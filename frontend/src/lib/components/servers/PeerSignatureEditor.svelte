@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, Dropdown, type DropdownOption } from '$lib/components/ui';
@@ -26,7 +27,7 @@
 	const options = $derived<DropdownOption<ProfileValue>[]>([
 		// Пустой профиль показываем, только пока он выбран: сигнатура пришла
 		// от старого сервера или набрана руками — профиля у неё нет.
-		...(selected === '' ? [{ value: '' as ProfileValue, label: '— не задан —' }] : []),
+		...(selected === '' ? [{ value: '' as ProfileValue, label: m.servers_sig_not_set() }] : []),
 		...Object.entries(protocols).map(([key, proto]) => ({
 			value: key as ProfileValue,
 			label: proto.name,
@@ -47,9 +48,9 @@
 				profile: target,
 				packets: { i1: res.packets.i1, i2: res.packets.i2, i3: res.packets.i3, i4: res.packets.i4, i5: res.packets.i5 },
 			});
-			notifications.success(`Сигнатура сгенерирована (${protocols[target].name})`);
+			notifications.success(m.servers_sig_generated({ name: protocols[target].name }));
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка генерации');
+			notifications.error(e instanceof Error ? e.message : m.servers_sig_generate_failed());
 		} finally {
 			generating = false;
 		}
@@ -57,9 +58,9 @@
 </script>
 
 <section class="peer-signature">
-	<span class="section-title">Сигнатура</span>
+	<span class="section-title">{m.servers_sig_title()}</span>
 	<p class="section-desc">
-		Пакеты-имитации перед рукопожатием. У каждого клиента своя сигнатура, сервер её не проверяет.
+		{m.servers_sig_desc()}
 	</p>
 
 	<div class="generate-row">
@@ -67,7 +68,7 @@
 			<Dropdown value={selected} {options} fullWidth onchange={(v) => (selected = v)} />
 		</div>
 		<Button variant="secondary" size="sm" onclick={handleGenerate} disabled={generating} loading={generating}>
-			Сгенерировать
+			{m.common_generate()}
 		</Button>
 	</div>
 
@@ -87,7 +88,7 @@
 	</div>
 
 	<div class="size-indicator" class:over-limit={overLimit}>
-		{totalChars} / {MAX_SIGNATURE_CHARS} символов
+		{m.servers_sig_size({ count: totalChars, max: MAX_SIGNATURE_CHARS })}
 	</div>
 </section>
 

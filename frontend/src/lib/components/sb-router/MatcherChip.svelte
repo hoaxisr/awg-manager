@@ -3,23 +3,10 @@
   При правках сверять с JSX напрямую — не угадывать spacing/typography/layout.
 -->
 
-<script lang="ts" module>
-  import type { MatcherKind } from './types';
-
-  /** Локализованная подпись для каждой категории матчера. */
-  const LABELS: Record<MatcherKind, string> = {
-    domain:   'домен',
-    ip:       'IP',
-    port:     'порт',
-    src:      'источник',
-    ruleset:  'набор',
-    protocol: 'proto',
-    private:  'тип',
-  };
-</script>
-
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Link } from 'lucide-svelte';
+  import type { MatcherKind } from './types';
   import RuleSetTypeIcon from './RuleSetTypeIcon.svelte';
   import type { RuleSetDisplayType } from '$lib/utils/ruleSetType';
 
@@ -38,21 +25,34 @@
   let { kind, label, mono = false, rulesetType, onclick, title }: Props = $props();
 
   const isClickable = $derived(typeof onclick === 'function');
+
+  /** Подпись для каждой категории матчера на текущем языке. */
+  function kindLabel(k: MatcherKind): string {
+    switch (k) {
+      case 'domain': return m.sb_router_matcher_domain();
+      case 'ip': return m.sb_router_matcher_ip();
+      case 'port': return m.sb_router_matcher_port();
+      case 'src': return m.sb_router_matcher_src();
+      case 'ruleset': return m.sb_router_matcher_ruleset();
+      case 'protocol': return m.sb_router_matcher_protocol();
+      case 'private': return m.sb_router_matcher_private();
+    }
+  }
 </script>
 
 {#snippet chipPrefix()}
   {#if kind === 'domain'}
     <span class="chip-prefix">
       <Link size={10} strokeWidth={2.25} aria-hidden="true" />
-      <span class="chip-key">{LABELS.domain}:</span>
+      <span class="chip-key">{kindLabel('domain')}:</span>
     </span>
   {:else if kind === 'ruleset' && rulesetType}
     <span class="chip-prefix">
       <RuleSetTypeIcon type={rulesetType} size={10} />
-      <span class="chip-key">{LABELS.ruleset}:</span>
+      <span class="chip-key">{kindLabel('ruleset')}:</span>
     </span>
   {:else}
-    <span class="chip-key">{LABELS[kind]}:</span>
+    <span class="chip-key">{kindLabel(kind)}:</span>
   {/if}
 {/snippet}
 

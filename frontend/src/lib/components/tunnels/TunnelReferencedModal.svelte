@@ -2,6 +2,7 @@
 	import { Modal, Button } from '$lib/components/ui';
 	import type { TunnelReferencedError } from '$lib/types';
 	import { describeRouterReference } from '$lib/utils/tunnelRefs';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		open: boolean;
@@ -11,21 +12,21 @@
 		onclose: () => void;
 	}
 
-	let { open, details, tunnelName, entityLabel = 'Туннель', onclose }: Props = $props();
+	let { open, details, tunnelName, entityLabel, onclose }: Props = $props();
 </script>
 
-<Modal {open} title="Удаление невозможно" size="sm" {onclose}>
+<Modal {open} title={m.tunnels_referenced_title()} size="sm" {onclose}>
 	{#if details}
 		<p class="lead">
-			{entityLabel} {#if tunnelName}<strong>{tunnelName}</strong>{/if} используется в других местах конфигурации:
+			{entityLabel ?? m.tunnels_referenced_entity_default()} {#if tunnelName}<strong>{tunnelName}</strong>{/if} {m.tunnels_referenced_used_name_after()}
 		</p>
 		<ul class="ref-list">
 			{#if details.deviceProxy}
-				<li>Активен в селекторе device-proxy (выбран как маршрут по умолчанию)</li>
+				<li>{m.tunnels_referenced_device_proxy()}</li>
 			{/if}
 			{#if details.routerRules && details.routerRules.length > 0}
 				<li>
-					Используется в правилах sing-box router:
+					{m.tunnels_referenced_router_rules()}
 					<span class="rule-indices">
 						{details.routerRules.map((i) => `#${i}`).join(', ')}
 					</span>
@@ -38,10 +39,10 @@
 				{/each}
 			{/if}
 		</ul>
-		<p class="hint">Удалите ссылки и попробуйте снова.</p>
+		<p class="hint">{m.tunnels_referenced_hint()}</p>
 	{/if}
 	{#snippet actions()}
-		<Button variant="primary" size="md" onclick={onclose}>Понятно</Button>
+		<Button variant="primary" size="md" onclick={onclose}>{m.tunnels_referenced_ok()}</Button>
 	{/snippet}
 </Modal>
 

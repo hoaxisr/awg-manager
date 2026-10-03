@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { ChevronDown, ChevronRight, Folder, RefreshCw } from 'lucide-svelte';
 	import type { TreeDir } from './types';
 
@@ -13,7 +14,7 @@
 </script>
 
 <aside class="side-tree">
-	<div class="tree-head">Структура</div>
+	<div class="tree-head">{m.system_files_tree_head()}</div>
 	<ul class="tree-root">
 		{#each nodes as node (node.path)}
 			<li>

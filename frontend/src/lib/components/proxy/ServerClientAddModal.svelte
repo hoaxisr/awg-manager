@@ -2,6 +2,7 @@
 	// Модалка добавления абонента (Дополнение №3 микрокопии): форма SH-39..43
 	// ушла из блока «Абоненты» в окно по кнопке шапки. Поля свои, решение об
 	// отправке — тоже; что делать с введённым, знает владелец списка.
+	import { m } from '$lib/i18n';
 	import { Button, Input, Modal } from '$lib/components/ui';
 	import { CLIENT_TEXT } from './serverClients';
 
@@ -44,17 +45,17 @@
 </script>
 
 <!-- Клик по подложке форму не теряет: выход — «Отменить» или Esc. -->
-<Modal {open} title="Новый абонент" size="sm" closeOnBackdrop={false} {onclose}>
+<Modal {open} title={m.proxy_client_add_title()} size="sm" closeOnBackdrop={false} {onclose}>
 	<div class="add-form">
-		<Input label="Имя абонента" placeholder="Ноутбук Пети" bind:value={name} fullWidth />
-		<Input label="Пароль" placeholder="Пусто — сгенерируется" bind:value={password} fullWidth />
+		<Input label={m.proxy_clients_name_label()} placeholder={m.proxy_client_add_name_placeholder()} bind:value={name} fullWidth />
+		<Input label={m.proxy_clients_password_label()} placeholder={m.proxy_client_add_password_placeholder()} bind:value={password} fullWidth />
 		<div class="vk-field">
-			<Input label="VK-хеш" bind:value={vkHash} fullWidth />
+			<Input label={m.proxy_clients_vk_hash_label()} bind:value={vkHash} fullWidth />
 			{#if serverHashes}
 				<!-- Не обещание, а факт: подставится ровно эта строка. Длинную
 				     обрезаем по ширине, целиком она остаётся в титре. -->
 				<p class="vk-note">
-					Пусто — подставим хеши сервера:
+					{m.proxy_client_add_vk_empty()}
 					<span class="vk-hashes" title={serverHashes}>{serverHashes}</span>
 				</p>
 			{:else}
@@ -66,9 +67,9 @@
 		{/if}
 	</div>
 	{#snippet actions()}
-		<Button variant="secondary" size="md" disabled={busy} onclick={onclose}>Отменить</Button>
+		<Button variant="secondary" size="md" disabled={busy} onclick={onclose}>{m.proxy_common_cancel_action()}</Button>
 		<Button variant="primary" size="md" disabled={!canSubmit} loading={busy} onclick={submit}>
-			Добавить
+			{m.common_add()}
 		</Button>
 	{/snippet}
 </Modal>

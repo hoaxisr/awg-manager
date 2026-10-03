@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { SideDrawer, Button, Dropdown } from '$lib/components/ui';
@@ -56,7 +57,7 @@
 				failThreshold = tunnel.pingCheck.failThreshold || 3;
 			}
 		} catch (e) {
-			notifications.error('Не удалось загрузить настройки');
+			notifications.error(m.pingcheck_settings_load_failed());
 		} finally {
 			loading = false;
 		}
@@ -75,10 +76,10 @@
 				failThreshold
 			};
 			await api.updateTunnel(tunnelId, tunnel);
-			notifications.success('Настройки мониторинга сохранены');
+			notifications.success(m.pingcheck_settings_saved());
 			onSaved();
 		} catch (e) {
-			notifications.error(`Ошибка: ${(e as Error).message}`);
+			notifications.error(m.sb_router_common_error({ message: (e as Error).message }));
 		} finally {
 			saving = false;
 		}
@@ -87,13 +88,13 @@
 
 <SideDrawer {open} onClose={onclose} title="Pingcheck: {tunnelName}">
 	{#if loading}
-		<div class="loading-state">Загрузка...</div>
+		<div class="loading-state">{m.tunnels_loading()}</div>
 	{:else}
 		<div class="form-grid">
 			<div class="field">
 				<Dropdown
 					id="kpc-method"
-					label="Метод"
+					label={m.pingcheck_method()}
 					bind:value={method}
 					options={[
 						{ value: 'http', label: 'HTTP 204' },
@@ -104,31 +105,31 @@
 			</div>
 
 			<div class="field">
-				<label class="field-label" for="kpc-target">Цель</label>
+				<label class="field-label" for="kpc-target">{m.pingcheck_target()}</label>
 				<input id="kpc-target" type="text" class="field-input" bind:value={target} placeholder="8.8.8.8" />
 			</div>
 
 			<div class="field">
-				<label class="field-label" for="kpc-interval">Интервал (сек)</label>
+				<label class="field-label" for="kpc-interval">{m.pingcheck_interval_sec()}</label>
 				<input id="kpc-interval" type="number" class="field-input" bind:value={interval} min="10" max="600" />
 			</div>
 
 			<div class="field">
-				<label class="field-label" for="kpc-dead">Интервал при dead (сек)</label>
+				<label class="field-label" for="kpc-dead">{m.pingcheck_dead_interval_sec()}</label>
 				<input id="kpc-dead" type="number" class="field-input" bind:value={deadInterval} min="30" max="600" />
 			</div>
 
 			<div class="field">
-				<label class="field-label" for="kpc-threshold">Порог ошибок</label>
+				<label class="field-label" for="kpc-threshold">{m.pingcheck_fail_threshold()}</label>
 				<input id="kpc-threshold" type="number" class="field-input" bind:value={failThreshold} min="1" max="20" />
 			</div>
 		</div>
 	{/if}
 
 	{#snippet footer()}
-		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="ghost" size="md" onclick={onclose}>{m.common_cancel()}</Button>
 		<Button variant="primary" size="md" onclick={handleSave} disabled={loading} loading={saving}>
-			Сохранить
+			{m.common_save()}
 		</Button>
 	{/snippet}
 </SideDrawer>

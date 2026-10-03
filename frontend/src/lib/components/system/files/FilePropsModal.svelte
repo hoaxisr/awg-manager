@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api, type SystemFileEntry } from '$lib/api/client';
 	import { Modal, Button } from '$lib/components/ui';
 	import { formatBytes } from '$lib/utils/format';
@@ -25,7 +26,7 @@
 
 <Modal
 	{open}
-	title="Свойства объекта"
+	title={m.system_files_props_title()}
 	size="md"
 	onclose={onClose}
 >
@@ -44,7 +45,7 @@
 					<div class="file-name">{entry.name}</div>
 					<div class="path-row">
 						<code>{entry.path}</code>
-						<FileCopyButton value={entry.path} size={13} title="Копировать путь" />
+						<FileCopyButton value={entry.path} size={13} title={m.system_files_props_copy_path()} />
 					</div>
 				</div>
 			</div>
@@ -57,15 +58,15 @@
 			<!-- Basic info table -->
 			<div class="info-grid">
 				<div class="info-row">
-					<span class="info-label">Тип:</span>
-					<span class="info-val">{entry.isDir ? 'Каталог (Папка)' : 'Файл'}</span>
+					<span class="info-label">{m.system_files_props_type()}</span>
+					<span class="info-val">{entry.isDir ? m.system_files_props_type_dir() : m.system_files_props_type_file()}</span>
 				</div>
 				<div class="info-row">
-					<span class="info-label">Размер:</span>
+					<span class="info-label">{m.system_files_props_size()}</span>
 					<span class="info-val">{entry.isDir ? '—' : formatBytes(entry.size)}</span>
 				</div>
 				<div class="info-row">
-					<span class="info-label">Изменён:</span>
+					<span class="info-label">{m.system_files_props_modified()}</span>
 					<span class="info-val">{new Date(entry.modTime).toLocaleString()}</span>
 				</div>
 			</div>
@@ -91,7 +92,7 @@
 						}}
 					>
 						{#snippet iconBefore()}<Download size={14} />{/snippet}
-						Скачать
+						{m.common_download()}
 					</Button>
 					{#if onEdit && entry}
 						<Button
@@ -104,12 +105,12 @@
 							}}
 						>
 							{#snippet iconBefore()}<FileText size={14} />{/snippet}
-							Редактировать
+							{m.system_files_props_edit()}
 						</Button>
 					{/if}
 				{/if}
 			</div>
-			<Button variant="ghost" onclick={onClose}>Закрыть</Button>
+			<Button variant="ghost" onclick={onClose}>{m.common_close()}</Button>
 		</div>
 	{/snippet}
 </Modal>

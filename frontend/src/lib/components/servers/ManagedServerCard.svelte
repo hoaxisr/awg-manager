@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import type { ManagedServer, ManagedPeer, ManagedPeerStats, ManagedServerStats, ASCParams } from '$lib/types';
 	import { api } from '$lib/api/client';
@@ -120,10 +121,10 @@
 		try {
 			const fresh = await api.deleteManagedServer(serverId);
 			servers.applyMutationResponse(fresh);
-			notifications.success('Сервер удалён');
+			notifications.success(m.servers_managed_deleted());
 			onDeleted();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка удаления');
+			notifications.error(e instanceof Error ? e.message : m.servers_card_delete_failed());
 		} finally {
 			deleting = false;
 			confirmDelete = false;
@@ -138,7 +139,7 @@
 			servers.applyMutationResponse(fresh);
 			onUpdated();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка');
+			notifications.error(e instanceof Error ? e.message : m.common_error());
 		} finally {
 			const next = new Set(togglingPeerKeys);
 			next.delete(peer.publicKey);
@@ -154,10 +155,10 @@
 		try {
 			const fresh = await api.deleteManagedPeer(serverId, peer.publicKey);
 			servers.applyMutationResponse(fresh);
-			notifications.success('Клиент удалён');
+			notifications.success(m.servers_card_peer_deleted());
 			onUpdated();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка удаления');
+			notifications.error(e instanceof Error ? e.message : m.servers_card_delete_failed());
 			throw e;
 		}
 	}
@@ -166,8 +167,6 @@
 		selectedPeer = peer;
 		editPeerOpen = true;
 	}
-
-	const WAN_IP_MASKED = 'показать';
 
 	let wanIP = $state('');
 	let showWanIP = $state(false);
@@ -184,7 +183,7 @@
 			servers.applyMutationResponse(fresh);
 			onUpdated();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка переключения');
+			notifications.error(e instanceof Error ? e.message : m.servers_card_toggle_failed());
 		} finally {
 			togglingEnabled = false;
 		}
@@ -196,10 +195,10 @@
 
 		try {
 			await api.restartManagedServer(serverId);
-			notifications.success(isUp ? 'Команда рестарта отправлена' : 'Команда запуска отправлена');
+			notifications.success(isUp ? m.servers_card_restart_sent() : m.servers_card_start_sent());
 			servers.invalidate();
 		} catch {
-			notifications.warning('Команда могла быть отправлена, соединение могло временно прерваться');
+			notifications.warning(m.servers_card_cmd_maybe_sent());
 		} finally {
 			restartingServer = false;
 		}
@@ -210,18 +209,18 @@
 
 	let natMode = $derived<NatMode>(resolveNatMode(server.natMode, server.natEnabled));
 
-	const natModeOptions: SegmentedOption<'full' | 'internet-only' | 'none'>[] = [
-		{ value: 'full', label: 'Полный' },
-		{ value: 'internet-only', label: 'Интернет' },
-		{ value: 'none', label: 'Без NAT' },
-	];
+	const natModeOptions: SegmentedOption<'full' | 'internet-only' | 'none'>[] = $derived([
+		{ value: 'full', label: m.servers_managed_nat_full() },
+		{ value: 'internet-only', label: m.servers_managed_nat_internet() },
+		{ value: 'none', label: m.servers_managed_nat_none() },
+	]);
 
 	async function handleToggleIngress() {
 		togglingIngress = true;
 		try {
 			await onToggleIngress(server.interfaceName, !ingressEnabled);
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка переключения egress в sing-box');
+			notifications.error(e instanceof Error ? e.message : m.servers_card_ingress_failed());
 		} finally {
 			togglingIngress = false;
 		}
@@ -235,7 +234,7 @@
 			servers.applyMutationResponse(fresh);
 			onUpdated();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка изменения режима NAT');
+			notifications.error(e instanceof Error ? e.message : m.servers_managed_nat_mode_failed());
 		} finally {
 			togglingNAT = false;
 		}
@@ -250,7 +249,7 @@
 			servers.applyMutationResponse(fresh);
 			onUpdated();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка изменения доступа в LAN');
+			notifications.error(e instanceof Error ? e.message : m.servers_managed_lan_failed());
 		} finally { settingLAN = false; }
 	}
 
@@ -307,9 +306,9 @@
 		try {
 			const fresh = await api.setManagedServerPolicy(serverId, newPolicy);
 			servers.applyMutationResponse(fresh);
-			notifications.success('Политика обновлена');
+			notifications.success(m.servers_card_policy_updated());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка изменения политики');
+			notifications.error(e instanceof Error ? e.message : m.servers_card_policy_failed());
 		} finally {
 			policyChanging = false;
 		}
@@ -332,7 +331,7 @@
 					<h3 class="card-title">{serverDisplayName}</h3>
 				</div>
 				<div class="title-badges">
-					<span class="badge-managed">Управляемый</span>
+					<span class="badge-managed">{m.servers_managed_badge()}</span>
 					{#if ascParams !== null}
 						<VersionBadge kind="awg" value={awgVersion} />
 					{/if}
@@ -349,22 +348,22 @@
 		</div>
 		<div class="header-right">
 			<div class="header-actions">
-				<Button variant="secondary" size="sm" onclick={handleRestartOrStart} disabled={restartingServer || togglingEnabled || deleting} loading={restartingServer} iconBefore={restartIcon} title={statusUnknown ? `Статус сервера «${serverDisplayName}» загружается` : isUp ? `Перезапустить сервер «${serverDisplayName}»` : `Запустить сервер «${serverDisplayName}»`}>
-					{statusUnknown ? 'Рестарт' : isUp ? 'Рестарт' : 'Запуск'}
+				<Button variant="secondary" size="sm" onclick={handleRestartOrStart} disabled={restartingServer || togglingEnabled || deleting} loading={restartingServer} iconBefore={restartIcon} title={statusUnknown ? m.servers_managed_status_loading_title({ name: serverDisplayName }) : isUp ? m.servers_managed_restart_title({ name: serverDisplayName }) : m.servers_managed_start_title({ name: serverDisplayName })}>
+					{statusUnknown ? m.servers_card_restart() : isUp ? m.servers_card_restart() : m.servers_card_start()}
 				</Button>
-				<Button variant="secondary" size="sm" onclick={onOpenASC} iconBefore={ascIcon} title={`Параметры обфускации сервера «${serverDisplayName}»`}>
-					Обфускация
+				<Button variant="secondary" size="sm" onclick={onOpenASC} iconBefore={ascIcon} title={m.servers_managed_asc_title({ name: serverDisplayName })}>
+					{m.tunnel_detail_tab_obfuscation()}
 				</Button>
-				<Button variant="secondary" size="sm" onclick={() => editServerOpen = true} iconBefore={settingsIcon} title={`Настройки сервера «${serverDisplayName}»`}>
-					Настройки
+				<Button variant="secondary" size="sm" onclick={() => editServerOpen = true} iconBefore={settingsIcon} title={m.servers_managed_settings_title({ name: serverDisplayName })}>
+					{m.nav_settings()}
 				</Button>
 				{#if confirmDelete}
-					<Button variant="danger" size="sm" onclick={handleDeleteServer} loading={deleting} title={`Подтвердить удаление сервера «${serverDisplayName}»`}>
-						Подтвердить?
+					<Button variant="danger" size="sm" onclick={handleDeleteServer} loading={deleting} title={m.servers_managed_confirm_delete_title({ name: serverDisplayName })}>
+						{m.servers_managed_confirm()}
 					</Button>
 				{:else}
-					<Button variant="outline-danger" size="sm" onclick={handleDeleteServer} disabled={deleting} iconBefore={deleteIcon} title={`Удалить сервер «${serverDisplayName}»`}>
-						Удалить
+					<Button variant="outline-danger" size="sm" onclick={handleDeleteServer} disabled={deleting} iconBefore={deleteIcon} title={m.servers_managed_delete_title({ name: serverDisplayName })}>
+						{m.common_delete()}
 					</Button>
 				{/if}
 			</div>
@@ -375,7 +374,7 @@
 	<StatStrip>
 		<Stat value={stats ? formatBytes(totalRx) : '—'} label="RX" />
 		<Stat value={stats ? formatBytes(totalTx) : '—'} label="TX" />
-		<Stat value={`${onlineCount} / ${(server.peers ?? []).length}`} label="Клиенты" sub={onlineCount > 0 ? `${onlineCount} онлайн` : 'нет активных'} />
+		<Stat value={`${onlineCount} / ${(server.peers ?? []).length}`} label={m.servers_stat_clients()} sub={onlineCount > 0 ? m.servers_stat_online({ count: onlineCount }) : m.servers_stat_none_active()} />
 		<Stat value={`UDP :${server.listenPort}`} label="Listen" />
 	</StatStrip>
 	{/if}
@@ -387,24 +386,24 @@
 				<span class="setting-title">NAT</span>
 				{#if natMode === 'full'}
 					<span class="setting-description">
-						Клиент выходит в интернет с внешним IP {@render wanIpButton()}. В LAN виден не как отдельное устройство, а как роутер{lanRouterLabel}.
+						{m.servers_managed_nat_full_prefix()} {@render wanIpButton()}{m.servers_managed_nat_full_suffix({ router: lanRouterLabel })}
 					</span>
 				{:else if natMode === 'internet-only'}
 					<span class="setting-description">
-						Клиент выходит в интернет с внешним IP {@render wanIpButton()}, в LAN виден со своим VPN-адресом ({vpnSubnetLabel}).
+						{m.servers_managed_nat_full_prefix()} {@render wanIpButton()}{m.servers_managed_nat_inet_suffix({ subnet: vpnSubnetLabel })}
 					</span>
 				{:else}
-					<span class="setting-description">Выхода в интернет для клиента нет (без дополнительной подмены адреса), в LAN виден со своим VPN-адресом ({vpnSubnetLabel}).</span>
+					<span class="setting-description">{m.servers_managed_nat_none_desc({ subnet: vpnSubnetLabel })}</span>
 				{/if}
 				{#if ingressEnabled && natMode === 'full'}
-					<span class="setting-description setting-description-warning">NAT для интернета не действует — интернет-трафик идёт через sing-box (туннель); режим NAT влияет только на видимость в LAN</span>
+					<span class="setting-description setting-description-warning">{m.servers_managed_nat_ingress_warning()}</span>
 				{/if}
 			</div>
 			<div class="setting-control">
 				<SegmentedControl
 					value={natMode}
 					options={natModeOptions}
-					ariaLabel="Режим NAT"
+					ariaLabel={m.servers_managed_nat_mode_aria()}
 					disabled={togglingNAT}
 					fullWidth
 					onchange={handleSetNATMode}
@@ -414,11 +413,11 @@
 
 		<div class="setting-row">
 			<div class="setting-copy">
-				<span class="setting-title">Доступ в LAN</span>
-				<span class="setting-description">Сегменты LAN, доступные клиентам этого сервера.</span>
+				<span class="setting-title">{m.servers_managed_lan_title()}</span>
+				<span class="setting-description">{m.servers_managed_lan_desc()}</span>
 				{#if server.foreignAcls?.length}
 					<span class="setting-description setting-description-warning">
-						К интерфейсу привязан посторонний список доступа ({server.foreignAcls.join(', ')}). Он срабатывает раньше выбора сегментов и может открыть клиентам больше, чем выбрано — проверьте его в настройках роутера.
+						{m.servers_managed_foreign_acls({ acls: server.foreignAcls.join(', ') })}
 					</span>
 				{/if}
 			</div>
@@ -429,12 +428,9 @@
 
 		<div class="setting-row setting-row-toggle">
 			<div class="setting-copy">
-				<span class="setting-title">Маршрутизация через sing-box</span>
+				<span class="setting-title">{m.servers_card_ingress_title()}</span>
 				<span class="setting-description">
-					Весь трафик клиентов этого сервера пойдёт через sing-box и маршрутизируется его правилами;
-					в режиме FakeIP их DNS-запросы перехватываются резолвером туннеля. Следствия в FakeIP:
-					выше нагрузка на процессор, у клиентов не работает ping (ICMP), при остановленном sing-box
-					они остаются без сети.
+					{m.servers_card_ingress_desc()}
 				</span>
 			</div>
 			<div class="setting-control setting-control-toggle">
@@ -452,7 +448,7 @@
 	<!-- Peers -->
 	<div class="peers-section">
 		<div class="peers-header">
-			<span class="peers-title">Клиенты {#if stats}({onlineCount}/{(server.peers ?? []).length} онлайн){:else}({(server.peers ?? []).length}){/if}</span>
+			<span class="peers-title">{#if stats}{m.servers_card_peers_title_online({ online: onlineCount, total: (server.peers ?? []).length })}{:else}{m.servers_card_peers_title_total({ total: (server.peers ?? []).length })}{/if}</span>
 			<div class="peers-controls">
 				<PeerSortControls
 					bind:searchQuery
@@ -460,13 +456,13 @@
 					hideSortOnDesktop
 				/>
 				<Button variant="secondary" size="sm" onclick={() => addPeerOpen = true} iconBefore={addPeerIcon}>
-					Добавить клиента
+					{m.servers_peer_add_title()}
 				</Button>
 			</div>
 		</div>
 
 		{#if (server.peers ?? []).length === 0}
-			<div class="empty-peers">Нет клиентов. Добавьте первого.</div>
+			<div class="empty-peers">{m.servers_card_no_peers()}</div>
 		{:else}
 			<ManagedPeerTable
 				peers={sortedPeers}
@@ -486,11 +482,11 @@
 		type="button"
 		class="wan-ip-reveal mono"
 		onclick={() => (showWanIP = !showWanIP)}
-		title={showWanIP && wanIP ? wanIP : 'Показать внешний IP'}
-		aria-label={showWanIP ? 'Скрыть внешний IP' : 'Показать внешний IP'}
+		title={showWanIP && wanIP ? wanIP : m.servers_managed_wan_show_title()}
+		aria-label={showWanIP ? m.servers_managed_wan_hide_title() : m.servers_managed_wan_show_title()}
 		aria-pressed={showWanIP}
 	>
-		({showWanIP && wanIP ? wanIP : WAN_IP_MASKED})
+		({showWanIP && wanIP ? wanIP : m.servers_managed_wan_show()})
 	</button>
 {/snippet}
 

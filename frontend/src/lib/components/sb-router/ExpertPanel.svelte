@@ -14,6 +14,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
@@ -46,7 +47,6 @@
   import { newDeviceProxyInstance } from '$lib/utils/deviceProxyInstance';
   import { inboundsPanelTotal } from '$lib/utils/singboxInbounds';
   import { deleteDeviceProxyInstanceWithNotice } from '$lib/utils/deviceProxyDeleteNotice';
-  import { pluralize, SET_WORDS } from '$lib/utils/pluralize';
 
   import StatStrip, { type StatCellData } from './StatStrip.svelte';
   import SidePanel from './SidePanel.svelte';
@@ -54,7 +54,7 @@
   import RuleSetsTable from './RuleSetsTable.svelte';
   import BulkSelectBar from './BulkSelectBar.svelte';
   import { isSystemRule, mapRuleAction } from './adapters';
-  import { buildDownloadDetourOptions } from '$lib/components/routing/singboxRouter/outboundOptions';
+  import { buildDownloadDetourOptions, outboundGroupLabel } from '$lib/components/routing/singboxRouter/outboundOptions';
   import SbRouterRuleSetCatalogModal from './SbRouterRuleSetCatalogModal.svelte';
   import SbRouterGeositeCatalogModal from './SbRouterGeositeCatalogModal.svelte';
   import { addGeositeRuleSets, applyCatalogPresetsAsRuleSets } from './rulesetCatalogActions';
@@ -115,12 +115,12 @@
   );
 
   // ── Globals (route-final + DNS final/strategy) ──────────────────────
-  // route-final: direct + все outbounds, кроме группы «Специальные»
+  // route-final: direct + все outbounds, кроме группы 'special'
   const routeFinalOptions = $derived<DropdownOption[]>([
-    { value: 'direct', label: 'direct (мимо VPN)' },
+    { value: 'direct', label: m.sb_router_expert_route_final_direct() },
     ...$storeOptions
-      .filter((g) => g.group !== 'Специальные')
-      .flatMap((g) => g.items.map((i) => ({ value: i.value, label: i.label, group: g.group }))),
+      .filter((g) => g.id !== 'special')
+      .flatMap((g) => g.items.map((i) => ({ value: i.value, label: i.label, group: outboundGroupLabel(g.id) }))),
   ]);
 
   let draftRouteFinal = $state('direct');
@@ -260,7 +260,7 @@
   let dpReloadKey = $state(0);
 
   // Унифицированное подтверждение удаления (rule / rule-set / inbound)
-  let pendingConfirm = $state<{ title: string; message: string; run: () => Promise<void> } | null>(null);
+  let pendingConfirm = $state<{ title: () => string; message: () => string; run: () => Promise<void> } | null>(null);
   let confirmBusy = $state(false);
 
   async function runConfirm() {
@@ -296,20 +296,19 @@
   }
   function deleteInbound(in_: DeviceProxyInstance) {
     pendingConfirm = {
-      title: 'Удалить inbound',
-      message: `Удалить inbound «${in_.name || in_.id}»?`,
+      title: () => m.sb_router_expert_inbound_delete_title(),
+      message: () => m.sb_router_expert_inbound_delete_message({ name: in_.name || in_.id }),
       run: async () => {
         try {
           await deleteDeviceProxyInstanceWithNotice(in_.id, {
-            successMessage: 'Inbound удалён',
-            pendingApplyMessage:
-              'Inbound удалён из конфига, но sing-box ещё не обновлён — изменение применится, когда сервис снова будет доступен.',
+            successMessage: m.sb_router_expert_inbound_deleted(),
+            pendingApplyMessage: m.sb_router_expert_inbound_deleted_pending(),
           });
           dpReloadKey += 1;
           await loadActiveProxyCount();
           await loadAllInbounds();
         } catch (e) {
-          notifications.error(`Не удалось удалить: ${e instanceof Error ? e.message : String(e)}`);
+          notifications.error(m.sb_router_expert_delete_failed({ message: e instanceof Error ? e.message : String(e) }));
         }
       },
     };
@@ -383,12 +382,19 @@
   // disabled → OFF. XOR-режимы: когда активен режим FakeIP, общий sing-box
   // крутит fakeip-слот и TPROXY-перехват не установлен — это НЕАКТИВЕН (muted),
   // НЕ ложный СБОЙ. Оценка active/СБОЙ только когда TProxy и есть активный режим.
-  const engineStat = $derived.by<{ value: string; tone: StatCellData['tone'] }>(() => {
-    if (!$storeStatus?.enabled) return { value: 'OFF', tone: 'muted' };
-    if ($storeSettings?.routingMode === 'fakeip-tun') return { value: 'НЕАКТИВЕН', tone: 'muted' };
+  // kind — код состояния для логики; value — подпись ячейки (переводится).
+  const engineStat = $derived.by<{
+    kind: 'off' | 'inactive' | 'on' | 'fail';
+    value: string;
+    tone: StatCellData['tone'];
+  }>(() => {
+    if (!$storeStatus?.enabled) return { kind: 'off', value: 'OFF', tone: 'muted' };
+    if ($storeSettings?.routingMode === 'fakeip-tun') {
+      return { kind: 'inactive', value: m.sb_router_expert_engine_inactive(), tone: 'muted' };
+    }
     return $storeStatus.active
-      ? { value: 'ON', tone: 'success' }
-      : { value: 'СБОЙ', tone: 'error' };
+      ? { kind: 'on', value: 'ON', tone: 'success' }
+      : { kind: 'fail', value: m.sb_router_expert_engine_fail(), tone: 'error' };
   });
 
   // Живые ресурсы движка: память из SSE singbox:memory, скорость и объём —
@@ -413,97 +419,97 @@
 
   const statCells: StatCellData[] = $derived([
     {
-      label: 'Движок',
+      label: m.sb_router_expert_stat_engine(),
       value: engineStat.value,
       tone: engineStat.tone,
-      helpTitle: engineStat.value === 'НЕАКТИВЕН' ? 'Режим неактивен' : undefined,
+      helpTitle: engineStat.kind === 'inactive' ? m.sb_router_expert_stat_engine_inactive_title() : undefined,
       helpText:
-        engineStat.value === 'НЕАКТИВЕН'
-          ? 'Активен режим FakeIP — TProxy-перехват не задействован.'
+        engineStat.kind === 'inactive'
+          ? m.sb_router_expert_stat_engine_inactive_text()
           : undefined,
       onClick:
-        engineStat.value === 'СБОЙ' && $storeStatus?.lastError
+        engineStat.kind === 'fail' && $storeStatus?.lastError
           ? () => (engineFatalOpen = true)
           : undefined,
-      actionLabel: 'подробнее',
+      actionLabel: m.sb_router_expert_stat_details(),
     },
     {
-      label: 'Память',
+      label: m.sb_router_expert_stat_memory(),
       value: memCellValue,
       compact: true,
-      helpTitle: 'Память sing-box',
-      helpText: 'Память Go-рантайма sing-box по данным Clash API (фактический RSS процесса выше). Обновляется каждые ~2 секунды, пока движок работает.',
+      helpTitle: m.sb_router_expert_stat_memory_title(),
+      helpText: m.sb_router_expert_stat_memory_text(),
     },
     {
-      label: 'Трафик ↓',
+      label: m.sb_router_expert_stat_traffic(),
       value: rateCellValue,
       compact: true,
-      helpTitle: 'Трафик через движок',
-      helpText: 'Агрегатная скорость скачивания через sing-box (кумулятивные счётчики Clash, включая закрытые соединения).',
+      helpTitle: m.sb_router_expert_stat_traffic_title(),
+      helpText: m.sb_router_expert_stat_traffic_text(),
       helpItems: [
-        `Отдача: ${engineRunning && liveStats.rate.hasRate ? formatByteRate(liveStats.rate.uploadRate) : '—'}`,
-        `За сессию: ${engineRunning ? formatBytes(liveStats.totals.downloadBytes + liveStats.totals.uploadBytes) : '—'}`,
+        m.sb_router_expert_stat_traffic_upload({ value: engineRunning && liveStats.rate.hasRate ? formatByteRate(liveStats.rate.uploadRate) : '—' }),
+        m.sb_router_expert_stat_traffic_session({ value: engineRunning ? formatBytes(liveStats.totals.downloadBytes + liveStats.totals.uploadBytes) : '—' }),
       ],
     },
     {
-      label: 'Правил',
+      label: m.sb_router_expert_stat_rules(),
       value: String($storeRules.length),
-      helpTitle: 'Правила маршрутизации',
-      helpText: 'Количество route rules. Они проверяются сверху вниз: первое совпадение выбирает outbound.',
+      helpTitle: m.sb_router_expert_stat_rules_title(),
+      helpText: m.sb_router_expert_stat_rules_text(),
       helpItems: [
-        'Порядок важен.',
-        'Если ничего не подошло — используется default outbound в панели правил.',
+        m.sb_router_expert_stat_rules_item_order(),
+        m.sb_router_expert_stat_rules_item_default(),
       ],
     },
     {
       label: 'Rule-sets',
       value: String($storeRuleSets.length),
-      helpTitle: 'Наборы правил',
-      helpText: 'Списки доменов и IP, на которые ссылаются route rules и DNS rules.',
+      helpTitle: m.sb_router_expert_stat_rulesets_title(),
+      helpText: m.sb_router_expert_stat_rulesets_text(),
       helpItems: [
-        'Remote — скачивается и обновляется.',
-        'Local — файл на роутере.',
-        'Inline — правила хранятся прямо в конфиге.',
+        m.sb_router_expert_stat_rulesets_remote(),
+        m.sb_router_expert_stat_rulesets_local(),
+        m.sb_router_expert_stat_rulesets_inline(),
       ],
     },
     {
       label: 'OUTBOUNDS',
       value: String($storeOutbounds.length),
       helpTitle: 'Outbounds',
-      helpText: 'Доступные направления трафика: direct, reject, VPN/selector/composite и подписочные группы.',
+      helpText: m.sb_router_expert_stat_outbounds_text(),
       helpItems: [
-        'Route rule выбирает outbound.',
-        'DNS server тоже может ходить через outbound.',
+        m.sb_router_expert_stat_outbounds_item_route(),
+        m.sb_router_expert_stat_outbounds_item_dns(),
       ],
     },
     {
       label: 'DNS',
       value: String($storeDnsRules.length),
-      helpTitle: 'DNS-правила',
-      helpText: 'Правила выбора DNS-сервера по доменам, rule-set, типам запросов и другим условиям.',
+      helpTitle: m.sb_router_expert_stat_dns_title(),
+      helpText: m.sb_router_expert_stat_dns_text(),
       helpItems: [
-        'Работают отдельно от route rules.',
-        'Могут направлять конкретные домены на нужный DNS-сервер.',
+        m.sb_router_expert_stat_dns_item_separate(),
+        m.sb_router_expert_stat_dns_item_domains(),
       ],
     },
     {
       label: 'Rewrite',
       value: String($storeDnsRewrites.length),
-      helpTitle: 'DNS-перезаписи',
-      helpText: 'Статические DNS-ответы: домен или шаблон получает заданный IP.',
+      helpTitle: m.sb_router_expert_stat_rewrite_title(),
+      helpText: m.sb_router_expert_stat_rewrite_text(),
       helpItems: [
-        'Полезно для локальных override.',
-        'Срабатывает до обычного DNS-резолва.',
+        m.sb_router_expert_stat_rewrite_item_override(),
+        m.sb_router_expert_stat_rewrite_item_before(),
       ],
     },
       {
-        label: 'Прокси',
+        label: m.sb_router_expert_stat_proxy(),
         value: activeProxyCountLabel,
         helpTitle: 'Device Proxy / Inbounds',
-        helpText: 'Количество активных локальных inbound-прокси для устройств.',
+        helpText: m.sb_router_expert_stat_proxy_text(),
         helpItems: [
-          'active — inbound запущен и принимает подключения.',
-          'выкл — запись есть, но runtime не активен.',
+          m.sb_router_expert_stat_proxy_item_active(),
+          m.sb_router_expert_stat_proxy_item_off(),
       ],
     },
   ]);
@@ -530,7 +536,7 @@
   // Тот же каталог outbound'ов, что у RuleEditModal ($storeOptions), сплющенный
   // в плоский список для BulkSelectBar.
   const bulkOutboundOptions = $derived(
-    $storeOptions.flatMap((g) => g.items.map((i) => ({ value: i.value, label: i.label, group: g.group }))),
+    $storeOptions.flatMap((g) => g.items.map((i) => ({ value: i.value, label: i.label, group: outboundGroupLabel(g.id) }))),
   );
 
   function toggleRulesSelectMode(): void {
@@ -559,12 +565,12 @@
     rulesBulkBusy = true;
     try {
       const { updated } = await api.singboxRouterBulkOutbound([...rulesSelected], value);
-      notifications.success(`Изменено ${updated}`);
+      notifications.success(m.sb_router_expert_changed({ count: updated }));
       rulesSelectMode = false;
       rulesSelected = new Set();
       await singboxRouterStore.loadAll();
     } catch (e) {
-      notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
     } finally {
       rulesBulkBusy = false;
     }
@@ -580,7 +586,7 @@
     if (rulesSelectMode && !rulesBulkBusy && prevRulesRef !== undefined && current !== prevRulesRef) {
       rulesSelectMode = false;
       rulesSelected = new Set();
-      notifications.info('Список изменился, выбор сброшен');
+      notifications.info(m.sb_router_expert_list_changed());
     }
     prevRulesRef = current;
   });
@@ -596,7 +602,7 @@
   // таблицы, а не от полного $storeRuleSets (#558 fix-волна, finding F2).
   let rsFilteredSelectableTags = $state<string[]>([]);
 
-  const rsBulkDetourOptions = $derived(buildDownloadDetourOptions($storeOptions, '— сбросить —'));
+  const rsBulkDetourOptions = $derived(buildDownloadDetourOptions($storeOptions, m.sb_router_expert_bulk_reset()));
 
   function toggleRsSelectMode(): void {
     rsSelectMode = true;
@@ -624,11 +630,11 @@
     rsBulkBusy = true;
     try {
       const { updated } = await handleRsBulkDetour([...rsSelected], value);
-      notifications.success(`Изменено ${updated}`);
+      notifications.success(m.sb_router_expert_changed({ count: updated }));
       rsSelectMode = false;
       rsSelected = new Set();
     } catch (e) {
-      notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
     } finally {
       rsBulkBusy = false;
     }
@@ -640,7 +646,7 @@
     if (rsSelectMode && !rsBulkBusy && prevRuleSetsRef !== undefined && current !== prevRuleSetsRef) {
       rsSelectMode = false;
       rsSelected = new Set();
-      notifications.info('Список изменился, выбор сброшен');
+      notifications.info(m.sb_router_expert_list_changed());
     }
     prevRuleSetsRef = current;
   });
@@ -663,15 +669,15 @@
   // Rule handlers
   function handleDeleteRule(idx: number) {
     pendingConfirm = {
-      title: 'Удалить правило',
-      message: `Удалить правило #${idx}?`,
+      title: () => m.sb_router_expert_rule_delete_title(),
+      message: () => m.sb_router_expert_rule_delete_message({ n: idx }),
       run: async () => {
         try {
           await api.singboxRouterDeleteRule(idx);
           await singboxRouterStore.loadAll();
-          notifications.success('Правило удалено');
+          notifications.success(m.sb_router_expert_rule_deleted());
         } catch (e) {
-          notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+          notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
         }
       },
     };
@@ -679,15 +685,15 @@
 
   function handleDeleteDNSRule(idx: number) {
     pendingConfirm = {
-      title: 'Удалить DNS-правило',
-      message: `Удалить DNS-правило #${idx + 1}?`,
+      title: () => m.sb_router_expert_dns_rule_delete_title(),
+      message: () => m.sb_router_expert_dns_rule_delete_message({ n: idx + 1 }),
       run: async () => {
         try {
           await api.singboxRouterDeleteDNSRule(idx);
           await singboxRouterStore.loadAll();
-          notifications.success('DNS-правило удалено');
+          notifications.success(m.sb_router_expert_dns_rule_deleted());
         } catch (e) {
-          notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+          notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
         }
       },
     };
@@ -695,15 +701,15 @@
 
   function handleDeleteDnsServer(tag: string) {
     pendingConfirm = {
-      title: 'Удалить DNS-сервер',
-      message: `Удалить DNS-сервер «${tag}»?`,
+      title: () => m.sb_router_expert_dns_server_delete_title(),
+      message: () => m.sb_router_expert_dns_server_delete_message({ tag }),
       run: async () => {
         try {
           await api.singboxRouterDeleteDNSServer(tag);
           await singboxRouterStore.loadAll();
-          notifications.success('DNS-сервер удалён');
+          notifications.success(m.sb_router_expert_dns_server_deleted());
         } catch (e) {
-          notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+          notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
         }
       },
     };
@@ -716,7 +722,7 @@
       await api.singboxRouterMoveRule(idx, to);
       await singboxRouterStore.loadAll();
     } catch (e) {
-      notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
     }
   }
 
@@ -735,15 +741,15 @@
   // RuleSet handlers
   function handleDeleteRs(tag: string) {
     pendingConfirm = {
-      title: 'Удалить набор',
-      message: `Удалить набор «${tag}»?`,
+      title: () => m.sb_router_expert_ruleset_delete_title(),
+      message: () => m.sb_router_expert_ruleset_delete_message({ tag }),
       run: async () => {
         try {
           await api.singboxRouterDeleteRuleSet(tag);
           await singboxRouterStore.loadAll();
-          notifications.success('Набор удалён');
+          notifications.success(m.sb_router_expert_ruleset_deleted());
         } catch (e) {
-          notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+          notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
         }
       },
     };
@@ -777,16 +783,16 @@
       await singboxRouterStore.loadAll();
 
       if (result.added.length > 0) {
-        notifications.success(`Добавлено ${pluralize(result.added.length, SET_WORDS)} из каталога`);
+        notifications.success(m.sb_router_expert_catalog_added({ count: result.added.length }));
       } else if (result.failures.length === 0 && result.emptyPresets.length > 0) {
-        notifications.error('У выбранных сервисов нет sing-box наборов');
+        notifications.error(m.sb_router_expert_catalog_no_sets());
       } else if (result.failures.length === 0) {
-        notifications.info('Выбранные наборы уже есть в конфиге');
+        notifications.info(m.sb_router_expert_catalog_already());
       }
 
       if (result.failures.length > 0) {
         const msg = result.failures.map((f) => `${f.tag}: ${f.error}`).join('; ');
-        notifications.error(`Не удалось добавить: ${msg}`);
+        notifications.error(m.sb_router_expert_add_failed({ message: msg }));
       } else if (result.added.length > 0 || result.emptyPresets.length === 0) {
         rsCatalogOpen = false;
       }
@@ -805,16 +811,14 @@
       await singboxRouterStore.loadAll();
 
       if (result.added.length > 0) {
-        notifications.success(
-          `Добавлено ${pluralize(result.added.length, SET_WORDS)} из каталога SagerNet`,
-        );
+        notifications.success(m.sb_router_expert_catalog_sagernet_added({ count: result.added.length }));
       } else if (result.failures.length === 0) {
-        notifications.info('Выбранные наборы уже есть в конфиге');
+        notifications.info(m.sb_router_expert_catalog_already());
       }
 
       if (result.failures.length > 0) {
         const msg = result.failures.map((f) => `${f.tag}: ${f.error}`).join('; ');
-        notifications.error(`Не удалось добавить: ${msg}`);
+        notifications.error(m.sb_router_expert_add_failed({ message: msg }));
       } else {
         geositeCatalogOpen = false;
       }
@@ -844,15 +848,15 @@
     const outbound = $storeOutbounds.find((o) => o.tag === tag);
     if (!outbound) return;
     pendingConfirm = {
-      title: 'Удалить outbound',
-      message: `Удалить outbound «${tag}»?`,
+      title: () => m.sb_router_expert_outbound_delete_title(),
+      message: () => m.sb_router_expert_outbound_delete_message({ tag }),
       run: async () => {
         try {
           await api.singboxRouterDeleteOutbound(tag);
           await singboxRouterStore.loadAll();
-          notifications.success('Outbound удалён');
+          notifications.success(m.sb_router_expert_outbound_deleted());
         } catch (e) {
-          notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+          notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
         }
       },
     };
@@ -898,17 +902,17 @@
       let msg: string;
       if (on) {
         await removeLanNamesRule();
-        msg = 'Правило LAN-имён удалено';
+        msg = m.sb_router_expert_lan_names_removed();
       } else {
         msg =
           (await ensureLanNamesRule()) === 'created'
-            ? 'Правило LAN-имён создано'
-            : 'Правило LAN-имён уже настроено';
+            ? m.sb_router_expert_lan_names_created()
+            : m.sb_router_expert_lan_names_exists();
       }
       await singboxRouterStore.loadAll();
       notifications.success(msg);
     } catch (e) {
-      notifications.error(`Не удалось: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_expert_action_failed({ message: e instanceof Error ? e.message : String(e) }));
     } finally {
       lanNamesBusy = false;
     }
@@ -928,7 +932,7 @@
       await singboxRouterStore.loadAll();
     } catch (e) {
       singboxRouterStore.applyDNSRules(snapshot);
-      notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_expert_move_failed({ message: e instanceof Error ? e.message : String(e) }));
     }
   }
 
@@ -951,7 +955,7 @@
     <div class="col-main">
       <SidePanel
         section="rules"
-        title="Правила маршрутизации"
+        title={m.sb_router_expert_rules_title()}
         count={String($storeRules.length)}
       >
         {#snippet actions()}
@@ -962,27 +966,27 @@
               disabled={rulesBulkBusy || selectableRuleIndices.length === 0}
               onclick={selectAllRules}
             >
-              Выбрать все
+              {m.sb_router_expert_select_all()}
             </Button>
             <Button variant="ghost" size="sm" disabled={rulesBulkBusy} onclick={cancelRulesSelectMode}>
-              Отмена
+              {m.common_cancel()}
             </Button>
           {:else}
             {#if selectableRuleIndices.length > 0}
-              <Button variant="ghost" size="sm" onclick={toggleRulesSelectMode}>Выбрать</Button>
+              <Button variant="ghost" size="sm" onclick={toggleRulesSelectMode}>{m.common_select()}</Button>
             {/if}
-            <Button variant="primary" size="sm" onclick={() => (ruleAddOpen = true)}>+ Правило</Button>
+            <Button variant="primary" size="sm" onclick={() => (ruleAddOpen = true)}>{m.sb_router_expert_add_rule()}</Button>
           {/if}
         {/snippet}
         <div class="globals-bar">
-          <span class="gb-label gb-label-full">first-match-wins · если ничего не подошло →</span>
-          <span class="gb-label gb-label-mobile">если не подошло →</span>
+          <span class="gb-label gb-label-full">{m.sb_router_expert_first_match_full()}</span>
+          <span class="gb-label gb-label-mobile">{m.sb_router_expert_first_match_mobile()}</span>
           <div class="route-final-select">
             <Dropdown bind:value={draftRouteFinal} options={routeFinalOptions} fullWidth />
           </div>
           {#if routeFinalDirty}
             <button class="gb-save" onclick={saveRouteFinal} disabled={routeFinalBusy} type="button">
-              Сохранить
+              {m.common_save()}
             </button>
           {/if}
         </div>
@@ -1006,7 +1010,7 @@
           <BulkSelectBar
             count={rulesSelected.size}
             options={bulkOutboundOptions}
-            applyLabel="Применить"
+            applyLabel={m.common_apply()}
             onapply={applyRulesBulkOutbound}
             oncancel={cancelRulesSelectMode}
             busy={rulesBulkBusy}
@@ -1028,35 +1032,35 @@
                 disabled={rsBulkBusy || rsFilteredSelectableTags.length === 0}
                 onclick={selectAllRs}
               >
-                Выбрать все
+                {m.sb_router_expert_select_all()}
               </Button>
               <Button variant="ghost" size="sm" disabled={rsBulkBusy} onclick={cancelRsSelectMode}>
-                Отмена
+                {m.common_cancel()}
               </Button>
             {:else if rsFilteredSelectableTags.length > 0}
-              <Button variant="ghost" size="sm" onclick={toggleRsSelectMode}>Выбрать</Button>
+              <Button variant="ghost" size="sm" onclick={toggleRsSelectMode}>{m.common_select()}</Button>
             {/if}
             <Button variant="secondary" size="sm" onclick={() => (rsCatalogOpen = true)}>
               {#snippet iconBefore()}
                 <LayoutGrid size={14} aria-hidden="true" />
               {/snippet}
-              Каталог
+              {m.sb_router_expert_catalog()}
             </Button>
             <Button
               variant="secondary"
               size="sm"
               onclick={() => (geositeCatalogOpen = true)}
-              title="Все geosite-наборы из репозитория SagerNet/sing-geosite"
+              title={m.sb_router_expert_geosite_title()}
             >
               {#snippet iconBefore()}
                 <Library size={14} aria-hidden="true" />
               {/snippet}
               SagerNet
             </Button>
-            <Button variant="primary" size="sm" onclick={() => (rsAddOpen = true)}>+ Набор</Button>
+            <Button variant="primary" size="sm" onclick={() => (rsAddOpen = true)}>{m.sb_router_expert_add_set()}</Button>
           </div>
         {/snippet}
-        <div class="panel-cap">наборы доменов и IP, на которые ссылаются правила</div>
+        <div class="panel-cap">{m.sb_router_expert_rulesets_cap()}</div>
         <RuleSetsTable
           bare
           ruleSets={sortedRuleSets}
@@ -1076,7 +1080,7 @@
           <BulkSelectBar
             count={rsSelected.size}
             options={rsBulkDetourOptions}
-            applyLabel="Применить"
+            applyLabel={m.common_apply()}
             onapply={applyRsBulkDetour}
             oncancel={cancelRsSelectMode}
             busy={rsBulkBusy}
@@ -1109,7 +1113,7 @@
 
       <SidePanel
         section="dnsServers"
-        title="DNS-серверы"
+        title={m.sb_router_expert_dns_servers_title()}
         count={String($storeDnsServers.length)}
       >
         {#snippet actions()}
@@ -1122,13 +1126,13 @@
             disabled={lanNamesBusy}
             iconBefore={lanNamesOn ? lanNamesCheck : undefined}
             title={lanNamesOn
-              ? 'Правило активно — нажмите, чтобы удалить'
-              : 'Создать правило: имена без точек резолвит локальный DNS'}
+              ? m.sb_router_expert_lan_names_active_title()
+              : m.sb_router_expert_lan_names_create_title()}
             onclick={toggleLanNamesRule}
           >
-            LAN-имена → локальный DNS
+            {m.sb_router_expert_lan_names_button()}
           </Button>
-          <Button variant="primary" size="sm" onclick={() => (dnsServerAddOpen = true)}>+ Сервер</Button>
+          <Button variant="primary" size="sm" onclick={() => (dnsServerAddOpen = true)}>{m.sb_router_expert_add_server()}</Button>
         {/snippet}
         <button
           type="button"
@@ -1136,13 +1140,13 @@
           onclick={openDnsGlobalsModal}
         >
           <div>
-            <span class="gb-label">DNS по умолчанию</span>
+            <span class="gb-label">{m.sb_router_expert_dns_default()}</span>
             <div class="globals-summary-values">
               <span>Final: <strong>{$storeDnsGlobals.final || '—'}</strong></span>
               <span>Strategy: <strong>{$storeDnsGlobals.strategy || 'default'}</strong></span>
             </div>
           </div>
-          <span class="globals-summary-action">Настроить</span>
+          <span class="globals-summary-action">{m.sb_router_expert_configure()}</span>
         </button>
         <DNSChainPresetCard
           servers={$storeDnsServers}
@@ -1174,7 +1178,7 @@
         section="dnsRewrite"
         title="DNS Rewrite"
         count={String($storeDnsRewrites.length)}
-        actionLabel="+ Добавить"
+        actionLabel={m.sb_router_expert_add()}
         actionVariant="filled"
         onAction={() => (rewriteAddMode = true)}
       >
@@ -1191,7 +1195,7 @@
           section="inbounds"
           title="Inbounds"
           count={inboundsPanelCountLabel}
-          actionLabel="+ Добавить"
+          actionLabel={m.sb_router_expert_add()}
           actionVariant="filled"
           onAction={addInbound}
         >
@@ -1361,8 +1365,8 @@
 
 <ConfirmModal
   open={pendingConfirm !== null}
-  title={pendingConfirm?.title ?? ''}
-  message={pendingConfirm?.message ?? ''}
+  title={pendingConfirm?.title() ?? ''}
+  message={pendingConfirm?.message() ?? ''}
   busy={confirmBusy}
   onConfirm={runConfirm}
   onClose={() => { if (!confirmBusy) pendingConfirm = null; }}

@@ -20,6 +20,7 @@
 	import { highlightJson } from '$lib/utils/shareEditorHighlight';
 	import { parseJsonErrorPosition, type JsonErrorPos } from '$lib/utils/jsonErrorPosition';
 	import { stripAnsi } from '$lib/utils/ansi';
+	import { m } from '$lib/i18n';
 	import type {
 		RouterStagingValidationError,
 		RouterValidationErrorDTO,
@@ -169,7 +170,7 @@
 			await api.singboxUserConfigSave(text);
 			serverText = text;
 			draftSaved = true;
-			if (!silent) notifications.success('Черновик сохранён');
+			if (!silent) notifications.success(m.singbox_routing_slot_draft_saved());
 			return true;
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : String(e));
@@ -202,7 +203,7 @@
 			serverWarnings = res.warnings?.length ? res.warnings : null;
 			draftSaved = false;
 			slotEnabled = true; // apply включает припаркованный слот (после успешной валидации)
-			notifications.success('Конфигурация применена');
+			notifications.success(m.singbox_routing_slot_config_applied());
 			onStateChanged?.();
 		} catch (e) {
 			const err = e as { status?: number; body?: RouterStagingValidationError };
@@ -229,7 +230,7 @@
 			text = slot.content;
 			serverText = slot.content;
 			draftSaved = false;
-			notifications.success('Черновик отменён');
+			notifications.success(m.singbox_routing_slot_draft_discarded());
 			onStateChanged?.();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : String(e));
@@ -244,7 +245,7 @@
 		try {
 			await api.singboxUserConfigEnable(next);
 			slotEnabled = next;
-			notifications.success(next ? 'Слот включён' : 'Слот выключен');
+			notifications.success(next ? m.singbox_routing_slot_enabled_toast() : m.singbox_routing_slot_disabled_toast());
 			onStateChanged?.();
 		} catch (e) {
 			slotEnabled = !next; // откат оптимистичного переключения
@@ -256,8 +257,8 @@
 
 	async function onCopy(): Promise<void> {
 		const ok = await copyToClipboard(text);
-		if (ok) notifications.success('Скопировано в буфер обмена');
-		else notifications.error('Не удалось скопировать');
+		if (ok) notifications.success(m.diag_logs_copied());
+		else notifications.error(m.singbox_routing_slot_copy_failed());
 	}
 
 	// Leave-guard: несохранённые правки не должны молча пропасть.
@@ -270,10 +271,10 @@
 		readonly
 			? ''
 			: dirty
-				? 'изменено, не сохранено'
+				? m.singbox_routing_slot_status_dirty()
 				: draftSaved
-					? 'черновик сохранён, не применён'
-					: 'применено',
+					? m.singbox_routing_slot_status_draft()
+					: m.singbox_routing_slot_status_applied(),
 	);
 </script>
 
@@ -282,9 +283,7 @@
 <div class="slot-editor">
 	{#if !readonly}
 		<div class="hint">
-			Слот дополняет конфиг: свои outbounds/inbounds/правила добавляются последними.
-			Скаляры dns/route (final, strategy) задаются в настройках роутера и отсюда не
-			переопределяются. Теги не должны совпадать с существующими.
+			{m.singbox_routing_slot_hint()}
 		</div>
 	{/if}
 
@@ -317,8 +316,11 @@
 	{#if parseError}
 		<div class="feedback error">
 			<div class="feedback-title">
-				Некорректный JSON{#if parseError.pos}
-					&nbsp;— строка {parseError.pos.line}, колонка {parseError.pos.column}{/if}
+				{#if parseError.pos}
+					{m.singbox_routing_slot_invalid_json_at({ line: parseError.pos.line, column: parseError.pos.column })}
+				{:else}
+					{m.singbox_routing_slot_invalid_json()}
+				{/if}
 			</div>
 			<div class="feedback-body">{parseError.message}</div>
 		</div>
@@ -326,7 +328,7 @@
 
 	{#if serverErrors}
 		<div class="feedback error">
-			<div class="feedback-title">Проверка не пройдена</div>
+			<div class="feedback-title">{m.singbox_routing_slot_check_failed()}</div>
 			<ul class="error-list">
 				<!-- Ключ с индексом: повторные duplicate-* ошибки совпадают по
 				     slot/kind/tag (пустой inRule) и без индекса роняют keyed-each. -->
@@ -343,7 +345,7 @@
 
 	{#if serverWarnings}
 		<div class="feedback warn">
-			<div class="feedback-title">Предупреждения — применение возможно</div>
+			<div class="feedback-title">{m.singbox_routing_slot_warnings_title()}</div>
 			<ul class="error-list">
 				{#each serverWarnings as w, i (`${i}-${w.kind}`)}
 					<li>
@@ -364,25 +366,25 @@
 	{/if}
 
 	{#if checkOkShown}
-		<div class="feedback ok">Проверка пройдена — конфиг совместим с активными слотами.</div>
+		<div class="feedback ok">{m.singbox_routing_slot_check_ok()}</div>
 	{/if}
 
 	{#if !readonly && tunTouched}
 		<div class="feedback warn">
-			Изменение tun-inbound перезагрузит sing-box — соединения через этот tun оборвутся.
+			{m.singbox_routing_slot_tun_warning()}
 		</div>
 	{/if}
 
 	<div class="toolbar">
 		{#if readonly}
-			<span class="readonly-note">Генерируется автоматически — правки перезапишет продюсер слота.</span>
+			<span class="readonly-note">{m.singbox_routing_slot_readonly_note()}</span>
 			<div class="spacer"></div>
-			<Button variant="secondary" size="sm" onclick={onCopy}>Копировать</Button>
+			<Button variant="secondary" size="sm" onclick={onCopy}>{m.common_copy()}</Button>
 		{:else}
 			<span class="status" class:dirty>{statusLabel}</span>
 			<div class="spacer"></div>
 			<FormToggle
-				label={slotEnabled ? 'Включён' : 'Выключен'}
+				label={slotEnabled ? m.singbox_routing_slot_enabled() : m.singbox_routing_slot_disabled()}
 				bind:checked={slotEnabled}
 				disabled={busy}
 				onchange={(v: boolean) => void onToggleEnabled(v)}
@@ -393,7 +395,7 @@
 				disabled={busy || !draftSaved}
 				onclick={onDiscard}
 			>
-				{discardBusy ? 'Отменяю…' : 'Отменить черновик'}
+				{discardBusy ? m.singbox_routing_slot_discarding() : m.singbox_routing_slot_discard()}
 			</Button>
 			<Button
 				variant="secondary"
@@ -401,7 +403,7 @@
 				disabled={busy || !!parseError}
 				onclick={onCheck}
 			>
-				{checkBusy ? 'Проверяю…' : 'Проверить'}
+				{checkBusy ? m.singbox_routing_slot_checking() : m.common_check()}
 			</Button>
 			<Button
 				variant="secondary"
@@ -409,7 +411,7 @@
 				disabled={busy || !!parseError || !dirty}
 				onclick={onSaveDraft}
 			>
-				{saveBusy ? 'Сохраняю…' : 'Сохранить черновик'}
+				{saveBusy ? m.singbox_routing_slot_saving() : m.singbox_routing_slot_save_draft()}
 			</Button>
 			<Button
 				variant="primary"
@@ -417,7 +419,7 @@
 				disabled={busy || !!parseError || (!dirty && !draftSaved)}
 				onclick={onApply}
 			>
-				{applyBusy ? 'Применяю…' : 'Применить'}
+				{applyBusy ? m.singbox_routing_slot_applying() : m.common_apply()}
 			</Button>
 		{/if}
 	</div>

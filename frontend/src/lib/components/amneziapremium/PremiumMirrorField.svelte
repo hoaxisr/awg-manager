@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import Button from '$lib/components/ui/Button.svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		/** Экран ошибки: правка адреса — единственный способ починиться, прятать её там нельзя. */
@@ -12,7 +13,8 @@
 	let expanded = $state(false);
 	let value = $state('');
 	let busy = $state(false);
-	let error = $state('');
+	/** Сообщение бэкенда или `null` — тогда показываем локализованный текст по виду операции. */
+	let error = $state<{ kind: 'get' | 'save'; message: string | null } | null>(null);
 	let saved = $state(false);
 
 	const shown = $derived(forceOpen || expanded);
@@ -39,7 +41,7 @@
 			value = mirror.mirrorUrl;
 		} catch (e) {
 			requested = false;
-			error = e instanceof Error ? e.message : 'Не удалось получить адрес зеркала';
+			error = { kind: 'get', message: e instanceof Error ? e.message : null };
 		} finally {
 			busy = false;
 		}
@@ -47,7 +49,7 @@
 
 	async function save(next: string): Promise<void> {
 		busy = true;
-		error = '';
+		error = null;
 		saved = false;
 		try {
 			const mirror = await api.amneziaPremiumSaveMirror(next);
@@ -56,7 +58,7 @@
 		} catch (e) {
 			// Текст отказа пишет бэкенд (в том числе про не-https адрес) —
 			// проглотить его значит оставить человека без причины отказа.
-			error = e instanceof Error ? e.message : 'Не удалось сохранить адрес зеркала';
+			error = { kind: 'save', message: e instanceof Error ? e.message : null };
 		} finally {
 			busy = false;
 		}
@@ -71,13 +73,13 @@
 			aria-expanded={expanded}
 			onclick={() => (expanded = !expanded)}
 		>
-			Адрес зеркала Amnezia
+			{m.amnezia_premium_mirror_label()}
 		</button>
 	{/if}
 
 	{#if shown}
 		<div class="premium-mirror-body">
-			<label class="premium-mirror-label" for="premium-mirror-url">Адрес зеркала Amnezia</label>
+			<label class="premium-mirror-label" for="premium-mirror-url">{m.amnezia_premium_mirror_label()}</label>
 			<input
 				id="premium-mirror-url"
 				class="field-input"
@@ -92,16 +94,16 @@
 			/>
 			<div class="premium-mirror-actions">
 				<Button variant="secondary" size="sm" disabled={busy} onclick={() => void save(value)}>
-					Сохранить
+					{m.common_save()}
 				</Button>
 				<Button variant="ghost" size="sm" disabled={busy} onclick={() => void save('')}>
-					Вернуть по умолчанию
+					{m.amnezia_premium_mirror_reset()}
 				</Button>
 			</div>
 			{#if error}
-				<p class="field-hint is-error">{error}</p>
+				<p class="field-hint is-error">{error.message || (error.kind === 'get' ? m.amnezia_premium_mirror_get_failed() : m.amnezia_premium_mirror_save_failed())}</p>
 			{:else if saved}
-				<p class="field-hint">Адрес сохранён.</p>
+				<p class="field-hint">{m.amnezia_premium_mirror_saved()}</p>
 			{/if}
 		</div>
 	{/if}

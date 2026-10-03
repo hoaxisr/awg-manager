@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button, Modal, Toggle } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -49,13 +50,13 @@
 	}
 </script>
 
-<Modal {open} title="Импорт резервной копии" size="md" {onclose}>
+<Modal {open} title={m.servers_import_title()} size="md" {onclose}>
 	{#if outcomes.length === 0}
-		<p>Файл содержит {file.managedServers.length} сервер(а/ов), {peerCount} пир(а/ов).</p>
+		<p>{m.servers_import_summary({ servers: file.managedServers.length, peers: peerCount })}</p>
 		<Toggle
 			checked={allowRenumber}
 			onchange={(v) => (allowRenumber = v)}
-			label="Если слот занят другим сервером — переименовать на свободный Wireguard<N>"
+			label={m.servers_import_renumber()}
 		/>
 	{:else}
 		<div class="results">
@@ -82,10 +83,10 @@
 
 	{#snippet actions()}
 		{#if outcomes.length === 0}
-			<Button variant="secondary" size="md" onclick={onclose}>Отмена</Button>
-			<Button variant="outline-primary" size="md" onclick={runImport} loading={importing}>Импортировать</Button>
+			<Button variant="secondary" size="md" onclick={onclose}>{m.common_cancel()}</Button>
+			<Button variant="outline-primary" size="md" onclick={runImport} loading={importing}>{m.tunnel_edit_import_button()}</Button>
 		{:else}
-			<Button variant="secondary" size="md" onclick={onclose}>Закрыть</Button>
+			<Button variant="secondary" size="md" onclick={onclose}>{m.common_close()}</Button>
 		{/if}
 	{/snippet}
 </Modal>

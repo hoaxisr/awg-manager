@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { settings, usageLevel } from '$lib/stores/settings';
 	import {
 		downloadOutbounds,
@@ -31,15 +32,15 @@
 	const isHardError = $derived($downloadOutboundsStatus === 'error');
 	const isStale = $derived($downloadOutboundsStatus === 'stale');
 	const noteText = $derived.by(() => {
-		if (isInitialLoading) return 'Маршрут загрузки определяется…';
-		if (isHardError) return 'Не удалось определить маршрут загрузки';
+		if (isInitialLoading) return m.downloads_route_resolving();
+		if (isHardError) return m.downloads_route_failed();
 		return `${text} ${routeLabel}`;
 	});
 	const noteTitle = $derived.by(() => {
-		if (isInitialLoading) return 'Загрузка списка маршрутов…';
-		if (isHardError) return `Не удалось загрузить список маршрутов: ${$downloadOutboundsError}`;
+		if (isInitialLoading) return m.downloads_route_list_loading();
+		if (isHardError) return m.downloads_route_list_failed({ error: $downloadOutboundsError });
 		if (isStale) {
-			return `${routeLabel}. Список маршрутов может быть устаревшим: ${$downloadOutboundsError}`;
+			return m.downloads_route_list_stale({ route: routeLabel, error: $downloadOutboundsError });
 		}
 		return routeLabel;
 	});

@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import { writable, derived, get } from 'svelte/store';
 import { api } from '$lib/api/client';
 import { awgTags } from './awgTags';
@@ -86,7 +87,7 @@ function createFakeipConfigStore() {
 			dnsRules.set(dr);
 			dnsGlobals.set(dg);
 		} catch (e) {
-			error.set(e instanceof Error ? e.message : 'Не удалось загрузить fakeip-конфиг');
+			error.set(e instanceof Error ? e.message : m.fakeip_config_load_failed());
 		} finally {
 			loading.set(false);
 			initialized.set(true);

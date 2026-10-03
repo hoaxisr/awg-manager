@@ -6,6 +6,7 @@
 import { api, type SystemFileEntry, type FileSystemScriptStatus } from '$lib/api/client';
 import { notifications } from '$lib/stores/notifications';
 import { errorMessage } from '$lib/utils/errorMessage';
+import { m } from '$lib/i18n';
 import { getFileTypeInfo } from './fileIcons';
 import type { ScriptAction } from './types';
 
@@ -56,15 +57,21 @@ export function createScriptStatuses(): ScriptStatusesController {
 			try {
 				const res = await api.systemFilesScriptAction({ path: entry.path, action });
 				if (res.ok) {
-					const actionName = action === 'start' || action === 'run' ? 'запущен' : action === 'restart' ? 'перезапущен' : 'остановлен';
-					notifications.success(`Скрипт «${entry.name}» ${actionName}`);
+					const params = { name: entry.name };
+					notifications.success(
+						action === 'start' || action === 'run'
+							? m.system_files_script_started(params)
+							: action === 'restart'
+								? m.system_files_script_restarted(params)
+								: m.system_files_script_stopped(params),
+					);
 				} else {
-					notifications.error(res.error || 'Ошибка выполнения');
+					notifications.error(res.error || m.system_files_script_error());
 				}
 				const st = await api.systemFilesScriptStatus(entry.path);
 				statuses = { ...statuses, [entry.path]: st };
 			} catch (e) {
-				notifications.error(errorMessage(e, 'Ошибка выполнения'));
+				notifications.error(errorMessage(e, m.system_files_script_error()));
 			} finally {
 				runningPath = null;
 			}

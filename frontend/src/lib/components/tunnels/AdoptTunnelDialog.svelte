@@ -2,6 +2,7 @@
 	import { TriangleAlert, CircleX } from 'lucide-svelte';
 	import { Modal, Button } from '$lib/components/ui';
 	import { tunnelNameError } from '$lib/utils/tunnelName';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		interfaceName: string;
@@ -42,14 +43,14 @@
 			configContent = e.target?.result as string;
 		};
 		reader.onerror = () => {
-			localError = 'Не удалось прочитать файл';
+			localError = m.tunnels_read_file_failed();
 		};
 		reader.readAsText(file);
 	}
 
 	function handleNext(): void {
 		if (!configContent.trim()) {
-			localError = 'Загрузите файл конфигурации';
+			localError = m.tunnels_adopt_upload_required();
 			return;
 		}
 		localError = tunnelNameError(tunnelName);
@@ -77,17 +78,17 @@
 
 <Modal
 	{open}
-	title="Взять под управление: {interfaceName}"
+	title={m.tunnels_adopt_title({ name: interfaceName })}
 	onclose={handleClose}
 	size="md"
 >
 	{#if step === 'upload'}
 		<p class="dialog-description">
-			Для импорта туннеля загрузите его конфигурационный файл (.conf).
+			{m.tunnels_adopt_description()}
 		</p>
 
 		<div class="form-group">
-			<label for="config-file">Файл конфигурации</label>
+			<label for="config-file">{m.tunnels_adopt_config_file()}</label>
 			<input
 				type="file"
 				id="config-file"
@@ -98,7 +99,7 @@
 
 		{#if configContent}
 			<div class="form-group">
-				<label for="tunnel-name">Название туннеля (опционально)</label>
+				<label for="tunnel-name">{m.tunnels_adopt_name_optional()}</label>
 				<input
 					type="text"
 					id="tunnel-name"
@@ -116,13 +117,13 @@
 		<div class="alert alert-warning">
 			<TriangleAlert size={24} aria-hidden="true" />
 			<div>
-				<h3>Важно!</h3>
-				<p>Для завершения импорта необходимо:</p>
+				<h3>{m.tunnels_adopt_important()}</h3>
+				<p>{m.tunnels_adopt_to_finish()}</p>
 				<ol>
-					<li>Остановить туннель во внешней программе/скрипте</li>
-					<li>Отключить автозапуск туннеля (cron, init.d, rc.local и т.д.)</li>
+					<li>{m.tunnels_adopt_step_stop()}</li>
+					<li>{m.tunnels_adopt_step_autostart()}</li>
 				</ol>
-				<p>После выполнения этих действий нажмите «Продолжить».</p>
+				<p>{m.tunnels_adopt_after_steps()}</p>
 			</div>
 		</div>
 
@@ -130,7 +131,7 @@
 		<div class="alert alert-error">
 			<CircleX size={24} aria-hidden="true" />
 			<div>
-				<h3>Ошибка</h3>
+				<h3>{m.common_error()}</h3>
 				<p>{displayError()}</p>
 			</div>
 		</div>
@@ -138,17 +139,17 @@
 
 	{#snippet actions()}
 		{#if step === 'upload'}
-			<Button variant="secondary" onclick={handleClose}>Отмена</Button>
+			<Button variant="secondary" onclick={handleClose}>{m.common_cancel()}</Button>
 			<Button variant="primary" onclick={handleNext} disabled={!configContent}>
-				Далее
+				{m.tunnels_adopt_next()}
 			</Button>
 		{:else if step === 'instructions'}
-			<Button variant="secondary" onclick={() => step = 'upload'}>Назад</Button>
+			<Button variant="secondary" onclick={() => step = 'upload'}>{m.common_back()}</Button>
 			<Button variant="primary" onclick={handleConfirm} loading={loading}>
-				Продолжить
+				{m.common_continue()}
 			</Button>
 		{:else if step === 'error'}
-			<Button variant="secondary" onclick={() => step = 'instructions'}>Назад</Button>
+			<Button variant="secondary" onclick={() => step = 'instructions'}>{m.common_back()}</Button>
 		{/if}
 	{/snippet}
 </Modal>

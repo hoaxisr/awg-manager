@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { OversizedTag } from '$lib/types';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		tags: OversizedTag[];
@@ -16,13 +17,12 @@
 
 <div class="disabled-pane">
 	<header class="pane-header">
-		<h2>Отключённые теги</h2>
+		<h2>{m.hrneo_disabled_tags_title()}</h2>
 		<span class="pane-meta">{tags.length}</span>
 	</header>
 
 	<div class="warn-banner">
-		HR Neo исключил {tags.length}
-		{tags.length === 1 ? 'тег' : 'тегов'} из маршрутизации — превышают
+		{m.hrneo_disabled_tags_banner({ count: tags.length })}
 		<code>IpsetMaxElem = {fmtCount(maxelem)}</code>.
 	</div>
 
@@ -30,7 +30,7 @@
 		{#each tags as t (t.name)}
 			<div class="tag-row">
 				<span class="tag-name">{t.name}</span>
-				<span class="tag-count">{fmtCount(t.count)} записей</span>
+				<span class="tag-count">{m.hrneo_disabled_tags_entries({ count: Math.max(0, t.count), formatted: fmtCount(t.count) })}</span>
 			</div>
 		{/each}
 	</div>

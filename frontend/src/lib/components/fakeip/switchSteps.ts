@@ -8,6 +8,7 @@
 //
 // Side-effect-free so the mapping is unit-tested without mounting Svelte.
 
+import { m } from '$lib/i18n';
 import type { SingboxRouterTransitionStep } from '$lib/types';
 import type { FakeIPMode } from '$lib/stores/fakeipTransition';
 
@@ -40,109 +41,110 @@ const MILESTONE_ORDER: Milestone[] = [
 ];
 
 // Enable direction (→ fakeip+tun): the full bring-up list from the mockup.
-const ENABLE_STEPS: UIStepDef[] = [
+// Functions (not constants) so the copy follows the active locale at call time.
+const enableSteps = (): UIStepDef[] => [
 	{
 		milestone: 'teardown',
-		title: 'Снят TPROXY-перехват',
-		detail: 'удалены jumps + AWGM-цепочки',
+		title: m.fakeip_step_tproxy_removed_title(),
+		detail: m.fakeip_step_jumps_chains_removed_detail(),
 	},
 	{
 		milestone: 'provision',
-		title: 'Интерфейс OpkgTun создан',
+		title: m.fakeip_step_opkgtun_created_title(),
 		detail: 'non-global · private · MTU 1500',
 	},
 	{
 		milestone: 'provision',
-		title: 'NDMS auto-маршруты применены',
-		detail: 'маршруты на пул fakeip',
+		title: m.fakeip_step_ndms_routes_applied_title(),
+		detail: m.fakeip_step_ndms_routes_applied_detail(),
 	},
 	{
 		milestone: 'provision',
-		title: 'config.json записан',
-		detail: 'tun inbound · fakeip DNS · правила',
+		title: m.fakeip_step_config_written_title(),
+		detail: m.fakeip_step_config_written_detail_fakeip(),
 	},
 	{
 		milestone: 'readiness',
-		title: 'Перезапуск sing-box',
-		detail: 'ожидаем inbounds (TPROXY/REDIRECT)',
+		title: m.fakeip_step_restart_title(),
+		detail: m.fakeip_step_restart_detail_inbounds(),
 	},
 	{
 		milestone: 'ready',
-		title: 'Проверка готовности',
-		detail: 'tun up · fakeip отвечает · маршруты · доставка',
+		title: m.fakeip_step_ready_title(),
+		detail: m.fakeip_step_ready_detail_fakeip(),
 	},
 ];
 
 // Disable / switch-out (fakeip+tun → tproxy|off): a simpler tear-down list.
-const DISABLE_STEPS: UIStepDef[] = [
+const disableSteps = (): UIStepDef[] => [
 	{
 		milestone: 'teardown',
-		title: 'Снят fakeip-режим',
-		detail: 'reject-маршрут · дренаж соединений',
+		title: m.fakeip_step_fakeip_removed_title(),
+		detail: m.fakeip_step_fakeip_removed_detail(),
 	},
 	{
 		milestone: 'provision',
-		title: 'NDMS-маршруты сняты, интерфейс удалён',
-		detail: 'OpkgTun убран · sing-box перестроен',
+		title: m.fakeip_step_ndms_routes_removed_title(),
+		detail: m.fakeip_step_opkgtun_removed_detail(),
 	},
 	{
 		milestone: 'readiness',
-		title: 'Перезапуск sing-box',
-		detail: 'ожидаем inbounds (TPROXY/REDIRECT)',
+		title: m.fakeip_step_restart_title(),
+		detail: m.fakeip_step_restart_detail_inbounds(),
 	},
 	{
 		milestone: 'ready',
-		title: 'Проверка готовности',
-		detail: 'предыдущий режим восстановлен',
+		title: m.fakeip_step_ready_title(),
+		detail: m.fakeip_step_ready_detail_restored(),
 	},
 ];
 
 // TProxy bring-up (off|fakeip-tun → tproxy). Order matches Enable: sing-box
 // readiness first, then iptables install.
-const TPROXY_ENABLE_STEPS: UIStepDef[] = [
-	{ milestone: 'teardown', title: 'Снят предыдущий режим', detail: 'прежние маршруты/перехват убраны (если были)' },
-	{ milestone: 'readiness', title: 'Перезапуск sing-box', detail: 'ожидаем inbounds (TPROXY/REDIRECT)' },
-	{ milestone: 'provision', title: 'iptables TPROXY установлен', detail: 'jumps + AWGM-цепочки' },
-	{ milestone: 'ready', title: 'Проверка готовности', detail: 'TPROXY-перехват активен' },
+const tproxyEnableSteps = (): UIStepDef[] => [
+	{ milestone: 'teardown', title: m.fakeip_step_prev_mode_removed_title(), detail: m.fakeip_step_prev_mode_removed_detail_tproxy() },
+	{ milestone: 'readiness', title: m.fakeip_step_restart_title(), detail: m.fakeip_step_restart_detail_inbounds() },
+	{ milestone: 'provision', title: m.fakeip_step_iptables_installed_title(), detail: m.fakeip_step_jumps_chains_detail() },
+	{ milestone: 'ready', title: m.fakeip_step_ready_title(), detail: m.fakeip_step_ready_detail_tproxy() },
 ];
-const TPROXY_DISABLE_STEPS: UIStepDef[] = [
-	{ milestone: 'teardown', title: 'Снят TPROXY-перехват', detail: 'iptables jumps + цепочки убраны' },
-	{ milestone: 'provision', title: 'sing-box перестроен', detail: 'без перехвата' },
-	{ milestone: 'readiness', title: 'Перезапуск sing-box', detail: 'ожидаем inbounds (TPROXY/REDIRECT)' },
-	{ milestone: 'ready', title: 'Проверка готовности', detail: 'маршрутизация выключена' },
+const tproxyDisableSteps = (): UIStepDef[] => [
+	{ milestone: 'teardown', title: m.fakeip_step_tproxy_removed_title(), detail: m.fakeip_step_iptables_removed_detail() },
+	{ milestone: 'provision', title: m.fakeip_step_singbox_rebuilt_title(), detail: m.fakeip_step_singbox_rebuilt_detail() },
+	{ milestone: 'readiness', title: m.fakeip_step_restart_title(), detail: m.fakeip_step_restart_detail_inbounds() },
+	{ milestone: 'ready', title: m.fakeip_step_ready_title(), detail: m.fakeip_step_ready_detail_off() },
 ];
 
 // policy-tun bring-up (off|tproxy|fakeip-tun → policy-tun). Тот же порядок
 // милстоунов, что у fakeip (provision:current до Enable), но без DNS-части:
 // перехват делает политика доступа NDMS, а не наши правила.
-const POLICY_TUN_ENABLE_STEPS: UIStepDef[] = [
-	{ milestone: 'teardown', title: 'Снят предыдущий режим', detail: 'прежний перехват/маршруты убраны (если были)' },
-	{ milestone: 'provision', title: 'Интерфейс OpkgTun создан', detail: 'ip global · разрешён в списке доступа' },
-	{ milestone: 'provision', title: 'Дефолт-маршрут NDMS припаркован', detail: 'v4 (+v6) на интерфейс режима' },
-	{ milestone: 'provision', title: 'config.json записан', detail: 'tun inbound · правила маршрутизации' },
-	{ milestone: 'readiness', title: 'Перезапуск sing-box', detail: 'ожидаем tun-inbound' },
-	{ milestone: 'ready', title: 'Проверка готовности', detail: 'интерфейс поднят · маршруты на месте' },
+const policyTunEnableSteps = (): UIStepDef[] => [
+	{ milestone: 'teardown', title: m.fakeip_step_prev_mode_removed_title(), detail: m.fakeip_step_prev_mode_removed_detail_policy() },
+	{ milestone: 'provision', title: m.fakeip_step_opkgtun_created_title(), detail: m.fakeip_step_opkgtun_created_detail_policy() },
+	{ milestone: 'provision', title: m.fakeip_step_default_route_parked_title(), detail: m.fakeip_step_default_route_parked_detail() },
+	{ milestone: 'provision', title: m.fakeip_step_config_written_title(), detail: m.fakeip_step_config_written_detail_policy() },
+	{ milestone: 'readiness', title: m.fakeip_step_restart_title(), detail: m.fakeip_step_restart_detail_tun() },
+	{ milestone: 'ready', title: m.fakeip_step_ready_title(), detail: m.fakeip_step_ready_detail_policy() },
 ];
-const POLICY_TUN_DISABLE_STEPS: UIStepDef[] = [
-	{ milestone: 'teardown', title: 'Снят policy-tun', detail: 'исходный NAT сегментов восстановлен' },
-	{ milestone: 'provision', title: 'Дефолт-маршрут снят, интерфейс удалён', detail: 'OpkgTun убран · sing-box перестроен' },
-	{ milestone: 'readiness', title: 'Перезапуск sing-box', detail: 'ожидаем inbounds' },
-	{ milestone: 'ready', title: 'Проверка готовности', detail: 'предыдущий режим восстановлен' },
+const policyTunDisableSteps = (): UIStepDef[] => [
+	{ milestone: 'teardown', title: m.fakeip_step_policy_tun_removed_title(), detail: m.fakeip_step_policy_tun_removed_detail() },
+	{ milestone: 'provision', title: m.fakeip_step_default_route_removed_title(), detail: m.fakeip_step_opkgtun_removed_detail() },
+	{ milestone: 'readiness', title: m.fakeip_step_restart_title(), detail: m.fakeip_step_restart_detail_plain() },
+	{ milestone: 'ready', title: m.fakeip_step_ready_title(), detail: m.fakeip_step_ready_detail_restored() },
 ];
 
 /** The predefined definitions for a transition direction (no derived state). */
 export function stepDefsFor(from: FakeIPMode, to: FakeIPMode): UIStepDef[] {
-	if (to === 'fakeip-tun') return ENABLE_STEPS;       // rich fakeip bring-up (unchanged)
-	if (to === 'policy-tun') return POLICY_TUN_ENABLE_STEPS;
-	if (to === 'tproxy') return TPROXY_ENABLE_STEPS;    // tproxy bring-up
+	if (to === 'fakeip-tun') return enableSteps();       // rich fakeip bring-up (unchanged)
+	if (to === 'policy-tun') return policyTunEnableSteps();
+	if (to === 'tproxy') return tproxyEnableSteps();    // tproxy bring-up
 	// to === 'off': teardown of the source mode.
-	if (from === 'tproxy') return TPROXY_DISABLE_STEPS;
-	if (from === 'policy-tun') return POLICY_TUN_DISABLE_STEPS;
-	return DISABLE_STEPS;
+	if (from === 'tproxy') return tproxyDisableSteps();
+	if (from === 'policy-tun') return policyTunDisableSteps();
+	return disableSteps();
 }
 
-function rank(m: Milestone): number {
-	const i = MILESTONE_ORDER.indexOf(m);
+function rank(milestone: Milestone): number {
+	const i = MILESTONE_ORDER.indexOf(milestone);
 	return i === -1 ? -1 : i;
 }
 
@@ -180,16 +182,16 @@ export function deriveSteps(
 
 	// Highest milestone rank that has reached `done`.
 	let maxDoneRank = -1;
-	for (const [m, st] of status) {
-		if (st === 'done') maxDoneRank = Math.max(maxDoneRank, rank(m));
+	for (const [ms, st] of status) {
+		if (st === 'done') maxDoneRank = Math.max(maxDoneRank, rank(ms));
 	}
 
 	// The single `current` milestone to emphasise: the highest-ranked one whose
 	// status is `current` and which isn't already superseded by a later `done`.
 	let currentRank = -1;
-	for (const [m, st] of status) {
-		if (st === 'current' && rank(m) > maxDoneRank) {
-			currentRank = Math.max(currentRank, rank(m));
+	for (const [ms, st] of status) {
+		if (st === 'current' && rank(ms) > maxDoneRank) {
+			currentRank = Math.max(currentRank, rank(ms));
 		}
 	}
 

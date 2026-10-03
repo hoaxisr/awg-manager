@@ -1,5 +1,6 @@
 // Итог удаления инстанса словами пользователя (TS-02, TS-03).
 
+import { m } from '$lib/i18n';
 import { notifications } from '$lib/stores/notifications';
 
 /**
@@ -23,10 +24,10 @@ export function tunnelErrorNames(errors: string[]): string[] {
 
 export function reportDeletedTunnels(deleted?: string[], errors?: string[]): void {
 	if (deleted?.length) {
-		notifications.success(`AWG-туннелей удалено: ${deleted.length} — перезапустите клиент`);
+		notifications.success(m.proxy_delete_tunnels_removed({ count: deleted.length }));
 	}
 	if (errors?.length) {
-		notifications.error(`Не удалось удалить туннели: ${tunnelErrorNames(errors).join(', ')}`);
+		notifications.error(m.proxy_delete_tunnels_failed({ names: tunnelErrorNames(errors).join(', ') }));
 	}
 }
 

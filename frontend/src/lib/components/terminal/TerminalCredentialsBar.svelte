@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { ChevronDown } from 'lucide-svelte';
 	import { Button, Card, Toggle } from '$lib/components/ui';
@@ -43,7 +44,7 @@
 
 	function handleSave() {
 		if (!login.trim()) {
-			notifications.error('Укажите логин');
+			notifications.error(m.terminal_creds_need_login());
 			return;
 		}
 		const payload: TerminalAutoLogin = {
@@ -54,7 +55,7 @@
 		if (remember) {
 			saveTerminalAutoLogin(payload);
 			saved = true;
-			notifications.success('Учётные данные сохранены на время сессии');
+			notifications.success(m.terminal_creds_saved_toast());
 		} else {
 			clearTerminalAutoLogin();
 			saved = false;
@@ -69,45 +70,43 @@
 		saved = false;
 		clearTerminalAutoLogin();
 		onchange?.(null);
-		notifications.success('Учётные данные удалены');
+		notifications.success(m.terminal_creds_removed_toast());
 	}
 </script>
 
 <Card padding="sm">
 	<details bind:open>
 	<summary class="head">
-		<h3>Учётные данные shell</h3>
+		<h3>{m.terminal_creds_title()}</h3>
 		{#if saved}
-			<span class="badge">Сохранено</span>
+			<span class="badge">{m.terminal_creds_saved()}</span>
 		{/if}
 		<span class="chevron" aria-hidden="true"><ChevronDown size={16} strokeWidth={2} /></span>
 	</summary>
 
 	<p class="hint">
-		Логин и пароль сохраняются только на время сессии браузера (в памяти вкладки).
-		В терминал они уходят по кнопкам «Логин» и «Пароль» в его заголовке — сами,
-		по виду приглашения, не подставляются: иначе пароль роутера мог бы уехать
-		в чужой запрос (<code>ssh</code>, <code>sudo</code>) внутри той же сессии.
+		{m.terminal_creds_hint_main()}
+		(<code>ssh</code>, <code>sudo</code>) {m.terminal_creds_hint_tail()}
 	</p>
 
 	<div class="form">
 		<label>
-			<span>Логин</span>
+			<span>{m.terminal_creds_login()}</span>
 			<input type="text" bind:value={login} autocomplete="username" placeholder="root" />
 		</label>
 		<label>
-			<span>Пароль</span>
+			<span>{m.terminal_creds_password()}</span>
 			<input bind:value={password} type="password" autocomplete="current-password" />
 		</label>
 		<div class="remember">
 			<Toggle checked={remember} onchange={(v) => (remember = v)} />
-			<span>Запомнить на время сессии</span>
+			<span>{m.terminal_creds_remember()}</span>
 		</div>
 	</div>
 
 	<div class="actions">
-		<Button variant="primary" onclick={handleSave}>Сохранить</Button>
-		<Button variant="ghost" onclick={handleClear}>Очистить</Button>
+		<Button variant="primary" onclick={handleSave}>{m.common_save()}</Button>
+		<Button variant="ghost" onclick={handleClear}>{m.common_clear()}</Button>
 	</div>
 	</details>
 </Card>

@@ -3,6 +3,7 @@
 	import { formatBitRate, formatBytes } from '$lib/utils/format';
 	import { fetchTrafficDetail, subscribeTraffic, getTrafficRates } from '$lib/stores/traffic';
 	import Modal from './Modal.svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		open: boolean;
@@ -25,16 +26,37 @@
 
 	let { open, tunnelId, tunnelName = '', ifaceName = '', onclose }: Props = $props();
 
-	const PERIOD_OPTIONS: { value: TrafficPeriod; label: string }[] = [
-		{ value: '5m', label: '5 мин' },
-		{ value: '10m', label: '10 мин' },
-		{ value: '30m', label: '30 мин' },
-		{ value: '1h', label: '1 ч' },
-		{ value: '3h', label: '3 ч' },
-		{ value: '6h', label: '6 ч' },
-		{ value: '12h', label: '12 ч' },
-		{ value: '24h', label: '24 ч' }
+	const PERIOD_OPTIONS: { value: TrafficPeriod }[] = [
+		{ value: '5m' },
+		{ value: '10m' },
+		{ value: '30m' },
+		{ value: '1h' },
+		{ value: '3h' },
+		{ value: '6h' },
+		{ value: '12h' },
+		{ value: '24h' }
 	];
+
+	function periodButtonLabel(period: TrafficPeriod): string {
+		switch (period) {
+			case '5m':
+				return m.format_duration_minutes({ minutes: 5 });
+			case '10m':
+				return m.format_duration_minutes({ minutes: 10 });
+			case '30m':
+				return m.format_duration_minutes({ minutes: 30 });
+			case '1h':
+				return m.ui_traffic_chart_period_hours({ hours: 1 });
+			case '3h':
+				return m.ui_traffic_chart_period_hours({ hours: 3 });
+			case '6h':
+				return m.ui_traffic_chart_period_hours({ hours: 6 });
+			case '12h':
+				return m.ui_traffic_chart_period_hours({ hours: 12 });
+			case '24h':
+				return m.ui_traffic_chart_period_hours({ hours: 24 });
+		}
+	}
 
 	/** Самый широкий период в UI — по нему пробуем оценить доступную историю при открытии. */
 	const WIDEST_PERIOD = PERIOD_OPTIONS[PERIOD_OPTIONS.length - 1].value;
@@ -59,17 +81,6 @@
 		return PERIOD_OPTIONS[0].value;
 	}
 
-	const PERIOD_LABELS: Record<TrafficPeriod, string> = {
-		'5m': 'последние 5 минут',
-		'10m': 'последние 10 минут',
-		'30m': 'последние 30 минут',
-		'1h': 'последний час',
-		'3h': 'последние 3 часа',
-		'6h': 'последние 6 часов',
-		'12h': 'последние 12 часов',
-		'24h': 'последние сутки'
-	};
-
 	/** Длительность выбранного окна (сек) — для оценки объёма по средним скоростям из API. */
 	const PERIOD_SECONDS: Record<TrafficPeriod, number> = {
 		'5m': 5 * 60,
@@ -83,7 +94,8 @@
 	};
 
 	let loading = $state(true);
-	let error = $state<string | null>(null);
+	/** Сообщение сервера или `null` — тогда показываем локализованный текст по умолчанию. */
+	let error = $state<{ message: string | null } | null>(null);
 	let selectedPeriod = $state<TrafficPeriod>('24h');
 	let timestamps = $state<number[]>([]);
 	let rxRates = $state<number[]>([]);
@@ -107,7 +119,24 @@
 	let periodAutoResolvedFor = '';
 
 	function periodLabel(period: TrafficPeriod): string {
-		return PERIOD_LABELS[period];
+		switch (period) {
+			case '5m':
+				return m.ui_traffic_chart_range_5m();
+			case '10m':
+				return m.ui_traffic_chart_range_10m();
+			case '30m':
+				return m.ui_traffic_chart_range_30m();
+			case '1h':
+				return m.ui_traffic_chart_range_1h();
+			case '3h':
+				return m.ui_traffic_chart_range_3h();
+			case '6h':
+				return m.ui_traffic_chart_range_6h();
+			case '12h':
+				return m.ui_traffic_chart_range_12h();
+			case '24h':
+				return m.ui_traffic_chart_range_24h();
+		}
 	}
 
 	function applyTrafficDetail(d: Awaited<ReturnType<typeof fetchTrafficDetail>>) {
@@ -140,7 +169,7 @@
 			applyTrafficDetail(d);
 		} catch (e) {
 			if (token !== lastLoadToken) return;
-			error = e instanceof Error ? e.message : 'Не удалось загрузить историю';
+			error = { message: e instanceof Error ? e.message : null };
 		} finally {
 			if (token !== lastLoadToken) return;
 			loading = false;
@@ -355,10 +384,10 @@
 	);
 
 	let chartStageMessage = $derived.by((): { text: string; error: boolean } | null => {
-		if (loading && !showChart) return { text: 'Загрузка…', error: false };
-		if (error) return { text: error, error: true };
+		if (loading && !showChart) return { text: m.common_loading(), error: false };
+		if (error) return { text: error.message || m.ui_traffic_chart_load_failed(), error: true };
 		if (!loading && !hasSufficientPeriodData) {
-			return { text: 'Недостаточно данных за выбранный период', error: false };
+			return { text: m.ui_traffic_chart_not_enough(), error: false };
 		}
 		return null;
 	});
@@ -370,7 +399,7 @@
 			{#if ifaceName}<span class="pill">{ifaceName}</span>{/if}
 			<span class="pill-muted">{periodLabel(selectedPeriod)}</span>
 		</div>
-		<div class="period-switch" role="group" aria-label="Период графика трафика">
+		<div class="period-switch" role="group" aria-label={m.ui_traffic_chart_period_aria()}>
 			{#each PERIOD_OPTIONS as option (option.value)}
 				<button
 					type="button"
@@ -379,7 +408,7 @@
 					aria-pressed={selectedPeriod === option.value}
 					onclick={() => selectPeriod(option.value)}
 				>
-					{option.label}
+					{periodButtonLabel(option.value)}
 				</button>
 			{/each}
 		</div>
@@ -389,10 +418,10 @@
 		<span
 			class="stat stat--period-est"
 			title={useServerVolume
-				? 'Объём за период на сервере: сумма (скорость×Δt) по сырым точкам истории между опросами.'
-				: 'Оценка: средняя скорость × длительность окна (мало точек или ответ API без полей volume).'}
+				? m.ui_traffic_chart_volume_server()
+				: m.ui_traffic_chart_volume_estimate()}
 		>
-			<span class="label">Трафик:</span>
+			<span class="label">{m.ui_traffic_chart_traffic()}</span>
 			{#if !loading && stats.points > 0}
 				<span class="val rx">↓ {formatBytes(periodRxBytes)}</span>
 				<span class="sep">/</span>
@@ -403,12 +432,12 @@
 		</span>
 		<span class="sep">·</span>
 		<span class="stat">
-			<span class="label">Пик:</span>
+			<span class="label">{m.ui_traffic_chart_peak()}</span>
 			<span class="val">{formatBitRate(stats.peakRate)}</span>
 		</span>
 		<span class="sep">·</span>
 		<span class="stat">
-			<span class="label">Средняя:</span>
+			<span class="label">{m.ui_traffic_chart_avg()}</span>
 			<span class="val rx">↓ {formatBitRate(stats.avgRx)}</span>
 			<span class="label">/</span>
 			<span class="val tx">↑ {formatBitRate(stats.avgTx)}</span>
@@ -429,7 +458,7 @@
 						viewBox={`0 0 ${CHART_W} ${CHART_H}`}
 						preserveAspectRatio="none"
 						role="img"
-						aria-label={`График трафика за период: ${periodLabel(selectedPeriod)}`}
+						aria-label={m.ui_traffic_chart_aria({ period: periodLabel(selectedPeriod) })}
 						onmousemove={handleMouseMove}
 						onmouseleave={handleMouseLeave}
 					>
@@ -553,16 +582,16 @@
 			<div class="chart-bottom">
 				<span class="time">{showChart ? timeStart : ''}</span>
 				<span class="legend">
-					<span class="dot rx"></span>Прием: <span class="val rx">{formatBitRate(liveCurrentRx)}</span>
+					<span class="dot rx"></span>{m.ui_traffic_chart_rx()} <span class="val rx">{formatBitRate(liveCurrentRx)}</span>
 					<span class="sep">·</span>
-					<span class="dot tx"></span>Передача: <span class="val tx">{formatBitRate(liveCurrentTx)}</span>
+					<span class="dot tx"></span>{m.ui_traffic_chart_tx()} <span class="val tx">{formatBitRate(liveCurrentTx)}</span>
 				</span>
 				<span class="time">{showChart ? timeEnd : ''}</span>
 			</div>
 		</div>
 		{#if showChartOverlay}
 			<div class="chart-overlay">
-				<div class="chart-overlay-label">Обновляем график…</div>
+				<div class="chart-overlay-label">{m.ui_traffic_chart_updating()}</div>
 			</div>
 		{/if}
 	</div>

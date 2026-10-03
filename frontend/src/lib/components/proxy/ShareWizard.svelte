@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Мастер «Настроить раздачу» (ia.md §3.4): протокол → параметры сервера →
 	// первый абонент → ссылка. Решения шагов — в `shareWizard.ts`, экраны здесь.
+	import { m } from '$lib/i18n';
 	import { untrack } from 'svelte';
 	import { Badge, Button, Card, FieldHint, Input, Toggle } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -68,7 +69,12 @@
 		ondone,
 	}: Props = $props();
 
-	const STEPS = ['Протокол', 'Параметры сервера', 'Первый абонент', 'Ссылка'];
+	const STEPS = $derived([
+		m.proxy_share_wizard_step_protocol(),
+		m.proxy_share_wizard_step_params(),
+		m.proxy_share_wizard_step_client(),
+		m.proxy_share_wizard_step_link(),
+	]);
 
 	// Мастер существующего сервера начинается с параметров: протокол у него уже
 	// выбран и смене не подлежит — шаг 1 спрашивал бы о решённом.
@@ -242,8 +248,8 @@
 
 <Card padding="lg">
 	<div class="head">
-		<h2>Настроить раздачу</h2>
-		<Button variant="ghost" onclick={leave}>← К списку</Button>
+		<h2>{m.proxy_share_wizard_title()}</h2>
+		<Button variant="ghost" onclick={leave}>{m.proxy_wizard_to_list()}</Button>
 	</div>
 
 	<WizardSteps steps={STEPS} current={step} {canNext} ongo={(i) => (step = i)}>
@@ -265,7 +271,7 @@
 							<Badge size="sm" variant="warning">{wdttBlock.badge}</Badge>
 						{/if}
 					</span>
-					<span class="choice-text">Абоненты подключаются по паролю</span>
+					<span class="choice-text">{m.proxy_share_wizard_wdtt_text()}</span>
 				</button>
 
 				<button
@@ -277,7 +283,7 @@
 					<span class="choice-head">
 						<span class="choice-title">FreeTurn</span>
 					</span>
-					<span class="choice-text">Абоненты подключаются по Client ID</span>
+					<span class="choice-text">{m.proxy_share_wizard_ft_text()}</span>
 				</button>
 			</div>
 
@@ -285,7 +291,7 @@
 				<p class="note">
 					{wdttBlock.note}<FieldHint
 						text={wdttBlock.info}
-						ariaLabel="Подсказка: раздача WDTT"
+						ariaLabel={m.proxy_share_wizard_wdtt_aria()}
 					/>
 				</p>
 			{/if}
@@ -303,23 +309,23 @@
 		{:else if step === 2}
 			{#if protocol === 'wdtt'}
 				<p class="lead">
-					Ссылку получит этот абонент<FieldHint
-						text="Ссылка выдаётся на пароль абонента, а не на главный пароль сервера. Без единого рабочего пароля сервер не запустится."
-						ariaLabel="Подсказка: первый абонент"
+					{m.proxy_share_wizard_first_lead()}<FieldHint
+						text={m.proxy_share_wizard_first_hint()}
+						ariaLabel={m.proxy_share_wizard_first_aria()}
 					/>
 				</p>
 				<div class="grid">
-					<Input label="Имя абонента" bind:value={client.name} fullWidth />
+					<Input label={m.proxy_clients_name_label()} bind:value={client.name} fullWidth />
 					<Input
-						label="Пароль абонента"
-						hint="Пусто — сгенерируется"
+						label={m.proxy_share_wizard_password_label()}
+						hint={m.proxy_share_wizard_password_hint()}
 						bind:value={client.password}
 						fullWidth
 					/>
 					<!-- Хешей у нового сервера нет ни в одном поле: подставить в ссылку
 					     нечего, и без них она у абонента не заработает. -->
 					<Input
-						label="VK-хеш"
+						label={m.proxy_clients_vk_hash_label()}
 						hint={CLIENT_TEXT.vkHashRequired}
 						bind:value={client.vkHash}
 						fullWidth
@@ -329,11 +335,11 @@
 				<div class="grid">
 					<Input label="Client ID" bind:value={client.clientId} fullWidth />
 					<!-- SH-39: у абонента имя, а не комментарий (Дополнение №4 п.2). -->
-					<Input label="Имя абонента" bind:value={client.name} fullWidth />
+					<Input label={m.proxy_clients_name_label()} bind:value={client.name} fullWidth />
 				</div>
 				<div class="toggle-row">
 					<Toggle
-						label="Внести в список разрешённых"
+						label={m.proxy_share_wizard_allow()}
 						checked={client.allow}
 						onchange={(v) => (client.allow = v)}
 					/>
@@ -343,8 +349,8 @@
 			{#if !hasLink}
 				<div class="grid">
 					<Input
-						label="Адрес сервера для абонента"
-						hint="Пусто — подставится сам"
+						label={m.proxy_link_panel_server_address()}
+						hint={m.proxy_share_wizard_peer_hint()}
 						bind:value={peer}
 						fullWidth
 					/>
@@ -358,28 +364,28 @@
 					<p class="warn">{peerConfError}</p>
 				{:else if linkMissing === 'conf'}
 					<p class="warn">
-						Ссылку соберём после вставки .conf пира — приватный ключ из Keenetic OS недоступен
+						{m.proxy_share_wizard_link_after_conf()}
 					</p>
 				{:else if linkMissing === 'port'}
 					<!-- WS-48: вставка .conf тут не поможет — не хватает порта. -->
-					<p class="warn">Ссылку соберём, когда будет известен порт клиента</p>
+					<p class="warn">{m.proxy_share_wizard_link_after_port()}</p>
 				{:else if linkMissing === 'addr'}
-					<p class="warn">Ссылку соберём после запуска: не хватает адреса сервера</p>
+					<p class="warn">{m.proxy_share_wizard_link_after_start()}</p>
 				{/if}
 			{:else}
 				<div class="links">
 					{#if linkQwdtt}
-						<LinkBox link={linkQwdtt} title="Для приложения на телефоне" />
+						<LinkBox link={linkQwdtt} title={m.proxy_link_panel_for_phone()} />
 					{/if}
 					{#if link}
 						<LinkBox
 							{link}
-							title={protocol === 'wdtt' ? 'Для клиента на роутере' : ''}
+							title={protocol === 'wdtt' ? m.proxy_link_panel_for_router() : ''}
 							freeturn={protocol === 'freeturn'}
 						/>
 					{/if}
 					<p class="note">
-						Вставьте ссылку во вкладку «Выход» на другом роутере или в приложение на телефоне
+						{m.proxy_share_wizard_paste_link()}
 					</p>
 				</div>
 			{/if}
@@ -388,10 +394,10 @@
 		{#snippet finish()}
 			{#if !hasLink}
 				<Button variant="secondary" loading={busy} disabled={!step2Ready} onclick={() => run(false)}>
-					Только запустить
+					{m.proxy_share_wizard_only_start()}
 				</Button>
 				<Button variant="primary" loading={busy} disabled={!step2Ready} onclick={() => run(true)}>
-					Запустить и выдать ссылку
+					{m.proxy_share_wizard_start_link()}
 				</Button>
 			{/if}
 		{/snippet}

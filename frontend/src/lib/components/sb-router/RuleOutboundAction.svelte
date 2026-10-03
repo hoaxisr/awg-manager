@@ -4,6 +4,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { ArrowRight } from 'lucide-svelte';
   import type { OutboundDisplay } from './types';
   import OutboundTile from './OutboundTile.svelte';
@@ -64,11 +65,11 @@
         class="overflow-tip"
         tabindex="0"
         role="button"
-        aria-label={`${outboundDisplayTitle(outbound)}, ещё ${overflowCount} туннелей`}
+        aria-label={m.sb_router_outbound_overflow_aria({ title: outboundDisplayTitle(outbound), count: overflowCount })}
       >
         <span class="overflow-plus">+{overflowCount}</span>
         <div class="overflow-pop" role="tooltip">
-          <div class="overflow-pop-title">{outboundFullLabel(outbound.label, outbound.metaSuffix)} (ещё {overflowCount})</div>
+          <div class="overflow-pop-title">{m.sb_router_outbound_overflow_title({ label: outboundFullLabel(outbound.label, outbound.metaSuffix), count: overflowCount })}</div>
           <ul>
             {#each tooltipItems as label, index (`${label}:${index}`)}
               <li title={outbound.otherMemberTitles?.[index] ?? label}>{label}</li>
