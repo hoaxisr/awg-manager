@@ -18,6 +18,10 @@
   import OutboundToneIcon from './OutboundToneIcon.svelte';
   import { displayTone, toneClass } from './outboundTileTone';
   import { Button } from '$lib/components/ui';
+  import { api } from '$lib/api/client';
+  import MihomoGroupEditModal from './mihomo/MihomoGroupEditModal.svelte';
+  import type { MihomoNativeGroup, MihomoNativeProxy, MihomoNativeSubscription, CatalogPreset } from '$lib/types';
+  import type { OutboundKind } from './types';
   import StepPill from './StepPill.svelte';
   import WizardStep from './WizardStep.svelte';
   import OutboundOption from './OutboundOption.svelte';
@@ -29,7 +33,8 @@
     addWizardOpen,
     wizardOutboundCategory, wizardTunnelTags, wizardCustom,
     wizardEditRuleIndex, wizardEditMode, wizardExistingInlineRuleSetTag, wizardWasInlineText,
-    closeAddWizard, setOutboundCategory, toggleTunnelTag, resetWizardState,
+    closeAddWizard, setOutboundCategory, toggleTunnelTag, setTunnelTags, resetWizardState,
+    type CustomMatcherFields, type OutboundCategory,
   } from './addWizardStore';
   import {
     templatesSelection, openTemplatesModal, clearSelection,
@@ -42,16 +47,56 @@
   import { ensureTunnelDnsInfra, syncTunnelDnsRule } from './emptyStateActions';
   import { pluralize, RULE_WORDS, SERVICE_WORDS, SET_WORDS } from '$lib/utils/pluralize';
   import { findScrollContainer } from '$lib/utils/findScrollContainer';
-  import { previewTunnelOutboundResolution, formatWizardOutboundPreview } from './wizardCompositeOutbound';
+  import {
+    formatWizardOutboundPreview,
+    previewTunnelOutboundResolution,
+  } from './wizardCompositeOutbound';
+  interface Props {
+    isMihomo?: boolean;
+    onReloadMihomo?: () => void;
+  }
+  let { isMihomo = false, onReloadMihomo }: Props = $props();
 
   const outbounds = singboxRouterStore.outbounds;
   const options = singboxRouterStore.options;
   const optionsReady = singboxRouterStore.optionsReady;
   const presets = singboxRouterStore.presets;
   const ruleSets = singboxRouterStore.ruleSets;
+  const routerSettings = singboxRouterStore.settings;
+
+  const effectiveIsMihomo = $derived(isMihomo || $routerSettings?.routingEngine === 'mihomo');
+
+  let mihomoGroups = $state<MihomoNativeGroup[]>([]);
+  let mihomoProxies = $state<MihomoNativeProxy[]>([]);
+  let mihomoSubscriptions = $state<MihomoNativeSubscription[]>([]);
+  let groupModalOpen = $state(false);
+
+  async function loadMihomoResources() {
+    try {
+      const [g, p, s] = await Promise.all([
+        api.mihomoNativeGroups().catch(() => []),
+        api.mihomoNativeProxies().catch(() => []),
+        api.mihomoNativeSubscriptions().catch(() => []),
+      ]);
+      mihomoGroups = Array.isArray(g) ? g : [];
+      mihomoProxies = Array.isArray(p) ? p : [];
+      mihomoSubscriptions = Array.isArray(s) ? s : [];
+    } catch (e) {
+      console.error('Failed to load Mihomo groups:', e);
+    }
+  }
+
+  $effect(() => {
+    if ($addWizardOpen && effectiveIsMihomo) {
+      void loadMihomoResources();
+    }
+  });
 
   onMount(() => {
     void singboxRouterStore.loadAll();
+    if (effectiveIsMihomo) {
+      void loadMihomoResources();
+    }
     window.addEventListener('keydown', handleKeydown);
   });
   onDestroy(() => {
@@ -66,9 +111,63 @@
     }
   }
 
+  function handleSelectTunnel(tag: string) {
+    if (effectiveIsMihomo) {
+      const current = get(wizardTunnelTags);
+      if (current.length === 1 && current[0] === tag) {
+        setTunnelTags([]);
+      } else {
+        setTunnelTags([tag]);
+      }
+    } else {
+      toggleTunnelTag(tag);
+    }
+  }
+
   const tunnelOutbounds = $derived(
-    $options.filter((g) => g.group !== 'Специальные').flatMap((g) => g.items),
+    $options
+      .filter((g) => g.group !== 'Специальные' && (!effectiveIsMihomo || g.group !== 'Proxy-группы (Mihomo)'))
+      .flatMap((g) => g.items),
   );
+
+  const allAvailableTunnels = $derived.by(() => {
+    const list: Array<{ value: string; label: string; kind?: string }> = [];
+    const groupNames = effectiveIsMihomo
+      ? new Set(mihomoGroups.map((g) => g.name.toLowerCase()))
+      : new Set<string>();
+
+    if (effectiveIsMihomo) {
+      // 1. Mihomo standalone proxies
+      for (const p of mihomoProxies) {
+        if (p.enabled && !groupNames.has(p.name.toLowerCase()) && !list.some((i) => i.value === p.name)) {
+          list.push({ value: p.name, label: p.name, kind: 'proxy' });
+        }
+      }
+      // 2. Mihomo subscriptions
+      for (const s of mihomoSubscriptions) {
+        if (s.enabled && s.groupName && !groupNames.has(s.groupName.toLowerCase()) && !list.some((i) => i.value === s.groupName)) {
+          list.push({ value: s.groupName, label: `${s.name} (${s.groupName})`, kind: 'subscription' });
+        }
+      }
+    }
+
+    // 3. Singbox options (AWG tunnels, Wireguard, Sing-box tunnels)
+    for (const ob of tunnelOutbounds) {
+      if (effectiveIsMihomo) {
+        const val = ob.value.toLowerCase();
+        const baseLabel = ob.label.replace(/\s*\([^)]*\)$/, '').trim().toLowerCase();
+        if (groupNames.has(val) || groupNames.has(baseLabel)) {
+          continue;
+        }
+      }
+      if (!list.some((i) => i.value === ob.value)) {
+        list.push({ value: ob.value, label: ob.label });
+      }
+    }
+
+    return list;
+  });
+
   const directTag = $derived(
     $outbounds.find((o) => o.type === 'direct')?.tag ?? 'direct',
   );
@@ -133,6 +232,272 @@
     });
   }
 
+
+
+  async function submitMihomoWizard(args: {
+    selectedTemplates: string[];
+    customFields: CustomMatcherFields;
+    outboundCategory: OutboundCategory;
+    tunnelTags: string[];
+  }): Promise<number> {
+    const operations: Array<(apply: boolean) => Promise<unknown>> = [];
+
+    let targetOutbound = 'DIRECT';
+    if (args.outboundCategory === 'direct') {
+      targetOutbound = 'DIRECT';
+    } else if (args.outboundCategory === 'block') {
+      targetOutbound = 'REJECT';
+    } else if (args.outboundCategory === 'tunnel') {
+      if (args.tunnelTags.length > 0) {
+        targetOutbound = args.tunnelTags[0];
+      }
+    }
+
+    let createdCount = 0;
+    const allPresets = get(presets);
+
+    const MIHOMO_ALIASES: Record<string, string> = {
+      gemini: 'google-gemini',
+      claude: 'anthropic',
+      chatgpt: 'openai',
+      grok: 'xai',
+      ads: 'category-ads-all',
+      'category-ai': 'category-ai-!cn',
+      copilot: 'github',
+      teams: 'microsoft',
+      wikipedia: 'wikimedia',
+      porn: 'category-porn',
+      'cloudflare-ips': 'cloudflare',
+      'russian-services': 'category-ru',
+      rkn: 'category-media-ru-blocked',
+      'all-blocked': 'category-media-ru-blocked',
+      'unavailable-in-russia': 'category-media-ru-blocked',
+      midjourney: 'discord',
+    };
+
+    // Expand composite covers and process all selected templates
+    const targetItems: Array<{ id: string; preset?: CatalogPreset | Partial<CatalogPreset> }> = [];
+    for (const rawId of args.selectedTemplates) {
+      const templateId = rawId.replace(/^(svc|rs):/, '');
+      const preset = allPresets.find((p) => p.id === templateId) || { id: templateId, name: templateId };
+      if ('covers' in preset && preset.covers && preset.covers.length > 0) {
+        for (const childId of preset.covers) {
+          if (!targetItems.some((t) => t.id === childId)) {
+            const childPreset = allPresets.find((p) => p.id === childId) || { id: childId, name: childId };
+            targetItems.push({ id: childId, preset: childPreset });
+          }
+        }
+      } else {
+        if (!targetItems.some((t) => t.id === templateId)) {
+          targetItems.push({ id: templateId, preset });
+        }
+      }
+    }
+
+    const existingProviders = await api.mihomoNativeRuleProviders().catch(() => []);
+    const knownProviderNames = new Set(existingProviders.map((p) => p.name));
+
+    for (const item of targetItems) {
+      const templateId = item.id;
+      const preset = item.preset;
+      const tagLower = templateId.toLowerCase();
+
+      if (tagLower.startsWith('geoip-')) {
+        const geoTag = tagLower.replace(/^geoip-/, '');
+        operations.push((apply) => api.mihomoNativeSaveRule({
+          type: 'GEOIP',
+          payload: geoTag,
+          outbound: targetOutbound,
+          noResolve: true,
+          enabled: true,
+        }, apply));
+        createdCount++;
+      } else {
+        const cleanTag = tagLower.replace(/^geosite-/, '');
+        const geoTag = (MIHOMO_ALIASES[cleanTag] || cleanTag).toLowerCase();
+
+        if (['dev-tools', 'ip-checkers', 'npm', 'torrents'].includes(cleanTag) && preset?.engines?.dns?.domains?.length) {
+          for (const d of preset.engines.dns.domains) {
+            const cleanDomain = d.replace(/^\*\./, '').replace(/^\./, '').trim();
+            if (cleanDomain) {
+              operations.push((apply) => api.mihomoNativeSaveRule({
+                type: 'DOMAIN-SUFFIX',
+                payload: cleanDomain,
+                outbound: targetOutbound,
+                enabled: true,
+              }, apply));
+              createdCount++;
+            }
+          }
+        } else {
+          // MetaCubeX MRS rule-provider support:
+          const mrsUrl = `https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/${geoTag}.mrs`;
+          if (!knownProviderNames.has(geoTag)) {
+            knownProviderNames.add(geoTag);
+            operations.push((apply) => api.mihomoNativeSaveRuleProvider({
+              name: geoTag,
+              type: 'http',
+              url: mrsUrl,
+              path: `./rules/${geoTag}.mrs`,
+              behavior: 'domain',
+              format: 'mrs',
+              interval: 86400,
+              enabled: true,
+            }, apply));
+          }
+          operations.push((apply) => api.mihomoNativeSaveRule({
+            type: 'RULE-SET',
+            payload: geoTag,
+            outbound: targetOutbound,
+            enabled: true,
+          }, apply));
+          createdCount++;
+
+          if (geoTag === 'roblox') {
+            operations.push((apply) => api.mihomoNativeSaveRule({
+              type: 'DOMAIN-SUFFIX',
+              payload: 'rbxcdn.com',
+              outbound: targetOutbound,
+              enabled: true,
+            }, apply));
+            operations.push((apply) => api.mihomoNativeSaveRule({
+              type: 'IP-CIDR',
+              payload: '128.116.0.0/16',
+              outbound: targetOutbound,
+              noResolve: true,
+              enabled: true,
+            }, apply));
+            createdCount += 2;
+          }
+        }
+
+        if (geoTag === 'telegram' || geoTag === 'netflix' || geoTag === 'twitter' || geoTag === 'facebook') {
+          operations.push((apply) => api.mihomoNativeSaveRule({
+            type: 'GEOIP',
+            payload: geoTag,
+            outbound: targetOutbound,
+            noResolve: true,
+            enabled: true,
+          }, apply));
+          createdCount++;
+        }
+      }
+    }
+
+    if (!isInlineRuleListEmpty(args.customFields.rulesList)) {
+      const rawLines = args.customFields.rulesList.split('\n');
+      for (let rawLine of rawLines) {
+        // Strip comments #, //, ;
+        const commentIdx = rawLine.search(/(?:^|\s)[#;/]/);
+        if (commentIdx !== -1) {
+          rawLine = rawLine.substring(0, commentIdx);
+        }
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        if (line.startsWith('geosite:')) {
+          const rawTag = line.replace(/^geosite:\s*/i, '').trim();
+          const tag = MIHOMO_ALIASES[rawTag.toLowerCase()] || rawTag;
+          operations.push((apply) => api.mihomoNativeSaveRule({
+            type: 'GEOSITE',
+            payload: tag,
+            outbound: targetOutbound,
+            enabled: true,
+          }, apply));
+          createdCount++;
+        } else if (line.startsWith('geoip:')) {
+          const rawTag = line.replace(/^geoip:\s*/i, '').trim();
+          const tag = MIHOMO_ALIASES[rawTag.toLowerCase()] || rawTag;
+          operations.push((apply) => api.mihomoNativeSaveRule({
+            type: 'GEOIP',
+            payload: tag,
+            outbound: targetOutbound,
+            noResolve: true,
+            enabled: true,
+          }, apply));
+          createdCount++;
+        } else if (line.startsWith('domain:')) {
+          const d = line.replace(/^domain:\s*/i, '').trim();
+          if (d) {
+            operations.push((apply) => api.mihomoNativeSaveRule({
+              type: 'DOMAIN',
+              payload: d,
+              outbound: targetOutbound,
+              enabled: true,
+            }, apply));
+            createdCount++;
+          }
+        } else if (line.startsWith('keyword:') || line.startsWith('domain_keyword:')) {
+          const kw = line.replace(/^(keyword|domain_keyword):\s*/i, '').trim();
+          if (kw) {
+            operations.push((apply) => api.mihomoNativeSaveRule({
+              type: 'DOMAIN-KEYWORD',
+              payload: kw,
+              outbound: targetOutbound,
+              enabled: true,
+            }, apply));
+            createdCount++;
+          }
+        } else if (line.startsWith('domain_suffix:')) {
+          const ds = line.replace(/^domain_suffix:\s*/i, '').replace(/^\*\./, '').replace(/^\./, '').trim();
+          if (ds) {
+            operations.push((apply) => api.mihomoNativeSaveRule({
+              type: 'DOMAIN-SUFFIX',
+              payload: ds,
+              outbound: targetOutbound,
+              enabled: true,
+            }, apply));
+            createdCount++;
+          }
+        } else if (line.includes('/') && /^[\d\.:a-fA-F\/]+$/.test(line.replace(/^(ip|cidr|src_ip):\s*/i, ''))) {
+          const cidr = line.replace(/^(ip|cidr|src_ip):\s*/i, '').trim();
+          operations.push((apply) => api.mihomoNativeSaveRule({
+            type: cidr.includes(':') ? 'IP-CIDR6' : 'IP-CIDR',
+            payload: cidr,
+            outbound: targetOutbound,
+            noResolve: true,
+            enabled: true,
+          }, apply));
+          createdCount++;
+        } else if (/^\d{1,3}(\.\d{1,3}){3}$/.test(line.replace(/^(ip|cidr|src_ip):\s*/i, '').trim())) {
+          const ip = line.replace(/^(ip|cidr|src_ip):\s*/i, '').trim() + '/32';
+          operations.push((apply) => api.mihomoNativeSaveRule({
+            type: 'IP-CIDR',
+            payload: ip,
+            outbound: targetOutbound,
+            noResolve: true,
+            enabled: true,
+          }, apply));
+          createdCount++;
+        } else {
+          let cleanDomain = line;
+          try {
+            if (cleanDomain.startsWith('http://') || cleanDomain.startsWith('https://')) {
+              cleanDomain = new URL(cleanDomain).hostname;
+            }
+          } catch {}
+          cleanDomain = cleanDomain.replace(/^\*\./, '').replace(/^\./, '').trim();
+          if (cleanDomain) {
+            operations.push((apply) => api.mihomoNativeSaveRule({
+              type: 'DOMAIN-SUFFIX',
+              payload: cleanDomain,
+              outbound: targetOutbound,
+              enabled: true,
+            }, apply));
+            createdCount++;
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < operations.length; i++) {
+      const isLast = (i === operations.length - 1);
+      await operations[i](isLast);
+    }
+
+    return createdCount;
+  }
+
   async function syncDnsAfterSave() {
     if (get(mode) !== 'beginner') return;
     try {
@@ -149,6 +514,42 @@
     if (!canSave) return;
     submitting = true;
     try {
+      if (effectiveIsMihomo) {
+        const cat = get(wizardOutboundCategory);
+        const tags = get(wizardTunnelTags);
+        let targetOutbound = 'DIRECT';
+        if (cat === 'tunnel' && tags.length > 0) {
+          targetOutbound = tags[0];
+        } else if (cat === 'direct') {
+          targetOutbound = 'DIRECT';
+        } else if (cat === 'block') {
+          targetOutbound = 'REJECT';
+        }
+
+        const created = await submitMihomoWizard({
+          selectedTemplates: Array.from(get(templatesSelection)),
+          customFields: get(wizardCustom),
+          outboundCategory: cat!,
+          tunnelTags: tags,
+        });
+
+
+        if (continueAfter) {
+          notifications.success(`Создано ${pluralize(created, RULE_WORDS)}. Можно добавить ещё одно.`);
+          clearSelection();
+          await scrollWizardToTop();
+          resetWizardState();
+          customResetKey++;
+          onReloadMihomo?.();
+        } else {
+          notifications.success(`Создано ${pluralize(created, RULE_WORDS)}`);
+          clearSelection();
+          closeAddWizard();
+          onReloadMihomo?.();
+        }
+        return;
+      }
+
       const editIndex = get(wizardEditRuleIndex);
       if (editIndex !== null && get(wizardEditMode)) {
         await submitWizardEdit({
@@ -293,7 +694,7 @@
           icon={iconTunnel}
           label="Через туннель"
           sub="AWG / прокси"
-          count="{tunnelOutbounds.length} доступно"
+          count="{allAvailableTunnels.length + (effectiveIsMihomo ? mihomoGroups.length : 0)} доступно"
           tone="accent"
           selected={$wizardOutboundCategory === 'tunnel'}
           onclick={() => setOutboundCategory('tunnel')}
@@ -321,15 +722,69 @@
       {#if $wizardOutboundCategory === 'tunnel'}
         <div class="tunnel-row">
           <div class="tunnel-cap">
-            Выбрать туннели
-            {#if $wizardTunnelTags.length > 1}
+            <span>Выбрать {effectiveIsMihomo ? 'направление' : 'туннели'}</span>
+            {#if !effectiveIsMihomo && $wizardTunnelTags.length > 1}
               <span class="tunnel-count">{$wizardTunnelTags.length} выбрано</span>
             {/if}
           </div>
-          <p class="tunnel-hint">Можно выбрать несколько — будет использован composite outbound</p>
-          {#if tunnelOutbounds.length > 0}
+          <p class="tunnel-hint">
+            {effectiveIsMihomo
+              ? 'Выберите готовую группу прокси или отдельный сервер'
+              : 'Можно выбрать несколько — будет использован composite outbound'}
+          </p>
+
+          {#if effectiveIsMihomo}
+            <div class="mihomo-groups-box">
+              <div class="groups-header">
+                <div class="groups-title">
+                  <Zap size={14} class="accent-icon" />
+                  <span>Группы прокси Mihomo</span>
+                  {#if mihomoGroups.length > 0}
+                    <span class="group-count-badge">{mihomoGroups.length}</span>
+                  {/if}
+                </div>
+                <button
+                  type="button"
+                  class="create-group-prominent-btn"
+                  onclick={() => (groupModalOpen = true)}
+                >
+                  <Plus size={14} /> Создать группу
+                </button>
+              </div>
+
+              {#if mihomoGroups.length > 0}
+                <div class="tunnel-chips">
+                  {#each mihomoGroups as grp (grp.id || grp.name)}
+                    {@const selected = $wizardTunnelTags.includes(grp.name)}
+                    <button
+                      type="button"
+                      class="t-chip group-chip"
+                      class:selected
+                      onclick={() => handleSelectTunnel(grp.name)}
+                    >
+                      <Zap size={12} class="accent-icon" />
+                      <span class="tag">{grp.name}</span>
+                      <span class="type-pill">{grp.type}</span>
+                    </button>
+                  {/each}
+                </div>
+              {:else}
+                <button
+                  type="button"
+                  class="empty-groups-cta"
+                  onclick={() => (groupModalOpen = true)}
+                >
+                  <Plus size={14} />
+                  <span>Создать группу прокси (Auto-fallback, URL-Test, Select, Балансировка)</span>
+                </button>
+              {/if}
+            </div>
+
+            <div class="group-sub-cap mt-3">Туннели и прокси-узлы:</div>
+          {/if}
+          {#if allAvailableTunnels.length > 0}
             <div class="tunnel-chips">
-              {#each tunnelOutbounds as ob (ob.value)}
+              {#each allAvailableTunnels as ob (ob.value)}
                 {@const selected = $wizardTunnelTags.includes(ob.value)}
                 {@const tunnelDisplay = resolveOutboundDisplay(
                   ob.value,
@@ -341,15 +796,15 @@
                   $singboxTunnels.data ?? [],
                 )}
                 {@const tunnelTone = displayTone(tunnelDisplay)}
-                <button type="button" class="t-chip" class:selected onclick={() => toggleTunnelTag(ob.value)}>
+                <button type="button" class="t-chip" class:selected onclick={() => handleSelectTunnel(ob.value)}>
                   <span class="tone-icon {toneClass(tunnelTone)}">
-                    <OutboundToneIcon tone={tunnelTone} kind={tunnelDisplay.kind} size={12} />
+                    <OutboundToneIcon tone={tunnelTone} kind={(ob.kind as OutboundKind) || tunnelDisplay.kind} size={12} />
                   </span>
                   <span class="tag">{ob.label}</span>
                 </button>
               {/each}
             </div>
-          {:else if $optionsReady}
+          {:else if $optionsReady && (!effectiveIsMihomo || mihomoGroups.length === 0)}
             <div class="empty-tunnels">Нет доступных туннелей.</div>
           {/if}
         </div>
@@ -400,10 +855,25 @@
       </Button>
     </MobileBottomBar>
 
-    {#if $mode === 'beginner'}
-      <SbRouterServiceCatalogModal existingRuleSetTags={$ruleSets.map((r) => r.tag)} />
+    {#if isMihomo || $mode === 'beginner'}
+      <SbRouterServiceCatalogModal existingRuleSetTags={isMihomo ? [] : $ruleSets.map((r) => r.tag)} />
     {:else}
       <TemplatesModal mode="collect" servicesOnly={false} />
+    {/if}
+
+    {#if groupModalOpen}
+      <MihomoGroupEditModal
+        open={true}
+        groups={mihomoGroups}
+        proxies={mihomoProxies}
+        subscriptions={mihomoSubscriptions}
+        onClose={() => (groupModalOpen = false)}
+        onSaved={async () => {
+          groupModalOpen = false;
+          await loadMihomoResources();
+          onReloadMihomo?.();
+        }}
+      />
     {/if}
   </div>
 {/if}
@@ -533,6 +1003,10 @@
     cursor: pointer;
     font-family: inherit;
     color: inherit;
+    transition: all var(--t-fast, 0.15s);
+  }
+  .t-chip.group-chip {
+    border-color: var(--accent-line, var(--border));
   }
   .t-chip.selected {
     background: var(--accent-soft);
@@ -542,6 +1016,109 @@
     font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 500;
+  }
+  .mihomo-groups-box {
+    margin: 12px 0 16px;
+    padding: 12px;
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+  }
+  .groups-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .groups-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .group-count-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .create-group-prominent-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 5px 12px;
+    border-radius: var(--radius-sm, 6px);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--t-fast, 0.15s);
+  }
+  .create-group-prominent-btn:hover {
+    filter: brightness(1.1);
+    transform: translateY(-1px);
+  }
+  .empty-groups-cta {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 12px;
+    border: 1px dashed var(--accent);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--t-fast, 0.15s);
+  }
+  .empty-groups-cta:hover {
+    background: rgba(var(--accent-rgb, 120, 90, 240), 0.2);
+  }
+  .create-group-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: 1px dashed var(--accent);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm, 4px);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    margin-left: auto;
+  }
+  .create-group-btn:hover {
+    background: var(--accent-soft);
+  }
+  .group-sub-cap {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin: 8px 0 4px;
+  }
+  .accent-icon {
+    color: var(--accent);
+  }
+  .type-pill {
+    font-size: 10px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-muted);
   }
   .empty-tunnels {
     font-size: 12px;

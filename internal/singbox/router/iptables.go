@@ -31,11 +31,14 @@ const (
 	// conntrack tracks the DNAT for established flows, ACKs are
 	// auto-translated, and sing-box's accept()ed socket handles them
 	// like any normal TCP connection. SKeen ships the same split.
-	RedirectPort  = 51272
-	Fwmark        = 0x1
-	RoutingTable  = 100
-	ChainName     = "AWGM-TPROXY"
-	RedirectChain = "AWGM-REDIRECT"
+	RedirectPort        = 51272
+	Fwmark              = 0x1
+	RoutingTable        = 100
+	ChainName           = "AWGM-TPROXY"
+	RedirectChain       = "AWGM-REDIRECT"
+	OutputChain         = "AWGM-OUTPUT"
+	CloudOutputUDPChain = "AWGM-OUTPUT-UDP"
+	MihomoRoutingMark   = 666
 	// BlackholeChain is the fail-closed DROP chain (mangle). It is engaged
 	// ONLY while sing-box is dead AND the PREROUTING interception jumps were
 	// wiped (e.g. an NDMS firewall reload): without it, policy-marked traffic
@@ -470,6 +473,14 @@ type RestoreInputSpec struct {
 	// Requires the xt_dscp kernel module (preloaded by the netfilter.d hook
 	// and EnsureRouterNetfilterModules).
 	QoSClasses []QoSClassSpec
+
+	// KeeneticCloudTunnel routes local router traffic destined to Keenetic Cloud
+	// and KeenDNS relay servers to the TCP redirect port (RedirectPort) from nat OUTPUT.
+	KeeneticCloudTunnel bool
+
+	// KeeneticCloudSet indicates whether the AWGM-CLOUD ipset exists in the kernel
+	// and can be safely referenced in iptables rules without crashing iptables-restore.
+	KeeneticCloudSet bool
 }
 
 // QoSClassSpec is the iptables projection of one active QoS class: the DSCP
@@ -688,6 +699,15 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 		return b.String()
 	}
 
+	// Router local & LAN DNS must not be hijacked by TPROXY (breaks Keenetic
+	// MWS repeaters, local service discovery, and loops back into proxy engine).
+	for _, cidr := range []string{"127.0.0.0/8", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"} {
+		fmt.Fprintf(&b, "-A %s -d %s -p udp --dport 53 -j RETURN\n", ChainName, cidr)
+	}
+	for _, ip := range spec.WANIPs {
+		fmt.Fprintf(&b, "-A %s -d %s -p udp --dport 53 -j RETURN\n", ChainName, ip)
+	}
+
 	// set_chain_rules: DNS first (when INTERCEPT_DNS_ENABLE=1)
 	fmt.Fprintf(&b, "-A %s -p udp --dport 53 -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
 		ChainName, TPROXYPort, Fwmark)
@@ -734,6 +754,7 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 	// matcher (SKeen jumps unconditionally; per-proto matching happens
 	// inside the chain).
 	emitPreroutingJump(&b, ChainName, spec)
+	emitKeeneticCloudUDPOutputRules(&b, spec)
 
 	b.WriteString("COMMIT\n")
 	return b.String()
@@ -770,6 +791,7 @@ func buildNatRestoreInput(spec RestoreInputSpec) string {
 				RedirectChain, q.DSCP, q.RedirectPort)
 		}
 		emitPreroutingJump(&b, RedirectChain, spec)
+		emitKeeneticCloudOutputRules(&b, spec)
 		b.WriteString("COMMIT\n")
 		return b.String()
 	}
@@ -838,8 +860,70 @@ func buildNatRestoreInput(spec RestoreInputSpec) string {
 		}
 	}
 
+	emitKeeneticCloudOutputRules(&b, spec)
+
 	b.WriteString("COMMIT\n")
 	return b.String()
+}
+
+func emitKeeneticCloudOutputRules(b *strings.Builder, spec RestoreInputSpec) {
+	if !spec.KeeneticCloudTunnel {
+		return
+	}
+	fmt.Fprintf(b, ":%s - [0:0]\n", OutputChain)
+	for _, iface := range []string{"nwg+", "wg+", "tun+", "opkg+", "wdtt+", "t2s+", "sstp+", "l2tp+", "ppp+", "ike+", "tap+"} {
+		fmt.Fprintf(b, "-A %s -o %s -j RETURN\n", OutputChain, iface)
+	}
+	emitUserBypassReturns(b, OutputChain, spec.BypassCIDRs)
+	emitBypassReturns(b, OutputChain, spec.WANIPs)
+	fmt.Fprintf(b, "-A %s -m mark --mark 0x%x -j RETURN\n", OutputChain, MihomoRoutingMark)
+	fmt.Fprintf(b, "-A %s -m mark --mark 0x%x -j RETURN\n", OutputChain, Fwmark)
+	// Dynamic Keenetic Cloud and KeenDNS relay IPs via AWGM-CLOUD ipset
+	if spec.KeeneticCloudSet {
+		fmt.Fprintf(b, "-A %s -m set --match-set %s dst -p tcp -j REDIRECT --to-ports %d\n", OutputChain, bypassset.CloudSetName, RedirectPort)
+	}
+	cloudCIDRs := []string{
+		"185.162.93.0/24",
+		"95.213.212.0/24",
+		"95.213.181.0/24",
+		"87.228.71.0/24",
+		"91.92.241.0/24",
+		"193.107.216.0/24",
+		"178.250.154.0/24",
+		"178.72.134.0/24",
+		"85.198.119.0/24",
+		"37.0.127.0/24",
+		"5.35.2.0/24",
+		"84.38.177.0/24",
+		"49.12.59.0/24",
+		"167.233.7.0/24",
+		"82.202.218.0/24",
+		"82.202.0.0/16",
+	}
+	for _, cidr := range cloudCIDRs {
+		fmt.Fprintf(b, "-A %s -p tcp -d %s -j REDIRECT --to-ports %d\n", OutputChain, cidr, RedirectPort)
+	}
+	fmt.Fprintf(b, "-A OUTPUT -j %s\n", OutputChain)
+}
+
+func emitKeeneticCloudUDPOutputRules(b *strings.Builder, spec RestoreInputSpec) {
+	if !spec.KeeneticCloudTunnel {
+		return
+	}
+	fmt.Fprintf(b, ":%s - [0:0]\n", CloudOutputUDPChain)
+	for _, iface := range []string{"nwg+", "wg+", "tun+", "opkg+", "wdtt+", "t2s+", "sstp+", "l2tp+", "ppp+", "ike+", "tap+"} {
+		fmt.Fprintf(b, "-A %s -o %s -j RETURN\n", CloudOutputUDPChain, iface)
+	}
+	emitUserBypassReturns(b, CloudOutputUDPChain, spec.BypassCIDRs)
+	emitBypassReturns(b, CloudOutputUDPChain, spec.WANIPs)
+	fmt.Fprintf(b, "-A %s -m mark --mark 0x%x -j RETURN\n", CloudOutputUDPChain, MihomoRoutingMark)
+	fmt.Fprintf(b, "-A %s -m mark --mark 0x%x -j RETURN\n", CloudOutputUDPChain, Fwmark)
+	// Dynamic Keenetic Cloud and KeenDNS relay IPs via AWGM-CLOUD ipset
+	if spec.KeeneticCloudSet {
+		fmt.Fprintf(b, "-A %s -m set --match-set %s dst -p udp -j MARK --set-mark 0x%x\n", CloudOutputUDPChain, bypassset.CloudSetName, Fwmark)
+	}
+	fmt.Fprintf(b, "-A %s -p udp -m multiport --dports 9,3478,3479,4044,5683,5684 -j MARK --set-mark 0x%x\n", CloudOutputUDPChain, Fwmark)
+	fmt.Fprintf(b, "-A OUTPUT -j %s\n", CloudOutputUDPChain)
 }
 
 type restoreNoflushFn func(ctx context.Context, input string) error
@@ -949,6 +1033,8 @@ func (it *IPTables) drainFwmarkRules(ctx context.Context) {
 }
 
 func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
+	_ = EnsureRouterNetfilterModules(ctx)
+
 	// Scrub any existing PREROUTING jumps to AWGM-TPROXY before inserting
 	// the new one. iptables-restore --noflush + -I PREROUTING 1 would
 	// otherwise stack a duplicate jump on every restart / mark-change /
@@ -1174,7 +1260,7 @@ case "$table" in mangle|nat) ;; *) exit 0 ;; esac
 # Best-effort kernel module preload (both paths need these). Absent .ko or
 # built-in modules are silently skipped — iptables-restore surfaces the verdict.
 KREL="$(uname -r)"
-for mod in xt_TPROXY xt_comment xt_mark xt_connmark xt_conntrack xt_pkttype xt_dscp xt_set; do
+for mod in xt_TPROXY xt_comment xt_mark xt_connmark xt_conntrack xt_pkttype xt_dscp xt_multiport xt_set; do
   grep -q "^${mod} " /proc/modules 2>/dev/null && continue
   [ -f "/lib/modules/${KREL}/${mod}.ko" ] && insmod "/lib/modules/${KREL}/${mod}.ko" 2>/dev/null || true
 done
@@ -1193,6 +1279,8 @@ if [ -f %[15]q ]; then
     /opt/sbin/ipset restore -exist < %[15]q
   fi
 fi
+/opt/sbin/ipset create %[20]s hash:net maxelem %[21]d family inet 2>/dev/null || true
+
 # scrub_jumps <table> <chain>: delete every PREROUTING jump into <chain>.
 scrub_jumps() {
   /opt/sbin/iptables -w -t "$1" -S PREROUTING 2>/dev/null \
@@ -1207,8 +1295,15 @@ scrub_tagged() {
     | sed 's/-A PREROUTING/-D PREROUTING/' \
     | while IFS= read -r line; do /opt/sbin/iptables -w -t "$1" $line 2>/dev/null; done
 }
-if pidof sing-box >/dev/null 2>&1; then
-  # sing-box ALIVE — real interception governs. Drop any lingering fail-closed
+# scrub_output_jumps <table> <chain>: delete every OUTPUT jump into <chain>.
+scrub_output_jumps() {
+  /opt/sbin/iptables -w -t "$1" -S OUTPUT 2>/dev/null \
+    | grep -E -- "-[jg] $2(\$| )" \
+    | sed 's/-A OUTPUT/-D OUTPUT/' \
+    | while IFS= read -r line; do /opt/sbin/iptables -w -t "$1" $line 2>/dev/null; done
+}
+if pidof sing-box >/dev/null 2>&1 || pidof mihomo >/dev/null 2>&1; then
+  # sing-box / mihomo ALIVE — real interception governs. Drop any lingering fail-closed
   # blackhole first so a stale DROP never sits in front of the interception jump.
   scrub_jumps mangle %[11]s
   /opt/sbin/iptables -w -t mangle -F %[11]s 2>/dev/null
@@ -1231,6 +1326,7 @@ if pidof sing-box >/dev/null 2>&1; then
       # (and vice versa) for the whole heavy rebuild.
       if [ "$mangle_ok" -eq 0 ]; then
         scrub_jumps mangle %[2]s
+        scrub_output_jumps mangle %[19]s
         # Legacy DNS-NOPOLICY MARK rules (dead code from earlier builds).
         scrub_tagged mangle %[8]s
         # Ingress-scope MARK/CONNMARK rules (comment-tagged).
@@ -1242,6 +1338,7 @@ if pidof sing-box >/dev/null 2>&1; then
       fi
       if [ "$nat_ok" -eq 0 ]; then
         scrub_jumps nat %[6]s
+        scrub_output_jumps nat %[18]s
         # DNS-RESCUE direct PREROUTING rules in nat (comment-tagged -j REDIRECT).
         scrub_tagged nat %[7]s
         /opt/sbin/iptables-restore --noflush < %[13]q
@@ -1249,7 +1346,9 @@ if pidof sing-box >/dev/null 2>&1; then
       fi
     else
       scrub_jumps mangle %[2]s
+      scrub_output_jumps mangle %[19]s
       scrub_jumps nat %[6]s
+      scrub_output_jumps nat %[18]s
       scrub_tagged nat %[7]s
       scrub_tagged mangle %[8]s
       scrub_tagged mangle %[9]s
@@ -1265,7 +1364,7 @@ if pidof sing-box >/dev/null 2>&1; then
 else
 %[10]sfi
 exit 0
-`, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain, DNSRescueTag, DNSNoPolicyTag, IngressTag, deadBranch, BlackholeChain, netfilterMangleRulesPath, netfilterNatRulesPath, netfilterCtCleanPath, bypassSavePath, bypassSetName, bypassset.SetMaxElem)
+`, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain, DNSRescueTag, DNSNoPolicyTag, IngressTag, deadBranch, BlackholeChain, netfilterMangleRulesPath, netfilterNatRulesPath, netfilterCtCleanPath, bypassSavePath, bypassSetName, bypassset.SetMaxElem, OutputChain, CloudOutputUDPChain, bypassset.CloudSetName, bypassset.CloudSetMaxElem)
 }
 
 // ctCleanScript renders the poisoned-flow eviction script (issue #627). While
@@ -1401,8 +1500,12 @@ func (it *IPTables) Uninstall(ctx context.Context) {
 	it.removeSourceHooks(ctx)
 	_ = it.runIPTables(ctx, "-t", "mangle", "-F", ChainName)
 	_ = it.runIPTables(ctx, "-t", "mangle", "-X", ChainName)
+	_ = it.runIPTables(ctx, "-t", "mangle", "-F", CloudOutputUDPChain)
+	_ = it.runIPTables(ctx, "-t", "mangle", "-X", CloudOutputUDPChain)
 	_ = it.runIPTables(ctx, "-t", "nat", "-F", RedirectChain)
 	_ = it.runIPTables(ctx, "-t", "nat", "-X", RedirectChain)
+	_ = it.runIPTables(ctx, "-t", "nat", "-F", OutputChain)
+	_ = it.runIPTables(ctx, "-t", "nat", "-X", OutputChain)
 	// Drain ALL fwmark rules — historically Install accumulated
 	// duplicates at priorities 0-N (auto-assigned), so a single `del`
 	// would leave the rest. Loop until ENOENT, capped defensively.
@@ -1412,7 +1515,9 @@ func (it *IPTables) Uninstall(ctx context.Context) {
 
 func (it *IPTables) removeSourceHooks(ctx context.Context) {
 	it.removeSourceHooksFromTable(ctx, "mangle", ChainName)
+	it.removeOutputHooksFromTable(ctx, "mangle", CloudOutputUDPChain)
 	it.removeSourceHooksFromTable(ctx, "nat", RedirectChain)
+	it.removeOutputHooksFromTable(ctx, "nat", OutputChain)
 	// DNS-RESCUE: direct PREROUTING REDIRECT rules in nat, tagged with
 	// `-m comment --comment AWGM-DNS-RESCUE`. Scrub before re-install
 	// so we don't accumulate duplicates and so port changes (e.g. NDMS
@@ -1456,8 +1561,16 @@ func (it *IPTables) removeCommentTaggedRulesFromTable(ctx context.Context, table
 	}
 }
 
+func (it *IPTables) removeOutputHooksFromTable(ctx context.Context, table, chain string) {
+	it.removeHooksFromTable(ctx, table, "OUTPUT", chain)
+}
+
 func (it *IPTables) removeSourceHooksFromTable(ctx context.Context, table, chain string) {
-	out, err := it.runIPTablesOut(ctx, "-t", table, "-S", "PREROUTING")
+	it.removeHooksFromTable(ctx, table, "PREROUTING", chain)
+}
+
+func (it *IPTables) removeHooksFromTable(ctx context.Context, table, parentChain, chain string) {
+	out, err := it.runIPTablesOut(ctx, "-t", table, "-S", parentChain)
 	if err != nil {
 		return
 	}
@@ -1465,15 +1578,16 @@ func (it *IPTables) removeSourceHooksFromTable(ctx context.Context, table, chain
 	// правок и старых версий — пином не покрыт.
 	jumpJ := "-j " + chain
 	gotoG := "-g " + chain
+	prefix := "-A " + parentChain
 	for _, line := range strings.Split(out, "\n") {
 		if !strings.Contains(line, jumpJ) && !strings.Contains(line, gotoG) {
 			continue
 		}
 		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "-A PREROUTING") {
+		if !strings.HasPrefix(line, prefix) {
 			continue
 		}
-		deleteLine := strings.Replace(line, "-A PREROUTING", "-D PREROUTING", 1)
+		deleteLine := strings.Replace(line, prefix, "-D "+parentChain, 1)
 		args := append([]string{"-t", table}, strings.Fields(deleteLine)...)
 		_ = it.runIPTables(ctx, args...)
 	}
@@ -1496,6 +1610,8 @@ func EnsureRouterNetfilterModules(ctx context.Context) []error {
 		"xt_conntrack",
 		"xt_pkttype",
 		"xt_dscp",
+		"xt_multiport",
+		"xt_set",
 	} {
 		err := ensureKernelModuleFn(ctx, name)
 		if err == nil || errors.Is(err, ErrNetfilterComponentMissing) {

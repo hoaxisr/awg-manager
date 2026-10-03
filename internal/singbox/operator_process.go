@@ -667,6 +667,11 @@ func (o *Operator) stopProc() error {
 	return o.proc.Stop()
 }
 
+// Stop stops the sing-box process to satisfy proxyengine.Engine interface.
+func (o *Operator) Stop() error {
+	return o.stopProc()
+}
+
 // hasCrashSince reports whether the crash ring holds an entry at or
 // after t. Guard против двойного учёта одного падения (запись из
 // handleExit + запись из неудавшегося авто-старта).

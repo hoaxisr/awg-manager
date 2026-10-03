@@ -6,12 +6,17 @@
   import { Code } from 'lucide-svelte';
   import InlineRuleListEditor from '$lib/components/routing/singboxRouter/InlineRuleListEditor.svelte';
   import { wizardCustom, updateCustomField } from './addWizardStore';
+  import { singboxRouter } from '$lib/stores/singboxRouter';
 
   interface Props {
     /** В режиме редактирования inline — список сразу развёрнут. */
     expanded?: boolean;
+    isMihomo?: boolean;
   }
-  let { expanded = false }: Props = $props();
+  let { expanded = false, isMihomo }: Props = $props();
+
+  const routerSettings = singboxRouter.settings;
+  const effectiveIsMihomo = $derived(isMihomo ?? ($routerSettings?.routingEngine === 'mihomo'));
 
   // svelte-ignore state_referenced_locally
   let value = $state($wizardCustom.rulesList);
@@ -22,10 +27,10 @@
   <summary class="summary">
     <Code size={14} color="var(--text-muted)" />
     <span>Описать вручную</span>
-    <span class="meta">· домены, IP, CIDR, порты, geosite:/geoip:</span>
+    <span class="meta">· {effectiveIsMihomo ? 'домены, IP, CIDR, geosite:/geoip:' : 'домены, IP, CIDR, порты, geosite:/geoip:'}</span>
   </summary>
   <div class="body">
-    <InlineRuleListEditor bind:value />
+    <InlineRuleListEditor bind:value isMihomo={effectiveIsMihomo} />
   </div>
 </details>
 

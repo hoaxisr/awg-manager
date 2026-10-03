@@ -53,7 +53,7 @@ func remapStaleTags(excluded []string, known []MemberInfo, diff DiffResult, acti
 	matches := func(mi MemberInfo) []string {
 		var out []string
 		for _, t := range all {
-			if !sameServer(mi, toMemberInfo(t.Tag, t.Out)) {
+			if !sameServer(mi, ToMemberInfo(t.Tag, t.Out)) {
 				continue
 			}
 			out = append(out, t.Tag)

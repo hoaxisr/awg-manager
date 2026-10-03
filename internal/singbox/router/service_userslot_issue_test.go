@@ -127,3 +127,42 @@ func TestGetStatus_UserSlotIssueClearedAfterFix(t *testing.T) {
 		}
 	}
 }
+
+// При активном движке Mihomo sing-box issues (DNS/route/user-slot) не всплывают в статусе.
+func TestGetStatus_MihomoEngine_NoSingboxConfigIssues(t *testing.T) {
+	stubListeningProbe(t, func() bool { return false })
+	orch := newUserSlotOrch(t, `{"route":{"rules":[{"outbound":"ghost-tag"}]}}`)
+
+	fe := &fakeExec{}
+	svc := newTestService(t, Deps{
+		Settings: newTestSettingsStore(t, storage.SingboxRouterSettings{
+			Enabled:       false,
+			RoutingEngine: "mihomo",
+			PolicyName:    "Policy0",
+		}),
+		Policies: &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+		IPTables: newTestIPTables(fe),
+		Singbox:  newTestSingbox(t),
+		Orch:     orch,
+	})
+	// Config contains an orphan rule with a non-existent outbound
+	cfg := NewEmptyConfig()
+	cfg.Route.Rules = append(cfg.Route.Rules, Rule{
+		Action:   "route",
+		Outbound: "nonexistent-outbound",
+	})
+	if err := SaveConfig(svc.routerConfigPath(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	for _, is := range st.Issues {
+		if is.Kind == "user-slot-validation" || is.Kind == "orphan-rule" {
+			t.Errorf("unexpected singbox issue under mihomo engine: %+v", is)
+		}
+	}
+}
+

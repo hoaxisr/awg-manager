@@ -286,21 +286,17 @@ func (s *Service) CreateGroup(ctx context.Context, in GroupCreateInput) (*Aggreg
 	}
 	proxyIdx := -1
 	if s.proxyEnabled() {
-		idx, err := s.mutator.AllocProxyIndex(ctx)
+		idx, err := s.allocateOwnedProxy(ctx, "group", g.ID, int(port), g.Label)
 		if err != nil {
 			s.groups.Delete(g.ID)
 			return nil, fmt.Errorf("subscription group: alloc proxy index: %w", err)
 		}
 		if err := s.groups.SetProxyIndex(g.ID, idx); err != nil {
+			_, _ = s.removeProxyIfOwned(ctx, "group", g.ID, idx)
 			s.groups.Delete(g.ID)
 			return nil, err
 		}
 		proxyIdx = idx
-		if err := s.mutator.EnsureProxy(ctx, idx, int(port), g.Label); err != nil {
-			_ = s.mutator.RemoveProxy(ctx, idx)
-			s.groups.Delete(g.ID)
-			return nil, fmt.Errorf("subscription group: register NDMS proxy: %w", err)
-		}
 	}
 
 	// Stage (пересборка групп) + Reload и Rollback-компенсация — одна
@@ -314,7 +310,7 @@ func (s *Service) CreateGroup(ctx context.Context, in GroupCreateInput) (*Aggreg
 		return nil
 	}); err != nil {
 		if proxyIdx >= 0 {
-			_ = s.mutator.RemoveProxy(ctx, proxyIdx)
+			_, _ = s.removeProxyIfOwned(ctx, "group", g.ID, proxyIdx, g.Label)
 		}
 		s.groups.Delete(g.ID)
 		return nil, fmt.Errorf("subscription group: materialize: %w", err)
@@ -371,9 +367,15 @@ func (s *Service) UpdateGroup(ctx context.Context, id string, patch GroupUpdateP
 	}
 	if patch.Label != nil && s.proxyEnabled() && g.ProxyIndex >= 0 {
 		// EnsureProxy идемпотентен — обновляет описание ProxyN «на месте».
-		if err := s.mutator.EnsureProxy(ctx, g.ProxyIndex, int(g.ListenPort), g.Label); err != nil {
+		index, err := s.syncOwnedProxy(
+			ctx, "group", g.ID, g.ProxyIndex, int(g.ListenPort),
+			func(index int) error { return s.groups.SetProxyIndex(g.ID, index) },
+			current.Label, g.Label,
+		)
+		if err != nil {
 			return g, fmt.Errorf("subscription group: sync proxy description: %w", err)
 		}
+		g.ProxyIndex = index
 	}
 	s.logInfo("subscription-group-update", id, "updated")
 	return g, nil
@@ -410,7 +412,7 @@ func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 	// Ошибка снятия прокси не блокирует удаление строки (симметрично
 	// Service.Delete для подписок): осиротевший ProxyN подберёт cleanup-свип.
 	if g.ProxyIndex >= 0 {
-		if err := s.mutator.RemoveProxy(ctx, g.ProxyIndex); err != nil {
+		if _, err := s.removeProxyIfOwned(ctx, "group", g.ID, g.ProxyIndex, g.Label); err != nil {
 			s.logWarn("subscription-group-delete", id, "remove proxy failed: "+err.Error())
 		}
 	}

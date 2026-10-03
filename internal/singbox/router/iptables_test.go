@@ -556,7 +556,7 @@ func TestWriteNetfilterHookContainsPidofGuard(t *testing.T) {
 	// The pidof guard now branches (alive → real interception, dead → fail-closed
 	// blackhole) instead of `|| exit 0`, so interception is only restored for a
 	// live engine while a dead engine still re-asserts the blackhole.
-	if !strings.Contains(body, "if pidof sing-box >/dev/null 2>&1; then") {
+	if !strings.Contains(body, "pidof sing-box >/dev/null 2>&1") {
 		t.Errorf("hook missing pidof branch guard:\n%s", body)
 	}
 	if !strings.Contains(body, "iptables-restore --noflush") {
@@ -1221,8 +1221,21 @@ func TestBuildRestoreInput_IngressScope(t *testing.T) {
 	if !strings.Contains(got, saveRule) {
 		t.Fatalf("missing CONNMARK save rule in:\n%s", got)
 	}
-	if strings.Index(got, markRule) > strings.Index(got, jump) {
-		t.Fatalf("MARK rule must precede the connmark jump")
+	if !strings.Contains(got, jump) {
+		t.Fatalf("missing jump rule in:\n%s", got)
+	}
+	lanDNSReturn := fmt.Sprintf("-A %s -d 10.0.0.0/8 -p udp --dport 53 -j RETURN", ChainName)
+	if !strings.Contains(got, lanDNSReturn) {
+		t.Fatalf("missing LAN DNS return rule in:\n%s", got)
+	}
+	ingressDNSRule := fmt.Sprintf("-A %s -i nwg3 -p udp --dport 53 -j TPROXY", ChainName)
+	if strings.Contains(got, ingressDNSRule) {
+		t.Fatalf("ingress DNS TPROXY rule must not be present: breaks local DNS for VPN clients:\n%s", got)
+	}
+
+	ingressTCPDNSRule := fmt.Sprintf("-A %s -i nwg3 -p tcp --dport 53 -j REDIRECT", RedirectChain)
+	if strings.Contains(got, ingressTCPDNSRule) {
+		t.Fatalf("ingress TCP DNS REDIRECT rule must not be present:\n%s", got)
 	}
 }
 

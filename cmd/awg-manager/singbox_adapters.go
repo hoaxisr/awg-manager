@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 
+	"github.com/hoaxisr/awg-manager/internal/mihomonative"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
@@ -71,22 +72,57 @@ func (a *orchValidatorAdapter) Validate(ctx context.Context, configDir string) e
 type subProxySet struct {
 	store  *subscription.Store
 	groups *subscription.GroupStore
+	mihomo *mihomonative.Store
+}
+
+func (a subProxySet) SingboxProxyIndices() map[int]bool {
+	out := make(map[int]bool)
+	if a.store != nil {
+		for _, sub := range a.store.List() {
+			if sub.ProxyIndex >= 0 {
+				out[sub.ProxyIndex] = true
+			}
+		}
+	}
+	if a.groups != nil {
+		for _, group := range a.groups.List() {
+			if group.ProxyIndex >= 0 {
+				out[group.ProxyIndex] = true
+			}
+		}
+	}
+	return out
+}
+
+// ManagedProxyIndices returns every persisted composite allocation, including
+// disabled/dormant resources whose ProxyN may currently be absent from NDMS.
+// ProxyManager uses it as a process-wide reservation source.
+func (a subProxySet) ManagedProxyIndices() map[int]bool {
+	out := a.SingboxProxyIndices()
+	if a.mihomo != nil {
+		for _, ref := range a.mihomo.ListBridges() {
+			if ref.Bridge.ProxyIndex >= 0 {
+				out[ref.Bridge.ProxyIndex] = true
+			}
+		}
+	}
+	return out
 }
 
 func (a subProxySet) SubscriptionProxies() []singbox.SubscriptionProxy {
-	if a.store == nil {
-		return nil
-	}
 	var out []singbox.SubscriptionProxy
-	for _, sub := range a.store.List() {
-		if sub.ProxyIndex < 0 || sub.ListenPort == 0 {
-			continue
+	if a.store != nil {
+		for _, sub := range a.store.List() {
+			if sub.ProxyIndex < 0 || sub.ListenPort == 0 {
+				continue
+			}
+			out = append(out, singbox.SubscriptionProxy{
+				Index:            sub.ProxyIndex,
+				Port:             int(sub.ListenPort),
+				Label:            sub.Label,
+				OwnerDescription: subscription.ProxyOwnershipDescription("subscription", sub.ID),
+			})
 		}
-		out = append(out, singbox.SubscriptionProxy{
-			Index: sub.ProxyIndex,
-			Port:  int(sub.ListenPort),
-			Label: sub.Label,
-		})
 	}
 	if a.groups != nil {
 		for _, g := range a.groups.List() {
@@ -94,9 +130,24 @@ func (a subProxySet) SubscriptionProxies() []singbox.SubscriptionProxy {
 				continue
 			}
 			out = append(out, singbox.SubscriptionProxy{
-				Index: g.ProxyIndex,
-				Port:  int(g.ListenPort),
-				Label: g.Label,
+				Index:            g.ProxyIndex,
+				Port:             int(g.ListenPort),
+				Label:            g.Label,
+				OwnerDescription: subscription.ProxyOwnershipDescription("group", g.ID),
+			})
+		}
+	}
+	if a.mihomo != nil {
+		for _, ref := range a.mihomo.ListBridges() {
+			if !ref.Enabled {
+				continue
+			}
+			out = append(out, singbox.SubscriptionProxy{
+				Index:            ref.Bridge.ProxyIndex,
+				Port:             ref.Bridge.ListenPort,
+				Label:            ref.Label,
+				OwnerDescription: mihomonative.BridgeOwnershipDescription(ref.Kind, ref.ID),
+				Bindable:         true,
 			})
 		}
 	}

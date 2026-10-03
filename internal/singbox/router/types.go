@@ -265,6 +265,7 @@ type Outbound struct {
 	// resolver instead of the fakeip server. Both omitempty so v1 IP-bound
 	// direct outbounds stay clean.
 	Server         string          `json:"server,omitempty"`
+	ServerPort     int             `json:"server_port,omitempty"`
 	DomainResolver *DomainResolver `json:"domain_resolver,omitempty"`
 }
 
@@ -458,4 +459,11 @@ type RouterConfig struct {
 	Route        Route         `json:"route"`
 	HTTPClients  []HTTPClient  `json:"http_clients,omitempty"`
 	Experimental *Experimental `json:"experimental,omitempty"`
+}
+
+type DeviceProxyInstance struct {
+	ID               string
+	Port             int
+	SelectedOutbound string
+	Enabled          bool
 }

@@ -1056,6 +1056,11 @@ const api_MonitoringTunnelDTO: v.GenericSchema = v.looseObject({
 	selfTarget: v.optional(v.nullable(v.string())),
 });
 
+const api_NativeDeleteUnsupportedRulesResponse: v.GenericSchema = v.looseObject({
+	deleted: v.optional(v.nullable(v.boolean())),
+	deletedCount: v.optional(v.nullable(v.number())),
+});
+
 const api_NativePingCheckStatusDTO: v.GenericSchema = v.looseObject({
 	bound: v.optional(v.nullable(v.boolean())),
 	exists: v.optional(v.nullable(v.boolean())),
@@ -1074,6 +1079,11 @@ const api_NativePingCheckStatusDTO: v.GenericSchema = v.looseObject({
 const api_NativePingCheckStatusResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_NativePingCheckStatusDTO))),
 	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_NativeUnsupportedRulesResponse: v.GenericSchema = v.looseObject({
+	items: v.optional(v.nullable(v.array(v.lazy(() => mihomonative_Rule)))),
+	revision: v.optional(v.nullable(v.string())),
 });
 
 const api_ObfuscatorDTO: v.GenericSchema = v.looseObject({
@@ -2995,6 +3005,79 @@ const install_InstallStatusResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const mihomo_AppliedRecordFact: v.GenericSchema = v.looseObject({
+	applied_at: v.optional(v.nullable(v.string())),
+	applied_config_digest: v.optional(v.nullable(v.string())),
+	applied_input_digest: v.optional(v.nullable(v.string())),
+	applied_store_digest: v.optional(v.nullable(v.string())),
+	generation: v.optional(v.nullable(v.number())),
+	generation_id: v.optional(v.nullable(v.string())),
+});
+
+const mihomo_BridgeFact: v.GenericSchema = v.looseObject({
+	generation: v.optional(v.nullable(v.number())),
+	kernel_interface: v.optional(v.nullable(v.string())),
+	listen_port: v.optional(v.nullable(v.number())),
+	owner_uuid: v.optional(v.nullable(v.string())),
+	proxy_index: v.optional(v.nullable(v.number())),
+	proxy_interface: v.optional(v.nullable(v.string())),
+});
+
+const mihomo_ListenerSpec: v.GenericSchema = v.looseObject({
+	address: v.optional(v.nullable(v.string())),
+	family: v.optional(v.nullable(v.string())),
+	network: v.optional(v.nullable(v.string())),
+	port: v.optional(v.nullable(v.number())),
+	protocol: v.optional(v.nullable(v.string())),
+	purpose: v.optional(v.nullable(v.string())),
+});
+
+const mihomo_ManifestFacts: v.GenericSchema = v.looseObject({
+	candidate_digest: v.optional(v.nullable(v.string())),
+	created_at: v.optional(v.nullable(v.string())),
+	state: v.optional(v.nullable(v.lazy(() => mihomo_ManifestState))),
+	target_digest: v.optional(v.nullable(v.string())),
+	tx_id: v.optional(v.nullable(v.string())),
+	updated_at: v.optional(v.nullable(v.string())),
+});
+
+const mihomo_ManifestState: v.GenericSchema = v.string();
+
+const mihomo_ProcessReceiptFact: v.GenericSchema = v.looseObject({
+	executable_name: v.optional(v.nullable(v.string())),
+	listeners: v.optional(v.nullable(v.array(v.lazy(() => mihomo_ListenerSpec)))),
+	pid: v.optional(v.nullable(v.number())),
+	proc_start_ticks: v.optional(v.nullable(v.number())),
+});
+
+const mihomo_RecoveryEvidenceDTO: v.GenericSchema = v.looseObject({
+	active_tx_id: v.optional(v.nullable(v.string())),
+	applied_record: v.optional(v.nullable(v.lazy(() => mihomo_AppliedRecordFact))),
+	bridges: v.optional(v.nullable(v.array(v.lazy(() => mihomo_BridgeFact)))),
+	daemon_epoch: v.optional(v.nullable(v.string())),
+	generated_at: v.optional(v.nullable(v.string())),
+	manifest_facts: v.optional(v.nullable(v.lazy(() => mihomo_ManifestFacts))),
+	process_receipt: v.optional(v.nullable(v.lazy(() => mihomo_ProcessReceiptFact))),
+	recovery_marker: v.optional(v.nullable(v.lazy(() => mihomo_RecoveryMarkerFact))),
+	recovery_reason: v.optional(v.nullable(v.string())),
+	sanitized_logs: v.optional(v.nullable(v.array(v.string()))),
+	state: v.optional(v.nullable(v.lazy(() => mihomo_ManifestState))),
+});
+
+const mihomo_RecoveryMarkerFact: v.GenericSchema = v.looseObject({
+	reason: v.optional(v.nullable(v.string())),
+	timestamp: v.optional(v.nullable(v.string())),
+});
+
+const mihomonative_Rule: v.GenericSchema = v.looseObject({
+	enabled: v.optional(v.nullable(v.boolean())),
+	id: v.optional(v.nullable(v.string())),
+	noResolve: v.optional(v.nullable(v.boolean())),
+	outbound: v.optional(v.nullable(v.string())),
+	payload: v.optional(v.nullable(v.string())),
+	type: v.optional(v.nullable(v.string())),
+});
+
 const opkg_Package: v.GenericSchema = v.looseObject({
 	description: v.optional(v.nullable(v.string())),
 	installedAt: v.optional(v.nullable(v.string())),
@@ -3308,6 +3391,11 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /managed/drift": v.lazy(() => api_ManagedServerDriftEnvelope),
 	"GET /managed/export": v.lazy(() => api_ManagedServerExportEnvelope),
 	"GET /mcp/keys": v.lazy(() => api_McpKeysListResponse),
+	"GET /mihomo/native/rules/unsupported": v.lazy(() => api_NativeUnsupportedRulesResponse),
+	"GET /mihomo/recovery/evidence": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => mihomo_RecoveryEvidenceDTO))),
+})]),
+	"GET /mihomo/status": v.lazy(() => api_APIEnvelope),
 	"GET /monitoring/matrix": v.lazy(() => api_MonitoringSnapshotResponse),
 	"GET /ndms/save-status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_SaveStatusDTO))),
@@ -3519,6 +3607,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /managed/restore-drift": v.lazy(() => api_ManagedServerImportEnvelope),
 	"POST /mcp/keys/create": v.lazy(() => api_McpKeyCreatedResponse),
 	"POST /mcp/keys/revoke": v.lazy(() => api_McpKeyRevokedResponse),
+	"POST /mihomo/native/rules/unsupported/delete": v.lazy(() => api_NativeDeleteUnsupportedRulesResponse),
+	"POST /mihomo/recovery/reconcile": v.lazy(() => api_APIEnvelope),
 	"POST /pingcheck/check-now": v.lazy(() => api_APIEnvelope),
 	"POST /pingcheck/logs/clear": v.lazy(() => api_APIEnvelope),
 	"POST /proxy/apply": v.lazy(() => api_APIEnvelope),

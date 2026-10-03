@@ -47,7 +47,7 @@ func NewLogBuffer(bucket Bucket) *LogBuffer {
 func DefaultCapacity(bucket Bucket) int { return defaultMaxEntriesFor(bucket) }
 
 func defaultMaxEntriesFor(bucket Bucket) int {
-	if bucket == BucketSingbox {
+	if bucket == BucketSingbox || bucket == BucketMihomo {
 		return defaultSBMaxEntries
 	}
 	return defaultAppMaxEntries

@@ -123,7 +123,7 @@ export function isDnsAddressFilterRuleSet(
   tag: string,
   ruleSets: SingboxRouterRuleSet[] = [],
 ): boolean {
-  if (/^geoip([-_:]|$)/i.test(tag)) return true;
+  if (/^geoip([-_:]|$)/i.test(tag) || /(-|_)?cidr$/i.test(tag) || /^susanin([-_:]|$)/i.test(tag)) return true;
 
   const rs = resolveRuleSetByTag(tag, ruleSets) as SingboxRouterRuleSet | undefined;
   if (!rs) return false;
@@ -166,6 +166,30 @@ export async function syncTunnelDnsRule(): Promise<void> {
     api.singboxRouterListRuleSets(),
   ]);
   const agg = collectTunnelDomainMatchers(rules, ruleSets);
+
+  // If no sing-box rules matched, check if Mihomo native rules have tunnel matchers
+  if (agg.rule_set.length === 0 && agg.domain_suffix.length === 0) {
+    try {
+      const mihomoRules = await api.mihomoNativeRules();
+      for (const mr of mihomoRules) {
+        if (!mr.enabled || !mr.outbound || !mr.payload || mr.outbound === 'DIRECT' || mr.outbound === 'REJECT') continue;
+        const payload = mr.payload;
+        if (mr.type === 'GEOSITE') {
+          const tag = payload.startsWith('geosite-') ? payload : `geosite-${payload}`;
+          if (!agg.rule_set.includes(tag)) agg.rule_set.push(tag);
+        } else if (mr.type === 'RULE-SET') {
+          if (!isDnsAddressFilterRuleSet(payload, ruleSets)) {
+            if (!agg.rule_set.includes(payload)) agg.rule_set.push(payload);
+          }
+        } else if (mr.type === 'DOMAIN-SUFFIX' || mr.type === 'DOMAIN') {
+          if (!agg.domain_suffix.includes(payload)) agg.domain_suffix.push(payload);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const hasAny = agg.rule_set.length || agg.domain_suffix.length;
 
   const servers = await api.singboxRouterListDNSServers();

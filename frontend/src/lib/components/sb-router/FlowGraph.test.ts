@@ -27,6 +27,8 @@ vi.mock('$lib/stores/singboxRouter', () => ({
 		dnsServers: { subscribe: empty.subscribe },
 		dnsGlobals: { subscribe: empty.subscribe },
 		options: { subscribe: empty.subscribe },
+		reloadStatus: vi.fn(),
+		reloadSettings: vi.fn(),
 	},
 }));
 

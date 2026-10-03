@@ -248,6 +248,8 @@
   let geositeCatalogBusy = $state(false);
   let outboundEditTag = $state<string | null>(null);
   let outboundAddOpen = $state(false);
+
+  // DNS-серверы
   let dnsServerEditTag = $state<string | null>(null);
   let dnsServerAddOpen = $state(false);
   let dnsRuleEditIdx = $state<number | null>(null);
@@ -383,8 +385,10 @@
   // disabled → OFF. XOR-режимы: когда активен режим FakeIP, общий sing-box
   // крутит fakeip-слот и TPROXY-перехват не установлен — это НЕАКТИВЕН (muted),
   // НЕ ложный СБОЙ. Оценка active/СБОЙ только когда TProxy и есть активный режим.
+  const mihomoOwnsRouting = $derived($storeSettings?.routingEngine === 'mihomo');
   const engineStat = $derived.by<{ value: string; tone: StatCellData['tone'] }>(() => {
     if (!$storeStatus?.enabled) return { value: 'OFF', tone: 'muted' };
+    if (mihomoOwnsRouting) return { value: 'MIHOMO', tone: 'muted' };
     if ($storeSettings?.routingMode === 'fakeip-tun') return { value: 'НЕАКТИВЕН', tone: 'muted' };
     return $storeStatus.active
       ? { value: 'ON', tone: 'success' }
@@ -399,6 +403,7 @@
   const engineRunning = $derived(
     ($storeStatus?.enabled ?? false)
     && ($storeStatus?.active ?? false)
+    && !mihomoOwnsRouting
     && $storeSettings?.routingMode !== 'fakeip-tun',
   );
   const liveStats = $derived($singboxTrafficLive);
@@ -416,9 +421,13 @@
       label: 'Движок',
       value: engineStat.value,
       tone: engineStat.tone,
-      helpTitle: engineStat.value === 'НЕАКТИВЕН' ? 'Режим неактивен' : undefined,
+      helpTitle: mihomoOwnsRouting
+        ? 'Маршрутизацию обслуживает Mihomo'
+        : engineStat.value === 'НЕАКТИВЕН' ? 'Режим неактивен' : undefined,
       helpText:
-        engineStat.value === 'НЕАКТИВЕН'
+        mihomoOwnsRouting
+          ? 'TProxy-перехват принадлежит Mihomo. Фоновый sing-box продолжает обслуживать отдельные device-proxy.'
+          : engineStat.value === 'НЕАКТИВЕН'
           ? 'Активен режим FakeIP — TProxy-перехват не задействован.'
           : undefined,
       onClick:

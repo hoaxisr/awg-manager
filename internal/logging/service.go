@@ -38,6 +38,7 @@ type Service struct {
 	settings      SettingsGetter
 	appBuffer     *LogBuffer
 	singboxBuffer *LogBuffer
+	mihomoBuffer  *LogBuffer
 	bus           *events.Bus
 }
 
@@ -46,6 +47,7 @@ func NewService(settings SettingsGetter) *Service {
 		settings:      settings,
 		appBuffer:     NewLogBuffer(BucketApp),
 		singboxBuffer: NewLogBuffer(BucketSingbox),
+		mihomoBuffer:  NewLogBuffer(BucketMihomo),
 	}
 	s.applySettingsLocked()
 	return s
@@ -54,6 +56,7 @@ func NewService(settings SettingsGetter) *Service {
 func (s *Service) Stop() {
 	s.appBuffer.Stop()
 	s.singboxBuffer.Stop()
+	s.mihomoBuffer.Stop()
 }
 
 // SetEventBus sets the event bus for SSE publishing.
@@ -71,12 +74,14 @@ func (s *Service) applySettingsLocked() {
 	if maxAge > 0 {
 		s.appBuffer.SetMaxAge(maxAge)
 		s.singboxBuffer.SetMaxAge(maxAge)
+		s.mihomoBuffer.SetMaxAge(maxAge)
 	}
 	if app := s.settings.GetAppMaxEntries(); app > 0 {
 		s.appBuffer.SetMaxEntries(app)
 	}
 	if sb := s.settings.GetSingboxMaxEntries(); sb > 0 {
 		s.singboxBuffer.SetMaxEntries(sb)
+		s.mihomoBuffer.SetMaxEntries(sb)
 	}
 }
 
@@ -218,6 +223,8 @@ func (s *Service) bufferFor(bucket Bucket) *LogBuffer {
 	switch bucket {
 	case BucketSingbox:
 		return s.singboxBuffer
+	case BucketMihomo:
+		return s.mihomoBuffer
 	case BucketApp:
 		return s.appBuffer
 	}
@@ -229,7 +236,7 @@ func capacityFor(settings SettingsGetter, bucket Bucket) int {
 		return defaultMaxEntriesFor(bucket)
 	}
 	switch bucket {
-	case BucketSingbox:
+	case BucketSingbox, BucketMihomo:
 		if v := settings.GetSingboxMaxEntries(); v > 0 {
 			return v
 		}
@@ -242,7 +249,9 @@ func capacityFor(settings SettingsGetter, bucket Bucket) int {
 }
 
 // Len returns the total entry count across both buckets.
-func (s *Service) Len() int { return s.appBuffer.Len() + s.singboxBuffer.Len() }
+func (s *Service) Len() int {
+	return s.appBuffer.Len() + s.singboxBuffer.Len() + s.mihomoBuffer.Len()
+}
 
 var (
 	_ AppLogger = (*Service)(nil)

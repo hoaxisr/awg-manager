@@ -11,9 +11,14 @@
   import { liveConnectionsSnapshot, liveConnectionsWsStatus } from './liveConnectionsStore';
 
   const status = singboxRouterStore.status;
+	const settings = singboxRouterStore.settings;
   // Жив перехват, а не просто persisted-тумблер: без активных jump'ов живых
   // соединений через движок нет, чип скрываем.
-  let engineOn = $derived(($status?.enabled ?? false) && ($status?.active ?? false));
+  let engineOn = $derived(
+		$settings?.routingEngine === 'mihomo'
+			? ($settings?.enabled ?? false)
+			: (($status?.enabled ?? false) && ($status?.active ?? false))
+	);
   let isActive = $derived($page.url.searchParams.get('sub') === 'connections');
 
   let snapshot = $derived($liveConnectionsSnapshot);

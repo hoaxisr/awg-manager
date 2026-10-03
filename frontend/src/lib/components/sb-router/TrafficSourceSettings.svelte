@@ -25,6 +25,8 @@
     onPatch,
   }: Props = $props();
 
+  const engineName = $derived(cfg.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box');
+
   const policyLabel = $derived(
     variant === 'expert' ? 'Только устройства policy' : 'Устройства в политике',
   );
@@ -35,7 +37,7 @@
   const allHint = $derived(
     variant === 'expert'
       ? 'При policy обрабатывается только трафик устройств, привязанных к policy в LAN-настройках NDMS.'
-      : 'sing-box перехватывает весь LAN-трафик роутера, без фильтра по NDMS policy.',
+      : `${engineName} перехватывает весь LAN-трафик роутера, без фильтра по NDMS policy.`,
   );
 
   function setDeviceMode(m: 'policy' | 'all') {
@@ -85,7 +87,7 @@
         Управление устройствами →
       </Button>
     {:else}
-      <p class="hint">Выберите или создайте политику — без неё sing-box не обработает трафик устройств.</p>
+      <p class="hint">Выберите или создайте политику — без неё {engineName} не обработает трафик устройств.</p>
     {/if}
     {#if cfg.policyName && policyExists === false}
       <p class="warn">Политика «{cfg.policyName}» не найдена в NDMS — создайте заново или выберите другую.</p>

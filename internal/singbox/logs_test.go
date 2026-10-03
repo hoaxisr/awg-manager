@@ -82,6 +82,23 @@ func TestLogForwarder_LevelMapping(t *testing.T) {
 	}
 }
 
+func TestEngineLogForwarder_MihomoIdentity(t *testing.T) {
+	cap := &captureLogger{}
+	f := NewEngineLogForwarder(func() string { return "unused" }, cap, logging.GroupMihomo, "mihomo")
+	f.forward([]byte(`{"type":"info","payload":"started"}`))
+
+	got := cap.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("expected one entry, got %d", len(got))
+	}
+	if got[0].Group != logging.GroupMihomo {
+		t.Errorf("group=%q want %q", got[0].Group, logging.GroupMihomo)
+	}
+	if got[0].Target != "mihomo" {
+		t.Errorf("target=%q want mihomo", got[0].Target)
+	}
+}
+
 func TestLogForwarder_SubgroupClassification(t *testing.T) {
 	cases := []struct {
 		name     string

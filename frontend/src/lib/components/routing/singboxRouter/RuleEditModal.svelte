@@ -428,10 +428,10 @@
 				/>
 
 				{#if action === 'route'}
-					<label class="field">
+					<div class="field">
 						<div class="lbl">Куда направить</div>
 						<Dropdown bind:value={outbound} options={outboundDropdownOptions} fullWidth />
-					</label>
+					</div>
 				{/if}
 			</div>
 		{/if}

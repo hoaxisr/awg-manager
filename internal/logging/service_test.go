@@ -66,6 +66,7 @@ func TestService_IsEnabled(t *testing.T) {
 				svc = &Service{
 					appBuffer:     NewLogBuffer(BucketApp),
 					singboxBuffer: NewLogBuffer(BucketSingbox),
+					mihomoBuffer:  NewLogBuffer(BucketMihomo),
 				}
 			}
 			defer svc.Stop()
@@ -458,10 +459,13 @@ func TestScopedLogger_NilSafe(t *testing.T) {
 	sl2.Debug("trace", "t1", "msg")
 }
 
-// BucketForGroup routes singbox to its bucket and everything else to app.
+// BucketForGroup isolates each proxy engine and routes everything else to app.
 func TestBucketForGroup(t *testing.T) {
 	if BucketForGroup(GroupSingbox) != BucketSingbox {
 		t.Errorf("singbox should map to BucketSingbox")
+	}
+	if BucketForGroup(GroupMihomo) != BucketMihomo {
+		t.Errorf("mihomo should map to BucketMihomo")
 	}
 	for _, g := range []string{GroupTunnel, GroupRouting, GroupServer, GroupSystem, ""} {
 		if BucketForGroup(g) != BucketApp {

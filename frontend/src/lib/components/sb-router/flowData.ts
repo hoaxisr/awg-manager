@@ -25,6 +25,10 @@ export interface RoutingSummary {
   tunnelDnsLabel: string | null;
   /** Тег первого detour-сервера. null, если такого нет. */
   tunnelDnsTag: string | null;
+  /** Detour туннельного DNS. */
+  tunnelDnsDetour: string | null;
+  /** Красивое имя выхода туннельного DNS. */
+  tunnelDnsDetourLabel: string | null;
 }
 
 // Конвенция тега туннельного DNS-сервера (см. emptyStateActions.ts). Своя
@@ -55,7 +59,6 @@ export function formatWanInterfaceLabel(
 	return `${label} (${iface.name})`;
 }
 
-/** Подпись WAN для ветки «напрямую»: выбранный или авто-определяемый интерфейс провайдера. */
 export function resolveDefaultWanLabel(
 	settings: Pick<SingboxRouterSettings, 'wanAutoDetect' | 'wanInterface'> | null | undefined,
 	wanInterfaces: SingboxRouterWANInterface[],
@@ -71,7 +74,16 @@ export function resolveDefaultWanLabel(
 		return iface ? formatWanInterfaceLabel(iface) : formatWanInterfaceLabel({ name, label: name });
 	}
 
-	const sorted = [...wanInterfaces].sort((a, b) => a.priority - b.priority);
+	const physical = wanInterfaces.filter(
+		(i) =>
+			!i.id?.startsWith('SSTP') &&
+			!i.id?.startsWith('OpenVPN') &&
+			!i.id?.startsWith('Wireguard') &&
+			!i.name?.startsWith('ppp') &&
+			!i.name?.startsWith('ovpn'),
+	);
+	const pool = physical.some((i) => i.up) ? physical : wanInterfaces;
+	const sorted = [...pool].sort((a, b) => (b.priority || 0) - (a.priority || 0));
 	const primary = sorted.find((i) => i.up) ?? sorted[0];
 	return primary ? formatWanInterfaceLabel(primary) : null;
 }
@@ -92,22 +104,31 @@ export function deriveRoutingSummary(
   }
 
   const defaultLabel = routeFinal && routeFinal !== 'direct' ? outboundLabelByTag(outboundOptions, routeFinal) : 'Напрямую';
-  const finalServer = dnsServers.find((x) => x.tag === dnsGlobals.final);
-  const defaultDnsLabel = finalServer ? finalServer.server || finalServer.tag : 'системный';
+  const directServer = dnsServers.find((x) => x.tag === dnsGlobals.final)
+    ?? dnsServers.find((x) => x.tag === 'dns-direct')
+    ?? dnsServers.find((x) => !x.detour || x.detour === 'direct' || x.detour === 'DIRECT');
+  const defaultDnsLabel = directServer ? (directServer.server || directServer.tag) : 'системный';
+  const defaultDnsTag = directServer?.tag ?? null;
 
   // На легаси-конфигах detour может висеть на dns-direct — тег dns-tunnel
   // приоритетнее первого сервера с detour.
-  const detourServer = dnsServers.find((s) => s.tag === DNS_TUNNEL_TAG) ?? dnsServers.find((s) => !!s.detour);
+  const detourServer = dnsServers.find((s) => s.tag === DNS_TUNNEL_TAG)
+    ?? dnsServers.find((s) => !!s.detour && s.detour !== 'direct' && s.detour !== 'DIRECT')
+    ?? dnsServers.find((s) => directServer && s.tag !== directServer.tag);
   const tunnelDnsLabel = detourServer ? (detourServer.server || detourServer.tag) : null;
+  const tunnelDnsDetour = detourServer?.detour ?? null;
+  const tunnelDnsDetourLabel = tunnelDnsDetour ? outboundLabelByTag(outboundOptions, tunnelDnsDetour) : null;
 
   return {
     defaultLabel,
     defaultDnsLabel,
-    defaultDnsTag: finalServer?.tag ?? null,
+    defaultDnsTag,
     tunnels: tunnels.map((tag) => outboundLabelByTag(outboundOptions, tag)),
     tunneledRuleCount: tunneled.length,
     bypassRuleCount: bypass.length,
     tunnelDnsLabel,
     tunnelDnsTag: detourServer?.tag ?? null,
+    tunnelDnsDetour,
+    tunnelDnsDetourLabel,
   };
 }
