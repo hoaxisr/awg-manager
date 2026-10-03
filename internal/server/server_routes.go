@@ -19,6 +19,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	sysports "github.com/hoaxisr/awg-manager/internal/sys/ports"
+	systraffic "github.com/hoaxisr/awg-manager/internal/sys/traffic"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -81,6 +82,7 @@ type routeHandlers struct {
 	accessPolicyHandler  *api.AccessPolicyHandler
 	crHandler            *api.ClientRouteHandler
 	systemToolsHandler   *api.SystemToolsHandler
+	trafficHandler       *systraffic.Handler
 
 	// guarded оборачивает handler в auth-middleware (RequireAuthFunc).
 	guarded func(http.HandlerFunc) http.HandlerFunc
@@ -224,6 +226,28 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.terminalHandler = api.NewTerminalHandler(s.terminalManager, s.loggingService)
 	h.systemToolsHandler = api.NewSystemToolsHandler(s.settings, h.appLog)
 	h.systemToolsHandler.SetEventBus(s.bus)
+
+	if s.trafficHandler != nil {
+		h.trafficHandler = s.trafficHandler
+	} else {
+		trafficSvc := systraffic.NewService(s.accessPolicyService, s.ndmsTransport, s.loggingService)
+		if s.settings != nil {
+			trafficSvc.SetSettingsStore(s.settings)
+		}
+		if s.presetCatalog != nil {
+			trafficSvc.SetPresetCatalog(s.presetCatalog)
+		}
+		if s.hydraService != nil {
+			trafficSvc.SetHydraService(s.hydraService)
+		}
+		if s.staticRouteService != nil {
+			trafficSvc.SetStaticRouteService(s.staticRouteService)
+		}
+		if s.singboxRouterHandler != nil {
+			trafficSvc.SetRouterService(s.singboxRouterHandler.Service())
+		}
+		h.trafficHandler = systraffic.NewHandler(trafficSvc)
+	}
 
 	h.eventsHandler = api.NewEventsHandler(s.bus, s.instanceID)
 
@@ -1349,6 +1373,10 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 
 // registerStaticRoutes — preset catalog and the SPA static handler (must stay last).
 func (s *Server) registerStaticRoutes(mux *http.ServeMux, h *routeHandlers) {
+	if h.trafficHandler != nil {
+		h.trafficHandler.RegisterRoutes(mux, h.guarded)
+	}
+
 	// Unified preset catalog (protected, read-only in U0)
 	if s.presetCatalog != nil {
 		presetsHandler := api.NewPresetsHandler(s.presetCatalog)

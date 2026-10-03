@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { AlertTriangle } from 'lucide-svelte';
 	import { Tabs } from '$lib/components/ui';
+	import TrafficAnalysisPanel from './TrafficAnalysisPanel.svelte';
 	import FileManager from './FileManager.svelte';
 	import ServicesPanel from './ServicesPanel.svelte';
 	import PackagesPanel from './PackagesPanel.svelte';
@@ -12,9 +13,10 @@
 	import PinkPoniesPanel from './PinkPoniesPanel.svelte';
 	import { poniesUnlocked } from '$lib/stores/poniesUnlocked';
 
-	type SystemView = 'files' | 'services' | 'packages' | 'terminal' | 'ports' | 'processes' | 'ponies';
+	type SystemView = 'traffic' | 'files' | 'services' | 'packages' | 'terminal' | 'ports' | 'processes' | 'ponies';
 
 	const baseViews: { id: SystemView; label: string }[] = [
+		{ id: 'traffic', label: 'Анализ трафика' },
 		{ id: 'files', label: 'Файлы' },
 		{ id: 'services', label: 'Службы' },
 		{ id: 'packages', label: 'Пакеты opkg' },
@@ -32,7 +34,7 @@
 
 	function initialView(): SystemView {
 		const v = $page.url.searchParams.get('view');
-		if (v === 'services' || v === 'packages' || v === 'terminal' || v === 'ports' || v === 'processes' || v === 'ponies') return v;
+		if (v === 'traffic' || v === 'services' || v === 'packages' || v === 'terminal' || v === 'ports' || v === 'processes' || v === 'ponies') return v;
 		return 'files';
 	}
 
@@ -46,7 +48,7 @@
 			} else {
 				activeView = 'files';
 			}
-		} else if (v === 'files' || v === 'services' || v === 'packages' || v === 'terminal' || v === 'ports' || v === 'processes') {
+		} else if (v === 'traffic' || v === 'files' || v === 'services' || v === 'packages' || v === 'terminal' || v === 'ports' || v === 'processes') {
 			activeView = v;
 		} else if (!$page.url.searchParams.has('view')) {
 			activeView = 'files';
@@ -80,7 +82,9 @@
 	<Tabs tabs={views} active={activeView} onchange={(id) => setView(id as SystemView)} />
 
 	<div class="panel">
-		{#if activeView === 'files'}
+		{#if activeView === 'traffic'}
+			<TrafficAnalysisPanel />
+		{:else if activeView === 'files'}
 			<FileManager />
 		{:else if activeView === 'services'}
 			<ServicesPanel />
