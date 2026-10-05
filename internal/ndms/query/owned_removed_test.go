@@ -244,6 +244,30 @@ func TestRemoved_Lifecycle(t *testing.T) {
 			t.Fatal("(7) список старше Forget снял метку removed")
 		}
 	})
+
+	// (8) список начат до Forget и прочитал живой X; до его применения пришёл
+	// опоздавший свой ifcreated X — его метка (gone=false) перекрыла метку
+	// Forget. Список старше Forget не воскрешает X и метку removed не снимает:
+	// страж сравнивает и seq Forget с началом списка. Мутация «страж только по
+	// exist-метке» → X в карте, RemovedByUs=false, красный.
+	t.Run("list older than forget, late ifcreated", func(t *testing.T) {
+		f, s, _ := ownedStore(t)
+		var once sync.Once
+		f.InList(func() {
+			once.Do(func() {
+				f.Remove(x)
+				s.Forget(x)
+				s.OnCreated(x)
+			})
+		})
+		if err := s.Refresh(ctx); err != nil {
+			t.Fatal(err)
+		}
+		f.InList(nil)
+		if s.Shown(x) || !s.RemovedByUs(x) {
+			t.Fatalf("(8) Shown=%v RemovedByUs=%v, want false/true", s.Shown(x), s.RemovedByUs(x))
+		}
+	})
 }
 
 // L3: TTL метки removed = expectedHookTTL оркестратора (45 с): стенд 01.10 —

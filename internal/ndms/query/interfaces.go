@@ -168,12 +168,14 @@ type InterfaceStore struct {
 	// списком. ConfirmCreated без created держит здесь имя только на время
 	// ожидания (FreeIndex, M6′).
 	owned map[string]struct{}
-	// removed — момент нашего успешного `no interface` (Forget) по имени (П20).
+	// removed — seq и момент нашего успешного `no interface` (Forget) по имени (П20).
 	// Метка не потребляется (хуки FIFO); доказательство «снято нами» — пока
 	// ей не больше removedProofTTL. Снимает новое воплощение имени: вход
 	// ConfirmCreated, запись id в карту списком. ifcreated — нет: при живой
-	// метке он двусмыслен, решает список (OnCreated, verify).
-	removed map[string]time.Time
+	// метке он двусмыслен, решает список (OnCreated, verify). seq держит
+	// страж воскрешения: метку gone из Forget может перекрыть опоздавший
+	// ifcreated, а список, начатый до Forget, всё равно не применяется к id.
+	removed map[string]removedMark
 	// createdBackoff — паузы между списками ConfirmCreated.
 	createdBackoff []time.Duration
 	// now — часы возраста списка действия (подменяются тестом).
@@ -216,7 +218,7 @@ func NewInterfaceStore(g Getter, log Logger) *InterfaceStore {
 		exist:     make(map[string]existMark),
 		raw:       make(map[string]json.RawMessage),
 		owned:     make(map[string]struct{}),
-		removed:   make(map[string]time.Time),
+		removed:   make(map[string]removedMark),
 
 		createdBackoff: confirmCreatedBackoff,
 		now:            time.Now,
@@ -381,14 +383,15 @@ func (s *InterfaceStore) unnamedLocked(raw map[string]ndms.Interface, start uint
 // applyListLocked кладёт свежий список в карту (П1): каждая запись — целиком,
 // всё, чего в списке нет, удаляется. Исключение одно — страж воскрешения: id,
 // которого нет в карте и который снят меткой новее начала списка start, не
-// кладётся. Срабатывает по нашему `no interface` (Forget, цель) и по
+// кладётся. Срабатывает по нашему `no interface` (Forget, цель; по seq метки
+// removed — gone-метку Forget перекрывает опоздавший свой ifcreated) и по
 // устаревшему ifdestroyed чужого X, которого карта ещё не знает: тогда X не в
 // карте до следующего ifcreated/списка; команды решают по ответу, не по карте.
 // Известный id страж не трогает: хук — подсказка, карта — по списку.
 func (s *InterfaceStore) applyListLocked(raw map[string]ndms.Interface, wire map[string]json.RawMessage, start uint64) {
 	now := time.Now()
 	for id, rec := range raw {
-		if _, known := s.byID[id]; !known && s.goneSinceLocked(id, start) {
+		if _, known := s.byID[id]; !known && (s.goneSinceLocked(id, start) || s.removed[id].seq > start) {
 			continue
 		}
 		cp := rec
@@ -429,6 +432,12 @@ func (s *InterfaceStore) applyListLocked(raw map[string]ndms.Interface, wire map
 func (s *InterfaceStore) goneSinceLocked(id string, start uint64) bool {
 	m, ok := s.exist[id]
 	return ok && m.gone && m.seq > start
+}
+
+// removedMark — наш Forget: seq метки существования и момент (TTL).
+type removedMark struct {
+	seq uint64
+	at  time.Time
 }
 
 // existMark — seq метки существования и её знак (gone — снят).
@@ -1138,8 +1147,8 @@ func (s *InterfaceStore) RemovedByUs(name string) bool {
 // removedByUsLocked — метка removed есть и не старше removedProofTTL.
 // Просроченную не удаляет (зовётся и под RLock): их чистит Forget.
 func (s *InterfaceStore) removedByUsLocked(id string) bool {
-	at, ok := s.removed[id]
-	return ok && s.now().Sub(at) <= removedProofTTL
+	m, ok := s.removed[id]
+	return ok && s.now().Sub(m.at) <= removedProofTTL
 }
 
 // Forget — запись снята нашей командой: зовётся ТОЛЬКО после своего успешного
@@ -1157,12 +1166,12 @@ func (s *InterfaceStore) Forget(id string) {
 	delete(s.raw, id)
 	delete(s.owned, id)
 	now := s.now()
-	for n, at := range s.removed {
-		if now.Sub(at) > removedProofTTL {
+	for n, m := range s.removed {
+		if now.Sub(m.at) > removedProofTTL {
 			delete(s.removed, n)
 		}
 	}
-	s.removed[id] = now
+	s.removed[id] = removedMark{seq: s.seq, at: now}
 }
 
 // OnSystemName — имя ядра из хука NDMS (`system_name` есть в хуках, стенд
