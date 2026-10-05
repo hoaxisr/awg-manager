@@ -277,7 +277,7 @@ func (g *ctxGetter) Get(ctx context.Context, path string, dst any) error {
 // присоединившийся не наследует «context canceled» — читает свой список.
 func TestSnapshot_JoinerSurvivesLeaderCancel(t *testing.T) {
 	f := snapshotFake()
-	g := &ctxGetter{Getter: f, entered: make(chan struct{})}
+	g := &ctxGetter{Getter: f, entered: make(chan struct{}, 1)}
 	lg := joinLogger{joined: make(chan struct{}, 4)}
 	s := NewInterfaceStore(g, lg)
 	if _, err := s.Snapshot(context.Background(), SnapshotRecent); err != nil { // bootstrap
@@ -312,7 +312,7 @@ func TestSnapshot_JoinerSurvivesLeaderCancel(t *testing.T) {
 // берут уже свежий снимок). 5 присоединившихся → 1 новый список.
 func TestSnapshot_JoinersAfterLeaderCancel_OneList(t *testing.T) {
 	f := snapshotFake()
-	g := &ctxGetter{Getter: f, entered: make(chan struct{})}
+	g := &ctxGetter{Getter: f, entered: make(chan struct{}, 1)}
 	lg := joinLogger{joined: make(chan struct{}, 64)}
 	s := NewInterfaceStore(g, lg)
 	if _, err := s.Snapshot(context.Background(), SnapshotRecent); err != nil { // bootstrap
