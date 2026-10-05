@@ -130,3 +130,117 @@ export type SystemProcSnapshot = {
 	processSummary: SystemProcSummary;
 	processes: SystemProcessItem[];
 };
+
+export type DomainKnowledge = {
+	title?: string;
+	description?: string;
+	org?: string;
+	country?: string;
+	countryCode?: string;
+	icon?: string;
+	category?: string;
+};
+
+export type ItemRouteStatus = {
+	target: 'mihomo' | 'singbox' | 'catalog' | 'ndms' | 'hydraroute' | 'static_route';
+	targetLabel: string;
+	ruleName: string;
+	ruleId?: string;
+	matchedPattern?: string;
+	isDirect?: boolean;
+};
+
+export type TrafficDevice = {
+	ip: string;
+	mac: string;
+	name: string;
+	hostname: string;
+	active: boolean;
+	activeSessions: number;
+	policy?: string;
+};
+
+export type TrafficSession = {
+	id: string;
+	protocol: string;
+	srcIp: string;
+	srcPort: number;
+	dstIp: string;
+	dstPort: number;
+	domain?: string;
+	state: string;
+	packets: number;
+	bytesIn: number;
+	bytesOut: number;
+	totalBytes: number;
+	ttl: number;
+	serviceName?: string;
+	serviceCategory?: string;
+	knowledge?: DomainKnowledge;
+	domainRoutes?: ItemRouteStatus[];
+	ipRoutes?: ItemRouteStatus[];
+	isConfigured?: boolean;
+};
+
+export type TrafficDomainGroup = {
+	groupKey: string;
+	title?: string;
+	domain: string;
+	domains?: string[];
+	serviceName?: string;
+	serviceCategory?: string;
+	knowledge?: DomainKnowledge;
+	sessionCount: number;
+	totalBytes: number;
+	bytesIn: number;
+	bytesOut: number;
+	ips: string[];
+	ports: number[];
+	sessions?: TrafficSession[];
+	domainStatuses?: Record<string, ItemRouteStatus[]>;
+	ipStatuses?: Record<string, ItemRouteStatus[]>;
+	existingRules?: string[];
+	overallStatus: 'routed' | 'partial' | 'new';
+	newDomainsCount: number;
+	newIpsCount: number;
+};
+
+export type ActiveEngineInfo = {
+	id: 'catalog' | 'mihomo' | 'singbox' | 'hydraroute' | 'static_route';
+	label: string;
+	description: string;
+	active: boolean;
+};
+
+export type TrafficSnapshot = {
+	device: TrafficDevice;
+	totalSessions: number;
+	activeCount: number;
+	totalBytesIn: number;
+	totalBytesOut: number;
+	domainGroups: TrafficDomainGroup[];
+	sessions: TrafficSession[];
+	activeEngines?: ActiveEngineInfo[];
+	timestamp: string;
+};
+
+export type TrafficExportRequest = {
+	target: 'catalog' | 'mihomo' | 'singbox' | 'hydraroute' | 'static_route';
+	mode?: 'append' | 'create';
+	targetRuleId?: string;
+	targetPresetId?: string;
+	serviceName?: string;
+	domains?: string[];
+	ips?: string[];
+	outbound?: string;
+};
+
+export type TrafficExportResponse = {
+	success: boolean;
+	message: string;
+	count: number;
+	addedDomains?: string[];
+	addedIps?: string[];
+	skippedDomains?: string[];
+	skippedIps?: string[];
+};
