@@ -978,3 +978,67 @@ func TestProc_SessionFailureAccumulatesBackoff(t *testing.T) {
 	}
 }
 
+func TestProcAutoReconnect_LogTruncatedOrRotated(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "test.log")
+	initialData := make([]byte, 100)
+	for i := range initialData {
+		initialData[i] = 'A'
+	}
+	if err := os.WriteFile(logFile, initialData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail := readLogTail(logFile, 80, 16384)
+	if len(tail) != 20 {
+		t.Fatalf("ожидали 20 байт, получили %d", len(tail))
+	}
+
+	// Внешняя ротация/усечение: файл стал короче startOffset
+	if err := os.WriteFile(logFile, []byte("сессия разорвана\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Функция должна сбросить смещение и прочесть новый короткий файл
+	tail = readLogTail(logFile, 80, 16384)
+	if !strings.Contains(tail, "сессия разорвана") {
+		t.Fatalf("ожидали прочесть усечённый лог, получили: %q", tail)
+	}
+}
+
+func TestProc_RestartSpawnFailureAccumulatesBackoff(t *testing.T) {
+	now := time.Now()
+	clock := func() time.Time { return now }
+	link := &fakeLink{st: awgmproto.State{PID: 101, UptimeS: 3600}}
+	spawnErr := errors.New("cannot spawn binary")
+	runner := &fakeRunner{pid: 101, alive: true, startErr: spawnErr}
+	p := newProc(link, runner, okGate{}, clock)
+	p.enabled = true
+	p.autoReconnect = true
+	p.reconnectInterval = time.Hour
+
+	step := proxyrt.Step{
+		Resource: p.c.ID,
+		Op:       "restart",
+		Reason:   "плановое переподключение (interval)",
+		Args:     map[string]string{"cause": "interval"},
+	}
+	err := p.Apply(context.Background(), step)
+	if err == nil {
+		t.Fatal("ожидали ошибку spawn")
+	}
+	if p.fails != 1 {
+		t.Fatalf("fails = %d, want 1 (backoff должен накапливаться при ошибке spawn)", p.fails)
+	}
+}
+
+func TestProc_StopResetsLastUptimeS(t *testing.T) {
+	p := newProc(&fakeLink{}, &fakeRunner{}, okGate{}, time.Now)
+	p.lastUptimeS = 7200
+	if err := p.stop(context.Background()); err != nil {
+		t.Fatalf("stop err: %v", err)
+	}
+	if p.lastUptimeS != 0 {
+		t.Fatalf("lastUptimeS = %d, want 0 после stop", p.lastUptimeS)
+	}
+}
+

@@ -148,7 +148,6 @@ func (p *Proc) ID() proxyrt.ResourceID { return p.c.ID }
 var fatalSessionSignatures = []string{
 	"error 401: Unauthorized",
 	"[VK Auth] Multiple auth errors detected",
-	"Credentials cache invalidated",
 	"[VK Auth] Persona burned",
 	"TURN Allocate: Allocate error",
 	"failed to allocate TURN",
@@ -177,6 +176,9 @@ func readLogTail(path string, startOffset int64, maxBytes int64) string {
 		startOffset = 0
 	}
 	fileSize := st.Size()
+	if fileSize < startOffset {
+		startOffset = 0
+	}
 	if fileSize <= startOffset {
 		return ""
 	}
@@ -271,6 +273,7 @@ func (p *Proc) Observe(ctx context.Context) (proxyrt.Observation, error) {
 			p.recordFail(now)
 		}
 		p.spawnedAt, p.unreachSince = nil, nil
+		p.lastUptimeS = 0
 		return proxyrt.Observation{Known: true, Exists: false,
 			Detail: fmt.Sprintf("процесс не запущен (%v)", err)}, nil
 	}
@@ -422,12 +425,10 @@ func (p *Proc) Apply(ctx context.Context, s proxyrt.Step) error {
 		}
 		return err
 	case "restart":
-		defer func() {
-			p.rmu.Lock()
-			p.restartWanted = false
-			p.restartReason = ""
-			p.rmu.Unlock()
-		}()
+		p.rmu.Lock()
+		p.restartWanted = false
+		p.restartReason = ""
+		p.rmu.Unlock()
 		// Гейт и backoff — ДО stop (I-2 ревью-2): гасить живой (и, возможно,
 		// пропускающий трафик) процесс, когда заменить его нечем — пин на
 		// диске тоже стар — нельзя. При старом пине restart вырождается в
@@ -462,7 +463,7 @@ func (p *Proc) stop(ctx context.Context) error {
 	if pid == 0 {
 		pid, _ = p.c.Runner.AlivePID()
 	}
-	p.spawnedAt, p.unreachSince = nil, nil
+	p.spawnedAt, p.unreachSince, p.lastUptimeS = nil, nil, 0
 	return p.c.Runner.Stop(ctx, pid)
 }
 
@@ -561,6 +562,9 @@ func (p *Proc) recordFail(now time.Time) {
 // будет: окно старта сокета, окно переподключения (§7), пауза
 // анти-флаппинга и интервал автопереподключения.
 func (p *Proc) RecheckAfter() time.Duration {
+	if !p.enabled {
+		return 0
+	}
 	now := p.c.Now()
 	if p.spawnedAt != nil && now.Sub(*p.spawnedAt) < socketGrace {
 		return socketWaitRecheck
@@ -571,7 +575,7 @@ func (p *Proc) RecheckAfter() time.Duration {
 	if until := p.retryAt(); now.Before(until) {
 		return until.Sub(now)
 	}
-	if p.enabled && p.autoReconnect && p.reconnectInterval > 0 && p.lastUptimeS > 0 {
+	if p.autoReconnect && p.reconnectInterval > 0 && p.lastUptimeS > 0 {
 		currentUptime := time.Duration(p.lastUptimeS)*time.Second + now.Sub(p.lastObservedAt)
 		if currentUptime < p.reconnectInterval {
 			return p.reconnectInterval - currentUptime
