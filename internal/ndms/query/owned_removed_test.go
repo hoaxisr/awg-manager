@@ -50,12 +50,12 @@ func TestOwned_Lifecycle(t *testing.T) {
 		if _, err := s.ConfirmCreated(ctx, "OpkgTun1", true); err != nil {
 			t.Fatal(err)
 		}
-		if own := s.OnCreated("OpkgTun1"); !own || dirtyAt(s) != 0 {
+		if own, _ := s.OnCreated("OpkgTun1"); !own || dirtyAt(s) != 0 {
 			t.Fatalf("(1) own=%v dirtyAt=%d, want true/0", own, dirtyAt(s))
 		}
 		f.Remove("OpkgTun1")
 		s.Forget("OpkgTun1")
-		if own := s.OnCreated("OpkgTun1"); own || dirtyAt(s) == 0 {
+		if own, _ := s.OnCreated("OpkgTun1"); own || dirtyAt(s) == 0 {
 			t.Fatalf("(2) после Forget: own=%v dirtyAt=%d, want false/≠0", own, dirtyAt(s))
 		}
 	})
@@ -68,7 +68,7 @@ func TestOwned_Lifecycle(t *testing.T) {
 		if _, err := s.ConfirmCreated(ctx, "Wireguard1", true); err == nil {
 			t.Fatal("want ErrNotListed")
 		}
-		if own := s.OnCreated("Wireguard1"); own {
+		if own, _ := s.OnCreated("Wireguard1"); own {
 			t.Fatal("(3) own=true после ErrNotListed")
 		}
 	})
@@ -85,7 +85,7 @@ func TestOwned_Lifecycle(t *testing.T) {
 		if err := s.Refresh(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if own := s.OnCreated("OpkgTun3"); own {
+		if own, _ := s.OnCreated("OpkgTun3"); own {
 			t.Fatal("(4) own=true после ухода записи из списка")
 		}
 	})
@@ -99,7 +99,7 @@ func TestOwned_Lifecycle(t *testing.T) {
 		if _, err := s.ConfirmCreated(ctx, "Wireguard1", true); err != nil {
 			t.Fatal(err)
 		}
-		if own := s.OnCreated("Wireguard1"); !own {
+		if own, _ := s.OnCreated("Wireguard1"); !own {
 			t.Fatal("(6) own=false: владение снято списком ожидания без записи")
 		}
 	})
@@ -112,7 +112,7 @@ func TestOwned_Lifecycle(t *testing.T) {
 		if _, err := s.ConfirmCreated(ctx, "OpkgTun4", false); err != nil {
 			t.Fatal(err)
 		}
-		if own := s.OnCreated("OpkgTun4"); own {
+		if own, _ := s.OnCreated("OpkgTun4"); own {
 			t.Fatal("(5) own=true при created=false")
 		}
 	})
@@ -144,17 +144,32 @@ func TestRemoved_Lifecycle(t *testing.T) {
 		}
 	})
 
-	// (3) новое воплощение по хуку ifcreated снимает метку. Мутация «не
-	// снимать в OnCreated» → own=true, красный.
-	t.Run("reborn by hook", func(t *testing.T) {
-		f, s, _ := ownedStore(t)
-		f.Remove(x)
-		s.Forget(x)
-		f.Add(ndms.Interface{ID: x, Type: "OpkgTun"})
-		s.OnCreated(x)
-		f.Remove(x)
-		if own := s.OnDestroyed(x); own {
-			t.Fatal("(3) ifdestroyed чужого воплощения принят за своё")
+	// (3) T5: ifcreated имени, снятого нами, двусмыслен — verify, метку не
+	// снимает; решает список. Запись в списке — чужое воплощение, метка снята;
+	// записи нет — хук наш опоздавший, метка жива, свой ifdestroyed за ним —
+	// свой. Мутации: «снимать метку в OnCreated» → «нет записи» own=false,
+	// красный; «verify=false» → красный.
+	t.Run("ifcreated after forget", func(t *testing.T) {
+		for _, recreated := range []bool{true, false} {
+			f, s, _ := ownedStore(t)
+			f.Remove(x)
+			s.Forget(x)
+			if recreated {
+				f.Add(ndms.Interface{ID: x, Type: "OpkgTun"})
+			}
+			if own, verify := s.OnCreated(x); own || !verify || dirtyAt(s) == 0 {
+				t.Fatalf("(3) recreated=%v: own=%v verify=%v dirtyAt=%d, want false/true/≠0", recreated, own, verify, dirtyAt(s))
+			}
+			if err := s.ReconcileDirty(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if s.Shown(x) != recreated {
+				t.Fatalf("(3) recreated=%v: Shown=%v", recreated, s.Shown(x))
+			}
+			f.Remove(x)
+			if own := s.OnDestroyed(x); own == recreated {
+				t.Fatalf("(3) recreated=%v: ifdestroyed own=%v", recreated, own)
+			}
 		}
 	})
 

@@ -45,11 +45,12 @@ type Dispatcher struct {
 
 	// Одна горутина списка на диспетчер (listing); пачки существования,
 	// пришедшие за время её списка, склеиваются в ОДИН следующий (again,
-	// againPublish — OR их publish).
+	// againPublish — OR их publish, againVerify — их verify).
 	listMu       sync.Mutex
 	listing      bool
 	again        bool
 	againPublish bool
+	againVerify  []string
 
 	notify    chan struct{} // cap=1, non-blocking wake
 	stopCh    chan struct{}
@@ -104,7 +105,8 @@ func (d *Dispatcher) SetRoutingChanged(fn RoutingChangedListener) {
 // the list of EVERY batch that carried ifcreated/ifdestroyed — even when the
 // list failed (Warn; the map stays dirty for the next reader). publish — в
 // пачке был хук существования чужого имени: ifcreated не из owned,
-// ifdestroyed не из removed (InterfaceStore, П14/П20). Свои создание и
+// ifdestroyed не из removed (InterfaceStore, П14/П20); ifcreated имени,
+// снятого нами (verify, T5), — только если список пачки показал запись. Свои создание и
 // снятие хуком не публикуются (решение владельца В3): до записи туннеля в
 // стор новый интерфейс показался бы в «системных» призраком. nil — nothing
 // is published.
@@ -185,10 +187,14 @@ func (d *Dispatcher) drain() {
 	}
 
 	existence, publish := false, false
+	var verify []string
 	for _, e := range batch {
-		own := d.apply(e)
-		switch e.Type {
-		case EventIfCreated, EventIfDestroyed:
+		own, check := d.apply(e)
+		switch {
+		case check:
+			existence = true
+			verify = append(verify, e.ID)
+		case e.Type == EventIfCreated || e.Type == EventIfDestroyed:
 			existence = true
 			publish = publish || !own
 		}
@@ -200,7 +206,7 @@ func (d *Dispatcher) drain() {
 		existence, publish = true, true
 	}
 	if existence {
-		d.scheduleList(publish)
+		d.scheduleList(publish, verify)
 	}
 
 	if p := d.onRouting.Load(); p != nil {
@@ -211,31 +217,43 @@ func (d *Dispatcher) drain() {
 // scheduleList запускает горутину списка или, если она уже работает,
 // заказывает ей ровно один следующий список: всплеск хуков стоит ≤2 списков,
 // а не по списку на пачку параллельно.
-func (d *Dispatcher) scheduleList(publish bool) {
+func (d *Dispatcher) scheduleList(publish bool, verify []string) {
 	d.listMu.Lock()
 	defer d.listMu.Unlock()
 	if d.listing {
 		d.again = true
 		d.againPublish = d.againPublish || publish
+		d.againVerify = append(d.againVerify, verify...)
 		return
 	}
 	d.listing = true
-	go d.listExistence(publish)
+	go d.listExistence(publish, verify)
 }
 
 // listExistence — список пачки хуков существования, затем слушатель; пока
 // за время списка пришли новые пачки — ещё круг. Хуки, разошедшиеся с картой,
 // сверяются ОДНИМ списком (join с читателями карты); совпавшие с картой не
 // стоят ни одного запроса. Слушатель — строго после списка: публикация до него
-// отдала бы UI карту без этой пачки.
-func (d *Dispatcher) listExistence(publish bool) {
+// отдала бы UI карту без этой пачки. verify — ifcreated имён, снятых нами
+// (T5): публикуются, только если этот список показал запись; список не
+// прочитан — публикуются (не знаем, чьё).
+func (d *Dispatcher) listExistence(publish bool, verify []string) {
 	for {
+		listed := false
 		if d.queries != nil && d.queries.Interfaces != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			if err := d.queries.Interfaces.ReconcileDirty(ctx); err != nil {
 				d.log.Warnf("reconcile dirty interfaces: %v", err)
+			} else {
+				listed = true
 			}
 			cancel()
+		}
+		for _, id := range verify {
+			if publish || !listed || d.queries.Interfaces.Shown(id) {
+				publish = true
+				break
+			}
 		}
 		if p := d.onExisting.Load(); p != nil {
 			(*p)(publish)
@@ -246,8 +264,8 @@ func (d *Dispatcher) listExistence(publish bool) {
 			d.listMu.Unlock()
 			return
 		}
-		publish = d.againPublish
-		d.again, d.againPublish = false, false
+		publish, verify = d.againPublish, d.againVerify
+		d.again, d.againPublish, d.againVerify = false, false, nil
 		d.listMu.Unlock()
 	}
 }
@@ -296,10 +314,11 @@ func (d *Dispatcher) refreshAfterOverflow() {
 // in follow-up PRs.
 //
 // own — хук существования своего имени (OnCreated/OnDestroyed): ifcreated
-// созданного нами, ifdestroyed снятого нами. Без карты — чужое.
-func (d *Dispatcher) apply(e Event) (own bool) {
+// созданного нами, ifdestroyed снятого нами. verify — ifcreated имени,
+// снятого нами: чьё оно, решит список пачки. Без карты — чужое.
+func (d *Dispatcher) apply(e Event) (own, verify bool) {
 	if d.queries == nil {
-		return false
+		return false, false
 	}
 
 	// === Event-sourced InterfaceStore path ===
@@ -311,7 +330,7 @@ func (d *Dispatcher) apply(e Event) (own bool) {
 		}
 		switch e.Type {
 		case EventIfCreated:
-			own = d.queries.Interfaces.OnCreated(e.ID)
+			own, verify = d.queries.Interfaces.OnCreated(e.ID)
 		case EventIfDestroyed:
 			own = d.queries.Interfaces.OnDestroyed(e.ID)
 		case EventIfLayerChanged:
@@ -358,5 +377,5 @@ func (d *Dispatcher) apply(e Event) (own bool) {
 			d.queries.Routes.InvalidateAll()
 		}
 	}
-	return own
+	return own, verify
 }

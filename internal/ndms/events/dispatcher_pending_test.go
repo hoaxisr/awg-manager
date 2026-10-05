@@ -410,20 +410,93 @@ func TestDispatcher_ForeignDestroyed_RecreatedName_Published(t *testing.T) {
 	}
 }
 
-// Своё создание и чужое снятие в одной пачке — публикация (OR по пачке).
+// Своё создание и чужое снятие в одной пачке — публикация (OR по пачке),
+// в любом порядке хуков. Мутации: «publish без own» → красный; «решает
+// последнее событие» (publish = !own) → «чужое → своё» publish=false, красный.
 func TestDispatcher_OwnCreatedPlusForeignDestroyed_Published(t *testing.T) {
-	f, q, d, listed := ownOracle(t)
-	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
-	if _, err := q.Interfaces.ConfirmCreated(context.Background(), "Wireguard1", true); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name         string
+		foreignFirst bool
+	}{
+		{"своё → чужое", false},
+		{"чужое → своё", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, q, d, listed := ownOracle(t)
+			f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
+			if _, err := q.Interfaces.ConfirmCreated(context.Background(), "Wireguard1", true); err != nil {
+				t.Fatal(err)
+			}
+			f.Remove("Wireguard0")
+			own := Event{Type: EventIfCreated, ID: "Wireguard1"}
+			foreign := Event{Type: EventIfDestroyed, ID: "Wireguard0"}
+			if tc.foreignFirst {
+				own, foreign = foreign, own
+			}
+			d.Enqueue(own)
+			d.Enqueue(foreign)
+			d.Start()
+			defer d.Stop()
+			if p := waitListed(t, listed); !p {
+				t.Fatal("чужое снятие в пачке со своим созданием не опубликовано")
+			}
+		})
 	}
+}
+
+// T5: ifcreated имени, снятого нами (Forget), двусмыслен — решает список
+// пачки. Запись показана — чужое пересоздание, публикация. Не показана — наш
+// ifcreated, опоздавший за нашим сносом (откат, ErrNotListed): публикации нет,
+// и свой ifdestroyed за ним — свой. Цена различения — список пачки (+1, как у
+// любого ifcreated, разошедшегося с картой); публикаций 0.
+// Мутации: «verify как чужое» (publish=true без списка) → «нет записи»
+// красный; «verify никогда не публикует» → «запись есть» красный; «OnCreated
+// снимает removed» → ifdestroyed после «нет записи» publish=true, красный.
+func TestDispatcher_IfCreatedAfterForget_ListDecides(t *testing.T) {
+	for _, recreated := range []bool{true, false} {
+		t.Run(map[bool]string{true: "запись есть", false: "нет записи"}[recreated], func(t *testing.T) {
+			f, q, d, listed := ownOracle(t)
+			f.Remove("Wireguard0")
+			q.Interfaces.Forget("Wireguard0")
+			if recreated {
+				f.Add(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
+			}
+			lists := f.ListCalls()
+			d.Start()
+			defer d.Stop()
+			d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard0"})
+			if p := waitListed(t, listed); p != recreated {
+				t.Fatalf("ifcreated: publish=%v, want %v", p, recreated)
+			}
+			if n := f.ListCalls() - lists; n != 1 {
+				t.Fatalf("списков +%d, want 1 (список пачки решает)", n)
+			}
+			if recreated {
+				return
+			}
+			d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
+			if p := waitListed(t, listed); p {
+				t.Fatal("свой ifdestroyed за опоздавшим своим ifcreated опубликован")
+			}
+			if n := f.ListCalls() - lists; n != 1 {
+				t.Fatalf("списков +%d, want 1", n)
+			}
+		})
+	}
+}
+
+// T5: список пачки не прочитан — чьё ifcreated, неизвестно: публикуется
+// (как до T5). Мутация «список не прочитан — не публиковать» → красный.
+func TestDispatcher_VerifyListFailed_Published(t *testing.T) {
+	f, q, d, listed := ownOracle(t)
 	f.Remove("Wireguard0")
-	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"})
-	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
+	q.Interfaces.Forget("Wireguard0")
+	f.FailList(errors.New("injected: rci"))
+	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard0"})
 	d.Start()
 	defer d.Stop()
 	if p := waitListed(t, listed); !p {
-		t.Fatal("чужое снятие в пачке со своим созданием не опубликовано")
+		t.Fatal("список не прочитан, а двусмысленный ifcreated не опубликован")
 	}
 }
 

@@ -1052,6 +1052,7 @@ func (o *OperatorOS5Impl) rollbackStart(ctx context.Context, tunnelID string, na
 		// первого старта (F560). Порядок как в Delete (F596/F598): устройство,
 		// затем запись — запись, снятая при живом opkgtunN, даёт C 0xcffd003b
 		// (стенд A7); свой ifdestroyed оркестратор узнаёт по карте (П20).
+		// Ожидание disabled здесь не поглощается (К27) — Task 61: одна точка регистрации, InterfaceDown.
 		o.expectHook(names.NDMSName, "disabled")
 		_ = o.backend.Stop(ctx, names.IfaceName)
 		if err := o.commands.Interfaces.DeleteOpkgTun(ctx, iface); err != nil {

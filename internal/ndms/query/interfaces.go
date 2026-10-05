@@ -170,8 +170,9 @@ type InterfaceStore struct {
 	owned map[string]struct{}
 	// removed — момент нашего успешного `no interface` (Forget) по имени (П20).
 	// Метка не потребляется (хуки FIFO); доказательство «снято нами» — пока
-	// ей не больше removedProofTTL. Снимает любое новое воплощение имени:
-	// OnCreated, вход ConfirmCreated, запись id в карту списком.
+	// ей не больше removedProofTTL. Снимает новое воплощение имени: вход
+	// ConfirmCreated, запись id в карту списком. ifcreated — нет: при живой
+	// метке он двусмыслен, решает список (OnCreated, verify).
 	removed map[string]time.Time
 	// createdBackoff — паузы между списками ConfirmCreated.
 	createdBackoff []time.Duration
@@ -1076,24 +1077,37 @@ func preferCandidate(c ndms.AllInterface, id string, win ndms.AllInterface, winI
 // === Hook-side write API (called from events.Dispatcher) ===
 
 // OnCreated — хук ifcreated: метка существования; карта не меняется (хук —
-// подсказка, карту ведёт список). Новое воплощение имени — метка removed
-// снимается (П20). own — имя наше (owned, П14): своё создание не новость для
-// UI. «Грязно» — только если хук расходится с картой (П6′): id в карте нет и
-// оно не наше (M6′ — свой ifcreated в полёте первого списка подтверждения его
-// списки и покажут). Тогда ReconcileDirty после пачки читает ОДИН список.
-// Точечное чтение здесь давало E «unable to find» на паре created→destroyed
-// одного id (F546).
-func (s *InterfaceStore) OnCreated(id string) (own bool) {
+// подсказка, карту ведёт список). own — имя наше (owned, П14): своё создание
+// не новость для UI. «Грязно» — только если хук расходится с картой (П6′): id
+// в карте нет и оно не наше (M6′ — свой ifcreated в полёте первого списка
+// подтверждения его списки и покажут). Тогда ReconcileDirty после пачки
+// читает ОДИН список. Точечное чтение здесь давало E «unable to find» на паре
+// created→destroyed одного id (F546).
+//
+// verify — имя снято нами (removed жива): хук двусмыслен (T5) — это либо наш
+// ifcreated, опоздавший за нашим же сносом (откат, ErrNotListed), либо чужое
+// пересоздание. Решает список пачки: показал запись — новое воплощение
+// (applyListLocked снимет метку, Shown), не показал — хук наш устаревший, метка
+// жива и свой ifdestroyed за ним тоже свой. Поэтому метку хук не снимает.
+func (s *InterfaceStore) OnCreated(id string) (own, verify bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.markExistLocked(id, false)
-	delete(s.removed, id)
 	_, known := s.byID[id]
 	_, own = s.owned[id]
 	if !known && !own {
 		s.dirtyAt, s.hookDirtyAt = s.seq, s.seq
 	}
-	return own
+	return own, s.removedByUsLocked(id)
+}
+
+// Shown — id в карте (последний применённый список его показал). Без RCI:
+// диспетчер спрашивает после списка пачки (verify у OnCreated).
+func (s *InterfaceStore) Shown(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.byID[id]
+	return ok
 }
 
 // OnDestroyed — хук ifdestroyed: метка существования; карта не меняется —
