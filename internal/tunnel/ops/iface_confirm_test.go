@@ -64,17 +64,17 @@ func TestDelete_Present_RemovesRecord(t *testing.T) {
 	clean(t, f)
 }
 
-// Список не прочитан — «не знаем»: ни NDMS, ни kernel-устройство не
-// трогаем (устройство снимается только перед сносом записи, а сносить её
-// без списка нельзя), ошибка наружу — оркестратор оставит запись туннеля
-// для повтора (F596, L4).
+// Список не прочитан — «не знаем»: ни host-route, ни NDMS, ни
+// kernel-устройство не трогаем (устройство снимается только перед сносом
+// записи, а сносить её без списка нельзя), ошибка наружу — оркестратор
+// оставит запись туннеля для повтора, туннель цел (F596, L4, N3).
 func TestDelete_ListError_KeepsDevice(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS(opkgTun10())
 	f.FailList(errors.New("injected: rci"))
 	be := &MockBackend{running: true}
-	o, _, _ := newOS5Oracle(t, f, be)
+	o, _, rec := newOS5Oracle(t, f, be)
 
-	err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"})
+	err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany", ResolvedEndpointIP: "203.0.113.5"})
 	if err == nil || !strings.Contains(err.Error(), "injected: rci") {
 		t.Fatalf("err = %v, want отказ чтения списка", err)
 	}
@@ -83,6 +83,9 @@ func TestDelete_ListError_KeepsDevice(t *testing.T) {
 	}
 	if len(be.StopCalls) != 0 {
 		t.Fatalf("kernel-устройство снято без списка: %v", be.StopCalls)
+	}
+	if len(rec.Calls) != 0 {
+		t.Fatalf("снос без списка (host-route и пр.):\n%s", strings.Join(rec.Calls, "\n"))
 	}
 	if !f.Has("OpkgTun10") {
 		t.Fatal("запись снята без списка")

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
 )
@@ -253,5 +255,37 @@ func TestOrphanDelete_AllAbsentDeviceWordingsAreSuccess(t *testing.T) {
 				t.Fatalf("code = %d, ждали 200: %s", rr.Code, rr.Body.String())
 			}
 		})
+	}
+}
+
+// oracleOrphanNDMS — снос записи через оракул FakeNDMS: C/E видны там.
+type oracleOrphanNDMS struct{ f *ndmsquery.FakeNDMS }
+
+func (o oracleOrphanNDMS) DeleteOpkgTun(ctx context.Context, name string) error {
+	_, err := o.f.Post(ctx, map[string]any{"interface": map[string]any{name: map[string]any{"no": true}}})
+	return err
+}
+
+// N1/F598: сирота OpkgTun10 с живым amneziawg opkgtun10 (например, после
+// потери стора туннелей). Устройство снимается до записи — иначе снос записи
+// при живом устройстве даёт C 0xcffd003b (стенд A7/B).
+func TestOrphanDelete_LiveAmneziaWG_DeviceBeforeRecord_NoC(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+	f.SetNetdev("opkgtun10", true)
+	f.SetAmneziaWG("opkgtun10", true)
+	prev := linkDelete
+	linkDelete = func(_ context.Context, iface string) error {
+		f.SetNetdev(iface, false)
+		f.SetAmneziaWG(iface, false)
+		return nil
+	}
+	t.Cleanup(func() { linkDelete = prev })
+	h := NewOrphanIfaceHandler(listOf("opkgtun10"), oracleOrphanNDMS{f}, nil)
+
+	if rr := orphanReq(t, h, `{"iface":"opkgtun10"}`); rr.Code != 200 {
+		t.Fatalf("code = %d, ждали 200 (%s)", rr.Code, rr.Body.String())
+	}
+	if f.Has("OpkgTun10") || f.C != 0 || f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("запись есть=%v C=%d E=%d фантомов=%d, want false/0/0/0; posts=%v", f.Has("OpkgTun10"), f.C, f.E, f.Phantoms, f.Posts)
 	}
 }

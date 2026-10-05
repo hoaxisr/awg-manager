@@ -602,22 +602,8 @@ func (o *OperatorOS5Impl) interfaceDownBestEffort(ctx context.Context, tunnelID 
 func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel) error {
 	names := tunnel.NewNames(stored.ID)
 
-	// 1. Remove endpoint route from kernel (host route to VPN server via WAN).
-	//    Uses persisted IP. Fallback to DNS for old tunnels without stored IP.
-	endpointIP := stored.ResolvedEndpointIP
-	if endpointIP == "" && stored.Peer.Endpoint != "" {
-		if ip, err := netutil.ResolveEndpointIP(stored.Peer.Endpoint); err == nil {
-			endpointIP = ip
-		}
-	}
-	// Петлю снимаем тоже: netutil.SkipHostRoute запрещает ставить маршрут, но
-	// не снимать — наследство прежних версий уходит с роутера отсюда и из
-	// гарда на старте. Через общий путь с ref-count: сосед к тому же серверу
-	// маршрут не потеряет (F130/#867).
-	o.removeHostRouteIfUnused(ctx, "delete", stored.ID, endpointIP)
-
-	// 2–5. Порядок F596/F598: ожидания хуков → kernel-устройство → запись
-	//    NDMS. Запись, снятая при живом amneziawg opkgtunN, даёт в журнале
+	// 1. Подтверждение записи — ДО любого сноса. Дальше порядок F596/F598:
+	//    ожидания хуков → kernel-устройство → запись NDMS. Запись, снятая при живом amneziawg opkgtunN, даёт в журнале
 	//    ndm `C Tun: system failed [0xcffd003b]` на каждом удалении (стенд
 	//    01.10, A7/B); снятое устройство, затем запись — 0 E/C (A7, повторный
 	//    Delete). Запись снимает всё своё: address, MTU, security-level,
@@ -630,15 +616,30 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 	// Записи нет в свежем списке — сносить в NDMS нечего, `no interface` по
 	// отсутствующему — строка E в журнале ndm (F546); устройство снимаем.
 	//
-	// Список не прочитан — ни устройство, ни NDMS, ни DNS не трогаем, ошибка
-	// наружу: оркестратор не удалит запись туннеля, повтор возможен.
-	// Устройство снимается только перед сносом записи, а без списка сносить
-	// её нельзя (L4; host-route шага 1 уже снят — как до F546).
+	// Список не прочитан — ни host-route, ни устройство, ни NDMS, ни DNS не
+	// трогаем, ошибка наружу: оркестратор не удалит запись туннеля, повтор
+	// возможен. Устройство снимается только перед сносом записи, а без списка
+	// сносить её нельзя (L4, N3). Маршруты правил и мониторинг оркестратор
+	// снимает раньше, до вызова Delete (decideDelete) — они вне этого шага.
 	iface, _, ok, confirmErr := confirmOpkgTun(ctx, o.queries, names.NDMSName)
 	if confirmErr != nil {
 		o.logWarn("delete", stored.ID, "read OpkgTun record: "+confirmErr.Error()+" — NDMS record and kernel interface kept")
 		return tunnel.NewOpError("delete", stored.ID, "ndms", fmt.Errorf("read OpkgTun record: %w", confirmErr))
 	}
+
+	// 2. Remove endpoint route from kernel (host route to VPN server via WAN).
+	//    Uses persisted IP. Fallback to DNS for old tunnels without stored IP.
+	endpointIP := stored.ResolvedEndpointIP
+	if endpointIP == "" && stored.Peer.Endpoint != "" {
+		if ip, err := netutil.ResolveEndpointIP(stored.Peer.Endpoint); err == nil {
+			endpointIP = ip
+		}
+	}
+	// Петлю снимаем тоже: netutil.SkipHostRoute запрещает ставить маршрут, но
+	// не снимать — наследство прежних версий уходит с роутера отсюда и из
+	// гарда на старте. Через общий путь с ref-count: сосед к тому же серверу
+	// маршрут не потеряет (F130/#867).
+	o.removeHostRouteIfUnused(ctx, "delete", stored.ID, endpointIP)
 
 	// 3. Ожидания — ДО Stop: исчезновение устройства под записью может дать
 	//    грань по OpkgTunN раньше `no interface`; оркестратор должен поглотить
