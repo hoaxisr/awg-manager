@@ -29,7 +29,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
-	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/firewall"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
@@ -160,11 +159,6 @@ func runCleanup(dataDir string) {
 	cleanupOrch := orchestrator.New(awgStore, operator, nwgOp, stateMgr, wan.NewModel(), nil)
 	tunnelService.SetOrchestrator(cleanupOrch)
 	nwgOp.SetHookNotifier(cleanupOrch)
-	if os5Op, ok := operator.(interface {
-		SetHookNotifier(tunnel.HookNotifier)
-	}); ok {
-		os5Op.SetHookNotifier(cleanupOrch)
-	}
 	// Wire HookNotifier on NDMS Commands now that the orchestrator exists.
 	cleanupNDMSCommands.SetHookNotifier(cleanupOrch)
 

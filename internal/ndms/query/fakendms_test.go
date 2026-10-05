@@ -208,7 +208,8 @@ func TestFakeNDMS_CreateOpkgTunOverDevice_CAndE(t *testing.T) {
 
 // Снос OpkgTunN при живом amneziawg opkgtunN (стенд 01.10, A7/K7/B): запись
 // снята, ответ успешный, но C 0xcffd003b — в обеих формах сноса (RCI и
-// parse). Без устройства и при plain tun (R60: не доказано) — снос чистый.
+// parse). Без устройства — снос чистый. При plain tun — чистый, и tun NDMS
+// снимает сам (стенд Task 59, П4: 30/30).
 func TestFakeNDMS_DeleteWithLiveDevice_C(t *testing.T) {
 	ctx := context.Background()
 	for name, payload := range map[string]any{
@@ -221,11 +222,12 @@ func TestFakeNDMS_DeleteWithLiveDevice_C(t *testing.T) {
 			if _, err := f.Post(ctx, payload); err != nil {
 				t.Fatal(err)
 			}
-			if f.C != 0 || f.Has("OpkgTun3") {
-				t.Fatalf("plain tun: C=%d Has=%v, want 0/false", f.C, f.Has("OpkgTun3"))
+			if f.C != 0 || f.Has("OpkgTun3") || f.netdev["opkgtun3"] {
+				t.Fatalf("plain tun: C=%d Has=%v устройство=%v, want 0/false/false", f.C, f.Has("OpkgTun3"), f.netdev["opkgtun3"])
 			}
 
 			f.Add(ndms.Interface{ID: "OpkgTun3", Type: "OpkgTun"})
+			f.SetNetdev("opkgtun3", true)
 			f.SetAmneziaWG("opkgtun3", true)
 			if _, err := f.Post(ctx, payload); err != nil {
 				t.Fatal(err)
@@ -241,6 +243,32 @@ func TestFakeNDMS_DeleteWithLiveDevice_C(t *testing.T) {
 			}
 			if f.C != 1 || f.E != 0 || f.Has("OpkgTun3") {
 				t.Fatalf("без устройства: C=%d E=%d Has=%v, want 1/0/false", f.C, f.E, f.Has("OpkgTun3"))
+			}
+		})
+	}
+}
+
+// 0ba1 (стенд Task 59: K-0ba1 3/3, C3b 3/10; C3a 0/20): устройство
+// opkgtunN исчезло под записью OpkgTunN в "up" — C; под "down", без
+// перехода (устройства не было) и у не-OpkgTun — 0.
+func TestFakeNDMS_DeviceGoneUnderUpRecord_C(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rec   ndms.Interface
+		had   bool
+		wantC int
+	}{
+		{"up", ndms.Interface{ID: "OpkgTun3", Type: "OpkgTun", State: "up"}, true, 1},
+		{"down", ndms.Interface{ID: "OpkgTun3", Type: "OpkgTun", State: "down"}, true, 0},
+		{"no device before", ndms.Interface{ID: "OpkgTun3", Type: "OpkgTun", State: "up"}, false, 0},
+		{"other record", ndms.Interface{ID: "OpkgTun4", Type: "OpkgTun", State: "up"}, true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := NewFakeNDMS(tc.rec)
+			f.SetNetdev("opkgtun3", tc.had)
+			f.SetNetdev("opkgtun3", false)
+			if f.C != tc.wantC || f.E != 0 {
+				t.Fatalf("C=%d E=%d, want %d/0", f.C, f.E, tc.wantC)
 			}
 		})
 	}

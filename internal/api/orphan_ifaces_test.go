@@ -15,13 +15,21 @@ import (
 )
 
 type fakeOrphanNDMS struct {
-	deleted []string
-	err     error
-	stopped []string // StopIfPresent: устройство снято
-	stopErr error
+	deleted    []string
+	err        error
+	stopped    []string // StopIfPresent: устройство снято
+	stopErr    error
+	replaceErr error
+	calls      []string // все шаги по порядку
+}
+
+func (f *fakeOrphanNDMS) InterfaceDownIfUp(_ context.Context, name string) error {
+	f.calls = append(f.calls, "down "+name)
+	return nil
 }
 
 func (f *fakeOrphanNDMS) StopIfPresent(_ context.Context, iface string) error {
+	f.calls = append(f.calls, "stop "+iface)
 	if f.stopErr != nil {
 		return f.stopErr
 	}
@@ -29,11 +37,13 @@ func (f *fakeOrphanNDMS) StopIfPresent(_ context.Context, iface string) error {
 	return nil
 }
 
-func (f *fakeOrphanNDMS) ReplaceWithTun(context.Context, string) error {
-	panic("ReplaceWithTun: порядок сироты с ним — Task 61")
+func (f *fakeOrphanNDMS) ReplaceWithTun(_ context.Context, iface string) error {
+	f.calls = append(f.calls, "replace "+iface)
+	return f.replaceErr
 }
 
 func (f *fakeOrphanNDMS) DeleteOpkgTun(_ context.Context, name string) error {
+	f.calls = append(f.calls, "delete "+name)
 	if f.err != nil {
 		return f.err
 	}
@@ -134,8 +144,8 @@ func TestOrphanDelete_RemovesKernelDeviceWhenNoNDMSRecord(t *testing.T) {
 	}
 	// Записи не было — в NDMS ходить незачем: снос имени, собранного из номера,
 	// ушёл бы мимо и был бы принят за успех.
-	if len(ndms.deleted) != 0 {
-		t.Fatalf("ходили в NDMS без записи: %v", ndms.deleted)
+	if len(ndms.deleted) != 0 || strings.Join(ndms.calls, ",") != "stop opkgtun10" {
+		t.Fatalf("ходили в NDMS без записи: deleted=%v шаги=%v", ndms.deleted, ndms.calls)
 	}
 }
 
@@ -143,7 +153,7 @@ func TestOrphanDelete_RemovesKernelDeviceWhenNoNDMSRecord(t *testing.T) {
 // на него успехом значит соврать: номер остался занятым.
 func TestOrphanDelete_ExecFailureIsNotTreatedAsAbsentDevice(t *testing.T) {
 	ndms := &fakeOrphanNDMS{stopErr: errors.New("fork/exec /opt/sbin/ip: no such file or directory")}
-	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
+	h := NewOrphanIfaceHandler(listKernelOnly("opkgtun10"), ndms, nil)
 
 	rr := orphanReq(t, h, `{"iface":"opkgtun10"}`)
 	if rr.Code == 200 {
@@ -151,6 +161,22 @@ func TestOrphanDelete_ExecFailureIsNotTreatedAsAbsentDevice(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "LINK_DELETE_FAILED") {
 		t.Errorf("ответ не называет причину: %s", rr.Body.String())
+	}
+}
+
+// D-N2 (C3a, стенд Task 59): запись есть — down, подмена устройства на tun,
+// снос записи, затем остаток устройства. Прежний порядок «устройство, затем
+// запись» оставлял запись без устройства до `no interface` (0767, X5b).
+func TestOrphanDelete_Order_DownTunRecordStop(t *testing.T) {
+	ndms := &fakeOrphanNDMS{}
+	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
+
+	if rr := orphanReq(t, h, `{"iface":"opkgtun10"}`); rr.Code != 200 {
+		t.Fatalf("code = %d, ждали 200 (%s)", rr.Code, rr.Body.String())
+	}
+	want := []string{"down OpkgTun10", "replace opkgtun10", "delete OpkgTun10", "stop opkgtun10"}
+	if strings.Join(ndms.calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("шаги %v, want %v", ndms.calls, want)
 	}
 }
 
@@ -172,10 +198,11 @@ func TestOrphanDelete_AcceptsNDMSSpellingAndDeletesCanonicalNames(t *testing.T) 
 	}
 }
 
-// Запись снята, устройство осталось — номер по-прежнему занят. Отчитаться
-// успехом значит соврать: пользователь решит, что убрано всё.
+// Устройство под записью не подменено (отказ ip, чужой держатель tun) —
+// запись не трогаем: снос записи при живом устройстве — C. Отчитаться
+// успехом значит соврать: номер по-прежнему занят.
 func TestOrphanDelete_ReportsFailureWhenDeviceSurvives(t *testing.T) {
-	ndms := &fakeOrphanNDMS{stopErr: errors.New("busy")}
+	ndms := &fakeOrphanNDMS{replaceErr: errors.New("busy")}
 	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
 
 	rr := orphanReq(t, h, `{"iface":"opkgtun10"}`)
@@ -213,8 +240,14 @@ func TestOrphanDelete_RefusesWhenOccupancyUnavailable(t *testing.T) {
 	}
 }
 
-// oracleOrphanNDMS — снос записи через оракул FakeNDMS: C/E видны там.
+// oracleOrphanNDMS — шаги сироты через оракул FakeNDMS: C/E видны там.
+// Опускание — без предиката State (его держит адаптер в cmd, свой тест).
 type oracleOrphanNDMS struct{ f *ndmsquery.FakeNDMS }
+
+func (o oracleOrphanNDMS) InterfaceDownIfUp(ctx context.Context, name string) error {
+	_, err := o.f.Post(ctx, map[string]any{"interface": map[string]any{name: map[string]any{"up": false}}})
+	return err
+}
 
 // StopIfPresent — снос устройства, видимый оракулу.
 func (o oracleOrphanNDMS) StopIfPresent(_ context.Context, iface string) error {
@@ -223,8 +256,12 @@ func (o oracleOrphanNDMS) StopIfPresent(_ context.Context, iface string) error {
 	return nil
 }
 
-func (o oracleOrphanNDMS) ReplaceWithTun(context.Context, string) error {
-	panic("ReplaceWithTun: порядок сироты с ним — Task 61")
+// ReplaceWithTun — как в ядре: живое устройство снято, затем plain tun.
+func (o oracleOrphanNDMS) ReplaceWithTun(_ context.Context, iface string) error {
+	o.f.SetNetdev(iface, false)
+	o.f.SetNetdev(iface, true)
+	o.f.SetAmneziaWG(iface, false)
+	return nil
 }
 
 func (o oracleOrphanNDMS) DeleteOpkgTun(ctx context.Context, name string) error {
@@ -232,11 +269,11 @@ func (o oracleOrphanNDMS) DeleteOpkgTun(ctx context.Context, name string) error 
 	return err
 }
 
-// N1/F598: сирота OpkgTun10 с живым amneziawg opkgtun10 (например, после
-// потери стора туннелей). Устройство снимается до записи — иначе снос записи
-// при живом устройстве даёт C 0xcffd003b (стенд A7/B).
-func TestOrphanDelete_LiveAmneziaWG_DeviceBeforeRecord_NoC(t *testing.T) {
-	f := ndmsquery.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+// N1/D-N2: сирота OpkgTun10 в up с живым amneziawg opkgtun10 (например,
+// после потери стора туннелей). C3a — 0 C: запись раньше tun — 003b, подмена
+// под up — 0ba1 (стенд Task 59).
+func TestOrphanDelete_LiveAmneziaWG_TunThenRecord_NoC(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun", State: "up"})
 	f.SetNetdev("opkgtun10", true)
 	f.SetAmneziaWG("opkgtun10", true)
 	h := NewOrphanIfaceHandler(listOf("opkgtun10"), oracleOrphanNDMS{f}, nil)

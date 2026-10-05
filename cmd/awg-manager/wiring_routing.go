@@ -33,8 +33,9 @@ func (a *app) setupOrchestrator() {
 	// Create orchestrator — single brain for all lifecycle decisions.
 	a.orch = orchestrator.New(a.awgStore, a.operator, a.nwgOp, a.stateMgr, a.wanModel, a.loggingService)
 	a.tunnelService.SetOrchestrator(a.orch)
-	// Оба оператора регистрируют ожидаемые хуки до InterfaceUp/Down.
-	wireHookNotifiers(a.orch, a.nwgOp, a.operator)
+	// nwg-оператор регистрирует ожидаемые хуки сам; kernel-оператор — через
+	// InterfaceUp/Down команд NDMS (ndmsCommands.SetHookNotifier ниже).
+	wireHookNotifiers(a.orch, a.nwgOp)
 	// Endpoint-страж правит host-route и перезапускает релей — то же, что
 	// действия оркестратора, значит под тем же per-tunnel замком.
 	a.nwgOp.SetTunnelLock(func(ctx context.Context, tunnelID, owner string, work func() error) error {
@@ -281,17 +282,14 @@ type hookNotifierSetter interface {
 	SetHookNotifier(tunnel.HookNotifier)
 }
 
-// wireHookNotifiers подключает оркестратор обоим операторам: nwg и, на OS5,
-// kernel-оператору (у того ExpectHook работает через двухслойный OpkgTun).
-// Вынесено из setupOrchestrator ради страж-теста: пропущенный здесь оператор
-// молча превращает свой expectHook в no-op, и собственное `conf: disabled`
-// приезжает в оркестратор как чужое событие.
-func wireHookNotifiers(orch tunnel.HookNotifier, nwgOp hookNotifierSetter, kernelOp any) {
+// wireHookNotifiers подключает оркестратор nwg-оператору. Вынесено из
+// setupOrchestrator ради страж-теста: пропущенный здесь оператор молча
+// превращает свой expectHook в no-op, и собственное `conf: disabled`
+// приезжает в оркестратор как чужое событие. У kernel-оператора OS5 своих
+// ожиданий нет: единственная точка — InterfaceUp/Down команд NDMS (Task 61).
+func wireHookNotifiers(orch tunnel.HookNotifier, nwgOp hookNotifierSetter) {
 	if nwgOp != nil {
 		nwgOp.SetHookNotifier(orch)
-	}
-	if ks, ok := kernelOp.(hookNotifierSetter); ok {
-		ks.SetHookNotifier(orch)
 	}
 }
 

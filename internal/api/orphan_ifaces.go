@@ -15,9 +15,12 @@ import (
 // Устройство снимается только бэкендом (backend.KernelBackend) — под барьером
 // списков (netdev.SwapGate, D-N1) и с гардом чужого держателя (F500).
 type OrphanIfaceNDMS interface {
+	// InterfaceDownIfUp — `interface down` записи в State "up"; записи нет
+	// или она опущена — nil, команды нет.
+	InterfaceDownIfUp(ctx context.Context, name string) error
 	DeleteOpkgTun(ctx context.Context, name string) error
 	// ReplaceWithTun — plain tun вместо устройства одной подменой под
-	// барьером (порядок сноса сироты с ним — Task 61).
+	// барьером; устройства нет — только tun.
 	ReplaceWithTun(ctx context.Context, iface string) error
 	// StopIfPresent — снос устройства, если оно есть; нет — nil.
 	StopIfPresent(ctx context.Context, iface string) error
@@ -101,17 +104,20 @@ func (h *OrphanIfaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Две ПОЛОВИНЫ, снимаются независимо, потому что существуют независимо:
-	// после `ip link del` запись NDMS живёт дальше со state error, а устройство,
-	// поднятое мимо NDMS (`ip link add`), записи не имеет вовсе. Обе половины
-	// держат номер в занятости, поэтому снимать надо обе и на каждую отвечать
-	// отдельно; «нет такой» — успех для обеих (снимаем то, чего и так нет).
+	// Две ПОЛОВИНЫ, существуют независимо: после `ip link del` запись NDMS
+	// живёт дальше со state error, а устройство, поднятое мимо NDMS
+	// (`ip link add`), записи не имеет вовсе. Обе держат номер в занятости,
+	// поэтому снимать надо обе; «нет такой» — успех для обеих.
 	//
-	// Порядок — устройство, потом запись (F598, как ops.Delete): amneziawg
-	// NDMS вместе с записью не уносит, и запись, снятая при живом opkgtunN,
-	// даёт в журнале ndm `C Tun: system failed [0xcffd003b]` (стенд 01.10,
-	// A7/B); устройство, затем запись — 0 E/C (A7). Ожиданий хуков нет:
-	// у сироты нет туннеля, оркестратор этот OpkgTunN не ведёт.
+	// Запись есть — снятие C3a, как ops.Delete (стенд Task 59: 20/20 без C
+	// всех классов): запись up — `interface down`; устройство под записью
+	// подменяется на plain tun под барьером списков; `no interface` — NDMS
+	// снимает tun сам. Прежний порядок «устройство, затем запись» оставлял
+	// запись без устройства до `no interface` — 0767 у читателей списка
+	// (X5b), под up-записью — 0ba1; запись при живом amneziawg — 003b.
+	// Любой шаг отказал — дальше не идём: запись при живом устройстве — C.
+	// Ожиданий хуков от ручки нет: у сироты нет туннеля, оркестратор этот
+	// OpkgTunN не ведёт (ожидание disabled регистрирует сам InterfaceDown).
 	//
 	// Имя записи NDMS берётся ИЗ НАЙДЕННОГО, а не собирается из номера: собрать
 	// его заново значит завести второй разборщик рядом с тем, которым занятость
@@ -122,26 +128,37 @@ func (h *OrphanIfaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ndmsName := target.NDMSName
 	iface := fmt.Sprintf("opkgtun%d", idx)
 
-	// Снос устройства — в том числе когда записи NDMS не было вовсе
-	// (устройство подняли мимо неё). Наличие решает stat /sys/class/net в
-	// бэкенде, а не текст отказа `ip`: незапустившийся `ip` — ошибка, а не
-	// «устройства нет». Устройство не снято (в т.ч. чужой держатель) — запись
-	// не трогаем: снос записи при живом устройстве и есть C выше.
-	if err := h.ndms.StopIfPresent(r.Context(), iface); err != nil {
-		h.log.Warn("orphan-delete", iface, "устройство не удалено, запись NDMS не тронута: "+err.Error())
-		response.Error(w, "устройство "+iface+" удалить не удалось: "+err.Error(), "LINK_DELETE_FAILED")
-		return
-	}
-
 	if ndmsName != "" {
+		if err := h.ndms.InterfaceDownIfUp(r.Context(), ndmsName); err != nil {
+			h.log.Warn("orphan-delete", iface, "запись NDMS не опущена, ничего не тронуто: "+err.Error())
+			response.Error(w, "не удалось опустить запись "+ndmsName+": "+err.Error(), "NDMS_DOWN_FAILED")
+			return
+		}
+		// Устройство не подменено (в т.ч. чужой держатель tun) — запись не
+		// трогаем: снос записи при живом устройстве и есть C.
+		if err := h.ndms.ReplaceWithTun(r.Context(), iface); err != nil {
+			h.log.Warn("orphan-delete", iface, "устройство не заменено, запись NDMS не тронута: "+err.Error())
+			response.Error(w, "устройство "+iface+" удалить не удалось: "+err.Error(), "LINK_DELETE_FAILED")
+			return
+		}
 		if err := h.ndms.DeleteOpkgTun(r.Context(), ndmsName); err != nil {
-			// Устройство снято, запись осталась: номер по-прежнему занят, и
-			// молчать об этом нельзя — пользователь решит, что убрано всё.
-			// Повторный снос доберёт запись (устройства уже нет — успех).
-			h.log.Warn("orphan-delete", iface, "устройство снято, запись NDMS осталась: "+err.Error())
+			// Запись осталась с plain tun под ней (как после ребута): номер
+			// по-прежнему занят, и молчать об этом нельзя. Повторный снос
+			// доберёт запись.
+			h.log.Warn("orphan-delete", iface, "запись NDMS осталась: "+err.Error())
 			response.Error(w, "не удалось снять запись "+ndmsName+": "+err.Error(), "NDMS_DELETE_FAILED")
 			return
 		}
+	}
+
+	// Устройство без записи — поднятое мимо NDMS, либо tun, который NDMS не
+	// снял вместе с записью. Наличие решает stat /sys/class/net в бэкенде, а
+	// не текст отказа `ip`: незапустившийся `ip` — ошибка, а не «устройства
+	// нет». Записи уже нет — C невозможен.
+	if err := h.ndms.StopIfPresent(r.Context(), iface); err != nil {
+		h.log.Warn("orphan-delete", iface, "устройство не удалено: "+err.Error())
+		response.Error(w, "устройство "+iface+" удалить не удалось: "+err.Error(), "LINK_DELETE_FAILED")
+		return
 	}
 
 	h.log.Info("orphan-delete", iface, "осиротевший интерфейс удалён")

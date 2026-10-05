@@ -103,6 +103,17 @@ type orphanNDMS struct {
 	*backend.KernelBackend
 }
 
+// InterfaceDownIfUp — `interface down` записи в State "up" перед подменой
+// устройства (C3a, стенд Task 59: подмена под up-записью — 0ba1 3/10, под
+// down — 0/20). Записи нет или она опущена — nil, команды нет.
+func (a orphanNDMS) InterfaceDownIfUp(ctx context.Context, name string) error {
+	c, rec, ok, err := a.ifaces.Confirm(ctx, name)
+	if err != nil || !ok || rec.State != "up" {
+		return err
+	}
+	return a.cmds.InterfaceDown(ctx, c)
+}
+
 func (a confirmingOpkgTun) DeleteOpkgTun(ctx context.Context, name string) error {
 	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.DeleteOpkgTun(ctx, c) })
 }

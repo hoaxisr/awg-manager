@@ -104,9 +104,8 @@ func (p failDeletePoster) Post(ctx context.Context, payload any) (json.RawMessag
 
 // Снос записи отвергнут — ошибка наружу: оркестратор не удалит запись
 // туннеля, OpkgTun10 не останется на роутере без хозяина (F559, как nwg).
-// Устройство к этому моменту уже снято (оно снимается до записи, F596/F598):
-// остаток П2 — на роутере C 0xcffd0ba1 до повторного Delete, который
-// снимет запись чисто (стенд A7).
+// Под записью к этому моменту plain tun (подмена идёт до сноса, C3a), а
+// снятия устройства после отказа нет: запись не остаётся без устройства.
 func TestDelete_DeleteRecordFails_Error(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS(opkgTun10())
 	be := &MockBackend{running: true}
@@ -116,8 +115,8 @@ func TestDelete_DeleteRecordFails_Error(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "injected: delete") {
 		t.Fatalf("err = %v, want отказ сноса записи", err)
 	}
-	if !slices.Equal(be.StopCalls, []string{"opkgtun10"}) {
-		t.Fatalf("kernel-устройство: %v, want [opkgtun10]", be.StopCalls)
+	if !slices.Equal(be.ReplaceCalls, []string{"opkgtun10"}) || len(be.StopCalls) != 0 || len(be.StopIfPresentCalls) != 0 {
+		t.Fatalf("replace=%v stop=%v stopIfPresent=%v, want [opkgtun10]/[]/[]", be.ReplaceCalls, be.StopCalls, be.StopIfPresentCalls)
 	}
 	clean(t, f)
 }
@@ -338,7 +337,7 @@ func TestStart_RenameWithLayerHookDuringConfirm_RecordIsOurs(t *testing.T) {
 	f.InList(func() { o.queries.Interfaces.OnLayerChanged("OpkgTun10", "conf", "running") })
 
 	cfg := lifecycleCfg(t)
-	if _, _, err := o.ensureOpkgTunRecord(ctx, "start", cfg, tunnel.NewNames(cfg.ID)); err != nil {
+	if _, _, _, err := o.ensureOpkgTunRecord(ctx, "start", cfg, tunnel.NewNames(cfg.ID)); err != nil {
 		t.Fatalf("ensureOpkgTunRecord: %v", err)
 	}
 	clean(t, f)
@@ -347,7 +346,7 @@ func TestStart_RenameWithLayerHookDuringConfirm_RecordIsOurs(t *testing.T) {
 // S4 F595 (стенд 30.09, сирота OpkgTun11, 2.4): имя переиспользовано, и
 // ifdestroyed прежнего воплощения доходит, пока список confirmOpkgTun в
 // полёте. Метка противоречит ответу — одно перечитывание; запись есть —
-// DeleteOpkgTun уходит, kernel-устройство снято, сироты нет.
+// устройство подменено на tun, DeleteOpkgTun уходит, сироты нет.
 func TestDelete_StaleDestroyedInFlight_DeletesRecord(t *testing.T) {
 	ctx := context.Background()
 	f := ndmsquery.NewFakeNDMS(opkgTun10())
@@ -379,8 +378,8 @@ func TestDelete_StaleDestroyedInFlight_DeletesRecord(t *testing.T) {
 	if got := f.ListCalls() - lists; got != 2 {
 		t.Fatalf("списков за Delete = %d, want 2 (ответ + перечитывание по противоречию)", got)
 	}
-	if !slices.Equal(be.StopCalls, []string{"opkgtun10"}) {
-		t.Fatalf("kernel-устройство: %v, want [opkgtun10]", be.StopCalls)
+	if !slices.Equal(be.ReplaceCalls, []string{"opkgtun10"}) {
+		t.Fatalf("kernel-устройство: replace=%v, want [opkgtun10]", be.ReplaceCalls)
 	}
 	clean(t, f)
 }

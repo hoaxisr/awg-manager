@@ -252,6 +252,33 @@ func TestConfirmingOpkgTun_PresentDeletes(t *testing.T) {
 	oracleClean(t, f)
 }
 
+// Сирота (C3a): запись в "up" опускается до подмены устройства, опущенная
+// и отсутствующая — без команды (down по опущенной — лишнее ожидание
+// disabled без хука; по отсутствующей — E).
+func TestOrphanNDMS_InterfaceDownIfUp(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		recs  []ndms.Interface
+		posts []string
+	}{
+		{"up", []ndms.Interface{{ID: "OpkgTun5", Type: "OpkgTun", State: "up"}}, []string{`{"interface":{"OpkgTun5":{"up":false}}}`}},
+		{"down", []ndms.Interface{{ID: "OpkgTun5", Type: "OpkgTun", State: "down"}}, nil},
+		{"absent", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := ndmsquery.NewFakeNDMS(tc.recs...)
+			a := orphanNDMS{confirmingOpkgTun: newConfirmAdapters(t, f).opkg}
+			if err := a.InterfaceDownIfUp(context.Background(), "OpkgTun5"); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(f.Posts, "\n") != strings.Join(tc.posts, "\n") {
+				t.Fatalf("posts = %v, want %v", f.Posts, tc.posts)
+			}
+			oracleClean(t, f)
+		})
+	}
+}
+
 // Стоимость: подтверждение на каждый шаг — один полный список на вызов.
 // Последовательности повторяют прод-потоки дословно:
 //   - policy-tun: policytun_enable.go (create → ip global → ACL → адрес → v6 →

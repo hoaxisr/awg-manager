@@ -42,7 +42,7 @@ type FakeNDMS struct {
 
 	E        int      // точечное чтение отсутствующего; ссылка на отсутствующий из ip route/nat/static/name-server/policy/hotspot/dns-proxy
 	Phantoms int      // `interface X …` по отсутствующему X, не объявленному ExpectCreate: X создан
-	C        int      // строки C прошивки от наших действий: создание (F569) и снос (F598, только amneziawg) OpkgTunN при живом opkgtunN
+	C        int      // строки C прошивки от наших действий: создание (F569) и снос (F598, только amneziawg) OpkgTunN при живом opkgtunN; исчезновение opkgtunN под up-записью (0ba1, SetNetdev)
 	Posts    []string // все payload в JSON, по порядку (пакет — одной строкой)
 	// Created — намеренно созданные: `interface X …` по объявленному через
 	// ExpectCreate X и импорт. Намерение объявляет тест, а не форма payload:
@@ -95,11 +95,24 @@ func (f *FakeNDMS) Remove(name string) {
 
 // SetNetdev — есть ли kernel-устройство name. Remove запись снимает, а
 // устройство нет (прошивка чужое amneziawg снять не может): тест ведёт его сам.
+//
+// Устройство opkgtunN исчезло под записью OpkgTunN в State "up" — C (NDMS
+// асинхронно пишет `C 0xcffd0ba1, no such device`: стенд K-0ba1 3/3, A7′
+// F559; подмена под `running` без `down` — C3b 3/10, Task 59). Под записью
+// в "down" — 0 C (C3a 20/20, T1 ц.1, уборка). Подмену бэкенд показывает
+// оракулу как снятие и появление — так она и идёт в ядре (del, затем add).
 func (f *FakeNDMS) SetNetdev(name string, present bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.netdev == nil {
 		f.netdev = make(map[string]bool)
+	}
+	if !present && f.netdev[name] {
+		for id, iface := range f.ifaces {
+			if kernel, ok := ndms.KernelName(id); ok && kernel == name && strings.HasPrefix(id, "OpkgTun") && iface.State == "up" {
+				f.C++
+			}
+		}
 	}
 	f.netdev[name] = present
 }
@@ -107,9 +120,8 @@ func (f *FakeNDMS) SetNetdev(name string, present bool) {
 // SetAmneziaWG — устройство name (если есть) — amneziawg нашего
 // kernel-бэкенда, а не plain tun. Только у такого снос записи OpkgTunN при
 // живом устройстве даёт C (ifaceCmd, R60): это доказано стендом 01.10
-// (A7/B), а для tun sing-box (policy-tun, fakeip-tun) доказательства нет —
-// A10 запись при живом tun не снимал, поэтому не моделируется. Подтвердит
-// или опровергнет стенд Task 58.
+// (A7/B); при plain tun без держателя снос чистый и tun NDMS снимает сам
+// (Task 59, П4).
 func (f *FakeNDMS) SetAmneziaWG(name string, on bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -514,8 +526,16 @@ func (f *FakeNDMS) ifaceCmd(name string, body map[string]any) (json.RawMessage, 
 		// снимается, ответ успешный, но прошивка пишет `C Tun: system failed
 		// [0xcffd003b]` (стенд 01.10, A7/K7/B). Пара имён та же, что у
 		// проверки создания ниже; только amneziawg — R60, см. SetAmneziaWG.
-		if kernel, isKernel := ndms.KernelName(name); isKernel && strings.HasPrefix(name, "OpkgTun") && f.netdev[kernel] && f.amneziawg[kernel] {
-			f.C++
+		// При живом plain tun (не amneziawg) — 0 C, и NDMS снимает tun сам,
+		// даже созданный не им: persistent tun без держателя снят 30/30
+		// (стенд Task 59, П4 C3a/C3b). С держателем (sing-box, X3) — C busy и
+		// tun остаётся; держателей оракул не знает и это не моделирует.
+		if kernel, isKernel := ndms.KernelName(name); isKernel && strings.HasPrefix(name, "OpkgTun") && f.netdev[kernel] {
+			if f.amneziawg[kernel] {
+				f.C++
+			} else {
+				f.netdev[kernel] = false
+			}
 		}
 		f.remove(name)
 		return json.RawMessage(`{}`), nil
