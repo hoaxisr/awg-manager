@@ -269,7 +269,7 @@ func (o *Orchestrator) SetSupportsASC(fn func() bool) {
 // assigned profile" warnings.
 //
 // Runtime-only fields (Running, Monitoring, quiescentUntil,
-// lastConfRunningAt, absorbedDisabledAt, recheckScheduled) live only in the orchestrator's cache, so they are preserved across
+// lastConfRunningAt, absorbedDisabledAt, recheckScheduled, bornAt) live only in the orchestrator's cache, so they are preserved across
 // the refresh — reloading them from storage would clobber the action
 // layer's view of the world.
 func (o *Orchestrator) RefreshTunnelState(tunnelID string) {
@@ -288,6 +288,9 @@ func (o *Orchestrator) RefreshTunnelState(tunnelID string) {
 		fresh.lastConfRunningAt = cur.lastConfRunningAt
 		fresh.absorbedDisabledAt = cur.absorbedDisabledAt
 		fresh.recheckScheduled = cur.recheckScheduled
+		fresh.bornAt = cur.bornAt
+	} else {
+		fresh.bornAt = o.nowFn()
 	}
 	o.state.tunnels[tunnelID] = fresh
 }
@@ -333,6 +336,7 @@ func (o *Orchestrator) LoadState(ctx context.Context) {
 type expectedHook struct {
 	ndmsName  string
 	level     string
+	at        time.Time
 	expiresAt time.Time
 }
 
@@ -350,16 +354,24 @@ func (o *Orchestrator) nowFn() time.Time {
 func (o *Orchestrator) ExpectHook(ndmsName, level string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	now := o.nowFn()
 	o.expectedHooks = append(o.expectedHooks, expectedHook{
 		ndmsName:  ndmsName,
 		level:     level,
-		expiresAt: o.nowFn().Add(expectedHookTTL),
+		at:        now,
+		expiresAt: now.Add(expectedHookTTL),
 	})
 }
 
 // consumeExpectedHook checks if an NDMS hook matches a non-expired expected
 // one. It first prunes expired expectations, then removes and returns true on
 // the first matching live entry.
+//
+// Ожидание, зарегистрированное раньше появления туннеля с этим именем в
+// кэше (bornAt), принадлежит прежнему воплощению имени: FreeIndex отдаёт
+// новому туннелю тот же OpkgTunN, а хвост Delete/отказавшего Start живёт
+// expectedHookTTL. Такое ожидание грань нового туннеля не поглощает — она
+// идёт в settle/окно/П13, как внешняя (M1 финального ревью F595).
 func (o *Orchestrator) consumeExpectedHook(ndmsName, level string) bool {
 	now := o.nowFn()
 	kept := o.expectedHooks[:0]
@@ -371,8 +383,12 @@ func (o *Orchestrator) consumeExpectedHook(ndmsName, level string) bool {
 	}
 	o.expectedHooks = kept
 
+	var born time.Time
+	if t := o.state.findByNDMSName(ndmsName); t != nil {
+		born = t.bornAt
+	}
 	for i, h := range o.expectedHooks {
-		if h.ndmsName == ndmsName && h.level == level {
+		if h.ndmsName == ndmsName && h.level == level && !h.at.Before(born) {
 			o.expectedHooks = append(o.expectedHooks[:i], o.expectedHooks[i+1:]...)
 			return true
 		}
@@ -390,6 +406,14 @@ func (o *Orchestrator) noteConfRunning(ndmsName string, at time.Time) {
 	if t := o.state.findByNDMSName(ndmsName); t != nil && at.After(t.lastConfRunningAt) {
 		t.lastConfRunningAt = at
 	}
+}
+
+// settleDelay — confSettleDelay с подменой из теста.
+func (o *Orchestrator) settleDelay() time.Duration {
+	if o.confSettleDelay > 0 {
+		return o.confSettleDelay
+	}
+	return confSettleDelay
 }
 
 // settleConfDisabled reports whether an external conf=disabled edge should be
@@ -426,11 +450,7 @@ func (o *Orchestrator) settleConfDisabled(ctx context.Context, event Event) bool
 	tunnelID := t.ID
 	o.mu.Unlock()
 
-	delay := o.confSettleDelay
-	if delay <= 0 {
-		delay = confSettleDelay
-	}
-	timer := time.NewTimer(delay)
+	timer := time.NewTimer(o.settleDelay())
 	defer timer.Stop()
 	select {
 	case <-timer.C:
@@ -616,7 +636,7 @@ func (o *Orchestrator) decideLocked(event Event) (actions []Action, deferredBoot
 
 	// Ensure tunnel is in cache (covers tunnels created/imported after startup)
 	if event.Tunnel != "" {
-		o.state.ensureTunnel(event.Tunnel, o.store)
+		o.state.ensureTunnel(event.Tunnel, o.store, o.nowFn())
 	}
 	// Отложенный бут: загрузка прошла без WAN, и первое WAN-событие обязано
 	// отработать за неё. Пометку снимает сам decideBoot.
@@ -725,7 +745,7 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 				if !t.recheckScheduled {
 					t.recheckScheduled = true
 					tunnelID, ndmsName := t.ID, event.NDMSName
-					o.scheduleFn(windowLeft, func() { o.recheckAbsorbedDisabled(tunnelID, ndmsName) })
+					o.scheduleFn(o.recheckDue(t).Sub(event.Now), func() { o.recheckAbsorbedDisabled(tunnelID, ndmsName) })
 				}
 			}
 		}
@@ -772,6 +792,19 @@ func (o *Orchestrator) scheduleFn(d time.Duration, fn func()) {
 		return
 	}
 	time.AfterFunc(d, fn)
+}
+
+// recheckDue — срок перепроверки поглощённой грани: конец окна, но не
+// раньше выдержки settle от самой грани (M2 финального ревью F595). Грань в
+// последние секунды окна без выдержки пробовалась бы посреди рестарта
+// интерфейса (#667: disabled→running за ~2 с) — ложная остановка, которой
+// у внешней грани вне окна нет (settleConfDisabled). Вызывать под o.mu.
+func (o *Orchestrator) recheckDue(t *tunnelState) time.Time {
+	due := t.quiescentUntil
+	if settled := t.absorbedDisabledAt.Add(o.settleDelay()); settled.After(due) {
+		due = settled
+	}
+	return due
 }
 
 // recheckAbsorbedDisabled — единственная перепроверка грани conf=disabled,
@@ -826,10 +859,11 @@ func (o *Orchestrator) recheckAbsorbedDisabled(tunnelID, ndmsName string) {
 		o.mu.Unlock()
 		return
 	}
-	if now.Before(t.quiescentUntil) {
-		// Окно продлено (повторный подъём/reconcile) — решать на его конце.
+	if due := o.recheckDue(t); now.Before(due) {
+		// Окно продлено (повторный подъём/reconcile) или грань моложе
+		// выдержки settle — решать на сроке.
 		t.recheckScheduled = true
-		o.scheduleFn(t.quiescentUntil.Sub(now), func() { o.recheckAbsorbedDisabled(tunnelID, ndmsName) })
+		o.scheduleFn(due.Sub(now), func() { o.recheckAbsorbedDisabled(tunnelID, ndmsName) })
 		o.mu.Unlock()
 		return
 	}

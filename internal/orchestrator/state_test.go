@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -34,13 +35,13 @@ func TestStateSkipsWdttRawMirrors(t *testing.T) {
 		t.Fatal("зеркальная запись попала в кэш через loadFromStore")
 	}
 
-	if s.ensureTunnel("wdttraw-de", store) {
+	if s.ensureTunnel("wdttraw-de", store, time.Time{}) {
 		t.Fatal("ensureTunnel загрузил зеркальную запись: второй путь сводит фильтр на нет")
 	}
 	if _, ok := s.tunnels["wdttraw-de"]; ok {
 		t.Fatal("зеркальная запись осела в кэше после ensureTunnel")
 	}
-	if !s.ensureTunnel("awg10", store) {
+	if !s.ensureTunnel("awg10", store, time.Time{}) {
 		t.Fatal("свой туннель обязан грузиться через ensureTunnel")
 	}
 }

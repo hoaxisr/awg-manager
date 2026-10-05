@@ -18,12 +18,182 @@ import (
 // Стенд 01.10, KN-1810 5.01.C.6: 16 замеров опоздания хуков под churn —
 // 14–30 с, максимум ≈30 с. Окно = максимум × 1,5. Вернуть 15/20 с — хук,
 // пришедший на 20-й секунде, снова примут за внешнюю грань.
+// Поведение, а не только значения: свой хук, опоздавший на 44 с, поглощается
+// ожиданием; чужая грань на 44-й секунде после подъёма — окном. Мутации
+// «TTL ожидания не из константы (15 с)» и «окно в updateState 15 с» → красный.
 func TestHookWindows_CoverMeasuredLag(t *testing.T) {
 	if expectedHookTTL != 45*time.Second {
 		t.Errorf("expectedHookTTL = %s, want 45s", expectedHookTTL)
 	}
 	if bootQuiescenceWindow != 45*time.Second {
 		t.Errorf("bootQuiescenceWindow = %s, want 45s", bootQuiescenceWindow)
+	}
+	const lag = 44 * time.Second
+
+	// Ожидание: свой disabled зарегистрирован в момент подъёма, хук пришёл
+	// через lag — поглощён до окна: ни метки, ни перепроверки.
+	r := newHookWindowRig(t)
+	r.o.ExpectHook("OpkgTun10", "disabled")
+	r.disabledEdge(t, lag)
+	if !r.absorbedAt().IsZero() || r.sched.count() != 0 {
+		t.Fatalf("свой хук с опозданием %s не поглощён ожиданием: метка=%v schedule=%d",
+			lag, r.absorbedAt(), r.sched.count())
+	}
+
+	// Окно: без ожидания та же грань на 44-й секунде поглощается окном.
+	r = newHookWindowRig(t)
+	r.disabledEdge(t, lag)
+	if n := r.op.stops.Load(); n != 0 {
+		t.Fatalf("грань на %s после подъёма остановила туннель: stops=%d", lag, n)
+	}
+	if !r.absorbedAt().Equal(r.base.Add(lag)) {
+		t.Fatalf("грань на %s не поглощена окном: метка=%v", lag, r.absorbedAt())
+	}
+}
+
+// M2: грань в последние секунды окна. Перепроверка на конце окна без
+// выдержки settle пробовала бы NDMS посреди рестарта интерфейса (#667:
+// disabled→running за ~2 с) и остановила бы туннель. Срок — не раньше
+// confSettleDelay от грани; running на 46-й секунде успевает.
+// Мутация «recheckDue = quiescentUntil» → таймер на 45-й, проба, stop → красный.
+func TestConfDisabled_EdgeAtWindowEnd_WaitsSettleBeforeProbe(t *testing.T) {
+	r := newHookWindowRig(t)
+	edgeAt := bootQuiescenceWindow - time.Second
+	runningAt := bootQuiescenceWindow + time.Second
+	r.disabledEdge(t, edgeAt)
+	fn := r.sched.fn(t, 0)
+	if r.sched.delays[0] != confSettleDelay {
+		t.Errorf("перепроверка через %s, want %s (выдержка settle от грани)", r.sched.delays[0], confSettleDelay)
+	}
+
+	// События в порядке времени: таймер раньше running — сначала таймер.
+	fire := r.base.Add(edgeAt + r.sched.delays[0])
+	sendRunning := func() {
+		r.clk.Set(r.base.Add(runningAt))
+		if err := r.o.HandleEvent(context.Background(), confHookName("OpkgTun10", "running")); err != nil {
+			t.Fatalf("HandleEvent running: %v", err)
+		}
+	}
+	if fire.Before(r.base.Add(runningAt)) {
+		r.clk.Set(fire)
+		fn()
+		sendRunning()
+	} else {
+		sendRunning()
+		r.clk.Set(fire)
+		fn()
+	}
+
+	if n := r.probe.calls.Load(); n != 0 {
+		t.Fatalf("проба посреди рестарта интерфейса: calls=%d", n)
+	}
+	if n := r.op.stops.Load(); n != 0 {
+		t.Fatalf("ложная остановка у края окна: stops=%d", n)
+	}
+	if !mustGet(t, r.store, "awg10").Enabled {
+		t.Fatal("Enabled снят")
+	}
+}
+
+// deleteThenReborn — M1: прежнее воплощение awg10 (OpkgTun10) удалено,
+// оставив ожидания (их регистрирует ops.Delete/отказавший Start; болванка
+// оператора этого не делает — регистрируем здесь же), затем через 5 с имя
+// занимает новый туннель. Возвращает риг на моменте base+5 с без туннеля в
+// кэше.
+func deleteThenReborn(t *testing.T, levels ...string) *hookWindowRig {
+	t.Helper()
+	r := newHookWindowRig(t)
+	r.o.mu.Lock()
+	r.o.state.tunnels["awg10"].Running = false
+	r.o.mu.Unlock()
+	for _, l := range levels {
+		r.o.ExpectHook("OpkgTun10", l)
+	}
+	r.o.updateState(Action{Type: ActionDeleteKernel, Tunnel: "awg10"})
+	r.clk.Set(r.base.Add(5 * time.Second))
+	return r
+}
+
+// M1: Delete выключенной записи — NDMS может не прислать conf=disabled, токен
+// живёт 45 с. Новый туннель на том же OpkgTun10 запущен; внешнее выключение
+// в эти 45 с обязано дойти до окна и П13 (остановка, Enabled=false по Q1), а
+// не исчезнуть в чужом токене. Мутация «не сравнивать at с bornAt» → грань
+// поглощена токеном → перепроверки нет → красный; так же «bornAt не ставить
+// в ensureTunnel» и «не переносить bornAt в RefreshTunnelState».
+func TestExpectedHook_PreviousIncarnation_DoesNotSwallowDisabled(t *testing.T) {
+	r := deleteThenReborn(t, "disabled", "destroyed")
+	if err := r.o.HandleEvent(context.Background(), Event{Type: EventStart, Tunnel: "awg10"}); err != nil {
+		t.Fatalf("Start нового туннеля: %v", err)
+	}
+	if !r.tunnel().Running {
+		t.Fatal("новый туннель не поднят")
+	}
+	r.o.RefreshTunnelState("awg10") // правка записи не обнуляет bornAt
+
+	r.disabledEdge(t, 15*time.Second) // токен прежнего ещё жив (до base+45 с)
+	if r.absorbedAt().IsZero() {
+		t.Fatal("внешняя грань нового туннеля поглощена токеном прежнего воплощения")
+	}
+	r.clk.Set(r.base.Add(5*time.Second + bootQuiescenceWindow))
+	r.sched.fn(t, 0)()
+	if n := r.probe.calls.Load(); n != 1 {
+		t.Fatalf("проба вызвана %d раз, want 1", n)
+	}
+	if n := r.op.stops.Load(); n != 1 {
+		t.Fatalf("stops=%d, want 1", n)
+	}
+	if mustGet(t, r.store, "awg10").Enabled {
+		t.Fatal("Enabled не снят: внешний стоп обязан персиститься (Q1)")
+	}
+}
+
+// M1, отказавший Start: прежнее воплощение оставило токен running. Новый
+// туннель на том же имени в кэше (правка записи → RefreshTunnelState), не
+// запущен; внешнее включение в роутере обязано его поднять (#183), а не
+// исчезнуть в чужом токене. Мутации «не сравнивать at с bornAt» и «bornAt не
+// ставить для новой записи в RefreshTunnelState» → coldStarts не растёт → красный.
+func TestExpectedHook_PreviousIncarnationFailedStart_DoesNotSwallowRunning(t *testing.T) {
+	r := newHookWindowRig(t)
+	r.o.mu.Lock()
+	r.o.state.tunnels["awg10"].Running = false
+	r.o.mu.Unlock()
+	r.o.state.anyWANUpFn = func() bool { return true }
+	r.op.coldStartErr = errors.New("ndms refused")
+	r.o.ExpectHook("OpkgTun10", "running") // InterfaceUp отказавшего Start
+	if err := r.o.HandleEvent(context.Background(), Event{Type: EventStart, Tunnel: "awg10"}); err == nil {
+		t.Fatal("Start прежнего воплощения должен был отказать")
+	}
+	r.o.ExpectHook("OpkgTun10", "disabled")
+	r.o.ExpectHook("OpkgTun10", "destroyed")
+	r.o.updateState(Action{Type: ActionDeleteKernel, Tunnel: "awg10"})
+	r.op.coldStartErr = nil
+	starts := r.op.coldStarts.Load()
+
+	r.clk.Set(r.base.Add(5 * time.Second))
+	r.o.RefreshTunnelState("awg10") // новый туннель на OpkgTun10
+	r.probe.up = true               // NDMS действительно держит интерфейс включённым
+	r.clk.Set(r.base.Add(10 * time.Second))
+	if err := r.o.HandleEvent(context.Background(), confHookName("OpkgTun10", "running")); err != nil {
+		t.Fatalf("HandleEvent running: %v", err)
+	}
+	if n := r.op.coldStarts.Load() - starts; n != 1 {
+		t.Fatalf("внешнее включение нового туннеля поглощено токеном прежнего: coldStarts+%d", n)
+	}
+	if !r.tunnel().Running {
+		t.Fatal("туннель не поднят")
+	}
+}
+
+// Своё ожидание нового воплощения (зарегистрировано после появления в кэше)
+// поглощается как прежде: граница bornAt не задевает свой Start.
+func TestExpectedHook_OwnIncarnation_StillConsumed(t *testing.T) {
+	r := deleteThenReborn(t)
+	r.o.RefreshTunnelState("awg10")
+	r.o.updateState(Action{Type: ActionColdStartKernel, Tunnel: "awg10"})
+	r.o.ExpectHook("OpkgTun10", "disabled") // свой Stop нового туннеля
+	r.disabledEdge(t, 15*time.Second)
+	if !r.absorbedAt().IsZero() || r.sched.count() != 0 {
+		t.Fatalf("своё ожидание не поглотило грань: метка=%v schedule=%d", r.absorbedAt(), r.sched.count())
 	}
 }
 
