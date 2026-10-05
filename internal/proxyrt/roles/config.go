@@ -529,7 +529,6 @@ func localListen(addr string) error {
 
 // ValidAutoReconnectIntervals — допустимые значения интервала автопереподключения.
 var ValidAutoReconnectIntervals = map[string]time.Duration{
-	"":           0,
 	"on_failure": 0,
 	"30m":        30 * time.Minute,
 	"1h":         1 * time.Hour,
@@ -544,6 +543,9 @@ func validateAutoReconnect(enabled bool, interval string) error {
 	if !enabled {
 		return nil
 	}
+	if interval == "" || interval == "on_failure" {
+		return nil
+	}
 	if _, ok := ValidAutoReconnectIntervals[interval]; !ok {
 		return fmt.Errorf("недопустимый интервал автопереподключения %q (допустимы: on_failure, 30m, 1h, 2h, 4h, 8h, 12h, 24h)", interval)
 	}
@@ -552,12 +554,19 @@ func validateAutoReconnect(enabled bool, interval string) error {
 
 // LookupReconnectInterval преобразует строковый интервал в time.Duration и сообщает, валиден ли он.
 func LookupReconnectInterval(s string) (time.Duration, bool) {
+	if s == "" || s == "on_failure" {
+		return 0, true
+	}
 	d, ok := ValidAutoReconnectIntervals[s]
 	return d, ok
 }
 
 // ParseReconnectInterval преобразует строковый интервал в time.Duration.
-func ParseReconnectInterval(s string) time.Duration {
-	d, _ := LookupReconnectInterval(s)
-	return d
+// Для неизвестных значений возвращает ошибку.
+func ParseReconnectInterval(s string) (time.Duration, error) {
+	d, ok := LookupReconnectInterval(s)
+	if !ok {
+		return 0, fmt.Errorf("недопустимый интервал автопереподключения %q", s)
+	}
+	return d, nil
 }

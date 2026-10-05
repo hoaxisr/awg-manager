@@ -117,7 +117,6 @@ type Proc struct {
 	reconnectInterval time.Duration
 	lastUptimeS       int64
 	lastObservedAt    time.Time
-	adopted           bool
 	logStartOffset    int64
 }
 
@@ -125,7 +124,7 @@ func NewProc(cfg ProcConfig) *Proc {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Proc{c: cfg}
+	return &Proc{c: cfg, logStartOffset: -1}
 }
 
 // SetDesired — намерение этого прогона. cfgErr — вердикт Validate() конфига:
@@ -164,7 +163,7 @@ var fatalSessionSignatures = []string{
 	"all retransmissions failed",
 }
 
-func readLogTail(path string, maxBytes int64) string {
+func readLogTail(path string, startOffset int64, maxBytes int64) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
@@ -174,11 +173,18 @@ func readLogTail(path string, maxBytes int64) string {
 	if err != nil {
 		return ""
 	}
-	off := st.Size() - maxBytes
-	if off < 0 {
-		off = 0
+	if startOffset < 0 {
+		startOffset = 0
 	}
-	buf := make([]byte, st.Size()-off)
+	fileSize := st.Size()
+	if fileSize <= startOffset {
+		return ""
+	}
+	off := fileSize - maxBytes
+	if off < startOffset {
+		off = startOffset
+	}
+	buf := make([]byte, fileSize-off)
 	n, err := f.ReadAt(buf, off)
 	if err != nil && n == 0 {
 		return ""
@@ -216,13 +222,24 @@ func (p *Proc) Observe(ctx context.Context) (proxyrt.Observation, error) {
 		p.spawnedAt, p.unreachSince = nil, nil
 		p.lastUptimeS = st.UptimeS
 		p.lastObservedAt = now
+		if p.logStartOffset < 0 {
+			if p.c.LogPath != "" {
+				if fi, statErr := os.Stat(p.c.LogPath); statErr == nil {
+					p.logStartOffset = fi.Size()
+				} else {
+					p.logStartOffset = 0
+				}
+			} else {
+				p.logStartOffset = 0
+			}
+		}
 		obs := obsFromState(st)
 		if p.enabled && p.autoReconnect {
 			if p.reconnectInterval > 0 && time.Duration(st.UptimeS)*time.Second >= p.reconnectInterval {
 				obs.Attrs["reconnect_due"] = "interval"
 			}
 			if p.c.LogPath != "" && time.Duration(st.UptimeS)*time.Second >= socketGrace {
-				tail := readLogTail(p.c.LogPath, 16384)
+				tail := readLogTail(p.c.LogPath, p.logStartOffset, 16384)
 				if sig := detectFatalSessionError(tail); sig != "" {
 					obs.Attrs["fatal_error"] = sig
 				}
@@ -466,12 +483,14 @@ func (p *Proc) start(ctx context.Context) error {
 // restart-ветка Apply, у той гейт стоит ДО stop).
 func (p *Proc) spawn(ctx context.Context, now time.Time) error {
 	p.logStartOffset = 0
-	p.adopted = true
 	if p.c.LogPath != "" {
-		if _, err := os.Stat(p.c.LogPath); err == nil {
+		if st, err := os.Stat(p.c.LogPath); err == nil {
 			if err := os.Rename(p.c.LogPath, p.c.LogPath+".prev"); err != nil {
 				if f, truncErr := os.OpenFile(p.c.LogPath, os.O_WRONLY|os.O_TRUNC, 0644); truncErr == nil {
 					_ = f.Close()
+					p.logStartOffset = 0
+				} else {
+					p.logStartOffset = st.Size()
 				}
 			}
 		}
@@ -512,7 +531,6 @@ func (p *Proc) RequestRestart(reason string) {
 	p.restartWanted = true
 	p.restartReason = reason
 	p.rmu.Unlock()
-	p.ResetStartBackoff()
 }
 
 var _ proxyrt.BackoffResetter = (*Proc)(nil)

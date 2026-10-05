@@ -615,8 +615,12 @@ func TestProcRequestRestartLifecycle(t *testing.T) {
 	}
 
 	p.RequestRestart("тест")
+	if got := p.RecheckAfter(); got == 0 {
+		t.Fatal("RequestRestart НЕ должен сбрасывать backoff")
+	}
+	p.ResetStartBackoff()
 	if got := p.RecheckAfter(); got != 0 {
-		t.Fatalf("RequestRestart обязан сбросить backoff, осталось %v", got)
+		t.Fatalf("ResetStartBackoff обязан сбросить backoff, осталось %v", got)
 	}
 
 	steps1 := p.Plan(obs)
@@ -677,6 +681,7 @@ func TestProcAutoReconnect_LogFatalError(t *testing.T) {
 	})
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
 	p.SetAutoReconnect(true, 0)
+	p.logStartOffset = 0 // симулируем процесс, запущенный через spawn
 
 	obs, err := p.Observe(context.Background())
 	if err != nil {
@@ -708,6 +713,60 @@ func TestProcAutoReconnect_LogFatalError(t *testing.T) {
 	// Повторный рестарт до истечения backoff отклоняется анти-флаппингом
 	if err := p.Apply(context.Background(), steps[0]); err == nil || !strings.Contains(err.Error(), "отложен") {
 		t.Fatalf("повторный рестарт обязан быть отложен backoff'ом: %v", err)
+	}
+}
+
+func TestProcAutoReconnect_AdoptedProcessIgnoresOldLogFatal(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "test.log")
+	if err := os.WriteFile(logFile, []byte("старый журнал демона\nall streams down\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	link := &fakeLink{st: awgmproto.State{PID: 100, UptimeS: 30}}
+	r := &fakeRunner{pid: 100, alive: true}
+	p := NewProc(ProcConfig{
+		ID: "process", Instance: "default", Impl: "wt-client", Role: "client",
+		Binary: "/opt/bin/wt-client", NeedCmds: []string{"state"},
+		SocketPath: "/tmp/sock", LogPath: logFile,
+		Link: link, Runner: r, Gate: okGate{}, Now: time.Now,
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(true, 0)
+
+	// Первый Observe: подхваченный процесс (logStartOffset был -1).
+	// Старая строка 'all streams down' в журнале не должна вызывать перезапуск!
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe err: %v", err)
+	}
+	if obs.Attrs["fatal_error"] != "" {
+		t.Fatalf("старая фатальная ошибка подхваченного процесса не должна обнаруживаться: %q", obs.Attrs["fatal_error"])
+	}
+	if steps := p.Plan(obs); len(steps) != 0 {
+		t.Fatalf("план подхваченного процесса без свежих сбоев должен быть пуст: %v", steps)
+	}
+
+	// Процесс дописывает свежий сбой в журнал:
+	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("сессия разорвана\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	// Второй Observe: свежая ошибка должна быть обнаружена!
+	obs2, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe 2 err: %v", err)
+	}
+	if obs2.Attrs["fatal_error"] != "сессия разорвана" {
+		t.Fatalf("свежий сбой сессии должен быть обнаружен, got %q", obs2.Attrs["fatal_error"])
+	}
+	steps2 := p.Plan(obs2)
+	if len(steps2) != 1 || steps2[0].Op != "restart" {
+		t.Fatalf("план после свежего сбоя должен быть [restart], got: %v", steps2)
 	}
 }
 
@@ -785,6 +844,7 @@ func TestProcAutoReconnect_StartupGrace(t *testing.T) {
 	})
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
 	p.SetAutoReconnect(true, 0)
+	p.logStartOffset = 0
 
 	obs, err := p.Observe(context.Background())
 	if err != nil {
@@ -811,6 +871,7 @@ func TestProcAutoReconnect_ReaderDeadlineSignature(t *testing.T) {
 	})
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
 	p.SetAutoReconnect(true, 0)
+	p.logStartOffset = 0
 
 	obs, err := p.Observe(context.Background())
 	if err != nil {
@@ -837,6 +898,7 @@ func TestProcAutoReconnect_IgnoresGenericSocketErrors(t *testing.T) {
 	})
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
 	p.SetAutoReconnect(true, 0)
+	p.logStartOffset = 0
 
 	obs, err := p.Observe(context.Background())
 	if err != nil {
