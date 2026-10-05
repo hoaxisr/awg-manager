@@ -2,9 +2,13 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -91,5 +95,62 @@ func setRouterEnabled(t *testing.T, store *storage.SettingsStore, enabled bool) 
 	})
 	if err != nil {
 		t.Fatalf("Update() error = %v", err)
+	}
+}
+
+func TestSetupMihomo_CorruptNativeStoreQuarantined(t *testing.T) {
+	dataDir := t.TempDir()
+	mihomoDir := filepath.Join(dataDir, "mihomo")
+	if err := os.MkdirAll(mihomoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	nativePath := filepath.Join(mihomoDir, "native.json")
+	corruptContent := []byte("{ this is corrupt json !!!")
+	if err := os.WriteFile(nativePath, corruptContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	settingsStore := storage.NewSettingsStore(dataDir)
+	loggingService := logging.NewService(settingsStore)
+	t.Cleanup(loggingService.Stop)
+
+	a := &app{
+		dataDir:        dataDir,
+		settingsStore:  settingsStore,
+		settings:       &storage.Settings{},
+		loggingService: loggingService,
+		bootLog:        logging.NewScopedLogger(loggingService, logging.GroupSystem, logging.SubCleanup),
+		eventBus:       events.NewBus(),
+	}
+	t.Cleanup(a.runOnExit)
+
+	// Should not panic on corrupt native.json
+	a.setupMihomo()
+
+	if a.mihomoNativeStore == nil {
+		t.Fatal("mihomoNativeStore should be initialized with clean store")
+	}
+
+	// Verify quarantine file was created
+	files, err := os.ReadDir(mihomoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundCorrupt := false
+	for _, f := range files {
+		if strings.Contains(f.Name(), "native.json.corrupt") {
+			foundCorrupt = true
+			data, err := os.ReadFile(filepath.Join(mihomoDir, f.Name()))
+			if err != nil {
+				t.Fatalf("failed to read corrupt file: %v", err)
+			}
+			if string(data) != string(corruptContent) {
+				t.Fatalf("corrupt file content mismatch: got %q, want %q", string(data), string(corruptContent))
+			}
+			break
+		}
+	}
+	if !foundCorrupt {
+		t.Fatal("expected native.json.corrupt.<timestamp> to be created")
 	}
 }

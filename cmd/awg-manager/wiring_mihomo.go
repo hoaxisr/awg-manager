@@ -52,10 +52,16 @@ func (a *app) setupMihomo() {
 		if a.bootLog != nil {
 			a.bootLog.Warn("startup", "mihomo-native", fmt.Sprintf("failed to load %s (%v); quarantining to %s and initializing clean store", nativePath, err, filepath.Base(corruptPath)))
 		}
-		_ = os.Rename(nativePath, corruptPath)
+		if renameErr := os.Rename(nativePath, corruptPath); renameErr != nil {
+			_ = os.Remove(nativePath)
+		}
 		nativeStore, err = mihomonative.NewStore(nativePath)
-		if err != nil && a.bootLog != nil {
-			a.bootLog.Error("startup", "mihomo-native", fmt.Sprintf("fallback clean store failed: %v", err))
+		if err != nil {
+			if a.bootLog != nil {
+				a.bootLog.Error("startup", "mihomo-native", fmt.Sprintf("fallback clean store failed: %v", err))
+			}
+			fallbackPath := filepath.Join(os.TempDir(), fmt.Sprintf("native-ephemeral-%d.json", time.Now().UnixNano()))
+			nativeStore, _ = mihomonative.NewStore(fallbackPath)
 		}
 	}
 	a.mihomoNativeStore = nativeStore
@@ -93,7 +99,9 @@ func (a *app) setupMihomo() {
 	managedProxySet := subProxySet{
 		store: a.subStore, groups: a.subGroupStore, mihomo: nativeStore,
 	}
-	a.ndmsProxyMgr.SetReservedIndices(managedProxySet.ManagedProxyIndices)
+	if a.ndmsProxyMgr != nil {
+		a.ndmsProxyMgr.SetReservedIndices(managedProxySet.ManagedProxyIndices)
+	}
 	a.mihomoBridge.SetReservedIndices(managedProxySet.SingboxProxyIndices)
 	a.mihomoBridge.SetRuntimeActive(func() bool {
 		running, _ := a.mihomoOp.IsRunning()
@@ -105,8 +113,10 @@ func (a *app) setupMihomo() {
 		a.mihomoBridgeRuntime.activate,
 		a.mihomoBridgeRuntime.deactivate,
 	)
-	a.singboxOp.SetSubscriptionProxySet(managedProxySet)
-	a.singboxOp.SetSubscriptionProxySync(a.syncNDMSProxyExports)
+	if a.singboxOp != nil {
+		a.singboxOp.SetSubscriptionProxySet(managedProxySet)
+		a.singboxOp.SetSubscriptionProxySync(a.syncNDMSProxyExports)
+	}
 	a.mihomoOp.SetOnUnexpectedExit(func(generation uint64) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -143,7 +153,10 @@ func (a *app) syncNDMSProxyExports(ctx context.Context) error {
 		)
 	}
 	// Capture current bridge state before mutation.
-	previous := a.mihomoNativeStore.ListBridges()
+	var previous []mihomonative.BridgeRef
+	if a.mihomoNativeStore != nil {
+		previous = a.mihomoNativeStore.ListBridges()
+	}
 	if a.dynamicEngine != nil {
 		if err := a.dynamicEngine.nativeMutationTransition(func() error {
 			// Bridge preparation.

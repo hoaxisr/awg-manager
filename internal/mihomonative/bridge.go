@@ -119,7 +119,7 @@ func (m *BridgeManager) Reconcile(ctx context.Context, previous []BridgeRef) err
 		}
 	}
 	for _, ref := range append(append([]BridgeRef(nil), previous...), m.store.ListBridges()...) {
-		if ref.Bridge.ListenPort > 0 {
+		if ref.Bridge.ListenPort >= bridgePortBase && ref.Bridge.ListenPort <= bridgePortMax {
 			usedPorts[ref.Bridge.ListenPort] = true
 		}
 		if ref.Bridge.ProxyIndex >= 0 {
@@ -188,9 +188,6 @@ func (m *BridgeManager) Reconcile(ctx context.Context, previous []BridgeRef) err
 		if !ref.Enabled {
 			continue
 		}
-		if err := validateBridge(ref.Bridge); err != nil {
-			return fmt.Errorf("invalid Mihomo bridge %s/%s: %w", ref.Kind, ref.ID, err)
-		}
 		canonicalOwner := BridgeOwnershipDescription(ref.Kind, ref.ID)
 		legacyOwners := []string{canonicalOwner}
 		if ref.LegacyOwner != "" && ref.LegacyOwner != canonicalOwner {
@@ -200,7 +197,7 @@ func (m *BridgeManager) Reconcile(ctx context.Context, previous []BridgeRef) err
 		bridge := ref.Bridge
 		changed := false
 		runtimeOwnsPorts := m.running != nil && m.running()
-		if configuredPorts[bridge.ListenPort] || (!runtimeOwnsPorts && !bridgePortAvailable(bridge.ListenPort)) {
+		if bridge.ListenPort < bridgePortBase || bridge.ListenPort > bridgePortMax || configuredPorts[bridge.ListenPort] || (!runtimeOwnsPorts && !bridgePortAvailable(bridge.ListenPort)) {
 			port, portErr := nextBridgePort(usedPorts)
 			if portErr != nil {
 				return fmt.Errorf("reallocate conflicting Mihomo port %s/%s: %w", ref.Kind, ref.ID, portErr)
@@ -214,6 +211,9 @@ func (m *BridgeManager) Reconcile(ctx context.Context, previous []BridgeRef) err
 				return fmt.Errorf("persist reallocated Mihomo bridge %s/%s: %w", ref.Kind, ref.ID, setErr)
 			}
 			ref.Bridge = bridge
+		}
+		if err := validateBridge(ref.Bridge); err != nil {
+			return fmt.Errorf("invalid Mihomo bridge %s/%s: %w", ref.Kind, ref.ID, err)
 		}
 		isGated := false
 		if g, ok := m.registrar.(interface{ IsGated() bool }); ok {

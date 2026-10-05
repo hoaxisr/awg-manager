@@ -539,3 +539,56 @@ func TestBridgeManagerLegacyOwnerMigrationClearsLegacyOwner(t *testing.T) {
 		t.Fatalf("Proxy7 owner after rename = %q, want %q", registrar.descriptions[7], expectedAfterRename)
 	}
 }
+
+func TestBridgeManager_Reconcile_ReallocatesOutOfRangePorts(t *testing.T) {
+	tmpDir := t.TempDir()
+	storePath := filepath.Join(tmpDir, "native.json")
+	store, err := NewStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := store.CreateProxy("vless://11111111-1111-1111-1111-111111111111@native.example:443?type=xhttp#LegacyCard", EngineMihomo, EngineMihomo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := nodes[0]
+	// Set initial bridge with valid port
+	initialBridge := ProxyBridge{
+		ListenPort: 12050, ProxyIndex: 5,
+		ProxyInterface: "Proxy5", KernelInterface: "t2s5",
+	}
+	if err := store.SetBridge("proxy", proxy.ID, initialBridge); err != nil {
+		t.Fatal(err)
+	}
+
+	// Directly modify store data to simulate an upgraded pre-existing native.json with port 12500
+	store.mu.Lock()
+	store.data.Proxies[0].Bridge.ListenPort = 12500
+	store.mu.Unlock()
+
+	canonicalOwner := BridgeOwnershipDescription("proxy", proxy.ID)
+	registrar := &fakeBridgeRegistrar{
+		occupied:     map[int]bool{5: true},
+		descriptions: map[int]string{5: canonicalOwner},
+	}
+	manager := NewBridgeManager(store, registrar, func() bool { return true })
+	manager.SetRuntimeActive(func() bool { return true })
+
+	if err := manager.Reconcile(context.Background(), store.ListBridges()); err != nil {
+		t.Fatalf("reconcile failed to reallocate out-of-range port: %v", err)
+	}
+	got, err := store.GetProxy(proxy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Bridge.ListenPort < bridgePortBase || got.Bridge.ListenPort > bridgePortMax {
+		t.Fatalf("reallocated port %d outside %d-%d", got.Bridge.ListenPort, bridgePortBase, bridgePortMax)
+	}
+	if len(registrar.ensured) == 0 {
+		t.Fatal("NDMS proxy was not ensured")
+	}
+	if registrar.ensured[len(registrar.ensured)-1].port != got.Bridge.ListenPort {
+		t.Fatalf("NDMS ensured port %d, want %d", registrar.ensured[len(registrar.ensured)-1].port, got.Bridge.ListenPort)
+	}
+}
+
