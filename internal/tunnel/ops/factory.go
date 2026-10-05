@@ -19,6 +19,14 @@ type Backend interface {
 	// IsRunning reports whether the kernel device exists and is amneziawg-typed.
 	IsRunning(ctx context.Context, ifaceName string) (bool, int)
 	WaitReady(ctx context.Context, ifaceName string, timeout time.Duration) error
+	// ReplaceWithTun — plain tun вместо устройства одной подменой под
+	// барьером списков (netdev.SwapGate); устройства нет — только tun.
+	ReplaceWithTun(ctx context.Context, ifaceName string) error
+	// Recreate — свежее amneziawg одной подменой под барьером (del + add),
+	// даже если живое amneziawg уже есть.
+	Recreate(ctx context.Context, ifaceName string) error
+	// StopIfPresent — Stop, если устройство есть; нет — nil.
+	StopIfPresent(ctx context.Context, ifaceName string) error
 }
 
 // NewOperator creates the operator for kernel tunnel management.

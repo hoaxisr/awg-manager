@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
@@ -19,12 +20,19 @@ const (
 )
 
 // KernelBackend manages AmneziaWG kernel module interfaces.
-// Uses ip link add/del type amneziawg for interface management.
-type KernelBackend struct{}
+// Устройства снимаются и создаются только под барьером gate (D-N1): пока
+// запись OpkgTunN живёт без устройства, наши списки интерфейсов ждут.
+type KernelBackend struct {
+	gate *netdev.SwapGate
+}
 
-// NewKernel creates a new kernel backend.
-func NewKernel() *KernelBackend {
-	return &KernelBackend{}
+// NewKernel creates a new kernel backend. gate — барьер списков, один на
+// процесс (общий с query.InterfaceStore).
+func NewKernel(gate *netdev.SwapGate) *KernelBackend {
+	if gate == nil {
+		panic("backend.NewKernel: SwapGate обязателен")
+	}
+	return &KernelBackend{gate: gate}
 }
 
 // HeldError — устройство iface открыто сторонним процессом (fd на
@@ -41,7 +49,8 @@ func (e *HeldError) Error() string {
 	return fmt.Sprintf("интерфейс %s занят сторонней программой %s (pid %d)", e.Iface, e.Comm, e.PID)
 }
 
-// Швы для тестов: бэкенд зовёт ip и читает /proc и /sys напрямую.
+// Швы для тестов: бэкенд зовёт ip (только чтение: `ip -d link show`; снос и
+// создание — у netdev.Swapper) и читает /proc и /sys напрямую.
 var (
 	kernelRun   = exec.Run
 	tunHolder   = func(iface string) *HeldError { return findTunHolder("/proc", iface) }
@@ -99,6 +108,9 @@ func findTunHolder(procRoot, iface string) *HeldError {
 // If interface exists as wrong type (tun) — deletes and recreates, unless a
 // foreign process holds it open (HeldError, F500).
 // If interface doesn't exist — creates new.
+//
+// Проверки (тип, наличие, обход /proc) — до барьера (N11); снос и создание —
+// одной подменой под ним.
 func (b *KernelBackend) Start(ctx context.Context, ifaceName string) error {
 	if running, _ := b.IsRunning(ctx, ifaceName); running {
 		return nil // Already amneziawg, nothing to do
@@ -108,18 +120,23 @@ func (b *KernelBackend) Start(ctx context.Context, ifaceName string) error {
 	// пересоздал после ребута по сохранённой записи OpkgTun (держателя нет):
 	// его сносим. Держатель есть — номер занят чужой программой, отказ.
 	// Устройства нет — держать нечего, обход /proc не нужен.
-	if ifaceExists(ifaceName) {
+	exists := ifaceExists(ifaceName)
+	if exists {
 		if held := tunHolder(ifaceName); held != nil {
 			return held
 		}
 	}
-	_, _ = kernelRun(ctx, "/opt/sbin/ip", "link", "del", "dev", ifaceName)
-
-	result, err := kernelRun(ctx, "/opt/sbin/ip", "link", "add", "dev", ifaceName, "type", "amneziawg")
-	if err != nil {
-		return fmt.Errorf("create kernel interface: %w", exec.FormatError(result, err))
-	}
-	return nil
+	return b.gate.Hold(ctx, func(sw netdev.Swapper) error {
+		if exists {
+			if err := sw.LinkDel(ifaceName); err != nil {
+				return fmt.Errorf("delete stale interface: %w", err)
+			}
+		}
+		if err := sw.LinkAdd(ifaceName, "amneziawg"); err != nil {
+			return fmt.Errorf("create kernel interface: %w", err)
+		}
+		return nil
+	})
 }
 
 // Stop removes the kernel AmneziaWG interface. Тот же гард держателя, что в
@@ -130,18 +147,82 @@ func (b *KernelBackend) Start(ctx context.Context, ifaceName string) error {
 // держать некому, наше amneziawg чужая программа через /dev/net/tun не
 // открывает.
 func (b *KernelBackend) Stop(ctx context.Context, ifaceName string) error {
-	if ifaceExists(ifaceName) {
-		if running, _ := b.IsRunning(ctx, ifaceName); !running {
-			if held := tunHolder(ifaceName); held != nil {
-				return held
+	if held := b.foreignHolder(ctx, ifaceName); held != nil {
+		return held
+	}
+	return b.gate.Hold(ctx, func(sw netdev.Swapper) error {
+		if err := sw.LinkDel(ifaceName); err != nil {
+			return fmt.Errorf("delete kernel interface: %w", err)
+		}
+		return nil
+	})
+}
+
+// Recreate — свежее amneziawg на имени одной подменой под барьером: снос
+// существующего устройства и создание — в одном Hold, так что запись OpkgTunN
+// не остаётся без устройства для наших читателей. Нужен Reconcile, когда
+// живое amneziawg оказалось под только что созданной записью (Start его не
+// тронул бы). Не-amneziawg с чужим держателем — HeldError (F500).
+func (b *KernelBackend) Recreate(ctx context.Context, ifaceName string) error {
+	if held := b.foreignHolder(ctx, ifaceName); held != nil {
+		return held
+	}
+	exists := ifaceExists(ifaceName)
+	return b.gate.Hold(ctx, func(sw netdev.Swapper) error {
+		if exists {
+			if err := sw.LinkDel(ifaceName); err != nil {
+				return fmt.Errorf("recreate kernel interface: %w", err)
 			}
 		}
+		if err := sw.LinkAdd(ifaceName, "amneziawg"); err != nil {
+			return fmt.Errorf("recreate kernel interface: %w", err)
+		}
+		return nil
+	})
+}
+
+// StopIfPresent — Stop, если устройство есть; нет — nil (снимать нечего,
+// например NDMS снял tun вместе с записью).
+func (b *KernelBackend) StopIfPresent(ctx context.Context, ifaceName string) error {
+	if !ifaceExists(ifaceName) {
+		return nil
 	}
-	result, err := kernelRun(ctx, "/opt/sbin/ip", "link", "del", "dev", ifaceName)
-	if err != nil {
-		return fmt.Errorf("delete kernel interface: %w", exec.FormatError(result, err))
+	return b.Stop(ctx, ifaceName)
+}
+
+// ReplaceWithTun ставит на имя plain persistent tun вместо нашего устройства
+// одной подменой под барьером: запись OpkgTunN не остаётся без устройства
+// ни для наших читателей, ни для `no interface` (П16/C3a, стенд П4 20/20 без
+// C). Устройства нет — только `tuntap add`. Чужой держатель — HeldError, ip
+// не зовётся. Отказ `tuntap add` — ошибка; что делать с записью, решает
+// вызывающий.
+func (b *KernelBackend) ReplaceWithTun(ctx context.Context, ifaceName string) error {
+	if held := b.foreignHolder(ctx, ifaceName); held != nil {
+		return held
 	}
-	return nil
+	exists := ifaceExists(ifaceName)
+	return b.gate.Hold(ctx, func(sw netdev.Swapper) error {
+		if exists {
+			if err := sw.LinkDel(ifaceName); err != nil {
+				return fmt.Errorf("replace with tun: %w", err)
+			}
+		}
+		if err := sw.TuntapAdd(ifaceName); err != nil {
+			return fmt.Errorf("replace with tun: %w", err)
+		}
+		return nil
+	})
+}
+
+// foreignHolder — держатель существующего не-amneziawg устройства (F500).
+func (b *KernelBackend) foreignHolder(ctx context.Context, ifaceName string) *HeldError {
+	if !ifaceExists(ifaceName) {
+		return nil
+	}
+	if running, _ := b.IsRunning(ctx, ifaceName); running {
+		return nil
+	}
+	return tunHolder(ifaceName)
 }
 
 // IsRunning checks if the kernel interface exists AND is amneziawg type.

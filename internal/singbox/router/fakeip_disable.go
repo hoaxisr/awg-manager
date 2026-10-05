@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
@@ -22,11 +23,12 @@ var fakeIPLinkPresent = func(ctx context.Context, iface string) bool {
 	return err == nil
 }
 
-// fakeIPLinkDelete removes a lingering kernel netdev (`ip link delete <iface>`).
+// fakeIPLinkDelete removes a lingering kernel netdev under the list barrier.
+// Запись OpkgTunN к этому моменту уже снята, так что C 0767 тут невозможен;
+// под гейтом — ради инварианта «ни одного del/add мимо netdev.Swapper» (N1).
 // Seam var for tests.
-var fakeIPLinkDelete = func(ctx context.Context, iface string) error {
-	_, err := sysexec.Run(ctx, ipBinary, "link", "delete", iface)
-	return err
+var fakeIPLinkDelete = func(ctx context.Context, gate *netdev.SwapGate, iface string) error {
+	return gate.DeleteLink(ctx, iface)
 }
 
 // fakeIPDrainComment labels the temporary fail-closed reject route installed
@@ -407,7 +409,7 @@ func (s *ServiceImpl) teardownOpkgTun(ctx context.Context, ndmsName, scope strin
 		// здесь тот же приём для откатов и реап-ретраев, которые ходят сюда.
 		iface := strings.ToLower(ndmsName)
 		if fakeIPLinkPresent(ctx, iface) {
-			if e := fakeIPLinkDelete(ctx, iface); e != nil {
+			if e := fakeIPLinkDelete(ctx, s.deps.SwapGate, iface); e != nil {
 				s.appLog.Warn(scope, ndmsName, "delete kernel netdev: "+e.Error())
 			}
 		}

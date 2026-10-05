@@ -3,6 +3,8 @@ package query
 import (
 	"context"
 	"fmt"
+
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 )
 
 // Queries bundles every NDMS Query Store.
@@ -36,6 +38,9 @@ type Deps struct {
 	// IsOS5 reports whether we're running on OS 5.x. Called lazily from
 	// OS-gated Stores (DNSProxyStore). Inject a fake in tests.
 	IsOS5 func() bool
+	// SwapGate — барьер списков на подмене устройства (D-N1), общий с
+	// backend.KernelBackend. nil — свой экземпляр у стора (тесты).
+	SwapGate *netdev.SwapGate
 }
 
 // WANInterfaceAddress returns the IPv4 address configured on the
@@ -68,6 +73,9 @@ func NewQueries(d Deps) *Queries {
 		isOS5 = func() bool { return false }
 	}
 	ifaces := NewInterfaceStore(d.Getter, d.Logger)
+	if d.SwapGate != nil {
+		ifaces.gate = d.SwapGate
+	}
 	runningConfig := NewRunningConfigStore(d.Getter, d.Logger)
 	return &Queries{
 		Interfaces:       ifaces,

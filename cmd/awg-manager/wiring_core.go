@@ -14,6 +14,7 @@ import (
 	ndmsevents "github.com/hoaxisr/awg-manager/internal/ndms/events"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
@@ -104,10 +105,12 @@ func (a *app) setupNDMS() {
 	a.ndmsTransportClient.SetAppLogger(a.loggingService)
 	a.deferOnExit(a.ndmsTransportClient.Close) // graceful batcher shutdown — финальный flush pending'а
 
+	a.swapGate = &netdev.SwapGate{}
 	a.ndmsQueries = ndmsquery.NewQueries(ndmsquery.Deps{
-		Getter: a.ndmsTransportClient,
-		Logger: queryLogger(a.loggingService),
-		IsOS5:  osdetect.Is5,
+		Getter:   a.ndmsTransportClient,
+		Logger:   queryLogger(a.loggingService),
+		IsOS5:    osdetect.Is5,
+		SwapGate: a.swapGate,
 	})
 
 	// Хуки NDMS (F571): читатель spool встаёт в конец файла ДО первого

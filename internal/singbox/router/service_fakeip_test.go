@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -1109,7 +1110,13 @@ func stubOrphanNetdev(t *testing.T, present bool) func() int {
 	oldDelete := fakeIPLinkDelete
 	deletes := 0
 	fakeIPLinkPresent = func(context.Context, string) bool { return present }
-	fakeIPLinkDelete = func(_ context.Context, _ string) error { deletes++; return nil }
+	fakeIPLinkDelete = func(_ context.Context, gate *netdev.SwapGate, _ string) error {
+		if gate == nil {
+			t.Error("снос opkgtunN без барьера списков (SwapGate nil)")
+		}
+		deletes++
+		return nil
+	}
 	t.Cleanup(func() { fakeIPLinkPresent = oldPresent; fakeIPLinkDelete = oldDelete })
 	return func() int { return deletes }
 }

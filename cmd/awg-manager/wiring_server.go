@@ -138,7 +138,7 @@ func (a *app) setupServer() {
 			},
 			OrphanIfaces:          orphanIfaces(a.opkgPool, a.ndmsQueries.Interfaces),
 			OrphanIfacesExclusive: orphanIfacesExclusive(a.opkgPool, a.ndmsQueries.Interfaces),
-			OrphanNDMS:            confirmingOpkgTun{a.ndmsCommands.Interfaces, a.ndmsQueries.Interfaces},
+			OrphanNDMS:            orphanNDMS{confirmingOpkgTun{a.ndmsCommands.Interfaces, a.ndmsQueries.Interfaces}, a.backendImpl},
 			ForeignIfaces: &foreignIfaces{
 				settings:  a.settingsStore,
 				pool:      a.opkgPool,
@@ -408,6 +408,7 @@ func (a *app) setupRouter() {
 		OpkgTun:                confirmingOpkgTun{a.ndmsCommands.Interfaces, a.ndmsQueries.Interfaces},
 		StaticRoutes:           &routerStaticRouteAdapter{routes: a.ndmsCommands.Routes, ifaces: a.ndmsQueries.Interfaces},
 		OpkgTunIndices:         &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces},
+		SwapGate:               a.swapGate,
 		// ОБЩИЙ пул, один на процесс и на все четыре подсистемы. Своя
 		// удерживающая запись из состава НЕ вычитается: режим узнаёт свой
 		// номер по ключу держателя, и пул отдаёт его пину по совпадению

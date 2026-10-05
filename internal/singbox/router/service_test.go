@@ -16,6 +16,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -1240,6 +1241,7 @@ func newOrchedTestService(t *testing.T) (*ServiceImpl, string) {
 			Singbox:  &fakeSingbox{dir: dir},
 			Orch:     orch,
 			Bus:      bus,
+			SwapGate: &netdev.SwapGate{},
 		},
 	}
 	if svc.deps.OpkgTunPool == nil {

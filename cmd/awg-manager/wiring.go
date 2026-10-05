@@ -23,6 +23,7 @@ import (
 	ndmsmetrics "github.com/hoaxisr/awg-manager/internal/ndms/metrics"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
@@ -111,6 +112,7 @@ type app struct {
 	kmodLoader    *kmod.Loader
 	wgClient      *wg.ClientImpl
 	backendImpl   *backend.KernelBackend
+	swapGate      *netdev.SwapGate // барьер списков на подмене устройства (D-N1), один на процесс
 	stateMgr      *state.ManagerImpl
 	eventBus      *events.Bus
 	operator      ops.Operator

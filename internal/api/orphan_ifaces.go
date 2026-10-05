@@ -4,18 +4,23 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/response"
-	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
 )
 
-// OrphanIfaceNDMS — снятие записи интерфейса в NDMS.
+// OrphanIfaceNDMS — снятие записи интерфейса в NDMS и его устройства ядра.
+// Устройство снимается только бэкендом (backend.KernelBackend) — под барьером
+// списков (netdev.SwapGate, D-N1) и с гардом чужого держателя (F500).
 type OrphanIfaceNDMS interface {
 	DeleteOpkgTun(ctx context.Context, name string) error
+	// ReplaceWithTun — plain tun вместо устройства одной подменой под
+	// барьером (порядок сноса сироты с ним — Task 61).
+	ReplaceWithTun(ctx context.Context, iface string) error
+	// StopIfPresent — снос устройства, если оно есть; нет — nil.
+	StopIfPresent(ctx context.Context, iface string) error
 }
 
 // DeleteOrphanIfaceRequest — тело POST /tunnels/orphans/delete.
@@ -48,46 +53,6 @@ func NewOrphanIfaceHandler(list func(ctx context.Context) ([]external.OrphanIfac
 		ndms: ndms,
 		log:  logging.NewScopedLogger(appLog, logging.GroupSystem, logging.SubCleanup),
 	}
-}
-
-// linkDelete — шов над `ip link del`: тестам незачем трогать сеть машины.
-//
-// stderr подмешивается в ошибку намеренно: exec.Run отдаёт «exit status 1» без
-// текста, и по одной этой строке «устройства нет» неотличимо от «не смогли
-// удалить». Стенд 15.09 (при прежнем порядке «запись, потом устройство»):
-// снос записи NDMS уносит устройство каскадом, так что к нашему `ip link del`
-// его уже нет, и ручка отчитывалась отказом об успешном сносе. Устройства
-// нет и тогда, когда его снял кто-то другой.
-var linkDelete = func(ctx context.Context, iface string) error {
-	res, err := exec.Run(ctx, "/opt/sbin/ip", "link", "del", "dev", iface)
-	if err == nil {
-		return nil
-	}
-	if res != nil {
-		if msg := strings.TrimSpace(res.Stderr); msg != "" {
-			return fmt.Errorf("%s (%w)", msg, err)
-		}
-	}
-	return err
-}
-
-// linkAbsent — «устройства нет», и это ЕДИНСТВЕННОЕ, что мы готовы принять за
-// успех несостоявшегося сноса. Отличается от прежней проверки наличия тем, что
-// решает по ТЕКСТУ отказа, а не по факту отказа: `ip link del` не запустился
-// (нет бинаря, таймаут ctx) — это не «устройства нет», это «мы не проверили».
-// Прежняя форма читала любой отказ как отсутствие и отвечала «удалено», не
-// удалив.
-func linkAbsent(err error) bool {
-	if err == nil {
-		return false
-	}
-	low := strings.ToLower(err.Error())
-	// Три формулировки, потому что на роутере их правда три: busybox ip пишет
-	// «Device "X" does not exist.», iproute2 — «Cannot find device "X"», ядро
-	// через netlink — ENODEV «no such device».
-	return strings.Contains(low, "does not exist") ||
-		strings.Contains(low, "cannot find device") ||
-		strings.Contains(low, "no such device")
 }
 
 // Delete handles POST /api/tunnels/orphans/delete.
@@ -157,14 +122,12 @@ func (h *OrphanIfaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ndmsName := target.NDMSName
 	iface := fmt.Sprintf("opkgtun%d", idx)
 
-	// Снос устройства БЕЗУСЛОВНЫЙ — в том числе когда записи NDMS не было вовсе
-	// (устройство подняли мимо неё). Прежде он шёл под проверкой наличия, а та
-	// была fail-open: незапустившийся `ip` читался как «устройства нет», и
-	// ручка отчитывалась успехом, оставив номер занятым. Лишний вызов на
-	// несуществующем устройстве стоит одного отказа с понятным текстом.
-	// Устройство не снято — запись не трогаем: снос записи при живом
-	// устройстве и есть C выше.
-	if err := linkDelete(r.Context(), iface); err != nil && !linkAbsent(err) {
+	// Снос устройства — в том числе когда записи NDMS не было вовсе
+	// (устройство подняли мимо неё). Наличие решает stat /sys/class/net в
+	// бэкенде, а не текст отказа `ip`: незапустившийся `ip` — ошибка, а не
+	// «устройства нет». Устройство не снято (в т.ч. чужой держатель) — запись
+	// не трогаем: снос записи при живом устройстве и есть C выше.
+	if err := h.ndms.StopIfPresent(r.Context(), iface); err != nil {
 		h.log.Warn("orphan-delete", iface, "устройство не удалено, запись NDMS не тронута: "+err.Error())
 		response.Error(w, "устройство "+iface+" удалить не удалось: "+err.Error(), "LINK_DELETE_FAILED")
 		return

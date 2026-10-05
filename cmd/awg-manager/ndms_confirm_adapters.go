@@ -27,7 +27,7 @@ var (
 	_ router.DefaultRouteProvider = confirmingDefaultRoute{}
 	_ router.SegmentNATProvider   = confirmingSegmentNAT{}
 	_ ndmsres.Permitter           = confirmingPermitter{}
-	_ api.OrphanIfaceNDMS         = confirmingOpkgTun{}
+	_ api.OrphanIfaceNDMS         = orphanNDMS{}
 )
 
 // errIfaceAbsent — отказ настройки по отсутствующему интерфейсу. Страж
@@ -57,9 +57,8 @@ func confirmTeardown(ctx context.Context, ifaces *ndmsquery.InterfaceStore, name
 	return do(c)
 }
 
-// confirmingOpkgTun — router.OpkgTunProvisioner, командная часть
-// ndmsres.Commands и api.OrphanIfaceNDMS (наборы методов пересекаются,
-// правило одно).
+// confirmingOpkgTun — router.OpkgTunProvisioner и командная часть
+// ndmsres.Commands (наборы методов пересекаются, правило одно).
 type confirmingOpkgTun struct {
 	cmds   *ndmscommand.InterfaceCommands
 	ifaces *ndmsquery.InterfaceStore
@@ -95,6 +94,13 @@ func (a confirmingOpkgTun) OpkgTunRecord(ctx context.Context, name string) (stri
 		return "", false, err
 	}
 	return rec.Description, true, nil
+}
+
+// orphanNDMS — api.OrphanIfaceNDMS: запись снимается по Confirmed, устройство
+// — бэкендом (под барьером списков D-N1, с гардом держателя F500).
+type orphanNDMS struct {
+	confirmingOpkgTun
+	*backend.KernelBackend
 }
 
 func (a confirmingOpkgTun) DeleteOpkgTun(ctx context.Context, name string) error {

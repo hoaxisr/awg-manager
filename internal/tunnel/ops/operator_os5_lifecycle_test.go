@@ -765,14 +765,16 @@ func TestReconcile_KeepsRunningKernelInterface(t *testing.T) {
 
 // Устройство пересоздаётся, если его нет (rmmod, ручной ip link del) — и если
 // записи OpkgTun в NDMS не было: на живом kernel-устройстве NDMS отвергает
-// ip address (exit 122), запись надо ставить на свежее. `ip link del` из
-// Reconcile — только для живого amneziawg под свежей записью; отсутствующее
-// или не-amneziawg устройство сносит сам backend.Start (там гейт F500).
+// ip address (exit 122), запись надо ставить на свежее. Живое amneziawg под
+// свежей записью пересоздаёт backend.Recreate (del + add одной подменой под
+// барьером, R61); отсутствующее или не-amneziawg устройство — backend.Start
+// (там гейт F500). Своего `ip link del` у Reconcile нет.
+// Мутация: Recreate → Start в ветке running → живое не пересоздано, красный.
 func TestReconcile_RecreatesKernelInterface(t *testing.T) {
 	cases := []struct {
-		name    string
-		backend *MockBackend
-		wantDel bool
+		name         string
+		backend      *MockBackend
+		wantRecreate bool
 	}{
 		{"устройства нет", &MockBackend{}, false},
 		{"устройство живо, записи OpkgTun нет", &MockBackend{running: true, pid: 1}, true},
@@ -785,11 +787,15 @@ func TestReconcile_RecreatesKernelInterface(t *testing.T) {
 			if err := o.Reconcile(context.Background(), lifecycleCfg(t)); err != nil {
 				t.Fatal(err)
 			}
-			if got := hasCall(rec.Calls, "/opt/sbin/ip link del dev opkgtun10"); got != tc.wantDel {
-				t.Fatalf("ip link del = %v, want %v:\n%s", got, tc.wantDel, strings.Join(rec.Calls, "\n"))
+			if hasCall(rec.Calls, "/opt/sbin/ip link del dev opkgtun10") {
+				t.Fatalf("голый ip link del мимо барьера:\n%s", strings.Join(rec.Calls, "\n"))
 			}
-			if !slices.Equal(tc.backend.StartCalls, []string{"opkgtun10"}) {
-				t.Fatalf("устройство не пересоздано: start=%v", tc.backend.StartCalls)
+			created := tc.backend.StartCalls
+			if tc.wantRecreate {
+				created = tc.backend.RecreateCalls
+			}
+			if !slices.Equal(created, []string{"opkgtun10"}) || len(tc.backend.StartCalls)+len(tc.backend.RecreateCalls) != 1 {
+				t.Fatalf("устройство не пересоздано: start=%v recreate=%v", tc.backend.StartCalls, tc.backend.RecreateCalls)
 			}
 		})
 	}

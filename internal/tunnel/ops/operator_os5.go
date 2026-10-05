@@ -718,14 +718,15 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	} else {
 		// Живое amneziawg под только что созданной записью: backend.Start его
 		// не тронул бы (IsRunning=true), а SetAddress ниже требует свежее —
-		// сносим здесь. Отсутствующее или не-amneziawg устройство (plain tun
-		// после ребута) сносит сам backend.Start — и отказывает HeldError,
-		// если устройство держит чужая программа (F500). Сносить его тут
-		// значило бы обойти этот гейт.
+		// backend.Recreate (снос и создание одной подменой под барьером
+		// списков, D-N1). Отсутствующее или не-amneziawg устройство (plain
+		// tun после ребута) сносит сам backend.Start — и отказывает
+		// HeldError, если устройство держит чужая программа (F500).
+		recreate := o.backend.Start
 		if running {
-			o.ipRun(ctx, "/opt/sbin/ip", "link", "del", "dev", names.IfaceName)
+			recreate = o.backend.Recreate
 		}
-		if err := o.backend.Start(ctx, names.IfaceName); err != nil {
+		if err := recreate(ctx, names.IfaceName); err != nil {
 			return tunnel.NewOpError("reconcile", cfg.ID, "backend", err)
 		}
 		if err := o.backend.WaitReady(ctx, names.IfaceName, interfaceReadyTimeout); err != nil {

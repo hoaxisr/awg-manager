@@ -100,7 +100,9 @@ func TestOperatorOS4_Start_BackendFails(t *testing.T) {
 }
 
 // Отказ wg.SetConf обязан откатить всё, что Start успел сделать: остановить
-// процесс и снести интерфейс. `link del` — БЕЗ `dev` (deleteInterface).
+// процесс и снести интерфейс. Снос — бэкендом (StopIfPresent, под барьером
+// netdev.SwapGate, R61), не голым `ip link del`.
+// Мутация: deleteInterface без StopIfPresent → устройство не снесено, красный.
 func TestOperatorOS4_Start_WGFails_Rollback(t *testing.T) {
 	backendMock := &MockBackend{}
 	wgClient := &MockWGClient{setConfError: errors.New("setconf: boom")}
@@ -128,10 +130,12 @@ func TestOperatorOS4_Start_WGFails_Rollback(t *testing.T) {
 	if len(backendMock.StopCalls) != 1 || backendMock.StopCalls[0] != "awgm5" {
 		t.Errorf("Backend.Stop = %v, want [awgm5]", backendMock.StopCalls)
 	}
+	if len(backendMock.StopIfPresentCalls) != 1 || backendMock.StopIfPresentCalls[0] != "awgm5" {
+		t.Errorf("снос интерфейса при откате: StopIfPresent = %v, want [awgm5]", backendMock.StopIfPresentCalls)
+	}
 	want := []string{
 		"/opt/sbin/ip address add dev awgm5 10.9.7.2/32",
 		"/opt/sbin/ip link set down dev awgm5",
-		"/opt/sbin/ip link del awgm5",
 	}
 	if strings.Join(rec.Calls, "\n") != strings.Join(want, "\n") {
 		t.Errorf("ip-команды отката:\nполучено:\n%s\nожидалось:\n%s",

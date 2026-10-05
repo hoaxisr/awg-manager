@@ -62,8 +62,11 @@ type MockBackend struct {
 	stopError    error
 	waitReadyErr error
 
-	StartCalls []string
-	StopCalls  []string
+	StartCalls         []string
+	StopCalls          []string
+	ReplaceCalls       []string
+	RecreateCalls      []string
+	StopIfPresentCalls []string
 }
 
 func (m *MockBackend) Start(ctx context.Context, ifaceName string) error {
@@ -88,6 +91,30 @@ func (m *MockBackend) IsRunning(ctx context.Context, ifaceName string) (bool, in
 
 func (m *MockBackend) WaitReady(ctx context.Context, ifaceName string, timeout time.Duration) error {
 	return m.waitReadyErr
+}
+
+func (m *MockBackend) ReplaceWithTun(ctx context.Context, ifaceName string) error {
+	m.ReplaceCalls = append(m.ReplaceCalls, ifaceName)
+	m.running = false
+	m.pid = 0
+	return nil
+}
+
+func (m *MockBackend) Recreate(ctx context.Context, ifaceName string) error {
+	m.RecreateCalls = append(m.RecreateCalls, ifaceName)
+	if m.startError == nil {
+		m.running = true
+		m.pid = 12345
+	}
+	return m.startError
+}
+
+func (m *MockBackend) StopIfPresent(ctx context.Context, ifaceName string) error {
+	m.StopIfPresentCalls = append(m.StopIfPresentCalls, ifaceName)
+	if !m.running {
+		return nil
+	}
+	return m.Stop(ctx, ifaceName)
 }
 
 // MockFirewall for firewall operations.

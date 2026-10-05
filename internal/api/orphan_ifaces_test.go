@@ -17,6 +17,20 @@ import (
 type fakeOrphanNDMS struct {
 	deleted []string
 	err     error
+	stopped []string // StopIfPresent: устройство снято
+	stopErr error
+}
+
+func (f *fakeOrphanNDMS) StopIfPresent(_ context.Context, iface string) error {
+	if f.stopErr != nil {
+		return f.stopErr
+	}
+	f.stopped = append(f.stopped, iface)
+	return nil
+}
+
+func (f *fakeOrphanNDMS) ReplaceWithTun(context.Context, string) error {
+	panic("ReplaceWithTun: порядок сироты с ним — Task 61")
 }
 
 func (f *fakeOrphanNDMS) DeleteOpkgTun(_ context.Context, name string) error {
@@ -61,26 +75,11 @@ func listKernelOnly(iface string) func(context.Context) ([]external.OrphanIface,
 	}
 }
 
-// stubLinkGone — устройства в ядре нет: `ip link del` отвечает так же, как
-// настоящий, и это для ручки успех.
-func stubLinkGone(t *testing.T) *[]string {
-	t.Helper()
-	prev := linkDelete
-	var called []string
-	linkDelete = func(_ context.Context, iface string) error {
-		called = append(called, iface)
-		return errors.New("Cannot find device \"" + iface + "\"")
-	}
-	t.Cleanup(func() { linkDelete = prev })
-	return &called
-}
-
 // ГЛАВНОЕ свойство ручки: сиротство перепроверяется на сервере. Отчёт
 // диагностики, по которому нажали кнопку, мог устареть, и номер к этому
 // моменту мог достаться новому туннелю — удаление по слову клиента снесло бы
 // чужой живой интерфейс.
 func TestOrphanDelete_RefusesWhenNoLongerOrphan(t *testing.T) {
-	stubLinkGone(t)
 	ndms := &fakeOrphanNDMS{}
 	h := NewOrphanIfaceHandler(listOf("opkgtun11"), ndms, nil)
 
@@ -95,7 +94,6 @@ func TestOrphanDelete_RefusesWhenNoLongerOrphan(t *testing.T) {
 }
 
 func TestOrphanDelete_RemovesNDMSRecordByNDMSName(t *testing.T) {
-	stubLinkGone(t)
 	ndms := &fakeOrphanNDMS{}
 	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
 
@@ -111,38 +109,28 @@ func TestOrphanDelete_RemovesNDMSRecordByNDMSName(t *testing.T) {
 // Устройство переживает снос записи, когда его держали открытым. Не добить
 // его значит занять номер пула навсегда.
 func TestOrphanDelete_AlsoRemovesSurvivingKernelDevice(t *testing.T) {
-	prev := linkDelete
-	var deleted string
-	linkDelete = func(_ context.Context, iface string) error { deleted = iface; return nil }
-	t.Cleanup(func() { linkDelete = prev })
-
-	h := NewOrphanIfaceHandler(listOf("opkgtun10"), &fakeOrphanNDMS{}, nil)
+	ndms := &fakeOrphanNDMS{}
+	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
 
 	if rr := orphanReq(t, h, `{"iface":"opkgtun10"}`); rr.Code != 200 {
 		t.Fatalf("code = %d, ждали 200 (%s)", rr.Code, rr.Body.String())
 	}
-	if deleted != "opkgtun10" {
-		t.Fatalf("устройство ядра не удалено (deleted=%q)", deleted)
+	if len(ndms.stopped) != 1 || ndms.stopped[0] != "opkgtun10" {
+		t.Fatalf("устройство ядра не удалено (stopped=%v)", ndms.stopped)
 	}
 }
 
 // Записи NDMS нет вовсе, устройство в ядре есть — снос обязан дойти до
-// `ip link del`. Прежняя форма шла под проверкой наличия и на отказе запуска
-// `ip` отвечала успехом, не удалив ничего.
+// бэкенда.
 func TestOrphanDelete_RemovesKernelDeviceWhenNoNDMSRecord(t *testing.T) {
-	prev := linkDelete
-	var deleted string
-	linkDelete = func(_ context.Context, iface string) error { deleted = iface; return nil }
-	t.Cleanup(func() { linkDelete = prev })
-
 	ndms := &fakeOrphanNDMS{}
 	h := NewOrphanIfaceHandler(listKernelOnly("opkgtun10"), ndms, nil)
 
 	if rr := orphanReq(t, h, `{"iface":"opkgtun10"}`); rr.Code != 200 {
 		t.Fatalf("code = %d, ждали 200 (%s)", rr.Code, rr.Body.String())
 	}
-	if deleted != "opkgtun10" {
-		t.Fatalf("устройство ядра не снесено при отсутствующей записи NDMS (deleted=%q)", deleted)
+	if len(ndms.stopped) != 1 || ndms.stopped[0] != "opkgtun10" {
+		t.Fatalf("устройство ядра не снесено при отсутствующей записи NDMS (stopped=%v)", ndms.stopped)
 	}
 	// Записи не было — в NDMS ходить незачем: снос имени, собранного из номера,
 	// ушёл бы мимо и был бы принят за успех.
@@ -154,13 +142,8 @@ func TestOrphanDelete_RemovesKernelDeviceWhenNoNDMSRecord(t *testing.T) {
 // Отказ ЗАПУСКА `ip` — это «мы не проверили», а не «устройства нет». Ответить
 // на него успехом значит соврать: номер остался занятым.
 func TestOrphanDelete_ExecFailureIsNotTreatedAsAbsentDevice(t *testing.T) {
-	prev := linkDelete
-	linkDelete = func(context.Context, string) error {
-		return errors.New("fork/exec /opt/sbin/ip: no such file or directory")
-	}
-	t.Cleanup(func() { linkDelete = prev })
-
-	h := NewOrphanIfaceHandler(listOf("opkgtun10"), &fakeOrphanNDMS{}, nil)
+	ndms := &fakeOrphanNDMS{stopErr: errors.New("fork/exec /opt/sbin/ip: no such file or directory")}
+	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
 
 	rr := orphanReq(t, h, `{"iface":"opkgtun10"}`)
 	if rr.Code == 200 {
@@ -175,11 +158,6 @@ func TestOrphanDelete_ExecFailureIsNotTreatedAsAbsentDevice(t *testing.T) {
 // написание. Сверка по строке отвечала на «OpkgTun10» отказом «у номера есть
 // владелец», что неправда, и сносила бы имя, которого в ядре нет.
 func TestOrphanDelete_AcceptsNDMSSpellingAndDeletesCanonicalNames(t *testing.T) {
-	prev := linkDelete
-	var deleted string
-	linkDelete = func(_ context.Context, iface string) error { deleted = iface; return nil }
-	t.Cleanup(func() { linkDelete = prev })
-
 	ndms := &fakeOrphanNDMS{}
 	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
 
@@ -189,19 +167,16 @@ func TestOrphanDelete_AcceptsNDMSSpellingAndDeletesCanonicalNames(t *testing.T) 
 	if len(ndms.deleted) != 1 || ndms.deleted[0] != "OpkgTun10" {
 		t.Errorf("запись NDMS = %v, ждали [OpkgTun10]", ndms.deleted)
 	}
-	if deleted != "opkgtun10" {
-		t.Errorf("устройство ядра = %q, ждали opkgtun10", deleted)
+	if len(ndms.stopped) != 1 || ndms.stopped[0] != "opkgtun10" {
+		t.Errorf("устройство ядра = %v, ждали [opkgtun10]", ndms.stopped)
 	}
 }
 
 // Запись снята, устройство осталось — номер по-прежнему занят. Отчитаться
 // успехом значит соврать: пользователь решит, что убрано всё.
 func TestOrphanDelete_ReportsFailureWhenDeviceSurvives(t *testing.T) {
-	prev := linkDelete
-	linkDelete = func(context.Context, string) error { return errors.New("busy") }
-	t.Cleanup(func() { linkDelete = prev })
-
-	h := NewOrphanIfaceHandler(listOf("opkgtun10"), &fakeOrphanNDMS{}, nil)
+	ndms := &fakeOrphanNDMS{stopErr: errors.New("busy")}
+	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
 
 	rr := orphanReq(t, h, `{"iface":"opkgtun10"}`)
 	if rr.Code == 200 {
@@ -209,6 +184,9 @@ func TestOrphanDelete_ReportsFailureWhenDeviceSurvives(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "LINK_DELETE_FAILED") {
 		t.Errorf("ответ не называет причину: %s", rr.Body.String())
+	}
+	if len(ndms.deleted) != 0 {
+		t.Errorf("запись снята при живом устройстве: %v", ndms.deleted)
 	}
 }
 
@@ -235,31 +213,19 @@ func TestOrphanDelete_RefusesWhenOccupancyUnavailable(t *testing.T) {
 	}
 }
 
-// Формулировки «устройства нет» на роутере три, и все три обязаны считаться
-// успехом: снос записи NDMS уносит устройство каскадом, так что к нашему
-// `ip link del` его штатно уже нет (стенд 15.09 — ручка отчитывалась отказом
-// об успешном сносе).
-func TestOrphanDelete_AllAbsentDeviceWordingsAreSuccess(t *testing.T) {
-	for _, msg := range []string{
-		`Device "opkgtun10" does not exist. (exit status 1)`,
-		`Cannot find device "opkgtun10" (exit status 1)`,
-		"no such device",
-	} {
-		t.Run(msg, func(t *testing.T) {
-			prev := linkDelete
-			linkDelete = func(context.Context, string) error { return errors.New(msg) }
-			t.Cleanup(func() { linkDelete = prev })
-
-			h := NewOrphanIfaceHandler(listOf("opkgtun10"), &fakeOrphanNDMS{}, nil)
-			if rr := orphanReq(t, h, `{"iface":"opkgtun10"}`); rr.Code != 200 {
-				t.Fatalf("code = %d, ждали 200: %s", rr.Code, rr.Body.String())
-			}
-		})
-	}
-}
-
 // oracleOrphanNDMS — снос записи через оракул FakeNDMS: C/E видны там.
 type oracleOrphanNDMS struct{ f *ndmsquery.FakeNDMS }
+
+// StopIfPresent — снос устройства, видимый оракулу.
+func (o oracleOrphanNDMS) StopIfPresent(_ context.Context, iface string) error {
+	o.f.SetNetdev(iface, false)
+	o.f.SetAmneziaWG(iface, false)
+	return nil
+}
+
+func (o oracleOrphanNDMS) ReplaceWithTun(context.Context, string) error {
+	panic("ReplaceWithTun: порядок сироты с ним — Task 61")
+}
 
 func (o oracleOrphanNDMS) DeleteOpkgTun(ctx context.Context, name string) error {
 	_, err := o.f.Post(ctx, map[string]any{"interface": map[string]any{name: map[string]any{"no": true}}})
@@ -273,13 +239,6 @@ func TestOrphanDelete_LiveAmneziaWG_DeviceBeforeRecord_NoC(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
 	f.SetNetdev("opkgtun10", true)
 	f.SetAmneziaWG("opkgtun10", true)
-	prev := linkDelete
-	linkDelete = func(_ context.Context, iface string) error {
-		f.SetNetdev(iface, false)
-		f.SetAmneziaWG(iface, false)
-		return nil
-	}
-	t.Cleanup(func() { linkDelete = prev })
 	h := NewOrphanIfaceHandler(listOf("opkgtun10"), oracleOrphanNDMS{f}, nil)
 
 	if rr := orphanReq(t, h, `{"iface":"opkgtun10"}`); rr.Code != 200 {

@@ -61,6 +61,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
@@ -109,6 +110,10 @@ var kernelIfaceExists = func(name string) bool {
 type InterfaceStore struct {
 	getter Getter
 	log    Logger
+	// gate — барьер подмены устройства (D-N1): список ждёт, пока под записью
+	// OpkgTunN меняют устройство. Один на процесс (Deps.SwapGate); без него —
+	// свой экземпляр (тесты).
+	gate *netdev.SwapGate
 
 	// bootMu serialises the bootstrap *operation* so concurrent boots
 	// coalesce to ONE HTTP. booted is atomic because InvalidateAll
@@ -212,6 +217,7 @@ func NewInterfaceStore(g Getter, log Logger) *InterfaceStore {
 	return &InterfaceStore{
 		getter:    g,
 		log:       log,
+		gate:      &netdev.SwapGate{},
 		byID:      make(map[string]*ndms.Interface),
 		startedAt: make(map[string]time.Time),
 		sysNames:  make(map[string]string),
@@ -1710,6 +1716,10 @@ var ErrGone = errors.New("ndms: interface gone")
 // id → запись ответа как есть. Used by bootstrap and InvalidateAll.
 func (s *InterfaceStore) fetchListMap(ctx context.Context) (map[string]ndms.Interface, map[string]json.RawMessage, error) {
 	var raw map[string]json.RawMessage
+	// Барьер D-N1: запись без устройства, прочитанная списком, — C 0767 у
+	// ndm. Пока бэкенд подменяет устройство (netdev.SwapGate.Hold), ждём.
+	release := s.gate.Read()
+	defer release()
 	if err := s.getter.Get(ctx, "/show/interface/", &raw); err != nil {
 		return nil, nil, fmt.Errorf("fetch interface list: %w", err)
 	}

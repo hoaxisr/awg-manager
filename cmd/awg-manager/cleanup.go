@@ -20,6 +20,7 @@ import (
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
@@ -76,10 +77,14 @@ func runCleanup(dataDir string) {
 	// the same transport + commands further down.
 	cleanupEventBus := events.NewBus()
 	cleanupNDMSTransport := ndmstransport.New(ndmstransport.NewSemaphore(4))
+	// Свой барьер подмены устройства (D-N1): уборка — отдельный процесс со
+	// своими списками и своим бэкендом.
+	gate := &netdev.SwapGate{}
 	cleanupNDMSQueries := ndmsquery.NewQueries(ndmsquery.Deps{
-		Getter: cleanupNDMSTransport,
-		Logger: nil,
-		IsOS5:  osdetect.Is5,
+		Getter:   cleanupNDMSTransport,
+		Logger:   nil,
+		IsOS5:    osdetect.Is5,
+		SwapGate: gate,
 	})
 
 	// Init NDMS info (needed for OS detection). Запасной канал (ndmc через
@@ -104,7 +109,7 @@ func runCleanup(dataDir string) {
 
 	// Create service components
 	wgClient := wg.New()
-	backendImpl := backend.NewKernel()
+	backendImpl := backend.NewKernel(gate)
 	stateMgr := state.New(cleanupNDMSQueries.Interfaces, wgClient, backendImpl, nil)
 	firewallMgr := firewall.New(true /* mssClamp */, osdetect.Is5(), nil)
 
@@ -240,6 +245,7 @@ func runCleanup(dataDir string) {
 		// Скан по описанию: без него снятие шло бы по индексу вслепую и на
 		// удалении пакета разобрало бы ЧУЖОЙ OpkgTun, занявший наш номер.
 		OpkgTunScan: opkgTunScanner(cleanupNDMSQueries.Interfaces),
+		SwapGate:    gate,
 	}
 	if err := router.ReleasePolicyTunForRemoval(ptCtx, tunDeps); err != nil {
 		fmt.Fprintf(os.Stderr, "policy-tun cleanup error: %v\n", err)

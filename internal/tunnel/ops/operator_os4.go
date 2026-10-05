@@ -358,10 +358,12 @@ func (o *OperatorOS4Impl) configureIPv6(ctx context.Context, iface, address stri
 	return exec.FormatError(result, err)
 }
 
-// deleteInterface force-deletes a network interface.
+// deleteInterface force-deletes a network interface. Снос — бэкендом (под
+// барьером netdev.SwapGate): записи OpkgTun на OS4 нет и C 0767 невозможен,
+// но правило одно — ни одного del мимо Swapper (N1, R61).
 func (o *OperatorOS4Impl) deleteInterface(ctx context.Context, iface string) {
 	o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", iface)
-	o.ipRun(ctx, "/opt/sbin/ip", "link", "del", iface)
+	_ = o.backend.StopIfPresent(ctx, iface)
 }
 
 // waitForInterfaceRemoval waits for interface to be removed.

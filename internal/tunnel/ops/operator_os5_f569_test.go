@@ -29,9 +29,10 @@ type deviceBackend struct {
 	amneziawg bool
 	held      *backend.HeldError
 
-	StartCalls []string
-	StopCalls  []string
-	stopPosts  []int // len(f.Posts) на момент каждого Stop
+	StartCalls   []string
+	StopCalls    []string
+	ReplaceCalls []string
+	stopPosts    []int // len(f.Posts) на момент каждого Stop
 }
 
 func newDeviceBackend(t *testing.T, f *ndmsquery.FakeNDMS) *deviceBackend {
@@ -90,6 +91,35 @@ func (b *deviceBackend) IsRunning(_ context.Context, iface string) (bool, int) {
 }
 
 func (b *deviceBackend) WaitReady(context.Context, string, time.Duration) error { return nil }
+
+// ReplaceWithTun — plain tun на имени (как backend.KernelBackend): держатель
+// не-amneziawg — HeldError, устройство не трогается.
+func (b *deviceBackend) ReplaceWithTun(_ context.Context, iface string) error {
+	b.ReplaceCalls = append(b.ReplaceCalls, iface)
+	if b.held != nil && !b.amneziawg {
+		return b.held
+	}
+	if !b.exists(iface) {
+		if err := os.Mkdir(filepath.Join(b.root, iface), 0o755); err != nil {
+			return err
+		}
+	}
+	b.f.SetNetdev(iface, true)
+	b.f.SetAmneziaWG(iface, false)
+	b.amneziawg = false
+	return nil
+}
+
+func (b *deviceBackend) Recreate(ctx context.Context, iface string) error {
+	return b.Start(ctx, iface)
+}
+
+func (b *deviceBackend) StopIfPresent(ctx context.Context, iface string) error {
+	if !b.exists(iface) {
+		return nil
+	}
+	return b.Stop(ctx, iface)
+}
 
 // F569: работающий туннель, запись OpkgTun10 снята снаружи, наше amneziawg
 // живо. ColdStart сносит устройство ДО создания записи, создание голое —

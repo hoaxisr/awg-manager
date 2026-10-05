@@ -15,6 +15,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
@@ -418,6 +419,10 @@ type Deps struct {
 	// ключ владельца, и пул отдаёт свой номер по совпадению ключа. Прежнее
 	// вычитание ломалось на handover — там номер принадлежит другому режиму.
 	OpkgTunPool *opkgtun.Pool
+	// SwapGate — барьер списков на подмене устройства (D-N1), общий с
+	// query.InterfaceStore: снос оставшегося opkgtunN идёт под ним. nil в
+	// NewService — свой экземпляр (тесты).
+	SwapGate *netdev.SwapGate
 	// OpkgTunScan lists NDMS OpkgTun IDs carrying the given description —
 	// the reap's persist-less orphan fallback (see teardownOpkgTun for why
 	// such orphans are dangerous). Optional — nil skips the scan; wired in
@@ -651,6 +656,9 @@ type ServiceImpl struct {
 }
 
 func NewService(d Deps) *ServiceImpl {
+	if d.SwapGate == nil {
+		d.SwapGate = &netdev.SwapGate{}
+	}
 	if d.IPTables == nil {
 		d.IPTables = NewIPTables()
 	}

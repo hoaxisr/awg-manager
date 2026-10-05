@@ -4,10 +4,12 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 )
 
 func TestKernelBackend_Basic(t *testing.T) {
-	b := NewKernel()
+	b := NewKernel(&netdev.SwapGate{})
 	ctx := context.Background()
 
 	// Start/Stop call /opt/sbin/ip — will fail on dev machines without it.

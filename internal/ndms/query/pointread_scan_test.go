@@ -718,3 +718,60 @@ func TestInterfaceStore_NoHookOwnedExistence(t *testing.T) {
 	}()
 	query.NewFakeNDMS().HideCreated(-1)
 }
+
+// listPathSite — единственное прод-чтение полного списка интерфейсов: под
+// барьером netdev.SwapGate (D-N1). Второй читатель списка шёл бы мимо барьера
+// и в зазоре подмены устройства давал бы C 0767.
+const listPathSite = "internal/ndms/query/interfaces.go:fetchListMap"
+
+// TestInterfaceListPath_OnlyInFetchListMap — литерал пути списка
+// ("/show/interface/" и "/show/interface") в прод-коде — только в
+// listPathSite; POST-форма того же чтения (ShowQuery([]string{"interface"},
+// …)) — нигде. Исключения: комментарии (go/ast их литералами не видит) и
+// оракул query/fakendms.go, который путь разбирает, а не читает (N9).
+// Мутация: второй getter.Get(ctx, "/show/interface/", …) в прод-коде → красный.
+func TestInterfaceListPath_OnlyInFetchListMap(t *testing.T) {
+	used := false
+	for _, f := range prodGoFiles(t, true) {
+		rel := filepath.ToSlash(f.rel)
+		if rel == "internal/ndms/query/fakendms.go" {
+			continue
+		}
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, f.rel, f.data, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("разбор %s: %v", f.rel, err)
+		}
+		for _, decl := range file.Decls {
+			key := rel + ":"
+			if fd, ok := decl.(*ast.FuncDecl); ok {
+				key += fd.Name.Name
+			}
+			ast.Inspect(decl, func(n ast.Node) bool {
+				switch n := n.(type) {
+				case *ast.BasicLit:
+					if !isStringLit(n, "/show/interface/") && !isStringLit(n, "/show/interface") {
+						return true
+					}
+					if key == listPathSite {
+						used = true
+						return true
+					}
+					t.Errorf("%s: %s — чтение списка интерфейсов мимо барьера (только %s)", fset.Position(n.Pos()), n.Value, listPathSite)
+				case *ast.CallExpr:
+					sel, ok := n.Fun.(*ast.SelectorExpr)
+					if !ok || sel.Sel.Name != "ShowQuery" || len(n.Args) == 0 {
+						return true
+					}
+					if lit, ok := n.Args[0].(*ast.CompositeLit); ok && len(lit.Elts) == 1 && isStringLit(lit.Elts[0], "interface") {
+						t.Errorf("%s: ShowQuery([]string{\"interface\"}, …) — чтение списка мимо барьера (только %s)", fset.Position(n.Pos()), listPathSite)
+					}
+				}
+				return true
+			})
+		}
+	}
+	if !used {
+		t.Errorf("%s больше не читает список — поправить listPathSite", listPathSite)
+	}
+}

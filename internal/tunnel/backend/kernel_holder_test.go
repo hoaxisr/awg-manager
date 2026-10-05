@@ -9,18 +9,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
-// stubKernelRun подменяет шов ip и отдаёт журнал вызовов.
+// stubKernelRun подменяет оба шва ip — свой (чтение типа) и netdev.Swapper
+// (снос/создание) — и отдаёт общий журнал вызовов.
 func stubKernelRun(t *testing.T) *[]string {
 	t.Helper()
 	old := kernelRun
 	var calls []string
-	kernelRun = func(_ context.Context, name string, args ...string) (*exec.Result, error) {
+	rec := func(_ context.Context, name string, args ...string) (*exec.Result, error) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		return &exec.Result{}, nil
 	}
+	kernelRun = rec
+	t.Cleanup(netdev.StubRunIP(rec))
 	t.Cleanup(func() { kernelRun = old })
 	return &calls
 }
@@ -50,7 +54,7 @@ func TestStart_HeldByForeignProcess_RefusesWithoutDelete(t *testing.T) {
 	stubIfaceExists(t, true)
 	stubTunHolder(t, &HeldError{Iface: "opkgtun7", PID: 4242, Comm: "csqtt"})
 
-	err := NewKernel().Start(context.Background(), "opkgtun7")
+	err := NewKernel(&netdev.SwapGate{}).Start(context.Background(), "opkgtun7")
 
 	var held *HeldError
 	if !errors.As(err, &held) || held.PID != 4242 || held.Comm != "csqtt" {
@@ -71,7 +75,7 @@ func TestStart_UnheldTun_DeletesAndRecreates(t *testing.T) {
 	stubIfaceExists(t, true)
 	stubTunHolder(t, nil)
 
-	if err := NewKernel().Start(context.Background(), "opkgtun7"); err != nil {
+	if err := NewKernel(&netdev.SwapGate{}).Start(context.Background(), "opkgtun7"); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
@@ -92,7 +96,7 @@ func TestStop_HeldByForeignProcess_Refuses(t *testing.T) {
 	stubIfaceExists(t, true)
 	stubTunHolder(t, &HeldError{Iface: "opkgtun7", PID: 4242, Comm: "csqtt"})
 
-	err := NewKernel().Stop(context.Background(), "opkgtun7")
+	err := NewKernel(&netdev.SwapGate{}).Stop(context.Background(), "opkgtun7")
 
 	var held *HeldError
 	if !errors.As(err, &held) {
@@ -111,8 +115,8 @@ func TestHolderScan_OnlyForExistingForeignTypedDevice(t *testing.T) {
 		stubKernelRun(t)
 		stubIfaceExists(t, false)
 		scans := stubTunHolder(t, nil)
-		_ = NewKernel().Start(ctx, "opkgtun7")
-		_ = NewKernel().Stop(ctx, "opkgtun7")
+		_ = NewKernel(&netdev.SwapGate{}).Start(ctx, "opkgtun7")
+		_ = NewKernel(&netdev.SwapGate{}).Stop(ctx, "opkgtun7")
 		if *scans != 0 {
 			t.Fatalf("сканов /proc %d, want 0", *scans)
 		}
@@ -120,14 +124,16 @@ func TestHolderScan_OnlyForExistingForeignTypedDevice(t *testing.T) {
 	t.Run("наше amneziawg", func(t *testing.T) {
 		old := kernelRun
 		var calls []string
-		kernelRun = func(_ context.Context, name string, args ...string) (*exec.Result, error) {
+		rec := func(_ context.Context, name string, args ...string) (*exec.Result, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
 			return &exec.Result{Stdout: "7: opkgtun7: <POINTOPOINT,NOARP,UP> mtu 1420\n    amneziawg"}, nil
 		}
+		kernelRun = rec
+		t.Cleanup(netdev.StubRunIP(rec))
 		t.Cleanup(func() { kernelRun = old })
 		stubIfaceExists(t, true)
 		scans := stubTunHolder(t, &HeldError{Iface: "opkgtun7", PID: 1, Comm: "x"})
-		if err := NewKernel().Stop(ctx, "opkgtun7"); err != nil {
+		if err := NewKernel(&netdev.SwapGate{}).Stop(ctx, "opkgtun7"); err != nil {
 			t.Fatalf("Stop нашего amneziawg: %v", err)
 		}
 		if *scans != 0 || !slices.Contains(calls, "/opt/sbin/ip link del dev opkgtun7") {
