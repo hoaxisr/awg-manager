@@ -222,3 +222,27 @@ func TestSwapper_OutsideHoldPanics(t *testing.T) {
 	}()
 	(&swapper{}).Context()
 }
+
+// Сбежавший Swapper: сохранён из fn и вызван после возврата Hold — ошибка
+// ErrSwapperDone, `ip` не запускается (иначе снос мимо барьера).
+// Мутация: убрать проверку done в run → ip вызван, красный.
+func TestSwapper_EscapedAfterHold(t *testing.T) {
+	calls := recordIP(t)
+	var g SwapGate
+	var saved Swapper
+	if err := g.Hold(context.Background(), func(sw Swapper) error { saved = sw; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	for name, call := range map[string]func() error{
+		"LinkDel":   func() error { return saved.LinkDel("opkgtun3") },
+		"LinkAdd":   func() error { return saved.LinkAdd("opkgtun3", "amneziawg") },
+		"TuntapAdd": func() error { return saved.TuntapAdd("opkgtun3") },
+	} {
+		if err := call(); !errors.Is(err, ErrSwapperDone) {
+			t.Errorf("%s после Hold: err = %v, want ErrSwapperDone", name, err)
+		}
+	}
+	if got := calls(); len(got) != 0 {
+		t.Fatalf("ip вызван сбежавшим Swapper: %v", got)
+	}
+}

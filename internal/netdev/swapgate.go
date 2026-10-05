@@ -2,8 +2,10 @@ package netdev
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
@@ -73,14 +75,20 @@ func (g *SwapGate) Read() (release func()) {
 // Требование к fn (N11): только ctx-aware exec `ip` через методы Swapper.
 // Обход /proc (держатель tun), stat, RCI — ДО Hold: Read не прерываем, и
 // всё, что fn делает сверх `ip`, читатели списка ждут. Swapper вне fn
-// недействителен: его ctx отменён к возврату Hold.
+// недействителен: сохранённый и вызванный после возврата Hold, он отвечает
+// ErrSwapperDone и `ip` не запускает (снос/создание мимо барьера).
 func (g *SwapGate) Hold(ctx context.Context, fn func(sw Swapper) error) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SwapHoldMax)
 	defer cancel()
-	return fn(&swapper{ctx: ctx})
+	sw := &swapper{ctx: ctx}
+	defer sw.done.Store(true) // раньше Unlock: defer — в обратном порядке
+	return fn(sw)
 }
+
+// ErrSwapperDone — примитив Swapper вызван после возврата Hold.
+var ErrSwapperDone = errors.New("netdev: Swapper вызван после Hold")
 
 // DeleteLink — `ip link del` под барьером для тех, у кого нет бэкенда
 // (fakeip-tun в sing-box роутере).
@@ -114,7 +122,10 @@ func StubRunIP(fn func(ctx context.Context, name string, args ...string) (*exec.
 
 const ipBin = "/opt/sbin/ip"
 
-type swapper struct{ ctx context.Context }
+type swapper struct {
+	ctx  context.Context
+	done atomic.Bool // fn вернулась — примитивы больше не работают
+}
 
 func (s *swapper) Context() context.Context {
 	if s.ctx == nil {
@@ -124,6 +135,9 @@ func (s *swapper) Context() context.Context {
 }
 
 func (s *swapper) run(args ...string) error {
+	if s.done.Load() {
+		return ErrSwapperDone
+	}
 	res, err := runIP(s.Context(), ipBin, args...)
 	if err != nil {
 		return exec.FormatError(res, err)

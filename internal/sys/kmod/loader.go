@@ -283,12 +283,6 @@ func (l *Loader) LoadedVersion() string {
 	return strings.TrimSpace(string(data))
 }
 
-// Unload removes the kernel module using rmmod.
-func (l *Loader) Unload(ctx context.Context) error {
-	_, err := exec.Run(ctx, "rmmod", ModuleName)
-	return err
-}
-
 // EnsureModule selects a bundled module (if available from IPK install/upgrade),
 // then loads the module via insmod if not already loaded.
 func (l *Loader) EnsureModule(ctx context.Context) error {
