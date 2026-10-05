@@ -21,11 +21,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
+	"github.com/hoaxisr/awg-manager/internal/listenfirewall"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerinfo"
 )
 
 var (
-	ErrArchNotSupported = errors.New("telemt is only supported on aarch64 (ARM64) routers")
+	ErrArchNotSupported = errors.New("telemt is only supported on aarch64 and x86_64 routers")
 	ErrNotInstalled     = errors.New("telemt binary is not installed")
 	ErrChecksumMismatch = errors.New("downloaded archive checksum does not match pinned SHA256")
 	ErrDiskSpace        = errors.New("insufficient disk space for telemt installation")
@@ -33,35 +35,45 @@ var (
 
 // Service coordinates telemt installation, configuration, and process management.
 type Service struct {
-	mu           sync.Mutex
-	dataDir      string
-	telemtDir    string
-	binPath      string
-	cfgPath      string
-	settingsPath string
-	pidPath      string
-	arch         string
-	spec         BinarySpec
-	httpClient   *http.Client
-	freeDisk     func(path string) (int64, bool)
-	config       Config
+	mu            sync.Mutex
+	dataDir       string
+	telemtDir     string
+	binPath       string
+	cfgPath       string
+	settingsPath  string
+	pidPath       string
+	arch          string
+	spec          BinarySpec
+	httpClient    *http.Client
+	freeDisk      func(path string) (int64, bool)
+	config        Config
+	cachedVersion string
+	openedPort    int
 }
 
 // New creates a new telemt service instance.
 func New(dataDir string, arch string) *Service {
-	telemtDir := ManagedTelemtDir
+	telemtDir := filepath.Join(dataDir, "telemt")
+	if dataDir == "" {
+		telemtDir = ManagedTelemtDir
+	}
 	_ = os.MkdirAll(telemtDir, 0755)
 
 	normArch := NormalizeArch(arch)
 	spec := EmbeddedBinaries[normArch]
 
+	pidPath := ManagedTelemtPIDPath
+	if dataDir != "/opt/etc/awg-manager" && dataDir != "" {
+		pidPath = filepath.Join(telemtDir, "telemt.pid")
+	}
+
 	s := &Service{
 		dataDir:      dataDir,
 		telemtDir:    telemtDir,
-		binPath:      ManagedTelemtBinaryPath,
-		cfgPath:      ManagedTelemtConfigPath,
+		binPath:      filepath.Join(telemtDir, "telemt"),
+		cfgPath:      filepath.Join(telemtDir, "config.toml"),
 		settingsPath: filepath.Join(telemtDir, "settings.json"),
-		pidPath:      ManagedTelemtPIDPath,
+		pidPath:      pidPath,
 		arch:         normArch,
 		spec:         spec,
 		httpClient:   &http.Client{Timeout: 3 * time.Minute},
@@ -69,15 +81,6 @@ func New(dataDir string, arch string) *Service {
 	}
 
 	s.loadSettings()
-
-	// If enabled and binary exists, ensure process is running on daemon startup
-	if s.config.Enabled && s.IsInstalled() {
-		running, _ := s.GetRunningState()
-		if !running {
-			_ = s.Start(context.Background())
-		}
-	}
-
 	return s
 }
 
@@ -113,23 +116,11 @@ func (s *Service) IsInstalled() bool {
 }
 
 func (s *Service) GetRunningState() (bool, int) {
-	// 1. Check PID file
 	data, err := os.ReadFile(s.pidPath)
 	if err == nil {
 		pidStr := strings.TrimSpace(string(data))
 		if pid, err := strconv.Atoi(pidStr); err == nil && pid > 0 {
-			if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err == nil {
-				return true, pid
-			}
-		}
-	}
-
-	// 2. Check via pidof
-	out, err := exec.Command("pidof", "telemt").Output()
-	if err == nil {
-		fields := strings.Fields(string(out))
-		if len(fields) > 0 {
-			if pid, err := strconv.Atoi(fields[0]); err == nil && pid > 0 {
+			if childproc.MatchesBinary(pid, "telemt") {
 				return true, pid
 			}
 		}
@@ -139,9 +130,13 @@ func (s *Service) GetRunningState() (bool, int) {
 
 var versionRe = regexp.MustCompile(`(?:telemt|v)?\s*([0-9]+\.[0-9]+\.[0-9]+)`)
 
-func (s *Service) GetInstalledVersion(ctx context.Context) string {
+func (s *Service) getInstalledVersionLocked(ctx context.Context) string {
 	if !s.IsInstalled() {
+		s.cachedVersion = ""
 		return ""
+	}
+	if s.cachedVersion != "" {
+		return s.cachedVersion
 	}
 	cmd := exec.CommandContext(ctx, s.binPath, "--version")
 	out, err := cmd.CombinedOutput()
@@ -150,9 +145,17 @@ func (s *Service) GetInstalledVersion(ctx context.Context) string {
 	}
 	matches := versionRe.FindStringSubmatch(string(out))
 	if len(matches) > 1 {
-		return matches[1]
+		s.cachedVersion = matches[1]
+	} else {
+		s.cachedVersion = strings.TrimSpace(string(out))
 	}
-	return strings.TrimSpace(string(out))
+	return s.cachedVersion
+}
+
+func (s *Service) GetInstalledVersion(ctx context.Context) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.getInstalledVersionLocked(ctx)
 }
 
 // GetStatus returns the live status for the API and UI.
@@ -163,7 +166,7 @@ func (s *Service) GetStatus(ctx context.Context) Status {
 	installed := s.IsInstalled()
 	running, pid := s.GetRunningState()
 	supported := IsArchSupported(s.arch)
-	installedVer := s.GetInstalledVersion(ctx)
+	installedVer := s.getInstalledVersionLocked(ctx)
 
 	cfgCopy := s.config
 
@@ -188,7 +191,7 @@ func (s *Service) GetStatus(ctx context.Context) Status {
 
 	var errMsg string
 	if !supported {
-		errMsg = fmt.Sprintf("Архитектура %s не поддерживается (telemt доступен только для aarch64)", s.arch)
+		errMsg = fmt.Sprintf("Архитектура %s не поддерживается (telemt доступен только для aarch64 и x86_64)", s.arch)
 	}
 
 	return Status{
@@ -230,10 +233,14 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 		return err
 	}
 
-	// If running, reload or restart
+	// If running, reload or restart, or stop if disabled
 	running, _ := s.GetRunningState()
 	if running {
-		_ = s.restartProcess(ctx)
+		if !s.config.Enabled {
+			_ = s.stopProcess(ctx)
+		} else {
+			_ = s.restartProcess(ctx)
+		}
 	} else if s.config.Enabled && s.IsInstalled() {
 		_ = s.startProcess(ctx)
 	}
@@ -243,9 +250,6 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 
 // Install downloads, verifies, and installs the pinned telemt binary.
 func (s *Service) Install(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if !IsArchSupported(s.arch) {
 		return ErrArchNotSupported
 	}
@@ -255,6 +259,8 @@ func (s *Service) Install(ctx context.Context) error {
 		return fmt.Errorf("no download URL for architecture %s", s.arch)
 	}
 
+	_ = os.MkdirAll(s.telemtDir, 0755)
+
 	// Check free disk space (at least 25 MB)
 	if s.freeDisk != nil {
 		if free, ok := s.freeDisk(s.telemtDir); ok && free < 25*1024*1024 {
@@ -262,9 +268,14 @@ func (s *Service) Install(ctx context.Context) error {
 		}
 	}
 
-	// Download archive to a temporary file
-	tmpArchive := filepath.Join(s.telemtDir, "telemt-download.tar.gz.tmp")
+	// Download archive to a temporary file OUTSIDE s.mu.Lock()
+	tmpArchiveFile, err := os.CreateTemp(s.telemtDir, "telemt-download-*.tar.gz.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temp archive: %w", err)
+	}
+	tmpArchive := tmpArchiveFile.Name()
 	defer func() { _ = os.Remove(tmpArchive) }()
+	defer tmpArchiveFile.Close()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, spec.URL, nil)
 	if err != nil {
@@ -283,24 +294,21 @@ func (s *Service) Install(ctx context.Context) error {
 	}
 
 	h := sha256.New()
-	f, err := os.OpenFile(tmpArchive, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to create temp archive: %w", err)
-	}
-
 	tee := io.TeeReader(resp.Body, h)
-	if _, err := io.Copy(f, tee); err != nil {
-		_ = f.Close()
+	if _, err := io.Copy(tmpArchiveFile, tee); err != nil {
 		return fmt.Errorf("failed to write archive: %w", err)
 	}
-	_ = f.Close()
+	_ = tmpArchiveFile.Close()
 
 	computedSHA := hex.EncodeToString(h.Sum(nil))
 	if !strings.EqualFold(computedSHA, spec.SHA256) {
 		return fmt.Errorf("%w: expected %s, got %s", ErrChecksumMismatch, spec.SHA256, computedSHA)
 	}
 
-	// Extract binary from tar.gz
+	// Lock only for unpack, swap, and start
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	tmpBin := filepath.Join(s.telemtDir, "telemt.tmp")
 	defer func() { _ = os.Remove(tmpBin) }()
 
@@ -326,6 +334,8 @@ func (s *Service) Install(ctx context.Context) error {
 		return fmt.Errorf("failed to install binary: %w", err)
 	}
 
+	s.cachedVersion = ""
+
 	// Create symlink /opt/bin/telemt if safe
 	s.ensureSymlink()
 
@@ -342,13 +352,15 @@ func (s *Service) Install(ctx context.Context) error {
 }
 
 func (s *Service) ensureSymlink() {
-	if fi, err := os.Lstat(LegacyTelemtBinaryPath); err == nil {
-		if fi.Mode()&os.ModeSymlink != 0 {
-			_ = os.Remove(LegacyTelemtBinaryPath)
+	if s.binPath == ManagedTelemtBinaryPath {
+		if fi, err := os.Lstat(LegacyTelemtBinaryPath); err == nil {
+			if fi.Mode()&os.ModeSymlink != 0 {
+				_ = os.Remove(LegacyTelemtBinaryPath)
+				_ = os.Symlink(s.binPath, LegacyTelemtBinaryPath)
+			}
+		} else if os.IsNotExist(err) {
 			_ = os.Symlink(s.binPath, LegacyTelemtBinaryPath)
 		}
-	} else if os.IsNotExist(err) {
-		_ = os.Symlink(s.binPath, LegacyTelemtBinaryPath)
 	}
 }
 
@@ -367,12 +379,15 @@ func (s *Service) Uninstall(ctx context.Context) error {
 
 	// 2. Remove binary
 	_ = os.Remove(s.binPath)
+	s.cachedVersion = ""
 
 	// 3. Remove symlink only if it points to our managed binary
-	if fi, err := os.Lstat(LegacyTelemtBinaryPath); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		if target, err := os.Readlink(LegacyTelemtBinaryPath); err == nil {
-			if strings.Contains(target, "awg-manager") {
-				_ = os.Remove(LegacyTelemtBinaryPath)
+	if s.binPath == ManagedTelemtBinaryPath {
+		if fi, err := os.Lstat(LegacyTelemtBinaryPath); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			if target, err := os.Readlink(LegacyTelemtBinaryPath); err == nil {
+				if strings.Contains(target, "awg-manager") {
+					_ = os.Remove(LegacyTelemtBinaryPath)
+				}
 			}
 		}
 	}
@@ -386,7 +401,12 @@ func (s *Service) Uninstall(ctx context.Context) error {
 func (s *Service) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.startProcess(ctx)
+	if err := s.startProcess(ctx); err != nil {
+		return err
+	}
+	s.config.Enabled = true
+	_ = s.saveSettingsLocked()
+	return nil
 }
 
 func (s *Service) startProcess(ctx context.Context) error {
@@ -418,6 +438,13 @@ func (s *Service) startProcess(ctx context.Context) error {
 		return errors.New("telemt failed to start: process exited immediately")
 	}
 
+	port := s.config.Port
+	if port <= 0 {
+		port = DefaultPort
+	}
+	_ = listenfirewall.Apply(ctx, port, "tcp")
+	s.openedPort = port
+
 	return nil
 }
 
@@ -425,10 +452,22 @@ func (s *Service) startProcess(ctx context.Context) error {
 func (s *Service) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.config.Enabled = false
+	_ = s.saveSettingsLocked()
 	return s.stopProcess(ctx)
 }
 
 func (s *Service) stopProcess(ctx context.Context) error {
+	port := s.config.Port
+	if port <= 0 {
+		port = DefaultPort
+	}
+	listenfirewall.Remove(ctx, port, "tcp")
+	if s.openedPort > 0 && s.openedPort != port {
+		listenfirewall.Remove(ctx, s.openedPort, "tcp")
+	}
+	s.openedPort = 0
+
 	running, pid := s.GetRunningState()
 	if !running {
 		_ = os.Remove(s.pidPath)
@@ -450,10 +489,14 @@ func (s *Service) stopProcess(ctx context.Context) error {
 
 	// Terminate by PID
 	if pid > 0 {
-		_ = exec.Command("kill", strconv.Itoa(pid)).Run()
-		time.Sleep(200 * time.Millisecond)
-		if r, _ := s.GetRunningState(); r {
-			_ = exec.Command("kill", "-9", strconv.Itoa(pid)).Run()
+		if childproc.MatchesBinary(pid, "telemt") {
+			_ = exec.Command("kill", strconv.Itoa(pid)).Run()
+			time.Sleep(200 * time.Millisecond)
+			if r, _ := s.GetRunningState(); r {
+				if childproc.MatchesBinary(pid, "telemt") {
+					_ = exec.Command("kill", "-9", strconv.Itoa(pid)).Run()
+				}
+			}
 		}
 	}
 
@@ -465,7 +508,12 @@ func (s *Service) stopProcess(ctx context.Context) error {
 func (s *Service) Restart(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.restartProcess(ctx)
+	if err := s.restartProcess(ctx); err != nil {
+		return err
+	}
+	s.config.Enabled = true
+	_ = s.saveSettingsLocked()
+	return nil
 }
 
 func (s *Service) restartProcess(ctx context.Context) error {

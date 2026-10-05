@@ -250,14 +250,18 @@
 		}
 	}
 
-	async function fetchTelemtStatus() {
-		telemtStatusLoading = true;
+	async function fetchTelemtStatus(silent = false) {
+		if (!silent) {
+			telemtStatusLoading = true;
+		}
 		try {
 			telemtStatusValue = await api.telemtStatus();
 		} catch (e) {
 			console.debug('telemt status unavailable:', e);
 		} finally {
-			telemtStatusLoading = false;
+			if (!silent) {
+				telemtStatusLoading = false;
+			}
 		}
 	}
 
@@ -465,7 +469,7 @@ onMount(() => {
 	// Фоновая вкладка не спрашивает вовсе.
 	const stopSystemInfoPoll = startVisiblePoll(() => {
 		fetchSystemInfo(true);
-		fetchTelemtStatus();
+		fetchTelemtStatus(true);
 	}, 120000);
 
 	void (async () => {
@@ -483,7 +487,7 @@ onMount(() => {
 			loading = false;
 		}
 
-		void fetchTelemtStatus();
+		void fetchTelemtStatus(false);
 
 		// Non-critical for first paint: load update state in background.
 		api.checkUpdate()

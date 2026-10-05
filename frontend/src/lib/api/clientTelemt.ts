@@ -29,6 +29,14 @@ export class TelemtClient extends Awg3Client {
 		return this.request<TelemtStatus>('/telemt/update', { method: 'POST' });
 	}
 
+	async telemtStart(): Promise<TelemtStatus> {
+		return this.request<TelemtStatus>('/telemt/start', { method: 'POST' });
+	}
+
+	async telemtStop(): Promise<TelemtStatus> {
+		return this.request<TelemtStatus>('/telemt/stop', { method: 'POST' });
+	}
+
 	async telemtRestart(): Promise<TelemtStatus> {
 		return this.request<TelemtStatus>('/telemt/restart', { method: 'POST' });
 	}

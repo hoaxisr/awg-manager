@@ -37,6 +37,13 @@ var EmbeddedBinaries = map[string]BinarySpec{
 		ArchiveSize: 6059751,
 		BinarySize:  16495864,
 	},
+	"x86_64": {
+		Version:     PinnedTelemtVersion,
+		URL:         "https://github.com/telemt/telemt/releases/download/3.5.7/telemt-x86_64-linux-musl.tar.gz",
+		SHA256:      "db26e363bb98f11a02a7fd6d0df455f4987af5cdb2a5897da7f6fb8d613fbf41",
+		ArchiveSize: 6626014,
+		BinarySize:  16471288,
+	},
 }
 
 // NormalizeArch standardizes router architecture strings.

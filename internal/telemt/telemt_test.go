@@ -22,7 +22,8 @@ func TestNormalizeArch(t *testing.T) {
 		{"mipsel-3.4", "mipsel", false},
 		{"mipsle", "mipsel", false},
 		{"mips-3.4", "mips", false},
-		{"x86_64", "x86_64", false},
+		{"x86_64", "x86_64", true},
+		{"amd64", "x86_64", true},
 	}
 
 	for _, c := range cases {
@@ -112,6 +113,9 @@ func TestGenerateTgLink_Web(t *testing.T) {
 	if !strings.Contains(link, "server=proxy.example.com") {
 		t.Errorf("expected server in link, got: %s", link)
 	}
+	if !strings.Contains(link, "port=8443") {
+		t.Errorf("expected port in link, got: %s", link)
+	}
 	if !strings.Contains(link, "secret=0123456789abcdef0123456789abcdef") {
 		t.Errorf("expected secret in link, got: %s", link)
 	}
@@ -156,13 +160,11 @@ func TestExtractTarGzBinary(t *testing.T) {
 
 func TestService_GetStatus_Mock(t *testing.T) {
 	tmpDir := t.TempDir()
-	binPath := filepath.Join(tmpDir, "telemt")
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\necho 'telemt 3.5.7'\n"), 0755); err != nil {
+	svc := New(tmpDir, "aarch64")
+
+	if err := os.WriteFile(svc.binPath, []byte("#!/bin/sh\necho 'telemt 3.5.7'\n"), 0755); err != nil {
 		t.Fatalf("write mock binary: %v", err)
 	}
-
-	svc := New(tmpDir, "aarch64")
-	svc.binPath = binPath
 
 	status := svc.GetStatus(context.Background())
 	if !status.Installed {
@@ -171,7 +173,60 @@ func TestService_GetStatus_Mock(t *testing.T) {
 	if !status.ArchSupported {
 		t.Fatalf("expected archSupported=true for aarch64")
 	}
+	if status.Version != "3.5.7" {
+		t.Fatalf("expected version=3.5.7, got %s", status.Version)
+	}
 	if status.LatestVersion != PinnedTelemtVersion {
 		t.Fatalf("expected latestVersion=%s, got %s", PinnedTelemtVersion, status.LatestVersion)
+	}
+	if svc.cachedVersion != "3.5.7" {
+		t.Fatalf("expected cachedVersion=3.5.7, got %s", svc.cachedVersion)
+	}
+
+	// Verify version caching: replace binary content with something broken
+	if err := os.WriteFile(svc.binPath, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatalf("rewrite mock binary: %v", err)
+	}
+	// Even though the binary now fails, GetStatus uses the cached version
+	status2 := svc.GetStatus(context.Background())
+	if status2.Version != "3.5.7" {
+		t.Fatalf("expected cached version 3.5.7, got %s", status2.Version)
+	}
+
+	// Invalidation: Uninstall clears the cached version
+	if err := svc.Uninstall(context.Background()); err != nil {
+		t.Fatalf("uninstall error: %v", err)
+	}
+	if svc.cachedVersion != "" {
+		t.Fatalf("expected cachedVersion to be cleared after uninstall, got %s", svc.cachedVersion)
+	}
+}
+
+func TestService_Lifecycle_Enabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "x86_64")
+
+	// Initially disabled
+	if svc.GetConfig().Enabled {
+		t.Fatalf("expected initially disabled")
+	}
+
+	// Calling Start when uninstalled returns ErrNotInstalled and doesn't enable
+	err := svc.Start(context.Background())
+	if err == nil {
+		t.Fatalf("expected start error when uninstalled")
+	}
+	if svc.GetConfig().Enabled {
+		t.Fatalf("expected still disabled after failed start")
+	}
+
+	// Calling Stop sets Enabled=false
+	svc.config.Enabled = true
+	_ = svc.saveSettingsLocked()
+	if err := svc.Stop(context.Background()); err != nil {
+		t.Fatalf("stop error: %v", err)
+	}
+	if svc.GetConfig().Enabled {
+		t.Fatalf("expected disabled after stop")
 	}
 }

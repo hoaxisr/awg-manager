@@ -5,6 +5,7 @@
 	import { Button, ConfirmModal, Input, Modal, StatusDot } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
+	import { notifications } from '$lib/stores/notifications';
 	import { singboxInstallProgress } from '$lib/stores/singboxInstall';
 	import { formatBytes } from '$lib/utils/format';
 	import { stripAnsi } from '$lib/utils/ansi';
@@ -214,6 +215,20 @@
 		const err = singboxInstallError ?? singboxUpdateError;
 		if (err) {
 			await copyToClipboard(err);
+		}
+	}
+
+	async function copyTelemtLink() {
+		if (!telemtStatus?.link) return;
+		let link = telemtStatus.link;
+		if (typeof window !== 'undefined' && window.location?.hostname) {
+			const host = window.location.hostname;
+			link = link.replace(/([?&]server=)(?:192\.168\.1\.1|0\.0\.0\.0)([&]|$)/, `$1${host}$2`);
+		}
+		if (await copyToClipboard(link)) {
+			notifications.success('Ссылка скопирована в буфер обмена');
+		} else {
+			notifications.error('Не удалось скопировать ссылку');
 		}
 	}
 
@@ -432,7 +447,7 @@
 									<button
 										type="button"
 										class="text-xs text-primary hover:underline cursor-pointer inline-flex items-center gap-1 font-medium"
-										onclick={() => telemtStatus?.link && copyToClipboard(telemtStatus.link)}
+										onclick={copyTelemtLink}
 									>
 										Скопировать ссылку для Telegram
 									</button>
@@ -440,10 +455,10 @@
 							{/if}
 						{:else if telemtStatus && telemtStatus.archSupported === false}
 							<span class="integration-sub" style="color: var(--color-warning, #f59e0b);">
-								Архитектура {telemtStatus.arch || ''} не поддерживается (доступно только для ARM64)
+								Архитектура {telemtStatus.arch || ''} не поддерживается (доступно только для ARM64 и x86_64)
 							</span>
 							<span class="setting-description">
-								Сборки telemt скомпилированы под aarch64 и недоступны для MIPS/MIPSEL.
+								Сборки telemt скомпилированы под aarch64 и x86_64 и недоступны для MIPS/MIPSEL.
 							</span>
 						{:else}
 							<span class="setting-description">

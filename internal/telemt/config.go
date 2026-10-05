@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -168,7 +169,7 @@ func GenerateTOML(cfg Config) string {
 
 // GenerateTgLink constructs the Telegram client proxy URL.
 // In Fake-TLS mode: "tg://proxy?server=...&port=...&secret=ee..."
-// In Web mode: "tg://webproxy?server=...&secret=..."
+// In Web mode: "tg://webproxy?server=...&port=...&secret=..."
 func GenerateTgLink(mode string, serverHost string, port int, secretHex string, domain string, webHost string) string {
 	rawSecret := strings.TrimSpace(secretHex)
 	if port <= 0 {
@@ -185,6 +186,7 @@ func GenerateTgLink(mode string, serverHost string, port int, secretHex string, 
 		}
 		q := url.Values{}
 		q.Set("server", targetHost)
+		q.Set("port", strconv.Itoa(port))
 		q.Set("secret", rawSecret)
 		return "tg://webproxy?" + q.Encode()
 	}

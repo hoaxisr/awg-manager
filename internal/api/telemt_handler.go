@@ -22,10 +22,21 @@ func (h *TelemtHandler) RegisterRoutes(mux *http.ServeMux, guarded func(http.Han
 	mux.HandleFunc("POST /api/telemt/config", guarded(h.handleSaveConfig))
 	mux.HandleFunc("POST /api/telemt/install", guarded(h.handleInstall))
 	mux.HandleFunc("POST /api/telemt/update", guarded(h.handleUpdate))
+	mux.HandleFunc("POST /api/telemt/start", guarded(h.handleStart))
+	mux.HandleFunc("POST /api/telemt/stop", guarded(h.handleStop))
 	mux.HandleFunc("POST /api/telemt/restart", guarded(h.handleRestart))
 	mux.HandleFunc("POST /api/telemt/uninstall", guarded(h.handleUninstall))
 }
 
+// handleStatus returns the current telemt status.
+//
+//	@Summary		Get telemt service status
+//	@Tags			telemt
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope{data=telemt.Status}
+//	@Failure		503	{object}	APIErrorEnvelope
+//	@Router			/telemt/status [get]
 func (h *TelemtHandler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "telemt service not initialized", "UNAVAILABLE")
@@ -35,6 +46,15 @@ func (h *TelemtHandler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, status)
 }
 
+// handleGetConfig returns the telemt configuration.
+//
+//	@Summary		Get telemt configuration
+//	@Tags			telemt
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope{data=telemt.Config}
+//	@Failure		503	{object}	APIErrorEnvelope
+//	@Router			/telemt/config [get]
 func (h *TelemtHandler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "telemt service not initialized", "UNAVAILABLE")
@@ -44,6 +64,19 @@ func (h *TelemtHandler) handleGetConfig(w http.ResponseWriter, r *http.Request) 
 	response.Success(w, cfg)
 }
 
+// handleSaveConfig updates the telemt configuration.
+//
+//	@Summary		Save telemt configuration
+//	@Tags			telemt
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		telemt.Config	true	"telemt configuration"
+//	@Success		200		{object}	APIEnvelope{data=telemt.Status}
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Failure		503		{object}	APIErrorEnvelope
+//	@Router			/telemt/config [post]
 func (h *TelemtHandler) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "telemt service not initialized", "UNAVAILABLE")
@@ -62,6 +95,16 @@ func (h *TelemtHandler) handleSaveConfig(w http.ResponseWriter, r *http.Request)
 	response.Success(w, status)
 }
 
+// handleInstall installs the telemt binary.
+//
+//	@Summary		Install telemt binary
+//	@Tags			telemt
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope{data=telemt.Status}
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Failure		503	{object}	APIErrorEnvelope
+//	@Router			/telemt/install [post]
 func (h *TelemtHandler) handleInstall(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "telemt service not initialized", "UNAVAILABLE")
@@ -75,6 +118,16 @@ func (h *TelemtHandler) handleInstall(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, status)
 }
 
+// handleUpdate updates the telemt binary.
+//
+//	@Summary		Update telemt binary
+//	@Tags			telemt
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope{data=telemt.Status}
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Failure		503	{object}	APIErrorEnvelope
+//	@Router			/telemt/update [post]
 func (h *TelemtHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "telemt service not initialized", "UNAVAILABLE")
@@ -88,6 +141,62 @@ func (h *TelemtHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, status)
 }
 
+// handleStart starts the telemt service.
+//
+//	@Summary		Start telemt service
+//	@Tags			telemt
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope{data=telemt.Status}
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Failure		503	{object}	APIErrorEnvelope
+//	@Router			/telemt/start [post]
+func (h *TelemtHandler) handleStart(w http.ResponseWriter, r *http.Request) {
+	if h.service == nil {
+		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "telemt service not initialized", "UNAVAILABLE")
+		return
+	}
+	if err := h.service.Start(r.Context()); err != nil {
+		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "START_FAILED")
+		return
+	}
+	status := h.service.GetStatus(r.Context())
+	response.Success(w, status)
+}
+
+// handleStop stops the telemt service.
+//
+//	@Summary		Stop telemt service
+//	@Tags			telemt
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope{data=telemt.Status}
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Failure		503	{object}	APIErrorEnvelope
+//	@Router			/telemt/stop [post]
+func (h *TelemtHandler) handleStop(w http.ResponseWriter, r *http.Request) {
+	if h.service == nil {
+		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "telemt service not initialized", "UNAVAILABLE")
+		return
+	}
+	if err := h.service.Stop(r.Context()); err != nil {
+		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "STOP_FAILED")
+		return
+	}
+	status := h.service.GetStatus(r.Context())
+	response.Success(w, status)
+}
+
+// handleRestart restarts the telemt service.
+//
+//	@Summary		Restart telemt service
+//	@Tags			telemt
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope{data=telemt.Status}
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Failure		503	{object}	APIErrorEnvelope
+//	@Router			/telemt/restart [post]
 func (h *TelemtHandler) handleRestart(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "telemt service not initialized", "UNAVAILABLE")
@@ -101,6 +210,16 @@ func (h *TelemtHandler) handleRestart(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, status)
 }
 
+// handleUninstall uninstalls the telemt service.
+//
+//	@Summary		Uninstall telemt service
+//	@Tags			telemt
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope{data=telemt.Status}
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Failure		503	{object}	APIErrorEnvelope
+//	@Router			/telemt/uninstall [post]
 func (h *TelemtHandler) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "telemt service not initialized", "UNAVAILABLE")
