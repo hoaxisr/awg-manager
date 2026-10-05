@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -413,4 +414,61 @@ func TestHookSetters_AreRaceFreeAgainstUpdateState(t *testing.T) {
 		o.updateState(Action{Type: ActionStopKernel, Tunnel: "awg10"})
 	}
 	<-done
+}
+
+// Штамп conf=running только растёт: running, пришедший раньше, но отпущенный
+// замком позже, не откатывает штамп более нового. Мутация «присваивать
+// безусловно» → штамп T1 → красный.
+func TestNoteConfRunning_NeverMovesBack(t *testing.T) {
+	o := settledTunnel()
+	t1, t3 := time.Unix(1000, 0), time.Unix(1003, 0)
+	o.noteConfRunning("Wireguard2", t3)
+	o.noteConfRunning("Wireguard2", t1)
+	if got := o.state.tunnels["awg11"].lastConfRunningAt; !got.Equal(t3) {
+		t.Fatalf("lastConfRunningAt = %v, want %v", got, t3)
+	}
+}
+
+// conf=running пришёл РАНЬШЕ conf=disabled, но застрял на замке туннеля и
+// отпущен во время удержания грани disabled. Это не bounce: остановка
+// обязана пройти. Часы растут на секунду с каждым чтением, поэтому порядок
+// штампов задают только места чтения. Мутация «штамп running — nowFn() после
+// ожиданий» (код до fix round 1) → bounce → красный.
+func TestConfDisabled_RunningQueuedOnLockBeforeEdge_NotBounce(t *testing.T) {
+	o := settledTunnel()
+	o.confSettleDelay = 300 * time.Millisecond
+	base := time.Unix(100000, 0)
+	o.state.tunnels["awg11"].quiescentUntil = base.Add(-time.Hour)
+	var ticks atomic.Int64
+	reads := make(chan struct{}, 16)
+	o.clock = func() time.Time {
+		reads <- struct{}{}
+		return base.Add(time.Duration(ticks.Add(1)) * time.Second)
+	}
+	if err := o.lockTunnel(context.Background(), "awg11", "test"); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+
+	running := confHook("running")
+	running.Now = base // пришёл первым
+	runDone := make(chan struct{})
+	go func() {
+		_ = o.HandleEvent(context.Background(), running)
+		close(runDone)
+	}()
+	<-reads // running прочитал часы (consumeExpectedHook) и встаёт на замок
+
+	settled := make(chan bool, 1)
+	go func() { settled <- o.settleConfDisabled(context.Background(), confHook("disabled")) }()
+	<-reads // disabled взял свой now
+	o.unlockTunnel("awg11")
+	select {
+	case <-runDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("conf=running не завершился")
+	}
+
+	if !<-settled {
+		t.Fatal("running пришёл раньше disabled — не bounce, остановка обязана пройти")
+	}
 }

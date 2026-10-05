@@ -385,7 +385,9 @@ func (o *Orchestrator) consumeExpectedHook(ndmsName, level string) bool {
 func (o *Orchestrator) noteConfRunning(ndmsName string, at time.Time) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if t := o.state.findByNDMSName(ndmsName); t != nil {
+	// Только вперёд: штамп — момент прихода, а записи идут в порядке выхода
+	// из ожиданий; старый running, отпущенный позже, не откатывает новый.
+	if t := o.state.findByNDMSName(ndmsName); t != nil && at.After(t.lastConfRunningAt) {
 		t.lastConfRunningAt = at
 	}
 }
