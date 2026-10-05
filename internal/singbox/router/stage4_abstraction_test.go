@@ -162,6 +162,23 @@ func TestStage4_EngineReadiness_GranularDiagnostics(t *testing.T) {
 	if !resTProxyUp.Ready {
 		t.Fatalf("tproxy up should be ready, missing: %v", resTProxyUp.MissingCriteria)
 	}
+
+	// Case G: TPROXY mode with listening probe false even if controller is active
+	stubListeningProbe(t, func() bool { return false })
+	resControllerOnly := CheckEngineReadiness(ctx, engineUp, "Mihomo", "tproxy", false, "", true)
+	if resControllerOnly.Ready {
+		t.Fatal("readiness must be false when inbound sockets 51271/51272 are not listening")
+	}
+	foundInboundErr := false
+	for _, c := range resControllerOnly.MissingCriteria {
+		if strings.Contains(c, "redirect") || strings.Contains(c, "tproxy") || strings.Contains(c, "inbound") {
+			foundInboundErr = true
+			break
+		}
+	}
+	if !foundInboundErr {
+		t.Fatalf("expected inbound sockets failure in missing criteria, got: %v", resControllerOnly.MissingCriteria)
+	}
 }
 
 func TestStage4_WaitForSingbox_ReportsCorrectEngineAndMissingDetails(t *testing.T) {

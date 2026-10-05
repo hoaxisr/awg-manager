@@ -422,7 +422,8 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			// Явный дефолт v6-пула: с v35 пустое значение ЗНАЧИМО («v6
 			// выключен»), поэтому свежая установка обязана нести его дословно.
 			// Литерал — дубль DefaultFakeIPTunParams().Inet6Range.
-			FakeIPPool6: "fc00::/18",
+			FakeIPPool6:     "fc00::/18",
+			MihomoMixedPort: 1099,
 		},
 		CreateNDMSProxyForSingbox: true,
 		// Fresh installs have no legacy peers — nothing to sweep. Only
@@ -430,6 +431,11 @@ func (s *SettingsStore) defaultSettings() *Settings {
 		// peer allow-ips migration.
 		ManagedPeerAllowIPsMigrated: true,
 	}
+}
+
+// DefaultSettings returns settings with default values.
+func DefaultSettings() *Settings {
+	return (&SettingsStore{}).defaultSettings()
 }
 
 // dedupManagedServers returns servers with duplicate InterfaceName entries

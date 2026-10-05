@@ -246,13 +246,13 @@ func TestCompileMihomoConfig_SidecarOnlyListeners(t *testing.T) {
 	}
 }
 
-func TestCompileMihomoConfig_PortZeroDisabled(t *testing.T) {
+func TestCompileMihomoConfig_PortZeroFallback1099(t *testing.T) {
 	input := &MihomoCompileInput{
 		RouterSettings: storage.SingboxRouterSettings{
 			RoutingEngine:   "mihomo",
 			Enabled:         true,
 			RoutingMode:     "tproxy",
-			MihomoMixedPort: 0, // Explicitly disabled
+			MihomoMixedPort: 0, // Fallback to 1099 per contract
 		},
 		FinalOutbound: "DIRECT",
 		Mode:          mihomo.RuntimeEnforced,
@@ -263,9 +263,14 @@ func TestCompileMihomoConfig_PortZeroDisabled(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	found1099 := false
 	for _, l := range res.RequiredListeners {
-		if l.Port == 1099 {
-			t.Fatalf("port 0 must disable listener, but found 1099: %+v", l)
+		if l.Port == 1099 && l.Purpose == "mihomo-mixed-port" {
+			found1099 = true
+			break
 		}
+	}
+	if !found1099 {
+		t.Fatalf("port 0 must fallback to 1099, but not found in: %+v", res.RequiredListeners)
 	}
 }

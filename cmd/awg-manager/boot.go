@@ -282,7 +282,6 @@ func (a *app) startBootSequence() {
 			// чинит ресурс linked_endpoint роли, отдельный проход не нужен.
 			// Горутиной: бут прокси может ждать загрузки бинарей (F98).
 			go a.proxyRuntimeNudge("cold-boot", proxyrt.EventBoot)
-			a.restoreAdaptiveRouting()
 			go func() {
 				if err := a.syncNDMSProxyExports(a.shutdownCtx); err != nil {
 					a.bootLog.Warn("startup", "ndms-proxy-sync", "Failed to sync NDMS proxy exports: "+err.Error())
@@ -330,7 +329,6 @@ func (a *app) startBootSequence() {
 			a.restorePingMonitors()
 			go a.reconcileSystemClientRoutes() // F497: system:-выходы после ребута
 			go a.proxyRuntimeNudge("post-restore", proxyrt.EventBoot)
-			a.restoreAdaptiveRouting()
 			return
 		}
 
@@ -344,7 +342,6 @@ func (a *app) startBootSequence() {
 		// Как на cold-boot: посев мог не состояться, если RCI ещё не отвечал
 		// сразу после opkg upgrade.
 		go a.proxyRuntimeNudge("daemon-restart", proxyrt.EventBoot)
-		a.restoreAdaptiveRouting()
 		go func() {
 			if err := a.syncNDMSProxyExports(context.Background()); err != nil {
 				a.bootLog.Warn("startup", "ndms-proxy-sync", "Failed to sync NDMS proxy exports: "+err.Error())
@@ -352,51 +349,6 @@ func (a *app) startBootSequence() {
 		}()
 	}
 
-}
-
-func (a *app) restoreAdaptiveRouting() {
-	if a.adaptiveRoutingSvc == nil || a.adaptiveRoutingStore == nil {
-		return
-	}
-	// Purge any stray daemon surviving from a previous crashed run or package upgrade
-	_ = a.adaptiveRoutingSvc.CleanupStaleOrphans(context.Background())
-
-	a.startAdaptiveRoutingWatchdog()
-	applied := a.adaptiveRoutingStore.GetApplied()
-	if applied == nil || !applied.Settings.Enabled {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(a.shutdownCtx, 30*time.Second)
-		defer cancel()
-		if _, err := a.adaptiveRoutingSvc.Apply(ctx, applied.Settings); err != nil {
-			a.bootLog.Warn("startup", "adaptive-routing", fmt.Sprintf("restore adaptive routing failed: %v", err))
-		} else {
-			a.bootLog.Info("startup", "adaptive-routing", "Adaptive routing (Susanin) restored successfully")
-		}
-	}()
-}
-
-func (a *app) startAdaptiveRoutingWatchdog() {
-	if a.adaptiveRoutingSvc == nil || a.shutdownCtx == nil {
-		return
-	}
-	a.adaptiveWatchdogOnce.Do(func() {
-		go func() {
-			ticker := time.NewTicker(5 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-a.shutdownCtx.Done():
-					return
-				case <-ticker.C:
-					ctx, cancel := context.WithTimeout(a.shutdownCtx, 4*time.Second)
-					_, _ = a.adaptiveRoutingSvc.Reconcile(ctx)
-					cancel()
-				}
-			}
-		}()
-	})
 }
 
 // serve installs signal handlers and runs the HTTP server until shutdown.

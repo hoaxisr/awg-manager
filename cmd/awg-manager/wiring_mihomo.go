@@ -45,9 +45,18 @@ func (a *app) setupMihomo() {
 		a.mihomoHandler.SetEventBus(a.eventBus)
 	}
 	a.mihomoHandler.SetSettingsStore(a.settingsStore)
-	nativeStore, err := mihomonative.NewStore(filepath.Join(configDir, "native.json"))
+	nativePath := filepath.Join(configDir, "native.json")
+	nativeStore, err := mihomonative.NewStore(nativePath)
 	if err != nil {
-		panic(fmt.Sprintf("initialize Mihomo native store: %v", err))
+		corruptPath := fmt.Sprintf("%s.corrupt.%d", nativePath, time.Now().Unix())
+		if a.bootLog != nil {
+			a.bootLog.Warn("startup", "mihomo-native", fmt.Sprintf("failed to load %s (%v); quarantining to %s and initializing clean store", nativePath, err, filepath.Base(corruptPath)))
+		}
+		_ = os.Rename(nativePath, corruptPath)
+		nativeStore, err = mihomonative.NewStore(nativePath)
+		if err != nil && a.bootLog != nil {
+			a.bootLog.Error("startup", "mihomo-native", fmt.Sprintf("fallback clean store failed: %v", err))
+		}
 	}
 	a.mihomoNativeStore = nativeStore
 	a.mihomoHandler.SetNativeStore(nativeStore)

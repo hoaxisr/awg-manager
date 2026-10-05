@@ -594,6 +594,13 @@ func TestDefaultSettingsChannelIsStable(t *testing.T) {
 	}
 }
 
+func TestDefaultSettings_MihomoMixedPort(t *testing.T) {
+	s := DefaultSettings()
+	if s.SingboxRouter.MihomoMixedPort != 1099 {
+		t.Errorf("DefaultSettings().SingboxRouter.MihomoMixedPort = %d, want 1099", s.SingboxRouter.MihomoMixedPort)
+	}
+}
+
 func TestMigrateToV23SetsStableChannel(t *testing.T) {
 	var s Settings
 	s.SchemaVersion = 22

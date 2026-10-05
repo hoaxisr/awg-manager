@@ -11,7 +11,7 @@ import (
 
 const (
 	bridgePortBase = 12000
-	bridgePortMax  = 12999
+	bridgePortMax  = 12099
 )
 
 type BridgeProxyRegistrar interface {
