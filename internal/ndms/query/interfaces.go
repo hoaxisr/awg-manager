@@ -317,14 +317,6 @@ type listAnswer struct {
 	start, no uint64
 }
 
-// appliedRecsLocked — записи последнего применённого ответа (nil — ни одного).
-func (s *InterfaceStore) appliedRecsLocked() map[string]ndms.Interface {
-	if s.applied == nil {
-		return nil
-	}
-	return s.applied.recs
-}
-
 // beginFlightLocked регистрирует новый полёт; start — seq ДО запроса: метки,
 // поставленные, пока список в полёте, получают seq > start.
 func (s *InterfaceStore) beginFlightLocked() *listFlight {

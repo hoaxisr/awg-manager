@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -206,7 +207,10 @@ func TestDispatcher_OverflowRefreshFails_RetriedNextPass(t *testing.T) {
 }
 
 // S13: пачка хуков существования (чужое создание A, чужое снятие известного B)
-// стоит ОДНОГО списка, и публикация идёт после него, один раз, с publish=true.
+// стоит ОДНОГО списка, и публикация идёт после его ОТВЕТА, один раз, с
+// publish=true. Ответ списка удерживается в фейке: пока он не отпущен,
+// слушатель молчит. Мутация «go (*p)(publish) до возврата ReconcileDirty» →
+// слушатель зовётся при удержанном ответе → красный.
 func TestDispatcher_ExistenceBatch_OneListThenPublish(t *testing.T) {
 	f := query.NewFakeNDMS(
 		ndms.Interface{ID: "Bridge0", Type: "Bridge"},
@@ -217,15 +221,20 @@ func TestDispatcher_ExistenceBatch_OneListThenPublish(t *testing.T) {
 	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
 	f.Remove("Wireguard0")
 
-	var listStarted atomic.Bool
-	f.InList(func() { listStarted.Store(true) })
+	entered := make(chan struct{}, 1)
+	gate := make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	defer release()
+	f.InList(func() {
+		entered <- struct{}{}
+		<-gate
+	})
 	var calls atomic.Int32
-	type call struct{ publish, afterList bool }
-	got := make(chan call, 4)
+	got := make(chan bool, 4)
 	d := NewDispatcher(q, NopLogger())
 	d.SetExistenceListed(func(publish bool) {
 		calls.Add(1)
-		got <- call{publish, listStarted.Load()}
+		got <- publish
 	})
 	for _, h := range f.DrainHooks() {
 		d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID, Layer: h.Layer, Level: h.Level})
@@ -233,14 +242,26 @@ func TestDispatcher_ExistenceBatch_OneListThenPublish(t *testing.T) {
 	d.Start()
 	defer d.Stop()
 
-	var c call
 	select {
-	case c = <-got:
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("список пачки не начат")
+	}
+	select {
+	case <-got:
+		t.Fatal("слушатель вызван до ответа списка")
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+
+	var publish bool
+	select {
+	case publish = <-got:
 	case <-time.After(2 * time.Second):
 		t.Fatal("слушатель существования не вызван")
 	}
-	if !c.publish || !c.afterList {
-		t.Fatalf("publish=%v afterList=%v, want true/true: публикация — после списка", c.publish, c.afterList)
+	if !publish {
+		t.Fatal("publish=false, want true: чужие создание и снятие")
 	}
 	if n := f.ListCalls() - lists; n != 1 || f.E != 0 {
 		t.Fatalf("списков +%d E=%d, want 1/0: один список на пачку", n, f.E)
