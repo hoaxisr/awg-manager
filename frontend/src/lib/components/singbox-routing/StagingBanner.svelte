@@ -5,6 +5,7 @@
 	import { Button, Modal } from '$lib/components/ui';
 	import { formatTime } from '$lib/utils/format';
 	import { stripAnsi } from '$lib/utils/ansi';
+	import { m } from '$lib/i18n';
 	import type { RouterStagingValidationError, RouterValidationErrorDTO } from '$lib/types';
 
 	const stagingStore = singboxRouter.staging;
@@ -52,7 +53,7 @@
 
 	function formatDrafted(d: Date | null): string {
 		if (!d) return '';
-		return `с ${formatTime(d.toISOString())}`;
+		return m.singbox_routing_staging_since({ time: formatTime(d.toISOString()) });
 	}
 
 	const hasErrors = $derived(!!(inlineErrors || inlineSbCheck));
@@ -113,10 +114,10 @@
 		disabled={applying || discarding}
 		onclick={() => (confirmDiscard = true)}
 	>
-		Сбросить
+		{m.singbox_routing_staging_reset()}
 	</Button>
 	<Button variant="primary" size="sm" disabled={applying || discarding} onclick={onApply}>
-		{applying ? 'Применяю…' : 'Применить'}
+		{applying ? m.singbox_routing_staging_applying() : m.common_apply()}
 	</Button>
 {/snippet}
 
@@ -130,7 +131,7 @@
 			<div class="staging-row">
 				<span class="dot" aria-hidden="true"></span>
 				<span class="title">
-					{hasErrors ? 'Не могу применить' : 'Несохранённые изменения'}
+					{hasErrors ? m.singbox_routing_staging_cannot_apply() : m.singbox_routing_staging_unsaved()}
 					·&nbsp;<span class="time">{formatDrafted(draftedAt)}</span>
 				</span>
 				<div class="spacer"></div>
@@ -145,7 +146,7 @@
 			{/if}
 			{#if missingRuleSetTag}
 				<div class="hint">
-					DNS-правило ссылается на rule_set «{missingRuleSetTag}», которого нет в Route → Наборы. Добавьте набор или удалите DNS-правило, которое на него ссылается.
+					{m.singbox_routing_staging_missing_rule_set({ tag: missingRuleSetTag })}
 				</div>
 			{/if}
 			{#if inlineSbCheck}
@@ -164,7 +165,7 @@
 			<div class="staging-banner compact">
 				<div class="staging-row">
 					<span class="dot" aria-hidden="true"></span>
-					<span class="title">Несохранённые изменения</span>
+					<span class="title">{m.singbox_routing_staging_unsaved()}</span>
 					<div class="spacer compact-spacer"></div>
 					{@render bannerActions()}
 				</div>
@@ -175,15 +176,15 @@
 
 <Modal
 	open={confirmDiscard}
-	title="Откатить правки?"
+	title={m.singbox_routing_staging_discard_title()}
 	size="sm"
 	onclose={() => (confirmDiscard = false)}
 >
-	<p class="discard-body">Все накопленные изменения будут отброшены.</p>
+	<p class="discard-body">{m.singbox_routing_staging_discard_body()}</p>
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={() => (confirmDiscard = false)}>Отмена</Button>
+		<Button variant="ghost" size="md" onclick={() => (confirmDiscard = false)}>{m.common_cancel()}</Button>
 		<Button variant="danger" size="md" disabled={discarding} onclick={onDiscard}>
-			{discarding ? 'Откатываю…' : 'Сбросить'}
+			{discarding ? m.singbox_routing_staging_discarding() : m.singbox_routing_staging_reset()}
 		</Button>
 	{/snippet}
 </Modal>

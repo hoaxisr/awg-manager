@@ -3,6 +3,7 @@
   beginner: состояние + здоровье + управление. expert: + редактируемые настройки (auto-save).
 -->
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { SideDrawer, Toggle, Button, Badge, StatusDot, SegmentedControl, Modal } from '$lib/components/ui';
   import { api } from '$lib/api/client';
@@ -13,6 +14,7 @@
   import { singboxTrafficLive } from '$lib/stores/singboxEngineStats';
   import { formatBytes, formatByteRate } from '$lib/utils/format';
   import { systemInfo } from '$lib/stores/system';
+  import { opkgTunUnsupportedReason, opkgTunSupported } from '$lib/utils/opkgTunSupport';
   import { notifications } from '$lib/stores/notifications';
   import { drawerOpen, closeDrawer } from './drawerStore';
   import { openSourceDrawer } from './sourceDrawerStore';
@@ -27,10 +29,9 @@
   import BypassGeoIPTags from './BypassGeoIPTags.svelte';
   import OutboundOption from './OutboundOption.svelte';
   import { deriveDeps, deriveIssues } from './drawerData';
-  import { formatSuppressedUntil, CRASH_WORDS } from './crashInfo';
+  import { formatSuppressedUntil } from './crashInfo';
   import { mergeAndSaveSettings, BYPASS_PRESETS } from './settingsActions';
   import { resolveWanAuto, planToggleAutoDetect, planSelectWanInterface, type WanAutoOverride } from './wanMode';
-  import { pluralize, pluralForm, RULE_WORDS } from '$lib/utils/pluralize';
   import { awgTags as awgTagsStore } from '$lib/stores/awgTags';
   import { singboxTunnels } from '$lib/stores/singbox';
   import { singboxProxies } from '$lib/stores/singboxProxies';
@@ -52,9 +53,9 @@
   let s = $derived($status);
   // Эффективный путь cache.db: при незаданной настройке это может быть
   // рукописный путь из 00-base.json, который селектор выразить не может.
-  let cacheDbNow = $derived(s?.cacheDbPath ? ` Сейчас: ${s.cacheDbPath}` : '');
   let cfg = $derived($storeSettings);
   let isExpert = $derived($mode === 'expert');
+  let tunSupported = $derived(opkgTunSupported($systemInfo.data));
 
   // ── Mihomo Traffic Mode (rule / global / direct) ──
   let currentMihomoMode = $state<'rule' | 'global' | 'direct'>('rule');
@@ -67,8 +68,8 @@
 
   const availableGlobalOutbounds = $derived.by(() => {
     const list: Array<{ value: string; label: string }> = [
-      { value: 'DIRECT', label: 'DIRECT (Прямое подключение / мимо VPN)' },
-      { value: 'REJECT', label: 'REJECT (Блокировать)' },
+      { value: 'DIRECT', label: m.sb_router_direct_option() },
+      { value: 'REJECT', label: m.sb_router_reject_option() },
     ];
 
     // 1. Mihomo native proxy groups
@@ -276,10 +277,10 @@
       if (sApi.clearAdaptiveRoutingCache) {
         await sApi.clearAdaptiveRoutingCache();
       }
-      notifications.success('Накопленные адреса Susanin очищены');
+      notifications.success(m.sb_router_susanin_cleared());
       await loadSusaninData();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка очистки базы Susanin');
+      notifications.error(e instanceof Error ? e.message : m.sb_router_susanin_clear_failed());
     } finally {
       susaninLoading = false;
     }
@@ -310,9 +311,9 @@
       susaninSettings = updated;
       susaninAlwaysList = entriesToSave;
       susaninAlwaysText = entriesToSave.join('\n');
-      notifications.success('Белый список Susanin обновлен');
+      notifications.success(m.sb_router_susanin_rules_saved());
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения белого списка');
+      notifications.error(e instanceof Error ? e.message : m.sb_router_susanin_clear_failed());
     } finally {
       susaninSavingAlways = false;
     }
@@ -325,7 +326,7 @@
     if (!val) return;
 
     if (susaninAlwaysList.some((e) => e.toLowerCase() === val)) {
-      notifications.info(`Запись «${val}» уже есть в белом списке`);
+      notifications.info(m.sb_router_susanin_rule_added({ val }));
       susaninAlwaysInput = '';
       return;
     }
@@ -346,14 +347,14 @@
 
   function pinToWhitelist(ipOrCidr: string) {
     if (susaninAlwaysList.includes(ipOrCidr)) {
-      notifications.info(`Адрес ${ipOrCidr} уже в белом списке`);
+      notifications.info(m.sb_router_susanin_rule_added({ val: ipOrCidr }));
       return;
     }
     const nextList = [...susaninAlwaysList, ipOrCidr];
     susaninAlwaysList = nextList;
     susaninAlwaysText = nextList.join('\n');
     void saveSusaninAlways(nextList);
-    notifications.success(`Адрес ${ipOrCidr} зафиксирован в белом списке`);
+    notifications.success(m.sb_router_susanin_promoted({ target: ipOrCidr }));
   }
 
   $effect(() => {
@@ -408,13 +409,13 @@
       await api.mihomoPatchClashConfigs({ mode: newMode });
       await applyPatch({ mihomoTrafficMode: newMode });
       const labels = {
-        rule: 'По правилам (Rule)',
-        global: 'Глобальный (Global)',
-        direct: 'Напрямую (Direct)',
+        rule: m.sb_router_status_mihomo_mode_rule(),
+        global: m.sb_router_status_mihomo_mode_global(),
+        direct: m.sb_router_status_mihomo_mode_direct(),
       };
-      notifications.success(`Режим Mihomo: ${labels[newMode]}`);
+      notifications.success(m.sb_router_mihomo_mode_switched({ mode: labels[newMode] }));
     } catch (e) {
-      notifications.error(`Ошибка переключения режима: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_mihomo_mode_switch_failed({ error: e instanceof Error ? e.message : String(e) }));
     }
   }
 
@@ -423,9 +424,9 @@
     try {
       await api.mihomoSetGlobalProxy(newTarget);
       await applyPatch({ mihomoGlobalTarget: newTarget });
-      notifications.success(`Весь трафик направлен через ${newTarget}`);
+      notifications.success(m.sb_router_mihomo_target_switched({ target: newTarget }));
     } catch (e) {
-      notifications.error(`Ошибка смены узла: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_mihomo_target_switch_failed({ error: e instanceof Error ? e.message : String(e) }));
     }
   }
 
@@ -449,12 +450,9 @@
   type CaptureMode = 'tproxy' | 'policy-tun';
   let activeMode = $derived.by<CaptureMode | null>(() => {
     if (!(s?.enabled ?? false)) return null;
-    const m = $settings?.routingMode;
-    // Legacy settings did not contain routingMode; an enabled legacy engine
-    // is TPROXY.  Keep FakeIP distinct: it is running, but neither capture
-    // card in this drawer is its active mode.
-    if (m === undefined || m === 'tproxy') return 'tproxy';
-    return m === 'policy-tun' ? m : null;
+    const rm = $settings?.routingMode;
+    if (rm === undefined || rm === 'tproxy') return 'tproxy';
+    return rm === 'policy-tun' ? rm : null;
   });
   // This is the main engine switch, so it must reflect the same global
   // enabled state as the status title and the core-switch guard.  Previously
@@ -482,7 +480,7 @@
           .map((i) => ({
             tone: i.severity === 'error' ? ('error' as const) : ('warning' as const),
             text: i.message,
-            ctaHint: '(в Эксперт)',
+            ctaHint: m.sb_router_cta_apply(),
           }))
       : deriveIssues(
           policyTunMode && s
@@ -519,29 +517,29 @@
     const current = cfg?.routingEngine === 'mihomo' ? 'mihomo' : 'sing-box';
     if (current === engine) return;
     if (engineEnabled || switchBusy) {
-      notifications.error('Остановите текущий движок перед сменой ядра');
+      notifications.error(m.sb_router_status_engine_switch_stop_first());
       return;
     }
     saving = true;
     try {
       await mergeAndSaveSettings({ routingEngine: engine });
-      notifications.success(`Ядро изменено на ${engine === 'mihomo' ? 'Mihomo' : 'Sing-box'}`);
+      notifications.success(m.sb_router_status_engine_switched({ engine: engine === 'mihomo' ? 'Mihomo' : 'Sing-box' }));
     } catch (e) {
-      notifications.error(`Ошибка при смене ядра: ${e}`);
+      notifications.error(m.sb_router_status_engine_switch_failed({ error: String(e) }));
     } finally {
       saving = false;
     }
   }
 
   let bigTitle = $derived.by(() => {
-    if (!engineEnabled) return 'Движок выключен';
-    return engineActive ? 'Движок работает' : 'Движок не работает';
+    if (!engineEnabled) return m.sb_router_status_engine_off();
+    return engineActive ? m.sb_router_status_engine_running() : m.sb_router_status_engine_not_running();
   });
   let bigSubtitle = $derived.by(() => {
-    if (!engineEnabled) return 'Не активен';
-    if (!engineActive) return 'Перехват не активен — правила не применены';
+    if (!engineEnabled) return m.sb_router_status_sub_inactive();
+    if (!engineActive) return m.sb_router_status_sub_no_intercept();
     const n = s?.ruleCount ?? 0;
-    return `Трафик идёт через ${pluralize(n, RULE_WORDS)}`;
+    return m.sb_router_status_sub_traffic_via({ count: n });
   });
 
   let engineState = $derived.by<'off' | 'warn' | 'on'>(() => {
@@ -592,11 +590,11 @@
   // Новичку TPROXY-настройки живут в SourceDrawer (узел «Источник» во FlowGraph);
   // здесь — сводка и переход, чтобы под выбором режима не было пусто (#730).
   let sourceSummary = $derived.by(() => {
-    if (cfg?.deviceMode === 'all') return 'Весь LAN-трафик роутера.';
+    if (cfg?.deviceMode === 'all') return m.sb_router_status_source_all();
     const name = (cfg?.policyName ?? '').trim();
     return name
-      ? `Только устройства политики «${name}».`
-      : 'Политика не выбрана — трафик устройств не обрабатывается.';
+      ? m.sb_router_status_source_policy({ name })
+      : m.sb_router_status_source_none();
   });
   function goToSourceSettings() {
     closeDrawer();
@@ -612,12 +610,11 @@
   }
   // Выбор режима: при выключенном движке только запоминаем цель тумблера,
   // при включённом — сразу просим переключение (общий confirm + прогресс).
-  function selectMode(m: CaptureMode) {
-    if (switchBusy) return;
-    if (engineOn && activeMode === m) return;
-    if (!engineOn && m === targetMode) return;
-    pickedMode = m;
-    if (engineOn) modeSwitch.request(m);
+  function selectMode(next: CaptureMode) {
+    if (switchBusy || next === targetMode) return;
+    if (next === 'policy-tun' && !tunSupported) return;
+    pickedMode = next;
+    if (activeMode !== null) modeSwitch.request(next);
   }
   async function restartEngine(_e: MouseEvent) {
     if (restarting) return;
@@ -625,9 +622,9 @@
     try {
       await api.singboxControl('restart');
       await singboxRouterStore.reloadStatus();
-      notifications.success('Движок перезапущен');
+      notifications.success(m.sb_router_status_restarted());
     } catch (e) {
-      notifications.error(`Не удалось перезапустить: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_status_restart_failed({ message: e instanceof Error ? e.message : String(e) }));
     } finally {
       restarting = false;
     }
@@ -642,14 +639,14 @@
     try {
       await api.mihomoResetConfig();
       await singboxRouterStore.loadAll();
-      notifications.success('Конфигурация Mihomo сброшена к заводским настройкам');
+      notifications.success(m.sb_router_status_mihomo_reset_done());
       resetConfirmOpen = false;
       closeDrawer();
       if (typeof window !== 'undefined') {
         window.location.reload();
       }
     } catch (e) {
-      notifications.error(`Не удалось сбросить настройки: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
     } finally {
       resetting = false;
     }
@@ -664,7 +661,7 @@
       await mergeAndSaveSettings(patch);
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
-      notifications.error(`Не удалось сохранить: ${lastError}`);
+      notifications.error(m.sb_router_common_save_failed({ message: lastError }));
     } finally {
       saving = false;
     }
@@ -692,33 +689,33 @@
     void applyPatch({ bypassPresets: next });
   }
 
-  const UDP_TIMEOUT_OPTIONS = [
-    { value: '', label: 'По умолчанию (5 мин)' },
-    { value: '5m0s', label: '5 минут' },
-    { value: '10m0s', label: '10 минут' },
-    { value: '15m0s', label: '15 минут' },
-    { value: '30m0s', label: '30 минут' },
-    { value: '1h0m0s', label: '1 час' },
-    { value: '3h0m0s', label: '3 часа' },
-  ];
+  const UDP_TIMEOUT_OPTIONS = $derived([
+    { value: '', label: m.sb_router_status_udp_timeout_default() },
+    { value: '5m0s', label: m.sb_router_status_udp_timeout_5m() },
+    { value: '10m0s', label: m.sb_router_status_udp_timeout_10m() },
+    { value: '15m0s', label: m.sb_router_status_udp_timeout_15m() },
+    { value: '30m0s', label: m.sb_router_status_udp_timeout_30m() },
+    { value: '1h0m0s', label: m.sb_router_status_udp_timeout_1h() },
+    { value: '3h0m0s', label: m.sb_router_status_udp_timeout_3h() },
+  ]);
 
-  const UDP_NAT_MAX_OPTIONS = [
-    { value: '', label: 'Авто (по памяти)' },
+  const UDP_NAT_MAX_OPTIONS = $derived([
+    { value: '', label: m.sb_router_status_udp_nat_auto() },
     { value: '2048', label: '2048' },
     { value: '4096', label: '4096' },
     { value: '8192', label: '8192' },
     { value: '16384', label: '16384' },
-  ];
+  ]);
 </script>
 
-<SideDrawer {open} onClose={closeDrawer} title={cfg?.routingEngine === 'mihomo' ? 'Движок Mihomo' : 'Движок sing-box'} width={420}>
+<SideDrawer {open} onClose={closeDrawer} title={cfg?.routingEngine === 'mihomo' ? m.sb_router_status_title_mihomo() : m.sb_router_status_title()} width={420}>
   <div class="sections">
     <!-- Состояние -->
     <section class="sec">
-      <div class="sec-cap">Состояние</div>
+      <div class="sec-cap">{m.sb_router_status_sec_state()}</div>
       <div class="engine-status" class:state-off={engineState === 'off'} class:state-warn={engineState === 'warn'} class:state-on={engineState === 'on'}>
         <div class="engine-main">
-          <Toggle checked={engineOn} controlled loading={switchBusy} ariaLabel="Включить или выключить движок маршрутизации" onchange={toggleEngine} />
+          <Toggle checked={engineOn} controlled loading={switchBusy} ariaLabel={m.sb_router_status_toggle_aria()} onchange={toggleEngine} />
           <div class="engine-text">
             <div class="engine-head">
               <StatusDot variant={engineDotVariant} size="sm" />
@@ -728,15 +725,15 @@
           </div>
         </div>
         <div class="engine-meta">
-          <span>{cfg?.routingEngine === 'mihomo' ? 'Версия Mihomo' : 'Версия sing-box'}</span>
+          <span>{cfg?.routingEngine === 'mihomo' ? m.sb_router_status_version_mihomo() : m.sb_router_status_version()}</span>
           <span class="engine-version">{cfg?.routingEngine === 'mihomo' ? mihomoVersionLabel : sbVersionLabel}</span>
         </div>
       </div>
 
-      <div class="sec-cap mt-4">Ядро маршрутизации</div>
+      <div class="sec-cap mt-4">{m.sb_router_status_sec_routing_core()}</div>
       <div class="card-grid">
         <SegmentedControl
-          ariaLabel="Ядро маршрутизации"
+          ariaLabel={m.sb_router_status_sec_routing_core()}
           options={[
             { label: 'Sing-box', value: 'sing-box' },
             { label: 'Mihomo', value: 'mihomo' }
@@ -745,36 +742,41 @@
           onchange={(val) => selectEngine(val as 'sing-box' | 'mihomo')}
         />
       </div>
-      <p class="hint mt-1">Остановите движок перед сменой ядра.</p>
+      <p class="hint mt-1">{m.sb_router_status_engine_switch_hint()}</p>
 
-      <div class="sec-cap mt-4">Режим захвата</div>
+      <div class="sec-cap mt-4">{m.sb_router_status_sec_capture()}</div>
       <div class="card-grid">
         <OutboundOption
-          label="TPROXY-правила"
-          sub="перехват iptables на роутере"
+          label={m.sb_router_status_mode_tproxy()}
+          sub={m.sb_router_status_mode_tproxy_sub()}
           tone="accent"
           selected={displayedMode === 'tproxy'}
           onclick={() => selectMode('tproxy')}
         />
         <OutboundOption
-          label="Политики + tun"
-          sub="захват трафика через политику доступа Keenetic, без TPROXY-правил"
+          label={m.sb_router_status_mode_policy_tun()}
+          sub={m.sb_router_status_mode_policy_tun_sub()}
           tone="accent"
-          selected={displayedMode === 'policy-tun'}
+          selected={targetMode === 'policy-tun'}
+          disabled={!tunSupported}
+          title={tunSupported ? undefined : opkgTunUnsupportedReason()}
           onclick={() => selectMode('policy-tun')}
         />
       </div>
       {#if cfg?.routingEngine !== 'mihomo'}
-        <p class="hint">Режим FakeIP включается на своей вкладке «Sing-box → FakeIP».</p>
+        <p class="hint">{m.sb_router_status_fakeip_hint()}</p>
+        {#if !tunSupported}
+          <p class="hint">{opkgTunUnsupportedReason()}</p>
+        {/if}
       {:else}
-        <div class="sec-cap mt-4">Режим обработки трафика</div>
+        <div class="sec-cap mt-4">{m.sb_router_status_mihomo_traffic_mode()}</div>
         <div class="mode-segmented">
           <SegmentedControl
-            ariaLabel="Режим обработки трафика"
+            ariaLabel={m.sb_router_status_mihomo_traffic_mode()}
             options={[
-              { label: 'По правилам', value: 'rule' },
-              { label: 'Глобальный', value: 'global' },
-              { label: 'Напрямую', value: 'direct' }
+              { label: m.sb_router_status_mihomo_mode_rule(), value: 'rule' },
+              { label: m.sb_router_status_mihomo_mode_global(), value: 'global' },
+              { label: m.sb_router_status_mihomo_mode_direct(), value: 'direct' }
             ]}
             value={currentMihomoMode}
             onchange={(val) => handleMihomoModeChange(val as 'rule' | 'global' | 'direct')}
@@ -783,15 +785,15 @@
 
         {#if currentMihomoMode === 'rule'}
           <p class="hint">
-            <strong>По правилам (Rule):</strong> Штатный режим. Трафик каждого сайта и приложения проверяется по списку правил (GEOSITE, GEOIP, IP-CIDR и т.д.) и направляется в назначенный туннель или напрямую.
+            <strong>{m.sb_router_status_mihomo_mode_rule()}:</strong> {m.sb_router_status_mihomo_mode_rule_hint()}
           </p>
         {:else if currentMihomoMode === 'global'}
           <div class="global-target-card">
             <p class="hint hint-warning">
-              <strong>Глобальный режим (Global):</strong> Все правила маршрутизации игнорируются! Абсолютно весь интернет-трафик роутера принудительно направляется в выбранный узел:
+              <strong>{m.sb_router_status_mihomo_mode_global()}:</strong> {m.sb_router_status_mihomo_mode_global_hint()}
             </p>
             <div class="field mt-2">
-              <label class="lbl" for="ed-global-target">Целевой выход (GLOBAL)</label>
+              <label class="lbl" for="ed-global-target">{m.sb_router_status_mihomo_global_target()}</label>
               <select
                 id="ed-global-target"
                 class="inp"
@@ -806,7 +808,7 @@
           </div>
         {:else if currentMihomoMode === 'direct'}
           <p class="hint hint-warning">
-            <strong>Напрямую (Direct):</strong> Все правила игнорируются. Весь сетевой трафик идёт напрямую от провайдера мимо любых VPN и прокси.
+            <strong>{m.sb_router_status_mihomo_mode_direct()}:</strong> {m.sb_router_status_mihomo_mode_direct_hint()}
           </p>
         {/if}
       {/if}
@@ -818,18 +820,20 @@
                «Падений: 0» рядом с активным подавлением только путает. -->
           {#if crashCount > 0}
             <div class="crash-line">
-              <span class="crash-label">Падений за 10 мин</span>
+              <span class="crash-label">{m.sb_router_status_crash_label()}</span>
               <span class="crash-value">{crashCount}</span>
             </div>
           {/if}
           {#if s?.lastCrashReason}
-            <p class="crash-reason">Причина: {s.lastCrashReason}</p>
+            <p class="crash-reason">{m.sb_router_status_crash_reason({ reason: s.lastCrashReason })}</p>
           {/if}
           {#if crashSuppressedLabel}
             <p class="crash-suppressed">
-              Автоперезапуск приостановлен до {crashSuppressedLabel}{#if crashCount > 0}&nbsp;({crashCount}
-              {pluralForm(crashCount, CRASH_WORDS)} за 10 мин){/if}.
-              Кнопка «Перезапустить» ниже запускает движок немедленно.
+              {#if crashCount > 0}
+                {m.sb_router_status_crash_suppressed_count({ time: crashSuppressedLabel, count: crashCount })}
+              {:else}
+                {m.sb_router_status_crash_suppressed({ time: crashSuppressedLabel })}
+              {/if}
             </p>
           {/if}
         </div>
@@ -839,17 +843,17 @@
     <!-- Ресурсы: живая память и трафик движка -->
     {#if resourcesVisible}
       <section class="sec">
-        <div class="sec-cap">Ресурсы</div>
-        <div class="stat-line" title={`Память Go-рантайма ${cfg?.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box'} по данным Clash API; фактический RSS процесса выше`}>
-          <span class="stat-label">Память {cfg?.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box'}</span>
+        <div class="sec-cap">{m.sb_router_status_sec_resources()}</div>
+        <div class="stat-line" title={m.sb_router_status_memory_title()}>
+          <span class="stat-label">{m.sb_router_status_memory()}</span>
           <span class="stat-value">{memoryLabel}</span>
         </div>
         <div class="stat-line">
-          <span class="stat-label">Скорость</span>
+          <span class="stat-label">{m.sb_router_status_speed()}</span>
           <span class="stat-value">{rateLabel}</span>
         </div>
         <div class="stat-line">
-          <span class="stat-label">За сессию</span>
+          <span class="stat-label">{m.sb_router_status_session()}</span>
           <span class="stat-value">{sessionLabel}</span>
         </div>
       </section>
@@ -857,7 +861,7 @@
 
     <!-- Зависимости -->
     <section class="sec">
-      <div class="sec-cap">Зависимости</div>
+      <div class="sec-cap">{m.sb_router_status_sec_deps()}</div>
       {#each deps as dep}
         <DepRow tone={dep.tone} label={dep.label} hint={dep.hint} />
       {/each}
@@ -866,7 +870,7 @@
     <!-- Замечания -->
     {#if issueCount > 0}
       <section class="sec">
-        <div class="sec-cap">Замечания <Badge variant="warning" size="sm">{issueCount}</Badge></div>
+        <div class="sec-cap">{m.sb_router_status_sec_issues()} <Badge variant="warning" size="sm">{issueCount}</Badge></div>
         {#each issues as issue}
           <IssueRow tone={issue.tone} text={issue.text} ctaHint={issue.ctaHint} />
         {/each}
@@ -883,41 +887,41 @@
          выбором режима пусто, тогда как policy-tun показывает свою карточку. -->
     {#if !policyTunMode && !isExpert && cfg}
       <section class="sec">
-        <div class="sec-cap">Источник трафика</div>
+        <div class="sec-cap">{m.sb_router_status_sec_source()}</div>
         <p class="hint">{sourceSummary}</p>
-        <Button variant="ghost" size="sm" onclick={goToSourceSettings}>Настроить источник →</Button>
+        <Button variant="ghost" size="sm" onclick={goToSourceSettings}>{m.sb_router_status_configure_source()}</Button>
       </section>
     {/if}
 
     {#if cfg}
       <!-- WAN-интерфейс -->
       <section class="sec">
-        <div class="sec-cap">WAN-интерфейс (выход в Интернет)</div>
+        <div class="sec-cap">{m.sb_router_status_sec_wan()}</div>
         <div class="field-row">
-          <span>Авто-определение</span>
+          <span>{m.sb_router_status_wan_auto()}</span>
           <Toggle checked={wanAuto} onchange={(checked) => toggleAutoDetect(checked)} />
         </div>
         {#if !wanAuto}
           <div class="field">
-            <label class="lbl" for="ed-wan">Интерфейс провайдера</label>
+            <label class="lbl" for="ed-wan">{m.sb_router_status_wan_interface()}</label>
             <select id="ed-wan" class="inp" value={cfg.wanInterface ?? ''} onchange={onWanInterfaceChange}>
-              <option value="">— выберите интерфейс —</option>
+              <option value="">{m.sb_router_status_wan_choose()}</option>
               {#each wanInterfaces as iface (iface.name)}
                 <option value={iface.name}>{iface.name}{iface.label ? ` — ${iface.label}` : ''}</option>
               {/each}
             </select>
           </div>
         {/if}
-        <p class="hint">Через какой внешний интерфейс отправляется прямой трафик (direct).</p>
+        <p class="hint">{m.sb_router_status_wan_hint()}</p>
       </section>
 
       <!-- Кэш sing-box (issue #842): единственное место настройки, вне expert-гейта —
            износ флеша касается любого режима с fakeip. -->
       {#if cfg?.routingEngine !== 'mihomo'}
         <section class="sec">
-          <div class="sec-cap">Кэш sing-box</div>
+          <div class="sec-cap">{m.sb_router_status_sec_cache()}</div>
           <div class="field">
-            <label class="lbl" for="ed-cache-location">Хранилище cache.db</label>
+            <label class="lbl" for="ed-cache-location">{m.sb_router_status_cache_location()}</label>
             <select
               id="ed-cache-location"
               class="inp"
@@ -925,13 +929,13 @@
               onchange={onCacheLocationChange}
             >
               {#if !cfg.cacheFileLocation}
-                <option value="">Не задано — как в 00-base.json</option>
+                <option value="">{m.sb_router_status_cache_unset()}</option>
               {/if}
-              <option value="flash">Флеш роутера (/opt)</option>
-              <option value="tmp">Оперативная память (/tmp)</option>
+              <option value="flash">{m.sb_router_status_cache_flash()}</option>
+              <option value="tmp">{m.sb_router_status_cache_tmp()}</option>
             </select>
           </div>
-          <p class="hint">В RAM записи FakeIP-карты и Clash не изнашивают флеш, но кэш не переживает перезагрузку. Выбор перезаписывает путь cache_file в 00-base.json, включая заданный вручную.{cacheDbNow}</p>
+          <p class="hint">{s?.cacheDbPath ? m.sb_router_status_cache_hint_now({ path: s.cacheDbPath }) : m.sb_router_status_cache_hint()}</p>
         </section>
       {/if}
     {/if}
@@ -951,14 +955,14 @@
 
       <!-- Анализ трафика -->
       <section class="sec">
-        <div class="sec-cap">Анализ трафика</div>
+        <div class="sec-cap">{m.sb_router_status_sec_sniff()}</div>
         <div class="field-row">
-          <span>Включить sniff</span>
+          <span>{m.sb_router_status_sniff_enable()}</span>
           <Toggle checked={cfg.snifferEnabled} onchange={(checked) => toggleSniffer(checked)} />
         </div>
-        <p class="hint">Анализ HTTP/TLS/QUIC по содержимому. Улучшает срабатывание domain-based правил при IP-only matchers.</p>
+        <p class="hint">{m.sb_router_status_sniff_hint()}</p>
         <div class="field">
-          <label class="lbl" for="ed-udp-timeout">UDP таймаут сессии</label>
+          <label class="lbl" for="ed-udp-timeout">{m.sb_router_status_udp_timeout()}</label>
           <div class="udp-timeout-row">
             <select
               id="ed-udp-timeout"
@@ -972,9 +976,9 @@
             </select>
           </div>
         </div>
-        <p class="hint">Как долго {cfg?.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box'} держит UDP-сессии активными. Увеличьте если игры или другие UDP-приложения обрываются каждые несколько минут.</p>
+        <p class="hint">{m.sb_router_status_udp_timeout_hint()}</p>
         <div class="field">
-          <label class="lbl" for="ed-udp-nat-max">Потолок UDP-сессий</label>
+          <label class="lbl" for="ed-udp-nat-max">{m.sb_router_status_udp_nat_max()}</label>
           <div class="udp-timeout-row">
             <select
               id="ed-udp-nat-max"
@@ -991,7 +995,7 @@
             </select>
           </div>
         </div>
-        <p class="hint">Сколько UDP-сессий движок держит одновременно; при переполнении вытесняется самая старая. Уменьшите на роутере с малой памятью, если {cfg?.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box'} растёт под UDP-нагрузкой.</p>
+        <p class="hint">{m.sb_router_status_udp_nat_max_hint()}</p>
       </section>
 
       {#if cfg?.routingEngine !== 'mihomo'}
@@ -1007,24 +1011,24 @@
 
       <!-- Службы Keenetic / KeenDNS в туннель -->
       <section class="sec">
-        <div class="sec-cap">Службы Keenetic в туннель</div>
+        <div class="sec-cap">{m.sb_router_cloud_sec_title()}</div>
         <div class="feature-chips">
           <button type="button" class="feature-chip" class:active={!!cfg?.keeneticCloudTunnel} onclick={toggleCloudTunnel}>
             <div class="feature-chip-head">
-              <span class="feature-chip-label">Облако Keenetic & KeenDNS</span>
+              <span class="feature-chip-label">{m.sb_router_cloud_chip_label()}</span>
               <span class="feature-chip-status-badge" class:active={!!cfg?.keeneticCloudTunnel}>
-                {cfg?.keeneticCloudTunnel ? 'В туннеле' : 'Напрямую'}
+                {cfg?.keeneticCloudTunnel ? m.sb_router_cloud_chip_active() : m.sb_router_cloud_chip_direct()}
               </span>
             </div>
             <span class="feature-chip-desc">
-              исходящая связь роутера с облаком Keenetic (KeenDNS, SSTP, приложение) идет через туннель
+              {m.sb_router_cloud_desc()}
             </span>
           </button>
         </div>
 
         {#if cfg?.keeneticCloudTunnel}
           <div class="field" style="margin-top: 10px;">
-            <label class="lbl" for="cloud-outbound-sel">Куда направить службы Keenetic</label>
+            <label class="lbl" for="cloud-outbound-sel">{m.sb_router_cloud_outbound_lbl()}</label>
             <select
               id="cloud-outbound-sel"
               class="sel"
@@ -1039,30 +1043,30 @@
         {/if}
 
         <p class="hint">
-          Направляет трафик роутера к серверам Keenetic Cloud (KeenDNS, облачный реле, аутентификация, приложение Keenetic и SSTP VPN) через выбранный туннель. Позволяет сохранить удаленный доступ к роутеру по доменному имени извне даже при блокировках провайдером или включении «белых списков». Локальный доступ дома (<code>my.keenetic.net</code>) остается прямым.
+          {@html m.sb_router_cloud_hint()}
         </p>
       </section>
 
       <!-- Адаптивное обнаружение блокировок (радар Susanin) -->
       <section class="sec">
-        <div class="sec-cap">Адаптивный радар Susanin</div>
+        <div class="sec-cap">{m.sb_router_susanin_sec_title()}</div>
         <div class="feature-chips">
           <button type="button" class="feature-chip" class:active={!!cfg?.susaninEnabled} onclick={toggleSusanin}>
             <div class="feature-chip-head">
-              <span class="feature-chip-label">Радар Susanin (автообход блокировок)</span>
+              <span class="feature-chip-label">{m.sb_router_susanin_chip_label()}</span>
               <span class="feature-chip-status-badge" class:active={!!cfg?.susaninEnabled}>
-                {cfg?.susaninEnabled ? 'Включен' : 'Выключен'}
+                {cfg?.susaninEnabled ? m.sb_router_susanin_chip_on() : m.sb_router_susanin_chip_off()}
               </span>
             </div>
             <span class="feature-chip-desc">
-              автоматически обнаруживает заблокированные IP-адреса и накапливает их в правиле susanin
+              {m.sb_router_susanin_chip_desc()}
             </span>
           </button>
         </div>
 
         {#if cfg?.susaninEnabled}
           <div class="field" style="margin-top: 10px;">
-            <label class="lbl" for="susanin-outbound-sel">Куда направить заблокированные IP</label>
+            <label class="lbl" for="susanin-outbound-sel">{m.sb_router_susanin_outbound_lbl()}</label>
             <select
               id="susanin-outbound-sel"
               class="sel"
@@ -1077,38 +1081,38 @@
 
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px;">
             <span style="font-size: 13px; color: var(--text-secondary);">
-              Накоплено адресов: <strong style="color: var(--text-primary);">{susaninIPCount}</strong>
+              {m.sb_router_susanin_active_count()} <strong style="color: var(--text-primary);">{susaninIPCount}</strong>
             </span>
             <Button variant="secondary" size="sm" onclick={openSusaninModal}>
-              Просмотреть список IP ({susaninIPCount})
+              {m.sb_router_susanin_active_ips_btn({ count: susaninIPCount })}
             </Button>
           </div>
         {/if}
 
         <p class="hint">
-          Радар Susanin непрерывно отслеживает сетевые сбои (таймауты TLS handshake, сбросы TCP RST) при прямых подключениях к сайтам. Все адреса с признаками блокировки DPI/РКН динамически накапливаются в правиле <code>susanin</code> активного движка и направляются через выбранный туннель или группу прокси без перезапуска.
+          {@html m.sb_router_susanin_drawer_hint()}
         </p>
       </section>
 
       <!-- Исключения: порт-пресеты + IP-пресеты (keendns) + ручные порты/подсети -->
       <section class="sec">
-        <div class="sec-cap">Исключения</div>
+        <div class="sec-cap">{m.sb_router_status_sec_bypass()}</div>
         <div class="bypass-presets">
           {#each BYPASS_PRESETS as p (p.id)}
             {@const active = (cfg.bypassPresets ?? []).includes(p.id)}
             <button type="button" class="bypass-preset" class:active onclick={() => togglePreset(p.id)}>
               <span class="preset-label">{p.label}</span>
               <span class="preset-desc">
-                {p.id === 'keendns' ? `имена роутера резолвит сам роутер, его адреса — мимо ${cfg?.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box'}` : p.desc}
+                {p.id === 'keendns' ? m.sb_router_keendns_warn({ engine: cfg?.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box' }) : p.desc}
               </span>
             </button>
           {/each}
         </div>
         <div class="field">
-          <label class="lbl" for="ed-ports-input">Доп. порты</label>
+          <label class="lbl" for="ed-ports-input">{m.sb_router_status_extra_ports()}</label>
           <PortChipsInput inputId="ed-ports-input" value={cfg.bypassExtraPorts ?? ''} onChange={(v) => void applyPatch({ bypassExtraPorts: v })} />
         </div>
-        <p class="hint">Эти порты пойдут мимо {cfg?.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box'} (прямо в WAN). Полезно для L2TP/NTP/SMB не ломая LAN-сервисы. Поддерживаются одиночные порты (<code class="mono">443 TCP</code>) и диапазоны (<code class="mono">5000-5500 UDP</code>).</p>
+        <p class="hint">{m.sb_router_status_ports_hint_pre()}<code class="mono">443 TCP</code>{m.sb_router_status_ports_hint_mid()}<code class="mono">5000-5500 UDP</code>{m.sb_router_status_ports_hint_post()}</p>
         <!-- В «Политики + tun» перехвата netfilter нет вовсе, поэтому исключения
              работают иначе, чем в TPROXY: они влияют только на классы QoS и на
              перехват DNS. Про 53 сказано отдельно — там выключатель СОЗНАТЕЛЬНО
@@ -1117,13 +1121,13 @@
              по TCP, и половинчатый перехват дал бы резолвинг, зависящий от
              размера ответа. -->
         {#if policyTunMode}
-          <p class="hint">В режиме «Политики + tun» исключения влияют только на классы QoS и на перехват DNS. Порт <code class="mono">53</code> в любом из списков — UDP или TCP — выключает перехват DNS целиком, для обоих протоколов сразу.</p>
+          <p class="hint">{m.sb_router_status_policy_tun_bypass_pre()} <code class="mono">53</code> {m.sb_router_status_policy_tun_bypass_post()}</p>
         {/if}
         <div class="field">
-          <label class="lbl" for="ed-subnets-input">Доп. подсети</label>
+          <label class="lbl" for="ed-subnets-input">{m.sb_router_status_extra_subnets()}</label>
           <SubnetChipsInput inputId="ed-subnets-input" value={cfg.bypassExtraSubnets ?? ''} onChange={(v) => void applyPatch({ bypassExtraSubnets: v })} />
         </div>
-        <p class="hint">IP или подсети, чей трафик целиком пойдёт мимо {cfg?.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box'} (прямо в WAN). Нужно для корпоративных VPN (Cisco AnyConnect и т.п.), чтобы их трафик не перехватывался.</p>
+        <p class="hint">{m.sb_router_status_subnets_hint()}</p>
         <!-- Набор AWGM-BYPASS живёт только в TPROXY-перехвате: в policy-tun
              (DSCPOnly) правило обхода не эмитится — обходить нечего. -->
         {#if !policyTunMode}
@@ -1134,8 +1138,8 @@
       {#if cfg?.routingEngine === 'mihomo'}
         <!-- Локальные порты прокси Mihomo -->
         <section class="sec">
-          <div class="sec-cap">Локальные порты прокси Mihomo</div>
-          <p class="hint">Локальные proxy-порты позволяют внешним программам на роутере использовать прокси Mihomo напрямую (0 = отключено).</p>
+          <div class="sec-cap">{m.sb_router_status_mihomo_local_ports()}</div>
+          <p class="hint">{m.sb_router_status_mihomo_local_ports_hint()}</p>
           <div class="card-grid">
             <div class="field">
               <label class="lbl" for="ed-mh-mixed">Mixed (SOCKS+HTTP)</label>
@@ -1150,7 +1154,7 @@
               />
             </div>
             <div class="field">
-              <label class="lbl" for="ed-mh-http">HTTP порт</label>
+              <label class="lbl" for="ed-mh-http">HTTP</label>
               <input
                 id="ed-mh-http"
                 type="number"
@@ -1162,7 +1166,7 @@
               />
             </div>
             <div class="field">
-              <label class="lbl" for="ed-mh-socks">SOCKS5 порт</label>
+              <label class="lbl" for="ed-mh-socks">SOCKS5</label>
               <input
                 id="ed-mh-socks"
                 type="number"
@@ -1181,10 +1185,10 @@
     {#if cfg?.routingEngine === 'mihomo'}
       <!-- Опасная зона / Сброс настроек Mihomo -->
       <section class="sec danger-sec">
-        <div class="sec-cap text-danger">Опасная зона</div>
-        <p class="hint">Очистить созданные правила маршрутизации и группы прокси Mihomo. Туннели, прокси и подписки сохранятся.</p>
+        <div class="sec-cap text-danger">{m.sb_router_status_mihomo_danger_zone()}</div>
+        <p class="hint">{m.sb_router_status_mihomo_reset_hint()}</p>
         <Button variant="danger" size="sm" fullWidth onclick={() => (resetConfirmOpen = true)}>
-          Сбросить правила и группы Mihomo
+          {m.sb_router_status_mihomo_reset_btn()}
         </Button>
       </section>
     {/if}
@@ -1194,13 +1198,13 @@
     <div class="footer-actions">
       <div class="footer-btns">
         <Button variant={engineOn ? 'danger' : 'primary'} size="sm" fullWidth disabled={switchBusy} onclick={handleToggleClick}>
-          {engineOn ? 'Выключить' : 'Включить'}
+          {engineOn ? m.sb_router_status_turn_off() : m.sb_router_status_turn_on()}
         </Button>
-        <Button variant="ghost" size="sm" fullWidth loading={restarting} onclick={restartEngine}>Перезапустить</Button>
+        <Button variant="ghost" size="sm" fullWidth loading={restarting} onclick={restartEngine}>{m.common_restart()}</Button>
       </div>
       {#if isExpert}
         <span class="save-status" class:err={lastError}>
-          {saving ? 'Сохраняем…' : lastError ? `Ошибка` : '✓ Сохранено'}
+          {saving ? m.sb_router_status_saving() : lastError ? m.common_error() : m.sb_router_status_saved()}
         </span>
       {/if}
     </div>
@@ -1209,19 +1213,19 @@
 
 <Modal
   open={resetConfirmOpen}
-  title="Сброс маршрутов и групп Mihomo"
+  title={m.sb_router_reset_modal_title()}
   size="sm"
   onclose={() => (resetConfirmOpen = false)}
 >
   <div class="reset-confirm-body">
-    <p class="reset-confirm-text">Вы действительно хотите сбросить правила маршрутизации и группы прокси Mihomo?</p>
-    <p class="reset-confirm-warn">Все ваши туннели, нативные прокси и подписки сохранятся. Будут удалены только созданные правила и группы прокси.</p>
+    <p class="reset-confirm-text">{m.sb_router_reset_modal_question()}</p>
+    <p class="reset-confirm-warn">{m.sb_router_reset_modal_warning()}</p>
     <div class="reset-modal-actions">
       <Button variant="ghost" size="sm" onclick={() => (resetConfirmOpen = false)}>
-        Отмена
+        {m.common_cancel()}
       </Button>
       <Button variant="danger" size="sm" loading={resetting} onclick={handleResetMihomo}>
-        Сбросить маршруты
+        {m.sb_router_status_mihomo_reset_btn()}
       </Button>
     </div>
   </div>
@@ -1229,7 +1233,7 @@
 
 <Modal
   open={susaninModalOpen}
-  title="База данных и белый список Susanin"
+  title={m.sb_router_susanin_modal_title()}
   size="lg"
   onclose={() => (susaninModalOpen = false)}
 >
@@ -1244,7 +1248,7 @@
       >
         <span style="display: flex; align-items: center; gap: 6px;">
           <Globe style="width: 14px; height: 14px;" />
-          Обнаруженные IP ({susaninIPList.length})
+          {m.sb_router_susanin_tab_radar({ count: susaninIPList.length })}
         </span>
       </button>
       <button
@@ -1255,22 +1259,22 @@
       >
         <span style="display: flex; align-items: center; gap: 6px;">
           <Shield style="width: 14px; height: 14px;" />
-          Белый список ({susaninAlwaysList.length})
+          {m.sb_router_susanin_tab_always({ count: susaninAlwaysList.length })}
         </span>
       </button>
     </div>
 
     {#if susaninModalTab === 'learned'}
       <p class="hint" style="margin-bottom: 8px;">
-        Адреса и подсети, к которым зафиксирован сбой прямого подключения (DPI/РКН).
-        Маршрутизируются через туннель по правилу <code>susanin</code>. Любой адрес можно зафиксировать в белом списке навсегда.
+        {m.sb_router_susanin_radar_desc_1()}
+        {@html m.sb_router_susanin_radar_desc_2()}
       </p>
 
       <div style="display: flex; gap: 8px; margin-bottom: 8px;">
         <input
           type="search"
           class="inp"
-          placeholder="Поиск по IP, сервису (YouTube, CDN77)..."
+          placeholder={m.sb_router_susanin_search_placeholder()}
           bind:value={susaninSearch}
           style="flex: 1;"
         />
@@ -1280,10 +1284,10 @@
           disabled={susaninIPList.length === 0}
           onclick={() => {
             navigator.clipboard.writeText(susaninIPList.join('\n'));
-            notifications.success('Список IP скопирован в буфер');
+            notifications.success(m.sb_router_susanin_copied());
           }}
         >
-          Скопировать
+          {m.sb_router_susanin_copy_all()}
         </Button>
         <Button
           variant="danger"
@@ -1292,18 +1296,18 @@
           loading={susaninLoading}
           onclick={handleClearSusanin}
         >
-          Очистить кэш
+          {m.sb_router_susanin_cleared()}
         </Button>
       </div>
 
       <div class="susanin-ip-scrollbox">
         {#if susaninIPList.length === 0}
           <div style="text-align: center; padding: 32px; color: var(--text-muted);">
-            Динамический кэш пуст. При обнаружении сбоев IP появятся здесь автоматически.
+            {m.sb_router_susanin_empty()}
           </div>
         {:else if filteredSusaninIPs.length === 0}
           <div style="text-align: center; padding: 32px; color: var(--text-muted);">
-            Ничего не найдено по запросу «{susaninSearch}»
+            {m.sb_router_susanin_not_found({ query: susaninSearch })}
           </div>
         {:else}
           <div class="susanin-card-grid">
@@ -1314,25 +1318,25 @@
                 <div class="susanin-card-top">
                   <span class="font-mono" style="font-size: 11px; font-weight: 600; user-select: all;">{ip}</span>
                   {#if isPinned}
-                    <Badge variant="success" size="sm">В белом</Badge>
+                    <Badge variant="success" size="sm">{m.sb_router_susanin_auto_radar_badge()}</Badge>
                   {:else}
                     <button
                       type="button"
                       class="pin-btn"
-                      title="Зафиксировать в белом списке навсегда"
+                      title={m.sb_router_susanin_promote_title()}
                       onclick={() => pinToWhitelist(ip)}
                     >
-                      + В белый
+                      {m.sb_router_susanin_promote_btn()}
                     </button>
                   {/if}
                 </div>
                 <div class="susanin-card-bottom">
-                  {#if k?.title && k.title !== 'Внешний узел'}
+                  {#if k?.title && k.title !== m.sb_router_susanin_unknown_host()}
                     <span class="service-chip" title="{k.org || ''} {k.country ? `(${k.country})` : ''}">
                       {k.title}
                     </span>
                   {:else}
-                    <span class="service-chip muted">Интернет-сервис</span>
+                    <span class="service-chip muted">{m.sb_router_susanin_other_service()}</span>
                   {/if}
                 </div>
               </div>
@@ -1344,8 +1348,8 @@
     {:else}
       <!-- Whitelist Tab -->
       <p class="hint" style="margin-bottom: 8px;">
-        Статический список доменов, IP-адресов и подсетей CIDR, которые <strong>всегда</strong> направляются через туннель. 
-        Домены (напр. <code>example.com</code>, <code>service.net</code>) автоматически разрешаются в IP демоном Susanin.
+        {@html m.sb_router_susanin_always_desc_1()}
+        {@html m.sb_router_susanin_always_desc_2()}
       </p>
 
       <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
@@ -1353,7 +1357,7 @@
           <input
             type="text"
             class="inp font-mono"
-            placeholder="Домен (напр. example.com) или IP/CIDR (198.51.100.0/24)..."
+            placeholder={m.sb_router_susanin_add_placeholder()}
             bind:value={susaninAlwaysInput}
             onkeydown={(e) => e.key === 'Enter' && addAlwaysEntry()}
             style="flex: 1;"
@@ -1364,11 +1368,11 @@
             disabled={!susaninAlwaysInput.trim() || susaninSavingAlways}
             onclick={addAlwaysEntry}
           >
-            + Добавить
+            {m.sb_router_susanin_add_btn()}
           </Button>
         {:else}
           <div style="flex: 1; font-size: 12px; color: var(--text-muted);">
-            Редактирование текстом (по одной записи на строку):
+            {m.sb_router_susanin_always_list_label()}
           </div>
         {/if}
 
@@ -1385,7 +1389,7 @@
             susaninAlwaysTextMode = !susaninAlwaysTextMode;
           }}
         >
-          {susaninAlwaysTextMode ? 'Режим списка' : 'Режим текста'}
+          {susaninAlwaysTextMode ? m.sb_router_susanin_mode_list() : m.sb_router_susanin_mode_text()}
         </Button>
       </div>
 
@@ -1394,10 +1398,7 @@
           class="inp font-mono"
           rows="12"
           bind:value={susaninAlwaysText}
-          placeholder="По одной записи на строку:
-example.com
-198.51.100.0/24
-gemini.google.com"
+          placeholder={m.sb_router_susanin_text_placeholder()}
           style="width: 100%; resize: vertical; margin-bottom: 8px;"
         ></textarea>
         <div style="display: flex; justify-content: flex-end; gap: 8px;">
@@ -1407,7 +1408,7 @@ gemini.google.com"
             loading={susaninSavingAlways}
             onclick={() => void saveSusaninAlways()}
           >
-            Сохранить белый список
+            {m.sb_router_susanin_save_rules()}
           </Button>
         </div>
       {:else}
@@ -1415,7 +1416,7 @@ gemini.google.com"
           <input
             type="search"
             class="inp"
-            placeholder="Поиск по белому списку..."
+            placeholder={m.sb_router_susanin_search_rules_placeholder()}
             bind:value={susaninSearch}
             style="width: 100%;"
           />
@@ -1424,11 +1425,11 @@ gemini.google.com"
         <div class="susanin-ip-scrollbox">
           {#if susaninAlwaysList.length === 0}
             <div style="text-align: center; padding: 32px; color: var(--text-muted);">
-              Белый список пуст. Добавьте домен или IP адрес выше.
+              {m.sb_router_susanin_always_empty()}
             </div>
           {:else if filteredSusaninAlways.length === 0}
             <div style="text-align: center; padding: 32px; color: var(--text-muted);">
-              Ничего не найдено по запросу «{susaninSearch}»
+              {m.sb_router_susanin_not_found({ query: susaninSearch })}
             </div>
           {:else}
             <div class="susanin-always-list">
@@ -1440,20 +1441,20 @@ gemini.google.com"
                   <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
                     <span class="font-mono" style="font-size: 11px; font-weight: 600; user-select: all;">{entry}</span>
                     {#if isCidr}
-                      <Badge variant="muted" size="sm">Подсеть CIDR</Badge>
+                      <Badge variant="muted" size="sm">{m.sb_router_susanin_badge_cidr()}</Badge>
                     {:else if isIp}
-                      <Badge variant="muted" size="sm">IP адрес</Badge>
+                      <Badge variant="muted" size="sm">{m.sb_router_susanin_badge_single_ip()}</Badge>
                     {:else}
-                      <Badge variant="accent" size="sm">Домен</Badge>
+                      <Badge variant="accent" size="sm">{m.sb_router_susanin_badge_domain()}</Badge>
                     {/if}
-                    {#if k?.title && k.title !== 'Внешний узел'}
+                    {#if k?.title && k.title !== m.sb_router_susanin_unknown_host()}
                       <span class="service-chip" title="{k.org || ''}">{k.title}</span>
                     {/if}
                   </div>
                   <button
                     type="button"
                     class="del-btn"
-                    title="Удалить из белого списка"
+                    title={m.sb_router_susanin_remove_title()}
                     disabled={susaninSavingAlways}
                     onclick={() => removeAlwaysEntry(entry)}
                   >
@@ -1472,9 +1473,9 @@ gemini.google.com"
     <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
       <span style="font-size: 12px; color: var(--text-muted);">
         {#if susaninModalTab === 'learned'}
-          Всего в кэше: {susaninIPList.length} IP
+          {m.sb_router_susanin_stats_radar({ count: susaninIPList.length })}
         {:else}
-          Всего в белом списке: {susaninAlwaysList.length} записей
+          {m.sb_router_susanin_stats_always({ count: susaninAlwaysList.length })}
         {/if}
       </span>
       <div style="display: flex; gap: 8px;">
@@ -1484,14 +1485,14 @@ gemini.google.com"
             size="sm"
             onclick={() => {
               navigator.clipboard.writeText(susaninAlwaysList.join('\n'));
-              notifications.success('Белый список скопирован');
+              notifications.success(m.sb_router_susanin_copied());
             }}
           >
-            Скопировать список
+            {m.sb_router_susanin_copy_all()}
           </Button>
         {/if}
         <Button variant="ghost" size="sm" onclick={() => (susaninModalOpen = false)}>
-          Закрыть
+          {m.common_close()}
         </Button>
       </div>
     </div>

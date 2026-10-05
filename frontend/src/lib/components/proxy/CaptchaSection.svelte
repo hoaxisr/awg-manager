@@ -2,11 +2,11 @@
 	// EX-25..29 — «Подтверждение VK». Только FreeTurn-клиент (у wdtt капча —
 	// лишь режим -captcha-mode, детекта ожидания в менеджере нет) и только пока
 	// статус говорит waiting/queued: в типовом случае подтверждать нечего.
+	import { m } from '$lib/i18n';
 	import { onDestroy, onMount } from 'svelte';
 	import { Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
-	import { pluralForm, STREAM_WORDS } from '$lib/utils/pluralize';
 	import type { FreeTurnCaptchaClientStatus } from '$lib/types';
 	import DetailSection from './DetailSection.svelte';
 
@@ -51,15 +51,15 @@
 
 {#if pending}
 	<DetailSection
-		title="Подтверждение VK"
-		hint="Пока подтверждение не пройдено, потоки не поднимаются. Капча открывается через менеджер, отдельного порта наружу не нужно."
+		title={m.proxy_captcha_title()}
+		hint={m.proxy_captcha_hint()}
 	>
-		<p class="line">Ожидает подтверждения: {streams} {pluralForm(streams, STREAM_WORDS)}</p>
+		<p class="line">{m.proxy_captcha_waiting({ streams })}</p>
 		{#if entry?.portContention}
-			<p class="line">Порт капчи занят другим инстансом</p>
+			<p class="line">{m.proxy_captcha_port_busy()}</p>
 		{/if}
 		<div class="btn-row">
-			<Button variant="primary" disabled={!entry?.canOpen} onclick={openCaptcha}>Открыть капчу</Button>
+			<Button variant="primary" disabled={!entry?.canOpen} onclick={openCaptcha}>{m.proxy_captcha_open()}</Button>
 		</div>
 	</DetailSection>
 {/if}

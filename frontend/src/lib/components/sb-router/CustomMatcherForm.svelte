@@ -3,6 +3,7 @@
   Переиспользует общий InlineRuleListEditor (smart-list + парс + geo-пикеры).
 -->
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Code } from 'lucide-svelte';
   import InlineRuleListEditor from '$lib/components/routing/singboxRouter/InlineRuleListEditor.svelte';
   import { wizardCustom, updateCustomField } from './addWizardStore';
@@ -26,8 +27,8 @@
 <details class="form" open={expanded || undefined}>
   <summary class="summary">
     <Code size={14} color="var(--text-muted)" />
-    <span>Описать вручную</span>
-    <span class="meta">· {effectiveIsMihomo ? 'домены, IP, CIDR, geosite:/geoip:' : 'домены, IP, CIDR, порты, geosite:/geoip:'}</span>
+    <span>{m.sb_router_custom_form_title()}</span>
+    <span class="meta">{effectiveIsMihomo ? m.sb_router_custom_form_meta_mihomo() : m.sb_router_custom_form_meta()}</span>
   </summary>
   <div class="body">
     <InlineRuleListEditor bind:value isMihomo={effectiveIsMihomo} />

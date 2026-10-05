@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type {
 	SingboxRouterRule,
 	SingboxRouterDNSServer,
@@ -103,11 +104,11 @@ export function deriveRoutingSummary(
     if (!tunnels.includes(tag)) tunnels.push(tag);
   }
 
-  const defaultLabel = routeFinal && routeFinal !== 'direct' ? outboundLabelByTag(outboundOptions, routeFinal) : 'Напрямую';
+  const defaultLabel = routeFinal && routeFinal !== 'direct' ? outboundLabelByTag(outboundOptions, routeFinal) : m.sb_router_flow_default_direct();
   const directServer = dnsServers.find((x) => x.tag === dnsGlobals.final)
     ?? dnsServers.find((x) => x.tag === 'dns-direct')
     ?? dnsServers.find((x) => !x.detour || x.detour === 'direct' || x.detour === 'DIRECT');
-  const defaultDnsLabel = directServer ? (directServer.server || directServer.tag) : 'системный';
+  const defaultDnsLabel = directServer ? (directServer.server || directServer.tag) : m.sb_router_flow_dns_system();
   const defaultDnsTag = directServer?.tag ?? null;
 
   // На легаси-конфигах detour может висеть на dns-direct — тег dns-tunnel

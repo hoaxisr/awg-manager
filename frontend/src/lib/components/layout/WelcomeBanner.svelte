@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { CircleAlert, X } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 	import { settings, usageLevel } from '$lib/stores/settings';
 
 	const STORAGE_KEY_BASIC = 'awgm.welcomeBannerDismissed';
@@ -34,17 +35,16 @@
 			<CircleAlert size={20} />
 		</div>
 		<div class="banner-body">
-			<strong>Вы в Базовом режиме</strong>
+			<strong>{m.layout_welcome_basic_title()}</strong>
 			<p>
-				Доступны туннели, диагностика, NDMS и VPN для устройств. Чтобы открыть политики доступа,
-				серверы, мониторинг, IP-маршруты и другие возможности — выберите более высокий уровень в
-				<a href="/settings?mode">Настройках</a>.
+				{m.layout_welcome_basic_before()}
+				<a href="/settings?mode">{m.layout_welcome_basic_link()}</a>.
 			</p>
 		</div>
 		<button
 			type="button"
 			class="banner-close"
-			aria-label="Скрыть подсказку"
+			aria-label={m.layout_welcome_hide_aria()}
 			onclick={dismissBasic}
 		>
 			<X size={16} />
@@ -58,17 +58,17 @@
 			<CircleAlert size={20} />
 		</div>
 		<div class="banner-body">
-			<strong>Вы в Расширенном режиме</strong>
+			<strong>{m.layout_welcome_advanced_title()}</strong>
 			<p>
-				Если не хватает функционала — например: HR Neo или Sing-box Router — переключитесь на
-				продвинутый режим в <a href="/settings?mode">настройках</a>.
-				Если всё кажется слишком сложным, вернитесь на Базовый.
+				{m.layout_welcome_advanced_before()}
+				<a href="/settings?mode">{m.layout_welcome_advanced_link()}</a>.
+				{m.layout_welcome_advanced_after()}
 			</p>
 		</div>
 		<button
 			type="button"
 			class="banner-close"
-			aria-label="Скрыть подсказку"
+			aria-label={m.layout_welcome_hide_aria()}
 			onclick={dismissAdvanced}
 		>
 			<X size={16} />

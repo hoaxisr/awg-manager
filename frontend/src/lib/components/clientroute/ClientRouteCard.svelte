@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { ClientRoute } from '$lib/types';
 	import { Toggle } from '$lib/components/ui';
 	import RoutingTargetBadges from '$lib/components/routing/RoutingTargetBadges.svelte';
@@ -74,9 +75,9 @@
 			{#if route.clientHostname}
 				<span class="card-stat">IP: {route.clientIp}</span>
 			{/if}
-			<span class="card-stat">{route.fallback === 'drop' ? 'Fallback: блокировать' : 'Fallback: напрямую'}</span>
+			<span class="card-stat">{route.fallback === 'drop' ? m.client_route_fallback_drop() : m.client_route_fallback_direct()}</span>
 			<div class="card-route">
-				<RoutingTargetBadges labels={[tunnelName]} overflowNoun="туннелей" />
+				<RoutingTargetBadges labels={[tunnelName]} />
 			</div>
 		</div>
 	</div>
@@ -91,7 +92,7 @@
 			<button
 				type="button"
 				class="route-action-btn"
-				title={`Изменить VPN-маршрут устройства «${clientLabel}»`}
+				title={m.client_route_edit_title({ name: clientLabel })}
 				onclick={() => onedit()}
 			>
 				<SquarePen size={15} />
@@ -99,7 +100,7 @@
 			<button
 				type="button"
 				class="route-action-btn danger"
-				title={`Удалить VPN-маршрут устройства «${clientLabel}»`}
+				title={m.client_route_delete_title({ name: clientLabel })}
 				onclick={() => ondelete()}
 			>
 				<Trash2 size={15} />

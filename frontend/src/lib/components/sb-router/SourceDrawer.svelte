@@ -3,6 +3,7 @@
   Открывается кликом по блоку «Источник» в FlowGraph (beginner).
 -->
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { SideDrawer, Button } from '$lib/components/ui';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
   import { notifications } from '$lib/stores/notifications';
@@ -24,12 +25,12 @@
       await mergeAndSaveSettings(patch);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      notifications.error(`Не удалось сохранить: ${msg}`);
+      notifications.error(m.sb_router_common_save_failed({ message: msg }));
     }
   }
 </script>
 
-<SideDrawer {open} onClose={closeSourceDrawer} title="Источник трафика" width={420}>
+<SideDrawer {open} onClose={closeSourceDrawer} title={m.sb_router_source_title()} width={420}>
   {#if cfg}
     <div class="sections">
       <TrafficSourceSettings
@@ -43,7 +44,7 @@
   {/if}
 
   {#snippet footer()}
-    <Button variant="ghost" size="sm" fullWidth onclick={closeSourceDrawer}>Закрыть</Button>
+    <Button variant="ghost" size="sm" fullWidth onclick={closeSourceDrawer}>{m.common_close()}</Button>
   {/snippet}
 </SideDrawer>
 

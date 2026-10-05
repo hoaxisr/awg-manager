@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import { writable, derived } from 'svelte/store';
 import { browser } from '$app/environment';
 import { api } from '$lib/api/client';
@@ -32,7 +33,7 @@ function createAuthStore() {
 					authDisabled: false,
 					login: null,
 					loading: false,
-					error: 'Сессия истекла'
+					error: m.api_session_expired()
 				};
 			});
 		});
@@ -97,7 +98,7 @@ function createAuthStore() {
 				update((s) => ({
 					...s,
 					loading: false,
-					error: e instanceof Error ? e.message : 'Ошибка авторизации'
+					error: e instanceof Error ? e.message : m.api_auth_error()
 				}));
 				return false;
 			}

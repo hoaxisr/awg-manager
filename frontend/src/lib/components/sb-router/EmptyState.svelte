@@ -2,6 +2,7 @@
   Мастер первичной настройки (простой режим): туннель/группа → сервисы в туннель (final=direct) → включить.
 -->
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { get } from 'svelte/store';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -73,7 +74,7 @@
 
   const tunnelOutbounds = $derived.by(() => {
     const raw = $options
-      .filter((g) => g.group !== 'Специальные' && (!isMihomo || g.group !== 'Proxy-группы (Mihomo)'))
+      .filter((g) => g.id !== 'special' && (!isMihomo || g.id !== 'mihomo_groups'))
       .flatMap((g) => g.items);
     if (!isMihomo || mihomoGroups.length === 0) return raw;
     const groupNames = new Set(mihomoGroups.map((g) => g.name.toLowerCase()));
@@ -174,7 +175,7 @@
         await api.mihomoReload();
         await singboxRouterStore.loadAll();
 
-        notifications.success('Готово — Mihomo запущен');
+        notifications.success(m.sb_router_empty_done_mihomo());
         clearSelection();
         selectedTunnel = null;
         onReloadMihomo?.();
@@ -189,21 +190,21 @@
         existingRuleSetTags: get(ruleSets).map((r) => r.tag),
       });
       if (result.failures.length === 0) {
-        notifications.success('Готово — sing-box запущен');
+        notifications.success(m.sb_router_empty_done());
       } else {
         const sN = result.successes.length;
         const fN = result.failures.length;
         notifications.error(
           sN > 0
-            ? `Запущено, но часть правил с ошибкой: ${sN} из ${sN + fN}`
-            : `Не удалось создать правила (${fN})`,
+            ? m.sb_router_empty_partial({ done: sN, total: sN + fN })
+            : m.sb_router_empty_failed({ count: fN }),
         );
       }
       clearSelection();
       selectedTunnel = null;
       await singboxRouterStore.loadAll();
     } catch (e) {
-      notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
     } finally {
       finishing = false;
     }
@@ -216,30 +217,30 @@
   <EmptyHero {isMihomo} />
 
   <div class="stepper">
-    <StepPill n={1} label={isMihomo ? "Группа / Туннель" : "Туннель"} active={!step1Done} done={step1Done} />
+    <StepPill n={1} label={isMihomo ? m.sb_router_empty_step_group_tunnel() : m.sb_router_empty_step_tunnel()} active={!step1Done} done={step1Done} />
     <div class="connector"></div>
-    <StepPill n={2} label="Что в туннель" active={step1Done && !step2Done} done={step2Done} />
+    <StepPill n={2} label={m.sb_router_empty_step_services()} active={step1Done && !step2Done} done={step2Done} />
     <div class="connector"></div>
-    <StepPill n={3} label="Включить" active={step2Done} done={false} />
+    <StepPill n={3} label={m.common_enable()} active={step2Done} done={false} />
   </div>
 
   <WizardStep
     n={1}
-    title={isMihomo ? "Выберите группу прокси или туннель" : "Выберите туннель"}
-    hint="весь трафик идёт напрямую, кроме выбранных сервисов"
+    title={isMihomo ? m.sb_router_empty_pick_tunnel_mihomo() : m.sb_router_empty_pick_tunnel()}
+    hint={m.sb_router_empty_pick_tunnel_hint()}
     active={true}
   >
     <div class="tunnel-header">
-      <span class="sub-hint">Доступные направления маршрутизации:</span>
+      <span class="sub-hint">{m.sb_router_empty_available_directions()}</span>
       {#if isMihomo}
         <Button variant="secondary" size="sm" onclick={() => (groupModalOpen = true)}>
-          <Plus size={14} /> Создать группу прокси
+          <Plus size={14} /> {m.sb_router_empty_create_proxy_group()}
         </Button>
       {/if}
     </div>
 
     {#if isMihomo && mihomoGroups.length > 0}
-      <div class="section-sub-label">Группы прокси Mihomo:</div>
+      <div class="section-sub-label">{m.sb_router_mihomo_groups()}:</div>
       <div class="tunnel-chips">
         {#each mihomoGroups as grp (grp.id || grp.name)}
           {@const selected = selectedTunnel === grp.name}
@@ -254,7 +255,7 @@
 
     {#if tunnelOutbounds.length > 0}
       {#if isMihomo && mihomoGroups.length > 0}
-        <div class="section-sub-label mt-2">Туннели и прокси-узлы:</div>
+        <div class="section-sub-label mt-2">{m.sb_router_tunnels_and_proxies()}</div>
       {/if}
       <div class="tunnel-chips">
         {#each tunnelOutbounds as ob (ob.value)}
@@ -266,31 +267,31 @@
       </div>
     {:else if $optionsReady && (!isMihomo || mihomoGroups.length === 0)}
       <div class="empty-tunnels">
-        Нет доступных туннелей.
-        <button type="button" class="link" onclick={() => goto('/')}>Создайте туннель</button>
-        и вернитесь сюда.
+        {m.sb_router_wizard_no_tunnels()}
+        <button type="button" class="link" onclick={() => goto('/')}>{m.sb_router_empty_create_tunnel()}</button>
+        {m.sb_router_empty_and_return()}
       </div>
     {/if}
   </WizardStep>
 
-  <WizardStep n={2} title="Что направить в туннель" hint="остальное — напрямую" active={step1Done}>
+  <WizardStep n={2} title={m.sb_router_empty_services_title()} hint={m.sb_router_empty_services_hint()} active={step1Done}>
     <button type="button" class="picker-btn" onclick={() => openTemplatesModal()}>
       <div class="picker-icon">+</div>
       <div class="picker-text">
-        <div class="picker-title">Выбрать сервисы</div>
-        <div class="picker-sub">{$presets.length} пресетов</div>
+        <div class="picker-title">{m.sb_router_empty_pick_services()}</div>
+        <div class="picker-sub">{m.sb_router_empty_presets_count({ count: $presets.length })}</div>
       </div>
       <div class="picker-chev">›</div>
     </button>
     <SelectedTemplatesRow />
   </WizardStep>
 
-  <WizardStep n={3} title="Включить" active={step2Done}>
+  <WizardStep n={3} title={m.common_enable()} active={step2Done}>
     <p class="enable-hint">
-      {isMihomo ? 'Mihomo' : 'sing-box'} будет настроен на весь роутер. Дополнительные настройки движка — в режиме «Эксперт».
+      {isMihomo ? m.sb_router_empty_enable_hint_mihomo() : m.sb_router_empty_enable_hint()}
     </p>
     <Button variant="primary" size="md" onclick={handleFinish} disabled={!canFinish} iconBefore={iconCheck}>
-      {isMihomo ? 'Включить Mihomo' : 'Включить sing-box'}
+      {isMihomo ? m.sb_router_empty_enable_btn_mihomo() : m.sb_router_empty_enable_button()}
     </Button>
   </WizardStep>
 

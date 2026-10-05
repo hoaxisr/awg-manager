@@ -3,18 +3,28 @@
 // компонентом InboundsMirror (tproxy ExpertPanel + fakeip InboundsTab)
 // и покрыты vitest.
 
+import { m } from '$lib/i18n';
 import type { SingboxInboundEntry, SingboxInboundSource } from '$lib/types';
 
-/** Русские заголовки групп по источнику. */
-export const INBOUND_GROUP_TITLES: Record<SingboxInboundSource, string> = {
-	engine: 'Движок',
-	deviceproxy: 'Прокси устройств',
-	subscription: 'Подписки',
-	group: 'Сводные группы',
-	tunnel: 'Туннели',
-	qos: 'QoS',
-	other: 'Прочее',
-};
+/** Заголовок группы по источнику на текущем языке. */
+export function inboundGroupTitle(source: SingboxInboundSource): string {
+	switch (source) {
+		case 'engine':
+			return m.singbox_inbounds_group_engine();
+		case 'deviceproxy':
+			return m.singbox_inbounds_group_deviceproxy();
+		case 'subscription':
+			return m.singbox_inbounds_group_subscription();
+		case 'group':
+			return m.singbox_inbounds_group_group();
+		case 'tunnel':
+			return m.singbox_inbounds_group_tunnel();
+		case 'qos':
+			return 'QoS';
+		case 'other':
+			return m.singbox_inbounds_group_other();
+	}
+}
 
 /** Порядок групп в UI: движок первым, «прочее» последним. */
 export const INBOUND_GROUP_ORDER: SingboxInboundSource[] = [
@@ -50,7 +60,7 @@ export function groupInbounds(entries: SingboxInboundEntry[]): InboundGroup[] {
 	}
 	return INBOUND_GROUP_ORDER.filter((s) => bySource.has(s)).map((s) => ({
 		source: s,
-		title: INBOUND_GROUP_TITLES[s],
+		title: inboundGroupTitle(s),
 		entries: bySource.get(s) ?? [],
 	}));
 }
@@ -66,11 +76,11 @@ export function idleBadgeLabel(e: SingboxInboundEntry): string {
 	if (!e.idle) return '';
 	switch (e.idleReason) {
 		case 'no_route_rule':
-			return 'не используется — конфиг не направляет трафик с этого порта';
+			return m.singbox_inbounds_idle_no_route_rule();
 		case 'ndms_proxy_missing':
-			return 'NDMS-прокси не создан';
+			return m.singbox_inbounds_idle_ndms_proxy_missing();
 		default:
-			return 'резерв порта — NDMS-прокси выключен';
+			return m.singbox_inbounds_idle_reserved();
 	}
 }
 
@@ -78,13 +88,11 @@ export function idleBadgeLabel(e: SingboxInboundEntry): string {
 export function idleTitle(e: SingboxInboundEntry): string {
 	if (!e.idle) return '';
 	if (e.idleReason === 'no_route_rule') {
-		return 'Ни одно route-правило конфига не направляет трафик с этого порта (владелец выключен или в группе нет серверов). Inbound сохранён ради стабильности порта: при включении номера портов не изменятся.';
+		return m.singbox_inbounds_idle_title_no_route_rule();
 	}
-	const cause =
-		e.idleReason === 'ndms_proxy_missing'
-			? 'тумблер «Создавать NDMS-прокси» включён, а ProxyN для порта не выделен (объект создан при выключенном тумблере)'
-			: 'тумблер «Создавать NDMS-прокси» выключен и порт никто не питает';
-	return `Inbound сохранён в конфиге, хотя ${cause}: порт остаётся зарезервированным, чтобы при включении не менялись номера портов.`;
+	return e.idleReason === 'ndms_proxy_missing'
+		? m.singbox_inbounds_idle_title_ndms_proxy_missing()
+		: m.singbox_inbounds_idle_title_reserved();
 }
 
 /** Тег inbound'а инстанса device-proxy: легаси-инстанс "default" — без id в теге. */

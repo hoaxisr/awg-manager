@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type { SingboxRouterDNSRule } from '$lib/types';
 
 export interface DnsRuleTarget {
@@ -35,7 +36,7 @@ export function dnsRuleTarget(r: SingboxRouterDNSRule): DnsRuleTarget {
 		return { label: `evaluate → ${r.server ?? '—'}${tag}`, kind: 'evaluate' };
 	}
 	if (r.action === 'respond') {
-		return { label: 'respond — вернуть ответ', kind: 'respond' };
+		return { label: m.sb_router_dns_rule_respond(), kind: 'respond' };
 	}
 	if (r.server) {
 		return { kind: 'route', label: r.server };

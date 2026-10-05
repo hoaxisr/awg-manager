@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type { SystemInfo } from '$lib/types/system';
 
 /**
@@ -5,8 +6,9 @@ import type { SystemInfo } from '$lib/types/system';
  * в KeeneticOS 4.x: NDMS молча отказывает в создании, и включение падает
  * невнятной ошибкой про access-list (issue #768).
  */
-export const OPKGTUN_UNSUPPORTED_REASON =
-	'Режим требует интерфейс OpkgTun, которого нет в KeeneticOS 4.x — обновите прошивку до 5.x или новее.';
+export function opkgTunUnsupportedReason(): string {
+	return m.opkgtun_unsupported_reason();
+}
 
 /**
  * Поддержку считаем по флагу бэкенда. Отсутствующее поле (старый бэкенд, ещё

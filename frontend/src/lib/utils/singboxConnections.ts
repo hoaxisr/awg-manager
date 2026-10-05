@@ -1,5 +1,6 @@
 // frontend/src/lib/utils/singboxConnections.ts
 
+import { m } from '$lib/i18n';
 import type {
 	ClashConnectionsRaw,
 	Connection,
@@ -8,15 +9,17 @@ import type {
 	ConnectionsSnapshot,
 } from '$lib/types/singboxConnections';
 
-const OUTBOUND_LABELS: Record<string, string> = {
-	DIRECT: 'Прямое',
-	REJECT: 'Отклонено',
-};
+/** Подписи встроенных outbound'ов sing-box на текущем языке. */
+function builtinOutboundLabel(tag: string): string | undefined {
+	if (tag === 'DIRECT') return m.singbox_connections_direct();
+	if (tag === 'REJECT') return m.singbox_connections_reject();
+	return undefined;
+}
 
 export function chainOutboundLabel(chains: string[]): string {
 	if (chains.length === 0) return '—';
 	const first = chains[0];
-	return OUTBOUND_LABELS[first] ?? first;
+	return builtinOutboundLabel(first) ?? first;
 }
 
 export function parseSnapshot(

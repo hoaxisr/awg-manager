@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m, uiText, type UiText } from '$lib/i18n';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
@@ -38,7 +39,7 @@
 	let saving = $state(false);
 	let copyingLink = $state(false);
 	let linkCopied = $state(false);
-	let error = $state<string | null>(null);
+	let error = $state<UiText | null>(null);
 	// The outbound is an arbitrary sing-box JSON object whose shape depends on the
 	// protocol; the editor reads/writes fields by path, so it is modelled as a
 	// dynamic record rather than a fixed interface.
@@ -55,9 +56,9 @@
 	);
 	let copyLinkTitle = $derived(
 		!canExportShareLink && protocol
-			? `Экспорт не поддерживается для протокола ${protocol}`
+			? m.singbox_edit_export_unsupported({ protocol })
 			: hasUnsavedChanges
-				? 'Копирует текущие значения формы без сохранения'
+				? m.singbox_edit_copy_unsaved()
 				: undefined,
 	);
 
@@ -79,7 +80,7 @@
 		if (!outbound) return;
 		const nextTag = editableTag.trim();
 		if (!nextTag) {
-			error = 'Название / tag обязательно';
+			error = () => m.singbox_edit_tag_required();
 			return;
 		}
 		saving = true;
@@ -179,12 +180,12 @@
 			const ok = await copyToClipboard(link);
 			if (ok) {
 				linkCopied = true;
-				notifications.success('Ссылка скопирована в буфер обмена');
+				notifications.success(m.singbox_edit_link_copied());
 				setTimeout(() => {
 					linkCopied = false;
 				}, 1500);
 			} else {
-				notifications.error('Не удалось скопировать');
+				notifications.error(m.diag_about_copy_failed());
 			}
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : String(e));
@@ -203,7 +204,7 @@
 	<div class="sticky-header">
 		<div class="header-left">
 			<Button variant="ghost" size="sm" onclick={() => goto('/?tab=singbox')} iconBefore={backIcon}>
-				Назад
+				{m.common_back()}
 			</Button>
 			<h1 class="page-title">{tag}</h1>
 			{#if protocol}
@@ -220,7 +221,7 @@
 				iconBefore={copyIcon}
 				title={copyLinkTitle}
 			>
-				{linkCopied ? 'Скопировано' : 'Копировать ссылку'}
+				{linkCopied ? m.common_copied() : m.singbox_edit_copy_link()}
 			</Button>
 			<Button
 				variant="primary"
@@ -229,22 +230,22 @@
 				disabled={!outbound}
 				loading={saving}
 			>
-				Сохранить
+				{m.common_save()}
 			</Button>
 		</div>
 	</div>
 
 	{#if loading}
-		<div class="py-12 text-center text-surface-400">Загрузка...</div>
+		<div class="py-12 text-center text-surface-400">{m.tunnels_loading()}</div>
 	{:else if !outbound}
-		<div class="py-12 text-center text-error-500">{error ?? 'Туннель не найден'}</div>
+		<div class="py-12 text-center text-error-500">{error ? uiText(error) : m.singbox_edit_not_found()}</div>
 	{:else}
 		<form class="tab-form" onsubmit={(e) => { e.preventDefault(); save(); }}>
 				<section class="card tunnel-section">
-				<SettingsSectionLabel label="Основные параметры" icon={Globe} tone="slate" header />
+				<SettingsSectionLabel label={m.singbox_edit_section_main()} icon={Globe} tone="slate" header />
 
 				<div class="form-group">
-					<label class="label" for="tag">Название / tag</label>
+					<label class="label" for="tag">{m.singbox_edit_label_tag()}</label>
 					<input
 						id="tag"
 						class="input"
@@ -254,7 +255,7 @@
 				</div>
 
 				<div class="form-group">
-					<label class="label" for="server">Сервер</label>
+					<label class="label" for="server">{m.tunnels_card_server()}</label>
 					<input
 						id="server"
 						class="input"
@@ -264,7 +265,7 @@
 				</div>
 
 				<div class="form-group">
-					<label class="label" for="server_port">Порт</label>
+					<label class="label" for="server_port">{m.tunnels_card_port()}</label>
 					<input
 						id="server_port"
 						class="input"
@@ -330,7 +331,7 @@
 								checked={getFieldBool(['tls', 'reality', 'support_x25519mlkem768'])}
 								onchange={(e) => setField(['tls', 'reality', 'support_x25519mlkem768'], (e.target as HTMLInputElement).checked)}
 							/>
-							<span>X25519MLKEM768 (нужен серверам Xray 26.9.8+, только fingerprint chrome)</span>
+							<span>{m.singbox_edit_reality_mlkem()}</span>
 						</label>
 					</section>
 				{/if}
@@ -385,7 +386,7 @@
 				{#if getField(['transport', 'type']) === 'ws'}
 					<section class="card tunnel-section">
 						<SettingsSectionLabel label="Transport (WebSocket)" icon={Radio} tone="orange" header />
-						<p class="section-hint">Параметры импортированы из ссылки и редактированию не подлежат.</p>
+						<p class="section-hint">{m.singbox_edit_imported_readonly()}</p>
 
 						<div class="form-group">
 							<label class="label" for="ws_path">Path</label>
@@ -413,7 +414,7 @@
 					<SettingsSectionLabel label="Trojan" icon={Link2} tone="orange" header />
 
 					<div class="form-group">
-						<label class="label" for="trojan_password">Пароль</label>
+						<label class="label" for="trojan_password">{m.login_label_password()}</label>
 						<input
 							id="trojan_password"
 							class="input"
@@ -460,7 +461,7 @@
 							checked={getFieldBool(['tls', 'insecure'])}
 							onchange={(e) => setField(['tls', 'insecure'], (e.target as HTMLInputElement).checked)}
 						/>
-						<span>Insecure (пропустить проверку сертификата)</span>
+						<span>{m.singbox_edit_insecure()}</span>
 					</label>
 				</section>
 
@@ -483,7 +484,7 @@
 				{#if getField(['transport', 'type']) === 'ws'}
 					<section class="card tunnel-section">
 						<SettingsSectionLabel label="Transport (WebSocket)" icon={Radio} tone="orange" header />
-						<p class="section-hint">Параметры импортированы из ссылки и редактированию не подлежат.</p>
+						<p class="section-hint">{m.singbox_edit_imported_readonly()}</p>
 
 						<div class="form-group">
 							<label class="label" for="trojan_ws_path">Path</label>
@@ -504,7 +505,7 @@
 					<SettingsSectionLabel label="Shadowsocks" icon={ScanEye} tone="slate" header />
 
 					<div class="form-group">
-						<label class="label" for="ss_method">Метод (cipher)</label>
+						<label class="label" for="ss_method">{m.singbox_edit_cipher()}</label>
 						<input
 							id="ss_method"
 							class="input"
@@ -515,7 +516,7 @@
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="ss_password">Пароль</label>
+						<label class="label" for="ss_password">{m.login_label_password()}</label>
 						<input
 							id="ss_password"
 							class="input"
@@ -554,7 +555,7 @@
 					<SettingsSectionLabel label="Hysteria2" icon={Zap} tone="pink" header />
 
 					<div class="form-group">
-						<label class="label" for="password">Пароль</label>
+						<label class="label" for="password">{m.login_label_password()}</label>
 						<input
 							id="password"
 							class="input"
@@ -584,7 +585,7 @@
 							checked={getFieldBool(['tls', 'insecure'])}
 							onchange={(e) => setField(['tls', 'insecure'], (e.target as HTMLInputElement).checked)}
 						/>
-						<span>Insecure (пропустить проверку сертификата)</span>
+						<span>{m.singbox_edit_insecure()}</span>
 					</label>
 				</section>
 
@@ -593,7 +594,7 @@
 					<SettingsSectionLabel label="NaiveProxy" icon={UserRound} tone="green" header />
 
 					<div class="form-group">
-						<label class="label" for="username">Пользователь</label>
+						<label class="label" for="username">{m.singbox_edit_user()}</label>
 						<input
 							id="username"
 							class="input"
@@ -603,7 +604,7 @@
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="naive_password">Пароль</label>
+						<label class="label" for="naive_password">{m.login_label_password()}</label>
 						<input
 							id="naive_password"
 							class="input"
@@ -618,7 +619,7 @@
 					<SettingsSectionLabel label="Mieru" icon={Boxes} tone="indigo" header />
 
 					<div class="form-group">
-						<label class="label" for="mieru_username">Пользователь</label>
+						<label class="label" for="mieru_username">{m.singbox_edit_user()}</label>
 						<input
 							id="mieru_username"
 							class="input"
@@ -628,7 +629,7 @@
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="mieru_password">Пароль</label>
+						<label class="label" for="mieru_password">{m.login_label_password()}</label>
 						<input
 							id="mieru_password"
 							class="input"
@@ -653,7 +654,7 @@
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="mieru_server_ports">Дополнительные порты / диапазоны</label>
+						<label class="label" for="mieru_server_ports">{m.singbox_edit_extra_ports()}</label>
 						<textarea
 							id="mieru_server_ports"
 							class="input textarea"
@@ -689,7 +690,7 @@
 					<SettingsSectionLabel label="TrustTunnel" icon={UserRound} tone="green" header />
 
 					<div class="form-group">
-						<label class="label" for="tt_username">Пользователь</label>
+						<label class="label" for="tt_username">{m.singbox_edit_user()}</label>
 						<input
 							id="tt_username"
 							class="input"
@@ -699,7 +700,7 @@
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="tt_password">Пароль</label>
+						<label class="label" for="tt_password">{m.login_label_password()}</label>
 						<input
 							id="tt_password"
 							class="input"
@@ -729,7 +730,7 @@
 							checked={getFieldBool(['tls', 'insecure'])}
 							onchange={(e) => setField(['tls', 'insecure'], (e.target as HTMLInputElement).checked)}
 						/>
-						<span>Insecure (пропустить проверку сертификата)</span>
+						<span>{m.singbox_edit_insecure()}</span>
 					</label>
 
 					<label class="checkbox-label">
@@ -738,29 +739,29 @@
 							checked={getFieldBool(['tls', 'fragment'])}
 							onchange={(e) => setField(['tls', 'fragment'], (e.target as HTMLInputElement).checked)}
 						/>
-						<span>Anti-DPI (фрагментация ClientHello)</span>
+						<span>{m.singbox_edit_anti_dpi()}</span>
 					</label>
 				</section>
 			{/if}
 
 			{#if error}
-				<div class="error-msg">{error}</div>
+				<div class="error-msg">{uiText(error)}</div>
 			{/if}
 
 			<section class="card tunnel-section egress-section">
-				<SettingsSectionLabel label="Исходящий интерфейс" icon={Waypoints} tone="slate" header />
+				<SettingsSectionLabel label={m.singbox_bind_label()} icon={Waypoints} tone="slate" header />
 				<BindInterfacePicker
 					label=""
 					value={getFieldString(['bind_interface'])}
 					onchange={setBindInterface}
-					hint="Принудительно направляет dial этого прокси через выбранный uplink (модем, WAN, Wi‑Fi)."
+					hint={m.singbox_edit_egress_hint()}
 				/>
 			</section>
 
 			<div class="form-actions">
-				<Button variant="secondary" size="sm" onclick={() => goto('/?tab=singbox')}>Отмена</Button>
+				<Button variant="secondary" size="sm" onclick={() => goto('/?tab=singbox')}>{m.common_cancel()}</Button>
 				<Button variant="primary" size="sm" type="submit" loading={saving}>
-					Сохранить
+					{m.common_save()}
 				</Button>
 			</div>
 		</form>

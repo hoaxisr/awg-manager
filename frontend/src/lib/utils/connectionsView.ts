@@ -1,4 +1,5 @@
 import type { ConntrackConnection, RuleHit } from '$lib/types';
+import { m } from '$lib/i18n';
 
 /** Стабильный ключ соединения (в conntrack нет id). */
 export function connKey(c: ConntrackConnection): string {
@@ -60,7 +61,7 @@ export function routeLabel(c: ConntrackConnection): string {
 		case 'singbox':
 			return 'sing-box';
 		case 'local':
-			return 'Локально';
+			return m.diag_conn_filter_local();
 		default:
 			return c.interface || '—';
 	}

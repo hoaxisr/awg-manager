@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { AmneziaPremiumCountry, AmneziaPremiumIssuedConfig } from '$lib/types';
 	import {
 		isPremiumCountryAvailable,
@@ -24,7 +25,7 @@
 	const usable = $derived(countries.filter(isPremiumCountryAvailable));
 </script>
 
-<ul class="premium-countries" role="listbox" aria-label="Страны подписки">
+<ul class="premium-countries" role="listbox" aria-label={m.amnezia_premium_countries_aria()}>
 	{#each usable as country (country.code)}
 		{@const flag = premiumCountryFlag(country.code)}
 		{@const label = premiumCountryLabel(country.code, issued, countryTunnels)}
@@ -46,7 +47,7 @@
 			</button>
 		</li>
 	{:else}
-		<li class="premium-countries-empty">Подписка не отдаёт ни одной страны по AmneziaWG.</li>
+		<li class="premium-countries-empty">{m.amnezia_premium_countries_empty()}</li>
 	{/each}
 </ul>
 

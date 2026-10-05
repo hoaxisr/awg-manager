@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type {
 	FreeTurnAllowlistAddResult,
 	FreeTurnAllowlistStatus,
@@ -65,7 +66,7 @@ export class FreeturnClient extends SubscriptionsClient {
 		// блоке seed. Отдать пустой список молча значило бы показать
 		// «инстансов нет» вместо «подсистема не поднялась».
 		if (!list.seed?.seeded) {
-			throw new Error(list.seed?.error || 'Прокси-подсистема не загружена');
+			throw new Error(list.seed?.error || m.api_proxy_subsystem_not_loaded());
 		}
 		return list;
 	}
@@ -148,6 +149,14 @@ export class FreeturnClient extends SubscriptionsClient {
 	 */
 	protected async proxyDelete(kind: ProxyKind, id: string): Promise<ProxyDeleteResult> {
 		return this.request<ProxyDeleteResult>(instancePath(kind, id), { method: 'DELETE' });
+	}
+
+	protected async proxyRestart(kind: ProxyKind, id: string): Promise<void> {
+		await this.request(instancePath(kind, id, '/restart'), { method: 'POST' });
+	}
+
+	async restartFreeTurnClient(id = 'default'): Promise<void> {
+		await this.proxyRestart('freeturn-client', id);
 	}
 
 	// #endregion

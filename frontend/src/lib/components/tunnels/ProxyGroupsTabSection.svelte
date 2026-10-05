@@ -9,7 +9,15 @@
 	import { singboxDelayHistory } from '$lib/stores/singbox';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { formatOutboundHumanName } from '$lib/utils/outboundHumanName';
-	import { pluralForm } from '$lib/utils/pluralize';
+
+	function pluralGroups(n: number): string {
+		const m100 = n % 100;
+		if (m100 >= 11 && m100 <= 14) return 'групп';
+		const m10 = n % 10;
+		if (m10 === 1) return 'группа';
+		if (m10 >= 2 && m10 <= 4) return 'группы';
+		return 'групп';
+	}
 	import type {
 		MihomoNativeGroup,
 		MihomoNativeProxy,
@@ -277,7 +285,7 @@
 	<!-- Toolbar matching standard TunnelsToolbar across the app -->
 	<div class="tunnels-toolbar">
 		<span class="tunnel-count">
-			{groups.length} {pluralForm(groups.length, ['группа', 'группы', 'групп'])}
+			{groups.length} {pluralGroups(groups.length)}
 		</span>
 		<div class="toolbar-actions">
 			<div class="relative flex items-center">

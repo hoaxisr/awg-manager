@@ -2,6 +2,7 @@ package logging
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -470,5 +471,35 @@ func TestBucketForGroup(t *testing.T) {
 		if BucketForGroup(g) != BucketApp {
 			t.Errorf("group %q should map to BucketApp", g)
 		}
+	}
+}
+
+// TestService_AppLogKeepsNoURLSecret — очистка в самом журнале, а не в
+// каждом месте записи: обработчик REST подписок писал сырую ошибку мимо
+// хелперов сервиса, и следующий новый Warn с err.Error() утёк бы так же.
+// Журнал читают веб-интерфейс, /api/logs и get_logs ключа MCP только для
+// чтения; маскирование при показе прячет хост, но не путь и не query.
+func TestService_AppLogKeepsNoURLSecret(t *testing.T) {
+	svc := NewService(&mockSettings{enabled: true, maxAge: 2, logLevel: "info"})
+	defer svc.Stop()
+
+	svc.AppLog(LevelWarn, GroupRouting, SubSubscription, "subscription-refresh",
+		"https://sub.example.com/sub/TargetTok", `Get "https://cdn.example.net/r/Hop5ecret?key=K3y": EOF; parse "vless://3a3b1c2e-9999@h1.example:443": bad`)
+	svc.AppLog(LevelWarn, GroupSingbox, SubSBRuntime, "x", "", "trojan://%21Passw0rd@h.example:443")
+
+	var all string
+	for _, b := range []Bucket{BucketApp, BucketSingbox} {
+		logs, _ := svc.GetLogs(b, "", "", "", time.Time{}, 200, 0)
+		for _, e := range logs {
+			all += e.Target + " " + e.Message + "\n"
+		}
+	}
+	for _, secret := range []string{"TargetTok", "Hop5ecret", "K3y", "3a3b1c2e", "Passw0rd"} {
+		if strings.Contains(all, secret) {
+			t.Fatalf("%q reached the journal: %q", secret, all)
+		}
+	}
+	if !strings.Contains(all, "cdn.example.net") {
+		t.Fatalf("the host must stay for diagnosis: %q", all)
 	}
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ConntrackConnection, ConnectionsPagination } from '$lib/types';
 	import { formatBytes } from '$lib/utils/format';
+	import { m } from '$lib/i18n';
 	import { Button, Badge } from '$lib/components/ui';
 	import { X, ChevronRight, ChevronDown } from 'lucide-svelte';
 	import { connKey, dstFqdn, routeLabel, routeVariant, normProto, groupConnections, type ConnGroup } from '$lib/utils/connectionsView';
@@ -117,8 +118,8 @@
 				<button
 					type="button"
 					class="kill-btn"
-					title="Сбросить соединение"
-					aria-label="Сбросить соединение"
+					title={m.connections_kill_connection()}
+					aria-label={m.connections_kill_connection()}
 					onclick={(e) => {
 						e.stopPropagation();
 						onKill(conn);
@@ -133,12 +134,12 @@
 
 <div class="conn-grid">
 	<div class="thead">
-		<span class="th">Прот</span>
-		{@render sortHeader('src', 'Источник')}
-		{@render sortHeader('dst', 'Назначение')}
-		<span class="th">Маршрут</span>
-		<span class="th">Состояние</span>
-		{@render sortHeader('bytes', 'Трафик')}
+		<span class="th">{m.connections_col_proto()}</span>
+		{@render sortHeader('src', m.connections_col_source())}
+		{@render sortHeader('dst', m.connections_col_dst())}
+		<span class="th">{m.connections_col_route()}</span>
+		<span class="th">{m.connections_col_state()}</span>
+		{@render sortHeader('bytes', m.connections_col_traffic())}
 		<span class="th"></span>
 	</div>
 	<!-- Ключ each ОБЯЗАН включать индекс: connKey не уникален для icmp
@@ -177,16 +178,16 @@
 		{/each}
 	{/if}
 	{#if !showSkeleton && connections.length === 0}
-		<div class="empty">Нет соединений по текущим фильтрам</div>
+		<div class="empty">{m.connections_empty()}</div>
 	{/if}
 </div>
 
 {#if totalPages > 1}
 	<div class="pagination">
-		<span>Стр. {currentPage} из {totalPages}</span>
+		<span>{m.connections_page({ page: currentPage, pages: totalPages })}</span>
 		<div class="pagination-btns">
-			<Button variant="ghost" size="sm" disabled={!hasPrev} onclick={() => onPageChange(Math.max(0, pagination.offset - pagination.limit))}>&larr; Назад</Button>
-			<Button variant="ghost" size="sm" disabled={!hasNext} onclick={() => onPageChange(pagination.offset + pagination.limit)}>Далее &rarr;</Button>
+			<Button variant="ghost" size="sm" disabled={!hasPrev} onclick={() => onPageChange(Math.max(0, pagination.offset - pagination.limit))}>&larr; {m.common_back()}</Button>
+			<Button variant="ghost" size="sm" disabled={!hasNext} onclick={() => onPageChange(pagination.offset + pagination.limit)}>{m.connections_next()} &rarr;</Button>
 		</div>
 	</div>
 {/if}

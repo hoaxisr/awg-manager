@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button } from '$lib/components/ui';
 	import { Printer, RotateCcw } from 'lucide-svelte';
+	import { ponyClassLabel, ponyDestinations, ponyOptionLabel } from './labels';
 	import type { TicketOrder } from './types';
 
 	interface Props {
@@ -9,6 +11,15 @@
 	}
 
 	let { ticket, onreset }: Props = $props();
+
+	const passengerName = $derived(
+		ticket.passengerName === null
+			? m.system_ponies_default_passenger()
+			: ticket.passengerName || m.system_ponies_fallback_passenger(),
+	);
+	const destinationName = $derived(
+		ponyDestinations().find((d) => d.id === ticket.destinationId)?.name ?? ticket.destinationId,
+	);
 </script>
 
 <div class="ticket-view-wrap">
@@ -16,40 +27,40 @@
 		<div class="bp-left">
 			<div class="bp-brand">
 				<span class="bp-logo">🦄 PINK PONY AIRWAYS</span>
-				<span class="bp-tag">BOARDING PASS / ПОСАДОЧНЫЙ ТАЛОН</span>
+				<span class="bp-tag">{m.system_ponies_bp_tag()}</span>
 			</div>
 
 			<div class="bp-grid">
 				<div class="bp-item">
-					<span class="bp-lbl">ПАССАЖИР / PASSENGER</span>
-					<span class="bp-val">{ticket.passengerName}</span>
+					<span class="bp-lbl">{m.system_ponies_bp_passenger()}</span>
+					<span class="bp-val">{passengerName}</span>
 				</div>
 				<div class="bp-item">
-					<span class="bp-lbl">РЕЙС / FLIGHT</span>
+					<span class="bp-lbl">{m.system_ponies_bp_flight()}</span>
 					<span class="bp-val flight-val">{ticket.ticketNumber}</span>
 				</div>
 				<div class="bp-item full-w">
-					<span class="bp-lbl">НАПРАВЛЕНИЕ / DESTINATION</span>
-					<span class="bp-val dest-val">{ticket.destination}</span>
+					<span class="bp-lbl">{m.system_ponies_bp_destination()}</span>
+					<span class="bp-val dest-val">{destinationName}</span>
 				</div>
 				<div class="bp-item">
-					<span class="bp-lbl">КЛАСС / CLASS</span>
-					<span class="bp-val">{ticket.serviceClass}</span>
+					<span class="bp-lbl">{m.system_ponies_bp_class()}</span>
+					<span class="bp-val">{ponyClassLabel(ticket.serviceClass)}</span>
 				</div>
 				<div class="bp-item">
-					<span class="bp-lbl">МЕСТО / SEAT</span>
+					<span class="bp-lbl">{m.system_ponies_bp_seat()}</span>
 					<span class="bp-val seat-val">{ticket.seat}</span>
 				</div>
 				<div class="bp-item full-w">
-					<span class="bp-lbl">ВРЕМЯ ВЫЛЕТА / DEPARTURE</span>
-					<span class="bp-val time-val">{ticket.flightTime}</span>
+					<span class="bp-lbl">{m.system_ponies_bp_departure()}</span>
+					<span class="bp-val time-val">{m.system_ponies_bp_flight_time()}</span>
 				</div>
 				{#if ticket.options.length > 0}
 					<div class="bp-item full-w">
-						<span class="bp-lbl">ВКЛЮЧЕННЫЕ ЧУДЕСА:</span>
+						<span class="bp-lbl">{m.system_ponies_bp_wonders()}</span>
 						<div class="bp-opts-tags">
 							{#each ticket.options as opt}
-								<span class="bp-tag-opt">🌸 {opt}</span>
+								<span class="bp-tag-opt">🌸 {ponyOptionLabel(opt)}</span>
 							{/each}
 						</div>
 					</div>
@@ -75,8 +86,8 @@
 			</div>
 
 			<div class="stub-footer">
-				<span>МЕСТО: <strong>{ticket.seat}</strong></span>
-				<span class="stamp-approved">ОДОБРЕНО РАДУГОЙ</span>
+				<span>{m.system_ponies_bp_seat_short()} <strong>{ticket.seat}</strong></span>
+				<span class="stamp-approved">{m.system_ponies_bp_approved()}</span>
 			</div>
 		</div>
 	</div>
@@ -84,11 +95,11 @@
 	<div class="ticket-actions">
 		<Button variant="secondary" onclick={() => window.print()}>
 			{#snippet iconBefore()}<Printer size={14} />{/snippet}
-			Распечатать билет
+			{m.system_ponies_bp_print()}
 		</Button>
 		<Button variant="primary" onclick={onreset}>
 			{#snippet iconBefore()}<RotateCcw size={14} />{/snippet}
-			Оформить еще один билет
+			{m.system_ponies_bp_again()}
 		</Button>
 	</div>
 </div>

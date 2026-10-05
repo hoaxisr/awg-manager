@@ -3,6 +3,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Shield } from 'lucide-svelte';
 
   interface Props {
@@ -15,23 +16,13 @@
   <div class="text">
     <div class="status-row">
       <span class="status-dot"></span>
-      <span class="status-label">Не настроен</span>
+      <span class="status-label">{m.sb_router_empty_hero_status()}</span>
     </div>
     <h2 class="heading">
-      {isMihomo
-        ? 'Направляйте трафик через прокси-группы и VPN-туннели по вашим правилам'
-        : 'Направляйте трафик через VPN-туннели по вашим правилам'}
+      {isMihomo ? m.sb_router_empty_hero_heading_mihomo() : m.sb_router_empty_hero_heading()}
     </h2>
     <p class="body">
-      {#if isMihomo}
-        Mihomo — это маршрутизатор внутри роутера. Решает для каждого запроса:
-        пустить напрямую, через группу прокси / туннель или заблокировать.
-        Настройка занимает 3 шага.
-      {:else}
-        sing-box — это маршрутизатор внутри роутера. Решает для каждого запроса:
-        пустить напрямую, через туннель или заблокировать.
-        Настройка занимает 3 шага.
-      {/if}
+      {isMihomo ? m.sb_router_empty_hero_body_mihomo() : m.sb_router_empty_hero_body()}
     </p>
   </div>
   <div class="icon-wrap">

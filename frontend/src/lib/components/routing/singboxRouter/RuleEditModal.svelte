@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import SingboxSettingsModal from './SingboxSettingsModal.svelte';
 	import {
@@ -13,7 +14,7 @@
 	import { api } from '$lib/api/client';
 	import type { PolicyDevice, SingboxRouterRule, SingboxRouterRuleSet } from '$lib/types';
 	import { flattenRouterRule } from '$lib/utils/routerRuleShape';
-	import type { OutboundGroup } from './outboundOptions';
+	import { outboundGroupLabel, type OutboundGroup } from './outboundOptions';
 
 	interface Props {
 		rule?: SingboxRouterRule;
@@ -55,9 +56,9 @@
 		r ? flattenRouterRule(r) : undefined;
 
 	const outboundDropdownOptions = $derived<DropdownOption[]>([
-		{ value: '', label: '— выберите —' },
+		{ value: '', label: m.routing_singbox_dns_choose() },
 		...outboundOptions.flatMap((g) =>
-			g.items.map((i) => ({ value: i.value, label: i.label, group: g.group })),
+			g.items.map((i) => ({ value: i.value, label: i.label, group: outboundGroupLabel(g.id) })),
 		),
 	]);
 
@@ -89,7 +90,7 @@
 				const label = `${d.name || d.hostname || d.ip} · ${d.mac}`;
 				return {
 					value: d.mac,
-					label: pickerAddedMacs.has(d.mac.toLowerCase()) ? `${label} (уже добавлен)` : label,
+					label: pickerAddedMacs.has(d.mac.toLowerCase()) ? m.routing_singbox_rule_already_added({ label }) : label,
 				};
 			}),
 	);
@@ -126,19 +127,28 @@
 	// svelte-ignore state_referenced_locally
 	let outbound = $state(rule?.outbound ?? '');
 
-	const actionOptions: SegmentedOption<'route' | 'reject'>[] = [
-		{ value: 'route', label: 'Направить' },
-		{ value: 'reject', label: 'Заблокировать' },
-	];
+	const actionOptions = $derived<SegmentedOption<'route' | 'reject'>[]>([
+		{ value: 'route', label: m.routing_singbox_rule_action_route() },
+		{ value: 'reject', label: m.routing_singbox_rule_action_reject() },
+	]);
 
-	const networkOptions: SegmentedOption<NetworkFilter>[] = [
-		{ value: '', label: 'Любой' },
+	const networkOptions = $derived<SegmentedOption<NetworkFilter>[]>([
+		{ value: '', label: m.routing_singbox_rule_network_any() },
 		{ value: 'tcp', label: 'TCP' },
 		{ value: 'udp', label: 'UDP' },
-	];
+	]);
 
 	let busy = $state(false);
 	let error = $state('');
+	let errorKind = $state<'' | 'matcher' | 'outbound'>('');
+	const errorText = $derived(
+		error ||
+			(errorKind === 'matcher'
+				? m.routing_singbox_dnsrule_err_matcher()
+				: errorKind === 'outbound'
+					? m.routing_singbox_rule_err_outbound()
+					: ''),
+	);
 
 	// Snapshot initial state for isDirty detection
 	let initialDomainSuffixStr = $state('');
@@ -208,10 +218,10 @@
 		const src = flat(rule);
 		if (!src) return [];
 		const out: string[] = [];
-		if (src.domain?.length) out.push(`точные домены: ${src.domain.join(', ')}`);
-		if (src.protocol) out.push(`прикладной протокол: ${src.protocol}`);
-		if (src.ip_is_private) out.push('только локальные адреса назначения');
-		if (src.inbound?.length) out.push(`вход: ${src.inbound.join(', ')}`);
+		if (src.domain?.length) out.push(m.routing_singbox_rule_hidden_domains({ domains: src.domain.join(', ') }));
+		if (src.protocol) out.push(m.routing_singbox_rule_hidden_protocol({ protocol: src.protocol }));
+		if (src.ip_is_private) out.push(m.routing_singbox_rule_hidden_private());
+		if (src.inbound?.length) out.push(m.routing_singbox_rule_hidden_inbound({ inbounds: src.inbound.join(', ') }));
 		return out;
 	});
 
@@ -223,6 +233,7 @@
 	async function save(): Promise<void> {
 		busy = true;
 		error = '';
+		errorKind = '';
 		try {
 			const domain_suffix = parseLines(domainSuffixStr);
 			const ip_cidr = parseLines(ipCidrStr);
@@ -242,12 +253,12 @@
 				rule_set.length > 0 ||
 				port.length > 0;
 			if (!hasMatcher) {
-				error = 'Нужен хотя бы один matcher';
+				errorKind = 'matcher';
 				busy = false;
 				return;
 			}
 			if (action === 'route' && !outbound) {
-				error = 'Выберите outbound для действия "Направить"';
+				errorKind = 'outbound';
 				busy = false;
 				return;
 			}
@@ -299,40 +310,37 @@
 </script>
 
 <SingboxSettingsModal
-	title={matchersOnly ? 'Домены и адреса' : rule ? 'Редактировать правило' : 'Новое правило'}
+	title={matchersOnly ? m.routing_singbox_rule_title_matchers_only() : rule ? m.routing_singbox_rule_title_edit() : m.routing_singbox_rule_title_new()}
 	onClose={onClose}
 	hasUnsavedChanges={() => isDirty}
 >
 	<div class="form">
 		{#if unflattenedLogical}
 			<div class="warn">
-				Это правило со вложенной логической структурой, которую форма не показывает.
-				Сохранение <b>заменит</b> её тем, что введено здесь. Чтобы изменить правило,
-				не потеряв структуру, правьте его в редакторе конфигурации.
+				{m.routing_singbox_rule_logical_warn_pre()} <b>{m.routing_singbox_rule_logical_warn_bold()}</b> {m.routing_singbox_rule_logical_warn_post()}
 			</div>
 		{/if}
 
 		{#if hiddenMatchers.length}
 			<div class="warn">
-				В правиле есть условия, которых нет в этой форме — они сохранятся без изменений:
-				{#each hiddenMatchers as m, i (m)}<code>{m}</code>{#if i < hiddenMatchers.length - 1}{', '}{/if}{/each}.
-				Изменить их можно в экспертном редакторе конфигурации.
+				{m.routing_singbox_rule_hidden_warn_pre()}
+				{#each hiddenMatchers as hidden, i (hidden)}<code>{hidden}</code>{#if i < hiddenMatchers.length - 1}{', '}{/if}{/each}.
+				{m.routing_singbox_rule_hidden_warn_post()}
 			</div>
 		{/if}
 
-		<div class="section-label">Matchers (минимум один)</div>
+		<div class="section-label">{m.routing_singbox_dnsrule_matchers_min()}</div>
 
 		<label class="field">
 			<div class="field-head">
 				<span class="lbl">Domain suffix</span>
 				{#if domainsCount > 0}
 					<span class="count-chip">
-						{domainsCount}
-						{domainsCount === 1 ? 'домен' : domainsCount < 5 ? 'домена' : 'доменов'}
+						{m.routing_search_domains({ count: domainsCount })}
 					</span>
 				{/if}
 			</div>
-			<textarea bind:value={domainSuffixStr} rows="6" placeholder="по одному на строке, например youtube.com"></textarea>
+			<textarea bind:value={domainSuffixStr} rows="6" placeholder={m.routing_singbox_rule_domain_placeholder()}></textarea>
 		</label>
 
 		<label class="field">
@@ -340,8 +348,7 @@
 				<span class="lbl">IP CIDR</span>
 				{#if ipsCount > 0}
 					<span class="count-chip">
-						{ipsCount}
-						{ipsCount === 1 ? 'подсеть' : ipsCount < 5 ? 'подсети' : 'подсетей'}
+						{m.routing_subnets_count({ count: ipsCount })}
 					</span>
 				{/if}
 			</div>
@@ -354,8 +361,7 @@
 					<span class="lbl">Source IP CIDR</span>
 					{#if sourceIPsCount > 0}
 						<span class="count-chip">
-							{sourceIPsCount}
-							{sourceIPsCount === 1 ? 'источник' : sourceIPsCount < 5 ? 'источника' : 'источников'}
+							{m.routing_singbox_rule_sources_count({ count: sourceIPsCount })}
 						</span>
 					{/if}
 				</div>
@@ -364,18 +370,18 @@
 
 			<label class="field">
 				<div class="field-head">
-					<span class="lbl">MAC устройства</span>
+					<span class="lbl">{m.routing_singbox_rule_mac_label()}</span>
 					{#if sourceMacCount > 0}
 						<span class="count-chip">{sourceMacCount}</span>
 					{/if}
 				</div>
 				<textarea bind:value={sourceMacStr} rows="3" placeholder="aa:bb:cc:dd:ee:ff"></textarea>
-				<div class="hint">По одному MAC в строке. Устройство определяется по таблице соседей роутера; для устройств за другим роутером не работает.</div>
+				<div class="hint">{m.routing_singbox_rule_mac_hint()}</div>
 				{#if pickerOptions.length}
 					<Dropdown
 						value={pickerValue}
 						options={pickerOptions}
-						placeholder="Добавить устройство…"
+						placeholder={m.routing_singbox_rule_add_device()}
 						onchange={pickDevice}
 						fullWidth
 					/>
@@ -388,61 +394,60 @@
 					values={ruleSetTags}
 					options={ruleSetOptions}
 					onchange={(next) => (ruleSetTags = next)}
-					placeholder="не выбрано"
+					placeholder={m.routing_singbox_dnsrule_not_selected()}
 					allowOrphans
 				/>
 				<div class="hint">
-					Готовые наборы (geosite/geoip). Для своих доменов и подсетей используйте поля выше —
-					правило сработает по набору <b>или</b> по вашим адресам.
+					{m.routing_singbox_rule_rulesets_hint_pre()} <b>{m.routing_singbox_rule_rulesets_hint_or()}</b> {m.routing_singbox_rule_rulesets_hint_post()}
 				</div>
 			</div>
 
 			<label class="field">
-				<div class="lbl">Порты (через запятую)</div>
+				<div class="lbl">{m.routing_singbox_rule_ports_label()}</div>
 				<input bind:value={portStr} placeholder="443, 80" />
 				<div class="hint">
-					Необязательно. Дополнительно ограничивает правило конкретными портами.
+					{m.routing_singbox_rule_ports_hint()}
 				</div>
 			</label>
 
 			<div class="field">
-				<div class="lbl">Сеть (L4)</div>
+				<div class="lbl">{m.routing_singbox_rule_network_label()}</div>
 				<SegmentedControl
 					value={network}
 					options={networkOptions}
-					ariaLabel="Протокол сети TCP или UDP"
+					ariaLabel={m.routing_singbox_rule_network_aria()}
 					onchange={(next) => (network = next)}
 				/>
 				<div class="hint">
-					Ограничить правило только TCP или только UDP. «Любой» — без фильтра (как раньше).
+					{m.routing_singbox_rule_network_hint()}
 				</div>
 			</div>
 
 			<div class="action-section">
-				<div class="section-label">Действие</div>
+				<div class="section-label">{m.routing_singbox_dnsrule_action()}</div>
 				<SegmentedControl
 					value={action}
 					options={actionOptions}
-					ariaLabel="Действие правила маршрутизации"
+					ariaLabel={m.routing_singbox_rule_action_aria()}
 					onchange={(next) => (action = next)}
 				/>
 
 				{#if action === 'route'}
 					<div class="field">
-						<div class="lbl">Куда направить</div>
+						<div class="lbl">{m.routing_singbox_rule_route_to()}</div>
 						<Dropdown bind:value={outbound} options={outboundDropdownOptions} fullWidth />
 					</div>
 				{/if}
 			</div>
 		{/if}
 
-		{#if error}<div class="error">{error}</div>{/if}
+		{#if errorText}<div class="error">{errorText}</div>{/if}
 	</div>
 
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={onClose} type="button">Отмена</Button>
+		<Button variant="ghost" size="md" onclick={onClose} type="button">{m.common_cancel()}</Button>
 		<Button variant="primary" size="md" onclick={save} disabled={busy} loading={busy} type="button">
-			Сохранить
+			{m.common_save()}
 		</Button>
 	{/snippet}
 </SingboxSettingsModal>

@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import { m } from '$lib/i18n';
   import type { LogBucket } from '$lib/stores/logs';
 
   export interface LogsFilter {
@@ -18,64 +19,72 @@
   // The toolbar shows the user a flat list of "groups" that abstracts this:
   // when bucket=singbox, "groups" actually drive the SUBGROUP filter and the
   // group filter is forced to "singbox" by LogsTerminal.
-  export const GROUP_LABELS: Record<string, string> = {
-    tunnel: 'Туннели',
-    routing: 'Маршрутизация',
-    server: 'Серверы',
-    system: 'Система',
-    inbound: 'Входящие',
-    outbound: 'Исходящие',
-    dns: 'DNS',
-    router: 'Маршрутизация',
-    runtime: 'Runtime',
-    process: 'Процесс',
+  export const GROUP_LABELS: Record<string, () => string> = {
+    tunnel: m.nav_tunnels,
+    routing: m.nav_routing,
+    server: m.nav_servers,
+    system: m.diag_tab_system,
+    inbound: m.diag_logs_group_inbound,
+    outbound: m.diag_logs_group_outbound,
+    dns: () => 'DNS',
+    router: m.nav_routing,
+    runtime: () => 'Runtime',
+    process: m.diag_logs_group_process,
   };
 
-  export const SUBGROUP_LABELS: Record<string, string> = {
+  export const SUBGROUP_LABELS: Record<string, () => string> = {
     // tunnel
-    lifecycle: 'Жизненный цикл',
-    ops: 'Операции',
-    state: 'Состояние',
-    firewall: 'Firewall',
-    pingcheck: 'Ping-check',
-    connectivity: 'Connectivity',
-    test: 'Тестирование',
-    signature: 'Подпись',
+    lifecycle: m.diag_logs_sub_lifecycle,
+    ops: m.diag_logs_sub_ops,
+    state: m.diag_logs_sub_state,
+    firewall: () => 'Firewall',
+    pingcheck: () => 'Ping-check',
+    connectivity: () => 'Connectivity',
+    test: m.diag_logs_sub_test,
+    signature: m.diag_logs_sub_signature,
     // routing
-    'dns-route': 'DNS-маршруты',
-    'static-route': 'Статические маршруты',
-    'access-policy': 'Access policies',
-    'client-route': 'Per-client routes',
-    'singbox-router': 'Sing-box router',
-    'bypass-set': 'Набор обхода',
-    subscription: 'Подписки',
-    deviceproxy: 'Device proxy',
-    hrneo: 'HrNeo',
-    catalog: 'Каталог',
-    'awg-outbounds': 'AWG outbounds',
+    'dns-route': m.diag_logs_sub_dns_route,
+    'static-route': m.diag_logs_sub_static_route,
+    'access-policy': () => 'Access policies',
+    'client-route': () => 'Per-client routes',
+    'singbox-router': () => 'Sing-box router',
+    'bypass-set': m.diag_logs_sub_bypass_set,
+    subscription: m.diag_logs_sub_subscription,
+    deviceproxy: () => 'Device proxy',
+    hrneo: () => 'HrNeo',
+    catalog: m.diag_logs_sub_catalog,
+    'awg-outbounds': () => 'AWG outbounds',
     // server
-    managed: 'Managed',
+    managed: () => 'Managed',
     // system
-    boot: 'Загрузка',
-    auth: 'Авторизация',
-    settings: 'Настройки',
-    update: 'Обновления',
-    wan: 'WAN',
-    'system-tunnels': 'Системные туннели',
-    cleanup: 'Cleanup',
-    dnscheck: 'DNS-проверки',
-    connections: 'Соединения',
-    traffic: 'Трафик',
-    diagnostics: 'Диагностика',
-    profiling: 'Profiling HTTP',
-    rci: 'RCI',
-    ndms: 'NDMS',
-    storage: 'Хранилище',
-    monitoring: 'Мониторинг',
-    orchestrator: 'Оркестратор',
-    kmod: 'Модуль ядра',
-    http: 'HTTP-сервер',
+    boot: m.diag_logs_sub_boot,
+    auth: m.diag_logs_sub_auth,
+    settings: m.nav_settings,
+    update: m.diag_logs_sub_update,
+    wan: () => 'WAN',
+    'system-tunnels': m.diag_logs_sub_system_tunnels,
+    cleanup: () => 'Cleanup',
+    dnscheck: m.diag_logs_sub_dnscheck,
+    connections: m.diag_tab_connections,
+    traffic: m.diag_logs_sub_traffic,
+    diagnostics: m.diag_logs_sub_diagnostics,
+    profiling: () => 'Profiling HTTP',
+    rci: () => 'RCI',
+    ndms: () => 'NDMS',
+    storage: m.diag_logs_sub_storage,
+    monitoring: m.diag_tab_monitoring,
+    orchestrator: m.diag_logs_sub_orchestrator,
+    kmod: m.diag_planned_kernel_module,
+    http: m.diag_logs_sub_http,
   };
+
+  export function groupLabel(g: string): string {
+    return GROUP_LABELS[g]?.() ?? g;
+  }
+
+  export function subgroupLabel(s: string): string {
+    return SUBGROUP_LABELS[s]?.() ?? s;
+  }
 
   export interface BufferBadge {
     size: number;
@@ -240,7 +249,7 @@
   );
 
   const bucketTitle = $derived(
-    bucket === 'singbox' ? 'журнал sing-box' : 'журнал приложения',
+    bucket === 'singbox' ? m.diag_logs_clear_title_singbox() : m.diag_logs_clear_title_app(),
   );
 </script>
 
@@ -260,18 +269,18 @@
       {/if}
     </span>
 
-    <span class="buffer-meta" title="Размер настраивается в Настройках">
+    <span class="buffer-meta" title={m.diag_logs_buffer_title()}>
       <a class="buffer-link" href="/settings#logging">
         {bufferStats.size}/{bufferStats.capacity}
       </a>
       {#if oldestRel}
-        <span class="buffer-oldest">· старейшая {oldestRel}</span>
+        <span class="buffer-oldest">{m.diag_logs_oldest({ age: oldestRel })}</span>
       {/if}
     </span>
   </div>
 
   <div class="row row-chips">
-    <span class="chip-row" role="group" aria-label="Фильтр по уровню">
+    <span class="chip-row" role="group" aria-label={m.diag_logs_menu_filter_level()}>
       {#each ALL_LEVELS as lvl (lvl)}
         {@const active = filter.levels.includes(lvl)}
         <button
@@ -289,7 +298,7 @@
           type="button"
           class="chip chip-profiling-stack"
           class:chip-active={filter.subgroups.includes('profiling')}
-          aria-label="Журнал медленных HTTP-запросов"
+          aria-label={m.diag_logs_profiling_aria()}
           aria-pressed={filter.subgroups.includes('profiling')}
           onclick={toggleProfilingFilter}
         >
@@ -300,7 +309,7 @@
 
     <span class="divider" aria-hidden="true"></span>
 
-    <span class="chip-row" role="group" aria-label="Фильтр по группе">
+    <span class="chip-row" role="group" aria-label={m.diag_logs_filter_group_aria()}>
         <button
           type="button"
           class="chip chip-group-pill"
@@ -319,7 +328,7 @@
           aria-pressed={active}
           onclick={() => toggleGroup(g)}
         >
-          {GROUP_LABELS[g] ?? g}
+          {groupLabel(g)}
         </button>
       {/each}
     </span>
@@ -327,8 +336,8 @@
 
   {#if availableSubgroups.length > 0 && (filter.groups.length > 0 || bucket === 'singbox')}
     <div class="row row-subgroups">
-      <span class="sub-label">Подгруппа</span>
-      <span class="chip-row" role="group" aria-label="Фильтр по подгруппе">
+      <span class="sub-label">{m.diag_logs_subgroup()}</span>
+      <span class="chip-row" role="group" aria-label={m.diag_logs_filter_subgroup_aria()}>
         <button
           type="button"
           class="chip chip-sub"
@@ -347,7 +356,7 @@
             aria-pressed={active}
             onclick={() => toggleSubgroup(s)}
           >
-            {SUBGROUP_LABELS[s] ?? s}
+            {subgroupLabel(s)}
           </button>
         {/each}
       </span>
@@ -358,7 +367,7 @@
     <input
       bind:this={searchEl}
       type="search"
-      placeholder="Поиск..."
+      placeholder={m.tunnels_search_placeholder()}
       bind:value={filter.search}
       oninput={(e) => handleSearchInput((e.currentTarget as HTMLInputElement).value)}
       class="search"
@@ -372,11 +381,11 @@
         class="chip chip-timestamp"
         class:chip-active={showFullTimestamp}
         aria-pressed={showFullTimestamp}
-        title={showFullTimestamp ? 'Скрыть дату и часовой пояс' : 'Показать дату и часовой пояс'}
+        title={showFullTimestamp ? m.diag_logs_date_hide_title() : m.diag_logs_date_show_title()}
         onclick={onToggleFullTimestamp}
       >
         <Calendar size={14} aria-hidden="true" />
-        Дата
+        {m.diag_logs_date()}
       </button>
       <button
         type="button"
@@ -384,8 +393,8 @@
         class:chip-privacy-open={sanitizeToggleAvailable && !sanitizeLogs}
         aria-pressed={sanitizeToggleAvailable && !sanitizeLogs}
         aria-label={sanitizeToggleAvailable
-          ? (sanitizeLogs ? 'Показать реальные адреса в журнале' : 'Скрыть адреса в журнале')
-          : (sanitizeToggleHint || 'Журнал уже маскируется')}
+          ? (sanitizeLogs ? m.diag_logs_sanitize_show_aria() : m.diag_logs_sanitize_hide_aria())
+          : (sanitizeToggleHint || m.diag_logs_sanitize_already_masked())}
         disabled={!sanitizeToggleAvailable}
         title={!sanitizeToggleAvailable ? sanitizeToggleHint : undefined}
         onclick={() => {
@@ -398,7 +407,7 @@
         {:else}
           <Eye size={14} aria-hidden="true" />
         {/if}
-        {sanitizeToggleAvailable ? (sanitizeLogs ? 'Скрыты' : 'Видны') : 'Уже скрыто'}
+        {sanitizeToggleAvailable ? (sanitizeLogs ? m.diag_logs_sanitize_hidden() : m.diag_logs_sanitize_visible()) : m.diag_logs_sanitize_already_hidden()}
       </button>
       <button type="button" class="chip" onclick={onTogglePause}>
         {#if paused}
@@ -406,19 +415,19 @@
         {:else}
           <Pause size={14} aria-hidden="true" />
         {/if}
-        {paused ? 'Продолжить' : 'Пауза'}
+        {paused ? m.diag_logs_resume() : m.diag_logs_pause()}
       </button>
       <button type="button" class="chip" onclick={onCopy} disabled={visibleEntries === 0}>
         <Copy size={14} aria-hidden="true" />
-        Копировать
+        {m.common_copy()}
       </button>
       <button type="button" class="chip" onclick={onDownload} disabled={totalEntries === 0 || downloading}>
         <Download size={14} aria-hidden="true" />
-        {downloading ? 'Скачивание…' : 'Скачать'}
+        {downloading ? m.diag_logs_downloading() : m.common_download()}
       </button>
       <button type="button" class="chip chip-danger" onclick={handleClear} disabled={totalEntries === 0 || clearing}>
         <Trash2 size={14} aria-hidden="true" />
-        {clearing ? 'Очистка…' : 'Очистить'}
+        {clearing ? m.diag_logs_clearing() : m.common_clear()}
       </button>
     </span>
   </div>
@@ -426,19 +435,19 @@
 
 <Modal
   open={confirmClearOpen}
-  title="Очистить {bucketTitle}"
+  title={bucketTitle}
   size="sm"
   onclose={() => (confirmClearOpen = false)}
 >
   <p class="confirm-text">
-    Удалить <strong>{totalEntries}</strong> {totalEntries === 1 ? 'запись' : (totalEntries < 5 ? 'записи' : 'записей')} из {bucketTitle === 'журнал sing-box' ? 'журнала sing-box' : 'журнала приложения'}? Это действие нельзя отменить.
+    {m.common_delete()} <strong>{totalEntries}</strong> {bucket === 'singbox' ? m.diag_logs_clear_confirm_singbox({ count: totalEntries }) : m.diag_logs_clear_confirm_app({ count: totalEntries })}
   </p>
   <p class="confirm-hint">
-    Логирование продолжится: новые события появятся по мере работы.
+    {m.diag_logs_clear_hint()}
   </p>
   {#snippet actions()}
-    <Button variant="ghost" size="md" onclick={() => (confirmClearOpen = false)}>Отмена</Button>
-    <Button variant="danger" size="md" onclick={confirmClear}>Очистить</Button>
+    <Button variant="ghost" size="md" onclick={() => (confirmClearOpen = false)}>{m.common_cancel()}</Button>
+    <Button variant="danger" size="md" onclick={confirmClear}>{m.common_clear()}</Button>
   {/snippet}
 </Modal>
 

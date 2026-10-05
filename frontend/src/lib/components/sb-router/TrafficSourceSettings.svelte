@@ -3,10 +3,10 @@
   Включается в SourceDrawer и StatusDrawer (expert).
 -->
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Button } from '$lib/components/ui';
   import OutboundOption from './OutboundOption.svelte';
   import PolicyCombobox from './PolicyCombobox.svelte';
-  import { pluralize, DEVICE_WORDS } from '$lib/utils/pluralize';
   import type { SingboxRouterSettings } from '$lib/types';
 
   interface Props {
@@ -28,25 +28,25 @@
   const engineName = $derived(cfg.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box');
 
   const policyLabel = $derived(
-    variant === 'expert' ? 'Только устройства policy' : 'Устройства в политике',
+    variant === 'expert' ? m.sb_router_source_policy_only_expert() : m.sb_router_source_policy_only_beginner(),
   );
   const policySub = $derived(
-    variant === 'expert' ? 'трафик из назначенной policy' : 'только привязанные к NDMS policy',
+    variant === 'expert' ? m.sb_router_source_policy_sub_expert() : m.sb_router_source_policy_sub_beginner(),
   );
-  const policyFieldLabel = $derived(variant === 'expert' ? 'NDMS policy' : 'Политика');
+  const policyFieldLabel = $derived(variant === 'expert' ? m.sb_router_source_field_policy_expert() : m.sb_router_source_field_policy_beginner());
   const allHint = $derived(
     variant === 'expert'
-      ? 'При policy обрабатывается только трафик устройств, привязанных к policy в LAN-настройках NDMS.'
-      : `${engineName} перехватывает весь LAN-трафик роутера, без фильтра по NDMS policy.`,
+      ? m.sb_router_source_all_hint_expert()
+      : m.sb_router_source_all_hint_beginner({ engine: engineName }),
   );
 
-  function setDeviceMode(m: 'policy' | 'all') {
-    onPatch({ deviceMode: m });
+  function setDeviceMode(mode: 'policy' | 'all') {
+    onPatch({ deviceMode: mode });
   }
 </script>
 
 <section class="sec">
-  <div class="sec-cap">Какой трафик обрабатывать</div>
+  <div class="sec-cap">{m.sb_router_source_what_traffic()}</div>
   <div class="card-grid">
     <OutboundOption
       label={policyLabel}
@@ -56,8 +56,8 @@
       onclick={() => setDeviceMode('policy')}
     />
     <OutboundOption
-      label="Весь роутер"
-      sub="весь LAN-трафик"
+      label={m.sb_router_source_all_router()}
+      sub={m.sb_router_source_all_router_sub()}
       tone="accent"
       selected={cfg.deviceMode === 'all'}
       onclick={() => setDeviceMode('all')}
@@ -74,9 +74,9 @@
     </div>
     {#if cfg.policyName}
       <p class="hint">
-        В политике <strong>{pluralize(deviceCount, DEVICE_WORDS)}</strong>.
+        {m.sb_router_source_policy_in_pre()} <strong>{m.sb_router_devices_count({ count: deviceCount })}</strong>.
         {#if variant === 'beginner'}
-          Привязку MAC-адресов настраивайте на странице политик.
+          {m.sb_router_source_bind_hint()}
         {/if}
       </p>
       <Button
@@ -84,13 +84,13 @@
         size="sm"
         href="/routing?tab=policy&policy={encodeURIComponent(cfg.policyName)}"
       >
-        Управление устройствами →
+        {m.sb_router_source_manage_devices()}
       </Button>
     {:else}
-      <p class="hint">Выберите или создайте политику — без неё {engineName} не обработает трафик устройств.</p>
+      <p class="hint">{m.sb_router_source_pick_policy({ engine: engineName })}</p>
     {/if}
     {#if cfg.policyName && policyExists === false}
-      <p class="warn">Политика «{cfg.policyName}» не найдена в NDMS — создайте заново или выберите другую.</p>
+      <p class="warn">{m.sb_router_source_policy_missing({ name: cfg.policyName })}</p>
     {/if}
   </section>
 {:else}

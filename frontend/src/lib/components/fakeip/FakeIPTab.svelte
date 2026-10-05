@@ -4,6 +4,7 @@
 	import { PageContainer } from '$lib/components/layout';
 	import { Button } from '$lib/components/ui';
 	import { Plus } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { singboxStatus } from '$lib/stores/singbox';
 	import {
@@ -23,7 +24,7 @@
 	import { LogsTerminal } from '$lib/components/diagnostics';
 	import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
 	import { systemInfo } from '$lib/stores/system';
-	import { OPKGTUN_UNSUPPORTED_REASON, opkgTunSupported } from '$lib/utils/opkgTunSupport';
+	import { opkgTunUnsupportedReason, opkgTunSupported } from '$lib/utils/opkgTunSupport';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
 
@@ -41,21 +42,21 @@
 	// depends on the running engine / Clash runtime (FE-spec §12.1): they show
 	// the "движок остановлен" empty-state or a clash-down banner. Config-oriented
 	// chips render regardless of state.
-	const CHIPS: ShellChip[] = [
-		{ id: 'overview', label: 'Обзор', live: false },
+	const chips = $derived<ShellChip[]>([
+		{ id: 'overview', label: m.fakeip_chip_overview(), live: false },
 		{ id: 'inbounds', label: 'Inbounds', live: false },
 		{ id: 'outbounds', label: 'Outbounds', live: false },
 		{ id: 'rulesets', label: 'Rule sets', live: false },
 		{ id: 'dns', label: 'DNS', live: false },
-		{ id: 'routes', label: 'Маршруты', live: false },
-		{ id: 'devices', label: 'Устройства', live: false },
-		{ id: 'connections', label: 'Соединения', live: true },
-		{ id: 'logs', label: 'Журнал', live: true }
-	];
+		{ id: 'routes', label: m.fakeip_chip_routes(), live: false },
+		{ id: 'devices', label: m.fakeip_chip_devices(), live: false },
+		{ id: 'connections', label: m.fakeip_chip_connections(), live: true },
+		{ id: 'logs', label: m.fakeip_chip_logs(), live: true }
+	]);
 
 	let activeTab = $state('overview');
 
-	let activeChip = $derived(CHIPS.find((c) => c.id === activeTab) ?? CHIPS[0]);
+	let activeChip = $derived(chips.find((c) => c.id === activeTab) ?? chips[0]);
 
 	// Hero-title по активному чипу (мокап: «FakeIP Router» на Обзоре, имя раздела
 	// на остальных — ср. page-outbounds-v3 title «Outbounds»).
@@ -113,9 +114,9 @@
 	async function handleRestart(): Promise<void> {
 		try {
 			await api.singboxControl('restart');
-			notifications.success('Перезапуск sing-box запущен');
+			notifications.success(m.fakeip_restart_started());
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : 'Не удалось перезапустить sing-box';
+			const msg = e instanceof Error ? e.message : m.fakeip_restart_failed();
 			notifications.error(msg);
 		}
 	}
@@ -130,7 +131,7 @@
 	{#if engineState === 'not-fakeip'}
 		<NotEnabledScreen
 			onEnableRequested={handleEnableRequested}
-			unavailableReason={tunSupported ? undefined : OPKGTUN_UNSUPPORTED_REASON}
+			unavailableReason={tunSupported ? undefined : opkgTunUnsupportedReason()}
 		/>
 	{:else}
 		<!--
@@ -140,7 +141,7 @@
 		-->
 		<FakeIPPageShell
 			title={pageTitle}
-			chips={CHIPS}
+			{chips}
 			activeChip={activeTab}
 			onChipChange={(id) => (activeTab = id)}
 			{engineState}
@@ -153,7 +154,7 @@
 			{#snippet createButton()}
 				{#if activeTab === 'outbounds'}
 					<!-- TODO(Slice 3.2): открыть мастер создания outbound. -->
-					<Button variant="primary" size="sm" disabled title="Скоро">
+					<Button variant="primary" size="sm" disabled title={m.fakeip_soon()}>
 						{#snippet iconBefore()}<Plus size={14} />{/snippet}
 						Outbound
 					</Button>
@@ -248,14 +249,14 @@
 				<section class="chip-stub">
 					<h2 class="chip-stub-title">{activeChip.label}</h2>
 					<p class="chip-stub-note chip-stub-error">
-						Clash-runtime недоступен — живые соединения временно не работают.
+						{m.fakeip_connections_clash_down()}
 					</p>
 				</section>
 			{:else}
 				<section class="chip-stub">
 					<h2 class="chip-stub-title">{activeChip.label}</h2>
 					<p class="chip-stub-note chip-stub-empty">
-						Движок остановлен — живые соединения недоступны.
+						{m.fakeip_connections_engine_stopped()}
 					</p>
 				</section>
 			{/if}
@@ -275,15 +276,14 @@
 
 				{#if activeChip.live && engineState === 'stopped'}
 					<p class="chip-stub-note chip-stub-empty">
-						Движок остановлен — живые данные недоступны.
+						{m.fakeip_stub_engine_stopped()}
 					</p>
 				{:else if activeChip.live && engineState === 'clash-down'}
 					<p class="chip-stub-note chip-stub-error">
-						Clash-runtime недоступен — живые блоки временно не работают.
-						Конфигурация по-прежнему доступна.
+						{m.fakeip_stub_clash_down()}
 					</p>
 				{:else}
-					<p class="chip-stub-note">Раздел в разработке (Slice 1E+)</p>
+					<p class="chip-stub-note">{m.fakeip_stub_in_development()}</p>
 				{/if}
 			</section>
 		{/if}

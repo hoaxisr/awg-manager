@@ -1198,6 +1198,21 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 		}
 		singboxOp = singboxOperatorWithDelay{Operator: s.singboxOp, delay: delay}
 	}
+	// Подписки и движок — те же экземпляры, что у HTTP-обработчиков.
+	// Конкретные типы под проверкой на nil: интерфейс с nil-указателем
+	// внутри сравнение с nil проходит и роняет демон на первом вызове.
+	var subsForMcp localdeps.SubscriptionService
+	if s.subscriptionHandler != nil {
+		if svc := s.subscriptionHandler.Service(); svc != nil {
+			subsForMcp = svc
+		}
+	}
+	var clashForMcp localdeps.ClashState
+	if s.singboxOp != nil {
+		if clash := s.singboxOp.Clash(); clash != nil {
+			clashForMcp = clash
+		}
+	}
 	var bus localdeps.Publisher
 	if s.bus != nil {
 		bus = s.bus
@@ -1230,6 +1245,8 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 		Router:         routerForMcp,
 		Diagnostics:    diagForMcp,
 		Singbox:        singboxOp,
+		Subscriptions:  subsForMcp,
+		Clash:          clashForMcp,
 		SystemInfo:     h.systemHandler.InfoData,
 		Resolve:        resolveHost,
 		Bus:            bus,

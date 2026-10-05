@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Card } from '$lib/components/ui';
 	import { Sparkles, Heart, Smile } from 'lucide-svelte';
 
@@ -15,36 +16,36 @@
 	<div class="summary-card">
 		<div class="summary-head">
 			<Sparkles size={20} class="text-pink" />
-			<h4>Итоговый расчет</h4>
+			<h4>{m.system_ponies_sum_title()}</h4>
 		</div>
 
 		<div class="summary-details">
 			<div class="s-row">
-				<span>Тариф экспресса:</span>
+				<span>{m.system_ponies_sum_tariff()}</span>
 				<strong>{serviceClass.toUpperCase()}</strong>
 			</div>
 			<div class="s-row">
-				<span>Стоимость в блестках:</span>
+				<span>{m.system_ponies_sum_glitter()}</span>
 				<strong class="text-glitter">{glitter} ✨</strong>
 			</div>
 			<div class="s-row">
-				<span>Спец. промокод:</span>
+				<span>{m.system_ponies_sum_promo()}</span>
 				<span class="promo-pill">KEENETIC-PONY (-100%)</span>
 			</div>
 			<div class="s-row total-row">
-				<span>К оплате:</span>
+				<span>{m.system_ponies_sum_total()}</span>
 				<span class="total-price">0 ₽ / 0 $</span>
 			</div>
 		</div>
 
 		<div class="guarantee-box">
 			<Smile size={16} />
-			<span>100% гарантия хорошего настроения и отсутствия потери пакетов!</span>
+			<span>{m.system_ponies_sum_guarantee()}</span>
 		</div>
 
 		<button type="button" class="btn-buy-pony" onclick={onbuy}>
 			<Sparkles size={16} />
-			<span>Получить билет в Страну Пони</span>
+			<span>{m.system_ponies_sum_buy()}</span>
 			<Heart size={16} />
 		</button>
 	</div>

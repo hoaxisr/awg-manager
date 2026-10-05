@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import '@xterm/xterm/css/xterm.css';
 	import type { Terminal } from '@xterm/xterm';
 	import type { FitAddon } from '@xterm/addon-fit';
@@ -228,11 +229,11 @@
 			if (Date.now() - lastOpenAt < 10_000) flapCount++;
 			else flapCount = 0;
 			if (flapCount >= 3) {
-				term.writeln('\r\n\x1b[33m[Сессия завершена — соединение постоянно рвётся]\x1b[0m');
-				onerror?.('Соединение с терминалом постоянно рвётся');
+				term.writeln(`\r\n\x1b[33m[${m.terminal_view_line_flapping()}]\x1b[0m`);
+				onerror?.(m.terminal_view_err_flapping());
 				return;
 			}
-			term.writeln('\r\n\x1b[33m[Соединение потеряно — переподключение...]\x1b[0m');
+			term.writeln(`\r\n\x1b[33m[${m.terminal_view_line_lost()}]\x1b[0m`);
 			void autoReconnect(term, fitAddon);
 		};
 
@@ -299,14 +300,14 @@
 						return;
 					}
 					ws = socket;
-					term.writeln('\x1b[33m[Переподключено — новая shell-сессия]\x1b[0m');
+					term.writeln(`\x1b[33m[${m.terminal_view_line_reconnected()}]\x1b[0m`);
 					return;
 				} catch {
 					// 409 (слот ещё занят старой сессией) или ttyd поднимается
 				}
 				await new Promise((r) => setTimeout(r, AUTO_RECONNECT_DELAY_MS));
 			}
-			onerror?.('Не удалось переподключиться к терминалу');
+			onerror?.(m.terminal_view_err_reconnect_auto());
 		} finally {
 			autoReconnecting = false;
 			reconnecting = false;
@@ -327,7 +328,7 @@
 			termInstance.clear();
 			ws = await connectSocket(termInstance, fitAddonRef);
 		} catch {
-			onerror?.('Не удалось переподключиться');
+			onerror?.(m.terminal_view_err_reconnect());
 		} finally {
 			reconnecting = false;
 		}
@@ -378,7 +379,7 @@
 		try {
 			ws = await connectSocket(term, fitAddon);
 		} catch {
-			onerror?.('Не удалось подключиться к терминалу');
+			onerror?.(m.terminal_view_err_connect());
 		}
 
 		observer = new ResizeObserver(() => {
@@ -410,67 +411,67 @@
 			<button
 				type="button"
 				class="mac-light mac-light-close"
-				aria-label="Отключиться"
+				aria-label={m.terminal_view_disconnect()}
 				disabled={reconnecting}
 				onclick={disconnectSession}
 			>
 				<span class="mac-light-icon" aria-hidden="true">×</span>
-				<span class="mac-light-tooltip">Отключиться</span>
+				<span class="mac-light-tooltip">{m.terminal_view_disconnect()}</span>
 			</button>
 			<button
 				type="button"
 				class="mac-light mac-light-minimize"
-				aria-label="Очистить экран"
+				aria-label={m.terminal_view_clear()}
 				disabled={reconnecting}
 				onclick={clearScreen}
 			>
 				<span class="mac-light-icon mac-light-icon-clear" aria-hidden="true">−</span>
-				<span class="mac-light-tooltip">Очистить экран</span>
+				<span class="mac-light-tooltip">{m.terminal_view_clear()}</span>
 			</button>
 			<button
 				type="button"
 				class="mac-light mac-light-maximize"
-				aria-label="Переподключиться"
+				aria-label={m.terminal_view_reconnect()}
 				disabled={reconnecting}
 				onclick={reconnectSession}
 			>
 				<span class="mac-light-icon mac-light-icon-reconnect" aria-hidden="true">↻</span>
-				<span class="mac-light-tooltip">Переподключиться</span>
+				<span class="mac-light-tooltip">{m.terminal_view_reconnect()}</span>
 			</button>
 		</div>
-		<span class="mac-title">Терминал</span>
+		<span class="mac-title">{m.nav_terminal()}</span>
 		<div class="mac-titlebar-actions">
 			{#if autoLogin?.login}
 				<button
 					type="button"
 					class="history-toggle"
-					title="Отправить сохранённый логин в текущее приглашение"
+					title={m.terminal_view_send_login_title()}
 					onclick={sendStoredLogin}
 				>
 					<UserRound size={14} />
-					<span>Логин</span>
+					<span>{m.terminal_view_login()}</span>
 				</button>
 			{/if}
 			{#if autoLogin?.password}
 				<button
 					type="button"
 					class="history-toggle"
-					title="Отправить сохранённый пароль в текущее приглашение"
+					title={m.terminal_view_send_password_title()}
 					onclick={sendStoredPassword}
 				>
 					<KeyRound size={14} />
-					<span>Пароль</span>
+					<span>{m.terminal_view_password()}</span>
 				</button>
 			{/if}
 			{#if !historyEnabled}
 				<button
 					type="button"
 					class="history-toggle"
-					title="Показать историю команд"
+					title={m.terminal_view_show_history_title()}
 					onclick={() => setHistoryEnabled(true)}
 				>
 					<History size={14} />
-					<span>История</span>
+					<span>{m.terminal_view_history()}</span>
 				</button>
 			{/if}
 		</div>
@@ -481,7 +482,7 @@
 			<button
 				type="button"
 				class="history-splitter"
-				aria-label="Изменить ширину панели истории"
+				aria-label={m.terminal_view_resize_history()}
 				onpointerdown={startHistoryResize}
 			></button>
 			<div class="history-wrap" style:width="{historyWidth}px">

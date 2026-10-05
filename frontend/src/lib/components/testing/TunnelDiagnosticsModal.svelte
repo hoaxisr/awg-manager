@@ -1,17 +1,18 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Modal } from '$lib/components/ui';
 	import type { MihomoDiagnosticResourceKind } from '$lib/types';
 	import TunnelDiagnosticsPanel from './TunnelDiagnosticsPanel.svelte';
 
 	type DiagnosticsKind = 'awg' | 'system' | 'singbox' | 'subscription' | 'mihomo';
-	type DiagnosticsSubjectLabel = 'туннель' | 'подписку';
+	type DiagnosticsSubject = 'tunnel' | 'subscription';
 
 	interface Props {
 		open: boolean;
 		kind: DiagnosticsKind;
 		targetId: string;
 		displayName: string;
-		subjectLabel: DiagnosticsSubjectLabel;
+		subject: DiagnosticsSubject;
 		iface?: string;
 		resourceKind?: MihomoDiagnosticResourceKind;
 		loading?: boolean;
@@ -24,7 +25,7 @@
 		kind,
 		targetId,
 		displayName,
-		subjectLabel,
+		subject,
 		iface,
 		resourceKind,
 		loading = false,
@@ -39,7 +40,7 @@
 		if (kind === 'mihomo') return 'Mihomo';
 		return 'Subscription';
 	});
-	let modalTitle = $derived(`${diagnosticsTitlePrefix} тестирование: ${displayName}`);
+	let modalTitle = $derived(m.tunnel_test_title({ prefix: diagnosticsTitlePrefix, name: displayName }));
 </script>
 
 <Modal
@@ -54,7 +55,7 @@
 		{displayName}
 		backHref=""
 		backLabel=""
-		{subjectLabel}
+		{subject}
 		{iface}
 		{resourceKind}
 		{loading}

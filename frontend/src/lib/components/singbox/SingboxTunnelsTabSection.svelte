@@ -1,11 +1,11 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	// Вкладка «Sing-box туннели» страницы туннелей — выделено из
 	// routes/+page.svelte (класс 2): разметка дословно, состояние — пропсами.
 	import { StatStrip, Stat, LayoutViewToggle, Button, Badge, TableSortHeader } from '$lib/components/ui';
 	import { TunnelToolbarViewRow } from '$lib/components/tunnels';
 	import { SingboxInstallBanner, SingboxTunnelCard } from '$lib/components/singbox';
 	import { singboxTunnelTableSort, type SingboxTunnelSortKey } from '$lib/stores/tunnelTableSort';
-	import { formatRunningSub, pluralForm, TUNNEL_WORDS } from '$lib/utils/pluralize';
 	import { formatBytes } from '$lib/utils/format';
 	import { ariaSort } from '$lib/utils/tunnelTableSort';
 	import type { SingboxLayoutMode, TunnelRenderMode } from '$lib/constants/singboxLayout';
@@ -99,7 +99,7 @@
 		<div class="tunnels-toolbar">
 			<span class="tunnel-count">
 				{totalTunnelCount}
-				{pluralForm(totalTunnelCount, TUNNEL_WORDS)}
+				{m.tunnels_unit_tunnels({ count: totalTunnelCount })}
 			</span>
 			<div class="toolbar-actions">
 				<TunnelToolbarViewRow
@@ -112,7 +112,7 @@
 						<LayoutViewToggle
 							value={singboxTunnelsLayoutMode}
 							showListOption={showSingboxGridListToggle}
-							ariaLabel="Вид туннелей"
+							ariaLabel={m.tunnels_dashboard_view_aria()}
 							onchange={(v) => (singboxTunnelsLayoutMode = v)}
 						/>
 					{/snippet}
@@ -123,7 +123,7 @@
 					onclick={() => openWizard('choose')}
 					iconBefore={createIcon}
 				>
-					Добавить
+					{m.common_add()}
 				</Button>
 			</div>
 		</div>
@@ -133,23 +133,23 @@
 		<div class="empty-kinds">
 			<button type="button" class="empty-kind-card" onclick={() => openWizard('single')}>
 				<Link class="empty-kind-icon" size={28} strokeWidth={1.6} aria-hidden="true" />
-				<div class="empty-kind-title">Один сервер</div>
+				<div class="empty-kind-title">{m.tunnels_create_single_title()}</div>
 				<div class="empty-kind-desc">
-					Вставь share-link — получишь sing-box туннель со своим Proxy NDMS.
+					{m.singbox_tabs_one_server_desc()}
 				</div>
 			</button>
 			<button type="button" class="empty-kind-card" onclick={() => openWizard('inline')}>
 				<LayoutGrid class="empty-kind-icon" size={28} strokeWidth={1.6} aria-hidden="true" />
-				<div class="empty-kind-title">Группа серверов</div>
+				<div class="empty-kind-title">{m.tunnels_create_group_title()}</div>
 				<div class="empty-kind-desc">
-					Несколько ссылок одной группой с общим Proxy: ручной выбор или автовыбор по скорости.
+					{m.singbox_tabs_group_desc()}
 				</div>
 			</button>
 			<button type="button" class="empty-kind-card" onclick={() => openWizard('url')}>
 				<Globe class="empty-kind-icon" size={28} strokeWidth={1.6} aria-hidden="true" />
-				<div class="empty-kind-title">Подписка по URL</div>
+				<div class="empty-kind-title">{m.tunnels_create_sub_title()}</div>
 				<div class="empty-kind-desc">
-					Адрес подписки провайдера — список обновляется автоматически.
+					{m.singbox_tabs_subscription_desc()}
 				</div>
 			</button>
 			{#if openAwg3Import}
@@ -157,40 +157,40 @@
 					<Waypoints class="empty-kind-icon" size={28} strokeWidth={1.6} aria-hidden="true" />
 					<div class="empty-kind-title">AWG3 Endpoint</div>
 					<div class="empty-kind-desc">
-						JSON AmneziaWG 3 — endpoint внутри sing-box.
+						{m.singbox_tabs_awg3_desc()}
 					</div>
 				</button>
 			{/if}
 		</div>
 		<div class="info-card">
-			<h3 class="info-title">О Sing-box</h3>
+			<h3 class="info-title">{m.singbox_tabs_about()}</h3>
 			<p class="info-section-desc">
-				Универсальный прокси с поддержкой современных протоколов:
+				{m.singbox_tabs_about_desc()}
 			</p>
 			<div class="info-versions">
 				<div class="info-version">
 					<Badge variant="accent" size="sm" mono>VLESS</Badge>
-					<span class="info-version-desc">Лёгкий протокол без шифрования на уровне протокола. Поддерживает <strong>Reality</strong> (маскировка под настоящий TLS-сервер) и транспорт gRPC для обхода DPI.</span>
+					<span class="info-version-desc">{m.singbox_tabs_vless_prefix()} <strong>Reality</strong> {m.singbox_tabs_vless_suffix()}</span>
 				</div>
 				<div class="info-version">
 					<Badge variant="error" size="sm" mono>Trojan</Badge>
-					<span class="info-version-desc">TLS-туннель с парольной аутентификацией. Работает поверх TCP, поддерживает WebSocket и gRPC как транспорт.</span>
+					<span class="info-version-desc">{m.singbox_tabs_trojan_desc()}</span>
 				</div>
 				<div class="info-version">
 					<Badge variant="success" size="sm" mono>Shadowsocks</Badge>
-					<span class="info-version-desc">Классический прокси с шифрованием на уровне приложения. Современные шифры (AES-GCM, ChaCha20) и плагины obfs-local / v2ray-plugin.</span>
+					<span class="info-version-desc">{m.singbox_tabs_ss_desc()}</span>
 				</div>
 				<div class="info-version">
 					<Badge variant="warning" size="sm" mono>Hysteria2</Badge>
-					<span class="info-version-desc">QUIC-based, устойчив к потерям пакетов и работает поверх UDP. Паролевая аутентификация, обфускация salamander.</span>
+					<span class="info-version-desc">{m.singbox_tabs_hy2_desc()}</span>
 				</div>
 				<div class="info-version">
 					<Badge variant="info" size="sm" mono>NaiveProxy</Badge>
-					<span class="info-version-desc">HTTP/2 с полноценным TLS-маскированием под обычный HTTPS-сервер. Сложно отличим от браузерного трафика.</span>
+					<span class="info-version-desc">{m.singbox_tabs_naive_desc()}</span>
 				</div>
 				<div class="info-version">
 					<Badge variant="purple" size="sm" mono>Mieru</Badge>
-					<span class="info-version-desc">Мультиплексированный прокси с парольной аутентификацией. TCP и UDP в одном профиле, несколько портов и транспортов.</span>
+					<span class="info-version-desc">{m.singbox_tabs_mieru_desc()}</span>
 				</div>
 			</div>
 		</div>
@@ -200,26 +200,26 @@
 				<StatStrip>
 					<Stat
 						value={`${singboxTunnelListStats.running + mihomoRunningCount}/${totalTunnelCount}`}
-						label={pluralForm(singboxTunnelListStats.running + mihomoRunningCount, TUNNEL_WORDS)}
-						sub={formatRunningSub(singboxTunnelListStats.running + mihomoRunningCount, totalTunnelCount)}
+						label={m.tunnels_unit_tunnels({ count: singboxTunnelListStats.running + mihomoRunningCount })}
+						sub={m.singbox_tabs_running_sub({ active: singboxTunnelListStats.running + mihomoRunningCount, stopped: Math.max(0, totalTunnelCount - (singboxTunnelListStats.running + mihomoRunningCount)) })}
 					/>
 					<Stat
 						value={formatBytes(singboxTunnelListStats.down + singboxTunnelListStats.up)}
-						label="Суммарный трафик"
+						label={m.singbox_tabs_total_traffic()}
 						sub={`↓ ${formatBytes(singboxTunnelListStats.down)} · ↑ ${formatBytes(singboxTunnelListStats.up)}`}
 					/>
 					<Stat
 						value={combinedAverageDelay !== null
 							? `${combinedAverageDelay} ms`
 							: '—'}
-						label="Средний delay"
-						sub="по последним проверкам"
+						label={m.singbox_tabs_avg_delay()}
+						sub={m.singbox_tabs_avg_delay_sub()}
 					/>
 					<Stat
 						value={singboxTunnelListStats.leaderBytes > 0
 							? formatBytes(singboxTunnelListStats.leaderBytes)
 							: '—'}
-						label="Лидер по трафику"
+						label={m.tunnels_awg_stat_leader()}
 						sub={singboxTunnelListStats.leaderName}
 					/>
 					</StatStrip>
@@ -243,21 +243,21 @@
 								<TableSortHeader label="Delay" sortKey={'delay'} activeSortKey={$singboxTunnelTableSort.sortBy} sortAsc={$singboxTunnelTableSort.sortAsc} onchange={(key) => handleSingboxTunnelSortChange(key as SingboxTunnelSortKey)} />
 							</th>
 							<th aria-sort={ariaSort($singboxTunnelTableSort.sortBy, 'name', $singboxTunnelTableSort.sortAsc)}>
-								<TableSortHeader label="Туннель" sortKey={'name'} activeSortKey={$singboxTunnelTableSort.sortBy} sortAsc={$singboxTunnelTableSort.sortAsc} onchange={(key) => handleSingboxTunnelSortChange(key as SingboxTunnelSortKey)} />
+								<TableSortHeader label={m.tunnels_awg_col_tunnel()} sortKey={'name'} activeSortKey={$singboxTunnelTableSort.sortBy} sortAsc={$singboxTunnelTableSort.sortAsc} onchange={(key) => handleSingboxTunnelSortChange(key as SingboxTunnelSortKey)} />
 							</th>
 							<th aria-sort={ariaSort($singboxTunnelTableSort.sortBy, 'protocol', $singboxTunnelTableSort.sortAsc)}>
-								<TableSortHeader label="Протокол" sortKey={'protocol'} activeSortKey={$singboxTunnelTableSort.sortBy} sortAsc={$singboxTunnelTableSort.sortAsc} onchange={(key) => handleSingboxTunnelSortChange(key as SingboxTunnelSortKey)} />
+								<TableSortHeader label={m.singbox_tabs_col_protocol()} sortKey={'protocol'} activeSortKey={$singboxTunnelTableSort.sortBy} sortAsc={$singboxTunnelTableSort.sortAsc} onchange={(key) => handleSingboxTunnelSortChange(key as SingboxTunnelSortKey)} />
 							</th>
 							<th aria-sort={ariaSort($singboxTunnelTableSort.sortBy, 'running', $singboxTunnelTableSort.sortAsc)}>
-								<TableSortHeader label="Процесс" sortKey={'running'} activeSortKey={$singboxTunnelTableSort.sortBy} sortAsc={$singboxTunnelTableSort.sortAsc} onchange={(key) => handleSingboxTunnelSortChange(key as SingboxTunnelSortKey)} />
+								<TableSortHeader label={m.singbox_tabs_col_process()} sortKey={'running'} activeSortKey={$singboxTunnelTableSort.sortBy} sortAsc={$singboxTunnelTableSort.sortAsc} onchange={(key) => handleSingboxTunnelSortChange(key as SingboxTunnelSortKey)} />
 							</th>
 							<th aria-sort={ariaSort($singboxTunnelTableSort.sortBy, 'traffic', $singboxTunnelTableSort.sortAsc)}>
-								<TableSortHeader label="Трафик" sortKey={'traffic'} activeSortKey={$singboxTunnelTableSort.sortBy} sortAsc={$singboxTunnelTableSort.sortAsc} onchange={(key) => handleSingboxTunnelSortChange(key as SingboxTunnelSortKey)} />
+								<TableSortHeader label={m.tunnels_awg_col_traffic()} sortKey={'traffic'} activeSortKey={$singboxTunnelTableSort.sortBy} sortAsc={$singboxTunnelTableSort.sortAsc} onchange={(key) => handleSingboxTunnelSortChange(key as SingboxTunnelSortKey)} />
 							</th>
 							<th aria-sort={ariaSort($singboxTunnelTableSort.sortBy, 'ping', $singboxTunnelTableSort.sortAsc)}>
 								<TableSortHeader label="Ping" sortKey={'ping'} activeSortKey={$singboxTunnelTableSort.sortBy} sortAsc={$singboxTunnelTableSort.sortAsc} onchange={(key) => handleSingboxTunnelSortChange(key as SingboxTunnelSortKey)} />
 							</th>
-							<th class="col-actions">Действия</th>
+							<th class="col-actions">{m.tunnels_awg_col_actions()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -276,7 +276,7 @@
 				{/each}
 				{#if combinedSearchEmpty}
 					<tr class="tunnel-empty-row">
-						<td colspan="7">Ничего не найдено</td>
+						<td colspan="7">{m.tunnels_dashboard_empty_title()}</td>
 					</tr>
 				{/if}
 					</tbody>
@@ -305,7 +305,7 @@
 				{/each}
 			</div>
 			{#if combinedSearchEmpty}
-				<p class="tunnel-list-empty">Ничего не найдено</p>
+				<p class="tunnel-list-empty">{m.tunnels_dashboard_empty_title()}</p>
 			{/if}
 		{/if}
 {/if}

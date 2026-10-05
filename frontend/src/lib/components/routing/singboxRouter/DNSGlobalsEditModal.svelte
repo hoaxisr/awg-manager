@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import SingboxSettingsModal from './SingboxSettingsModal.svelte';
 	import type { SingboxRouterDNSServer, SingboxRouterDNSStrategy } from '$lib/types';
@@ -26,17 +27,17 @@
 		{ value: 'prefer_ipv6', label: 'prefer_ipv6' },
 	];
 
-	const TIMEOUT_OPTIONS: DropdownOption[] = [
-		{ value: '', label: '— по умолчанию (10 с) —' },
-		{ value: '3s', label: '3 с' },
-		{ value: '5s', label: '5 с' },
-		{ value: '10s', label: '10 с' },
-		{ value: '15s', label: '15 с' },
-		{ value: '30s', label: '30 с' },
-	];
+	const TIMEOUT_OPTIONS = $derived<DropdownOption[]>([
+		{ value: '', label: m.routing_singbox_timeout_default() },
+		{ value: '3s', label: m.routing_singbox_timeout_seconds({ count: 3 }) },
+		{ value: '5s', label: m.routing_singbox_timeout_seconds({ count: 5 }) },
+		{ value: '10s', label: m.routing_singbox_timeout_seconds({ count: 10 }) },
+		{ value: '15s', label: m.routing_singbox_timeout_seconds({ count: 15 }) },
+		{ value: '30s', label: m.routing_singbox_timeout_seconds({ count: 30 }) },
+	]);
 
 	const finalOptions = $derived<DropdownOption[]>([
-		{ value: '', label: '— не задан —' },
+		{ value: '', label: m.routing_singbox_dns_final_unset() },
 		...servers.map((s) => ({ value: s.tag, label: s.tag })),
 	]);
 
@@ -82,14 +83,14 @@
 </script>
 
 <SingboxSettingsModal
-	title="DNS по умолчанию"
+	title={m.routing_singbox_dns_globals_title()}
 	onClose={onClose}
 	size="md"
 	hasUnsavedChanges={() => isDirty}
 >
 	<div class="form">
 		<label class="field">
-			<div class="lbl">Final-сервер</div>
+			<div class="lbl">{m.routing_singbox_dns_final_label()}</div>
 			<Dropdown
 				bind:value={draftFinal}
 				options={finalOptions}
@@ -97,25 +98,21 @@
 				fullWidth
 			/>
 			<div class="hint">
-				Сервер по умолчанию для запросов, не попавших ни под одно правило —
-				простой запасной путь (рекомендуется). Отдельное catch-all правило
-				(без условий) делает то же, но как явное последнее правило; если есть
-				и то и другое, правило важнее (проверяется раньше final).
+				{m.routing_singbox_dns_final_hint()}
 			</div>
 		</label>
 
 		<label class="field">
-			<div class="lbl">Стратегия</div>
+			<div class="lbl">{m.routing_singbox_dns_strategy()}</div>
 			<Dropdown bind:value={draftStrategy} options={STRATEGY_OPTIONS} fullWidth />
-			<div class="hint">Для роутера без IPv6 обычно prefer_ipv4 или ipv4_only.</div>
+			<div class="hint">{m.routing_singbox_dns_strategy_hint()}</div>
 		</label>
 
 		<label class="field">
-			<div class="lbl">Таймаут запроса</div>
+			<div class="lbl">{m.routing_singbox_dns_timeout()}</div>
 			<Dropdown bind:value={draftTimeout} options={TIMEOUT_OPTIONS} fullWidth />
 			<div class="hint">
-				Сколько ждать ответ одного DNS-сервера. Короче — быстрее переход к
-				следующему в цепочке, но чаще ложные отказы на медленном канале.
+				{m.routing_singbox_dns_timeout_hint()}
 			</div>
 		</label>
 
@@ -123,9 +120,9 @@
 	</div>
 
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={onClose} type="button">Отмена</Button>
+		<Button variant="ghost" size="md" onclick={onClose} type="button">{m.common_cancel()}</Button>
 		<Button variant="primary" size="md" onclick={save} disabled={busy || !isDirty} loading={busy} type="button">
-			Сохранить
+			{m.common_save()}
 		</Button>
 	{/snippet}
 </SingboxSettingsModal>

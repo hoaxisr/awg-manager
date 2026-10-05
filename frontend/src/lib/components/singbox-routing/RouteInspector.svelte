@@ -5,6 +5,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { awgTags as awgTagsStore } from '$lib/stores/awgTags';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
+	import { m } from '$lib/i18n';
 	import type {
 		SingboxRouterInspectResult,
 		SingboxRouterInspectMatch,
@@ -62,8 +63,11 @@
 	interface InspectorStep {
 		id: string;
 		label: string;
+		/** Код сгенерированной подписи шага (перевод выводится при рендере). */
+		labelKind?: 'wait_config' | 'finish_rule_set' | 'next_rule' | 'final' | 'wait_step';
+		labelRule?: number;
+		labelTotal?: number;
 		status: StepStatus;
-		meta?: string;
 		startedAt?: number;
 		finishedAt?: number;
 		durationMs?: number;
@@ -82,7 +86,8 @@
 		slowestSteps: InspectorStep[];
 		ruleSetSteps: InspectorStep[];
 	}
-	let currentProgressMessage = $state('Ожидаем ответ backend…');
+	/** Сообщение backend; null — ещё не пришло (показываем запасной текст). */
+	let currentProgressMessage = $state<string | null>(null);
 	let previousStep = $state<InspectorStep | null>(null);
 	let currentStep = $state<InspectorStep | null>(null);
 	let nextStep = $state<InspectorStep | null>(null);
@@ -148,7 +153,34 @@
 
 	function formatDuration(ms?: number): string {
 		if (!ms || ms < 1000) return '';
-		return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)} сек`;
+		return m.format_duration_seconds({ seconds: (ms / 1000).toFixed(ms < 10000 ? 1 : 0) });
+	}
+
+	function stepLabel(step: InspectorStep): string {
+		switch (step.labelKind) {
+			case 'wait_config':
+				return m.singbox_routing_inspector_next_wait_config();
+			case 'finish_rule_set':
+				return m.singbox_routing_inspector_next_finish_rule_set({ rule: step.labelRule ?? 0 });
+			case 'next_rule':
+				return m.singbox_routing_inspector_next_rule({ rule: step.labelRule ?? 0, total: step.labelTotal ?? 0 });
+			case 'final':
+				return m.singbox_routing_inspector_next_final();
+			case 'wait_step':
+				return m.singbox_routing_inspector_next_wait_step();
+			default:
+				return step.label;
+		}
+	}
+
+	function stepMeta(step: InspectorStep): string {
+		const tag = step.ruleSetTag;
+		if (typeof step.ruleIndex === 'number' && step.ruleTotal) {
+			return tag
+				? m.singbox_routing_inspector_rule_of_with_set({ index: step.ruleIndex, total: step.ruleTotal, tag })
+				: m.singbox_routing_inspector_rule_of({ index: step.ruleIndex, total: step.ruleTotal });
+		}
+		return tag ? m.singbox_routing_inspector_set_only({ tag }) : '';
 	}
 
 	function stepKey(progress: SingboxRouterInspectProgress): string {
@@ -167,18 +199,10 @@
 		const ruleTotal = typeof progress.ruleTotal === 'number' ? progress.ruleTotal : undefined;
 		const ruleSetTag = progress.ruleSetTag || undefined;
 		let label = progress.message || progress.phase;
-		let meta = '';
-		if (typeof ruleIndex === 'number' && ruleTotal) {
-			meta = `Правило #${ruleIndex} из ${ruleTotal}`;
-		}
-		if (ruleSetTag) {
-			meta = meta ? `${meta} · rule_set: ${ruleSetTag}` : `rule_set: ${ruleSetTag}`;
-		}
 		return {
 			id: `${stepKey(progress)}:${now}`,
 			label,
 			status,
-			meta,
 			startedAt: now,
 			ruleIndex,
 			ruleTotal,
@@ -220,40 +244,44 @@
 		if (totalRules <= 0) {
 			return {
 				id: `next:config:${Date.now()}`,
-				label: 'Ожидаем загрузку конфигурации',
+				label: '',
+				labelKind: 'wait_config',
 				status: 'next',
-				meta: '',
 			};
 		}
 		if (currentRule !== null) {
 			if (activeRuleSetTag) {
 				return {
 					id: `next:ruleset:${Date.now()}`,
-					label: `Завершить проверку rule_set и перейти к результату правила #${currentRule}`,
+					label: '',
+					labelKind: 'finish_rule_set',
+					labelRule: currentRule,
 					status: 'next',
-					meta: activeRuleSetTag ? `rule_set: ${activeRuleSetTag}` : '',
+					ruleSetTag: activeRuleSetTag,
 				};
 			}
 			if (currentRule + 1 < totalRules) {
 				return {
 					id: `next:rule:${Date.now()}`,
-					label: `Далее: правило #${currentRule + 1} из ${totalRules}`,
+					label: '',
+					labelKind: 'next_rule',
+					labelRule: currentRule + 1,
+					labelTotal: totalRules,
 					status: 'next',
-					meta: '',
 				};
 			}
 			return {
 				id: `next:final:${Date.now()}`,
-				label: 'Далее: финальное решение маршрута',
+				label: '',
+				labelKind: 'final',
 				status: 'next',
-				meta: '',
 			};
 		}
 		return {
 			id: `next:wait:${Date.now()}`,
-			label: 'Ожидаем следующий шаг проверки',
+			label: '',
+			labelKind: 'wait_step',
 			status: 'next',
-			meta: '',
 		};
 	}
 
@@ -390,7 +418,7 @@
 			currentStep = null;
 			nextStep = null;
 			completedSteps = [];
-			currentProgressMessage = 'Ожидаем ответ backend…';
+			currentProgressMessage = null;
 			activeStepStartedAt = {};
 			checkedRuleIndexes = new Set();
 			totalRules = 0;
@@ -416,7 +444,7 @@
 						if (runId !== inspectRunId) return;
 						if (next.matches?.length) {
 							totalRules = Math.max(totalRules, next.matches.length);
-							checkedRuleIndexes = new Set(next.matches.map((m: { index: number }) => m.index));
+							checkedRuleIndexes = new Set(next.matches.map((match) => match.index));
 						}
 						inspectionReport = buildInspectionReport(next);
 						result = next;
@@ -428,7 +456,7 @@
 					onInspectError: (message: string) => {
 						if (runId !== inspectRunId) return;
 						error = message;
-						notifications.error(`Не удалось проверить маршрут: ${message}`);
+						notifications.error(m.singbox_routing_inspector_check_failed({ message }));
 						testing = false;
 						stopProgressTimer();
 						inspectStream?.close();
@@ -437,7 +465,7 @@
 					onError: (message: string) => {
 						if (runId !== inspectRunId) return;
 						error = message;
-						notifications.error(`Не удалось проверить маршрут: ${message}`);
+						notifications.error(m.singbox_routing_inspector_check_failed({ message }));
 						testing = false;
 						stopProgressTimer();
 						inspectStream?.close();
@@ -449,7 +477,7 @@
 			if (runId !== inspectRunId) return;
 			const msg = e instanceof Error ? e.message : String(e);
 			error = msg;
-			notifications.error(`Не удалось проверить маршрут: ${msg}`);
+			notifications.error(m.singbox_routing_inspector_check_failed({ message: msg }));
 			testing = false;
 			stopProgressTimer();
 			inspectStream?.close();
@@ -488,7 +516,7 @@
 		currentStep = null;
 		nextStep = null;
 		completedSteps = [];
-		currentProgressMessage = 'Ожидаем ответ backend…';
+		currentProgressMessage = null;
 		activeStepStartedAt = {};
 		checkedRuleIndexes = new Set();
 		totalRules = 0;
@@ -521,18 +549,18 @@
 	const matchedRuleData = $derived.by<SingboxRouterInspectMatch | null>(() => {
 		const r = result;
 		if (!r || r.matchedRule < 0) return null;
-		return r.matches.find((m) => m.index === r.matchedRule) ?? null;
+		return r.matches.find((match) => match.index === r.matchedRule) ?? null;
 	});
 
 	const isReject = $derived(result?.destination === 'REJECT');
 </script>
 
-<Modal {open} title={`Инспектор маршрутов · ${engine === 'mihomo' ? 'Mihomo' : 'Sing-box'}`} size="xl" onclose={close}>
+<Modal {open} title={m.singbox_routing_inspector_title({ engine: engine === 'mihomo' ? 'Mihomo' : 'sing-box' })} size="xl" onclose={close}>
 	<div class="inspector">
 		<!-- Input section -->
 		<section class="card input-section">
 			<label for="inspector-input" class="field-label">
-				Домен или IP
+				{m.singbox_routing_inspector_input_label()}
 			</label>
 			<div class="input-row">
 				<input
@@ -540,7 +568,7 @@
 					type="text"
 					bind:value={inputValue}
 					onkeydown={handleKeydown}
-					placeholder="google.com или 8.8.8.8"
+					placeholder={m.singbox_routing_inspector_input_placeholder()}
 					class="text-input"
 					autocomplete="off"
 				/>
@@ -549,7 +577,7 @@
 					onclick={testRoute}
 					disabled={testing || !inputValue.trim()}
 				>
-					{testing ? 'Проверяем…' : 'Проверить'}
+					{testing ? m.singbox_routing_inspector_checking() : m.common_check()}
 				</Button>
 			</div>
 
@@ -558,26 +586,26 @@
 				class="advanced-toggle"
 				onclick={() => (advancedOpen = !advancedOpen)}
 			>
-				{advancedOpen ? 'Скрыть' : 'Показать'} дополнительные параметры
+				{advancedOpen ? m.singbox_routing_inspector_hide_advanced() : m.singbox_routing_inspector_show_advanced()}
 			</button>
 
 			{#if advancedOpen}
 				<div class="advanced-row">
 					<label class="adv-field">
-						<span class="adv-label">Порт</span>
+						<span class="adv-label">{m.singbox_routing_inspector_port()}</span>
 						<input
 							type="number"
 							min="0"
 							max="65535"
 							bind:value={port}
-							placeholder="опционально"
+							placeholder={m.singbox_routing_inspector_port_placeholder()}
 							class="text-input"
 						/>
 					</label>
 					<label class="adv-field">
-						<span class="adv-label">Протокол</span>
+						<span class="adv-label">{m.singbox_routing_inspector_protocol()}</span>
 						<select bind:value={protocol} class="select-input">
-							<option value="">не задан</option>
+							<option value="">{m.singbox_routing_inspector_protocol_unset()}</option>
 							<option value="tcp">tcp</option>
 							<option value="udp">udp</option>
 						</select>
@@ -586,7 +614,7 @@
 			{/if}
 
 			<div class="quick-row">
-				<span class="quick-label">Быстрая проверка:</span>
+				<span class="quick-label">{m.singbox_routing_inspector_quick_check()}</span>
 				{#each examples as ex (ex)}
 					<button
 						type="button"
@@ -604,10 +632,10 @@
 			<section class="card progress-card" aria-live="polite">
 				<div class="progress-header-row">
 					<div>
-						<div class="progress-title">Идёт проверка маршрута</div>
-						<div class="progress-message">{currentProgressMessage}</div>
+						<div class="progress-title">{m.singbox_routing_inspector_in_progress_title()}</div>
+						<div class="progress-message">{currentProgressMessage ?? m.singbox_routing_inspector_waiting_backend()}</div>
 					</div>
-					<div class="progress-elapsed">Общее время: {elapsedSec} сек</div>
+					<div class="progress-elapsed">{m.singbox_routing_inspector_total_time({ seconds: elapsedSec })}</div>
 				</div>
 				{#if ruleTotal > 0}
 					<div class="progress-bar-wrap">
@@ -618,25 +646,25 @@
 				{/if}
 				<div class="progress-summary">
 					{#if ruleTotal > 0}
-						<span class="progress-pill">Правила: {checkedRules} из {ruleTotal}</span>
+						<span class="progress-pill">{m.singbox_routing_inspector_rules_progress({ checked: checkedRules, total: ruleTotal })}</span>
 					{/if}
 					{#if typeof currentRuleIndex === 'number' && ruleTotal > 0}
-						<span class="progress-pill">Текущее правило: #{currentRuleIndex}</span>
+						<span class="progress-pill">{m.singbox_routing_inspector_current_rule({ index: currentRuleIndex })}</span>
 					{/if}
 					{#if currentRuleSet}
 						<span class="progress-pill">Rule-set: <code>{currentRuleSet}</code></span>
 					{/if}
 				</div>
-				<div class="progress-hint">Инспектор симулирует правила{engine === 'mihomo' ? ' ядра Mihomo.' : ' и может проверять rule_set через sing-box.'}</div>
-				<div class="step-stack" aria-label="Ход проверки">
+				<div class="progress-hint">{m.singbox_routing_inspector_progress_hint()}</div>
+				<div class="step-stack" aria-label={m.singbox_routing_inspector_steps_aria()}>
 					{#if previousStep}
 						<div class="step-card step-{previousStep.status}">
 							<span class="step-dot"></span>
 							<div class="step-content">
-								<div class="step-kicker">Проверено</div>
-								<div class="step-label">{previousStep.label}</div>
+								<div class="step-kicker">{m.singbox_routing_inspector_step_checked()}</div>
+								<div class="step-label">{stepLabel(previousStep)}</div>
 								<div class="step-meta">
-									{#if previousStep.meta}<span>{previousStep.meta}</span>{/if}
+									{#if stepMeta(previousStep)}<span>{stepMeta(previousStep)}</span>{/if}
 									{#if previousStep.durationMs}<span>{formatDuration(previousStep.durationMs)}</span>{/if}
 								</div>
 							</div>
@@ -646,9 +674,9 @@
 						<div class="step-card step-current">
 							<span class="step-dot"></span>
 							<div class="step-content">
-								<div class="step-kicker">Сейчас</div>
-								<div class="step-label">{currentStep.label}</div>
-								{#if currentStep.meta}<div class="step-meta"><span>{currentStep.meta}</span></div>{/if}
+								<div class="step-kicker">{m.singbox_routing_inspector_step_now()}</div>
+								<div class="step-label">{stepLabel(currentStep)}</div>
+								{#if stepMeta(currentStep)}<div class="step-meta"><span>{stepMeta(currentStep)}</span></div>{/if}
 							</div>
 						</div>
 					{/if}
@@ -656,9 +684,9 @@
 						<div class="step-card step-next">
 							<span class="step-dot"></span>
 							<div class="step-content">
-								<div class="step-kicker">Далее</div>
-								<div class="step-label">{nextStep.label}</div>
-								{#if nextStep.meta}<div class="step-meta"><span>{nextStep.meta}</span></div>{/if}
+								<div class="step-kicker">{m.singbox_routing_inspector_step_next()}</div>
+								<div class="step-label">{stepLabel(nextStep)}</div>
+								{#if stepMeta(nextStep)}<div class="step-meta"><span>{stepMeta(nextStep)}</span></div>{/if}
 							</div>
 						</div>
 					{/if}
@@ -676,7 +704,7 @@
 				<div class="result-row">
 					<div class="input-block">
 						<div class="input-value">{result.input}</div>
-						<div class="input-type">{result.inputType === 'domain' ? 'домен' : 'IP-адрес'}</div>
+						<div class="input-type">{result.inputType === 'domain' ? m.singbox_routing_inspector_type_domain() : m.singbox_routing_inspector_type_ip()}</div>
 					</div>
 					<div class="arrow">→</div>
 					<div
@@ -687,9 +715,9 @@
 						<div class="dest-value">{humanize(result.destination)}</div>
 						<div class="dest-meta">
 							{#if result.matchedRule >= 0}
-								Сработало правило #{result.matchedRule}
+								{m.singbox_routing_inspector_matched_rule({ index: result.matchedRule })}
 							{:else}
-								Дефолтный outbound (final: {humanize(result.final || 'direct')})
+								{m.singbox_routing_inspector_default_outbound({ final: humanize(result.final || 'direct') })}
 							{/if}
 						</div>
 					</div>
@@ -698,7 +726,7 @@
 				{#if matchedRuleData}
 					<div class="match-detail">
 						<div class="match-header">
-							<span class="rule-num">Правило #{matchedRuleData.index}</span>
+							<span class="rule-num">{m.singbox_routing_inspector_rule_num({ index: matchedRuleData.index })}</span>
 							<span class="badge badge-{actionVariant(matchedRuleData.action)}">
 								{actionLabel(matchedRuleData.action)}
 							</span>
@@ -711,7 +739,7 @@
 						{/if}
 						{#if matchedRuleData.conditions && matchedRuleData.conditions.length}
 							<div class="match-conditions">
-								<span class="cond-label">Условия:</span>
+								<span class="cond-label">{m.singbox_routing_inspector_conditions()}</span>
 								{matchedRuleData.conditions.join(', ')}
 							</div>
 						{/if}
@@ -719,7 +747,7 @@
 				{:else}
 					<div class="match-detail no-match">
 						<span>
-							Ни одно правило не сработало — трафик пойдёт через
+							{m.singbox_routing_inspector_no_match_prefix()}
 							<strong>{humanize(result.final || 'direct')}</strong>.
 						</span>
 					</div>
@@ -731,15 +759,15 @@
 					<div class="dns-header">
 						<div class="dns-title-group">
 							<Globe size={15} class="dns-icon" />
-							<span class="dns-title">DNS-решение (Nameserver Policy)</span>
+							<span class="dns-title">{m.singbox_routing_inspector_dns_title()}</span>
 						</div>
 						<span class="badge {result.dns.isRemoteDNS ? 'badge-route' : 'badge-sniff'}">
-							{result.dns.isRemoteDNS ? 'Remote DNS (Туннель)' : 'Локальный / Nameserver'}
+							{result.dns.isRemoteDNS ? m.singbox_routing_inspector_dns_remote() : m.singbox_routing_inspector_dns_local()}
 						</span>
 					</div>
 					<div class="dns-grid">
 						<div class="dns-field">
-							<span class="dns-label">Целевой DNS-сервер:</span>
+							<span class="dns-label">{m.singbox_routing_inspector_dns_target_server()}</span>
 							<strong class="dns-server-name">{result.dns.server}</strong>
 							{#if result.dns.serverAddress}
 								<span class="dns-server-addr">({result.dns.serverAddress})</span>
@@ -747,13 +775,13 @@
 						</div>
 						{#if result.dns.policy}
 							<div class="dns-field">
-								<span class="dns-label">Политика DNS:</span>
+								<span class="dns-label">{m.singbox_routing_inspector_dns_policy()}</span>
 								<code class="dns-code">{result.dns.policy}</code>
 							</div>
 						{/if}
 						{#if result.dns.reason}
 							<div class="dns-field">
-								<span class="dns-label">Обоснование:</span>
+								<span class="dns-label">{m.singbox_routing_inspector_dns_reason()}</span>
 								<span class="dns-reason-text">{result.dns.reason}</span>
 							</div>
 						{/if}
@@ -763,7 +791,7 @@
 
 			{#if result.note}
 				<div class="note-banner">
-					<strong>Примечание:</strong>
+					<strong>{m.singbox_routing_inspector_note()}</strong>
 					{result.note}
 				</div>
 			{/if}
@@ -772,43 +800,43 @@
 				<section class="card inspect-report">
 					<div class="report-header">
 						<div>
-							<div class="report-title">Отчёт проверки</div>
-							<div class="report-subtitle">Проверено правил: {inspectionReport.checkedRules} из {inspectionReport.totalRules}</div>
+							<div class="report-title">{m.singbox_routing_inspector_report_title()}</div>
+							<div class="report-subtitle">{m.singbox_routing_inspector_report_checked_rules({ checked: inspectionReport.checkedRules, total: inspectionReport.totalRules })}</div>
 						</div>
-						<div class="report-duration">{formatDuration(inspectionReport.totalDurationMs) || 'менее 1 сек'}</div>
+						<div class="report-duration">{formatDuration(inspectionReport.totalDurationMs) || m.singbox_routing_inspector_less_than_second()}</div>
 					</div>
 					<div class="report-grid">
 						<div class="report-item">
-							<span>Решение</span>
+							<span>{m.singbox_routing_inspector_report_decision()}</span>
 							<strong>{humanize(inspectionReport.destination)}</strong>
 						</div>
 						<div class="report-item">
-							<span>Сработало</span>
+							<span>{m.singbox_routing_inspector_report_matched()}</span>
 							<strong>
 								{inspectionReport.matchedRule >= 0
-									? `Правило #${inspectionReport.matchedRule}`
+									? m.singbox_routing_inspector_rule_num({ index: inspectionReport.matchedRule })
 									: `Final: ${humanize(inspectionReport.final)}`}
 							</strong>
 						</div>
 					</div>
 					{#if inspectionReport.slowestSteps.length > 0}
 						<div class="report-section">
-							<div class="report-section-title">Самые долгие этапы</div>
+							<div class="report-section-title">{m.singbox_routing_inspector_report_slowest()}</div>
 							{#each inspectionReport.slowestSteps as step (step.id)}
 								<div class="report-row">
-									<span>{step.label}</span>
-									<strong>{formatDuration(step.durationMs) || 'менее 1 сек'}</strong>
+									<span>{stepLabel(step)}</span>
+									<strong>{formatDuration(step.durationMs) || m.singbox_routing_inspector_less_than_second()}</strong>
 								</div>
 							{/each}
 						</div>
 					{/if}
 					{#if inspectionReport.ruleSetSteps.length > 0}
 						<div class="report-section">
-							<div class="report-section-title">Rule-set проверки</div>
+							<div class="report-section-title">{m.singbox_routing_inspector_report_rule_set_checks()}</div>
 							{#each inspectionReport.ruleSetSteps as step (step.id)}
 								<div class="report-row">
-									<span>{step.label}</span>
-									<strong>{formatDuration(step.durationMs) || 'менее 1 сек'}</strong>
+									<span>{stepLabel(step)}</span>
+									<strong>{formatDuration(step.durationMs) || m.singbox_routing_inspector_less_than_second()}</strong>
 								</div>
 							{/each}
 						</div>
@@ -822,46 +850,48 @@
 					class="walkthrough-toggle"
 					onclick={() => (showAllRules = !showAllRules)}
 				>
-					{showAllRules ? 'Скрыть' : 'Показать'} разбор всех правил ({result.matches.length})
+					{showAllRules
+						? m.singbox_routing_inspector_walkthrough_hide({ count: result.matches.length })
+						: m.singbox_routing_inspector_walkthrough_show({ count: result.matches.length })}
 				</button>
 			{/if}
 
 			{#if showAllRules}
 				<section class="card walkthrough">
-					<header class="walkthrough-header">Порядок проверки правил</header>
+					<header class="walkthrough-header">{m.singbox_routing_inspector_walkthrough_title()}</header>
 					<ul class="walkthrough-list">
-						{#each result.matches as m (m.index)}
+						{#each result.matches as match (match.index)}
 							<li
 								class="walkthrough-row"
-								class:row-matched={m.matched}
-								class:row-non-final={m.matched &&
-									(m.action === 'sniff' || m.action === 'hijack-dns')}
+								class:row-matched={match.matched}
+								class:row-non-final={match.matched &&
+									(match.action === 'sniff' || match.action === 'hijack-dns')}
 							>
 								<div class="row-head">
-									<span class="row-index">#{m.index}</span>
-									<span class="badge badge-{actionVariant(m.action)}">
-										{actionLabel(m.action)}
+									<span class="row-index">#{match.index}</span>
+									<span class="badge badge-{actionVariant(match.action)}">
+										{actionLabel(match.action)}
 									</span>
-									{#if m.outbound}
-										<span class="row-outbound">→ {humanize(m.outbound)}</span>
+									{#if match.outbound}
+										<span class="row-outbound">→ {humanize(match.outbound)}</span>
 									{/if}
 									<span class="row-status">
-										{#if m.matched}
-											{#if m.action === 'sniff' || m.action === 'hijack-dns'}
-												совпало (не финальное)
+										{#if match.matched}
+											{#if match.action === 'sniff' || match.action === 'hijack-dns'}
+												{m.singbox_routing_inspector_row_matched_non_final()}
 											{:else}
-												совпало
+												{m.singbox_routing_inspector_row_matched()}
 											{/if}
 										{:else}
-											не совпало
+											{m.singbox_routing_inspector_row_not_matched()}
 										{/if}
 									</span>
 								</div>
-								{#if m.conditions && m.conditions.length}
-									<div class="row-conditions">{m.conditions.join(' · ')}</div>
+								{#if match.conditions && match.conditions.length}
+									<div class="row-conditions">{match.conditions.join(' · ')}</div>
 								{/if}
-								{#if m.reason}
-									<div class="row-reason">{m.reason}</div>
+								{#if match.reason}
+									<div class="row-reason">{match.reason}</div>
 								{/if}
 							</li>
 						{/each}
@@ -870,7 +900,7 @@
 								<span class="row-index">∞</span>
 								<span class="badge badge-other">FINAL</span>
 								<span class="row-outbound">→ {humanize(result.final || 'direct')}</span>
-								<span class="row-status">используется, если ни одно правило не подходит</span>
+								<span class="row-status">{m.singbox_routing_inspector_row_final_hint()}</span>
 							</div>
 						</li>
 					</ul>
@@ -878,8 +908,7 @@
 			{/if}
 		{:else if !error && !testing}
 			<div class="empty-state">
-				Введите домен или IP-адрес — инспектор покажет, через какой выходной узел пойдёт
-				трафик и какое правило сработает. Это симуляция, ядро {engine === 'mihomo' ? 'Mihomo' : 'sing-box'} не вызывается.
+				{m.singbox_routing_inspector_empty({ engine: engine === 'mihomo' ? 'Mihomo' : 'sing-box' })}
 			</div>
 		{/if}
 	</div>
