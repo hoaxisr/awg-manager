@@ -64,9 +64,9 @@ func TestConfirmCreated_OwnCreatedInFlight_AbsentAnswer_RereadImmediately(t *tes
 }
 
 // M6′: свой ifcreated пришёл, пока первый список ConfirmCreated в полёте, а имени
-// в карте ещё нет — имя в creating, «грязно» не ставится: подтверждено первым
+// в карте ещё нет — имя в owned, «грязно» не ставится: подтверждено первым
 // списком, и ReconcileDirty диспетчера списка не читает.
-// Мутация: убрать creating-гард в OnCreated → ReconcileDirty +1, красный.
+// Мутация: убрать owned-гард в OnCreated → ReconcileDirty +1, красный.
 func TestConfirmCreated_OwnCreatedInFirstList_NoDispatcherList(t *testing.T) {
 	f, s := importLate(t, 0)
 	f.InList(func() {

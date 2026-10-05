@@ -102,10 +102,12 @@ func (d *Dispatcher) SetRoutingChanged(fn RoutingChangedListener) {
 
 // SetExistenceListed registers (or clears with nil) the callback fired after
 // the list of EVERY batch that carried ifcreated/ifdestroyed — even when the
-// list failed (Warn; the map stays dirty for the next reader). publish is
-// true when the batch had an ifdestroyed or an ifcreated without
-// SelfCreated: our own creation is published by its creator after the
-// tunnel is persisted. nil — nothing is published.
+// list failed (Warn; the map stays dirty for the next reader). publish — в
+// пачке был хук существования чужого имени: ifcreated не из owned,
+// ifdestroyed не из removed (InterfaceStore, П14/П20). Свои создание и
+// снятие хуком не публикуются (решение владельца В3): до записи туннеля в
+// стор новый интерфейс показался бы в «системных» призраком. nil — nothing
+// is published.
 func (d *Dispatcher) SetExistenceListed(fn func(publish bool)) {
 	if fn == nil {
 		d.onExisting.Store(nil)
@@ -184,13 +186,11 @@ func (d *Dispatcher) drain() {
 
 	existence, publish := false, false
 	for _, e := range batch {
-		d.apply(e)
+		own := d.apply(e)
 		switch e.Type {
-		case EventIfDestroyed:
-			existence, publish = true, true
-		case EventIfCreated:
+		case EventIfCreated, EventIfDestroyed:
 			existence = true
-			publish = publish || !e.SelfCreated
+			publish = publish || !own
 		}
 	}
 	if overflow {
@@ -294,9 +294,12 @@ func (d *Dispatcher) refreshAfterOverflow() {
 // Other stores — legacy InvalidateAll/Invalidate; their state will
 // be re-fetched on the next read. Will be migrated to event-sourcing
 // in follow-up PRs.
-func (d *Dispatcher) apply(e Event) {
+//
+// own — хук существования своего имени (OnCreated/OnDestroyed): ifcreated
+// созданного нами, ifdestroyed снятого нами. Без карты — чужое.
+func (d *Dispatcher) apply(e Event) (own bool) {
 	if d.queries == nil {
-		return
+		return false
 	}
 
 	// === Event-sourced InterfaceStore path ===
@@ -308,9 +311,9 @@ func (d *Dispatcher) apply(e Event) {
 		}
 		switch e.Type {
 		case EventIfCreated:
-			d.queries.Interfaces.OnCreated(e.ID)
+			own = d.queries.Interfaces.OnCreated(e.ID)
 		case EventIfDestroyed:
-			d.queries.Interfaces.OnDestroyed(e.ID)
+			own = d.queries.Interfaces.OnDestroyed(e.ID)
 		case EventIfLayerChanged:
 			d.queries.Interfaces.OnLayerChanged(e.ID, e.Layer, e.Level)
 		case EventIfIPChanged:
@@ -355,4 +358,5 @@ func (d *Dispatcher) apply(e Event) {
 			d.queries.Routes.InvalidateAll()
 		}
 	}
+	return own
 }

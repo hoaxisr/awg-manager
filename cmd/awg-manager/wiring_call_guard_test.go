@@ -50,3 +50,25 @@ func TestSetupEventWiring_WiresExistencePublisher(t *testing.T) {
 		t.Fatal("setupEventWiring не вешает existencePublisher: UI не узнает о внешнем создании/снятии интерфейса")
 	}
 }
+
+// П20: без пробы «снято нами» свой ifdestroyed (Delete, откат старта) идёт в
+// оркестратор как чужой — список на каждое своё снятие. Пропавший вызов
+// сборка и тесты оркестратора не заметят: проба nil-безопасна.
+func TestWiring_RemovedByUsProbeWired(t *testing.T) {
+	src, err := os.ReadFile("wiring_routing.go")
+	if err != nil {
+		t.Fatalf("чтение проводки: %v", err)
+	}
+	body := string(src)
+	start := strings.Index(body, "func (a *app) setupEventWiring()")
+	if start < 0 {
+		t.Fatal("setupEventWiring не найдена — проверку надо переписать под новое имя")
+	}
+	end := strings.Index(body[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("не видно конца setupEventWiring")
+	}
+	if !strings.Contains(body[start:start+end], "a.orch.SetRemovedByUsProbe(a.ndmsQueries.Interfaces.RemovedByUs)") {
+		t.Fatal("setupEventWiring не подключает RemovedByUs стора к оркестратору")
+	}
+}

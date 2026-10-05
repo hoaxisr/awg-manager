@@ -270,10 +270,6 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 	}
 	if s.tunnelService != nil {
 		h.hookHandler.SetWANModel(s.tunnelService.WANModel())
-		// Wire the self-create gate so importNativeWG can suppress the
-		// ifcreated-driven snapshot republish while its store.Save is
-		// still pending.
-		s.tunnelService.SetSelfCreateGate(h.hookHandler)
 	}
 	if s.proxyRuntimeNudge != nil {
 		h.hookHandler.SetProxyRuntimeNudge(s.proxyRuntimeNudge)
@@ -783,7 +779,6 @@ func (s *Server) wireCrossHandlers(mux *http.ServeMux, h *routeHandlers) {
 	h.tunnelsHandler.SetTunnelsSnapshotBuilder(func(ctx context.Context) map[string]interface{} {
 		return tsb.Build(ctx)
 	})
-	h.tunnelsHandler.SetSelfCreateGate(h.hookHandler)
 
 	// DNS routing diagnostics
 	if s.dnsCheckService != nil {

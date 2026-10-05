@@ -195,9 +195,9 @@ func (n *orderedNotifier) ExpectHook(name, level string) {
 	n.calls = append(n.calls, c)
 }
 
-// Наш снос записи ждёт свой ifdestroyed ДО POST: иначе оркестратор принял
-// бы его за внешнее снятие (Task 35).
-func TestDelete_RegistersDestroyedExpectation(t *testing.T) {
+// Наш снос записи — свой ifdestroyed: оркестратор узнаёт его по карте
+// (RemovedByUs, П20), ожиданий хуков Delete не регистрирует (Task 35 → 60).
+func TestDelete_RecordRemovedByUs(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS(opkgTun10())
 	o, _, _ := newOS5Oracle(t, f, &MockBackend{running: true})
 	hn := &orderedNotifier{f: f}
@@ -206,14 +206,15 @@ func TestDelete_RegistersDestroyedExpectation(t *testing.T) {
 	if err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if !slices.Contains(hn.calls, "OpkgTun10/destroyed@0") || f.Has("OpkgTun10") {
-		t.Fatalf("ожидание destroyed до POST не зарегистрировано: %v; posts=%v", hn.calls, f.Posts)
+	if !o.queries.Interfaces.RemovedByUs("OpkgTun10") || f.Has("OpkgTun10") || len(hn.calls) != 0 {
+		t.Fatalf("RemovedByUs=%v запись есть=%v ожидания=%v; posts=%v",
+			o.queries.Interfaces.RemovedByUs("OpkgTun10"), f.Has("OpkgTun10"), hn.calls, f.Posts)
 	}
 	clean(t, f)
 }
 
 // Первый старт упал после создания записи — откат сносит созданную запись
-// (с ожиданием её ifdestroyed до POST), а не только опускает: иначе
+// (свой ifdestroyed — по карте, RemovedByUs), а не только опускает: иначе
 // OpkgTun10 остаётся на роутере после неудачного старта (F560).
 func TestColdStart_RollbackDeletesJustCreatedRecord(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS()
@@ -228,15 +229,15 @@ func TestColdStart_RollbackDeletesJustCreatedRecord(t *testing.T) {
 	if f.Has("OpkgTun10") {
 		t.Fatalf("созданная запись осталась после отката: %v", f.Posts)
 	}
-	if !slices.Contains(hn.calls, "OpkgTun10/destroyed@"+strconv.Itoa(len(f.Posts)-1)) {
-		t.Fatalf("ожидание destroyed до POST сноса не зарегистрировано: %v; posts=%v", hn.calls, f.Posts)
+	if !o.queries.Interfaces.RemovedByUs("OpkgTun10") {
+		t.Fatalf("снос отката не отмечен своим (RemovedByUs=false); posts=%v", f.Posts)
 	}
 	clean(t, f)
 }
 
 // deviceFirst проверяет порядок F596/F598 на сносе записи OpkgTun10:
-// устройство снято один раз и до POST сноса, оба ожидания зарегистрированы
-// до Stop, запись снята, оракул чист (снос при живом opkgtun10 — C).
+// устройство снято один раз и до POST сноса, ожиданий destroyed нет (П20),
+// запись снята, оракул чист (снос при живом opkgtun10 — C).
 func deviceFirst(t *testing.T, f *ndmsquery.FakeNDMS, be *deviceBackend, hn *orderedNotifier) {
 	t.Helper()
 	clean(t, f)
@@ -247,10 +248,8 @@ func deviceFirst(t *testing.T, f *ndmsquery.FakeNDMS, be *deviceBackend, hn *ord
 	if !slices.Equal(be.StopCalls, []string{"opkgtun10"}) || be.stopPosts[0] > del {
 		t.Fatalf("устройство не снято до сноса записи: stop=%v posts-at-stop=%v, снос — POST #%d", be.StopCalls, be.stopPosts, del)
 	}
-	for _, lvl := range []string{"disabled", "destroyed"} {
-		if want := "OpkgTun10/" + lvl + "@" + strconv.Itoa(del) + "/stops=0"; !slices.Contains(hn.calls, want) {
-			t.Fatalf("нет %s (ожидание до Stop и до POST сноса): %v", want, hn.calls)
-		}
+	if slices.ContainsFunc(hn.calls, func(c string) bool { return strings.Contains(c, "/destroyed@") }) {
+		t.Fatalf("ожидание destroyed зарегистрировано: %v", hn.calls)
 	}
 	if f.Has("OpkgTun10") || be.exists("opkgtun10") {
 		t.Fatalf("запись есть=%v устройство есть=%v", f.Has("OpkgTun10"), be.exists("opkgtun10"))

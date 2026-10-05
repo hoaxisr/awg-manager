@@ -51,7 +51,7 @@ func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, 
 	if err != nil {
 		return query.Confirmed{}, err
 	}
-	conf, err := c.ConfirmCreated(ctx, name, reply.Proven())
+	conf, err := ConfirmCreated(ctx, c.poster, c.save, c.queries, name, reply.Proven())
 	if err != nil {
 		return query.Confirmed{}, fmt.Errorf("create opkgtun: %w", err) // имя уже в ошибке подтверждения
 	}
@@ -71,10 +71,8 @@ func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, 
 		// Запись без нашего описания — тупик: kernel-старт сочтёт её чужой
 		// (ForeignRecordError), sing-box не найдёт как сироту по описанию, номер
 		// занят навсегда. Сносим её по тому же Confirmed; свой ifdestroyed
-		// оркестратор поглотит. Частичное применение настроек тогда не важно.
-		if c.hookNotifier != nil {
-			c.hookNotifier.ExpectHook(name, "destroyed")
-		}
+		// оркестратор узнает по карте (Forget, П20). Частичное применение
+		// настроек тогда не важно.
 		return query.Confirmed{}, errors.Join(err, c.DeleteOpkgTun(ctx, conf))
 	}
 	return conf, nil

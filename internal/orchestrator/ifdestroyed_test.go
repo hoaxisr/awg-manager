@@ -73,23 +73,6 @@ func runningKernelOrch(t *testing.T) (*Orchestrator, *fakeKernelOp, *storage.AWG
 	return o, op, store
 }
 
-// Наш собственный `no interface OpkgTun10` (Delete зарегистрировал
-// ожидание) — хук поглощён, туннель не трогаем.
-func TestHandleEvent_IfDestroyed_Expected_Consumed(t *testing.T) {
-	o, op, store := runningKernelOrch(t)
-	o.ExpectHook("OpkgTun10", "destroyed")
-
-	if err := o.HandleEvent(context.Background(), Event{Type: EventNDMSIfDestroyed, NDMSName: "OpkgTun10"}); err != nil {
-		t.Fatalf("HandleEvent: %v", err)
-	}
-	if n := op.stops.Load(); n != 0 {
-		t.Fatalf("свой снос принят за внешний: stops=%d", n)
-	}
-	if !mustGet(t, store, "awg10").Enabled {
-		t.Fatal("Enabled снят по своему же сносу")
-	}
-}
-
 // Внешнее снятие — Stop и Enabled=false в сторе.
 func TestHandleEvent_IfDestroyed_External_StopsAndDisables(t *testing.T) {
 	o, op, store := runningKernelOrch(t)
@@ -211,9 +194,10 @@ func TestHandleEvent_IfDestroyed_ProbeAndStopAtomicWithRestart(t *testing.T) {
 	}
 }
 
-// confirmProbeOrch — runningKernelOrch с пробой, как в проде
-// (wiring_routing.go): Interfaces.Confirm настоящего InterfaceStore над
-// оракулом. Стор без bootstrap — карту строят только списки пробы.
+// confirmProbeOrch — runningKernelOrch с пробами, как в проде
+// (wiring_routing.go): Interfaces.Confirm и Interfaces.RemovedByUs настоящего
+// InterfaceStore над оракулом. Стор без bootstrap — карту строят только списки
+// пробы.
 func confirmProbeOrch(t *testing.T, f *query.FakeNDMS) (*Orchestrator, *fakeKernelOp, *storage.AWGTunnelStore, *query.InterfaceStore) {
 	t.Helper()
 	o, op, store := runningKernelOrch(t)
@@ -222,7 +206,78 @@ func confirmProbeOrch(t *testing.T, f *query.FakeNDMS) (*Orchestrator, *fakeKern
 		_, _, ok, err := ifaces.Confirm(ctx, name)
 		return ok, err
 	})
+	o.SetRemovedByUsProbe(ifaces.RemovedByUs)
 	return o, op, store, ifaces
+}
+
+// П20: запись снята нашим `no interface` (Forget) — свой ifdestroyed: ни
+// списка пробы, ни остановки. Мутация «игнорировать RemovedByUs» → список +1,
+// записи нет → Stop, красный.
+func TestHandleEvent_IfDestroyed_RemovedByUs_NoProbeNoStop(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+	o, op, store, ifaces := confirmProbeOrch(t, f)
+	f.Remove("OpkgTun10")
+	ifaces.Forget("OpkgTun10")
+	lists := f.ListCalls()
+
+	if err := o.HandleEvent(context.Background(), Event{Type: EventNDMSIfDestroyed, NDMSName: "OpkgTun10"}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	if n := f.ListCalls() - lists; n != 0 {
+		t.Fatalf("списков +%d, want 0: своё снятие проверено списком", n)
+	}
+	if n := op.stops.Load(); n != 0 {
+		t.Fatalf("своё снятие принято за внешнее: stops=%d", n)
+	}
+	if !mustGet(t, store, "awg10").Enabled {
+		t.Fatal("Enabled снят по своему же сносу")
+	}
+}
+
+// N6: хук прошёл проверку на входе раньше, чем Delete (держащий замок
+// туннеля) снял запись и позвал Forget, — после замка проверка повторяется:
+// ни пробы, ни остановки. Мутация «проверка только на входе HandleEvent» →
+// список +1 и Stop, красный.
+func TestHandleEvent_IfDestroyed_RemovedByUsAfterLock_NoProbe(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+	o, op, store, ifaces := confirmProbeOrch(t, f)
+	entered := make(chan struct{})
+	var once sync.Once
+	o.SetRemovedByUsProbe(func(name string) bool {
+		ours := ifaces.RemovedByUs(name)
+		once.Do(func() { close(entered) })
+		return ours
+	})
+	ctx := context.Background()
+	if err := o.lockTunnel(ctx, "awg10", "test-delete"); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- o.HandleEvent(ctx, Event{Type: EventNDMSIfDestroyed, NDMSName: "OpkgTun10"})
+	}()
+	select { // вход пройден: «снято нами» ещё нет
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleEvent не спросил RemovedByUs на входе")
+	}
+	f.Remove("OpkgTun10")
+	ifaces.Forget("OpkgTun10")
+	lists := f.ListCalls()
+	o.unlockTunnel("awg10")
+
+	if err := <-done; err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	if n := f.ListCalls() - lists; n != 0 {
+		t.Fatalf("списков +%d, want 0: после замка снятие не узнано своим", n)
+	}
+	if n := op.stops.Load(); n != 0 {
+		t.Fatalf("своё снятие принято за внешнее: stops=%d", n)
+	}
+	if !mustGet(t, store, "awg10").Enabled {
+		t.Fatal("Enabled снят по своему же сносу")
+	}
 }
 
 // inFlightOnce — fn один раз, пока первый список в полёте (после снимка, до

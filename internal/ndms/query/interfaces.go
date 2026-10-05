@@ -37,6 +37,12 @@
 // Список — истина для карты: применённый ответ кладёт все свои записи и
 // удаляет всё, чего в нём нет (applyListLocked). Чтений по имени (`show interface name=X`,
 // `/show/rc/interface/X`) в пакете нет (F546, TestByNameReads_Absent).
+//
+// Своё создание и своё снятие — факты карты (П14, П20): owned — имена,
+// созданные нашим доказанным `created` (ConfirmCreated), removed — снятые
+// нашим успешным `no interface` (Forget). По ним OnCreated/OnDestroyed
+// отвечают диспетчеру «своё», а RemovedByUs — оркестратору: свой хук
+// существования не публикуется и не проверяется списком.
 package query
 
 import (
@@ -156,14 +162,29 @@ type InterfaceStore struct {
 	// Confirm* решают по нему, если свой ответ вытеснен (decideLocked, П12).
 	applied *listAnswer
 
-	// creating — имена, которые ждёт ConfirmCreated: NDMS ответил на создание,
-	// в списке записи может ещё не быть — FreeIndex их не выбирает.
-	creating map[string]struct{}
+	// owned — созданные нашим доказанным `created`, до снятия; FreeIndex не
+	// выбирает; их ifcreated — не новость ни карте (П6′), ни UI. Ставит
+	// ConfirmCreated при created; снимает её ошибка, Forget, уход id из карты
+	// списком. ConfirmCreated без created держит здесь имя только на время
+	// ожидания (FreeIndex, M6′).
+	owned map[string]struct{}
+	// removed — момент нашего успешного `no interface` (Forget) по имени (П20).
+	// Метка не потребляется (хуки FIFO); доказательство «снято нами» — пока
+	// ей не больше removedProofTTL. Снимает любое новое воплощение имени:
+	// OnCreated, вход ConfirmCreated, запись id в карту списком.
+	removed map[string]time.Time
 	// createdBackoff — паузы между списками ConfirmCreated.
 	createdBackoff []time.Duration
 	// now — часы возраста списка действия (подменяются тестом).
 	now func() time.Time
 }
+
+// removedProofTTL — сколько метка removed доказывает «снято нами» (П20):
+// = expectedHookTTL оркестратора, одна мера опоздания хука (стенд 01.10: до
+// ≈30 с под churn, ×1,5; X6: свой хук максимум 27 с). Свой хук старше —
+// принятый остаток: одна публикация, ≤1 список, проба оркестратора как у
+// чужого. Проверяется лениво, таймера нет.
+const removedProofTTL = 45 * time.Second
 
 // confirmCreatedBackoff — паузы между списками ConfirmCreated: не больше
 // 4 полных списков (~15 тиков ndm каждый) и ~2,5 с на всё. Под нагрузкой
@@ -193,7 +214,8 @@ func NewInterfaceStore(g Getter, log Logger) *InterfaceStore {
 		sysNames:  make(map[string]string),
 		exist:     make(map[string]existMark),
 		raw:       make(map[string]json.RawMessage),
-		creating:  make(map[string]struct{}),
+		owned:     make(map[string]struct{}),
+		removed:   make(map[string]time.Time),
 
 		createdBackoff: confirmCreatedBackoff,
 		now:            time.Now,
@@ -371,6 +393,7 @@ func (s *InterfaceStore) applyListLocked(raw map[string]ndms.Interface, wire map
 		cp := rec
 		s.byID[id] = &cp
 		s.raw[id] = wire[id]
+		delete(s.removed, id) // новое воплощение имени (П20)
 		// Часы аптайма ведёт демон; для уже поднятого интерфейса без них
 		// восстанавливаем старт из Uptime NDMS — переживает рестарт демона.
 		if cp.ConfLayer == "running" {
@@ -390,6 +413,7 @@ func (s *InterfaceStore) applyListLocked(raw map[string]ndms.Interface, wire map
 		delete(s.byID, id)
 		delete(s.startedAt, id)
 		delete(s.raw, id)
+		delete(s.owned, id)
 	}
 	// Имена — и тех id, что в карту так и не попали (имя пришло хуком);
 	// имя id с меткой новее списка ждёт следующего.
@@ -1052,39 +1076,63 @@ func preferCandidate(c ndms.AllInterface, id string, win ndms.AllInterface, winI
 // === Hook-side write API (called from events.Dispatcher) ===
 
 // OnCreated — хук ifcreated: метка существования; карта не меняется (хук —
-// подсказка, карту ведёт список). «Грязно» — только если хук расходится с
-// картой (П6′): id в карте нет и его не ждёт ConfirmCreated (creating, M6′ —
-// свой ifcreated в полёте первого списка подтверждения его списки и покажут).
-// Тогда ReconcileDirty после пачки читает ОДИН список. Точечное чтение здесь
-// давало E «unable to find» на паре created→destroyed одного id (F546).
-func (s *InterfaceStore) OnCreated(id string) {
+// подсказка, карту ведёт список). Новое воплощение имени — метка removed
+// снимается (П20). own — имя наше (owned, П14): своё создание не новость для
+// UI. «Грязно» — только если хук расходится с картой (П6′): id в карте нет и
+// оно не наше (M6′ — свой ifcreated в полёте первого списка подтверждения его
+// списки и покажут). Тогда ReconcileDirty после пачки читает ОДИН список.
+// Точечное чтение здесь давало E «unable to find» на паре created→destroyed
+// одного id (F546).
+func (s *InterfaceStore) OnCreated(id string) (own bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.markExistLocked(id, false)
+	delete(s.removed, id)
 	_, known := s.byID[id]
-	_, own := s.creating[id]
+	_, own = s.owned[id]
 	if !known && !own {
 		s.dirtyAt, s.hookDirtyAt = s.seq, s.seq
 	}
+	return own
 }
 
 // OnDestroyed — хук ifdestroyed: метка существования; карта не меняется —
 // хук бывает устаревшим (переиспользованное имя), снять запись вправе только
-// список. «Грязно» — только если id в карте (П6′): хук по уже забытому id
-// ничего не стоит.
-func (s *InterfaceStore) OnDestroyed(id string) {
+// список. own — запись снята нами (removedByUsLocked, П20); метка не
+// потребляется. «Грязно» — только если id в карте (П6′): хук по уже забытому
+// id ничего не стоит.
+func (s *InterfaceStore) OnDestroyed(id string) (own bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.markExistLocked(id, true)
+	own = s.removedByUsLocked(id)
 	if _, known := s.byID[id]; known {
 		s.dirtyAt, s.hookDirtyAt = s.seq, s.seq
 	}
+	return own
+}
+
+// RemovedByUs — запись name снята нашим успешным `no interface` не дольше
+// removedProofTTL назад и с тех пор не появлялась (П20): её ifdestroyed —
+// свой, оркестратору проверять нечего.
+func (s *InterfaceStore) RemovedByUs(name string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.removedByUsLocked(name)
+}
+
+// removedByUsLocked — метка removed есть и не старше removedProofTTL.
+// Просроченную не удаляет (зовётся и под RLock): их чистит Forget.
+func (s *InterfaceStore) removedByUsLocked(id string) bool {
+	at, ok := s.removed[id]
+	return ok && s.now().Sub(at) <= removedProofTTL
 }
 
 // Forget — запись снята нашей командой: зовётся ТОЛЬКО после своего успешного
 // `no interface` (или «unable to find» на него), никогда по хуку. Метка
 // существования + удаление из карты, без «грязно»: список, начатый до метки,
-// запись не воскресит (страж в applyListLocked).
+// запись не воскресит (страж в applyListLocked). Владение снимается, ставится
+// метка removed (П20); просроченные метки removed чистятся здесь же.
 func (s *InterfaceStore) Forget(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1093,6 +1141,14 @@ func (s *InterfaceStore) Forget(id string) {
 	delete(s.startedAt, id)
 	delete(s.sysNames, id)
 	delete(s.raw, id)
+	delete(s.owned, id)
+	now := s.now()
+	for n, at := range s.removed {
+		if now.Sub(at) > removedProofTTL {
+			delete(s.removed, n)
+		}
+	}
+	s.removed[id] = now
 }
 
 // OnSystemName — имя ядра из хука NDMS (`system_name` есть в хуках, стенд
@@ -1401,20 +1457,27 @@ var ErrNotSeen = errors.New("NDMS принял создание, но запис
 // решают. Доказательство то же, что у Confirm: запись в свежем полном списке.
 // Список не прочитан — ошибка сразу (решение 4). За все попытки записи нет —
 // ErrNotListed, если создание доказано (created: ответ NDMS «created»), иначе
-// ErrNotSeen. Пока ждёт, имя занято для FreeIndex (creating).
-func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string, created bool) (Confirmed, error) {
+// ErrNotSeen. Пока ждёт, имя занято для FreeIndex (owned). Создание доказано
+// (created) — имя наше и после подтверждения (П14), ошибка владение снимает;
+// без created — только на время ожидания. Вход — новое воплощение имени:
+// метка removed снимается (П20).
+func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string, created bool) (_ Confirmed, err error) {
 	if name == "" {
 		return Confirmed{}, errors.New("confirm: пустое имя интерфейса")
 	}
 	s.mu.Lock()
 	s.markExistLocked(name, false) // П4: NDMS ответил «создано»
-	s.creating[name] = struct{}{}
+	delete(s.removed, name)
+	_, had := s.owned[name]
+	s.owned[name] = struct{}{}
 	backoff := s.createdBackoff
 	s.mu.Unlock()
 	defer func() {
-		s.mu.Lock()
-		delete(s.creating, name)
-		s.mu.Unlock()
+		if err != nil || (!created && !had) {
+			s.mu.Lock()
+			delete(s.owned, name)
+			s.mu.Unlock()
+		}
 	}()
 	for i := 0; ; i++ {
 		// Свой список, не список действия: запись новее него.
@@ -1511,8 +1574,8 @@ func (s *InterfaceStore) ConfirmAll(ctx context.Context) (map[string]Confirmed, 
 }
 
 // FreeIndex — наименьший N в [0, limit), для которого имени prefix+N нет ни в
-// СВОЁМ свежем полном списке, ни в карте, ни среди ждущих ConfirmCreated
-// (creating), и N не в reserved (F574). Память одна не решает: под нагрузкой
+// СВОЁМ свежем полном списке, ни в карте, ни среди своих (owned: созданные
+// нами и ждущие ConfirmCreated), и N не в reserved (F574). Память одна не решает: под нагрузкой
 // ifcreated опаздывает, и чужой только что созданный WireguardN/ProxyN
 // был бы выбран нами. Метка ifcreated имя не занимает — её решает список. Метка существования имени
 // с prefix новее начала списка противоречит ему — один повторный список, выбор
@@ -1536,7 +1599,7 @@ func (s *InterfaceStore) FreeIndex(ctx context.Context, prefix string, limit int
 		for n := range s.byID {
 			mark(n)
 		}
-		for n := range s.creating {
+		for n := range s.owned {
 			mark(n)
 		}
 	}

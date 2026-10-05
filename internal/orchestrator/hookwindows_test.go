@@ -121,7 +121,7 @@ func deleteThenReborn(t *testing.T, levels ...string) *hookWindowRig {
 // поглощена токеном → перепроверки нет → красный; так же «bornAt не ставить
 // в ensureTunnel» и «не переносить bornAt в RefreshTunnelState».
 func TestExpectedHook_PreviousIncarnation_DoesNotSwallowDisabled(t *testing.T) {
-	r := deleteThenReborn(t, "disabled", "destroyed")
+	r := deleteThenReborn(t, "disabled")
 	if err := r.o.HandleEvent(context.Background(), Event{Type: EventStart, Tunnel: "awg10"}); err != nil {
 		t.Fatalf("Start нового туннеля: %v", err)
 	}
@@ -164,7 +164,6 @@ func TestExpectedHook_PreviousIncarnationFailedStart_DoesNotSwallowRunning(t *te
 		t.Fatal("Start прежнего воплощения должен был отказать")
 	}
 	r.o.ExpectHook("OpkgTun10", "disabled")
-	r.o.ExpectHook("OpkgTun10", "destroyed")
 	r.o.updateState(Action{Type: ActionDeleteKernel, Tunnel: "awg10"})
 	r.op.coldStartErr = nil
 	starts := r.op.coldStarts.Load()

@@ -94,8 +94,8 @@ func TestFreeIndex_ForeignCreatedInFlight_Reread(t *testing.T) {
 
 // Имя, которое ждёт ConfirmCreated (NDMS ответил «создано», в списке записи
 // ещё нет), занято: FreeIndex, начатый во время паузы, его пропускает.
-// Мутация: убрать creating из памяти FreeIndex → выбран 1.
-func TestFreeIndex_CreatingTaken(t *testing.T) {
+// Мутация: убрать owned из памяти FreeIndex → выбран 1.
+func TestFreeIndex_OwnedTaken(t *testing.T) {
 	f, s := importLate(t, 100, 5*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	firstListed := make(chan struct{})

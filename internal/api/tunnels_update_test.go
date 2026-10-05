@@ -358,9 +358,8 @@ func (s *stubTunnelSvc) ReplaceConfig(_ context.Context, _, _, newName string, o
 }
 func (s *stubTunnelSvc) SyncDescription(context.Context, string, string, string) {}
 
-func (s *stubTunnelSvc) WANModel() *wan.Model                     { return nil }
-func (s *stubTunnelSvc) GetResolvedISP(string) string             { return "" }
-func (s *stubTunnelSvc) SetSelfCreateGate(tunnel.SelfCreateGater) {}
+func (s *stubTunnelSvc) WANModel() *wan.Model         { return nil }
+func (s *stubTunnelSvc) GetResolvedISP(string) string { return "" }
 
 func newTunnelsUpdateHarness(t *testing.T, stub *stubTunnelSvc) (*TunnelsHandler, *storage.AWGTunnelStore) {
 	t.Helper()

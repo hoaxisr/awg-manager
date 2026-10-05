@@ -79,33 +79,6 @@ func TestHookHandler_Handle_IfCreated(t *testing.T) {
 	}
 }
 
-// Своё создание помечается в событии: диспетчер сверит его списком, но
-// публиковать не станет — создатель публикует сам после записи в стор.
-func TestHookHandler_IfCreated_UnderGate_SelfCreated(t *testing.T) {
-	disp := &spyDispatcher{}
-	h := newTestHookHandler(disp)
-
-	h.EnterSelfCreate()
-	handleForm(t, h, "type=ifcreated&id=Wireguard1")
-	handleForm(t, h, "type=ifdestroyed&id=Wireguard2")
-	h.ExitSelfCreate()
-	handleForm(t, h, "type=ifcreated&id=Wireguard3")
-
-	got := disp.Events()
-	if len(got) != 3 {
-		t.Fatalf("events: want 3, got %d", len(got))
-	}
-	if !got[0].SelfCreated {
-		t.Errorf("ifcreated под гейтом: SelfCreated=false, want true")
-	}
-	if got[1].SelfCreated {
-		t.Errorf("ifdestroyed под гейтом: SelfCreated=true, want false")
-	}
-	if got[2].SelfCreated {
-		t.Errorf("ifcreated после ExitSelfCreate: SelfCreated=true, want false")
-	}
-}
-
 func TestHookHandler_Handle_NilDispatcher_NoPanic(t *testing.T) {
 	h := newTestHookHandler(nil) // nil dispatcher
 
@@ -381,14 +354,14 @@ func TestHookSink_BeforeAndAfterPublish(t *testing.T) {
 }
 
 // F569: ifdestroyed доходит до оркестратора (явная реакция на снятие нашей
-// записи не зависит от layer-хуков, #328). Доход виден по поглощённому
-// ожиданию "destroyed".
+// записи не зависит от layer-хуков, #328). Доход виден по ответу пробы
+// «снято нами» (П20).
 func TestHandle_IfDestroyed_ForwardsToOrchestrator(t *testing.T) {
 	disp := &spyDispatcher{}
 	h := newTestHookHandler(disp)
 	logs := &captureAppLogger{}
 	orch := orchestrator.New(nil, nil, nil, nil, nil, logs)
-	orch.ExpectHook("OpkgTun10", "destroyed")
+	orch.SetRemovedByUsProbe(func(name string) bool { return name == "OpkgTun10" })
 	h.orch = orch
 
 	h.Handle(events.Event{Type: events.EventIfDestroyed, ID: "OpkgTun10"})
@@ -397,7 +370,7 @@ func TestHandle_IfDestroyed_ForwardsToOrchestrator(t *testing.T) {
 		t.Fatalf("dispatcher: %#v", got)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for !logs.has("expected-hook consumed level=destroyed") {
+	for !logs.has("ifdestroyed: снято нами") {
 		if time.Now().After(deadline) {
 			t.Fatal("ifdestroyed не дошёл до оркестратора")
 		}

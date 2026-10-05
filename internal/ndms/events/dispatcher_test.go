@@ -529,7 +529,7 @@ func TestDispatcher_NextBatchNotBlockedByList(t *testing.T) {
 
 // I1: пачки существования, пришедшие за время списка, склеиваются в ОДИН
 // следующий список: 4 пачки при удержанном списке → 2 списка всего, без
-// параллельных запросов; последний слушатель — с publish=true.
+// параллельных запросов; оба круга — с publish=true (чужие создания).
 func TestDispatcher_BatchesDuringList_CoalesceIntoOneRerun(t *testing.T) {
 	fg := query.NewFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleList)
@@ -548,7 +548,7 @@ func TestDispatcher_BatchesDuringList_CoalesceIntoOneRerun(t *testing.T) {
 	release := sync.OnceFunc(func() { close(bg.gate) })
 	defer release()
 
-	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1", SelfCreated: true})
+	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"})
 	select {
 	case <-bg.entered:
 	case <-time.After(2 * time.Second):
@@ -566,8 +566,8 @@ func TestDispatcher_BatchesDuringList_CoalesceIntoOneRerun(t *testing.T) {
 	}
 
 	release()
-	if p := waitListed(t, listed); p {
-		t.Fatalf("первый круг: publish=true, want false (только своё создание)")
+	if p := waitListed(t, listed); !p {
+		t.Fatalf("первый круг: publish=false, want true (чужое создание)")
 	}
 	if p := waitListed(t, listed); !p {
 		t.Fatalf("повтор: publish=false, want true (чужие создания склеены)")

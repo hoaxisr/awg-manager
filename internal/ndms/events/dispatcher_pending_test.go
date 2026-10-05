@@ -298,40 +298,132 @@ func TestDispatcher_LayerHooksUnknownIDs_NoList(t *testing.T) {
 	}
 }
 
-// Своё создание (гейт selfCreate): список есть, публикации нет — её делает
-// создатель после записи в стор. Снятие известного в той же пачке — публикация.
-func TestDispatcher_SelfCreated_ListedNotPublished(t *testing.T) {
+// ownOracle — оракул с Bridge0 и Wireguard0, тёплый стор и диспетчер со
+// слушателем существования; хуки самого оракула не доставляются.
+func ownOracle(t *testing.T) (*query.FakeNDMS, *query.Queries, *Dispatcher, <-chan bool) {
+	t.Helper()
+	f := query.NewFakeNDMS(
+		ndms.Interface{ID: "Bridge0", Type: "Bridge"},
+		ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
+	q := oracleQueries(t, f)
+	_, _ = q.Interfaces.List(context.Background())
+	d := NewDispatcher(q, NopLogger())
+	return f, q, d, listedBarrier(d)
+}
+
+// noReaderList — карта не грязная и для следующего читателя: Get списка не читает.
+func noReaderList(t *testing.T, f *query.FakeNDMS, q *query.Queries, lists int) {
+	t.Helper()
+	_, _ = q.Interfaces.Get(context.Background(), "Bridge0")
+	if n := f.ListCalls() - lists; n != 0 {
+		t.Fatalf("списков +%d, want 0", n)
+	}
+}
+
+// П14 (D-N4): своё создание (owned) — ни списка, ни публикации: его
+// публикует создатель после записи туннеля в стор. Мутация «publish без own»
+// → publish=true, красный.
+func TestDispatcher_OwnCreated_NotListedNotPublished(t *testing.T) {
+	f, q, d, listed := ownOracle(t)
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
+	if _, err := q.Interfaces.ConfirmCreated(context.Background(), "Wireguard1", true); err != nil {
+		t.Fatal(err)
+	}
+	lists := f.ListCalls()
+	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"})
+	d.Start()
+	defer d.Stop()
+	if p := waitListed(t, listed); p {
+		t.Fatal("своё создание опубликовано")
+	}
+	noReaderList(t, f, q, lists)
+}
+
+// П20 (В3): своё снятие (removed) — ни списка, ни «грязно», ни публикации.
+// Мутация «publish без own» → publish=true, красный.
+func TestDispatcher_OwnDestroyed_NotPublished(t *testing.T) {
+	f, q, d, listed := ownOracle(t)
+	f.Remove("Wireguard0")
+	q.Interfaces.Forget("Wireguard0")
+	lists := f.ListCalls()
+	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
+	d.Start()
+	defer d.Stop()
+	if p := waitListed(t, listed); p {
+		t.Fatal("своё снятие опубликовано")
+	}
+	noReaderList(t, f, q, lists)
+}
+
+// Чужое создание публикуется всегда — и разошедшееся с картой (+1 список), и
+// уже показанное списком панели до хука (П14: «публиковать только при
+// расхождении» отвергнуто). Мутация «publish только при dirty» → второй
+// случай publish=false, красный.
+func TestDispatcher_ForeignCreated_ListedPublished(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		destroy bool
-		want    bool
+		name      string
+		shown     bool
+		wantLists int
 	}{
-		{"только своё создание", false, false},
-		{"своё создание + снятие известного", true, true},
+		{"карта не знает", false, 1},
+		{"уже показано списком", true, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := query.NewFakeNDMS(
-				ndms.Interface{ID: "Bridge0", Type: "Bridge"},
-				ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
-			q := oracleQueries(t, f)
-			_, _ = q.Interfaces.List(context.Background())
-			lists := f.ListCalls()
-			d := NewDispatcher(q, NopLogger())
-			listed := listedBarrier(d)
-			d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1", SelfCreated: true})
-			if tc.destroy {
-				f.Remove("Wireguard0")
-				d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
+			f, q, d, listed := ownOracle(t)
+			f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
+			if tc.shown {
+				if err := q.Interfaces.Refresh(context.Background()); err != nil {
+					t.Fatal(err)
+				}
 			}
+			lists := f.ListCalls()
+			d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"})
 			d.Start()
 			defer d.Stop()
-			if got := waitListed(t, listed); got != tc.want {
-				t.Fatalf("publish=%v, want %v", got, tc.want)
+			if p := waitListed(t, listed); !p {
+				t.Fatal("чужое создание не опубликовано")
 			}
-			if n := f.ListCalls() - lists; n != 1 {
-				t.Fatalf("списков +%d, want 1: своё создание тоже сверяется списком", n)
+			if n := f.ListCalls() - lists; n != tc.wantLists {
+				t.Fatalf("списков +%d, want %d", n, tc.wantLists)
 			}
 		})
+	}
+}
+
+// Имя, снятое нами, занял чужой (ifcreated снял метку removed): его
+// ifdestroyed — чужой, публикуется.
+func TestDispatcher_ForeignDestroyed_RecreatedName_Published(t *testing.T) {
+	f, q, d, listed := ownOracle(t)
+	f.Remove("Wireguard0")
+	q.Interfaces.Forget("Wireguard0")
+	f.Add(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
+	d.Start()
+	defer d.Stop()
+	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard0"})
+	if p := waitListed(t, listed); !p {
+		t.Fatal("чужое создание не опубликовано")
+	}
+	f.Remove("Wireguard0")
+	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
+	if p := waitListed(t, listed); !p {
+		t.Fatal("ifdestroyed чужого воплощения не опубликован")
+	}
+}
+
+// Своё создание и чужое снятие в одной пачке — публикация (OR по пачке).
+func TestDispatcher_OwnCreatedPlusForeignDestroyed_Published(t *testing.T) {
+	f, q, d, listed := ownOracle(t)
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
+	if _, err := q.Interfaces.ConfirmCreated(context.Background(), "Wireguard1", true); err != nil {
+		t.Fatal(err)
+	}
+	f.Remove("Wireguard0")
+	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"})
+	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
+	d.Start()
+	defer d.Stop()
+	if p := waitListed(t, listed); !p {
+		t.Fatal("чужое снятие в пачке со своим созданием не опубликовано")
 	}
 }
 

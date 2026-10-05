@@ -50,26 +50,7 @@ type HookHandler struct {
 	uptime        func() float64 // nil — events.ReadUptime; см. SetUptimeReader
 	log           *logging.ScopedLogger
 	wanLog        *logging.ScopedLogger
-	// selfCreateGate counts in-flight awg-manager-initiated NDMS interface
-	// creations. While > 0, ifcreated hook events suppress their automatic
-	// snapshot rebroadcast — the caller (importer / Create path) is
-	// responsible for publishing a fresh snapshot AFTER it has persisted
-	// the tunnel to awg-manager's store. Otherwise the hook-triggered
-	// snapshot fires before the Save and the new NDMS interface appears
-	// briefly in the "system tunnels" list as a ghost duplicate of the
-	// managed tunnel.
-	selfCreateGate atomic.Int32
 }
-
-// EnterSelfCreate marks the start of an awg-manager-initiated NDMS
-// interface creation. Pair with ExitSelfCreate via defer.
-func (h *HookHandler) EnterSelfCreate() { h.selfCreateGate.Add(1) }
-
-// ExitSelfCreate marks the end of an awg-manager-initiated NDMS
-// interface creation. Callers MUST publish a fresh tunnels invalidation
-// hint themselves after this (typically via TunnelsHandler.publishTunnelList)
-// so UIs see the finalized state.
-func (h *HookHandler) ExitSelfCreate() { h.selfCreateGate.Add(-1) }
 
 // NewHookHandler creates a new hook event handler.
 func NewHookHandler(svc TunnelService, orch *orchestrator.Orchestrator, appLogger logging.AppLogger) *HookHandler {
@@ -200,12 +181,9 @@ func (h *HookHandler) Handle(event events.Event) {
 	}
 
 	// 1) Enqueue into Dispatcher for cache invalidation (async, non-blocking).
-	// Своё создание (EnterSelfCreate) помечается: диспетчер сверит его списком,
-	// но публиковать tunnels/servers не станет — до записи туннеля в наш стор
-	// новый интерфейс показался бы в «системных» призраком; создатель публикует
-	// сам после Save. Остальные ifcreated/ifdestroyed диспетчер публикует после
-	// списка своей пачки.
-	event.SelfCreated = event.Type == events.EventIfCreated && h.selfCreateGate.Load() > 0
+	// Своё создание/снятие диспетчер и оркестратор узнают по карте
+	// (InterfaceStore: owned/removed); чужие ifcreated/ifdestroyed диспетчер
+	// публикует после списка своей пачки.
 	enqueueHook(h.dispatcher, event)
 
 	// 1a) Смена адреса интерфейса — повод перепроверить DDNS-имена: страж
@@ -242,7 +220,7 @@ func (h *HookHandler) Handle(event events.Event) {
 
 	// 3) ifdestroyed — в оркестратор явным событием: реакция на снятие нашей
 	// записи OpkgTun не зависит от layer-хуков (#328, F569). Свой снос
-	// оркестратор поглощает по ожиданию "destroyed".
+	// оркестратор узнаёт по карте (RemovedByUs).
 	if event.Type == events.EventIfDestroyed && h.orch != nil {
 		go func(e events.Event) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -57,11 +57,6 @@ type TunnelService interface {
 
 	// Resolved ISP for auto-mode tunnels
 	GetResolvedISP(tunnelID string) string
-
-	// SetSelfCreateGate wires the gate used by import/create paths to
-	// suppress hook-driven snapshot refreshes while an NDMS interface is
-	// being created but our store.Save hasn't run yet.
-	SetSelfCreateGate(g tunnel.SelfCreateGater)
 }
 
 // TunnelsHandler handles tunnel CRUD operations.
@@ -76,11 +71,6 @@ type TunnelsHandler struct {
 	log               *logging.ScopedLogger
 	traffic           *traffic.History
 	pingCheckSnapshot func()
-	// selfCreateGate (optional) suppresses the hook-driven snapshot
-	// refresh while awg-manager is itself in the middle of creating an
-	// NDMS interface. See tunnel.SelfCreateGater / api.HookHandler for
-	// the contract.
-	selfCreateGate tunnel.SelfCreateGater
 	// proxyRecords — записи прокси-инстансов: удаление зеркальной записи
 	// wdtt-raw обязано знать, жив ли инстанс, чьей проекцией она является
 	// (амендмент F2).
@@ -114,13 +104,6 @@ func (h *TunnelsHandler) SetCatalog(cat routing.Catalog) { h.catalog = cat }
 // typically injects TunnelsSnapshotBuilder.Build.
 func (h *TunnelsHandler) SetTunnelsSnapshotBuilder(fn func(ctx context.Context) map[string]interface{}) {
 	h.buildTunnelsSnapshot = fn
-}
-
-// SetSelfCreateGate wires the gate used to suppress hook-driven snapshot
-// refreshes while the handler itself is creating an NDMS interface
-// (manual Create path — import path gates inside ServiceImpl directly).
-func (h *TunnelsHandler) SetSelfCreateGate(g tunnel.SelfCreateGater) {
-	h.selfCreateGate = g
 }
 
 // SetSettingsStore sets the settings store for reading defaults.

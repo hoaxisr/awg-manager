@@ -33,14 +33,26 @@ import (
 // created — CreateReply.Proven() ответа на создание (у импорта — всегда true).
 // Без этого сноса нет вовсе (F574): команда попала в уже существующую
 // запись, и если это чужая, ещё не показанная списком, снос удалил бы её.
+//
+// Свой ifdestroyed сноса оркестратор узнаёт по карте (Forget, П20).
 func ConfirmCreated(ctx context.Context, p Poster, save *SaveCoordinator, q *query.Queries, name string, created bool) (query.Confirmed, error) {
-	return confirmCreated(ctx, p, save, q, nil, name, created)
-}
-
-// ConfirmCreated — ConfirmCreated пакета по командам интерфейсов; снос
-// неподтверждённого заранее объявлен оркестратору (свой ifdestroyed).
-func (c *InterfaceCommands) ConfirmCreated(ctx context.Context, name string, created bool) (query.Confirmed, error) {
-	return confirmCreated(ctx, c.poster, c.save, c.queries, c.hookNotifier, name, created)
+	conf, err := q.Interfaces.ConfirmCreated(ctx, name, created)
+	if !created || !errors.Is(err, query.ErrNotListed) {
+		return conf, err
+	}
+	var after []func()
+	if save != nil {
+		after = append(after, save.Request)
+	}
+	if q.RunningConfig != nil {
+		after = append(after, q.RunningConfig.InvalidateAll)
+	}
+	drop := map[string]any{"interface": map[string]any{name: map[string]any{"no": true}}}
+	if derr := PostChecked(ctx, p, drop, "delete unlisted "+name, isMissingInterface, after...); derr != nil {
+		return query.Confirmed{}, errors.Join(err, fmt.Errorf("%w: %w", ErrLeftOnRouter, derr))
+	}
+	q.Interfaces.Forget(name)
+	return query.Confirmed{}, fmt.Errorf("%w; созданная запись снесена", err)
 }
 
 // ErrNotCreated — на создание NDMS не ответил `"name" interface created.`:
@@ -131,27 +143,4 @@ func CreateInterface(ctx context.Context, p Poster, save *SaveCoordinator, q *qu
 	}
 	c, err := ConfirmCreated(ctx, p, save, q, name, reply.Proven())
 	return c, reply, err
-}
-
-func confirmCreated(ctx context.Context, p Poster, save *SaveCoordinator, q *query.Queries, hn HookNotifier, name string, created bool) (query.Confirmed, error) {
-	conf, err := q.Interfaces.ConfirmCreated(ctx, name, created)
-	if !created || !errors.Is(err, query.ErrNotListed) {
-		return conf, err
-	}
-	var after []func()
-	if save != nil {
-		after = append(after, save.Request)
-	}
-	if q.RunningConfig != nil {
-		after = append(after, q.RunningConfig.InvalidateAll)
-	}
-	if hn != nil {
-		hn.ExpectHook(name, "destroyed")
-	}
-	drop := map[string]any{"interface": map[string]any{name: map[string]any{"no": true}}}
-	if derr := PostChecked(ctx, p, drop, "delete unlisted "+name, isMissingInterface, after...); derr != nil {
-		return query.Confirmed{}, errors.Join(err, fmt.Errorf("%w: %w", ErrLeftOnRouter, derr))
-	}
-	q.Interfaces.Forget(name)
-	return query.Confirmed{}, fmt.Errorf("%w; созданная запись снесена", err)
 }

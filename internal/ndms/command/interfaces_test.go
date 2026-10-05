@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -399,7 +398,7 @@ func (p failSettingsPoster) Post(ctx context.Context, payload any) (json.RawMess
 
 // Создание прошло, настройки отвергнуты — запись без нашего описания стала бы
 // «чужой» (ForeignRecordError у kernel, сирота у sing-box). Команда сносит её
-// сама по тому же Confirmed и ждёт свой ifdestroyed.
+// сама по тому же Confirmed; свой ifdestroyed узнаётся по карте (П20).
 func TestCreateOpkgTun_SettingsFail_RollsBackRecord(t *testing.T) {
 	f := query.NewFakeNDMS()
 	f.ExpectCreate("OpkgTun3")
@@ -427,7 +426,8 @@ func TestCreateOpkgTun_SettingsFail_RollsBackRecord(t *testing.T) {
 	if f.E != 0 || f.Phantoms != 0 || f.C != 0 {
 		t.Fatalf("E=%d Phantoms=%d C=%d", f.E, f.Phantoms, f.C)
 	}
-	if !slices.Contains(hn.calls, hookCall{"OpkgTun3", "destroyed"}) {
-		t.Fatalf("ожидание destroyed не зарегистрировано: %+v", hn.calls)
+	if !q.Interfaces.RemovedByUs("OpkgTun3") || len(hn.calls) != 0 {
+		t.Fatalf("снос не отмечен в карте как свой (RemovedByUs=%v) или зарегистрированы ожидания %+v",
+			q.Interfaces.RemovedByUs("OpkgTun3"), hn.calls)
 	}
 }

@@ -213,6 +213,9 @@ func (a *app) setupEventWiring() {
 		_, _, ok, err := a.ndmsQueries.Interfaces.Confirm(ctx, name)
 		return ok, err
 	})
+	// Своё снятие записи — факт карты (П20): ifdestroyed записи, снятой нашим
+	// `no interface`, оркестратор не проверяет списком и туннель не трогает.
+	a.orch.SetRemovedByUsProbe(a.ndmsQueries.Interfaces.RemovedByUs)
 	a.ndmsDispatcher.SetExistenceListed(existencePublisher(a.eventBus))
 	// Full hr-neo restart on tunnel-running — NDMS assigns fwmarks only
 	// during rci_create_policies (hr-neo startup), so tunnels appearing
@@ -294,8 +297,8 @@ func wireHookNotifiers(orch tunnel.HookNotifier, nwgOp hookNotifierSetter, kerne
 
 // existencePublisher — слушатель списка пачки хуков существования. Появление и
 // исчезновение интерфейса меняет и туннели, и серверы (тот же кэш WGServers):
-// UI перечитывает их после списка, а не по таймеру опроса (F364). Своё
-// создание (publish=false) публикует создатель после записи в стор — иначе в
+// UI перечитывает их после списка, а не по таймеру опроса (F364). Свои
+// создание и снятие (publish=false, П14/П20) хуком не публикуются — иначе в
 // «системных» мелькнул бы призрак создаваемого туннеля.
 func existencePublisher(bus *events.Bus) func(publish bool) {
 	return func(publish bool) {

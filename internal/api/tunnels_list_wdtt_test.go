@@ -45,9 +45,8 @@ func (s *listSvcStub) Import(context.Context, string, string, string, service.Im
 func (s *listSvcStub) ReplaceConfig(context.Context, string, string, string, service.ReplaceOptions) error {
 	return nil
 }
-func (s *listSvcStub) WANModel() *wan.Model                     { return nil }
-func (s *listSvcStub) GetResolvedISP(string) string             { return "" }
-func (s *listSvcStub) SetSelfCreateGate(tunnel.SelfCreateGater) {}
+func (s *listSvcStub) WANModel() *wan.Model         { return nil }
+func (s *listSvcStub) GetResolvedISP(string) string { return "" }
 
 func (s *listSvcStub) SyncDescription(context.Context, string, string, string) {}
 

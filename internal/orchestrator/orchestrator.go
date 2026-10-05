@@ -154,6 +154,11 @@ type Orchestrator struct {
 	// перед остановкой (F569, R31). nil → проверка пропущена.
 	recordPresent func(ctx context.Context, ndmsName string) (bool, error)
 
+	// removedByUs (под o.mu, как recordPresent) — запись ndmsName снята нашим
+	// `no interface` (InterfaceStore.RemovedByUs, П20): её ifdestroyed — свой,
+	// пробы и реакции нет. nil → каждое ifdestroyed идёт в пробу.
+	removedByUs func(ndmsName string) bool
+
 	// ifaceInvalidator, when set, refreshes the NDMS interface cache for a
 	// kernel tunnel's NDMS name on its confirmed "running" transition (#328).
 	// nil-safe. Production wires an async closure; the orchestrator calls it
@@ -248,6 +253,26 @@ func (o *Orchestrator) SetRecordPresenceProbe(fn func(ctx context.Context, ndmsN
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.recordPresent = fn
+}
+
+// SetRemovedByUsProbe wires the store's «снято нами» (Interfaces.RemovedByUs).
+// nil-safe: без него свой ifdestroyed проверяется списком, как чужой.
+func (o *Orchestrator) SetRemovedByUsProbe(fn func(ndmsName string) bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.removedByUs = fn
+}
+
+// ifdestroyedOurs — ifdestroyed записи, снятой нашим `no interface` (П20).
+func (o *Orchestrator) ifdestroyedOurs(ndmsName string) bool {
+	o.mu.Lock()
+	fn := o.removedByUs
+	o.mu.Unlock()
+	if fn == nil || !fn(ndmsName) {
+		return false
+	}
+	o.appLog.Debug("ifdestroyed", ndmsName, "ifdestroyed: снято нами")
+	return true
 }
 
 // SetSupportsASC sets the ASC support flag.
@@ -512,6 +537,11 @@ func (o *Orchestrator) handleIfDestroyed(ctx context.Context, event Event) error
 		return err
 	}
 	defer o.unlockTunnel(tunnelID)
+	// Повторно после замка (N6): Delete держал его и снял запись (Forget)
+	// уже после того, как хук прошёл проверку на входе HandleEvent.
+	if o.ifdestroyedOurs(event.NDMSName) {
+		return nil
+	}
 
 	o.mu.Lock()
 	probe := o.recordPresent
@@ -657,24 +687,22 @@ func (o *Orchestrator) decideLocked(event Event) (actions []Action, deferredBoot
 func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 	// Filter self-triggered NDMS hooks before decide.
 	// Our operators register expected hooks before InterfaceUp/Down.
-	// ifdestroyed ждут под уровнем "destroyed": его регистрирует наш Delete
-	// перед `no interface` (F569).
-	if event.Type == EventNDMSHook || event.Type == EventNDMSIfDestroyed {
-		level := event.Level
-		if event.Type == EventNDMSIfDestroyed {
-			level = "destroyed"
-		}
+	if event.Type == EventNDMSHook {
 		o.mu.Lock()
-		consumed := o.consumeExpectedHook(event.NDMSName, level)
+		consumed := o.consumeExpectedHook(event.NDMSName, event.Level)
 		o.mu.Unlock()
 		if consumed {
 			o.appLog.Debug("boot-trace", event.NDMSName,
-				fmt.Sprintf("expected-hook consumed level=%s", level))
+				fmt.Sprintf("expected-hook consumed level=%s", event.Level))
 			return nil
 		}
 	}
 
+	// Своё снятие записи (F569) — факт карты, не ожидание (П20).
 	if event.Type == EventNDMSIfDestroyed {
+		if o.ifdestroyedOurs(event.NDMSName) {
+			return nil
+		}
 		return o.handleIfDestroyed(ctx, event)
 	}
 

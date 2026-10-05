@@ -603,7 +603,7 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 	names := tunnel.NewNames(stored.ID)
 
 	// 1. Подтверждение записи — ДО любого сноса. Дальше порядок F596/F598:
-	//    ожидания хуков → kernel-устройство → запись NDMS. Запись, снятая при живом amneziawg opkgtunN, даёт в журнале
+	//    kernel-устройство → запись NDMS. Запись, снятая при живом amneziawg opkgtunN, даёт в журнале
 	//    ndm `C Tun: system failed [0xcffd003b]` на каждом удалении (стенд
 	//    01.10, A7/B); снятое устройство, затем запись — 0 E/C (A7, повторный
 	//    Delete). Запись снимает всё своё: address, MTU, security-level,
@@ -641,15 +641,7 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 	// маршрут не потеряет (F130/#867).
 	o.removeHostRouteIfUnused(ctx, "delete", stored.ID, endpointIP)
 
-	// 3. Ожидания — ДО Stop: исчезновение устройства под записью может дать
-	//    грань по OpkgTunN раньше `no interface`; оркестратор должен поглотить
-	//    её как свою, а не принять за внешнее снятие (ожидания живут 45 с).
-	if ok {
-		o.expectHook(names.NDMSName, "disabled")
-		o.expectHook(names.NDMSName, "destroyed")
-	}
-
-	// 4. Remove kernel interface (our amneziawg — NDMS can't delete what we created).
+	// 3. Remove kernel interface (our amneziawg — NDMS can't delete what we created).
 	//    Через backend.Stop — с гейтом держателя (F500): устройство, открытое
 	//    чужой программой, не наше — его не сносим, а удаление нашей записи
 	//    туннеля продолжаем. Прочие ошибки (устройства уже нет) — как прежде,
@@ -660,7 +652,8 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 		o.appLog.Warn("delete", stored.ID, "Интерфейс "+names.IfaceName+" не удалён: "+err.Error())
 	}
 
-	// 5. Запись NDMS. Снос отвергнут (отсутствие записи DeleteOpkgTun уже
+	// 4. Запись NDMS (свой ifdestroyed оркестратор узнаёт по карте:
+	//    DeleteOpkgTun → Forget → RemovedByUs, П20). Снос отвергнут (отсутствие записи DeleteOpkgTun уже
 	//    терпит) — ошибка наружу, как у nwg: иначе запись туннеля уйдёт, а
 	//    OpkgTunN останется на роутере без хозяина (F559). Остаток П2:
 	//    устройство уже снято, и до повторного Delete прошивка пишет
@@ -677,7 +670,7 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 		o.logInfo("delete", stored.ID, "OpkgTun record absent in NDMS — nothing to delete there")
 	}
 
-	// 6. Clear in-memory tracking (endpointRoutes уже забыт на шаге 1).
+	// 5. Clear in-memory tracking (endpointRoutes уже забыт на шаге 1).
 	//    Сохранения конфигурации среди шагов нет: его ведёт SaveCoordinator,
 	//    который сам сводит запросы всех команд в одну запись.
 	o.appliedDNSMu.Lock()
@@ -1056,11 +1049,10 @@ func (o *OperatorOS5Impl) rollbackStart(ctx context.Context, tunnelID string, na
 	if justCreated {
 		// Запись создана этой попыткой — сносим её целиком, а не только
 		// опускаем: иначе OpkgTunN остаётся на роутере после неудачного
-		// первого старта (F560). Порядок как в Delete (F596/F598): ожидания
-		// хуков (свой снос — не внешнее снятие), устройство, затем запись —
-		// запись, снятая при живом opkgtunN, даёт C 0xcffd003b (стенд A7).
+		// первого старта (F560). Порядок как в Delete (F596/F598): устройство,
+		// затем запись — запись, снятая при живом opkgtunN, даёт C 0xcffd003b
+		// (стенд A7); свой ifdestroyed оркестратор узнаёт по карте (П20).
 		o.expectHook(names.NDMSName, "disabled")
-		o.expectHook(names.NDMSName, "destroyed")
 		_ = o.backend.Stop(ctx, names.IfaceName)
 		if err := o.commands.Interfaces.DeleteOpkgTun(ctx, iface); err != nil {
 			o.logWarn("rollback", tunnelID, "DeleteOpkgTun: "+err.Error())

@@ -294,7 +294,7 @@ func decideNDMSHook(event Event, state *State) []Action {
 }
 
 // decideNDMSIfDestroyed — запись OpkgTunN работающего kernel-туннеля снята
-// снаружи (свой снос поглощён ожиданием "destroyed" в HandleEvent). Внешнее
+// снаружи (свой снос HandleEvent отсеял по RemovedByUs стора, П20). Внешнее
 // снятие — внешнее намерение, как внешний conf=disabled: остановка (она же
 // сносит наше устройство — записи нет ⇒ устройства нет, F569) и
 // Enabled=false. Окна quiescence нет: снятая запись — не дрожание слоя conf.

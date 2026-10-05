@@ -551,7 +551,7 @@ func TestKernelNameCommands_OnlyAllowed(t *testing.T) {
 // notListedSite — единственное место вне query, где ветвятся по
 // query.ErrNotListed: там исключение F584 — снос `no interface X` по имени из
 // нашей же принятой команды создания, без Confirmed (см. command/created.go).
-const notListedSite = "internal/ndms/command/created.go:confirmCreated"
+const notListedSite = "internal/ndms/command/created.go:ConfirmCreated"
 
 // TestNotListed_OnlyInConfirmCreated — обращение к ErrNotListed в прод-коде
 // вне query — только в notListedSite: иначе второе место могло бы слать
