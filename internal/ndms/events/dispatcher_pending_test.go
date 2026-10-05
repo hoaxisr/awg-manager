@@ -145,9 +145,10 @@ func TestDispatcher_QueueBoundBeforeStart_OverflowRefreshes(t *testing.T) {
 	q := oracleQueries(t, f)
 	_, _ = q.Interfaces.List(context.Background()) // bootstrap: Bridge0 в карте
 	f.Remove("Bridge0")
+	lists := f.ListCalls()
 	log := &countLogger{}
 	d := NewDispatcher(q, log)
-	done := drainBarrier(d)
+	listed := listedBarrier(d)
 	// Самое старое — снятие Bridge0; переполнение его отбросит.
 	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Bridge0"})
 	for range maxQueuedEvents + 10 {
@@ -164,7 +165,13 @@ func TestDispatcher_QueueBoundBeforeStart_OverflowRefreshes(t *testing.T) {
 	}
 	d.Start()
 	defer d.Stop()
-	waitDrain(t, done)
+	// Отброшенное снятие UI узнаёт только публикацией — после списка.
+	if p := waitListed(t, listed); !p {
+		t.Fatal("переполнение: publish=false, want true")
+	}
+	if n := f.ListCalls() - lists; n != 1 {
+		t.Fatalf("переполнение: списков +%d, want 1", n)
+	}
 	if got, _ := q.Interfaces.Get(context.Background(), "Bridge0"); got != nil {
 		t.Fatalf("потерянное снятие не покрыто списком: %#v", got)
 	}
@@ -304,5 +311,30 @@ func TestDispatcher_SelfCreated_ListedNotPublished(t *testing.T) {
 				t.Fatalf("списков +%d, want 1: своё создание тоже сверяется списком", n)
 			}
 		})
+	}
+}
+
+// Два ifdestroyed известных id одной пачкой — один список. Wireguard1 жив
+// (устаревший хук по переиспользованному имени): список после первого
+// снятия оставил бы его в карте, и второй хук стоил бы ещё одного списка.
+func TestDispatcher_TwoDestroyedInBatch_OneList(t *testing.T) {
+	f := query.NewFakeNDMS(
+		ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"},
+		ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
+	q := oracleQueries(t, f)
+	_, _ = q.Interfaces.List(context.Background())
+	f.Remove("Wireguard0")
+	lists := f.ListCalls()
+	d := NewDispatcher(q, NopLogger())
+	listed := listedBarrier(d)
+	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
+	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard1"})
+	d.Start()
+	defer d.Stop()
+	if p := waitListed(t, listed); !p {
+		t.Fatal("publish=false, want true")
+	}
+	if n := f.ListCalls() - lists; n != 1 || f.E != 0 {
+		t.Fatalf("два ifdestroyed: списков +%d E=%d, want 1/0", n, f.E)
 	}
 }

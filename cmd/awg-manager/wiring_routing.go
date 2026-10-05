@@ -213,16 +213,7 @@ func (a *app) setupEventWiring() {
 		_, _, ok, err := a.ndmsQueries.Interfaces.Confirm(ctx, name)
 		return ok, err
 	})
-	// Появление и исчезновение интерфейса меняет и туннели, и серверы (тот же
-	// кэш WGServers): UI перечитывает их после списка пачки хуков, а не по
-	// таймеру опроса (F364). Своё создание публикует создатель (publish=false).
-	a.ndmsDispatcher.SetExistenceListed(func(publish bool) {
-		if !publish {
-			return
-		}
-		a.eventBus.PublishInvalidated(events.ResourceTunnels, "ndms-hook")
-		a.eventBus.PublishInvalidated(events.ResourceServers, "ndms-hook")
-	})
+	a.ndmsDispatcher.SetExistenceListed(existencePublisher(a.eventBus))
 	// Full hr-neo restart on tunnel-running — NDMS assigns fwmarks only
 	// during rci_create_policies (hr-neo startup), so tunnels appearing
 	// after startup would miss CONNMARK rules without this.
@@ -298,5 +289,20 @@ func wireHookNotifiers(orch tunnel.HookNotifier, nwgOp hookNotifierSetter, kerne
 	}
 	if ks, ok := kernelOp.(hookNotifierSetter); ok {
 		ks.SetHookNotifier(orch)
+	}
+}
+
+// existencePublisher — слушатель списка пачки хуков существования. Появление и
+// исчезновение интерфейса меняет и туннели, и серверы (тот же кэш WGServers):
+// UI перечитывает их после списка, а не по таймеру опроса (F364). Своё
+// создание (publish=false) публикует создатель после записи в стор — иначе в
+// «системных» мелькнул бы призрак создаваемого туннеля.
+func existencePublisher(bus *events.Bus) func(publish bool) {
+	return func(publish bool) {
+		if !publish {
+			return
+		}
+		bus.PublishInvalidated(events.ResourceTunnels, "ndms-hook")
+		bus.PublishInvalidated(events.ResourceServers, "ndms-hook")
 	}
 }

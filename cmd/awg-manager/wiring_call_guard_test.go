@@ -28,3 +28,25 @@ func TestSetupOrchestrator_WiresHookNotifiers(t *testing.T) {
 		t.Fatal("setupOrchestrator не зовёт wireHookNotifiers: операторы останутся без источника ожидаемых хуков")
 	}
 }
+
+// Слушатель существования диспетчера — единственный путь, которым UI узнаёт о
+// внешнем создании/снятии интерфейса (tunnels, servers). Пропавший вызов
+// сборка и тесты диспетчера не заметят.
+func TestSetupEventWiring_WiresExistencePublisher(t *testing.T) {
+	src, err := os.ReadFile("wiring_routing.go")
+	if err != nil {
+		t.Fatalf("чтение проводки: %v", err)
+	}
+	body := string(src)
+	start := strings.Index(body, "func (a *app) setupEventWiring()")
+	if start < 0 {
+		t.Fatal("setupEventWiring не найдена — проверку надо переписать под новое имя")
+	}
+	end := strings.Index(body[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("не видно конца setupEventWiring")
+	}
+	if !strings.Contains(body[start:start+end], "SetExistenceListed(existencePublisher(") {
+		t.Fatal("setupEventWiring не вешает existencePublisher: UI не узнает о внешнем создании/снятии интерфейса")
+	}
+}

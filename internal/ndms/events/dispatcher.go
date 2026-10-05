@@ -22,8 +22,9 @@ type RoutingChangedListener = func()
 // store mutates its internal map in place, without HTTP. A hook of
 // existence that disagrees with the map marks it dirty. A batch with
 // hooks of existence (ifcreated/ifdestroyed) ends with ONE full list
-// (ReconcileDirty) in its own goroutine — the next batch is not held by
-// it — and only after that list the existence listener is called
+// (ReconcileDirty) in the dispatcher's single list goroutine — the next
+// batch is not held by it; batches arriving during a list coalesce into
+// ONE more list after it — and only after a list the existence listener is called
 // (SetExistenceListed): the UI is told to refetch tunnels/servers when
 // the map already reflects the batch. No point reads by name (F546).
 //
@@ -41,6 +42,14 @@ type Dispatcher struct {
 	mu       sync.Mutex
 	queue    []Event
 	overflow bool // с прошлого прохода отброшены события (F572)
+
+	// Одна горутина списка на диспетчер (listing); пачки существования,
+	// пришедшие за время её списка, склеиваются в ОДИН следующий (again,
+	// againPublish — OR их publish).
+	listMu       sync.Mutex
+	listing      bool
+	again        bool
+	againPublish bool
 
 	notify    chan struct{} // cap=1, non-blocking wake
 	stopCh    chan struct{}
@@ -186,9 +195,12 @@ func (d *Dispatcher) drain() {
 	}
 	if overflow {
 		d.refreshAfterOverflow()
+		// Среди отброшенных могли быть создание/снятие: UI узнаёт о них только
+		// публикацией. Список не удваивается — после Refresh ReconcileDirty пуст.
+		existence, publish = true, true
 	}
 	if existence {
-		go d.listExistence(publish)
+		d.scheduleList(publish)
 	}
 
 	if p := d.onRouting.Load(); p != nil {
@@ -196,20 +208,47 @@ func (d *Dispatcher) drain() {
 	}
 }
 
-// listExistence — список пачки хуков существования, затем слушатель. Хуки,
-// разошедшиеся с картой, сверяются ОДНИМ списком на пачку (join с читателями
-// карты); совпавшие с картой не стоят ни одного запроса. Слушатель — строго
-// после списка: публикация до него отдала бы UI карту без этой пачки.
-func (d *Dispatcher) listExistence(publish bool) {
-	if d.queries != nil && d.queries.Interfaces != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if err := d.queries.Interfaces.ReconcileDirty(ctx); err != nil {
-			d.log.Warnf("reconcile dirty interfaces: %v", err)
-		}
-		cancel()
+// scheduleList запускает горутину списка или, если она уже работает,
+// заказывает ей ровно один следующий список: всплеск хуков стоит ≤2 списков,
+// а не по списку на пачку параллельно.
+func (d *Dispatcher) scheduleList(publish bool) {
+	d.listMu.Lock()
+	defer d.listMu.Unlock()
+	if d.listing {
+		d.again = true
+		d.againPublish = d.againPublish || publish
+		return
 	}
-	if p := d.onExisting.Load(); p != nil {
-		(*p)(publish)
+	d.listing = true
+	go d.listExistence(publish)
+}
+
+// listExistence — список пачки хуков существования, затем слушатель; пока
+// за время списка пришли новые пачки — ещё круг. Хуки, разошедшиеся с картой,
+// сверяются ОДНИМ списком (join с читателями карты); совпавшие с картой не
+// стоят ни одного запроса. Слушатель — строго после списка: публикация до него
+// отдала бы UI карту без этой пачки.
+func (d *Dispatcher) listExistence(publish bool) {
+	for {
+		if d.queries != nil && d.queries.Interfaces != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := d.queries.Interfaces.ReconcileDirty(ctx); err != nil {
+				d.log.Warnf("reconcile dirty interfaces: %v", err)
+			}
+			cancel()
+		}
+		if p := d.onExisting.Load(); p != nil {
+			(*p)(publish)
+		}
+		d.listMu.Lock()
+		if !d.again {
+			d.listing = false
+			d.listMu.Unlock()
+			return
+		}
+		publish = d.againPublish
+		d.again, d.againPublish = false, false
+		d.listMu.Unlock()
 	}
 }
 

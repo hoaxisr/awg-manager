@@ -2,7 +2,9 @@ package events
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -474,10 +476,12 @@ type listBlockingGetter struct {
 	query.Getter
 	gate    chan struct{}
 	entered chan struct{}
+	lists   atomic.Int32 // запросов списка, считая удержанные
 }
 
 func (b *listBlockingGetter) Get(ctx context.Context, path string, dst any) error {
 	if path == ifaceListPath && b.gate != nil {
+		b.lists.Add(1)
 		select {
 		case b.entered <- struct{}{}:
 		default:
@@ -521,4 +525,54 @@ func TestDispatcher_NextBatchNotBlockedByList(t *testing.T) {
 
 	release()
 	waitListed(t, listed)
+}
+
+// I1: пачки существования, пришедшие за время списка, склеиваются в ОДИН
+// следующий список: 4 пачки при удержанном списке → 2 списка всего, без
+// параллельных запросов; последний слушатель — с publish=true.
+func TestDispatcher_BatchesDuringList_CoalesceIntoOneRerun(t *testing.T) {
+	fg := query.NewFakeGetter()
+	fg.SetJSON(ifaceListPath, sampleList)
+	bg := &listBlockingGetter{Getter: fg, entered: make(chan struct{}, 1)}
+	q := query.NewQueries(query.Deps{Getter: bg, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	if _, err := q.Interfaces.List(context.Background()); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+	bg.gate = make(chan struct{})
+
+	d := NewDispatcher(q, NopLogger())
+	drained := drainBarrier(d)
+	listed := listedBarrier(d)
+	d.Start()
+	defer d.Stop()
+	release := sync.OnceFunc(func() { close(bg.gate) })
+	defer release()
+
+	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1", SelfCreated: true})
+	select {
+	case <-bg.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("список пачки не начат")
+	}
+	waitDrain(t, drained)
+	for i := range 4 {
+		d.Enqueue(Event{Type: EventIfCreated, ID: fmt.Sprintf("Wireguard%d", i+2)})
+		waitDrain(t, drained)
+	}
+	// Горутина на пачку успела бы войти в геттер за это время.
+	time.Sleep(100 * time.Millisecond)
+	if n := bg.lists.Load(); n != 1 {
+		t.Fatalf("при удержанном списке запросов %d, want 1: пачки не склеены", n)
+	}
+
+	release()
+	if p := waitListed(t, listed); p {
+		t.Fatalf("первый круг: publish=true, want false (только своё создание)")
+	}
+	if p := waitListed(t, listed); !p {
+		t.Fatalf("повтор: publish=false, want true (чужие создания склеены)")
+	}
+	if n := bg.lists.Load(); n != 2 {
+		t.Fatalf("списков всего %d, want 2 (в полёте + один повтор)", n)
+	}
 }
