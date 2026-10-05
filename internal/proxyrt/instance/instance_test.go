@@ -345,3 +345,30 @@ func TestOnState_SeverityFollowsPhase(t *testing.T) {
 		}
 	}
 }
+
+type restartableRole struct {
+	recordRole
+	reasons []string
+}
+
+func (r *restartableRole) RequestRestart(reason string) { r.reasons = append(r.reasons, reason) }
+
+// Роль без процесса перезапуск не умеет: Restart обязан это сказать (ручка
+// отвечает 409), а не делать вид, что запрос принят.
+func TestRestartReachesRoleOrReportsUnsupported(t *testing.T) {
+	newInst := func(role proxyrt.Role) *Instance {
+		return New(Config{ID: "i1", Role: role,
+			Cfg:     func() any { return nil },
+			Intent:  func() proxyrt.Intent { return proxyrt.IntentEnabled },
+			States:  proxyrt.NewStateStore(nil, nil),
+			Journal: &memJournal{},
+		})
+	}
+	role := &restartableRole{}
+	if !newInst(role).Restart("запрос") || len(role.reasons) != 1 || role.reasons[0] != "запрос" {
+		t.Fatalf("перезапуск не дошёл до роли: %v", role.reasons)
+	}
+	if newInst(&recordRole{}).Restart("запрос") {
+		t.Fatal("роль без RestartRequester: Restart обязан вернуть false")
+	}
+}

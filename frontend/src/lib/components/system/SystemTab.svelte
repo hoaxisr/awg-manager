@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { AlertTriangle } from 'lucide-svelte';
@@ -15,19 +16,19 @@
 
 	type SystemView = 'ai' | 'files' | 'services' | 'packages' | 'terminal' | 'ports' | 'processes' | 'ponies';
 
-	const baseViews: { id: SystemView; label: string }[] = [
+	const baseViews: { id: SystemView; label: string }[] = $derived([
 		{ id: 'ai', label: 'ИИ-помощник' },
-		{ id: 'files', label: 'Файлы' },
-		{ id: 'services', label: 'Службы' },
-		{ id: 'packages', label: 'Пакеты opkg' },
-		{ id: 'terminal', label: 'Терминал' },
-		{ id: 'ports', label: 'Порты' },
-		{ id: 'processes', label: 'Процессы' },
-	];
+		{ id: 'files', label: m.system_tab_files() },
+		{ id: 'services', label: m.system_tab_services() },
+		{ id: 'packages', label: m.system_tab_packages() },
+		{ id: 'terminal', label: m.nav_terminal() },
+		{ id: 'ports', label: m.system_tab_ports() },
+		{ id: 'processes', label: m.system_tab_processes() },
+	]);
 
 	const views = $derived.by(() => {
 		if ($poniesUnlocked || $page.url.searchParams.get('view') === 'ponies') {
-			return [...baseViews, { id: 'ponies' as SystemView, label: 'Страна розовых пони' }];
+			return [...baseViews, { id: 'ponies' as SystemView, label: m.system_tab_ponies() }];
 		}
 		return baseViews;
 	});
@@ -71,8 +72,9 @@
 	<div class="expert-disclaimer" role="note">
 		<AlertTriangle size={16} aria-hidden="true" />
 		<span>
-			<strong>Expert-режим.</strong> Прямое управление службами роутера, системными файлами, пакетами, процессами и сетевыми
-			соединениями от имени <code>root</code>.
+			<strong>{m.system_tab_expert_title()}</strong>
+			{m.system_tab_expert_before_code()} <code>root</code>
+			{m.system_tab_expert_after_code()}
 		</span>
 	</div>
 

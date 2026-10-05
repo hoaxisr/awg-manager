@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import type { DnsProxyInfo } from '$lib/types';
 	import { RefreshCcw } from 'lucide-svelte';
@@ -40,7 +41,7 @@
 		await systemInfo.refetch();
 		const routerTime = $systemInfo.data?.routerTime;
 		if (!routerTime) {
-			notifications.warning('Время роутера ещё не загружено, попробуйте через несколько секунд');
+			notifications.warning(m.diag_dns_router_time_not_loaded());
 			return null;
 		}
 		return {
@@ -55,8 +56,8 @@
 		if (!clock) return;
 		const { routerTime, routerOffset } = clock;
 		const ok = await copyToClipboard(formatDnsInfoReport(info, routerTime, routerOffset));
-		if (ok) notifications.success('DNS отчёт скопирован');
-		else notifications.error('Не удалось скопировать DNS отчёт');
+		if (ok) notifications.success(m.diag_dns_report_copied());
+		else notifications.error(m.diag_dns_report_copy_failed());
 	}
 
 	async function saveFile(): Promise<void> {
@@ -79,26 +80,26 @@
 {/snippet}
 
 <div class="toolbar">
-	<Button variant="secondary" size="sm" onclick={load} loading={loading} iconBefore={refreshIcon}>Обновить</Button>
-	<Button variant="secondary" size="sm" onclick={copyData} disabled={!info || loading}>Скопировать данные</Button>
-	<Button variant="secondary" size="sm" onclick={saveFile} disabled={!info || loading}>Сохранить файл</Button>
+	<Button variant="secondary" size="sm" onclick={load} loading={loading} iconBefore={refreshIcon}>{m.common_refresh()}</Button>
+	<Button variant="secondary" size="sm" onclick={copyData} disabled={!info || loading}>{m.diag_dns_copy_data()}</Button>
+	<Button variant="secondary" size="sm" onclick={saveFile} disabled={!info || loading}>{m.diag_dns_save_file()}</Button>
 </div>
 
 {#if loading && !info}
-	<p class="hint">Загрузка сведений о DNS…</p>
+	<p class="hint">{m.diag_dns_loading()}</p>
 {:else if errored}
-	<p class="hint warn">Не удалось загрузить сведения о DNS.</p>
+	<p class="hint warn">{m.diag_dns_load_failed()}</p>
 {:else if info && info.proxies.length > 0}
 	<div class="dns-sections">
 		{#if shared}
 			<Card>
-				<div class="card-label">Апстрим-серверы <span class="hint-inline">общие для роутера</span></div>
+				<div class="card-label">{m.diag_dns_upstreams()} <span class="hint-inline">{m.diag_dns_upstreams_shared()}</span></div>
 				<UpstreamsTable upstreams={shared.upstreams} />
 			</Card>
 		{/if}
 
 		<Card>
-			<div class="card-label">Статистика по политикам</div>
+			<div class="card-label">{m.diag_dns_policy_stats()}</div>
 			{#each info.proxies as p, i}
 				<PolicyStatRow proxy={p} open={i === 0} />
 			{/each}
@@ -110,7 +111,7 @@
 		{/if}
 	</div>
 {:else}
-	<EmptyState title="Нет данных DNS-прокси" />
+	<EmptyState title={m.diag_dns_empty()} />
 {/if}
 
 <style>

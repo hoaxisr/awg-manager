@@ -1,11 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/svelte';
+import { flushSync } from 'svelte';
 
 vi.mock('$lib/api/client', () => ({ api: {} }));
 
 import SaveStatusLed from './SaveStatusLed.svelte';
 import { saveStatus } from '$lib/stores/saveStatus';
 import { invalidateResource } from '$lib/stores/storeRegistry';
+import { locale } from '$lib/i18n';
 
 describe('SaveStatusLed', () => {
 	// Ключ `saveStatus` публикует SaveCoordinator на каждом переходе, но стор
@@ -84,5 +86,21 @@ describe('SaveStatusLed', () => {
 		const led = container.querySelector('.save-led');
 		expect(led?.getAttribute('title')).toContain('пропадут при перезагрузке');
 		expect(led?.getAttribute('title')).toContain('boom');
+	});
+
+	it('подсказка следует за языком интерфейса', async () => {
+		saveStatus.applyMutationResponse({ state: 'pending', pendingCount: 2, lastError: 'boom' });
+		const { container } = render(SaveStatusLed);
+		await new Promise((r) => setTimeout(r, 0));
+		try {
+			locale.set('en');
+			flushSync();
+			const led = container.querySelector('.save-led');
+			expect(led?.getAttribute('aria-label')).toBe('Router configuration is not saved (2)');
+			expect(led?.getAttribute('title')).toContain('Error: boom');
+		} finally {
+			locale.set('ru');
+			localStorage.clear();
+		}
 	});
 });

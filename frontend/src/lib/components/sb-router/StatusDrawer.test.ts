@@ -1,6 +1,7 @@
 // #730: под выбором режима захвата новичку должен быть блок и в policy-tun, и в TPROXY.
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import type { SingboxRouterSettings, SingboxRouterStatus } from '$lib/types';
 
 const { status, settings, empty, uiMode } = await vi.hoisted(async () => {
@@ -71,6 +72,68 @@ describe('#730 простой режим: инфо под выбором реж�
 		render(StatusDrawer);
 		expect(screen.queryByText(/Источник трафика/)).not.toBeNull();
 		expect(screen.queryByText(/Настроить источник/)).not.toBeNull();
+	});
+});
+
+describe('policy-tun: название интерфейса', () => {
+	beforeEach(() => {
+		patchSpy.mockClear();
+		uiMode.set('beginner');
+		settings.set({ routingMode: 'policy-tun', deviceMode: 'policy', policyName: 'p1' });
+		openDrawer();
+	});
+
+	it('сохраняет имя по change через applyPatch({ policyTunDescription })', async () => {
+		render(StatusDrawer);
+		const input = screen.getByLabelText('Название интерфейса');
+		await fireEvent.change(input, { target: { value: '  Awgmanager ' } });
+		expect(patchSpy).toHaveBeenCalledWith({ policyTunDescription: 'Awgmanager' });
+	});
+
+	it('штатное имя сохраняется пустым', async () => {
+		settings.set({
+			routingMode: 'policy-tun',
+			deviceMode: 'policy',
+			policyName: 'p1',
+			policyTunDescription: 'Awgmanager',
+		});
+		render(StatusDrawer);
+		const input = screen.getByLabelText('Название интерфейса');
+		await fireEvent.change(input, { target: { value: 'awgm policy-tun' } });
+		expect(patchSpy).toHaveBeenCalledWith({ policyTunDescription: '' });
+	});
+
+	it('служебный префикс и длинное имя не уходят на бэкенд', async () => {
+		render(StatusDrawer);
+		const input = screen.getByLabelText('Название интерфейса');
+		await fireEvent.change(input, { target: { value: 'awgm x' } });
+		await fireEvent.change(input, { target: { value: 'x'.repeat(33) } });
+		expect(patchSpy).not.toHaveBeenCalled();
+	});
+
+	it('набираемый текст переживает перечитывание настроек с тем же именем', async () => {
+		render(StatusDrawer);
+		const input = screen.getByLabelText<HTMLInputElement>('Название интерфейса');
+		await fireEvent.input(input, { target: { value: 'Awg' } });
+		// Автосохранение другой настройки: новый объект cfg, имя прежнее.
+		settings.set({ routingMode: 'policy-tun', deviceMode: 'policy', policyName: 'p1' });
+		await tick();
+		expect(input.value).toBe('Awg');
+	});
+
+	it('отвергнутое бэкендом имя возвращается к сохранённому', async () => {
+		patchSpy.mockRejectedValueOnce(new Error('policyTunDescription: control characters are not allowed'));
+		settings.set({
+			routingMode: 'policy-tun',
+			deviceMode: 'policy',
+			policyName: 'p1',
+			policyTunDescription: 'Old',
+		});
+		render(StatusDrawer);
+		const input = screen.getByLabelText<HTMLInputElement>('Название интерфейса');
+		await fireEvent.input(input, { target: { value: 'New' } });
+		await fireEvent.change(input, { target: { value: 'New' } });
+		await waitFor(() => expect(input.value).toBe('Old'));
 	});
 });
 

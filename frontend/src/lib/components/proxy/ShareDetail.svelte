@@ -3,6 +3,7 @@
 	// Конфиг с прихода страницы — состояние сервера; правит пользователь
 	// редактируемую копию, которая живёт здесь (W-22). Сохраняет её страница:
 	// она владеет конфигами и статусами.
+	import { m } from '$lib/i18n';
 	import { onMount, untrack } from 'svelte';
 	import { Badge, Button, Card, Dropdown, FieldHint, SideDrawer, Stat, StatStrip, Toggle } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -287,12 +288,12 @@
 	<div class="head">
 		<h2>{row.name}</h2>
 		<Badge size="sm" variant={row.protocol === 'wdtt' ? 'accent' : 'purple'}>
-			{row.protocol === 'wdtt' ? 'WDTT-сервер' : 'FreeTurn-сервер'}
+			{row.protocol === 'wdtt' ? m.proxy_share_detail_wdtt_server() : m.proxy_share_detail_ft_server()}
 		</Badge>
 		<InstanceBadges {row} />
 		<div class="head-actions">
 			{#if running}
-				<Button variant="secondary" size="sm" disabled={busy} onclick={onstop}>Остановить</Button>
+				<Button variant="secondary" size="sm" disabled={busy} onclick={onstop}>{m.common_stop()}</Button>
 			{:else}
 				<Button
 					variant="primary"
@@ -300,23 +301,31 @@
 					disabled={busy || !!startBlockedHint}
 					onclick={onstart}
 				>
-					Запустить
+					{m.common_start()}
 				</Button>
 				{#if startBlockedHint}
-					<FieldHint text={startBlockedHint} ariaLabel="Подсказка: сервер не запускается" />
+					<FieldHint text={startBlockedHint} ariaLabel={m.proxy_share_detail_start_blocked_aria()} />
 				{/if}
 			{/if}
-			<Button variant="ghost" size="sm" onclick={() => (settingsOpen = true)}>Настройки</Button>
+			<Button variant="ghost" size="sm" onclick={() => (settingsOpen = true)}>{m.proxy_common_settings()}</Button>
 			{#if onwizard}
-				<Button variant="ghost" size="sm" onclick={onwizard}>Мастер</Button>
+				<Button variant="ghost" size="sm" onclick={onwizard}>{m.proxy_common_wizard()}</Button>
 			{/if}
 		</div>
 	</div>
 
 	<!-- Состояние: четыре числа, которые смотрят каждый день. -->
 	<StatStrip>
-		<Stat value={running ? 'Запущен' : 'Остановлен'} label="Состояние" sub={uptimeValue} />
-		<Stat value={clientsValue} label="Абоненты" sub="рабочих / всего" />
+		<Stat
+			value={running ? m.proxy_detail_state_running() : m.proxy_detail_state_stopped()}
+			label={m.proxy_detail_state()}
+			sub={uptimeValue}
+		/>
+		<Stat
+			value={clientsValue}
+			label={m.proxy_share_detail_subscribers()}
+			sub={m.proxy_share_detail_subscribers_sub()}
+		/>
 		{#each portTiles as p (p.label)}
 			<Stat value={`:${p.port}`} label={p.label} />
 		{/each}
@@ -356,10 +365,10 @@
 	<LogSection
 		log={status?.log}
 		{routerClock}
-		hint="Это вывод процесса, а не файл server.log."
+		hint={m.proxy_share_detail_log_hint()}
 		showDebug={!!ftDraft}
 		debug={ftDraft?.debug ?? false}
-		debugHint="Применяется при старте процесса"
+		debugHint={m.proxy_share_detail_debug_hint()}
 		ondebug={(on) => {
 			if (ftDraft) ftDraft.debug = on;
 		}}
@@ -368,7 +377,7 @@
 
 <!-- Настройки — одноразовые: сеть, NAT, политика, тумблеры. В ящике они не
      мешают ежедневной работе, но остаются в один клик. -->
-<SideDrawer open={settingsOpen} onClose={() => (settingsOpen = false)} title="Настройки раздачи">
+<SideDrawer open={settingsOpen} onClose={() => (settingsOpen = false)} title={m.proxy_share_detail_drawer_title()}>
 	{#if wdttDraft}
 		<div class="drawer-toggle">
 			{@render ingressToggle()}
@@ -407,18 +416,18 @@
 {#snippet peerSelect()}
 	<div class="run-toggle">
 		<Dropdown
-			label="WG-сервер"
+			label={m.proxy_share_detail_wg_server()}
 			value={wgServer}
 			options={wgServerOptions}
-			placeholder={wgServerOptions.length ? 'Выберите…' : 'Нет поднятых WG-серверов'}
+			placeholder={wgServerOptions.length ? m.proxy_common_choose() : m.proxy_net_no_wg_servers()}
 			disabled={!wgServerOptions.length || mutating}
 			onchange={(v) => {
 				if (ftDraft) ftDraft.connect = connectForServerValue(peerSnap, v);
 			}}
 		/>
 		<FieldHint
-			text="WG-сервер роутера, в который FreeTurn отдаёт трафик абонентов (-connect). Пира под каждого абонента выбирают или создают при добавлении."
-			ariaLabel="Подсказка: WG-сервер раздачи"
+			text={m.proxy_share_detail_wg_server_hint()}
+			ariaLabel={m.proxy_share_detail_wg_server_aria()}
 		/>
 	</div>
 {/snippet}
@@ -426,11 +435,11 @@
 {#snippet ingressToggle()}
 	<div class="run-toggle">
 		<Toggle
-			label="Маршрутизация через sing-box"
+			label={m.proxy_share_detail_ingress()}
 			hint={!singboxRunning
-				? 'sing-box не запущен — правило вступит в силу после его запуска'
+				? m.proxy_share_detail_ingress_not_running()
 				: ingressForced
-					? 'Режим устройств «все» — трафик абонентов и так идёт через sing-box'
+					? m.proxy_share_detail_ingress_forced()
 					: ''}
 			checked={ingress}
 			disabled={mutating}
@@ -439,9 +448,9 @@
 		/>
 		<FieldHint
 			text={ingressForced
-				? 'В маршрутизации sing-box выбран режим устройств «все»: под правила попадает весь транзитный трафик роутера, включая трафик абонентов, — при любом положении этого тумблера. Положение всё равно сохраняется и вступит в силу, когда режим вернут на «по политике».'
-				: 'Трафик абонентов пойдёт по правилам sing-box — тем же, что у устройств сети. Выключено — абоненты выходят напрямую, минуя правила.'}
-			ariaLabel="Подсказка: маршрутизация через sing-box"
+				? m.proxy_share_detail_ingress_hint_forced()
+				: m.proxy_share_detail_ingress_hint()}
+			ariaLabel={m.proxy_share_detail_ingress_aria()}
 		/>
 	</div>
 {/snippet}

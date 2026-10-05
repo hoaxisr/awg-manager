@@ -875,6 +875,7 @@ type fakeRunning struct{}
 func (fakeRunning) Start(context.Context)       {}
 func (fakeRunning) Post(proxyrt.EventKind) bool { return true }
 func (fakeRunning) ResetStartBackoff()          {}
+func (fakeRunning) Restart(string) bool         { return true }
 func (fakeRunning) Stop()                       {}
 
 // newProdAllocManager — менеджер с БОЕВЫМИ аллокаторами поверх настоящего
@@ -1341,7 +1342,9 @@ func TestOwners_OwnedIndicesExcludeForeignAndAnon(t *testing.T) {
 	e := newOccEnv(t)
 	_ = e.settings.MarkForeignInterface("opkgtun12")
 	e.putRecord(t, rawClientRecord("vk", "OpkgTun13", "opkgtun13"))
-	noPins := func(context.Context) (map[int]string, error) { return map[int]string{14: "запись NDMS OpkgTun14"}, nil }
+	noPins := func(context.Context) (map[int]string, error) {
+		return map[int]string{14: "запись NDMS OpkgTun14"}, nil
+	}
 	got, err := e.owners(map[int]bool{15: true}, noPins).ownedIndices(context.Background())
 	if err != nil {
 		t.Fatal(err)

@@ -1,5 +1,6 @@
 <!-- frontend/src/lib/components/routing/singboxRouter/ConnectionsSubTab.svelte -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount, onDestroy } from 'svelte';
 	import type { ConnectionFilters } from '$lib/types/singboxConnections';
 	import { matchFilters, aggregateBy } from '$lib/utils/singboxConnections';
@@ -70,7 +71,7 @@ const totalUp = $derived(filteredConns.reduce((s, c) => s + c.upload, 0));
 const totalDown = $derived(filteredConns.reduce((s, c) => s + c.download, 0));
 const showEmptyState = $derived(snapshot.connections.length === 0);
 const emptyStateText = $derived(
-	wsStatus === 'open' ? 'Активных соединений сейчас нет' : 'Ожидаем поток Clash API…'
+	wsStatus === 'open' ? m.routing_singbox_conn_empty_open() : m.routing_singbox_conn_empty_waiting()
 );
 
 	const statusLabel = $derived.by(() => {
@@ -79,9 +80,9 @@ const emptyStateText = $derived(
 		if (wsStatus === 'open' && lastMessageAt > 0 && sinceMs < 2000) return { dot: '●', text: 'Live', cls: 'ok' };
 		if (wsStatus === 'open' && sinceMs < 5000) return { dot: '●', text: 'Live', cls: 'ok' };
 		if (wsStatus === 'open') return { dot: '◐', text: 'Stale', cls: 'warn' };
-		if (wsStatus === 'connecting') return { dot: '◯', text: 'Подключение…', cls: 'warn' };
-		if (wsStatus === 'closed') return { dot: '◯', text: 'Переподключение…', cls: 'err' };
-		return { dot: '◯', text: 'Ошибка', cls: 'err' };
+		if (wsStatus === 'connecting') return { dot: '◯', text: m.routing_singbox_conn_status_connecting(), cls: 'warn' };
+		if (wsStatus === 'closed') return { dot: '◯', text: m.routing_singbox_conn_status_reconnecting(), cls: 'err' };
+		return { dot: '◯', text: m.common_error(), cls: 'err' };
 	});
 
 	function onFilterToggle(kind: 'outbound' | 'host' | 'client', key: string): void {
@@ -110,9 +111,9 @@ const emptyStateText = $derived(
 	async function killOne(id: string): Promise<void> {
 		dropConnections([id]);
 		if (await api.singboxKillConnection(id)) {
-			notifications.success('Соединение закрыто');
+			notifications.success(m.routing_singbox_conn_closed());
 		} else {
-			notifications.error('Не удалось закрыть соединение');
+			notifications.error(m.routing_singbox_conn_close_failed());
 		}
 	}
 
@@ -120,7 +121,7 @@ const emptyStateText = $derived(
 		const ids = filteredConns.map((c) => c.id);
 		dropConnections(ids);
 		const { ok, total } = await api.singboxKillConnections(ids);
-		const msg = `Закрыто ${ok} из ${total}`;
+		const msg = m.routing_singbox_conn_closed_of({ ok, total });
 		if (ok === total) notifications.success(msg);
 		else if (ok === 0) notifications.error(msg);
 		else notifications.warning(msg);
@@ -138,11 +139,13 @@ const emptyStateText = $derived(
 
 <div class="totals">
 	<span class="totals-count">
-		Всего: <strong class="num">{filteredConns.length}</strong>
+		{m.routing_singbox_conn_total()} <strong class="num">{filteredConns.length}</strong>
 		{#if filteredConns.length !== snapshot.connectionsTotal}
-			<span class="muted">из <span class="num">{snapshot.connectionsTotal}</span></span>
+			<span class="muted">{m.routing_singbox_conn_total_of()} <span class="num">{snapshot.connectionsTotal}</span></span>
+			{m.routing_singbox_conn_total_of_suffix({ count: snapshot.connectionsTotal })}
+		{:else}
+			{m.routing_singbox_conn_total_suffix({ count: snapshot.connectionsTotal })}
 		{/if}
-		соединений
 	</span>
 
 	<span class="totals-bytes">

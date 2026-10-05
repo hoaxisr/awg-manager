@@ -4,6 +4,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { Button, Badge } from '$lib/components/ui';
   import { ChevronRight, Trash2, Edit3 } from 'lucide-svelte';
@@ -157,16 +158,16 @@
                 {#if isInstanceActive(in_)}
                   <Badge variant="success" size="sm" mono>active</Badge>
                 {:else}
-                  <Badge variant="muted" size="sm" mono>выкл</Badge>
+                  <Badge variant="muted" size="sm" mono>{m.sb_router_device_proxy_off()}</Badge>
                 {/if}
                 <span class="arrow">→</span>
                 <span class="outbound-wrap">
                   <Badge variant={outboundVariantFor(outboundTag)} size="sm" mono>{outboundLabel}</Badge>
                 </span>
                 {#if in_.enabled && degradedText}
-                  <span class="degraded" title={`Выход «${outboundLabel}» отсутствует в текущем конфиге (движок выключен)`}>{degradedText}</span>
+                  <span class="degraded" title={m.sb_router_device_proxy_missing_exit({ label: outboundLabel })}>{degradedText}</span>
                 {:else if in_.enabled && nowTag}
-                  <span class="now mono">сейчас: {nowTag}</span>
+                  <span class="now mono">{m.sb_router_device_proxy_now({ tag: nowTag })}</span>
                 {/if}
               </div>
             </div>
@@ -177,8 +178,8 @@
                 type="button"
                 class="route-action-btn"
                 onclick={() => onSelect(in_)}
-                aria-label={`Редактировать inbound ${in_.name || in_.id}`}
-                title={`Редактировать inbound «${in_.name || in_.id}»`}
+                aria-label={m.sb_router_device_proxy_edit_aria({ name: in_.name || in_.id })}
+                title={m.sb_router_device_proxy_edit_title({ name: in_.name || in_.id })}
               >
                 <Edit3 size={15} />
               </button>
@@ -189,8 +190,8 @@
                 type="button"
                 class="route-action-btn danger"
                 onclick={() => onDelete(in_)}
-                aria-label={`Удалить inbound ${in_.name || in_.id}`}
-                title={`Удалить inbound «${in_.name || in_.id}»`}
+                aria-label={m.sb_router_device_proxy_delete_aria({ name: in_.name || in_.id })}
+                title={m.sb_router_device_proxy_delete_title({ name: in_.name || in_.id })}
               >
                 <Trash2 size={15} />
               </button>
@@ -201,22 +202,22 @@
     </div>
   {:else if loadError}
     <div class="info">
-      <div class="title">Не удалось загрузить</div>
+      <div class="title">{m.sb_router_device_proxy_load_failed()}</div>
       <div class="sub error">{loadError}</div>
     </div>
   {:else if !loaded}
     <div class="info">
-      <div class="title">Загрузка...</div>
+      <div class="title">{m.sb_router_device_proxy_loading()}</div>
       <div class="sub">device proxy</div>
     </div>
   {:else}
     <div class="empty">
-      Нет inbound'ов. «Inbound» — локальный прокси для устройств в сети.
+      {m.sb_router_device_proxy_empty()}
     </div>
   {/if}
   {#if !bare && onConfigure}
     <Button variant="ghost" size="sm" onclick={onConfigure} iconBefore={icon}>
-      Настроить
+      {m.sb_router_common_configure()}
     </Button>
   {/if}
 </div>

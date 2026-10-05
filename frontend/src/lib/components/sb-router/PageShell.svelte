@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import { m } from '$lib/i18n';
   import type { Snippet } from "svelte";
 </script>
 
@@ -44,7 +45,7 @@
 <div class="sb-shell">
   <header class="sb-header">
     <div class="title-block">
-      <h1 class="title">Маршрутизация · sing-box</h1>
+      <h1 class="title">{m.sb_router_shell_title()}</h1>
       {#if subtitle}<div class="subtitle">{subtitle}</div>{/if}
     </div>
 
@@ -55,10 +56,10 @@
         type="button"
         class="params-btn"
         onclick={openDrawer}
-        aria-label="Параметры sing-box"
+        aria-label={m.sb_router_shell_params()}
       >
         <Settings size={16} aria-hidden="true" />
-        <span class="params-text">Параметры sing-box</span>
+        <span class="params-text">{m.sb_router_shell_params()}</span>
       </button>
 
       <div class="header-actions">
@@ -67,11 +68,11 @@
             type="button"
             class="icon-btn"
             onclick={onOpenInspector}
-            aria-label="Инспектор маршрута"
-            title="Инспектор маршрута"
+            aria-label={m.sb_router_shell_inspector_label()}
+            title={m.sb_router_shell_inspector_label()}
           >
             <span class="action-icon"><Search size={16} /></span>
-            <span class="action-text">Инспектор</span>
+            <span class="action-text">{m.sb_router_shell_inspector()}</span>
           </button>
         {/if}
         {#if onOpenJson}
@@ -79,11 +80,11 @@
             type="button"
             class="icon-btn"
             onclick={onOpenJson}
-            aria-label="JSON-конфиг"
-            title="JSON-конфиг"
+            aria-label={m.sb_router_shell_json_label()}
+            title={m.sb_router_shell_json_label()}
           >
             <span class="action-icon"><FileJson size={16} /></span>
-            <span class="action-text">Конфиг</span>
+            <span class="action-text">{m.sb_router_shell_json()}</span>
           </button>
         {/if}
         {#if onOpenConfigEditor}
@@ -91,11 +92,11 @@
             type="button"
             class="icon-btn"
             onclick={onOpenConfigEditor}
-            aria-label="Редактор конфигурации"
-            title="Редактор конфигурации (config.d)"
+            aria-label={m.sb_router_shell_editor_label()}
+            title={m.sb_router_shell_editor_title()}
           >
             <span class="action-icon"><FilePen size={16} /></span>
-            <span class="action-text">Редактор</span>
+            <span class="action-text">{m.sb_router_shell_editor()}</span>
           </button>
         {/if}
         {#if onOpenLogs}
@@ -105,11 +106,11 @@
             class:icon-btn-active={logsActive}
             onclick={onOpenLogs}
             aria-pressed={logsActive}
-            aria-label={logsActive ? 'Закрыть логи sing-box' : 'Логи sing-box'}
-            title={logsActive ? 'Закрыть логи sing-box' : 'Логи sing-box'}
+            aria-label={logsActive ? m.sb_router_shell_logs_close() : m.sb_router_shell_logs_label()}
+            title={logsActive ? m.sb_router_shell_logs_close() : m.sb_router_shell_logs_label()}
           >
             <span class="action-icon"><ScrollText size={16} /></span>
-            <span class="action-text">Логи</span>
+            <span class="action-text">{m.sb_router_shell_logs()}</span>
           </button>
         {/if}
       </div>
@@ -117,10 +118,10 @@
       <SegmentedControl
         value={currentMode}
         options={[
-          { value: "beginner", label: "Простой" },
-          { value: "expert", label: "Эксперт" },
+          { value: "beginner", label: m.sb_router_shell_mode_simple() },
+          { value: "expert", label: m.sb_router_shell_mode_expert() },
         ] satisfies Array<{ value: RouterMode; label: string }>}
-        ariaLabel="Режим интерфейса"
+        ariaLabel={m.sb_router_shell_mode_label()}
         onchange={selectMode}
       />
     </div>

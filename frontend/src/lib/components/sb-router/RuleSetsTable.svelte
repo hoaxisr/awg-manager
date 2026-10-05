@@ -3,6 +3,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import type { SingboxRouterRuleSet } from '$lib/types';
   import { Edit3, Trash2, ArrowDownAZ } from 'lucide-svelte';
   import RuleSetTypeBadge from './RuleSetTypeBadge.svelte';
@@ -77,7 +78,7 @@
 <div class="wrap">
   <div class="segment-row">
     <div class="seg" role="tablist">
-      {#each [{ k: 'all', l: 'Все' }, { k: 'remote', l: 'Remote' }, { k: 'local', l: 'Local' }, { k: 'inline', l: 'Inline' }, { k: 'dat', l: 'Dat' }] as opt (opt.k)}
+      {#each [{ k: 'all', l: m.sb_router_rs_filter_all() }, { k: 'remote', l: 'Remote' }, { k: 'local', l: 'Local' }, { k: 'inline', l: 'Inline' }, { k: 'dat', l: 'Dat' }] as opt (opt.k)}
         <button
           type="button"
           class="seg-tab"
@@ -93,8 +94,8 @@
         type="button"
         class="seg-tab sort"
         class:active={alphaSort}
-        title="Сортировать наборы по алфавиту"
-        aria-label="Сортировать наборы по алфавиту"
+        title={m.sb_router_rs_sort_alpha()}
+        aria-label={m.sb_router_rs_sort_alpha()}
         aria-pressed={alphaSort}
         onclick={onToggleAlphaSort}
       >
@@ -105,11 +106,11 @@
 
   <div class="table" class:bare>
     <div class="header">
-      <div>Тег</div>
-      <div>Тип</div>
-      <div>Источник</div>
-      <div>Через</div>
-      <div class="actions-col">Действия</div>
+      <div>{m.sb_router_rs_col_tag()}</div>
+      <div>{m.sb_router_rs_col_type()}</div>
+      <div>{m.sb_router_rs_col_source()}</div>
+      <div>{m.sb_router_rs_col_via()}</div>
+      <div class="actions-col">{m.sb_router_table_col_actions()}</div>
     </div>
     {#each filtered as rs (rs.tag)}
       <div class="row">
@@ -121,12 +122,12 @@
                 class="rs-checkbox"
                 checked={selected.has(rs.tag)}
                 onchange={() => onToggleSelect(rs.tag)}
-                aria-label={`Выбрать набор ${displayRuleSetTag(rs.tag)}`}
+                aria-label={m.sb_router_rs_select_aria({ tag: displayRuleSetTag(rs.tag) })}
               />
             {:else}
               <span
                 class="rs-checkbox-placeholder"
-                title="Download detour применим только к remote"
+                title={m.sb_router_rs_detour_remote_only()}
                 aria-hidden="true"
               ></span>
             {/if}
@@ -142,8 +143,8 @@
           <button
             type="button"
             class="route-action-btn"
-            title={`Редактировать набор правил «${rs.tag}»`}
-            aria-label={`Редактировать набор правил ${rs.tag}`}
+            title={m.sb_router_rs_edit_title({ tag: rs.tag })}
+            aria-label={m.sb_router_rs_edit_aria({ tag: rs.tag })}
             onclick={() => onEdit(rs.tag)}
           >
             <Edit3 size={15} />
@@ -151,8 +152,8 @@
           <button
             type="button"
             class="route-action-btn danger"
-            title={`Удалить набор правил «${rs.tag}»`}
-            aria-label={`Удалить набор правил ${rs.tag}`}
+            title={m.sb_router_rs_delete_title({ tag: rs.tag })}
+            aria-label={m.sb_router_rs_delete_aria({ tag: rs.tag })}
             onclick={() => onDelete(rs.tag)}
           >
             <Trash2 size={15} />
@@ -161,7 +162,7 @@
       </div>
     {/each}
     {#if filtered.length === 0}
-      <div class="empty">Нет наборов</div>
+      <div class="empty">{m.sb_router_rs_empty()}</div>
     {/if}
   </div>
 </div>

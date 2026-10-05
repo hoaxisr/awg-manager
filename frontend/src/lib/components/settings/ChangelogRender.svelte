@@ -19,6 +19,7 @@
 </script>
 
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { ChangelogEntry } from '$lib/types';
 
 	interface Props {
@@ -27,17 +28,17 @@
 
 	let { entries }: Props = $props();
 
-	const GROUP_LABELS: Record<string, string> = {
-		Added: 'Добавлено',
-		Fixed: 'Исправлено',
-		Changed: 'Изменено',
-		Removed: 'Удалено',
-		Security: 'Безопасность',
-		Breaking: 'Breaking changes',
+	const GROUP_LABELS: Record<string, () => string> = {
+		Added: m.settings_changelog_group_added,
+		Fixed: m.settings_changelog_group_fixed,
+		Changed: m.settings_changelog_group_changed,
+		Removed: m.settings_changelog_group_removed,
+		Security: m.settings_changelog_group_security,
+		Breaking: () => 'Breaking changes',
 	};
 
 	function label(heading: string): string {
-		return GROUP_LABELS[heading] ?? heading;
+		return GROUP_LABELS[heading]?.() ?? heading;
 	}
 </script>
 

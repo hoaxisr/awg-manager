@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,6 +34,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
+	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	awgtesting "github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
@@ -87,6 +87,20 @@ type (
 		ApplyStaging(ctx context.Context) (singboxorch.ValidationResult, error)
 		DiscardStaging(ctx context.Context) error
 	}
+	// SubscriptionService is the subset of *subscription.Service MCP
+	// uses. List is sorted by label and then id (subscription.Store.List).
+	SubscriptionService interface {
+		List() []subscription.Subscription
+		Get(id string) (*subscription.Subscription, error)
+		Update(id string, patch subscription.UpdatePatch) (*subscription.Subscription, error)
+		ListGroups() []subscription.AggregateGroup
+	}
+	// ClashState reads the running engine: which member each group routes
+	// through and the delays it has on record. Satisfied by
+	// *singbox.ClashClient, whose HTTP client times out after 5 s.
+	ClashState interface {
+		GetProxies() (map[string]singbox.ClashProxy, error)
+	}
 	MonitoringSnapshotter interface {
 		Snapshot() monitoring.Snapshot
 	}
@@ -137,8 +151,14 @@ type Config struct {
 	Connections ConnectionLister
 	Diagnostics DiagnosticsRunner
 	// Router serves the sing-box routing-rule tools.
-	Router     SingboxRouter
-	Singbox    SingboxOperator
+	Router  SingboxRouter
+	Singbox SingboxOperator
+	// Subscriptions serves the subscription tools. nil makes them report
+	// that sing-box subscriptions are unavailable on this router.
+	Subscriptions SubscriptionService
+	// Clash reads the engine's runtime state. nil, or an engine that does
+	// not answer, makes every RuntimeKnown false.
+	Clash      ClashState
 	SystemInfo func() map[string]interface{}
 	// Resolve looks a hostname up. Injected rather than called directly so
 	// tests need no network; nil disables explain_route's subnet leg.
@@ -183,6 +203,7 @@ type Local struct {
 	clientLog  *logging.ScopedLogger
 	serverLog  *logging.ScopedLogger
 	singboxLog *logging.ScopedLogger
+	subLog     *logging.ScopedLogger
 }
 
 // New wires a Local. It does not validate cfg: nil fields are checked per
@@ -198,6 +219,9 @@ func New(cfg Config) *Local {
 		clientLog:        logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubClientRoute),
 		serverLog:        logging.NewScopedLogger(cfg.AppLog, logging.GroupServer, logging.SubManaged),
 		singboxLog:       logging.NewScopedLogger(cfg.AppLog, logging.GroupSingbox, logging.SubSBRouter),
+		// Same scope as api.SubscriptionHandler: user actions on
+		// subscriptions go to routing/subscription, not the sing-box bucket.
+		subLog: logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubSubscription),
 	}
 }
 
@@ -306,13 +330,22 @@ func (l *Local) GetLogs(_ context.Context, q mcpsrv.LogsQuery) ([]mcpsrv.LogEntr
 	// GetLogsMulti returns entries NEWEST-first (logbuf.Buffer.FilterPage
 	// walks the ring from the end). get_logs promises "newest last", and the
 	// tail-slice below must keep the NEWEST matches — so reverse first.
-	// Matching keeps pointers only; mapping (and the regex-heavy masking)
-	// runs on the entries actually returned, not on every match.
+	// Matching keeps pointers only; mapping runs on the entries actually
+	// returned. contains is matched against the text the caller will see:
+	// matched against the unmasked text, it would let a caller without
+	// raw (a read-only key is refused raw) learn a masked address by
+	// probing which filters return lines.
 	matched := make([]*logging.LogEntry, 0, len(entries))
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := &entries[i]
-		if contains != "" && !strings.Contains(strings.ToLower(e.Message), contains) {
-			continue
+		if contains != "" {
+			msg := e.Message
+			if !q.Raw {
+				msg = logging.SanitizeLogText(msg)
+			}
+			if !strings.Contains(strings.ToLower(msg), contains) {
+				continue
+			}
 		}
 		if filterByLevel {
 			// An entry whose level is not one of debug|info|warn|error (e.g.
@@ -410,8 +443,33 @@ func (l *Local) MonitoringMatrix(context.Context) (mcpsrv.MonitoringMatrix, erro
 	for _, t := range snap.Targets {
 		out.Targets = append(out.Targets, mcpsrv.MonitoringTarget{ID: t.ID, Host: t.Host, Name: t.Name})
 	}
+	// A row has a cell only if the scheduler probed it. Only self-cells
+	// are probed (monitoring/scheduler.go, runOnce), so a sing-box row —
+	// which has no self-target — never has one.
+	probed := make(map[string]bool, len(snap.Cells))
+	for _, c := range snap.Cells {
+		probed[c.TunnelID] = true
+	}
 	for _, t := range snap.Tunnels {
-		out.Tunnels = append(out.Tunnels, mcpsrv.MonitoringTunnel{ID: t.ID, Name: t.Name})
+		row := mcpsrv.MonitoringTunnel{
+			ID: t.ID, Name: t.Name, Source: t.Source,
+			Subscription: t.Subscription, SingboxTag: t.SingboxTag,
+			Probed: probed[t.ID],
+		}
+		// A sing-box row is named by the provider (monitoring/scheduler.go
+		// lists subscription servers by their label). An AWG or system
+		// row is the user's own name, returned whole by list_tunnels —
+		// capping it here would make the two stop matching.
+		if t.Source == "singbox" {
+			row.Name = sanitizeLabel(t.Name)
+		}
+		// ClashDelay is 0 for "not a urltest member", "nothing recorded"
+		// and "the engine is unreachable" alike, so 0 is never passed on.
+		if t.ClashDelay > 0 && t.UrltestGroup != "" {
+			d := t.ClashDelay
+			row.UrltestGroup, row.UrltestDelayMs = t.UrltestGroup, &d
+		}
+		out.Tunnels = append(out.Tunnels, row)
 	}
 	for _, c := range snap.Cells {
 		out.Cells = append(out.Cells, mcpsrv.MonitoringCell{TargetID: c.TargetID, TunnelID: c.TunnelID, OK: c.OK, LatencyMs: c.LatencyMs, TS: c.TS})
@@ -760,7 +818,7 @@ func dnsRouteDetail(dl *dnsroute.DomainList) mcpsrv.DNSRouteDetail {
 	}
 	for _, sub := range dl.Subscriptions {
 		out.Subscriptions = append(out.Subscriptions, mcpsrv.DNSSubscription{
-			URL: redactURL(sub.URL), Name: sub.Name, LastFetched: sub.LastFetched, LastCount: sub.LastCount, LastError: sub.LastError,
+			URL: logging.RedactURLs(sub.URL), Name: sub.Name, LastFetched: sub.LastFetched, LastCount: sub.LastCount, LastFetchFailed: sub.LastError != "",
 		})
 	}
 	return out
@@ -809,21 +867,6 @@ func (l *Local) ListDNSRouteDetails(ctx context.Context) ([]mcpsrv.DNSRouteDetai
 		out = append(out, dnsRouteDetail(&list[i]))
 	}
 	return out, nil
-}
-
-// redactURL strips userinfo and the query from a subscription URL. Private
-// feeds carry their token there, and a read-only key must not walk away
-// with it along with the list. Host and path stay so the feed is still
-// recognisable.
-func redactURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	u.User = nil
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String()
 }
 
 // GetDNSRoute reads one list in full for get_dns_route.
@@ -1657,21 +1700,6 @@ func (l *Local) ListSingboxRules(ctx context.Context) ([]mcpsrv.SingboxRule, boo
 	return out, l.c.Router.StagingStatus(ctx).HasDraft, nil
 }
 
-func (l *Local) ListSingboxOutbounds(ctx context.Context) ([]mcpsrv.SingboxOutbound, error) {
-	if l.c.Router == nil {
-		return nil, errUnavailable("sing-box router")
-	}
-	list, err := l.c.Router.ListCompositeOutbounds(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]mcpsrv.SingboxOutbound, 0, len(list))
-	for _, o := range list {
-		out = append(out, mcpsrv.SingboxOutbound{Tag: o.Tag, Type: o.Type, Source: o.Source})
-	}
-	return out, nil
-}
-
 func (l *Local) SingboxStaging(ctx context.Context) (mcpsrv.SingboxStaging, error) {
 	if l.c.Router == nil {
 		return mcpsrv.SingboxStaging{}, errUnavailable("sing-box router")
@@ -1772,50 +1800,16 @@ func (l *Local) ListSingboxTunnels(ctx context.Context) ([]mcpsrv.SingboxTunnel,
 	}
 	out := make([]mcpsrv.SingboxTunnel, 0, len(list))
 	for _, t := range list {
+		// A proxy is usually imported from a share link, so these fields
+		// are someone else's text — shaped as for a subscription's
+		// servers in get_singbox_outbound.
 		out = append(out, mcpsrv.SingboxTunnel{
-			Tag: t.Tag, Protocol: t.Protocol, Server: t.Server, Port: t.Port,
-			Security: t.Security, Transport: t.Transport, ListenPort: t.ListenPort,
-			ProxyInterface: t.ProxyInterface, SNI: t.SNI, Running: t.Running,
+			Tag: t.Tag, Protocol: token(t.Protocol), Server: hostShaped(t.Server), Port: t.Port,
+			Security: token(t.Security), Transport: token(t.Transport), ListenPort: t.ListenPort,
+			ProxyInterface: t.ProxyInterface, SNI: hostShaped(t.SNI), Running: t.Running,
 		})
 	}
 	return out, nil
-}
-
-// CheckSingboxDelay probes one proxy. The tag is checked against the
-// configured proxies first: the delay test itself answers "no response"
-// for a tag that does not exist, so a typo would otherwise be reported as
-// a proxy that is down.
-func (l *Local) CheckSingboxDelay(ctx context.Context, tag string) (mcpsrv.SingboxDelay, error) {
-	if l.c.Singbox == nil {
-		return mcpsrv.SingboxDelay{}, errUnavailable("sing-box")
-	}
-	list, err := l.c.Singbox.ListTunnels(ctx)
-	if err != nil {
-		return mcpsrv.SingboxDelay{}, err
-	}
-	known := false
-	for _, t := range list {
-		if t.Tag == tag {
-			known = true
-			break
-		}
-	}
-	if !known {
-		return mcpsrv.SingboxDelay{}, fmt.Errorf("sing-box proxy %q not found (use list_singbox_tunnels)", tag)
-	}
-	ms, err := l.c.Singbox.CheckDelay(ctx, tag)
-	if errors.Is(err, singbox.ErrProbeInFlight) {
-		// The periodic sweep shares the prober and holds a slow proxy's
-		// tag for several seconds; nothing was measured here, so neither
-		// verdict applies.
-		return mcpsrv.SingboxDelay{Tag: tag, Busy: true}, nil
-	}
-	if err != nil {
-		return mcpsrv.SingboxDelay{}, err
-	}
-	// CheckOne normalises a timeout to 0 ms, so 0 means silence — not a
-	// round trip that took no time.
-	return mcpsrv.SingboxDelay{Tag: tag, Reachable: ms > 0, DelayMs: ms}, nil
 }
 
 // onOff renders a flag for the journal, matching the REST handlers.

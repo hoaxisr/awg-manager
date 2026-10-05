@@ -17,6 +17,7 @@
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { m, formatLocale } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, ConfirmModal, ChipMultiSelect, type ChipOption } from '$lib/components/ui';
@@ -95,15 +96,15 @@
 		// Токен подтверждения из URL-фрагмента — мы только что приехали со
 		// старого origin после живой смены адреса. Confirm всегда, даже если
 		// UI порта/интерфейсов скрыт уровнем использования.
-		const m = window.location.hash.match(/listen-confirm=([0-9a-f]{16,})/);
-		if (!m) return;
+		const hashMatch = window.location.hash.match(/listen-confirm=([0-9a-f]{16,})/);
+		if (!hashMatch) return;
 		history.replaceState(null, '', window.location.pathname + window.location.search);
 		try {
-			await api.serverListenConfirm(m[1]);
-			notifications.success('Новый адрес HTTP-сервера подтверждён и сохранён');
+			await api.serverListenConfirm(hashMatch[1]);
+			notifications.success(m.settings_http_confirmed_saved());
 		} catch (e) {
 			notifications.error(
-				`Не удалось подтвердить смену адреса — бэкенд откатится на старый: ${e instanceof Error ? e.message : String(e)}`,
+				m.settings_http_confirm_failed({ error: e instanceof Error ? e.message : String(e) }),
 			);
 		}
 	});
@@ -169,26 +170,26 @@
 			if (isFrontendBehindProxy(prevPort)) {
 				await api.serverListenConfirm(res.confirmToken);
 				await load();
-				notifications.success('Адрес HTTP-сервера подтверждён и сохранён');
+				notifications.success(m.settings_http_address_saved());
 				if (port !== prevPort) {
 					notifications.warning(
-						'Порт демона изменился — обновите VITE_API_TARGET (или reverse-proxy) и перезапустите фронт',
+						m.settings_http_port_changed_warning(),
 					);
 				}
 				busy = false;
 				return;
 			}
 			const target = redirectTarget(port, res.boundAddrs);
-			notifications.success('Адрес применён — переходим на новый и подтверждаем…');
+			notifications.success(m.settings_http_address_applied());
 			window.location.href = `${target}/settings#listen-confirm=${res.confirmToken}`;
 		} catch (e) {
-			notifications.error(`Не удалось сменить адрес: ${e instanceof Error ? e.message : String(e)}`);
+			notifications.error(m.settings_http_change_failed({ error: e instanceof Error ? e.message : String(e) }));
 			busy = false;
 		}
 	}
 
 	const confirmIfaceLabel = $derived(
-		selected.length === 0 ? 'все интерфейсы' : selected.join(', '),
+		selected.length === 0 ? m.settings_http_all_interfaces() : selected.join(', '),
 	);
 </script>
 
@@ -196,15 +197,15 @@
 	{#if listen}
 		{#if listen.pendingConfirm}
 			<div class="pending">
-				Предыдущая смена адреса ожидает подтверждения (откат в {new Date(listen.confirmDeadline ?? '').toLocaleTimeString()}).
+				{m.settings_http_pending_confirm({ time: new Date(listen.confirmDeadline ?? '').toLocaleTimeString(formatLocale()) })}
 			</div>
 		{/if}
 
 		<div class="setting-row hs-port-row">
 			<div class="flex flex-col gap-1">
-				<span class="font-medium">Порт</span>
+				<span class="font-medium">{m.settings_http_port_label()}</span>
 				<span class="setting-description">
-					Порт HTTP-сервера панели. Применяется без перезапуска.
+					{m.settings_http_port_description()}
 				</span>
 			</div>
 			<div class="hs-port-form">
@@ -215,12 +216,12 @@
 					max="65535"
 					bind:value={portDraft}
 					oninput={markTouched}
-					aria-label="Порт HTTP-сервера"
+					aria-label={m.settings_http_port_aria()}
 				/>
 				{#if portDraft !== '' && !portValid}
 					<span class="err">1–65535</span>
 				{:else if portValid && port < 1024}
-					<span class="warn-inline" title="Порты &lt;1024 могут конфликтовать с системными сервисами">&lt;1024</span>
+					<span class="warn-inline" title={m.settings_http_privileged_port_title()}>&lt;1024</span>
 				{/if}
 			</div>
 		</div>
@@ -228,9 +229,9 @@
 		<div class="setting-row hs-iface-row">
 			<div class="hs-iface-block">
 				<div class="flex flex-col gap-1">
-					<span class="font-medium">Интерфейсы</span>
+					<span class="font-medium">{m.settings_http_interfaces_label()}</span>
 					<span class="setting-description">
-						Пусто — все (0.0.0.0). Loopback (127.0.0.1) остаётся всегда.
+						{m.settings_http_interfaces_description()}
 					</span>
 				</div>
 				<ChipMultiSelect
@@ -240,15 +241,15 @@
 						selected = next;
 						markTouched();
 					}}
-					placeholder="Все интерфейсы"
+					placeholder={m.settings_http_interfaces_placeholder()}
 					allowOrphans
 				/>
 			</div>
 		</div>
 
 		<p class="hint">
-			Сейчас слушает: <code>{listen.boundAddrs.join(', ')}</code>.
-			После применения вы будете перенаправлены на новый адрес; если он не откроется — через ~2 минуты вернётся старый.
+			{m.settings_http_listening_now()} <code>{listen.boundAddrs.join(', ')}</code>.
+			{m.settings_http_redirect_hint()}
 		</p>
 
 		{#if touched && dirty}
@@ -260,16 +261,16 @@
 					loading={busy}
 					onclick={() => (confirmOpen = true)}
 				>
-					{busy ? 'Применяем…' : 'Применить'}
+					{busy ? m.settings_http_applying() : m.common_apply()}
 				</Button>
 			</div>
 		{/if}
 
 		<ConfirmModal
 			open={confirmOpen}
-			title="Сменить адрес HTTP-сервера"
-			message={`Веб-интерфейс переедет на порт ${portValid ? port : '?'} (${confirmIfaceLabel}). Вы будете перенаправлены на новый адрес для подтверждения; без подтверждения через ~2 минуты вернётся текущий адрес.`}
-			confirmLabel="Применить"
+			title={m.settings_http_confirm_title()}
+			message={m.settings_http_confirm_message({ port: portValid ? port : '?', interfaces: confirmIfaceLabel })}
+			confirmLabel={m.common_apply()}
 			variant="primary"
 			busy={busy}
 			onConfirm={() => {
@@ -281,7 +282,7 @@
 			}}
 		/>
 	{:else}
-		<p class="hint">Состояние HTTP-сервера недоступно.</p>
+		<p class="hint">{m.settings_http_unavailable()}</p>
 	{/if}
 {/if}
 

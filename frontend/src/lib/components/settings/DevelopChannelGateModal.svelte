@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
+	import RichText from '$lib/components/ui/RichText.svelte';
 	import { Modal, Button, ConfirmModal } from '$lib/components/ui';
 	import { isMockDevMode } from '$lib/env';
 	import { openDonateModal } from '$lib/stores/donateModal';
@@ -21,7 +23,6 @@
 		resolveDevelopChannelLockoutMs,
 		setDevelopChannelLockout,
 	} from '$lib/utils/developChannelGate';
-	import { pluralize, ERROR_WORDS } from '$lib/utils/pluralize';
 
 	interface Props {
 		open: boolean;
@@ -34,14 +35,14 @@
 
 	type Phase = 'lockout' | 'disclaimer' | 'quiz' | 'result';
 
-	const disclaimerItems = [
-		'Умеете писать консистентные, развернутые и полные баг-репорты в формате GitHub Issues',
-		'Обладаете необходимыми компетенциями, чтобы самостоятельно откатиться на старую версию, если AWGM UI недоступен',
-		'Принимаете риск, что возврат на стабильный канал может быть невозможен до следующего патча или без полной переустановки AWGM',
-		'Уведомлены, что за жалобы и вопросы по develop-ветке, оформленные ненадлежащим образом (степень соответствия определяет администрация), может быть выдана блокировка в сообществе на срок от суток',
-		'Не получаете автоматически дополнительных привилегий, несмотря на волонтёрское участие в альфа-тесте',
-		'Знаете, как перезагрузить роутер, и обладаете достаточными финансами, чтобы купить новый, если вдруг что-то пойдёт не так'
-	];
+	const disclaimerItems = $derived([
+		m.settings_develop_gate_item_1,
+		m.settings_develop_gate_item_2,
+		m.settings_develop_gate_item_3,
+		m.settings_develop_gate_item_4,
+		m.settings_develop_gate_item_5,
+		m.settings_develop_gate_item_6
+	]);
 
 	let phase = $state<Phase>('disclaimer');
 	let lockoutRemainingMs = $state(0);
@@ -65,7 +66,7 @@
 	);
 	const progressLabel = $derived(
 		phase === 'quiz' && quizQuestions.length > 0
-			? `Вопрос ${quizIndex + 1} из ${quizQuestions.length}`
+			? m.settings_develop_gate_progress({ current: quizIndex + 1, total: quizQuestions.length })
 			: '',
 	);
 	const progressPercent = $derived(
@@ -84,14 +85,14 @@
 
 	const modalTitle = $derived(
 		phase === 'lockout'
-			? 'Переход на develop-канал временно недоступен'
+			? m.settings_develop_gate_title_lockout()
 			: phase === 'disclaimer'
-				? 'Переход на develop-канал'
+				? m.settings_develop_gate_title_disclaimer()
 				: phase === 'quiz'
-					? 'Проверка готовности'
+					? m.settings_develop_gate_title_quiz()
 					: resultPassed
-						? 'Допуск получен'
-						: 'Проверка не пройдена',
+						? m.settings_develop_gate_title_passed()
+						: m.settings_develop_gate_title_failed(),
 	);
 
 	function refreshLockoutRemaining() {
@@ -349,29 +350,28 @@
 	<div class="gate-body" bind:this={gateBodyEl}>
 		{#if phase === 'lockout'}
 			<p class="gate-lead">
-				Недостаточно правильных ответов в прошлой попытке. Смена канала на develop заблокирована.
+				{m.settings_develop_gate_lockout_lead()}
 			</p>
 			<div class="lockout-timer" aria-live="polite">
-				<span class="lockout-timer-label">Повторить можно через</span>
+				<span class="lockout-timer-label">{m.settings_develop_gate_retry_in()}</span>
 				<span class="lockout-timer-value">{formatLockoutCountdown(lockoutRemainingMs)}</span>
 			</div>
 			<p class="gate-hint">
-				Повторная попытка будет доступна через {lockoutDurationLabel}. Пока таймер не истёк,
-				переключение на develop недоступно.
+				{m.settings_develop_gate_lockout_hint({ duration: lockoutDurationLabel })}
 			</p>
 			<p class="gate-docs-hint">
-				Пока ждёте, рекомендуем изучить
-				<a href={DEVELOP_CHANNEL_DOCS_URL} target="_blank" rel="noopener noreferrer">документацию AWGM</a>.
+				{m.settings_develop_gate_docs_hint()}
+				<a href={DEVELOP_CHANNEL_DOCS_URL} target="_blank" rel="noopener noreferrer">{m.settings_develop_gate_docs_link()}</a>.
 			</p>
 			<p class="gate-premium-hint">
-				Или можете получить
+				{m.settings_develop_gate_premium_hint()}
 				<button type="button" class="gate-premium-highlight" onclick={openDonateModal}>
-					Premium-доступ
-				</button> к development-сборкам.
+					{m.settings_develop_gate_premium_link()}
+				</button> {m.settings_develop_gate_premium_suffix()}
 			</p>
 		{:else if phase === 'disclaimer'}
 			<p class="gate-lead">
-				Переключаясь на ветку <b>develop</b>, вы подтверждаете, что:
+				<RichText text={m.settings_develop_gate_disclaimer_lead()} />
 			</p>
 			<ul class="disclaimer-list">
 				{#each disclaimerItems as item}
@@ -384,14 +384,14 @@
 					<div class="quiz-progress-leading">
 						<span class="quiz-progress-text">{progressLabel}</span>
 						<span class="quiz-progress-score">
-							Допустимо до {pluralize(DEVELOP_CHANNEL_QUIZ_MAX_WRONG, ERROR_WORDS)}
+							{m.settings_develop_gate_allowed_errors({ count: DEVELOP_CHANNEL_QUIZ_MAX_WRONG })}
 						</span>
 					</div>
 					<div
 						class="quiz-timer"
 						class:quiz-timer-urgent={questionRemainingMs <= 5_000}
 						aria-live="polite"
-						title="Время на ответ"
+						title={m.settings_develop_gate_time_to_answer()}
 					>
 						{formatQuizQuestionCountdown(questionRemainingMs)}
 					</div>
@@ -430,27 +430,26 @@
 				<span class="result-score">{resultCorrect} / {quizQuestions.length}</span>
 				<span class="result-caption">
 					{#if resultPassed}
-						Поздравляем — допуск к develop-каналу получен.
+						{m.settings_develop_gate_passed_text()}
 					{:else}
-						Допустимо не более {pluralize(DEVELOP_CHANNEL_QUIZ_MAX_WRONG, ERROR_WORDS)} из {quizQuestions.length}.
-						Повтор через {lockoutDurationLabel}.
+						{m.settings_develop_gate_result_allowed({ count: DEVELOP_CHANNEL_QUIZ_MAX_WRONG, total: quizQuestions.length, duration: lockoutDurationLabel })}
 					{/if}
 				</span>
 			</div>
 			{#if !resultPassed}
 				<div class="lockout-timer lockout-timer-inline" aria-live="polite">
-					<span class="lockout-timer-label">До следующей попытки</span>
+					<span class="lockout-timer-label">{m.settings_develop_gate_next_attempt()}</span>
 					<span class="lockout-timer-value">{formatLockoutCountdown(lockoutRemainingMs)}</span>
 				</div>
 				<p class="gate-docs-hint">
-					Пока ждёте, рекомендуем изучить
-					<a href={DEVELOP_CHANNEL_DOCS_URL} target="_blank" rel="noopener noreferrer">документацию AWGM</a>.
+					{m.settings_develop_gate_docs_hint()}
+					<a href={DEVELOP_CHANNEL_DOCS_URL} target="_blank" rel="noopener noreferrer">{m.settings_develop_gate_docs_link()}</a>.
 				</p>
 				<p class="gate-premium-hint">
-					Или можете получить
+					{m.settings_develop_gate_premium_hint()}
 					<button type="button" class="gate-premium-highlight" onclick={openDonateModal}>
-						Premium-доступ
-					</button> к development-сборкам.
+						{m.settings_develop_gate_premium_link()}
+					</button> {m.settings_develop_gate_premium_suffix()}
 				</p>
 			{/if}
 		{/if}
@@ -458,17 +457,17 @@
 
 	{#snippet actions()}
 		{#if phase === 'lockout'}
-			<Button variant="primary" size="md" onclick={handleClose}>Понятно</Button>
+			<Button variant="primary" size="md" onclick={handleClose}>{m.settings_develop_gate_understood()}</Button>
 		{:else if phase === 'disclaimer'}
 			<Button variant="secondary" size="md" onclick={handleClose} disabled={busy}>
-				Отмена
+				{m.common_cancel()}
 			</Button>
 			<Button variant="outline-primary" size="md" onclick={acceptDisclaimer} disabled={busy}>
-				Согласен, к тесту
+				{m.settings_develop_gate_agree()}
 			</Button>
 		{:else if phase === 'quiz'}
 			<Button variant="secondary" size="md" onclick={requestModalClose} disabled={busy}>
-				Отмена
+				{m.common_cancel()}
 			</Button>
 			<Button
 				variant="primary"
@@ -476,18 +475,18 @@
 				onclick={goNextQuestion}
 				disabled={busy || selectedIndex === undefined}
 			>
-				{quizIndex < quizQuestions.length - 1 ? 'Далее' : 'Проверить ответы'}
+				{quizIndex < quizQuestions.length - 1 ? m.settings_develop_gate_next() : m.settings_develop_gate_check_answers()}
 			</Button>
 		{:else if phase === 'result'}
 			{#if resultPassed}
 				<Button variant="secondary" size="md" onclick={handleClose} disabled={busy}>
-					Как-то уже расхотелось...
+					{m.settings_develop_gate_changed_mind()}
 				</Button>
 				<Button variant="primary" size="md" onclick={confirmPassed} disabled={busy} loading={busy}>
-					Перейти на develop
+					{m.settings_develop_gate_go_develop()}
 				</Button>
 			{:else}
-				<Button variant="primary" size="md" onclick={handleClose}>Закрыть</Button>
+				<Button variant="primary" size="md" onclick={handleClose}>{m.common_close()}</Button>
 			{/if}
 		{/if}
 	{/snippet}
@@ -495,11 +494,11 @@
 
 <ConfirmModal
 	open={quitConfirmOpen}
-	title="Прервать тест?"
-	message="Если выйти сейчас, попытка будет засчитана как проваленная."
-	secondary={`Канал develop будет заблокирован на ${lockoutDurationLabel}.`}
-	confirmLabel="Выйти и провалить"
-	cancelLabel="Продолжить тест"
+	title={m.settings_develop_gate_quit_title()}
+	message={m.settings_develop_gate_quit_message()}
+	secondary={m.settings_develop_gate_quit_secondary({ duration: lockoutDurationLabel })}
+	confirmLabel={m.settings_develop_gate_quit_confirm()}
+	cancelLabel={m.settings_develop_gate_quit_cancel()}
 	variant="danger"
 	onConfirm={failQuizAbandoned}
 	onClose={() => (quitConfirmOpen = false)}

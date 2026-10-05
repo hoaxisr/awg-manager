@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { DEFAULT_SORT_VALUE } from '$lib/utils/tableSort';
+	import { m } from '$lib/i18n';
 
 	interface SortOption {
 		value: string | null;
@@ -34,7 +35,7 @@
 
 	const dropdownOptions = $derived(
 		([
-			{ value: DEFAULT_SORT_VALUE, label: 'Исходный порядок' },
+			{ value: DEFAULT_SORT_VALUE, label: m.tunnels_sort_default() },
 			...options.map((option) => ({ value: option.value ?? DEFAULT_SORT_VALUE, label: option.label })),
 		] satisfies DropdownOption<string>[])
 	);
@@ -45,7 +46,7 @@
 		<input
 			class="tunnel-search"
 			type="text"
-			placeholder="Поиск..."
+			placeholder={m.tunnels_search_placeholder()}
 			value={searchQuery}
 			oninput={(e) => onSearchChange((e.currentTarget as HTMLInputElement).value)}
 		/>
@@ -65,7 +66,7 @@
 				type="button"
 				disabled={sortKey === null}
 				onclick={onToggleDir}
-				title="Направление сортировки"
+				title={m.tunnels_sort_direction()}
 			>
 				{sortAsc ? '↑' : '↓'}
 			</button>

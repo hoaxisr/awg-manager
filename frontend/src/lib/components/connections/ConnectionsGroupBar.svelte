@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	interface Props {
 		group: 'none' | 'client' | 'host';
 		visible: number;
@@ -8,15 +9,15 @@
 
 	let { group, visible, total, onChange }: Props = $props();
 
-	const SEGMENTS = [
-		['none', 'Нет'],
-		['client', 'По клиенту'],
-		['host', 'По хосту'],
-	] as const;
+	const SEGMENTS = $derived([
+		['none', m.connections_group_none()],
+		['client', m.connections_group_client()],
+		['host', m.connections_group_host()],
+	] as const);
 </script>
 
 <div class="group-bar">
-	<span class="lbl">Группировка:</span>
+	<span class="lbl">{m.connections_group_label()}</span>
 	<div class="segments">
 		{#each SEGMENTS as [val, label] (val)}
 			<button type="button" class="segment" class:active={group === val} onclick={() => onChange(val)}>
@@ -24,7 +25,7 @@
 			</button>
 		{/each}
 	</div>
-	<span class="visible">Видимо: <span class="num">{visible}</span> из <span class="num">{total}</span></span>
+	<span class="visible">{m.connections_visible()} <span class="num">{visible}</span> {m.connections_visible_of()} <span class="num">{total}</span></span>
 </div>
 
 <style>

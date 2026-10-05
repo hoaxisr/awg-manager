@@ -4,6 +4,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import type { Snippet } from 'svelte';
 
   interface Props {
@@ -31,7 +32,7 @@
         <span class="counter">{selectedCount} / {totalCount}</span>
       {/if}
       <button type="button" class="link" onclick={onSelectAll}>
-        {selectedCount === totalCount ? 'Снять всё' : 'Выбрать всё'}
+        {selectedCount === totalCount ? m.sb_router_templates_deselect_all() : m.sb_router_templates_select_all()}
       </button>
     </div>
   </header>

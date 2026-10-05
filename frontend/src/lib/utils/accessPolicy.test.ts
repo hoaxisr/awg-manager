@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
 	findPolicyForInterface,
 	isHydraRouteAccessPolicy,
-	isStandardAccessPolicyName
+	isStandardAccessPolicyName,
+	isDeviceOnline
 } from './accessPolicy';
 
 describe('isStandardAccessPolicyName', () => {
@@ -73,3 +74,73 @@ describe('findPolicyForInterface', () => {
 		expect(findPolicyForInterface([{ name: 'Policy2' }], 'OpkgTun17')).toBeNull();
 	});
 });
+
+describe('isDeviceOnline', () => {
+	it('marks directly connected devices with link: "up" as online', () => {
+		expect(isDeviceOnline({
+			active: true,
+			link: 'up',
+			ip: '192.168.90.28',
+		})).toBe(true);
+	});
+
+	it('marks MWS extender backhaul devices with empty link as online', () => {
+		// Ivan-PC case: connected via Keenetic Giga extender wire, link is '' in RCI
+		expect(isDeviceOnline({
+			active: true,
+			link: '',
+			ip: '192.168.90.50',
+		})).toBe(true);
+
+		// Extender port device case with link undefined
+		expect(isDeviceOnline({
+			active: true,
+			link: undefined,
+			ip: '192.168.90.32',
+		})).toBe(true);
+	});
+
+	it('marks disconnected devices with link: "down" as offline', () => {
+		expect(isDeviceOnline({
+			active: false,
+			link: 'down',
+			ip: '192.168.90.91',
+		})).toBe(false);
+	});
+
+	it('marks devices with link: "down" as offline even if active is true', () => {
+		expect(isDeviceOnline({
+			active: true,
+			link: 'down',
+			ip: '192.168.90.91',
+		})).toBe(false);
+	});
+
+	it('marks inactive devices as offline even with IP', () => {
+		expect(isDeviceOnline({
+			active: false,
+			link: '',
+			ip: '192.168.90.50',
+		})).toBe(false);
+	});
+
+	it('marks devices with missing or 0.0.0.0 IP as offline', () => {
+		expect(isDeviceOnline({
+			active: true,
+			link: 'up',
+			ip: '0.0.0.0',
+		})).toBe(false);
+
+		expect(isDeviceOnline({
+			active: true,
+			link: 'up',
+			ip: '',
+		})).toBe(false);
+	});
+
+	it('handles null and undefined input safely', () => {
+		expect(isDeviceOnline(null)).toBe(false);
+		expect(isDeviceOnline(undefined)).toBe(false);
+	});
+});
+

@@ -8,12 +8,15 @@
  * ENABLE_DEPRECATED_TUN_STACK=true, 1.17 удалит — держим как аварийный откат.
  * 'gvisor' и 'mixed' убраны: наш бинарь собирается без тега with_gvisor.
  */
+import { m } from '$lib/i18n';
 import type { TunStack } from '$lib/types';
 
-export const TUN_STACK_OPTIONS: { value: TunStack; label: string }[] = [
-	{ value: '', label: 'sing-tun (рекомендуется)' },
-	{ value: 'system', label: 'system (устаревший)' },
-];
+export function tunStackOptions(): { value: TunStack; label: string }[] {
+	return [
+		{ value: '', label: m.sb_router_tun_stack_singtun() },
+		{ value: 'system', label: m.sb_router_tun_stack_system() },
+	];
+}
 
 /** Подпись стека в фактах/карточках: пустое значение показываем именем движка. */
 export function tunStackLabel(stack: TunStack | undefined): string {
@@ -22,5 +25,5 @@ export function tunStackLabel(stack: TunStack | undefined): string {
 
 /** Подсказка под селектором; для актуального стека её нет. */
 export function tunStackHint(stack: TunStack | undefined): string | undefined {
-	return stack ? 'устаревший стек, sing-box удалит его в 1.17' : undefined;
+	return stack ? m.sb_router_tun_stack_deprecated_hint() : undefined;
 }

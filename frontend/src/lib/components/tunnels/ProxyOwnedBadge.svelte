@@ -25,6 +25,7 @@
 	// два объекта на один выход, не понимая, откуда взялся opkgtunN.
 	import { ExternalLink } from 'lucide-svelte';
 	import { Badge } from '$lib/components/ui';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		tunnel: TunnelListItem;
@@ -39,9 +40,9 @@
 	<a
 		class="proxy-owned"
 		href={`/proxy?tab=exit&instance=${encodeURIComponent(ownerKey)}`}
-		title="Туннель создан прокси-выходом: поднимается и удаляется вместе с ним"
+		title={m.tunnels_proxy_owned_title()}
 	>
-		<Badge size="xs" variant="purple">прокси</Badge>
+		<Badge size="xs" variant="purple">{m.tunnels_proxy_owned_badge()}</Badge>
 		<ExternalLink size={11} />
 	</a>
 {/if}

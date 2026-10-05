@@ -6,6 +6,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { ChevronDown, ChevronRight, ArrowRight, Check } from 'lucide-svelte';
   import type { SingboxRouterInspectDNSResult } from '$lib/types';
 
@@ -25,21 +26,21 @@
 
   let ruleLabel = $derived(
     result.matchedRule === -1
-      ? `по default → ${result.final}`
-      : `DNS-правило #${result.matchedRule + 1}`,
+      ? m.sb_router_trace_dns_by_default({ final: result.final })
+      : m.sb_router_trace_dns_rule({ n: result.matchedRule + 1 }),
   );
 </script>
 
 <div class="card stage">
   <div class="sh">
     <span class="no">1</span>
-    <span class="st">DNS-решение</span>
+    <span class="st">{m.sb_router_trace_dns_title()}</span>
   </div>
 
   <div class="res">
     <div class="inp">
       <div class="v">{result.input}</div>
-      <div class="ty">{result.inputType === 'ip' ? 'IP' : 'домен'}</div>
+      <div class="ty">{result.inputType === 'ip' ? m.sb_router_trace_input_ip() : m.sb_router_trace_input_domain()}</div>
     </div>
     <div class="arr"><ArrowRight size={14} /></div>
     <div class="dst">
@@ -50,22 +51,23 @@
 
   <div class="detail">
     <div class="dh">
-      <span class="rn">{result.matchedRule === -1 ? 'нет матча' : `DNS-правило #${result.matchedRule + 1}`}</span>
+      <span class="rn">{result.matchedRule === -1 ? m.sb_router_trace_no_match() : m.sb_router_trace_dns_rule({ n: result.matchedRule + 1 })}</span>
       <span class="badge tone-{result.classification}">→ {classLabel}</span>
-      <span class="ob">сервер: {result.server}</span>
+      <span class="ob">{m.sb_router_trace_dns_server({ server: result.server })}</span>
     </div>
   </div>
 
   {#if result.classification === 'fakeip'}
     <div class="verdict">
-      {result.input} получит <b>fake-ip{result.pool ? ` из пула ${result.pool}` : ''}</b>
-      → трафик пойдёт в туннель (конкретный адрес выделяется в рантайме).
-      Дальше — шаг 2.
+      {m.sb_router_trace_dns_fakeip_pre({ input: result.input })}
+      <b>{result.pool ? m.sb_router_trace_dns_fakeip_pool({ pool: result.pool }) : 'fake-ip'}</b>
+      {m.sb_router_trace_dns_fakeip_post()}
     </div>
   {:else}
     <div class="verdict muted">
-      {result.input} резолвится в {result.classification === 'local' ? 'адрес на роутере (local)' : 'реальный IP (upstream)'} —
-      маршрутизация по домену не применяется, route сработает только по ip_cidr / sniff.
+      {result.classification === 'local'
+        ? m.sb_router_trace_dns_local({ input: result.input })
+        : m.sb_router_trace_dns_real({ input: result.input })}
     </div>
   {/if}
 
@@ -76,24 +78,24 @@
   {#if result.matches.length > 0}
     <button type="button" class="toggle" onclick={() => (showRules = !showRules)} aria-expanded={showRules}>
       {#if showRules}<ChevronDown size={13} />{:else}<ChevronRight size={13} />{/if}
-      разбор DNS-правил ({result.matches.length})
+      {m.sb_router_trace_dns_breakdown({ count: result.matches.length })}
     </button>
     {#if showRules}
       <div class="rules-list">
-        {#each result.matches as m (m.index)}
-          <div class="rrow" class:is-matched={m.matched} class:is-winner={m.index === result.matchedRule}>
-            <span class="ri">#{String(m.index + 1).padStart(2, '0')}</span>
+        {#each result.matches as mt (mt.index)}
+          <div class="rrow" class:is-matched={mt.matched} class:is-winner={mt.index === result.matchedRule}>
+            <span class="ri">#{String(mt.index + 1).padStart(2, '0')}</span>
             <div class="rc">
               <div class="rh">
-                <span class="rsrv">→ {m.server || '—'}</span>
-                {#if m.matched}<Check class="check" size={13} />{/if}
+                <span class="rsrv">→ {mt.server || '—'}</span>
+                {#if mt.matched}<Check class="check" size={13} />{/if}
               </div>
-              {#if m.conditions && m.conditions.length > 0}
+              {#if mt.conditions && mt.conditions.length > 0}
                 <div class="conds">
-                  {#each m.conditions as cond}<span class="cond-chip">{cond}</span>{/each}
+                  {#each mt.conditions as cond}<span class="cond-chip">{cond}</span>{/each}
                 </div>
               {/if}
-              {#if m.reason}<div class="reason">{m.reason}</div>{/if}
+              {#if mt.reason}<div class="reason">{mt.reason}</div>{/if}
             </div>
           </div>
         {/each}

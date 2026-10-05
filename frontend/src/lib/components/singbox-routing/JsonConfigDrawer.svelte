@@ -4,6 +4,7 @@
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { downloadSingboxConfigText } from '$lib/utils/singboxConfigExport';
 	import { notifications } from '$lib/stores/notifications';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		open: boolean;
@@ -37,12 +38,12 @@
 		const ok = await copyToClipboard(json);
 		if (ok) {
 			copied = true;
-			notifications.success('Конфиг скопирован в буфер обмена');
+			notifications.success(m.singbox_routing_json_copied_toast());
 			setTimeout(() => {
 				copied = false;
 			}, 1500);
 		} else {
-			notifications.error('Не удалось скопировать');
+			notifications.error(m.singbox_routing_slot_copy_failed());
 		}
 	}
 
@@ -50,7 +51,7 @@
 		if (!json) return;
 		try {
 			downloadSingboxConfigText(json);
-			notifications.success('Конфиг скачан');
+			notifications.success(m.singbox_routing_json_downloaded_toast());
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : String(e));
 		}
@@ -66,11 +67,11 @@
 	});
 </script>
 
-<SideDrawer {open} {onClose} title="Конфиг sing-box" width={720}>
+<SideDrawer {open} {onClose} title={m.singbox_routing_json_title()} width={720}>
 	<div class="content">
 		<div class="toolbar">
 			<Button variant="secondary" size="sm" onclick={load} disabled={loading}>
-				{loading ? 'Загрузка…' : 'Обновить'}
+				{loading ? m.common_loading() : m.common_refresh()}
 			</Button>
 			<Button
 				variant="secondary"
@@ -78,7 +79,7 @@
 				onclick={onCopy}
 				disabled={loading || !json}
 			>
-				{copied ? 'Скопировано' : 'Копировать'}
+				{copied ? m.common_copied() : m.common_copy()}
 			</Button>
 			<Button
 				variant="secondary"
@@ -86,22 +87,22 @@
 				onclick={onExport}
 				disabled={loading || !json}
 			>
-				Экспорт
+				{m.common_export()}
 			</Button>
 		</div>
 
 		<div class="state">
 			{#if loading && !json}
-				<div class="placeholder">Загрузка конфига…</div>
+				<div class="placeholder">{m.singbox_routing_json_loading()}</div>
 			{:else if error}
 				<div class="error">
-					<div class="error-title">Не удалось загрузить конфиг</div>
+					<div class="error-title">{m.singbox_routing_json_load_failed()}</div>
 					<div class="error-message">{error}</div>
 				</div>
 			{:else if json}
 				<pre class="json">{json}</pre>
 			{:else}
-				<div class="placeholder">Конфиг пуст</div>
+				<div class="placeholder">{m.singbox_routing_json_empty()}</div>
 			{/if}
 		</div>
 	</div>

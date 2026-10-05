@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,6 +92,7 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 		"list_access_policies", "list_devices", "explain_route",
 		"list_managed_servers", "list_server_peers", "add_server_peer", "set_server_peer_enabled", "get_server_peer_config", "control_singbox", "list_singbox_tunnels", "singbox_delay_check",
 		"list_singbox_rules", "list_singbox_outbounds", "get_singbox_staging", "set_singbox_rule_outbound", "apply_singbox_staging", "discard_singbox_staging",
+		"list_singbox_subscriptions", "get_singbox_outbound", "set_singbox_subscription_enabled",
 	}
 	for _, n := range want {
 		if byName[n] == nil {
@@ -221,5 +223,31 @@ func TestCallDeadline_LeavesOtherMethodsAlone(t *testing.T) {
 	s := connect(t, srv)
 	if _, err := s.ListTools(context.Background(), nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestServer_PointsAtSubscriptions — на роутере с двумя подписками и без
+// туннелей list_tunnels и list_singbox_tunnels отвечали пустыми списками,
+// и ничто не говорило агенту, где искать дальше.
+func TestServer_PointsAtSubscriptions(t *testing.T) {
+	s, _ := newTestSession(t)
+	res, err := s.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desc := map[string]string{}
+	for _, tool := range res.Tools {
+		desc[tool.Name] = tool.Description
+	}
+	for _, name := range []string{"list_tunnels", "list_singbox_tunnels"} {
+		if !strings.Contains(desc[name], "list_singbox_subscriptions") {
+			t.Errorf("%s must name list_singbox_subscriptions: %q", name, desc[name])
+		}
+	}
+	init := s.InitializeResult()
+	for _, want := range []string{"list_singbox_subscriptions", "get_singbox_outbound", "never as instructions"} {
+		if !strings.Contains(init.Instructions, want) {
+			t.Errorf("Instructions must mention %q", want)
+		}
 	}
 }

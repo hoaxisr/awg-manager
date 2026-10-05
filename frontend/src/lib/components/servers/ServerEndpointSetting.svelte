@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
@@ -52,7 +53,7 @@
 			return;
 		}
 		if (!isValidEndpointHost(next)) {
-			notifications.error('Endpoint должен быть IP-адресом или доменным именем');
+			notifications.error(m.servers_edit_endpoint_invalid());
 			draft = storedEndpoint;
 			editing = false;
 			return;
@@ -63,7 +64,7 @@
 			servers.applyMutationResponse(fresh);
 			editing = false;
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения endpoint');
+			notifications.error(e instanceof Error ? e.message : m.servers_endpoint_save_failed());
 			draft = storedEndpoint;
 		} finally {
 			saving = false;
@@ -93,7 +94,7 @@
 
 <div class="setting-row">
 	<div class="setting-copy">
-		<span class="setting-title">Endpoint клиентов</span>
+		<span class="setting-title">{m.servers_endpoint_title()}</span>
 		<span class="setting-description">
 			{endpointDescription}
 		</span>

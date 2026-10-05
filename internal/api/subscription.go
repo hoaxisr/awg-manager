@@ -90,6 +90,11 @@ func NewSubscriptionHandler(svc *subscription.Service, presence SingboxPresenceP
 	}
 }
 
+// Service exposes the subscription service so other wiring (the MCP
+// adapter) works against the same instance the HTTP handlers use: a
+// second one would have its own locks and reload sing-box on its own.
+func (h *SubscriptionHandler) Service() *subscription.Service { return h.svc }
+
 // SetNDMSProxyToggler wires the global NDMS Proxy flag reader. When wired
 // and the flag is false, DTO converters surface proxyIndex=-1 so the UI
 // (and any other API consumer) sees that the composite NDMS Proxy is
