@@ -274,6 +274,10 @@ func TestNormalizeTLSDomain(t *testing.T) {
 		{"http://yandex.ru:8443", "yandex.ru"},
 		{"https://yandex.ru/test/path?foo=bar#hash", "yandex.ru"},
 		{"yandex.ru:8443", "yandex.ru"},
+		{"//yandex.ru", "yandex.ru"},
+		{"https://user:pass@YANDEX.RU:8443/test", "yandex.ru"},
+		{"YANDEX.RU", "yandex.ru"},
+		{"yandex.ru.", "yandex.ru"},
 		{"", DefaultTLSDomain},
 		{"   ", DefaultTLSDomain},
 	}

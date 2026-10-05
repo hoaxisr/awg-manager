@@ -85,16 +85,18 @@ func TestTelemtHandler_Routes(t *testing.T) {
 		t.Fatalf("expected 400 for invalid JSON body, got %d", w.Code)
 	}
 
-	// 4a. POST /api/telemt/config with reserved port 1099 -> 400
-	reservedCfg := telemt.Config{
-		Port: 1099,
-	}
-	reservedBody, _ := json.Marshal(reservedCfg)
-	req = httptest.NewRequest(http.MethodPost, "/api/telemt/config", strings.NewReader(string(reservedBody)))
-	w = httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for reserved port 1099, got %d: %s", w.Code, w.Body.String())
+	// 4a. POST /api/telemt/config with reserved / invalid ports -> 400
+	for _, badPort := range []int{22, 2222, 1099, 51820, -1, 70000} {
+		badCfg := telemt.Config{
+			Port: badPort,
+		}
+		badBody, _ := json.Marshal(badCfg)
+		req = httptest.NewRequest(http.MethodPost, "/api/telemt/config", strings.NewReader(string(badBody)))
+		w = httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for port %d, got %d: %s", badPort, w.Code, w.Body.String())
+		}
 	}
 
 	// 4b. POST /api/telemt/config with empty secret and URL domain -> 200 with generated secret and normalized domain

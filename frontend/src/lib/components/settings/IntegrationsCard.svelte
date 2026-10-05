@@ -226,9 +226,9 @@
 			link = link.replace(/([?&]server=)(?:192\.168\.1\.1|0\.0\.0\.0)([&]|$)/, `$1${host}$2`);
 		}
 		if (await copyToClipboard(link)) {
-			notifications.success('Ссылка скопирована в буфер обмена');
+			notifications.success(m.settings_integrations_telemt_link_copied());
 		} else {
-			notifications.error('Не удалось скопировать ссылку');
+			notifications.error(m.settings_integrations_telemt_link_copy_failed());
 		}
 	}
 
@@ -410,37 +410,37 @@
 						size="md"
 						ariaLabel={
 							telemtStatusLoading
-								? 'Telemt: получение данных'
+								? m.settings_integrations_telemt_loading_aria()
 								: telemtInstalled && telemtRunning
-									? 'Telemt работает'
-									: 'Telemt остановлен'
+									? m.settings_integrations_telemt_running_aria()
+									: m.settings_integrations_telemt_stopped_aria()
 						}
 					/>
 					<div class="integration-meta">
 						<div class="integration-title-wrap">
 							<span class="font-medium">Telemt (Telegram MTProxy)</span>
 							{#if telemtStatus?.source === 'managed'}
-								<span class="integration-badge">управляется awg-manager</span>
+								<span class="integration-badge">{m.settings_integrations_telemt_badge_managed()}</span>
 							{:else if telemtStatus?.source === 'opkg'}
-								<span class="integration-badge">пакет opkg</span>
+								<span class="integration-badge">{m.settings_integrations_telemt_badge_opkg()}</span>
 							{:else if telemtStatus?.source === 'external'}
-								<span class="integration-badge">внешний бинарник</span>
+								<span class="integration-badge">{m.settings_integrations_telemt_badge_external()}</span>
 							{/if}
 						</div>
 						{#if telemtStatusLoading}
-							<span class="integration-sub">получаю данные…</span>
+							<span class="integration-sub">{m.settings_integrations_loading()}</span>
 						{:else if telemtInstalled && telemtStatus}
 							<span class="integration-sub">
-								v{telemtStatus.version || 'Версия не определена'}
-								{#if telemtRunning}· запущен{:else}· остановлен{/if}
+								v{telemtStatus.version || m.settings_integrations_telemt_version_unknown()}
+								{#if telemtRunning}· {m.settings_integrations_telemt_running()}{:else}· {m.settings_integrations_stopped()}{/if}
 								{#if telemtStatus.config?.mode === 'web'}
-									· Web-режим
+									· {m.settings_integrations_telemt_mode_web()}
 								{:else}
 									· Fake-TLS
 								{/if}
 							</span>
 							<span class="setting-description">
-								Высокопроизводительный MTProxy для Telegram с поддержкой Fake-TLS и Web-проксирования (HTTP/WS).
+								{m.settings_integrations_telemt_description_full()}
 							</span>
 							{#if telemtRunning && telemtStatus.link}
 								<div class="mt-1">
@@ -449,20 +449,20 @@
 										class="text-xs text-primary hover:underline cursor-pointer inline-flex items-center gap-1 font-medium"
 										onclick={copyTelemtLink}
 									>
-										Скопировать ссылку для Telegram
+										{m.settings_integrations_telemt_copy_link()}
 									</button>
 								</div>
 							{/if}
 						{:else if telemtStatus && telemtStatus.archSupported === false}
 							<span class="integration-sub" style="color: var(--color-warning, #f59e0b);">
-								Архитектура {telemtStatus.arch || ''} не поддерживается (доступно только для ARM64 и x86_64)
+								{m.settings_integrations_telemt_arch_not_supported({ arch: telemtStatus.arch || '' })}
 							</span>
 							<span class="setting-description">
-								Сборки telemt скомпилированы под aarch64 и x86_64 и недоступны для MIPS/MIPSEL.
+								{m.settings_integrations_telemt_arch_notice()}
 							</span>
 						{:else}
 							<span class="setting-description">
-								Высокопроизводительный MTProxy для Telegram с поддержкой Fake-TLS.
+								{m.settings_integrations_telemt_description()}
 							</span>
 						{/if}
 					</div>
@@ -471,12 +471,12 @@
 					<div class="integration-actions">
 						{#if onrestartTelemt && telemtRunning}
 							<Button variant="secondary" size="sm" onclick={onrestartTelemt} loading={telemtRestarting}>
-								{telemtRestarting ? 'Перезапуск...' : 'Перезапустить'}
+								{telemtRestarting ? m.settings_integrations_telemt_restarting() : m.settings_integrations_telemt_restart()}
 							</Button>
 						{/if}
 						{#if telemtNeedsUpdate && onupdateTelemt}
 							<Button variant="primary" size="sm" onclick={onupdateTelemt} loading={telemtUpdating}>
-								{telemtUpdating ? 'Обновление...' : 'Обновить'}
+								{telemtUpdating ? m.settings_integrations_updating() : m.common_update()}
 							</Button>
 						{/if}
 						{#if onuninstallTelemt}
@@ -486,17 +486,17 @@
 								loading={telemtUninstalling}
 								onclick={() => (confirmUninstallTelemt = true)}
 							>
-								{telemtUninstalling ? 'Удаление...' : 'Удалить'}
+								{telemtUninstalling ? m.settings_integrations_uninstalling() : m.common_delete()}
 							</Button>
 						{/if}
 					</div>
 				{:else if telemtStatusLoading}
-					<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
+					<Button variant="secondary" size="sm" disabled>{m.settings_integrations_waiting()}</Button>
 				{:else if telemtStatus && telemtStatus.archSupported === false}
-					<Button variant="secondary" size="sm" disabled>Недоступно</Button>
+					<Button variant="secondary" size="sm" disabled>{m.settings_integrations_telemt_unavailable()}</Button>
 				{:else if oninstallTelemt}
 					<Button variant="primary" size="sm" onclick={oninstallTelemt} loading={telemtInstalling}>
-						{telemtInstalling ? 'Установка...' : 'Установить'}
+						{telemtInstalling ? m.settings_integrations_installing() : m.settings_integrations_install()}
 					</Button>
 				{/if}
 			</div>
@@ -674,10 +674,10 @@
 {#if confirmUninstallTelemt}
 	<ConfirmModal
 		open={confirmUninstallTelemt}
-		title="Удалить Telemt?"
-		message="Служба Telemt будет остановлена, а исполняемый файл удален с роутера."
-		secondary="Конфигурационные файлы config.toml и raw.toml сохранятся."
-		confirmLabel="Удалить"
+		title={m.settings_integrations_telemt_remove_title()}
+		message={m.settings_integrations_telemt_remove_message()}
+		secondary={m.settings_integrations_telemt_remove_secondary()}
+		confirmLabel={m.common_delete()}
 		variant="danger"
 		busy={telemtUninstalling}
 		onConfirm={() => {

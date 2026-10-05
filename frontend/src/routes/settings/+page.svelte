@@ -269,9 +269,9 @@
 		telemtInstalling = true;
 		try {
 			telemtStatusValue = await api.telemtInstall();
-			notifications.success("Telemt установлен");
+			notifications.success(m.settings_page_telemt_installed());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : "Не удалось установить Telemt");
+			notifications.error(e instanceof Error ? e.message : m.settings_page_telemt_install_failed());
 		} finally {
 			telemtInstalling = false;
 		}
@@ -281,9 +281,9 @@
 		telemtUpdating = true;
 		try {
 			telemtStatusValue = await api.telemtUpdate();
-			notifications.success("Telemt обновлён");
+			notifications.success(m.settings_page_telemt_updated());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : "Не удалось обновить Telemt");
+			notifications.error(e instanceof Error ? e.message : m.settings_page_telemt_update_failed());
 		} finally {
 			telemtUpdating = false;
 		}
@@ -293,9 +293,9 @@
 		telemtRestarting = true;
 		try {
 			telemtStatusValue = await api.telemtRestart();
-			notifications.success("Telemt перезапущен");
+			notifications.success(m.settings_page_telemt_restarted());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : "Не удалось перезапустить Telemt");
+			notifications.error(e instanceof Error ? e.message : m.settings_page_telemt_restart_failed());
 		} finally {
 			telemtRestarting = false;
 		}
@@ -305,9 +305,9 @@
 		telemtUninstalling = true;
 		try {
 			telemtStatusValue = await api.telemtUninstall();
-			notifications.success("Telemt удалён");
+			notifications.success(m.settings_page_telemt_removed());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : "Не удалось удалить Telemt");
+			notifications.error(e instanceof Error ? e.message : m.settings_page_telemt_remove_failed());
 		} finally {
 			telemtUninstalling = false;
 		}

@@ -90,6 +90,15 @@ func (s *Service) loadSettings() {
 	if err == nil {
 		var cfg Config
 		if err := json.Unmarshal(data, &cfg); err == nil {
+			if strings.TrimSpace(cfg.Secret) == "" {
+				cfg.Secret, _ = GenerateSecret()
+			}
+			if port, err := ValidatePort(cfg.Port); err == nil {
+				cfg.Port = port
+			} else {
+				cfg.Port = DefaultPort
+			}
+			cfg.TLSDomain = NormalizeTLSDomain(cfg.TLSDomain)
 			s.config = cfg
 			return
 		}
@@ -236,7 +245,7 @@ func ValidatePort(port int) (int, error) {
 	return port, nil
 }
 
-// NormalizeTLSDomain strips whitespace, URL scheme, path, query, and port.
+// NormalizeTLSDomain strips whitespace, URL scheme, userinfo, path, query, and port.
 func NormalizeTLSDomain(raw string) string {
 	d := strings.TrimSpace(raw)
 	if d == "" {
@@ -246,9 +255,16 @@ func NormalizeTLSDomain(raw string) string {
 	if idx := strings.Index(d, "://"); idx != -1 {
 		d = d[idx+3:]
 	}
+	if strings.HasPrefix(d, "//") {
+		d = strings.TrimPrefix(d, "//")
+	}
 	// Strip path, query, or fragment
 	if idx := strings.IndexAny(d, "/?#"); idx != -1 {
 		d = d[:idx]
+	}
+	// Strip userinfo if present (e.g. user:pass@)
+	if at := strings.LastIndex(d, "@"); at != -1 {
+		d = d[at+1:]
 	}
 	// Strip port if present
 	if host, _, err := net.SplitHostPort(d); err == nil {
@@ -259,7 +275,8 @@ func NormalizeTLSDomain(raw string) string {
 			d = parts[0]
 		}
 	}
-	d = strings.TrimSpace(d)
+	d = strings.TrimSuffix(strings.TrimSpace(d), ".")
+	d = strings.ToLower(d)
 	if d == "" {
 		return DefaultTLSDomain
 	}
