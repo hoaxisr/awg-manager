@@ -102,7 +102,10 @@ type remediationSpec struct {
 	description    func(string) string
 }
 
-var remediationTargetPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+var (
+	remediationTargetPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	wireguard2ProtectedPattern = regexp.MustCompile(`(?i)\bwireguard[\s_]*2\b`)
+)
 
 var remediationSpecs = map[string]remediationSpec{
 	"singbox.restart": {
@@ -216,6 +219,13 @@ var remediationSpecs = map[string]remediationSpec{
 			return "Принудительно загрузить обновлённый список серверов подписки и применить его через штатный сервис AWG Manager."
 		},
 	},
+	"dns.flush": {
+		risk:  "low",
+		title: func(string) string { return "Сбросить кэш DNS" },
+		description: func(string) string {
+			return "Очистить кэш DNS-прокси роутера KeeneticOS и перезапустить локальные службы DNS-резолверов."
+		},
+	},
 	"keenetic.ndmc": {
 		risk: "medium", targetRequired: true,
 		title: func(target string) string {
@@ -271,7 +281,7 @@ func validRemediationTarget(action string, spec remediationSpec, target string) 
 			}
 		}
 		// Strict invariant protections: reject commands touching Wireguard2 interface, port 1099, or forbidden flags
-		if strings.Contains(lower, "wireguard2") || strings.Contains(lower, "wireguard 2") || strings.Contains(lower, "1099") || strings.Contains(lower, "--force-reinstall") {
+		if wireguard2ProtectedPattern.MatchString(trimmed) || strings.Contains(lower, "1099") || strings.Contains(lower, "force-reinstall") {
 			return false
 		}
 		return true

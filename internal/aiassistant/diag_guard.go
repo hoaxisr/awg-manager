@@ -29,11 +29,15 @@ var (
 	// Mutating ip subcommands (add, del, delete, change, replace, set, flush, etc.)
 	ipMutatePattern = regexp.MustCompile(`(?i)\bip(?:\s+-(?:4|6|o|d|s|br))*?\s+(?:link\s+set|route\s+(?:add|del|delete|change|replace|flush|append)|rule\s+(?:add|del|delete|flush)|addr(?:ess)?\s+(?:add|del|delete|change|replace|flush)|neigh(?:bor)?\s+(?:add|del|delete|change|replace|flush))\b`)
 
-	// Mutating curl options (POST, PUT, DELETE, PATCH, data payloads, form uploads)
-	curlMutatePattern = regexp.MustCompile(`(?i)\bcurl\b.*?(?:-X\s*(?:POST|PUT|DELETE|PATCH)|--request\s*(?:POST|PUT|DELETE|PATCH)|-d\b|--data\b|--data-raw\b|--data-binary\b|--data-urlencode\b|-F\b|--form\b)`)
+	// Mutating curl options (POST, PUT, DELETE, PATCH, data payloads, form uploads, file uploads, file outputs)
+	curlMutatePattern = regexp.MustCompile(`(?i)\bcurl\b.*?(?:-X\s*(?:POST|PUT|DELETE|PATCH)|--request\s*(?:POST|PUT|DELETE|PATCH)|-d\b|--data\b|--data-raw\b|--data-binary\b|--data-urlencode\b|--data-ascii\b|--json\b|-F\b|--form\b|--form-string\b|-T\b|--upload-file\b|-o\b|-O\b|--output\b|--output-dir\b|-D\b|--dump-header\b)`)
 
-	// Localhost RCI mutations (any POST/PUT/DELETE to 127.0.0.1:79/rci or localhost/rci)
-	rciMutatePattern = regexp.MustCompile(`(?i)(?:127\.0\.0\.1|localhost)(?::79)?/rci/.*?(?:-X|-d|--data)`)
+	// Localhost RCI mutations (any POST/PUT/DELETE or payload to 127.0.0.1:79/rci or localhost/rci)
+	rciTargetPattern  = regexp.MustCompile(`(?i)(?:127\.0\.0\.1|localhost)(?::79)?/rci\b|/rci/`)
+	rciPayloadPattern = regexp.MustCompile(`(?i)(?:-X\s*(?:POST|PUT|DELETE|PATCH)|--request\s*(?:POST|PUT|DELETE|PATCH)|-d\b|--data\b|--data-raw\b|--data-binary\b|--data-urlencode\b|--data-ascii\b|--json\b|-F\b|--form\b|--form-string\b|-T\b|--upload-file\b)`)
+
+	// Subshell / command execution escapes inside pipes or arguments (e.g. awk system(...), sed e, eval, etc.)
+	subshellEscapePattern = regexp.MustCompile(`(?i)(?:system\s*\(|\beval\b|\bexec\b|\bgetline\b|/bin/sh|/bin/bash|\bsh\b|\bbash\b)`)
 
 	// Whitelisted primary diagnostic commands
 	whitelistedPrimaryPatterns = []*regexp.Regexp{
@@ -111,11 +115,15 @@ func ValidateDiagnosticCommand(cmd string) error {
 	}
 
 	if curlMutatePattern.MatchString(trimmed) {
-		return errors.New("мутирующие HTTP-запросы curl (POST, PUT, DELETE, data payloads) запрещены в режиме диагностики")
+		return errors.New("мутирующие HTTP-запросы curl (POST, PUT, DELETE, data payloads, file output) запрещены в режиме диагностики")
 	}
 
-	if rciMutatePattern.MatchString(trimmed) {
+	if rciTargetPattern.MatchString(trimmed) && rciPayloadPattern.MatchString(trimmed) {
 		return errors.New("мутирующие вызовы к Keenetic RCI API запрещены в режиме диагностики")
+	}
+
+	if subshellEscapePattern.MatchString(trimmed) {
+		return errors.New("вызов внешних команд и подоболочек (system, exec, eval, sh) запрещён в режиме диагностики")
 	}
 
 	// Split by pipeline

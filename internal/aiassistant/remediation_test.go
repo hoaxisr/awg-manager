@@ -614,8 +614,11 @@ func TestKeeneticNdmcProposalValidation(t *testing.T) {
 		"no interface Wireguard2",
 		"interface Wireguard2 down",
 		"interface Wireguard 2 down",
+		"interface Wireguard   2 down",
+		"interface Wireguard_2 down",
 		"ip static tcp ISP 1099 192.168.1.50 1099",
 		"opkg install --force-reinstall test.ipk",
+		"opkg install force-reinstall test.ipk",
 		"",
 	}
 	for _, cmd := range bannedCmds {
@@ -628,6 +631,44 @@ func TestKeeneticNdmcProposalValidation(t *testing.T) {
 	// command.exec must be completely rejected as an action
 	if p := validatedRemediationProposal("command.exec", "ls -la"); p != nil {
 		t.Fatalf("expected command.exec to be rejected, got %+v", p)
+	}
+}
+
+func TestDnsFlushProposalValidationAndApply(t *testing.T) {
+	p := validatedRemediationProposal("dns.flush", "")
+	if p == nil {
+		t.Fatal("expected valid proposal for dns.flush, got nil")
+	}
+	if p.Action != "dns.flush" || p.Risk != "low" {
+		t.Fatalf("unexpected proposal: %+v", p)
+	}
+
+	// target must be empty
+	if pBad := validatedRemediationProposal("dns.flush", "extra"); pBad != nil {
+		t.Fatalf("expected dns.flush with non-empty target to be rejected, got %+v", pBad)
+	}
+
+	flushed := false
+	handlers := ActionHandlers{
+		FlushDNS: func(ctx context.Context) error {
+			flushed = true
+			return nil
+		},
+		VerifyDNS: func(ctx context.Context) (*ActionVerification, error) {
+			return &ActionVerification{Status: "passed", Summary: "DNS verified"}, nil
+		},
+	}
+	registry := NewActionRegistry(handlers)
+	if err := registry.Apply(context.Background(), "dns.flush", ""); err != nil {
+		t.Fatalf("Apply dns.flush failed: %v", err)
+	}
+	if !flushed {
+		t.Fatal("expected FlushDNS handler to be called")
+	}
+
+	ver, err := registry.Verify(context.Background(), "dns.flush", "")
+	if err != nil || ver == nil || ver.Status != "passed" {
+		t.Fatalf("Verify dns.flush failed: ver=%+v err=%v", ver, err)
 	}
 }
 

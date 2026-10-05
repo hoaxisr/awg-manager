@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,5 +125,45 @@ func TestServer_Shutdown_StopsAIServices(t *testing.T) {
 	}
 	if s.aiEmbeddedMgr != nil {
 		t.Fatal("expected aiEmbeddedMgr to be cleared after shutdown")
+	}
+}
+
+func TestAIActionHandlers_ExecKeeneticGuards(t *testing.T) {
+	s := &Server{}
+	handlers := s.buildAIActionHandlers(nil)
+
+	// Banned commands touching Wireguard2, port 1099, force-reinstall, cleanup
+	banned := []string{
+		"no interface Wireguard2",
+		"interface Wireguard 2 down",
+		"interface Wireguard   2 down",
+		"ip static tcp ISP 1099 192.168.1.1 1099",
+		"opkg install --force-reinstall foo.ipk",
+		"awg-manager --cleanup",
+		"",
+	}
+
+	for _, cmd := range banned {
+		err := handlers.ExecKeenetic(context.Background(), cmd)
+		if err == nil || (!strings.Contains(err.Error(), "rejected") && !strings.Contains(err.Error(), "empty")) {
+			t.Fatalf("expected ExecKeenetic to reject %q with guard error, got: %v", cmd, err)
+		}
+	}
+}
+
+func TestAIActionHandlers_FlushDNS(t *testing.T) {
+	s := &Server{}
+	handlers := s.buildAIActionHandlers(nil)
+
+	if handlers.FlushDNS == nil {
+		t.Fatal("expected FlushDNS handler to be non-nil")
+	}
+	if handlers.VerifyDNS == nil {
+		t.Fatal("expected VerifyDNS handler to be non-nil")
+	}
+
+	ver, err := handlers.VerifyDNS(context.Background())
+	if err != nil || ver == nil || ver.Status != "passed" {
+		t.Fatalf("VerifyDNS failed: ver=%+v, err=%v", ver, err)
 	}
 }

@@ -345,7 +345,7 @@ func (s *Sentinel) consultCloudAI(ctx context.Context, symptom string, settings 
 	defer cancel()
 
 	query := fmt.Sprintf(`Фоновый наблюдатель (Sentinel) роутера Keenetic обнаружил сетевой сбой: %s.
-Определи диагноз и подбери действие из разрешённых: singbox.restart, mihomo.restart, mihomo.reload, routing.reapply, tunnel.restart, service.restart.
+Определи диагноз и подбери действие из разрешённых: singbox.restart, mihomo.restart, mihomo.reload, routing.reapply, tunnel.restart, service.restart, dns.flush.
 Ответь ТОЛЬКО валидным JSON без markdown-разметки:
 {"title": "Краткое имя", "diagnosis": "В чём причина", "action": "одно из разрешённых", "target": "цель или пусто", "category": "routing/tunnel/dns"}`, symptom)
 
@@ -419,7 +419,7 @@ func (s *Sentinel) consultCloudAI(ctx context.Context, symptom string, settings 
 
 func isSafeAutoAction(action string) bool {
 	switch action {
-	case "singbox.restart", "mihomo.restart", "mihomo.reload", "tunnel.restart", "routing.reapply":
+	case "singbox.restart", "mihomo.restart", "mihomo.reload", "tunnel.restart", "routing.reapply", "dns.flush":
 		return true
 	default:
 		return false

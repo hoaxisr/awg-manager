@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -298,6 +299,8 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	return h
 }
 
+var wireguard2ProtectedPattern = regexp.MustCompile(`(?i)\bwireguard[\s_]*2\b`)
+
 func (s *Server) buildAIActionHandlers(h *routeHandlers) aiassistant.ActionHandlers {
 	actionHandlers := aiassistant.ActionHandlers{}
 	if s.singboxOrch != nil {
@@ -551,6 +554,14 @@ func (s *Server) buildAIActionHandlers(h *routeHandlers) aiassistant.ActionHandl
 		}, nil
 	}
 	actionHandlers.ExecKeenetic = func(ctx context.Context, cmdStr string) error {
+		trimmed := strings.TrimSpace(cmdStr)
+		if trimmed == "" {
+			return errors.New("command is empty")
+		}
+		lower := strings.ToLower(trimmed)
+		if wireguard2ProtectedPattern.MatchString(trimmed) || strings.Contains(lower, "1099") || strings.Contains(lower, "force-reinstall") || strings.Contains(lower, "cleanup") {
+			return errors.New("command rejected: touches protected interface Wireguard2, port 1099, or forbidden operations")
+		}
 		res, err := sysexec.Run(ctx, "ndmc", "-c", cmdStr)
 		if err != nil {
 			return fmt.Errorf("ndmc execution failed: %w", err)
@@ -558,7 +569,6 @@ func (s *Server) buildAIActionHandlers(h *routeHandlers) aiassistant.ActionHandl
 		if res != nil && res.ExitCode != 0 {
 			return fmt.Errorf("ndmc exited with code %d: %s", res.ExitCode, res.Stderr)
 		}
-		trimmed := strings.TrimSpace(cmdStr)
 		isReadOnly := strings.HasPrefix(trimmed, "show") ||
 			strings.HasPrefix(trimmed, "ip dns-proxy cache flush") ||
 			strings.HasPrefix(trimmed, "ping") ||

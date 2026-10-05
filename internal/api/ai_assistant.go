@@ -168,7 +168,7 @@ func (h *AIAssistantHandler) MCP(w http.ResponseWriter, r *http.Request) {
 			switch typed := value.(type) {
 			case string:
 				arguments[key] = typed
-			case float64, bool:
+			case float64, float32, int, int64, bool:
 				arguments[key] = fmt.Sprint(typed)
 			}
 		}
