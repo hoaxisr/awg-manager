@@ -60,7 +60,7 @@ func TestGenerateConfig_TProxyMode(t *testing.T) {
 		},
 		"direct",
 		[]DeviceProxyListener{
-			{ID: "lan1", Port: 1099, SelectedOutbound: "block", Enabled: true},
+			{ID: "lan1", Port: 1080, SelectedOutbound: "block", Enabled: true},
 		},
 	)
 	if err != nil {
@@ -518,6 +518,17 @@ func TestGenerateConfig_MihomoLocalListeners(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in:\n%s", want, text)
 		}
+	}
+}
+
+func TestGenerateConfig_MihomoMixedPortDefault(t *testing.T) {
+	b, err := GenerateConfig(storage.SingboxRouterSettings{}, "", nil, nil, "direct", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(b)
+	if !strings.Contains(text, "mixed-port: 1099") {
+		t.Fatalf("expected mixed-port: 1099 fallback in:\n%s", text)
 	}
 }
 

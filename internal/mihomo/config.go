@@ -609,6 +609,11 @@ func GenerateConfigWithResources(
 		trafficMode = settings.MihomoTrafficMode
 	}
 
+	mixedPort := settings.MihomoMixedPort
+	if mixedPort <= 0 {
+		mixedPort = 1099
+	}
+
 	cfg := Config{
 		Mode:        trafficMode,
 		LogLevel:    "info",
@@ -633,7 +638,7 @@ func GenerateConfigWithResources(
 		RedirPort:  51272, // Reuse sing-box redirect port
 		Port:       settings.MihomoHTTPPort,
 		SocksPort:  settings.MihomoSOCKSPort,
-		MixedPort:  settings.MihomoMixedPort,
+		MixedPort:  mixedPort,
 	}
 	cfg.ProxyProvider = native.ProxyProviders
 	cfg.RuleProvider = native.RuleProviders

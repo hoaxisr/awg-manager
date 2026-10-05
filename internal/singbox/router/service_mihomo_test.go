@@ -1099,6 +1099,9 @@ func TestValidateMihomoVersion_Mismatches(t *testing.T) {
 }
 
 func TestValidateMihomoVersion_ExecutionScript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping POSIX shell script execution test on Windows")
+	}
 	tmpDir := t.TempDir()
 	scriptPath := filepath.Join(tmpDir, "mock-mihomo")
 	scriptContent := "#!/bin/sh\necho 'Mihomo v1.18.0 linux amd64'\n"

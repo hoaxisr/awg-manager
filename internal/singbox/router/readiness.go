@@ -52,14 +52,15 @@ func CheckEngineReadiness(ctx context.Context, engine proxyengine.Engine, engine
 	}
 
 	if tunMode || usesTunInbound(mode) || iface != "" {
-		target := iface
-		if target == "" {
-			target = "unspecified"
-		}
-		carrierUp := tunReadyProbe(target)
-		res.Details["tun_carrier"] = carrierUp
-		if !carrierUp {
-			res.MissingCriteria = append(res.MissingCriteria, fmt.Sprintf("tun carrier=0 (%s)", target))
+		if iface == "" {
+			res.Details["tun_carrier"] = false
+			res.MissingCriteria = append(res.MissingCriteria, "tun interface not provisioned")
+		} else {
+			carrierUp := tunReadyProbe(iface)
+			res.Details["tun_carrier"] = carrierUp
+			if !carrierUp {
+				res.MissingCriteria = append(res.MissingCriteria, fmt.Sprintf("tun carrier=0 (%s)", iface))
+			}
 		}
 	} else {
 		// TPROXY / REDIRECT mode
@@ -80,20 +81,19 @@ func CheckEngineReadiness(ctx context.Context, engine proxyengine.Engine, engine
 				} else {
 					res.MissingCriteria = append(res.MissingCriteria, "mihomo controller/mixed-port not ready")
 				}
-			} else {
-				tcpOK := checkTCPRedirect()
-				udpOK := checkUDPTProxy()
-				res.Details["tcp_redirect"] = tcpOK
-				res.Details["udp_tproxy"] = udpOK
-				if !tcpOK {
-					res.MissingCriteria = append(res.MissingCriteria, fmt.Sprintf("tcp redirect:%d not listening", RedirectPort))
-				}
-				if !udpOK {
-					res.MissingCriteria = append(res.MissingCriteria, fmt.Sprintf("udp tproxy:%d not bound", TPROXYPort))
-				}
-				if tcpOK && udpOK {
-					res.MissingCriteria = append(res.MissingCriteria, "inbound sockets not ready")
-				}
+			}
+			tcpOK := checkTCPRedirect()
+			udpOK := checkUDPTProxy()
+			res.Details["tcp_redirect"] = tcpOK
+			res.Details["udp_tproxy"] = udpOK
+			if !tcpOK {
+				res.MissingCriteria = append(res.MissingCriteria, fmt.Sprintf("tcp redirect:%d not listening", RedirectPort))
+			}
+			if !udpOK {
+				res.MissingCriteria = append(res.MissingCriteria, fmt.Sprintf("udp tproxy:%d not bound", TPROXYPort))
+			}
+			if tcpOK && udpOK {
+				res.MissingCriteria = append(res.MissingCriteria, "inbound sockets not ready")
 			}
 		} else {
 			res.Details["tcp_redirect"] = true

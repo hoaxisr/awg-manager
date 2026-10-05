@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -96,7 +97,7 @@ func TestMihomoBridgeRuntimeActivateNDMSOffDoesNotWaitOrPublish(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.SetBridge("proxy", nodes[0].ID, mihomonative.ProxyBridge{
-		ListenPort: 12999, ProxyIndex: 7, ProxyInterface: "Proxy7", KernelInterface: "t2s7",
+		ListenPort: 12099, ProxyIndex: 7, ProxyInterface: "Proxy7", KernelInterface: "t2s7",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -332,14 +333,7 @@ func (f *fakeNDMSRegistrarWithOwnership) EnsureProxyIfOwned(ctx context.Context,
 	}
 	if f.occupied[index] {
 		cur := f.descriptions[index]
-		owned := cur == owner
-		for _, leg := range legacy {
-			if leg != "" && cur == leg {
-				owned = true
-				break
-			}
-		}
-		if !owned {
+		if !fakeOwnerMatches(cur, owner, legacy) {
 			return false, nil
 		}
 	}
@@ -360,14 +354,7 @@ func (f *fakeNDMSRegistrarWithOwnership) RemoveProxyIfOwned(_ context.Context, i
 		return true, nil
 	}
 	cur := f.descriptions[index]
-	owned := cur == owner
-	for _, leg := range legacy {
-		if leg != "" && cur == leg {
-			owned = true
-			break
-		}
-	}
-	if !owned {
+	if !fakeOwnerMatches(cur, owner, legacy) {
 		return false, nil
 	}
 	f.events = append(f.events, fmt.Sprintf("withdraw:%d:%s", index, owner))
@@ -377,6 +364,35 @@ func (f *fakeNDMSRegistrarWithOwnership) RemoveProxyIfOwned(_ context.Context, i
 		delete(f.ports, index)
 	}
 	return true, nil
+}
+
+func fakeOwnerMatches(description, owner string, legacyOwners []string) bool {
+	if description == owner {
+		return true
+	}
+	descToken := singbox.ExtractProxyOwnerToken(description)
+	ownerToken := singbox.ExtractProxyOwnerToken(owner)
+	if descToken != "" && ownerToken != "" && descToken == ownerToken {
+		return true
+	}
+	if ownerToken != "" && (description == ownerToken || strings.Contains(description, "["+ownerToken+"]")) {
+		return true
+	}
+	if descToken != "" && (owner == descToken || strings.Contains(owner, "["+descToken+"]")) {
+		return true
+	}
+	for _, legacy := range legacyOwners {
+		if legacy != "" {
+			if description == legacy || (descToken != "" && descToken == legacy) {
+				return true
+			}
+			legacyToken := singbox.ExtractProxyOwnerToken(legacy)
+			if legacyToken != "" && (descToken == legacyToken || description == legacyToken) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestMihomoBridgeRuntime_PrepareRetainsLegacyOwnerUntilActivate(t *testing.T) {
@@ -434,7 +450,7 @@ func TestMihomoBridgeRuntime_PrepareRetainsLegacyOwnerUntilActivate(t *testing.T
 	}
 
 	// Verify that after activate, NDMS description is updated to canonical token AND LegacyOwner is cleared
-	canonicalOwner := mihomonative.BridgeOwnershipDescription("proxy", nodes[0].ID)
+	canonicalOwner := mihomonative.FormatBridgeDescription(nodes[0].Name, "proxy", nodes[0].ID)
 	if base.descriptions[7] != canonicalOwner {
 		t.Fatalf("activate did not write canonical owner: %q, want %q", base.descriptions[7], canonicalOwner)
 	}
@@ -677,13 +693,13 @@ func TestMihomoBridgeRuntime_CoordinatorLifecycleSubtests(t *testing.T) {
 		manager := mihomonative.NewBridgeManager(store, gate, func() bool { return true })
 		runtime := newMihomoBridgeRuntime(store, manager, gate)
 
-		canon := mihomonative.BridgeOwnershipDescription("proxy", nodes[0].ID)
+		canon := mihomonative.FormatBridgeDescription(nodes[0].Name, "proxy", nodes[0].ID)
 		ref := mihomo.BridgeRef{
 			ProxyIndex:      7,
 			ProxyInterface:  "Proxy7",
 			KernelInterface: "t2s7",
 			ListenPort:      12007,
-			OwnerUUID:       canon,
+			OwnerUUID:       mihomonative.BridgeOwnershipDescription("proxy", nodes[0].ID),
 		}
 		return runtime, base, ref, canon
 	}
@@ -897,7 +913,7 @@ func TestGateB_Rev8_EndToEnd_NormalApplyAndCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	canonOwner := mihomonative.BridgeOwnershipDescription("proxy", nodes[0].ID)
+	canonOwner := mihomonative.FormatBridgeDescription(nodes[0].Name, "proxy", nodes[0].ID)
 
 	err = c.coord.MutateAndApply(ctx, nil, c.compileFn)
 	if err != nil {
@@ -990,7 +1006,7 @@ func TestGateB_Rev8_EndToEnd_SameSlotReplacement_WithdrawPrecedesPublish(t *test
 		if err != nil {
 			return err
 		}
-		canonB = mihomonative.BridgeOwnershipDescription("proxy", nodesB[0].ID)
+		canonB = mihomonative.FormatBridgeDescription(nodesB[0].Name, "proxy", nodesB[0].ID)
 		return c.store.SetBridge("proxy", nodesB[0].ID, mihomonative.ProxyBridge{
 			ListenPort: 12008, ProxyIndex: 7, ProxyInterface: "Proxy7", KernelInterface: "t2s7",
 		})
@@ -1069,7 +1085,7 @@ func TestGateB_Rev8_EndToEnd_PortChangeControlledReplacement(t *testing.T) {
 	c.ndms.mu.Unlock()
 
 	expectedWithdraw := fmt.Sprintf("withdraw:7:%s", canonOwner)
-	expectedPublish := fmt.Sprintf("publish:7:%s:12009", canonOwner)
+	expectedPublish := fmt.Sprintf("publish:7:%s:12009", mihomonative.FormatBridgeDescription(nodes[0].Name, "proxy", nodes[0].ID))
 
 	withdrawIdx := -1
 	publishIdx := -1
@@ -1105,7 +1121,7 @@ func TestGateB_Rev8_EndToEnd_FailPublication_RollbackRestoresPrevious(t *testing
 		t.Fatal(err)
 	}
 
-	canonA := mihomonative.BridgeOwnershipDescription("proxy", nodesA[0].ID)
+	canonA := mihomonative.FormatBridgeDescription(nodesA[0].Name, "proxy", nodesA[0].ID)
 
 	c.ndms.failPublishIndex = 7
 

@@ -194,7 +194,7 @@ func TestGenerateConfig_UnknownListenerTarget_FailsClosed(t *testing.T) {
 		nil,
 		"direct",
 		[]DeviceProxyListener{
-			{ID: "dev1", Port: 1099, SelectedOutbound: "ghost-proxy", Enabled: true},
+			{ID: "dev1", Port: 1080, SelectedOutbound: "ghost-proxy", Enabled: true},
 		},
 	)
 	if err == nil {
