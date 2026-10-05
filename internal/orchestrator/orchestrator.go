@@ -19,15 +19,24 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
+// Окна хуков (В6): стенд 01.10, KN-1810 5.01.C.6, 16 замеров опоздания
+// хуков под churn 14–30 с, max ≈30 с; окно = max × 1,5. Внешняя грань
+// conf=disabled внутри окна не теряется: поглощённая грань перепроверяется
+// при истечении окна (recheckAbsorbedDisabled), остаток — задержка до 45 с.
+
 // expectedHookTTL bounds how long a self-induced NDMS hook expectation
 // stays valid. Past it, the token is pruned so a stale expectation can't
 // absorb a later, legitimate external edge.
-const expectedHookTTL = 15 * time.Second
+const expectedHookTTL = 45 * time.Second
 
-// bootQuiescenceWindow is how long after we (re)start a NativeWG tunnel we
+// bootQuiescenceWindow is how long after we (re)start a tunnel we
 // treat an incoming conf=disabled as transient NDMS settling rather than a
-// stop command. See decideNDMSHook + updateState.
-const bootQuiescenceWindow = 20 * time.Second
+// stop command. See decideNDMSHook + updateState + recheckAbsorbedDisabled.
+const bootQuiescenceWindow = 45 * time.Second
+
+// absorbedRecheckTimeout — потолок фоновой перепроверки поглощённой грани:
+// ожидание замка туннеля, проба NDMS и остановка.
+const absorbedRecheckTimeout = 30 * time.Second
 
 // confSettleDelay is how long an external conf=disabled edge is held before it
 // is acted on, waiting to see whether NDMS bounces the interface back to
@@ -126,6 +135,10 @@ type Orchestrator struct {
 
 	// confSettleDelay overrides the package const; injectable for tests.
 	confSettleDelay time.Duration
+
+	// schedule откладывает вызов fn на d; nil → time.AfterFunc. Как clock —
+	// ставится тестом до первого события и дальше не меняется.
+	schedule func(d time.Duration, fn func())
 
 	// confLayerRunning (пишется и читается под o.mu — у остальных Set*-полей
 	// контракт слабее: они ставятся однократно в setupOrchestrator до приёма
@@ -255,8 +268,8 @@ func (o *Orchestrator) SetSupportsASC(fn func() bool) {
 // the next lifecycle event and triggers NDMS "interface has no
 // assigned profile" warnings.
 //
-// Runtime-only fields (Running, Monitoring, quiescentUntil)
-// live only in the orchestrator's cache, so they are preserved across
+// Runtime-only fields (Running, Monitoring, quiescentUntil,
+// lastConfRunningAt, absorbedDisabledAt, recheckScheduled) live only in the orchestrator's cache, so they are preserved across
 // the refresh — reloading them from storage would clobber the action
 // layer's view of the world.
 func (o *Orchestrator) RefreshTunnelState(tunnelID string) {
@@ -273,6 +286,8 @@ func (o *Orchestrator) RefreshTunnelState(tunnelID string) {
 		fresh.Monitoring = cur.Monitoring
 		fresh.quiescentUntil = cur.quiescentUntil
 		fresh.lastConfRunningAt = cur.lastConfRunningAt
+		fresh.absorbedDisabledAt = cur.absorbedDisabledAt
+		fresh.recheckScheduled = cur.recheckScheduled
 	}
 	o.state.tunnels[tunnelID] = fresh
 }
@@ -696,6 +711,13 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 			} else {
 				o.appLog.Debug("boot-trace", t.ID,
 					fmt.Sprintf("conf=disabled suppressed sinceStart=%s windowLeft=%s", sinceStart.Round(time.Second), windowLeft.Round(time.Second)))
+				// П13: грань могла быть внешней — окно её только откладывает.
+				t.absorbedDisabledAt = event.Now
+				if !t.recheckScheduled {
+					t.recheckScheduled = true
+					tunnelID, ndmsName := t.ID, event.NDMSName
+					o.scheduleFn(windowLeft, func() { o.recheckAbsorbedDisabled(tunnelID, ndmsName) })
+				}
 			}
 		}
 	}
@@ -732,6 +754,96 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 	}
 	defer o.unlockTunnel(tunnelID)
 	return o.executeActions(execCtx, actions)
+}
+
+// scheduleFn — o.schedule или time.AfterFunc.
+func (o *Orchestrator) scheduleFn(d time.Duration, fn func()) {
+	if o.schedule != nil {
+		o.schedule(d, fn)
+		return
+	}
+	time.AfterFunc(d, fn)
+}
+
+// recheckAbsorbedDisabled — единственная перепроверка грани conf=disabled,
+// поглощённой окном quiescence (П13, В6). Окно гасит дрожание NDMS после
+// нашего же подъёма, но ровно так же глотало бы и настоящее внешнее
+// выключение в первые 45 с — туннель остался бы Running при выключенном
+// интерфейсе. Поэтому при истечении окна: conf=running после грани — NDMS
+// вернул интерфейс сам, 0 RCI; иначе одна проба. down — остановка как от
+// внешней грани (Q1: Enabled=false); ошибка пробы — не останавливаем (R31).
+//
+// Всё под замком туннеля, действия — executeActions: замок уже взят,
+// executeActionsGrouped взял бы тот же семафор второй раз и через
+// tunnelLockTimeout упал бы ErrOperationInProgress (L1′(b)).
+func (o *Orchestrator) recheckAbsorbedDisabled(tunnelID, ndmsName string) {
+	ctx, cancel := context.WithTimeout(context.Background(), absorbedRecheckTimeout)
+	defer cancel()
+	if err := o.lockTunnel(ctx, tunnelID, "recheck-absorbed-disabled"); err != nil {
+		// Метка остаётся, переноса нет (L1′(c)): туннель занят нашей же
+		// операцией; её подъём сбросит метку, остановка сделает её ненужной.
+		// Таймера больше нет — флаг снимаем, чтобы он не врал.
+		o.mu.Lock()
+		if t := o.state.tunnels[tunnelID]; t != nil {
+			t.recheckScheduled = false
+		}
+		o.mu.Unlock()
+		o.appLog.Warn("conf-recheck", tunnelID, fmt.Sprintf("перепроверка грани: туннель занят (%v)", err))
+		return
+	}
+	defer o.unlockTunnel(tunnelID)
+
+	now := o.nowFn()
+	o.mu.Lock()
+	t := o.state.tunnels[tunnelID]
+	if t == nil {
+		o.mu.Unlock()
+		return
+	}
+	t.recheckScheduled = false
+	if !t.Running || t.absorbedDisabledAt.IsZero() {
+		o.mu.Unlock()
+		return
+	}
+	if now.Before(t.quiescentUntil) {
+		// Окно продлено (повторный подъём/reconcile) — решать на его конце.
+		t.recheckScheduled = true
+		o.scheduleFn(t.quiescentUntil.Sub(now), func() { o.recheckAbsorbedDisabled(tunnelID, ndmsName) })
+		o.mu.Unlock()
+		return
+	}
+	if t.lastConfRunningAt.After(t.absorbedDisabledAt) {
+		t.absorbedDisabledAt = time.Time{}
+		o.mu.Unlock()
+		o.appLog.Info("conf-recheck", tunnelID,
+			"поглощённая грань conf=disabled сменилась на conf=running — туннель не останавливаем")
+		return
+	}
+	probe := o.confLayerRunning
+	o.mu.Unlock()
+	if probe == nil {
+		return
+	}
+
+	up, err := probe(ctx, ndmsName)
+	if err != nil {
+		o.appLog.Warn("conf-recheck", tunnelID,
+			fmt.Sprintf("поглощённая грань conf=disabled: NDMS не прочитан (%v) — туннель не останавливаем", err))
+		return
+	}
+	if !up {
+		actions, _, _ := o.decideLocked(Event{Type: EventNDMSHook, NDMSName: ndmsName, Layer: "conf", Level: "disabled", Now: now})
+		_ = o.executeActions(query.WithActionList(ctx), actions)
+		o.appLog.Info("conf-recheck", tunnelID, "поглощённая грань conf=disabled подтверждена NDMS — остановка")
+	} else {
+		o.appLog.Info("conf-recheck", tunnelID,
+			"поглощённая грань conf=disabled: NDMS держит интерфейс включённым — туннель не останавливаем")
+	}
+	o.mu.Lock()
+	if t := o.state.tunnels[tunnelID]; t != nil {
+		t.absorbedDisabledAt = time.Time{}
+	}
+	o.mu.Unlock()
 }
 
 // tunnelLockTimeout bounds how long a caller waits for a busy tunnel's
@@ -963,6 +1075,9 @@ func (o *Orchestrator) updateState(action Action) {
 	case ActionColdStartKernel, ActionStartNativeWG, ActionReconcileNativeWG, ActionReconcileKernel, ActionResumeKernel:
 		t.Running = true
 		t.quiescentUntil = o.nowFn().Add(bootQuiescenceWindow)
+		// Новое окно — грань прошлого подъёма к нему не относится (L1′(d)).
+		t.absorbedDisabledAt = time.Time{}
+		t.recheckScheduled = false
 		o.appLog.Debug("boot-trace", t.ID, fmt.Sprintf("tunnel-start action=%d", action.Type))
 		// Refresh ActiveWAN from store. Execute layer persists the resolved
 		// WAN; we mirror it into the in-memory cache so decideWANDown can

@@ -53,6 +53,13 @@ type tunnelState struct {
 	// this tunnel. settleConfDisabled uses it to tell an NDMS interface restart
 	// (disabled→running bounce) from a real disable. Runtime-only.
 	lastConfRunningAt time.Time
+
+	// absorbedDisabledAt: когда грань conf=disabled работающего туннеля
+	// поглотило окно quiescence; ноль — поглощённой грани нет.
+	// recheckScheduled: перепроверка этой грани на конце окна запланирована
+	// (recheckAbsorbedDisabled) — одна на поглощение. Runtime-only.
+	absorbedDisabledAt time.Time
+	recheckScheduled   bool
 }
 
 // ndmsName returns the NDMS interface name for this tunnel.
