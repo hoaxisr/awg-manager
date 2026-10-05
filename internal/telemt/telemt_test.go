@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -159,6 +160,10 @@ func TestExtractTarGzBinary(t *testing.T) {
 }
 
 func TestService_GetStatus_Mock(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping shell script fixture on windows")
+	}
+
 	tmpDir := t.TempDir()
 	svc := New(tmpDir, "aarch64")
 
@@ -228,5 +233,141 @@ func TestService_Lifecycle_Enabled(t *testing.T) {
 	}
 	if svc.GetConfig().Enabled {
 		t.Fatalf("expected disabled after stop")
+	}
+}
+
+func TestValidatePort(t *testing.T) {
+	cases := []struct {
+		port    int
+		want    int
+		wantErr bool
+	}{
+		{0, DefaultPort, false},
+		{8443, 8443, false},
+		{1080, 1080, false},
+		{-1, 0, true},
+		{65536, 0, true},
+		{22, 0, true},
+		{2222, 0, true},
+		{1099, 0, true},
+		{51820, 0, true},
+	}
+	for _, c := range cases {
+		got, err := ValidatePort(c.port)
+		if (err != nil) != c.wantErr {
+			t.Errorf("ValidatePort(%d) err = %v, wantErr = %v", c.port, err, c.wantErr)
+		}
+		if !c.wantErr && got != c.want {
+			t.Errorf("ValidatePort(%d) = %d, want %d", c.port, got, c.want)
+		}
+	}
+}
+
+func TestNormalizeTLSDomain(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"yandex.ru", "yandex.ru"},
+		{"  yandex.ru  ", "yandex.ru"},
+		{"https://yandex.ru", "yandex.ru"},
+		{"http://yandex.ru:8443", "yandex.ru"},
+		{"https://yandex.ru/test/path?foo=bar#hash", "yandex.ru"},
+		{"yandex.ru:8443", "yandex.ru"},
+		{"", DefaultTLSDomain},
+		{"   ", DefaultTLSDomain},
+	}
+	for _, c := range cases {
+		got := NormalizeTLSDomain(c.in)
+		if got != c.want {
+			t.Errorf("NormalizeTLSDomain(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestService_Close_DoesNotDisable(t *testing.T) {
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "x86_64")
+
+	// Set Enabled = true
+	svc.config.Enabled = true
+	_ = svc.saveSettingsLocked()
+
+	// Calling Close() does NOT set Enabled = false
+	if err := svc.Close(); err != nil {
+		t.Fatalf("close error: %v", err)
+	}
+	if !svc.GetConfig().Enabled {
+		t.Fatalf("expected service to remain enabled after Close()")
+	}
+
+	// Calling Stop() DOES set Enabled = false
+	if err := svc.Stop(context.Background()); err != nil {
+		t.Fatalf("stop error: %v", err)
+	}
+	if svc.GetConfig().Enabled {
+		t.Fatalf("expected service to be disabled after Stop()")
+	}
+}
+
+func TestService_StartIfEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "x86_64")
+
+	// Disabled and uninstalled -> returns nil without error
+	if err := svc.StartIfEnabled(context.Background()); err != nil {
+		t.Fatalf("unexpected error for disabled StartIfEnabled: %v", err)
+	}
+
+	// Enabled but uninstalled -> IsInstalled is false, so returns nil without error
+	svc.config.Enabled = true
+	if err := svc.StartIfEnabled(context.Background()); err != nil {
+		t.Fatalf("unexpected error for uninstalled StartIfEnabled: %v", err)
+	}
+}
+
+func TestSaveConfig_SecretGeneration(t *testing.T) {
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "x86_64")
+
+	cfg := Config{
+		Enabled:   false,
+		Port:      8443,
+		ListenIP:  "0.0.0.0",
+		Secret:    "", // Empty secret
+		TLSDomain: "https://example.com/foo",
+	}
+
+	if err := svc.SaveConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	saved := svc.GetConfig()
+	if saved.Secret == "" {
+		t.Fatalf("expected secret to be automatically generated")
+	}
+	if len(saved.Secret) != 32 {
+		t.Fatalf("expected 32-char hex secret, got length %d: %s", len(saved.Secret), saved.Secret)
+	}
+	if saved.TLSDomain != "example.com" {
+		t.Fatalf("expected normalized tlsDomain example.com, got %s", saved.TLSDomain)
+	}
+}
+
+func TestSaveConfig_ReservedPort(t *testing.T) {
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "x86_64")
+
+	for _, port := range []int{22, 2222, 1099, 51820} {
+		cfg := Config{
+			Port: port,
+		}
+		err := svc.SaveConfig(context.Background(), cfg)
+		if err == nil {
+			t.Fatalf("expected error for reserved port %d, got nil", port)
+		}
+		if !strings.Contains(err.Error(), "reserved by system") {
+			t.Fatalf("expected 'reserved by system' error for port %d, got %v", port, err)
+		}
 	}
 }

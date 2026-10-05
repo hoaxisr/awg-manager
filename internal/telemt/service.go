@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -218,10 +219,73 @@ func (s *Service) GetConfig() Config {
 	return s.config
 }
 
+// ValidatePort checks that the port is within the valid range (1-65535)
+// and rejects ports reserved by system components.
+// If port is 0, DefaultPort (8443) is returned.
+func ValidatePort(port int) (int, error) {
+	if port == 0 {
+		port = DefaultPort
+	}
+	if port < 1 || port > 65535 {
+		return 0, fmt.Errorf("invalid port %d: must be between 1 and 65535", port)
+	}
+	switch port {
+	case 22, 2222, 1099, 51820:
+		return 0, fmt.Errorf("port %d is reserved by system", port)
+	}
+	return port, nil
+}
+
+// NormalizeTLSDomain strips whitespace, URL scheme, path, query, and port.
+func NormalizeTLSDomain(raw string) string {
+	d := strings.TrimSpace(raw)
+	if d == "" {
+		return DefaultTLSDomain
+	}
+	// Strip scheme if present (e.g. https://)
+	if idx := strings.Index(d, "://"); idx != -1 {
+		d = d[idx+3:]
+	}
+	// Strip path, query, or fragment
+	if idx := strings.IndexAny(d, "/?#"); idx != -1 {
+		d = d[:idx]
+	}
+	// Strip port if present
+	if host, _, err := net.SplitHostPort(d); err == nil {
+		d = host
+	} else if strings.Contains(d, ":") && !strings.Contains(d, "]") {
+		parts := strings.Split(d, ":")
+		if len(parts) == 2 {
+			d = parts[0]
+		}
+	}
+	d = strings.TrimSpace(d)
+	if d == "" {
+		return DefaultTLSDomain
+	}
+	return d
+}
+
 // SaveConfig updates the telemt configuration and writes config.toml.
 func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	port, err := ValidatePort(cfg.Port)
+	if err != nil {
+		return err
+	}
+	cfg.Port = port
+
+	if strings.TrimSpace(cfg.Secret) == "" {
+		sec, err := GenerateSecret()
+		if err != nil {
+			return fmt.Errorf("failed to generate secret: %w", err)
+		}
+		cfg.Secret = sec
+	}
+
+	cfg.TLSDomain = NormalizeTLSDomain(cfg.TLSDomain)
 
 	s.config = cfg
 	if err := s.saveSettingsLocked(); err != nil {
@@ -409,6 +473,16 @@ func (s *Service) Start(ctx context.Context) error {
 	return nil
 }
 
+// StartIfEnabled launches the telemt daemon if it is installed and configured as enabled.
+func (s *Service) StartIfEnabled(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.config.Enabled && s.IsInstalled() {
+		return s.startProcess(ctx)
+	}
+	return nil
+}
+
 func (s *Service) startProcess(ctx context.Context) error {
 	if !s.IsInstalled() {
 		return ErrNotInstalled
@@ -416,8 +490,17 @@ func (s *Service) startProcess(ctx context.Context) error {
 
 	running, _ := s.GetRunningState()
 	if running {
+		port := s.config.Port
+		if port <= 0 {
+			port = DefaultPort
+		}
+		_ = listenfirewall.Apply(ctx, port, "tcp")
+		s.openedPort = port
 		return nil
 	}
+
+	// Clean up any stale PID file before starting
+	_ = os.Remove(s.pidPath)
 
 	// Ensure config.toml is written
 	tomlData := GenerateTOML(s.config)
@@ -479,8 +562,13 @@ func (s *Service) stopProcess(ctx context.Context) error {
 	_ = stopCmd.Run()
 
 	// Wait up to 1 second
+stopWait:
 	for i := 0; i < 5; i++ {
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			break stopWait
+		case <-time.After(200 * time.Millisecond):
+		}
 		if r, _ := s.GetRunningState(); !r {
 			_ = os.Remove(s.pidPath)
 			return nil
@@ -490,11 +578,14 @@ func (s *Service) stopProcess(ctx context.Context) error {
 	// Terminate by PID
 	if pid > 0 {
 		if childproc.MatchesBinary(pid, "telemt") {
-			_ = exec.Command("kill", strconv.Itoa(pid)).Run()
-			time.Sleep(200 * time.Millisecond)
+			_ = childproc.Terminate(pid)
+			select {
+			case <-ctx.Done():
+			case <-time.After(200 * time.Millisecond):
+			}
 			if r, _ := s.GetRunningState(); r {
 				if childproc.MatchesBinary(pid, "telemt") {
-					_ = exec.Command("kill", "-9", strconv.Itoa(pid)).Run()
+					_ = childproc.Kill(pid)
 				}
 			}
 		}
@@ -518,13 +609,19 @@ func (s *Service) Restart(ctx context.Context) error {
 
 func (s *Service) restartProcess(ctx context.Context) error {
 	_ = s.stopProcess(ctx)
-	time.Sleep(300 * time.Millisecond)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(300 * time.Millisecond):
+	}
 	return s.startProcess(ctx)
 }
 
-// Close gracefully shuts down the service.
+// Close gracefully shuts down the service without modifying configuration.
 func (s *Service) Close() error {
-	return s.Stop(context.Background())
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stopProcess(context.Background())
 }
 
 // extractTarGzBinary reads a .tar.gz archive stream and writes the file named targetName to destPath.

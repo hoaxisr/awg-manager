@@ -80,6 +80,7 @@ func (a *app) setupServer() {
 	a.deferOnExit(func() {
 		_ = a.telemtService.Close()
 	})
+	_ = a.telemtService.StartIfEnabled(context.Background())
 	a.telemtHandler = api.NewTelemtHandler(a.telemtService)
 
 	a.srv = server.New(

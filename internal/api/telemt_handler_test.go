@@ -85,6 +85,39 @@ func TestTelemtHandler_Routes(t *testing.T) {
 		t.Fatalf("expected 400 for invalid JSON body, got %d", w.Code)
 	}
 
+	// 4a. POST /api/telemt/config with reserved port 1099 -> 400
+	reservedCfg := telemt.Config{
+		Port: 1099,
+	}
+	reservedBody, _ := json.Marshal(reservedCfg)
+	req = httptest.NewRequest(http.MethodPost, "/api/telemt/config", strings.NewReader(string(reservedBody)))
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for reserved port 1099, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 4b. POST /api/telemt/config with empty secret and URL domain -> 200 with generated secret and normalized domain
+	urlCfg := telemt.Config{
+		Port:      8443,
+		Secret:    "",
+		TLSDomain: "https://example.org/proxy",
+	}
+	urlBody, _ := json.Marshal(urlCfg)
+	req = httptest.NewRequest(http.MethodPost, "/api/telemt/config", strings.NewReader(string(urlBody)))
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for URL domain and empty secret, got %d: %s", w.Code, w.Body.String())
+	}
+	afterSave := svc.GetConfig()
+	if len(afterSave.Secret) != 32 {
+		t.Fatalf("expected 32-char generated secret, got %q", afterSave.Secret)
+	}
+	if afterSave.TLSDomain != "example.org" {
+		t.Fatalf("expected normalized tlsDomain example.org, got %q", afterSave.TLSDomain)
+	}
+
 	// 5. POST /api/telemt/stop -> 200
 	req = httptest.NewRequest(http.MethodPost, "/api/telemt/stop", nil)
 	w = httptest.NewRecorder()

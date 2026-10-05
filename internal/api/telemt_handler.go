@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/telemt"
@@ -88,6 +89,10 @@ func (h *TelemtHandler) handleSaveConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := h.service.SaveConfig(r.Context(), req); err != nil {
+		if strings.Contains(err.Error(), "port") {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_PORT")
+			return
+		}
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "SAVE_CONFIG_FAILED")
 		return
 	}

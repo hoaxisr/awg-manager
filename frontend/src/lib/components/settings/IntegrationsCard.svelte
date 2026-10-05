@@ -240,7 +240,7 @@
 	});
 </script>
 
-{#if showSingbox || showHydra || proxyBinaries.length > 0}
+{#if showSingbox || showHydra || proxyBinaries.length > 0 || showTelemt}
 	<div class="settings-block">
 		<div class="card">
 		<SettingsSectionLabel label={m.settings_integrations_title()} icon={Blocks} tone="purple" header />
