@@ -2,7 +2,9 @@ package events
 
 import (
 	"fmt"
+	"math"
 	"net/url"
+	"strconv"
 )
 
 // ParseHookForm разбирает строку хука (форма application/x-www-form-urlencoded,
@@ -19,6 +21,10 @@ func ParseHookForm(v url.Values) (Event, error) {
 		Layer:      v.Get("layer"),
 		Level:      v.Get("level"),
 		Address:    v.Get("address"),
+	}
+	// t= — диагностика (см. Event.ScriptUptime): нечисло не роняет строку.
+	if t, err := strconv.ParseFloat(v.Get("t"), 64); err == nil && t > 0 && !math.IsInf(t, 0) {
+		e.ScriptUptime = t
 	}
 	switch e.Type {
 	case EventIfLayerChanged, EventIfCreated, EventIfDestroyed, EventIfIPChanged:

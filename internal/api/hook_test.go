@@ -404,3 +404,36 @@ func TestHandle_IfDestroyed_ForwardsToOrchestrator(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// В1 (F595): t= хук-скрипта даёт Debug «hook age» — разность аптаймов,
+// округлённая до секунды. Без t= (или без аптайма) строки нет.
+func TestHandle_ScriptUptime_LogsHookAge(t *testing.T) {
+	cases := []struct {
+		name   string
+		event  events.Event
+		uptime float64
+		want   string
+	}{
+		{"age", events.Event{Type: events.EventIfCreated, ID: "Wireguard1", ScriptUptime: 100}, 122.4, "hook age=22s"},
+		{"round", events.Event{Type: events.EventIfCreated, ID: "Wireguard1", ScriptUptime: 100}, 122.6, "hook age=23s"},
+		{"no t", events.Event{Type: events.EventIfCreated, ID: "Wireguard1"}, 122.4, ""},
+		{"no uptime", events.Event{Type: events.EventIfCreated, ID: "Wireguard1", ScriptUptime: 100}, 0, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			logs := &captureAppLogger{}
+			h := &HookHandler{log: logging.NewScopedLogger(logs, logging.GroupSystem, logging.SubBoot)}
+			h.SetUptimeReader(func() float64 { return c.uptime })
+			h.Handle(c.event)
+			if c.want != "" {
+				if !logs.has("hook|Wireguard1|" + c.want) {
+					t.Fatalf("нет %q в журнале: %q", c.want, logs.lines)
+				}
+				return
+			}
+			if logs.has("hook age") {
+				t.Fatalf("лишняя строка age: %q", logs.lines)
+			}
+		})
+	}
+}

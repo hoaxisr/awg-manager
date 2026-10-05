@@ -7,7 +7,12 @@
 # копит, а пропущенное покрывает полный список на старте. Признак — каталог,
 # а не файл: при ротации файл на миг отсутствует (rename, затем создание).
 # 2>/dev/null стоит ДО >>: иначе отказ открыть файл печатается в stderr.
+# t= — аптайм роутера на момент хука (read — встроенная, без fork'а). Только
+# диагностика: демон пишет в журнал «hook age», в решениях поле не участвует.
+# up= до read: NDMS сам передаёт хукам переменную up, и при отказе открыть
+# /proc/uptime в t= ушло бы её значение.
 d=${0%/*}; d=${d%.d}
-echo "type=${d##*/}&id=${id}&system_name=${system_name}&layer=${layer}&level=${level}&address=${address}" \
+up=; read up _ 2>/dev/null </proc/uptime
+echo "type=${d##*/}&id=${id}&system_name=${system_name}&layer=${layer}&level=${level}&address=${address}&t=${up}" \
     2>/dev/null >> /var/run/awg-manager/hooks/ndm-hooks
 exit 0

@@ -61,3 +61,22 @@ func TestParseHookForm_IgnoresUpConnected(t *testing.T) {
 		t.Errorf("got %#v, want %#v", got, want)
 	}
 }
+
+// t= (В1) — аптайм скрипта, только для журнала. Нечисло, неположительное и
+// бесконечность — 0: разбор строки поле не роняет.
+func TestParseHookForm_ScriptUptime(t *testing.T) {
+	cases := map[string]float64{
+		"&t=122.4": 122.4, "&t=7": 7, "": 0, "&t=": 0, "&t=abc": 0,
+		"&t=-5": 0, "&t=0": 0, "&t=NaN": 0, "&t=Inf": 0, "&t=1e400": 0,
+	}
+	for suffix, want := range cases {
+		form := "type=ifcreated&id=Wireguard1" + suffix
+		got, err := ParseHookForm(spoolValues(form))
+		if err != nil {
+			t.Fatalf("%s: %v", form, err)
+		}
+		if got.ScriptUptime != want {
+			t.Errorf("%s: ScriptUptime=%v, want %v", form, got.ScriptUptime, want)
+		}
+	}
+}

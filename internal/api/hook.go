@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -46,6 +47,7 @@ type HookHandler struct {
 	proxyNudge    ProxyRuntimeNudge
 	endpointNudge func()
 	ipv4Running   func(ndmsID string)
+	uptime        func() float64 // nil — events.ReadUptime; см. SetUptimeReader
 	log           *logging.ScopedLogger
 	wanLog        *logging.ScopedLogger
 	// selfCreateGate counts in-flight awg-manager-initiated NDMS interface
@@ -122,6 +124,11 @@ func (h *HookHandler) SetIPv4RunningHook(fn func(ndmsID string)) {
 	h.ipv4Running = fn
 }
 
+// SetUptimeReader подменяет источник аптайма для «hook age» (тесты).
+func (h *HookHandler) SetUptimeReader(fn func() float64) {
+	h.uptime = fn
+}
+
 // HookSink — приёмник событий spool (events.SpoolReader) с первых секунд
 // жизни демона. Читатель обязан стартовать ДО установки хук-скриптов и до
 // первого чтения списка интерфейсов, а готовый HookHandler появляется только
@@ -168,6 +175,19 @@ func enqueueHook(d HookDispatcher, event events.Event) {
 // Синхронна только WAN-модель: на незнакомом интерфейсе SetUp
 // перечитывает список WAN (RCI); остальное уходит в горутины.
 func (h *HookHandler) Handle(event events.Event) {
+	// Возраст хука (В1, F595): сколько строка ждала между скриптом и нами.
+	// Только журнал — ни здесь, ни дальше ScriptUptime в решениях не участвует
+	// (TestScriptUptime_OnlyLogged).
+	if event.ScriptUptime > 0 {
+		read := h.uptime
+		if read == nil {
+			read = events.ReadUptime
+		}
+		if now := read(); now > 0 {
+			h.log.Debug("hook", event.ID, fmt.Sprintf("hook age=%ds", int64(math.Round(now-event.ScriptUptime))))
+		}
+	}
+
 	// 0) Имя ядра из хука — в кэш синхронно (I3, F570): SetUp WAN-модели ниже
 	// на незнакомом имени перечитывает ListWAN, а тот читает только память.
 	// Через одну лишь очередь диспетчера имя горячо подключённого модема

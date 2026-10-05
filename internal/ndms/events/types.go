@@ -25,4 +25,9 @@ type Event struct {
 	// (HookHandler.Handle): диспетчер сверяет его списком, но публикацию
 	// tunnels/servers не делает — создатель публикует сам после записи в стор.
 	SelfCreated bool
+	// ScriptUptime — аптайм роутера (с), когда хук-скрипт писал строку (`t=`);
+	// 0 — поля нет или оно не число. Только диагностика: HookHandler.Handle
+	// пишет по нему «hook age» в журнал. В решениях не используется
+	// (TestScriptUptime_OnlyLogged).
+	ScriptUptime float64
 }
