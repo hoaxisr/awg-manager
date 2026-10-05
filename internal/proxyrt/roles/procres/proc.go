@@ -152,10 +152,6 @@ var fatalSessionSignatures = []string{
 	"server did not acknowledge client ID",
 	"failed to write client ID",
 	"Ошибка Reader",
-	"deadline exceeded",
-	"broken pipe",
-	"connection reset by peer",
-	"read: connection timed out",
 	"сессия разорвана",
 	"сессия закрыта",
 	"таймаут сессии",
@@ -459,7 +455,9 @@ func (p *Proc) start(ctx context.Context) error {
 // restart-ветка Apply, у той гейт стоит ДО stop).
 func (p *Proc) spawn(ctx context.Context, now time.Time) error {
 	if p.c.LogPath != "" {
-		_ = os.Remove(p.c.LogPath)
+		if _, err := os.Stat(p.c.LogPath); err == nil {
+			_ = os.Rename(p.c.LogPath, p.c.LogPath+".prev")
+		}
 	}
 	args := append(append([]string{}, p.forkArgs...),
 		// Форма --имя=значение: единственная, однозначная для значений,

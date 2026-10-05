@@ -821,6 +821,32 @@ func TestProcAutoReconnect_ReaderDeadlineSignature(t *testing.T) {
 	}
 }
 
+func TestProcAutoReconnect_IgnoresGenericSocketErrors(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "test.log")
+	if err := os.WriteFile(logFile, []byte("client error: write: broken pipe\nread tcp 127.0.0.1: connection reset by peer\ncontext deadline exceeded\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	link := &fakeLink{st: awgmproto.State{PID: 100, UptimeS: 30}}
+	r := &fakeRunner{pid: 100, alive: true}
+	p := NewProc(ProcConfig{
+		ID: "process", Instance: "default", Impl: "wt-client", Role: "client",
+		Binary: "/opt/bin/wt-client", NeedCmds: []string{"state"},
+		SocketPath: "/tmp/sock", LogPath: logFile,
+		Link: link, Runner: r, Gate: okGate{}, Now: time.Now,
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(true, 0)
+
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe err: %v", err)
+	}
+	if obs.Attrs["fatal_error"] != "" {
+		t.Fatalf("fatal_error should NOT trigger on generic socket errors, got %q", obs.Attrs["fatal_error"])
+	}
+}
+
 func TestProc_WANRestartSuppressedDuringSocketGrace(t *testing.T) {
 	now := time.Now()
 	clock := func() time.Time { return now }

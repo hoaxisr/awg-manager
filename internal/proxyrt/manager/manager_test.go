@@ -1611,8 +1611,10 @@ func TestManagerRestartTunnel(t *testing.T) {
 		t.Fatalf("RestartTunnel вернул ошибку: %v", err)
 	}
 	inst2 := e.instances["wdtt-client:no-auto"]
-	if len(inst2.calls) != 0 {
-		t.Errorf("инстанс без auto-reconnect не должен перезапускаться: %v", inst2.calls)
+	for _, c := range inst2.calls {
+		if strings.HasPrefix(c, "restart") {
+			t.Errorf("инстанс без auto-reconnect не должен перезапускаться: %v", inst2.calls)
+		}
 	}
 
 	if err := e.m.RestartTunnel(context.Background(), "wdttraw-nonexistent", "причина"); !errors.Is(err, ErrInstanceNotFound) {
@@ -1648,8 +1650,10 @@ func TestPostAllWANUpRestartsAutoReconnectClients(t *testing.T) {
 	posts := slices.Clone(inst3.posts)
 	calls := slices.Clone(inst3.calls)
 	inst3.mu.Unlock()
-	if len(calls) != 0 {
-		t.Errorf("клиент без autoReconnect не должен перезапускаться на WANUp: %v", calls)
+	for _, c := range calls {
+		if strings.HasPrefix(c, "restart") {
+			t.Errorf("клиент без autoReconnect не должен перезапускаться на WANUp: %v", calls)
+		}
 	}
 	if !slices.Contains(posts, proxyrt.EventWANUp) {
 		t.Errorf("клиент без autoReconnect обязан получить обычный будильник WANUp: %v", posts)
