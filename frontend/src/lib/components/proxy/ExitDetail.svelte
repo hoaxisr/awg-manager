@@ -171,6 +171,26 @@
 		if (await save()) onstart();
 	}
 
+	let restarting = $state(false);
+
+	async function restart() {
+		if (restarting || busy) return;
+		restarting = true;
+		try {
+			if (row.protocol === 'wdtt') {
+				await api.restartWdttClient(row.id);
+			} else {
+				await api.restartFreeTurnClient(row.id);
+			}
+			notifications.success('Перезапуск инициирован');
+			await onreload();
+		} catch (e) {
+			notifications.error(errText(e));
+		} finally {
+			restarting = false;
+		}
+	}
+
 	// ─── Автоповедения клиента (W-19, W-20): туннель заводится сам.
 
 	let tunnelBusy = $state(false);
@@ -241,7 +261,10 @@
 		<InstanceBadges {row} mode={draftRaw ? 'raw' : 'wg'} />
 		<div class="head-actions">
 			{#if running}
-				<Button variant="secondary" size="sm" disabled={busy} onclick={onstop}>Остановить</Button>
+				<Button variant="secondary" size="sm" loading={restarting} disabled={busy || restarting} onclick={restart}>
+					Перезапустить
+				</Button>
+				<Button variant="secondary" size="sm" disabled={busy || restarting} onclick={onstop}>Остановить</Button>
 			{:else}
 				<Button variant="primary" size="sm" disabled={busy || !!noPeerHint} onclick={onstart}>
 					Запустить

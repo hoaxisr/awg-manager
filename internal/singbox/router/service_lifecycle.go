@@ -203,6 +203,10 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 				}
 			}
 		})
+	// Только штатное описание: пользовательское (PolicyTunDescription) не
+	// уникально по построению, и реап по нему снёс бы чужой OpkgTun с тем же
+	// именем (policytun_description.go). Свой переименованный интерфейс
+	// исключён по NDMS-имени, как и прежде.
 	s.reapOrphansByDescription(ctx, policyTunDescription, ownedPolicy, "policy-tun-reap", nil)
 
 	// Миграционный артефакт: policy-payload на записи ЧУЖОГО режима (v34
@@ -313,7 +317,7 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	// каждый тик значило бы churn без шанса на успех. Скан упал — ни сноса, ни
 	// снятия записи: следующий тик/бут повторит (F493); Warn уже дал гейт,
 	// поэтому наружу nil — иначе планировщик писал бы второе предупреждение.
-	proceed, gateErr := s.teardownGate(ctx, owned, fakeIPTunDescription, "fakeip-reap")
+	proceed, gateErr := s.teardownGate(ctx, owned, "fakeip-reap", fakeIPTunDescription)
 	if gateErr != nil {
 		return nil
 	}

@@ -74,7 +74,11 @@ func NewClient(d ClientDeps) (*ClientRole, error) {
 // единственная точка правки записи — manager.Update (proxyrt.BackoffResetter).
 func (r *ClientRole) ResetStartBackoff() { r.proc.ResetStartBackoff() }
 
+// RequestRestart запрашивает перезапуск процесса роли.
+func (r *ClientRole) RequestRestart(reason string) { r.proc.RequestRestart(reason) }
+
 var _ proxyrt.BackoffResetter = (*ClientRole)(nil)
+var _ proxyrt.RestartRequester = (*ClientRole)(nil)
 
 func (r *ClientRole) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations) []proxyrt.Resource {
 	c, ok := cfg.(roles.FreeTurnClientConfig)

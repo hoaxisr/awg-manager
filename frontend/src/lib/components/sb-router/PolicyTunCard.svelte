@@ -1,16 +1,19 @@
 <!--
   Карточка режима «Политики + tun» (policy-tun) — секция настроек движка
   sing-box (StatusDrawer). Показывает интерфейс режима, под каким именем он
-  виден в политиках доступа NDMS, замечание policy-tun-unbound и тумблер
-  source-preserve с предпоказом сегментов (GET .../policy-tun/nat-preview).
+  виден в политиках доступа NDMS, поле его названия в веб-интерфейсе роутера,
+  замечание policy-tun-unbound и тумблер source-preserve с предпоказом
+  сегментов (GET .../policy-tun/nat-preview).
 
   Сохранение идёт тем же auto-save пайплайном, что и остальные настройки
   дровера: onPatch → applyPatch → mergeAndSaveSettings → PUT /singbox/router/settings.
 -->
 <script lang="ts">
-  import { Toggle, Button, Badge, Modal, Dropdown } from '$lib/components/ui';
+  import { Toggle, Button, Badge, Modal, Dropdown, Input } from '$lib/components/ui';
   import { TUN_STACK_OPTIONS, tunStackHint } from './tunStack';
   import { api } from '$lib/api/client';
+  import { notifications } from '$lib/stores/notifications';
+  import { untrack } from 'svelte';
   import IssueRow from './IssueRow.svelte';
   import PolicyCombobox from './PolicyCombobox.svelte';
   import { pluralize, DEVICE_WORDS } from '$lib/utils/pluralize';
@@ -61,6 +64,52 @@
   let egresses = $state<PolicyTunNATEgress[]>([]);
 
   const tunName = $derived(ndmsName || 'туннель sing-box');
+
+  // ── Название интерфейса в NDMS (policyTunDescription) ──
+  // Пусто — штатное имя. Сохраняем на change (blur/Enter), а не на каждый
+  // символ: каждое сохранение переименовывает интерфейс на роутере. Проверки
+  // зеркалят бэкенд (normalizePolicyTunDescription) — ради мгновенного ответа,
+  // последнее слово за ним.
+  const DEFAULT_TUN_DESCRIPTION = 'awgm policy-tun';
+  const TUN_DESCRIPTION_MAX = 32;
+  const descDraft = $state({ v: '' });
+  // Черновик сбрасывается только когда СОХРАНЁННОЕ имя действительно
+  // сменилось. cfg перечитывается после каждого автосохранения дровера, и
+  // сброс на каждый новый объект cfg стирал бы набираемый текст.
+  // $state, как всё изменяемое в runes-компоненте; untrack — эффект зависит
+  // только от cfg, а не от собственной записи.
+  let lastSavedDesc: string | undefined = $state();
+  $effect(() => {
+    const saved = cfg.policyTunDescription ?? '';
+    if (saved !== untrack(() => lastSavedDesc)) {
+      lastSavedDesc = saved;
+      descDraft.v = saved;
+    }
+  });
+
+  async function commitDescription(raw: string): Promise<void> {
+    const v = raw.trim();
+    const next = v === DEFAULT_TUN_DESCRIPTION ? '' : v;
+    if (next === (cfg.policyTunDescription ?? '')) {
+      descDraft.v = next;
+      return;
+    }
+    if ([...next].length > TUN_DESCRIPTION_MAX) {
+      notifications.error(`Название интерфейса — не длиннее ${TUN_DESCRIPTION_MAX} символов`);
+      descDraft.v = cfg.policyTunDescription ?? '';
+      return;
+    }
+    if (next.toLowerCase().startsWith('awgm ')) {
+      notifications.error('Названия на «awgm » зарезервированы за служебными интерфейсами awg-manager');
+      descDraft.v = cfg.policyTunDescription ?? '';
+      return;
+    }
+    await onPatch({ policyTunDescription: next });
+    // Отказ бэкенда (например, управляющий символ, который здесь не
+    // проверяется) applyPatch показывает уведомлением и не пробрасывает —
+    // о нём говорит cfg: сохранилось — там next, нет — прежнее имя.
+    descDraft.v = cfg.policyTunDescription ?? '';
+  }
 
   async function openPicker() {
     pickerOpen = true;
@@ -147,6 +196,24 @@
   {:else}
     <p class="hint">Интерфейс ещё не создан — он появится после включения режима.</p>
   {/if}
+
+  <div class="field">
+    <label class="lbl" for="policy-tun-description">Название интерфейса</label>
+    <Input
+      id="policy-tun-description"
+      value={descDraft.v}
+      placeholder={DEFAULT_TUN_DESCRIPTION}
+      fullWidth
+      oninput={(v) => (descDraft.v = v)}
+      onchange={commitDescription}
+    />
+  </div>
+  <p class="hint">
+    Так интерфейс называется в веб-интерфейсе роутера. Пусто — «{DEFAULT_TUN_DESCRIPTION}».
+    Переименование не пересоздаёт интерфейс: разрешения в политиках сохраняются.
+    Интерфейс со своим названием awg-manager не удаляет автоматически — если он останется
+    на роутере (например, после удаления пакета), удалите его в веб-интерфейсе роутера.
+  </p>
 
   <div class="field">
     <span class="lbl">TCP/IP-стек</span>

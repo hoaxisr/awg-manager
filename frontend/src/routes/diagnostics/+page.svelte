@@ -111,7 +111,8 @@
 				api.listSubscriptions().catch(() => [] as Subscription[]),
 			]);
 
-			const awg: DiagnosticsTargetSeed[] = (snap.tunnels ?? []).map((t: TunnelListItem) => ({
+			// wdtt-raw — зеркало прокси-выхода, диагностика его не проверяет (F588).
+			const awg: DiagnosticsTargetSeed[] = (snap.tunnels ?? []).filter((t: TunnelListItem) => t.backend !== 'wdtt-raw').map((t: TunnelListItem) => ({
 				id: t.id,
 				name: t.name,
 				status: t.status,

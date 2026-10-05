@@ -5814,6 +5814,15 @@ definitions:
       policyName:
         example: awgm-router
         type: string
+      policyTunDescription:
+        description: |-
+          PolicyTunDescription — имя интерфейса policy-tun в веб-интерфейсе роутера
+          и в политиках доступа (NDMS-описание OpkgTun). Пусто — "awgm policy-tun".
+          До 32 символов; префикс "awgm " зарезервирован. Живой интерфейс
+          переименовывается на ближайшем reconcile, без пересоздания.
+        example: Awgmanager
+        maxLength: 32
+        type: string
       policyTunNatSegments:
         description: |-
           PolicyTunNATSegments — выбранные пользователем сегменты для
@@ -13457,6 +13466,42 @@ paths:
       security:
       - CookieAuth: []
       summary: Выдать ссылку абоненту серверного инстанса
+      tags:
+      - proxyrt
+  /proxyrt/instances/{key}/restart:
+    post:
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Перезапустить процесс инстанса
       tags:
       - proxyrt
   /proxyrt/instances/{key}/subscription/refresh:

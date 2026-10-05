@@ -94,8 +94,9 @@ func requireConf(config string) error {
 
 func registerTunnelTools(s *mcp.Server, d Deps) {
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "list_tunnels",
-		Description: "List AWG/WireGuard tunnels with runtime state (running/stopped), enabled flag, backend, endpoint and whether the default route goes through them.",
+		Name: "list_tunnels",
+		Description: "List AWG/WireGuard tunnels with runtime state (running/stopped), enabled flag, backend, endpoint and whether the default route goes through them. " +
+			"Only these are tunnels: sing-box proxies are in list_singbox_tunnels and sing-box subscriptions in list_singbox_subscriptions, so an empty list does not mean the router has no VPN.",
 		Annotations: readOnly("List tunnels"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, tunnelsOut, error) {
 		list, err := d.ListTunnels(ctx)

@@ -107,6 +107,14 @@ func (s *Service) AppLog(level Level, group, subgroup, action, target, message s
 	if !s.Visible(level) {
 		return
 	}
+	// Every address is reduced to scheme and host here, once, after the
+	// level check: callers write error text as is, and net/http quotes a
+	// subscription's address whole — token in the path, query or
+	// userinfo, a redirect hop's too — while the parser quotes share
+	// links with the server's uuid. The journal is read by the web
+	// interface, /api/logs and get_logs on a read-only MCP key, and the
+	// display mask (SanitizeLogText) hides hosts, not paths.
+	target, message = RedactURLs(target), RedactURLs(message)
 	bucket := BucketForGroup(group)
 	target_buf := s.bufferFor(bucket)
 	if target_buf == nil {

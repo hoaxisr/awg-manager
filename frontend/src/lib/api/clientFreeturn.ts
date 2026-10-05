@@ -150,6 +150,14 @@ export class FreeturnClient extends SubscriptionsClient {
 		return this.request<ProxyDeleteResult>(instancePath(kind, id), { method: 'DELETE' });
 	}
 
+	protected async proxyRestart(kind: ProxyKind, id: string): Promise<void> {
+		await this.request(instancePath(kind, id, '/restart'), { method: 'POST' });
+	}
+
+	async restartFreeTurnClient(id = 'default'): Promise<void> {
+		await this.proxyRestart('freeturn-client', id);
+	}
+
 	// #endregion
 
 	// ─────────────────────────────────────────────

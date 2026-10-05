@@ -193,3 +193,57 @@ func TestScope_ReadOnlyKeyCannotExportCredentials(t *testing.T) {
 		}
 	}
 }
+
+// TestScope_ReadOnlyKeyGetsMaskedLogsOnly — get_logs masks hosts and IPs
+// by default; raw=true lifts that. A read-only key is meant for an agent
+// the user does not fully trust, and unmasked journal lines carry the
+// router's peers, servers and subscription hosts. Masked reading stays
+// open to it; a full-access key may still ask for raw.
+func TestScope_ReadOnlyKeyGetsMaskedLogsOnly(t *testing.T) {
+	ro := scopedSession(t, true)
+	res, _ := callTool(t, ro, "get_logs", map[string]any{"raw": true})
+	if !res.IsError {
+		t.Fatal("raw logs were handed to a read-only key")
+	}
+	if txt := toolText(res); !strings.Contains(strings.ToLower(txt), "read-only") || !strings.Contains(txt, "raw") {
+		t.Errorf("the refusal must name the key and the flag, got %q", txt)
+	}
+	if res, _ := callTool(t, ro, "get_logs", map[string]any{}); res.IsError {
+		t.Errorf("masked logs must stay readable on a read-only key: %q", toolText(res))
+	}
+	if res, _ := callTool(t, scopedSession(t, false), "get_logs", map[string]any{"raw": true}); res.IsError {
+		t.Errorf("a full-access key may read raw logs: %q", toolText(res))
+	}
+}
+
+// TestScope_ReadOnlyKeyAndSubscriptions — ключ «только чтение» читает
+// подписки и группы, но переключить подписку им нельзя: это
+// перезагружает sing-box.
+func TestScope_ReadOnlyKeyAndSubscriptions(t *testing.T) {
+	s := scopedSession(t, true)
+
+	// This does not prove the tool exists: a read-only key refuses an
+	// unknown tool name with the same words. TestServer_ListsToolsWithAnnotations
+	// does that. What it proves is that the tool is not in readOnlyTools —
+	// if it were, this call would go through.
+	res, _ := callTool(t, s, "set_singbox_subscription_enabled", map[string]any{"subscriptionId": "706dcf33aabbccddeeff0011", "enabled": false})
+	if !res.IsError || !strings.Contains(strings.ToLower(toolText(res)), "read-only") {
+		t.Fatalf("a read-only key must be refused with the cause named: %q", toolText(res))
+	}
+	_, out := callTool(t, s, "list_singbox_subscriptions", nil)
+	if out["subscriptions"].([]any)[0].(map[string]any)["enabled"] != true {
+		t.Fatal("a refused write must not have been applied")
+	}
+
+	for name, args := range map[string]map[string]any{
+		"list_singbox_subscriptions": nil,
+		"list_singbox_outbounds":     nil,
+		"get_singbox_outbound":       {"tag": "sub-706dcf33"},
+		"singbox_delay_check":        {"tag": "sub-706dcf33-a1"},
+		"get_monitoring_matrix":      nil,
+	} {
+		if res, _ := callTool(t, s, name, args); res.IsError {
+			t.Errorf("%s must be allowed on a read-only key: %s", name, toolText(res))
+		}
+	}
+}

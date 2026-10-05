@@ -72,12 +72,12 @@ var noPin = opkgTunPin{index: -1}
 // даёт −1: номер сменится. Это паритет с прежним поведением, и направление
 // безопасное — чужой интерфейс не трогаем.
 func (s *ServiceImpl) pinFor(ctx context.Context, prev *storage.OpkgTunState,
-	live map[int]bool, description string,
+	live map[int]bool, descriptions ...string,
 ) opkgTunPin {
 	if prev == nil {
 		return noPin
 	}
-	if s.ownsOpkgTun(ctx, tunNDMSName(prev.Index), description) {
+	if s.ownsOpkgTun(ctx, tunNDMSName(prev.Index), descriptions...) {
 		return opkgTunPin{index: prev.Index, proven: true}
 	}
 	if !live[prev.Index] {

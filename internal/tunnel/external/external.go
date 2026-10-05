@@ -114,6 +114,11 @@ func (s *Service) List(ctx context.Context) ([]TunnelInfo, error) {
 
 	managed := make(map[int]bool)
 	for _, t := range managedTunnels {
+		// NativeWG и зеркало wdtt-raw OpkgTun не занимают: номер из их id —
+		// не номер интерфейса, и «наш» opkgtun0 спрятал бы чужой (F589).
+		if t.Backend == "nativewg" || t.Backend == "wdtt-raw" {
+			continue
+		}
 		numStr := tunnel.NewNames(t.ID).TunnelNum
 		if num, err := strconv.Atoi(numStr); err == nil {
 			managed[num] = true
