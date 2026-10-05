@@ -363,8 +363,11 @@ func (d *DatapathController) EnsureChain(
 		if primaryDNS != "" {
 			_, _ = d.runner(ctx, d.iptablesBin, "-w", "-t", "nat", "-N", ChainSusaninDNS)
 			_, _ = d.runner(ctx, d.iptablesBin, "-w", "-t", "nat", "-F", ChainSusaninDNS)
-			// Exclude loopback and local router IPs so we never hijack local router DNS queries
+			// Exclude loopback, RFC1918 private subnets, and local router IPs so we never hijack local router DNS queries
 			_, _ = d.runner(ctx, d.iptablesBin, "-w", "-t", "nat", "-A", ChainSusaninDNS, "-d", "127.0.0.0/8", "-j", "RETURN")
+			_, _ = d.runner(ctx, d.iptablesBin, "-w", "-t", "nat", "-A", ChainSusaninDNS, "-d", "192.168.0.0/16", "-j", "RETURN")
+			_, _ = d.runner(ctx, d.iptablesBin, "-w", "-t", "nat", "-A", ChainSusaninDNS, "-d", "10.0.0.0/8", "-j", "RETURN")
+			_, _ = d.runner(ctx, d.iptablesBin, "-w", "-t", "nat", "-A", ChainSusaninDNS, "-d", "172.16.0.0/12", "-j", "RETURN")
 			for _, rip := range routerIPs {
 				rip = strings.TrimSpace(rip)
 				if rip != "" {
@@ -788,10 +791,12 @@ func (d *DatapathController) drainRulesLocked(ctx context.Context, table, priOk,
 			break
 		}
 	}
-	for i := 0; i < 5; i++ {
-		res, err := d.runner(ctx, d.ipBin, "rule", "del", "table", strconv.Itoa(table))
-		if err != nil || (res != nil && res.ExitCode != 0) {
-			break
+	if table >= 100 && table != 254 && table != 255 {
+		for i := 0; i < 5; i++ {
+			res, err := d.runner(ctx, d.ipBin, "rule", "del", "table", strconv.Itoa(table))
+			if err != nil || (res != nil && res.ExitCode != 0) {
+				break
+			}
 		}
 	}
 }
@@ -851,6 +856,23 @@ func (d *DatapathController) cleanDnsNatLocked(ctx context.Context, lanInterface
 					delArgs := append([]string{"-w", "-t", "nat", "-D", "PREROUTING"}, fields[2:]...)
 					_, _ = d.runner(ctx, d.iptablesBin, delArgs...)
 				}
+			}
+		}
+	}
+	if len(lanInterfaces) == 0 {
+		lanInterfaces = []string{"br0", "br1"}
+	}
+	for _, iface := range lanInterfaces {
+		for i := 0; i < 5; i++ {
+			res, err := d.runner(ctx, d.iptablesBin, "-w", "-t", "nat", "-D", "PREROUTING", "-i", iface, "-p", "udp", "--dport", "53", "-j", ChainSusaninDNS)
+			if err != nil || (res != nil && res.ExitCode != 0) {
+				break
+			}
+		}
+		for i := 0; i < 5; i++ {
+			res, err := d.runner(ctx, d.iptablesBin, "-w", "-t", "nat", "-D", "PREROUTING", "-i", iface, "-p", "tcp", "--dport", "53", "-j", ChainSusaninDNS)
+			if err != nil || (res != nil && res.ExitCode != 0) {
+				break
 			}
 		}
 	}

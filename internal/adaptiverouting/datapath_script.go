@@ -51,6 +51,10 @@ case "$EGRESS" in
         ;;
 esac
 TABLE=${TABLE:-${SUSANIN_TABLE:-105}}
+if [ "$TABLE" -lt 100 ] 2>/dev/null || [ "$TABLE" -eq 254 ] 2>/dev/null || [ "$TABLE" -eq 255 ] 2>/dev/null; then
+    echo "[susanin] ERROR: routing table $TABLE is reserved (must be >= 100 and != 254, 255)" >&2
+    exit 1
+fi
 MARK_OK=${MARK_OK:-${SUSANIN_MARK_OK:-0x20000000}}
 MARK_TEST=${MARK_TEST:-${SUSANIN_MARK_TEST:-0x10000000}}
 MASK=${MASK:-${SUSANIN_MARK_MASK:-0x30000000}}

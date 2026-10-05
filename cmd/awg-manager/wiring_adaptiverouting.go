@@ -10,7 +10,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/api"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
@@ -198,9 +197,11 @@ func (a *app) setupAdaptiveRouting() {
 		arch = detectArch()
 	}
 	svc := adaptiverouting.NewService(a.dataDir, catalog, refChecker, store, arch)
-	if lanIP := netif.FirstIPv4(storage.DefaultInterface); lanIP != "" {
-		svc.SetRouterIPs([]string{lanIP})
+	lanIfaces := []string{storage.DefaultInterface}
+	if a.settings != nil && len(a.settings.Server.Interfaces) > 0 {
+		lanIfaces = a.settings.Server.Interfaces
 	}
+	svc.SetLanInterfaces(lanIfaces)
 
 	if a.ndmsTransportClient != nil {
 		markStore := ndmsquery.NewPolicyMarkStore(a.ndmsTransportClient, nil)

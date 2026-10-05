@@ -31,9 +31,10 @@ type Service struct {
 	mihomoExec  *MihomoExecutor
 	singboxExec *SingboxExecutor
 
-	slotController RouterSlotController
-	lanInterfaces  []string
-	routerIPs      []string
+	slotController  RouterSlotController
+	lanInterfaces   []string
+	routerIPs       []string
+	customRouterIPs bool
 }
 
 func detectRouterIPs(lanInterfaces []string) []string {
@@ -52,6 +53,29 @@ func detectRouterIPs(lanInterfaces []string) []string {
 							if !seen[s] {
 								seen[s] = true
 								ips = append(ips, s)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	// If no IPs were found on the specified LAN interfaces, search all active interfaces
+	if len(ips) == 0 {
+		if ifaces, err := net.Interfaces(); err == nil {
+			for _, iface := range ifaces {
+				if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+					continue
+				}
+				if addrs, err := iface.Addrs(); err == nil {
+					for _, addr := range addrs {
+						if ipNet, ok := addr.(*net.IPNet); ok {
+							if ip4 := ipNet.IP.To4(); ip4 != nil && !ip4.IsLoopback() {
+								s := ip4.String()
+								if !seen[s] {
+									seen[s] = true
+									ips = append(ips, s)
+								}
 							}
 						}
 					}
@@ -137,7 +161,7 @@ func (s *Service) SetLanInterfaces(ifaces []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lanInterfaces = ifaces
-	if len(s.routerIPs) == 0 {
+	if !s.customRouterIPs {
 		s.routerIPs = detectRouterIPs(ifaces)
 	}
 }
@@ -146,6 +170,18 @@ func (s *Service) SetRouterIPs(ips []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.routerIPs = ips
+	s.customRouterIPs = true
+}
+
+func (s *Service) currentRouterIPsLocked() []string {
+	if s.customRouterIPs && len(s.routerIPs) > 0 {
+		return s.routerIPs
+	}
+	ips := detectRouterIPs(s.lanInterfaces)
+	if len(ips) > 0 {
+		s.routerIPs = ips
+	}
+	return s.routerIPs
 }
 
 func (s *Service) SetPolicyMarkResolver(r PolicyMarkResolver) {
@@ -359,6 +395,9 @@ func (s *Service) Apply(ctx context.Context, desired Settings) (OperationalState
 	defer s.mu.Unlock()
 
 	// 1. Validation phase
+	if _, err := ValidateRoutingTableID(desired.RoutingTableID); err != nil {
+		return s.store.GetState(), fmt.Errorf("валидация таблицы маршрутизации не удалась: %w", err)
+	}
 	resolved, err := s.catalog.Resolve(ctx, desired.PrimaryEgress)
 	if err != nil {
 		return s.store.GetState(), fmt.Errorf("валидация выхода не удалась: %w", err)
@@ -458,7 +497,7 @@ func (s *Service) Apply(ctx context.Context, desired Settings) (OperationalState
 			return s.failApplyLocked(ctx, savedSettings, exec, executorCommitted, slotParked,
 				fmt.Errorf("prepare ipset: %w", err))
 		}
-		if err := s.datapath.EnsureChain(ctx, savedSettings, s.lanInterfaces, s.routerIPs); err != nil {
+		if err := s.datapath.EnsureChain(ctx, savedSettings, s.lanInterfaces, s.currentRouterIPsLocked()); err != nil {
 			return s.failApplyLocked(ctx, savedSettings, exec, executorCommitted, slotParked,
 				fmt.Errorf("prepare iptables: %w", err))
 		}
@@ -620,7 +659,7 @@ func (s *Service) restoreAppliedRuntimeLocked(ctx context.Context, applied Appli
 	}
 	if s.datapath != nil {
 		if err = s.datapath.EnsureSets(ctx); err == nil {
-			err = s.datapath.EnsureChain(ctx, applied.Settings, s.lanInterfaces, s.routerIPs)
+			err = s.datapath.EnsureChain(ctx, applied.Settings, s.lanInterfaces, s.currentRouterIPsLocked())
 		}
 		if err == nil {
 			err = s.datapath.EnsureRules(ctx, applied.Settings, egressDev)
@@ -931,7 +970,7 @@ func (s *Service) ReconcileDatapath(ctx context.Context) error {
 		egressDev = TunInterfaceName
 	}
 
-	return s.datapath.ReconcileDatapath(ctx, applied.Settings, s.lanInterfaces, s.routerIPs, egressDev)
+	return s.datapath.ReconcileDatapath(ctx, applied.Settings, s.lanInterfaces, s.currentRouterIPsLocked(), egressDev)
 }
 
 func (s *Service) CleanupStaleOrphans(ctx context.Context) error {

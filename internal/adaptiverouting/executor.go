@@ -16,6 +16,8 @@ const (
 	TunInterfaceName = "awgsus0"
 )
 
+var ifaceByName = net.InterfaceByName
+
 type Executor interface {
 	Prepare(ctx context.Context, egress ResolvedEgress) error
 	Commit(ctx context.Context) error
@@ -61,6 +63,9 @@ func (s *SystemExecutor) TearDown(ctx context.Context) error {
 }
 
 func (s *SystemExecutor) InterfaceName() string {
+	if s == nil {
+		return ""
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.iface
@@ -93,7 +98,12 @@ func isNilProvider(p MihomoNativeProvider) bool {
 		return true
 	}
 	v := reflect.ValueOf(p)
-	return v.Kind() == reflect.Ptr && v.IsNil()
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 func (m *MihomoExecutor) SetReloadFunc(fn func(ctx context.Context) error) {
@@ -165,7 +175,7 @@ func (m *MihomoExecutor) Commit(ctx context.Context) error {
 	// Wait up to 5 seconds for awgsus0 interface to be created by Mihomo
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if _, err := net.InterfaceByName(TunInterfaceName); err == nil {
+		if _, err := ifaceByName(TunInterfaceName); err == nil {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -193,6 +203,9 @@ func (m *MihomoExecutor) Rollback(ctx context.Context) error {
 }
 
 func (m *MihomoExecutor) TearDown(ctx context.Context) error {
+	if m == nil {
+		return nil
+	}
 	m.mu.Lock()
 	m.committed = false
 	m.groupName = ""
@@ -206,12 +219,15 @@ func (m *MihomoExecutor) TearDown(ctx context.Context) error {
 }
 
 func (m *MihomoExecutor) InterfaceName() string {
+	if m == nil {
+		return ""
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.committed {
 		return ""
 	}
-	if _, err := net.InterfaceByName(TunInterfaceName); err != nil {
+	if _, err := ifaceByName(TunInterfaceName); err != nil {
 		return ""
 	}
 	return TunInterfaceName
@@ -265,6 +281,11 @@ func (s *SingboxExecutor) Commit(ctx context.Context) error {
 		return nil
 	}
 
+	_ = s.orch.Register(orchestrator.SlotMeta{
+		Slot:     orchestrator.SlotAdaptiveEgress,
+		Filename: "25-adaptive-egress.json",
+	})
+
 	cfg := map[string]any{
 		"inbounds": []map[string]any{
 			{
@@ -299,6 +320,7 @@ func (s *SingboxExecutor) Commit(ctx context.Context) error {
 		return fmt.Errorf("enable sing-box adaptive slot: %w", err)
 	}
 	if err := s.orch.ReloadNow(); err != nil {
+		_ = s.orch.SetEnabled(orchestrator.SlotAdaptiveEgress, false)
 		return fmt.Errorf("reload sing-box immediately: %w", err)
 	}
 
@@ -307,7 +329,7 @@ func (s *SingboxExecutor) Commit(ctx context.Context) error {
 	// Wait up to 5 seconds for awgsus0 interface to be created by sing-box
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if _, err := net.InterfaceByName(TunInterfaceName); err == nil {
+		if _, err := ifaceByName(TunInterfaceName); err == nil {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -315,10 +337,18 @@ func (s *SingboxExecutor) Commit(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
+			if s.orch != nil {
+				_ = s.orch.SetEnabled(orchestrator.SlotAdaptiveEgress, false)
+				_ = s.orch.ReloadNow()
+			}
 			s.committed = false
 			return ctx.Err()
 		case <-time.After(150 * time.Millisecond):
 		}
+	}
+	if s.orch != nil {
+		_ = s.orch.SetEnabled(orchestrator.SlotAdaptiveEgress, false)
+		_ = s.orch.ReloadNow()
 	}
 	s.committed = false
 	return fmt.Errorf("интерфейс %s не был поднят sing-box в течение 5 секунд", TunInterfaceName)
@@ -329,6 +359,9 @@ func (s *SingboxExecutor) Rollback(ctx context.Context) error {
 }
 
 func (s *SingboxExecutor) TearDown(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -342,12 +375,15 @@ func (s *SingboxExecutor) TearDown(ctx context.Context) error {
 }
 
 func (s *SingboxExecutor) InterfaceName() string {
+	if s == nil {
+		return ""
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.committed {
 		return ""
 	}
-	if _, err := net.InterfaceByName(TunInterfaceName); err != nil {
+	if _, err := ifaceByName(TunInterfaceName); err != nil {
 		return ""
 	}
 	return TunInterfaceName
