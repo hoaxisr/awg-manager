@@ -3,11 +3,14 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
@@ -227,7 +230,9 @@ func TestConfDisabled_RecheckAfterBounce_NoProbe(t *testing.T) {
 	r := newHookWindowRig(t)
 	r.disabledEdge(t, 10*time.Second)
 	r.clk.Set(r.base.Add(12 * time.Second))
-	r.o.noteConfRunning("OpkgTun10")
+	if err := r.o.HandleEvent(context.Background(), confHookName("OpkgTun10", "running")); err != nil {
+		t.Fatalf("HandleEvent running: %v", err)
+	}
 	r.expire()
 	r.sched.fn(t, 0)()
 
@@ -242,14 +247,20 @@ func TestConfDisabled_RecheckAfterBounce_NoProbe(t *testing.T) {
 	}
 }
 
+// Грань, отличная от conf=disabled, перепроверку не планирует.
+// Мутация «не смотреть на Level в ветке подавления» → conf=running работающего
+// туннеля в окне планирует перепроверку → красный.
 func TestConfDisabled_NoAbsorbedEdge_NoSchedule(t *testing.T) {
 	r := newHookWindowRig(t)
-	r.expire()
+	r.clk.Set(r.base.Add(10 * time.Second))
+	if err := r.o.HandleEvent(context.Background(), confHookName("OpkgTun10", "running")); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
 	if n := r.sched.count(); n != 0 {
 		t.Fatalf("без поглощённой грани перепроверка не планируется: schedule=%d", n)
 	}
-	if n := r.probe.calls.Load(); n != 0 {
-		t.Fatalf("calls=%d", n)
+	if !r.absorbedAt().IsZero() {
+		t.Fatal("метка поставлена без грани conf=disabled")
 	}
 }
 
@@ -272,35 +283,137 @@ func TestConfDisabled_RecheckProbeError_LeavesTunnel(t *testing.T) {
 	}
 }
 
-// Окно продлено (повторный подъём/reconcile) к моменту вызова — перенос на
-// остаток, решает второй вызов.
+// Restart внутри окна (через HandleEvent, как из API) продлевает окно и
+// сбрасывает метку; новая грань ставит второй таймер. Первый на старом сроке
+// переносит себя, на конце нового окна — одна проба и одна остановка.
+// Мутация «не переносить при now < quiescentUntil» → первый таймер пробует и
+// останавливает внутри нового окна → красный.
 func TestConfDisabled_RecheckWindowExtended_Reschedules(t *testing.T) {
 	r := newHookWindowRig(t)
 	r.disabledEdge(t, 10*time.Second)
-	r.o.mu.Lock()
-	r.o.state.tunnels["awg10"].quiescentUntil = r.base.Add(60 * time.Second)
-	r.o.mu.Unlock()
 
-	r.expire() // base+45 с, окно теперь до base+60 с
+	r.clk.Set(r.base.Add(20 * time.Second))
+	if err := r.o.HandleEvent(context.Background(), Event{Type: EventRestart, Tunnel: "awg10"}); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if n := r.op.coldStarts.Load(); n != 1 {
+		t.Fatalf("Restart не дошёл до ColdStart: coldStarts=%d", n)
+	}
+	r.op.stops.Store(0) // Stop самого Restart не в счёт
+	if !r.absorbedAt().IsZero() {
+		t.Fatal("подъём не сбросил метку прошлого окна")
+	}
+	r.disabledEdge(t, 25*time.Second) // новое окно до base+65 с
+	if n := r.sched.count(); n != 2 {
+		t.Fatalf("schedule=%d, want 2 (флаг сброшен подъёмом)", n)
+	}
+
+	r.expire() // base+45 с — срок первого таймера
 	r.sched.fn(t, 0)()
 	if n := r.probe.calls.Load(); n != 0 {
 		t.Fatalf("внутри продлённого окна проба не нужна: calls=%d", n)
 	}
-	if n := r.sched.count(); n != 2 {
-		t.Fatalf("schedule=%d, want 2 (перенос)", n)
+	if n := r.op.stops.Load(); n != 0 {
+		t.Fatalf("остановка внутри продлённого окна: stops=%d", n)
 	}
-	if r.sched.delays[1] != 15*time.Second {
-		t.Fatalf("перенос на %s, want 15s", r.sched.delays[1])
+	if n := r.sched.count(); n != 3 || r.sched.delays[2] != 20*time.Second {
+		t.Fatalf("перенос: schedule=%d delays=%v, want 3 и 20s", n, r.sched.delays)
 	}
 
-	r.clk.Set(r.base.Add(60 * time.Second))
+	r.clk.Set(r.base.Add(65 * time.Second))
 	r.sched.fn(t, 1)()
+	r.sched.fn(t, 2)()
 	if n := r.probe.calls.Load(); n != 1 {
-		t.Fatalf("calls=%d, want 1", n)
+		t.Fatalf("calls=%d, want 1 на два таймера", n)
 	}
 	if n := r.op.stops.Load(); n != 1 {
 		t.Fatalf("stops=%d, want 1", n)
 	}
+}
+
+// Гонка штампов: conf=running пришёл раньше disabled, но застрял в
+// awaitTunnelIdle (замок держит наша операция) и штамповался бы ПОСЛЕ
+// поглощения disabled — грань сошла бы за «bounce», туннель остался бы
+// Running при выключенном интерфейсе. Штамп — момент прихода.
+// Мутация «штамп после ожиданий (nowFn)» → проба не вызвана → красный.
+func TestConfDisabled_RunningQueuedBeforeEdge_NotBounce(t *testing.T) {
+	r := newHookWindowRig(t)
+	if err := r.o.lockTunnel(context.Background(), "awg10", "test"); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	running := confHookName("OpkgTun10", "running")
+	running.Now = r.base.Add(10 * time.Second)
+	done := make(chan struct{})
+	go func() {
+		_ = r.o.HandleEvent(context.Background(), running)
+		close(done)
+	}()
+	r.disabledEdge(t, 12*time.Second)
+	r.clk.Set(r.base.Add(14 * time.Second))
+	r.o.unlockTunnel("awg10")
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("conf=running не завершился")
+	}
+
+	r.expire()
+	r.sched.fn(t, 0)()
+	if n := r.probe.calls.Load(); n != 1 {
+		t.Fatalf("running пришёл раньше disabled — не bounce, нужна проба: calls=%d", n)
+	}
+	if n := r.op.stops.Load(); n != 1 {
+		t.Fatalf("stops=%d, want 1", n)
+	}
+}
+
+// Сбой остановки: метка снимается (как ошибка пробы), туннель не числится
+// остановленным.
+// Мутация «Info об остановке без проверки ошибки» → красный.
+func TestConfDisabled_RecheckStopFails_MarkCleared(t *testing.T) {
+	r := newHookWindowRig(t)
+	lg := &levelLog{}
+	r.o.appLog = logging.NewScopedLogger(lg, logging.GroupTunnel, logging.SubOrchestrator)
+	r.op.stopErr = errors.New("rci down")
+	r.disabledEdge(t, 10*time.Second)
+	r.expire()
+	r.sched.fn(t, 0)()
+
+	if !r.absorbedAt().IsZero() {
+		t.Fatal("метка не снята после сбоя остановки")
+	}
+	if !r.tunnel().Running {
+		t.Fatal("сбойная остановка учтена как успешная")
+	}
+	if lg.has(logging.LevelInfo, "подтверждена NDMS — остановка") {
+		t.Fatal("журнал заявляет остановку, которой не было")
+	}
+	if !lg.has(logging.LevelWarn, "остановка не удалась") {
+		t.Fatalf("нет Warn о сбое остановки: %v", lg.lines)
+	}
+}
+
+// levelLog — журнал теста с уровнями.
+type levelLog struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *levelLog) AppLog(level logging.Level, _, _, action, target, message string) {
+	l.mu.Lock()
+	l.lines = append(l.lines, fmt.Sprintf("%v|%s/%s: %s", level, action, target, message))
+	l.mu.Unlock()
+}
+
+func (l *levelLog) has(level logging.Level, sub string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, s := range l.lines {
+		if strings.HasPrefix(s, fmt.Sprintf("%v|", level)) && strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // L1′(b): перепроверка исполняет действия под уже взятым замком туннеля.

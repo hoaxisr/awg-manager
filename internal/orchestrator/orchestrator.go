@@ -382,11 +382,11 @@ func (o *Orchestrator) consumeExpectedHook(ndmsName, level string) bool {
 
 // noteConfRunning records an external conf=running edge so a conf=disabled
 // still settling can recognise it as an NDMS interface restart.
-func (o *Orchestrator) noteConfRunning(ndmsName string) {
+func (o *Orchestrator) noteConfRunning(ndmsName string, at time.Time) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if t := o.state.findByNDMSName(ndmsName); t != nil {
-		t.lastConfRunningAt = o.nowFn()
+		t.lastConfRunningAt = at
 	}
 }
 
@@ -657,6 +657,13 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 	}
 
 	if event.Type == EventNDMSHook && event.Layer == "conf" {
+		// Момент прихода грани — до ожиданий awaitTunnelIdle/settle: штамп
+		// conf=running, поставленный после них, обгонял бы грань disabled,
+		// пришедшую ПОЗЖЕ running, и та сходила бы за «bounce».
+		arrived := event.Now
+		if arrived.IsZero() {
+			arrived = o.nowFn()
+		}
 		switch event.Level {
 		case "running":
 			// Ждали своей же операции — спрашивать NDMS бесполезно: он
@@ -670,7 +677,7 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 			// устояла: по нему settleConfDisabled отличает перезапуск
 			// интерфейса в NDMS от настоящего выключения, и опровергнутая
 			// грань подавляла бы там законную остановку.
-			o.noteConfRunning(event.NDMSName)
+			o.noteConfRunning(event.NDMSName, arrived)
 		case "disabled":
 			if !o.settleConfDisabled(ctx, event) {
 				return nil
@@ -777,12 +784,24 @@ func (o *Orchestrator) scheduleFn(d time.Duration, fn func()) {
 // executeActionsGrouped взял бы тот же семафор второй раз и через
 // tunnelLockTimeout упал бы ErrOperationInProgress (L1′(b)).
 func (o *Orchestrator) recheckAbsorbedDisabled(tunnelID, ndmsName string) {
-	ctx, cancel := context.WithTimeout(context.Background(), absorbedRecheckTimeout)
+	// Контекст жизни демона, как у отложенного бута: на выходе демона
+	// перепроверка не начнёт остановку. Без него (тесты, демон до
+	// SetBaseContext) — context.Background().
+	o.mu.Lock()
+	base := o.baseCtx
+	o.mu.Unlock()
+	if base == nil {
+		base = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(base, absorbedRecheckTimeout)
 	defer cancel()
 	if err := o.lockTunnel(ctx, tunnelID, "recheck-absorbed-disabled"); err != nil {
-		// Метка остаётся, переноса нет (L1′(c)): туннель занят нашей же
-		// операцией; её подъём сбросит метку, остановка сделает её ненужной.
-		// Таймера больше нет — флаг снимаем, чтобы он не врал.
+		// Метка остаётся, переноса нет (L1′(c)). Подъём/остановка под этим
+		// замком метку сбросят или сделают ненужной, но замок держат и
+		// владельцы, которые её не трогают (service.Update, endpoint-страж
+		// nwg): держат дольше tunnelLockTimeout — поглощённая грань потеряна
+		// до следующей (остаток В6 в трекере). Таймера больше нет — флаг
+		// снимаем, чтобы он не врал.
 		o.mu.Lock()
 		if t := o.state.tunnels[tunnelID]; t != nil {
 			t.recheckScheduled = false
@@ -833,8 +852,15 @@ func (o *Orchestrator) recheckAbsorbedDisabled(tunnelID, ndmsName string) {
 	}
 	if !up {
 		actions, _, _ := o.decideLocked(Event{Type: EventNDMSHook, NDMSName: ndmsName, Layer: "conf", Level: "disabled", Now: now})
-		_ = o.executeActions(query.WithActionList(ctx), actions)
-		o.appLog.Info("conf-recheck", tunnelID, "поглощённая грань conf=disabled подтверждена NDMS — остановка")
+		if err := o.executeActions(query.WithActionList(ctx), actions); err != nil {
+			// Как ошибка пробы: повтора нет, метка снимается. Остаток В6 —
+			// туннель мог остаться Running при выключенном в NDMS интерфейсе
+			// до следующей грани или действия пользователя.
+			o.appLog.Warn("conf-recheck", tunnelID,
+				fmt.Sprintf("поглощённая грань conf=disabled подтверждена NDMS, остановка не удалась: %v", err))
+		} else {
+			o.appLog.Info("conf-recheck", tunnelID, "поглощённая грань conf=disabled подтверждена NDMS — остановка")
+		}
 	} else {
 		o.appLog.Info("conf-recheck", tunnelID,
 			"поглощённая грань conf=disabled: NDMS держит интерфейс включённым — туннель не останавливаем")

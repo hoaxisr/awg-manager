@@ -170,6 +170,7 @@ type fakeKernelOp struct {
 	// счётчика параллельно с парковкой стало бы флейком.
 	coldStartErr error
 	deleteErr    error
+	stopErr      error
 	stops        atomic.Int64
 	stopName     atomic.Value // имя туннеля, с которым звали Stop
 	coldStarts   atomic.Int64
@@ -201,7 +202,7 @@ func (f *fakeKernelOp) ColdStart(context.Context, tunnel.Config) error {
 func (f *fakeKernelOp) Stop(_ context.Context, _, name string) error {
 	f.stops.Add(1)
 	f.stopName.Store(name)
-	return nil
+	return f.stopErr
 }
 func (f *fakeKernelOp) Delete(context.Context, *storage.AWGTunnel) error {
 	return f.deleteErr
