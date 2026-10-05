@@ -55,6 +55,7 @@ func setupTestAdaptiveRoutingHandler(t *testing.T) (*AdaptiveRoutingHandler, *ht
 	}
 	dp := adaptiverouting.NewDatapathController(mockRunner)
 	svc.SetDatapathController(dp)
+	svc.SetProcessManager(nil)
 
 	handler := NewAdaptiveRoutingHandler(svc)
 

@@ -36,19 +36,52 @@ type Service struct {
 	routerIPs      []string
 }
 
+func detectRouterIPs(lanInterfaces []string) []string {
+	var ips []string
+	seen := make(map[string]bool)
+	if len(lanInterfaces) == 0 {
+		lanInterfaces = []string{"br0"}
+	}
+	for _, ifaceName := range lanInterfaces {
+		if iface, err := net.InterfaceByName(ifaceName); err == nil {
+			if addrs, err := iface.Addrs(); err == nil {
+				for _, addr := range addrs {
+					if ipNet, ok := addr.(*net.IPNet); ok {
+						if ip4 := ipNet.IP.To4(); ip4 != nil && !ip4.IsLoopback() {
+							s := ip4.String()
+							if !seen[s] {
+								seen[s] = true
+								ips = append(ips, s)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return ips
+}
+
 func NewService(
 	dataDir string,
 	catalog *Catalog,
 	refChecker *ReferenceChecker,
 	store *Store,
+	archOpt ...string,
 ) *Service {
+	arch := "aarch64"
+	if len(archOpt) > 0 && strings.TrimSpace(archOpt[0]) != "" {
+		arch = strings.TrimSpace(archOpt[0])
+	}
+
+	lanIfaces := []string{"br0"}
 	s := &Service{
 		dataDir:       dataDir,
 		catalog:       catalog,
 		refChecker:    refChecker,
 		store:         store,
-		lanInterfaces: []string{"br0"},
-		routerIPs:     []string{"192.168.90.1", "192.168.50.1"},
+		lanInterfaces: lanIfaces,
+		routerIPs:     detectRouterIPs(lanIfaces),
 	}
 
 	s.datapath = NewDatapathController(nil)
@@ -58,7 +91,7 @@ func NewService(
 	// made Stop unable to scan /proc, allowing an old daemon to survive package
 	// upgrades next to the newly started process.
 	s.procMgr = NewProcessManager(filepath.Join(dataDir, "susanin"), ManagedSusaninBinaryPath)
-	s.installer = NewInstaller("aarch64")
+	s.installer = NewInstaller(arch)
 	s.systemExec = NewSystemExecutor()
 
 	return s
@@ -104,6 +137,9 @@ func (s *Service) SetLanInterfaces(ifaces []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lanInterfaces = ifaces
+	if len(s.routerIPs) == 0 {
+		s.routerIPs = detectRouterIPs(ifaces)
+	}
 }
 
 func (s *Service) SetRouterIPs(ips []string) {

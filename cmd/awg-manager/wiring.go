@@ -74,6 +74,7 @@ type app struct {
 	forceBoot   bool
 	pprofListen string
 	slowReqMS   int
+	routerArch  string
 
 	// prunedRestoreDirs — сколько остатков восстановлений удалено до
 	// setupCore (пишется в журнал, когда он появится).

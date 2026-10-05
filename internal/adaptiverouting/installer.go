@@ -94,6 +94,18 @@ var ReleaseBinaries = map[string]BinarySpec{
 		SHA256:  "db22883d8af2abc1d29c7e7ddc8a0b4dec47ea3741c6de3dc3ada0a31e713638",
 		Size:    333399,
 	},
+	"x86_64": {
+		Version: SusaninVersion,
+		URL:     "https://github.com/R17a/Susanin.Keenetic/releases/download/v0.3.10/susanin-keenetic-deploy-x86_64.tar.gz",
+		SHA256:  "72f64b2a3e1b68211a2476d5a62d885f962327f152c784bb05053a9adb04c65e",
+		Size:    477518,
+	},
+	"amd64": {
+		Version: SusaninVersion,
+		URL:     "https://github.com/R17a/Susanin.Keenetic/releases/download/v0.3.10/susanin-keenetic-deploy-x86_64.tar.gz",
+		SHA256:  "72f64b2a3e1b68211a2476d5a62d885f962327f152c784bb05053a9adb04c65e",
+		Size:    477518,
+	},
 }
 
 type SusaninInstaller struct {

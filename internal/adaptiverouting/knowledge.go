@@ -67,6 +67,7 @@ func init() {
 		{"91.108.16.0/22", "Telegram DC", "Telegram Messenger Network", "США", "US", "chat"},
 		{"91.108.56.0/22", "Telegram DC", "Telegram Messenger Network", "Нидерланды", "NL", "chat"},
 		{"173.194.0.0/16", "YouTube / Google", "Google LLC", "США", "US", "youtube"},
+		{"142.250.0.0/15", "Google / YouTube", "Google LLC", "США", "US", "youtube"},
 		{"108.177.0.0/17", "Google Video", "Google LLC", "США", "US", "youtube"},
 		{"104.16.0.0/12", "Cloudflare CDN", "Cloudflare, Inc.", "США", "US", "cloud"},
 		{"172.64.0.0/13", "Cloudflare CDN", "Cloudflare, Inc.", "США", "US", "cloud"},
@@ -94,7 +95,7 @@ func FindDomainKnowledge(domain, ip string) *DomainKnowledge {
 	if target != "" {
 		for _, rule := range domainKnowledgeRules {
 			for _, pattern := range rule.patterns {
-				if target == pattern || strings.HasSuffix(target, "."+pattern) || strings.Contains(target, pattern) {
+				if target == pattern || strings.HasSuffix(target, "."+pattern) {
 					return &DomainKnowledge{
 						Title:       rule.title,
 						Org:         rule.org,

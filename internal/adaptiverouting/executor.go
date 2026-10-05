@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"reflect"
 	"sync"
 	"time"
 
@@ -87,6 +88,14 @@ func NewMihomoExecutor(nativeStore MihomoNativeProvider) *MihomoExecutor {
 	}
 }
 
+func isNilProvider(p MihomoNativeProvider) bool {
+	if p == nil {
+		return true
+	}
+	v := reflect.ValueOf(p)
+	return v.Kind() == reflect.Ptr && v.IsNil()
+}
+
 func (m *MihomoExecutor) SetReloadFunc(fn func(ctx context.Context) error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -98,31 +107,40 @@ func (m *MihomoExecutor) Prepare(ctx context.Context, egress ResolvedEgress) err
 	defer m.mu.Unlock()
 
 	targetName := egress.DisplayName
-	if egress.Ref.Kind == EgressKindMihomoGroup && m.nativeStore != nil {
-		for _, g := range m.nativeStore.ListGroups() {
-			if g.ID == egress.Ref.ResourceID || g.Name == egress.Ref.ResourceID {
-				targetName = g.Name
-				break
+	if !isNilProvider(m.nativeStore) {
+		switch egress.Ref.Kind {
+		case EgressKindMihomoGroup:
+			for _, g := range m.nativeStore.ListGroups() {
+				if g.ID == egress.Ref.ResourceID || g.Name == egress.Ref.ResourceID {
+					targetName = g.Name
+					break
+				}
 			}
-		}
-	} else if egress.Ref.Kind == EgressKindMihomoProxy && m.nativeStore != nil {
-		for _, p := range m.nativeStore.ListProxies() {
-			if p.ID == egress.Ref.ResourceID || p.Name == egress.Ref.ResourceID {
-				targetName = p.Name
-				break
+		case EgressKindMihomoProxy:
+			for _, p := range m.nativeStore.ListProxies() {
+				if p.ID == egress.Ref.ResourceID || p.Name == egress.Ref.ResourceID {
+					targetName = p.Name
+					break
+				}
 			}
-		}
-	} else if egress.Ref.Kind == EgressKindMihomoSubscription && m.nativeStore != nil {
-		for _, sub := range m.nativeStore.ListSubscriptions() {
-			if sub.ID == egress.Ref.ResourceID || sub.Name == egress.Ref.ResourceID {
-				targetName = sub.Name
-				break
+		case EgressKindMihomoSubscription:
+			for _, sub := range m.nativeStore.ListSubscriptions() {
+				if sub.ID == egress.Ref.ResourceID || sub.Name == egress.Ref.ResourceID {
+					targetName = sub.Name
+					break
+				}
 			}
 		}
 	}
 
 	if targetName == "" {
-		return fmt.Errorf("unable to resolve Mihomo target name for %s", egress.Ref.ResourceID)
+		if egress.DisplayName != "" {
+			targetName = egress.DisplayName
+		} else if egress.Ref.ResourceID != "" {
+			targetName = egress.Ref.ResourceID
+		} else {
+			return fmt.Errorf("unable to resolve Mihomo target name for %s", egress.Ref.ResourceID)
+		}
 	}
 
 	m.groupName = targetName
@@ -155,10 +173,18 @@ func (m *MihomoExecutor) Commit(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
+			m.mu.Lock()
+			m.committed = false
+			m.mu.Unlock()
+			_ = m.TearDown(context.Background())
 			return ctx.Err()
 		case <-time.After(150 * time.Millisecond):
 		}
 	}
+	m.mu.Lock()
+	m.committed = false
+	m.mu.Unlock()
+	_ = m.TearDown(context.Background())
 	return fmt.Errorf("интерфейс %s не был поднят Mihomo в течение 5 секунд", TunInterfaceName)
 }
 
@@ -180,6 +206,14 @@ func (m *MihomoExecutor) TearDown(ctx context.Context) error {
 }
 
 func (m *MihomoExecutor) InterfaceName() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.committed {
+		return ""
+	}
+	if _, err := net.InterfaceByName(TunInterfaceName); err != nil {
+		return ""
+	}
 	return TunInterfaceName
 }
 
@@ -264,6 +298,9 @@ func (s *SingboxExecutor) Commit(ctx context.Context) error {
 	if err := s.orch.SetEnabled(orchestrator.SlotAdaptiveEgress, true); err != nil {
 		return fmt.Errorf("enable sing-box adaptive slot: %w", err)
 	}
+	if err := s.orch.ReloadNow(); err != nil {
+		return fmt.Errorf("reload sing-box immediately: %w", err)
+	}
 
 	s.committed = true
 
@@ -278,10 +315,12 @@ func (s *SingboxExecutor) Commit(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
+			s.committed = false
 			return ctx.Err()
 		case <-time.After(150 * time.Millisecond):
 		}
 	}
+	s.committed = false
 	return fmt.Errorf("интерфейс %s не был поднят sing-box в течение 5 секунд", TunInterfaceName)
 }
 
@@ -295,6 +334,7 @@ func (s *SingboxExecutor) TearDown(ctx context.Context) error {
 
 	if s.orch != nil {
 		_ = s.orch.SetEnabled(orchestrator.SlotAdaptiveEgress, false)
+		_ = s.orch.ReloadNow()
 	}
 	s.committed = false
 	s.outboundTag = ""
@@ -302,5 +342,13 @@ func (s *SingboxExecutor) TearDown(ctx context.Context) error {
 }
 
 func (s *SingboxExecutor) InterfaceName() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.committed {
+		return ""
+	}
+	if _, err := net.InterfaceByName(TunInterfaceName); err != nil {
+		return ""
+	}
 	return TunInterfaceName
 }

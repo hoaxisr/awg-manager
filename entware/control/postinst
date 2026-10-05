@@ -26,7 +26,6 @@ chmod 755 /opt/etc/awg-manager/susanin/bin/susanin-agent 2>/dev/null || true
 if [ -d /opt/susanin ] && [ ! -L /opt/susanin ]; then
     mkdir -p /opt/etc/awg-manager/susanin
     cp -a /opt/susanin/* /opt/etc/awg-manager/susanin/ 2>/dev/null || true
-    rm -rf /opt/susanin
 fi
 
 if [ -f /opt/etc/awg-manager/susanin/bin/susanin-agent ]; then

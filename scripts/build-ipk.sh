@@ -160,16 +160,6 @@ build_ipk_one() {
     # Бинари внешних сервисов (sing-box, wdtt, freeturn, susanin) в IPK не кладём:
     # они устанавливаются on-demand через встроенные инсталлеры с проверкой SHA256 и места на диске.
 
-    if [[ -f "$PROJECT_ROOT/scripts/awgm-susanin-sync.py" ]]; then
-        cp "$PROJECT_ROOT/scripts/awgm-susanin-sync.py" "$IPK_ROOT/opt/bin/awgm-susanin-sync.py"
-        chmod 755 "$IPK_ROOT/opt/bin/awgm-susanin-sync.py"
-        echo "Bundled awgm-susanin-sync.py"
-    fi
-    if [[ -f "$PROJECT_ROOT/scripts/S98susanin-sync" ]]; then
-        cp "$PROJECT_ROOT/scripts/S98susanin-sync" "$IPK_ROOT/opt/etc/init.d/S98susanin-sync"
-        chmod 755 "$IPK_ROOT/opt/etc/init.d/S98susanin-sync"
-        echo "Bundled S98susanin-sync"
-    fi
 
     # wdtt/freeturn в IPK не кладём: бинари приезжают только с зеркала по пину
     # install.go, с проверкой SHA256. Бандл давал молчаливое расхождение —

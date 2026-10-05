@@ -36,7 +36,7 @@ func TestParseSusaninLogLine(t *testing.T) {
 }
 
 func TestReleaseBinaries_PinsComplete(t *testing.T) {
-	requiredArches := []string{"aarch64", "mips", "mipsel", "armv7"}
+	requiredArches := []string{"aarch64", "mips", "mipsel", "armv7", "x86_64"}
 	for _, arch := range requiredArches {
 		spec, ok := ReleaseBinaries[arch]
 		if !ok {
@@ -58,3 +58,29 @@ func TestReleaseBinaries_PinsComplete(t *testing.T) {
 	}
 }
 
+func TestFindDomainKnowledge_ExactOrSuffixOnly(t *testing.T) {
+	exact := FindDomainKnowledge("x.com", "")
+	if exact == nil || exact.Title != "X (Twitter)" {
+		t.Fatalf("expected X (Twitter) for x.com, got %v", exact)
+	}
+
+	sub := FindDomainKnowledge("api.x.com", "")
+	if sub == nil || sub.Title != "X (Twitter)" {
+		t.Fatalf("expected X (Twitter) for api.x.com, got %v", sub)
+	}
+
+	fox := FindDomainKnowledge("fox.com", "")
+	if fox != nil && fox.Title == "X (Twitter)" {
+		t.Fatalf("fox.com falsely matched X (Twitter)")
+	}
+
+	notion := FindDomainKnowledge("notion.so", "")
+	if notion == nil || notion.Title != "Notion" {
+		t.Fatalf("expected Notion for notion.so, got %v", notion)
+	}
+
+	fakeNotion := FindDomainKnowledge("badnotion.solutions", "")
+	if fakeNotion != nil && fakeNotion.Title == "Notion" {
+		t.Fatalf("badnotion.solutions falsely matched Notion")
+	}
+}
