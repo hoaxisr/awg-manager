@@ -31,6 +31,7 @@ type FakeNDMS struct {
 	expect      map[string]bool
 	inList      func()
 	netdev      map[string]bool            // kernel-устройства, видимые «прошивке» (SetNetdev)
+	amneziawg   map[string]bool            // из них — amneziawg нашего kernel-бэкенда (SetAmneziaWG)
 	detail      map[string]json.RawMessage // поля записи сверх toWire (SetDetail)
 	rc          map[string]json.RawMessage // объект rc интерфейса (SetRC)
 	rcListCalls int
@@ -41,7 +42,7 @@ type FakeNDMS struct {
 
 	E        int      // точечное чтение отсутствующего; ссылка на отсутствующий из ip route/nat/static/name-server/policy/hotspot/dns-proxy
 	Phantoms int      // `interface X …` по отсутствующему X, не объявленному ExpectCreate: X создан
-	C        int      // строки C прошивки от наших действий: создание OpkgTunN при живом opkgtunN (F569)
+	C        int      // строки C прошивки от наших действий: создание (F569) и снос (F598, только amneziawg) OpkgTunN при живом opkgtunN
 	Posts    []string // все payload в JSON, по порядку (пакет — одной строкой)
 	// Created — намеренно созданные: `interface X …` по объявленному через
 	// ExpectCreate X и импорт. Намерение объявляет тест, а не форма payload:
@@ -101,6 +102,21 @@ func (f *FakeNDMS) SetNetdev(name string, present bool) {
 		f.netdev = make(map[string]bool)
 	}
 	f.netdev[name] = present
+}
+
+// SetAmneziaWG — устройство name (если есть) — amneziawg нашего
+// kernel-бэкенда, а не plain tun. Только у такого снос записи OpkgTunN при
+// живом устройстве даёт C (ifaceCmd, R60): это доказано стендом 01.10
+// (A7/B), а для tun sing-box (policy-tun, fakeip-tun) доказательства нет —
+// A10 запись при живом tun не снимал, поэтому не моделируется. Подтвердит
+// или опровергнет стенд Task 58.
+func (f *FakeNDMS) SetAmneziaWG(name string, on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.amneziawg == nil {
+		f.amneziawg = make(map[string]bool)
+	}
+	f.amneziawg[name] = on
 }
 
 // SetDetail — поля записи интерфейса сверх toWire (`wireguard`, `summary`…):
@@ -493,6 +509,13 @@ func (f *FakeNDMS) ifaceCmd(name string, body map[string]any) (json.RawMessage, 
 		if !ok {
 			f.E++
 			return statusError(fmt.Sprintf("unable to find interface %q", name)), nil
+		}
+		// Снос записи OpkgTunN при живом amneziawg opkgtunN: запись
+		// снимается, ответ успешный, но прошивка пишет `C Tun: system failed
+		// [0xcffd003b]` (стенд 01.10, A7/K7/B). Пара имён та же, что у
+		// проверки создания ниже; только amneziawg — R60, см. SetAmneziaWG.
+		if kernel, isKernel := ndms.KernelName(name); isKernel && strings.HasPrefix(name, "OpkgTun") && f.netdev[kernel] && f.amneziawg[kernel] {
+			f.C++
 		}
 		f.remove(name)
 		return json.RawMessage(`{}`), nil

@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -49,6 +50,7 @@ func (b *deviceBackend) plug(t *testing.T, iface string, amneziawg bool) {
 		t.Fatal(err)
 	}
 	b.f.SetNetdev(iface, true)
+	b.f.SetAmneziaWG(iface, amneziawg)
 	b.amneziawg = amneziawg
 }
 
@@ -65,6 +67,7 @@ func (b *deviceBackend) Start(_ context.Context, iface string) error {
 		}
 	}
 	b.f.SetNetdev(iface, true)
+	b.f.SetAmneziaWG(iface, true)
 	b.amneziawg = true
 	return nil
 }
@@ -77,6 +80,7 @@ func (b *deviceBackend) Stop(_ context.Context, iface string) error {
 	}
 	_ = os.Remove(filepath.Join(b.root, iface))
 	b.f.SetNetdev(iface, false)
+	b.f.SetAmneziaWG(iface, false)
 	b.amneziawg = false
 	return nil
 }
@@ -174,14 +178,21 @@ func TestStop_RecordGone_ForeignTun_Untouched(t *testing.T) {
 	}
 }
 
-// orderedNotifier — ожидания хуков с числом POST на момент регистрации.
+// orderedNotifier — ожидания хуков с числом POST на момент регистрации и,
+// если задан be, с числом Stop: между ожиданием и Stop POST не уходит, так
+// что порядок «ожидание → Stop» виден только по числу Stop (M2′).
 type orderedNotifier struct {
 	f     *ndmsquery.FakeNDMS
+	be    *deviceBackend
 	calls []string
 }
 
 func (n *orderedNotifier) ExpectHook(name, level string) {
-	n.calls = append(n.calls, name+"/"+level+"@"+strconv.Itoa(len(n.f.Posts)))
+	c := name + "/" + level + "@" + strconv.Itoa(len(n.f.Posts))
+	if n.be != nil {
+		c += "/stops=" + strconv.Itoa(len(n.be.StopCalls))
+	}
+	n.calls = append(n.calls, c)
 }
 
 // Наш снос записи ждёт свой ifdestroyed ДО POST: иначе оркестратор принял
@@ -219,6 +230,93 @@ func TestColdStart_RollbackDeletesJustCreatedRecord(t *testing.T) {
 	}
 	if !slices.Contains(hn.calls, "OpkgTun10/destroyed@"+strconv.Itoa(len(f.Posts)-1)) {
 		t.Fatalf("ожидание destroyed до POST сноса не зарегистрировано: %v; posts=%v", hn.calls, f.Posts)
+	}
+	clean(t, f)
+}
+
+// deviceFirst проверяет порядок F596/F598 на сносе записи OpkgTun10:
+// устройство снято один раз и до POST сноса, оба ожидания зарегистрированы
+// до Stop, запись снята, оракул чист (снос при живом opkgtun10 — C).
+func deviceFirst(t *testing.T, f *ndmsquery.FakeNDMS, be *deviceBackend, hn *orderedNotifier) {
+	t.Helper()
+	clean(t, f)
+	del := slices.Index(f.Posts, `{"interface":{"OpkgTun10":{"no":true}}}`)
+	if del < 0 {
+		t.Fatalf("сноса записи нет: %v", f.Posts)
+	}
+	if !slices.Equal(be.StopCalls, []string{"opkgtun10"}) || be.stopPosts[0] > del {
+		t.Fatalf("устройство не снято до сноса записи: stop=%v posts-at-stop=%v, снос — POST #%d", be.StopCalls, be.stopPosts, del)
+	}
+	for _, lvl := range []string{"disabled", "destroyed"} {
+		if want := "OpkgTun10/" + lvl + "@" + strconv.Itoa(del) + "/stops=0"; !slices.Contains(hn.calls, want) {
+			t.Fatalf("нет %s (ожидание до Stop и до POST сноса): %v", want, hn.calls)
+		}
+	}
+	if f.Has("OpkgTun10") || be.exists("opkgtun10") {
+		t.Fatalf("запись есть=%v устройство есть=%v", f.Has("OpkgTun10"), be.exists("opkgtun10"))
+	}
+}
+
+// F596/F598 (стенд 01.10, B: C 0xcffd003b на каждом удалении работающего
+// kernel-туннеля): Delete снимает устройство до записи NDMS, ожидания хуков —
+// до Stop.
+func TestDelete_Running_DeviceBeforeRecord(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(opkgTun10())
+	be := newDeviceBackend(t, f)
+	be.plug(t, "opkgtun10", true)
+	o, _ := newOS5LifecycleOn(t, &recordingPoster{f: f}, f, be, true)
+	hn := &orderedNotifier{f: f, be: be}
+	o.SetHookNotifier(hn)
+
+	if err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	deviceFirst(t, f, be, hn)
+}
+
+// rejectAddressPoster — оракул, отвергающий установку ip address.
+type rejectAddressPoster struct{ f *ndmsquery.FakeNDMS }
+
+func (p rejectAddressPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	if js, _ := json.Marshal(payload); strings.Contains(string(js), `"ip":{"address":`) {
+		return nil, errors.New("injected: address")
+	}
+	return p.f.Post(ctx, payload)
+}
+
+// F560/F598 (стенд A7: откат первого старта снял запись при живом
+// opkgtun11 → C 0xcffd003b): откат созданной записи — устройство, затем
+// запись, ожидания до Stop.
+func TestColdStart_Rollback_DeviceBeforeRecord(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS()
+	f.ExpectCreate("OpkgTun10")
+	be := newDeviceBackend(t, f)
+	o, _ := newOS5LifecycleOn(t, rejectAddressPoster{f}, f, be, true)
+	hn := &orderedNotifier{f: f, be: be}
+	o.SetHookNotifier(hn)
+
+	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err == nil || !strings.Contains(err.Error(), "injected: address") {
+		t.Fatalf("ColdStart: err = %v, want отказ адреса", err)
+	}
+	deviceFirst(t, f, be, hn)
+}
+
+// Остаток П2: снос записи отвергнут после того, как устройство уже снято —
+// ошибка наружу, запись туннеля и OpkgTun10 остаются (F559). На роутере это
+// C 0xcffd0ba1 («no such device») до повторного Delete; повтор снимает
+// запись без E/C (стенд A7). Оракул эту C не моделирует.
+func TestDelete_RecordRefused_DeviceGoneRecordKept(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(opkgTun10())
+	be := newDeviceBackend(t, f)
+	be.plug(t, "opkgtun10", true)
+	o, _ := newOS5LifecycleOn(t, failDeletePoster{f}, f, be, true)
+
+	err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"})
+	if err == nil || !strings.Contains(err.Error(), "injected: delete") {
+		t.Fatalf("err = %v, want отказ сноса записи", err)
+	}
+	if !f.Has("OpkgTun10") || !slices.Equal(be.StopCalls, []string{"opkgtun10"}) || be.exists("opkgtun10") {
+		t.Fatalf("запись есть=%v stop=%v устройство есть=%v", f.Has("OpkgTun10"), be.StopCalls, be.exists("opkgtun10"))
 	}
 	clean(t, f)
 }

@@ -22,11 +22,11 @@ func opkgTun10() ndms.Interface {
 	return ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun", Description: "Germany"}
 }
 
-// clean — оракул не видел ни E, ни фантомов.
+// clean — оракул не видел ни E, ни C, ни фантомов.
 func clean(t *testing.T, f *ndmsquery.FakeNDMS) {
 	t.Helper()
-	if f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("E=%d фантомов=%d, want 0/0; posts=%v", f.E, f.Phantoms, f.Posts)
+	if f.E != 0 || f.C != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d C=%d фантомов=%d, want 0/0/0; posts=%v", f.E, f.C, f.Phantoms, f.Posts)
 	}
 }
 
@@ -64,9 +64,11 @@ func TestDelete_Present_RemovesRecord(t *testing.T) {
 	clean(t, f)
 }
 
-// Список не прочитан — «не знаем»: NDMS не трогаем, kernel-устройство
-// снимаем, ошибка наружу (оркестратор оставит запись туннеля для повтора).
-func TestDelete_ListError_FailsClosed(t *testing.T) {
+// Список не прочитан — «не знаем»: ни NDMS, ни kernel-устройство не
+// трогаем (устройство снимается только перед сносом записи, а сносить её
+// без списка нельзя), ошибка наружу — оркестратор оставит запись туннеля
+// для повтора (F596, L4).
+func TestDelete_ListError_KeepsDevice(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS(opkgTun10())
 	f.FailList(errors.New("injected: rci"))
 	be := &MockBackend{running: true}
@@ -79,8 +81,8 @@ func TestDelete_ListError_FailsClosed(t *testing.T) {
 	if len(f.Posts) != 0 {
 		t.Fatalf("команды в NDMS без списка: %v", f.Posts)
 	}
-	if !slices.Equal(be.StopCalls, []string{"opkgtun10"}) {
-		t.Fatalf("kernel-устройство не снято: %v", be.StopCalls)
+	if len(be.StopCalls) != 0 {
+		t.Fatalf("kernel-устройство снято без списка: %v", be.StopCalls)
 	}
 	if !f.Has("OpkgTun10") {
 		t.Fatal("запись снята без списка")
@@ -99,13 +101,20 @@ func (p failDeletePoster) Post(ctx context.Context, payload any) (json.RawMessag
 
 // Снос записи отвергнут — ошибка наружу: оркестратор не удалит запись
 // туннеля, OpkgTun10 не останется на роутере без хозяина (F559, как nwg).
+// Устройство к этому моменту уже снято (оно снимается до записи, F596/F598):
+// остаток П2 — на роутере C 0xcffd0ba1 до повторного Delete, который
+// снимет запись чисто (стенд A7).
 func TestDelete_DeleteRecordFails_Error(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS(opkgTun10())
-	o, _ := newOS5LifecycleOn(t, failDeletePoster{f}, f, &MockBackend{running: true}, true)
+	be := &MockBackend{running: true}
+	o, _ := newOS5LifecycleOn(t, failDeletePoster{f}, f, be, true)
 
 	err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"})
 	if err == nil || !strings.Contains(err.Error(), "injected: delete") {
 		t.Fatalf("err = %v, want отказ сноса записи", err)
+	}
+	if !slices.Equal(be.StopCalls, []string{"opkgtun10"}) {
+		t.Fatalf("kernel-устройство: %v, want [opkgtun10]", be.StopCalls)
 	}
 	clean(t, f)
 }

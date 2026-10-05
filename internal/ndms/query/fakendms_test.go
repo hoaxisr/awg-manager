@@ -206,6 +206,46 @@ func TestFakeNDMS_CreateOpkgTunOverDevice_CAndE(t *testing.T) {
 	}
 }
 
+// Снос OpkgTunN при живом amneziawg opkgtunN (стенд 01.10, A7/K7/B): запись
+// снята, ответ успешный, но C 0xcffd003b — в обеих формах сноса (RCI и
+// parse). Без устройства и при plain tun (R60: не доказано) — снос чистый.
+func TestFakeNDMS_DeleteWithLiveDevice_C(t *testing.T) {
+	ctx := context.Background()
+	for name, payload := range map[string]any{
+		"rci":   map[string]any{"interface": map[string]any{"OpkgTun3": map[string]any{"no": true}}},
+		"parse": map[string]any{"parse": "no interface OpkgTun3"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := NewFakeNDMS(ndms.Interface{ID: "OpkgTun3", Type: "OpkgTun"})
+			f.SetNetdev("opkgtun3", true)
+			if _, err := f.Post(ctx, payload); err != nil {
+				t.Fatal(err)
+			}
+			if f.C != 0 || f.Has("OpkgTun3") {
+				t.Fatalf("plain tun: C=%d Has=%v, want 0/false", f.C, f.Has("OpkgTun3"))
+			}
+
+			f.Add(ndms.Interface{ID: "OpkgTun3", Type: "OpkgTun"})
+			f.SetAmneziaWG("opkgtun3", true)
+			if _, err := f.Post(ctx, payload); err != nil {
+				t.Fatal(err)
+			}
+			if f.C != 1 || f.E != 0 || f.Has("OpkgTun3") {
+				t.Fatalf("при устройстве: C=%d E=%d Has=%v, want 1/0/false", f.C, f.E, f.Has("OpkgTun3"))
+			}
+
+			f.Add(ndms.Interface{ID: "OpkgTun3", Type: "OpkgTun"})
+			f.SetNetdev("opkgtun3", false)
+			if _, err := f.Post(ctx, payload); err != nil {
+				t.Fatal(err)
+			}
+			if f.C != 1 || f.E != 0 || f.Has("OpkgTun3") {
+				t.Fatalf("без устройства: C=%d E=%d Has=%v, want 1/0/false", f.C, f.E, f.Has("OpkgTun3"))
+			}
+		})
+	}
+}
+
 // Поля сверх toWire (SetDetail) отдаются одинаково в списке и в точечном
 // ответе — как у NDMS, где ключи записи идентичны (стенд 30.09).
 func TestFakeNDMS_SetDetail_SameBytesInListAndPoint(t *testing.T) {
