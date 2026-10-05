@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -164,8 +165,11 @@ func (h *AIAssistantHandler) MCP(w http.ResponseWriter, r *http.Request) {
 		}
 		arguments := make(map[string]string, len(params.Arguments))
 		for key, value := range params.Arguments {
-			if text, ok := value.(string); ok {
-				arguments[key] = text
+			switch typed := value.(type) {
+			case string:
+				arguments[key] = typed
+			case float64, bool:
+				arguments[key] = fmt.Sprint(typed)
 			}
 		}
 		step := service.CallTool(r.Context(), aiassistant.ToolCall{Name: params.Name, Arguments: arguments})

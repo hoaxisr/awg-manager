@@ -97,3 +97,72 @@ func TestSentinel_NotifyOnlyPlaybook(t *testing.T) {
 		t.Fatalf("expected mihomo.restart proposal, got %s", proposal.Action)
 	}
 }
+
+func TestSentinel_ProbeHealth_StructuredEngineStatus(t *testing.T) {
+	sources := ToolSources{
+		EngineStatus: func(ctx context.Context) (any, error) {
+			return map[string]any{
+				"routing": map[string]any{
+					"enabled":        true,
+					"selectedEngine": "mihomo",
+				},
+				"mihomo": map[string]any{
+					"running":  false,
+					"selected": true,
+					"enabled":  true,
+				},
+			}, nil
+		},
+	}
+
+	sentinel := NewSentinel(nil, nil, sources, nil)
+	symptom := sentinel.probeHealth(context.Background())
+	if symptom != "engine_stopped: mihomo is stopped" {
+		t.Fatalf("expected 'engine_stopped: mihomo is stopped', got %q", symptom)
+	}
+
+	// Now test when running
+	sourcesRunning := ToolSources{
+		DNSProbe: func(context.Context) error { return nil },
+		EngineStatus: func(ctx context.Context) (any, error) {
+			return map[string]any{
+				"routing": map[string]any{
+					"enabled":        true,
+					"selectedEngine": "mihomo",
+				},
+				"mihomo": map[string]any{
+					"running":  true,
+					"selected": true,
+					"enabled":  true,
+				},
+			}, nil
+		},
+	}
+	sentinelRunning := NewSentinel(nil, nil, sourcesRunning, nil)
+	symptomOk := sentinelRunning.probeHealth(context.Background())
+	if symptomOk != "" {
+		t.Fatalf("expected empty symptom when running, got %q", symptomOk)
+	}
+}
+
+func TestSentinel_ProbeHealth_TunnelUsesInternalID(t *testing.T) {
+	sources := ToolSources{
+		DNSProbe: func(context.Context) error { return nil },
+		Tunnels: func(ctx context.Context) (any, error) {
+			return []map[string]any{
+				{
+					"id":      "awg-internal-id-123",
+					"name":    "My Beautiful VPN Label",
+					"enabled": true,
+					"state":   "down",
+				},
+			}, nil
+		},
+	}
+	sentinel := NewSentinel(nil, nil, sources, nil)
+	symptom := sentinel.probeHealth(context.Background())
+	if symptom != "tunnel_down: awg-internal-id-123" {
+		t.Fatalf("expected 'tunnel_down: awg-internal-id-123', got %q", symptom)
+	}
+}
+

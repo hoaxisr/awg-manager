@@ -63,6 +63,14 @@ func TestValidateDiagnosticCommand_Blocked(t *testing.T) {
 		"dd if=/dev/zero of=/dev/sda",
 		"sed -i 's/foo/bar/g' /opt/etc/config",
 		"cat /etc/passwd | tee /tmp/stolen.txt",
+		"ndmc -c 'interface Wireguard2 down'",
+		"ip route add default via 192.168.1.1",
+		"ip link set eth0 down",
+		"ip addr del 192.168.1.1/24 dev eth0",
+		"curl -X POST http://127.0.0.1:79/rci/interface",
+		"curl -d '{\"test\":1}' http://127.0.0.1:79/rci/system",
+		"python3 -c 'import os; os.system(\"ls\")'",
+		"ping 1.1.1.1",
 	}
 
 	for _, cmd := range unsafeCommands {

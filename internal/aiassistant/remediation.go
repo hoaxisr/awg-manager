@@ -88,7 +88,6 @@ type ActionHandlers struct {
 	VerifyTunnel         func(ctx context.Context, tunnelID string) (*ActionVerification, error)
 	VerifySubscription   func(ctx context.Context, subID string) (*ActionVerification, error)
 	VerifyDNS            func(ctx context.Context) (*ActionVerification, error)
-	ExecCommand          func(ctx context.Context, command string) error
 	ExecKeenetic         func(ctx context.Context, command string) error
 }
 
@@ -217,18 +216,6 @@ var remediationSpecs = map[string]remediationSpec{
 			return "Принудительно загрузить обновлённый список серверов подписки и применить его через штатный сервис AWG Manager."
 		},
 	},
-	"command.exec": {
-		risk: "medium", targetRequired: true,
-		title: func(target string) string {
-			if len(target) > 50 {
-				return "Выполнить команду: " + target[:50] + "…"
-			}
-			return "Выполнить команду: " + target
-		},
-		description: func(target string) string {
-			return "Выполнить согласованную системную команду после подтверждения пользователем: " + target
-		},
-	},
 	"keenetic.ndmc": {
 		risk: "medium", targetRequired: true,
 		title: func(target string) string {
@@ -270,10 +257,6 @@ func validRemediationTarget(action string, spec remediationSpec, target string) 
 			return false
 		}
 	}
-	if action == "command.exec" {
-		trimmed := strings.TrimSpace(target)
-		return trimmed != "" && len(trimmed) <= 512
-	}
 	if action == "keenetic.ndmc" {
 		trimmed := strings.TrimSpace(target)
 		if trimmed == "" || len(trimmed) > 512 {
@@ -286,6 +269,10 @@ func validRemediationTarget(action string, spec remediationSpec, target string) 
 			if strings.Contains(lower, b) {
 				return false
 			}
+		}
+		// Strict invariant protections: reject commands touching Wireguard2 interface, port 1099, or forbidden flags
+		if strings.Contains(lower, "wireguard2") || strings.Contains(lower, "wireguard 2") || strings.Contains(lower, "1099") || strings.Contains(lower, "--force-reinstall") {
+			return false
 		}
 		return true
 	}
@@ -393,24 +380,12 @@ func (r *ActionRegistry) Apply(ctx context.Context, action, target string) error
 			return errors.New("dns flush is unavailable")
 		}
 		return r.handlers.FlushDNS(ctx)
-	case "command.exec":
-		if r.handlers.ExecCommand == nil {
-			return errors.New("command execution is unavailable")
-		}
-		if target == "" {
-			return errors.New("command target is required")
-		}
-		return r.handlers.ExecCommand(ctx, target)
 	case "keenetic.ndmc":
 		if target == "" {
 			return errors.New("keenetic ndmc command is required")
 		}
 		if r.handlers.ExecKeenetic != nil {
 			return r.handlers.ExecKeenetic(ctx, target)
-		}
-		if r.handlers.ExecCommand != nil {
-			cmd := fmt.Sprintf("ndmc -c %q && ndmc -c 'system configuration save'", target)
-			return r.handlers.ExecCommand(ctx, cmd)
 		}
 		return errors.New("keenetic ndmc execution is unavailable")
 	default:
@@ -524,12 +499,6 @@ func (r *ActionRegistry) Verify(ctx context.Context, action, target string) (*Ac
 		return &ActionVerification{
 			Status:  "passed",
 			Summary: "Команда KeeneticOS успешно выполнена и сохранена в конфигурации",
-			Detail:  target,
-		}, nil
-	case "command.exec":
-		return &ActionVerification{
-			Status:  "passed",
-			Summary: "Системная команда успешно выполнена",
 			Detail:  target,
 		}, nil
 	default:

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestEmbeddedManagerReusesHealthyExternalServer(t *testing.T) {
@@ -50,3 +51,23 @@ func TestEmbeddedManagerReusesHealthyExternalServer(t *testing.T) {
 		t.Fatalf("unexpected external status: %+v", status)
 	}
 }
+
+func TestEmbeddedManagerConcurrentStatusDoesNotBlock(t *testing.T) {
+	store, err := NewConfigStore(filepath.Join(t.TempDir(), "ai.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := NewEmbeddedManager(store)
+	// Status() returns immediately without blocking
+	done := make(chan struct{})
+	go func() {
+		_ = manager.Status()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("Status() blocked")
+	}
+}
+

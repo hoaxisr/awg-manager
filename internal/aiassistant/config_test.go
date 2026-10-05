@@ -131,3 +131,31 @@ func TestConfigStorePersistsModelRoute(t *testing.T) {
 		t.Fatalf("stored route = %q/%q", got.RouteKind, got.RouteTag)
 	}
 }
+
+func TestConfigStoreAcceptsAnthropicAndRequiresItsOwnKey(t *testing.T) {
+	store, err := NewConfigStore(filepath.Join(t.TempDir(), "ai-assistant.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Save(ConfigUpdate{
+		Enabled: true, Provider: "anthropic", Model: "claude-3-5-sonnet",
+	}); err == nil {
+		t.Fatal("expected Anthropic API key validation error")
+	}
+	pub, err := store.Save(ConfigUpdate{
+		Enabled: true, Provider: "anthropic", Model: "claude-3-5-sonnet", APIKey: "anthropic-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pub.APIKeySet || pub.Provider != "anthropic" {
+		t.Fatalf("public config = %+v", pub)
+	}
+	if _, err := store.Save(ConfigUpdate{
+		Enabled: true, Provider: "anthropic", Model: "claude-3-5-sonnet", APIKey: "anthropic-secret",
+		BaseURL: "https://example.com/v1",
+	}); err == nil {
+		t.Fatal("expected Anthropic host validation error")
+	}
+}
+

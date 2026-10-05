@@ -604,13 +604,18 @@ func TestKeeneticNdmcProposalValidation(t *testing.T) {
 		}
 	}
 
-	// Banned / destructive commands
+	// Banned / destructive commands and invariant protection
 	bannedCmds := []string{
 		"system default-config",
 		"format storage",
 		"erase nvram",
 		"system reboot",
 		"cleanup all",
+		"no interface Wireguard2",
+		"interface Wireguard2 down",
+		"interface Wireguard 2 down",
+		"ip static tcp ISP 1099 192.168.1.50 1099",
+		"opkg install --force-reinstall test.ipk",
 		"",
 	}
 	for _, cmd := range bannedCmds {
@@ -618,6 +623,11 @@ func TestKeeneticNdmcProposalValidation(t *testing.T) {
 		if p != nil {
 			t.Fatalf("expected banned command %q to return nil proposal, got %+v", cmd, p)
 		}
+	}
+
+	// command.exec must be completely rejected as an action
+	if p := validatedRemediationProposal("command.exec", "ls -la"); p != nil {
+		t.Fatalf("expected command.exec to be rejected, got %+v", p)
 	}
 }
 

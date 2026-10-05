@@ -109,4 +109,11 @@ func TestAIAssistantMCPListsAndCallsReadOnlyTools(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"isError":false`) || !strings.Contains(rec.Body.String(), "DNS отвечает") {
 		t.Fatalf("unexpected tools/call response: status=%d body=%s", rec.Code, rec.Body.String())
 	}
+
+	// Verify numeric and boolean arguments in tools/call are converted and forwarded
+	rec = httptest.NewRecorder()
+	h.MCP(rec, httptest.NewRequest(http.MethodPost, "/api/system/ai/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"system.diagnose_command","arguments":{"command":"ping -c 1 127.0.0.1","timeoutSeconds":5}}}`)))
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"error":`) {
+		t.Fatalf("unexpected tools/call with numeric args response: status=%d body=%s", rec.Code, rec.Body.String())
+	}
 }

@@ -305,7 +305,7 @@ func validateModelConfig(cfg ModelConfig) error {
 			return errors.New("model name is required when model analysis is enabled")
 		}
 		// Cloud providers require API key; local/ollama do not
-		if (cfg.Provider == "openai" || cfg.Provider == "deepseek" || cfg.Provider == "openrouter" || cfg.Provider == "google") && cfg.APIKey == "" {
+		if (cfg.Provider == "openai" || cfg.Provider == "deepseek" || cfg.Provider == "openrouter" || cfg.Provider == "google" || cfg.Provider == "anthropic") && cfg.APIKey == "" {
 			return errors.New("API key is required for cloud model provider")
 		}
 	}
@@ -337,6 +337,10 @@ func validateProviderURL(provider, raw string) error {
 	case "google":
 		if u.Scheme != "https" || host != "generativelanguage.googleapis.com" {
 			return errors.New("Google base URL must use https://generativelanguage.googleapis.com")
+		}
+	case "anthropic":
+		if u.Scheme != "https" || host != "api.anthropic.com" {
+			return errors.New("Anthropic base URL must use https://api.anthropic.com; use custom provider for another endpoint")
 		}
 	case "local_embedded":
 		ip := net.ParseIP(host)

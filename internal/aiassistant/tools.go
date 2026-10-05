@@ -88,6 +88,7 @@ type ToolSources struct {
 	TestOutbound    func(context.Context, string, string) (any, error)
 	ExplainDNS      func(context.Context, string, string, string) (any, error)
 	ExplainConn     func(context.Context, string, int, string, int, string) (any, error)
+	DNSProbe        func(context.Context) error
 }
 
 func NewToolRegistry() *ToolRegistry {
@@ -270,7 +271,7 @@ func (r *ToolRegistry) Tools() []ToolDefinition {
 		},
 		{
 			Name: "system.diagnose_command", Title: "Диагностическая команда ОС",
-			Description: "Выполняет произвольную диагностическую команду в Linux/Entware роутера (SSH-уровень диагностики). Разрешены команды сбора информации: ip, ping, curl, traceroute, nslookup, dig, iptables/ip6tables (только чтение -L/-S/-v/-n), nft (list), dmesg, logread, cat/head/tail/grep/awk/sed (без -i), ps, top, free, df, netstat, ss, lsof, awg show, wg show, conntrack -L, ndmq, curl к 127.0.0.1:79/rci, /opt/etc/init.d/* status, проверки сетевых интерфейсов и файлов. Любые деструктивные операции (rm, reboot, mv, запись в файлы >, kill, iptables -A/-I/-D/-F) строго заблокированы.",
+			Description: "Выполняет строго проверенную диагностическую команду из белого списка в Linux/Entware роутера. Разрешены только безопасные команды сбора информации: ip route/rule/addr/link show, ping -c, traceroute, ss, netstat, dmesg, logread, cat (/proc, /sys), ps, top -b, free, df, nslookup, dig, iptables (инспекция -L/-S/-v/-n), nft list, awg/wg show, conntrack -L, curl (только чтение GET, без POST к RCI), /opt/etc/init.d/* status, opkg (list/status/info). Любые мутирующие операции (ndmc, ip add/del/set, POST к RCI, запись в файлы >, kill, reboot) строго заблокированы.",
 			InputSchema: map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,
@@ -295,8 +296,8 @@ func (r *ToolRegistry) Tools() []ToolDefinition {
 			Name: "remediation.propose", Title: "Предложить исправление",
 			Description: "Формирует безопасное предложение штатного исправления. Ничего не применяет: действие появится в интерфейсе и потребует отдельного подтверждения пользователя.",
 			InputSchema: map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
-				"action": map[string]any{"type": "string", "enum": []string{"singbox.restart", "mihomo.restart", "mihomo.reload", "routing.reapply", "routing.switch_engine", "routing.switch_mode", "tunnel.restart", "subscription.update", "service.start", "service.stop", "service.restart", "opkg.update", "opkg.install", "opkg.upgrade", "opkg.remove", "command.exec", "keenetic.ndmc"}},
-				"target": map[string]any{"type": "string", "description": "ID туннеля, имя сервиса, команда Linux для command.exec или команда KeeneticOS (например: interface SSTP0 security-level private, ip route ...) для keenetic.ndmc; для действий без цели оставь пустым"},
+				"action": map[string]any{"type": "string", "enum": []string{"singbox.restart", "mihomo.restart", "mihomo.reload", "routing.reapply", "routing.switch_engine", "routing.switch_mode", "tunnel.restart", "subscription.update", "service.start", "service.stop", "service.restart", "opkg.update", "opkg.install", "opkg.upgrade", "opkg.remove", "keenetic.ndmc"}},
+				"target": map[string]any{"type": "string", "description": "ID туннеля, имя сервиса или команда KeeneticOS (например: interface SSTP0 security-level private, ip route ...) для keenetic.ndmc; для действий без цели оставь пустым"},
 			}, "required": []string{"action"}}, ReadOnly: true, Risk: "none",
 		},
 		{
@@ -315,7 +316,7 @@ func (r *ToolRegistry) Tools() []ToolDefinition {
 			InputSchema: map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
 				"symptom":           map[string]any{"type": "string", "description": "Краткое описание проблемы или симптома сбоя"},
 				"diagnosis":         map[string]any{"type": "string", "description": "Установленная причина сбоя"},
-				"remediationAction": map[string]any{"type": "string", "enum": []string{"singbox.restart", "mihomo.restart", "mihomo.reload", "routing.reapply", "routing.switch_engine", "routing.switch_mode", "tunnel.restart", "subscription.update", "service.start", "service.stop", "service.restart", "opkg.update", "opkg.install", "opkg.upgrade", "opkg.remove", "command.exec"}, "description": "Действие для устранения сбоя"},
+				"remediationAction": map[string]any{"type": "string", "enum": []string{"singbox.restart", "mihomo.restart", "mihomo.reload", "routing.reapply", "routing.switch_engine", "routing.switch_mode", "tunnel.restart", "subscription.update", "service.start", "service.stop", "service.restart", "opkg.update", "opkg.install", "opkg.upgrade", "opkg.remove"}, "description": "Действие для устранения сбоя"},
 				"remediationTarget": map[string]any{"type": "string", "description": "Цель действия (имя туннеля, сервиса или команда)"},
 				"explanation":       map[string]any{"type": "string", "description": "Краткое объяснение, почему это действие помогает"},
 			}, "required": []string{"symptom", "diagnosis", "remediationAction"}}, ReadOnly: true, Risk: "none",

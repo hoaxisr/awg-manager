@@ -168,7 +168,6 @@ func (m *EmbeddedManager) Status() EmbeddedStatus {
 // EnsureRunning starts llama-server on-demand if not already running.
 func (m *EmbeddedManager) EnsureRunning(ctx context.Context) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	cfg := m.config.Get().LocalEngine
 	port := cfg.Port
@@ -181,16 +180,20 @@ func (m *EmbeddedManager) EnsureRunning(ctx context.Context) error {
 	// the same port. Such an instance is reported as running but unmanaged.
 	if m.serverReady(port) {
 		m.touch()
+		m.mu.Unlock()
 		return nil
 	}
 
 	// If our child is still loading, wait for that child instead of starting a
 	// duplicate. This path also covers concurrent readiness checks.
 	if m.cmd != nil && m.cmd.Process != nil {
+		m.mu.Unlock()
 		if err := m.waitReady(ctx, port, 45*time.Second); err != nil {
 			return err
 		}
+		m.mu.Lock()
 		m.touch()
+		m.mu.Unlock()
 		return nil
 	}
 
@@ -199,6 +202,7 @@ func (m *EmbeddedManager) EnsureRunning(ctx context.Context) error {
 		binaryPath = FindDefaultBinary()
 	}
 	if binaryPath == "" {
+		m.mu.Unlock()
 		return errors.New("llama-server binary not found on router")
 	}
 
@@ -207,12 +211,14 @@ func (m *EmbeddedManager) EnsureRunning(ctx context.Context) error {
 		modelPath = FindDefaultModel()
 	}
 	if modelPath == "" {
+		m.mu.Unlock()
 		return errors.New("GGUF model not found on router")
 	}
 
 	// Safety check: ensure at least 450 MB RAM available to protect router network services
 	mem := GetMemAvailableMB()
 	if mem > 0 && mem < 450 {
+		m.mu.Unlock()
 		return fmt.Errorf("insufficient memory: %d MB available (minimum 450 MB required)", mem)
 	}
 
@@ -244,6 +250,7 @@ func (m *EmbeddedManager) EnsureRunning(ctx context.Context) error {
 	}
 
 	if err := cmd.Start(); err != nil {
+		m.mu.Unlock()
 		return fmt.Errorf("start llama-server: %w", err)
 	}
 
@@ -259,11 +266,18 @@ func (m *EmbeddedManager) EnsureRunning(ctx context.Context) error {
 		m.mu.Unlock()
 	}()
 
+	// Release lock before entering the waitReady loop so concurrent Status() and Stop() calls don't block.
+	m.mu.Unlock()
+
 	if err := m.waitReady(ctx, port, 45*time.Second); err != nil {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
+		m.mu.Lock()
 		if m.cmd == cmd {
+			if cmd.Process != nil {
+				_ = cmd.Process.Signal(syscall.SIGTERM)
+			}
 			m.cmd = nil
 		}
+		m.mu.Unlock()
 		return err
 	}
 	return nil

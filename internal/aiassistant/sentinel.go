@@ -169,6 +169,45 @@ func (s *Sentinel) probeHealth(ctx context.Context) string {
 				if strings.Contains(str, "stopped") || strings.Contains(str, "failed") {
 					return "engine_stopped: " + str
 				}
+			} else {
+				rawBytes, _ := json.Marshal(statusRaw)
+				var st struct {
+					Routing struct {
+						Enabled        bool   `json:"enabled"`
+						SelectedEngine string `json:"selectedEngine"`
+					} `json:"routing"`
+					Singbox struct {
+						Running   bool   `json:"running"`
+						Installed bool   `json:"installed"`
+						LastError string `json:"lastError"`
+					} `json:"singbox"`
+					Mihomo struct {
+						Running   bool   `json:"running"`
+						Enabled   bool   `json:"enabled"`
+						Selected  bool   `json:"selected"`
+						Active    bool   `json:"active"`
+						LastError string `json:"lastError"`
+					} `json:"mihomo"`
+				}
+				if json.Unmarshal(rawBytes, &st) == nil {
+					engine := strings.ToLower(strings.TrimSpace(st.Routing.SelectedEngine))
+					if engine == "" {
+						if st.Mihomo.Selected || st.Mihomo.Enabled || st.Mihomo.Active {
+							engine = "mihomo"
+						} else {
+							engine = "sing-box"
+						}
+					}
+					if engine == "mihomo" {
+						if !st.Mihomo.Running && (st.Mihomo.Enabled || st.Routing.Enabled || st.Mihomo.Selected) {
+							return "engine_stopped: mihomo is stopped"
+						}
+					} else if engine == "sing-box" || engine == "singbox" {
+						if !st.Singbox.Running && st.Routing.Enabled {
+							return "engine_stopped: sing-box is stopped"
+						}
+					}
+				}
 			}
 		}
 	}
@@ -186,9 +225,9 @@ func (s *Sentinel) probeHealth(ctx context.Context) string {
 					name, _ := t["name"].(string)
 					id, _ := t["id"].(string)
 					if enabled && (state == "failed" || state == "error" || state == "down") {
-						target := name
+						target := id
 						if target == "" {
-							target = id
+							target = name
 						}
 						return fmt.Sprintf("tunnel_down: %s", target)
 					}
@@ -198,6 +237,13 @@ func (s *Sentinel) probeHealth(ctx context.Context) string {
 	}
 
 	// 3. Probe DNS resolution
+	if s.sources.DNSProbe != nil {
+		if err := s.sources.DNSProbe(ctx); err != nil {
+			return "dns_resolution_failed: " + err.Error()
+		}
+		return ""
+	}
+
 	r := net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
