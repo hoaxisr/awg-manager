@@ -739,7 +739,7 @@ func TestRestore_HiddenForeignSlot_FailsNoConfigure(t *testing.T) {
 		"/show/rc/ip/route":    `[]`,
 		"/show/running-config": `{"message":[]}`,
 	})
-	f.HideCreated(-1)
+	f.HideCreated(1)
 	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
 	f.HideCreated(0)
 	posts := len(f.Posts)

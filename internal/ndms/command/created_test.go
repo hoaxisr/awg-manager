@@ -120,7 +120,7 @@ func TestImport_ListError_NoCommands(t *testing.T) {
 // hiddenForeign — чужой name уже есть в NDMS, но ни списком, ни хуком ещё не
 // показан (поздний ifcreated под нагрузкой, F574).
 func hiddenForeign(f *query.FakeNDMS, name, typ string) {
-	f.HideCreated(-1)
+	f.HideCreated(1)
 	f.Add(ndms.Interface{ID: name, Type: typ})
 	f.HideCreated(0)
 }

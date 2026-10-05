@@ -1521,7 +1521,7 @@ func (s *InterfaceStore) ConfirmAll(ctx context.Context) (map[string]Confirmed, 
 // FreeIndex — наименьший N в [0, limit), для которого имени prefix+N нет ни в
 // СВОЁМ свежем полном списке, ни в карте, ни среди ждущих ConfirmCreated
 // (creating), и N не в reserved (F574). Память одна не решает: под нагрузкой
-// ifcreated опаздывает до ~7 с, и чужой только что созданный WireguardN/ProxyN
+// ifcreated опаздывает, и чужой только что созданный WireguardN/ProxyN
 // был бы выбран нами. Метка ifcreated имя не занимает — её решает список. Метка существования имени
 // с prefix новее начала списка противоречит ему — один повторный список, выбор
 // заново по нему (П4). Список не прочитан — ошибка (решение 4). ok=false — все

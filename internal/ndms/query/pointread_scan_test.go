@@ -8,9 +8,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // byNamePatterns — формы запроса интерфейса ПО ИМЕНИ (F546, решение владельца
@@ -695,4 +698,23 @@ func hasNoTrue(cl *ast.CompositeLit) bool {
 		}
 	}
 	return false
+}
+
+// TestInterfaceStore_NoHookOwnedExistence — существование записи решает
+// список, а не доставка хуков (F595): в InterfaceStore нет полей-владельцев
+// «ждущего» существования, а оракул не умеет прятать запись до хука.
+// Мутация: поле `pending map[string]struct{}` в структуру → красный.
+func TestInterfaceStore_NoHookOwnedExistence(t *testing.T) {
+	typ := reflect.TypeOf(query.InterfaceStore{})
+	for _, name := range []string{"pending", "tombs", "awaiting", "touched"} {
+		if _, ok := typ.FieldByName(name); ok {
+			t.Errorf("InterfaceStore.%s: запись в списке не зависит от хуков (F595)", name)
+		}
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("HideCreated(-1) должен паниковать")
+		}
+	}()
+	query.NewFakeNDMS().HideCreated(-1)
 }

@@ -253,7 +253,7 @@ func TestProxyManager_CreateProxy_Ours(t *testing.T) {
 	f := query.NewFakeNDMS()
 	pm := oracleProxyManager(f)
 	pm.queries.Interfaces.SetCreatedBackoff(time.Millisecond)
-	f.HideCreated(-1)
+	f.HideCreated(1)
 	f.Add(ndms.Interface{ID: "Proxy0", Type: "Proxy"})
 	f.HideCreated(0)
 	if ours, err := pm.CreateProxy(context.Background(), 0, 1080, "t"); ours || err == nil {

@@ -208,7 +208,7 @@ func TestCreateProxy_SettingsRejected_Dropped(t *testing.T) {
 // настроек и сноса; чужой цел со своим description.
 func TestCreateProxy_HiddenForeign_NoSettingsNoDrop(t *testing.T) {
 	cmds, f, _ := newOracleCommands(t, nil)
-	f.HideCreated(-1)
+	f.HideCreated(1)
 	f.Add(ndms.Interface{ID: "Proxy0", Type: "Proxy", Description: "Work"})
 	f.HideCreated(0)
 	posts := len(f.Posts)

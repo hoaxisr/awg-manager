@@ -430,7 +430,7 @@ func TestCreateViaBatch_ListError_NoCreate(t *testing.T) {
 // настроек, ни сноса, чужая запись цела.
 func TestCreateViaBatch_HiddenForeign_ErrorNoSettings(t *testing.T) {
 	o, _, _, f, srv := newLifecycleOperator(t, false, false)
-	f.HideCreated(-1)
+	f.HideCreated(1)
 	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
 	f.HideCreated(0)
 	_, err := o.createViaBatch(context.Background(), nwgStored(awgObfuscatedIface()))

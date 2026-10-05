@@ -35,7 +35,7 @@ type FakeNDMS struct {
 	rc          map[string]json.RawMessage // объект rc интерфейса (SetRC)
 	rcListCalls int
 	rcListErr   error
-	// hideNext/hidden — поздняя регистрация созданного в списке (HideCreated).
+	// hideNext/hidden — сколько чтений списка ещё не показывают созданное (HideCreated).
 	hideNext int
 	hidden   map[string]int
 
@@ -142,11 +142,22 @@ func (f *FakeNDMS) FailRCList(err error) {
 
 // HideCreated — записи, созданные после вызова (импорт, `interface X`), не
 // видны в полном списке, хотя NDMS их уже знает (снос проходит): n > 0 — n
-// чтений списка, n < 0 — пока их ifcreated не отдан DrainHooks (поздняя
-// регистрация под нагрузкой, стенд 30.09, F584). 0 снимает для следующих.
+// чтений списка. 0 снимает для следующих. n < 0 — паника: запись в списке не
+// зависит от доставки хуков (F595).
 func (f *FakeNDMS) HideCreated(n int) {
+	if n < 0 {
+		panic("режим удалён: запись в списке не зависит от доставки хуков (F595)")
+	}
 	f.mu.Lock()
 	f.hideNext = n
+	f.mu.Unlock()
+}
+
+// ShowHidden — снимает сокрытие у уже скрытых записей (доставка хуков тут ни
+// при чём: список показывает запись, когда оракул так решил).
+func (f *FakeNDMS) ShowHidden() {
+	f.mu.Lock()
+	f.hidden = nil
 	f.mu.Unlock()
 }
 
@@ -167,11 +178,6 @@ func (f *FakeNDMS) DrainHooks() []FakeHook {
 	defer f.mu.Unlock()
 	h := f.hooks
 	f.hooks = nil
-	for _, e := range h {
-		if e.Type == "ifcreated" && f.hidden[e.ID] < 0 {
-			delete(f.hidden, e.ID)
-		}
-	}
 	return h
 }
 
@@ -189,11 +195,6 @@ func (f *FakeNDMS) HooksFor(name string) []FakeHook {
 		}
 	}
 	f.hooks = keep
-	for _, e := range take {
-		if e.Type == "ifcreated" && f.hidden[e.ID] < 0 {
-			delete(f.hidden, e.ID)
-		}
-	}
 	return take
 }
 
@@ -427,10 +428,8 @@ func (f *FakeNDMS) list() ([]byte, error) {
 	}
 	out := make(map[string]json.RawMessage, len(f.ifaces))
 	for id, iface := range f.ifaces {
-		if n := f.hidden[id]; n != 0 {
-			if n > 0 {
-				f.hidden[id]--
-			}
+		if n := f.hidden[id]; n > 0 {
+			f.hidden[id]--
 			continue
 		}
 		w, err := f.wire(iface)

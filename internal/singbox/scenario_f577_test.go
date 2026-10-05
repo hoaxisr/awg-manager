@@ -34,7 +34,7 @@ func TestScenario_AddTunnels_HiddenForeignSlot_Unslotted(t *testing.T) {
 	withProxy501(t)
 	op, _, f, _ := f562Stand(t)
 	ctx := context.Background()
-	f.HideCreated(-1)
+	f.HideCreated(2)
 	f.Add(ndms.Interface{ID: "Proxy1", Type: "Proxy", Description: "Work", State: "up"})
 	f.HideCreated(0)
 
@@ -104,7 +104,7 @@ func TestScenario_AddTunnels_CreatedNeverListed(t *testing.T) {
 		ctx := context.Background()
 		op.proxyMgr.(*ProxyManager).queries.Interfaces.SetCreatedBackoff(time.Millisecond)
 		f.ExpectCreate("Proxy1")
-		f.HideCreated(-1)
+		f.HideCreated(100)
 		p.refuse = true
 		added, errs, err := op.AddTunnels(ctx, f577Link)
 		if err != nil || len(added) != 0 || len(errs) != 1 {
@@ -118,6 +118,7 @@ func TestScenario_AddTunnels_CreatedNeverListed(t *testing.T) {
 		}
 		p.refuse = false
 		f.HideCreated(0)
+		f.ShowHidden()
 		f.DrainHooks()
 		w.tick(ctx)
 		if f.Has("Proxy1") || op.proxyRemovalDeferred("Proxy1") {
@@ -220,7 +221,7 @@ func orphanOnLiveSlot(t *testing.T) (*Operator, *Watchdog, *query.FakeNDMS, *Pro
 	f.Remove("Proxy3")
 	f.DrainHooks()
 	f.ExpectCreate("Proxy3")
-	f.HideCreated(-1)
+	f.HideCreated(100)
 	cfg, err := op.loadConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -234,6 +235,7 @@ func orphanOnLiveSlot(t *testing.T) (*Operator, *Watchdog, *query.FakeNDMS, *Pro
 		t.Fatalf("метка: %+v", op.deferredProxies)
 	}
 	f.HideCreated(0)
+	f.ShowHidden()
 	f.DrainHooks() // голый Proxy3 виден
 	return op, w, f, pm, cfg.Tunnels()
 }
@@ -347,7 +349,7 @@ func TestSyncProxies_LeftContinues(t *testing.T) {
 	f.Remove("Proxy4")
 	f.DrainHooks()
 	f.ExpectCreate("Proxy3", "Proxy4")
-	f.HideCreated(-1)
+	f.HideCreated(100)
 	p.refuse = true
 	cfg, _ := op.loadConfig()
 	if err := pm.SyncProxies(context.Background(), cfg.Tunnels()); err != nil {
