@@ -748,7 +748,7 @@ func TestProcAutoReconnect_IntervalExpiration(t *testing.T) {
 	p := NewProc(ProcConfig{
 		ID: "process", Instance: "default", Impl: "wt-client", Role: "client",
 		Binary: "/opt/bin/wt-client", NeedCmds: []string{"state"},
-		SocketPath: "/tmp/sock", LogPath: "/tmp/log",
+		SocketPath: filepath.Join(t.TempDir(), "sock"), LogPath: filepath.Join(t.TempDir(), "test.log"),
 		Link: link, Runner: r, Gate: okGate{}, Now: time.Now,
 	})
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
@@ -847,29 +847,72 @@ func TestProcAutoReconnect_IgnoresGenericSocketErrors(t *testing.T) {
 	}
 }
 
-func TestProc_WANRestartSuppressedDuringSocketGrace(t *testing.T) {
+func TestProc_SessionFailureAccumulatesBackoff(t *testing.T) {
 	now := time.Now()
 	clock := func() time.Time { return now }
-	link := &fakeLink{st: awgmproto.State{PID: 100, UptimeS: 5}}
+	link := &fakeLink{st: awgmproto.State{PID: 100, UptimeS: 25}}
 	r := &fakeRunner{pid: 100, alive: true}
 	p := NewProc(ProcConfig{
 		ID: "process", Instance: "default", Impl: "wt-client", Role: "client",
 		Binary: "/opt/bin/wt-client", NeedCmds: []string{"state"},
-		SocketPath: "/tmp/sock",
+		SocketPath: filepath.Join(t.TempDir(), "sock"),
 		Link: link, Runner: r, Gate: okGate{}, Now: clock,
 	})
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(true, 0)
 
-	// Симулируем процесс, только что запущенный (5 секунд назад)
-	spawned := now.Add(-5 * time.Second)
-	p.spawnedAt = &spawned
+	// 1-й сбой сессии: Step с cause="session_failure"
+	step := proxyrt.Step{
+		Resource: p.ID(),
+		Op:       "restart",
+		Args:     map[string]string{"cause": "session_failure"},
+		Reason:   "сбой сессии в журнале: error 401: Unauthorized",
+	}
+	if err := p.Apply(context.Background(), step); err != nil {
+		t.Fatalf("Apply err: %v", err)
+	}
+	if p.fails != 1 {
+		t.Fatalf("fails = %d, want 1", p.fails)
+	}
+	retry1 := p.retryAt()
+	if !retry1.Equal(now.Add(backoffBase)) {
+		t.Fatalf("retryAt = %v, want %v", retry1, now.Add(backoffBase))
+	}
 
-	// Запрашиваем рестарт по WAN
-	p.RequestRestart("восстановление WAN-соединения")
+	// Симулируем перезапущенный процесс (uptime = 20s < stableGrace)
+	now = now.Add(backoffBase + 20*time.Second)
+	link.st = awgmproto.State{PID: 101, UptimeS: 20}
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe err: %v", err)
+	}
+	_ = obs
+	// Поскольку uptime < stableGrace, backoff НЕ должен сбрасываться!
+	if p.fails != 1 {
+		t.Fatalf("fails сбросился раньше stableGrace: %d, want 1", p.fails)
+	}
 
-	obs := proxyrt.Observation{Exists: true, Known: true, Attrs: map[string]string{}}
-	steps := p.Plan(obs)
-	if len(steps) != 0 {
-		t.Fatalf("в окне socketGrace WAN-рестарт обязан быть подавлен, получено шагов: %v", steps)
+	// 2-й сбой сессии должен удвоить backoff
+	if err := p.Apply(context.Background(), step); err != nil {
+		t.Fatalf("Apply err: %v", err)
+	}
+	if p.fails != 2 {
+		t.Fatalf("fails = %d, want 2", p.fails)
+	}
+	retry2 := p.retryAt()
+	if !retry2.Equal(now.Add(2 * backoffBase)) {
+		t.Fatalf("retryAt = %v, want %v", retry2, now.Add(2*backoffBase))
+	}
+
+	// Только после достижения stableGrace (>= 60s) без ошибок backoff сбрасывается
+	now = now.Add(2*backoffBase + 65*time.Second)
+	link.st = awgmproto.State{PID: 102, UptimeS: 65}
+	obs, err = p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe err: %v", err)
+	}
+	if p.fails != 0 {
+		t.Fatalf("fails не сбросился после stableGrace: %d, want 0", p.fails)
 	}
 }
+

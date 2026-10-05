@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { formatBitRate, formatBytes } from '$lib/utils/format';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		rxRates: number[];
@@ -138,7 +139,7 @@
 				}
 			}
 		: undefined}
-	aria-label={onclick ? 'Открыть детальный график' : undefined}
+	aria-label={onclick ? m.ui_traffic_chart_open_detail() : undefined}
 >
 	{#if hasData}
 		<div class="chart-top">
@@ -202,7 +203,7 @@
 	<div class="stats-row">
 		<span class="rate rx">↓ {fmtRate(currentRx)}</span>
 		<span class="rate tx">↑ {fmtRate(currentTx)}</span>
-		<span class="total">всего: {formatBytes(rxTotal + txTotal)}</span>
+		<span class="total">{m.ui_traffic_chart_total({ total: formatBytes(rxTotal + txTotal) })}</span>
 	</div>
 </div>
 

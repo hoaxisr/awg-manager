@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount, onDestroy } from 'svelte';
 	import type { Snippet } from 'svelte';
 	import IconButton from './IconButton.svelte';
@@ -96,7 +97,7 @@
 		<header class="drawer-header" use:sheetSwipeTarget>
 			<h3>{title}</h3>
 			<span class="drawer-close">
-				<IconButton ariaLabel="Закрыть" onclick={onClose}>
+				<IconButton ariaLabel={m.common_close()} onclick={onClose}>
 					<X size={16} aria-hidden="true" />
 				</IconButton>
 			</span>

@@ -1015,26 +1015,6 @@ func (a *app) wireProxyrt() {
 		a.proxyRuntimeNudge(reason, proxyrt.EventWANUp)
 	})
 
-	if a.monitoringService != nil {
-		a.monitoringService.SetSelfProbeFailureHandler(func(tunnelID string, failures int) {
-			ctx, cancel := context.WithTimeout(a.shutdownCtx, 15*time.Second)
-			defer cancel()
-			reason := fmt.Sprintf("провал проверок связности (%d цикла подряд)", failures)
-			if strings.HasPrefix(tunnelID, "wdttraw-") {
-				_ = a.proxyMgr.RestartTunnel(ctx, tunnelID, reason)
-				return
-			}
-			if a.awgStore != nil {
-				if stored, err := a.awgStore.Get(tunnelID); err == nil && stored != nil && stored.FreeTurnClientID != "" {
-					key := "freeturn-client:" + stored.FreeTurnClientID
-					if rec, ok := a.proxyMgr.Record(key); ok && rec.AutoReconnectEnabled() {
-						_ = a.proxyMgr.Restart(ctx, key, reason)
-					}
-				}
-			}
-		})
-	}
-
 	// F497: клиентские маршруты на system:-выходе теряются на down/up
 	// интерфейса — ядро снимает default dev, и переприменить их некому.
 	a.srv.SetIPv4RunningHook(func(ndmsID string) {

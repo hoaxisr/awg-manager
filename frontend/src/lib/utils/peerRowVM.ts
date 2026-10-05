@@ -1,5 +1,5 @@
 import type { ManagedPeer, ManagedPeerStats } from '$lib/types';
-import { formatBytes, formatRelativeTime } from '$lib/utils/format';
+import { formatBytes, formatRelativeTimeParts } from '$lib/utils/format';
 
 export type PeerStatus = 'online' | 'offline' | 'disabled';
 
@@ -60,12 +60,6 @@ export function peerStatus(enabled: boolean, online: boolean | null | undefined)
 	return online ? 'online' : 'offline';
 }
 
-export function splitHandshake(value: string): { main: string; suffix?: string } {
-	const t = value.trim();
-	if (t.endsWith(' назад')) return { main: t.slice(0, -' назад'.length), suffix: 'назад' };
-	return { main: t };
-}
-
 export function buildPeerRowVM(peer: ManagedPeer, stats: ManagedPeerStats | undefined): PeerRowVM {
 	return {
 		publicKey: peer.publicKey,
@@ -76,6 +70,6 @@ export function buildPeerRowVM(peer: ManagedPeer, stats: ManagedPeerStats | unde
 		endpointHost: endpointHost(stats?.endpoint),
 		rx: formatBytes(stats?.rxBytes ?? 0),
 		tx: formatBytes(stats?.txBytes ?? 0),
-		handshake: stats?.lastHandshake ? splitHandshake(formatRelativeTime(stats.lastHandshake)) : null,
+		handshake: stats?.lastHandshake ? formatRelativeTimeParts(stats.lastHandshake) : null,
 	};
 }

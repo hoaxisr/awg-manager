@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SystemProcessItem } from '$lib/api/client';
 	import { formatBytes, formatDuration } from '$lib/utils/format';
 	import { Square } from 'lucide-svelte';
@@ -13,6 +14,21 @@
 	let { proc, cpuCount, onkill }: Props = $props();
 
 	const cpuLvl = $derived(getCpuClass(proc.cpuPercent, cpuCount));
+
+	const stateTitle = $derived.by(() => {
+		switch (proc.state) {
+			case 'R':
+				return m.system_processes_state_running();
+			case 'S':
+				return m.system_processes_state_sleeping();
+			case 'D':
+				return m.system_processes_state_disk_sleep();
+			case 'Z':
+				return m.system_processes_state_zombie();
+			default:
+				return m.system_processes_state_stopped();
+		}
+	});
 </script>
 
 <tr class="proc-row" class:is-self={proc.isSelf} class:is-high-cpu={cpuLvl === 'high'}>
@@ -28,12 +44,7 @@
 
 	<!-- State -->
 	<td class="col-td-state">
-		<span class="state-badge state-{proc.state.toLowerCase()}" title={
-			proc.state === 'R' ? 'Выполняется (Running)' :
-			proc.state === 'S' ? 'Ожидание (Sleeping)' :
-			proc.state === 'D' ? 'Ожидание диска (Disk sleep)' :
-			proc.state === 'Z' ? 'Зомби (Zombie)' : 'Остановлен'
-		}>
+		<span class="state-badge state-{proc.state.toLowerCase()}" title={stateTitle}>
 			{proc.state}
 		</span>
 	</td>
@@ -74,8 +85,8 @@
 			{/if}
 		</div>
 		{#if proc.memoryFile > 0}
-			<div class="mem-file" title="Страницы файлов (бинари, библиотеки): ядро освобождает их при нехватке памяти">
-				+{formatBytes(proc.memoryFile)} файлы
+			<div class="mem-file" title={m.system_processes_row_mem_file_title()}>
+				{m.system_processes_row_mem_file({ size: formatBytes(proc.memoryFile) })}
 			</div>
 		{/if}
 	</td>
@@ -88,7 +99,7 @@
 				<span class="badge-self">AWG Manager</span>
 			{/if}
 			{#if proc.isCritical}
-				<span class="badge-critical">Системный</span>
+				<span class="badge-critical">{m.system_processes_row_critical()}</span>
 			{/if}
 			<span class="proc-cmdline" title={proc.cmdline}>{proc.cmdline}</span>
 		</div>
@@ -100,7 +111,7 @@
 			type="button"
 			class="btn-kill"
 			class:btn-kill-self={proc.isSelf}
-			title={proc.isSelf ? 'Остановить сервис AWG Manager' : 'Завершить процесс'}
+			title={proc.isSelf ? m.system_processes_row_kill_self() : m.system_processes_row_kill()}
 			onclick={() => onkill(proc)}
 		>
 			<Square size={11} />

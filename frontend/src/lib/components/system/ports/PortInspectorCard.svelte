@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button, Card, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { Search, Power, CheckCircle2, AlertTriangle } from 'lucide-svelte';
 	import PortAddressPills from './PortAddressPills.svelte';
@@ -23,18 +24,18 @@
 		onkill,
 	}: Props = $props();
 
-	const inspectProtoOptions: DropdownOption<ProtoFilter>[] = [
-		{ value: 'all', label: 'Любой протокол (TCP/UDP)' },
-		{ value: 'tcp', label: 'Только TCP' },
-		{ value: 'udp', label: 'Только UDP' },
-	];
+	const inspectProtoOptions: DropdownOption<ProtoFilter>[] = $derived([
+		{ value: 'all', label: m.system_ports_pi_any() },
+		{ value: 'tcp', label: m.system_ports_pi_tcp() },
+		{ value: 'udp', label: m.system_ports_pi_udp() },
+	]);
 </script>
 
 <Card padding="sm">
 	<div class="card-header">
 		<div>
-			<h3>Проверка и освобождение порта</h3>
-			<p class="subtitle">Введите номер порта, чтобы узнать, какой процесс его слушает, и освободить его при необходимости</p>
+			<h3>{m.system_ports_pi_title()}</h3>
+			<p class="subtitle">{m.system_ports_pi_subtitle()}</p>
 		</div>
 	</div>
 
@@ -43,7 +44,7 @@
 			<input
 				type="text"
 				inputmode="numeric"
-				placeholder="Номер порта (например, 56013, 2222, 8080)"
+				placeholder={m.system_ports_pi_placeholder()}
 				bind:value={searchPort}
 				onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); oninspect(); } }}
 			/>
@@ -57,7 +58,7 @@
 		</div>
 		<Button type="submit" variant="primary" loading={busy} onclick={oninspect}>
 			{#snippet iconBefore()}<Search size={15} />{/snippet}
-			Проверить порт
+			{m.system_ports_pi_check()}
 		</Button>
 	</form>
 
@@ -67,8 +68,8 @@
 				<div class="result-box free">
 					<CheckCircle2 size={20} class="icon-free" />
 					<div>
-						<div class="res-title">Порт {result.port} свободен</div>
-						<div class="res-desc">Ни один процесс в данный момент не слушает этот порт.</div>
+						<div class="res-title">{m.system_ports_pi_free({ port: result.port })}</div>
+						<div class="res-desc">{m.system_ports_pi_free_desc()}</div>
 					</div>
 				</div>
 			{:else}
@@ -76,7 +77,7 @@
 					<div class="occupied-header">
 						<AlertTriangle size={20} class="icon-occupied" />
 						<div class="res-title">
-							Порт {result.port} занят ({result.groups.length} {result.groups.length === 1 ? 'процесс' : 'процесса'}, {result.totalSockets} {result.totalSockets === 1 ? 'сокет' : 'сокета'})
+							{m.system_ports_pi_occupied({ port: result.port, groups: result.groups.length, sockets: result.totalSockets })}
 						</div>
 					</div>
 					<div class="occupied-list">
@@ -84,7 +85,7 @@
 							<div class="occupied-item">
 								<div class="item-main">
 									<div class="item-line">
-										<span class="proc-name"><strong>{group.processName || 'Процесс без имени'}</strong></span>
+										<span class="proc-name"><strong>{group.processName || m.system_ports_pi_no_name()}</strong></span>
 										{#if group.pid}
 											<span class="pid-badge">PID: {group.pid}</span>
 										{/if}
@@ -93,18 +94,18 @@
 											isSelf={group.isSelf}
 											isCritical={group.isCritical}
 											selfLabel="awg-manager"
-											selfTitle="Текущий сервер awg-manager"
-											criticalTitle="Системный процесс роутера"
+											selfTitle={m.system_ports_pi_self_title()}
+											criticalTitle={m.system_ports_pi_crit_title()}
 										/>
 									</div>
 
-									<PortAddressPills addresses={group.addresses} label="Адреса привязки:" />
+									<PortAddressPills addresses={group.addresses} label={m.system_ports_pi_addrs()} />
 
 									{#if group.exe}
-										<div class="item-sub"><strong>Бинарник:</strong> <code>{group.exe}</code></div>
+										<div class="item-sub"><strong>{m.system_ports_pi_binary()}</strong> <code>{group.exe}</code></div>
 									{/if}
 									{#if group.cmdline}
-										<div class="item-sub cmd"><strong>Команда:</strong> <code>{group.cmdline}</code></div>
+										<div class="item-sub cmd"><strong>{m.system_ports_pi_cmd()}</strong> <code>{group.cmdline}</code></div>
 									{/if}
 								</div>
 								<div class="item-act">
@@ -115,10 +116,10 @@
 											onclick={() => onkill(group)}
 										>
 											{#snippet iconBefore()}<Power size={14} />{/snippet}
-											Освободить порт
+											{m.system_ports_pi_free_port()}
 										</Button>
 									{:else}
-										<span class="no-pid-hint">Ядро / без PID</span>
+										<span class="no-pid-hint">{m.system_ports_pi_kernel()}</span>
 									{/if}
 								</div>
 							</div>

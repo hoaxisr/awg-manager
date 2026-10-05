@@ -8,6 +8,7 @@
 	import { SideDrawer, Button, Badge } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import ConfigSlotEditor from './ConfigSlotEditor.svelte';
+	import { m } from '$lib/i18n';
 	import type { ConfigSlotInfo, ConfigSlotContentResponse } from '$lib/types';
 
 	interface Props {
@@ -41,7 +42,7 @@
 	 */
 	function confirmDiscardDirty(): boolean {
 		if (!editorDirty) return true;
-		return confirm('Есть несохранённые изменения — закрыть без сохранения?');
+		return confirm(m.singbox_routing_slots_confirm_discard());
 	}
 
 	async function loadSlots(): Promise<void> {
@@ -112,8 +113,8 @@
 
 	function formatSize(bytes: number): string {
 		if (bytes <= 0) return '—';
-		if (bytes < 1024) return `${bytes} Б`;
-		return `${(bytes / 1024).toFixed(1)} КБ`;
+		if (bytes < 1024) return m.singbox_routing_slots_size_bytes({ size: bytes });
+		return m.singbox_routing_slots_size_kb({ size: (bytes / 1024).toFixed(1) });
 	}
 
 	$effect(() => {
@@ -134,7 +135,7 @@
 	});
 
 	let title = $derived(
-		selected ? `Слот ${selected.filename}` : 'Конфигурация sing-box',
+		selected ? m.singbox_routing_slots_title_slot({ filename: selected.filename }) : m.singbox_routing_slots_title(),
 	);
 </script>
 
@@ -142,17 +143,17 @@
 	<div class="content">
 		{#if selected}
 			<div class="slot-toolbar">
-				<Button variant="ghost" size="sm" onclick={backToList}>← К списку слотов</Button>
+				<Button variant="ghost" size="sm" onclick={backToList}>{m.singbox_routing_slots_back()}</Button>
 				{#if selectedInfo?.ownership === 'system'}
-					<Badge variant="muted" size="sm">генерируется автоматически</Badge>
+					<Badge variant="muted" size="sm">{m.singbox_routing_slots_badge_generated()}</Badge>
 				{:else}
-					<Badge variant="accent" size="sm">пользовательский</Badge>
+					<Badge variant="accent" size="sm">{m.singbox_routing_slots_badge_user()}</Badge>
 				{/if}
 				{#if selected.hasDraft}
-					<Badge variant="warning" size="sm">черновик</Badge>
+					<Badge variant="warning" size="sm">{m.singbox_routing_slots_badge_draft()}</Badge>
 				{/if}
 				{#if selected.state === 'disabled'}
-					<Badge variant="muted" size="sm">выключен</Badge>
+					<Badge variant="muted" size="sm">{m.singbox_routing_slots_badge_disabled()}</Badge>
 				{/if}
 			</div>
 			{#key editorEpoch}
@@ -169,21 +170,21 @@
 		{:else}
 			<div class="list-toolbar">
 				<Button variant="secondary" size="sm" onclick={loadSlots} disabled={listLoading}>
-					{listLoading ? 'Загрузка…' : 'Обновить'}
+					{listLoading ? m.common_loading() : m.common_refresh()}
 				</Button>
 				<div class="spacer"></div>
 				{#if onOpenMerged}
-					<Button variant="secondary" size="sm" onclick={onOpenMerged}>Итоговый конфиг</Button>
+					<Button variant="secondary" size="sm" onclick={onOpenMerged}>{m.singbox_routing_slots_merged()}</Button>
 				{/if}
 			</div>
 
 			{#if listError}
 				<div class="error">
-					<div class="error-title">Не удалось загрузить слоты</div>
+					<div class="error-title">{m.singbox_routing_slots_load_failed()}</div>
 					<div class="error-message">{listError}</div>
 				</div>
 			{:else if listLoading && slots.length === 0}
-				<div class="placeholder">Загрузка…</div>
+				<div class="placeholder">{m.common_loading()}</div>
 			{:else}
 				<div class="slot-list">
 					{#each slots as s (s.slot)}
@@ -192,15 +193,15 @@
 							<span class="slot-name">{s.slot}</span>
 							<span class="badges">
 								{#if s.ownership === 'user'}
-									<Badge variant="accent" size="sm">пользовательский</Badge>
+									<Badge variant="accent" size="sm">{m.singbox_routing_slots_badge_user()}</Badge>
 								{:else}
-									<Badge variant="muted" size="sm">генерируется автоматически</Badge>
+									<Badge variant="muted" size="sm">{m.singbox_routing_slots_badge_generated()}</Badge>
 								{/if}
 								{#if s.hasDraft}
-									<Badge variant="warning" size="sm">черновик</Badge>
+									<Badge variant="warning" size="sm">{m.singbox_routing_slots_badge_draft()}</Badge>
 								{/if}
 								{#if !s.enabled}
-									<Badge variant="muted" size="sm">выключен</Badge>
+									<Badge variant="muted" size="sm">{m.singbox_routing_slots_badge_disabled()}</Badge>
 								{/if}
 							</span>
 							<span class="slot-size">{formatSize(s.size)}</span>
@@ -208,9 +209,7 @@
 					{/each}
 				</div>
 				<div class="list-hint">
-					Файлы объединяются в лексикографическом порядке. Системные слоты полностью
-					перезаписываются своими генераторами — редактируется только пользовательский
-					слот 90-user.json.
+					{m.singbox_routing_slots_list_hint()}
 				</div>
 			{/if}
 		{/if}

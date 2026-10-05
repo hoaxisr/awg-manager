@@ -550,7 +550,14 @@ func validateAutoReconnect(enabled bool, interval string) error {
 	return nil
 }
 
+// LookupReconnectInterval преобразует строковый интервал в time.Duration и сообщает, валиден ли он.
+func LookupReconnectInterval(s string) (time.Duration, bool) {
+	d, ok := ValidAutoReconnectIntervals[s]
+	return d, ok
+}
+
 // ParseReconnectInterval преобразует строковый интервал в time.Duration.
 func ParseReconnectInterval(s string) time.Duration {
-	return ValidAutoReconnectIntervals[s]
+	d, _ := LookupReconnectInterval(s)
+	return d
 }

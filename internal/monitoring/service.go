@@ -76,11 +76,6 @@ func (s *Service) SetSingboxDelay(p SingboxDelayProber) {
 	s.scheduler.SetSingboxDelay(p)
 }
 
-// SetSelfProbeFailureHandler delegates to the scheduler.
-func (s *Service) SetSelfProbeFailureHandler(fn func(tunnelID string, failures int)) {
-	s.scheduler.SetSelfProbeFailureHandler(fn)
-}
-
 // Scheduler exposes the underlying scheduler so collaborators (e.g. the
 // connectivity Monitor) can request an immediate matrix tick without
 // importing internal types.

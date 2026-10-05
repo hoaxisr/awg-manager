@@ -1,5 +1,7 @@
 # AWG Manager
 
+> [English](README.en.md)
+
 > Веб-интерфейс для управления AmneziaWG VPN-туннелями на роутерах Keenetic.
 В тестовом режиме добавлена поддержка Sing-box (vless tcp, hysteria, trojan, etc)
 

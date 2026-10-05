@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { api, type SystemServiceItem } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -40,7 +41,7 @@
 		try {
 			items = await api.systemServicesList();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось загрузить службы'));
+			notifications.error(errorMessage(e, m.system_services_load_failed()));
 		} finally {
 			loading = false;
 		}
@@ -61,11 +62,11 @@
 			if (res.ok) {
 				notifications.success(`${item.name}: ${action}`);
 			} else {
-				notifications.error(stripAnsi(res.error || res.output || 'Ошибка'));
+				notifications.error(stripAnsi(res.error || res.output || m.common_error()));
 			}
 			await load();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось выполнить действие'));
+			notifications.error(errorMessage(e, m.system_services_action_failed()));
 		} finally {
 			acting = null;
 			pendingAction = null;
@@ -88,10 +89,14 @@
 		acting = item.script;
 		try {
 			await api.systemServicesToggleEnable(item.script, enable);
-			notifications.success(`${item.name}: автозапуск ${enable ? 'включен (S)' : 'выключен (K)'}`);
+			notifications.success(
+				enable
+					? m.system_services_autostart_enabled({ name: item.name })
+					: m.system_services_autostart_disabled({ name: item.name }),
+			);
 			await load();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось изменить статус автозапуска'));
+			notifications.error(errorMessage(e, m.system_services_autostart_failed()));
 		} finally {
 			acting = null;
 		}
@@ -158,9 +163,9 @@
 {#if pendingAction}
 	<ConfirmModal
 		open={!!pendingAction}
-		title="Остановить управляемую службу?"
+		title={m.system_services_stop_managed_title()}
 		message={pendingAction.item.managedHint || pendingAction.item.name}
-		confirmLabel="Остановить"
+		confirmLabel={m.common_stop()}
 		variant="danger"
 		busy={acting === pendingAction.item.script}
 		onClose={() => (pendingAction = null)}

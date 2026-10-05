@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type {
 	ASCParams,
 	AWGTagInfo,
@@ -22,7 +23,7 @@ import type {
 	TunnelReferencedError
 } from '$lib/types';
 import type { TrafficPeriod } from './clientCore';
-import { CoreClient } from './clientCore';
+import { ApiNetworkError, CoreClient } from './clientCore';
 import type { ApiResponse } from './clientCore';
 import { validateApiResponse } from './validate';
 
@@ -101,7 +102,7 @@ export class TunnelsClient extends CoreClient {
 		} catch (e) {
 			if (e instanceof DOMException && e.name === 'AbortError') throw e;
 			this.onConnectionLost?.();
-			throw new Error('Ошибка сети: не удалось подключиться к серверу');
+			throw new ApiNetworkError();
 		}
 		if (res.status === 409) {
 			// Тело "null" — валидный JSON, catch не сработает, поэтому ?.
@@ -118,18 +119,18 @@ export class TunnelsClient extends CoreClient {
 			}
 			// Нейтральный fallback: fetchDelete общий для всех ручек удаления,
 			// подставлять сюда причину одной из них нельзя.
-			throw new Error(body?.message || 'Конфликт: операция отклонена (409)');
+			throw new Error(body?.message || m.api_conflict_rejected());
 		}
 		if (res.status === 401) {
 			this.onUnauthorized?.();
-			throw new Error('Сессия истекла');
+			throw new Error(m.api_session_expired());
 		}
 		if (!res.ok) {
 			const text = await res.text().catch(() => '');
-			throw new Error(`Ошибка удаления (${res.status}): ${text.substring(0, 100)}`);
+			throw new Error(m.api_delete_error_text({ status: res.status, text: text.substring(0, 100) }));
 		}
 		const data = (await res.json()) as ApiResponse<T>;
-		if (data.error) throw new Error(data.message || 'Ошибка удаления');
+		if (data.error) throw new Error(data.message || m.api_delete_error());
 		validateApiResponse(
 			options.method ?? 'POST',
 			url.startsWith(this.baseUrl) ? url.slice(this.baseUrl.length) : url,
@@ -447,7 +448,7 @@ export class TunnelsClient extends CoreClient {
 			if (e instanceof MessageEvent) {
 				onError(e.data);
 			} else {
-				onError('Соединение потеряно');
+				onError(m.api_connection_lost());
 			}
 			es.close();
 		});

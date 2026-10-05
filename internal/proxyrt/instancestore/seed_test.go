@@ -1394,7 +1394,7 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 	// старый freeturn.json, который переносит посев, его не знал. ObfTimingMs
 	// (4.0) — та же причина. Bond в старом файле был, но под протокол 2.x
 	// (tcpfwd/smux), с bond 4.x поверх KCP он несовместим — не переносим.
-	// AutoReconnect / AutoReconnectInterval заведены в proxyrt, старый файл их не имел.
+	// AutoReconnect/AutoReconnectInterval — новые поля 4.x, в старом файле их не было.
 	assertEveryFieldCarried(t, "FreeTurnClientConfig",
 		[]any{*got["freeturn-client:ftc-1"].FreeTurnClient}, "KCP", "Bond", "ObfTimingMs", "AutoReconnect", "AutoReconnectInterval")
 	// LinkPeer — настройка адреса для ссылок абонентам (#933), заведена
@@ -1778,49 +1778,5 @@ func TestSeedDoesNotReserveUnderStoreTransaction(t *testing.T) {
 	}
 	if reads != 1 {
 		t.Fatalf("источник прочитан %d раз, ждали один", reads)
-	}
-}
-
-func TestSeedPreservesAutoReconnect(t *testing.T) {
-	e := newSeedEnv(t)
-	wdttJSON := `{
-	  "clients": [{"id":"cli-auto","name":"Клиент","config":{
-	    "enabled":true,"listen":"127.0.0.1:9000","peer":"9.9.9.9:1",
-	    "password":"p","vkHashes":"vk","connMode":"wg",
-	    "autoReconnect":true,"autoReconnectInterval":"2h"
-	  }}]
-	}`
-	ftJSON := `{
-	  "version": 2,
-	  "clients": [{"id":"ft-auto","name":"FT","config":{
-	    "enabled":true,"listen":"127.0.0.1:9001","peer":"9.9.9.9:2",
-	    "autoReconnect":true,"autoReconnectInterval":"4h"
-	  }}]
-	}`
-	writeFile(t, e.deps.WdttPath, wdttJSON)
-	writeFile(t, e.deps.FreeturnPath, ftJSON)
-
-	res, err := Seed(context.Background(), e.st, e.deps)
-	if err != nil {
-		t.Fatalf("Seed err: %v", err)
-	}
-	m := byKey(res)
-
-	wdttRec, ok := m["wdtt-client:cli-auto"]
-	if !ok || wdttRec.WdttClient == nil {
-		t.Fatalf("нет wdtt-client:cli-auto: %+v", m)
-	}
-	if !wdttRec.WdttClient.AutoReconnect || wdttRec.WdttClient.AutoReconnectInterval != "2h" {
-		t.Errorf("wdtt AutoReconnect=%v, Interval=%q, want true, '2h'",
-			wdttRec.WdttClient.AutoReconnect, wdttRec.WdttClient.AutoReconnectInterval)
-	}
-
-	ftRec, ok := m["freeturn-client:ft-auto"]
-	if !ok || ftRec.FreeTurnClient == nil {
-		t.Fatalf("нет freeturn-client:ft-auto: %+v", m)
-	}
-	if !ftRec.FreeTurnClient.AutoReconnect || ftRec.FreeTurnClient.AutoReconnectInterval != "4h" {
-		t.Errorf("ft AutoReconnect=%v, Interval=%q, want true, '4h'",
-			ftRec.FreeTurnClient.AutoReconnect, ftRec.FreeTurnClient.AutoReconnectInterval)
 	}
 }

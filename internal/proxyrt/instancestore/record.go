@@ -133,17 +133,6 @@ type Record struct {
 // ExitID и связей.
 func (r Record) Key() string { return string(r.Kind) + ":" + r.ID }
 
-// AutoReconnectEnabled сообщает, включено ли автоматическое переподключение у инстанса.
-func (r Record) AutoReconnectEnabled() bool {
-	if r.Kind == KindWdttClient && r.WdttClient != nil {
-		return r.WdttClient.AutoReconnect
-	}
-	if r.Kind == KindFreeTurnClient && r.FreeTurnClient != nil {
-		return r.FreeTurnClient.AutoReconnect
-	}
-	return false
-}
-
 func (r Record) kindMismatch(want Kind) error {
 	return fmt.Errorf("инстанс %s: роль %s, а спрошена %s (дефект вызывающего)", r.ID, r.Kind, want)
 }

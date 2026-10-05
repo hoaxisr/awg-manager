@@ -1341,35 +1341,14 @@ func (m *Manager) Post(key string, k proxyrt.EventKind) bool {
 
 func (m *Manager) PostAll(k proxyrt.EventKind) {
 	m.mu.Lock()
-	type target struct {
-		inst RunningInstance
-		rec  instancestore.Record
-	}
-	targets := make([]target, 0, len(m.m))
+	insts := make([]RunningInstance, 0, len(m.m))
 	for _, mg := range m.m {
-		targets = append(targets, target{inst: mg.inst, rec: mg.live.Config()})
+		insts = append(insts, mg.inst)
 	}
 	m.mu.Unlock()
-	for _, t := range targets {
-		if k == proxyrt.EventWANUp {
-			if t.rec.Enabled && t.rec.Kind.IsClient() && t.rec.AutoReconnectEnabled() {
-				t.inst.Restart("восстановление WAN-соединения")
-				continue
-			}
-		}
-		t.inst.Post(k)
+	for _, inst := range insts {
+		inst.Post(k)
 	}
-}
-
-// Record возвращает конфигурацию инстанса по его ключу ("kind:id").
-func (m *Manager) Record(key string) (instancestore.Record, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	mg, ok := m.m[key]
-	if !ok {
-		return instancestore.Record{}, false
-	}
-	return mg.live.Config(), true
 }
 
 func (m *Manager) Records() []instancestore.Record {
@@ -1380,33 +1359,6 @@ func (m *Manager) Records() []instancestore.Record {
 		out = append(out, mg.live.Config())
 	}
 	return out
-}
-
-// RestartTunnel запрашивает перезапуск клиентского инстанса, связанного с указанным tunnelID
-// (например, "wdttraw-default"), если у него включено автопереподключение.
-func (m *Manager) RestartTunnel(ctx context.Context, tunnelID string, reason string) error {
-	m.mu.Lock()
-	var foundKey string
-	var autoReconnect bool
-	for key, mg := range m.m {
-		rec := mg.live.Config()
-		if !rec.Enabled {
-			continue
-		}
-		if rec.Kind == instancestore.KindWdttClient && wdttclient.RawTunnelID(rec.ID) == tunnelID {
-			foundKey = key
-			autoReconnect = rec.AutoReconnectEnabled()
-			break
-		}
-	}
-	m.mu.Unlock()
-	if foundKey == "" {
-		return ErrInstanceNotFound
-	}
-	if !autoReconnect {
-		return nil
-	}
-	return m.Restart(ctx, foundKey, reason)
 }
 
 // Shutdown гасит все инстансы; Stop — вне лока (Щ6).

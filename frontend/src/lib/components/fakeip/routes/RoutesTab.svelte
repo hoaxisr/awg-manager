@@ -28,6 +28,8 @@
   Движок-гейт: route-правила — это конфиг, рендерится при любом состоянии движка.
 -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
+	import { outboundGroupLabel } from '$lib/components/routing/singboxRouter/outboundOptions';
 	import { onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
@@ -123,7 +125,7 @@
 	// Тот же каталог outbound'ов, что у RuleEditModal ($storeOptions),
 	// сплющенный в плоский список для BulkSelectBar.
 	const bulkOutboundOptions = $derived(
-		$storeOptions.flatMap((g) => g.items.map((it) => ({ value: it.value, label: it.label, group: g.group }))),
+		$storeOptions.flatMap((g) => g.items.map((it) => ({ value: it.value, label: it.label, group: outboundGroupLabel(g.id) }))),
 	);
 
 	function toggleSelectMode(): void {
@@ -154,12 +156,12 @@
 		bulkBusy = true;
 		try {
 			const { updated } = await api.singboxFakeIPBulkOutbound([...selected], value);
-			notifications.success(`Изменено ${updated}`);
+			notifications.success(m.sb_router_rules_bulk_changed({ count: updated }));
 			selectMode = false;
 			selected = new Set();
 			await fakeipConfig.loadAll();
 		} catch (e) {
-			notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+			notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
 		} finally {
 			bulkBusy = false;
 		}
@@ -175,7 +177,7 @@
 		if (selectMode && prevRulesRef !== undefined && current !== prevRulesRef) {
 			selectMode = false;
 			selected = new Set();
-			notifications.info('Список изменился, выбор сброшен');
+			notifications.info(m.sb_router_rules_selection_reset());
 		}
 		prevRulesRef = current;
 	});
@@ -196,12 +198,12 @@
 	);
 
 	// ── Final-outbound правка (route.final) ─────────────────────────────────
-	// Опции: direct + все outbounds, кроме группы «Специальные».
+	// Опции: direct + все outbounds, кроме группы 'special'.
 	const routeFinalOptions = $derived<DropdownOption[]>([
-		{ value: 'direct', label: 'direct (мимо VPN)' },
+		{ value: 'direct', label: m.routing_singbox_option_direct() },
 		...$storeOptions
-			.filter((g) => g.group !== 'Специальные')
-			.flatMap((g) => g.items.map((it) => ({ value: it.value, label: it.label, group: g.group }))),
+			.filter((g) => g.id !== 'special')
+			.flatMap((g) => g.items.map((it) => ({ value: it.value, label: it.label, group: outboundGroupLabel(g.id) }))),
 	]);
 
 	let finalEditing = $state(false);
@@ -236,10 +238,10 @@
 			// to the pre-save final while waiting for the status SSE event.
 			await singboxRouter.reloadStatus();
 			await fakeipConfig.loadAll();
-			notifications.success('Final-outbound обновлён');
+			notifications.success(m.fakeip_routes_final_updated());
 			finalEditing = false;
 		} catch (e) {
-			notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+			notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
 		} finally {
 			finalBusy = false;
 		}
@@ -274,7 +276,9 @@
 				await fakeipConfig.loadAll();
 			} catch (e) {
 				fakeipConfig.applyRules(snapshot);
-				notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
+				notifications.error(
+					m.sb_router_expert_move_failed({ message: e instanceof Error ? e.message : String(e) }),
+				);
 			}
 		},
 	});
@@ -302,8 +306,8 @@
 	let deleteBusy = $state(false);
 
 	function ruleSummary(card: RuleCardData | undefined, idx: number): string {
-		if (!card) return `правило #${idx}`;
-		return `правило #${idx}: ${card.title}`;
+		if (!card) return m.sb_router_rules_summary_missing({ n: idx });
+		return m.fakeip_routes_rule_summary({ n: idx, title: card.title });
 	}
 
 	// ── Handlers ─────────────────────────────────────────────────────────────
@@ -325,10 +329,10 @@
 		try {
 			await api.singboxFakeIPDeleteRule(idx);
 			await fakeipConfig.loadAll();
-			notifications.success('Правило удалено');
+			notifications.success(m.sb_router_rules_deleted());
 			deleteIdx = null;
 		} catch (e) {
-			notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+			notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
 		} finally {
 			deleteBusy = false;
 		}
@@ -387,8 +391,8 @@
 				type="button"
 				class="grip"
 				class:is-busy={drag.busy || selectMode}
-				aria-label={`Перетащить правило #${i}`}
-				title="Перетащить для изменения порядка"
+				aria-label={m.sb_router_card_drag_aria({ n: i })}
+				title={m.fakeip_drag_to_reorder()}
 				onpointerdown={drag.busy || selectMode ? undefined : (e) => drag.handlePointerDown(i, e)}
 			>
 				<GripVertical size={16} strokeWidth={2} />
@@ -401,7 +405,7 @@
 					class="rule-checkbox"
 					checked={selected.has(i)}
 					onchange={() => toggleSelect(i)}
-					aria-label={`Выбрать правило #${i}`}
+					aria-label={m.sb_router_card_select_aria({ n: i })}
 				/>
 			{:else}
 				{i}
@@ -420,7 +424,7 @@
 					/>
 				{/each}
 				{#if hiddenCount > 0}
-					<span class="more">+{hiddenCount} ещё</span>
+					<span class="more">{m.sb_router_card_more({ count: hiddenCount })}</span>
 				{/if}
 			{/if}
 		</div>
@@ -429,9 +433,9 @@
 			{#if $storeRules[i] && ruleInstallsTunRoute($storeRules[i])}
 				<span
 					class="tun-route-mark"
-					title="Ставит статический NDMS-маршрут на tun (ловит by-IP)"
+					title={m.fakeip_routes_ndms_route_title()}
 				>
-					NDMS-маршрут
+					{m.fakeip_routes_ndms_route()}
 				</span>
 			{/if}
 		</div>
@@ -441,8 +445,8 @@
 					type="button"
 					class="ib"
 					onclick={() => (ruleEditIdx = i)}
-					aria-label={`Редактировать правило #${i}`}
-					title={`Редактировать правило #${i}`}
+					aria-label={m.sb_router_table_edit_title({ n: i })}
+					title={m.sb_router_table_edit_title({ n: i })}
 				>
 					<Pencil size={15} strokeWidth={2} />
 				</button>
@@ -450,8 +454,8 @@
 					type="button"
 					class="ib danger"
 					onclick={() => (deleteIdx = i)}
-					aria-label={`Удалить правило #${i}`}
-					title={`Удалить правило #${i}`}
+					aria-label={m.sb_router_table_delete_title({ n: i })}
+					title={m.sb_router_table_delete_title({ n: i })}
 				>
 					<Trash2 size={15} strokeWidth={2} />
 				</button>
@@ -471,22 +475,19 @@
 					disabled={bulkBusy || selectableIndices.length === 0}
 					onclick={selectAllRules}
 				>
-					Выбрать все
+					{m.sb_router_expert_select_all()}
 				</Button>
 			{:else}
 				{#if selectableIndices.length > 0}
-					<Button variant="ghost" size="sm" onclick={toggleSelectMode}>Выбрать</Button>
+					<Button variant="ghost" size="sm" onclick={toggleSelectMode}>{m.common_select()}</Button>
 				{/if}
 				<button type="button" class="add" onclick={() => (ruleAddOpen = true)}>
-					<Plus size={14} strokeWidth={2} aria-hidden="true" /> Правило
+					<Plus size={14} strokeWidth={2} aria-hidden="true" /> {m.fakeip_dns_add_rule()}
 				</button>
 			{/if}
 		</div>
 	</header>
-	<p class="pd">
-		Куда направить трафик. Порядок важен — first-match. Матч: rule_set / domain /
-		ip_cidr / источник (устройство) / порт. Composite-аутбаунды выделены.
-	</p>
+	<p class="pd">{m.fakeip_routes_desc()}</p>
 
 	<div class="table">
 		<div class="thead">
@@ -499,7 +500,7 @@
 
 		<div class="rows" class:is-dragging={drag.active} style={drag.cardsMotionStyle()}>
 			{#if $storeRules.length === 0}
-				<div class="empty">Нет route-правил.</div>
+				<div class="empty">{m.fakeip_routes_empty()}</div>
 			{/if}
 
 			{#each cards as card, i (card.id)}
@@ -552,8 +553,8 @@
 								class="ib ok"
 								onclick={saveFinal}
 								disabled={finalBusy}
-								aria-label="Сохранить final-outbound"
-								title="Сохранить"
+								aria-label={m.fakeip_routes_final_save_aria()}
+								title={m.common_save()}
 							>
 								<Check size={15} strokeWidth={2} />
 							</button>
@@ -562,8 +563,8 @@
 								class="ib"
 								onclick={() => (finalEditing = false)}
 								disabled={finalBusy}
-								aria-label="Отменить"
-								title="Отменить"
+								aria-label={m.fakeip_routes_final_cancel()}
+								title={m.fakeip_routes_final_cancel()}
 							>
 								<X size={15} strokeWidth={2} />
 							</button>
@@ -572,8 +573,8 @@
 								type="button"
 								class="ib"
 								onclick={startEditFinal}
-								aria-label="Редактировать final-outbound"
-								title="Изменить outbound по умолчанию (final)"
+								aria-label={m.fakeip_routes_final_edit_aria()}
+								title={m.fakeip_routes_final_edit_title()}
 							>
 								<Pencil size={15} strokeWidth={2} />
 							</button>
@@ -597,7 +598,7 @@
 		<BulkSelectBar
 			count={selected.size}
 			options={bulkOutboundOptions}
-			applyLabel="Применить"
+			applyLabel={m.common_apply()}
 			onapply={applyBulkOutbound}
 			oncancel={cancelSelectMode}
 			busy={bulkBusy}
@@ -639,8 +640,10 @@
 
 <ConfirmModal
 	open={deleteIdx !== null}
-	title="Удалить правило"
-	message={deleteIdx !== null ? `Удалить ${ruleSummary(cards[deleteIdx], deleteIdx)}?` : ''}
+	title={m.sb_router_rules_delete_title()}
+	message={deleteIdx !== null
+		? m.sb_router_rules_delete_message({ summary: ruleSummary(cards[deleteIdx], deleteIdx) })
+		: ''}
 	busy={deleteBusy}
 	onConfirm={confirmDelete}
 	onClose={() => {

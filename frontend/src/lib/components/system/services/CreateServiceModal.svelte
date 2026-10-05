@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { untrack } from 'svelte';
 	import { api, type SystemServiceItem } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -83,7 +84,7 @@
 		if (form.mode === 'template') {
 			const clean = form.tplName.trim().replace(/[^a-zA-Z0-9._-]/g, '');
 			if (!clean) {
-				notifications.error('Укажите корректное имя службы');
+				notifications.error(m.system_services_c_bad_name());
 				return;
 			}
 			const prio = Math.min(99, Math.max(10, Number(form.tplPriority) || 90));
@@ -92,7 +93,7 @@
 		} else if (form.mode === 'clone') {
 			const clean = form.cloneTargetName.trim().replace(/[^a-zA-Z0-9._-]/g, '');
 			if (!clean) {
-				notifications.error('Укажите имя для новой службы');
+				notifications.error(m.system_services_c_no_name());
 				return;
 			}
 			const prio = Math.min(99, Math.max(10, Number(form.clonePriority) || 90));
@@ -103,14 +104,14 @@
 				const src = await api.systemServicesGet(form.cloneSourceScript);
 				content = src.content;
 			} catch (e) {
-				notifications.error(errorMessage(e, 'Не удалось прочитать исходную службу'));
+				notifications.error(errorMessage(e, m.system_services_c_donor_failed()));
 				return;
 			}
 		} else {
 			// Custom
 			scriptName = form.customScriptName.trim();
 			if (!scriptName.startsWith('S') || scriptName.length < 4) {
-				notifications.error('Имя скрипта должно начинаться с S и номера, например: S90my-service');
+				notifications.error(m.system_services_c_bad_script());
 				return;
 			}
 			content = form.customScriptContent;
@@ -119,18 +120,18 @@
 		creating = true;
 		try {
 			await api.systemServicesSave({ scriptName, content });
-			notifications.success(`Служба ${scriptName} успешно создана!`);
+			notifications.success(m.system_services_c_created({ name: scriptName }));
 			onclose();
 			await onCreated();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Ошибка создания службы'));
+			notifications.error(errorMessage(e, m.system_services_c_failed()));
 		} finally {
 			creating = false;
 		}
 	}
 </script>
 
-<Modal {open} title="Создание новой службы Entware" size="lg" {onclose}>
+<Modal {open} title={m.system_services_c_title()} size="lg" {onclose}>
 	<div class="create-modal-root">
 		<!-- Tabs -->
 		<div class="modal-mode-tabs">
@@ -141,7 +142,7 @@
 				onclick={() => (form.mode = 'template')}
 			>
 				<Cpu size={14} />
-				<span>Конструктор (по шаблону)</span>
+				<span>{m.system_services_c_tab_template()}</span>
 			</button>
 			<button
 				type="button"
@@ -150,7 +151,7 @@
 				onclick={() => (form.mode = 'clone')}
 			>
 				<Copy size={14} />
-				<span>Клонировать службу</span>
+				<span>{m.system_services_c_tab_clone()}</span>
 			</button>
 			<button
 				type="button"
@@ -159,7 +160,7 @@
 				onclick={() => (form.mode = 'custom')}
 			>
 				<FileCode size={14} />
-				<span>Свой bash-скрипт</span>
+				<span>{m.system_services_c_tab_custom()}</span>
 			</button>
 		</div>
 
@@ -168,10 +169,10 @@
 
 	{#snippet actions()}
 		<div class="modal-footer-btns">
-			<Button variant="ghost" onclick={onclose}>Отмена</Button>
+			<Button variant="ghost" onclick={onclose}>{m.common_cancel()}</Button>
 			<Button variant="primary" loading={creating} onclick={handleCreateService}>
 				{#snippet iconBefore()}<Check size={14} />{/snippet}
-				Создать и активировать службу
+				{m.system_services_c_submit()}
 			</Button>
 		</div>
 	{/snippet}

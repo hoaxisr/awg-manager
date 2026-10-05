@@ -6,6 +6,7 @@
 // его как «настройку» — враньё. Прецедент: about-device.ts (selectedOutbound
 // первичен, activeTag — отдельная пометка «активный: X»).
 
+import { m } from '$lib/i18n';
 import type { DeviceProxyOutbound, DeviceProxyRuntime } from '$lib/types';
 
 export interface OutboundLabelInput {
@@ -50,7 +51,7 @@ export function outboundDegradedText(
 	const rt = input.runtime;
 	if (!rt?.degradedOutbound) return null;
 	const via = outboundDisplayLabel(rt.fallbackTag || 'direct', outbounds);
-	return `выход недоступен — через ${via}`;
+	return m.device_proxy_outbound_unavailable_via({ via });
 }
 
 /**

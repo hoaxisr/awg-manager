@@ -7,6 +7,7 @@
 </script>
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import type { OutboundDisplay } from './types';
   import { displayTone, toneClass } from './outboundTileTone';
   import OutboundToneIcon from './OutboundToneIcon.svelte';
@@ -25,18 +26,18 @@
     `tone-chip ${toneClass(tone)}${size === 'compact' ? ' tone-chip-compact' : ''}`,
   );
   let iconSize = $derived(size === 'compact' ? 10 : 14);
-  let title = $derived(outbound.invalidHint ?? (outbound.kind === 'unknown' ? 'Outbound не найден в конфиге' : undefined));
+  let title = $derived(outbound.invalidHint ?? (outbound.kind === 'unknown' ? m.sb_router_outbound_not_found() : undefined));
 </script>
 
 {#if outbound.kind === 'block'}
   <div class={cls}>
     <OutboundToneIcon {tone} kind={outbound.kind} size={iconSize} />
-    <span>Заблокировать</span>
+    <span>{m.sb_router_wizard_opt_block()}</span>
   </div>
 {:else if outbound.kind === 'direct' && tone !== 'invalid'}
   <div class={cls}>
     <OutboundToneIcon {tone} kind={outbound.kind} size={iconSize} />
-    <span>Напрямую</span>
+    <span>{m.sb_router_wizard_opt_direct()}</span>
   </div>
 {:else if tone === 'invalid'}
   <div class={cls} title={title}>
@@ -48,12 +49,12 @@
     />
   </div>
 {:else if outbound.kind === 'via-route'}
-  <div class={cls} title="DNS маршрутизируется по таблице route">
+  <div class={cls} title={m.sb_router_outbound_via_route()}>
     <OutboundToneIcon {tone} kind={outbound.kind} size={iconSize} />
     <span>{outbound.label}</span>
   </div>
 {:else}
-  <div class={cls} title={outbound.kind === 'unknown' ? 'Outbound не найден в конфиге' : undefined}>
+  <div class={cls} title={outbound.kind === 'unknown' ? m.sb_router_outbound_not_found() : undefined}>
     <OutboundToneIcon {tone} kind={outbound.kind} size={iconSize} />
     <OutboundChipLabel
       label={outbound.label}

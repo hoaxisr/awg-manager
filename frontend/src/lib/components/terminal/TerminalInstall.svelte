@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button } from '$lib/components/ui';
 	import { Terminal } from 'lucide-svelte';
 
@@ -15,17 +16,17 @@
 	<div class="install-icon">
 		<Terminal size={48} strokeWidth={2} aria-hidden="true" />
 	</div>
-	<h2>Терминал</h2>
-	<p>Для работы терминала необходим пакет <code>ttyd</code>.</p>
-	<p class="hint">Будет установлен через <code>opkg install ttyd</code></p>
+	<h2>{m.nav_terminal()}</h2>
+	<p>{m.terminal_install_need()} <code>ttyd</code>.</p>
+	<p class="hint">{m.terminal_install_hint()} <code>opkg install ttyd</code></p>
 	{#if error}
 		<div class="install-error">
-			<p>Ошибка установки:</p>
+			<p>{m.terminal_install_error()}</p>
 			<pre>{error}</pre>
 		</div>
 	{/if}
 	<Button variant="primary" size="md" onclick={oninstall} loading={installing}>
-		{installing ? 'Установка...' : 'Установить ttyd'}
+		{installing ? m.terminal_installing() : m.terminal_install_button()}
 	</Button>
 </div>
 

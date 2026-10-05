@@ -28,6 +28,10 @@ const socketGrace = 20 * time.Second
 // появления сокета не бывает, разбудить реконсиляцию больше некому.
 const socketWaitRecheck = 3 * time.Second
 
+// stableGrace — минимальное время стабильной работы процесса без сбоев,
+// после которого разрешается сбросить паузу анти-флаппинга.
+const stableGrace = 60 * time.Second
+
 // snapMaxAge — свежесть снимка для соседних ресурсов (tun_handoff, адрес).
 const snapMaxAge = 30 * time.Second
 
@@ -113,6 +117,8 @@ type Proc struct {
 	reconnectInterval time.Duration
 	lastUptimeS       int64
 	lastObservedAt    time.Time
+	adopted           bool
+	logStartOffset    int64
 }
 
 func NewProc(cfg ProcConfig) *Proc {
@@ -156,8 +162,6 @@ var fatalSessionSignatures = []string{
 	"сессия закрыта",
 	"таймаут сессии",
 	"all retransmissions failed",
-	"channel bind transaction failed",
-	"Failed to refresh allocation",
 }
 
 func readLogTail(path string, maxBytes int64) string {
@@ -224,7 +228,9 @@ func (p *Proc) Observe(ctx context.Context) (proxyrt.Observation, error) {
 				}
 			}
 		}
-		if obs.Attrs["fatal_error"] == "" {
+		if !p.autoReconnect {
+			p.ResetStartBackoff()
+		} else if obs.Attrs["fatal_error"] == "" && time.Duration(st.UptimeS)*time.Second >= stableGrace {
 			p.ResetStartBackoff()
 		}
 		return obs, nil
@@ -348,32 +354,37 @@ func (p *Proc) Plan(obs proxyrt.Observation) []proxyrt.Step {
 		return []proxyrt.Step{{Resource: p.c.ID, Op: "start", Reason: "процесс не запущен"}}
 	}
 	if reqRestart {
-		if strings.Contains(restartReason, "WAN") && p.spawnedAt != nil && p.c.Now().Sub(*p.spawnedAt) < socketGrace {
-			// Процесс только что запущен (в окне socketGrace) — повторный перезапуск по WAN-up избыточен
-			p.rmu.Lock()
-			p.restartWanted = false
-			p.restartReason = ""
-			p.rmu.Unlock()
-			return nil
-		}
 		if restartReason == "" {
 			restartReason = "запрос перезапуска"
 		}
-		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart", Reason: restartReason}}
+		return []proxyrt.Step{{
+			Resource: p.c.ID,
+			Op:       "restart",
+			Args:     map[string]string{"cause": "requested"},
+			Reason:   restartReason,
+		}}
 	}
 	if sig := obs.Attrs["fatal_error"]; sig != "" {
-		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart",
-			Reason: "сбой сессии в журнале: " + sig}}
+		return []proxyrt.Step{{
+			Resource: p.c.ID,
+			Op:       "restart",
+			Args:     map[string]string{"cause": "session_failure", "signature": sig},
+			Reason:   "сбой сессии в журнале: " + sig,
+		}}
 	}
 	if obs.Attrs["reconnect_due"] == "interval" {
-		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart",
-			Reason: fmt.Sprintf("истёк интервал автопереподключения (%s)", p.reconnectInterval)}}
+		return []proxyrt.Step{{
+			Resource: p.c.ID,
+			Op:       "restart",
+			Args:     map[string]string{"cause": "interval"},
+			Reason:   fmt.Sprintf("истёк интервал автопереподключения (%s)", p.reconnectInterval),
+		}}
 	}
 	if got := obs.Attrs["config_hash"]; got != "" && got != p.wantHash {
-		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart", Reason: "конфигурация изменилась"}}
+		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart", Args: map[string]string{"cause": "config_changed"}, Reason: "конфигурация изменилась"}}
 	}
 	if sha := obs.Attrs["binary_sha256"]; sha != "" && p.c.PinnedSHA256 != "" && sha != p.c.PinnedSHA256 {
-		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart", Reason: "бинарь обновлён"}}
+		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart", Args: map[string]string{"cause": "binary_updated"}, Reason: "бинарь обновлён"}}
 	}
 	return nil
 }
@@ -414,7 +425,7 @@ func (p *Proc) Apply(ctx context.Context, s proxyrt.Step) error {
 			p.recordFail(now)
 			return err
 		}
-		if strings.Contains(s.Reason, "сбой сессии") {
+		if s.Args != nil && s.Args["cause"] == "session_failure" {
 			p.recordFail(now)
 		}
 		if err := p.stop(ctx); err != nil {
@@ -454,9 +465,15 @@ func (p *Proc) start(ctx context.Context) error {
 // spawn — порождение БЕЗ гейта и backoff: их прошёл вызывающий (start либо
 // restart-ветка Apply, у той гейт стоит ДО stop).
 func (p *Proc) spawn(ctx context.Context, now time.Time) error {
+	p.logStartOffset = 0
+	p.adopted = true
 	if p.c.LogPath != "" {
 		if _, err := os.Stat(p.c.LogPath); err == nil {
-			_ = os.Rename(p.c.LogPath, p.c.LogPath+".prev")
+			if err := os.Rename(p.c.LogPath, p.c.LogPath+".prev"); err != nil {
+				if f, truncErr := os.OpenFile(p.c.LogPath, os.O_WRONLY|os.O_TRUNC, 0644); truncErr == nil {
+					_ = f.Close()
+				}
+			}
 		}
 	}
 	args := append(append([]string{}, p.forkArgs...),
@@ -536,19 +553,12 @@ func (p *Proc) RecheckAfter() time.Duration {
 	if until := p.retryAt(); now.Before(until) {
 		return until.Sub(now)
 	}
-	if p.enabled && p.autoReconnect {
-		if p.reconnectInterval > 0 && p.lastUptimeS > 0 {
-			currentUptime := time.Duration(p.lastUptimeS)*time.Second + now.Sub(p.lastObservedAt)
-			if currentUptime < p.reconnectInterval {
-				rem := p.reconnectInterval - currentUptime
-				if rem < 15*time.Second {
-					return rem
-				}
-			} else {
-				return time.Second
-			}
+	if p.enabled && p.autoReconnect && p.reconnectInterval > 0 && p.lastUptimeS > 0 {
+		currentUptime := time.Duration(p.lastUptimeS)*time.Second + now.Sub(p.lastObservedAt)
+		if currentUptime < p.reconnectInterval {
+			return p.reconnectInterval - currentUptime
 		}
-		return 15 * time.Second
+		return time.Second
 	}
 	return 0
 }

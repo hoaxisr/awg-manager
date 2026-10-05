@@ -121,9 +121,8 @@ type SchedulerDeps struct {
 	SingboxDelay   SingboxDelayProber      // optional — when nil, sing-box rows use the default Prober
 	Prober         Prober                  // default prober for all cells
 	ICMPProber     Prober                  // optional — used for self-target cells when tunnel.SelfMethod=="ping"
-	Log                logging.AppLogger
-	Bus                *events.Bus // optional — set later via SetEventBus
-	OnSelfProbeFailure func(tunnelID string, failures int) // optional — called on repeated self-probe failures
+	Log            logging.AppLogger
+	Bus            *events.Bus // optional — set later via SetEventBus
 }
 
 // Scheduler runs ICMP probes through running tunnels on a fixed interval.
@@ -240,13 +239,6 @@ func (s *Scheduler) SetClashState(p ClashStateProvider) {
 // Prober (HTTP-through-interface).
 func (s *Scheduler) SetSingboxDelay(p SingboxDelayProber) {
 	s.deps.SingboxDelay = p
-}
-
-// SetSelfProbeFailureHandler wires the callback fired when a tunnel's self-probe fails repeatedly.
-func (s *Scheduler) SetSelfProbeFailureHandler(fn func(tunnelID string, failures int)) {
-	s.mu.Lock()
-	s.deps.OnSelfProbeFailure = fn
-	s.mu.Unlock()
 }
 
 // Start launches the background loop and returns immediately.
@@ -417,15 +409,7 @@ func (s *Scheduler) runOnce(ctx context.Context, wait bool, afterAcquire func())
 				probedMu.Lock()
 				probed[tn.ID] = true
 				probedMu.Unlock()
-				obs := s.logProbeTransition(tn, t, ok)
-				if !ok && self {
-					s.mu.RLock()
-					fn := s.deps.OnSelfProbeFailure
-					s.mu.RUnlock()
-					if fn != nil && obs.Failures >= 3 && obs.Failures%3 == 0 {
-						fn(tn.ID, obs.Failures)
-					}
-				}
+				s.logProbeTransition(tn, t, ok)
 
 				sample := Sample{TS: now, OK: ok}
 				if ok {
@@ -488,23 +472,22 @@ func (s *Scheduler) runOnce(ctx context.Context, wait bool, afterAcquire func())
 // недостижимость — Warn, восстановление — Info с длиной серии. Пробы
 // выполняются раз в минуту на туннель; стабильное состояние журнал
 // не трогает.
-func (s *Scheduler) logProbeTransition(tn Tunnel, t Target, ok bool) logging.TransitionResult {
-	obs := s.transitions.Observe(tn.ID, ok)
-	if s.deps.Log != nil {
-		name := tn.Name
-		if name == "" {
-			name = tn.ID
-		}
-		switch obs.Kind {
-		case logging.TransitionNowFailing:
-			s.deps.Log.AppLog(logging.LevelWarn, logging.GroupSystem, logging.SubMonitoring,
-				"probe", name, fmt.Sprintf("monitoring probe unreachable: %s", t.Host))
-		case logging.TransitionRecovered:
-			s.deps.Log.AppLog(logging.LevelInfo, logging.GroupSystem, logging.SubMonitoring,
-				"probe", name, fmt.Sprintf("monitoring probe reachable again (%s) after %d failed cycles", t.Host, obs.Failures))
-		}
+func (s *Scheduler) logProbeTransition(tn Tunnel, t Target, ok bool) {
+	if s.deps.Log == nil {
+		return
 	}
-	return obs
+	name := tn.Name
+	if name == "" {
+		name = tn.ID
+	}
+	switch obs := s.transitions.Observe(tn.ID, ok); obs.Kind {
+	case logging.TransitionNowFailing:
+		s.deps.Log.AppLog(logging.LevelWarn, logging.GroupSystem, logging.SubMonitoring,
+			"probe", name, fmt.Sprintf("monitoring probe unreachable: %s", t.Host))
+	case logging.TransitionRecovered:
+		s.deps.Log.AppLog(logging.LevelInfo, logging.GroupSystem, logging.SubMonitoring,
+			"probe", name, fmt.Sprintf("monitoring probe reachable again (%s) after %d failed cycles", t.Host, obs.Failures))
+	}
 }
 
 // monitoringExcludedSet returns the persisted set of tunnel IDs that should

@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type { SingboxRouterDNSServer } from '$lib/types';
 
 /** Транспорт выходного DNS в простом режиме. */
@@ -34,7 +35,7 @@ export interface DnsPreset {
  * «девятки» из issue #560.
  */
 export const DNS_PRESETS: readonly DnsPreset[] = [
-	{ id: 'yandex', label: 'Яндекс', ip: '77.88.8.8', sni: 'common.dot.dns.yandex.net' },
+	{ id: 'yandex', get label() { return m.sb_router_dns_preset_yandex(); }, ip: '77.88.8.8', sni: 'common.dot.dns.yandex.net' },
 	{ id: 'quad9', label: 'Quad9', ip: '9.9.9.9', sni: 'dns.quad9.net' },
 	{ id: 'cloudflare', label: 'Cloudflare', ip: '1.1.1.1', sni: 'cloudflare-dns.com' },
 	{ id: 'google', label: 'Google', ip: '8.8.8.8', sni: 'dns.google' },

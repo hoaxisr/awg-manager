@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { AccessPolicyInterface, PolicyGlobalInterface } from '$lib/types';
 	import { errorMessage } from '$lib/utils/errorMessage';
 	import { ConfirmModal, Badge, Button } from '$lib/components/ui';
@@ -81,7 +82,7 @@
 			await api.setPolicyInterfaceUp(name, !currentlyUp);
 			onupdate();
 		} catch (e) {
-			notifications.error(`Ошибка: ${errorMessage(e)}`);
+			notifications.error(m.tunnels_error_with_message({ message: errorMessage(e) }));
 		} finally {
 			toggling = '';
 		}
@@ -100,10 +101,10 @@
 
 <div class="iface-section" class:iface-section--panel={isPanelPicker}>
 	<div class="section-header">
-		<h4>Интерфейсы (приоритет)</h4>
+		<h4>{m.access_policy_interfaces_title()}</h4>
 		{#if unassigned.length > 0}
 			<Button variant="secondary" size="sm" onclick={() => (showAdd = !showAdd)}>
-				{showAdd ? 'Отмена' : 'Добавить'}
+				{showAdd ? m.common_cancel() : m.common_add()}
 			</Button>
 		{/if}
 	</div>
@@ -125,7 +126,7 @@
 	{/if}
 
 	{#if sorted.length === 0}
-		<p class="empty-text">Нет разрешённых интерфейсов</p>
+		<p class="empty-text">{m.access_policy_no_allowed_interfaces()}</p>
 	{:else}
 		<div class="iface-list">
 			{#each sorted as iface, index}
@@ -134,12 +135,12 @@
 					<span class="led" class:led-green={!iface.denied && isUp(iface.name)} class:led-gray={iface.denied || !isUp(iface.name)}></span>
 					<span class="iface-label" title={iface.name}>{getLabel(iface.name)}</span>
 					{#if iface.denied}
-						<Badge variant="error" size="xs">запрещён</Badge>
+						<Badge variant="error" size="xs">{m.access_policy_denied()}</Badge>
 					{/if}
 					<button
 						class="icon-btn"
 						class:active-toggle={isUp(iface.name)}
-						title={isUp(iface.name) ? 'Выключить интерфейс' : 'Включить интерфейс'}
+						title={isUp(iface.name) ? m.access_policy_iface_turn_off() : m.access_policy_iface_turn_on()}
 						disabled={toggling === iface.name}
 						onclick={() => requestToggle(iface.name)}
 					>
@@ -148,7 +149,7 @@
 					<div class="iface-actions">
 						<button
 							class="icon-btn"
-							title="Вверх"
+							title={m.access_policy_up()}
 							disabled={index === 0}
 							onclick={() => moveUp(index)}
 						>
@@ -156,7 +157,7 @@
 						</button>
 						<button
 							class="icon-btn"
-							title="Вниз"
+							title={m.access_policy_down()}
 							disabled={index === sorted.length - 1}
 							onclick={() => moveDown(index)}
 						>
@@ -164,7 +165,7 @@
 						</button>
 						<button
 							class="icon-btn"
-							title={iface.denied ? 'Разрешить использование' : 'Запретить использование'}
+							title={iface.denied ? m.access_policy_allow_use() : m.access_policy_deny_use()}
 							onclick={() => iface.denied ? onpermit(iface.name, interfaces.filter(i => !i.denied).length) : ondeny(iface.name)}
 						>
 							{#if iface.denied}
@@ -183,15 +184,15 @@
 {#if confirmToggle}
 	<ConfirmModal
 		open={true}
-		title={confirmToggle.currentlyUp ? 'Выключение интерфейса' : 'Включение интерфейса'}
+		title={confirmToggle.currentlyUp ? m.access_policy_confirm_off_title() : m.access_policy_confirm_on_title()}
 		message={confirmToggle.currentlyUp
-			? `Это действие выключит интерфейс «${confirmToggle.label}» на роутере.`
-			: `Это действие включит интерфейс «${confirmToggle.label}» на роутере.`}
+			? m.access_policy_confirm_off_message({ label: confirmToggle.label })
+			: m.access_policy_confirm_on_message({ label: confirmToggle.label })}
 		secondary={confirmToggle.currentlyUp
-			? 'Интерфейс перестанет работать для всех сервисов, не только для этой политики. Все подключения через этот интерфейс будут разорваны.'
-			: 'Интерфейс станет доступен для всех сервисов, не только для этой политики.'}
+			? m.access_policy_confirm_off_secondary()
+			: m.access_policy_confirm_on_secondary()}
 		variant={confirmToggle.currentlyUp ? 'danger' : 'primary'}
-		confirmLabel={confirmToggle.currentlyUp ? 'Выключить' : 'Включить'}
+		confirmLabel={confirmToggle.currentlyUp ? m.access_policy_confirm_off() : m.access_policy_confirm_on()}
 		onConfirm={executeToggle}
 		onClose={() => confirmToggle = null}
 	/>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { ServiceCatalogModal } from '$lib/components/dnsroutes';
   import { presetCatalog } from '$lib/stores/presets';
   import { singboxRouterCatalogPresetFilter } from '$lib/utils/catalog-preset';
@@ -32,7 +33,7 @@
 
 <ServiceCatalogModal
   {open}
-  title="Каталог наборов"
+  title={m.sb_router_catalog_rulesets_title()}
   presetFilter={singboxRouterCatalogPresetFilter}
   footer="none"
   multiple
@@ -41,7 +42,7 @@
   {existingNames}
   {existingRuleSetTags}
   {ruleSetUsage}
-  confirmLabel="Добавить наборы"
+  confirmLabel={m.sb_router_catalog_add_sets()}
   {submitting}
   {onclose}
   {onconfirm}

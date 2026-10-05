@@ -16,8 +16,8 @@ const subs = [
 ] as unknown as Subscription[];
 
 const options: OutboundGroup[] = [
-	{ group: 'Специальные', items: [{ value: 'direct', label: 'direct (мимо VPN)' }] },
-	{ group: 'AWG туннели', items: [{ value: 'awg-awg10', label: 'Office VPN (t2s10)' }] },
+	{ id: 'special', items: [{ value: 'direct', label: 'direct (мимо VPN)' }] },
+	{ id: 'awg', items: [{ value: 'awg-awg10', label: 'Office VPN (t2s10)' }] },
 ];
 
 describe('resolveMemberLabel', () => {

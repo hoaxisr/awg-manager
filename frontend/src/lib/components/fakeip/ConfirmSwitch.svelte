@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
 	import { Modal, Button } from '$lib/components/ui';
+	import { m } from '$lib/i18n';
 	import {
 		humanLabel,
 		switchConsequences,
@@ -40,8 +41,12 @@
 	const steps = $derived(switchConsequences(from, to));
 	// Action-based framing (per-tab on/off model): «Включить <mode>» / «Выключить <mode>».
 	const actingMode = $derived(to === 'off' ? from : to);
-	const title = $derived(`${to === 'off' ? 'Выключить' : 'Включить'} ${humanLabel(actingMode)}`);
-	const confirmLabel = $derived(to === 'off' ? 'Выключить' : 'Включить');
+	const title = $derived(
+		to === 'off'
+			? m.fakeip_confirm_title_disable({ mode: humanLabel(actingMode) })
+			: m.fakeip_confirm_title_enable({ mode: humanLabel(actingMode) }),
+	);
+	const confirmLabel = $derived(to === 'off' ? m.fakeip_confirm_disable() : m.fakeip_confirm_enable());
 	const enablingFakeip = $derived(to === 'fakeip-tun');
 	// Оба tun-режима поднимают один и тот же tun — оговорка о пропускной
 	// способности относится к обоим; DoH/DoT-оговорка только к fakeip (свой резолвер).
@@ -54,13 +59,12 @@
 	// Cross-activation: enabling X while a DIFFERENT mode Y is active displaces Y.
 	// Derivable from from/to alone — no extra prop.
 	const displacedMode = $derived(to !== 'off' && from !== 'off' && from !== to ? from : null);
-	const connSuffix = $derived(typeof activeConnections === 'number' ? ` (${activeConnections})` : '');
 </script>
 
 <Modal {open} {title} size="md" onclose={onCancel} closeOnBackdrop={!busy}>
 	<div class="confirm">
 		<section class="block">
-			<h4 class="block-title">Что произойдёт</h4>
+			<h4 class="block-title">{m.fakeip_confirm_what_happens()}</h4>
 			<ul class="steps">
 				{#each steps as step}
 					<li>{step}</li>
@@ -71,27 +75,25 @@
 		<section class="block amber">
 			<ul class="warnings">
 				{#if displacedMode}
-					<li>Активный режим {humanLabel(displacedMode)} будет выключен.</li>
+					<li>{m.fakeip_confirm_displaced({ mode: humanLabel(displacedMode) })}</li>
 				{/if}
-				<li>Активные соединения{connSuffix} будут разорваны и переустановлены.</li>
+				<li>
+					{typeof activeConnections === 'number'
+						? m.fakeip_confirm_conns_reset_count({ count: activeConnections })
+						: m.fakeip_confirm_conns_reset()}
+				</li>
 				{#if enablingFakeip}
-					<li>
-						Устройства с собственным DoH/DoT резолвят мимо fakeip — их трафик не
-						попадёт в туннель.
-					</li>
+					<li>{m.fakeip_confirm_own_doh()}</li>
 				{/if}
 				{#if enablingTun}
-					<li>
-						Режим обсчитывает TCP/IP в userspace (стек {tunStackLabel(stack)}):
-						пропускная способность ниже TPROXY.
-					</li>
+					<li>{m.fakeip_confirm_userspace({ stack: tunStackLabel(stack) })}</li>
 				{/if}
 			</ul>
 		</section>
 	</div>
 
 	{#snippet actions()}
-		<Button variant="secondary" size="md" onclick={onCancel}>Отмена</Button>
+		<Button variant="secondary" size="md" onclick={onCancel}>{m.common_cancel()}</Button>
 		<Button
 			variant="primary"
 			size="md"

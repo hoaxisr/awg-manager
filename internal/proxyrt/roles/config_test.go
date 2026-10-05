@@ -342,3 +342,16 @@ func TestParseReconnectInterval(t *testing.T) {
 		t.Errorf("garbage: got %v", got)
 	}
 }
+
+func TestLookupReconnectInterval(t *testing.T) {
+	if d, ok := LookupReconnectInterval("30m"); !ok || d != 30*time.Minute {
+		t.Errorf("30m: got %v, %v", d, ok)
+	}
+	if d, ok := LookupReconnectInterval("on_failure"); !ok || d != 0 {
+		t.Errorf("on_failure: got %v, %v", d, ok)
+	}
+	if _, ok := LookupReconnectInterval("garbage"); ok {
+		t.Errorf("garbage: expected ok=false")
+	}
+}
+

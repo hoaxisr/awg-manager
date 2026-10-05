@@ -2,6 +2,7 @@
 	// Шаговая обвязка мастеров «Прокси»: номера с подписями, содержимое шага и
 	// навигация «Назад»/«Дальше» (WE-27/28). Вперёд ведёт только «Дальше» —
 	// иначе шаг можно перешагнуть незаполненным.
+	import { m } from '$lib/i18n';
 	import type { Snippet } from 'svelte';
 	import { Button } from '$lib/components/ui';
 	import { Check } from 'lucide-svelte';
@@ -44,12 +45,12 @@
 
 <div class="foot">
 	{#if current > 0}
-		<Button variant="ghost" onclick={() => ongo(current - 1)}>Назад</Button>
+		<Button variant="ghost" onclick={() => ongo(current - 1)}>{m.common_back()}</Button>
 	{/if}
 	{#if last}
 		{#if finish}{@render finish()}{/if}
 	{:else}
-		<Button variant="primary" disabled={!canNext} onclick={() => ongo(current + 1)}>Дальше</Button>
+		<Button variant="primary" disabled={!canNext} onclick={() => ongo(current + 1)}>{m.proxy_wizard_next()}</Button>
 	{/if}
 </div>
 
