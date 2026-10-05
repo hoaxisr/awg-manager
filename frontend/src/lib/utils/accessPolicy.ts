@@ -46,8 +46,8 @@ export function findPolicyForInterface<P extends PolicyMembership>(
  *  - Отключенные устройства имеют d.active === false или d.link === 'down'.
  *  - Устройства без IP или с 0.0.0.0 считаются офлайн.
  */
-export function isDeviceOnline(d: { active?: boolean; link?: string; ip?: string }): boolean {
-	if (!d.active) return false;
+export function isDeviceOnline(d?: { active?: boolean; link?: string; ip?: string } | null): boolean {
+	if (!d || !d.active) return false;
 	if (d.link === 'down') return false;
 	if (!d.ip || d.ip === '' || d.ip === '0.0.0.0') return false;
 	return true;

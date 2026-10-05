@@ -108,6 +108,14 @@ describe('isDeviceOnline', () => {
 		})).toBe(false);
 	});
 
+	it('marks devices with link: "down" as offline even if active is true', () => {
+		expect(isDeviceOnline({
+			active: true,
+			link: 'down',
+			ip: '192.168.90.91',
+		})).toBe(false);
+	});
+
 	it('marks inactive devices as offline even with IP', () => {
 		expect(isDeviceOnline({
 			active: false,
@@ -128,6 +136,11 @@ describe('isDeviceOnline', () => {
 			link: 'up',
 			ip: '',
 		})).toBe(false);
+	});
+
+	it('handles null and undefined input safely', () => {
+		expect(isDeviceOnline(null)).toBe(false);
+		expect(isDeviceOnline(undefined)).toBe(false);
 	});
 });
 
