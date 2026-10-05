@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
@@ -205,5 +208,110 @@ func TestHandleEvent_IfDestroyed_ProbeAndStopAtomicWithRestart(t *testing.T) {
 	o.mu.Unlock()
 	if !running || op.coldStarts.Load() != 1 {
 		t.Fatalf("running=%v coldStarts=%d, want true/1", running, op.coldStarts.Load())
+	}
+}
+
+// confirmProbeOrch — runningKernelOrch с пробой, как в проде
+// (wiring_routing.go): Interfaces.Confirm настоящего InterfaceStore над
+// оракулом. Стор без bootstrap — карту строят только списки пробы.
+func confirmProbeOrch(t *testing.T, f *query.FakeNDMS) (*Orchestrator, *fakeKernelOp, *storage.AWGTunnelStore, *query.InterfaceStore) {
+	t.Helper()
+	o, op, store := runningKernelOrch(t)
+	ifaces := query.NewInterfaceStore(f, query.NopLogger())
+	o.SetRecordPresenceProbe(func(ctx context.Context, name string) (bool, error) {
+		_, _, ok, err := ifaces.Confirm(ctx, name)
+		return ok, err
+	})
+	return o, op, store, ifaces
+}
+
+// inFlightOnce — fn один раз, пока первый список в полёте (после снимка, до
+// ответа): так доходит хук, опоздавший относительно начала списка.
+func inFlightOnce(f *query.FakeNDMS, fn func()) {
+	var once sync.Once
+	f.InList(func() { once.Do(fn) })
+}
+
+// deliverDestroyed — ifdestroyed name из очереди оракула (HooksFor) в стор,
+// как его применил бы диспетчер.
+func deliverDestroyed(f *query.FakeNDMS, ifaces *query.InterfaceStore, name string) {
+	for _, h := range f.HooksFor(name) {
+		if h.Type == "ifdestroyed" {
+			ifaces.OnDestroyed(h.ID)
+		}
+	}
+}
+
+// S5 F595 (стенд 30.09, 2.5): OpkgTun10 снят и пересоздан, ifdestroyed
+// прежнего воплощения доходит, пока список пробы в полёте. Метка противоречит
+// ответу — одно перечитывание; запись есть — живой туннель не трогаем.
+func TestHandleEvent_IfDestroyed_StaleHookDuringProbe_NoStop(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+	o, op, store, ifaces := confirmProbeOrch(t, f)
+	f.Remove("OpkgTun10")                                   // прежнее воплощение
+	f.Add(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"}) // новое, без дренажа
+	inFlightOnce(f, func() { deliverDestroyed(f, ifaces, "OpkgTun10") })
+
+	if err := o.HandleEvent(context.Background(), Event{Type: EventNDMSIfDestroyed, NDMSName: "OpkgTun10"}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	if n := op.stops.Load(); n != 0 {
+		t.Fatalf("живой туннель остановлен устаревшим ifdestroyed: stops=%d", n)
+	}
+	if !mustGet(t, store, "awg10").Enabled {
+		t.Fatal("Enabled снят устаревшим ifdestroyed")
+	}
+	if got := f.ListCalls(); got != 2 {
+		t.Fatalf("списков = %d, want 2 (проба + перечитывание по противоречию)", got)
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d Phantoms=%d", f.E, f.Phantoms)
+	}
+}
+
+// S5′: запись действительно снята, пока список пробы в полёте (снимок её
+// ещё показал). Метка противоречит ответу — перечитывание её не видит:
+// остановка и Enabled=false.
+func TestHandleEvent_IfDestroyed_RealRemovalDuringProbe_Stops(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+	o, op, store, ifaces := confirmProbeOrch(t, f)
+	inFlightOnce(f, func() {
+		f.Remove("OpkgTun10")
+		deliverDestroyed(f, ifaces, "OpkgTun10")
+	})
+
+	if err := o.HandleEvent(context.Background(), Event{Type: EventNDMSIfDestroyed, NDMSName: "OpkgTun10"}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	if n := op.stops.Load(); n != 1 {
+		t.Fatalf("stops=%d, want 1", n)
+	}
+	if mustGet(t, store, "awg10").Enabled {
+		t.Fatal("Enabled не снят после внешнего снятия записи (Q1)")
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d Phantoms=%d", f.E, f.Phantoms)
+	}
+}
+
+// S6 (Q1, закрепление): внешнее снятие, хук доставлен до пробы — список
+// записи не видит: остановка и Enabled=false.
+func TestHandleEvent_IfDestroyed_External_RealStore_Stops(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+	o, op, store, ifaces := confirmProbeOrch(t, f)
+	f.Remove("OpkgTun10")
+	deliverDestroyed(f, ifaces, "OpkgTun10")
+
+	if err := o.HandleEvent(context.Background(), Event{Type: EventNDMSIfDestroyed, NDMSName: "OpkgTun10"}); err != nil {
+		t.Fatalf("HandleEvent: %v", err)
+	}
+	if n := op.stops.Load(); n != 1 {
+		t.Fatalf("stops=%d, want 1", n)
+	}
+	if mustGet(t, store, "awg10").Enabled {
+		t.Fatal("Enabled не снят после внешнего снятия записи (Q1)")
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d Phantoms=%d", f.E, f.Phantoms)
 	}
 }

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -789,5 +791,48 @@ func TestRestore_CreatedFailure_Dropped(t *testing.T) {
 	out := s.Restore(context.Background(), []ManagedServerExport{sv}, RestoreOptions{})
 	if len(out) != 1 || out[0].Action != "failed" || f.Has("Wireguard1") {
 		t.Fatalf("outcome %+v has=%v", out, f.Has("Wireguard1"))
+	}
+}
+
+// S3 F595 (стенд 30.09, сирота Wireguard5, 2.3): имя переиспользовано, и
+// ifdestroyed прежнего воплощения доходит, пока список Confirm в полёте.
+// Метка противоречит ответу — одно перечитывание; запись есть — `no
+// interface` уходит, запись настроек удалена, сироты нет.
+func TestDelete_StaleDestroyedInFlight_RemovesRecord(t *testing.T) {
+	ctx := context.Background()
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard5", Type: "Wireguard", State: "up"})
+	s := newServiceWithOracle(t, f, nil, storage.ManagedServer{InterfaceName: "Wireguard5"})
+	if _, err := s.queries.Interfaces.List(ctx); err != nil { // карта тёплая, как в проде
+		t.Fatal(err)
+	}
+	f.Remove("Wireguard5")                                                  // прежнее воплощение
+	f.Add(ndms.Interface{ID: "Wireguard5", Type: "Wireguard", State: "up"}) // новое, без дренажа
+	var once sync.Once
+	f.InList(func() {
+		once.Do(func() {
+			for _, h := range f.HooksFor("Wireguard5") {
+				if h.Type == "ifdestroyed" {
+					s.queries.Interfaces.OnDestroyed(h.ID) // устаревший хук — в полёте списка
+				}
+			}
+		})
+	})
+
+	before := f.ListCalls()
+	if err := s.Delete(ctx, "Wireguard5"); err != nil {
+		t.Fatal(err)
+	}
+	lists := f.ListCalls() - before
+	if !slices.Contains(f.Posts, `{"interface":{"Wireguard5":{"no":true}}}`) || f.Has("Wireguard5") {
+		t.Fatalf("сирота: запись есть=%v; posts=%v", f.Has("Wireguard5"), f.Posts)
+	}
+	if lists != 2 {
+		t.Fatalf("списков за Delete = %d, want 2 (ответ + перечитывание по противоречию)", lists)
+	}
+	if _, ok := s.settings.GetManagedServerByID("Wireguard5"); ok {
+		t.Fatal("запись настроек не удалена")
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d Phantoms=%d", f.E, f.Phantoms)
 	}
 }

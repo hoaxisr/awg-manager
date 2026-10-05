@@ -3,6 +3,8 @@ package nwg
 import (
 	"context"
 	"encoding/json"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -176,5 +178,51 @@ func TestStartStop_BatchMarksDirty_SnapshotAfterBatch(t *testing.T) {
 	}
 	if f.E != 0 {
 		t.Fatalf("E=%d", f.E)
+	}
+}
+
+// S1 F595 (стенд 30.09, сирота Wireguard3, 2.1): имя переиспользовано —
+// прежнее воплощение снято, новое создано, а ifdestroyed прежнего доходит,
+// пока список Confirm в полёте. Хук не решает: метка противоречит ответу —
+// одно перечитывание, запись есть — `no interface` уходит, сироты нет.
+func TestScenario_StaleDestroyedInConfirmFlight_DeleteSendsNoInterface(t *testing.T) {
+	ctx := context.Background()
+	o, _, _, f, _ := newLifecycleOperator(t, false, false)
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
+	if _, err := o.queries.Interfaces.List(ctx); err != nil { // карта тёплая, как в проде
+		t.Fatal(err)
+	}
+	f.DrainHooks()
+	f.Remove("Wireguard1")                                     // прежнее воплощение
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"}) // новое, без дренажа
+	var once sync.Once
+	f.InList(func() {
+		once.Do(func() {
+			for _, h := range f.HooksFor("Wireguard1") {
+				if h.Type == string(events.EventIfDestroyed) {
+					o.queries.Interfaces.OnDestroyed(h.ID) // устаревший хук — в полёте списка
+				}
+			}
+		})
+	})
+	st := nwgStored(awgObfuscatedIface())
+	st.NWGIndex = 1
+
+	lists := f.ListCalls()
+	if err := o.Delete(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	sent := false
+	for _, p := range f.Posts {
+		sent = sent || strings.Contains(p, `{"interface":{"name":"Wireguard1","no":true}}`)
+	}
+	if !sent || f.Has("Wireguard1") {
+		t.Fatalf("сирота: no interface отправлен=%v, запись есть=%v; posts=%v", sent, f.Has("Wireguard1"), f.Posts)
+	}
+	if got := f.ListCalls() - lists; got != 2 {
+		t.Fatalf("списков за Delete = %d, want 2 (ответ + перечитывание по противоречию)", got)
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d Phantoms=%d", f.E, f.Phantoms)
 	}
 }

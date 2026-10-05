@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -327,6 +328,47 @@ func TestStart_RenameWithLayerHookDuringConfirm_RecordIsOurs(t *testing.T) {
 	cfg := lifecycleCfg(t)
 	if _, _, err := o.ensureOpkgTunRecord(ctx, "start", cfg, tunnel.NewNames(cfg.ID)); err != nil {
 		t.Fatalf("ensureOpkgTunRecord: %v", err)
+	}
+	clean(t, f)
+}
+
+// S4 F595 (стенд 30.09, сирота OpkgTun11, 2.4): имя переиспользовано, и
+// ifdestroyed прежнего воплощения доходит, пока список confirmOpkgTun в
+// полёте. Метка противоречит ответу — одно перечитывание; запись есть —
+// DeleteOpkgTun уходит, kernel-устройство снято, сироты нет.
+func TestDelete_StaleDestroyedInFlight_DeletesRecord(t *testing.T) {
+	ctx := context.Background()
+	f := ndmsquery.NewFakeNDMS(opkgTun10())
+	be := &MockBackend{running: true}
+	o, _, _ := newOS5Oracle(t, f, be)
+	if _, err := o.queries.Interfaces.List(ctx); err != nil { // карта тёплая, как в проде
+		t.Fatal(err)
+	}
+	f.Remove("OpkgTun10") // прежнее воплощение
+	f.Add(opkgTun10())    // новое, без дренажа
+	var once sync.Once
+	f.InList(func() {
+		once.Do(func() {
+			for _, h := range f.HooksFor("OpkgTun10") {
+				if h.Type == "ifdestroyed" {
+					o.queries.Interfaces.OnDestroyed(h.ID) // устаревший хук — в полёте списка
+				}
+			}
+		})
+	})
+
+	lists := f.ListCalls()
+	if err := o.Delete(ctx, &storage.AWGTunnel{ID: "awg10", Name: "Germany"}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if !slices.Contains(f.Posts, `{"interface":{"OpkgTun10":{"no":true}}}`) || f.Has("OpkgTun10") {
+		t.Fatalf("сирота: запись есть=%v; posts=%v", f.Has("OpkgTun10"), f.Posts)
+	}
+	if got := f.ListCalls() - lists; got != 2 {
+		t.Fatalf("списков за Delete = %d, want 2 (ответ + перечитывание по противоречию)", got)
+	}
+	if !slices.Equal(be.StopCalls, []string{"opkgtun10"}) {
+		t.Fatalf("kernel-устройство: %v, want [opkgtun10]", be.StopCalls)
 	}
 	clean(t, f)
 }
