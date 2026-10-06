@@ -454,6 +454,77 @@ func TestDelete_ReplaceFailedDeviceGone_RecordRemoved(t *testing.T) {
 	clean(t, f)
 }
 
+// M1 (финальное ревью F595): устройство снято снаружи (`ip link del`/rmmod),
+// запись осталась — `state: error` при `conf: running`, либо ещё `up`, пока
+// NDMS не заметил (0ba1 через ~3 с). Delete — сразу `no interface`: ни
+// down, ни подмены — подмена здесь голый `tuntap add`, NEWLINK под
+// running-записью (стендом не снят), а снос записи без устройства — 0 C
+// ×12 (стенд Task 59). Оракул этот C не моделирует, поэтому ассерт — по
+// шагам: tun не создан, down не отправлен, `no interface` ушёл.
+// Мутация: снять ветку «устройства нет» → ReplaceCalls непуст, красный.
+func TestDelete_DeviceAbsent_NoTunCreated(t *testing.T) {
+	for _, state := range []string{"error", "up"} {
+		t.Run(state, func(t *testing.T) {
+			r := opkgTun10()
+			r.State = state
+			f := ndmsquery.NewFakeNDMS(r)
+			be := newDeviceBackend(t, f) // устройства opkgtun10 нет
+			o, _ := newOS5LifecycleOn(t, &recordingPoster{f: f}, f, be, true)
+			hn := watchHooks(o, f, be)
+
+			if err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"}); err != nil {
+				t.Fatalf("Delete: %v", err)
+			}
+			if len(be.ReplaceCalls) != 0 || be.exists("opkgtun10") {
+				t.Fatalf("tun создан под записью без устройства: replace=%v устройство=%v", be.ReplaceCalls, be.exists("opkgtun10"))
+			}
+			if !slices.Equal(f.Posts, []string{postNo}) || len(hn.calls) != 0 {
+				t.Fatalf("posts=%v ожидания=%v, want ровно [no interface] без down", f.Posts, hn.calls)
+			}
+			if f.Has("OpkgTun10") || !o.queries.Interfaces.RemovedByUs("OpkgTun10") {
+				t.Fatalf("запись есть=%v RemovedByUs=%v", f.Has("OpkgTun10"), o.queries.Interfaces.RemovedByUs("OpkgTun10"))
+			}
+			clean(t, f)
+		})
+	}
+}
+
+// L2 (остаток F1): откат по существующей записи, `del` прошёл, `tuntap add`
+// отказал — запись без устройства; оставленная до следующего Start, она
+// давала бы 0767 на каждом нашем списке. Запись снимается (без устройства —
+// 0 C, стенд Task 59), свой ifdestroyed — по карте; следующий Start создаёт
+// её заново. Мутация: оставить запись при !deleteRecord → красный.
+func TestRollback_ExistingRecord_TuntapFails_RecordRemoved(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(upTun10())
+	be := newDeviceBackend(t, f)
+	be.plug(t, "opkgtun10", false) // tun NDMS после ребута
+	be.replaceErr = errors.New("injected: tuntap")
+	o, _ := newOS5LifecycleOn(t, &recordingPoster{f: f}, f, be, true)
+	o.firewall = &MockFirewall{addError: errors.New("injected: firewall")}
+
+	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err == nil || !strings.Contains(err.Error(), "injected: firewall") {
+		t.Fatalf("ColdStart: err = %v, want отказ файрвола", err)
+	}
+	if be.exists("opkgtun10") || f.Has("OpkgTun10") || !slices.Contains(f.Posts, postNo) {
+		t.Fatalf("устройство=%v запись=%v posts=%v, want ни устройства, ни записи", be.exists("opkgtun10"), f.Has("OpkgTun10"), f.Posts)
+	}
+	if !o.queries.Interfaces.RemovedByUs("OpkgTun10") {
+		t.Fatal("снос отката не отмечен своим (RemovedByUs=false)")
+	}
+	clean(t, f)
+
+	be.replaceErr = nil
+	o.firewall = &MockFirewall{}
+	f.ExpectCreate("OpkgTun10")
+	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err != nil {
+		t.Fatalf("следующий ColdStart: %v", err)
+	}
+	if !f.Has("OpkgTun10") || !be.exists("opkgtun10") || !be.amneziawg {
+		t.Fatalf("запись=%v устройство=%v amneziawg=%v после повторного старта", f.Has("OpkgTun10"), be.exists("opkgtun10"), be.amneziawg)
+	}
+	clean(t, f)
+}
+
 // F560/F598: откат первого старта (запись создана этой попыткой и ни разу не
 // была up) — tun, затем запись; down не шлётся.
 func TestColdStart_Rollback_TunThenRecord(t *testing.T) {

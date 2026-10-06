@@ -1047,7 +1047,9 @@ func (o *OperatorOS5Impl) GetDefaultGatewayInterface(ctx context.Context) (strin
 // Существующая запись остаётся с plain tun под ней — состояние как после
 // ребута, следующий старт подменит его на amneziawg (F1 ревью Task 62:
 // прежний Stop оставлял запись без устройства — 0ba1 под up и 0767 на
-// каждом нашем списке до следующего старта). up — запись могла быть up
+// каждом нашем списке до следующего старта). Исключение — подмена сорвалась
+// после del (tun не встал): запись снимается, см. removeOpkgTun (L2). up —
+// запись могла быть up
 // (была до старта или старт дошёл до InterfaceUp). Порядок — removeOpkgTun.
 func (o *OperatorOS5Impl) rollbackStart(ctx context.Context, tunnelID string, names tunnel.Names, iface query.Confirmed, justCreated, up bool) {
 	o.logInfo("rollback", tunnelID, "Rolling back failed start")
@@ -1098,12 +1100,28 @@ func (o *OperatorOS5Impl) downBeforeSwap(ctx context.Context, tunnelID string, n
 //     destroyed нет.
 //  4. tun остался (NDMS не снял) — снимаем: записи уже нет, C невозможен.
 //
+// Устройства уже нет, а запись сносится (M1: внешний `ip link del`/rmmod —
+// запись `state: error` при `conf: running`) — ни down, ни подмены, сразу
+// `no interface`: подмена здесь — голый `tuntap add`, NEWLINK под running-
+// записью (не снято стендом). Снос записи без устройства — 0 C ×12 (стенд
+// Task 59: хвост K-0ba1 ×3 — запись после 0ba1 без down; уборка K-0767 ×9).
+// Down не шлётся: улик, что он нужен, нет, а по записи без устройства он
+// сам не снят стендом.
+//
 // Down не прошёл — ничего не меняется, ошибка наружу (fail-closed).
 // Подмена не удалась, а устройство живо (чужой держатель — HeldError, отказ
 // ip) — запись не трогаем, ошибка наружу (fail-closed): `no interface` при
 // живом устройстве — C. Устройства нет (del прошёл, tun не встал) — запись
-// снимается: снос записи без устройства — 0 C (стенд Task 59).
+// снимается и при !deleteRecord (L2: откат по существующей записи):
+// оставленная, она без устройства до следующего Start, и каждый наш список
+// в этом окне — 0767; снос записи без устройства — 0 C (стенд Task 59),
+// следующий Start создаст её заново (justCreated). Остаток — окно между
+// отпусканием барьера и ответом `no interface` (один POST, только при
+// отказе `ip tuntap add`), класс аварийного остатка N4.
 func (o *OperatorOS5Impl) removeOpkgTun(ctx context.Context, op, tunnelID string, names tunnel.Names, iface query.Confirmed, up, deleteRecord bool) error {
+	if _, err := netdev.Absent(names.IfaceName); err == nil && deleteRecord {
+		return o.deleteOpkgTunRecord(ctx, op, tunnelID, names, iface)
+	}
 	if up {
 		// Down не прошёл ни с одной попытки — ни подмены (под running это
 		// C3b, 0ba1), ни `no interface`: запись и устройство как были,
@@ -1115,15 +1133,25 @@ func (o *OperatorOS5Impl) removeOpkgTun(ctx context.Context, op, tunnelID string
 		}
 	}
 	if err := o.backend.ReplaceWithTun(ctx, names.IfaceName); err != nil {
-		if _, absent := netdev.Absent(names.IfaceName); absent != nil || !deleteRecord {
+		if _, absent := netdev.Absent(names.IfaceName); absent != nil {
 			o.logWarn(op, tunnelID, "kernel interface not replaced, NDMS record kept: "+err.Error())
 			o.appLog.Warn(op, tunnelID, "Интерфейс "+names.IfaceName+" не заменён, запись "+names.NDMSName+" оставлена: "+err.Error())
 			return fmt.Errorf("replace %s with tun: %w", names.IfaceName, err)
 		}
+		if !deleteRecord {
+			o.logWarn(op, tunnelID, "kernel interface gone and tun not created, NDMS record removed: "+err.Error())
+		}
+		return o.deleteOpkgTunRecord(ctx, op, tunnelID, names, iface)
 	}
 	if !deleteRecord {
 		return nil
 	}
+	return o.deleteOpkgTunRecord(ctx, op, tunnelID, names, iface)
+}
+
+// deleteOpkgTunRecord — `no interface` (NDMS снимает свой tun сам), затем
+// остаток устройства, если NDMS его не снял: записи уже нет, C невозможен.
+func (o *OperatorOS5Impl) deleteOpkgTunRecord(ctx context.Context, op, tunnelID string, names tunnel.Names, iface query.Confirmed) error {
 	if err := o.commands.Interfaces.DeleteOpkgTun(ctx, iface); err != nil {
 		o.logWarn(op, tunnelID, "DeleteOpkgTun: "+err.Error())
 		return fmt.Errorf("delete OpkgTun record: %w", err)

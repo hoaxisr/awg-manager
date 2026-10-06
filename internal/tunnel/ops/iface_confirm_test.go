@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -13,6 +15,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
@@ -20,6 +23,20 @@ import (
 // opkgTun10 — наша запись туннеля awg10 (описание = имени из lifecycleCfg).
 func opkgTun10() ndms.Interface {
 	return ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun", Description: "Germany"}
+}
+
+// devicePresent — устройство iface есть для netdev (временный SysClassNet):
+// MockBackend живого устройства в /sys не создаёт, а removeOpkgTun решает
+// «устройства нет → сразу `no interface`» по netdev (M1).
+func devicePresent(t *testing.T, iface string) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, iface), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := netdev.SysClassNet
+	netdev.SysClassNet = root
+	t.Cleanup(func() { netdev.SysClassNet = old })
 }
 
 // clean — оракул не видел ни E, ни C, ни фантомов.
@@ -109,6 +126,7 @@ func (p failDeletePoster) Post(ctx context.Context, payload any) (json.RawMessag
 func TestDelete_DeleteRecordFails_Error(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS(opkgTun10())
 	be := &MockBackend{running: true}
+	devicePresent(t, "opkgtun10")
 	o, _ := newOS5LifecycleOn(t, failDeletePoster{f}, f, be, true)
 
 	err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"})
@@ -351,6 +369,7 @@ func TestDelete_StaleDestroyedInFlight_DeletesRecord(t *testing.T) {
 	ctx := context.Background()
 	f := ndmsquery.NewFakeNDMS(opkgTun10())
 	be := &MockBackend{running: true}
+	devicePresent(t, "opkgtun10")
 	o, _, _ := newOS5Oracle(t, f, be)
 	if _, err := o.queries.Interfaces.List(ctx); err != nil { // карта тёплая, как в проде
 		t.Fatal(err)
