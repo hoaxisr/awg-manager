@@ -1,0 +1,27 @@
+# Cross-compile susanin-agent to a static MIPS (mipsel) binary.
+# Build:   docker build -f Dockerfile.cross -t susanin-build .
+# Extract: docker run --rm -v "$PWD/build:/out" susanin-build sh -c \
+#            'cp /src/susanin-agent /out/susanin-agent.mipsel && file /out/susanin-agent.mipsel'
+# (binary will be in ./build/susanin-agent.mipsel)
+#
+# Base = ubuntu:24.04 (matches the toolchain proven by tools/wsl-build.sh).
+# NOTE: install libc6-dev-mipsel-cross EXPLICITLY: with
+# --no-install-recommends the cross glibc headers (time.h etc.) are skipped.
+FROM ubuntu:24.04
+
+# make sure universe (gcc-mipsel-linux-gnu) is available in the base image
+RUN sed -i 's/^Components: .*/Components: main restricted universe multiverse/' \
+        /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc-mipsel-linux-gnu libc6-dev-mipsel-cross make file && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+ADD . /src
+
+RUN make CC=mipsel-linux-gnu-gcc \
+        CFLAGS="-O2 -std=c11 -Wall -Wextra -Wpedantic -static" \
+        LDFLAGS="-static"
+
+CMD ["/bin/sh", "-c", "echo built; file /src/susanin-agent"]

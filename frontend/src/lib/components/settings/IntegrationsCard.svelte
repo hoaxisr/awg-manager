@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
 	import type { SingboxStatus, HydraRouteStatus } from '$lib/types';
+	import type { OperationalState } from '$lib/types/adaptiveRouting';
 	import type { ProxySubsystem } from '$lib/api/proxyInstances';
 	import { Button, ConfirmModal, Input, Modal, StatusDot } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
@@ -44,6 +45,16 @@
 		singboxUninstalling?: boolean;
 		showSingbox?: boolean;
 		showHydra?: boolean;
+		/** Susanin (Адаптивная маршрутизация) */
+		susaninStatus?: OperationalState | null;
+		susaninStatusLoading?: boolean;
+		susaninInstalling?: boolean;
+		susaninRestarting?: boolean;
+		susaninUninstalling?: boolean;
+		oninstallSusanin?: () => void;
+		onrestartSusanin?: () => void;
+		onuninstallSusanin?: () => void;
+		showSusanin?: boolean;
 		/** Адрес bootstrap-резолвера sing-box; пусто = адрес не навязывается. */
 		bootstrapDNS?: string;
 		onsaveBootstrapDNS?: (value: string) => void;
@@ -73,6 +84,15 @@
 		singboxUninstalling = false,
 		showSingbox = true,
 		showHydra = true,
+		susaninStatus = null,
+		susaninStatusLoading = false,
+		susaninInstalling = false,
+		susaninRestarting = false,
+		susaninUninstalling = false,
+		oninstallSusanin,
+		onrestartSusanin,
+		onuninstallSusanin,
+		showSusanin = true,
 		bootstrapDNS = '',
 		onsaveBootstrapDNS,
 		bootstrapSaving = false,
@@ -85,6 +105,10 @@
 
 	// Подсистема, ожидающая подтверждения удаления.
 	let confirmProxy = $state<ProxyBinaryRow | null>(null);
+	let confirmUninstallSusanin = $state(false);
+
+	const susaninInstalled = $derived(susaninStatus?.installed ?? false);
+	const susaninRunning = $derived(susaninStatus?.status === 'running' || susaninStatus?.status === 'learning');
 
 	// Копии Go-констант: singbox.DefaultClashPort и api.minClashPort. Фронт не
 	// импортирует Go, а бэкенд остаётся авторитетом — невалидное он отвергнет
@@ -360,6 +384,60 @@
 			{/if}
 		{/if}
 
+		{#if showSusanin}
+			<div class="setting-row">
+				<div class="integration-item">
+					<StatusDot
+						variant={susaninStatusLoading ? 'muted' : (susaninInstalled && susaninRunning ? 'success' : 'muted')}
+						size="md"
+						ariaLabel={
+							susaninStatusLoading
+								? 'Susanin: получение данных'
+								: susaninInstalled && susaninRunning
+									? 'Susanin работает'
+									: 'Susanin остановлен'
+						}
+					/>
+					<div class="integration-meta">
+						<span class="font-medium">Сусанин (Адаптивная маршрутизация)</span>
+						{#if susaninStatusLoading}
+							<span class="integration-sub">получаю данные…</span>
+						{:else if susaninInstalled && susaninStatus}
+							<span class="integration-sub">
+								v{susaninStatus.version ?? '0.3.10'}
+								{#if susaninRunning}· запущен{:else}· остановлен{/if}
+							</span>
+						{:else}
+							<span class="setting-description">
+								Автоматическое разделение трафика и самообучающаяся маршрутизация доменов и IP.
+							</span>
+						{/if}
+					</div>
+				</div>
+				{#if susaninInstalled}
+					<div class="integration-actions">
+						<Button variant="secondary" size="sm" href="/routing?tab=adaptive">Открыть</Button>
+						{#if onuninstallSusanin}
+							<Button
+								variant="outline-danger"
+								size="sm"
+								loading={susaninUninstalling}
+								onclick={() => (confirmUninstallSusanin = true)}
+							>
+								{susaninUninstalling ? 'Удаление...' : 'Удалить'}
+							</Button>
+						{/if}
+					</div>
+				{:else if susaninStatusLoading}
+					<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
+				{:else if oninstallSusanin}
+					<Button variant="primary" size="sm" onclick={oninstallSusanin} loading={susaninInstalling}>
+						{susaninInstalling ? 'Установка...' : 'Установить'}
+					</Button>
+				{/if}
+			</div>
+		{/if}
+
 		{#each proxyBinaries as p (p.key)}
 			<div class="setting-row">
 				<div class="integration-item">
@@ -526,6 +604,23 @@
 			onuninstallSingbox?.();
 		}}
 		onClose={() => (confirmUninstall = false)}
+	/>
+{/if}
+
+{#if confirmUninstallSusanin}
+	<ConfirmModal
+		open={confirmUninstallSusanin}
+		title="Удалить Сусанин?"
+		message="Агент susanin-agent будет остановлен, а его исполняемый файл удален с роутера."
+		secondary="Файлы списков vpn_always.txt и vpn_never.txt сохранятся — после повторной установки они продолжат действовать."
+		confirmLabel="Удалить"
+		variant="danger"
+		busy={susaninUninstalling}
+		onConfirm={() => {
+			confirmUninstallSusanin = false;
+			onuninstallSusanin?.();
+		}}
+		onClose={() => (confirmUninstallSusanin = false)}
 	/>
 {/if}
 

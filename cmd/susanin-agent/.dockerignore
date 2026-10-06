@@ -1,0 +1,11 @@
+# keep the build context small and free of private/working files
+.git
+.github
+PLAN.md
+STATUS.md
+docs/
+recon/
+*.log
+*.state
+build/
+deploy/

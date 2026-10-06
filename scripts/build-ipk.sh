@@ -157,7 +157,9 @@ build_ipk_one() {
 
     cp build/bin/awg-manager "$IPK_ROOT/opt/bin/"
     cp "$AWG_CLI_BIN" "$IPK_ROOT/opt/sbin/awg"
-    chmod +x "$IPK_ROOT/opt/sbin/awg"
+    # Бинари внешних сервисов (sing-box, wdtt, freeturn, susanin) в IPK не кладём:
+    # они устанавливаются on-demand через встроенные инсталлеры с проверкой SHA256 и места на диске.
+
 
     # wdtt/freeturn в IPK не кладём: бинари приезжают только с зеркала по пину
     # install.go, с проверкой SHA256. Бандл давал молчаливое расхождение —
@@ -209,7 +211,7 @@ build_ipk_one() {
     cat > "$IPK_ROOT/CONTROL/control" << EOF
 Package: awg-manager
 Version: ${VERSION}
-Depends: iptables, ip-full, wireguard-tools, conntrack, curl
+Depends: iptables, ipset, ip-full, wireguard-tools, conntrack, curl
 Section: net
 Architecture: ${PKG_ARCH}
 Maintainer: hoaxisr

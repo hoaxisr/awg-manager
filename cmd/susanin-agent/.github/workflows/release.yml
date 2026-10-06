@@ -1,0 +1,119 @@
+name: Release binaries
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: mipsel
+            cc: mipsel-linux-gnu-gcc
+            pkg: gcc-mipsel-linux-gnu
+            dev: libc6-dev-mipsel-cross
+          - arch: mips
+            cc: mips-linux-gnu-gcc
+            pkg: gcc-mips-linux-gnu
+            dev: libc6-dev-mips-cross
+          - arch: aarch64
+            cc: aarch64-linux-gnu-gcc
+            pkg: gcc-aarch64-linux-gnu
+            dev: libc6-dev-arm64-cross
+          - arch: armv7
+            cc: arm-linux-gnueabihf-gcc
+            pkg: gcc-arm-linux-gnueabihf
+            dev: libc6-dev-armhf-cross
+          - arch: x86_64
+            cc: gcc
+            pkg: gcc-multilib
+            dev: ""
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends make file \
+            ${{ matrix.pkg }} ${{ matrix.dev }}
+      - name: Build ${{ matrix.arch }}
+        run: |
+          make clean || true
+          make CC=${{ matrix.cc }} \
+            CFLAGS="-O2 -std=c11 -Wall -Wextra -Wpedantic -static" \
+            LDFLAGS="-static"
+          file susanin-agent
+      - name: Stage deploy archive
+        run: |
+          set -e
+          STAGE="pkg-${{ matrix.arch }}"
+          mkdir -p "$STAGE"
+          cp susanin-agent "$STAGE/susanin-agent"
+          # Scripts live in tools/, docs/conf/lists in the repo root, and the
+          # init script in init/entware/ (S94susanin used to be missed here).
+          # `set -e` makes any missing file fail the build loudly.
+          cp tools/datapath.sh tools/susanin.sh tools/update.sh \
+             tools/uninstall.sh tools/report.sh tools/diagnose.sh "$STAGE/"
+          cp install.sh config.example.conf vpn_always.txt vpn_never.txt \
+             DEPLOY.md "$STAGE/"
+          cp init/entware/S94susanin "$STAGE/S94susanin"
+          tar -czf "susanin-keenetic-deploy-${{ matrix.arch }}.tar.gz" -C "$STAGE" .
+          ls -l "susanin-keenetic-deploy-${{ matrix.arch }}.tar.gz"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.arch }}
+          path: susanin-keenetic-deploy-${{ matrix.arch }}.tar.gz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+      - name: Compose release notes
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          # "Что нового" берём из CHANGELOG.md (секция ## vX.Y.Z), чтобы
+          # заметки релиза не были захардкожены под старую версию.
+          awk -v v="$V" '
+            $0 ~ "^## v" v "([[:space:]]|$)" { f=1; next }
+            f && /^## v/ { exit }
+            f { print }
+          ' CHANGELOG.md > /tmp/changes.md
+          if [ ! -s /tmp/changes.md ]; then
+            echo "_Список изменений см. в CHANGELOG.md._" > /tmp/changes.md
+          fi
+          sed "s/{{TAG}}/${GITHUB_REF_NAME}/g" \
+            .github/release-body.template.md > /tmp/body.md
+          while IFS= read -r line; do
+            if [ "$line" = "<!-- CHANGELOG -->" ]; then
+              cat /tmp/changes.md
+            else
+              printf '%s\n' "$line"
+            fi
+          done < /tmp/body.md > release-body.md
+          cat release-body.md
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          body_path: release-body.md
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
