@@ -151,10 +151,14 @@ func NewProc(cfg ProcConfig) *Proc {
 	return &Proc{c: cfg, logStartOffset: -1}
 }
 
-func (p *Proc) setFatalError(sig string) {
+// setFatalError запоминает сигнатуру сбоя; true — флаг был пуст, то есть
+// сбой новый и воркер стоит будить.
+func (p *Proc) setFatalError(sig string) bool {
 	p.fatalMu.Lock()
 	defer p.fatalMu.Unlock()
+	first := p.fatalErr == ""
 	p.fatalErr = sig
+	return first
 }
 
 func (p *Proc) getFatalError() string {
@@ -169,21 +173,31 @@ func (p *Proc) clearFatalError() {
 	p.fatalErr = ""
 }
 
-func (p *Proc) scanLog() string {
+// scanLog дочитывает журнал; true — найден новый сбой (флаг был пуст).
+func (p *Proc) scanLog() bool {
 	p.lwMu.Lock()
 	defer p.lwMu.Unlock()
 	if p.c.LogPath == "" {
-		return ""
+		return false
 	}
 	if p.logScanOffset < p.logStartOffset && p.logStartOffset >= 0 {
 		p.logScanOffset = p.logStartOffset
 	}
 	sig := scanLogForFatal(p.c.LogPath, &p.logScanOffset)
-	if sig != "" {
-		p.setFatalError(sig)
-		return sig
+	return sig != "" && p.setFatalError(sig)
+}
+
+// skipLogBacklog переносит чтение журнала на его текущий конец: строки,
+// записанные до включения автопереподключения, не повод для рестарта.
+func (p *Proc) skipLogBacklog() {
+	if p.c.LogPath == "" {
+		return
 	}
-	return p.getFatalError()
+	p.lwMu.Lock()
+	defer p.lwMu.Unlock()
+	if fi, err := os.Stat(p.c.LogPath); err == nil {
+		p.logScanOffset = fi.Size()
+	}
 }
 
 // SetDesired — намерение этого прогона. cfgErr — вердикт Validate() конфига:
@@ -202,6 +216,11 @@ func (p *Proc) SetDesired(enabled bool, forkArgs []string, cfgErr error) {
 // SetAutoReconnect настраивает автоматический перезапуск процесса:
 // мониторинг фатальных сбоев сессии и плановый перезапуск по интервалу.
 func (p *Proc) SetAutoReconnect(enabled bool, interval time.Duration) {
+	// Включили у уже наблюдавшегося работающего процесса. Подхват и spawn
+	// выставляют начало чтения сами (logStartOffset / обнуление).
+	if enabled && !p.autoReconnect && p.lastUptimeS > 0 {
+		p.skipLogBacklog()
+	}
 	p.autoReconnect = enabled
 	p.reconnectInterval = interval
 	if !enabled {
@@ -312,11 +331,10 @@ func (p *Proc) Observe(ctx context.Context) (proxyrt.Observation, error) {
 			if p.reconnectInterval > 0 && time.Duration(st.UptimeS)*time.Second >= p.reconnectInterval {
 				obs.Attrs[attrReconnectDue] = causeInterval
 			}
-			sig := p.getFatalError()
-			if sig == "" {
-				sig = p.scanLog()
+			if p.getFatalError() == "" {
+				p.scanLog()
 			}
-			if sig != "" {
+			if sig := p.getFatalError(); sig != "" {
 				obs.Attrs[attrFatalError] = sig
 			}
 		}
@@ -688,16 +706,20 @@ func (p *Proc) ensureLogWatcher() {
 		p.lwMu.Unlock()
 		return
 	}
+	// Будим только на первом сбое: пока рестарт ждёт паузы, новые строки
+	// журнала ничего не меняют, а остаток паузы отсчитывает RecheckAfter.
 	p.logWatch = newPlatformLogWatcher(p.c.LogPath, func() {
-		if sig := p.scanLog(); sig != "" {
-			if p.c.Wake != nil {
-				p.c.Wake()
-			}
+		if p.scanLog() && p.c.Wake != nil {
+			p.c.Wake()
 		}
 	})
 	watch := p.logWatch
 	p.lwMu.Unlock()
-	watch.start()
+	// Неподнявшийся watcher остаётся на месте до следующего spawn: повтор
+	// на каждом Observe лишь повторял бы ту же ошибку в журнал.
+	if err := watch.start(); err != nil && p.c.Warn != nil {
+		p.c.Warn(fmt.Sprintf("контроль журнала %s не запущен, сбой сессии не будет замечен: %v", p.c.LogPath, err))
+	}
 }
 
 func (p *Proc) stopLogWatcher() {

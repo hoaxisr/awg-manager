@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1532,11 +1533,15 @@ func TestProcAutoReconnect_ConcurrentInotifyAndObserve(t *testing.T) {
 	}
 	_ = f.Close()
 
-	// Ждём либо wake, либо завершение воркера
+	// Ждём либо wake, либо завершение воркера: сбой, найденный самим
+	// Observe, будить уже не нужно — воркер его видит.
+	workerFinished := make(chan struct{})
+	go func() { workerDone.Wait(); close(workerFinished) }()
 	select {
 	case <-wakeCh:
+	case <-workerFinished:
 	case <-time.After(2 * time.Second):
-		t.Fatal("таймаут ожидания wake")
+		t.Fatal("сбой не замечен: ни wake, ни fatal_error в Observe")
 	}
 
 	close(stop)
@@ -1548,5 +1553,72 @@ func TestProcAutoReconnect_ConcurrentInotifyAndObserve(t *testing.T) {
 	}
 	if obsFinal.Attrs[attrFatalError] != "error 401: Unauthorized" {
 		t.Fatalf("финальный Observe не зафиксировал фатальную ошибку: %q", obsFinal.Attrs[attrFatalError])
+	}
+}
+
+// Строка сбоя, записанная до включения автопереподключения у работающего
+// процесса, рестарт не вызывает.
+func TestProcAutoReconnect_EnableSkipsLogBacklog(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "backlog.log")
+	if err := os.WriteFile(logPath, []byte("сессия закрыта\n[СТАТИСТИКА] 10 пакетов\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	p := NewProc(ProcConfig{
+		ID: "proc", LogPath: logPath,
+		Runner: &fakeRunner{pid: 501, alive: true},
+		Link:   &fakeLink{st: awgmproto.State{PID: 501, UptimeS: 3600}},
+		Gate:   okGate{}, Now: time.Now,
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(false, 0)
+	p.logStartOffset = 0 // процесс порождён нами, журнал читается с начала
+	defer p.stopLogWatcher()
+	if _, err := p.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	p.SetAutoReconnect(true, 0)
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sig := obs.Attrs[attrFatalError]; sig != "" {
+		t.Fatalf("старая строка дала fatal_error = %q", sig)
+	}
+}
+
+// После первого сбоя watcher не будит воркер на каждую следующую строку.
+func TestProc_LogWatcherWakesOncePerFailure(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "storm.log")
+	if err := os.WriteFile(logPath, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	var wakes atomic.Int32
+	p := NewProc(ProcConfig{
+		ID: "proc", LogPath: logPath, Runner: &fakeRunner{}, Link: &fakeLink{},
+		Gate: okGate{}, Now: time.Now, Wake: func() { wakes.Add(1) },
+	})
+	p.enabled = true
+	p.autoReconnect = true
+	p.ensureLogWatcher()
+	defer p.stopLogWatcher()
+
+	appendLine := func(s string) {
+		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = f.WriteString(s + "\n")
+		_ = f.Close()
+		time.Sleep(20 * time.Millisecond)
+	}
+	appendLine("error 401: Unauthorized")
+	for i := 0; i < 10; i++ {
+		appendLine("[СТАТИСТИКА] 100 пакетов")
+	}
+	appendLine("error 401: Unauthorized")
+	time.Sleep(100 * time.Millisecond)
+	if n := wakes.Load(); n != 1 {
+		t.Fatalf("wake = %d, want 1", n)
 	}
 }

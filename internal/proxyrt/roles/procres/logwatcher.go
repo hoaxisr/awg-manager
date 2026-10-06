@@ -6,7 +6,7 @@ import (
 )
 
 type logWatcher interface {
-	start()
+	start() error
 	stop()
 }
 

@@ -24,7 +24,7 @@ func newPlatformLogWatcher(path string, onNotify func()) logWatcher {
 	}
 }
 
-func (w *otherLogWatcher) start() {
+func (w *otherLogWatcher) start() error {
 	if w.onNotify != nil {
 		w.onNotify()
 	}
@@ -44,6 +44,7 @@ func (w *otherLogWatcher) start() {
 			}
 		}
 	}()
+	return nil
 }
 
 func (w *otherLogWatcher) stop() {

@@ -5,6 +5,7 @@ package procres
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -28,18 +29,30 @@ func newPlatformLogWatcher(path string, onNotify func()) logWatcher {
 	}
 }
 
-func (w *linuxLogWatcher) start() {
+// fail закрывает то, что start успел открыть. Номера пайпа обнуляются:
+// иначе stop() писал бы в чужие дескрипторы, выданные ОС повторно, и
+// закрывал бы их.
+func (w *linuxLogWatcher) fail(inotifyFd int, err error) error {
+	if inotifyFd >= 0 {
+		_ = unix.Close(inotifyFd)
+	}
+	if w.stopPipe[1] != 0 {
+		_ = unix.Close(w.stopPipe[0])
+		_ = unix.Close(w.stopPipe[1])
+	}
+	w.stopPipe = [2]int{}
+	close(w.doneCh)
+	return err
+}
+
+func (w *linuxLogWatcher) start() error {
 	if err := unix.Pipe2(w.stopPipe[:], unix.O_CLOEXEC|unix.O_NONBLOCK); err != nil {
-		close(w.doneCh)
-		return
+		return w.fail(-1, fmt.Errorf("pipe: %w", err))
 	}
 
 	inotifyFd, err := unix.InotifyInit1(unix.IN_NONBLOCK | unix.IN_CLOEXEC)
 	if err != nil {
-		_ = unix.Close(w.stopPipe[0])
-		_ = unix.Close(w.stopPipe[1])
-		close(w.doneCh)
-		return
+		return w.fail(-1, fmt.Errorf("inotify_init: %w", err))
 	}
 
 	dir := filepath.Dir(w.path)
@@ -47,7 +60,10 @@ func (w *linuxLogWatcher) start() {
 
 	// Ставим IN_CREATE ТОЛЬКО на каталог (без IN_MODIFY), чтобы модификация
 	// соседних файлов других инстансов в RuntimeDir не будила этот watcher.
-	dirWd, _ := unix.InotifyAddWatch(inotifyFd, dir, unix.IN_CREATE)
+	dirWd, err := unix.InotifyAddWatch(inotifyFd, dir, unix.IN_CREATE)
+	if err != nil {
+		return w.fail(inotifyFd, fmt.Errorf("inotify_add_watch %s: %w", dir, err))
+	}
 	fileWd := -1
 	if _, statErr := os.Stat(w.path); statErr == nil {
 		if wd, err := unix.InotifyAddWatch(inotifyFd, w.path, unix.IN_MODIFY); err == nil {
@@ -129,6 +145,7 @@ func (w *linuxLogWatcher) start() {
 			}
 		}
 	}()
+	return nil
 }
 
 func (w *linuxLogWatcher) stop() {
