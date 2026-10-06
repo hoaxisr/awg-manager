@@ -283,6 +283,27 @@ func TestRemovePermitAllACL_RuleAlreadyGone_Tolerated(t *testing.T) {
 	}
 }
 
+// M2: в списке только чужие правила, нашей строки в свежем дереве нет (снята
+// в веб-морде, реап-ретрай после частичного снятия) — ни одного POST: `no
+// rule found to delete.` — ошибка разбора в status[] (кандидат в E), и
+// уходила бы каждым тиком ретрая.
+// Мутация: снять гейт hasOurPermitRule в ветке чужих правил → `no … permit`
+// уходит, красный.
+func TestRemovePermitAllACL_ForeignOnly_OurAbsent_NoPosts(t *testing.T) {
+	foreign := map[string]string{"v4": "permit tcp 10.77.0.2 255.255.255.255 0.0.0.0 0.0.0.0", "v6": "permit ipv6 2001:db8::/32 ::/0"}
+	for _, f := range []aclFamily{aclV4, aclV6} {
+		t.Run(f.name, func(t *testing.T) {
+			cmds, poster := newACLTestCommandsRC(append(rcIface(f, true), f.header, "    "+foreign[f.name], "    auto-delete", "!"))
+			if err := f.remove(cmds, confirmed(t, "OpkgTun15")); err != nil {
+				t.Fatalf("снятие: %v", err)
+			}
+			if len(poster.parses) != 0 {
+				t.Fatalf("нашего правила в дереве нет — ни одного POST, got %v", poster.parses)
+			}
+		})
+	}
+}
+
 // Running-config не прочитан — не снимаем НИЧЕГО: решить, чей это список,
 // нечем, а снести чужие правила необратимо.
 func TestRemovePermitAllACL_RunningConfigUnreadable_TouchesNothing(t *testing.T) {

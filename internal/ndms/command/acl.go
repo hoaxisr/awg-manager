@@ -345,7 +345,7 @@ func (c *InterfaceCommands) freshACLTree(ctx context.Context, name string) ([]st
 // removePermitAll — снятие permit-all одного семейства по готовому дереву, F606.
 // Таблица П17:
 //
-//	чужие правила            → снять только нашу строку (F314)
+//	чужие правила            → снять только нашу строку (F314), если она есть
 //	bound ∧ autoDelete       → только unbind: список NDMS снимает сам
 //	bound ∧ ¬autoDelete      → unbind, затем remove
 //	¬bound ∧ listed          → remove
@@ -371,6 +371,13 @@ func (c *InterfaceCommands) removePermitAll(ctx context.Context, name string, li
 	acl := "_WEBADMIN_" + name
 	header, label := f.header(acl), f.label()
 	if hasForeignACLRules(lines, header, f.rule()) {
+		// Нашей строки в дереве нет (снята в веб-морде, реап-ретрай после
+		// частичного снятия) — POST не шлём: `no rule found to delete.` —
+		// ошибка разбора в status[], кандидат в E ndm-лога, и уходила бы
+		// каждым тиком ретрая. Команды — только по доказанному дереву.
+		if !hasOurPermitRule(lines, name, f) {
+			return nil
+		}
 		return c.removeOurPermitRule(ctx, fmt.Sprintf("no %s %s", header, f.rule()), label+" permit remove "+acl)
 	}
 	bound, listed, autoDelete := aclState(lines, name, f)
