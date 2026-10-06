@@ -66,7 +66,7 @@ export function tunnelStatusBucket(status: string): 'running' | 'broken' | 'star
 // неудавшегося старта по существующей записи (подмена устройства только под
 // down-записью). «Выключен» здесь неправда — тумблер пользователя включён,
 // старт повторят бут, подъём WAN или кнопка.
-export const FAILED_START_LABEL = 'Не запустился — будет повтор';
+export const FAILED_START_LABEL = 'Не запустился — нажмите «Запустить»';
 
 export function isEnabledButDown(status: string, enabled: boolean | undefined): boolean {
 	return status === 'disabled' && enabled === true;
