@@ -100,13 +100,20 @@ func IsACLDuplicate(err error) bool {
 
 // SetPermitAllACL создаёт permit-all access-list `_WEBADMIN_<name>` (конвенция
 // веб-морды Keenetic — UI показывает его как разрешение доступа к
-// интерфейсу), привязывает `in` и включает auto-delete. Идемпотентен: дубль
-// permit толерируется, повторные bind/auto-delete идемпотентны в NDMS.
+// интерфейсу), привязывает `in` и включает auto-delete. Идемпотентен: permit
+// уходит только без нашего правила в свежем running-config (hasOurPermitRule,
+// F607), повторные bind/auto-delete идемпотентны в NDMS без E.
 func (c *InterfaceCommands) SetPermitAllACL(ctx context.Context, iface query.Confirmed) error {
 	name := iface.Name()
 	acl := "_WEBADMIN_" + name
-	if err := c.ACLPermitIP(ctx, acl, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0"); err != nil && !IsACLDuplicate(err) {
+	present, err := c.hasOurPermitRule(ctx, name, permitV4)
+	if err != nil {
 		return err
+	}
+	if !present {
+		if err := c.ACLPermitIP(ctx, acl, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0"); err != nil && !IsACLDuplicate(err) {
+			return err
+		}
 	}
 	if err := c.ACLBind(ctx, iface, acl); err != nil {
 		return err
@@ -122,12 +129,13 @@ func (c *InterfaceCommands) SetPermitAllACL(ctx context.Context, iface query.Con
 // Гранулярных v6-примитивов сознательно нет: единственный потребитель — вот эта
 // композиция, а managed-серверы работают только с v4.
 //
-// Порядок и толерантность те же, что у v4: permit → bind → auto-delete
-// (auto-delete работает только на привязанном списке), повторный permit NDMS
-// отклоняет как дубль без дублирования правила. Фраза отказа у v6 ТА ЖЕ, что у
-// v4 («a duplicate was found for the rule being set», stand-verified
-// 2026-08-11), хотя ident другой (Network::Ip6::Acl) — поэтому IsACLDuplicate
-// годится на оба протокола и отдельного матчера не нужно.
+// Порядок и толерантность те же, что у v4: permit (только без нашего правила
+// в свежем running-config, F607) → bind → auto-delete (auto-delete работает
+// только на привязанном списке); permit, всё же встретивший правило (гонка
+// чтение→POST), NDMS отклоняет как дубль без дублирования. Фраза отказа у v6
+// ТА ЖЕ, что у v4 («a duplicate was found for the rule being set»,
+// stand-verified 2026-08-11), хотя ident другой (Network::Ip6::Acl) — поэтому
+// IsACLDuplicate годится на оба протокола и отдельного матчера не нужно.
 //
 // Дополнительная толерантность против v4: до KeeneticOS 5.01 команд
 // `ipv6 access-list`/`ipv6 access-group` не существует вовсе (isACLUnsupported).
@@ -135,14 +143,20 @@ func (c *InterfaceCommands) SetPermitAllACL(ctx context.Context, iface query.Con
 func (c *InterfaceCommands) SetPermitAllACLv6(ctx context.Context, iface query.Confirmed) error {
 	name := iface.Name()
 	acl := "_WEBADMIN_" + name
-	err := postMutationCheckedTolerant(ctx, c.poster, c.save,
-		map[string]any{"parse": fmt.Sprintf("ipv6 access-list %s permit ipv6 ::/0 ::/0", acl)},
-		"acl6 permit "+acl,
-		isACLUnsupported,
-		c.queries.RunningConfig.InvalidateAll,
-	)
-	if err != nil && !IsACLDuplicate(err) {
+	present, err := c.hasOurPermitRule(ctx, name, permitV6)
+	if err != nil {
 		return err
+	}
+	if !present {
+		err := postMutationCheckedTolerant(ctx, c.poster, c.save,
+			map[string]any{"parse": fmt.Sprintf("ipv6 access-list %s permit ipv6 ::/0 ::/0", acl)},
+			"acl6 permit "+acl,
+			isACLUnsupported,
+			c.queries.RunningConfig.InvalidateAll,
+		)
+		if err != nil && !IsACLDuplicate(err) {
+			return err
+		}
 	}
 	if err := postMutationCheckedTolerant(ctx, c.poster, c.save,
 		map[string]any{"parse": fmt.Sprintf("interface %s ipv6 access-group %s in", name, acl)},
@@ -178,8 +192,25 @@ func hasForeignACLRules(lines []string, header, ours string) bool {
 	return false
 }
 
-// permitAllFamily — семейство снятия permit-all. Тип неэкспортирован, значений
-// два: опечатка семейства не компилируется.
+// hasOurPermitRule — стоит ли наше правило permit-all семейства f в свежем
+// running-config (F607). Улики стенда X2 (5.01.C.6): идемпотентной формы permit
+// у NDMS нет — повтор того же правила, повтор с лишними пробелами (NDMS
+// нормализует строку) дают `E Network::[Ip6::]Acl: a duplicate was found`,
+// `permit ip any any` — `argument parse error`, JSON-формы access-list —
+// `Command::Root: no input`; повтор bind и auto-delete идёт без E. Поэтому
+// permit гейтится чтением, а IsACLDuplicate остаётся терпимостью гонки
+// чтение→POST. Дерево не прочитано — ошибка наверх, не шлём ничего: вслепую
+// это снова E, а one-shot ассерт повторит следующим тиком.
+func (c *InterfaceCommands) hasOurPermitRule(ctx context.Context, name string, f permitAllFamily) (bool, error) {
+	lines, err := c.freshACLTree(ctx, name)
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(query.ACLRulesOf(lines, f.header("_WEBADMIN_"+name)), f.rule()), nil
+}
+
+// permitAllFamily — семейство permit-all (постановка и снятие). Тип
+// неэкспортирован, значений два: опечатка семейства не компилируется.
 type permitAllFamily uint8
 
 const (
@@ -273,10 +304,10 @@ func (c *InterfaceCommands) RemovePermitAllACLs(ctx context.Context, iface query
 	)
 }
 
-// freshACLTree — свежий running-config для решения о снятии: мимо кэша и мимо
-// чужого чтения в полёте (Fetch). Список и привязку меняют и веб-морда, и
-// каскад auto-delete, а хук ndm об этом не приходит. Дерево не прочитано —
-// не снимаем НИЧЕГО: гадать, чей это список, дороже, чем оставить своё
+// freshACLTree — свежий running-config для решения о снятии и о permit: мимо
+// кэша и мимо чужого чтения в полёте (Fetch). Список и привязку меняют и
+// веб-морда, и каскад auto-delete, а хук ndm об этом не приходит. Дерево не
+// прочитано — не шлём НИЧЕГО: гадать, чей это список, дороже, чем оставить своё
 // разрешение до следующего прохода.
 func (c *InterfaceCommands) freshACLTree(ctx context.Context, name string) ([]string, error) {
 	lines, err := c.queries.RunningConfig.Fetch(ctx)

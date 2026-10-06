@@ -103,7 +103,8 @@ func TestACLPrimitives_NestedErrorSurfaces(t *testing.T) {
 }
 
 // SetPermitAllACL: последовательность permit→bind→auto-delete с конвенцией
-// _WEBADMIN_; дубль permit (идемпотентный re-assert) толерируется.
+// _WEBADMIN_. Running-config без правила, а permit встречает дубль — гонка
+// чтение→POST (F607): дубль толерируется.
 func TestSetPermitAllACL_SequenceAndDuplicateTolerance(t *testing.T) {
 	cmds, poster := newACLTestCommands(nestedACLError("a duplicate was found for the rule being set."))
 	if err := cmds.SetPermitAllACL(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
@@ -126,7 +127,8 @@ func TestSetPermitAllACL_SequenceAndDuplicateTolerance(t *testing.T) {
 
 // SetPermitAllACLv6/RemovePermitAllACLv6: у NDMS под IPv6 ОТДЕЛЬНОЕ пространство
 // списков — `ipv6 access-list` + `ipv6 access-group`, имя то же (форма снята с
-// живого роутера 2026-08-11). Порядок и толерантность к дублю — как у v4.
+// живого роутера 2026-08-11). Порядок и толерантность к дублю (гонка
+// чтение→POST на running-config без правила, F607) — как у v4.
 func TestSetPermitAllACLv6_SequenceAndDuplicateTolerance(t *testing.T) {
 	cmds, poster := newACLTestCommands(nestedACLError("a duplicate was found for the rule being set."))
 	if err := cmds.SetPermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
@@ -526,5 +528,118 @@ func TestRemovePermitAllACLs_V4FailureStillRemovesV6(t *testing.T) {
 	}
 	if want := []string{aclV4.unbindCmd(), aclV6.unbindCmd()}; !slices.Equal(poster.parses, want) {
 		t.Fatalf("parses = %v, ждали %v", poster.parses, want)
+	}
+}
+
+// F607 (П18, В2): permit уходит только при отсутствии нашего правила в свежем
+// running-config. Идемпотентной формы permit у NDMS нет (стенд X2: повтор и
+// повтор с лишними пробелами — E duplicate, JSON-формы — `no input`), а
+// повтор bind и auto-delete идёт без E — их шлём как раньше.
+func (f aclFamily) set(c *InterfaceCommands, i query.Confirmed) error {
+	if f.name == "v6" {
+		return c.SetPermitAllACLv6(context.Background(), i)
+	}
+	return c.SetPermitAllACL(context.Background(), i)
+}
+
+func (f aclFamily) permitCmd() string { return f.header + " " + f.rule }
+func (f aclFamily) bindCmd() string {
+	return "interface OpkgTun15 " + f.group + " _WEBADMIN_OpkgTun15 in"
+}
+func (f aclFamily) autoDeleteCmd() string { return f.header + " auto-delete" }
+
+// rcStore подменяет running-config командного слоя своим FakeGetter'ом —
+// чтобы считать чтения и менять дерево между ними.
+func rcStore(cmds *InterfaceCommands, lines []string) *query.FakeGetter {
+	fg := query.NewFakeGetter()
+	setRCLines(fg, lines)
+	cmds.queries.RunningConfig = query.NewRunningConfigStore(fg, query.NopLogger())
+	return fg
+}
+
+func setRCLines(fg *query.FakeGetter, lines []string) {
+	body, _ := json.Marshal(map[string]any{"message": lines})
+	fg.SetJSON("/show/running-config", string(body))
+}
+
+// Правило стоит — permit не шлётся (это и есть 2 E на включение, X2); bind и
+// auto-delete уходят: они идемпотентны без E и чинят снятую привязку.
+// Чтение — ровно одно на вызов (≈89 тиков ndm).
+// Мутация: убрать чтение (permit всегда) → три POST, красный.
+func TestSetPermitAllACL_RulePresent_NoPermitPost(t *testing.T) {
+	for _, f := range []aclFamily{aclV4, aclV6} {
+		t.Run(f.name, func(t *testing.T) {
+			cmds, poster := newACLTestCommandsRC(nil)
+			fg := rcStore(cmds, append(rcIface(f, true), rcList(f, true)...))
+			if err := f.set(cmds, confirmed(t, "OpkgTun15")); err != nil {
+				t.Fatalf("постановка: %v", err)
+			}
+			if want := []string{f.bindCmd(), f.autoDeleteCmd()}; !slices.Equal(poster.parses, want) {
+				t.Fatalf("parses = %v, ждали %v", poster.parses, want)
+			}
+			if n := fg.Calls("/show/running-config"); n != 1 {
+				t.Fatalf("чтений running-config = %d, ждали 1", n)
+			}
+		})
+	}
+}
+
+// Правила нет (список снят мимо нас, апгрейд, первое включение) — полная
+// тройка permit → bind → auto-delete.
+// Мутация: permit не шлётся никогда → два POST, красный.
+func TestSetPermitAllACL_RuleAbsent_FullSequence(t *testing.T) {
+	for _, f := range []aclFamily{aclV4, aclV6} {
+		t.Run(f.name, func(t *testing.T) {
+			cmds, poster := newACLTestCommandsRC(rcIface(f, false))
+			if err := f.set(cmds, confirmed(t, "OpkgTun15")); err != nil {
+				t.Fatalf("постановка: %v", err)
+			}
+			if want := []string{f.permitCmd(), f.bindCmd(), f.autoDeleteCmd()}; !slices.Equal(poster.parses, want) {
+				t.Fatalf("parses = %v, ждали %v", poster.parses, want)
+			}
+		})
+	}
+}
+
+// Running-config не прочитан — не шлём НИЧЕГО, ошибка наверх: one-shot ассерт
+// флаг не взведёт и повторит следующим тиком (L4).
+// Мутация: игнорировать ошибку чтения → permit ушёл, красный.
+func TestSetPermitAllACL_RunningConfigUnreadable_NoPosts(t *testing.T) {
+	for _, f := range []aclFamily{aclV4, aclV6} {
+		t.Run(f.name, func(t *testing.T) {
+			cmds, poster := newACLTestCommandsRC(nil)
+			fg := rcStore(cmds, nil)
+			fg.SetError("/show/running-config", errors.New("ndms boom"))
+			err := f.set(cmds, confirmed(t, "OpkgTun15"))
+			if err == nil || !strings.Contains(err.Error(), "ndms boom") {
+				t.Fatalf("err = %v, ждали отказ чтения running-config", err)
+			}
+			if len(poster.parses) != 0 {
+				t.Fatalf("ни одной команды быть не должно, got %v", poster.parses)
+			}
+		})
+	}
+}
+
+// Решение по свежему дереву, не по кэшу: кэш помнит правило, а список уже
+// снят мимо нас (веб-морда, каскад auto-delete) — permit обязан уйти, иначе
+// интерфейс остаётся без разрешения.
+// Мутация: Fetch → Lines (кэш) → permit не уходит, красный.
+func TestSetPermitAllACL_ReadsFreshTree(t *testing.T) {
+	for _, f := range []aclFamily{aclV4, aclV6} {
+		t.Run(f.name, func(t *testing.T) {
+			cmds, poster := newACLTestCommandsRC(nil)
+			fg := rcStore(cmds, append(rcIface(f, true), rcList(f, true)...))
+			if _, err := cmds.queries.RunningConfig.Lines(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			setRCLines(fg, rcIface(f, false))
+			if err := f.set(cmds, confirmed(t, "OpkgTun15")); err != nil {
+				t.Fatalf("постановка: %v", err)
+			}
+			if len(poster.parses) == 0 || poster.parses[0] != f.permitCmd() {
+				t.Fatalf("решение по устаревшему кэшу: %v", poster.parses)
+			}
+		})
 	}
 }

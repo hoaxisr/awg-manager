@@ -2037,6 +2037,34 @@ func TestReconcilePolicyTun_SkipsPermitACLWhenProbeFailed(t *testing.T) {
 	})
 }
 
+// Цена ассерта F607 (П18): каждый SetPermitAllACL[v6] читает running-config
+// один раз (TestSetPermitAllACL_RulePresent_NoPermitPost), а сам ассерт —
+// one-shot на процесс: за любое число тиков по одному вызову на семейство,
+// то есть не больше 2 чтений (≈89 тиков ndm каждое).
+// Мутация: не взводить флаг после успеха → вызов на каждом тике, красный.
+func TestReconcilePolicyTun_PermitACLAssertOneShot(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip policy Policy0", "    permit global OpkgTun0",
+	}}
+	h.svc.policyTunACLAsserted = false
+	h.svc.policyTunACLv6Asserted = false
+
+	for i := 0; i < 3; i++ {
+		if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+			t.Fatalf("reconcilePolicyTun #%d: %v", i, err)
+		}
+	}
+	if n := h.log.count("SetPermitACL:OpkgTun0"); n != 1 {
+		t.Errorf("v4-ассерт за 3 тика: %d вызовов, ждали 1", n)
+	}
+	if n := h.log.count("SetPermitACLv6:OpkgTun0"); n != 1 {
+		t.Errorf("v6-ассерт за 3 тика: %d вызовов, ждали 1", n)
+	}
+}
+
 // stubTunKernelAddrs подменяет чтение адресов интерфейса из ядра.
 func stubTunKernelAddrs(t *testing.T, addrs ...string) {
 	t.Helper()

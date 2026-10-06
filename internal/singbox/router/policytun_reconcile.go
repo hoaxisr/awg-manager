@@ -303,7 +303,10 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	}
 
 	// One-shot (до первого УСПЕХА) ассерт permit-ACL: покрывает апгрейд поверх
-	// уже включённого режима и удаление списка мимо нас. Гейт probeErr == nil —
+	// уже включённого режима и удаление списка мимо нас (В2). Идемпотентен
+	// чтением: permit уходит только без нашего правила в свежем running-config
+	// (F607, без этого — 2 E duplicate на каждое включение); цена ≈89 тиков ndm
+	// на чтение, по одному на семейство за процесс. Гейт probeErr == nil —
 	// живость интерфейса подтверждена, иначе bind упал бы и осиротевший список
 	// остался бы в конфиге навсегда.
 	if !s.policyTunACLAsserted && s.deps.OpkgTun != nil && probeErr == nil {
