@@ -23,20 +23,21 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
-	"github.com/hoaxisr/awg-manager/internal/listenfirewall"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerinfo"
 )
 
 var (
-	ErrArchNotSupported = errors.New("telemt is only supported on aarch64 and x86_64 routers")
-	ErrNotInstalled     = errors.New("telemt binary is not installed")
-	ErrChecksumMismatch = errors.New("downloaded archive checksum does not match pinned SHA256")
-	ErrDiskSpace        = errors.New("insufficient disk space for telemt installation")
+	ErrArchNotSupported    = errors.New("telemt is only supported on aarch64 and x86_64 routers")
+	ErrNotInstalled        = errors.New("telemt binary is not installed")
+	ErrChecksumMismatch    = errors.New("downloaded archive checksum does not match pinned SHA256")
+	ErrDiskSpace           = errors.New("insufficient disk space for telemt installation")
+	ErrAlreadyInstalling   = errors.New("telemt installation is already in progress")
 )
 
 // Service coordinates telemt installation, configuration, and process management.
 type Service struct {
 	mu            sync.Mutex
+	isInstalling  bool
 	dataDir       string
 	telemtDir     string
 	binPath       string
@@ -331,6 +332,19 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 
 // Install downloads, verifies, and installs the pinned telemt binary.
 func (s *Service) Install(ctx context.Context) error {
+	s.mu.Lock()
+	if s.isInstalling {
+		s.mu.Unlock()
+		return ErrAlreadyInstalling
+	}
+	s.isInstalling = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.isInstalling = false
+		s.mu.Unlock()
+	}()
+
 	if !IsArchSupported(s.arch) {
 		return ErrArchNotSupported
 	}
@@ -511,7 +525,7 @@ func (s *Service) startProcess(ctx context.Context) error {
 		if port <= 0 {
 			port = DefaultPort
 		}
-		_ = listenfirewall.Apply(ctx, port, "tcp")
+		_ = applyFirewall(ctx, port)
 		s.openedPort = port
 		return nil
 	}
@@ -527,14 +541,22 @@ func (s *Service) startProcess(ctx context.Context) error {
 
 	// telemt has native daemon support: telemt start --pid-file <path> <config>
 	cmd := exec.CommandContext(ctx, s.binPath, "start", "--pid-file", s.pidPath, s.cfgPath)
+	cmd.Dir = s.telemtDir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		// Fallback: try foreground execution in background goroutine if daemon mode fails
 		return fmt.Errorf("telemt start failed: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 
-	// Verify startup
-	time.Sleep(200 * time.Millisecond)
-	if running, _ := s.GetRunningState(); !running {
+	// Verify startup with polling loop (allows slower MIPS/ARM CPUs time to spawn)
+	started := false
+	for i := 0; i < 5; i++ {
+		time.Sleep(200 * time.Millisecond)
+		if r, _ := s.GetRunningState(); r {
+			started = true
+			break
+		}
+	}
+	if !started {
 		return errors.New("telemt failed to start: process exited immediately")
 	}
 
@@ -542,7 +564,7 @@ func (s *Service) startProcess(ctx context.Context) error {
 	if port <= 0 {
 		port = DefaultPort
 	}
-	_ = listenfirewall.Apply(ctx, port, "tcp")
+	_ = applyFirewall(ctx, port)
 	s.openedPort = port
 
 	return nil
@@ -562,9 +584,9 @@ func (s *Service) stopProcess(ctx context.Context) error {
 	if port <= 0 {
 		port = DefaultPort
 	}
-	listenfirewall.Remove(ctx, port, "tcp")
+	removeFirewall(ctx, port)
 	if s.openedPort > 0 && s.openedPort != port {
-		listenfirewall.Remove(ctx, s.openedPort, "tcp")
+		removeFirewall(ctx, s.openedPort)
 	}
 	s.openedPort = 0
 
@@ -576,6 +598,7 @@ func (s *Service) stopProcess(ctx context.Context) error {
 
 	// Try graceful stop via telemt CLI
 	stopCmd := exec.CommandContext(ctx, s.binPath, "stop", "--pid-file", s.pidPath)
+	stopCmd.Dir = s.telemtDir
 	_ = stopCmd.Run()
 
 	// Wait up to 1 second

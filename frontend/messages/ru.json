@@ -7652,5 +7652,5 @@
 	"settings_integrations_telemt_unavailable": "Недоступно",
 	"settings_integrations_telemt_remove_title": "Удалить Telemt?",
 	"settings_integrations_telemt_remove_message": "Служба Telemt будет остановлена, а исполняемый файл удален с роутера.",
-	"settings_integrations_telemt_remove_secondary": "Конфигурационные файлы config.toml и raw.toml сохранятся."
+	"settings_integrations_telemt_remove_secondary": "Конфигурационные файлы config.toml и settings.json сохранятся."
 }

@@ -7268,5 +7268,5 @@
 	"settings_integrations_telemt_unavailable": "Unavailable",
 	"settings_integrations_telemt_remove_title": "Remove Telemt?",
 	"settings_integrations_telemt_remove_message": "The Telemt service will be stopped and its executable will be removed from the router.",
-	"settings_integrations_telemt_remove_secondary": "Configuration files config.toml and raw.toml will be preserved."
+	"settings_integrations_telemt_remove_secondary": "Configuration files config.toml and settings.json will be preserved."
 }
