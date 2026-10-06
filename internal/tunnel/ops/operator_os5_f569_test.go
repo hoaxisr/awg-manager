@@ -488,12 +488,25 @@ func TestRollback_ExistingRecord_TuntapFails_RecordRemoved(t *testing.T) {
 	be.replaceErr = errors.New("injected: tuntap")
 	o, _ := newOS5LifecycleOn(t, &recordingPoster{f: f}, f, be, true)
 	o.firewall = &MockFirewall{addError: errors.New("injected: firewall")}
+	cfg := lifecycleCfg(t)
+	cfg.DefaultRoute = true
 
-	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err == nil || !strings.Contains(err.Error(), "injected: firewall") {
+	if err := o.ColdStart(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "injected: firewall") {
 		t.Fatalf("ColdStart: err = %v, want отказ файрвола", err)
 	}
 	if be.exists("opkgtun10") || f.Has("OpkgTun10") || !slices.Contains(f.Posts, postNo) {
 		t.Fatalf("устройство=%v запись=%v posts=%v, want ни устройства, ни записи", be.exists("opkgtun10"), f.Has("OpkgTun10"), f.Posts)
+	}
+	// L3: снос существующей записи снимает её маршрутизацию, как Delete, —
+	// после последнего down, перед `no`. Мутация: снос L2 без снятия → красный.
+	down, nd, ng, no := slices.Index(f.Posts, postDown), slices.Index(f.Posts, postNoDefault), slices.Index(f.Posts, postNoGlobal), slices.Index(f.Posts, postNo)
+	for i, p := range f.Posts {
+		if p == postDown && i < no {
+			down = i
+		}
+	}
+	if nd < down || ng < down || nd > no || ng > no || nd < 0 || ng < 0 {
+		t.Fatalf("снятия default/global между down и `no` нет: %v", f.Posts)
 	}
 	if !o.queries.Interfaces.ClaimOwnDestroyed("OpkgTun10") {
 		t.Fatal("снос отката без кредита своего ifdestroyed")
@@ -730,9 +743,14 @@ func TestDelete_DownFails_FailClosed(t *testing.T) {
 	be.plug(t, "opkgtun10", true)
 	o, _ := newOS5LifecycleOn(t, downDeniedPoster{f}, f, be, true)
 
-	err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"})
+	err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany", DefaultRoute: true})
 	if err == nil || !strings.Contains(err.Error(), "injected: down") {
 		t.Fatalf("err = %v, want отказ down", err)
+	}
+	// M1: туннель остаётся работать — его default route и ip global целы.
+	// Мутация: снятие до down → красный.
+	if slices.Contains(f.Posts, postNoDefault) || slices.Contains(f.Posts, postNoGlobal) {
+		t.Fatalf("маршрутизация работающего туннеля снята при отказе down: %v", f.Posts)
 	}
 	downFailedKept(t, f, be)
 }
@@ -875,9 +893,10 @@ func newOS5WithSave(t *testing.T, f *ndmsquery.FakeNDMS, getter ndmsquery.Getter
 func indexOf(posts []string, want string) int { return slices.Index(posts, want) }
 
 // Kernel-снос снимает `ip route default` (только при DefaultRoute) и `ip
-// global` до down — по своему состоянию, без чтения running-config.
+// global` после down, перед `no interface` (M1) — по своему состоянию, без
+// чтения running-config.
 // Мутации: снимать default при DefaultRoute=false → лишний POST, красный;
-// снимать после down → порядок, красный; читать running-config → счётчик,
+// снимать до down → порядок, красный; читать running-config → счётчик,
 // красный.
 func TestDelete_StripsRoutingByOwnState(t *testing.T) {
 	for _, dflt := range []bool{true, false} {
@@ -893,9 +912,9 @@ func TestDelete_StripsRoutingByOwnState(t *testing.T) {
 			}
 			p.quiesce()
 			posts, _ := p.snapshot()
-			want := []string{postNoGlobal, postDown, postNo, postSave}
+			want := []string{postDown, postNoGlobal, postNo, postSave}
 			if dflt {
-				want = append([]string{postNoDefault}, want...)
+				want = []string{postDown, postNoDefault, postNoGlobal, postNo, postSave}
 			}
 			if !slices.Equal(posts, want) {
 				t.Fatalf("posts=%v, want %v", posts, want)
@@ -949,9 +968,9 @@ func TestRollback_StripsByAppliedFlags(t *testing.T) {
 		}
 		p.quiesce()
 		posts, _ := p.snapshot()
-		nd, ng, down := indexOf(posts, postNoDefault), indexOf(posts, postNoGlobal), indexOf(posts, postDown)
-		if nd < 0 || ng < 0 || down < 0 || nd > down || ng > down {
-			t.Fatalf("снятия до down нет: %v", posts)
+		nd, ng, down, no := indexOf(posts, postNoDefault), indexOf(posts, postNoGlobal), indexOf(posts, postDown), indexOf(posts, postNo)
+		if nd < 0 || ng < 0 || down < 0 || no < 0 || nd < down || ng < down || nd > no || ng > no {
+			t.Fatalf("снятия между down и `no` нет: %v", posts)
 		}
 		if f.Has("OpkgTun10") {
 			t.Fatalf("запись осталась: %v", posts)
@@ -967,9 +986,9 @@ func rejectAddressCommands(t *testing.T, o *OperatorOS5Impl, f *ndmsquery.FakeND
 		Save: o.commands.Save, IsOS5: func() bool { return true }})
 }
 
-// Удержание сохранения держится на всю последовательность сноса (снятия,
-// down, подмена, `no`): fire в ней откладывается, save-POST между первым
-// снятием и `no` нет, оракул без E/C. Мутация: снять внешнее удержание в
+// Удержание сохранения держится на всю последовательность сноса (down,
+// подмена, снятия, `no`): fire в ней откладывается, save-POST между down и
+// `no` нет, оракул без E/C. Мутация: снять внешнее удержание в
 // removeOpkgTun → сохранение уходит до `no` (тест доставляет событие, чтобы
 // внутреннее удержание не висело), красный по форме Posts.
 func TestDelete_SaveHeldAcrossSequence(t *testing.T) {
@@ -992,7 +1011,7 @@ func TestDelete_SaveHeldAcrossSequence(t *testing.T) {
 	}
 	p.quiesce()
 	posts, _ := p.snapshot()
-	first, no := indexOf(posts, postNoGlobal), indexOf(posts, postNo)
+	first, no := indexOf(posts, postDown), indexOf(posts, postNo)
 	if first < 0 || no < 0 || slices.Contains(posts[first:no], postSave) {
 		t.Fatalf("сохранение внутри сноса: %v", posts)
 	}
@@ -1104,5 +1123,77 @@ func TestDelete_RollbackWithoutRecord_NoHold(t *testing.T) {
 	}
 	if !f.Has("OpkgTun10") {
 		t.Fatal("запись снята откатом без deleteRecord")
+	}
+}
+
+// L6: удержание берётся до первого шага сноса. Ожидание полёта отменено
+// (обрыв HTTP-запроса) — Delete отказан, host-route к endpoint и запись NDMS
+// целы, ни одного POST. Мутация: удержание после removeHostRouteIfUnused →
+// `ip route del` в журнале, красный.
+func TestDelete_HoldCancelled_HostRouteKept(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(upTun10())
+	be := newDeviceBackend(t, f)
+	be.plug(t, "opkgtun10", true)
+	o, p, sc := newOS5WithSave(t, f, f, be, 0)
+	rec := &ipRunRecorder{}
+	o.ipRun = rec.run
+	o.endpointRoutes["awg10"] = "203.0.113.5"
+	// Полёт без события до конца теста.
+	p.mu.Lock()
+	p.manual = true
+	p.mu.Unlock()
+	sc.Request()
+	for posts, _ := p.snapshot(); !slices.Contains(posts, postSave); posts, _ = p.snapshot() {
+		time.Sleep(time.Millisecond)
+	}
+	defer func() {
+		p.mu.Lock()
+		p.manual = false
+		p.mu.Unlock()
+		f.SaveSettled()
+		sc.OnConfigurationSaved(1e9)
+	}()
+	before, _ := p.snapshot()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := o.Delete(ctx, &storage.AWGTunnel{ID: "awg10", Name: "Germany", ResolvedEndpointIP: "203.0.113.5"}); err == nil {
+		t.Fatal("Delete без ошибки при отменённом ожидании полёта")
+	}
+	for _, c := range rec.Calls {
+		if strings.Contains(c, "route del") {
+			t.Fatalf("host-route снят до удержания: %v", rec.Calls)
+		}
+	}
+	if o.endpointRoutes["awg10"] == "" {
+		t.Fatal("host-route забыт картой при отказе Delete")
+	}
+	if posts, _ := p.snapshot(); len(posts) != len(before) || !f.Has("OpkgTun10") {
+		t.Fatalf("POST при отказе удержания: %v", posts[len(before):])
+	}
+}
+
+// L3: откат по существующей записи упал до `ip global` (адрес отвергнут), и
+// подмена сорвалась — запись сносится (L2). Её global и default ставили
+// прежние старты: снимаются перед `no`, хотя этот старт их не ставил.
+// Мутация: снимать по applied и для существующей записи → красный.
+func TestRollback_ExistingRecord_L2_StripsPriorRouting(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(upTun10())
+	be := newDeviceBackend(t, f)
+	be.plug(t, "opkgtun10", false) // tun NDMS после ребута
+	be.replaceErr = errors.New("injected: tuntap")
+	o, _ := newOS5LifecycleOn(t, rejectAddressPoster{f}, f, be, true)
+	cfg := lifecycleCfg(t)
+	cfg.DefaultRoute = true
+
+	if err := o.ColdStart(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "injected: address") {
+		t.Fatalf("ColdStart: err = %v, want отказ адреса", err)
+	}
+	if f.Has("OpkgTun10") {
+		t.Fatalf("запись без устройства оставлена: %v", f.Posts)
+	}
+	nd, ng, no := slices.Index(f.Posts, postNoDefault), slices.Index(f.Posts, postNoGlobal), slices.Index(f.Posts, postNo)
+	if nd < 0 || ng < 0 || nd > no || ng > no {
+		t.Fatalf("снятия default/global перед `no` нет: %v", f.Posts)
 	}
 }
