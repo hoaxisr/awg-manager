@@ -122,7 +122,7 @@ type SaveCoordinator struct {
 	// отключение шины: без сокета он был бы на каждое сохранение (L7).
 	// Сбрасывает подключение.
 	fallbackWarned bool
-	observer      func(deferred bool)
+	observer       func(deferred bool)
 	// Эпохи (Н10b): requested растёт на каждом Request, saved — значение
 	// requested на момент POST полёта, закрытого событием или потолком.
 	requested, saved uint64
