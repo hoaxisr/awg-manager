@@ -366,6 +366,7 @@ func newCreateTestService(t *testing.T) (*Service, *storage.SettingsStore, *stat
 	ifaces := query.NewInterfaceStoreWithTTL(getter, query.NopLogger(), 0, 0)
 	queries := &query.Queries{
 		Interfaces:    ifaces,
+		Peers:         query.NewPeerStore(query.NopLogger(), ifaces),
 		Policies:      query.NewPolicyStore(getter, query.NopLogger()),
 		WGServers:     query.NewWGServerStore(getter, query.NopLogger(), ifaces),
 		RunningConfig: query.NewRunningConfigStore(getter, query.NopLogger()),
@@ -1019,6 +1020,7 @@ func newLANSegmentsTestService(t *testing.T) (*Service, *storage.SettingsStore, 
 	ifaces := query.NewInterfaceStoreWithTTL(getter, query.NopLogger(), 0, 0)
 	queries := &query.Queries{
 		Interfaces:    ifaces,
+		Peers:         query.NewPeerStore(query.NopLogger(), ifaces),
 		Policies:      query.NewPolicyStore(getter, query.NopLogger()),
 		WGServers:     query.NewWGServerStore(getter, query.NopLogger(), ifaces),
 		RunningConfig: query.NewRunningConfigStore(getter, query.NopLogger()),
@@ -1876,12 +1878,21 @@ func inFlight(t *testing.T, svc *Service, run func() error) (finish func() error
 	return inFlightOn(t, svc, nil, run)
 }
 
-// inFlightOn — inFlight с задержкой на POST, подходящем под match.
+// testCommands — команды над тем же poster, что и transport сервиса: создание
+// и снос интерфейса идут через них (П24). Save — debounce час: save в тестах
+// не летит.
+func testCommands(p command.Poster, q *query.Queries) *command.Commands {
+	return command.NewCommands(command.Deps{Poster: p, Save: command.NewSaveCoordinator(p, nil, time.Hour, time.Hour, 0, nil), Queries: q})
+}
+
+// inFlightOn — inFlight с задержкой на POST, подходящем под match. Команды
+// пересобираются над тем же gatePoster: создание интерфейса идёт через них.
 func inFlightOn(t *testing.T, svc *Service, match func(map[string]interface{}) bool, run func() error) (finish func() error) {
 	t.Helper()
 	gp := &gatePoster{rciPoster: svc.transport, match: match, entered: make(chan struct{}), gate: make(chan struct{})}
 	gp.armed.Store(true)
 	svc.transport = gp
+	svc.commands = command.NewCommands(command.Deps{Poster: gp, Save: svc.commands.Save, Queries: svc.queries})
 	done := make(chan error, 1)
 	go func() { done <- run() }()
 	<-gp.entered

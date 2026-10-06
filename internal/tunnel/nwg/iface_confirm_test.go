@@ -141,17 +141,18 @@ func TestDelete_Present_NoInterfaceThenForget(t *testing.T) {
 	if rec, _ := o.queries.Interfaces.Get(context.Background(), "Wireguard0"); rec != nil {
 		t.Fatal("record must be forgotten after successful delete")
 	}
-	if f.E != 0 || f.Phantoms != 0 || srv.log.posts() != 1 {
+	// Снос — командой, не батчем транспорта (П24).
+	if f.E != 0 || f.Phantoms != 0 || srv.log.posts() != 0 {
 		t.Fatalf("E=%d phantoms=%d batches=%d", f.E, f.Phantoms, srv.log.posts())
 	}
 }
 
-// Батч сноса отказал не по «интерфейса нет»: запись в кэше остаётся (иначе её
+// Снос отказал не по «интерфейса нет»: запись в кэше остаётся (иначе её
 // индекс освободился бы, и следующий Create писал бы поверх живого), ошибка наружу.
-func TestDelete_BatchFailure_KeepsRecord(t *testing.T) {
-	o, _, _, _, srv := newLifecycleOperator(t, false, false)
-	srv.respond = func(string) (string, bool) {
-		return `[{"status":"error","message":"interface is busy"},{}]`, true
+func TestDelete_Refused_KeepsRecord(t *testing.T) {
+	o, _, poster, _, _ := newLifecycleOperator(t, false, false)
+	poster.respond = func(p string) (string, bool) {
+		return `{"status":"error","message":"interface is busy"}`, strings.Contains(p, `"no":true`)
 	}
 	if err := o.Delete(context.Background(), nwgStored(awgObfuscatedIface())); err == nil {
 		t.Fatal("want error on failed delete batch")
@@ -161,11 +162,11 @@ func TestDelete_BatchFailure_KeepsRecord(t *testing.T) {
 	}
 }
 
-// Батч сноса ответил «интерфейса нет» — снято до нас: запись забывается, это успех.
-func TestDelete_BatchMissingInterface_Forgets(t *testing.T) {
-	o, _, _, _, srv := newLifecycleOperator(t, false, false)
-	srv.respond = func(string) (string, bool) {
-		return `[{"status":"error","message":"unable to find interface \"Wireguard0\""},{}]`, true
+// Снос ответил «интерфейса нет» — снято до нас: запись забывается, это успех.
+func TestDelete_MissingInterface_Forgets(t *testing.T) {
+	o, _, poster, _, _ := newLifecycleOperator(t, false, false)
+	poster.respond = func(p string) (string, bool) {
+		return `{"status":"error","message":"unable to find interface \"Wireguard0\""}`, strings.Contains(p, `"no":true`)
 	}
 	if err := o.Delete(context.Background(), nwgStored(awgObfuscatedIface())); err != nil {
 		t.Fatal(err)
@@ -175,11 +176,12 @@ func TestDelete_BatchMissingInterface_Forgets(t *testing.T) {
 	}
 }
 
-// Создание пакетом: сначала только `interface WireguardN`, затем чтение
-// списка (Confirm), затем настройки тем же именем по Confirmed.
+// Создание пакетом: сначала только `interface WireguardN` (командой, П24),
+// затем чтение списка (Confirm), затем настройки тем же именем по Confirmed.
 func TestCreateViaBatch_CreateThenConfirmThenSettings(t *testing.T) {
 	o, _, _, f, srv := newLifecycleOperator(t, false, false)
 	f.ExpectCreate("Wireguard1")
+	lists := f.ListCalls()
 	idx, err := o.createViaBatch(context.Background(), nwgStored(awgObfuscatedIface()))
 	if err != nil {
 		t.Fatal(err)
@@ -187,18 +189,18 @@ func TestCreateViaBatch_CreateThenConfirmThenSettings(t *testing.T) {
 	if idx != 1 {
 		t.Fatalf("index = %d, want 1", idx)
 	}
+	if f.Posts[0] != `[{"interface":{"name":"Wireguard1"}}]` {
+		t.Fatalf("first command must be the bare create: %v", f.Posts)
+	}
 	bodies, listsAt := srv.sent()
-	if len(bodies) != 2 {
-		t.Fatalf("want 2 batches, got %d: %v", len(bodies), bodies)
+	if len(bodies) != 1 {
+		t.Fatalf("want 1 settings batch, got %d: %v", len(bodies), bodies)
 	}
-	if strings.TrimSpace(bodies[0]) != `[{"interface":{"name":"Wireguard1"}}]` {
-		t.Fatalf("first batch must be the bare create: %s", bodies[0])
+	if listsAt[0] <= lists {
+		t.Fatalf("settings sent without a list read after create: lists %d → %v", lists, listsAt)
 	}
-	if listsAt[1] <= listsAt[0] {
-		t.Fatalf("settings sent without a list read after create: lists %v", listsAt)
-	}
-	if !strings.Contains(bodies[1], `"name":"Wireguard1"`) || !strings.Contains(bodies[1], `"description":"n"`) {
-		t.Fatalf("settings batch: %s", bodies[1])
+	if !strings.Contains(bodies[0], `"name":"Wireguard1"`) || !strings.Contains(bodies[0], `"description":"n"`) {
+		t.Fatalf("settings batch: %s", bodies[0])
 	}
 	if f.E != 0 || f.Phantoms != 0 || len(f.Created) != 1 {
 		t.Fatalf("E=%d phantoms=%d created=%v", f.E, f.Phantoms, f.Created)
@@ -217,9 +219,9 @@ func TestCreateViaBatch_AbsentAfterCreate_Error(t *testing.T) {
 	if !errors.Is(err, query.ErrNotListed) || !strings.Contains(err.Error(), "Wireguard1") {
 		t.Fatalf("want ErrNotListed naming Wireguard1, got %v", err)
 	}
-	bodies, _ := srv.sent()
-	if len(bodies) != 2 || strings.TrimSpace(bodies[1]) != `{"interface":{"Wireguard1":{"no":true}}}` {
-		t.Fatalf("want create + drop, no settings: %q", bodies)
+	// Создание и снос — командами (П24), батчей настроек нет.
+	if bodies, _ := srv.sent(); len(bodies) != 0 || len(f.Posts) != 2 || f.Posts[1] != `{"interface":{"Wireguard1":{"no":true}}}` {
+		t.Fatalf("want create + drop, no settings: bodies=%q posts=%q", bodies, f.Posts)
 	}
 	if f.Has("Wireguard1") || f.Phantoms != 0 || f.E != 0 {
 		t.Fatalf("has=%v E=%d phantoms=%d", f.Has("Wireguard1"), f.E, f.Phantoms)
@@ -437,7 +439,8 @@ func TestCreateViaBatch_HiddenForeign_ErrorNoSettings(t *testing.T) {
 	if !errors.Is(err, command.ErrNotCreated) {
 		t.Fatalf("err=%v", err)
 	}
-	if bodies, _ := srv.sent(); len(bodies) != 1 || !f.Has("Wireguard1") || f.E != 0 {
-		t.Fatalf("bodies=%v has=%v E=%d", bodies, f.Has("Wireguard1"), f.E)
+	// Одно создание (командой, П24), ни настроек, ни сноса.
+	if bodies, _ := srv.sent(); len(bodies) != 0 || len(f.Posts) != 1 || !f.Has("Wireguard1") || f.E != 0 {
+		t.Fatalf("bodies=%v posts=%v has=%v E=%d", bodies, f.Posts, f.Has("Wireguard1"), f.E)
 	}
 }

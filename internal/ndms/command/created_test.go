@@ -129,11 +129,11 @@ func hiddenForeign(f *query.FakeNDMS, name, typ string) {
 // ответил «interface created»: ErrNotCreated, ни настроек, ни подтверждения,
 // ни сноса; чужая запись цела, E == 0.
 func TestCreateInterface_Existing_ErrorNoConfigureNoDrop(t *testing.T) {
-	_, f, q := newOracleCommands(t, nil)
+	cmds, f, _ := newOracleCommands(t, nil)
 	hiddenForeign(f, "Wireguard1", "Wireguard")
 	posts, lists := len(f.Posts), f.ListCalls()
 	payload := map[string]any{"interface": map[string]any{"Wireguard1": map[string]any{}}}
-	c, reply, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
+	c, reply, err := cmds.Interfaces.CreateInterface(context.Background(), payload, "Wireguard1", false)
 	if !errors.Is(err, ErrNotCreated) || c != (query.Confirmed{}) || reply != CreateNotNew {
 		t.Fatalf("c=%v err=%v", c, err)
 	}
@@ -144,10 +144,10 @@ func TestCreateInterface_Existing_ErrorNoConfigureNoDrop(t *testing.T) {
 
 // Создано — подтверждено, как раньше.
 func TestCreateInterface_Created_Confirms(t *testing.T) {
-	_, f, q := newOracleCommands(t, nil)
+	cmds, f, _ := newOracleCommands(t, nil)
 	f.ExpectCreate("Wireguard1")
 	payload := map[string]any{"interface": map[string]any{"Wireguard1": map[string]any{}}}
-	c, reply, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
+	c, reply, err := cmds.Interfaces.CreateInterface(context.Background(), payload, "Wireguard1", false)
 	if err != nil || c.Name() != "Wireguard1" || f.Phantoms != 0 || reply != CreateNew {
 		t.Fatalf("c=%v err=%v phantoms=%d", c, err, f.Phantoms)
 	}

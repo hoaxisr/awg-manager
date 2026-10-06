@@ -4,56 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
-
-	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
-
-// ConfirmCreated подтверждает только что созданный интерфейс name
-// (query.ConfirmCreated: ограниченное ожидание записи в свежем списке, F584).
-// Записи так и нет, а создание доказано ответом NDMS (created:
-// query.ErrNotListed) — снос `no interface name`: без него интерфейс
-// оставался сиротой, которую снести нечем (снос требует Confirmed). Создание
-// не доказано (ErrNotSeen: запись уже была) — ошибка без сноса: `no interface` по
-// отсутствующему пишет E в журнал ndm (стенд 5.01.C.6), а неснесённую сироту
-// покажет следующий список (Occupied / системные туннели).
-//
-// Это ЕДИНСТВЕННАЯ команда по интерфейсу без Confirmed (исключение под
-// TestNotListed_OnlyInConfirmCreated). Контракт Confirmed она не нарушает:
-// он защищает от `interface X …` по отсутствующему X, которое СОЗДАЁТ X, а
-// `no interface X` ничего не создаёт; шлётся только при доказанном создании, а
-// отказ «unable to find interface» (запись успели снять) терпим. Имя — из нашей же принятой команды
-// создания или из ответа NDMS на импорт (`created`), запись — наша, созданная
-// этим же потоком миллисекунды назад.
-//
-// Список не прочитан (решение 4) — ошибка без команд: созданное остаётся на
-// роутере, его найдёт следующий список, как любую запись без туннеля.
-//
-// created — CreateReply.Proven() ответа на создание (у импорта — всегда true).
-// Без этого сноса нет вовсе (F574): команда попала в уже существующую
-// запись, и если это чужая, ещё не показанная списком, снос удалил бы её.
-//
-// Свой ifdestroyed сноса оркестратор узнаёт по карте (Forget, П20).
-func ConfirmCreated(ctx context.Context, p Poster, save *SaveCoordinator, q *query.Queries, name string, created bool) (query.Confirmed, error) {
-	conf, err := q.Interfaces.ConfirmCreated(ctx, name, created)
-	if !created || !errors.Is(err, query.ErrNotListed) {
-		return conf, err
-	}
-	var after []func()
-	if save != nil {
-		after = append(after, save.Request)
-	}
-	if q.RunningConfig != nil {
-		after = append(after, q.RunningConfig.InvalidateAll)
-	}
-	drop := map[string]any{"interface": map[string]any{name: map[string]any{"no": true}}}
-	if derr := PostChecked(ctx, p, drop, "delete unlisted "+name, isMissingInterface, after...); derr != nil {
-		return query.Confirmed{}, errors.Join(err, fmt.Errorf("%w: %w", ErrLeftOnRouter, derr))
-	}
-	q.Interfaces.Forget(name)
-	return query.Confirmed{}, fmt.Errorf("%w; созданная запись снесена", err)
-}
 
 // ErrNotCreated — на создание NDMS не ответил `"name" interface created.`:
 // запись name уже была, команда её лишь настроила (F574). Для имени,
@@ -81,7 +33,7 @@ const (
 
 // Proven — создание доказано ответом NDMS (`"name" interface created.`):
 // только такую запись вызывающий вправе сносить по имени при откате, и только
-// её, не показанную списком, сносит ConfirmCreated.
+// её, не показанную списком, сносит confirmCreated.
 func (r CreateReply) Proven() bool { return r == CreateNew }
 
 // PostCreate — POST команды, создающей name (с настройками или без), с
@@ -125,22 +77,4 @@ func hasCreatedMessage(v any, want string) bool {
 		}
 	}
 	return false
-}
-
-// CreateInterface — создание name, выбранного свободным (FreeIndex), и его
-// подтверждение (F574, F584). NDMS доказанно не создал запись (CreateNotNew)
-// — ErrNotCreated без подтверждения, настроек и сноса, если только
-// вызывающий не принимает существующую запись осознанно (existingOK: managed
-// restore в живой сервер того же ключа). Вердикт — вызывающему: откат вправе
-// сносить только Proven.
-func CreateInterface(ctx context.Context, p Poster, save *SaveCoordinator, q *query.Queries, payload any, name string, existingOK bool, after ...func()) (query.Confirmed, CreateReply, error) {
-	reply, err := PostCreate(ctx, p, payload, "create "+name, name, after...)
-	if err != nil {
-		return query.Confirmed{}, reply, err
-	}
-	if reply == CreateNotNew && !existingOK {
-		return query.Confirmed{}, reply, fmt.Errorf("%w: %s", ErrNotCreated, name)
-	}
-	c, err := ConfirmCreated(ctx, p, save, q, name, reply.Proven())
-	return c, reply, err
 }

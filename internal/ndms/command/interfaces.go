@@ -12,14 +12,19 @@ import (
 
 // InterfaceCommands performs write operations on NDMS Interface objects.
 type InterfaceCommands struct {
-	poster       Poster
-	save         *SaveCoordinator
-	queries      *query.Queries
+	ndmsMutator
 	hookNotifier HookNotifier
 }
 
+// NewInterfaceCommands паникует на nil s (newMutator).
 func NewInterfaceCommands(p Poster, s *SaveCoordinator, q *query.Queries, hn HookNotifier) *InterfaceCommands {
-	return &InterfaceCommands{poster: p, save: s, queries: q, hookNotifier: hn}
+	return &InterfaceCommands{ndmsMutator: newMutator(p, s, q), hookNotifier: hn}
+}
+
+// CreateInterface — createInterface для пакетов, собирающих payload создания
+// сами (managed, nwg): координатор и кэши — из конструктора команд.
+func (c *InterfaceCommands) CreateInterface(ctx context.Context, payload any, name string, existingOK bool, after ...func()) (query.Confirmed, CreateReply, error) {
+	return c.createInterface(ctx, payload, name, existingOK, after...)
 }
 
 // SetHookNotifier replaces the HookNotifier after construction. Used to
@@ -51,7 +56,7 @@ func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, 
 	if err != nil {
 		return query.Confirmed{}, err
 	}
-	conf, err := ConfirmCreated(ctx, c.poster, c.save, c.queries, name, reply.Proven())
+	conf, err := c.confirmCreated(ctx, name, reply.Proven())
 	if err != nil {
 		return query.Confirmed{}, fmt.Errorf("create opkgtun: %w", err) // имя уже в ошибке подтверждения
 	}
@@ -71,7 +76,7 @@ func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, 
 		// Запись без нашего описания — тупик: kernel-старт сочтёт её чужой
 		// (ForeignRecordError), sing-box не найдёт как сироту по описанию, номер
 		// занят навсегда. Сносим её по тому же Confirmed; свой ifdestroyed
-		// оркестратор узнает по карте (Forget, П20). Частичное применение
+		// оркестратор узнает по карте (RemovalToken, П20). Частичное применение
 		// настроек тогда не важно.
 		return query.Confirmed{}, errors.Join(err, c.DeleteOpkgTun(ctx, conf))
 	}
@@ -84,24 +89,16 @@ func (c *InterfaceCommands) CreateOpkgTun(ctx context.Context, name, description
 	return c.CreateOpkgTunWithSecurityLevel(ctx, name, description, "public", free)
 }
 
-// DeleteOpkgTun removes an interface (any type — NDMS accepts "no": true for any).
-// Снято (или его уже не было) — запись забывается в кэше сразу, не дожидаясь
-// хука ifdestroyed (F546).
-func (c *InterfaceCommands) DeleteOpkgTun(ctx context.Context, iface query.Confirmed) error {
+// DeleteOpkgTun removes an interface (any type — NDMS accepts "no": true for any)
+// через deleteInterface. invalidators — кэши вызывающего сверх своих (managed:
+// WGServers, StaticRoutes).
+func (c *InterfaceCommands) DeleteOpkgTun(ctx context.Context, iface query.Confirmed, invalidators ...func()) error {
 	name := iface.Name()
-	payload := map[string]any{
-		"interface": map[string]any{
-			name: map[string]any{"no": true},
-		},
-	}
-	err := postMutationCheckedTolerant(ctx, c.poster, c.save, payload, "delete interface "+name,
-		isMissingInterface,
-		func() { c.queries.Peers.Invalidate(name) },
-		c.queries.RunningConfig.InvalidateAll)
-	if err == nil {
-		c.queries.Interfaces.Forget(name)
-	}
-	return err
+	return c.deleteInterface(ctx, iface, "delete interface "+name,
+		append([]func(){
+			func() { c.queries.Peers.Invalidate(name) },
+			c.queries.RunningConfig.InvalidateAll,
+		}, invalidators...)...)
 }
 
 // SetSecurityLevel switches interface between public (egress) and private (LAN).

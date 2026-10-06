@@ -1096,7 +1096,7 @@ func (o *OperatorOS5Impl) downBeforeSwap(ctx context.Context, tunnelID string, n
 //     ни на миг не видна нашим читателям без устройства (0767).
 //  3. `no interface` — NDMS снимает свой tun сам (30/30, и созданный не им);
 //     при живом amneziawg было бы 003b. Свой ifdestroyed оркестратор узнаёт
-//     по карте (DeleteOpkgTun → Forget → RemovedByUs, П20), ожидания
+//     по карте (DeleteOpkgTun → RemovalToken → RemovedByUs, П20), ожидания
 //     destroyed нет.
 //  4. tun остался (NDMS не снял) — снимаем: записи уже нет, C невозможен.
 //

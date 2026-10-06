@@ -120,9 +120,8 @@ func (o *OperatorNativeWG) SyncPrivateKey(ctx context.Context, iface query.Confi
 	ndmsName := iface.Name()
 	cmds := []any{
 		payloads.CmdWireguardPrivateKey(iface, stored.Interface.PrivateKey),
-		payloads.CmdSave(),
 	}
-	if _, err := o.postIfaceBatch(ctx, iface, cmds); err != nil {
+	if _, err := o.postIfaceBatchSaved(ctx, iface, cmds); err != nil {
 		return fmt.Errorf("sync private-key: %w", err)
 	}
 	o.appLog.Info("sync-private-key", ndmsName, "private-key synced")
@@ -287,8 +286,8 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, iface query.Confirmed, 
 	if previousPublicKey != "" && previousPublicKey != stored.Peer.PublicKey {
 		cmds = append(cmds, payloads.CmdWireguardPeerNo(iface, previousPublicKey))
 	}
-	cmds = append(cmds, payloads.CmdWireguardPeer(iface, peerCfg), payloads.CmdSave())
-	_, err := o.postIfaceBatch(ctx, iface, cmds)
+	cmds = append(cmds, payloads.CmdWireguardPeer(iface, peerCfg))
+	_, err := o.postIfaceBatchSaved(ctx, iface, cmds)
 	if err != nil {
 		return fmt.Errorf("sync peer: %w", err)
 	}

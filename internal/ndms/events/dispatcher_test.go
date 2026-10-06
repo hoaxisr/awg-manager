@@ -615,7 +615,7 @@ func TestDispatcher_VerifyDuringList_CoalescedAndDecidedByRerun(t *testing.T) {
 				t.Fatal("список пачки не начат")
 			}
 			waitDrain(t, drained)
-			q.Interfaces.Forget(tc.id)
+			q.Interfaces.ExpectRemoval(tc.id).Removed()
 			d.Enqueue(Event{Type: EventIfCreated, ID: tc.id})
 			waitDrain(t, drained)
 

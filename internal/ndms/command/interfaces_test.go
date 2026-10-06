@@ -93,6 +93,10 @@ func (g oracleGetter) Get(ctx context.Context, path string, dst any) error {
 
 // newOracleCommands — все группы команд на оракуле; raw — ответы по путям
 // сверх модели FakeNDMS.
+// newTestSave — координатор для автономных конструкторов команд в тестах
+// (nil паникует, newMutator): debounce 0 — заказ стреляет сразу, в p.
+func newTestSave(p Poster) *SaveCoordinator { return NewSaveCoordinator(p, nil, 0, 0, 0, nil) }
+
 func newOracleCommands(t *testing.T, raw map[string]string, ifaces ...ndms.Interface) (*Commands, *query.FakeNDMS, *query.Queries) {
 	t.Helper()
 	f := query.NewFakeNDMS(ifaces...)

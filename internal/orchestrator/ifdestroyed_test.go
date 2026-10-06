@@ -217,7 +217,7 @@ func TestHandleEvent_IfDestroyed_RemovedByUs_NoProbeNoStop(t *testing.T) {
 	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
 	o, op, store, ifaces := confirmProbeOrch(t, f)
 	f.Remove("OpkgTun10")
-	ifaces.Forget("OpkgTun10")
+	ifaces.ExpectRemoval("OpkgTun10").Removed()
 	lists := f.ListCalls()
 
 	if err := o.HandleEvent(context.Background(), Event{Type: EventNDMSIfDestroyed, NDMSName: "OpkgTun10"}); err != nil {
@@ -262,7 +262,7 @@ func TestHandleEvent_IfDestroyed_RemovedByUsAfterLock_NoProbe(t *testing.T) {
 		t.Fatal("HandleEvent не спросил RemovedByUs на входе")
 	}
 	f.Remove("OpkgTun10")
-	ifaces.Forget("OpkgTun10")
+	ifaces.ExpectRemoval("OpkgTun10").Removed()
 	lists := f.ListCalls()
 	o.unlockTunnel("awg10")
 

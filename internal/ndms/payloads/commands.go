@@ -24,10 +24,6 @@ func CmdInterfaceCreate(name string) any {
 	return map[string]any{"interface": map[string]any{"name": name}}
 }
 
-func CmdInterfaceDelete(c query.Confirmed) any {
-	return map[string]any{"interface": map[string]any{"name": c.Name(), "no": true}}
-}
-
 func CmdInterfaceDescription(c query.Confirmed, desc string) any {
 	return map[string]any{"interface": map[string]any{"name": c.Name(), "description": desc}}
 }
@@ -140,10 +136,4 @@ func CmdWireguardPeerNo(c query.Confirmed, publicKey string) any {
 	return map[string]any{"interface": map[string]any{"name": c.Name(), "wireguard": map[string]any{
 		"peer": map[string]any{"key": publicKey, "no": true},
 	}}}
-}
-
-// --- System (#30) ---
-
-func CmdSave() any {
-	return map[string]any{"system": map[string]any{"configuration": map[string]any{"save": map[string]any{}}}}
 }

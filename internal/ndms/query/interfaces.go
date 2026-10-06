@@ -40,9 +40,14 @@
 //
 // Своё создание и своё снятие — факты карты (П14, П20): owned — имена,
 // созданные нашим доказанным `created` (ConfirmCreated), removed — снятые
-// нашим успешным `no interface` (Forget). По ним OnCreated/OnDestroyed
+// нашим успешным `no interface` (RemovalToken). По ним OnCreated/OnDestroyed
 // отвечают диспетчеру «своё», а RemovedByUs — оркестратору: свой хук
 // существования не публикуется и не проверяется списком.
+//
+// Кредиты своих хуков (credits, hookcredits.go, П21) — счётчики по имени:
+// created выдаёт вход ConfirmCreated при доказанном создании, destroyed —
+// ExpectRemoval до POST `no interface`. Карту при нашем снятии чистит только
+// RemovalToken; единственный путь `no interface` — command.deleteInterface.
 package query
 
 import (
@@ -132,13 +137,13 @@ type InterfaceStore struct {
 	// ответа RCI, а `interface-name` там не имя ядра (5.02.A.11: NDMS-id
 	// или подпись, `Bridge0` → `Home`). Жило бы в записи — терялось бы при
 	// каждом сбросе, и следующий список снова спрашивал бы все ~20
-	// интерфейсов (F473). Снимается Forget и списком без этого id.
+	// интерфейсов (F473). Снимается forgetLocked и списком без этого id.
 	sysNames map[string]string
 
 	// seq — единые часы меток существования и «грязно»; под mu.
 	seq uint64
 	// exist — метка существования по id: последний хук ifcreated/ifdestroyed,
-	// наш Forget или вход ConfirmCreated. В решении не участвует — только
+	// наш forgetLocked или вход ConfirmCreated. В решении не участвует — только
 	// говорит, что ответ списка, начатого раньше метки, надо перечитать
 	// (contradictsLocked), и держит страж воскрешения (applyListLocked).
 	// Метки не новее начала применённого списка снимаются при его применении.
@@ -169,18 +174,21 @@ type InterfaceStore struct {
 
 	// owned — созданные нашим доказанным `created`, до снятия; FreeIndex не
 	// выбирает; их ifcreated — не новость ни карте (П6′), ни UI. Ставит
-	// ConfirmCreated при created; снимает её ошибка, Forget, уход id из карты
+	// ConfirmCreated при created; снимает её ошибка, forgetLocked, уход id из карты
 	// списком. ConfirmCreated без created держит здесь имя только на время
 	// ожидания (FreeIndex, M6′).
 	owned map[string]struct{}
-	// removed — seq и момент нашего успешного `no interface` (Forget) по имени (П20).
+	// removed — seq и момент нашего успешного `no interface` (forgetLocked) по имени (П20).
 	// Метка не потребляется (хуки FIFO); доказательство «снято нами» — пока
 	// ей не больше removedProofTTL. Снимает новое воплощение имени: вход
 	// ConfirmCreated, запись id в карту списком. ifcreated — нет: при живой
 	// метке он двусмыслен, решает список (OnCreated, verify). seq держит
-	// страж воскрешения: метку gone из Forget может перекрыть опоздавший
-	// ifcreated, а список, начатый до Forget, всё равно не применяется к id.
+	// страж воскрешения: метку gone из forgetLocked может перекрыть опоздавший
+	// ifcreated, а список, начатый до forgetLocked, всё равно не применяется к id.
 	removed map[string]removedMark
+	// credits — непогашенные кредиты своих хуков существования по имени (П21,
+	// hookcredits.go); записи с обоими нулями нет.
+	credits map[string]hookCredit
 	// createdBackoff — паузы между списками ConfirmCreated.
 	createdBackoff []time.Duration
 	// now — часы возраста списка действия (подменяются тестом).
@@ -225,6 +233,7 @@ func NewInterfaceStore(g Getter, log Logger) *InterfaceStore {
 		raw:       make(map[string]json.RawMessage),
 		owned:     make(map[string]struct{}),
 		removed:   make(map[string]removedMark),
+		credits:   make(map[string]hookCredit),
 
 		createdBackoff: confirmCreatedBackoff,
 		now:            time.Now,
@@ -389,8 +398,8 @@ func (s *InterfaceStore) unnamedLocked(raw map[string]ndms.Interface, start uint
 // applyListLocked кладёт свежий список в карту (П1): каждая запись — целиком,
 // всё, чего в списке нет, удаляется. Исключение одно — страж воскрешения: id,
 // которого нет в карте и который снят меткой новее начала списка start, не
-// кладётся. Срабатывает по нашему `no interface` (Forget, цель; по seq метки
-// removed — gone-метку Forget перекрывает опоздавший свой ifcreated) и по
+// кладётся. Срабатывает по нашему `no interface` (forgetLocked, цель; по seq метки
+// removed — gone-метку forgetLocked перекрывает опоздавший свой ifcreated) и по
 // устаревшему ifdestroyed чужого X, которого карта ещё не знает: тогда X не в
 // карте до следующего ifcreated/списка; команды решают по ответу, не по карте.
 // Известный id страж не трогает: хук — подсказка, карта — по списку.
@@ -440,7 +449,7 @@ func (s *InterfaceStore) goneSinceLocked(id string, start uint64) bool {
 	return ok && m.gone && m.seq > start
 }
 
-// removedMark — наш Forget: seq метки существования и момент (TTL).
+// removedMark — наш forgetLocked: seq метки существования и момент (TTL).
 type removedMark struct {
 	seq uint64
 	at  time.Time
@@ -1151,20 +1160,18 @@ func (s *InterfaceStore) RemovedByUs(name string) bool {
 }
 
 // removedByUsLocked — метка removed есть и не старше removedProofTTL.
-// Просроченную не удаляет (зовётся и под RLock): их чистит Forget.
+// Просроченную не удаляет (зовётся и под RLock): их чистит forgetLocked.
 func (s *InterfaceStore) removedByUsLocked(id string) bool {
 	m, ok := s.removed[id]
 	return ok && s.now().Sub(m.at) <= removedProofTTL
 }
 
-// Forget — запись снята нашей командой: зовётся ТОЛЬКО после своего успешного
-// `no interface` (или «unable to find» на него), никогда по хуку. Метка
-// существования + удаление из карты, без «грязно»: список, начатый до метки,
-// запись не воскресит (страж в applyListLocked). Владение снимается, ставится
-// метка removed (П20); просроченные метки removed чистятся здесь же.
-func (s *InterfaceStore) Forget(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// forgetLocked — запись снята нашей командой: зовёт ТОЛЬКО RemovalToken после
+// своего успешного `no interface` (или «unable to find» на него), никогда хук.
+// Метка существования + удаление из карты, без «грязно»: список, начатый до
+// метки, запись не воскресит (страж в applyListLocked). Владение снимается,
+// ставится метка removed (П20); просроченные метки removed чистятся здесь же.
+func (s *InterfaceStore) forgetLocked(id string) {
 	s.markExistLocked(id, true)
 	delete(s.byID, id)
 	delete(s.startedAt, id)
@@ -1183,7 +1190,7 @@ func (s *InterfaceStore) Forget(id string) {
 // OnSystemName — имя ядра из хука NDMS (`system_name` есть в хуках, стенд
 // 5.01.C.6: модель WAN строится по нему). Пишется всегда, даже для id, которого
 // карта ещё не знает: на создание layer-хуки приходят раньше ifcreated. Снимают
-// Forget и список без этого id (applyListLocked). Эхо id или подпись не
+// forgetLocked и список без этого id (applyListLocked). Эхо id или подпись не
 // кладутся: запись в sysNames снимает id с резолвера вслед за списком
 // (unnamedLocked), и мусор закрыл бы ему имя навсегда.
 func (s *InterfaceStore) OnSystemName(id, name string) {
@@ -1336,6 +1343,11 @@ func (c Confirmed) Name() string { return c.name }
 
 // String — имя: %v/%+v печатают запись как `Interface:X`.
 func (c Confirmed) String() string { return c.name }
+
+// Unlisted — запись, доказанно созданная NDMS (`created`), но не показанная
+// списком (ErrNotListed): её снос. Единственный вызывающий — notListedSite
+// (сканер TestUnlisted_OnlyInNotListedSite).
+func Unlisted(name string) Confirmed { return Confirmed{name: name} }
 
 type actionListKey struct{}
 
@@ -1496,6 +1508,9 @@ func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string, create
 	}
 	s.mu.Lock()
 	s.markExistLocked(name, false) // П4: NDMS ответил «создано»
+	if created {
+		s.grantCreatedLocked(name) // П21: наш ifcreated ещё придёт
+	}
 	delete(s.removed, name)
 	_, had := s.owned[name]
 	s.owned[name] = struct{}{}

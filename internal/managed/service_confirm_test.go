@@ -71,6 +71,7 @@ func newServiceWithOracle(t *testing.T, f *query.FakeNDMS, raw map[string]string
 	ifaces := query.NewInterfaceStore(g, query.NopLogger())
 	queries := &query.Queries{
 		Interfaces:    ifaces,
+		Peers:         query.NewPeerStore(query.NopLogger(), ifaces),
 		WGServers:     query.NewWGServerStore(g, query.NopLogger(), ifaces),
 		RunningConfig: query.NewRunningConfigStore(g, query.NopLogger()),
 		StaticRoutes:  query.NewStaticRouteStore(g, query.NopLogger()),

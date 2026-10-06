@@ -80,7 +80,7 @@ func TestInterfaceStore_ListRace_DoesNotResurrectDestroyed(t *testing.T) {
 	})
 	t.Run("Forget", func(t *testing.T) {
 		s, bg, done := startListInFlight(t)
-		s.Forget("Wireguard0") // наш `no interface` прошёл, пока список в полёте
+		s.ExpectRemoval("Wireguard0").Removed() // наш `no interface` прошёл, пока список в полёте
 		close(bg.gate)
 		<-done
 		if got, _ := s.Get(ctx, "Wireguard0"); got != nil {
@@ -135,7 +135,7 @@ func TestApplyList_ResurrectionGuard_OwnForget(t *testing.T) {
 		f.InList(func() {
 			f.InList(nil)
 			f.Remove("Wireguard0")
-			s.Forget("Wireguard0")
+			s.ExpectRemoval("Wireguard0").Removed()
 		})
 		if err := s.Refresh(ctx); err != nil {
 			t.Fatal(err)
@@ -232,7 +232,7 @@ func TestHooks_MatchingMap_NoDirty(t *testing.T) {
 			s.OnCreated("Wireguard5")
 		}, 1},
 		{"known OnDestroyed", func(_ *FakeNDMS, s *InterfaceStore) { s.OnDestroyed("Wireguard0") }, 1},
-		{"known Forget", func(_ *FakeNDMS, s *InterfaceStore) { s.Forget("Wireguard0") }, 0},
+		{"known Forget", func(_ *FakeNDMS, s *InterfaceStore) { s.ExpectRemoval("Wireguard0").Removed() }, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -310,7 +310,7 @@ func TestExist_PrunedByAppliedList(t *testing.T) {
 	s.OnCreated("Wireguard0")
 	s.OnDestroyed("Nope")
 	f.Remove("Wireguard1")
-	s.Forget("Wireguard1")
+	s.ExpectRemoval("Wireguard1").Removed()
 	f.InList(func() {
 		f.InList(nil)
 		s.OnDestroyed("Wireguard0") // в полёте: новее начала списка

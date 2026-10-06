@@ -14,13 +14,12 @@ import (
 )
 
 type WireguardCommands struct {
-	poster  Poster
-	save    *SaveCoordinator
-	queries *query.Queries
+	ndmsMutator
 }
 
+// NewWireguardCommands паникует на nil s (newMutator).
 func NewWireguardCommands(p Poster, s *SaveCoordinator, q *query.Queries) *WireguardCommands {
-	return &WireguardCommands{poster: p, save: s, queries: q}
+	return &WireguardCommands{ndmsMutator: newMutator(p, s, q)}
 }
 
 // SetASCParams sets the AmneziaWG ASC obfuscation parameters. The params
@@ -144,7 +143,7 @@ func (c *WireguardCommands) ImportWireguardConfig(ctx context.Context, confData 
 		}
 		return ImportResult{}, fmt.Errorf("import wireguard: router returned no created interface (intersects=%q; status: %s)", imp.Intersects, detail)
 	}
-	conf, err := ConfirmCreated(ctx, c.poster, c.save, c.queries, imp.Created, true)
+	conf, err := c.confirmCreated(ctx, imp.Created, true)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("import wireguard: %w", err) // имя уже в ошибке подтверждения
 	}

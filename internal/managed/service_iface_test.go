@@ -61,3 +61,42 @@ func TestRCIHelpers_ZeroConfirmed_NoPost(t *testing.T) {
 		t.Fatalf("posts=%v phantoms=%d", f.Posts, f.Phantoms)
 	}
 }
+
+// П24: снос сервера — единым путём команд (DeleteOpkgTun). Без команд —
+// ошибка без POST; с командами кэши managed сбрасываются, как у rciPost (п.9):
+// список серверов после сноса не показывает снятый.
+// Мутация: не прокидывать invalidators в DeleteOpkgTun → список из кэша со
+// снятым сервером, красный.
+func TestRciDeleteInterface_ViaCommands(t *testing.T) {
+	ctx := context.Background()
+	t.Run("not wired", func(t *testing.T) {
+		f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard1"})
+		queries := &query.Queries{Interfaces: query.NewInterfaceStore(f, query.NopLogger())}
+		svc := New(f, nil, queries, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+		conf, _, ok, err := queries.Interfaces.Confirm(ctx, "Wireguard1")
+		if err != nil || !ok {
+			t.Fatalf("confirm: ok=%v err=%v", ok, err)
+		}
+		if err := svc.rciDeleteInterface(ctx, conf); err == nil || len(f.Posts) != 0 {
+			t.Fatalf("err=%v posts=%v", err, f.Posts)
+		}
+	})
+	t.Run("wired", func(t *testing.T) {
+		f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"}, ndms.Interface{ID: "Wireguard3", Type: "Wireguard"})
+		s := newServiceWithOracle(t, f, nil)
+		conf, _, ok, err := s.queries.Interfaces.Confirm(ctx, "Wireguard1")
+		if err != nil || !ok {
+			t.Fatalf("confirm: ok=%v err=%v", ok, err)
+		}
+		if servers, err := s.queries.WGServers.List(ctx); err != nil || len(servers) != 2 {
+			t.Fatalf("до сноса: %v %v", servers, err)
+		}
+		if err := s.rciDeleteInterface(ctx, conf); err != nil {
+			t.Fatal(err)
+		}
+		servers, err := s.queries.WGServers.List(ctx)
+		if err != nil || len(servers) != 1 || f.Has("Wireguard1") {
+			t.Fatalf("после сноса список серверов %v (err=%v): кэш WGServers не сброшен", servers, err)
+		}
+	})
+}

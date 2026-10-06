@@ -36,7 +36,6 @@ func TestCmd_Confirmed_Payloads(t *testing.T) {
 		got  any
 		want string
 	}{
-		{"Delete", CmdInterfaceDelete(c), `{"interface":{"name":"Wireguard0","no":true}}`},
 		{"Description", CmdInterfaceDescription(c, "d"), `{"interface":{"description":"d","name":"Wireguard0"}}`},
 		{"SecurityLevel", CmdInterfaceSecurityLevel(c, "public"), `{"interface":{"name":"Wireguard0","security-level":{"public":true}}}`},
 		{"Up", CmdInterfaceUp(c, true), `{"interface":{"name":"Wireguard0","up":true}}`},

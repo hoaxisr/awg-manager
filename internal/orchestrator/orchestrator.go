@@ -537,7 +537,7 @@ func (o *Orchestrator) handleIfDestroyed(ctx context.Context, event Event) error
 		return err
 	}
 	defer o.unlockTunnel(tunnelID)
-	// Повторно после замка (N6): Delete держал его и снял запись (Forget)
+	// Повторно после замка (N6): Delete держал его и снял запись (RemovalToken)
 	// уже после того, как хук прошёл проверку на входе HandleEvent.
 	if o.ifdestroyedOurs(event.NDMSName) {
 		return nil

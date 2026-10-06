@@ -10,8 +10,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -79,7 +81,7 @@ func (f *fakeNDMS) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Single POST: CmdInterfaceDelete (по имени интерфейс не читается, F546).
+	// Single POST: снос из команд {"interface":{X:{"no":true}}} (F546, П24).
 	var single map[string]any
 	_ = json.Unmarshal(body, &single)
 
@@ -98,6 +100,12 @@ func (f *fakeNDMS) applyInterfaceCmd(cmd map[string]any) (created string) {
 	}
 	name, _ := iface["name"].(string)
 	if name == "" {
+		// command-форма сноса: {"interface":{X:{"no":true}}}
+		for n, body := range iface {
+			if b, _ := body.(map[string]any); b["no"] == true {
+				delete(f.known, n)
+			}
+		}
 		return ""
 	}
 	if no, _ := iface["no"].(bool); no {
@@ -116,8 +124,13 @@ func newCreateTestOperator(t *testing.T, f *fakeNDMS) *OperatorNativeWG {
 	ndmsinfo.Reset() // Get()==nil -> Supports{HRanges,WireguardASC}() == false
 	sem := transport.NewSemaphore(4)
 	tr := transport.NewWithURL(f.srv.URL, sem)
+	q := query.NewQueries(query.Deps{Getter: tr, Logger: query.NopLogger()})
+	// Создание и снос — через команды над тем же транспортом (П24); save —
+	// debounce час: в тестах не летит.
+	sc := command.NewSaveCoordinator(tr, nil, time.Hour, time.Hour, 0, nil)
 	o := &OperatorNativeWG{
-		queries:     &query.Queries{Interfaces: query.NewInterfaceStore(tr, nil)},
+		queries:     q,
+		commands:    command.NewCommands(command.Deps{Poster: tr, Save: sc, Queries: q}),
 		transport:   tr,
 		kmod:        NewKmodManager(nil),
 		appLog:      logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),

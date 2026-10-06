@@ -54,7 +54,7 @@ func TestOwned_Lifecycle(t *testing.T) {
 			t.Fatalf("(1) own=%v dirtyAt=%d, want true/0", own, dirtyAt(s))
 		}
 		f.Remove("OpkgTun1")
-		s.Forget("OpkgTun1")
+		s.ExpectRemoval("OpkgTun1").Removed()
 		if own, _ := s.OnCreated("OpkgTun1"); own || dirtyAt(s) == 0 {
 			t.Fatalf("(2) после Forget: own=%v dirtyAt=%d, want false/≠0", own, dirtyAt(s))
 		}
@@ -130,7 +130,7 @@ func TestRemoved_Lifecycle(t *testing.T) {
 	t.Run("forget and ttl", func(t *testing.T) {
 		f, s, clk := ownedStore(t)
 		f.Remove(x)
-		s.Forget(x)
+		s.ExpectRemoval(x).Removed()
 		lists := f.ListCalls()
 		if own := s.OnDestroyed(x); !own || !s.RemovedByUs(x) || dirtyAt(s) != 0 {
 			t.Fatalf("(1) own=%v RemovedByUs=%v dirtyAt=%d, want true/true/0", own, s.RemovedByUs(x), dirtyAt(s))
@@ -153,7 +153,7 @@ func TestRemoved_Lifecycle(t *testing.T) {
 		for _, recreated := range []bool{true, false} {
 			f, s, _ := ownedStore(t)
 			f.Remove(x)
-			s.Forget(x)
+			s.ExpectRemoval(x).Removed()
 			if recreated {
 				f.Add(ndms.Interface{ID: x, Type: "OpkgTun"})
 			}
@@ -178,7 +178,7 @@ func TestRemoved_Lifecycle(t *testing.T) {
 	t.Run("reborn by list", func(t *testing.T) {
 		f, s, _ := ownedStore(t)
 		f.Remove(x)
-		s.Forget(x)
+		s.ExpectRemoval(x).Removed()
 		f.Add(ndms.Interface{ID: x, Type: "OpkgTun"})
 		if err := s.Refresh(ctx); err != nil {
 			t.Fatal(err)
@@ -196,7 +196,7 @@ func TestRemoved_Lifecycle(t *testing.T) {
 	t.Run("reborn by own create", func(t *testing.T) {
 		f, s, _ := ownedStore(t)
 		f.Remove(x)
-		s.Forget(x)
+		s.ExpectRemoval(x).Removed()
 		f.Add(ndms.Interface{ID: x, Type: "OpkgTun"})
 		var once sync.Once
 		inFlight := true
@@ -218,7 +218,7 @@ func TestRemoved_Lifecycle(t *testing.T) {
 	t.Run("not consumed", func(t *testing.T) {
 		f, s, _ := ownedStore(t)
 		f.Remove(x)
-		s.Forget(x)
+		s.ExpectRemoval(x).Removed()
 		if a, b := s.OnDestroyed(x), s.OnDestroyed(x); !a || !b {
 			t.Fatalf("(6) own=%v,%v, want true,true", a, b)
 		}
@@ -233,7 +233,7 @@ func TestRemoved_Lifecycle(t *testing.T) {
 		f.InList(func() {
 			once.Do(func() {
 				f.Remove(x)
-				s.Forget(x)
+				s.ExpectRemoval(x).Removed()
 			})
 		})
 		if err := s.Refresh(ctx); err != nil {
@@ -256,7 +256,7 @@ func TestRemoved_Lifecycle(t *testing.T) {
 		f.InList(func() {
 			once.Do(func() {
 				f.Remove(x)
-				s.Forget(x)
+				s.ExpectRemoval(x).Removed()
 				s.OnCreated(x)
 			})
 		})

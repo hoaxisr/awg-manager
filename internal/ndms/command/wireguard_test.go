@@ -52,7 +52,8 @@ func listQueries(names ...string) *query.Queries {
 }
 
 func TestImportWireguardConfig_Success_ReturnsCreated(t *testing.T) {
-	c := NewWireguardCommands(&respPoster{body: realImportSuccess}, nil, listQueries("Wireguard3"))
+	p := &respPoster{body: realImportSuccess}
+	c := NewWireguardCommands(p, newTestSave(p), listQueries("Wireguard3"))
 
 	res, err := c.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
 	if err != nil {
@@ -68,7 +69,8 @@ func TestImportWireguardConfig_Success_PreservesIntersectAndMessages(t *testing.
 	// creates a new one, but the router reports the collision in intersects.
 	// The caller must not lose that context.
 	body := `{"interface":{"wireguard":{"import":{"intersects":"Wireguard3","created":"Wireguard4","status":[{"status":"message","code":"75507472","ident":"Wireguard::Interface","message":"\"Wireguard4\": imported settings."}]}}}}`
-	c := NewWireguardCommands(&respPoster{body: body}, nil, listQueries("Wireguard3", "Wireguard4"))
+	p := &respPoster{body: body}
+	c := NewWireguardCommands(p, newTestSave(p), listQueries("Wireguard3", "Wireguard4"))
 
 	res, err := c.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
 	if err != nil {
@@ -90,7 +92,8 @@ func TestImportWireguardConfig_EmptyCreated_SurfacesStatusMessage(t *testing.T) 
 	// status[] carries the router's explanation. The current code throws
 	// this message away and reports an opaque "empty created field".
 	body := `{"interface":{"wireguard":{"import":{"intersects":"","created":"","status":[{"status":"error","code":"75507473","ident":"Wireguard::Interface","message":"interface limit reached"}]}}}}`
-	c := NewWireguardCommands(&respPoster{body: body}, nil, nil)
+	p := &respPoster{body: body}
+	c := NewWireguardCommands(p, newTestSave(p), nil)
 
 	_, err := c.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
 	if err == nil {
@@ -103,7 +106,8 @@ func TestImportWireguardConfig_EmptyCreated_SurfacesStatusMessage(t *testing.T) 
 
 func TestImportWireguardConfig_EmptyCreated_IncludesIntersects(t *testing.T) {
 	body := `{"interface":{"wireguard":{"import":{"intersects":"Wireguard5","created":"","status":[]}}}}`
-	c := NewWireguardCommands(&respPoster{body: body}, nil, nil)
+	p := &respPoster{body: body}
+	c := NewWireguardCommands(p, newTestSave(p), nil)
 
 	_, err := c.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
 	if err == nil {
@@ -115,7 +119,8 @@ func TestImportWireguardConfig_EmptyCreated_IncludesIntersects(t *testing.T) {
 }
 
 func TestImportWireguardConfig_PosterError(t *testing.T) {
-	c := NewWireguardCommands(&errPoster{err: errors.New("boom")}, nil, nil)
+	p := &errPoster{err: errors.New("boom")}
+	c := NewWireguardCommands(p, newTestSave(p), nil)
 	_, err := c.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
 	if err == nil || !strings.Contains(err.Error(), "import wireguard") {
 		t.Fatalf("err = %v, want contains import wireguard", err)
@@ -123,7 +128,8 @@ func TestImportWireguardConfig_PosterError(t *testing.T) {
 }
 
 func TestImportWireguardConfig_InvalidResponseJSON(t *testing.T) {
-	c := NewWireguardCommands(&respPoster{body: `{"interface":`}, nil, nil)
+	p := &respPoster{body: `{"interface":`}
+	c := NewWireguardCommands(p, newTestSave(p), nil)
 	_, err := c.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
 	if err == nil || !strings.Contains(err.Error(), "import wireguard: decode") {
 		t.Fatalf("err = %v, want decode error", err)
@@ -132,7 +138,8 @@ func TestImportWireguardConfig_InvalidResponseJSON(t *testing.T) {
 
 func TestImportWireguardConfig_EmptyCreatedNoStatusMessage(t *testing.T) {
 	body := `{"interface":{"wireguard":{"import":{"intersects":"","created":"","status":[]}}}}`
-	c := NewWireguardCommands(&respPoster{body: body}, nil, nil)
+	p := &respPoster{body: body}
+	c := NewWireguardCommands(p, newTestSave(p), nil)
 	_, err := c.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
 	if err == nil || !strings.Contains(err.Error(), "no status message") {
 		t.Fatalf("err = %v, want no status message", err)
@@ -324,7 +331,8 @@ func TestImportWireguardConfig_LayerHooksDuringConfirm(t *testing.T) {
 func TestImportWireguardConfig_CreatedAbsent_Error(t *testing.T) {
 	q := listQueries()
 	q.Interfaces.SetCreatedBackoff()
-	c := NewWireguardCommands(&respPoster{body: realImportSuccess}, nil, q)
+	p := &respPoster{body: realImportSuccess}
+	c := NewWireguardCommands(p, newTestSave(p), q)
 	res, err := c.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
 	if err == nil || !strings.Contains(err.Error(), "Wireguard3") || res.Created != (query.Confirmed{}) {
 		t.Fatalf("res=%+v err=%v", res, err)

@@ -550,8 +550,9 @@ func TestKernelNameCommands_OnlyAllowed(t *testing.T) {
 
 // notListedSite — единственное место вне query, где ветвятся по
 // query.ErrNotListed: там исключение F584 — снос `no interface X` по имени из
-// нашей же принятой команды создания, без Confirmed (см. command/created.go).
-const notListedSite = "internal/ndms/command/created.go:ConfirmCreated"
+// нашей же принятой команды создания через query.Unlisted (см.
+// command/mutator.go). Ключ — файл:функция без ресивера.
+const notListedSite = "internal/ndms/command/mutator.go:confirmCreated"
 
 // TestNotListed_OnlyInConfirmCreated — обращение к ErrNotListed в прод-коде
 // вне query — только в notListedSite: иначе второе место могло бы слать
@@ -594,12 +595,11 @@ func TestNotListed_OnlyInConfirmCreated(t *testing.T) {
 // TestRawInterfaceDelete_OnlyConfirmed — снос интерфейса литералом
 // ({"interface":{X:{"no":true}}} или {"interface":{"name":X,"no":true}}) в
 // прод-коде — только по имени из Confirmed: X — вызов `….Name()` или
-// переменная, присвоенная из него в той же функции. Исключение одно —
-// notListedSite (F584): снос неподтверждённого с положительным следом.
+// переменная, присвоенная из него в той же функции. Исключений нет: снос
+// неподтверждённого (F584) идёт через query.Unlisted в тот же deleteInterface.
 // Формы `{"parse":"no interface X"}` сносом здесь не бывают (снимают
 // настройку) и не проверяются.
 func TestRawInterfaceDelete_OnlyConfirmed(t *testing.T) {
-	used := false
 	for _, f := range prodGoFiles(t, true) {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, f.rel, f.data, parser.SkipObjectResolution)
@@ -657,22 +657,133 @@ func TestRawInterfaceDelete_OnlyConfirmed(t *testing.T) {
 					}
 				}
 				for _, x := range names {
-					if ok2(x) {
-						continue
+					if !ok2(x) {
+						t.Errorf("%s: %s: снос интерфейса по имени не из Confirmed — только по query.Confirmed",
+							fset.Position(x.Pos()), key)
 					}
-					if key == notListedSite {
-						used = true
-						continue
-					}
-					t.Errorf("%s: снос интерфейса по имени не из Confirmed — только по query.Confirmed (исключение F584: %s)",
-						fset.Position(x.Pos()), notListedSite)
 				}
 				return true
 			})
 		}
 	}
+}
+
+// prodCalls — каждый вызов `….name(…)` или `name(…)` в прод-коде internal/ и
+// cmd/ (без комментариев и объявлений) с ключом "файл:функция".
+func prodCalls(t *testing.T, name string) (keys []string) {
+	t.Helper()
+	for _, f := range prodGoFiles(t, true) {
+		rel := filepath.ToSlash(f.rel)
+		if !strings.HasPrefix(rel, "internal/") && !strings.HasPrefix(rel, "cmd/") {
+			continue
+		}
+		if !strings.Contains(string(f.data), name) {
+			continue
+		}
+		file, fset, _ := parseProd(t, f)
+		for _, decl := range file.Decls {
+			key := rel + ":"
+			if fd, ok := decl.(*ast.FuncDecl); ok {
+				key += fd.Name.Name
+			}
+			ast.Inspect(decl, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				switch fn := call.Fun.(type) {
+				case *ast.SelectorExpr:
+					ok = fn.Sel.Name == name
+				case *ast.Ident:
+					ok = fn.Name == name
+				default:
+					ok = false
+				}
+				if ok {
+					keys = append(keys, key+" @ "+fset.Position(call.Pos()).String())
+				}
+				return true
+			})
+		}
+	}
+	return keys
+}
+
+// TestExpectRemoval_OnlyInDeleteInterface — кредит снятия выдаёт только
+// единственный путь `no interface` (П24): второй вызывающий выдавал бы кредит
+// без нашей команды или слал бы `no` мимо жетона.
+// Мутация: второй ExpectRemoval( в прод-файле → красный.
+func TestExpectRemoval_OnlyInDeleteInterface(t *testing.T) {
+	const site = "internal/ndms/command/delete.go:deleteInterface"
+	calls := prodCalls(t, "ExpectRemoval")
+	if len(calls) != 1 || !strings.HasPrefix(calls[0], site+" @ ") {
+		t.Errorf("ExpectRemoval вызывается %v, ждали ровно один раз в %s", calls, site)
+	}
+}
+
+// TestUnlisted_OnlyInNotListedSite — Confirmed без списка получает только
+// снос записи, доказанно созданной и не показанной (F584).
+// Мутация: второй вызов Unlisted( в прод-файле → красный.
+func TestUnlisted_OnlyInNotListedSite(t *testing.T) {
+	calls := prodCalls(t, "Unlisted")
+	if len(calls) != 1 || !strings.HasPrefix(calls[0], notListedSite+" @ ") {
+		t.Errorf("query.Unlisted вызывается %v, ждали ровно один раз в %s", calls, notListedSite)
+	}
+}
+
+// TestNoInterfaceForgetOutsideStore — карту при нашем снятии чистит только
+// RemovalToken, `no interface` — только deleteInterface: ни Forget, ни
+// payload-форм сноса и сохранения мимо них в прод-коде нет (П24).
+// Мутация: вернуть payloads.CmdSave или Interfaces.Forget( → красный.
+func TestNoInterfaceForgetOutsideStore(t *testing.T) {
+	for _, f := range prodGoFiles(t, true) {
+		code := withoutComments(t, f)
+		for _, bad := range []string{"Interfaces.Forget(", "CmdInterfaceDelete", "CmdSave"} {
+			if strings.Contains(code, bad) {
+				t.Errorf("%s: %s в прод-коде (П24)", f.rel, bad)
+			}
+		}
+	}
+}
+
+// TestSavePayload_OnlyInCoordinator — `system configuration save` в прод-коде
+// шлёт только SaveCoordinator: сохранение мимо него — полёт, которого
+// координатор не видит (П24, В3). Ищется литерал "save" под ключом
+// "configuration" и строка `configuration save` (форма parse).
+// Мутация: вернуть save в батч nwg → красный.
+func TestSavePayload_OnlyInCoordinator(t *testing.T) {
+	const site = "internal/ndms/command/save.go"
+	used := false
+	for _, f := range prodGoFiles(t, true) {
+		rel := filepath.ToSlash(f.rel)
+		file, fset, _ := parseProd(t, f)
+		ast.Inspect(file, func(n ast.Node) bool {
+			hit := false
+			switch n := n.(type) {
+			case *ast.KeyValueExpr:
+				if inner, ok := n.Value.(*ast.CompositeLit); ok && isStringLit(n.Key, "configuration") {
+					for _, el := range inner.Elts {
+						if kv, ok := el.(*ast.KeyValueExpr); ok && isStringLit(kv.Key, "save") {
+							hit = true
+						}
+					}
+				}
+			case *ast.BasicLit:
+				hit = n.Kind == token.STRING && strings.Contains(n.Value, "configuration save")
+			}
+			if !hit {
+				return true
+			}
+			if rel == site {
+				used = true
+				return true
+			}
+			t.Errorf("%s: сохранение конфигурации мимо SaveCoordinator (только %s)", fset.Position(n.Pos()), site)
+			return true
+		})
+	}
 	if !used {
-		t.Errorf("%s больше не сносит по голому имени — поправить notListedSite", notListedSite)
+		t.Errorf("%s больше не шлёт save — поправить сканер", site)
 	}
 }
 

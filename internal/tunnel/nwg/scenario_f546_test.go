@@ -214,7 +214,7 @@ func TestScenario_StaleDestroyedInConfirmFlight_DeleteSendsNoInterface(t *testin
 	}
 	sent := false
 	for _, p := range f.Posts {
-		sent = sent || strings.Contains(p, `{"interface":{"name":"Wireguard1","no":true}}`)
+		sent = sent || strings.Contains(p, `{"interface":{"Wireguard1":{"no":true}}}`)
 	}
 	if !sent || f.Has("Wireguard1") {
 		t.Fatalf("сирота: no interface отправлен=%v, запись есть=%v; posts=%v", sent, f.Has("Wireguard1"), f.Posts)

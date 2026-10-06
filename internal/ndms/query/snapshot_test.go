@@ -203,7 +203,7 @@ func TestSnapshot_ForgetDropsRaw(t *testing.T) {
 	if _, err := s.Snapshot(ctx, SnapshotRecent); err != nil {
 		t.Fatal(err)
 	}
-	s.Forget("Wireguard0")
+	s.ExpectRemoval("Wireguard0").Removed()
 	snap, err := s.Snapshot(ctx, SnapshotRecent)
 	if err != nil {
 		t.Fatal(err)

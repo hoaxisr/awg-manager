@@ -26,13 +26,21 @@ type payloadPoster struct {
 	payloads []string
 	// f — оракул: payload уходит и в него (фантомы, E), ответ — его.
 	f *query.FakeNDMS
+	// respond — подмена ответа по payload (отказ роутера); false — как обычно.
+	respond func(payload string) (string, bool)
 }
 
 func (p *payloadPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
 	b, _ := json.Marshal(payload)
 	p.mu.Lock()
 	p.payloads = append(p.payloads, string(b))
+	respond := p.respond
 	p.mu.Unlock()
+	if respond != nil {
+		if resp, ok := respond(string(b)); ok {
+			return json.RawMessage(resp), nil
+		}
+	}
 	if p.f != nil {
 		return p.f.Post(ctx, payload)
 	}

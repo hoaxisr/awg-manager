@@ -119,7 +119,7 @@ func TestActionList_RemovedAfterListNotConfirmed(t *testing.T) {
 		{"own Forget", func(f *FakeNDMS, s *InterfaceStore) {
 			f.Remove("Wireguard1")
 			_ = f.DrainHooks()
-			s.Forget("Wireguard1")
+			s.ExpectRemoval("Wireguard1").Removed()
 		}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

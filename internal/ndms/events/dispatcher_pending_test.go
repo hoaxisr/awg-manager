@@ -344,7 +344,7 @@ func TestDispatcher_OwnCreated_NotListedNotPublished(t *testing.T) {
 func TestDispatcher_OwnDestroyed_NotPublished(t *testing.T) {
 	f, q, d, listed := ownOracle(t)
 	f.Remove("Wireguard0")
-	q.Interfaces.Forget("Wireguard0")
+	q.Interfaces.ExpectRemoval("Wireguard0").Removed()
 	lists := f.ListCalls()
 	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
 	d.Start()
@@ -395,7 +395,7 @@ func TestDispatcher_ForeignCreated_ListedPublished(t *testing.T) {
 func TestDispatcher_ForeignDestroyed_RecreatedName_Published(t *testing.T) {
 	f, q, d, listed := ownOracle(t)
 	f.Remove("Wireguard0")
-	q.Interfaces.Forget("Wireguard0")
+	q.Interfaces.ExpectRemoval("Wireguard0").Removed()
 	f.Add(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
 	d.Start()
 	defer d.Stop()
@@ -457,7 +457,7 @@ func TestDispatcher_IfCreatedAfterForget_ListDecides(t *testing.T) {
 		t.Run(map[bool]string{true: "запись есть", false: "нет записи"}[recreated], func(t *testing.T) {
 			f, q, d, listed := ownOracle(t)
 			f.Remove("Wireguard0")
-			q.Interfaces.Forget("Wireguard0")
+			q.Interfaces.ExpectRemoval("Wireguard0").Removed()
 			if recreated {
 				f.Add(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
 			}
@@ -490,7 +490,7 @@ func TestDispatcher_IfCreatedAfterForget_ListDecides(t *testing.T) {
 func TestDispatcher_VerifyListFailed_Published(t *testing.T) {
 	f, q, d, listed := ownOracle(t)
 	f.Remove("Wireguard0")
-	q.Interfaces.Forget("Wireguard0")
+	q.Interfaces.ExpectRemoval("Wireguard0").Removed()
 	f.FailList(errors.New("injected: rci"))
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard0"})
 	d.Start()

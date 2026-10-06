@@ -10,13 +10,12 @@ import (
 )
 
 type ProxyCommands struct {
-	poster  Poster
-	save    *SaveCoordinator
-	queries *query.Queries
+	ndmsMutator
 }
 
+// NewProxyCommands паникует на nil s (newMutator).
 func NewProxyCommands(p Poster, s *SaveCoordinator, q *query.Queries) *ProxyCommands {
-	return &ProxyCommands{poster: p, save: s, queries: q}
+	return &ProxyCommands{ndmsMutator: newMutator(p, s, q)}
 }
 
 // CreateProxy создаёт ProxyN по имени, выбранному свободным, и подтверждает
@@ -34,7 +33,7 @@ func NewProxyCommands(p Poster, s *SaveCoordinator, q *query.Queries) *ProxyComm
 // навсегда чужая для владения по description.
 func (c *ProxyCommands) CreateProxy(ctx context.Context, name, description, upstreamHost string, upstreamPort int, socks5UDP bool) (query.Confirmed, CreateReply, error) {
 	create := map[string]any{"interface": map[string]any{name: map[string]any{}}}
-	conf, reply, err := CreateInterface(ctx, c.poster, c.save, c.queries, create, name, false,
+	conf, reply, err := c.createInterface(ctx, create, name, false,
 		c.save.Request, c.queries.RunningConfig.InvalidateAll)
 	if err != nil {
 		err = fmt.Errorf("create proxy: %w", err) // имя уже в ошибке
@@ -118,22 +117,10 @@ func proxyPayload(name, description, upstreamHost string, upstreamPort int, sock
 	}
 }
 
-// DeleteProxy снимает ProxyN. Снято (или его уже не было) — запись
-// забывается в кэше сразу, не дожидаясь хука ifdestroyed (F546).
+// DeleteProxy снимает ProxyN через deleteInterface.
 func (c *ProxyCommands) DeleteProxy(ctx context.Context, iface query.Confirmed) error {
-	name := iface.Name()
-	payload := map[string]any{
-		"interface": map[string]any{
-			name: map[string]any{"no": true},
-		},
-	}
-	err := postMutationCheckedTolerant(ctx, c.poster, c.save, payload, "delete proxy "+name,
-		isMissingInterface,
+	return c.deleteInterface(ctx, iface, "delete proxy "+iface.Name(),
 		c.queries.RunningConfig.InvalidateAll)
-	if err == nil {
-		c.queries.Interfaces.Forget(name)
-	}
-	return err
 }
 
 func (c *ProxyCommands) ProxyUp(ctx context.Context, iface query.Confirmed) error {

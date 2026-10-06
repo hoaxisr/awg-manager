@@ -14,6 +14,9 @@ type HookNotifier interface {
 
 // Commands bundles every NDMS Command group.
 type Commands struct {
+	// Save — координатор сохранений тех же команд: пакеты, шлющие батчи мимо
+	// групп команд (nwg), заказывают сохранение через него (П24).
+	Save         *SaveCoordinator
 	Interfaces   *InterfaceCommands
 	Proxies      *ProxyCommands
 	Wireguard    *WireguardCommands
@@ -46,9 +49,11 @@ func (c *Commands) SetHookNotifier(hn HookNotifier) {
 	}
 }
 
-// NewCommands constructs the full Command registry.
+// NewCommands constructs the full Command registry. Паникует на nil d.Save
+// (newMutator через автономные конструкторы).
 func NewCommands(d Deps) *Commands {
 	return &Commands{
+		Save:         d.Save,
 		Interfaces:   NewInterfaceCommands(d.Poster, d.Save, d.Queries, d.HookNotifier),
 		Proxies:      NewProxyCommands(d.Poster, d.Save, d.Queries),
 		Wireguard:    NewWireguardCommands(d.Poster, d.Save, d.Queries),

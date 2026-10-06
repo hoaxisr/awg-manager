@@ -11,7 +11,6 @@ import (
 	"crypto/ecdh"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -227,10 +226,9 @@ func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.
 		payloads.CmdInterfaceSecurityLevel(iface, "public"),
 		payloads.CmdInterfaceIPGlobal(iface, true),
 		payloads.CmdInterfaceAdjustMSS(iface, true),
-		payloads.CmdSave(),
 	}
 
-	if _, err := o.postIfaceBatch(ctx, iface, cmds); err != nil {
+	if _, err := o.postIfaceBatchSaved(ctx, iface, cmds); err != nil {
 		o.cleanupCreated(ctx, iface)
 		return 0, fmt.Errorf("post-import settings: %w", err)
 	}
@@ -262,9 +260,9 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	// никто не видел. Подтверждение же кладёт запись в карту, и следующий
 	// nextFreeIndex видит индекс занятым без хука ifcreated (#255).
 	// NDMS не создал запись (индекс занят чужой, ещё не видимой) — ошибка
-	// без настроек и сноса (F574). Создание шло без save — и снос
-	// неподтверждённого тоже (save = nil).
-	iface, _, err := command.CreateInterface(ctx, o.transport, nil, o.queries, []any{payloads.CmdInterfaceCreate(ndmsName)}, ndmsName, false)
+	// без настроек и сноса (F574). Создание — без save; снос
+	// неподтверждённого заказывает его через координатор команд.
+	iface, _, err := o.commands.Interfaces.CreateInterface(ctx, []any{payloads.CmdInterfaceCreate(ndmsName)}, ndmsName, false)
 	if err != nil {
 		return 0, fmt.Errorf("create: %w", err)
 	}
@@ -326,9 +324,9 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	if stored.Peer.PresharedKey != "" {
 		peerCfg.PresharedKey = stored.Peer.PresharedKey
 	}
-	cmds = append(cmds, payloads.CmdWireguardPeer(iface, peerCfg), payloads.CmdSave())
+	cmds = append(cmds, payloads.CmdWireguardPeer(iface, peerCfg))
 
-	if _, err := o.postIfaceBatch(ctx, iface, cmds); err != nil {
+	if _, err := o.postIfaceBatchSaved(ctx, iface, cmds); err != nil {
 		o.cleanupCreated(ctx, iface)
 		return 0, fmt.Errorf("create batch: %w", err)
 	}
@@ -352,11 +350,9 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 }
 
 // cleanupCreated сносит только что созданный интерфейс, чьи настройки NDMS
-// отверг. Снят — запись забывается сразу, не дожидаясь хука ifdestroyed.
+// отверг (DeleteOpkgTun: карта забывает снятое сразу).
 func (o *OperatorNativeWG) cleanupCreated(ctx context.Context, iface query.Confirmed) {
-	if _, err := o.transport.PostBatch(ctx, []any{payloads.CmdInterfaceDelete(iface), payloads.CmdSave()}); err == nil {
-		o.queries.Interfaces.Forget(iface.Name())
-	}
+	_ = o.commands.Interfaces.DeleteOpkgTun(ctx, iface)
 }
 
 // confirmIface подтверждает интерфейс туннеля по свежему списку NDMS (F546).
@@ -756,9 +752,8 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 	}
 	cmds := []any{
 		payloads.CmdInterfaceUp(iface, false),
-		payloads.CmdSave(),
 	}
-	_, _ = o.postIfaceBatch(ctx, iface, cmds)
+	_, _ = o.postIfaceBatchSaved(ctx, iface, cmds)
 
 	// Clear DNS servers from the router's DNS proxy
 	if err := o.SyncDNS(ctx, iface, tunnel.ParseDNSList(stored.Interface.DNS), nil); err != nil {
@@ -825,35 +820,17 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 	}
 
 	// 4. Remove NDMS interface — cleans everything:
-	//    peer, DNS (ip + ipv6 name-server), ASC params, kernel Wireguard interface
-	if _, err := o.transport.PostBatch(ctx, []any{payloads.CmdInterfaceDelete(iface), payloads.CmdSave()}); err != nil && !isMissingInterface(err) {
-		// Живую запись не забываем: освободившийся индекс следующий Create
-		// занял бы поверх неё.
+	//    peer, DNS (ip + ipv6 name-server), ASC params, kernel Wireguard interface.
+	//    Снято или уже не было — карта забывает запись сразу, индекс свободен
+	//    без рестарта (issue #255); отказ — живая запись остаётся в карте:
+	//    освободившийся индекс следующий Create занял бы поверх неё.
+	if err := o.commands.Interfaces.DeleteOpkgTun(ctx, iface); err != nil {
 		o.appLog.Warn("delete", names.NDMSName, "no interface: "+err.Error())
 		return fmt.Errorf("delete %s: %w", names.NDMSName, err)
 	}
 
-	// 5. Free the slot in the interface cache so the index can be reused
-	// without an AWGM restart — issue #255.
-	o.queries.Interfaces.Forget(names.NDMSName)
-
 	o.appLog.Info("delete", names.NDMSName, "tunnel deleted")
 	return nil
-}
-
-// isMissingInterface — NDMS ответил на снос «интерфейса нет»: снят до нас.
-// Фраза — одна на проект, command.TolerateMissingInterface.
-func isMissingInterface(err error) bool {
-	var be *transport.BatchError
-	if !errors.As(err, &be) {
-		return false
-	}
-	for _, f := range be.Failures {
-		if command.TolerateMissingInterface(f.Message) {
-			return true
-		}
-	}
-	return false
 }
 
 // classifyNWGState decides the tunnel State for a NativeWG interface from parsed
@@ -924,6 +901,16 @@ func nwgStalled(rci NWGState, now time.Time) bool {
 func (o *OperatorNativeWG) postIfaceBatch(ctx context.Context, iface query.Confirmed, cmds []any) ([]json.RawMessage, error) {
 	res, err := o.transport.PostBatch(ctx, cmds)
 	o.queries.Interfaces.Invalidate(iface.Name())
+	return res, err
+}
+
+// postIfaceBatchSaved — postIfaceBatch, применённое которого обязано попасть в
+// startup-config: сохранение заказывает координатор команд (П24, save в
+// батче шёл бы мимо него) — на ОБОИХ путях, как postChecked: NDMS применяет
+// батч поэлементно, отказ одного элемента не отменяет применённые.
+func (o *OperatorNativeWG) postIfaceBatchSaved(ctx context.Context, iface query.Confirmed, cmds []any) ([]json.RawMessage, error) {
+	res, err := o.postIfaceBatch(ctx, iface, cmds)
+	o.commands.Save.Request()
 	return res, err
 }
 

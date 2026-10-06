@@ -20,7 +20,7 @@ import (
 // could affect on BOTH paths: NDMS applies a payload element-wise, so a
 // rejected reply may still carry applied changes. Список интерфейсов не
 // перечитывается: запись правят хуки NDMS, создание подтверждает
-// rciCreateInterface, снос — Forget в rciDeleteInterface (F546).
+// rciCreateInterface, снос — RemovalToken в rciDeleteInterface (F546).
 //
 // ifaces — подтверждения интерфейсов, по которым собран payload: нулевой
 // Confirmed (Name()=="") — отказ без POST, иначе команда ушла бы по имени ""
@@ -50,6 +50,13 @@ func (s *Service) rciAfter() []func() {
 	if s.saveCoord != nil {
 		after = append(after, s.saveCoord.Request)
 	}
+	return append(after, s.rciInvalidators()...)
+}
+
+// rciInvalidators — rciAfter без save: для путей через команды, которые
+// сохранение заказывают сами (DeleteOpkgTun).
+func (s *Service) rciInvalidators() []func() {
+	var after []func()
 	if s.queries != nil {
 		if s.queries.WGServers != nil {
 			after = append(after, s.queries.WGServers.InvalidateAll)
@@ -67,7 +74,7 @@ func (s *Service) rciAfter() []func() {
 
 // rciCreateInterface creates a new WireGuard interface via RCI и подтверждает
 // его свежим списком: дальше весь поток идёт по этому доказательству (F546).
-// Записи нет за всё ожидание — command.ConfirmCreated её сносит (F584);
+// Записи нет за всё ожидание — создание её сносит (F584);
 // список не прочитан — ошибка без сноса, остаток — в журнал. NDMS не создал
 // запись (имя занято чужой, ещё не видимой) — command.ErrNotCreated без
 // настроек и сноса (F574); existingOK — restore осознанно берёт живой сервер
@@ -75,15 +82,15 @@ func (s *Service) rciAfter() []func() {
 // (ответ NDMS «created»); взятый как существующий — нет (M3: снос сервера,
 // жившего до restore, унёс бы его пиров).
 func (s *Service) rciCreateInterface(ctx context.Context, name string, existingOK bool) (c query.Confirmed, owned bool, err error) {
-	if s.queries == nil || s.queries.Interfaces == nil {
-		return query.Confirmed{}, false, fmt.Errorf("interface store not wired")
+	if s.commands == nil || s.commands.Interfaces == nil {
+		return query.Confirmed{}, false, fmt.Errorf("ndms commands not wired")
 	}
 	payload := map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{},
 		},
 	}
-	c, reply, err := command.CreateInterface(ctx, s.transport, s.saveCoord, s.queries, payload, name, existingOK, s.rciAfter()...)
+	c, reply, err := s.commands.Interfaces.CreateInterface(ctx, payload, name, existingOK, s.rciAfter()...)
 	if err != nil {
 		s.appLog.Warn("create", name, "интерфейс не создан или не подтверждён списком: "+err.Error())
 		return query.Confirmed{}, false, err
@@ -92,21 +99,21 @@ func (s *Service) rciCreateInterface(ctx context.Context, name string, existingO
 	return c, owned, nil
 }
 
-// rciDeleteInterface removes a WireGuard interface via RCI. Интерфейса уже нет
-// (снесён мимо панели между подтверждением и командой) — цель достигнута.
-// Снято — запись забывается сразу, не дожидаясь ifdestroyed.
+// rciDeleteInterface removes a WireGuard interface единым путём команд
+// (DeleteOpkgTun). Интерфейса уже нет (снесён мимо панели между
+// подтверждением и командой) — цель достигнута. Снято — запись забывается
+// сразу, не дожидаясь ifdestroyed. Кэши managed (WGServers, StaticRoutes) —
+// те же, что у rciPost.
 func (s *Service) rciDeleteInterface(ctx context.Context, iface query.Confirmed) error {
-	if err := s.rciPostTolerant(ctx, map[string]interface{}{
-		"interface": map[string]interface{}{
-			iface.Name(): map[string]interface{}{
-				"no": true,
-			},
-		},
-	}, command.TolerateMissingInterface, iface); err != nil {
-		return err
+	if s.commands == nil || s.commands.Interfaces == nil {
+		return fmt.Errorf("ndms commands not wired")
 	}
-	if s.queries != nil && s.queries.Interfaces != nil {
-		s.queries.Interfaces.Forget(iface.Name())
+	if iface.Name() == "" {
+		return fmt.Errorf("managed rci: команда без подтверждённого интерфейса")
+	}
+	if err := s.commands.Interfaces.DeleteOpkgTun(ctx, iface, s.rciInvalidators()...); err != nil {
+		s.sysLog().Warn("managed rci post failed", "error", err)
+		return err
 	}
 	return nil
 }
