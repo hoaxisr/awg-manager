@@ -2,10 +2,18 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
+
+// errNoSwapGate — Release*ForRemoval собраны без барьера списков. ServiceImpl
+// здесь собирается мимо NewService (тот ставит гейт по умолчанию), и снос
+// opkgtunN (fakeIPLinkDelete) разыменовал бы nil — паника в `--cleanup` при
+// удалении пакета. Гейт по умолчанию не подходит: он был бы не общим с
+// читателями списка уборки (D-N1), то есть барьером только на вид.
+var errNoSwapGate = errors.New("router: SwapGate обязателен для снятия при удалении пакета")
 
 // ReleasePolicyTunForRemoval снимает интерфейс policy-tun при удалении пакета
 // (`opkg remove` → `--cleanup`): вернуть NAT сегментов → снять NDMS-дефолт →
@@ -27,6 +35,9 @@ import (
 // переписывает netfilter-хук на диске, а на пути удаления пакета возвращать
 // файлы — ровно обратное тому, что требуется.
 func ReleasePolicyTunForRemoval(ctx context.Context, d Deps) error {
+	if d.SwapGate == nil {
+		return errNoSwapGate
+	}
 	if d.Settings == nil || d.OpkgTun == nil {
 		return nil
 	}

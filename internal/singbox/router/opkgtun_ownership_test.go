@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -682,6 +683,7 @@ func TestReleasePolicyTunForRemoval_SparesForeignInterface(t *testing.T) {
 			log := &callLog{}
 
 			err := ReleasePolicyTunForRemoval(context.Background(), Deps{
+				SwapGate:     &netdev.SwapGate{},
 				Settings:     store,
 				OpkgTun:      opkg,
 				DefaultRoute: &recDefaultRoute{log: log},

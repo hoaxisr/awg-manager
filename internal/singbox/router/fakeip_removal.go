@@ -20,6 +20,9 @@ import (
 // Персист fakeip после выключения режима очищается, поэтому запись есть
 // только у включённого режима — выключенный интерфейса и не держит.
 func ReleaseFakeIPTunForRemoval(ctx context.Context, d Deps) error {
+	if d.SwapGate == nil {
+		return errNoSwapGate
+	}
 	if d.Settings == nil || d.OpkgTun == nil {
 		return nil
 	}

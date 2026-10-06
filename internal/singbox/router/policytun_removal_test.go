@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -27,6 +28,7 @@ func TestReleasePolicyTunForRemoval_RemovesHeldInterface(t *testing.T) {
 	routes := &recDefaultRoute{log: log}
 
 	if err := ReleasePolicyTunForRemoval(context.Background(), Deps{
+		SwapGate:     &netdev.SwapGate{},
 		Settings:     store,
 		OpkgTun:      opkg,
 		DefaultRoute: routes,
@@ -60,6 +62,7 @@ func TestReleasePolicyTunForRemoval_RestoresSegmentNATFirst(t *testing.T) {
 	state := &fakeNATState{}
 
 	if err := ReleasePolicyTunForRemoval(context.Background(), Deps{
+		SwapGate:     &netdev.SwapGate{},
 		Settings:     store,
 		OpkgTun:      &recOpkgTun{log: log},
 		DefaultRoute: &recDefaultRoute{log: log},
@@ -89,6 +92,7 @@ func TestReleasePolicyTunForRemoval_NoopWithoutPersist(t *testing.T) {
 	log := &callLog{}
 
 	if err := ReleasePolicyTunForRemoval(context.Background(), Deps{
+		SwapGate:     &netdev.SwapGate{},
 		Settings:     store,
 		OpkgTun:      opkg,
 		DefaultRoute: &recDefaultRoute{log: log},
@@ -116,6 +120,7 @@ func TestReleaseFakeIPTunForRemoval_DeletesOwnSparesForeign(t *testing.T) {
 			}
 			opkg := &recordingOpkgTunProvisioner{}
 			err := ReleaseFakeIPTunForRemoval(context.Background(), Deps{
+				SwapGate:    &netdev.SwapGate{},
 				Settings:    store,
 				OpkgTun:     opkg,
 				OpkgTunScan: tc.scan,
@@ -145,10 +150,48 @@ func TestReleaseFakeIPTunForRemoval_IgnoresPolicyTunRecord(t *testing.T) {
 		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	opkg := &recordingOpkgTunProvisioner{}
-	if err := ReleaseFakeIPTunForRemoval(context.Background(), Deps{Settings: store, OpkgTun: opkg}); err != nil {
+	if err := ReleaseFakeIPTunForRemoval(context.Background(), Deps{Settings: store, OpkgTun: opkg, SwapGate: &netdev.SwapGate{}}); err != nil {
 		t.Fatalf("ReleaseFakeIPTunForRemoval: %v", err)
 	}
 	if len(opkg.deleted) != 0 {
 		t.Errorf("снесён чужой режим: %v", opkg.deleted)
+	}
+}
+
+// L3: Release*ForRemoval собирают ServiceImpl мимо NewService — без гейта
+// снос пережившего opkgtunN (fakeIPLinkDelete) разыменовал бы nil-SwapGate:
+// паника в `--cleanup`. Без гейта — отказ ошибкой, NDMS не трогаем.
+// Мутация: снять проверку SwapGate → паника nil-deref в DeleteLink, красный.
+func TestReleaseForRemoval_NilSwapGate_ErrorNoPanic(t *testing.T) {
+	old := fakeIPLinkPresent
+	fakeIPLinkPresent = func(context.Context, string) bool { return true } // устройство пережило снос записи
+	t.Cleanup(func() { fakeIPLinkPresent = old })
+	for _, tc := range []struct {
+		name    string
+		mode    string
+		state   string
+		release func(context.Context, Deps) error
+	}{
+		{"policy-tun", storage.OpkgTunModePolicyTun, statePolicyTun, ReleasePolicyTunForRemoval},
+		{"fakeip", storage.OpkgTunModeFakeIP, stateFakeIPTun, ReleaseFakeIPTunForRemoval},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: tc.state})
+			if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: tc.mode, Index: 3, Provisioned: true}); err != nil {
+				t.Fatalf("SetOpkgTunState: %v", err)
+			}
+			opkg := &recordingOpkgTunProvisioner{}
+			err := tc.release(context.Background(), Deps{
+				Settings:     store,
+				OpkgTun:      opkg,
+				DefaultRoute: &recDefaultRoute{log: &callLog{}},
+			})
+			if !errors.Is(err, errNoSwapGate) {
+				t.Fatalf("err = %v, want errNoSwapGate", err)
+			}
+			if len(opkg.deleted) != 0 {
+				t.Fatalf("без гейта NDMS тронут: %v", opkg.deleted)
+			}
+		})
 	}
 }
