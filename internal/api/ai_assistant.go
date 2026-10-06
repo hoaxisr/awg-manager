@@ -80,7 +80,7 @@ func (h *AIAssistantHandler) ListErrors(w http.ResponseWriter, r *http.Request) 
 	cat := r.URL.Query().Get("category")
 
 	results := aiassistant.SearchErrors(q, cat)
-	categories := []string{"Все", "KeeneticOS (NDMS)", "AmneziaWG", "Mihomo", "Sing-box", "DNS", "Сеть", "Ядро Linux", "Система"}
+	categories := aiassistant.GetAllCategories()
 	response.Success(w, map[string]any{
 		"total":      len(results),
 		"categories": categories,

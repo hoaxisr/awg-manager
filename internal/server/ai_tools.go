@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -103,14 +106,19 @@ func (s *Server) aiToolSources(connectionSource func() *connections.Service, dia
 		},
 		EngineStatus: func(ctx context.Context) (any, error) {
 			result := map[string]any{}
+			selectedEngine, _ := s.selectedAIEngine("auto")
 			if s.settings != nil {
 				if settings, err := s.settings.Load(); err == nil {
 					result["routing"] = map[string]any{
 						"enabled":        settings.SingboxRouter.Enabled,
-						"selectedEngine": "singbox",
+						"selectedEngine": selectedEngine,
 					}
 				} else {
 					result["settingsError"] = safeDiagnosticError(err.Error())
+				}
+			} else {
+				result["routing"] = map[string]any{
+					"selectedEngine": selectedEngine,
 				}
 			}
 			if s.singboxOp != nil {
@@ -119,6 +127,48 @@ func (s *Server) aiToolSources(connectionSource func() *connections.Service, dia
 					"installed": status.Installed, "running": status.Running, "pid": status.PID,
 					"version": status.Version, "tunnelCount": status.TunnelCount,
 					"proxyComponent": status.ProxyComponent, "lastError": safeDiagnosticError(status.LastError),
+				}
+			}
+			if s.mihomoOrch != nil {
+				ver, err := s.mihomoOrch.Verify(ctx)
+				if err != nil {
+					result["mihomo"] = map[string]any{
+						"running": false,
+						"error":   safeDiagnosticError(err.Error()),
+					}
+				} else if ver != nil {
+					result["mihomo"] = map[string]any{
+						"running": ver.Status == "passed",
+						"status":  ver.Status,
+						"summary": ver.Summary,
+						"detail":  safeDiagnosticError(ver.Detail),
+					}
+				} else {
+					result["mihomo"] = map[string]any{
+						"running": false,
+						"status":  "unknown",
+						"summary": "Mihomo status is unknown",
+					}
+				}
+			} else if selectedEngine == "mihomo" {
+				clashAddr := "127.0.0.1:9090"
+				if s != nil && s.mihomoClashAddr != "" {
+					clashAddr = s.mihomoClashAddr
+				}
+				conn, err := net.DialTimeout("tcp", clashAddr, 500*time.Millisecond)
+				if err != nil {
+					result["mihomo"] = map[string]any{
+						"running": false,
+						"summary": fmt.Sprintf("Mihomo REST API недоступен на %s", clashAddr),
+						"detail":  safeDiagnosticError(err.Error()),
+					}
+				} else {
+					_ = conn.Close()
+					result["mihomo"] = map[string]any{
+						"running": true,
+						"status":  "passed",
+						"summary": fmt.Sprintf("Mihomo REST API отвечает на %s", clashAddr),
+					}
 				}
 			}
 			return result, nil
@@ -275,6 +325,9 @@ func (s *Server) aiToolSources(connectionSource func() *connections.Service, dia
 			return result, nil
 		},
 		Connections: func(ctx context.Context, search string, limit int) (any, error) {
+			if connectionSource == nil {
+				return nil, errors.New("connections service is unavailable")
+			}
 			service := connectionSource()
 			if service == nil {
 				return nil, errors.New("connections service is unavailable")
@@ -334,17 +387,20 @@ func (s *Server) aiToolSources(connectionSource func() *connections.Service, dia
 					result["clientRoutes"] = matches
 				}
 			}
-			if service := connectionSource(); service != nil {
-				live, err := safeConnectionSearch(ctx, service, resolvedIP, 30)
-				if err != nil {
-					partialErrors = append(partialErrors, safeDiagnosticError(err.Error()))
-				} else {
-					result["live"] = live
+			if connectionSource != nil {
+				if service := connectionSource(); service != nil {
+					live, err := safeConnectionSearch(ctx, service, resolvedIP, 30)
+					if err != nil {
+						partialErrors = append(partialErrors, safeDiagnosticError(err.Error()))
+					} else {
+						result["live"] = live
+					}
 				}
 			}
+			engine, _ := s.selectedAIEngine("auto")
+			result["routingEngine"] = engine
 			if s.settings != nil {
 				if settings, err := s.settings.Load(); err == nil {
-					result["routingEngine"] = "singbox"
 					result["routingEnabled"] = settings.SingboxRouter.Enabled
 				}
 			}
@@ -444,8 +500,42 @@ func (s *Server) aiToolSources(connectionSource func() *connections.Service, dia
 			if queryType != "" && queryType != "A" && queryType != "AAAA" {
 				return nil, errors.New("queryType must be A or AAAA")
 			}
-			if _, err := s.selectedAIEngine("auto"); err != nil {
+			engine, err := s.selectedAIEngine("auto")
+			if err != nil {
 				return nil, err
+			}
+			if engine == "mihomo" {
+				qType := queryType
+				if qType == "" {
+					qType = "A"
+				}
+				_, clashClient, err := s.aiClashClient("mihomo")
+				if err != nil {
+					return nil, err
+				}
+				reqURL := fmt.Sprintf("http://%s/dns/query?name=%s&type=%s", clashClient.Address(), url.QueryEscape(domain), url.QueryEscape(qType))
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+				if err != nil {
+					return nil, err
+				}
+				client := &http.Client{Timeout: 5 * time.Second}
+				resp, err := client.Do(req)
+				if err != nil {
+					return nil, fmt.Errorf("mihomo DNS query failed: %w", err)
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					bodySnippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+					if len(bodySnippet) > 0 {
+						return nil, fmt.Errorf("mihomo DNS query status %d: %s", resp.StatusCode, safeDiagnosticText(string(bodySnippet)))
+					}
+					return nil, fmt.Errorf("mihomo DNS query status: %d", resp.StatusCode)
+				}
+				var dnsRes any
+				if err := json.NewDecoder(resp.Body).Decode(&dnsRes); err != nil {
+					return nil, fmt.Errorf("decode mihomo DNS result: %w", err)
+				}
+				return map[string]any{"engine": "mihomo", "result": dnsRes}, nil
 			}
 			if s.singboxRouterHandler == nil || s.singboxRouterHandler.Service() == nil {
 				return nil, errors.New("sing-box DNS inspector is unavailable")
@@ -457,6 +547,9 @@ func (s *Server) aiToolSources(connectionSource func() *connections.Service, dia
 			return map[string]any{"engine": "singbox", "result": result}, nil
 		},
 		ExplainConn: func(ctx context.Context, source string, sourcePort int, destination string, destinationPort int, protocol string) (any, error) {
+			if connectionSource == nil {
+				return nil, errors.New("connections service is unavailable")
+			}
 			service := connectionSource()
 			if service == nil {
 				return nil, errors.New("connections service is unavailable")
@@ -504,10 +597,37 @@ func (s *Server) aiToolSources(connectionSource func() *connections.Service, dia
 	}
 }
 
+func (s *Server) activeRoutingEngine() string {
+	if s == nil {
+		return "singbox"
+	}
+	if s.settings != nil {
+		if cfg, err := s.settings.Get(); err == nil && cfg.SingboxRouter.RoutingEngine != "" {
+			if strings.EqualFold(cfg.SingboxRouter.RoutingEngine, "mihomo") {
+				return "mihomo"
+			}
+			return "singbox"
+		}
+	}
+	if s.singboxRouterHandler != nil && s.singboxRouterHandler.Service() != nil {
+		if settings, err := s.singboxRouterHandler.Service().GetSettings(context.Background()); err == nil && settings.RoutingEngine != "" {
+			if strings.EqualFold(settings.RoutingEngine, "mihomo") {
+				return "mihomo"
+			}
+			return "singbox"
+		}
+	}
+	return "singbox"
+}
+
 func (s *Server) selectedAIEngine(requested string) (string, error) {
 	requested = strings.ToLower(strings.TrimSpace(requested))
 	switch requested {
-	case "", "auto", "sing-box", "singbox":
+	case "", "auto":
+		return s.activeRoutingEngine(), nil
+	case "mihomo":
+		return "mihomo", nil
+	case "sing-box", "singbox":
 		return "singbox", nil
 	default:
 		return "", fmt.Errorf("proxy engine %q is unsupported", requested)
@@ -519,7 +639,14 @@ func (s *Server) aiClashClient(requested string) (string, *singbox.ClashClient, 
 	if err != nil {
 		return "", nil, err
 	}
-	if s.singboxOp == nil || s.singboxOp.Clash() == nil {
+	if engine == "mihomo" {
+		addr := "127.0.0.1:9090"
+		if s != nil && s.mihomoClashAddr != "" {
+			addr = s.mihomoClashAddr
+		}
+		return "mihomo", singbox.NewClashClient(addr), nil
+	}
+	if s == nil || s.singboxOp == nil || s.singboxOp.Clash() == nil {
 		return "", nil, errors.New("sing-box Clash API is unavailable")
 	}
 	return engine, s.singboxOp.Clash(), nil
@@ -541,7 +668,7 @@ func (s *Server) inspectAIRule(ctx context.Context, destination string, port int
 	if err != nil {
 		return nil, err
 	}
-	if s.singboxRouterHandler == nil || s.singboxRouterHandler.Service() == nil {
+	if s == nil || s.singboxRouterHandler == nil || s.singboxRouterHandler.Service() == nil {
 		return nil, errors.New("sing-box router inspector is unavailable")
 	}
 	result, err := s.singboxRouterHandler.Service().Inspect(ctx, singboxrouter.InspectInput{Domain: destination, Port: port, Protocol: protocol})

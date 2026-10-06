@@ -127,6 +127,7 @@ type Server struct {
 	aiSentinel                 *aiassistant.Sentinel
 	aiEmbeddedMgr              *aiassistant.EmbeddedManager
 	mihomoOrch                 MihomoOrchestrator
+	mihomoClashAddr            string
 	singboxOp                  *singbox.Operator
 	singboxOrch                *singboxorch.Orchestrator
 	presetCatalog              *presets.Catalog
@@ -495,6 +496,11 @@ type MihomoOrchestrator interface {
 // SetMihomoOrchestrator wires the Mihomo orchestrator.
 func (s *Server) SetMihomoOrchestrator(orch MihomoOrchestrator) {
 	s.mihomoOrch = orch
+}
+
+// SetMihomoClashAddr sets custom Clash API address for Mihomo (e.g. in tests).
+func (s *Server) SetMihomoClashAddr(addr string) {
+	s.mihomoClashAddr = addr
 }
 
 // SetAISentinel wires the Sentinel background watchdog.

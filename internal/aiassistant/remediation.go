@@ -263,7 +263,7 @@ func validRemediationTarget(action string, spec remediationSpec, target string) 
 		if len(name) > 3 && (name[0] == 's' || name[0] == 'k') && name[1] >= '0' && name[1] <= '9' && name[2] >= '0' && name[2] <= '9' {
 			name = name[3:]
 		}
-		if name == "dropbear" || name == "awg-manager" || name == "ttyd" || name == "sing-box" {
+		if name == "dropbear" || name == "awg-manager" || name == "ttyd" || name == "sing-box" || name == "singbox" || name == "mihomo" {
 			return false
 		}
 	}

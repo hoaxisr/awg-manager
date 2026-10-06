@@ -151,6 +151,12 @@ func TestSystemActionTargetsAreStrictlyValidated(t *testing.T) {
 	for _, tc := range []struct{ action, target string }{
 		{"service.restart", "../../S90demo"},
 		{"service.stop", "dropbear"},
+		{"service.stop", "sing-box"},
+		{"service.stop", "singbox"},
+		{"service.stop", "S99sing-box"},
+		{"service.stop", "mihomo"},
+		{"service.stop", "S99mihomo"},
+		{"service.stop", "k99mihomo"},
 		{"opkg.install", "curl; reboot"},
 		{"opkg.update", "unexpected"},
 	} {
