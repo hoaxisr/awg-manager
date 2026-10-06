@@ -70,12 +70,14 @@ func (s *RunningConfigStore) GlobalEgressInterfaces(ctx context.Context) ([]stri
 }
 
 // InterfaceAccessGroupsOf — имена списков, привязанных к интерфейсу строками
-// `ip access-group <name> in` внутри блока `interface <iface>`, в порядке
+// `<family> access-group <name> in` внутри блока `interface <iface>`, в порядке
 // появления — это порядок привязки и порядок джампов в _NDM_ACL_IN (стенд
-// 5.01, 2026-09-05). Форма `no ip access-group …` не совпадает по построению:
-// сравнение идёт с начала строки после TrimSpace. Разбор по готовым строкам —
-// для вызывающих без стора (адаптеры cmd).
-func InterfaceAccessGroupsOf(lines []string, iface string) []string {
+// 5.01, 2026-09-05). family — «ip» (v4) или «ipv6»: у NDMS под IPv6 своё
+// пространство списков, и привязка печатается `ipv6 access-group <name> in`
+// (стенд 5.01.C.6, Task 59 П5). Форма `no ip access-group …` не совпадает по
+// построению: сравнение идёт с начала строки после TrimSpace. Разбор по готовым
+// строкам — для вызывающих без стора (адаптеры cmd).
+func InterfaceAccessGroupsOf(lines []string, iface, family string) []string {
 	out := []string{}
 	in := false
 	for _, raw := range lines {
@@ -91,7 +93,7 @@ func InterfaceAccessGroupsOf(lines []string, iface string) []string {
 			continue
 		}
 		f := strings.Fields(trimmed)
-		if len(f) == 4 && f[0] == "ip" && f[1] == "access-group" && f[3] == "in" {
+		if len(f) == 4 && f[0] == family && f[1] == "access-group" && f[3] == "in" {
 			out = append(out, f[2])
 		}
 	}
@@ -128,6 +130,38 @@ func ACLRulesOf(lines []string, header string) []string {
 	return out
 }
 
+// HasBlock — есть ли в running-config блок с заголовком header (строка без
+// отступа, целиком), например `ipv6 access-list <name>`.
+func HasBlock(lines []string, header string) bool {
+	for _, raw := range lines {
+		if raw == header {
+			return true
+		}
+	}
+	return false
+}
+
+// HasBlockLine — есть ли в теле блока header строка line (после TrimSpace,
+// целиком). Флаг списка `auto-delete` NDMS печатает именно так — строкой тела
+// блока `[ipv6 ]access-list <name>` (стенд 5.01.C.6, Task 59 П5).
+func HasBlockLine(lines []string, header, line string) bool {
+	in := false
+	for _, raw := range lines {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		if raw == trimmed { // без отступа — заголовок блока или его конец
+			in = trimmed == header
+			continue
+		}
+		if in && trimmed == line {
+			return true
+		}
+	}
+	return false
+}
+
 // ACLRules — то же по кэшированному running-config.
 func (s *RunningConfigStore) ACLRules(ctx context.Context, header string) ([]string, error) {
 	lines, err := s.Lines(ctx)
@@ -143,7 +177,7 @@ func (s *RunningConfigStore) InterfaceAccessGroups(ctx context.Context, iface st
 	if err != nil {
 		return nil, err
 	}
-	return InterfaceAccessGroupsOf(lines, iface), nil
+	return InterfaceAccessGroupsOf(lines, iface, "ip"), nil
 }
 
 type rcResp struct {

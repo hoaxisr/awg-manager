@@ -86,3 +86,66 @@ func TestACLRulesOf_BlockAndFlags(t *testing.T) {
 		t.Fatalf("незнакомый список: got %v, ждали пустой не-nil", got)
 	}
 }
+
+// Блоки дословно со стенда (Task 59, П5: KN-1810, 5.01.C.6, запись OpkgTun15
+// без устройства): v6-привязка печатается `ipv6 access-group`, v4 —
+// `ip access-group`; флаг `auto-delete` — строка тела блока списка.
+var p5BoundV6 = []string{
+	"interface OpkgTun15",
+	"    security-level public",
+	"    ipv6 access-group _WEBADMIN_OpkgTun15 in",
+	"    down",
+	"ipv6 access-list _WEBADMIN_OpkgTun15",
+	"    permit ipv6 ::/0 ::/0",
+	"    auto-delete",
+}
+
+var p5BoundV4 = []string{
+	"access-list _WEBADMIN_OpkgTun15",
+	"    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0",
+	"    auto-delete",
+	"interface OpkgTun15",
+	"    security-level public",
+	"    ip access-group _WEBADMIN_OpkgTun15 in",
+	"    down",
+}
+
+// Семейство различает пространства: v6-привязка не видна как v4 и наоборот.
+// Мутация: парсер только `ip` (семейство игнорируется) → v6 пуст, красный.
+func TestInterfaceAccessGroupsOf_IPv6Form(t *testing.T) {
+	if got := InterfaceAccessGroupsOf(p5BoundV6, "OpkgTun15", "ipv6"); !slices.Equal(got, []string{"_WEBADMIN_OpkgTun15"}) {
+		t.Fatalf("v6: got %v", got)
+	}
+	if got := InterfaceAccessGroupsOf(p5BoundV6, "OpkgTun15", "ip"); len(got) != 0 {
+		t.Fatalf("v6-строка не v4-привязка: got %v", got)
+	}
+	if got := InterfaceAccessGroupsOf(p5BoundV4, "OpkgTun15", "ip"); !slices.Equal(got, []string{"_WEBADMIN_OpkgTun15"}) {
+		t.Fatalf("v4: got %v", got)
+	}
+	if got := InterfaceAccessGroupsOf(p5BoundV4, "OpkgTun15", "ipv6"); len(got) != 0 {
+		t.Fatalf("v4-строка не v6-привязка: got %v", got)
+	}
+}
+
+// Флаг `auto-delete` и наличие блока читаются из тела нужного блока, а не из
+// любого. Мутации: HasBlockLine всегда false / ищет строку вне блока → красный.
+func TestHasBlockLine_AutoDelete(t *testing.T) {
+	both := append(append([]string{}, p5BoundV6...), "access-list _WEBADMIN_OpkgTun15", "    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0")
+	if !HasBlockLine(both, "ipv6 access-list _WEBADMIN_OpkgTun15", "auto-delete") {
+		t.Fatal("v6-список с auto-delete: ждали true")
+	}
+	if HasBlockLine(both, "access-list _WEBADMIN_OpkgTun15", "auto-delete") {
+		t.Fatal("v4-список без флага: ждали false (флаг v6-блока чужой)")
+	}
+	if !HasBlockLine(p5BoundV4, "access-list _WEBADMIN_OpkgTun15", "auto-delete") {
+		t.Fatal("v4-список с auto-delete: ждали true")
+	}
+	if !HasBlock(both, "access-list _WEBADMIN_OpkgTun15") || HasBlock(p5BoundV4, "ipv6 access-list _WEBADMIN_OpkgTun15") {
+		t.Fatal("HasBlock: ждали true для v4-блока и false для отсутствующего v6")
+	}
+	// После unbind auto-delete NDMS сам снимает список (П5): блока нет.
+	afterUnbind := []string{"interface OpkgTun15", "    security-level public", "    down"}
+	if HasBlock(afterUnbind, "ipv6 access-list _WEBADMIN_OpkgTun15") || HasBlockLine(afterUnbind, "ipv6 access-list _WEBADMIN_OpkgTun15", "auto-delete") {
+		t.Fatal("после unbind блока нет")
+	}
+}

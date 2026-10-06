@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -146,27 +147,6 @@ func TestSetPermitAllACLv6_SequenceAndDuplicateTolerance(t *testing.T) {
 	}
 }
 
-// Снятие v6-пары: unbind + удаление списка. Обе команды идут ВСЕГДА — снятие
-// best-effort, и провал unbind не должен оставлять список висеть.
-func TestRemovePermitAllACLv6_UnbindsAndRemoves(t *testing.T) {
-	cmds, poster := newACLTestCommands(nil)
-	if err := cmds.RemovePermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
-		t.Fatalf("RemovePermitAllACLv6: %v", err)
-	}
-	want := []string{
-		"no interface OpkgTun0 ipv6 access-group _WEBADMIN_OpkgTun0 in",
-		"no ipv6 access-list _WEBADMIN_OpkgTun0",
-	}
-	if len(poster.parses) != len(want) {
-		t.Fatalf("parses: want %d, got %d: %v", len(want), len(poster.parses), poster.parses)
-	}
-	for i, w := range want {
-		if poster.parses[i] != w {
-			t.Errorf("parse[%d]: got %q, want %q", i, poster.parses[i], w)
-		}
-	}
-}
-
 // НЕ-duplicate провал permit — жёсткая ошибка SetPermitAllACL: guard
 // толерирует только дубль, реальная ошибка не должна проглатываться (ревью).
 func TestSetPermitAllACL_RealPermitErrorFails(t *testing.T) {
@@ -189,36 +169,17 @@ func TestIsACLDuplicate_ExactPhraseOnly(t *testing.T) {
 	}
 }
 
-func TestRemovePermitAllACL_Sequence(t *testing.T) {
-	cmds, poster := newACLTestCommands()
-	if err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
-		t.Fatalf("RemovePermitAllACL: %v", err)
-	}
-	want := []string{
-		"no interface OpkgTun0 ip access-group _WEBADMIN_OpkgTun0 in",
-		"no access-list _WEBADMIN_OpkgTun0",
-	}
-	if len(poster.parses) != len(want) {
-		t.Fatalf("parses: want %d, got %d: %v", len(want), len(poster.parses), poster.parses)
-	}
-	for i, w := range want {
-		if poster.parses[i] != w {
-			t.Errorf("parse[%d]: got %q, want %q", i, poster.parses[i], w)
-		}
-	}
-}
-
-// «Привязки нет» (argument parse error — стенд 2026-09-05) — не отказ: обе
-// команды уходят, RemovePermitAllACL возвращает nil. Раньше это был отказ,
-// и wdtt лечил его перепроверкой, а managed падал бы на 5.00 (#828).
+// Гонка: running-config показал привязку без auto-delete, а к моменту POST её
+// уже снял кто-то другой — «привязки нет» (argument parse error — стенд
+// 2026-09-05) не отказ: обе команды уходят, RemovePermitAllACL возвращает nil.
 func TestRemovePermitAllACL_ToleratesNotBound(t *testing.T) {
 	// aclBodyPoster отдаёт очередь тел; nestedACLError — готовый строитель
-	// status:"error" (acl_test.go:34-36; ident ndmsStatusErrors не смотрит).
-	cmds, poster := newACLTestCommands(
+	// status:"error" (ident ndmsStatusErrors не смотрит).
+	cmds, poster := newACLTestCommandsRC(rcBoundNoAutoDelete(aclV4),
 		nestedACLError("argument parse error."),
 		nestedACLError("argument parse error."),
 	)
-	if err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
+	if err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun15")); err != nil {
 		t.Fatalf("«нет привязки» обязано прощаться: %v", err)
 	}
 	if len(poster.parses) != 2 {
@@ -228,8 +189,8 @@ func TestRemovePermitAllACL_ToleratesNotBound(t *testing.T) {
 
 // Любая другая status-ошибка всплывает как раньше.
 func TestRemovePermitAllACL_OtherErrorSurfaces(t *testing.T) {
-	cmds, _ := newACLTestCommands(nestedACLError("access list is in use"))
-	err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun0"))
+	cmds, _ := newACLTestCommandsRC(rcBoundNoAutoDelete(aclV4), nestedACLError("access list is in use"))
+	err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun15"))
 	if err == nil || !strings.Contains(err.Error(), "router reported error: access list is in use") {
 		t.Fatalf("err = %v", err)
 	}
@@ -310,24 +271,6 @@ func TestRemovePermitAllACL_ForeignRulesPresent_RemovesOnlyOurRule(t *testing.T)
 	}
 }
 
-// Только наша строка (плюс флаг auto-delete, правилом он не считается) —
-// список наш целиком: прежняя пара unbind + `no access-list`. Пустой список
-// NDMS сам не убирает (стенд 5.01), поэтому оставлять его нельзя.
-func TestRemovePermitAllACL_OnlyOurRule_RemovesWholeList(t *testing.T) {
-	cmds, poster := newACLTestCommandsRC([]string{"access-list _WEBADMIN_OpkgTun0",
-		"    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0", "    auto-delete", "!"})
-	if err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
-		t.Fatalf("RemovePermitAllACL: %v", err)
-	}
-	want := []string{
-		"no interface OpkgTun0 ip access-group _WEBADMIN_OpkgTun0 in",
-		"no access-list _WEBADMIN_OpkgTun0",
-	}
-	if len(poster.parses) != 2 || poster.parses[0] != want[0] || poster.parses[1] != want[1] {
-		t.Fatalf("parses = %v, want %v", poster.parses, want)
-	}
-}
-
 // Гонка с чужой правкой: нашей строки в списке уже нет. `no rule found to
 // delete.` (стенд 5.01) — цель достигнута, а не отказ.
 func TestRemovePermitAllACL_RuleAlreadyGone_Tolerated(t *testing.T) {
@@ -395,5 +338,165 @@ func TestRemovePermitAllACLv6_ForeignRules_UnsupportedTolerated(t *testing.T) {
 		nestedACLError("no such command: access-list."))
 	if err := cmds.RemovePermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// F606 (П17): снятие permit-all решается по тройке (bound, listed,
+// auto-delete) из одного свежего running-config. Формы блоков — дословно со
+// стенда (Task 59, П5, 5.01.C.6): unbind без привязки даёт E `argument parse
+// error`, remove по отсутствующему списку молчит, auto-delete снимает список
+// вместе с последней привязкой.
+type aclFamily struct {
+	name, group, header, rule string
+	remove                    func(*InterfaceCommands, query.Confirmed) error
+}
+
+var (
+	aclV4 = aclFamily{"v4", "ip access-group", "access-list _WEBADMIN_OpkgTun15", permitAllRuleV4,
+		func(c *InterfaceCommands, i query.Confirmed) error {
+			return c.RemovePermitAllACL(context.Background(), i)
+		}}
+	aclV6 = aclFamily{"v6", "ipv6 access-group", "ipv6 access-list _WEBADMIN_OpkgTun15", permitAllRuleV6,
+		func(c *InterfaceCommands, i query.Confirmed) error {
+			return c.RemovePermitAllACLv6(context.Background(), i)
+		}}
+)
+
+func (f aclFamily) unbindCmd() string {
+	return "no interface OpkgTun15 " + f.group + " _WEBADMIN_OpkgTun15 in"
+}
+func (f aclFamily) removeCmd() string { return "no " + f.header }
+
+func rcIface(f aclFamily, bound bool) []string {
+	out := []string{"interface OpkgTun15", "    security-level public"}
+	if bound {
+		out = append(out, "    "+f.group+" _WEBADMIN_OpkgTun15 in")
+	}
+	return append(out, "    down")
+}
+
+func rcList(f aclFamily, autoDelete bool) []string {
+	out := []string{f.header, "    " + f.rule}
+	if autoDelete {
+		out = append(out, "    auto-delete")
+	}
+	return out
+}
+
+func rcBoundNoAutoDelete(f aclFamily) []string {
+	return append(rcIface(f, true), rcList(f, false)...)
+}
+
+// Ни привязки, ни списка (policy-tun без v6; повторное выключение) — ни
+// одного POST: unbind здесь — ровно E F606.
+// Мутация: снять гейт bound у unbind → unbind уходит, красный.
+func TestRemovePermitAllACL_NotBound_NotListed_NoPosts(t *testing.T) {
+	for _, f := range []aclFamily{aclV4, aclV6} {
+		t.Run(f.name, func(t *testing.T) {
+			cmds, poster := newACLTestCommandsRC(rcIface(f, false))
+			if err := f.remove(cmds, confirmed(t, "OpkgTun15")); err != nil {
+				t.Fatalf("снятие: %v", err)
+			}
+			if len(poster.parses) != 0 {
+				t.Fatalf("ни одного POST, got %v", poster.parses)
+			}
+		})
+	}
+}
+
+// Привязка + auto-delete (наша штатная форма) — только unbind: список NDMS
+// снимает сам (П5: блока после unbind нет).
+// Мутация: слать remove и в этой ветке → лишний POST, красный.
+func TestRemovePermitAllACL_Bound_AutoDelete_UnbindOnly(t *testing.T) {
+	for _, f := range []aclFamily{aclV4, aclV6} {
+		t.Run(f.name, func(t *testing.T) {
+			cmds, poster := newACLTestCommandsRC(append(rcIface(f, true), rcList(f, true)...))
+			if err := f.remove(cmds, confirmed(t, "OpkgTun15")); err != nil {
+				t.Fatalf("снятие: %v", err)
+			}
+			if want := []string{f.unbindCmd()}; !slices.Equal(poster.parses, want) {
+				t.Fatalf("parses = %v, ждали %v", poster.parses, want)
+			}
+		})
+	}
+}
+
+// Привязка без auto-delete — unbind, затем remove: пустой список NDMS сам не
+// убирает (стенд 5.01, 2026-09-12).
+// Мутация: autoDelete всегда true → remove не уходит, красный.
+func TestRemovePermitAllACL_Bound_NoAutoDelete_UnbindAndRemove(t *testing.T) {
+	for _, f := range []aclFamily{aclV4, aclV6} {
+		t.Run(f.name, func(t *testing.T) {
+			cmds, poster := newACLTestCommandsRC(rcBoundNoAutoDelete(f))
+			if err := f.remove(cmds, confirmed(t, "OpkgTun15")); err != nil {
+				t.Fatalf("снятие: %v", err)
+			}
+			if want := []string{f.unbindCmd(), f.removeCmd()}; !slices.Equal(poster.parses, want) {
+				t.Fatalf("parses = %v, ждали %v", poster.parses, want)
+			}
+		})
+	}
+}
+
+// Список есть, привязки нет — только remove.
+// Мутация: listed всегда false → ни одного POST, красный.
+func TestRemovePermitAllACL_ListedNotBound_RemoveOnly(t *testing.T) {
+	for _, f := range []aclFamily{aclV4, aclV6} {
+		t.Run(f.name, func(t *testing.T) {
+			cmds, poster := newACLTestCommandsRC(append(rcIface(f, false), rcList(f, true)...))
+			if err := f.remove(cmds, confirmed(t, "OpkgTun15")); err != nil {
+				t.Fatalf("снятие: %v", err)
+			}
+			if want := []string{f.removeCmd()}; !slices.Equal(poster.parses, want) {
+				t.Fatalf("parses = %v, ждали %v", poster.parses, want)
+			}
+		})
+	}
+}
+
+// Привязка другого семейства не считается: v6-снятие на дереве с одной
+// v4-парой и v4-снятие на дереве с одной v6-парой — ни одного POST.
+// Мутация: InterfaceAccessGroupsOf без семейства → unbind уходит, красный.
+func TestRemovePermitAllACL_OtherFamilyIgnored(t *testing.T) {
+	v4tree := append(rcIface(aclV4, true), rcList(aclV4, true)...)
+	v6tree := append(rcIface(aclV6, true), rcList(aclV6, true)...)
+	for _, tc := range []struct {
+		f  aclFamily
+		rc []string
+	}{{aclV6, v4tree}, {aclV4, v6tree}} {
+		t.Run(tc.f.name, func(t *testing.T) {
+			cmds, poster := newACLTestCommandsRC(tc.rc)
+			if err := tc.f.remove(cmds, confirmed(t, "OpkgTun15")); err != nil {
+				t.Fatalf("снятие: %v", err)
+			}
+			if len(poster.parses) != 0 {
+				t.Fatalf("ни одного POST, got %v", poster.parses)
+			}
+		})
+	}
+}
+
+// Q6: дерево читается свежим перед записью, а не из кэша — привязку снимает
+// каскад auto-delete и веб-морда, хук об этом не приходит. Кэш помнит
+// привязку, роутер — уже нет: ни одного POST.
+// Мутация: Fetch → Lines (кэш) → unbind по устаревшему дереву, красный.
+func TestRemovePermitAllACL_ReadsFreshTree(t *testing.T) {
+	cmds, poster := newACLTestCommandsRC(nil)
+	fg := query.NewFakeGetter()
+	setRC := func(lines []string) {
+		body, _ := json.Marshal(map[string]any{"message": lines})
+		fg.SetJSON("/show/running-config", string(body))
+	}
+	cmds.queries.RunningConfig = query.NewRunningConfigStore(fg, query.NopLogger())
+	setRC(append(rcIface(aclV6, true), rcList(aclV6, true)...))
+	if _, err := cmds.queries.RunningConfig.Lines(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	setRC(rcIface(aclV6, false))
+	if err := cmds.RemovePermitAllACLv6(context.Background(), confirmed(t, "OpkgTun15")); err != nil {
+		t.Fatalf("снятие: %v", err)
+	}
+	if len(poster.parses) != 0 {
+		t.Fatalf("решение по устаревшему кэшу: %v", poster.parses)
 	}
 }

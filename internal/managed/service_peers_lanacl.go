@@ -89,7 +89,7 @@ func (s *Service) lanACLState(ctx context.Context, iface string) (exists, bound 
 		return false, false, fmt.Errorf("read running-config: %w", err)
 	}
 	acl := "AWGM_" + iface
-	return slices.Contains(lines, "access-list "+acl), slices.Contains(query.InterfaceAccessGroupsOf(lines, iface), acl), nil
+	return slices.Contains(lines, "access-list "+acl), slices.Contains(query.InterfaceAccessGroupsOf(lines, iface, "ip"), acl), nil
 }
 
 // applyPeerSubnetsACL применяет правку: permit добавленных сетей в каждый
