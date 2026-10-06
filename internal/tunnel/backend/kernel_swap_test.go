@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -218,5 +219,60 @@ func TestKernelRecreate_UnderHold(t *testing.T) {
 	}
 	if !slices.Equal(r.links(), want) {
 		t.Fatalf("calls = %v, want %v", r.links(), want)
+	}
+}
+
+// L2 (решение владельца 06.10): первый `tuntap add` после del отказал —
+// повтор в том же Hold: читатель списка, пришедший между попытками, ждёт
+// до конца подмены и записи без устройства не видит (окна нет), ошибки нет.
+// Мутация: без повтора → ошибка и два вызова ip, красный.
+func TestKernelReplaceWithTun_TuntapRetryUnderSameHold(t *testing.T) {
+	r := newSwapRig(t, true, nil)
+	gate := &netdev.SwapGate{}
+	var (
+		mu          sync.Mutex
+		tuntaps     int
+		readerIn    atomic.Bool
+		inAtRetry   bool
+		readerAdmit = make(chan struct{})
+	)
+	t.Cleanup(netdev.StubRunIP(func(_ context.Context, name string, args ...string) (*exec.Result, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		r.mu.Lock()
+		r.link = append(r.link, name+" "+strings.Join(args, " "))
+		r.mu.Unlock()
+		if args[0] != "tuntap" {
+			return &exec.Result{}, nil
+		}
+		tuntaps++
+		if tuntaps == 1 {
+			go func() { // читатель приходит между попытками
+				release := gate.Read()
+				readerIn.Store(true)
+				release()
+				close(readerAdmit)
+			}()
+			time.Sleep(20 * time.Millisecond)
+			return nil, errors.New("injected: tuntap")
+		}
+		inAtRetry = readerIn.Load()
+		return &exec.Result{}, nil
+	}))
+
+	if err := NewKernel(gate).ReplaceWithTun(context.Background(), "opkgtun7"); err != nil {
+		t.Fatalf("ReplaceWithTun: %v", err)
+	}
+	<-readerAdmit
+	want := []string{
+		"/opt/sbin/ip link del dev opkgtun7",
+		"/opt/sbin/ip tuntap add dev opkgtun7 mode tun",
+		"/opt/sbin/ip tuntap add dev opkgtun7 mode tun",
+	}
+	if !slices.Equal(r.links(), want) {
+		t.Fatalf("calls = %v, want %v", r.links(), want)
+	}
+	if inAtRetry {
+		t.Fatal("читатель списка вошёл между попытками — запись без устройства видна")
 	}
 }

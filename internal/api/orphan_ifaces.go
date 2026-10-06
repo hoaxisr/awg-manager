@@ -132,7 +132,8 @@ func (h *OrphanIfaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Устройства нет (stat доказал; `ip link del`/rmmod — запись в state
 	// error при conf running) — ни down, ни подмены, сразу `no interface`, как
 	// ops.removeOpkgTun (M1): подмена здесь — голый `tuntap add`, NEWLINK под
-	// running-записью, а снос записи без устройства — 0 C ×12 (стенд Task 59).
+	// running-записью, а снос записи без устройства — 0 C (стенд Task 59:
+	// error/running ×3, never-up ×9).
 	// stat не ответил — «не знаем»: идём C3a, как с живым устройством.
 	_, absentErr := netdev.Absent(iface)
 	if ndmsName != "" && absentErr != nil {

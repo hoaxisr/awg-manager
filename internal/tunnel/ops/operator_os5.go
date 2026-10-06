@@ -1103,8 +1103,9 @@ func (o *OperatorOS5Impl) downBeforeSwap(ctx context.Context, tunnelID string, n
 // Устройства уже нет, а запись сносится (M1: внешний `ip link del`/rmmod —
 // запись `state: error` при `conf: running`) — ни down, ни подмены, сразу
 // `no interface`: подмена здесь — голый `tuntap add`, NEWLINK под running-
-// записью (не снято стендом). Снос записи без устройства — 0 C ×12 (стенд
-// Task 59: хвост K-0ba1 ×3 — запись после 0ba1 без down; уборка K-0767 ×9).
+// записью (не снято стендом). Снос записи без устройства — 0 C (стенд
+// Task 59: error/running ×3 — хвост K-0ba1 без down, без нагрузки;
+// never-up ×9 — уборка K-0767). Подзапись «ещё up» — стенд S4.
 // Down не шлётся: улик, что он нужен, нет, а по записи без устройства он
 // сам не снят стендом.
 //
@@ -1115,9 +1116,10 @@ func (o *OperatorOS5Impl) downBeforeSwap(ctx context.Context, tunnelID string, n
 // снимается и при !deleteRecord (L2: откат по существующей записи):
 // оставленная, она без устройства до следующего Start, и каждый наш список
 // в этом окне — 0767; снос записи без устройства — 0 C (стенд Task 59),
-// следующий Start создаст её заново (justCreated). Остаток — окно между
-// отпусканием барьера и ответом `no interface` (один POST, только при
-// отказе `ip tuntap add`), класс аварийного остатка N4.
+// следующий Start создаст её заново (justCreated). `tuntap add` повторяется
+// один раз в том же Hold (ReplaceWithTun). Принятый остаток (решение
+// владельца 06.10): отказали обе попытки — окно между отпусканием барьера и
+// ответом `no interface` (один POST), класс аварийного остатка N4.
 func (o *OperatorOS5Impl) removeOpkgTun(ctx context.Context, op, tunnelID string, names tunnel.Names, iface query.Confirmed, up, deleteRecord bool) error {
 	if _, err := netdev.Absent(names.IfaceName); err == nil && deleteRecord {
 		return o.deleteOpkgTunRecord(ctx, op, tunnelID, names, iface)

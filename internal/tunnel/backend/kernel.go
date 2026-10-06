@@ -194,8 +194,8 @@ func (b *KernelBackend) StopIfPresent(ctx context.Context, ifaceName string) err
 // одной подменой под барьером: запись OpkgTunN не остаётся без устройства
 // ни для наших читателей, ни для `no interface` (П16/C3a, стенд П4 20/20 без
 // C). Устройства нет — только `tuntap add`. Чужой держатель — HeldError, ip
-// не зовётся. Отказ `tuntap add` — ошибка; что делать с записью, решает
-// вызывающий.
+// не зовётся. Отказ `tuntap add` повторяется один раз в том же Hold; отказ
+// обеих попыток — ошибка; что делать с записью, решает вызывающий.
 func (b *KernelBackend) ReplaceWithTun(ctx context.Context, ifaceName string) error {
 	if held := b.foreignHolder(ctx, ifaceName); held != nil {
 		return held
@@ -207,7 +207,21 @@ func (b *KernelBackend) ReplaceWithTun(ctx context.Context, ifaceName string) er
 				return fmt.Errorf("replace with tun: %w", err)
 			}
 		}
-		if err := sw.TuntapAdd(ifaceName); err != nil {
+		// Одна повторная попытка в том же Hold: после del запись без
+		// устройства, и отпустить барьер до tun значит дать 0767 списку в
+		// полёте (L2). Повтор снимает транзиентный отказ, не выходя из-под
+		// барьера (только exec ip, N11).
+		// Принятый остаток (решение владельца 06.10): обе попытки отказали
+		// (ядро не создаёт netdev, ip убит по SwapHoldMax) — вызывающий
+		// снимает запись без устройства (removeOpkgTun, ручка сироты), и
+		// между отпусканием Hold и ответом `no interface` (один POST)
+		// список в полёте может дать 0767. Закрыть без RCI под барьером
+		// нельзя.
+		err := sw.TuntapAdd(ifaceName)
+		if err != nil {
+			err = sw.TuntapAdd(ifaceName)
+		}
+		if err != nil {
 			return fmt.Errorf("replace with tun: %w", err)
 		}
 		return nil
