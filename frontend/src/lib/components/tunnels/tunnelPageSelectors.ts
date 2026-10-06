@@ -62,6 +62,16 @@ export function tunnelStatusBucket(status: string): 'running' | 'broken' | 'star
 	}
 }
 
+// Туннель включён, а запись NDMS опущена: так её оставляет откат
+// неудавшегося старта по существующей записи (подмена устройства только под
+// down-записью). «Выключен» здесь неправда — тумблер пользователя включён,
+// старт повторят бут, подъём WAN или кнопка.
+export const FAILED_START_LABEL = 'Не запустился — будет повтор';
+
+export function isEnabledButDown(status: string, enabled: boolean | undefined): boolean {
+	return status === 'disabled' && enabled === true;
+}
+
 export function isManagedTunnelOn(tunnel: TunnelListItem): boolean {
 	return ['running', 'starting', 'broken'].includes(tunnel.status);
 }

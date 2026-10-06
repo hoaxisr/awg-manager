@@ -9,7 +9,7 @@
 	import TunnelPingButton from '$lib/components/tunnels/TunnelPingButton.svelte';
 	import TunnelTitleRow from '$lib/components/tunnels/TunnelTitleRow.svelte';
 	import TunnelLockGlyph from './TunnelLockGlyph.svelte';
-	import { tunnelLockAvailable } from './tunnelPageSelectors';
+	import { FAILED_START_LABEL, isEnabledButDown, tunnelLockAvailable } from './tunnelPageSelectors';
 	import { awgLedToStatusDot } from '$lib/utils/statusDot';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { api } from '$lib/api/client';
@@ -67,6 +67,7 @@
 		switch (tunnel.status) {
 			case 'starting': return 'Запуск...';
 			case 'needs_start': return 'Ожидает запуска';
+			case 'disabled': return isEnabledButDown(tunnel.status, tunnel.enabled) ? FAILED_START_LABEL : '';
 			case 'needs_stop': return 'Остановка...';
 			case 'broken': return '';
 			case 'running':

@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { Check, Download, RefreshCw, Save, SaveAll, X } from 'lucide-svelte';
 	import { Button, BackLink, type ButtonVariant } from '$lib/components/ui';
+	import { FAILED_START_LABEL, isEnabledButDown } from './tunnelPageSelectors';
 
 	type ActionStatus = 'loading' | 'success' | 'error';
 
 	interface Props {
 		tunnelName: string;
 		tunnelState: string;
+		enabled?: boolean;
 		saving: boolean;
 		actionStatus: ActionStatus | null;
 		onReplace?: () => void;
@@ -18,6 +20,7 @@
 	let {
 		tunnelName,
 		tunnelState,
+		enabled,
 		saving,
 		actionStatus,
 		onReplace,
@@ -45,7 +48,7 @@
 				 : tunnelState === 'needs_start' ? 'Ожидает запуска'
 				 : tunnelState === 'needs_stop' ? 'Ожидает остановки'
 				 : tunnelState === 'stopping' ? 'Останавливается'
-				 : tunnelState === 'disabled' ? 'Отключён'
+				 : tunnelState === 'disabled' ? (isEnabledButDown(tunnelState, enabled) ? FAILED_START_LABEL : 'Отключён')
 				 : tunnelState === 'broken' ? 'Сломан'
 				 : 'Остановлен'}
 			</span>
