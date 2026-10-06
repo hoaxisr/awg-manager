@@ -259,7 +259,11 @@ func runCleanup(dataDir string) {
 	// а процесс сейчас завершится: без явного сброса удаление интерфейса не
 	// доехало бы до startup-config и вернулось бы после перезагрузки роутера.
 	// CleanupAll свой сброс уже сделал — до этих снятий.
-	if err := (configSaver{sc: cleanupNDMSSave}).Save(ptCtx); err != nil {
+	// Свой бюджет (R1 ревью F595): снятия выше могли съесть ptCtx, а с шиной
+	// сохранение ждёт конец записи — отказ до POST оставил бы сирот.
+	saveCtx, saveCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer saveCancel()
+	if err := (configSaver{sc: cleanupNDMSSave}).Save(saveCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "save config after tun cleanup: %v\n", err)
 	}
 

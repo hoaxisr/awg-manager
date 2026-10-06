@@ -3,6 +3,7 @@ package cleanup
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
@@ -41,5 +42,43 @@ func TestCleanupAll_RemovesProbeHostBeforeSave(t *testing.T) {
 		if rec.steps[i] != want[i] {
 			t.Fatalf("шаги: got %v, want %v", rec.steps, want)
 		}
+	}
+}
+
+// exhaustingProbe — шаг уборки, съедающий общий ctx целиком.
+type exhaustingProbe struct{}
+
+func (exhaustingProbe) RemoveProbeHost(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// ctxSaver — что увидело финальное сохранение.
+type ctxSaver struct {
+	called bool
+	err    error
+}
+
+func (s *ctxSaver) Save(ctx context.Context) error {
+	s.called = true
+	s.err = ctx.Err()
+	return nil
+}
+
+// R1: шаги уборки съели общий ctx — финальное сохранение всё равно идёт со
+// своим живым бюджетом: иначе Flush отказал бы до POST, и снятые записи
+// вернулись бы сиротами после ребута роутера.
+// Мутация: Save(ctx) с общим ctx → ctx.Err() != nil, красный.
+func TestCleanupAll_FinalSaveOwnBudget(t *testing.T) {
+	saver := &ctxSaver{}
+	svc := New(nil, nil, nil, nil, nil, nil, nil, exhaustingProbe{}, saver)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	if err := svc.CleanupAll(ctx); err != nil {
+		t.Fatalf("CleanupAll: %v", err)
+	}
+	if !saver.called || saver.err != nil {
+		t.Fatalf("финальное сохранение: вызвано=%v ctx.Err=%v, ждали живой ctx", saver.called, saver.err)
 	}
 }

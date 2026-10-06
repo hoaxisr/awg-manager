@@ -6,9 +6,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+// finalSaveTimeout — бюджет финального сохранения уборки: ожидание
+// удержаний и паузы после сноса плюс POST. Событие конца записи Flush ждёт
+// сверх него, не дольше SaveEventCap.
+const finalSaveTimeout = 30 * time.Second
 
 // TunnelDeleter deletes individual tunnels.
 type TunnelDeleter interface {
@@ -175,9 +181,17 @@ func (s *Service) CleanupAll(ctx context.Context) error {
 		}
 	}
 
-	// 5. Persist NDMS configuration
+	// 5. Persist NDMS configuration — СВОЙ бюджет, а не остаток общего ctx
+	// (R1 ревью F595): с шиной ndm каждое сохранение уборки ждёт конец записи
+	// (4–10 с), шаги выше могут съесть общий ctx целиком, и Flush отказал бы
+	// до POST — снятые записи вернулись бы сиротами после ребута роутера, а
+	// повторить уборку некому. Так же у kmod и policy-tun (cmd/awg-manager/cleanup.go).
 	if s.saver != nil {
-		_ = s.saver.Save(ctx)
+		saveCtx, cancel := context.WithTimeout(context.Background(), finalSaveTimeout)
+		defer cancel()
+		if err := s.saver.Save(saveCtx); err != nil {
+			fmt.Fprintf(os.Stderr, "    Warning: save configuration: %v\n", err)
+		}
 	}
 
 	return nil

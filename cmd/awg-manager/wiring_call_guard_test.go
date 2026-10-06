@@ -97,3 +97,19 @@ func TestWiring_CleanupNDMBusWired(t *testing.T) {
 		t.Fatal("уборка переопределяет потолки сохранения (fallback 0 — `no` во время записи)")
 	}
 }
+
+// R1: последнее сохранение `opkg remove` — со своим бюджетом, не с ptCtx
+// снятий policy-tun: с шиной оно ждёт конец записи, и съеденный снятиями ctx
+// отказал бы до POST (снятые записи — сироты после ребута роутера).
+// Мутация: saveCtx от ptCtx → красный.
+func TestWiring_CleanupFinalSaveOwnBudget(t *testing.T) {
+	src, err := os.ReadFile("cleanup.go")
+	if err != nil {
+		t.Fatalf("чтение уборки: %v", err)
+	}
+	body := string(src)
+	if strings.Contains(body, ".Save(ptCtx)") || !strings.Contains(body, "(configSaver{sc: cleanupNDMSSave}).Save(saveCtx)") ||
+		!strings.Contains(body, "saveCtx, saveCancel := context.WithTimeout(context.Background(),") {
+		t.Fatal("последнее сохранение уборки делит ctx со снятиями policy-tun")
+	}
+}
