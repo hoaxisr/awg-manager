@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
@@ -427,5 +428,49 @@ func TestFakeNDMS_HooksFor_Unknown_Empty(t *testing.T) {
 	f.Add(ndms.Interface{ID: "A", Type: "Wireguard"})
 	if hooks := f.HooksFor("Z"); len(hooks) != 0 {
 		t.Fatalf("hooks: %+v", hooks)
+	}
+}
+
+// Правило D-N3 (dn3-round2-evidence.md §3) в обе стороны: `no interface` при
+// сохранении в полёте и сохранение ≤4 с после снятия — E; снятие после
+// конца записи и сохранение позже 4 с — 0.
+func TestFakeNDMS_SaveRaceWithRemoval(t *testing.T) {
+	save := map[string]any{"system": map[string]any{"configuration": map[string]any{"save": map[string]any{}}}}
+	no := func(name string) map[string]any {
+		return map[string]any{"interface": map[string]any{name: map[string]any{"no": true}}}
+	}
+	ctx := context.Background()
+	now := time.Unix(1000, 0)
+	newF := func() *FakeNDMS {
+		f := NewFakeNDMS(ndms.Interface{ID: "OpkgTun1", Type: "OpkgTun"}, ndms.Interface{ID: "OpkgTun2", Type: "OpkgTun"})
+		f.HoldSaves()
+		f.SetClock(func() time.Time { return now })
+		return f
+	}
+
+	f := newF()
+	_, _ = f.Post(ctx, save)
+	_, _ = f.Post(ctx, no("OpkgTun1"))
+	if f.E != 1 {
+		t.Fatalf("`no` при сохранении в полёте: E=%d, ждали 1", f.E)
+	}
+
+	f = newF()
+	_, _ = f.Post(ctx, save)
+	f.SaveSettled()
+	now = now.Add(time.Minute)
+	_, _ = f.Post(ctx, no("OpkgTun1"))
+	now = now.Add(4 * time.Second)
+	_, _ = f.Post(ctx, save)
+	if f.E != 0 {
+		t.Fatalf("снятие после записи и save через 4 с: E=%d, ждали 0", f.E)
+	}
+
+	f = newF()
+	_, _ = f.Post(ctx, no("OpkgTun2"))
+	now = now.Add(3 * time.Second)
+	_, _ = f.Post(ctx, save)
+	if f.E != 1 {
+		t.Fatalf("save через 3 с после снятия: E=%d, ждали 1", f.E)
 	}
 }

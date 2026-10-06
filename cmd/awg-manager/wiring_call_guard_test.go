@@ -43,3 +43,33 @@ func TestWiring_HookSinkClaimsFromInterfaces(t *testing.T) {
 		t.Fatal("точка входа spool не гасит кредиты стора интерфейсов: свои хуки станут чужими")
 	}
 }
+
+// П25: конец нашего сохранения — событие ConfigurationSaved шины ndm. Без
+// клиента шины координатор остаётся «без шины»: полёт кончается ответом на
+// POST, и `no interface` идёт во время записи (D-N3). Сборка и тесты пакетов
+// этого не заметят. Клиент — сразу за координатором (busUp до первого POST).
+// Мутация: убрать NewBusReader/Start или адаптер события → красный.
+func TestWiring_NDMBusWired(t *testing.T) {
+	src, err := os.ReadFile("wiring_tunnels.go")
+	if err != nil {
+		t.Fatalf("чтение проводки: %v", err)
+	}
+	body := string(src)
+	coord := strings.Index(body, "a.ndmsSaveCoord = ndmscommand.NewSaveCoordinator(")
+	bus := strings.Index(body, "ndmsevents.NewBusReader(ndmsevents.DefaultBusPath,")
+	cmds := strings.Index(body, "a.ndmsCommands = ndmscommand.NewCommands(")
+	if coord < 0 || bus < 0 || cmds < 0 || !(coord < bus && bus < cmds) {
+		t.Fatalf("клиент шины не между координатором и командами: coord=%d bus=%d cmds=%d", coord, bus, cmds)
+	}
+	for _, want := range []string{
+		"a.ndmsSaveCoord.OnConfigurationSaved(ev.RaiseTime)",
+		"ev.Class == ndmsevents.BusClassConfigurationSaved",
+		"}, a.ndmsSaveCoord.OnBusState, ",
+		"if err := ndmBus.Start(); err != nil {",
+		"a.deferOnExit(ndmBus.Stop)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("в проводке шины нет %q", want)
+		}
+	}
+}

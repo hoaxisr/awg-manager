@@ -12,6 +12,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
+	ndmsevents "github.com/hoaxisr/awg-manager/internal/ndms/events"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/presets"
@@ -55,6 +56,22 @@ func (a *app) setupTunnels() {
 		env.DurationDefault("AWG_NDMS_SAVE_SETTLE_DELAY", 2*time.Second),
 		a.ndmsQueries.RunningConfig,
 	)
+	a.ndmsSaveCoord.SetLogger(eventsLogger(a.loggingService))
+	// Шина событий ndm — конец нашего сохранения (ConfigurationSaved, П25).
+	// Сразу за координатором и до любой команды: busUp должен быть известен
+	// до первого POST. Сокета может не быть (ndm грузится): клиент
+	// подключается сам, а до того сохранения ждут saveFallback. Ошибка Start
+	// (не linux) — не фатальна, как у spool.
+	ndmBus := ndmsevents.NewBusReader(ndmsevents.DefaultBusPath, func(ev ndmsevents.BusEvent) {
+		if ev.Class == ndmsevents.BusClassConfigurationSaved {
+			a.ndmsSaveCoord.OnConfigurationSaved(ev.RaiseTime)
+		}
+	}, a.ndmsSaveCoord.OnBusState, eventsLogger(a.loggingService))
+	if err := ndmBus.Start(); err != nil {
+		a.bootLog.Warn("ndm-event-bus", "", err.Error())
+	} else {
+		a.deferOnExit(ndmBus.Stop)
+	}
 	a.ndmsCommands = ndmscommand.NewCommands(ndmscommand.Deps{
 		Poster:  a.ndmsTransportClient,
 		Save:    a.ndmsSaveCoord,

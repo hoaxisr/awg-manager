@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
@@ -12,6 +13,10 @@ type DNSRouteCommands struct {
 	save    *SaveCoordinator
 	queries *query.Queries
 	isOS5   func() bool
+	// dirtyAt — эпоха Requested координатора после последней нашей правки
+	// dns-proxy route: sc-вид покажет её только после сохранения, начатого
+	// позже (F568, FlushPendingSave).
+	dirtyAt atomic.Uint64
 }
 
 func NewDNSRouteCommands(p Poster, s *SaveCoordinator, q *query.Queries, isOS5 func() bool) *DNSRouteCommands {
@@ -35,17 +40,36 @@ type DNSRouteRef struct {
 	Group, Interface string
 }
 
-// FlushPendingSave синхронно сохраняет конфигурацию, если есть несохранённые
-// правки (F568). `/show/sc/dns-proxy/route` показывает снесённую через RCI
-// строку до `system configuration save` (добавленную — сразу; стенд): без
-// сохранения сверка видит уже снесённый маршрут и сносит его повторно — E
-// «unable to find the DNS route» в журнале ndm. Ошибка сохранения —
-// ошибка вызывающему: по устаревшему виду сверка посчитала бы неверные сносы.
+// FlushPendingSave синхронно сохраняет конфигурацию, если sc-вид dns-proxy
+// route грязен с последнего завершённого сохранения (F568).
+// `/show/sc/dns-proxy/route` показывает снесённую через RCI строку до
+// `system configuration save` (добавленную — сразу; стенд): без сохранения
+// сверка видит уже снесённый маршрут и сносит его повторно — E «unable to
+// find the DNS route» в журнале ndm. Гейт — эпохи координатора, а не
+// PendingCount: ожидающее сохранение после чужих правок (снос туннелей
+// пачкой) sc-вид не портит, и Flush на нём сериализовал бы пачку на событиях
+// сохранения (Н10b). Ошибка сохранения — ошибка вызывающему: по устаревшему
+// виду сверка посчитала бы неверные сносы.
 func (c *DNSRouteCommands) FlushPendingSave(ctx context.Context) error {
-	if !c.isOS5() || c.save.Status().PendingCount == 0 {
+	if !c.isOS5() {
+		return nil
+	}
+	if _, saved := c.save.Epoch(); saved >= c.dirtyAt.Load() {
 		return nil
 	}
 	return c.save.Flush(ctx)
+}
+
+// markDirty — после правки dns-proxy route: sc-вид устарел до сохранения,
+// заказанного этой правкой.
+func (c *DNSRouteCommands) markDirty() {
+	req, _ := c.save.Epoch()
+	for {
+		cur := c.dirtyAt.Load()
+		if req <= cur || c.dirtyAt.CompareAndSwap(cur, req) {
+			return
+		}
+	}
 }
 
 // DeleteRoutes removes dns-proxy route entries in a single batch.
@@ -70,7 +94,8 @@ func (c *DNSRouteCommands) DeleteRoutes(ctx context.Context, refs []DNSRouteRef)
 	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, "delete dns-proxy routes",
 		toleratesMissingDNSRoute,
 		c.queries.DNSProxy.InvalidateAll,
-		c.queries.RunningConfig.InvalidateAll)
+		c.queries.RunningConfig.InvalidateAll,
+		c.markDirty)
 }
 
 // SetDisabled toggles a dns-proxy route's disable flag without deleting
@@ -104,6 +129,7 @@ func (c *DNSRouteCommands) SetDisabled(ctx context.Context, index string, disabl
 	}
 	c.queries.DNSProxy.InvalidateAll()
 	c.queries.RunningConfig.InvalidateAll()
+	c.markDirty()
 	// Flush save synchronously, not via the debounced coordinator. NDMS
 	// applies dns-proxy.route.disable to running state on POST, but the
 	// flag only surfaces in /show/sc/… (which Keenetic's web UI reads)
@@ -168,7 +194,8 @@ func (c *DNSRouteCommands) ReplaceRoutes(ctx context.Context, deletes []DNSRoute
 	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, "replace dns-proxy routes",
 		func(msg string) bool { return toleratesReplaceRoutes(msg, upsertIfaces) },
 		c.queries.DNSProxy.InvalidateAll,
-		c.queries.RunningConfig.InvalidateAll)
+		c.queries.RunningConfig.InvalidateAll,
+		c.markDirty)
 }
 
 // toleratesReplaceRoutes — поблажки смешанного батча. Ответ NDMS плоский:

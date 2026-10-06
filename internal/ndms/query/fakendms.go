@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
@@ -40,6 +41,16 @@ type FakeNDMS struct {
 	hideNext int
 	hidden   map[string]int
 
+	// D-N3 (dn3-round2-evidence.md §3, R60 в обе стороны: FULL2 6/8 против
+	// NOSAVE 0/8; save вне окна 0/12): проход сохранения, открытый при нашем
+	// `no interface`, или стартующий ≤4 с после снятия, ловит снимаемую
+	// запись — E. Сохранение «летит» от POST до SaveSettled, только если тест
+	// включил HoldSaves; иначе запись мгновенная. Часы — SetClock.
+	holdSaves     bool
+	saving        bool
+	lastRemovedAt time.Time
+	now           func() time.Time
+
 	E        int      // точечное чтение отсутствующего; ссылка на отсутствующий из ip route/nat/static/name-server/policy/hotspot/dns-proxy
 	Phantoms int      // `interface X …` по отсутствующему X, не объявленному ExpectCreate: X создан
 	C        int      // строки C прошивки от наших действий: создание (F569) и снос (F598, только amneziawg) OpkgTunN при живом opkgtunN; исчезновение opkgtunN под up-записью (0ba1, SetNetdev)
@@ -56,7 +67,7 @@ type FakeNDMS struct {
 type FakeHook struct{ Type, ID, Layer, Level string } // "ifcreated" | "ifdestroyed" | "iflayerchanged"
 
 func NewFakeNDMS(ifaces ...ndms.Interface) *FakeNDMS {
-	f := &FakeNDMS{ifaces: make(map[string]ndms.Interface, len(ifaces))}
+	f := &FakeNDMS{ifaces: make(map[string]ndms.Interface, len(ifaces)), now: time.Now}
 	for _, i := range ifaces {
 		f.ifaces[i.ID] = i
 	}
@@ -71,6 +82,28 @@ func (f *FakeNDMS) Add(iface ndms.Interface) {
 		f.created(iface.ID)
 	}
 	f.ifaces[iface.ID] = iface
+}
+
+// SetClock — часы правила D-N3 («сохранение ≤4 с после снятия»).
+func (f *FakeNDMS) SetClock(now func() time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.now = now
+}
+
+// HoldSaves — сохранение длится от POST до SaveSettled (без вызова запись
+// мгновенная): `no interface` в этом окне — E (D-N3).
+func (f *FakeNDMS) HoldSaves() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.holdSaves = true
+}
+
+// SaveSettled — запись во флеш окончена (строка `configuration saved`).
+func (f *FakeNDMS) SaveSettled() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.saving = false
 }
 
 // ExpectCreate объявляет имена, которые тест создаёт намеренно: первая
@@ -430,6 +463,13 @@ func (f *FakeNDMS) post(v any) (json.RawMessage, error) {
 	if line, ok := m["parse"].(string); ok {
 		return f.parseCmd(line)
 	}
+	if _, ok := sub(m, "system", "configuration", "save"); ok {
+		if !f.lastRemovedAt.IsZero() && f.now().Sub(f.lastRemovedAt) < 4*time.Second {
+			f.E++ // проход стартует ≤4 с после снятия (D-N3)
+		}
+		f.saving = f.holdSaves
+		return json.RawMessage(`{}`), nil
+	}
 	var names []string
 	for _, section := range []string{"ip", "ipv6", "dns-proxy"} {
 		if s, ok := m[section]; ok {
@@ -530,6 +570,10 @@ func (f *FakeNDMS) ifaceCmd(name string, body map[string]any) (json.RawMessage, 
 		// даже созданный не им: persistent tun без держателя снят 30/30
 		// (стенд Task 59, П4 C3a/C3b). С держателем (sing-box, X3) — C busy и
 		// tun остаётся; держателей оракул не знает и это не моделирует.
+		if f.saving {
+			f.E++ // снятие при сохранении в полёте (D-N3)
+		}
+		f.lastRemovedAt = f.now()
 		if kernel, isKernel := ndms.KernelName(name); isKernel && strings.HasPrefix(name, "OpkgTun") && f.netdev[kernel] {
 			if f.amneziawg[kernel] {
 				f.C++

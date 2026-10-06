@@ -399,12 +399,9 @@ func TestSaveCoordinator_FlushFailureGoesToFailed(t *testing.T) {
 }
 
 func TestSaveCoordinator_FlushConcurrentWithInFlightFire(t *testing.T) {
-	// A fire() is mid-POST when Flush is called. saveMu serialises the
-	// two POSTs but the state machine must not clobber itself, and the
-	// terminal state must reflect Flush's outcome.
-	//
-	// Without the flushInProgress guard, fire()'s post-POST state write
-	// would overwrite Flush's state.
+	// A fire() is mid-POST when Flush is called. saveSem serialises the
+	// two POSTs (with their flights) so the state machine must not clobber
+	// itself, and the terminal state must reflect Flush's outcome.
 	poster := &fakePoster{sleep: 60 * time.Millisecond}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond, 0, nil)
@@ -425,22 +422,18 @@ func TestSaveCoordinator_FlushConcurrentWithInFlightFire(t *testing.T) {
 	// Горутина fire дозавершается — ждём состояние, а не миллисекунды.
 	st := waitState(t, sc, SaveStateIdle)
 
-	// ГРАНИЦА ЭТОГО ТЕСТА: он НЕ пинит гард flushInProgress — снятие любой из
-	// двух его точек оставляет тест зелёным, потому что исход сходится к Idle
-	// несколькими путями. Он держит другое, и это тоже нужное: сценарий
-	// «Flush поверх ЛЕТЯЩЕГО fire» действительно воспроизводится (ждём сигнал
-	// входа в Post, а не спим наугад), состояние терминальное, pending снят.
-	// Сами гарды пинуют TestSaveCoordinator_LateFireDoesNotResurrectRetry
-	// (хвостовой) и TestSaveCoordinator_FireDispatchedDuringFlushYields
-	// (входной) — каждому нужен СВОЙ порядок событий (CF11).
+	// ГРАНИЦА ЭТОГО ТЕСТА: сериализацию он не пинит — исход сходится к Idle
+	// несколькими путями. Он держит другое: сценарий «Flush поверх ЛЕТЯЩЕГО
+	// fire» действительно воспроизводится (ждём сигнал входа в Post, а не
+	// спим наугад), состояние терминальное, pending снят. Порядок пинуют
+	// TestSaveCoordinator_LateFireDoesNotResurrectRetry и
+	// TestSaveCoordinator_FireDispatchedDuringFlushWaits (CF11).
 	if st.PendingCount != 0 {
 		t.Errorf("pending after Flush: want 0, got %d", st.PendingCount)
 	}
 
 	// Hints are just invalidation nudges now; verify they were emitted
-	// for both the Flush-driven transitions and the fire() path. The
-	// flushInProgress guard in setStateLocked's caller prevents fire
-	// from clobbering state after Flush — we rely on Status() above.
+	// for both the Flush-driven transitions and the fire() path.
 	if len(pub.Hints()) == 0 {
 		t.Fatal("no hints published")
 	}
@@ -667,28 +660,15 @@ func TestSaveCoordinator_Flush_NilInvalidator_DoesNotPanic(t *testing.T) {
 	// Success — no panic.
 }
 
-// CF11: гард `flushInProgress` в ХВОСТЕ fire() — тот, что после POST. Смысл
-// его в том, что терминальным состоянием владеет Flush, и опоздавший fire не
-// имеет права ни переписать исход, ни ВОСКРЕСИТЬ цикл ретраев: Flush
-// останавливает таймер в самом начале, а fire на своём отказе завёл бы новый
-// уже после этого — и на роутер ушёл бы лишний Save, которого никто не просил.
-//
-// Прежний тест (`…FlushConcurrentWithInFlightFire`) гард не различал: с
-// maxRetries=0 отказавший fire уходил в Failed без таймера, и оба исхода
-// сходились к Idle. Различитель здесь — ТРЕТИЙ POST: он существует только
-// без гарда.
-//
-// Порядок детерминирован: Flush блокируется на saveMu, пока летит POST от
-// fire, поэтому хвост fire выполняется, когда `flushInProgress` уже взведён и
-// ещё не снят (Flush в это время сидит в своём POST).
+// CF11: терминальным состоянием после Flush владеет Flush — опоздавший fire
+// не имеет права ВОСКРЕСИТЬ цикл ретраев: его отказ заводит таймер ретрая до
+// того, как Flush получит saveSem, а Flush гасит таймер, взяв saveSem (П25:
+// гарда flushInProgress больше нет — fire и Flush сериализованы saveSem).
+// Различитель — ТРЕТИЙ POST: он существует только без гашения.
 //
 // Отрицательное утверждение на фиксированном окне: ждать нечего. Направление
 // риска — ложный ЗЕЛЁНЫЙ, если Flush-POST растянется дольше `retryDelay`
-// (150 мс) и воскрешённый ретрай заглушит входной гард; под нагрузкой на
-// одном ядре мутант ловится 10/10 (2026-09-02). При флейке этого класса —
-// первый подозреваемый. Часы координатора (`time.AfterFunc`,
-// `save.go:150,221`) не инжектируются — детерминированный вариант требует
-// шва таймера; решение — принять.
+// (150 мс). При флейке этого класса — первый подозреваемый.
 func TestSaveCoordinator_LateFireDoesNotResurrectRetry(t *testing.T) {
 	poster := &fakePoster{sleep: 60 * time.Millisecond}
 	poster.SetError(errors.New("NDMS отказал"))
@@ -724,46 +704,31 @@ func TestSaveCoordinator_LateFireDoesNotResurrectRetry(t *testing.T) {
 	}
 }
 
-// Второй гард — ВХОДНОЙ, в голове fire(). Он про другой порядок: fire
-// диспетчеризован таймером, пока Flush уже начал свой POST. Без гарда fire
-// возьмёт saveMu следом за Flush и отправит ВТОРОЙ Save, которого никто не
-// просил, — на роутере это лишняя запись конфигурации.
-//
-// Отрицательное утверждение на фиксированном окне 200 мс: пока Flush держит
-// POST, диспетчеризованный тем временем fire() обязан упереться во ВХОДНОЙ
-// гард `flushInProgress` (save.go:169-171) и вернуться ДО `saveMu.Lock`/
-// `Post` — второго POST быть не должно. Ретрая на этом пути нет:
-// `SetRetryPolicy` не вызывается, а входной гард отсекает fire() раньше
-// POST, до ветки, что заводит повторный таймер при ошибке. Риск у этого окна
-// — направленный иначе, чем в соседнем тесте: если под нагрузкой таймер
-// fire() (`time.AfterFunc`, 10 мс) реально диспетчеризуется ПОЗЖЕ конца
-// Flush-POST (120 мс), `flushInProgress` к этому моменту уже снят, входной
-// гард не срабатывает, и POST уходит по-настоящему — тест падает КРАСНЫМ на
-// корректном коде (это уже не гонка «fire во время Flush», а независимый
-// Request после его завершения). Часы координатора (`time.AfterFunc`) не
-// инжектируются — шов таймера не заводим, решение принято.
-func TestSaveCoordinator_FireDispatchedDuringFlushYields(t *testing.T) {
+// fire, диспетчеризованный таймером, пока Flush держит свой POST, не шлёт
+// второй Save параллельно: ждёт saveSem и идёт после Flush (П25: гард
+// flushInProgress снят — Request во время POST Flush мог не попасть в его
+// запись, и уступка теряла бы его до следующей правки).
+// Мутация: fire без saveSem → второй POST во время Flush, красный.
+func TestSaveCoordinator_FireDispatchedDuringFlushWaits(t *testing.T) {
 	poster := &fakePoster{sleep: 120 * time.Millisecond}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond, 0, nil)
 
-	// Flush идёт в фоне и держит POST 120 мс.
 	done := make(chan error, 1)
 	go func() { done <- sc.Flush(context.Background()) }()
 	waitCalls(t, poster, 1, "Flush не вошёл в Post")
 
 	// Пока Flush в POST — просим Save: его таймер (10 мс) сработает внутри
-	// окна Flush, и fire обязан уступить.
+	// окна Flush.
 	sc.Request()
+	time.Sleep(50 * time.Millisecond)
+	if got := poster.Calls(); got != 1 {
+		t.Fatalf("POST'ов %d во время Flush, ждали 1", got)
+	}
 	if err := <-done; err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
-	waitState(t, sc, SaveStateIdle)
-
-	time.Sleep(200 * time.Millisecond)
-	if got := poster.Calls(); got != 1 {
-		t.Errorf("POST'ов %d, ждали 1 (только Flush): fire не уступил владение состоянием", got)
-	}
+	waitCalls(t, poster, 2, "отложенный Request после Flush не сохранён")
 }
 
 // payloadMentionsIPv6 — команда пришла в v6-форме (внешний ключ "ipv6").

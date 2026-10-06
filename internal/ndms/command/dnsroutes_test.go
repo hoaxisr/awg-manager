@@ -193,3 +193,58 @@ func TestDNSRouteCommands_ReplaceRoutes_ZeroInterface_Refused(t *testing.T) {
 		t.Fatalf("в NDMS ушло %d POST", poster.Calls())
 	}
 }
+
+// F568 по эпохам (Н10b): sc-вид чист, когда завершённое сохранение начато
+// после нашей правки dns-proxy route; чужие ожидающие правки Flush не
+// вызывают. Мутация: гейт по PendingCount → Flush при чистом sc-виде, красный.
+func TestFlushPendingSave_ByEpoch(t *testing.T) {
+	poster := &flightPoster{}
+	sc := newFlightSC(t, poster)
+	sc.SetSaveTimings(5*time.Second, 5*time.Second, 0)
+	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger(),
+		IsOS5: func() bool { return true }})
+	c := NewDNSRouteCommands(poster, sc, q, func() bool { return true })
+
+	if err := c.DeleteRoutes(context.Background(), []DNSRouteRef{{Group: "g_p1", Interface: "OpkgTun0"}}); err != nil {
+		t.Fatal(err)
+	}
+	poster.waitCalls(t, 2) // снос + сохранение
+	waitFlight(t, sc)
+	sc.OnConfigurationSaved(104)
+	waitEpochSaved(t, sc, 1)
+
+	sc.mu.Lock()
+	sc.debounce = time.Hour // чужая правка ждёт своего сохранения
+	sc.mu.Unlock()
+	sc.Request()
+	if err := c.FlushPendingSave(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(poster.calls()); n != 2 {
+		t.Fatalf("POST %d: Flush при чистом sc-виде", n)
+	}
+
+	if err := c.DeleteRoutes(context.Background(), []DNSRouteRef{{Group: "g_p1", Interface: "OpkgTun1"}}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- c.FlushPendingSave(context.Background()) }()
+	poster.waitCalls(t, 4) // снос + Flush
+	waitFlight(t, sc)
+	sc.OnConfigurationSaved(105)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitEpochSaved(t *testing.T, sc *SaveCoordinator, want uint64) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, saved := sc.Epoch(); saved >= want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("saved < %d", want)
+}

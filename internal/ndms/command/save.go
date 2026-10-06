@@ -3,10 +3,12 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
+	ndmsevents "github.com/hoaxisr/awg-manager/internal/ndms/events"
 )
 
 // Poster is the minimum surface SaveCoordinator needs from the NDMS
@@ -44,8 +46,38 @@ var savePayload = map[string]any{
 	},
 }
 
+// Временные величины полёта сохранения (П25, вариант А владельца 06.10
+// 15:50). Это страховки на случай пропущенного события, а не механизм:
+// конец сохранения — событие ConfigurationSaved шины ndm.
+const (
+	// saveEventCap — потолок полёта при подключённой шине: событие не пришло
+	// (потеряно ndm, не наш формат) — полёт закрывается с Warn. Запись по
+	// стенду 4–10 с (К42), под нагрузкой событие +4,3–6,9 с от POST.
+	saveEventCap = 30 * time.Second
+	// saveFallback — полёт без сигнала (шины нет или она оборвалась во время
+	// полёта, uptime не прочитан): верхняя граница длительности записи по
+	// стенду (К42: `saving → configuration saved` 4–10 с), считается от POST.
+	saveFallback = 10 * time.Second
+	// SaveAfterRemoval — наше сохранение не раньше, чем через 5 с после
+	// нашего `no interface`. Эвристика: сигнала «снятая запись разобрана» нет
+	// ни на шине, ни в хуках (event-bus-evidence.md §4); проход сохранения,
+	// стартующий ≤~4 с после `removed`, ловит недоразобранную запись — E
+	// Base/L3Base (dn3-round2-evidence.md §3: 20/33 против 0/12 вне окна;
+	// под нагрузкой хвост разбора 2–3 с).
+	SaveAfterRemoval = 5 * time.Second
+)
+
 // SaveCoordinator debounces flash-write Save requests into a single POST
 // per burst. See design spec §5.2-5.3.
+//
+// Полёт сохранения (П25): от POST до события ConfigurationSaved шины ndm с
+// raise_time ≥ t0 (uptime перед POST; тот же домен часов). Пока полёт
+// открыт, удаление записи (HoldForRemoval) ждёт: проход сохранения,
+// открытый при `no interface`, ловит снимаемую запись — E в журнале ndm
+// (D-N3, dn3-round2-evidence.md). Порядок замков — saveSem → mu; полёт
+// открывает только владелец saveSem (fire/Flush) в одной секции mu с
+// проверкой удержаний и паузы после сноса, закрывает — тоже он (closeFlight
+// до отпускания saveSem). Шина, таймеры полёта, HoldForRemoval берут только mu.
 type SaveCoordinator struct {
 	poster     Poster
 	publisher  StatusPublisher
@@ -57,17 +89,60 @@ type SaveCoordinator struct {
 	settleDelay time.Duration
 	invalidator PostSaveInvalidator
 
-	mu              sync.Mutex
-	timer           *time.Timer
-	firstAt         time.Time // zero if no pending batch
-	pendingCount    int
-	state           SaveState
-	lastError       string
-	lastSaveAt      time.Time
-	retryCount      int // consecutive failures in current batch
-	flushInProgress bool
-	saveMu          sync.Mutex
+	eventCap, fallback, afterRemoval time.Duration
+	uptime                           func() float64
+	log                              WarnLogger
+
+	// saveSem (ёмкость 1) сериализует POST вместе с ожиданием его события:
+	// fire берёт блокирующе, Flush — по ctx.
+	saveSem chan struct{}
+
+	mu           sync.Mutex
+	timer        *time.Timer
+	firstAt      time.Time // zero if no pending batch
+	pendingCount int
+	state        SaveState
+	lastError    string
+	lastSaveAt   time.Time
+	retryCount   int // consecutive failures in current batch
+
+	cur           *saveFlight
+	holds         int
+	holdsZero     chan struct{} // закрывается, когда holds возвращается к 0
+	deferred      bool          // fire отложен удержанием — release перевзведёт
+	lastRemovalAt time.Time
+	// busWired — шина подключена к координатору (первый OnBusState; клиент
+	// шины зовёт его в Start до первого POST). Без шины (уборка, тесты пакетов)
+	// конец записи ждать нечем: полёт кончается ответом на POST.
+	busWired bool
+	busUp    bool
+	observer func(deferred bool)
+	// Эпохи (Н10b): requested растёт на каждом Request, saved — значение
+	// requested на момент POST полёта, закрытого событием или потолком.
+	requested, saved uint64
 }
+
+// saveFlight — одно наше сохранение в полёте. Принадлежит владельцу POST.
+type saveFlight struct {
+	ch        chan struct{} // закрыт — полёт окончен (holders идут)
+	t0        float64       // uptime перед POST; 0 — не прочитан (unknown)
+	openedAt  time.Time
+	unknown   bool // сигнала не будет: закрывает saveFallback от openedAt
+	noBus     bool // шины нет вовсе — полёт кончается ответом на POST
+	pending   int  // pendingCount на момент POST: столько правок покрывает запись
+	done      bool
+	requested uint64
+	timers    []*time.Timer
+}
+
+// WarnLogger — журнал координатора (Warn о потере сигнала сохранения).
+type WarnLogger interface {
+	Warnf(format string, args ...any)
+}
+
+type nopWarnLogger struct{}
+
+func (nopWarnLogger) Warnf(string, ...any) {}
 
 const (
 	defaultRetryDelay = 5 * time.Second
@@ -91,6 +166,10 @@ const (
 //	wired to query.Queries.RunningConfig.
 //
 // Retries: 3 attempts 5 seconds apart after a failed fire.
+//
+// Шины нет, пока не позван OnBusState (клиент шины зовёт OnBusState(false)
+// в Start): полёт кончается ответом на POST. С шиной, пока она не подключена,
+// каждый полёт — unknown, закрывается через saveFallback.
 func NewSaveCoordinator(
 	poster Poster,
 	pub StatusPublisher,
@@ -98,15 +177,21 @@ func NewSaveCoordinator(
 	invalidator PostSaveInvalidator,
 ) *SaveCoordinator {
 	return &SaveCoordinator{
-		poster:      poster,
-		publisher:   pub,
-		debounce:    debounce,
-		maxWait:     maxWait,
-		retryDelay:  defaultRetryDelay,
-		maxRetries:  defaultMaxRetries,
-		settleDelay: settleDelay,
-		invalidator: invalidator,
-		state:       SaveStateIdle,
+		poster:       poster,
+		publisher:    pub,
+		debounce:     debounce,
+		maxWait:      maxWait,
+		retryDelay:   defaultRetryDelay,
+		maxRetries:   defaultMaxRetries,
+		settleDelay:  settleDelay,
+		invalidator:  invalidator,
+		state:        SaveStateIdle,
+		eventCap:     saveEventCap,
+		fallback:     saveFallback,
+		afterRemoval: SaveAfterRemoval,
+		uptime:       ndmsevents.ReadUptime,
+		log:          nopWarnLogger{},
+		saveSem:      make(chan struct{}, 1),
 	}
 }
 
@@ -127,11 +212,52 @@ func (s *SaveCoordinator) SetRetryPolicy(delay time.Duration, maxRetries int) {
 	s.mu.Unlock()
 }
 
+// SetSaveTimings — потолок полёта, запасной потолок без сигнала и пауза
+// после сноса (тест-шов; уборка ставит fallback 0 — шины у неё нет, а после
+// финального сохранения процесс выходит).
+func (s *SaveCoordinator) SetSaveTimings(eventCap, fallback, afterRemoval time.Duration) {
+	s.mu.Lock()
+	s.eventCap, s.fallback, s.afterRemoval = eventCap, fallback, afterRemoval
+	s.mu.Unlock()
+}
+
+// SetUptimeReader — часы t0 (тест-шов Б2; по умолчанию /proc/uptime).
+func (s *SaveCoordinator) SetUptimeReader(fn func() float64) {
+	s.mu.Lock()
+	s.uptime = fn
+	s.mu.Unlock()
+}
+
+// SetLogger — журнал Warn о потере сигнала сохранения.
+func (s *SaveCoordinator) SetLogger(l WarnLogger) {
+	s.mu.Lock()
+	s.log = l
+	s.mu.Unlock()
+}
+
+// SetFireObserver — тест-шов: fn(deferred) зовётся после решения fire
+// (true — отложен удержанием или паузой после сноса, false — POST), вне mu.
+// fn обязан не блокировать.
+func (s *SaveCoordinator) SetFireObserver(fn func(deferred bool)) {
+	s.mu.Lock()
+	s.observer = fn
+	s.mu.Unlock()
+}
+
+// Epoch — (requested, saved): saved ≥ эпохи правки ⇔ правка покрыта
+// завершённым сохранением (FlushPendingSave).
+func (s *SaveCoordinator) Epoch() (requested, saved uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.requested, s.saved
+}
+
 // Request schedules a debounced Save. Non-blocking.
 func (s *SaveCoordinator) Request() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.requested++
 	now := time.Now()
 	if s.firstAt.IsZero() {
 		s.firstAt = now
@@ -152,60 +278,293 @@ func (s *SaveCoordinator) Request() {
 	s.setStateLocked(SaveStatePending, "")
 }
 
-// fire runs on the timer goroutine. Performs the Save POST, publishes
-// status transitions, and schedules a retry on failure.
-//
-// Race with Flush: timer.Stop() in Flush returns false if fire has
-// already been dispatched. We guard with flushInProgress — fire yields
-// its work to Flush rather than racing two Save POSTs and clobbering
-// the state machine.
-func (s *SaveCoordinator) fire() {
+// OnConfigurationSaved — событие шины: закрывает наш полёт, если оно не
+// раньше нашего POST (raise ≥ t0 > 0). Чужое сохранение, склеенное ndm с
+// нашим, тоже его закрывает — запись тогда действительно окончена. O(1) под
+// mu: зовётся из горутины чтения шины.
+func (s *SaveCoordinator) OnConfigurationSaved(raise float64) {
 	s.mu.Lock()
-	// Clear the timer/firstAt so a new Request() starts a fresh batch.
-	// pendingCount is intentionally preserved so the SSE status reflects
-	// how many mutations accumulated since the last successful Save.
-	s.timer = nil
-	s.firstAt = time.Time{}
-	if s.flushInProgress {
+	defer s.mu.Unlock()
+	f := s.cur
+	if f == nil || f.done || f.unknown {
+		return
+	}
+	if raise >= f.t0 {
+		s.completeLocked(f)
+	}
+}
+
+// OnBusState — подключение шины. Потеря во время полёта: события промежутка
+// потеряны (ndm не досылает), полёт становится unknown и закрывается через
+// saveFallback от POST — сразу, если этот срок уже прошёл.
+func (s *SaveCoordinator) OnBusState(connected bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	was := s.busUp
+	s.busWired = true
+	s.busUp = connected
+	if was && !connected {
+		s.log.Warnf("шина событий ndm отключена: конец сохранения не виден, каждое сохранение ждёт %s", s.fallback)
+	}
+	if f := s.cur; !connected && f != nil && !f.done && !f.unknown {
+		f.unknown = true
+		s.armFallbackLocked(f)
+	}
+}
+
+// HoldForRemoval — удержание сохранения на время сноса записи: ждёт
+// окончания нашего сохранения в полёте (по ctx: отмена — удержание снято,
+// ошибка, `no interface` не шлётся), а пока удержание держится, fire не
+// стреляет (deferred). Вложенные удержания считаются; release взводит
+// отложенное сохранение только при отпускании последнего. release
+// идемпотентен.
+func (s *SaveCoordinator) HoldForRemoval(ctx context.Context) (release func(), err error) {
+	s.mu.Lock()
+	if s.holds == 0 {
+		s.holdsZero = make(chan struct{})
+	}
+	s.holds++
+	f := s.cur
+	s.mu.Unlock()
+	if f != nil {
+		select {
+		case <-f.ch:
+		case <-ctx.Done():
+			s.releaseHold()
+			return nil, fmt.Errorf("wait for configuration save: %w", ctx.Err())
+		}
+	}
+	var once sync.Once
+	return func() { once.Do(s.releaseHold) }, nil
+}
+
+func (s *SaveCoordinator) releaseHold() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.holds--
+	if s.holds > 0 {
+		return
+	}
+	close(s.holdsZero)
+	if s.deferred || s.pendingCount > 0 {
+		s.deferred = false
+		s.firstAt = time.Now()
+		if s.timer != nil {
+			s.timer.Stop()
+		}
+		s.timer = time.AfterFunc(s.debounce, s.fire)
+	}
+}
+
+// NoteRemoval — наш `no interface` снял запись: следующее наше сохранение
+// не раньше SaveAfterRemoval.
+func (s *SaveCoordinator) NoteRemoval() {
+	s.mu.Lock()
+	s.lastRemovalAt = time.Now()
+	s.mu.Unlock()
+}
+
+// removalGapLocked — сколько ещё ждать до конца паузы после сноса.
+func (s *SaveCoordinator) removalGapLocked() time.Duration {
+	if s.lastRemovalAt.IsZero() {
+		return 0
+	}
+	return time.Until(s.lastRemovalAt.Add(s.afterRemoval))
+}
+
+// openFlightLocked открывает полёт перед POST. Только владелец saveSem.
+func (s *SaveCoordinator) openFlightLocked() *saveFlight {
+	f := &saveFlight{
+		ch:        make(chan struct{}),
+		t0:        s.uptime(),
+		openedAt:  time.Now(),
+		requested: s.requested,
+		pending:   s.pendingCount,
+	}
+	// Н1: полёт, закрытый потолком при записи дольше eventCap, оставляет
+	// хвост: его событие может закрыть следующий полёт раньше. Записи > 30 с
+	// не наблюдались — не чиним.
+	s.cur = f
+	switch {
+	case !s.busWired:
+		f.noBus = true
+	case !s.busUp || f.t0 == 0:
+		// Б1: t0 == 0 — любое событие (raise ≥ 0) закрыло бы полёт сразу.
+		f.unknown = true
+		s.armFallbackLocked(f)
+	}
+	f.timers = append(f.timers, time.AfterFunc(s.eventCap, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if !f.done {
+			s.log.Warnf("событие ConfigurationSaved не пришло за %s — сохранение считается законченным", s.eventCap)
+			s.completeLocked(f)
+		}
+	}))
+	return f
+}
+
+// armFallbackLocked — закрыть unknown-полёт через fallback от POST.
+// Отрицательная задержка (срок прошёл) — AfterFunc стреляет сразу (Н5).
+func (s *SaveCoordinator) armFallbackLocked(f *saveFlight) {
+	d := time.Until(f.openedAt.Add(s.fallback))
+	f.timers = append(f.timers, time.AfterFunc(d, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if !f.done {
+			s.log.Warnf("конец сохранения не виден (шина ndm не подключена) — считается законченным через %s", s.fallback)
+			s.completeLocked(f)
+		}
+	}))
+}
+
+// settledLocked — сохранение f записано: снимаются правки, заказанные до
+// его POST; заказанные во время полёта ждут своего fire (их таймер взведён).
+func (s *SaveCoordinator) settledLocked(f *saveFlight) {
+	s.pendingCount = max(s.pendingCount-f.pending, 0)
+	s.retryCount = 0
+	s.lastSaveAt = time.Now()
+	if s.pendingCount > 0 {
+		s.setStateLocked(SaveStatePending, "")
+		return
+	}
+	s.setStateLocked(SaveStateIdle, "")
+}
+
+// awaitFlight — дождаться конца записи после успешного POST: события,
+// потолка или fallback; без шины — сразу.
+func (s *SaveCoordinator) awaitFlight(f *saveFlight) {
+	if f.noBus {
+		s.mu.Lock()
+		s.completeLocked(f)
+		s.mu.Unlock()
+	}
+	<-f.ch
+}
+
+// completeLocked — сохранение окончено (событие, потолок, fallback):
+// holders идут, эпоха saved покрывает запросы до POST.
+func (s *SaveCoordinator) completeLocked(f *saveFlight) {
+	if f.done {
+		return
+	}
+	endFlight(f)
+	if f.requested > s.saved {
+		s.saved = f.requested
+	}
+}
+
+// endFlight — holders идут, таймеры полёта сняты. Под mu.
+func endFlight(f *saveFlight) {
+	f.done = true
+	close(f.ch)
+	for _, t := range f.timers {
+		t.Stop()
+	}
+}
+
+// closeFlight — владелец снимает свой полёт (defer до отпускания saveSem):
+// на отказе POST полёт закрывается без эпохи; cur обнуляется, только если
+// он ещё этот полёт.
+func (s *SaveCoordinator) closeFlight(f *saveFlight) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !f.done {
+		endFlight(f)
+	}
+	if s.cur == f {
+		s.cur = nil
+	}
+}
+
+func (s *SaveCoordinator) observe(deferred bool) {
+	s.mu.Lock()
+	fn := s.observer
+	s.mu.Unlock()
+	if fn != nil {
+		fn(deferred)
+	}
+}
+
+// fire runs on the timer goroutine. Performs the Save POST, waits for its
+// end (ConfigurationSaved or a ceiling), publishes status transitions, and
+// schedules a retry on failure.
+//
+// saveSem берётся ДО решения и открытия полёта: иначе Flush, держащий
+// saveSem в ожидании удержаний, и holder, ждущий открытого здесь полёта,
+// ждали бы друг друга (TestSave_NoDeadlock_FlushHoldsSaveMu).
+func (s *SaveCoordinator) fire() {
+	// settle — после отпускания saveSem (defer'ы LIFO: полёт закрыт, saveSem
+	// отпущен, затем settle): пауза публикации running-config не держит Flush.
+	var settle func()
+	defer func() {
+		if settle != nil {
+			settle()
+		}
+	}()
+	s.saveSem <- struct{}{}
+	defer func() { <-s.saveSem }() // closeFlight зарегистрирован позже — идёт раньше (Н3)
+
+	s.mu.Lock()
+	// Этот fire обслуживает заказ сам: таймер, взведённый после его
+	// срабатывания, не нужен (иначе два отложенных fire дали бы два POST).
+	if s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
+	}
+	if s.pendingCount == 0 {
+		// Заказ уже покрыт сохранением, начатым после него (fire, ждавший
+		// saveSem за чужим полётом).
 		s.mu.Unlock()
 		return
 	}
+	if s.holds > 0 {
+		s.deferred = true
+		s.mu.Unlock()
+		s.observe(true)
+		return
+	}
+	if gap := s.removalGapLocked(); gap > 0 {
+		s.timer = time.AfterFunc(gap, s.fire)
+		s.mu.Unlock()
+		s.observe(true)
+		return
+	}
+	// Clear firstAt so a new Request() starts a fresh batch.
+	// pendingCount is intentionally preserved so the SSE status reflects
+	// how many mutations accumulated since the last successful Save.
+	s.firstAt = time.Time{}
+	f := s.openFlightLocked()
 	s.setStateLocked(SaveStateSaving, "")
 	s.mu.Unlock()
+	s.observe(false)
+	defer s.closeFlight(f)
 
-	// Serialise concurrent Save POSTs.
-	s.saveMu.Lock()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	_, err := s.poster.Post(ctx, savePayload)
 	cancel()
-	s.saveMu.Unlock()
+	if err == nil {
+		s.awaitFlight(f)
+	}
 
 	s.mu.Lock()
-	// Flush may have started while we were POSTing. If so, Flush owns
-	// the state transition — don't step on it.
-	if s.flushInProgress {
-		s.mu.Unlock()
-		return
-	}
 	if err == nil {
-		s.pendingCount = 0
-		s.retryCount = 0
-		s.lastSaveAt = time.Now()
-		s.setStateLocked(SaveStateIdle, "")
+		s.settledLocked(f)
 		// Snapshot settle deps under the lock so SetSettleDelay races
 		// can't tear our view of (delay, invalidator).
 		settleDelay := s.settleDelay
 		invalidator := s.invalidator
 		s.mu.Unlock()
 
-		// Post-save settle (outside all mutexes — semaphore slot already
-		// released by postJSON's defer above): wait for NDMS to publish
-		// the updated running-config view, then invalidate the cache so
-		// the next reader gets fresh data.
+		// Post-save settle (outside mu and saveSem): wait for NDMS to publish
+		// the updated running-config view, then invalidate the cache so the
+		// next reader gets fresh data.
 		if settleDelay > 0 && invalidator != nil {
-			time.Sleep(settleDelay)
-			invalidator.InvalidateAll()
-			events.PublishInvalidatedTo(s.publisher, events.ResourceSaveStatus, "save-settled")
+			settle = func() {
+				time.Sleep(settleDelay)
+				invalidator.InvalidateAll()
+				events.PublishInvalidatedTo(s.publisher, events.ResourceSaveStatus, "save-settled")
+			}
 		}
 		return
 	}
@@ -223,36 +582,71 @@ func (s *SaveCoordinator) fire() {
 }
 
 // Flush runs Save synchronously, bypassing debounce. Called on graceful
-// shutdown and by the UI "Retry save" button. Clears Failed state on
-// success. On failure, transitions directly to SaveStateFailed — Flush is
-// itself the explicit retry, so there is no point in scheduling another.
-// Returns the underlying error (nil on success).
+// shutdown, backup quiesce, F568 and by the UI "Retry save" button. Clears
+// Failed state on success. On failure, transitions directly to
+// SaveStateFailed — Flush is itself the explicit retry, so there is no point
+// in scheduling another. Returns the underlying error (nil on success).
+//
+// По ctx ждёт saveSem (летящий fire со своим событием), отпускания удержаний
+// и паузы после сноса (В5); затем POST и его событие. Событие ждётся без
+// ctx: снять удержания до конца записи — открыть D-N3; ожидание ограничено
+// потолком полёта.
 func (s *SaveCoordinator) Flush(ctx context.Context) error {
+	select {
+	case s.saveSem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-s.saveSem }()
+
 	s.mu.Lock()
+	for {
+		var wait <-chan struct{}
+		var gapTimer *time.Timer
+		if s.holds > 0 {
+			wait = s.holdsZero
+		} else if gap := s.removalGapLocked(); gap > 0 {
+			gapTimer = time.NewTimer(gap)
+		} else {
+			break
+		}
+		s.mu.Unlock()
+		var tc <-chan time.Time
+		if gapTimer != nil {
+			tc = gapTimer.C
+		}
+		select {
+		case <-wait:
+		case <-tc:
+		case <-ctx.Done():
+			if gapTimer != nil {
+				gapTimer.Stop()
+			}
+			return ctx.Err()
+		}
+		s.mu.Lock()
+	}
+	// Таймер — после ожидания: его мог взвести release удержания, а POST
+	// ниже покрывает всё, что заказано до него.
 	if s.timer != nil {
 		s.timer.Stop()
 		s.timer = nil
 	}
 	s.firstAt = time.Time{}
-	// Claim exclusive state ownership — any fire() that slipped past
-	// timer.Stop() will see this flag and yield.
-	s.flushInProgress = true
+	f := s.openFlightLocked()
 	s.setStateLocked(SaveStateSaving, "")
 	s.mu.Unlock()
+	defer s.closeFlight(f)
 
-	// saveMu serialises against any fire() POST already in flight.
-	s.saveMu.Lock()
 	_, err := s.poster.Post(ctx, savePayload)
-	s.saveMu.Unlock()
+	if err == nil {
+		s.awaitFlight(f)
+	}
 
 	s.mu.Lock()
-	s.flushInProgress = false
 	successful := err == nil
 	if successful {
-		s.pendingCount = 0
-		s.retryCount = 0
-		s.lastSaveAt = time.Now()
-		s.setStateLocked(SaveStateIdle, "")
+		s.settledLocked(f)
 	} else {
 		// Flush IS the explicit retry — failure is terminal, go straight
 		// to Failed. Mark retry budget exhausted.

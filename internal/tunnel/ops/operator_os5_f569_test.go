@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -290,8 +293,11 @@ func (p rejectAddressPoster) Post(ctx context.Context, payload any) (json.RawMes
 }
 
 const (
-	postDown = `{"interface":{"OpkgTun10":{"up":false}}}`
-	postNo   = `{"interface":{"OpkgTun10":{"no":true}}}`
+	postDown      = `{"interface":{"OpkgTun10":{"up":false}}}`
+	postNo        = `{"interface":{"OpkgTun10":{"no":true}}}`
+	postNoGlobal  = `{"parse":"interface OpkgTun10 no ip global"}`
+	postNoDefault = `{"ip":{"route":{"default":true,"interface":"OpkgTun10","no":true}}}`
+	postSave      = `{"system":{"configuration":{"save":{}}}}`
 )
 
 // upTun10 — наша запись OpkgTun10 в State "up" (туннель работал).
@@ -458,8 +464,9 @@ func TestDelete_DeviceAbsent_NoTunCreated(t *testing.T) {
 			if len(be.ReplaceCalls) != 0 || be.exists("opkgtun10") {
 				t.Fatalf("tun создан под записью без устройства: replace=%v устройство=%v", be.ReplaceCalls, be.exists("opkgtun10"))
 			}
-			if !slices.Equal(f.Posts, []string{postNo}) {
-				t.Fatalf("posts=%v, want ровно [no interface] без down", f.Posts)
+			// `no ip global` до сноса — снятие по своему состоянию (D-N3, П25).
+			if !slices.Equal(f.Posts, []string{postNoGlobal, postNo}) {
+				t.Fatalf("posts=%v, want ровно [no ip global, no interface] без down", f.Posts)
 			}
 			if f.Has("OpkgTun10") || !o.queries.Interfaces.ClaimOwnDestroyed("OpkgTun10") {
 				t.Fatalf("запись есть=%v или нет кредита своего ifdestroyed", f.Has("OpkgTun10"))
@@ -757,5 +764,345 @@ func TestRollback_DownFails_FailClosed(t *testing.T) {
 			}
 			downFailedKept(t, f, be)
 		})
+	}
+}
+
+// --- D-N3 (Task 69): удержание сохранения на сносе, снятие default/global ---
+
+// savePoster — оракул с журналом под замком (сохранения идут из горутины
+// таймера) и «шиной»: на каждый save через 10 мс запись окончена
+// (SaveSettled) и приходит ConfigurationSaved — полёт не висит до потолка.
+type savePoster struct {
+	f  *ndmsquery.FakeNDMS
+	sc func() *ndmscommand.SaveCoordinator
+
+	gap    time.Duration
+	manual bool // событие доставляет тест
+
+	mu    sync.Mutex
+	posts []string
+	at    []time.Time
+	wg    sync.WaitGroup
+}
+
+// quiesce — дождаться отложенного сохранения (gap) и его события: после
+// этого оракул читается без гонки с горутиной таймера.
+func (p *savePoster) quiesce() {
+	time.Sleep(p.gap + 60*time.Millisecond)
+	p.wg.Wait()
+}
+
+func (p *savePoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	js, _ := json.Marshal(payload)
+	p.mu.Lock()
+	p.posts = append(p.posts, string(js))
+	p.at = append(p.at, time.Now())
+	manual := p.manual
+	p.mu.Unlock()
+	if string(js) == postSave && !manual {
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			time.Sleep(10 * time.Millisecond)
+			p.f.SaveSettled()
+			p.sc().OnConfigurationSaved(1e9)
+		}()
+	}
+	return p.f.Post(ctx, payload)
+}
+
+func (p *savePoster) snapshot() ([]string, []time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.posts...), append([]time.Time(nil), p.at...)
+}
+
+// countingGetter — оракул с учётом путей чтения.
+type countingGetter struct {
+	*ndmsquery.FakeNDMS
+	mu    sync.Mutex
+	paths []string
+}
+
+func (g *countingGetter) Get(ctx context.Context, path string, dst any) error {
+	g.mu.Lock()
+	g.paths = append(g.paths, path)
+	g.mu.Unlock()
+	return g.FakeNDMS.Get(ctx, path, dst)
+}
+
+func (g *countingGetter) GetRaw(ctx context.Context, path string) ([]byte, error) {
+	g.mu.Lock()
+	g.paths = append(g.paths, path)
+	g.mu.Unlock()
+	return g.FakeNDMS.GetRaw(ctx, path)
+}
+
+// newOS5WithSave — оператор над оракулом с координатором сохранений с шиной:
+// debounce 0, uptime 100, потолки 2 с, пауза после сноса afterRemoval.
+// Оракул держит сохранение «в полёте» до события (HoldSaves): `no interface`
+// при нём — E. Уборка ждёт доставки событий.
+func newOS5WithSave(t *testing.T, f *ndmsquery.FakeNDMS, getter ndmsquery.Getter, be Backend,
+	afterRemoval time.Duration) (*OperatorOS5Impl, *savePoster, *ndmscommand.SaveCoordinator) {
+	t.Helper()
+	f.HoldSaves()
+	if afterRemoval > 0 {
+		// Часы оракула в масштабе паузы: afterRemoval реального времени —
+		// SaveAfterRemoval (5 с) его часов, против его окна D-N3 в 4 с.
+		start := time.Now()
+		scale := float64(ndmscommand.SaveAfterRemoval) / float64(afterRemoval)
+		f.SetClock(func() time.Time {
+			return start.Add(time.Duration(float64(time.Since(start)) * scale))
+		})
+	}
+	var sc *ndmscommand.SaveCoordinator
+	poster := &savePoster{f: f, sc: func() *ndmscommand.SaveCoordinator { return sc }, gap: afterRemoval}
+	sc = ndmscommand.NewSaveCoordinator(poster, nil, 0, time.Hour, 0, nil)
+	sc.SetSaveTimings(2*time.Second, 2*time.Second, afterRemoval)
+	sc.SetUptimeReader(func() float64 { return 100 })
+	sc.OnBusState(true)
+	queries := ndmsquery.NewQueries(ndmsquery.Deps{Getter: getter, Logger: ndmsquery.NopLogger(),
+		IsOS5: func() bool { return true }})
+	cmds := ndmscommand.NewCommands(ndmscommand.Deps{Poster: poster, Queries: queries, Save: sc,
+		IsOS5: func() bool { return true }})
+	o := NewOperatorOS5(queries, cmds, &MockWGClient{}, be, &MockFirewall{})
+	rec := &ipRunRecorder{}
+	o.ipRun = rec.run
+	t.Cleanup(poster.quiesce)
+	return o, poster, sc
+}
+
+func indexOf(posts []string, want string) int { return slices.Index(posts, want) }
+
+// Kernel-снос снимает `ip route default` (только при DefaultRoute) и `ip
+// global` до down — по своему состоянию, без чтения running-config.
+// Мутации: снимать default при DefaultRoute=false → лишний POST, красный;
+// снимать после down → порядок, красный; читать running-config → счётчик,
+// красный.
+func TestDelete_StripsRoutingByOwnState(t *testing.T) {
+	for _, dflt := range []bool{true, false} {
+		t.Run(fmt.Sprint("default=", dflt), func(t *testing.T) {
+			f := ndmsquery.NewFakeNDMS(upTun10())
+			g := &countingGetter{FakeNDMS: f}
+			be := newDeviceBackend(t, f)
+			be.plug(t, "opkgtun10", true)
+			o, p, _ := newOS5WithSave(t, f, g, be, 50*time.Millisecond)
+
+			if err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany", DefaultRoute: dflt}); err != nil {
+				t.Fatalf("Delete: %v", err)
+			}
+			p.quiesce()
+			posts, _ := p.snapshot()
+			want := []string{postNoGlobal, postDown, postNo, postSave}
+			if dflt {
+				want = append([]string{postNoDefault}, want...)
+			}
+			if !slices.Equal(posts, want) {
+				t.Fatalf("posts=%v, want %v", posts, want)
+			}
+			g.mu.Lock()
+			for _, path := range g.paths {
+				if strings.Contains(path, "running-config") {
+					t.Fatalf("чтение %s на сносе", path)
+				}
+			}
+			g.mu.Unlock()
+			if n := f.RCListCalls(); n != 0 {
+				t.Fatalf("чтений rc %d", n)
+			}
+			clean(t, f)
+		})
+	}
+}
+
+// Откат первого старта снимает только то, что старт успел поставить.
+// Мутация: флаги не вести (снимать всегда) → снятие несуществующего до
+// ip global, красный по форме Posts.
+func TestRollback_StripsByAppliedFlags(t *testing.T) {
+	t.Run("до ip global", func(t *testing.T) {
+		f := ndmsquery.NewFakeNDMS()
+		f.ExpectCreate("OpkgTun10")
+		be := newDeviceBackend(t, f)
+		o, p, _ := newOS5WithSave(t, f, f, be, 50*time.Millisecond)
+		o.commands = rejectAddressCommands(t, o, f)
+		if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err == nil {
+			t.Fatal("ColdStart: want отказ адреса")
+		}
+		p.quiesce()
+		if slices.Contains(f.Posts, postNoGlobal) || slices.Contains(f.Posts, postNoDefault) {
+			t.Fatalf("снято непоставленное: %v", f.Posts)
+		}
+		if f.Has("OpkgTun10") || !slices.Contains(f.Posts, postNo) {
+			t.Fatalf("запись осталась: %v", f.Posts)
+		}
+	})
+	t.Run("после default", func(t *testing.T) {
+		f := ndmsquery.NewFakeNDMS()
+		f.ExpectCreate("OpkgTun10")
+		be := newDeviceBackend(t, f)
+		o, p, _ := newOS5WithSave(t, f, f, be, 50*time.Millisecond)
+		o.firewall = &MockFirewall{addError: errors.New("injected: firewall")}
+		cfg := lifecycleCfg(t)
+		cfg.DefaultRoute = true
+		if err := o.ColdStart(context.Background(), cfg); err == nil {
+			t.Fatal("ColdStart: want отказ файрвола")
+		}
+		p.quiesce()
+		posts, _ := p.snapshot()
+		nd, ng, down := indexOf(posts, postNoDefault), indexOf(posts, postNoGlobal), indexOf(posts, postDown)
+		if nd < 0 || ng < 0 || down < 0 || nd > down || ng > down {
+			t.Fatalf("снятия до down нет: %v", posts)
+		}
+		if f.Has("OpkgTun10") {
+			t.Fatalf("запись осталась: %v", posts)
+		}
+	})
+}
+
+// rejectAddressCommands — команды оператора над постером, отвергающим ip
+// address, с тем же координатором.
+func rejectAddressCommands(t *testing.T, o *OperatorOS5Impl, f *ndmsquery.FakeNDMS) *ndmscommand.Commands {
+	t.Helper()
+	return ndmscommand.NewCommands(ndmscommand.Deps{Poster: rejectAddressPoster{f}, Queries: o.queries,
+		Save: o.commands.Save, IsOS5: func() bool { return true }})
+}
+
+// Удержание сохранения держится на всю последовательность сноса (снятия,
+// down, подмена, `no`): fire в ней откладывается, save-POST между первым
+// снятием и `no` нет, оракул без E/C. Мутация: снять внешнее удержание в
+// removeOpkgTun → сохранение уходит до `no` (тест доставляет событие, чтобы
+// внутреннее удержание не висело), красный по форме Posts.
+func TestDelete_SaveHeldAcrossSequence(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(upTun10())
+	be := &gatedBackend{deviceBackend: newDeviceBackend(t, f), seen: make(chan struct{})}
+	be.plug(t, "opkgtun10", true)
+	o, p, sc := newOS5WithSave(t, f, f, be, 50*time.Millisecond)
+	var once sync.Once
+	sc.SetFireObserver(func(deferred bool) {
+		if deferred {
+			once.Do(func() { close(be.seen) })
+		}
+	})
+
+	if err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if !be.sawDeferred {
+		t.Fatal("наблюдатель не видел отложенного fire до подмены")
+	}
+	p.quiesce()
+	posts, _ := p.snapshot()
+	first, no := indexOf(posts, postNoGlobal), indexOf(posts, postNo)
+	if first < 0 || no < 0 || slices.Contains(posts[first:no], postSave) {
+		t.Fatalf("сохранение внутри сноса: %v", posts)
+	}
+	clean(t, f)
+}
+
+// gatedBackend — подмена ждёт, пока наблюдатель увидит отложенный fire (с
+// пределом: под мутацией его не будет).
+type gatedBackend struct {
+	*deviceBackend
+	seen        chan struct{}
+	sawDeferred bool
+}
+
+func (b *gatedBackend) ReplaceWithTun(ctx context.Context, iface string) error {
+	select {
+	case <-b.seen:
+		b.sawDeferred = true
+	case <-time.After(time.Second):
+	}
+	return b.deviceBackend.ReplaceWithTun(ctx, iface)
+}
+
+// Пачка сносов — ни одного сохранения внутри и ни одного ожидания события;
+// одно сохранение через afterRemoval после последнего `no`.
+// Мутация: полёт при holds == 0 без паузы после сноса → save внутри пачки, красный.
+func TestDeleteBurst_OneSaveAfterLast(t *testing.T) {
+	var recs []ndms.Interface
+	for _, n := range []string{"10", "11", "12"} {
+		recs = append(recs, ndms.Interface{ID: "OpkgTun" + n, Type: "OpkgTun", Description: "T" + n, State: "down"})
+	}
+	f := ndmsquery.NewFakeNDMS(recs...)
+	be := newDeviceBackend(t, f)
+	for _, n := range []string{"10", "11", "12"} {
+		be.plug(t, "opkgtun"+n, true)
+	}
+	const gap = 150 * time.Millisecond
+	o, p, _ := newOS5WithSave(t, f, f, be, gap)
+
+	for _, n := range []string{"10", "11", "12"} {
+		start := time.Now()
+		if err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg" + n, Name: "T" + n}); err != nil {
+			t.Fatalf("Delete awg%s: %v", n, err)
+		}
+		if d := time.Since(start); d > gap/2 {
+			t.Fatalf("Delete awg%s ждал %s", n, d)
+		}
+	}
+	lastNo := `{"interface":{"OpkgTun12":{"no":true}}}`
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		posts, _ := p.snapshot()
+		if slices.Contains(posts, postSave) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	posts, at := p.snapshot()
+	no, save := indexOf(posts, lastNo), indexOf(posts, postSave)
+	if save < no {
+		t.Fatalf("сохранение внутри пачки: %v", posts)
+	}
+	if d := at[save].Sub(at[no]); d < gap {
+		t.Fatalf("сохранение через %s после последнего `no`, ждали ≥ %s", d, gap)
+	}
+	p.quiesce()
+	if posts, _ := p.snapshot(); slices.Index(posts[save+1:], postSave) >= 0 {
+		t.Fatalf("второе сохранение после пачки: %v", posts)
+	}
+	clean(t, f)
+}
+
+// Н6: откат по существующей записи без её сноса удержание не берёт — не
+// ждёт сохранения в полёте. Мутация: удержание при любом deleteRecord →
+// откат ждёт потолок полёта, красный.
+func TestDelete_RollbackWithoutRecord_NoHold(t *testing.T) {
+	r := opkgTun10()
+	r.State = "down"
+	f := ndmsquery.NewFakeNDMS(r)
+	be := newDeviceBackend(t, f)
+	be.plug(t, "opkgtun10", false) // tun NDMS после ребута
+	o, p, sc := newOS5WithSave(t, f, f, be, 0)
+	o.commands = rejectAddressCommands(t, o, f)
+	// Полёт без события до конца теста.
+	p.mu.Lock()
+	p.manual = true
+	p.mu.Unlock()
+	sc.Request()
+	for posts, _ := p.snapshot(); !slices.Contains(posts, postSave); posts, _ = p.snapshot() {
+		time.Sleep(time.Millisecond)
+	}
+	defer func() {
+		p.mu.Lock()
+		p.manual = false
+		p.mu.Unlock()
+		for i := 0; i < 3; i++ { // полёт этого Request и, может быть, следующего
+			f.SaveSettled()
+			sc.OnConfigurationSaved(1e9)
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+
+	start := time.Now()
+	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err == nil {
+		t.Fatal("ColdStart: want отказ адреса")
+	}
+	if d := time.Since(start); d > 500*time.Millisecond {
+		t.Fatalf("откат без сноса записи ждал сохранение %s", d)
+	}
+	if !f.Has("OpkgTun10") {
+		t.Fatal("запись снята откатом без deleteRecord")
 	}
 }

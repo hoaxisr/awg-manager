@@ -301,6 +301,9 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	if err != nil {
 		return err // без rollbackStart: чужую запись и её устройство не трогаем
 	}
+	// applied — что из маршрутизации этот старт уже поставил (после успешного
+	// POST): откат снимает ровно это (stripRouting).
+	var applied stripRouting
 
 	// === Phase 2: kernel device (ip link add type amneziawg) ===
 	// Устройство — ДО NDMS-конфига: на записи OpkgTun без kernel-устройства
@@ -321,13 +324,13 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 		up = false
 	}
 	if err := o.backend.Start(ctx, names.IfaceName); err != nil {
-		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up)
+		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up, applied)
 		return tunnel.NewOpError("start", cfg.ID, "backend", err)
 	}
 
 	// Wait for interface to appear in /sys/class/net
 	if err := o.backend.WaitReady(ctx, names.IfaceName, interfaceReadyTimeout); err != nil {
-		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up)
+		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up, applied)
 		return tunnel.NewOpError("start", cfg.ID, "backend", fmt.Errorf("wait ready: %w", err))
 	}
 
@@ -340,12 +343,12 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	// SetAddress via RCI triggers NDMS to do "ip addr add" on the interface.
 	__addr, __mask := cfg.Address, maskFromPrefix(cfg.AddressPrefix)
 	if err := o.commands.Interfaces.SetAddress(ctx, iface, __addr, __mask); err != nil {
-		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up)
+		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up, applied)
 		return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("set address: %w", err))
 	}
 
 	if err := o.commands.Interfaces.SetMTU(ctx, iface, cfg.MTU); err != nil {
-		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up)
+		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up, applied)
 		return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("set MTU: %w", err))
 	}
 
@@ -367,6 +370,8 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	// (split out to avoid premature nginx binding), so re-apply on every start.
 	if err := o.commands.Interfaces.SetIPGlobal(ctx, iface); err != nil {
 		o.logWarn("start", cfg.ID, "Failed to set ip global: "+err.Error())
+	} else {
+		applied.global = true
 	}
 
 	o.logInfo("start", cfg.ID, "NDMS config applied (address + MTU + global)")
@@ -389,13 +394,13 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	}
 	if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "dev", names.IfaceName,
 		"txqueuelen", "1000", "mtu", fmt.Sprintf("%d", mtu)); err != nil {
-		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up)
+		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up, applied)
 		return tunnel.NewOpError("start", cfg.ID, "kernel", fmt.Errorf("configure interface: %w", err))
 	}
 	o.logInfo("start", cfg.ID, fmt.Sprintf("Kernel interface configured (mtu=%d, qlen=1000)", mtu))
 
 	if err := o.wg.SetConf(ctx, names.IfaceName, cfg.ConfPath); err != nil {
-		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up)
+		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up, applied)
 		return tunnel.NewOpError("start", cfg.ID, "wg", err)
 	}
 
@@ -405,7 +410,7 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	o.applyKernelAddresses(ctx, "start", cfg, names.IfaceName)
 
 	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", names.IfaceName); err != nil {
-		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up)
+		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up, applied)
 		return tunnel.NewOpError("start", cfg.ID, "link", fmt.Errorf("ip link up: %w", exec.FormatError(result, err)))
 	}
 
@@ -415,7 +420,7 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	// С этого POST запись может быть up и при его отказе — откат опустит её.
 	up = true
 	if err := o.commands.Interfaces.InterfaceUp(ctx, iface); err != nil {
-		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up)
+		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up, applied)
 		return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("interface up: %w", err))
 	}
 
@@ -448,6 +453,7 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 			o.logWarn("start", cfg.ID, "Default route failed (non-fatal): "+err.Error())
 			o.appLog.Warn("start", cfg.ID, "Не удалось установить маршрут по умолчанию — будет повторная попытка при WAN UP")
 		} else {
+			applied.defaultRoute = true
 			if cfg.AddressIPv6 != "" {
 				if err := o.commands.Routes.SetIPv6DefaultRoute(ctx, iface); err != nil {
 					o.logWarn("start", cfg.ID, "Failed to set IPv6 default route: "+err.Error())
@@ -465,7 +471,7 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	// === Phase 7: Add firewall rules ===
 	// Use kernel interface name (opkgtun0), not NDMS name (OpkgTun0)
 	if err := o.firewall.AddRules(ctx, names.IfaceName); err != nil {
-		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up)
+		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up, applied)
 		return tunnel.NewOpError("start", cfg.ID, "firewall", err)
 	}
 
@@ -647,7 +653,10 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 	var ndmsErr error
 	switch {
 	case ok:
-		ndmsErr = o.removeOpkgTun(ctx, "delete", stored.ID, names, iface, rec.State == "up", true)
+		// ColdStart и Reconcile ставят `ip global auto` безусловно при каждом подъёме,
+		// default — iff DefaultRoute: снимаем по своему состоянию, без чтений.
+		ndmsErr = o.removeOpkgTun(ctx, "delete", stored.ID, names, iface, rec.State == "up", true,
+			stripRouting{defaultRoute: stored.DefaultRoute, global: true})
 	default:
 		if names.NDMSName != "" {
 			o.logInfo("delete", stored.ID, "OpkgTun record absent in NDMS — nothing to delete there")
@@ -1050,12 +1059,14 @@ func (o *OperatorOS5Impl) GetDefaultGatewayInterface(ctx context.Context) (strin
 // после del (tun не встал): запись снимается, см. removeOpkgTun (L2). up —
 // запись могла быть up
 // (была до старта или старт дошёл до InterfaceUp). Порядок — removeOpkgTun.
-func (o *OperatorOS5Impl) rollbackStart(ctx context.Context, tunnelID string, names tunnel.Names, iface query.Confirmed, justCreated, up bool) {
+// applied — что из маршрутизации старт успел поставить: снимается до down
+// только при сносе записи (stripRouting).
+func (o *OperatorOS5Impl) rollbackStart(ctx context.Context, tunnelID string, names tunnel.Names, iface query.Confirmed, justCreated, up bool, applied stripRouting) {
 	o.logInfo("rollback", tunnelID, "Rolling back failed start")
 
 	o.clearAppliedDNS(ctx, tunnelID, iface)
 	_ = o.firewall.RemoveRules(ctx, names.IfaceName)
-	_ = o.removeOpkgTun(ctx, "rollback", tunnelID, names, iface, up, justCreated)
+	_ = o.removeOpkgTun(ctx, "rollback", tunnelID, names, iface, up, justCreated, applied)
 }
 
 // downBeforeSwap — C3a для подмены tun → amneziawg на старте (F61-1): под
@@ -1118,7 +1129,33 @@ func (o *OperatorOS5Impl) downBeforeSwap(ctx context.Context, tunnelID string, n
 // один раз в том же Hold (ReplaceWithTun). Принятый остаток (решение
 // владельца 06.10): отказали обе попытки — окно между отпусканием барьера и
 // ответом `no interface` (один POST), класс аварийного остатка N4.
-func (o *OperatorOS5Impl) removeOpkgTun(ctx context.Context, op, tunnelID string, names tunnel.Names, iface query.Confirmed, up, deleteRecord bool) error {
+//
+// D-N3 (П25, вариант А владельца): при сносе записи первым действием —
+// удержание сохранения (ждёт конца нашего сохранения в полёте; отказ — ни
+// одного POST, fail-closed), оно держится на down/подмену/`no`, чтобы наше
+// сохранение не открылось между ними; затем, до down, снимаются `ip route
+// default` и `ip global` (strip). Улика dn3-round2-evidence.md: при
+// сохранении в окне сноса `ip route default` даёт `C RoutingTable: unable to
+// resolve interface names` (NOGA: есть, NORD/NEITHER/STRIP: нет), `ip global
+// auto` — `E L3Base: unable to find` (NORD: есть, NOGA/NEITHER/STRIP: нет);
+// снятие обоих перед down — STRIP: 0/7 против 3/7. Снимаем по своему
+// состоянию, без чтений running-config. Знание устаревает, когда запись не
+// поднималась нашим Start (восстановление старого бэкапа, запись не наша),
+// когда default снят в веб-морде роутера или Start отказал между `ip global`
+// и default, — тогда снимается отсутствующее: маршрут — терпимый `0xcffd0198`,
+// не E (S6 06.10); `no ip global` без global — проба CS3-P0. Отказ снятия не
+// мешает сносу (Warn): это строки журнала, не состояние.
+// `ipv6 route default` не снимается — улики нет (Н12).
+func (o *OperatorOS5Impl) removeOpkgTun(ctx context.Context, op, tunnelID string, names tunnel.Names, iface query.Confirmed, up, deleteRecord bool, strip stripRouting) error {
+	if deleteRecord {
+		release, err := o.commands.Save.HoldForRemoval(ctx)
+		if err != nil {
+			o.logWarn(op, tunnelID, "NDMS record kept: "+err.Error())
+			return err
+		}
+		defer release()
+		o.stripRouting(ctx, op, tunnelID, iface, strip)
+	}
 	if _, err := netdev.Absent(names.IfaceName); err == nil && deleteRecord {
 		return o.deleteOpkgTunRecord(ctx, op, tunnelID, names, iface)
 	}
@@ -1147,6 +1184,24 @@ func (o *OperatorOS5Impl) removeOpkgTun(ctx context.Context, op, tunnelID string
 		return nil
 	}
 	return o.deleteOpkgTunRecord(ctx, op, tunnelID, names, iface)
+}
+
+// stripRouting — что снять с записи до down (removeOpkgTun).
+type stripRouting struct {
+	defaultRoute, global bool
+}
+
+func (o *OperatorOS5Impl) stripRouting(ctx context.Context, op, tunnelID string, iface query.Confirmed, strip stripRouting) {
+	if strip.defaultRoute {
+		if err := o.commands.Routes.RemoveDefaultRoute(ctx, iface); err != nil {
+			o.logWarn(op, tunnelID, "remove default route before delete: "+err.Error())
+		}
+	}
+	if strip.global {
+		if err := o.commands.Interfaces.ClearIPGlobal(ctx, iface); err != nil {
+			o.logWarn(op, tunnelID, "clear ip global before delete: "+err.Error())
+		}
+	}
 }
 
 // deleteOpkgTunRecord — `no interface` (NDMS снимает свой tun сам), затем

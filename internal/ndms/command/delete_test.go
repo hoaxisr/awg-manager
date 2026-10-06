@@ -146,3 +146,62 @@ func TestWireguardImport_NotListed_DroppedViaMutator(t *testing.T) {
 		t.Fatalf("снос не через deleteInterface: posts=%v", f.Posts)
 	}
 }
+
+// D-N3: `no interface` не уходит, пока летит наше сохранение — только после
+// ConfigurationSaved. Мутация: снять HoldForRemoval → `no` при сохранении в
+// полёте, оракул E == 1, красный.
+func TestDeleteInterface_WaitsFlight(t *testing.T) {
+	c, f, _, conf := deleteFixture(t, func(f *query.FakeNDMS, _ *query.Queries) Poster { return f })
+	sc := c.save
+	sc.SetSaveTimings(5*time.Second, 5*time.Second, 0)
+	sc.SetUptimeReader(func() float64 { return 100 })
+	sc.OnBusState(true)
+	t.Cleanup(func() { drainSC(t, sc) })
+	f.HoldSaves()
+	flushed := make(chan error, 1)
+	go func() { flushed <- sc.Flush(context.Background()) }()
+	waitFlight(t, sc)
+	deleted := make(chan error, 1)
+	go func() { deleted <- c.deleteInterface(context.Background(), conf, "delete Wireguard1") }()
+	time.Sleep(50 * time.Millisecond)
+	if !f.Has("Wireguard1") {
+		t.Fatal("`no interface` ушёл при сохранении в полёте")
+	}
+	f.SaveSettled()
+	sc.OnConfigurationSaved(104)
+	if err := <-deleted; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-flushed; err != nil {
+		t.Fatal(err)
+	}
+	if f.E != 0 {
+		t.Fatalf("E = %d", f.E)
+	}
+}
+
+// Пауза после сноса — только когда запись снята: «unable to find» и отказ
+// её не ставят. Мутация: NoteRemoval на всех исходах → красный.
+func TestDeleteInterface_NotesRemoval(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		want bool
+	}{
+		"removed": {`{}`, true},
+		"absent":  {`{"status":"error","message":"unable to find interface \"Wireguard1\""}`, false},
+		"refused": {`{"status":"error","message":"interface is busy"}`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _, _, conf := deleteFixture(t, func(*query.FakeNDMS, *query.Queries) Poster {
+				return stubPoster{body: tc.body}
+			})
+			_ = c.deleteInterface(context.Background(), conf, "delete Wireguard1")
+			c.save.mu.Lock()
+			noted := !c.save.lastRemovalAt.IsZero()
+			c.save.mu.Unlock()
+			if noted != tc.want {
+				t.Fatalf("lastRemovalAt поставлен=%v, ждали %v", noted, tc.want)
+			}
+		})
+	}
+}
