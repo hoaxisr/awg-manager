@@ -180,15 +180,6 @@ func HasBlockLine(lines []string, header, line string) bool {
 	return false
 }
 
-// ACLRules — то же по кэшированному running-config.
-func (s *RunningConfigStore) ACLRules(ctx context.Context, header string) ([]string, error) {
-	lines, err := s.Lines(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return ACLRulesOf(lines, header), nil
-}
-
 // InterfaceAccessGroups — то же по кэшированному running-config.
 func (s *RunningConfigStore) InterfaceAccessGroups(ctx context.Context, iface string) ([]string, error) {
 	lines, err := s.Lines(ctx)
