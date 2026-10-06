@@ -3,6 +3,8 @@
 package procres
 
 import (
+	"bytes"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"sync"
@@ -12,22 +14,17 @@ import (
 
 type linuxLogWatcher struct {
 	path     string
-	offset   int64
-	onFatal  func()
+	onNotify func()
 	stopPipe [2]int
 	doneCh   chan struct{}
 	stopOnce sync.Once
 }
 
-func newPlatformLogWatcher(path string, startOffset int64, onFatal func()) logWatcher {
-	if startOffset < 0 {
-		startOffset = 0
-	}
+func newPlatformLogWatcher(path string, onNotify func()) logWatcher {
 	return &linuxLogWatcher{
-		path:    path,
-		offset:  startOffset,
-		onFatal: onFatal,
-		doneCh:  make(chan struct{}),
+		path:     path,
+		onNotify: onNotify,
+		doneCh:   make(chan struct{}),
 	}
 }
 
@@ -46,9 +43,20 @@ func (w *linuxLogWatcher) start() {
 	}
 
 	dir := filepath.Dir(w.path)
-	_, _ = unix.InotifyAddWatch(inotifyFd, dir, unix.IN_CREATE|unix.IN_MODIFY)
+	base := filepath.Base(w.path)
+
+	// Ставим IN_CREATE ТОЛЬКО на каталог (без IN_MODIFY), чтобы модификация
+	// соседних файлов других инстансов в RuntimeDir не будила этот watcher.
+	dirWd, _ := unix.InotifyAddWatch(inotifyFd, dir, unix.IN_CREATE)
+	fileWd := -1
 	if _, statErr := os.Stat(w.path); statErr == nil {
-		_, _ = unix.InotifyAddWatch(inotifyFd, w.path, unix.IN_MODIFY)
+		if wd, err := unix.InotifyAddWatch(inotifyFd, w.path, unix.IN_MODIFY); err == nil {
+			fileWd = wd
+		}
+	}
+
+	if w.onNotify != nil {
+		w.onNotify()
 	}
 
 	go func() {
@@ -57,7 +65,6 @@ func (w *linuxLogWatcher) start() {
 			_ = unix.Close(inotifyFd)
 		}()
 
-		signaled := false
 		var buf [4096]byte
 
 		for {
@@ -82,22 +89,42 @@ func (w *linuxLogWatcher) start() {
 			}
 
 			if pfd[1].Revents&unix.POLLIN != 0 {
+				needNotify := false
 				for {
 					rn, rerr := unix.Read(inotifyFd, buf[:])
 					if rerr != nil || rn <= 0 {
 						break
 					}
-				}
-
-				if _, statErr := os.Stat(w.path); statErr == nil {
-					_, _ = unix.InotifyAddWatch(inotifyFd, w.path, unix.IN_MODIFY)
-				}
-
-				if !signaled && scanLogForFatal(w.path, &w.offset) {
-					signaled = true
-					if w.onFatal != nil {
-						w.onFatal()
+					const header = 16
+					for off := 0; off+header <= rn; {
+						wd := int32(binary.NativeEndian.Uint32(buf[off : off+4]))
+						mask := binary.NativeEndian.Uint32(buf[off+4 : off+8])
+						nameLen := int(binary.NativeEndian.Uint32(buf[off+12 : off+16]))
+						var name string
+						if nameLen > 0 && off+header+nameLen <= rn {
+							rawName := buf[off+header : off+header+nameLen]
+							if idx := bytes.IndexByte(rawName, 0); idx >= 0 {
+								name = string(rawName[:idx])
+							} else {
+								name = string(rawName)
+							}
+						}
+						if wd == int32(dirWd) && mask&unix.IN_CREATE != 0 {
+							if name == base {
+								if nwd, err := unix.InotifyAddWatch(inotifyFd, w.path, unix.IN_MODIFY); err == nil {
+									fileWd = nwd
+									needNotify = true
+								}
+							}
+						} else if fileWd >= 0 && wd == int32(fileWd) && mask&unix.IN_MODIFY != 0 {
+							needNotify = true
+						}
+						off += header + nameLen
 					}
+				}
+
+				if needNotify && w.onNotify != nil {
+					w.onNotify()
 				}
 			}
 		}

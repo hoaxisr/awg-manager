@@ -55,6 +55,8 @@ const (
 	causeRequested      = "requested"
 	causeSessionFailure = "session_failure"
 	causeInterval       = "interval"
+	causeConfigChanged  = "config_changed"
+	causeBinaryUpdated  = "binary_updated"
 )
 
 // ProcessLink — срез control.Link, нужный ресурсу process.
@@ -94,6 +96,7 @@ type ProcConfig struct {
 	Now          func() time.Time
 	Wake         func()
 	Log          func(string)
+	Warn         func(string)
 }
 
 // Proc — ресурс process: один тип на все четыре роли, различия — данными.
@@ -133,8 +136,12 @@ type Proc struct {
 	lastObservedAt    time.Time
 	logStartOffset    int64
 
-	lwMu     sync.Mutex
-	logWatch logWatcher
+	fatalMu  sync.Mutex
+	fatalErr string
+
+	lwMu          sync.Mutex
+	logWatch      logWatcher
+	logScanOffset int64
 }
 
 func NewProc(cfg ProcConfig) *Proc {
@@ -144,6 +151,40 @@ func NewProc(cfg ProcConfig) *Proc {
 	return &Proc{c: cfg, logStartOffset: -1}
 }
 
+func (p *Proc) setFatalError(sig string) {
+	p.fatalMu.Lock()
+	defer p.fatalMu.Unlock()
+	p.fatalErr = sig
+}
+
+func (p *Proc) getFatalError() string {
+	p.fatalMu.Lock()
+	defer p.fatalMu.Unlock()
+	return p.fatalErr
+}
+
+func (p *Proc) clearFatalError() {
+	p.fatalMu.Lock()
+	defer p.fatalMu.Unlock()
+	p.fatalErr = ""
+}
+
+func (p *Proc) scanLog() string {
+	p.lwMu.Lock()
+	defer p.lwMu.Unlock()
+	if p.c.LogPath == "" {
+		return ""
+	}
+	if p.logScanOffset < p.logStartOffset && p.logStartOffset >= 0 {
+		p.logScanOffset = p.logStartOffset
+	}
+	sig := scanLogForFatal(p.c.LogPath, &p.logScanOffset)
+	if sig != "" {
+		p.setFatalError(sig)
+	}
+	return sig
+}
+
 // SetDesired — намерение этого прогона. cfgErr — вердикт Validate() конфига:
 // невалидное намерение не запускает процесс, а выносит приговор с причиной.
 func (p *Proc) SetDesired(enabled bool, forkArgs []string, cfgErr error) {
@@ -151,6 +192,10 @@ func (p *Proc) SetDesired(enabled bool, forkArgs []string, cfgErr error) {
 	p.forkArgs = forkArgs
 	p.wantHash = awgmproto.ConfigHash(forkArgs)
 	p.cfgErr = cfgErr
+	if !enabled {
+		p.stopLogWatcher()
+		p.clearFatalError()
+	}
 }
 
 // SetAutoReconnect настраивает автоматический перезапуск процесса:
@@ -160,6 +205,9 @@ func (p *Proc) SetAutoReconnect(enabled bool, interval time.Duration) {
 	p.reconnectInterval = interval
 	if !enabled {
 		p.stopLogWatcher()
+		p.clearFatalError()
+	} else if p.enabled && p.c.LogPath != "" && p.lastUptimeS > 0 {
+		p.ensureLogWatcher()
 	}
 }
 
@@ -214,38 +262,6 @@ var fatalSessionSignatures = []string{
 	"all retransmissions failed",
 }
 
-func readLogTail(path string, startOffset int64, maxBytes int64) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return ""
-	}
-	if startOffset < 0 {
-		startOffset = 0
-	}
-	fileSize := st.Size()
-	if fileSize < startOffset {
-		startOffset = 0
-	}
-	if fileSize <= startOffset {
-		return ""
-	}
-	off := fileSize - maxBytes
-	if off < startOffset {
-		off = startOffset
-	}
-	buf := make([]byte, fileSize-off)
-	n, err := f.ReadAt(buf, off)
-	if err != nil && n == 0 {
-		return ""
-	}
-	return string(buf[:n])
-}
-
 func detectFatalSessionError(logTail string) string {
 	if logTail == "" {
 		return ""
@@ -287,16 +303,20 @@ func (p *Proc) Observe(ctx context.Context) (proxyrt.Observation, error) {
 				p.logStartOffset = 0
 			}
 		}
+		if p.enabled && p.autoReconnect && p.c.LogPath != "" {
+			p.ensureLogWatcher()
+		}
 		obs := obsFromState(st)
 		if p.enabled && p.autoReconnect {
 			if p.reconnectInterval > 0 && time.Duration(st.UptimeS)*time.Second >= p.reconnectInterval {
 				obs.Attrs[attrReconnectDue] = causeInterval
 			}
-			if p.c.LogPath != "" && time.Duration(st.UptimeS)*time.Second >= socketGrace {
-				tail := readLogTail(p.c.LogPath, p.logStartOffset, 16384)
-				if sig := detectFatalSessionError(tail); sig != "" {
-					obs.Attrs[attrFatalError] = sig
-				}
+			sig := p.getFatalError()
+			if sig == "" {
+				sig = p.scanLog()
+			}
+			if sig != "" {
+				obs.Attrs[attrFatalError] = sig
 			}
 		}
 		if !p.autoReconnect {
@@ -317,6 +337,8 @@ func (p *Proc) Observe(ctx context.Context) (proxyrt.Observation, error) {
 	pid, alive := p.c.Runner.AlivePID()
 	now := p.c.Now()
 	if !alive {
+		p.stopLogWatcher()
+		p.clearFatalError()
 		// Процесса нет. Это факт, а не «не смогли посмотреть».
 		if p.spawnedAt != nil && now.Sub(*p.spawnedAt) < socketGrace {
 			// Смерть в окне старта = неудача старта: без этого крашлупа
@@ -453,10 +475,10 @@ func (p *Proc) Plan(obs proxyrt.Observation) []proxyrt.Step {
 		}}
 	}
 	if got := obs.Attrs["config_hash"]; got != "" && got != p.wantHash {
-		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart", Args: map[string]string{"cause": "config_changed"}, Reason: "конфигурация изменилась"}}
+		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart", Args: map[string]string{argCause: causeConfigChanged}, Reason: "конфигурация изменилась"}}
 	}
 	if sha := obs.Attrs["binary_sha256"]; sha != "" && p.c.PinnedSHA256 != "" && sha != p.c.PinnedSHA256 {
-		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart", Args: map[string]string{"cause": "binary_updated"}, Reason: "бинарь обновлён"}}
+		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart", Args: map[string]string{argCause: causeBinaryUpdated}, Reason: "бинарь обновлён"}}
 	}
 	return nil
 }
@@ -512,6 +534,7 @@ func (p *Proc) Apply(ctx context.Context, s proxyrt.Step) error {
 
 func (p *Proc) stop(ctx context.Context) error {
 	p.stopLogWatcher()
+	p.clearFatalError()
 	pid := 0
 	if snap, ok := p.c.Link.Snapshot(); ok {
 		pid = snap.State.PID
@@ -543,12 +566,18 @@ func (p *Proc) start(ctx context.Context) error {
 // restart-ветка Apply, у той гейт стоит ДО stop).
 func (p *Proc) spawn(ctx context.Context, now time.Time) error {
 	p.stopLogWatcher()
+	p.clearFatalError()
 	p.logStartOffset = 0
+	p.lwMu.Lock()
+	p.logScanOffset = 0
+	p.lwMu.Unlock()
 	if p.c.LogPath != "" {
 		_ = os.Remove(p.c.LogPath + ".prev")
 		if st, err := os.Stat(p.c.LogPath); err == nil {
 			if err := os.Rename(p.c.LogPath, p.c.LogPath+".prev"); err != nil {
-				if p.c.Log != nil {
+				if p.c.Warn != nil {
+					p.c.Warn(fmt.Sprintf("не удалось переименовать лог %s: %v", p.c.LogPath, err))
+				} else if p.c.Log != nil {
 					p.c.Log(fmt.Sprintf("не удалось переименовать лог %s: %v", p.c.LogPath, err))
 				}
 				if f, truncErr := os.OpenFile(p.c.LogPath, os.O_WRONLY|os.O_TRUNC, 0644); truncErr == nil {
@@ -573,8 +602,8 @@ func (p *Proc) spawn(ctx context.Context, now time.Time) error {
 	t := now
 	p.spawnedAt = &t
 	p.unreachSince = nil
-	if p.autoReconnect && p.c.LogPath != "" && p.c.Wake != nil {
-		p.startLogWatcher()
+	if p.autoReconnect && p.c.LogPath != "" {
+		p.ensureLogWatcher()
 	}
 	return nil
 }
@@ -652,26 +681,30 @@ func (p *Proc) RecheckAfter() time.Duration {
 	return 0
 }
 
-func (p *Proc) startLogWatcher() {
+func (p *Proc) ensureLogWatcher() {
 	p.lwMu.Lock()
-	defer p.lwMu.Unlock()
-	if p.logWatch != nil {
-		p.logWatch.stop()
-		p.logWatch = nil
+	if p.logWatch != nil || !p.enabled || !p.autoReconnect || p.c.LogPath == "" {
+		p.lwMu.Unlock()
+		return
 	}
-	p.logWatch = newPlatformLogWatcher(p.c.LogPath, p.logStartOffset, func() {
-		if p.c.Wake != nil {
-			p.c.Wake()
+	p.logWatch = newPlatformLogWatcher(p.c.LogPath, func() {
+		if sig := p.scanLog(); sig != "" {
+			if p.c.Wake != nil {
+				p.c.Wake()
+			}
 		}
 	})
-	p.logWatch.start()
+	watch := p.logWatch
+	p.lwMu.Unlock()
+	watch.start()
 }
 
 func (p *Proc) stopLogWatcher() {
 	p.lwMu.Lock()
-	defer p.lwMu.Unlock()
-	if p.logWatch != nil {
-		p.logWatch.stop()
-		p.logWatch = nil
+	watch := p.logWatch
+	p.logWatch = nil
+	p.lwMu.Unlock()
+	if watch != nil {
+		watch.stop()
 	}
 }

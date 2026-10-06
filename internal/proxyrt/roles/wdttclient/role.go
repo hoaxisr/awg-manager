@@ -70,6 +70,7 @@ type Deps struct {
 	Now          func() time.Time
 	Wake         func()
 	Log          func(string)
+	Warn         func(string)
 }
 
 // Role — реализация proxyrt.Role. Ресурсы — долгоживущие: защёлки
@@ -122,7 +123,7 @@ func (r *Role) build(sock, logPath string) {
 		NeedCmds:   []string{"state", "attach-tun", "detach-tun"},
 		SocketPath: sock, LogPath: logPath,
 		Link: d.Link, Runner: d.Runner, Gate: d.Gate, Now: d.Now,
-		Wake: d.Wake, Log: d.Log,
+		Wake: d.Wake, Log: d.Log, Warn: d.Warn,
 	})
 	r.iface = ndmsres.NewIface(roles.RNdmsIface, d.Cmds, d.Query)
 	r.addr = ndmsres.NewAddress(roles.RNdmsAddress, d.Cmds, d.Query)

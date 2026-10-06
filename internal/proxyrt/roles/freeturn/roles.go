@@ -32,6 +32,7 @@ type ClientDeps struct {
 	Now          func() time.Time
 	Wake         func()
 	Log          func(string)
+	Warn         func(string)
 }
 
 // ClientRole: listen_port → process → linked_endpoint (§4.1; listen первым —
@@ -67,7 +68,7 @@ func NewClient(d ClientDeps) (*ClientRole, error) {
 			NeedCmds:   []string{"state"},
 			SocketPath: sock, LogPath: logPath,
 			Link: d.Link, Runner: d.Runner, Gate: d.Gate, Now: d.Now,
-			Wake: d.Wake, Log: d.Log,
+			Wake: d.Wake, Log: d.Log, Warn: d.Warn,
 		}),
 		linked: linkres.NewLinkedEndpoint(roles.RLinkedEndpoint, d.Sync),
 	}, nil

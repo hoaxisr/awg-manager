@@ -1185,6 +1185,7 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 				Occ:  newProxyOccupancy(store, a.awgStore, rec.Kind, rec.ID),
 				Wake: func() { ref.mgr.Post(key, proxyrt.EventProcessState) },
 				Log:  func(msg string) { journal.Info("proc", key, msg) },
+				Warn: func(msg string) { journal.Warn("proc", key, msg) },
 			})
 			if err != nil {
 				return nil, err
@@ -1225,6 +1226,7 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 				Occ:  newProxyOccupancy(store, a.awgStore, rec.Kind, rec.ID),
 				Wake: func() { ref.mgr.Post(key, proxyrt.EventProcessState) },
 				Log:  func(msg string) { journal.Info("proc", key, msg) },
+				Warn: func(msg string) { journal.Warn("proc", key, msg) },
 			})
 			if err != nil {
 				return nil, err

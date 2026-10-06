@@ -9,43 +9,37 @@ import (
 
 type otherLogWatcher struct {
 	path     string
-	offset   int64
-	onFatal  func()
+	onNotify func()
 	stopCh   chan struct{}
 	doneCh   chan struct{}
 	stopOnce sync.Once
 }
 
-func newPlatformLogWatcher(path string, startOffset int64, onFatal func()) logWatcher {
-	if startOffset < 0 {
-		startOffset = 0
-	}
+func newPlatformLogWatcher(path string, onNotify func()) logWatcher {
 	return &otherLogWatcher{
-		path:    path,
-		offset:  startOffset,
-		onFatal: onFatal,
-		stopCh:  make(chan struct{}),
-		doneCh:  make(chan struct{}),
+		path:     path,
+		onNotify: onNotify,
+		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
 	}
 }
 
 func (w *otherLogWatcher) start() {
+	if w.onNotify != nil {
+		w.onNotify()
+	}
 	go func() {
 		defer close(w.doneCh)
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 
-		signaled := false
 		for {
 			select {
 			case <-w.stopCh:
 				return
 			case <-ticker.C:
-				if !signaled && scanLogForFatal(w.path, &w.offset) {
-					signaled = true
-					if w.onFatal != nil {
-						w.onFatal()
-					}
+				if w.onNotify != nil {
+					w.onNotify()
 				}
 			}
 		}

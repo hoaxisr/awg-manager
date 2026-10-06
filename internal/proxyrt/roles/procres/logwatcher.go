@@ -1,6 +1,7 @@
 package procres
 
 import (
+	"bytes"
 	"os"
 )
 
@@ -9,22 +10,26 @@ type logWatcher interface {
 	stop()
 }
 
-func scanLogForFatal(path string, offset *int64) bool {
+// scanLogForFatal проверяет дозаписанную часть журнала на наличие фатальных
+// сигнатур сбоя сессии. Смещение *offset сдвигается строго до последнего перевода
+// строки (\n), чтобы строка, записанная клиентом в два приёма, не разрезалась между
+// блоками чтения.
+func scanLogForFatal(path string, offset *int64) string {
 	f, err := os.Open(path)
 	if err != nil {
-		return false
+		return ""
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		return false
+		return ""
 	}
 	size := st.Size()
 	if size < *offset {
 		*offset = 0 // файл усечён или ротирован
 	}
 	if size <= *offset {
-		return false
+		return ""
 	}
 	readFrom := *offset
 	if size-readFrom > 16384 {
@@ -32,9 +37,22 @@ func scanLogForFatal(path string, offset *int64) bool {
 	}
 	buf := make([]byte, size-readFrom)
 	n, err := f.ReadAt(buf, readFrom)
-	*offset = size
 	if err != nil && n == 0 {
-		return false
+		return ""
 	}
-	return detectFatalSessionError(string(buf[:n])) != ""
+	data := buf[:n]
+	lastNL := bytes.LastIndexByte(data, '\n')
+	var toCheck []byte
+	if lastNL >= 0 {
+		toCheck = data[:lastNL+1]
+		*offset = readFrom + int64(lastNL+1)
+	} else if len(data) >= 16384 {
+		toCheck = data
+		*offset = size
+	} else {
+		// Неполная строка без перевода строки: смещение не продвигаем,
+		// чтобы следующий опрос прочитал строку целиком после дозаписи.
+		return ""
+	}
+	return detectFatalSessionError(string(toCheck))
 }

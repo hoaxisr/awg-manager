@@ -682,6 +682,7 @@ func TestProcAutoReconnect_LogFatalError(t *testing.T) {
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
 	p.SetAutoReconnect(true, 0)
 	p.logStartOffset = 0 // симулируем процесс, запущенный через spawn
+	defer p.stopLogWatcher()
 
 	obs, err := p.Observe(context.Background())
 	if err != nil {
@@ -732,6 +733,7 @@ func TestProcAutoReconnect_AdoptedProcessIgnoresOldLogFatal(t *testing.T) {
 	})
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
 	p.SetAutoReconnect(true, 0)
+	defer p.stopLogWatcher()
 
 	// Первый Observe: подхваченный процесс (logStartOffset был -1).
 	// Старая строка 'all streams down' в журнале не должна вызывать перезапуск!
@@ -812,6 +814,7 @@ func TestProcAutoReconnect_IntervalExpiration(t *testing.T) {
 	})
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
 	p.SetAutoReconnect(true, 1*time.Hour)
+	defer p.stopLogWatcher()
 
 	obs, err := p.Observe(context.Background())
 	if err != nil {
@@ -827,13 +830,13 @@ func TestProcAutoReconnect_IntervalExpiration(t *testing.T) {
 	}
 }
 
-func TestProcAutoReconnect_StartupGrace(t *testing.T) {
+func TestProcAutoReconnect_StartupFailureDetected(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "test.log")
 	if err := os.WriteFile(logFile, []byte("error 401: Unauthorized\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Uptime 5s — окно старта (socketGrace = 20s), лог не должен инспектироваться
+	// Сбой в первые 20 с (UptimeS = 5) ОБЯЗАН обнаруживаться и приводить к перезапуску
 	link := &fakeLink{st: awgmproto.State{PID: 100, UptimeS: 5}}
 	r := &fakeRunner{pid: 100, alive: true}
 	p := NewProc(ProcConfig{
@@ -845,13 +848,18 @@ func TestProcAutoReconnect_StartupGrace(t *testing.T) {
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
 	p.SetAutoReconnect(true, 0)
 	p.logStartOffset = 0
+	defer p.stopLogWatcher()
 
 	obs, err := p.Observe(context.Background())
 	if err != nil {
 		t.Fatalf("Observe err: %v", err)
 	}
-	if obs.Attrs["fatal_error"] != "" {
-		t.Fatalf("fatal_error should be ignored during startup grace, got %q", obs.Attrs["fatal_error"])
+	if obs.Attrs["fatal_error"] != "error 401: Unauthorized" {
+		t.Fatalf("ожидали обнаружение fatal_error на старте, получили %q", obs.Attrs["fatal_error"])
+	}
+	steps := p.Plan(obs)
+	if len(steps) != 1 || steps[0].Op != "restart" {
+		t.Fatalf("Plan = %+v, want [restart]", steps)
 	}
 }
 
@@ -872,6 +880,7 @@ func TestProcAutoReconnect_ReaderDeadlineSignature(t *testing.T) {
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
 	p.SetAutoReconnect(true, 0)
 	p.logStartOffset = 0
+	defer p.stopLogWatcher()
 
 	obs, err := p.Observe(context.Background())
 	if err != nil {
@@ -899,6 +908,7 @@ func TestProcAutoReconnect_IgnoresGenericSocketErrors(t *testing.T) {
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
 	p.SetAutoReconnect(true, 0)
 	p.logStartOffset = 0
+	defer p.stopLogWatcher()
 
 	obs, err := p.Observe(context.Background())
 	if err != nil {
@@ -922,12 +932,13 @@ func TestProc_SessionFailureAccumulatesBackoff(t *testing.T) {
 	})
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
 	p.SetAutoReconnect(true, 0)
+	defer p.stopLogWatcher()
 
 	// 1-й сбой сессии: Step с cause="session_failure"
 	step := proxyrt.Step{
 		Resource: p.ID(),
 		Op:       "restart",
-		Args:     map[string]string{"cause": "session_failure"},
+		Args:     map[string]string{argCause: causeSessionFailure},
 		Reason:   "сбой сессии в журнале: error 401: Unauthorized",
 	}
 	if err := p.Apply(context.Background(), step); err != nil {
@@ -1003,28 +1014,29 @@ func TestProc_SessionFailureAccumulatesBackoff(t *testing.T) {
 
 func TestProcAutoReconnect_LogTruncatedOrRotated(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "test.log")
-	initialData := make([]byte, 100)
-	for i := range initialData {
-		initialData[i] = 'A'
-	}
+	initialData := []byte("строка номер один\nстрока номер два\n")
 	if err := os.WriteFile(logFile, initialData, 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	tail := readLogTail(logFile, 80, 16384)
-	if len(tail) != 20 {
-		t.Fatalf("ожидали 20 байт, получили %d", len(tail))
+	offset := int64(100) // смещение больше размера файла (имитация ротации)
+	sig := scanLogForFatal(logFile, &offset)
+	if sig != "" {
+		t.Fatalf("ожидали пустую сигнатуру, получили %q", sig)
+	}
+	if offset != int64(len(initialData)) {
+		t.Fatalf("offset = %d, want %d", offset, len(initialData))
 	}
 
-	// Внешняя ротация/усечение: файл стал короче startOffset
+	// Внешняя ротация/усечение: файл перезаписан фатальной ошибкой
 	if err := os.WriteFile(logFile, []byte("сессия разорвана\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Функция должна сбросить смещение и прочесть новый короткий файл
-	tail = readLogTail(logFile, 80, 16384)
-	if !strings.Contains(tail, "сессия разорвана") {
-		t.Fatalf("ожидали прочесть усечённый лог, получили: %q", tail)
+	// scanLogForFatal должен сбросить смещение и прочесть новый короткий файл
+	sig = scanLogForFatal(logFile, &offset)
+	if sig != "сессия разорвана" {
+		t.Fatalf("ожидали прочесть усечённый лог, получили: %q", sig)
 	}
 }
 
@@ -1038,12 +1050,13 @@ func TestProc_RestartSpawnFailureAccumulatesBackoff(t *testing.T) {
 	p.enabled = true
 	p.autoReconnect = true
 	p.reconnectInterval = time.Hour
+	defer p.stopLogWatcher()
 
 	step := proxyrt.Step{
 		Resource: p.c.ID,
 		Op:       "restart",
 		Reason:   "плановое переподключение (interval)",
-		Args:     map[string]string{"cause": "interval"},
+		Args:     map[string]string{argCause: causeInterval},
 	}
 	err := p.Apply(context.Background(), step)
 	if err == nil {
@@ -1152,8 +1165,9 @@ func TestProc_LogWatcherWakesOnFatalError(t *testing.T) {
 		Now:     time.Now,
 		Wake:    func() { wakeCh <- struct{}{} },
 	})
+	p.enabled = true
 	p.autoReconnect = true
-	p.startLogWatcher()
+	p.ensureLogWatcher()
 	defer p.stopLogWatcher()
 
 	// Нефатальная строка: не должна будить
@@ -1183,5 +1197,275 @@ func TestProc_LogWatcherWakesOnFatalError(t *testing.T) {
 		// успешно!
 	case <-time.After(2 * time.Second):
 		t.Fatal("таймаут ожидания wake при записи фатальной ошибки в лог")
+	}
+}
+
+func TestProcAutoReconnect_SplitLineSignature(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "split.log")
+
+	// 1. Запись первой части строки без перевода строки
+	if err := os.WriteFile(logPath, []byte("[VK Auth] Multi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	offset := int64(0)
+	sig := scanLogForFatal(logPath, &offset)
+	if sig != "" {
+		t.Fatalf("неполная строка не должна возвращать сигнатуру, got %q", sig)
+	}
+	if offset != 0 {
+		t.Fatalf("offset не должен смещаться на неполной строке, got %d", offset)
+	}
+
+	// 2. Дозапись остатка строки с переводом строки
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("ple auth errors detected\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	sig = scanLogForFatal(logPath, &offset)
+	if sig != "[VK Auth] Multiple auth errors detected" {
+		t.Fatalf("ожидали '[VK Auth] Multiple auth errors detected', got %q", sig)
+	}
+	if offset <= 0 {
+		t.Fatalf("offset должен продвинуться после завершения строки, got %d", offset)
+	}
+}
+
+func TestProcAutoReconnect_EarlyUptimeFailureTriggersRestart(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "early.log")
+	if err := os.WriteFile(logPath, []byte("старт\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	wakeCh := make(chan struct{}, 5)
+	link := &fakeLink{st: awgmproto.State{PID: 201, UptimeS: 5}}
+	runner := &fakeRunner{pid: 201, alive: true}
+	p := NewProc(ProcConfig{
+		ID:      "proc",
+		LogPath: logPath,
+		Runner:  runner,
+		Link:    link,
+		Gate:    okGate{},
+		Now:     time.Now,
+		Wake:    func() { wakeCh <- struct{}{} },
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(true, 0)
+	defer p.stopLogWatcher()
+
+	// Первый Observe: процесс подхвачен на 5-й секунде
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe err: %v", err)
+	}
+	if obs.Attrs[attrFatalError] != "" {
+		t.Fatalf("не ожидали ошибку на чистом старте, got %q", obs.Attrs[attrFatalError])
+	}
+
+	// Клиент пишет фатальную ошибку на 5-й секунде работы
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("error 401: Unauthorized\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	// Watcher обязан разбудить воркер
+	select {
+	case <-wakeCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("таймаут ожидания wake при сбое на 5-й секунде аптайма")
+	}
+
+	// Observe обязан вернуть fatal_error, несмотря на UptimeS < socketGrace!
+	obs2, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe 2 err: %v", err)
+	}
+	if obs2.Attrs[attrFatalError] != "error 401: Unauthorized" {
+		t.Fatalf("ожидали fatal_error 'error 401: Unauthorized', got %q", obs2.Attrs[attrFatalError])
+	}
+
+	// Plan обязан вернуть перезапуск
+	steps := p.Plan(obs2)
+	if len(steps) != 1 || steps[0].Op != "restart" {
+		t.Fatalf("Plan = %+v, want [restart]", steps)
+	}
+}
+
+func TestProcAutoReconnect_AdoptedProcessStartsWatcher(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "adopted.log")
+	if err := os.WriteFile(logPath, []byte("прежний лог до старта awg-manager\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	wakeCh := make(chan struct{}, 5)
+	link := &fakeLink{st: awgmproto.State{PID: 301, UptimeS: 3600}}
+	runner := &fakeRunner{pid: 301, alive: true}
+	p := NewProc(ProcConfig{
+		ID:      "proc",
+		LogPath: logPath,
+		Runner:  runner,
+		Link:    link,
+		Gate:    okGate{},
+		Now:     time.Now,
+		Wake:    func() { wakeCh <- struct{}{} },
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(true, 0)
+	defer p.stopLogWatcher()
+
+	// Первый Observe: процесс подхвачен без spawn
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe err: %v", err)
+	}
+	if obs.Attrs[attrFatalError] != "" {
+		t.Fatalf("старый лог не должен давать ошибку: %q", obs.Attrs[attrFatalError])
+	}
+
+	// Проверяем, что watcher действительно поднят и ловит новые сбои:
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("[VK Auth] Persona burned\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	select {
+	case <-wakeCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("таймаут ожидания wake на подхваченном процессе")
+	}
+
+	obs2, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe 2 err: %v", err)
+	}
+	if obs2.Attrs[attrFatalError] != "[VK Auth] Persona burned" {
+		t.Fatalf("ожидали '[VK Auth] Persona burned', got %q", obs2.Attrs[attrFatalError])
+	}
+}
+
+func TestProcAutoReconnect_EnabledOnRunningProcess(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "running.log")
+	if err := os.WriteFile(logPath, []byte("работает без автопереподключения\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	wakeCh := make(chan struct{}, 5)
+	link := &fakeLink{st: awgmproto.State{PID: 401, UptimeS: 500}}
+	runner := &fakeRunner{pid: 401, alive: true}
+	p := NewProc(ProcConfig{
+		ID:      "proc",
+		LogPath: logPath,
+		Runner:  runner,
+		Link:    link,
+		Gate:    okGate{},
+		Now:     time.Now,
+		Wake:    func() { wakeCh <- struct{}{} },
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(false, 0) // выключено!
+	defer p.stopLogWatcher()
+
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe err: %v", err)
+	}
+	_ = obs
+
+	// Включаем автопереподключение у работающего клиента:
+	p.SetAutoReconnect(true, 0)
+
+	obs2, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe 2 err: %v", err)
+	}
+	_ = obs2
+
+	// Проверяем, что watcher активен
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("failed to allocate TURN\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	select {
+	case <-wakeCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("таймаут ожидания wake после включения автопереподключения")
+	}
+
+	obs3, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe 3 err: %v", err)
+	}
+	if obs3.Attrs[attrFatalError] != "failed to allocate TURN" {
+		t.Fatalf("ожидали 'failed to allocate TURN', got %q", obs3.Attrs[attrFatalError])
+	}
+}
+
+func TestProcAutoReconnect_InotifyDirectoryIsolation(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "my_proc.log")
+	otherLogPath := filepath.Join(dir, "other_proc.log")
+	if err := os.WriteFile(logPath, []byte("лог нашего процесса\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(otherLogPath, []byte("лог чужого процесса\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	wakeCh := make(chan struct{}, 5)
+	p := NewProc(ProcConfig{
+		ID:      "proc",
+		LogPath: logPath,
+		Runner:  &fakeRunner{pid: 501, alive: true},
+		Link:    &fakeLink{st: awgmproto.State{PID: 501, UptimeS: 100}},
+		Gate:    okGate{},
+		Now:     time.Now,
+		Wake:    func() { wakeCh <- struct{}{} },
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(true, 0)
+	defer p.stopLogWatcher()
+
+	if _, err := p.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Запись фатальной ошибки в ЧУЖОЙ лог в том же каталоге
+	f, err := os.OpenFile(otherLogPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("error 401: Unauthorized\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	// Наш watcher НЕ должен реагировать на запись в чужой лог!
+	select {
+	case <-wakeCh:
+		t.Fatal("получен wake на запись в чужой файл лога в том же каталоге!")
+	case <-time.After(200 * time.Millisecond):
+		// успешно — изоляция работает!
 	}
 }
