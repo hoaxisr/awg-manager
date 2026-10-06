@@ -27,8 +27,14 @@ const (
 
 // flushSaveOnShutdown — последнее сохранение конфигурации роутера перед
 // выходом: покрывает и отложенное сохранение после сноса записи (пауза
-// SaveAfterRemoval, удержания). Зовётся и на SIGTERM (onExit), и перед
-// syscall.Exec (shutdown-хук) — пути взаимоисключающие.
+// SaveAfterRemoval, удержания: Flush ждёт их и шлёт POST —
+// TestSave_FlushWaitsHoldsThenRemovalGap). Зовётся и на SIGTERM (onExit), и
+// перед syscall.Exec (shutdown-хук) — пути взаимоисключающие. До L4
+// финального ревью F595 SIGTERM шёл мимо: хуки исполняются только перед
+// exec, и снятая перед остановкой запись оставалась в startup-config.
+// Остаток: SIGKILL, паника, OOM — отложенное сохранение (debounce 3 с +
+// пауза 5 с после сноса) теряется; снятые записи — сироты после ребута
+// роутера до следующего любого сохранения.
 func (a *app) flushSaveOnShutdown() {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownFlushTimeout)
 	defer cancel()
