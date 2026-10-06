@@ -8,9 +8,9 @@ import TunnelEditHeader from './TunnelEditHeader.svelte';
 describe('TunnelEditHeader: включён, но не запустился', () => {
 	const props = { tunnelName: 'NL', saving: false, actionStatus: null, onSaveAndStart: () => {} };
 
-	it('disabled + enabled — «Не запустился — нажмите «Запустить»»', () => {
+	it('disabled + enabled — «Не запустился — перезапустите туннель»', () => {
 		render(TunnelEditHeader, { props: { ...props, tunnelState: 'disabled', enabled: true } });
-		expect(screen.getByText('Не запустился — нажмите «Запустить»')).toBeTruthy();
+		expect(screen.getByText('Не запустился — перезапустите туннель')).toBeTruthy();
 		expect(screen.queryByText('Отключён')).toBeNull();
 	});
 

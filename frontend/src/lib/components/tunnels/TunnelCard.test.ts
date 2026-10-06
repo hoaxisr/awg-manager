@@ -106,7 +106,7 @@ describe('TunnelCard: причина состояния broken', () => {
 // как у needs_start: подсказка статуса (видимая) и метка точки статуса.
 // Мутации «disabled → без подсказки» и «→ всегда Выключен» → красный.
 describe('TunnelCard: включён, но не запустился', () => {
-	const label = 'Не запустился — нажмите «Запустить»';
+	const label = 'Не запустился — перезапустите туннель';
 
 	it('status=disabled при enabled=true — подпись «не запустился» (компактный вид)', () => {
 		render(TunnelCard, { props: { tunnel: { ...base, status: 'disabled', enabled: true }, view: 'compact' } });
