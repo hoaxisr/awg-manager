@@ -211,3 +211,118 @@ func TestTools_SubscriptionMemberCountFollowsTheGroup(t *testing.T) {
 		t.Fatalf("memberCount after the write = %v, want the size of the group", n)
 	}
 }
+
+// TestTools_SetSingboxSubscriptionMode — бот переключал режим подписки
+// через REST с логином и паролем от веб-интерфейса: в MCP этого не было
+// (#965). Фраза в ответе описывает состояние, поэтому верна и на повторе.
+func TestTools_SetSingboxSubscriptionMode(t *testing.T) {
+	s, _ := newTestSession(t)
+	id := "706dcf33aabbccddeeff0011"
+
+	res, out := callTool(t, s, "set_singbox_subscription_mode", map[string]any{"subscriptionId": id, "mode": "selector"})
+	if res.IsError {
+		t.Fatal(toolText(res))
+	}
+	if out["id"] != id || out["mode"] != "selector" {
+		t.Fatalf("the record must be read back after the write: %v", out)
+	}
+	if txt := toolText(res); !strings.Contains(txt, "sub-706dcf33") || !strings.Contains(txt, "set_singbox_subscription_active_member") {
+		t.Fatalf("in selector mode the result must name the group and the tool that chooses its server: %q", txt)
+	}
+	_, grp := callTool(t, s, "get_singbox_outbound", map[string]any{"tag": "sub-706dcf33"})
+	if grp["type"] != "selector" {
+		t.Fatalf("the subscription's group must now be a selector: %v", grp["type"])
+	}
+
+	res, out = callTool(t, s, "set_singbox_subscription_mode", map[string]any{"subscriptionId": id, "mode": "selector"})
+	if res.IsError || out["mode"] != "selector" {
+		t.Fatalf("a repeated call must be a no-op: %v", out)
+	}
+
+	res, out = callTool(t, s, "set_singbox_subscription_mode", map[string]any{"subscriptionId": id, "mode": "URLTest"})
+	if res.IsError || out["mode"] != "urltest" {
+		t.Fatalf("the mode is case-insensitive: %v %s", out, toolText(res))
+	}
+	if txt := toolText(res); !strings.Contains(txt, "fastest") || !strings.Contains(txt, "cannot be chosen by hand") {
+		t.Fatalf("in urltest mode the result must say that the engine picks the server: %q", txt)
+	}
+}
+
+// TestTools_SetSingboxSubscriptionActiveMember — второй сценарий из #965:
+// выбрать сервер подписки в режиме selector. В urltest сервер выбирает
+// sing-box, и отказ должен назвать инструмент, который меняет режим.
+func TestTools_SetSingboxSubscriptionActiveMember(t *testing.T) {
+	s, _ := newTestSession(t)
+
+	res, out := callTool(t, s, "set_singbox_subscription_active_member", map[string]any{"subscriptionId": "1a00ae3b0011223344556677", "memberTag": "sub-1a00ae3b-k2"})
+	if res.IsError {
+		t.Fatal(toolText(res))
+	}
+	if out["groupTag"] != "sub-1a00ae3b" || out["memberTag"] != "sub-1a00ae3b-k2" || out["subscriptionId"] != "1a00ae3b0011223344556677" {
+		t.Fatalf("out = %v", out)
+	}
+	_, grp := callTool(t, s, "get_singbox_outbound", map[string]any{"tag": "sub-1a00ae3b"})
+	if grp["activeMember"] != "sub-1a00ae3b-k2" {
+		t.Fatalf("the running group must route through the chosen server: %v", grp["activeMember"])
+	}
+
+	urltest := "706dcf33aabbccddeeff0011"
+	res, _ = callTool(t, s, "set_singbox_subscription_active_member", map[string]any{"subscriptionId": urltest, "memberTag": "sub-706dcf33-b2"})
+	if !res.IsError || !strings.Contains(toolText(res), "set_singbox_subscription_mode") {
+		t.Fatalf("urltest mode must be refused with the tool that changes it named: %q", toolText(res))
+	}
+	if res, _ = callTool(t, s, "set_singbox_subscription_mode", map[string]any{"subscriptionId": urltest, "mode": "selector"}); res.IsError {
+		t.Fatal(toolText(res))
+	}
+	if res, _ = callTool(t, s, "set_singbox_subscription_active_member", map[string]any{"subscriptionId": urltest, "memberTag": "sub-706dcf33-b2"}); res.IsError {
+		t.Fatalf("after switching to selector the server must be choosable: %s", toolText(res))
+	}
+	_, grp = callTool(t, s, "get_singbox_outbound", map[string]any{"tag": "sub-706dcf33"})
+	if grp["activeMember"] != "sub-706dcf33-b2" {
+		t.Fatalf("activeMember = %v", grp["activeMember"])
+	}
+}
+
+func TestTools_SubscriptionModeAndServerRejectNonsense(t *testing.T) {
+	s, fake := newTestSession(t)
+	selector := "1a00ae3b0011223344556677"
+
+	for name, tag := range map[string]string{
+		"an empty tag":        "",
+		"a control character": "sub-1a00ae3b\x1b-k2",
+		"a tag too long":      strings.Repeat("a", 1025),
+	} {
+		if res, _ := callTool(t, s, "set_singbox_subscription_active_member", map[string]any{"subscriptionId": selector, "memberTag": tag}); !res.IsError {
+			t.Errorf("%s must be refused", name)
+		}
+	}
+	for _, tool := range []string{"set_singbox_subscription_mode", "set_singbox_subscription_active_member"} {
+		if res, _ := callTool(t, s, tool, map[string]any{"subscriptionId": "../settings", "mode": "selector", "memberTag": "sub-1a00ae3b-k2"}); !res.IsError {
+			t.Errorf("%s: a path traversal in the id must be refused", tool)
+		}
+	}
+	// A server of another subscription is not a server of this group.
+	res, _ := callTool(t, s, "set_singbox_subscription_active_member", map[string]any{"subscriptionId": selector, "memberTag": "sub-706dcf33-a1"})
+	if !res.IsError || !strings.Contains(toolText(res), "get_singbox_outbound") {
+		t.Fatalf("a foreign server must be refused with the listing tool named: %q", toolText(res))
+	}
+	if fake.ActiveMembers["sub-1a00ae3b"] != "sub-1a00ae3b-k1" || fake.Subscriptions[1].Mode != "selector" {
+		t.Fatal("a refused call changed something")
+	}
+}
+
+// TestTools_SubscriptionServerStoredButNotApplied — служба сохраняет выбор
+// раньше, чем переключает работающую группу. Пока sing-box не отвечает,
+// выбор остаётся сохранённым, а вызов — ошибкой, которая говорит именно это.
+func TestTools_SubscriptionServerStoredButNotApplied(t *testing.T) {
+	s, fake := newTestSession(t)
+	fake.ClashDown = true
+
+	res, _ := callTool(t, s, "set_singbox_subscription_active_member", map[string]any{"subscriptionId": "1a00ae3b0011223344556677", "memberTag": "sub-1a00ae3b-k2"})
+	if !res.IsError || !strings.Contains(toolText(res), "STORED") {
+		t.Fatalf("a failed live switch must be an error that says the choice is stored: %q", toolText(res))
+	}
+	if fake.ActiveMembers["sub-1a00ae3b"] != "sub-1a00ae3b-k2" {
+		t.Fatalf("the choice must be recorded before the switch fails: %v", fake.ActiveMembers["sub-1a00ae3b"])
+	}
+}

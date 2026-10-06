@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // newHRTestSvc returns a dnsroute ServiceImpl wired to a hydraroute.Service
@@ -385,3 +386,241 @@ func TestHRRoundTrip_SystemTargetIsKernelName(t *testing.T) {
 		t.Errorf("не прочитаны: %v", want)
 	}
 }
+
+func newHRTestSvcWithNDMS(t *testing.T, resolver InterfaceResolver) (*ServiceImpl, *hydraroute.Service, *query.FakeGetter) {
+	t.Helper()
+	dir := t.TempDir()
+	restore := hydraroute.SetPaths(
+		filepath.Join(dir, "domain.conf"),
+		filepath.Join(dir, "ip.list"),
+	)
+	t.Cleanup(restore)
+
+	hydra := hydraroute.NewService(&kernelResolverAdapter{resolver: resolver}, nil)
+	hydra.SetStatusForTest(true)
+
+	store := NewStore(t.TempDir())
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	q, c, _, fg := newTestNDMS()
+	hydra.SetQueries(q)
+	svc := &ServiceImpl{
+		store:    store,
+		queries:  q,
+		commands: c,
+		resolver: resolver,
+		hydra:    hydra,
+	}
+	return svc, hydra, fg
+}
+
+// Issue #967 regression test:
+// When a ghost policy (e.g. "awgm0") is created on the router by hrneo at boot,
+// rules bound to "awgm0" must NOT flip to policy mode. They must remain in interface mode.
+func TestHRRuleToDomainList_GhostPolicyDoesNotFlipInterfaceMode(t *testing.T) {
+	resolver := &stubResolver{
+		kernelByTunnel: map[string]string{"awgm0": "awgm0", "awg10": "awgm0"},
+	}
+	svc, hydra, fg := newHRTestSvcWithNDMS(t, resolver)
+	ctx := context.Background()
+
+	// Seed /show/rc/ip/policy with both a ghost policy "awgm0" and a valid user policy "Streaming"
+	fg.SetJSON("/show/rc/ip/policy", `{
+		"awgm0": {"description": "awgm0"},
+		"Streaming": {"description": "Media Policy"}
+	}`)
+
+	// 1. Direct rules created in domain.conf
+	_, err := hydra.CreateRule(hydraroute.HRRule{
+		Name:    "AwgRule",
+		Domains: []string{"awg-target.com"},
+		Target:  "awgm0",
+	})
+	if err != nil {
+		t.Fatalf("CreateRule AwgRule: %v", err)
+	}
+
+	_, err = hydra.CreateRule(hydraroute.HRRule{
+		Name:    "StreamRule",
+		Domains: []string{"netflix.com"},
+		Target:  "Streaming",
+	})
+	if err != nil {
+		t.Fatalf("CreateRule StreamRule: %v", err)
+	}
+
+	// 2. List rules through dnsroute Service
+	lists, err := svc.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(lists) != 2 {
+		t.Fatalf("expected 2 rules, got %d", len(lists))
+	}
+
+	var awgList, streamList *DomainList
+	for i := range lists {
+		if lists[i].Name == "AwgRule" {
+			awgList = &lists[i]
+		} else if lists[i].Name == "StreamRule" {
+			streamList = &lists[i]
+		}
+	}
+
+	if awgList == nil || streamList == nil {
+		t.Fatalf("missing expected rules: awgList=%v, streamList=%v", awgList, streamList)
+	}
+
+	// AwgRule must be in interface mode despite "awgm0" being in policySet!
+	if awgList.HRRouteMode != "interface" {
+		t.Errorf("AwgRule HRRouteMode = %q, want 'interface'", awgList.HRRouteMode)
+	}
+	if awgList.HRPolicyName != "" {
+		t.Errorf("AwgRule HRPolicyName = %q, want empty", awgList.HRPolicyName)
+	}
+	if len(awgList.Routes) != 1 || awgList.Routes[0].Interface != "awgm0" {
+		t.Errorf("AwgRule Routes = %+v, want [{Interface: awgm0}]", awgList.Routes)
+	}
+
+	// StreamRule must be in policy mode
+	if streamList.HRRouteMode != "policy" {
+		t.Errorf("StreamRule HRRouteMode = %q, want 'policy'", streamList.HRRouteMode)
+	}
+	if streamList.HRPolicyName != "Streaming" {
+		t.Errorf("StreamRule HRPolicyName = %q, want 'Streaming'", streamList.HRPolicyName)
+	}
+	if len(streamList.Routes) != 0 {
+		t.Errorf("StreamRule Routes = %+v, want empty", streamList.Routes)
+	}
+
+	// 3. Create a new rule with interface mode for awgm0
+	created, err := svc.Create(ctx, DomainList{
+		Name:          "NewAwgRule",
+		Backend:       "hydraroute",
+		ManualDomains: []string{"new-awg.com"},
+		HRRouteMode:   "interface",
+		Routes:        []RouteTarget{{TunnelID: "awgm0"}},
+	})
+	if err != nil {
+		t.Fatalf("Create NewAwgRule: %v", err)
+	}
+	if created.HRRouteMode != "interface" {
+		t.Errorf("created rule HRRouteMode = %q, want 'interface'", created.HRRouteMode)
+	}
+	if len(created.Routes) != 1 || created.Routes[0].Interface != "awgm0" {
+		t.Errorf("created rule Routes = %+v, want Interface: awgm0", created.Routes)
+	}
+
+	// 4. Update the rule with interface mode for awgm0
+	updated, err := svc.Update(ctx, DomainList{
+		ID:            created.ID,
+		Name:          "NewAwgRule",
+		Backend:       "hydraroute",
+		ManualDomains: []string{"updated-awg.com"},
+		HRRouteMode:   "interface",
+		Routes:        []RouteTarget{{TunnelID: "awgm0"}},
+	})
+	if err != nil {
+		t.Fatalf("Update NewAwgRule: %v", err)
+	}
+	if updated.HRRouteMode != "interface" {
+		t.Errorf("updated rule HRRouteMode = %q, want 'interface'", updated.HRRouteMode)
+	}
+	if len(updated.Routes) != 1 || updated.Routes[0].Interface != "awgm0" {
+		t.Errorf("updated rule Routes = %+v, want Interface: awgm0", updated.Routes)
+	}
+
+	// 5. Attempting to create a policy-mode rule using the ghost policy name "awgm0" must be rejected
+	_, err = svc.Create(ctx, DomainList{
+		Name:          "InvalidGhostPolicyRule",
+		Backend:       "hydraroute",
+		ManualDomains: []string{"invalid.com"},
+		HRRouteMode:   "policy",
+		HRPolicyName:  "awgm0",
+	})
+	if err == nil {
+		t.Fatal("expected error creating policy-mode rule with ghost policy name 'awgm0', got nil")
+	}
+}
+
+func TestHRRuleToDomainList_TargetClassification(t *testing.T) {
+	// Various router interfaces and policies in policySet
+	policySet := map[string]bool{
+		"awgm0":      true, // ghost policy
+		"nwg0":       true, // ghost policy
+		"nwg1":       true, // ghost policy for system tunnel interface
+		"opkgtun10":  true, // ghost policy
+		"Wireguard0": true, // ghost policy
+		"PPPoE0":     true, // ghost policy
+		"OpenVPN0":   true, // ghost policy
+		"Policy0":    true, // system policy
+		"Streaming":  true, // genuine user policy
+		"Work":       true, // genuine user policy
+	}
+	systemByIface := map[string]string{
+		"nwg1": "system:Wireguard0",
+	}
+
+	cases := []struct {
+		target     string
+		wantMode   string
+		wantPol    string
+		wantIface  string
+		wantTunnel string
+	}{
+		{target: "awgm0", wantMode: "interface", wantIface: "awgm0", wantTunnel: "awgm0"},
+		{target: "nwg0", wantMode: "interface", wantIface: "nwg0", wantTunnel: "nwg0"},
+		{target: "nwg1", wantMode: "interface", wantIface: "nwg1", wantTunnel: "system:Wireguard0"},
+		{target: "opkgtun10", wantMode: "interface", wantIface: "opkgtun10", wantTunnel: "opkgtun10"},
+		{target: "Wireguard0", wantMode: "interface", wantIface: "Wireguard0", wantTunnel: "Wireguard0"},
+		{target: "PPPoE0", wantMode: "interface", wantIface: "PPPoE0", wantTunnel: "PPPoE0"},
+		{target: "OpenVPN0", wantMode: "interface", wantIface: "OpenVPN0", wantTunnel: "OpenVPN0"},
+		{target: "Policy0", wantMode: "interface", wantIface: "Policy0", wantTunnel: "Policy0"},
+		{target: "wan:eth0", wantMode: "interface", wantIface: "wan:eth0", wantTunnel: "wan:eth0"},
+		{target: "wan:PPPoE0", wantMode: "interface", wantIface: "wan:PPPoE0", wantTunnel: "wan:PPPoE0"},
+		{target: "eth0.100", wantMode: "interface", wantIface: "eth0.100", wantTunnel: "eth0.100"},
+		{target: "Streaming", wantMode: "policy", wantPol: "Streaming"},
+		{target: "Work", wantMode: "policy", wantPol: "Work"},
+		{target: "NonExistentPolicy", wantMode: "interface", wantIface: "NonExistentPolicy", wantTunnel: "NonExistentPolicy"},
+		{target: "", wantMode: "interface", wantIface: "", wantTunnel: ""},
+	}
+
+	for _, tc := range cases {
+		rule := hydraroute.HRRule{
+			Name:    "rule_" + tc.target,
+			Domains: []string{"example.com"},
+			Target:  tc.target,
+		}
+		dl := hrRuleToDomainList(rule, policySet, systemByIface)
+		if dl.HRRouteMode != tc.wantMode {
+			t.Errorf("target %q: HRRouteMode = %q, want %q", tc.target, dl.HRRouteMode, tc.wantMode)
+		}
+		if dl.HRPolicyName != tc.wantPol {
+			t.Errorf("target %q: HRPolicyName = %q, want %q", tc.target, dl.HRPolicyName, tc.wantPol)
+		}
+		if tc.wantMode == "interface" {
+			if len(dl.Routes) != 1 {
+				t.Fatalf("target %q: expected 1 route, got %d", tc.target, len(dl.Routes))
+			}
+			if dl.Routes[0].Interface != tc.wantIface {
+				t.Errorf("target %q: Route Interface = %q, want %q", tc.target, dl.Routes[0].Interface, tc.wantIface)
+			}
+			if dl.Routes[0].TunnelID != tc.wantTunnel {
+				t.Errorf("target %q: Route TunnelID = %q, want %q", tc.target, dl.Routes[0].TunnelID, tc.wantTunnel)
+			}
+		} else {
+			if len(dl.Routes) != 0 {
+				t.Errorf("target %q: policy mode expected empty Routes, got %+v", tc.target, dl.Routes)
+			}
+		}
+	}
+
+	// Nil map robustness: policySet or systemByIface being nil must not panic
+	nilDl := hrRuleToDomainList(hydraroute.HRRule{Name: "nil_test", Target: "awgm0"}, nil, nil)
+	if nilDl.HRRouteMode != "interface" || nilDl.Routes[0].Interface != "awgm0" || nilDl.Routes[0].TunnelID != "awgm0" {
+		t.Errorf("nil maps returned unexpected domain list: %+v", nilDl)
+	}
+}
+

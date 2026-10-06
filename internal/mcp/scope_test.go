@@ -230,6 +230,17 @@ func TestScope_ReadOnlyKeyAndSubscriptions(t *testing.T) {
 	if !res.IsError || !strings.Contains(strings.ToLower(toolText(res)), "read-only") {
 		t.Fatalf("a read-only key must be refused with the cause named: %q", toolText(res))
 	}
+	// Switching the mode reloads sing-box, and choosing a server moves the
+	// traffic: neither is a read.
+	for name, args := range map[string]map[string]any{
+		"set_singbox_subscription_mode":          {"subscriptionId": "706dcf33aabbccddeeff0011", "mode": "selector"},
+		"set_singbox_subscription_active_member": {"subscriptionId": "1a00ae3b0011223344556677", "memberTag": "sub-1a00ae3b-k2"},
+	} {
+		res, _ := callTool(t, s, name, args)
+		if !res.IsError || !strings.Contains(strings.ToLower(toolText(res)), "read-only") {
+			t.Fatalf("%s: a read-only key must be refused with the cause named: %q", name, toolText(res))
+		}
+	}
 	_, out := callTool(t, s, "list_singbox_subscriptions", nil)
 	if out["subscriptions"].([]any)[0].(map[string]any)["enabled"] != true {
 		t.Fatal("a refused write must not have been applied")
