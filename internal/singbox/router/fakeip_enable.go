@@ -320,6 +320,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// SlotRouter already off, and a hardcoded re-enable would wrongly turn tproxy on.
 	// Legacy fallback (no orch) uses an explicit Start.
 	prevRouterEnabled := false
+	mihomoPrimary := sr.RoutingEngine == "mihomo"
 	if s.deps.Orch != nil {
 		for _, st := range s.deps.Orch.Snapshot() {
 			if st.Slot == orchestrator.SlotRouter {
@@ -330,8 +331,8 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		// Undo КАЖДОГО флипа пушится сразу за ним (симметрично policy-tun):
 		// один push на оба оставлял слот 21 активным, если первый флип прошёл,
 		// а второй упал.
-		if err = s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, true); err != nil {
-			return fmt.Errorf("enable fakeip-tun: orchestrator enable fakeip slot: %w", err)
+		if err = s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, !mihomoPrimary); err != nil {
+			return fmt.Errorf("enable fakeip-tun: orchestrator set fakeip slot: %w", err)
 		}
 		push(func() {
 			if e := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, false); e != nil {
@@ -351,7 +352,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 				s.appLog.Warn("fakeip-rollback", iface, "restore router slot: "+e.Error())
 			}
 		})
-	} else {
+	} else if !mihomoPrimary {
 		if running, _ := s.deps.Singbox.IsRunning(); !running {
 			if err = s.deps.Singbox.Start(); err != nil {
 				return fmt.Errorf("enable fakeip-tun: sing-box start: %w", err)
@@ -374,14 +375,33 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// зависимый слот 30 device-proxy перегенерируется ДО reload ниже (issue #465).
 	s.notifyRoutingSlotsChanged()
 	if err = s.orchestratorApplyNow(); err != nil {
-		return fmt.Errorf("enable fakeip-tun: orchestrator reload: %w", err)
+		if !mihomoPrimary {
+			return fmt.Errorf("enable fakeip-tun: orchestrator reload: %w", err)
+		}
+		s.appLog.Warn("fakeip-enable", "orchestrator", fmt.Sprintf("sing-box orchestrator reload failed while Mihomo is primary: %v", err))
 	}
 
-	// Wait for sing-box to be truly ready (process + tun carrier + live fakeip
-	// DNS). HARD fail: an unready sing-box means the tun and its hijack-dns path
-	// never come up, so we roll the whole thing back.
+	if mihomoPrimary && !s.singboxReady(ctx, true) {
+		engine := s.routingEngineController()
+		if engine == nil {
+			return fmt.Errorf("enable fakeip-tun: Mihomo routing engine is unavailable")
+		}
+		if err = engine.Reload(); err != nil {
+			return fmt.Errorf("enable fakeip-tun: start Mihomo routing engine: %w", err)
+		}
+	}
+
+	// Wait for sing-box/Mihomo to be truly ready (process + tun carrier + live fakeip
+	// DNS). The address flush already ran PRE-start (above), so the tun keeps the
+	// address assigned on attach. HARD fail: an unready engine means the
+	// tun and its hijack-dns path never come up, so we roll the whole thing back.
 	bootWait := bootWaitWithFloor()
 	if err = s.waitForSingbox(ctx, bootWait); err != nil {
+		if mihomoPrimary {
+			if engine := s.routingEngineController(); engine != nil {
+				_ = engine.Stop()
+			}
+		}
 		return fmt.Errorf("enable fakeip-tun: %w: waited %s (%v)", ErrSingboxNotReady, bootWait, err)
 	}
 

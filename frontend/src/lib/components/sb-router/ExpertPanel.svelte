@@ -248,6 +248,8 @@
   let geositeCatalogBusy = $state(false);
   let outboundEditTag = $state<string | null>(null);
   let outboundAddOpen = $state(false);
+
+  // DNS-серверы
   let dnsServerEditTag = $state<string | null>(null);
   let dnsServerAddOpen = $state(false);
   let dnsRuleEditIdx = $state<number | null>(null);
@@ -382,13 +384,15 @@
   // disabled → OFF. XOR-режимы: когда активен режим FakeIP, общий sing-box
   // крутит fakeip-слот и TPROXY-перехват не установлен — это НЕАКТИВЕН (muted),
   // НЕ ложный СБОЙ. Оценка active/СБОЙ только когда TProxy и есть активный режим.
+  const mihomoOwnsRouting = $derived($storeSettings?.routingEngine === 'mihomo');
   // kind — код состояния для логики; value — подпись ячейки (переводится).
   const engineStat = $derived.by<{
-    kind: 'off' | 'inactive' | 'on' | 'fail';
+    kind: 'off' | 'inactive' | 'mihomo' | 'on' | 'fail';
     value: string;
     tone: StatCellData['tone'];
   }>(() => {
     if (!$storeStatus?.enabled) return { kind: 'off', value: 'OFF', tone: 'muted' };
+    if (mihomoOwnsRouting) return { kind: 'mihomo', value: 'MIHOMO', tone: 'muted' };
     if ($storeSettings?.routingMode === 'fakeip-tun') {
       return { kind: 'inactive', value: m.sb_router_expert_engine_inactive(), tone: 'muted' };
     }
@@ -405,6 +409,7 @@
   const engineRunning = $derived(
     ($storeStatus?.enabled ?? false)
     && ($storeStatus?.active ?? false)
+    && !mihomoOwnsRouting
     && $storeSettings?.routingMode !== 'fakeip-tun',
   );
   const liveStats = $derived($singboxTrafficLive);
@@ -422,9 +427,16 @@
       label: m.sb_router_expert_stat_engine(),
       value: engineStat.value,
       tone: engineStat.tone,
-      helpTitle: engineStat.kind === 'inactive' ? m.sb_router_expert_stat_engine_inactive_title() : undefined,
+      helpTitle:
+        engineStat.kind === 'mihomo'
+          ? m.sb_router_expert_stat_engine_mihomo_title()
+          : engineStat.kind === 'inactive'
+          ? m.sb_router_expert_stat_engine_inactive_title()
+          : undefined,
       helpText:
-        engineStat.kind === 'inactive'
+        engineStat.kind === 'mihomo'
+          ? m.sb_router_expert_stat_engine_mihomo_text()
+          : engineStat.kind === 'inactive'
           ? m.sb_router_expert_stat_engine_inactive_text()
           : undefined,
       onClick:

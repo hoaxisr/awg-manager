@@ -42,9 +42,12 @@ let clientsByIP = new Map<string, string>();
 let wsClose: (() => void) | null = null;
 let clientsTimer: ReturnType<typeof setInterval> | null = null;
 let bound = false;
-// holders — сколько оболочек страниц сейчас держат поток. Ноль = закрыть.
 let holders = 0;
 let unbindStatus: (() => void) | null = null;
+let unbindSettings: (() => void) | null = null;
+let currentPath = '';
+let currentStatus: { enabled?: boolean; active?: boolean } | null = null;
+let currentSettings: { enabled?: boolean; routingEngine?: string } | null = null;
 
 async function refetchClients(): Promise<void> {
 	try {
@@ -59,15 +62,17 @@ async function refetchClients(): Promise<void> {
 	}
 }
 
-function connect(): void {
-	if (wsClose) return;
+function connect(path: string): void {
+	if (wsClose && currentPath === path) return;
+	if (wsClose) disconnect();
+	currentPath = path;
 	wsStatus.set('connecting');
 	void refetchClients();
 	if (!clientsTimer) {
 		clientsTimer = setInterval(() => void refetchClients(), 30_000);
 	}
 	wsClose = createClashWS<ClashConnectionsRaw>(
-		'/api/singbox/clash/connections',
+		path,
 		(raw) => {
 			snapshot.set(parseSnapshot(raw, clientsByIP));
 			lastMessageAt.set(Date.now());
@@ -79,6 +84,7 @@ function connect(): void {
 function disconnect(): void {
 	wsClose?.();
 	wsClose = null;
+	currentPath = '';
 	if (clientsTimer) {
 		clearInterval(clientsTimer);
 		clientsTimer = null;
@@ -100,13 +106,36 @@ function disconnect(): void {
  */
 export function bindLiveConnectionsStore(): () => void {
 	holders++;
+	const reconcile = () => {
+		if (holders <= 0) {
+			disconnect();
+			return;
+		}
+		const mihomo = currentSettings?.routingEngine === 'mihomo';
+		const enabled = mihomo
+			? (currentSettings?.enabled ?? false)
+			: ((currentStatus?.enabled ?? false) && (currentStatus?.active ?? false));
+		if (enabled || isMockDevMode()) {
+			connect(mihomo ? '/api/mihomo/clash/connections' : '/api/singbox/clash/connections');
+		} else {
+			disconnect();
+		}
+	};
+
 	if (!bound) {
 		bound = true;
 		unbindStatus = singboxRouter.status.subscribe((s) => {
-			if (holders > 0 && (s?.enabled || isMockDevMode())) connect();
-			else disconnect();
+			currentStatus = s;
+			reconcile();
 		});
+		unbindSettings = singboxRouter.settings.subscribe((s) => {
+			currentSettings = s;
+			reconcile();
+		});
+	} else {
+		reconcile();
 	}
+
 	let released = false;
 	return () => {
 		if (released) return;
@@ -115,6 +144,8 @@ export function bindLiveConnectionsStore(): () => void {
 		if (holders > 0) return;
 		unbindStatus?.();
 		unbindStatus = null;
+		unbindSettings?.();
+		unbindSettings = null;
 		bound = false;
 		disconnect();
 	};

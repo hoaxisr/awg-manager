@@ -13,7 +13,8 @@
   import { onDestroy, onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
-  import { SectionLabel, Button, ConfirmModal } from '$lib/components/ui';
+  import { SectionLabel, Button, ConfirmModal, Badge } from '$lib/components/ui';
+  import { Zap } from 'lucide-svelte';
   import { openAddWizard, openEditWizard } from './addWizardStore';
   import RuleCard from './RuleCard.svelte';
   import BulkSelectBar from './BulkSelectBar.svelte';
@@ -41,6 +42,7 @@
   const outbounds = singboxRouterStore.outbounds;
   const presets = singboxRouterStore.presets;
   const options = singboxRouterStore.options;
+  const storeSettings = singboxRouterStore.settings;
 
   const rowElements = new Map<string, HTMLElement>();
 
@@ -875,7 +877,7 @@
     </div>
   </header>
 
-  {#if count === 0}
+  {#if count === 0 && !$storeSettings?.susaninEnabled}
     <div class="empty">
       <SectionLabel>{m.sb_router_rules_empty_title()}</SectionLabel>
       <p class="empty-text">
@@ -884,6 +886,32 @@
     </div>
   {:else}
     <div class="cards" class:is-dragging={isDragActive()} style={cardsMotionStyle()} role="list">
+      {#if $storeSettings?.susaninEnabled}
+        {@const susaninOutbound = $storeSettings.susaninOutbound || 'direct'}
+        <div class="card-shell susanin-radar-shell" role="listitem">
+          <div class="susanin-radar-card">
+            <div class="susanin-radar-left">
+              <span class="susanin-icon font-mono">⚡</span>
+              <div class="susanin-meta">
+                <div class="susanin-title-line">
+                  <Badge variant="success" size="sm">РАДАР</Badge>
+                  <span class="susanin-title">Адаптивный радар Susanin</span>
+                </div>
+                <div class="susanin-desc">
+                  <span class="font-mono">RULE-SET: susanin</span> · автоматический обход заблокированных IP
+                </div>
+              </div>
+            </div>
+            <div class="susanin-radar-right">
+              <span class="susanin-outbound-label">Выход:</span>
+              <div class="susanin-outbound-chip">
+                <Zap size={12} />
+                <span>{susaninOutbound}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      {/if}
       {#each cards as card, i (card.id)}
         <div
           data-rule-index={i}
@@ -1171,5 +1199,67 @@
     font-size: var(--fs-sm);
     color: var(--text-secondary);
     line-height: var(--lh-body);
+  }
+
+  .susanin-radar-shell {
+    margin-bottom: 8px;
+  }
+  .susanin-radar-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    background: rgba(34, 197, 94, 0.05);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+    border-radius: var(--radius);
+  }
+  .susanin-radar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .susanin-icon {
+    font-size: 16px;
+  }
+  .susanin-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .susanin-title-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .susanin-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .susanin-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .susanin-radar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .susanin-outbound-label {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .susanin-outbound-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
   }
 </style>

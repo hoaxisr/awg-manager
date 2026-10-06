@@ -63,13 +63,25 @@
         unsubRouting?.();
     });
 
-    let activeTab = $state<'hrneo' | 'geodata' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'singbox' | 'fakeip'>('dns');
+    let activeTab = $state<'hrneo' | 'geodata' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'singbox' | 'fakeip' | 'mihomo'>('singbox');
+
+    const singboxInitializedStore = singboxRouterStore.initialized;
+    const singboxSettings = singboxRouterStore.settings;
 
     // ?policy=Policy1 — прямой переход из настроек sing-box в редактор
     // конкретной политики (#573).
     let deepLinkPolicy = $derived($page.url.searchParams.get('policy'));
 
     let isOS5 = $derived($systemInfo.data?.isOS5 ?? false);
+    // The router settings store is the source of truth used by the editor to
+    // choose between Sing-box and Mihomo. systemInfo is refreshed separately
+    // and may briefly report the previous engine, which used to make the
+    // Sing-box draft guard appear while editing Mihomo (whose mutations are
+    // applied immediately by the native API).
+    let isMihomo = $derived(
+        $singboxSettings?.routingEngine === 'mihomo'
+        || (!$singboxSettings && $systemInfo.data?.routingEngine === 'mihomo'),
+    );
     let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
     let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
     let singboxInstalled = $derived($systemInfo.data?.singbox?.installed ?? false);
@@ -78,7 +90,7 @@
 
     function requestTab(id: string): void {
         if (modeSwitchBusy(get(modeSwitch))) return;
-        const hasDraft = get(singboxRouterStore.staging)?.hasDraft ?? false;
+        const hasDraft = !isMihomo && (get(singboxRouterStore.staging)?.hasDraft ?? false);
         if (activeTab === 'singbox' && id !== 'singbox' && hasDraft) {
             pendingTab = id;
             return;
@@ -136,20 +148,24 @@
     // (the same condition that renders the tab) so we never select a tab that
     // isn't there — fakeip-tun implies sing-box installed, but this keeps the
     // selection from racing ahead of systemInfo arriving.
-    const singboxInitializedStore = singboxRouterStore.initialized;
-    const singboxSettings = singboxRouterStore.settings;
     let fakeipAutoSelected = false;
+    let engineAutoSelected = false;
     $effect(() => {
         if (!browser) return;
-        if (!$singboxInitializedStore) return;
-        if (!singboxInstalled) return;
         if (fakeipAutoSelected) return;
-        if ($singboxSettings?.routingMode === 'fakeip-tun') {
+        if (!isMihomo && singboxInstalled && $singboxSettings?.routingMode === 'fakeip-tun') {
             fakeipAutoSelected = true;
             const explicitTab = new URL(window.location.href).searchParams.get('tab');
             if (!explicitTab) {
                 activeTab = 'fakeip';
             }
+            return;
+        }
+        if (engineAutoSelected) return;
+        const explicitTab = new URL(window.location.href).searchParams.get('tab');
+        if (!explicitTab && activeTab === 'dns' && (isMihomo || $singboxSettings?.enabled || singboxInstalled)) {
+            engineAutoSelected = true;
+            activeTab = 'singbox';
         }
     });
 
@@ -236,6 +252,7 @@
         hrneo: 'hrNeo',
         geodata: 'geoData',
         singbox: 'singboxRouter',
+        mihomo: 'singboxRouter',
     };
 
     function tabVisible(localId: string, level?: UsageLevel): boolean {
@@ -255,24 +272,31 @@
     const singboxRouterStatus = singboxRouterStore.status;
     let singboxRuleCount = $derived($singboxRouterStatus?.ruleCount ?? 0);
 
-    const showSingboxTproxy = $derived(singboxInstalled && tabVisible('singbox'));
+    const showSingboxTproxy = $derived(
+        singboxInstalled || isMihomo
+    );
     // FakeIP is expert-gated (mirrors the 'singbox' tab's 'expert' level) BUT
     // stays visible whenever the engine is actually in fakeip-tun mode — that's
     // the in-use case the auto-select effect lands on, and hiding the chip there
     // would strand activeTab on a tab with no chip to navigate back from.
     const showSingboxFakeip = $derived(
-        singboxInstalled && (tabVisible('singbox') || $singboxSettings?.routingMode === 'fakeip-tun'),
+        !isMihomo
+        && singboxInstalled
+        && (tabVisible('singbox') || $singboxSettings?.routingMode === 'fakeip-tun'),
     );
     const singboxMenuChildren = $derived(
         (
             [
                 showSingboxTproxy
-                    ? { id: 'singbox', label: 'TProxy', badge: singboxRuleCount }
+                    ? { id: 'singbox', label: isMihomo ? 'Mihomo' : 'TProxy', badge: singboxRuleCount }
                     : null,
                 showSingboxFakeip ? { id: 'fakeip', label: 'FakeIP' } : null,
             ] as (TabChildItem | null)[]
         ).filter((c): c is TabChildItem => c !== null),
     );
+
+    const currentEngine = $derived($singboxSettings?.routingEngine === 'mihomo' ? 'mihomo' : 'sing-box');
+    const routingTabLabel = $derived(currentEngine === 'mihomo' ? 'Mihomo' : 'Sing-box');
 
     let tabItems = $derived(
         ([
@@ -283,16 +307,15 @@
             { id: 'ip', label: m.routing_page_tab_ip(), badge: ipActiveCount },
             { id: 'clientvpn', label: m.routing_page_tab_clientvpn(), badge: clientActiveCount },
             { id: 'policy', label: m.routing_page_tab_policy(), badge: policyCount },
-            // Sing-box modes as one dropdown chip (same pattern as tunnels page).
             singboxMenuChildren.length > 0
                 ? {
                         id: singboxMenuChildren[0].id,
-                        label: 'Sing-box',
+                        label: routingTabLabel,
                         separatorBefore: true,
                         children: singboxMenuChildren,
                     }
                 : null,
-            // HR Neo is a separate routing engine (not sing-box) — divider before it.
+            // HR Neo is a separate routing engine — divider before it.
             hydrarouteInstalled ? { id: 'hrneo', label: 'HR Neo', badge: hrRuleCount, separatorBefore: true } : null,
             (hydrarouteInstalled || singboxInstalled)
                 ? { id: 'geodata', label: m.routing_page_tab_geodata(), badge: geoFileCount, separatorBefore: true }
@@ -302,12 +325,14 @@
             .filter((t) => (t.children ? true : tabVisible(t.id)))
     );
 
-    // If the user deep-linked / had the tab active and sing-box disappeared
+    // If the user deep-linked / had the tab active and engine disappeared
     // (uninstall while the page is open), bounce them off.
     $effect(() => {
         if (!$systemInfo.data) return;
-        if (!singboxInstalled && (activeTab === 'singbox' || activeTab === 'fakeip')) {
+        if (!singboxInstalled && !isMihomo && (activeTab === 'singbox' || activeTab === 'fakeip')) {
             activeTab = 'dns';
+        } else if (isMihomo && activeTab === 'fakeip') {
+            activeTab = 'singbox';
         }
     });
 
@@ -327,7 +352,7 @@
 
         if (
             !systemKnown &&
-            (activeTab === 'dns' || activeTab === 'singbox' || activeTab === 'fakeip') &&
+            (activeTab === 'dns' || activeTab === 'singbox' || activeTab === 'fakeip' || activeTab === 'mihomo') &&
             !tabsInclude(items, activeTab)
         ) {
             return;
@@ -341,6 +366,9 @@
         }
 
         if (!tabsInclude(items, activeTab)) {
+            if ((activeTab === 'singbox' || activeTab === 'mihomo') && (!systemKnown || singboxInstalled || isMihomo)) {
+                return;
+            }
             const first = items[0];
             activeTab = (first.children?.[0]?.id ?? first.id) as typeof activeTab;
         }
@@ -386,7 +414,7 @@
         active={activeTab}
         onchange={(id) => requestTab(id)}
         urlParam="tab"
-        defaultTab="dns"
+        defaultTab="singbox"
     />
 
     {#if activeTab === 'hrneo'}

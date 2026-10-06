@@ -18,7 +18,7 @@ export interface LogEntryEvent {
 	action: string;
 	target: string;
 	message: string;
-	bucket: 'app' | 'singbox';
+	bucket: 'app' | 'singbox' | 'mihomo';
 	/** Повтор, свёрнутый в существующую запись: счётчик и время последнего. */
 	repeats?: number;
 	lastSeen?: string;

@@ -5,6 +5,11 @@
 <script lang="ts">
   import { m } from '$lib/i18n';
   import { Shield } from 'lucide-svelte';
+
+  interface Props {
+    isMihomo?: boolean;
+  }
+  let { isMihomo = false }: Props = $props();
 </script>
 
 <section class="hero">
@@ -13,9 +18,11 @@
       <span class="status-dot"></span>
       <span class="status-label">{m.sb_router_empty_hero_status()}</span>
     </div>
-    <h2 class="heading">{m.sb_router_empty_hero_heading()}</h2>
+    <h2 class="heading">
+      {isMihomo ? m.sb_router_empty_hero_heading_mihomo() : m.sb_router_empty_hero_heading()}
+    </h2>
     <p class="body">
-      {m.sb_router_empty_hero_body()}
+      {isMihomo ? m.sb_router_empty_hero_body_mihomo() : m.sb_router_empty_hero_body()}
     </p>
   </div>
   <div class="icon-wrap">
@@ -57,33 +64,29 @@
   }
   .status-label {
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.08em;
     color: var(--text-muted);
   }
   .heading {
-    margin: 0 0 8px;
+    margin: 0 0 10px;
     font-size: 22px;
-    font-weight: 600;
+    font-weight: 700;
+    line-height: 1.25;
     color: var(--text-primary);
   }
   .body {
     margin: 0;
     font-size: 14px;
     color: var(--text-secondary);
-    max-width: 540px;
-    line-height: 1.55;
+    line-height: 1.5;
   }
   .icon-wrap {
-    width: 140px;
-    height: 140px;
-    border-radius: 16px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
+    color: var(--accent);
+    opacity: 0.85;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--accent);
   }
 </style>

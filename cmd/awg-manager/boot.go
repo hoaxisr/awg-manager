@@ -282,6 +282,11 @@ func (a *app) startBootSequence() {
 			// чинит ресурс linked_endpoint роли, отдельный проход не нужен.
 			// Горутиной: бут прокси может ждать загрузки бинарей (F98).
 			go a.proxyRuntimeNudge("cold-boot", proxyrt.EventBoot)
+			go func() {
+				if err := a.syncNDMSProxyExports(a.shutdownCtx); err != nil {
+					a.bootLog.Warn("startup", "ndms-proxy-sync", "Failed to sync NDMS proxy exports: "+err.Error())
+				}
+			}()
 
 			// Wait for background migrations to finish (non-critical but
 			// we track them so they don't leak on shutdown).
@@ -337,6 +342,11 @@ func (a *app) startBootSequence() {
 		// Как на cold-boot: посев мог не состояться, если RCI ещё не отвечал
 		// сразу после opkg upgrade.
 		go a.proxyRuntimeNudge("daemon-restart", proxyrt.EventBoot)
+		go func() {
+			if err := a.syncNDMSProxyExports(context.Background()); err != nil {
+				a.bootLog.Warn("startup", "ndms-proxy-sync", "Failed to sync NDMS proxy exports: "+err.Error())
+			}
+		}()
 	}
 
 }

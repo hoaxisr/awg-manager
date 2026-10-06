@@ -2,6 +2,7 @@ package subscription
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -234,6 +235,63 @@ func TestStore_Load_SanitizesLegacyDownloadViaSubscriptionError(t *testing.T) {
 	}
 	if list[0].LastError != "" {
 		t.Fatalf("legacy subscription error must be cleared, got %q", list[0].LastError)
+	}
+}
+
+func TestStore_UpdateState_PreservesLastKnownGoodMembersOnRefreshFailure(t *testing.T) {
+	st, err := NewStore(filepath.Join(t.TempDir(), "subscriptions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, err := st.Create(CreateInput{Label: "vox", Inline: "vless://u@h:443"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetMembers(sub.ID, []MemberInfo{{Tag: "member-1", Server: "host", Port: 443}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().UTC().Truncate(time.Second)
+	refreshErr := errors.New("subscription: no valid links")
+	if err := st.UpdateState(sub.ID, RefreshResult{When: when, Err: refreshErr}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Get(sub.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastError != "" {
+		t.Fatalf("usable LKG must not become fatal: %q", got.LastError)
+	}
+	if got.RefreshError == "" {
+		t.Fatal("refresh error was not retained")
+	}
+	if len(got.Members) != 1 || got.Members[0].Tag != "member-1" {
+		t.Fatalf("LKG members changed: %#v", got.Members)
+	}
+}
+
+func TestStore_UpdateState_TracksLastSuccessfulRefresh(t *testing.T) {
+	st, err := NewStore(filepath.Join(t.TempDir(), "subscriptions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, err := st.Create(CreateInput{Label: "vox", Inline: "vless://u@h:443"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().UTC().Truncate(time.Second)
+	if err := st.UpdateState(sub.ID, RefreshResult{When: when}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Get(sub.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LastSuccessfulFetched.Equal(when) {
+		t.Fatalf("last successful refresh=%v want %v", got.LastSuccessfulFetched, when)
+	}
+	if got.LastError != "" || got.RefreshError != "" {
+		t.Fatalf("successful refresh retained errors: fatal=%q refresh=%q", got.LastError, got.RefreshError)
 	}
 }
 

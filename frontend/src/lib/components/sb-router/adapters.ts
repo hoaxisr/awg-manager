@@ -81,7 +81,7 @@ export function mapRuleAction(rule: SingboxRouterRule): RuleAction {
 /* ─── Outbound display ──────────────────────────────────────────────── */
 
 const COMPOSITE_TYPES = COMPOSITE_OUTBOUND_TYPES;
-const AWG_OPTION_GROUPS = new Set<OutboundGroupId>(['awg', 'system']);
+const AWG_OPTION_GROUPS = new Set<OutboundGroupId>(['awg', 'system', 'awg3']);
 
 function findOutboundOption(
   tag: string,
@@ -168,6 +168,13 @@ export function resolveOutboundDisplay(
       kind: 'proxy',
       tone: 'proxy',
     };
+  }
+  if (option?.group === 'mihomo_groups') {
+    const parsed = splitParenMeta(option.label);
+    return { name, label: parsed.label, metaSuffix: parsed.metaSuffix, kind: 'composite', tone: 'composite' };
+  }
+  if (option?.group === 'mihomo_proxies') {
+    return { name, label: option.label, kind: 'proxy', tone: 'proxy' };
   }
   if (!ob) {
     const expanded = resolveCompositeOutboundView(name, outbounds, outboundOptions, subscriptions, proxyGroups);

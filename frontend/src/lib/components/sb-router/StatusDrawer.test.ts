@@ -51,7 +51,32 @@ const patchSpy = mergeAndSaveSettings as unknown as ReturnType<typeof vi.fn>;
 describe('#730 простой режим: инфо под выбором режима захвата', () => {
 	beforeEach(() => {
 		uiMode.set('beginner');
+		status.set({ enabled: false, active: false, ruleCount: 0 });
+		settings.set({ routingMode: 'tproxy', deviceMode: 'policy', policyName: 'p1' });
 		openDrawer();
+	});
+
+	it('главный тумблер включён, когда движок работает в FakeIP', () => {
+		status.set({ enabled: true, active: true, ruleCount: 3 });
+		settings.set({ routingMode: 'fakeip-tun', deviceMode: 'policy', policyName: 'p1' });
+		render(StatusDrawer);
+
+		const toggle = screen.getByRole('checkbox', {
+			name: 'Включить или выключить движок маршрутизации',
+		}) as unknown as HTMLInputElement;
+		expect(toggle.checked).toBe(true);
+		expect(screen.queryByText('Движок работает')).not.toBeNull();
+	});
+
+	it('legacy-настройки без routingMode считаются активным TPROXY', () => {
+		status.set({ enabled: true, active: true, ruleCount: 1 });
+		settings.set({ deviceMode: 'policy', policyName: 'p1' });
+		render(StatusDrawer);
+
+		const toggle = screen.getByRole('checkbox', {
+			name: 'Включить или выключить движок маршрутизации',
+		}) as unknown as HTMLInputElement;
+		expect(toggle.checked).toBe(true);
 	});
 
 	it('policy-tun: блок режима виден новичку', () => {
@@ -154,3 +179,38 @@ describe('Анализ трафика: потолок UDP-NAT', () => {
 		expect(patchSpy).toHaveBeenCalledWith({ udpNatMax: undefined });
 	});
 });
+
+describe('Mihomo engine clean UI', () => {
+	beforeEach(() => {
+		uiMode.set('beginner');
+		status.set({
+			enabled: true,
+			active: true,
+			ruleCount: 0,
+			issues: [
+				{ severity: 'warning', kind: 'rule-set-not-found', message: "DNS-правило ссылается на несуществующий rule_set 'xai'" },
+				{ severity: 'error', kind: 'engine-dead-interception', message: 'Движок остановлен, но перехват трафика активен' },
+			],
+		});
+		settings.set({
+			routingEngine: 'mihomo',
+			routingMode: 'tproxy',
+			deviceMode: 'policy',
+			policyName: 'p1',
+		});
+		openDrawer();
+	});
+
+	it('скрывает блок «Кэш sing-box» при активном движке Mihomo', () => {
+		render(StatusDrawer);
+		expect(screen.queryByText('Кэш sing-box')).toBeNull();
+		expect(screen.queryByText(/Хранилище cache\.db/)).toBeNull();
+	});
+
+	it('фильтрует предупреждения sing-box rule_set, но оставляет runtime issues', () => {
+		render(StatusDrawer);
+		expect(screen.queryByText(/DNS-правило ссылается на несуществующий rule_set/)).toBeNull();
+		expect(screen.queryByText(/Движок остановлен, но перехват трафика активен/)).not.toBeNull();
+	});
+});
+

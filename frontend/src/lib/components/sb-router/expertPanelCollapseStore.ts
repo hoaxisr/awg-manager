@@ -4,6 +4,7 @@ export type ExpertPanelSection =
   | 'rules'
   | 'ruleSets'
   | 'outbounds'
+  | 'proxyGroups'
   | 'dnsServers'
   | 'dnsRewrite'
   | 'inbounds';
@@ -16,6 +17,7 @@ const SECTIONS: ReadonlyArray<ExpertPanelSection> = [
   'rules',
   'ruleSets',
   'outbounds',
+  'proxyGroups',
   'dnsServers',
   'dnsRewrite',
   'inbounds',
@@ -25,6 +27,7 @@ const DEFAULT_STATE: ExpertPanelCollapseState = {
   rules: false,
   ruleSets: false,
   outbounds: false,
+  proxyGroups: false,
   dnsServers: false,
   dnsRewrite: false,
   inbounds: false,

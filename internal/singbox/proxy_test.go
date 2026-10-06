@@ -2,10 +2,137 @@ package singbox
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
+
+func TestProxyManagerNextFreeIndexReservesAcrossConcurrentCallers(t *testing.T) {
+	pm := &ProxyManager{
+		pending: make(map[int]time.Time),
+		listInterfaces: func(context.Context) ([]ndms.Interface, error) {
+			return nil, nil
+		},
+	}
+	const callers = 16
+	results := make(chan int, callers)
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			index, err := pm.NextFreeIndex(context.Background(), nil)
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- index
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	seen := make(map[int]bool)
+	for index := range results {
+		if seen[index] {
+			t.Fatalf("duplicate pending Proxy%d reservation", index)
+		}
+		seen[index] = true
+	}
+	if len(seen) != callers {
+		t.Fatalf("reserved %d unique indices, want %d", len(seen), callers)
+	}
+	pm.ReleaseProxyIndex(0)
+	index, err := pm.NextFreeIndex(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index != 0 {
+		t.Fatalf("released reservation yielded Proxy%d, want Proxy0", index)
+	}
+}
+
+func TestProxyManagerNextFreeIndexSkipsPersistedReservations(t *testing.T) {
+	pm := &ProxyManager{
+		pending: make(map[int]time.Time),
+		listInterfaces: func(context.Context) ([]ndms.Interface, error) {
+			return nil, nil
+		},
+	}
+	pm.SetReservedIndices(func() map[int]bool {
+		return map[int]bool{0: true, 2: true}
+	})
+	index, err := pm.NextFreeIndex(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index != 1 {
+		t.Fatalf("NextFreeIndex = %d, want 1 (Proxy0 and Proxy2 persisted)", index)
+	}
+}
+
+func TestProxyManagerOwnedMutationPreservesForeignProxy(t *testing.T) {
+	description := "user-created"
+	createCalls := 0
+	deleteCalls := 0
+	pm := &ProxyManager{
+		pending:      make(map[int]time.Time),
+		hasComponent: func() bool { return true },
+		getProxy: func(_ context.Context, _ string) (*ndms.ProxyInfo, error) {
+			return &ndms.ProxyInfo{Exists: true, Description: description}, nil
+		},
+		createProxy: func(_ context.Context, _, nextDescription, _ string, _ int, _ bool) error {
+			createCalls++
+			description = nextDescription
+			return nil
+		},
+		downProxy: func(context.Context, string) error { return nil },
+		deleteProxy: func(context.Context, string) error {
+			deleteCalls++
+			return nil
+		},
+	}
+
+	owner := "awg-manager:singbox:subscription:sub-id"
+	owned, err := pm.EnsureProxyIfOwned(context.Background(), 4, 11004, owner, "old label")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owned || createCalls != 0 || description != "user-created" {
+		t.Fatalf("foreign ensure mutated Proxy4: owned=%v createCalls=%d description=%q", owned, createCalls, description)
+	}
+	removed, err := pm.RemoveProxyIfOwnedBy(context.Background(), 4, owner, "old label")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed || deleteCalls != 0 {
+		t.Fatalf("foreign remove mutated Proxy4: removed=%v deleteCalls=%d", removed, deleteCalls)
+	}
+
+	// A legacy label is accepted once and rewritten to the stable owner token.
+	description = "old label"
+	owned, err = pm.EnsureProxyIfOwned(context.Background(), 4, 11004, owner, "old label")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !owned || createCalls != 1 || description != owner {
+		t.Fatalf("legacy migration: owned=%v createCalls=%d description=%q", owned, createCalls, description)
+	}
+	removed, err = pm.RemoveProxyIfOwnedBy(context.Background(), 4, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removed || deleteCalls != 1 {
+		t.Fatalf("owned remove: removed=%v deleteCalls=%d", removed, deleteCalls)
+	}
+}
 
 // proxyIsOurs decides whether an NDMS ProxyN belongs to awg-manager's sing-box
 // management, so disable/orphan-cleanup removes it. Subscription composites are
@@ -60,6 +187,125 @@ func TestNativeProxyKernelNames(t *testing.T) {
 		if !want[k] {
 			t.Errorf("unexpected native proxy %q in %v", k, got)
 		}
+	}
+}
+
+func TestProxyManagerInspectProxy_ResolvesEmptySystemName(t *testing.T) {
+	pm := &ProxyManager{
+		pending: make(map[int]time.Time),
+		getInterface: func(_ context.Context, name string) (*ndms.Interface, error) {
+			if name == "Proxy1" {
+				return &ndms.Interface{
+					ID:          "Proxy1",
+					State:       "up",
+					Description: "test-proxy",
+					SystemName:  "", // empty in bulk/show query on Keenetic OS
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+	pm.SetSystemNameResolver(func(_ context.Context, name string) string {
+		if name == "Proxy1" {
+			return "t2s1"
+		}
+		return ""
+	})
+
+	obs, err := pm.InspectProxy(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("InspectProxy failed: %v", err)
+	}
+	if !obs.Exists {
+		t.Fatalf("expected Exists=true")
+	}
+	if obs.SystemName != "t2s1" {
+		t.Fatalf("expected SystemName='t2s1', got %q", obs.SystemName)
+	}
+}
+
+func TestProxyManagerInspectProxy_PreservesExistingSystemName(t *testing.T) {
+	pm := &ProxyManager{
+		pending: make(map[int]time.Time),
+		getInterface: func(_ context.Context, name string) (*ndms.Interface, error) {
+			return &ndms.Interface{
+				ID:         "Proxy2",
+				State:      "up",
+				SystemName: "t2s2",
+			}, nil
+		},
+	}
+	pm.SetSystemNameResolver(func(_ context.Context, name string) string {
+		t.Fatal("resolver should not be called when SystemName is already populated")
+		return "unexpected"
+	})
+
+	obs, err := pm.InspectProxy(context.Background(), 2)
+	if err != nil {
+		t.Fatalf("InspectProxy failed: %v", err)
+	}
+	if obs.SystemName != "t2s2" {
+		t.Fatalf("expected SystemName='t2s2', got %q", obs.SystemName)
+	}
+}
+
+func TestProxyManagerInspectProxy_GetProxyFallbackResolvesSystemName(t *testing.T) {
+	pm := &ProxyManager{
+		pending: make(map[int]time.Time),
+		getProxy: func(_ context.Context, name string) (*ndms.ProxyInfo, error) {
+			return &ndms.ProxyInfo{
+				Name:   "Proxy3",
+				Exists: true,
+				Up:     true,
+			}, nil
+		},
+	}
+	pm.SetSystemNameResolver(func(_ context.Context, name string) string {
+		if name == "Proxy3" {
+			return "t2s3"
+		}
+		return ""
+	})
+
+	obs, err := pm.InspectProxy(context.Background(), 3)
+	if err != nil {
+		t.Fatalf("InspectProxy failed: %v", err)
+	}
+	if obs.SystemName != "t2s3" {
+		t.Fatalf("expected SystemName='t2s3', got %q", obs.SystemName)
+	}
+}
+
+func TestProxyManagerListProxyObservations_ResolvesEmptySystemName(t *testing.T) {
+	pm := &ProxyManager{
+		pending: make(map[int]time.Time),
+		listInterfaces: func(context.Context) ([]ndms.Interface, error) {
+			return []ndms.Interface{
+				{ID: "Proxy1", State: "up", SystemName: ""},
+				{ID: "Proxy2", State: "up", SystemName: "t2s2"},
+				{ID: "Wireguard0", State: "up", SystemName: "nwg0"},
+			}, nil
+		},
+	}
+	pm.SetSystemNameResolver(func(_ context.Context, name string) string {
+		if name == "Proxy1" {
+			return "t2s1"
+		}
+		return ""
+	})
+
+	obs, err := pm.ListProxyObservations(context.Background())
+	if err != nil {
+		t.Fatalf("ListProxyObservations failed: %v", err)
+	}
+	if len(obs) != 2 {
+		t.Fatalf("expected 2 proxy observations, got %d", len(obs))
+	}
+	if obs[0].Name != "Proxy1" || obs[0].SystemName != "t2s1" {
+		t.Errorf("Proxy1 mismatch: name=%q sys=%q, want sys='t2s1'", obs[0].Name, obs[0].SystemName)
+	}
+	if obs[1].Name != "Proxy2" || obs[1].SystemName != "t2s2" {
+		t.Errorf("Proxy2 mismatch: name=%q sys=%q, want sys='t2s2'", obs[1].Name, obs[1].SystemName)
 	}
 }
 

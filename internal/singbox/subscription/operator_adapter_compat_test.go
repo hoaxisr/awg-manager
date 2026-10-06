@@ -31,6 +31,28 @@ func slotOutboundByTag(t *testing.T, dir, tag string) map[string]any {
 	return nil
 }
 
+func TestOperatorAdapter_LoadFromDiskReadsParkedSubscriptionSlot(t *testing.T) {
+	dir := t.TempDir()
+	disabledDir := filepath.Join(dir, "disabled")
+	if err := os.MkdirAll(disabledDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"inbounds":[{"type":"mixed","tag":"sub-old-in","listen_port":11001}],"outbounds":[{"type":"selector","tag":"sub-old","outbounds":["node"]}],"route":{"rules":[]}}`)
+	if err := os.WriteFile(filepath.Join(disabledDir, "40-subscriptions.json"), raw, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	orch := orchestrator.New(dir, nil)
+	adapter := NewOperatorAdapter(orch, nil, nil)
+	if err := adapter.LoadFromDisk(dir); err != nil {
+		t.Fatalf("LoadFromDisk: %v", err)
+	}
+
+	if got := adapter.SubscriptionOutbounds(); len(got) != 1 || got[0]["tag"] != "sub-old" {
+		t.Fatalf("parked subscription slot was not restored: %#v", got)
+	}
+}
+
 // hysteria2, приехавший подпиской, обязан получить disable_chrome_parrot в
 // записанном слоте: sing-box 1.14.0-beta.7 включил chrome-парротинг по
 // умолчанию, и при disable_sni && !insecure туннель мёртв.

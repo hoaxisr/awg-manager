@@ -8,6 +8,7 @@ import type {
 	DeviceProxyOutbound,
 	DeviceProxyRuntime,
 	IPResult,
+	MihomoDiagnosticResourceKind,
 	SingboxConfigPreview,
 	SingboxImportResponse,
 	SingboxInboundsList,
@@ -35,7 +36,12 @@ export class SingboxClient extends RoutingClient {
 	// because ClashProxy returns 204 with no JSON envelope. Returns true on
 	// success so callers can decide whether to roll back optimistic UI.
 	async singboxKillConnection(id: string): Promise<boolean> {
-		const url = `${this.baseUrl}/singbox/clash/connections/${encodeURIComponent(id)}`;
+		return this.clashKillConnection('sing-box', id);
+	}
+
+	async clashKillConnection(engine: 'sing-box' | 'mihomo', id: string): Promise<boolean> {
+		const prefix = engine === 'mihomo' ? 'mihomo' : 'singbox';
+		const url = `${this.baseUrl}/${prefix}/clash/connections/${encodeURIComponent(id)}`;
 		try {
 			const r = await fetch(url, {
 				method: 'DELETE',
@@ -50,9 +56,17 @@ export class SingboxClient extends RoutingClient {
 
 	// Bulk-kill: returns counts so the caller can surface partial failure.
 	async singboxKillConnections(ids: string[]): Promise<{ ok: number; total: number }> {
-		const results = await Promise.all(ids.map((id) => this.singboxKillConnection(id)));
+		return this.clashKillConnections('sing-box', ids);
+	}
+
+	async clashKillConnections(engine: 'sing-box' | 'mihomo', ids: string[]): Promise<{ ok: number; total: number }> {
+		const results = await Promise.all(ids.map((id) => this.clashKillConnection(engine, id)));
 		const ok = results.filter(Boolean).length;
 		return { ok, total: ids.length };
+	}
+
+	async singboxUninstall(): Promise<SingboxStatus> {
+		return this.request('/singbox/uninstall', { method: 'POST' });
 	}
 
 	async singboxInstall(): Promise<SingboxStatus> {
@@ -61,10 +75,6 @@ export class SingboxClient extends RoutingClient {
 
 	async singboxUpdate(): Promise<SingboxStatus> {
 		return this.request('/singbox/update', { method: 'POST' });
-	}
-
-	async singboxUninstall(): Promise<SingboxStatus> {
-		return this.request('/singbox/uninstall', { method: 'POST' });
 	}
 
 	async singboxControl(action: 'start' | 'stop' | 'restart'): Promise<SingboxStatus> {
@@ -236,6 +246,17 @@ export class SingboxClient extends RoutingClient {
 		return this.request(url);
 	}
 
+	async mihomoCheckConnectivity(kind: MihomoDiagnosticResourceKind, resourceId: string): Promise<ConnectivityResult> {
+		const query = new URLSearchParams({ mihomoKind: kind, mihomoId: resourceId });
+		return this.request(`/singbox/tunnels/test/connectivity?${query}`);
+	}
+
+	async mihomoCheckIP(kind: MihomoDiagnosticResourceKind, resourceId: string, serviceURL?: string): Promise<IPResult> {
+		const query = new URLSearchParams({ mihomoKind: kind, mihomoId: resourceId });
+		if (serviceURL) query.set('service', serviceURL);
+		return this.request(`/singbox/tunnels/test/ip?${query}`);
+	}
+
 	singboxSpeedTestStream(
 		tag: string,
 		server: string,
@@ -262,6 +283,44 @@ export class SingboxClient extends RoutingClient {
 		es.addEventListener('done', () => { onDone(); es.close(); });
 		es.addEventListener('error', (e) => {
 			const msg = e instanceof MessageEvent ? String(e.data) : m.api_connection_lost();
+			onError(msg);
+			es.close();
+		});
+		return es;
+	}
+
+	mihomoSpeedTestStream(
+		kind: MihomoDiagnosticResourceKind,
+		resourceId: string,
+		server: string,
+		port: number,
+		onPhase: (phase: 'download' | 'upload') => void,
+		onInterval: (data: { phase: string; second: number; bandwidth: number }) => void,
+		onResult: (data: { phase: string; bandwidth: number; bytes: number; duration: number }) => void,
+		onDone: () => void,
+		onError: (error: string) => void,
+		iface?: string,
+	): EventSource {
+		const query = new URLSearchParams({
+			mihomoKind: kind,
+			mihomoId: resourceId,
+			server,
+			port: String(port),
+		});
+		if (iface) query.set('iface', iface);
+		const es = new EventSource(`${this.baseUrl}/singbox/tunnels/test/speed/stream?${query}`);
+		es.addEventListener('phase', (e) => {
+			try { onPhase(JSON.parse((e).data).phase); } catch { /* ignore */ }
+		});
+		es.addEventListener('interval', (e) => {
+			try { onInterval(JSON.parse((e).data)); } catch { /* ignore */ }
+		});
+		es.addEventListener('result', (e) => {
+			try { onResult(JSON.parse((e).data)); } catch { /* ignore */ }
+		});
+		es.addEventListener('done', () => { onDone(); es.close(); });
+		es.addEventListener('error', (e) => {
+			const msg = e instanceof MessageEvent ? String(e.data) : 'Соединение потеряно';
 			onError(msg);
 			es.close();
 		});

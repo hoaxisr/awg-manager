@@ -64,9 +64,37 @@ func TestParseTrustTunnelLink_MultiAddressSNIFragment(t *testing.T) {
 	if tls["server_name"] != "cdn.example.org" || tls["insecure"] != true || tls["fragment"] != true {
 		t.Fatalf("tls: %v", tls)
 	}
-	// http3 во входе → всё равно quic:false (H2-only)
-	if ttOutboundMap(t, parsed[0])["quic"] != false {
-		t.Fatal("quic must stay false")
+	// ttTwo имеет tag 0x09 = 2 (HTTP/3) → quic: true
+	if ttOutboundMap(t, parsed[0])["quic"] != true {
+		t.Fatal("quic must be true for HTTP/3 upstream protocol")
+	}
+}
+
+func TestParseTrustTunnelLink_UpstreamProtocolDetection(t *testing.T) {
+	// Germany (H2, tag 0x09 = 1) -> quic: false
+	deLink := "tt://?AAEBAQtkZS50dG5sLnRvcAUXZHJhdy1zbGljay1jbHVtcC04NmU3YjcGKzVueWVDYzRwR1hhV0NwNVlOSmp1WDdUMnh1eTlaMmpWYW9MMm1aeUxTRmcCKGRyYXctc2xpY2stY2x1bXAtODZlN2I3LnJlbGF5N2FpLm5ldDo0NDMMDUdlcm1hbnlUVDg5OTcEAQAJAQENEAcxLjEuMS4xBzguOC44Ljg"
+	parsedDE, err := ParseLinkMany(deLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsedDE) != 1 {
+		t.Fatalf("want 1 outbound, got %d", len(parsedDE))
+	}
+	if ttOutboundMap(t, parsedDE[0])["quic"] != false {
+		t.Fatal("Germany H2 must have quic: false")
+	}
+
+	// Netherlands (QUIC/H3, tag 0x09 = 2) -> quic: true
+	nlLink := "tt://?AAEBAQtubC50dG5sLnRvcAUWY2FuZHktd2lzZS1raWNrLTlhNGFjZQYrMkFpWkVlTG41dUpDa0NLeUxiN2pzdHM4MmdIM1gwT19PR2hsRDJwdXIycwInY2FuZHktd2lzZS1raWNrLTlhNGFjZS5yZWxheTdhaS5uZXQ6NDQzDA1OZXRoZXJsVFQyMzY0BAEACQECDRAHMS4xLjEuMQc4LjguOC44"
+	parsedNL, err := ParseLinkMany(nlLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsedNL) != 1 {
+		t.Fatalf("want 1 outbound, got %d", len(parsedNL))
+	}
+	if ttOutboundMap(t, parsedNL[0])["quic"] != true {
+		t.Fatal("Netherlands H3 must have quic: true")
 	}
 }
 

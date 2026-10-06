@@ -433,10 +433,10 @@
 				/>
 
 				{#if action === 'route'}
-					<label class="field">
+					<div class="field">
 						<div class="lbl">{m.routing_singbox_rule_route_to()}</div>
 						<Dropdown bind:value={outbound} options={outboundDropdownOptions} fullWidth />
-					</label>
+					</div>
 				{/if}
 			</div>
 		{/if}

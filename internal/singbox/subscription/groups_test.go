@@ -669,13 +669,14 @@ func TestService_SyncProxies_CoversGroups(t *testing.T) {
 		t.Error("SyncProxies must allocate a proxy index for the group")
 	}
 	found := false
+	wantDesc := ProxyOwnershipDescription("group", g.ID)
 	for _, c := range mut.ensuredProxies {
-		if c.idx == got.ProxyIndex && c.port == int(got.ListenPort) && c.description == "grp" {
+		if c.idx == got.ProxyIndex && c.port == int(got.ListenPort) && c.description == wantDesc {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("EnsureProxy(idx=%d, port=%d, %q) not observed: %v", got.ProxyIndex, got.ListenPort, "grp", mut.ensuredProxies)
+		t.Errorf("EnsureProxy(idx=%d, port=%d, %q) not observed: %v", got.ProxyIndex, got.ListenPort, wantDesc, mut.ensuredProxies)
 	}
 }
 

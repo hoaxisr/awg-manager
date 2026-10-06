@@ -9,11 +9,12 @@
 	import { formatBytes } from '$lib/utils/format';
 	import { ariaSort } from '$lib/utils/tunnelTableSort';
 	import type { SingboxLayoutMode, TunnelRenderMode } from '$lib/constants/singboxLayout';
-	import type { SingboxTunnel } from '$lib/types';
+	import type { MihomoNativeProxy, MihomoRuntimeProvider, MihomoRuntimeProxy, SingboxTunnel } from '$lib/types';
 	import type { SubscriptionActiveCardVM, SingboxTunnelListStats } from '$lib/components/subscriptions/subscriptionVMs';
 	import { Globe, LayoutGrid, Link, Waypoints } from 'lucide-svelte';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
 	import { showSummary } from '$lib/stores/showSummary';
+	import MihomoNativeResourceCard from '$lib/components/mihomo/MihomoNativeResourceCard.svelte';
 
 	interface Props {
 		dashboardOn: boolean;
@@ -22,12 +23,14 @@
 		sortedFilteredSingboxTunnels: SingboxTunnel[];
 		singboxTunnelListStats: SingboxTunnelListStats;
 		singboxTunnelsSourceRowCount: number;
-		singboxTunnelsSearchEmpty: boolean;
 		singboxAutoDelayCheckNonce: number;
 		showSingboxGridListToggle: boolean;
 		effectiveSingboxTunnelsEffectiveLayout: SingboxLayoutMode;
 		effectiveSingboxTunnelsRenderMode: TunnelRenderMode;
 		subscriptionsActiveCards: SubscriptionActiveCardVM[];
+		mihomoProxies?: MihomoNativeProxy[];
+		mihomoRuntimeProxies?: Record<string, MihomoRuntimeProxy>;
+		mihomoRuntimeProviders?: Record<string, MihomoRuntimeProvider>;
 		singboxTunnelsSearchQuery: string;
 		singboxTunnelsLayoutMode: SingboxLayoutMode;
 		handleSingboxTunnelSortChange: (key: SingboxTunnelSortKey) => void;
@@ -43,12 +46,14 @@
 		sortedFilteredSingboxTunnels,
 		singboxTunnelListStats,
 		singboxTunnelsSourceRowCount,
-		singboxTunnelsSearchEmpty,
 		singboxAutoDelayCheckNonce,
 		showSingboxGridListToggle,
 		effectiveSingboxTunnelsEffectiveLayout,
 		effectiveSingboxTunnelsRenderMode,
 		subscriptionsActiveCards,
+		mihomoProxies = [],
+		mihomoRuntimeProxies = {},
+		mihomoRuntimeProviders = {},
 		singboxTunnelsSearchQuery = $bindable(),
 		singboxTunnelsLayoutMode = $bindable(),
 		handleSingboxTunnelSortChange,
@@ -56,6 +61,32 @@
 		openWizard,
 		openAwg3Import,
 	}: Props = $props();
+
+	let visibleMihomoProxies = $derived.by(() => {
+		if (dashboardOn) return [];
+		const query = singboxTunnelsSearchQuery.trim().toLowerCase();
+		return mihomoProxies.filter((proxy) => {
+			if (!query) return true;
+			const config = proxy.nativeConfig ?? {};
+			return [proxy.name, proxy.protocol, proxy.transport, String(config.server ?? ''), String(config.port ?? '')]
+				.some((value) => value.toLowerCase().includes(query));
+		});
+	});
+	let totalTunnelCount = $derived(singboxTunnelsList.length + (dashboardOn ? 0 : mihomoProxies.length));
+	let combinedSearchEmpty = $derived(
+		singboxTunnelsSearchQuery.trim() !== '' && sortedFilteredSingboxTunnels.length === 0 && visibleMihomoProxies.length === 0,
+	);
+	let mihomoRunningCount = $derived(
+		mihomoProxies.filter((proxy) => proxy.enabled && mihomoRuntimeProxies[proxy.name]?.alive !== false && Boolean(mihomoRuntimeProxies[proxy.name])).length,
+	);
+	let mihomoDelayValues = $derived(
+		mihomoProxies.map((proxy) => mihomoRuntimeProxies[proxy.name]?.history?.at(-1)?.delay ?? 0).filter((delay) => delay > 0),
+	);
+	let combinedAverageDelay = $derived.by(() => {
+		const samples = [...mihomoDelayValues];
+		if (singboxTunnelListStats.avgDelayMs !== null) samples.push(singboxTunnelListStats.avgDelayMs);
+		return samples.length ? Math.round(samples.reduce((sum, value) => sum + value, 0) / samples.length) : null;
+	});
 </script>
 
 {#snippet createIcon()}
@@ -64,16 +95,16 @@
 
 	{#if !dashboardOn}
 	<SingboxInstallBanner />
-	{#if singboxTunnelsList.length > 0 || subscriptionsActiveCards.length > 0}
+	{#if totalTunnelCount > 0 || subscriptionsActiveCards.length > 0}
 		<div class="tunnels-toolbar">
 			<span class="tunnel-count">
-				{singboxTunnelsList.length}
-				{m.tunnels_unit_tunnels({ count: singboxTunnelsList.length })}
+				{totalTunnelCount}
+				{m.tunnels_unit_tunnels({ count: totalTunnelCount })}
 			</span>
 			<div class="toolbar-actions">
 				<TunnelToolbarViewRow
-					sourceRowCount={singboxTunnelsSourceRowCount}
-					showViewToggle={singboxTunnelsList.length > 0}
+					sourceRowCount={singboxTunnelsSourceRowCount + mihomoProxies.length}
+					showViewToggle={totalTunnelCount > 0}
 					searchQuery={singboxTunnelsSearchQuery}
 					onSearchChange={(value) => (singboxTunnelsSearchQuery = value)}
 				>
@@ -98,7 +129,7 @@
 		</div>
 	{/if}
 	{/if}
-	{#if !dashboardOn && singboxTunnelsList.length === 0}
+	{#if !dashboardOn && totalTunnelCount === 0}
 		<div class="empty-kinds">
 			<button type="button" class="empty-kind-card" onclick={() => openWizard('single')}>
 				<Link class="empty-kind-icon" size={28} strokeWidth={1.6} aria-hidden="true" />
@@ -163,14 +194,14 @@
 				</div>
 			</div>
 		</div>
-	{:else if singboxTunnelsList.length > 0 || (dashboardOn && dashboardSingboxTunnels.length > 0)}
+	{:else if totalTunnelCount > 0 || (dashboardOn && dashboardSingboxTunnels.length > 0)}
 		{#if !dashboardOn && $showSummary}
 			<div class="awg-summary-row">
 				<StatStrip>
 					<Stat
-						value={`${singboxTunnelListStats.running}/${singboxTunnelListStats.count}`}
-						label={m.tunnels_unit_tunnels({ count: singboxTunnelListStats.running })}
-						sub={m.singbox_tabs_running_sub({ active: singboxTunnelListStats.running, stopped: Math.max(0, singboxTunnelListStats.count - singboxTunnelListStats.running) })}
+						value={`${singboxTunnelListStats.running + mihomoRunningCount}/${totalTunnelCount}`}
+						label={m.tunnels_unit_tunnels({ count: singboxTunnelListStats.running + mihomoRunningCount })}
+						sub={m.singbox_tabs_running_sub({ active: singboxTunnelListStats.running + mihomoRunningCount, stopped: Math.max(0, totalTunnelCount - (singboxTunnelListStats.running + mihomoRunningCount)) })}
 					/>
 					<Stat
 						value={formatBytes(singboxTunnelListStats.down + singboxTunnelListStats.up)}
@@ -178,8 +209,8 @@
 						sub={`↓ ${formatBytes(singboxTunnelListStats.down)} · ↑ ${formatBytes(singboxTunnelListStats.up)}`}
 					/>
 					<Stat
-						value={singboxTunnelListStats.avgDelayMs !== null
-							? `${singboxTunnelListStats.avgDelayMs} ms`
+						value={combinedAverageDelay !== null
+							? `${combinedAverageDelay} ms`
 							: '—'}
 						label={m.singbox_tabs_avg_delay()}
 						sub={m.singbox_tabs_avg_delay_sub()}
@@ -230,6 +261,9 @@
 						</tr>
 					</thead>
 					<tbody>
+				{#each visibleMihomoProxies as proxy, i (proxy.id)}
+					<MihomoNativeResourceCard kind="proxy" {proxy} runtimeProxies={mihomoRuntimeProxies} runtimeProviders={mihomoRuntimeProviders} layout="list" renderMode="table" autoDelayCheckNonce={singboxAutoDelayCheckNonce} autoDelayCheckDelayMs={i * 180} />
+				{/each}
 				{#each sortedFilteredSingboxTunnels as tunnel, i (tunnel.tag)}
 					<SingboxTunnelCard
 						{tunnel}
@@ -240,7 +274,7 @@
 						ondetail={(tag) => openSingboxDetail(tag)}
 					/>
 				{/each}
-				{#if singboxTunnelsSearchEmpty}
+				{#if combinedSearchEmpty}
 					<tr class="tunnel-empty-row">
 						<td colspan="7">{m.tunnels_dashboard_empty_title()}</td>
 					</tr>
@@ -256,6 +290,9 @@
 				class:tunnel-grid--dense={effectiveSingboxTunnelsRenderMode !== 'list-card' && effectiveSingboxTunnelsEffectiveLayout === 'dense'}
 				class:tunnel-grid--compact={effectiveSingboxTunnelsRenderMode !== 'list-card' && effectiveSingboxTunnelsEffectiveLayout === 'compact'}
 			>
+				{#each visibleMihomoProxies as proxy, i (proxy.id)}
+					<MihomoNativeResourceCard kind="proxy" {proxy} runtimeProxies={mihomoRuntimeProxies} runtimeProviders={mihomoRuntimeProviders} layout={sbTunnelCardLayout} renderMode={effectiveSingboxTunnelsRenderMode} autoDelayCheckNonce={singboxAutoDelayCheckNonce} autoDelayCheckDelayMs={i * 180} />
+				{/each}
 				{#each sortedFilteredSingboxTunnels as tunnel, i (tunnel.tag)}
 					<SingboxTunnelCard
 						{tunnel}
@@ -267,7 +304,7 @@
 					/>
 				{/each}
 			</div>
-			{#if singboxTunnelsSearchEmpty}
+			{#if combinedSearchEmpty}
 				<p class="tunnel-list-empty">{m.tunnels_dashboard_empty_title()}</p>
 			{/if}
 		{/if}

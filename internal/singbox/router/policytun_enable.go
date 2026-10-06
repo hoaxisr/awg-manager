@@ -359,6 +359,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// Promote SlotRouter FIRST so persistConfigDirect targets the active path.
 	// The prior enabled-state is captured for rollback (SlotFakeIP is not
 	// touched: leaving fakeip is the transition's teardown job, not ours).
+	mihomoPrimary := sr.RoutingEngine == "mihomo"
 	prevRouterEnabled := false
 	if s.deps.Orch != nil {
 		for _, st := range s.deps.Orch.Snapshot() {
@@ -367,8 +368,8 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 				break
 			}
 		}
-		if err = s.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
-			return fmt.Errorf("enable policy-tun: orchestrator enable router slot: %w", err)
+		if err = s.deps.Orch.SetEnabled(orchestrator.SlotRouter, !mihomoPrimary); err != nil {
+			return fmt.Errorf("enable policy-tun: orchestrator set router slot: %w", err)
 		}
 		push(func() {
 			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, prevRouterEnabled); e != nil {
@@ -378,7 +379,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			// слот 30 под неё до следующего reload.
 			s.notifyRoutingSlotsChanged()
 		})
-	} else {
+	} else if !mihomoPrimary {
 		if running, _ := s.deps.Singbox.IsRunning(); !running {
 			if err = s.deps.Singbox.Start(); err != nil {
 				return fmt.Errorf("enable policy-tun: sing-box start: %w", err)
@@ -406,13 +407,31 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// свои слоты ДО reload.
 	s.notifyRoutingSlotsChanged()
 	if err = s.orchestratorApplyNow(); err != nil {
-		return fmt.Errorf("enable policy-tun: orchestrator reload: %w", err)
+		if !mihomoPrimary {
+			return fmt.Errorf("enable policy-tun: orchestrator reload: %w", err)
+		}
+		s.appLog.Warn("policy-tun-enable", "orchestrator", fmt.Sprintf("sing-box orchestrator reload failed while Mihomo is primary: %v", err))
 	}
 
-	// HARD gate: an unready sing-box means the tun never attaches, and parking
+	if mihomoPrimary && !s.singboxReady(ctx, true) {
+		engine := s.routingEngineController()
+		if engine == nil {
+			return fmt.Errorf("enable policy-tun: Mihomo routing engine is unavailable")
+		}
+		if err = engine.Reload(); err != nil {
+			return fmt.Errorf("enable policy-tun: start Mihomo routing engine: %w", err)
+		}
+	}
+
+	// HARD gate: an unready sing-box/Mihomo means the tun never attaches, and parking
 	// the NDMS default route on a dead tun blackholes every policy client.
 	bootWait := bootWaitWithFloor()
 	if err = s.waitForSingbox(ctx, bootWait); err != nil {
+		if mihomoPrimary {
+			if engine := s.routingEngineController(); engine != nil {
+				_ = engine.Stop()
+			}
+		}
 		return fmt.Errorf("enable policy-tun: %w: waited %s (%v)", ErrSingboxNotReady, bootWait, err)
 	}
 
@@ -550,7 +569,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			err = fmt.Errorf("enable policy-tun: collect WAN IPs: %w", cerr)
 			return err
 		}
-		spec := s.buildPolicyTunSpec(sr, wanIPs, qosSpecs)
+		spec := s.buildPolicyTunSpec(ctx, sr, wanIPs, qosSpecs)
 		if err = s.deps.IPTables.Install(ctx, spec); err != nil {
 			// См. F20: часть таблиц могла закоммититься — снимок неизвестен.
 			s.netfilterStateKnown = false

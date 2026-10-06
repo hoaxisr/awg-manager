@@ -38,6 +38,22 @@ func (a *singboxUpdaterAdapter) Update(ctx context.Context) error {
 func (a *app) setupSingbox() {
 	a.setupSingboxRuntime()
 
+	isMihomo := func() bool {
+		if a.settingsStore != nil {
+			if s, err := a.settingsStore.Get(); err == nil && s != nil && s.SingboxRouter.RoutingEngine == "mihomo" {
+				return true
+			}
+		}
+		return false
+	}
+	if a.singboxOp != nil && a.singboxOp.Clash() != nil {
+		a.singboxOp.Clash().SetAddressFn(func() string {
+			if isMihomo() {
+				return "127.0.0.1:9090"
+			}
+			return ""
+		})
+	}
 	delayChecker := singbox.NewDelayChecker(
 		a.singboxOp.Clash(),
 		&singboxAndSubLister{op: a.singboxOp, sub: a.subSvc, awg3: a.awg3Svc},
@@ -66,11 +82,22 @@ func (a *app) setupSingbox() {
 
 	trafficCtx, trafficCancel := context.WithCancel(context.Background())
 	a.deferOnExit(trafficCancel)
+	clashAddr := func() string {
+		if a.settingsStore != nil {
+			if s, err := a.settingsStore.Get(); err == nil && s != nil && s.SingboxRouter.RoutingEngine == "mihomo" {
+				return "127.0.0.1:9090"
+			}
+		}
+		if a.singboxOp != nil && a.singboxOp.Clash() != nil {
+			return a.singboxOp.Clash().Address()
+		}
+		return "127.0.0.1:9090"
+	}
 	// Тот же счётчик зрителей, что у матрицы, поллеров и delay-проверки: при
 	// закрытой панели три SSE-события каждые 2 с уходили бы в никуда, а разбор
 	// всей таблицы соединений шёл бы раз в секунду ради часовой истории,
 	// которой хватает точки в минуту.
-	trafficAgg := singbox.NewTrafficAggregator(a.singboxOp.Clash().Address, a.eventBus, a.trafficHistory)
+	trafficAgg := singbox.NewTrafficAggregator(clashAddr, a.eventBus, a.trafficHistory)
 	trafficAgg.SetClientCounter(a.eventBus)
 	go trafficAgg.Run(trafficCtx)
 

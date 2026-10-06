@@ -9,6 +9,7 @@
   import { mode, setMode, type RouterMode } from "./modeStore";
   import { bindLiveConnectionsStore } from "./liveConnectionsStore";
   import { openDrawer } from "./drawerStore";
+  import { singboxRouter as singboxRouterStore } from "$lib/stores/singboxRouter";
   import StatusDrawer from "./StatusDrawer.svelte";
   import SourceDrawer from "./SourceDrawer.svelte";
   import LiveConnectionsChip from "./LiveConnectionsChip.svelte";
@@ -33,6 +34,9 @@
 
   let { subtitle, onOpenInspector, onOpenJson, onOpenConfigEditor, onOpenLogs, logsActive = false, children }: Props = $props();
   let currentMode = $derived($mode);
+  const routerSettings = singboxRouterStore.settings;
+  let activeEngine = $derived($routerSettings?.routingEngine === 'mihomo' ? 'mihomo' : 'sing-box');
+  let activeEngineLabel = $derived(activeEngine === 'mihomo' ? 'Mihomo' : 'Sing-box');
 
   // Отпуск на размонтировании: иначе поток соединений живёт до конца сессии.
   onMount(() => bindLiveConnectionsStore());
@@ -45,7 +49,7 @@
 <div class="sb-shell">
   <header class="sb-header">
     <div class="title-block">
-      <h1 class="title">{m.sb_router_shell_title()}</h1>
+      <h1 class="title">{m.sb_router_shell_title({ engine: activeEngineLabel })}</h1>
       {#if subtitle}<div class="subtitle">{subtitle}</div>{/if}
     </div>
 
@@ -56,10 +60,10 @@
         type="button"
         class="params-btn"
         onclick={openDrawer}
-        aria-label={m.sb_router_shell_params()}
+        aria-label={m.sb_router_shell_params({ engine: activeEngineLabel })}
       >
         <Settings size={16} aria-hidden="true" />
-        <span class="params-text">{m.sb_router_shell_params()}</span>
+        <span class="params-text">{m.sb_router_shell_params({ engine: activeEngineLabel })}</span>
       </button>
 
       <div class="header-actions">
@@ -106,8 +110,8 @@
             class:icon-btn-active={logsActive}
             onclick={onOpenLogs}
             aria-pressed={logsActive}
-            aria-label={logsActive ? m.sb_router_shell_logs_close() : m.sb_router_shell_logs_label()}
-            title={logsActive ? m.sb_router_shell_logs_close() : m.sb_router_shell_logs_label()}
+            aria-label={logsActive ? m.sb_router_shell_logs_close({ engine: activeEngineLabel }) : m.sb_router_shell_logs_label({ engine: activeEngineLabel })}
+            title={logsActive ? m.sb_router_shell_logs_close({ engine: activeEngineLabel }) : m.sb_router_shell_logs_label({ engine: activeEngineLabel })}
           >
             <span class="action-icon"><ScrollText size={16} /></span>
             <span class="action-text">{m.sb_router_shell_logs()}</span>

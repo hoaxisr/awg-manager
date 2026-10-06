@@ -61,6 +61,19 @@ type ConfigMutator interface {
 	SubscriptionOutbounds() []map[string]any
 }
 
+type proxyOwnershipMutator interface {
+	EnsureProxyIfOwned(ctx context.Context, idx, port int, owner string, legacyOwners ...string) (bool, error)
+	RemoveProxyIfOwnedBy(ctx context.Context, idx int, owner string, legacyOwners ...string) (bool, error)
+	ReleaseProxyIndex(idx int)
+}
+
+// ProxyOwnershipDescription is the stable NDMS description for a persisted
+// subscription or aggregate group. User labels are editable and therefore
+// cannot safely prove ownership of a retained ProxyN slot.
+func ProxyOwnershipDescription(kind, id string) string {
+	return "awg-manager:singbox:" + kind + ":" + id
+}
+
 // Service is the subscription business-logic facade.
 type Service struct {
 	store   *Store
@@ -151,6 +164,102 @@ func (s *Service) proxyEnabled() bool {
 	return s.ndmsProxyEnabled()
 }
 
+// FormatProxyDescription formats NDMS description with human-readable label
+// and stable canonical ownership token: e.g. "VOX [awg-manager:singbox:subscription:123]".
+func FormatProxyDescription(label, kind, id string) string {
+	canonical := ProxyOwnershipDescription(kind, id)
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return canonical
+	}
+	return fmt.Sprintf("%s [%s]", label, canonical)
+}
+
+func (s *Service) resolveResourceLabel(kind, id string) string {
+	if kind == "subscription" && s.store != nil {
+		if sub, err := s.store.Get(id); err == nil {
+			return sub.Label
+		}
+	}
+	if kind == "group" && s.groups != nil {
+		if g, err := s.groups.Get(id); err == nil {
+			return g.Label
+		}
+	}
+	return ""
+}
+
+func (s *Service) ensureProxyIfOwned(ctx context.Context, kind, id string, idx, port int, legacyOwners ...string) (bool, error) {
+	canonical := ProxyOwnershipDescription(kind, id)
+	label := s.resolveResourceLabel(kind, id)
+	desc := FormatProxyDescription(label, kind, id)
+	allLegacy := append([]string{canonical}, legacyOwners...)
+	if mutator, ok := s.mutator.(proxyOwnershipMutator); ok {
+		return mutator.EnsureProxyIfOwned(ctx, idx, port, desc, allLegacy...)
+	}
+	return true, s.mutator.EnsureProxy(ctx, idx, port, desc)
+}
+
+func (s *Service) removeProxyIfOwned(ctx context.Context, kind, id string, idx int, legacyOwners ...string) (bool, error) {
+	owner := ProxyOwnershipDescription(kind, id)
+	if mutator, ok := s.mutator.(proxyOwnershipMutator); ok {
+		return mutator.RemoveProxyIfOwnedBy(ctx, idx, owner, legacyOwners...)
+	}
+	return true, s.mutator.RemoveProxy(ctx, idx)
+}
+
+func (s *Service) releaseProxyIndex(idx int) {
+	if mutator, ok := s.mutator.(proxyOwnershipMutator); ok {
+		mutator.ReleaseProxyIndex(idx)
+	}
+}
+
+func (s *Service) allocateOwnedProxy(ctx context.Context, kind, id string, port int, legacyDescription string) (int, error) {
+	idx, err := s.mutator.AllocProxyIndex(ctx)
+	if err != nil {
+		return -1, err
+	}
+	defer s.releaseProxyIndex(idx)
+	owned, err := s.ensureProxyIfOwned(ctx, kind, id, idx, port, legacyDescription)
+	if err != nil {
+		_, _ = s.removeProxyIfOwned(ctx, kind, id, idx, legacyDescription)
+		return -1, err
+	}
+	if !owned {
+		return -1, fmt.Errorf("Proxy%d ownership changed during allocation", idx)
+	}
+	return idx, nil
+}
+
+func (s *Service) syncOwnedProxy(
+	ctx context.Context,
+	kind, id string,
+	idx, port int,
+	persist func(int) error,
+	legacyOwners ...string,
+) (int, error) {
+	owned, err := s.ensureProxyIfOwned(ctx, kind, id, idx, port, legacyOwners...)
+	if err != nil {
+		return idx, err
+	}
+	if owned {
+		return idx, nil
+	}
+	legacyDescription := ""
+	if len(legacyOwners) > 0 {
+		legacyDescription = legacyOwners[len(legacyOwners)-1]
+	}
+	newIndex, err := s.allocateOwnedProxy(ctx, kind, id, port, legacyDescription)
+	if err != nil {
+		return idx, fmt.Errorf("reallocate foreign Proxy%d: %w", idx, err)
+	}
+	if err := persist(newIndex); err != nil {
+		_, _ = s.removeProxyIfOwned(ctx, kind, id, newIndex)
+		return idx, fmt.Errorf("persist reallocated Proxy%d: %w", newIndex, err)
+	}
+	return newIndex, nil
+}
+
 // SyncProxies ensures every subscription has its NDMS ProxyN interface when
 // the global toggle is on. It is the toggle-ON counterpart to the gated
 // Create: subscriptions created while the toggle was off carry ProxyIndex=-1
@@ -184,7 +293,12 @@ func (s *Service) SyncProxies(ctx context.Context) error {
 		err := func() error {
 			mu.Lock()
 			defer mu.Unlock()
-			return s.mutator.EnsureProxy(ctx, sub.ProxyIndex, int(sub.ListenPort), sub.Label)
+			_, err := s.syncOwnedProxy(
+				ctx, "subscription", sub.ID, sub.ProxyIndex, int(sub.ListenPort),
+				func(index int) error { return s.store.SetProxyIndex(sub.ID, index) },
+				sub.Label,
+			)
+			return err
 		}()
 		if err != nil {
 			return fmt.Errorf("subscription %s: ensure proxy: %w", sub.ID, err)
@@ -199,7 +313,11 @@ func (s *Service) SyncProxies(ctx context.Context) error {
 		if g.ListenPort == 0 || g.ProxyIndex < 0 {
 			continue
 		}
-		if err := s.mutator.EnsureProxy(ctx, g.ProxyIndex, int(g.ListenPort), g.Label); err != nil {
+		if _, err := s.syncOwnedProxy(
+			ctx, "group", g.ID, g.ProxyIndex, int(g.ListenPort),
+			func(index int) error { return s.groups.SetProxyIndex(g.ID, index) },
+			g.Label,
+		); err != nil {
 			return fmt.Errorf("subscription group %s: ensure proxy: %w", g.ID, err)
 		}
 	}
@@ -214,14 +332,12 @@ func (s *Service) SyncProxies(ctx context.Context) error {
 		err := func() error {
 			mu.Lock()
 			defer mu.Unlock()
-			idx, err := s.mutator.AllocProxyIndex(ctx)
+			idx, err := s.allocateOwnedProxy(ctx, "subscription", sub.ID, int(sub.ListenPort), sub.Label)
 			if err != nil {
 				return fmt.Errorf("alloc proxy index: %w", err)
 			}
-			if err := s.mutator.EnsureProxy(ctx, idx, int(sub.ListenPort), sub.Label); err != nil {
-				return fmt.Errorf("ensure proxy: %w", err)
-			}
 			if err := s.store.SetProxyIndex(sub.ID, idx); err != nil {
+				_, _ = s.removeProxyIfOwned(ctx, "subscription", sub.ID, idx)
 				return fmt.Errorf("persist proxy index: %w", err)
 			}
 			return nil
@@ -235,14 +351,12 @@ func (s *Service) SyncProxies(ctx context.Context) error {
 		if g.ListenPort == 0 || g.ProxyIndex >= 0 {
 			continue
 		}
-		idx, err := s.mutator.AllocProxyIndex(ctx)
+		idx, err := s.allocateOwnedProxy(ctx, "group", g.ID, int(g.ListenPort), g.Label)
 		if err != nil {
 			return fmt.Errorf("subscription group %s: alloc proxy index: %w", g.ID, err)
 		}
-		if err := s.mutator.EnsureProxy(ctx, idx, int(g.ListenPort), g.Label); err != nil {
-			return fmt.Errorf("subscription group %s: ensure proxy: %w", g.ID, err)
-		}
 		if err := s.groups.SetProxyIndex(g.ID, idx); err != nil {
+			_, _ = s.removeProxyIfOwned(ctx, "group", g.ID, idx)
 			return fmt.Errorf("subscription group %s: persist proxy index: %w", g.ID, err)
 		}
 	}
@@ -408,25 +522,18 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, er
 	// allocates the ProxyN later if the toggle is turned back on.
 	proxyIdx := -1
 	if s.proxyEnabled() {
-		idx, err := s.mutator.AllocProxyIndex(ctx)
+		idx, err := s.allocateOwnedProxy(ctx, "subscription", sub.ID, int(port), sub.Label)
 		if err != nil {
 			s.store.Delete(sub.ID)
 			s.logWarn("subscription-create", sub.ID, "failed to allocate proxy index: "+err.Error())
 			return nil, fmt.Errorf("subscription: alloc proxy index: %w", err)
 		}
 		if err := s.store.SetProxyIndex(sub.ID, idx); err != nil {
+			_, _ = s.removeProxyIfOwned(ctx, "subscription", sub.ID, idx)
 			s.store.Delete(sub.ID)
 			return nil, err
 		}
 		proxyIdx = idx
-		if err := s.mutator.EnsureProxy(ctx, idx, int(port), sub.Label); err != nil {
-			// Best-effort cleanup: EnsureProxy may have partially registered
-			// the interface before failing. RemoveProxy is idempotent.
-			_ = s.mutator.RemoveProxy(ctx, idx)
-			s.store.Delete(sub.ID)
-			s.logWarn("subscription-create", sub.ID, "failed to ensure NDMS proxy: "+err.Error())
-			return nil, fmt.Errorf("subscription: register NDMS proxy: %w", err)
-		}
 	}
 
 	if _, err := s.refreshLocked(ctx, sub.ID); err != nil {
@@ -446,7 +553,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, er
 		// the RemoveProxy error: the storage row is going away regardless,
 		// and a stranded ProxyN is recoverable via Settings → cleanup.
 		if proxyIdx >= 0 {
-			_ = s.mutator.RemoveProxy(ctx, proxyIdx)
+			_, _ = s.removeProxyIfOwned(ctx, "subscription", sub.ID, proxyIdx, sub.Label)
 		}
 		s.store.Delete(sub.ID)
 		s.logWarn("subscription-create", sub.ID, "initial refresh failed: "+err.Error())
@@ -572,18 +679,24 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	// декодирования строки без share-схем отбрасываются. Ограничение
 	// сознательное и симметричное для обоих JSON-форматов.
 	isMieruJSON := !isClash && !isSbJSON && !isXrayJSON && vlink.IsMieruClientJSON(body)
+	isTrustTunnelTOML := !isClash && !isSbJSON && !isXrayJSON && !isMieruJSON && vlink.IsTrustTunnelTOML(body)
 	// Body that's valid JSON but not a recognised sing-box subscription
 	// (no outbounds key in the right place) or mieru client config (no
 	// profiles) gets a precise error rather than a fall-through into
 	// share-link parsing — otherwise the user sees "ни одной валидной
 	// ссылки" with a meaningless prefix from scanning JSON bytes for "://".
-	if !isClash && !isSbJSON && !isXrayJSON && !isMieruJSON && vlink.LooksLikeJSON(body) {
-		err := errors.New("subscription: тело подписки выглядит как JSON, но не похоже на sing-box config / Xray config (нет outbounds) или mieru client config (нет profiles). Поддерживаются: sing-box config, Xray JSON config, mieru JSON config, Clash / mihomo YAML, base64 share-links, plain text vless://, trojan://, ss://, hysteria2://, mieru://, mierus://.")
+	if !isClash && !isSbJSON && !isXrayJSON && !isMieruJSON && !isTrustTunnelTOML && vlink.LooksLikeJSON(body) {
+		err := errors.New("subscription: тело подписки выглядит как JSON, но не похоже на sing-box config / Xray config (нет outbounds) или mieru client config (нет profiles). Поддерживаются: sing-box config, Xray JSON config, mieru JSON config, Clash / mihomo YAML, base64 share-links, plain text vless://, trojan://, ss://, hysteria2://, mieru://, mierus://, TrustTunnel connect URL (https://trustunnel.ru/connect/?d=…), tt://, TrustTunnel TOML.")
 		s.store.UpdateState(id, RefreshResult{When: time.Now(), Err: err})
 		s.logWarn("subscription-refresh", id, err.Error())
 		return nil, err
 	}
-	parseRes := parseSubscriptionBody(body, ct)
+	var parseRes vlink.BatchResult
+	if sub.IsInline() {
+		parseRes = parseInlineImportBody(body)
+	} else {
+		parseRes = ParseSubscriptionBody(body, ct)
+	}
 
 	parts := partitionParsedOutbounds(id, parseRes.Outbounds)
 	s.logPartitionResult(id, parts)
@@ -597,10 +710,10 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 		case isSbJSON && emptyClean:
 			errMsg = "subscription: подписка пуста (outbounds: []). Возможно, истекла или ещё не активирована — проверь на стороне провайдера."
 		case len(parseRes.Errors) > 0:
-			hint := "ни одной валидной ссылки. Поддерживаются: base64-encoded share-links, HTML с share-link якорями, plain text со ссылками vless://, trojan://, ss://, hysteria2://, mieru://, mierus://, tt:// (TrustTunnel), Clash YAML / mihomo, sing-box JSON (одиночный, массив конфигов, или массив outbounds; типы vless, trojan, ss, hysteria2, mieru), а также mieru JSON config (формат mieru apply config, экспорт панелей), TOML-конфиг TrustTunnel (экспорт endpoint или конфиг клиента). Записи vmess пропускаются."
+hint := "ни одной валидной ссылки. Поддерживаются: base64-encoded share-links, HTML с share-link якорями, plain text со ссылками vless://, trojan://, ss://, hysteria2://, mieru://, mierus://, TrustTunnel (https://trustunnel.ru/connect/?d=…, tt://, TOML AdGuard / экспорт endpoint), Clash YAML / mihomo, sing-box JSON (одиночный, массив конфигов, или массив outbounds; типы vless, trojan, ss, hysteria2, mieru, trusttunnel), а также mieru JSON config (формат mieru apply config, экспорт панелей). Записи vmess пропускаются."
 			errMsg = fmt.Sprintf("subscription: %s Первая ошибка парсера: %s", hint, parseRes.Errors[0].Error())
 		default:
-			hint := "ни одной валидной ссылки. Поддерживаются: base64-encoded share-links, HTML с share-link якорями, plain text со ссылками vless://, trojan://, ss://, hysteria2://, mieru://, mierus://, tt:// (TrustTunnel), Clash YAML / mihomo, sing-box JSON (одиночный, массив конфигов, или массив outbounds; типы vless, trojan, ss, hysteria2, mieru), а также mieru JSON config (формат mieru apply config, экспорт панелей), TOML-конфиг TrustTunnel (экспорт endpoint или конфиг клиента). Записи vmess пропускаются."
+			hint := "ни одной валидной ссылки. Поддерживаются: base64-encoded share-links, HTML с share-link якорями, plain text со ссылками vless://, trojan://, ss://, hysteria2://, mieru://, mierus://, TrustTunnel (https://trustunnel.ru/connect/?d=…, tt://, TOML AdGuard / экспорт endpoint), Clash YAML / mihomo, sing-box JSON (одиночный, массив конфигов, или массив outbounds; типы vless, trojan, ss, hysteria2, mieru, trusttunnel), а также mieru JSON config (формат mieru apply config, экспорт панелей). Записи vmess пропускаются."
 			if len(parts.Info) > 0 {
 				hint += fmt.Sprintf(" (инфо-строк провайдера: %d — не являются серверами)", len(parts.Info))
 			}
@@ -669,7 +782,7 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	// Исключение по тегу имеет приоритет над фильтром: сервер попадает
 	// ровно в одну из трёх корзин (members / excluded / filtered).
 	for _, n := range diff.New {
-		mi := toMemberInfo(n.Tag, n.Out)
+		mi := ToMemberInfo(n.Tag, n.Out)
 		switch {
 		case excluded[n.Tag]:
 			excludedMembers = append(excludedMembers, mi)
@@ -680,7 +793,7 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 		}
 	}
 	for _, e := range diff.Existing {
-		mi := toMemberInfo(e.Tag, e.Out)
+		mi := ToMemberInfo(e.Tag, e.Out)
 		switch {
 		case excluded[e.Tag]:
 			excludedMembers = append(excludedMembers, mi)
@@ -866,7 +979,7 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 		}
 	}
 	s.mutator.RemoveOutbound(sub.SelectorTag)
-	if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, memberTags, defaultTag)); err != nil {
+if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, memberTags, defaultTag)); err != nil {
 		return err
 	}
 
@@ -930,7 +1043,7 @@ func (s *Service) deleteLocked(ctx context.Context, id string) error {
 	// держать общий транзакционный мьютекс во время I/O. Ошибка не блокирует
 	// удаление (как и раньше) — осиротевший ProxyN подберёт cleanup-свип.
 	if sub.ProxyIndex >= 0 {
-		if err := s.mutator.RemoveProxy(ctx, sub.ProxyIndex); err != nil {
+		if _, err := s.removeProxyIfOwned(ctx, "subscription", sub.ID, sub.ProxyIndex, sub.Label); err != nil {
 			s.store.UpdateState(id, RefreshResult{When: time.Now(), Err: err})
 		}
 	}
@@ -960,10 +1073,10 @@ func replaceTag(raw []byte, tag string) []byte {
 	return out
 }
 
-// toMemberInfo extracts user-facing metadata from a parsed outbound so the
+// ToMemberInfo extracts user-facing metadata from a parsed outbound so the
 // UI can render protocol, server:port, transport, and security badges without
 // re-parsing the raw JSON on every render.
-func toMemberInfo(tag string, p vlink.ParsedOutbound) MemberInfo {
+func ToMemberInfo(tag string, p vlink.ParsedOutbound) MemberInfo {
 	mi := MemberInfo{
 		Tag:      tag,
 		Label:    p.Label,
@@ -994,18 +1107,25 @@ func toMemberInfo(tag string, p vlink.ParsedOutbound) MemberInfo {
 	return mi
 }
 
-// ListActiveMemberTags returns the active member tag of every enabled
-// subscription whose ActiveMember is set. Used by DelayChecker so the
-// active outbound of each subscription gets the same periodic latency
-// probe as regular sing-box tunnels.
+// ListActiveMemberTags returns the active member tags and selector tags of every enabled
+// subscription. Used by DelayChecker so the active outbound and selector group of each
+// subscription gets the same periodic latency probe as regular sing-box tunnels.
 func (s *Service) ListActiveMemberTags() []string {
 	subs := s.store.List()
-	out := make([]string, 0, len(subs))
+	out := make([]string, 0, len(subs)*2)
 	for _, sub := range subs {
-		if !sub.Enabled || sub.ActiveMember == "" {
+		if !sub.Enabled {
 			continue
 		}
-		out = append(out, sub.ActiveMember)
+		if sub.ActiveMember != "" {
+			out = append(out, sub.ActiveMember)
+		}
+		if sub.SelectorTag != "" {
+			out = append(out, sub.SelectorTag)
+		}
+		if sub.ActiveMember == "" && len(sub.MemberTags) > 0 {
+			out = append(out, sub.MemberTags[0])
+		}
 	}
 	return out
 }
@@ -1173,15 +1293,15 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		}
 	}
 	if patch.Label != nil && s.proxyEnabled() && sub.ProxyIndex >= 0 {
-		// EnsureProxy is idempotent — re-running with new description updates
-		// NDMS Proxy.description in place. Best-effort: on failure the store
-		// already has the new label, the proxy description stays stale until
-		// next refresh; we surface the error so the UI can show a warning.
-		// Skipped when the toggle is off or the subscription has no ProxyN
-		// (created while off): there is no interface to relabel.
-		if err := s.mutator.EnsureProxy(context.Background(), sub.ProxyIndex, int(sub.ListenPort), sub.Label); err != nil {
+		index, err := s.syncOwnedProxy(
+			context.Background(), "subscription", sub.ID, sub.ProxyIndex, int(sub.ListenPort),
+			func(index int) error { return s.store.SetProxyIndex(sub.ID, index) },
+			current.Label, sub.Label,
+		)
+		if err != nil {
 			return sub, fmt.Errorf("sync proxy description: %w", err)
 		}
+		sub.ProxyIndex = index
 	}
 	return sub, nil
 }
@@ -1397,7 +1517,7 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	// сделанных до появления поля, он пуст — для них остаётся прежнее грубое
 	// сравнение, иначе точный повтор проскочил бы под тем же тегом.
 	tag := stableTagFromKey(sub.ID, fullKey(out))
-	mi := toMemberInfo(tag, out)
+	mi := ToMemberInfo(tag, out)
 	for _, existing := range sub.Members {
 		if existing.Server != mi.Server || existing.Port != mi.Port ||
 			existing.Protocol != mi.Protocol || existing.SNI != mi.SNI {
@@ -1442,7 +1562,7 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 		}
 
 		newMembers := append([]MemberInfo{}, sub.Members...)
-		newMembers = append(newMembers, toMemberInfo(tag, out))
+		newMembers = append(newMembers, ToMemberInfo(tag, out))
 		rejected := appendRejectedUnique(sub.RejectedMembers, parts.Rejected...)
 		info := mergeInfoItems(sub.InfoItems, filterDismissedInfo(parts.Info, sub.DismissedInfoIDs))
 		if err := s.store.SetMembersExtras(id, newMembers, sub.OrphanTags, rejected, info, nil, sub.FilteredMembers); err != nil {
@@ -1695,10 +1815,10 @@ type PreviewMember struct {
 	Security  string `json:"security,omitempty"`
 }
 
-// PreviewURL качает и парсит URL-подписку БЕЗ создания/записи — для шага превью
-// при импорте. Key — subID-независимый суффикс тега (узкий, либо расширенный при коллизии маскировки); по нему исключают при создании.
-// ponytail: small read-only dup of fetch+detect — safer than refactoring tested refreshLocked.
-func parseSubscriptionBody(body []byte, ct string) vlink.BatchResult {
+// ParseSubscriptionBody parses raw subscription bytes into BatchResult.
+var parseSubscriptionBody = ParseSubscriptionBody
+
+func ParseSubscriptionBody(body []byte, ct string) vlink.BatchResult {
 	switch {
 	case vlink.IsClashYAML(body):
 		return vlink.ParseClashBody(body)
@@ -1708,7 +1828,7 @@ func parseSubscriptionBody(body []byte, ct string) vlink.BatchResult {
 		return vlink.ParseXrayBody(body)
 	case vlink.IsMieruClientJSON(body):
 		return vlink.ParseMieruClientJSON(body)
-	case vlink.IsTrustTunnelTOML(body):
+case vlink.IsTrustTunnelTOML(body):
 		return vlink.ParseTrustTunnelTOML(body)
 	default:
 		return vlink.ParseBatch(NormalizeBody(body, ct))
@@ -1732,7 +1852,7 @@ func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) 
 	if err != nil {
 		return nil, fmt.Errorf("%s", MaskURL(err.Error(), url))
 	}
-	return s.previewBody(body, ct)
+return s.previewBody(body, ct)
 }
 
 // PreviewPath is PreviewURL for a file-backed source: the body comes from
@@ -1750,7 +1870,7 @@ func (s *Service) PreviewPath(ctx context.Context, path string) ([]PreviewMember
 
 // previewBody — общий хвост превью: разбор тела в список участников.
 func (s *Service) previewBody(body []byte, ct string) ([]PreviewMember, error) {
-	parseRes := parseSubscriptionBody(body, ct)
+	parseRes := ParseSubscriptionBody(body, ct)
 	parts := partitionParsedOutbounds("preview", parseRes.Outbounds)
 
 	out := make([]PreviewMember, 0, len(parts.Valid))
@@ -1776,9 +1896,9 @@ func (s *Service) previewBody(body []byte, ct string) ([]PreviewMember, error) {
 			}
 			continue
 		}
-		seen[key] = len(out)
+seen[key] = len(out)
 		labelRank = append(labelRank, p.LabelRank)
-		mi := toMemberInfo(StableTag("preview00", p), p) // tag игнорируется, берём поля
+		mi := ToMemberInfo(StableTag("preview00", p), p) // tag игнорируется, берём поля
 		out = append(out, PreviewMember{
 			Key: key, Label: mi.Label, Protocol: mi.Protocol,
 			Server: mi.Server, Port: mi.Port, SNI: mi.SNI,
@@ -1880,7 +2000,7 @@ func (s *Service) DetectHeaders(ctx context.Context, rawUrl string, userHeaders 
 		if err != nil {
 			continue
 		}
-		parseRes := parseSubscriptionBody(body, ct)
+		parseRes := ParseSubscriptionBody(body, ct)
 		parts := partitionParsedOutbounds("detect", parseRes.Outbounds)
 		if len(parts.Valid) > 0 {
 			label := prof.Label

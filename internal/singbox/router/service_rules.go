@@ -12,7 +12,26 @@ func (s *ServiceImpl) ListRules(ctx context.Context) ([]Rule, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.ruleSetMaterializer().restoreConfig(cfg).Route.Rules, nil
+	rules := s.ruleSetMaterializer().restoreConfig(cfg).Route.Rules
+	if s.deps.Settings != nil {
+		if st, err := s.deps.Settings.Load(); err == nil && !st.SingboxRouter.SusaninEnabled {
+			filtered := make([]Rule, 0, len(rules))
+			for _, r := range rules {
+				isSusanin := false
+				for _, rs := range r.RuleSet {
+					if rs == "susanin" {
+						isSusanin = true
+						break
+					}
+				}
+				if !isSusanin {
+					filtered = append(filtered, r)
+				}
+			}
+			rules = filtered
+		}
+	}
+	return rules, nil
 }
 
 func (s *ServiceImpl) AddRule(ctx context.Context, r Rule) error {
@@ -175,7 +194,19 @@ func (s *ServiceImpl) ListRuleSets(ctx context.Context) ([]RuleSet, error) {
 		return nil, err
 	}
 	restored := s.ruleSetMaterializer().restoreConfig(cfg)
-	return restored.Route.RuleSet, nil
+	ruleSets := restored.Route.RuleSet
+	if s.deps.Settings != nil {
+		if st, err := s.deps.Settings.Load(); err == nil && !st.SingboxRouter.SusaninEnabled {
+			filtered := make([]RuleSet, 0, len(ruleSets))
+			for _, rs := range ruleSets {
+				if rs.Tag != "susanin" {
+					filtered = append(filtered, rs)
+				}
+			}
+			ruleSets = filtered
+		}
+	}
+	return ruleSets, nil
 }
 
 func (s *ServiceImpl) AddRuleSet(ctx context.Context, rs RuleSet) error {

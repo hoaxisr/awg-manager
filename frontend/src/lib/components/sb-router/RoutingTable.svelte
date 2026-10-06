@@ -14,7 +14,8 @@
   } from '$lib/types';
   import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
   import { Badge } from '$lib/components/ui';
-  import { ChevronUp, ChevronDown, Edit3, Trash2 } from 'lucide-svelte';
+  import { ChevronUp, ChevronDown, Edit3, Trash2, Zap } from 'lucide-svelte';
+  import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
   import { isSystemRule, mapRuleAction, resolveOutboundDisplay, systemRuleTooltip } from './adapters';
   import { flattenRouterRule } from '$lib/utils/routerRuleShape';
   import OutboundTile from './OutboundTile.svelte';
@@ -35,6 +36,7 @@
     selected?: Set<number>;
     onToggleSelect?: (index: number) => void;
     isSelectable?: (index: number) => boolean;
+    onOpenSettings?: () => void;
   }
 
   let {
@@ -52,7 +54,12 @@
     selected = new Set(),
     onToggleSelect = () => {},
     isSelectable = () => false,
+    onOpenSettings = () => {},
   }: Props = $props();
+
+  const storeSettings = singboxRouterStore.settings;
+  let susaninEnabled = $derived(!!$storeSettings?.susaninEnabled);
+  let susaninOutbound = $derived($storeSettings?.susaninOutbound || 'direct');
 
   type ActionLabel = 'SNIFF' | 'HIJACK' | 'BYPASS' | 'REJECT' | 'ROUTE' | 'UDP TTL';
   type ActionVariant = 'default' | 'accent' | 'success' | 'error' | 'warning' | 'info' | 'muted';
@@ -152,6 +159,45 @@
     <div class="outbound-head">{m.sb_router_table_col_outbound()}</div>
     <div class="actions-col">{m.sb_router_table_col_actions()}</div>
   </div>
+  {#if susaninEnabled}
+    <div class="row susanin-row">
+      <div class="idx font-mono">⚡</div>
+      <div class="reorder">
+        <Badge variant="success" size="sm">{m.susanin_radar()}</Badge>
+      </div>
+      <div class="action-badge-cell">
+        <Badge variant="success" size="sm" mono>ROUTE</Badge>
+      </div>
+      <div class="matchers">
+        <span class="mobile-label">{m.sb_router_table_col_conditions()}</span>
+        <span class="matcher-text font-mono">RULE-SET: susanin</span>
+        <Badge variant="muted" size="sm">{m.susanin_adaptive()}</Badge>
+      </div>
+      <div class="outbound-cell">
+        <span class="mobile-label">{m.sb_router_table_col_outbound()}</span>
+        <button
+          type="button"
+          class="susanin-outbound-chip clickable"
+          title={m.susanin_outbound_tooltip()}
+          onclick={() => onOpenSettings()}
+        >
+          <Zap size={11} />
+          <span>{susaninOutbound}</span>
+        </button>
+      </div>
+      <div class="actions-col actions">
+        <button
+          type="button"
+          class="route-action-btn"
+          title={m.susanin_configure_tooltip()}
+          aria-label={m.susanin_configure_aria()}
+          onclick={() => onOpenSettings()}
+        >
+          <Edit3 size={15} />
+        </button>
+      </div>
+    </div>
+  {/if}
   {#each rowData as row (row.idx)}
     <div
       class="row"
@@ -236,12 +282,33 @@
       </div>
     </div>
   {/each}
-  {#if rules.length === 0}
+  {#if rules.length === 0 && !susaninEnabled}
     <div class="empty">{m.sb_router_table_empty()}</div>
   {/if}
 </div>
 
 <style>
+  .susanin-row {
+    background: rgba(34, 197, 94, 0.05);
+    border-bottom: 1px solid rgba(34, 197, 94, 0.2);
+  }
+  .susanin-outbound-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+  }
+  .managed-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
   .table {
     width: 100%;
     min-width: 0;

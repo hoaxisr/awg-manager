@@ -44,12 +44,12 @@ export interface GeoFileEntry {
 
 export interface DownloadRoute {
 	tag: string;
-	kind?: 'direct' | 'awg' | 'singbox' | 'subscription';
+	kind?: 'direct' | 'awg' | 'singbox' | 'subscription' | 'router' | 'mihomo';
 }
 
 export interface DownloadOutbound {
 	tag: string;
-	kind: 'direct' | 'awg' | 'singbox' | 'subscription';
+	kind: 'direct' | 'awg' | 'singbox' | 'subscription' | 'router' | 'mihomo';
 	label: string;
 	detail?: string;
 	available: boolean;
@@ -84,12 +84,11 @@ export interface SystemInfo {
 	goOS: string;
 	keeneticOS: string;
 	isOS5: boolean;
-	/** Прошивка умеет интерфейсы OpkgTun (KeeneticOS 5.x) — от них зависят режимы fakeip-tun и policy-tun. */
-	supportsOpkgTun?: boolean;
 	firmwareVersion: string;
 	supportsExtendedASC: boolean;
 	supportsHRanges: boolean;
 	supportsPingCheck: boolean;
+	supportsOpkgTun?: boolean;
 	totalMemoryMB: number;
 	isLowMemory: boolean;
 	gcMemLimit: string;
@@ -109,6 +108,7 @@ export interface SystemInfo {
 	supportsWireguardASC3?: boolean;
 	isAarch64: boolean;
 	activeBackend: string;
+	routingEngine?: 'singbox' | 'mihomo';
 	routerIP: string;
 	routerTime?: string;
 	routerTimezone?: string;
@@ -245,7 +245,7 @@ export interface UpdateSettings {
 
 export interface DownloadSettings {
 	routeTag: string;
-	routeKind?: 'direct' | 'awg' | 'singbox' | 'subscription';
+	routeKind?: 'direct' | 'awg' | 'singbox' | 'subscription' | 'router' | 'mihomo';
 }
 
 export interface DNSRouteSettings {

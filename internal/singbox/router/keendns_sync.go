@@ -25,6 +25,12 @@ type KeenDNSInfoProvider interface {
 	KeenDNSInfo(ctx context.Context) (fqdn string, addrs []string, err error)
 }
 
+// KeenCloudRelayProvider provides active Keenetic Cloud relay IPs and domains
+// discovered from the router's NDMS (/show/ndns).
+type KeenCloudRelayProvider interface {
+	KeenCloudRelays(ctx context.Context) (relayIPs []string, relayDomains []string, err error)
+}
+
 // KeenDNSPresetSyncer включает или снимает блок пресета keendns в слоте DNS.
 type KeenDNSPresetSyncer interface {
 	SetKeenDNSEnabled(on bool, extraDomain string) error

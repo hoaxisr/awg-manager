@@ -15,9 +15,11 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/proxyengine"
 	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/strictfs"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
@@ -438,20 +440,29 @@ var healDetachedTunAttempts = [...]int{2, 4, 8}
 // Вызывается из reconcile-тика, сериализованного transitionMu, — им же
 // защищено поле tunDownStrikes.
 func (s *ServiceImpl) healDetachedTun(iface, scope string, slot orchestrator.Slot) {
-	if s.deps.Singbox == nil || iface == "" {
+	engine := s.routingEngineController()
+	if engine == nil || iface == "" {
 		return
 	}
 	// Запаркованный слот — нулевой carrier ЗАКОНОМЕРЕН: в merged-конфиге нет
 	// tun-инбаунда, привязываться нечем. Перезапуск здесь ничего не чинит, а
-	// возврат слота — забота вызывающего (и он идёт выше по тику). Гейт кодом,
-	// а не порядком вызова: возврат слота может и провалиться.
-	if s.deps.Orch != nil {
+	// возврат слота — забота вызывающего (и он идёт выше по тику).
+	// Если активен Mihomo, слоты sing-box оркестратора не определяют активность TUN:
+	// активность определяется настройками SingboxRouter.Enabled и RoutingMode.
+	if s.isMihomoPrimary() {
+		if s.deps.Settings != nil {
+			if settings, err := s.deps.Settings.Load(); err != nil || settings == nil || !settings.SingboxRouter.Enabled {
+				s.tunDownStrikes = 0
+				return
+			}
+		}
+	} else if s.deps.Orch != nil {
 		if st, ok := s.slotSnapshot(slot); !ok || !st.Enabled {
 			s.tunDownStrikes = 0
 			return
 		}
 	}
-	if running, _ := s.deps.Singbox.IsRunning(); !running {
+	if running, _ := engine.IsRunning(); !running {
 		s.tunDownStrikes = 0 // мёртвый процесс — забота watchdog'а, не наша
 		return
 	}
@@ -477,12 +488,6 @@ func (s *ServiceImpl) healDetachedTun(iface, scope string, slot orchestrator.Slo
 	// режим мог выключиться, пока мы копили такты и ждали гейт. Поднять
 	// движок в выключенном режиме хуже, чем пропустить такт: лечение
 	// повторится, а воскрешение придётся отменять пользователю.
-	//
-	// NB: прежняя редакция обосновывала эту проверку тем, что «Disable ходит
-	// мимо transitionMu (признано в service.go)» — это было НЕВЕРНО и в обе
-	// стороны: все вызовы Disable идут под transitionMu, а service.go прямо
-	// говорит, что третий путь мимо него вернул бы гонку и потому удалён.
-	// Сама проверка полезна (мы ждали гейт памяти), обоснование было ложным.
 	if s.deps.Settings != nil {
 		if settings, err := s.deps.Settings.Load(); err != nil || settings == nil || !settings.SingboxRouter.Enabled {
 			s.tunDownStrikes = 0
@@ -490,15 +495,41 @@ func (s *ServiceImpl) healDetachedTun(iface, scope string, slot orchestrator.Slo
 		}
 	}
 
+	engineName := s.routingEngineName()
 	last := s.tunDownStrikes == healDetachedTunAttempts[len(healDetachedTunAttempts)-1]
-	msg := "движок жив, но tun не прицеплен (carrier=0) — перезапускаю движок"
+	msg := fmt.Sprintf("%s жив, но tun не прицеплен (carrier=0) — перезапускаю движок", engineName)
 	if last {
 		msg += " (последняя попытка: дальше жду, пока carrier поднимется сам)"
 	}
 	s.appLog.Warn(scope, iface, msg)
-	if err := s.deps.Singbox.Reload(); err != nil {
-		s.appLog.Warn(scope, iface, "перезапуск движка не удался: "+err.Error())
+	if err := engine.Reload(); err != nil {
+		s.appLog.Warn(scope, iface, fmt.Sprintf("перезапуск %s не удался: %v", engineName, err))
 	}
+}
+
+func (s *ServiceImpl) checkActiveEngineReadiness(ctx context.Context, tunMode bool) ReadinessProbeResult {
+	engine := s.routingEngineController()
+	engineName := s.routingEngineName()
+	isMihomo := s.isMihomoPrimary()
+	mode := "tproxy"
+	if s.deps.Settings != nil {
+		if settings, err := s.deps.Settings.Load(); err == nil && settings != nil {
+			mode = settings.SingboxRouter.RoutingMode
+		}
+	}
+	iface := ""
+	if tunMode || usesTunInbound(mode) {
+		if i, ok := s.tunModeIface(); ok {
+			iface = i
+		}
+	}
+	if isMihomo && iface == "" {
+		if tunReadyProbe("awgsus0") {
+			iface = "awgsus0"
+			tunMode = true
+		}
+	}
+	return CheckEngineReadiness(ctx, engine, engineName, mode, tunMode, iface, isMihomo)
 }
 
 // tunKernelAddrs — адреса интерфейса в ядре. Шов для тестов.
@@ -617,18 +648,11 @@ func (s *ServiceImpl) completeExternalFlip(ctx context.Context, sr storage.Singb
 }
 
 func (s *ServiceImpl) waitForSingbox(ctx context.Context, timeout time.Duration) error {
-	if s.deps.Singbox == nil {
+	engine := s.routingEngineController()
+	if engine == nil {
 		return nil
 	}
 
-	// Mode-aware readiness: read the mode INTERNALLY (the signature has test
-	// callers and must not change). fakeip-tun has no inbound sockets, so the
-	// tproxy socket probe never turns true for it — gate instead on process +
-	// tun carrier (carrier=1 = sing-box attached the gvisor tun stack, the
-	// structural "config is live" signal). The live .2→fakeip DNS answer is NO
-	// longer in this gate (it tripped on resolv.conf attempts:1, stand-verified
-	// 2026-06-15) — it is now a best-effort confirm after readiness in
-	// enableFakeIPTun. See singboxReady for the full rationale.
 	tunMode := false
 	if s.deps.Settings != nil {
 		if settings, err := s.deps.Settings.Load(); err == nil && settings != nil {
@@ -641,21 +665,26 @@ func (s *ServiceImpl) waitForSingbox(ctx context.Context, timeout time.Duration)
 	lastHeartbeat := time.Time{}
 	const pollInterval = 100 * time.Millisecond
 	for {
-		if s.singboxReady(ctx, tunMode) {
+		res := s.checkActiveEngineReadiness(ctx, tunMode)
+		if res.Ready {
 			return nil
 		}
 		if fn := s.transitionReadinessProgress; fn != nil && time.Since(lastHeartbeat) >= 2*time.Second {
 			elapsed := time.Since(start).Round(time.Second)
-			running, _ := s.deps.Singbox.IsRunning()
-			msg := fmt.Sprintf("запуск sing-box… %s", elapsed)
+			running, _ := engine.IsRunning()
+			msg := fmt.Sprintf("запуск %s… %s", res.EngineName, elapsed)
 			if running {
-				msg = fmt.Sprintf("sing-box работает, ожидаем inbounds… %s", elapsed)
+				msg = fmt.Sprintf("%s работает, ожидаем inbounds… %s", res.EngineName, elapsed)
 			}
 			fn(msg)
 			lastHeartbeat = time.Now()
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("sing-box did not come up within %s", timeout)
+			missingStr := strings.Join(res.MissingCriteria, ", ")
+			if missingStr == "" {
+				missingStr = "readiness check timed out"
+			}
+			return fmt.Errorf("%s did not come up within %s (%s)", res.EngineName, timeout, missingStr)
 		}
 		select {
 		case <-ctx.Done():
@@ -665,45 +694,235 @@ func (s *ServiceImpl) waitForSingbox(ctx context.Context, timeout time.Duration)
 	}
 }
 
-// singboxReady reports whether sing-box is up for the active mode. tproxy:
-// process + both inbound sockets bound. fakeip-tun: process + tun carrier.
-//
-// For fakeip-tun, carrier=1 IS the structural readiness signal: it means
-// sing-box created and attached the gvisor tun stack from the fakeip config —
-// the analog of "inbound socket bound" for tproxy, and it is fast and reliable.
-//
-// The live .2→fakeip DNS probe was DEMOTED out of this hard gate (stand-verified
-// 2026-06-15): the Go resolver (net.Resolver{PreferGo:true}) HONORS the router's
-// /etc/resolv.conf `options timeout:1 attempts:1`, so it does a single ~1s-bounded
-// attempt with no retry. In the first seconds after sing-box starts the fakeip
-// round-trip to .2 is occasionally slower than that, so the probe returned false
-// on every poll and waitForSingbox timed out at 60s — falsely failing Enable even
-// though sing-box was fully up (carrier=1) and fakeip worked. The DNS check now
-// runs ONCE as a best-effort, logged confirmation AFTER readiness (see
-// enableFakeIPTun), never as a flaky gate. ctx is unused now that the live DNS
-// probe is out of the gate; kept on the signature for the tproxy/test callers.
-func (s *ServiceImpl) singboxReady(_ context.Context, tunMode bool) bool {
-	running, _ := s.deps.Singbox.IsRunning()
-	if !running {
-		return false
+func (s *ServiceImpl) singboxReady(ctx context.Context, tunMode bool) bool {
+	res := s.checkActiveEngineReadiness(ctx, tunMode)
+	return res.Ready
+}
+
+// routingEngineController returns the engine that owns the shared transparent
+// interception ports. Production wires DynamicEngine here; tests and legacy
+// callers that only provide Singbox keep the historical fallback.
+func (s *ServiceImpl) routingEngineController() proxyengine.Engine {
+	if s.deps.Engine != nil {
+		return s.deps.Engine
 	}
-	if !tunMode {
-		// HARD gate (issue #221): only the procfs socket probe proves the
-		// router-slot TPROXY/REDIRECT inbounds actually bound. A healthy
-		// Clash API is NOT equivalent — the process can be up and serving
-		// Clash while the router inbounds failed to bind (port taken,
-		// rejected hot-reload), and installing iptables in that state
-		// blackholes all policy traffic including DNS:53.
-		return singboxListeningProbe()
+	if engine, ok := s.deps.Singbox.(proxyengine.Engine); ok {
+		return engine
 	}
-	// Only iface is needed for the carrier gate; dnsAddr/fakeipNet (which the
-	// demoted DNS probe used) are derived later in enableFakeIPTun for the
-	// best-effort confirm.
-	iface, ok := s.tunModeIface()
-	if !ok {
-		return false
+	return nil
+}
+
+func (s *ServiceImpl) routingEngineName() string {
+	if s.deps.Settings != nil {
+		if settings, err := s.deps.Settings.Load(); err == nil && settings != nil &&
+			settings.SingboxRouter.RoutingEngine == "mihomo" {
+			return "Mihomo"
+		}
 	}
-	return tunReadyProbe(iface)
+	return "sing-box"
+}
+
+func (s *ServiceImpl) isMihomoPrimary() bool {
+	if s.deps.Settings != nil {
+		if settings, err := s.deps.Settings.Load(); err == nil && settings != nil {
+			return settings.SingboxRouter.RoutingEngine == "mihomo"
+		}
+	}
+	return false
+}
+
+// reconcileCompatibilitySlotsLocked synchronizes sing-box compatibility slots based on active routing engine.
+// Caller MUST hold lifecycle lock (s.mu).
+func (s *ServiceImpl) loadAppliedDeviceProxyForReconcile() ([]byte, error) {
+	if s.deps.LoadAppliedDeviceProxy != nil {
+		return s.deps.LoadAppliedDeviceProxy()
+	}
+	return s.deps.Orch.LoadApplied(orchestrator.SlotDeviceProxy)
+}
+
+// SetLoadAppliedDeviceProxyForTest sets an instance-scoped override for LoadApplied in tests.
+func (s *ServiceImpl) SetLoadAppliedDeviceProxyForTest(fn func() ([]byte, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deps.LoadAppliedDeviceProxy = fn
+}
+
+func (s *ServiceImpl) reconcileCompatibilitySlotsLocked(sr storage.SingboxRouterSettings) error {
+	if s.deps.Orch == nil {
+		return nil
+	}
+	mihomoPrimary := sr.RoutingEngine == "mihomo"
+
+	// 1. Reconcile SlotRouter using SetEnabledSilent (authoritative surrounding flow reloads).
+	if err := s.deps.Orch.SetEnabledSilent(orchestrator.SlotRouter, !mihomoPrimary); err != nil {
+		return fmt.Errorf("orchestrator set router slot state: %w", err)
+	}
+
+	// 1b. Reconcile SlotSubscriptions: in Mihomo primary mode, sing-box SlotSubscriptions
+	// is parked in disabled/ so sing-box does not run background urltests or hold the daemon alive.
+	// Mihomo loads subscription outbounds via LoadEffective, which reads from disabled/ transparently.
+	// When switching back to sing-box primary, unpark SlotSubscriptions if it has outbounds.
+	if subState, subRegistered := s.slotSnapshot(orchestrator.SlotSubscriptions); subRegistered {
+		targetSubEnabled := false
+		if !mihomoPrimary {
+			if raw, err := s.deps.Orch.LoadEffective(orchestrator.SlotSubscriptions); err == nil && len(raw) > 0 {
+				var slot struct {
+					Outbounds []any `json:"outbounds"`
+				}
+				if json.Unmarshal(raw, &slot) == nil && len(slot.Outbounds) > 0 {
+					targetSubEnabled = true
+				}
+			}
+		}
+		if subState.Enabled != targetSubEnabled {
+			if err := s.deps.Orch.SetEnabledSilent(orchestrator.SlotSubscriptions, targetSubEnabled); err != nil {
+				return fmt.Errorf("orchestrator set subscriptions slot state: %w", err)
+			}
+		}
+	}
+
+	// 2. Load existing parking state. Fails closed if corrupt, unknown owner, or unsupported version.
+	state, err := s.loadCompatibilityParkingStateLocked()
+	if err != nil {
+		return fmt.Errorf("load compatibility parking state: %w", err)
+	}
+
+	dpSlotKey := string(orchestrator.SlotDeviceProxy)
+	dpState, dpRegistered := s.slotSnapshot(orchestrator.SlotDeviceProxy)
+
+	if mihomoPrimary {
+		// --- Parking transition: sing-box -> Mihomo ---
+		// If DeviceProxy is not registered in orchestrator, nothing to check or park.
+		if !dpRegistered {
+			return nil
+		}
+
+		existingRec, hasRecord := state.Records[dpSlotKey]
+		if hasRecord {
+			// Invariant: For any valid owned record, DeviceProxy must be disabled while Mihomo is primary,
+			// regardless of whether applied bytes are readable or match digest.
+			if dpState.Enabled {
+				if err := s.deps.Orch.SetEnabledSilent(orchestrator.SlotDeviceProxy, false); err != nil {
+					return fmt.Errorf("enforce disable parked slot: %w", err)
+				}
+			}
+
+			// A valid owned record already exists.
+			// Per contract: load applied bytes and compare their digest BEFORE deciding from the current conflict result.
+			appliedData, loadErr := s.loadAppliedDeviceProxyForReconcile()
+			if loadErr != nil {
+				return fmt.Errorf("load applied deviceproxy config for parked slot: %w", loadErr)
+			}
+			var currentDigest string
+			if len(appliedData) > 0 {
+				currentDigest = strictfs.ComputeBytesDigest(appliedData)
+			}
+
+			if currentDigest != existingRec.ConfigDigest {
+				// Digest mismatch, missing applied bytes, or user edited configuration:
+				// Retain record and leave DeviceProxy disabled.
+				if s.appLog != nil {
+					s.appLog.Warn("reconcile-compatibility", "", fmt.Sprintf("deviceproxy config digest mismatch while parked (expected %s, got %s); retaining disabled state and parking record", existingRec.ConfigDigest, currentDigest))
+				}
+				return nil
+			}
+
+			// Digest matches exactly: converge path completed, perform no file churn and preserve original ParkedAt and digest.
+			return nil
+		}
+
+		// No existing record: inspect applied configuration for conflict with effective Mihomo mixed port.
+		conflicts, conflictPort, appliedData, checkErr := s.checkDeviceProxyPortConflict(sr)
+		if checkErr != nil {
+			// Fail closed on malformed/duplicate-key/trailing-data config.
+			return fmt.Errorf("check deviceproxy port conflict: %w", checkErr)
+		}
+		if !conflicts || len(appliedData) == 0 {
+			return nil
+		}
+
+		// If DeviceProxy was already disabled by the user prior to switch, do not park it.
+		if !dpState.Enabled {
+			return nil
+		}
+
+		// Newly detected enabled conflict:
+		// 1. Compute exact SHA-256 digest over the bytes returned by LoadApplied.
+		digest := strictfs.ComputeBytesDigest(appliedData)
+
+		// 2. Persist and fsync parking intent first.
+		rec := compatibilityParkingRecord{
+			Slot:            orchestrator.SlotDeviceProxy,
+			PreviousEnabled: true,
+			Reason:          CompatibilityParkingReasonConflict,
+			Owner:           CompatibilityParkingOwner,
+			ParkedAt:        time.Now().UTC(),
+			ConfigDigest:    digest,
+			ConflictPort:    conflictPort,
+		}
+		state.Records[dpSlotKey] = rec
+		if err := s.saveCompatibilityParkingStateLocked(state); err != nil {
+			return fmt.Errorf("persist parking intent: %w", err)
+		}
+
+		// 3. Call SetEnabledSilent(SlotDeviceProxy, false).
+		if err := s.deps.Orch.SetEnabledSilent(orchestrator.SlotDeviceProxy, false); err != nil {
+			// Attempt to remove newly created record
+			delete(state.Records, dpSlotKey)
+			cleanupErr := s.saveCompatibilityParkingStateLocked(state)
+			if cleanupErr != nil {
+				return fmt.Errorf("disable slot failed (%v) and cleanup of parking record also failed (%w)", err, cleanupErr)
+			}
+			return fmt.Errorf("disable conflicting deviceproxy slot: %w", err)
+		}
+
+		return nil
+	}
+
+	// --- Unparking transition: Mihomo -> sing-box ---
+	rec, hasRecord := state.Records[dpSlotKey]
+	if !hasRecord {
+		// No owned record: do nothing to DeviceProxy.
+		return nil
+	}
+
+	// Refuse automatic restoration if owner, slot, or reason is invalid.
+	if rec.Owner != CompatibilityParkingOwner || rec.Slot != orchestrator.SlotDeviceProxy || !rec.PreviousEnabled || rec.Reason != CompatibilityParkingReasonConflict {
+		return fmt.Errorf("invalid parking record for slot %s: owner=%q previous_enabled=%v reason=%q", dpSlotKey, rec.Owner, rec.PreviousEnabled, rec.Reason)
+	}
+
+	// Load applied parked bytes via orchestrator and compare exact digest with recorded digest.
+	appliedData, loadErr := s.deps.Orch.LoadApplied(orchestrator.SlotDeviceProxy)
+	if loadErr != nil {
+		return fmt.Errorf("load applied deviceproxy config for unparking: %w", loadErr)
+	}
+	if len(appliedData) == 0 {
+		return fmt.Errorf("applied deviceproxy config is empty or missing; retaining parking record")
+	}
+
+	currentDigest := strictfs.ComputeBytesDigest(appliedData)
+	if currentDigest != rec.ConfigDigest {
+		// User or another subsystem changed the slot: keep it disabled, retain record for diagnosis.
+		if s.appLog != nil {
+			s.appLog.Warn("reconcile-compatibility", "", fmt.Sprintf("deviceproxy config digest mismatch (expected %s, got %s); retaining disabled state", rec.ConfigDigest, currentDigest))
+		}
+		return nil
+	}
+
+	// Digest matches: enable slot first if not already enabled.
+	if !dpState.Enabled {
+		if err := s.deps.Orch.SetEnabledSilent(orchestrator.SlotDeviceProxy, true); err != nil {
+			return fmt.Errorf("unpark enable deviceproxy slot: %w", err)
+		}
+	}
+
+	// Only after successful enable, atomically remove record and fsync state directory.
+	delete(state.Records, dpSlotKey)
+	if err := s.saveCompatibilityParkingStateLocked(state); err != nil {
+		return fmt.Errorf("remove parking record after unpark: %w", err)
+	}
+
+	return nil
 }
 
 // tunModeIface returns the kernel tun iface of the active tun-inbound mode:
@@ -798,9 +1017,11 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// user-initiated Enable: a drift-heal reconcile (clearManualStop=false) must
 	// NOT wipe a user's master-Stop. The nil guard keeps test wirings that omit
 	// Singbox working.
-	if clearManualStop && s.deps.Singbox != nil {
-		if err := s.deps.Singbox.ClearManualStop(); err != nil {
-			return fmt.Errorf("clear manual-stop intent: %w", err)
+	if clearManualStop {
+		if engine := s.routingEngineController(); engine != nil {
+			if err := engine.ClearManualStop(); err != nil {
+				return fmt.Errorf("clear manual-stop intent: %w", err)
+			}
 		}
 	}
 
@@ -874,16 +1095,16 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	}
 	cfg.EnsureRouteWAN(sr.WANAutoDetect, sr.WANInterface)
 
-	// Promote SlotRouter to active FIRST so persistConfigDirect's
-	// orch.Save targets the active path (it keys on the slot's enabled
-	// flag). SetEnabled also triggers the orchestrator's debounced cold-
-	// start — sing-box will read the active config we are about to write.
-	// Legacy fallback (tests) keeps the explicit Start call.
+	// Only sing-box consumes SlotRouter directly. Mihomo translates the same
+	// persisted data into config.yaml, so its source slot must stay parked;
+	// otherwise sing-box binds the shared 51271/51272 ports and steals TCP
+	// REDIRECT while UDP happens to remain on Mihomo.
+	mihomoPrimary := sr.RoutingEngine == "mihomo"
 	if s.deps.Orch != nil {
-		if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
-			return fmt.Errorf("orchestrator enable router: %w", err)
+		if err := s.reconcileCompatibilitySlotsLocked(sr); err != nil {
+			return err
 		}
-	} else {
+	} else if !mihomoPrimary {
 		if running, _ := s.deps.Singbox.IsRunning(); !running {
 			if err := s.deps.Singbox.Start(); err != nil {
 				return fmt.Errorf("sing-box start: %w", err)
@@ -907,7 +1128,28 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// перегенерировать свои слоты (вернуть ссылки на композиты) ДО reload.
 	s.notifyRoutingSlotsChanged()
 	if err := s.orchestratorApplyNow(); err != nil {
-		return fmt.Errorf("orchestrator reload after enable: %w", err)
+		if !mihomoPrimary {
+			return fmt.Errorf("orchestrator reload after enable: %w", err)
+		}
+		// When Mihomo is primary, verify whether sing-box released 51271/51272.
+		// If sing-box still holds them, abort to prevent dual-bind collision!
+		if singboxListeningProbe() {
+			return fmt.Errorf("sing-box failed to release router inbounds: %w", err)
+		}
+		s.appLog.Warn("orchestrator-reload", "", fmt.Sprintf("sing-box orchestrator reload failed while Mihomo is primary: %v", err))
+	}
+	// Reloading the parked sing-box slot normally triggers DynamicEngine's
+	// mirror hook. Keep an explicit convergence fallback for boot, legacy
+	// orchestrators and missed hooks; Reload starts Mihomo when it is not yet
+	// running and regenerates its translated configuration first.
+	if mihomoPrimary && !s.singboxReady(ctx, false) {
+		engine := s.routingEngineController()
+		if engine == nil {
+			return fmt.Errorf("Mihomo routing engine is unavailable")
+		}
+		if err := engine.Reload(); err != nil {
+			return fmt.Errorf("start Mihomo routing engine: %w", err)
+		}
 	}
 
 	// Wait for sing-box to be listening before iptables start redirecting
@@ -925,6 +1167,11 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// already pulls router) blocks reusing the parent helper directly.
 	bootWait := bootWaitWithFloor()
 	if err := s.waitForSingbox(ctx, bootWait); err != nil {
+		if mihomoPrimary {
+			if engine := s.routingEngineController(); engine != nil {
+				_ = engine.Stop()
+			}
+		}
 		return fmt.Errorf("%w: waited %s (%v)", ErrSingboxNotReady, bootWait, err)
 	}
 
@@ -962,6 +1209,9 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	if len(sr.BypassGeoIPTags) > 0 {
 		s.ensureBypassSetExists(ctx)
 	}
+	if sr.KeeneticCloudTunnel {
+		s.ensureCloudSetExists(ctx)
+	}
 
 	spec := s.buildTproxySpec(ctx, sr, mark, policyMode, wanIPs, qosSpecs)
 	if policyMode && len(spec.LANBridges) == 0 {
@@ -971,6 +1221,12 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		// См. F20: restore коммитит по таблицам — часть могла примениться,
 		// снимок больше не соответствует железу. appliedSpec не обнуляем.
 		s.netfilterStateKnown = false
+		s.deps.IPTables.Uninstall(ctx)
+		if mihomoPrimary {
+			if engine := s.routingEngineController(); engine != nil {
+				_ = engine.Stop()
+			}
+		}
 		// Stop sing-box from listening on the now-orphan TPROXY port,
 		// but DO NOT corrupt the persisted user config. With orchestrator
 		// wired we just park the slot back under disabled/ — sing-box
@@ -1509,7 +1765,10 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		// "TPROXY jumps present"). No live DNS query here: that would add
 		// per-poll latency, and the route-presence check is enough once Enable
 		// has finished wiring routes (waitForSingbox already gated on live DNS).
-		running, _ := s.deps.Singbox.IsRunning()
+		running := false
+		if engine := s.routingEngineController(); engine != nil {
+			running, _ = engine.IsRunning()
+		}
 		if iface, _, fakeipNet, ok := s.fakeIPReadyInputs(); ok {
 			active = running && tunReadyProbe(iface) && fakeIPPoolRoutePresent(iface, fakeipNet)
 		}
@@ -1520,7 +1779,10 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		// этом режиме появляются только под классы QoS и о режиме не говорят.
 		installed = policyTunNDMSName != ""
 		if policyTunNDMSName != "" {
-			running, _ := s.deps.Singbox.IsRunning()
+			running := false
+			if engine := s.routingEngineController(); engine != nil {
+				running, _ = engine.IsRunning()
+			}
 			if running && tunReadyProbe(policyTunIfaceName) {
 				active, _ = policyTunDefaultRoutePresent(policyTunLines, policyTunNDMSName)
 				// Запись в конфиге — ещё не установленный маршрут (#932): пока
@@ -1539,8 +1801,10 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// meant to be up but isn't (СБОЙ). lastError is cleared by the operator
 	// on a successful (re)start, so a healthy engine reports empty.
 	lastError := ""
-	if sr.Enabled && !active && s.deps.Singbox != nil {
-		lastError = s.deps.Singbox.LastError()
+	if sr.Enabled && !active {
+		if engine := s.routingEngineController(); engine != nil {
+			lastError = engine.LastError()
+		}
 	}
 	// Crash observability (#456): счётчик недавних падений, причина
 	// последнего и пауза авто-перезапуска. Заполняется всегда (omitempty
@@ -1550,8 +1814,8 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	lastCrashReason := ""
 	restartSuppressedUntil := ""
 	var suppressedUntil time.Time
-	if s.deps.Singbox != nil {
-		n, reason, until := s.deps.Singbox.CrashStats()
+	if engine := s.routingEngineController(); engine != nil {
+		n, reason, until := engine.CrashStats()
 		crashCount = n
 		lastCrashReason = reason
 		if !until.IsZero() {
@@ -1559,27 +1823,33 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 			restartSuppressedUntil = until.Format(time.RFC3339)
 		}
 	}
-	issues := s.computeIssues(cfg)
+	var issues []Issue
+	if sr.RoutingEngine != "mihomo" {
+		issues = s.computeIssues(cfg)
+	}
 	// Мёртвый движок при живом перехвате (#456 FIX-B): PREROUTING-джампы
 	// стоят, а процесс не работает — весь policy-трафик (включая hijacked
 	// DNS:53) уходит в мёртвый порт до конца backoff-паузы. computeIssues
 	// видит только конфиг, поэтому этот runtime-issue собирается здесь, где
 	// уже есть probe и crash-статистика. Только tproxy: у fakeip-tun нет
 	// iptables-перехвата.
-	if sr.Enabled && sr.RoutingMode != "fakeip-tun" && jumps && s.deps.Singbox != nil {
-		if running, _ := s.deps.Singbox.IsRunning(); !running {
-			msg := "Движок остановлен, но перехват трафика активен — трафик политик не ходит."
-			if !suppressedUntil.IsZero() {
-				msg += fmt.Sprintf(" Автоперезапуск приостановлен до %s (падений за 10 мин: %d).",
-					suppressedUntil.Local().Format("15:04"), crashCount)
-			} else {
-				msg += " Автоперезапуск: при следующей проверке (до 30 с)."
+	if sr.Enabled && sr.RoutingMode != "fakeip-tun" && jumps {
+		engine := s.routingEngineController()
+		if engine != nil {
+			if running, _ := engine.IsRunning(); !running {
+				msg := "Движок остановлен, но перехват трафика активен — трафик политик не ходит."
+				if !suppressedUntil.IsZero() {
+					msg += fmt.Sprintf(" Автоперезапуск приостановлен до %s (падений за 10 мин: %d).",
+						suppressedUntil.Local().Format("15:04"), crashCount)
+				} else {
+					msg += " Автоперезапуск: при следующей проверке (до 30 с)."
+				}
+				issues = append(issues, Issue{
+					Severity: "error",
+					Kind:     "engine-dead-interception",
+					Message:  msg,
+				})
 			}
-			issues = append(issues, Issue{
-				Severity: "error",
-				Kind:     "engine-dead-interception",
-				Message:  msg,
-			})
 		}
 	}
 	// Эксперт-редактор (90-user.json): если последний reload пропущен из-за
@@ -1588,7 +1858,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// намеренно не чинит (prune пропускает user-слот). computeIssues видит
 	// только конфиг роутера, поэтому runtime-issue собирается здесь из
 	// orchestrator.LastReloadValidation — по паттерну #456.
-	if s.deps.Orch != nil {
+	if sr.RoutingEngine != "mihomo" && s.deps.Orch != nil {
 		if v := s.deps.Orch.LastReloadValidation(); v != nil {
 			for _, ve := range v.Errors {
 				if ve.Slot != orchestrator.SlotUser || ve.Severity == orchestrator.SeverityWarning {
@@ -1623,7 +1893,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// A class whose outbound no longer resolves is skipped at emit time
 	// (syncQoSRoutesSlot) — surface WHY the class is inert so the user can
 	// re-point or disable it.
-	if sr.RoutingMode != "fakeip-tun" {
+	if sr.RoutingEngine != "mihomo" && sr.RoutingMode != "fakeip-tun" {
 		for _, c := range qosActive {
 			if !s.isKnownOutboundTag(ctx, c.Outbound, cfg) {
 				issues = append(issues, Issue{
@@ -1636,7 +1906,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		}
 	}
 	xtDscpAvailable := s.xtDscpUsable(ctx)
-	if !xtDscpAvailable && sr.RoutingMode != "fakeip-tun" && len(qosActive) > 0 {
+	if !xtDscpAvailable && sr.RoutingEngine != "mihomo" && sr.RoutingMode != "fakeip-tun" && len(qosActive) > 0 {
 		moduleOK, matchOK := cachedXtDscpAvailability(ctx)
 		var msg string
 		switch {
@@ -1864,6 +2134,14 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 		return err
 	}
 
+	if s.isMihomoPrimary() {
+		if engine := s.routingEngineController(); engine != nil {
+			if err := engine.Stop(); err != nil {
+				s.appLog.Warn("disable", "engine-stop", err.Error())
+			}
+		}
+	}
+
 	s.emitStatus(ctx)
 	return nil
 }
@@ -1906,6 +2184,7 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 		return err
 	}
 	s.syncKeenDNSPreset(ctx, sr)
+	s.syncKeeneticCloudRelays(ctx, sr)
 	// Уборка ingress-ссылок на исчезнувшие устройства — до диспатча по режиму:
 	// список общий на fakeip и policy-tun, и мусор в нём одинаково вреден обоим.
 	s.healIngressRefs(sr)
@@ -1963,12 +2242,17 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	// идём в reconcileInstalled (DROP сразу), watchdog оживляет процесс, и
 	// следующий тик при живом движке перепромоутит слот.
 	engineUp := true
-	if s.deps.Singbox != nil {
-		engineUp, _ = s.deps.Singbox.IsRunning()
+	if engine := s.routingEngineController(); engine != nil {
+		engineUp, _ = engine.IsRunning()
 	}
-	routerSlotParked := s.deps.Orch != nil && !s.routerSlotEnabled()
+	routerSlotEnabled := s.deps.Orch != nil && s.routerSlotEnabled()
+	// sing-box needs the router slot active; Mihomo needs the exact same slot
+	// parked because it translates it and owns the shared intercept ports itself.
+	routerSlotDrift := s.deps.Orch != nil &&
+		((sr.RoutingEngine == "mihomo" && routerSlotEnabled) ||
+			(sr.RoutingEngine != "mihomo" && !routerSlotEnabled && engineUp))
 	switch {
-	case sr.Enabled && (!installedComplete || (routerSlotParked && engineUp)):
+	case sr.Enabled && (!installedComplete || routerSlotDrift || (sr.RoutingEngine == "mihomo" && !engineUp)):
 		// Drift-heal, NOT user-initiated: must honour a prior master-Stop, so
 		// do not clear the sticky intent (clearManualStop=false).
 		return s.enableLocked(ctx, false)
@@ -2027,7 +2311,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// включая DNS:53. Поэтому up-but-unbound трактуем как engineDown: ставим
 	// fail-closed blackhole и НЕ ставим реальный перехват, пока сокеты не встанут.
 	engineReady := true
-	if s.deps.Singbox != nil {
+	if s.routingEngineController() != nil {
 		engineReady = s.singboxReady(ctx, false)
 	}
 	engineDown := !engineReady
@@ -2240,6 +2524,9 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		// Набор должен существовать до правила `--match-set` (см. Enable).
 		if len(sr.BypassGeoIPTags) > 0 {
 			s.ensureBypassSetExists(ctx)
+		}
+		if sr.KeeneticCloudTunnel {
+			s.ensureCloudSetExists(ctx)
 		}
 		s.mu.Lock()
 		if err := s.deps.IPTables.Install(ctx, want); err != nil {

@@ -118,17 +118,26 @@ type SingboxControlRequest struct {
 
 // SingboxHandler serves /api/singbox/* routes.
 type SingboxHandler struct {
-	op              *singbox.Operator
-	bus             *events.Bus
-	delayChecker    *singbox.DelayChecker
-	testingSvc      *testing.Service
-	log             *logging.ScopedLogger
-	migrator        *singbox.Migrator
-	settings        ndmsProxyToggler
-	settingsStore   *storage.SettingsStore
-	deviceProxyRefs tunnelservice.DeviceProxyRefChecker
-	routerRefs      tunnelservice.RouterRefChecker
-	bindValidator   func(ctx context.Context, name string) error
+	op                *singbox.Operator
+	bus               *events.Bus
+	delayChecker      *singbox.DelayChecker
+	testingSvc        *testing.Service
+	log               *logging.ScopedLogger
+	migrator          *singbox.Migrator
+	settings          ndmsProxyToggler
+	settingsStore     *storage.SettingsStore
+	deviceProxyRefs   tunnelservice.DeviceProxyRefChecker
+	routerRefs        tunnelservice.RouterRefChecker
+	bindValidator     func(ctx context.Context, name string) error
+	mihomoDiagnostics MihomoDiagnosticsResolver
+}
+
+// MihomoDiagnosticsResolver resolves a native Mihomo resource to the kernel
+// interface that is currently and safely exported through NDMS. Implementations
+// must validate the resource and its live ProxyN ownership; handlers never
+// trust an iface supplied by a browser for a Mihomo diagnostic request.
+type MihomoDiagnosticsResolver interface {
+	ResolveMihomoDiagnosticInterface(ctx context.Context, kind, resourceID string) (string, error)
 }
 
 // ndmsProxyToggler — узкий интерфейс для чтения текущего значения
@@ -172,6 +181,12 @@ func (h *SingboxHandler) SetNDMSProxyMigrator(m *singbox.Migrator, settings ndms
 // SetSettingsStore wires global settings for connectivity checks.
 func (h *SingboxHandler) SetSettingsStore(settings *storage.SettingsStore) {
 	h.settingsStore = settings
+}
+
+// SetMihomoDiagnosticsResolver wires the composition-root resolver that owns
+// the native store, runtime publication gate, and NDMS interface catalog.
+func (h *SingboxHandler) SetMihomoDiagnosticsResolver(resolver MihomoDiagnosticsResolver) {
+	h.mihomoDiagnostics = resolver
 }
 
 // SetBindValidator wires the router's validateBindInterface for direct API tunnel saves.
@@ -268,9 +283,8 @@ func (h *SingboxHandler) ToggleNDMSProxy(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// Инвалидацию публикует сам мигратор (MigrateOn/MigrateOff) — тем же
-	// ключам здесь взяться неоткуда, а дубль будил бы подписчиков шины
-	// (deviceproxy.Reconcile, SyncAWGOutbounds) второй раз за одно нажатие.
+	h.bus.PublishInvalidated(events.ResourceSingboxStatus, "ndms-proxy-toggled")
+	h.bus.PublishInvalidated(events.ResourceSingboxTunnels, "ndms-proxy-toggled")
 	response.Success(w, map[string]any{"enabled": req.Enabled, "migrated": true})
 }
 
@@ -367,67 +381,6 @@ func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, singboxStatusData(s))
 }
 
-// Uninstall handles POST /api/singbox/uninstall.
-// Останавливает движок и удаляет его артефакты: бинарь, слоты config.d, кэш
-// FakeIP, pid и журналы процесса. Настройки AWGM (подписки, правила
-// маршрутизации, device-proxy) сохраняются — повторная установка возвращает
-// рабочее состояние.
-//
-//	@Summary		Uninstall sing-box
-//	@Description	Останавливает движок и удаляет бинарь с его конфигурацией. Отклоняется, пока включена маршрутизация sing-box.
-//	@Tags			singbox
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Success		200	{object}	SingboxStatusResponse
-//	@Failure		405	{object}	APIErrorEnvelope
-//	@Failure		409	{object}	APIErrorEnvelope
-//	@Failure		500	{object}	APIErrorEnvelope
-//	@Router			/singbox/uninstall [post]
-func (h *SingboxHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	// Гейт: движок под включённой маршрутизацией снимать нельзя — правила
-	// iptables, OpkgTun и ACL остались бы висеть без процесса, который их
-	// обслуживает, и трафик встал бы (issue #771).
-	if h.routingEnabled() {
-		response.ErrorWithStatus(w, http.StatusConflict,
-			"сначала выключите маршрутизацию sing-box", "SINGBOX_ROUTING_ENABLED")
-		return
-	}
-	if h.op == nil {
-		response.InternalError(w, "sing-box operator not wired")
-		return
-	}
-	if err := h.op.Uninstall(r.Context()); err != nil {
-		if errors.Is(err, singbox.ErrInstallInProgress) {
-			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_IN_PROGRESS")
-			return
-		}
-		response.InternalError(w, err.Error())
-		return
-	}
-	s := h.op.GetStatus(r.Context())
-	h.bus.PublishInvalidated(events.ResourceSingboxStatus, "uninstalled")
-	h.bus.PublishInvalidated(events.ResourceSysInfo, "singbox-uninstalled")
-	response.Success(w, singboxStatusData(s))
-}
-
-// routingEnabled сообщает, работает ли сейчас маршрутизация sing-box. Нет
-// доступа к настройкам — считаем, что работает: отказать по незнанию безопаснее,
-// чем снести движок из-под живых правил.
-func (h *SingboxHandler) routingEnabled() bool {
-	if h.settingsStore == nil {
-		return true
-	}
-	st, err := h.settingsStore.Get()
-	if err != nil {
-		return true
-	}
-	return st.SingboxRouter.Enabled
-}
-
 // Update handles POST /api/singbox/update.
 // Replaces the installed managed sing-box binary with the version this
 // awg-manager build is pinned to. No-op when versions match. Returns the fresh
@@ -459,6 +412,57 @@ func (h *SingboxHandler) Update(w http.ResponseWriter, r *http.Request) {
 	s := h.op.GetStatus(r.Context())
 	h.bus.PublishInvalidated(events.ResourceSingboxStatus, "updated")
 	h.bus.PublishInvalidated(events.ResourceSysInfo, "singbox-updated")
+	response.Success(w, singboxStatusData(s))
+}
+
+func (h *SingboxHandler) routingEnabled() bool {
+	if h.settingsStore == nil {
+		return true
+	}
+	st, err := h.settingsStore.Get()
+	if err != nil {
+		return true
+	}
+	return st.SingboxRouter.Enabled
+}
+
+// Uninstall handles POST /api/singbox/uninstall.
+//
+//	@Summary		Uninstall sing-box
+//	@Description	Removes the managed sing-box binary and clears its config directory. Rejects when routing is enabled.
+//	@Tags			singbox
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	SingboxStatusResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/uninstall [post]
+func (h *SingboxHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if h.routingEnabled() {
+		response.ErrorWithStatus(w, http.StatusConflict,
+			"сначала выключите маршрутизацию sing-box", "SINGBOX_ROUTING_ENABLED")
+		return
+	}
+	if h.op == nil {
+		response.InternalError(w, "sing-box operator not wired")
+		return
+	}
+	if err := h.op.Uninstall(r.Context()); err != nil {
+		if errors.Is(err, singbox.ErrInstallInProgress) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_IN_PROGRESS")
+			return
+		}
+		response.InternalError(w, err.Error())
+		return
+	}
+	s := h.op.GetStatus(r.Context())
+	h.bus.PublishInvalidated(events.ResourceSingboxStatus, "uninstalled")
+	h.bus.PublishInvalidated(events.ResourceSysInfo, "singbox-uninstalled")
 	response.Success(w, singboxStatusData(s))
 }
 
@@ -820,18 +824,57 @@ func (h *SingboxHandler) RenameTunnel(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, out)
 }
 
+const mihomoBridgeUnavailableCode = "BRIDGE_UNAVAILABLE"
+
+// resolveMihomoDiagnosticInterface recognizes an explicit native Mihomo
+// diagnostic target. The raw iface query parameter is deliberately ignored on
+// this path: only the server-side resolver may select the kernel interface.
+func (h *SingboxHandler) resolveMihomoDiagnosticInterface(ctx context.Context, r *http.Request) (iface string, requested bool, err error) {
+	kind := strings.TrimSpace(r.URL.Query().Get("mihomoKind"))
+	resourceID := strings.TrimSpace(r.URL.Query().Get("mihomoId"))
+	requested = kind != "" || resourceID != ""
+	if !requested {
+		return "", false, nil
+	}
+	if kind == "" || resourceID == "" {
+		return "", true, fmt.Errorf("Mihomo diagnostic target requires kind and resource ID")
+	}
+	if h == nil || h.mihomoDiagnostics == nil {
+		return "", true, fmt.Errorf("Mihomo bridge diagnostics are unavailable")
+	}
+	iface, err = h.mihomoDiagnostics.ResolveMihomoDiagnosticInterface(ctx, kind, resourceID)
+	if err != nil {
+		return "", true, err
+	}
+	if strings.TrimSpace(iface) == "" {
+		return "", true, fmt.Errorf("Mihomo bridge has no live kernel interface")
+	}
+	return strings.TrimSpace(iface), true, nil
+}
+
+func writeMihomoBridgeUnavailable(w http.ResponseWriter, err error) {
+	message := "Mihomo bridge is unavailable"
+	if err != nil && strings.TrimSpace(err.Error()) != "" {
+		message = err.Error()
+	}
+	response.ErrorWithStatus(w, http.StatusPreconditionFailed, message, mihomoBridgeUnavailableCode)
+}
+
 // CheckConnectivity performs connectivity test through a sing-box tunnel.
 //
 //	@Summary		Sing-box tunnel connectivity test
-//	@Description	Tests connectivity through a sing-box tunnel. Provide either `tag` (resolved to tunnel kernel interface) or `iface` (direct kernel interface override, useful for subscription tests).
+//	@Description	Tests connectivity through a sing-box tunnel, or through a server-resolved native Mihomo bridge when mihomoKind+mihomoId are supplied.
 //	@Tags			singbox
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			tag		query		string	false	"Tunnel tag (required when iface is not set)"
 //	@Param			iface	query		string	false	"Kernel interface override (e.g. t2s12)"
+//	@Param			mihomoKind	query	string	false	"Native Mihomo resource kind: proxy or subscription"
+//	@Param			mihomoId	query	string	false	"Native Mihomo stable resource ID"
 //	@Success		200		{object}	APIEnvelope
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		412		{object}	APIErrorEnvelope	"Mihomo bridge unavailable"
 //	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/tunnels/test/connectivity [get]
 func (h *SingboxHandler) CheckConnectivity(w http.ResponseWriter, r *http.Request) {
@@ -841,13 +884,21 @@ func (h *SingboxHandler) CheckConnectivity(w http.ResponseWriter, r *http.Reques
 	}
 	tag := r.URL.Query().Get("tag")
 	ifaceOverride := r.URL.Query().Get("iface")
-	if tag == "" && ifaceOverride == "" {
+	mihomoIface, mihomoRequested, mihomoErr := h.resolveMihomoDiagnosticInterface(r.Context(), r)
+	if mihomoRequested && mihomoErr != nil {
+		writeMihomoBridgeUnavailable(w, mihomoErr)
+		return
+	}
+	if !mihomoRequested && tag == "" && ifaceOverride == "" {
 		response.BadRequest(w, "tag or iface required")
 		return
 	}
 
-	iface := ifaceOverride
-	if iface == "" {
+	iface := mihomoIface
+	if !mihomoRequested {
+		iface = ifaceOverride
+	}
+	if !mihomoRequested && iface == "" {
 		if h.op == nil {
 			response.InternalError(w, "singbox operator not wired")
 			return
@@ -884,16 +935,19 @@ func (h *SingboxHandler) connectivityCheckURL() string {
 // CheckIP tests IP through a sing-box tunnel.
 //
 //	@Summary		Sing-box tunnel IP test
-//	@Description	Resolves current external IP through a sing-box tunnel. Provide either `tag` (resolved to tunnel kernel interface) or `iface` (direct kernel interface override, useful for subscription tests). Optional `service` overrides IP-check endpoint.
+//	@Description	Resolves current external IP through a sing-box tunnel, or through a server-resolved native Mihomo bridge when mihomoKind+mihomoId are supplied. Optional `service` overrides IP-check endpoint.
 //	@Tags			singbox
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			tag		query		string	false	"Tunnel tag (required when iface is not set)"
 //	@Param			iface	query		string	false	"Kernel interface override (e.g. t2s12)"
+//	@Param			mihomoKind	query	string	false	"Native Mihomo resource kind: proxy or subscription"
+//	@Param			mihomoId	query	string	false	"Native Mihomo stable resource ID"
 //	@Param			service	query		string	false	"Custom IP-check service URL"
 //	@Success		200		{object}	APIEnvelope
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		412		{object}	APIErrorEnvelope	"Mihomo bridge unavailable"
 //	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/tunnels/test/ip [get]
 func (h *SingboxHandler) CheckIP(w http.ResponseWriter, r *http.Request) {
@@ -903,13 +957,21 @@ func (h *SingboxHandler) CheckIP(w http.ResponseWriter, r *http.Request) {
 	}
 	tag := r.URL.Query().Get("tag")
 	ifaceOverride := r.URL.Query().Get("iface")
-	if tag == "" && ifaceOverride == "" {
+	mihomoIface, mihomoRequested, mihomoErr := h.resolveMihomoDiagnosticInterface(r.Context(), r)
+	if mihomoRequested && mihomoErr != nil {
+		writeMihomoBridgeUnavailable(w, mihomoErr)
+		return
+	}
+	if !mihomoRequested && tag == "" && ifaceOverride == "" {
 		response.BadRequest(w, "tag or iface required")
 		return
 	}
 
-	iface := ifaceOverride
-	if iface == "" {
+	iface := mihomoIface
+	if !mihomoRequested {
+		iface = ifaceOverride
+	}
+	if !mihomoRequested && iface == "" {
 		if h.op == nil {
 			response.InternalError(w, "singbox operator not wired")
 			return
@@ -972,10 +1034,12 @@ func resolveTunnelInterfaceFromList(tunnels []singbox.TunnelInfo, tag string) (s
 //	@Tags			singbox
 //	@Produce		text/event-stream
 //	@Security		CookieAuth
-//	@Param			tag		query	string	true	"Sing-box outbound tag"
+//	@Param			tag		query	string	false	"Sing-box outbound tag"
 //	@Param			server	query	string	true	"iperf3 server host"
 //	@Param			port	query	int		true	"iperf3 server port"
 //	@Param			iface	query	string	false	"Kernel interface override (NDMS Proxy must be enabled)"
+//	@Param			mihomoKind	query	string	false	"Native Mihomo resource kind: proxy or subscription"
+//	@Param			mihomoId	query	string	false	"Native Mihomo stable resource ID"
 //	@Success		200	{string}	string	"SSE stream"
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		404	{object}	APIErrorEnvelope	"Tunnel tag not found"
@@ -991,8 +1055,13 @@ func (h *SingboxHandler) SpeedTestStream(w http.ResponseWriter, r *http.Request)
 	server := r.URL.Query().Get("server")
 	portStr := r.URL.Query().Get("port")
 	ifaceOverride := r.URL.Query().Get("iface")
-	if tag == "" || server == "" || portStr == "" {
-		response.BadRequest(w, "tag, server, port required")
+	mihomoIface, mihomoRequested, mihomoErr := h.resolveMihomoDiagnosticInterface(r.Context(), r)
+	if mihomoRequested && mihomoErr != nil {
+		writeMihomoBridgeUnavailable(w, mihomoErr)
+		return
+	}
+	if (!mihomoRequested && tag == "") || server == "" || portStr == "" {
+		response.BadRequest(w, "tag (or Mihomo target), server, port required")
 		return
 	}
 	port, err := strconv.Atoi(portStr)
@@ -1004,7 +1073,7 @@ func (h *SingboxHandler) SpeedTestStream(w http.ResponseWriter, r *http.Request)
 		response.InternalError(w, "testing service not wired")
 		return
 	}
-	if h.op == nil {
+	if !mihomoRequested && h.op == nil {
 		response.InternalError(w, "singbox operator not wired")
 		return
 	}
@@ -1018,14 +1087,17 @@ func (h *SingboxHandler) SpeedTestStream(w http.ResponseWriter, r *http.Request)
 	// But: the override only makes sense when NDMS Proxy is globally on
 	// — t2sN/ProxyN composites do not exist otherwise. Reject directly
 	// rather than letting iperf3 silently hang against a torn-down iface.
-	iface := ifaceOverride
-	if iface != "" && h.settings != nil && !h.settings.IsSingboxNDMSProxyEnabled() {
+	iface := mihomoIface
+	if !mihomoRequested {
+		iface = ifaceOverride
+	}
+	if !mihomoRequested && iface != "" && h.settings != nil && !h.settings.IsSingboxNDMSProxyEnabled() {
 		response.ErrorWithStatus(w, http.StatusPreconditionFailed,
 			"NDMS Proxy disabled — iface override unavailable (composite interface no longer exists)",
 			"PROXY_DISABLED")
 		return
 	}
-	if iface == "" {
+	if !mihomoRequested && iface == "" {
 		iface, err = h.resolveTunnelInterface(r.Context(), tag)
 		if err != nil {
 			if errors.Is(err, singbox.ErrTunnelNotFound) {

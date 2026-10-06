@@ -35,6 +35,9 @@ func TestOutboundFingerprint_TrustTunnel(t *testing.T) {
 
 func TestDetectTransport_TrustTunnel(t *testing.T) {
 	if got := detectTransport(map[string]any{"type": "trusttunnel"}); got != "https" {
-		t.Fatalf("got %q", got)
+		t.Fatalf("got %q, want https", got)
+	}
+	if got := detectTransport(map[string]any{"type": "trusttunnel", "quic": true}); got != "quic" {
+		t.Fatalf("got %q, want quic", got)
 	}
 }

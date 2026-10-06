@@ -156,7 +156,7 @@
 	.pie-num {
 		font-size: 14px; font-weight: 600;
 		color: var(--color-text-primary);
-		font-family: ui-monospace, monospace;
+		font-family: var(--font-mono, ui-monospace, monospace);
 	}
 	.pie-lbl {
 		font-size: 9px; color: var(--color-text-muted);
@@ -171,10 +171,11 @@
 	.legend-name {
 		flex: 1; overflow: hidden; text-overflow: ellipsis;
 		white-space: nowrap; color: var(--color-text-secondary);
+		font-family: var(--font-sans);
 	}
 	.legend-pct {
 		color: var(--color-text-muted);
-		font-family: ui-monospace, monospace; font-size: 10px;
+		font-family: var(--font-mono, ui-monospace, monospace); font-size: 10px;
 	}
 	.buckets { max-height: 240px; overflow-y: auto; }
 	.bucket {
@@ -199,11 +200,11 @@
 		display: flex; justify-content: space-between; align-items: baseline;
 		gap: 8px;
 	}
-	.bucket-key { font-size: 12px; color: var(--color-text-primary); }
+	.bucket-key { font-size: 12px; color: var(--color-text-primary); font-family: var(--font-sans); }
 	.bucket.active .bucket-key { color: #da7756; font-weight: 500; }
 	.bucket-stats {
 		display: flex; gap: 6px; flex-shrink: 0;
-		font-family: ui-monospace, monospace;
+		font-family: var(--font-mono, ui-monospace, monospace);
 		font-size: 11px; color: var(--color-text-secondary);
 		font-variant-numeric: tabular-nums;
 		white-space: nowrap;

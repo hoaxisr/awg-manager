@@ -234,3 +234,40 @@ func TestReconcile_ParkedSlotDeadEngine_DefersRepromote(t *testing.T) {
 		t.Fatal("dead engine: slot promotion must defer to the tick after watchdog revives the process")
 	}
 }
+
+func TestReconcile_MihomoPrimaryParksActiveSingboxRouterSlot(t *testing.T) {
+	stubListeningProbe(t, func() bool { return true })
+	svc, dir := newQoSSlotTestService(t, "vpn")
+	ensureDisabledDir(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orch := svc.deps.Orch
+	if !routerSlotEnabled(orch) {
+		t.Fatal("precondition: sing-box router slot must start active")
+	}
+	svc.deps.Settings = newTestSettingsStore(t, storage.SingboxRouterSettings{
+		RoutingMode:   "tproxy",
+		RoutingEngine: "mihomo",
+		DeviceMode:    "all",
+		WANAutoDetect: true,
+		Enabled:       true,
+	})
+	active := &fakeSingbox{dir: dir, isRunningFn: func() (bool, int) { return true, 4321 }}
+	svc.deps.Engine = active
+	svc.deps.Singbox = active
+	var installs int
+	svc.deps.IPTables = newStubIPTables(func(_ context.Context, _ string) error { installs++; return nil })
+	svc.deps.WANIPCollector = &fakeWANIPCollector{}
+	svc.deps.NetfilterPreflight = func(context.Context) error { return nil }
+
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if routerSlotEnabled(orch) {
+		t.Fatal("Mihomo primary must park sing-box router slot so it cannot bind shared intercept ports")
+	}
+	if installs == 0 {
+		t.Fatal("Mihomo drift-heal must reinstall interception after changing port ownership")
+	}
+}

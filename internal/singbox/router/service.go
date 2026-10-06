@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,9 +15,12 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/mihomo"
+	"github.com/hoaxisr/awg-manager/internal/mihomonative"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/presets"
+	"github.com/hoaxisr/awg-manager/internal/proxyengine"
 	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
@@ -282,7 +286,8 @@ type AWGTagCatalog interface {
 
 // AWGTag is router's local projection of awgoutbounds.TagInfo.
 type AWGTag struct {
-	Tag string
+	Tag   string
+	Iface string
 }
 
 // SingboxTunnelCatalog returns the outbound tags for sing-box tunnels
@@ -304,11 +309,32 @@ type StagingEventBus interface {
 	Publish(event string, data any)
 }
 
+type MihomoNativeProxySource interface {
+	ValidateRuntimeRules() error
+	ConfigProxies() []map[string]interface{}
+	ConfigProviders() map[string]map[string]interface{}
+	ConfigProviderGroups() []map[string]interface{}
+	ConfigBridgeListeners() []mihomonative.BridgeListener
+	ConfigRules() []string
+	HasGroups() bool
+	HasRules() bool
+	ConfigRuleProviders() map[string]map[string]interface{}
+	ImportLegacyGroups([]storage.ProxyGroup) error
+	ImportLegacyRules([]string) error
+	ListBridges() []mihomonative.BridgeRef
+}
+
+type AdaptiveEgressProvider interface {
+	AdaptiveConfig() *mihomo.AdaptiveEgressConfig
+}
+
 type Deps struct {
 	AppLog   logging.AppLogger
 	Settings *storage.SettingsStore
 	// PresetCatalog is the unified preset catalog. Required for ListPresets and ApplyPreset.
 	PresetCatalog *presets.Catalog
+	AdaptiveEgressProvider AdaptiveEgressProvider
+	Engine        proxyengine.Engine
 	Singbox       SingboxController
 	Policies      AccessPolicyProvider
 	Events        *events.Bus
@@ -323,6 +349,12 @@ type Deps struct {
 	// subscription slot (40-subscriptions.json). Optional — when nil,
 	// ListCompositeOutbounds returns only this service's own composites.
 	SubscriptionComposites *SubscriptionCompositesAdapter
+	MihomoNativeProxies    MihomoNativeProxySource
+	// MihomoConfigDir is the concrete Mihomo directory used by sidecar mode
+	// even when DynamicEngine currently selects sing-box.
+	MihomoConfigDir string
+	// DeviceProxyInstances returns active device proxy instances for Mihomo config.
+	DeviceProxyInstances func() []DeviceProxyInstance
 	// Orch is the config.d orchestrator. When non-nil (production),
 	// persistConfig writes 20-router.json through the slot writer and
 	// Enable / Disable toggle SlotRouter so the file moves between
@@ -381,6 +413,11 @@ type Deps struct {
 	// xt_connmark, xt_conntrack, xt_pkttype via
 	// EnsureRouterNetfilterModules). Tests set this to avoid real syscalls.
 	NetfilterPreflight func(context.Context) error
+
+	// LoadAppliedDeviceProxy is an optional override for reading applied DeviceProxy configuration.
+	// When nil, Orch.LoadApplied(orchestrator.SlotDeviceProxy) is called.
+	// Tests set this to inject deterministic read failures without mutable package state.
+	LoadAppliedDeviceProxy func() ([]byte, error)
 
 	// FirmwareRelease is an optional override for the KeeneticOS release
 	// string (osdetect by default). Only tests set it — the tun-mode gate
@@ -648,6 +685,12 @@ type ServiceImpl struct {
 	keenDNSAddrs       []string
 	keenDNSInfoAt      time.Time
 	keenDNSBypassCIDRs []string
+
+	// Keenetic Cloud auto-discovery and self-healing state
+	cloudSyncMu        sync.Mutex
+	cloudSyncLast      time.Time
+	cloudBasePopulated bool
+	dynamicCloudIPs    []string
 }
 
 func NewService(d Deps) *ServiceImpl {
@@ -894,6 +937,14 @@ func parseRouterConfigBytes(data []byte) (*RouterConfig, error) {
 	if cfg.Route.Rules == nil {
 		cfg.Route.Rules = []Rule{}
 	}
+	// Older builds could append the same generated routing block every time
+	// the engine/configuration was applied. Apart from wasting space, those
+	// duplicates make the routing UI render dozens (or hundreds) of identical
+	// cards and can effectively freeze a low-powered router browser session.
+	// Keep the first byte-equivalent rule and preserve ordering. Deliberately do
+	// not merge similar rules: a rule with even one different matcher remains a
+	// distinct user rule.
+	cfg.Route.Rules = deduplicateExactRules(cfg.Route.Rules)
 	if cfg.DNS.Servers == nil {
 		cfg.DNS.Servers = []DNSServer{}
 	}
@@ -902,6 +953,31 @@ func parseRouterConfigBytes(data []byte) (*RouterConfig, error) {
 	}
 	SanitizeDNSConfig(cfg)
 	return cfg, nil
+}
+
+func deduplicateExactRules(rules []Rule) []Rule {
+	if len(rules) < 2 {
+		return rules
+	}
+	seen := make(map[string]struct{}, len(rules))
+	result := make([]Rule, 0, len(rules))
+	for _, rule := range rules {
+		keyBytes, err := json.Marshal(rule)
+		if err != nil {
+			// Rule is JSON-backed and therefore expected to marshal. In the
+			// unlikely event a future field changes that contract, retaining the
+			// rule is safer than silently dropping user configuration.
+			result = append(result, rule)
+			continue
+		}
+		key := string(keyBytes)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, rule)
+	}
+	return result
 }
 
 // loadRouterConfigForMode returns the routing config for the active mode:
@@ -949,6 +1025,7 @@ func (s *ServiceImpl) persistSlotDirect(slot orchestrator.Slot, cfg *RouterConfi
 	if err != nil {
 		return err
 	}
+	s.enrichMaterializedConfig(materialized)
 	if checkCycles {
 		if err := validateNoCompositeCycles(materialized.Outbounds); err != nil {
 			return err
@@ -983,6 +1060,32 @@ func (s *ServiceImpl) orchestratorApplyNow() error {
 	if s.deps.Orch == nil {
 		return nil
 	}
+	if !s.isMihomoPrimary() {
+		if engine := s.routingEngineController(); engine != nil {
+			if dyn, ok := engine.(interface{ SyncMihomoRuntime() error }); ok {
+				if err := dyn.SyncMihomoRuntime(); err != nil {
+					s.appLog.Warn("engine-sync", "", fmt.Sprintf("failed to sync Mihomo runtime before sing-box start: %v", err))
+				}
+			}
+		}
+		if s.deps.Singbox != nil {
+			if sbRunning, _ := s.deps.Singbox.IsRunning(); !sbRunning {
+				for i := 0; i < 20 && singboxIntercepting(); i++ {
+					time.Sleep(100 * time.Millisecond)
+				}
+				if singboxIntercepting() {
+					if engine := s.routingEngineController(); engine != nil {
+						if dyn, ok := engine.(interface{ ForceStopMihomo() error }); ok {
+							_ = dyn.ForceStopMihomo()
+						}
+					}
+					for i := 0; i < 15 && singboxIntercepting(); i++ {
+						time.Sleep(100 * time.Millisecond)
+					}
+				}
+			}
+		}
+	}
 	return s.deps.Orch.ReloadNow()
 }
 
@@ -991,6 +1094,7 @@ func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) erro
 	if err != nil {
 		return err
 	}
+	s.enrichMaterializedConfig(materialized)
 	// sing-box only reports circular outbound dependencies at "start
 	// service" (not via `sing-box check`), so a cyclic config would persist
 	// and FATAL-loop. Catch it here before writing, regardless of source
@@ -1081,11 +1185,46 @@ func (s *ServiceImpl) withConfig(ctx context.Context, event string, fn func(*Rou
 		return err
 	}
 	cfg = s.ruleSetMaterializer().restoreConfig(cfg)
+	if s.deps.Settings != nil {
+		if st, err := s.deps.Settings.Load(); err == nil && !st.SingboxRouter.SusaninEnabled {
+			filteredRules := make([]Rule, 0, len(cfg.Route.Rules))
+			for _, r := range cfg.Route.Rules {
+				isSusanin := false
+				for _, rs := range r.RuleSet {
+					if rs == "susanin" {
+						isSusanin = true
+						break
+					}
+				}
+				if !isSusanin {
+					filteredRules = append(filteredRules, r)
+				}
+			}
+			cfg.Route.Rules = filteredRules
+
+			filteredSets := make([]RuleSet, 0, len(cfg.Route.RuleSet))
+			for _, rs := range cfg.Route.RuleSet {
+				if rs.Tag != "susanin" {
+					filteredSets = append(filteredSets, rs)
+				}
+			}
+			cfg.Route.RuleSet = filteredSets
+		}
+	}
 	if err := fn(cfg); err != nil {
 		return err
 	}
 	if err := s.ensureDNSChainOverlayFromState(cfg); err != nil {
 		return err
+	}
+	if s.deps.Settings != nil {
+		if st, err := s.deps.Settings.Load(); err == nil && st.SingboxRouter.RoutingEngine == "mihomo" {
+			if err := s.persistConfigDirect(ctx, cfg); err != nil {
+				return err
+			}
+			s.emitCfgEvent(event, cfg)
+			return nil
+		}
 	}
 	if err := s.persistConfig(ctx, cfg); err != nil {
 		return err
@@ -1129,5 +1268,247 @@ func (s *ServiceImpl) emitCfgEvent(event string, cfg *RouterConfig) {
 }
 
 // ---------------------------------------------------------------------------
-// Staging API
+// Keenetic Cloud Tunnel rules & Outbound Enrichment
 // ---------------------------------------------------------------------------
+
+var KeeneticCloudDomains = []string{
+	"keenetic.com", "keenetic.io", "keenetic.net", "keenetic.ru",
+	"keenetic.pro", "keenetic.link", "keenetic.name", "keenetic.cloud",
+	"netcraze.io", "netcraze.net", "netcraze.pro", "netcraze.ru", "netcraze.com", "netcraze.cloud",
+	"crazedns.ru", "crazedns.com", "crazedns.net",
+	"omni.ru", "knt9.xyz",
+}
+
+var KeeneticCloudCIDRs = []string{
+	"31.135.0.0/16",
+	"91.240.84.0/22",
+	"95.213.181.0/24",
+	"95.213.212.0/24",
+	"185.162.93.0/24",
+	"87.228.71.0/24",
+	"91.92.241.0/24",
+	"193.107.216.0/24",
+	"178.250.154.0/24",
+	"178.72.134.0/24",
+	"85.198.119.0/24",
+	"37.0.127.0/24",
+	"5.35.2.0/24",
+	"84.38.177.0/24",
+	"49.12.59.0/24",
+	"167.233.7.0/24",
+	"162.55.128.0/24",
+	"157.180.11.0/24",
+	"5.9.29.0/24",
+	"185.10.184.0/24",
+	"82.202.218.0/24",
+	"82.202.0.0/16",
+}
+
+var KeeneticCloudPorts = []int{9, 3478, 3479, 4044, 5683, 5684}
+
+func BuildKeeneticCloudRules(targetOutbound string, extraCIDRs ...string) []Rule {
+	target := strings.TrimSpace(targetOutbound)
+	if target == "" {
+		return nil
+	}
+	cidrs := slices.Clone(KeeneticCloudCIDRs)
+	for _, extra := range extraCIDRs {
+		extra = strings.TrimSpace(extra)
+		if extra != "" && !slices.Contains(cidrs, extra) {
+			cidrs = append(cidrs, extra)
+		}
+	}
+	return []Rule{
+		{Domain: []string{"my.keenetic.net", "my.netcraze.net"}, Outbound: "direct"},
+		{DomainSuffix: KeeneticCloudDomains, Outbound: target},
+		{IPCIDR: cidrs, Outbound: target},
+		{Port: KeeneticCloudPorts, Outbound: target},
+	}
+}
+
+func insertCloudRules(rules []Rule, cloudRules []Rule) []Rule {
+	if len(cloudRules) == 0 {
+		return rules
+	}
+	insertIdx := 0
+	for i, r := range rules {
+		if r.Action == "route-options" || r.Action == "sniff" || r.Action == "hijack-dns" || (r.IPIsPrivate != nil && *r.IPIsPrivate) {
+			insertIdx = i + 1
+		}
+	}
+	out := make([]Rule, 0, len(rules)+len(cloudRules))
+	out = append(out, rules[:insertIdx]...)
+	out = append(out, cloudRules...)
+	out = append(out, rules[insertIdx:]...)
+	return out
+}
+
+func (s *ServiceImpl) enrichMaterializedConfig(materialized *RouterConfig) {
+	if materialized == nil || s.deps.Settings == nil {
+		return
+	}
+	settings, err := s.deps.Settings.Load()
+	if err != nil {
+		return
+	}
+	if settings.SingboxRouter.RoutingEngine == "mihomo" {
+		return
+	}
+
+	// Enrich with Mihomo native resources (bridge listeners, groups, standalone proxies)
+	// so Sing-box can route directly to Mihomo proxy groups and proxies via loopback.
+	existingTags := make(map[string]bool)
+	for _, o := range materialized.Outbounds {
+		existingTags[o.Tag] = true
+	}
+
+	mihomoOutbounds := make([]Outbound, 0)
+	mixedPort := settings.SingboxRouter.MihomoMixedPort
+	if mixedPort <= 0 {
+		mixedPort = 1099
+	}
+
+	if s.deps.MihomoNativeProxies != nil {
+		// 1. Mihomo Bridge Listeners (Proxies & Subscriptions with dedicated bridge ports)
+		for _, bridge := range s.deps.MihomoNativeProxies.ConfigBridgeListeners() {
+			if bridge.Port > 0 && bridge.Proxy != "" && !existingTags[bridge.Proxy] {
+				mihomoOutbounds = append(mihomoOutbounds, Outbound{
+					Type:       "socks",
+					Tag:        bridge.Proxy,
+					Server:     "127.0.0.1",
+					ServerPort: bridge.Port,
+				})
+				existingTags[bridge.Proxy] = true
+			}
+		}
+
+		// 2. Mihomo Native Proxy Groups (matched to loopback mixed listeners on 12100+i)
+		baseGroupPort := 12100
+		for i, rawGroup := range s.deps.MihomoNativeProxies.ConfigProviderGroups() {
+			if name, ok := rawGroup["name"].(string); ok && name != "" && !existingTags[name] {
+				mihomoOutbounds = append(mihomoOutbounds, Outbound{
+					Type:       "socks",
+					Tag:        name,
+					Server:     "127.0.0.1",
+					ServerPort: baseGroupPort + i,
+				})
+				existingTags[name] = true
+			}
+		}
+
+		// 3. Standalone Mihomo Proxies without dedicated bridge listeners
+		for _, rawProxy := range s.deps.MihomoNativeProxies.ConfigProxies() {
+			if name, ok := rawProxy["name"].(string); ok && name != "" && !existingTags[name] {
+				mihomoOutbounds = append(mihomoOutbounds, Outbound{
+					Type:       "socks",
+					Tag:        name,
+					Server:     "127.0.0.1",
+					ServerPort: mixedPort,
+				})
+				existingTags[name] = true
+			}
+		}
+	}
+
+	// Legacy settings.SingboxRouter.ProxyGroups fallback
+	for _, pg := range settings.SingboxRouter.ProxyGroups {
+		if pg.Name != "" && !existingTags[pg.Name] {
+			mihomoOutbounds = append(mihomoOutbounds, Outbound{
+				Type:       "socks",
+				Tag:        pg.Name,
+				Server:     "127.0.0.1",
+				ServerPort: mixedPort,
+			})
+			existingTags[pg.Name] = true
+		}
+	}
+
+	materialized.Outbounds = append(materialized.Outbounds, mihomoOutbounds...)
+
+	if settings.SingboxRouter.SusaninEnabled {
+		targetOutbound := strings.TrimSpace(settings.SingboxRouter.SusaninOutbound)
+		if targetOutbound == "" {
+			targetOutbound = "direct"
+		}
+		susaninRule := Rule{
+			RuleSet:  []string{"susanin"},
+			Action:   "route",
+			Outbound: targetOutbound,
+		}
+		hasSusaninRule := false
+		for i, r := range materialized.Route.Rules {
+			for _, rs := range r.RuleSet {
+				if rs == "susanin" {
+					materialized.Route.Rules[i].Outbound = targetOutbound
+					hasSusaninRule = true
+					break
+				}
+			}
+			if hasSusaninRule {
+				break
+			}
+		}
+		if !hasSusaninRule {
+			materialized.Route.Rules = insertCloudRules(materialized.Route.Rules, []Rule{susaninRule})
+		}
+
+		hasSusaninSet := false
+		for _, rs := range materialized.Route.RuleSet {
+			if rs.Tag == "susanin" {
+				hasSusaninSet = true
+				break
+			}
+		}
+		if !hasSusaninSet {
+			susaninPath := "/opt/etc/awg-manager/sing-box/rules/susanin.json"
+			// Ensure initial file exists so sing-box check doesn't fail
+			if _, statErr := os.Stat(susaninPath); os.IsNotExist(statErr) {
+				_ = os.MkdirAll(filepath.Dir(susaninPath), 0755)
+				_ = os.WriteFile(susaninPath, []byte(`{"version": 1, "rules": []}`), 0644)
+			}
+			materialized.Route.RuleSet = append(materialized.Route.RuleSet, RuleSet{
+				Tag:    "susanin",
+				Type:   "local",
+				Format: "source",
+				Path:   susaninPath,
+			})
+		}
+	} else {
+		// When Susanin is disabled, strip any susanin route rules and susanin rule-sets
+		filteredRules := make([]Rule, 0, len(materialized.Route.Rules))
+		for _, r := range materialized.Route.Rules {
+			isSusanin := false
+			for _, rs := range r.RuleSet {
+				if rs == "susanin" {
+					isSusanin = true
+					break
+				}
+			}
+			if !isSusanin {
+				filteredRules = append(filteredRules, r)
+			}
+		}
+		materialized.Route.Rules = filteredRules
+
+		filteredSets := make([]RuleSet, 0, len(materialized.Route.RuleSet))
+		for _, rs := range materialized.Route.RuleSet {
+			if rs.Tag != "susanin" {
+				filteredSets = append(filteredSets, rs)
+			}
+		}
+		materialized.Route.RuleSet = filteredSets
+	}
+
+	if settings.SingboxRouter.KeeneticCloudTunnel && strings.TrimSpace(settings.SingboxRouter.KeeneticCloudOutbound) != "" {
+		target := strings.TrimSpace(settings.SingboxRouter.KeeneticCloudOutbound)
+		cloudRules := BuildKeeneticCloudRules(target, s.dynamicCloudCIDRs()...)
+		materialized.Route.Rules = insertCloudRules(materialized.Route.Rules, cloudRules)
+	}
+
+	if materialized.Inbounds == nil {
+		materialized.Inbounds = []Inbound{}
+	}
+	if materialized.Outbounds == nil {
+		materialized.Outbounds = []Outbound{}
+	}
+}

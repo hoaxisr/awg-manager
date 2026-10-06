@@ -15,7 +15,24 @@
   import { openSourceDrawer } from './sourceDrawerStore';
   import { deriveRoutingSummary, resolveDefaultWanLabel } from './flowData';
   import { liveConnectionsTraffic } from './liveConnectionsStore';
-  import type { RouterPolicy, SingboxRouterWANInterface } from '$lib/types';
+  import type { RouterPolicy, SingboxRouterWANInterface, SingboxRouterDNSServer } from '$lib/types';
+
+  interface Props {
+    isMihomo?: boolean;
+    mihomoRulesCount?: number;
+    mihomoGroupsCount?: number;
+    mihomoTopGroup?: string;
+    mihomoOutbounds?: string[];
+  }
+  let {
+    isMihomo = false,
+    mihomoRulesCount = 0,
+    mihomoGroupsCount = 0,
+    mihomoTopGroup = '',
+    mihomoOutbounds = [],
+  }: Props = $props();
+
+  let dnsPickerTag = $state<string | null>(null);
 
   const status = singboxRouterStore.status;
   const storeSettings = singboxRouterStore.settings;
@@ -23,6 +40,8 @@
   const dnsServersStore = singboxRouterStore.dnsServers;
   const dnsGlobalsStore = singboxRouterStore.dnsGlobals;
   const options = singboxRouterStore.options;
+
+  let engineIsMihomo = $derived(isMihomo || $storeSettings?.routingEngine === 'mihomo');
 
   let policies = $state<RouterPolicy[]>([]);
   let wanInterfaces = $state<SingboxRouterWANInterface[]>([]);
@@ -44,15 +63,14 @@
   }
 
   let s = $derived($status);
-  let engineOn = $derived(s?.enabled ?? false);
+  let engineOn = $derived(s?.enabled ?? true);
   // engineActive = интерцепция реально жива (цепочки + PREROUTING-jump'ы),
   // а не просто «включён в настройках». Узел светится только когда работает.
-  let engineActive = $derived(engineOn && (s?.active ?? false));
+  let engineActive = $derived(
+    engineOn && (Boolean(s?.active) || (Boolean(engineIsMihomo) && ((mihomoRulesCount > 0) || Boolean(s?.ruleCount))))
+  );
   let engineFatalOpen = $state(false);
-  // Тег DNS-сервера, открытого в пикере. dns-direct правится с выбором
-  // протокола, туннельный — всегда UDP.
-  let dnsPickerTag = $state<string | null>(null);
-  const dnsPickerServer = $derived(
+  let activeDnsServer = $derived(
     dnsPickerTag ? (($dnsServersStore ?? []).find((srv) => srv.tag === dnsPickerTag) ?? null) : null,
   );
   // СБОЙ с захваченной причиной → клик по узлу открывает модалку с ошибкой,
@@ -66,6 +84,8 @@
   onMount(() => {
     void loadPolicies();
     void loadWanInterfaces();
+    void singboxRouterStore.reloadStatus?.();
+    void singboxRouterStore.reloadSettings?.();
   });
 
   let singboxInstallStatus = $derived($singboxStatus.data);
@@ -76,6 +96,9 @@
   let summary = $derived(
     deriveRoutingSummary($rulesStore ?? [], routeFinal, $dnsServersStore ?? [], $dnsGlobalsStore, $options),
   );
+
+  let effectiveRulesCount = $derived(engineIsMihomo ? (mihomoRulesCount || s?.ruleCount || 0) : (s?.ruleCount ?? 0));
+  let engineDisplayName = $derived(engineIsMihomo ? 'Mihomo' : 'sing-box');
 
   let currentPolicy = $derived(policies.find((p) => p.name === policyName));
 
@@ -103,20 +126,40 @@
     if (!engineOn) return m.sb_router_flow_engine_off();
     if (!engineActive) return m.sb_router_flow_engine_down();
     const parts = ['first-match'];
-    if (singboxVersion) parts.push(`v${singboxVersion}`);
+    if (!engineIsMihomo && singboxVersion) parts.push(`v${singboxVersion}`);
     return parts.join(' · ');
   });
 
-  let hasTunnel = $derived(summary.tunnels.length > 0);
-  let tunnelTitle = $derived(
-    summary.tunnels.length <= 1 ? (summary.tunnels[0] ?? '—') : m.sb_router_flow_tunnels_count({ count: summary.tunnels.length }),
+  let hasTunnel = $derived(
+    engineIsMihomo
+      ? (mihomoOutbounds.length > 0 || mihomoGroupsCount > 0 || !!mihomoTopGroup)
+      : summary.tunnels.length > 0,
   );
+  let tunnelTitle = $derived.by(() => {
+    if (engineIsMihomo) {
+      if (mihomoOutbounds.length === 1) return mihomoOutbounds[0];
+      if (mihomoOutbounds.length > 1) {
+        return m.sb_router_flow_tunnels_count({ count: mihomoOutbounds.length });
+      }
+      return mihomoTopGroup || (mihomoGroupsCount > 1 ? m.tunnels_tab_proxy_groups() : 'Proxy Group');
+    }
+    return summary.tunnels.length <= 1
+      ? (summary.tunnels[0] ?? '—')
+      : m.sb_router_flow_tunnels_count({ count: summary.tunnels.length });
+  });
+  let tunnelTooltip = $derived.by(() => {
+    if (engineIsMihomo && mihomoOutbounds.length > 1) {
+      return mihomoOutbounds.join(', ');
+    }
+    return tunnelTitle;
+  });
 
   let defaultWanLabel = $derived(
     resolveDefaultWanLabel($storeSettings, wanInterfaces, routeFinal),
   );
 
   let defaultRuleHint = $derived.by(() => {
+    if (engineIsMihomo) return m.sb_router_flow_rest_traffic();
     if (summary.bypassRuleCount > 0) return m.routing_rules_count({ count: summary.bypassRuleCount });
     if (routeFinal === 'direct' && summary.tunneledRuleCount > 0) return m.sb_router_flow_rest_traffic();
     return null;
@@ -154,10 +197,10 @@
     <div class="arrow">›</div>
 
     <button type="button" class="node engine" class:glow={engineActive} class:offline={!engineActive} onclick={() => (engineFatal ? (engineFatalOpen = true) : openDrawer())} aria-label={m.sb_router_flow_engine_aria()}>
-      <div class="cap acc">{m.sb_router_flow_cap_engine()}</div>
+      <div class="cap acc">{m.sb_router_flow_cap_engine()} {engineDisplayName}</div>
       <div class="node-title">{engineSub}</div>
       <div class="node-sub">
-        {m.routing_rules_count({ count: rulesCount })}
+        {m.routing_rules_count({ count: effectiveRulesCount })}
         {#if !policyTunMode && deviceMode === 'all'}
           {' · '}{m.sb_router_flow_whole_router()}
         {/if}
@@ -174,7 +217,7 @@
         <div class="out-line">
           <span class="dot muted"></span>
           <span class="out-prefix"><span class="mut">{m.sb_router_flow_default_prefix()}</span></span>
-          <span class="out-target" title={summary.defaultLabel}><b>{summary.defaultLabel}</b></span>
+          <span class="out-target" title={engineIsMihomo ? 'DIRECT' : summary.defaultLabel}><b>{engineIsMihomo ? m.sb_router_flow_default_direct() : summary.defaultLabel}</b></span>
           {#if defaultRuleHint}
             <span class="out-hint mut">{' · '}{defaultRuleHint}</span>
           {/if}
@@ -191,9 +234,9 @@
           <div class="out-line">
             <span class="dot"></span>
             <span class="out-prefix"><span class="mut">{m.sb_router_flow_tunnel_prefix()}</span></span>
-            <span class="out-target acc" title={tunnelTitle}>{tunnelTitle}</span>
-            {#if summary.tunneledRuleCount > 0}
-              <span class="out-hint mut">{' · '}{m.routing_rules_count({ count: summary.tunneledRuleCount })}</span>
+            <span class="out-target acc" title={tunnelTooltip}>{tunnelTitle}</span>
+            {#if (engineIsMihomo ? effectiveRulesCount : summary.tunneledRuleCount) > 0}
+              <span class="out-hint mut">{' · '}{m.routing_rules_count({ count: engineIsMihomo ? effectiveRulesCount : summary.tunneledRuleCount })}</span>
             {/if}
           </div>
           {@render dnsLine(
@@ -214,10 +257,10 @@
   onclose={() => (engineFatalOpen = false)}
 />
 
-{#if dnsPickerServer}
+{#if activeDnsServer}
   <SimpleDnsPickerModal
-    server={dnsPickerServer}
-    allowProtocol={dnsPickerServer.tag !== summary.tunnelDnsTag}
+    server={activeDnsServer}
+    allowProtocol={true}
     onclose={() => (dnsPickerTag = null)}
     onsaved={() => (dnsPickerTag = null)}
   />
@@ -293,11 +336,11 @@
   .out-target b {
     font-weight: 600;
   }
-  .dns { font-size: 11px; color: var(--text-muted); margin-top: 5px; padding-top: 5px; border-top: 1px dashed var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dns { font-size: 11px; color: var(--text-muted); margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dns-btn {
     display: block;
     width: 100%;
-    margin-top: 5px;
+    margin-top: 6px;
     padding: 5px 0 0;
     border: 0;
     border-top: 1px dashed var(--border);
@@ -312,7 +355,53 @@
     cursor: pointer;
   }
   .dns-btn:hover {
-    color: var(--text);
+    color: var(--text-primary);
+  }
+  .out-sub-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    padding-top: 5px;
+    border-top: 1px dashed var(--border);
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 0;
+    overflow: hidden;
+  }
+  .wan-link-btn,
+  .dns-link-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-family: inherit;
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    text-decoration: underline;
+    text-decoration-style: dashed;
+    text-underline-offset: 2px;
+  }
+  .wan-link-btn {
+    flex-shrink: 1;
+  }
+  .wan-link-btn:hover,
+  .dns-link-btn:hover {
+    color: var(--accent);
+  }
+  .dns-text {
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .sub-sep {
+    color: var(--text-muted);
+    opacity: 0.6;
+    flex-shrink: 0;
   }
   .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: middle; }
   .dot.muted { background: var(--text-muted); }

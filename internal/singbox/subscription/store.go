@@ -16,6 +16,13 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
+// ErrSubscriptionNotFound is returned when a subscription id is absent from store.
+var ErrSubscriptionNotFound = errors.New("subscription: not found")
+
+func subscriptionNotFound(id string) error {
+	return fmt.Errorf("%w: %q", ErrSubscriptionNotFound, id)
+}
+
 // Store persists subscriptions to disk as JSON, atomic-writes on every mutation.
 type Store struct {
 	path string
@@ -141,7 +148,7 @@ func (s *Store) mutate(id string, fn func(*Subscription) error) (*Subscription, 
 	defer s.mu.Unlock()
 	orig, ok := s.data[id]
 	if !ok {
-		return nil, fmt.Errorf("subscription %q not found", id)
+		return nil, subscriptionNotFound(id)
 	}
 	next := orig.clone()
 	if err := fn(next); err != nil {
@@ -231,7 +238,7 @@ func (s *Store) Get(id string) (*Subscription, error) {
 	defer s.mu.RUnlock()
 	sub, ok := s.data[id]
 	if !ok {
-		return nil, fmt.Errorf("subscription %q not found", id)
+		return nil, subscriptionNotFound(id)
 	}
 	cp := *sub
 	return &cp, nil
@@ -316,7 +323,7 @@ func (s *Store) Delete(id string) error {
 	defer s.mu.Unlock()
 	sub, ok := s.data[id]
 	if !ok {
-		return fmt.Errorf("subscription %q not found", id)
+		return subscriptionNotFound(id)
 	}
 	delete(s.data, id)
 	if err := s.saveLocked(); err != nil {
@@ -332,9 +339,20 @@ func (s *Store) UpdateState(id string, res RefreshResult) error {
 	_, err := s.mutate(id, func(sub *Subscription) error {
 		sub.LastFetched = res.When
 		if res.Err != nil {
-			sub.LastError = MaskURL(res.Err.Error(), sub.URL)
+			masked := MaskURL(res.Err.Error(), sub.URL)
+			sub.RefreshError = masked
+			// A failed refresh must not turn an already materialized, usable
+			// subscription into a fatal error. Keep serving the last-known-good
+			// members and expose the refresh failure separately to the UI.
+			if len(sub.Members) == 0 {
+				sub.LastError = masked
+			} else {
+				sub.LastError = ""
+			}
 		} else {
 			sub.LastError = ""
+			sub.RefreshError = ""
+			sub.LastSuccessfulFetched = res.When
 		}
 		return nil
 	})

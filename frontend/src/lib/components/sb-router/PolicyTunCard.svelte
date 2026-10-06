@@ -61,7 +61,8 @@
   // который сеть может уйти наружу, а не только на текущий выход в интернет.
   let egresses = $state<PolicyTunNATEgress[]>([]);
 
-  const tunName = $derived(ndmsName || m.sb_router_policy_tun_default_tun_name());
+  const engineName = $derived(cfg?.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box');
+  const tunName = $derived(ndmsName || m.sb_router_policy_tun_default_tun_name({ engine: engineName }));
 
   // ── Название интерфейса в NDMS (policyTunDescription) ──
   // Пусто — штатное имя. Сохраняем на change (blur/Enter), а не на каждый
@@ -255,7 +256,7 @@
 
   {#if !wanted}
     <p class="hint">
-      {m.sb_router_policy_tun_preserve_off_hint()}
+      {m.sb_router_policy_tun_preserve_off_hint({ engine: engineName })}
     </p>
   {:else}
     <p class="hint">
@@ -283,7 +284,7 @@
     <p class="hint">{m.sb_router_policy_tun_segments_none()}</p>
   {:else}
     <p class="hint">
-      {m.sb_router_policy_tun_picker_hint()}
+      {m.sb_router_policy_tun_picker_hint({ engine: engineName })}
     </p>
 
     <div class="flow">
@@ -318,7 +319,7 @@
       <div class="flow-col">
         <div class="flow-cap">{m.sb_router_policy_tun_exit_sees()}</div>
         <div class="dest dest-free">
-          <span class="dest-name">{m.sb_router_policy_tun_tunnel_singbox()}</span>
+          <span class="dest-name">{m.sb_router_policy_tun_tunnel_singbox({ engine: engineName })}</span>
           <span class="dest-tech">{tunName}</span>
           <span class="dest-note">{m.sb_router_policy_tun_note_client_addrs()}</span>
         </div>
