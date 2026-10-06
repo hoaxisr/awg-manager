@@ -62,11 +62,7 @@ func (a *app) setupTunnels() {
 	// POST. Сокета может не быть (ndm грузится): клиент подключается сам, а
 	// до того сохранения ждут saveFallback (дефолт координатора — шина
 	// отключена). Ошибка Start (не linux) — не фатальна, как у spool.
-	ndmBus := ndmsevents.NewBusReader(ndmsevents.DefaultBusPath, func(ev ndmsevents.BusEvent) {
-		if ev.Class == ndmsevents.BusClassConfigurationSaved {
-			a.ndmsSaveCoord.OnConfigurationSaved(ev.RaiseTime)
-		}
-	}, a.ndmsSaveCoord.OnBusState, eventsLogger(a.loggingService))
+	ndmBus := ndmsevents.NewSaveBusReader(ndmsevents.DefaultBusPath, a.ndmsSaveCoord, eventsLogger(a.loggingService))
 	if err := ndmBus.Start(); err != nil {
 		a.bootLog.Warn("ndm-event-bus", "", err.Error())
 	} else {

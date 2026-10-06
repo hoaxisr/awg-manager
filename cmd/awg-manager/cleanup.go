@@ -18,6 +18,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
+	ndmsevents "github.com/hoaxisr/awg-manager/internal/ndms/events"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/netdev"
@@ -121,10 +122,16 @@ func runCleanup(dataDir string) {
 		env.DurationDefault("AWG_NDMS_SAVE_SETTLE_DELAY", 2*time.Second),
 		cleanupNDMSQueries.RunningConfig,
 	)
-	// Шины событий у уборки нет: ждать ConfigurationSaved нечем — fallback 0
-	// (иначе каждое сохранение уборки ждало бы 10 с). Пауза после сноса
-	// остаётся: сохранение не раньше 5 с после последнего `no interface`.
-	cleanupNDMSSave.SetSaveTimings(ndmscommand.SaveEventCap, 0, ndmscommand.SaveAfterRemoval)
+	// Шина событий ndm — как у демона (M2 финального ревью F595): уборка
+	// сносит записи (туннели, managed `no interface` после сохранения
+	// dnsRoutes.CleanupAll), и `no` во время записи — D-N3. ndm при `opkg
+	// remove` жив; сокета нет — сохранения ждут saveFallback (fail-closed).
+	cleanupBus := ndmsevents.NewSaveBusReader(ndmsevents.DefaultBusPath, cleanupNDMSSave, eventsLogger(loggingService))
+	if err := cleanupBus.Start(); err != nil {
+		bootLog.Warn("ndm-event-bus", "", err.Error())
+	} else {
+		defer cleanupBus.Stop()
+	}
 	cleanupNDMSCommands := ndmscommand.NewCommands(ndmscommand.Deps{
 		Poster:  cleanupNDMSTransport,
 		Save:    cleanupNDMSSave,

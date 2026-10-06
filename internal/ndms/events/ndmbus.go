@@ -160,6 +160,24 @@ type BusReader struct {
 	done chan struct{}
 }
 
+// SaveSink — координатор сохранений (command.SaveCoordinator) глазами шины.
+type SaveSink interface {
+	OnConfigurationSaved(raise float64)
+	OnBusState(connected bool)
+}
+
+// NewSaveBusReader — клиент шины для конца наших сохранений (П25): событие
+// ConfigurationSaved и состояние подключения — координатору. Одна проводка
+// на демон и уборку (`opkg remove`): без шины полёт сохранения кончается
+// fallback'ом, а не событием.
+func NewSaveBusReader(path string, sink SaveSink, log Logger) *BusReader {
+	return NewBusReader(path, func(ev BusEvent) {
+		if ev.Class == BusClassConfigurationSaved {
+			sink.OnConfigurationSaved(ev.RaiseTime)
+		}
+	}, sink.OnBusState, log)
+}
+
 // NewBusReader создаёт клиента; подключается Start.
 func NewBusReader(path string, onEvent func(BusEvent), onState func(connected bool), log Logger) *BusReader {
 	if log == nil {

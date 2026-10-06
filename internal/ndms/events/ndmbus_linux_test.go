@@ -219,3 +219,37 @@ func TestNDMBus_Stop_JoinsGoroutine(t *testing.T) {
 		t.Fatalf("после Stop: события %v, состояния %v → %v", ev, st, st2)
 	}
 }
+
+// saveSinkRec — координатор сохранений глазами шины.
+type saveSinkRec struct{ busRecorder }
+
+func (r *saveSinkRec) OnConfigurationSaved(raise float64) {
+	r.onEvent(BusEvent{Class: BusClassConfigurationSaved, RaiseTime: raise})
+}
+func (r *saveSinkRec) OnBusState(up bool) { r.onState(up) }
+
+// Проводка координатора (демон и уборка): только ConfigurationSaved с его
+// raise_time, состояние подключения — как есть.
+// Мутация: отдавать координатору любое событие → raise Neighbour, красный.
+func TestNDMBus_SaveReader_OnlyConfigurationSaved(t *testing.T) {
+	path := busSocketPath(t)
+	var b bytes.Buffer
+	busNeighbourDoc(&b)
+	busSavedDoc(&b, "7.5")
+	serveBus(t, path, b.Bytes())
+	sink := &saveSinkRec{}
+	r := NewSaveBusReader(path, sink, nil)
+	r.backoffMin, r.backoffMax = time.Millisecond, time.Millisecond
+	if err := r.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	sink.waitEvents(t, 1) // Neighbour идёт в потоке раньше — уже разобран
+	evs, st := sink.snapshot()
+	if len(evs) != 1 || evs[0].RaiseTime != 7.5 {
+		t.Fatalf("координатору отдано %v, ждали одно сохранение raise 7.5", evs)
+	}
+	if len(st) != 1 || !st[0] {
+		t.Fatalf("состояния %v, ждали [true]", st)
+	}
+}

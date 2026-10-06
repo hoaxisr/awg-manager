@@ -163,8 +163,9 @@ const (
 // Retries: 3 attempts 5 seconds apart after a failed fire.
 //
 // Шина ndm до первого OnBusState(true) считается отключённой: каждый полёт —
-// unknown, закрывается через saveFallback от POST (fail-closed). Без шины
-// вовсе (уборка, тесты) fallback опускают явно: SetSaveTimings(…, 0, …).
+// unknown, закрывается через saveFallback от POST (fail-closed). Шину
+// подключают и демон, и уборка (events.NewSaveBusReader); fallback 0 — только
+// тестовые харнессы без шины: SetSaveTimings(…, 0, …).
 func NewSaveCoordinator(
 	poster Poster,
 	pub StatusPublisher,
@@ -207,9 +208,9 @@ func (s *SaveCoordinator) SetRetryPolicy(delay time.Duration, maxRetries int) {
 	s.mu.Unlock()
 }
 
-// SetSaveTimings — потолок полёта, запасной потолок без сигнала и пауза
-// после сноса. Координатор без шины (уборка — cmd/awg-manager/cleanup.go,
-// тестовые харнессы) ставит fallback 0: ждать события нечем.
+// SetSaveTimings — тест-шов: потолок полёта, запасной потолок без сигнала и
+// пауза после сноса. Харнесс без шины ставит fallback 0: ждать события нечем.
+// Прод его не зовёт (уборка с M2 финального ревью F595 — с шиной).
 func (s *SaveCoordinator) SetSaveTimings(eventCap, fallback, afterRemoval time.Duration) {
 	s.mu.Lock()
 	s.eventCap, s.fallback, s.afterRemoval = eventCap, fallback, afterRemoval

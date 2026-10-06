@@ -56,15 +56,12 @@ func TestWiring_NDMBusWired(t *testing.T) {
 	}
 	body := string(src)
 	coord := strings.Index(body, "a.ndmsSaveCoord = ndmscommand.NewSaveCoordinator(")
-	bus := strings.Index(body, "ndmsevents.NewBusReader(ndmsevents.DefaultBusPath,")
+	bus := strings.Index(body, "ndmsevents.NewSaveBusReader(ndmsevents.DefaultBusPath, a.ndmsSaveCoord,")
 	cmds := strings.Index(body, "a.ndmsCommands = ndmscommand.NewCommands(")
 	if coord < 0 || bus < 0 || cmds < 0 || !(coord < bus && bus < cmds) {
 		t.Fatalf("клиент шины не между координатором и командами: coord=%d bus=%d cmds=%d", coord, bus, cmds)
 	}
 	for _, want := range []string{
-		"a.ndmsSaveCoord.OnConfigurationSaved(ev.RaiseTime)",
-		"ev.Class == ndmsevents.BusClassConfigurationSaved",
-		"}, a.ndmsSaveCoord.OnBusState, ",
 		"if err := ndmBus.Start(); err != nil {",
 		"a.deferOnExit(ndmBus.Stop)",
 	} {
@@ -74,15 +71,29 @@ func TestWiring_NDMBusWired(t *testing.T) {
 	}
 }
 
-// Уборка без шины событий: fallback 0, иначе каждое её сохранение ждало бы
-// saveFallback (10 с) — полёт без шины fail-closed по дефолту координатора.
-// Мутация: fallback уборки не 0 (или строка снята) → красный.
-func TestWiring_CleanupSaveFallbackZero(t *testing.T) {
+// M2: уборка (`opkg remove`) сносит записи — туннели, managed `no interface`
+// после сохранения dnsRoutes.CleanupAll — и ждёт конец сохранения той же
+// шиной, что демон: без неё полёт кончался ответом POST, и `no` шёл во время
+// записи (D-N3). Fallback 0 у уборки запрещён.
+// Мутация: снять клиент шины или вернуть SetSaveTimings(…, 0, …) → красный.
+func TestWiring_CleanupNDMBusWired(t *testing.T) {
 	src, err := os.ReadFile("cleanup.go")
 	if err != nil {
 		t.Fatalf("чтение уборки: %v", err)
 	}
-	if !strings.Contains(string(src), "cleanupNDMSSave.SetSaveTimings(ndmscommand.SaveEventCap, 0, ndmscommand.SaveAfterRemoval)") {
-		t.Fatal("координатор уборки без fallback 0: каждое сохранение уборки ждёт 10 с")
+	body := string(src)
+	coord := strings.Index(body, "cleanupNDMSSave := ndmscommand.NewSaveCoordinator(")
+	bus := strings.Index(body, "ndmsevents.NewSaveBusReader(ndmsevents.DefaultBusPath, cleanupNDMSSave,")
+	cmds := strings.Index(body, "cleanupNDMSCommands := ndmscommand.NewCommands(")
+	if coord < 0 || bus < 0 || cmds < 0 || !(coord < bus && bus < cmds) {
+		t.Fatalf("клиент шины уборки не между координатором и командами: coord=%d bus=%d cmds=%d", coord, bus, cmds)
+	}
+	for _, want := range []string{"if err := cleanupBus.Start(); err != nil {", "defer cleanupBus.Stop()"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("в уборке нет %q", want)
+		}
+	}
+	if strings.Contains(body, "SetSaveTimings(") {
+		t.Fatal("уборка переопределяет потолки сохранения (fallback 0 — `no` во время записи)")
 	}
 }
