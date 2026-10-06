@@ -267,3 +267,36 @@ func TestReconcile_AbsentDecidedPerInterface(t *testing.T) {
 		})
 	}
 }
+
+// L5 (F548): туннель-цель без интерфейса (ни разу не стартовал) — строки
+// dns-proxy route на него сверка не ставила, и снос туннеля её не снимает:
+// `no` по отсутствующей строке/интерфейсу — E в журнале ndm. Строку живой
+// цели снос снимает. Мутация: снимать по хранилищу без подтверждения →
+// E=1, красный.
+func TestOnTunnelDelete_AbsentTarget_NoE(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"}) // Wireguard7 нет
+	s, o := newDNSRouteServiceWithOracle(t, f, listWithRoutes("Wireguard0", "Wireguard7"))
+	ctx := context.Background()
+	if err := s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	n := waitQuiet(t, o.fakeRouter)
+
+	if err := s.OnTunnelDelete(ctx, "Wireguard7"); err != nil {
+		t.Fatal(err)
+	}
+	if got := waitQuiet(t, o.fakeRouter); got != n || f.E != 0 {
+		t.Fatalf("снос цели без интерфейса: новых POST %d, E=%d; ждали 0 и 0", got-n, f.E)
+	}
+
+	if err := s.OnTunnelDelete(ctx, "Wireguard0"); err != nil {
+		t.Fatal(err)
+	}
+	waitQuiet(t, o.fakeRouter)
+	if f.E != 0 {
+		t.Fatalf("E=%d на сносе живой цели", f.E)
+	}
+	if got := o.ifaceOrder("absent_p"); len(got) != 0 {
+		t.Fatalf("строка живой цели осталась: %v", got)
+	}
+}

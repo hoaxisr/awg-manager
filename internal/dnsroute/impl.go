@@ -870,6 +870,30 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 	if failed {
 		return s.reconcileAll(ctx)
 	}
+	// Строку ставит только сверка и только на подтверждённый интерфейс
+	// (buildTargetState, F548): у цели без интерфейса строки нет, и `no` по
+	// ней — E в журнале ndm (L5 финального ревью F595; туннель-цель, ни разу
+	// не стартовавший). Подтверждение — одним списком; в ctx действия
+	// оркестратора (WithActionList) это тот же список, что у Delete
+	// оператора следом, — без лишнего чтения. Список не прочитан — команды
+	// не шлём (решение 4): строки, если есть, снимет следующая сверка.
+	if len(refs) > 0 {
+		names := make([]string, 0, len(refs))
+		for _, r := range refs {
+			names = append(names, r.Interface)
+		}
+		confirmed, err := s.queries.Interfaces.ConfirmEach(ctx, names)
+		if err != nil {
+			return fmt.Errorf("confirm dns-proxy route targets of tunnel %s: %w", tunnelID, err)
+		}
+		present := refs[:0]
+		for _, r := range refs {
+			if _, ok := confirmed[r.Interface]; ok {
+				present = append(present, r)
+			}
+		}
+		refs = present
+	}
 	if err := s.commands.DNSRoutes.DeleteRoutes(ctx, refs); err != nil && !errors.Is(err, query.ErrNotSupportedOnOS4) {
 		return fmt.Errorf("delete dns-proxy routes of tunnel %s: %w", tunnelID, err)
 	}

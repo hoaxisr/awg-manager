@@ -17,6 +17,7 @@ func TestOnTunnelDelete_NoReadNoReconcile(t *testing.T) {
 		t.Fatal(err)
 	}
 	q, c, poster, fg := newTestNDMS()
+	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"},"Wireguard1":{"id":"Wireguard1","type":"Wireguard"}}`)
 	svc := &ServiceImpl{store: store, queries: q, commands: c}
 	ctx := context.Background()
 	list, err := svc.Create(ctx, DomainList{
