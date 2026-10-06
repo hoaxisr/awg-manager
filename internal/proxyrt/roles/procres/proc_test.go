@@ -918,7 +918,7 @@ func TestProc_SessionFailureAccumulatesBackoff(t *testing.T) {
 		ID: "process", Instance: "default", Impl: "wt-client", Role: "client",
 		Binary: "/opt/bin/wt-client", NeedCmds: []string{"state"},
 		SocketPath: filepath.Join(t.TempDir(), "sock"),
-		Link: link, Runner: r, Gate: okGate{}, Now: clock,
+		Link:       link, Runner: r, Gate: okGate{}, Now: clock,
 	})
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
 	p.SetAutoReconnect(true, 0)
@@ -966,9 +966,32 @@ func TestProc_SessionFailureAccumulatesBackoff(t *testing.T) {
 		t.Fatalf("retryAt = %v, want %v", retry2, now.Add(2*backoffBase))
 	}
 
-	// Только после достижения stableGrace (>= 60s) без ошибок backoff сбрасывается
+	// Сбой после 65s (больше 60s) не должен терять backoff: stableGrace = 10m
 	now = now.Add(2*backoffBase + 65*time.Second)
 	link.st = awgmproto.State{PID: 102, UptimeS: 65}
+	obs, err = p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe err: %v", err)
+	}
+	if p.fails != 2 {
+		t.Fatalf("fails сбросился раньше stableGrace: %d, want 2", p.fails)
+	}
+
+	// 3-й сбой после 65s работы накапливает backoff дальше
+	if err := p.Apply(context.Background(), step); err != nil {
+		t.Fatalf("Apply err: %v", err)
+	}
+	if p.fails != 3 {
+		t.Fatalf("fails = %d, want 3", p.fails)
+	}
+	retry3 := p.retryAt()
+	if !retry3.Equal(now.Add(4 * backoffBase)) {
+		t.Fatalf("retryAt = %v, want %v", retry3, now.Add(4*backoffBase))
+	}
+
+	// Только после достижения stableGrace (>= 10 мин) без ошибок backoff сбрасывается
+	now = now.Add(4*backoffBase + 11*time.Minute)
+	link.st = awgmproto.State{PID: 103, UptimeS: int64(11 * 60)}
 	obs, err = p.Observe(context.Background())
 	if err != nil {
 		t.Fatalf("Observe err: %v", err)
@@ -1042,3 +1065,123 @@ func TestProc_StopResetsLastUptimeS(t *testing.T) {
 	}
 }
 
+func TestProc_DeferredRestartKeepsRestartWanted(t *testing.T) {
+	now := time.Now()
+	clock := func() time.Time { return now }
+	link := &fakeLink{st: awgmproto.State{PID: 101, UptimeS: 3600}}
+	runner := &fakeRunner{pid: 101, alive: true}
+	p := newProc(link, runner, okGate{}, clock)
+	p.enabled = true
+
+	// Имитируем активный backoff
+	p.recordFail(now)
+	p.RequestRestart("ручной перезапуск")
+
+	step := proxyrt.Step{
+		Resource: p.c.ID,
+		Op:       "restart",
+		Reason:   "ручной перезапуск",
+		Args:     map[string]string{argCause: causeRequested},
+	}
+	// Apply должен отклонить старт из-за backoff
+	err := p.Apply(context.Background(), step)
+	if err == nil || !strings.Contains(err.Error(), "анти-флаппинг") {
+		t.Fatalf("Apply ожидался с ошибкой анти-флаппинга, получили: %v", err)
+	}
+
+	// restartWanted НЕ должен сбрасываться, пока перезапуск не выполнен!
+	p.rmu.Lock()
+	wanted := p.restartWanted
+	reason := p.restartReason
+	p.rmu.Unlock()
+	if !wanted || reason != "ручной перезапуск" {
+		t.Fatalf("restartWanted потерян при отложенном старте: wanted=%v, reason=%q", wanted, reason)
+	}
+
+	// Когда пауза истекает, следующий Apply сбрасывает флаг
+	now = now.Add(backoffBase + time.Second)
+	if err := p.Apply(context.Background(), step); err != nil {
+		t.Fatalf("Apply после истечения паузы: %v", err)
+	}
+	p.rmu.Lock()
+	wanted = p.restartWanted
+	p.rmu.Unlock()
+	if wanted {
+		t.Fatal("restartWanted должен сброситься после успешного перезапуска")
+	}
+}
+
+func TestProc_StopCleansUpPrevLog(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "proc.log")
+	prevPath := logPath + ".prev"
+	if err := os.WriteFile(prevPath, []byte("старый лог"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := NewProc(ProcConfig{
+		ID:      "proc",
+		LogPath: logPath,
+		Runner:  &fakeRunner{},
+		Link:    &fakeLink{},
+		Gate:    okGate{},
+		Now:     time.Now,
+	})
+	if err := p.stop(context.Background()); err != nil {
+		t.Fatalf("stop err: %v", err)
+	}
+	if _, err := os.Stat(prevPath); !os.IsNotExist(err) {
+		t.Fatalf(".prev файл не был удалён при stop: err=%v", err)
+	}
+}
+
+func TestProc_LogWatcherWakesOnFatalError(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "watch.log")
+	if err := os.WriteFile(logPath, []byte("старт процесса\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	wakeCh := make(chan struct{}, 5)
+	p := NewProc(ProcConfig{
+		ID:      "proc",
+		LogPath: logPath,
+		Runner:  &fakeRunner{},
+		Link:    &fakeLink{},
+		Gate:    okGate{},
+		Now:     time.Now,
+		Wake:    func() { wakeCh <- struct{}{} },
+	})
+	p.autoReconnect = true
+	p.startLogWatcher()
+	defer p.stopLogWatcher()
+
+	// Нефатальная строка: не должна будить
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString("[СТАТИСТИКА] 100 пакетов\n")
+	_ = f.Close()
+
+	select {
+	case <-wakeCh:
+		t.Fatal("получен wake на нефатальную строку")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// Фатальная строка: должна вызвать Wake()
+	f, err = os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString("Ошибка Reader: EOF\n")
+	_ = f.Close()
+
+	select {
+	case <-wakeCh:
+		// успешно!
+	case <-time.After(2 * time.Second):
+		t.Fatal("таймаут ожидания wake при записи фатальной ошибки в лог")
+	}
+}

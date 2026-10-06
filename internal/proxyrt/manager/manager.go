@@ -1073,6 +1073,7 @@ func (m *Manager) Restart(ctx context.Context, key string, reason string) error 
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrInstanceNotFound, key)
 	}
+	mg.inst.ResetStartBackoff()
 	if !mg.inst.Restart(reason) {
 		return fmt.Errorf("%w: %s", ErrRestartUnsupported, key)
 	}

@@ -30,7 +30,9 @@ const socketWaitRecheck = 3 * time.Second
 
 // stableGrace — минимальное время стабильной работы процесса без сбоев,
 // после которого разрешается сбросить паузу анти-флаппинга.
-const stableGrace = 60 * time.Second
+// Должно существенно превышать backoffMax (5 мин), иначе сессионные сбои
+// после стартового окна сбрасывают накопленный backoff в 0 на очередном Observe.
+const stableGrace = 10 * time.Minute
 
 // snapMaxAge — свежесть снимка для соседних ресурсов (tun_handoff, адрес).
 const snapMaxAge = 30 * time.Second
@@ -43,6 +45,16 @@ const snapMaxAge = 30 * time.Second
 const (
 	backoffBase = 5 * time.Second
 	backoffMax  = 5 * time.Minute
+)
+
+const (
+	attrFatalError   = "fatal_error"
+	attrReconnectDue = "reconnect_due"
+	argCause         = "cause"
+
+	causeRequested      = "requested"
+	causeSessionFailure = "session_failure"
+	causeInterval       = "interval"
 )
 
 // ProcessLink — срез control.Link, нужный ресурсу process.
@@ -80,6 +92,8 @@ type ProcConfig struct {
 	Runner       ProcRunner
 	Gate         BinaryGate
 	Now          func() time.Time
+	Wake         func()
+	Log          func(string)
 }
 
 // Proc — ресурс process: один тип на все четыре роли, различия — данными.
@@ -118,6 +132,9 @@ type Proc struct {
 	lastUptimeS       int64
 	lastObservedAt    time.Time
 	logStartOffset    int64
+
+	lwMu     sync.Mutex
+	logWatch logWatcher
 }
 
 func NewProc(cfg ProcConfig) *Proc {
@@ -141,10 +158,45 @@ func (p *Proc) SetDesired(enabled bool, forkArgs []string, cfgErr error) {
 func (p *Proc) SetAutoReconnect(enabled bool, interval time.Duration) {
 	p.autoReconnect = enabled
 	p.reconnectInterval = interval
+	if !enabled {
+		p.stopLogWatcher()
+	}
 }
 
 func (p *Proc) ID() proxyrt.ResourceID { return p.c.ID }
 
+// fatalSessionSignatures — строки в журнале дочернего процесса, свидетельствующие
+// о фатальном сбое сессии, после которого процесс не восстанавливается самостоятельно
+// и требует перезапуска:
+//
+// 1. "error 401: Unauthorized" / "[VK Auth] Multiple auth errors detected" / "[VK Auth] Persona burned":
+//    Аутентификация клиента отклонена сервером либо персона/токен VK сожжены.
+//    Клиент переходит в терминальное состояние и не производит повторный обмен ключами.
+//
+// 2. "TURN Allocate: Allocate error" / "failed to allocate TURN":
+//    Фатальный отказ сервера TURN в выделении релейного канала (исчерпание квоты,
+//    ошибка распределения или сбой авторизации TURN). Клиент freeturn не пересоздаёт
+//    TURN-сессию в рамках текущего цикла работы, туннель остаётся неработоспособен.
+//
+// 3. "all streams down" / "all streams failed":
+//    Все параллельные транспортные соединения клиента с сервером упали и исчерпали
+//    внутренние попытки реконнекта. Клиент прекращает передачу данных.
+//
+// 4. "server did not acknowledge client ID" / "failed to write client ID":
+//    Сбой этапа инициализации сессии и регистрации клиентского идентификатора.
+//    Процесс зависает в цикле ожидания подтверждения.
+//
+// 5. "Ошибка Reader":
+//    Внутренний ридер транспортного потока (wt-client) завершился с терминальной
+//    ошибкой ввода-вывода или десериализации протокола. Поток закрыт, автовосстановления
+//    ридера в рамках процесса нет, трафик прекращает ходить.
+//
+// 6. "сессия разорвана" / "сессия закрыта" / "таймаут сессии":
+//    Явные маркеры терминального завершения сессии в журнале клиента.
+//
+// 7. "all retransmissions failed":
+//    Транспортный уровень (QUIC/KCP) исчерпал лимит повторных передач пакетов.
+//    Сессионное соединение признано мёртвым, дальнейшая передача не возобновляется.
 var fatalSessionSignatures = []string{
 	"error 401: Unauthorized",
 	"[VK Auth] Multiple auth errors detected",
@@ -238,18 +290,18 @@ func (p *Proc) Observe(ctx context.Context) (proxyrt.Observation, error) {
 		obs := obsFromState(st)
 		if p.enabled && p.autoReconnect {
 			if p.reconnectInterval > 0 && time.Duration(st.UptimeS)*time.Second >= p.reconnectInterval {
-				obs.Attrs["reconnect_due"] = "interval"
+				obs.Attrs[attrReconnectDue] = causeInterval
 			}
 			if p.c.LogPath != "" && time.Duration(st.UptimeS)*time.Second >= socketGrace {
 				tail := readLogTail(p.c.LogPath, p.logStartOffset, 16384)
 				if sig := detectFatalSessionError(tail); sig != "" {
-					obs.Attrs["fatal_error"] = sig
+					obs.Attrs[attrFatalError] = sig
 				}
 			}
 		}
 		if !p.autoReconnect {
 			p.ResetStartBackoff()
-		} else if obs.Attrs["fatal_error"] == "" && time.Duration(st.UptimeS)*time.Second >= stableGrace {
+		} else if obs.Attrs[attrFatalError] == "" && time.Duration(st.UptimeS)*time.Second >= stableGrace {
 			p.ResetStartBackoff()
 		}
 		return obs, nil
@@ -380,23 +432,23 @@ func (p *Proc) Plan(obs proxyrt.Observation) []proxyrt.Step {
 		return []proxyrt.Step{{
 			Resource: p.c.ID,
 			Op:       "restart",
-			Args:     map[string]string{"cause": "requested"},
+			Args:     map[string]string{argCause: causeRequested},
 			Reason:   restartReason,
 		}}
 	}
-	if sig := obs.Attrs["fatal_error"]; sig != "" {
+	if sig := obs.Attrs[attrFatalError]; sig != "" {
 		return []proxyrt.Step{{
 			Resource: p.c.ID,
 			Op:       "restart",
-			Args:     map[string]string{"cause": "session_failure", "signature": sig},
+			Args:     map[string]string{argCause: causeSessionFailure, "signature": sig},
 			Reason:   "сбой сессии в журнале: " + sig,
 		}}
 	}
-	if obs.Attrs["reconnect_due"] == "interval" {
+	if obs.Attrs[attrReconnectDue] == causeInterval {
 		return []proxyrt.Step{{
 			Resource: p.c.ID,
 			Op:       "restart",
-			Args:     map[string]string{"cause": "interval"},
+			Args:     map[string]string{argCause: causeInterval},
 			Reason:   fmt.Sprintf("истёк интервал автопереподключения (%s)", p.reconnectInterval),
 		}}
 	}
@@ -425,10 +477,6 @@ func (p *Proc) Apply(ctx context.Context, s proxyrt.Step) error {
 		}
 		return err
 	case "restart":
-		p.rmu.Lock()
-		p.restartWanted = false
-		p.restartReason = ""
-		p.rmu.Unlock()
 		// Гейт и backoff — ДО stop (I-2 ревью-2): гасить живой (и, возможно,
 		// пропускающий трафик) процесс, когда заменить его нечем — пин на
 		// диске тоже стар — нельзя. При старом пине restart вырождается в
@@ -443,19 +491,27 @@ func (p *Proc) Apply(ctx context.Context, s proxyrt.Step) error {
 			p.recordFail(now)
 			return err
 		}
-		if s.Args != nil && s.Args["cause"] == "session_failure" {
+		if s.Args != nil && s.Args[argCause] == causeSessionFailure {
 			p.recordFail(now)
 		}
 		if err := p.stop(ctx); err != nil {
 			return err
 		}
-		return p.spawn(ctx, p.c.Now())
+		err := p.spawn(ctx, p.c.Now())
+		if err == nil {
+			p.rmu.Lock()
+			p.restartWanted = false
+			p.restartReason = ""
+			p.rmu.Unlock()
+		}
+		return err
 	default:
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}
 }
 
 func (p *Proc) stop(ctx context.Context) error {
+	p.stopLogWatcher()
 	pid := 0
 	if snap, ok := p.c.Link.Snapshot(); ok {
 		pid = snap.State.PID
@@ -464,6 +520,9 @@ func (p *Proc) stop(ctx context.Context) error {
 		pid, _ = p.c.Runner.AlivePID()
 	}
 	p.spawnedAt, p.unreachSince, p.lastUptimeS = nil, nil, 0
+	if p.c.LogPath != "" {
+		_ = os.Remove(p.c.LogPath + ".prev")
+	}
 	return p.c.Runner.Stop(ctx, pid)
 }
 
@@ -483,10 +542,15 @@ func (p *Proc) start(ctx context.Context) error {
 // spawn — порождение БЕЗ гейта и backoff: их прошёл вызывающий (start либо
 // restart-ветка Apply, у той гейт стоит ДО stop).
 func (p *Proc) spawn(ctx context.Context, now time.Time) error {
+	p.stopLogWatcher()
 	p.logStartOffset = 0
 	if p.c.LogPath != "" {
+		_ = os.Remove(p.c.LogPath + ".prev")
 		if st, err := os.Stat(p.c.LogPath); err == nil {
 			if err := os.Rename(p.c.LogPath, p.c.LogPath+".prev"); err != nil {
+				if p.c.Log != nil {
+					p.c.Log(fmt.Sprintf("не удалось переименовать лог %s: %v", p.c.LogPath, err))
+				}
 				if f, truncErr := os.OpenFile(p.c.LogPath, os.O_WRONLY|os.O_TRUNC, 0644); truncErr == nil {
 					_ = f.Close()
 					p.logStartOffset = 0
@@ -509,6 +573,9 @@ func (p *Proc) spawn(ctx context.Context, now time.Time) error {
 	t := now
 	p.spawnedAt = &t
 	p.unreachSince = nil
+	if p.autoReconnect && p.c.LogPath != "" && p.c.Wake != nil {
+		p.startLogWatcher()
+	}
 	return nil
 }
 
@@ -580,7 +647,31 @@ func (p *Proc) RecheckAfter() time.Duration {
 		if currentUptime < p.reconnectInterval {
 			return p.reconnectInterval - currentUptime
 		}
-		return time.Second
+		return backoffBase
 	}
 	return 0
+}
+
+func (p *Proc) startLogWatcher() {
+	p.lwMu.Lock()
+	defer p.lwMu.Unlock()
+	if p.logWatch != nil {
+		p.logWatch.stop()
+		p.logWatch = nil
+	}
+	p.logWatch = newPlatformLogWatcher(p.c.LogPath, p.logStartOffset, func() {
+		if p.c.Wake != nil {
+			p.c.Wake()
+		}
+	})
+	p.logWatch.start()
+}
+
+func (p *Proc) stopLogWatcher() {
+	p.lwMu.Lock()
+	defer p.lwMu.Unlock()
+	if p.logWatch != nil {
+		p.logWatch.stop()
+		p.logWatch = nil
+	}
 }

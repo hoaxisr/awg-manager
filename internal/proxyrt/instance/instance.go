@@ -136,6 +136,7 @@ func (i *Instance) Restart(reason string) bool {
 	if !ok {
 		return false
 	}
+	i.ResetStartBackoff()
 	r.RequestRestart(reason)
 	i.worker.Post(proxyrt.EventReconnect)
 	return true

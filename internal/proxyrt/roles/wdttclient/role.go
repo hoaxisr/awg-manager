@@ -68,6 +68,8 @@ type Deps struct {
 	Sync         linkres.EndpointSync
 	Occ          linkres.Occupancy
 	Now          func() time.Time
+	Wake         func()
+	Log          func(string)
 }
 
 // Role — реализация proxyrt.Role. Ресурсы — долгоживущие: защёлки
@@ -120,6 +122,7 @@ func (r *Role) build(sock, logPath string) {
 		NeedCmds:   []string{"state", "attach-tun", "detach-tun"},
 		SocketPath: sock, LogPath: logPath,
 		Link: d.Link, Runner: d.Runner, Gate: d.Gate, Now: d.Now,
+		Wake: d.Wake, Log: d.Log,
 	})
 	r.iface = ndmsres.NewIface(roles.RNdmsIface, d.Cmds, d.Query)
 	r.addr = ndmsres.NewAddress(roles.RNdmsAddress, d.Cmds, d.Query)
@@ -143,7 +146,7 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	}
 	enabled := intent == proxyrt.IntentEnabled
 	r.proc.SetDesired(enabled, roles.WdttClientArgs(c), c.Validate())
-	interval, _ := roles.ParseReconnectInterval(c.AutoReconnectInterval)
+	interval := roles.ParseReconnectInterval(c.AutoReconnectInterval)
 	r.proc.SetAutoReconnect(c.AutoReconnect, interval)
 	r.listen.SetDesired(c.Listen)
 	// Желаемое связанных туннелей — РОВНО намерение владельца инстанса, и

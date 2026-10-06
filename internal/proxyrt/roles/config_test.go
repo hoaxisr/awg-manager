@@ -326,32 +326,19 @@ func TestAutoReconnectValidation(t *testing.T) {
 }
 
 func TestParseReconnectInterval(t *testing.T) {
-	if got, err := ParseReconnectInterval("30m"); err != nil || got != 30*time.Minute {
-		t.Errorf("30m: got %v, err=%v", got, err)
+	if got := ParseReconnectInterval("30m"); got != 30*time.Minute {
+		t.Errorf("30m: got %v, want %v", got, 30*time.Minute)
 	}
-	if got, err := ParseReconnectInterval("2h"); err != nil || got != 2*time.Hour {
-		t.Errorf("2h: got %v, err=%v", got, err)
+	if got := ParseReconnectInterval("2h"); got != 2*time.Hour {
+		t.Errorf("2h: got %v, want %v", got, 2*time.Hour)
 	}
-	if got, err := ParseReconnectInterval("on_failure"); err != nil || got != 0 {
-		t.Errorf("on_failure: got %v, err=%v", got, err)
+	if got := ParseReconnectInterval("on_failure"); got != 0 {
+		t.Errorf("on_failure: got %v, want 0", got)
 	}
-	if got, err := ParseReconnectInterval(""); err != nil || got != 0 {
-		t.Errorf("empty: got %v, err=%v", got, err)
+	if got := ParseReconnectInterval(""); got != 0 {
+		t.Errorf("empty: got %v, want 0", got)
 	}
-	if _, err := ParseReconnectInterval("garbage"); err == nil {
-		t.Errorf("garbage: expected error, got nil")
-	}
-}
-
-func TestLookupReconnectInterval(t *testing.T) {
-	if d, ok := LookupReconnectInterval("30m"); !ok || d != 30*time.Minute {
-		t.Errorf("30m: got %v, %v", d, ok)
-	}
-	if d, ok := LookupReconnectInterval("on_failure"); !ok || d != 0 {
-		t.Errorf("on_failure: got %v, %v", d, ok)
-	}
-	if _, ok := LookupReconnectInterval("garbage"); ok {
-		t.Errorf("garbage: expected ok=false")
+	if got := ParseReconnectInterval("garbage"); got != 0 {
+		t.Errorf("garbage: got %v, want 0", got)
 	}
 }
-

@@ -30,6 +30,8 @@ type ClientDeps struct {
 	Sync         linkres.EndpointSync
 	Occ          linkres.Occupancy
 	Now          func() time.Time
+	Wake         func()
+	Log          func(string)
 }
 
 // ClientRole: listen_port → process → linked_endpoint (§4.1; listen первым —
@@ -65,6 +67,7 @@ func NewClient(d ClientDeps) (*ClientRole, error) {
 			NeedCmds:   []string{"state"},
 			SocketPath: sock, LogPath: logPath,
 			Link: d.Link, Runner: d.Runner, Gate: d.Gate, Now: d.Now,
+			Wake: d.Wake, Log: d.Log,
 		}),
 		linked: linkres.NewLinkedEndpoint(roles.RLinkedEndpoint, d.Sync),
 	}, nil
@@ -88,7 +91,7 @@ func (r *ClientRole) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observa
 	}
 	enabled := intent == proxyrt.IntentEnabled
 	r.proc.SetDesired(enabled, roles.FreeTurnClientArgs(c), c.Validate())
-	interval, _ := roles.ParseReconnectInterval(c.AutoReconnectInterval)
+	interval := roles.ParseReconnectInterval(c.AutoReconnectInterval)
 	r.proc.SetAutoReconnect(c.AutoReconnect, interval)
 	r.linked.SetDesired(r.inst, c.Listen, enabled)
 	if !enabled {
