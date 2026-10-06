@@ -1469,3 +1469,84 @@ func TestProcAutoReconnect_InotifyDirectoryIsolation(t *testing.T) {
 		// успешно — изоляция работает!
 	}
 }
+
+func TestProcAutoReconnect_ConcurrentInotifyAndObserve(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "race.log")
+	if err := os.WriteFile(logPath, []byte("старый лог\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	wakeCh := make(chan struct{}, 100)
+	link := &fakeLink{st: awgmproto.State{PID: 601, UptimeS: 120}}
+	runner := &fakeRunner{pid: 601, alive: true}
+	p := NewProc(ProcConfig{
+		ID:      "proc",
+		LogPath: logPath,
+		Runner:  runner,
+		Link:    link,
+		Gate:    okGate{},
+		Now:     time.Now,
+		Wake: func() {
+			select {
+			case wakeCh <- struct{}{}:
+			default:
+			}
+		},
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(true, 0)
+	defer p.stopLogWatcher()
+
+	if _, err := p.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Один воркер вызывает Observe, а в фоне идут дозаписи в лог
+	stop := make(chan struct{})
+	var workerDone sync.WaitGroup
+	workerDone.Add(1)
+	go func() {
+		defer workerDone.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				obs, err := p.Observe(context.Background())
+				if err == nil && obs.Attrs[attrFatalError] == "error 401: Unauthorized" {
+					return
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}()
+
+	// Дописываем ошибку
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("error 401: Unauthorized\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	// Ждём либо wake, либо завершение воркера
+	select {
+	case <-wakeCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("таймаут ожидания wake")
+	}
+
+	close(stop)
+	workerDone.Wait()
+
+	obsFinal, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obsFinal.Attrs[attrFatalError] != "error 401: Unauthorized" {
+		t.Fatalf("финальный Observe не зафиксировал фатальную ошибку: %q", obsFinal.Attrs[attrFatalError])
+	}
+}

@@ -181,8 +181,9 @@ func (p *Proc) scanLog() string {
 	sig := scanLogForFatal(p.c.LogPath, &p.logScanOffset)
 	if sig != "" {
 		p.setFatalError(sig)
+		return sig
 	}
-	return sig
+	return p.getFatalError()
 }
 
 // SetDesired — намерение этого прогона. cfgErr — вердикт Validate() конфига:
