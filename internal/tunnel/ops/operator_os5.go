@@ -1098,13 +1098,21 @@ func (o *OperatorOS5Impl) downBeforeSwap(ctx context.Context, tunnelID string, n
 //     destroyed нет.
 //  4. tun остался (NDMS не снял) — снимаем: записи уже нет, C невозможен.
 //
+// Down не прошёл — ничего не меняется, ошибка наружу (fail-closed).
 // Подмена не удалась, а устройство живо (чужой держатель — HeldError, отказ
 // ip) — запись не трогаем, ошибка наружу (fail-closed): `no interface` при
 // живом устройстве — C. Устройства нет (del прошёл, tun не встал) — запись
 // снимается: снос записи без устройства — 0 C (стенд Task 59).
 func (o *OperatorOS5Impl) removeOpkgTun(ctx context.Context, op, tunnelID string, names tunnel.Names, iface query.Confirmed, up, deleteRecord bool) error {
 	if up {
-		o.interfaceDownBestEffort(ctx, tunnelID, iface)
+		// Down не прошёл ни с одной попытки — ни подмены (под running это
+		// C3b, 0ba1), ни `no interface`: запись и устройство как были,
+		// повтор действия пройдёт чисто.
+		if err := o.interfaceDownBestEffort(ctx, tunnelID, iface); err != nil {
+			o.logWarn(op, tunnelID, "interface down failed, kernel interface and NDMS record kept: "+err.Error())
+			o.appLog.Warn(op, tunnelID, "Запись "+names.NDMSName+" не опущена — интерфейс и запись оставлены: "+err.Error())
+			return fmt.Errorf("interface down %s: %w", names.NDMSName, err)
+		}
 	}
 	if err := o.backend.ReplaceWithTun(ctx, names.IfaceName); err != nil {
 		if _, absent := netdev.Absent(names.IfaceName); absent != nil || !deleteRecord {

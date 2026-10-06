@@ -657,3 +657,62 @@ func TestStart_DownFails_NoSwap(t *testing.T) {
 		})
 	}
 }
+
+// downFailedKept — down отвергнут на всех попытках: ни подмены, ни `no
+// interface`, запись и наше amneziawg как были (подмена под running — C3b).
+func downFailedKept(t *testing.T, f *ndmsquery.FakeNDMS, be *deviceBackend) {
+	t.Helper()
+	if len(be.ReplaceCalls) != 0 || len(be.StopCalls) != 0 || slices.Contains(f.Posts, postNo) {
+		t.Fatalf("после отказа down: replace=%v stop=%v posts=%v", be.ReplaceCalls, be.StopCalls, f.Posts)
+	}
+	if !f.Has("OpkgTun10") || !be.exists("opkgtun10") || !be.amneziawg {
+		t.Fatalf("запись есть=%v устройство есть=%v amneziawg=%v", f.Has("OpkgTun10"), be.exists("opkgtun10"), be.amneziawg)
+	}
+	clean(t, f)
+}
+
+// Fix round 3: Delete работающего — down отказал ×3 → ошибка наружу
+// (запись туннеля остаётся, повтор Delete пройдёт), устройство и запись
+// NDMS не тронуты. Мутация «подменять несмотря на отказ down» → красный.
+func TestDelete_DownFails_FailClosed(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(upTun10())
+	be := newDeviceBackend(t, f)
+	be.plug(t, "opkgtun10", true)
+	o, _ := newOS5LifecycleOn(t, downDeniedPoster{f}, f, be, true)
+
+	err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"})
+	if err == nil || !strings.Contains(err.Error(), "injected: down") {
+		t.Fatalf("err = %v, want отказ down", err)
+	}
+	downFailedKept(t, f, be)
+}
+
+// Fix round 3: откат старта, дошедшего до InterfaceUp (упал файрвол), —
+// down отказал ×3 → ни подмены, ни сноса; ошибка старта остаётся главной.
+// Обе ветки: запись создана этой попыткой и существовала (amneziawg жив).
+// Мутация «подменять несмотря на отказ down» → красный.
+func TestRollback_DownFails_FailClosed(t *testing.T) {
+	for _, justCreated := range []bool{true, false} {
+		t.Run(map[bool]string{true: "justCreated", false: "existing"}[justCreated], func(t *testing.T) {
+			var f *ndmsquery.FakeNDMS
+			if justCreated {
+				f = ndmsquery.NewFakeNDMS()
+				f.ExpectCreate("OpkgTun10")
+			} else {
+				f = ndmsquery.NewFakeNDMS(upTun10())
+			}
+			be := newDeviceBackend(t, f)
+			if !justCreated {
+				be.plug(t, "opkgtun10", true)
+			}
+			o, _ := newOS5LifecycleOn(t, downDeniedPoster{f}, f, be, true)
+			o.firewall = &MockFirewall{addError: errors.New("injected: firewall")}
+
+			err := o.ColdStart(context.Background(), lifecycleCfg(t))
+			if err == nil || !strings.Contains(err.Error(), "injected: firewall") {
+				t.Fatalf("err = %v, want отказ файрвола (ошибка старта — главная)", err)
+			}
+			downFailedKept(t, f, be)
+		})
+	}
+}
