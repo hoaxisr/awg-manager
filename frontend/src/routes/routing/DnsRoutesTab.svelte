@@ -52,7 +52,11 @@
     }: Props = $props();
 
     // HR-backed rules live in their own tab now; this tab shows only NDMS.
-    let dnsRoutes = $derived(allDnsRoutes.filter((r) => r.backend !== 'hydraroute'));
+    // By name, as the HR Neo tab lists its rules (#851): the order of lists
+    // means nothing to the router — only the order of tunnels inside a list does.
+    let dnsRoutes = $derived(
+        allDnsRoutes.filter((r) => r.backend !== 'hydraroute').sort((a, b) => a.name.localeCompare(b.name))
+    );
 
     // Open edit modal when search result is clicked.
     // Capture counter at mount to skip stale values on tab re-mount.
@@ -284,6 +288,7 @@
                     subnets: route.subnets,
                     enabled: route.enabled,
                     iconUrl: route.iconUrl,
+                    skipIPv6: route.skipIPv6 === true || undefined,
                     routes: route.tunnelId
                         ? [{ tunnelId: route.tunnelId, interface: route.tunnelId, fallback: 'auto' as const }]
                         : [],

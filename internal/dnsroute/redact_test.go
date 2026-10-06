@@ -85,7 +85,7 @@ func TestValidateSubscriptions_KeepsTheTokenOut(t *testing.T) {
 	svc := newTestService(t)
 	svc.SetDownloader(failingDownloader{err: cause})
 
-	err := svc.validateSubscriptions(context.Background(), []Subscription{{URL: "https://1.1.1.1/l/Tok3nAbc?key=K3y"}})
+	err := svc.validateSubscriptions(context.Background(), &DomainList{}, []Subscription{{URL: "https://1.1.1.1/l/Tok3nAbc?key=K3y"}})
 	if err == nil {
 		t.Fatal("a failing subscription must be refused")
 	}

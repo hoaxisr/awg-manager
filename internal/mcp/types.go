@@ -308,6 +308,9 @@ type DNSRouteDetail struct {
 	Backend        string            `json:"backend,omitempty"`
 	CreatedAt      string            `json:"createdAt,omitempty"`
 	UpdatedAt      string            `json:"updatedAt,omitempty"`
+	// SkipIPv6 mirrors dnsroute.DomainList.SkipIPv6: the list keeps its
+	// IPv6 entries, but they are not put on the router.
+	SkipIPv6 bool `json:"skipIPv6,omitempty" jsonschema:"true when the list's IPv6 addresses and networks stay in the list but are not put on the router"`
 }
 
 // Summary projects the full record onto the capped list form, so

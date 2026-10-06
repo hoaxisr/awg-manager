@@ -141,5 +141,20 @@ type Deps interface {
 	// unknown id is an error and nothing is written.
 	SetSingboxSubscriptionEnabled(ctx context.Context, id string, enabled bool) (updated SingboxSubscription, warnings []string, err error)
 
+	// SetSingboxSubscriptionMode switches a subscription's group between
+	// selector and urltest and returns the subscription as it stands
+	// afterwards. mode arrives trimmed and lowercased; anything but selector
+	// or urltest is an error. A call that changes nothing writes nothing. An
+	// unknown id is an error and nothing is written.
+	SetSingboxSubscriptionMode(ctx context.Context, id, mode string) (SingboxSubscription, error)
+
+	// SetSingboxSubscriptionActiveMember makes memberTag the server a
+	// selector-mode subscription routes through and returns the
+	// subscription as read before the switch: SingboxSubscription carries no
+	// active server, so the switch changes none of its fields. A urltest
+	// subscription, an unknown id and a tag that is not a server of the
+	// subscription's group are errors, and nothing is written.
+	SetSingboxSubscriptionActiveMember(ctx context.Context, id, memberTag string) (SingboxSubscription, error)
+
 	OpenAPISpec() []byte
 }

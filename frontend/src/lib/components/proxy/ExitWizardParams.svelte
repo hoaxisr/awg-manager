@@ -2,8 +2,9 @@
 	// Шаг 2 мастера «Выхода» — параметры (WE-29..WE-37). Поля правятся на месте
 	// в объекте мастера; пароль есть только у WDTT-клиента, у FreeTurn его нет.
 	import { m } from '$lib/i18n';
-	import { Input } from '$lib/components/ui';
+	import { Dropdown, Input, Toggle } from '$lib/components/ui';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
+	import { autoReconnectIntervalOptions } from '../freeturn/options';
 	import type { ExitProtocol, ExitWizardFields } from './exitWizard';
 
 	interface Props {
@@ -44,6 +45,29 @@
 		hint={protocol === 'wdtt' ? m.proxy_exit_params_workers_hint() : ''}
 		fullWidth
 	/>
+	<div class="reconnect-box">
+		<Toggle
+			label={m.proxy_exit_params_auto_reconnect()}
+			hint={m.proxy_exit_params_auto_reconnect_hint()}
+			checked={fields.autoReconnect ?? false}
+			onchange={(v) => {
+				fields.autoReconnect = v;
+				if (v && !fields.autoReconnectInterval) {
+					fields.autoReconnectInterval = 'on_failure';
+				}
+			}}
+		/>
+		{#if fields.autoReconnect}
+			<div class="reconnect-interval">
+				<Dropdown
+					label={m.proxy_exit_params_auto_reconnect_interval()}
+					bind:value={fields.autoReconnectInterval}
+					options={autoReconnectIntervalOptions()}
+					fullWidth
+				/>
+			</div>
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -57,5 +81,15 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 		gap: 0.75rem;
+	}
+
+	.reconnect-box {
+		grid-column: 1 / -1;
+		padding-top: 0.5rem;
+	}
+
+	.reconnect-interval {
+		max-width: 240px;
+		margin-top: 0.5rem;
 	}
 </style>

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Дефолт потоков зависит от архитектуры: на mips полосу отнимает CPU (замеры
@@ -274,5 +275,70 @@ func TestFreeTurnClientValidateBondLimit(t *testing.T) {
 		if err := c.Validate(); (err != nil) != tc.wantErr {
 			t.Errorf("%s: err=%v, ждали ошибку=%t", tc.name, err, tc.wantErr)
 		}
+	}
+}
+
+func TestAutoReconnectValidation(t *testing.T) {
+	ftBase := FreeTurnClientConfig{Listen: "127.0.0.1:9000", Peer: "p:1"}
+	wdttBase := WdttClientConfig{Mode: "wg", Listen: "127.0.0.1:9000", Peer: "p:1", Password: "pwd", VKHashes: "vk"}
+
+	validIntervals := []string{"", "on_failure", "30m", "1h", "2h", "4h", "8h", "12h", "24h"}
+	for _, interval := range validIntervals {
+		ft := ftBase
+		ft.AutoReconnect = true
+		ft.AutoReconnectInterval = interval
+		if err := ft.Validate(); err != nil {
+			t.Errorf("FreeTurnClientConfig.Validate() rejected valid interval %q: %v", interval, err)
+		}
+
+		wdtt := wdttBase
+		wdtt.AutoReconnect = true
+		wdtt.AutoReconnectInterval = interval
+		if err := wdtt.Validate(); err != nil {
+			t.Errorf("WdttClientConfig.Validate() rejected valid interval %q: %v", interval, err)
+		}
+	}
+
+	invalidIntervals := []string{"1s", "5m", "garbage", "-1h", "100h"}
+	for _, interval := range invalidIntervals {
+		ft := ftBase
+		ft.AutoReconnect = true
+		ft.AutoReconnectInterval = interval
+		if err := ft.Validate(); err == nil {
+			t.Errorf("FreeTurnClientConfig.Validate() accepted invalid interval %q", interval)
+		}
+
+		wdtt := wdttBase
+		wdtt.AutoReconnect = true
+		wdtt.AutoReconnectInterval = interval
+		if err := wdtt.Validate(); err == nil {
+			t.Errorf("WdttClientConfig.Validate() accepted invalid interval %q", interval)
+		}
+	}
+
+	// AutoReconnect = false: любой интервал допустим (игнорируется)
+	ftDisabled := ftBase
+	ftDisabled.AutoReconnect = false
+	ftDisabled.AutoReconnectInterval = "garbage"
+	if err := ftDisabled.Validate(); err != nil {
+		t.Errorf("FreeTurnClientConfig.Validate() failed with AutoReconnect=false: %v", err)
+	}
+}
+
+func TestParseReconnectInterval(t *testing.T) {
+	if got := ParseReconnectInterval("30m"); got != 30*time.Minute {
+		t.Errorf("30m: got %v, want %v", got, 30*time.Minute)
+	}
+	if got := ParseReconnectInterval("2h"); got != 2*time.Hour {
+		t.Errorf("2h: got %v, want %v", got, 2*time.Hour)
+	}
+	if got := ParseReconnectInterval("on_failure"); got != 0 {
+		t.Errorf("on_failure: got %v, want 0", got)
+	}
+	if got := ParseReconnectInterval(""); got != 0 {
+		t.Errorf("empty: got %v, want 0", got)
+	}
+	if got := ParseReconnectInterval("garbage"); got != 0 {
+		t.Errorf("garbage: got %v, want 0", got)
 	}
 }

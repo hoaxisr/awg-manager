@@ -854,6 +854,36 @@ func TestSetupEndpointRoute_ReplacesSharedHostRouteAtomically(t *testing.T) {
 	}
 }
 
+// F612/#1004: шлюз не-предпочтительного WAN лежит не в main, а в таблице
+// интерфейса за правилом `from <адрес> lookup N` (роутер репортёра:
+// `1176: from 192.168.8.100 lookup 16397` → `default via 192.168.8.1 dev
+// cdc_br1`). Без `from` ядро с заданным oif и без маршрута в main считает
+// адрес on-link — вывод без `via`, и маршрут вставал `dev cdc_br1` (ARP в
+// сеть модема). Подмена отвечает так же, как ядро.
+func TestSetupEndpointRoute_NonPreferredWANUsesInterfaceTable(t *testing.T) {
+	o, _, _ := newOS5Lifecycle(t)
+	rec := &ipRunRecorder{}
+	o.ipRun = func(ctx context.Context, name string, args ...string) (*exec.Result, error) {
+		rec.run(ctx, name, args...)
+		line := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(line, "-o -4 addr show dev cdc_br1"):
+			return &exec.Result{Stdout: "7: cdc_br1    inet 192.168.8.100/24 brd 192.168.8.255 scope global cdc_br1\\       valid_lft forever preferred_lft forever\n"}, nil
+		case strings.HasPrefix(line, "route get 198.51.100.20 from 192.168.8.100 oif cdc_br1"):
+			return &exec.Result{Stdout: "198.51.100.20 from 192.168.8.100 via 192.168.8.1 dev cdc_br1 table 16397 uid 0\n"}, nil
+		case strings.HasPrefix(line, "route get"):
+			return &exec.Result{Stdout: "198.51.100.20 dev cdc_br1 src 192.168.8.100 uid 0\n"}, nil
+		}
+		return &exec.Result{}, nil
+	}
+	if _, err := o.SetupEndpointRoute(context.Background(), "awg10", "198.51.100.20:51820", "cdc_br1", "CdcEthernet1"); err != nil {
+		t.Fatal(err)
+	}
+	if !hasCall(rec.Calls, "/opt/sbin/ip route replace 198.51.100.20/32 via 192.168.8.1") {
+		t.Fatalf("маршрут не через шлюз интерфейса:\n%s", strings.Join(rec.Calls, "\n"))
+	}
+}
+
 // F117: до петли хост-маршрут не нужен. Связанные туннели wdtt/freeturn в
 // WG-режиме несут endpoint 127.0.0.1:<порт> — релей слушает на самом роутере.
 // Роутер такую команду ПРИНИМАЕТ (стенд 5.01): в ядре оседает

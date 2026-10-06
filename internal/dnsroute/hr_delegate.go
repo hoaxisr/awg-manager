@@ -130,7 +130,7 @@ func hrRuleToDomainList(r hydraroute.HRRule, policySet map[string]bool, systemBy
 		Backend:       "hydraroute",
 		Enabled:       !r.Disabled,
 	}
-	if policySet[r.Target] {
+	if policySet[r.Target] && validateHRPolicyName(r.Target) == nil {
 		dl.HRRouteMode = "policy"
 		dl.HRPolicyName = r.Target
 		return dl

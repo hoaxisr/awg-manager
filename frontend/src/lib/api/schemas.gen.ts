@@ -572,6 +572,7 @@ const api_DnsRouteDTO: v.GenericSchema = v.looseObject({
 	manualText: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
 	routes: v.optional(v.nullable(v.array(v.lazy(() => api_DnsRouteTargetDTO)))),
+	skipIPv6: v.optional(v.nullable(v.boolean())),
 	subnets: v.optional(v.nullable(v.array(v.string()))),
 	subscriptions: v.optional(v.nullable(v.array(v.lazy(() => api_DnsRouteSubscriptionDTO)))),
 	updatedAt: v.optional(v.nullable(v.string())),

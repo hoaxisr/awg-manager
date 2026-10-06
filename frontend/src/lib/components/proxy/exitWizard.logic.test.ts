@@ -103,6 +103,8 @@ describe('поля из ссылки', () => {
 			password: 'p',
 			vkHashes: 'aa,bb',
 			workers: '18',
+			autoReconnect: false,
+			autoReconnectInterval: 'on_failure',
 		});
 	});
 
@@ -125,6 +127,8 @@ describe('поля из ссылки', () => {
 			password: '',
 			vkHashes: '',
 			workers: DEFAULT_WORKERS,
+			autoReconnect: false,
+			autoReconnectInterval: 'on_failure',
 		});
 	});
 

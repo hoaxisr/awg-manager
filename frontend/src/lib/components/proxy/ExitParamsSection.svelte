@@ -3,10 +3,10 @@
 	// конфиге инстанса на месте; сохраняет и откатывает страница (владелец
 	// конфига).
 	import { m } from '$lib/i18n';
-	import { Button, Dropdown, FormRow, Input, SegmentedControl } from '$lib/components/ui';
+	import { Button, Dropdown, FormRow, Input, SegmentedControl, Toggle } from '$lib/components/ui';
 	import { setPeer, switchConnMode } from '$lib/utils/wdttPeerMode';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
-	import { dnsModeOptions, modeOptions, platformOptions, transportOptions } from '../freeturn/options';
+	import { autoReconnectIntervalOptions, dnsModeOptions, modeOptions, platformOptions, transportOptions } from '../freeturn/options';
 	import type { FreeTurnClientConfig, WdttClientConfig } from '$lib/types';
 	import DetailSection from './DetailSection.svelte';
 
@@ -102,6 +102,35 @@
 					<Dropdown bind:value={wdttClient.captchaMode} options={captchaOptions} fullWidth />
 				</div>
 			</FormRow>
+
+			<FormRow
+				label={m.proxy_exit_params_auto_reconnect()}
+				hint={m.proxy_exit_params_auto_reconnect_hint()}
+			>
+				<Toggle
+					checked={wdttClient.autoReconnect ?? false}
+					onchange={(v) => {
+						if (wdttClient) {
+							wdttClient.autoReconnect = v;
+							if (v && !wdttClient.autoReconnectInterval) {
+								wdttClient.autoReconnectInterval = 'on_failure';
+							}
+						}
+					}}
+				/>
+			</FormRow>
+
+			{#if wdttClient.autoReconnect}
+				<FormRow label={m.proxy_exit_params_auto_reconnect_interval()}>
+					<div class="w-select">
+						<Dropdown
+							bind:value={wdttClient.autoReconnectInterval}
+							options={autoReconnectIntervalOptions()}
+							fullWidth
+						/>
+					</div>
+				</FormRow>
+			{/if}
 		</div>
 	{:else if ftClient}
 		<div class="grid">
@@ -136,6 +165,31 @@
 			/>
 			<Dropdown label={m.proxy_exit_params_dns_mode()} bind:value={ftClient.dnsMode} options={dnsModeOptions()} fullWidth />
 			<Input label={m.proxy_exit_params_dns_servers()} bind:value={ftClient.dnsServers} fullWidth />
+			<div class="ft-reconnect-block">
+				<Toggle
+					label={m.proxy_exit_params_auto_reconnect()}
+					hint={m.proxy_exit_params_auto_reconnect_hint()}
+					checked={ftClient.autoReconnect ?? false}
+					onchange={(v) => {
+						if (ftClient) {
+							ftClient.autoReconnect = v;
+							if (v && !ftClient.autoReconnectInterval) {
+								ftClient.autoReconnectInterval = 'on_failure';
+							}
+						}
+					}}
+				/>
+				{#if ftClient.autoReconnect}
+					<div class="w-select" style="margin-top: 0.5rem;">
+						<Dropdown
+							label={m.proxy_exit_params_auto_reconnect_interval()}
+							bind:value={ftClient.autoReconnectInterval}
+							options={autoReconnectIntervalOptions()}
+							fullWidth
+						/>
+					</div>
+				{/if}
+			</div>
 		</div>
 	{/if}
 	<div class="btn-row">
@@ -187,7 +241,8 @@
 		width: 220px;
 	}
 
-
-
-
+	.ft-reconnect-block {
+		grid-column: 1 / -1;
+		padding: 0.5rem 0;
+	}
 </style>

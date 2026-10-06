@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { DnsRoute, DnsRouteTarget, DnsRouteSubscription, RoutingTunnel, DedupeItem } from '$lib/types';
-	import { Modal, Button, Dropdown } from '$lib/components/ui';
+	import { Modal, Button, Dropdown, FormToggle } from '$lib/components/ui';
 	import { formatRelativeTime } from '$lib/utils/format';
 	import DnsRouteDomainEditor from './DnsRouteDomainEditor.svelte';
 	import ServiceIcon from './ServiceIcon.svelte';
@@ -32,6 +32,7 @@
 	// Form state
 	let name = $state('');
 	let iconUrl = $state<string | undefined>(undefined);
+	let skipIPv6 = $state(false);
 	let iconPickerOpen = $state(false);
 	let manualDomains = $state<string[]>([]);
 	let manualText = $state('');
@@ -71,6 +72,7 @@
 	let initialExcludesText = $state('');
 	let initialHrInterfaceId = $state('');
 	let initialIconUrl = $state<string | undefined>(undefined);
+	let initialSkipIPv6 = $state(false);
 
 	let nameError = $derived(attempted && name.trim() === '');
 	let routeError = $derived(attempted && routes.length === 0);
@@ -92,6 +94,7 @@
 					excludesText = route.excludesText ?? [...(route.excludes ?? []), ...(route.excludeSubnets ?? [])].join('\n');
 					hrInterfaceId = (isHR && route.routes?.[0]?.tunnelId) || tunnels[0]?.id || '';
 					iconUrl = route.iconUrl;
+					skipIPv6 = route.skipIPv6 ?? false;
 					// Capture snapshot for isDirty
 					initialName = route.name;
 					initialManualDomains = [...(route.manualDomains ?? [])];
@@ -104,6 +107,7 @@
 					initialExcludesText = excludesText;
 					initialHrInterfaceId = hrInterfaceId;
 					initialIconUrl = iconUrl;
+					initialSkipIPv6 = skipIPv6;
 				} else {
 					name = '';
 					manualDomains = [];
@@ -116,6 +120,7 @@
 					excludesText = '';
 					hrInterfaceId = tunnels[0]?.id || '';
 					iconUrl = undefined;
+					skipIPv6 = false;
 					// Capture snapshot for isDirty (create mode defaults)
 					initialName = '';
 					initialManualDomains = [];
@@ -128,6 +133,7 @@
 					initialExcludesText = '';
 					initialHrInterfaceId = hrInterfaceId;
 					initialIconUrl = undefined;
+					initialSkipIPv6 = false;
 				}
 				newSubUrl = '';
 				newRouteTunnelId = '';
@@ -201,7 +207,8 @@
 			hrPolicyName !== initialHrPolicyName ||
 			excludesText !== initialExcludesText ||
 			hrInterfaceId !== initialHrInterfaceId ||
-			iconUrl !== initialIconUrl
+			iconUrl !== initialIconUrl ||
+			skipIPv6 !== initialSkipIPv6
 		);
 	});
 
@@ -326,6 +333,7 @@
 			backend,
 			excludes: isNDMS ? parsedExcludes : undefined,
 			excludesText: isNDMS ? excludesText : undefined,
+			skipIPv6: isNDMS ? skipIPv6 : undefined,
 			hrRouteMode: isHR ? hrRouteMode : undefined,
 			hrPolicyName: isPolicyMode ? (hrPolicyName || `AWG_${name.trim().replace(/\s+/g, '_')}`) : undefined,
 			iconUrl: iconUrl || undefined,
@@ -657,6 +665,14 @@
 				onkeydown={handleExcludesKeydown}
 			></textarea>
 			<span class="field-hint excludes-hint">{m.dns_routes_edit_excludes_hint()}</span>
+		</div>
+		<div class="form-section">
+			<FormToggle
+				bind:checked={skipIPv6}
+				size="sm"
+				label={m.dns_routes_edit_skip_ipv6()}
+				hint={m.dns_routes_edit_skip_ipv6_hint()}
+			/>
 		</div>
 	{/if}
 

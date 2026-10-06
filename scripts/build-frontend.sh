@@ -7,7 +7,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT/frontend"
 
 echo "Installing dependencies..."
-npm install
+npm ci
 
 echo "Building frontend..."
 npm run build

@@ -46,6 +46,8 @@ export interface DnsRoute {
 	/** Raw manual editor text. Preserves comments and blank lines; active entries are derived from it. */
 	manualText?: string;
 	subscriptions?: DnsRouteSubscription[];
+	/** NDMS only: keep IPv6 entries (networks and bare addresses) off the router. The list keeps them. */
+	skipIPv6?: boolean;
 	routes: DnsRouteTarget[];
 	enabled: boolean;
 	createdAt: string;

@@ -56,8 +56,10 @@
     // Orphan = list whose tunnel was deleted (TunnelID=""). Kept in storage
     // so the user can reassign it via the Edit dialog instead of rebuilding
     // the CIDRs from scratch.
-    let orphanRoutes = $derived(ipRoutes.filter(r => !r.tunnelID));
-    let boundRoutes = $derived(ipRoutes.filter(r => r.tunnelID));
+    // By name, as the other routing tabs list their rules (#851).
+    let sortedIpRoutes = $derived([...ipRoutes].sort((a, b) => a.name.localeCompare(b.name)));
+    let orphanRoutes = $derived(sortedIpRoutes.filter(r => !r.tunnelID));
+    let boundRoutes = $derived(sortedIpRoutes.filter(r => r.tunnelID));
     let ipActiveCount = $derived(boundRoutes.filter(r => r.enabled).length);
 
     async function saveIpRoute(data: { name: string; tunnelID: string; subnets: string[]; fallback: '' | 'reject'; iconUrl?: string }) {

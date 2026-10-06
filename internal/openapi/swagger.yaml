@@ -1659,6 +1659,9 @@ definitions:
         items:
           $ref: '#/definitions/api.DnsRouteTargetDTO'
         type: array
+      skipIPv6:
+        example: true
+        type: boolean
       subnets:
         example:
         - 10.0.0.0/8
@@ -1786,6 +1789,9 @@ definitions:
         items:
           $ref: '#/definitions/api.DnsRouteTargetDTO'
         type: array
+      skipIPv6:
+        example: true
+        type: boolean
       subnets:
         example:
         - 142.250.0.0/15

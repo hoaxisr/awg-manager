@@ -340,6 +340,28 @@ func (o *OperatorOS5Impl) delKernelHostRoute(ctx context.Context, endpointIP str
 	return err
 }
 
+// deviceAddr — первый глобальный адрес устройства нужного семейства, "" если
+// его нет. Строка `ip -o addr`: `7: cdc_br1    inet 192.168.8.100/24 brd …`,
+// у PPP — `inet 91.144.142.72 peer 92.255.203.254/32 …` (без префикса).
+func (o *OperatorOS5Impl) deviceAddr(ctx context.Context, device string, v6 bool) string {
+	family := "-4"
+	if v6 {
+		family = "-6"
+	}
+	result, err := o.ipRun(ctx, "/opt/sbin/ip", "-o", family, "addr", "show", "dev", device, "scope", "global")
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(result.Stdout)
+	for i, f := range fields {
+		if (f == "inet" || f == "inet6") && i+1 < len(fields) {
+			addr, _, _ := strings.Cut(fields[i+1], "/")
+			return addr
+		}
+	}
+	return ""
+}
+
 // resolveKernelRouteTarget determines how the kernel currently routes to dstIP.
 // When oifDevice is non-empty, constrains the lookup to that specific interface
 // (ip route get <dstIP> oif <device>), ensuring the route uses the intended WAN.
@@ -351,6 +373,14 @@ func (o *OperatorOS5Impl) resolveKernelRouteTarget(ctx context.Context, dstIP, o
 	}
 	args = append(args, "route", "get", dstIP)
 	if oifDevice != "" {
+		// Шлюз не-предпочтительного WAN в main не лежит: NDMS держит его в
+		// таблице интерфейса за правилом `from <адрес> lookup N`. Без `from`
+		// ядро с заданным oif и без маршрута в main считает адрес on-link и
+		// отвечает без `via` — маршрут вставал `dev <wan>`, ARP в сеть модема
+		// (F612/#1004). Нет адреса — спрашиваем как раньше.
+		if src := o.deviceAddr(ctx, oifDevice, isIPv6(dstIP)); src != "" {
+			args = append(args, "from", src)
+		}
 		args = append(args, "oif", oifDevice)
 	}
 	result, runErr := o.ipRun(ctx, "/opt/sbin/ip", args...)

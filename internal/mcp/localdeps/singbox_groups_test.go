@@ -32,6 +32,13 @@ type fakeSubs struct {
 	// updateDeletes mirrors a subscription deleted between the adapter's
 	// read and its write.
 	updateDeletes bool
+	// activeCalls counts SetActiveMember calls. activeErr fails the call;
+	// with activeStored the store write has happened first and only the
+	// live switch failed (subscription.Service.SetActiveMember writes the
+	// store, then asks the Clash API).
+	activeCalls  int
+	activeErr    error
+	activeStored bool
 }
 
 // List mirrors subscription.Store.List: sorted by label, then id.
@@ -62,6 +69,9 @@ func (f *fakeSubs) Update(id string, p subscription.UpdatePatch) (*subscription.
 			if f.updateKeepsFlag && p.Enabled != nil {
 				f.subs[i].Enabled = *p.Enabled
 			}
+			if f.updateKeepsFlag && p.Mode != nil {
+				f.subs[i].Mode = *p.Mode
+			}
 			if f.updateDeletes {
 				f.subs = append(f.subs[:i], f.subs[i+1:]...)
 			}
@@ -74,6 +84,9 @@ func (f *fakeSubs) Update(id string, p subscription.UpdatePatch) (*subscription.
 			if p.Enabled != nil {
 				f.subs[i].Enabled = *p.Enabled
 			}
+			if p.Mode != nil {
+				f.subs[i].Mode = *p.Mode
+			}
 			c := f.subs[i]
 			return &c, nil
 		}
@@ -82,6 +95,21 @@ func (f *fakeSubs) Update(id string, p subscription.UpdatePatch) (*subscription.
 }
 
 func (f *fakeSubs) ListGroups() []subscription.AggregateGroup { return f.groups }
+
+func (f *fakeSubs) SetActiveMember(_ context.Context, id, memberTag string) error {
+	f.activeCalls++
+	for i := range f.subs {
+		if f.subs[i].ID != id {
+			continue
+		}
+		if f.activeErr != nil && !f.activeStored {
+			return f.activeErr
+		}
+		f.subs[i].ActiveMember = memberTag
+		return f.activeErr
+	}
+	return fmt.Errorf("subscription %q not found", id)
+}
 
 const (
 	subAutoID  = "706dcf33aabbccddeeff0011"
@@ -980,6 +1008,243 @@ func TestLocal_SetSingboxSubscriptionEnabledReportsFailure(t *testing.T) {
 	t.Run("no subscription service", func(t *testing.T) {
 		if _, _, err := New(Config{}).SetSingboxSubscriptionEnabled(ctx, subAutoID, false); err == nil {
 			t.Fatal("without the subscription service the tool must say it is unavailable")
+		}
+	})
+}
+
+// TestLocal_SetSingboxSubscriptionMode — служба читает nil в патче как
+// «поле не прислали», поэтому уходит только Mode: настройки urltest,
+// фильтры и адрес остаются как были.
+func TestLocal_SetSingboxSubscriptionMode(t *testing.T) {
+	subs := subsHarness()
+	journal := &recLog{}
+	l := New(Config{Subscriptions: subs, AppLog: journal})
+	ctx := context.Background()
+
+	got, err := l.SetSingboxSubscriptionMode(ctx, subAutoID, "selector")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != subAutoID || got.Mode != "selector" {
+		t.Fatalf("returned = %+v, want the record as it stands after the write", got)
+	}
+	p := subs.patched
+	if subs.patchedID != subAutoID || p.Mode == nil || *p.Mode != subscription.ModeSelector {
+		t.Fatalf("patch = %+v", p)
+	}
+	if p.Label != nil || p.URL != nil || p.Headers != nil || p.RefreshHours != nil || p.Enabled != nil ||
+		p.URLTest != nil || p.FilterInclude != nil || p.FilterExclude != nil || p.BindInterface != nil {
+		t.Fatalf("only Mode may be sent; the service preserves the rest: %+v", p)
+	}
+	if len(journal.lines) != 1 || !strings.HasPrefix(journal.lines[0], "routing/subscription ") || !strings.Contains(journal.lines[0], "(MCP)") {
+		t.Fatalf("journal = %v, want one routing/subscription line marked (MCP)", journal.lines)
+	}
+	raw, _ := json.Marshal(got)
+	for _, secret := range []string{"TOKEN123", "HDRSECRET", "TOKEN456"} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("the returned record leaked %q", secret)
+		}
+	}
+}
+
+// TestLocal_SetSingboxSubscriptionModeNoOpSendsNothing — служба
+// пересобирает группу и перезагружает sing-box на любой патч с Mode, даже
+// с тем же значением. Повтор после таймаута не должен рвать соединения.
+// Пустой режим в хранилище — это selector (Subscription.EffectiveMode).
+func TestLocal_SetSingboxSubscriptionModeNoOpSendsNothing(t *testing.T) {
+	subs := subsHarness()
+	l := New(Config{Subscriptions: subs})
+	ctx := context.Background()
+
+	for id, mode := range map[string]string{subAutoID: "urltest", subPasteID: "selector"} {
+		got, err := l.SetSingboxSubscriptionMode(ctx, id, mode)
+		if err != nil || got.Mode != mode {
+			t.Fatalf("%s: got %+v, err %v", id, got, err)
+		}
+	}
+	if subs.updates != 0 {
+		t.Fatalf("a call that changes nothing sent %d patches", subs.updates)
+	}
+}
+
+func TestLocal_SetSingboxSubscriptionModeRefusals(t *testing.T) {
+	subs := subsHarness()
+	l := New(Config{Subscriptions: subs})
+	ctx := context.Background()
+
+	if _, err := l.SetSingboxSubscriptionMode(ctx, subAutoID, "fallback"); err == nil {
+		t.Fatal("an unknown mode must be refused")
+	}
+	_, err := l.SetSingboxSubscriptionMode(ctx, "00000000aabbccddeeff0011", "selector")
+	if err == nil || !strings.Contains(err.Error(), "list_singbox_subscriptions") {
+		t.Fatalf("err = %v, want the listing tool named", err)
+	}
+	if subs.updates != 0 {
+		t.Fatalf("a refused call sent a patch")
+	}
+	if _, err := New(Config{}).SetSingboxSubscriptionMode(ctx, subAutoID, "selector"); err == nil {
+		t.Fatal("without the subscription service the tool must say it is unavailable")
+	}
+}
+
+// TestLocal_SetSingboxSubscriptionModeReportsFailure — как и у
+// переключателя enabled: причина остаётся в журнале службы, а фраза для
+// модели говорит правду о том, в каком режиме подписка осталась.
+func TestLocal_SetSingboxSubscriptionModeReportsFailure(t *testing.T) {
+	cause := fmt.Errorf(`subscription: применение настроек: reload after mode change: parse "vless://uuid-secret@de1.example.net:443x": invalid port, see https://sub.example.net/api/TOKEN123`)
+	ctx := context.Background()
+
+	carriesNoCause := func(t *testing.T, err error, journal *recLog) {
+		t.Helper()
+		for _, secret := range []string{"uuid-secret", "TOKEN123", "invalid port", "de1.example.net"} {
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("the error handed to the model carries %q: %v", secret, err)
+			}
+			for _, line := range journal.lines {
+				if strings.Contains(line, secret) {
+					t.Fatalf("the journal line carries %q: %v", secret, journal.lines)
+				}
+			}
+		}
+		if len(journal.lines) != 1 || !strings.Contains(journal.lines[0], "(MCP)") || !strings.Contains(journal.lines[0], "in bucket singbox") {
+			t.Fatalf("a failure must be journalled once, saying where the cause is: %v", journal.lines)
+		}
+	}
+
+	t.Run("the service restored the previous mode", func(t *testing.T) {
+		subs, journal := subsHarness(), &recLog{}
+		subs.updateErr = cause
+		l := New(Config{Subscriptions: subs, AppLog: journal})
+
+		_, err := l.SetSingboxSubscriptionMode(ctx, subAutoID, "selector")
+		if err == nil {
+			t.Fatal("a failed write must be an error, never a record that looks applied")
+		}
+		carriesNoCause(t, err, journal)
+		if !strings.Contains(err.Error(), "unchanged") || !strings.Contains(err.Error(), "still in urltest mode") {
+			t.Fatalf("err = %v, want it said that the subscription is unchanged and still in urltest mode", err)
+		}
+		if !strings.Contains(err.Error(), `bucket "singbox"`) {
+			t.Fatalf("err = %v, want the journal bucket the cause is really in", err)
+		}
+	})
+
+	t.Run("the rollback failed too and the mode stayed stored", func(t *testing.T) {
+		subs, journal := subsHarness(), &recLog{}
+		subs.updateErr, subs.updateKeepsFlag = cause, true
+		l := New(Config{Subscriptions: subs, AppLog: journal})
+
+		_, err := l.SetSingboxSubscriptionMode(ctx, subAutoID, "selector")
+		if err == nil {
+			t.Fatal("a failed write must be an error")
+		}
+		carriesNoCause(t, err, journal)
+		if strings.Contains(err.Error(), "unchanged") || !strings.Contains(err.Error(), "STORED in selector mode") || !strings.Contains(err.Error(), "disagree") {
+			t.Fatalf("err = %v, want it said that the mode is stored and the engine disagrees", err)
+		}
+	})
+}
+
+// TestLocal_SetSingboxSubscriptionActiveMember — выбор сервера идёт в
+// службу как есть; она сама пишет хранилище и переключает живую группу
+// через Clash API без перезагрузки.
+func TestLocal_SetSingboxSubscriptionActiveMember(t *testing.T) {
+	subs := subsHarness()
+	journal := &recLog{}
+	l := New(Config{Subscriptions: subs, AppLog: journal})
+
+	got, err := l.SetSingboxSubscriptionActiveMember(context.Background(), subPasteID, "sub-1a00ae3b-k2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != subPasteID || got.GroupTag != "sub-1a00ae3b" {
+		t.Fatalf("returned = %+v", got)
+	}
+	if subs.activeCalls != 1 || subs.subs[1].ActiveMember != "sub-1a00ae3b-k2" {
+		t.Fatalf("calls = %d, stored = %q", subs.activeCalls, subs.subs[1].ActiveMember)
+	}
+	if len(journal.lines) != 1 || !strings.HasPrefix(journal.lines[0], "routing/subscription ") || !strings.Contains(journal.lines[0], "(MCP)") {
+		t.Fatalf("journal = %v, want one routing/subscription line marked (MCP)", journal.lines)
+	}
+}
+
+// TestLocal_SetSingboxSubscriptionActiveMemberRefusals — отказ должен
+// называть выход: сменить режим или взять тег из get_singbox_outbound.
+// Исключённый пользователем сервер в группу не входит, и выбрать его
+// нельзя. Ни один отказ не доходит до службы.
+func TestLocal_SetSingboxSubscriptionActiveMemberRefusals(t *testing.T) {
+	subs := subsHarness()
+	l := New(Config{Subscriptions: subs})
+	ctx := context.Background()
+
+	_, err := l.SetSingboxSubscriptionActiveMember(ctx, subAutoID, "sub-706dcf33-b2")
+	if err == nil || !strings.Contains(err.Error(), "urltest") || !strings.Contains(err.Error(), "set_singbox_subscription_mode") {
+		t.Fatalf("err = %v, want urltest mode named with the tool that changes it", err)
+	}
+	subs.subs[0].Mode = subscription.ModeSelector
+	for _, tag := range []string{"sub-706dcf33-x9", "sub-706dcf33-f7", "sub-706dcf33-old", "sub-1a00ae3b-k1"} {
+		_, err = l.SetSingboxSubscriptionActiveMember(ctx, subAutoID, tag)
+		if err == nil || !strings.Contains(err.Error(), "get_singbox_outbound") || !strings.Contains(err.Error(), "sub-706dcf33") {
+			t.Fatalf("%s: err = %v, want the group and the tool that lists its servers named", tag, err)
+		}
+	}
+	_, err = l.SetSingboxSubscriptionActiveMember(ctx, "00000000aabbccddeeff0011", "sub-706dcf33-a1")
+	if err == nil || !strings.Contains(err.Error(), "list_singbox_subscriptions") {
+		t.Fatalf("err = %v, want the listing tool named", err)
+	}
+	if subs.activeCalls != 0 {
+		t.Fatalf("a refused call reached the service %d times", subs.activeCalls)
+	}
+	if _, err := New(Config{}).SetSingboxSubscriptionActiveMember(ctx, subPasteID, "sub-1a00ae3b-k2"); err == nil {
+		t.Fatal("without the subscription service the tool must say it is unavailable")
+	}
+}
+
+// TestLocal_SetSingboxSubscriptionActiveMemberReportsFailure — служба
+// пишет выбор в хранилище раньше, чем переключает живую группу. Если
+// упало переключение, выбор сохранён, а движок ещё на прежнем сервере, и
+// модель должна узнать именно это.
+func TestLocal_SetSingboxSubscriptionActiveMemberReportsFailure(t *testing.T) {
+	cause := fmt.Errorf(`subscription: clash select: Put "http://127.0.0.1:9090/proxies/sub-1a00ae3b": connect: connection refused`)
+	ctx := context.Background()
+
+	t.Run("stored, but the live switch failed", func(t *testing.T) {
+		subs, journal := subsHarness(), &recLog{}
+		subs.activeErr, subs.activeStored = cause, true
+		l := New(Config{Subscriptions: subs, AppLog: journal})
+
+		_, err := l.SetSingboxSubscriptionActiveMember(ctx, subPasteID, "sub-1a00ae3b-k2")
+		if err == nil || !strings.Contains(err.Error(), "STORED as the active one") || !strings.Contains(err.Error(), `bucket "singbox"`) {
+			t.Fatalf("err = %v, want it said that the choice is stored and not applied", err)
+		}
+		if strings.Contains(err.Error(), "127.0.0.1") || len(journal.lines) != 1 || strings.Contains(journal.lines[0], "127.0.0.1") {
+			t.Fatalf("the cause must stay in the service's journal: err %v, journal %v", err, journal.lines)
+		}
+	})
+
+	// The server asked for was already the active one, and the service
+	// refused before writing (here: the subscription went to urltest
+	// meanwhile). The stored value equals the request, yet nothing was
+	// written, so "STORED" would be false.
+	t.Run("already active, refused before the write", func(t *testing.T) {
+		subs := subsHarness()
+		subs.activeErr = subscription.ErrActiveMemberOnURLTest
+		l := New(Config{Subscriptions: subs})
+
+		_, err := l.SetSingboxSubscriptionActiveMember(ctx, subPasteID, "sub-1a00ae3b-k1")
+		if err == nil || !strings.Contains(err.Error(), "unchanged") || strings.Contains(err.Error(), "STORED") {
+			t.Fatalf("err = %v, want it said that the subscription is unchanged", err)
+		}
+	})
+
+	t.Run("nothing was stored", func(t *testing.T) {
+		subs := subsHarness()
+		subs.activeErr = cause
+		l := New(Config{Subscriptions: subs})
+
+		_, err := l.SetSingboxSubscriptionActiveMember(ctx, subPasteID, "sub-1a00ae3b-k2")
+		if err == nil || !strings.Contains(err.Error(), "unchanged") || strings.Contains(err.Error(), "STORED") {
+			t.Fatalf("err = %v, want it said that the subscription is unchanged", err)
 		}
 	})
 }

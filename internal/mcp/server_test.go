@@ -93,6 +93,7 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 		"list_managed_servers", "list_server_peers", "add_server_peer", "set_server_peer_enabled", "get_server_peer_config", "control_singbox", "list_singbox_tunnels", "singbox_delay_check",
 		"list_singbox_rules", "list_singbox_outbounds", "get_singbox_staging", "set_singbox_rule_outbound", "apply_singbox_staging", "discard_singbox_staging",
 		"list_singbox_subscriptions", "get_singbox_outbound", "set_singbox_subscription_enabled",
+		"set_singbox_subscription_mode", "set_singbox_subscription_active_member",
 	}
 	for _, n := range want {
 		if byName[n] == nil {

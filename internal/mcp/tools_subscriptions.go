@@ -73,6 +73,33 @@ func subscriptionNotice(sub SingboxSubscription) string {
 		"To stop that traffic, retarget those rules with set_singbox_rule_outbound.", sub.GroupTag)
 }
 
+type setSubscriptionModeIn struct {
+	SubscriptionID string `json:"subscriptionId" jsonschema:"subscription id from list_singbox_subscriptions"`
+	Mode           string `json:"mode" jsonschema:"selector (one server chosen by the user) or urltest (sing-box picks the fastest)"`
+}
+
+type setSubscriptionActiveMemberIn struct {
+	SubscriptionID string `json:"subscriptionId" jsonschema:"subscription id from list_singbox_subscriptions"`
+	MemberTag      string `json:"memberTag" jsonschema:"tag of a server in the subscription's group, as get_singbox_outbound lists them for its groupTag"`
+}
+
+type setSubscriptionActiveMemberOut struct {
+	SubscriptionID string `json:"subscriptionId"`
+	GroupTag       string `json:"groupTag" jsonschema:"the subscription's group; get_singbox_outbound shows the server it uses now"`
+	MemberTag      string `json:"memberTag" jsonschema:"the server the group was switched to"`
+}
+
+// subscriptionModeNotice says in words what the mode means for the traffic,
+// and is just as true on a call that changed nothing.
+func subscriptionModeNotice(sub SingboxSubscription) string {
+	if sub.Mode == "urltest" {
+		return fmt.Sprintf("The subscription's group %q is in urltest mode: sing-box tests its servers periodically and routes through the fastest. "+
+			"A server cannot be chosen by hand in this mode; get_singbox_outbound with this groupTag shows the one in use.", sub.GroupTag)
+	}
+	return fmt.Sprintf("The subscription's group %q is in selector mode: it routes through one server chosen by the user, the one stored as active. "+
+		"get_singbox_outbound with this groupTag shows which server that is; set_singbox_subscription_active_member changes it.", sub.GroupTag)
+}
+
 func registerSubscriptionTools(s *mcp.Server, d Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "list_singbox_subscriptions",
@@ -108,5 +135,49 @@ func registerSubscriptionTools(s *mcp.Server, d Deps) {
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: subscriptionNotice(updated)}}},
 			setSubscriptionEnabledOut{SingboxSubscription: updated, Warnings: warnings}, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "set_singbox_subscription_mode",
+		Description: "Switch one sing-box subscription's group between selector (it routes through one server chosen by the user) and urltest (sing-box tests the servers and routes through the fastest). " +
+			"Routing rules that point at the group keep pointing at it. A change rebuilds the group and reloads sing-box, which can interrupt open connections for a moment; a call that changes nothing reloads nothing. " +
+			"Reversible: call it again with the other mode.",
+		Annotations: safeWrite("Set sing-box subscription mode", true),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setSubscriptionModeIn) (*mcp.CallToolResult, SingboxSubscription, error) {
+		id, err := requireSubscriptionID(in.SubscriptionID)
+		if err != nil {
+			return nil, SingboxSubscription{}, err
+		}
+		// Deps validates the mode (one check, where it becomes a
+		// subscription.SubscriptionMode); the tool only normalises it.
+		updated, err := d.SetSingboxSubscriptionMode(ctx, id, strings.ToLower(strings.TrimSpace(in.Mode)))
+		if err != nil {
+			return nil, SingboxSubscription{}, err
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: subscriptionModeNotice(updated)}}}, updated, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "set_singbox_subscription_active_member",
+		Description: "Choose the server a selector-mode sing-box subscription routes through. memberTag is a server tag that get_singbox_outbound lists for the subscription's groupTag. " +
+			"Refused in urltest mode, where sing-box picks the server itself: switch the mode with set_singbox_subscription_mode first. " +
+			"The running group switches at once, without reloading sing-box. Reversible: choose another server.",
+		Annotations: safeWrite("Choose sing-box subscription server", true),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setSubscriptionActiveMemberIn) (*mcp.CallToolResult, setSubscriptionActiveMemberOut, error) {
+		id, err := requireSubscriptionID(in.SubscriptionID)
+		if err != nil {
+			return nil, setSubscriptionActiveMemberOut{}, err
+		}
+		tag, err := requireSingboxTag(in.MemberTag, "get_singbox_outbound with the subscription's groupTag")
+		if err != nil {
+			return nil, setSubscriptionActiveMemberOut{}, err
+		}
+		sub, err := d.SetSingboxSubscriptionActiveMember(ctx, id, tag)
+		if err != nil {
+			return nil, setSubscriptionActiveMemberOut{}, err
+		}
+		text := fmt.Sprintf("The subscription's group %q now routes through server %q. get_singbox_outbound with this groupTag shows the server in use.", sub.GroupTag, tag)
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}},
+			setSubscriptionActiveMemberOut{SubscriptionID: sub.ID, GroupTag: sub.GroupTag, MemberTag: tag}, nil
 	})
 }

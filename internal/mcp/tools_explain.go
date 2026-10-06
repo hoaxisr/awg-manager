@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/ipfamily"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -266,6 +267,14 @@ func registerExplainTools(s *mcp.Server, d Deps) {
 			return nil, explainOut{}, err
 		}
 		for _, detail := range details {
+			// A list with SkipIPv6 keeps its IPv6 entries but never puts
+			// them on the router: matching against them would report a
+			// route the traffic does not take.
+			if detail.SkipIPv6 {
+				detail.Domains = ipfamily.WithoutIPv6(detail.Domains)
+				detail.Subnets = ipfamily.WithoutIPv6(detail.Subnets)
+				detail.Excludes = ipfamily.WithoutIPv6(detail.Excludes)
+			}
 			entry, unevaluated := matchDNSList(detail.Domains, target, ips)
 			if entry == "" {
 				sub, _, subUnevaluated := matchSubnets(detail.Subnets, ips)

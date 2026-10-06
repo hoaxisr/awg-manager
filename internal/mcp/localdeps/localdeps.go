@@ -94,6 +94,7 @@ type (
 		Get(id string) (*subscription.Subscription, error)
 		Update(id string, patch subscription.UpdatePatch) (*subscription.Subscription, error)
 		ListGroups() []subscription.AggregateGroup
+		SetActiveMember(ctx context.Context, id, memberTag string) error
 	}
 	// ClashState reads the running engine: which member each group routes
 	// through and the delays it has on record. Satisfied by
@@ -821,6 +822,7 @@ func dnsRouteDetail(dl *dnsroute.DomainList) mcpsrv.DNSRouteDetail {
 			URL: logging.RedactURLs(sub.URL), Name: sub.Name, LastFetched: sub.LastFetched, LastCount: sub.LastCount, LastFetchFailed: sub.LastError != "",
 		})
 	}
+	out.SkipIPv6 = dl.SkipsIPv6()
 	return out
 }
 
