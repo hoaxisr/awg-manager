@@ -96,7 +96,7 @@ func teardowns(a confirmAdapters) map[string]func(context.Context) error {
 		"ClearIPv6Address":       func(ctx context.Context) error { return a.opkg.ClearIPv6Address(ctx, "OpkgTun5") },
 		"ClearIPGlobal":          func(ctx context.Context) error { return a.opkg.ClearIPGlobal(ctx, "OpkgTun5") },
 		"RemovePermitAllACL":     func(ctx context.Context) error { return a.opkg.RemovePermitAllACL(ctx, "OpkgTun5") },
-		"RemovePermitAllACLv6":   func(ctx context.Context) error { return a.opkg.RemovePermitAllACLv6(ctx, "OpkgTun5") },
+		"RemovePermitAllACLs":    func(ctx context.Context) error { return a.opkg.RemovePermitAllACLs(ctx, "OpkgTun5") },
 		"RemoveDefaultRoute":     func(ctx context.Context) error { return a.defrt.RemoveDefaultRoute(ctx, "OpkgTun5") },
 		"RemoveIPv6DefaultRoute": func(ctx context.Context) error { return a.defrt.RemoveIPv6DefaultRoute(ctx, "OpkgTun5") },
 		"RemoveSegmentNAT":       func(ctx context.Context) error { return a.nat.RemoveSegmentNAT(ctx, "Bridge1") },

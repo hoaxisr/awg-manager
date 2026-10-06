@@ -106,17 +106,13 @@ func (r *recOpkgTun) SetPermitAllACL(_ context.Context, name string) error {
 	r.log.add("SetPermitACL:" + name)
 	return r.maybeFail("SetPermitACL")
 }
-func (r *recOpkgTun) RemovePermitAllACL(_ context.Context, name string) error {
+func (r *recOpkgTun) RemovePermitAllACLs(_ context.Context, name string) error {
 	r.log.add("RemovePermitACL:" + name)
 	return nil
 }
 func (r *recOpkgTun) SetPermitAllACLv6(_ context.Context, name string) error {
 	r.log.add("SetPermitACLv6:" + name)
 	return r.maybeFail("SetPermitACLv6")
-}
-func (r *recOpkgTun) RemovePermitAllACLv6(_ context.Context, name string) error {
-	r.log.add("RemovePermitACLv6:" + name)
-	return nil
 }
 func (r *recOpkgTun) ClearIPv6Address(_ context.Context, name string) error {
 	r.log.add("ClearIPv6Address:" + name)

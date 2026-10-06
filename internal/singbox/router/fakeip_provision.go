@@ -42,18 +42,19 @@ type OpkgTunProvisioner interface {
 	SetMTU(ctx context.Context, name string, mtu int) error
 	InterfaceUp(ctx context.Context, name string) error
 	InterfaceDown(ctx context.Context, name string) error
-	// SetPermitAllACL / RemovePermitAllACL — NDMS-native разрешение трафика в
-	// интерфейс: permit-all access-list `_WEBADMIN_<name>` + `ip access-group
-	// … in` + auto-delete (как галка доступа в веб-морде). Без него firewall
-	// NDMS (isolate-private и т.п.) режет LAN→tun форвард и DNS на tun-адрес.
+	// SetPermitAllACL — NDMS-native разрешение трафика в интерфейс: permit-all
+	// access-list `_WEBADMIN_<name>` + `ip access-group … in` + auto-delete (как
+	// галка доступа в веб-морде). Без него firewall NDMS (isolate-private и т.п.)
+	// режет LAN→tun форвард и DNS на tun-адрес.
 	SetPermitAllACL(ctx context.Context, name string) error
-	RemovePermitAllACL(ctx context.Context, name string) error
-	// SetPermitAllACLv6 / RemovePermitAllACLv6 — то же для IPv6: у NDMS под v6
-	// ОТДЕЛЬНОЕ пространство списков (`ipv6 access-list` + `ipv6 access-group`),
-	// и v4-разрешение его не покрывает. Ставится только когда у интерфейса есть
-	// v6-адрес — на интерфейсе без v6 разрешать нечего.
+	// SetPermitAllACLv6 — то же для IPv6: у NDMS под v6 ОТДЕЛЬНОЕ пространство
+	// списков (`ipv6 access-list` + `ipv6 access-group`), и v4-разрешение его не
+	// покрывает. Ставится только когда у интерфейса есть v6-адрес — на
+	// интерфейсе без v6 разрешать нечего.
 	SetPermitAllACLv6(ctx context.Context, name string) error
-	RemovePermitAllACLv6(ctx context.Context, name string) error
+	// RemovePermitAllACLs снимает permit-all обоих семейств по одному чтению
+	// running-config; шлёт только то, что в нём есть (F606).
+	RemovePermitAllACLs(ctx context.Context, name string) error
 }
 
 // StaticRouteProvider manages NDMS auto static routes for the fakeip pool + reject route.

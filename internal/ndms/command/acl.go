@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -160,14 +161,6 @@ func (c *InterfaceCommands) SetPermitAllACLv6(ctx context.Context, iface query.C
 	)
 }
 
-// RemovePermitAllACLv6 — v6-близнец RemovePermitAllACL (та же функция
-// removePermitAll, семейство «ipv6»). Прошивки без v6-ACL (isACLUnsupported):
-// там блоков нет, по дереву не шлётся ничего; терпимость к «нет такой
-// команды» оставлена на обеих командах на случай, если дерево всё же их покажет.
-func (c *InterfaceCommands) RemovePermitAllACLv6(ctx context.Context, iface query.Confirmed) error {
-	return c.removePermitAll(ctx, iface, "ipv6")
-}
-
 // permitAllRuleV4/V6 — наше правило в списке `_WEBADMIN_<name>`, как его
 // печатает running-config (стенд 5.01, 2026-09-12).
 const (
@@ -185,23 +178,65 @@ func hasForeignACLRules(lines []string, header, ours string) bool {
 	return false
 }
 
+// permitAllFamily — семейство снятия permit-all. Тип неэкспортирован, значений
+// два: опечатка семейства не компилируется.
+type permitAllFamily uint8
+
+const (
+	permitV4 permitAllFamily = iota + 1
+	permitV6
+)
+
+// header — заголовок блока списка: `access-list <acl>` / `ipv6 access-list <acl>`.
+func (f permitAllFamily) header(acl string) string {
+	if f == permitV6 {
+		return "ipv6 access-list " + acl
+	}
+	return "access-list " + acl
+}
+
+// group — первое слово привязки: `ip access-group` / `ipv6 access-group`.
+func (f permitAllFamily) group() string {
+	if f == permitV6 {
+		return "ipv6"
+	}
+	return "ip"
+}
+
+func (f permitAllFamily) rule() string {
+	if f == permitV6 {
+		return permitAllRuleV6
+	}
+	return permitAllRuleV4
+}
+
+func (f permitAllFamily) label() string {
+	if f == permitV6 {
+		return "acl6"
+	}
+	return "acl"
+}
+
 // aclState — тройка П17 по тому же дереву, по которому решён hasForeignACLRules:
-// bound — строка `<family> access-group <acl> in` в блоке `interface <name>`;
-// listed — блок header есть; autoDelete — строка `auto-delete` в его теле.
-func aclState(lines []string, name, family, header string) (bound, listed, autoDelete bool) {
-	bound = slices.Contains(query.InterfaceAccessGroupsOf(lines, name, family), "_WEBADMIN_"+name)
+// bound — строка `<ip|ipv6> access-group <acl> in` в блоке `interface <name>`;
+// listed — блок списка есть; autoDelete — строка `auto-delete` в его теле.
+func aclState(lines []string, name string, f permitAllFamily) (bound, listed, autoDelete bool) {
+	qf := query.ACLv4
+	if f == permitV6 {
+		qf = query.ACLv6
+	}
+	header := f.header("_WEBADMIN_" + name)
+	bound = slices.Contains(query.InterfaceAccessGroupsOf(lines, name, qf), "_WEBADMIN_"+name)
 	return bound, query.HasBlock(lines, header), query.HasBlockLine(lines, header, "auto-delete")
 }
 
 // removeOurPermitRule снимает ТОЛЬКО нашу строку, оставляя список и привязку
 // пользователю (`no rule found to delete.` — цель достигнута, стенд 5.01).
-// tolerate — от вызывающего: isACLUnsupported законен только у v6 (на v4
-// «нет такой команды» — настоящая поломка, см. предикат).
-func (c *InterfaceCommands) removeOurPermitRule(ctx context.Context, cmd, label string, tolerate func(string) bool) error {
+func (c *InterfaceCommands) removeOurPermitRule(ctx context.Context, cmd, label string) error {
 	return postMutationCheckedTolerant(ctx, c.poster, c.save,
 		map[string]any{"parse": cmd},
 		label,
-		tolerate,
+		isACLRuleAbsent,
 		c.queries.RunningConfig.InvalidateAll,
 	)
 }
@@ -215,18 +250,48 @@ func (c *InterfaceCommands) removeOurPermitRule(ctx context.Context, cmd, label 
 // одна наша строка, а список и его привязка остаются пользователю (F314,
 // issue #879: `no access-list` уносил и правило, написанное руками).
 func (c *InterfaceCommands) RemovePermitAllACL(ctx context.Context, iface query.Confirmed) error {
-	return c.removePermitAll(ctx, iface, "ip")
+	lines, err := c.freshACLTree(ctx, iface.Name())
+	if err != nil {
+		return err
+	}
+	return c.removePermitAll(ctx, iface.Name(), lines, permitV4)
 }
 
-// removePermitAll — снятие permit-all одного семейства («ip» или «ipv6»), F606.
-//
-// Решение — по одному свежему running-config, прочитанному мимо кэша и мимо
-// чужого чтения в полёте (Fetch): список и привязку меняют и веб-морда, и
-// каскад auto-delete, а хук ndm об этом не приходит. Таблица П17:
+// RemovePermitAllACLs снимает наш permit-all обоих семейств (v4 и v6) по ОДНОМУ
+// чтению running-config: выключение, удаление и откат слота снимают оба, а
+// полное дерево стоит ≈89 тиков ndm. v4-POST'ы v6-блоков не меняют, поэтому
+// дерево годится и для второго семейства. Провал v4 не мешает снять v6:
+// ошибки собираются вместе.
+func (c *InterfaceCommands) RemovePermitAllACLs(ctx context.Context, iface query.Confirmed) error {
+	lines, err := c.freshACLTree(ctx, iface.Name())
+	if err != nil {
+		return err
+	}
+	return errors.Join(
+		c.removePermitAll(ctx, iface.Name(), lines, permitV4),
+		c.removePermitAll(ctx, iface.Name(), lines, permitV6),
+	)
+}
+
+// freshACLTree — свежий running-config для решения о снятии: мимо кэша и мимо
+// чужого чтения в полёте (Fetch). Список и привязку меняют и веб-морда, и
+// каскад auto-delete, а хук ndm об этом не приходит. Дерево не прочитано —
+// не снимаем НИЧЕГО: гадать, чей это список, дороже, чем оставить своё
+// разрешение до следующего прохода.
+func (c *InterfaceCommands) freshACLTree(ctx context.Context, name string) ([]string, error) {
+	lines, err := c.queries.RunningConfig.Fetch(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acl rules _WEBADMIN_%s: %w", name, err)
+	}
+	return lines, nil
+}
+
+// removePermitAll — снятие permit-all одного семейства по готовому дереву, F606.
+// Таблица П17:
 //
 //	чужие правила            → снять только нашу строку (F314)
 //	bound ∧ autoDelete       → только unbind: список NDMS снимает сам
-//	bound ∧ ¬autoDelete      → unbind + remove
+//	bound ∧ ¬autoDelete      → unbind, затем remove
 //	¬bound ∧ listed          → remove
 //	¬bound ∧ ¬listed         → ничего
 //
@@ -239,37 +304,26 @@ func (c *InterfaceCommands) RemovePermitAllACL(ctx context.Context, iface query.
 // шлётся просто как лишний POST. Пустой список без auto-delete NDMS сам не
 // убирает (стенд 5.01, 2026-09-12) — его снимаем.
 //
-// Running-config недоступен — не снимаем НИЧЕГО: гадать, чей это список,
-// дороже, чем оставить своё разрешение до следующего прохода.
+// remove уходит и после провала unbind: снятие best-effort, и висящий список
+// хуже лишнего POST; наружу — ошибка unbind (первая по порядку).
 //
 // isACLNotBound на unbind/remove — для гонки «дерево показало, к POST уже
-// снято»; у v6 сверх того isACLUnsupported (#828). На v4 «нет такой команды» —
-// настоящая поломка и всплывает.
-func (c *InterfaceCommands) removePermitAll(ctx context.Context, iface query.Confirmed, family string) error {
-	name := iface.Name()
+// снято». «Нет такой команды» (#828, прошивка без v6-ACL) здесь не прощается
+// ни у одного семейства: POST уходит только по блоку из дерева, а такая
+// прошивка v6-блоков не печатает.
+func (c *InterfaceCommands) removePermitAll(ctx context.Context, name string, lines []string, f permitAllFamily) error {
 	acl := "_WEBADMIN_" + name
-	header, rule, label := "access-list "+acl, permitAllRuleV4, "acl"
-	tolerate := isACLNotBound
-	foreignTolerate := isACLRuleAbsent
-	if family == "ipv6" {
-		header, rule, label = "ipv6 access-list "+acl, permitAllRuleV6, "acl6"
-		tolerate = func(msg string) bool { return isACLNotBound(msg) || isACLUnsupported(msg) }
-		foreignTolerate = func(msg string) bool { return isACLRuleAbsent(msg) || isACLUnsupported(msg) }
+	header, label := f.header(acl), f.label()
+	if hasForeignACLRules(lines, header, f.rule()) {
+		return c.removeOurPermitRule(ctx, fmt.Sprintf("no %s %s", header, f.rule()), label+" permit remove "+acl)
 	}
-	lines, err := c.queries.RunningConfig.Fetch(ctx)
-	if err != nil {
-		return fmt.Errorf("%s rules %s: %w", label, acl, err)
-	}
-	if hasForeignACLRules(lines, header, rule) {
-		return c.removeOurPermitRule(ctx, fmt.Sprintf("no %s %s", header, rule), label+" permit remove "+acl, foreignTolerate)
-	}
-	bound, listed, autoDelete := aclState(lines, name, family, header)
+	bound, listed, autoDelete := aclState(lines, name, f)
 	var unbindErr, removeErr error
 	if bound {
 		unbindErr = postMutationCheckedTolerant(ctx, c.poster, c.save,
-			map[string]any{"parse": fmt.Sprintf("no interface %s %s access-group %s in", name, family, acl)},
+			map[string]any{"parse": fmt.Sprintf("no interface %s %s access-group %s in", name, f.group(), acl)},
 			label+" unbind "+acl,
-			tolerate,
+			isACLNotBound,
 			func() { c.queries.Interfaces.Invalidate(name) },
 			c.queries.RunningConfig.InvalidateAll,
 		)
@@ -278,7 +332,7 @@ func (c *InterfaceCommands) removePermitAll(ctx context.Context, iface query.Con
 		removeErr = postMutationCheckedTolerant(ctx, c.poster, c.save,
 			map[string]any{"parse": "no " + header},
 			label+" remove "+acl,
-			tolerate,
+			isACLNotBound,
 			c.queries.RunningConfig.InvalidateAll,
 		)
 	}

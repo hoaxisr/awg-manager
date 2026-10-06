@@ -113,16 +113,16 @@ var p5BoundV4 = []string{
 // Семейство различает пространства: v6-привязка не видна как v4 и наоборот.
 // Мутация: парсер только `ip` (семейство игнорируется) → v6 пуст, красный.
 func TestInterfaceAccessGroupsOf_IPv6Form(t *testing.T) {
-	if got := InterfaceAccessGroupsOf(p5BoundV6, "OpkgTun15", "ipv6"); !slices.Equal(got, []string{"_WEBADMIN_OpkgTun15"}) {
+	if got := InterfaceAccessGroupsOf(p5BoundV6, "OpkgTun15", ACLv6); !slices.Equal(got, []string{"_WEBADMIN_OpkgTun15"}) {
 		t.Fatalf("v6: got %v", got)
 	}
-	if got := InterfaceAccessGroupsOf(p5BoundV6, "OpkgTun15", "ip"); len(got) != 0 {
+	if got := InterfaceAccessGroupsOf(p5BoundV6, "OpkgTun15", ACLv4); len(got) != 0 {
 		t.Fatalf("v6-строка не v4-привязка: got %v", got)
 	}
-	if got := InterfaceAccessGroupsOf(p5BoundV4, "OpkgTun15", "ip"); !slices.Equal(got, []string{"_WEBADMIN_OpkgTun15"}) {
+	if got := InterfaceAccessGroupsOf(p5BoundV4, "OpkgTun15", ACLv4); !slices.Equal(got, []string{"_WEBADMIN_OpkgTun15"}) {
 		t.Fatalf("v4: got %v", got)
 	}
-	if got := InterfaceAccessGroupsOf(p5BoundV4, "OpkgTun15", "ipv6"); len(got) != 0 {
+	if got := InterfaceAccessGroupsOf(p5BoundV4, "OpkgTun15", ACLv6); len(got) != 0 {
 		t.Fatalf("v4-строка не v6-привязка: got %v", got)
 	}
 }

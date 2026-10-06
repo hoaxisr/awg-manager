@@ -331,13 +331,11 @@ func (s *ServiceImpl) scheduleFakeIPDrain(poolNet4, poolMask4, ndmsName string) 
 // повториться. Отказ на v6 провалом не считается: v6-адреса могло не быть
 // вовсе, а вечный ретрай выключения хуже незакрытого v6.
 func (s *ServiceImpl) holdOpkgTun(ctx context.Context, ndmsName, scope string) error {
-	if err := s.deps.OpkgTun.RemovePermitAllACL(ctx, ndmsName); err != nil {
+	// v4 и v6 — по одному running-config; отсутствующей привязки/списка команда
+	// не шлёт (F606), так что ошибка здесь — настоящий отказ NDMS. Debug: hold
+	// best-effort, разрешение снимется при следующем выключении.
+	if err := s.deps.OpkgTun.RemovePermitAllACLs(ctx, ndmsName); err != nil {
 		s.appLog.Debug(scope, ndmsName, "remove permit acl: "+err.Error())
-	}
-	// v6-список — отдельная сущность NDMS, каскадом от v4 не снимается. Debug:
-	// у интерфейса без v6 его и не было, «not found» тут норма.
-	if err := s.deps.OpkgTun.RemovePermitAllACLv6(ctx, ndmsName); err != nil {
-		s.appLog.Debug(scope, ndmsName, "remove permit acl v6: "+err.Error())
 	}
 	// Гейт существования — обязателен: дальше идут down/clear, а NDMS создаёт
 	// интерфейс по ЛЮБОЙ мутации его имени (см. teardownOpkgTun). Здесь, в
@@ -375,18 +373,14 @@ func (s *ServiceImpl) holdOpkgTun(ctx context.Context, ndmsName, scope string) e
 // create-on-reference риском в NDMS) не выполняются вовсе. Возвращает ошибку
 // delete; down и clear'ы — warn-and-continue.
 func (s *ServiceImpl) teardownOpkgTun(ctx context.Context, ndmsName, scope string) error {
-	// Снять permit-all ACL (unbind + no access-list) ДО down/delete: при
-	// успешном delete auto-delete каскадит ACL и сам, но при провале delete
-	// интерфейс не должен остаться с висящей привязкой. Debug, не Warn:
-	// «not found» на давно снятом ACL — норма для reap-ретраев (каждый тик
-	// до успеха delete) и сирот от версий без ACL (ревью).
-	if err := s.deps.OpkgTun.RemovePermitAllACL(ctx, ndmsName); err != nil {
+	// Снять permit-all ACL v4 и v6 ДО down/delete: при успешном delete
+	// auto-delete каскадит ACL и сам, но при провале delete интерфейс не должен
+	// остаться с висящей привязкой. Что снимать — решает свежий running-config
+	// (F606): на давно снятом ACL (reap-ретраи, сироты от версий без ACL) не
+	// уходит ни одного POST. Debug, не Warn: teardown best-effort, а снос
+	// интерфейса ACL всё равно уносит.
+	if err := s.deps.OpkgTun.RemovePermitAllACLs(ctx, ndmsName); err != nil {
 		s.appLog.Debug(scope, ndmsName, "remove permit acl: "+err.Error())
-	}
-	// v6-список — отдельная сущность NDMS, каскадом от v4 не снимается. Debug:
-	// у интерфейса без v6 его и не было, «not found» тут норма.
-	if err := s.deps.OpkgTun.RemovePermitAllACLv6(ctx, ndmsName); err != nil {
-		s.appLog.Debug(scope, ndmsName, "remove permit acl v6: "+err.Error())
 	}
 	// БЕЗ предварительного down: NDMS создаёт интерфейс по ЛЮБОЙ мутации его
 	// имени (стенд 2026-08-24: `{"interface":{"OpkgTunN":{"down":true}}}` на

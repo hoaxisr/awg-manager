@@ -88,7 +88,7 @@ func (q proxyNDMSQuery) HasPermitAllACL(ctx context.Context, name string) (bool,
 	if err != nil {
 		return false, err
 	}
-	return slices.Contains(query.InterfaceAccessGroupsOf(lines, name, "ip"), "_WEBADMIN_"+name), nil
+	return slices.Contains(query.InterfaceAccessGroupsOf(lines, name, query.ACLv4), "_WEBADMIN_"+name), nil
 }
 
 func (q proxyNDMSQuery) HasDefaultRoute(ctx context.Context, name string) (bool, error) {

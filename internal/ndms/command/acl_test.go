@@ -187,12 +187,17 @@ func TestRemovePermitAllACL_ToleratesNotBound(t *testing.T) {
 	}
 }
 
-// Любая другая status-ошибка всплывает как раньше.
+// Любая другая status-ошибка unbind всплывает, а remove всё равно уходит:
+// снятие best-effort, висящий список без привязки хуже лишнего POST.
+// Мутация: return на ошибке unbind до remove → один POST, красный.
 func TestRemovePermitAllACL_OtherErrorSurfaces(t *testing.T) {
-	cmds, _ := newACLTestCommandsRC(rcBoundNoAutoDelete(aclV4), nestedACLError("access list is in use"))
+	cmds, poster := newACLTestCommandsRC(rcBoundNoAutoDelete(aclV4), nestedACLError("access list is in use"))
 	err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun15"))
 	if err == nil || !strings.Contains(err.Error(), "router reported error: access list is in use") {
 		t.Fatalf("err = %v", err)
+	}
+	if want := []string{aclV4.unbindCmd(), aclV4.removeCmd()}; !slices.Equal(poster.parses, want) {
+		t.Fatalf("parses = %v, ждали %v", poster.parses, want)
 	}
 }
 
@@ -208,13 +213,6 @@ func TestSetPermitAllACLv6_UnsupportedFirmwareTolerated(t *testing.T) {
 	)
 	if err := cmds.SetPermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
 		t.Fatalf("SetPermitAllACLv6 на прошивке без v6-ACL: %v", err)
-	}
-	cmds, _ = newACLTestCommands(
-		nestedACLError("no such command: access-group."),
-		nestedACLError("no such command: access-list."),
-	)
-	if err := cmds.RemovePermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
-		t.Fatalf("RemovePermitAllACLv6 на прошивке без v6-ACL: %v", err)
 	}
 }
 
@@ -254,7 +252,7 @@ func TestRemovePermitAllACL_ForeignRulesPresent_RemovesOnlyOurRule(t *testing.T)
 				"    permit ipv6 2001:db8::/32 ::/0",
 				"    permit ipv6 ::/0 ::/0", "!"},
 			remove: func(c *InterfaceCommands) error {
-				return c.RemovePermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0"))
+				return c.RemovePermitAllACLs(context.Background(), confirmed(t, "OpkgTun0"))
 			},
 			want: "no ipv6 access-list _WEBADMIN_OpkgTun0 permit ipv6 ::/0 ::/0",
 		},
@@ -330,17 +328,6 @@ func TestRemovePermitAllACL_V4NoSuchCommandSurfaces(t *testing.T) {
 	}
 }
 
-// v6-снятие нашей строки на прошивке без v6-ACL (#828) по-прежнему терпимо.
-func TestRemovePermitAllACLv6_ForeignRules_UnsupportedTolerated(t *testing.T) {
-	cmds, _ := newACLTestCommandsRC([]string{"ipv6 access-list _WEBADMIN_OpkgTun0",
-		"    permit ipv6 2001:db8::/32 ::/0",
-		"    permit ipv6 ::/0 ::/0", "!"},
-		nestedACLError("no such command: access-list."))
-	if err := cmds.RemovePermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
-		t.Fatalf("err = %v", err)
-	}
-}
-
 // F606 (П17): снятие permit-all решается по тройке (bound, listed,
 // auto-delete) из одного свежего running-config. Формы блоков — дословно со
 // стенда (Task 59, П5, 5.01.C.6): unbind без привязки даёт E `argument parse
@@ -358,7 +345,12 @@ var (
 		}}
 	aclV6 = aclFamily{"v6", "ipv6 access-group", "ipv6 access-list _WEBADMIN_OpkgTun15", permitAllRuleV6,
 		func(c *InterfaceCommands, i query.Confirmed) error {
-			return c.RemovePermitAllACLv6(context.Background(), i)
+			// Публичного «только v6» нет; дерево читается так же, как в RemovePermitAllACLs.
+			lines, err := c.freshACLTree(context.Background(), i.Name())
+			if err != nil {
+				return err
+			}
+			return c.removePermitAll(context.Background(), i.Name(), lines, permitV6)
 		}}
 )
 
@@ -493,10 +485,46 @@ func TestRemovePermitAllACL_ReadsFreshTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	setRC(rcIface(aclV6, false))
-	if err := cmds.RemovePermitAllACLv6(context.Background(), confirmed(t, "OpkgTun15")); err != nil {
+	if err := cmds.RemovePermitAllACLs(context.Background(), confirmed(t, "OpkgTun15")); err != nil {
 		t.Fatalf("снятие: %v", err)
 	}
 	if len(poster.parses) != 0 {
 		t.Fatalf("решение по устаревшему кэшу: %v", poster.parses)
+	}
+}
+
+// Снятие обоих семейств — одно чтение running-config (≈89 тиков ndm) на оба;
+// решение по нему верное для обоих (v4-POST'ы v6-блоков не меняют).
+// Мутация: RemovePermitAllACLs читает дерево на каждое семейство → 2, красный.
+func TestRemovePermitAllACLs_OneFetchBothFamilies(t *testing.T) {
+	cmds, poster := newACLTestCommandsRC(nil)
+	fg := query.NewFakeGetter()
+	body, _ := json.Marshal(map[string]any{"message": append(append(rcIface(aclV4, true), "    ipv6 access-group _WEBADMIN_OpkgTun15 in"),
+		append(rcList(aclV4, true), rcList(aclV6, true)...)...)})
+	fg.SetJSON("/show/running-config", string(body))
+	cmds.queries.RunningConfig = query.NewRunningConfigStore(fg, query.NopLogger())
+	if err := cmds.RemovePermitAllACLs(context.Background(), confirmed(t, "OpkgTun15")); err != nil {
+		t.Fatalf("снятие: %v", err)
+	}
+	if n := fg.Calls("/show/running-config"); n != 1 {
+		t.Fatalf("чтений running-config = %d, ждали 1", n)
+	}
+	if want := []string{aclV4.unbindCmd(), aclV6.unbindCmd()}; !slices.Equal(poster.parses, want) {
+		t.Fatalf("parses = %v, ждали %v", poster.parses, want)
+	}
+}
+
+// Провал v4 не мешает снять v6; наружу — ошибка v4.
+// Мутация: вернуть ошибку v4 до v6 → v6-unbind не уходит, красный.
+func TestRemovePermitAllACLs_V4FailureStillRemovesV6(t *testing.T) {
+	rc := append(append(rcIface(aclV4, true), "    ipv6 access-group _WEBADMIN_OpkgTun15 in"),
+		append(rcList(aclV4, true), rcList(aclV6, true)...)...)
+	cmds, poster := newACLTestCommandsRC(rc, nestedACLError("access list is in use"))
+	err := cmds.RemovePermitAllACLs(context.Background(), confirmed(t, "OpkgTun15"))
+	if err == nil || !strings.Contains(err.Error(), "access list is in use") {
+		t.Fatalf("err = %v", err)
+	}
+	if want := []string{aclV4.unbindCmd(), aclV6.unbindCmd()}; !slices.Equal(poster.parses, want) {
+		t.Fatalf("parses = %v, ждали %v", poster.parses, want)
 	}
 }

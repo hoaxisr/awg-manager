@@ -174,8 +174,8 @@ func (a confirmingOpkgTun) SetPermitAllACLv6(ctx context.Context, name string) e
 	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.SetPermitAllACLv6(ctx, c) })
 }
 
-func (a confirmingOpkgTun) RemovePermitAllACLv6(ctx context.Context, name string) error {
-	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.RemovePermitAllACLv6(ctx, c) })
+func (a confirmingOpkgTun) RemovePermitAllACLs(ctx context.Context, name string) error {
+	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.RemovePermitAllACLs(ctx, c) })
 }
 
 // confirmingDefaultRoute — router.DefaultRouteProvider.

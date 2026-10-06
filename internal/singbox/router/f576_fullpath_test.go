@@ -157,14 +157,11 @@ func (o *oracleOpkg) InterfaceDown(ctx context.Context, name string) error {
 func (o *oracleOpkg) SetPermitAllACL(ctx context.Context, name string) error {
 	return o.set(ctx, name, func(c query.Confirmed) error { return o.cmds.Interfaces.SetPermitAllACL(ctx, c) })
 }
-func (o *oracleOpkg) RemovePermitAllACL(ctx context.Context, name string) error {
-	return o.teardown(ctx, name, func(c query.Confirmed) error { return o.cmds.Interfaces.RemovePermitAllACL(ctx, c) })
-}
 func (o *oracleOpkg) SetPermitAllACLv6(ctx context.Context, name string) error {
 	return o.set(ctx, name, func(c query.Confirmed) error { return o.cmds.Interfaces.SetPermitAllACLv6(ctx, c) })
 }
-func (o *oracleOpkg) RemovePermitAllACLv6(ctx context.Context, name string) error {
-	return o.teardown(ctx, name, func(c query.Confirmed) error { return o.cmds.Interfaces.RemovePermitAllACLv6(ctx, c) })
+func (o *oracleOpkg) RemovePermitAllACLs(ctx context.Context, name string) error {
+	return o.teardown(ctx, name, func(c query.Confirmed) error { return o.cmds.Interfaces.RemovePermitAllACLs(ctx, c) })
 }
 
 // DefaultRouteProvider по тем же правилам подтверждения.

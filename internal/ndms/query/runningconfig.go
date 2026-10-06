@@ -69,15 +69,33 @@ func (s *RunningConfigStore) GlobalEgressInterfaces(ctx context.Context) ([]stri
 	return out, nil
 }
 
+// aclFamily — пространство списков NDMS: у IPv6 своё (`ipv6 access-list`,
+// `ipv6 access-group`), имена с v4 не пересекаются. Тип неэкспортирован, значения —
+// только ACLv4/ACLv6: опечатка семейства у вызывающего не компилируется.
+type aclFamily uint8
+
+const (
+	ACLv4 aclFamily = iota + 1
+	ACLv6
+)
+
+// keyword — первое слово строки привязки: `ip access-group` / `ipv6 access-group`.
+func (f aclFamily) keyword() string {
+	if f == ACLv6 {
+		return "ipv6"
+	}
+	return "ip"
+}
+
 // InterfaceAccessGroupsOf — имена списков, привязанных к интерфейсу строками
-// `<family> access-group <name> in` внутри блока `interface <iface>`, в порядке
+// `<ip|ipv6> access-group <name> in` внутри блока `interface <iface>`, в порядке
 // появления — это порядок привязки и порядок джампов в _NDM_ACL_IN (стенд
-// 5.01, 2026-09-05). family — «ip» (v4) или «ipv6»: у NDMS под IPv6 своё
-// пространство списков, и привязка печатается `ipv6 access-group <name> in`
-// (стенд 5.01.C.6, Task 59 П5). Форма `no ip access-group …` не совпадает по
-// построению: сравнение идёт с начала строки после TrimSpace. Разбор по готовым
-// строкам — для вызывающих без стора (адаптеры cmd).
-func InterfaceAccessGroupsOf(lines []string, iface, family string) []string {
+// 5.01, 2026-09-05). Семейство выбирает пространство: v6-привязка печатается
+// `ipv6 access-group <name> in` (стенд 5.01.C.6, Task 59 П5). Форма
+// `no ip access-group …` не совпадает по построению: сравнение идёт с начала
+// строки после TrimSpace. Разбор по готовым строкам — для вызывающих без стора
+// (адаптеры cmd).
+func InterfaceAccessGroupsOf(lines []string, iface string, family aclFamily) []string {
 	out := []string{}
 	in := false
 	for _, raw := range lines {
@@ -93,7 +111,7 @@ func InterfaceAccessGroupsOf(lines []string, iface, family string) []string {
 			continue
 		}
 		f := strings.Fields(trimmed)
-		if len(f) == 4 && f[0] == family && f[1] == "access-group" && f[3] == "in" {
+		if len(f) == 4 && f[0] == family.keyword() && f[1] == "access-group" && f[3] == "in" {
 			out = append(out, f[2])
 		}
 	}
@@ -177,7 +195,7 @@ func (s *RunningConfigStore) InterfaceAccessGroups(ctx context.Context, iface st
 	if err != nil {
 		return nil, err
 	}
-	return InterfaceAccessGroupsOf(lines, iface, "ip"), nil
+	return InterfaceAccessGroupsOf(lines, iface, ACLv4), nil
 }
 
 type rcResp struct {

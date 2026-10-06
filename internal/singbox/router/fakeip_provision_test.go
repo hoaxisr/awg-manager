@@ -24,9 +24,8 @@ func (fakeOpkgTunProvisioner) SetAddress(context.Context, string, string, string
 func (fakeOpkgTunProvisioner) SetIPv6Address(context.Context, string, string) error { return nil }
 func (fakeOpkgTunProvisioner) ClearAddress(context.Context, string) error           { return nil }
 func (fakeOpkgTunProvisioner) SetPermitAllACL(context.Context, string) error        { return nil }
-func (fakeOpkgTunProvisioner) RemovePermitAllACL(context.Context, string) error     { return nil }
 func (fakeOpkgTunProvisioner) SetPermitAllACLv6(context.Context, string) error      { return nil }
-func (fakeOpkgTunProvisioner) RemovePermitAllACLv6(context.Context, string) error   { return nil }
+func (fakeOpkgTunProvisioner) RemovePermitAllACLs(context.Context, string) error    { return nil }
 func (fakeOpkgTunProvisioner) ClearIPv6Address(context.Context, string) error       { return nil }
 func (fakeOpkgTunProvisioner) SetMTU(context.Context, string, int) error            { return nil }
 func (fakeOpkgTunProvisioner) InterfaceUp(context.Context, string) error            { return nil }

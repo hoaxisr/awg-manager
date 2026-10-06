@@ -150,9 +150,9 @@ func (r *PermitAbsent) Apply(ctx context.Context, s proxyrt.Step) error {
 	switch s.Op {
 	case "remove-acl":
 		if err := r.cmds.RemovePermitAllACL(ctx, name); err != nil {
-			// Снятие best-effort по замыслу команды (acl.go: auto-delete мог уже
-			// каскадировать список после unbind). Если привязки больше нет —
-			// цель достигнута, отказ второй половины команды не считается.
+			// Команда решает по свежему running-config (F606), но между чтением
+			// и POST привязку может снять кто-то ещё. Если привязки больше нет —
+			// цель достигнута, отказ не считается.
 			if has, qerr := r.q.HasPermitAllACL(ctx, name); qerr == nil && !has {
 				return nil
 			}
