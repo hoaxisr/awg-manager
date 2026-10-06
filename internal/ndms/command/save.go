@@ -65,6 +65,12 @@ const (
 	// Base/L3Base (dn3-round2-evidence.md §3: 20/33 против 0/12 вне окна;
 	// под нагрузкой хвост разбора 2–3 с).
 	SaveAfterRemoval = 5 * time.Second
+	// uptimeTick — разрешение /proc/uptime (сотые): t0 усечён вниз до тика,
+	// настоящий момент POST лежит в [t0, t0+uptimeTick). Событие с raise в
+	// этом окне может быть чужим сохранением, законченным ДО нашего POST, —
+	// полёт закрывает только raise ≥ t0+uptimeTick (L2 финального ревью
+	// F595). Наше событие — не раньше POST + 4 с записи (К42).
+	uptimeTick = 0.01
 )
 
 // SaveCoordinator debounces flash-write Save requests into a single POST
@@ -112,6 +118,10 @@ type SaveCoordinator struct {
 	deferred      bool          // fire отложен удержанием — release перевзведёт
 	lastRemovalAt time.Time
 	busUp         bool
+	// fallbackWarned — Warn «конец сохранения не виден» уже записан за это
+	// отключение шины: без сокета он был бы на каждое сохранение (L7).
+	// Сбрасывает подключение.
+	fallbackWarned bool
 	observer      func(deferred bool)
 	// Эпохи (Н10b): requested растёт на каждом Request, saved — значение
 	// requested на момент POST полёта, закрытого событием или потолком.
@@ -275,9 +285,20 @@ func (s *SaveCoordinator) Request() {
 }
 
 // OnConfigurationSaved — событие шины: закрывает наш полёт, если оно не
-// раньше нашего POST (raise ≥ t0 > 0). Чужое сохранение, склеенное ndm с
-// нашим, тоже его закрывает — запись тогда действительно окончена. O(1) под
-// mu: зовётся из горутины чтения шины.
+// раньше нашего POST (raise ≥ t0+uptimeTick, t0 > 0). Чужое сохранение,
+// склеенное ndm с нашим, тоже его закрывает — запись тогда действительно
+// окончена. O(1) под mu: зовётся из горутины чтения шины.
+//
+// Остаток D-N3 по дизайну (L1 финального ревью F595): событие не несёт
+// источника сохранения, а чужие сохранения (веб-морда, RMM ~раз в 25 мин)
+// координатор не видит и не держит. (1) Чужое сохранение, стартовавшее ≤4 с
+// после нашего `no interface`, ловит недоразобранную запись — пауза
+// SaveAfterRemoval держит только наше. (2) Чужой POST раньше нашего: если ndm
+// ставит наш в очередь, а не склеивает, событие чужой записи (raise ≥ t0)
+// закроет наш полёт до конца нашей записи, и удержание сноса пройдёт рано.
+// Склейка доказана при 0,5 с между POST (П7(4)); при ~3 с внутри 4-секундной
+// записи — не проверена (пункт приёмки Task 70). Закрыть ни то ни другое
+// нечем: сигнала «чья запись» нет ни на шине, ни в хуках.
 func (s *SaveCoordinator) OnConfigurationSaved(raise float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -285,7 +306,7 @@ func (s *SaveCoordinator) OnConfigurationSaved(raise float64) {
 	if f == nil || f.done || f.unknown {
 		return
 	}
-	if raise >= f.t0 {
+	if raise >= f.t0+uptimeTick {
 		s.completeLocked(f)
 	}
 }
@@ -298,8 +319,12 @@ func (s *SaveCoordinator) OnBusState(connected bool) {
 	defer s.mu.Unlock()
 	was := s.busUp
 	s.busUp = connected
+	if connected {
+		s.fallbackWarned = false
+	}
 	if was && !connected {
 		s.log.Warnf("шина событий ndm отключена: конец сохранения не виден, каждое сохранение ждёт %s", s.fallback)
+		s.fallbackWarned = true
 	}
 	if f := s.cur; !connected && f != nil && !f.done && !f.unknown {
 		f.unknown = true
@@ -398,13 +423,17 @@ func (s *SaveCoordinator) openFlightLocked() *saveFlight {
 
 // armFallbackLocked — закрыть unknown-полёт через fallback от POST.
 // Отрицательная задержка (срок прошёл) — AfterFunc стреляет сразу (Н5).
+// Warn — один на отключение шины (fallbackWarned), а не на каждое сохранение.
 func (s *SaveCoordinator) armFallbackLocked(f *saveFlight) {
 	d := time.Until(f.openedAt.Add(s.fallback))
 	f.timers = append(f.timers, time.AfterFunc(d, func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if !f.done {
-			s.log.Warnf("конец сохранения не виден (шина ndm не подключена) — считается законченным через %s", s.fallback)
+			if !s.fallbackWarned {
+				s.fallbackWarned = true
+				s.log.Warnf("конец сохранения не виден (шина ndm не подключена или uptime не прочитан) — сохранения считаются законченными через %s после POST", s.fallback)
+			}
 			s.completeLocked(f)
 		}
 	}))

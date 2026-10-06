@@ -182,9 +182,11 @@ func (s *SaveCoordinator) holdsNow() int {
 	return s.holds
 }
 
-// Полёт закрывает только событие не раньше POST (raise ≥ t0).
-// Мутация: закрывать по любому событию → удержание проходит по raise 99, красный.
-func TestSave_FlightClosesOnEventAtOrAfterPost(t *testing.T) {
+// Полёт закрывает только событие не раньше POST: t0 усечён до тика
+// /proc/uptime, поэтому raise в [t0, t0+тик) — возможно, до POST (L2).
+// Мутации: закрывать по любому событию → проходит по 99,5, красный;
+// raise ≥ t0 без тика → проходит по 100 и 100,005, красный.
+func TestSave_FlightClosesOnEventAfterPostTick(t *testing.T) {
 	p := &flightPoster{}
 	sc := newFlightSC(t, p)
 	sc.Request()
@@ -193,8 +195,12 @@ func TestSave_FlightClosesOnEventAtOrAfterPost(t *testing.T) {
 	ch := holdAsync(sc, context.Background())
 	sc.OnConfigurationSaved(99.5) // чужое сохранение до нашего POST
 	requireBlocked(t, ch, 50*time.Millisecond, "событие раньше POST")
-	sc.OnConfigurationSaved(100)
-	requirePassed(t, ch, time.Second, "событие в момент POST")
+	sc.OnConfigurationSaved(100) // равенство t0: момент POST мог быть позже
+	requireBlocked(t, ch, 30*time.Millisecond, "событие в t0")
+	sc.OnConfigurationSaved(100.005)
+	requireBlocked(t, ch, 30*time.Millisecond, "событие внутри тика t0")
+	sc.OnConfigurationSaved(100.02)
+	requirePassed(t, ch, time.Second, "событие после тика t0")
 }
 
 // Удержание ждёт полёт и проходит по его событию.
@@ -224,6 +230,40 @@ func TestSave_FlightCapWarn(t *testing.T) {
 	requirePassed(t, holdAsync(sc, context.Background()), time.Second, "потолок")
 	if msgs := w.all(); len(msgs) != 1 || !strings.Contains(msgs[0], "ConfigurationSaved") {
 		t.Fatalf("Warn %q", msgs)
+	}
+}
+
+// L7: без шины Warn «конец сохранения не виден» — один на отключение, а не
+// на каждое сохранение; подключение сбрасывает, обрыв пишет свой Warn и
+// fallback-закрытия после него молчат.
+// Мутация: Warn на каждое fallback-закрытие → 3 + 3 строк, красный.
+func TestSave_NoBus_WarnOncePerDisconnect(t *testing.T) {
+	p := &flightPoster{}
+	sc := NewSaveCoordinator(p, nil, 0, time.Hour, 0, nil) // шина ни разу не подключалась
+	sc.SetSaveTimings(5*time.Second, 5*time.Millisecond, 0)
+	sc.SetUptimeReader(func() float64 { return 100 })
+	t.Cleanup(func() { drainSC(t, sc) })
+	w := &warnRec{}
+	sc.SetLogger(w)
+	flush := func() {
+		t.Helper()
+		if err := sc.Flush(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		flush()
+	}
+	if msgs := w.all(); len(msgs) != 1 {
+		t.Fatalf("Warn без шины за 3 сохранения: %q, ждали один", msgs)
+	}
+	sc.OnBusState(true)
+	sc.OnBusState(false)
+	for i := 0; i < 3; i++ {
+		flush()
+	}
+	if msgs := w.all(); len(msgs) != 2 || !strings.Contains(msgs[1], "шина событий ndm отключена") {
+		t.Fatalf("Warn после переподключения и обрыва: %q, ждали один об обрыве", msgs)
 	}
 }
 
