@@ -900,3 +900,75 @@ func TestInterfaceListPath_OnlyInFetchListMap(t *testing.T) {
 		t.Errorf("%s больше не читает список — поправить listPathSite", listPathSite)
 	}
 }
+
+// TestUpPayload_OnlyInSetUp — команда `interface X up:<up>` (и прежняя форма
+// `down`) в прод-коде собирается ровно в двух местах: command-форма в
+// mutator.go:setUp и payloads-форма в payloads.CmdInterfaceUp, которую зовёт
+// только nwg postUpBatch. Оба места выдают кредит своей грани conf
+// (ExpectConf): `up` мимо них дал бы грань без кредита — своя пришла бы
+// чужой, а no-op следующей команды по устаревшей карте получил бы висящий
+// кредит (R68-1). Счётчики ровно по одному — иначе сканер не видит форм.
+// Мутация: `"up": true` в настройках proxyPayload или rciConfigureServer →
+// красный.
+func TestUpPayload_OnlyInSetUp(t *testing.T) {
+	allowed := map[string]bool{
+		"internal/ndms/command/mutator.go:setUp":            true,
+		"internal/ndms/payloads/commands.go:CmdInterfaceUp": true,
+	}
+	sites := map[string]int{}
+	for _, f := range prodGoFiles(t, true) {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, f.rel, f.data, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("разбор %s: %v", f.rel, err)
+		}
+		for _, decl := range file.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Body == nil {
+				continue
+			}
+			key := filepath.ToSlash(f.rel) + ":" + fd.Name.Name
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				kv, ok := n.(*ast.KeyValueExpr)
+				if !ok || !isStringLit(kv.Key, "interface") {
+					return true
+				}
+				inner, ok := kv.Value.(*ast.CompositeLit)
+				if !ok {
+					return true
+				}
+				bodies := []*ast.CompositeLit{inner} // payloads-форма {"name":X,"up":…}
+				for _, el := range inner.Elts {      // command-форма {X:{"up":…}}
+					if e, ok := el.(*ast.KeyValueExpr); ok {
+						if body, ok := e.Value.(*ast.CompositeLit); ok {
+							bodies = append(bodies, body)
+						}
+					}
+				}
+				for _, body := range bodies {
+					for _, el := range body.Elts {
+						e, ok := el.(*ast.KeyValueExpr)
+						if !ok || !(isStringLit(e.Key, "up") || isStringLit(e.Key, "down")) {
+							continue
+						}
+						sites[key]++
+						if !allowed[key] {
+							t.Errorf("%s: %s: `up`/`down` интерфейса вне setUp/CmdInterfaceUp — грань без кредита",
+								fset.Position(e.Pos()), key)
+						}
+					}
+				}
+				return true
+			})
+		}
+	}
+	for key := range allowed {
+		if sites[key] != 1 {
+			t.Errorf("%s: `up` %d раз, ждали ровно один — сканер не видит формы", key, sites[key])
+		}
+	}
+	const batchSite = "internal/tunnel/nwg/operator.go:postUpBatch"
+	if calls := prodCalls(t, "CmdInterfaceUp"); len(calls) != 1 || !strings.HasPrefix(calls[0], batchSite+" @") {
+		t.Errorf("CmdInterfaceUp вызывается %v, ждали ровно один раз в %s", calls, batchSite)
+	}
+}

@@ -51,8 +51,12 @@ func TestProxyCommands_CreateProxy_SOCKS5(t *testing.T) {
 	if proxy["socks5-udp"] != true {
 		t.Errorf("socks5-udp: %v", proxy["socks5-udp"])
 	}
-	if iface["up"] != true {
-		t.Errorf("up: %v", iface["up"])
+	if _, ok := iface["up"]; ok {
+		t.Errorf("up в настройках: %v (только единым путём setUp, R68-1)", iface["up"])
+	}
+	up := p0(t, poster.Payloads()[2])
+	if len(up) != 1 || up["up"] != true {
+		t.Errorf("up отдельной командой: %v", up)
 	}
 }
 
@@ -120,16 +124,18 @@ func TestProxyCommands_ProxyUp(t *testing.T) {
 	}
 }
 
-func TestProxyCommands_ProxyDown_UsesDownKey(t *testing.T) {
+// R68-1: ProxyDown — `up:false` единым путём setUp (форма `down:true`
+// снята; равнозначность для Proxy — проверка стенда Task 70).
+func TestProxyCommands_ProxyDown_UsesUpFalse(t *testing.T) {
 	cmds, poster, _ := newTestProxyCommands(t)
 	_ = cmds.ProxyDown(context.Background(), confirmed(t, "Proxy0"))
 	p := poster.Payloads()[0].(map[string]any)
 	iface := p["interface"].(map[string]any)["Proxy0"].(map[string]any)
-	if iface["down"] != true {
-		t.Errorf("down: %v", iface["down"])
+	if iface["up"] != false {
+		t.Errorf("up: %v", iface["up"])
 	}
-	if _, ok := iface["up"]; ok {
-		t.Errorf("up must be absent")
+	if _, ok := iface["down"]; ok {
+		t.Errorf("down must be absent")
 	}
 }
 
@@ -280,4 +286,27 @@ func TestCreateProxy_LeftOnRouter(t *testing.T) {
 		}
 	})
 
+}
+
+// R68-1: ProxyUp/ProxyDown — единым путём setUp: no-op кредита не даёт,
+// действующая команда — ровно один. Мутации: «ProxyDown сырым POST» →
+// кредита disabled нет, красный; «кредит всегда» → no-op up даёт кредит,
+// красный.
+func TestProxyUpDown_ConfCreditOnlyWhenEffective(t *testing.T) {
+	ctx := context.Background()
+	cmds, _, q := newOracleCommands(t, nil, ndms.Interface{ID: "Proxy0", Type: "Proxy", ConfLayer: "running"})
+	c, _, _, err := q.Interfaces.Confirm(ctx, "Proxy0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := func(level string) bool { return q.Interfaces.ClaimOwnConf("Proxy0", level) }
+	if err := cmds.Proxies.ProxyUp(ctx, c); err != nil || claim("running") {
+		t.Fatalf("no-op up: err=%v или выдан кредит", err)
+	}
+	if err := cmds.Proxies.ProxyDown(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if !claim("disabled") || claim("disabled") {
+		t.Fatal("действующий down: ждали ровно один кредит disabled")
+	}
 }

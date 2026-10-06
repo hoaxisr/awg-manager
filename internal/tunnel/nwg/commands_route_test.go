@@ -121,3 +121,35 @@ func TestNwg_Stop_ConfCredit(t *testing.T) {
 		}
 	}
 }
+
+// R68-2: NDMS применяет батч поэлементно — кредит грани conf снимается, только
+// если отказал сам `up` или ответа нет (применение неизвестно); отказ соседнего
+// элемента кредит оставляет. Мутация «снимать при любой ошибке батча» →
+// «отказал сосед» без кредита, красный; «никогда не снимать» → «отказал up»
+// с кредитом, красный.
+func TestNwg_PostUpBatch_CreditByUpElement(t *testing.T) {
+	for _, tc := range []struct {
+		name, resp string
+		keep       bool
+	}{
+		{"отказал сосед", `[{"status":"error","message":"bad endpoint"},{}]`, true},
+		{"отказал up", `[{},{"status":"error","message":"busy"}]`, false},
+		{"ответ не разобран", `not json`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, _, _, _, srv := newLifecycleOperator(t, false, false)
+			ctx := context.Background()
+			iface, _, ok, err := o.queries.Interfaces.Confirm(ctx, "Wireguard0")
+			if err != nil || !ok {
+				t.Fatalf("confirm: ok=%v err=%v", ok, err)
+			}
+			srv.respond = func(string) (string, bool) { return tc.resp, true }
+			if _, err := o.postUpBatch(ctx, iface, true, []any{map[string]any{"x": 1}}); err == nil {
+				t.Fatal("отказ батча принят")
+			}
+			if got := o.queries.Interfaces.ClaimOwnConf("Wireguard0", "running"); got != tc.keep {
+				t.Fatalf("кредит running = %v, want %v", got, tc.keep)
+			}
+		})
+	}
+}

@@ -314,7 +314,8 @@ func TestEnsureProxy_RenameByOldDescription(t *testing.T) {
 	if err := pm.EnsureProxy(ctx, 4, 1084, "t", "t"); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.Posts[posts:]; len(got) != 2 || got[0] != `{"interface":{"Proxy4":{}}}` || !strings.Contains(got[1], `"description":"t"`) {
+	if got := f.Posts[posts:]; len(got) != 3 || got[0] != `{"interface":{"Proxy4":{}}}` || !strings.Contains(got[1], `"description":"t"`) ||
+		got[2] != `{"interface":{"Proxy4":{"up":true}}}` {
 		t.Fatalf("команды: %v", got)
 	}
 	if f.E != 0 || f.Phantoms != 0 {

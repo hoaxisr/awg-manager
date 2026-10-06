@@ -28,6 +28,27 @@ func newMutator(p Poster, s *SaveCoordinator, q *query.Queries) ndmsMutator {
 	return ndmsMutator{poster: p, save: s, queries: q}
 }
 
+// setUp — ЕДИНСТВЕННЫЙ путь команды `interface X up:<up>` в группах команд
+// (сканер TestUpPayload_OnlyInSetUp; nwg шлёт `up` батчем через свой
+// postUpBatch): кредит своей грани conf до POST (ExpectConf, только
+// действующей команды — П8), отказ — кредит назад. Карту помечает грязной
+// после POST на обоих путях; invalidators — сверх того.
+func (m *ndmsMutator) setUp(ctx context.Context, iface query.Confirmed, up bool, opDesc string, invalidators ...func()) error {
+	name := iface.Name()
+	refused := m.queries.Interfaces.ExpectConf(name, up)
+	payload := map[string]any{
+		"interface": map[string]any{
+			name: map[string]any{"up": up},
+		},
+	}
+	err := postMutationChecked(ctx, m.poster, m.save, payload, opDesc,
+		append([]func(){func() { m.queries.Interfaces.Invalidate(name) }}, invalidators...)...)
+	if err != nil {
+		refused()
+	}
+	return err
+}
+
 // confirmCreated подтверждает только что созданный интерфейс name
 // (query.ConfirmCreated: ограниченное ожидание записи в свежем списке, F584).
 // Записи так и нет, а создание доказано ответом NDMS (created:

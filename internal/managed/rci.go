@@ -118,9 +118,10 @@ func (s *Service) rciDeleteInterface(ctx context.Context, iface query.Confirmed)
 	return nil
 }
 
-// rciConfigureServer sets all server interface properties in a single RCI call.
+// rciConfigureServer sets all server interface properties in a single RCI call,
+// затем up — отдельной командой единого пути (rciInterfaceUp, R68-1).
 func (s *Service) rciConfigureServer(ctx context.Context, iface query.Confirmed, description, address, mask string, port, mtu int) error {
-	return s.rciPost(ctx, map[string]interface{}{
+	if err := s.rciPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			iface.Name(): map[string]interface{}{
 				"description": description,
@@ -145,10 +146,13 @@ func (s *Service) rciConfigureServer(ctx context.Context, iface query.Confirmed,
 						},
 					},
 				},
-				"up": true,
 			},
 		},
-	}, iface)
+	}, iface); err != nil {
+		return err
+	}
+	// up — отдельной командой единого пути (кредит своей грани conf, R68-1).
+	return s.rciInterfaceUp(ctx, iface)
 }
 
 // updateServerChanges holds the optional set of mutations rciUpdateServer
@@ -355,26 +359,36 @@ func (s *Service) rciClearHotspotPolicy(ctx context.Context, iface query.Confirm
 	}, iface)
 }
 
-// rciInterfaceUp brings the interface up.
+// rciInterfaceUp brings the interface up единым путём команд (setUp:
+// кредит своей грани conf, R68-1); кэши managed — как у rciPost.
 func (s *Service) rciInterfaceUp(ctx context.Context, iface query.Confirmed) error {
-	return s.rciPost(ctx, map[string]interface{}{
-		"interface": map[string]interface{}{
-			iface.Name(): map[string]interface{}{
-				"up": true,
-			},
-		},
-	}, iface)
+	return s.rciSetUp(ctx, iface, true)
 }
 
-// rciInterfaceDown brings the interface down.
+// rciInterfaceDown brings the interface down. См. rciInterfaceUp.
 func (s *Service) rciInterfaceDown(ctx context.Context, iface query.Confirmed) error {
-	return s.rciPost(ctx, map[string]interface{}{
-		"interface": map[string]interface{}{
-			iface.Name(): map[string]interface{}{
-				"up": false,
-			},
-		},
-	}, iface)
+	return s.rciSetUp(ctx, iface, false)
+}
+
+func (s *Service) rciSetUp(ctx context.Context, iface query.Confirmed, up bool) error {
+	if s.commands == nil || s.commands.Interfaces == nil {
+		return fmt.Errorf("ndms commands not wired")
+	}
+	if iface.Name() == "" {
+		return fmt.Errorf("managed rci: команда без подтверждённого интерфейса")
+	}
+	set := s.commands.Interfaces.InterfaceDown
+	if up {
+		set = s.commands.Interfaces.InterfaceUp
+	}
+	err := set(ctx, iface)
+	for _, inv := range s.rciInvalidators() {
+		inv()
+	}
+	if err != nil {
+		s.sysLog().Warn("managed rci post failed", "error", err)
+	}
+	return err
 }
 
 // rciAddPeer adds a peer with all parameters in a single RCI call.

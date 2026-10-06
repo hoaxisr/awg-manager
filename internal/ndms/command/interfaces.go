@@ -324,33 +324,12 @@ func (c *InterfaceCommands) ClearDNSByKernelName(ctx context.Context, name strin
 // events.Dispatcher invalidates RunningConfig on iflayerchanged hooks,
 // which fire on every interface up/down.
 func (c *InterfaceCommands) InterfaceUp(ctx context.Context, iface query.Confirmed) error {
-	return c.setUp(ctx, iface, true)
+	name := iface.Name()
+	return c.setUp(ctx, iface, true, "interface up "+name, func() { c.queries.Peers.Invalidate(name) })
 }
 
 // InterfaceDown brings the interface administratively down. См. InterfaceUp.
 func (c *InterfaceCommands) InterfaceDown(ctx context.Context, iface query.Confirmed) error {
-	return c.setUp(ctx, iface, false)
-}
-
-// setUp — `interface X up:<up>`: кредит своей грани conf до POST
-// (ExpectConf, только действующей команды), отказ — кредит назад.
-func (c *InterfaceCommands) setUp(ctx context.Context, iface query.Confirmed, up bool) error {
 	name := iface.Name()
-	op := "interface down "
-	if up {
-		op = "interface up "
-	}
-	refused := c.queries.Interfaces.ExpectConf(name, up)
-	payload := map[string]any{
-		"interface": map[string]any{
-			name: map[string]any{"up": up},
-		},
-	}
-	err := postMutationChecked(ctx, c.poster, c.save, payload, op+name,
-		func() { c.queries.Interfaces.Invalidate(name) },
-		func() { c.queries.Peers.Invalidate(name) })
-	if err != nil {
-		refused()
-	}
-	return err
+	return c.setUp(ctx, iface, false, "interface down "+name, func() { c.queries.Peers.Invalidate(name) })
 }

@@ -86,12 +86,17 @@ func (c *ProxyCommands) leftConfigured(ctx context.Context, name string, err err
 }
 
 // ConfigureProxy пишет настройки подтверждённого ProxyN: description,
-// upstream socks5, ip global, up. Владение записью проверяет вызывающий.
+// upstream socks5, ip global, затем up — отдельной командой единого пути
+// setUp (кредит своей грани conf, R68-1). Владение записью проверяет
+// вызывающий.
 func (c *ProxyCommands) ConfigureProxy(ctx context.Context, iface query.Confirmed, description, upstreamHost string, upstreamPort int, socks5UDP bool) error {
 	name := iface.Name()
-	return postMutationChecked(ctx, c.poster, c.save, proxyPayload(name, description, upstreamHost, upstreamPort, socks5UDP), "configure proxy "+name,
+	if err := postMutationChecked(ctx, c.poster, c.save, proxyPayload(name, description, upstreamHost, upstreamPort, socks5UDP), "configure proxy "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
-		c.queries.RunningConfig.InvalidateAll)
+		c.queries.RunningConfig.InvalidateAll); err != nil {
+		return err
+	}
+	return c.ProxyUp(ctx, iface)
 }
 
 func proxyPayload(name, description, upstreamHost string, upstreamPort int, socks5UDP bool) map[string]any {
@@ -111,7 +116,6 @@ func proxyPayload(name, description, upstreamHost string, upstreamPort int, sock
 				"description": description,
 				"proxy":       proxy,
 				"ip":          map[string]any{"global": map[string]any{"auto": true}},
-				"up":          true,
 			},
 		},
 	}
@@ -123,24 +127,14 @@ func (c *ProxyCommands) DeleteProxy(ctx context.Context, iface query.Confirmed) 
 		c.queries.RunningConfig.InvalidateAll)
 }
 
+// ProxyUp — `up:true` единым путём setUp (кредит своей грани conf).
 func (c *ProxyCommands) ProxyUp(ctx context.Context, iface query.Confirmed) error {
-	name := iface.Name()
-	payload := map[string]any{
-		"interface": map[string]any{
-			name: map[string]any{"up": true},
-		},
-	}
-	return postMutationChecked(ctx, c.poster, c.save, payload, "proxy up "+name,
-		func() { c.queries.Interfaces.Invalidate(name) })
+	return c.setUp(ctx, iface, true, "proxy up "+iface.Name())
 }
 
+// ProxyDown — `up:false` единым путём setUp. Прежняя форма `{"down":true}`
+// заменена на `{"up":false}` (как InterfaceDown): П8 мерил грани conf именно
+// для `up:false`; равнозначность форм для Proxy — проверка стенда Task 70.
 func (c *ProxyCommands) ProxyDown(ctx context.Context, iface query.Confirmed) error {
-	name := iface.Name()
-	payload := map[string]any{
-		"interface": map[string]any{
-			name: map[string]any{"down": true},
-		},
-	}
-	return postMutationChecked(ctx, c.poster, c.save, payload, "proxy down "+name,
-		func() { c.queries.Interfaces.Invalidate(name) })
+	return c.setUp(ctx, iface, false, "proxy down "+iface.Name())
 }

@@ -11,6 +11,7 @@ import (
 	"crypto/ecdh"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -528,7 +529,6 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 	cmds := []any{
 		payloads.CmdWireguardPeerEndpoint(iface, pubkey, rciEndpoint),
 		payloads.CmdWireguardPeerConnect(iface, pubkey, stored.ISPInterface),
-		payloads.CmdInterfaceUp(iface, true),
 	}
 	if _, err := o.postUpBatch(ctx, iface, true, cmds); err != nil {
 		return fmt.Errorf("start native: %w", err)
@@ -652,7 +652,6 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 	cmds := []any{
 		payloads.CmdWireguardPeerEndpoint(iface, pubkey, proxyEndpoint),
 		payloads.CmdWireguardPeerConnect(iface, pubkey, stored.ISPInterface),
-		payloads.CmdInterfaceUp(iface, true),
 	}
 	if _, err := o.postUpBatch(ctx, iface, true, cmds); err != nil {
 		_ = o.kmod.RemoveTunnel(stored.ID)
@@ -734,13 +733,8 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 
 	o.appLog.Full("stop", stored.Name, "Interface down")
 
-	cmds := []any{
-		payloads.CmdInterfaceUp(iface, false),
-	}
-	refused := o.queries.Interfaces.ExpectConf(iface.Name(), false)
-	if _, err := o.postIfaceBatchSaved(ctx, iface, cmds); err != nil {
-		refused()
-	}
+	_, _ = o.postUpBatch(ctx, iface, false, nil)
+	o.commands.Save.Request() // на обоих путях, как postIfaceBatchSaved
 
 	// Clear DNS servers from the router's DNS proxy
 	if err := o.SyncDNS(ctx, iface, tunnel.ParseDNSList(stored.Interface.DNS), nil); err != nil {
@@ -891,15 +885,35 @@ func (o *OperatorNativeWG) postIfaceBatch(ctx context.Context, iface query.Confi
 	return res, err
 }
 
-// postUpBatch — postIfaceBatch с `up` в батче: кредит своей грани conf до
-// POST (ExpectConf, только действующей команды), отказ батча — кредит назад.
+// postUpBatch — батч cmds с `up` последним элементом: ЕДИНСТВЕННОЕ место
+// `up` в батчах nwg (сканер TestUpPayload_OnlyInSetUp). Кредит своей грани
+// conf — до POST (ExpectConf, только действующей команды); снимается, только
+// если `up` не применён или это неизвестно (upRefused, R68-2): NDMS применяет
+// батч поэлементно, и отказ соседнего элемента `up` не отменяет.
 func (o *OperatorNativeWG) postUpBatch(ctx context.Context, iface query.Confirmed, up bool, cmds []any) ([]json.RawMessage, error) {
 	refused := o.queries.Interfaces.ExpectConf(iface.Name(), up)
+	cmds = append(cmds, payloads.CmdInterfaceUp(iface, up))
 	res, err := o.postIfaceBatch(ctx, iface, cmds)
-	if err != nil {
+	if err != nil && upRefused(res, err, len(cmds)-1) {
 		refused()
 	}
 	return res, err
+}
+
+// upRefused — ошибка батча касается элемента up (индекс upIdx): ответа нет
+// (транспорт — применение неизвестно), ошибка не поэлементная, ответ короче
+// батча или среди отказов есть сам up.
+func upRefused(res []json.RawMessage, err error, upIdx int) bool {
+	var be *transport.BatchError
+	if res == nil || !errors.As(err, &be) || upIdx >= len(res) {
+		return true
+	}
+	for _, f := range be.Failures {
+		if f.Index == upIdx {
+			return true
+		}
+	}
+	return false
 }
 
 // postIfaceBatchSaved — postIfaceBatch, применённое которого обязано попасть в

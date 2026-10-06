@@ -128,7 +128,6 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 		cmds := []any{
 			payloads.CmdWireguardPeerEndpoint(iface, stored.Peer.PublicKey, loopback),
 			payloads.CmdWireguardPeerConnect(iface, stored.Peer.PublicKey, stored.ISPInterface),
-			payloads.CmdInterfaceUp(iface, true),
 		}
 		if _, err := o.postUpBatch(ctx, iface, true, cmds); err != nil {
 			_ = o.obf.Stop(stored.ID)

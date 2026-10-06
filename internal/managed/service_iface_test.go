@@ -100,3 +100,27 @@ func TestRciDeleteInterface_ViaCommands(t *testing.T) {
 		}
 	})
 }
+
+// R68-1: up/down managed — единым путём команд (setUp): no-op (слой карты уже
+// целевой) кредита не даёт, действующая команда — ровно один. Мутации:
+// «rciInterfaceDown сырым rciPost» → кредита disabled нет, красный; «кредит
+// всегда» (ExpectConf) → no-op up даёт кредит, красный.
+func TestRciSetUp_ConfCreditOnlyWhenEffective(t *testing.T) {
+	ctx := context.Background()
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", ConfLayer: "running"})
+	s := newServiceWithOracle(t, f, nil)
+	conf, _, ok, err := s.queries.Interfaces.Confirm(ctx, "Wireguard1")
+	if err != nil || !ok {
+		t.Fatalf("confirm: ok=%v err=%v", ok, err)
+	}
+	claim := func(level string) bool { return s.queries.Interfaces.ClaimOwnConf("Wireguard1", level) }
+	if err := s.rciInterfaceUp(ctx, conf); err != nil || claim("running") {
+		t.Fatalf("no-op up: err=%v или выдан кредит", err)
+	}
+	if err := s.rciInterfaceDown(ctx, conf); err != nil {
+		t.Fatal(err)
+	}
+	if !claim("disabled") || claim("disabled") {
+		t.Fatal("действующий down: ждали ровно один кредит disabled")
+	}
+}
