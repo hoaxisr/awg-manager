@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
 )
@@ -20,8 +23,11 @@ type fakeOrphanNDMS struct {
 	stopped    []string // StopIfPresent: устройство снято
 	stopErr    error
 	replaceErr error
-	downErr    error
-	calls      []string // все шаги по порядку
+	// replaceGone — подмена сорвалась после del: устройство снято (каталог
+	// в временном netdev.SysClassNet удаляется), tun не встал.
+	replaceGone bool
+	downErr     error
+	calls       []string // все шаги по порядку
 }
 
 func (f *fakeOrphanNDMS) InterfaceDownIfUp(_ context.Context, name string) error {
@@ -40,7 +46,31 @@ func (f *fakeOrphanNDMS) StopIfPresent(_ context.Context, iface string) error {
 
 func (f *fakeOrphanNDMS) ReplaceWithTun(_ context.Context, iface string) error {
 	f.calls = append(f.calls, "replace "+iface)
+	if f.replaceGone {
+		_ = os.Remove(filepath.Join(netdev.SysClassNet, iface))
+	}
 	return f.replaceErr
+}
+
+// orphanDevice — устройство iface есть для netdev (временный SysClassNet):
+// ручка решает «устройства нет → сразу `no interface`» по stat (M1).
+func orphanDevice(t *testing.T, iface string) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, iface), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := netdev.SysClassNet
+	netdev.SysClassNet = root
+	t.Cleanup(func() { netdev.SysClassNet = old })
+}
+
+// noOrphanDevice — устройства нет (пустой временный SysClassNet).
+func noOrphanDevice(t *testing.T) {
+	t.Helper()
+	old := netdev.SysClassNet
+	netdev.SysClassNet = t.TempDir()
+	t.Cleanup(func() { netdev.SysClassNet = old })
 }
 
 func (f *fakeOrphanNDMS) DeleteOpkgTun(_ context.Context, name string) error {
@@ -169,6 +199,7 @@ func TestOrphanDelete_ExecFailureIsNotTreatedAsAbsentDevice(t *testing.T) {
 // снос записи, затем остаток устройства. Прежний порядок «устройство, затем
 // запись» оставлял запись без устройства до `no interface` (0767, X5b).
 func TestOrphanDelete_Order_DownTunRecordStop(t *testing.T) {
+	orphanDevice(t, "opkgtun10")
 	ndms := &fakeOrphanNDMS{}
 	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
 
@@ -202,6 +233,7 @@ func TestOrphanDelete_AcceptsNDMSSpellingAndDeletesCanonicalNames(t *testing.T) 
 // Запись не опущена (RCI отказал / список не прочитан) — дальше не идём:
 // подмена под up-записью — 0ba1, снос записи при живом устройстве — 003b.
 func TestOrphanDelete_DownFails_NothingTouched(t *testing.T) {
+	orphanDevice(t, "opkgtun10")
 	ndms := &fakeOrphanNDMS{downErr: errors.New("injected: down")}
 	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
 
@@ -218,6 +250,7 @@ func TestOrphanDelete_DownFails_NothingTouched(t *testing.T) {
 // запись не трогаем: снос записи при живом устройстве — C. Отчитаться
 // успехом значит соврать: номер по-прежнему занят.
 func TestOrphanDelete_ReportsFailureWhenDeviceSurvives(t *testing.T) {
+	orphanDevice(t, "opkgtun10")
 	ndms := &fakeOrphanNDMS{replaceErr: errors.New("busy")}
 	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
 
@@ -289,6 +322,7 @@ func (o oracleOrphanNDMS) DeleteOpkgTun(ctx context.Context, name string) error 
 // после потери стора туннелей). C3a — 0 C: запись раньше tun — 003b, подмена
 // под up — 0ba1 (стенд Task 59).
 func TestOrphanDelete_LiveAmneziaWG_TunThenRecord_NoC(t *testing.T) {
+	orphanDevice(t, "opkgtun10")
 	f := ndmsquery.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun", State: "up"})
 	f.SetNetdev("opkgtun10", true)
 	f.SetAmneziaWG("opkgtun10", true)
@@ -299,5 +333,42 @@ func TestOrphanDelete_LiveAmneziaWG_TunThenRecord_NoC(t *testing.T) {
 	}
 	if f.Has("OpkgTun10") || f.C != 0 || f.E != 0 || f.Phantoms != 0 {
 		t.Fatalf("запись есть=%v C=%d E=%d фантомов=%d, want false/0/0/0; posts=%v", f.Has("OpkgTun10"), f.C, f.E, f.Phantoms, f.Posts)
+	}
+}
+
+// M1: устройства нет (внешний `ip link del`/rmmod — запись в state error при
+// conf running) — ни down, ни подмены: сразу `no interface` (0 C ×12, стенд
+// Task 59), затем остаток устройства (StopIfPresent — nil). Подмена здесь
+// была бы голым `tuntap add` под running-записью.
+// Мутация: снять ветку «устройства нет» → down/replace в шагах, красный.
+func TestOrphanDelete_DeviceAbsent_DirectNoInterface(t *testing.T) {
+	noOrphanDevice(t)
+	ndms := &fakeOrphanNDMS{}
+	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
+
+	if rr := orphanReq(t, h, `{"iface":"opkgtun10"}`); rr.Code != 200 {
+		t.Fatalf("code = %d, ждали 200 (%s)", rr.Code, rr.Body.String())
+	}
+	want := []string{"delete OpkgTun10", "stop opkgtun10"}
+	if strings.Join(ndms.calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("шаги %v, want %v", ndms.calls, want)
+	}
+}
+
+// L2: подмена сорвалась после del (tun не встал) — устройства нет, запись
+// снимается: оставленная без устройства, она давала бы 0767 на каждом нашем
+// списке. Живое устройство после отказа — отказ (ReportsFailureWhenDeviceSurvives).
+// Мутация: отказ подмены всегда без сноса записи → красный.
+func TestOrphanDelete_ReplaceFailedDeviceGone_RecordRemoved(t *testing.T) {
+	orphanDevice(t, "opkgtun10")
+	ndms := &fakeOrphanNDMS{replaceErr: errors.New("injected: tuntap"), replaceGone: true}
+	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
+
+	if rr := orphanReq(t, h, `{"iface":"opkgtun10"}`); rr.Code != 200 {
+		t.Fatalf("code = %d, ждали 200 (%s)", rr.Code, rr.Body.String())
+	}
+	want := []string{"down OpkgTun10", "replace opkgtun10", "delete OpkgTun10", "stop opkgtun10"}
+	if strings.Join(ndms.calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("шаги %v, want %v", ndms.calls, want)
 	}
 }

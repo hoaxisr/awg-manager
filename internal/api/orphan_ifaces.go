@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
@@ -128,19 +129,32 @@ func (h *OrphanIfaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ndmsName := target.NDMSName
 	iface := fmt.Sprintf("opkgtun%d", idx)
 
-	if ndmsName != "" {
+	// Устройства нет (stat доказал; `ip link del`/rmmod — запись в state
+	// error при conf running) — ни down, ни подмены, сразу `no interface`, как
+	// ops.removeOpkgTun (M1): подмена здесь — голый `tuntap add`, NEWLINK под
+	// running-записью, а снос записи без устройства — 0 C ×12 (стенд Task 59).
+	// stat не ответил — «не знаем»: идём C3a, как с живым устройством.
+	_, absentErr := netdev.Absent(iface)
+	if ndmsName != "" && absentErr != nil {
 		if err := h.ndms.InterfaceDownIfUp(r.Context(), ndmsName); err != nil {
 			h.log.Warn("orphan-delete", iface, "запись NDMS не опущена, ничего не тронуто: "+err.Error())
 			response.Error(w, "не удалось опустить запись "+ndmsName+": "+err.Error(), "NDMS_DOWN_FAILED")
 			return
 		}
-		// Устройство не подменено (в т.ч. чужой держатель tun) — запись не
-		// трогаем: снос записи при живом устройстве и есть C.
+		// Устройство не подменено и живо (в т.ч. чужой держатель tun) —
+		// запись не трогаем: снос записи при живом устройстве и есть C.
+		// del прошёл, а tun не встал — устройства нет: запись снимается
+		// ниже, оставленная без устройства она давала бы 0767 на каждом
+		// нашем списке (L2).
 		if err := h.ndms.ReplaceWithTun(r.Context(), iface); err != nil {
-			h.log.Warn("orphan-delete", iface, "устройство не заменено, запись NDMS не тронута: "+err.Error())
-			response.Error(w, "устройство "+iface+" удалить не удалось: "+err.Error(), "LINK_DELETE_FAILED")
-			return
+			if _, gone := netdev.Absent(iface); gone != nil {
+				h.log.Warn("orphan-delete", iface, "устройство не заменено, запись NDMS не тронута: "+err.Error())
+				response.Error(w, "устройство "+iface+" удалить не удалось: "+err.Error(), "LINK_DELETE_FAILED")
+				return
+			}
 		}
+	}
+	if ndmsName != "" {
 		if err := h.ndms.DeleteOpkgTun(r.Context(), ndmsName); err != nil {
 			// Запись осталась с plain tun под ней (как после ребута): номер
 			// по-прежнему занят, и молчать об этом нельзя. Повторный снос
