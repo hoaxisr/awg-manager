@@ -687,7 +687,11 @@ func (o *Orchestrator) decideLocked(event Event) (actions []Action, deferredBoot
 func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 	// Filter self-triggered NDMS hooks before decide.
 	// Our operators register expected hooks before InterfaceUp/Down.
-	if event.Type == EventNDMSHook {
+	// Ожидание — грань слоя conf (её ставит up:true/false и только на неё
+	// реагирует decide). Блок от `interface down` идёт FIFO ctrl → ipv4 →
+	// link → conf (стенд Task 59, 20/20): без сверки слоя токен съедала
+	// ctrl=disabled, а conf=disabled приходила непоглощённой.
+	if event.Type == EventNDMSHook && event.Layer == "conf" {
 		o.mu.Lock()
 		consumed := o.consumeExpectedHook(event.NDMSName, event.Level)
 		o.mu.Unlock()

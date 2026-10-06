@@ -309,6 +309,11 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	// сносил устройство снова — туннель не стартовал никогда (стенд 5.01,
 	// 2026-09-05; трекер F97). Когда устройство появляется, запись сама
 	// возвращается из error в down и принимает адрес.
+	// Под up-записью tun NDMS (ребут): опустить до подмены (C3a); поднимет
+	// InterfaceUp ниже — он в старте безусловный.
+	if o.downBeforeSwap(ctx, cfg.ID, names, iface, up) {
+		up = false
+	}
 	if err := o.backend.Start(ctx, names.IfaceName); err != nil {
 		o.rollbackStart(ctx, cfg.ID, names, iface, justCreated, up)
 		return tunnel.NewOpError("start", cfg.ID, "backend", err)
@@ -674,7 +679,7 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	o.appLog.Info("reconcile", cfg.ID, "Восстановление конфигурации NDMS")
 
 	// === Phase 1: Ensure OpkgTun exists — and is OURS (F517) ===
-	iface, justCreated, _, err := o.ensureOpkgTunRecord(ctx, "reconcile", cfg, names)
+	iface, justCreated, up, err := o.ensureOpkgTunRecord(ctx, "reconcile", cfg, names)
 	if err != nil {
 		return err // без rollbackStart: чужую запись и её устройство не трогаем
 	}
@@ -688,6 +693,7 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	// (exit 122) on a running kernel-mode device, so the device must be fresh.
 	// ip link del triggers transient NDMS state:error — safe under per-tunnel lock.
 	running, _ := o.backend.IsRunning(ctx, names.IfaceName)
+	downed := false
 	if running && !justCreated {
 		o.logInfo("reconcile", cfg.ID, "Kernel interface alive, kept")
 	} else {
@@ -700,6 +706,10 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 		recreate := o.backend.Start
 		if running {
 			recreate = o.backend.Recreate
+		} else {
+			// Под up-записью tun NDMS: опустить до подмены (C3a), поднять
+			// InterfaceUp ниже.
+			downed = o.downBeforeSwap(ctx, cfg.ID, names, iface, up)
 		}
 		if err := recreate(ctx, names.IfaceName); err != nil {
 			return tunnel.NewOpError("reconcile", cfg.ID, "backend", err)
@@ -767,9 +777,10 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 		return tunnel.NewOpError("reconcile", cfg.ID, "link", fmt.Errorf("ip link up: %w", exec.FormatError(result, err)))
 	}
 
-	// NDMS InterfaceUp: only when OpkgTun was just created. Commands
-	// register the expected "running" hook via HookNotifier.
-	if justCreated {
+	// NDMS InterfaceUp: only when OpkgTun was just created or we put it
+	// down before the swap. Commands register the expected "running" hook
+	// via HookNotifier.
+	if justCreated || downed {
 		if err := o.commands.Interfaces.InterfaceUp(ctx, iface); err != nil {
 			return tunnel.NewOpError("reconcile", cfg.ID, "ndms", fmt.Errorf("interface up: %w", err))
 		}
@@ -1027,6 +1038,27 @@ func (o *OperatorOS5Impl) rollbackStart(ctx context.Context, tunnelID string, na
 	o.clearAppliedDNS(ctx, tunnelID, iface)
 	_ = o.firewall.RemoveRules(ctx, names.IfaceName)
 	_ = o.removeOpkgTun(ctx, "rollback", tunnelID, names, iface, up, justCreated)
+}
+
+// downBeforeSwap — C3a для подмены tun → amneziawg на старте (F61-1): под
+// up-записью живёт не-amneziawg устройство (tun NDMS после ребута), и
+// backend.Start снесёт его под барьером — DELLINK под running даёт 0ba1
+// (C3b, стенд Task 59: 3/10). Запись опускается до подмены (под down —
+// 0/20 для amneziawg → tun; направление tun → amneziawg — стенд Task 65).
+// true — запись опущена, вызывающий поднимает её InterfaceUp. Живое
+// amneziawg Start не трогает, устройства нет — сносить нечего: без down.
+func (o *OperatorOS5Impl) downBeforeSwap(ctx context.Context, tunnelID string, names tunnel.Names, iface query.Confirmed, up bool) bool {
+	if !up {
+		return false
+	}
+	if _, err := netdev.Absent(names.IfaceName); !errors.Is(err, netdev.ErrPresent) {
+		return false
+	}
+	if running, _ := o.backend.IsRunning(ctx, names.IfaceName); running {
+		return false
+	}
+	o.interfaceDownBestEffort(ctx, tunnelID, iface)
+	return true
 }
 
 // removeOpkgTun — снятие kernel-устройства из-под записи OpkgTunN и, при

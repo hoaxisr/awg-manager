@@ -613,3 +613,30 @@ func TestConfDisabled_RecheckUnderTunnelLock_NoGroupedRelock(t *testing.T) {
 		t.Fatalf("stops=%d, want 1", n)
 	}
 }
+
+// F61-3: ожидание disabled от `interface down` поглощает грань conf, а не
+// первую грань блока. Блок на up:false приходит FIFO ctrl → ipv4 → link →
+// conf (стенд Task 59, C3a 20/20; ipv4 в оркестратор не идёт — hook.go).
+// Мутация «сверка без слоя» → токен съедает ctrl=disabled, conf=disabled
+// уходит в окно (метка поглощённой грани + перепроверка) → красный.
+func TestExpectedDisabled_ConsumedByConfEdgeNotCtrl(t *testing.T) {
+	r := newHookWindowRig(t)
+	r.clk.Set(r.base.Add(time.Second))
+	r.o.ExpectHook("OpkgTun10", "disabled")
+	r.clk.Set(r.base.Add(3 * time.Second))
+	for _, layer := range []string{"ctrl", "link", "conf"} {
+		if err := r.o.HandleEvent(context.Background(), Event{Type: EventNDMSHook, NDMSName: "OpkgTun10", Layer: layer, Level: "disabled"}); err != nil {
+			t.Fatalf("HandleEvent %s: %v", layer, err)
+		}
+	}
+	if !r.absorbedAt().IsZero() || r.sched.count() != 0 || r.op.stops.Load() != 0 {
+		t.Fatalf("conf=disabled не поглощена ожиданием: метка=%v schedule=%d stops=%d",
+			r.absorbedAt(), r.sched.count(), r.op.stops.Load())
+	}
+	r.o.mu.Lock()
+	left := len(r.o.expectedHooks)
+	r.o.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("ожиданий осталось %d, want 0", left)
+	}
+}

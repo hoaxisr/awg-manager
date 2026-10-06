@@ -20,12 +20,13 @@ type fakeOrphanNDMS struct {
 	stopped    []string // StopIfPresent: устройство снято
 	stopErr    error
 	replaceErr error
+	downErr    error
 	calls      []string // все шаги по порядку
 }
 
 func (f *fakeOrphanNDMS) InterfaceDownIfUp(_ context.Context, name string) error {
 	f.calls = append(f.calls, "down "+name)
-	return nil
+	return f.downErr
 }
 
 func (f *fakeOrphanNDMS) StopIfPresent(_ context.Context, iface string) error {
@@ -195,6 +196,21 @@ func TestOrphanDelete_AcceptsNDMSSpellingAndDeletesCanonicalNames(t *testing.T) 
 	}
 	if len(ndms.stopped) != 1 || ndms.stopped[0] != "opkgtun10" {
 		t.Errorf("устройство ядра = %v, ждали [opkgtun10]", ndms.stopped)
+	}
+}
+
+// Запись не опущена (RCI отказал / список не прочитан) — дальше не идём:
+// подмена под up-записью — 0ba1, снос записи при живом устройстве — 003b.
+func TestOrphanDelete_DownFails_NothingTouched(t *testing.T) {
+	ndms := &fakeOrphanNDMS{downErr: errors.New("injected: down")}
+	h := NewOrphanIfaceHandler(listOf("opkgtun10"), ndms, nil)
+
+	rr := orphanReq(t, h, `{"iface":"opkgtun10"}`)
+	if rr.Code == 200 || !strings.Contains(rr.Body.String(), "NDMS_DOWN_FAILED") {
+		t.Fatalf("code=%d body=%s, want отказ NDMS_DOWN_FAILED", rr.Code, rr.Body.String())
+	}
+	if strings.Join(ndms.calls, ",") != "down OpkgTun10" {
+		t.Fatalf("шаги после отказа down: %v", ndms.calls)
 	}
 }
 

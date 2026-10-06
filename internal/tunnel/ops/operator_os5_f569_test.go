@@ -36,6 +36,7 @@ type deviceBackend struct {
 	StopCalls    []string
 	ReplaceCalls []string
 	stopPosts    []int // len(f.Posts) на момент каждого Stop
+	startPosts   []int // len(f.Posts) на момент каждого Start
 	replacePosts []int // len(f.Posts) на момент каждого ReplaceWithTun
 }
 
@@ -64,12 +65,19 @@ func (b *deviceBackend) exists(iface string) bool {
 	return err == nil
 }
 
+// Start — как backend.KernelBackend: живое amneziawg не трогает; иное
+// устройство сносит и создаёт amneziawg одной подменой — оракул видит её
+// как снятие и появление (под up-записью — 0ba1).
 func (b *deviceBackend) Start(_ context.Context, iface string) error {
 	b.StartCalls = append(b.StartCalls, iface)
-	if !b.exists(iface) {
-		if err := os.Mkdir(filepath.Join(b.root, iface), 0o755); err != nil {
-			return err
-		}
+	b.startPosts = append(b.startPosts, len(b.f.Posts))
+	if b.exists(iface) && b.amneziawg {
+		return nil
+	}
+	if b.exists(iface) {
+		b.f.SetNetdev(iface, false)
+	} else if err := os.Mkdir(filepath.Join(b.root, iface), 0o755); err != nil {
+		return err
 	}
 	b.f.SetNetdev(iface, true)
 	b.f.SetAmneziaWG(iface, true)
@@ -520,5 +528,62 @@ func TestRollback_ExistingRecord_ReplacedWithTun(t *testing.T) {
 				t.Fatalf("state=%s: ожиданий disabled %d, want %d: %v", state, disabled, want, hn.calls)
 			}
 		})
+	}
+}
+
+// F61-1: старт по существующей up-записи, под которой tun NDMS (ребут):
+// down → подмена на amneziawg → InterfaceUp. Без down подмена под running —
+// 0ba1 (C3b). Под down-записью и при живом amneziawg — без down.
+func TestStart_ExistingUpRecordTun_DownSwapUp(t *testing.T) {
+	const postUp = `{"interface":{"OpkgTun10":{"up":true}}}`
+	for _, tc := range []struct {
+		name      string
+		state     string
+		amneziawg bool
+		wantDown  bool
+	}{
+		{"up+tun", "up", false, true},
+		{"down+tun", "down", false, false},
+		{"up+amneziawg", "up", true, false},
+	} {
+		for _, site := range []string{"ColdStart", "Reconcile"} {
+			t.Run(site+"/"+tc.name, func(t *testing.T) {
+				r := opkgTun10()
+				r.State = tc.state
+				f := ndmsquery.NewFakeNDMS(r)
+				be := newDeviceBackend(t, f)
+				be.plug(t, "opkgtun10", tc.amneziawg)
+				o, _ := newOS5LifecycleOn(t, &recordingPoster{f: f}, f, be, true)
+				hn := watchHooks(o, f, be)
+
+				run := o.ColdStart
+				if site == "Reconcile" {
+					run = o.Reconcile
+				}
+				if err := run(context.Background(), lifecycleCfg(t)); err != nil {
+					t.Fatalf("%s: %v", site, err)
+				}
+				clean(t, f)
+				down := slices.Index(f.Posts, postDown)
+				if !tc.wantDown {
+					if down >= 0 {
+						t.Fatalf("down без нужды: %v", f.Posts)
+					}
+					return
+				}
+				up := slices.Index(f.Posts, postUp)
+				if len(be.startPosts) != 1 || down < 0 || down >= be.startPosts[0] || up < be.startPosts[0] {
+					t.Fatalf("порядок down → подмена → up: down=#%d start@%v up=#%d; posts=%v", down, be.startPosts, up, f.Posts)
+				}
+				want := []string{"OpkgTun10/disabled", "OpkgTun10/running"}
+				var got []string
+				for _, c := range hn.calls {
+					got = append(got, c[:strings.Index(c, "@")])
+				}
+				if !slices.Equal(got, want) {
+					t.Fatalf("ожидания %v, want %v", got, want)
+				}
+			})
+		}
 	}
 }
