@@ -56,7 +56,7 @@ func newTestQueries() (*query.Queries, *query.FakeGetter) {
 func newTestPolicyCommands(q *query.Queries) (*command.PolicyCommands, *fakePoster) {
 	poster := &fakePoster{}
 	sc := command.NewSaveCoordinator(poster, nopPublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
-	return command.NewPolicyCommands(poster, sc, q, nil), poster
+	return command.NewPolicyCommands(poster, sc, q), poster
 }
 
 func TestListPolicyNames_ParsesKeys(t *testing.T) {
@@ -167,7 +167,7 @@ func digPermit(t *testing.T, payload any, policyName string) map[string]any {
 func TestEnsurePolicyInterfaces_SkipsAbsent_OneList(t *testing.T) {
 	f := query.NewFakeNDMS(ndms.Interface{ID: "PPPoE0"}, ndms.Interface{ID: "Wireguard1"})
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
-	cmds := command.NewPolicyCommands(f, command.NewSaveCoordinator(f, nil, time.Hour, time.Hour, 0, nil), q, nil)
+	cmds := command.NewPolicyCommands(f, command.NewSaveCoordinator(f, nil, time.Hour, time.Hour, 0, nil), q)
 	svc := &Service{policies: cmds, queries: q}
 
 	if err := svc.EnsurePolicyInterfaces(context.Background(), "HydraRoute", []string{"Wireguard0", "PPPoE0", "Wireguard1"}); err != nil {
@@ -194,7 +194,7 @@ func TestEnsurePolicyInterfaces_ListError_NoCommand(t *testing.T) {
 	boom := errors.New("rci down")
 	f.FailList(boom)
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
-	cmds := command.NewPolicyCommands(f, command.NewSaveCoordinator(f, nil, time.Hour, time.Hour, 0, nil), q, nil)
+	cmds := command.NewPolicyCommands(f, command.NewSaveCoordinator(f, nil, time.Hour, time.Hour, 0, nil), q)
 	svc := &Service{policies: cmds, queries: q}
 
 	if err := svc.EnsurePolicyInterfaces(context.Background(), "HydraRoute", []string{"PPPoE0"}); !errors.Is(err, boom) {

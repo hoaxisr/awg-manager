@@ -54,7 +54,7 @@ func newACLTestCommandsRC(rcLines []string, bodies ...json.RawMessage) (*Interfa
 	body, _ := json.Marshal(map[string]any{"message": rcLines})
 	fg.SetJSON("/show/running-config", string(body))
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
-	return NewInterfaceCommands(poster, sc, q, nil), poster
+	return NewInterfaceCommands(poster, sc, q), poster
 }
 
 func TestACLPrimitives_ParseForms(t *testing.T) {

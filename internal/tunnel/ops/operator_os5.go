@@ -409,8 +409,8 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 		return tunnel.NewOpError("start", cfg.ID, "link", fmt.Errorf("ip link up: %w", exec.FormatError(result, err)))
 	}
 
-	// NDMS InterfaceUp sets conf: running (intent UP). Commands register
-	// the expected hook themselves via the HookNotifier wired at startup.
+	// NDMS InterfaceUp sets conf: running (intent UP). Кредит своей грани
+	// conf выдаёт сама команда (ExpectConf, только действующей).
 	// Always needed in Start: after Stop, InterfaceDown set conf: disabled.
 	// С этого POST запись может быть up и при его отказе — откат опустит её.
 	up = true
@@ -574,8 +574,8 @@ func (o *OperatorOS5Impl) clearAppliedDNS(ctx context.Context, tunnelID string, 
 // Возвращает ошибку последней попытки, если ни одна не прошла; вызывающие,
 // которым down — только уборка, её не смотрят.
 func (o *OperatorOS5Impl) interfaceDownBestEffort(ctx context.Context, tunnelID string, iface query.Confirmed) error {
-	// Commands register the expected "disabled" hook on each attempt via
-	// the HookNotifier wired at startup.
+	// Кредит своей грани conf=disabled выдаёт каждая попытка сама
+	// (ExpectConf, только действующей; отказ — кредит назад).
 	var err error
 	for attempt := 1; attempt <= 3; attempt++ {
 		err = o.commands.Interfaces.InterfaceDown(ctx, iface)
@@ -795,8 +795,7 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	// подменой или её оставила опущенной наша же прежняя попытка, упавшая
 	// между down и up (R61-1): Reconcile идёт только у Running-туннеля, а
 	// Running под опущенной записью — рассогласование, внешний disabled уже
-	// остановил бы туннель. Commands register the expected "running" hook
-	// via HookNotifier.
+	// остановил бы туннель. Кредит грани conf=running — в команде (ExpectConf).
 	if justCreated || !up {
 		if err := o.commands.Interfaces.InterfaceUp(ctx, iface); err != nil {
 			return tunnel.NewOpError("reconcile", cfg.ID, "ndms", fmt.Errorf("interface up: %w", err))
@@ -1089,15 +1088,14 @@ func (o *OperatorOS5Impl) downBeforeSwap(ctx context.Context, tunnelID string, n
 // без C всех классов и без E; проигравшие: без down — 0ba1 3/10, снос
 // устройства до записи — 0767 6/10, запись при живом amneziawg — 003b 3/3):
 //
-//  1. Запись up — `interface down` (единственная точка ожидания disabled:
+//  1. Запись up — `interface down` (единственная точка кредита disabled:
 //     блок conf=disabled приходит только от up:false). Устройство,
 //     исчезнувшее под up-записью, — 0ba1; под down подмену NDMS не замечает.
 //  2. Подмена устройства на plain tun под барьером списков (D-N1): запись
 //     ни на миг не видна нашим читателям без устройства (0767).
 //  3. `no interface` — NDMS снимает свой tun сам (30/30, и созданный не им);
-//     при живом amneziawg было бы 003b. Свой ifdestroyed оркестратор узнаёт
-//     по карте (DeleteOpkgTun → RemovalToken → RemovedByUs, П20), ожидания
-//     destroyed нет.
+//     при живом amneziawg было бы 003b. Свой ifdestroyed — по кредиту
+//     `ExpectRemoval`, вердикт в точке входа (api.HookSink.Handle, Event.Own).
 //  4. tun остался (NDMS не снял) — снимаем: записи уже нет, C невозможен.
 //
 // Устройства уже нет, а запись сносится (M1: внешний `ip link del`/rmmod —

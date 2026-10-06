@@ -60,11 +60,6 @@ type tunnelState struct {
 	// (recheckAbsorbedDisabled) — одна на поглощение. Runtime-only.
 	absorbedDisabledAt time.Time
 	recheckScheduled   bool
-
-	// bornAt: когда туннель появился в кэше после старта демона (ноль —
-	// загружен LoadState, ожиданий старше него нет). Ожидания хуков старше
-	// bornAt — прежнего воплощения того же имени (consumeExpectedHook).
-	bornAt time.Time
 }
 
 // ndmsName returns the NDMS interface name for this tunnel.
@@ -123,10 +118,9 @@ func (s *State) anyWANUp() bool {
 	return false
 }
 
-// ensureTunnel loads a single tunnel into cache if not already present,
-// stamping bornAt=now on a fresh load.
+// ensureTunnel loads a single tunnel into cache if not already present.
 // Returns true if the tunnel exists (in cache or loaded from store).
-func (s *State) ensureTunnel(tunnelID string, store *storage.AWGTunnelStore, now time.Time) bool {
+func (s *State) ensureTunnel(tunnelID string, store *storage.AWGTunnelStore) bool {
 	if _, ok := s.tunnels[tunnelID]; ok {
 		return true
 	}
@@ -140,9 +134,7 @@ func (s *State) ensureTunnel(tunnelID string, store *storage.AWGTunnelStore, now
 	if stored.Backend == "wdtt-raw" {
 		return false
 	}
-	t := tunnelStateFromStored(stored)
-	t.bornAt = now
-	s.tunnels[tunnelID] = t
+	s.tunnels[tunnelID] = tunnelStateFromStored(stored)
 	return true
 }
 

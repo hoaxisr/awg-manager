@@ -141,7 +141,7 @@ func (a *app) setupNDMS() {
 		}
 	})
 
-	a.ndmsHookSink = api.NewHookSink(a.ndmsDispatcher)
+	a.ndmsHookSink = api.NewHookSink(a.ndmsDispatcher, a.ndmsQueries.Interfaces)
 	spool := ndmsevents.NewSpoolReader(ndmsevents.DefaultSpoolPath, a.ndmsHookSink.Handle, eventsLogger(a.loggingService))
 	if err := spool.Start(); err != nil {
 		a.bootLog.Warn("ndms-hook-spool", "", err.Error())

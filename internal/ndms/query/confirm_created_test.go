@@ -40,61 +40,6 @@ func TestConfirmCreated_LateAfterLists_Confirms(t *testing.T) {
 	}
 }
 
-// M3′: свой ifcreated пришёл, пока первый список в полёте, а записи в ответе
-// нет — метка новее списка противоречит ему: повтор сразу, паузу 5 с не ждёт.
-// Мутация: перечитывать только после паузы → ≥5 с.
-func TestConfirmCreated_OwnCreatedInFlight_AbsentAnswer_RereadImmediately(t *testing.T) {
-	f, s := importLate(t, 1, 5*time.Second)
-	f.InList(func() {
-		f.InList(nil)
-		s.OnCreated("Wireguard1")
-	})
-	lists := f.ListCalls()
-	start := time.Now()
-	c, err := s.ConfirmCreated(context.Background(), "Wireguard1", true)
-	if err != nil || c.Name() != "Wireguard1" {
-		t.Fatalf("c=%v err=%v", c, err)
-	}
-	if el := time.Since(start); el > time.Second {
-		t.Fatalf("ждал паузу вместо повтора: %v", el)
-	}
-	if f.ListCalls()-lists != 2 || f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("lists=%d E=%d phantoms=%d", f.ListCalls()-lists, f.E, f.Phantoms)
-	}
-}
-
-// M6′: свой ifcreated пришёл, пока первый список ConfirmCreated в полёте, а имени
-// в карте ещё нет — имя в owned, «грязно» не ставится: подтверждено первым
-// списком, и ReconcileDirty диспетчера списка не читает.
-// Мутация: убрать owned-гард в OnCreated → ReconcileDirty +1, красный.
-func TestConfirmCreated_OwnCreatedInFirstList_NoDispatcherList(t *testing.T) {
-	f, s := importLate(t, 0)
-	f.InList(func() {
-		f.InList(nil)
-		s.OnCreated("Wireguard1")
-	})
-	ctx := context.Background()
-	lists := f.ListCalls()
-	if c, err := s.ConfirmCreated(ctx, "Wireguard1", true); err != nil || c.Name() != "Wireguard1" {
-		t.Fatalf("c=%v err=%v", c, err)
-	}
-	if got := f.ListCalls() - lists; got != 1 {
-		t.Fatalf("ConfirmCreated: %d списков, want 1", got)
-	}
-	if err := s.ReconcileDirty(ctx); err != nil {
-		t.Fatal(err)
-	}
-	s.mu.RLock()
-	dirty := s.dirtyAt
-	s.mu.RUnlock()
-	if got := f.ListCalls() - lists; got != 1 || dirty != 0 {
-		t.Fatalf("после ReconcileDirty: %d списков, dirtyAt=%d; want 1, 0", got, dirty)
-	}
-	if f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("E=%d Phantoms=%d", f.E, f.Phantoms)
-	}
-}
-
 // S11: записи нет за все попытки — ровно 1+len(backoff) списков; ошибку решает
 // доказательство создания: created → ErrNotListed (снос разрешён), нет →
 // ErrNotSeen (без сноса). Мутация: поменять местами → красный.
@@ -187,6 +132,25 @@ func TestConfirmCreated_StaleDestroyedDuringWait_Confirms(t *testing.T) {
 			t.Fatalf("lists=%d (ждали свой + повтор) E=%d phantoms=%d", f.ListCalls()-lists, f.E, f.Phantoms)
 		}
 	})
+}
+
+// П22в: created, а список не прочитан — запись в NDMS есть, в карте нет, и
+// свой ifcreated карту больше не «грязнит»: ConfirmCreated помечает её сам,
+// следующий читатель перечитает. Мутация «не ставить Invalidate» → dirtyAt=0,
+// красный.
+func TestConfirmCreated_ListError_Invalidates(t *testing.T) {
+	f, s := importLate(t, 1, time.Millisecond)
+	f.InList(func() {
+		f.InList(nil)
+		f.FailList(errors.New("rci down")) // второй список не прочитается
+	})
+	_, err := s.ConfirmCreated(context.Background(), "Wireguard1", true)
+	if err == nil || errors.Is(err, ErrNotListed) {
+		t.Fatalf("err=%v, want ошибку списка", err)
+	}
+	if dirtyAt(s) == 0 {
+		t.Fatal("карта не помечена грязной")
+	}
 }
 
 // Список не прочитан — ошибка сразу, не ErrNotListed (решение 4): повторов нет.

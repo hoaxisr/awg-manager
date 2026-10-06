@@ -125,15 +125,12 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 		if err := o.SyncDNS(ctx, iface, nil, tunnel.ParseDNSList(stored.Interface.DNS)); err != nil {
 			o.appLog.Warn("apply-dns", names.NDMSName, err.Error())
 		}
-		if o.hookNotifier != nil {
-			o.hookNotifier.ExpectHook(names.NDMSName, "running")
-		}
 		cmds := []any{
 			payloads.CmdWireguardPeerEndpoint(iface, stored.Peer.PublicKey, loopback),
 			payloads.CmdWireguardPeerConnect(iface, stored.Peer.PublicKey, stored.ISPInterface),
 			payloads.CmdInterfaceUp(iface, true),
 		}
-		if _, err := o.postIfaceBatch(ctx, iface, cmds); err != nil {
+		if _, err := o.postUpBatch(ctx, iface, true, cmds); err != nil {
 			_ = o.obf.Stop(stored.ID)
 			o.restoreTrackedIP(stored.ID, prevIP) // F486: маршрут остался под prevIP
 			return fmt.Errorf("start obfuscated: %w", err)

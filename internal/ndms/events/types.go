@@ -26,4 +26,8 @@ type Event struct {
 	// пишет по нему «hook age» в журнал. В решениях не используется
 	// (TestScriptUptime_OnlyLogged).
 	ScriptUptime float64
+	// Own — свой хук по кредиту (П21/П22): ifcreated/ifdestroyed или грань
+	// слоя conf от нашей же команды. Ставит только точка входа spool
+	// (api.HookSink.Handle); диспетчер и оркестратор вердикт не пересчитывают.
+	Own bool
 }

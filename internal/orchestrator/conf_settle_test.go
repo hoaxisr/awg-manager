@@ -449,14 +449,13 @@ func TestConfDisabled_RunningQueuedOnLockBeforeEdge_NotBounce(t *testing.T) {
 		t.Fatalf("lock: %v", err)
 	}
 
-	running := confHook("running")
-	running.Now = base // пришёл первым
+	running := confHook("running") // момент прихода — первое чтение часов
 	runDone := make(chan struct{})
 	go func() {
 		_ = o.HandleEvent(context.Background(), running)
 		close(runDone)
 	}()
-	<-reads // running прочитал часы (consumeExpectedHook) и встаёт на замок
+	<-reads // running прочитал часы (момент прихода) и встаёт на замок
 
 	settled := make(chan bool, 1)
 	go func() { settled <- o.settleConfDisabled(context.Background(), confHook("disabled")) }()

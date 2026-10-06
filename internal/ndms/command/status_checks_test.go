@@ -49,31 +49,31 @@ func TestMutators_SurfaceNestedErrors(t *testing.T) {
 		call func(*fakePoster) error
 	}{
 		{"CreatePolicy", respNoInput, func(p *fakePoster) error {
-			c, _, _, _ := newTestPolicyCommandsWith(p)
+			c, _, _ := newTestPolicyCommandsWith(p)
 			return c.CreatePolicy(ctx, "P", "d")
 		}},
 		{"PermitInterface", respPermitNoIface, func(p *fakePoster) error {
-			c, _, _, _ := newTestPolicyCommandsWith(p)
+			c, _, _ := newTestPolicyCommandsWith(p)
 			return c.PermitInterface(ctx, "P", confirmed(t, "OpkgTun42"), 0)
 		}},
 		{"DenyInterface", respPermitNoIface, func(p *fakePoster) error {
-			c, _, _, _ := newTestPolicyCommandsWith(p)
+			c, _, _ := newTestPolicyCommandsWith(p)
 			return c.DenyInterface(ctx, "P", confirmed(t, "OpkgTun42"))
 		}},
 		{"SetStandalone", respPermitNoIface, func(p *fakePoster) error {
-			c, _, _, _ := newTestPolicyCommandsWith(p)
+			c, _, _ := newTestPolicyCommandsWith(p)
 			return c.SetStandalone(ctx, "P", true)
 		}},
 		{"SetPolicyDescription", respPermitNoIface, func(p *fakePoster) error {
-			c, _, _, _ := newTestPolicyCommandsWith(p)
+			c, _, _ := newTestPolicyCommandsWith(p)
 			return c.SetDescription(ctx, "P", "d")
 		}},
 		{"AssignDevice", respHostUnregistered, func(p *fakePoster) error {
-			c, _, _, _ := newTestPolicyCommandsWith(p)
+			c, _, _ := newTestPolicyCommandsWith(p)
 			return c.AssignDevice(ctx, "00:00:00:00:00:01", "P")
 		}},
 		{"UnassignDevice", respHostUnregistered, func(p *fakePoster) error {
-			c, _, _, _ := newTestPolicyCommandsWith(p)
+			c, _, _ := newTestPolicyCommandsWith(p)
 			return c.UnassignDevice(ctx, "00:00:00:00:00:01")
 		}},
 		{"AddStaticRoute", respRouteNoIface, func(p *fakePoster) error {
@@ -127,7 +127,7 @@ func TestRemovals_TolerateMissingTarget(t *testing.T) {
 		call func(*fakePoster) error
 	}{
 		{"DeletePolicy", respNoInput, func(p *fakePoster) error {
-			c, _, _, _ := newTestPolicyCommandsWith(p)
+			c, _, _ := newTestPolicyCommandsWith(p)
 			return c.DeletePolicy(ctx, "P")
 		}},
 		{"DeleteProxy", respProxyMissing, func(p *fakePoster) error {
@@ -165,7 +165,7 @@ func TestRemovals_SurfaceRealErrors(t *testing.T) {
 		`"ident":"Network::PolicyTable","message":"policy is in use."}]}}}}`
 	poster := &fakePoster{}
 	poster.SetResponse(busy)
-	c, _, _, _ := newTestPolicyCommandsWith(poster)
+	c, _, _ := newTestPolicyCommandsWith(poster)
 	err := c.DeletePolicy(ctx, "P")
 	if err == nil {
 		t.Fatal("реальный отказ сноса проглочен")
@@ -181,9 +181,9 @@ func newSaveFor(p Poster) *SaveCoordinator {
 	return NewSaveCoordinator(p, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
 }
 
-func newTestPolicyCommandsWith(p Poster) (*PolicyCommands, *SaveCoordinator, *query.Queries, *spyHookNotifier) {
-	sc, q, hn := newSaveFor(p), testQueries(), &spyHookNotifier{}
-	return NewPolicyCommands(p, sc, q, hn), sc, q, hn
+func newTestPolicyCommandsWith(p Poster) (*PolicyCommands, *SaveCoordinator, *query.Queries) {
+	sc, q := newSaveFor(p), testQueries()
+	return NewPolicyCommands(p, sc, q), sc, q
 }
 
 func newRouteCommandsWith(p Poster) *RouteCommands {

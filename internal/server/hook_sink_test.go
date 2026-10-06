@@ -20,8 +20,8 @@ func (s *spyHookDispatcher) Enqueue(e ndmsevents.Event) { s.got = append(s.got, 
 func TestRegisterRoutes_PublishesHookHandler(t *testing.T) {
 	s, _ := newGuardServer(t)
 	disp := &spyHookDispatcher{}
-	s.ndmsDispatcher = disp           // диспетчер обработчика
-	s.hookSink = api.NewHookSink(nil) // до Publish событие не дошло бы никуда
+	s.ndmsDispatcher = disp                // диспетчер обработчика
+	s.hookSink = api.NewHookSink(nil, nil) // до Publish событие не дошло бы никуда
 
 	s.registerRoutes(http.NewServeMux())
 	s.hookSink.Handle(ndmsevents.Event{Type: ndmsevents.EventIfCreated, ID: "OpkgTun99"})

@@ -103,3 +103,21 @@ func TestNwg_CreateInterface_ViaCommands(t *testing.T) {
 		}
 	}
 }
+
+// П8/П26: up:false батча Stop — кредит своей грани conf=disabled до POST
+// (ExpectConf), отказ батча — кредит назад. Мутации: «без ExpectConf в Stop» →
+// успех без кредита, красный; «без refused» → кредит после отказа, красный.
+func TestNwg_Stop_ConfCredit(t *testing.T) {
+	for _, refuse := range []bool{false, true} {
+		o, _, _, _, srv := newLifecycleOperator(t, false, false)
+		if refuse {
+			srv.respond = func(string) (string, bool) {
+				return `[{"status":"error","message":"busy"}]`, true
+			}
+		}
+		_ = o.Stop(context.Background(), nwgStored(awgObfuscatedIface()))
+		if got := o.queries.Interfaces.ClaimOwnConf("Wireguard0", "disabled"); got == refuse {
+			t.Fatalf("refuse=%v: кредит conf=disabled = %v", refuse, got)
+		}
+	}
+}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -13,16 +12,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/netdev"
 )
-
-type spyHookNotifier struct {
-	calls []hookCall
-}
-
-type hookCall struct{ Name, Level string }
-
-func (s *spyHookNotifier) ExpectHook(name, level string) {
-	s.calls = append(s.calls, hookCall{name, level})
-}
 
 func testQueries() *query.Queries {
 	return query.NewQueries(query.Deps{
@@ -36,14 +25,13 @@ func testQueries() *query.Queries {
 // ответы роутера), список интерфейсов читается у FakeNDMS: в нём уже есть
 // имена, которые тесты создают, — так подтверждение после создания находит
 // запись, как на роутере после принятой команды.
-func newTestInterfaceCommands(_ *testing.T) (*InterfaceCommands, *fakePoster, *SaveCoordinator, *query.Queries, *spyHookNotifier) {
+func newTestInterfaceCommands(_ *testing.T) (*InterfaceCommands, *fakePoster, *SaveCoordinator, *query.Queries) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
 	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun0"}, ndms.Interface{ID: "OpkgTun10"})
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
-	hn := &spyHookNotifier{}
-	return NewInterfaceCommands(poster, sc, q, hn), poster, sc, q, hn
+	return NewInterfaceCommands(poster, sc, q), poster, sc, q
 }
 
 // confirmed — доказательство существования name для тестов формы команд:
@@ -60,14 +48,13 @@ func confirmed(t *testing.T, name string) query.Confirmed {
 
 // newOracleInterfaceCommands — FakeNDMS и принимает команды, и отдаёт список:
 // видно созданное, снятое, фантомы и E.
-func newOracleInterfaceCommands(t *testing.T, ifaces ...ndms.Interface) (*InterfaceCommands, *query.FakeNDMS, *SaveCoordinator, *query.Queries, *spyHookNotifier) {
+func newOracleInterfaceCommands(t *testing.T, ifaces ...ndms.Interface) (*InterfaceCommands, *query.FakeNDMS, *SaveCoordinator, *query.Queries) {
 	t.Helper()
 	f := query.NewFakeNDMS(ifaces...)
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(f, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
-	hn := &spyHookNotifier{}
-	return NewInterfaceCommands(f, sc, q, hn), f, sc, q, hn
+	return NewInterfaceCommands(f, sc, q), f, sc, q
 }
 
 // oracleGetter — FakeNDMS плюс ответы на пути, которых у него нет
@@ -106,7 +93,7 @@ func newOracleCommands(t *testing.T, raw map[string]string, ifaces ...ndms.Inter
 }
 
 func TestCreateOpkgTun_ReturnsConfirmedAndFillsCache(t *testing.T) {
-	cmds, f, _, q, _ := newOracleInterfaceCommands(t)
+	cmds, f, _, q := newOracleInterfaceCommands(t)
 	f.ExpectCreate("OpkgTun3")
 	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t", freeFor(t, "opkgtun3"))
 	if err != nil || c.Name() != "OpkgTun3" || f.Phantoms != 0 || len(f.Created) != 1 {
@@ -126,20 +113,20 @@ func TestCreateOpkgTun_ReturnsConfirmedAndFillsCache(t *testing.T) {
 // NDMS принял команду, а записи нет ни в списке, ни в хуках — ошибка с
 // именем, не Confirmed; ни настроек, ни сноса (снос отсутствующего — E, F584).
 func TestCreateOpkgTun_AbsentAfterCreate_Error(t *testing.T) {
-	cmds, poster, _, q, hn := newTestInterfaceCommands(t)
+	cmds, poster, _, q := newTestInterfaceCommands(t)
 	q.Interfaces.SetCreatedBackoff() // один список, без пауз
 	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun7", "t", freeFor(t, "opkgtun7"))
 	if err == nil || !errors.Is(err, query.ErrNotSeen) || !strings.Contains(err.Error(), "OpkgTun7") || c != (query.Confirmed{}) {
 		t.Fatalf("c=%v err=%v", c, err)
 	}
-	if p := poster.Payloads(); len(p) != 1 || len(hn.calls) != 0 {
-		t.Fatalf("payloads: %v hooks: %v", p, hn.calls)
+	if p := poster.Payloads(); len(p) != 1 || q.Interfaces.ClaimOwnConf("OpkgTun7", "running") {
+		t.Fatalf("payloads: %v (или выдан кредит грани conf)", p)
 	}
 }
 
 // Список не прочитался после создания — ошибка с именем (одним), не Confirmed.
 func TestCreateOpkgTun_ConfirmListError(t *testing.T) {
-	cmds, f, _, _, _ := newOracleInterfaceCommands(t)
+	cmds, f, _, _ := newOracleInterfaceCommands(t)
 	f.ExpectCreate("OpkgTun3")
 	f.FailList(errors.New("rci down"))
 	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t", freeFor(t, "opkgtun3"))
@@ -150,7 +137,7 @@ func TestCreateOpkgTun_ConfirmListError(t *testing.T) {
 
 // Настоящий отказ сноса (не «интерфейса нет») — ошибка наружу, запись в кэше остаётся.
 func TestDeleteOpkgTun_RealError_KeepsRecord(t *testing.T) {
-	cmds, poster, _, q, _ := newTestInterfaceCommands(t)
+	cmds, poster, _, q := newTestInterfaceCommands(t)
 	c, _, _, err := q.Interfaces.Confirm(context.Background(), "OpkgTun0")
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +152,7 @@ func TestDeleteOpkgTun_RealError_KeepsRecord(t *testing.T) {
 }
 
 func TestDeleteOpkgTun_ForgetsOnSuccess(t *testing.T) {
-	cmds, f, _, q, _ := newOracleInterfaceCommands(t, ndms.Interface{ID: "OpkgTun3", Type: "OpkgTun"})
+	cmds, f, _, q := newOracleInterfaceCommands(t, ndms.Interface{ID: "OpkgTun3", Type: "OpkgTun"})
 	c, _, _, _ := q.Interfaces.Confirm(context.Background(), "OpkgTun3")
 	lists := f.ListCalls()
 	if err := cmds.DeleteOpkgTun(context.Background(), c); err != nil {
@@ -179,20 +166,69 @@ func TestDeleteOpkgTun_ForgetsOnSuccess(t *testing.T) {
 	}
 }
 
-func TestInterfaceUp_ExpectHookAfterConfirmed(t *testing.T) {
-	cmds, f, _, q, hn := newOracleInterfaceCommands(t, ndms.Interface{ID: "OpkgTun3"})
-	c, _, _, _ := q.Interfaces.Confirm(context.Background(), "OpkgTun3")
-	_ = cmds.InterfaceUp(context.Background(), c)
-	if len(hn.calls) != 1 || hn.calls[0] != (hookCall{"OpkgTun3", "running"}) {
-		t.Fatalf("hook: %+v", hn.calls)
+// П8 (стенд 06.10): действующий up:true/up:false даёт ровно одну грань conf,
+// no-op — ни одной. Кредит — только за действующую команду, судит карта, и
+// карта сразу принимает наш слой: up→up и down→down — no-op, кредита нет.
+// Мутации: «кредит всегда» → no-op down даёт кредит, красный; «карту не
+// трогать» → второй up снова действующий, второй кредит running, красный.
+func TestInterfaceUpDown_CreditOnlyWhenEffective(t *testing.T) {
+	ctx := context.Background()
+	cmds, f, _, q := newOracleInterfaceCommands(t, ndms.Interface{ID: "OpkgTun3", ConfLayer: "disabled"})
+	c, _, _, _ := q.Interfaces.Confirm(ctx, "OpkgTun3")
+	claim := func(level string) bool { return q.Interfaces.ClaimOwnConf("OpkgTun3", level) }
+
+	if err := cmds.InterfaceDown(ctx, c); err != nil || claim("disabled") {
+		t.Fatalf("down на выключенной: err=%v или выдан кредит no-op", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := cmds.InterfaceUp(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !claim("running") || claim("running") {
+		t.Fatal("up, up: ждали ровно один кредит running")
+	}
+	if err := cmds.InterfaceDown(ctx, c); err != nil || !claim("disabled") {
+		t.Fatalf("down после up: err=%v, кредита disabled нет", err)
 	}
 	if f.Phantoms != 0 || f.E != 0 {
 		t.Fatalf("phantoms=%d E=%d", f.Phantoms, f.E)
 	}
 }
 
+// Отказ POST: кредит назад, слой карты прежний — иначе no-op следующей
+// команды прочитался бы действующим: down по-прежнему выключенной записи дал
+// бы кредит, которого не погасит ни одна грань. Мутации: «не звать refused» →
+// кредит running остался, красный; «слой не возвращать» → кредит disabled у
+// no-op down, красный.
+func TestInterfaceUp_Refused_CreditBack(t *testing.T) {
+	ctx := context.Background()
+	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun0", ConfLayer: "disabled"})
+	poster := &fakePoster{}
+	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	cmds := NewInterfaceCommands(poster, NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil), q)
+	c, _, _, err := q.Interfaces.Confirm(ctx, "OpkgTun0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	poster.SetError(errors.New("refused"))
+	if err := cmds.InterfaceUp(ctx, c); err == nil {
+		t.Fatal("ожидалась ошибка")
+	}
+	if q.Interfaces.ClaimOwnConf("OpkgTun0", "running") {
+		t.Fatal("кредит отказанного up остался")
+	}
+	poster.SetError(nil)
+	if err := cmds.InterfaceDown(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if q.Interfaces.ClaimOwnConf("OpkgTun0", "disabled") {
+		t.Fatal("no-op down после отказанного up получил кредит: слой не возвращён")
+	}
+}
+
 func TestInterfaceCommands_CreateOpkgTun(t *testing.T) {
-	cmds, poster, sc, _, _ := newTestInterfaceCommands(t)
+	cmds, poster, sc, _ := newTestInterfaceCommands(t)
 	if _, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun0", "test", freeFor(t, "opkgtun0")); err != nil {
 		t.Fatalf("CreateOpkgTun: %v", err)
 	}
@@ -214,7 +250,7 @@ func TestInterfaceCommands_CreateOpkgTun(t *testing.T) {
 }
 
 func TestCreateOpkgTunWithSecurityLevel_Private(t *testing.T) {
-	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
+	cmds, poster, _, _ := newTestInterfaceCommands(t)
 	if _, err := cmds.CreateOpkgTunWithSecurityLevel(context.Background(), "OpkgTun10", "fakeip-tun", "private", freeFor(t, "opkgtun10")); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -229,7 +265,7 @@ func TestCreateOpkgTunWithSecurityLevel_Private(t *testing.T) {
 }
 
 func TestInterfaceCommands_DeleteOpkgTun(t *testing.T) {
-	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
+	cmds, poster, _, _ := newTestInterfaceCommands(t)
 	if err := cmds.DeleteOpkgTun(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
 		t.Fatalf("DeleteOpkgTun: %v", err)
 	}
@@ -241,7 +277,7 @@ func TestInterfaceCommands_DeleteOpkgTun(t *testing.T) {
 }
 
 func TestInterfaceCommands_SetAddress_TwoPosts(t *testing.T) {
-	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
+	cmds, poster, _, _ := newTestInterfaceCommands(t)
 	if err := cmds.SetAddress(context.Background(), confirmed(t, "OpkgTun0"), "10.0.0.2", "255.255.255.255"); err != nil {
 		t.Fatalf("SetAddress: %v", err)
 	}
@@ -256,7 +292,7 @@ func TestInterfaceCommands_SetAddress_TwoPosts(t *testing.T) {
 }
 
 func TestInterfaceCommands_SetMTU(t *testing.T) {
-	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
+	cmds, poster, _, _ := newTestInterfaceCommands(t)
 	if err := cmds.SetMTU(context.Background(), confirmed(t, "OpkgTun0"), 1280); err != nil {
 		t.Fatalf("SetMTU: %v", err)
 	}
@@ -271,42 +307,24 @@ func TestInterfaceCommands_SetMTU(t *testing.T) {
 	}
 }
 
-func TestInterfaceCommands_InterfaceUp_WithHookNotifier(t *testing.T) {
-	cmds, _, _, _, hn := newTestInterfaceCommands(t)
-	if err := cmds.InterfaceUp(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
-		t.Fatalf("InterfaceUp: %v", err)
-	}
-	if !reflect.DeepEqual(hn.calls, []hookCall{{"OpkgTun0", "running"}}) {
-		t.Errorf("ExpectHook calls: %#v", hn.calls)
-	}
-}
-
-func TestInterfaceCommands_InterfaceDown_WithHookNotifier(t *testing.T) {
-	cmds, _, _, _, hn := newTestInterfaceCommands(t)
-	if err := cmds.InterfaceDown(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
-		t.Fatalf("InterfaceDown: %v", err)
-	}
-	if !reflect.DeepEqual(hn.calls, []hookCall{{"OpkgTun0", "disabled"}}) {
-		t.Errorf("ExpectHook calls: %#v", hn.calls)
-	}
-}
-
-func TestInterfaceCommands_InterfaceUp_NilHookNotifier(t *testing.T) {
+// Записи нет в карте — судить нечем, кредита нет (недодать безопаснее, чем
+// повесить кредит). Мутация «кредит неизвестной записи» → красный.
+func TestInterfaceUp_UnknownRecord_NoCredit(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
 	q := testQueries()
-	cmds := NewInterfaceCommands(poster, sc, q, nil)
+	cmds := NewInterfaceCommands(poster, sc, q)
 	if err := cmds.InterfaceUp(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
-		t.Fatalf("InterfaceUp (nil notifier): %v", err)
+		t.Fatalf("InterfaceUp: %v", err)
 	}
-	if poster.Calls() != 1 {
-		t.Errorf("calls: want 1, got %d", poster.Calls())
+	if poster.Calls() != 1 || q.Interfaces.ClaimOwnConf("OpkgTun0", "running") {
+		t.Errorf("calls=%d (want 1) или выдан кредит неизвестной записи", poster.Calls())
 	}
 }
 
 func TestInterfaceCommands_SetDNS_MultipleServers(t *testing.T) {
-	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
+	cmds, poster, _, _ := newTestInterfaceCommands(t)
 	servers := []string{"1.1.1.1", "8.8.8.8"}
 	if err := cmds.SetDNS(context.Background(), confirmed(t, "OpkgTun0"), servers); err != nil {
 		t.Fatalf("SetDNS: %v", err)
@@ -317,7 +335,7 @@ func TestInterfaceCommands_SetDNS_MultipleServers(t *testing.T) {
 }
 
 func TestInterfaceCommands_ClearDNS_IgnoresErrors(t *testing.T) {
-	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
+	cmds, poster, _, _ := newTestInterfaceCommands(t)
 	poster.SetError(errors.New("already absent"))
 	if err := cmds.ClearDNS(context.Background(), confirmed(t, "OpkgTun0"), []string{"1.1.1.1"}); err != nil {
 		t.Fatalf("ClearDNS best-effort: want no error, got %v", err)
@@ -325,7 +343,7 @@ func TestInterfaceCommands_ClearDNS_IgnoresErrors(t *testing.T) {
 }
 
 func TestInterfaceCommands_CreateOpkgTun_PosterError(t *testing.T) {
-	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
+	cmds, poster, _, _ := newTestInterfaceCommands(t)
 	poster.SetError(errors.New("ndms rejected"))
 	_, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun0", "x", freeFor(t, "opkgtun0"))
 	if err == nil {
@@ -349,7 +367,7 @@ func freeFor(t *testing.T, kernel string) netdev.Free {
 
 // F569: создание — голое, настройки — отдельным POST по Confirmed.
 func TestCreateOpkgTun_SplitPayload(t *testing.T) {
-	cmds, f, _, _, _ := newOracleInterfaceCommands(t)
+	cmds, f, _, _ := newOracleInterfaceCommands(t)
 	f.ExpectCreate("OpkgTun3")
 	if _, err := cmds.CreateOpkgTunWithSecurityLevel(context.Background(), "OpkgTun3", "t", "private", freeFor(t, "opkgtun3")); err != nil {
 		t.Fatal(err)
@@ -366,7 +384,7 @@ func TestCreateOpkgTun_SplitPayload(t *testing.T) {
 
 // Отказ создания (устройство живо) — ни одной команды по несозданной записи.
 func TestCreateOpkgTun_CreateFails_NoSettings(t *testing.T) {
-	cmds, f, _, _, _ := newOracleInterfaceCommands(t)
+	cmds, f, _, _ := newOracleInterfaceCommands(t)
 	f.ExpectCreate("OpkgTun3")
 	f.SetNetdev("opkgtun3", true)
 	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t", freeFor(t, "opkgtun3"))
@@ -380,7 +398,7 @@ func TestCreateOpkgTun_CreateFails_NoSettings(t *testing.T) {
 
 // Доказательство для чужого имени — отказ до POST.
 func TestCreateOpkgTun_WrongProofName(t *testing.T) {
-	cmds, f, _, _, _ := newOracleInterfaceCommands(t)
+	cmds, f, _, _ := newOracleInterfaceCommands(t)
 	f.ExpectCreate("OpkgTun3")
 	_, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t", freeFor(t, "opkgtun4"))
 	if err == nil || len(f.Posts) != 0 || f.ListCalls() != 0 {
@@ -402,14 +420,13 @@ func (p failSettingsPoster) Post(ctx context.Context, payload any) (json.RawMess
 
 // Создание прошло, настройки отвергнуты — запись без нашего описания стала бы
 // «чужой» (ForeignRecordError у kernel, сирота у sing-box). Команда сносит её
-// сама по тому же Confirmed; свой ifdestroyed узнаётся по карте (П20).
+// сама по тому же Confirmed; свой ifdestroyed узнаётся по кредиту (П21).
 func TestCreateOpkgTun_SettingsFail_RollsBackRecord(t *testing.T) {
 	f := query.NewFakeNDMS()
 	f.ExpectCreate("OpkgTun3")
 	sc := NewSaveCoordinator(f, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
-	hn := &spyHookNotifier{}
-	cmds := NewInterfaceCommands(failSettingsPoster{f}, sc, q, hn)
+	cmds := NewInterfaceCommands(failSettingsPoster{f}, sc, q)
 
 	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t", freeFor(t, "opkgtun3"))
 	if err == nil || !strings.Contains(err.Error(), "injected: settings rejected") || c != (query.Confirmed{}) {
@@ -430,8 +447,7 @@ func TestCreateOpkgTun_SettingsFail_RollsBackRecord(t *testing.T) {
 	if f.E != 0 || f.Phantoms != 0 || f.C != 0 {
 		t.Fatalf("E=%d Phantoms=%d C=%d", f.E, f.Phantoms, f.C)
 	}
-	if !q.Interfaces.RemovedByUs("OpkgTun3") || len(hn.calls) != 0 {
-		t.Fatalf("снос не отмечен в карте как свой (RemovedByUs=%v) или зарегистрированы ожидания %+v",
-			q.Interfaces.RemovedByUs("OpkgTun3"), hn.calls)
+	if !q.Interfaces.ClaimOwnDestroyed("OpkgTun3") || q.Interfaces.ClaimOwnConf("OpkgTun3", "running") {
+		t.Fatal("снос не выдал кредит своего ifdestroyed (или выдан кредит грани conf)")
 	}
 }

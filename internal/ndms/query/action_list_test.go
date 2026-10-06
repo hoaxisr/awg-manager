@@ -269,3 +269,42 @@ func TestActionList_AgeCapFromRequestStart(t *testing.T) {
 		t.Fatalf("новый список действия не переиспользован: %d списков, want 2", got)
 	}
 }
+
+// D6.3/П22: страж воскрешения при нашем снятии держится одной меткой exist
+// (gone от RemovalToken): свой поздний ifcreated её не перекрывает — он до
+// стора не доходит. Список, начатый до Removed() и показавший X, применён
+// после — X не в карте. Мутация «убрать goneSinceLocked из стража» → X в
+// карте, красный. Новое воплощение после снятия (NDMS пересоздал X, хук ещё не
+// дошёл / чужой ifcreated дошёл) следующий список кладёт: мутация «страж по
+// любой gone-метке без seq» → «хук не дошёл» X не в карте, красный; подслучай
+// с чужим ifcreated — сторож.
+func TestResurrectionGuard_OwnRemoval(t *testing.T) {
+	ctx := context.Background()
+	f, s := actionStore(t)
+	f.InList(func() {
+		f.InList(nil)
+		f.Remove("Wireguard1")
+		s.ExpectRemoval("Wireguard1").Removed()
+	})
+	if err := s.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := s.Get(ctx, "Wireguard1"); rec != nil {
+		t.Fatalf("список старше снятия воскресил X: %#v", rec)
+	}
+	for _, foreignHook := range []bool{false, true} {
+		f, s := actionStore(t)
+		f.Remove("Wireguard1")
+		s.ExpectRemoval("Wireguard1").Removed()
+		f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
+		if foreignHook {
+			s.OnCreated("Wireguard1")
+		}
+		if err := s.Refresh(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if rec, _ := s.Get(ctx, "Wireguard1"); rec == nil {
+			t.Fatalf("foreignHook=%v: новое воплощение не в карте", foreignHook)
+		}
+	}
+}

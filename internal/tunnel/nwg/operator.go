@@ -48,12 +48,11 @@ var resolveRetryGap = 300 * time.Millisecond
 
 // OperatorNativeWG manages tunnels via Keenetic native WireGuard + awg_proxy.ko.
 type OperatorNativeWG struct {
-	queries      *query.Queries
-	commands     *command.Commands
-	transport    *transport.Client
-	kmod         *KmodManager
-	appLog       *logging.ScopedLogger
-	hookNotifier tunnel.HookNotifier
+	queries   *query.Queries
+	commands  *command.Commands
+	transport *transport.Client
+	kmod      *KmodManager
+	appLog    *logging.ScopedLogger
 
 	// resolveFn resolves "host:port" to (ip, port). Defaults to
 	// netutil.ResolveEndpoint; overridable in tests.
@@ -136,11 +135,6 @@ func NewOperator(queries *query.Queries, commands *command.Commands, tr *transpo
 	}
 	op.hasProxySlot = op.kmod.HasSlotListening
 	return op
-}
-
-// SetHookNotifier sets the hook notifier for registering expected NDMS hooks.
-func (o *OperatorNativeWG) SetHookNotifier(hn tunnel.HookNotifier) {
-	o.hookNotifier = hn
 }
 
 // SetTunnelLookup задаёт доступ к хранилищу туннелей.
@@ -522,9 +516,6 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 	}
 
 	o.appLog.Full("start", stored.Name, "Setting peer endpoint, interface up")
-	if o.hookNotifier != nil {
-		o.hookNotifier.ExpectHook(names.NDMSName, "running")
-	}
 
 	// Batch: endpoint + connect via + up. Для v6 в RCI уходит ЗАГЛУШКА —
 	// она перезаписывает возможный устаревший реальный endpoint в конфиге
@@ -539,7 +530,7 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 		payloads.CmdWireguardPeerConnect(iface, pubkey, stored.ISPInterface),
 		payloads.CmdInterfaceUp(iface, true),
 	}
-	if _, err := o.postIfaceBatch(ctx, iface, cmds); err != nil {
+	if _, err := o.postUpBatch(ctx, iface, true, cmds); err != nil {
 		return fmt.Errorf("start native: %w", err)
 	}
 
@@ -657,17 +648,13 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 		o.appLog.Warn("apply-dns", names.NDMSName, err.Error())
 	}
 
-	if o.hookNotifier != nil {
-		o.hookNotifier.ExpectHook(names.NDMSName, "running")
-	}
-
 	// Batch: set proxy endpoint + connect + up
 	cmds := []any{
 		payloads.CmdWireguardPeerEndpoint(iface, pubkey, proxyEndpoint),
 		payloads.CmdWireguardPeerConnect(iface, pubkey, stored.ISPInterface),
 		payloads.CmdInterfaceUp(iface, true),
 	}
-	if _, err := o.postIfaceBatch(ctx, iface, cmds); err != nil {
+	if _, err := o.postUpBatch(ctx, iface, true, cmds); err != nil {
 		_ = o.kmod.RemoveTunnel(stored.ID)
 		return fmt.Errorf("start proxy: %w", err)
 	}
@@ -747,13 +734,13 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 
 	o.appLog.Full("stop", stored.Name, "Interface down")
 
-	if o.hookNotifier != nil {
-		o.hookNotifier.ExpectHook(names.NDMSName, "disabled")
-	}
 	cmds := []any{
 		payloads.CmdInterfaceUp(iface, false),
 	}
-	_, _ = o.postIfaceBatchSaved(ctx, iface, cmds)
+	refused := o.queries.Interfaces.ExpectConf(iface.Name(), false)
+	if _, err := o.postIfaceBatchSaved(ctx, iface, cmds); err != nil {
+		refused()
+	}
 
 	// Clear DNS servers from the router's DNS proxy
 	if err := o.SyncDNS(ctx, iface, tunnel.ParseDNSList(stored.Interface.DNS), nil); err != nil {
@@ -901,6 +888,17 @@ func nwgStalled(rci NWGState, now time.Time) bool {
 func (o *OperatorNativeWG) postIfaceBatch(ctx context.Context, iface query.Confirmed, cmds []any) ([]json.RawMessage, error) {
 	res, err := o.transport.PostBatch(ctx, cmds)
 	o.queries.Interfaces.Invalidate(iface.Name())
+	return res, err
+}
+
+// postUpBatch — postIfaceBatch с `up` в батче: кредит своей грани conf до
+// POST (ExpectConf, только действующей команды), отказ батча — кредит назад.
+func (o *OperatorNativeWG) postUpBatch(ctx context.Context, iface query.Confirmed, up bool, cmds []any) ([]json.RawMessage, error) {
+	refused := o.queries.Interfaces.ExpectConf(iface.Name(), up)
+	res, err := o.postIfaceBatch(ctx, iface, cmds)
+	if err != nil {
+		refused()
+	}
 	return res, err
 }
 

@@ -161,3 +161,45 @@ func TestUnlisted_IsConfirmedName(t *testing.T) {
 		t.Fatalf("Name()=%q", got)
 	}
 }
+
+// П8/П26: кредит грани conf — только за действующую команду (слой карты не
+// целевой); уровни кроме running/disabled кредитов не имеют. Мутация «кредит
+// всегда» → up на running даёт кредит, красный.
+func TestExpectConf_EffectiveOnly(t *testing.T) {
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", ConfLayer: "running"})
+	s := warmStore(t, f)
+	s.ExpectConf("Wireguard0", true)
+	if s.ClaimOwnConf("Wireguard0", "running") {
+		t.Fatal("no-op up: выдан кредит")
+	}
+	s.ExpectConf("Wireguard0", false)
+	if s.ClaimOwnConf("Wireguard0", "pending") || !s.ClaimOwnConf("Wireguard0", "disabled") || creditsLen(s) != 0 {
+		t.Fatalf("down: ждали ровно один кредит disabled, len(credits)=%d", creditsLen(s))
+	}
+}
+
+// Список, начатый до нашей команды и применённый после, слой conf не
+// перетирает (иначе следующая команда судилась бы по устаревшему слою и
+// no-op получил бы кредит); список, начатый после, — перетирает. Мутация
+// «без confAt в applyListLocked» → слой disabled после старого списка, красный.
+func TestExpectConf_OlderListKeepsOurLayer(t *testing.T) {
+	ctx := context.Background()
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", ConfLayer: "disabled"})
+	s := warmStore(t, f)
+	f.InList(func() {
+		f.InList(nil)
+		s.ExpectConf("Wireguard0", true) // ответ списка уже прочитан: disabled
+	})
+	if err := s.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := s.Get(ctx, "Wireguard0"); rec == nil || rec.ConfLayer != "running" {
+		t.Fatalf("старый список перетёр наш слой: %+v", rec)
+	}
+	if err := s.Refresh(ctx); err != nil { // начат после команды: истина оракула
+		t.Fatal(err)
+	}
+	if rec, _ := s.Get(ctx, "Wireguard0"); rec == nil || rec.ConfLayer != "disabled" {
+		t.Fatalf("новый список не применил слой: %+v", rec)
+	}
+}

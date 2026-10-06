@@ -594,12 +594,18 @@ func TestNotListed_OnlyInConfirmCreated(t *testing.T) {
 
 // TestRawInterfaceDelete_OnlyConfirmed — снос интерфейса литералом
 // ({"interface":{X:{"no":true}}} или {"interface":{"name":X,"no":true}}) в
-// прод-коде — только по имени из Confirmed: X — вызов `….Name()` или
-// переменная, присвоенная из него в той же функции. Исключений нет: снос
-// неподтверждённого (F584) идёт через query.Unlisted в тот же deleteInterface.
-// Формы `{"parse":"no interface X"}` сносом здесь не бывают (снимают
-// настройку) и не проверяются.
+// прод-коде — ровно один, в deleteSite, и только по имени из Confirmed: X —
+// вызов `….Name()` или переменная, присвоенная из него в той же функции.
+// Только там выдаётся кредит своего ifdestroyed (ExpectRemoval): второй
+// композит сноса, даже по Confirmed, снимал бы запись без кредита, и её
+// ifdestroyed стал бы чужим (R67-1). Снос неподтверждённого (F584) идёт через
+// query.Unlisted в тот же deleteInterface. Формы `{"parse":"no interface X"}`
+// сносом здесь не бывают (снимают настройку) и не проверяются.
+// Мутация: второй композит `{"interface":{iface.Name():{"no":true}}}` в
+// command/proxy.go → красный.
 func TestRawInterfaceDelete_OnlyConfirmed(t *testing.T) {
+	const deleteSite = "internal/ndms/command/delete.go:deleteInterface"
+	sites := 0
 	for _, f := range prodGoFiles(t, true) {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, f.rel, f.data, parser.SkipObjectResolution)
@@ -657,6 +663,11 @@ func TestRawInterfaceDelete_OnlyConfirmed(t *testing.T) {
 					}
 				}
 				for _, x := range names {
+					sites++
+					if key != deleteSite {
+						t.Errorf("%s: %s: снос интерфейса вне %s — без кредита своего ifdestroyed",
+							fset.Position(x.Pos()), key, deleteSite)
+					}
 					if !ok2(x) {
 						t.Errorf("%s: %s: снос интерфейса по имени не из Confirmed — только по query.Confirmed",
 							fset.Position(x.Pos()), key)
@@ -665,6 +676,9 @@ func TestRawInterfaceDelete_OnlyConfirmed(t *testing.T) {
 				return true
 			})
 		}
+	}
+	if sites != 1 {
+		t.Errorf("композитов сноса интерфейса %d, ждали ровно один (%s) — сканер не видит формы", sites, deleteSite)
 	}
 }
 

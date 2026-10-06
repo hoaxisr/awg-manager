@@ -16,31 +16,31 @@ import (
 )
 
 // Стенд 01.10, KN-1810 5.01.C.6: 16 замеров опоздания хуков под churn —
-// 14–30 с, максимум ≈30 с. Окно = максимум × 1,5. Вернуть 15/20 с — хук,
-// пришедший на 20-й секунде, снова примут за внешнюю грань.
-// Поведение, а не только значения: свой хук, опоздавший на 44 с, поглощается
-// ожиданием; чужая грань на 44-й секунде после подъёма — окном. Мутации
-// «TTL ожидания не из константы (15 с)» и «окно в updateState 15 с» → красный.
+// 14–30 с, максимум ≈30 с. Окно = максимум × 1,5. Вернуть 15/20 с — грань,
+// пришедшая на 20-й секунде, снова сошла бы за остановку.
+// Поведение, а не только значение: свой хук (кредит, Own) отсеивается при
+// любом опоздании — ни метки, ни перепроверки; чужая грань на 44-й секунде
+// после подъёма — окном. Мутации «игнорировать Own у грани conf» → метка
+// поглощённой грани, красный; «окно в updateState 15 с» → stop, красный.
 func TestHookWindows_CoverMeasuredLag(t *testing.T) {
-	if expectedHookTTL != 45*time.Second {
-		t.Errorf("expectedHookTTL = %s, want 45s", expectedHookTTL)
-	}
 	if bootQuiescenceWindow != 45*time.Second {
 		t.Errorf("bootQuiescenceWindow = %s, want 45s", bootQuiescenceWindow)
 	}
 	const lag = 44 * time.Second
 
-	// Ожидание: свой disabled зарегистрирован в момент подъёма, хук пришёл
-	// через lag — поглощён до окна: ни метки, ни перепроверки.
 	r := newHookWindowRig(t)
-	r.o.ExpectHook("OpkgTun10", "disabled")
-	r.disabledEdge(t, lag)
-	if !r.absorbedAt().IsZero() || r.sched.count() != 0 {
-		t.Fatalf("свой хук с опозданием %s не поглощён ожиданием: метка=%v schedule=%d",
-			lag, r.absorbedAt(), r.sched.count())
+	r.clk.Set(r.base.Add(10 * time.Minute)) // опоздание больше любого окна
+	own := confHookName("OpkgTun10", "disabled")
+	own.Own = true
+	if err := r.o.HandleEvent(context.Background(), own); err != nil {
+		t.Fatal(err)
+	}
+	if !r.absorbedAt().IsZero() || r.sched.count() != 0 || r.op.stops.Load() != 0 {
+		t.Fatalf("свой хук не отсеян кредитом: метка=%v schedule=%d stops=%d",
+			r.absorbedAt(), r.sched.count(), r.op.stops.Load())
 	}
 
-	// Окно: без ожидания та же грань на 44-й секунде поглощается окном.
+	// Окно: чужая грань на 44-й секунде поглощается окном.
 	r = newHookWindowRig(t)
 	r.disabledEdge(t, lag)
 	if n := r.op.stops.Load(); n != 0 {
@@ -92,107 +92,6 @@ func TestConfDisabled_EdgeAtWindowEnd_WaitsSettleBeforeProbe(t *testing.T) {
 	}
 	if !mustGet(t, r.store, "awg10").Enabled {
 		t.Fatal("Enabled снят")
-	}
-}
-
-// deleteThenReborn — M1: прежнее воплощение awg10 (OpkgTun10) удалено,
-// оставив ожидания (их регистрирует ops.Delete/отказавший Start; болванка
-// оператора этого не делает — регистрируем здесь же), затем через 5 с имя
-// занимает новый туннель. Возвращает риг на моменте base+5 с без туннеля в
-// кэше.
-func deleteThenReborn(t *testing.T, levels ...string) *hookWindowRig {
-	t.Helper()
-	r := newHookWindowRig(t)
-	r.o.mu.Lock()
-	r.o.state.tunnels["awg10"].Running = false
-	r.o.mu.Unlock()
-	for _, l := range levels {
-		r.o.ExpectHook("OpkgTun10", l)
-	}
-	r.o.updateState(Action{Type: ActionDeleteKernel, Tunnel: "awg10"})
-	r.clk.Set(r.base.Add(5 * time.Second))
-	return r
-}
-
-// M1: Delete выключенной записи — NDMS может не прислать conf=disabled, токен
-// живёт 45 с. Новый туннель на том же OpkgTun10 запущен; внешнее выключение
-// в эти 45 с обязано дойти до окна и П13 (остановка, Enabled=false по Q1), а
-// не исчезнуть в чужом токене. Мутация «не сравнивать at с bornAt» → грань
-// поглощена токеном → перепроверки нет → красный; так же «bornAt не ставить
-// в ensureTunnel» и «не переносить bornAt в RefreshTunnelState».
-func TestExpectedHook_PreviousIncarnation_DoesNotSwallowDisabled(t *testing.T) {
-	r := deleteThenReborn(t, "disabled")
-	if err := r.o.HandleEvent(context.Background(), Event{Type: EventStart, Tunnel: "awg10"}); err != nil {
-		t.Fatalf("Start нового туннеля: %v", err)
-	}
-	if !r.tunnel().Running {
-		t.Fatal("новый туннель не поднят")
-	}
-	r.o.RefreshTunnelState("awg10") // правка записи не обнуляет bornAt
-
-	r.disabledEdge(t, 15*time.Second) // токен прежнего ещё жив (до base+45 с)
-	if r.absorbedAt().IsZero() {
-		t.Fatal("внешняя грань нового туннеля поглощена токеном прежнего воплощения")
-	}
-	r.clk.Set(r.base.Add(5*time.Second + bootQuiescenceWindow))
-	r.sched.fn(t, 0)()
-	if n := r.probe.calls.Load(); n != 1 {
-		t.Fatalf("проба вызвана %d раз, want 1", n)
-	}
-	if n := r.op.stops.Load(); n != 1 {
-		t.Fatalf("stops=%d, want 1", n)
-	}
-	if mustGet(t, r.store, "awg10").Enabled {
-		t.Fatal("Enabled не снят: внешний стоп обязан персиститься (Q1)")
-	}
-}
-
-// M1, отказавший Start: прежнее воплощение оставило токен running. Новый
-// туннель на том же имени в кэше (правка записи → RefreshTunnelState), не
-// запущен; внешнее включение в роутере обязано его поднять (#183), а не
-// исчезнуть в чужом токене. Мутации «не сравнивать at с bornAt» и «bornAt не
-// ставить для новой записи в RefreshTunnelState» → coldStarts не растёт → красный.
-func TestExpectedHook_PreviousIncarnationFailedStart_DoesNotSwallowRunning(t *testing.T) {
-	r := newHookWindowRig(t)
-	r.o.mu.Lock()
-	r.o.state.tunnels["awg10"].Running = false
-	r.o.mu.Unlock()
-	r.o.state.anyWANUpFn = func() bool { return true }
-	r.op.coldStartErr = errors.New("ndms refused")
-	r.o.ExpectHook("OpkgTun10", "running") // InterfaceUp отказавшего Start
-	if err := r.o.HandleEvent(context.Background(), Event{Type: EventStart, Tunnel: "awg10"}); err == nil {
-		t.Fatal("Start прежнего воплощения должен был отказать")
-	}
-	r.o.ExpectHook("OpkgTun10", "disabled")
-	r.o.updateState(Action{Type: ActionDeleteKernel, Tunnel: "awg10"})
-	r.op.coldStartErr = nil
-	starts := r.op.coldStarts.Load()
-
-	r.clk.Set(r.base.Add(5 * time.Second))
-	r.o.RefreshTunnelState("awg10") // новый туннель на OpkgTun10
-	r.probe.up = true               // NDMS действительно держит интерфейс включённым
-	r.clk.Set(r.base.Add(10 * time.Second))
-	if err := r.o.HandleEvent(context.Background(), confHookName("OpkgTun10", "running")); err != nil {
-		t.Fatalf("HandleEvent running: %v", err)
-	}
-	if n := r.op.coldStarts.Load() - starts; n != 1 {
-		t.Fatalf("внешнее включение нового туннеля поглощено токеном прежнего: coldStarts+%d", n)
-	}
-	if !r.tunnel().Running {
-		t.Fatal("туннель не поднят")
-	}
-}
-
-// Своё ожидание нового воплощения (зарегистрировано после появления в кэше)
-// поглощается как прежде: граница bornAt не задевает свой Start.
-func TestExpectedHook_OwnIncarnation_StillConsumed(t *testing.T) {
-	r := deleteThenReborn(t)
-	r.o.RefreshTunnelState("awg10")
-	r.o.updateState(Action{Type: ActionColdStartKernel, Tunnel: "awg10"})
-	r.o.ExpectHook("OpkgTun10", "disabled") // свой Stop нового туннеля
-	r.disabledEdge(t, 15*time.Second)
-	if !r.absorbedAt().IsZero() || r.sched.count() != 0 {
-		t.Fatalf("своё ожидание не поглотило грань: метка=%v schedule=%d", r.absorbedAt(), r.sched.count())
 	}
 }
 
@@ -611,32 +510,5 @@ func TestConfDisabled_RecheckUnderTunnelLock_NoGroupedRelock(t *testing.T) {
 	}
 	if n := r.op.stops.Load(); n != 1 {
 		t.Fatalf("stops=%d, want 1", n)
-	}
-}
-
-// F61-3: ожидание disabled от `interface down` поглощает грань conf, а не
-// первую грань блока. Блок на up:false приходит FIFO ctrl → ipv4 → link →
-// conf (стенд Task 59, C3a 20/20; ipv4 в оркестратор не идёт — hook.go).
-// Мутация «сверка без слоя» → токен съедает ctrl=disabled, conf=disabled
-// уходит в окно (метка поглощённой грани + перепроверка) → красный.
-func TestExpectedDisabled_ConsumedByConfEdgeNotCtrl(t *testing.T) {
-	r := newHookWindowRig(t)
-	r.clk.Set(r.base.Add(time.Second))
-	r.o.ExpectHook("OpkgTun10", "disabled")
-	r.clk.Set(r.base.Add(3 * time.Second))
-	for _, layer := range []string{"ctrl", "link", "conf"} {
-		if err := r.o.HandleEvent(context.Background(), Event{Type: EventNDMSHook, NDMSName: "OpkgTun10", Layer: layer, Level: "disabled"}); err != nil {
-			t.Fatalf("HandleEvent %s: %v", layer, err)
-		}
-	}
-	if !r.absorbedAt().IsZero() || r.sched.count() != 0 || r.op.stops.Load() != 0 {
-		t.Fatalf("conf=disabled не поглощена ожиданием: метка=%v schedule=%d stops=%d",
-			r.absorbedAt(), r.sched.count(), r.op.stops.Load())
-	}
-	r.o.mu.Lock()
-	left := len(r.o.expectedHooks)
-	r.o.mu.Unlock()
-	if left != 0 {
-		t.Fatalf("ожиданий осталось %d, want 0", left)
 	}
 }

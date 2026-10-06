@@ -22,7 +22,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
-	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 )
 
@@ -33,9 +32,6 @@ func (a *app) setupOrchestrator() {
 	// Create orchestrator — single brain for all lifecycle decisions.
 	a.orch = orchestrator.New(a.awgStore, a.operator, a.nwgOp, a.stateMgr, a.wanModel, a.loggingService)
 	a.tunnelService.SetOrchestrator(a.orch)
-	// nwg-оператор регистрирует ожидаемые хуки сам; kernel-оператор — через
-	// InterfaceUp/Down команд NDMS (ndmsCommands.SetHookNotifier ниже).
-	wireHookNotifiers(a.orch, a.nwgOp)
 	// Endpoint-страж правит host-route и перезапускает релей — то же, что
 	// действия оркестратора, значит под тем же per-tunnel замком.
 	a.nwgOp.SetTunnelLock(func(ctx context.Context, tunnelID, owner string, work func() error) error {
@@ -48,9 +44,6 @@ func (a *app) setupOrchestrator() {
 	a.orch.SetPingCheck(a.pingCheckFacade)
 	// dnsRouteService wiring to orchestrator happens later, after ndmsCommands is built.
 	a.orch.SetClientRoute(a.clientRouteService)
-
-	// Wire HookNotifier for NDMS Commands — orchestrator exists now.
-	a.ndmsCommands.SetHookNotifier(a.orch)
 
 	// System WireGuard tunnels (read-only + ASC editing) — wired to NDMS CQRS layer.
 	a.systemTunnelSvc = systemtunnel.New(a.ndmsQueries, a.ndmsCommands, a.settingsStore,
@@ -214,9 +207,9 @@ func (a *app) setupEventWiring() {
 		_, _, ok, err := a.ndmsQueries.Interfaces.Confirm(ctx, name)
 		return ok, err
 	})
-	// Своё снятие записи — факт карты (П20): ifdestroyed записи, снятой нашим
+	// Своё снятие записи — вердикт точки входа spool по кредиту (Event.Own,
+	// api.NewHookSink в wiring_core): ifdestroyed записи, снятой нашим
 	// `no interface`, оркестратор не проверяет списком и туннель не трогает.
-	a.orch.SetRemovedByUsProbe(a.ndmsQueries.Interfaces.RemovedByUs)
 	a.ndmsDispatcher.SetExistenceListed(existencePublisher(a.eventBus))
 	// Full hr-neo restart on tunnel-running — NDMS assigns fwmarks only
 	// during rci_create_policies (hr-neo startup), so tunnels appearing
@@ -277,27 +270,12 @@ func (j dnsFailoverJournal) Infof(format string, args ...interface{}) {
 	j.log.Info("failover", "", fmt.Sprintf(format, args...))
 }
 
-// hookNotifierSetter — оператор, умеющий принять источник ожидаемых хуков.
-type hookNotifierSetter interface {
-	SetHookNotifier(tunnel.HookNotifier)
-}
-
-// wireHookNotifiers подключает оркестратор nwg-оператору. Вынесено из
-// setupOrchestrator ради страж-теста: пропущенный здесь оператор молча
-// превращает свой expectHook в no-op, и собственное `conf: disabled`
-// приезжает в оркестратор как чужое событие. У kernel-оператора OS5 своих
-// ожиданий нет: единственная точка — InterfaceUp/Down команд NDMS (Task 61).
-func wireHookNotifiers(orch tunnel.HookNotifier, nwgOp hookNotifierSetter) {
-	if nwgOp != nil {
-		nwgOp.SetHookNotifier(orch)
-	}
-}
-
 // existencePublisher — слушатель списка пачки хуков существования. Появление и
 // исчезновение интерфейса меняет и туннели, и серверы (тот же кэш WGServers):
 // UI перечитывает их после списка, а не по таймеру опроса (F364). Свои
-// создание и снятие (publish=false, П14/П20) хуком не публикуются — иначе в
-// «системных» мелькнул бы призрак создаваемого туннеля.
+// создание и снятие (publish=false: вердикт точки входа по кредитам, П22)
+// хуком не публикуются — иначе в «системных» мелькнул бы призрак создаваемого
+// туннеля.
 func existencePublisher(bus *events.Bus) func(publish bool) {
 	return func(publish bool) {
 		if !publish {

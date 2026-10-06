@@ -320,17 +320,15 @@ func noReaderList(t *testing.T, f *query.FakeNDMS, q *query.Queries, lists int) 
 	}
 }
 
-// П14 (D-N4): своё создание (owned) — ни списка, ни публикации: его
-// публикует создатель после записи туннеля в стор. Мутация «publish без own»
-// → publish=true, красный.
-func TestDispatcher_OwnCreated_NotListedNotPublished(t *testing.T) {
+// П22: свой ifcreated (вердикт точки входа, Own) стор не трогает — ни метки,
+// ни «грязно», ни списка, ни публикации (её делает создатель после записи
+// туннеля в стор). Мутация «игнорировать Own» → OnCreated незнакомого id →
+// список и публикация, красный.
+func TestDispatcher_OwnCreated_NoListNoPublish(t *testing.T) {
 	f, q, d, listed := ownOracle(t)
 	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
-	if _, err := q.Interfaces.ConfirmCreated(context.Background(), "Wireguard1", true); err != nil {
-		t.Fatal(err)
-	}
 	lists := f.ListCalls()
-	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"})
+	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1", Own: true})
 	d.Start()
 	defer d.Stop()
 	if p := waitListed(t, listed); p {
@@ -339,20 +337,85 @@ func TestDispatcher_OwnCreated_NotListedNotPublished(t *testing.T) {
 	noReaderList(t, f, q, lists)
 }
 
-// П20 (В3): своё снятие (removed) — ни списка, ни «грязно», ни публикации.
-// Мутация «publish без own» → publish=true, красный.
-func TestDispatcher_OwnDestroyed_NotPublished(t *testing.T) {
+// П22: X создан (k), снят нами, создан снова (k+1) и показан списком; свой
+// поздний ifdestroyed воплощения k — ни списка, ни публикации, X в карте.
+// «Метку сняло новое воплощение» (leak10) кредит не знает: решает порядок.
+// Мутация «звать OnDestroyed при Own» → X известен → «грязно» → список, красный.
+func TestDispatcher_OwnDestroyed_NewIncarnationListed_NoList(t *testing.T) {
 	f, q, d, listed := ownOracle(t)
-	f.Remove("Wireguard0")
-	q.Interfaces.ExpectRemoval("Wireguard0").Removed()
+	ctx := context.Background()
+	q.Interfaces.SetCreatedBackoff()
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
+	if _, err := q.Interfaces.ConfirmCreated(ctx, "Wireguard1", true); err != nil { // k
+		t.Fatal(err)
+	}
+	f.Remove("Wireguard1")
+	q.Interfaces.ExpectRemoval("Wireguard1").Removed()
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
+	if _, err := q.Interfaces.ConfirmCreated(ctx, "Wireguard1", true); err != nil { // k+1
+		t.Fatal(err)
+	}
+	if rec, _ := q.Interfaces.Get(ctx, "Wireguard1"); rec == nil {
+		t.Fatal("k+1 не в карте")
+	}
 	lists := f.ListCalls()
-	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
+	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard1", Own: true})
 	d.Start()
 	defer d.Stop()
 	if p := waitListed(t, listed); p {
-		t.Fatal("своё снятие опубликовано")
+		t.Fatal("свой поздний ifdestroyed опубликован")
 	}
 	noReaderList(t, f, q, lists)
+	if rec, _ := q.Interfaces.Get(ctx, "Wireguard1"); rec == nil {
+		t.Fatal("свой поздний ifdestroyed снял новое воплощение из карты")
+	}
+}
+
+// M6′/П22: свой ifcreated пришёл, пока первый список ConfirmCreated в полёте,
+// а имени в карте ещё нет — Own: «грязно» не ставится, подтверждает первый
+// список, ReconcileDirty списка не читает. Мутация «игнорировать Own» →
+// OnCreated незнакомого id → «грязно» новее списка → ReconcileDirty +1, красный.
+func TestDispatcher_OwnCreatedInFirstList_NoDispatcherList(t *testing.T) {
+	f, q, d, _ := ownOracle(t)
+	ctx := context.Background()
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
+	f.InList(func() {
+		f.InList(nil)
+		d.apply(Event{Type: EventIfCreated, ID: "Wireguard1", Own: true})
+	})
+	lists := f.ListCalls()
+	if c, err := q.Interfaces.ConfirmCreated(ctx, "Wireguard1", true); err != nil || c.Name() != "Wireguard1" {
+		t.Fatalf("c=%v err=%v", c, err)
+	}
+	if err := q.Interfaces.ReconcileDirty(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.ListCalls() - lists; got != 1 {
+		t.Fatalf("%d списков, want 1 (только список ConfirmCreated)", got)
+	}
+	noReaderList(t, f, q, f.ListCalls())
+}
+
+// Свою грань conf карта знает от ExpectConf; свой поздний хук прежней грани
+// слой не перетирает, чужой — перетирает. Мутация «OnLayerChanged и при Own»
+// → слой disabled, красный.
+func TestDispatcher_OwnConf_KeepsOurLayer(t *testing.T) {
+	_, q, d, _ := ownOracle(t)
+	ctx := context.Background()
+	layer := func() string {
+		rec, _ := q.Interfaces.Get(ctx, "Wireguard0")
+		return rec.ConfLayer
+	}
+	q.Interfaces.ExpectConf("Wireguard0", false) // карта: disabled
+	q.Interfaces.ExpectConf("Wireguard0", true)  // карта: running
+	d.apply(Event{Type: EventIfLayerChanged, ID: "Wireguard0", Layer: "conf", Level: "disabled", Own: true})
+	if got := layer(); got != "running" {
+		t.Fatalf("свой поздний conf=disabled перетёр слой: %q", got)
+	}
+	d.apply(Event{Type: EventIfLayerChanged, ID: "Wireguard0", Layer: "conf", Level: "disabled"})
+	if got := layer(); got != "disabled" {
+		t.Fatalf("чужой conf=disabled не применён: %q", got)
+	}
 }
 
 // Чужое создание публикуется всегда — и разошедшееся с картой (+1 список), и
@@ -390,8 +453,8 @@ func TestDispatcher_ForeignCreated_ListedPublished(t *testing.T) {
 	}
 }
 
-// Имя, снятое нами, занял чужой (ifcreated снял метку removed): его
-// ifdestroyed — чужой, публикуется.
+// Имя, снятое нами, занял чужой: его ifcreated и ifdestroyed — чужие (Own
+// false — кредитов нет), публикуются.
 func TestDispatcher_ForeignDestroyed_RecreatedName_Published(t *testing.T) {
 	f, q, d, listed := ownOracle(t)
 	f.Remove("Wireguard0")
@@ -410,10 +473,10 @@ func TestDispatcher_ForeignDestroyed_RecreatedName_Published(t *testing.T) {
 	}
 }
 
-// Своё создание и чужое снятие в одной пачке — публикация (OR по пачке),
-// в любом порядке хуков. Мутации: «publish без own» → красный; «решает
-// последнее событие» (publish = !own) → «чужое → своё» publish=false, красный.
-func TestDispatcher_OwnCreatedPlusForeignDestroyed_Published(t *testing.T) {
+// Своё создание и чужое снятие в одной пачке — один список, публикация (OR
+// по пачке), в любом порядке хуков. Мутации: «publish только если все чужие»
+// → красный; «решает последнее событие» → «чужое → своё» publish=false, красный.
+func TestDispatcher_MixedBatch_PublishIfAnyForeign(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		foreignFirst bool
@@ -422,17 +485,15 @@ func TestDispatcher_OwnCreatedPlusForeignDestroyed_Published(t *testing.T) {
 		{"чужое → своё", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f, q, d, listed := ownOracle(t)
+			f, _, d, listed := ownOracle(t)
 			f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
-			if _, err := q.Interfaces.ConfirmCreated(context.Background(), "Wireguard1", true); err != nil {
-				t.Fatal(err)
-			}
 			f.Remove("Wireguard0")
-			own := Event{Type: EventIfCreated, ID: "Wireguard1"}
+			own := Event{Type: EventIfCreated, ID: "Wireguard1", Own: true}
 			foreign := Event{Type: EventIfDestroyed, ID: "Wireguard0"}
 			if tc.foreignFirst {
 				own, foreign = foreign, own
 			}
+			lists := f.ListCalls()
 			d.Enqueue(own)
 			d.Enqueue(foreign)
 			d.Start()
@@ -440,63 +501,10 @@ func TestDispatcher_OwnCreatedPlusForeignDestroyed_Published(t *testing.T) {
 			if p := waitListed(t, listed); !p {
 				t.Fatal("чужое снятие в пачке со своим созданием не опубликовано")
 			}
-		})
-	}
-}
-
-// T5: ifcreated имени, снятого нами (Forget), двусмыслен — решает список
-// пачки. Запись показана — чужое пересоздание, публикация. Не показана — наш
-// ifcreated, опоздавший за нашим сносом (откат, ErrNotListed): публикации нет,
-// и свой ifdestroyed за ним — свой. Цена различения — список пачки (+1, как у
-// любого ifcreated, разошедшегося с картой); публикаций 0.
-// Мутации: «verify как чужое» (publish=true без списка) → «нет записи»
-// красный; «verify никогда не публикует» → «запись есть» красный; «OnCreated
-// снимает removed» → ifdestroyed после «нет записи» publish=true, красный.
-func TestDispatcher_IfCreatedAfterForget_ListDecides(t *testing.T) {
-	for _, recreated := range []bool{true, false} {
-		t.Run(map[bool]string{true: "запись есть", false: "нет записи"}[recreated], func(t *testing.T) {
-			f, q, d, listed := ownOracle(t)
-			f.Remove("Wireguard0")
-			q.Interfaces.ExpectRemoval("Wireguard0").Removed()
-			if recreated {
-				f.Add(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
-			}
-			lists := f.ListCalls()
-			d.Start()
-			defer d.Stop()
-			d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard0"})
-			if p := waitListed(t, listed); p != recreated {
-				t.Fatalf("ifcreated: publish=%v, want %v", p, recreated)
-			}
-			if n := f.ListCalls() - lists; n != 1 {
-				t.Fatalf("списков +%d, want 1 (список пачки решает)", n)
-			}
-			if recreated {
-				return
-			}
-			d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
-			if p := waitListed(t, listed); p {
-				t.Fatal("свой ifdestroyed за опоздавшим своим ifcreated опубликован")
-			}
 			if n := f.ListCalls() - lists; n != 1 {
 				t.Fatalf("списков +%d, want 1", n)
 			}
 		})
-	}
-}
-
-// T5: список пачки не прочитан — чьё ifcreated, неизвестно: публикуется
-// (как до T5). Мутация «список не прочитан — не публиковать» → красный.
-func TestDispatcher_VerifyListFailed_Published(t *testing.T) {
-	f, q, d, listed := ownOracle(t)
-	f.Remove("Wireguard0")
-	q.Interfaces.ExpectRemoval("Wireguard0").Removed()
-	f.FailList(errors.New("injected: rci"))
-	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard0"})
-	d.Start()
-	defer d.Stop()
-	if p := waitListed(t, listed); !p {
-		t.Fatal("список не прочитан, а двусмысленный ifcreated не опубликован")
 	}
 }
 

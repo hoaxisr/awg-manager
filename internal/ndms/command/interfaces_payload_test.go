@@ -8,7 +8,7 @@ import (
 )
 
 func TestInterfaceCommandsPayloads_CoreOps(t *testing.T) {
-	cmds, poster, _, _, hn := newTestInterfaceCommands(t)
+	cmds, poster, _, _ := newTestInterfaceCommands(t)
 
 	if _, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun10", "Test tunnel", freeFor(t, "opkgtun10")); err != nil {
 		t.Fatalf("CreateOpkgTun: %v", err)
@@ -59,13 +59,10 @@ func TestInterfaceCommandsPayloads_CoreOps(t *testing.T) {
 	}
 	requireJSONEqual(t, poster.Payloads()[6], `{"interface":{"OpkgTun10":{"up":true}}}`)
 	requireJSONEqual(t, poster.Payloads()[7], `{"interface":{"OpkgTun10":{"up":false}}}`)
-	if len(hn.calls) != 2 || hn.calls[0] != (hookCall{"OpkgTun10", "running"}) || hn.calls[1] != (hookCall{"OpkgTun10", "disabled"}) {
-		t.Fatalf("ExpectHook calls = %#v", hn.calls)
-	}
 }
 
 func TestInterfaceCommandsPayloads_AddressAndIPv6(t *testing.T) {
-	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
+	cmds, poster, _, _ := newTestInterfaceCommands(t)
 
 	if err := cmds.SetAddress(context.Background(), confirmed(t, "OpkgTun10"), "10.0.0.2", "255.255.255.255"); err != nil {
 		t.Fatalf("SetAddress: %v", err)
@@ -90,7 +87,7 @@ func TestInterfaceCommandsPayloads_AddressAndIPv6(t *testing.T) {
 }
 
 func TestInterfaceCommandsPayloads_DNS(t *testing.T) {
-	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
+	cmds, poster, _, _ := newTestInterfaceCommands(t)
 
 	if err := cmds.SetDNS(context.Background(), confirmed(t, "OpkgTun10"), []string{"1.1.1.1", "8.8.8.8"}); err != nil {
 		t.Fatalf("SetDNS: %v", err)
@@ -113,7 +110,7 @@ func TestInterfaceCommandsPayloads_DNS(t *testing.T) {
 // Снятие `ip global` идёт parse-формой: JSON-обёртки у обратной команды нет,
 // форма снята со стенда 5.01 2026-09-06 («global priority cleared»).
 func TestClearIPGlobal_ParseForm(t *testing.T) {
-	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
+	cmds, poster, _, _ := newTestInterfaceCommands(t)
 
 	if err := cmds.ClearIPGlobal(context.Background(), confirmed(t, "OpkgTun10")); err != nil {
 		t.Fatalf("ClearIPGlobal: %v", err)

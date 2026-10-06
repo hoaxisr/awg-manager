@@ -411,7 +411,7 @@ func TestDecide_Start_NativeWGTunnel(t *testing.T) {
 // own web UI) must start the tunnel even when awg-manager's store says
 // Enabled=false. The user's intent ("on") wins; the start path re-persists
 // Enabled=true. Self-induced hooks are already filtered upstream by
-// consumeExpectedHook, so a conf=running reaching decide is genuinely
+// the credit verdict (Event.Own), so a conf=running reaching decide is genuinely
 // external. (issue #183 — router-UI enable case.)
 func TestDecide_NDMSHook_Running_ExternalEnableWhileDisabled_Starts(t *testing.T) {
 	s := newState()

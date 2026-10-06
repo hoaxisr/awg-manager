@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -227,50 +226,46 @@ func TestStop_RecordGone_ForeignTun_Untouched(t *testing.T) {
 	}
 }
 
-// orderedNotifier — ожидания хуков с числом POST на момент регистрации и,
-// если задан be, с числом Stop: между ожиданием и Stop POST не уходит, так
-// что порядок «ожидание → Stop» виден только по числу Stop (M2′).
-type orderedNotifier struct {
-	f     *ndmsquery.FakeNDMS
-	be    *deviceBackend
-	calls []string
-}
-
-func (n *orderedNotifier) ExpectHook(name, level string) {
-	c := name + "/" + level + "@" + strconv.Itoa(len(n.f.Posts))
-	if n.be != nil {
-		c += "/stops=" + strconv.Itoa(len(n.be.StopCalls))
+// confCalls — команды up/down записи OpkgTun10 по порядку как "имя/уровень":
+// кредиты своих граней conf выдают именно они (ExpectConf, П8), своих
+// ожиданий у оператора OS5 нет.
+func confCalls(f *ndmsquery.FakeNDMS) []string {
+	var out []string
+	for _, p := range f.Posts {
+		switch p {
+		case postDown:
+			out = append(out, "OpkgTun10/disabled")
+		case `{"interface":{"OpkgTun10":{"up":true}}}`:
+			out = append(out, "OpkgTun10/running")
+		}
 	}
-	n.calls = append(n.calls, c)
+	return out
 }
 
-// Наш снос записи — свой ifdestroyed: оркестратор узнаёт его по карте
-// (RemovedByUs, П20), ожиданий хуков Delete не регистрирует (Task 35 → 60).
-func TestDelete_RecordRemovedByUs(t *testing.T) {
+// Наш снос записи — свой ifdestroyed: кредит выдан до POST (ExpectRemoval в
+// deleteInterface), вердикт — в точке входа (П22); команд up/down Delete
+// опущенной записи не шлёт.
+func TestDelete_RecordOwnRemoval(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS(opkgTun10())
 	o, _, _ := newOS5Oracle(t, f, &MockBackend{running: true})
-	hn := &orderedNotifier{f: f}
-	o.commands.SetHookNotifier(hn)
 
 	if err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if !o.queries.Interfaces.RemovedByUs("OpkgTun10") || f.Has("OpkgTun10") || len(hn.calls) != 0 {
-		t.Fatalf("RemovedByUs=%v запись есть=%v ожидания=%v; posts=%v",
-			o.queries.Interfaces.RemovedByUs("OpkgTun10"), f.Has("OpkgTun10"), hn.calls, f.Posts)
+	if !o.queries.Interfaces.ClaimOwnDestroyed("OpkgTun10") || f.Has("OpkgTun10") || len(confCalls(f)) != 0 {
+		t.Fatalf("кредит ifdestroyed нет, запись есть=%v или up/down %v; posts=%v",
+			f.Has("OpkgTun10"), confCalls(f), f.Posts)
 	}
 	clean(t, f)
 }
 
 // Первый старт упал после создания записи — откат сносит созданную запись
-// (свой ifdestroyed — по карте, RemovedByUs), а не только опускает: иначе
+// (свой ifdestroyed — по кредиту, ClaimOwnDestroyed), а не только опускает: иначе
 // OpkgTun10 остаётся на роутере после неудачного старта (F560).
 func TestColdStart_RollbackDeletesJustCreatedRecord(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS()
 	f.ExpectCreate("OpkgTun10")
 	o, _, _ := newOS5Oracle(t, f, &MockBackend{startError: errors.New("injected: backend")})
-	hn := &orderedNotifier{f: f}
-	o.commands.SetHookNotifier(hn)
 
 	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err == nil {
 		t.Fatal("ColdStart: want ошибку бэкенда")
@@ -278,18 +273,10 @@ func TestColdStart_RollbackDeletesJustCreatedRecord(t *testing.T) {
 	if f.Has("OpkgTun10") {
 		t.Fatalf("созданная запись осталась после отката: %v", f.Posts)
 	}
-	if !o.queries.Interfaces.RemovedByUs("OpkgTun10") {
-		t.Fatalf("снос отката не отмечен своим (RemovedByUs=false); posts=%v", f.Posts)
+	if !o.queries.Interfaces.ClaimOwnDestroyed("OpkgTun10") {
+		t.Fatalf("снос отката без кредита своего ifdestroyed; posts=%v", f.Posts)
 	}
 	clean(t, f)
-}
-
-// watchHooks — ожидания хуков kernel-туннеля: их регистрируют только
-// InterfaceUp/Down команд NDMS (своих у оператора OS5 нет), как в проводке.
-func watchHooks(o *OperatorOS5Impl, f *ndmsquery.FakeNDMS, be *deviceBackend) *orderedNotifier {
-	hn := &orderedNotifier{f: f, be: be}
-	o.commands.SetHookNotifier(hn)
-	return hn
 }
 
 // rejectAddressPoster — оракул, отвергающий установку ip address.
@@ -317,9 +304,8 @@ func upTun10() ndms.Interface {
 // tunThenRecord проверяет снятие C3a (стенд Task 59: 20/20 без C всех
 // классов и без E): `interface down` (только если запись была up — wasUp),
 // затем подмена устройства на plain tun, затем `no interface`; NDMS снимает
-// tun сам. Ожидание disabled — одно и только при down, ожиданий destroyed
-// нет (П20).
-func tunThenRecord(t *testing.T, f *ndmsquery.FakeNDMS, be *deviceBackend, hn *orderedNotifier, wasUp bool) {
+// tun сам. Команда down (кредит disabled) — одна и только при up-записи.
+func tunThenRecord(t *testing.T, f *ndmsquery.FakeNDMS, be *deviceBackend, wasUp bool) {
 	t.Helper()
 	clean(t, f)
 	del := slices.Index(f.Posts, postNo)
@@ -331,11 +317,8 @@ func tunThenRecord(t *testing.T, f *ndmsquery.FakeNDMS, be *deviceBackend, hn *o
 	}
 	down := slices.Index(f.Posts, postDown)
 	var downExp []string
-	for _, c := range hn.calls {
-		if strings.Contains(c, "/destroyed@") {
-			t.Fatalf("ожидание destroyed зарегистрировано: %v", hn.calls)
-		}
-		if strings.Contains(c, "/disabled@") {
+	for _, c := range confCalls(f) {
+		if strings.HasSuffix(c, "/disabled") {
 			downExp = append(downExp, c)
 		}
 	}
@@ -347,7 +330,7 @@ func tunThenRecord(t *testing.T, f *ndmsquery.FakeNDMS, be *deviceBackend, hn *o
 			t.Fatalf("ожидания disabled = %v, want одно (InterfaceDown)", downExp)
 		}
 	} else if down >= 0 || len(downExp) != 0 {
-		t.Fatalf("down по опущенной записи: posts=%v ожидания=%v", f.Posts, hn.calls)
+		t.Fatalf("down по опущенной записи: posts=%v", f.Posts)
 	}
 	for _, at := range be.stopPosts {
 		if at <= del {
@@ -367,12 +350,11 @@ func TestDelete_Running_TunThenRecord(t *testing.T) {
 	be := newDeviceBackend(t, f)
 	be.plug(t, "opkgtun10", true)
 	o, _ := newOS5LifecycleOn(t, &recordingPoster{f: f}, f, be, true)
-	hn := watchHooks(o, f, be)
 
 	if err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	tunThenRecord(t, f, be, hn, true)
+	tunThenRecord(t, f, be, true)
 }
 
 // Delete остановленного (запись down, amneziawg жив) — та же
@@ -384,12 +366,11 @@ func TestDelete_Stopped_SameSequence(t *testing.T) {
 	be := newDeviceBackend(t, f)
 	be.plug(t, "opkgtun10", true)
 	o, _ := newOS5LifecycleOn(t, &recordingPoster{f: f}, f, be, true)
-	hn := watchHooks(o, f, be)
 
 	if err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	tunThenRecord(t, f, be, hn, false)
+	tunThenRecord(t, f, be, false)
 }
 
 // HeldError (на имени tun чужой программы с держателем): подменить нельзя —
@@ -470,7 +451,6 @@ func TestDelete_DeviceAbsent_NoTunCreated(t *testing.T) {
 			f := ndmsquery.NewFakeNDMS(r)
 			be := newDeviceBackend(t, f) // устройства opkgtun10 нет
 			o, _ := newOS5LifecycleOn(t, &recordingPoster{f: f}, f, be, true)
-			hn := watchHooks(o, f, be)
 
 			if err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"}); err != nil {
 				t.Fatalf("Delete: %v", err)
@@ -478,11 +458,11 @@ func TestDelete_DeviceAbsent_NoTunCreated(t *testing.T) {
 			if len(be.ReplaceCalls) != 0 || be.exists("opkgtun10") {
 				t.Fatalf("tun создан под записью без устройства: replace=%v устройство=%v", be.ReplaceCalls, be.exists("opkgtun10"))
 			}
-			if !slices.Equal(f.Posts, []string{postNo}) || len(hn.calls) != 0 {
-				t.Fatalf("posts=%v ожидания=%v, want ровно [no interface] без down", f.Posts, hn.calls)
+			if !slices.Equal(f.Posts, []string{postNo}) {
+				t.Fatalf("posts=%v, want ровно [no interface] без down", f.Posts)
 			}
-			if f.Has("OpkgTun10") || !o.queries.Interfaces.RemovedByUs("OpkgTun10") {
-				t.Fatalf("запись есть=%v RemovedByUs=%v", f.Has("OpkgTun10"), o.queries.Interfaces.RemovedByUs("OpkgTun10"))
+			if f.Has("OpkgTun10") || !o.queries.Interfaces.ClaimOwnDestroyed("OpkgTun10") {
+				t.Fatalf("запись есть=%v или нет кредита своего ifdestroyed", f.Has("OpkgTun10"))
 			}
 			clean(t, f)
 		})
@@ -508,8 +488,8 @@ func TestRollback_ExistingRecord_TuntapFails_RecordRemoved(t *testing.T) {
 	if be.exists("opkgtun10") || f.Has("OpkgTun10") || !slices.Contains(f.Posts, postNo) {
 		t.Fatalf("устройство=%v запись=%v posts=%v, want ни устройства, ни записи", be.exists("opkgtun10"), f.Has("OpkgTun10"), f.Posts)
 	}
-	if !o.queries.Interfaces.RemovedByUs("OpkgTun10") {
-		t.Fatal("снос отката не отмечен своим (RemovedByUs=false)")
+	if !o.queries.Interfaces.ClaimOwnDestroyed("OpkgTun10") {
+		t.Fatal("снос отката без кредита своего ifdestroyed")
 	}
 	clean(t, f)
 
@@ -532,12 +512,11 @@ func TestColdStart_Rollback_TunThenRecord(t *testing.T) {
 	f.ExpectCreate("OpkgTun10")
 	be := newDeviceBackend(t, f)
 	o, _ := newOS5LifecycleOn(t, rejectAddressPoster{f}, f, be, true)
-	hn := watchHooks(o, f, be)
 
 	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err == nil || !strings.Contains(err.Error(), "injected: address") {
 		t.Fatalf("ColdStart: err = %v, want отказ адреса", err)
 	}
-	tunThenRecord(t, f, be, hn, false)
+	tunThenRecord(t, f, be, false)
 }
 
 // Откат первого старта после InterfaceUp (упал файрвол): запись up — down,
@@ -548,16 +527,15 @@ func TestColdStart_RollbackAfterUp_DownTunThenRecord(t *testing.T) {
 	be := newDeviceBackend(t, f)
 	o, _ := newOS5LifecycleOn(t, &recordingPoster{f: f}, f, be, true)
 	o.firewall = &MockFirewall{addError: errors.New("injected: firewall")}
-	hn := watchHooks(o, f, be)
 
 	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err == nil || !strings.Contains(err.Error(), "injected: firewall") {
 		t.Fatalf("ColdStart: err = %v, want отказ файрвола", err)
 	}
 	// running от InterfaceUp + disabled от down отката.
-	if !slices.ContainsFunc(hn.calls, func(c string) bool { return strings.HasPrefix(c, "OpkgTun10/running@") }) {
-		t.Fatalf("InterfaceUp не дошёл: %v", hn.calls)
+	if !slices.Contains(confCalls(f), "OpkgTun10/running") {
+		t.Fatalf("InterfaceUp не дошёл: %v", f.Posts)
 	}
-	tunThenRecord(t, f, be, hn, true)
+	tunThenRecord(t, f, be, true)
 }
 
 // F1 ревью Task 62: откат старта по существующей записи — запись остаётся,
@@ -573,7 +551,6 @@ func TestRollback_ExistingRecord_ReplacedWithTun(t *testing.T) {
 			be := newDeviceBackend(t, f)
 			be.plug(t, "opkgtun10", false) // tun NDMS после ребута
 			o, _ := newOS5LifecycleOn(t, rejectAddressPoster{f}, f, be, true)
-			hn := watchHooks(o, f, be)
 
 			if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err == nil || !strings.Contains(err.Error(), "injected: address") {
 				t.Fatalf("ColdStart: err = %v, want отказ адреса", err)
@@ -590,13 +567,13 @@ func TestRollback_ExistingRecord_ReplacedWithTun(t *testing.T) {
 				t.Fatalf("state=%s: down — POST #%d, подмена при %d; posts=%v", state, down, be.replacePosts[0], f.Posts)
 			}
 			disabled := 0
-			for _, c := range hn.calls {
-				if strings.Contains(c, "/disabled@") {
+			for _, c := range confCalls(f) {
+				if strings.HasSuffix(c, "/disabled") {
 					disabled++
 				}
 			}
 			if want := map[string]int{"up": 1, "down": 0}[state]; disabled != want {
-				t.Fatalf("state=%s: ожиданий disabled %d, want %d: %v", state, disabled, want, hn.calls)
+				t.Fatalf("state=%s: down %d, want %d: %v", state, disabled, want, f.Posts)
 			}
 		})
 	}
@@ -625,7 +602,6 @@ func TestStart_ExistingUpRecordTun_DownSwapUp(t *testing.T) {
 				be := newDeviceBackend(t, f)
 				be.plug(t, "opkgtun10", tc.amneziawg)
 				o, _ := newOS5LifecycleOn(t, &recordingPoster{f: f}, f, be, true)
-				hn := watchHooks(o, f, be)
 
 				run := o.ColdStart
 				if site == "Reconcile" {
@@ -647,12 +623,8 @@ func TestStart_ExistingUpRecordTun_DownSwapUp(t *testing.T) {
 					t.Fatalf("порядок down → подмена → up: down=#%d start@%v up=#%d; posts=%v", down, be.startPosts, up, f.Posts)
 				}
 				want := []string{"OpkgTun10/disabled", "OpkgTun10/running"}
-				var got []string
-				for _, c := range hn.calls {
-					got = append(got, c[:strings.Index(c, "@")])
-				}
-				if !slices.Equal(got, want) {
-					t.Fatalf("ожидания %v, want %v", got, want)
+				if got := confCalls(f); !slices.Equal(got, want) {
+					t.Fatalf("up/down %v, want %v", got, want)
 				}
 			})
 		}

@@ -42,7 +42,7 @@ func deleteFixture(t *testing.T, poster func(*query.FakeNDMS, *query.Queries) Po
 	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger()})
 	p := poster(f, q)
-	c := NewInterfaceCommands(p, NewSaveCoordinator(p, nil, time.Hour, time.Hour, 0, nil), q, nil)
+	c := NewInterfaceCommands(p, NewSaveCoordinator(p, nil, time.Hour, time.Hour, 0, nil), q)
 	conf, _, ok, err := q.Interfaces.Confirm(context.Background(), "Wireguard1")
 	if err != nil || !ok {
 		t.Fatalf("confirm: ok=%v err=%v", ok, err)
@@ -56,7 +56,7 @@ func TestNewMutator_NilSave_Panics(t *testing.T) {
 	q := query.NewQueries(query.Deps{Getter: query.NewFakeNDMS(), Logger: query.NopLogger()})
 	f := query.NewFakeNDMS()
 	for name, build := range map[string]func(){
-		"NewInterfaceCommands": func() { NewInterfaceCommands(f, nil, q, nil) },
+		"NewInterfaceCommands": func() { NewInterfaceCommands(f, nil, q) },
 		"NewProxyCommands":     func() { NewProxyCommands(f, nil, q) },
 		"NewWireguardCommands": func() { NewWireguardCommands(f, nil, q) },
 		"NewCommands":          func() { NewCommands(Deps{Poster: f, Queries: q}) },

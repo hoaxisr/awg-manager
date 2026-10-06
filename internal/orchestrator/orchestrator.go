@@ -19,15 +19,12 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
-// Окна хуков (В6): стенд 01.10, KN-1810 5.01.C.6, 16 замеров опоздания
+// Окно quiescence (В6): стенд 01.10, KN-1810 5.01.C.6, 16 замеров опоздания
 // хуков под churn 14–30 с, max ≈30 с; окно = max × 1,5. Внешняя грань
 // conf=disabled внутри окна не теряется: поглощённая грань перепроверяется
 // при истечении окна (recheckAbsorbedDisabled), остаток — задержка до 45 с.
-
-// expectedHookTTL bounds how long a self-induced NDMS hook expectation
-// stays valid. Past it, the token is pruned so a stale expectation can't
-// absorb a later, legitimate external edge.
-const expectedHookTTL = 45 * time.Second
+// Свои грани conf окно не ловит — их отсеивает кредит (Event.Own, П21/П22);
+// окно — для грани, которую NDMS даёт сам, пока поднимает интерфейс.
 
 // bootQuiescenceWindow is how long after we (re)start a tunnel we
 // treat an incoming conf=disabled as transient NDMS settling rather than a
@@ -99,10 +96,6 @@ type Orchestrator struct {
 	// tunnelLockOwner: tunnelID -> lockHolder, кто держит tunnelMu.
 	tunnelLockOwner sync.Map
 
-	// Expected NDMS hooks — queue of hooks our own actions will trigger.
-	// Consumed in HandleEvent to filter self-triggered iflayerchanged events.
-	expectedHooks []expectedHook
-
 	// Executors (no decision logic, only execution)
 	store    *storage.AWGTunnelStore
 	kernelOp ops.Operator
@@ -153,11 +146,6 @@ type Orchestrator struct {
 	// ndmsName в СВЕЖЕМ полном списке NDMS. Им перепроверяется ifdestroyed
 	// перед остановкой (F569, R31). nil → проверка пропущена.
 	recordPresent func(ctx context.Context, ndmsName string) (bool, error)
-
-	// removedByUs (под o.mu, как recordPresent) — запись ndmsName снята нашим
-	// `no interface` (InterfaceStore.RemovedByUs, П20): её ifdestroyed — свой,
-	// пробы и реакции нет. nil → каждое ifdestroyed идёт в пробу.
-	removedByUs func(ndmsName string) bool
 
 	// ifaceInvalidator, when set, refreshes the NDMS interface cache for a
 	// kernel tunnel's NDMS name on its confirmed "running" transition (#328).
@@ -255,26 +243,6 @@ func (o *Orchestrator) SetRecordPresenceProbe(fn func(ctx context.Context, ndmsN
 	o.recordPresent = fn
 }
 
-// SetRemovedByUsProbe wires the store's «снято нами» (Interfaces.RemovedByUs).
-// nil-safe: без него свой ifdestroyed проверяется списком, как чужой.
-func (o *Orchestrator) SetRemovedByUsProbe(fn func(ndmsName string) bool) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.removedByUs = fn
-}
-
-// ifdestroyedOurs — ifdestroyed записи, снятой нашим `no interface` (П20).
-func (o *Orchestrator) ifdestroyedOurs(ndmsName string) bool {
-	o.mu.Lock()
-	fn := o.removedByUs
-	o.mu.Unlock()
-	if fn == nil || !fn(ndmsName) {
-		return false
-	}
-	o.appLog.Debug("ifdestroyed", ndmsName, "ifdestroyed: снято нами")
-	return true
-}
-
 // SetSupportsASC sets the ASC support flag.
 func (o *Orchestrator) SetSupportsASC(fn func() bool) {
 	o.mu.Lock()
@@ -294,7 +262,7 @@ func (o *Orchestrator) SetSupportsASC(fn func() bool) {
 // assigned profile" warnings.
 //
 // Runtime-only fields (Running, Monitoring, quiescentUntil,
-// lastConfRunningAt, absorbedDisabledAt, recheckScheduled, bornAt) live only in the orchestrator's cache, so they are preserved across
+// lastConfRunningAt, absorbedDisabledAt, recheckScheduled) live only in the orchestrator's cache, so they are preserved across
 // the refresh — reloading them from storage would clobber the action
 // layer's view of the world.
 func (o *Orchestrator) RefreshTunnelState(tunnelID string) {
@@ -313,9 +281,6 @@ func (o *Orchestrator) RefreshTunnelState(tunnelID string) {
 		fresh.lastConfRunningAt = cur.lastConfRunningAt
 		fresh.absorbedDisabledAt = cur.absorbedDisabledAt
 		fresh.recheckScheduled = cur.recheckScheduled
-		fresh.bornAt = cur.bornAt
-	} else {
-		fresh.bornAt = o.nowFn()
 	}
 	o.state.tunnels[tunnelID] = fresh
 }
@@ -357,68 +322,12 @@ func (o *Orchestrator) LoadState(ctx context.Context) {
 	}
 }
 
-// expectedHook represents an NDMS hook we expect from our own actions.
-type expectedHook struct {
-	ndmsName  string
-	level     string
-	at        time.Time
-	expiresAt time.Time
-}
-
 // nowFn returns the current time, honouring an injected clock in tests.
 func (o *Orchestrator) nowFn() time.Time {
 	if o.clock != nil {
 		return o.clock()
 	}
 	return time.Now()
-}
-
-// ExpectHook registers an expected NDMS hook (implements tunnel.HookNotifier).
-// Called by operators before InterfaceUp/Down. The expectation expires after
-// expectedHookTTL so a stale token cannot absorb an unrelated later edge.
-func (o *Orchestrator) ExpectHook(ndmsName, level string) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	now := o.nowFn()
-	o.expectedHooks = append(o.expectedHooks, expectedHook{
-		ndmsName:  ndmsName,
-		level:     level,
-		at:        now,
-		expiresAt: now.Add(expectedHookTTL),
-	})
-}
-
-// consumeExpectedHook checks if an NDMS hook matches a non-expired expected
-// one. It first prunes expired expectations, then removes and returns true on
-// the first matching live entry.
-//
-// Ожидание, зарегистрированное раньше появления туннеля с этим именем в
-// кэше (bornAt), принадлежит прежнему воплощению имени: FreeIndex отдаёт
-// новому туннелю тот же OpkgTunN, а хвост Delete/отказавшего Start живёт
-// expectedHookTTL. Такое ожидание грань нового туннеля не поглощает — она
-// идёт в settle/окно/П13, как внешняя (M1 финального ревью F595).
-func (o *Orchestrator) consumeExpectedHook(ndmsName, level string) bool {
-	now := o.nowFn()
-	kept := o.expectedHooks[:0]
-	for _, h := range o.expectedHooks {
-		if !now.Before(h.expiresAt) {
-			continue
-		}
-		kept = append(kept, h)
-	}
-	o.expectedHooks = kept
-
-	var born time.Time
-	if t := o.state.findByNDMSName(ndmsName); t != nil {
-		born = t.bornAt
-	}
-	for i, h := range o.expectedHooks {
-		if h.ndmsName == ndmsName && h.level == level && !h.at.Before(born) {
-			o.expectedHooks = append(o.expectedHooks[:i], o.expectedHooks[i+1:]...)
-			return true
-		}
-	}
-	return false
 }
 
 // noteConfRunning records an external conf=running edge so a conf=disabled
@@ -537,11 +446,6 @@ func (o *Orchestrator) handleIfDestroyed(ctx context.Context, event Event) error
 		return err
 	}
 	defer o.unlockTunnel(tunnelID)
-	// Повторно после замка (N6): Delete держал его и снял запись (RemovalToken)
-	// уже после того, как хук прошёл проверку на входе HandleEvent.
-	if o.ifdestroyedOurs(event.NDMSName) {
-		return nil
-	}
 
 	o.mu.Lock()
 	probe := o.recordPresent
@@ -666,7 +570,7 @@ func (o *Orchestrator) decideLocked(event Event) (actions []Action, deferredBoot
 
 	// Ensure tunnel is in cache (covers tunnels created/imported after startup)
 	if event.Tunnel != "" {
-		o.state.ensureTunnel(event.Tunnel, o.store, o.nowFn())
+		o.state.ensureTunnel(event.Tunnel, o.store)
 	}
 	// Отложенный бут: загрузка прошла без WAN, и первое WAN-событие обязано
 	// отработать за неё. Пометку снимает сам decideBoot.
@@ -685,26 +589,18 @@ func (o *Orchestrator) decideLocked(event Event) (actions []Action, deferredBoot
 }
 
 func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
-	// Filter self-triggered NDMS hooks before decide.
-	// Our operators register expected hooks before InterfaceUp/Down.
-	// Ожидание — грань слоя conf (её ставит up:true/false и только на неё
-	// реагирует decide). Блок от `interface down` идёт FIFO ctrl → ipv4 →
-	// link → conf (стенд Task 59, 20/20): без сверки слоя токен съедала
-	// ctrl=disabled, а conf=disabled приходила непоглощённой.
-	if event.Type == EventNDMSHook && event.Layer == "conf" {
-		o.mu.Lock()
-		consumed := o.consumeExpectedHook(event.NDMSName, event.Level)
-		o.mu.Unlock()
-		if consumed {
-			o.appLog.Debug("boot-trace", event.NDMSName,
-				fmt.Sprintf("expected-hook consumed level=%s", event.Level))
-			return nil
-		}
+	// Свой хук — вердикт точки входа spool по кредиту (Event.Own, П22): грань
+	// conf нашей команды up:true/false и ifdestroyed нашего `no interface`.
+	// Кредит выдан до POST, хук приходит после — проверка окончательна,
+	// повторной после замка нет.
+	if event.Own && event.Type == EventNDMSHook && event.Layer == "conf" {
+		o.appLog.Debug("boot-trace", event.NDMSName,
+			fmt.Sprintf("conf=%s: свой (кредит)", event.Level))
+		return nil
 	}
-
-	// Своё снятие записи (F569) — факт карты, не ожидание (П20).
 	if event.Type == EventNDMSIfDestroyed {
-		if o.ifdestroyedOurs(event.NDMSName) {
+		if event.Own {
+			o.appLog.Debug("ifdestroyed", event.NDMSName, "ifdestroyed: свой (кредит)")
 			return nil
 		}
 		return o.handleIfDestroyed(ctx, event)

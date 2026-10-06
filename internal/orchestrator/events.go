@@ -41,6 +41,10 @@ type Event struct {
 	NDMSName string
 	Layer    string
 	Level    string
+	// Own — свой хук по кредиту (ifdestroyed или грань слоя conf от нашей
+	// команды): вердикт точки входа spool (api.HookSink.Handle), здесь не
+	// пересчитывается (П22).
+	Own bool
 
 	// WAN event data
 	WANIface string

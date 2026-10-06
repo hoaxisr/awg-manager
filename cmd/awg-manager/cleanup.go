@@ -112,8 +112,7 @@ func runCleanup(dataDir string) {
 	stateMgr := state.New(cleanupNDMSQueries.Interfaces, wgClient, backendImpl, nil)
 	firewallMgr := firewall.New(true /* mssClamp */, osdetect.Is5(), nil)
 
-	// Build NDMS Commands early so the Operator can consume them. HookNotifier
-	// is wired below once the orchestrator exists (see SetHookNotifier call).
+	// Build NDMS Commands early so the Operator can consume them.
 	cleanupNDMSSave := ndmscommand.NewSaveCoordinator(
 		cleanupNDMSTransport,
 		cleanupEventBus,
@@ -158,9 +157,6 @@ func runCleanup(dataDir string) {
 	// Wire orchestrator for lifecycle operations (Delete needs it)
 	cleanupOrch := orchestrator.New(awgStore, operator, nwgOp, stateMgr, wan.NewModel(), nil)
 	tunnelService.SetOrchestrator(cleanupOrch)
-	nwgOp.SetHookNotifier(cleanupOrch)
-	// Wire HookNotifier on NDMS Commands now that the orchestrator exists.
-	cleanupNDMSCommands.SetHookNotifier(cleanupOrch)
 
 	// Create auxiliary services
 	dnsStore := dnsroute.NewStore(dataDir)

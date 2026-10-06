@@ -46,8 +46,6 @@ func (a *app) setupTunnels() {
 	firewallMgr := firewall.New(true /* mssClamp */, osdetect.Is5(), a.loggingService)
 
 	// Build NDMS CQRS Commands eagerly so the Operator can consume them.
-	// HookNotifier is wired later (ndmsCommands.SetHookNotifier(orch)) once
-	// the orchestrator exists — this breaks the construction cycle.
 	a.eventBus = events.NewBus()
 	a.ndmsSaveCoord = ndmscommand.NewSaveCoordinator(
 		a.ndmsTransportClient,
@@ -58,11 +56,10 @@ func (a *app) setupTunnels() {
 		a.ndmsQueries.RunningConfig,
 	)
 	a.ndmsCommands = ndmscommand.NewCommands(ndmscommand.Deps{
-		Poster:       a.ndmsTransportClient,
-		Save:         a.ndmsSaveCoord,
-		Queries:      a.ndmsQueries,
-		HookNotifier: nil, // wired after orchestrator construction below
-		IsOS5:        osdetect.Is5,
+		Poster:  a.ndmsTransportClient,
+		Save:    a.ndmsSaveCoord,
+		Queries: a.ndmsQueries,
+		IsOS5:   osdetect.Is5,
 	})
 
 	a.operator = ops.NewOperator(a.ndmsQueries, a.ndmsCommands, a.wgClient, a.backendImpl, firewallMgr)

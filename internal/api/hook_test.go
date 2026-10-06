@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -10,6 +12,9 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/events"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
 type spyDispatcher struct {
@@ -293,88 +298,144 @@ func (c *captureAppLogger) has(sub string) bool {
 
 // Handle — единственная точка входа события без HTTP: в диспетчер и, для
 // iflayerchanged conf, в оркестратор. Доход до оркестратора виден по
-// поглощённому ожиданию хука — оно не требует ни хранилища, ни операторов.
+// отсеянной своей грани (Own) — она не требует ни хранилища, ни операторов.
 func TestHandle_DirectCall_EnqueuesAndForwards(t *testing.T) {
 	disp := &spyDispatcher{}
 	h := newTestHookHandler(disp)
 	logs := &captureAppLogger{}
-	orch := orchestrator.New(nil, nil, nil, nil, nil, logs)
-	orch.ExpectHook("Wireguard0", "running")
-	h.orch = orch
+	h.orch = orchestrator.New(nil, nil, nil, nil, nil, logs)
 
-	ev := events.Event{Type: events.EventIfLayerChanged, ID: "Wireguard0", Layer: "conf", Level: "running"}
+	ev := events.Event{Type: events.EventIfLayerChanged, ID: "Wireguard0", Layer: "conf", Level: "running", Own: true}
 	h.Handle(ev)
 
 	if got := disp.Events(); len(got) != 1 || got[0] != ev {
 		t.Fatalf("dispatcher: %#v", got)
 	}
+	waitLog(t, logs, "conf=running: свой (кредит)")
+}
+
+func waitLog(t *testing.T, logs *captureAppLogger, sub string) {
+	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
-	for !logs.has("expected-hook consumed") {
+	for !logs.has(sub) {
 		if time.Now().After(deadline) {
-			t.Fatal("событие не дошло до оркестратора")
+			t.Fatalf("в журнале нет %q", sub)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 }
 
-// До публикации готового обработчика событие попадает только в диспетчер
-// (кэш), оркестратор его не видит; после публикации — и туда, и туда.
-func TestHookSink_BeforeAndAfterPublish(t *testing.T) {
+// countingClaimer — кредиты по виду: отвечает own и считает вызовы.
+type countingClaimer struct {
+	mu    sync.Mutex
+	own   bool
+	calls []string
+}
+
+func (c *countingClaimer) claim(kind string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, kind)
+	return c.own
+}
+func (c *countingClaimer) ClaimOwnCreated(string) bool     { return c.claim("created") }
+func (c *countingClaimer) ClaimOwnDestroyed(string) bool   { return c.claim("destroyed") }
+func (c *countingClaimer) ClaimOwnConf(_, lvl string) bool { return c.claim("conf=" + lvl) }
+func (c *countingClaimer) take() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := c.calls
+	c.calls = nil
+	return out
+}
+
+// П22: вердикт — в точке входа, до ветвления: и до публикации обработчика
+// (окно старта, только диспетчер), и после — кредит гасится ровно один раз на
+// событие, а Own события в диспетчере — ответ claimer. Хуки без кредитов
+// (ifipchanged, грань не слоя conf) claimer не трогают. После публикации
+// событие доходит и до оркестратора. Мутации: «вызов в HookHandler.Handle» →
+// до Publish claimer не вызван, красный; «вызов в обеих ветвях» → 2 вызова,
+// красный; «сверка conf без слоя» → ctrl гасит кредит, красный.
+func TestHookSink_ClaimsOwnOnce_BothPaths(t *testing.T) {
 	disp := &spyDispatcher{}
 	logs := &captureAppLogger{}
-	orch := orchestrator.New(nil, nil, nil, nil, nil, logs)
-	orch.ExpectHook("Wireguard0", "running")
-	orch.ExpectHook("Wireguard0", "running")
-	ev := events.Event{Type: events.EventIfLayerChanged, ID: "Wireguard0", Layer: "conf", Level: "running"}
+	cl := &countingClaimer{own: true}
+	sink := NewHookSink(disp, cl)
+	conf := events.Event{Type: events.EventIfLayerChanged, ID: "Wireguard0", Layer: "conf", Level: "running"}
 
-	sink := NewHookSink(disp)
-	sink.Handle(ev)
-	if got := disp.Events(); len(got) != 1 || got[0] != ev {
-		t.Fatalf("до публикации, диспетчер: %#v", got)
+	check := func(phase string, ev events.Event, wantCalls []string, wantOwn bool) {
+		t.Helper()
+		n := len(disp.Events())
+		sink.Handle(ev)
+		got := disp.Events()
+		if len(got) != n+1 || got[n].Own != wantOwn {
+			t.Fatalf("%s: диспетчер %#v, want Own=%v", phase, got[n:], wantOwn)
+		}
+		if calls := cl.take(); strings.Join(calls, ",") != strings.Join(wantCalls, ",") {
+			t.Fatalf("%s: claimer %v, want %v", phase, calls, wantCalls)
+		}
 	}
+	check("до публикации", conf, []string{"conf=running"}, true)
+	check("до публикации, ifcreated", events.Event{Type: events.EventIfCreated, ID: "Wireguard1"}, []string{"created"}, true)
 	time.Sleep(100 * time.Millisecond)
-	if logs.has("expected-hook consumed") {
+	if logs.has("свой (кредит)") {
 		t.Fatal("до публикации событие дошло до оркестратора")
 	}
 
 	h := newTestHookHandler(disp)
-	h.orch = orch
+	h.orch = orchestrator.New(nil, nil, nil, nil, nil, logs)
 	sink.Publish(h)
-	sink.Handle(ev)
-	if got := disp.Events(); len(got) != 2 {
-		t.Fatalf("после публикации, диспетчер: %d событий", len(got))
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for !logs.has("expected-hook consumed") {
-		if time.Now().After(deadline) {
-			t.Fatal("после публикации событие не дошло до оркестратора")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	check("после публикации", conf, []string{"conf=running"}, true)
+	waitLog(t, logs, "conf=running: свой (кредит)")
+	cl.own = false
+	check("после публикации, ifdestroyed", events.Event{Type: events.EventIfDestroyed, ID: "Wireguard9"}, []string{"destroyed"}, false)
+	check("ctrl", events.Event{Type: events.EventIfLayerChanged, ID: "Wireguard0", Layer: "ctrl", Level: "disabled"}, nil, false)
+	check("ifipchanged", events.Event{Type: events.EventIfIPChanged, ID: "Wireguard0", Address: "10.0.0.1"}, nil, false)
 }
 
-// F569: ifdestroyed доходит до оркестратора (явная реакция на снятие нашей
-// записи не зависит от layer-хуков, #328). Доход виден по ответу пробы
-// «снято нами» (П20).
-func TestHandle_IfDestroyed_ForwardsToOrchestrator(t *testing.T) {
-	disp := &spyDispatcher{}
-	h := newTestHookHandler(disp)
-	logs := &captureAppLogger{}
-	orch := orchestrator.New(nil, nil, nil, nil, nil, logs)
-	orch.SetRemovedByUsProbe(func(name string) bool { return name == "OpkgTun10" })
-	h.orch = orch
+// fakeStateMgr — kernel-туннель в состоянии running для LoadState.
+type fakeStateMgr struct{}
 
-	h.Handle(events.Event{Type: events.EventIfDestroyed, ID: "OpkgTun10"})
+func (fakeStateMgr) GetState(context.Context, string) tunnel.StateInfo {
+	return tunnel.StateInfo{State: tunnel.StateRunning}
+}
 
-	if got := disp.Events(); len(got) != 1 || got[0].Type != events.EventIfDestroyed {
-		t.Fatalf("dispatcher: %#v", got)
+// F569/П22: ifdestroyed доходит до оркестратора вместе с вердиктом Own:
+// свой — проба записи не вызывается, чужой — вызывается. Настоящий оркестратор
+// с работающим kernel-туннелем awg10 (OpkgTun10). Мутация «не переносить Own
+// в orchestrator.Event» → проба при Own=true, красный.
+func TestHandle_IfDestroyed_ForwardsOwn(t *testing.T) {
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	if err := store.Create(&storage.AWGTunnel{ID: "awg10", Name: "g", Backend: "kernel", Enabled: true}); err != nil {
+		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for !logs.has("ifdestroyed: снято нами") {
-		if time.Now().After(deadline) {
-			t.Fatal("ifdestroyed не дошёл до оркестратора")
+	for _, own := range []bool{true, false} {
+		logs := &captureAppLogger{}
+		orch := orchestrator.New(store, nil, nil, fakeStateMgr{}, wan.NewModel(), logs)
+		orch.LoadState(context.Background())
+		probed := make(chan string, 1)
+		orch.SetRecordPresenceProbe(func(_ context.Context, name string) (bool, error) {
+			probed <- name
+			return true, nil // запись есть — хук устарел, исполнителей не зовём
+		})
+		h := newTestHookHandler(&spyDispatcher{})
+		h.orch = orch
+		h.Handle(events.Event{Type: events.EventIfDestroyed, ID: "OpkgTun10", Own: own})
+		if own {
+			waitLog(t, logs, "ifdestroyed: свой (кредит)")
+			select {
+			case n := <-probed:
+				t.Fatalf("Own=true: проба %s вызвана", n)
+			default:
+			}
+			continue
 		}
-		time.Sleep(5 * time.Millisecond)
+		select {
+		case <-probed:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Own=false: проба не вызвана")
+		}
 	}
 }
 

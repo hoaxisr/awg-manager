@@ -121,14 +121,29 @@ func (h *HookHandler) SetUptimeReader(fn func() float64) {
 // получает, и UI тоже: публикацию делает диспетчер после списка. Реакции
 // оркестратора и WAN-модели на хуки этого окна теряются — ровно как до F571
 // терялся отказанный HTTP POST, пока листенера не было.
+//
+// Вердикт «свой/чужой» (Event.Own) выносится здесь, ДО ветвления, один раз
+// на событие и в порядке прихода (П22): кредиты своих хуков гасятся по
+// порядку FIFO, а за точкой входа порядок теряется (оркестратор — горутина
+// на событие). Окно старта вердикт тоже получает.
 type HookSink struct {
 	dispatcher HookDispatcher
+	claimer    OwnHookClaimer
 	ready      atomic.Pointer[HookHandler]
 }
 
-// NewHookSink создаёт приёмник; до Publish события идут только в d.
-func NewHookSink(d HookDispatcher) *HookSink {
-	return &HookSink{dispatcher: d}
+// OwnHookClaimer — кредиты своих хуков (query.InterfaceStore, П21): гашение
+// кредита этого имени и вида; true — хук наш.
+type OwnHookClaimer interface {
+	ClaimOwnCreated(id string) bool
+	ClaimOwnDestroyed(id string) bool
+	ClaimOwnConf(id, level string) bool
+}
+
+// NewHookSink создаёт приёмник; до Publish события идут только в d. claimer
+// nil — все хуки чужие (тесты; прод — страж проводки).
+func NewHookSink(d HookDispatcher, claimer OwnHookClaimer) *HookSink {
+	return &HookSink{dispatcher: d, claimer: claimer}
 }
 
 // Publish отдаёт приёмнику ПОЛНОСТЬЮ настроенный обработчик. Звать после
@@ -137,11 +152,31 @@ func (s *HookSink) Publish(h *HookHandler) { s.ready.Store(h) }
 
 // Handle — sink для SpoolReader.
 func (s *HookSink) Handle(event events.Event) {
+	event = claimOwn(s.claimer, event)
 	if h := s.ready.Load(); h != nil {
 		h.Handle(event)
 		return
 	}
 	enqueueHook(s.dispatcher, event)
+}
+
+// claimOwn — единственное место гашения кредитов (сканер
+// TestClaimOwn_OnlyInHookSink): ifcreated, ifdestroyed и грань слоя conf;
+// прочие хуки и claimer == nil — Own=false.
+func claimOwn(c OwnHookClaimer, e events.Event) events.Event {
+	e.Own = false
+	if c == nil {
+		return e
+	}
+	switch {
+	case e.Type == events.EventIfCreated:
+		e.Own = c.ClaimOwnCreated(e.ID)
+	case e.Type == events.EventIfDestroyed:
+		e.Own = c.ClaimOwnDestroyed(e.ID)
+	case e.Type == events.EventIfLayerChanged && e.Layer == "conf":
+		e.Own = c.ClaimOwnConf(e.ID, e.Level)
+	}
+	return e
 }
 
 // enqueueHook ставит событие в диспетчер (инвалидация кэшей, неблокирующе).
@@ -181,9 +216,9 @@ func (h *HookHandler) Handle(event events.Event) {
 	}
 
 	// 1) Enqueue into Dispatcher for cache invalidation (async, non-blocking).
-	// Своё создание/снятие диспетчер и оркестратор узнают по карте
-	// (InterfaceStore: owned/removed); чужие ifcreated/ifdestroyed диспетчер
-	// публикует после списка своей пачки.
+	// Своё создание/снятие/грань conf — по вердикту точки входа (event.Own,
+	// HookSink.Handle); чужие ifcreated/ifdestroyed диспетчер публикует после
+	// списка своей пачки.
 	enqueueHook(h.dispatcher, event)
 
 	// 1a) Смена адреса интерфейса — повод перепроверить DDNS-имена: страж
@@ -211,6 +246,7 @@ func (h *HookHandler) Handle(event events.Event) {
 					NDMSName: e.ID,
 					Layer:    e.Layer,
 					Level:    e.Level,
+					Own:      e.Own,
 				}); err != nil {
 					h.log.Warn("hook", e.ID, "orchestrator HandleEvent failed: "+err.Error())
 				}
@@ -220,7 +256,7 @@ func (h *HookHandler) Handle(event events.Event) {
 
 	// 3) ifdestroyed — в оркестратор явным событием: реакция на снятие нашей
 	// записи OpkgTun не зависит от layer-хуков (#328, F569). Свой снос
-	// оркестратор узнаёт по карте (RemovedByUs).
+	// оркестратор узнаёт по вердикту точки входа (event.Own).
 	if event.Type == events.EventIfDestroyed && h.orch != nil {
 		go func(e events.Event) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -228,13 +264,14 @@ func (h *HookHandler) Handle(event events.Event) {
 			if err := h.orch.HandleEvent(ctx, orchestrator.Event{
 				Type:     orchestrator.EventNDMSIfDestroyed,
 				NDMSName: e.ID,
+				Own:      e.Own,
 			}); err != nil {
 				h.log.Warn("hook", e.ID, "orchestrator HandleEvent failed: "+err.Error())
 			}
 		}(event)
 	}
 
-	h.log.Info("hook", event.ID, fmt.Sprintf("ndms: type=%s layer=%s level=%s", event.Type, event.Layer, event.Level))
+	h.log.Info("hook", event.ID, fmt.Sprintf("ndms: type=%s layer=%s level=%s own=%v", event.Type, event.Layer, event.Level, event.Own))
 }
 
 // handleWANLayerEvent processes an iflayerchanged hook with layer=ipv4.

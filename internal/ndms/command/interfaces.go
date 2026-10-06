@@ -13,12 +13,11 @@ import (
 // InterfaceCommands performs write operations on NDMS Interface objects.
 type InterfaceCommands struct {
 	ndmsMutator
-	hookNotifier HookNotifier
 }
 
 // NewInterfaceCommands паникует на nil s (newMutator).
-func NewInterfaceCommands(p Poster, s *SaveCoordinator, q *query.Queries, hn HookNotifier) *InterfaceCommands {
-	return &InterfaceCommands{ndmsMutator: newMutator(p, s, q), hookNotifier: hn}
+func NewInterfaceCommands(p Poster, s *SaveCoordinator, q *query.Queries) *InterfaceCommands {
+	return &InterfaceCommands{ndmsMutator: newMutator(p, s, q)}
 }
 
 // CreateInterface — createInterface для пакетов, собирающих payload создания
@@ -26,12 +25,6 @@ func NewInterfaceCommands(p Poster, s *SaveCoordinator, q *query.Queries, hn Hoo
 func (c *InterfaceCommands) CreateInterface(ctx context.Context, payload any, name string, existingOK bool, after ...func()) (query.Confirmed, CreateReply, error) {
 	return c.createInterface(ctx, payload, name, existingOK, after...)
 }
-
-// SetHookNotifier replaces the HookNotifier after construction. Used to
-// break the construction cycle between Commands and the Orchestrator
-// (Commands are needed to build the Operator, which feeds the Orchestrator,
-// which is then the HookNotifier for Commands).
-func (c *InterfaceCommands) SetHookNotifier(hn HookNotifier) { c.hookNotifier = hn }
 
 // CreateOpkgTunWithSecurityLevel creates an OpkgTun with an explicit security
 // level ("public" or "private"). fakeip-tun mode requires "private" so
@@ -327,41 +320,37 @@ func (c *InterfaceCommands) ClearDNSByKernelName(ctx context.Context, name strin
 }
 
 // InterfaceUp brings the interface administratively up.
-// Registers expected hook if notifier is set.
 // RunningConfig invalidation is deliberately skipped — Plan 4's
 // events.Dispatcher invalidates RunningConfig on iflayerchanged hooks,
 // which fire on every interface up/down.
 func (c *InterfaceCommands) InterfaceUp(ctx context.Context, iface query.Confirmed) error {
-	name := iface.Name()
-	if c.hookNotifier != nil {
-		c.hookNotifier.ExpectHook(name, "running")
-	}
-	payload := map[string]any{
-		"interface": map[string]any{
-			name: map[string]any{"up": true},
-		},
-	}
-	return postMutationChecked(ctx, c.poster, c.save, payload, "interface up "+name,
-		func() { c.queries.Interfaces.Invalidate(name) },
-		func() { c.queries.Peers.Invalidate(name) })
+	return c.setUp(ctx, iface, true)
 }
 
-// InterfaceDown brings the interface administratively down.
-// Registers expected hook if notifier is set.
-// RunningConfig invalidation is deliberately skipped — Plan 4's
-// events.Dispatcher invalidates RunningConfig on iflayerchanged hooks,
-// which fire on every interface up/down.
+// InterfaceDown brings the interface administratively down. См. InterfaceUp.
 func (c *InterfaceCommands) InterfaceDown(ctx context.Context, iface query.Confirmed) error {
+	return c.setUp(ctx, iface, false)
+}
+
+// setUp — `interface X up:<up>`: кредит своей грани conf до POST
+// (ExpectConf, только действующей команды), отказ — кредит назад.
+func (c *InterfaceCommands) setUp(ctx context.Context, iface query.Confirmed, up bool) error {
 	name := iface.Name()
-	if c.hookNotifier != nil {
-		c.hookNotifier.ExpectHook(name, "disabled")
+	op := "interface down "
+	if up {
+		op = "interface up "
 	}
+	refused := c.queries.Interfaces.ExpectConf(name, up)
 	payload := map[string]any{
 		"interface": map[string]any{
-			name: map[string]any{"up": false},
+			name: map[string]any{"up": up},
 		},
 	}
-	return postMutationChecked(ctx, c.poster, c.save, payload, "interface down "+name,
+	err := postMutationChecked(ctx, c.poster, c.save, payload, op+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		func() { c.queries.Peers.Invalidate(name) })
+	if err != nil {
+		refused()
+	}
+	return err
 }

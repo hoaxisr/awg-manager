@@ -7,19 +7,14 @@ import (
 )
 
 type PolicyCommands struct {
-	poster       Poster
-	save         *SaveCoordinator
-	queries      *query.Queries
-	hookNotifier HookNotifier
+	poster  Poster
+	save    *SaveCoordinator
+	queries *query.Queries
 }
 
-func NewPolicyCommands(p Poster, s *SaveCoordinator, q *query.Queries, hn HookNotifier) *PolicyCommands {
-	return &PolicyCommands{poster: p, save: s, queries: q, hookNotifier: hn}
+func NewPolicyCommands(p Poster, s *SaveCoordinator, q *query.Queries) *PolicyCommands {
+	return &PolicyCommands{poster: p, save: s, queries: q}
 }
-
-// SetHookNotifier replaces the HookNotifier after construction. See
-// InterfaceCommands.SetHookNotifier for the rationale.
-func (c *PolicyCommands) SetHookNotifier(hn HookNotifier) { c.hookNotifier = hn }
 
 func (c *PolicyCommands) CreatePolicy(ctx context.Context, name, description string) error {
 	payload := map[string]any{
