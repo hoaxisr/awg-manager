@@ -245,16 +245,6 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		_ = s.teardownOpkgTun(rbCtx, ndmsName, "fakeip-rollback")
 	})
 
-	// NDMS-native разрешение трафика в tun: permit-all access-list
-	// `_WEBADMIN_<iface>` + `ip access-group … in` + auto-delete (как галка
-	// доступа в веб-морде). Восстановлено — потеряно при интеграции PoC; без
-	// него firewall NDMS (isolate-private и т.п.) режет LAN→tun форвард и DNS
-	// на tun-адрес. Снятие — в teardownOpkgTun (rollback идёт через него же);
-	// auto-delete дополнительно каскадит ACL при удалении интерфейса.
-	if err = s.deps.OpkgTun.SetPermitAllACL(ctx, ndmsName); err != nil {
-		return fmt.Errorf("enable fakeip-tun: permit acl: %w", err)
-	}
-
 	if err = s.deps.OpkgTun.SetAddress(ctx, ndmsName, addr4, mask4); err != nil {
 		return fmt.Errorf("enable fakeip-tun: set address: %w", err)
 	}
@@ -269,11 +259,19 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		if err = s.deps.OpkgTun.SetIPv6Address(ctx, ndmsName, addr6); err != nil {
 			return fmt.Errorf("enable fakeip-tun: set ipv6 address: %w", err)
 		}
-		// v6-разрешение — ПОСЛЕ адреса: v4-ACL выше v6-трафик не покрывает,
-		// у NDMS под него отдельное пространство списков.
-		if err = s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); err != nil {
-			return fmt.Errorf("enable fakeip-tun: permit acl v6: %w", err)
-		}
+	}
+	// NDMS-native разрешение трафика в tun: permit-all access-list
+	// `_WEBADMIN_<iface>` + `ip access-group … in` + auto-delete (как галка
+	// доступа в веб-морде). Восстановлено — потеряно при интеграции PoC; без
+	// него firewall NDMS (isolate-private и т.п.) режет LAN→tun форвард и DNS
+	// на tun-адрес. Снятие — в teardownOpkgTun (rollback идёт через него же);
+	// auto-delete дополнительно каскадит ACL при удалении интерфейса. v6 —
+	// отдельное пространство списков, v4-ACL v6-трафик не покрывает. Оба
+	// семейства — одним чтением running-config (F607) и ПОСЛЕ адресов: v6 и
+	// раньше ставился после v6-адреса; v4 переехал за адрес — интерфейс ещё не
+	// поднят, трафика до ACL нет.
+	if err = s.deps.OpkgTun.SetPermitAllACLs(ctx, ndmsName, p.TunAddr6 != ""); err != nil {
+		return fmt.Errorf("enable fakeip-tun: permit acl: %w", err)
 	}
 	if err = s.deps.OpkgTun.SetMTU(ctx, ndmsName, p.MTU); err != nil {
 		return fmt.Errorf("enable fakeip-tun: set mtu: %w", err)

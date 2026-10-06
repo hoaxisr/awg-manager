@@ -170,6 +170,10 @@ func (a confirmingOpkgTun) RemovePermitAllACL(ctx context.Context, name string) 
 	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.RemovePermitAllACL(ctx, c) })
 }
 
+func (a confirmingOpkgTun) SetPermitAllACLs(ctx context.Context, name string, withV6 bool) error {
+	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.SetPermitAllACLs(ctx, c, withV6) })
+}
+
 func (a confirmingOpkgTun) SetPermitAllACLv6(ctx context.Context, name string) error {
 	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.SetPermitAllACLv6(ctx, c) })
 }

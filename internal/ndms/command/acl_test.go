@@ -643,3 +643,54 @@ func TestSetPermitAllACL_ReadsFreshTree(t *testing.T) {
 		})
 	}
 }
+
+// В списке только ЧУЖОЕ правило — наше не стоит: permit уходит (рядом с
+// чужим), а когда наше встало — следующий вызов его не повторяет.
+// Мутация: «правило стоит» = «блок есть» → permit не уходит, красный;
+// предикат всегда false → второй вызов шлёт дубль, красный.
+func TestSetPermitAllACL_ForeignRuleOnly_PermitOnce(t *testing.T) {
+	foreign := map[string]string{"v4": "permit tcp 10.77.0.2 255.255.255.255 0.0.0.0 0.0.0.0", "v6": "permit ipv6 2001:db8::/32 ::/0"}
+	for _, f := range []aclFamily{aclV4, aclV6} {
+		t.Run(f.name, func(t *testing.T) {
+			cmds, poster := newACLTestCommandsRC(nil)
+			fg := rcStore(cmds, append(rcIface(f, true), f.header, "    "+foreign[f.name], "    auto-delete"))
+			if err := f.set(cmds, confirmed(t, "OpkgTun15")); err != nil {
+				t.Fatalf("постановка: %v", err)
+			}
+			if want := []string{f.permitCmd(), f.bindCmd(), f.autoDeleteCmd()}; !slices.Equal(poster.parses, want) {
+				t.Fatalf("parses = %v, ждали %v", poster.parses, want)
+			}
+			setRCLines(fg, append(rcIface(f, true), f.header, "    "+foreign[f.name], "    "+f.rule, "    auto-delete"))
+			poster.parses = nil
+			if err := f.set(cmds, confirmed(t, "OpkgTun15")); err != nil {
+				t.Fatalf("повтор: %v", err)
+			}
+			if want := []string{f.bindCmd(), f.autoDeleteCmd()}; !slices.Equal(poster.parses, want) {
+				t.Fatalf("повтор: parses = %v, ждали %v", poster.parses, want)
+			}
+		})
+	}
+}
+
+// SetPermitAllACLs — оба семейства по одному чтению; без v6 — только v4.
+// Мутация: чтение на каждое семейство → 2, красный; withV6 игнорируется →
+// v6-команды без v6, красный.
+func TestSetPermitAllACLs_OneFetch(t *testing.T) {
+	for _, withV6 := range []bool{true, false} {
+		cmds, poster := newACLTestCommandsRC(nil)
+		fg := rcStore(cmds, nil)
+		if err := cmds.SetPermitAllACLs(context.Background(), confirmed(t, "OpkgTun15"), withV6); err != nil {
+			t.Fatalf("withV6=%v: %v", withV6, err)
+		}
+		if n := fg.Calls("/show/running-config"); n != 1 {
+			t.Errorf("withV6=%v: чтений running-config = %d, ждали 1", withV6, n)
+		}
+		want := []string{aclV4.permitCmd(), aclV4.bindCmd(), aclV4.autoDeleteCmd()}
+		if withV6 {
+			want = append(want, aclV6.permitCmd(), aclV6.bindCmd(), aclV6.autoDeleteCmd())
+		}
+		if !slices.Equal(poster.parses, want) {
+			t.Errorf("withV6=%v: parses = %v, ждали %v", withV6, poster.parses, want)
+		}
+	}
+}

@@ -110,6 +110,15 @@ func (r *recOpkgTun) RemovePermitAllACLs(_ context.Context, name string) error {
 	r.log.add("RemovePermitACL:" + name)
 	return nil
 }
+
+// SetPermitAllACLs пишет те же метки, что и два отдельных вызова, — в
+// журнале видно, какие семейства поставлены.
+func (r *recOpkgTun) SetPermitAllACLs(ctx context.Context, name string, withV6 bool) error {
+	if err := r.SetPermitAllACL(ctx, name); err != nil || !withV6 {
+		return err
+	}
+	return r.SetPermitAllACLv6(ctx, name)
+}
 func (r *recOpkgTun) SetPermitAllACLv6(_ context.Context, name string) error {
 	r.log.add("SetPermitACLv6:" + name)
 	return r.maybeFail("SetPermitACLv6")

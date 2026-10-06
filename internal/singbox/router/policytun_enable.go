@@ -257,12 +257,6 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable policy-tun: ip global: %w", err)
 	}
 
-	// NDMS-native разрешение трафика в tun: permit-all access-list + binding.
-	// Без него firewall NDMS (isolate-private и т.п.) режет форвард в tun.
-	if err = s.deps.OpkgTun.SetPermitAllACL(ctx, ndmsName); err != nil {
-		return fmt.Errorf("enable policy-tun: permit acl: %w", err)
-	}
-
 	if err = s.deps.OpkgTun.SetAddress(ctx, ndmsName, addr4, mask4); err != nil {
 		return fmt.Errorf("enable policy-tun: set address: %w", err)
 	}
@@ -270,12 +264,16 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		if err = s.deps.OpkgTun.SetIPv6Address(ctx, ndmsName, addr6); err != nil {
 			return fmt.Errorf("enable policy-tun: set ipv6 address: %w", err)
 		}
-		// v6-разрешение — ПОСЛЕ адреса: у NDMS под v6 отдельное пространство
-		// списков, и v4-ACL выше его не покрывает. Без него дефолт клиентов
-		// припаркован на tun, а v6 в него режет firewall — уйти в обход некуда.
-		if err = s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); err != nil {
-			return fmt.Errorf("enable policy-tun: permit acl v6: %w", err)
-		}
+	}
+	// NDMS-native разрешение трафика в tun: permit-all access-list + binding.
+	// Без него firewall NDMS (isolate-private и т.п.) режет форвард в tun.
+	// v6-разрешение — отдельное пространство списков (v4-ACL его не покрывает):
+	// без него дефолт клиентов припаркован на tun, а v6 в него режет firewall.
+	// Оба семейства — одним чтением running-config (F607) и ПОСЛЕ адресов: v6
+	// и раньше ставился после v6-адреса, порядок для него сохранён; v4 переехал
+	// за адрес — интерфейс ещё не поднят, трафика до ACL нет.
+	if err = s.deps.OpkgTun.SetPermitAllACLs(ctx, ndmsName, addr6 != ""); err != nil {
+		return fmt.Errorf("enable policy-tun: permit acl: %w", err)
 	}
 	if err = s.deps.OpkgTun.SetMTU(ctx, ndmsName, p.MTU); err != nil {
 		return fmt.Errorf("enable policy-tun: set mtu: %w", err)

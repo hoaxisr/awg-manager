@@ -52,6 +52,9 @@ type OpkgTunProvisioner interface {
 	// покрывает. Ставится только когда у интерфейса есть v6-адрес — на
 	// интерфейсе без v6 разрешать нечего.
 	SetPermitAllACLv6(ctx context.Context, name string) error
+	// SetPermitAllACLs — v4 и (withV6) v6 по одному чтению running-config:
+	// включение ставит оба, чтение стоит ≈89 тиков ndm (F607).
+	SetPermitAllACLs(ctx context.Context, name string, withV6 bool) error
 	// RemovePermitAllACLs снимает permit-all обоих семейств по одному чтению
 	// running-config; шлёт только то, что в нём есть (F606).
 	RemovePermitAllACLs(ctx context.Context, name string) error

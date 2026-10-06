@@ -104,13 +104,36 @@ func IsACLDuplicate(err error) bool {
 // уходит только без нашего правила в свежем running-config (hasOurPermitRule,
 // F607), повторные bind/auto-delete идемпотентны в NDMS без E.
 func (c *InterfaceCommands) SetPermitAllACL(ctx context.Context, iface query.Confirmed) error {
-	name := iface.Name()
-	acl := "_WEBADMIN_" + name
-	present, err := c.hasOurPermitRule(ctx, name, permitV4)
+	lines, err := c.freshACLTree(ctx, iface.Name())
 	if err != nil {
 		return err
 	}
-	if !present {
+	return c.setPermitAllV4(ctx, iface, lines)
+}
+
+// SetPermitAllACLs ставит permit-all v4 и (withV6) v6 по ОДНОМУ чтению
+// running-config — включение ставит оба, а полное дерево стоит ≈89 тиков ndm.
+// v4-POST'ы v6-блоков не меняют, поэтому дерево годится и для второго
+// семейства. Провал v4 прерывает: включение всё равно откатится.
+func (c *InterfaceCommands) SetPermitAllACLs(ctx context.Context, iface query.Confirmed, withV6 bool) error {
+	lines, err := c.freshACLTree(ctx, iface.Name())
+	if err != nil {
+		return err
+	}
+	if err := c.setPermitAllV4(ctx, iface, lines); err != nil {
+		return err
+	}
+	if !withV6 {
+		return nil
+	}
+	return c.setPermitAllV6(ctx, iface, lines)
+}
+
+// setPermitAllV4 — постановка v4 по готовому дереву.
+func (c *InterfaceCommands) setPermitAllV4(ctx context.Context, iface query.Confirmed, lines []string) error {
+	name := iface.Name()
+	acl := "_WEBADMIN_" + name
+	if !hasOurPermitRule(lines, name, permitV4) {
 		if err := c.ACLPermitIP(ctx, acl, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0"); err != nil && !IsACLDuplicate(err) {
 			return err
 		}
@@ -141,13 +164,18 @@ func (c *InterfaceCommands) SetPermitAllACL(ctx context.Context, iface query.Con
 // `ipv6 access-list`/`ipv6 access-group` не существует вовсе (isACLUnsupported).
 // Там разрешать нечего, и отказ не должен валить включение режима — issue #828.
 func (c *InterfaceCommands) SetPermitAllACLv6(ctx context.Context, iface query.Confirmed) error {
-	name := iface.Name()
-	acl := "_WEBADMIN_" + name
-	present, err := c.hasOurPermitRule(ctx, name, permitV6)
+	lines, err := c.freshACLTree(ctx, iface.Name())
 	if err != nil {
 		return err
 	}
-	if !present {
+	return c.setPermitAllV6(ctx, iface, lines)
+}
+
+// setPermitAllV6 — постановка v6 по готовому дереву.
+func (c *InterfaceCommands) setPermitAllV6(ctx context.Context, iface query.Confirmed, lines []string) error {
+	name := iface.Name()
+	acl := "_WEBADMIN_" + name
+	if !hasOurPermitRule(lines, name, permitV6) {
 		err := postMutationCheckedTolerant(ctx, c.poster, c.save,
 			map[string]any{"parse": fmt.Sprintf("ipv6 access-list %s permit ipv6 ::/0 ::/0", acl)},
 			"acl6 permit "+acl,
@@ -193,20 +221,17 @@ func hasForeignACLRules(lines []string, header, ours string) bool {
 }
 
 // hasOurPermitRule — стоит ли наше правило permit-all семейства f в свежем
-// running-config (F607). Улики стенда X2 (5.01.C.6): идемпотентной формы permit
+// running-config lines (F607). Чужие правила списка не в счёт: наше ставится
+// рядом с ними. Улики стенда X2 (5.01.C.6): идемпотентной формы permit
 // у NDMS нет — повтор того же правила, повтор с лишними пробелами (NDMS
 // нормализует строку) дают `E Network::[Ip6::]Acl: a duplicate was found`,
 // `permit ip any any` — `argument parse error`, JSON-формы access-list —
 // `Command::Root: no input`; повтор bind и auto-delete идёт без E. Поэтому
 // permit гейтится чтением, а IsACLDuplicate остаётся терпимостью гонки
-// чтение→POST. Дерево не прочитано — ошибка наверх, не шлём ничего: вслепую
-// это снова E, а one-shot ассерт повторит следующим тиком.
-func (c *InterfaceCommands) hasOurPermitRule(ctx context.Context, name string, f permitAllFamily) (bool, error) {
-	lines, err := c.freshACLTree(ctx, name)
-	if err != nil {
-		return false, err
-	}
-	return slices.Contains(query.ACLRulesOf(lines, f.header("_WEBADMIN_"+name)), f.rule()), nil
+// чтение→POST. Дерево не прочитано (freshACLTree) — ошибка наверх, не шлём
+// ничего: вслепую это снова E, а one-shot ассерт повторит следующим тиком.
+func hasOurPermitRule(lines []string, name string, f permitAllFamily) bool {
+	return slices.Contains(query.ACLRulesOf(lines, f.header("_WEBADMIN_"+name)), f.rule())
 }
 
 // permitAllFamily — семейство permit-all (постановка и снятие). Тип

@@ -157,6 +157,9 @@ func (o *oracleOpkg) InterfaceDown(ctx context.Context, name string) error {
 func (o *oracleOpkg) SetPermitAllACL(ctx context.Context, name string) error {
 	return o.set(ctx, name, func(c query.Confirmed) error { return o.cmds.Interfaces.SetPermitAllACL(ctx, c) })
 }
+func (o *oracleOpkg) SetPermitAllACLs(ctx context.Context, name string, withV6 bool) error {
+	return o.set(ctx, name, func(c query.Confirmed) error { return o.cmds.Interfaces.SetPermitAllACLs(ctx, c, withV6) })
+}
 func (o *oracleOpkg) SetPermitAllACLv6(ctx context.Context, name string) error {
 	return o.set(ctx, name, func(c query.Confirmed) error { return o.cmds.Interfaces.SetPermitAllACLv6(ctx, c) })
 }

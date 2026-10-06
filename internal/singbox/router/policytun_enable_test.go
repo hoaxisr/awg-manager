@@ -202,9 +202,11 @@ func TestPolicyTunEnable_ProvisionOrder(t *testing.T) {
 	}
 
 	mustOrderCalls(t, h.log, createCall, "SetIPGlobal:"+ndmsName)
-	mustOrderCalls(t, h.log, "SetIPGlobal:"+ndmsName, "SetPermitACL:"+ndmsName)
-	mustOrderCalls(t, h.log, "SetPermitACL:"+ndmsName, "SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252")
-	mustOrderCalls(t, h.log, "SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252", "SetMTU:"+ndmsName+":1500")
+	mustOrderCalls(t, h.log, "SetIPGlobal:"+ndmsName, "SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252")
+	// ACL обоих семейств — одним чтением running-config после адресов (F607);
+	// интерфейс ещё не поднят.
+	mustOrderCalls(t, h.log, "SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252", "SetPermitACL:"+ndmsName)
+	mustOrderCalls(t, h.log, "SetPermitACL:"+ndmsName, "SetMTU:"+ndmsName+":1500")
 	mustOrderCalls(t, h.log, "SetMTU:"+ndmsName+":1500", "InterfaceUp:"+ndmsName)
 	// Default route lands only AFTER the slot write + carrier readiness.
 	mustOrderCalls(t, h.log, "InterfaceUp:"+ndmsName, "SetDefaultRoute:"+ndmsName)
