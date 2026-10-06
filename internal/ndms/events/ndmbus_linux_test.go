@@ -135,8 +135,8 @@ func TestNDMBus_FakeSocket_DeliversInOrder(t *testing.T) {
 			t.Fatalf("событие %d: raise %v — порядок потока нарушен", i, ev.RaiseTime)
 		}
 	}
-	if _, st := rec.snapshot(); len(st) != 2 || st[0] || !st[1] {
-		t.Fatalf("состояния %v, ждали [false true]", st)
+	if _, st := rec.snapshot(); len(st) != 1 || !st[0] {
+		t.Fatalf("состояния %v, ждали [true]", st)
 	}
 }
 
@@ -155,7 +155,7 @@ func TestNDMBus_Reconnect_NotifiesAndResumes(t *testing.T) {
 	if evs[0].RaiseTime != 1 || evs[1].RaiseTime != 2 {
 		t.Fatalf("события %+v", evs)
 	}
-	want := []bool{false, true, false, true}
+	want := []bool{true, false, true}
 	if _, st := rec.snapshot(); fmt.Sprint(st) != fmt.Sprint(want) {
 		t.Fatalf("состояния %v, ждали %v", st, want)
 	}
@@ -177,7 +177,10 @@ func TestNDMBus_NoSocketAtStart_RetriesWithoutError(t *testing.T) {
 }
 
 // Stop закрывает соединение и дожидается горутины: после возврата
-// обработчики не зовутся (goleak пакета ловит недождавшуюся горутину).
+// обработчики не зовутся (goleak пакета ловит недождавшуюся горутину), а
+// своя остановка — не обрыв: onState(false) нет, Warn «шина отключена» на
+// каждой остановке демона не пишется.
+// Мутация: onState(false) и на Stop → состояния [true false], красный.
 func TestNDMBus_Stop_JoinsGoroutine(t *testing.T) {
 	path := busSocketPath(t)
 	ln, err := net.Listen("unix", path)
@@ -199,8 +202,15 @@ func TestNDMBus_Stop_JoinsGoroutine(t *testing.T) {
 	}
 	c := <-accepted
 	defer c.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for _, st := rec.snapshot(); len(st) == 0 && time.Now().Before(deadline); _, st = rec.snapshot() {
+		time.Sleep(time.Millisecond)
+	}
 	r.Stop()
 	_, st := rec.snapshot()
+	if len(st) != 1 || !st[0] {
+		t.Fatalf("состояния после Stop %v, ждали [true]", st)
+	}
 	var b bytes.Buffer
 	busSavedDoc(&b, "1")
 	c.Write(b.Bytes())

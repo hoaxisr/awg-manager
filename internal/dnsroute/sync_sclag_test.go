@@ -127,6 +127,7 @@ func newSCLagService(t *testing.T) (*ServiceImpl, *scLagRouter) {
 	// Отложенный save не срабатывает сам за время теста: сохранить до
 	// чтения может только сверка.
 	sc := command.NewSaveCoordinator(r, nopPublisher{}, time.Hour, time.Hour, 0, nil)
+	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
 	c := command.NewCommands(command.Deps{Poster: r, Save: sc, Queries: q, IsOS5: func() bool { return true }})
 	s := &ServiceImpl{store: store, queries: q, commands: c}
 

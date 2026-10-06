@@ -67,6 +67,7 @@ func newDNSRouteServiceWithOracle(t *testing.T, f *query.FakeNDMS, data StoreDat
 	o := &oracleRouter{fakeRouter: newFakeRouter(), f: f}
 	q := query.NewQueries(query.Deps{Getter: o, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	sc := command.NewSaveCoordinator(o, nopPublisher{}, 10*time.Millisecond, time.Second, 0, nil)
+	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
 	c := command.NewCommands(command.Deps{Poster: o, Save: sc, Queries: q, IsOS5: func() bool { return true }})
 	// resolver не нужен: Reconcile берёт интерфейсы из сохранённых RouteTarget.
 	return &ServiceImpl{store: store, queries: q, commands: c}, o

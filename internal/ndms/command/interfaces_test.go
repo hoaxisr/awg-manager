@@ -29,6 +29,7 @@ func newTestInterfaceCommands(_ *testing.T) (*InterfaceCommands, *fakePoster, *S
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun0"}, ndms.Interface{ID: "OpkgTun10"})
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	return NewInterfaceCommands(poster, sc, q), poster, sc, q
@@ -53,6 +54,7 @@ func newOracleInterfaceCommands(t *testing.T, ifaces ...ndms.Interface) (*Interf
 	f := query.NewFakeNDMS(ifaces...)
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(f, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	return NewInterfaceCommands(f, sc, q), f, sc, q
 }
@@ -82,12 +84,15 @@ func (g oracleGetter) Get(ctx context.Context, path string, dst any) error {
 // сверх модели FakeNDMS.
 // newTestSave — координатор для автономных конструкторов команд в тестах
 // (nil паникует, newMutator): debounce 0 — заказ стреляет сразу, в p.
-func newTestSave(p Poster) *SaveCoordinator { return NewSaveCoordinator(p, nil, 0, 0, 0, nil) }
+func newTestSave(p Poster) *SaveCoordinator {
+	return noBusSave(NewSaveCoordinator(p, nil, 0, 0, 0, nil))
+}
 
 func newOracleCommands(t *testing.T, raw map[string]string, ifaces ...ndms.Interface) (*Commands, *query.FakeNDMS, *query.Queries) {
 	t.Helper()
 	f := query.NewFakeNDMS(ifaces...)
 	sc := NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	q := query.NewQueries(query.Deps{Getter: oracleGetter{FakeNDMS: f, raw: raw}, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	return NewCommands(Deps{Poster: f, Save: sc, Queries: q, IsOS5: func() bool { return true }}), f, q
 }
@@ -313,6 +318,7 @@ func TestInterfaceUp_UnknownRecord_NoCredit(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	q := testQueries()
 	cmds := NewInterfaceCommands(poster, sc, q)
 	if err := cmds.InterfaceUp(context.Background(), confirmed(t, "OpkgTun0")); err != nil {

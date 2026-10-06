@@ -9,11 +9,9 @@ import (
 )
 
 // Start запускает горутину клиента и сразу возвращается: сокета может не
-// быть (ndm ещё грузится) — это не ошибка, клиент подключается с backoff.
-// onState(false) — синхронно, до возврата: потребитель знает, что шина есть,
-// но не подключена, раньше первого своего действия.
+// быть (ndm ещё грузится) — это не ошибка, клиент подключается с backoff, а
+// до подключения потребитель считает шину отключённой (его дефолт).
 func (r *BusReader) Start() error {
-	r.onState(false)
 	r.stop = make(chan struct{})
 	r.done = make(chan struct{})
 	go r.loop()
@@ -75,6 +73,11 @@ func (r *BusReader) loop() {
 		r.mu.Lock()
 		r.conn = nil
 		r.mu.Unlock()
+		select {
+		case <-r.stop: // своя остановка — не обрыв шины: без onState(false)
+			return
+		default:
+		}
 		r.onState(false)
 		if !r.sleep(backoff) {
 			return

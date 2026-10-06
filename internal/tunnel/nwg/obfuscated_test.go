@@ -214,6 +214,7 @@ func newObfOperator(t *testing.T, n *captureNDMS, fr *fakeObfRunner) *OperatorNa
 	q := query.NewQueries(query.Deps{Getter: tr, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	// Save обязателен: mutation.go зовёт save.Request() без nil-гарда.
 	sc := command.NewSaveCoordinator(tr, startNopPublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
 	cmds := command.NewCommands(command.Deps{Poster: tr, Save: sc, Queries: q, IsOS5: func() bool { return true }})
 	op := &OperatorNativeWG{
 		queries:      q,

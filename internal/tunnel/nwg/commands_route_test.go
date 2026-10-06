@@ -36,7 +36,9 @@ func TestDelete_NoInterface_ViaCommands(t *testing.T) {
 func TestNwg_SaveViaCoordinator(t *testing.T) {
 	ctx := context.Background()
 	o, _, poster, f, srv := newLifecycleOperator(t, false, false)
-	o.commands = command.NewCommands(command.Deps{Poster: poster, Save: command.NewSaveCoordinator(poster, nil, 0, 0, 0, nil), Queries: o.queries})
+	sc := command.NewSaveCoordinator(poster, nil, 0, 0, 0, nil)
+	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
+	o.commands = command.NewCommands(command.Deps{Poster: poster, Save: sc, Queries: o.queries})
 	f.ExpectCreate("Wireguard1")
 	if _, err := o.createViaBatch(ctx, nwgStored(awgObfuscatedIface())); err != nil {
 		t.Fatal(err)
@@ -72,6 +74,7 @@ func TestNwg_SaveViaCoordinator(t *testing.T) {
 func TestNwg_BatchError_StillRequestsSave(t *testing.T) {
 	o, _, _, _, srv := newLifecycleOperator(t, false, false)
 	sc := command.NewSaveCoordinator(nil, nil, time.Hour, time.Hour, 0, nil)
+	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
 	o.commands.Save = sc
 	srv.respond = func(string) (string, bool) {
 		return `[{"status":"error","message":"bad key"}]`, true

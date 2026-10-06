@@ -73,3 +73,16 @@ func TestWiring_NDMBusWired(t *testing.T) {
 		}
 	}
 }
+
+// Уборка без шины событий: fallback 0, иначе каждое её сохранение ждало бы
+// saveFallback (10 с) — полёт без шины fail-closed по дефолту координатора.
+// Мутация: fallback уборки не 0 (или строка снята) → красный.
+func TestWiring_CleanupSaveFallbackZero(t *testing.T) {
+	src, err := os.ReadFile("cleanup.go")
+	if err != nil {
+		t.Fatalf("чтение уборки: %v", err)
+	}
+	if !strings.Contains(string(src), "cleanupNDMSSave.SetSaveTimings(ndmscommand.SaveEventCap, 0, ndmscommand.SaveAfterRemoval)") {
+		t.Fatal("координатор уборки без fallback 0: каждое сохранение уборки ждёт 10 с")
+	}
+}

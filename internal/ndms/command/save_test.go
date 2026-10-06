@@ -170,6 +170,7 @@ func TestSaveCoordinator_SingleRequestTriggersSave(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 20*time.Millisecond, 100*time.Millisecond, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	sc.Request()
 	time.Sleep(50 * time.Millisecond)
@@ -183,6 +184,7 @@ func TestSaveCoordinator_MultipleRequestsCoalesce(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 30*time.Millisecond, 500*time.Millisecond, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	for i := 0; i < 5; i++ {
 		sc.Request()
@@ -200,6 +202,7 @@ func TestSaveCoordinator_MaxWaitCapsDelay(t *testing.T) {
 	pub := &fakePublisher{}
 	// Tight maxWait; debounce is larger than the whole test window.
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 80*time.Millisecond, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	start := time.Now()
 	// Issue Requests faster than debounce so debounce would never fire,
@@ -235,6 +238,7 @@ func TestSaveCoordinator_PublishesStatusTransitions(t *testing.T) {
 	poster := &fakePoster{sleep: 20 * time.Millisecond}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 15*time.Millisecond, 100*time.Millisecond, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	sc.Request()
 	time.Sleep(80 * time.Millisecond)
@@ -264,6 +268,7 @@ func TestSaveCoordinator_RetryOnFailure(t *testing.T) {
 
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	sc.SetRetryPolicy(20*time.Millisecond, 3) // 3 retries, 20ms apart
 
 	sc.Request()
@@ -327,6 +332,7 @@ func TestSaveCoordinator_RetrySucceedsClearsError(t *testing.T) {
 
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	sc.SetRetryPolicy(20*time.Millisecond, 3)
 
 	sc.Request()
@@ -345,6 +351,7 @@ func TestSaveCoordinator_FlushBypassesDebounce(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 1*time.Second, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	sc.Request()
 	// Immediately Flush — debounce would otherwise keep Save pending.
@@ -362,6 +369,7 @@ func TestSaveCoordinator_FlushClearsFailedState(t *testing.T) {
 
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 50*time.Millisecond, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	sc.SetRetryPolicy(10*time.Millisecond, 1)
 
 	sc.Request()
@@ -382,6 +390,7 @@ func TestSaveCoordinator_FlushFailureGoesToFailed(t *testing.T) {
 	poster.SetError(errors.New("flash write failed"))
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 100*time.Millisecond, 500*time.Millisecond, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	err := sc.Flush(context.Background())
 	if err == nil {
@@ -405,6 +414,7 @@ func TestSaveCoordinator_FlushConcurrentWithInFlightFire(t *testing.T) {
 	poster := &fakePoster{sleep: 60 * time.Millisecond}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	sc.Request()
 	// Ждём ВХОДА fire в Post, а не «наверное, уже вошёл через 25 мс». Сон
@@ -443,6 +453,7 @@ func TestSaveCoordinator_StatusSnapshot(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 20*time.Millisecond, 100*time.Millisecond, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	// Fresh coordinator: Idle, 0 pending.
 	if st := sc.Status(); st.State != SaveStateIdle || st.PendingCount != 0 {
@@ -474,6 +485,7 @@ func TestSaveCoordinator_fire_OnSuccess_InvalidatesRunningConfig(t *testing.T) {
 	inv := &mockInvalidator{}
 	sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond,
 		20*time.Millisecond, inv)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	sc.Request()
 	// debounce 10ms + post 0ms + settle 20ms = ~30ms. Wait 100ms for safety.
@@ -491,6 +503,7 @@ func TestSaveCoordinator_fire_OnSuccess_SettlesBeforeInvalidate(t *testing.T) {
 	settle := 50 * time.Millisecond
 	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
 		settle, inv)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	t0 := time.Now()
 	sc.Request()
@@ -513,6 +526,7 @@ func TestSaveCoordinator_fire_OnSuccess_PublishesSettledHint(t *testing.T) {
 	inv := &mockInvalidator{}
 	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
 		10*time.Millisecond, inv)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	sc.Request()
 	time.Sleep(80 * time.Millisecond)
@@ -538,6 +552,7 @@ func TestSaveCoordinator_fire_OnFailure_DoesNotInvalidate(t *testing.T) {
 	inv := &mockInvalidator{}
 	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
 		10*time.Millisecond, inv)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	sc.SetRetryPolicy(50*time.Millisecond, 0) // disable retry — single attempt then fail
 
 	sc.Request()
@@ -554,6 +569,7 @@ func TestSaveCoordinator_fire_ZeroSettleDelay_SkipsSettle(t *testing.T) {
 	inv := &mockInvalidator{}
 	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
 		0, inv) // settleDelay = 0
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	sc.Request()
 	time.Sleep(80 * time.Millisecond)
@@ -573,6 +589,7 @@ func TestSaveCoordinator_fire_NilInvalidator_SkipsSettle(t *testing.T) {
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
 		20*time.Millisecond, nil) // invalidator = nil
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	sc.Request()
 	time.Sleep(80 * time.Millisecond)
@@ -591,6 +608,7 @@ func TestSaveCoordinator_fire_Retry_InvalidatesOnceAfterFinalSuccess(t *testing.
 	inv := &mockInvalidator{}
 	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
 		10*time.Millisecond, inv)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	sc.SetRetryPolicy(20*time.Millisecond, 3)
 
 	// First attempt fails, second attempt succeeds.
@@ -615,6 +633,7 @@ func TestSaveCoordinator_Flush_OnSuccess_InvalidatesImmediately(t *testing.T) {
 	// settleDelay 1s, but Flush should invalidate WITHOUT sleep.
 	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
 		1*time.Second, inv)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	t0 := time.Now()
 	if err := sc.Flush(context.Background()); err != nil {
@@ -637,6 +656,7 @@ func TestSaveCoordinator_Flush_OnFailure_DoesNotInvalidate(t *testing.T) {
 	inv := &mockInvalidator{}
 	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
 		10*time.Millisecond, inv)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	if err := sc.Flush(context.Background()); err == nil {
 		t.Fatalf("Flush should have returned error")
@@ -653,6 +673,7 @@ func TestSaveCoordinator_Flush_NilInvalidator_DoesNotPanic(t *testing.T) {
 	// invalidator = nil
 	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
 		10*time.Millisecond, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	if err := sc.Flush(context.Background()); err != nil {
 		t.Fatalf("Flush returned error: %v", err)
@@ -674,6 +695,7 @@ func TestSaveCoordinator_LateFireDoesNotResurrectRetry(t *testing.T) {
 	poster.SetError(errors.New("NDMS отказал"))
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	// Ретрай ЕСТЬ (иначе гарду нечего защищать) и он ПОЗЖЕ конца Flush:
 	// иначе воскрешённый ретрай приходит, пока Flush ещё в своём POST, и его
 	// глушит ВХОДНОЙ гард — тогда снятие хвостового ничем не проявляется.
@@ -713,6 +735,7 @@ func TestSaveCoordinator_FireDispatchedDuringFlushWaits(t *testing.T) {
 	poster := &fakePoster{sleep: 120 * time.Millisecond}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	done := make(chan error, 1)
 	go func() { done <- sc.Flush(context.Background()) }()

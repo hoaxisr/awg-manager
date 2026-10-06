@@ -22,6 +22,7 @@ func newTestProxyCommandsWithGetter() (*ProxyCommands, *fakePoster, *SaveCoordin
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	g := query.NewFakeGetter()
 	// Созданное подтверждается списком: имена, которые тесты создают, в нём уже есть.
 	g.SetJSON("/show/interface/", `{"Proxy0":{"id":"Proxy0","type":"Proxy"},"Proxy1":{"id":"Proxy1","type":"Proxy"}}`)
@@ -199,7 +200,7 @@ func TestCreateProxy_SettingsRejected_Dropped(t *testing.T) {
 	_, f, q := newOracleCommands(t, nil)
 	f.ExpectCreate("Proxy0")
 	p := rejectProxySettings{FakeNDMS: f}
-	cmds := NewProxyCommands(p, NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil), q)
+	cmds := NewProxyCommands(p, noBusSave(NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)), q)
 	_, _, err := cmds.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
 	if err == nil || f.Has("Proxy0") || !hasDrop(f.Posts, "Proxy0") {
 		t.Fatalf("err=%v has=%v posts=%v", err, f.Has("Proxy0"), f.Posts)
@@ -257,7 +258,7 @@ func TestCreateProxy_LeftOnRouter(t *testing.T) {
 		q.Interfaces.SetCreatedBackoff(time.Millisecond)
 		f.HideCreated(100)
 		p := rejectProxySettings{FakeNDMS: f, refuseDrop: true}
-		cmds := NewProxyCommands(p, NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil), q)
+		cmds := NewProxyCommands(p, noBusSave(NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)), q)
 		_, _, err := cmds.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
 		var left *LeftCreatedError
 		if !errors.As(err, &left) || left.Desc != "" || !errors.Is(err, ErrLeftOnRouter) {
@@ -268,7 +269,7 @@ func TestCreateProxy_LeftOnRouter(t *testing.T) {
 		_, f, q := newOracleCommands(t, nil)
 		f.ExpectCreate("Proxy0")
 		p := rejectProxySettings{FakeNDMS: f, refuseDrop: true}
-		cmds := NewProxyCommands(p, NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil), q)
+		cmds := NewProxyCommands(p, noBusSave(NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)), q)
 		_, _, err := cmds.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
 		var left *LeftCreatedError
 		if !errors.As(err, &left) || left.Name != "Proxy0" || left.Desc != "d" || !f.Has("Proxy0") {
@@ -278,7 +279,7 @@ func TestCreateProxy_LeftOnRouter(t *testing.T) {
 	t.Run("settings refused, dropped", func(t *testing.T) {
 		_, f, q := newOracleCommands(t, nil)
 		f.ExpectCreate("Proxy0")
-		cmds := NewProxyCommands(rejectProxySettings{FakeNDMS: f}, NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil), q)
+		cmds := NewProxyCommands(rejectProxySettings{FakeNDMS: f}, noBusSave(NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)), q)
 		_, _, err := cmds.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
 		var left *LeftCreatedError
 		if err == nil || errors.As(err, &left) {

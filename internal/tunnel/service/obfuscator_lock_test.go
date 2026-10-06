@@ -58,6 +58,7 @@ func nwgOperatorOnStub(t *testing.T) *nwg.OperatorNativeWG {
 	tr := transport.NewWithURL(srv.URL, transport.NewSemaphore(2))
 	q := query.NewQueries(query.Deps{Getter: tr, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	sc := command.NewSaveCoordinator(tr, nopPublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
 	cmds := command.NewCommands(command.Deps{Poster: tr, Save: sc, Queries: q, IsOS5: func() bool { return true }})
 	op := nwg.NewOperator(q, cmds, tr, nil)
 	t.Cleanup(func() { op.Close(); tr.Close() })

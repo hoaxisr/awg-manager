@@ -74,6 +74,13 @@ func (w *warnRec) all() []string {
 	return append([]string(nil), w.msgs...)
 }
 
+// noBusSave — координатор без шины событий (харнессы команд): fallback 0,
+// иначе каждый полёт ждал бы saveFallback и горутина fire пережила бы тест.
+func noBusSave(sc *SaveCoordinator) *SaveCoordinator {
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+	return sc
+}
+
 // newFlightSC — координатор с подключённой шиной, uptime 100, debounce 0;
 // потолки — 5 с (тест, ждущий потолка, ставит свои). Уборка сжимает потолки,
 // гасит таймер и закрывает летящий полёт: горутина fire не переживает тест.
@@ -438,9 +445,8 @@ func TestSave_FlushWaitsHoldsThenRemovalGap(t *testing.T) {
 // holder ждёт полёт, Flush ждёт holder'а, fire ждёт Flush, красный по времени.
 func TestSave_NoDeadlock_FlushHoldsSaveMu(t *testing.T) {
 	p := &flightPoster{}
-	sc := NewSaveCoordinator(p, nil, 0, time.Hour, 0, nil) // без шины: полёт = POST
-	sc.SetSaveTimings(5*time.Second, 5*time.Second, 0)
-	t.Cleanup(func() { drainSC(t, sc) })
+	sc := newFlightSC(t, p)
+	p.onPost = func() { sc.OnConfigurationSaved(1e9) } // событие конца — на каждый POST
 	start := time.Now()
 	h1, _ := sc.HoldForRemoval(context.Background())
 	done := make(chan error, 1)
@@ -533,53 +539,54 @@ func TestSave_PostRefused_ClosesFlight(t *testing.T) {
 	requirePassed(t, ch, 200*time.Millisecond, "полёт после отказа")
 }
 
-// Окна между проверкой удержаний и открытием полёта нет: снос (между
-// возвратом HoldForRemoval и release) и POST не пересекаются. Вероятностный
-// (×200 с -race): у верного кода окна нет, тест сторожит регресс.
+// Полёт открывается только при holds == 0 — в той же секции mu, где
+// проверены удержания. Инвариант проверяется в точке открытия через шов
+// часов (uptime зовётся под mu при открытии); holder'ы крутятся без пауз,
+// так что окно между проверкой и открытием, будь оно, занято удержанием.
+// Детерминированно: у верного кода holds там 0 всегда, ложного красного нет.
+// Мутация: Unlock/Lock между проверкой holds и открытием полёта → красный.
 func TestSave_FireHoldRace(t *testing.T) {
-	var posting, removing, bad atomic.Int32
 	p := &flightPoster{}
-	p.onPost = func() {
-		posting.Add(1)
-		if removing.Load() > 0 {
+	sc := NewSaveCoordinator(p, nil, 0, time.Hour, 0, nil)
+	sc.SetSaveTimings(5*time.Second, 0, 0) // без шины: полёт кончается сразу
+	var opens, bad atomic.Int32
+	sc.SetUptimeReader(func() float64 {
+		opens.Add(1)
+		if sc.holds > 0 { // под mu
 			bad.Add(1)
 		}
-		time.Sleep(time.Millisecond)
-		posting.Add(-1)
-	}
-	sc := NewSaveCoordinator(p, nil, 0, time.Hour, 0, nil) // без шины: полёт = POST
-	sc.SetSaveTimings(5*time.Second, 5*time.Second, 0)
-	sc.SetFireObserver(func(bool) {})
+		return 100
+	})
 	t.Cleanup(func() { drainSC(t, sc) })
+	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
-		wg.Add(2)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 20; j++ {
-				sc.Request()
-				time.Sleep(100 * time.Microsecond)
-			}
-		}()
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 20; j++ {
-				rel, err := sc.HoldForRemoval(context.Background())
-				if err != nil {
+			for {
+				select {
+				case <-stop:
 					return
+				default:
 				}
-				removing.Add(1)
-				if posting.Load() > 0 {
-					bad.Add(1)
+				if rel, err := sc.HoldForRemoval(context.Background()); err == nil {
+					rel()
 				}
-				time.Sleep(100 * time.Microsecond)
-				removing.Add(-1)
-				rel()
 			}
 		}()
 	}
+	deadline := time.Now().Add(5 * time.Second)
+	for opens.Load() < 300 && time.Now().Before(deadline) {
+		sc.Request()
+		time.Sleep(100 * time.Microsecond)
+	}
+	close(stop)
 	wg.Wait()
+	if n := opens.Load(); n < 300 {
+		t.Fatalf("полётов %d за 5 с, ждали 300", n)
+	}
 	if n := bad.Load(); n != 0 {
-		t.Fatalf("снос и POST пересеклись %d раз", n)
+		t.Fatalf("полёт открыт при удержании %d раз", n)
 	}
 }

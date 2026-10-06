@@ -50,10 +50,10 @@ var savePayload = map[string]any{
 // 15:50). Это страховки на случай пропущенного события, а не механизм:
 // конец сохранения — событие ConfigurationSaved шины ndm.
 const (
-	// saveEventCap — потолок полёта при подключённой шине: событие не пришло
+	// SaveEventCap — потолок полёта при подключённой шине: событие не пришло
 	// (потеряно ndm, не наш формат) — полёт закрывается с Warn. Запись по
 	// стенду 4–10 с (К42), под нагрузкой событие +4,3–6,9 с от POST.
-	saveEventCap = 30 * time.Second
+	SaveEventCap = 30 * time.Second
 	// saveFallback — полёт без сигнала (шины нет или она оборвалась во время
 	// полёта, uptime не прочитан): верхняя граница длительности записи по
 	// стенду (К42: `saving → configuration saved` 4–10 с), считается от POST.
@@ -111,12 +111,8 @@ type SaveCoordinator struct {
 	holdsZero     chan struct{} // закрывается, когда holds возвращается к 0
 	deferred      bool          // fire отложен удержанием — release перевзведёт
 	lastRemovalAt time.Time
-	// busWired — шина подключена к координатору (первый OnBusState; клиент
-	// шины зовёт его в Start до первого POST). Без шины (уборка, тесты пакетов)
-	// конец записи ждать нечем: полёт кончается ответом на POST.
-	busWired bool
-	busUp    bool
-	observer func(deferred bool)
+	busUp         bool
+	observer      func(deferred bool)
 	// Эпохи (Н10b): requested растёт на каждом Request, saved — значение
 	// requested на момент POST полёта, закрытого событием или потолком.
 	requested, saved uint64
@@ -128,7 +124,6 @@ type saveFlight struct {
 	t0        float64       // uptime перед POST; 0 — не прочитан (unknown)
 	openedAt  time.Time
 	unknown   bool // сигнала не будет: закрывает saveFallback от openedAt
-	noBus     bool // шины нет вовсе — полёт кончается ответом на POST
 	pending   int  // pendingCount на момент POST: столько правок покрывает запись
 	done      bool
 	requested uint64
@@ -167,9 +162,9 @@ const (
 //
 // Retries: 3 attempts 5 seconds apart after a failed fire.
 //
-// Шины нет, пока не позван OnBusState (клиент шины зовёт OnBusState(false)
-// в Start): полёт кончается ответом на POST. С шиной, пока она не подключена,
-// каждый полёт — unknown, закрывается через saveFallback.
+// Шина ndm до первого OnBusState(true) считается отключённой: каждый полёт —
+// unknown, закрывается через saveFallback от POST (fail-closed). Без шины
+// вовсе (уборка, тесты) fallback опускают явно: SetSaveTimings(…, 0, …).
 func NewSaveCoordinator(
 	poster Poster,
 	pub StatusPublisher,
@@ -186,7 +181,7 @@ func NewSaveCoordinator(
 		settleDelay:  settleDelay,
 		invalidator:  invalidator,
 		state:        SaveStateIdle,
-		eventCap:     saveEventCap,
+		eventCap:     SaveEventCap,
 		fallback:     saveFallback,
 		afterRemoval: SaveAfterRemoval,
 		uptime:       ndmsevents.ReadUptime,
@@ -213,8 +208,8 @@ func (s *SaveCoordinator) SetRetryPolicy(delay time.Duration, maxRetries int) {
 }
 
 // SetSaveTimings — потолок полёта, запасной потолок без сигнала и пауза
-// после сноса (тест-шов; уборка ставит fallback 0 — шины у неё нет, а после
-// финального сохранения процесс выходит).
+// после сноса. Координатор без шины (уборка — cmd/awg-manager/cleanup.go,
+// тестовые харнессы) ставит fallback 0: ждать события нечем.
 func (s *SaveCoordinator) SetSaveTimings(eventCap, fallback, afterRemoval time.Duration) {
 	s.mu.Lock()
 	s.eventCap, s.fallback, s.afterRemoval = eventCap, fallback, afterRemoval
@@ -301,7 +296,6 @@ func (s *SaveCoordinator) OnBusState(connected bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	was := s.busUp
-	s.busWired = true
 	s.busUp = connected
 	if was && !connected {
 		s.log.Warnf("шина событий ndm отключена: конец сохранения не виден, каждое сохранение ждёт %s", s.fallback)
@@ -385,10 +379,7 @@ func (s *SaveCoordinator) openFlightLocked() *saveFlight {
 	// хвост: его событие может закрыть следующий полёт раньше. Записи > 30 с
 	// не наблюдались — не чиним.
 	s.cur = f
-	switch {
-	case !s.busWired:
-		f.noBus = true
-	case !s.busUp || f.t0 == 0:
+	if !s.busUp || f.t0 == 0 {
 		// Б1: t0 == 0 — любое событие (raise ≥ 0) закрыло бы полёт сразу.
 		f.unknown = true
 		s.armFallbackLocked(f)
@@ -429,17 +420,6 @@ func (s *SaveCoordinator) settledLocked(f *saveFlight) {
 		return
 	}
 	s.setStateLocked(SaveStateIdle, "")
-}
-
-// awaitFlight — дождаться конца записи после успешного POST: события,
-// потолка или fallback; без шины — сразу.
-func (s *SaveCoordinator) awaitFlight(f *saveFlight) {
-	if f.noBus {
-		s.mu.Lock()
-		s.completeLocked(f)
-		s.mu.Unlock()
-	}
-	<-f.ch
 }
 
 // completeLocked — сохранение окончено (событие, потолок, fallback):
@@ -544,7 +524,7 @@ func (s *SaveCoordinator) fire() {
 	_, err := s.poster.Post(ctx, savePayload)
 	cancel()
 	if err == nil {
-		s.awaitFlight(f)
+		<-f.ch // потолок полёта гарантирует возврат
 	}
 
 	s.mu.Lock()
@@ -640,7 +620,7 @@ func (s *SaveCoordinator) Flush(ctx context.Context) error {
 
 	_, err := s.poster.Post(ctx, savePayload)
 	if err == nil {
-		s.awaitFlight(f)
+		<-f.ch // потолок полёта гарантирует возврат
 	}
 
 	s.mu.Lock()

@@ -121,6 +121,10 @@ func runCleanup(dataDir string) {
 		env.DurationDefault("AWG_NDMS_SAVE_SETTLE_DELAY", 2*time.Second),
 		cleanupNDMSQueries.RunningConfig,
 	)
+	// Шины событий у уборки нет: ждать ConfigurationSaved нечем — fallback 0
+	// (иначе каждое сохранение уборки ждало бы 10 с). Пауза после сноса
+	// остаётся: сохранение не раньше 5 с после последнего `no interface`.
+	cleanupNDMSSave.SetSaveTimings(ndmscommand.SaveEventCap, 0, ndmscommand.SaveAfterRemoval)
 	cleanupNDMSCommands := ndmscommand.NewCommands(ndmscommand.Deps{
 		Poster:  cleanupNDMSTransport,
 		Save:    cleanupNDMSSave,

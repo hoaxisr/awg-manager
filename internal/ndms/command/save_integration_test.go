@@ -80,6 +80,7 @@ func TestIntegration_SaveSettleInvalidatesRunningConfig(t *testing.T) {
 		settle,
 		rcStore,
 	)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -128,6 +129,7 @@ func TestIntegration_SaveSettleDisabled_NoInvalidate(t *testing.T) {
 		50*time.Millisecond,
 		0, rcStore,
 	)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

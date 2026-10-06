@@ -70,6 +70,7 @@ func newStartTestCommands(poster *recordingPoster) *command.Commands {
 		IsOS5:  func() bool { return true },
 	})
 	sc := command.NewSaveCoordinator(poster, startNopPublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
 	return command.NewCommands(command.Deps{Poster: poster, Save: sc, Queries: q, IsOS5: func() bool { return true }})
 }
 

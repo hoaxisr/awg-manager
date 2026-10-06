@@ -128,6 +128,7 @@ func newCreateTestOperator(t *testing.T, f *fakeNDMS) *OperatorNativeWG {
 	// Создание и снос — через команды над тем же транспортом (П24); save —
 	// debounce час: в тестах не летит.
 	sc := command.NewSaveCoordinator(tr, nil, time.Hour, time.Hour, 0, nil)
+	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
 	o := &OperatorNativeWG{
 		queries:     q,
 		commands:    command.NewCommands(command.Deps{Poster: tr, Save: sc, Queries: q}),

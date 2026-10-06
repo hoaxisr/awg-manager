@@ -58,10 +58,10 @@ func (a *app) setupTunnels() {
 	)
 	a.ndmsSaveCoord.SetLogger(eventsLogger(a.loggingService))
 	// Шина событий ndm — конец нашего сохранения (ConfigurationSaved, П25).
-	// Сразу за координатором и до любой команды: busUp должен быть известен
-	// до первого POST. Сокета может не быть (ndm грузится): клиент
-	// подключается сам, а до того сохранения ждут saveFallback. Ошибка Start
-	// (не linux) — не фатальна, как у spool.
+	// Сразу за координатором и до любой команды: события ловятся с первого
+	// POST. Сокета может не быть (ndm грузится): клиент подключается сам, а
+	// до того сохранения ждут saveFallback (дефолт координатора — шина
+	// отключена). Ошибка Start (не linux) — не фатальна, как у spool.
 	ndmBus := ndmsevents.NewBusReader(ndmsevents.DefaultBusPath, func(ev ndmsevents.BusEvent) {
 		if ev.Class == ndmsevents.BusClassConfigurationSaved {
 			a.ndmsSaveCoord.OnConfigurationSaved(ev.RaiseTime)

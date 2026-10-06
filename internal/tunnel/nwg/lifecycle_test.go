@@ -74,6 +74,7 @@ func newLifecycleOperator(t *testing.T, asc, asc3 bool) (*OperatorNativeWG, *pro
 	poster := &payloadPoster{f: f}
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	sc := command.NewSaveCoordinator(poster, startNopPublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
 	cmds := command.NewCommands(command.Deps{Poster: poster, Save: sc, Queries: q, IsOS5: func() bool { return true }})
 	srv := newRCIBatchServer(t, &eventLog{})
 	srv.fwd = f

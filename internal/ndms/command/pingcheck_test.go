@@ -26,6 +26,7 @@ func newTestPingCheckCommands(_ *testing.T) (*PingCheckCommands, *fakePoster) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger()})
 	return NewPingCheckCommands(poster, sc, q), poster
 }
@@ -113,6 +114,7 @@ func TestPingCheckCommands_ConfigureProfile_BindError(t *testing.T) {
 	poster := &bindFailPoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger()})
 	cmds := NewPingCheckCommands(poster, sc, q)
 	err := cmds.ConfigureProfile(context.Background(), "p", confirmed(t, "W0"), ndms.PingCheckConfig{

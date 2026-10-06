@@ -53,6 +53,7 @@ func requireJSONEqual(t *testing.T, got any, want string) {
 func TestSaveCoordinatorFlushSuccessSendsSavePayload(t *testing.T) {
 	poster := &recordingPoster{}
 	save := NewSaveCoordinator(poster, nil, 0, 0, 0, nil)
+	save.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	if err := save.Flush(context.Background()); err != nil {
 		t.Fatalf("Flush() error = %v", err)
@@ -85,6 +86,7 @@ func TestSaveCoordinatorFlushSuccessSendsSavePayload(t *testing.T) {
 func TestSaveCoordinatorFlushFailureSetsFailedState(t *testing.T) {
 	poster := &recordingPoster{err: errors.New("boom")}
 	save := NewSaveCoordinator(poster, nil, 0, 0, 0, nil)
+	save.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	err := save.Flush(context.Background())
 	if err == nil {
@@ -107,6 +109,7 @@ func TestSaveCoordinatorFlushInvalidatesOnSuccess(t *testing.T) {
 	poster := &recordingPoster{}
 	invalidator := &countingInvalidator{}
 	save := NewSaveCoordinator(poster, nil, 0, 0, 0, invalidator)
+	save.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	if err := save.Flush(context.Background()); err != nil {
 		t.Fatalf("Flush() error = %v", err)
@@ -120,6 +123,7 @@ func TestSaveCoordinatorFlushDoesNotInvalidateOnFailure(t *testing.T) {
 	poster := &recordingPoster{err: errors.New("boom")}
 	invalidator := &countingInvalidator{}
 	save := NewSaveCoordinator(poster, nil, 0, 0, 0, invalidator)
+	save.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 	if err := save.Flush(context.Background()); err == nil {
 		t.Fatal("Flush() error = nil, want error")

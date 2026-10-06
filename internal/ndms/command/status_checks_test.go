@@ -178,7 +178,7 @@ func TestRemovals_SurfaceRealErrors(t *testing.T) {
 // ── конструкторы поверх заданного постера ───────────────────────────────────
 
 func newSaveFor(p Poster) *SaveCoordinator {
-	return NewSaveCoordinator(p, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	return noBusSave(NewSaveCoordinator(p, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil))
 }
 
 func newTestPolicyCommandsWith(p Poster) (*PolicyCommands, *SaveCoordinator, *query.Queries) {

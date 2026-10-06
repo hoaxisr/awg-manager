@@ -56,6 +56,7 @@ func newTestQueries() (*query.Queries, *query.FakeGetter) {
 func newTestPolicyCommands(q *query.Queries) (*command.PolicyCommands, *fakePoster) {
 	poster := &fakePoster{}
 	sc := command.NewSaveCoordinator(poster, nopPublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
 	return command.NewPolicyCommands(poster, sc, q), poster
 }
 

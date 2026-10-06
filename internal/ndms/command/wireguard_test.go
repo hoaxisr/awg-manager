@@ -150,6 +150,7 @@ func TestWireguardCommands_SetASCParams(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger()})
 	cmds := NewWireguardCommands(poster, sc, q)
 
@@ -170,6 +171,7 @@ func TestWireguardCommands_SetPeerConnect_PreservesComment(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`) // кэш интерфейсов: rc читается только по известным (F546)
 	fg.SetRC("Wireguard0", `{"wireguard":{"peer":[{"key":"KEY="}]}}`)
@@ -195,6 +197,7 @@ func TestWireguardCommands_SetPeerConnect_OmitsEmptyComment(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`) // кэш интерфейсов: rc читается только по известным (F546)
 	fg.SetRC("Wireguard0", `{"wireguard":{"peer":[{"key":"KEY="}]}}`)
@@ -216,6 +219,7 @@ func TestWireguardCommands_SetASCParams_InvalidJSON(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger()})
 	cmds := NewWireguardCommands(poster, sc, q)
 
