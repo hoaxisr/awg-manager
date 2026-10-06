@@ -5,6 +5,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 
   interface Props {
@@ -17,7 +18,7 @@
     allowEmpty?: boolean;
   }
 
-  let { count, options, applyLabel = 'Применить', onapply, oncancel, busy = false, allowEmpty = false }: Props = $props();
+  let { count, options, applyLabel, onapply, oncancel, busy = false, allowEmpty = false }: Props = $props();
 
   let value = $state('');
 
@@ -34,7 +35,7 @@
 </script>
 
 <div class="bulk-select-bar">
-  <span class="count">{count} выбрано</span>
+  <span class="count">{m.sb_router_bulk_selected({ count })}</span>
   <div class="dropdown-slot">
     <Dropdown bind:value options={options as DropdownOption[]} disabled={busy} fullWidth />
   </div>
@@ -45,10 +46,10 @@
     loading={busy}
     onclick={handleApply}
   >
-    {applyLabel}
+    {applyLabel ?? m.common_apply()}
   </Button>
   <Button variant="ghost" size="sm" disabled={busy} onclick={oncancel}>
-    Отмена
+    {m.common_cancel()}
   </Button>
 </div>
 

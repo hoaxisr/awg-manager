@@ -40,6 +40,7 @@ type DnsRouteDTO struct {
 	ManualDomains      []string                  `json:"manualDomains" example:"corp.internal"`
 	ManualText         string                    `json:"manualText,omitempty" example:"# streaming\nyoutube.com\n# backup\ngooglevideo.com"`
 	Subscriptions      []DnsRouteSubscriptionDTO `json:"subscriptions,omitempty"`
+	SkipIPv6           bool                      `json:"skipIPv6,omitempty" example:"true"`
 	Routes             []DnsRouteTargetDTO       `json:"routes"`
 	Enabled            bool                      `json:"enabled" example:"true"`
 	CreatedAt          string                    `json:"createdAt" example:"2024-01-01T00:00:00Z"`
@@ -61,6 +62,7 @@ type DnsRouteUpsertRequest struct {
 	ExcludesText       string                    `json:"excludesText,omitempty" example:"# local bypass\n.local\n10.0.0.0/8"`
 	ExcludeSubnets     []string                  `json:"excludeSubnets,omitempty" example:"10.0.0.0/24"`
 	Subnets            []string                  `json:"subnets,omitempty" example:"142.250.0.0/15"`
+	SkipIPv6           *bool                     `json:"skipIPv6,omitempty" example:"true"`
 	Routes             []DnsRouteTargetDTO       `json:"routes,omitempty"`
 	Enabled            bool                      `json:"enabled" example:"true"`
 	Backend            string                    `json:"backend,omitempty" enums:"ndms,hydraroute" example:"hydraroute"`

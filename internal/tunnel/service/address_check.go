@@ -5,8 +5,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
 
 // StoredAddressConflicts checks if any stored tunnel shares an IP address
@@ -32,12 +30,9 @@ func StoredAddressConflicts(store *storage.AWGTunnelStore, address, excludeID st
 		}
 		storedIPv4, storedIPv6 := orchestrator.SplitAddresses(t.Interface.Address)
 
-		// Имя интерфейса — по backend'у: у NativeWG это nwgN (по NWGIndex),
-		// tunnel.NewNames по ID дал бы несуществующий opkgtunN.
-		ifaceName := tunnel.NewNames(t.ID).IfaceName
-		if t.Backend == "nativewg" {
-			ifaceName = nwg.NewNWGNames(t.NWGIndex).IfaceName
-		}
+		// Имя интерфейса — по backend'у (nwgN у NativeWG, живое имя у
+		// wdtt-raw): tunnel.NewNames по ID дал бы чужой opkgtunN (F589).
+		ifaceName, _ := storedIfaceNames(&t)
 
 		if newIPv4 != "" && storedIPv4 == newIPv4 {
 			warnings = append(warnings, fmt.Sprintf(

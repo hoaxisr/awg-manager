@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { StaticRouteList, RoutingTunnel } from '$lib/types';
 	import { Toggle, Badge } from '$lib/components/ui';
 	import RoutingTargetBadges from '$lib/components/routing/RoutingTargetBadges.svelte';
@@ -76,8 +77,8 @@
 				class="icon-btn"
 				type="button"
 				onclick={() => onicon()}
-				aria-label="Сменить иконку"
-				title="Сменить иконку"
+				aria-label={m.routing_ip_card_change_icon()}
+				title={m.routing_ip_card_change_icon()}
 			>
 				<ServiceIcon name={route.name} iconUrl={route.iconUrl} size={36} />
 			</button>
@@ -95,13 +96,13 @@
 			</div>
 			{#if subnetCount > 0}
 				<span class="card-stat">
-					{subnetCount} подсетей
+					{m.routing_subnets_count({ count: subnetCount })}
 					{#if commentTags.length > 0}
 						<span class="comment-sep">&middot;</span>
 						<span class="comment-tags">
 							{commentTags.slice(0, 3).join(', ')}
 							{#if commentTags.length > 3}
-								<span class="comment-more">+{commentTags.length - 3} ещё</span>
+								<span class="comment-more">{m.routing_more_count({ count: commentTags.length - 3 })}</span>
 							{/if}
 						</span>
 					{/if}
@@ -109,7 +110,7 @@
 			{/if}
 			{#if routeTarget}
 				<div class="card-route">
-					<RoutingTargetBadges labels={[routeTarget]} overflowNoun="туннелей" />
+					<RoutingTargetBadges labels={[routeTarget]} />
 					{#if route.fallback === 'reject'}
 						<Badge variant="error" uppercase size="xs">Kill Switch</Badge>
 					{/if}
@@ -118,9 +119,9 @@
 							variant="warning"
 							uppercase
 							size="xs"
-							title="Туннель ещё не создан на роутере. Маршруты применятся при его запуске."
+							title={m.routing_ip_card_pending_title()}
 						>
-							Ждёт старта туннеля
+							{m.routing_ip_card_pending()}
 						</Badge>
 					{/if}
 				</div>
@@ -130,9 +131,9 @@
 						variant="warning"
 						uppercase
 						size="xs"
-						title="Туннель, к которому был привязан этот список, удалён. Нажмите «Изменить» и выберите новый туннель."
+						title={m.routing_ip_card_orphan_title()}
 					>
-						Без туннеля
+						{m.routing_ip_card_no_tunnel()}
 					</Badge>
 				</div>
 			{/if}
@@ -150,7 +151,7 @@
 			<button
 				type="button"
 				class="route-action-btn"
-				title={`Изменить IP-маршрут «${route.name}»`}
+				title={m.routing_ip_card_edit_title({ name: route.name })}
 				onclick={() => onedit()}
 			>
 				<SquarePen size={15} aria-hidden="true" />
@@ -158,7 +159,7 @@
 			<button
 				type="button"
 				class="route-action-btn danger"
-				title={`Удалить IP-маршрут «${route.name}»`}
+				title={m.routing_ip_card_delete_title({ name: route.name })}
 				onclick={() => ondelete()}
 			>
 				<Trash2 size={15} aria-hidden="true" />

@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import { formatIpCidrForList, toAsciiHostname } from '$lib/utils/singboxInlineRules';
 
 const GEOSITE_RE = /^geosite:([A-Za-z0-9_-]+)$/i;
@@ -51,9 +52,9 @@ export async function expandGeoLinesInInput(
 			try {
 				const items = await expand('geosite', tag);
 				if (items.length === 0) {
-					warnings.push(`geosite:${tag}: тег пуст`);
+					warnings.push(m.inline_geo_empty_tag({ kind: 'geosite', tag }));
 				} else {
-					warnings.push(`geosite:${tag} → ${items.length} строк`);
+					warnings.push(m.inline_geo_expanded({ kind: 'geosite', tag, count: items.length }));
 					out.push(...items.map(normalizeGeositeExpandLine));
 				}
 			} catch (e) {
@@ -69,9 +70,9 @@ export async function expandGeoLinesInInput(
 			try {
 				const items = await expand('geoip', tag);
 				if (items.length === 0) {
-					warnings.push(`geoip:${tag}: тег пуст`);
+					warnings.push(m.inline_geo_empty_tag({ kind: 'geoip', tag }));
 				} else {
-					warnings.push(`geoip:${tag} → ${items.length} строк`);
+					warnings.push(m.inline_geo_expanded({ kind: 'geoip', tag, count: items.length }));
 					out.push(...items.map(formatIpCidrForList));
 				}
 			} catch (e) {

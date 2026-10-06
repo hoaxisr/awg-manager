@@ -139,6 +139,10 @@ func (r *recOpkgTun) InterfaceDown(_ context.Context, name string) error {
 	r.log.add("InterfaceDown:" + name)
 	return nil
 }
+func (r *recOpkgTun) SetDescription(_ context.Context, name, desc string) error {
+	r.log.add("SetDescription:" + name + ":" + desc)
+	return r.maybeFail("SetDescription")
+}
 
 type recStaticRoutes struct {
 	log    *callLog

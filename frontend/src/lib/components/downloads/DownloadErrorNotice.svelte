@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import {
 		DOWNLOAD_SETTINGS_HREF,
 		humanizeDownloadError,
@@ -29,12 +30,12 @@
 	{/if}
 	{#if showSettingsLink}
 		<a class="dl-error-link" href={DOWNLOAD_SETTINGS_HREF}>
-			Открыть Настройки → Загрузки
+			{m.downloads_error_open_settings()}
 		</a>
 	{/if}
 	{#if showRaw}
 		<details class="dl-error-raw">
-			<summary>Подробности</summary>
+			<summary>{m.downloads_error_details()}</summary>
 			<code>{info.raw}</code>
 		</details>
 	{/if}

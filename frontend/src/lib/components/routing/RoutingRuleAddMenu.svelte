@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { m } from '$lib/i18n';
     import DropdownMenu from '$lib/components/ui/DropdownMenu.svelte';
     import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
     import { LayoutGrid, Plus, Upload } from 'lucide-svelte';
@@ -14,12 +15,12 @@
     }
 
     let {
-        label = 'Добавить',
+        label,
         disabled = false,
         oncatalog,
         onmanual,
         importEnabled = false,
-        importLabel = 'Загрузить конфигурацию',
+        importLabel,
         onimport,
     }: Props = $props();
 </script>
@@ -28,7 +29,7 @@
     <CreateIcon />
 {/snippet}
 
-<DropdownMenu {label} size="sm" {disabled} iconBefore={createIcon}>
+<DropdownMenu label={label ?? m.common_add()} size="sm" {disabled} iconBefore={createIcon}>
     {#snippet menu(close)}
         {#if oncatalog}
             <button
@@ -40,7 +41,7 @@
                 }}
             >
                 <LayoutGrid size={16} style="flex-shrink:0;color:var(--text-muted)" aria-hidden="true" />
-                Из каталога
+                {m.routing_from_catalog()}
             </button>
         {/if}
         <button
@@ -52,7 +53,7 @@
             }}
         >
             <Plus size={16} style="flex-shrink:0;color:var(--text-muted)" aria-hidden="true" />
-            Создать вручную
+            {m.routing_create_manual()}
         </button>
         {#if importEnabled && onimport}
             <div class="dropdown-sep"></div>
@@ -65,7 +66,7 @@
                 }}
             >
                 <Upload size={16} style="flex-shrink:0;color:var(--text-muted)" aria-hidden="true" />
-                {importLabel}
+                {importLabel ?? m.routing_load_config()}
             </button>
         {/if}
     {/snippet}

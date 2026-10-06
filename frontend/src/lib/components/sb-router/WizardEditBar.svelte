@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Toggle } from '$lib/components/ui';
 
 	interface Props {
@@ -12,8 +13,8 @@
 {#if visible}
 	<div class="wizard-edit-bar">
 		<Toggle
-			label="Изменить настройки"
-			hint="Разблокирует шаги конфигурации для правок (импорт ссылки, пароль, NAT и т.д.)"
+			label={m.sb_router_wizard_edit_bar_label()}
+			hint={m.sb_router_wizard_edit_bar_hint()}
 			checked={editUnlocked}
 			onchange={(v) => (editUnlocked = v)}
 		/>

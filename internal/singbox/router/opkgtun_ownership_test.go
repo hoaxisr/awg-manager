@@ -180,7 +180,7 @@ func TestTeardownGate_UnknownIsAnError(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := newTestService(t, Deps{OpkgTunScan: tc.scan})
-			proceed, err := svc.teardownGate(context.Background(), "OpkgTun2", policyTunDescription, "test")
+			proceed, err := svc.teardownGate(context.Background(), "OpkgTun2", "test", policyTunDescription)
 			if proceed != tc.proceed || !errors.Is(err, tc.wantErr) {
 				t.Fatalf("gate = (%v, %v), want (%v, %v)", proceed, err, tc.proceed, tc.wantErr)
 			}

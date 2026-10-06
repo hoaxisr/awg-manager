@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SystemServiceItem } from '$lib/api/client';
 	import type { CreateServiceFormState } from './createService';
 
@@ -18,60 +19,60 @@
 	<div class="form-grid">
 		<div class="form-row">
 			<label class="form-field">
-				<span class="field-label">Имя службы <span class="required">*</span>:</span>
+				<span class="field-label">{m.system_services_f_name()} <span class="required">*</span>:</span>
 				<input
 					type="text"
-					placeholder="например: my-proxy, qwdtt, xray"
+					placeholder={m.system_services_f_name_ph()}
 					bind:value={form.tplName}
 				/>
-				<span class="field-hint">Используется в названии скрипта: <code>/opt/etc/init.d/S{form.tplPriority || 90}{form.tplName || 'name'}</code></span>
+				<span class="field-hint">{m.system_services_f_name_hint()} <code>/opt/etc/init.d/S{form.tplPriority || 90}{form.tplName || 'name'}</code></span>
 			</label>
 
 			<label class="form-field" style="max-width: 140px;">
-				<span class="field-label">Приоритет (S10-S99):</span>
+				<span class="field-label">{m.system_services_f_prio()}</span>
 				<input
 					type="number"
 					min="10"
 					max="99"
 					bind:value={form.tplPriority}
 				/>
-				<span class="field-hint">Порядок автозапуска</span>
+				<span class="field-hint">{m.system_services_f_prio_hint()}</span>
 			</label>
 		</div>
 
 		<div class="form-row">
 			<label class="form-field">
-				<span class="field-label">Имя процесса / бинарника:</span>
+				<span class="field-label">{m.system_services_f_proc()}</span>
 				<input
 					type="text"
-					placeholder={form.tplName ? form.tplName : 'например: qwdtt или /opt/bin/sing-box'}
+					placeholder={form.tplName ? form.tplName : m.system_services_f_proc_ph()}
 					bind:value={form.tplProc}
 				/>
-				<span class="field-hint">Переменная PROCS для отслеживания PID через rc.func</span>
+				<span class="field-hint">{m.system_services_f_proc_hint()}</span>
 			</label>
 
 			<label class="form-field">
-				<span class="field-label">Описание службы:</span>
+				<span class="field-label">{m.system_services_f_desc()}</span>
 				<input
 					type="text"
-					placeholder="например: Мой прокси-сервер"
+					placeholder={m.system_services_f_desc_ph()}
 					bind:value={form.tplDesc}
 				/>
 			</label>
 		</div>
 
 		<label class="form-field">
-			<span class="field-label">Аргументы и ключи запуска (ARGS):</span>
+			<span class="field-label">{m.system_services_f_args()}</span>
 			<input
 				type="text"
-				placeholder="например: -c /opt/etc/config.json -log /opt/var/log/my.log"
+				placeholder={m.system_services_f_args_ph()}
 				bind:value={form.tplArgs}
 			/>
 		</label>
 
 		<!-- Preview -->
 		<div class="preview-box">
-			<span class="preview-label">Сгенерированный init.d скрипт:</span>
+			<span class="preview-label">{m.system_services_f_preview()}</span>
 			<pre class="code-preview"><code>{generatedScript}</code></pre>
 		</div>
 	</div>
@@ -79,7 +80,7 @@
 	<!-- Clone Mode -->
 	<div class="form-grid">
 		<label class="form-field">
-			<span class="field-label">Выберите исходную службу-донор:</span>
+			<span class="field-label">{m.system_services_f_donor()}</span>
 			<select bind:value={form.cloneSourceScript}>
 				{#each items as it}
 					<option value={it.script}>{it.name} ({it.script})</option>
@@ -89,16 +90,16 @@
 
 		<div class="form-row">
 			<label class="form-field">
-				<span class="field-label">Имя новой службы <span class="required">*</span>:</span>
+				<span class="field-label">{m.system_services_f_new_name()} <span class="required">*</span>:</span>
 				<input
 					type="text"
-					placeholder="например: my-service-2"
+					placeholder={m.system_services_f_new_name_ph()}
 					bind:value={form.cloneTargetName}
 				/>
 			</label>
 
 			<label class="form-field" style="max-width: 140px;">
-				<span class="field-label">Приоритет:</span>
+				<span class="field-label">{m.system_services_f_prio_short()}</span>
 				<input
 					type="number"
 					min="10"
@@ -112,7 +113,7 @@
 	<!-- Custom Mode -->
 	<div class="form-grid">
 		<label class="form-field">
-			<span class="field-label">Имя файла в /opt/etc/init.d/ <span class="required">*</span>:</span>
+			<span class="field-label">{m.system_services_f_file_name()} <span class="required">*</span>:</span>
 			<input
 				type="text"
 				placeholder="S90custom-daemon"
@@ -121,7 +122,7 @@
 		</label>
 
 		<label class="form-field">
-			<span class="field-label">Код init-скрипта:</span>
+			<span class="field-label">{m.system_services_f_code()}</span>
 			<textarea
 				rows="12"
 				class="code-textarea"

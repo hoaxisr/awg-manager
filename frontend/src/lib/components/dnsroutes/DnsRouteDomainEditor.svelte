@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
+
 	interface Props {
 		domains: string[];
 		onchange: (domains: string[], manualText: string) => void;
@@ -192,15 +194,15 @@
 
 <div class="domain-editor">
 	<div class="editor-header">
-		<span class="editor-count">{domainCount} записей</span>
+		<span class="editor-count">{m.dns_routes_editor_entries_count({ count: domainCount })}</span>
 		{#if errorLines.length > 0}
 			<span class="editor-errors">
-				<span class="editor-errors-label">Ошибки в строках:</span>
+				<span class="editor-errors-label">{m.dns_routes_editor_errors_label()}</span>
 				{#each errorLines as line (line)}
 					<button
 						type="button"
 						class="editor-error-chip"
-						title="Перейти к строке {line}"
+						title={m.dns_routes_editor_goto_line({ line })}
 						onclick={() => jumpToLine(line)}
 					>{line}</button>
 				{/each}
@@ -212,14 +214,12 @@
 		class="form-textarea"
 		class:has-errors={errorLines.length > 0}
 		rows="8"
-		placeholder={"# Видео-сервисы\nyoutube.com\ninstagram.com\ntiktok.com\n\n# Подсети\n10.0.0.0/8\n2001:db8::/32"}
+		placeholder={m.dns_routes_editor_placeholder()}
 		value={text}
 		oninput={handleInput}
 		onkeydown={handleKeydown}
 	></textarea>
-	<span class="editor-hint editor-hint-multiline">Один домен или CIDR на строку.
-Комментарии начинаются с #
-Ctrl+/ или Cmd+/ комментирует выбранные строки.</span>
+	<span class="editor-hint editor-hint-multiline">{m.dns_routes_editor_hint()}</span>
 </div>
 
 <style>

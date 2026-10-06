@@ -40,6 +40,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Plus } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -195,8 +196,11 @@
 			await loadDeviceProxy();
 			await loadAllInbounds();
 		} catch (e) {
+			const message = e instanceof Error ? e.message : String(e);
 			notifications.error(
-				`Не удалось ${next ? 'включить' : 'выключить'} inbound: ${e instanceof Error ? e.message : String(e)}`,
+				next
+					? m.fakeip_inbounds_enable_failed({ message })
+					: m.fakeip_inbounds_disable_failed({ message }),
 			);
 		} finally {
 			togglingId = null;
@@ -206,14 +210,15 @@
 	async function deleteInstance(in_: DeviceProxyInstance): Promise<void> {
 		try {
 			await deleteDeviceProxyInstanceWithNotice(in_.id, {
-				successMessage: 'Inbound удалён',
-				pendingApplyMessage:
-					'Inbound удалён из конфига, но sing-box ещё не обновлён — изменение применится, когда сервис снова будет доступен.',
+				successMessage: m.sb_router_expert_inbound_deleted(),
+				pendingApplyMessage: m.sb_router_expert_inbound_deleted_pending(),
 			});
 			await loadDeviceProxy();
 			await loadAllInbounds();
 		} catch (e) {
-			notifications.error(`Не удалось удалить: ${e instanceof Error ? e.message : String(e)}`);
+			notifications.error(
+				m.fakeip_inbounds_delete_failed({ message: e instanceof Error ? e.message : String(e) }),
+			);
 		}
 	}
 
@@ -233,17 +238,19 @@
 
 <section class="inbounds-tab">
 	<div class="sectlbl">
-		<span class="sect-name">Входы · {inboundsTotal}</span>
+		<span class="sect-name">{m.fakeip_inbounds_title({ count: inboundsTotal })}</span>
 		<button type="button" class="add" onclick={() => void addInbound()}>
 			<Plus size={13} aria-hidden="true" /> SOCKS/HTTP inbound
 		</button>
 	</div>
 
 	{#if inboundWarnings.length > 0}
-		<p class="warn-note">Не удалось прочитать: {inboundWarnings.join('; ')}</p>
+		<p class="warn-note">
+			{m.fakeip_inbounds_read_failed({ details: inboundWarnings.join('; ') })}
+		</p>
 	{/if}
 
-	<div class="grp-h">Движок</div>
+	<div class="grp-h">{m.fakeip_inbounds_group_engine()}</div>
 	<div class="icards">
 		<TunInboundCard
 			iface={$status?.fakeipIface}
@@ -258,7 +265,7 @@
 		<InboundsMirror entries={engineExtras} showGroupHeaders={false} />
 	{/if}
 
-	<div class="grp-h">Прокси устройств</div>
+	<div class="grp-h">{m.fakeip_inbounds_group_device_proxy()}</div>
 	{#if instances.length > 0}
 		<div class="icards">
 			{#each instances as in_ (in_.id)}
@@ -279,11 +286,10 @@
 	{/if}
 
 	{#if loadError}
-		<p class="load-error">Не удалось загрузить inbound'ы: {loadError}</p>
+		<p class="load-error">{m.fakeip_inbounds_load_failed({ message: loadError })}</p>
 	{:else if loaded && instances.length === 0}
 		<p class="empty-note">
-			SOCKS/HTTP-входов нет. «+ SOCKS/HTTP inbound» — локальный прокси для устройств с
-			ручной настройкой.
+			{m.fakeip_inbounds_empty()}
 		</p>
 	{/if}
 

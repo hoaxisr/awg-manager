@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Upload } from 'lucide-svelte';
 
 	interface Props {
@@ -19,7 +20,7 @@
 	let {
 		subject = '',
 		description = '',
-		dropTitle = 'Перетащите .json файл сюда',
+		dropTitle,
 		accept = '.json',
 		parseError = '',
 		onfile,
@@ -50,7 +51,7 @@
 		<p class="import-description">{description}</p>
 	{:else if subject}
 		<p class="import-description">
-			Файл <b class="import-accent">.json</b> с {subject}, экспортированными ранее из AWG Manager.
+			{m.routing_drop_description_prefix()} <b class="import-accent">.json</b> {m.routing_drop_description_suffix({ subject })}
 		</p>
 	{/if}
 	<div
@@ -73,8 +74,8 @@
 	>
 		<Upload size={24} class="drop-icon" strokeWidth={1.5} aria-hidden="true" />
 		<p class="drop-title">
-			{dropTitle}<br />
-			<span class="drop-hint">или нажмите для выбора</span>
+			{dropTitle ?? m.routing_drop_title()}<br />
+			<span class="drop-hint">{m.routing_drop_hint()}</span>
 		</p>
 	</div>
 	<input type="file" {accept} onchange={handleFile} bind:this={fileInput} class="hidden-input" />

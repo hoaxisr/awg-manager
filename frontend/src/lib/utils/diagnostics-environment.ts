@@ -1,4 +1,5 @@
 import { get } from 'svelte/store';
+import { m } from '$lib/i18n';
 import { api } from '$lib/api/client';
 import { auth } from '$lib/stores/auth';
 import { reloadSettings, settings, usageLevel } from '$lib/stores/settings';
@@ -114,16 +115,25 @@ function sanitizeRouterClientContext(ctx: RouterClientContext | null): RouterCli
 	};
 }
 
-function sanitizeClientRows(rows: AboutInfoRow[]): AboutInfoRow[] {
+/** Экспорт — для теста маскирования (diagnostics-environment.test.ts). */
+export function sanitizeClientRows(rows: AboutInfoRow[]): AboutInfoRow[] {
 	return rows.map((row) => {
-		if (row.label === 'MAC') {
+		if (row.id === 'mac') {
 			return { ...row, value: CLIENT_MAC_PLACEHOLDER, title: undefined };
 		}
-		if (row.label === 'Hostname' || row.label === 'Имя в NDMS') {
+		if (row.id === 'hostname' || row.id === 'ndmsName') {
 			return { ...row, value: CLIENT_HOST_PLACEHOLDER, title: undefined };
 		}
 		return row;
 	});
+}
+
+/**
+ * Строки «Клиент в сети роутера» для сохраняемого отчёта: MAC и имена
+ * маскируются и в контексте, и в готовых строках (по id строки).
+ */
+export function reportClientRows(ctx: RouterClientContext | null): AboutInfoRow[] {
+	return sanitizeClientRows(routerClientRows(sanitizeRouterClientContext(ctx)));
 }
 
 async function capture<T>(
@@ -313,11 +323,14 @@ export async function collectDiagnosticsEnvironmentSnapshot(): Promise<Diagnosti
 		markPartial,
 	);
 
-	const routerRows = sys ? routerStaticRows(sys, level) : [{ label: 'Статус', value: 'Не загружено' }];
+	const notLoadedRows = (): AboutInfoRow[] => [
+		{ id: 'status', label: m.about_device_label_status(), value: m.about_device_value_not_loaded() },
+	];
+	const routerRows = sys ? routerStaticRows(sys, level) : notLoadedRows();
 	const browserRows = browserSnapshotRows(browser);
 	const sanitizedRouterClient = sanitizeRouterClientContext(routerClient);
-	const clientRows = sanitizeClientRows(routerClientRows(sanitizedRouterClient));
-	const awgmRows = awgm ? awgmServicesRows(awgm) : [{ label: 'Статус', value: 'Не загружено' }];
+	const clientRows = reportClientRows(routerClient);
+	const awgmRows = awgm ? awgmServicesRows(awgm) : notLoadedRows();
 
 	return {
 		generatedAt: nowWithOffset(routerOffset),
@@ -328,9 +341,9 @@ export async function collectDiagnosticsEnvironmentSnapshot(): Promise<Diagnosti
 			rules: ['client-mac', 'client-hostname'],
 		},
 		sections: [
-			{ title: 'Роутер', rows: routerRows },
-			{ title: 'Браузер', rows: browserRows },
-			{ title: 'Клиент в сети роутера', rows: clientRows },
+			{ title: m.diag_about_section_router(), rows: routerRows },
+			{ title: m.diag_about_section_browser(), rows: browserRows },
+			{ title: m.diag_about_section_client(), rows: clientRows },
 			{ title: 'AWGM', rows: awgmRows },
 		],
 		raw: {

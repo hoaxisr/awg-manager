@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m, uiText, type UiText } from '$lib/i18n';
 	import { goto } from '$app/navigation';
 	import { Modal, Button, Dropdown } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -48,7 +49,7 @@
 
 	let kind = $state<WizardKind | 'choose'>('choose');
 	let submitting = $state(false);
-	let error = $state('');
+	let error = $state<UiText>('');
 
 	// "Один сервер" state — paste of N share-links, each becomes its
 	// own sing-box tunnel via /singbox/import-links.
@@ -81,14 +82,14 @@
 		refreshHours = parseInt(refreshHoursStr, 10) || 0;
 	});
 
-	const refreshOptions = [
-		{ value: '0', label: 'Только вручную' },
-		{ value: '1', label: 'Каждый час' },
-		{ value: '6', label: 'Каждые 6 часов' },
-		{ value: '12', label: 'Каждые 12 часов' },
-		{ value: '24', label: 'Раз в сутки' },
-		{ value: '168', label: 'Раз в неделю' },
-	];
+	const refreshOptions = $derived([
+		{ value: '0', label: m.subscriptions_refresh_manual() },
+		{ value: '1', label: m.subscriptions_refresh_hourly() },
+		{ value: '6', label: m.subscriptions_refresh_6h() },
+		{ value: '12', label: m.subscriptions_refresh_12h() },
+		{ value: '24', label: m.subscriptions_refresh_daily() },
+		{ value: '168', label: m.subscriptions_refresh_weekly() },
+	]);
 
 	const singboxInstalled = $derived($singboxStatus.data?.installed ?? false);
 	// URL- и файловая подписки делят двухшаговый поток «форма → выбор серверов».
@@ -123,7 +124,7 @@
 	});
 
 	let detectingHeaders = $state(false);
-	let detectedNotice = $state('');
+	let detectedNotice = $state<UiText>('');
 	let detectStatus = $state<'ok' | 'keys' | 'error'>('ok');
 	let showHappKeysModal = $state(false);
 	let detectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -167,16 +168,19 @@
 				}
 				if (res && res.serverCount > 0) {
 					headersText = res.headersText;
+					const { label, serverCount: count } = res;
 					if (res.isEncrypted && res.decryptedUrl) {
-						detectedNotice = `Расшифровано: ${res.decryptedUrl} (${res.label}, серверов: ${res.serverCount})`;
+						const decryptedUrl = res.decryptedUrl;
+						detectedNotice = () => m.subscriptions_wizard_decrypted_full({ url: decryptedUrl, label, count });
 					} else {
-						detectedNotice = `Распознано: ${res.label} (найдено серверов: ${res.serverCount})`;
+						detectedNotice = () => m.subscriptions_wizard_recognized({ label, count });
 					}
 				} else if (res && res.isEncrypted && res.decryptedUrl) {
-					detectedNotice = `Расшифровано: ${res.decryptedUrl}`;
+					const decryptedUrl = res.decryptedUrl;
+					detectedNotice = () => m.subscriptions_wizard_decrypted({ url: decryptedUrl });
 				} else if (res && res.isEncrypted && !res.decryptedUrl) {
 					detectStatus = 'keys';
-					detectedNotice = 'Обнаружена зашифрованная ссылка Happ (требуются ключи RSA)';
+					detectedNotice = () => m.subscriptions_wizard_happ_encrypted();
 				}
 			} catch (e) {
 				if (seq !== detectSeq) return;
@@ -184,7 +188,7 @@
 				lastDetectedUrl = '';
 				detectStatus = 'error';
 				detectedNotice =
-					e instanceof Error ? e.message : 'Не удалось определить тип подписки';
+					e instanceof Error ? e.message : () => m.subscriptions_wizard_detect_failed();
 			} finally {
 				if (seq === detectSeq) {
 					detectingHeaders = false;
@@ -277,41 +281,39 @@
 		// Кап тела запроса на бэкенде — 1 МБ (http.MaxBytesReader): больший
 		// файл упал бы только на submit с невнятным 413.
 		if (file.size > 1 << 20) {
-			error = `Файл «${file.name}» больше 1 МБ — превышает лимит импорта`;
+			error = () => m.subscriptions_wizard_file_too_big({ name: file.name });
 			return;
 		}
 		try {
 			const text = await file.text();
 			if (!text.trim()) {
-				error = `Файл «${file.name}» пуст`;
+				error = () => m.subscriptions_wizard_file_empty({ name: file.name });
 				return;
 			}
 			const merged = appendImportedFileText(get(), text);
-			if (merged.error) {
-				error = merged.error;
+			if (merged.rejected) {
+				error = () => m.subscriptions_wizard_config_whole_only();
 				return;
 			}
 			set(merged.text);
 			error = '';
 		} catch {
-			error = `Не удалось прочитать файл «${file.name}»`;
+			error = () => m.subscriptions_wizard_file_read_failed({ name: file.name });
 		}
 	}
 
 	// «Один сервер» понимает share-ссылки, mieru JSON и TrustTunnel TOML;
 	// Clash YAML и sing-box JSON принимает лишь ветка «Группа серверов».
 	const IMPORT_FILE_ACCEPT_SINGLE = '.json,.txt,.toml';
-	const IMPORT_FILE_DROP_TITLE_SINGLE = 'или перетащите .json / .txt / .toml файл сюда';
 	const IMPORT_FILE_ACCEPT = '.json,.txt,.yaml,.yml,.toml';
-	const IMPORT_FILE_DROP_TITLE = 'или перетащите .json / .txt / .yaml / .toml файл сюда';
 
-	const titleByKind: Record<WizardKind | 'choose', string> = {
-		choose: 'Добавить',
-		single: 'Один сервер',
-		inline: 'Группа серверов',
-		url: 'Подписка по URL',
-		file: 'Подписка из файла',
-	};
+	const titleByKind = $derived<Record<WizardKind | 'choose', string>>({
+		choose: m.common_add(),
+		single: m.tunnels_create_single_title(),
+		inline: m.tunnels_create_group_title(),
+		url: m.tunnels_create_sub_title(),
+		file: m.subscriptions_wizard_kind_file(),
+	});
 
 	async function submitSingle(): Promise<void> {
 		singleLinks = normalizeSpaceSeparatedShareLinks(singleLinks);
@@ -337,10 +339,10 @@
 				inlineText = singleLinks;
 				singleLinks = '';
 				kind = 'inline';
-				error = `TrustTunnel-конфиг с несколькими адресами (${n}) — это Группа серверов. Текст перенесён, задайте имя группы.`;
+				error = () => m.subscriptions_wizard_trusttunnel_multi({ count: n });
 				return;
 			}
-			error = e instanceof Error ? e.message : 'Не удалось импортировать';
+			error = e instanceof Error ? e.message : () => m.subscriptions_wizard_import_failed();
 		} finally {
 			submitting = false;
 		}
@@ -349,7 +351,7 @@
 	async function fetchPreview(): Promise<void> {
 		const isFile = kind === 'file';
 		if (previewing || (isFile ? !filePath.trim() : !url.trim())) {
-			error = isFile ? 'Укажите путь к файлу' : 'Укажите URL подписки';
+			error = isFile ? () => m.subscriptions_wizard_enter_path() : () => m.subscriptions_wizard_enter_url();
 			return;
 		}
 		previewing = true;
@@ -367,15 +369,15 @@
 			// модалка замирает на «Загрузка...» (issue #428). Бэкенд уже
 			// дедуплицирует, это страховка от старых бэкендов и иных источников.
 			const seen = new Set<string>();
-			previewMembers = (members ?? []).filter((m) => {
-				if (seen.has(m.key)) return false;
-				seen.add(m.key);
+			previewMembers = (members ?? []).filter((member) => {
+				if (seen.has(member.key)) return false;
+				seen.add(member.key);
 				return true;
 			});
 			excludedKeys = new Set();
 			urlStep = 'preview';
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Не удалось получить список серверов';
+			error = e instanceof Error ? e.message : () => m.subscriptions_wizard_preview_failed();
 		} finally {
 			previewing = false;
 		}
@@ -393,7 +395,7 @@
 	}
 
 	function selectNoneMembers(): void {
-		excludedKeys = new Set(previewMembers.map((m) => m.key));
+		excludedKeys = new Set(previewMembers.map((member) => member.key));
 	}
 
 	async function submitSubscription(): Promise<void> {
@@ -404,15 +406,15 @@
 			inlineText = normalizeSpaceSeparatedShareLinks(inlineText);
 		}
 		if (isInline && !inlineText.trim()) {
-			error = 'Вставьте хотя бы одну ссылку';
+			error = () => m.subscriptions_wizard_paste_link();
 			return;
 		}
 		if (isFile && !filePath.trim()) {
-			error = 'Укажите путь к файлу';
+			error = () => m.subscriptions_wizard_enter_path();
 			return;
 		}
 		if (!isInline && !isFile && !url.trim()) {
-			error = 'Укажите URL подписки';
+			error = () => m.subscriptions_wizard_enter_url();
 			return;
 		}
 		submitting = true;
@@ -444,7 +446,7 @@
 			reset();
 			goto(`/subscriptions/${sub.id}`);
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Не удалось создать';
+			error = e instanceof Error ? e.message : () => m.subscriptions_wizard_create_failed();
 		} finally {
 			submitting = false;
 		}
@@ -459,38 +461,34 @@
 	hasUnsavedChanges={() => isDirty}
 >
 	{#if kind === 'choose'}
-		<p class="lead">Что добавить?</p>
+		<p class="lead">{m.subscriptions_wizard_lead()}</p>
 		<div class="kind-grid">
 			<button type="button" class="kind-card" onclick={() => (kind = 'single')}>
 				<Link size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
-				<div class="kind-title">Один сервер</div>
+				<div class="kind-title">{m.tunnels_create_single_title()}</div>
 				<div class="kind-desc">
-					Вставь одну или несколько share-link'ов — каждая станет
-					отдельным sing-box туннелем со своим Proxy NDMS.
+					{m.subscriptions_wizard_single_desc()}
 				</div>
 			</button>
 			<button type="button" class="kind-card" onclick={() => (kind = 'inline')}>
 				<LayoutGrid size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
-				<div class="kind-title">Группа серверов</div>
+				<div class="kind-title">{m.tunnels_create_group_title()}</div>
 				<div class="kind-desc">
-					Несколько ссылок становятся одной группой с общим Proxy.
-					Внутри — ручное переключение или автовыбор по скорости.
+					{m.subscriptions_wizard_group_desc()}
 				</div>
 			</button>
 			<button type="button" class="kind-card" onclick={() => (kind = 'url')}>
 				<Globe size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
-				<div class="kind-title">Подписка по URL</div>
+				<div class="kind-title">{m.tunnels_create_sub_title()}</div>
 				<div class="kind-desc">
-					Адрес подписки провайдера. Список серверов обновляется
-					автоматически по расписанию.
+					{m.subscriptions_wizard_url_desc()}
 				</div>
 			</button>
 			<button type="button" class="kind-card" onclick={() => (kind = 'file')}>
 				<FileText size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
-				<div class="kind-title">Подписка из файла</div>
+				<div class="kind-title">{m.subscriptions_wizard_kind_file()}</div>
 				<div class="kind-desc">
-					Файл со ссылками или конфигом на роутере
-					(USB, /opt). Обновляется только вручную.
+					{m.subscriptions_wizard_file_desc()}
 				</div>
 			</button>
 			{#if onAwg3}
@@ -498,8 +496,7 @@
 					<Waypoints size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
 					<div class="kind-title">AWG3 Endpoint</div>
 					<div class="kind-desc">
-						JSON-конфиг AmneziaWG 3 — endpoint внутри sing-box,
-						не отдельный kernel-туннель.
+						{m.subscriptions_wizard_awg3_desc()}
 					</div>
 				</button>
 			{/if}
@@ -513,20 +510,17 @@
 			}}
 		>
 			<p class="lead">
-				Каждая строка — отдельный sing-box туннель со своим Proxy NDMS.
-				Поддерживаются <code>vless://</code>, <code>hy2://</code>,
+				{m.subscriptions_wizard_single_lead_1()} <code>vless://</code>, <code>hy2://</code>,
 				<code>trojan://</code>, <code>ss://</code>, <code>hysteria2://</code>,
 				<code>mieru://</code>, <code>mierus://</code>,
 				<code>naive+http://</code>, <code>naive+https://</code>,
-				<code>tt://</code> и connect-ссылки TrustTunnel (<code>…?d=</code>),
-				а также JSON-конфиг mieru целиком (экспорт панелей, формат
-				<code>mieru apply config</code>) и TOML-конфиг TrustTunnel целиком
-				(экспорт endpoint или конфиг клиента).
-				Список через пробел при вставке разбивается на строки автоматически.
+				<code>tt://</code> {m.subscriptions_wizard_single_lead_2()} (<code>…?d=</code>),
+				{m.subscriptions_wizard_single_lead_3()}
+				<code>mieru apply config</code>) {m.subscriptions_wizard_single_lead_4()}
 			</p>
 			{#if !singboxInstalled}
 				<div class="warn">
-					Sing-box не установлен — установи в настройках перед добавлением туннелей.
+					{m.subscriptions_wizard_no_singbox()}
 				</div>
 			{/if}
 			<ShareLinksTextarea
@@ -537,14 +531,14 @@
 				onpaste={(e) => onShareListPaste(e, () => singleLinks, (v) => (singleLinks = v))}
 			/>
 			<RoutingImportDropZone
-				dropTitle={IMPORT_FILE_DROP_TITLE_SINGLE}
+				dropTitle={m.subscriptions_wizard_drop_single()}
 				accept={IMPORT_FILE_ACCEPT_SINGLE}
 				onfile={(f) => void onImportFile(f, () => singleLinks, (v) => (singleLinks = v))}
 			/>
-			{#if error}<div class="err">{error}</div>{/if}
+			{#if error}<div class="err">{uiText(error)}</div>{/if}
 			{#if singleResult && singleResult.errors.length > 0}
 				<div class="err">
-					<div>Импортировано: {singleResult.imported}, ошибок: {singleResult.errors.length}</div>
+					<div>{m.subscriptions_wizard_import_result({ imported: singleResult.imported, errors: singleResult.errors.length })}</div>
 					<ul class="err-list">
 						{#each singleResult.errors as e}<li>{e}</li>{/each}
 					</ul>
@@ -553,11 +547,11 @@
 		</form>
 	{:else if hasPreviewStep && urlStep === 'preview'}
 		<div class="steps" aria-hidden="true">
-			<span class="step done">{kind === 'file' ? 'Файл' : 'URL и заголовки'}</span>
+			<span class="step done">{kind === 'file' ? m.subscriptions_wizard_step_file() : m.subscriptions_wizard_step_url()}</span>
 			<span class="step-sep">›</span>
-			<span class="step current">Выбор серверов</span>
+			<span class="step current">{m.subscriptions_wizard_step_pick()}</span>
 			<span class="step-sep">›</span>
-			<span class="step">Готово</span>
+			<span class="step">{m.common_done()}</span>
 		</div>
 		<SubscriptionImportPreview
 			members={previewMembers}
@@ -566,7 +560,7 @@
 			onselectAll={selectAllMembers}
 			onselectNone={selectNoneMembers}
 		/>
-		{#if error}<div class="err">{error}</div>{/if}
+		{#if error}<div class="err">{uiText(error)}</div>{/if}
 	{:else}
 		<form
 			class="form"
@@ -578,21 +572,21 @@
 		>
 			{#if hasPreviewStep}
 				<div class="steps" aria-hidden="true">
-					<span class="step current">{kind === 'file' ? 'Файл' : 'URL и заголовки'}</span>
+					<span class="step current">{kind === 'file' ? m.subscriptions_wizard_step_file() : m.subscriptions_wizard_step_url()}</span>
 					<span class="step-sep">›</span>
-					<span class="step">Выбор серверов</span>
+					<span class="step">{m.subscriptions_wizard_step_pick()}</span>
 					<span class="step-sep">›</span>
-					<span class="step">Готово</span>
+					<span class="step">{m.common_done()}</span>
 				</div>
 			{/if}
 			<label class="row">
-				<span class="lbl">Название</span>
+				<span class="lbl">{m.subscriptions_form_name()}</span>
 				<input class="inp" type="text" bind:value={label} placeholder="Provider X" required />
 			</label>
 
 			{#if kind === 'url'}
 				<label class="row">
-					<span class="lbl">URL подписки</span>
+					<span class="lbl">{m.subscriptions_wizard_url_label()}</span>
 					<input
 						class="inp"
 						type="url"
@@ -600,11 +594,11 @@
 						onpaste={() => setTimeout(() => triggerDetectHeaders(url, true), 0)}
 						onblur={() => triggerDetectHeaders(url, true)}
 						oninput={() => triggerDetectHeaders(url)}
-						placeholder="https://provider.example/sub/abc или happ://..."
+						placeholder={m.subscriptions_wizard_url_placeholder()}
 					/>
 					{#if detectingHeaders}
 						<div class="detect-badge detect-loading">
-							<span>Определение типа подписки...</span>
+							<span>{m.subscriptions_wizard_detecting()}</span>
 						</div>
 					{:else if detectedNotice}
 						<div
@@ -612,20 +606,20 @@
 							class:detect-warning={detectStatus !== 'ok'}
 							class:detect-success={detectStatus === 'ok'}
 						>
-							<span>{detectedNotice}</span>
+							<span>{uiText(detectedNotice)}</span>
 							{#if detectStatus === 'keys'}
 								<Button
 									size="sm"
 									variant="secondary"
 									onclick={() => (showHappKeysModal = true)}
 								>
-									Ввести ключи…
+									{m.subscriptions_wizard_enter_keys()}
 								</Button>
 							{/if}
 						</div>
 					{:else}
 						<span class="hint">
-							Поддерживаются ссылки HTTPS, зашифрованные HAPP (happ://crypt), Clash, V2Ray/Xray, Sing-box.
+							{m.subscriptions_wizard_url_hint()}
 						</span>
 					{/if}
 				</label>
@@ -634,7 +628,7 @@
 				</div>
 				<div class="row">
 					<Dropdown
-						label="Авто-обновление"
+						label={m.subscriptions_card_detail_auto_refresh()}
 						bind:value={refreshHoursStr}
 						options={refreshOptions}
 						fullWidth
@@ -646,7 +640,7 @@
 				     Строка — <div> с <label for>, потому что <button> внутри
 				     <label> нарушает его модель содержимого (labelable element). -->
 				<div class="row">
-					<label class="lbl" for="sub-file-path">Путь к файлу на роутере</label>
+					<label class="lbl" for="sub-file-path">{m.subscriptions_wizard_path_label()}</label>
 					<div class="path-line">
 						<input
 							id="sub-file-path"
@@ -659,18 +653,17 @@
 						/>
 						{#if $usageLevel === 'expert'}
 							<Button variant="secondary" size="sm" onclick={() => (showFilePicker = true)}>
-								Выбрать…
+								{m.subscriptions_wizard_pick_file()}
 							</Button>
 						{/if}
 					</div>
 					<span class="hint">
-						Абсолютный путь внутри /opt или /tmp. Обновление — кнопкой
-						«Обновить» во вкладке «Серверы».
+						{m.subscriptions_wizard_path_hint()}
 					</span>
 				</div>
 			{:else}
 				<label class="row">
-					<span class="lbl">Ссылки на серверы (по одной на строку)</span>
+					<span class="lbl">{m.subscriptions_wizard_links_label()}</span>
 					<ShareLinksTextarea
 						bind:value={inlineText}
 						placeholder={`vless://...\ntrojan://...\nhysteria2://...\nnaive+https://\nss://...\nmieru://...\ntt://...`}
@@ -678,24 +671,19 @@
 						onpaste={(e) => onShareListPaste(e, () => inlineText, (v) => (inlineText = v))}
 					/>
 					<span class="hint">
-						Поддерживаются share-link'и, Clash YAML, sing-box JSON,
-						JSON-конфиг mieru (экспорт панелей, формат mieru apply config)
-						и TOML-конфиг TrustTunnel целиком (экспорт endpoint или конфиг клиента).
-						Список ссылок через пробел при вставке разбивается на строки.
-						Авто-обновления нет — список замораживается на момент создания,
-						редактируется во вкладке «Серверы».
+						{m.subscriptions_wizard_inline_hint()}
 					</span>
 				</label>
 				<RoutingImportDropZone
-					dropTitle={IMPORT_FILE_DROP_TITLE}
+					dropTitle={m.subscriptions_wizard_drop_multi()}
 					accept={IMPORT_FILE_ACCEPT}
 					onfile={(f) => void onImportFile(f, () => inlineText, (v) => (inlineText = v))}
 				/>
 			{/if}
 
 			<div class="row">
-				<span class="lbl">Режим выбора сервера</span>
-				<div class="mode-grid" role="radiogroup" aria-label="Режим выбора сервера">
+				<span class="lbl">{m.subscriptions_form_mode()}</span>
+				<div class="mode-grid" role="radiogroup" aria-label={m.subscriptions_form_mode()}>
 					<button
 						type="button"
 						role="radio"
@@ -704,9 +692,9 @@
 						class:selected={mode === 'selector'}
 						onclick={() => (mode = 'selector')}
 					>
-						<div class="mode-title">Ручной выбор</div>
+						<div class="mode-title">{m.subscriptions_form_mode_selector_title()}</div>
 						<div class="mode-desc">
-							Сервер переключается вручную из списка.
+							{m.subscriptions_form_mode_selector_desc()}
 						</div>
 						{#if mode === 'selector'}
 							<span class="mode-check" aria-hidden="true">
@@ -722,9 +710,9 @@
 						class:selected={mode === 'urltest'}
 						onclick={() => (mode = 'urltest')}
 					>
-						<div class="mode-title">Автовыбор по скорости</div>
+						<div class="mode-title">{m.subscriptions_form_mode_urltest_title()}</div>
 						<div class="mode-desc">
-							Sing-box сам пингует серверы и держит самый быстрый.
+							{m.subscriptions_form_mode_urltest_desc()}
 						</div>
 						{#if mode === 'urltest'}
 							<span class="mode-check" aria-hidden="true">
@@ -738,7 +726,7 @@
 			{#if mode === 'urltest'}
 				<div class="urltest-block">
 					<label class="row">
-						<span class="lbl">URL для проверки</span>
+						<span class="lbl">{m.subscriptions_form_check_url()}</span>
 						<input
 							class="inp"
 							type="url"
@@ -748,11 +736,11 @@
 					</label>
 					<div class="row two-col">
 						<label class="col">
-							<span class="lbl">Интервал, сек</span>
+							<span class="lbl">{m.subscriptions_form_interval()}</span>
 							<input class="inp" type="number" min="10" max="3600" bind:value={utIntervalSec} />
 						</label>
 						<label class="col">
-							<span class="lbl">Допуск, мс</span>
+							<span class="lbl">{m.subscriptions_form_tolerance()}</span>
 							<input class="inp" type="number" min="0" max="2000" bind:value={utToleranceMs} />
 						</label>
 					</div>
@@ -761,19 +749,19 @@
 
 			<label class="row chk">
 				<input type="checkbox" bind:checked={enabled} />
-				<span>Включить сразу</span>
+				<span>{m.subscriptions_wizard_enable_now()}</span>
 			</label>
-			{#if error}<div class="err">{error}</div>{/if}
+			{#if error}<div class="err">{uiText(error)}</div>{/if}
 		</form>
 	{/if}
 
 	{#snippet actions()}
 		{#if hasPreviewStep && urlStep === 'preview'}
-			<Button variant="ghost" onclick={() => (urlStep = 'form')} disabled={submitting}>← Назад</Button>
+			<Button variant="ghost" onclick={() => (urlStep = 'form')} disabled={submitting}>{m.subscriptions_wizard_back()}</Button>
 		{:else if kind !== 'choose'}
-			<Button variant="ghost" onclick={backToChoose} disabled={submitting}>← Назад</Button>
+			<Button variant="ghost" onclick={backToChoose} disabled={submitting}>{m.subscriptions_wizard_back()}</Button>
 		{/if}
-		<Button variant="ghost" onclick={close} disabled={submitting}>Отмена</Button>
+		<Button variant="ghost" onclick={close} disabled={submitting}>{m.common_cancel()}</Button>
 		{#if kind === 'single'}
 			<Button
 				variant="primary"
@@ -781,7 +769,7 @@
 				disabled={submitting || !singleLinks.trim() || !singboxInstalled}
 				loading={submitting}
 			>
-				{submitting ? 'Импорт...' : 'Импортировать'}
+				{submitting ? m.subscriptions_wizard_importing() : m.subscriptions_wizard_import()}
 			</Button>
 		{:else if hasPreviewStep && urlStep === 'form'}
 			<Button
@@ -790,7 +778,7 @@
 				disabled={previewing || (kind === 'file' ? !filePath.trim() : !url.trim())}
 				loading={previewing}
 			>
-				{previewing ? 'Загрузка...' : 'Далее'}
+				{previewing ? m.tunnels_loading() : m.tunnels_adopt_next()}
 			</Button>
 		{:else if hasPreviewStep && urlStep === 'preview'}
 			<Button
@@ -800,8 +788,8 @@
 				loading={submitting}
 			>
 				{submitting
-					? 'Создаём...'
-					: `Создать — оставить ${previewMembers.length - excludedKeys.size}`}
+					? m.subscriptions_wizard_creating()
+					: m.subscriptions_wizard_create_keep({ count: previewMembers.length - excludedKeys.size })}
 			</Button>
 		{:else if kind !== 'choose'}
 			<Button
@@ -810,7 +798,7 @@
 				disabled={submitting}
 				loading={submitting}
 			>
-				{submitting ? 'Создаём...' : 'Создать'}
+				{submitting ? m.subscriptions_wizard_creating() : m.common_create()}
 			</Button>
 		{/if}
 	{/snippet}

@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -42,6 +43,9 @@ type OpkgTunProvisioner interface {
 	SetMTU(ctx context.Context, name string, mtu int) error
 	InterfaceUp(ctx context.Context, name string) error
 	InterfaceDown(ctx context.Context, name string) error
+	// SetDescription — переименование живого интерфейса (настраиваемое
+	// описание policy-tun, healPolicyTunDescription).
+	SetDescription(ctx context.Context, name, description string) error
 	// SetPermitAllACL — NDMS-native разрешение трафика в интерфейс: permit-all
 	// access-list `_WEBADMIN_<name>` + `ip access-group … in` + auto-delete (как
 	// галка доступа в веб-морде). Без него firewall NDMS (isolate-private и т.п.)
@@ -207,26 +211,37 @@ func resolveFakeIPParamsWith(base FakeIPTunParams, sr storage.SingboxRouterSetti
 
 // provisionOpkgTun — запись OpkgTun под включение режима (R45). Запись по
 // имени смотрится свежим списком:
-//   - нет — создание F569 (голое создание → подтверждение → настройки);
-//   - есть с нашим description — удержанная нами (выключение policy-tun её
-//     не сносит): Create по ней невозможен (живое устройство записи —
-//     отказ F569, на 5.01+ ещё и ErrNotCreated), поэтому её только
-//     настраиваем;
-//   - есть с чужим description — отказ без единой команды.
+//   - нет — создание F569 (голое создание → подтверждение → настройки) сразу
+//     под описанием want;
+//   - есть с одним из своих описаний (own: применённое и ожидаемое из записи
+//     владения, см. policyTunOwnDescriptions) — удержанная нами (выключение
+//     policy-tun её не сносит): Create по ней невозможен (живое устройство
+//     записи — отказ F569, на 5.01+ ещё и ErrNotCreated), поэтому её только
+//     настраиваем и, если описание в настройках сменили, переименовываем в
+//     want (Create по живой записи делал бы это сам);
+//   - есть с чужим description — отказ без единой команды. want в own не
+//     входит намеренно: пользовательское имя не уникально, и чужой OpkgTun
+//     под ним признавался бы своим (policytun_description.go).
 //
 // reused=true — запись переиспользована, не создана этим включением: откат
 // обязан её удержать (holdOpkgTun), а не снести — сносом умер бы permit
 // пользователя в `ip policy` (M1, решение владельца 01.10).
-func (s *ServiceImpl) provisionOpkgTun(ctx context.Context, ndmsName, description, securityLevel string) (reused bool, err error) {
+func (s *ServiceImpl) provisionOpkgTun(ctx context.Context, ndmsName, want, securityLevel string, own ...string) (reused bool, err error) {
 	desc, ok, err := s.deps.OpkgTun.OpkgTunRecord(ctx, ndmsName)
 	if err != nil {
 		return false, err
 	}
 	if !ok {
-		return false, s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, description, securityLevel)
+		return false, s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, want, securityLevel)
 	}
-	if desc != description {
+	if !slices.Contains(own, desc) {
 		return false, fmt.Errorf("запись %s уже есть и не наша (description %q)", ndmsName, desc)
 	}
-	return true, s.deps.OpkgTun.SetSecurityLevel(ctx, ndmsName, securityLevel)
+	if err := s.deps.OpkgTun.SetSecurityLevel(ctx, ndmsName, securityLevel); err != nil {
+		return true, err
+	}
+	if desc != want {
+		return true, s.deps.OpkgTun.SetDescription(ctx, ndmsName, want)
+	}
+	return true, nil
 }

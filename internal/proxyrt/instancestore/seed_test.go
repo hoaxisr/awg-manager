@@ -1381,7 +1381,7 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 	// Record.Name, в самой записи оно пустое (Р3, один писатель имени).
 	// Союз двух клиентов: NdmsIface/RawIface/Policies есть только у raw.
 	assertEveryFieldCarried(t, "WdttClientConfig",
-		[]any{*rawCli.WdttClient, *wgCli.WdttClient}, "Name")
+		[]any{*rawCli.WdttClient, *wgCli.WdttClient}, "Name", "AutoReconnect", "AutoReconnectInterval")
 	if c, _ := rawCli.WdttClientConfig(); c.Name != "Клиент раз" {
 		t.Errorf("геттер не впрыснул имя: %q", c.Name)
 	}
@@ -1394,8 +1394,9 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 	// старый freeturn.json, который переносит посев, его не знал. ObfTimingMs
 	// (4.0) — та же причина. Bond в старом файле был, но под протокол 2.x
 	// (tcpfwd/smux), с bond 4.x поверх KCP он несовместим — не переносим.
+	// AutoReconnect/AutoReconnectInterval — новые поля 4.x, в старом файле их не было.
 	assertEveryFieldCarried(t, "FreeTurnClientConfig",
-		[]any{*got["freeturn-client:ftc-1"].FreeTurnClient}, "KCP", "Bond", "ObfTimingMs")
+		[]any{*got["freeturn-client:ftc-1"].FreeTurnClient}, "KCP", "Bond", "ObfTimingMs", "AutoReconnect", "AutoReconnectInterval")
 	// LinkPeer — настройка адреса для ссылок абонентам (#933), заведена
 	// панелью; в старом freeturn.json такого поля не было вовсе, переносить
 	// нечего. Та же причина исключения, что у KCP клиента.

@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type { DnsRoute } from '$lib/types';
 
 export interface PortableDnsRoute {
@@ -8,6 +9,7 @@ export interface PortableDnsRoute {
 	subnets?: string[];
 	enabled: boolean;
 	iconUrl?: string;
+	skipIPv6?: boolean;
 }
 
 export function exportRoutes(routes: DnsRoute[]): PortableDnsRoute[] {
@@ -21,6 +23,7 @@ export function exportRoutes(routes: DnsRoute[]): PortableDnsRoute[] {
 		subnets: r.subnets?.length ? r.subnets : undefined,
 		enabled: r.enabled,
 		iconUrl: r.iconUrl || undefined,
+		skipIPv6: r.skipIPv6 || undefined,
 	}));
 }
 
@@ -36,7 +39,7 @@ export function downloadJson(data: unknown, filename: string) {
 
 export function parseImportFile(json: string): PortableDnsRoute[] {
 	const data = JSON.parse(json);
-	if (!Array.isArray(data)) throw new Error('Файл должен содержать JSON массив');
+	if (!Array.isArray(data)) throw new Error(m.export_file_must_be_array());
 	return data.filter(item =>
 		typeof item.name === 'string' &&
 		item.name.trim() !== '' &&

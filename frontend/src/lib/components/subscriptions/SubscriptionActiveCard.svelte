@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { m } from '$lib/i18n';
+    import RichText from '$lib/components/ui/RichText.svelte';
     import { untrack } from 'svelte';
     import { Eye, EyeOff } from 'lucide-svelte';
     import { goto } from '$app/navigation';
@@ -70,7 +72,7 @@
     const selectorTag = $derived(subscription.selectorTag ?? '');
     const diagnosticsUnavailableReason = $derived(
         !selectorTag || !kernelIface
-            ? 'Для подписки не удалось определить интерфейс тестирования.'
+            ? m.subscriptions_test_no_iface()
             : undefined,
     );
 
@@ -124,7 +126,7 @@
     const isInlineGroup = $derived(
         subscription.isInline || (!subscription.isFile && !subscription.url?.trim()),
     );
-    const sourceKindLabel = $derived(isInlineGroup ? 'группа' : 'подписка');
+    const sourceKindLabel = $derived(isInlineGroup ? m.subscriptions_card_kind_group() : m.subscriptions_card_kind_subscription());
     const lastFetchedHuman = $derived(
         subscription.lastFetched ? formatRelativeTime(subscription.lastFetched) : '—',
     );
@@ -200,10 +202,10 @@
             confirmDeleteOpen = false;
         } catch (e) {
             const name = subscription.label || subscription.selectorTag || subscription.id;
-            if (showOutboundReferencedError(e, name, 'Подписка')) {
+            if (showOutboundReferencedError(e, name, m.tunnels_entity_subscription())) {
                 confirmDeleteOpen = false;
             } else {
-                notifications.error(e instanceof Error ? e.message : 'Не удалось удалить подписку');
+                notifications.error(e instanceof Error ? e.message : m.tunnels_subscription_delete_failed());
             }
         } finally {
             deleting = false;
@@ -256,7 +258,7 @@
                         staticTitle
                     />
                     <TunnelMetaText>
-                        <span>{subscription.memberTags.length} серверов</span>
+                        <span>{m.subscriptions_card_servers_count({ count: subscription.memberTags.length })}</span>
                         <span class="meta-dot" aria-hidden="true">·</span>
                         <span>{lastFetchedHuman}</span>
                     </TunnelMetaText>
@@ -295,7 +297,7 @@
                         rxData={trafficSparkSeries.rx}
                         txData={trafficSparkSeries.tx}
                         onclick={() => ondetail?.(activeMember.tag)}
-                        title="Открыть детальный график"
+                        title={m.singbox_card_chart_detail()}
                     />
                 {/if}
             </td>
@@ -311,7 +313,7 @@
                         state={cardState}
                         layout="list"
                         onclick={() => void triggerCheck()}
-                        title="Delay за последние проверки"
+                        title={m.subscriptions_card_delay_history()}
                     />
                 {/if}
             </td>
@@ -321,12 +323,12 @@
             >
                 <TunnelListActions
                     onEdit={openSettings}
-                    editLabel="Изменить"
-                    editTitle="Настройки подписки «{subscription.label}»"
+                    editLabel={m.common_edit()}
+                    editTitle={m.subscriptions_card_edit_title({ name: subscription.label })}
                     onTest={() => (diagnosticsOpen = true)}
-                    testTitle="Открыть диагностику подписки «{subscription.label}»"
+                    testTitle={m.subscriptions_card_test_title({ name: subscription.label })}
                     onDelete={() => (confirmDeleteOpen = true)}
-                    deleteTitle="Удалить подписку «{subscription.label}»"
+                    deleteTitle={m.subscriptions_card_delete_title({ name: subscription.label })}
                 />
             </td>
     </tr>
@@ -407,7 +409,7 @@
     <div class="details-dense-cols">
         <div class="details-dense-col">
             <div class="kv-stacked-stat">
-                <span class="kv-stacked-label">{isURLTest ? 'Авто' : 'Активный сервер'}</span>
+                <span class="kv-stacked-label">{isURLTest ? m.subscriptions_active_auto() : m.subscriptions_active_server()}</span>
                 <span class="kv-endpoint">
                     <span
                         class="kv-stacked-value"
@@ -428,7 +430,7 @@
                             e.stopPropagation();
                             showEndpoint = !showEndpoint;
                         }}
-                        aria-label={showEndpoint ? 'Скрыть IP' : 'Показать IP'}
+                        aria-label={showEndpoint ? m.subscriptions_active_hide_ip() : m.subscriptions_active_show_ip()}
                     >
                         {#if showEndpoint}
                             <Eye size={12} aria-hidden="true" />
@@ -441,15 +443,15 @@
         </div>
     </div>
     <div class="dense-meta-line mono">
-        <span>{subscription.memberTags.length} серверов</span>
-        <span>обновлено: {lastFetchedHuman}</span>
+        <span>{m.subscriptions_card_servers_count({ count: subscription.memberTags.length })}</span>
+        <span>{m.subscriptions_active_updated_colon({ time: lastFetchedHuman })}</span>
     </div>
     </div>
     {/if}
 
     {#if renderMode === 'list-card'}
     <div class="list-card-endpoint mono">
-        <span class="list-card-endpoint-label">{isURLTest ? 'Авто' : 'Активен'}</span>
+        <span class="list-card-endpoint-label">{isURLTest ? m.subscriptions_active_auto() : m.tunnels_status_active()}</span>
         <span
             class="list-card-endpoint-value"
             title={showEndpoint ? activeEndpointTitle : (listActiveServerName || subscription.activeMember || activeMember.tag)}
@@ -469,12 +471,12 @@
         <TunnelListActions
             variant="labeled"
             onEdit={openSettings}
-            editLabel="Изменить"
-            editTitle="Настройки подписки «{subscription.label}»"
+            editLabel={m.common_edit()}
+            editTitle={m.subscriptions_card_edit_title({ name: subscription.label })}
             onTest={() => (diagnosticsOpen = true)}
-            testTitle="Тест подписки «{subscription.label}»"
+            testTitle={m.subscriptions_active_test_title({ name: subscription.label })}
             onDelete={() => (confirmDeleteOpen = true)}
-            deleteTitle="Удалить подписку «{subscription.label}»"
+            deleteTitle={m.subscriptions_card_delete_title({ name: subscription.label })}
         />
     </div>
 
@@ -484,7 +486,7 @@
                 type="button"
                 class="traffic-inline"
                 onclick={() => ondetail?.(activeMember.tag)}
-                title="Открыть график трафика"
+                title={m.tunnels_card_open_traffic_chart()}
             >
                 <TrafficSparkline
                     rxData={trafficSparkSeries.rx}
@@ -499,7 +501,7 @@
             </button>
             <div class="chart-inline delay-inline">
                 <div class="chart-inline-head">
-                    <span class="chart-inline-label">Delay (5 мин)</span>
+                    <span class="chart-inline-label">{m.singbox_card_delay_5m()}</span>
                 </div>
                 <TunnelDelaySparkBars
                     {history}
@@ -574,15 +576,15 @@
 
     <div class="sub-meta">
         <div>
-            <span>{subscription.memberTags.length} серверов</span>
+            <span>{m.subscriptions_card_servers_count({ count: subscription.memberTags.length })}</span>
             {#if subscription.activeMember}
-                <span>· активен <span class="mono">{subscription.activeMember}</span></span>
+                <span>{m.subscriptions_active_is_active()} <span class="mono">{subscription.activeMember}</span></span>
             {/if}
         </div>
         <div>
-            <span>обновлено {lastFetchedHuman}</span>
+            <span>{m.subscriptions_card_updated({ time: lastFetchedHuman })}</span>
             {#if subscription.refreshHours > 0}
-                <span>· auto {subscription.refreshHours}ч</span>
+                <span>{m.subscriptions_active_auto_refresh_hours({ hours: subscription.refreshHours })}</span>
             {/if}
         </div>
     </div>
@@ -593,7 +595,7 @@
 
     <div class="server-section">
     <div class="server-row">
-        <span class="label">{isURLTest ? 'Авто' : 'Активный сервер'}</span>
+        <span class="label">{isURLTest ? m.subscriptions_active_auto() : m.subscriptions_active_server()}</span>
         <div class="picker-anchor">
             <div class="server-control">
                 <button
@@ -603,7 +605,7 @@
                         e.stopPropagation();
                         if (isURLTest) {
                             notifications.info(
-                                'Включён автовыбор (URLTest). Чтобы выбирать сервер вручную, откройте подписку → вкладка «Настройки» → режим «Вручную».',
+                                m.subscriptions_active_urltest_info(),
                                 { duration: 9000 },
                             );
                             return;
@@ -612,7 +614,7 @@
                     }}
                     aria-haspopup={isURLTest ? undefined : 'listbox'}
                     aria-expanded={isURLTest ? undefined : pickerOpen}
-                    title={isURLTest ? 'Sing-box выбирает самый быстрый сервер автоматически' : ''}
+                    title={isURLTest ? m.subscriptions_active_urltest_title() : ''}
                 >
                     <span
                         class="server-text"
@@ -638,8 +640,8 @@
                         e.stopPropagation();
                         showEndpoint = !showEndpoint;
                     }}
-                    title={showEndpoint ? 'Скрыть IP' : 'Показать IP'}
-                    aria-label={showEndpoint ? 'Скрыть IP сервера' : 'Показать IP сервера'}
+                    title={showEndpoint ? m.subscriptions_active_hide_ip() : m.subscriptions_active_show_ip()}
+                    aria-label={showEndpoint ? m.subscriptions_active_hide_server_ip() : m.subscriptions_active_show_server_ip()}
                 >
                     {#if showEndpoint}
                         <Eye size={14} aria-hidden="true" />
@@ -664,12 +666,12 @@
         <TunnelListActions
             variant="labeled"
             onEdit={openSettings}
-            editLabel="Изменить"
-            editTitle="Настройки подписки «{subscription.label}»"
+            editLabel={m.common_edit()}
+            editTitle={m.subscriptions_card_edit_title({ name: subscription.label })}
             onTest={() => (diagnosticsOpen = true)}
-            testTitle="Открыть диагностику подписки «{subscription.label}»"
+            testTitle={m.subscriptions_card_test_title({ name: subscription.label })}
             onDelete={() => (confirmDeleteOpen = true)}
-            deleteTitle="Удалить подписку «{subscription.label}»"
+            deleteTitle={m.subscriptions_card_delete_title({ name: subscription.label })}
         />
     </div>
 
@@ -677,7 +679,7 @@
         <div class="chart-section">
             <div class="chart-body">
                 <div class="chart-head">
-                    <span>Delay (5 мин)</span>
+                    <span>{m.singbox_card_delay_5m()}</span>
                 </div>
                 <TunnelDelaySparkBars
                     {history}
@@ -686,7 +688,7 @@
                     onclick={() => void triggerCheck()}
                 />
                 <div class="chart-head traffic-head">
-                    <span>Трафик</span>
+                    <span>{m.tunnels_awg_col_traffic()}</span>
                     <span class="stats">
                         ↓ {formatBytes(traffic?.download ?? 0)} · ↑ {formatBytes(traffic?.upload ?? 0)}
                     </span>
@@ -710,7 +712,7 @@
     kind="subscription"
     targetId={selectorTag}
     displayName={subscription.label || selectorTag || subscription.id}
-    subjectLabel="подписку"
+    subject="subscription"
     iface={kernelIface}
     loading={false}
     unavailableReason={diagnosticsUnavailableReason}
@@ -719,24 +721,27 @@
 
 <Modal
     open={confirmDeleteOpen}
-    title="Удалить подписку?"
+    title={m.tunnels_modals_delete_sub_title()}
     size="md"
     onclose={() => {
         if (deleting) return;
         confirmDeleteOpen = false;
     }}
 >
-    <p>
-        Подписка <strong>{subscription.label || subscription.url || subscription.path}</strong> будет
-        удалена вместе с её sing-box outbound'ами и NDMS Proxy
-        <code class="mono">Proxy{subscription.proxyIndex}</code>.
+    <p class="delete-confirm-text">
+        <RichText
+            text={m.subscriptions_delete_confirm_message({
+                label: subscription.label || subscription.url || subscription.path,
+                index: subscription.proxyIndex,
+            })}
+        />
     </p>
     {#snippet actions()}
         <Button variant="ghost" disabled={deleting} onclick={() => (confirmDeleteOpen = false)}>
-            Отмена
+            {m.common_cancel()}
         </Button>
         <Button variant="danger" disabled={deleting} loading={deleting} onclick={removeSubscription}>
-            {deleting ? 'Удаляем...' : 'Удалить'}
+            {deleting ? m.tunnels_modals_deleting() : m.common_delete()}
         </Button>
     {/snippet}
 </Modal>
@@ -1223,7 +1228,8 @@
         font-size: var(--sbx-card-meta);
         color: #f85149;
     }
-    .mono {
+    .mono,
+    .delete-confirm-text :global(.mono) {
         font-family: var(--font-mono, ui-monospace, monospace);
     }
 

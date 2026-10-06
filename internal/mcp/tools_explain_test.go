@@ -372,3 +372,62 @@ func TestTools_ExplainRouteCapsTheTarget(t *testing.T) {
 		t.Fatal("a target longer than a DNS name must be refused before resolving")
 	}
 }
+
+// TestTools_ExplainRouteSkipsIPv6WhenTheListDoes — #1011: список с
+// SkipIPv6 хранит IPv6-записи, но на роутер их не ставит. Голый IPv6-адрес
+// в списке совпадает с такой же целью по строке, и без фильтра инструмент
+// сообщил бы маршрут, по которому трафик не пойдёт. (Подсети сверяются
+// только с IPv4-адресами, так что IPv6-сеть сюда не доходит.)
+func TestTools_ExplainRouteSkipsIPv6WhenTheListDoes(t *testing.T) {
+	deps, fake := explainFake(t)
+	list := mcpsrv.DNSRouteDetail{
+		ID: "dl-v4-only", Name: "No IPv6", Enabled: true,
+		Domains: []string{"2001:db8::7"}, Subnets: []string{"2001:db8::/32", "10.30.0.0/16"},
+		Routes: []mcpsrv.RouteTarget{{TunnelID: "tn-1"}}, SkipIPv6: true,
+	}
+	fake.DNSRoutes = []mcpsrv.DNSRouteDetail{list}
+	s := connectDeps(t, deps)
+
+	_, out := callTool(t, s, "explain_route", map[string]any{"target": "2001:db8::7"})
+	if n := len(out["dnsMatches"].([]any)); n != 0 {
+		t.Fatalf("dnsMatches = %v, want none — the list keeps IPv6 off the router", out["dnsMatches"])
+	}
+	_, out = callTool(t, s, "explain_route", map[string]any{"target": "10.30.1.1"})
+	if n := len(out["dnsMatches"].([]any)); n != 1 {
+		t.Fatalf("an IPv4 entry of the same list still routes: dnsMatches = %v", out["dnsMatches"])
+	}
+
+	list.SkipIPv6 = false
+	fake.DNSRoutes = []mcpsrv.DNSRouteDetail{list}
+	_, out = callTool(t, s, "explain_route", map[string]any{"target": "2001:db8::7"})
+	if n := len(out["dnsMatches"].([]any)); n != 1 {
+		t.Fatalf("without the flag the IPv6 address routes: dnsMatches = %v", out["dnsMatches"])
+	}
+}
+
+// TestTools_ExplainRouteDropsIPv6ExcludesWhenTheListDoes — исключение,
+// записанное IPv4-mapped сетью, накрывает IPv4-адрес, но со SkipIPv6 на
+// роутер не уходит (оно IPv6 по записи) — и вырезать цель из списка не может.
+// Без флага то же исключение вырезает.
+func TestTools_ExplainRouteDropsIPv6ExcludesWhenTheListDoes(t *testing.T) {
+	deps, fake := explainFake(t)
+	list := mcpsrv.DNSRouteDetail{
+		ID: "dl-mapped", Name: "Mapped exclude", Enabled: true,
+		Subnets: []string{"10.20.0.0/16"}, Excludes: []string{"::ffff:10.20.5.0/120"},
+		Routes: []mcpsrv.RouteTarget{{TunnelID: "tn-1"}}, SkipIPv6: true,
+	}
+	fake.DNSRoutes = []mcpsrv.DNSRouteDetail{list}
+	s := connectDeps(t, deps)
+
+	_, out := callTool(t, s, "explain_route", map[string]any{"target": "10.20.5.7"})
+	if n := len(out["dnsMatches"].([]any)); n != 1 {
+		t.Fatalf("dnsMatches = %v, want the list — its IPv6 exclude never reaches the router", out["dnsMatches"])
+	}
+
+	list.SkipIPv6 = false
+	fake.DNSRoutes = []mcpsrv.DNSRouteDetail{list}
+	_, out = callTool(t, s, "explain_route", map[string]any{"target": "10.20.5.7"})
+	if ex, _ := out["excludedFrom"].([]any); len(ex) != 1 {
+		t.Fatalf("without the flag the exclude carves the target out: excludedFrom = %v, dnsMatches = %v", out["excludedFrom"], out["dnsMatches"])
+	}
+}

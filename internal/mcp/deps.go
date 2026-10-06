@@ -104,16 +104,57 @@ type Deps interface {
 	// ListSingboxRules returns the router's rules in evaluation order.
 	// hasDraft reports whether they come from an unapplied draft.
 	ListSingboxRules(ctx context.Context) (rules []SingboxRule, hasDraft bool, err error)
-	ListSingboxOutbounds(ctx context.Context) ([]SingboxOutbound, error)
+	// ListSingboxOutbounds returns every group. An engine that does not
+	// answer is not an error: the entries come back with RuntimeKnown
+	// false and no active member. hasDraft reports whether the router
+	// holds an unapplied draft; groups are listed from it when it exists.
+	ListSingboxOutbounds(ctx context.Context) (groups []SingboxOutbound, hasDraft bool, err error)
+	// GetSingboxOutbound returns one group with all its members, in
+	// configuration order, and HasDraft as ListSingboxOutbounds reports
+	// it. An unknown tag is an error; so is a tag that names a single
+	// server, and the error says which it is.
+	GetSingboxOutbound(ctx context.Context, tag string) (SingboxOutboundDetail, error)
 	SingboxStaging(ctx context.Context) (SingboxStaging, error)
 	// SetSingboxRuleOutbound retargets one rule. The write lands in the
 	// draft; nothing changes for traffic until ApplySingboxStaging.
 	SetSingboxRuleOutbound(ctx context.Context, index int, outbound string) error
 	ApplySingboxStaging(ctx context.Context) error
 	DiscardSingboxStaging(ctx context.Context) error
-	// CheckSingboxDelay probes one proxy. An unknown tag is an error;
-	// a proxy that stays silent is a result with Reachable false.
+	// CheckSingboxDelay probes one outbound: a proxy, a subscription
+	// server or a group. The tag is classified from configuration, so an
+	// unknown tag is an error even while the engine is down, and a tag
+	// that exists but is not an outbound (an excluded server) is an error
+	// that says why. An engine that does not answer, or answers without
+	// the tag, is an error too: nothing is probed, because the prober
+	// answers 0 then, the same 0 as for a silent outbound. An outbound
+	// that stays silent is a result with Reachable false. A group is
+	// probed through its active member.
 	CheckSingboxDelay(ctx context.Context, tag string) (SingboxDelay, error)
+	// ListSingboxSubscriptions returns every subscription, sorted by label
+	// and then id, so that an offset means the same thing on every call.
+	// The tool pages the result; implementations must not truncate it.
+	ListSingboxSubscriptions(ctx context.Context) ([]SingboxSubscription, error)
+
+	// SetSingboxSubscriptionEnabled switches a subscription and returns it
+	// as it stands afterwards. warnings names the aggregate groups whose
+	// members changed; a call that changes nothing returns none. An
+	// unknown id is an error and nothing is written.
+	SetSingboxSubscriptionEnabled(ctx context.Context, id string, enabled bool) (updated SingboxSubscription, warnings []string, err error)
+
+	// SetSingboxSubscriptionMode switches a subscription's group between
+	// selector and urltest and returns the subscription as it stands
+	// afterwards. mode arrives trimmed and lowercased; anything but selector
+	// or urltest is an error. A call that changes nothing writes nothing. An
+	// unknown id is an error and nothing is written.
+	SetSingboxSubscriptionMode(ctx context.Context, id, mode string) (SingboxSubscription, error)
+
+	// SetSingboxSubscriptionActiveMember makes memberTag the server a
+	// selector-mode subscription routes through and returns the
+	// subscription as read before the switch: SingboxSubscription carries no
+	// active server, so the switch changes none of its fields. A urltest
+	// subscription, an unknown id and a tag that is not a server of the
+	// subscription's group are errors, and nothing is written.
+	SetSingboxSubscriptionActiveMember(ctx context.Context, id, memberTag string) (SingboxSubscription, error)
 
 	OpenAPISpec() []byte
 }

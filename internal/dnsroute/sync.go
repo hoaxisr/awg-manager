@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/hoaxisr/awg-manager/internal/ipfamily"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -267,6 +268,28 @@ func (s *ServiceImpl) confirmTargets(ctx context.Context, data *StoreData) (map[
 	return confirmed, absent, nil
 }
 
+// routedEntries — записи и исключения списка, которые уходят на роутер.
+// Domains и Subnets в object-group fqdn одинаковы (один слот include), поэтому
+// идут одним списком. Единственный источник для buildTargetState и
+// tunnelRouteRefs: число групп-кусков у них обязано совпадать, иначе снятие
+// строк туннеля без сверки бьёт мимо (E в журнале ndm) или оставляет хвост.
+//
+// SkipIPv6 drops IPv6 entries here, at render time, so the stored list keeps
+// them. An IPv6 exclude has nothing left to carve from and would still take a
+// slot in every chunk, so it goes too. A list left with no entries gets no
+// groups: chunkWithReserve returns none for an empty input.
+func routedEntries(list *DomainList) (items, excludes []string) {
+	items = make([]string, 0, len(list.Domains)+len(list.Subnets))
+	items = append(items, list.Domains...)
+	items = append(items, list.Subnets...)
+	excludes = list.Excludes
+	if list.SkipsIPv6() {
+		items = ipfamily.WithoutIPv6(items)
+		excludes = ipfamily.WithoutIPv6(excludes)
+	}
+	return items, excludes
+}
+
 // buildTargetState converts stored domain lists into the desired router state.
 // absentIfaces — интерфейсы целей, которых нет в NDMS (F548): такая цель
 // пропускается так же, как упавший туннель.
@@ -291,14 +314,12 @@ func buildTargetState(data *StoreData, failedTunnels, absentIfaces map[string]st
 		// object-group fqdn — both consume one `include` slot and count
 		// against the same MaxDomainsPerGroup limit. Merge them before
 		// chunking so a huge CIDR list still gets split across groups.
-		items := make([]string, 0, len(list.Domains)+len(list.Subnets))
-		items = append(items, list.Domains...)
-		items = append(items, list.Subnets...)
+		items, excludes := routedEntries(&list)
 
 		// NDMS applies an exclude only inside its own object-group, so the
 		// full exclude set goes into every chunk. Excludes also count
 		// against the group's capacity — shrink each chunk's budget.
-		chunks := chunkWithReserve(items, MaxDomainsPerGroup, len(list.Excludes))
+		chunks := chunkWithReserve(items, MaxDomainsPerGroup, len(excludes))
 
 		for i, chunk := range chunks {
 			groupName := buildGroupName(list.ID, list.Name, i+1)
@@ -306,7 +327,7 @@ func buildTargetState(data *StoreData, failedTunnels, absentIfaces map[string]st
 			g := targetGroup{
 				name:     groupName,
 				includes: chunk,
-				excludes: list.Excludes,
+				excludes: excludes,
 			}
 
 			ts.groups = append(ts.groups, g)

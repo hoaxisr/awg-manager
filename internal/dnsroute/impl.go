@@ -199,8 +199,9 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 	list.Enabled = true
 	list.CreatedAt = now
 	list.UpdatedAt = now
+	list.normalizeSkipIPv6()
 	list.Domains, list.Subnets = splitDomainsAndSubnets(deduplicateDomains(list.ManualDomains))
-	if err := validateSubnetsLimit(len(list.Subnets)); err != nil {
+	if err := validateSubnetsLimit(len(list.routedSubnets(list.Subnets))); err != nil {
 		return nil, err
 	}
 
@@ -226,7 +227,7 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 	// Validate subscriptions by fetching them. If any URL fails (wrong
 	// Content-Type, unreachable, etc.), reject the entire Create.
 	if len(list.Subscriptions) > 0 {
-		if err := s.validateSubscriptions(ctx, list.Subscriptions); err != nil {
+		if err := s.validateSubscriptions(ctx, &list, list.Subscriptions); err != nil {
 			// Remove the just-appended list from data.
 			data.Lists = data.Lists[:len(data.Lists)-1]
 			_ = s.store.Save(data)
@@ -372,6 +373,10 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	if list.HRPolicyName == "" {
 		list.HRPolicyName = existing.HRPolicyName
 	}
+	if list.SkipIPv6 == nil {
+		list.SkipIPv6 = existing.SkipIPv6
+	}
+	list.normalizeSkipIPv6()
 	if list.ManualText == nil {
 		list.ManualText = existing.ManualText
 	} else {
@@ -393,7 +398,7 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	// Validate any new subscription URLs before saving.
 	newSubs := findNewSubscriptions(existing.Subscriptions, list.Subscriptions)
 	if len(newSubs) > 0 {
-		if err := s.validateSubscriptions(ctx, newSubs); err != nil {
+		if err := s.validateSubscriptions(ctx, &list, newSubs); err != nil {
 			return nil, err
 		}
 	}
@@ -404,7 +409,7 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	manual := deduplicateDomains(list.ManualDomains)
 	subDomains := subscriptionDomains(existing.Domains, existing.ManualDomains)
 	list.Domains, list.Subnets = splitDomainsAndSubnets(deduplicateDomains(append(manual, subDomains...)))
-	if err := validateSubnetsLimit(len(list.Subnets)); err != nil {
+	if err := validateSubnetsLimit(len(list.routedSubnets(list.Subnets))); err != nil {
 		return nil, err
 	}
 
@@ -694,20 +699,36 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 	return nil
 }
 
+// redactedError prints a message with addresses reduced to scheme and
+// host while keeping the cause reachable for errors.Is and errors.As.
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e redactedError) Error() string { return e.msg }
+func (e redactedError) Unwrap() error { return e.err }
+
 // validateSubscriptions fetches each subscription URL and verifies it returns
 // text/plain with at least one parseable domain. Returns the first error encountered.
-func (s *ServiceImpl) validateSubscriptions(ctx context.Context, subs []Subscription) error {
+func (s *ServiceImpl) validateSubscriptions(ctx context.Context, list *DomainList, subs []Subscription) error {
 	seenSubnets := make(map[string]struct{})
 	for _, sub := range subs {
 		domains, err := s.fetchSubscription(ctx, sub.URL)
+		// The error goes back to REST and to the MCP tools that create a
+		// list: the address and the fetch error keep scheme and host only,
+		// since both can carry a token (a redirect hop's too).
 		if err != nil {
-			return fmt.Errorf("подписка %q: %w", sub.URL, err)
+			return redactedError{
+				msg: fmt.Sprintf("подписка %s: %s", logging.RedactURLs(sub.URL), logging.RedactURLs(err.Error())),
+				err: err,
+			}
 		}
 		if len(domains) == 0 {
-			return fmt.Errorf("подписка %q: список пуст — URL не содержит доменов", sub.URL)
+			return fmt.Errorf("подписка %s: список пуст — URL не содержит доменов", logging.RedactURLs(sub.URL))
 		}
 		_, subnets := splitDomainsAndSubnets(domains)
-		for _, subnet := range subnets {
+		for _, subnet := range list.routedSubnets(subnets) {
 			seenSubnets[subnet] = struct{}{}
 		}
 		if err := validateSubnetsLimit(len(seenSubnets)); err != nil {
@@ -751,8 +772,14 @@ func (s *ServiceImpl) refreshSubscriptions(ctx context.Context, id string) error
 		domains, err := s.fetchSubscription(ctx, sub.URL)
 		sub.LastFetched = now
 		if err != nil {
-			sub.LastError = err.Error()
+			// net/http quotes the address whole, a redirect hop's too, and
+			// a list's address can carry a token in its path or query. The
+			// stored text is what REST, the web interface and MCP read, so
+			// it keeps only scheme and host.
+			reason := logging.RedactURLs(err.Error())
+			sub.LastError = reason
 			sub.LastCount = 0
+			// The journal line is scrubbed by logging.Service.AppLog.
 			s.appLog.Warn("subscription-fetch", id, fmt.Sprintf("url=%s err=%s", sub.URL, err.Error()))
 			// Keep going — one failed subscription shouldn't block others
 			continue
@@ -765,7 +792,7 @@ func (s *ServiceImpl) refreshSubscriptions(ctx context.Context, id string) error
 	// Merge manual + subscription domains, then classify CIDRs → Subnets.
 	merged := mergeDomains(list.ManualDomains, allSubDomains)
 	domains, subnets := splitDomainsAndSubnets(merged)
-	if err := validateSubnetsLimit(len(subnets)); err != nil {
+	if err := validateSubnetsLimit(len(list.routedSubnets(subnets))); err != nil {
 		return err
 	}
 	list.Domains, list.Subnets = domains, subnets
@@ -906,8 +933,8 @@ func tunnelRouteRefs(list *DomainList, iface string) []command.DNSRouteRef {
 	if !isNDMS(list.Backend) || len(list.Domains)+len(list.Subnets) == 0 {
 		return nil
 	}
-	n := len(chunkWithReserve(append(append([]string{}, list.Domains...), list.Subnets...),
-		MaxDomainsPerGroup, len(list.Excludes)))
+	items, excludes := routedEntries(list)
+	n := len(chunkWithReserve(items, MaxDomainsPerGroup, len(excludes)))
 	refs := make([]command.DNSRouteRef, 0, n)
 	for i := 1; i <= n; i++ {
 		refs = append(refs, command.DNSRouteRef{Group: buildGroupName(list.ID, list.Name, i), Interface: iface})

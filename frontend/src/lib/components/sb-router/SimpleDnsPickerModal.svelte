@@ -4,6 +4,7 @@
   правит только один сервер и только поля транспорта.
 -->
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Modal, SegmentedControl, Input, Button } from '$lib/components/ui';
   import type { SegmentedOption } from '$lib/components/ui/segmentedControl';
   import { api } from '$lib/api/client';
@@ -72,25 +73,25 @@
   }
 </script>
 
-<Modal open title="Выходной DNS" size="sm" {onclose} closeOnBackdrop={false}>
+<Modal open title={m.sb_router_dns_picker_title()} size="sm" {onclose} closeOnBackdrop={false}>
   {#if allowProtocol}
     <div class="proto">
       <SegmentedControl
         value={effectiveProto}
         options={PROTO_OPTIONS}
-        ariaLabel="Протокол DNS"
+        ariaLabel={m.sb_router_dns_picker_proto_label()}
         disabled={!preset}
         fullWidth
         onchange={(v) => (proto = v)}
       />
       {#if !preset}
-        <p class="hint">Свой адрес доступен только по обычному DNS</p>
+        <p class="hint">{m.sb_router_dns_picker_custom_udp_only()}</p>
       {/if}
       {#if tlsLoss}
-        <p class="warn">Настройки TLS будут удалены: обычный DNS их не поддерживает</p>
+        <p class="warn">{m.sb_router_dns_picker_tls_loss()}</p>
       {/if}
       {#if pinLoss}
-        <p class="warn">Пин сертификата будет сброшен: он привязан к прежнему адресу</p>
+        <p class="warn">{m.sb_router_dns_picker_pin_loss()}</p>
       {/if}
     </div>
   {/if}
@@ -114,7 +115,7 @@
         checked={choice === CUSTOM}
         onchange={() => (choice = CUSTOM)}
       />
-      <label class="label" for="dns-custom">Свой адрес</label>
+      <label class="label" for="dns-custom">{m.sb_router_dns_picker_custom()}</label>
       <span class="custom">
         <Input
           bind:value={customAddr}
@@ -131,8 +132,8 @@
   {/if}
 
   {#snippet actions()}
-    <Button variant="ghost" onclick={onclose}>Отмена</Button>
-    <Button variant="primary" disabled={!canSave} onclick={save}>Сохранить</Button>
+    <Button variant="ghost" onclick={onclose}>{m.common_cancel()}</Button>
+    <Button variant="primary" disabled={!canSave} onclick={save}>{m.common_save()}</Button>
   {/snippet}
 </Modal>
 

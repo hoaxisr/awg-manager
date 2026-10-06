@@ -711,6 +711,14 @@ func (r *Runner) testEndpointRouteCheck(t TunnelInfo) TestResult {
 		return res
 	}
 
+	// До немаршрутизируемого endpoint (loopback релея и т.п.) оператор
+	// хост-маршрут намеренно не ставит (operator_os5_routing.go, F587).
+	if ip := extractEndpointIP(t.Connection.RawOutput); netutil.SkipHostRoute(ip) {
+		res.Status = StatusSkip
+		res.Detail = "Endpoint " + ip + " не маршрутизируется — host route не нужен"
+		return res
+	}
+
 	if !osdetect.Is5() {
 		res.Status = StatusSkip
 		res.Detail = "OS4: маршрутизация не управляется оператором"

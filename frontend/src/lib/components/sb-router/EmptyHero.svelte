@@ -3,6 +3,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Shield } from 'lucide-svelte';
 </script>
 
@@ -10,13 +11,11 @@
   <div class="text">
     <div class="status-row">
       <span class="status-dot"></span>
-      <span class="status-label">Не настроен</span>
+      <span class="status-label">{m.sb_router_empty_hero_status()}</span>
     </div>
-    <h2 class="heading">Направляйте трафик через VPN-туннели по вашим правилам</h2>
+    <h2 class="heading">{m.sb_router_empty_hero_heading()}</h2>
     <p class="body">
-      sing-box — это маршрутизатор внутри роутера. Решает для каждого запроса:
-      пустить напрямую, через туннель или заблокировать.
-      Настройка занимает 3 шага.
+      {m.sb_router_empty_hero_body()}
     </p>
   </div>
   <div class="icon-wrap">

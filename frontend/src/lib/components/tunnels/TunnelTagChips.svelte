@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
+
 	interface Props {
 		tags: string[];
 		onAdd: (raw: string) => void;
@@ -50,7 +52,7 @@
 			<button
 				type="button"
 				class="chip-label"
-				title={onSelect ? `Фильтр по тегу «${tag}»` : tag}
+				title={onSelect ? m.tunnels_tag_filter_by({ tag }) : tag}
 				onclick={(event) => {
 					event.stopPropagation();
 					onSelect?.(tag);
@@ -62,7 +64,7 @@
 				<button
 					type="button"
 					class="chip-remove"
-					aria-label="Удалить тег «{tag}»"
+					aria-label={m.tunnels_tag_remove({ tag })}
 					onclick={(event) => {
 						event.stopPropagation();
 						onRemove(tag);
@@ -81,9 +83,9 @@
 				bind:value={draft}
 				class="chip-input"
 				type="text"
-				placeholder="тег"
+				placeholder={m.tunnels_tag_placeholder()}
 				maxlength="24"
-				aria-label="Новый тег"
+				aria-label={m.tunnels_tag_new()}
 				onclick={(event) => event.stopPropagation()}
 				onkeydown={handleInputKeydown}
 				onblur={handleInputBlur}
@@ -92,7 +94,7 @@
 			<button
 				type="button"
 				class="chip-add"
-				aria-label="Добавить тег"
+				aria-label={m.tunnels_tag_add()}
 				onclick={(event) => {
 					event.stopPropagation();
 					adding = true;

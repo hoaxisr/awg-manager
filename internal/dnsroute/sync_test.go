@@ -3,6 +3,7 @@ package dnsroute
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -846,5 +847,61 @@ func TestBuildTargetState_SameTunnelInMultipleLists(t *testing.T) {
 	}
 	if !ifaces["Wireguard2"] {
 		t.Error("expected Wireguard2 in target state")
+	}
+}
+
+// TestBuildTargetStateSkipIPv6 — #1011: каждая IPv6-запись занимает слот
+// include в object-group наравне с доменом, а на роутере без IPv6 только
+// съедает лимит. С флагом они не уходят на роутер, но остаются в списке:
+// выключенный флаг возвращает их без повторной загрузки подписок.
+func TestBuildTargetStateSkipIPv6(t *testing.T) {
+	skip := true
+	list := func(flag *bool) DomainList {
+		return DomainList{
+			ID: "list_1", Name: "foo", Enabled: true,
+			Domains:  []string{"a.com", "2001:db8::1"},
+			Subnets:  []string{"10.0.0.0/8", "2001:db8::/32"},
+			Excludes: []string{"b.a.com", "2001:db8::2"},
+			Routes:   []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}},
+			SkipIPv6: flag,
+		}
+	}
+
+	data := &StoreData{Lists: []DomainList{list(&skip)}}
+	ts := buildTargetState(data, nil, nil)
+	if len(ts.groups) != 1 {
+		t.Fatalf("groups = %d, want 1", len(ts.groups))
+	}
+	g := ts.groups[0]
+	if strings.Join(g.includes, ",") != "a.com,10.0.0.0/8" {
+		t.Fatalf("includes = %v, want the IPv6 address and network dropped", g.includes)
+	}
+	if strings.Join(g.excludes, ",") != "b.a.com" {
+		t.Fatalf("excludes = %v, want the IPv6 exclude dropped", g.excludes)
+	}
+	if len(data.Lists[0].Domains) != 2 || len(data.Lists[0].Subnets) != 2 || len(data.Lists[0].Excludes) != 2 {
+		t.Fatalf("the stored list must keep its IPv6 entries: %+v", data.Lists[0])
+	}
+
+	off := false
+	for name, flag := range map[string]*bool{"not set": nil, "off": &off} {
+		ts := buildTargetState(&StoreData{Lists: []DomainList{list(flag)}}, nil, nil)
+		if len(ts.groups) != 1 || len(ts.groups[0].includes) != 4 || len(ts.groups[0].excludes) != 2 {
+			t.Fatalf("%s: every entry must reach the router: %+v", name, ts.groups)
+		}
+	}
+
+	// A list of nothing but IPv6 has nothing left to route.
+	only := DomainList{ID: "list_2", Enabled: true, Domains: []string{"2001:db8::1"}, Subnets: []string{"2001:db8::/32"},
+		Routes: []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}}, SkipIPv6: &skip}
+	ts = buildTargetState(&StoreData{Lists: []DomainList{only}}, nil, nil)
+	if len(ts.groups) != 0 || len(ts.routes) != 0 {
+		t.Fatalf("an all-IPv6 list must produce no group and no route: %+v", ts)
+	}
+	// Снос туннеля снимает строки по хранилищу, без сверки (tunnelRouteRefs):
+	// число групп обязано совпасть со сверкой, иначе `no` по строке, которой
+	// нет, — E в журнале ndm.
+	if refs := tunnelRouteRefs(&only, "OpkgTun0"); len(refs) != 0 {
+		t.Fatalf("an all-IPv6 list has no router lines to remove: %+v", refs)
 	}
 }

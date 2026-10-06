@@ -4,6 +4,7 @@
 	import { TunnelDelaySparkBars } from '$lib/components/tunnels';
 	import { Settings, Power, PowerOff, Info, Check, X, RotateCcw } from 'lucide-svelte';
 	import { formatTime } from '$lib/utils/format';
+	import { m } from '$lib/i18n';
 	import type { CardStats } from '$lib/utils/pingStats';
 
 	interface Props {
@@ -26,14 +27,28 @@
 	let { name, backend, awgVersion, statusKind, hasPingcheck, isWatchdog, configLine, stats, latencyNote, onConfigure, onCheckNow, onDisable, onEnable }: Props =
 		$props();
 
-	const STATUS: Record<Props['statusKind'], { dot: StatusDotVariant; pulse: boolean; label: string; badge: BadgeVariant }> = {
-		alive: { dot: 'success', pulse: false, label: 'активен', badge: 'success' },
-		recovering: { dot: 'warning', pulse: true, label: 'восстановление', badge: 'warning' },
-		disabled: { dot: 'muted', pulse: false, label: 'выключен', badge: 'muted' },
-		stopped: { dot: 'muted', pulse: false, label: 'остановлен', badge: 'muted' },
-		warming: { dot: 'muted', pulse: true, label: 'ждём первого интервала', badge: 'muted' },
+	const STATUS: Record<Props['statusKind'], { dot: StatusDotVariant; pulse: boolean; badge: BadgeVariant }> = {
+		alive: { dot: 'success', pulse: false, badge: 'success' },
+		recovering: { dot: 'warning', pulse: true, badge: 'warning' },
+		disabled: { dot: 'muted', pulse: false, badge: 'muted' },
+		stopped: { dot: 'muted', pulse: false, badge: 'muted' },
+		warming: { dot: 'muted', pulse: true, badge: 'muted' },
 	};
 	const st = $derived(STATUS[statusKind]);
+	const statusLabel = $derived.by(() => {
+		switch (statusKind) {
+			case 'alive':
+				return m.pingcheck_status_alive();
+			case 'recovering':
+				return m.pingcheck_status_recovering();
+			case 'disabled':
+				return m.pingcheck_status_disabled();
+			case 'stopped':
+				return m.pingcheck_status_stopped();
+			case 'warming':
+				return m.pingcheck_status_warming();
+		}
+	});
 	const fmt = (v: number | null) => (v === null ? '—' : `${v}ms`);
 	// latency <= 0 у успешной проверки означает «не измерено» (issue #629):
 	// печатать «-1ms» нельзя, причина показана отдельной строкой ниже.
@@ -51,7 +66,7 @@
 			<VersionBadge kind="backend" value={backend} />
 			{#if awgVersion}<VersionBadge kind="awg" value={awgVersion} />{/if}
 			{#if isWatchdog}<Badge variant="accent" mono>watchdog</Badge>{/if}
-			<span class="wd-status"><Badge variant={st.badge}>{st.label}</Badge></span>
+			<span class="wd-status"><Badge variant={st.badge}>{statusLabel}</Badge></span>
 		</div>
 	</div>
 
@@ -62,8 +77,8 @@
 		<!-- Stats grid -->
 		<div class="wd-stats">
 			<div class="wd-stat"><span class="v">{fmt(stats.avgMs)}</span><span class="k">avg</span></div>
-			<div class="wd-stat"><span class="v">{stats.failsLabel}</span><span class="k">сбои</span></div>
-			<div class="wd-stat"><span class="v"><RotateCcw size={13} />{stats.restarts}</span><span class="k">рестарты</span></div>
+			<div class="wd-stat"><span class="v">{stats.failsLabel}</span><span class="k">{m.pingcheck_stat_fails()}</span></div>
+			<div class="wd-stat"><span class="v"><RotateCcw size={13} />{stats.restarts}</span><span class="k">{m.pingcheck_stat_restarts()}</span></div>
 			<div class="wd-stat"><span class="v" class:loss={stats.lossPct > 0}>{stats.lossPct}%</span><span class="k">loss</span></div>
 		</div>
 
@@ -76,13 +91,13 @@
 		<!-- Last checks -->
 		<div class="wd-checks">
 			<div class="wd-checks-head">
-				<span class="wd-checks-title">Последние проверки</span>
-				<span class="wd-minmax" title="последние {stats.history.length} проверок">
+				<span class="wd-checks-title">{m.pingcheck_last_checks()}</span>
+				<span class="wd-minmax" title={m.pingcheck_last_checks_title({ count: stats.history.length })}>
 					min {fmt(stats.minMs)} · max {fmt(stats.maxMs)}
 				</span>
 			</div>
 			<div class="wd-bars">
-				<TunnelDelaySparkBars history={stats.history} state="ok" maxBars={12} colorPerBar title="Проверить сейчас" onclick={onCheckNow} />
+				<TunnelDelaySparkBars history={stats.history} state="ok" maxBars={12} colorPerBar title={m.pingcheck_check_now()} onclick={onCheckNow} />
 			</div>
 			<div class="wd-log">
 				{#each stats.recent as e (e.timestamp + e.tunnelId)}
@@ -102,37 +117,37 @@
 		<div class="wd-foot">
 			<Button variant="outline-danger" size="sm" onclick={onDisable}>
 				{#snippet iconBefore()}<PowerOff size={14} />{/snippet}
-				Выключить
+				{m.pingcheck_disable()}
 			</Button>
 			<Button variant="outline-primary" size="sm" onclick={onConfigure}>
 				{#snippet iconBefore()}<Settings size={14} />{/snippet}
-				Настроить
+				{m.sb_router_common_configure()}
 			</Button>
 		</div>
 	{:else if hasPingcheck}
 		<!-- Configured but disabled: re-enable with saved settings -->
 		<div class="wd-note">
-			<span class="wd-note-text"><PowerOff size={14} /> Мониторинг выключен. Настройки сохранены.</span>
+			<span class="wd-note-text"><PowerOff size={14} /> {m.pingcheck_monitoring_off_note()}</span>
 		</div>
 		<div class="wd-foot">
 			<Button variant="outline-primary" size="sm" onclick={onEnable}>
 				{#snippet iconBefore()}<Power size={14} />{/snippet}
-				Включить
+				{m.common_enable()}
 			</Button>
 			<Button variant="outline-primary" size="sm" onclick={onConfigure}>
 				{#snippet iconBefore()}<Settings size={14} />{/snippet}
-				Настроить
+				{m.sb_router_common_configure()}
 			</Button>
 		</div>
 	{:else}
 		<!-- No pingcheck -->
 		<div class="wd-note">
-			<span class="wd-note-text"><Info size={14} /> Pingcheck/watchdog не настроен для этого туннеля.</span>
+			<span class="wd-note-text"><Info size={14} /> {m.pingcheck_not_configured_note()}</span>
 		</div>
 		<div class="wd-foot">
 			<Button variant="outline-primary" size="sm" onclick={onConfigure}>
 				{#snippet iconBefore()}<Power size={14} />{/snippet}
-				Включить
+				{m.common_enable()}
 			</Button>
 		</div>
 	{/if}

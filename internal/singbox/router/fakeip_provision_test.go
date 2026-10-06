@@ -35,6 +35,7 @@ func (fakeOpkgTunProvisioner) OpkgTunRecord(context.Context, string) (string, bo
 	return "", false, nil
 }
 func (fakeOpkgTunProvisioner) SetSecurityLevel(context.Context, string, string) error { return nil }
+func (fakeOpkgTunProvisioner) SetDescription(context.Context, string, string) error   { return nil }
 
 type fakeStaticRouteProvider struct{}
 

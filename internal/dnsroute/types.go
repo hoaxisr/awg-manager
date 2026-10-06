@@ -1,5 +1,7 @@
 package dnsroute
 
+import "github.com/hoaxisr/awg-manager/internal/ipfamily"
+
 // MaxDomainsPerGroup is the maximum number of domains in a single NDMS object-group fqdn.
 const MaxDomainsPerGroup = 300
 const MaxSubnetsPerList = 20000
@@ -38,6 +40,34 @@ type DomainList struct {
 	// Only honored when HRRouteMode == "policy" and HRPolicyName is set
 	// (new-policy flow). Ignored otherwise. Not persisted back to clients.
 	HRPolicyInterfaces []string `json:"hrPolicyInterfaces,omitempty"`
+	// SkipIPv6 keeps IPv6 entries (CIDRs and bare addresses) out of the
+	// router: each one takes an include slot in the NDMS object-group like
+	// a domain, and on a router without IPv6 they only eat the limit. The
+	// list itself keeps them, so turning the flag off brings them back on
+	// the next reconcile without a refetch. NDMS lists only. A pointer, so
+	// a partial update that does not send it keeps the stored value.
+	SkipIPv6 *bool `json:"skipIPv6,omitempty"`
+}
+
+// SkipsIPv6 reports whether the list keeps its IPv6 entries off the router.
+func (l *DomainList) SkipsIPv6() bool { return l.SkipIPv6 != nil && *l.SkipIPv6 }
+
+// normalizeSkipIPv6 stores the flag only when it is on: an explicit false
+// becomes nil, so the stored list and the API answer the same "absent".
+func (l *DomainList) normalizeSkipIPv6() {
+	if !l.SkipsIPv6() {
+		l.SkipIPv6 = nil
+	}
+}
+
+// routedSubnets is the part of subnets the router gets, which is what the
+// MaxSubnetsPerList limit counts: an NDMS list that keeps IPv6 off the
+// router is not refused for its IPv6 networks.
+func (l *DomainList) routedSubnets(subnets []string) []string {
+	if !l.SkipsIPv6() || !isNDMS(l.Backend) {
+		return subnets
+	}
+	return ipfamily.WithoutIPv6(subnets)
 }
 
 // Subscription represents a remote domain list URL that is periodically fetched.

@@ -2,6 +2,7 @@
 // +page.svelte): фильтрация по поисковому запросу + сортировка табличных
 // представлений и сводные статистики. Никакой реактивности — страница
 // оборачивает вызовы в $derived, передавая значения сторов параметрами.
+import { m } from '$lib/i18n';
 import type {
 	TunnelListItem,
 	SystemTunnel,
@@ -65,9 +66,8 @@ export function tunnelStatusBucket(status: string): 'running' | 'broken' | 'star
 // Туннель включён, а запись NDMS опущена: так её оставляет откат
 // неудавшегося старта по существующей записи (подмена устройства только под
 // down-записью). «Выключен» здесь неправда — тумблер пользователя включён,
-// старт повторят бут, подъём WAN или кнопка.
-export const FAILED_START_LABEL = 'Не запустился — перезапустите туннель';
-
+// старт повторят бут, подъём WAN или кнопка; подпись —
+// m.tunnels_state_failed_start().
 export function isEnabledButDown(status: string, enabled: boolean | undefined): boolean {
 	return status === 'disabled' && enabled === true;
 }
@@ -90,7 +90,7 @@ export function managedRouteMeta(tunnel: TunnelListItem): string {
 	if (label && iface) return label === iface ? label : `${label} (${iface})`;
 	if (label) return label;
 	if (iface) return iface;
-	return 'Маршрут не установлен';
+	return m.tunnels_route_not_set();
 }
 
 export function systemStatusVariant(tunnel: SystemTunnel): 'success' | 'muted' {
@@ -98,8 +98,8 @@ export function systemStatusVariant(tunnel: SystemTunnel): 'success' | 'muted' {
 }
 
 export function systemStatusLabel(tunnel: SystemTunnel): string {
-	if (tunnel.status !== 'up') return 'Выключен';
-	return tunnel.peer?.online ? 'Активен' : 'Без handshake';
+	if (tunnel.status !== 'up') return m.tunnels_status_off();
+	return tunnel.peer?.online ? m.tunnels_status_active() : m.tunnels_status_no_handshake();
 }
 
 export function externalStatusVariant(tunnel: ExternalTunnel): 'success' | 'muted' {
@@ -107,7 +107,7 @@ export function externalStatusVariant(tunnel: ExternalTunnel): 'success' | 'mute
 }
 
 export function externalStatusLabel(tunnel: ExternalTunnel): string {
-	return tunnel.lastHandshake ? 'Подключён' : 'Неактивен';
+	return tunnel.lastHandshake ? m.tunnels_external_connected() : m.tunnels_status_inactive();
 }
 
 export function matchQuery(values: Array<string | null | undefined>, query: string): boolean {

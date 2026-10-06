@@ -3,7 +3,7 @@
     import ServiceIcon from './ServiceIcon.svelte';
     import { presetCatalog, presetCatalogLoaded, loadPresetCatalog } from '$lib/stores/presets';
     import { buildRoutingTunnelDropdownOptions } from '$lib/utils/routingTunnelOptions';
-    import { pluralize, SERVICE_WORDS } from '$lib/utils/pluralize';
+    import { m } from '$lib/i18n';
     import {
         addedCompositesByMember,
         applyPresetToggle,
@@ -64,7 +64,7 @@
 
     let {
         open = $bindable(false),
-        title = 'Каталог сервисов',
+        title,
         presetFilter = dnsRouteCatalogPresetFilter,
         markExisting = false,
         existingNames = [],
@@ -91,14 +91,14 @@
     let query = $state('');
     let categoryFilter = $state<string>('all');
 
-    const CATEGORY_LABELS: Record<string, string> = {
-        social: 'Соцсети',
-        media: 'Медиа',
-        ai: 'AI',
-        developer: 'Разработка',
-        cloud: 'Облако',
-        gaming: 'Игры',
-        block: 'Блок',
+    const CATEGORY_LABELS: Record<string, () => string> = {
+        social: m.dns_routes_catalog_cat_social,
+        media: m.dns_routes_catalog_cat_media,
+        ai: m.dns_routes_catalog_cat_ai,
+        developer: m.dns_routes_catalog_cat_developer,
+        cloud: m.dns_routes_catalog_cat_cloud,
+        gaming: m.dns_routes_catalog_cat_gaming,
+        block: m.dns_routes_catalog_cat_block,
     };
     const CATEGORY_ORDER = ['social', 'media', 'ai', 'developer', 'cloud', 'gaming', 'block'];
 
@@ -181,9 +181,9 @@
 
     const primaryLabel = $derived.by(() => {
         if (confirmLabel) return confirmLabel;
-        if (showTunnelFooter) return `Создать (${selected.size})`;
-        if (!multiple) return 'Выбрать';
-        return `Выбрать (${selected.size})`;
+        if (showTunnelFooter) return m.dns_routes_catalog_create({ count: selected.size });
+        if (!multiple) return m.common_select();
+        return m.dns_routes_catalog_select_count({ count: selected.size });
     });
 
     $effect(() => {
@@ -202,7 +202,7 @@
     });
 
     function categoryLabel(cat: string): string {
-        return CATEGORY_LABELS[cat] ?? cat;
+        return CATEGORY_LABELS[cat]?.() ?? cat;
     }
 
     function isAdded(preset: CatalogPreset): boolean {
@@ -237,7 +237,7 @@
     );
 </script>
 
-<Modal {open} {title} size="wide" bodyLayout="fill" {onclose}>
+<Modal {open} title={title ?? m.dns_routes_catalog_title()} size="wide" bodyLayout="fill" {onclose}>
     <div class="catalog-root">
         {#if $presetCatalogLoaded && catalogPresets.length > 0}
             <div class="search-row">
@@ -248,7 +248,7 @@
                         placeholder="netflix, telegram, ai..."
                         bind:value={query}
                     />
-                    <span class="search-count">{pluralize(filteredPresets.length, SERVICE_WORDS)}</span>
+                    <span class="search-count">{m.dns_routes_catalog_services_count({ count: filteredPresets.length })}</span>
                 </div>
                 <div class="chips-slot" class:has-chips={showCategoryChips}>
                     {#if showCategoryChips}
@@ -260,7 +260,7 @@
                                 aria-pressed={categoryFilter === 'all'}
                                 onclick={() => (categoryFilter = 'all')}
                             >
-                                <span class="chip-label">Все</span>
+                                <span class="chip-label">{m.routing_singbox_all()}</span>
                                 <span class="chip-count">{queryFiltered.length}</span>
                             </button>
                             {#each catalogCategories as cat (cat)}
@@ -283,11 +283,11 @@
 
         <div class="catalog-scroll">
             {#if !$presetCatalogLoaded}
-                <p class="catalog-loading">Загрузка каталога…</p>
+                <p class="catalog-loading">{m.dns_routes_catalog_loading()}</p>
             {:else if catalogPresets.length === 0}
-                <p class="catalog-loading">Каталог пуст</p>
+                <p class="catalog-loading">{m.dns_routes_catalog_empty()}</p>
             {:else if filteredPresets.length === 0}
-                <p class="catalog-loading">По запросу ничего не нашлось.</p>
+                <p class="catalog-loading">{m.dns_routes_catalog_no_results()}</p>
             {:else}
                 <div class="preset-grid">
                     {#each filteredPresets as preset (preset.id)}
@@ -320,7 +320,7 @@
                             class:added
                             class:covered={!!coveredBy}
                             title={coveredBy
-                                ? `Уже включено в «${coveredBy.name}»`
+                                ? m.dns_routes_catalog_already_included({ name: coveredBy.name })
                                 : [cardNotice, stateTooltip].filter(Boolean).join('\n\n') ||
                                   undefined}
                             onclick={() => {
@@ -334,28 +334,28 @@
                                 <span class="preset-badge" title={addedBadge.tooltip}
                                     >{addedBadge.text}</span>
                             {:else if coveredBy}
-                                <span class="preset-badge">в {coveredBy.name}</span>
+                                <span class="preset-badge">{m.dns_routes_catalog_in_name({ name: coveredBy.name })}</span>
                             {:else if reuseBadge}
                                 <span class="preset-badge preset-badge-help" title={reuseBadge.tooltip}
                                     >{reuseBadge.text}</span>
                             {:else if memberTitle && memberComposite}
                                 <span class="preset-badge preset-badge-help" title={memberTitle}
-                                    >в {memberComposite.name}</span>
+                                    >{m.dns_routes_catalog_in_name({ name: memberComposite.name })}</span>
                             {/if}
                             <span class="corner-left">
                                 {#if largeDnsWarn}
                                     <span
                                         class="preset-notice-mark preset-notice-mark-danger"
-                                        aria-label="большой DNS-список"
+                                        aria-label={m.dns_routes_catalog_large_dns_aria()}
                                     >⚠</span>
                                 {:else if preset.notice}
-                                    <span class="preset-notice-mark" aria-label="примечание">⚠</span>
+                                    <span class="preset-notice-mark" aria-label={m.dns_routes_catalog_note_aria()}>⚠</span>
                                 {/if}
                                 {#if memberTitle}
                                     <span
                                         class="preset-member-mark"
                                         role="img"
-                                        aria-label="уже входит в добавленный композитный список"
+                                        aria-label={m.dns_routes_catalog_member_of_composite_aria()}
                                         title={memberTitle}
                                     >
                                         <Layers size={12} aria-hidden="true" />
@@ -390,7 +390,7 @@
                 {#if showTunnelFooter}
                     <div class="tunnel-row">
                         {#if showBackendSelector}
-                            <span class="tunnel-label">Движок</span>
+                            <span class="tunnel-label">{m.dns_routes_catalog_engine()}</span>
                             <div class="tunnel-control tunnel-control-engine">
                                 <Dropdown
                                     bind:value={backend}
@@ -403,7 +403,7 @@
                                 />
                             </div>
                         {/if}
-                        <span class="tunnel-label">Туннель</span>
+                        <span class="tunnel-label">{m.routing_ip_tunnel()}</span>
                         <div class="tunnel-control tunnel-control-main">
                             <Dropdown
                                 bind:value={defaultTunnelId}
@@ -414,10 +414,10 @@
                         </div>
                     </div>
                     <DownloadRouteNote
-                        text="Если сервис использует URL-лист, он будет получен через"
+                        text={m.dns_routes_catalog_url_list_note()}
                     />
                     {#if noTunnels}
-                        <p class="no-tunnels">Создайте хотя бы один туннель</p>
+                        <p class="no-tunnels">{m.dns_routes_catalog_no_tunnels()}</p>
                     {/if}
                 {/if}
             </div>
@@ -425,7 +425,7 @@
     </div>
 
     {#snippet actions()}
-        <Button variant="ghost" onclick={onclose} disabled={submitting}>Отмена</Button>
+        <Button variant="ghost" onclick={onclose} disabled={submitting}>{m.common_cancel()}</Button>
         <Button
             variant="primary"
             onclick={handlePrimary}

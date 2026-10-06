@@ -68,6 +68,9 @@ type Deps struct {
 	Sync         linkres.EndpointSync
 	Occ          linkres.Occupancy
 	Now          func() time.Time
+	Wake         func()
+	Log          func(string)
+	Warn         func(string)
 }
 
 // Role — реализация proxyrt.Role. Ресурсы — долгоживущие: защёлки
@@ -120,6 +123,7 @@ func (r *Role) build(sock, logPath string) {
 		NeedCmds:   []string{"state", "attach-tun", "detach-tun"},
 		SocketPath: sock, LogPath: logPath,
 		Link: d.Link, Runner: d.Runner, Gate: d.Gate, Now: d.Now,
+		Wake: d.Wake, Log: d.Log, Warn: d.Warn,
 	})
 	r.iface = ndmsres.NewIface(roles.RNdmsIface, d.Cmds, d.Query)
 	r.addr = ndmsres.NewAddress(roles.RNdmsAddress, d.Cmds, d.Query)
@@ -143,6 +147,8 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	}
 	enabled := intent == proxyrt.IntentEnabled
 	r.proc.SetDesired(enabled, roles.WdttClientArgs(c), c.Validate())
+	interval := roles.ParseReconnectInterval(c.AutoReconnectInterval)
+	r.proc.SetAutoReconnect(c.AutoReconnect, interval)
 	r.listen.SetDesired(c.Listen)
 	// Желаемое связанных туннелей — РОВНО намерение владельца инстанса, и
 	// одинаково в обоих режимах: связь ставится, пока клиент в режиме wg, а
@@ -219,7 +225,11 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 // единственная точка правки записи — manager.Update (proxyrt.BackoffResetter).
 func (r *Role) ResetStartBackoff() { r.proc.ResetStartBackoff() }
 
+// RequestRestart запрашивает перезапуск процесса роли.
+func (r *Role) RequestRestart(reason string) { r.proc.RequestRestart(reason) }
+
 var _ proxyrt.BackoffResetter = (*Role)(nil)
+var _ proxyrt.RestartRequester = (*Role)(nil)
 
 // addrWant — желаемый адрес из наблюдения процесса (снимок Link, обновлён
 // process-ресурсом этого же прогона). Спека §3: адрес выдаёт VPS, он не может

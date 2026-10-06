@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { Check, Download, RefreshCw, Save, SaveAll, X } from 'lucide-svelte';
 	import { Button, BackLink, type ButtonVariant } from '$lib/components/ui';
-	import { FAILED_START_LABEL, isEnabledButDown } from './tunnelPageSelectors';
+	import { m } from '$lib/i18n';
+	import { isEnabledButDown } from './tunnelPageSelectors';
 
 	type ActionStatus = 'loading' | 'success' | 'error';
 
@@ -43,14 +44,14 @@
 			<h1 class="page-title text-lg font-semibold">{tunnelName}</h1>
 			<span class="badge" class:badge-success={tunnelState === 'running'} class:badge-warning={tunnelState === 'starting' || tunnelState === 'broken' || tunnelState === 'needs_start' || tunnelState === 'needs_stop' || tunnelState === 'stopping'} class:badge-muted={tunnelState === 'disabled'} class:badge-error={tunnelState === 'stopped' || tunnelState === 'not_created'}>
 				<span class="w-1.5 h-1.5 rounded-full bg-current"></span>
-				{tunnelState === 'running' ? 'Работает'
-				 : tunnelState === 'starting' ? 'Запускается'
-				 : tunnelState === 'needs_start' ? 'Ожидает запуска'
-				 : tunnelState === 'needs_stop' ? 'Ожидает остановки'
-				 : tunnelState === 'stopping' ? 'Останавливается'
-				 : tunnelState === 'disabled' ? (isEnabledButDown(tunnelState, enabled) ? FAILED_START_LABEL : 'Отключён')
-				 : tunnelState === 'broken' ? 'Сломан'
-				 : 'Остановлен'}
+				{tunnelState === 'running' ? m.tunnels_state_running()
+				 : tunnelState === 'starting' ? m.tunnels_state_starting()
+				 : tunnelState === 'needs_start' ? m.tunnels_state_needs_start()
+				 : tunnelState === 'needs_stop' ? m.tunnels_state_needs_stop()
+				 : tunnelState === 'stopping' ? m.tunnels_state_stopping()
+				 : tunnelState === 'disabled' ? (isEnabledButDown(tunnelState, enabled) ? m.tunnels_state_failed_start() : m.tunnels_state_disabled())
+				 : tunnelState === 'broken' ? m.tunnels_state_broken()
+				 : m.tunnels_state_stopped()}
 			</span>
 		</div>
 	</div>
@@ -62,7 +63,7 @@
 				{#snippet iconBefore()}
 					<RefreshCw size={16} strokeWidth={2} aria-hidden="true" />
 				{/snippet}
-				Заменить
+				{m.tunnels_replace()}
 			</Button>
 		{/if}
 		{#if onExport}
@@ -70,7 +71,7 @@
 				{#snippet iconBefore()}
 					<Download size={16} strokeWidth={2} aria-hidden="true" />
 				{/snippet}
-				Скачать
+				{m.common_download()}
 			</Button>
 		{/if}
 		{#if onSaveOnly}
@@ -78,7 +79,7 @@
 				{#snippet iconBefore()}
 					<Save size={16} strokeWidth={2} aria-hidden="true" />
 				{/snippet}
-				Сохранить
+				{m.common_save()}
 			</Button>
 		{/if}
 		{#snippet successIcon()}
@@ -98,13 +99,13 @@
 			onclick={onSaveAndStart}
 		>
 			{#if actionStatus === 'loading'}
-				Сохранение...
+				{m.common_saving()}
 			{:else if actionStatus === 'success'}
-				Сохранено
+				{m.tunnel_edit_header_saved()}
 			{:else if actionStatus === 'error'}
-				Ошибка
+				{m.common_error()}
 			{:else}
-				{tunnelState === 'running' ? 'Сохранить и перезапустить' : 'Сохранить и запустить'}
+				{tunnelState === 'running' ? m.tunnel_edit_header_save_restart() : m.tunnel_edit_header_save_start()}
 			{/if}
 		</Button>
 	</div>

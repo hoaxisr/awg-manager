@@ -2,10 +2,11 @@
 	// EX-15..24, EX-57, EX-59..EX-65 — «Параметры» клиента. Поля правятся в
 	// конфиге инстанса на месте; сохраняет и откатывает страница (владелец
 	// конфига).
-	import { Button, Dropdown, FormRow, Input, SegmentedControl } from '$lib/components/ui';
+	import { m } from '$lib/i18n';
+	import { Button, Dropdown, FormRow, Input, SegmentedControl, Toggle } from '$lib/components/ui';
 	import { setPeer, switchConnMode } from '$lib/utils/wdttPeerMode';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
-	import { dnsModeOptions, modeOptions, platformOptions, transportOptions } from '../freeturn/options';
+	import { autoReconnectIntervalOptions, dnsModeOptions, modeOptions, platformOptions, transportOptions } from '../freeturn/options';
 	import type { FreeTurnClientConfig, WdttClientConfig } from '$lib/types';
 	import DetailSection from './DetailSection.svelte';
 
@@ -37,26 +38,26 @@
 	];
 
 	// -captcha-mode: auto|rjs|wv, дефолт роутера rjs (internal/wdtt/types.go:24).
-	const captchaOptions = [
-		{ value: 'rjs', label: 'rjs (рекомендуется)' },
+	const captchaOptions = $derived([
+		{ value: 'rjs', label: m.proxy_exit_params_captcha_rjs() },
 		{ value: 'auto', label: 'auto' },
 		{ value: 'wv', label: 'wv' },
-	];
+	]);
 </script>
 
-<DetailSection title="Параметры">
+<DetailSection title={m.proxy_exit_params_title()}>
 	{#if wdttClient}
 		<!-- Одна сетка «метка — контрол» на всю секцию (решение по вёрстке
 		     2026-08-27): метки в колонке, ширина поля по содержимому. -->
 		<div class="form">
 			<FormRow
-				label="Режим подключения"
-				hint="У режимов разные порты сервера: адрес подставится из сохранённого для выбранного режима. Применяется при перезапуске"
+				label={m.proxy_exit_params_conn_mode()}
+				hint={m.proxy_exit_params_conn_mode_hint()}
 			>
 				<SegmentedControl
 					value={wdttClient.connMode === 'raw' ? 'raw' : 'wg'}
 					options={connModeOptions}
-					ariaLabel="Режим подключения"
+					ariaLabel={m.proxy_exit_params_conn_mode()}
 					onchange={(v) => {
 						if (wdttClient) switchConnMode(wdttClient, v);
 					}}
@@ -64,9 +65,9 @@
 			</FormRow>
 
 			<FormRow
-				label="Адрес сервера"
+				label={m.proxy_exit_params_server_address()}
 				for="exit-peer"
-				hint="Смена удалит AWG-туннели этого клиента — перезапустите его"
+				hint={m.proxy_exit_params_peer_hint()}
 			>
 				<Input
 					id="exit-peer"
@@ -76,15 +77,15 @@
 				/>
 			</FormRow>
 
-			<FormRow label="Пароль" hint="Применяется при перезапуске">
+			<FormRow label={m.proxy_common_password()} hint={m.proxy_exit_params_applied_on_restart()}>
 				<SensitiveInput bind:value={wdttClient.password} />
 			</FormRow>
 
-			<FormRow label="VK-хеши" for="exit-vk" hint="Применяется при перезапуске">
+			<FormRow label={m.proxy_exit_params_vk_hashes()} for="exit-vk" hint={m.proxy_exit_params_applied_on_restart()}>
 				<Input id="exit-vk" bind:value={wdttClient.vkHashes} fullWidth />
 			</FormRow>
 
-			<FormRow label="Потоков" for="exit-workers">
+			<FormRow label={m.proxy_exit_params_workers()} for="exit-workers">
 				<div class="w-num">
 					<Input
 						id="exit-workers"
@@ -96,52 +97,106 @@
 				</div>
 			</FormRow>
 
-			<FormRow label="Режим капчи">
+			<FormRow label={m.proxy_exit_params_captcha_mode()}>
 				<div class="w-select">
 					<Dropdown bind:value={wdttClient.captchaMode} options={captchaOptions} fullWidth />
 				</div>
 			</FormRow>
+
+			<FormRow
+				label={m.proxy_exit_params_auto_reconnect()}
+				hint={m.proxy_exit_params_auto_reconnect_hint()}
+			>
+				<Toggle
+					checked={wdttClient.autoReconnect ?? false}
+					onchange={(v) => {
+						if (wdttClient) {
+							wdttClient.autoReconnect = v;
+							if (v && !wdttClient.autoReconnectInterval) {
+								wdttClient.autoReconnectInterval = 'on_failure';
+							}
+						}
+					}}
+				/>
+			</FormRow>
+
+			{#if wdttClient.autoReconnect}
+				<FormRow label={m.proxy_exit_params_auto_reconnect_interval()}>
+					<div class="w-select">
+						<Dropdown
+							bind:value={wdttClient.autoReconnectInterval}
+							options={autoReconnectIntervalOptions()}
+							fullWidth
+						/>
+					</div>
+				</FormRow>
+			{/if}
 		</div>
 	{:else if ftClient}
 		<div class="grid">
-			<Input label="Адрес сервера" bind:value={ftClient.peer} fullWidth />
-			<Input label="Ссылки VK Calls" bind:value={ftClient.links} fullWidth />
+			<Input label={m.proxy_exit_params_server_address()} bind:value={ftClient.peer} fullWidth />
+			<Input label={m.proxy_exit_params_vk_links()} bind:value={ftClient.links} fullWidth />
 			<Input
-				label="Потоков"
+				label={m.proxy_exit_params_workers()}
 				type="number"
 				value={String(ftClient.streams)}
 				onchange={(v) => (ftClient.streams = Number(v) || ftClient.streams)}
 				fullWidth
 			/>
 			<Input
-				label="Потоков на кред"
+				label={m.proxy_exit_params_streams_per_cred()}
 				type="number"
 				value={String(ftClient.streamsPerCred)}
 				onchange={(v) => (ftClient.streamsPerCred = Number(v) || ftClient.streamsPerCred)}
 				fullWidth
 			/>
-			<Dropdown label="Режим" bind:value={ftClient.mode} options={modeOptions} fullWidth />
+			<Dropdown label={m.proxy_exit_source_mode()} bind:value={ftClient.mode} options={modeOptions} fullWidth />
 			<Dropdown
-				label="Транспорт"
+				label={m.proxy_exit_params_transport()}
 				bind:value={ftClient.transport}
 				options={transportOptions}
 				fullWidth
 			/>
 			<Dropdown
-				label="Платформа"
+				label={m.proxy_exit_params_platform()}
 				bind:value={ftClient.platform}
-				options={platformOptions}
+				options={platformOptions()}
 				fullWidth
 			/>
-			<Dropdown label="DNS-режим" bind:value={ftClient.dnsMode} options={dnsModeOptions} fullWidth />
-			<Input label="DNS-серверы" bind:value={ftClient.dnsServers} fullWidth />
+			<Dropdown label={m.proxy_exit_params_dns_mode()} bind:value={ftClient.dnsMode} options={dnsModeOptions()} fullWidth />
+			<Input label={m.proxy_exit_params_dns_servers()} bind:value={ftClient.dnsServers} fullWidth />
+			<div class="ft-reconnect-block">
+				<Toggle
+					label={m.proxy_exit_params_auto_reconnect()}
+					hint={m.proxy_exit_params_auto_reconnect_hint()}
+					checked={ftClient.autoReconnect ?? false}
+					onchange={(v) => {
+						if (ftClient) {
+							ftClient.autoReconnect = v;
+							if (v && !ftClient.autoReconnectInterval) {
+								ftClient.autoReconnectInterval = 'on_failure';
+							}
+						}
+					}}
+				/>
+				{#if ftClient.autoReconnect}
+					<div class="w-select" style="margin-top: 0.5rem;">
+						<Dropdown
+							label={m.proxy_exit_params_auto_reconnect_interval()}
+							bind:value={ftClient.autoReconnectInterval}
+							options={autoReconnectIntervalOptions()}
+							fullWidth
+						/>
+					</div>
+				{/if}
+			</div>
 		</div>
 	{/if}
 	<div class="btn-row">
 		<Button variant="primary" loading={saving} disabled={!!saveBlockedHint} onclick={onsave}>
-			Сохранить
+			{m.common_save()}
 		</Button>
-		<Button variant="ghost" onclick={onrevert}>Отменить</Button>
+		<Button variant="ghost" onclick={onrevert}>{m.proxy_common_cancel_action()}</Button>
 		{#if saveBlockedHint}
 			<span class="save-blocked">{saveBlockedHint}</span>
 		{/if}
@@ -186,7 +241,8 @@
 		width: 220px;
 	}
 
-
-
-
+	.ft-reconnect-block {
+		grid-column: 1 / -1;
+		padding: 0.5rem 0;
+	}
 </style>

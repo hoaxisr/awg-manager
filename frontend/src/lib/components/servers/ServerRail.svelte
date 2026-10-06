@@ -12,6 +12,7 @@
 </script>
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Plus } from 'lucide-svelte';
 
   interface Props {
@@ -27,9 +28,9 @@
   const active = $derived(items.find((i) => i.id === activeId) ?? items[0]);
 </script>
 
-<aside class="rail" aria-label="Список серверов">
+<aside class="rail" aria-label={m.servers_rail_aria()}>
   <header class="rail-header">
-    <span class="label">Серверы ({items.length})</span>
+    <span class="label">{m.servers_rail_label({ count: items.length })}</span>
   </header>
 
   {#each items as item (item.id)}
@@ -58,7 +59,7 @@
   {#if onCreate}
     <button type="button" class="create-btn" onclick={onCreate}>
       <Plus size={12} strokeWidth={2} aria-hidden="true" />
-      Новый сервер
+      {m.servers_rail_new()}
     </button>
   {/if}
 </aside>
@@ -93,7 +94,7 @@
       {#if onCreate}
         <button type="button" class="create-btn" onclick={() => { onCreate?.(); mobileOpen = false; }}>
           <Plus size={12} strokeWidth={2} aria-hidden="true" />
-          Новый сервер
+          {m.servers_rail_new()}
         </button>
       {/if}
     </div>

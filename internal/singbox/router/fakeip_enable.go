@@ -227,7 +227,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// access-policy exit (the old policy-exit model is abandoned). A private,
 	// non-global tun routes traffic fine (stand-verified).
 	var reused bool
-	if reused, err = s.provisionOpkgTun(ctx, ndmsName, fakeIPTunDescription, "private"); err != nil {
+	if reused, err = s.provisionOpkgTun(ctx, ndmsName, fakeIPTunDescription, "private", fakeIPTunDescription); err != nil {
 		return fmt.Errorf("enable fakeip-tun: create opkgtun: %w", err)
 	}
 	// rbCtx: рулбэк обязан доехать и когда Enable упал ИЗ-ЗА отмены ctx (клиент

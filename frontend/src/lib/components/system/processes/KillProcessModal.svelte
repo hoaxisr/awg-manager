@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SystemProcessItem } from '$lib/api/client';
 	import { Button, Modal } from '$lib/components/ui';
 	import { formatBytes } from '$lib/utils/format';
@@ -17,7 +18,7 @@
 
 <Modal
 	open={target !== null}
-	title="Завершение процесса"
+	title={m.system_processes_kill_title()}
 	size="md"
 	{onclose}
 >
@@ -26,22 +27,22 @@
 			<div class="kill-warning-box">
 				<AlertTriangle size={24} class="warning-icon" />
 				<div>
-					<p>Вы действительно хотите отправить сигнал завершения процессу?</p>
+					<p>{m.system_processes_kill_question()}</p>
 					<strong>PID {target.pid} — {target.name}</strong>
 				</div>
 			</div>
 
 			<div class="kill-info-table">
 				<div class="kill-row">
-					<span>Команда:</span>
+					<span>{m.system_processes_kill_cmd()}</span>
 					<code>{target.cmdline}</code>
 				</div>
 				<div class="kill-row">
-					<span>Пользователь:</span>
+					<span>{m.system_processes_kill_user()}</span>
 					<span>{target.user}</span>
 				</div>
 				<div class="kill-row">
-					<span>Использование:</span>
+					<span>{m.system_processes_kill_usage()}</span>
 					<span>CPU: {target.cpuPercent.toFixed(1)}% | RAM: {formatBytes(target.memoryOwn)}</span>
 				</div>
 			</div>
@@ -50,26 +51,26 @@
 				<div class="self-kill-notice">
 					<AlertTriangle size={16} class="danger-icon" />
 					<div>
-						<strong>Внимание: Это текущий процесс веб-панели AWG Manager!</strong>
-						<p>При завершении процесса веб-интерфейс будет немедленно остановлен и станет недоступен. Чтобы снова его включить, потребуется зайти по SSH и выполнить: <code>/opt/etc/init.d/S99awg-manager start</code>.</p>
+						<strong>{m.system_processes_kill_self_title()}</strong>
+						<p>{m.system_processes_kill_self_text()} <code>/opt/etc/init.d/S99awg-manager start</code>.</p>
 					</div>
 				</div>
 			{:else if target.isCritical}
 				<div class="danger-notice">
 					<AlertTriangle size={15} />
-					<span>Внимание: Это критически важный системный процесс роутера! Его завершение может нарушить работу сети или доступ к устройству.</span>
+					<span>{m.system_processes_kill_critical()}</span>
 				</div>
 			{/if}
 
 			<div class="signal-selector">
-				<span class="signal-label">Тип сигнала:</span>
+				<span class="signal-label">{m.system_processes_kill_signal_type()}</span>
 				<label class="signal-option">
 					<input type="radio" bind:group={signal} value="SIGTERM" />
-					<span><strong>SIGTERM</strong> (Мягкое корректное завершение)</span>
+					<span><strong>SIGTERM</strong> {m.system_processes_kill_sigterm()}</span>
 				</label>
 				<label class="signal-option">
 					<input type="radio" bind:group={signal} value="SIGKILL" />
-					<span><strong>SIGKILL</strong> (Принудительное немедленное убийство)</span>
+					<span><strong>SIGKILL</strong> {m.system_processes_kill_sigkill()}</span>
 				</label>
 			</div>
 		</div>
@@ -77,10 +78,10 @@
 
 	{#snippet actions()}
 		<div class="modal-footer-btns">
-			<Button variant="ghost" onclick={onclose}>Отмена</Button>
+			<Button variant="ghost" onclick={onclose}>{m.common_cancel()}</Button>
 			<Button variant="danger" loading={killing} onclick={onconfirm}>
 				{#snippet iconBefore()}<Square size={13} />{/snippet}
-				Завершить (PID {target?.pid})
+				{m.system_processes_kill_confirm({ pid: target?.pid ?? '' })}
 			</Button>
 		</div>
 	{/snippet}

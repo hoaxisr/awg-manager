@@ -1,4 +1,5 @@
 <script lang="ts" generics="T extends LayoutViewMode">
+	import { m } from '$lib/i18n';
 	import SegmentedControl from './SegmentedControl.svelte';
 	import type { SegmentedOption } from './segmentedControl';
 	import type { LayoutViewDense, LayoutViewMode } from './layoutViewToggle';
@@ -18,7 +19,7 @@
 	let {
 		value,
 		onchange,
-		ariaLabel = 'Вид списка',
+		ariaLabel,
 		denseValue = 'dense',
 		showListOption = true,
 		showDenseOption = true,
@@ -27,14 +28,14 @@
 	const options = $derived.by((): SegmentedOption<T>[] => {
 		const items: SegmentedOption<T>[] = [];
 		if (showDenseOption) {
-			items.push({ value: denseValue as T, label: 'Мелкая сетка', icon: 'dense' });
+			items.push({ value: denseValue as T, label: m.ui_layout_toggle_dense(), icon: 'dense' });
 		}
-		items.push({ value: 'compact' as T, label: 'Сетка', icon: 'compact' });
+		items.push({ value: 'compact' as T, label: m.ui_layout_toggle_grid(), icon: 'compact' });
 		if (showListOption) {
-			items.push({ value: 'list' as T, label: 'Список', icon: 'list' });
+			items.push({ value: 'list' as T, label: m.ui_layout_toggle_list(), icon: 'list' });
 		}
 		return items;
 	});
 </script>
 
-<SegmentedControl variant="icon" {value} {options} {ariaLabel} onchange={onchange} />
+<SegmentedControl variant="icon" {value} {options} ariaLabel={ariaLabel ?? m.ui_layout_toggle_aria()} onchange={onchange} />

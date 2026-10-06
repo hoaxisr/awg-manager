@@ -301,3 +301,14 @@ func TestTunnelConnectivity_BindsToTunnelInterface(t *testing.T) {
 		t.Fatalf("узкие AllowedIPs должны давать skip: status=%s detail=%q", res.Status, res.Detail)
 	}
 }
+
+// F587: до loopback endpoint (релей) оператор хост-маршрут не ставит —
+// проверка не должна выдавать это за отказ.
+func TestEndpointRouteCheck_LoopbackEndpointSkipped(t *testing.T) {
+	ti := TunnelInfo{Backend: "kernel", Status: "running"}
+	ti.Connection.RawOutput = "peer: abc=\n  endpoint: 127.0.0.1:51830\n"
+	res := (&Runner{}).testEndpointRouteCheck(ti)
+	if res.Status != StatusSkip || !strings.Contains(res.Detail, "127.0.0.1") {
+		t.Fatalf("loopback endpoint: status=%s detail=%q", res.Status, res.Detail)
+	}
+}

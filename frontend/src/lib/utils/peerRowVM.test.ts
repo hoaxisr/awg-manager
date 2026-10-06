@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripHostMask, endpointHost, peerStatus, buildPeerRowVM, splitHandshake, STATUS_LABEL } from './peerRowVM';
+import { stripHostMask, endpointHost, peerStatus, buildPeerRowVM, STATUS_LABEL } from './peerRowVM';
 import type { ManagedPeer, ManagedPeerStats } from '$lib/types';
 
 describe('stripHostMask', () => {
@@ -35,14 +35,6 @@ describe('endpointHost', () => {
 	});
 });
 
-describe('splitHandshake', () => {
-	it('отрезает суффикс « назад»', () => {
-		expect(splitHandshake('2 дня назад')).toEqual({ main: '2 дня', suffix: 'назад' });
-	});
-	it('без суффикса возвращает только main', () => {
-		expect(splitHandshake('только что')).toEqual({ main: 'только что' });
-	});
-});
 
 describe('peerStatus', () => {
 	it('disabled важнее online', () => {

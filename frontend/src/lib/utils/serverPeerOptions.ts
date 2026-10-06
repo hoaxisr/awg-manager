@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type { DropdownOption } from '$lib/components/ui';
 import type { ServersSnapshot } from '$lib/stores/servers';
 
@@ -50,7 +51,7 @@ export function buildServerPeerDropdownOptions(
   }
 
   for (const s of snap.servers ?? []) {
-    const group = `Системный WG · ${s.description || s.interfaceName}`;
+    const group = m.server_peer_system_group({ name: s.description || s.interfaceName });
     for (const p of s.peers ?? []) {
       if (p.confAvailable !== true) continue;
       opts.push({
@@ -86,7 +87,7 @@ export function buildRunningServerPeerDropdownOptions(
 
 	for (const s of snap.servers ?? []) {
 		if (s.status !== 'up') continue;
-		const group = `Системный WG · ${s.description || s.interfaceName}`;
+		const group = m.server_peer_system_group({ name: s.description || s.interfaceName });
 		for (const p of s.peers ?? []) {
 			const keeneticOnly = p.confAvailable !== true;
 			opts.push({
@@ -109,7 +110,7 @@ export function resolveServerListenPort(
 ): number | null {
 	if (!snap) return null;
 	if (kind === 'managed') {
-		const s = snap.managed?.find((m) => m.interfaceName === serverId);
+		const s = snap.managed?.find((mg) => mg.interfaceName === serverId);
 		return s?.listenPort ?? null;
 	}
 	const s = snap.servers?.find((srv) => srv.id === serverId);
@@ -183,7 +184,7 @@ export function buildRunningServerDropdownOptions(snap: ServersSnapshot | null):
 		if (s.status !== 'up') continue;
 		opts.push({
 			value: encodeServerPeerValue('system', s.id, ''),
-			label: `Системный WG · ${s.description || s.interfaceName}`,
+			label: m.server_peer_system_group({ name: s.description || s.interfaceName }),
 		});
 	}
 	return opts;

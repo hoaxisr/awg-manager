@@ -130,6 +130,9 @@ func (o *oracleOpkg) DeleteOpkgTun(ctx context.Context, name string) error {
 func (o *oracleOpkg) SetSecurityLevel(ctx context.Context, name, level string) error {
 	return o.set(ctx, name, func(c query.Confirmed) error { return o.cmds.Interfaces.SetSecurityLevel(ctx, c, level) })
 }
+func (o *oracleOpkg) SetDescription(ctx context.Context, name, desc string) error {
+	return o.set(ctx, name, func(c query.Confirmed) error { return o.cmds.Interfaces.SetDescription(ctx, c, desc) })
+}
 func (o *oracleOpkg) SetIPGlobal(ctx context.Context, name string) error {
 	return o.set(ctx, name, func(c query.Confirmed) error { return o.cmds.Interfaces.SetIPGlobal(ctx, c) })
 }
@@ -331,6 +334,41 @@ func TestF576_PolicyTunReenableReusesHeldRecord(t *testing.T) {
 	}
 	if sb.startCalls != starts || sb.reloadCalls != reloads {
 		t.Fatalf("sing-box перезапускался напрямую: start %d→%d reload %d→%d", starts, sb.startCalls, reloads, sb.reloadCalls)
+	}
+	o.clean(t)
+}
+
+// R45 + своё описание: название сменили, пока запись удержана. Второе
+// включение её не создаёт, а переименовывает (Create по живой записи
+// невозможен) — интерфейс тот же, permit'ы в политиках целы; запись владения
+// называет новое имя без висящего намерения, иначе следующий скан владения
+// счёл бы интерфейс чужим.
+func TestF576_PolicyTunReenableRenamesHeldRecord(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	o := wireOracle(t, h)
+	o.f.ExpectCreate("OpkgTun0")
+	ctx := context.Background()
+
+	if err := h.svc.Enable(ctx); err != nil {
+		t.Fatalf("Enable #1: %v", err)
+	}
+	if err := h.svc.Disable(ctx); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+	setPolicyTunDescription(t, h.store, "Awgmanager")
+
+	if err := h.svc.Enable(ctx); err != nil {
+		t.Fatalf("Enable #2: %v", err)
+	}
+	if len(o.f.Created) != 1 {
+		t.Fatalf("запись создана %d раз, want 1: %v", len(o.f.Created), o.f.Created)
+	}
+	if ids, err := o.scan(ctx, "Awgmanager"); err != nil || len(ids) != 1 || ids[0] != "OpkgTun0" {
+		t.Fatalf("скан по новому имени = %v, %v; want [OpkgTun0]", ids, err)
+	}
+	st := h.loadPolicyTun(t)
+	if st == nil || !st.Provisioned || st.Index != 0 || st.Description != "Awgmanager" || st.PendingDescription != "" {
+		t.Fatalf("persist = %+v, want provisioned 0, Description=Awgmanager без намерения", st)
 	}
 	o.clean(t)
 }

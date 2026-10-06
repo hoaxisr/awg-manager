@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Badge, Button, StatusDot, Toggle } from '$lib/components/ui';
 	import type { StatusDotVariant } from '$lib/components/ui';
 	import { ChevronDown, Pencil, Plus, X } from 'lucide-svelte';
@@ -70,21 +71,23 @@
 	// Мета отдаётся частями, а не готовой строкой: в рейле 300px одна строка с
 	// эллипсисом съедала хвост («PID 15…»), а по частям он переносится целиком.
 	function meta(row: ProxyInstanceRow): string[] {
-		if (row.orphanedPid) return ['устаревший процесс'];
+		if (row.orphanedPid) return [m.proxy_list_meta_orphaned()];
 		if (row.state === 'running') {
-			return ['запущен', formatUptime(row.startedAt), row.pid ? `PID ${row.pid}` : ''].filter(
+			return [m.proxy_list_meta_running(), formatUptime(row.startedAt), row.pid ? `PID ${row.pid}` : ''].filter(
 				Boolean,
 			);
 		}
-		if (row.state === 'error') return ['включён, но не работает'];
-		return row.autostart ? ['автоподключение', 'остановлен'] : ['остановлен'];
+		if (row.state === 'error') return [m.proxy_list_meta_error()];
+		return row.autostart
+			? [m.proxy_list_meta_autostart(), m.proxy_list_meta_stopped()]
+			: [m.proxy_list_meta_stopped()];
 	}
 
 	// EX-55 / SH-83 — та же строка, что в модалке удаления: у раздачи своя.
 	function deleteLabel(row: ProxyInstanceRow): string {
 		return row.role === 'server'
-			? `Удалить раздачу «${row.name}»?`
-			: `Удалить инстанс «${row.name}»?`;
+			? m.proxy_page_delete_share_title({ name: row.name })
+			: m.proxy_page_delete_instance_title({ name: row.name });
 	}
 
 	// LS-10..LS-12. Режим есть у КЛИЕНТА — он подключается ровно одним
@@ -131,8 +134,8 @@
 						<input
 							bind:this={renameInput}
 							class="row-rename-input"
-							aria-label="Имя инстанса"
-							placeholder="Имя инстанса"
+							aria-label={m.proxy_list_name_label()}
+							placeholder={m.proxy_list_name_label()}
 							bind:value={renameDraft}
 							onkeydown={(e) => {
 								if (e.key === 'Enter') commitRename(row);
@@ -164,7 +167,7 @@
 					<div class="row-actions">
 						<span
 							class="row-toggle"
-							title={row.binaryPresent ? undefined : 'Установите бинарь, чтобы запустить инстанс'}
+							title={row.binaryPresent ? undefined : m.proxy_list_install_binary()}
 						>
 							<Toggle
 								checked={row.state === 'running'}
@@ -173,15 +176,17 @@
 								controlled
 								size="sm"
 								label=""
-								ariaLabel="{row.state === 'running' ? 'Остановить' : 'Запустить'} {row.name}"
+								ariaLabel={row.state === 'running'
+									? m.proxy_list_stop_aria({ name: row.name })
+									: m.proxy_list_start_aria({ name: row.name })}
 							/>
 						</span>
 						<button
 							type="button"
 							class="row-action"
 							class:active={renamingKey === row.key}
-							aria-label="Имя инстанса"
-							title="Имя инстанса"
+							aria-label={m.proxy_list_name_label()}
+							title={m.proxy_list_name_label()}
 							onmousedown={(e) => {
 								if (renamingKey === row.key) e.preventDefault();
 							}}

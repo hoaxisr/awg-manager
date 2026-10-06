@@ -1,9 +1,34 @@
 import type { AWGTagInfo, SingboxRouterOutbound, SingboxTunnel, Subscription } from '$lib/types';
 import type { DropdownOption } from '$lib/components/ui';
+import { m } from '$lib/i18n';
+
+/**
+ * Стабильный код группы outbound'ов: по нему идёт вся логика (фильтры,
+ * сопоставления). Подпись группы строится на показе — outboundGroupLabel(id).
+ */
+export type OutboundGroupId = 'special' | 'awg' | 'system' | 'awg3' | 'singbox' | 'composite';
 
 export interface OutboundGroup {
-	group: string;
+	id: OutboundGroupId;
 	items: Array<{ value: string; label: string }>;
+}
+
+/** Подпись группы на текущем языке; вызывать при показе, не сохранять. */
+export function outboundGroupLabel(id: OutboundGroupId): string {
+	switch (id) {
+		case 'special':
+			return m.routing_singbox_group_special();
+		case 'awg':
+			return m.routing_singbox_group_awg();
+		case 'system':
+			return m.routing_singbox_group_system();
+		case 'awg3':
+			return m.routing_singbox_group_awg3();
+		case 'singbox':
+			return m.routing_singbox_group_singbox();
+		case 'composite':
+			return m.routing_singbox_group_composite();
+	}
 }
 
 export function buildOutboundOptions(
@@ -25,8 +50,17 @@ export function buildOutboundOptions(
 
 	if (includeSpecial) {
 		groups.push({
-			group: 'Специальные',
-			items: [{ value: 'direct', label: 'direct (мимо VPN)' }],
+			id: 'special',
+			items: [
+				{
+					value: 'direct',
+					// Геттер: подпись берётся при показе и следует за языком, хотя
+					// сам список собирается в derived-сторе один раз.
+					get label() {
+						return m.routing_singbox_option_direct();
+					},
+				},
+			],
 		});
 	}
 
@@ -36,7 +70,7 @@ export function buildOutboundOptions(
 
 	if (managed.length > 0) {
 		groups.push({
-			group: 'AWG туннели',
+			id: 'awg',
 			items: managed.map((t) => ({
 				value: t.tag,
 				label: `${t.label} (${t.iface})`,
@@ -46,7 +80,7 @@ export function buildOutboundOptions(
 
 	if (system.length > 0) {
 		groups.push({
-			group: 'Системные WireGuard',
+			id: 'system',
 			items: system.map((t) => ({
 				value: t.tag,
 				label: `${t.label} (${t.iface})`,
@@ -56,7 +90,7 @@ export function buildOutboundOptions(
 
 	if (awg3.length > 0) {
 		groups.push({
-			group: 'AWG3 туннели',
+			id: 'awg3',
 			items: awg3.map((t) => ({
 				value: t.tag,
 				// AWG3-эндпоинты не имеют kernel-iface — скобки печатаются только
@@ -68,7 +102,7 @@ export function buildOutboundOptions(
 
 	if (sbTunnels.length > 0) {
 		groups.push({
-			group: 'Sing-box туннели',
+			id: 'singbox',
 			items: sbTunnels.map((t) => ({
 				value: t.tag,
 				label: t.tag,
@@ -79,7 +113,7 @@ export function buildOutboundOptions(
 	if (composites.length > 0) {
 		const subs = subscriptions ?? [];
 		groups.push({
-			group: 'Composite outbounds',
+			id: 'composite',
 			items: composites.map((o) => {
 				if (o.source === 'subscription' && subs.length > 0) {
 					const sub = subs.find((s) => s.selectorTag === o.tag);
@@ -116,7 +150,7 @@ export function buildDownloadDetourOptions(
 	return [
 		{ value: '', label: resetLabel },
 		...outboundOptions.flatMap((g) =>
-			g.items.map((i) => ({ value: i.value, label: i.label, group: g.group })),
+			g.items.map((i) => ({ value: i.value, label: i.label, group: outboundGroupLabel(g.id) })),
 		),
 	];
 }

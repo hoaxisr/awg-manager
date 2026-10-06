@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { m } from '$lib/i18n';
     import { api } from '$lib/api/client';
     import { errorMessage } from '$lib/utils/errorMessage';
     import type { StaticRouteList, RoutingTunnel } from '$lib/types';
@@ -11,7 +12,6 @@
     import { staticRoutesStore } from '$lib/stores/routing';
     import RoutingTabBodySkeleton from './RoutingTabBodySkeleton.svelte';
     import RoutingRuleAddMenu from '$lib/components/routing/RoutingRuleAddMenu.svelte';
-    import { ERROR_WORDS, pluralForm, pluralize, ROUTE_WORDS, RULE_WORDS } from '$lib/utils/pluralize';
     import { routingTunnelLabel } from '$lib/utils/routingTunnelOptions';
 
     interface Props {
@@ -56,8 +56,10 @@
     // Orphan = list whose tunnel was deleted (TunnelID=""). Kept in storage
     // so the user can reassign it via the Edit dialog instead of rebuilding
     // the CIDRs from scratch.
-    let orphanRoutes = $derived(ipRoutes.filter(r => !r.tunnelID));
-    let boundRoutes = $derived(ipRoutes.filter(r => r.tunnelID));
+    // By name, as the other routing tabs list their rules (#851).
+    let sortedIpRoutes = $derived([...ipRoutes].sort((a, b) => a.name.localeCompare(b.name)));
+    let orphanRoutes = $derived(sortedIpRoutes.filter(r => !r.tunnelID));
+    let boundRoutes = $derived(sortedIpRoutes.filter(r => r.tunnelID));
     let ipActiveCount = $derived(boundRoutes.filter(r => r.enabled).length);
 
     async function saveIpRoute(data: { name: string; tunnelID: string; subnets: string[]; fallback: '' | 'reject'; iconUrl?: string }) {
@@ -72,7 +74,7 @@
                     fallback: data.fallback,
                     iconUrl: data.iconUrl,
                 });
-                notifications.success('IP-маршрут обновлён');
+                notifications.success(m.routing_ip_updated());
             } else {
                 await api.createStaticRoute({
                     name: data.name,
@@ -82,13 +84,13 @@
                     iconUrl: data.iconUrl,
                     enabled: true,
                 });
-                notifications.success('IP-маршрут создан');
+                notifications.success(m.routing_ip_created());
             }
 
             ipCreateOpen = false;
             editingIpRoute = null;
         } catch (e) {
-            notifications.error(errorMessage(e, 'Ошибка сохранения'));
+            notifications.error(errorMessage(e, m.routing_error_save()));
         } finally {
             ipSaving = false;
         }
@@ -100,7 +102,7 @@
             await api.setStaticRouteEnabled(id, enabled);
 
         } catch (e) {
-            notifications.error(errorMessage(e, 'Ошибка'));
+            notifications.error(errorMessage(e, m.common_error()));
         } finally {
             ipToggling = null;
         }
@@ -113,9 +115,9 @@
         try {
             await api.deleteStaticRoute(id);
 
-            notifications.success('IP-маршрут удалён');
+            notifications.success(m.routing_ip_deleted());
         } catch (e) {
-            notifications.error(errorMessage(e, 'Ошибка удаления'));
+            notifications.error(errorMessage(e, m.routing_error_delete()));
         }
     }
 
@@ -140,7 +142,7 @@
         const selected = ipRoutes.filter(r => ipSelected.has(r.id));
         const portable = exportStaticRoutes(selected);
         downloadJson(portable, 'awg-ip-routes.json');
-        notifications.success(`Экспортировано ${pluralize(portable.length, ROUTE_WORDS)}`);
+        notifications.success(m.routing_exported_routes({ count: portable.length }));
     }
 
     async function bulkIpToggle(enabled: boolean) {
@@ -151,9 +153,8 @@
                 try { await api.setStaticRouteEnabled(id, enabled); ok++; } catch { fail++; }
             }
 
-            const label = enabled ? 'Включено' : 'Выключено';
-            if (fail > 0) notifications.warning(`${label} ${ok} из ${ok + fail} ${pluralForm(ok + fail, ROUTE_WORDS)} (${pluralize(fail, ERROR_WORDS)})`);
-            else notifications.success(`${label} ${pluralize(ok, ROUTE_WORDS)}`);
+            if (fail > 0) notifications.warning(enabled ? m.routing_bulk_enabled_routes_partial({ ok, total: ok + fail, fail }) : m.routing_bulk_disabled_routes_partial({ ok, total: ok + fail, fail }));
+            else notifications.success(enabled ? m.routing_bulk_enabled_routes({ count: ok }) : m.routing_bulk_disabled_routes({ count: ok }));
         } finally {
             ipBulkLoading = false;
         }
@@ -168,8 +169,8 @@
             }
 
             exitIpSelection();
-            if (fail > 0) notifications.warning(`Удалено ${ok} из ${ok + fail} ${pluralForm(ok + fail, ROUTE_WORDS)} (${pluralize(fail, ERROR_WORDS)})`);
-            else notifications.success(`Удалено ${pluralize(ok, ROUTE_WORDS)}`);
+            if (fail > 0) notifications.warning(m.routing_bulk_deleted_routes_partial({ ok, total: ok + fail, fail }));
+            else notifications.success(m.routing_bulk_deleted_routes({ count: ok }));
         } finally {
             ipBulkLoading = false;
             ipBulkDeleteConfirm = false;
@@ -188,8 +189,8 @@
             }
 
             ipTunnelMode = false;
-            if (fail > 0) notifications.warning(`Туннель изменён для ${ok} из ${ok + fail} ${pluralForm(ok + fail, ROUTE_WORDS)} (${pluralize(fail, ERROR_WORDS)})`);
-            else notifications.success(`Туннель изменён для ${pluralize(ok, ROUTE_WORDS)}`);
+            if (fail > 0) notifications.warning(m.routing_bulk_tunnel_routes_partial({ ok, total: ok + fail, fail }));
+            else notifications.success(m.routing_bulk_tunnel_routes({ count: ok }));
         } finally {
             ipBulkLoading = false;
         }
@@ -208,12 +209,12 @@
                 });
                 count++;
             } catch (e) {
-                notifications.error(`Ошибка импорта "${route.name}": ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+                notifications.error(m.routing_import_error({ name: route.name, message: e instanceof Error ? e.message : m.routing_unknown_error() }));
             }
         }
         ipImportOpen = false;
         if (count > 0) {
-            notifications.success(`Импортировано ${pluralize(count, ROUTE_WORDS)}`);
+            notifications.success(m.routing_imported_routes({ count }));
         }
     }
 </script>
@@ -224,13 +225,13 @@
             {#if bodyLoading}
                 …
             {:else}
-                {pluralize(boundRoutes.length, RULE_WORDS)}, {ipActiveCount} активных{#if orphanRoutes.length > 0}, <span class="orphan-count">несвязанных: {orphanRoutes.length}</span>{/if}
+                {m.routing_rules_active_summary({ count: boundRoutes.length, active: ipActiveCount })}{#if orphanRoutes.length > 0}, <span class="orphan-count">{m.routing_ip_orphan_count({ count: orphanRoutes.length })}</span>{/if}
             {/if}
         </span>
         <div class="section-buttons">
             <StoreStatusBadge store={staticRoutesStore} />
             {#if ipRoutes.length > 0}
-                <Button variant="ghost" size="sm" disabled={bodyLoading} onclick={() => { ipSelectionMode = true; ipSelected = new Set(); }}>Выбрать</Button>
+                <Button variant="ghost" size="sm" disabled={bodyLoading} onclick={() => { ipSelectionMode = true; ipSelected = new Set(); }}>{m.common_select()}</Button>
             {/if}
             <RoutingRuleAddMenu
                 disabled={bodyLoading}
@@ -239,24 +240,24 @@
                     ipCreateOpen = true;
                 }}
                 importEnabled
-                importLabel="Загрузить набор правил"
+                importLabel={m.routing_ip_import_set()}
                 onimport={() => (ipImportOpen = true)}
             />
         </div>
     {:else}
         <div class="bulk-bar">
             <div class="bulk-bar-nav">
-                <button class="bulk-btn bulk-btn-cancel" onclick={exitIpSelection} disabled={ipBulkLoading}>✕ Отмена</button>
-                <span class="bulk-count">{ipSelected.size} выбрано</span>
-                <button class="bulk-btn bulk-btn-select-all" onclick={ipSelectAll} disabled={ipBulkLoading}>Выбрать все</button>
+                <button class="bulk-btn bulk-btn-cancel" onclick={exitIpSelection} disabled={ipBulkLoading}>✕ {m.common_cancel()}</button>
+                <span class="bulk-count">{m.routing_selected_count({ count: ipSelected.size })}</span>
+                <button class="bulk-btn bulk-btn-select-all" onclick={ipSelectAll} disabled={ipBulkLoading}>{m.routing_select_all()}</button>
             </div>
             {#if !ipTunnelMode}
                 <div class="bulk-bar-actions">
-                    <button class="bulk-btn bulk-btn-enable" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => bulkIpToggle(true)}>Включить</button>
-                    <button class="bulk-btn bulk-btn-disable" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => bulkIpToggle(false)}>Выключить</button>
-                    <button class="bulk-btn bulk-btn-delete" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => ipBulkDeleteConfirm = true}>Удалить</button>
-                    <button class="bulk-btn bulk-btn-tunnel" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => { ipTunnelMode = true; ipBulkTunnelId = routingTunnels.find(t => t.available)?.id ?? ''; }}>Туннель ▾</button>
-                    <button class="bulk-btn bulk-btn-export" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={downloadIpExport}>Экспорт</button>
+                    <button class="bulk-btn bulk-btn-enable" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => bulkIpToggle(true)}>{m.common_enable()}</button>
+                    <button class="bulk-btn bulk-btn-disable" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => bulkIpToggle(false)}>{m.common_disable()}</button>
+                    <button class="bulk-btn bulk-btn-delete" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => ipBulkDeleteConfirm = true}>{m.common_delete()}</button>
+                    <button class="bulk-btn bulk-btn-tunnel" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => { ipTunnelMode = true; ipBulkTunnelId = routingTunnels.find(t => t.available)?.id ?? ''; }}>{m.routing_bulk_tunnel()} ▾</button>
+                    <button class="bulk-btn bulk-btn-export" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={downloadIpExport}>{m.common_export()}</button>
                 </div>
             {:else}
                 {@const ipBulkTunnelOpts: DropdownOption[] = [
@@ -264,7 +265,7 @@
                     ...routingTunnels.filter(t => t.type === 'system' && t.available).map((t) => ({ value: t.id, label: routingTunnelLabel(t) })),
                 ]}
                 <div class="bulk-tunnel-bar">
-                    <span class="bulk-tunnel-label">Туннель:</span>
+                    <span class="bulk-tunnel-label">{m.routing_bulk_tunnel_label()}</span>
                     <div class="bulk-tunnel-select">
                         <Dropdown
                             bind:value={ipBulkTunnelId}
@@ -273,7 +274,7 @@
                             fullWidth
                         />
                     </div>
-                    <button class="bulk-tunnel-apply" disabled={ipBulkLoading} onclick={bulkIpChangeTunnel}>Применить ({ipSelected.size})</button>
+                    <button class="bulk-tunnel-apply" disabled={ipBulkLoading} onclick={bulkIpChangeTunnel}>{m.routing_bulk_apply({ count: ipSelected.size })}</button>
                     <button class="bulk-tunnel-close" onclick={() => ipTunnelMode = false}>✕</button>
                 </div>
             {/if}
@@ -284,12 +285,12 @@
 {#if bodyLoading}
     <RoutingTabBodySkeleton />
 {:else if ipRoutes.length === 0}
-    <div class="empty-hint">Нет IP-маршрутов</div>
+    <div class="empty-hint">{m.routing_ip_empty()}</div>
 {:else}
     {#if orphanRoutes.length > 0}
         <div class="orphan-section">
-            <h4 class="orphan-header">Без туннеля — {orphanRoutes.length}</h4>
-            <p class="orphan-hint">Туннель удалён, правила сохранены. Нажмите «Изменить», чтобы привязать список к другому туннелю.</p>
+            <h4 class="orphan-header">{m.routing_orphan_title({ count: orphanRoutes.length })}</h4>
+            <p class="orphan-hint">{m.routing_orphan_hint_ip()}</p>
             <div class="route-grid">
                 {#each orphanRoutes as route (route.id)}
                     <IpRouteCard
@@ -350,8 +351,8 @@
     {@const routeToDelete = ipRoutes.find(r => r.id === ipDeleteId)}
     <ConfirmModal
         open={true}
-        title="Удаление"
-        message={`Удалить список маршрутов «${routeToDelete?.name ?? ipDeleteId}»?`}
+        title={m.routing_delete_title()}
+        message={m.routing_ip_delete_message({ name: routeToDelete?.name ?? ipDeleteId })}
         onConfirm={() => deleteIpRoute()}
         onClose={() => ipDeleteId = null}
     />
@@ -360,8 +361,8 @@
 {#if ipBulkDeleteConfirm}
     <ConfirmModal
         open={true}
-        title="Удаление"
-        message={`Удалить ${ipSelected.size} IP-маршрутов?`}
+        title={m.routing_delete_title()}
+        message={m.routing_ip_bulk_delete_message({ count: ipSelected.size })}
         onConfirm={bulkIpDelete}
         onClose={() => ipBulkDeleteConfirm = false}
     />
@@ -380,9 +381,9 @@
             pickingForRoute = null;
             try {
                 await api.updateStaticRoute({ ...route, iconUrl: newUrl ?? undefined });
-                notifications.success(newUrl ? 'Иконка изменена' : 'Иконка сброшена');
+                notifications.success(newUrl ? m.routing_icon_changed() : m.routing_icon_reset());
             } catch (e) {
-                notifications.error(errorMessage(e, 'Не удалось обновить иконку'));
+                notifications.error(errorMessage(e, m.routing_icon_update_failed()));
             }
         }}
     />

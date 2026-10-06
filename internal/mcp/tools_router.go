@@ -23,6 +23,38 @@ type rulesOut struct {
 
 type outboundsOut struct {
 	Outbounds []SingboxOutbound `json:"outbounds"`
+	HasDraft  bool              `json:"hasDraft" jsonschema:"true means the router holds changes that are not applied; the groups and members listed include them, and sing-box is not running them yet"`
+}
+
+type outboundDetailIn struct {
+	Tag           string `json:"tag" jsonschema:"group tag from list_singbox_outbounds, or a subscription's groupTag"`
+	MembersOffset int    `json:"membersOffset,omitempty" jsonschema:"index of the first member to return; default 0"`
+}
+
+// outboundDetailOut is the group with Members replaced by one page.
+// MemberCount is always the real size, so a short page is never mistaken
+// for a short group.
+type outboundDetailOut struct {
+	SingboxOutbound
+	Members          []SingboxGroupMember `json:"members"`
+	MembersOffset    int                  `json:"membersOffset" jsonschema:"index of the first member returned"`
+	MembersTruncated bool                 `json:"membersTruncated" jsonschema:"true when members beyond this page remain — call again with a larger membersOffset before concluding a server is absent"`
+	HasDraft         bool                 `json:"hasDraft" jsonschema:"true means the router holds changes that are not applied; the groups and members listed include them, and sing-box is not running them yet"`
+}
+
+// pageOutboundDetail cuts one page of members. An offset past the end
+// yields an empty page rather than an error.
+func pageOutboundDetail(detail SingboxOutboundDetail, offset int) outboundDetailOut {
+	total := len(detail.Members)
+	start := min(offset, total)
+	end := min(start+MaxGroupMembersInOutput, total)
+	page := detail.Members[start:end:end]
+	if page == nil {
+		page = []SingboxGroupMember{}
+	}
+	out := outboundDetailOut{SingboxOutbound: detail.SingboxOutbound, Members: page, MembersOffset: start, MembersTruncated: end < total, HasDraft: detail.HasDraft}
+	out.MemberCount = total
+	return out
 }
 
 type stagedOut struct {
@@ -61,15 +93,41 @@ func registerRouterTools(s *mcp.Server, d Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "list_singbox_outbounds",
-		Description: "Composite routing targets defined in the sing-box router (selectors and urltest groups) that a rule can point at. " +
-			"A rule may also target a single proxy from list_singbox_tunnels, or the built-in direct and block.",
+		Description: "Groups of servers in sing-box — selectors and urltest groups — that a rule can point at, with the member each one is routing through now. " +
+			"Subscriptions appear here as groups (subscriptionId set); so do groups that gather several subscriptions (aggregateOf set). " +
+			"runtimeKnown=false means sing-box gave no answer for that group: it exists, and nothing is known about what it is doing. " +
+			"outOfSync=true means sing-box answered and is not running the group as listed — because of a draft not applied yet (hasDraft says whether there is one), the sing-box router being switched off, or a reload in progress. " +
+			"For the members of one group, call get_singbox_outbound. A rule may also target a single proxy from list_singbox_tunnels, or the built-in direct and block.",
 		Annotations: readOnly("List sing-box outbounds"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, outboundsOut, error) {
-		list, err := d.ListSingboxOutbounds(ctx)
+		list, hasDraft, err := d.ListSingboxOutbounds(ctx)
 		if list == nil {
 			list = []SingboxOutbound{}
 		}
-		return nil, outboundsOut{Outbounds: list}, err
+		return nil, outboundsOut{Outbounds: list, HasDraft: hasDraft}, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "get_singbox_outbound",
+		Description: "One sing-box group in full: its members, which one carries traffic now, and the last delay the engine recorded for each. Use it to answer which server a subscription or group is using. " +
+			"Members are paged: when membersTruncated is true, call again with membersOffset. " +
+			"Read lastDelayMs here before probing — singbox_delay_check makes a real request through the server, and a subscription can hold hundreds. " +
+			"delayKnown=false means no test is on record, not that the server is down; runtimeKnown=false means sing-box gave no answer for this group and nothing here describes the present. " +
+			"outOfSync=true means sing-box is not running the group as listed — a draft not applied yet (see hasDraft), the sing-box router switched off, or a reload in progress; activeMember then describes what is running and may not be among the members.",
+		Annotations: readOnly("Get sing-box group"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in outboundDetailIn) (*mcp.CallToolResult, outboundDetailOut, error) {
+		tag, err := requireSingboxTag(in.Tag, "list_singbox_outbounds")
+		if err != nil {
+			return nil, outboundDetailOut{}, err
+		}
+		if in.MembersOffset < 0 {
+			return nil, outboundDetailOut{}, fmt.Errorf("membersOffset must not be negative")
+		}
+		detail, err := d.GetSingboxOutbound(ctx, tag)
+		if err != nil {
+			return nil, outboundDetailOut{}, err
+		}
+		return nil, pageOutboundDetail(detail, in.MembersOffset), nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
