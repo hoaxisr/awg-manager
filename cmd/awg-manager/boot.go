@@ -353,7 +353,7 @@ func (a *app) serve() {
 	go func() {
 		<-sigCh
 		os.Remove(pidFile)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), serveShutdownTimeout)
 		defer cancel()
 		a.srv.Shutdown(ctx)
 	}()

@@ -11,6 +11,11 @@ BIN="/opt/bin/awg-manager"
 PID_FILE="/var/run/awg-manager.pid"
 DATA_DIR="/opt/etc/awg-manager"
 SETTINGS_FILE="$DATA_DIR/settings.json"
+# STOP_WAIT — сколько секунд ждать выхода после SIGTERM до SIGKILL. Остановка
+# демона сохраняет конфигурацию роутера и ждёт конца записи (ConfigurationSaved,
+# 4–10 с, потолок — бюджет остановки в cmd/awg-manager/shutdown.go); SIGKILL
+# посреди записи терял бы правки. Число сторожит TestShutdownBudget_FitsInitWait.
+STOP_WAIT=90
 
 # Read port from settings.json: first "port": N match only. The old
 # `grep | tr -cd 0-9` concatenated digits from every matching line and
@@ -113,7 +118,7 @@ stop() {
             kill "$pid" 2>/dev/null
 
             local count=0
-            while is_our_pid "$pid" && [ $count -lt 5 ]; do
+            while is_our_pid "$pid" && [ $count -lt $STOP_WAIT ]; do
                 sleep 1
                 count=$((count + 1))
             done
@@ -130,7 +135,7 @@ stop() {
         echo "Stopping $DESC (no pid file)..."
         kill $rest 2>/dev/null
         local count=0
-        while [ -n "$(pidof awg-manager 2>/dev/null)" ] && [ $count -lt 5 ]; do
+        while [ -n "$(pidof awg-manager 2>/dev/null)" ] && [ $count -lt $STOP_WAIT ]; do
             sleep 1
             count=$((count + 1))
         done

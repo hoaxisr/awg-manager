@@ -153,8 +153,10 @@ func serviceStop() {
 	// Send SIGTERM for graceful shutdown
 	_ = process.Signal(syscall.SIGTERM)
 
-	// Wait up to 5 seconds for process to exit
-	for i := 0; i < 5; i++ {
+	// Ждём выхода до serviceStopWait: остановка сохраняет конфигурацию
+	// роутера и ждёт конца записи (shutdownBudget); SIGKILL раньше терял бы
+	// правки. Та же граница, что STOP_WAIT init-скрипта.
+	for i := 0; i < int(serviceStopWait/time.Second); i++ {
 		time.Sleep(time.Second)
 		if !isProcessRunning(pid) {
 			break
