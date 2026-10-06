@@ -587,3 +587,73 @@ func TestStart_ExistingUpRecordTun_DownSwapUp(t *testing.T) {
 		}
 	}
 }
+
+// R61-1: Reconcile упал между нашим down и InterfaceUp (здесь — ip link mtu
+// после подмены): запись осталась disabled у Running-туннеля. Следующий
+// Reconcile (WAN-up, reconnect) обязан её поднять — запись не up.
+// Мутация «InterfaceUp только при justCreated || downed» → красный.
+func TestReconcile_FailAfterDown_NextReconcileUp(t *testing.T) {
+	const postUp = `{"interface":{"OpkgTun10":{"up":true}}}`
+	f := ndmsquery.NewFakeNDMS(upTun10())
+	be := newDeviceBackend(t, f)
+	be.plug(t, "opkgtun10", false)
+	o, rec := newOS5LifecycleOn(t, &recordingPoster{f: f}, f, be, true)
+	rec.failOn = "txqueuelen"
+
+	if err := o.Reconcile(context.Background(), lifecycleCfg(t)); err == nil {
+		t.Fatal("Reconcile: want отказ ip link")
+	}
+	if !slices.Contains(f.Posts, postDown) || slices.Contains(f.Posts, postUp) {
+		t.Fatalf("первый проход: want down без up; posts=%v", f.Posts)
+	}
+
+	rec.failOn = ""
+	before := len(f.Posts)
+	if err := o.Reconcile(context.Background(), lifecycleCfg(t)); err != nil {
+		t.Fatalf("второй Reconcile: %v", err)
+	}
+	if !slices.Contains(f.Posts[before:], postUp) {
+		t.Fatalf("опущенная запись не поднята повторным Reconcile: %v", f.Posts[before:])
+	}
+	clean(t, f)
+}
+
+// downDeniedPoster — оракул, отвергающий `interface down`.
+type downDeniedPoster struct{ f *ndmsquery.FakeNDMS }
+
+func (p downDeniedPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	if js, _ := json.Marshal(payload); string(js) == postDown {
+		return nil, errors.New("injected: down")
+	}
+	return p.f.Post(ctx, payload)
+}
+
+// R61-2: down перед подменой не прошёл ни с одной попытки — подмены нет
+// (под running это C3b, 0ba1), ошибка наружу, запись и tun не тронуты.
+// Мутация «down всегда считается сделанным» → Start вызван → красный.
+func TestStart_DownFails_NoSwap(t *testing.T) {
+	for _, site := range []string{"ColdStart", "Reconcile"} {
+		t.Run(site, func(t *testing.T) {
+			f := ndmsquery.NewFakeNDMS(upTun10())
+			be := newDeviceBackend(t, f)
+			be.plug(t, "opkgtun10", false)
+			o, _ := newOS5LifecycleOn(t, downDeniedPoster{f}, f, be, true)
+
+			run := o.ColdStart
+			if site == "Reconcile" {
+				run = o.Reconcile
+			}
+			err := run(context.Background(), lifecycleCfg(t))
+			if err == nil || !strings.Contains(err.Error(), "injected: down") {
+				t.Fatalf("err = %v, want отказ down", err)
+			}
+			if len(be.StartCalls) != 0 || len(be.ReplaceCalls) != 0 || len(be.StopCalls) != 0 || !be.exists("opkgtun10") || be.amneziawg {
+				t.Fatalf("устройство тронуто: start=%v replace=%v stop=%v", be.StartCalls, be.ReplaceCalls, be.StopCalls)
+			}
+			if !f.Has("OpkgTun10") || len(f.Posts) != 0 {
+				t.Fatalf("запись есть=%v posts=%v, want запись цела и ни одного POST", f.Has("OpkgTun10"), f.Posts)
+			}
+			clean(t, f)
+		})
+	}
+}

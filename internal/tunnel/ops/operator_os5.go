@@ -311,7 +311,13 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	// возвращается из error в down и принимает адрес.
 	// Под up-записью tun NDMS (ребут): опустить до подмены (C3a); поднимет
 	// InterfaceUp ниже — он в старте безусловный.
-	if o.downBeforeSwap(ctx, cfg.ID, names, iface, up) {
+	// Down не прошёл — подмены нет (под running это C3b), запись и
+	// устройство не тронуты: откатывать нечего.
+	downed, err := o.downBeforeSwap(ctx, cfg.ID, names, iface, up)
+	if err != nil {
+		return tunnel.NewOpError("start", cfg.ID, "ndms", err)
+	}
+	if downed {
 		up = false
 	}
 	if err := o.backend.Start(ctx, names.IfaceName); err != nil {
@@ -565,26 +571,29 @@ func (o *OperatorOS5Impl) clearAppliedDNS(ctx context.Context, tunnelID string, 
 // interfaceDownBestEffort tries to set NDMS conf: disabled.
 // Retries up to 3 times for transient failures (NDMS busy/timeout).
 // Exit 122 = NDMS permanent rejection (already down) — not an error.
-func (o *OperatorOS5Impl) interfaceDownBestEffort(ctx context.Context, tunnelID string, iface query.Confirmed) {
+// Возвращает ошибку последней попытки, если ни одна не прошла; вызывающие,
+// которым down — только уборка, её не смотрят.
+func (o *OperatorOS5Impl) interfaceDownBestEffort(ctx context.Context, tunnelID string, iface query.Confirmed) error {
 	// Commands register the expected "disabled" hook on each attempt via
 	// the HookNotifier wired at startup.
+	var err error
 	for attempt := 1; attempt <= 3; attempt++ {
-		err := o.commands.Interfaces.InterfaceDown(ctx, iface)
+		err = o.commands.Interfaces.InterfaceDown(ctx, iface)
 		if err == nil {
 			o.logInfo("stop", tunnelID, "Interface down (conf: disabled)")
-			return
+			return nil
 		}
 		if strings.Contains(err.Error(), "exit status 122") {
 			o.logInfo("stop", tunnelID, "InterfaceDown: already disabled (exit 122)")
-			return
+			return nil
 		}
 		o.logWarn("stop", tunnelID, fmt.Sprintf("InterfaceDown attempt %d/3 failed: %s", attempt, err))
 		if attempt < 3 {
 			time.Sleep(1 * time.Second)
 		}
 	}
-	// Not fatal — cleanup continues regardless.
 	// The enabled/disabled state is tracked in the program's own JSON storage.
+	return err
 }
 
 // Delete completely removes a tunnel.
@@ -693,7 +702,6 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	// (exit 122) on a running kernel-mode device, so the device must be fresh.
 	// ip link del triggers transient NDMS state:error — safe under per-tunnel lock.
 	running, _ := o.backend.IsRunning(ctx, names.IfaceName)
-	downed := false
 	if running && !justCreated {
 		o.logInfo("reconcile", cfg.ID, "Kernel interface alive, kept")
 	} else {
@@ -708,8 +716,14 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 			recreate = o.backend.Recreate
 		} else {
 			// Под up-записью tun NDMS: опустить до подмены (C3a), поднять
-			// InterfaceUp ниже.
-			downed = o.downBeforeSwap(ctx, cfg.ID, names, iface, up)
+			// InterfaceUp ниже (по !up).
+			downed, err := o.downBeforeSwap(ctx, cfg.ID, names, iface, up)
+			if err != nil {
+				return tunnel.NewOpError("reconcile", cfg.ID, "ndms", err)
+			}
+			if downed {
+				up = false
+			}
 		}
 		if err := recreate(ctx, names.IfaceName); err != nil {
 			return tunnel.NewOpError("reconcile", cfg.ID, "backend", err)
@@ -777,10 +791,13 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 		return tunnel.NewOpError("reconcile", cfg.ID, "link", fmt.Errorf("ip link up: %w", exec.FormatError(result, err)))
 	}
 
-	// NDMS InterfaceUp: only when OpkgTun was just created or we put it
-	// down before the swap. Commands register the expected "running" hook
+	// NDMS InterfaceUp: запись создана сейчас либо не up — опустили мы перед
+	// подменой или её оставила опущенной наша же прежняя попытка, упавшая
+	// между down и up (R61-1): Reconcile идёт только у Running-туннеля, а
+	// Running под опущенной записью — рассогласование, внешний disabled уже
+	// остановил бы туннель. Commands register the expected "running" hook
 	// via HookNotifier.
-	if justCreated || downed {
+	if justCreated || !up {
 		if err := o.commands.Interfaces.InterfaceUp(ctx, iface); err != nil {
 			return tunnel.NewOpError("reconcile", cfg.ID, "ndms", fmt.Errorf("interface up: %w", err))
 		}
@@ -1047,18 +1064,22 @@ func (o *OperatorOS5Impl) rollbackStart(ctx context.Context, tunnelID string, na
 // 0/20 для amneziawg → tun; направление tun → amneziawg — стенд Task 65).
 // true — запись опущена, вызывающий поднимает её InterfaceUp. Живое
 // amneziawg Start не трогает, устройства нет — сносить нечего: без down.
-func (o *OperatorOS5Impl) downBeforeSwap(ctx context.Context, tunnelID string, names tunnel.Names, iface query.Confirmed, up bool) bool {
+// Down не прошёл ни с одной попытки — ошибка: подменять под running нельзя
+// (fail-closed, R61-2).
+func (o *OperatorOS5Impl) downBeforeSwap(ctx context.Context, tunnelID string, names tunnel.Names, iface query.Confirmed, up bool) (bool, error) {
 	if !up {
-		return false
+		return false, nil
 	}
 	if _, err := netdev.Absent(names.IfaceName); !errors.Is(err, netdev.ErrPresent) {
-		return false
+		return false, nil
 	}
 	if running, _ := o.backend.IsRunning(ctx, names.IfaceName); running {
-		return false
+		return false, nil
 	}
-	o.interfaceDownBestEffort(ctx, tunnelID, iface)
-	return true
+	if err := o.interfaceDownBestEffort(ctx, tunnelID, iface); err != nil {
+		return false, fmt.Errorf("interface down before swap: %w", err)
+	}
+	return true, nil
 }
 
 // removeOpkgTun — снятие kernel-устройства из-под записи OpkgTunN и, при
