@@ -134,11 +134,6 @@ func (o *OperatorOS4Impl) Start(ctx context.Context, cfg tunnel.Config) error {
 		o.logWarn("start", cfg.ID, "Failed to set MTU: "+exec.FormatError(result, err).Error())
 	}
 
-	// Set txqueuelen
-	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "dev", ifaceName, "txqueuelen", "1000"); err != nil {
-		o.logWarn("start", cfg.ID, "Failed to set txqueuelen: "+exec.FormatError(result, err).Error())
-	}
-
 	o.logInfo("start", cfg.ID, "Interface up with MTU")
 
 	// === Phase 5: Add firewall rules ===

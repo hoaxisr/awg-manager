@@ -393,11 +393,11 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 		mtu = 1280
 	}
 	if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "dev", names.IfaceName,
-		"txqueuelen", "1000", "mtu", fmt.Sprintf("%d", mtu)); err != nil {
+		"mtu", fmt.Sprintf("%d", mtu)); err != nil {
 		o.rollbackStart(ctx, cfg, names, iface, justCreated, up, applied)
 		return tunnel.NewOpError("start", cfg.ID, "kernel", fmt.Errorf("configure interface: %w", err))
 	}
-	o.logInfo("start", cfg.ID, fmt.Sprintf("Kernel interface configured (mtu=%d, qlen=1000)", mtu))
+	o.logInfo("start", cfg.ID, fmt.Sprintf("Kernel interface configured (mtu=%d)", mtu))
 
 	if err := o.wg.SetConf(ctx, names.IfaceName, cfg.ConfPath); err != nil {
 		o.rollbackStart(ctx, cfg, names, iface, justCreated, up, applied)
@@ -759,7 +759,7 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 		mtu = 1280
 	}
 	if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "dev", names.IfaceName,
-		"txqueuelen", "1000", "mtu", fmt.Sprintf("%d", mtu)); err != nil {
+		"mtu", fmt.Sprintf("%d", mtu)); err != nil {
 		return tunnel.NewOpError("reconcile", cfg.ID, "kernel", fmt.Errorf("configure interface: %w", err))
 	}
 

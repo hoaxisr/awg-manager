@@ -31,6 +31,7 @@
 				m.diag_planned_wan(),
 				m.diag_planned_ndms(),
 				m.diag_planned_kernel_module(),
+				'iproute2 (ip-full)',
 				m.diag_planned_clock_sync(),
 				m.diag_planned_direct(),
 				'Sing-box runtime',

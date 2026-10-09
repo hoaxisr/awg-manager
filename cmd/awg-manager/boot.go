@@ -18,6 +18,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/iproute2"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
@@ -104,6 +105,9 @@ func (a *app) startBootSequence() {
 	}
 	a.bootLog.Info("startup", "",
 		fmt.Sprintf("awg-manager %s started (uptime %ds, tunnels in config: %d)", version, int(a.uptime), tunnelCount))
+	if err := iproute2.Check(context.Background()); err != nil {
+		a.bootLog.Error("startup", "", err.Error())
+	}
 	const bootDetectionMax = 300 // 5 minutes
 	isBoot := (a.uptime > 0 && a.uptime < bootDetectionMax) || a.forceBoot
 	if isBoot {

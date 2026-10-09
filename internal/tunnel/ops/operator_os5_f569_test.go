@@ -661,7 +661,7 @@ func TestReconcile_FailAfterDown_NextReconcileUp(t *testing.T) {
 	be := newDeviceBackend(t, f)
 	be.plug(t, "opkgtun10", false)
 	o, rec := newOS5LifecycleOn(t, &recordingPoster{f: f}, f, be, true)
-	rec.failOn = "txqueuelen"
+	rec.failOn = "link set dev opkgtun10 mtu"
 
 	if err := o.Reconcile(context.Background(), lifecycleCfg(t)); err == nil {
 		t.Fatal("Reconcile: want отказ ip link")

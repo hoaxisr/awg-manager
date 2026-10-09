@@ -379,7 +379,7 @@ func TestColdStart_KernelAddressCarriesUserPrefix(t *testing.T) {
 	if !hasCall(rec.Calls, "/opt/sbin/ip address replace dev opkgtun10 10.9.7.2/26") {
 		t.Fatalf("адрес с маской пользователя не выставлен:\n%s", strings.Join(rec.Calls, "\n"))
 	}
-	if !hasCall(rec.Calls, "/opt/sbin/ip link set dev opkgtun10 txqueuelen 1000 mtu 1342") {
+	if !hasCall(rec.Calls, "/opt/sbin/ip link set dev opkgtun10 mtu 1342") {
 		t.Fatalf("MTU из конфига не выставлен:\n%s", strings.Join(rec.Calls, "\n"))
 	}
 }

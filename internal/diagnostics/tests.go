@@ -13,6 +13,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
+	"github.com/hoaxisr/awg-manager/internal/sys/iproute2"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -50,6 +51,7 @@ func (r *Runner) runTestsWithEvents(ctx context.Context, report *Report) []TestR
 		run(r.testWANConnectivity(ctx))
 		run(r.testNDMSHealth(ctx))
 		run(r.testKernelModule(ctx, report))
+		run(testIPRoute2(ctx))
 		run(r.testClockSkew(ctx))
 		run(r.testDirectConnectivity(ctx))
 		run(r.testSingboxRuntime(ctx))
@@ -239,6 +241,15 @@ func (r *Runner) testKernelModule(ctx context.Context, report *Report) TestResul
 		res.Status = StatusFail
 	}
 	res.Detail = strings.Join(details, "; ")
+	return res
+}
+
+func testIPRoute2(ctx context.Context) TestResult {
+	res := TestResult{Name: "iproute2", Description: "iproute2 (ip-full)", Status: StatusPass, Detail: iproute2.Path}
+	if err := iproute2.Check(ctx); err != nil {
+		res.Status = StatusFail
+		res.Detail = err.Error()
+	}
 	return res
 }
 
