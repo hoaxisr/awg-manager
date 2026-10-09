@@ -48,6 +48,9 @@ const ALLOWED: Record<string, { lines: number; reason: string }> = {
 	'/src/lib/utils/deviceProxyInstance.ts': { lines: 1, reason: 'имя прокси по умолчанию — данные на роутере' },
 	'/src/lib/components/sb-router/qosClasses.ts': { lines: 1, reason: 'имя класса по умолчанию — данные на роутере' },
 	'/src/routes/tunnels/[id]/+page.svelte': { lines: 1, reason: 'подпись «Через …» сохраняется на бэкенде' },
+	'/src/lib/components/system/AIAssistantPanel.svelte': { lines: 136, reason: 'текст интерфейса ИИ-помощника' },
+	'/src/lib/components/system/AIMemoryDrawer.svelte': { lines: 77, reason: 'текст интерфейса памяти ИИ-ассистента' },
+	'/src/lib/components/system/SystemTab.svelte': { lines: 1, reason: 'название вкладки ИИ-помощника' },
 };
 
 /** \u0410-escape — та же кириллица, просто записанная кодами. */

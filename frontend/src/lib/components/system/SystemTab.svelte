@@ -11,11 +11,13 @@
 	import PortsPanel from './PortsPanel.svelte';
 	import ProcessesPanel from './ProcessesPanel.svelte';
 	import PinkPoniesPanel from './PinkPoniesPanel.svelte';
+	import AIAssistantPanel from './AIAssistantPanel.svelte';
 	import { poniesUnlocked } from '$lib/stores/poniesUnlocked';
 
-	type SystemView = 'files' | 'services' | 'packages' | 'terminal' | 'ports' | 'processes' | 'ponies';
+	type SystemView = 'ai' | 'files' | 'services' | 'packages' | 'terminal' | 'ports' | 'processes' | 'ponies';
 
 	const baseViews: { id: SystemView; label: string }[] = $derived([
+		{ id: 'ai', label: 'ИИ-помощник' },
 		{ id: 'files', label: m.system_tab_files() },
 		{ id: 'services', label: m.system_tab_services() },
 		{ id: 'packages', label: m.system_tab_packages() },
@@ -33,8 +35,8 @@
 
 	function initialView(): SystemView {
 		const v = $page.url.searchParams.get('view');
-		if (v === 'services' || v === 'packages' || v === 'terminal' || v === 'ports' || v === 'processes' || v === 'ponies') return v;
-		return 'files';
+		if (v === 'ai' || v === 'services' || v === 'packages' || v === 'terminal' || v === 'ports' || v === 'processes' || v === 'ponies') return v as SystemView;
+		return 'ai';
 	}
 
 	let activeView = $state<SystemView>(initialView());
@@ -45,20 +47,19 @@
 			if ($poniesUnlocked) {
 				activeView = 'ponies';
 			} else {
-				activeView = 'files';
+				activeView = 'ai';
 			}
-		} else if (v === 'files' || v === 'services' || v === 'packages' || v === 'terminal' || v === 'ports' || v === 'processes') {
+		} else if (v === 'ai' || v === 'files' || v === 'services' || v === 'packages' || v === 'terminal' || v === 'ports' || v === 'processes') {
 			activeView = v;
 		} else if (!$page.url.searchParams.has('view')) {
-			activeView = 'files';
+			activeView = 'ai';
 		}
 	});
 
 	function setView(id: SystemView) {
 		activeView = id;
 		const url = new URL($page.url);
-		if (id === 'files') url.searchParams.delete('view');
-		else url.searchParams.set('view', id);
+		url.searchParams.set('view', id);
 		void goto(url.pathname + url.search + url.hash, {
 			replaceState: true,
 			keepFocus: true,
@@ -80,7 +81,9 @@
 	<Tabs tabs={views} active={activeView} onchange={(id) => setView(id as SystemView)} />
 
 	<div class="panel">
-		{#if activeView === 'files'}
+		{#if activeView === 'ai'}
+			<AIAssistantPanel />
+		{:else if activeView === 'files'}
 			<FileManager />
 		{:else if activeView === 'services'}
 			<ServicesPanel />

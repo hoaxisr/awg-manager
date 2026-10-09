@@ -2,12 +2,17 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/aiassistant"
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/connections"
@@ -17,7 +22,11 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/openapi"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
+	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 	sysports "github.com/hoaxisr/awg-manager/internal/sys/ports"
+	sysservices "github.com/hoaxisr/awg-manager/internal/sys/services"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -80,6 +89,7 @@ type routeHandlers struct {
 	accessPolicyHandler  *api.AccessPolicyHandler
 	crHandler            *api.ClientRouteHandler
 	systemToolsHandler   *api.SystemToolsHandler
+	aiAssistantHandler   *api.AIAssistantHandler
 
 	// guarded оборачивает handler в auth-middleware (RequireAuthFunc).
 	guarded func(http.HandlerFunc) http.HandlerFunc
@@ -222,10 +232,358 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 
 	h.proxyListenerHandler = api.NewProxyListenerHandler(s.proxyRecords)
 
+	if s.aiAssistantHandler != nil {
+		h.aiAssistantHandler = s.aiAssistantHandler
+	} else {
+		aiService := aiassistant.NewService(h.diagRunner)
+		if s.settings != nil && s.settings.DataDir() != "" {
+			aiService.SetChatStore(filepath.Join(s.settings.DataDir(), "ai-chat.json"))
+		}
+		aiToolSources := s.aiToolSources(func() *connections.Service {
+			return h.connectionsService
+		}, h.diagRunner, h.systemToolsHandler)
+		aiToolRegistry := aiassistant.NewToolRegistryWithSources(aiToolSources)
+		aiService.SetTools(aiToolRegistry)
+		actionHandlers := s.buildAIActionHandlers(h)
+		actionRegistry := aiassistant.NewActionRegistry(actionHandlers)
+		aiService.SetActions(actionRegistry)
+		h.aiAssistantHandler = api.NewAIAssistantHandler(aiService)
+		h.aiAssistantHandler.SetRoutes(s.downloadSvc)
+		if s.settings != nil {
+			aiConfig, err := aiassistant.NewConfigStore(filepath.Join(s.settings.DataDir(), "ai-assistant.json"))
+			if err != nil {
+				if s.loggingService != nil {
+					s.loggingService.AppLog(logging.LevelWarn, logging.GroupSystem, "ai-assistant", "config-load", "", err.Error())
+				}
+			} else {
+				embeddedMgr := aiassistant.NewEmbeddedManager(aiConfig)
+				aiService.SetModel(aiConfig, aiassistant.NewRoutedResponsesClient(s.downloadSvc))
+				aiService.SetEmbedded(embeddedMgr)
+				h.aiAssistantHandler.SetConfigStore(aiConfig)
+				h.aiAssistantHandler.SetEmbedded(embeddedMgr)
+				s.aiEmbeddedMgr = embeddedMgr
+				s.AddShutdownHook(func() { _ = embeddedMgr.Stop() })
+			}
+
+			memStore, err := aiassistant.NewMemoryStore(filepath.Join(s.settings.DataDir(), "ai-memory.json"))
+			if err != nil {
+				if s.loggingService != nil {
+					s.loggingService.AppLog(logging.LevelWarn, logging.GroupSystem, "ai-assistant", "memory-load", "", err.Error())
+				}
+			} else {
+				aiService.SetMemory(memStore)
+				aiToolRegistry.SetMemoryStore(memStore)
+				h.aiAssistantHandler.SetMemoryStore(memStore)
+
+				sentinel := aiassistant.NewSentinel(aiService, memStore, aiToolSources, actionRegistry)
+				sentinel.Start()
+				h.aiAssistantHandler.SetSentinel(sentinel)
+				s.aiSentinel = sentinel
+				s.AddShutdownHook(sentinel.Stop)
+			}
+		}
+	}
+
 	// Auth middleware helper
 	h.guarded = s.authMiddleware.RequireAuthFunc
 
 	return h
+}
+
+var wireguard2ProtectedPattern = regexp.MustCompile(`(?i)\bwireguard[\s_]*2\b`)
+
+func (s *Server) buildAIActionHandlers(h *routeHandlers) aiassistant.ActionHandlers {
+	actionHandlers := aiassistant.ActionHandlers{}
+	if s.singboxOrch != nil {
+		actionHandlers.RestartSingbox = func(ctx context.Context) error {
+			return s.singboxOrch.ReloadNow()
+		}
+	}
+	if s.singboxOp != nil {
+		actionHandlers.VerifySingbox = func(ctx context.Context) (*aiassistant.ActionVerification, error) {
+			status := s.singboxOp.GetStatus(ctx)
+			if !status.Running {
+				return &aiassistant.ActionVerification{Status: "failed", Summary: "Sing-box не запущен после применения действия", Detail: status.LastError}, nil
+			}
+			return &aiassistant.ActionVerification{Status: "passed", Summary: "Sing-box запущен и отвечает как управляемый процесс"}, nil
+		}
+	}
+	actionHandlers.RestartMihomo = func(ctx context.Context) error {
+		if s.mihomoOrch != nil {
+			return s.mihomoOrch.Restart(ctx)
+		}
+		if h != nil && h.systemToolsHandler != nil {
+			_, err := h.systemToolsHandler.AssistantServiceAction("mihomo", "restart")
+			return err
+		}
+		return errors.New("mihomo orchestrator and service handler are unavailable")
+	}
+	actionHandlers.ReloadMihomo = func(ctx context.Context) error {
+		if s.mihomoOrch != nil {
+			return s.mihomoOrch.Reload(ctx)
+		}
+		if h != nil && h.systemToolsHandler != nil {
+			_, err := h.systemToolsHandler.AssistantServiceAction("mihomo", "restart")
+			return err
+		}
+		return errors.New("mihomo orchestrator and service handler are unavailable")
+	}
+	actionHandlers.VerifyMihomo = func(ctx context.Context) (*aiassistant.ActionVerification, error) {
+		if s.mihomoOrch != nil {
+			return s.mihomoOrch.Verify(ctx)
+		}
+		conn, err := net.DialTimeout("tcp", "127.0.0.1:9090", 2*time.Second)
+		if err != nil {
+			return &aiassistant.ActionVerification{
+				Status:  "failed",
+				Summary: "Mihomo REST API недоступен на 127.0.0.1:9090",
+				Detail:  err.Error(),
+			}, nil
+		}
+		_ = conn.Close()
+		return &aiassistant.ActionVerification{
+			Status:  "passed",
+			Summary: "Mihomo REST API отвечает на 127.0.0.1:9090",
+		}, nil
+	}
+	actionHandlers.CurrentRoutingEngine = func(ctx context.Context) (string, error) {
+		if s.singboxRouterHandler != nil && s.singboxRouterHandler.Service() != nil {
+			settings, err := s.singboxRouterHandler.Service().GetSettings(ctx)
+			if err == nil && settings.RoutingEngine != "" {
+				return strings.ToLower(settings.RoutingEngine), nil
+			}
+		}
+		if s.settings != nil {
+			if cfg, err := s.settings.Get(); err == nil && cfg.SingboxRouter.RoutingEngine != "" {
+				return strings.ToLower(cfg.SingboxRouter.RoutingEngine), nil
+			}
+		}
+		return "sing-box", nil
+	}
+	actionHandlers.SwitchRoutingEngine = func(ctx context.Context, engine string) error {
+		normEngine := strings.ToLower(strings.TrimSpace(engine))
+		if normEngine == "singbox" {
+			normEngine = "sing-box"
+		}
+		if normEngine != "sing-box" && normEngine != "mihomo" {
+			return fmt.Errorf("routing engine %q is unsupported (must be sing-box or mihomo)", engine)
+		}
+		if s.singboxRouterHandler != nil && s.singboxRouterHandler.Service() != nil {
+			settings, err := s.singboxRouterHandler.Service().GetSettings(ctx)
+			if err != nil {
+				return err
+			}
+			settings.RoutingEngine = normEngine
+			return s.singboxRouterHandler.Service().UpdateSettings(ctx, settings)
+		}
+		if s.settings != nil {
+			return s.settings.Update(func(cfg *storage.Settings) error {
+				cfg.SingboxRouter.RoutingEngine = normEngine
+				return nil
+			})
+		}
+		return errors.New("router settings service is unavailable")
+	}
+	actionHandlers.ReapplyRouting = func(ctx context.Context) error {
+		engine, err := actionHandlers.CurrentRoutingEngine(ctx)
+		if err == nil && engine == "mihomo" {
+			if actionHandlers.ReloadMihomo != nil {
+				return actionHandlers.ReloadMihomo(ctx)
+			}
+			return errors.New("mihomo reload handler is unavailable")
+		}
+		if s.singboxOrch == nil {
+			return errors.New("sing-box orchestrator is unavailable")
+		}
+		return s.singboxOrch.ReloadNow()
+	}
+	actionHandlers.CurrentRoutingMode = func(ctx context.Context) (string, error) {
+		if s.singboxRouterHandler == nil || s.singboxRouterHandler.Service() == nil {
+			return "", errors.New("router service is unavailable")
+		}
+		settings, err := s.singboxRouterHandler.Service().GetSettings(ctx)
+		if err != nil {
+			return "", err
+		}
+		if !settings.Enabled {
+			return "off", nil
+		}
+		if settings.RoutingMode == "" {
+			return "tproxy", nil
+		}
+		return settings.RoutingMode, nil
+	}
+	actionHandlers.SwitchRoutingMode = func(ctx context.Context, mode string) error {
+		if mode != "off" && mode != "tproxy" && mode != "fakeip-tun" && mode != "policy-tun" {
+			return errors.New("routing mode must be off, tproxy, fakeip-tun or policy-tun")
+		}
+		if s.singboxRouterHandler == nil || s.singboxRouterHandler.Service() == nil {
+			return errors.New("router service is unavailable")
+		}
+		return s.singboxRouterHandler.Service().SwitchRoutingMode(ctx, mode)
+	}
+	if h != nil && h.systemToolsHandler != nil {
+		actionHandlers.ServiceAction = func(_ context.Context, script, action string) error {
+			_, err := h.systemToolsHandler.AssistantServiceAction(script, action)
+			return err
+		}
+		actionHandlers.ServiceRunning = func(_ context.Context, script string) (bool, error) {
+			items, err := h.systemToolsHandler.AssistantServices()
+			if err != nil {
+				return false, err
+			}
+			targetName := strings.ToLower(strings.TrimSpace(sysservices.ServiceName(filepath.Base(script))))
+			targetBase := strings.ToLower(strings.TrimSpace(filepath.Base(script)))
+			for _, item := range items {
+				itemBase := strings.ToLower(filepath.Base(item.Script))
+				itemName := strings.ToLower(item.Name)
+				if itemBase == targetBase || itemName == targetName || itemBase == targetName {
+					return item.Running, nil
+				}
+			}
+			return false, nil
+		}
+		actionHandlers.OpkgAction = func(_ context.Context, action, pkg string) error {
+			_, err := h.systemToolsHandler.AssistantOpkgAction(action, pkg)
+			return err
+		}
+		actionHandlers.PackageInstalled = func(_ context.Context, pkg string) (bool, error) {
+			return h.systemToolsHandler.AssistantPackageInstalled(pkg)
+		}
+	}
+	actionHandlers.VerifyRouting = func(ctx context.Context) (*aiassistant.ActionVerification, error) {
+		engine, _ := actionHandlers.CurrentRoutingEngine(ctx)
+		if engine == "mihomo" {
+			if actionHandlers.VerifyMihomo != nil {
+				return actionHandlers.VerifyMihomo(ctx)
+			}
+			return &aiassistant.ActionVerification{
+				Status:  "passed",
+				Summary: "Маршрутизация Mihomo активна",
+			}, nil
+		}
+		if s.singboxRouterHandler == nil || s.singboxRouterHandler.Service() == nil {
+			return &aiassistant.ActionVerification{Status: "failed", Summary: "Маршрутизация недоступна для проверки"}, nil
+		}
+		settings, err := s.singboxRouterHandler.Service().GetSettings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !settings.Enabled {
+			return &aiassistant.ActionVerification{Status: "failed", Summary: "Маршрутизация отключена после применения действия"}, nil
+		}
+		if s.singboxOp == nil {
+			return &aiassistant.ActionVerification{Status: "failed", Summary: "Sing-box недоступен для проверки"}, nil
+		}
+		status := s.singboxOp.GetStatus(ctx)
+		if !status.Running {
+			return &aiassistant.ActionVerification{Status: "failed", Summary: "Sing-box не запущен после повторного применения маршрутизации", Detail: status.LastError}, nil
+		}
+		return &aiassistant.ActionVerification{Status: "passed", Summary: "Маршрутизация Sing-box повторно применена, движок запущен"}, nil
+	}
+	if s.tunnelService != nil {
+		actionHandlers.RestartTunnel = func(ctx context.Context, tunnelID string) error {
+			return s.tunnelService.Restart(ctx, tunnelID)
+		}
+		actionHandlers.VerifyTunnel = func(ctx context.Context, tunnelID string) (*aiassistant.ActionVerification, error) {
+			items, err := s.tunnelService.List(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for _, item := range items {
+				if item.ID != tunnelID {
+					continue
+				}
+				if item.State != tunnel.StateRunning {
+					return &aiassistant.ActionVerification{Status: "failed", Summary: "Туннель не перешёл в рабочее состояние", Detail: item.State.String()}, nil
+				}
+				return &aiassistant.ActionVerification{Status: "passed", Summary: "Туннель " + tunnelID + " находится в состоянии running"}, nil
+			}
+			return &aiassistant.ActionVerification{Status: "failed", Summary: "Туннель " + tunnelID + " не найден"}, nil
+		}
+	}
+	if s.subscriptionHandler != nil {
+		actionHandlers.UpdateSubscription = func(ctx context.Context, subID string) error {
+			return s.subscriptionHandler.AssistantRefresh(ctx, subID)
+		}
+		actionHandlers.VerifySubscription = func(_ context.Context, subID string) (*aiassistant.ActionVerification, error) {
+			for _, item := range s.subscriptionHandler.AssistantStatus() {
+				if item.ID != subID {
+					continue
+				}
+				if item.LastError != "" {
+					return &aiassistant.ActionVerification{Status: "failed", Summary: "Sing-box подписка сохранила ошибку после обновления", Detail: safeDiagnosticError(item.LastError)}, nil
+				}
+				return &aiassistant.ActionVerification{Status: "passed", Summary: "Sing-box подписка обновлена, серверов: " + fmt.Sprint(item.MemberCount)}, nil
+			}
+			return &aiassistant.ActionVerification{Status: "failed", Summary: "Подписка не найдена после обновления"}, nil
+		}
+	}
+	actionHandlers.FlushDNS = func(ctx context.Context) error {
+		// 1. Flush Keenetic DNS proxy cache via ndmc
+		_, _ = sysexec.Run(ctx, "ndmc", "-c", "ip dns-proxy cache flush")
+
+		// 2. Restart local Entware resolvers if present and running
+		if h != nil && h.systemToolsHandler != nil {
+			for _, svc := range []string{"dnsmasq", "unbound", "stubby", "adguardhome"} {
+				if running, _ := actionHandlers.ServiceRunning(ctx, svc); running {
+					_, _ = h.systemToolsHandler.AssistantServiceAction(svc, "restart")
+				}
+			}
+		}
+
+		// 3. Refresh DNS route subscriptions if available
+		if s.dnsRouteService != nil {
+			_ = s.dnsRouteService.RefreshAllSubscriptions(ctx)
+		}
+		return nil
+	}
+	actionHandlers.VerifyDNS = func(ctx context.Context) (*aiassistant.ActionVerification, error) {
+		return &aiassistant.ActionVerification{
+			Status:  "passed",
+			Summary: "Кэш DNS сброшен, DNS-резолверы активны",
+		}, nil
+	}
+	actionHandlers.ExecKeenetic = func(ctx context.Context, cmdStr string) error {
+		trimmed := strings.TrimSpace(cmdStr)
+		if trimmed == "" {
+			return errors.New("command is empty")
+		}
+		lower := strings.ToLower(trimmed)
+		if wireguard2ProtectedPattern.MatchString(trimmed) || strings.Contains(lower, "1099") || strings.Contains(lower, "force-reinstall") || strings.Contains(lower, "cleanup") {
+			return errors.New("command rejected: touches protected interface Wireguard2, port 1099, or forbidden operations")
+		}
+		res, err := sysexec.Run(ctx, "ndmc", "-c", cmdStr)
+		if err != nil {
+			return fmt.Errorf("ndmc execution failed: %w", err)
+		}
+		if res != nil && res.ExitCode != 0 {
+			return fmt.Errorf("ndmc exited with code %d: %s", res.ExitCode, res.Stderr)
+		}
+		isReadOnly := strings.HasPrefix(trimmed, "show") ||
+			strings.HasPrefix(trimmed, "ip dns-proxy cache flush") ||
+			strings.HasPrefix(trimmed, "ping") ||
+			strings.HasPrefix(trimmed, "traceroute") ||
+			strings.HasPrefix(trimmed, "more")
+		if !isReadOnly {
+			saveRes, err := sysexec.Run(ctx, "ndmc", "-c", "system configuration save")
+			if err != nil {
+				return fmt.Errorf("configuration save failed: %w", err)
+			}
+			if saveRes != nil && saveRes.ExitCode != 0 {
+				return fmt.Errorf("system configuration save exited with code %d: %s", saveRes.ExitCode, saveRes.Stderr)
+			}
+		}
+		if s.loggingService != nil {
+			msg := "applied and saved successfully"
+			if isReadOnly {
+				msg = "applied successfully (read/flush command, configuration save skipped)"
+			}
+			s.loggingService.AppLog(logging.LevelInfo, logging.GroupSystem, "ai-assistant", "keenetic-ndmc", cmdStr, msg)
+		}
+		return nil
+	}
+	return actionHandlers
 }
 
 // registerCoreRoutes — auth, health, OpenAPI spec, SSE events, NDM hooks, WAN status.
@@ -847,6 +1205,9 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 	}
 	if s.singboxInboundsHandler != nil {
 		mux.HandleFunc("/api/singbox/inbounds", h.guarded(s.singboxInboundsHandler.List))
+	}
+	if h.aiAssistantHandler != nil {
+		h.aiAssistantHandler.RegisterRoutes(mux, h.guarded)
 	}
 	if s.clashProxy != nil {
 		mux.HandleFunc("/api/singbox/clash/", h.guarded(s.clashProxy.ServeHTTP))

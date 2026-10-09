@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
+	"github.com/hoaxisr/awg-manager/internal/aiassistant"
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
@@ -122,6 +123,11 @@ type Server struct {
 	dnsRewritesHandler         *api.DNSRewritesHandler
 	awg3Handler                *api.Awg3Handler
 	clashProxy                 *api.ClashProxy
+	aiAssistantHandler         *api.AIAssistantHandler
+	aiSentinel                 *aiassistant.Sentinel
+	aiEmbeddedMgr              *aiassistant.EmbeddedManager
+	mihomoOrch                 MihomoOrchestrator
+	mihomoClashAddr            string
 	singboxOp                  *singbox.Operator
 	singboxOrch                *singboxorch.Orchestrator
 	presetCatalog              *presets.Catalog
@@ -221,6 +227,8 @@ type Deps struct {
 	SingboxHandler       *api.SingboxHandler
 	SingboxOrch          *singboxorch.Orchestrator
 	ClashProxy           *api.ClashProxy
+	AIAssistantHandler   *api.AIAssistantHandler
+	MihomoOrch           MihomoOrchestrator
 	SingboxConnsHandler  *api.SingboxConnectionsHandler
 	MonitoringService    *monitoring.Service
 	SingboxSubMembers    func() []diagnostics.SingboxSubMember
@@ -312,6 +320,8 @@ func New(cfg Config, deps Deps) *Server {
 		obfuscatorRelayChanged: deps.ObfuscatorRelayChanged,
 		authMiddleware:         auth.NewMiddleware(deps.Sessions, deps.Settings, &authLoggerAdapter{log: appLog}),
 		mcpKeys:                deps.McpKeys,
+		aiAssistantHandler:     deps.AIAssistantHandler,
+		mihomoOrch:             deps.MihomoOrch,
 		instanceID:             id,
 	}
 }
@@ -482,6 +492,38 @@ func (s *Server) SetAwg3Handler(h *api.Awg3Handler) {
 	s.awg3Handler = h
 }
 
+// SetAIAssistantHandler wires the AI assistant handler.
+func (s *Server) SetAIAssistantHandler(h *api.AIAssistantHandler) {
+	s.aiAssistantHandler = h
+}
+
+// MihomoOrchestrator defines the actions required for managing and verifying the Mihomo proxy engine.
+type MihomoOrchestrator interface {
+	Restart(ctx context.Context) error
+	Reload(ctx context.Context) error
+	Verify(ctx context.Context) (*aiassistant.ActionVerification, error)
+}
+
+// SetMihomoOrchestrator wires the Mihomo orchestrator.
+func (s *Server) SetMihomoOrchestrator(orch MihomoOrchestrator) {
+	s.mihomoOrch = orch
+}
+
+// SetMihomoClashAddr sets custom Clash API address for Mihomo (e.g. in tests).
+func (s *Server) SetMihomoClashAddr(addr string) {
+	s.mihomoClashAddr = addr
+}
+
+// SetAISentinel wires the Sentinel background watchdog.
+func (s *Server) SetAISentinel(sentinel *aiassistant.Sentinel) {
+	s.aiSentinel = sentinel
+}
+
+// SetAIEmbeddedManager wires the embedded local AI manager.
+func (s *Server) SetAIEmbeddedManager(mgr *aiassistant.EmbeddedManager) {
+	s.aiEmbeddedMgr = mgr
+}
+
 // generateInstanceID creates a random 16-byte hex string (32 chars).
 func generateInstanceID() string {
 	b := make([]byte, 16)
@@ -636,6 +678,16 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.exposureGuardStop != nil {
 		s.exposureGuardStop()
 		s.exposureGuardStop = nil
+	}
+
+	if s.aiSentinel != nil {
+		s.aiSentinel.Stop()
+		s.aiSentinel = nil
+	}
+
+	if s.aiEmbeddedMgr != nil {
+		_ = s.aiEmbeddedMgr.Stop()
+		s.aiEmbeddedMgr = nil
 	}
 
 	if s.mcpCallsCancel != nil {

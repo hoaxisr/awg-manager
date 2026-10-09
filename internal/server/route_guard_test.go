@@ -258,6 +258,7 @@ func newGuardServer(t *testing.T) (*Server, *auth.SessionStore) {
 			FreeTurnLinkDecode: stub, CaptchaStatus: stub, InstallStatus: stub, Install: stub, Uninstall: stub,
 		},
 	}
+	t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
 	return s, sessions
 }
 
