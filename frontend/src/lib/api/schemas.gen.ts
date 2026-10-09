@@ -2763,7 +2763,14 @@ const api_UpdateSettingsDTO: v.GenericSchema = v.looseObject({
 	autoInstallTime: v.optional(v.nullable(v.string())),
 	channel: v.optional(v.nullable(v.string())),
 	checkEnabled: v.optional(v.nullable(v.boolean())),
+	snapshotDisabled: v.optional(v.nullable(v.boolean())),
 	statsEnabled: v.optional(v.nullable(v.boolean())),
+});
+
+const api_UpdateSnapshotsData: v.GenericSchema = v.looseObject({
+	keep: v.optional(v.nullable(v.number())),
+	snapshots: v.optional(v.nullable(v.array(v.lazy(() => backup_Snapshot)))),
+	ttlDays: v.optional(v.nullable(v.number())),
 });
 
 const api_UserConfigApplyResponse: v.GenericSchema = v.looseObject({
@@ -2849,6 +2856,13 @@ const api_WireguardServerPeerDTO: v.GenericSchema = v.looseObject({
 	signatureProfile: v.optional(v.nullable(v.string())),
 	tunnelIP: v.optional(v.nullable(v.string())),
 	txBytes: v.optional(v.nullable(v.number())),
+});
+
+const backup_Snapshot: v.GenericSchema = v.looseObject({
+	appVersion: v.optional(v.nullable(v.string())),
+	createdAt: v.optional(v.nullable(v.string())),
+	id: v.optional(v.nullable(v.string())),
+	size: v.optional(v.nullable(v.number())),
 });
 
 const captcha_ClientStatus: v.GenericSchema = v.looseObject({
@@ -3419,6 +3433,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /system-tunnels": v.lazy(() => api_SystemTunnelsResponse),
 	"GET /system-tunnels/asc": v.lazy(() => api_ASCParamsResponse),
 	"GET /system/all-interfaces": v.lazy(() => api_AllInterfacesResponse),
+	"GET /system/backup/snapshots": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_UpdateSnapshotsData))),
+})]),
 	"GET /system/files/checksum": v.lazy(() => api_SystemFileChecksumResponse),
 	"GET /system/files/list": v.lazy(() => api_SystemFilesListResponse),
 	"GET /system/files/read": v.lazy(() => api_SystemFileReadResponse),
@@ -3668,6 +3685,10 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 })]),
 	"POST /system-tunnels/asc": v.lazy(() => api_OkResponse),
 	"POST /system/backup/import": v.lazy(() => api_APIEnvelope),
+	"POST /system/backup/snapshots/delete": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_UpdateSnapshotsData))),
+})]),
+	"POST /system/backup/snapshots/restore": v.lazy(() => api_APIEnvelope),
 	"POST /system/files/chmod": v.lazy(() => api_SystemOKResponse),
 	"POST /system/files/copy": v.lazy(() => api_SystemOKResponse),
 	"POST /system/files/mkdir": v.lazy(() => api_SystemOKResponse),

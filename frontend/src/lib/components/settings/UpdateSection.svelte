@@ -24,6 +24,7 @@
 	let showChangelog = $state(false);
 	let savingAutoInstall = $state(false);
 	let savingStats = $state(false);
+	let savingSnapshot = $state(false);
 
 	let localIntervalDays = $state(settings.updates.autoInstallIntervalDays || 7);
 	let localTime = $state(settings.updates.autoInstallTime || '05:00');
@@ -130,6 +131,21 @@
 			notifications.error(m.settings_update_stats_failed({ error: downloadErrorToText(e) }));
 		} finally {
 			savingStats = false;
+		}
+	}
+
+	async function toggleSnapshot(enabled: boolean) {
+		savingSnapshot = true;
+		try {
+			settings = await api.updateSettings({
+				...settings,
+				updates: { ...settings.updates, snapshotDisabled: !enabled },
+			});
+			setGlobalSettings(settings);
+		} catch (e) {
+			notifications.error(m.settings_update_snapshot_failed({ error: downloadErrorToText(e) }));
+		} finally {
+			savingSnapshot = false;
 		}
 	}
 
@@ -291,6 +307,21 @@
 		</div>
 	{/if}
 {/if}
+
+<div class="setting-row toggle-inline-row">
+	<div class="flex flex-col gap-1">
+		<span class="font-medium">{m.settings_update_snapshot_label()}</span>
+		<span class="setting-description">
+			{m.settings_update_snapshot_description()}
+		</span>
+	</div>
+	<Toggle
+		checked={!settings.updates.snapshotDisabled}
+		ariaLabel={m.settings_update_snapshot_label()}
+		onchange={toggleSnapshot}
+		disabled={savingSnapshot}
+	/>
+</div>
 
 <div class="setting-row toggle-inline-row">
 	<div class="flex flex-col gap-1">

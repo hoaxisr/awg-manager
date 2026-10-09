@@ -241,6 +241,8 @@ export interface UpdateSettings {
 	autoInstallIntervalDays: number;
 	autoInstallTime: string;
 	statsEnabled: boolean;
+	/** Не сохранять снимок данных перед установкой обновления; по умолчанию false. */
+	snapshotDisabled?: boolean;
 }
 
 export interface DownloadSettings {
@@ -351,6 +353,22 @@ export interface UpdateInfo {
 	nextAutoInstallAt?: string;
 	/** Absent until the first auto-install attempt has run. */
 	lastAutoInstallAt?: string;
+}
+
+/** Снимок настроек, который AWG Manager сохраняет перед установкой обновления. */
+export interface UpdateSnapshot {
+	id: string;
+	createdAt: string;
+	appVersion?: string;
+	size: number;
+}
+
+export interface UpdateSnapshotsData {
+	snapshots: UpdateSnapshot[];
+	/** Сколько последних снимков хранится. */
+	keep: number;
+	/** Срок жизни снимка в днях; самый новый живёт до следующего обновления. */
+	ttlDays: number;
 }
 
 export interface ChangelogGroup {

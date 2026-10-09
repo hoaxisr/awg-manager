@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -51,16 +52,24 @@ func CheckDataDir(dataDir string) error {
 }
 
 // Export writes a gzip-compressed tar of dataDir to w. Runtime caches are skipped.
-func Export(dataDir, appVersion string, w io.Writer) error {
+func Export(dataDir, appVersion string, w io.Writer) (err error) {
 	if err := CheckDataDir(dataDir); err != nil {
 		return err
 	}
 	dataDir = filepath.Clean(strings.TrimSpace(dataDir))
 
 	gz := gzip.NewWriter(w)
-	defer gz.Close()
 	tw := tar.NewWriter(gz)
-	defer tw.Close()
+	// Ошибки закрытия — часть результата: хвост tar и gzip пишется здесь, и
+	// снимок на диске без него — битый архив, о котором никто бы не узнал.
+	defer func() {
+		if cerr := tw.Close(); err == nil {
+			err = cerr
+		}
+		if cerr := gz.Close(); err == nil {
+			err = cerr
+		}
+	}()
 
 	manifest := Manifest{
 		Version:    FileVersion,
@@ -137,7 +146,15 @@ func Export(dataDir, appVersion string, w io.Writer) error {
 // каталога. В архив не попадает и при очистке не трогается (shouldSkip).
 const restoreTmpDir = ".restore-tmp"
 
-var restoreMu sync.Mutex
+var (
+	restoreMu sync.Mutex
+	// restoring — идёт Restore. Обновление при нём не начинается: opkg с
+	// postinst и восстановление боролись бы за одни и те же данные.
+	restoring atomic.Bool
+)
+
+// Restoring сообщает, идёт ли сейчас восстановление.
+func Restoring() bool { return restoring.Load() }
 
 // Restore заменяет данные из архива r (gzip tar) на месте, не подменяя каталог:
 //  1. архив распаковывается в <dataDir>/.restore-tmp и проверяется манифест —
@@ -158,6 +175,8 @@ func Restore(dataDir string, r io.Reader) error {
 	// восстановления сносили бы распаковку друг друга.
 	restoreMu.Lock()
 	defer restoreMu.Unlock()
+	restoring.Store(true)
+	defer restoring.Store(false)
 	dataDir = filepath.Clean(strings.TrimSpace(dataDir))
 	if dataDir == "" {
 		return fmt.Errorf("data-dir не задан")
@@ -353,6 +372,11 @@ func shouldSkip(rel string) bool {
 	if strings.Contains(rel, ".pre-restore-") || strings.HasPrefix(rel, ".awg-manager-restore-") {
 		return true
 	}
+	// Снимки перед обновлением в архив не едут (архив в архиве), а
+	// восстановление их не трогает: иначе откат на снимок стирал бы сами снимки.
+	if rel == SnapshotDir || strings.HasPrefix(rel, SnapshotDir+"/") {
+		return true
+	}
 	return false
 }
 
@@ -528,7 +552,12 @@ func Filename(now time.Time) string {
 
 // PeekManifest reads manifest from an in-memory gzip tar prefix (for UI hints).
 func PeekManifest(data []byte) (*Manifest, error) {
-	gr, err := gzip.NewReader(bytes.NewReader(data))
+	return readManifest(bytes.NewReader(data))
+}
+
+// readManifest ищет манифест в gzip tar из r.
+func readManifest(r io.Reader) (*Manifest, error) {
+	gr, err := gzip.NewReader(r)
 	if err != nil {
 		return nil, err
 	}

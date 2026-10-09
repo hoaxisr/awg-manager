@@ -26,6 +26,9 @@ const (
 	ResourceAwg3           Resource = "awg3"
 	ResourceProxyInstances Resource = "proxyrt.instances"
 	ResourceMcpKeys        Resource = "mcpKeys"
+	// ResourceUpdateSnapshots — снимки настроек перед обновлением: появляются
+	// при автообновлении и уходят по сроку без участия страницы.
+	ResourceUpdateSnapshots Resource = "updateSnapshots"
 
 	// ResourceAmneziaPremiumKey — состояние ключа подписки Amnezia Premium
 	// (есть ли сохранённый шифротекст и читается ли он). Своё, а не
@@ -83,6 +86,7 @@ var AllResources = []Resource{
 	ResourceAwg3,
 	ResourceProxyInstances,
 	ResourceMcpKeys,
+	ResourceUpdateSnapshots,
 	ResourceAmneziaPremiumKey,
 	ResourceAmneziaPremiumCatalog,
 	ResourceAmneziaPremiumMirror,

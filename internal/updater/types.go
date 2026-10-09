@@ -22,3 +22,6 @@ type UpdateInfo struct {
 }
 
 var ErrUpgradeInProgress = errors.New("upgrade already in progress")
+
+// ErrRestoreInProgress — идёт восстановление из резервной копии или снимка.
+var ErrRestoreInProgress = errors.New("идёт восстановление из резервной копии — обновление отложено")

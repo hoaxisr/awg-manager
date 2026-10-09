@@ -33,6 +33,7 @@ export type ResourceKey =
 	| 'singbox.router.rules'        // emitted by emitRulesEvent — triggers loadRulesSnapshot()
 	| 'proxyrt.instances'             // ResourceProxyInstances — состав инстансов прокси
 	| 'mcpKeys'                     // ResourceMcpKeys — ключи MCP-сервера
+	| 'updateSnapshots'             // ResourceUpdateSnapshots — снимки настроек перед обновлением
 	// Три ключа мастера Amnezia Premium: публикаторы есть, ПОДПИСЧИКОВ НЕТ
 	// СОЗНАТЕЛЬНО. Мастер — модальное окно, оно грузит и ключ, и зеркало, и
 	// каталог при открытии и перечитывает каталог само после выдачи и отзыва,
