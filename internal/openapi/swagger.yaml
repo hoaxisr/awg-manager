@@ -8757,6 +8757,62 @@ definitions:
       payload:
         $ref: '#/definitions/wdttlink.ImportPayload'
     type: object
+  telemt.Config:
+    properties:
+      enabled:
+        type: boolean
+      listenIp:
+        type: string
+      mode:
+        description: '"direct" (Fake-TLS) or "web" (Native Web Proxy)'
+        type: string
+      port:
+        type: integer
+      secret:
+        type: string
+      tlsDomain:
+        type: string
+      upstreamDevice:
+        type: string
+      webCarrier:
+        description: '"https-lanes", "websocket", "https"'
+        type: string
+      webDecoy:
+        description: e.g. "http://127.0.0.1:80"
+        type: string
+      webHost:
+        description: e.g. "proxy.example.com"
+        type: string
+    type: object
+  telemt.Status:
+    properties:
+      arch:
+        type: string
+      archSupported:
+        type: boolean
+      binary:
+        type: string
+      config:
+        $ref: '#/definitions/telemt.Config'
+      error:
+        type: string
+      installed:
+        type: boolean
+      latestVersion:
+        type: string
+      link:
+        type: string
+      pid:
+        type: integer
+      running:
+        type: boolean
+      source:
+        type: string
+      updateAvailable:
+        type: boolean
+      version:
+        type: string
+    type: object
   wdttlink.DecodeResponse:
     properties:
       data:
@@ -21055,6 +21111,253 @@ paths:
       summary: WAN interfaces
       tags:
       - system
+  /telemt/config:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Config'
+              type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get telemt configuration
+      tags:
+      - telemt
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: telemt configuration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/telemt.Config'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Save telemt configuration
+      tags:
+      - telemt
+  /telemt/install:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Install telemt binary
+      tags:
+      - telemt
+  /telemt/restart:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Restart telemt service
+      tags:
+      - telemt
+  /telemt/start:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Start telemt service
+      tags:
+      - telemt
+  /telemt/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get telemt service status
+      tags:
+      - telemt
+  /telemt/stop:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Stop telemt service
+      tags:
+      - telemt
+  /telemt/uninstall:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Uninstall telemt service
+      tags:
+      - telemt
+  /telemt/update:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Update telemt binary
+      tags:
+      - telemt
   /terminal/install:
     post:
       produces:

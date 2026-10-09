@@ -5,6 +5,7 @@
 	import { Button, ConfirmModal, Input, Modal, StatusDot } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
+	import { notifications } from '$lib/stores/notifications';
 	import { singboxInstallProgress } from '$lib/stores/singboxInstall';
 	import { formatBytes } from '$lib/utils/format';
 	import { stripAnsi } from '$lib/utils/ansi';
@@ -55,6 +56,17 @@
 		clashPortError?: string | null;
 		/** Подсистемы прокси (WDTT, FreeTurn); пусто — блок не рисуется. */
 		proxyBinaries?: ProxyBinaryRow[];
+		showTelemt?: boolean;
+		telemtStatus?: import('$lib/types').TelemtStatus | null;
+		telemtStatusLoading?: boolean;
+		telemtInstalling?: boolean;
+		telemtUpdating?: boolean;
+		telemtRestarting?: boolean;
+		telemtUninstalling?: boolean;
+		oninstallTelemt?: () => void;
+		onupdateTelemt?: () => void;
+		onrestartTelemt?: () => void;
+		onuninstallTelemt?: () => void;
 	}
 
 	let {
@@ -81,7 +93,23 @@
 		clashPortSaving = false,
 		clashPortError = null,
 		proxyBinaries = [],
+		showTelemt = false,
+		telemtStatus = null,
+		telemtStatusLoading = false,
+		telemtInstalling = false,
+		telemtUpdating = false,
+		telemtRestarting = false,
+		telemtUninstalling = false,
+		oninstallTelemt,
+		onupdateTelemt,
+		onrestartTelemt,
+		onuninstallTelemt,
 	}: Props = $props();
+
+	const telemtInstalled = $derived(telemtStatus?.installed ?? false);
+	const telemtRunning = $derived(telemtStatus?.running ?? false);
+	const telemtNeedsUpdate = $derived(telemtStatus?.updateAvailable ?? false);
+	let confirmUninstallTelemt = $state(false);
 
 	// Подсистема, ожидающая подтверждения удаления.
 	let confirmProxy = $state<ProxyBinaryRow | null>(null);
@@ -190,6 +218,20 @@
 		}
 	}
 
+	async function copyTelemtLink() {
+		if (!telemtStatus?.link) return;
+		let link = telemtStatus.link;
+		if (typeof window !== 'undefined' && window.location?.hostname) {
+			const host = window.location.hostname;
+			link = link.replace(/([?&]server=)(?:192\.168\.1\.1|0\.0\.0\.0)([&]|$)/, `$1${host}$2`);
+		}
+		if (await copyToClipboard(link)) {
+			notifications.success(m.settings_integrations_telemt_link_copied());
+		} else {
+			notifications.error(m.settings_integrations_telemt_link_copy_failed());
+		}
+	}
+
 	// Auto-close modal when the upstream error is cleared (e.g. successful retry).
 	$effect(() => {
 		if (singboxInstallError === null && singboxUpdateError === null) {
@@ -198,7 +240,7 @@
 	});
 </script>
 
-{#if showSingbox || showHydra || proxyBinaries.length > 0}
+{#if showSingbox || showHydra || proxyBinaries.length > 0 || showTelemt}
 	<div class="settings-block">
 		<div class="card">
 		<SettingsSectionLabel label={m.settings_integrations_title()} icon={Blocks} tone="purple" header />
@@ -358,6 +400,106 @@
 					</div>
 				</div>
 			{/if}
+		{/if}
+
+		{#if showTelemt}
+			<div class="setting-row">
+				<div class="integration-item">
+					<StatusDot
+						variant={telemtStatusLoading ? 'muted' : (telemtInstalled && telemtRunning ? 'success' : 'muted')}
+						size="md"
+						ariaLabel={
+							telemtStatusLoading
+								? m.settings_integrations_telemt_loading_aria()
+								: telemtInstalled && telemtRunning
+									? m.settings_integrations_telemt_running_aria()
+									: m.settings_integrations_telemt_stopped_aria()
+						}
+					/>
+					<div class="integration-meta">
+						<div class="integration-title-wrap">
+							<span class="font-medium">Telemt (Telegram MTProxy)</span>
+							{#if telemtStatus?.source === 'managed'}
+								<span class="integration-badge">{m.settings_integrations_telemt_badge_managed()}</span>
+							{:else if telemtStatus?.source === 'opkg'}
+								<span class="integration-badge">{m.settings_integrations_telemt_badge_opkg()}</span>
+							{:else if telemtStatus?.source === 'external'}
+								<span class="integration-badge">{m.settings_integrations_telemt_badge_external()}</span>
+							{/if}
+						</div>
+						{#if telemtStatusLoading}
+							<span class="integration-sub">{m.settings_integrations_loading()}</span>
+						{:else if telemtInstalled && telemtStatus}
+							<span class="integration-sub">
+								v{telemtStatus.version || m.settings_integrations_telemt_version_unknown()}
+								{#if telemtRunning}· {m.settings_integrations_telemt_running()}{:else}· {m.settings_integrations_stopped()}{/if}
+								{#if telemtStatus.config?.mode === 'web'}
+									· {m.settings_integrations_telemt_mode_web()}
+								{:else}
+									· Fake-TLS
+								{/if}
+							</span>
+							<span class="setting-description">
+								{m.settings_integrations_telemt_description_full()}
+							</span>
+							{#if telemtRunning && telemtStatus.link}
+								<div class="mt-1">
+									<button
+										type="button"
+										class="text-xs text-primary hover:underline cursor-pointer inline-flex items-center gap-1 font-medium"
+										onclick={copyTelemtLink}
+									>
+										{m.settings_integrations_telemt_copy_link()}
+									</button>
+								</div>
+							{/if}
+						{:else if telemtStatus && telemtStatus.archSupported === false}
+							<span class="integration-sub" style="color: var(--color-warning, #f59e0b);">
+								{m.settings_integrations_telemt_arch_not_supported({ arch: telemtStatus.arch || '' })}
+							</span>
+							<span class="setting-description">
+								{m.settings_integrations_telemt_arch_notice()}
+							</span>
+						{:else}
+							<span class="setting-description">
+								{m.settings_integrations_telemt_description()}
+							</span>
+						{/if}
+					</div>
+				</div>
+				{#if telemtInstalled}
+					<div class="integration-actions">
+						{#if onrestartTelemt && telemtRunning}
+							<Button variant="secondary" size="sm" onclick={onrestartTelemt} loading={telemtRestarting}>
+								{telemtRestarting ? m.settings_integrations_telemt_restarting() : m.settings_integrations_telemt_restart()}
+							</Button>
+						{/if}
+						{#if telemtNeedsUpdate && onupdateTelemt}
+							<Button variant="primary" size="sm" onclick={onupdateTelemt} loading={telemtUpdating}>
+								{telemtUpdating ? m.settings_integrations_updating() : m.common_update()}
+							</Button>
+						{/if}
+						{#if onuninstallTelemt}
+							<Button
+								variant="outline-danger"
+								size="sm"
+								loading={telemtUninstalling}
+								onclick={() => (confirmUninstallTelemt = true)}
+							>
+								{telemtUninstalling ? m.settings_integrations_uninstalling() : m.common_delete()}
+							</Button>
+						{/if}
+					</div>
+				{:else if telemtStatusLoading}
+					<Button variant="secondary" size="sm" disabled>{m.settings_integrations_waiting()}</Button>
+				{:else if telemtStatus && telemtStatus.archSupported === false}
+					<Button variant="secondary" size="sm" disabled>{m.settings_integrations_telemt_unavailable()}</Button>
+				{:else if oninstallTelemt}
+					<Button variant="primary" size="sm" onclick={oninstallTelemt} loading={telemtInstalling}>
+						{telemtInstalling ? m.settings_integrations_installing() : m.settings_integrations_install()}
+					</Button>
+				{/if}
+			</div>
 		{/if}
 
 		{#each proxyBinaries as p (p.key)}
@@ -529,7 +671,40 @@
 	/>
 {/if}
 
+{#if confirmUninstallTelemt}
+	<ConfirmModal
+		open={confirmUninstallTelemt}
+		title={m.settings_integrations_telemt_remove_title()}
+		message={m.settings_integrations_telemt_remove_message()}
+		secondary={m.settings_integrations_telemt_remove_secondary()}
+		confirmLabel={m.common_delete()}
+		variant="danger"
+		busy={telemtUninstalling}
+		onConfirm={() => {
+			confirmUninstallTelemt = false;
+			onuninstallTelemt?.();
+		}}
+		onClose={() => (confirmUninstallTelemt = false)}
+	/>
+{/if}
+
 <style>
+	.integration-title-wrap {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+	.integration-badge {
+		font-size: 0.6875rem;
+		font-weight: 500;
+		padding: 0.1rem 0.4rem;
+		background: var(--color-primary-bg, rgba(59, 130, 246, 0.12));
+		color: var(--color-primary, #3b82f6);
+		border-radius: 4px;
+		border: 1px solid var(--color-primary-border, rgba(59, 130, 246, 0.25));
+	}
+
 	/* Своя раскладка вместо сетки .setting-row (1fr auto): там колонка с
 	   описанием схлопывалась под ширину поля и текст ломался по слову. */
 	.setting-row.bootstrap-row {

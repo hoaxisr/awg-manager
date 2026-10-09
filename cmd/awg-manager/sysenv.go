@@ -31,6 +31,8 @@ func detectArch() string {
 		return "mips-3.4"
 	case "arm64":
 		return "aarch64-3.10"
+	case "amd64":
+		return "x86_64"
 	}
 	return ""
 }
