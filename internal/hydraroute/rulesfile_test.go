@@ -166,3 +166,25 @@ func TestRuleRevision(t *testing.T) {
 		t.Fatal("parseRuleFiles must fill Revision from raw contents")
 	}
 }
+
+func TestParseRuleFiles_EmptyTargetOpensNoBlock(t *testing.T) {
+	rs := parseRuleFiles("", "/\n1.0.0.0/8\n/P\n2.0.0.0/8")
+	if len(rs.Targets) != 1 || rs.Targets[0].Name != "P" {
+		t.Fatalf("targets = %+v", rs.Targets)
+	}
+	if _, ip := renderRuleFiles(rs); ip != "/P\n2.0.0.0/8" {
+		t.Fatalf("ip.list = %q", ip)
+	}
+}
+
+func TestParseRuleFiles_CommentLineInBlockKept(t *testing.T) {
+	in := "/P\n# office\n1.0.0.0/8"
+	rs := parseRuleFiles("", in)
+	g := rs.Target("P").Groups[0]
+	if !reflect.DeepEqual(g.Subnets, []string{"# office", "1.0.0.0/8"}) || g.SubnetsDisabled {
+		t.Fatalf("got %+v", g)
+	}
+	if _, ip := renderRuleFiles(rs); ip != in {
+		t.Fatalf("round-trip = %q", ip)
+	}
+}

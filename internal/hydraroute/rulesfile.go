@@ -3,6 +3,7 @@ package hydraroute
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -10,9 +11,12 @@ import (
 // RuleSet — содержимое domain.conf и ip.list в модели HRweb 1.65: правило =
 // цель (политика Keenetic или интерфейс DirectRoute), внутри — группы.
 // Разбор и запись повторяют parseDomainFile / parseCIDRFile / linkGroups /
-// buildDomainFile / buildCIDRFile HRweb (F629), кроме одного: пустая строка
-// в ip.list закрывает блок, как у демона (scan_cidrfile_blocks), — HRweb её
-// пропускает, но маршрутизирует демон.
+// buildDomainFile / buildCIDRFile HRweb (F629). Сознательные расхождения:
+// пустая строка в ip.list закрывает блок, как у демона (scan_cidrfile_blocks);
+// `#` на CIDR-строке (релизы до 5434e2147, #1022) снимается, половина
+// выключается; порядок CIDR-блоков цели следует порядку групп; пустые
+// половины не пишутся; служебная секция пишется в конец; список доменов
+// нормализуется.
 type RuleSet struct {
 	Targets   []Target
 	Oversized []string // geoip-теги служебной секции `##impossible to use`
@@ -150,6 +154,8 @@ func parseDomainHalves(content string) []parsedHalf {
 	return out
 }
 
+var legacyDisabledCIDR = regexp.MustCompile(`^(geoip:\S+|[0-9A-Fa-f:.]+(/\d{1,3})?)$`)
+
 func parseCIDRHalves(content string) (halves []parsedHalf, oversized []string) {
 	var cur *parsedHalf
 	desc, header := "", false
@@ -178,6 +184,9 @@ func parseCIDRHalves(content string) (halves []parsedHalf, oversized []string) {
 			target := strings.TrimSpace(strings.TrimLeft(line, "#")[1:])
 			d, h := desc, header
 			flush()
+			if target == "" {
+				continue
+			}
 			if disabled && h && isOversizedSection(d, target) {
 				service = true
 				continue
@@ -191,8 +200,10 @@ func parseCIDRHalves(content string) (halves []parsedHalf, oversized []string) {
 			// Второе сознательное расхождение с HRweb: `#` на подсети писали
 			// релизные awg-manager до 5434e2147 (#1022). Снимаем и выключаем
 			// половину, следующая запись даёт формат HR Neo.
-			if strings.HasPrefix(line, "#") {
-				line = line[1:]
+			// Только если остаток похож на CIDR/IP/geoip: прочее `#…` HRweb
+			// держит как есть.
+			if rest := strings.TrimPrefix(line, "#"); rest != line && legacyDisabledCIDR.MatchString(rest) {
+				line = rest
 				cur.disabled = true
 			}
 			cur.items = append(cur.items, line)
