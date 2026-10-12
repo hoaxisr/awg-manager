@@ -182,6 +182,9 @@
 		pendingOversizedRefresh = setTimeout(() => {
 			pendingOversizedRefresh = null;
 			void loadOversized();
+			// Перенос тега в служебную секцию HR Neo переписывает ip.list
+			// (~2 с после нашей записи) — ревизия меняется.
+			void dnsRoutesStore.refetch();
 		}, delayMs);
 	}
 
@@ -329,7 +332,8 @@
 	let handledEditCounter = editRuleCounter;
 	$effect(() => {
 		if (editRuleCounter > handledEditCounter && editRuleId) {
-			const rule = hrRules.find((r) => r.id === editRuleId);
+			// Позиция, не id: ревизия в id могла смениться после поиска.
+			const rule = hrRules.find((r) => hrPosKey(r.id) === hrPosKey(editRuleId));
 			if (rule) {
 				handledEditCounter = editRuleCounter;
 				// Auto-select the rule's target so when the modal closes the
@@ -414,7 +418,13 @@
 		if (!t) return;
 		// Все HR-id несут одну ревизию; у списка без групп — из конфига.
 		const revision = hrRevisionOf(hrRules) ?? configRevision;
-		if (!revision) return;
+		if (!revision) {
+			// Ревизия ещё не пришла — без неё сервер удаление не примет.
+			notifications.error(m.hrneo_rules_changed());
+			void loadPolicyOrder();
+			void dnsRoutesStore.refetch();
+			return;
+		}
 		deletingTarget = true;
 		try {
 			await api.deleteHydraRouteTarget(t.name, revision);

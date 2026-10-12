@@ -27,6 +27,7 @@
     import AccessPoliciesTab from './AccessPoliciesTab.svelte';
     import ClientRoutesTab from './ClientRoutesTab.svelte';
     import { HrNeoTab } from '$lib/components/hrneo';
+    import { hrPosKey } from '$lib/components/hrneo/hrIds';
     import { SingboxRouterRedesignPage } from '$lib/components/sb-router';
     import FakeIPTab from '$lib/components/fakeip/FakeIPTab.svelte';
     import ModeSwitchHost from '$lib/components/routing/ModeSwitchHost.svelte';
@@ -100,7 +101,8 @@
             // dnsRoutes mixes NDMS and hydraroute backends in one array;
             // route hydraroute hits to the HR Neo tab so the edit modal
             // actually opens (DnsRoutesTab filters those out).
-            const route = dnsRoutes.find(r => r.id === id);
+            // By position: an HR id's revision may be stale after a write.
+            const route = dnsRoutes.find(r => hrPosKey(r.id) === hrPosKey(id));
             activeTab = route?.backend === 'hydraroute' ? 'hrneo' : 'dns';
         } else {
             activeTab = 'ip';

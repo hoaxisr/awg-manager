@@ -17,7 +17,6 @@
 		ondeleterule: (rule: DnsRoute) => void;
 		oniconrule?: (rule: DnsRoute) => void;
 		ontogglerule?: (rule: DnsRoute, enabled: boolean) => void;
-		toggleLoadingId?: string | null;
 		displayRule?: (rule: DnsRoute) => DnsRoute;
 		ondeletetarget?: () => void;
 	}
@@ -33,7 +32,6 @@
 		ondeleterule,
 		oniconrule,
 		ontogglerule,
-		toggleLoadingId = null,
 		displayRule,
 		ondeletetarget,
 	}: Props = $props();
@@ -63,7 +61,6 @@
 				<HrNeoRuleCard
 					rule={cardRule}
 					broken={brokenRuleIds.has(rule.id)}
-					toggleLoading={toggleLoadingId === rule.id}
 					ontoggle={ontogglerule ? (enabled) => ontogglerule(rule, enabled) : undefined}
 					onedit={() => oneditrule(rule)}
 					ondelete={() => ondeleterule(rule)}

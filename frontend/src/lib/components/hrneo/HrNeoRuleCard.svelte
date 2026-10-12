@@ -12,7 +12,6 @@
 		onedit: () => void;
 		ondelete: () => void;
 		onicon?: () => void;
-		toggleLoading?: boolean;
 	}
 
 	let {
@@ -22,7 +21,6 @@
 		onedit,
 		ondelete,
 		onicon,
-		toggleLoading = false,
 	}: Props = $props();
 
 	let displayName = $derived(rule.name || m.hrneo_group_unnamed());
@@ -75,7 +73,6 @@
 			<Toggle
 				checked={rule.enabled}
 				onchange={(checked) => ontoggle(checked)}
-				loading={toggleLoading}
 				disabled={broken}
 				size="sm"
 			/>
