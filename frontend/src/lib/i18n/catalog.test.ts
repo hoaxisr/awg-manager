@@ -48,6 +48,7 @@ const ALLOWED: Record<string, { lines: number; reason: string }> = {
 	'/src/lib/utils/deviceProxyInstance.ts': { lines: 1, reason: 'имя прокси по умолчанию — данные на роутере' },
 	'/src/lib/components/sb-router/qosClasses.ts': { lines: 1, reason: 'имя класса по умолчанию — данные на роутере' },
 	'/src/routes/tunnels/[id]/+page.svelte': { lines: 1, reason: 'подпись «Через …» сохраняется на бэкенде' },
+	'/src/lib/types/mihomoRuleTypes.generated.ts': { lines: 5, reason: 'категории правил Mihomo, сгенерированные из Go-реестра' },
 };
 
 /** \u0410-escape — та же кириллица, просто записанная кодами. */
