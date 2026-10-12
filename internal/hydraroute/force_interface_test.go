@@ -14,20 +14,19 @@ func readTestConf(t *testing.T) string {
 	return string(data)
 }
 
-func entriesWith(ifaces ...string) map[string]ManagedEntry {
-	m := map[string]ManagedEntry{}
-	for i, iface := range ifaces {
-		name := string(rune('a' + i))
-		m[name] = ManagedEntry{ListName: name, Iface: iface}
+func ruleSetWith(ifaces ...string) RuleSet {
+	var rs RuleSet
+	for _, iface := range ifaces {
+		rs.Targets = append(rs.Targets, Target{Name: iface, Groups: []Group{{Domains: []string{"a.com"}}}})
 	}
-	return m
+	return rs
 }
 
 // Шаблон пишется только для семейств, которые реально стоят целью,
 // а не для всех трёх; чужая цель (политика, сторонний интерфейс) не в счёт.
 func TestSyncForceInterface_AddsUsedFamiliesOnly(t *testing.T) {
 	setupTestConf(t, "log=off\nDirectRouteEnabled=true\n")
-	changed, err := syncForceInterface(entriesWith("awgm0", "opkgtun3", "awgm12", "HydraRoute", "nwg0", "t2s"))
+	changed, err := syncForceInterface(ruleSetWith("awgm0", "opkgtun3", "awgm12", "HydraRoute", "nwg0", "t2s"))
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
@@ -40,7 +39,7 @@ func TestSyncForceInterface_AddsUsedFamiliesOnly(t *testing.T) {
 // Записи пользователя и их порядок сохраняются, наше дописывается в хвост.
 func TestSyncForceInterface_KeepsUserEntries(t *testing.T) {
 	setupTestConf(t, "forceinterface=wg9, t2sX\nlog=off\n")
-	changed, err := syncForceInterface(entriesWith("t2s1", "awgm0"))
+	changed, err := syncForceInterface(ruleSetWith("t2s1", "awgm0"))
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
@@ -54,7 +53,7 @@ func TestSyncForceInterface_KeepsUserEntries(t *testing.T) {
 // второй строки не теряются.
 func TestSyncForceInterface_MergesDuplicateLines(t *testing.T) {
 	setupTestConf(t, "ForceInterface=wg9\nlog=off\nForceInterface=awgmX,tun7\n")
-	changed, err := syncForceInterface(entriesWith("awgm0"))
+	changed, err := syncForceInterface(ruleSetWith("awgm0"))
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
@@ -71,7 +70,7 @@ func TestSyncForceInterface_NoChangeNoWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed, err := syncForceInterface(entriesWith("awgm0", "opkgtun1"))
+	changed, err := syncForceInterface(ruleSetWith("awgm0", "opkgtun1"))
 	if err != nil || changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
@@ -83,7 +82,7 @@ func TestSyncForceInterface_NoChangeNoWrite(t *testing.T) {
 		t.Fatal("conf rewritten without change")
 	}
 
-	changed, err = syncForceInterface(entriesWith("HydraRoute"))
+	changed, err = syncForceInterface(ruleSetWith("HydraRoute"))
 	if err != nil || changed {
 		t.Fatalf("no own targets: changed=%v err=%v", changed, err)
 	}
@@ -92,11 +91,11 @@ func TestSyncForceInterface_NoChangeNoWrite(t *testing.T) {
 // Выключенное правило HR Neo не читает — его цель шаблон не добавляет.
 func TestSyncForceInterface_IgnoresDisabledRules(t *testing.T) {
 	setupTestConf(t, "log=off\n")
-	entries := map[string]ManagedEntry{
-		"on":  {ListName: "on", Iface: "awgm0"},
-		"off": {ListName: "off", Iface: "opkgtun0", Disabled: true},
-	}
-	changed, err := syncForceInterface(entries)
+	rs := RuleSet{Targets: []Target{
+		{Name: "awgm0", Groups: []Group{{Domains: []string{"a.com"}}}},
+		{Name: "opkgtun0", Groups: []Group{{Domains: []string{"a.com"}, DomainsDisabled: true}}},
+	}}
+	changed, err := syncForceInterface(rs)
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
@@ -107,10 +106,10 @@ func TestSyncForceInterface_IgnoresDisabledRules(t *testing.T) {
 
 // Правило из панели с целью-нашим интерфейсом сразу попадает в ForceInterface:
 // без этого HR Neo на следующем старте снова завёл бы пустую политику.
-func TestCreateRule_SyncsForceInterface(t *testing.T) {
+func TestCreateGroup_SyncsForceInterface(t *testing.T) {
 	svc, _, _ := setupRuleFiles(t)
-	if _, err := svc.CreateRule(HRRule{Name: "NL", Domains: []string{"example.com"}, Target: "awgm0"}); err != nil {
-		t.Fatalf("CreateRule: %v", err)
+	if _, err := svc.CreateGroup("awgm0", Group{Description: "NL", Domains: []string{"example.com"}}); err != nil {
+		t.Fatalf("CreateGroup: %v", err)
 	}
 	if got := readTestConf(t); got != "ForceInterface=awgmX\n" {
 		t.Fatalf("conf = %q", got)

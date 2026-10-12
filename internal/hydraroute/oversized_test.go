@@ -125,7 +125,7 @@ func TestRemoveOversizedTag(t *testing.T) {
 	})
 
 	// domain.conf и ip.list расходятся (другой интерфейс, правило отключено
-	// только в domain.conf): loadEntries слил бы их, но удаление тега не
+	// только в domain.conf): запись из RuleSet слила бы их, но удаление тега не
 	// должно трогать правила — ip.list меняется только в служебном разделе.
 	t.Run("rules are not merged with domain.conf", func(t *testing.T) {
 		svc, domainPath, ipPath := setupRuleFiles(t)
@@ -345,8 +345,8 @@ func TestRemoveOversizedTagText(t *testing.T) {
 				return
 			}
 			// Результат читается так же, как исходный файл, но без тега.
-			inEntries, inTags := parseIPList(tc.in)
-			gotEntries, gotTags := parseIPList(got)
+			inEntries, inTags := parseCIDRHalves(tc.in)
+			gotEntries, gotTags := parseCIDRHalves(got)
 			if !reflect.DeepEqual(gotEntries, inEntries) {
 				t.Errorf("rules changed:\n%+v\nwant:\n%+v", gotEntries, inEntries)
 			}

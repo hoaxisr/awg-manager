@@ -51,10 +51,10 @@ func NewService(resolver KernelIfaceResolver, appLogger logging.AppLogger) *Serv
 	if s.status.Installed {
 		s.appLog.Info("detect", "", fmt.Sprintf("HrNeo detected (running=%v)", s.status.Running))
 		s.HealInvalidRuntimeConfig()
-		if entries, _, err := s.loadEntries(); err != nil {
+		if rs, err := s.ListRuleSet(); err != nil {
 			s.appLog.Warn("force-interface", "", "failed to read rules: "+err.Error())
 		} else {
-			s.updateForceInterface(entries)
+			s.updateForceInterface(rs)
 		}
 	}
 	return s
@@ -63,9 +63,9 @@ func NewService(resolver KernelIfaceResolver, appLogger logging.AppLogger) *Serv
 // updateForceInterface держит наши семейства интерфейсов в ForceInterface
 // (#967). HR Neo сам не перезапускается: при старте awg-manager туннели
 // либо уже подняты, либо при подъёме перезапустят HR Neo (OnTunnelRunning),
-// а saveEntries назначает рестарт и без этого.
-func (s *Service) updateForceInterface(entries map[string]ManagedEntry) {
-	changed, err := syncForceInterface(entries)
+// а mutateRules назначает рестарт и без этого.
+func (s *Service) updateForceInterface(rs RuleSet) {
+	changed, err := syncForceInterface(rs)
 	if err != nil {
 		s.appLog.Warn("force-interface", "", "failed to update ForceInterface: "+err.Error())
 		return

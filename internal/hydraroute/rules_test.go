@@ -1,10 +1,10 @@
 package hydraroute
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"testing"
 )
 
@@ -31,337 +31,6 @@ func setupRuleFiles(t *testing.T) (svc *Service, domainPath, ipPath string) {
 	return svc, domainPath, ipPath
 }
 
-func TestListRules_Empty(t *testing.T) {
-	svc, _, _ := setupRuleFiles(t)
-	rules, _, err := svc.ListRules()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(rules) != 0 {
-		t.Errorf("expected empty, got %+v", rules)
-	}
-}
-
-func TestCreateRule_Persists(t *testing.T) {
-	svc, domainPath, _ := setupRuleFiles(t)
-
-	created, err := svc.CreateRule(HRRule{
-		Name:    "Youtube",
-		Domains: []string{"youtube.com"},
-		Target:  "nwg0",
-	})
-	if err != nil {
-		t.Fatalf("CreateRule: %v", err)
-	}
-	if created.Name != "Youtube" {
-		t.Errorf("name = %q, want Youtube", created.Name)
-	}
-
-	data, err := os.ReadFile(domainPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !containsAll(string(data), []string{"## Youtube", "youtube.com/nwg0"}) {
-		t.Errorf("file content missing tokens:\n%s", string(data))
-	}
-}
-
-func TestCreateRule_DuplicateNameRejected(t *testing.T) {
-	svc, _, _ := setupRuleFiles(t)
-	_, _ = svc.CreateRule(HRRule{Name: "X", Domains: []string{"x.com"}, Target: "nwg0"})
-	if _, err := svc.CreateRule(HRRule{Name: "X", Domains: []string{"x2.com"}, Target: "nwg0"}); err == nil {
-		t.Fatal("expected duplicate-name error")
-	}
-}
-
-func TestCreateRule_DomainsAndSubnets(t *testing.T) {
-	svc, domainPath, ipPath := setupRuleFiles(t)
-
-	_, err := svc.CreateRule(HRRule{
-		Name:    "Mixed",
-		Domains: []string{"example.com"},
-		Subnets: []string{"10.0.0.0/8"},
-		Target:  "nwg0",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	domains := readFileOrEmpty(t, domainPath)
-	ips := readFileOrEmpty(t, ipPath)
-
-	if !containsAll(domains, []string{"## Mixed", "example.com/nwg0"}) {
-		t.Errorf("domain.conf missing entry:\n%s", domains)
-	}
-	if !containsAll(ips, []string{"## Mixed", "/nwg0", "10.0.0.0/8"}) {
-		t.Errorf("ip.list missing entry:\n%s", ips)
-	}
-}
-
-func TestListRules_RoundtripAfterCreate(t *testing.T) {
-	svc, _, _ := setupRuleFiles(t)
-
-	_, _ = svc.CreateRule(HRRule{Name: "A", Domains: []string{"a.com"}, Target: "nwg0"})
-	_, _ = svc.CreateRule(HRRule{Name: "B", Domains: []string{"b.com"}, Subnets: []string{"1.2.3.0/24"}, Target: "HydraRoute"})
-
-	rules, _, err := svc.ListRules()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rules) != 2 {
-		t.Fatalf("got %d rules, want 2: %+v", len(rules), rules)
-	}
-
-	sort.Slice(rules, func(i, j int) bool { return rules[i].Name < rules[j].Name })
-	if rules[0].Name != "A" || !reflect.DeepEqual(rules[0].Domains, []string{"a.com"}) || rules[0].Target != "nwg0" {
-		t.Errorf("rule A wrong: %+v", rules[0])
-	}
-	if rules[1].Name != "B" || !reflect.DeepEqual(rules[1].Subnets, []string{"1.2.3.0/24"}) || rules[1].Target != "HydraRoute" {
-		t.Errorf("rule B wrong: %+v", rules[1])
-	}
-}
-
-func TestUpdateRule_ReplacesByName(t *testing.T) {
-	svc, _, _ := setupRuleFiles(t)
-
-	_, _ = svc.CreateRule(HRRule{Name: "Orig", Domains: []string{"orig.com"}, Target: "nwg0"})
-
-	_, err := svc.UpdateRule("Orig", HRRule{
-		Name:    "Orig",
-		Domains: []string{"new.com"},
-		Target:  "nwg0",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rules, _, _ := svc.ListRules()
-	if len(rules) != 1 || !reflect.DeepEqual(rules[0].Domains, []string{"new.com"}) {
-		t.Errorf("after update: %+v", rules)
-	}
-}
-
-func TestUpdateRule_AllowsRename(t *testing.T) {
-	svc, _, _ := setupRuleFiles(t)
-
-	_, _ = svc.CreateRule(HRRule{Name: "Old", Domains: []string{"a.com"}, Target: "nwg0"})
-
-	_, err := svc.UpdateRule("Old", HRRule{
-		Name:    "New",
-		Domains: []string{"a.com"},
-		Target:  "nwg0",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rules, _, _ := svc.ListRules()
-	if len(rules) != 1 || rules[0].Name != "New" {
-		t.Errorf("after rename: %+v", rules)
-	}
-}
-
-func TestUpdateRule_RenamePreservesDisabled(t *testing.T) {
-	svc, domainPath, _ := setupRuleFiles(t)
-
-	_, _ = svc.CreateRule(HRRule{Name: "Old", Domains: []string{"a.com"}, Target: "nwg0"})
-	if err := svc.SetRuleEnabled("Old", false); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := svc.UpdateRule("Old", HRRule{
-		Name:    "New",
-		Domains: []string{"a.com"},
-		Target:  "nwg0",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rules, _, err := svc.ListRules()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rules) != 1 || rules[0].Name != "New" || !rules[0].Disabled {
-		t.Fatalf("after rename: %+v", rules)
-	}
-
-	data, err := os.ReadFile(domainPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !containsAll(string(data), []string{"## New", "#a.com/nwg0"}) {
-		t.Errorf("expected disabled line after rename:\n%s", string(data))
-	}
-}
-
-func TestDeleteRule_RemovesEntry(t *testing.T) {
-	svc, _, _ := setupRuleFiles(t)
-
-	_, _ = svc.CreateRule(HRRule{Name: "A", Domains: []string{"a.com"}, Target: "nwg0"})
-	_, _ = svc.CreateRule(HRRule{Name: "B", Domains: []string{"b.com"}, Target: "nwg0"})
-
-	if err := svc.DeleteRule("A"); err != nil {
-		t.Fatal(err)
-	}
-
-	rules, _, _ := svc.ListRules()
-	if len(rules) != 1 || rules[0].Name != "B" {
-		t.Errorf("after delete of A: %+v", rules)
-	}
-}
-
-func TestListRules_SplitsRulesFromOversizedServiceBlock(t *testing.T) {
-	svc, _, ipPath := setupRuleFiles(t)
-
-	content := "## 2ip\n" +
-		"/HydraRoute\n" +
-		"geoip:RU\n" +
-		"\n" +
-		"##impossible to use\n" +
-		"#/Too-big-geoip-tag\n" +
-		"geoip:ru-blocked\n"
-	if err := os.WriteFile(ipPath, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	rules, oversized, err := svc.ListRules()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rules) != 1 || rules[0].Name != "2ip" {
-		t.Errorf("want exactly one rule '2ip', got %+v", rules)
-	}
-	wantOversized := []string{"geoip:ru-blocked"}
-	if !reflect.DeepEqual(oversized, wantOversized) {
-		t.Errorf("oversized = %v, want %v", oversized, wantOversized)
-	}
-}
-
-// #1025: HR Neo убирает слишком большой geoip-тег из правила и хранит его
-// только в служебном разделе. Любая запись ip.list из AWG Manager обязана
-// этот раздел сохранить — иначе тег теряется насовсем.
-func TestRuleWrites_KeepOversizedServiceSection(t *testing.T) {
-	const seed = "## 2ip\n" +
-		"/HydraRoute\n" +
-		"geoip:RU\n" +
-		"\n" +
-		"##impossible to use\n" +
-		"#/Too-big-geoip-tag\n" +
-		"geoip:ru-blocked\n"
-	for name, write := range map[string]func(*Service) error{
-		"create": func(s *Service) error {
-			_, err := s.CreateRule(HRRule{Name: "New", Subnets: []string{"10.0.0.0/8"}, Target: "nwg0"})
-			return err
-		},
-		"update": func(s *Service) error {
-			_, err := s.UpdateRule("2ip", HRRule{Name: "2ip", Subnets: []string{"geoip:RU", "1.1.1.0/24"}, Target: "HydraRoute"})
-			return err
-		},
-		"disable": func(s *Service) error { return s.SetRuleEnabled("2ip", false) },
-		"delete":  func(s *Service) error { return s.DeleteRule("2ip") },
-	} {
-		t.Run(name, func(t *testing.T) {
-			svc, _, ipPath := setupRuleFiles(t)
-			if err := os.WriteFile(ipPath, []byte(seed), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if err := write(svc); err != nil {
-				t.Fatal(err)
-			}
-			_, oversized, err := svc.ListRules()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if want := []string{"geoip:ru-blocked"}; !reflect.DeepEqual(oversized, want) {
-				t.Errorf("oversized after %s = %v, want %v\nip.list:\n%s", name, oversized, want, readFileOrEmpty(t, ipPath))
-			}
-		})
-	}
-}
-
-func TestSetRuleEnabled_WritesCommentAndRoundtrip(t *testing.T) {
-	svc, domainPath, _ := setupRuleFiles(t)
-
-	_, err := svc.CreateRule(HRRule{
-		Name:    "Youtube",
-		Domains: []string{"youtube.com"},
-		Target:  "nwg0",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := svc.SetRuleEnabled("Youtube", false); err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(domainPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !containsAll(string(data), []string{"## Youtube", "#youtube.com/nwg0"}) {
-		t.Errorf("expected disabled line:\n%s", string(data))
-	}
-
-	rules, _, err := svc.ListRules()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rules) != 1 || !rules[0].Disabled {
-		t.Fatalf("ListRules: %+v", rules)
-	}
-
-	if err := svc.SetRuleEnabled("Youtube", true); err != nil {
-		t.Fatal(err)
-	}
-	rules, _, _ = svc.ListRules()
-	if len(rules) != 1 || rules[0].Disabled {
-		t.Fatalf("after re-enable: %+v", rules)
-	}
-}
-
-func TestListRules_PicksUpManualEdits(t *testing.T) {
-	// Core premise: HR files are SoT. A manual edit must be visible on
-	// the next ListRules call — no caching, no marker-section restriction.
-	svc, domainPath, _ := setupRuleFiles(t)
-
-	_, _ = svc.CreateRule(HRRule{Name: "Before", Domains: []string{"before.com"}, Target: "nwg0"})
-
-	edited := "## Manual\n" +
-		"manual.com/nwg0\n"
-	if err := os.WriteFile(domainPath, []byte(edited), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	rules, _, err := svc.ListRules()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rules) != 1 || rules[0].Name != "Manual" {
-		t.Errorf("manual edit not picked up: %+v", rules)
-	}
-}
-
-// helpers
-func containsAll(s string, subs []string) bool {
-	for _, sub := range subs {
-		if !stringContains(s, sub) {
-			return false
-		}
-	}
-	return true
-}
-
-func stringContains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
-
 func readFileOrEmpty(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -374,17 +43,230 @@ func readFileOrEmpty(t *testing.T, path string) string {
 	return string(data)
 }
 
-// Имя служебного раздела HR Neo занято: такое правило после выключения
-// читалось бы как раздел «impossible to use».
-func TestRuleWrites_RejectServiceSectionName(t *testing.T) {
+func writeRuleFiles(t *testing.T, domainPath, ipPath, d, i string) {
+	t.Helper()
+	if err := os.WriteFile(domainPath, []byte(d), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ipPath, []byte(i), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParseGroupRef(t *testing.T) {
+	ref, err := ParseGroupRef("abc123:x:y:2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref != (GroupRef{Revision: "abc123", Target: "x:y", Index: 2}) {
+		t.Fatalf("ref = %+v", ref)
+	}
+	if ref.String() != "abc123:x:y:2" {
+		t.Fatalf("String() = %q", ref.String())
+	}
+	for _, bad := range []string{"", "Youtube", "rev:2", "rev::2", "rev:P:-1", "rev:P:x"} {
+		if _, err := ParseGroupRef(bad); err == nil {
+			t.Errorf("ParseGroupRef(%q) accepted", bad)
+		}
+	}
+}
+
+func TestListRuleSet_ReadsHRwebFiles(t *testing.T) {
+	svc, dp, ip := setupRuleFiles(t)
+	writeRuleFiles(t, dp, ip, "##\ntelegram.org,t.me/Belka", "##\n/Belka\n91.108.4.0/22")
+	rs, err := svc.ListRuleSet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := rs.Target("Belka").Groups[0]
+	if g.Description != "" || len(g.Domains) != 2 || g.Subnets[0] != "91.108.4.0/22" {
+		t.Fatalf("group = %+v", g)
+	}
+}
+
+func TestCreateGroup_AppendsAndAllowsEmptyAndDuplicateNames(t *testing.T) {
+	svc, dp, ip := setupRuleFiles(t)
+	if _, err := svc.CreateGroup("P", Group{Domains: []string{"a.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateGroup("P", Group{Description: "X", Domains: []string{"b.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	// CIDR-группа с тем же описанием, что у доменной группы "X": формат
+	// склеивает их по общему `##X` (linkGroups HRweb), и после записи это
+	// одна группа №1. Позиция берётся из перечитанного документа.
+	ref, err := svc.CreateGroup("P", Group{Description: "X", Subnets: []string{"1.0.0.0/8"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Index != 1 || ref.Target != "P" {
+		t.Fatalf("ref = %+v", ref)
+	}
+	d, i := readFileOrEmpty(t, dp), readFileOrEmpty(t, ip)
+	if d != "a.com/P\n##X\nb.com/P" || i != "##X\n/P\n1.0.0.0/8" {
+		t.Fatalf("files:\n%q\n%q", d, i)
+	}
+	if rev, _ := svc.RulesRevision(); rev != ref.Revision {
+		t.Fatalf("returned ref revision %q != files %q", ref.Revision, rev)
+	}
+}
+
+func TestMutations_StaleRevisionRejectedFilesUntouched(t *testing.T) {
+	svc, dp, ip := setupRuleFiles(t)
+	writeRuleFiles(t, dp, ip, "a.com/P", "")
+	stale := GroupRef{Revision: "000000000000", Target: "P", Index: 0}
+	checks := map[string]error{
+		"update":  func() error { _, err := svc.UpdateGroup(stale, "P", Group{Domains: []string{"b.com"}}); return err }(),
+		"delete":  svc.DeleteGroups([]GroupRef{stale}),
+		"enabled": svc.SetGroupEnabled(stale, false),
+		"target":  svc.DeleteTarget("P", stale.Revision),
+	}
+	for name, err := range checks {
+		if !errors.Is(err, ErrRulesChanged) {
+			t.Errorf("%s: err = %v, want ErrRulesChanged", name, err)
+		}
+	}
+	if readFileOrEmpty(t, dp) != "a.com/P" {
+		t.Fatal("domain.conf changed on a rejected mutation")
+	}
+}
+
+func TestUpdateGroup_KeepsFlagsMovesTarget(t *testing.T) {
+	svc, dp, ip := setupRuleFiles(t)
+	writeRuleFiles(t, dp, ip, "##Tg\n#t.me/P\nz.com/P", "##Tg\n/P\n91.108.4.0/22")
+	rs, _ := svc.ListRuleSet()
+	ref := GroupRef{Revision: rs.Revision, Target: "P", Index: 0}
+	newRef, err := svc.UpdateGroup(ref, "P", Group{Description: "Tg", Domains: []string{"t.me", "x.me"}, Subnets: []string{"91.108.4.0/22"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readFileOrEmpty(t, dp); got != "##Tg\n#t.me,x.me/P\nz.com/P" {
+		t.Fatalf("flags lost: %q", got)
+	}
+	// перенос в другую цель: группа уходит в конец новой цели
+	movedRef, err := svc.UpdateGroup(newRef, "Q", Group{Domains: []string{"t.me"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if movedRef.Target != "Q" || movedRef.Index != 0 {
+		t.Fatalf("moved ref = %+v", movedRef)
+	}
+	if got := readFileOrEmpty(t, dp); got != "z.com/P\n#t.me/Q" {
+		t.Fatalf("after move: %q", got)
+	}
+}
+
+func TestUpdateGroup_NewHalfInheritsGroupState(t *testing.T) {
+	svc, dp, ip := setupRuleFiles(t)
+	writeRuleFiles(t, dp, ip, "#a.com/P", "")
+	rs, _ := svc.ListRuleSet()
+	_, err := svc.UpdateGroup(GroupRef{rs.Revision, "P", 0}, "P", Group{Domains: []string{"a.com"}, Subnets: []string{"1.0.0.0/8"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readFileOrEmpty(t, ip); got != "##\n#/P\n1.0.0.0/8" {
+		t.Fatalf("new CIDR half of a disabled group must be disabled: %q", got)
+	}
+}
+
+func TestDeleteGroups_OneSnapshot(t *testing.T) {
+	svc, dp, ip := setupRuleFiles(t)
+	writeRuleFiles(t, dp, ip, "a.com/P\nb.com/P\nc.com/P", "")
+	rs, _ := svc.ListRuleSet()
+	err := svc.DeleteGroups([]GroupRef{{rs.Revision, "P", 0}, {rs.Revision, "P", 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readFileOrEmpty(t, dp); got != "b.com/P" {
+		t.Fatalf("got %q, want only the middle group left", got)
+	}
+}
+
+func TestDeleteGroups_MixedRevisionsRejected(t *testing.T) {
+	svc, dp, ip := setupRuleFiles(t)
+	writeRuleFiles(t, dp, ip, "a.com/P\nb.com/P", "")
+	rs, _ := svc.ListRuleSet()
+	err := svc.DeleteGroups([]GroupRef{{rs.Revision, "P", 0}, {"000000000000", "P", 1}})
+	if !errors.Is(err, ErrRulesChanged) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSetGroupEnabled_BothHalves(t *testing.T) {
+	svc, dp, ip := setupRuleFiles(t)
+	writeRuleFiles(t, dp, ip, "##A\na.com/P", "##A\n/P\n1.0.0.0/8")
+	rs, _ := svc.ListRuleSet()
+	if err := svc.SetGroupEnabled(GroupRef{rs.Revision, "P", 0}, false); err != nil {
+		t.Fatal(err)
+	}
+	if readFileOrEmpty(t, dp) != "##A\n#a.com/P" || readFileOrEmpty(t, ip) != "##A\n#/P\n1.0.0.0/8" {
+		t.Fatalf("files:\n%q\n%q", readFileOrEmpty(t, dp), readFileOrEmpty(t, ip))
+	}
+}
+
+func TestDeleteTarget_GroupsAndPolicyOrder(t *testing.T) {
+	svc, dp, ip := setupRuleFiles(t)
+	writeRuleFiles(t, dp, ip, "a.com/P\nb.com/Q", "/P\n1.0.0.0/8")
+	if err := WritePolicyOrderOnly([]string{"Q", "P", "Empty"}); err != nil {
+		t.Fatal(err)
+	}
+	rev, _ := svc.RulesRevision()
+	if err := svc.DeleteTarget("P", rev); err != nil {
+		t.Fatal(err)
+	}
+	if readFileOrEmpty(t, dp) != "b.com/Q" || readFileOrEmpty(t, ip) != "" {
+		t.Fatal("P groups left in files")
+	}
+	cfg, err := ReadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.PolicyOrder, []string{"Q", "Empty"}) {
+		t.Fatalf("PolicyOrder = %v", cfg.PolicyOrder)
+	}
+	// пустая цель (только в PolicyOrder) тоже удаляется
+	rev, _ = svc.RulesRevision()
+	if err := svc.DeleteTarget("Empty", rev); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = ReadConfig()
+	if !reflect.DeepEqual(cfg.PolicyOrder, []string{"Q"}) {
+		t.Fatalf("PolicyOrder = %v", cfg.PolicyOrder)
+	}
+}
+
+func TestGroupValidation(t *testing.T) {
 	svc, _, _ := setupRuleFiles(t)
-	if _, err := svc.CreateRule(HRRule{Name: " Impossible To Use ", Subnets: []string{"10.0.0.0/8"}, Target: "nwg0"}); err == nil {
-		t.Fatal("CreateRule: expected reserved-name error")
+	bad := []struct {
+		target string
+		g      Group
+	}{
+		{"", Group{Domains: []string{"a.com"}}},
+		{"P", Group{}},
+		{"P", Group{Description: "impossible to use", Domains: []string{"a.com"}}},
+		{"P", Group{Description: "a\nb", Domains: []string{"a.com"}}},
+		{"P", Group{Domains: []string{"a.com/x"}}},
+		{"P", Group{Domains: []string{"a.com,b.com"}}},
+		{"P", Group{Domains: []string{"#a.com"}}},
+		{"P", Group{Subnets: []string{"1.0.0.0/8\n2.0.0.0/8"}}},
+		{"a/b", Group{Domains: []string{"a.com"}}},
+		{"#P", Group{Domains: []string{"a.com"}}},
 	}
-	if _, err := svc.CreateRule(HRRule{Name: "X", Subnets: []string{"10.0.0.0/8"}, Target: "nwg0"}); err != nil {
-		t.Fatalf("CreateRule: %v", err)
+	for i, tc := range bad {
+		if _, err := svc.CreateGroup(tc.target, tc.g); err == nil {
+			t.Errorf("case %d accepted: %q %+v", i, tc.target, tc.g)
+		}
 	}
-	if _, err := svc.UpdateRule("X", HRRule{Name: "impossible to use", Subnets: []string{"10.0.0.0/8"}, Target: "nwg0"}); err == nil {
-		t.Fatal("UpdateRule: expected reserved-name error")
+}
+
+func TestRuleWrites_KeepOversizedServiceSection(t *testing.T) {
+	svc, dp, ip := setupRuleFiles(t)
+	writeRuleFiles(t, dp, ip, "", "##impossible to use\n#/Too-big-geoip-tag\ngeoip:cn")
+	if _, err := svc.CreateGroup("P", Group{Subnets: []string{"1.0.0.0/8"}}); err != nil {
+		t.Fatal(err)
+	}
+	want := "/P\n1.0.0.0/8\n##impossible to use\n#/Too-big-geoip-tag\ngeoip:cn"
+	if got := readFileOrEmpty(t, ip); got != want {
+		t.Fatalf("got %q want %q", got, want)
 	}
 }

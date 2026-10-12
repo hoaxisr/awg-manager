@@ -1,242 +1,352 @@
 package hydraroute
 
 import (
+	"errors"
 	"fmt"
-	"sort"
+	"slices"
+	"strconv"
 	"strings"
 )
 
-// HRRule is the HR-file-backed rule model. The rule name is its identity;
-// renaming = delete + create at the service layer.
-type HRRule struct {
-	Name     string
-	Domains  []string
-	Subnets  []string
+// ErrRulesChanged — файлы правил изменились после того, как клиент их прочитал
+// (их переписал HRweb, руки или наш же предыдущий запрос). Группа адресуется
+// позицией, поэтому без совпадения ревизии правка ушла бы не той группе.
+var ErrRulesChanged = errors.New("HydraRoute Neo rules changed outside this request")
+
+// GroupRef адресует группу позицией в цели на конкретной ревизии файлов.
+// В самих файлах id хранить негде: HRweb принял бы его за описание группы.
+type GroupRef struct {
+	Revision string
 	Target   string
-	Disabled bool
+	Index    int
 }
 
-// ListRules returns all rules currently present in domain.conf and ip.list,
-// merged by name, plus the oversized geoip tags found in HR Neo's service
-// block (##impossible to use). Files are the source of truth — each call
-// re-parses, so manual edits between calls are immediately visible.
-func (s *Service) ListRules() ([]HRRule, []string, error) {
-	entries, oversized, err := s.loadEntries()
-	if err != nil {
-		return nil, nil, err
-	}
-	result := make([]HRRule, 0, len(entries))
-	for _, e := range entries {
-		result = append(result, entryToRule(e))
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
-	return result, oversized, nil
+func (r GroupRef) String() string {
+	return r.Revision + ":" + r.Target + ":" + strconv.Itoa(r.Index)
 }
 
-// CreateRule persists a new rule. Name must be unique — duplicate is rejected.
-func (s *Service) CreateRule(rule HRRule) (*HRRule, error) {
+// ParseGroupRef разбирает "<rev>:<target>:<n>". Цель может содержать ':',
+// поэтому ревизия — до первого ':', индекс — после последнего.
+func ParseGroupRef(s string) (GroupRef, error) {
+	first := strings.Index(s, ":")
+	last := strings.LastIndex(s, ":")
+	if first <= 0 || last <= first+1 {
+		return GroupRef{}, fmt.Errorf("invalid HR group id %q", s)
+	}
+	idx, err := strconv.Atoi(s[last+1:])
+	if err != nil || idx < 0 {
+		return GroupRef{}, fmt.Errorf("invalid HR group id %q", s)
+	}
+	return GroupRef{Revision: s[:first], Target: s[first+1 : last], Index: idx}, nil
+}
+
+// ListRuleSet читает оба файла. Файлы — источник правды: каждый вызов
+// перечитывает их, ручные правки видны сразу. Читает под s.mu: наша запись —
+// два rename подряд, и снимок между ними дал бы ревизию, которой никогда не
+// будет, а следующей мутации — ложный 409.
+func (s *Service) ListRuleSet() (RuleSet, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if err := validateRule(rule); err != nil {
-		return nil, err
-	}
-
-	entries, oversized, err := s.loadEntries()
+	d, i, err := readRuleFiles()
 	if err != nil {
-		return nil, err
+		return RuleSet{}, err
 	}
-	if _, exists := entries[rule.Name]; exists {
-		return nil, fmt.Errorf("rule %q already exists", rule.Name)
-	}
-	entries[rule.Name] = ruleToEntry(rule)
-	if err := s.saveEntries(entries, oversized); err != nil {
-		return nil, err
-	}
-	s.appLog.Info("create-rule", rule.Name, fmt.Sprintf("target=%q domains=%d subnets=%d", rule.Target, len(rule.Domains), len(rule.Subnets)))
-	return &rule, nil
+	return parseRuleFiles(d, i), nil
 }
 
-// UpdateRule replaces the rule identified by originalName with the supplied
-// content. Allows rename: if rule.Name differs from originalName, the old
-// entry is dropped and a new one (under the new name) is written. The new
-// name must not collide with another existing rule.
-func (s *Service) UpdateRule(originalName string, rule HRRule) (*HRRule, error) {
+// RulesRevision — ревизия текущих файлов (для пустой цели, у которой нет
+// групп, а значит и id с ревизией). Под s.mu — см. ListRuleSet.
+func (s *Service) RulesRevision() (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if err := validateRule(rule); err != nil {
-		return nil, err
-	}
-
-	entries, oversized, err := s.loadEntries()
+	d, i, err := readRuleFiles()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	prev, exists := entries[originalName]
-	if !exists {
-		return nil, fmt.Errorf("rule %q not found", originalName)
+	return ruleRevision(d, i), nil
+}
+
+func readRuleFiles() (string, string, error) {
+	d, err := readOrEmpty(domainConfPath)
+	if err != nil {
+		return "", "", err
 	}
-	if rule.Name != originalName {
-		if _, collision := entries[rule.Name]; collision {
-			return nil, fmt.Errorf("rule %q already exists", rule.Name)
+	i, err := readOrEmpty(ipListPath)
+	if err != nil {
+		return "", "", err
+	}
+	return d, i, nil
+}
+
+// CreateGroup дописывает группу в конец цели. Ревизию не сверяет: ни на
+// какую позицию не ссылается.
+func (s *Service) CreateGroup(target string, g Group) (GroupRef, error) {
+	if err := validateGroup(target, g); err != nil {
+		return GroupRef{}, err
+	}
+	rs, err := s.mutateRules("", func(rs *RuleSet) error {
+		t := rs.ensureTarget(target)
+		t.Groups = append(t.Groups, g)
+		return nil
+	})
+	if err != nil {
+		return GroupRef{}, err
+	}
+	s.appLog.Info("create-group", target, fmt.Sprintf("description=%q domains=%d subnets=%d", g.Description, len(g.Domains), len(g.Subnets)))
+	return GroupRef{Revision: rs.Revision, Target: target, Index: findGroup(rs.Target(target), g)}, nil
+}
+
+// findGroup ищет записанную группу в перечитанном документе. Позиция может
+// не совпасть с той, куда группу положили: формат склеивает доменную и
+// CIDR-половины с одинаковым явным `##описание` (linkGroups HRweb). Ищем
+// последнюю группу цели с теми же доменами (или подсетями у группы без
+// доменов).
+func findGroup(t *Target, g Group) int {
+	if t == nil {
+		return 0
+	}
+	for i := len(t.Groups) - 1; i >= 0; i-- {
+		have := t.Groups[i]
+		if len(g.Domains) > 0 && slices.Equal(have.Domains, g.Domains) {
+			return i
 		}
-		delete(entries, originalName)
+		if len(g.Domains) == 0 && slices.Equal(have.Subnets, g.Subnets) {
+			return i
+		}
 	}
-	newEntry := ruleToEntry(rule)
-	newEntry.Disabled = prev.Disabled
-	entries[rule.Name] = newEntry
-	if err := s.saveEntries(entries, oversized); err != nil {
-		return nil, err
-	}
-	s.appLog.Info("update-rule", rule.Name, fmt.Sprintf("target=%q domains=%d subnets=%d", rule.Target, len(rule.Domains), len(rule.Subnets)))
-	return &rule, nil
+	return len(t.Groups) - 1
 }
 
-// DeleteRule removes a rule by name. Missing name is a no-op — idempotent.
-func (s *Service) DeleteRule(name string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	entries, oversized, err := s.loadEntries()
-	if err != nil {
-		return err
+// UpdateGroup заменяет описание и содержимое группы. Флаги половин
+// сохраняются; новая половина получает состояние группы. Смена цели
+// переносит группу в конец новой цели.
+func (s *Service) UpdateGroup(ref GroupRef, target string, g Group) (GroupRef, error) {
+	if err := validateGroup(target, g); err != nil {
+		return GroupRef{}, err
 	}
-	if _, exists := entries[name]; !exists {
+	rs, err := s.mutateRules(ref.Revision, func(rs *RuleSet) error {
+		old, err := groupAt(rs, ref)
+		if err != nil {
+			return err
+		}
+		off := !old.Enabled()
+		g.DomainsDisabled, g.SubnetsDisabled = off, off
+		if len(old.Domains) > 0 {
+			g.DomainsDisabled = old.DomainsDisabled
+		}
+		if len(old.Subnets) > 0 {
+			g.SubnetsDisabled = old.SubnetsDisabled
+		}
+		if target == ref.Target {
+			*old = g
+			return nil
+		}
+		removeGroups(rs, []GroupRef{ref})
+		t := rs.ensureTarget(target)
+		t.Groups = append(t.Groups, g)
+		return nil
+	})
+	if err != nil {
+		return GroupRef{}, err
+	}
+	s.appLog.Info("update-group", target, fmt.Sprintf("was %s", ref))
+	idx := -1
+	if target == ref.Target {
+		idx = findGroupFrom(rs.Target(target), g, ref.Index)
+	}
+	if idx < 0 {
+		idx = findGroup(rs.Target(target), g)
+	}
+	return GroupRef{Revision: rs.Revision, Target: target, Index: idx}, nil
+}
+
+// findGroupFrom — первая группа, точно совпавшая с g (описание, домены,
+// подсети), начиная с позиции from: правка на месте позицию не двигает, а
+// при двух одинаковых группах findGroup вернул бы последнюю. -1 — не нашли
+// (группу склеило с соседней, см. findGroup).
+func findGroupFrom(t *Target, g Group, from int) int {
+	if t == nil {
+		return -1
+	}
+	for i := max(from, 0); i < len(t.Groups); i++ {
+		have := t.Groups[i]
+		if have.Description == g.Description && slices.Equal(have.Domains, g.Domains) && slices.Equal(have.Subnets, g.Subnets) {
+			return i
+		}
+	}
+	return -1
+}
+
+// DeleteGroups удаляет группы одной записью; все ссылки обязаны нести одну
+// ревизию и разрешаются по одному снимку.
+func (s *Service) DeleteGroups(refs []GroupRef) error {
+	if len(refs) == 0 {
 		return nil
 	}
-	delete(entries, name)
-	if err := s.saveEntries(entries, oversized); err != nil {
-		return err
+	for _, r := range refs[1:] {
+		if r.Revision != refs[0].Revision {
+			return ErrRulesChanged
+		}
 	}
-	s.appLog.Info("delete-rule", name, "rule deleted")
-	return nil
+	_, err := s.mutateRules(refs[0].Revision, func(rs *RuleSet) error {
+		for _, r := range refs {
+			if _, err := groupAt(rs, r); err != nil {
+				return err
+			}
+		}
+		removeGroups(rs, refs)
+		return nil
+	})
+	if err == nil {
+		s.appLog.Info("delete-groups", "", fmt.Sprintf("deleted %d", len(refs)))
+	}
+	return err
 }
 
-// SetRuleEnabled toggles whether a rule is active in HR Neo config files.
-// A disabled rule is written in HR Neo's disabled form: a leading '#' on its
-// domain.conf line, `#/Target` for its ip.list block (CIDR lines stay as is);
-// saveEntries schedules a debounced neo restart.
-func (s *Service) SetRuleEnabled(name string, enabled bool) error {
+func (s *Service) SetGroupEnabled(ref GroupRef, enabled bool) error {
+	_, err := s.mutateRules(ref.Revision, func(rs *RuleSet) error {
+		g, err := groupAt(rs, ref)
+		if err != nil {
+			return err
+		}
+		g.SetEnabled(enabled)
+		return nil
+	})
+	if err == nil {
+		s.appLog.Info("set-group-enabled", ref.Target, fmt.Sprintf("index=%d enabled=%v", ref.Index, enabled))
+	}
+	return err
+}
+
+// DeleteTarget удаляет правило HRweb целиком: все группы цели и её место в
+// PolicyOrder. Политику NDMS не трогает — она живёт на вкладке политик.
+func (s *Service) DeleteTarget(target, revision string) error {
+	_, err := s.mutateRulesThen(revision, func(rs *RuleSet) error {
+		rs.Targets = slices.DeleteFunc(rs.Targets, func(t Target) bool { return t.Name == target })
+		return nil
+	}, func() error {
+		cfg, err := ReadConfig()
+		if err != nil {
+			return err
+		}
+		order := slices.DeleteFunc(slices.Clone(cfg.PolicyOrder), func(n string) bool { return n == target })
+		if len(order) == len(cfg.PolicyOrder) {
+			return nil
+		}
+		return WritePolicyOrderOnly(order)
+	})
+	if err == nil {
+		s.appLog.Info("delete-target", target, "rule deleted with its groups")
+	}
+	return err
+}
+
+// mutateRules — единственный путь записи правил. Под s.mu: перечитать файлы,
+// сверить ревизию (пустая — не сверять), применить fn, записать оба файла,
+// синхронизировать ForceInterface, назначить рестарт. Возвращает документ,
+// перечитанный из записанного текста: позиции и ревизия в нём те, что увидит
+// следующий List.
+//
+// Отката нет: сбой между записью domain.conf и ip.list (или в after)
+// оставляет файлы частично новыми. Каждый файл пишется атомарно, оба
+// остаются валидными для демона; следующий List покажет фактическое
+// состояние, а ревизия клиента устареет (409, а не правка не той группы).
+func (s *Service) mutateRules(want string, fn func(*RuleSet) error) (RuleSet, error) {
+	return s.mutateRulesThen(want, fn, nil)
+}
+
+func (s *Service) mutateRulesThen(want string, fn func(*RuleSet) error, after func() error) (RuleSet, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	entries, oversized, err := s.loadEntries()
+	if !s.status.Installed {
+		return RuleSet{}, ErrNotInstalled
+	}
+	d, i, err := readRuleFiles()
 	if err != nil {
-		return err
+		return RuleSet{}, err
 	}
-	e, ok := entries[name]
-	if !ok {
-		return fmt.Errorf("rule %q not found", name)
+	rs := parseRuleFiles(d, i)
+	if want != "" && want != rs.Revision {
+		return RuleSet{}, ErrRulesChanged
 	}
-	e.Disabled = !enabled
-	entries[name] = e
-	if err := s.saveEntries(entries, oversized); err != nil {
-		return err
+	if err := fn(&rs); err != nil {
+		return RuleSet{}, err
 	}
-	s.appLog.Info("set-rule-enabled", name, fmt.Sprintf("enabled=%v", enabled))
-	return nil
-}
-
-// loadEntries reads both HR files and merges into a single map keyed by name.
-// Also returns the oversized geoip tags that HR Neo has quarantined in its
-// ##impossible to use service block.
-func (s *Service) loadEntries() (map[string]ManagedEntry, []string, error) {
-	domainData, err := readOrEmpty(domainConfPath)
-	if err != nil {
-		return nil, nil, err
+	nd, ni := renderRuleFiles(rs)
+	if err := WriteWholeFile(domainConfPath, nd); err != nil {
+		return RuleSet{}, err
 	}
-	ipData, err := readOrEmpty(ipListPath)
-	if err != nil {
-		return nil, nil, err
+	if err := WriteWholeFile(ipListPath, ni); err != nil {
+		return RuleSet{}, err
 	}
-
-	domains := parseDomainConf(domainData)
-	subnets, oversized := parseIPList(ipData)
-
-	merged := make(map[string]ManagedEntry, len(domains)+len(subnets))
-	for _, e := range domains {
-		merged[e.ListName] = e
-	}
-	for _, e := range subnets {
-		if existing, ok := merged[e.ListName]; ok {
-			existing.Subnets = e.Subnets
-			if existing.Iface == "" {
-				existing.Iface = e.Iface
-			}
-			if e.Disabled {
-				existing.Disabled = true
-			}
-			merged[e.ListName] = existing
-		} else {
-			merged[e.ListName] = e
+	if after != nil {
+		if err := after(); err != nil {
+			return RuleSet{}, err
 		}
 	}
-	return merged, oversized, nil
-}
-
-// saveEntries writes the full content of both files and schedules a daemon
-// restart so HR Neo picks up the change. oversized (from loadEntries) keeps
-// HR Neo's `##impossible to use` section in ip.list.
-func (s *Service) saveEntries(entries map[string]ManagedEntry, oversized []string) error {
-	if !s.status.Installed {
-		return fmt.Errorf("HydraRoute Neo is not installed")
-	}
-
-	ordered := sortedEntries(entries)
-	if err := WriteWholeFile(domainConfPath, GenerateDomainConf(ordered)); err != nil {
-		return err
-	}
-	if err := WriteWholeFile(ipListPath, GenerateIPList(ordered, oversized)); err != nil {
-		return err
-	}
-	s.updateForceInterface(entries)
+	written := parseRuleFiles(nd, ni)
+	s.updateForceInterface(written)
 	s.scheduleRestart("rules-write")
-	return nil
+	return written, nil
 }
 
-// sortedEntries returns entries ordered by name, the order both files use.
-func sortedEntries(entries map[string]ManagedEntry) []ManagedEntry {
-	ordered := make([]ManagedEntry, 0, len(entries))
-	for _, e := range entries {
-		ordered = append(ordered, e)
+func groupAt(rs *RuleSet, ref GroupRef) (*Group, error) {
+	t := rs.Target(ref.Target)
+	if t == nil || ref.Index >= len(t.Groups) {
+		// Ревизия совпала, а позиции нет — id собран руками.
+		return nil, fmt.Errorf("HR group %s not found", ref)
 	}
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ListName < ordered[j].ListName })
-	return ordered
+	return &t.Groups[ref.Index], nil
 }
 
-func ruleToEntry(r HRRule) ManagedEntry {
-	return ManagedEntry{
-		ListName: r.Name,
-		Domains:  r.Domains,
-		Subnets:  r.Subnets,
-		Iface:    r.Target,
-		Disabled: r.Disabled,
+// removeGroups удаляет группы по позициям одного снимка; цель без групп
+// остаётся в PolicyOrder и из файлов просто пропадает.
+func removeGroups(rs *RuleSet, refs []GroupRef) {
+	drop := map[string]map[int]bool{}
+	for _, r := range refs {
+		if drop[r.Target] == nil {
+			drop[r.Target] = map[int]bool{}
+		}
+		drop[r.Target][r.Index] = true
+	}
+	for ti := range rs.Targets {
+		t := &rs.Targets[ti]
+		kept := t.Groups[:0]
+		for gi, g := range t.Groups {
+			if !drop[t.Name][gi] {
+				kept = append(kept, g)
+			}
+		}
+		t.Groups = kept
 	}
 }
 
-func entryToRule(e ManagedEntry) HRRule {
-	return HRRule{
-		Name:     e.ListName,
-		Domains:  e.Domains,
-		Subnets:  e.Subnets,
-		Target:   e.Iface,
-		Disabled: e.Disabled,
+// validateGroup отсекает то, что сломало бы формат файлов. Описание
+// необязательно и может повторяться (модель HRweb).
+func validateGroup(target string, g Group) error {
+	if target == "" || strings.ContainsAny(target, "/,#\r\n \t") {
+		return fmt.Errorf("invalid rule target %q", target)
 	}
-}
-
-func validateRule(r HRRule) error {
-	if strings.TrimSpace(r.Name) == "" {
-		return fmt.Errorf("rule name must not be empty")
+	if strings.ContainsAny(g.Description, "\r\n") {
+		return fmt.Errorf("group name must be a single line")
 	}
-	if strings.EqualFold(strings.TrimSpace(r.Name), oversizedSectionName) {
-		return fmt.Errorf("rule name %q is reserved by HydraRoute Neo", oversizedSectionName)
+	if strings.EqualFold(strings.TrimSpace(g.Description), oversizedSectionName) {
+		return fmt.Errorf("group name %q is reserved by HydraRoute Neo", oversizedSectionName)
 	}
-	if r.Target == "" {
-		return fmt.Errorf("rule target (interface or policy) must not be empty")
+	if len(g.Domains) == 0 && len(g.Subnets) == 0 {
+		return fmt.Errorf("group must have at least one domain or subnet")
 	}
-	if len(r.Domains) == 0 && len(r.Subnets) == 0 {
-		return fmt.Errorf("rule must have at least one domain or subnet")
+	for _, d := range g.Domains {
+		// `#` в начале первого домена выключил бы строку, `##` — сделал бы её заголовком.
+		if d == "" || strings.ContainsAny(d, "/,\r\n") || strings.HasPrefix(d, "#") {
+			return fmt.Errorf("invalid domain %q", d)
+		}
+	}
+	for _, c := range g.Subnets {
+		if c == "" || strings.ContainsAny(c, "\r\n") || strings.HasPrefix(c, "#") {
+			return fmt.Errorf("invalid subnet %q", c)
+		}
 	}
 	return nil
 }

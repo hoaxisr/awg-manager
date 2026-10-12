@@ -22,20 +22,20 @@ const forceInterfaceKey = "ForceInterface"
 var ownIfaceFamily = regexp.MustCompile(`^(awgm|opkgtun|t2s)[0-9]+$`) //nolint:gochecknoglobals
 
 // syncForceInterface дописывает в ForceInterface шаблоны семейств наших
-// интерфейсов, которые встречаются среди целей включённых правил
-// domain.conf/ip.list (выключенные HR Neo не читает).
+// интерфейсов, которые встречаются среди целей, у которых есть включённая
+// группа в domain.conf/ip.list (выключенные HR Neo не читает).
 // Только дописывает: чужие записи и порядок сохраняются, ненужный больше
 // шаблон не убирается (он безвреден). Несколько строк ключа HR Neo
 // складывает, поэтому они сводятся в одну, без потери значений.
 // Возвращает true, если файл изменён.
-func syncForceInterface(entries map[string]ManagedEntry) (bool, error) {
+func syncForceInterface(rs RuleSet) (bool, error) {
 	var want []string
 	seen := map[string]bool{}
-	for _, e := range entries {
-		if e.Disabled {
+	for _, t := range rs.Targets {
+		if !slices.ContainsFunc(t.Groups, Group.Enabled) {
 			continue
 		}
-		m := ownIfaceFamily.FindStringSubmatch(e.Iface)
+		m := ownIfaceFamily.FindStringSubmatch(t.Name)
 		if m == nil || seen[m[1]] {
 			continue
 		}

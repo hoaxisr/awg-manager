@@ -29,10 +29,11 @@ type OversizedTag struct {
 // names, and enriches each with its live entry count from the installed
 // geoip .dat files.
 func (s *Service) OversizedTags(ctx context.Context) ([]OversizedTag, error) {
-	_, names, err := s.ListRules()
+	rs, err := s.ListRuleSet()
 	if err != nil {
 		return nil, err
 	}
+	names := rs.Oversized
 
 	gds := s.GetGeoData()
 	result := make([]OversizedTag, 0, len(names))
@@ -76,7 +77,7 @@ func (s *Service) OversizedTags(ctx context.Context) ([]OversizedTag, error) {
 // The file is edited as text (removeOversizedTag): only the tag's lines
 // leave, and an emptied section goes with its header. Rules, comments and
 // anything else in ip.list stay byte-for-byte — the rules are deliberately
-// not regenerated from loadEntries, which would merge domain.conf into them.
+// not regenerated from the RuleSet, which would merge domain.conf into them.
 // domain.conf is not touched and HR Neo is not restarted — it ignores the
 // section anyway (`#/` target).
 func (s *Service) RemoveOversizedTag(name string) error {
