@@ -33,14 +33,16 @@ func TestCreateBatch_RoutesHydraRouteToHR(t *testing.T) {
 	}
 
 	// HR-правило реально создано в HR-файлах.
-	rules, _, err := hydra.ListRules()
+	rs, err := hydra.ListRuleSet()
 	if err != nil {
 		t.Fatal(err)
 	}
 	found := false
-	for _, r := range rules {
-		if r.Name == "hr-rule" {
-			found = true
+	if tg := rs.Target("nwg0"); tg != nil {
+		for _, g := range tg.Groups {
+			if g.Description == "hr-rule" {
+				found = true
+			}
 		}
 	}
 	if !found {
@@ -71,10 +73,12 @@ func TestCreateBatch_HydraRouteSubscriptions(t *testing.T) {
 		t.Fatalf("created = %d, want 1 (hr-mixed only)", len(created))
 	}
 
-	rules, _, _ := hydra.ListRules()
+	rs, _ := hydra.ListRuleSet()
 	names := map[string]bool{}
-	for _, r := range rules {
-		names[r.Name] = true
+	if tg := rs.Target("nwg0"); tg != nil {
+		for _, g := range tg.Groups {
+			names[g.Description] = true
+		}
 	}
 	if !names["hr-mixed"] {
 		t.Fatal("hr-mixed should be created from manual domains")

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func setupRuleFiles(t *testing.T) (svc *Service, domainPath, ipPath string) {
@@ -23,11 +24,11 @@ func setupRuleFiles(t *testing.T) (svc *Service, domainPath, ipPath string) {
 		ipListPath = origIP
 	})
 
-	setupEmptyConf(t) // saveEntries дописывает ForceInterface в hrneo.conf
+	setupEmptyConf(t) // mutateRules дописывает ForceInterface в hrneo.conf
 
 	svc = &Service{}
 	svc.SetStatusForTest(true)
-	stopRestartTimerOnCleanup(t, svc) // WriteRules планирует neo restart (F410)
+	stopRestartTimerOnCleanup(t, svc) // mutateRules планирует neo restart (F410)
 	return svc, domainPath, ipPath
 }
 
@@ -272,5 +273,49 @@ func TestRuleWrites_KeepOversizedServiceSection(t *testing.T) {
 	want := "/P\n1.0.0.0/8\n##impossible to use\n#/Too-big-geoip-tag\ngeoip:cn"
 	if got := readFileOrEmpty(t, ip); got != want {
 		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestGroupAt_NegativeIndexRejected(t *testing.T) {
+	svc, dp, ip := setupRuleFiles(t)
+	writeRuleFiles(t, dp, ip, "a.com/P", "")
+	rev, _ := svc.RulesRevision()
+	err := svc.SetGroupEnabled(GroupRef{Revision: rev, Target: "P", Index: -1}, false)
+	if err == nil || errors.Is(err, ErrRulesChanged) {
+		t.Fatalf("err = %v", err)
+	}
+	if readFileOrEmpty(t, dp) != "a.com/P" {
+		t.Fatal("domain.conf changed")
+	}
+}
+
+// Мутация без изменений не пишет файлы и не дёргает рестарт демона.
+func TestMutateRules_NoChangeNoWrite(t *testing.T) {
+	svc, dp, ip := setupRuleFiles(t)
+	writeRuleFiles(t, dp, ip, "a.com/P", "/P\n1.0.0.0/8")
+	old := time.Now().Add(-time.Hour).Truncate(time.Second)
+	for _, p := range []string{dp, ip} {
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rev, _ := svc.RulesRevision()
+	if err := svc.SetGroupEnabled(GroupRef{Revision: rev, Target: "P", Index: 0}, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{dp, ip} {
+		st, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !st.ModTime().Equal(old) {
+			t.Errorf("%s rewritten", filepath.Base(p))
+		}
+	}
+	if readFileOrEmpty(t, dp) != "a.com/P" || readFileOrEmpty(t, ip) != "/P\n1.0.0.0/8" {
+		t.Fatal("contents changed")
+	}
+	if svc.restartTimer != nil {
+		t.Fatal("restart scheduled for a no-op")
 	}
 }

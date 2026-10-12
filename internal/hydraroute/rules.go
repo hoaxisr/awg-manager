@@ -242,8 +242,9 @@ func (s *Service) DeleteTarget(target, revision string) error {
 }
 
 // mutateRules — единственный путь записи правил. Под s.mu: перечитать файлы,
-// сверить ревизию (пустая — не сверять), применить fn, записать оба файла,
-// синхронизировать ForceInterface, назначить рестарт. Возвращает документ,
+// сверить ревизию (пустая — не сверять), применить fn и, если текст
+// изменился, записать оба файла, синхронизировать ForceInterface, назначить
+// рестарт. Возвращает документ,
 // перечитанный из записанного текста: позиции и ревизия в нём те, что увидит
 // следующий List.
 //
@@ -274,11 +275,17 @@ func (s *Service) mutateRulesThen(want string, fn func(*RuleSet) error, after fu
 		return RuleSet{}, err
 	}
 	nd, ni := renderRuleFiles(rs)
-	if err := WriteWholeFile(domainConfPath, nd); err != nil {
-		return RuleSet{}, err
-	}
-	if err := WriteWholeFile(ipListPath, ni); err != nil {
-		return RuleSet{}, err
+	// Текст не изменился (например, включить уже включённую группу) — файлы
+	// не трогаем и демон не перезапускаем; after выполняется всё равно:
+	// у пустой цели DeleteTarget меняет только PolicyOrder.
+	unchanged := nd == d && ni == i
+	if !unchanged {
+		if err := WriteWholeFile(domainConfPath, nd); err != nil {
+			return RuleSet{}, err
+		}
+		if err := WriteWholeFile(ipListPath, ni); err != nil {
+			return RuleSet{}, err
+		}
 	}
 	if after != nil {
 		if err := after(); err != nil {
@@ -286,14 +293,16 @@ func (s *Service) mutateRulesThen(want string, fn func(*RuleSet) error, after fu
 		}
 	}
 	written := parseRuleFiles(nd, ni)
-	s.updateForceInterface(written)
-	s.scheduleRestart("rules-write")
+	if !unchanged {
+		s.updateForceInterface(written)
+		s.scheduleRestart("rules-write")
+	}
 	return written, nil
 }
 
 func groupAt(rs *RuleSet, ref GroupRef) (*Group, error) {
 	t := rs.Target(ref.Target)
-	if t == nil || ref.Index >= len(t.Groups) {
+	if t == nil || ref.Index < 0 || ref.Index >= len(t.Groups) {
 		// Ревизия совпала, а позиции нет — id собран руками.
 		return nil, fmt.Errorf("HR group %s not found", ref)
 	}

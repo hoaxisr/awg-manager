@@ -26,6 +26,9 @@ func SetPaths(domain, ipList string) (restore func()) {
 	}
 }
 
+// PathsForTest returns the current HR config file paths (set by SetPaths).
+func PathsForTest() (domain, ipList string) { return domainConfPath, ipListPath }
+
 // WriteWholeFile atomically writes content as the entire file body.
 // We own the file — anything outside our format is discarded on next write.
 func WriteWholeFile(filePath, content string) error {

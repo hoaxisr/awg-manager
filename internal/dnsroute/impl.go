@@ -446,19 +446,12 @@ func (s *ServiceImpl) Delete(ctx context.Context, id string) error {
 		if !s.hrReady() {
 			return fmt.Errorf("HydraRoute Neo is not installed")
 		}
-		name := nameFromHRID(id)
-		if err := s.hydra.DeleteRule(name); err != nil {
+		ref, err := refFromHRID(id)
+		if err != nil {
 			return err
 		}
-		if data := s.store.GetCached(); data != nil && data.HRRuleIcons != nil {
-			if _, ok := data.HRRuleIcons[name]; ok {
-				delete(data.HRRuleIcons, name)
-				if err := s.store.Save(data); err != nil {
-					return fmt.Errorf("save after HR icon delete: %w", err)
-				}
-			}
-		}
-		return nil
+		// Иконку убирает reconcileHRIcons в следующем List.
+		return s.hydra.DeleteGroups([]hydraroute.GroupRef{ref})
 	}
 
 	data := s.store.GetCached()
@@ -499,13 +492,39 @@ func (s *ServiceImpl) DeleteBatch(ctx context.Context, ids []string) (int, error
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 
-	data := s.store.GetCached()
-	if data == nil {
-		return 0, fmt.Errorf("store not loaded")
+	// HR-группы удаляются одной записью: их позиции разрешаются по одному
+	// снимку, поштучное удаление сдвинуло бы позиции следующих.
+	var hrRefs []hydraroute.GroupRef
+	rest := ids[:0:0]
+	for _, id := range ids {
+		if !isHRID(id) {
+			rest = append(rest, id)
+			continue
+		}
+		ref, err := refFromHRID(id)
+		if err != nil {
+			return 0, err
+		}
+		hrRefs = append(hrRefs, ref)
+	}
+	hrDeleted := 0
+	if len(hrRefs) > 0 {
+		if !s.hrReady() {
+			return 0, fmt.Errorf("HydraRoute Neo is not installed")
+		}
+		if err := s.hydra.DeleteGroups(hrRefs); err != nil {
+			return 0, err
+		}
+		hrDeleted = len(hrRefs)
 	}
 
-	toDelete := make(map[string]bool, len(ids))
-	for _, id := range ids {
+	data := s.store.GetCached()
+	if data == nil {
+		return hrDeleted, fmt.Errorf("store not loaded")
+	}
+
+	toDelete := make(map[string]bool, len(rest))
+	for _, id := range rest {
 		toDelete[id] = true
 	}
 
@@ -521,20 +540,20 @@ func (s *ServiceImpl) DeleteBatch(ctx context.Context, ids []string) (int, error
 	}
 
 	if deleted == 0 {
-		return 0, nil
+		return hrDeleted, nil
 	}
 
 	data.Lists = kept
 
 	if err := s.store.Save(data); err != nil {
-		return 0, fmt.Errorf("save after delete batch: %w", err)
+		return hrDeleted, fmt.Errorf("save after delete batch: %w", err)
 	}
 
 	if err := s.reconcileAll(ctx); err != nil {
 		s.logError("delete-batch", "", "Reconcile failed", err.Error())
 	}
 
-	return deleted, nil
+	return deleted + hrDeleted, nil
 }
 
 // CreateBatch adds multiple domain lists, persists once, and reconciles once.
@@ -554,21 +573,17 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 	hasSubs := false
 
 	for _, list := range lists {
-		if strings.TrimSpace(list.Name) == "" {
-			continue
-		}
-
 		applyManualText(&list)
 		applyExcludesText(&list)
-
-		if len(list.ManualDomains) == 0 && len(list.Subscriptions) == 0 {
-			continue
-		}
 
 		// HydraRoute-backed entries go through the real HR creation path
 		// (HR files = SoT); they must NOT land in data.Lists. HR has no
 		// subscriptions — create from ManualDomains and log-ignore any.
+		// The name is optional for HR groups (HRweb model).
 		if isHydraRoute(list.Backend) {
+			if len(list.ManualDomains) == 0 {
+				continue
+			}
 			if len(list.Subscriptions) > 0 {
 				s.logInfo("create-batch", list.Name, "HR rule: subscriptions unsupported, ignored")
 			}
@@ -578,6 +593,12 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 				continue
 			}
 			hrCreated = append(hrCreated, dl)
+			continue
+		}
+		if strings.TrimSpace(list.Name) == "" {
+			continue
+		}
+		if len(list.ManualDomains) == 0 && len(list.Subscriptions) == 0 {
 			continue
 		}
 
@@ -654,14 +675,14 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 		if !s.hrReady() {
 			return fmt.Errorf("HydraRoute Neo is not installed")
 		}
-		name := nameFromHRID(id)
-		if name == "" {
-			return fmt.Errorf("invalid HR rule id %q", id)
-		}
-		if err := s.hydra.SetRuleEnabled(name, enabled); err != nil {
+		ref, err := refFromHRID(id)
+		if err != nil {
 			return err
 		}
-		s.logInfo("set-enabled", id, fmt.Sprintf("enabled=%v name=%q backend=hydraroute", enabled, name))
+		if err := s.hydra.SetGroupEnabled(ref, enabled); err != nil {
+			return err
+		}
+		s.logInfo("set-enabled", id, fmt.Sprintf("enabled=%v backend=hydraroute", enabled))
 		return nil
 	}
 

@@ -55,13 +55,13 @@ func (s *ServiceImpl) hrReady() bool {
 	return s.hydra != nil && s.hydra.GetStatus().Installed
 }
 
-// listHydraRoute returns HR-backed rules read straight from the HR Neo config
+// listHydraRoute returns HR groups read straight from the HR Neo config
 // files, converted into the DomainList shape the API expects.
 func (s *ServiceImpl) listHydraRoute(ctx context.Context) ([]DomainList, error) {
 	if !s.hrReady() {
 		return nil, nil
 	}
-	rules, _, err := s.hydra.ListRules()
+	rs, err := s.hydra.ListRuleSet()
 	if err != nil {
 		return nil, fmt.Errorf("list HR rules: %w", err)
 	}
@@ -75,72 +75,121 @@ func (s *ServiceImpl) listHydraRoute(ctx context.Context) ([]DomainList, error) 
 	}
 
 	icons := map[string]string{}
-	if data := s.store.GetCached(); data != nil && data.HRRuleIcons != nil {
+	if data := s.store.GetCached(); data != nil {
+		if data.HRRuleIcons == nil {
+			data.HRRuleIcons = map[string]string{}
+		}
+		if reconcileHRIcons(data.HRRuleIcons, rs) {
+			if err := s.store.Save(data); err != nil {
+				s.appLog.Warn("hydraroute-icons", "", "save reconciled icons: "+err.Error())
+			}
+		}
 		icons = data.HRRuleIcons
 	}
 
 	systemByIface := s.systemTunnelsByIface(ctx)
-	result := make([]DomainList, 0, len(rules))
-	for _, r := range rules {
-		dl := hrRuleToDomainList(r, policySet, systemByIface)
-		if iconURL := strings.TrimSpace(icons[r.Name]); iconURL != "" {
-			dl.IconURL = iconURL
+	var result []DomainList
+	for _, t := range rs.Targets {
+		for i, g := range t.Groups {
+			ref := hydraroute.GroupRef{Revision: rs.Revision, Target: t.Name, Index: i}
+			dl := hrGroupToDomainList(ref, g, policySet, systemByIface)
+			if g.Description != "" {
+				dl.IconURL = strings.TrimSpace(icons[hrIconKey(t.Name, g.Description)])
+			}
+			result = append(result, dl)
 		}
-		result = append(result, dl)
 	}
 	return result, nil
 }
 
-// hrIDPrefix tags HR rule identifiers in the API layer so dispatch by ID
-// keeps working even though HR rules use their name as the real identity.
+// hrIDPrefix tags HR group identifiers in the API layer. The rest of the id
+// is hydraroute.GroupRef: revision, target and position — HR files have no
+// place for an id of their own (HRweb would read it as the group name).
 const hrIDPrefix = "hr:"
 
-// hrIDFromName builds the API-side ID for an HR rule.
-func hrIDFromName(name string) string { return hrIDPrefix + name }
+func hrID(ref hydraroute.GroupRef) string { return hrIDPrefix + ref.String() }
 
-// nameFromHRID returns the rule name from an "hr:Name" ID; empty if not HR.
-func nameFromHRID(id string) string {
-	if !strings.HasPrefix(id, hrIDPrefix) {
-		return ""
-	}
-	return strings.TrimPrefix(id, hrIDPrefix)
+func refFromHRID(id string) (hydraroute.GroupRef, error) {
+	return hydraroute.ParseGroupRef(strings.TrimPrefix(id, hrIDPrefix))
 }
 
-// isHRID reports whether the ID refers to an HR rule.
+// isHRID reports whether the ID refers to an HR group.
 func isHRID(id string) bool { return strings.HasPrefix(id, hrIDPrefix) }
 
-// hrRuleToDomainList converts the HR-file-native shape into the DomainList
-// contract shared with NDMS. Subscriptions/dedup don't exist at this layer.
-// Enabled reflects whether the rule's content lines are commented with '#'
-// in domain.conf / ip.list.
+// hrIconKey — ключ иконки группы: цель и описание. У безымянной группы
+// иконки нет: позиционный ключ уезжал бы на соседнюю группу.
+func hrIconKey(target, description string) string { return target + "\x00" + description }
+
+// reconcileHRIcons приводит ключи иконок к группам файлов: старый ключ
+// «имя» (до F629) переносится на каждую цель, где есть группа с таким
+// описанием; ключ без группы удаляется — в том числе все, если HR Neo
+// установлен, а файлов правил нет. Возвращает true, если map изменилась.
+func reconcileHRIcons(icons map[string]string, rs hydraroute.RuleSet) bool {
+	live := map[string]bool{}
+	byDesc := map[string][]string{}
+	for _, t := range rs.Targets {
+		for _, g := range t.Groups {
+			if g.Description == "" {
+				continue
+			}
+			live[hrIconKey(t.Name, g.Description)] = true
+			byDesc[g.Description] = append(byDesc[g.Description], t.Name)
+		}
+	}
+	changed := false
+	moved := map[string]string{}
+	for k, url := range icons {
+		if strings.Contains(k, "\x00") {
+			if !live[k] {
+				delete(icons, k)
+				changed = true
+			}
+			continue
+		}
+		delete(icons, k)
+		changed = true
+		for _, target := range byDesc[k] {
+			moved[hrIconKey(target, k)] = url
+		}
+	}
+	for k, url := range moved {
+		if _, ok := icons[k]; !ok {
+			icons[k] = url
+		}
+	}
+	return changed
+}
+
+// hrGroupToDomainList converts an HR group into the DomainList contract
+// shared with NDMS. Subscriptions/dedup don't exist at this layer. Enabled
+// reflects whether the group's lines are commented with '#'.
 //
 // systemByIface turns the target of a system interface back into its
 // "system:<NDMS id>" tunnel ID (F498); other targets (managed tunnels, WAN)
 // keep the kernel name as TunnelID, as before.
-func hrRuleToDomainList(r hydraroute.HRRule, policySet map[string]bool, systemByIface map[string]string) DomainList {
-	domains := append([]string(nil), r.Domains...)
-	domains = append(domains, r.Subnets...)
-
+func hrGroupToDomainList(ref hydraroute.GroupRef, g hydraroute.Group, policySet map[string]bool, systemByIface map[string]string) DomainList {
+	domains := append([]string(nil), g.Domains...)
+	domains = append(domains, g.Subnets...)
 	dl := DomainList{
-		ID:            hrIDFromName(r.Name),
-		Name:          r.Name,
-		Domains:       r.Domains,
-		Subnets:       r.Subnets,
+		ID:            hrID(ref),
+		Name:          g.Description,
+		Domains:       g.Domains,
+		Subnets:       g.Subnets,
 		ManualDomains: domains,
 		Backend:       "hydraroute",
-		Enabled:       !r.Disabled,
+		Enabled:       g.Enabled(),
 	}
-	if policySet[r.Target] && validateHRPolicyName(r.Target) == nil {
+	if policySet[ref.Target] && validateHRPolicyName(ref.Target) == nil {
 		dl.HRRouteMode = "policy"
-		dl.HRPolicyName = r.Target
+		dl.HRPolicyName = ref.Target
 		return dl
 	}
 	dl.HRRouteMode = "interface"
-	tunnelID := r.Target
-	if id, ok := systemByIface[r.Target]; ok {
+	tunnelID := ref.Target
+	if id, ok := systemByIface[ref.Target]; ok {
 		tunnelID = id
 	}
-	dl.Routes = []RouteTarget{{Interface: r.Target, TunnelID: tunnelID}}
+	dl.Routes = []RouteTarget{{Interface: ref.Target, TunnelID: tunnelID}}
 	return dl
 }
 
@@ -153,16 +202,39 @@ func (s *ServiceImpl) systemTunnelsByIface(ctx context.Context) map[string]strin
 	return s.resolver.SystemTunnelsByIface(ctx)
 }
 
+func hrGroupFromList(list DomainList) hydraroute.Group {
+	domains, subnets := splitDomainsAndSubnets(deduplicateDomains(list.ManualDomains))
+	return hydraroute.Group{Description: strings.TrimSpace(list.Name), Domains: domains, Subnets: subnets}
+}
+
+// setHRIcon пишет иконку группы с описанием; устаревшие ключи убирает
+// reconcileHRIcons при следующем List.
+func (s *ServiceImpl) setHRIcon(target, description, iconURL string) error {
+	data := s.store.GetCached()
+	if data == nil || description == "" {
+		return nil
+	}
+	if data.HRRuleIcons == nil {
+		data.HRRuleIcons = map[string]string{}
+	}
+	key := hrIconKey(target, description)
+	if iconURL == "" {
+		delete(data.HRRuleIcons, key)
+	} else {
+		data.HRRuleIcons[key] = iconURL
+	}
+	if err := s.store.Save(data); err != nil {
+		return fmt.Errorf("save HR group icon: %w", err)
+	}
+	return nil
+}
+
 // createHydraRoute validates the input, resolves the target tunnel, and
-// persists a new rule straight into the HR Neo config files. Returns the
-// stored rule re-read through the same pipeline so callers see exactly
-// what the next List() will show.
+// appends a new group straight into the HR Neo config files. The name is
+// optional: HRweb groups may have no description.
 func (s *ServiceImpl) createHydraRoute(ctx context.Context, list DomainList) (*DomainList, error) {
 	if !s.hrReady() {
 		return nil, fmt.Errorf("HydraRoute Neo is not installed")
-	}
-	if strings.TrimSpace(list.Name) == "" {
-		return nil, fmt.Errorf("name must not be empty")
 	}
 	if len(list.ManualDomains) == 0 {
 		return nil, fmt.Errorf("at least one domain or subnet is required")
@@ -173,14 +245,8 @@ func (s *ServiceImpl) createHydraRoute(ctx context.Context, list DomainList) (*D
 		return nil, err
 	}
 
-	domains, subnets := splitDomainsAndSubnets(deduplicateDomains(list.ManualDomains))
-
-	created, err := s.hydra.CreateRule(hydraroute.HRRule{
-		Name:    list.Name,
-		Domains: domains,
-		Subnets: subnets,
-		Target:  target,
-	})
+	g := hrGroupFromList(list)
+	ref, err := s.hydra.CreateGroup(target, g)
 	if err != nil {
 		return nil, err
 	}
@@ -191,24 +257,13 @@ func (s *ServiceImpl) createHydraRoute(ctx context.Context, list DomainList) (*D
 		return nil, err
 	}
 	iconURL := strings.TrimSpace(list.IconURL)
-	if data := s.store.GetCached(); data != nil {
-		if data.HRRuleIcons == nil {
-			data.HRRuleIcons = map[string]string{}
-		}
-		if iconURL == "" {
-			delete(data.HRRuleIcons, created.Name)
-		} else {
-			data.HRRuleIcons[created.Name] = iconURL
-		}
-		if err := s.store.Save(data); err != nil {
-			return nil, fmt.Errorf("save HR rule icon: %w", err)
-		}
+	if err := s.setHRIcon(target, g.Description, iconURL); err != nil {
+		return nil, err
 	}
+	s.appLog.Info("hydraroute-create", target, fmt.Sprintf("group %d created", ref.Index))
 
-	s.appLog.Info("hydraroute-create", created.Name, "dns-route created")
-
-	dl := hrRuleToDomainList(*created, s.currentPolicySet(ctx), s.systemTunnelsByIface(ctx))
-	if iconURL != "" {
+	dl := hrGroupToDomainList(ref, g, s.currentPolicySet(ctx), s.systemTunnelsByIface(ctx))
+	if g.Description != "" {
 		dl.IconURL = iconURL
 	}
 	dl.CreatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -216,29 +271,22 @@ func (s *ServiceImpl) createHydraRoute(ctx context.Context, list DomainList) (*D
 	return &dl, nil
 }
 
-// updateHydraRoute replaces an existing HR rule identified by id ("hr:Name").
-// list.Name in the payload may differ — that's a rename, handled by HR layer.
+// updateHydraRoute replaces the HR group addressed by id ("hr:<rev>:<target>:<n>").
+// A stale revision fails with hydraroute.ErrRulesChanged.
 func (s *ServiceImpl) updateHydraRoute(ctx context.Context, id string, list DomainList) (*DomainList, error) {
 	if !s.hrReady() {
 		return nil, fmt.Errorf("HydraRoute Neo is not installed")
 	}
-	originalName := nameFromHRID(id)
-	if originalName == "" {
-		// Caller passed a bare name (legacy or non-prefixed) — accept it.
-		originalName = id
+	ref, err := refFromHRID(id)
+	if err != nil {
+		return nil, err
 	}
 	target, err := s.resolveHRTarget(ctx, list)
 	if err != nil {
 		return nil, err
 	}
-	domains, subnets := splitDomainsAndSubnets(deduplicateDomains(list.ManualDomains))
-
-	updated, err := s.hydra.UpdateRule(originalName, hydraroute.HRRule{
-		Name:    list.Name,
-		Domains: domains,
-		Subnets: subnets,
-		Target:  target,
-	})
+	g := hrGroupFromList(list)
+	newRef, err := s.hydra.UpdateGroup(ref, target, g)
 	if err != nil {
 		return nil, err
 	}
@@ -246,26 +294,20 @@ func (s *ServiceImpl) updateHydraRoute(ctx context.Context, id string, list Doma
 		return nil, err
 	}
 	iconURL := strings.TrimSpace(list.IconURL)
-	if data := s.store.GetCached(); data != nil {
-		if data.HRRuleIcons == nil {
-			data.HRRuleIcons = map[string]string{}
-		}
-		if originalName != updated.Name {
-			delete(data.HRRuleIcons, originalName)
-		}
-		if iconURL == "" {
-			delete(data.HRRuleIcons, updated.Name)
-		} else {
-			data.HRRuleIcons[updated.Name] = iconURL
-		}
-		if err := s.store.Save(data); err != nil {
-			return nil, fmt.Errorf("save HR rule icon: %w", err)
+	if err := s.setHRIcon(target, g.Description, iconURL); err != nil {
+		return nil, err
+	}
+	s.appLog.Info("hydraroute-update", target, "was "+ref.String())
+
+	// UpdateGroup сохраняет флаги включения; показать группу как записана
+	// (если файлы с тех пор не переписали — иначе по newRef уже не она).
+	if rs, err := s.hydra.ListRuleSet(); err == nil && rs.Revision == newRef.Revision {
+		if t := rs.Target(newRef.Target); t != nil && newRef.Index < len(t.Groups) {
+			g = t.Groups[newRef.Index]
 		}
 	}
-	s.appLog.Info("hydraroute-update", updated.Name, "was "+originalName)
-
-	dl := hrRuleToDomainList(*updated, s.currentPolicySet(ctx), s.systemTunnelsByIface(ctx))
-	if iconURL != "" {
+	dl := hrGroupToDomainList(newRef, g, s.currentPolicySet(ctx), s.systemTunnelsByIface(ctx))
+	if g.Description != "" {
 		dl.IconURL = iconURL
 	}
 	dl.UpdatedAt = time.Now().UTC().Format(time.RFC3339)

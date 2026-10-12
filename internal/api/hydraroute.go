@@ -764,5 +764,7 @@ func (h *HydraRouteHandler) DeleteOversizedTag(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// ip.list переписан — HR-id групп сменили ревизию.
+	h.bus.PublishInvalidated(events.ResourceRoutingDnsRoutes, "oversized-delete")
 	response.Success(w, map[string]bool{"ok": true})
 }
