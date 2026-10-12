@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 )
 
 type fakeDNSRouteService struct {
@@ -442,5 +444,21 @@ func TestDNSRouteHandler_MutationsPublishInvalidation(t *testing.T) {
 				t.Fatalf("на отказе публикаций быть не должно: %v", got)
 			}
 		})
+	}
+}
+
+func TestWriteDNSRouteError_RulesChangedIs409(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeDNSRouteError(rec, fmt.Errorf("wrap: %w", hydraroute.ErrRulesChanged), "DNS_ROUTE_UPDATE_ERROR")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"code":"HR_RULES_CHANGED"`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	writeDNSRouteError(rec, errors.New("boom"), "DNS_ROUTE_UPDATE_ERROR")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "DNS_ROUTE_UPDATE_ERROR") {
+		t.Fatalf("other errors keep old shape: %d %s", rec.Code, rec.Body.String())
 	}
 }

@@ -6,9 +6,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/downloader"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -155,5 +157,47 @@ func TestDeleteOversizedTag(t *testing.T) {
 				t.Errorf("ip.list:\n%s\nwant:\n%s", got, tc.ipList)
 			}
 		})
+	}
+}
+
+func newHydraRouteTestHandler(t *testing.T) (*HydraRouteHandler, *hydraroute.Service) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Cleanup(hydraroute.SetPaths(filepath.Join(dir, "domain.conf"), filepath.Join(dir, "ip.list")))
+	t.Cleanup(hydraroute.SetConfPathForTest(filepath.Join(dir, "hrneo.conf")))
+	svc := &hydraroute.Service{}
+	svc.SetStatusForTest(true)
+	h := NewHydraRouteHandler(svc, nil)
+	h.SetEventBus(events.NewBus())
+	return h, svc
+}
+
+func TestDeleteTarget_StaleRevision409(t *testing.T) {
+	h, _ := newHydraRouteTestHandler(t)
+	body := strings.NewReader(`{"target":"P","revision":"000000000000"}`)
+	rec := httptest.NewRecorder()
+	h.DeleteTarget(rec, httptest.NewRequest(http.MethodPost, "/api/hydraroute/targets/delete", body))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDeleteTarget_EmptyRevision400(t *testing.T) {
+	h, _ := newHydraRouteTestHandler(t)
+	body := strings.NewReader(`{"target":"P","revision":""}`)
+	rec := httptest.NewRecorder()
+	h.DeleteTarget(rec, httptest.NewRequest(http.MethodPost, "/api/hydraroute/targets/delete", body))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGetConfig_HasRevision(t *testing.T) {
+	h, svc := newHydraRouteTestHandler(t)
+	rec := httptest.NewRecorder()
+	h.GetConfig(rec, httptest.NewRequest(http.MethodGet, "/api/hydraroute/config", nil))
+	rev, _ := svc.RulesRevision()
+	if !strings.Contains(rec.Body.String(), `"hrRevision":"`+rev+`"`) {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }

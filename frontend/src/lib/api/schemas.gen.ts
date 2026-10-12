@@ -448,6 +448,15 @@ const api_DNSRouteSettingsDTO: v.GenericSchema = v.looseObject({
 	refreshMode: v.optional(v.nullable(v.string())),
 });
 
+const api_DeleteTargetData: v.GenericSchema = v.looseObject({
+	target: v.optional(v.nullable(v.string())),
+});
+
+const api_DeleteTargetResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_DeleteTargetData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_DetectHeadersResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_DetectedProfileDTO))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -747,6 +756,7 @@ const api_HydraRouteConfigData: v.GenericSchema = v.looseObject({
 	geoIPFiles: v.optional(v.nullable(v.array(v.string()))),
 	geoSiteFiles: v.optional(v.nullable(v.array(v.string()))),
 	globalRouting: v.optional(v.nullable(v.boolean())),
+	hrRevision: v.optional(v.nullable(v.string())),
 	ipsetEnableTimeout: v.optional(v.nullable(v.boolean())),
 	ipsetMaxElem: v.optional(v.nullable(v.number())),
 	ipsetTimeout: v.optional(v.nullable(v.number())),
@@ -3503,6 +3513,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /hydraroute/geo-files/take-control": v.lazy(() => api_GeoFileResponse),
 	"POST /hydraroute/geo-files/update": v.lazy(() => api_GeoFileUpdatedResponse),
 	"POST /hydraroute/policy-order": v.lazy(() => api_PolicyOrderResponse),
+	"POST /hydraroute/targets/delete": v.lazy(() => api_DeleteTargetResponse),
 	"POST /import/conf": v.lazy(() => api_APIEnvelope),
 	"POST /interfaces/foreign/mark": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_ForeignIfaceMarkResponse))),

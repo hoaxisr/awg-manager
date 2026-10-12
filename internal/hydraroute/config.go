@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -646,4 +647,11 @@ func cutConfLine(raw string) (key, val string, ok bool) {
 		return "", "", false
 	}
 	return strings.TrimSpace(key), strings.TrimSpace(val), true
+}
+
+// SetConfPathForTest points hrneo.conf at path; returns a restore function.
+func SetConfPathForTest(path string) (restore func()) {
+	orig, origDir := hrConfPath, hrDir
+	hrConfPath, hrDir = path, filepath.Dir(path)
+	return func() { hrConfPath, hrDir = orig, origDir }
 }

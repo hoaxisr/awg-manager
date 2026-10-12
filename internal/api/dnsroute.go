@@ -2,14 +2,27 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
+
+// writeDNSRouteError: HR-группа адресуется позицией на ревизии файлов; если
+// файлы с тех пор переписали (HRweb, руки), клиент получает 409 и
+// перечитывает список, а не правит не ту группу.
+func writeDNSRouteError(w http.ResponseWriter, err error, code string) {
+	if errors.Is(err, hydraroute.ErrRulesChanged) {
+		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "HR_RULES_CHANGED")
+		return
+	}
+	response.Error(w, err.Error(), code)
+}
 
 // ── Response DTOs ────────────────────────────────────────────────
 
@@ -229,6 +242,7 @@ func (h *DNSRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 //	@Param			body	body	DnsRouteUpsertRequest	true	"DNS route list payload"
 //	@Success		200	{object}	DnsRouteResponse
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/update [post]
 func (h *DNSRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -244,7 +258,7 @@ func (h *DNSRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := h.svc.Update(r.Context(), list)
 	if err != nil {
-		response.Error(w, err.Error(), "DNS_ROUTE_UPDATE_ERROR")
+		writeDNSRouteError(w, err, "DNS_ROUTE_UPDATE_ERROR")
 		return
 	}
 
@@ -264,6 +278,7 @@ func (h *DNSRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 //	@Param			id	query	string	true	"List id"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/delete [post]
 func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -278,7 +293,7 @@ func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.Delete(r.Context(), id); err != nil {
-		response.Error(w, err.Error(), "DNS_ROUTE_DELETE_ERROR")
+		writeDNSRouteError(w, err, "DNS_ROUTE_DELETE_ERROR")
 		return
 	}
 
@@ -304,6 +319,7 @@ func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 //	@Param			body	body	DnsRouteDeleteBatchRequest	true	"IDs to delete"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/delete-batch [post]
 func (h *DNSRouteHandler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
@@ -320,7 +336,7 @@ func (h *DNSRouteHandler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.svc.DeleteBatch(r.Context(), body.IDs); err != nil {
-		response.Error(w, err.Error(), "DNS_ROUTE_DELETE_BATCH_ERROR")
+		writeDNSRouteError(w, err, "DNS_ROUTE_DELETE_BATCH_ERROR")
 		return
 	}
 
@@ -385,6 +401,7 @@ func (h *DNSRouteHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 //	@Param			body	body	EnabledToggleRequest	true	"Enabled flag"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/set-enabled [post]
 func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
@@ -399,7 +416,7 @@ func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.SetEnabled(r.Context(), id, body.Enabled); err != nil {
-		response.Error(w, err.Error(), "DNS_ROUTE_SET_ENABLED_ERROR")
+		writeDNSRouteError(w, err, "DNS_ROUTE_SET_ENABLED_ERROR")
 		return
 	}
 

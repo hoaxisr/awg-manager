@@ -1351,6 +1351,29 @@ definitions:
         example: a1b2c3d4e5f60718293a4b5c
         type: string
     type: object
+  api.DeleteTargetData:
+    properties:
+      target:
+        example: Belka
+        type: string
+    type: object
+  api.DeleteTargetRequest:
+    properties:
+      revision:
+        example: 3f2a9c0d1b7e
+        type: string
+      target:
+        example: Belka
+        type: string
+    type: object
+  api.DeleteTargetResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.DeleteTargetData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.DetectHeadersRequest:
     properties:
       headers:
@@ -2177,6 +2200,9 @@ definitions:
       globalRouting:
         example: false
         type: boolean
+      hrRevision:
+        example: 3f2a9c0d1b7e
+        type: string
       ipsetEnableTimeout:
         example: false
         type: boolean
@@ -10636,6 +10662,10 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
@@ -10665,6 +10695,10 @@ paths:
             $ref: '#/definitions/api.APIEnvelope'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
@@ -10780,6 +10814,10 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
@@ -10814,6 +10852,10 @@ paths:
             $ref: '#/definitions/api.DnsRouteResponse'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
@@ -11311,6 +11353,37 @@ paths:
       security:
       - CookieAuth: []
       summary: Set HydraRoute policy order
+      tags:
+      - hydraroute
+  /hydraroute/targets/delete:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Target and rules revision
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.DeleteTargetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.DeleteTargetResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Delete HydraRoute rule target
       tags:
       - hydraroute
   /import/conf:

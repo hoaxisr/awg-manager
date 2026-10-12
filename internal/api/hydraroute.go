@@ -31,6 +31,7 @@ type HydraRouteConfigData struct {
 	GeoIPFiles         []string `json:"geoIPFiles" example:"/opt/etc/hrneo/geoip.db"`
 	GeoSiteFiles       []string `json:"geoSiteFiles" example:"/opt/etc/hrneo/geosite.db"`
 	PolicyOrder        []string `json:"policyOrder" example:"default"`
+	HRRevision         string   `json:"hrRevision" example:"3f2a9c0d1b7e"`
 }
 
 // HydraRouteConfigResponse is the envelope for GET /hydraroute/config.
@@ -234,7 +235,17 @@ func (h *HydraRouteHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.Success(w, cfg)
+	rev, err := h.svc.RulesRevision()
+	if err != nil {
+		response.Error(w, err.Error(), "CONFIG_READ_ERROR")
+		return
+	}
+	// Ревизия файлов правил нужна пустой цели (§3 спеки F629): у неё нет
+	// групп, из id которых её можно взять.
+	response.Success(w, struct {
+		*hydraroute.Config
+		HRRevision string `json:"hrRevision"`
+	}{cfg, rev})
 }
 
 // UpdateConfig writes the HydraRoute config.
@@ -767,4 +778,61 @@ func (h *HydraRouteHandler) DeleteOversizedTag(w http.ResponseWriter, r *http.Re
 	// ip.list переписан — HR-id групп сменили ревизию.
 	h.bus.PublishInvalidated(events.ResourceRoutingDnsRoutes, "oversized-delete")
 	response.Success(w, map[string]bool{"ok": true})
+}
+
+// DeleteTargetRequest is the body for POST /hydraroute/targets/delete.
+type DeleteTargetRequest struct {
+	Target   string `json:"target" example:"Belka"`
+	Revision string `json:"revision" example:"3f2a9c0d1b7e"`
+}
+
+// DeleteTargetData reports the removed rule target.
+type DeleteTargetData struct {
+	Target string `json:"target" example:"Belka"`
+}
+
+// DeleteTargetResponse is the envelope for POST /hydraroute/targets/delete.
+type DeleteTargetResponse struct {
+	Success bool             `json:"success" example:"true"`
+	Data    DeleteTargetData `json:"data"`
+}
+
+// DeleteTarget removes an HR Neo rule (target) with all its groups and its
+// PolicyOrder entry. The NDMS policy stays.
+//
+//	@Summary		Delete HydraRoute rule target
+//	@Tags			hydraroute
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		DeleteTargetRequest	true	"Target and rules revision"
+//	@Success		200		{object}	DeleteTargetResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		409		{object}	APIErrorEnvelope
+//	@Router			/hydraroute/targets/delete [post]
+func (h *HydraRouteHandler) DeleteTarget(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	var req DeleteTargetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid request body: "+err.Error(), "BAD_REQUEST")
+		return
+	}
+	if req.Target == "" || req.Revision == "" {
+		response.Error(w, "target and revision are required", "BAD_REQUEST")
+		return
+	}
+	if err := h.svc.DeleteTarget(req.Target, req.Revision); err != nil {
+		if errors.Is(err, hydraroute.ErrRulesChanged) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "HR_RULES_CHANGED")
+			return
+		}
+		response.Error(w, err.Error(), "TARGET_DELETE_ERROR")
+		return
+	}
+	h.bus.PublishInvalidated(events.ResourceRoutingDnsRoutes, "target-delete")
+	h.bus.PublishInvalidated(events.ResourceRoutingHydrarouteStatus, "target-delete")
+	response.Success(w, DeleteTargetData{Target: req.Target})
 }

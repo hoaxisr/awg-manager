@@ -368,6 +368,7 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/hydraroute/oversized-tags", h.guarded(hrHandler.GetOversizedTags))
 		mux.HandleFunc("/api/hydraroute/oversized-tags/delete", h.guarded(hrHandler.DeleteOversizedTag))
 		mux.HandleFunc("/api/hydraroute/policy-order", h.guarded(hrHandler.SetPolicyOrder))
+		mux.HandleFunc("/api/hydraroute/targets/delete", h.guarded(hrHandler.DeleteTarget))
 	}
 
 	// Update endpoints (protected + boot guarded)
