@@ -1319,6 +1319,10 @@ func (s *Server) registerStaticRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/presets", h.guarded(presetsHandler.List))
 	}
 
+	if s.mihomoHandler != nil {
+		s.mihomoHandler.RegisterRoutes(mux, h.guarded)
+	}
+
 	// Static files (SPA) - must be last.
 	if s.config.FrontendFS != nil {
 		mux.Handle("/", spaHandler(s.config.FrontendFS))

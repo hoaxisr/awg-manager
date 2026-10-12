@@ -18,6 +18,9 @@ type LogForwarder struct {
 	// рантайме (issue #788), а Run переподключается каждые reconnect секунд,
 	// так что новый адрес подхватывается сам, без перезапуска горутины.
 	clashAddr func() string
+	app       logging.AppLogger
+	group     string
+	engine    string
 
 	// gate — необязательная способность логгера сказать, попадёт ли запись
 	// такого уровня в журнал. Есть — отсеиваем ДО разбора; нет — работаем
@@ -44,15 +47,25 @@ type LogForwarder struct {
 const levelWatchInterval = 5 * time.Second
 
 func NewLogForwarder(clashAddr func() string, appLogger logging.AppLogger) *LogForwarder {
+	return NewEngineLogForwarder(clashAddr, appLogger, logging.GroupSingbox, "sing-box")
+}
+
+// NewEngineLogForwarder forwards a Clash-compatible /logs stream into the
+// bucket of the engine that actually produced it. Both sing-box and Mihomo
+// expose this endpoint, but their records must never share an identity/buffer.
+func NewEngineLogForwarder(clashAddr func() string, appLogger logging.AppLogger, group, engine string) *LogForwarder {
 	gate, _ := appLogger.(logging.LevelGate)
 	return &LogForwarder{
 		clashAddr:  clashAddr,
+		app:        appLogger,
+		group:      group,
+		engine:     engine,
 		gate:       gate,
-		inbound:    logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBInbound),
-		outbound:   logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBOutbound),
-		dns:        logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBDNS),
-		router:     logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBRouter),
-		runtime:    logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBRuntime),
+		inbound:    logging.NewScopedLogger(appLogger, group, logging.SubSBInbound),
+		outbound:   logging.NewScopedLogger(appLogger, group, logging.SubSBOutbound),
+		dns:        logging.NewScopedLogger(appLogger, group, logging.SubSBDNS),
+		router:     logging.NewScopedLogger(appLogger, group, logging.SubSBRouter),
+		runtime:    logging.NewScopedLogger(appLogger, group, logging.SubSBRuntime),
 		http:       &http.Client{},
 		reconnect:  3 * time.Second,
 		levelWatch: levelWatchInterval,
@@ -72,11 +85,13 @@ func (f *LogForwarder) Run(ctx context.Context) {
 		}
 	}
 }
-
 func (f *LogForwarder) runOnce(ctx context.Context) {
 	level := f.desiredClashLevel()
 	if level == "" {
 		return // журнал выключен — поток не открываем
+	}
+	if f.engine == "mihomo" && level == "trace" {
+		level = "debug"
 	}
 
 	// Поток живёт, пока жив sing-box, и сам по себе новый уровень не
@@ -96,14 +111,17 @@ func (f *LogForwarder) runOnce(ctx context.Context) {
 				// Сюда же попадает включение/выключение журнала: у выключенного
 				// desiredClashLevel пустой, а Run на следующем витке решит, что
 				// поток открывать не надо.
-				if f.desiredClashLevel() != level {
+				desired := f.desiredClashLevel()
+				if f.engine == "mihomo" && desired == "trace" {
+					desired = "debug"
+				}
+				if desired != level {
 					cancel()
 					return
 				}
 			}
 		}
 	}()
-
 	url := fmt.Sprintf("http://%s/logs?level=%s", f.clashAddr(), level)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -136,27 +154,48 @@ var connIDPrefix = regexp.MustCompile(`^\[\d+\s+[\d.]+[a-zµ]+\]\s+`)
 var contextBracket = regexp.MustCompile(`\[[^\]]*\]`)
 
 func classifyPayload(payload string) (subgroup, target, message string) {
+	return classifyPayloadForEngine(payload, "sing-box")
+}
+
+func classifyPayloadForEngine(payload, engine string) (subgroup, target, message string) {
 	msg := timestampPrefix.ReplaceAllString(payload, "")
 	msg = connIDPrefix.ReplaceAllString(msg, "")
 	msg = strings.TrimSpace(msg)
 
 	head, rest, hasSep := cutSegment(msg)
 	if !hasSep {
-		return logging.SubSBRuntime, "sing-box", msg
+		// Mihomo bracket format: [TCP], [UDP], [DNS], [Rule], [Proxy]
+		if strings.HasPrefix(msg, "[") {
+			if end := strings.Index(msg, "]"); end > 0 {
+				bracket := strings.ToLower(msg[1:end])
+				body := strings.TrimSpace(msg[end+1:])
+				switch bracket {
+				case "dns":
+					return logging.SubSBDNS, "dns", body
+				case "tcp", "udp", "inbound":
+					return logging.SubSBInbound, bracket, body
+				case "rule", "router", "route":
+					return logging.SubSBRouter, "router", body
+				case "outbound", "proxy":
+					return logging.SubSBOutbound, bracket, body
+				}
+			}
+		}
+		return logging.SubSBRuntime, engine, msg
 	}
 
 	category, tag := splitCategory(head)
 	switch category {
-	case "inbound":
+	case "inbound", "tcp", "udp":
 		return logging.SubSBInbound, tagOr(tag, "inbound"), rest
-	case "outbound":
+	case "outbound", "proxy":
 		return logging.SubSBOutbound, tagOr(tag, "outbound"), rest
 	case "dns":
 		return logging.SubSBDNS, tagOr(tag, "dns"), rest
-	case "router", "route":
+	case "router", "route", "rule":
 		return logging.SubSBRouter, tagOr(tag, "router"), rest
 	default:
-		return logging.SubSBRuntime, tagOr(tag, "sing-box"), msg
+		return logging.SubSBRuntime, tagOr(tag, engine), msg
 	}
 }
 
@@ -208,7 +247,7 @@ func (f *LogForwarder) forward(line []byte) {
 		return
 	}
 
-	subgroup, target, message := classifyPayload(payload)
+	subgroup, target, message := classifyPayloadForEngine(payload, f.engine)
 	scoped := f.scopedFor(subgroup)
 	if scoped == nil {
 		return
