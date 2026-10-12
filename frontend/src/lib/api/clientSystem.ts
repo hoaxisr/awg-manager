@@ -37,6 +37,7 @@ import type {
 	SystemInfo,
 	TerminalStatus,
 	UpdateInfo,
+	UpdateSnapshotsData,
 	WANInterface,
 	WANStatus,
 	SystemFileRoot,
@@ -676,7 +677,12 @@ export class SystemClient extends TunnelsClient {
 	}
 
 	async exportFullBackup(): Promise<Blob> {
-		const res = await fetch(`${this.baseUrl}/system/backup/export`, {
+		return this.downloadArchive('/system/backup/export', (status) => m.api_export_error({ status }));
+	}
+
+	/** GET архива .tar.gz: ошибка сервера — его текстом, иначе errorText(status). */
+	protected async downloadArchive(endpoint: string, errorText: (status: number) => string): Promise<Blob> {
+		const res = await fetch(`${this.baseUrl}${endpoint}`, {
 			credentials: 'same-origin',
 			signal: this.abortController.signal
 		});
@@ -684,13 +690,13 @@ export class SystemClient extends TunnelsClient {
 			this.onUnauthorized?.();
 			throw new Error(m.api_session_expired());
 		}
-		const contentType = res.headers.get('content-type') || '';
 		if (!res.ok) {
+			const contentType = res.headers.get('content-type') || '';
 			if (contentType.includes('application/json')) {
 				const body = (await res.json()) as { message?: string };
-				throw new Error(body.message || m.api_export_error({ status: res.status }));
+				throw new Error(body.message || errorText(res.status));
 			}
-			throw new Error(m.api_export_error({ status: res.status }));
+			throw new Error(errorText(res.status));
 		}
 		return res.blob();
 	}
@@ -717,6 +723,33 @@ export class SystemClient extends TunnelsClient {
 			throw new Error(body.message || m.api_restore_failed());
 		}
 		return { message: body.data?.message || body.message || 'OK' };
+	}
+
+	/** Снимки настроек, снятые перед обновлениями, новые первыми. */
+	async listUpdateSnapshots(): Promise<UpdateSnapshotsData> {
+		return this.request<UpdateSnapshotsData>('/system/backup/snapshots');
+	}
+
+	async downloadUpdateSnapshot(id: string): Promise<Blob> {
+		return this.downloadArchive(
+			`/system/backup/snapshots/download?id=${encodeURIComponent(id)}`,
+			(status) => m.api_snapshot_download_error({ status })
+		);
+	}
+
+	/** Восстанавливает данные из снимка; после ответа демон перезапускается. */
+	async restoreUpdateSnapshot(id: string): Promise<{ message: string }> {
+		return this.request<{ message: string }>(
+			`/system/backup/snapshots/restore?id=${encodeURIComponent(id)}`,
+			{ method: 'POST' }
+		);
+	}
+
+	async deleteUpdateSnapshot(id: string): Promise<UpdateSnapshotsData> {
+		return this.request<UpdateSnapshotsData>(
+			`/system/backup/snapshots/delete?id=${encodeURIComponent(id)}`,
+			{ method: 'POST' }
+		);
 	}
 
 	// #endregion

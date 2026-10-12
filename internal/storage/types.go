@@ -566,6 +566,11 @@ type UpdateSettings struct {
 	// используемых механизмов уходят заголовками ТОЛЬКО в запросе проверки
 	// обновлений (см. internal/updater/stats.go). Default: true.
 	StatsEnabled bool `json:"statsEnabled"`
+	// SnapshotDisabled выключает снимок каталога данных перед установкой
+	// обновления (internal/backup/snapshot.go). Отрицание намеренно: нулевое
+	// значение — снимок включён, без миграции схемы, и клиент, приславший
+	// блок updates без этого поля, снимки не выключит.
+	SnapshotDisabled bool `json:"snapshotDisabled"`
 }
 
 // DNSRouteSettings contains DNS route auto-refresh configuration.

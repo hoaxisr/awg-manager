@@ -7810,12 +7810,31 @@ definitions:
       checkEnabled:
         example: true
         type: boolean
+      snapshotDisabled:
+        description: |-
+          SnapshotDisabled — не сохранять снимок каталога данных перед
+          установкой обновления. По умолчанию false: снимок сохраняется.
+        example: false
+        type: boolean
       statsEnabled:
         description: |-
           StatsEnabled — анонимная статистика установок: случайный ID установки
           и флаги используемых механизмов в запросе проверки обновлений.
         example: true
         type: boolean
+    type: object
+  api.UpdateSnapshotsData:
+    properties:
+      keep:
+        type: integer
+      snapshots:
+        items:
+          $ref: '#/definitions/backup.Snapshot'
+        type: array
+      ttlDays:
+        description: TTLDays — срок жизни снимка; самый новый живёт до следующего
+          обновления.
+        type: integer
     type: object
   api.UpdateSubscriptionGroupRequest:
     properties:
@@ -8114,6 +8133,17 @@ definitions:
     properties:
       enabled:
         type: boolean
+    type: object
+  backup.Snapshot:
+    properties:
+      appVersion:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      size:
+        type: integer
     type: object
   captcha.ClientStatus:
     properties:
@@ -19853,6 +19883,10 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Идёт установка обновления
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
@@ -19860,6 +19894,127 @@ paths:
       security:
       - CookieAuth: []
       summary: Restore full data-dir backup
+      tags:
+      - system
+  /system/backup/snapshots:
+    get:
+      description: Снимки каталога данных, которые AWG Manager сохраняет перед установкой
+        обновления; новые первыми.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.UpdateSnapshotsData'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List pre-update snapshots
+      tags:
+      - system
+  /system/backup/snapshots/delete:
+    post:
+      parameters:
+      - description: Snapshot id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.UpdateSnapshotsData'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Delete pre-update snapshot
+      tags:
+      - system
+  /system/backup/snapshots/download:
+    get:
+      description: Отдаёт снимок как обычный архив резервной копии.
+      parameters:
+      - description: Snapshot id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/gzip
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Download pre-update snapshot
+      tags:
+      - system
+  /system/backup/snapshots/restore:
+    post:
+      description: Восстанавливает каталог данных из снимка так же, как из загруженного
+        архива, и планирует перезапуск демона.
+      parameters:
+      - description: Snapshot id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Идёт установка обновления
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Restore pre-update snapshot
       tags:
       - system
   /system/files/checksum:

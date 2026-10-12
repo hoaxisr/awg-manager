@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // Адреса шлюзов половин сервера — константы старого мира
@@ -306,5 +307,7 @@ func syncPasswordsJSON(configDir string, users []instancestore.ServerUser) (bool
 	if cur, rerr := os.ReadFile(path); rerr == nil && bytes.Equal(cur, data) {
 		return sanitized, nil
 	}
-	return sanitized, os.WriteFile(path, data, 0600)
+	// Атомарно: оборванный файл не попадёт ни в бэкап, ни в снимок перед
+	// обновлением, которые читают каталог данных на ходу.
+	return sanitized, storage.AtomicWritePerm(path, data, 0600)
 }

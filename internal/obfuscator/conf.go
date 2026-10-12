@@ -43,7 +43,8 @@ func WriteConf(tunnelID string, o *storage.Obfuscator, ip string) error {
 	if err := os.MkdirAll(ConfDir, 0o700); err != nil {
 		return fmt.Errorf("obfuscator conf dir: %w", err)
 	}
-	return os.WriteFile(ConfPath(tunnelID), []byte(RenderConf(o, ip)), 0o600)
+	// Атомарно: каталог данных читают на ходу бэкап и снимок перед обновлением.
+	return storage.AtomicWritePerm(ConfPath(tunnelID), []byte(RenderConf(o, ip)), 0o600)
 }
 
 // RemoveConf — отсутствие файла не ошибка.

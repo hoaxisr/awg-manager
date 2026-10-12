@@ -3,7 +3,11 @@ import { render, screen } from '@testing-library/svelte';
 import BackupRestoreCard from './BackupRestoreCard.svelte';
 
 vi.mock('$lib/api/client', () => ({
-	api: { createBackup: vi.fn(), restoreBackup: vi.fn() }
+	api: {
+		createBackup: vi.fn(),
+		restoreBackup: vi.fn(),
+		listUpdateSnapshots: vi.fn().mockResolvedValue({ snapshots: [], keep: 3 })
+	}
 }));
 vi.mock('$lib/stores/notifications', () => ({
 	notifications: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }

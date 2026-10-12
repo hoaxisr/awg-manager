@@ -332,8 +332,16 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 		s.ScheduleRestart,
 		h.appLog,
 	)
+	backupHandler.SetEventBus(s.bus)
+	if s.updaterService != nil {
+		backupHandler.SetUpgradeGuard(s.updaterService.IsUpgrading)
+	}
 	mux.HandleFunc("/api/system/backup/export", h.guarded(backupHandler.Export))
 	mux.HandleFunc("/api/system/backup/import", h.guarded(backupHandler.Import))
+	mux.HandleFunc("/api/system/backup/snapshots", h.guarded(backupHandler.ListSnapshots))
+	mux.HandleFunc("/api/system/backup/snapshots/download", h.guarded(backupHandler.DownloadSnapshot))
+	mux.HandleFunc("/api/system/backup/snapshots/restore", h.guarded(backupHandler.RestoreSnapshot))
+	mux.HandleFunc("/api/system/backup/snapshots/delete", h.guarded(backupHandler.DeleteSnapshot))
 	mux.HandleFunc("/api/system/wan-interfaces", h.guarded(h.systemHandler.WANInterfaces))
 	mux.HandleFunc("/api/system/all-interfaces", h.guarded(h.systemHandler.AllInterfaces))
 	mux.HandleFunc("/api/system/hydraroute-status", h.guarded(h.systemHandler.HydraRouteStatus))
