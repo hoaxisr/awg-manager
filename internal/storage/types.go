@@ -360,6 +360,32 @@ type SingboxRouterSettings struct {
 	// (не задано) — путь из 00-base.json как есть, рукописный сохраняется,
 	// негодный заменяется флешем.
 	CacheFileLocation string `json:"cacheFileLocation,omitempty"`
+	// RoutingEngine: "sing-box" (default) or "mihomo".
+	RoutingEngine string `json:"routingEngine,omitempty"`
+	// Mihomo local proxy listeners. Zero disables the listener.
+	MihomoMixedPort int `json:"mihomoMixedPort,omitempty"`
+	MihomoHTTPPort  int `json:"mihomoHttpPort,omitempty"`
+	MihomoSOCKSPort int `json:"mihomoSocksPort,omitempty"`
+	// MihomoTrafficMode: "rule" (default) | "global" | "direct"
+	MihomoTrafficMode string `json:"mihomoTrafficMode,omitempty"`
+	// MihomoGlobalTarget: outbound/group name when MihomoTrafficMode is "global"
+	MihomoGlobalTarget string `json:"mihomoGlobalTarget,omitempty"`
+	// ProxyGroups (abstract routing groups like fallback, url-test, load-balance).
+	ProxyGroups []ProxyGroup `json:"proxyGroups,omitempty"`
+}
+
+// ProxyGroup is an abstracted proxy group. Generates outbounds in sing-box or
+// proxy-groups in Mihomo.
+type ProxyGroup struct {
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`                 // "select", "url-test", "fallback", "load-balance"
+	Proxies    []string `json:"proxies"`              // Member proxies/groups
+	URL        string   `json:"url,omitempty"`        // Health check URL
+	Interval   int      `json:"interval,omitempty"`   // Health check interval (seconds)
+	Tolerance  int      `json:"tolerance,omitempty"`  // Allowed latency difference (url-test)
+	Lazy       bool     `json:"lazy,omitempty"`       // Mihomo-only: don't test unselected proxies
+	Strategy   string   `json:"strategy,omitempty"`   // Mihomo-only: "consistent-hashing", "round-robin"
+	DisableUDP bool     `json:"disableUdp,omitempty"` // Mihomo-only
 }
 
 // Значения SingboxRouterSettings.CacheFileLocation.

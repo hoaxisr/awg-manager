@@ -17,6 +17,9 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
+	"github.com/hoaxisr/awg-manager/internal/mihomo"
+	mihomoinstaller "github.com/hoaxisr/awg-manager/internal/mihomo/installer"
+	"github.com/hoaxisr/awg-manager/internal/mihomonative"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsevents "github.com/hoaxisr/awg-manager/internal/ndms/events"
@@ -201,6 +204,16 @@ type app struct {
 	// заводится один раз на процесс: нуджей много (проводка, фазы бута,
 	// WAN-хук), а ждущий загрузки цикл нужен один.
 	binariesRetryOnce sync.Once
+	ndmsProxyMgr      *singbox.ProxyManager
+
+	// mihomo
+	mihomoInstaller     *mihomoinstaller.Installer
+	mihomoOp            *mihomo.Operator
+	mihomoHandler       *api.MihomoHandler
+	mihomoNativeStore   *mihomonative.Store
+	mihomoBridge        *mihomonative.BridgeManager
+	mihomoBridgeRuntime *mihomoBridgeRuntime
+	dynamicEngine       *DynamicEngine
 
 	// HTTP
 	srv *server.Server
