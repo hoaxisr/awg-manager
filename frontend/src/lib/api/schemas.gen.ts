@@ -3153,6 +3153,35 @@ const subscription_RefreshResult: v.GenericSchema = v.looseObject({
 	payload: v.optional(v.nullable(v.lazy(() => wdttlink_ImportPayload))),
 });
 
+const telemt_Config: v.GenericSchema = v.looseObject({
+	enabled: v.optional(v.nullable(v.boolean())),
+	listenIp: v.optional(v.nullable(v.string())),
+	mode: v.optional(v.nullable(v.string())),
+	port: v.optional(v.nullable(v.number())),
+	secret: v.optional(v.nullable(v.string())),
+	tlsDomain: v.optional(v.nullable(v.string())),
+	upstreamDevice: v.optional(v.nullable(v.string())),
+	webCarrier: v.optional(v.nullable(v.string())),
+	webDecoy: v.optional(v.nullable(v.string())),
+	webHost: v.optional(v.nullable(v.string())),
+});
+
+const telemt_Status: v.GenericSchema = v.looseObject({
+	arch: v.optional(v.nullable(v.string())),
+	archSupported: v.optional(v.nullable(v.boolean())),
+	binary: v.optional(v.nullable(v.string())),
+	config: v.optional(v.nullable(v.lazy(() => telemt_Config))),
+	error: v.optional(v.nullable(v.string())),
+	installed: v.optional(v.nullable(v.boolean())),
+	latestVersion: v.optional(v.nullable(v.string())),
+	link: v.optional(v.nullable(v.string())),
+	pid: v.optional(v.nullable(v.number())),
+	running: v.optional(v.nullable(v.boolean())),
+	source: v.optional(v.nullable(v.string())),
+	updateAvailable: v.optional(v.nullable(v.boolean())),
+	version: v.optional(v.nullable(v.string())),
+});
+
 const wdttlink_DecodeResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => wdttlink_LinkDecodeResult))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -3438,6 +3467,12 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /system/update/changelog": v.lazy(() => api_ChangelogResponse),
 	"GET /system/update/check": v.lazy(() => api_UpdateCheckResponse),
 	"GET /system/wan-interfaces": v.lazy(() => api_WANInterfacesResponse),
+	"GET /telemt/config": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Config))),
+})]),
+	"GET /telemt/status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
 	"GET /terminal/status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_TerminalStatusResponse))),
 })]),
@@ -3689,6 +3724,27 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /system/services/save": v.lazy(() => api_SystemServiceSavedResponse),
 	"POST /system/services/toggle-enable": v.lazy(() => api_SystemServiceToggleEnableResponse),
 	"POST /system/update/apply": v.lazy(() => api_UpdateApplyResponse),
+	"POST /telemt/config": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/install": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/restart": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/start": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/stop": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/uninstall": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/update": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
 	"POST /terminal/install": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_TerminalInstallData))),
 })]),

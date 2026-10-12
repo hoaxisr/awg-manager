@@ -95,3 +95,13 @@ scripts/diag/
 /genpresets
 /internal/presets/decompiled/
 /build/tools/.design/
+tmp/
+.gocache*/
+reports/
+scratch/
+dev/
+__pycache__/
+*.pyc
+*.log
+prebuilt/mihomo/
+prebuilt/telemt/

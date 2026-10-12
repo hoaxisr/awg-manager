@@ -110,6 +110,12 @@
 	let singboxUpdating = $state(false);
 	let singboxUpdateError = $state<string | null>(null);
 	let singboxBusy = $state(false);
+	let telemtStatusValue = $state<import('$lib/types').TelemtStatus | null>(null);
+	let telemtStatusLoading = $state(false);
+	let telemtInstalling = $state(false);
+	let telemtUpdating = $state(false);
+	let telemtRestarting = $state(false);
+	let telemtUninstalling = $state(false);
 	let ndmsProxyBusy = $state(false);
 	let ndmsProxyConfirmOpen = $state(false);
 	let ndmsProxyConfirmEnable = $state(false); // true = подтверждение включения; false = выключения
@@ -241,6 +247,69 @@
 			singboxUpdateError = e instanceof Error ? e.message : String(e);
 		} finally {
 			singboxUpdating = false;
+		}
+	}
+
+	async function fetchTelemtStatus(silent = false) {
+		if (!silent) {
+			telemtStatusLoading = true;
+		}
+		try {
+			telemtStatusValue = await api.telemtStatus();
+		} catch (e) {
+			console.debug('telemt status unavailable:', e);
+		} finally {
+			if (!silent) {
+				telemtStatusLoading = false;
+			}
+		}
+	}
+
+	async function installTelemt() {
+		telemtInstalling = true;
+		try {
+			telemtStatusValue = await api.telemtInstall();
+			notifications.success(m.settings_page_telemt_installed());
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.settings_page_telemt_install_failed());
+		} finally {
+			telemtInstalling = false;
+		}
+	}
+
+	async function updateTelemt() {
+		telemtUpdating = true;
+		try {
+			telemtStatusValue = await api.telemtUpdate();
+			notifications.success(m.settings_page_telemt_updated());
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.settings_page_telemt_update_failed());
+		} finally {
+			telemtUpdating = false;
+		}
+	}
+
+	async function restartTelemt() {
+		telemtRestarting = true;
+		try {
+			telemtStatusValue = await api.telemtRestart();
+			notifications.success(m.settings_page_telemt_restarted());
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.settings_page_telemt_restart_failed());
+		} finally {
+			telemtRestarting = false;
+		}
+	}
+
+	async function uninstallTelemt() {
+		telemtUninstalling = true;
+		try {
+			telemtStatusValue = await api.telemtUninstall();
+			notifications.success(m.settings_page_telemt_removed());
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.settings_page_telemt_remove_failed());
+		} finally {
+			telemtUninstalling = false;
 		}
 	}
 
@@ -398,7 +467,10 @@ onMount(() => {
 	// меняет сам пользователь с этой же страницы, и те пути перечитывают
 	// сами — поэтому это страховка, а не источник, и 30 с ей ни к чему.
 	// Фоновая вкладка не спрашивает вовсе.
-	const stopSystemInfoPoll = startVisiblePoll(() => fetchSystemInfo(true), 120000);
+	const stopSystemInfoPoll = startVisiblePoll(() => {
+		fetchSystemInfo(true);
+		fetchTelemtStatus(true);
+	}, 120000);
 
 	void (async () => {
 		try {
@@ -414,6 +486,8 @@ onMount(() => {
 		} finally {
 			loading = false;
 		}
+
+		void fetchTelemtStatus(false);
 
 		// Non-critical for first paint: load update state in background.
 		api.checkUpdate()
@@ -938,6 +1012,17 @@ $effect(() => {
 					{clashPortError}
 					onsaveClashPort={saveClashPort}
 					proxyBinaries={proxyBinaryRows}
+					telemtStatus={telemtStatusValue}
+					{telemtStatusLoading}
+					{telemtInstalling}
+					{telemtUpdating}
+					{telemtRestarting}
+					{telemtUninstalling}
+					oninstallTelemt={installTelemt}
+					onupdateTelemt={updateTelemt}
+					onrestartTelemt={restartTelemt}
+					onuninstallTelemt={uninstallTelemt}
+					showTelemt={true}
 				/>
 				</div>
 			</aside>
