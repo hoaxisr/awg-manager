@@ -45,14 +45,12 @@ func applyFirewall(ctx context.Context, iface string, port int) error {
 }
 
 // removeFirewall drops only our tagged INPUT rules for tcp/port, and removes the netfilter.d hook.
+// If port <= 0, all telemt tagged rules are removed.
 func removeFirewall(ctx context.Context, iface string, port int) {
 	removeTelemtNetfilterHook()
-	if port <= 0 {
-		return
-	}
 	out, err := iptables.RunOutput(ctx, "-S", "INPUT")
 	if err != nil {
-		if iface != "" {
+		if iface != "" && port > 0 {
 			for {
 				if err := iptables.Run(ctx, append([]string{"-D", "INPUT"}, telemtRuleArgs(iface, port)...)...); err != nil {
 					break
@@ -61,12 +59,18 @@ func removeFirewall(ctx context.Context, iface string, port int) {
 		}
 		return
 	}
-	portArg := fmt.Sprintf("--dport %d", port)
+	var portArg string
+	if port > 0 {
+		portArg = fmt.Sprintf("--dport %d", port)
+	}
 	for _, line := range strings.Split(out, "\n") {
 		if !strings.Contains(line, telemtFirewallComment) {
 			continue
 		}
-		if !strings.Contains(line, "-p tcp") || !strings.Contains(line, portArg) {
+		if !strings.Contains(line, "-p tcp") {
+			continue
+		}
+		if portArg != "" && !strings.Contains(line, portArg) {
 			continue
 		}
 		fields := strings.Fields(line)

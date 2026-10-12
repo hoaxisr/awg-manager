@@ -26,6 +26,7 @@
 	let portDraft = $state<number | string>(8443);
 	let secretDraft = $state('');
 	let domainDraft = $state('yandex.ru');
+	let loadedConfig = $state<TelemtConfig | null>(null);
 	let touched = $state(false);
 
 	let busy = $state(false);
@@ -68,12 +69,24 @@
 		return opts;
 	});
 
+	async function loadConfig() {
+		try {
+			const cfg = await api.telemtConfig();
+			loadedConfig = cfg;
+			if (!touched) {
+				ifaceDraft = cfg.interface ?? '';
+				portDraft = cfg.port || 8443;
+				secretDraft = cfg.secret ?? '';
+				domainDraft = cfg.tlsDomain || 'yandex.ru';
+			}
+		} catch {
+			// ignore if not configured or uninstalled
+		}
+	}
+
 	$effect(() => {
-		if (status?.config && !touched) {
-			ifaceDraft = status.config.interface ?? '';
-			portDraft = status.config.port || 8443;
-			secretDraft = status.config.secret ?? '';
-			domainDraft = status.config.tlsDomain || 'yandex.ru';
+		if (installed && !loadedConfig) {
+			void loadConfig();
 		}
 	});
 
@@ -82,6 +95,9 @@
 			ifaces = await api.getAllInterfaces();
 		} catch {
 			ifaces = [];
+		}
+		if (installed) {
+			void loadConfig();
 		}
 	});
 
@@ -94,12 +110,13 @@
 	const isValid = $derived(portValid && secretValid && domainValid && ifaceValid);
 
 	const dirty = $derived.by(() => {
-		if (!status?.config) return touched;
+		const base = loadedConfig ?? status?.config;
+		if (!base) return touched;
 		return (
-			ifaceDraft.trim() !== (status.config.interface ?? '').trim() ||
-			portNum !== (status.config.port || 8443) ||
-			secretDraft.trim() !== (status.config.secret ?? '').trim() ||
-			domainDraft.trim() !== (status.config.tlsDomain || 'yandex.ru').trim()
+			ifaceDraft.trim() !== (base.interface ?? '').trim() ||
+			portNum !== (base.port || 8443) ||
+			secretDraft.trim() !== (base.secret ?? '').trim() ||
+			domainDraft.trim() !== (base.tlsDomain || 'yandex.ru').trim()
 		);
 	});
 
@@ -144,6 +161,7 @@
 			};
 			const fresh = await api.telemtSaveConfig(cfg);
 			telemtStatus.applyMutationResponse(fresh);
+			loadedConfig = { ...cfg };
 			touched = false;
 			notifications.success(m.settings_telemt_config_saved());
 		} catch (e) {
@@ -166,6 +184,9 @@
 		try {
 			const fresh = await api.telemtInstall();
 			telemtStatus.applyMutationResponse(fresh);
+			loadedConfig = null;
+			touched = false;
+			await loadConfig();
 			notifications.success(m.settings_page_telemt_installed());
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.settings_page_telemt_install_failed());
@@ -208,6 +229,10 @@
 		try {
 			const fresh = await api.telemtUninstall();
 			telemtStatus.applyMutationResponse(fresh);
+			loadedConfig = null;
+			touched = false;
+			ifaceDraft = '';
+			secretDraft = '';
 			confirmUninstallOpen = false;
 			notifications.success(m.settings_page_telemt_removed());
 		} catch (e) {

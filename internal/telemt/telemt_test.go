@@ -5,12 +5,17 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/events"
 )
 
 func TestNormalizeArch(t *testing.T) {
@@ -347,5 +352,149 @@ func TestSaveConfig_ReservedPort(t *testing.T) {
 		if !strings.Contains(err.Error(), "reserved by system") {
 			t.Fatalf("expected 'reserved by system' error for port %d, got %v", port, err)
 		}
+	}
+}
+
+type testMockDownloader struct {
+	fn func(ctx context.Context, url, destPath string, maxSize int64) error
+}
+
+func (m *testMockDownloader) DownloadFile(ctx context.Context, url, destPath string, maxSize int64) error {
+	if m.fn != nil {
+		return m.fn(ctx, url, destPath, maxSize)
+	}
+	return nil
+}
+
+func TestService_Install_DownloaderRequirementsAndValidation(t *testing.T) {
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "aarch64")
+
+	// 1. Without downloader, returns ErrDownloaderNotConfigured
+	err := svc.Install(context.Background())
+	if !errors.Is(err, ErrDownloaderNotConfigured) {
+		t.Fatalf("expected ErrDownloaderNotConfigured, got: %v", err)
+	}
+
+	testBinary := []byte("#!/bin/sh\necho 'telemt 3.5.7'\n")
+	var buf bytes.Buffer
+	gzw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gzw)
+	hdr := &tar.Header{
+		Name: "telemt",
+		Mode: 0755,
+		Size: int64(len(testBinary)),
+	}
+	_ = tw.WriteHeader(hdr)
+	_, _ = tw.Write(testBinary)
+	_ = tw.Close()
+	_ = gzw.Close()
+	archiveBytes := buf.Bytes()
+	h := sha256.Sum256(archiveBytes)
+	shaHex := hex.EncodeToString(h[:])
+
+	// 2. Archive size mismatch
+	svc.SetDownloader(&testMockDownloader{
+		fn: func(ctx context.Context, url, destPath string, maxSize int64) error {
+			return os.WriteFile(destPath, archiveBytes, 0644)
+		},
+	})
+	svc.spec = BinarySpec{
+		Version:     "3.5.7",
+		URL:         "http://example.com/telemt.tar.gz",
+		SHA256:      shaHex,
+		ArchiveSize: int64(len(archiveBytes)) + 10,
+		BinarySize:  int64(len(testBinary)),
+	}
+	err = svc.Install(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "invalid downloaded archive size") {
+		t.Fatalf("expected invalid archive size error, got: %v", err)
+	}
+
+	// 3. Binary size mismatch
+	svc.spec.ArchiveSize = int64(len(archiveBytes))
+	svc.spec.BinarySize = int64(len(testBinary)) + 10
+	err = svc.Install(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "invalid extracted binary size") {
+		t.Fatalf("expected invalid binary size error, got: %v", err)
+	}
+
+	// 4. Successful install with exact match
+	svc.spec.BinarySize = int64(len(testBinary))
+	err = svc.Install(context.Background())
+	if err != nil {
+		t.Fatalf("expected install success, got: %v", err)
+	}
+	if !svc.IsInstalled() {
+		t.Fatalf("expected service to be installed")
+	}
+	// Service must remain disabled after installation
+	if svc.GetConfig().Enabled {
+		t.Fatalf("expected service to be disabled after install")
+	}
+}
+
+func TestService_SaveConfig_SecretPreserved(t *testing.T) {
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "aarch64")
+
+	existingSecret := "0123456789abcdef0123456789abcdef"
+	svc.config.Secret = existingSecret
+	_ = svc.saveSettingsLocked()
+
+	// Saving with empty Secret preserves existingSecret
+	cfg := Config{
+		Port:      8443,
+		Secret:    "",
+		TLSDomain: "yandex.ru",
+	}
+	if err := svc.SaveConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+	if svc.GetConfig().Secret != existingSecret {
+		t.Fatalf("expected secret to be preserved as %s, got %s", existingSecret, svc.GetConfig().Secret)
+	}
+
+	// Saving with explicitly different Secret overwrites
+	newSecret := "fedcba9876543210fedcba9876543210"
+	cfg.Secret = newSecret
+	if err := svc.SaveConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+	if svc.GetConfig().Secret != newSecret {
+		t.Fatalf("expected secret to be updated to %s, got %s", newSecret, svc.GetConfig().Secret)
+	}
+}
+
+func TestService_EventBus_Notifications(t *testing.T) {
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "aarch64")
+
+	bus := events.NewBus()
+	_, ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	svc.SetEventBus(bus)
+
+	cfg := Config{
+		Port:      8443,
+		Secret:    "0123456789abcdef0123456789abcdef",
+		TLSDomain: "yandex.ru",
+	}
+	if err := svc.SaveConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	select {
+	case ev := <-ch:
+		if ev.Type != events.EventResourceInvalidated {
+			t.Fatalf("expected %s event, got %s", events.EventResourceInvalidated, ev.Type)
+		}
+		data, ok := ev.Data.(events.ResourceInvalidatedEvent)
+		if !ok || data.Resource != events.ResourceTelemtStatus || data.Reason != "telemt-config" {
+			t.Fatalf("unexpected event data: %+v", ev.Data)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatalf("timed out waiting for event bus notification")
 	}
 }

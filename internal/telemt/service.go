@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,20 +21,22 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerinfo"
 )
 
 var (
-	ErrArchNotSupported  = errors.New("telemt is only supported on aarch64 routers")
-	ErrNotInstalled      = errors.New("telemt binary is not installed")
-	ErrChecksumMismatch  = errors.New("downloaded archive checksum does not match pinned SHA256")
-	ErrDiskSpace         = errors.New("insufficient disk space for telemt installation")
-	ErrAlreadyInstalling = errors.New("telemt installation is already in progress")
-	ErrInvalidPort       = errors.New("invalid port")
-	ErrPortReserved      = errors.New("port is reserved")
-	ErrInterfaceRequired = errors.New("network interface is required")
+	ErrArchNotSupported        = errors.New("telemt is only supported on aarch64 routers")
+	ErrNotInstalled            = errors.New("telemt binary is not installed")
+	ErrChecksumMismatch        = errors.New("downloaded archive checksum does not match pinned SHA256")
+	ErrDiskSpace               = errors.New("insufficient disk space for telemt installation")
+	ErrAlreadyInstalling       = errors.New("telemt installation is already in progress")
+	ErrInvalidPort             = errors.New("invalid port")
+	ErrPortReserved            = errors.New("port is reserved")
+	ErrInterfaceRequired       = errors.New("network interface is required")
+	ErrDownloaderNotConfigured = errors.New("downloader service not configured")
 )
 
 // Downloader defines the narrow contract required for downloading binaries.
@@ -62,6 +63,11 @@ type Service struct {
 	cachedVersion string
 	openedPort    int
 	openedIface   string
+	stopping      bool
+	crashCount    int
+	lastCrash     time.Time
+	activeCmd     *exec.Cmd
+	bus           *events.Bus
 }
 
 // New creates a new telemt service instance without performing filesystem side effects.
@@ -100,6 +106,18 @@ func (s *Service) SetDownloader(d Downloader) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.downloader = d
+}
+
+// SetEventBus injects the event bus for SSE status notifications.
+func (s *Service) SetEventBus(bus *events.Bus) {
+	s.bus = bus
+}
+
+func (s *Service) notify(reason string) {
+	bus := s.bus
+	if bus != nil {
+		bus.PublishInvalidated(events.ResourceTelemtStatus, reason)
+	}
 }
 
 func (s *Service) loadSettings() {
@@ -321,11 +339,15 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	}
 
 	if strings.TrimSpace(cfg.Secret) == "" {
-		sec, err := GenerateSecret()
-		if err != nil {
-			return fmt.Errorf("failed to generate secret: %w", err)
+		if s.config.Secret != "" {
+			cfg.Secret = s.config.Secret
+		} else {
+			sec, err := GenerateSecret()
+			if err != nil {
+				return fmt.Errorf("failed to generate secret: %w", err)
+			}
+			cfg.Secret = sec
 		}
-		cfg.Secret = sec
 	}
 
 	cfg.TLSDomain = NormalizeTLSDomain(cfg.TLSDomain)
@@ -340,17 +362,20 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 		return err
 	}
 
+	var runErr error
 	running, _ := s.GetRunningState()
 	if running {
 		if !s.config.Enabled {
-			return s.stopProcess(ctx)
+			runErr = s.stopProcess(ctx)
+		} else {
+			runErr = s.restartProcess(ctx)
 		}
-		return s.restartProcess(ctx)
 	} else if s.config.Enabled && s.IsInstalled() {
-		return s.startProcess(ctx)
+		runErr = s.startProcess(ctx)
 	}
 
-	return nil
+	s.notify("telemt-config")
+	return runErr
 }
 
 // Install downloads, verifies, and installs the pinned telemt binary.
@@ -387,7 +412,11 @@ func (s *Service) Install(ctx context.Context) error {
 	}
 
 	if s.freeDisk != nil {
-		if free, ok := s.freeDisk(s.telemtDir); ok && free < 25*1024*1024 {
+		reqDisk := int64(25 * 1024 * 1024)
+		if spec.ArchiveSize > 0 && spec.BinarySize > 0 {
+			reqDisk = spec.ArchiveSize + spec.BinarySize + 5*1024*1024
+		}
+		if free, ok := s.freeDisk(s.telemtDir); ok && free < reqDisk {
 			return ErrDiskSpace
 		}
 	}
@@ -395,24 +424,20 @@ func (s *Service) Install(ctx context.Context) error {
 	tmpArchive := filepath.Join(s.telemtDir, fmt.Sprintf("telemt-dl-%d.tar.gz.tmp", time.Now().UnixNano()))
 	defer func() { _ = os.Remove(tmpArchive) }()
 
+	if s.downloader == nil {
+		return ErrDownloaderNotConfigured
+	}
 	maxArchiveSize := spec.ArchiveSize + 1024*1024
-	if s.downloader != nil {
-		if err := s.downloader.DownloadFile(installCtx, spec.URL, tmpArchive, maxArchiveSize); err != nil {
-			return fmt.Errorf("download %s: %w", spec.URL, err)
-		}
-	} else {
-		// Fallback for tests when downloader not set
-		if err := downloadHTTPFallback(installCtx, spec.URL, tmpArchive, maxArchiveSize); err != nil {
-			return err
-		}
+	if err := s.downloader.DownloadFile(installCtx, spec.URL, tmpArchive, maxArchiveSize); err != nil {
+		return fmt.Errorf("download %s: %w", spec.URL, err)
 	}
 
 	fi, err := os.Stat(tmpArchive)
 	if err != nil {
 		return err
 	}
-	if fi.Size() == 0 || (spec.ArchiveSize > 0 && fi.Size() > maxArchiveSize) {
-		return fmt.Errorf("invalid downloaded archive size (%d bytes)", fi.Size())
+	if fi.Size() == 0 || (spec.ArchiveSize > 0 && fi.Size() != spec.ArchiveSize) {
+		return fmt.Errorf("invalid downloaded archive size (%d bytes, expected %d)", fi.Size(), spec.ArchiveSize)
 	}
 
 	computedSHA, err := sha256File(tmpArchive)
@@ -448,8 +473,8 @@ func (s *Service) Install(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if binFi.Size() == 0 || (spec.BinarySize > 0 && binFi.Size() > maxBinSize) {
-		return fmt.Errorf("invalid extracted binary size (%d bytes)", binFi.Size())
+	if binFi.Size() == 0 || (spec.BinarySize > 0 && binFi.Size() != spec.BinarySize) {
+		return fmt.Errorf("invalid extracted binary size (%d bytes, expected %d)", binFi.Size(), spec.BinarySize)
 	}
 
 	if err := os.Chmod(tmpBin, 0755); err != nil {
@@ -473,6 +498,7 @@ func (s *Service) Install(ctx context.Context) error {
 	// Keep service disabled after install until user selects interface and explicitly enables it
 	s.config.Enabled = false
 	_ = s.saveSettingsLocked()
+	s.notify("telemt-install")
 
 	return nil
 }
@@ -528,6 +554,7 @@ func (s *Service) Uninstall(ctx context.Context) error {
 	s.config.Interface = ""
 	_ = s.saveSettingsLocked()
 	_ = os.Remove(s.pidPath)
+	s.notify("telemt-uninstall")
 
 	return nil
 }
@@ -543,6 +570,7 @@ func (s *Service) Start(ctx context.Context) error {
 		return err
 	}
 	s.config.Enabled = true
+	s.notify("telemt-start")
 	return s.saveSettingsLocked()
 }
 
@@ -606,14 +634,12 @@ func (s *Service) startProcess(ctx context.Context) error {
 	}
 
 	pid := cmd.Process.Pid
+	s.activeCmd = cmd
 	if err := os.WriteFile(s.pidPath, []byte(strconv.Itoa(pid)), 0600); err != nil {
+		s.activeCmd = nil
 		_ = childproc.KillGroup(pid)
 		return err
 	}
-
-	go func() {
-		_, _ = cmd.Process.Wait()
-	}()
 
 	started := false
 	for i := 0; i < 5; i++ {
@@ -624,11 +650,13 @@ func (s *Service) startProcess(ctx context.Context) error {
 		}
 	}
 	if !started {
+		s.activeCmd = nil
 		_ = os.Remove(s.pidPath)
 		return errors.New("telemt failed to start: process exited immediately")
 	}
 
 	if err := applyFirewall(ctx, s.config.Interface, port); err != nil {
+		s.activeCmd = nil
 		_ = childproc.TerminateGroup(pid)
 		_ = os.Remove(s.pidPath)
 		return fmt.Errorf("telemt firewall setup failed: %w", err)
@@ -636,7 +664,58 @@ func (s *Service) startProcess(ctx context.Context) error {
 	s.openedPort = port
 	s.openedIface = s.config.Interface
 
+	go s.supervise(cmd, pid)
+
 	return nil
+}
+
+func (s *Service) supervise(cmd *exec.Cmd, expectedPID int) {
+	_, _ = cmd.Process.Wait()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.stopping {
+		return
+	}
+	if s.activeCmd != cmd {
+		return
+	}
+	s.activeCmd = nil
+
+	if data, err := os.ReadFile(s.pidPath); err == nil {
+		if curPID, _ := strconv.Atoi(strings.TrimSpace(string(data))); curPID == expectedPID {
+			_ = os.Remove(s.pidPath)
+		}
+	}
+
+	if s.config.Enabled && s.IsInstalled() {
+		removeFirewall(context.Background(), s.openedIface, s.openedPort)
+		s.openedPort = 0
+		s.openedIface = ""
+		s.notify("telemt-crash")
+
+		now := time.Now()
+		if now.Sub(s.lastCrash) < 30*time.Second {
+			s.crashCount++
+		} else {
+			s.crashCount = 1
+		}
+		s.lastCrash = now
+
+		if s.crashCount <= 3 {
+			go func() {
+				time.Sleep(2 * time.Second)
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				if s.config.Enabled && !s.stopping && s.IsInstalled() && s.activeCmd == nil {
+					if err := s.startProcess(context.Background()); err == nil {
+						s.notify("telemt-autorestart")
+					}
+				}
+			}()
+		}
+	}
 }
 
 // Stop terminates the telemt daemon process.
@@ -645,20 +724,23 @@ func (s *Service) Stop(ctx context.Context) error {
 	defer s.mu.Unlock()
 	s.config.Enabled = false
 	_ = s.saveSettingsLocked()
-	return s.stopProcess(ctx)
+	err := s.stopProcess(ctx)
+	s.notify("telemt-stop")
+	return err
 }
 
 func (s *Service) stopProcess(ctx context.Context) error {
-	port := s.config.Port
-	if port <= 0 {
-		port = DefaultPort
-	}
-	removeFirewall(ctx, s.openedIface, s.openedPort)
-	if s.openedPort > 0 && (s.openedPort != port || s.openedIface != s.config.Interface) {
-		removeFirewall(ctx, s.config.Interface, port)
+	s.stopping = true
+	defer func() {
+		s.stopping = false
+	}()
+
+	if s.openedPort > 0 || s.openedIface != "" {
+		removeFirewall(ctx, s.openedIface, s.openedPort)
 	}
 	s.openedPort = 0
 	s.openedIface = ""
+	s.activeCmd = nil
 
 	running, pid := s.GetRunningState()
 	if !running {
@@ -695,6 +777,7 @@ func (s *Service) Restart(ctx context.Context) error {
 	}
 	s.config.Enabled = true
 	_ = s.saveSettingsLocked()
+	s.notify("telemt-restart")
 	return nil
 }
 
@@ -732,8 +815,8 @@ func Cleanup(ctx context.Context, dataDir string) {
 		}
 	}
 
-	// Remove firewall rules and hook
-	removeFirewall(ctx, "", DefaultPort)
+	// Remove all telemt firewall rules and hook
+	removeFirewall(ctx, "", 0)
 	removeTelemtNetfilterHook()
 
 	// Remove symlink if it points to telemt
@@ -796,31 +879,4 @@ func extractTarGzBinary(r io.Reader, targetName, destPath string, maxBytes int64
 		}
 	}
 	return fmt.Errorf("binary %q not found in archive", targetName)
-}
-
-func downloadHTTPFallback(ctx context.Context, url, destPath string, maxBytes int64) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", "awg-manager-telemt-installer")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download HTTP status %d", resp.StatusCode)
-	}
-
-	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, io.LimitReader(resp.Body, maxBytes+1))
-	return err
 }

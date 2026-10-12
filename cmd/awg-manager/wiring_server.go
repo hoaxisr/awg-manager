@@ -77,6 +77,7 @@ func (a *app) setupServer() {
 
 	telemtArch := detectArch()
 	a.telemtService = telemt.New(a.dataDir, telemtArch)
+	a.telemtService.SetEventBus(a.eventBus)
 	a.deferOnExit(func() {
 		_ = a.telemtService.Close()
 	})
