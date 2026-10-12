@@ -22,6 +22,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/managed/peerip"
@@ -922,6 +923,11 @@ func (l *Local) UpdateDNSRoute(ctx context.Context, in mcpsrv.DNSRouteUpdate) (m
 	}
 
 	patch := dnsroute.DomainList{ID: in.RouteID, Name: in.Name}
+	if in.Name == "" {
+		// The HR path of dnsroute.Update takes the name as the group
+		// description verbatim, so an empty one would erase it.
+		patch.Name = existing.Name
+	}
 	var warnings []string
 	if in.ManualDomains != nil {
 		// ManualDomains only: the service recomputes Domains (and Subnets)
@@ -996,7 +1002,12 @@ func (l *Local) SetDNSRouteEnabled(ctx context.Context, id string, enabled bool)
 	}
 	l.dnsLog.Info(action, existing.Name, "DNS route list switched "+onOff(enabled)+" (MCP)")
 	l.publish(events.ResourceRoutingDnsRoutes, "mcp-"+action)
-	updated, err := l.findDNSList(ctx, id)
+	var updated *dnsroute.DomainList
+	if strings.HasPrefix(id, "hr:") {
+		updated, err = l.findHRGroupAt(ctx, id)
+	} else {
+		updated, err = l.findDNSList(ctx, id)
+	}
 	if err != nil {
 		// The switch itself succeeded; fall back to the pre-change record
 		// with the flag we know was applied rather than failing the call.
@@ -1004,6 +1015,30 @@ func (l *Local) SetDNSRouteEnabled(ctx context.Context, id string, enabled bool)
 		return dnsRoute(existing), nil
 	}
 	return dnsRoute(updated), nil
+}
+
+// findHRGroupAt re-reads an HR group after a write. The write changes the
+// file revision and with it every "hr:" id, so the group is found by its
+// position (target + index) taken from the old id.
+func (l *Local) findHRGroupAt(ctx context.Context, oldID string) (*dnsroute.DomainList, error) {
+	old, err := hydraroute.ParseGroupRef(strings.TrimPrefix(oldID, "hr:"))
+	if err != nil {
+		return l.findDNSList(ctx, oldID)
+	}
+	lists, err := l.c.DNSRoutes.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range lists {
+		rest, ok := strings.CutPrefix(lists[i].ID, "hr:")
+		if !ok {
+			continue
+		}
+		if ref, err := hydraroute.ParseGroupRef(rest); err == nil && ref.Target == old.Target && ref.Index == old.Index {
+			return &lists[i], nil
+		}
+	}
+	return nil, fmt.Errorf("dns route %q not found", oldID)
 }
 
 func (l *Local) RemoveDNSRoute(ctx context.Context, id string) (mcpsrv.DNSRoute, error) {

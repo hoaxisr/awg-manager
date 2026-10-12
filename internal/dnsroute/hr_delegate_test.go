@@ -151,8 +151,10 @@ func TestCreate_HRBackend_WritesToHRFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create HR: %v", err)
 	}
-	if created.ID == "" || len(created.ID) < 6 {
-		t.Errorf("expected 8-hex ID, got %q", created.ID)
+	if !strings.HasPrefix(created.ID, "hr:") {
+		t.Errorf("created.ID = %q, want hr:<rev>:<target>:<n>", created.ID)
+	} else if _, err := hydraroute.ParseGroupRef(strings.TrimPrefix(created.ID, "hr:")); err != nil {
+		t.Errorf("created.ID = %q: %v", created.ID, err)
 	}
 
 	// Must be in HR files, not in JSON store.

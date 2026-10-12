@@ -3,7 +3,7 @@ package hydraroute
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"regexp"
+	"net/netip"
 	"sort"
 	"strings"
 )
@@ -154,7 +154,18 @@ func parseDomainHalves(content string) []parsedHalf {
 	return out
 }
 
-var legacyDisabledCIDR = regexp.MustCompile(`^(geoip:\S+|[0-9A-Fa-f:.]+(/\d{1,3})?)$`)
+// legacyDisabledCIDR — остаток `#…` строки CIDR-блока, который писали
+// релизы до 5434e2147: geoip-тег, подсеть или адрес. Прочее — комментарий.
+func legacyDisabledCIDR(rest string) bool {
+	if strings.HasPrefix(rest, "geoip:") {
+		return true
+	}
+	if _, err := netip.ParsePrefix(rest); err == nil {
+		return true
+	}
+	_, err := netip.ParseAddr(rest)
+	return err == nil
+}
 
 func parseCIDRHalves(content string) (halves []parsedHalf, oversized []string) {
 	var cur *parsedHalf
@@ -202,7 +213,7 @@ func parseCIDRHalves(content string) (halves []parsedHalf, oversized []string) {
 			// половину, следующая запись даёт формат HR Neo.
 			// Только если остаток похож на CIDR/IP/geoip: прочее `#…` HRweb
 			// держит как есть.
-			if rest := strings.TrimPrefix(line, "#"); rest != line && legacyDisabledCIDR.MatchString(rest) {
+			if rest := strings.TrimPrefix(line, "#"); rest != line && legacyDisabledCIDR(rest) {
 				line = rest
 				cur.disabled = true
 			}

@@ -494,6 +494,8 @@ func (s *ServiceImpl) DeleteBatch(ctx context.Context, ids []string) (int, error
 
 	// HR-группы удаляются одной записью: их позиции разрешаются по одному
 	// снимку, поштучное удаление сдвинуло бы позиции следующих.
+	// Смешанный пакет HR+NDMS не атомарен: HR-группы пишутся первыми, сбой
+	// дальше их не вернёт. Фронт смешанных пакетов не шлёт.
 	var hrRefs []hydraroute.GroupRef
 	rest := ids[:0:0]
 	for _, id := range ids {

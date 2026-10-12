@@ -17,6 +17,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/managed/peerip"
@@ -138,6 +139,9 @@ type fakeDNSRoutes struct {
 	// JSON store and never finds an "hr:" list, while List merges them in.
 	getKnowsHR bool
 	deleted    []string
+	// afterSetEnabled runs after the flag is stored: lets a test model the
+	// HR revision change that renumbers every "hr:" id.
+	afterSetEnabled func(f *fakeDNSRoutes)
 }
 
 func (f *fakeDNSRoutes) Create(_ context.Context, l dnsroute.DomainList) (*dnsroute.DomainList, error) {
@@ -200,6 +204,9 @@ func (f *fakeDNSRoutes) SetEnabled(_ context.Context, id string, v bool) error {
 		if f.lists[i].ID == id {
 			f.lists[i].Enabled = v
 		}
+	}
+	if f.afterSetEnabled != nil {
+		f.afterSetEnabled(f)
 	}
 	return nil
 }
@@ -1468,8 +1475,8 @@ func TestLocal_UpdateDNSRouteSendsOnlyWhatChanged(t *testing.T) {
 	if sent.Domains != nil {
 		t.Errorf("Domains is derived by the service and must not be sent: %v", sent.Domains)
 	}
-	if sent.Name != "" {
-		t.Errorf("an unchanged name must not be sent: %q", sent.Name)
+	if sent.Name != "Видео" {
+		t.Errorf("an omitted name must be sent as the current one: %q", sent.Name)
 	}
 
 	if !h.bus.has(events.ResourceRoutingDnsRoutes) {
@@ -2553,6 +2560,52 @@ func TestLocal_DNSRouteReadsResolveHydraRouteIDs(t *testing.T) {
 
 	if _, err := h.l.GetDNSRoute(ctx, "nope"); err == nil {
 		t.Error("an unknown id must still be an error")
+	}
+}
+
+// TestLocal_UpdateDNSRouteKeepsHRDescription — у HR-группы имя = описание,
+// и HR-путь dnsroute.Update берёт его из записи как есть: пустое имя
+// стёрло бы описание, хотя схема MCP обещает «не прислал — осталось».
+func TestLocal_UpdateDNSRouteKeepsHRDescription(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.dns.lists = []dnsroute.DomainList{{ID: "hr:r1:nwg0:0", Name: "YouTube", Backend: "hydraroute", ManualDomains: []string{"youtube.com"}}}
+
+	if _, _, err := h.l.UpdateDNSRoute(ctx, mcpsrv.DNSRouteUpdate{RouteID: "hr:r1:nwg0:0", ManualDomains: []string{"youtu.be"}}); err != nil {
+		t.Fatal(err)
+	}
+	if h.dns.updated.Name != "YouTube" {
+		t.Fatalf("sent name %q, want the current description kept", h.dns.updated.Name)
+	}
+}
+
+// TestLocal_SetDNSRouteEnabledFindsHRGroupByPosition — переключение HR-
+// группы меняет ревизию файлов, а с ней id всех групп. Перечитывать по
+// старому id нельзя: вернулась бы запись до переключения. Ищем по позиции.
+func TestLocal_SetDNSRouteEnabledFindsHRGroupByPosition(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.dns.lists = []dnsroute.DomainList{
+		{ID: "hr:r1:nwg0:0", Name: "A", Enabled: true, Backend: "hydraroute"},
+		{ID: "hr:r1:nwg0:1", Name: "B", Enabled: true, Backend: "hydraroute"},
+		{ID: "hr:r1:Belka:1", Name: "C", Enabled: true, Backend: "hydraroute"},
+	}
+	h.dns.afterSetEnabled = func(f *fakeDNSRoutes) {
+		for i := range f.lists {
+			f.lists[i].ID = strings.Replace(f.lists[i].ID, "hr:r1:", "hr:r2:", 1)
+		}
+	}
+
+	got, err := h.l.SetDNSRouteEnabled(ctx, "hr:r1:nwg0:1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "hr:r2:nwg0:1" || got.Name != "B" || got.Enabled {
+		t.Fatalf("got %+v, want the fresh hr:r2:nwg0:1, disabled", got)
+	}
+	ref, err := hydraroute.ParseGroupRef(strings.TrimPrefix(got.ID, "hr:"))
+	if err != nil || ref.Target != "nwg0" || ref.Index != 1 {
+		t.Fatalf("ref = %+v, %v", ref, err)
 	}
 }
 
