@@ -105,6 +105,7 @@
 					<div class="row-meta">
 						<span class="kind kind-{t.kind}">{t.kind}</span>
 						<span class="count">{t.ruleCount}</span>
+						{#if t.empty}<span class="empty-badge">{m.hrneo_sidebar_no_groups()}</span>{/if}
 					</div>
 				</div>
 				<div class="row-arrows">
@@ -328,6 +329,12 @@
 
 	.count {
 		color: var(--text-muted);
+	}
+
+	.empty-badge {
+		color: var(--text-muted);
+		font-size: 0.6875rem;
+		font-style: italic;
 	}
 
 	.row-arrows {

@@ -26,6 +26,8 @@
 	import HrNeoDisabledTagsView from './HrNeoDisabledTagsView.svelte';
 	import HrNeoEditModal from './HrNeoEditModal.svelte';
 	import { hrTargetTunnel } from './hrTargetTunnel';
+	import { buildHrTargets, findSameHrGroup, hrPosKey, hrRevisionOf, isHrRulesChanged } from './hrIds';
+	import { createHrToggleQueue } from './hrToggleQueue';
 	import { IconPickerModal, ServiceCatalogModal } from '$lib/components/dnsroutes';
 	import type { CatalogPreset } from '$lib/types';
 	import { hrNeoCatalogPresetFilter } from '$lib/utils/catalog-preset';
@@ -52,17 +54,22 @@
 	let hrRules = $derived(dnsRoutes.filter((r) => r.backend === 'hydraroute'));
 
 	let policyOrder = $state<string[]>([]);
+	let configRevision = $state<string | null>(null);
 
 	async function loadPolicyOrder() {
 		try {
 			const cfg = await api.getHydraRouteConfig();
 			policyOrder = cfg.policyOrder ?? [];
+			configRevision = cfg.hrRevision ?? null;
 		} catch {
 			policyOrder = [];
+			configRevision = null;
 		}
 	}
 
+	// Перечитывается с каждым списком: пустые цели и ревизия живут только в конфиге.
 	$effect(() => {
+		void dnsRoutes;
 		void loadPolicyOrder();
 	});
 
@@ -117,57 +124,36 @@
 	/** Debounce HR Neo restarts when toggling several rules quickly. */
 	const HR_TOGGLE_DEBOUNCE_MS = 600;
 	let optimisticEnabled = $state<Record<string, boolean>>({});
-	let pendingToggleTimers = new Map<string, ReturnType<typeof setTimeout>>();
-	/** Per-rule generation — stale API responses are ignored after a newer toggle. */
-	let toggleGeneration = new Map<string, number>();
-	let hrToggleLoadingId = $state<string | null>(null);
+	const toggleQueue = createHrToggleQueue({
+		setEnabled: (id, enabled) => api.setDnsRouteEnabled(id, enabled),
+		onApplied: (fresh) => {
+			dnsRoutesStore.applyMutationResponse(fresh);
+			optimisticEnabled = toggleQueue.pending();
+		},
+		onError: (e) => {
+			optimisticEnabled = {};
+			notifyHrError(e);
+		},
+		debounceMs: HR_TOGGLE_DEBOUNCE_MS,
+	});
 
 	function ruleForCard(rule: DnsRoute): DnsRoute {
-		if (rule.id in optimisticEnabled) {
-			return { ...rule, enabled: optimisticEnabled[rule.id] };
-		}
-		return rule;
+		const key = hrPosKey(rule.id);
+		return key in optimisticEnabled ? { ...rule, enabled: optimisticEnabled[key] } : rule;
 	}
 
 	function scheduleHrRuleToggle(rule: DnsRoute, enabled: boolean) {
-		optimisticEnabled = { ...optimisticEnabled, [rule.id]: enabled };
-		const gen = (toggleGeneration.get(rule.id) ?? 0) + 1;
-		toggleGeneration.set(rule.id, gen);
-		const prev = pendingToggleTimers.get(rule.id);
-		if (prev) clearTimeout(prev);
-		pendingToggleTimers.set(
-			rule.id,
-			setTimeout(() => {
-				pendingToggleTimers.delete(rule.id);
-				void flushHrRuleToggle(rule.id, gen);
-			}, HR_TOGGLE_DEBOUNCE_MS),
-		);
+		toggleQueue.toggle(rule.id, enabled);
+		optimisticEnabled = toggleQueue.pending();
 	}
 
-	async function flushHrRuleToggle(id: string, gen: number) {
-		if (toggleGeneration.get(id) !== gen) return;
-		const enabled = optimisticEnabled[id];
-		if (enabled === undefined) return;
-
-		hrToggleLoadingId = id;
-		try {
-			const fresh = await api.setDnsRouteEnabled(id, enabled);
-			if (toggleGeneration.get(id) !== gen) return;
-			dnsRoutesStore.applyMutationResponse(fresh);
-			const next = { ...optimisticEnabled };
-			delete next[id];
-			optimisticEnabled = next;
-		} catch (e: unknown) {
-			if (toggleGeneration.get(id) !== gen) return;
-			const next = { ...optimisticEnabled };
-			delete next[id];
-			optimisticEnabled = next;
-			notifications.error(e instanceof Error ? e.message : String(e));
-		} finally {
-			if (toggleGeneration.get(id) === gen) {
-				hrToggleLoadingId = null;
-			}
+	function notifyHrError(e: unknown) {
+		if (isHrRulesChanged(e)) {
+			notifications.error(m.hrneo_rules_changed());
+			void dnsRoutesStore.refetch();
+			return;
 		}
+		notifications.error(e instanceof Error ? e.message : String(e));
 	}
 
 	async function loadOversized() {
@@ -206,8 +192,7 @@
 
 	$effect(() => () => {
 		if (pendingOversizedRefresh) clearTimeout(pendingOversizedRefresh);
-		for (const t of pendingToggleTimers.values()) clearTimeout(t);
-		pendingToggleTimers.clear();
+		toggleQueue.dispose();
 	});
 
 	function targetOf(
@@ -249,14 +234,7 @@
 					broken: isBroken(t),
 				});
 		}
-		const entries = [...byName.values()];
-		if (policyOrder.length === 0) return entries;
-		const orderIdx = new Map(policyOrder.map((n, i) => [n, i]));
-		const UNKNOWN = Number.MAX_SAFE_INTEGER;
-		return entries
-			.map((entry, origIdx) => ({ entry, idx: orderIdx.get(entry.name) ?? UNKNOWN, origIdx }))
-			.sort((a, b) => a.idx - b.idx || a.origIdx - b.origIdx)
-			.map((x) => x.entry);
+		return buildHrTargets([...byName.values()], policyOrder);
 	});
 
 	let rulesOfSelected = $derived.by(() => {
@@ -377,8 +355,21 @@
 			editOpen = false;
 			editInitialPreset = null;
 		} catch (e: unknown) {
-			const msg = e instanceof Error ? e.message : String(e);
-			notifications.error(msg);
+			if (isHrRulesChanged(e) && editingRule) {
+				await dnsRoutesStore.refetch();
+				const fresh = (dnsRoutesStore.peek().data ?? []).filter((r) => r.backend === 'hydraroute');
+				const same = findSameHrGroup(editingRule, fresh);
+				// Модалка переинициализирует форму только при открытии — ввод сохраняется.
+				if (same) {
+					editingRule = same;
+					notifications.error(m.hrneo_rules_changed());
+				} else {
+					notifications.error(m.hrneo_rules_changed_group_gone());
+					editOpen = false;
+				}
+				return;
+			}
+			notifyHrError(e);
 		} finally {
 			saving = false;
 		}
@@ -407,9 +398,38 @@
 			pendingDelete = null;
 			scheduleOversizedRefresh();
 		} catch (e: unknown) {
-			notifications.error(e instanceof Error ? e.message : String(e));
+			notifyHrError(e);
+			// id устарел: повторное «Удалить» снова дало бы 409.
+			if (isHrRulesChanged(e)) pendingDelete = null;
 		} finally {
 			deleting = false;
+		}
+	}
+
+	let pendingTargetDelete = $state<TargetEntry | null>(null);
+	let deletingTarget = $state(false);
+
+	async function confirmTargetDelete() {
+		const t = pendingTargetDelete;
+		if (!t) return;
+		// Все HR-id несут одну ревизию; у списка без групп — из конфига.
+		const revision = hrRevisionOf(hrRules) ?? configRevision;
+		if (!revision) return;
+		deletingTarget = true;
+		try {
+			await api.deleteHydraRouteTarget(t.name, revision);
+			pendingTargetDelete = null;
+			selection = null;
+			await loadPolicyOrder();
+		} catch (e: unknown) {
+			notifyHrError(e);
+			if (isHrRulesChanged(e)) {
+				// Счётчик групп в подтверждении устарел — закрыть, пусть откроют заново.
+				pendingTargetDelete = null;
+				await loadPolicyOrder();
+			}
+		} finally {
+			deletingTarget = false;
 		}
 	}
 
@@ -510,8 +530,8 @@
 					targetKind={selectedTargetEntry.kind}
 					rules={rulesOfSelected}
 					displayRule={ruleForCard}
-					toggleLoadingId={hrToggleLoadingId}
 					ontogglerule={scheduleHrRuleToggle}
+					ondeletetarget={() => (pendingTargetDelete = selectedTargetEntry ?? null)}
 					oncatalog={openCatalogForTarget}
 					onmanual={() => openNewRuleForSelectedTarget(null)}
 					oneditrule={openEditRule}
@@ -559,8 +579,8 @@
 							targetKind={t.kind}
 							rules={hrRules.filter((r) => targetOf(r)?.name === t.name)}
 							displayRule={ruleForCard}
-							toggleLoadingId={hrToggleLoadingId}
 							ontogglerule={scheduleHrRuleToggle}
+							ondeletetarget={() => (pendingTargetDelete = t)}
 							oncatalog={() => {
 								selection = { type: 'target', name: t.name };
 								openCatalogForTarget();
@@ -639,7 +659,7 @@
 		onclose={() => (pendingDelete = null)}
 	>
 		<p class="confirm-text">
-			{m.hrneo_tab_delete_prefix()}<strong>{pendingDelete.name}</strong>?
+			{m.hrneo_tab_delete_prefix()}<strong>{pendingDelete.name || m.hrneo_group_unnamed()}</strong>?
 		</p>
 		<p class="confirm-hint">
 			{m.hrneo_tab_delete_hint_prefix()}<code>domain.conf</code>{m.hrneo_tab_delete_hint_and()}<code>ip.list</code>{m.hrneo_tab_delete_hint_suffix()}
@@ -649,6 +669,25 @@
 				{m.common_cancel()}
 			</Button>
 			<Button variant="danger" onclick={confirmDelete} loading={deleting}>
+				{m.common_delete()}
+			</Button>
+		{/snippet}
+	</Modal>
+{/if}
+
+{#if pendingTargetDelete}
+	<Modal
+		open={true}
+		title={m.hrneo_target_delete_title({ target: pendingTargetDelete.name })}
+		size="sm"
+		onclose={() => (pendingTargetDelete = null)}
+	>
+		<p class="confirm-text">{m.hrneo_target_delete_text({ count: pendingTargetDelete.ruleCount })}</p>
+		{#snippet actions()}
+			<Button variant="secondary" onclick={() => (pendingTargetDelete = null)} disabled={deletingTarget}>
+				{m.common_cancel()}
+			</Button>
+			<Button variant="danger" onclick={confirmTargetDelete} loading={deletingTarget}>
 				{m.common_delete()}
 			</Button>
 		{/snippet}
@@ -674,7 +713,8 @@
 				invalidateAllRouting();
 				notifications.success(newUrl ? m.hrneo_tab_icon_changed() : m.hrneo_tab_icon_reset());
 			} catch (e: unknown) {
-				notifications.error(e instanceof Error ? e.message : m.hrneo_tab_icon_update_failed());
+				if (e instanceof Error) notifyHrError(e);
+				else notifications.error(m.hrneo_tab_icon_update_failed());
 			}
 		}}
 	/>

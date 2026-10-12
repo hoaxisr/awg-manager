@@ -114,3 +114,12 @@ describe('HrNeoEditModal: у правила нет цели', () => {
 		expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Сохранить' }).disabled).toBe(true);
 	});
 });
+
+describe('HrNeoEditModal: группа без имени', () => {
+	it('сохраняет группу без имени', async () => {
+		const { onsave } = openCreate({ kind: 'interface', name: 'nwg0', tunnelId: 'awg10' });
+		await fireEvent.input(screen.getByPlaceholderText(/youtube\.com/), { target: { value: 'a.com' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+		expect(onsave).toHaveBeenCalledWith(expect.objectContaining({ name: '', iconUrl: '' }));
+	});
+});

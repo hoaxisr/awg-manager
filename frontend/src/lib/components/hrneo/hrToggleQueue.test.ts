@@ -85,4 +85,39 @@ describe('createHrToggleQueue', () => {
 		expect(onError).toHaveBeenCalledTimes(1);
 		expect(q.pending()).toEqual({});
 	});
+
+	it('после dispose идущий сброс не зовёт onApplied/onError и не шлёт следующие', async () => {
+		let release!: () => void;
+		const onApplied = vi.fn();
+		const onError = vi.fn();
+		const setEnabled = vi.fn(async () => {
+			await new Promise<void>((r) => (release = r));
+			return list('r2');
+		});
+		const q = createHrToggleQueue({ setEnabled, onApplied, onError, debounceMs: 600 });
+		q.toggle('hr:r1:P:0', false);
+		q.toggle('hr:r1:P:1', false);
+		await vi.advanceTimersByTimeAsync(600); // первый запрос висит
+		q.dispose(); // вкладку закрыли
+		release();
+		await vi.advanceTimersByTimeAsync(600);
+		expect(setEnabled).toHaveBeenCalledTimes(1);
+		expect(onApplied).not.toHaveBeenCalled();
+		expect(onError).not.toHaveBeenCalled();
+	});
+
+	it('после dispose ошибка идущего запроса не доходит до onError', async () => {
+		let fail!: () => void;
+		const onError = vi.fn();
+		const setEnabled = vi.fn(
+			() => new Promise<DnsRoute[]>((_, reject) => (fail = () => reject(new Error('409')))),
+		);
+		const q = createHrToggleQueue({ setEnabled, onApplied: () => {}, onError, debounceMs: 600 });
+		q.toggle('hr:r1:P:0', false);
+		await vi.advanceTimersByTimeAsync(600);
+		q.dispose();
+		fail();
+		await vi.advanceTimersByTimeAsync(600);
+		expect(onError).not.toHaveBeenCalled();
+	});
 });

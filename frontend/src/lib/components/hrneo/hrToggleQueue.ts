@@ -21,6 +21,8 @@ export function createHrToggleQueue(deps: {
 	/** Ревизии, которые дала наша же запись (и стартовая): с них перенос безопасен. */
 	let known = new Set<string>();
 	let lastRev: string | null = null;
+	/** Вкладку размонтировали: идущий сброс молча останавливается. */
+	let disposed = false;
 
 	function schedule() {
 		if (timer) clearTimeout(timer);
@@ -40,6 +42,7 @@ export function createHrToggleQueue(deps: {
 				if (ref && known.size === 0) known.add(ref.revision);
 				const id = ref && lastRev && known.has(ref.revision) ? withRevision(item.id, lastRev) : item.id;
 				const fresh = await deps.setEnabled(id, item.enabled);
+				if (disposed) return;
 				lastRev = hrRevisionOf(fresh);
 				if (lastRev) known.add(lastRev);
 				// Группу переключили ещё раз, пока шёл запрос, — новое значение
@@ -48,6 +51,7 @@ export function createHrToggleQueue(deps: {
 				deps.onApplied(fresh);
 			}
 		} catch (e) {
+			if (disposed) return;
 			queue = new Map();
 			deps.onError(e);
 		} finally {
@@ -72,6 +76,7 @@ export function createHrToggleQueue(deps: {
 			return Object.fromEntries([...queue].map(([k, v]) => [k, v.enabled]));
 		},
 		dispose() {
+			disposed = true;
 			if (timer) clearTimeout(timer);
 			timer = null;
 			queue = new Map();

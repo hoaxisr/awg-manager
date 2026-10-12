@@ -1,6 +1,8 @@
 <script lang="ts">
 	import type { DnsRoute } from '$lib/types';
 	import HrNeoRuleCard from './HrNeoRuleCard.svelte';
+	import { hrPosKey } from './hrIds';
+	import { Button } from '$lib/components/ui';
 	import RoutingRuleAddMenu from '$lib/components/routing/RoutingRuleAddMenu.svelte';
 	import { m } from '$lib/i18n';
 
@@ -17,6 +19,7 @@
 		ontogglerule?: (rule: DnsRoute, enabled: boolean) => void;
 		toggleLoadingId?: string | null;
 		displayRule?: (rule: DnsRoute) => DnsRoute;
+		ondeletetarget?: () => void;
 	}
 
 	let {
@@ -32,9 +35,8 @@
 		ontogglerule,
 		toggleLoadingId = null,
 		displayRule,
+		ondeletetarget,
 	}: Props = $props();
-
-	let sortedRules = $derived([...rules].sort((a, b) => a.name.localeCompare(b.name)));
 </script>
 
 <div class="hr-list">
@@ -44,14 +46,19 @@
 			<span class="kind-badge kind-{targetKind}">{targetKind}</span>
 			<span class="count">{m.routing_rules_count({ count: rules.length })}</span>
 		</div>
-		<RoutingRuleAddMenu label={m.hrneo_rules_list_add()} oncatalog={oncatalog} onmanual={onmanual} />
+		<div class="header-actions">
+			{#if ondeletetarget}
+				<Button variant="outline-danger" size="sm" onclick={ondeletetarget}>{m.hrneo_target_delete()}</Button>
+			{/if}
+			<RoutingRuleAddMenu label={m.hrneo_rules_list_add()} oncatalog={oncatalog} onmanual={onmanual} />
+		</div>
 	</header>
 
-	{#if sortedRules.length === 0}
+	{#if rules.length === 0}
 		<div class="empty">{m.hrneo_rules_list_empty()}</div>
 	{:else}
 		<div class="route-grid">
-			{#each sortedRules as rule (rule.id)}
+			{#each rules as rule (hrPosKey(rule.id))}
 				{@const cardRule = displayRule ? displayRule(rule) : rule}
 				<HrNeoRuleCard
 					rule={cardRule}
@@ -81,6 +88,13 @@
 		padding-bottom: 12px;
 		border-bottom: 1px solid var(--border);
 		gap: 12px;
+	}
+
+	.header-actions {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+		flex-wrap: wrap;
 	}
 
 	.list-title {
@@ -156,7 +170,8 @@
 		.list-header {
 			flex-wrap: wrap;
 		}
-		.list-title {
+		.list-title,
+		.header-actions {
 			flex: 1 1 100%;
 		}
 		.list-header :global(.dropdown-wrapper) {

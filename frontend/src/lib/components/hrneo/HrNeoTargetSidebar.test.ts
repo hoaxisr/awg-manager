@@ -40,3 +40,23 @@ describe('HrNeoTargetSidebar: клавиатура на кнопках поря�
 		expect(onselect).toHaveBeenCalledWith({ type: 'target', name: 'a' });
 	});
 });
+
+describe('HrNeoTargetSidebar: пустая цель', () => {
+	it('показывает метку «нет групп» и счётчик 0', () => {
+		const { container } = render(HrNeoTargetSidebar, {
+			props: {
+				targets: [{ name: 'Belka', kind: 'policy', ruleCount: 0, empty: true }],
+				selected: null,
+				geoSiteCount: 0,
+				geoIPCount: 0,
+				oversizedCount: 0,
+				onselect: () => {},
+				onreorder: () => {},
+				onnewrule: () => {}
+			}
+		});
+		const row = container.querySelector('.row[role="button"]') as HTMLElement;
+		expect(row.textContent).toContain('0');
+		expect(row.querySelector('.empty-badge')).not.toBeNull();
+	});
+});

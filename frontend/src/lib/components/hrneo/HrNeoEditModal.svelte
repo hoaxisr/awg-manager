@@ -97,7 +97,7 @@
 	let initialNewPolicyIfaces = $state<AccessPolicyInterface[]>([]);
 
 	let isNew = $derived(rule === null);
-	let title = $derived(isNew ? m.hrneo_edit_new_title() : m.routing_ip_edit_title({ name: rule?.name ?? '' }));
+	let title = $derived(isNew ? m.hrneo_edit_new_title() : m.routing_ip_edit_title({ name: rule?.name || m.hrneo_group_unnamed() }));
 
 	$effect(() => {
 		if (!open) {
@@ -313,7 +313,6 @@
 	let showCatalogEntry = $derived(!!onpickcatalog && !hasDomainOrCidrContent);
 
 	let canSave = $derived.by(() => {
-		if (!name.trim()) return false;
 		const d = splitLines(domainsText);
 		const c = splitLines(cidrText);
 		if (d.length === 0 && c.length === 0) return false;
@@ -381,7 +380,7 @@
 			backend: 'hydraroute',
 			manualDomains,
 			// Keep an explicit empty string so HR backend can clear the sidecar icon.
-			iconUrl: iconUrl ?? '',
+			iconUrl: name.trim() ? (iconUrl ?? '') : '',
 		};
 		if (mode === 'interface') {
 			payload.hrRouteMode = 'interface';
@@ -449,26 +448,27 @@
 					<div class="icon-hint">{m.hrneo_edit_icon_preset_hint()}</div>
 				{:else}
 					<div class="icon-src">{m.routing_ip_icon_auto()}</div>
-					<div class="icon-hint">{m.hrneo_edit_icon_auto_hint()}</div>
+					{#if name.trim()}<div class="icon-hint">{m.hrneo_edit_icon_auto_hint()}</div>{/if}
 				{/if}
+				<!-- Иконка ключуется целью и именем группы (hrIconKey): без имени ключа нет. -->
+				{#if !name.trim()}<div class="icon-hint">{m.hrneo_edit_icon_needs_name()}</div>{/if}
 			</div>
-			<Button variant="ghost" size="sm" onclick={() => (iconPickerOpen = true)}>
+			<Button variant="ghost" size="sm" disabled={!name.trim()} onclick={() => (iconPickerOpen = true)}>
 				{iconUrl ? m.routing_ip_card_change_icon() : m.routing_ip_icon_choose()}
 			</Button>
 		</div>
 	</div>
 
 	<!-- Name -->
-	<div class="form-group" class:field-error={attempted && !name.trim()}>
+	<div class="form-group">
 		<label class="field-label" for="hr-rule-name">{m.routing_ip_name()}</label>
 		<input
 			id="hr-rule-name"
 			class="field-input"
 			type="text"
-			placeholder="Youtube"
+			placeholder={m.hrneo_group_unnamed()}
 			bind:value={name}
 		/>
-		{#if attempted && !name.trim()}<div class="error-text">{m.routing_ip_name_required()}</div>{/if}
 	</div>
 
 	<!-- Target — placed near the top so the routing decision (the most
