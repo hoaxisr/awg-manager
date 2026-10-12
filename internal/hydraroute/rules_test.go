@@ -249,6 +249,10 @@ func TestGroupValidation(t *testing.T) {
 		{"P", Group{Domains: []string{"a.com,b.com"}}},
 		{"P", Group{Domains: []string{"#a.com"}}},
 		{"P", Group{Subnets: []string{"1.0.0.0/8\n2.0.0.0/8"}}},
+		{"P", Group{Subnets: []string{"/Q"}}},
+		{"P", Group{Subnets: []string{"   "}}},
+		{"P", Group{Subnets: []string{" 1.0.0.0/8"}}},
+		{"P", Group{Domains: []string{" a.com"}}},
 		{"a/b", Group{Domains: []string{"a.com"}}},
 		{"#P", Group{Domains: []string{"a.com"}}},
 	}

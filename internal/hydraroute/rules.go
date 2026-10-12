@@ -339,12 +339,14 @@ func validateGroup(target string, g Group) error {
 	}
 	for _, d := range g.Domains {
 		// `#` в начале первого домена выключил бы строку, `##` — сделал бы её заголовком.
-		if d == "" || strings.ContainsAny(d, "/,\r\n") || strings.HasPrefix(d, "#") {
+		// Пробелы по краям парсер срежет при чтении: записанное не совпало бы с прочитанным.
+		if d == "" || d != strings.TrimSpace(d) || strings.ContainsAny(d, "/,\r\n") || strings.HasPrefix(d, "#") {
 			return fmt.Errorf("invalid domain %q", d)
 		}
 	}
 	for _, c := range g.Subnets {
-		if c == "" || strings.ContainsAny(c, "\r\n") || strings.HasPrefix(c, "#") {
+		// Пустая строка закрыла бы блок ip.list, `/X` открыл бы блок другой цели.
+		if c == "" || c != strings.TrimSpace(c) || strings.ContainsAny(c, "\r\n") || strings.HasPrefix(c, "#") || strings.HasPrefix(c, "/") {
 			return fmt.Errorf("invalid subnet %q", c)
 		}
 	}
