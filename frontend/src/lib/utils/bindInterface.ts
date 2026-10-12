@@ -1,9 +1,13 @@
+import { m } from '$lib/i18n';
 import type { SingboxRouterOutbound, SingboxRouterWANInterface } from '$lib/types';
 
 /** Подпись пункта выбора интерфейса привязки (sing-box direct). */
 export function bindInterfaceLabel(i: SingboxRouterWANInterface): string {
-	const state = i.up ? '' : i.absent ? ' (нет в системе)' : i.foreign ? ' (нет несущей)' : ' (down)';
-	return `${i.label} · ${i.name}${state}`;
+	const args = { label: i.label, name: i.name };
+	if (i.up) return m.bind_interface_label(args);
+	if (i.absent) return m.bind_interface_label_absent(args);
+	if (i.foreign) return m.bind_interface_label_foreign(args);
+	return m.bind_interface_label_down(args);
 }
 
 /**

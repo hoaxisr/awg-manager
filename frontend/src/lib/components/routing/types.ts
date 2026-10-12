@@ -1,3 +1,9 @@
+export type SourceSummary =
+	| { kind: 'lists-manual'; lists: number; manual: number }
+	| { kind: 'lists'; lists: number }
+	| { kind: 'manual' }
+	| { kind: 'subnets'; count: number };
+
 export interface MatchedRule {
 	id: string;
 	name: string;
@@ -7,7 +13,7 @@ export interface MatchedRule {
 	enabled: boolean;
 	tunnelName: string;
 	domainCount: number;
-	sourceSummary: string;
+	sourceSummary: SourceSummary | null;
 	iconUrl?: string;
 }
 

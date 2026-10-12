@@ -1,3 +1,5 @@
+import { m } from '$lib/i18n';
+
 export const GITHUB_NEW_ISSUE_URL = 'https://github.com/hoaxisr/awg-manager/issues/new';
 
 // Bug-report issue FORM (.github/ISSUE_TEMPLATE/bug_report.yml on the default
@@ -15,13 +17,13 @@ export function buildGitHubIssueUrl(title: string, body: string): string {
 
 export function buildSuggestionIssueUrl(): string {
 	const body = [
-		'## Что хотите сообщить',
+		m.github_feedback_suggestion_heading_report(),
 		'',
-		'<!-- Опишите идею, предложение или вопрос -->',
+		m.github_feedback_suggestion_comment(),
 		'',
-		'## Важно',
+		m.github_feedback_suggestion_heading_important(),
 		'',
-		'AWG Manager — open-source проект без службы поддержки и SLA. Ответ не гарантируется.',
+		m.github_feedback_suggestion_important(),
 	].join('\n');
-	return buildGitHubIssueUrl('Сообщение или предложение AWG Manager', body);
+	return buildGitHubIssueUrl(m.github_feedback_suggestion_title(), body);
 }

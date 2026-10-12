@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Панель ссылок абоненту (ia.md §3.3, LK-01..LK-11). Ссылка выдаётся на
 	// пароль абонента; peer и VK-хеши правятся здесь же и пересобирают ссылку.
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { Button, FieldHint, Input, IconButton, SegmentedControl } from '$lib/components/ui';
 	import { X } from 'lucide-svelte';
@@ -103,21 +104,21 @@
 <div class="link-panel">
 	<div class="panel-head">
 		<div class="panel-titles">
-			<span class="panel-title">Ссылки абоненту</span>
-			<span class="panel-sub">Абонент: {user.comment || user.password}</span>
+			<span class="panel-title">{m.proxy_link_panel_title()}</span>
+			<span class="panel-sub">{m.proxy_link_panel_subscriber({ name: user.comment || user.password })}</span>
 		</div>
-		<IconButton size="sm" ariaLabel="Закрыть" onclick={onclose}>
+		<IconButton size="sm" ariaLabel={m.common_close()} onclick={onclose}>
 			<X size={14} />
 		</IconButton>
 	</div>
 
 	<div class="panel-fields">
 		<div class="mode-row">
-			<span class="mode-label">Подключение</span>
+			<span class="mode-label">{m.proxy_link_panel_connection()}</span>
 			<SegmentedControl
 				value={mode}
 				options={modeOptions}
-				ariaLabel="Подключение абонента"
+				ariaLabel={m.proxy_link_panel_connection_aria()}
 				disabled={busy}
 				onchange={(v) => {
 					mode = v;
@@ -125,13 +126,13 @@
 				}}
 			/>
 			<FieldHint
-				text="Обе половины сервера работают всегда — выбор влияет только на эту ссылку. WireGuard: абонент идёт через WG-половину (порт раздачи). Raw: через raw-половину (следующий порт)."
-				ariaLabel="Подсказка: подключение абонента"
+				text={m.proxy_link_panel_connection_hint()}
+				ariaLabel={m.proxy_link_panel_connection_hint_aria()}
 			/>
 		</div>
 		<div class="field-with-btn">
 			<Input
-				label="Адрес сервера для абонента"
+				label={m.proxy_link_panel_server_address()}
 				bind:value={peer}
 				onchange={() => generate()}
 				fullWidth
@@ -139,8 +140,8 @@
 			<Button variant="secondary" size="sm" loading={wanBusy} onclick={fillWan}>WAN IP</Button>
 		</div>
 		<Input
-			label="VK-хеши"
-			hint="Маскировка, а не пароль подключения"
+			label={m.proxy_link_panel_vk_hashes()}
+			hint={m.proxy_link_panel_vk_hashes_hint()}
 			bind:value={vkHashes}
 			onchange={() => generate()}
 			fullWidth
@@ -148,10 +149,10 @@
 	</div>
 
 	{#if linkQwdtt}
-		<LinkBox link={linkQwdtt} title="Для приложения на телефоне" />
+		<LinkBox link={linkQwdtt} title={m.proxy_link_panel_for_phone()} />
 	{/if}
 	{#if link}
-		<LinkBox {link} title="Для клиента на роутере" />
+		<LinkBox {link} title={m.proxy_link_panel_for_router()} />
 	{/if}
 </div>
 

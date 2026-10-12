@@ -7,7 +7,7 @@ import {
 	idleTitle,
 	deviceProxyInboundTag,
 	inboundsPanelTotal,
-	INBOUND_GROUP_TITLES,
+	inboundGroupTitle,
 } from './singboxInbounds';
 
 function entry(over: Partial<SingboxInboundEntry>): SingboxInboundEntry {
@@ -59,7 +59,7 @@ describe('groupInbounds', () => {
 		]);
 		expect(groups).toHaveLength(1);
 		expect(groups[0].source).toBe('other');
-		expect(groups[0].title).toBe(INBOUND_GROUP_TITLES.other);
+		expect(groups[0].title).toBe(inboundGroupTitle('other'));
 	});
 });
 

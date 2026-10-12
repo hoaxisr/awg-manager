@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { Awg3Tunnel } from '$lib/types';
 	import type { SingboxLayoutMode, TunnelRenderMode } from '$lib/constants/singboxLayout';
 	import { api } from '$lib/api/client';
@@ -110,7 +111,7 @@
 			awg3Tunnels.applyMutationResponse(fresh);
 			renaming = false;
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось переименовать туннель');
+			notifications.error(e instanceof Error ? e.message : m.awg3_card_rename_failed());
 		} finally {
 			savingRename = false;
 		}
@@ -123,7 +124,7 @@
 			const fresh = await api.awg3Delete(tunnel.id);
 			awg3Tunnels.applyMutationResponse(fresh);
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось удалить туннель');
+			notifications.error(e instanceof Error ? e.message : m.awg3_card_delete_failed());
 		} finally {
 			deleting = false;
 		}
@@ -132,11 +133,11 @@
 
 {#snippet renameForm()}
 	<form class="rename-form" onsubmit={(e) => { e.preventDefault(); void submitRename(); }}>
-		<Input bind:value={renameValue} placeholder="Имя туннеля" disabled={savingRename} fullWidth />
-		<IconButton ariaLabel="Сохранить имя" title="Сохранить" disabled={savingRename} onclick={() => void submitRename()}>
+		<Input bind:value={renameValue} placeholder={m.awg3_card_name_placeholder()} disabled={savingRename} fullWidth />
+		<IconButton ariaLabel={m.awg3_card_save_name_aria()} title={m.common_save()} disabled={savingRename} onclick={() => void submitRename()}>
 			<Check size={16} aria-hidden="true" />
 		</IconButton>
-		<IconButton ariaLabel="Отмена" title="Отмена" disabled={savingRename} onclick={cancelRename}>
+		<IconButton ariaLabel={m.common_cancel()} title={m.common_cancel()} disabled={savingRename} onclick={cancelRename}>
 			<X size={16} aria-hidden="true" />
 		</IconButton>
 	</form>
@@ -148,7 +149,7 @@
 
 {#snippet timersMeta()}
 	{#if timers.length > 0}
-		<span class="timers" title="Таймеры устройства (настраиваются в RouteBox)">
+		<span class="timers" title={m.awg3_card_timers_title()}>
 			{#each timers as t (t.label)}
 				<span class="timer"><span class="timer-label">{t.label}</span> {t.value}{t.unit}</span>
 			{/each}
@@ -157,13 +158,13 @@
 {/snippet}
 
 {#snippet cardActions()}
-	<IconButton ariaLabel="Проверить delay" title="Проверить" disabled={checking} onclick={() => void triggerCheck()}>
+	<IconButton ariaLabel={m.awg3_card_check_aria()} title={m.common_check()} disabled={checking} onclick={() => void triggerCheck()}>
 		<Activity size={16} aria-hidden="true" />
 	</IconButton>
-	<IconButton ariaLabel="Переименовать" title="Переименовать" disabled={renaming} onclick={startRename}>
+	<IconButton ariaLabel={m.awg3_card_rename()} title={m.awg3_card_rename()} disabled={renaming} onclick={startRename}>
 		<Pencil size={16} aria-hidden="true" />
 	</IconButton>
-	<IconButton variant="danger" ariaLabel="Удалить туннель «{tunnel.tag}»" title="Удалить" disabled={deleting} onclick={() => (confirmDeleteOpen = true)}>
+	<IconButton variant="danger" ariaLabel={m.tunnels_delete_tunnel_title({ name: tunnel.tag })} title={m.common_delete()} disabled={deleting} onclick={() => (confirmDeleteOpen = true)}>
 		<Trash2 size={16} aria-hidden="true" />
 	</IconButton>
 {/snippet}
@@ -255,11 +256,11 @@
 	</div>
 {/if}
 
-<Modal open={confirmDeleteOpen} title="Удаление" size="sm" onclose={() => (confirmDeleteOpen = false)}>
-	<p class="confirm-text">Удалить туннель <strong>{tunnel.tag}</strong>?</p>
+<Modal open={confirmDeleteOpen} title={m.awg3_card_delete_title()} size="sm" onclose={() => (confirmDeleteOpen = false)}>
+	<p class="confirm-text">{m.tunnels_modals_delete_tunnel_lead()} <strong>{tunnel.tag}</strong>?</p>
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={() => (confirmDeleteOpen = false)}>Отмена</Button>
-		<Button variant="danger" size="md" onclick={remove}>Удалить</Button>
+		<Button variant="ghost" size="md" onclick={() => (confirmDeleteOpen = false)}>{m.common_cancel()}</Button>
+		<Button variant="danger" size="md" onclick={remove}>{m.common_delete()}</Button>
 	{/snippet}
 </Modal>
 

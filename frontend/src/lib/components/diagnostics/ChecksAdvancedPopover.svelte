@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Settings } from 'lucide-svelte';
 	import { Toggle } from '$lib/components/ui';
 
@@ -51,7 +52,7 @@
 		class:active={open || includeRestart}
 		aria-haspopup="dialog"
 		aria-expanded={open}
-		title="Расширенные параметры"
+		title={m.diag_checks_advanced()}
 	>
 		<Settings size={14} />
 		{#if includeRestart}<span class="dot" aria-label="custom"></span>{/if}
@@ -59,7 +60,7 @@
 
 	{#if open}
 		<div bind:this={popover} class="popover" role="dialog">
-			<header class="head">Расширенные параметры</header>
+			<header class="head">{m.diag_checks_advanced()}</header>
 
 			<label class="toggle-row">
 				<Toggle
@@ -68,10 +69,9 @@
 					disabled={running}
 				/>
 				<div class="toggle-label">
-					<span>Включая restart-цикл</span>
+					<span>{m.diag_checks_advanced_restart()}</span>
 					<span class="hint">
-						Перезапустит каждый запущенный туннель на 2-5&nbsp;сек для проверки
-						stop/start цикла.
+						{m.diag_checks_advanced_restart_hint()}
 					</span>
 				</div>
 			</label>

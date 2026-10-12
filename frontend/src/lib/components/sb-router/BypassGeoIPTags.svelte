@@ -9,6 +9,7 @@
   завершении бэкенд говорит resource:invalidated («bypass-set»).
 -->
 <script lang="ts">
+  import { m, formatLocale } from '$lib/i18n';
   import { onMount, tick } from 'svelte';
   import { api } from '$lib/api/client';
   import { Button } from '$lib/components/ui';
@@ -36,7 +37,7 @@
   let query = $state('');
   // Причина, по которой последний клик не сохранён (бюджет набора). Гаснет
   // на следующем действии пользователя.
-  let budgetError = $state<string | null>(null);
+  let budgetOverflow = $state<number | null>(null);
   let installing = $state<'ipset' | 'conntrack' | null>(null);
 
   const status = $derived($bypassSetStatus.data);
@@ -51,7 +52,7 @@
   // другой вкладки — обе причины блокируют обе кнопки.
   const installBusy = $derived(installing !== null || (status?.installing ?? false));
   const entryCountLabel = $derived(
-    status?.entryCountOK ? status.entryCount.toLocaleString('ru-RU') : 'н/д',
+    status?.entryCountOK ? status.entryCount.toLocaleString(formatLocale()) : m.sb_router_bypass_geo_na(),
   );
 
   onMount(async () => {
@@ -81,12 +82,12 @@
   // сохранено (иначе браузерное состояние input'а расходится с настройками).
   async function toggleTag(name: string, e: Event) {
     const input = e.currentTarget as HTMLInputElement;
-    budgetError = null;
+    budgetOverflow = null;
     const on = selected.includes(name);
     const next = on ? selected.filter((t) => t !== name) : [...selected, name];
     const nextTotal = sumSelectedTags(next, options);
     if (!on && nextTotal > BYPASS_SET_MAX_ELEM) {
-      budgetError = `Не помещается в набор: ${nextTotal.toLocaleString('ru-RU')} записей при пределе ${BYPASS_SET_MAX_ELEM.toLocaleString('ru-RU')}. Уберите часть тегов.`;
+      budgetOverflow = nextTotal;
       input.checked = on;
       return;
     }
@@ -108,7 +109,7 @@
       bypassSetStatus.applyMutationResponse(fresh);
     } catch (e) {
       const pkg = what === 'ipset' ? 'ipset' : 'conntrack-tools';
-      notifications.error(`Не удалось установить ${pkg}: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_bypass_geo_install_failed({ pkg, message: e instanceof Error ? e.message : String(e) }));
     } finally {
       installing = null;
     }
@@ -116,23 +117,23 @@
 </script>
 
 <div class="geo">
-  <div class="geo-cap">Обход по geoip</div>
+  <div class="geo-cap">{m.sb_router_bypass_geo_title()}</div>
 
   {#if catalogLoading}
-    <p class="hint">Читаем теги geoip-файлов…</p>
+    <p class="hint">{m.sb_router_bypass_geo_loading()}</p>
   {:else if catalogError}
-    <p class="hint warn">Не удалось прочитать гео-данные: {catalogError}</p>
+    <p class="hint warn">{m.sb_router_bypass_geo_catalog_error({ message: catalogError })}</p>
   {:else if geoFileCount === 0}
     <p class="hint">
-      Нет подключённых файлов <code class="mono">geoip.dat</code> — добавьте их в
-      <a class="geo-link" href="/routing?tab=geodata">Маршрутизация → Гео-данные</a>.
+      {m.sb_router_bypass_geo_no_files_pre()} <code class="mono">geoip.dat</code> {m.sb_router_bypass_geo_no_files_post()}
+      <a class="geo-link" href="/routing?tab=geodata">{m.sb_router_bypass_geo_no_files_link()}</a>.
     </p>
   {:else}
     <input
       class="inp"
       type="search"
-      placeholder="Поиск тега…"
-      aria-label="Поиск geoip-тега"
+      placeholder={m.sb_router_bypass_geo_search_placeholder()}
+      aria-label={m.sb_router_bypass_geo_search_aria()}
       bind:value={query}
     />
     <div class="tag-list">
@@ -144,51 +145,50 @@
             onchange={(e) => void toggleTag(opt.name, e)}
           />
           <span class="tag-name">{opt.name}</span>
-          <span class="tag-count">{opt.count.toLocaleString('ru-RU')}</span>
+          <span class="tag-count">{opt.count.toLocaleString(formatLocale())}</span>
         </label>
       {:else}
-        <p class="hint">Ничего не найдено.</p>
+        <p class="hint">{m.sb_router_bypass_geo_nothing_found()}</p>
       {/each}
     </div>
 
     <div class="budget" class:warn={overBudget}>
-      выбрано ~{total.toLocaleString('ru-RU')} из {BYPASS_SET_MAX_ELEM.toLocaleString('ru-RU')}
+      {m.sb_router_bypass_geo_budget({ total: total.toLocaleString(formatLocale()), max: BYPASS_SET_MAX_ELEM.toLocaleString(formatLocale()) })}
     </div>
     {#if overBudget}
       <p class="hint warn">
-        Выбор больше предела набора — сохранение заблокировано, снимите часть тегов.
+        {m.sb_router_bypass_geo_over_budget()}
       </p>
     {/if}
-    {#if budgetError}
-      <p class="hint warn">{budgetError}</p>
+    {#if budgetOverflow !== null}
+      <p class="hint warn">{m.sb_router_bypass_geo_budget_exceeded({ total: budgetOverflow.toLocaleString(formatLocale()), max: BYPASS_SET_MAX_ELEM.toLocaleString(formatLocale()) })}</p>
     {/if}
 
     <p class="hint">
-      Обход полный, включая DNS: клиенты с DNS-серверами из выбранных диапазонов не будут
-      обслуживаться DNS-перехватом. Изменения действуют на новые соединения.
+      {m.sb_router_bypass_geo_full_bypass()}
     </p>
 
     {#if selected.length > 0}
       <div class="stat-line">
-        <span class="stat-label">Записей в наборе обхода</span>
+        <span class="stat-label">{m.sb_router_bypass_geo_entries()}</span>
         <span class="stat-value">{entryCountLabel}</span>
       </div>
       <div class="stat-line">
-        <span class="stat-label">Последнее наполнение</span>
+        <span class="stat-label">{m.sb_router_bypass_geo_last_populate()}</span>
         <span class="stat-value">
           {status?.lastPopulate ? formatRelativeTime(status.lastPopulate) : '—'}
         </span>
       </div>
       {#if status?.lastError}
-        <p class="hint warn">Ошибка наполнения: {status.lastError}</p>
+        <p class="hint warn">{m.sb_router_bypass_geo_populate_error({ message: status.lastError })}</p>
       {/if}
       {#if status?.missingTags?.length}
-        <p class="hint warn">Теги не найдены в геоданных: {status.missingTags.join(', ')}</p>
+        <p class="hint warn">{m.sb_router_bypass_geo_missing_tags({ tags: status.missingTags.join(', ') })}</p>
       {/if}
 
       {#if status && !status.available}
         <p class="hint warn">
-          Требуется пакет <code class="mono">ipset</code> — без него набор обхода не собрать.
+          {m.sb_router_bypass_geo_need_ipset_pre()} <code class="mono">ipset</code> {m.sb_router_bypass_geo_need_ipset_post()}
         </p>
         <Button
           variant="ghost"
@@ -198,14 +198,13 @@
           loading={installing === 'ipset'}
           onclick={() => void install('ipset')}
         >
-          {installing === 'ipset' ? 'Установка…' : 'Установить ipset'}
+          {installing === 'ipset' ? m.sb_router_bypass_geo_installing() : m.sb_router_bypass_geo_install_ipset()}
         </Button>
       {/if}
 
       {#if status && !status.conntrackAvailable}
         <p class="hint">
-          Без <code class="mono">conntrack-tools</code> уже установленные соединения доживут
-          по старому пути до истечения таймаута.
+          {m.sb_router_bypass_geo_conntrack_pre()} <code class="mono">conntrack-tools</code> {m.sb_router_bypass_geo_conntrack_post()}
         </p>
         <Button
           variant="ghost"
@@ -215,7 +214,7 @@
           loading={installing === 'conntrack'}
           onclick={() => void install('conntrack')}
         >
-          {installing === 'conntrack' ? 'Установка…' : 'Установить conntrack-tools'}
+          {installing === 'conntrack' ? m.sb_router_bypass_geo_installing() : m.sb_router_bypass_geo_install_conntrack()}
         </Button>
       {/if}
     {/if}

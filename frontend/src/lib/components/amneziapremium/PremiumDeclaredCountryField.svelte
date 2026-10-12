@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 
 	interface Props {
@@ -12,14 +13,15 @@
 	let { value, disabled, onchange }: Props = $props();
 
 	let busy = $state(false);
-	let error = $state('');
+	/** Сообщение бэкенда или `null` — тогда показываем локализованный текст по виду операции. */
+	let error = $state<{ kind: 'read' | 'save'; message: string | null } | null>(null);
 
 	// Подписи и значения — словарь портала: третьего варианта у него нет, а
 	// «ag» означает «все остальные страны и регионы», не какую-то одну.
-	const options: { code: string; label: string }[] = [
-		{ code: 'ru', label: 'Россия' },
-		{ code: 'ag', label: 'Другие страны и регионы' }
-	];
+	const options = $derived<{ code: string; label: string }[]>([
+		{ code: 'ru', label: m.amnezia_premium_country_ru() },
+		{ code: 'ag', label: m.amnezia_premium_country_other() }
+	]);
 
 	// Отметка «за выбором уже сходили»: не $state намеренно — нигде не
 	// рисуется, а реактивной сделала бы эффект зависимым от себя же
@@ -39,7 +41,7 @@
 			onchange(saved.declaredCountryCode);
 		} catch (e) {
 			requested = false;
-			error = e instanceof Error ? e.message : 'Не удалось прочитать страну подключения';
+			error = { kind: 'read', message: e instanceof Error ? e.message : null };
 		} finally {
 			busy = false;
 		}
@@ -48,7 +50,7 @@
 	async function choose(code: string): Promise<void> {
 		if (code === value) return;
 		busy = true;
-		error = '';
+		error = null;
 		try {
 			const saved = await api.amneziaPremiumSaveDeclaredCountry(code);
 			// Выбор объявляется ТОЛЬКО после удавшейся записи: иначе кнопка
@@ -56,7 +58,7 @@
 			// выдача откажет уже после нажатия.
 			onchange(saved.declaredCountryCode);
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Не удалось сохранить страну подключения';
+			error = { kind: 'save', message: e instanceof Error ? e.message : null };
 		} finally {
 			busy = false;
 		}
@@ -65,7 +67,7 @@
 
 <div class="premium-declared">
 	<span class="premium-declared-label" id="premium-declared-label">
-		Страна, из которой вы подключаетесь
+		{m.amnezia_premium_declared_label()}
 	</span>
 	<div class="premium-declared-options" role="group" aria-labelledby="premium-declared-label">
 		{#each options as opt (opt.code)}
@@ -82,12 +84,12 @@
 		{/each}
 	</div>
 	{#if error}
-		<p class="field-hint is-error">{error}</p>
+		<p class="field-hint is-error">{error.message || (error.kind === 'read' ? m.amnezia_premium_declared_read_failed() : m.amnezia_premium_declared_save_failed())}</p>
 	{:else if !value}
 		<!-- Портал требует эту страну в каждой выдаче и по ней собирает
 		     параметры: без выбора кнопка выдачи заперта, и человек должен
 		     понимать, чем именно. -->
-		<p class="field-hint">Выберите страну — без неё Amnezia не выдаёт конфигурацию.</p>
+		<p class="field-hint">{m.amnezia_premium_declared_hint()}</p>
 	{/if}
 </div>
 

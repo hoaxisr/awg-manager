@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { m } from '$lib/i18n';
     import { api } from '$lib/api/client';
     import type { AccessPolicy, PolicyDevice, PolicyGlobalInterface } from '$lib/types';
     import { ConfirmModal, StoreStatusBadge, Button } from '$lib/components/ui';
@@ -7,7 +8,6 @@
     import { notifications } from '$lib/stores/notifications';
     import { accessPoliciesStore, policyDevicesStore, policyInterfacesStore, invalidateAllRouting } from '$lib/stores/routing';
     import { isHydraRouteAccessPolicy } from '$lib/utils/accessPolicy';
-    import { ERROR_WORDS, pluralForm, pluralize, DEVICE_WORDS, POLICY_WORDS } from '$lib/utils/pluralize';
 
     interface Props {
         accessPolicies: AccessPolicy[];
@@ -59,10 +59,9 @@
             // Open newly created policy for editing
             createdPolicy = created;
             editingPolicy = created.name;
-            void refreshPolicyData();
-            notifications.success('Политика создана');
+            notifications.success(m.access_policy_created());
         } catch (e) {
-            notifications.error(`Ошибка: ${(e as Error).message}`);
+            notifications.error(m.tunnels_error_with_message({ message: (e as Error).message }));
         } finally {
             policyCreating = false;
         }
@@ -72,9 +71,9 @@
         try {
             await api.deleteAccessPolicy(name);
             policyDeleteName = null;
-            notifications.success('Политика удалена');
+            notifications.success(m.access_policy_deleted());
         } catch (e) {
-            notifications.error(`Ошибка: ${(e as Error).message}`);
+            notifications.error(m.tunnels_error_with_message({ message: (e as Error).message }));
         }
     }
 
@@ -94,12 +93,12 @@
             const res = await api.refreshRouting();
             invalidateAllRouting();
             if (res.missing?.includes('accessPolicies')) {
-                notifications.warning('Не удалось обновить политики доступа');
+                notifications.warning(m.access_policy_refresh_failed());
             } else {
-                notifications.success('Политики обновлены');
+                notifications.success(m.access_policy_refreshed());
             }
         } catch (e) {
-            notifications.error(`Ошибка обновления политик: ${(e as Error).message}`);
+            notifications.error(m.access_policy_refresh_error({ message: (e as Error).message }));
         } finally {
             policyRefreshing = false;
         }
@@ -141,8 +140,8 @@
                 try { await api.deleteAccessPolicy(name); ok++; } catch { fail++; }
             }
             exitPolicySelection();
-            if (fail > 0) notifications.warning(`Удалено ${ok} из ${ok + fail} ${pluralForm(ok + fail, POLICY_WORDS)} (${pluralize(fail, ERROR_WORDS)})`);
-            else notifications.success(`Удалено ${pluralize(ok, POLICY_WORDS)}`);
+            if (fail > 0) notifications.warning(m.routing_bulk_deleted_policies_partial({ ok, total: ok + fail, fail }));
+            else notifications.success(m.routing_bulk_deleted_policies({ count: ok }));
         } finally {
             policyBulkLoading = false;
             policyBulkDeleteConfirm = false;
@@ -167,7 +166,7 @@
     <div class="section-header">
         {#if !policySelectionMode}
             <span class="section-summary">
-                {pluralize(policyCount, POLICY_WORDS)}, {pluralize(policyDeviceCount, DEVICE_WORDS)}
+                {m.routing_policies_devices_summary({ policies: policyCount, devices: policyDeviceCount })}
             </span>
             <div class="section-buttons">
                 <StoreStatusBadge store={accessPoliciesStore} />
@@ -180,22 +179,22 @@
                     disabled={policyRefreshing}
                     loading={policyRefreshing}
                 >
-                    Обновить
+                    {m.common_refresh()}
                 </Button>
                 {#if accessPolicies.length > 0}
-                    <Button variant="ghost" size="sm" onclick={() => { policySelectionMode = true; policySelected = new Set(); }}>Выбрать</Button>
+                    <Button variant="ghost" size="sm" onclick={() => { policySelectionMode = true; policySelected = new Set(); }}>{m.common_select()}</Button>
                 {/if}
                 <RoutingCreateButton onclick={() => (policyCreateOpen = true)} />
             </div>
         {:else}
             <div class="bulk-bar">
                 <div class="bulk-bar-nav">
-                    <button class="bulk-btn bulk-btn-cancel" onclick={exitPolicySelection} disabled={policyBulkLoading}>✕ Отмена</button>
-                    <span class="bulk-count">{policySelected.size} выбрано</span>
-                    <button class="bulk-btn bulk-btn-select-all" onclick={policySelectAll} disabled={policyBulkLoading}>Выбрать все</button>
+                    <button class="bulk-btn bulk-btn-cancel" onclick={exitPolicySelection} disabled={policyBulkLoading}>✕ {m.common_cancel()}</button>
+                    <span class="bulk-count">{m.routing_selected_count({ count: policySelected.size })}</span>
+                    <button class="bulk-btn bulk-btn-select-all" onclick={policySelectAll} disabled={policyBulkLoading}>{m.routing_select_all()}</button>
                 </div>
                 <div class="bulk-bar-actions">
-                    <button class="bulk-btn bulk-btn-delete" disabled={policySelected.size === 0 || policyBulkLoading} onclick={() => policyBulkDeleteConfirm = true}>Удалить</button>
+                    <button class="bulk-btn bulk-btn-delete" disabled={policySelected.size === 0 || policyBulkLoading} onclick={() => policyBulkDeleteConfirm = true}>{m.common_delete()}</button>
                 </div>
             </div>
         {/if}
@@ -204,11 +203,11 @@
     {#if accessPolicies.length === 0}
         {#if missing}
             <div class="warn-hint">
-                Данные политик не получены от маршрутизатора. Нажмите «Загрузить недостающее» в заголовке страницы, чтобы повторить запрос.
+                {m.access_policy_no_data()}
             </div>
         {:else}
             <div class="empty-hint">
-                Нет политик доступа. Создайте политику, чтобы направить трафик устройств через выбранные интерфейсы.
+                {m.access_policy_empty()}
             </div>
         {/if}
     {:else}
@@ -235,9 +234,9 @@
         {@const pol = accessPolicies.find(p => p.name === policyDeleteName)}
         <ConfirmModal
             open={true}
-            title="Удаление политики"
-            message={`Удалить политику «${pol?.description || policyDeleteName}»?`}
-            secondary="Все устройства будут отвязаны от этой политики."
+            title={m.access_policy_delete_title()}
+            message={m.access_policy_delete_message({ name: pol?.description || policyDeleteName || '' })}
+            secondary={m.access_policy_delete_secondary()}
             onConfirm={() => deletePolicy(policyDeleteName!)}
             onClose={() => policyDeleteName = null}
         />
@@ -246,8 +245,8 @@
     {#if policyBulkDeleteConfirm}
         <ConfirmModal
             open={true}
-            title="Удаление"
-            message={`Удалить ${pluralize(policySelected.size, POLICY_WORDS)}? Все устройства будут отвязаны.`}
+            title={m.routing_delete_title()}
+            message={m.routing_policy_bulk_delete_message({ count: policySelected.size })}
             onConfirm={bulkPolicyDelete}
             onClose={() => policyBulkDeleteConfirm = false}
         />

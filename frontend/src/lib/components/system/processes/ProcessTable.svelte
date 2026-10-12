@@ -1,10 +1,10 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SystemProcessItem } from '$lib/api/client';
 	import { Card } from '$lib/components/ui';
 	import { RefreshCw, Search, ArrowUp, ArrowDown } from 'lucide-svelte';
 	import ProcessRow from './ProcessRow.svelte';
 	import type { SortField } from './shared';
-	import { CORE_WORDS, pluralize } from '$lib/utils/pluralize';
 
 	interface Props {
 		processes: SystemProcessItem[];
@@ -25,12 +25,12 @@
 		{#if !initialLoaded && loading}
 			<div class="empty-state">
 				<RefreshCw size={24} class="spin" />
-				<p>Сбор списка процессов роутера…</p>
+				<p>{m.system_processes_t_collecting()}</p>
 			</div>
 		{:else if processes.length === 0}
 			<div class="empty-state">
 				<Search size={24} class="muted" />
-				<p>Процессы не найдены по текущему запросу</p>
+				<p>{m.system_processes_t_none()}</p>
 			</div>
 		{:else}
 			<table class="proc-table">
@@ -46,7 +46,7 @@
 						</th>
 						<th class="th-sortable col-th-user" onclick={() => onsort('user')}>
 							<div class="th-wrap">
-								<span>Польз.</span>
+								<span>{m.system_processes_t_user()}</span>
 								{#if sortField === 'user'}
 									{#if sortAsc}<ArrowUp size={11} />{:else}<ArrowDown size={11} />{/if}
 								{/if}
@@ -54,7 +54,7 @@
 						</th>
 						<th class="th-sortable col-th-state" onclick={() => onsort('state')}>
 							<div class="th-wrap">
-								<span>Сост.</span>
+								<span>{m.system_processes_t_state()}</span>
 								{#if sortField === 'state'}
 									{#if sortAsc}<ArrowUp size={11} />{:else}<ArrowDown size={11} />{/if}
 								{/if}
@@ -62,7 +62,7 @@
 						</th>
 						<th class="th-sortable col-th-threads" onclick={() => onsort('threads')}>
 							<div class="th-wrap">
-								<span>Потоки</span>
+								<span>{m.system_processes_t_threads()}</span>
 								{#if sortField === 'threads'}
 									{#if sortAsc}<ArrowUp size={11} />{:else}<ArrowDown size={11} />{/if}
 								{/if}
@@ -70,7 +70,7 @@
 						</th>
 						<th
 							class="th-sortable col-th-cpu"
-							title="Доля всего процессора роутера{cpuCount > 1 ? ` (${pluralize(cpuCount, CORE_WORDS)})` : ''}: 100 % — заняты все ядра"
+							title={cpuCount > 1 ? m.system_processes_t_cpu_title_cores({ count: cpuCount }) : m.system_processes_t_cpu_title()}
 							onclick={() => onsort('cpu')}
 						>
 							<div class="th-wrap">
@@ -82,11 +82,11 @@
 						</th>
 						<th
 							class="th-sortable col-th-time"
-							title="Процессорное время с запуска процесса"
+							title={m.system_processes_t_cpu_time_title()}
 							onclick={() => onsort('time')}
 						>
 							<div class="th-wrap">
-								<span>Время CPU</span>
+								<span>{m.system_processes_t_cpu_time()}</span>
 								{#if sortField === 'time'}
 									{#if sortAsc}<ArrowUp size={11} />{:else}<ArrowDown size={11} />{/if}
 								{/if}
@@ -94,11 +94,11 @@
 						</th>
 						<th
 							class="th-sortable col-th-mem"
-							title="Своя память процесса — ядро не может её отдать. Отдельно — страницы файлов (бинари, библиотеки): их ядро освобождает при нехватке памяти. У процессов, порождённых через fork (например, воркеры nginx), общие страницы засчитываются каждому — сумма по строкам больше реального расхода"
+							title={m.system_processes_t_mem_title()}
 							onclick={() => onsort('mem')}
 						>
 							<div class="th-wrap">
-								<span>Память</span>
+								<span>{m.system_processes_t_memory()}</span>
 								{#if sortField === 'mem'}
 									{#if sortAsc}<ArrowUp size={11} />{:else}<ArrowDown size={11} />{/if}
 								{/if}
@@ -106,13 +106,13 @@
 						</th>
 						<th class="th-sortable col-th-cmd" onclick={() => onsort('name')}>
 							<div class="th-wrap">
-								<span>Команда / Процесс</span>
+								<span>{m.system_processes_t_cmd()}</span>
 								{#if sortField === 'name'}
 									{#if sortAsc}<ArrowUp size={11} />{:else}<ArrowDown size={11} />{/if}
 								{/if}
 							</div>
 						</th>
-						<th class="col-th-act">Стоп</th>
+						<th class="col-th-act">{m.system_processes_t_stop()}</th>
 					</tr>
 				</thead>
 				<tbody>

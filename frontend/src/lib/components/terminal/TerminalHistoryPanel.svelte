@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { History, Play, Trash2, X } from 'lucide-svelte';
 
 	interface Props {
@@ -12,26 +13,26 @@
 	let { commands, onselect, onclear, onclose, compact = false }: Props = $props();
 </script>
 
-<aside class="history-panel" class:compact aria-label="История команд">
+<aside class="history-panel" class:compact aria-label={m.terminal_hist_aria()}>
 	<div class="history-head">
 		<div class="history-title">
 			<History size={14} />
-			<span>История</span>
+			<span>{m.terminal_hist_title()}</span>
 		</div>
 		<div class="history-actions">
 			{#if commands.length > 0}
-				<button type="button" class="icon-btn" title="Очистить историю" onclick={() => onclear?.()}>
+				<button type="button" class="icon-btn" title={m.terminal_hist_clear()} onclick={() => onclear?.()}>
 					<Trash2 size={13} />
 				</button>
 			{/if}
-			<button type="button" class="icon-btn" title="Скрыть панель" onclick={() => onclose?.()}>
+			<button type="button" class="icon-btn" title={m.terminal_hist_hide()} onclick={() => onclose?.()}>
 				<X size={13} />
 			</button>
 		</div>
 	</div>
 
 	{#if commands.length === 0}
-		<p class="empty">Команды появятся здесь после ввода в терминале</p>
+		<p class="empty">{m.terminal_hist_empty()}</p>
 	{:else}
 		<ul class="history-list">
 			{#each commands as cmd (cmd)}

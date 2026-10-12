@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Download, Upload } from 'lucide-svelte';
 	import { Button, Modal } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -70,7 +71,7 @@
 				preparedExport = data;
 				if (exportWarnings.length > 0) {
 					notifications.warning(
-						`Внимание: у ${exportWarnings.length} сервер(ов) отсутствует privateKey. Backup будет неполным.`,
+						m.servers_backup_warning({ count: exportWarnings.length }),
 					);
 					return;
 				}
@@ -97,13 +98,13 @@
 				const text = await file.text();
 				const parsed = JSON.parse(text) as unknown;
 				if (!isManagedServerBackupFile(parsed)) {
-					notifications.error('Это не файл резервной копии awg-manager.');
+					notifications.error(m.servers_backup_not_backup_file());
 					return;
 				}
 				pendingFile = parsed;
 				importModalOpen = true;
 			} catch (e) {
-				notifications.error('Не удалось прочитать файл: ' + (e as Error).message);
+				notifications.error(m.servers_backup_read_failed({ error: (e as Error).message }));
 			}
 		};
 		input.click();
@@ -125,9 +126,9 @@
 			size="md"
 			onclick={startExport}
 			iconBefore={exportIcon}
-			title="Экспорт серверов"
+			title={m.servers_backup_export_servers()}
 		>
-			Экспорт
+			{m.common_export()}
 		</Button>
 	{/if}
 	<Button
@@ -135,15 +136,15 @@
 		size="md"
 		onclick={openFilePicker}
 		iconBefore={importIcon}
-		title="Импорт серверов"
+		title={m.servers_backup_import_servers()}
 	>
-		Импорт
+		{m.servers_backup_import()}
 	</Button>
 </div>
 
 <Modal
 	bind:open={exportModalOpen}
-	title="Экспорт резервной копии"
+	title={m.servers_backup_export_title()}
 	size="sm"
 	onclose={() => {
 		exportModalOpen = false;
@@ -151,10 +152,10 @@
 		preparedExport = null;
 	}}
 >
-	<p>Файл будет содержать приватные ключи сервера и пиров. Храните его в безопасном месте.</p>
+	<p>{m.servers_backup_private_keys_note()}</p>
 	{#if exportWarnings.length > 0}
 		<div class="warn-box">
-			<strong>Внимание:</strong> backup неполный, часть серверов не сможет быть восстановлена:
+			<strong>{m.servers_backup_warning_label()}</strong> {m.servers_backup_incomplete()}
 			<ul>
 				{#each exportWarnings as w}
 					<li>{w}</li>
@@ -172,10 +173,10 @@
 				preparedExport = null;
 			}}
 		>
-			Отмена
+			{m.common_cancel()}
 		</Button>
 		<Button variant="outline-primary" size="md" onclick={confirmExport} loading={exporting}>
-			{exportWarnings.length > 0 ? 'Скачать всё равно' : 'Скачать'}
+			{exportWarnings.length > 0 ? m.servers_backup_download_anyway() : m.common_download()}
 		</Button>
 	{/snippet}
 </Modal>

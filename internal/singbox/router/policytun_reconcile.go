@@ -251,7 +251,7 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if s.deps.OpkgTunIndices != nil {
 		live, probeErr = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx)
 	}
-	if s.needsReprovision(ctx, st, live, probeErr, policyTunDescription) {
+	if s.needsReprovision(ctx, st, live, probeErr, policyTunOwnDescriptions(st)...) {
 		// Drift-heal, НЕ действие пользователя: sticky master-Stop не сбрасываем.
 		return s.enableLocked(ctx, false)
 	}
@@ -274,6 +274,7 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 			"режим включён, но tun-инбаунд пропал из слота — переустановка (недоделанное выключение)")
 		if e := s.deps.Settings.SetOpkgTunState(&storage.OpkgTunState{
 			Mode: storage.OpkgTunModePolicyTun, Index: st.Index, PolicyTun: st.PolicyTun,
+			Description: st.Description, PendingDescription: st.PendingDescription,
 		}); e != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "reset policy-tun persist: "+e.Error())
 		}
@@ -308,8 +309,10 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	s.healDetachedTun(iface, "policy-tun-reconcile", orchestrator.SlotRouter)
 	// Гейт probeErr == nil: без скана чужой интерфейс на нашем индексе не
 	// отсечён (needsReprovision на ошибке пробы молчит) — адрес ушёл бы ему.
+	// Тот же гейт у переименования: описание — метка владения.
 	if probeErr == nil {
 		s.healTunAddress(ctx, sr, iface, ndmsName, "policy-tun-reconcile")
+		s.healPolicyTunDescription(ctx, st, sr, iface, ndmsName)
 	}
 
 	// One-shot (до первого УСПЕХА) ассерт permit-ACL: покрывает апгрейд поверх

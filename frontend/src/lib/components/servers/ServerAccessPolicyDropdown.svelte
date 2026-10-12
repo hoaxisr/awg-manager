@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { Snippet } from 'svelte';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
@@ -37,8 +38,8 @@
 	let standardPolicies = $derived(policies.filter((p) => isStandardAccessPolicyName(p.id)));
 
 	let policyOptions = $derived<DropdownOption[]>([
-		{ value: 'none', label: 'Политика по умолчанию' },
-		...(orphanedPolicy ? [{ value: orphanedPolicy, label: `${orphanedPolicy} (отсутствует)` }] : []),
+		{ value: 'none', label: m.servers_policy_default() },
+		...(orphanedPolicy ? [{ value: orphanedPolicy, label: m.servers_policy_missing({ policy: orphanedPolicy }) }] : []),
 		...standardPolicies.map((p) => ({
 			value: p.id,
 			label: p.description ? `${p.id} — ${p.description}` : p.id,
@@ -60,9 +61,9 @@
 {:else}
 	<div class="setting-row">
 		<div class="setting-copy">
-			<span class="setting-title">Политика доступа</span>
+			<span class="setting-title">{m.servers_policy_title()}</span>
 			<span class="setting-description"
-				>Регулирует выход в интернет для клиентов сервера. Применяется ко всем клиентам этого сервера.</span
+				>{m.servers_policy_desc()}</span
 			>
 			{#if extra}{@render extra()}{/if}
 		</div>

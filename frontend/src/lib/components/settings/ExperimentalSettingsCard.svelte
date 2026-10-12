@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { Button } from '$lib/components/ui';
 	import { summonPukhosos } from '$lib/stores/pukhososSummon';
@@ -19,16 +20,16 @@
 
 <div class="settings-block" id="experimental-settings">
 	<div class="card">
-		<SettingsSectionLabel label="Экспериментальное" icon={FlaskConical} tone="info" header cycleInVivid />
+		<SettingsSectionLabel label={m.settings_experimental_title()} icon={FlaskConical} tone="info" header cycleInVivid />
 		<div class="setting-row">
 			<div class="flex flex-col gap-1">
-				<span class="font-medium">Пухосос</span>
+				<span class="font-medium">{m.settings_experimental_vacuum_label()}</span>
 				<span class="setting-description">
-					Вызвать пухосос, он пару раз проедет по блоку ссылок и благодарностей.
+					{m.settings_experimental_vacuum_description()}
 				</span>
 			</div>
 			<Button variant="secondary" size="md" onclick={handleSummon} disabled={summoning}>
-				{summoning ? 'Едет…' : 'Вызвать пухосос'}
+				{summoning ? m.settings_experimental_vacuum_busy() : m.settings_experimental_vacuum_summon()}
 			</Button>
 		</div>
 	</div>

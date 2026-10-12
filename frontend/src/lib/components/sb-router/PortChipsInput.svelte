@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { parsePortsString, serializePorts, parseDraftEntries, portKey, portLabel, type PortEntry } from '$lib/utils/ports';
 
   interface Props {
@@ -65,7 +66,7 @@
     {#each chips as c (portKey(c))}
       <span class="port-chip">
         {portLabel(c)}
-        <button type="button" class="chip-x" onclick={() => remove(c)} aria-label="удалить порт">✕</button>
+        <button type="button" class="chip-x" onclick={() => remove(c)} aria-label={m.sb_router_chips_port_remove()}>✕</button>
       </span>
     {/each}
     <input
@@ -75,7 +76,7 @@
       bind:value={draft}
       onkeydown={onKeydown}
       oninput={() => (error = '')}
-      placeholder="443 TCP или 5000-5500 UDP"
+      placeholder={m.sb_router_chips_port_placeholder()}
     />
   </div>
   {#if error}<div class="port-error">{error}</div>{/if}

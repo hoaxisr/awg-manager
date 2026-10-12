@@ -3,6 +3,9 @@ package mcp_test
 import (
 	"strings"
 	"testing"
+
+	mcpsrv "github.com/hoaxisr/awg-manager/internal/mcp"
+	"github.com/hoaxisr/awg-manager/internal/mcp/mcptest"
 )
 
 // TestTools_ListSingboxTunnels — control_singbox умеет запустить и
@@ -102,5 +105,171 @@ func TestTools_SingboxDelayCheckBusyIsNotUnreachable(t *testing.T) {
 	}
 	if txt := strings.ToLower(toolText(res)); !strings.Contains(txt, "retry") {
 		t.Fatalf("the text must tell the model to retry rather than conclude: %q", txt)
+	}
+}
+
+// TestTools_SingboxDelayCheckKinds — проба принимала только теги из
+// list_singbox_tunnels. Сервер подписки и группа получали «не найден»,
+// хотя движок умеет мерить любой outbound.
+func TestTools_SingboxDelayCheckKinds(t *testing.T) {
+	s, _ := newTestSession(t)
+
+	for tag, want := range map[string]string{
+		"vless-nl":        "proxy",
+		"sub-706dcf33-a1": "member",
+		"sub-706dcf33":    "group",
+	} {
+		res, out := callTool(t, s, "singbox_delay_check", map[string]any{"tag": tag})
+		if res.IsError {
+			t.Fatalf("%s: %s", tag, toolText(res))
+		}
+		if out["kind"] != want || out["reachable"] != true {
+			t.Fatalf("%s: out = %v, want kind %s", tag, out, want)
+		}
+	}
+
+	// A group is measured through the member it routes through now, and
+	// the answer must say which one that was.
+	_, out := callTool(t, s, "singbox_delay_check", map[string]any{"tag": "sub-706dcf33"})
+	if out["via"] != "sub-706dcf33-a1" {
+		t.Fatalf("via = %v, want the active member", out["via"])
+	}
+	_, out = callTool(t, s, "singbox_delay_check", map[string]any{"tag": "vless-nl"})
+	if _, has := out["via"]; has {
+		t.Fatalf("via is for groups only: %v", out)
+	}
+}
+
+// TestTools_SingboxDelayCheckSaysWhyItCannotProbe — исключённый сервер
+// есть в подписке, но не в конфиге движка. «Не найден» отправил бы
+// агента искать опечатку в теге, который ему только что выдали.
+func TestTools_SingboxDelayCheckSaysWhyItCannotProbe(t *testing.T) {
+	s, _ := newTestSession(t)
+
+	res, _ := callTool(t, s, "singbox_delay_check", map[string]any{"tag": "sub-706dcf33-x9"})
+	if !res.IsError {
+		t.Fatal("an excluded server cannot be probed")
+	}
+	if txt := toolText(res); !strings.Contains(txt, "excluded") {
+		t.Fatalf("the refusal must say why: %q", txt)
+	}
+
+	res, _ = callTool(t, s, "singbox_delay_check", map[string]any{"tag": "nope"})
+	if !res.IsError {
+		t.Fatal("an unknown tag must be an error, not a proxy that is down")
+	}
+	txt := toolText(res)
+	for _, tool := range []string{"list_singbox_tunnels", "list_singbox_outbounds", "get_singbox_outbound"} {
+		if !strings.Contains(txt, tool) {
+			t.Errorf("the refusal must name %s: %q", tool, txt)
+		}
+	}
+
+	// A tag comes from any of three tools; the refusal names all three.
+	res, _ = callTool(t, s, "singbox_delay_check", map[string]any{"tag": " "})
+	if !res.IsError {
+		t.Fatal("an empty tag must be refused")
+	}
+	txt = toolText(res)
+	for _, tool := range []string{"list_singbox_tunnels", "list_singbox_outbounds", "get_singbox_outbound"} {
+		if !strings.Contains(txt, tool) {
+			t.Errorf("the refusal of an empty tag must name %s: %q", tool, txt)
+		}
+	}
+
+	for name, tag := range map[string]string{"a control character": "vless-nl\nx", "an over-long tag": strings.Repeat("a", 200)} {
+		if res, _ := callTool(t, s, "singbox_delay_check", map[string]any{"tag": tag}); !res.IsError {
+			t.Errorf("%s must be refused before Deps", name)
+		}
+	}
+}
+
+// TestTools_SingboxDelayCheckRefusesADraftOnlyGroup — группа из
+// неприменённого черновика движку неизвестна. «Не отвечает» про неё —
+// неправда: её никто не спрашивал.
+func TestTools_SingboxDelayCheckRefusesADraftOnlyGroup(t *testing.T) {
+	fake := mcptest.New()
+	fake.RouterOutbounds = append(fake.RouterOutbounds, mcpsrv.SingboxOutbound{Tag: "draft-only", Type: "selector", Source: "router"})
+	s := connect(t, mcpsrv.NewServer(fake, "test"))
+
+	res, _ := callTool(t, s, "singbox_delay_check", map[string]any{"tag": "draft-only"})
+	if !res.IsError {
+		t.Fatal("a group the engine does not run must not be reported as unreachable")
+	}
+	if txt := toolText(res); !strings.Contains(txt, "not running it") || !strings.Contains(txt, "get_singbox_staging") {
+		t.Fatalf("the refusal must say why and name the tool that shows the draft: %q", txt)
+	}
+}
+
+// TestTools_SingboxDelayCheckWithTheEngineDown — проба идёт через тот же
+// Clash API, что не ответил, и любую ошибку транспорта превращает в 0.
+// «Не ответил вовремя» про исправный сервер при остановленном sing-box —
+// неправда: не мерили ничего.
+func TestTools_SingboxDelayCheckWithTheEngineDown(t *testing.T) {
+	s, fake := newTestSession(t)
+	fake.ClashDown = true
+
+	res, _ := callTool(t, s, "singbox_delay_check", map[string]any{"tag": "sub-706dcf33"})
+	if !res.IsError {
+		t.Fatal("with sing-box not answering, a probe must not report reachable=false")
+	}
+	if txt := toolText(res); !strings.Contains(txt, "nothing was measured") {
+		t.Fatalf("the refusal must say nothing was measured: %q", txt)
+	}
+	// A typo is still a typo.
+	res, _ = callTool(t, s, "singbox_delay_check", map[string]any{"tag": "nope"})
+	if txt := toolText(res); !res.IsError || !strings.Contains(txt, "not found") {
+		t.Fatalf("a mistyped tag with the engine down = %q, want not found", txt)
+	}
+}
+
+// TestTools_SingboxTagsFromShareLinksAreAccepted — тег импортированного
+// прокси — это #fragment share-link без ограничения длины (vlink,
+// allocUniqueTunnelTag). Кириллица — два байта на букву, эмодзи —
+// четыре, и имя вроде «🇩🇪 Германия | Франкфурт | …» легко длиннее
+// 128 байт. До этого PR проба таких тегов работала.
+func TestTools_SingboxTagsFromShareLinksAreAccepted(t *testing.T) {
+	s, _ := newTestSession(t)
+	long := "🇩🇪 " + strings.Repeat("Германия | Франкфурт | ", 6)
+	if len(long) <= 128 {
+		t.Fatalf("fixture is only %d bytes", len(long))
+	}
+	for _, tool := range []string{"singbox_delay_check", "get_singbox_outbound"} {
+		res, _ := callTool(t, s, tool, map[string]any{"tag": long})
+		if txt := toolText(res); strings.Contains(txt, "longer than") {
+			t.Errorf("%s refused a share-link tag for its length: %q", tool, txt)
+		}
+	}
+}
+
+// TestTools_SingboxDelayCheckRefusesWhatTheEngineLacks — адаптер отказывает
+// любому тегу, которого нет в /proxies движка, а не только группе. Фейк,
+// который меряет такой прокси, соглашается сам с собой.
+func TestTools_SingboxDelayCheckRefusesWhatTheEngineLacks(t *testing.T) {
+	fake := mcptest.New()
+	fake.EngineLacks = map[string]bool{"vless-nl": true, "sub-706dcf33-a1": true}
+	s := connect(t, mcpsrv.NewServer(fake, "test"))
+	for _, tag := range []string{"vless-nl", "sub-706dcf33-a1"} {
+		res, _ := callTool(t, s, "singbox_delay_check", map[string]any{"tag": tag})
+		if !res.IsError || !strings.Contains(toolText(res), "not running it") {
+			t.Errorf("%s: a tag the engine does not run must be refused, got %q", tag, toolText(res))
+		}
+	}
+}
+
+// TestTools_SubscriptionGroupNotBuiltYet mirrors the adapter: a group tag
+// list_singbox_subscriptions handed out must not come back as "not found".
+func TestTools_SubscriptionGroupNotBuiltYet(t *testing.T) {
+	fake := mcptest.New()
+	fake.Subscriptions = append(fake.Subscriptions, mcpsrv.SingboxSubscription{
+		ID: "deadbeef00112233445566ff", Label: "New provider", SourceType: "url", Enabled: true, Mode: "urltest", GroupTag: "sub-deadbeef",
+	})
+	s := connect(t, mcpsrv.NewServer(fake, "test"))
+	for _, tool := range []string{"get_singbox_outbound", "singbox_delay_check"} {
+		res, _ := callTool(t, s, tool, map[string]any{"tag": "sub-deadbeef"})
+		txt := toolText(res)
+		if !res.IsError || strings.Contains(txt, "not found") || !strings.Contains(txt, "New provider") {
+			t.Errorf("%s: want the subscription named, got %q", tool, txt)
+		}
 	}
 }

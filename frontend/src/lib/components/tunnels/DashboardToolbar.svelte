@@ -1,14 +1,12 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { m } from '$lib/i18n';
 	import { Badge, SegmentedControl } from '$lib/components/ui';
 	import LayoutViewToggle from '$lib/components/ui/LayoutViewToggle.svelte';
 	import TunnelSearchInput from './TunnelSearchInput.svelte';
 	import TunnelCreateMenu from './TunnelCreateMenu.svelte';
 	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
-	import {
-		TUNNEL_DASHBOARD_LAYOUT_LABELS,
-		type TunnelDashboardLayout,
-	} from '$lib/stores/tunnelDashboardMode';
+	import type { TunnelDashboardLayout } from '$lib/stores/tunnelDashboardMode';
 	import type {
 		TunnelDashboardGroupMode,
 		TunnelDashboardOrderMode,
@@ -69,20 +67,20 @@
 		actions,
 	}: Props = $props();
 
-	const layoutOptions: Array<{ value: TunnelDashboardLayout; label: string }> = [
-		{ value: 'flat', label: TUNNEL_DASHBOARD_LAYOUT_LABELS.flat },
-		{ value: 'sections', label: TUNNEL_DASHBOARD_LAYOUT_LABELS.sections },
-	];
+	const layoutOptions: Array<{ value: TunnelDashboardLayout; label: string }> = $derived([
+		{ value: 'flat', label: m.tunnels_dashboard_layout_flat() },
+		{ value: 'sections', label: m.tunnels_dashboard_layout_sections() },
+	]);
 
-	const orderOptions: Array<{ value: TunnelDashboardOrderMode; label: string }> = [
-		{ value: 'auto', label: 'Авто' },
-		{ value: 'manual', label: 'Вручную' },
-	];
+	const orderOptions: Array<{ value: TunnelDashboardOrderMode; label: string }> = $derived([
+		{ value: 'auto', label: m.tunnels_dashboard_order_auto() },
+		{ value: 'manual', label: m.tunnels_dashboard_order_manual() },
+	]);
 
-	const groupOptions: Array<{ value: TunnelDashboardGroupMode; label: string }> = [
-		{ value: 'type', label: 'Тип' },
-		{ value: 'tags', label: 'Теги' },
-	];
+	const groupOptions: Array<{ value: TunnelDashboardGroupMode; label: string }> = $derived([
+		{ value: 'type', label: m.tunnels_dashboard_group_type() },
+		{ value: 'tags', label: m.tunnels_dashboard_group_tags() },
+	]);
 </script>
 
 <div class="dashboard-toolbar">
@@ -94,7 +92,7 @@
 		<SegmentedControl
 			value={layout}
 			options={layoutOptions}
-			ariaLabel="Расположение туннелей на дашборде"
+			ariaLabel={m.tunnels_dashboard_layout_aria()}
 			onchange={(next) => onLayoutChange(next)}
 		/>
 	</div>
@@ -104,7 +102,7 @@
 			<SegmentedControl
 				value={orderMode}
 				options={orderOptions}
-				ariaLabel="Порядок туннелей на дашборде"
+				ariaLabel={m.tunnels_dashboard_order_aria()}
 				onchange={(next) => onOrderModeChange?.(next)}
 			/>
 		</div>
@@ -115,7 +113,7 @@
 			<SegmentedControl
 				value={groupMode}
 				options={groupOptions}
-				ariaLabel="Группировка туннелей на дашборде"
+				ariaLabel={m.tunnels_dashboard_group_aria()}
 				onchange={(next) => onGroupModeChange?.(next)}
 			/>
 		</div>
@@ -124,11 +122,11 @@
 	{#if activeTagFilter}
 		<div class="dashboard-toolbar-tag-filter">
 			<Badge variant="accent">
-				<span class="tag-filter-label">Тег: {activeTagFilter}</span>
+				<span class="tag-filter-label">{m.tunnels_dashboard_tag_filter({ tag: activeTagFilter })}</span>
 				<button
 					type="button"
 					class="tag-filter-clear"
-					aria-label="Сбросить фильтр по тегу"
+					aria-label={m.tunnels_dashboard_tag_filter_clear()}
 					onclick={() => onClearTagFilter?.()}
 				>
 					&times;
@@ -143,7 +141,7 @@
 				value={viewMode}
 				denseValue="dense"
 				{showListOption}
-				ariaLabel="Вид туннелей"
+				ariaLabel={m.tunnels_dashboard_view_aria()}
 				onchange={(mode) => onViewModeChange(mode)}
 			/>
 		</div>

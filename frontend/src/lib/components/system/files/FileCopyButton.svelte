@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { Copy } from 'lucide-svelte';
@@ -13,7 +14,7 @@
 
 	async function copy() {
 		const ok = await copyToClipboard(value);
-		if (ok) notifications.success('Скопировано в буфер');
+		if (ok) notifications.success(m.system_files_copied_to_clipboard());
 	}
 </script>
 

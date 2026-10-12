@@ -16,7 +16,7 @@ import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outbou
 const noOutbounds: SingboxRouterOutbound[] = [];
 const noRulesets: Record<string, string> = {};
 const awgOptions: OutboundGroup[] = [
-  { group: 'AWG туннели', items: [{ value: 'awg-awg10', label: 'Office VPN (nwg0)' }] },
+  { id: 'awg', items: [{ value: 'awg-awg10', label: 'Office VPN (nwg0)' }] },
 ];
 
 const catalog: CatalogPreset[] = [
@@ -216,7 +216,7 @@ describe('resolveOutboundDisplay', () => {
       connectivity: { connected: true, latency: 50 },
       running: true,
     }];
-    const opts = [{ group: 'Sing-box туннели', items: [{ value: 'vless-nl', label: 'vless-nl' }] }];
+    const opts: OutboundGroup[] = [{ id: 'singbox', items: [{ value: 'vless-nl', label: 'vless-nl' }] }];
     const d = resolveOutboundDisplay('vless-nl', 'route', [], opts, null, [], tunnels);
     expect(d.label).toBe('vless-nl');
     expect(d.metaSuffix).toBe('t2s1');

@@ -11,6 +11,7 @@
 </script>
 
 <script lang="ts">
+    import { m } from '$lib/i18n';
     import { tick } from 'svelte';
 
     interface Props {
@@ -26,7 +27,7 @@
         values,
         options,
         onchange,
-        placeholder = 'Не выбрано',
+        placeholder,
         allowOrphans = false,
         disabled = false,
     }: Props = $props();
@@ -203,7 +204,7 @@
         }}
     >
         {#if values.length === 0}
-            <span class="placeholder">{placeholder}</span>
+            <span class="placeholder">{placeholder ?? m.ui_chip_select_placeholder()}</span>
         {/if}
         {#each knownChips as opt (opt.value)}
             <span class="value-chip">
@@ -211,20 +212,20 @@
                 <button
                     type="button"
                     class="chip-remove"
-                    aria-label="Удалить"
+                    aria-label={m.common_delete()}
                     onclick={() => removeValue(opt.value)}
                     {disabled}
                 >×</button>
             </span>
         {/each}
         {#each orphanValues as v (v)}
-            <span class="value-chip chip-orphan" title="Набор не найден в текущем конфиге">
+            <span class="value-chip chip-orphan" title={m.ui_chip_select_orphan_title()}>
                 <span class="chip-label">{v}</span>
-                <span class="chip-orphan-badge">сирота / orphaned</span>
+                <span class="chip-orphan-badge">{m.ui_chip_select_orphan_badge()}</span>
                 <button
                     type="button"
                     class="chip-remove"
-                    aria-label="Удалить"
+                    aria-label={m.common_delete()}
                     onclick={() => removeValue(v)}
                     {disabled}
                 >×</button>
@@ -256,8 +257,8 @@
                 class="search-input"
                 bind:this={searchInputEl}
                 bind:value={searchQuery}
-                placeholder="Поиск…"
-                aria-label="Поиск по списку"
+                placeholder={m.ui_chip_select_search_placeholder()}
+                aria-label={m.ui_chip_select_search_aria()}
                 autocomplete="off"
                 spellcheck="false"
                 inputmode="search"
@@ -277,7 +278,7 @@
             {/each}
 
             {#if usedItems.length > 0 && unusedItems.length > 0}
-                <div class="group-divider">Используются в других правилах</div>
+                <div class="group-divider">{m.ui_chip_select_used_divider()}</div>
             {/if}
 
             {#each usedItems as opt (opt.value)}
@@ -287,7 +288,7 @@
                     onclick={() => addValue(opt.value)}
                     role="option"
                     aria-selected="false"
-                    title="Уже используется в {opt.usedCount} прав{opt.usedCount === 1 ? 'иле' : 'илах'}"
+                    title={m.ui_chip_select_used_title({ count: opt.usedCount ?? 0 })}
                 >
                     <span class="opt-label">{opt.label ?? opt.value}</span>
                     <span class="usage-badge">×{opt.usedCount}</span>
@@ -295,7 +296,7 @@
             {/each}
 
             {#if filteredItems.length === 0}
-                <div class="empty">Ничего не найдено</div>
+                <div class="empty">{m.ui_chip_select_empty()}</div>
             {/if}
         </div>
     </div>

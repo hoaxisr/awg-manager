@@ -1,6 +1,7 @@
 <script lang="ts">
 	// EX-46..48 / SH-69..71 — единственное место «Kill port» на странице
 	// (решение Q10 ИА): одна строка на каждый порт инстанса.
+	import { m } from '$lib/i18n';
 	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
 
 	interface Props {
@@ -10,13 +11,13 @@
 		title?: string;
 	}
 
-	let { ports, title = 'Освобождение порта' }: Props = $props();
+	let { ports, title }: Props = $props();
 
 	const shown = $derived(ports.filter((p) => p.listen?.trim()));
 </script>
 
 {#if shown.length}
-	<p class="sub-title">{title}</p>
+	<p class="sub-title">{title ?? m.proxy_kill_port_title()}</p>
 	{#each shown as port (port.listen)}
 		<ListenPortKillButton listen={port.listen} proto={port.proto ?? 'udp'} />
 	{/each}

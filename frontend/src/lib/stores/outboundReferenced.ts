@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import { writable } from 'svelte/store';
 import type { TunnelReferencedError } from '$lib/types';
 
@@ -12,7 +13,7 @@ function createOutboundReferencedStore() {
 
 	return {
 		subscribe,
-		show(details: TunnelReferencedError, name: string, entityLabel = 'Туннель') {
+		show(details: TunnelReferencedError, name: string, entityLabel: string = m.tunnels_referenced_entity_default()) {
 			set({ details, name, entityLabel });
 		},
 		close() {

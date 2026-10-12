@@ -4,9 +4,9 @@
 	// SingboxTunnelsTabSection (view-режимы, table vs grid, EmptyState).
 	import { LayoutViewToggle, Button } from '$lib/components/ui';
 	import { EmptyState } from '$lib/components/layout';
+	import { m } from '$lib/i18n';
 	import { TunnelToolbarViewRow } from '$lib/components/tunnels';
 	import Awg3TunnelCard from './Awg3TunnelCard.svelte';
-	import { pluralForm, TUNNEL_WORDS } from '$lib/utils/pluralize';
 	import type { SingboxLayoutMode, TunnelRenderMode } from '$lib/constants/singboxLayout';
 	import type { Awg3Tunnel } from '$lib/types';
 	import { Waypoints, Download } from 'lucide-svelte';
@@ -60,10 +60,9 @@
 {#if showToolbar && tunnels.length > 0}
 	<div class="tunnels-toolbar">
 		<div class="toolbar-title">
-			<span class="section-title">AWG3 туннели</span>
+			<span class="section-title">{m.awg3_section_title()}</span>
 			<span class="tunnel-count">
-				{tunnels.length}
-				{pluralForm(tunnels.length, TUNNEL_WORDS)}
+				{m.settings_page_tunnels_count({ count: tunnels.length })}
 			</span>
 		</div>
 		<div class="toolbar-actions">
@@ -77,13 +76,13 @@
 					<LayoutViewToggle
 						value={layoutMode}
 						showListOption={showGridListToggle}
-						ariaLabel="Вид туннелей"
+						ariaLabel={m.awg3_section_view_aria()}
 						onchange={(v) => (layoutMode = v)}
 					/>
 				{/snippet}
 			</TunnelToolbarViewRow>
 			<Button variant="primary" size="md" onclick={openImport} iconBefore={importIcon}>
-				Импортировать
+				{m.awg3_section_import()}
 			</Button>
 		</div>
 	</div>
@@ -95,8 +94,8 @@
 
 {#if tunnels.length === 0}
 	<EmptyState
-		title="Нет AWG3 туннелей"
-		description="Импортируй JSON-конфиг AWG3-клиента — он станет sing-box endpoint'ом."
+		title={m.awg3_section_empty_title()}
+		description={m.awg3_section_empty_description()}
 		icon={emptyIcon}
 		action={emptyAction}
 	/>
@@ -105,7 +104,7 @@
 	{/snippet}
 	{#snippet emptyAction()}
 		<Button variant="primary" size="md" onclick={openImport} iconBefore={importIcon}>
-			Импортировать
+			{m.awg3_section_import()}
 		</Button>
 	{/snippet}
 {:else if renderMode === 'table'}
@@ -121,12 +120,12 @@
 			</colgroup>
 			<thead>
 				<tr>
-					<th>Туннель</th>
-					<th>Хост</th>
-					<th>Защита</th>
-					<th>Таймеры</th>
+					<th>{m.awg3_section_col_tunnel()}</th>
+					<th>{m.awg3_section_col_host()}</th>
+					<th>{m.awg3_section_col_protection()}</th>
+					<th>{m.awg3_section_col_timers()}</th>
 					<th>Delay</th>
-					<th class="col-actions">Действия</th>
+					<th class="col-actions">{m.awg3_section_col_actions()}</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -135,7 +134,7 @@
 				{/each}
 				{#if searchEmpty}
 					<tr class="tunnel-empty-row">
-						<td colspan="6">Ничего не найдено</td>
+						<td colspan="6">{m.awg3_section_nothing_found()}</td>
 					</tr>
 				{/if}
 			</tbody>
@@ -153,7 +152,7 @@
 		{/each}
 	</div>
 	{#if searchEmpty}
-		<p class="tunnel-list-empty">Ничего не найдено</p>
+		<p class="tunnel-list-empty">{m.awg3_section_nothing_found()}</p>
 	{/if}
 {/if}
 

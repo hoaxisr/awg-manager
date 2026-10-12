@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SystemFileEntry, FileSystemScriptStatus } from '$lib/api/client';
 	import { getFileTypeInfo } from './fileIcons';
 	import type { CtxMenu, ScriptAction } from './types';
@@ -78,70 +79,70 @@
 	{#if menu.entry}
 		{@const entry = menu.entry}
 		<button type="button" role="menuitem" onclick={() => { onOpen(entry); onClose(); }}>
-			<ExternalLink size={13} /> Открыть <kbd>Enter</kbd>
+			<ExternalLink size={13} /> {m.system_files_ctx_open()} <kbd>Enter</kbd>
 		</button>
 		<button type="button" role="menuitem" onclick={() => { onProps(entry); onClose(); }}>
-			<Eye size={13} /> Свойства… <kbd>F3</kbd>
+			<Eye size={13} /> {m.system_files_ctx_props()} <kbd>F3</kbd>
 		</button>
 		{#if !entry.isDir}
 			<button type="button" role="menuitem" onclick={() => { onEdit(entry); onClose(); }}>
-				<Edit2 size={13} /> Редактировать <kbd>F4</kbd>
+				<Edit2 size={13} /> {m.system_files_ctx_edit()} <kbd>F4</kbd>
 			</button>
 			<button type="button" role="menuitem" onclick={() => { onDownload(entry); onClose(); }}>
-				<Download size={13} /> Скачать
+				<Download size={13} /> {m.common_download()}
 			</button>
 			{@const info = getFileTypeInfo(entry.name, entry.isDir)}
 			{@const isRunning = scriptStatuses[entry.path]?.running}
 			{#if info.kind === 'script' || entry.mode.includes('x')}
 				{#if isRunning}
 					<button type="button" role="menuitem" onclick={() => { onScriptAction(entry, 'restart'); onClose(); }}>
-						<RotateCw size={13} /> Перезапустить скрипт
+						<RotateCw size={13} /> {m.system_files_ctx_restart_script()}
 					</button>
 					<button type="button" role="menuitem" class="danger" onclick={() => { onScriptAction(entry, 'stop'); onClose(); }}>
-						<Square size={13} /> Остановить скрипт
+						<Square size={13} /> {m.system_files_ctx_stop_script()}
 					</button>
 				{:else}
 					<button type="button" role="menuitem" onclick={() => { onScriptAction(entry, 'start'); onClose(); }}>
-						<Play size={13} /> Запустить скрипт
+						<Play size={13} /> {m.system_files_ctx_start_script()}
 					</button>
 				{/if}
 			{/if}
 		{/if}
 		<hr />
 		<button type="button" role="menuitem" onclick={() => { onCopyPath(entry.path); onClose(); }}>
-			<Copy size={13} /> Копировать путь
+			<Copy size={13} /> {m.system_files_ctx_copy_path()}
 		</button>
 		{#if !readOnly && entry.name !== '..'}
 			<button type="button" role="menuitem" onclick={() => { onRename(entry); onClose(); }}>
-				<Edit2 size={13} /> Переименовать… <kbd>F2</kbd>
+				<Edit2 size={13} /> {m.system_files_ctx_rename()} <kbd>F2</kbd>
 			</button>
 			<button type="button" role="menuitem" onclick={() => { onCopyTo(entry.path); onClose(); }}>
-				<Copy size={13} /> Копировать в…
+				<Copy size={13} /> {m.system_files_ctx_copy_to()}
 			</button>
 			<button type="button" role="menuitem" onclick={() => { onMoveTo(entry.path); onClose(); }}>
-				<Move size={13} /> Переместить в…
+				<Move size={13} /> {m.system_files_ctx_move_to()}
 			</button>
 			<button type="button" role="menuitem" class="danger" onclick={() => { onDelete(entry); onClose(); }}>
-				<Trash2 size={13} /> Удалить <kbd>F8</kbd>
+				<Trash2 size={13} /> {m.common_delete()} <kbd>F8</kbd>
 			</button>
 		{/if}
 	{:else}
 		{#if !readOnly}
 			<button type="button" role="menuitem" onclick={() => { onMkdir(); onClose(); }}>
-				<FolderPlus size={13} /> Создать папку <kbd>F7</kbd>
+				<FolderPlus size={13} /> {m.system_files_ctx_mkdir()} <kbd>F7</kbd>
 			</button>
 			<button type="button" role="menuitem" onclick={() => { onNewFile(); onClose(); }}>
-				<FilePlus size={13} /> Создать файл
+				<FilePlus size={13} /> {m.system_files_ctx_new_file()}
 			</button>
 			<button type="button" role="menuitem" onclick={() => { onUploadClick(); onClose(); }}>
-				<Upload size={13} /> Загрузить файл…
+				<Upload size={13} /> {m.system_files_ctx_upload()}
 			</button>
 		{/if}
 		<button type="button" role="menuitem" onclick={() => { onSelectAll(); onClose(); }}>
-			<Check size={13} /> Выделить всё <kbd>Ctrl+A</kbd>
+			<Check size={13} /> {m.system_files_ctx_select_all()} <kbd>Ctrl+A</kbd>
 		</button>
 		<button type="button" role="menuitem" onclick={() => { onRefresh(); onClose(); }}>
-			<RefreshCw size={13} /> Обновить <kbd>F5</kbd>
+			<RefreshCw size={13} /> {m.common_refresh()} <kbd>F5</kbd>
 		</button>
 	{/if}
 </div>

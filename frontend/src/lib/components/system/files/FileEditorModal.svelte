@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api, type FileSystemScriptStatus } from '$lib/api/client';
 	import { Modal, Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
@@ -24,12 +25,13 @@
 	// Script execution state
 	let scriptStatus = $state<FileSystemScriptStatus | null>(null);
 	let runningAction = $state(false);
-	let lastOutput = $state<string | null>(null);
+	// Вывод последнего запуска; пустой output подменяется текстом при отрисовке.
+	let lastRun = $state<{ output: string; ok: boolean } | null>(null);
 
 	$effect(() => {
 		if (open) {
 			dirty = false;
-			lastOutput = null;
+			lastRun = null;
 			if (path) {
 				void checkScriptStatus(path);
 			}
@@ -50,11 +52,11 @@
 		try {
 			await api.systemFilesWrite(path, content);
 			dirty = false;
-			notifications.success('Файл сохранён');
+			notifications.success(m.system_files_editor_saved());
 			onSaved?.();
 			if (path) void checkScriptStatus(path);
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Ошибка сохранения файла'));
+			notifications.error(errorMessage(e, m.system_files_editor_save_failed()));
 		} finally {
 			saving = false;
 		}
@@ -68,15 +70,15 @@
 		runningAction = true;
 		try {
 			const res = await api.systemFilesScriptAction({ path, action });
-			lastOutput = res.output || (res.ok ? 'Команда выполнена успешно' : 'Завершено с ошибкой');
+			lastRun = { output: res.output, ok: res.ok };
 			if (res.ok) {
-				notifications.success(`Скрипт: действие «${action}» выполнено`);
+				notifications.success(m.system_files_editor_action_done({ action }));
 			} else {
-				notifications.error(res.error || 'Ошибка выполнения');
+				notifications.error(res.error || m.system_files_script_error());
 			}
 			await checkScriptStatus(path);
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Ошибка запуска скрипта'));
+			notifications.error(errorMessage(e, m.system_files_editor_run_failed()));
 		} finally {
 			runningAction = false;
 		}
@@ -104,7 +106,7 @@
 
 <Modal
 	{open}
-	title={path ? path.split('/').pop() || path : 'Редактор файла'}
+	title={path ? path.split('/').pop() || path : m.system_files_editor_title()}
 	size="xl"
 	onclose={onClose}
 >
@@ -115,7 +117,7 @@
 				<FileText size={16} class="text-accent" />
 				<code class="file-path">{path}</code>
 				{#if dirty}
-					<span class="dirty-badge">● Не сохранено</span>
+					<span class="dirty-badge">{m.system_files_editor_unsaved()}</span>
 				{/if}
 			</div>
 
@@ -126,9 +128,11 @@
 						<span class="status-dot"></span>
 						<span class="status-txt">
 							{#if scriptStatus.running}
-								Запущен {scriptStatus.pids?.length ? `(PID ${scriptStatus.pids.join(', ')})` : ''}
+								{scriptStatus.pids?.length
+									? m.system_files_editor_running_pids({ pids: scriptStatus.pids.join(', ') })
+									: m.system_files_editor_running()}
 							{:else}
-								Остановлен
+								{m.system_files_editor_stopped()}
 							{/if}
 						</span>
 					</div>
@@ -142,7 +146,7 @@
 								onclick={() => handleScriptAction(scriptStatus?.isService ? 'start' : 'run')}
 							>
 								{#snippet iconBefore()}<Play size={13} />{/snippet}
-								{scriptStatus.isService ? 'Запустить службу' : 'Запустить скрипт'}
+								{scriptStatus.isService ? m.system_files_editor_start_service() : m.system_files_editor_start_script()}
 							</Button>
 						{:else}
 							<Button
@@ -152,7 +156,7 @@
 								onclick={() => handleScriptAction('restart')}
 							>
 								{#snippet iconBefore()}<RotateCw size={13} />{/snippet}
-								Перезапустить
+								{m.common_restart()}
 							</Button>
 							<Button
 								size="sm"
@@ -161,7 +165,7 @@
 								onclick={() => handleScriptAction('stop')}
 							>
 								{#snippet iconBefore()}<Square size={13} />{/snippet}
-								Остановить
+								{m.common_stop()}
 							</Button>
 						{/if}
 					</div>
@@ -169,18 +173,18 @@
 			{/if}
 
 			<div class="header-right">
-				<span class="file-meta">{content.length} симв. ({formatBytes(new Blob([content]).size)})</span>
+				<span class="file-meta">{m.system_files_editor_chars({ count: content.length, size: formatBytes(new Blob([content]).size) })}</span>
 			</div>
 		</div>
 
 		<!-- Script Output Banner (if any) -->
-		{#if lastOutput}
+		{#if lastRun}
 			<div class="script-output-banner">
 				<div class="banner-head">
-					<div class="head-title"><Terminal size={14} /> Вывод выполнения:</div>
-					<button type="button" class="btn-close-output" onclick={() => (lastOutput = null)}><X size={14} /></button>
+					<div class="head-title"><Terminal size={14} /> {m.system_files_editor_output()}</div>
+					<button type="button" class="btn-close-output" onclick={() => (lastRun = null)}><X size={14} /></button>
 				</div>
-				<pre class="output-text">{lastOutput}</pre>
+				<pre class="output-text">{lastRun.output || (lastRun.ok ? m.system_files_editor_cmd_ok() : m.system_files_editor_cmd_failed())}</pre>
 			</div>
 		{/if}
 
@@ -192,7 +196,7 @@
 			readonly={readOnly}
 			oninput={() => (dirty = true)}
 			onkeydown={handleKeyDown}
-			placeholder="Содержимое файла..."
+			placeholder={m.system_files_editor_placeholder()}
 			spellcheck="false"
 			autofocus
 		></textarea>
@@ -201,15 +205,15 @@
 	{#snippet actions()}
 		<div class="editor-footer">
 			<div class="footer-hint">
-				<span><kbd>Ctrl+S</kbd> — сохранить</span>
-				<span><kbd>Tab</kbd> — отступ</span>
+				<span><kbd>Ctrl+S</kbd> {m.system_files_editor_hint_save()}</span>
+				<span><kbd>Tab</kbd> {m.system_files_editor_hint_indent()}</span>
 			</div>
 			<div class="footer-btns">
-				<Button variant="ghost" onclick={onClose}>Закрыть</Button>
+				<Button variant="ghost" onclick={onClose}>{m.common_close()}</Button>
 				{#if !readOnly}
 					<Button variant="primary" loading={saving} disabled={!dirty} onclick={handleSave}>
 						{#snippet iconBefore()}<Save size={14} />{/snippet}
-						Сохранить
+						{m.common_save()}
 					</Button>
 				{/if}
 			</div>

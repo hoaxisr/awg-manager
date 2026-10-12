@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { tunnelNameBytes, tunnelNameError, TUNNEL_NAME_TOO_LONG } from './tunnelName';
+import { tunnelNameBytes, tunnelNameError, TUNNEL_NAME_MAX_BYTES } from './tunnelName';
+import { m } from '$lib/i18n';
 
 describe('tunnelNameBytes', () => {
 	it('считает байты UTF-8, а не символы', () => {
@@ -14,9 +15,10 @@ describe('tunnelNameError', () => {
 		expect(tunnelNameError('ж'.repeat(128))).toBe('');
 		expect(tunnelNameError('a'.repeat(256))).toBe('');
 	});
-	it('257 байт — текст сервера', () => {
-		expect(tunnelNameError('ж'.repeat(128) + 'a')).toBe(TUNNEL_NAME_TOO_LONG);
-		expect(TUNNEL_NAME_TOO_LONG).toBe('имя туннеля длиннее 256 байт (ограничение роутера)');
+	it('257 байт — ошибка с пределом роутера', () => {
+		expect(tunnelNameError('ж'.repeat(128) + 'a')).toBe(
+			m.validation_tunnel_name_too_long({ max: TUNNEL_NAME_MAX_BYTES }),
+		);
 	});
 	it('пустое имя не ошибка', () => {
 		expect(tunnelNameError('')).toBe('');

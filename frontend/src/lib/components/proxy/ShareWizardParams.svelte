@@ -2,6 +2,7 @@
 	// Шаг 2 мастера «Настроить раздачу» — параметры сервера (ia.md §3.4).
 	// WDTT: порт и firewall. FreeTurn: WG-сервер роутера и пир,
 	// listen-порт, обфускация, firewall.
+	import { m } from '$lib/i18n';
 	import { Button, Dropdown, Input, Toggle } from '$lib/components/ui';
 	import { obfOptions } from '../freeturn/options';
 	import ShareWizardPeer from './ShareWizardPeer.svelte';
@@ -25,7 +26,7 @@
 		<!-- Порт живёт строкой: `bind:value` у `type="number"` приводит значение к
 		     числу, а подсказка WS-19 и проверка готовности работают со строкой. -->
 		<Input
-			label="Порт"
+			label={m.proxy_common_port()}
 			type="number"
 			hint={rawPortHint(fields.port)}
 			value={fields.port}
@@ -35,7 +36,7 @@
 	</div>
 	<div class="toggle-row">
 		<Toggle
-			label="Открыть порты сервера в firewall"
+			label={m.proxy_share_params_firewall_ports()}
 			checked={fields.firewall}
 			onchange={(v) => (fields.firewall = v)}
 		/>
@@ -49,29 +50,29 @@
 
 	<div class="grid">
 		<Input
-			label="Listen-порт"
+			label={m.proxy_share_params_listen_port()}
 			type="number"
 			value={fields.port}
 			oninput={(v) => (fields.port = v)}
 			fullWidth
 		/>
 		<Dropdown
-			label="Профиль обфускации"
+			label={m.proxy_share_params_obf_profile()}
 			value={fields.obfProfile}
 			options={obfOptions}
 			onchange={(v) => (fields.obfProfile = v as FreeTurnServerConfig['obfProfile'])}
 			fullWidth
 		/>
 		<div class="field-with-btn">
-			<Input label="Ключ обфускации" type="password" bind:value={fields.obfKey} fullWidth />
+			<Input label={m.proxy_share_params_obf_key()} type="password" bind:value={fields.obfKey} fullWidth />
 			<Button variant="secondary" size="sm" onclick={() => (fields.obfKey = randomHex(32))}>
-				Сгенерировать
+				{m.common_generate()}
 			</Button>
 		</div>
 	</div>
 	<div class="toggle-row">
 		<Toggle
-			label="Открыть порт в firewall"
+			label={m.proxy_share_params_firewall_port()}
 			checked={fields.firewall}
 			onchange={(v) => (fields.firewall = v)}
 		/>

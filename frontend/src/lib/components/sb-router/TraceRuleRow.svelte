@@ -4,6 +4,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Check } from 'lucide-svelte';
   import type { SingboxRouterInspectMatch } from '$lib/types';
 
@@ -17,7 +18,7 @@
   let indexStr = $derived(`#${String(match.index).padStart(2, '0')}`);
   let actionLabel = $derived.by(() => {
     if (match.action === 'route' && match.outbound) return `→ ${match.outbound}`;
-    if (match.action === 'reject') return '✕ заблокировать';
+    if (match.action === 'reject') return m.sb_router_trace_row_reject();
     if (match.action === 'sniff') return 'sniff';
     if (match.action === 'hijack-dns') return 'hijack-dns';
     return match.action;

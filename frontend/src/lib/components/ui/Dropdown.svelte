@@ -12,6 +12,7 @@
 </script>
 
 <script lang="ts" generics="T extends string = string">
+  import { m } from '$lib/i18n';
   import { onDestroy, tick } from 'svelte';
   import { ChevronDown, Check } from 'lucide-svelte';
 
@@ -33,7 +34,7 @@
   let {
     value = $bindable('' as T),
     options,
-    placeholder = '— выбрать —',
+    placeholder,
     label,
     hint,
     error,
@@ -47,6 +48,7 @@
 
   const fallbackId = `dropdown-${Math.random().toString(36).slice(2, 8)}`;
   const fieldId = $derived(id ?? fallbackId);
+  const placeholderText = $derived(placeholder ?? m.ui_dropdown_placeholder());
 
   let open = $state(false);
   let triggerEl = $state<HTMLButtonElement | null>(null);
@@ -273,7 +275,7 @@
           {/if}
           <span class="trigger-label">{selectedOption.label}</span>
         {:else}
-          <span class="trigger-placeholder">{placeholder}</span>
+          <span class="trigger-placeholder">{placeholderText}</span>
         {/if}
       </span>
       <span class="chevron" class:rotated={open} aria-hidden="true">
@@ -294,7 +296,7 @@
         class="dropdown-panel"
         class:menu-up={menuUp}
         tabindex="-1"
-        aria-label={label ?? placeholder}
+        aria-label={label ?? placeholderText}
         style="top: {panelTop}px; left: {panelLeft}px; width: {panelWidth}px;"
         onkeydown={handlePanelKey}
       >
@@ -335,7 +337,7 @@
           </button>
         {/each}
         {#if options.length === 0}
-          <div class="empty">Нет вариантов</div>
+          <div class="empty">{m.ui_dropdown_empty()}</div>
         {/if}
       </div>
     {/if}

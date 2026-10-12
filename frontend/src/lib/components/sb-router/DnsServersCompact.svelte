@@ -3,6 +3,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import type {
     SingboxProxyGroup,
     SingboxRouterDNSServer,
@@ -129,7 +130,7 @@
     class:shadowed
     class:has-grip={!!onMoveRule}
     class:dragging={!ghost && ruleDrag.draggingIndex === i}
-    title={managed ? 'Правило DNS-пресета — изменяется через карточку пресета' : undefined}
+    title={managed ? m.sb_router_dns_rule_preset_title() : undefined}
   >
     {#if onMoveRule}
       {#if managed}
@@ -139,8 +140,8 @@
           type="button"
           class="grip"
           class:is-busy={ruleDrag.busy}
-          aria-label={`Перетащить DNS-правило #${i + 1}`}
-          title="Перетащить для изменения порядка (или стрелки вверх/вниз)"
+          aria-label={m.sb_router_dns_rule_drag_aria({ n: i + 1 })}
+          title={m.sb_router_dns_rule_drag_title()}
           onpointerdown={ruleDrag.busy ? undefined : (e) => ruleDrag.handlePointerDown(i, e)}
           onkeydown={(e) => handleGripKeydown(i, e)}
         >
@@ -156,15 +157,15 @@
       title={managed
         ? undefined
         : shadowed
-        ? `${dnsMatcherSummary(r)} → ${tgt.label} · перекрыто catch-all правилом выше`
+        ? m.sb_router_dns_rule_summary_shadowed({ summary: dnsMatcherSummary(r), target: tgt.label })
         : `${dnsMatcherSummary(r)} → ${tgt.label}`}
     >
       <span class="rule-match">
         {#if matchers.length === 0}
           <Badge variant="accent" size="xs">
             {r.action === 'evaluate'
-              ? 'catch-all · оценивает все запросы'
-              : 'catch-all · всё остальное'}
+              ? m.sb_router_dns_catch_all_evaluate()
+              : m.sb_router_dns_catch_all_rest()}
           </Badge>
         {:else}
           {#each matchers as part, pi (part.key + pi)}
@@ -182,10 +183,10 @@
           {/each}
         {/if}
         {#if shadowed}
-          <Badge variant="warning" size="xs">перекрыто catch-all выше</Badge>
+          <Badge variant="warning" size="xs">{m.sb_router_dns_rule_shadowed_badge()}</Badge>
         {/if}
         {#if managed}
-          <Badge variant="muted" size="xs">пресет</Badge>
+          <Badge variant="muted" size="xs">{m.sb_router_dns_rule_preset_badge()}</Badge>
         {/if}
       </span>
       <span class="rule-arrow" aria-hidden="true">→</span>
@@ -212,8 +213,8 @@
           type="button"
           class="route-action-btn"
           onclick={() => onEditRule(i)}
-          aria-label={`Редактировать DNS-правило #${i + 1}`}
-          title={`Редактировать DNS-правило #${i + 1}`}
+          aria-label={m.sb_router_dns_rule_edit_aria({ n: i + 1 })}
+          title={m.sb_router_dns_rule_edit_title({ n: i + 1 })}
         >
           <Edit3 size={15} />
         </button>
@@ -223,8 +224,8 @@
             type="button"
             class="route-action-btn danger"
             onclick={() => onDeleteRule(i)}
-            aria-label={`Удалить DNS-правило #${i + 1}`}
-            title={`Удалить DNS-правило #${i + 1}`}
+            aria-label={m.sb_router_dns_rule_delete_aria({ n: i + 1 })}
+            title={m.sb_router_dns_rule_delete_title({ n: i + 1 })}
           >
             <Trash2 size={15} />
           </button>
@@ -264,8 +265,8 @@
             type="button"
             class="route-action-btn"
             onclick={() => onEditServer(s.tag)}
-            aria-label={`Редактировать DNS-сервер ${s.tag}`}
-            title={`Редактировать DNS-сервер «${s.tag}»`}
+            aria-label={m.sb_router_dns_server_edit_aria({ tag: s.tag })}
+            title={m.sb_router_dns_server_edit_title({ tag: s.tag })}
           >
             <Edit3 size={15} />
           </button>
@@ -275,8 +276,8 @@
               class="route-action-btn danger"
               disabled={deleteReason !== null}
               onclick={() => onDeleteServer(s.tag)}
-              aria-label={`Удалить DNS-сервер ${s.tag}`}
-              title={deleteReason ?? `Удалить DNS-сервер «${s.tag}»`}
+              aria-label={m.sb_router_dns_server_delete_aria({ tag: s.tag })}
+              title={deleteReason ?? m.sb_router_dns_server_delete_title({ tag: s.tag })}
             >
               <Trash2 size={15} />
             </button>
@@ -285,19 +286,19 @@
       </div>
     {/each}
     {#if servers.length === 0}
-      <div class="empty">Нет DNS-серверов.</div>
+      <div class="empty">{m.sb_router_dns_no_servers()}</div>
     {/if}
   </div>
 
   <div class="rules-cap">
-    <span class="rules-cap-label">DNS-правила · {rules.length}</span>
+    <span class="rules-cap-label">{m.sb_router_dns_rules_cap({ count: rules.length })}</span>
     {#if onAddRule}
-      <Button variant="primary" size="sm" onclick={onAddRule} disabled={addRuleDisabled}>+ Правило</Button>
+      <Button variant="primary" size="sm" onclick={onAddRule} disabled={addRuleDisabled}>{m.sb_router_dns_add_rule()}</Button>
     {/if}
   </div>
   {#if shadowedRuleIdx.size > 0}
     <div class="shadow-note">
-      Правила после catch-all (без условий) не проверяются — перенесите их выше или удалите.
+      {m.sb_router_dns_shadow_note()}
     </div>
   {/if}
   {#if rules.length > 0}
@@ -338,7 +339,7 @@
       </div>
     </div>
   {:else}
-    <div class="empty">Нет правил</div>
+    <div class="empty">{m.sb_router_dns_no_rules()}</div>
   {/if}
 </div>
 

@@ -2,6 +2,7 @@
  * Разбор .conf для записи в туннель и разбор тегов I1.
  * Оценка — в awgConfScore.ts, совместимость — на бэкенде.
  */
+import { m } from '$lib/i18n';
 
 export type AwgIface = Record<string, string>;
 
@@ -74,10 +75,10 @@ export function parseI1(i1: string): I1Parsed {
 	};
 
 	const tagRegex = /<(\w+)(?:\s+([^>]*))?>/g;
-	let m: RegExpExecArray | null;
-	while ((m = tagRegex.exec(i1)) !== null) {
-		const tag = m[1].toLowerCase();
-		const arg = (m[2] || '').trim();
+	let hit: RegExpExecArray | null;
+	while ((hit = tagRegex.exec(i1)) !== null) {
+		const tag = hit[1].toLowerCase();
+		const arg = (hit[2] || '').trim();
 		result.tags.push({ tag, arg });
 
 		if (tag === 'b') {
@@ -109,20 +110,20 @@ export function parseI1(i1: string): I1Parsed {
 	result.startsWith_b = result.firstTag === 'b';
 	if (!result.startsWith_b) {
 		result.errors.push(
-			'Первый тег в I1 должен быть <b …> — иначе парсер amneziawg-go может отказать в handshake.',
+			m.awg_analyzer_first_tag_b(),
 		);
 	}
 
 	for (const n of result.rTagSizes) {
 		if (n >= 1000) {
 			result.errors.push(
-				`Тег <r> с размером ${n} ≥ 1000 — разбейте на части ≤999, иначе риск поломки парсера.`,
+				m.awg_analyzer_r_tag_size({ size: n }),
 			);
 		}
 	}
 
 	if (result.hasC) {
-		result.errors.push('Тег <c> устарел — на старых клиентах AmneziaVPN возможен ErrorCode 1000.');
+		result.errors.push(m.awg_analyzer_c_tag_deprecated());
 	}
 
 	result.protocol = detectI1ProtocolFromHex(result.hexData);
@@ -134,14 +135,14 @@ export function parseI1(i1: string): I1Parsed {
 			result.firstByteOk = firstByte >= 0xc0 && firstByte <= 0xef;
 			if (!result.firstByteOk) {
 				result.errors.push(
-					`Первый байт 0x${firstByte.toString(16)} — для QUIC long header ожидается 0xC0–0xEF.`,
+					m.awg_analyzer_quic_first_byte({ byte: firstByte.toString(16) }),
 				);
 			}
 		} else if (result.protocol === 'TLS' || result.protocol === 'DTLS') {
 			result.firstByteOk = firstByte === 0x16;
 			if (!result.firstByteOk) {
 				result.errors.push(
-					`Первый байт 0x${firstByte.toString(16)} — для ${result.protocol} ожидается 0x16.`,
+					m.awg_analyzer_tls_first_byte({ byte: firstByte.toString(16), protocol: result.protocol }),
 				);
 			}
 		} else if (result.protocol === 'SIP') {
@@ -155,7 +156,7 @@ export function parseI1(i1: string): I1Parsed {
 
 export function parseAWG(raw: string): AwgParsed {
 	const trimmed = raw.trim();
-	if (!trimmed) throw new Error('Пустой конфиг');
+	if (!trimmed) throw new Error(m.awg_analyzer_empty_config());
 
 	const cfg: { iface: Record<string, string>; peer: Record<string, string> } = {
 		iface: {},
@@ -180,7 +181,7 @@ export function parseAWG(raw: string): AwgParsed {
 	}
 
 	if (!cfg.iface.PrivateKey && !cfg.iface.privatekey && !trimmed.includes('[Interface]')) {
-		throw new Error('Не найдена секция [Interface]. Вставьте .conf файл AmneziaWG / WireGuard.');
+		throw new Error(m.awg_analyzer_no_interface());
 	}
 
 	const iface: AwgIface = {};

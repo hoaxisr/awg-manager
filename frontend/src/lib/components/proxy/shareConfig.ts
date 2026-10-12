@@ -3,6 +3,7 @@
 // «Выход»: конфиг страницы — состояние сервера, правки живут в копии детали.
 
 import { api } from '$lib/api/client';
+import { m } from '$lib/i18n';
 import { listenPortNumber, setListenPort } from '$lib/utils/listenPortUtils';
 import type { NatMode } from '$lib/utils/network';
 import type {
@@ -60,14 +61,16 @@ export function normalizeShareConfigs(wdtt: WdttConfig, ft: FreeTurnConfig): voi
 
 // ─── Режим NAT (SH-48): подписи одни на секцию и на схему.
 
-export const natModeOptions: { value: NatMode; label: string }[] = [
-	{ value: 'full', label: 'Полный' },
-	{ value: 'internet-only', label: 'Интернет' },
-	{ value: 'none', label: 'Без NAT' },
-];
+export function natModeOptions(): { value: NatMode; label: string }[] {
+	return [
+		{ value: 'full', label: m.proxy_nat_full() },
+		{ value: 'internet-only', label: m.proxy_nat_internet() },
+		{ value: 'none', label: m.proxy_nat_none() },
+	];
+}
 
 export function natModeLabel(mode?: string): string {
-	return natModeOptions.find((o) => o.value === (mode || 'full'))?.label ?? '';
+	return natModeOptions().find((o) => o.value === (mode || 'full'))?.label ?? '';
 }
 
 // ─── Порты инстанса.
@@ -220,19 +223,20 @@ export function serverPortConflict(cfg: WdttServerConfig): string {
 	// (`WdttServerConfig.Validate`, internal/proxyrt/roles/config.go), а
 	// здесь он подменяется дефолтом и конфликта не даёт — отказ прилетал
 	// с сервера вместо того, чтобы не дать нажать «Сохранить».
-	if (!(cfg.listen ?? '').trim()) return 'Не задан порт раздачи.';
+	if (!(cfg.listen ?? '').trim()) return m.proxy_port_share_missing();
 	const seen = new Map<number, string>();
 	const add = (name: string, port: number): string => {
 		if (!Number.isInteger(port) || port <= 0) return '';
 		const prev = seen.get(port);
-		if (prev) return `Порт ${port} занят дважды: ${prev} и ${name}. Задайте разные.`;
+		if (prev) return m.proxy_port_conflict({ port, first: prev, second: name });
 		seen.set(port, name);
 		return '';
 	};
 	for (const p of wdttServerPorts(cfg)) {
-		const label = p.label === 'DTLS' ? 'порт раздачи' : `${p.label}-порт`;
+		const label =
+			p.label === 'DTLS' ? m.proxy_flow_share_port() : m.proxy_port_label_named({ label: p.label });
 		const err = add(label, p.port);
 		if (err) return err;
 	}
-	return add('внутренний WG-порт', cfg.wgPort ?? 0);
+	return add(m.proxy_port_label_wg_internal(), cfg.wgPort ?? 0);
 }

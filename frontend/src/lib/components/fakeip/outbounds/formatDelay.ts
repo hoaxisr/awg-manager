@@ -6,6 +6,8 @@
 // "unreachable / timed out" (see SingboxProxyMember.lastDelay,
 // SingboxProxiesTestResponse.delays). `undefined` means "not tested yet".
 
+import { m } from '$lib/i18n';
+
 export type DelayHealth = 'ok' | 'down' | 'unknown';
 
 /** Health bucket for the per-member health dot. */
@@ -17,6 +19,6 @@ export function delayHealth(delay: number | undefined | null): DelayHealth {
 /** Human label for a delay value: «—» untested, «timeout» unreachable, «<n> ms». */
 export function formatDelay(delay: number | undefined | null): string {
 	if (delay === undefined || delay === null) return '—';
-	if (delay <= 0) return 'таймаут';
+	if (delay <= 0) return m.fakeip_delay_timeout();
 	return `${Math.round(delay)} ms`;
 }

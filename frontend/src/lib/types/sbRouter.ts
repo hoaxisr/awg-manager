@@ -90,6 +90,13 @@ export interface SingboxRouterSettings {
 	/** Сегменты, выбранные для source-preserve (см. GET .../policy-tun/nat-preview). */
 	policyTunNatSegments?: string[];
 	/**
+	 * Имя интерфейса policy-tun в веб-интерфейсе роутера и в политиках доступа
+	 * (NDMS-описание OpkgTun). Отсутствует/пусто — штатное «awgm policy-tun».
+	 * До 32 символов, префикс «awgm » зарезервирован — такое сохранение бэкенд
+	 * отвергает.
+	 */
+	policyTunDescription?: string;
+	/**
 	 * QoS/DSCP routing classes (issue #371). Traffic marked with class DSCP is
 	 * routed to the class outbound, trumping other route rules. Works in
 	 * routingMode 'tproxy' and 'policy-tun' (DSCP-перехват — единственный

@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import { api } from '$lib/api/client';
 import type { DownloadOutbound, Settings } from '$lib/types';
 import { derived, get, writable } from 'svelte/store';
@@ -32,7 +33,7 @@ export async function ensureDownloadOutboundsLoaded(force = false): Promise<void
 		} catch (e) {
 			const err = e as (Error & { status?: number; body?: { code?: string; message?: string } });
 			const code = err?.body?.code || '';
-			const message = err?.body?.message || err?.message || 'Не удалось загрузить список маршрутов';
+			const message = err?.body?.message || err?.message || m.download_route_load_failed();
 			const statusPart = err?.status ? ` [HTTP ${err.status}]` : '';
 			const codePart = code ? ` (${code})` : '';
 			const fullError = `${message}${statusPart}${codePart}`;
@@ -65,10 +66,10 @@ export function resolveDownloadRouteLabel(
 	);
 	if (match) {
 		const rendered = displayRouteName(match.label, match.kind);
-		return `${rendered}${match.available ? '' : ' (недоступен)'}`;
+		return match.available ? rendered : m.download_route_label_unavailable({ label: rendered });
 	}
 	if (tag === 'direct') {
-		return 'Direct (WAN) — без туннеля';
+		return m.download_route_direct_wan();
 	}
-	return `Недоступный маршрут: ${maskSensitiveInText(tag)}`;
+	return m.settings_download_unavailable_route({ route: maskSensitiveInText(tag) });
 }

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
+	import RichText from '$lib/components/ui/RichText.svelte';
 	import type { Subscription, SubscriptionGroup } from '$lib/types';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -64,11 +66,11 @@
 		deleting = true;
 		try {
 			await api.deleteSubscriptionGroup(pendingDelete.id);
-			notifications.success('Группа удалена');
+			notifications.success(m.subscriptions_groups_deleted());
 			pendingDelete = null;
 			await load();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось удалить группу');
+			notifications.error(e instanceof Error ? e.message : m.subscriptions_groups_delete_failed());
 		} finally {
 			deleting = false;
 		}
@@ -77,7 +79,7 @@
 	function subLabels(g: SubscriptionGroup): string {
 		const byId = new Map(subscriptions.map((s) => [s.id, s.label || s.url || s.id]));
 		const names = g.useSubscriptionIds.map((id) => byId.get(id) ?? id);
-		return names.length > 0 ? names.join(', ') : 'нет подписок';
+		return names.length > 0 ? names.join(', ') : m.subscriptions_groups_no_subs();
 	}
 </script>
 
@@ -89,14 +91,13 @@
 	<section class="groups-section">
 		<div class="groups-head">
 			<div>
-				<h2 class="section-title">Сводные группы</h2>
+				<h2 class="section-title">{m.subscriptions_groups_title()}</h2>
 				<p class="section-hint">
-					Один туннель поверх серверов из нескольких подписок — с общим фильтром и
-					авто-выбором быстрейшего.
+					{m.subscriptions_groups_hint()}
 				</p>
 			</div>
 			<Button variant="primary" size="md" iconBefore={createIcon} onclick={openCreate}>
-				Создать группу
+				{m.subscriptions_groups_create()}
 			</Button>
 		</div>
 		{#if groups.length > 0}
@@ -106,24 +107,25 @@
 						<div class="group-main">
 							<div class="group-title-row">
 								<span class="group-title">{g.label}</span>
-								{#if !g.enabled}<span class="group-off-badge">выкл</span>{/if}
+								{#if !g.enabled}<span class="group-off-badge">{m.subscriptions_groups_off()}</span>{/if}
 							</div>
 							<div class="group-meta">
-								{g.mode === 'urltest' ? 'авто-выбор' : 'селектор'} ·
-								{g.memberCount}
-								{g.memberCount === 1 ? 'сервер' : g.memberCount < 5 && g.memberCount > 0 ? 'сервера' : 'серверов'}
+								{m.subscriptions_groups_meta({
+									mode: g.mode === 'urltest' ? m.subscriptions_groups_mode_urltest() : m.subscriptions_groups_mode_selector(),
+									count: g.memberCount,
+								})}
 								{#if g.listenPort}
-									· порт <span class="mono">{g.listenPort}</span>
+									· {m.subscriptions_groups_port()} <span class="mono">{g.listenPort}</span>
 								{/if}
 							</div>
-							<div class="group-subs" title={subLabels(g)}>из: {subLabels(g)}</div>
+							<div class="group-subs" title={subLabels(g)}>{m.subscriptions_groups_from({ names: subLabels(g) })}</div>
 						</div>
 						<div class="group-actions">
 							<button
 								type="button"
 								class="icon-btn"
-								title="Изменить группу"
-								aria-label="Изменить группу {g.label}"
+								title={m.subscriptions_groups_edit()}
+								aria-label={m.subscriptions_groups_edit_aria({ label: g.label })}
 								onclick={() => openEdit(g)}
 							>
 								<Pencil size={14} strokeWidth={2} aria-hidden="true" />
@@ -131,8 +133,8 @@
 							<button
 								type="button"
 								class="icon-btn danger"
-								title="Удалить группу"
-								aria-label="Удалить группу {g.label}"
+								title={m.subscriptions_groups_delete()}
+								aria-label={m.subscriptions_groups_delete_aria({ label: g.label })}
 								onclick={() => (pendingDelete = g)}
 							>
 								<Trash2 size={14} strokeWidth={2} aria-hidden="true" />
@@ -143,8 +145,7 @@
 			</div>
 		{:else}
 			<div class="groups-empty">
-				Нет сводных групп. Создайте группу, чтобы объединить серверы нескольких подписок в
-				один туннель.
+				{m.subscriptions_groups_empty()}
 			</div>
 		{/if}
 	</section>
@@ -160,7 +161,7 @@
 
 <Modal
 	open={pendingDelete !== null}
-	title="Удалить группу?"
+	title={m.subscriptions_groups_delete_title()}
 	size="md"
 	onclose={() => {
 		if (deleting) return;
@@ -169,16 +170,15 @@
 >
 	{#if pendingDelete}
 		<p>
-			Группа <strong>{pendingDelete.label}</strong> будет удалена вместе с её
-			sing-box outbound'ом и NDMS Proxy. Подписки и их серверы не пострадают.
+			<RichText text={m.subscriptions_groups_delete_message({ label: pendingDelete.label })} />
 		</p>
 	{/if}
 	{#snippet actions()}
 		<Button variant="ghost" disabled={deleting} onclick={() => (pendingDelete = null)}>
-			Отмена
+			{m.common_cancel()}
 		</Button>
 		<Button variant="danger" disabled={deleting} loading={deleting} onclick={confirmDelete}>
-			{deleting ? 'Удаляем...' : 'Удалить'}
+			{deleting ? m.subscriptions_groups_deleting() : m.common_delete()}
 		</Button>
 	{/snippet}
 </Modal>

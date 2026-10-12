@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -74,6 +75,13 @@ func sanitizeLegacySubscriptionLastError(sub *Subscription) bool {
 	}
 	if strings.Contains(msg, "download via") && strings.Contains(msg, "(subscription)") {
 		sub.LastError = ""
+		return true
+	}
+	// Text saved before MaskURL reduced every address kept the token of a
+	// redirect hop or the uuid of a share link, and REST served it until
+	// the next successful fetch — for a disabled subscription, forever.
+	if scrubbed := MaskURL(sub.LastError, sub.URL); scrubbed != sub.LastError {
+		sub.LastError = scrubbed
 		return true
 	}
 	return false
@@ -563,12 +571,18 @@ func (s *Store) SetListenPort(id string, port uint16) error {
 }
 
 // MaskURL replaces the subscription URL in an error message with a placeholder
-// so logs and API responses never leak provider tokens / paths.
+// so logs and API responses never leak provider tokens / paths. Any other
+// address left in the message — a redirect hop, a share link quoted by the
+// parser — is reduced to its scheme and host (logging.RedactURLs): an
+// exact-match replacement cannot know those.
 func MaskURL(msg, url string) string {
-	if url == "" || msg == "" {
+	if msg == "" {
 		return msg
 	}
-	return strings.ReplaceAll(msg, url, "<subscription-url>")
+	if url != "" {
+		msg = strings.ReplaceAll(msg, url, "<subscription-url>")
+	}
+	return logging.RedactURLs(msg)
 }
 
 // MaybeRefresh returns subscriptions whose RefreshHours interval has

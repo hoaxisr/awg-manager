@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Modal, Input, Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		open: boolean;
@@ -14,9 +15,33 @@
 	let jsonText = $state('');
 	// Тег авто-подставляется из JSON, пока пользователь сам его не тронул.
 	let tagTouched = $state(false);
-	let error = $state('');
+	// Ошибка хранится как код (+ текст бэкенда), а не как переведённая строка:
+	// подпись собирается при отрисовке и следует за языком интерфейса.
+	type ImportError =
+		| { kind: 'tag-required' }
+		| { kind: 'config-required' }
+		| { kind: 'invalid-json'; detail: string | null }
+		| { kind: 'import-failed'; message: string | null };
+	let importError = $state<ImportError | null>(null);
 	// Какое поле подсветить: тег или textarea конфига.
-	let errorField = $state<'tag' | 'config' | ''>('');
+	const errorField = $derived<'tag' | 'config' | ''>(
+		importError === null ? '' : importError.kind === 'tag-required' ? 'tag' : 'config'
+	);
+	const error = $derived.by((): string => {
+		if (importError === null) return '';
+		switch (importError.kind) {
+			case 'tag-required':
+				return m.awg3_import_tag_required();
+			case 'config-required':
+				return m.awg3_import_config_required();
+			case 'invalid-json':
+				return m.awg3_import_invalid_json({
+					detail: importError.detail ?? m.awg3_import_parse_error()
+				});
+			case 'import-failed':
+				return importError.message ?? m.awg3_import_failed();
+		}
+	});
 	let importing = $state(false);
 
 	// Достаёт peers[0].address из вставленного конфига для дефолтного тега.
@@ -46,9 +71,9 @@
 
 	// Дефолт-тег из строки Endpoint = host:port нативного .conf (host).
 	function peekConfTag(text: string): string {
-		const m = text.match(/^\s*Endpoint\s*=\s*(.+)$/im);
-		if (!m) return '';
-		const host = m[1].trim();
+		const endpoint = text.match(/^\s*Endpoint\s*=\s*(.+)$/im);
+		if (!endpoint) return '';
+		const host = endpoint[1].trim();
 		if (host.startsWith('[')) {
 			const end = host.indexOf(']');
 			return end > 0 ? host.slice(1, end) : '';
@@ -69,23 +94,20 @@
 
 	function onJsonInput(value: string): void {
 		jsonText = value;
-		error = '';
-		errorField = '';
+		importError = null;
 		if (!tagTouched) tag = peekDefaultTag(value);
 	}
 
 	function onTagInput(): void {
 		tagTouched = true;
-		error = '';
-		errorField = '';
+		importError = null;
 	}
 
 	function reset(): void {
 		tag = '';
 		jsonText = '';
 		tagTouched = false;
-		error = '';
-		errorField = '';
+		importError = null;
 		importing = false;
 	}
 
@@ -99,18 +121,15 @@
 
 	async function submit(): Promise<void> {
 		if (importing) return;
-		error = '';
-		errorField = '';
+		importError = null;
 		const cleanTag = tag.trim();
 		if (cleanTag === '') {
-			error = 'Укажите тег';
-			errorField = 'tag';
+			importError = { kind: 'tag-required' };
 			return;
 		}
 		const raw = jsonText.trim();
 		if (raw === '') {
-			error = 'Вставьте конфиг или загрузите .conf';
-			errorField = 'config';
+			importError = { kind: 'config-required' };
 			return;
 		}
 		let config: unknown;
@@ -118,8 +137,7 @@
 			try {
 				config = JSON.parse(raw);
 			} catch (e) {
-				error = `Некорректный JSON: ${e instanceof Error ? e.message : 'ошибка разбора'}`;
-				errorField = 'config';
+				importError = { kind: 'invalid-json', detail: e instanceof Error ? e.message : null };
 				return;
 			}
 		} else {
@@ -134,21 +152,20 @@
 			onimported();
 			requestClose();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Не удалось импортировать конфиг';
-			errorField = 'config';
+			importError = { kind: 'import-failed', message: e instanceof Error ? e.message : null };
 		} finally {
 			importing = false;
 		}
 	}
 </script>
 
-<Modal {open} title="Импорт AWG3" size="md" closeOnBackdrop={false} onclose={requestClose}>
+<Modal {open} title={m.awg3_import_title()} size="md" closeOnBackdrop={false} onclose={requestClose}>
 	<div class="import-form">
 		<Input
-			label="Тег"
+			label={m.awg3_import_tag_label()}
 			bind:value={tag}
 			oninput={onTagInput}
-			placeholder="имя туннеля"
+			placeholder={m.awg3_import_tag_placeholder()}
 			disabled={importing}
 			error={errorField === 'tag' ? error : ''}
 			fullWidth
@@ -156,7 +173,7 @@
 
 		<div class="field">
 			<div class="field-head">
-				<label class="field-lbl" for="awg3-conf">Конфиг (JSON или .conf)</label>
+				<label class="field-lbl" for="awg3-conf">{m.awg3_import_config_label()}</label>
 				<input
 					type="file"
 					accept=".conf,.txt"
@@ -170,7 +187,7 @@
 					onclick={() => fileInput?.click()}
 					disabled={importing}
 				>
-					Загрузить .conf
+					{m.awg3_import_upload_conf()}
 				</Button>
 			</div>
 			<textarea
@@ -179,7 +196,7 @@
 				class:is-error={errorField === 'config'}
 				rows="10"
 				spellcheck="false"
-				placeholder={'{ "type": "awg", … }  или  [Interface] …'}
+				placeholder={m.awg3_import_config_placeholder({ json: '{ "type": "awg", … }' })}
 				disabled={importing}
 				value={jsonText}
 				oninput={(e) => onJsonInput(e.currentTarget.value)}
@@ -192,9 +209,9 @@
 	</div>
 
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={requestClose} disabled={importing}>Отмена</Button>
+		<Button variant="ghost" size="md" onclick={requestClose} disabled={importing}>{m.common_cancel()}</Button>
 		<Button variant="primary" size="md" onclick={submit} loading={importing} disabled={importing}>
-			Импортировать
+			{m.awg3_import_submit()}
 		</Button>
 	{/snippet}
 </Modal>

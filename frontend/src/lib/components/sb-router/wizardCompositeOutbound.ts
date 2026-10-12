@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import { DEFAULT_SUBSCRIPTION_URLTEST, type SingboxRouterOutbound } from '$lib/types';
 
 const COMPOSITE_TYPES = new Set(['selector', 'urltest', 'loadbalance']);
@@ -46,12 +47,18 @@ export type WizardOutboundCategory = 'tunnel' | 'direct' | 'block';
 /** Текст предпросмотра outbound на шаге 3 визарда. */
 export function formatTunnelOutboundPreview(preview: TunnelOutboundPreview): string {
   if (preview.tunnelCount === 1) {
-    return `Правило направит трафик через outbound «${preview.outboundTag}»`;
+    return m.sb_router_wizard_preview_route({ tag: preview.outboundTag });
   }
   if (preview.willCreate) {
-    return `Будет создан composite outbound «${preview.outboundTag}» из выбранных туннелей (${preview.tunnelCount}) — автовыбор по скорости`;
+    return m.sb_router_wizard_preview_create_composite({
+      tag: preview.outboundTag,
+      count: preview.tunnelCount,
+    });
   }
-  return `Будет использован composite outbound «${preview.outboundTag}» из выбранных туннелей (${preview.tunnelCount})`;
+  return m.sb_router_wizard_preview_use_composite({
+    tag: preview.outboundTag,
+    count: preview.tunnelCount,
+  });
 }
 
 export function formatWizardOutboundPreview(
@@ -60,10 +67,10 @@ export function formatWizardOutboundPreview(
   directTag = 'direct',
 ): string | null {
   if (category === 'direct') {
-    return `Трафик пойдёт напрямую (outbound «${directTag}»)`;
+    return m.sb_router_wizard_preview_direct({ tag: directTag });
   }
   if (category === 'block') {
-    return 'Трафик будет заблокирован (reject)';
+    return m.sb_router_wizard_preview_block();
   }
   if (category === 'tunnel' && preview) {
     return formatTunnelOutboundPreview(preview);

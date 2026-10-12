@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount, tick } from 'svelte';
 	import { api, type SystemFileEntry, type SystemFileRoot } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -121,7 +122,7 @@
 				await loadDir(currentPath);
 			}
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось загрузить корневые папки'));
+			notifications.error(errorMessage(e, m.system_files_roots_load_failed()));
 		}
 	}
 
@@ -137,7 +138,7 @@
 			entries = res.entries;
 			void scripts.load(res.entries);
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось прочитать каталог'));
+			notifications.error(errorMessage(e, m.system_files_dir_read_failed()));
 		} finally {
 			loading = false;
 		}
@@ -167,7 +168,7 @@
 				}));
 			await loadDir(node.path);
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось открыть каталог'));
+			notifications.error(errorMessage(e, m.system_files_dir_open_failed()));
 		} finally {
 			node.loading = false;
 		}
@@ -187,7 +188,7 @@
 			editorModalPath = res.path;
 			editorModalContent = res.content;
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось открыть файл'));
+			notifications.error(errorMessage(e, m.system_files_file_open_failed()));
 		}
 	}
 
@@ -222,7 +223,7 @@
 		const p = path ?? selected?.path ?? currentPath;
 		if (!p) return;
 		const ok = await copyToClipboard(p);
-		if (ok) notifications.success('Путь скопирован');
+		if (ok) notifications.success(m.system_files_path_copied());
 	}
 
 	function downloadEntry(entry: SystemFileEntry) {
@@ -236,10 +237,10 @@
 		if (!file || readOnly) return;
 		try {
 			const res = await api.systemFilesUpload(currentPath, file);
-			notifications.success(`Загружено: ${res.path}`);
+			notifications.success(m.system_files_uploaded({ path: res.path }));
 			await loadDir(currentPath);
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось загрузить файл'));
+			notifications.error(errorMessage(e, m.system_files_upload_failed()));
 		}
 	}
 </script>

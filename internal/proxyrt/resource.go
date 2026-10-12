@@ -57,6 +57,10 @@ type Role interface {
 // приведению типа, и забывшая роль потеряет сброс молча.
 type BackoffResetter interface{ ResetStartBackoff() }
 
+// RestartRequester — способность роли запросить перезапуск своего процесса
+// (автопереподключение или ручной запрос пользователя).
+type RestartRequester interface{ RequestRestart(reason string) }
+
 // Observations — снимок наблюдений одного прохода. Обёртка над картой:
 // методы с value-приёмником, карта общая, копия структуры видит те же данные.
 type Observations struct {

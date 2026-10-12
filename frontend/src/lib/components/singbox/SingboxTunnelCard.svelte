@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SingboxTunnel } from '$lib/types';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api/client';
@@ -139,8 +140,8 @@
 			// Instant update — beats waiting for the poll or SSE hint refetch.
 			singboxTunnels.applyMutationResponse(fresh);
 		} catch (e) {
-			if (!showOutboundReferencedError(e, tunnel.tag, 'Туннель')) {
-				notifications.error(e instanceof Error ? e.message : 'Не удалось удалить туннель');
+			if (!showOutboundReferencedError(e, tunnel.tag, m.tunnels_referenced_entity_default())) {
+				notifications.error(e instanceof Error ? e.message : m.tunnels_delete_failed());
 			}
 		} finally {
 			deleting = false;
@@ -237,7 +238,7 @@
 				rxData={trafficSparkSeries.rx}
 				txData={trafficSparkSeries.tx}
 				onclick={() => ondetail?.(tunnel.tag)}
-				title="Открыть детальный график"
+				title={m.singbox_card_chart_detail()}
 			/>
 		</td>
 		<td class="tunnel-list-cell tunnel-list-cell--ping list-cell list-cell-ping-mini">
@@ -246,14 +247,14 @@
 		<td class="tunnel-list-cell tunnel-list-cell--actions list-cell list-cell-actions col-actions">
 			<TunnelListActions
 				onEdit={edit}
-				editTitle="Изменить туннель «{tunnel.tag}»"
+				editTitle={m.tunnels_edit_tunnel_title({ name: tunnel.tag })}
 				onTest={() => (diagnosticsOpen = true)}
 				testDisabled={!tunnel.kernelInterface}
-				testTitle="Тест туннеля «{tunnel.tag}»"
+				testTitle={m.tunnels_test_tunnel_title({ name: tunnel.tag })}
 				onDelete={() => (confirmDeleteOpen = true)}
 				deleteDisabled={deleting}
 				deleting={deleting}
-				deleteTitle="Удалить туннель «{tunnel.tag}»"
+				deleteTitle={m.tunnels_delete_tunnel_title({ name: tunnel.tag })}
 			/>
 		</td>
 	</tr>
@@ -304,12 +305,12 @@
 	<div class="details-dense-cols">
 		<div class="details-dense-col details-dense-col-lead">
 			<div class="kv-stacked-stat">
-				<span class="kv-stacked-label">Сервер</span>
+				<span class="kv-stacked-label">{m.tunnels_card_server()}</span>
 				<span class="kv-endpoint">
 					<span class="kv-stacked-value" title={showServer ? tunnel.server : ''}>
 						{showServer ? tunnel.server : '••••••••'}
 					</span>
-					<button class="icon-btn" onclick={() => (showServer = !showServer)} aria-label={showServer ? 'Скрыть' : 'Показать'}>
+					<button class="icon-btn" onclick={() => (showServer = !showServer)} aria-label={showServer ? m.common_hide() : m.common_show()}>
 						{#if showServer}
 							<Eye size={12} aria-hidden="true" />
 						{:else}
@@ -320,7 +321,7 @@
 			</div>
 			{#if tunnel.protocol === 'naive'}
 				<div class="kv-stacked-stat">
-					<span class="kv-stacked-label">Логин</span>
+					<span class="kv-stacked-label">{m.login_label_login()}</span>
 					<span class="kv-stacked-value">{tunnel.username || '—'}</span>
 				</div>
 			{:else if tunnel.sni}
@@ -332,7 +333,7 @@
 		</div>
 		<div class="details-dense-col details-dense-col-right">
 			<div class="kv-stacked-stat">
-				<span class="kv-stacked-label">Порт</span>
+				<span class="kv-stacked-label">{m.tunnels_card_port()}</span>
 				<span class="kv-stacked-value">:{tunnel.port}</span>
 			</div>
 			<div class="kv-stacked-stat">
@@ -350,14 +351,14 @@
 		<TunnelListActions
 			variant="labeled"
 			onEdit={edit}
-			editTitle="Изменить туннель «{tunnel.tag}»"
+			editTitle={m.tunnels_edit_tunnel_title({ name: tunnel.tag })}
 			onTest={() => (diagnosticsOpen = true)}
 			testDisabled={!tunnel.kernelInterface}
-			testTitle="Тест туннеля «{tunnel.tag}»"
+			testTitle={m.tunnels_test_tunnel_title({ name: tunnel.tag })}
 			onDelete={() => (confirmDeleteOpen = true)}
 			deleteDisabled={deleting}
 			deleting={deleting}
-			deleteTitle="Удалить туннель «{tunnel.tag}»"
+			deleteTitle={m.tunnels_delete_tunnel_title({ name: tunnel.tag })}
 		/>
 	</div>
 
@@ -367,7 +368,7 @@
 			type="button"
 			class="traffic-inline"
 			onclick={() => ondetail?.(tunnel.tag)}
-			title="Открыть график трафика"
+			title={m.tunnels_card_open_traffic_chart()}
 		>
 			<TrafficSparkline
 				rxData={trafficSparkSeries.rx}
@@ -382,7 +383,7 @@
 		</button>
 		<div class="chart-inline delay-inline">
 			<div class="chart-inline-head">
-				<span class="chart-inline-label">Delay (5 мин)</span>
+				<span class="chart-inline-label">{m.singbox_card_delay_5m()}</span>
 			</div>
 			<TunnelDelaySparkBars
 				history={history}
@@ -434,14 +435,14 @@
 	<div class="divider divider-dashed"></div>
 
 	<div class="row">
-		<span class="label">Сервер</span>
+		<span class="label">{m.tunnels_card_server()}</span>
 		<div class="server-row value">
 			{#if showServer}
 				<span class="server-text">{tunnel.server}</span>
 			{:else}
 				<span class="server-hidden">●●●●●●●●</span>
 			{/if}
-			<button class="icon-btn" onclick={() => (showServer = !showServer)} aria-label={showServer ? 'Скрыть' : 'Показать'}>
+			<button class="icon-btn" onclick={() => (showServer = !showServer)} aria-label={showServer ? m.common_hide() : m.common_show()}>
 				<Eye size={12} aria-hidden="true" />
 			</button>
 			<span class="port">:{tunnel.port}</span>
@@ -450,7 +451,7 @@
 
 	{#if tunnel.protocol === 'naive'}
 		<div class="row">
-			<span class="label">Логин</span>
+			<span class="label">{m.login_label_login()}</span>
 			<span class="value">{tunnel.username || '—'}</span>
 		</div>
 	{:else if tunnel.sni}
@@ -470,21 +471,21 @@
 		<TunnelListActions
 			variant="labeled"
 			onEdit={edit}
-			editTitle="Изменить туннель «{tunnel.tag}»"
+			editTitle={m.tunnels_edit_tunnel_title({ name: tunnel.tag })}
 			onTest={() => (diagnosticsOpen = true)}
 			testDisabled={!tunnel.kernelInterface}
-			testTitle="Тест туннеля «{tunnel.tag}»"
+			testTitle={m.tunnels_test_tunnel_title({ name: tunnel.tag })}
 			onDelete={() => (confirmDeleteOpen = true)}
 			deleteDisabled={deleting}
 			deleting={deleting}
-			deleteTitle="Удалить туннель «{tunnel.tag}»"
+			deleteTitle={m.tunnels_delete_tunnel_title({ name: tunnel.tag })}
 		/>
 	</div>
 
 	<div class="chart-section">
 		<div class="chart-body">
 			<div class="chart-head">
-				<span>Delay (5 мин)</span>
+				<span>{m.singbox_card_delay_5m()}</span>
 			</div>
 			<TunnelDelaySparkBars
 				history={history}
@@ -493,7 +494,7 @@
 				onclick={() => void triggerCheck()}
 			/>
 			<div class="chart-head traffic-head">
-				<span>Трафик</span>
+				<span>{m.tunnels_awg_col_traffic()}</span>
 				<span class="stats">
 					↓ {formatBytes(traffic?.download ?? 0)} · ↑ {formatBytes(traffic?.upload ?? 0)}
 				</span>
@@ -516,23 +517,23 @@
 	kind="singbox"
 	targetId={tunnel.tag}
 	displayName={tunnel.tag}
-	subjectLabel="туннель"
+	subject="tunnel"
 	iface={tunnel.kernelInterface}
 	loading={false}
-	unavailableReason={tunnel.kernelInterface ? undefined : 'У этого sing-box туннеля нет kernel interface, расширенные тесты недоступны.'}
+	unavailableReason={tunnel.kernelInterface ? undefined : m.singbox_no_kernel_iface()}
 	onclose={() => (diagnosticsOpen = false)}
 />
 
 <Modal
 	open={confirmDeleteOpen}
-	title="Удаление"
+	title={m.singbox_card_delete_title()}
 	size="sm"
 	onclose={() => (confirmDeleteOpen = false)}
 >
-	<p class="confirm-text">Удалить туннель <strong>{tunnel.tag}</strong>?</p>
+	<p class="confirm-text">{m.tunnels_modals_delete_tunnel_lead()} <strong>{tunnel.tag}</strong>?</p>
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={() => (confirmDeleteOpen = false)}>Отмена</Button>
-		<Button variant="danger" size="md" onclick={remove}>Удалить</Button>
+		<Button variant="ghost" size="md" onclick={() => (confirmDeleteOpen = false)}>{m.common_cancel()}</Button>
+		<Button variant="danger" size="md" onclick={remove}>{m.common_delete()}</Button>
 	{/snippet}
 </Modal>
 

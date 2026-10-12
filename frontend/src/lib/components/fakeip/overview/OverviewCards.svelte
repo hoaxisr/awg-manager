@@ -16,6 +16,7 @@
   Презентационный: значения приходят пропами, своих подписок нет.
 -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { formatBytes } from '$lib/utils/format';
 	import type { ActiveCompositeRow } from './activeComposites';
 
@@ -38,8 +39,8 @@
 
 	const notLiveText = $derived(
 		notLiveReason === 'clash-down'
-			? 'Clash-runtime недоступен — активные выборы временно недоступны.'
-			: 'Движок остановлен — активные выборы недоступны.',
+			? m.fakeip_overview_cards_clash_down()
+			: m.fakeip_overview_cards_engine_stopped(),
 	);
 </script>
 
@@ -50,25 +51,25 @@
 			{#if engineLive}<span class="d" aria-hidden="true"></span>{/if}
 			{engineLabel}
 		</div>
-		<div class="l">движок</div>
+		<div class="l">{m.fakeip_overview_cards_engine()}</div>
 		<div class="s">{stackLabel}</div>
 	</div>
 
 	<!-- Память sing-box -->
 	<div class="otile">
 		<div class="v">{memoryBytes > 0 ? formatBytes(memoryBytes) : '—'}</div>
-		<div class="l">память sing-box</div>
+		<div class="l">{m.fakeip_overview_cards_memory()}</div>
 		<div class="s">Clash /connections</div>
 	</div>
 
 	<!-- Активные выборы (composite) -->
 	<div class="ocomp">
-		<div class="l">Активные выборы (composite) — какой outbound где активен</div>
+		<div class="l">{m.fakeip_overview_cards_composite_title()}</div>
 
 		{#if !engineLive}
 			<p class="empty">{notLiveText}</p>
 		{:else if composites.length === 0}
-			<p class="empty">Composite-outbounds не настроены.</p>
+			<p class="empty">{m.fakeip_overview_cards_no_composites()}</p>
 		{:else}
 			{#each composites as row (row.tag)}
 				<div class="grp">

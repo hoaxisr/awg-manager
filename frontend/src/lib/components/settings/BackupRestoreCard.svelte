@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Database } from 'lucide-svelte';
 	import { Button, ConfirmModal } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -35,9 +36,9 @@
 			const blob = await api.exportFullBackup();
 			const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
 			downloadBlob(blob, `awg-manager-backup-${stamp}.tar.gz`);
-			notifications.success('Резервная копия создана и скачана');
+			notifications.success(m.settings_backup_created());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось создать резервную копию');
+			notifications.error(e instanceof Error ? e.message : m.settings_backup_create_failed());
 		} finally {
 			exporting = false;
 		}
@@ -63,7 +64,7 @@
 		const before = await readBackendInstanceId().catch(() => null);
 		try {
 			await api.importFullBackup(pendingFile);
-			notifications.success('Резервная копия восстановлена. AWG Manager перезапускается…');
+			notifications.success(m.settings_backup_restored());
 			const waitResult = await waitForBackendRestart({
 				previousInstanceId: before,
 				readInstanceId: readBackendInstanceId,
@@ -72,13 +73,13 @@
 				timeoutMs: 120_000
 			});
 			if (waitResult === 'timeout') {
-				notifications.warning('Не удалось дождаться перезапуска. Обновите страницу вручную.');
+				notifications.warning(m.settings_backup_restart_timeout());
 				restoring = false;
 				return;
 			}
 			location.reload();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось восстановить');
+			notifications.error(e instanceof Error ? e.message : m.settings_backup_restore_failed());
 			restoring = false;
 		} finally {
 			pendingFile = null;
@@ -87,15 +88,10 @@
 </script>
 
 <div class="card backup-card">
-	<SettingsSectionLabel label="Резервное копирование" icon={Database} tone="blue" header />
+	<SettingsSectionLabel label={m.settings_backup_title()} icon={Database} tone="blue" header />
 
 	<p class="backup-lead">
-		Копия данных awg-manager: туннели, WDTT/FreeTurn, конфигурация sing-box, маршруты и настройки.
-		Не включаются файлы, собранные под этот роутер (модули ядра, бинарь sing-box), кэш sing-box,
-		pid-файлы и служебный каталог run/: при восстановлении остаются свои, а на новом роутере
-		sing-box нужно поставить заново кнопкой.
-		Перед созданием или восстановлением кратковременно останавливаются связанные процессы;
-		после восстановления выполняется холодный перезапуск с синхронизацией портов linked-туннелей.
+		{m.settings_backup_lead()}
 	</p>
 
 	<!-- Архив несёт секреты ОТКРЫТЫМ текстом, и пользователь обязан знать это
@@ -106,32 +102,28 @@
 	     восстановленный на ДРУГОМ роутере, потерял бы приватные ключи
 	     туннелей — то есть перестал бы быть бэкапом. -->
 	<p class="backup-secrets">
-		<strong>Архив содержит секреты в открытом виде:</strong> ключ API панели, приватные и
-		preshared-ключи туннелей и пиров. Кто получил файл — получил доступ к панели и к VPN.
-		Храните и пересылайте его как пароль. Отдельно зашифрован только ключ подписки
-		Amnezia Premium — он привязан к этому роутеру и на другом не прочитается.
+		<strong>{m.settings_backup_secrets_title()}</strong> {m.settings_backup_secrets_text()}
 	</p>
 
 	<div class="setting-row">
 		<div class="flex flex-col gap-1">
-			<span class="font-medium">Создать копию</span>
-			<span class="setting-description">Архив .tar.gz сразу скачается в браузере</span>
+			<span class="font-medium">{m.settings_backup_create_label()}</span>
+			<span class="setting-description">{m.settings_backup_create_description()}</span>
 		</div>
 		<Button variant="secondary" size="sm" loading={exporting} onclick={createBackup}>
-			{exporting ? 'Создание…' : 'Резервное копирование'}
+			{exporting ? m.settings_backup_creating() : m.settings_backup_button()}
 		</Button>
 	</div>
 
 	<div class="setting-row">
 		<div class="flex flex-col gap-1">
-			<span class="font-medium">Восстановление</span>
+			<span class="font-medium">{m.settings_backup_restore_label()}</span>
 			<span class="setting-description">
-				Заменит текущие данные. Чтобы можно было вернуться, сначала сохраните резервную
-				копию.
+				{m.settings_backup_restore_description()}
 			</span>
 		</div>
 		<Button variant="danger" size="sm" loading={restoring} onclick={openRestorePicker}>
-			{restoring ? 'Восстановление…' : 'Восстановить'}
+			{restoring ? m.settings_backup_restoring() : m.settings_backup_restore()}
 		</Button>
 	</div>
 
@@ -146,11 +138,11 @@
 
 <ConfirmModal
 	open={restoreConfirmOpen}
-	title="Восстановить awg-manager?"
+	title={m.settings_backup_confirm_title()}
 	message={pendingFile
-		? `Будет загружен архив «${pendingFile.name}». Текущие данные будут заменены, затем AWG Manager перезапустится. Продолжить?`
+		? m.settings_backup_confirm_message({ name: pendingFile.name })
 		: ''}
-	confirmLabel="Восстановить"
+	confirmLabel={m.settings_backup_restore()}
 	variant="danger"
 	busy={restoring}
 	onClose={() => {

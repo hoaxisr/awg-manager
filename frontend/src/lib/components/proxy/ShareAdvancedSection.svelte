@@ -3,6 +3,7 @@
 	// WDTT-сервера, бэкенд и режим туннеля FreeTurn-сервера, режим записи
 	// server.log и освобождение портов. Свёрнута: глобального режима «Эксперт»
 	// больше нет (решение Q7 ИА).
+	import { m } from '$lib/i18n';
 	import { Dropdown, FieldHint, Input, SegmentedControl } from '$lib/components/ui';
 	import { modeOptions } from '../freeturn/options';
 	import { listenPortNumber } from '$lib/utils/listenPortUtils';
@@ -58,30 +59,30 @@
 		if (next !== null) wdttServer.directListen = next;
 	}
 
-	const statsLogOptions: { value: StatsLogMode; label: string }[] = [
+	const statsLogOptions: { value: StatsLogMode; label: string }[] = $derived([
 		{ value: 'ram', label: 'RAM' },
-		{ value: 'off', label: 'Выкл' },
+		{ value: 'off', label: m.proxy_adv_off() },
 		{ value: 'disk', label: 'Flash' },
-	];
+	]);
 
 	const statsLog = $derived((wdttServer?.statsLog?.trim() || 'ram') as StatsLogMode);
 </script>
 
-<DetailSection title="Дополнительно" collapsed hint="Экспертные поля и освобождение портов.">
+<DetailSection title={m.proxy_adv_title()} collapsed hint={m.proxy_adv_share_hint()}>
 	{#if wdttServer}
 		<div class="grid">
 			<Input
-				label="Внутренний WG-порт"
+				label={m.proxy_adv_wg_port()}
 				type="number"
 				value={wgPort}
-				hint="Порт userspace-WireGuard внутри сервера. Смена перезапустит сервер"
+				hint={m.proxy_adv_wg_port_hint()}
 				onchange={applyWgPort}
 				fullWidth
 			/>
 			<Dropdown
-				label="Выход в интернет"
+				label={m.proxy_adv_wan()}
 				value={effectiveStaticWan(wdttServer)}
-				options={[{ value: '', label: 'Не выбран' }, ...wanOptions]}
+				options={[{ value: '', label: m.proxy_adv_wan_none() }, ...wanOptions]}
 				onchange={(v) => {
 					if (!wdttServer) return;
 					// Выбор пользователя становится правдой целиком: одиночка
@@ -97,40 +98,40 @@
 			     инкапсуляции — выше скорость, ценой потери маскировки под DTLS.
 			     Поле пропало при переписывании рантайма, хотя argv его слал. -->
 			<Input
-				label="Порт Direct (без DTLS)"
+				label={m.proxy_adv_direct_port()}
 				type="number"
 				value={directPort}
 				onchange={applyDirectPort}
-				placeholder="выключено"
-				hint="Быстрее DTLS, но трафик перестаёт маскироваться под него. Пусто — выключено"
+				placeholder={m.proxy_adv_direct_placeholder()}
+				hint={m.proxy_adv_direct_hint()}
 				fullWidth
 			/>
 			<Input label="Config dir" bind:value={wdttServer.configDir} fullWidth />
 		</div>
 
 		<div class="log-mode">
-			<span class="row-label">Режим server.log</span>
+			<span class="row-label">{m.proxy_adv_log_mode()}</span>
 			<SegmentedControl
 				value={statsLog}
 				options={statsLogOptions}
-				ariaLabel="Режим server.log"
+				ariaLabel={m.proxy_adv_log_mode()}
 				onchange={(v) => {
 					if (wdttServer) wdttServer.statsLog = v;
 				}}
 			/>
 			<FieldHint
-				text="Запись на накопитель изнашивает память роутера. Запущенный сервер будет перезапущен."
-				ariaLabel="Подсказка: режим server.log"
+				text={m.proxy_adv_log_mode_hint()}
+				ariaLabel={m.proxy_adv_log_mode_aria()}
 			/>
 		</div>
 	{:else if ftServer}
 		<div class="grid">
-			<Input label="Бэкенд (connect)" bind:value={ftServer.connect} fullWidth />
-			<Dropdown label="Режим туннеля" bind:value={ftServer.mode} options={modeOptions} fullWidth />
+			<Input label={m.proxy_adv_backend()} bind:value={ftServer.connect} fullWidth />
+			<Dropdown label={m.proxy_adv_tunnel_mode()} bind:value={ftServer.mode} options={modeOptions} fullWidth />
 		</div>
 	{/if}
 
-	<KillPortSection title="Освобождение портов" {ports} />
+	<KillPortSection title={m.proxy_adv_kill_ports()} {ports} />
 </DetailSection>
 
 <style>

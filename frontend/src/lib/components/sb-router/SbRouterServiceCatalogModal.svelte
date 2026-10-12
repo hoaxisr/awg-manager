@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { ServiceCatalogModal } from '$lib/components/dnsroutes';
   import type { CatalogPreset } from '$lib/types';
   import { singboxRouterCatalogPresetFilter } from '$lib/utils/catalog-preset';
@@ -32,7 +33,7 @@
 
 <ServiceCatalogModal
   open={$templatesOpen}
-  title="Каталог сервисов"
+  title={m.dns_routes_catalog_title()}
   presetFilter={singboxRouterCatalogPresetFilter}
   footer="none"
   multiple

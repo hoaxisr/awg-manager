@@ -2,6 +2,7 @@
 	// SH-47..SH-61 — «Сеть» раздачи. NAT, LAN и политика применяются своими
 	// ручками сразу (их и правит бэкенд), остальные поля живут в редактируемой
 	// копии конфига и уезжают кнопкой «Сохранить».
+	import { m } from '$lib/i18n';
 	import { Badge, Button, ChipMultiSelect, Dropdown, FieldHint, FormRow, Input, SegmentedControl, Toggle } from '$lib/components/ui';
 	import { ServerAccessPolicyDropdown } from '$lib/components/servers';
 	import { servers, type ServersSnapshot } from '$lib/stores/servers';
@@ -142,7 +143,7 @@
 	}
 </script>
 
-<DetailSection title="Сеть">
+<DetailSection title={m.proxy_net_title()}>
 	{#if wdttServer}
 		<!-- Одна сетка «метка — контрол» на всю секцию (решение по вёрстке
 		     2026-08-27): раньше здесь уживались три схемы сразу. -->
@@ -151,9 +152,9 @@
 			     его человек должен здесь, а не в «экспертном» разделе. Raw-
 			     половина занимает следующий порт автоматически. -->
 			<FormRow
-				label="Порт раздачи"
+				label={m.proxy_net_share_port()}
 				for="wdtt-dtls-port"
-				hint="Главный внешний порт; raw-половина займёт следующий. Смена перезапустит сервер"
+				hint={m.proxy_net_share_port_hint()}
 			>
 				<div class="w-port">
 					<Input
@@ -166,23 +167,22 @@
 				</div>
 			</FormRow>
 
-			<FormRow label="Режим NAT">
+			<FormRow label={m.proxy_net_nat_mode()}>
 				<SegmentedControl
 					value={natMode}
-					options={natModeOptions}
-					ariaLabel="Режим NAT"
+					options={natModeOptions()}
+					ariaLabel={m.proxy_net_nat_mode()}
 					disabled={busy}
 					onchange={changeNat}
 				/>
 				{#if natWanBlocked}
 					<span class="save-block">
-						Сначала выберите выход в интернет в разделе «Дополнительно» — без него
-						режим «Интернет» не работает.
+						{m.proxy_net_nat_wan_blocked()}
 					</span>
 				{/if}
 			</FormRow>
 
-			<FormRow label="Доступ в LAN">
+			<FormRow label={m.proxy_net_lan_access()}>
 				<ChipMultiSelect
 					values={wdttServer.lanSegments ?? []}
 					options={lanOptions}
@@ -191,14 +191,14 @@
 				/>
 				{#if foreignAcls?.length}
 					<span class="save-block">
-						К интерфейсу привязан посторонний список доступа ({foreignAcls.join(', ')}). Он срабатывает раньше выбора сегментов и может открыть клиентам больше, чем выбрано — проверьте его в настройках роутера.
+						{m.proxy_net_foreign_acl({ acls: foreignAcls.join(', ') })}
 					</span>
 				{/if}
 			</FormRow>
 
 			<!-- Политика доступа (SH-50) — общий с «Серверами» контрол: список
 			     политик роутера внутри, подпись даёт строка формы. -->
-			<FormRow label="Политика доступа">
+			<FormRow label={m.proxy_exit_wizard_policy_label()}>
 				<ServerAccessPolicyDropdown
 					policy={wdttServer.policy ?? 'none'}
 					disabled={busy}
@@ -211,7 +211,7 @@
 
 		<div class="toggle-row">
 			<Toggle
-				label="Использовать в политиках доступа"
+				label={m.proxy_net_expose()}
 				checked={wdttServer.exposeToPolicies ?? false}
 				disabled={busy}
 				onchange={(v) => {
@@ -219,17 +219,17 @@
 				}}
 			/>
 			<FieldHint
-				text="Выключено — интерфейсы сервера остаются внутренними: роутер не предлагает их в политиках доступа. Включено — предлагает."
-				ariaLabel="Подсказка: использовать в политиках доступа"
+				text={m.proxy_net_expose_hint()}
+				ariaLabel={m.proxy_net_expose_aria()}
 			/>
 			{#if exposePending}
-				<Badge size="sm" variant="warning">применится после перезапуска сервера</Badge>
+				<Badge size="sm" variant="warning">{m.proxy_net_pending_restart()}</Badge>
 			{/if}
 		</div>
 
 		<div class="toggle-row">
 			<Toggle
-				label="Открыть порты сервера в firewall"
+				label={m.proxy_share_params_firewall_ports()}
 				checked={wdttServer.openFirewall !== false}
 				disabled={busy}
 				onchange={(v) => {
@@ -242,13 +242,13 @@
 		     как 127.0.0.1:<listenPort>; .conf пира абоненту выбирает модалка
 		     «Добавить» (#871). Стоит ПЕРВЫМ (правка владельца 2026-08-27):
 		     сначала «куда ведёт раздача», потом «на каком порту принимает». -->
-		<p class="sub-title">WG-сервер</p>
+		<p class="sub-title">{m.proxy_net_wg_server()}</p>
 		<div class="form">
-			<FormRow label="Сервер" hint="Поднятый WG-сервер роутера, в который FreeTurn отдаёт трафик абонентов">
+			<FormRow label={m.proxy_common_server()} hint={m.proxy_net_wg_server_hint()}>
 				<Dropdown
 					value={wgServer}
 					options={wgServerOptions}
-					placeholder={wgServerOptions.length ? 'Выберите…' : 'Нет поднятых WG-серверов'}
+					placeholder={wgServerOptions.length ? m.proxy_common_choose() : m.proxy_net_no_wg_servers()}
 					disabled={!wgServerOptions.length || busy}
 					onchange={(v) => {
 						if (ftServer) ftServer.connect = connectForServerValue(wgSnap, v);
@@ -257,9 +257,9 @@
 				/>
 			</FormRow>
 			<FormRow
-				label="Listen-порт"
+				label={m.proxy_share_params_listen_port()}
 				for="ft-listen"
-				hint="Порт, на котором сервер принимает абонентов. Клиентам порт выделяет менеджер, серверу — задаёте вы"
+				hint={m.proxy_net_listen_hint()}
 			>
 				<div class="w-port">
 					<Input id="ft-listen" type="number" value={ftPort} onchange={applyFtPort} fullWidth />
@@ -267,9 +267,9 @@
 			</FormRow>
 
 			<FormRow
-				label="Адрес для абонентов"
+				label={m.proxy_net_link_peer()}
 				for="ft-link-peer"
-				hint="Что уедет в ссылку: DNS-имя роутера или его внешний IP. Пусто — подставится внешний IP, именем он быть не может"
+				hint={m.proxy_net_link_peer_hint()}
 			>
 				<div class="field-with-btn">
 					<Input
@@ -290,7 +290,7 @@
 
 			<!-- Ключа обфускации в детали нет: строки под него в микрокопии не
 			     заведено, а профиль без ключа задаёт мастер (WS-27). -->
-			<FormRow label="Профиль обфускации">
+			<FormRow label={m.proxy_share_params_obf_profile()}>
 				<div class="w-select">
 					<Dropdown bind:value={ftServer.obfProfile} options={obfOptions} fullWidth />
 				</div>
@@ -299,7 +299,7 @@
 
 		<div class="toggle-row">
 			<Toggle
-				label="Открыть порт в firewall"
+				label={m.proxy_share_params_firewall_port()}
 				checked={ftServer.openFirewall !== false}
 				disabled={busy}
 				onchange={(v) => {
@@ -315,16 +315,15 @@
 
 	{#if wanMissing}
 		<p class="save-block">
-			Режиму NAT «Интернет» нужен выход в интернет — выберите его в разделе
-			«Дополнительно». Без него сервер не запустится.
+			{m.proxy_net_wan_missing()}
 		</p>
 	{/if}
 
 	<div class="btn-row">
 		<Button variant="primary" loading={saving} disabled={busy || wanMissing || !!portConflict} onclick={onsave}>
-			Сохранить
+			{m.common_save()}
 		</Button>
-		<Button variant="ghost" disabled={busy} onclick={onrevert}>Отменить</Button>
+		<Button variant="ghost" disabled={busy} onclick={onrevert}>{m.proxy_common_cancel_action()}</Button>
 	</div>
 </DetailSection>
 

@@ -1,18 +1,24 @@
-export const AWG_PARAM_HINTS: Record<string, string> = {
-	jc: 'Количество junk-пакетов, отправляемых перед handshake. Диапазон: 0-128.',
-	jmin: 'Минимальный размер junk-пакета в байтах. Диапазон: 0-1280.',
-	jmax: 'Максимальный размер junk-пакета в байтах. Диапазон: 0-1280.',
-	s1: 'Padding для Init Handshake.',
-	s2: 'Padding для Response Handshake.',
-	s3: 'Padding для Transport Handshake Init.',
-	s4: 'Padding для Transport Handshake Response.',
-	h1: 'Кастомный заголовок для Init Handshake. Формат: число или диапазон (мин-макс).',
-	h2: 'Кастомный заголовок для Response Handshake. Формат: число или диапазон (мин-макс).',
-	h3: 'Кастомный заголовок для Cookie Reply. Формат: число или диапазон (мин-макс).',
-	h4: 'Кастомный заголовок для Transport. Формат: число или диапазон (мин-макс).',
-	i1: 'Signature пакет I1 — имитация протокола. Поддерживает CPS теги.',
-	i2: 'Signature пакет I2.',
-	i3: 'Signature пакет I3.',
-	i4: 'Signature пакет I4.',
-	i5: 'Signature пакет I5.',
-};
+import { m } from '$lib/i18n';
+
+// Подсказки к параметрам AWG. Функция, а не константа: текст берётся из
+// словаря при вызове, поэтому смена языка подхватывается без перезагрузки.
+export function awgParamHints(): Record<string, string> {
+	return {
+		jc: m.awg_param_hint_jc(),
+		jmin: m.awg_param_hint_jmin(),
+		jmax: m.awg_param_hint_jmax(),
+		s1: m.awg_param_hint_s1(),
+		s2: m.awg_param_hint_s2(),
+		s3: m.awg_param_hint_s3(),
+		s4: m.awg_param_hint_s4(),
+		h1: m.awg_param_hint_h1(),
+		h2: m.awg_param_hint_h2(),
+		h3: m.awg_param_hint_h3(),
+		h4: m.awg_param_hint_h4(),
+		i1: m.awg_param_hint_i1(),
+		i2: m.awg_param_hint_i2(),
+		i3: m.awg_param_hint_i3(),
+		i4: m.awg_param_hint_i4(),
+		i5: m.awg_param_hint_i5(),
+	};
+}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onDestroy } from 'svelte';
 	import { Button } from '$lib/components/ui';
 	import type { PeerPresets } from '$lib/types';
@@ -41,7 +42,7 @@
 			const presets = await loadPresets();
 			if (!destroyed) clientAllowedIPs = formatClientAllowedIPs(presets[kind]);
 		} catch (e) {
-			if (!destroyed) notifications.error(e instanceof Error ? e.message : 'Не удалось получить пресет');
+			if (!destroyed) notifications.error(e instanceof Error ? e.message : m.servers_netfields_preset_failed());
 		} finally {
 			loading = false;
 		}
@@ -49,7 +50,7 @@
 </script>
 
 <div class="form-group">
-	<label class="field-label" for="{idPrefix}-allowed">AllowedIPs клиента</label>
+	<label class="field-label" for="{idPrefix}-allowed">{m.servers_netfields_allowed_label()}</label>
 	<textarea
 		id="{idPrefix}-allowed"
 		class="field-textarea"
@@ -60,22 +61,22 @@
 	></textarea>
 	<div class="preset-row">
 		<Button variant="secondary" size="sm" onclick={() => applyPreset('routerOnly')} disabled={disabled || loading}>
-			Только сети роутера
+			{m.servers_netfields_router_only()}
 		</Button>
 		<Button variant="secondary" size="sm" onclick={() => applyPreset('exceptRouter')} disabled={disabled || loading}>
-			Всё, кроме сетей роутера
+			{m.servers_netfields_except_router()}
 		</Button>
 	</div>
 	{#if disabled}
-		<span class="field-hint">Недоступно: клиент создан вне AWG Manager</span>
+		<span class="field-hint">{m.servers_netfields_unavailable()}</span>
 	{:else if allowedError}
 		<span class="field-hint is-error">{allowedError}</span>
 	{:else}
-		<span class="field-hint">Пусто — весь трафик через туннель. После изменения перевыдайте конфигурацию клиенту</span>
+		<span class="field-hint">{m.servers_netfields_allowed_hint()}</span>
 	{/if}
 </div>
 <div class="form-group">
-	<label class="field-label" for="{idPrefix}-subnets">Сети за клиентом</label>
+	<label class="field-label" for="{idPrefix}-subnets">{m.servers_netfields_subnets_label()}</label>
 	<textarea
 		id="{idPrefix}-subnets"
 		class="field-textarea"
@@ -85,11 +86,11 @@
 		{disabled}
 	></textarea>
 	{#if disabled}
-		<span class="field-hint">Недоступно: клиент создан вне AWG Manager</span>
+		<span class="field-hint">{m.servers_netfields_unavailable()}</span>
 	{:else if subnetsError}
 		<span class="field-hint is-error">{subnetsError}</span>
 	{:else}
-		<span class="field-hint">Роутер отправит трафик этим сетям через этого клиента; маршруты awg-manager создаст сам</span>
+		<span class="field-hint">{m.servers_netfields_subnets_hint()}</span>
 	{/if}
 </div>
 

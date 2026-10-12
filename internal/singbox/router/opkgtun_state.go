@@ -67,35 +67,52 @@ const (
 	ownershipForeign
 )
 
-// opkgTunOwnership — один скан на вердикт; отличие ошибки скана от его
+// opkgTunOwnership — один скан на описание; отличие ошибки скана от его
 // отсутствия принципиально (см. константы).
-func (s *ServiceImpl) opkgTunOwnership(ctx context.Context, ndmsName, description string) opkgTunOwnership {
+//
+// Описаний бывает несколько: у policy-tun оно настраивается, и на время
+// переименования своим считается интерфейс и под применённым, и под ожидаемым
+// из записи (policyTunOwnDescriptions). Имя нашлось хоть в одном скане — наш; иначе
+// хоть один скан упал — «не знаем»; все успешны и пусты — чужой.
+//
+// Пустой список описаний — «не знаем», а не «чужой»: без единого скана
+// «доказанно чужой» был бы не доказан, а вердикт ведёт к re-provision поверх
+// живого интерфейса и к пропуску сноса. Штатно сюда всегда приходит хотя бы
+// одно описание.
+func (s *ServiceImpl) opkgTunOwnership(ctx context.Context, ndmsName string, descriptions ...string) opkgTunOwnership {
 	if s.deps.OpkgTunScan == nil {
 		return ownershipNoScan
 	}
-	ids, err := s.deps.OpkgTunScan(ctx, description)
-	if err != nil {
+	if len(descriptions) == 0 {
 		return ownershipUnknown
 	}
-	if slices.Contains(ids, ndmsName) {
-		return ownershipOurs
+	verdict := ownershipForeign
+	for _, description := range descriptions {
+		ids, err := s.deps.OpkgTunScan(ctx, description)
+		if err != nil {
+			verdict = ownershipUnknown
+			continue
+		}
+		if slices.Contains(ids, ndmsName) {
+			return ownershipOurs
+		}
 	}
-	return ownershipForeign
+	return verdict
 }
 
 // ownsOpkgTun сообщает, несёт ли живой NDMS-интерфейс наше описание. Скана
 // нет или он упал — false: «не знаем» ≠ «наш», а Create по чужому живому
 // интерфейсу переписал бы его настройки (fail-closed, reuse-путь policy-tun).
-func (s *ServiceImpl) ownsOpkgTun(ctx context.Context, ndmsName, description string) bool {
-	return s.opkgTunOwnership(ctx, ndmsName, description) == ownershipOurs
+func (s *ServiceImpl) ownsOpkgTun(ctx context.Context, ndmsName string, descriptions ...string) bool {
+	return s.opkgTunOwnership(ctx, ndmsName, descriptions...) == ownershipOurs
 }
 
 // provenForeignOpkgTun — «доказанно чужой»: скан по нашему описанию УСПЕШЕН и
 // имени в нём нет. Отличие от !ownsOpkgTun принципиально: там «не знаем ≠ наш»
 // (fail-closed для reuse), здесь «не знаем ≠ чужой» — недоступный скан не
 // должен ронять идемпотентность в вечный re-provision.
-func (s *ServiceImpl) provenForeignOpkgTun(ctx context.Context, ndmsName, description string) bool {
-	return s.opkgTunOwnership(ctx, ndmsName, description) == ownershipForeign
+func (s *ServiceImpl) provenForeignOpkgTun(ctx context.Context, ndmsName string, descriptions ...string) bool {
+	return s.opkgTunOwnership(ctx, ndmsName, descriptions...) == ownershipForeign
 }
 
 // needsReprovision — общий предикат обоих reconcile: провижининга нет, наш
@@ -108,7 +125,7 @@ func (s *ServiceImpl) provenForeignOpkgTun(ctx context.Context, ndmsName, descri
 // fail-closed здесь ПРОТИВОПОЛОЖНО reuse-switch в enablePolicyTun. Подмена на
 // !ownsOpkgTun тихо гасит drift-heal: гард enableLocked схлопнется тем же
 // provenForeign, и тик не сделает вообще ничего.
-func (s *ServiceImpl) needsReprovision(ctx context.Context, st *storage.OpkgTunState, live map[int]bool, probeErr error, desc string) bool {
+func (s *ServiceImpl) needsReprovision(ctx context.Context, st *storage.OpkgTunState, live map[int]bool, probeErr error, descs ...string) bool {
 	if st == nil || !st.Provisioned {
 		return true
 	}
@@ -118,7 +135,7 @@ func (s *ServiceImpl) needsReprovision(ctx context.Context, st *storage.OpkgTunS
 	if !live[st.Index] {
 		return true
 	}
-	return s.provenForeignOpkgTun(ctx, tunNDMSName(st.Index), desc)
+	return s.provenForeignOpkgTun(ctx, tunNDMSName(st.Index), descs...)
 }
 
 // errOpkgTunOwnershipUnknown — скан владения подключён, но недоступен:
@@ -136,8 +153,8 @@ var errOpkgTunOwnershipUnknown = errors.New("владение OpkgTun не ус�
 // сироты как раньше). Доказанно чужой — (false, nil): сносить нечего, запись
 // отработана. Скан упал — (false, errOpkgTunOwnershipUnknown): не сносим и не
 // снимаем запись. Оба пропуска логируются здесь, вызывающие не дублируют.
-func (s *ServiceImpl) teardownGate(ctx context.Context, ndmsName, description, scope string) (proceed bool, err error) {
-	switch s.opkgTunOwnership(ctx, ndmsName, description) {
+func (s *ServiceImpl) teardownGate(ctx context.Context, ndmsName, scope string, descriptions ...string) (proceed bool, err error) {
+	switch s.opkgTunOwnership(ctx, ndmsName, descriptions...) {
 	case ownershipForeign:
 		s.appLog.Warn(scope, ndmsName, "на этом номере нет нашего OpkgTun — снос пропущен")
 		return false, nil
@@ -165,15 +182,15 @@ func (s *ServiceImpl) releaseForeignOpkgTun(ctx context.Context, st *storage.Opk
 			s.appLog.Warn(scope, ndmsName, "restore segment NAT: "+err.Error())
 		}
 	}
-	desc := fakeIPTunDescription
+	descs := []string{fakeIPTunDescription}
 	if st.Mode == storage.OpkgTunModePolicyTun {
-		desc = policyTunDescription
+		descs = policyTunOwnDescriptions(st)
 	}
 	// Чужой → (false, nil): сносить нечего, запись отработана. Скан упал →
 	// (false, errOpkgTunOwnershipUnknown): реап держит запись до следующего
 	// тика, handover в enable идёт дальше как при провале release — хвост с
 	// прежним описанием добирает description-реап.
-	if proceed, gerr := s.teardownGate(ctx, ndmsName, desc, scope); !proceed {
+	if proceed, gerr := s.teardownGate(ctx, ndmsName, scope, descs...); !proceed {
 		return false, gerr
 	}
 	if err := s.teardownOpkgTun(ctx, ndmsName, scope); err != nil {

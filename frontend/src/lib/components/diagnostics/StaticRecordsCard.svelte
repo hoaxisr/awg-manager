@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { DnsStaticRecord } from '$lib/types';
 	import { Badge } from '$lib/components/ui';
 	interface Props { records: DnsStaticRecord[]; }
@@ -9,12 +10,12 @@
 <div class="static" class:open>
 	<button type="button" class="head" onclick={() => (open = !open)}>
 		<span class="chev">›</span>
-		<span class="title">Статические записи</span>
+		<span class="title">{m.diag_static_title()}</span>
 		<Badge variant="muted" size="sm" mono>{records.length}</Badge>
 	</button>
 	{#if open}
 		<table>
-			<thead><tr><th>Хост</th><th>Тип</th><th>Значение</th><th class="num">Flag</th></tr></thead>
+			<thead><tr><th>{m.diag_static_col_host()}</th><th>{m.diag_static_col_type()}</th><th>{m.diag_static_col_value()}</th><th class="num">Flag</th></tr></thead>
 			<tbody>
 				{#each records as r}
 					<tr>
@@ -27,7 +28,7 @@
 			</tbody>
 		</table>
 
-		<div class="static-mobile-list" aria-label="Статические DNS-записи">
+		<div class="static-mobile-list" aria-label={m.diag_static_aria()}>
 			{#each records as r}
 				<section class="static-mobile-card">
 					<div class="static-mobile-head">
@@ -35,7 +36,7 @@
 						<Badge variant={r.type === 'AAAA' ? 'info' : 'success'} size="sm" mono>{r.type}</Badge>
 					</div>
 					<div class="static-mobile-field">
-						<span class="static-mobile-label">Значение</span>
+						<span class="static-mobile-label">{m.diag_static_col_value()}</span>
 						<span class="static-value mono muted">{r.value}</span>
 					</div>
 					<div class="static-mobile-field">

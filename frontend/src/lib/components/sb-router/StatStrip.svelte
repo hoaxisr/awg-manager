@@ -3,6 +3,7 @@
 -->
 
 <script lang="ts" module>
+  import { m } from '$lib/i18n';
   export interface StatCellData {
     label: string;
     value: string;
@@ -110,7 +111,7 @@
 
         {#if cell.onClick}
           <button type="button" class="cell-action" onclick={cell.onClick}>
-            {cell.actionLabel ?? 'подробнее'}
+            {cell.actionLabel ?? m.sb_router_stat_more()}
           </button>
         {/if}
 
@@ -118,7 +119,7 @@
           <button
             type="button"
             class="help-btn"
-            aria-label={`Подсказка: ${cell.label}`}
+            aria-label={m.sb_router_stat_help_aria({ label: cell.label })}
             aria-describedby={activeIndex === i ? tipId : undefined}
             onmouseenter={(event) => showTooltip(i, event)}
             onmouseleave={() => hideTooltip(i)}

@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import { api } from '$lib/api/client';
 import type {
   SingboxRouterOutbound,
@@ -29,7 +30,7 @@ export async function resolveTunnelOutbound(
   tunnelTags: string[],
   existingOutbounds: SingboxRouterOutbound[],
 ): Promise<string> {
-  if (tunnelTags.length === 0) throw new ValidationError('Выберите туннель');
+  if (tunnelTags.length === 0) throw new ValidationError(m.sb_router_wizard_err_pick_tunnel());
   if (tunnelTags.length === 1) return tunnelTags[0];
 
   const existing = findMatchingComposite(existingOutbounds, tunnelTags);
@@ -62,14 +63,14 @@ export function nextCustomRuleSetTag(existing: string[]): string {
 
 /** Парсит smart-list (с geo-expand) в правила inline rule_set. Бросает ValidationError. */
 export async function parseCustomList(rulesList: string): Promise<Record<string, unknown>[]> {
-  if (isInlineRuleListEmpty(rulesList)) throw new ValidationError('Список пуст');
+  if (isInlineRuleListEmpty(rulesList)) throw new ValidationError(m.sb_router_wizard_err_list_empty());
   const { text } = await expandGeoLinesInInput(
     rulesList,
     async (kind, tag) => (await api.expandGeoTag(kind, tag)).lines,
   );
   const parsed = parseInlineRuleList(text);
   if (parsed.errors.length > 0) throw new ValidationError(parsed.errors.join('\n'));
-  if (parsed.rules.length === 0) throw new ValidationError('Нет валидных строк');
+  if (parsed.rules.length === 0) throw new ValidationError(m.sb_router_wizard_err_no_valid_lines());
   return parsed.rules;
 }
 
@@ -92,7 +93,7 @@ export async function submitWizard(args: SubmitWizardArgs): Promise<SubmitResult
   const hasCustom = !isInlineRuleListEmpty(args.customFields.rulesList);
 
   if (args.selectedTemplates.length === 0 && !hasCustom) {
-    throw new ValidationError('Выберите шаблон или опишите правило');
+    throw new ValidationError(m.sb_router_wizard_err_pick_template_or_rule());
   }
 
   // Кастом валидируем ДО любых сетевых вызовов — никаких частичных провалов из-за невалидного ввода.
@@ -179,10 +180,10 @@ export async function submitWizardEdit(args: SubmitWizardEditArgs): Promise<void
 
   if (args.editMode === 'external') {
     if (args.selectedTemplates.length !== 1) {
-      throw new ValidationError('Выберите один шаблон');
+      throw new ValidationError(m.sb_router_wizard_err_pick_one_template());
     }
     const tag = ruleSetTagFromTemplateId(args.selectedTemplates[0], args.groups, args.presets);
-    if (!tag) throw new ValidationError('Шаблон не найден');
+    if (!tag) throw new ValidationError(m.sb_router_wizard_err_template_not_found());
     await api.singboxRouterUpdateRule(args.ruleIndex, buildRoutedRule(outbound, [tag]));
     return;
   }

@@ -45,7 +45,7 @@ describe('dnsServerDetourDisplay', () => {
 
 	it('tunnel detour → normal proxy badge', () => {
 		const d = dnsServerDetourDisplay(server('wg-nl'), [], [
-			{ group: 'Sing-box туннели', items: [{ value: 'wg-nl', label: 'NL VPN' }] },
+			{ id: 'singbox', items: [{ value: 'wg-nl', label: 'NL VPN' }] },
 		]);
 		expect(d.kind).toBe('proxy');
 		expect(d.label).toBe('NL VPN');
@@ -65,7 +65,7 @@ describe('dnsServerDetourDisplay', () => {
 		const d = dnsServerDetourDisplay(
 			{ tag: 'dns-direct', type: 'udp', server: '1.1.1.1', detour: 'wg-nl' },
 			[],
-			[{ group: 'Sing-box туннели', items: [{ value: 'wg-nl', label: 'NL VPN' }] }],
+			[{ id: 'singbox', items: [{ value: 'wg-nl', label: 'NL VPN' }] }],
 		);
 		expect(d.tone).toBe('invalid');
 		expect(d.label).toBe('NL VPN');

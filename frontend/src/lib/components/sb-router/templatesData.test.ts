@@ -52,8 +52,8 @@ describe('templatesData.buildTemplateList', () => {
 
 describe('templatesData.filterByCategory', () => {
   const groups: TemplateGroup[] = [
-    { category: 'services', title: 'Сервисы', items: [{ id: 'svc:x', category: 'services', presetId: 'x', name: 'X' }] },
-    { category: 'rulesets', title: 'Сервисные наборы', items: [{ id: 'rs:y', category: 'rulesets', tag: 'y', type: 'remote' }] },
+    { category: 'services', items: [{ id: 'svc:x', category: 'services', presetId: 'x', name: 'X' }] },
+    { category: 'rulesets', items: [{ id: 'rs:y', category: 'rulesets', tag: 'y', type: 'remote' }] },
   ];
 
   it('returns all groups when filter=all', () => {

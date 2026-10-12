@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Строка секции «Освобождение порта» страницы «Прокси» (EX-47/EX-48,
 	// SH-70/SH-71) — единственная форма компонента.
+	import { m } from '$lib/i18n';
 	import { Button, ConfirmModal } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -49,7 +50,7 @@
 		killing = true;
 		try {
 			const res = await api.killProxyListener(parsed.host, parsed.port, proto);
-			notifications.success(res.message ?? `PID ${res.pid} остановлен`);
+			notifications.success(res.message ?? m.proxy_kill_pid_stopped({ pid: res.pid ?? '' }));
 			await refresh();
 		} catch (e) {
 			notifications.error(errText(e));
@@ -70,9 +71,9 @@
 {#if parsed}
 	<div class="kill-row">
 		{#if open && pid}
-			<span class="kill-text">Порт {parsed.port} занят процессом {comm} (PID {pid})</span>
+			<span class="kill-text">{m.proxy_kill_port_busy({ port: parsed.port, comm, pid })}</span>
 		{:else}
-			<span class="kill-text">Порт {parsed.port} — свободен</span>
+			<span class="kill-text">{m.proxy_kill_port_free({ port: parsed.port })}</span>
 		{/if}
 		<Button
 			variant="secondary"
@@ -81,15 +82,15 @@
 			disabled={!open || !pid}
 			onclick={() => (confirmOpen = true)}
 		>
-			Освободить порт
+			{m.proxy_kill_port_action()}
 		</Button>
 	</div>
 
 	<ConfirmModal
 		open={confirmOpen}
-		title="Освободить порт {parsed.port}? Процесс, занявший его, будет завершён."
+		title={m.proxy_kill_port_confirm({ port: parsed.port })}
 		message=""
-		confirmLabel="Освободить порт"
+		confirmLabel={m.proxy_kill_port_action()}
 		busy={killing}
 		onConfirm={kill}
 		onClose={() => (confirmOpen = false)}

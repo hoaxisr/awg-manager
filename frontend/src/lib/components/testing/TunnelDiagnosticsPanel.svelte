@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onDestroy, onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -16,7 +17,7 @@
 	import TunnelTestIcon from '$lib/components/tunnels/TunnelTestIcon.svelte';
 
 	type DiagnosticsKind = 'awg' | 'system' | 'singbox' | 'subscription' | 'mihomo';
-	type DiagnosticsSubjectLabel = 'туннель' | 'подписку';
+	type DiagnosticsSubject = 'tunnel' | 'subscription';
 	type DiagnosticsMode = 'page' | 'modal';
 
 	interface Props {
@@ -25,7 +26,7 @@
 		displayName: string;
 		backHref: string;
 		backLabel: string;
-		subjectLabel: DiagnosticsSubjectLabel;
+		subject: DiagnosticsSubject;
 		iface?: string;
 		resourceKind?: MihomoDiagnosticResourceKind;
 		loading?: boolean;
@@ -39,7 +40,7 @@
 		displayName,
 		backHref,
 		backLabel,
-		subjectLabel,
+		subject,
 		iface,
 		resourceKind,
 		loading = false,
@@ -124,11 +125,11 @@
 	);
 	const gaugeLabel = $derived(
 		gaugePhase === 'download'
-			? 'ЗАГРУЗКА'
+			? m.tunnel_test_gauge_download()
 			: gaugePhase === 'upload'
-				? 'ОТДАЧА'
+				? m.tunnel_test_gauge_upload()
 				: gaugePhase === 'done'
-					? 'ГОТОВО'
+					? m.tunnel_test_gauge_done()
 					: '',
 	);
 
@@ -163,7 +164,7 @@
 		try {
 			speedTestInfo = await api.getSpeedTestInfo();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось загрузить информацию о тесте скорости');
+			notifications.error(e instanceof Error ? e.message : m.tunnel_test_info_load_failed());
 		} finally {
 			infoLoading = false;
 		}
@@ -184,7 +185,7 @@
 			} else if (kind === 'system') {
 				connectivityResult = await api.checkSystemTunnelConnectivity(targetId);
 			} else if (kind === 'mihomo') {
-				if (!resourceKind) throw new Error('Не указан тип ресурса Mihomo');
+				if (!resourceKind) throw new Error('Mihomo resource kind is not specified');
 				connectivityResult = await api.mihomoCheckConnectivity(resourceKind, targetId);
 			} else if (kind === 'subscription') {
 				connectivityResult = await api.singboxCheckConnectivity(targetId, iface);
@@ -192,7 +193,7 @@
 				connectivityResult = await api.singboxCheckConnectivity(targetId);
 			}
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка проверки соединения');
+			notifications.error(e instanceof Error ? e.message : m.tunnel_test_connectivity_failed());
 		} finally {
 			connectivityLoading = false;
 		}
@@ -207,7 +208,7 @@
 		if (shouldUseCustomService) {
 			serviceURL = customServiceURL.trim();
 			if (!serviceURL) {
-				notifications.error('Введите URL сервиса');
+				notifications.error(m.tunnel_test_enter_service_url());
 				return;
 			}
 		} else if (ipServices.length > 0) {
@@ -222,7 +223,7 @@
 			} else if (kind === 'system') {
 				ipResult = await api.checkSystemTunnelIP(targetId, serviceURL || undefined);
 			} else if (kind === 'mihomo') {
-				if (!resourceKind) throw new Error('Не указан тип ресурса Mihomo');
+				if (!resourceKind) throw new Error('Mihomo resource kind is not specified');
 				ipResult = await api.mihomoCheckIP(resourceKind, targetId, serviceURL || undefined);
 			} else if (kind === 'subscription') {
 				ipResult = await api.singboxCheckIP(targetId, serviceURL || undefined, iface);
@@ -230,7 +231,7 @@
 				ipResult = await api.singboxCheckIP(targetId, serviceURL || undefined);
 			}
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка проверки IP');
+			notifications.error(e instanceof Error ? e.message : m.tunnel_test_ip_failed());
 		} finally {
 			ipLoading = false;
 		}
@@ -255,19 +256,19 @@
 
 	function friendlyError(msg: string): string {
 		if (msg.includes('exit 1') || msg.includes('server busy') || msg.includes('the server is busy')) {
-			return 'Сервер занят, попробуйте позже или выберите другой';
+			return m.tunnel_test_err_server_busy();
 		}
 		if (msg.includes('timed out') || msg.includes('timeout')) {
-			return 'Превышено время ожидания — сервер не отвечает';
+			return m.tunnel_test_err_timeout();
 		}
 		if (msg.includes('connection refused') || msg.includes('No route')) {
-			return 'Не удалось подключиться к серверу';
+			return m.tunnel_test_err_connect();
 		}
 		if (msg.includes('tunnel not running')) {
-			return 'Туннель не запущен';
+			return m.tunnel_test_err_not_running();
 		}
 		if (msg.includes('no IPv4 address') || msg.includes('no kernel interface') || (msg.includes('interface') && msg.includes('not found'))) {
-			return 'Интерфейс туннеля недоступен';
+			return m.tunnel_test_err_iface_unavailable();
 		}
 		return msg;
 	}
@@ -294,7 +295,7 @@
 		speedPhase = 'cancelled';
 		currentBandwidth = 0;
 		currentSecond = 0;
-		notifications.info('Тест скорости отменён');
+		notifications.info(m.tunnel_test_speed_cancelled_toast());
 	}
 
 	function runSystemStreamPhase(
@@ -395,7 +396,7 @@
 
 			if (kind === 'mihomo') {
 				if (!resourceKind) {
-					reject(new Error('Не указан тип ресурса Mihomo'));
+					reject(new Error('Mihomo resource kind is not specified'));
 					return;
 				}
 				activeEventSource = api.mihomoSpeedTestStream(
@@ -416,7 +417,7 @@
 		if (useCustomServer) {
 			const parsed = parseCustomServer();
 			if (!parsed || !parsed.host) {
-				notifications.error('Введите адрес сервера');
+				notifications.error(m.tunnel_test_enter_server());
 				return;
 			}
 			server = parsed.host;
@@ -442,7 +443,7 @@
 			try {
 				downloadResult = await runPhase(server, port, 'download');
 			} catch (e) {
-				const raw = e instanceof Error ? e.message : 'Ошибка теста скорости';
+				const raw = e instanceof Error ? e.message : m.tunnel_test_speed_failed();
 				speedError = friendlyError(raw);
 				speedPhase = 'error';
 				return;
@@ -454,7 +455,7 @@
 			try {
 				uploadResult = await runPhase(server, port, 'upload');
 			} catch (e) {
-				const raw = e instanceof Error ? e.message : 'Ошибка теста скорости';
+				const raw = e instanceof Error ? e.message : m.tunnel_test_speed_failed();
 				speedError = friendlyError(raw);
 			}
 			speedPhase = 'done';
@@ -463,7 +464,7 @@
 				await runSingboxStream(server, port);
 				speedPhase = 'done';
 			} catch (e) {
-				const raw = e instanceof Error ? e.message : 'Ошибка теста скорости';
+				const raw = e instanceof Error ? e.message : m.tunnel_test_speed_failed();
 				speedError = friendlyError(raw);
 				speedPhase = 'error';
 			}
@@ -476,10 +477,10 @@
 	<div class="card test-card">
 		<h3>
 			<TunnelTestIcon size={20} />
-			Проверка соединения
+			{m.tunnel_test_connectivity_title()}
 		</h3>
 
-		<p class="test-desc">Проверить доступ в интернет через {subjectLabel}.</p>
+		<p class="test-desc">{subject === 'tunnel' ? m.tunnel_test_connectivity_desc_tunnel() : m.tunnel_test_connectivity_desc_subscription()}</p>
 
 		{#if connectivityResult}
 			<div class="test-result">
@@ -487,26 +488,26 @@
 					{#if connectivityResult.connected}
 						<span class="result-success">
 							<CircleCheck size={24} aria-hidden="true" />
-							Подключено
+							{m.tunnel_test_connected()}
 						</span>
 					{:else}
 						<span class="result-error">
 							<CircleX size={24} aria-hidden="true" />
-							Нет соединения
+							{m.tunnel_test_no_connection()}
 						</span>
 					{/if}
 				{:else if connectivityResult.connected}
-					<span class="result-success">Подключено</span>
+					<span class="result-success">{m.tunnel_test_connected()}</span>
 				{:else}
-					<span class="result-error">Нет соединения</span>
+					<span class="result-error">{m.tunnel_test_no_connection()}</span>
 				{/if}
 
 				{#if connectivityResult.latency}
-					<span class="result-detail">Задержка: {connectivityResult.latency} мс</span>
+					<span class="result-detail">{m.tunnel_test_latency({ ms: connectivityResult.latency })}</span>
 				{/if}
 
 				{#if connectivityResult.reason}
-					<span class="result-detail">Причина: {connectivityResult.reason}</span>
+					<span class="result-detail">{m.tunnel_test_reason({ reason: connectivityResult.reason })}</span>
 				{/if}
 			</div>
 		{/if}
@@ -519,7 +520,7 @@
 			onclick={checkConnectivity}
 			loading={connectivityLoading}
 		>
-			Проверить соединение
+			{m.tunnel_test_check_connectivity_btn()}
 		</Button>
 	</div>
 {/snippet}
@@ -528,19 +529,19 @@
 	<div class="card test-card">
 		<h3>
 			<Globe size={20} aria-hidden="true" />
-			Проверка IP
+			{m.tunnel_test_ip_title()}
 		</h3>
 
-		<p class="test-desc">Убедиться, что IP меняется при использовании {subjectLabel}.</p>
+		<p class="test-desc">{subject === 'tunnel' ? m.tunnel_test_ip_desc_tunnel() : m.tunnel_test_ip_desc_subscription()}</p>
 
 		{#if kind === 'subscription' || kind === 'mihomo' || ipServices.length > 0}
 			<div class="server-section">
 				<div class="server-header">
-					<span class="server-label">Сервис</span>
+					<span class="server-label">{m.tunnel_test_service()}</span>
 					<FormToggle
 						bind:checked={useCustomService}
 						disabled={ipLoading}
-						label="Свой"
+						label={m.tunnel_test_custom()}
 						size="sm"
 					/>
 				</div>
@@ -572,7 +573,7 @@
 		{#if ipResult}
 			<div class="test-result ip-result">
 				<div class="ip-row">
-					<span class="ip-label">Прямой IP:</span>
+					<span class="ip-label">{m.tunnel_test_direct_ip()}</span>
 					<span class="ip-value">{ipResult.directIp}</span>
 				</div>
 
@@ -583,16 +584,16 @@
 
 				{#if ipResult.endpointIp}
 					<div class="ip-row">
-						<span class="ip-label">IP сервера:</span>
+						<span class="ip-label">{m.tunnel_test_server_ip()}</span>
 						<span class="ip-value">{ipResult.endpointIp}</span>
 					</div>
 				{/if}
 
 				<div class="ip-status">
 					{#if ipResult.ipChanged}
-						<span class="result-success">IP изменился — туннель работает!</span>
+						<span class="result-success">{m.tunnel_test_ip_changed()}</span>
 					{:else}
-						<span class="result-warning">IP не изменился</span>
+						<span class="result-warning">{m.tunnel_test_ip_unchanged()}</span>
 					{/if}
 				</div>
 			</div>
@@ -606,7 +607,7 @@
 			onclick={checkIP}
 			loading={ipLoading}
 		>
-			Проверить IP
+			{m.tunnel_test_check_ip_btn()}
 		</Button>
 	</div>
 {/snippet}
@@ -615,7 +616,7 @@
 	<div class="card test-card">
 		<h3 class="card-title">
 			<Zap size={20} aria-hidden="true" />
-			Тест скорости
+			{m.tunnel_test_speed_title()}
 		</h3>
 
 		{#if infoLoading}
@@ -625,28 +626,27 @@
 		{:else if !speedTestInfo?.available}
 			<p class="test-desc unavailable">
 				<CircleAlert size={16} aria-hidden="true" />
-				iperf3 не найден. Доступно только на NDMS 5.x.
+				{m.tunnel_test_iperf_missing()}
 			</p>
 		{:else if (kind === 'singbox' || kind === 'subscription' || kind === 'mihomo') && !iface}
 			<p class="test-desc unavailable">
 				<CircleAlert size={16} aria-hidden="true" />
-				Тест iperf для этого ресурса требует включённого NDMS Proxy
-				(нужен kernel-интерфейс t2sX для bind).
+				{m.tunnel_test_iperf_needs_proxy()}
 			</p>
 		{:else}
-			<p class="test-desc">Измерить скорость через {subjectLabel} с помощью iperf3.</p>
+			<p class="test-desc">{subject === 'tunnel' ? m.tunnel_test_speed_desc_tunnel() : m.tunnel_test_speed_desc_subscription()}</p>
 
 			<div class="speed-test-panel">
 				<div class="metrics">
 					<div class="metric">
-						<div class="m-label">ЗАГРУЗКА</div>
+						<div class="m-label">{m.tunnel_test_gauge_download()}</div>
 						<div class="m-value" class:has-value={displayDownload !== null}>
 							{formatMetric(displayDownload)}<span class="m-unit">Mbps</span>
 						</div>
 					</div>
 
 					<div class="metric">
-						<div class="m-label">ОТДАЧА</div>
+						<div class="m-label">{m.tunnel_test_gauge_upload()}</div>
 						<div class="m-value upload" class:has-value={displayUpload !== null}>
 							{formatMetric(displayUpload)}<span class="m-unit">Mbps</span>
 						</div>
@@ -660,9 +660,9 @@
 				{#if isRunning || speedPhase === 'done'}
 					<div class="step-row">
 						{#each [
-							{ key: 'ping', label: 'Пинг' },
-							{ key: 'download', label: 'Загрузка' },
-							{ key: 'upload', label: 'Отдача' },
+							{ key: 'ping', label: m.tunnel_test_step_ping() },
+							{ key: 'download', label: m.tunnel_test_step_download() },
+							{ key: 'upload', label: m.tunnel_test_step_upload() },
 						] as s}
 							{@const st = stepState(s.key as 'ping' | 'download' | 'upload')}
 
@@ -681,7 +681,7 @@
 					</div>
 
 					{#if speedPhase === 'ping'}
-						<div class="progress-hint">Устанавливаем соединение…</div>
+						<div class="progress-hint">{m.tunnel_test_establishing()}</div>
 					{:else if speedPhase === 'download' || speedPhase === 'upload'}
 						<div class="progress-track">
 							<div
@@ -694,16 +694,16 @@
 
 						<div class="progress-hint">
 							{#if currentSecond > 0}
-								{currentSecond} / {TOTAL_SECONDS} сек
+								{m.tunnel_test_seconds_progress({ current: currentSecond, total: TOTAL_SECONDS })}
 							{:else}
-								подключение…
+								{m.tunnel_test_connecting()}
 							{/if}
 						</div>
 					{/if}
 				{/if}
 
 				{#if speedPhase === 'cancelled'}
-					<div class="hint hint-muted">Тест отменён. Можно запустить заново.</div>
+					<div class="hint hint-muted">{m.tunnel_test_cancelled_hint()}</div>
 				{/if}
 
 				{#if speedPhase === 'error' && speedError}
@@ -715,17 +715,17 @@
 				{/if}
 
 				{#if uploadResult && uploadResult.retransmits > 0}
-					<div class="hint hint-muted">Ретрансмиты: {uploadResult.retransmits}</div>
+					<div class="hint hint-muted">{m.tunnel_test_retransmits({ count: uploadResult.retransmits })}</div>
 				{/if}
 			</div>
 
 			<div class="server-section">
 				<div class="server-header">
-					<span class="server-label">Сервер</span>
+					<span class="server-label">{m.tunnel_test_server()}</span>
 					<FormToggle
 						bind:checked={useCustomServer}
 						disabled={isRunning}
-						label="Свой"
+						label={m.tunnel_test_custom()}
 						size="sm"
 					/>
 				</div>
@@ -733,7 +733,7 @@
 				{#if useCustomServer}
 					<input
 						type="text"
-						placeholder="host:port (порт по умолчанию 5201)"
+						placeholder={m.tunnel_test_custom_server_placeholder()}
 						bind:value={customServer}
 						disabled={isRunning}
 					/>
@@ -761,12 +761,12 @@
 				target="_blank"
 				rel="noopener noreferrer"
 			>
-				Публично доступные серверы iperf3 ↗
+				{m.tunnel_test_public_servers()}
 			</a>
 
 			{#if isRunning}
 				<Button variant="ghost" fullWidth onclick={cancelSpeedTest}>
-					Отмена
+					{m.common_cancel()}
 				</Button>
 			{:else}
 				<Button
@@ -776,10 +776,10 @@
 					disabled={!selectedServer && !useCustomServer}
 				>
 					{speedPhase === 'idle'
-						? 'Запустить'
+						? m.common_start()
 						: speedPhase === 'cancelled'
-							? 'Запустить заново'
-							: 'Повторить'}
+							? m.tunnel_test_start_again()
+							: m.common_retry()}
 				</Button>
 			{/if}
 		{/if}
@@ -790,12 +790,12 @@
 	<div class="tests-grid" class:modal-grid={mode === 'modal'}>
 		{#if loading}
 			<div class="card test-card">
-				<h3>Загрузка...</h3>
-				<p class="test-desc">Проверяем доступность тестирования.</p>
+				<h3>{m.tunnel_test_loading_title()}</h3>
+				<p class="test-desc">{m.tunnel_test_loading_desc()}</p>
 			</div>
 		{:else if unavailableReason}
 			<div class="card test-card">
-				<h3>Тестирование недоступно</h3>
+				<h3>{m.tunnel_test_unavailable()}</h3>
 				<p class="test-desc">{unavailableReason}</p>
 			</div>
 		{:else}
@@ -805,8 +805,8 @@
 				<details class="aux-tests" open={auxTestsOpen} ontoggle={handleAuxTestsToggle}>
 					<summary class="aux-tests-summary">
 						<span class="aux-tests-copy">
-							<span class="aux-tests-title">Дополнительные проверки</span>
-							<span class="aux-tests-desc">Проверка соединения и Проверка IP</span>
+							<span class="aux-tests-title">{m.tunnel_test_aux_title()}</span>
+							<span class="aux-tests-desc">{m.tunnel_test_aux_desc()}</span>
 						</span>
 
 						<ChevronDown class="aux-tests-chevron" size={16} aria-hidden="true" />
@@ -831,7 +831,7 @@
 		<div class="page-header test-page-header">
 			<BackLink href={backHref} label={backLabel} />
 
-			<h1 class="page-title">{diagnosticsTitlePrefix} тестирование: {displayName}</h1>
+			<h1 class="page-title">{m.tunnel_test_title({ prefix: diagnosticsTitlePrefix, name: displayName })}</h1>
 		</div>
 
 		{@render diagnosticsBody()}

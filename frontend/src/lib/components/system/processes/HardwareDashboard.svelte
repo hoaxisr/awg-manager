@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SystemProcSnapshot } from '$lib/api/client';
 	import type { SystemCpuCore } from '$lib/api/clientSystem';
 	import { Card } from '$lib/components/ui';
@@ -28,7 +29,7 @@
 			<div class="col-head">
 				<div class="col-title">
 					<Cpu size={16} class="text-accent" />
-					<span>Процессор (CPU)</span>
+					<span>{m.system_processes_hw_cpu()}</span>
 					{#if snapshot?.cpuModel}
 						<span class="chip-model">{snapshot.cpuModel}</span>
 					{/if}
@@ -38,7 +39,7 @@
 					{@const level = getCpuClass(totalCore.usage)}
 					<div class="pill-cpu-total level-{level}">
 						<span class="dot"></span>
-						<span>Всего: <strong>{totalCore.usage.toFixed(1)}%</strong></span>
+						<span>{m.system_processes_hw_total()} <strong>{totalCore.usage.toFixed(1)}%</strong></span>
 					</div>
 				{/if}
 			</div>
@@ -66,27 +67,27 @@
 								<div
 									class="bar-seg seg-user"
 									style="width: {Math.min(100, Math.max(0, core.user))}%"
-									title="Пользователь (User): {core.user.toFixed(1)}%"
+									title={m.system_processes_hw_user_title({ value: core.user.toFixed(1) })}
 								></div>
 								<!-- System (amber) -->
 								<div
 									class="bar-seg seg-sys"
 									style="width: {Math.min(100 - core.user, Math.max(0, core.system))}%"
-									title="Система (Kernel): {core.system.toFixed(1)}%"
+									title={m.system_processes_hw_sys_title({ value: core.system.toFixed(1) })}
 								></div>
 								<!-- IOWait (orange/red) -->
 								{#if core.iowait > 0}
 									<div
 										class="bar-seg seg-iowait"
 										style="width: {Math.min(100 - core.user - core.system, Math.max(0, core.iowait))}%"
-										title="Ожидание ввода-вывода: {core.iowait.toFixed(1)}%"
+										title={m.system_processes_hw_iowait_title({ value: core.iowait.toFixed(1) })}
 									></div>
 								{/if}
 							</div>
 						</div>
 					{/each}
 				{:else}
-					<div class="loading-hint">Сбор данных CPU…</div>
+					<div class="loading-hint">{m.system_processes_hw_cpu_collecting()}</div>
 				{/if}
 			</div>
 		</div>
@@ -96,7 +97,7 @@
 			<div class="col-head">
 				<div class="col-title">
 					<HardDrive size={16} class="text-accent" />
-					<span>Оперативная память</span>
+					<span>{m.system_processes_hw_ram_title()}</span>
 				</div>
 				{#if snapshot?.memory}
 					<div class="pill-mem-total">
@@ -111,9 +112,9 @@
 					<!-- RAM Bar -->
 					<div class="core-card">
 						<div class="core-header-line">
-							<span class="core-idx">ОЗУ</span>
+							<span class="core-idx">{m.system_processes_hw_ram()}</span>
 							<span class="core-details-text">
-								Занято: {formatBytes(snapshot.memory.used)} · Кэш: {formatBytes(reclaimable)} · Свободно: {formatBytes(snapshot.memory.free)}
+								{m.system_processes_hw_ram_details({ used: formatBytes(snapshot.memory.used), cache: formatBytes(reclaimable), free: formatBytes(snapshot.memory.free) })}
 							</span>
 							<span class="core-percentage mem-pct-txt">
 								{snapshot.memory.usagePercent.toFixed(1)}%
@@ -123,12 +124,12 @@
 							<div
 								class="bar-seg mem-used-seg"
 								style="width: {Math.min(100, (snapshot.memory.used / snapshot.memory.total) * 100)}%"
-								title="Занято приложениями: {formatBytes(snapshot.memory.used)}"
+								title={m.system_processes_hw_used_title({ size: formatBytes(snapshot.memory.used) })}
 							></div>
 							<div
 								class="bar-seg mem-cached-seg"
 								style="width: {(reclaimable / snapshot.memory.total) * 100}%"
-								title="Кэш, который ядро освободит по требованию: {formatBytes(reclaimable)}"
+								title={m.system_processes_hw_cache_title({ size: formatBytes(reclaimable) })}
 							></div>
 						</div>
 					</div>

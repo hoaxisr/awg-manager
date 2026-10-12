@@ -1,4 +1,5 @@
 <script lang="ts" generics="T extends string = string">
+	import { m } from '$lib/i18n';
 	interface Props {
 		label: string;
 		sortKey: T;
@@ -18,7 +19,7 @@
 	class:active
 	aria-pressed={active}
 	onclick={() => onchange(sortKey)}
-	title={`Сортировать по колонке «${label}». Повторный клик — смена направления, третий — исходный порядок`}
+	title={m.ui_table_sort_title({ label })}
 >
 	<span>{label}</span>
 	<span class="sort-indicator" aria-hidden="true">

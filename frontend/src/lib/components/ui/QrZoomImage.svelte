@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	interface Props {
 		src: string;
 		alt: string;
@@ -33,7 +34,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<button type="button" class="qr-zoom-trigger {className}" onclick={open} title="Нажмите для увеличения">
+<button type="button" class="qr-zoom-trigger {className}" onclick={open} title={m.ui_qr_zoom_trigger_title()}>
 	<img {src} {alt} class="qr-zoom-thumb" />
 	<span class="qr-zoom-badge" aria-hidden="true">⤢</span>
 </button>
@@ -51,7 +52,7 @@
 		onclick={close}
 	>
 		<img {src} {alt} class="qr-zoom-enlarged" onclick={(e) => e.stopPropagation()} />
-		<p class="qr-zoom-caption">Нажмите вне QR или Esc, чтобы закрыть</p>
+		<p class="qr-zoom-caption">{m.ui_qr_zoom_caption()}</p>
 	</div>
 {/if}
 

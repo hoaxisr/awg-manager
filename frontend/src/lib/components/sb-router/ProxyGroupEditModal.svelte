@@ -3,7 +3,7 @@
 	import { X } from 'lucide-svelte';
 	import SingboxSettingsModal from '../routing/singboxRouter/SingboxSettingsModal.svelte';
 	import type { ProxyGroup } from '$lib/types/sbRouter';
-	import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
+	import { outboundGroupLabel, type OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
 
   interface Props {
     group?: ProxyGroup;
@@ -31,7 +31,7 @@
   const outboundDropdownOptions = $derived<DropdownOption[]>([
     { value: '', label: '— выберите —' },
     ...outboundOptions.flatMap((g) =>
-      g.items.map((i) => ({ value: i.value, label: i.label, group: g.group })),
+      g.items.map((i) => ({ value: i.value, label: i.label, group: outboundGroupLabel(g.id) })),
     ),
   ]);
 

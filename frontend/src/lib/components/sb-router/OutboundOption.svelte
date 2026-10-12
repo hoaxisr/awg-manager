@@ -16,12 +16,23 @@
     tone: Tone;
     selected: boolean;
     onclick: () => void;
+    /** Режим недоступен на этом роутере — кнопка блокируется, причина уходит в title. */
+    disabled?: boolean;
+    title?: string;
   }
 
-  let { icon, label, sub, count, tone, selected, onclick }: Props = $props();
+  let { icon, label, sub, count, tone, selected, onclick, disabled = false, title }: Props = $props();
 </script>
 
-<button type="button" class="opt tone-{tone}" class:selected aria-pressed={selected} {onclick}>
+<button
+  type="button"
+  class="opt tone-{tone}"
+  class:selected
+  aria-pressed={selected}
+  {disabled}
+  {title}
+  {onclick}
+>
   {#if icon}<div class="icon">{@render icon()}</div>{/if}
   <div class="text">
     <div class="label">{label}</div>
@@ -34,6 +45,11 @@
 </button>
 
 <style>
+  .opt:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   .opt {
     padding: 14px;
     border-radius: var(--radius-sm);

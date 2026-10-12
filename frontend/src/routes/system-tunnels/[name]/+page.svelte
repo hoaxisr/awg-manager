@@ -9,6 +9,7 @@
 	import { ArrowLeft } from 'lucide-svelte';
 	import { Button } from '$lib/components/ui';
 	import { formatBytes } from '$lib/utils/format';
+	import { m } from '$lib/i18n';
 
 	const name = $page.params.name!;
 
@@ -44,7 +45,7 @@
 			ascParams = asc;
 			isServer = (snap?.servers ?? []).some((s) => s.id === name);
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Не удалось загрузить данные';
+			error = e instanceof Error ? e.message : m.system_tunnels_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -55,9 +56,9 @@
 		saving = true;
 		try {
 			await api.setASCParams(name, ascParams);
-			notifications.success('Параметры обфускации сохранены');
+			notifications.success(m.system_tunnels_obfuscation_saved());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения');
+			notifications.error(e instanceof Error ? e.message : m.system_tunnels_save_failed());
 		} finally {
 			saving = false;
 		}
@@ -73,10 +74,10 @@
 		<div class="sticky-header">
 		<div class="header-left">
 			<Button variant="ghost" size="sm" onclick={() => goto('/')} iconBefore={backIcon}>
-				Назад
+				{m.common_back()}
 			</Button>
 			<h1 class="page-title">{tunnel?.description || name}</h1>
-			<span class="badge-system">Системный</span>
+			<span class="badge-system">{m.system_tunnels_card_system_badge()}</span>
 		</div>
 		<Button
 			variant="primary"
@@ -85,24 +86,24 @@
 			disabled={!ascParams}
 			loading={saving}
 		>
-			{saving ? 'Сохранение...' : 'Сохранить'}
+			{saving ? m.common_saving() : m.common_save()}
 		</Button>
 	</div>
 
 	{#if loading}
-		<div class="py-12 text-center text-surface-400">Загрузка...</div>
+		<div class="py-12 text-center text-surface-400">{m.tunnels_loading()}</div>
 	{:else if error}
 		<div class="py-12 text-center text-error-500">{error}</div>
 	{:else if tunnel && ascParams}
 		<div class="section">
-			<h2 class="section-title">Информация</h2>
+			<h2 class="section-title">{m.system_tunnels_info()}</h2>
 			<div class="info-grid">
 				<div class="info-item">
-					<span class="info-label">Статус</span>
-					<span class="info-value">{tunnel.status === 'up' ? 'Активен' : 'Неактивен'}</span>
+					<span class="info-label">{m.system_tunnels_status()}</span>
+					<span class="info-value">{tunnel.status === 'up' ? m.tunnels_status_active() : m.tunnels_status_inactive()}</span>
 				</div>
 				<div class="info-item">
-					<span class="info-label">Интерфейс</span>
+					<span class="info-label">{m.system_tunnels_interface()}</span>
 					<span class="info-value font-mono">{tunnel.interfaceName}</span>
 				</div>
 				<div class="info-item">
@@ -123,7 +124,7 @@
 				{/if}
 				{#if tunnel.peer}
 					<div class="info-item">
-						<span class="info-label">Трафик</span>
+						<span class="info-label">{m.system_tunnels_traffic()}</span>
 						<span class="info-value"
 							>RX: {formatBytes(tunnel.peer.rxBytes)} / TX: {formatBytes(tunnel.peer.txBytes)}</span
 						>

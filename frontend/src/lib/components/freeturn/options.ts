@@ -1,3 +1,5 @@
+import { m } from '$lib/i18n';
+
 // Общие option-списки клиентской и серверной панелей — единый источник,
 // чтобы новый obf-профиль не появился только в одной из них.
 export const modeOptions = [
@@ -18,9 +20,11 @@ export const obfOptions = [
 ];
 
 /** VK-auth persona class for freeturn (-platform). */
-export const platformOptions = [
-	{ value: 'desktop', label: 'desktop (роутер / ПК)' },
-	{ value: 'mobile', label: 'mobile' }
-];
+export function platformOptions() {
+	return [
+		{ value: 'desktop', label: m.proxy_option_platform_desktop() },
+		{ value: 'mobile', label: 'mobile' }
+	];
+}
 
 export { dnsModeOptions } from '../proxy-panel/dnsOptions';

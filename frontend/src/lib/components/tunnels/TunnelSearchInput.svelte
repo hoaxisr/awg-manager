@@ -1,17 +1,19 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
+
 	interface Props {
 		value: string;
 		onInput: (value: string) => void;
 		placeholder?: string;
 	}
 
-	let { value, onInput, placeholder = 'Поиск...' }: Props = $props();
+	let { value, onInput, placeholder }: Props = $props();
 </script>
 
 <input
 	class="tunnel-search"
 	type="text"
-	{placeholder}
+	placeholder={placeholder ?? m.tunnels_search_placeholder()}
 	{value}
 	oninput={(e) => onInput((e.currentTarget as HTMLInputElement).value)}
 />

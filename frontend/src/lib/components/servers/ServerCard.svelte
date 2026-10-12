@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type {
 		ASCParams,
 		WireguardServer,
@@ -169,7 +170,7 @@
 			const fresh = await api.setWireguardServerEnabled(server.id, enabled);
 			servers.applyMutationResponse(patchSystemServerEnabledInSnapshot(fresh, server.id, enabled));
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка переключения');
+			notifications.error(e instanceof Error ? e.message : m.servers_card_toggle_failed());
 		} finally {
 			togglingEnabled = false;
 		}
@@ -180,10 +181,10 @@
 		restartingServer = true;
 		try {
 			await api.restartWireguardServer(server.id);
-			notifications.success(isUp ? 'Команда рестарта отправлена' : 'Команда запуска отправлена');
+			notifications.success(isUp ? m.servers_card_restart_sent() : m.servers_card_start_sent());
 			servers.invalidate();
 		} catch {
-			notifications.warning('Команда могла быть отправлена, соединение могло временно прерваться');
+			notifications.warning(m.servers_card_cmd_maybe_sent());
 		} finally {
 			restartingServer = false;
 		}
@@ -194,7 +195,7 @@
 		try {
 			await onToggleIngress(server.interfaceName, !ingressEnabled);
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка переключения egress в sing-box');
+			notifications.error(e instanceof Error ? e.message : m.servers_card_ingress_failed());
 		} finally {
 			togglingIngress = false;
 		}
@@ -207,7 +208,7 @@
 			const fresh = await api.setWireguardServerNATEnabled(server.id, enabled);
 			servers.applyMutationResponse(fresh);
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка изменения NAT');
+			notifications.error(e instanceof Error ? e.message : m.servers_card_nat_failed());
 		} finally {
 			togglingNAT = false;
 		}
@@ -219,9 +220,9 @@
 		try {
 			const fresh = await api.setWireguardServerPolicy(server.id, newPolicy);
 			servers.applyMutationResponse(fresh);
-			notifications.success('Политика обновлена');
+			notifications.success(m.servers_card_policy_updated());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка изменения политики');
+			notifications.error(e instanceof Error ? e.message : m.servers_card_policy_failed());
 		} finally {
 			policyChanging = false;
 		}
@@ -238,7 +239,7 @@
 			const fresh = await api.toggleSystemServerPeer(server.id, peer.publicKey, !peer.enabled);
 			servers.applyMutationResponse(fresh);
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка');
+			notifications.error(e instanceof Error ? e.message : m.common_error());
 		} finally {
 			const next = new Set(togglingPeerKeys);
 			next.delete(peer.publicKey);
@@ -250,9 +251,9 @@
 		try {
 			const fresh = await api.deleteSystemServerPeer(server.id, peer.publicKey);
 			servers.applyMutationResponse(fresh);
-			notifications.success('Клиент удалён');
+			notifications.success(m.servers_card_peer_deleted());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка удаления');
+			notifications.error(e instanceof Error ? e.message : m.servers_card_delete_failed());
 			throw e;
 		}
 	}
@@ -280,7 +281,7 @@
 			void openConfGenerator(peer.publicKey);
 			return;
 		}
-		notifications.warning('Конфиг недоступен — клиент создан вне AWG Manager или через KeenDNS');
+		notifications.warning(m.servers_card_conf_unavailable());
 	}
 
 	async function openConfGenerator(publicKey: string) {
@@ -296,7 +297,7 @@
 			wanIP = ip;
 			confGeneratorOpen = true;
 		} catch {
-			notifications.error('Не удалось загрузить конфигурацию');
+			notifications.error(m.servers_card_conf_load_failed());
 		}
 	}
 
@@ -352,9 +353,9 @@
 				</div>
 				<div class="title-badges">
 					{#if isBuiltIn}
-						<span class="badge badge-builtin">Встроенный</span>
+						<span class="badge badge-builtin">{m.servers_card_badge_builtin()}</span>
 					{:else if isMarked}
-						<span class="badge badge-system">Системный</span>
+						<span class="badge badge-system">{m.system_tunnels_card_system_badge()}</span>
 					{/if}
 				</div>
 			</div>
@@ -378,7 +379,7 @@
 		<div class="header-right">
 			<div class="header-actions">
 					<Button variant="secondary" size="sm" onclick={handleRestartOrStart} disabled={restartingServer || togglingEnabled} loading={restartingServer} iconBefore={restartIcon}>
-						{isUp ? 'Рестарт' : 'Запуск'}
+						{isUp ? m.servers_card_restart() : m.servers_card_start()}
 					</Button>
 				</div>
 		</div>
@@ -388,7 +389,7 @@
 	<StatStrip>
 		<Stat value={formatBytes(totalRx)} label="RX" />
 		<Stat value={formatBytes(totalTx)} label="TX" />
-		<Stat value={`${onlineCount} / ${totalPeers}`} label="Клиенты" sub={onlineCount > 0 ? `${onlineCount} онлайн` : 'нет активных'} />
+		<Stat value={`${onlineCount} / ${totalPeers}`} label={m.servers_stat_clients()} sub={onlineCount > 0 ? m.servers_stat_online({ count: onlineCount }) : m.servers_stat_none_active()} />
 		<Stat value={`UDP :${server.listenPort}`} label="Listen" />
 	</StatStrip>
 	{/if}
@@ -401,14 +402,14 @@
 				<div class="setting-copy">
 					<span class="setting-title">NAT</span>
 					{#if !natModeKnown}
-						<span class="setting-description setting-description-warning">Не удалось прочитать состояние NAT с роутера — обновите страницу.</span>
+						<span class="setting-description setting-description-warning">{m.servers_card_nat_unreadable()}</span>
 					{:else if natEnabled}
-						<span class="setting-description">Для доступа клиентов в интернет через NAT роутера.</span>
+						<span class="setting-description">{m.servers_card_nat_on_desc()}</span>
 					{:else}
-						<span class="setting-description">Без NAT — клиенты не выходят в интернет напрямую.</span>
+						<span class="setting-description">{m.servers_card_nat_off_desc()}</span>
 					{/if}
 					{#if natModeKnown && ingressEnabled && natEnabled}
-						<span class="setting-description setting-description-warning">Интернет-трафик идёт через sing-box - NAT влияет только на видимость в LAN.</span>
+						<span class="setting-description setting-description-warning">{m.servers_card_nat_ingress_warning()}</span>
 					{/if}
 				</div>
 				<div class="setting-control setting-control-toggle">
@@ -425,12 +426,9 @@
 
 			<div class="setting-row setting-row-toggle">
 				<div class="setting-copy">
-					<span class="setting-title">Маршрутизация через sing-box</span>
+					<span class="setting-title">{m.servers_card_ingress_title()}</span>
 					<span class="setting-description">
-						Весь трафик клиентов этого сервера пойдёт через sing-box и маршрутизируется его
-						правилами; в режиме FakeIP их DNS-запросы перехватываются резолвером туннеля.
-						Следствия в FakeIP: выше нагрузка на процессор, у клиентов не работает ping (ICMP),
-						при остановленном sing-box они остаются без сети.
+						{m.servers_card_ingress_desc()}
 					</span>
 				</div>
 				<div class="setting-control setting-control-toggle">
@@ -450,7 +448,7 @@
 			>
 				{#snippet extra()}
 					{#if !policyKnown}
-						<span class="setting-description setting-description-warning">Не удалось прочитать политику доступа с роутера — обновите страницу.</span>
+						<span class="setting-description setting-description-warning">{m.servers_card_policy_unreadable()}</span>
 					{/if}
 				{/snippet}
 			</ServerAccessPolicyDropdown>
@@ -468,7 +466,7 @@
 
 	<div class="peers-section">
 		<div class="peers-header">
-			<span class="peers-title">Клиенты ({onlineCount}/{totalPeers} онлайн)</span>
+			<span class="peers-title">{m.servers_card_peers_title_online({ online: onlineCount, total: totalPeers })}</span>
 			<div class="peers-controls">
 				<PeerSortControls
 					bind:searchQuery
@@ -477,14 +475,14 @@
 				/>
 				{#if isBuiltIn || isMarked}
 					<Button variant="secondary" size="sm" onclick={() => (addPeerOpen = true)} iconBefore={addPeerIcon}>
-						Добавить клиента
+						{m.servers_peer_add_title()}
 					</Button>
 				{/if}
 			</div>
 		</div>
 
 		{#if (server.peers ?? []).length === 0}
-			<div class="empty-peers">Нет клиентов. Добавьте первого.</div>
+			<div class="empty-peers">{m.servers_card_no_peers()}</div>
 		{:else}
 			<ManagedPeerTable
 				peers={sortedPeers}
@@ -504,7 +502,7 @@
 	{#if !isBuiltIn && onUnmark}
 		<div class="server-actions">
 			<Button variant="ghost" size="sm" onclick={() => onUnmark?.(server.id)} {iconBefore}>
-				Вернуть в туннели
+				{m.servers_card_unmark()}
 			</Button>
 		</div>
 	{/if}

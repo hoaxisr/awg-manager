@@ -39,6 +39,8 @@ export function newDeviceProxyInstance(existing: DeviceProxyInstance[]): DeviceP
   const n = Math.random().toString(36).slice(2, 8);
   return {
     id: `px-${n}`,
+    // Имя уходит на роутер и дальше это данные, а не текст интерфейса — одно
+    // для всех языков, иначе в списке смешаются «Прокси 1» и «Proxy 2».
     name: `Прокси ${existing.length + 1}`,
     enabled: false,
     listenAll: true,

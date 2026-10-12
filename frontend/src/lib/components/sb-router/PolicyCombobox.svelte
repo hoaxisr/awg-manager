@@ -4,6 +4,7 @@
   предлагает создать «X» (api.singboxRouterCreatePolicy). Выбор/создание → onChange(name).
 -->
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { api } from '$lib/api/client';
   import { notifications } from '$lib/stores/notifications';
@@ -56,7 +57,7 @@
       await loadPolicies();
       select(created.name);
     } catch (e) {
-      notifications.error(`Не удалось создать политику: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_policy_combo_create_failed({ message: e instanceof Error ? e.message : String(e) }));
     } finally {
       creating = false;
     }
@@ -66,7 +67,7 @@
 <div class="combo">
   {#if value}
     <div class="current">
-      Текущая:
+      {m.sb_router_policy_combo_current()}
       {#if currentLabel && currentLabel !== value}
         <strong>{currentLabel}</strong> <span class="current-id">({value})</span>
       {:else}
@@ -79,7 +80,7 @@
       class="inp"
       type="text"
       bind:value={query}
-      placeholder="Найти или создать политику…"
+      placeholder={m.sb_router_policy_combo_placeholder()}
       onfocus={() => (open = true)}
       onblur={() => setTimeout(() => (open = false), 150)}
     />
@@ -88,16 +89,16 @@
         {#each filtered as p (p.name)}
           <button type="button" class="opt" class:sel={p.name === value} onmousedown={() => select(p.name)}>
             <span class="opt-name">{p.description || p.name}</span>
-            <span class="opt-meta">{p.mark ? `${p.mark} · ` : ''}{p.deviceCount} устр.</span>
+            <span class="opt-meta">{p.mark ? `${p.mark} · ` : ''}{m.sb_router_policy_combo_devices({ count: p.deviceCount })}</span>
           </button>
         {/each}
         {#if canCreate}
           <button type="button" class="opt create" onmousedown={create} disabled={creating}>
-            {creating ? 'Создание…' : `+ Создать «${trimmed}»`}
+            {creating ? m.sb_router_policy_combo_creating() : m.sb_router_policy_combo_create({ name: trimmed })}
           </button>
         {/if}
         {#if filtered.length === 0 && !canCreate}
-          <div class="empty">Нет политик</div>
+          <div class="empty">{m.sb_router_policy_combo_empty()}</div>
         {/if}
       </div>
     {/if}

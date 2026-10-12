@@ -3,6 +3,7 @@
 // невалидный ответ (присутствующее значение неверного типа) — это ошибка
 // запроса и в dev, и в prod. Отсутствующие/null-поля валидны by design —
 // см. дизайн-решения в scripts/gen-api-schemas.mjs.
+import { m } from '$lib/i18n';
 import * as v from 'valibot';
 import { RESPONSE_SCHEMAS } from './schemas.gen';
 
@@ -11,7 +12,7 @@ export class ApiValidationError extends Error {
 	readonly issues: string[];
 
 	constructor(endpoint: string, issues: string[]) {
-		super(`Некорректный ответ сервера (${endpoint}): ${issues.join('; ')}`);
+		super(m.api_invalid_response({ endpoint, issues: issues.join('; ') }));
 		this.name = 'ApiValidationError';
 		this.endpoint = endpoint;
 		this.issues = issues;
@@ -68,7 +69,7 @@ function formatIssue(issue: v.BaseIssue<unknown>): string {
 		.map((p) => String((p as { key?: unknown }).key ?? '?'))
 		.join('.');
 	const got = issue.received;
-	return `${path || '<root>'}: ожидался ${issue.expected}, получен ${got}`;
+	return m.api_validate_issue({ path: path || '<root>', expected: String(issue.expected), received: got });
 }
 
 /**
@@ -85,7 +86,7 @@ export function validateApiResponse(method: string, endpoint: string, body: unkn
 
 	const issues = result.issues.slice(0, 5).map(formatIssue);
 	if (result.issues.length > 5) {
-		issues.push(`… и ещё ${result.issues.length - 5}`);
+		issues.push(m.api_validate_more({ count: result.issues.length - 5 }));
 	}
 	throw new ApiValidationError(endpoint, issues);
 }

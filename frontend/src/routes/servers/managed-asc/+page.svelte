@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m, uiText, type UiText } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
@@ -18,7 +19,7 @@
 	let systemInfo = $state<SystemInfo | null>(null);
 	let saving = $state(false);
 	let loading = $state(true);
-	let error = $state<string | null>(null);
+	let error = $state<UiText | null>(null);
 	let generating = $state(false);
 
 	let canClearASC = $derived.by(() => ascParams !== null && !isZeroASCState(ascParams));
@@ -44,9 +45,9 @@
 					} satisfies ASCParamsExtended)
 				: generated;
 
-			notifications.success('Параметры сгенерированы');
+			notifications.success(m.servers_asc_generated());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка генерации');
+			notifications.error(e instanceof Error ? e.message : m.servers_asc_generate_failed());
 		} finally {
 			generating = false;
 		}
@@ -55,7 +56,7 @@
 	function handleClearASC() {
 		if (!ascParams) return;
 		applyDisabledASCState(ascParams);
-		notifications.success('ASC подготовлен к отключению — нажмите «Сохранить»');
+		notifications.success(m.servers_asc_prepared_to_disable());
 	}
 
 	$effect(() => {
@@ -63,7 +64,7 @@
 			loadData();
 		} else {
 			loading = false;
-			error = 'Не указан идентификатор сервера';
+			error = () => m.servers_asc_no_server_id();
 		}
 	});
 
@@ -79,7 +80,7 @@
 			ascParams = asc;
 			systemInfo = info;
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Не удалось загрузить параметры';
+			error = e instanceof Error ? e.message : () => m.servers_asc_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -97,13 +98,13 @@
 			const fresh = await api.setManagedServerASC(serverId, ascParams);
 			servers.applyMutationResponse(fresh);
 			ascParams = await api.getManagedServerASC(serverId);
-			notifications.success('Параметры обфускации сохранены');
+			notifications.success(m.system_tunnels_obfuscation_saved());
 			try {
 				const server = await api.getManagedServer(serverId);
 				if (server && server.peers.length > 0) {
 					const n = server.peers.length;
 					notifications.warning(
-						`Клиенты (${n}) должны быть переконфигурированы — скачайте новые конфигурации`,
+						m.servers_asc_clients_reconfigure({ count: n }),
 						12000,
 					);
 				}
@@ -111,7 +112,7 @@
 				// Non-critical — don't block on peer count fetch
 			}
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения');
+			notifications.error(e instanceof Error ? e.message : m.system_tunnels_save_failed());
 		} finally {
 			saving = false;
 		}
@@ -119,7 +120,7 @@
 </script>
 
 <svelte:head>
-	<title>Обфускация — AWG Manager</title>
+	<title>{m.servers_asc_page_title()}</title>
 </svelte:head>
 
 <PageContainer width="wide">
@@ -127,10 +128,10 @@
 		<div class="sticky-header">
 		<div class="header-left">
 			<Button variant="ghost" size="sm" onclick={() => goto('/servers')} iconBefore={backIcon}>
-				Назад
+				{m.common_back()}
 			</Button>
-			<h1 class="page-title">Обфускация (ASC)</h1>
-			<span class="badge-managed">Управляемый сервер</span>
+			<h1 class="page-title">{m.servers_asc_heading()}</h1>
+			<span class="badge-managed">{m.servers_asc_badge_managed()}</span>
 		</div>
 		<div class="header-actions">
 			{#if canClearASC}
@@ -140,7 +141,7 @@
 					onclick={handleClearASC}
 					disabled={saving || generating || !ascParams}
 				>
-					Убрать ASC
+					{m.servers_asc_clear()}
 				</Button>
 			{/if}
 			<Button
@@ -150,8 +151,8 @@
 				disabled={!ascParams}
 				loading={generating}
 			>
-				<span class="gen-label gen-label-desktop">Сгенерировать параметры</span>
-				<span class="gen-label gen-label-mobile">Сгенерировать</span>
+				<span class="gen-label gen-label-desktop">{m.servers_asc_generate_params()}</span>
+				<span class="gen-label gen-label-mobile">{m.common_generate()}</span>
 			</Button>
 			<Button
 				variant="primary"
@@ -160,15 +161,15 @@
 				disabled={generating || !ascParams}
 				loading={saving}
 			>
-				Сохранить
+				{m.common_save()}
 			</Button>
 		</div>
 	</div>
 
 	{#if loading}
-		<div class="py-12 text-center text-surface-400">Загрузка...</div>
+		<div class="py-12 text-center text-surface-400">{m.tunnels_loading()}</div>
 	{:else if error}
-		<div class="py-12 text-center text-error-500">{error}</div>
+		<div class="py-12 text-center text-error-500">{uiText(error)}</div>
 	{:else if ascParams}
 		<div class="tab-content">
 			<ASCEditor bind:params={ascParams} signatureModes="none" idPrefix="managed-" />

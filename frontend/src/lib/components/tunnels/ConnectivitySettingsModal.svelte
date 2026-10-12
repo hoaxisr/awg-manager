@@ -3,6 +3,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { Modal, Button, Dropdown } from '$lib/components/ui';
 	import type { AWGTunnel, ConnectivityCheckConfig } from '$lib/types';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		open: boolean;
@@ -46,7 +47,7 @@
 			method = (cfg?.method !== undefined && cfg?.method !== null) ? cfg.method : 'http';
 			pingTarget = cfg?.pingTarget || computeDefaultGateway(tunnel.interface?.address || tunnelAddress);
 		} catch (e) {
-			notifications.error('Не удалось загрузить настройки');
+			notifications.error(m.tunnels_connectivity_load_failed());
 		} finally {
 			loading = false;
 		}
@@ -61,30 +62,30 @@
 				pingTarget: method === 'ping' ? pingTarget : undefined,
 			};
 			await api.updateTunnel(tunnelId, tunnel);
-			notifications.success('Настройки проверки сохранены');
+			notifications.success(m.tunnels_connectivity_saved());
 			onSaved();
 		} catch (e) {
-			notifications.error(`Ошибка: ${(e as Error).message}`);
+			notifications.error(m.tunnels_error_with_message({ message: (e as Error).message }));
 		} finally {
 			saving = false;
 		}
 	}
 </script>
 
-<Modal {open} title="Проверка связности" size="sm" {onclose}>
+<Modal {open} title={m.tunnels_connectivity_title()} size="sm" {onclose}>
 	{#if loading}
-		<div class="loading-state">Загрузка...</div>
+		<div class="loading-state">{m.tunnels_loading()}</div>
 	{:else}
 		<div class="form-fields">
 			<div class="field">
 				<Dropdown
 					id="cc-method"
-					label="Метод проверки"
+					label={m.tunnels_connectivity_method()}
 					bind:value={method}
 					options={[
-						{ value: 'http', label: 'HTTP 204 (интернет)' },
-						{ value: 'ping', label: 'Ping IP' },
-						{ value: 'disabled', label: 'Выключено' },
+						{ value: 'http', label: m.tunnels_connectivity_method_http() },
+						{ value: 'ping', label: m.tunnels_connectivity_method_ping() },
+						{ value: 'disabled', label: m.tunnels_connectivity_method_disabled() },
 					]}
 					fullWidth
 				/>
@@ -92,24 +93,24 @@
 
 			{#if method === 'ping'}
 				<div class="field">
-					<label class="field-label" for="cc-target">IP для ping</label>
+					<label class="field-label" for="cc-target">{m.tunnels_connectivity_ping_ip()}</label>
 					<input id="cc-target" type="text" class="field-input" bind:value={pingTarget} placeholder="10.0.0.1" />
-					<span class="hint-text">По умолчанию: gateway (.1) из адреса туннеля</span>
+					<span class="hint-text">{m.tunnels_connectivity_ping_default()}</span>
 				</div>
 			{/if}
 
 			{#if method === 'http'}
-				<p class="hint-text">Проверка через HTTP запрос к connectivitycheck.gstatic.com. Требует выход в интернет через туннель.</p>
+				<p class="hint-text">{m.tunnels_connectivity_http_hint()}</p>
 			{:else if method === 'disabled'}
-				<p class="hint-text">Индикатор связности будет скрыт на карточке туннеля.</p>
+				<p class="hint-text">{m.tunnels_connectivity_disabled_hint()}</p>
 			{/if}
 		</div>
 	{/if}
 
 	{#snippet actions()}
-		<Button variant="secondary" onclick={onclose}>Отмена</Button>
+		<Button variant="secondary" onclick={onclose}>{m.common_cancel()}</Button>
 		<Button variant="primary" onclick={handleSave} disabled={loading} loading={saving}>
-			Сохранить
+			{m.common_save()}
 		</Button>
 	{/snippet}
 </Modal>

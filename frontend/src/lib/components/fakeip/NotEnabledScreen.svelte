@@ -2,6 +2,7 @@
 	import { EmptyState } from '$lib/components/layout';
 	import { Button } from '$lib/components/ui';
 	import { Network } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 
 	// FE-spec §12.1 state 'not-fakeip' / §7.2 — shown when fakeip-tun is not the
 	// active routing mode. The CTA is the entry point into the mode transition;
@@ -17,9 +18,8 @@
 </script>
 
 <EmptyState
-	title="Режим FakeIP не включён"
-	description={unavailableReason ??
-		'Сейчас активен другой режим маршрутизации (TPROXY или маршрутизация выключена). Конфигурация и блоки FakeIP появятся после включения движка fakeip-tun.'}
+	title={m.fakeip_not_enabled_title()}
+	description={unavailableReason ?? m.fakeip_not_enabled_description()}
 >
 	{#snippet icon()}
 		<Network />
@@ -32,7 +32,7 @@
 			title={unavailableReason}
 			onclick={onEnableRequested}
 		>
-			Включить FakeIP
+			{m.fakeip_not_enabled_enable()}
 		</Button>
 	{/snippet}
 </EmptyState>

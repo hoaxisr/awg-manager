@@ -285,3 +285,29 @@ func TestAdopt_SyncsDescriptionBeforeStart(t *testing.T) {
 		t.Fatalf("вызовы: %v", svc.calls)
 	}
 }
+
+// F589: зеркало wdtt-raw (id без цифр) и NativeWG OpkgTun не занимают —
+// сторонний AWG на opkgtun0 обязан остаться в списке внешних.
+func TestList_NonOpkgTunRecordsDoNotHideExternal(t *testing.T) {
+	awg := map[string]*sysinfo.ExternalTunnelInfo{
+		"opkgtun0": {InterfaceName: "opkgtun0", TunnelNumber: 0, IsAWG: true},
+	}
+	stubScan(t, []int{0}, awg)
+	s := newTestService(t)
+	for _, rec := range []*storage.AWGTunnel{
+		{ID: "wdttraw-de", Backend: "wdtt-raw"},
+		{ID: "nwg0", Backend: "nativewg"},
+	} {
+		if err := s.store.Create(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(got) != 1 || got[0].InterfaceName != "opkgtun0" {
+		t.Fatalf("список = %+v, ждали сторонний opkgtun0", got)
+	}
+}

@@ -6,6 +6,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { Globe, Funnel, MonitorSmartphone } from 'lucide-svelte';
   import { Button, SectionLabel } from '$lib/components/ui';
@@ -62,15 +63,15 @@
   });
   let outcomeLabel = $derived.by(() => {
     if (!result) return '';
-    if (result.destination === 'reject' || result.destination === 'block') return 'ЗАБЛОКИРОВАНО';
-    if (result.matchedRule === -1) return `ПО DEFAULT: ${result.final || 'direct'}`;
-    return 'МАРШРУТ НАЙДЕН';
+    if (result.destination === 'reject' || result.destination === 'block') return m.sb_router_trace_outcome_blocked();
+    if (result.matchedRule === -1) return m.sb_router_trace_outcome_default({ final: result.final || 'direct' });
+    return m.sb_router_trace_outcome_found();
   });
 
   let matchedRuleAction = $derived.by(() => {
     if (!result || result.matchedRule === -1) return '';
-    const m = result.matches.find((x) => x.index === result.matchedRule);
-    return m?.action ?? '';
+    const hit = result.matches.find((x) => x.index === result.matchedRule);
+    return hit?.action ?? '';
   });
 
   function handleDomainChange(e: Event) {
@@ -102,17 +103,17 @@
 <section class="trace">
   {#if !embedded}
     <header class="trace-header">
-      <button type="button" class="back-btn" onclick={closeTrace} aria-label="Назад">
-        ← Назад
+      <button type="button" class="back-btn" onclick={closeTrace} aria-label={m.common_back()}>
+        ← {m.common_back()}
       </button>
       <span class="bread-sep">/</span>
-      <span class="bread-current">Куда поедет запрос</span>
+      <span class="bread-current">{m.sb_router_trace_title()}</span>
     </header>
 
     <div class="title-row">
       <div class="title-group">
-        <h1 class="title">Куда поедет запрос</h1>
-        <p class="title-sub">Подставьте домен или IP — увидите, какое правило сработает и через какой туннель.</p>
+        <h1 class="title">{m.sb_router_trace_title()}</h1>
+        <p class="title-sub">{m.sb_router_trace_sub()}</p>
       </div>
     </div>
   {/if}
@@ -124,7 +125,7 @@
       <input
         class="input"
         type="text"
-        placeholder="netflix.com или 192.168.1.1"
+        placeholder={m.sb_router_trace_placeholder()}
         value={input.domain}
         oninput={handleDomainChange}
         onkeydown={handleKeyDown}
@@ -133,23 +134,23 @@
       />
     </div>
     <Button variant="primary" size="md" onclick={handleSubmit} disabled={!canSubmit}>
-      {loading ? 'Проверяем…' : 'Проверить'}
+      {loading ? m.sb_router_trace_checking() : m.common_check()}
     </Button>
   </div>
 
   <!-- Доп. параметры для DNS-ветки (Step 1): тип запроса + источник (опц.). -->
   <div class="adv-row">
     <label class="adv-field">
-      <span class="adv-label">Тип запроса</span>
+      <span class="adv-label">{m.sb_router_trace_query_type()}</span>
       <select class="adv-input" value={input.queryType ?? ''} onchange={handleQueryTypeChange}>
-        <option value="">любой</option>
+        <option value="">{m.sb_router_trace_query_any()}</option>
         <option value="A">A</option>
         <option value="AAAA">AAAA</option>
         <option value="HTTPS">HTTPS</option>
       </select>
     </label>
     <label class="adv-field">
-      <span class="adv-label">Источник (IP клиента) · опц.</span>
+      <span class="adv-label">{m.sb_router_trace_source()}</span>
       <input
         class="adv-input"
         type="text"
@@ -163,7 +164,7 @@
   </div>
 
   {#if dnsErr}
-    <div class="error-banner">⚠ DNS-инспектор: {dnsErr}</div>
+    <div class="error-banner">⚠ {m.sb_router_trace_dns_inspector_error({ message: dnsErr })}</div>
   {/if}
 
   <!-- Step 1 — DNS-решение (новая ветка fakeip), над route-секцией. -->
@@ -172,11 +173,11 @@
     {#if dns.classification === 'fakeip'}
       <div class="conn">
         <ArrowDown size={14} />
-        домен фейкнут → в туннель
+        {m.sb_router_trace_fakeip_conn()}
       </div>
     {/if}
   {:else if dnsBusy}
-    <div class="dns-skel">Проверяем DNS-решение…</div>
+    <div class="dns-skel">{m.sb_router_trace_dns_checking()}</div>
   {/if}
 
   {#if error}
@@ -187,7 +188,7 @@
     {#if dns}
       <div class="step-head">
         <span class="step-no">2</span>
-        <span class="step-title">Маршрут (route)</span>
+        <span class="step-title">{m.sb_router_trace_route_step()}</span>
       </div>
     {/if}
     <div class="result-hero tone-{outcomeTone}">
@@ -199,9 +200,9 @@
       <div class="path">
         <TracePathStation
           tone="accent"
-          kicker="Откуда"
+          kicker={m.sb_router_trace_from()}
           title={result.input}
-          sub={result.inputType === 'ip' ? 'IP' : 'домен'}
+          sub={result.inputType === 'ip' ? m.sb_router_trace_input_ip() : m.sb_router_trace_input_domain()}
         >
           {#snippet icon()}
             <MonitorSmartphone size={16} aria-hidden={true} />
@@ -215,8 +216,8 @@
 
         <TracePathStation
           tone={outcomeTone}
-          kicker={result.matchedRule === -1 ? 'По default' : `Правило #${result.matchedRule}`}
-          title={result.matchedRule === -1 ? 'нет матча' : `match ${matchedRuleAction}`}
+          kicker={result.matchedRule === -1 ? m.sb_router_trace_kicker_default() : m.sb_router_trace_kicker_rule({ n: result.matchedRule })}
+          title={result.matchedRule === -1 ? m.sb_router_trace_no_match() : `match ${matchedRuleAction}`}
         >
           {#snippet icon()}
             <Funnel size={16} aria-hidden={true} />
@@ -230,7 +231,7 @@
 
         <TracePathStation
           tone={outcomeTone}
-          kicker="Куда"
+          kicker={m.sb_router_trace_to()}
           title={result.destination}
           sub={result.matchedRule === -1 ? `final: ${result.final}` : undefined}
         >
@@ -246,7 +247,7 @@
     </div>
 
     <div class="rules-section">
-      <SectionLabel>Правила ({result.matches.length} из {allRules.length} проверены)</SectionLabel>
+      <SectionLabel>{m.sb_router_trace_rules_checked({ checked: result.matches.length, total: allRules.length })}</SectionLabel>
       <div class="rules-list">
         {#each result.matches as match (match.index)}
           <TraceRuleRow {match} winner={match.index === result.matchedRule} />
@@ -255,7 +256,7 @@
     </div>
   {:else if !loading && !error}
     <div class="empty">
-      <p>Введите домен или IP и нажмите «Проверить» — увидите подробный разбор маршрута.</p>
+      <p>{m.sb_router_trace_empty()}</p>
     </div>
   {/if}
 </section>

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { m } from '$lib/i18n';
     import { onMount, onDestroy } from 'svelte';
     import { get } from 'svelte/store';
     import { goto } from '$app/navigation';
@@ -189,12 +190,12 @@
             // UI responsive even if SSE happens to be lagging).
             invalidateAllRouting();
             if (res.missing.length === 0) {
-                notifications.success('Данные получены');
+                notifications.success(m.routing_page_refreshed());
             } else {
-                notifications.warning(`Не удалось загрузить: ${res.missing.join(', ')}`);
+                notifications.warning(m.routing_page_missing({ items: res.missing.join(', ') }));
             }
         } catch (e) {
-            notifications.error(`Ошибка обновления: ${(e as Error).message}`);
+            notifications.error(m.routing_page_refresh_error({ message: (e as Error).message }));
         } finally {
             refreshing = false;
         }
@@ -303,10 +304,9 @@
             // tab on isOS5 so OS4 routers don't see an unusable NDMS tab
             // (hydraroute users on OS4 use the HR Neo tab instead).
             isOS5 ? { id: 'dns', label: 'NDMS', badge: dnsActiveCount } : null,
-            { id: 'ip', label: 'IP-адреса', badge: ipActiveCount },
-            { id: 'clientvpn', label: 'VPN для устройств', badge: clientActiveCount },
-            { id: 'policy', label: 'Политики доступа', badge: policyCount },
-            // Sing-box / Mihomo router modes as one dropdown chip
+            { id: 'ip', label: m.routing_page_tab_ip(), badge: ipActiveCount },
+            { id: 'clientvpn', label: m.routing_page_tab_clientvpn(), badge: clientActiveCount },
+            { id: 'policy', label: m.routing_page_tab_policy(), badge: policyCount },
             singboxMenuChildren.length > 0
                 ? {
                         id: singboxMenuChildren[0].id,
@@ -318,7 +318,7 @@
             // HR Neo is a separate routing engine — divider before it.
             hydrarouteInstalled ? { id: 'hrneo', label: 'HR Neo', badge: hrRuleCount, separatorBefore: true } : null,
             (hydrarouteInstalled || singboxInstalled)
-                ? { id: 'geodata', label: 'Гео-данные', badge: geoFileCount, separatorBefore: true }
+                ? { id: 'geodata', label: m.routing_page_tab_geodata(), badge: geoFileCount, separatorBefore: true }
                 : null,
         ] as (TabItem | null)[])
             .filter((t): t is TabItem => t !== null)
@@ -377,12 +377,12 @@
 </script>
 
 <svelte:head>
-    <title>Маршрутизация - AWG Manager</title>
+    <title>{m.nav_routing()} - AWG Manager</title>
 </svelte:head>
 
 <PageContainer width="full">
     <div class="routing-page">
-    <PageHeader title="Маршрутизация">
+    <PageHeader title={m.nav_routing()}>
         {#snippet actions()}
             <Button
                 variant="secondary"
@@ -390,7 +390,7 @@
                 onclick={() => (searchOpen = true)}
                 iconBefore={searchIcon}
             >
-                Поиск
+                {m.routing_page_search()}
             </Button>
             <!-- TODO Phase 1: warning variant for missing>0 -->
             <Button
@@ -401,9 +401,9 @@
                 loading={refreshing}
             >
                 {#if missing.length > 0}
-                    Загрузить недостающее ({missing.length})
+                    {m.routing_page_load_missing({ count: missing.length })}
                 {:else}
-                    Обновить
+                    {m.common_refresh()}
                 {/if}
             </Button>
         {/snippet}
@@ -472,21 +472,21 @@
 
 <Modal
     open={pendingTab !== null}
-    title="Несохранённые правки маршрутизации"
+    title={m.routing_page_unsaved_title()}
     size="sm"
     onclose={() => (pendingTab = null)}
 >
-    <p>Правки {currentEngine === 'mihomo' ? 'Mihomo' : 'sing-box'} сохранены как черновик, но <strong>ещё не применены</strong>. Если уйти с вкладки — маршрутизация не изменится, пока вы не нажмёте «Применить».</p>
+    <p>{m.routing_page_unsaved_pre()} <strong>{m.routing_page_unsaved_strong()}</strong>. {m.routing_page_unsaved_post()}</p>
     {#snippet actions()}
-        <Button variant="ghost" size="md" onclick={() => (pendingTab = null)}>Остаться</Button>
-        <Button variant="primary" size="md" onclick={confirmLeave}>Уйти всё равно</Button>
+        <Button variant="ghost" size="md" onclick={() => (pendingTab = null)}>{m.routing_page_stay()}</Button>
+        <Button variant="primary" size="md" onclick={confirmLeave}>{m.routing_page_leave()}</Button>
     {/snippet}
 </Modal>
 
 <Modal
     open={searchOpen}
     onclose={() => (searchOpen = false)}
-    title="Поиск по правилам маршрутизации NDMS"
+    title={m.routing_page_search_title()}
     size="xl"
 >
     <RoutingSearch

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { m } from '$lib/i18n';
     import { Button } from '$lib/components/ui';
     import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
 
@@ -8,7 +9,7 @@
         label?: string;
     }
 
-    let { disabled = false, onclick, label = 'Создать' }: Props = $props();
+    let { disabled = false, onclick, label }: Props = $props();
 </script>
 
 {#snippet createIcon()}
@@ -16,5 +17,5 @@
 {/snippet}
 
 <Button variant="primary" size="sm" {disabled} {onclick} iconBefore={createIcon}>
-    {label}
+    {label ?? m.common_create()}
 </Button>

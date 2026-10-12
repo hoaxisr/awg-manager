@@ -5,6 +5,7 @@
 
 <script lang="ts">
 	import Button from '$lib/components/ui/Button.svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		/** Введённый ключ; владелец — мастер: он же чистит поле при сбросе. */
@@ -49,7 +50,7 @@
 		     сохранённый ключ значит не дать сменить подписку, а молча просить
 		     ввод — обесценить хранение. -->
 		<fieldset class="premium-key-source" disabled={busy}>
-			<legend class="premium-key-source-legend">На роутере сохранён ключ подписки.</legend>
+			<legend class="premium-key-source-legend">{m.amnezia_premium_key_stored_legend()}</legend>
 			<label class="premium-key-source-option">
 				<input
 					type="radio"
@@ -58,7 +59,7 @@
 					checked={source === 'stored'}
 					onchange={() => onsource('stored')}
 				/>
-				<span>Использовать сохранённый ключ</span>
+				<span>{m.amnezia_premium_key_use_stored()}</span>
 			</label>
 			<label class="premium-key-source-option">
 				<input
@@ -68,18 +69,17 @@
 					checked={source === 'new'}
 					onchange={() => onsource('new')}
 				/>
-				<span>Ввести другой ключ</span>
+				<span>{m.amnezia_premium_enter_other_key()}</span>
 			</label>
 		</fieldset>
 	{/if}
 	{#if unusableStored}
 		<p class="premium-key-unusable">
-			Сохранённый на роутере ключ не читается — его зашифровали другим секретом устройства.
-			Забудьте его и введите ключ заново.
+			{m.amnezia_premium_key_unusable()}
 		</p>
 	{/if}
 	{#if showInput}
-		<label class="field-label" for="premium-key-input">Ключ подписки Amnezia Premium</label>
+		<label class="field-label" for="premium-key-input">{m.amnezia_premium_key_label()}</label>
 		<textarea
 			id="premium-key-input"
 			class="field-textarea premium-key-input"
@@ -96,22 +96,21 @@
 				disabled={busy}
 				onchange={(e) => onremember(e.currentTarget.checked)}
 			/>
-			<span>Запомнить ключ на роутере (хранится в зашифрованном виде)</span>
+			<span>{m.amnezia_premium_key_remember()}</span>
 		</label>
 	{/if}
 	<p class="premium-key-direct">
-		Запрос к сервису Amnezia уходит с роутера напрямую, поэтому список стран и выдача зависят от
-		того, доступен ли сервис из вашего региона.
+		{m.amnezia_premium_key_direct()}
 	</p>
 	<p class="premium-cp-note">
-		Если распознан ключ для получения параметров подписки, приложение может обратиться к внешнему сервису по вашей инициативе.<br>
-		AWG Manager не связан с операторами таких сервисов, не проверяет и не гарантирует ключи, доступность их API а так же стабильность работы данного функционала.<br>
-		В рамках использования приложения и связанных решений вы принимаете на себя ответственность за соблюдение законодательства страны, в которой находитесь.<br>
-		Данный функционал не является официальной интеграцией и не подлежит технической поддержке.
+		{m.amnezia_premium_cp_note_1()}<br>
+		{m.amnezia_premium_cp_note_2()}<br>
+		{m.amnezia_premium_cp_note_3()}<br>
+		{m.amnezia_premium_cp_note_4()}
 	</p>
 	{#if unusableStored}
 		<div class="premium-key-actions">
-			<Button variant="ghost" size="md" disabled={busy} onclick={onforget}>Забыть ключ</Button>
+			<Button variant="ghost" size="md" disabled={busy} onclick={onforget}>{m.amnezia_premium_forget_key()}</Button>
 		</div>
 	{/if}
 </div>

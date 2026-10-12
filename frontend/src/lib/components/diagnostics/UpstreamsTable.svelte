@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { DnsUpstream } from '$lib/types';
 	import { Badge } from '$lib/components/ui';
 	import type { BadgeVariant } from '$lib/components/ui';
@@ -11,13 +12,13 @@
 		return 'muted';
 	}
 	function scopeLabel(s: string): string {
-		return s === 'all' ? 'все' : `.${s}`;
+		return s === 'all' ? m.diag_upstreams_scope_all() : `.${s}`;
 	}
 </script>
 
 <table class="up-table">
 	<thead>
-		<tr><th>Сервер</th><th>Шифрование</th><th>Хост / SNI</th><th>Домены</th></tr>
+		<tr><th>{m.diag_dns_col_server()}</th><th>{m.diag_upstreams_col_encryption()}</th><th>{m.diag_upstreams_col_host_sni()}</th><th>{m.diag_upstreams_col_domains()}</th></tr>
 	</thead>
 	<tbody>
 		{#each upstreams as u}
@@ -31,7 +32,7 @@
 	</tbody>
 </table>
 
-<div class="up-mobile-list" aria-label="Апстрим-серверы">
+<div class="up-mobile-list" aria-label={m.diag_dns_upstreams()}>
 	{#each upstreams as u}
 		<section class="up-mobile-card">
 			<div class="up-mobile-main">
@@ -42,11 +43,11 @@
 			</div>
 			<div class="up-mobile-grid">
 				<div class="up-mobile-field">
-					<span class="up-mobile-label">Хост / SNI</span>
+					<span class="up-mobile-label">{m.diag_upstreams_col_host_sni()}</span>
 					<span class="up-mobile-value muted">{u.sni || '—'}</span>
 				</div>
 				<div class="up-mobile-field">
-					<span class="up-mobile-label">Домены</span>
+					<span class="up-mobile-label">{m.diag_upstreams_col_domains()}</span>
 					<span class="scope" class:scope-ru={u.scope !== 'all'}>{scopeLabel(u.scope)}</span>
 				</div>
 			</div>

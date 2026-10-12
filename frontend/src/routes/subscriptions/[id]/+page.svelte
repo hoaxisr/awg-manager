@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m, uiText, type UiText } from '$lib/i18n';
 	import { page } from '$app/stores';
 	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { onMount, onDestroy } from 'svelte';
@@ -31,7 +32,7 @@
 	const id = $derived($page.params.id ?? '');
 	let subscription = $state<Subscription | null>(null);
 	let loading = $state(true);
-	let error = $state('');
+	let error = $state<UiText>('');
 	let progressTotal = $state(0);
 	let progressLoaded = $state(0);
 
@@ -74,7 +75,7 @@
 			await api.restoreSubscriptionMembers(id, tags);
 			loadStream();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Не удалось вернуть';
+			error = e instanceof Error ? e.message : () => m.subscriptions_page_restore_failed();
 		} finally {
 			excludedRestoring = false;
 		}
@@ -97,7 +98,7 @@
 					progressTotal = sub.memberTags?.length ?? sub.members?.length ?? 0;
 					progressLoaded = progressTotal;
 				} catch {
-					error = 'Не удалось загрузить подписку';
+					error = () => m.subscriptions_page_load_failed();
 				} finally {
 					loading = false;
 				}
@@ -194,9 +195,11 @@
 			// Browser fires onerror on connection drop. Surface partial state
 			// if we got members, generic error otherwise.
 			if (progressLoaded > 0 && progressTotal > 0) {
-				error = `Загружено ${progressLoaded} из ${progressTotal} серверов. Соединение прервалось.`;
+				const loaded = progressLoaded;
+				const total = progressTotal;
+				error = () => m.subscriptions_page_connection_lost_partial({ loaded, total });
 			} else {
-				error = 'Не удалось загрузить подписку';
+				error = () => m.subscriptions_page_load_failed();
 			}
 			loading = false;
 			evtSrc?.close();
@@ -258,7 +261,7 @@
 
 		if (loading || error || !sub || active !== 'members') return;
 
-		const tags = (sub.members && sub.members.length > 0 ? sub.members.map((m) => m.tag) : sub.memberTags)
+		const tags = (sub.members && sub.members.length > 0 ? sub.members.map((member) => member.tag) : sub.memberTags)
 			.filter(Boolean)
 			.sort()
 			.join(',');
@@ -285,27 +288,27 @@
 </script>
 
 <svelte:head>
-	<title>{subscription?.label ?? 'Подписка'} - AWG Manager</title>
+	<title>{subscription?.label ?? m.subscriptions_page_default_title()} - AWG Manager</title>
 </svelte:head>
 
 <PageContainer width="wide">
 	{#if !subscription && loading}
 		<!-- Initial spinner before meta arrives (any subscription size) -->
 		<div class="loading-centered">
-			<LoadingSpinner size="md" message="Загружаем подписку..." />
+			<LoadingSpinner size="md" message={m.subscriptions_page_loading()} />
 		</div>
 	{:else if !subscription && error}
-		<div class="err">{error}</div>
+		<div class="err">{uiText(error)}</div>
 	{:else if subscription}
 		<PageHeader title={subscription.label || subscription.url} backTo="/?tab=subscriptions" />
 		{@const excludedCount = subscription.excludedMembers?.length ?? 0}
 		<Tabs
 			tabs={[
-				{ id: 'members', label: `Серверы (${subscription.memberTags.length})` },
+				{ id: 'members', label: m.subscriptions_page_tab_servers({ count: subscription.memberTags.length }) },
 				...(excludedCount > 0
-					? [{ id: 'excluded', label: 'Исключённые', badge: excludedCount }]
+					? [{ id: 'excluded', label: m.subscriptions_page_tab_excluded(), badge: excludedCount }]
 					: []),
-				{ id: 'settings', label: 'Настройки' },
+				{ id: 'settings', label: m.subscriptions_page_tab_settings() },
 			]}
 			active={active}
 			onchange={(tabId) => (active = tabId as 'members' | 'excluded' | 'settings')}
@@ -315,7 +318,7 @@
 		{#if loading && progressTotal > PROGRESS_BAR_THRESHOLD}
 			<div class="loading-progress">
 				<div class="progress-text">
-					Загружено {progressLoaded} из {progressTotal} серверов
+					{m.subscriptions_page_loaded_of_total({ loaded: progressLoaded, total: progressTotal })}
 				</div>
 				<div class="progress-bar">
 					<div class="progress-fill" style="width: {(progressLoaded / progressTotal) * 100}%"></div>
@@ -323,7 +326,7 @@
 			</div>
 		{/if}
 		{#if error}
-			<div class="err">{error}</div>
+			<div class="err">{uiText(error)}</div>
 		{/if}
 		<section class="content">
 			{#if active === 'members'}

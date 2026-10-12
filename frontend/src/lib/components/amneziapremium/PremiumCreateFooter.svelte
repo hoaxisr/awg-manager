@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { PremiumWizardBackend } from './AmneziaPremiumWizard.svelte';
 
 	interface Props {
@@ -15,19 +16,19 @@
 	let { name, backend, nativewgAvailable, kernelAvailable, disabled, onname, onbackend }: Props =
 		$props();
 
-	const unavailableTitle = 'Недоступен на этом роутере';
+	const unavailableTitle = $derived(m.amnezia_premium_backend_unavailable());
 </script>
 
 <input
 	class="field-input premium-name-input"
 	type="text"
-	placeholder="имя туннеля"
-	aria-label="Имя туннеля"
+	placeholder={m.amnezia_premium_tunnel_name_placeholder()}
+	aria-label={m.amnezia_premium_tunnel_name_aria()}
 	value={name}
 	{disabled}
 	oninput={(e) => onname(e.currentTarget.value)}
 />
-<div class="premium-backend" role="group" aria-label="Бэкенд туннеля">
+<div class="premium-backend" role="group" aria-label={m.amnezia_premium_backend_aria()}>
 	<button
 		type="button"
 		class="premium-backend-option"

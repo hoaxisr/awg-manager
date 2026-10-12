@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import { get } from 'svelte/store';
 import { experimentalSettingsUnlocked } from '$lib/stores/experimentalSettingsUnlocked';
 import { poniesUnlocked } from '$lib/stores/poniesUnlocked';
@@ -20,11 +21,6 @@ function scheduleReset() {
 	}, VERSION_EASTER_EGG_RESET_MS);
 }
 
-function remainingClicksMessage(remaining: number): string {
-	if (remaining === 1) return 'Осталось кликнуть ещё 1 раз';
-	return `Осталось кликнуть ещё ${remaining} ${remaining >= 2 && remaining <= 4 ? 'раза' : 'раз'}`;
-}
-
 export function handleVersionBadgeClick(options: {
 	usageLevel: UsageLevel;
 	hasUpdate: boolean;
@@ -41,7 +37,7 @@ export function handleVersionBadgeClick(options: {
 		// 5 Clicks: Unlock Pink Ponies!
 		if (clickCount === PONY_EASTER_EGG_CLICKS) {
 			poniesUnlocked.unlock();
-			notifications.success('🦄✨ Секретный раздел «Страна розовых пони» разблокирован в разделе «Система»!');
+			notifications.success(m.version_badge_ponies_unlocked());
 		}
 	}
 
@@ -56,7 +52,9 @@ export function handleVersionBadgeClick(options: {
 
 	if (usageLevel === 'expert') {
 		if (clickCount >= 7 && clickCount < VERSION_EASTER_EGG_CLICKS) {
-			notifications.info(remainingClicksMessage(VERSION_EASTER_EGG_CLICKS - clickCount));
+			notifications.info(
+				m.version_badge_clicks_remaining({ remaining: VERSION_EASTER_EGG_CLICKS - clickCount }),
+			);
 			return;
 		}
 		if (clickCount >= VERSION_EASTER_EGG_CLICKS) {
@@ -69,8 +67,8 @@ export function handleVersionBadgeClick(options: {
 			const unlocked = get(experimentalSettingsUnlocked);
 			notifications.success(
 				unlocked
-					? 'Экспериментальные настройки разблокированы'
-					: 'Экспериментальные настройки скрыты',
+					? m.version_badge_experimental_unlocked()
+					: m.version_badge_experimental_hidden(),
 			);
 		}
 	}

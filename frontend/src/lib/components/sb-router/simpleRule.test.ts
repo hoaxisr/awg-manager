@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyRuleSimplicity,
-  COMPLEX_RULE_EDIT_MESSAGE,
+  complexRuleEditMessage,
   isCustomInlineRuleSetTag,
   isSystemRule,
   singleRuleSetTagFromTemplateId,
@@ -219,8 +219,8 @@ describe('template helpers', () => {
   });
 });
 
-describe('COMPLEX_RULE_EDIT_MESSAGE', () => {
+describe('complexRuleEditMessage', () => {
   it('непустая строка для UI', () => {
-    expect(COMPLEX_RULE_EDIT_MESSAGE).toMatch(/экспертном режиме/i);
+    expect(complexRuleEditMessage()).toMatch(/экспертном режиме/i);
   });
 });

@@ -3,6 +3,7 @@
   выход По умолчанию (Напрямую) и Через туннель, DNS и провайдер — по каждой ветке.
 -->
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { api } from '$lib/api/client';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
@@ -14,7 +15,6 @@
   import { openSourceDrawer } from './sourceDrawerStore';
   import { deriveRoutingSummary, resolveDefaultWanLabel } from './flowData';
   import { liveConnectionsTraffic } from './liveConnectionsStore';
-  import { pluralize, RULE_WORDS, TUNNEL_WORDS, DEVICE_WORDS } from '$lib/utils/pluralize';
   import type { RouterPolicy, SingboxRouterWANInterface, SingboxRouterDNSServer } from '$lib/types';
 
   interface Props {
@@ -70,22 +70,9 @@
     engineOn && (Boolean(s?.active) || (Boolean(engineIsMihomo) && ((mihomoRulesCount > 0) || Boolean(s?.ruleCount))))
   );
   let engineFatalOpen = $state(false);
-  let activeDnsServer = $state<SingboxRouterDNSServer | null>(null);
-
-  function openDirectDnsPicker() {
-    const srv = ($dnsServersStore ?? []).find((s) => s.tag === summary.defaultDnsTag)
-      ?? ($dnsServersStore ?? []).find((s) => s.tag === 'dns-direct')
-      ?? ($dnsServersStore ?? []).find((s) => !s.detour || s.detour === 'direct')
-      ?? { tag: 'dns-direct', type: 'udp', server: summary.defaultDnsLabel !== 'системный' ? summary.defaultDnsLabel : '77.88.8.8', address: summary.defaultDnsLabel !== 'системный' ? summary.defaultDnsLabel : '77.88.8.8' };
-    activeDnsServer = srv;
-  }
-
-  function openTunnelDnsPicker() {
-    const srv = ($dnsServersStore ?? []).find((s) => s.tag === (summary.tunnelDnsTag || 'dns-tunnel'))
-      ?? ($dnsServersStore ?? []).find((s) => !!s.detour)
-      ?? { tag: 'dns-tunnel', type: 'udp', server: summary.tunnelDnsLabel ?? '9.9.9.9', address: summary.tunnelDnsLabel ?? '9.9.9.9', detour: summary.tunnelDnsDetour ?? '' };
-    activeDnsServer = srv;
-  }
+  let activeDnsServer = $derived(
+    dnsPickerTag ? (($dnsServersStore ?? []).find((srv) => srv.tag === dnsPickerTag) ?? null) : null,
+  );
   // СБОЙ с захваченной причиной → клик по узлу открывает модалку с ошибкой,
   // иначе — обычные настройки движка (StatusDrawer).
   const engineFatal = $derived(engineOn && !engineActive && !!s?.lastError);
@@ -121,19 +108,23 @@
   // его выбором «весь роутер», а ведёт в карточку режима (StatusDrawer).
   let policyTunMode = $derived($storeSettings?.routingMode === 'policy-tun');
   let sourceTitle = $derived(
-    policyTunMode ? 'Политика доступа' : deviceMode === 'all' ? 'Весь роутер' : 'Устройства в политике',
+    policyTunMode
+      ? m.sb_router_flow_source_policy()
+      : deviceMode === 'all'
+        ? m.sb_router_flow_source_all()
+        : m.sb_router_flow_source_devices(),
   );
   let sourceSub = $derived.by(() => {
-    if (!policyTunMode && deviceMode === 'all') return 'весь LAN-трафик';
-    if (!policyName) return 'политика не выбрана';
+    if (!policyTunMode && deviceMode === 'all') return m.sb_router_flow_sub_all_lan();
+    if (!policyName) return m.sb_router_flow_sub_no_policy();
     const label = currentPolicy?.description?.trim() || policyName;
     const devices = s?.deviceCount ?? currentPolicy?.deviceCount ?? 0;
-    return `${label} · ${pluralize(devices, DEVICE_WORDS)}`;
+    return m.sb_router_flow_policy_devices({ label, devices: m.sb_router_devices_count({ count: devices }) });
   });
 
   let engineSub = $derived.by(() => {
-    if (!engineOn) return 'выключен';
-    if (!engineActive) return 'не работает';
+    if (!engineOn) return m.sb_router_flow_engine_off();
+    if (!engineActive) return m.sb_router_flow_engine_down();
     const parts = ['first-match'];
     if (!engineIsMihomo && singboxVersion) parts.push(`v${singboxVersion}`);
     return parts.join(' · ');
@@ -148,11 +139,13 @@
     if (engineIsMihomo) {
       if (mihomoOutbounds.length === 1) return mihomoOutbounds[0];
       if (mihomoOutbounds.length > 1) {
-        return `${mihomoOutbounds.length} ${pluralize(mihomoOutbounds.length, ['выход', 'выхода', 'выходов'])}`;
+        return m.sb_router_flow_tunnels_count({ count: mihomoOutbounds.length });
       }
-      return mihomoTopGroup || (mihomoGroupsCount > 1 ? pluralize(mihomoGroupsCount, ['группа', 'группы', 'групп']) : 'Proxy Group');
+      return mihomoTopGroup || (mihomoGroupsCount > 1 ? m.tunnels_tab_proxy_groups() : 'Proxy Group');
     }
-    return summary.tunnels.length <= 1 ? (summary.tunnels[0] ?? '—') : pluralize(summary.tunnels.length, TUNNEL_WORDS);
+    return summary.tunnels.length <= 1
+      ? (summary.tunnels[0] ?? '—')
+      : m.sb_router_flow_tunnels_count({ count: summary.tunnels.length });
   });
   let tunnelTooltip = $derived.by(() => {
     if (engineIsMihomo && mihomoOutbounds.length > 1) {
@@ -166,9 +159,9 @@
   );
 
   let defaultRuleHint = $derived.by(() => {
-    if (engineIsMihomo) return 'остальной трафик';
-    if (summary.bypassRuleCount > 0) return pluralize(summary.bypassRuleCount, RULE_WORDS);
-    if (routeFinal === 'direct' && summary.tunneledRuleCount > 0) return 'остальной трафик';
+    if (engineIsMihomo) return m.sb_router_flow_rest_traffic();
+    if (summary.bypassRuleCount > 0) return m.routing_rules_count({ count: summary.bypassRuleCount });
+    if (routeFinal === 'direct' && summary.tunneledRuleCount > 0) return m.sb_router_flow_rest_traffic();
     return null;
   });
 
@@ -180,14 +173,8 @@
     <button
       type="button"
       class="dns-btn"
-      title="Изменить выходной DNS"
-      onclick={() => {
-        if (tag === 'direct' || tag === 'dns-direct') {
-          openDirectDnsPicker();
-        } else {
-          openTunnelDnsPicker();
-        }
-      }}
+      title={m.sb_router_flow_dns_change()}
+      onclick={() => (dnsPickerTag = tag)}
     >{text}</button>
   {:else}
     <div class="dns">{text}</div>
@@ -200,22 +187,22 @@
       type="button"
       class="node source"
       onclick={policyTunMode ? openDrawer : openSourceDrawer}
-      aria-label={policyTunMode ? 'Открыть настройки режима «Политики + tun»' : 'Настроить источник трафика'}
+      aria-label={policyTunMode ? m.sb_router_flow_source_aria_policy() : m.sb_router_flow_source_aria()}
     >
-      <div class="cap">Источник</div>
+      <div class="cap">{m.sb_router_flow_cap_source()}</div>
       <div class="node-title">{sourceTitle}</div>
       <div class="node-sub">{sourceSub}</div>
     </button>
 
     <div class="arrow">›</div>
 
-    <button type="button" class="node engine" class:glow={engineActive} class:offline={!engineActive} onclick={() => (engineFatal ? (engineFatalOpen = true) : openDrawer())} aria-label={`Настройки движка ${engineDisplayName}`}>
-      <div class="cap acc">Движок {engineDisplayName}</div>
+    <button type="button" class="node engine" class:glow={engineActive} class:offline={!engineActive} onclick={() => (engineFatal ? (engineFatalOpen = true) : openDrawer())} aria-label={m.sb_router_flow_engine_aria()}>
+      <div class="cap acc">{m.sb_router_flow_cap_engine()} {engineDisplayName}</div>
       <div class="node-title">{engineSub}</div>
       <div class="node-sub">
-        {pluralize(effectiveRulesCount, RULE_WORDS)}
+        {m.routing_rules_count({ count: effectiveRulesCount })}
         {#if !policyTunMode && deviceMode === 'all'}
-          {' · '}весь роутер
+          {' · '}{m.sb_router_flow_whole_router()}
         {/if}
         {#if trafficText}
           {' · '}<span class="traffic">{trafficText}</span>
@@ -229,49 +216,35 @@
       <div class="out">
         <div class="out-line">
           <span class="dot muted"></span>
-          <span class="out-prefix"><span class="mut">По умолчанию →</span></span>
-          <span class="out-target" title={engineIsMihomo ? 'DIRECT' : summary.defaultLabel}><b>{engineIsMihomo ? 'Напрямую' : summary.defaultLabel}</b></span>
+          <span class="out-prefix"><span class="mut">{m.sb_router_flow_default_prefix()}</span></span>
+          <span class="out-target" title={engineIsMihomo ? 'DIRECT' : summary.defaultLabel}><b>{engineIsMihomo ? m.sb_router_flow_default_direct() : summary.defaultLabel}</b></span>
           {#if defaultRuleHint}
             <span class="out-hint mut">{' · '}{defaultRuleHint}</span>
           {/if}
         </div>
-        <div class="out-sub-row">
-          {#if defaultWanLabel}
-            <button
-              type="button"
-              class="wan-link-btn"
-              title="Настроить интерфейс провайдера (WAN)"
-              onclick={openDrawer}
-            >{defaultWanLabel}</button>
-            <span class="sub-sep">·</span>
-          {/if}
-          <button
-            type="button"
-            class="dns-link-btn"
-            title="Изменить выходной DNS для прямого подключения"
-            onclick={openDirectDnsPicker}
-          >DNS: {summary.defaultDnsLabel}</button>
-        </div>
+        {@render dnsLine(
+          defaultWanLabel
+            ? m.sb_router_flow_dns_wan({ wan: defaultWanLabel, dns: summary.defaultDnsLabel })
+            : m.sb_router_flow_dns({ dns: summary.defaultDnsLabel }),
+          summary.defaultDnsTag,
+        )}
       </div>
       {#if hasTunnel}
         <div class="out tun">
           <div class="out-line">
             <span class="dot"></span>
-            <span class="out-prefix"><span class="mut">Через {engineIsMihomo ? 'прокси' : 'туннель'} →</span></span>
-            <span class="out-target acc">
-              {pluralize(engineIsMihomo ? effectiveRulesCount : summary.tunneledRuleCount, RULE_WORDS)}
-            </span>
+            <span class="out-prefix"><span class="mut">{m.sb_router_flow_tunnel_prefix()}</span></span>
+            <span class="out-target acc" title={tunnelTooltip}>{tunnelTitle}</span>
+            {#if (engineIsMihomo ? effectiveRulesCount : summary.tunneledRuleCount) > 0}
+              <span class="out-hint mut">{' · '}{m.routing_rules_count({ count: engineIsMihomo ? effectiveRulesCount : summary.tunneledRuleCount })}</span>
+            {/if}
           </div>
-          <button
-            type="button"
-            class="dns-btn"
-            title="Изменить выходной DNS для туннелей"
-            onclick={openTunnelDnsPicker}
-          >
-            {summary.tunnelDnsLabel
-              ? `DNS: ${summary.tunnelDnsLabel} (через VPN)`
-              : `DNS: через VPN`}
-          </button>
+          {@render dnsLine(
+            summary.tunnelDnsLabel
+              ? m.sb_router_flow_dns_tunnel_named({ dns: summary.tunnelDnsLabel })
+              : m.sb_router_flow_dns_tunnel(),
+            summary.tunnelDnsTag,
+          )}
         </div>
       {/if}
     </div>
@@ -288,11 +261,8 @@
   <SimpleDnsPickerModal
     server={activeDnsServer}
     allowProtocol={true}
-    onclose={() => (activeDnsServer = null)}
-    onsaved={async () => {
-      activeDnsServer = null;
-      await singboxRouterStore.loadAll();
-    }}
+    onclose={() => (dnsPickerTag = null)}
+    onsaved={() => (dnsPickerTag = null)}
   />
 {/if}
 

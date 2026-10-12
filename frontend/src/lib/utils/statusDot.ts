@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type { StatusDotVariant } from '$lib/components/ui/StatusDot.svelte';
 import type { TunnelListItem } from '$lib/types';
 import { awgConnectivityDown } from '$lib/utils/awgPingStatus';
@@ -14,31 +15,31 @@ export function awgManagedStatusDot(
 	connectivity?: { connected: boolean; latency: number | null },
 ): StatusDotPresentation {
 	if (tunnel.hasAddressConflict) {
-		return { variant: 'error', pulse: false, label: 'Конфликт IP' };
+		return { variant: 'error', pulse: false, label: m.tunnels_card_status_ip_conflict() };
 	}
 	if (awgConnectivityDown(tunnel, connectivity)) {
-		return { variant: 'error', pulse: false, label: 'Нет связи' };
+		return { variant: 'error', pulse: false, label: m.tunnels_card_status_no_link() };
 	}
 	switch (tunnel.status) {
 		case 'running':
 			if (tunnel.pingCheck.status === 'recovering') {
-				return { variant: 'warning', pulse: true, label: 'Восстанавливается' };
+				return { variant: 'warning', pulse: true, label: m.status_dot_recovering() };
 			}
-			return { variant: 'success', pulse: false, label: 'Активен' };
+			return { variant: 'success', pulse: false, label: m.tunnels_status_active() };
 		case 'broken':
-			return { variant: 'broken', pulse: true, label: 'Сломан' };
+			return { variant: 'broken', pulse: true, label: m.tunnels_state_broken() };
 		case 'starting':
-			return { variant: 'warning', pulse: true, label: 'Запускается' };
+			return { variant: 'warning', pulse: true, label: m.tunnels_state_starting() };
 		case 'needs_stop':
-			return { variant: 'warning', pulse: true, label: 'Останавливается' };
+			return { variant: 'warning', pulse: true, label: m.tunnels_state_stopping() };
 		case 'needs_start':
-			return { variant: 'muted', pulse: false, label: 'Остановлен' };
+			return { variant: 'muted', pulse: false, label: m.tunnels_state_stopped() };
 		case 'stopping':
-			return { variant: 'warning', pulse: true, label: 'Останавливается' };
+			return { variant: 'warning', pulse: true, label: m.tunnels_state_stopping() };
 		case 'not_created':
-			return { variant: 'muted', pulse: false, label: 'Не создан' };
+			return { variant: 'muted', pulse: false, label: m.status_dot_not_created() };
 		case 'disabled':
-			return { variant: 'muted', pulse: false, label: 'Выключен' };
+			return { variant: 'muted', pulse: false, label: m.tunnels_status_off() };
 		default:
 			return { variant: 'muted', pulse: false, label: tunnel.status || '—' };
 	}

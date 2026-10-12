@@ -1,4 +1,6 @@
 <script lang="ts" module>
+	import { m } from '$lib/i18n';
+
 	export type GroupLed = 'gray' | 'green' | 'yellow' | 'red' | 'running';
 
 	interface KindStyle {
@@ -21,42 +23,42 @@
 		'ss':     { label: 'SS',      color: '#9ece6a', bg: 'rgba(158,206,106,0.14)' },
 	};
 
-	const PLANNED_GLOBAL = [
-		'WAN связность',
-		'NDMS здоровье',
-		'Модуль ядра',
-		'Синхронизация часов',
-		'Прямая связность',
-		'Sing-box runtime',
-	];
-
-	const PLANNED_AWG = [
-		'Резолв эндпоинта',
-		'Пинг эндпоинта',
-		'Маршрут к эндпоинту',
-		'AWG рукопожатие',
-		'Связность туннеля',
-		'Правила файрвола',
-		'Парсинг конфига',
-		'Состояние интерфейса',
-		'MTU',
-		'Здоровье прокси',
-		'Пинг-чек',
-		'rp_filter',
-	];
-
-	const PLANNED_SINGBOX = [
-		'Состояние туннеля',
-		'Proxy port (TCP)',
-		'HTTP-check (gstatic)',
-		'Задержка (RTT)',
-		'Alt-check (Cloudflare)',
-	];
-
+	// Функция, а не константа: подписи берутся из словаря при вызове,
+	// поэтому смена языка подхватывается без перезагрузки.
 	export function getPlannedTests(isGlobal: boolean, isSingbox: boolean): string[] {
-		if (isGlobal) return PLANNED_GLOBAL;
-		if (isSingbox) return PLANNED_SINGBOX;
-		return PLANNED_AWG;
+		if (isGlobal) {
+			return [
+				m.diag_planned_wan(),
+				m.diag_planned_ndms(),
+				m.diag_planned_kernel_module(),
+				m.diag_planned_clock_sync(),
+				m.diag_planned_direct(),
+				'Sing-box runtime',
+			];
+		}
+		if (isSingbox) {
+			return [
+				m.diag_planned_tunnel_state(),
+				'Proxy port (TCP)',
+				'HTTP-check (gstatic)',
+				m.diag_planned_delay(),
+				'Alt-check (Cloudflare)',
+			];
+		}
+		return [
+			m.diag_planned_endpoint_resolve(),
+			m.diag_planned_endpoint_ping(),
+			m.diag_planned_endpoint_route(),
+			m.diag_planned_awg_handshake(),
+			m.diag_planned_tunnel_connectivity(),
+			m.diag_planned_firewall(),
+			m.diag_planned_config_parse(),
+			m.diag_planned_iface_state(),
+			'MTU',
+			m.diag_planned_proxy_health(),
+			m.diag_planned_ping_check(),
+			'rp_filter',
+		];
 	}
 </script>
 
@@ -109,7 +111,7 @@
 	const isSingbox = $derived(!isGlobal && !kind?.startsWith('awg') && kind !== 'wg');
 	const plannedTests = $derived(getPlannedTests(isGlobal, isSingbox));
 	const showPlanned = $derived(expanded && !body && tests.length === 0);
-	const runBtnLabel = $derived(groupRunning ? 'Идёт' : 'Проверить');
+	const runBtnLabel = $derived(groupRunning ? m.diag_group_running() : m.common_check());
 </script>
 
 <section class="group" class:highlight class:expanded>
@@ -147,7 +149,7 @@
 			class="chev"
 			type="button"
 			onclick={onToggle}
-			aria-label={expanded ? 'Свернуть' : 'Развернуть'}
+			aria-label={expanded ? m.diag_group_collapse() : m.diag_group_expand()}
 		>
 			<span class:rotated={expanded}>›</span>
 		</button>

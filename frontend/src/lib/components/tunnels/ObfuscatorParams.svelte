@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ObfuscatorMasking, TunnelObfuscator } from '$lib/types';
+	import { m } from '$lib/i18n';
 	interface Props {
 		obfuscator: TunnelObfuscator;
 		error?: string;
@@ -11,25 +12,24 @@
 </script>
 
 <p class="form-hint">
-	Разновидность: <strong>{obfuscator.flavor === 'phobos' ? 'Phobos' : 'ClusterM'}</strong> — не
-	меняется. WireGuard ходит в локальный релей (127.0.0.1:{obfuscator.localPort}), релей — на сервер
-	ниже.
+	{m.tunnel_edit_obf_flavor_prefix()} <strong>{obfuscator.flavor === 'phobos' ? 'Phobos' : 'ClusterM'}</strong>
+	{m.tunnel_edit_obf_flavor_suffix({ port: obfuscator.localPort })}
 </p>
 <div class="flex flex-col gap-1.5">
-	<label class="field-label" for="obf-target">Сервер обфускатора (host:port)</label>
+	<label class="field-label" for="obf-target">{m.tunnel_edit_obf_target_obf_first()}</label>
 	<input id="obf-target" class="field-input" bind:value={obfuscator.target}>
 	<!-- .field-hint.is-error, а не text-error-500: последний в этой сборке
 	     резолвится в серый (oklch(0.556 0 0)), т.е. ошибка не читается красным. -->
 	{#if error}<p class="field-hint is-error">{error}</p>{/if}
 </div>
 <div class="flex flex-col gap-1.5">
-	<label class="field-label" for="obf-key">Ключ</label>
+	<label class="field-label" for="obf-key">{m.tunnel_edit_obf_key()}</label>
 	<input id="obf-key" class="field-input" bind:value={obfuscator.key}>
 </div>
 <div class="flex flex-col gap-1.5">
-	<label class="field-label" for="obf-masking">Маскировка</label>
+	<label class="field-label" for="obf-masking">{m.tunnel_edit_obf_masking()}</label>
 	<select id="obf-masking" class="field-select" bind:value={obfuscator.masking}>
-		{#each maskings as m (m)}<option value={m}>{m}</option>{/each}
+		{#each maskings as masking (masking)}<option value={masking}>{masking}</option>{/each}
 	</select>
 </div>
 <div class="flex items-end gap-3">
@@ -38,12 +38,12 @@
 		<input id="obf-dummy" class="field-input" type="number" min="0" max="1024" bind:value={obfuscator.maxDummy}>
 	</div>
 	<div class="flex flex-1 flex-col gap-1.5">
-		<label class="field-label" for="obf-idle">idle-timeout, с</label>
+		<label class="field-label" for="obf-idle">{m.tunnel_edit_obf_idle()}</label>
 		<input id="obf-idle" class="field-input" type="number" min="0" bind:value={obfuscator.idleTimeout}>
 	</div>
 	{#if obfuscator.flavor === 'phobos'}
 		<div class="flex flex-1 flex-col gap-1.5">
-			<label class="field-label" for="obf-bytes">obfuscate-bytes (0 = весь пакет)</label>
+			<label class="field-label" for="obf-bytes">{m.tunnel_edit_obf_bytes()}</label>
 			<input id="obf-bytes" class="field-input" type="number" min="0" bind:value={obfuscator.obfuscateBytes}>
 		</div>
 	{/if}

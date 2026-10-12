@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { DnsProxy } from '$lib/types';
 	import { Badge } from '$lib/components/ui';
 	interface Props { proxy: DnsProxy; open?: boolean; }
@@ -21,7 +22,7 @@
 		</span>
 		<span class="pol-port">:{proxy.tcpPort}</span>
 		<span class="pol-metrics">
-			<span class="metric"><span class="v">{proxy.stat.totalRequests}</span><span class="k">запросов</span></span>
+			<span class="metric"><span class="v">{proxy.stat.totalRequests}</span><span class="k">{m.diag_policy_requests()}</span></span>
 			<span class="metric"><span class="v faint">{proxy.stat.proxyRequestsSent}</span><span class="k">proxy</span></span>
 			<span class="cache">
 				<span class="bar"><span style="width:{cachePct}%"></span></span>
@@ -33,7 +34,7 @@
 		<div class="pol-body">
 			<table>
 				<thead>
-					<tr><th>Сервер</th><th class="num">Отпр</th><th class="num">Получ</th><th class="num">NX</th><th class="num">Медиана</th><th class="num">Среднее</th><th class="num">Rank</th></tr>
+					<tr><th>{m.diag_dns_col_server()}</th><th class="num">{m.diag_policy_col_sent()}</th><th class="num">{m.diag_policy_col_received()}</th><th class="num">NX</th><th class="num">{m.diag_policy_col_median()}</th><th class="num">{m.diag_policy_col_average()}</th><th class="num">Rank</th></tr>
 				</thead>
 				<tbody>
 					{#each proxy.upstreams as u}
@@ -50,16 +51,16 @@
 				</tbody>
 			</table>
 
-			<div class="pol-mobile-list" aria-label={`Статистика DNS-политики ${proxy.displayName}`}>
+			<div class="pol-mobile-list" aria-label={m.diag_policy_stats_aria({ name: proxy.displayName })}>
 				{#each proxy.upstreams as u}
 					<section class="pol-mobile-card">
 						<div class="pol-mobile-title mono">{u.address}</div>
 						<div class="pol-mobile-stats">
-							<div class="pol-mobile-stat"><span>Отпр</span><strong>{u.rSent}</strong></div>
-							<div class="pol-mobile-stat"><span>Получ</span><strong>{u.aRcvd}</strong></div>
+							<div class="pol-mobile-stat"><span>{m.diag_policy_col_sent()}</span><strong>{u.rSent}</strong></div>
+							<div class="pol-mobile-stat"><span>{m.diag_policy_col_received()}</span><strong>{u.aRcvd}</strong></div>
 							<div class="pol-mobile-stat"><span>NX</span><strong>{u.nxRcvd}</strong></div>
-							<div class="pol-mobile-stat"><span>Медиана</span><strong>{u.medResp || '—'}</strong></div>
-							<div class="pol-mobile-stat"><span>Среднее</span><strong>{u.avgResp || '—'}</strong></div>
+							<div class="pol-mobile-stat"><span>{m.diag_policy_col_median()}</span><strong>{u.medResp || '—'}</strong></div>
+							<div class="pol-mobile-stat"><span>{m.diag_policy_col_average()}</span><strong>{u.avgResp || '—'}</strong></div>
 							<div class="pol-mobile-stat pol-mobile-rank"><span>Rank</span><Badge variant="accent" size="sm" mono>{u.rank}</Badge></div>
 						</div>
 					</section>

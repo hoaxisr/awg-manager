@@ -15,11 +15,6 @@ import { createPersistedFlag, createPersistedStore } from './persisted';
 
 export type TunnelDashboardLayout = 'flat' | 'sections';
 
-export const TUNNEL_DASHBOARD_LAYOUT_LABELS: Record<TunnelDashboardLayout, string> = {
-	flat: 'Сплошной',
-	sections: 'Разделы',
-};
-
 const modeStore = createPersistedFlag('awg-manager-tunnel-dashboard-mode', false);
 
 export const tunnelDashboardMode = {

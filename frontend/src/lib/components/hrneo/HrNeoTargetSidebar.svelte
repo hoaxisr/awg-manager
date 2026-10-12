@@ -22,6 +22,7 @@
 	import { usageLevel } from '$lib/stores/settings';
 	import { isRoutingSubTabVisible } from '$lib/types/usageLevel';
 	import { ChevronUp, ChevronDown } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		targets: TargetEntry[];
@@ -73,7 +74,7 @@
 		<div class="section-label">Targets</div>
 
 		{#if targets.length === 0}
-			<div class="empty-hint">Пока нет правил</div>
+			<div class="empty-hint">{m.hrneo_sidebar_no_rules()}</div>
 		{/if}
 
 		{#each targets as t, i (t.name)}
@@ -131,11 +132,11 @@
 			</div>
 		{/each}
 
-		<button type="button" class="add-row" onclick={onnewrule}>+ Новое правило</button>
+		<button type="button" class="add-row" onclick={onnewrule}>{m.hrneo_tab_new_rule()}</button>
 	</div>
 
 	<div class="sidebar-section">
-		<div class="section-label">Служебное</div>
+		<div class="section-label">{m.hrneo_sidebar_service()}</div>
 
 		{#if showGeodataLink}
 		<div
@@ -151,7 +152,7 @@
 			}}
 		>
 			<div class="row-body">
-				<div class="row-title">Гео-данные</div>
+				<div class="row-title">{m.hrneo_sidebar_geodata()}</div>
 				<div class="row-meta">
 					<span class="kind kind-policy">geosite {geoSiteCount}</span>
 					<span class="kind kind-interface">geoip {geoIPCount}</span>
@@ -175,7 +176,7 @@
 			}}
 		>
 			<div class="row-body">
-				<div class="row-title">Настройки демона</div>
+				<div class="row-title">{m.hrneo_sidebar_daemon_settings()}</div>
 			</div>
 		</div>
 
@@ -194,7 +195,7 @@
 				}}
 			>
 				<div class="row-body">
-					<div class="row-title">Отключённые теги</div>
+					<div class="row-title">{m.hrneo_sidebar_disabled_tags()}</div>
 					<div class="row-meta">
 						<span class="kind kind-warn">{oversizedCount}</span>
 					</div>

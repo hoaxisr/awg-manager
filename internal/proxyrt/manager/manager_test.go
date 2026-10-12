@@ -111,8 +111,9 @@ type fakeInstance struct {
 	// calls — ПОРЯДОК обращений менеджера к инстансу. Сброс паузы обязан
 	// ложиться ДО побудки, и факта вызова тут мало: сброс после побудки
 	// пропадает впустую (см. TestUpdateResetsStartBackoffBeforeWakeup).
-	calls  []string
-	onStop func() // для TestStopRunsOutsideManagerLock
+	calls              []string
+	unsupportedRestart bool
+	onStop             func() // для TestStopRunsOutsideManagerLock
 }
 
 func (f *fakeInstance) Start(context.Context) { f.mu.Lock(); f.started = true; f.mu.Unlock() }
@@ -139,6 +140,13 @@ func (f *fakeInstance) ResetStartBackoff() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "reset")
+}
+
+func (f *fakeInstance) Restart(reason string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "restart:"+reason)
+	return !f.unsupportedRestart
 }
 
 // callTail — последние n обращений: хвост, а не весь список, потому что boot
@@ -1551,6 +1559,33 @@ func TestAckListenMovesClearsDiskAndCache(t *testing.T) {
 	}
 	if got := e.m.SeedInfo().MovedListen; len(got) != 0 {
 		t.Errorf("в кэше менеджера остались переезды: %+v", got)
+	}
+}
+
+func TestManagerRestart(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, ftRec("c1"), ftRec("s1"))
+	boot(t, e)
+
+	serverKey := "freeturn-client:s1"
+	e.instances[serverKey].unsupportedRestart = true
+
+	key := "freeturn-client:c1"
+	if err := e.m.Restart(context.Background(), key, "тестовый перезапуск"); err != nil {
+		t.Fatalf("Restart вернул ошибку: %v", err)
+	}
+	inst := e.instances[key]
+	tail := inst.callTail(1)
+	if len(tail) != 1 || tail[0] != "restart:тестовый перезапуск" {
+		t.Errorf("неверный порядок вызовов при Restart: %v", tail)
+	}
+
+	if err := e.m.Restart(context.Background(), serverKey, "перезапуск сервера"); !errors.Is(err, ErrRestartUnsupported) {
+		t.Errorf("Restart неподдерживаемой роли обязан вернуть ErrRestartUnsupported, получено: %v", err)
+	}
+
+	if err := e.m.Restart(context.Background(), "unknown:key", "причина"); !errors.Is(err, ErrInstanceNotFound) {
+		t.Errorf("Restart несуществующего инстанса обязан вернуть ErrInstanceNotFound, получено: %v", err)
 	}
 }
 

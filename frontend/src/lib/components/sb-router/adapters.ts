@@ -10,6 +10,7 @@
  * (всё остальное где outbound найден в списке).
  */
 
+import { m } from '$lib/i18n';
 import type {
   CatalogPreset,
   SingboxProxyGroup,
@@ -21,7 +22,10 @@ import type {
   Subscription,
 } from '$lib/types';
 import { displayRuleSetTag, resolveRuleSetByTag } from '$lib/utils/singboxInlineRules';
-import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
+import type {
+  OutboundGroup,
+  OutboundGroupId,
+} from '$lib/components/routing/singboxRouter/outboundOptions';
 import type {
   MatcherChip,
   OutboundDisplay,
@@ -47,17 +51,18 @@ export { isSystemRule };
 /** Пояснение для системных правил — тултип в простом и экспертном режиме. */
 export function systemRuleTooltip(rule: SingboxRouterRule): string | undefined {
   if (rule.action === 'sniff') {
-    return 'Анализирует протокол и извлекает домен из соединения (SNI, HTTP Host). Нужно, чтобы следующие правила могли маршрутизировать по домену, а не только по IP.';
+    return m.sb_router_system_tip_sniff();
   }
   if (rule.action === 'hijack-dns') {
-    return 'Перехватывает DNS-запросы на порту 53 и обрабатывает их через DNS-модуль sing-box. Без этого DNS-маршрутизация не работает.';
+    return m.sb_router_system_tip_hijack_dns();
   }
   if (rule.ip_is_private && rule.outbound === 'direct') {
-    return 'Трафик в локальные и приватные сети (RFC1918, loopback, link-local) идёт напрямую, минуя VPN. Нужен для доступа к роутеру, NAS и устройствам в LAN.';
+    return m.sb_router_system_tip_private();
   }
   if (rule.action === 'route-options') {
-    const to = rule.udp_timeout ? ` (${rule.udp_timeout})` : '';
-    return `Автоматически поднимает таймаут UDP-сессий${to} до значения таймаута движка. Без него игры, VoIP и QUIC рвутся из-за коротких протокольных таймаутов (10–30 с). Задаётся системой, редактировать нельзя.`;
+    return rule.udp_timeout
+      ? m.sb_router_system_tip_udp_timeout_value({ timeout: rule.udp_timeout })
+      : m.sb_router_system_tip_udp_timeout();
   }
   return undefined;
 }
@@ -76,22 +81,22 @@ export function mapRuleAction(rule: SingboxRouterRule): RuleAction {
 /* ─── Outbound display ──────────────────────────────────────────────── */
 
 const COMPOSITE_TYPES = COMPOSITE_OUTBOUND_TYPES;
-const AWG_OPTION_GROUPS = new Set(['AWG туннели', 'Системные WireGuard', 'AWG3 туннели']);
+const AWG_OPTION_GROUPS = new Set<OutboundGroupId>(['awg', 'system', 'awg3']);
 
 function findOutboundOption(
   tag: string,
   outboundOptions: OutboundGroup[] | undefined,
-): { label: string; group: string } | null {
+): { label: string; group: OutboundGroupId } | null {
   for (const group of outboundOptions ?? []) {
     const item = group.items?.find((x) => x.value === tag);
-    if (item) return { label: item.label, group: group.group };
+    if (item) return { label: item.label, group: group.id };
   }
   return null;
 }
 
 import { splitParenMeta } from './outboundLabelFormat';
 
-const SINGBOX_TUNNEL_GROUP = 'Sing-box туннели';
+const SINGBOX_TUNNEL_GROUP: OutboundGroupId = 'singbox';
 
 function proxyMetaSuffix(tag: string, tunnels: SingboxTunnel[]): string | undefined {
   return tunnels.find((t) => t.tag === tag)?.proxyInterface;
@@ -139,14 +144,14 @@ export function resolveOutboundDisplay(
   }
 
   if (action === 'block') {
-    return { name: name ?? 'block', label: 'Блок', kind: 'block', tone: 'block' };
+    return { name: name ?? 'block', label: m.sb_router_outbound_block(), kind: 'block', tone: 'block' };
   }
 
   if (!name || name === 'direct') {
-    return { name: 'direct', label: 'Прямо', kind: 'direct', tone: 'direct' };
+    return { name: 'direct', label: m.sb_router_outbound_direct(), kind: 'direct', tone: 'direct' };
   }
   if (name === 'block' || name === 'reject') {
-    return { name, label: 'Блок', kind: 'block', tone: 'block' };
+    return { name, label: m.sb_router_outbound_block(), kind: 'block', tone: 'block' };
   }
 
   const option = findOutboundOption(name, outboundOptions);
@@ -164,11 +169,11 @@ export function resolveOutboundDisplay(
       tone: 'proxy',
     };
   }
-  if (option?.group === 'Proxy-группы (Mihomo)') {
+  if (option?.group === 'mihomo_groups') {
     const parsed = splitParenMeta(option.label);
     return { name, label: parsed.label, metaSuffix: parsed.metaSuffix, kind: 'composite', tone: 'composite' };
   }
-  if (option?.group === 'Прокси (Mihomo)') {
+  if (option?.group === 'mihomo_proxies') {
     return { name, label: option.label, kind: 'proxy', tone: 'proxy' };
   }
   if (!ob) {
@@ -240,8 +245,8 @@ export function extractMatcherChips(
   for (const c of rule.source_ip_cidr ?? []) {
     chips.push({ kind: 'src', label: c, mono: true });
   }
-  for (const m of rule.source_mac_address ?? []) {
-    chips.push({ kind: 'src', label: m, mono: true });
+  for (const mac of rule.source_mac_address ?? []) {
+    chips.push({ kind: 'src', label: mac, mono: true });
   }
   for (const p of rule.port ?? []) {
     chips.push({ kind: 'port', label: String(p), mono: true });
@@ -263,7 +268,7 @@ export function extractMatcherChips(
     chips.push({ kind: 'protocol', label: rule.protocol });
   }
   if (rule.ip_is_private) {
-    chips.push({ kind: 'private', label: 'Локальная сеть' });
+    chips.push({ kind: 'private', label: m.sb_router_rules_local_network() });
   }
 
   return chips;
@@ -366,14 +371,14 @@ function fallbackTitle(
   if (serviceKey !== 'custom') {
     return serviceKey.charAt(0).toUpperCase() + serviceKey.slice(1).replace('_', ' ');
   }
-  if (rule.ip_is_private) return 'Локальная сеть';
-  if (rule.action === 'sniff') return 'Анализ протокола';
-  if (rule.action === 'hijack-dns') return 'Перехват DNS';
-  if (rule.action === 'route-options') return 'UDP таймаут';
+  if (rule.ip_is_private) return m.sb_router_rules_local_network();
+  if (rule.action === 'sniff') return m.sb_router_rules_title_sniff();
+  if (rule.action === 'hijack-dns') return m.sb_router_rules_title_hijack_dns();
+  if (rule.action === 'route-options') return m.sb_router_rules_title_udp_timeout();
   if (rule.domain_suffix?.length) return rule.domain_suffix[0];
   if (rule.ip_cidr?.length) return rule.ip_cidr[0];
   if (rule.rule_set?.length) return displayRuleSetTag(rule.rule_set[0]);
-  return `Правило #${index}`;
+  return m.sb_router_rules_title_default({ index });
 }
 
 /* ─── Subtitle (system rules show technical detail per design) ─────── */
@@ -450,7 +455,7 @@ export function singboxRuleToCard(
   const subtitle = isSystem
     ? systemSubtitle(rule)
     : matchers.length > 4
-      ? `${matchers.length} матчеров`
+      ? m.sb_router_rules_matchers_count({ count: matchers.length })
       : undefined;
 
   return {

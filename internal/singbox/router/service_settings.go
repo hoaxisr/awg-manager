@@ -317,6 +317,9 @@ func NormalizeSingboxRouterSettings(sr storage.SingboxRouterSettings) (storage.S
 	} else {
 		sr.PolicyTunNATSegments = nil
 	}
+	if err := normalizePolicyTunDescription(&sr); err != nil {
+		return sr, err
+	}
 	if err := validateQoSClasses(sr.QoSClasses); err != nil {
 		return sr, err
 	}

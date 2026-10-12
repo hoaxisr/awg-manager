@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Строка абонента: имя, укороченный пароль, бейджи SH-27..SH-31 и действия
 	// по матрице спеки §4.4. Решает матрицу чистый модуль, строка её рисует.
+	import { m } from '$lib/i18n';
 	import { KeyRound, Link2, Pencil, Trash2 } from 'lucide-svelte';
 	import { Badge, Button, FieldHint } from '$lib/components/ui';
 	import type { WdttPanelUserEntry } from '$lib/types';
@@ -48,7 +49,7 @@
 			<input
 				bind:this={input}
 				class="rename-input"
-				aria-label="Имя абонента"
+				aria-label={m.proxy_clients_name_label()}
 				bind:value={draft}
 				onkeydown={(e) => {
 					if (e.key === 'Enter') commit();
@@ -61,10 +62,10 @@
 			<code class="row-pass" title={user.password}>{shortPassword(user.password)}</code>
 			{#if user.isAuto}
 				<span class="row-auto">
-					<Badge size="xs" variant="info">заведён автоматически</Badge>
+					<Badge size="xs" variant="info">{m.proxy_client_row_auto()}</Badge>
 					<FieldHint
-						text="Сервер не запускается без единого рабочего пароля, поэтому абонент создан за вас."
-						ariaLabel="Подсказка: заведён автоматически"
+						text={m.proxy_client_row_auto_hint()}
+						ariaLabel={m.proxy_client_row_auto_aria()}
 					/>
 				</span>
 			{/if}
@@ -76,8 +77,8 @@
 			type="button"
 			class="row-action"
 			disabled={busy}
-			aria-label="Ссылка"
-			title="Ссылка абоненту"
+			aria-label={m.proxy_client_row_link()}
+			title={m.proxy_client_row_link_title()}
 			onclick={() => onlink(user)}
 		>
 			<Link2 size={14} />
@@ -87,8 +88,8 @@
 				type="button"
 				class="row-action"
 				disabled={busy}
-				aria-label="Перевыпустить"
-				title="Перевыпустить: новый пароль и новая ссылка"
+				aria-label={m.proxy_client_row_reissue()}
+				title={m.proxy_client_row_reissue_title()}
 				onclick={() => onreissue(user)}
 			>
 				<KeyRound size={14} />
@@ -98,21 +99,21 @@
 			type="button"
 			class="row-action danger"
 			disabled={busy || actions.remove === 'blocked'}
-			aria-label="Удалить"
-			title="Удалить абонента"
+			aria-label={m.common_delete()}
+			title={m.proxy_client_row_delete_title()}
 			onclick={() => onremove(user)}
 		>
 			<Trash2 size={14} />
 		</button>
 		{#if actions.removeHint}
-			<FieldHint text={actions.removeHint} ariaLabel="Подсказка: удаление недоступно" />
+			<FieldHint text={actions.removeHint} ariaLabel={m.proxy_client_row_remove_blocked_aria()} />
 		{/if}
 		<button
 			type="button"
 			class="row-action"
 			class:active={renaming}
-			aria-label="Переименовать абонента"
-			title="Переименовать абонента"
+			aria-label={m.proxy_client_row_rename()}
+			title={m.proxy_client_row_rename()}
 			onmousedown={(e) => {
 				if (renaming) e.preventDefault();
 			}}

@@ -14,6 +14,7 @@
 </script>
 
 <script lang="ts">
+    import { m } from '$lib/i18n';
     import type { Snippet } from 'svelte';
     import ConfirmModal from './ConfirmModal.svelte';
 
@@ -213,10 +214,10 @@
     {#if hasUnsavedChanges}
         <ConfirmModal
             open={confirmOpen}
-            title="Закрыть без сохранения?"
-            message="Все правки будут потеряны."
-            confirmLabel="Закрыть"
-            cancelLabel="Остаться"
+            title={m.ui_modal_discard_title()}
+            message={m.ui_modal_discard_message()}
+            confirmLabel={m.common_close()}
+            cancelLabel={m.routing_page_stay()}
             variant="danger"
             onConfirm={() => { confirmOpen = false; onclose(); }}
             onClose={() => { confirmOpen = false; }}

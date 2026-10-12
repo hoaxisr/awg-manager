@@ -4,6 +4,7 @@
 	import { api } from '$lib/api/client';
 	import type { AWGTunnel } from '$lib/types';
 	import TunnelDiagnosticsPanel from '$lib/components/testing/TunnelDiagnosticsPanel.svelte';
+	import { m } from '$lib/i18n';
 
 	let tunnelId = $derived($page.params.id as string);
 	let tunnel: AWGTunnel | null = $state(null);
@@ -26,6 +27,6 @@
 	targetId={tunnelId}
 	{displayName}
 	backHref="/"
-	backLabel="К списку туннелей"
-	subjectLabel="туннель"
+	backLabel={m.tunnels_back_to_list()}
+	subject="tunnel"
 />

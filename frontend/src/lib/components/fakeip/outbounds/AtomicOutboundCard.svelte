@@ -25,6 +25,7 @@
 <script lang="ts">
 	import { Gauge, ArrowUpRight } from 'lucide-svelte';
 	import type { AtomicEgress } from './atomicEgress';
+	import { m } from '$lib/i18n';
 	import { delayHealth, formatDelay } from './formatDelay';
 
 	interface Props {
@@ -54,10 +55,10 @@
 	);
 	const manageLabel = $derived(
 		egress.source === 'subscription'
-			? 'Открыть подписку'
+			? m.fakeip_outbounds_atomic_open_subscription()
 			: egress.source === 'tunnel'
-				? 'Открыть туннель'
-				: 'Открыть Туннели',
+				? m.fakeip_outbounds_atomic_open_tunnel()
+				: m.fakeip_outbounds_atomic_open_tunnels(),
 	);
 </script>
 
@@ -94,7 +95,7 @@
 
 	<div class="lat">
 		<span class="lat-label"
-			>задержка
+			>{m.fakeip_outbounds_atomic_delay()}
 			{#if hasDelay}
 				<span class="ms" data-health={health}>{formatDelay(delay)}</span>
 			{:else}
@@ -108,7 +109,7 @@
 			onclick={() => onTest(egress.tag)}
 		>
 			<Gauge size={13} aria-hidden="true" />
-			{testing ? 'тест…' : 'тест'}
+			{testing ? m.fakeip_outbounds_testing() : m.fakeip_outbounds_atomic_test()}
 		</button>
 	</div>
 </div>

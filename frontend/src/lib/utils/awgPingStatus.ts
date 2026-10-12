@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type { TunnelListItem } from '$lib/types';
 
 export type AwgPingStatusNote = { text: string; tone: 'recovering' | 'transitional' };
@@ -11,25 +12,25 @@ export function awgPingStatusNote(
 ): AwgPingStatusNote | null {
 	switch (tunnel.status) {
 		case 'starting':
-			return { text: 'Запускается', tone: 'transitional' };
+			return { text: m.tunnels_state_starting(), tone: 'transitional' };
 		case 'needs_stop':
-			return { text: 'Остановка...', tone: 'transitional' };
+			return { text: m.ping_status_stopping(), tone: 'transitional' };
 		case 'broken':
 			// Причина состояния приходит только у обфусцированных туннелей и
 			// вытесняет общее «Сломан»: единственный видимый канал — эта метка.
-			return { text: tunnel.statusDetails || 'Сломан', tone: 'recovering' };
+			return { text: tunnel.statusDetails || m.tunnels_state_broken(), tone: 'recovering' };
 	}
 
 	if (tunnel.status === 'running' && tunnel.pingCheck.status === 'recovering') {
 		const n = tunnel.pingCheck.restartCount;
 		if (variant === 'full') {
 			return {
-				text: n > 0 ? `Восстановление (${n})` : 'Проверка связи...',
+				text: n > 0 ? m.ping_status_recovering_count({ count: n }) : m.ping_status_checking(),
 				tone: 'recovering',
 			};
 		}
 		return {
-			text: n > 0 ? `Восст. (${n})` : 'Восстановление...',
+			text: n > 0 ? m.ping_status_recovering_short_count({ count: n }) : m.ping_status_recovering(),
 			tone: 'recovering',
 		};
 	}

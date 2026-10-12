@@ -4,6 +4,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { get } from 'svelte/store';
   import { onMount, onDestroy } from 'svelte';
   import {
@@ -45,7 +46,6 @@
   import MobileBottomBar from './MobileBottomBar.svelte';
   import { mode } from './modeStore';
   import { ensureTunnelDnsInfra, syncTunnelDnsRule } from './emptyStateActions';
-  import { pluralize, RULE_WORDS, SERVICE_WORDS, SET_WORDS } from '$lib/utils/pluralize';
   import { findScrollContainer } from '$lib/utils/findScrollContainer';
   import {
     formatWizardOutboundPreview,
@@ -126,7 +126,7 @@
 
   const tunnelOutbounds = $derived(
     $options
-      .filter((g) => g.group !== 'Специальные' && (!effectiveIsMihomo || g.group !== 'Proxy-группы (Mihomo)'))
+      .filter((g) => g.id !== 'special' && (!effectiveIsMihomo || g.id !== 'mihomo_groups'))
       .flatMap((g) => g.items),
   );
 
@@ -535,14 +535,14 @@
 
 
         if (continueAfter) {
-          notifications.success(`Создано ${pluralize(created, RULE_WORDS)}. Можно добавить ещё одно.`);
+          notifications.success(m.sb_router_wizard_created_continue({ count: created }));
           clearSelection();
           await scrollWizardToTop();
           resetWizardState();
           customResetKey++;
           onReloadMihomo?.();
         } else {
-          notifications.success(`Создано ${pluralize(created, RULE_WORDS)}`);
+          notifications.success(m.sb_router_wizard_created({ count: created }));
           clearSelection();
           closeAddWizard();
           onReloadMihomo?.();
@@ -567,7 +567,7 @@
           wasInlineText: get(wizardWasInlineText),
         });
         await syncDnsAfterSave();
-        notifications.success('Правило обновлено');
+        notifications.success(m.sb_router_wizard_rule_updated());
         clearSelection();
         closeAddWizard();
         await singboxRouterStore.loadAll();
@@ -587,14 +587,14 @@
         await syncDnsAfterSave();
         const created = result.successes.length;
         if (continueAfter) {
-          notifications.success(`Создано ${pluralize(created, RULE_WORDS)}. Можно добавить ещё одно.`);
+          notifications.success(m.sb_router_wizard_created_continue({ count: created }));
           clearSelection();
           await scrollWizardToTop();
           resetWizardState();
           customResetKey++;
           await singboxRouterStore.loadAll();
         } else {
-          notifications.success(`Создано ${pluralize(created, RULE_WORDS)}`);
+          notifications.success(m.sb_router_wizard_created({ count: created }));
           clearSelection();
           closeAddWizard();
           await singboxRouterStore.loadAll();
@@ -604,15 +604,15 @@
         const fN = result.failures.length;
         notifications.error(
           sN > 0
-            ? `Создано ${sN} из ${sN + fN}. Ошибок: ${fN}`
-            : `Не удалось создать (${fN})`,
+            ? m.sb_router_wizard_created_partial({ done: sN, total: sN + fN, failed: fN })
+            : m.sb_router_wizard_create_failed({ count: fN }),
         );
       }
     } catch (e) {
       if (e instanceof ValidationError) {
         notifications.error(e.message);
       } else {
-        notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+        notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
       }
     } finally {
       submitting = false;
@@ -629,35 +629,35 @@
   <div class="wizard" bind:this={wizardEl}>
     <div class="bc">
       <button type="button" class="bc-back" onclick={closeAddWizard}>
-        <ArrowLeft size={12} /> Правила
+        <ArrowLeft size={12} /> {m.sb_router_wizard_bc_rules()}
       </button>
       <span class="bc-sep">/</span>
-      <span class="bc-current">{isEditMode ? 'Редактирование' : 'Новое правило'}</span>
+      <span class="bc-current">{isEditMode ? m.sb_router_wizard_bc_edit() : m.sb_router_wizard_bc_new()}</span>
     </div>
 
-    <h1 class="title">{isEditMode ? 'Редактировать правило' : 'Куда направить трафик?'}</h1>
+    <h1 class="title">{isEditMode ? m.sb_router_wizard_title_edit() : m.sb_router_wizard_title_new()}</h1>
     <p class="sub">
       {#if isEditMode && editMode === 'external'}
-        Выберите другой шаблон и куда направить трафик.
+        {m.sb_router_wizard_sub_edit_external()}
       {:else if isEditMode}
-        Измените список и куда направить трафик.
+        {m.sb_router_wizard_sub_edit_inline()}
       {:else}
-        Выберите сервис или опишите свой. Затем — куда его пустить.
+        {m.sb_router_wizard_sub_new()}
       {/if}
     </p>
 
     <div class="stepper">
-      <StepPill n={1} label="Что направить" shortLabel="Что" active={!step1Ok} done={step1Ok} />
+      <StepPill n={1} label={m.sb_router_wizard_step_what()} shortLabel={m.sb_router_wizard_step_what_short()} active={!step1Ok} done={step1Ok} />
       <div class="connector" aria-hidden="true"></div>
-      <StepPill n={2} label="Куда" shortLabel="Куда" active={step1Ok && !step2Ok} done={step1Ok && step2Ok} />
+      <StepPill n={2} label={m.sb_router_wizard_step_where_short()} shortLabel={m.sb_router_wizard_step_where_short()} active={step1Ok && !step2Ok} done={step1Ok && step2Ok} />
       <div class="connector" aria-hidden="true"></div>
-      <StepPill n={3} label="Предпросмотр" shortLabel="Проверка" active={step1Ok && step2Ok} done={false} />
+      <StepPill n={3} label={m.sb_router_wizard_step_preview()} shortLabel={m.sb_router_wizard_step_preview_short()} active={step1Ok && step2Ok} done={false} />
     </div>
 
     <WizardStep
       n={1}
-      title="Что направить"
-      hint={isEditMode && editMode === 'inline' ? 'список доменов и адресов' : 'выберите шаблон или опишите вручную'}
+      title={m.sb_router_wizard_step_what()}
+      hint={isEditMode && editMode === 'inline' ? m.sb_router_wizard_what_hint_inline() : m.sb_router_wizard_what_hint_new()}
       active={true}
     >
       {#if !isEditMode || editMode === 'external'}
@@ -665,13 +665,13 @@
           <div class="picker-icon"><Plus size={20} /></div>
           <div class="picker-text">
             <div class="picker-title">
-              {isEditMode ? 'Заменить шаблон' : 'Выбрать из готовых шаблонов'}
+              {isEditMode ? m.sb_router_wizard_pick_replace() : m.sb_router_wizard_pick_new()}
             </div>
             <div class="picker-sub">
               {#if $mode === 'beginner'}
-                {pluralize($presets.length, SERVICE_WORDS)}
+                {m.sb_router_wizard_services_count({ count: $presets.length })}
               {:else}
-                {pluralize($presets.length, SERVICE_WORDS)} · {pluralize($ruleSets.length, SET_WORDS)}
+                {m.sb_router_wizard_services_count({ count: $presets.length })} · {m.sb_router_wizard_sets_count({ count: $ruleSets.length })}
               {/if}
             </div>
           </div>
@@ -688,21 +688,21 @@
       {/if}
     </WizardStep>
 
-    <WizardStep n={2} title="Куда направить" active={step1Ok}>
+    <WizardStep n={2} title={m.sb_router_wizard_step_where()} active={step1Ok}>
       <div class="grid-3">
         <OutboundOption
           icon={iconTunnel}
-          label="Через туннель"
-          sub="AWG / прокси"
-          count="{allAvailableTunnels.length + (effectiveIsMihomo ? mihomoGroups.length : 0)} доступно"
+          label={m.sb_router_wizard_opt_tunnel()}
+          sub={m.sb_router_wizard_opt_tunnel_sub()}
+          count={m.sb_router_wizard_tunnels_available({ count: allAvailableTunnels.length + (effectiveIsMihomo ? mihomoGroups.length : 0) })}
           tone="accent"
           selected={$wizardOutboundCategory === 'tunnel'}
           onclick={() => setOutboundCategory('tunnel')}
         />
         <OutboundOption
           icon={iconDirect}
-          label="Напрямую"
-          sub="Через интерфейс провайдера"
+          label={m.sb_router_wizard_opt_direct()}
+          sub={m.sb_router_wizard_opt_direct_sub()}
           count={directTag}
           tone="muted"
           selected={$wizardOutboundCategory === 'direct'}
@@ -710,8 +710,8 @@
         />
         <OutboundOption
           icon={iconBlock}
-          label="Заблокировать"
-          sub="Трафик отбрасывается"
+          label={m.sb_router_wizard_opt_block()}
+          sub={m.sb_router_wizard_opt_block_sub()}
           count="reject"
           tone="error"
           selected={$wizardOutboundCategory === 'block'}
@@ -722,15 +722,15 @@
       {#if $wizardOutboundCategory === 'tunnel'}
         <div class="tunnel-row">
           <div class="tunnel-cap">
-            <span>Выбрать {effectiveIsMihomo ? 'направление' : 'туннели'}</span>
+            <span>{effectiveIsMihomo ? m.sb_router_wizard_pick_direction() : m.sb_router_wizard_pick_tunnels()}</span>
             {#if !effectiveIsMihomo && $wizardTunnelTags.length > 1}
-              <span class="tunnel-count">{$wizardTunnelTags.length} выбрано</span>
+              <span class="tunnel-count">{m.sb_router_wizard_tunnels_selected({ count: $wizardTunnelTags.length })}</span>
             {/if}
           </div>
           <p class="tunnel-hint">
             {effectiveIsMihomo
-              ? 'Выберите готовую группу прокси или отдельный сервер'
-              : 'Можно выбрать несколько — будет использован composite outbound'}
+              ? m.sb_router_wizard_tunnels_hint_mihomo()
+              : m.sb_router_wizard_tunnels_hint()}
           </p>
 
           {#if effectiveIsMihomo}
@@ -738,7 +738,7 @@
               <div class="groups-header">
                 <div class="groups-title">
                   <Zap size={14} class="accent-icon" />
-                  <span>Группы прокси Mihomo</span>
+                  <span>{m.sb_router_mihomo_groups()}</span>
                   {#if mihomoGroups.length > 0}
                     <span class="group-count-badge">{mihomoGroups.length}</span>
                   {/if}
@@ -748,7 +748,7 @@
                   class="create-group-prominent-btn"
                   onclick={() => (groupModalOpen = true)}
                 >
-                  <Plus size={14} /> Создать группу
+                  <Plus size={14} /> {m.sb_router_create_group()}
                 </button>
               </div>
 
@@ -775,12 +775,12 @@
                   onclick={() => (groupModalOpen = true)}
                 >
                   <Plus size={14} />
-                  <span>Создать группу прокси (Auto-fallback, URL-Test, Select, Балансировка)</span>
+                  <span>{m.sb_router_empty_groups_cta()}</span>
                 </button>
               {/if}
             </div>
 
-            <div class="group-sub-cap mt-3">Туннели и прокси-узлы:</div>
+            <div class="group-sub-cap mt-3">{m.sb_router_tunnels_and_proxies()}</div>
           {/if}
           {#if allAvailableTunnels.length > 0}
             <div class="tunnel-chips">
@@ -805,23 +805,23 @@
               {/each}
             </div>
           {:else if $optionsReady && (!effectiveIsMihomo || mihomoGroups.length === 0)}
-            <div class="empty-tunnels">Нет доступных туннелей.</div>
+            <div class="empty-tunnels">{m.sb_router_wizard_no_tunnels()}</div>
           {/if}
         </div>
       {/if}
     </WizardStep>
 
-    <WizardStep n={3} title="Предпросмотр" active={step1Ok && step2Ok}>
+    <WizardStep n={3} title={m.sb_router_wizard_step_preview()} active={step1Ok && step2Ok}>
       {#if isEditMode}
-        <p class="preview-hint">Изменения применятся к текущему правилу.</p>
+        <p class="preview-hint">{m.sb_router_wizard_preview_edit_hint()}</p>
       {:else}
         <p class="preview-hint">
-          Правила появятся в конце списка. После создания можно перетаскивать.
+          {m.sb_router_wizard_preview_new_hint()}
         </p>
         <div class="preview-info">
           <Info size={14} />
           <span>
-            {pluralize($templatesSelection.size + (hasCustom ? 1 : 0), RULE_WORDS)} будет создано.
+            {m.sb_router_wizard_will_create({ count: $templatesSelection.size + (hasCustom ? 1 : 0) })}
           </span>
         </div>
       {/if}
@@ -834,24 +834,24 @@
     </WizardStep>
 
     <div class="actions desktop-only">
-      <Button variant="ghost" size="md" onclick={closeAddWizard} disabled={submitting}>Отмена</Button>
+      <Button variant="ghost" size="md" onclick={closeAddWizard} disabled={submitting}>{m.common_cancel()}</Button>
       <div class="actions-right">
         {#if !isEditMode}
           <Button variant="secondary" size="md" onclick={() => doSave(true)} disabled={!canSave || submitting}>
-            + Добавить ещё одно
+            {m.sb_router_wizard_add_another()}
           </Button>
         {/if}
         <Button variant="primary" size="md" onclick={() => doSave(false)} disabled={!canSave || submitting} iconBefore={iconCheck}>
-          {isEditMode ? 'Сохранить изменения' : 'Сохранить'}
+          {isEditMode ? m.sb_router_wizard_save_changes() : m.common_save()}
         </Button>
       </div>
     </div>
 
     <MobileBottomBar>
-      <Button variant="ghost" size="sm" onclick={closeAddWizard} disabled={submitting}>Отмена</Button>
+      <Button variant="ghost" size="sm" onclick={closeAddWizard} disabled={submitting}>{m.common_cancel()}</Button>
       <div style="flex:1"></div>
       <Button variant="primary" size="sm" onclick={() => doSave(false)} disabled={!canSave || submitting} iconBefore={iconCheck}>
-        Сохранить
+        {m.common_save()}
       </Button>
     </MobileBottomBar>
 

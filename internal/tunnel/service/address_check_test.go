@@ -29,3 +29,18 @@ func TestStoredAddressConflicts_ByAddress(t *testing.T) {
 		t.Fatalf("исключённый id всё равно конфликтует: %v", got)
 	}
 }
+
+// F589: у зеркала wdtt-raw в предупреждении — его живой интерфейс, а не
+// opkgtun0 из id без цифр (это интерфейс чужого туннеля).
+func TestStoredAddressConflicts_WdttRawNamesItsOwnIface(t *testing.T) {
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(filepath.Join(dir, "tunnels"), filepath.Join(dir, "locks"))
+	if err := store.Create(&storage.AWGTunnel{ID: "wdttraw-de", Name: "WDTT DE", Backend: "wdtt-raw",
+		RawKernelIface: "wdttraw0", Interface: storage.AWGInterface{Address: "10.66.0.9/32"}}); err != nil {
+		t.Fatal(err)
+	}
+	got := StoredAddressConflicts(store, "10.66.0.9/32", "")
+	if len(got) != 1 || !strings.Contains(got[0], "(wdttraw0)") {
+		t.Fatalf("предупреждение = %v, ждали интерфейс wdttraw0", got)
+	}
+}

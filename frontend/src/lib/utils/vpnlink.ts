@@ -1,4 +1,5 @@
 import pako from 'pako';
+import { m } from '$lib/i18n';
 
 export type VpnLinkFlavor = 'regular' | 'premium' | 'unknown';
 
@@ -60,7 +61,7 @@ export function vpnLinkUnsupportedPortalReason(input: string): string | null {
 	const st = (ac as Record<string, unknown>).service_type;
 	if (st === 'amnezia-free') {
 		return (
-			'Это ключ Amnezia Free (облачный API другого типа) и не поддерживается в рамках данного функционала'
+			m.vpnlink_amnezia_free_unsupported()
 		);
 	}
 	return null;
@@ -103,12 +104,12 @@ export interface VpnLinkResult {
 export function decodeVpnLink(input: string): VpnLinkResult {
 	const trimmed = input.trim();
 	if (!trimmed.startsWith('vpn://')) {
-		throw new Error('Ссылка должна начинаться с vpn://');
+		throw new Error(m.vpnlink_must_start_with_scheme());
 	}
 
 	const encoded = trimmed.slice('vpn://'.length);
 	if (!encoded) {
-		throw new Error('Неверный формат vpn:// ссылки');
+		throw new Error(m.vpnlink_invalid_format());
 	}
 
 	const bytes = base64UrlDecode(encoded);
@@ -140,7 +141,7 @@ function base64UrlDecode(input: string): Uint8Array {
 		}
 		return bytes;
 	} catch {
-		throw new Error('Неверный формат vpn:// ссылки');
+		throw new Error(m.vpnlink_invalid_format());
 	}
 }
 
@@ -189,7 +190,7 @@ function decompress(bytes: Uint8Array): string {
 	try {
 		return new TextDecoder().decode(bytes);
 	} catch {
-		throw new Error('Не удалось распаковать данные');
+		throw new Error(m.vpnlink_decompress_failed());
 	}
 }
 
@@ -198,12 +199,12 @@ function extractConfig(jsonStr: string): VpnLinkResult {
 	try {
 		data = JSON.parse(jsonStr);
 	} catch {
-		throw new Error('Не удалось распаковать данные');
+		throw new Error(m.vpnlink_decompress_failed());
 	}
 
 	const containers = data.containers;
 	if (!Array.isArray(containers) || containers.length === 0) {
-		throw new Error('Конфигурация AWG не найдена в ссылке');
+		throw new Error(m.vpnlink_awg_config_not_found());
 	}
 
 	// Use last container (as AmneziaVPN does)
@@ -212,7 +213,7 @@ function extractConfig(jsonStr: string): VpnLinkResult {
 	// Try to find AWG/WireGuard config in the container
 	const proto = container.awg || container.wireguard;
 	if (!proto) {
-		throw new Error('Контейнер не содержит AWG или WireGuard конфигурацию');
+		throw new Error(m.vpnlink_container_no_config());
 	}
 
 	// Extract .conf content from last_config.
@@ -242,11 +243,7 @@ function extractConfig(jsonStr: string): VpnLinkResult {
 	}
 
 	if (!config) {
-		throw new Error(
-			'Ссылка не содержит готовой конфигурации клиента. ' +
-			'Вероятно, это ссылка полного доступа (Full Access). ' +
-			'Экспортируйте конфигурацию конкретного клиента из AmneziaVPN.'
-		);
+		throw new Error(m.vpnlink_no_client_config());
 	}
 
 	// DNS substitution

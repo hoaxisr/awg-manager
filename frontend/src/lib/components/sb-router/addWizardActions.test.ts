@@ -29,11 +29,11 @@ import type { SingboxRouterPreset } from '$lib/types';
 const emptyCustom: CustomMatcherFields = { rulesList: '' };
 const groups: TemplateGroup[] = [
   {
-    category: 'services', title: 'Сервисы',
+    category: 'services',
     items: [{ id: 'svc:netflix', category: 'services', presetId: 'netflix', name: 'Netflix' }],
   },
   {
-    category: 'rulesets', title: 'Наборы',
+    category: 'rulesets',
     items: [{ id: 'rs:geoip-ru', category: 'rulesets', tag: 'geoip-ru', type: 'local' }],
   },
 ];

@@ -5,6 +5,7 @@
   поэтому тестируется без моков api.
 -->
 <script lang="ts">
+	import { m, uiText, type UiText } from '$lib/i18n';
 	import { Badge, Button, ConfirmModal, IconButton, Modal, Toggle } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
@@ -35,7 +36,7 @@
 	// ключа нельзя, иначе выданный агенту ключ менял бы права под ним.
 	let readOnlyDraft = $state(false);
 	let creating = $state(false);
-	let createError = $state<string | null>(null);
+	let createError = $state<UiText | null>(null);
 	let created = $state<McpKeyCreated | null>(null);
 	let revokeTarget = $state<McpKey | null>(null);
 	let revoking = $state(false);
@@ -62,7 +63,7 @@
 	async function submitCreate() {
 		const name = nameDraft.trim();
 		if (!name) {
-			createError = 'Укажите название ключа';
+			createError = () => m.settings_mcp_name_required();
 			return;
 		}
 		creating = true;
@@ -70,7 +71,7 @@
 		try {
 			created = await oncreate(name, readOnlyDraft);
 		} catch (e) {
-			createError = e instanceof Error ? e.message : 'Не удалось создать ключ';
+			createError = e instanceof Error ? e.message : () => m.settings_mcp_create_failed();
 		} finally {
 			creating = false;
 		}
@@ -95,17 +96,17 @@
 
 	async function copyKey(text: string) {
 		if (await copyToClipboard(text)) {
-			notifications.success('Ключ скопирован в буфер обмена');
+			notifications.success(m.settings_mcp_key_copied());
 		} else {
-			notifications.error('Не удалось скопировать ключ');
+			notifications.error(m.settings_mcp_key_copy_failed());
 		}
 	}
 
 	async function copyEndpoint() {
 		if (await copyToClipboard(endpoint)) {
-			notifications.success('Адрес скопирован в буфер обмена');
+			notifications.success(m.settings_mcp_address_copied());
 		} else {
-			notifications.error('Не удалось скопировать адрес');
+			notifications.error(m.settings_mcp_address_copy_failed());
 		}
 	}
 
@@ -144,51 +145,51 @@
 
 <div class="settings-block">
 	<div class="card">
-		<SettingsSectionLabel label="MCP-сервер" icon={Plug} tone="indigo" header />
+		<SettingsSectionLabel label={m.settings_mcp_title()} icon={Plug} tone="indigo" header />
 		<div class="setting-row toggle-inline-row">
 			<div class="flex flex-col gap-1">
 				<span class="flex items-center gap-2">
-					<span class="font-medium">Доступ для ИИ-агентов (MCP)</span>
+					<span class="font-medium">{m.settings_mcp_access_label()}</span>
 					<Badge variant="accent" size="sm" uppercase>Beta</Badge>
 				</span>
 				<span class="setting-description">
-					Эндпоинт Model Context Protocol для Claude Code, Cursor и других агентов. Доступ только по ключу, даже если авторизация веб-интерфейса выключена. Набор инструментов и API ещё могут меняться.
+					{m.settings_mcp_access_description()}
 				</span>
 			</div>
-			<Toggle checked={enabled} onchange={ontoggle} disabled={saving} ariaLabel="MCP-сервер" />
+			<Toggle checked={enabled} onchange={ontoggle} disabled={saving} ariaLabel={m.settings_mcp_title()} />
 		</div>
 
 		{#if enabled}
 			<div class="setting-row">
 				<div class="flex flex-col gap-1">
-					<span class="font-medium">Адрес эндпоинта</span>
-					<span class="setting-description">Через KeenDNS используйте https://&lt;ваш-домен&gt;/mcp.</span>
+					<span class="font-medium">{m.settings_mcp_endpoint_label()}</span>
+					<span class="setting-description">{m.settings_mcp_endpoint_description()}</span>
 				</div>
 				<div class="mcp-key-row">
 					<code class="mcp-code-value">{endpoint}</code>
-					<IconButton size="md" ariaLabel="Скопировать адрес эндпоинта" title="Скопировать адрес эндпоинта" onclick={copyEndpoint}>
+					<IconButton size="md" ariaLabel={m.settings_mcp_copy_endpoint()} title={m.settings_mcp_copy_endpoint()} onclick={copyEndpoint}>
 						<Copy size={16} />
 					</IconButton>
 				</div>
 			</div>
 
 			<div class="setting-row toggle-inline-row">
-				<span class="font-medium">Ключи доступа</span>
-				<Button variant="secondary" size="md" onclick={openCreate} disabled={saving}>Создать ключ</Button>
+				<span class="font-medium">{m.settings_mcp_keys_label()}</span>
+				<Button variant="secondary" size="md" onclick={openCreate} disabled={saving}>{m.settings_mcp_create_key()}</Button>
 			</div>
 			<div class="setting-row">
 				{#if keysLoading}
-					<span class="setting-description">Загрузка…</span>
+					<span class="setting-description">{m.common_loading()}</span>
 				{:else if keys.length === 0}
-					<span class="setting-description">Ключей пока нет — без ключа подключиться нельзя.</span>
+					<span class="setting-description">{m.settings_mcp_no_keys()}</span>
 				{:else}
 					<div class="mcp-keys-table-wrap">
 						<table class="mcp-keys-table w-full text-sm">
 							<thead>
 								<tr class="setting-description text-left">
-									<th class="font-normal">Название</th>
-									<th class="font-normal">Создан</th>
-									<th class="font-normal">Использован</th>
+									<th class="font-normal">{m.settings_mcp_col_name()}</th>
+									<th class="font-normal">{m.settings_mcp_col_created()}</th>
+									<th class="font-normal">{m.settings_mcp_col_used()}</th>
 									<th></th>
 								</tr>
 							</thead>
@@ -198,13 +199,13 @@
 										<td>
 											{k.name}
 											{#if k.readOnly}
-												<Badge variant="info" size="sm">только чтение</Badge>
+												<Badge variant="info" size="sm">{m.settings_mcp_read_only_badge()}</Badge>
 											{/if}
 										</td>
 										<td>{formatDate(k.createdAt)}</td>
 										<td>{k.lastUsedAt ? formatDate(k.lastUsedAt) : '—'}</td>
 										<td class="text-right">
-											<Button variant="danger" size="sm" onclick={() => (revokeTarget = k)} disabled={saving}>Отозвать</Button>
+											<Button variant="danger" size="sm" onclick={() => (revokeTarget = k)} disabled={saving}>{m.settings_mcp_revoke()}</Button>
 										</td>
 									</tr>
 								{/each}
@@ -217,30 +218,30 @@
 	</div>
 </div>
 
-<Modal open={createOpen} title={created ? 'Ключ создан' : 'Новый ключ MCP'} size="md" onclose={() => closeCreate()}>
+<Modal open={createOpen} title={created ? m.settings_mcp_modal_created() : m.settings_mcp_modal_new()} size="md" onclose={() => closeCreate()}>
 	{#if !created}
 		<div class="flex flex-col gap-2">
-			<label class="setting-description" for="mcp-key-name">Название (для кого этот ключ)</label>
+			<label class="setting-description" for="mcp-key-name">{m.settings_mcp_name_label()}</label>
 			<input
 				id="mcp-key-name"
 				class="api-key-input"
-				placeholder="Например, laptop"
+				placeholder={m.settings_mcp_name_placeholder()}
 				bind:value={nameDraft}
 				maxlength="64"
 				onkeydown={(e) => e.key === 'Enter' && submitCreate()}
 			/>
-			<Toggle checked={readOnlyDraft} onchange={(v) => (readOnlyDraft = v)} label="Только чтение" size="sm" />
+			<Toggle checked={readOnlyDraft} onchange={(v) => (readOnlyDraft = v)} label={m.settings_mcp_read_only_label()} size="sm" />
 			<span class="setting-description text-xs">
-				Такой ключ читает состояние, логи и маршруты, но не может ничего изменить на роутере и не выдаёт конфиги с приватными ключами.
+				{m.settings_mcp_read_only_description()}
 			</span>
-			{#if createError}<span class="text-error text-sm">{createError}</span>{/if}
+			{#if createError}<span class="text-error text-sm">{uiText(createError)}</span>{/if}
 		</div>
 	{:else}
 		<div class="flex flex-col gap-3">
-			<p class="setting-description">Ключ показывается только сейчас. Скопируйте его в конфигурацию клиента.</p>
+			<p class="setting-description">{m.settings_mcp_key_shown_once()}</p>
 			<div class="mcp-key-row">
 				<code class="mcp-code-value">{created.key}</code>
-				<IconButton size="md" ariaLabel="Скопировать ключ" title="Скопировать ключ" onclick={() => created && copyKey(created.key)}>
+				<IconButton size="md" ariaLabel={m.settings_mcp_copy_key()} title={m.settings_mcp_copy_key()} onclick={() => created && copyKey(created.key)}>
 					<Copy size={16} />
 				</IconButton>
 			</div>
@@ -260,19 +261,19 @@
 	{/if}
 	{#snippet actions()}
 		{#if !created}
-			<Button variant="secondary" size="md" onclick={() => closeCreate()}>Отмена</Button>
-			<Button variant="primary" size="md" onclick={submitCreate} disabled={creating}>Создать</Button>
+			<Button variant="secondary" size="md" onclick={() => closeCreate()}>{m.common_cancel()}</Button>
+			<Button variant="primary" size="md" onclick={submitCreate} disabled={creating}>{m.common_create()}</Button>
 		{:else}
-			<Button variant="primary" size="md" onclick={() => closeCreate()}>Готово</Button>
+			<Button variant="primary" size="md" onclick={() => closeCreate()}>{m.common_done()}</Button>
 		{/if}
 	{/snippet}
 </Modal>
 
 <ConfirmModal
 	open={revokeTarget !== null}
-	title="Отозвать ключ?"
-	message={revokeTarget ? `Клиенты с ключом «${revokeTarget.name}» потеряют доступ.` : ''}
-	confirmLabel="Отозвать"
+	title={m.settings_mcp_revoke_title()}
+	message={revokeTarget ? m.settings_mcp_revoke_message({ name: revokeTarget.name }) : ''}
+	confirmLabel={m.settings_mcp_revoke()}
 	busy={revoking}
 	onConfirm={confirmRevoke}
 	onClose={() => (revokeTarget = null)}

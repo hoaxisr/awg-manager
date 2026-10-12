@@ -1,4 +1,5 @@
 import type { SubscriptionHeader } from '$lib/types';
+import { m } from '$lib/i18n';
 
 export function parseHeadersText(text: string): SubscriptionHeader[] {
 	const lines = text.split('\n');
@@ -23,7 +24,8 @@ export function serializeHeaders(headers: SubscriptionHeader[]): string {
 // /singbox/subscriptions/header-profiles) не загружены.
 export const DEFAULT_PRESET = `User-Agent: sing-box/v1.14.20`;
 
-export const ALL_HEADERS_PRESET = `# Заполните только нужные строки. Пустые игнорируются при сохранении.
+export function allHeadersPreset(): string {
+	return `# ${m.subscriptions_headers_preset_comment()}
 User-Agent:
 Accept-Encoding:
 X-HWID:
@@ -34,3 +36,4 @@ X-Ver-OS:
 X-App-Version:
 X-Real-IP:
 X-Forwarded-For:`;
+}

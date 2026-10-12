@@ -1,3 +1,4 @@
+import { m, formatLocale } from '$lib/i18n';
 import type { AmneziaPremiumCountry, AmneziaPremiumIssuedConfig } from '$lib/types';
 
 // Решения списка стран мастера Amnezia Premium: чистые функции над ответом
@@ -205,7 +206,7 @@ export function isPremiumIssueAllowed(state: PremiumSubscriptionState): boolean 
 export function formatPremiumDate(value: string | undefined): string {
 	const ms = Date.parse(value?.trim() ?? '');
 	if (!Number.isFinite(ms)) return '';
-	return new Date(ms).toLocaleDateString('ru-RU', {
+	return new Date(ms).toLocaleDateString(formatLocale(), {
 		day: '2-digit',
 		month: '2-digit',
 		year: 'numeric',
@@ -258,15 +259,15 @@ export function premiumCountryLabel<T extends { name: string; amneziaCountry?: s
 	tunnels: readonly T[]
 ): PremiumCountryLabel | null {
 	if (premiumCountryConfigFreshness(issued, code) === 'stale') {
-		return { kind: 'stale', text: 'конфиг устарел' };
+		return { kind: 'stale', text: m.amnezia_premium_label_stale() };
 	}
 	const tunnel = findPremiumCountryTunnel(tunnels, code);
-	if (tunnel) return { kind: 'tunnel', text: `туннель ${tunnel.name}` };
+	if (tunnel) return { kind: 'tunnel', text: m.amnezia_premium_label_tunnel({ name: tunnel.name }) };
 	if (isPremiumCountryIssued(issued, code)) {
-		return { kind: 'issued', text: 'конфиг уже выдавался' };
+		return { kind: 'issued', text: m.amnezia_premium_label_issued() };
 	}
 	if (premiumActiveDevicesForCountry(issued, code).length > 0) {
-		return { kind: 'external', text: 'получено вне AWG-M' };
+		return { kind: 'external', text: m.amnezia_premium_label_external() };
 	}
 	return null;
 }

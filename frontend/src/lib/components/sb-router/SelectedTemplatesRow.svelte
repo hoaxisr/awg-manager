@@ -5,6 +5,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { X as XIcon } from 'lucide-svelte';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
   import PresetIcon from '$lib/components/routing/singboxRouter/PresetIcon.svelte';
@@ -55,8 +56,8 @@
 {#if items.length > 0}
   <div class="row">
     <header class="head">
-      <span class="caption">Выбрано: {items.length}</span>
-      <button type="button" class="link" onclick={() => openTemplatesModal()}>Изменить →</button>
+      <span class="caption">{m.sb_router_templates_selected({ count: items.length })}</span>
+      <button type="button" class="link" onclick={() => openTemplatesModal()}>{m.sb_router_templates_change()}</button>
     </header>
     <div class="chips">
       {#each items as it (it.id)}
@@ -66,7 +67,7 @@
               <PresetIcon slug={it.iconSlug ?? it.presetId} label={it.label} size={18} />
             </span>
             <span class="chip-label">{it.label}</span>
-            <button type="button" class="chip-x" onclick={() => toggleTemplate(it.id)} aria-label="Убрать">
+            <button type="button" class="chip-x" onclick={() => toggleTemplate(it.id)} aria-label={m.sb_router_templates_remove()}>
               <XIcon size={10} />
             </button>
           </span>
@@ -76,7 +77,7 @@
             {#if it.rsType}
               <RuleSetTypeBadge type={it.rsType} size="xs" />
             {/if}
-            <button type="button" class="chip-x" onclick={() => toggleTemplate(it.id)} aria-label="Убрать">
+            <button type="button" class="chip-x" onclick={() => toggleTemplate(it.id)} aria-label={m.sb_router_templates_remove()}>
               <XIcon size={10} />
             </button>
           </span>

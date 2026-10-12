@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { usageLevel } from '$lib/stores/settings';
 	import { TriangleAlert } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		/** NDMS dns-proxy tab is OS5-only; parent passes router capability. */
@@ -18,9 +19,7 @@
 			<TriangleAlert size={20} />
 		</div>
 		<p>
-			Для работы DNS-маршрутизации клиент должен находиться в политике доступа «Политика по умолчанию» — в веб-интерфейсе
-			роутера, раздел <strong>Приоритеты подключений</strong>. Если устройство привязано к другой
-			политике, DNS-маршруты на него не распространяются.
+			{m.dns_routes_policy_hint_prefix()}<strong>{m.dns_routes_policy_hint_section()}</strong>{m.dns_routes_policy_hint_suffix()}
 		</p>
 	</div>
 {/if}

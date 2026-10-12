@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type { SingboxRouterPreset, SingboxRouterRuleSet } from '$lib/types';
 import { resolveRuleSetDisplayType, type RuleSetDisplayType } from '$lib/utils/ruleSetType';
 
@@ -25,9 +26,21 @@ export type TemplateItem = ServiceTemplate | RulesetTemplate;
 
 export interface TemplateGroup {
   category: TemplateCategory;
-  title: string;
-  hint?: string;
   items: TemplateItem[];
+}
+
+/** Заголовок группы шаблонов на текущем языке; вызывать при показе. */
+export function templateGroupTitle(category: TemplateCategory): string {
+  return category === 'services'
+    ? m.sb_router_templates_group_services()
+    : m.sb_router_templates_group_rulesets();
+}
+
+/** Подсказка к группе шаблонов на текущем языке; вызывать при показе. */
+export function templateGroupHint(category: TemplateCategory): string {
+  return category === 'services'
+    ? m.sb_router_templates_group_services_hint()
+    : m.sb_router_templates_group_rulesets_hint();
 }
 
 function matchesQuery(haystack: string, q: string): boolean {
@@ -58,8 +71,6 @@ export function buildTemplateList(
   if (services.length > 0) {
     groups.push({
       category: 'services',
-      title: 'Сервисы',
-      hint: 'один сервис = одно правило',
       items: services,
     });
   }
@@ -76,8 +87,6 @@ export function buildTemplateList(
   if (rss.length > 0) {
     groups.push({
       category: 'rulesets',
-      title: 'Наборы доменов и CIDR',
-      hint: 'rule_set уже в config',
       items: rss,
     });
   }

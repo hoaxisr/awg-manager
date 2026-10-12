@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import RuleEditModal from './RuleEditModal.svelte';
 import type { PolicyDevice, SingboxRouterRule } from '$lib/types';
+import type { OutboundGroup } from './outboundOptions';
 
 class ResizeObserverStub {
 	observe(): void {}
@@ -21,7 +22,7 @@ beforeEach(() => {
 });
 
 const baseProps = {
-	outboundOptions: [{ group: 'Туннели', items: [{ value: 'vpn', label: 'vpn' }] }],
+	outboundOptions: [{ id: 'awg', items: [{ value: 'vpn', label: 'vpn' }] }] as OutboundGroup[],
 	availableRuleSets: [],
 	onClose: vi.fn(),
 };

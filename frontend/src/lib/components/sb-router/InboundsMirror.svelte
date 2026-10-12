@@ -11,6 +11,7 @@
   почему inbound сохранён в конфиге (стабильность номеров портов).
 -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Badge } from '$lib/components/ui';
 	import type { SingboxInboundEntry } from '$lib/types';
 	import {
@@ -31,7 +32,7 @@
 	let {
 		entries,
 		warnings = [],
-		emptyText = "Inbound'ов нет.",
+		emptyText,
 		showGroupHeaders = true,
 	}: Props = $props();
 
@@ -40,11 +41,11 @@
 
 <div class="mirror">
 	{#if warnings.length > 0}
-		<p class="warn">Не удалось прочитать: {warnings.join('; ')}</p>
+		<p class="warn">{m.sb_router_inbounds_read_failed({ warnings: warnings.join('; ') })}</p>
 	{/if}
 
 	{#if groups.length === 0 && warnings.length === 0}
-		<div class="empty">{emptyText}</div>
+		<div class="empty">{emptyText ?? m.sb_router_inbounds_none()}</div>
 	{:else}
 		{#each groups as group (group.source)}
 			<div class="group">

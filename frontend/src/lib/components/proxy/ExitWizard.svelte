@@ -2,6 +2,7 @@
 	// Мастер «Вывести трафик» (ia.md §2.3): источник → параметры → куда
 	// направить трафик. Протокол спрашивают только при ручном создании, из
 	// ссылки он выводится схемой (WE-08). Решения шагов — в exitWizard.ts.
+	import { m } from '$lib/i18n';
 	import { untrack } from 'svelte';
 	import { Button, Card, Dropdown, FieldHint } from '$lib/components/ui';
 	import { ExternalLink } from 'lucide-svelte';
@@ -55,7 +56,11 @@
 
 	let { policies, row = null, wdttClient, ftClient, onclose, ondone }: Props = $props();
 
-	const STEPS = ['Источник', 'Параметры', 'Куда направить трафик'];
+	const STEPS = $derived([
+		m.proxy_exit_wizard_step_source(),
+		m.proxy_exit_wizard_step_params(),
+		m.proxy_exit_wizard_step_target(),
+	]);
 
 	// Мастер существующего клиента начинается с параметров: источник у него уже
 	// разобран. Шаг 1 остаётся доступным — через него идёт переимпорт ссылки.
@@ -241,7 +246,7 @@
 	let policy = $state('');
 
 	const policyOptions = $derived([
-		{ value: '', label: 'Не заводить в политику (сделаю сам)' },
+		{ value: '', label: m.proxy_exit_wizard_no_policy() },
 		...policies.map((p) => ({ value: p.name, label: p.description || p.name })),
 	]);
 
@@ -280,9 +285,7 @@
 				} else {
 					// TS-23: имя интерфейса так и не появилось — в политику его
 					// добавить нечем, и молчать об этом нельзя.
-					notifications.error(
-						'Не удалось добавить интерфейс в политику — добавьте его на странице «Маршрутизация»',
-					);
+					notifications.error(m.proxy_exit_wizard_policy_failed());
 				}
 			}
 			await ondone(res.protocol, res.id);
@@ -296,8 +299,8 @@
 
 <Card padding="lg">
 	<div class="head">
-		<h2>Вывести трафик</h2>
-		<Button variant="ghost" onclick={onclose}>← К списку</Button>
+		<h2>{m.proxy_exit_wizard_title()}</h2>
+		<Button variant="ghost" onclick={onclose}>{m.proxy_wizard_to_list()}</Button>
 	</div>
 
 	<WizardSteps
@@ -330,7 +333,7 @@
 					// Дефолт потоков — правило выбранного протокола.
 					fields.workers = emptyFields(p).workers;
 				}}
-				onmode={(m) => (mode = m)}
+				onmode={(next) => (mode = next)}
 				onprofile={(idx) => {
 					profileIdx = idx;
 					const picked = subscription?.profiles[Number(idx)];
@@ -342,31 +345,31 @@
 		{:else}
 			{#if needsManualWg}
 				<!-- WE-26 обещает вставку .conf именно здесь. -->
-				<ConfPasteBox label="Вставить клиентский .conf" bind:value={manualWg} />
+				<ConfPasteBox label={m.proxy_exit_wizard_paste_conf()} bind:value={manualWg} />
 			{/if}
 			{#if willHaveIface}
 				<div class="explain">
 					{#if protocol === 'wdtt' && mode === 'raw'}
 						<p>
-							Клиент поднимет свой интерфейс в роутере.
+							{m.proxy_exit_wizard_raw_note()}
 							<FieldHint
-								text="Режим Raw: отдельный AWG-туннель не нужен. Интерфейс виден в AWG-туннелях с бейджем «WDTT Raw» и в «Маршрутизации», переключатель в AWG управляет этим клиентом."
-								ariaLabel="Подсказка: режим Raw"
+								text={m.proxy_exit_wizard_raw_hint()}
+								ariaLabel={m.proxy_exit_wizard_raw_aria()}
 							/>
 						</p>
 					{:else}
 						<p>
-							Будет создан AWG-туннель «{tunnelName}».
+							{m.proxy_exit_wizard_wg_note({ name: tunnelName })}
 							<FieldHint
-								text="Режим WG: клиент получит WireGuard-конфиг, из него создастся AWG-туннель с Endpoint на локальный порт клиента."
-								ariaLabel="Подсказка: режим WG"
+								text={m.proxy_exit_wizard_wg_hint()}
+								ariaLabel={m.proxy_exit_wizard_wg_aria()}
 							/>
 						</p>
 					{/if}
 				</div>
 
 				<Dropdown
-					label="Политика доступа"
+					label={m.proxy_exit_wizard_policy_label()}
 					value={policy}
 					options={policyOptions}
 					onchange={(v) => (policy = v)}
@@ -374,15 +377,15 @@
 				/>
 				{#if policy}
 					<p class="note">
-						Интерфейс будет добавлен в конец выбранной политики<FieldHint
-							text="Запись в политике — кандидатура, а не назначение: интерфейс дописывается в конец её порядка, и трафик пойдёт через него, только если он окажется первым рабочим."
-							ariaLabel="Подсказка: политика доступа"
+						{m.proxy_exit_wizard_policy_note()}<FieldHint
+							text={m.proxy_exit_wizard_policy_hint()}
+							ariaLabel={m.proxy_exit_wizard_policy_aria()}
 						/>
 					</p>
 				{/if}
 				<div class="routing-link">
 					<Button variant="ghost" size="sm" href="/routing">
-						Маршрутизация
+						{m.proxy_exit_wizard_routing()}
 						{#snippet iconAfter()}<ExternalLink size={12} />{/snippet}
 					</Button>
 				</div>
@@ -391,7 +394,7 @@
 
 		{#snippet finish()}
 			<Button variant="primary" loading={busy} disabled={!step2Ready} onclick={saveAndStart}>
-				Сохранить и запустить
+				{m.proxy_exit_wizard_save_start()}
 			</Button>
 		{/snippet}
 	</WizardSteps>

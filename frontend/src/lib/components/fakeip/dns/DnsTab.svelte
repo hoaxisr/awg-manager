@@ -32,6 +32,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
+	import { m } from '$lib/i18n';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { createReorderDrag } from '$lib/components/sb-router/reorderDrag.svelte';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
@@ -83,9 +84,9 @@
 	}
 	function serverLockTitle(s: SingboxRouterDNSServer): string {
 		if (s.type === ('fakeip' as SingboxRouterDNSServer['type'])) {
-			return 'fakeip — ядро движка, удаление недоступно';
+			return m.fakeip_dns_core_lock_title();
 		}
-		return serverDeleteReasons.get(s.tag) ?? 'Удаление недоступно';
+		return serverDeleteReasons.get(s.tag) ?? m.fakeip_dns_delete_unavailable();
 	}
 
 	// Тип-бейдж сервера: fakeip / local — особые тона, остальное — нейтральный.
@@ -102,10 +103,10 @@
 		return 'accent';
 	}
 	function serverAddr(s: SingboxRouterDNSServer): string {
-		if (s.type === 'local') return 'системный resolver';
+		if (s.type === 'local') return m.fakeip_dns_addr_system_resolver();
 		// fakeip-сервер синтезирует адреса в туннель — у него нет upstream-адреса,
 		// поэтому s.server пустой; показываем «синтез», а не «undefined».
-		if (s.type === 'fakeip') return 'синтез';
+		if (s.type === 'fakeip') return m.fakeip_dns_addr_synth();
 		const port = s.server_port ? `:${s.server_port}` : '';
 		const path = s.path ?? '';
 		return `${s.server}${port}${path}`;
@@ -136,7 +137,9 @@
 				await fakeipConfig.loadAll();
 			} catch (e) {
 				fakeipConfig.applyDNSServers(snapshot);
-				notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
+				notifications.error(
+					m.sb_router_expert_move_failed({ message: e instanceof Error ? e.message : String(e) }),
+				);
 			}
 		},
 	});
@@ -149,7 +152,9 @@
 			await fakeipConfig.loadAll();
 		} catch (e) {
 			fakeipConfig.applyDNSRules(snapshot);
-			notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
+			notifications.error(
+				m.sb_router_expert_move_failed({ message: e instanceof Error ? e.message : String(e) }),
+			);
 		}
 	}
 
@@ -206,14 +211,33 @@
 	);
 
 	// Унифицированное подтверждение удаления (server / rule).
-	let pendingConfirm = $state<{ title: string; message: string; run: () => Promise<void> } | null>(null);
+	// Храним цель (код), а не готовый текст: заголовок/сообщение выводятся из неё
+	// при рендере и следуют за сменой языка.
+	let pendingConfirm = $state<{ kind: 'server'; tag: string } | { kind: 'rule'; idx: number } | null>(
+		null,
+	);
 	let confirmBusy = $state(false);
+	const confirmTitle = $derived(
+		pendingConfirm === null
+			? ''
+			: pendingConfirm.kind === 'server'
+				? m.sb_router_expert_dns_server_delete_title()
+				: m.sb_router_expert_dns_rule_delete_title(),
+	);
+	const confirmMessage = $derived(
+		pendingConfirm === null
+			? ''
+			: pendingConfirm.kind === 'server'
+				? m.sb_router_expert_dns_server_delete_message({ tag: pendingConfirm.tag })
+				: m.sb_router_expert_dns_rule_delete_message({ n: pendingConfirm.idx + 1 }),
+	);
 
 	async function runConfirm(): Promise<void> {
 		if (!pendingConfirm) return;
 		confirmBusy = true;
 		try {
-			await pendingConfirm.run();
+			if (pendingConfirm.kind === 'server') await deleteDnsServer(pendingConfirm.tag);
+			else await deleteDnsRule(pendingConfirm.idx);
 			pendingConfirm = null;
 		} finally {
 			confirmBusy = false;
@@ -234,19 +258,16 @@
 		await fakeipConfig.loadAll();
 	}
 	function handleDeleteDnsServer(tag: string): void {
-		pendingConfirm = {
-			title: 'Удалить DNS-сервер',
-			message: `Удалить DNS-сервер «${tag}»?`,
-			run: async () => {
-				try {
-					await api.singboxFakeIPDeleteDNSServer(tag);
-					await fakeipConfig.loadAll();
-					notifications.success('DNS-сервер удалён');
-				} catch (e) {
-					notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
-				}
-			},
-		};
+		pendingConfirm = { kind: 'server', tag };
+	}
+	async function deleteDnsServer(tag: string): Promise<void> {
+		try {
+			await api.singboxFakeIPDeleteDNSServer(tag);
+			await fakeipConfig.loadAll();
+			notifications.success(m.sb_router_expert_dns_server_deleted());
+		} catch (e) {
+			notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
+		}
 	}
 
 	async function handleDnsRuleAddSave(rule: SingboxRouterDNSRule): Promise<void> {
@@ -262,19 +283,16 @@
 		await fakeipConfig.loadAll();
 	}
 	function handleDeleteDNSRule(idx: number): void {
-		pendingConfirm = {
-			title: 'Удалить DNS-правило',
-			message: `Удалить DNS-правило #${idx + 1}?`,
-			run: async () => {
-				try {
-					await api.singboxFakeIPDeleteDNSRule(idx);
-					await fakeipConfig.loadAll();
-					notifications.success('DNS-правило удалено');
-				} catch (e) {
-					notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
-				}
-			},
-		};
+		pendingConfirm = { kind: 'rule', idx };
+	}
+	async function deleteDnsRule(idx: number): Promise<void> {
+		try {
+			await api.singboxFakeIPDeleteDNSRule(idx);
+			await fakeipConfig.loadAll();
+			notifications.success(m.sb_router_expert_dns_rule_deleted());
+		} catch (e) {
+			notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
+		}
 	}
 
 	async function handleDnsGlobalsSave(globals: {
@@ -296,15 +314,15 @@
 			type="button"
 			class="grip"
 			class:is-busy={serverDrag.busy}
-			aria-label={`Перетащить DNS-сервер ${s.tag}`}
-			title="Перетащить для изменения порядка"
+			aria-label={m.fakeip_dns_server_drag_aria({ tag: s.tag })}
+			title={m.fakeip_drag_to_reorder()}
 			onpointerdown={serverDrag.busy ? undefined : (e) => serverDrag.handlePointerDown(i, e)}
 		>
 			<GripVertical size={16} strokeWidth={2} />
 		</button>
 		<div class="tag-cell">
 			<span class="stag">{s.tag}</span>
-			{#if s.type === ('fakeip' as typeof s.type)}<span class="core">ядро</span>{/if}
+			{#if s.type === ('fakeip' as typeof s.type)}<span class="core">{m.fakeip_dns_core_badge()}</span>{/if}
 		</div>
 		<span class="type-cell">
 			<Badge variant={serverTypeVariant(s.type)} size="sm" mono>{s.type}</Badge>
@@ -328,8 +346,8 @@
 				type="button"
 				class="ib"
 				onclick={() => (dnsServerEditTag = s.tag)}
-				aria-label={`Редактировать DNS-сервер ${s.tag}`}
-				title={`Редактировать DNS-сервер «${s.tag}»`}
+				aria-label={m.sb_router_dns_server_edit_aria({ tag: s.tag })}
+				title={m.sb_router_dns_server_edit_title({ tag: s.tag })}
 			>
 				<Pencil size={15} strokeWidth={2} />
 			</button>
@@ -342,8 +360,8 @@
 					type="button"
 					class="ib danger"
 					onclick={() => handleDeleteDnsServer(s.tag)}
-					aria-label={`Удалить DNS-сервер ${s.tag}`}
-					title={`Удалить DNS-сервер «${s.tag}»`}
+					aria-label={m.sb_router_dns_server_delete_aria({ tag: s.tag })}
+					title={m.sb_router_dns_server_delete_title({ tag: s.tag })}
 				>
 					<Trash2 size={15} strokeWidth={2} />
 				</button>
@@ -362,8 +380,8 @@
 			type="button"
 			class="grip"
 			class:is-busy={ruleDrag.busy}
-			aria-label={`Перетащить DNS-правило #${i + 1}`}
-			title="Перетащить для изменения порядка (или стрелки вверх/вниз)"
+			aria-label={m.sb_router_dns_rule_drag_aria({ n: i + 1 })}
+			title={m.sb_router_dns_rule_drag_title()}
 			onpointerdown={ruleDrag.busy ? undefined : (e) => ruleDrag.handlePointerDown(i, e)}
 			onkeydown={(e) => handleGripKeydown(i, e)}
 		>
@@ -375,14 +393,14 @@
 			class="match-btn"
 			onclick={() => (dnsRuleEditIdx = i)}
 			title={shadowed
-				? `${dnsMatcherSummary(r)} → ${tgt.label} · перекрыто catch-all правилом выше`
+				? m.sb_router_dns_rule_summary_shadowed({ summary: dnsMatcherSummary(r), target: tgt.label })
 				: `${dnsMatcherSummary(r)} → ${tgt.label}`}
 		>
 			{#if matchers.length === 0}
 				<Badge variant="accent" size="xs">
 					{r.action === 'evaluate'
-						? 'catch-all · оценивает все запросы'
-						: 'catch-all · всё остальное'}
+						? m.sb_router_dns_catch_all_evaluate()
+						: m.sb_router_dns_catch_all_rest()}
 				</Badge>
 			{:else}
 				{#each matchers as part, pi (part.key + pi)}
@@ -394,7 +412,7 @@
 				{/each}
 			{/if}
 			{#if shadowed}
-				<Badge variant="warning" size="xs">перекрыто catch-all выше</Badge>
+				<Badge variant="warning" size="xs">{m.sb_router_dns_rule_shadowed_badge()}</Badge>
 			{/if}
 			<span class="r-arrow" aria-hidden="true">→</span>
 			{#if tgt.kind === 'none'}
@@ -410,8 +428,8 @@
 				type="button"
 				class="ib"
 				onclick={() => (dnsRuleEditIdx = i)}
-				aria-label={`Редактировать DNS-правило #${i + 1}`}
-				title={`Редактировать DNS-правило #${i + 1}`}
+				aria-label={m.sb_router_dns_rule_edit_aria({ n: i + 1 })}
+				title={m.sb_router_dns_rule_edit_title({ n: i + 1 })}
 			>
 				<Pencil size={15} strokeWidth={2} />
 			</button>
@@ -419,8 +437,8 @@
 				type="button"
 				class="ib danger"
 				onclick={() => handleDeleteDNSRule(i)}
-				aria-label={`Удалить DNS-правило #${i + 1}`}
-				title={`Удалить DNS-правило #${i + 1}`}
+				aria-label={m.sb_router_dns_rule_delete_aria({ n: i + 1 })}
+				title={m.sb_router_dns_rule_delete_title({ n: i + 1 })}
 			>
 				<Trash2 size={15} strokeWidth={2} />
 			</button>
@@ -432,18 +450,15 @@
 	<!-- ── Блок 1: DNS-серверы ─────────────────────────────────────────── -->
 	<section class="panel" bind:this={serverPanelEl}>
 		<header class="ph">
-			<span class="nm">DNS-серверы · {$storeDnsServers.length}</span>
+			<span class="nm">{m.fakeip_dns_servers_cap({ count: $storeDnsServers.length })}</span>
 			<button type="button" class="add" onclick={() => (dnsServerAddOpen = true)}>
-				<Plus size={14} strokeWidth={2} aria-hidden="true" /> Сервер
+				<Plus size={14} strokeWidth={2} aria-hidden="true" /> {m.fakeip_dns_add_server()}
 			</button>
 		</header>
-		<p class="pd">
-			Резолверы. fakeip синтезирует адреса (в туннель), real резолвит через outbound,
-			local — роутер для direct.
-		</p>
+		<p class="pd">{m.fakeip_dns_servers_desc()}</p>
 
 		{#if $storeDnsServers.length === 0}
-			<div class="empty">Нет DNS-серверов.</div>
+			<div class="empty">{m.sb_router_dns_no_servers()}</div>
 		{:else}
 			<div class="rows" class:is-dragging={serverDrag.active} style={serverDrag.cardsMotionStyle()}>
 				{#each $storeDnsServers as s, i (s.tag)}
@@ -482,7 +497,7 @@
 			default_domain_resolver), поэтому показываем реальные поля, которые правит
 			DNSGlobalsEditModal. Клик открывает модал.
 		-->
-		<button type="button" class="resolver" onclick={() => (dnsGlobalsModalOpen = true)} title="Настроить DNS по умолчанию">
+		<button type="button" class="resolver" onclick={() => (dnsGlobalsModalOpen = true)} title={m.fakeip_dns_globals_title()}>
 			final = <b>{$storeDnsGlobals.final || '—'}</b> · strategy =
 			<b>{$storeDnsGlobals.strategy || 'default'}</b>
 		</button>
@@ -491,20 +506,15 @@
 	<!-- ── Блок 2: DNS-правила ─────────────────────────────────────────── -->
 	<section class="panel" bind:this={rulePanelEl}>
 		<header class="ph">
-			<span class="nm">DNS-правила · {$storeDnsRules.length}</span>
+			<span class="nm">{m.sb_router_dns_rules_cap({ count: $storeDnsRules.length })}</span>
 			<button type="button" class="add" onclick={() => (dnsRuleAddOpen = true)}>
-				<Plus size={14} strokeWidth={2} aria-hidden="true" /> Правило
+				<Plus size={14} strokeWidth={2} aria-hidden="true" /> {m.fakeip_dns_add_rule()}
 			</button>
 		</header>
-		<p class="pd">
-			Какой сервер для какого запроса. first-match. Матч: домен / rule_set / query_type /
-			источник.
-		</p>
+		<p class="pd">{m.fakeip_dns_rules_desc()}</p>
 
 		{#if shadowedDnsRuleIdx.size > 0}
-			<div class="shadow-note">
-				Правила после catch-all (без условий) не проверяются — перенесите их выше или удалите.
-			</div>
+			<div class="shadow-note">{m.sb_router_dns_shadow_note()}</div>
 		{/if}
 
 		<div class="rows" class:is-dragging={ruleDrag.active} style={ruleDrag.cardsMotionStyle()}>
@@ -630,8 +640,8 @@
 
 <ConfirmModal
 	open={pendingConfirm !== null}
-	title={pendingConfirm?.title ?? ''}
-	message={pendingConfirm?.message ?? ''}
+	title={confirmTitle}
+	message={confirmMessage}
 	busy={confirmBusy}
 	onConfirm={runConfirm}
 	onClose={() => {

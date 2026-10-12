@@ -1,5 +1,21 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { downloadErrorToText, humanizeDownloadError } from './downloadError';
+import { ApiNetworkError } from '$lib/api/clientCore';
+import { locale } from '$lib/i18n';
+
+describe('сетевой сбой клиента', () => {
+	afterEach(() => {
+		locale.set('ru');
+		localStorage.clear();
+	});
+
+	// Классификатор не должен зависеть от перевода: ApiNetworkError узнаётся по
+	// коду, на любом языке интерфейса.
+	it.each(['ru', 'en'] as const)('ApiNetworkError → network (%s)', (lang) => {
+		locale.set(lang);
+		expect(humanizeDownloadError(new ApiNetworkError()).kind).toBe('network');
+	});
+});
 
 describe('humanizeDownloadError', () => {
 	it('classifies sing-box-off from outbound-unavailable message', () => {

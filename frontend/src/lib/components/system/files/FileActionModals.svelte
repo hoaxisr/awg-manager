@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Modal, Button, ConfirmModal } from '$lib/components/ui';
 	import { api, type SystemFileEntry } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -75,11 +76,11 @@
 		busy = true;
 		try {
 			await api.systemFilesMkdir(path);
-			notifications.success(`Каталог «${name}» создан`);
+			notifications.success(m.system_files_mkdir_done({ name }));
 			onCloseMkdir();
 			onSuccess();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось создать каталог'));
+			notifications.error(errorMessage(e, m.system_files_mkdir_failed()));
 		} finally {
 			busy = false;
 		}
@@ -92,11 +93,11 @@
 		busy = true;
 		try {
 			await api.systemFilesWrite(path, '');
-			notifications.success(`Файл «${name}» создан`);
+			notifications.success(m.system_files_newfile_done({ name }));
 			onCloseNewFile();
 			onSuccess();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось создать файл'));
+			notifications.error(errorMessage(e, m.system_files_newfile_failed()));
 		} finally {
 			busy = false;
 		}
@@ -114,11 +115,11 @@
 		busy = true;
 		try {
 			await api.systemFilesRename(renameEntry.path, to);
-			notifications.success(`Переименовано в «${name}»`);
+			notifications.success(m.system_files_rename_done({ name }));
 			onCloseRename();
 			onSuccess();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось переименовать'));
+			notifications.error(errorMessage(e, m.system_files_rename_failed()));
 		} finally {
 			busy = false;
 		}
@@ -130,11 +131,11 @@
 		busy = true;
 		try {
 			await api.systemFilesCopy(copyTarget, target);
-			notifications.success('Успешно скопировано');
+			notifications.success(m.system_files_copy_done());
 			onCloseCopy();
 			onSuccess();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось скопировать'));
+			notifications.error(errorMessage(e, m.system_files_copy_failed()));
 		} finally {
 			busy = false;
 		}
@@ -146,11 +147,11 @@
 		busy = true;
 		try {
 			await api.systemFilesRename(moveTarget, target);
-			notifications.success('Успешно перемещено');
+			notifications.success(m.system_files_move_done());
 			onCloseMove();
 			onSuccess();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось переместить'));
+			notifications.error(errorMessage(e, m.system_files_move_failed()));
 		} finally {
 			busy = false;
 		}
@@ -161,11 +162,11 @@
 		busy = true;
 		try {
 			await api.systemFilesRemove(deleteTarget.path);
-			notifications.success(`«${deleteTarget.name}» удалён`);
+			notifications.success(m.system_files_delete_done({ name: deleteTarget.name }));
 			onCloseDelete();
 			onSuccess();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось удалить объект'));
+			notifications.error(errorMessage(e, m.system_files_delete_failed()));
 		} finally {
 			busy = false;
 		}
@@ -174,23 +175,23 @@
 
 <!-- 1. Создание каталога -->
 {#if showMkdir}
-	<Modal open={showMkdir} title="Новый каталог" size="sm" onclose={onCloseMkdir}>
+	<Modal open={showMkdir} title={m.system_files_mkdir_title()} size="sm" onclose={onCloseMkdir}>
 		<form onsubmit={(e) => { e.preventDefault(); void handleMkdir(); }}>
-			<p class="modal-hint">Будет создан каталог внутри: <code>{currentPath}</code></p>
+			<p class="modal-hint">{m.system_files_mkdir_hint()} <code>{currentPath}</code></p>
 			<!-- svelte-ignore a11y_autofocus -->
 			<input
 				type="text"
 				class="modal-input"
-				placeholder="Имя нового каталога..."
+				placeholder={m.system_files_mkdir_placeholder()}
 				bind:value={newDirName}
 				autofocus
 			/>
 		</form>
 		{#snippet actions()}
-			<Button variant="ghost" onclick={onCloseMkdir}>Отмена</Button>
+			<Button variant="ghost" onclick={onCloseMkdir}>{m.common_cancel()}</Button>
 			<Button variant="primary" loading={busy} disabled={!newDirName.trim()} onclick={handleMkdir}>
 				{#snippet iconBefore()}<FolderPlus size={14} />{/snippet}
-				Создать
+				{m.common_create()}
 			</Button>
 		{/snippet}
 	</Modal>
@@ -198,23 +199,23 @@
 
 <!-- 2. Создание файла -->
 {#if showNewFile}
-	<Modal open={showNewFile} title="Новый файл" size="sm" onclose={onCloseNewFile}>
+	<Modal open={showNewFile} title={m.system_files_newfile_title()} size="sm" onclose={onCloseNewFile}>
 		<form onsubmit={(e) => { e.preventDefault(); void handleNewFile(); }}>
-			<p class="modal-hint">Будет создан пустой файл внутри: <code>{currentPath}</code></p>
+			<p class="modal-hint">{m.system_files_newfile_hint()} <code>{currentPath}</code></p>
 			<!-- svelte-ignore a11y_autofocus -->
 			<input
 				type="text"
 				class="modal-input"
-				placeholder="Имя нового файла (например, config.json)..."
+				placeholder={m.system_files_newfile_placeholder()}
 				bind:value={newFileName}
 				autofocus
 			/>
 		</form>
 		{#snippet actions()}
-			<Button variant="ghost" onclick={onCloseNewFile}>Отмена</Button>
+			<Button variant="ghost" onclick={onCloseNewFile}>{m.common_cancel()}</Button>
 			<Button variant="primary" loading={busy} disabled={!newFileName.trim()} onclick={handleNewFile}>
 				{#snippet iconBefore()}<FilePlus size={14} />{/snippet}
-				Создать
+				{m.common_create()}
 			</Button>
 		{/snippet}
 	</Modal>
@@ -222,9 +223,9 @@
 
 <!-- 3. Переименование -->
 {#if renameEntry}
-	<Modal open={!!renameEntry} title="Переименовать" size="sm" onclose={onCloseRename}>
+	<Modal open={!!renameEntry} title={m.system_files_rename()} size="sm" onclose={onCloseRename}>
 		<form onsubmit={(e) => { e.preventDefault(); void handleRename(); }}>
-			<p class="modal-hint">Текущий путь: <code>{renameEntry.path}</code></p>
+			<p class="modal-hint">{m.system_files_rename_hint()} <code>{renameEntry.path}</code></p>
 			<!-- svelte-ignore a11y_autofocus -->
 			<input
 				type="text"
@@ -234,10 +235,10 @@
 			/>
 		</form>
 		{#snippet actions()}
-			<Button variant="ghost" onclick={onCloseRename}>Отмена</Button>
+			<Button variant="ghost" onclick={onCloseRename}>{m.common_cancel()}</Button>
 			<Button variant="primary" loading={busy} disabled={!renameName.trim()} onclick={handleRename}>
 				{#snippet iconBefore()}<Edit2 size={14} />{/snippet}
-				Переименовать
+				{m.system_files_rename()}
 			</Button>
 		{/snippet}
 	</Modal>
@@ -245,10 +246,10 @@
 
 <!-- 4. Копирование -->
 {#if copyTarget}
-	<Modal open={!!copyTarget} title="Копировать объект" size="md" onclose={onCloseCopy}>
+	<Modal open={!!copyTarget} title={m.system_files_copy_title()} size="md" onclose={onCloseCopy}>
 		<form onsubmit={(e) => { e.preventDefault(); void handleCopy(); }}>
-			<p class="modal-hint">Исходный путь: <code>{copyTarget}</code></p>
-			<label class="input-label">Куда скопировать:</label>
+			<p class="modal-hint">{m.system_files_source_path()} <code>{copyTarget}</code></p>
+			<label class="input-label">{m.system_files_copy_where()}</label>
 			<input
 				type="text"
 				class="modal-input"
@@ -256,10 +257,10 @@
 			/>
 		</form>
 		{#snippet actions()}
-			<Button variant="ghost" onclick={onCloseCopy}>Отмена</Button>
+			<Button variant="ghost" onclick={onCloseCopy}>{m.common_cancel()}</Button>
 			<Button variant="primary" loading={busy} disabled={!copyPath.trim()} onclick={handleCopy}>
 				{#snippet iconBefore()}<Copy size={14} />{/snippet}
-				Копировать
+				{m.common_copy()}
 			</Button>
 		{/snippet}
 	</Modal>
@@ -267,10 +268,10 @@
 
 <!-- 5. Перемещение -->
 {#if moveTarget}
-	<Modal open={!!moveTarget} title="Переместить объект" size="md" onclose={onCloseMove}>
+	<Modal open={!!moveTarget} title={m.system_files_move_title()} size="md" onclose={onCloseMove}>
 		<form onsubmit={(e) => { e.preventDefault(); void handleMove(); }}>
-			<p class="modal-hint">Исходный путь: <code>{moveTarget}</code></p>
-			<label class="input-label">Куда переместить:</label>
+			<p class="modal-hint">{m.system_files_source_path()} <code>{moveTarget}</code></p>
+			<label class="input-label">{m.system_files_move_where()}</label>
 			<input
 				type="text"
 				class="modal-input"
@@ -278,10 +279,10 @@
 			/>
 		</form>
 		{#snippet actions()}
-			<Button variant="ghost" onclick={onCloseMove}>Отмена</Button>
+			<Button variant="ghost" onclick={onCloseMove}>{m.common_cancel()}</Button>
 			<Button variant="primary" loading={busy} disabled={!movePath.trim()} onclick={handleMove}>
 				{#snippet iconBefore()}<Move size={14} />{/snippet}
-				Переместить
+				{m.system_files_move()}
 			</Button>
 		{/snippet}
 	</Modal>
@@ -291,9 +292,9 @@
 {#if deleteTarget}
 	<ConfirmModal
 		open={!!deleteTarget}
-		title={`Удалить ${deleteTarget.isDir ? 'каталог' : 'файл'}?`}
-		message={`Вы действительно хотите безвозвратно удалить: ${deleteTarget.path}`}
-		confirmLabel="Удалить"
+		title={deleteTarget.isDir ? m.system_files_delete_dir_title() : m.system_files_delete_file_title()}
+		message={m.system_files_delete_message({ path: deleteTarget.path })}
+		confirmLabel={m.common_delete()}
 		variant="danger"
 		busy={busy}
 		onClose={onCloseDelete}

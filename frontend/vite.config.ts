@@ -1,9 +1,11 @@
+import { paraglideVitePlugin } from '@inlang/paraglide-js';
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { svelteTesting } from '@testing-library/svelte/vite';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
+import { paraglideOptions } from './scripts/paraglide.mjs';
 
 /**
  * In mock-dev (`VITE_API_STRIP_PREFIX=true`) the router-relative
@@ -102,6 +104,7 @@ export default defineConfig(({ mode }) => {
 		plugins: [
 			serveNestedManifestInMockDev(useMockRewrite),
 			stubDevRoutes(),
+			paraglideVitePlugin(paraglideOptions),
 			tailwindcss(),
 			sveltekit(),
 			svelteTesting(),
@@ -109,6 +112,7 @@ export default defineConfig(({ mode }) => {
 		test: {
 			environment: 'jsdom',
 			include: ['src/**/*.test.ts'],
+			setupFiles: ['src/vitest.setup.ts'],
 		},
 		resolve: {
 			alias: {

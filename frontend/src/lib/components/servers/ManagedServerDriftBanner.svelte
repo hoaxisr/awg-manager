@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -14,7 +15,7 @@
 			const resp = await api.managedServerDrift();
 			drift = resp.drift ?? [];
 		} catch (e) {
-			notifications.error('Не удалось получить drift-список: ' + (e as Error).message);
+			notifications.error(m.servers_drift_list_failed({ error: (e as Error).message }));
 		}
 	}
 
@@ -37,18 +38,18 @@
 {#if drift.length > 0}
 	<div class="drift-banner">
 		<div class="drift-text">
-			<strong>Обнаружено {drift.length} сервер(а/ов) в конфигурации, отсутствующих в NDMS.</strong>
+			<strong>{m.servers_drift_detected({ count: drift.length })}</strong>
 			<div class="drift-list">{drift.map((d) => d.interfaceName).join(', ')}</div>
 		</div>
 		<Button variant="outline-primary" size="sm" onclick={restore} loading={restoring}>
-			Восстановить
+			{m.settings_backup_restore()}
 		</Button>
 	</div>
 {/if}
 
 {#if lastResult}
 	<div class="drift-result">
-		Готово:
+		{m.servers_drift_done()}
 		{#each lastResult as r}
 			<span class="drift-pill drift-{r.action}">{r.name}: {r.action}</span>
 		{/each}

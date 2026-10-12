@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api, type SystemFileEntry } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { errorMessage } from '$lib/utils/errorMessage';
@@ -47,7 +48,7 @@
 				await loadDir(currentPath);
 			}
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось загрузить корневые папки'));
+			notifications.error(errorMessage(e, m.system_files_roots_load_failed()));
 		}
 	}
 
@@ -58,7 +59,7 @@
 			currentPath = res.path;
 			entries = res.entries;
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось прочитать каталог'));
+			notifications.error(errorMessage(e, m.system_files_dir_read_failed()));
 		}
 	}
 
@@ -86,7 +87,7 @@
 				}));
 			await loadDir(node.path);
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось открыть каталог'));
+			notifications.error(errorMessage(e, m.system_files_dir_open_failed()));
 		} finally {
 			node.loading = false;
 		}
@@ -101,7 +102,7 @@
 	}
 </script>
 
-<Modal {open} title="Выбор файла" size="wide" {onclose}>
+<Modal {open} title={m.system_files_picker_title()} size="wide" {onclose}>
 	{#snippet children()}
 		<div class="pick-body">
 			<FileTree nodes={treeRoots} {currentPath} onToggle={expandTree} onNavigate={loadDir} />
@@ -112,8 +113,8 @@
 		</div>
 	{/snippet}
 	{#snippet actions()}
-		<Button variant="secondary" onclick={onclose}>Отмена</Button>
-		<Button variant="primary" disabled={!selected} onclick={() => onpick(selected)}>Выбрать</Button>
+		<Button variant="secondary" onclick={onclose}>{m.common_cancel()}</Button>
+		<Button variant="primary" disabled={!selected} onclick={() => onpick(selected)}>{m.system_files_picker_choose()}</Button>
 	{/snippet}
 </Modal>
 

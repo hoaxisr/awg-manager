@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -57,9 +58,10 @@ func (s *Store) Load() (*StoreData, error) {
 	dropped := dropLegacyHRRows(&data)
 	forkMigrated := migrateRuleSetSubscriptionURLs(&data)
 	discordMigrated := migrateDiscordDNSSubnet(&data)
+	errorsScrubbed := scrubSubscriptionErrors(&data)
 
 	s.data = &data
-	if dropped > 0 || forkMigrated || discordMigrated {
+	if dropped > 0 || forkMigrated || discordMigrated || errorsScrubbed {
 		// Persist the cleanup so the file itself is cleaned, not just the
 		// in-memory cache. Best-effort: on write error the cache is already
 		// clean and the next Save() rewrites disk — failing startup over
@@ -69,6 +71,24 @@ func (s *Store) Load() (*StoreData, error) {
 		_ = s.writeLocked(&data)
 	}
 	return s.data, nil
+}
+
+// scrubSubscriptionErrors reduces every address in a stored fetch error to
+// scheme and host. Text saved before the refresh path did so quoted the
+// list's address whole, token in the path or query included, and REST
+// served it until the next successful fetch.
+func scrubSubscriptionErrors(data *StoreData) bool {
+	changed := false
+	for i := range data.Lists {
+		for j := range data.Lists[i].Subscriptions {
+			sub := &data.Lists[i].Subscriptions[j]
+			if scrubbed := logging.RedactURLs(sub.LastError); scrubbed != sub.LastError {
+				sub.LastError = scrubbed
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 // migrateRuleSetSubscriptionURLs rewrites snapshotted vernette subscription

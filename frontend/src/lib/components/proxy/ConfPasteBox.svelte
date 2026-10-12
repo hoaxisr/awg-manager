@@ -3,6 +3,7 @@
 	// (WE-49): кнопка раскрытия и поле. Что делать с текстом, решает владелец:
 	// деталь заводит туннель сразу, мастер несёт конфиг до «Сохранить и
 	// запустить».
+	import { m } from '$lib/i18n';
 	import type { Snippet } from 'svelte';
 	import { Button } from '$lib/components/ui';
 
@@ -24,7 +25,7 @@
 	<Button variant="ghost" onclick={() => (open = !open)}>{label}</Button>
 </div>
 {#if open}
-	<textarea class="manual-conf" bind:value rows="8" aria-label="WireGuard-конфиг"></textarea>
+	<textarea class="manual-conf" bind:value rows="8" aria-label={m.proxy_conf_aria()}></textarea>
 	{#if children}{@render children()}{/if}
 {/if}
 

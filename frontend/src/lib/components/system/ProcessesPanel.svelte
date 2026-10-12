@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount, onDestroy } from 'svelte';
 	import { api, type SystemProcSnapshot, type SystemProcessItem } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -101,7 +102,7 @@
 			initialLoaded = true;
 		} catch (e) {
 			if (showSpinner) {
-				notifications.error(errorMessage(e, 'Не удалось получить данные о процессах'));
+				notifications.error(errorMessage(e, m.system_processes_load_failed()));
 			}
 		} finally {
 			if (showSpinner) loading = false;
@@ -178,13 +179,13 @@
 		const isSelf = killTarget.isSelf;
 		try {
 			await api.systemProcKill({ pid: killTarget.pid, signal: killSignal });
-			notifications.success(`Сигнал ${killSignal} отправлен процессу PID ${killTarget.pid}`);
+			notifications.success(m.system_processes_signal_sent({ signal: killSignal, pid: killTarget.pid }));
 			killTarget = null;
 			if (!isSelf) {
 				await fetchSnapshot(false);
 			}
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Ошибка завершения процесса'));
+			notifications.error(errorMessage(e, m.system_processes_kill_failed()));
 		} finally {
 			killing = false;
 		}
@@ -213,12 +214,12 @@
 			<div class="disabled-placeholder">
 				<Power size={36} class="muted-icon" />
 				<div class="disabled-text">
-					<h3>Мониторинг процессов отключен</h3>
-					<p>Для экономии вычислительных ресурсов роутера фоновый сбор метрик и опрос процессов остановлен.</p>
+					<h3>{m.system_processes_disabled_title()}</h3>
+					<p>{m.system_processes_disabled_text()}</p>
 				</div>
 				<Button variant="primary" onclick={toggleMasterEnabled}>
 					{#snippet iconBefore()}<Play size={14} />{/snippet}
-					Включить мониторинг
+					{m.system_processes_enable()}
 				</Button>
 			</div>
 		</Card>

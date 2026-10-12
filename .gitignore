@@ -36,6 +36,7 @@ frontend/build/
 frontend/.macos-frontend-build.sha256
 frontend/.svelte-kit/
 frontend/static/openapi.yaml
+frontend/src/lib/paraglide/
 yarn.lock
 
 # Planning & docs (internal only)

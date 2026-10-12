@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { Dropdown, type DropdownOption } from '$lib/components/ui';
@@ -16,16 +17,17 @@
 
 	let {
 		id = 'bind-interface',
-		label = 'Исходящий интерфейс',
+		label,
 		value = $bindable(''),
-		hint = 'Принудительно направляет dial этого прокси через выбранный uplink (модем, WAN, Wi‑Fi). Пусто — маршрут по умолчанию.',
+		hint,
 		disabled = false,
 		onchange
 	}: Props = $props();
 
 	let bindables = $state<SingboxRouterWANInterface[]>([]);
 	let loading = $state(true);
-	let error = $state('');
+	let loadError = $state<string | null>(null);
+	const error = $derived(loadError === null ? '' : loadError || m.singbox_bind_load_failed());
 
 	onMount(() => {
 		void api
@@ -35,7 +37,7 @@
 			})
 			.catch((err) => {
 				bindables = [];
-				error = err.message || 'Ошибка загрузки списка интерфейсов';
+				loadError = err.message || '';
 			})
 			.finally(() => {
 				loading = false;
@@ -43,7 +45,7 @@
 	});
 
 	const options = $derived<DropdownOption[]>([
-		{ value: '', label: '— по умолчанию (auto) —' },
+		{ value: '', label: m.singbox_bind_default_auto() },
 		...bindables.map((i) => ({
 			value: i.name,
 			label: bindInterfaceLabel(i)
@@ -53,13 +55,13 @@
 
 <Dropdown
 	{id}
-	{label}
+	label={label ?? m.singbox_bind_label()}
 	bind:value
 	{options}
 	{disabled}
-	{hint}
+	hint={hint ?? m.singbox_bind_hint()}
 	fullWidth
-	placeholder={loading ? 'Загрузка интерфейсов…' : '— по умолчанию —'}
+	placeholder={loading ? m.singbox_bind_loading() : m.singbox_bind_default()}
 	error={error}
 	onchange={(v) => onchange?.(v)}
 />

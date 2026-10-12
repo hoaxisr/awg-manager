@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { api } from '$lib/api/client';
@@ -12,8 +13,8 @@
 	let displayName = $derived.by(() => tunnel ? tunnel.tag : tunnelTag);
 	let unavailableReason = $derived.by(() => {
 		if (!tunnelLoaded) return undefined;
-		if (tunnel === null) return 'Туннель не найден или недоступен для расширенного тестирования.';
-		if (!tunnel.kernelInterface) return 'У этого sing-box туннеля нет kernel interface, расширенные тесты недоступны.';
+		if (tunnel === null) return m.singbox_test_not_found();
+		if (!tunnel.kernelInterface) return m.singbox_no_kernel_iface();
 		return undefined;
 	});
 
@@ -34,8 +35,8 @@
 	targetId={tunnelTag}
 	{displayName}
 	backHref="/?tab=singbox"
-	backLabel="К списку туннелей"
-	subjectLabel="туннель"
+	backLabel={m.tunnels_back_to_list()}
+	subject="tunnel"
 	iface={tunnel?.kernelInterface}
 	loading={!tunnelLoaded}
 	{unavailableReason}

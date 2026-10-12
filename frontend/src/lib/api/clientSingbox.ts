@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type {
 	ConfigSlotContentResponse,
 	ConfigSlotsResponse,
@@ -190,7 +191,7 @@ export class SingboxClient extends RoutingClient {
 				return { tag: found.tag, outbound: this.buildMockOutboundFromTunnel(found) };
 			}
 		}
-		throw new Error('Туннель не найден');
+		throw new Error(m.api_tunnel_not_found());
 	}
 
 
@@ -281,7 +282,7 @@ export class SingboxClient extends RoutingClient {
 		});
 		es.addEventListener('done', () => { onDone(); es.close(); });
 		es.addEventListener('error', (e) => {
-			const msg = e instanceof MessageEvent ? String(e.data) : 'Соединение потеряно';
+			const msg = e instanceof MessageEvent ? String(e.data) : m.api_connection_lost();
 			onError(msg);
 			es.close();
 		});

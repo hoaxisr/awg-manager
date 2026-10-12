@@ -3,6 +3,7 @@
 // абонентом. Компонент отвечает за экраны, модуль — за решения.
 
 import { api } from '$lib/api/client';
+import { m } from '$lib/i18n';
 import { setListenPort } from '$lib/utils/listenPortUtils';
 import { addedPassword } from './serverClients';
 import type { ProxyProtocol } from './rows';
@@ -12,19 +13,29 @@ import type {
 } from '$lib/types';
 
 /** Тексты берутся по ID микрокопии; своих строк в мастере нет. */
+// Геттеры, а не строки: текст читается при обращении и следует за языком.
 export const SHARE_WIZARD_TEXT = {
 	/** WS-11 */
-	wdttExistsBadge: 'уже настроен',
+	get wdttExistsBadge(): string {
+		return m.proxy_wizard_wdtt_exists_badge();
+	},
 	/** WS-12 */
-	wdttExistsNote: 'WDTT-сервер на роутере может быть только один',
+	get wdttExistsNote(): string {
+		return m.proxy_wizard_wdtt_exists_note();
+	},
 	/** WS-13 */
-	wdttExistsInfo:
-		'Раздача WDTT занимает общий интерфейс роутера с фиксированным адресом, второй такой сервер не поднимется. FreeTurn-серверов можно настроить сколько угодно.',
+	get wdttExistsInfo(): string {
+		return m.proxy_wizard_wdtt_exists_info();
+	},
 	/** WS-14 */
-	wdttUnsupportedBadge: 'недоступен на этом роутере',
+	get wdttUnsupportedBadge(): string {
+		return m.proxy_wizard_wdtt_unsupported_badge();
+	},
 	/** WS-15 */
-	wdttUnsupportedInfo: 'Сервер WDTT не собран под процессор этого роутера.',
-} as const;
+	get wdttUnsupportedInfo(): string {
+		return m.proxy_wizard_wdtt_unsupported_info();
+	},
+};
 
 /** Дефолтный DTLS-порт WDTT-сервера (`DefaultServerConfig`, internal/wdtt/types.go). */
 export const DEFAULT_WDTT_PORT = 56002;
@@ -143,7 +154,7 @@ export function rawPortHint(port: string): string {
 	const dtls = Number(port.trim());
 	const raw =
 		Number.isInteger(dtls) && dtls > 0 && dtls <= MAX_WDTT_PORT ? dtls + 1 : DEFAULT_WDTT_PORT + 1;
-	return `Raw-половина займёт следующий порт — ${raw}`;
+	return m.proxy_wizard_raw_port_hint({ port: raw });
 }
 
 /** Поля шага 2 — параметры сервера (WS-16..WS-28). */

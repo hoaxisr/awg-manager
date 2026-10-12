@@ -3,6 +3,7 @@
 </script>
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { openContextMenu } from './log-row-context-menu';
   import { formatDateTimeWithOffset, formatTime } from '$lib/utils/format';
   import { familyOf } from './subgroup-palette';
@@ -61,8 +62,8 @@
   // время последнего повтора (timestamp строки — первое появление).
   const repeatTitle = $derived(
     log.lastSeen
-      ? `Повторялось, последний раз: ${formatDateTimeWithOffset(log.lastSeen, routerOffset ?? undefined)}`
-      : 'Повторяющаяся запись',
+      ? m.diag_log_repeated_last({ time: formatDateTimeWithOffset(log.lastSeen, routerOffset ?? undefined) })
+      : m.diag_log_repeated(),
   );
 
   // Sing-box stderr lines (and any other ANSI-emitting source) may carry
@@ -137,7 +138,7 @@
     type="button"
     class="level-chip level-chip-{log.level}"
     onclick={handleClickLevel}
-    aria-label="Фильтр по уровню {levelLabel[log.level] ?? log.level}"
+    aria-label={m.diag_log_filter_level_aria({ level: levelLabel[log.level] ?? log.level })}
   >
     {levelLabel[log.level] ?? log.level.toUpperCase()}
   </button>
@@ -145,7 +146,7 @@
     type="button"
     class="scope-chip"
     onclick={handleClickScope}
-    aria-label="Фильтр по scope {log.group}{log.subgroup ? '/' + log.subgroup : ''}"
+    aria-label={m.diag_log_filter_scope_aria({ scope: log.group + (log.subgroup ? '/' + log.subgroup : '') })}
   >
     <span class="scope-group">{log.group}</span>
     {#if log.subgroup}

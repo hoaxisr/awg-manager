@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Шаг 1 мастера «Выхода» — источник (WE-06..WE-26). Компонент только
 	// показывает: разбор ссылки и выбор профиля делает мастер.
+	import { m } from '$lib/i18n';
 	import { Badge, Button, Dropdown, FieldHint, Input } from '$lib/components/ui';
 	import { Upload } from 'lucide-svelte';
 	import type { DropdownOption } from '$lib/components/ui';
@@ -25,7 +26,7 @@
 		onfile: (f: File | undefined) => void;
 		ontogglemanual: () => void;
 		onprotocol: (p: ExitProtocol) => void;
-		onmode: (m: ExitMode) => void;
+		onmode: (next: ExitMode) => void;
 		onprofile: (idx: string) => void;
 	}
 
@@ -52,12 +53,12 @@
 </script>
 
 <Input
-	label="Ссылка или URL подписки"
+	label={m.proxy_exit_source_link_label()}
 	value={link}
 	{oninput}
 	onchange={() => oncommit()}
 	placeholder="wdtt:// · qwdtt:// · freeturn:// · https://… · JSON"
-	hint="Протокол определится по ссылке. Профиль или подписку можно вставить JSON-ом"
+	hint={m.proxy_exit_source_link_hint()}
 	disabled={manual}
 	fullWidth
 />
@@ -65,10 +66,10 @@
 <div class="btn-row">
 	<Button variant="secondary" disabled={manual} onclick={() => fileInput?.click()}>
 		{#snippet iconBefore()}<Upload size={14} strokeWidth={2.5} />{/snippet}
-		Файл профиля
+		{m.proxy_exit_source_file()}
 	</Button>
 	<Button variant="ghost" onclick={ontogglemanual}>
-		{manual ? 'Вернуться к ссылке' : 'Создать вручную'}
+		{manual ? m.proxy_exit_source_back_to_link() : m.proxy_exit_source_manual()}
 	</Button>
 </div>
 
@@ -94,7 +95,7 @@
 			onfile(e.dataTransfer?.files?.[0]);
 		}}
 	>
-		Или перетащите сюда файл профиля
+		{m.proxy_exit_source_drop()}
 	</div>
 {/if}
 
@@ -102,7 +103,7 @@
 	<div class="detect-box">
 		<div class="grid">
 			<Dropdown
-				label="Протокол"
+				label={m.proxy_exit_source_protocol()}
 				value={protocol}
 				options={[
 					{ value: 'wdtt', label: 'WDTT' },
@@ -113,11 +114,11 @@
 			/>
 			{#if protocol === 'wdtt'}
 				<Dropdown
-					label="Режим"
+					label={m.proxy_exit_source_mode()}
 					value={mode}
 					options={[
-						{ value: 'wg', label: 'WG — трафик через AWG-туннель' },
-						{ value: 'raw', label: 'Raw — свой интерфейс OpkgTun' },
+						{ value: 'wg', label: m.proxy_exit_source_mode_wg() },
+						{ value: 'raw', label: m.proxy_exit_source_mode_raw() },
 					]}
 					onchange={(v) => onmode(v as ExitMode)}
 					fullWidth
@@ -128,18 +129,18 @@
 {:else if detected === 'unknown'}
 	<div class="detect-box bad">
 		<p class="detect-note">
-			Схема ссылки не распознана
+			{m.proxy_exit_source_unknown()}
 			<FieldHint
-				text="Ожидаются wdtt://, qwdtt://, freeturn://, http(s):// для подписки или JSON профиля/подписки."
-				ariaLabel="Подсказка: схема ссылки"
+				text={m.proxy_exit_source_unknown_hint()}
+				ariaLabel={m.proxy_exit_source_unknown_aria()}
 			/>
 		</p>
 	</div>
 {:else if detected === 'subscription'}
 	<div class="detect-box">
-		<p class="detect-note">Подписка</p>
+		<p class="detect-note">{m.proxy_exit_source_subscription()}</p>
 		<Dropdown
-			label="Сервер из подписки"
+			label={m.proxy_exit_source_subscription_server()}
 			value={profileIdx}
 			options={profiles}
 			onchange={onprofile}
@@ -149,17 +150,17 @@
 {:else if detected === 'freeturn'}
 	<div class="detect-box">
 		<p class="detect-note">
-			Профиль FreeTurn
+			{m.proxy_exit_source_ft_profile()}
 			{#if ftClientId}
 				<FieldHint
-					text="В ссылке есть Client ID. Если у сервера включён список разрешённых, владелец сервера должен внести именно этот ID."
-					ariaLabel="Подсказка: Client ID"
+					text={m.proxy_exit_source_client_id_hint()}
+					ariaLabel={m.proxy_exit_source_client_id_aria()}
 				/>
 			{/if}
 			{#if !ftHasWg}
 				<FieldHint
-					text="В ссылке нет WireGuard-конфига — вставьте клиентский .conf на шаге «Куда направить трафик»."
-					ariaLabel="Подсказка: WireGuard-конфиг"
+					text={m.proxy_exit_source_no_wg_hint()}
+					ariaLabel={m.proxy_exit_source_no_wg_aria()}
 				/>
 			{/if}
 		</p>
@@ -169,7 +170,7 @@
 		{#if mode === 'raw'}
 			<Badge size="sm" variant="accent">WDTT · Raw</Badge>
 		{:else}
-			<p class="detect-note">Профиль WDTT · режим WG</p>
+			<p class="detect-note">{m.proxy_exit_source_wdtt_wg()}</p>
 		{/if}
 	</div>
 {/if}

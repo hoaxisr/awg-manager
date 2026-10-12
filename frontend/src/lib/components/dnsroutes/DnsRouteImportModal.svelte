@@ -6,7 +6,7 @@
         findRoutingTunnelLabel,
     } from '$lib/utils/routingTunnelOptions';
     import type { RoutingTunnel } from '$lib/types';
-    import { pluralize, RULE_WORDS } from '$lib/utils/pluralize';
+    import { m, uiText, type UiText } from '$lib/i18n';
     import RoutingImportDropZone from '$lib/components/routing/RoutingImportDropZone.svelte';
 
     interface Props {
@@ -27,7 +27,7 @@
 
     let parsed = $state<PortableDnsRoute[] | null>(null);
     let selectedFlags = $state<boolean[]>([]);
-    let parseError = $state('');
+    let parseError = $state<UiText>('');
     let importing = $state(false);
     let wasOpen = $state(false);
     let defaultTunnelId = $state('');
@@ -73,7 +73,7 @@
             const text = await file.text();
             const routes = parseImportFile(text);
             if (routes.length === 0) {
-                parseError = 'Не найдено валидных правил в файле';
+                parseError = () => m.dns_routes_import_no_rules();
                 return;
             }
             parsed = routes;
@@ -81,7 +81,7 @@
             tunnelOverrides = {};
             editingTunnelIdx = null;
         } catch (e) {
-            parseError = e instanceof Error ? e.message : 'Ошибка чтения файла';
+            parseError = e instanceof Error ? e.message : () => m.routing_import_read_error();
         }
     }
 
@@ -96,17 +96,17 @@
     }
 </script>
 
-<Modal {open} title="Загрузить набор правил" size="lg" {onclose}>
+<Modal {open} title={m.dns_routes_import_title()} size="lg" {onclose}>
     {#if !parsed}
         <RoutingImportDropZone
-            subject="правилами DNS-маршрутизации"
-            parseError={parseError}
+            subject={m.dns_routes_import_subject()}
+            parseError={uiText(parseError)}
             onfile={processFile}
         />
     {:else}
         <div class="import-preview">
         <div class="tunnel-default-bar">
-            <span class="tunnel-default-label">Туннель для всех:</span>
+            <span class="tunnel-default-label">{m.routing_import_tunnel_for_all()}</span>
             <div class="tunnel-select">
                 <Dropdown
                     bind:value={defaultTunnelId}
@@ -118,10 +118,10 @@
         </div>
 
         {#if noTunnels}
-            <p class="import-error">Создайте хотя бы один туннель перед импортом</p>
+            <p class="import-error">{m.routing_import_no_tunnels()}</p>
         {/if}
 
-        <p class="import-hint">Найдено {pluralize(parsed.length, RULE_WORDS)}</p>
+        <p class="import-hint">{m.dns_routes_import_found({ count: parsed.length })}</p>
         <div class="import-list">
             {#each parsed as route, i}
                 <label class="import-item" class:duplicate={isDuplicate(route.name)} class:overridden={tunnelOverrides[i] != null}>
@@ -129,14 +129,14 @@
                     <div class="import-item-info">
                         <span class="import-name">{route.name}</span>
                         <span class="import-meta">
-                            {route.manualDomains?.length ?? 0} доменов
+                            {m.routing_search_domains({ count: route.manualDomains?.length ?? 0 })}
                             {#if route.subscriptions?.length}
-                                , {route.subscriptions.length} листов
+                                , {m.routing_search_lists({ count: route.subscriptions.length })}
                             {/if}
                         </span>
                     </div>
                     {#if isDuplicate(route.name)}
-                        <span class="import-dup">Дубликат</span>
+                        <span class="import-dup">{m.routing_import_duplicate()}</span>
                     {/if}
                     {#if editingTunnelIdx === i}
                         <div class="tunnel-select-inline">
@@ -173,10 +173,10 @@
     {/if}
 
     {#snippet actions()}
-        <Button variant="ghost" onclick={onclose} disabled={importing}>Отмена</Button>
+        <Button variant="ghost" onclick={onclose} disabled={importing}>{m.common_cancel()}</Button>
         {#if parsed}
             <Button variant="primary" onclick={handleImport} disabled={selectedCount === 0 || noTunnels} loading={importing}>
-                {`Импортировать (${selectedCount})`}
+                {m.routing_import_submit({ count: selectedCount })}
             </Button>
         {/if}
     {/snippet}

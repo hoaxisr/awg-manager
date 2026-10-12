@@ -77,8 +77,12 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// live ≠ наш: индекс мог занять посторонний интерфейс после смерти нашего.
 	// Доказанно чужой (успешный скан без нашего имени) → re-provision.
 	prev, _ := opkgTunOwned(settings, statePolicyTun)
+	// Своё описание — применённое и ожидаемое из записи, не желаемое из
+	// настроек (policytun_description.go): переименование на живом интерфейсе
+	// доводит reconcile, а не повторный провижининг.
+	ownDescs := policyTunOwnDescriptions(prev)
 	if prev != nil && prev.Provisioned && live[prev.Index] &&
-		!s.provenForeignOpkgTun(ctx, tunNDMSName(prev.Index), policyTunDescription) {
+		!s.provenForeignOpkgTun(ctx, tunNDMSName(prev.Index), ownDescs...) {
 		return nil
 	}
 
@@ -113,7 +117,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		// закрепил permit'ы в политике за конкретным именем. Занятый персистом
 		// номер тоже наш, если на нём висит НАШ интерфейс — выключение его
 		// больше не удаляет, а удерживает (holdOpkgTun).
-		pin = s.pinFor(ctx, prev, live, policyTunDescription)
+		pin = s.pinFor(ctx, prev, live, ownDescs...)
 	}
 
 	idx, res, err := s.reserveOpkgTun(ctx, storage.OpkgTunModePolicyTun, pin)
@@ -165,6 +169,24 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// доживает до диска само — финальный Settings.Update снимает копию кэша
 	// в момент коммита, а не работает по снимку, взятому здесь.
 	ptState := &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: idx}
+	// Описание в записи до Create — то, что на интерфейсе СЕЙЧАС: при
+	// переиспользовании своего номера это прежнее применённое (Create ниже
+	// переименует интерфейс, и запись догонит его сразу после), на новом номере
+	// интерфейса ещё нет — пишем желаемое. Желаемое в записи раньше Create
+	// оставило бы крах между ними с интерфейсом под именем, которого владение
+	// не признаёт. Переименование при этом — намерение (PendingDescription,
+	// см. policytun_description.go): крах после Create не оставит интерфейс
+	// под именем, которого запись не называет. Незакрытое намерение прежней
+	// записи сохраняем — интерфейс может стоять под ним.
+	wantDesc := policyTunWantDescription(sr)
+	ptState.Description = storedPolicyTunDescription(wantDesc)
+	if prev != nil && prev.Index == idx {
+		ptState.Description = prev.Description
+		ptState.PendingDescription = prev.PendingDescription
+		if ptState.PendingDescription == "" && policyTunAppliedDescription(prev) != wantDesc {
+			ptState.PendingDescription = wantDesc
+		}
+	}
 	// ГОЧА (re-provision): записи NAT-сегментов ОБЯЗАНЫ пережить повторный
 	// провижининг (heal «интерфейс пропал» → reconcile → enableLocked). Они —
 	// единственный след того, каким сегмент был ДО нас; потеряв их,
@@ -216,6 +238,23 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			}
 			restore = &base
 		}
+		// Переиспользованный номер: Create выше уже переименовал интерфейс
+		// в желаемое, а prev называет прежнее. Снос ниже по стеку его
+		// уберёт, но если снос упал, интерфейс остался под именем, которого
+		// запись не называет, — и следующее включение сочло бы его чужим
+		// (re-provision на другом номере, permit'ы потеряны). Поэтому в
+		// восстановленную запись ложится намерение: владение признаёт его, а
+		// reconcile сверит со сканом (healPolicyTunDescription) — дошло ли.
+		// Желаемое из настроек в набор владения не входит
+		// (policytun_description.go), так что без этой строки окно открыто.
+		if prevRecord != nil && prevRecord.Mode == storage.OpkgTunModePolicyTun && prevRecord.Index == idx &&
+			policyTunAppliedDescription(prevRecord) != wantDesc {
+			if restore == prevRecord {
+				cp := *prevRecord // копия: prevRecord мутировать нельзя
+				restore = &cp
+			}
+			restore.PendingDescription = wantDesc
+		}
 		if e := s.deps.Settings.SetOpkgTunState(restore); e != nil {
 			s.appLog.Warn("policy-tun-rollback", iface, "restore policy-tun persist: "+e.Error())
 		}
@@ -223,8 +262,21 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 
 	// PUBLIC security-level (unlike fakeip's private): NDMS only offers public
 	// interfaces as access-policy exits, and the policy IS the steering here.
-	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, policyTunDescription, "public"); err != nil {
+	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, wantDesc, "public"); err != nil {
 		return fmt.Errorf("enable policy-tun: create opkgtun: %w", err)
+	}
+	// Интерфейс уже под желаемым описанием — запись догоняет. Best-effort:
+	// до этой записи желаемое уже стоит в записи (новый номер — применённым,
+	// переиспользованный — намерением), а расхождение записи с настройкой
+	// дописывает reconcile (healPolicyTunDescription). Откатывать из-за
+	// описания весь провижининг незачем — откат удаляет интерфейс вместе с
+	// permit'ами пользователя.
+	if d := storedPolicyTunDescription(wantDesc); ptState.Description != d || ptState.PendingDescription != "" {
+		ptState.Description = d
+		ptState.PendingDescription = ""
+		if e := s.deps.Settings.SetOpkgTunState(ptState); e != nil {
+			s.appLog.Warn("policy-tun-enable", iface, "persist description: "+e.Error())
+		}
 	}
 	// rbCtx: откат обязан доехать и когда Enable упал ИЗ-ЗА отмены ctx (клиент
 	// отвалился во время waitForSingbox) — иначе NDMS-вызовы отката no-op'ятся

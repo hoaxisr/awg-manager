@@ -3,6 +3,7 @@
 	import { Toggle } from '$lib/components/ui';
 	import { ServiceIcon } from '$lib/components/dnsroutes';
 	import { SquarePen, Trash2 } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		rule: DnsRoute;
@@ -42,8 +43,8 @@
 				class="icon-btn"
 				type="button"
 				onclick={() => onicon()}
-				aria-label="Сменить иконку"
-				title="Сменить иконку"
+				aria-label={m.routing_ip_card_change_icon()}
+				title={m.routing_ip_card_change_icon()}
 			>
 				<ServiceIcon name={rule.name} iconUrl={rule.iconUrl} size={36} />
 			</button>
@@ -61,7 +62,7 @@
 				<h3 lang="ru" title={rule.name}>{rule.name}</h3>
 				{#if broken}<span class="broken-badge">broken</span>{/if}
 			</div>
-			{#if counts.d > 0}<span class="card-stat">{counts.d} доменов</span>{/if}
+			{#if counts.d > 0}<span class="card-stat">{m.routing_search_domains({ count: counts.d })}</span>{/if}
 			{#if counts.s > 0}<span class="card-stat">{counts.s} CIDR</span>{/if}
 			{#if counts.gs > 0}<span class="card-stat geo">{counts.gs} geosite</span>{/if}
 			{#if counts.gi > 0}<span class="card-stat geo">{counts.gi} geoip</span>{/if}
@@ -78,10 +79,10 @@
 			/>
 		{/if}
 		<div class="action-row">
-			<button class="route-action-btn" title="Изменить" onclick={() => onedit()} aria-label="Edit">
+			<button class="route-action-btn" title={m.common_edit()} onclick={() => onedit()} aria-label="Edit">
 				<SquarePen size={15} />
 			</button>
-			<button class="route-action-btn danger" title="Удалить" onclick={() => ondelete()} aria-label="Delete">
+			<button class="route-action-btn danger" title={m.common_delete()} onclick={() => ondelete()} aria-label="Delete">
 				<Trash2 size={15} />
 			</button>
 		</div>

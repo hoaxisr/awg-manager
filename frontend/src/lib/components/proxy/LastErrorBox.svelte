@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	// EX-01 — ошибка последнего запуска. Одна форма у «Выхода» и у «Раздачи»:
 	// блок живёт, пока процесс не работает, и показывает хвост stderr как есть.
 	interface Props {
@@ -10,7 +11,7 @@
 
 {#if text}
 	<div class="error-box">
-		<p class="error-title">Ошибка последнего запуска</p>
+		<p class="error-title">{m.proxy_last_error_title()}</p>
 		<pre>{text}</pre>
 	</div>
 {/if}

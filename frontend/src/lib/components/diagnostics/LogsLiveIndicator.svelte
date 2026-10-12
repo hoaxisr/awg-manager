@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Badge, StatusDot } from '$lib/components/ui';
 
   interface Props {
@@ -16,7 +17,7 @@
     <Badge variant="warning" size="sm">PAUSED</Badge>
     {#if bufferCount > 0}
       <button type="button" class="buffer-chip" onclick={onResume}>
-        +{bufferCount} {bufferCount === 1 ? 'новая' : 'новых'} ↑
+        {m.diag_logs_new_entries({ count: bufferCount })}
       </button>
     {/if}
   {:else}
@@ -25,7 +26,7 @@
       <Badge variant="success" size="sm">LIVE</Badge>
     </span>
   {/if}
-  <span class="entries-count">{entries} {entries === 1 ? 'запись' : 'записей'}</span>
+  <span class="entries-count">{m.diag_logs_entries_count({ count: entries })}</span>
 </div>
 
 <style>

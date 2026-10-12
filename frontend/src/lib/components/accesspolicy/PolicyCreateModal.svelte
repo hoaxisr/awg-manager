@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Modal, Button } from '$lib/components/ui';
 
 	interface Props {
@@ -23,9 +24,9 @@
 	let descriptionError = $derived.by(() => {
 		if (!attempted) return '';
 		const val = description.trim();
-		if (val.length === 0) return 'Введите описание политики';
-		if (!VALID_PATTERN.test(val)) return 'Только латинские буквы, цифры, дефисы и подчёркивания';
-		if (val.length > MAX_LEN) return 'Максимум 256 символов';
+		if (val.length === 0) return m.access_policy_desc_required();
+		if (!VALID_PATTERN.test(val)) return m.access_policy_desc_pattern();
+		if (val.length > MAX_LEN) return m.access_policy_desc_max();
 		return '';
 	});
 
@@ -51,10 +52,10 @@
 	}
 </script>
 
-<Modal {open} title="Создать политику" size="sm" {onclose} hasUnsavedChanges={() => isDirty}>
+<Modal {open} title={m.access_policy_create_title()} size="sm" {onclose} hasUnsavedChanges={() => isDirty}>
 	<div class="form-group" class:field-error={descriptionError !== ''}>
 		<label class="field-label">
-			Описание
+			{m.access_policy_description()}
 			<input
 				type="text"
 				class="field-input"
@@ -62,16 +63,16 @@
 				placeholder="Guest-Network"
 				disabled={saving}
 			/>
-			<span class="field-hint">Латинские буквы, цифры, дефисы, подчёркивания</span>
+			<span class="field-hint">{m.access_policy_description_hint()}</span>
 			<div class="error-text" class:visible={descriptionError !== ''}>{descriptionError}</div>
 		</label>
 	</div>
 
 	{#snippet actions()}
-		<Button variant="ghost" onclick={onclose} disabled={saving}>Отмена</Button>
+		<Button variant="ghost" onclick={onclose} disabled={saving}>{m.common_cancel()}</Button>
 		<!-- TODO Phase 1: shake animation on save when invalid (was class:shake={shaking}) -->
 		<Button variant="primary" onclick={handleSave} loading={saving}>
-			Создать
+			{m.common_create()}
 		</Button>
 	{/snippet}
 </Modal>

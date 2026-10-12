@@ -1,3 +1,5 @@
+import { m } from '$lib/i18n';
+
 // AWG 3.0 device params are only honoured by the 3.x AmneziaWG kernel module.
 // Older modules ignore the netlink attributes without an error, so the tunnel
 // would look configured while running plain AWG 2.0 — gate the editor instead.
@@ -10,10 +12,10 @@ export function supportsAwg3(kernelModuleLoadedVersion: string | undefined): boo
 // those tokens, so gate the NativeWG awg3 editor on the loaded proxy version —
 // the NativeWG analogue of supportsAwg3 for the kernel module.
 export function supportsAwg31Proxy(awgProxyVersion: string | undefined): boolean {
-	const m = /^(\d+)\.(\d+)/.exec(awgProxyVersion ?? '');
-	if (!m) return false;
-	const major = Number(m[1]);
-	const minor = Number(m[2]);
+	const ver = /^(\d+)\.(\d+)/.exec(awgProxyVersion ?? '');
+	if (!ver) return false;
+	const major = Number(ver[1]);
+	const minor = Number(ver[2]);
 	return major > 1 || (major === 1 && minor >= 4);
 }
 
@@ -55,9 +57,9 @@ export function awgProxyOutdated(
 export function nativewgUnavailableHint(reason: string | undefined): string {
 	switch (reason) {
 		case 'no-component':
-			return 'Не установлен компонент WireGuard. Установите его на роутере: Общие настройки → Изменить набор компонентов → WireGuard, затем перезагрузите роутер.';
+			return m.backend_no_wg_component();
 		case 'no-obfuscation':
-			return 'NativeWG недоступен: прошивка без нативного WireGuard ASC и не загружен модуль awg_proxy.';
+			return m.backend_no_obfuscation();
 		default:
 			return '';
 	}

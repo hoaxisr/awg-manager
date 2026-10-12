@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Modal, Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -49,7 +50,7 @@
 				? await api.getSystemServerPeerConf(serverId, pubkey)
 				: await api.getManagedPeerConf(serverId, pubkey);
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка загрузки');
+			notifications.error(e instanceof Error ? e.message : m.servers_conf_load_failed());
 			conf = '';
 		} finally {
 			loading = false;
@@ -73,9 +74,9 @@
 			} catch (e) {
 				const size = new Blob([conf]).size;
 				if (size > 2900) {
-					notifications.error(`Конфигурация слишком большая для QR-кода (${size} байт). Используйте .conf файл.`, 8000);
+					notifications.error(m.servers_conf_qr_too_large({ size }), 8000);
 				} else {
-					notifications.error('Ошибка генерации QR-кода');
+					notifications.error(m.servers_conf_qr_failed());
 				}
 				return;
 			} finally {
@@ -99,38 +100,38 @@
 
 	async function copyConf() {
 		if (await copyToClipboard(conf)) {
-			notifications.success('Скопировано');
+			notifications.success(m.common_copied());
 		} else {
-			notifications.error('Не удалось скопировать');
+			notifications.error(m.diag_about_copy_failed());
 		}
 	}
 </script>
 
-<Modal {open} title="Конфигурация клиента" size="md" {onclose}>
+<Modal {open} title={m.servers_conf_title()} size="md" {onclose}>
 	{#if loading}
-		<div class="loading">Загрузка...</div>
+		<div class="loading">{m.tunnels_loading()}</div>
 	{:else if conf}
 		{#if showQR && qrDataUrl}
 			<div class="qr-container">
-				<img src={qrDataUrl} alt="QR-код конфигурации" class="qr-image" />
-				<span class="qr-hint">Отсканируйте в AmneziaWG / WireGuard</span>
+				<img src={qrDataUrl} alt={m.servers_conf_qr_alt()} class="qr-image" />
+				<span class="qr-hint">{m.servers_conf_qr_hint()}</span>
 			</div>
 		{:else}
 			<pre class="conf-preview">{conf}</pre>
 		{/if}
 	{:else}
-		<div class="loading">Нет данных</div>
+		<div class="loading">{m.servers_conf_no_data()}</div>
 	{/if}
 
 	{#snippet actions()}
 		<Button variant="ghost" size="md" onclick={toggleQR} disabled={!conf} loading={qrGenerating}>
-			{showQR ? 'Конфиг' : 'QR-код'}
+			{showQR ? m.servers_conf_show_conf() : m.servers_conf_show_qr()}
 		</Button>
 		<Button variant="ghost" size="md" onclick={copyConf} disabled={!conf}>
-			Копировать
+			{m.common_copy()}
 		</Button>
 		<Button variant="primary" size="md" onclick={downloadConf} disabled={!conf}>
-			Скачать .conf
+			{m.servers_confgen_download()}
 		</Button>
 	{/snippet}
 </Modal>

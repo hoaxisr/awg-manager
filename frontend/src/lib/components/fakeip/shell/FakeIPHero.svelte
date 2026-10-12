@@ -22,6 +22,7 @@
 
 <script lang="ts">
 	import { Button, Modal } from '$lib/components/ui';
+	import { m } from '$lib/i18n';
 	import { JsonConfigDrawer } from '$lib/components/singbox-routing';
 	import { TracePanel, traceOpen, openTrace, closeTrace } from '$lib/components/sb-router';
 	import { tunStackLabel } from '$lib/components/sb-router/tunStack';
@@ -72,12 +73,12 @@
 
 	const engineFact = $derived(
 		engineState === 'not-fakeip'
-			? 'движок выключен'
+			? m.fakeip_hero_engine_off()
 			: engineState === 'stopped'
-				? 'движок остановлен'
+				? m.fakeip_hero_engine_stopped()
 				: engineState === 'clash-down'
-					? 'clash-runtime недоступен'
-					: 'движок работает', // 'live'
+					? m.fakeip_hero_clash_down()
+					: m.fakeip_hero_engine_running(), // 'live'
 	);
 
 	// Честный субтайтл: стек (· iface, если провижен) · WAN · состояние.
@@ -85,7 +86,7 @@
 		fakeipIface ? `${tunStackLabel(fakeipStack)} · ${fakeipIface}` : tunStackLabel(fakeipStack),
 	);
 	const wanFact = $derived(
-		wanAutoDetect ? 'WAN авто' : wanInterface ? `WAN ${wanInterface}` : '',
+		wanAutoDetect ? m.fakeip_hero_wan_auto() : wanInterface ? `WAN ${wanInterface}` : '',
 	);
 	const facts = $derived([stackFact, wanFact, engineFact].filter(Boolean).join(' · '));
 
@@ -111,7 +112,7 @@
 		<Button
 			variant="secondary"
 			size="sm"
-			title="Сгенерированный конфиг sing-box"
+			title={m.fakeip_hero_config_title()}
 			onclick={() => (configOpen = true)}
 		>
 			{#snippet iconBefore()}<FileJson size={14} />{/snippet}
@@ -121,11 +122,11 @@
 		<Button
 			variant="secondary"
 			size="sm"
-			title="Инспектор маршрутов — куда поедет домен/IP"
+			title={m.fakeip_hero_inspector_title()}
 			onclick={() => openTrace()}
 		>
 			{#snippet iconBefore()}<Search size={14} />{/snippet}
-			Инспектор маршрутов
+			{m.fakeip_hero_inspector()}
 		</Button>
 
 		<Button
@@ -136,7 +137,7 @@
 			onclick={handleRestart}
 		>
 			{#snippet iconBefore()}<RotateCw size={14} />{/snippet}
-			Перезагрузить
+			{m.fakeip_hero_restart()}
 		</Button>
 
 		{#if createButton}{@render createButton()}{/if}
@@ -149,7 +150,7 @@
 <!-- Инспектор маршрутов — route-трейс в модале (✕ и «← Назад» внутри закрывают). -->
 <Modal
 	open={$traceOpen}
-	title="Инспектор маршрутов"
+	title={m.fakeip_hero_inspector()}
 	size="wide"
 	bodyLayout="fill"
 	onclose={closeTrace}

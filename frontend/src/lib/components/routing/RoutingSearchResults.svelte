@@ -1,6 +1,7 @@
 <script lang="ts">
+    import { m } from '$lib/i18n';
     import { ServiceIcon } from '$lib/components/dnsroutes';
-    import type { MatchedRule, ResolveMatch } from './types';
+    import type { MatchedRule, ResolveMatch, SourceSummary } from './types';
     import { X } from 'lucide-svelte';
 
     interface Props {
@@ -16,17 +17,30 @@
     let { dnsResults, ipResults, resolveMatch, resolving, resolveError, onRuleClick, onClose }: Props = $props();
 
     const MAX_SHOWN = 4;
+
+    function sourceSummaryText(s: SourceSummary): string {
+        switch (s.kind) {
+            case 'lists-manual':
+                return m.routing_search_lists_manual({ lists: s.lists, manual: s.manual });
+            case 'lists':
+                return m.routing_search_lists({ count: s.lists });
+            case 'manual':
+                return m.routing_search_all_manual();
+            case 'subnets':
+                return m.routing_subnets_count({ count: s.count });
+        }
+    }
 </script>
 
 <div class="search-results">
     {#if onClose}
-        <button class="results-close" onclick={onClose} title="Закрыть (Esc)" aria-label="Закрыть результаты">
+        <button class="results-close" onclick={onClose} title={m.routing_search_close()} aria-label={m.routing_search_close_aria()}>
             <X size={14} aria-hidden="true" />
         </button>
     {/if}
     {#if dnsResults.length > 0}
         <div class="results-group">
-            <div class="results-group-title">DNS-правила</div>
+            <div class="results-group-title">{m.routing_search_dns_rules()}</div>
             {#each dnsResults as rule}
                 <button class="result-card" onclick={() => onRuleClick?.(rule.id, rule.type)}>
                     <ServiceIcon name={rule.name} iconUrl={rule.iconUrl} size={32} />
@@ -37,10 +51,10 @@
                         </div>
                         <div class="result-meta">
                             {#if rule.domainCount > 0}
-                                <span>{rule.domainCount} доменов</span>
+                                <span>{m.routing_search_domains({ count: rule.domainCount })}</span>
                             {/if}
                             {#if rule.sourceSummary}
-                                <span>{rule.sourceSummary}</span>
+                                <span>{sourceSummaryText(rule.sourceSummary)}</span>
                             {/if}
                             {#if rule.tunnelName}
                                 <span class="result-tunnel">&rarr; <code>{rule.tunnelName}</code></span>
@@ -49,7 +63,7 @@
                         <div class="result-match">
                             {rule.matches.slice(0, MAX_SHOWN).join(', ')}
                             {#if rule.totalMatches > MAX_SHOWN}
-                                <span class="result-more">+{rule.totalMatches - MAX_SHOWN} ещё</span>
+                                <span class="result-more">{m.routing_more_count({ count: rule.totalMatches - MAX_SHOWN })}</span>
                             {/if}
                         </div>
                     </div>
@@ -61,7 +75,7 @@
 
     {#if ipResults.length > 0}
         <div class="results-group">
-            <div class="results-group-title">IP-правила</div>
+            <div class="results-group-title">{m.routing_search_ip_rules()}</div>
             {#each ipResults as rule}
                 <button class="result-card" onclick={() => onRuleClick?.(rule.id, rule.type)}>
                     <ServiceIcon name={rule.name} iconUrl={rule.iconUrl} size={32} />
@@ -72,7 +86,7 @@
                         </div>
                         <div class="result-meta">
                             {#if rule.sourceSummary}
-                                <span>{rule.sourceSummary}</span>
+                                <span>{sourceSummaryText(rule.sourceSummary)}</span>
                             {/if}
                             {#if rule.tunnelName}
                                 <span class="result-tunnel">&rarr; <code>{rule.tunnelName}</code></span>
@@ -81,7 +95,7 @@
                         <div class="result-match">
                             {rule.matches.slice(0, MAX_SHOWN).join(', ')}
                             {#if rule.totalMatches > MAX_SHOWN}
-                                <span class="result-more">+{rule.totalMatches - MAX_SHOWN} ещё</span>
+                                <span class="result-more">{m.routing_more_count({ count: rule.totalMatches - MAX_SHOWN })}</span>
                             {/if}
                         </div>
                     </div>
@@ -95,7 +109,7 @@
         <div class="results-group">
             <div class="results-group-title resolve-loading">
                 <span class="spinner-sm"></span>
-                Резолв домена...
+                {m.routing_search_resolving()}
             </div>
         </div>
     {/if}
@@ -103,7 +117,7 @@
     {#if resolveMatch}
         <div class="results-group resolve-group">
             <div class="results-group-title">
-                Резолв: {resolveMatch.domain} &rarr; <span class="resolve-ips">{resolveMatch.ips.join(', ')}</span>
+                {m.routing_search_resolve_result({ domain: resolveMatch.domain })} &rarr; <span class="resolve-ips">{resolveMatch.ips.join(', ')}</span>
             </div>
             {#if resolveMatch.rules.length > 0}
                 {#each resolveMatch.rules as rule}
@@ -120,9 +134,9 @@
                                 {/if}
                             </div>
                             <div class="result-match">
-                                попадает в {rule.matches.slice(0, MAX_SHOWN).join(', ')}
+                                {m.routing_search_matches_in({ matches: rule.matches.slice(0, MAX_SHOWN).join(', ') })}
                                 {#if rule.totalMatches > MAX_SHOWN}
-                                    <span class="result-more">+{rule.totalMatches - MAX_SHOWN} ещё</span>
+                                    <span class="result-more">{m.routing_more_count({ count: rule.totalMatches - MAX_SHOWN })}</span>
                                 {/if}
                             </div>
                         </div>
@@ -130,7 +144,7 @@
                     </button>
                 {/each}
             {:else}
-                <div class="result-empty">Не попадает ни в одну подсеть</div>
+                <div class="result-empty">{m.routing_search_no_subnet()}</div>
             {/if}
         </div>
     {/if}
@@ -142,7 +156,7 @@
     {/if}
 
     {#if dnsResults.length === 0 && ipResults.length === 0 && !resolving && !resolveMatch && !resolveError}
-        <div class="result-empty">Не найдено ни в одном правиле</div>
+        <div class="result-empty">{m.routing_search_not_found()}</div>
     {/if}
 </div>
 

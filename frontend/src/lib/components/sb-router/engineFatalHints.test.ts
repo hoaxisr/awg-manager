@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { engineFatalHint, ENGINE_FATAL_FALLBACK } from './engineFatalHints';
+import { engineFatalHint, engineFatalFallback } from './engineFatalHints';
 
 describe('engineFatalHint', () => {
 	const cases: [string, string][] = [
@@ -32,6 +32,6 @@ describe('engineFatalHint', () => {
 		expect(engineFatalHint(undefined)).toBeNull();
 	});
 	it('exposes a non-empty fallback', () => {
-		expect(ENGINE_FATAL_FALLBACK).toContain('Движок не смог запуститься');
+		expect(engineFatalFallback()).toContain('Движок не смог запуститься');
 	});
 });

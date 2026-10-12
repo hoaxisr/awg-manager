@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import { writable, derived, get } from 'svelte/store';
 import { api } from '$lib/api/client';
 import { awgTags } from './awgTags';
@@ -109,7 +110,7 @@ function createSingboxRouterStore() {
 			dnsRewrites.set(drw);
 			dnsGlobals.set(dg);
 		} catch (e) {
-			error.set(e instanceof Error ? e.message : 'Не удалось загрузить singbox-router');
+			error.set(e instanceof Error ? e.message : m.singbox_router_load_failed());
 		} finally {
 			loading.set(false);
 			initialized.set(true);

@@ -1,5 +1,6 @@
 <!-- frontend/src/lib/components/connections/ConnectionsBreakdown.svelte -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import ConnectionsBreakdownPanel, { type PanelBucket } from './ConnectionsBreakdownPanel.svelte';
 
 	interface Props {
@@ -17,9 +18,9 @@
 </script>
 
 <div class="grid">
-	<ConnectionsBreakdownPanel title="По туннелям" buckets={byTunnel} activeKey={activeTunnelKey} onSelect={onTunnelToggle} />
-	<ConnectionsBreakdownPanel title="По назначению" buckets={byDst} activeKey={activeSearch} onSelect={onSearchToggle} />
-	<ConnectionsBreakdownPanel title="По клиентам" buckets={byClient} activeKey={activeSearch} onSelect={onSearchToggle} />
+	<ConnectionsBreakdownPanel title={m.connections_by_tunnels()} buckets={byTunnel} activeKey={activeTunnelKey} onSelect={onTunnelToggle} />
+	<ConnectionsBreakdownPanel title={m.connections_by_dst()} buckets={byDst} activeKey={activeSearch} onSelect={onSearchToggle} />
+	<ConnectionsBreakdownPanel title={m.connections_by_clients()} buckets={byClient} activeKey={activeSearch} onSelect={onSearchToggle} />
 </div>
 
 <style>

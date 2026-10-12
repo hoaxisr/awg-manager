@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import type { DownloadOutbound, Settings } from '$lib/types';
 	import { displayOutboundName, maskSensitiveInText } from '$lib/utils/downloadRouteLabel';
@@ -32,11 +33,11 @@
 		singbox: 2,
 		subscription: 3,
 	};
-	const KIND_GROUP: Record<string, string | undefined> = {
+	const KIND_GROUP: Record<string, (() => string) | undefined> = {
 		direct: undefined, // Direct sits on top, ungrouped.
-		awg: 'AWG-туннели',
-		singbox: 'Sing-box туннели',
-		subscription: 'Sing-box подписки',
+		awg: m.settings_download_group_awg,
+		singbox: m.settings_download_group_singbox,
+		subscription: m.settings_download_group_subscription,
 	};
 	function isKnownKind(kind: string): boolean {
 		return kind in KIND_ORDER;
@@ -91,13 +92,13 @@
 			value: routeKey(ob.tag, ob.kind),
 			label: optionLabel(ob),
 			disabled: !ob.available,
-			group: KIND_GROUP[ob.kind],
+			group: KIND_GROUP[ob.kind]?.(),
 		}));
 		if (!hasSelected && selectedValue) {
 			const extra = selectedKind ? `${maskSensitiveInText(selectedTag)} (${selectedKind})` : maskSensitiveInText(selectedTag);
 			built.unshift({
 				value: selectedValue,
-				label: `Недоступный маршрут: ${extra}`,
+				label: m.settings_download_unavailable_route({ route: extra }),
 				disabled: true,
 			});
 		}
@@ -135,16 +136,16 @@
 
 <div id="downloads" class="setting-row download-setting">
 	<div class="flex flex-col gap-1">
-		<span class="font-medium">Служебные загрузки AWGM</span>
+		<span class="font-medium">{m.settings_download_label()}</span>
 		<div class="download-description" bind:this={infoHintEl}>
 			<span class="setting-description">
-				Маршрут для служебных задач: обновления AWGM и Sing-Box, загрузок geo.dat и DNSRoute-списков, а также конфигураций Amnezia Premium.<span
+				{m.settings_download_description()}<span
 					class="info-hint"
 				>
 					<button
 						type="button"
 						class="info-trigger"
-						aria-label="Через что идут загрузки"
+						aria-label={m.settings_download_info_aria()}
 						aria-expanded={infoOpen}
 						onclick={() => (infoOpen = !infoOpen)}
 					>
@@ -158,17 +159,15 @@
 			</span>
 			{#if infoOpen}
 				<div class="info-popup" role="tooltip">
-					<span class="info-popup-title">Через какой маршрут идёт загрузка</span>
+					<span class="info-popup-title">{m.settings_download_info_title()}</span>
 					<span class="info-popup-row">
-						<strong>AWG-туннели</strong> — качают напрямую, отдельный sing-box не нужен.
+						<strong>{m.settings_download_info_awg_term()}</strong> {m.settings_download_info_awg_text()}
 					</span>
 					<span class="info-popup-row">
-						<strong>sing-box-туннели и подписки (SUB)</strong> — работают только при запущенном
-						sing-box; если он выключен, маршрут будет недоступен.
+						<strong>{m.settings_download_info_singbox_term()}</strong> {m.settings_download_info_singbox_text()}
 					</span>
 					<span class="info-popup-row">
-						<strong>Загрузка самих подписок</strong> (скачивание их содержимого по URL) — всегда
-						идёт напрямую через WAN, мимо туннеля.
+						<strong>{m.settings_download_info_subs_term()}</strong> {m.settings_download_info_subs_text()}
 					</span>
 				</div>
 			{/if}
@@ -194,7 +193,7 @@
 				onclick={onRefresh}
 				disabled={saving || loading}
 			>
-				Обновить список
+				{m.settings_download_refresh()}
 			</Button>
 		</div>
 	</div>

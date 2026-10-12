@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	export type PukhososAnimation = 'idle' | 'walk' | 'turn';
 	export type PukhososWalkFrameMode = 'cycle' | 'sequence';
 
@@ -92,7 +93,7 @@
 		style:--turn-cycle="{turnCycleMs}ms"
 		style:background-position={walkSequenced && sequencedWalkBg ? sequencedWalkBg : undefined}
 		role="img"
-		aria-label="Пухосос"
+		aria-label={m.settings_experimental_vacuum_label()}
 		onanimationend={(event) => {
 			if (
 				animation === 'turn' &&

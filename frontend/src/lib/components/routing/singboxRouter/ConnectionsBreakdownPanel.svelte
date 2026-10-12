@@ -1,5 +1,6 @@
 <!-- frontend/src/lib/components/routing/singboxRouter/ConnectionsBreakdownPanel.svelte -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { ConnectionBucket } from '$lib/types/singboxConnections';
 	import { formatBytes } from '$lib/utils/format';
 
@@ -109,7 +110,7 @@
 			</button>
 		{/each}
 		{#if buckets.length === 0}
-			<div class="empty">Нет данных</div>
+			<div class="empty">{m.routing_singbox_no_data()}</div>
 		{/if}
 	</div>
 </div>

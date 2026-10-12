@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { SingboxProxyGroup, SingboxRouterOutbound, Subscription } from '$lib/types';
+import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
 import {
 	resolveCompositeActiveMemberTag,
 	resolveCompositeOutboundView,
 } from './compositeOutboundDisplay';
 
-const outboundOptions = [{ group: 'Подписки', items: [] }];
+const outboundOptions: OutboundGroup[] = [{ id: 'composite', items: [] }];
 
 const demoSub: Subscription = {
 	id: 'sub-demo0001',

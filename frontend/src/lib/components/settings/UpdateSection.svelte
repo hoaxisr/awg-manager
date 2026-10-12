@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Modal, Button, Toggle } from '$lib/components/ui';
@@ -43,10 +44,10 @@
 	});
 
 	const manualCheckTitle = $derived(
-		updateInfo?.available ? 'Проверить наличие более новой версии' : 'Проверить обновления'
+		updateInfo?.available ? m.settings_update_check_newer_title() : m.settings_update_check_title()
 	);
 	const manualCheckLabel = $derived(
-		checking ? 'Проверка...' : updateInfo?.available ? 'Проверить ещё' : 'Проверить'
+		checking ? m.settings_update_checking() : updateInfo?.available ? m.settings_update_check_again() : m.common_check()
 	);
 
 	async function checkForUpdates() {
@@ -55,17 +56,17 @@
 		try {
 			updateInfo = await api.checkUpdate(true);
 			if (updateInfo.error) {
-				notifications.error(`Проверка обновлений: ${downloadErrorToText(updateInfo.error)}`);
+				notifications.error(m.settings_update_check_failed({ error: downloadErrorToText(updateInfo.error) }));
 			} else if (updateInfo.available) {
-				notifications.success(`Доступна версия ${updateInfo.latestVersion}`);
+				notifications.success(m.settings_update_version_available({ version: updateInfo.latestVersion ?? '' }));
 			} else {
-				notifications.info('Обновлений нет');
+				notifications.info(m.settings_update_none_toast());
 			}
 			if (updateInfo.warning) {
 				notifications.info(updateInfo.warning);
 			}
 		} catch (e) {
-			notifications.error(`Проверка обновлений: ${downloadErrorToText(e)}`);
+			notifications.error(m.settings_update_check_failed({ error: downloadErrorToText(e) }));
 		} finally {
 			checking = false;
 		}
@@ -91,7 +92,7 @@
 		try {
 			await api.applyUpdate();
 		} catch (e) {
-			notifications.error(`Запуск обновления: ${downloadErrorToText(e)}`);
+			notifications.error(m.settings_update_start_failed({ error: downloadErrorToText(e) }));
 			upgrading = false;
 			return;
 		}
@@ -113,7 +114,7 @@
 			}
 		}
 
-		notifications.error('Сервер не ответил после обновления');
+		notifications.error(m.settings_update_no_response());
 		upgrading = false;
 	}
 
@@ -126,7 +127,7 @@
 			});
 			setGlobalSettings(settings);
 		} catch (e) {
-			notifications.error(`Статистика установок: ${downloadErrorToText(e)}`);
+			notifications.error(m.settings_update_stats_failed({ error: downloadErrorToText(e) }));
 		} finally {
 			savingStats = false;
 		}
@@ -141,10 +142,10 @@
 			});
 			setGlobalSettings(settings);
 			notifications.success(
-				enabled ? 'Автоустановка обновлений включена' : 'Автоустановка обновлений отключена'
+				enabled ? m.settings_update_auto_enabled() : m.settings_update_auto_disabled()
 			);
 		} catch (e) {
-			notifications.error(`Автоустановка обновлений: ${downloadErrorToText(e)}`);
+			notifications.error(m.settings_update_auto_failed({ error: downloadErrorToText(e) }));
 		} finally {
 			savingAutoInstall = false;
 		}
@@ -162,9 +163,9 @@
 				},
 			});
 			setGlobalSettings(settings);
-			notifications.success('Расписание автоустановки сохранено');
+			notifications.success(m.settings_update_schedule_saved());
 		} catch (e) {
-			notifications.error(`Расписание автоустановки: ${downloadErrorToText(e)}`);
+			notifications.error(m.settings_update_schedule_failed({ error: downloadErrorToText(e) }));
 		} finally {
 			savingAutoInstall = false;
 		}
@@ -175,11 +176,11 @@
 	<div class="flex flex-col gap-1 update-info">
 		{#if upgrading}
 			<span class="setting-description update-status">
-				Обновление... не закрывайте страницу
+				{m.settings_update_in_progress()}
 			</span>
 		{:else if updateInfo?.available}
 			<span class="setting-description update-available">
-				Доступна версия {updateInfo.latestVersion}
+				{m.settings_update_version_available({ version: updateInfo.latestVersion ?? '' })}
 			</span>
 		{:else if updateInfo?.error}
 			<div class="update-error-notice">
@@ -187,7 +188,7 @@
 			</div>
 		{:else}
 			<span class="setting-description">
-				Установлена последняя версия
+				{m.settings_update_latest()}
 			</span>
 		{/if}
 		{#if updateInfo?.warning}
@@ -206,7 +207,7 @@
 					size="sm"
 					onclick={() => (showChangelog = true)}
 				>
-					Что нового
+					{m.settings_update_whats_new()}
 				</Button>
 			{/if}
 			<!-- Manual check must stay available even when an update is already cached:
@@ -227,7 +228,7 @@
 					onclick={confirmUpgrade}
 					disabled={checking}
 				>
-					Обновить
+					{m.common_update()}
 				</Button>
 			{/if}
 		{/if}
@@ -237,9 +238,9 @@
 {#if isAutoInstallSettingsVisible(settings.usageLevel)}
 	<div class="setting-row toggle-inline-row">
 		<div class="flex flex-col gap-1">
-			<span class="font-medium">Автоматическая установка</span>
+			<span class="font-medium">{m.settings_update_auto_label()}</span>
 			<span class="setting-description">
-				Устанавливать проверенные обновления автоматически по расписанию.
+				{m.settings_update_auto_description()}
 			</span>
 		</div>
 		<Toggle
@@ -261,7 +262,7 @@
 						max="30"
 						disabled={savingAutoInstall}
 					/>
-					<span class="input-suffix">каждые N дней</span>
+					<span class="input-suffix">{m.settings_update_every_n_days()}</span>
 				</div>
 				<input
 					type="time"
@@ -276,15 +277,15 @@
 						onclick={saveAutoInstallSchedule}
 						loading={savingAutoInstall}
 					>
-						{savingAutoInstall ? 'Сохранение...' : 'Сохранить'}
+						{savingAutoInstall ? m.common_saving() : m.common_save()}
 					</Button>
 				{/if}
 			</div>
 			{#if updateInfo?.nextAutoInstallAt}
-				<p class="auto-install-status">Следующее окно: {formatDate(updateInfo.nextAutoInstallAt)}</p>
+				<p class="auto-install-status">{m.settings_update_next_window({ date: formatDate(updateInfo.nextAutoInstallAt) })}</p>
 			{/if}
 			{#if updateInfo?.lastAutoInstallAt}
-				<p class="auto-install-status">Последняя автоустановка: {formatDate(updateInfo.lastAutoInstallAt)}</p>
+				<p class="auto-install-status">{m.settings_update_last_auto({ date: formatDate(updateInfo.lastAutoInstallAt) })}</p>
 			{/if}
 		</div>
 	{/if}
@@ -292,10 +293,9 @@
 
 <div class="setting-row toggle-inline-row">
 	<div class="flex flex-col gap-1">
-		<span class="font-medium">Анонимная статистика</span>
+		<span class="font-medium">{m.settings_update_stats_label()}</span>
 		<span class="setting-description">
-			При проверке обновлений отправлять случайный ID установки и какие механизмы
-			маршрутизации включены (только да/нет). Без адресов, имён и настроек.
+			{m.settings_update_stats_description()}
 		</span>
 	</div>
 	<Toggle
@@ -307,16 +307,16 @@
 
 <Modal
 	open={showConfirm}
-	title="Обновление"
+	title={m.settings_update_confirm_title()}
 	onclose={() => showConfirm = false}
 >
 	<p class="modal-text">
-		Обновить до версии {updateInfo?.latestVersion}? Сервис будет перезапущен.
+		{m.settings_update_confirm_text({ version: updateInfo?.latestVersion ?? '' })}
 	</p>
 
 	{#snippet actions()}
-		<Button variant="secondary" size="md" onclick={() => showConfirm = false}>Отмена</Button>
-		<Button variant="primary" size="md" onclick={applyUpgrade}>Обновить</Button>
+		<Button variant="secondary" size="md" onclick={() => showConfirm = false}>{m.common_cancel()}</Button>
+		<Button variant="primary" size="md" onclick={applyUpgrade}>{m.common_update()}</Button>
 	{/snippet}
 </Modal>
 

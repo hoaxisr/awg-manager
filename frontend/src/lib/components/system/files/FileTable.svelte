@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m, formatLocale } from '$lib/i18n';
 	import type { SystemFileEntry, FileSystemScriptStatus } from '$lib/api/client';
 	import { Folder, FileText } from 'lucide-svelte';
 	import { getFileTypeInfo } from './fileIcons';
@@ -50,26 +51,26 @@
 	function formatTime(iso: string): string {
 		if (!iso) return '—';
 		const d = new Date(iso);
-		return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(formatLocale()) + ' ' + d.toLocaleTimeString(formatLocale(), { hour: '2-digit', minute: '2-digit' });
 	}
 </script>
 
 <div class="files-table-container">
 	{#if loading}
-		<div class="loading-state">Загрузка каталога…</div>
+		<div class="loading-state">{m.system_files_table_loading()}</div>
 	{:else if entries.length === 0}
-		<div class="empty-state">Каталог пуст или файлы не найдены</div>
+		<div class="empty-state">{m.system_files_table_empty()}</div>
 	{:else}
 		<div class="table-wrap">
 			<table class="fm-table" oncontextmenu={(e) => onContextMenu(e, null)}>
 				<thead>
 					<tr>
-						<th style="width: 32px;"><span class="sr-only">Выбор</span></th>
-						<th>Имя</th>
-						<th style="width: 100px;">Размер</th>
-						<th style="width: 150px;">Изменён</th>
-						<th style="width: 90px;">Права</th>
-						<th style="width: 145px; text-align: right;">Действия</th>
+						<th style="width: 32px;"><span class="sr-only">{m.system_files_table_select()}</span></th>
+						<th>{m.system_files_table_name()}</th>
+						<th style="width: 100px;">{m.system_files_table_size()}</th>
+						<th style="width: 150px;">{m.system_files_table_modified()}</th>
+						<th style="width: 90px;">{m.system_files_table_mode()}</th>
+						<th style="width: 145px; text-align: right;">{m.system_files_table_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -108,9 +109,9 @@
 										<span class="file-badge" class:badge-script={info.kind === 'script'}>{info.badge}</span>
 									{/if}
 									{#if isScript && isRunning}
-										<span class="running-pill" title={scriptSt?.pids?.length ? `PID: ${scriptSt.pids.join(', ')}` : 'Запущен'}>
+										<span class="running-pill" title={scriptSt?.pids?.length ? `PID: ${scriptSt.pids.join(', ')}` : m.system_files_table_running()}>
 											<span class="dot"></span>
-											<span>Запущен</span>
+											<span>{m.system_files_table_running()}</span>
 										</span>
 									{/if}
 								</div>

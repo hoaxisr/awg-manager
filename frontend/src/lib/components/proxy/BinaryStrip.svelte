@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Badge, Button } from '$lib/components/ui';
 	import { Download } from 'lucide-svelte';
 
@@ -37,13 +38,13 @@
 
 				{#if b.binaryPresent}
 					{#if b.installedVersion}
-						<Badge size="xs" variant="success">установлен {b.installedVersion}</Badge>
+						<Badge size="xs" variant="success">{m.proxy_binary_installed({ version: b.installedVersion })}</Badge>
 					{/if}
 					{#if b.installVersion}
-						<Badge size="xs" variant="warning">доступно обновление {b.installVersion}</Badge>
+						<Badge size="xs" variant="warning">{m.proxy_binary_update_available({ version: b.installVersion })}</Badge>
 					{/if}
 				{:else}
-					<Badge size="xs" variant="error">не установлен</Badge>
+					<Badge size="xs" variant="error">{m.proxy_binary_not_installed()}</Badge>
 				{/if}
 
 				{#if b.installAvailable}
@@ -54,7 +55,7 @@
 						onclick={b.oninstall}
 					>
 						{#snippet iconBefore()}<Download size={14} strokeWidth={2.5} />{/snippet}
-						{b.binaryPresent ? 'Обновить' : 'Установить'}
+						{b.binaryPresent ? m.common_update() : m.proxy_binary_install()}
 					</Button>
 				{/if}
 			</div>

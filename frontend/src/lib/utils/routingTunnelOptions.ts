@@ -1,22 +1,65 @@
+import { m } from '$lib/i18n';
 import type { DropdownOption } from '$lib/components/ui';
 import type { PolicyGlobalInterface, RoutingTunnel, TunnelListItem } from '$lib/types';
 
-/** Display order for grouped tunnel dropdowns (aligned with sing-box router groups). */
-const GROUP_ORDER = [
-	'Провайдер',
-	'AWG туннели',
-	'Системные WireGuard',
-	'Серверы WireGuard',
-	'Прокси',
-	'OpkgTun',
-	'Системные',
-	'LTE / USB',
-	'Wi‑Fi',
-	'WAN',
-] as const;
+/**
+ * Стабильный код группы туннелей: по нему идёт сортировка и группировка.
+ * Подпись строится на показе — routingGroupLabel(id).
+ */
+export type RoutingGroupId =
+	| 'provider'
+	| 'awg'
+	| 'systemWg'
+	| 'serverWg'
+	| 'proxy'
+	| 'opkgtun'
+	| 'system'
+	| 'lte'
+	| 'wifi'
+	| 'wan';
 
-function groupSortIndex(group: string): number {
-	const idx = (GROUP_ORDER as readonly string[]).indexOf(group);
+/** Display order for grouped tunnel dropdowns (aligned with sing-box router groups). */
+const GROUP_ORDER: readonly RoutingGroupId[] = [
+	'provider',
+	'awg',
+	'systemWg',
+	'serverWg',
+	'proxy',
+	'opkgtun',
+	'system',
+	'lte',
+	'wifi',
+	'wan',
+];
+
+/** Подпись группы на текущем языке; вызывать при показе, не сохранять. */
+export function routingGroupLabel(id: RoutingGroupId): string {
+	switch (id) {
+		case 'provider':
+			return m.routing_tunnel_group_provider();
+		case 'awg':
+			return m.routing_singbox_group_awg();
+		case 'systemWg':
+			return m.routing_singbox_group_system();
+		case 'serverWg':
+			return m.routing_tunnel_group_server_wg();
+		case 'proxy':
+			return m.routing_tunnel_group_proxy();
+		case 'opkgtun':
+			return 'OpkgTun';
+		case 'system':
+			return m.routing_tunnel_group_system();
+		case 'lte':
+			return 'LTE / USB';
+		case 'wifi':
+			return 'Wi‑Fi';
+		case 'wan':
+			return 'WAN';
+	}
+}
+
+function groupSortIndex(id: RoutingGroupId): number {
+	const idx = GROUP_ORDER.indexOf(id);
 	return idx >= 0 ? idx : GROUP_ORDER.length;
 }
 
@@ -64,15 +107,20 @@ export function shouldOmitSingboxProxyKernelDuplicate(
 }
 
 /** Группа для NDMS-имени в «Интерфейсы политики» (ip policy permit). */
-export function policyInterfaceGroup(ndmsName: string): string {
+export function policyInterfaceGroupId(ndmsName: string): RoutingGroupId {
 	const lower = ndmsName.trim().toLowerCase();
-	if (lower.startsWith('pppoe') || lower.startsWith('isp')) return 'Провайдер';
-	if (lower.startsWith('wireguard')) return 'Системные WireGuard';
-	if (lower.startsWith('proxy')) return 'Прокси';
-	if (lower.startsWith('opkgtun') || lower.startsWith('awgm')) return 'AWG туннели';
-	if (lower.startsWith('lte') || lower.startsWith('usb')) return 'LTE / USB';
-	if (lower.startsWith('apcli') || lower.startsWith('wlan')) return 'Wi‑Fi';
-	return 'Системные';
+	if (lower.startsWith('pppoe') || lower.startsWith('isp')) return 'provider';
+	if (lower.startsWith('wireguard')) return 'systemWg';
+	if (lower.startsWith('proxy')) return 'proxy';
+	if (lower.startsWith('opkgtun') || lower.startsWith('awgm')) return 'awg';
+	if (lower.startsWith('lte') || lower.startsWith('usb')) return 'lte';
+	if (lower.startsWith('apcli') || lower.startsWith('wlan')) return 'wifi';
+	return 'system';
+}
+
+/** Подпись группы для NDMS-имени на текущем языке. */
+export function policyInterfaceGroup(ndmsName: string): string {
+	return routingGroupLabel(policyInterfaceGroupId(ndmsName));
 }
 
 export function filterPolicyGlobalInterfaces(
@@ -132,51 +180,58 @@ export function policyInterfaceDisplayLabel(
 }
 
 export interface PolicyInterfaceGroup {
+	id: RoutingGroupId;
+	/** Подпись группы на момент сборки. */
 	group: string;
 	items: PolicyGlobalInterface[];
 }
 
 /** Unassigned policy ifaces grouped for the «Добавить» picker (HR Neo + NDMS policies). */
 export function groupPolicyGlobalInterfaces(items: PolicyGlobalInterface[]): PolicyInterfaceGroup[] {
-	const byGroup = new Map<string, PolicyGlobalInterface[]>();
+	const byGroup = new Map<RoutingGroupId, PolicyGlobalInterface[]>();
 	for (const gi of items) {
-		const group = policyInterfaceGroup(gi.name);
-		const bucket = byGroup.get(group) ?? [];
+		const id = policyInterfaceGroupId(gi.name);
+		const bucket = byGroup.get(id) ?? [];
 		bucket.push(gi);
-		byGroup.set(group, bucket);
+		byGroup.set(id, bucket);
 	}
 	return [...byGroup.keys()]
 		.sort((a, b) => groupSortIndex(a) - groupSortIndex(b))
-		.map((group) => ({ group, items: byGroup.get(group) ?? [] }));
+		.map((id) => ({ id, group: routingGroupLabel(id), items: byGroup.get(id) ?? [] }));
 }
 
 /** Human-readable option label with kernel/NDMS iface suffix (like sing-box outbound dropdown). */
 export function routingTunnelLabel(t: RoutingTunnel): string {
 	const iface = t.iface?.trim();
 	let label = iface ? `${t.name} (${iface})` : t.name;
-	if (t.type === 'system' && t.status === 'down') label += ' — нет несущей';
+	if (t.type === 'system' && t.status === 'down') label = m.routing_tunnel_label_down({ label });
 	if (t.warning) label += ` (${t.warning})`;
 	return label;
 }
 
-/** Resolves the dropdown group for one routing catalog entry. */
-export function routingTunnelGroup(t: RoutingTunnel): string {
-	if (t.type === 'managed') return 'AWG туннели';
+/** Стабильный id группы для записи каталога маршрутизации. */
+export function routingTunnelGroupId(t: RoutingTunnel): RoutingGroupId {
+	if (t.type === 'managed') return 'awg';
 	if (t.type === 'wan') return wanGroup(t);
 	return systemGroup(t);
 }
 
-function systemGroup(t: RoutingTunnel): string {
-	const ndmsId = t.id.startsWith('system:') ? t.id.slice('system:'.length) : t.id;
-	const lower = ndmsId.toLowerCase();
-	if (t.server) return 'Серверы WireGuard';
-	if (lower.startsWith('wireguard')) return 'Системные WireGuard';
-	if (lower.startsWith('proxy')) return 'Прокси';
-	if (lower.startsWith('opkgtun')) return 'OpkgTun';
-	return 'Системные';
+/** Подпись группы в выпадающем списке для записи каталога — на текущем языке. */
+export function routingTunnelGroup(t: RoutingTunnel): string {
+	return routingGroupLabel(routingTunnelGroupId(t));
 }
 
-function wanGroup(t: RoutingTunnel): string {
+function systemGroup(t: RoutingTunnel): RoutingGroupId {
+	const ndmsId = t.id.startsWith('system:') ? t.id.slice('system:'.length) : t.id;
+	const lower = ndmsId.toLowerCase();
+	if (t.server) return 'serverWg';
+	if (lower.startsWith('wireguard')) return 'systemWg';
+	if (lower.startsWith('proxy')) return 'proxy';
+	if (lower.startsWith('opkgtun')) return 'opkgtun';
+	return 'system';
+}
+
+function wanGroup(t: RoutingTunnel): RoutingGroupId {
 	const kernel = (t.iface ?? t.id.replace(/^wan:/, '')).toLowerCase();
 	// PPPoE, physical Ethernet, GPON, VLAN subifs → один блок «Провайдер»
 	if (
@@ -185,11 +240,11 @@ function wanGroup(t: RoutingTunnel): string {
 		kernel.startsWith('gpon') ||
 		kernel.includes('.')
 	) {
-		return 'Провайдер';
+		return 'provider';
 	}
-	if (kernel.startsWith('lte') || kernel.startsWith('usb')) return 'LTE / USB';
-	if (kernel.startsWith('apcli') || kernel.startsWith('wlan')) return 'Wi‑Fi';
-	return 'WAN';
+	if (kernel.startsWith('lte') || kernel.startsWith('usb')) return 'lte';
+	if (kernel.startsWith('apcli') || kernel.startsWith('wlan')) return 'wifi';
+	return 'wan';
 }
 
 export interface BuildRoutingTunnelDropdownOptions {
@@ -225,12 +280,12 @@ export function buildRoutingTunnelDropdownOptions(
 		list = list.filter(filter);
 	}
 
-	const byGroup = new Map<string, DropdownOption[]>();
+	const byGroup = new Map<RoutingGroupId, DropdownOption[]>();
 	for (const t of list) {
-		const group = routingTunnelGroup(t);
-		const bucket = byGroup.get(group) ?? [];
-		bucket.push({ value: t.id, label: routingTunnelLabel(t), group });
-		byGroup.set(group, bucket);
+		const id = routingTunnelGroupId(t);
+		const bucket = byGroup.get(id) ?? [];
+		bucket.push({ value: t.id, label: routingTunnelLabel(t), group: routingGroupLabel(id) });
+		byGroup.set(id, bucket);
 	}
 
 	const sortedGroups = [...byGroup.keys()].sort((a, b) => groupSortIndex(a) - groupSortIndex(b));
@@ -267,7 +322,7 @@ export function buildManagedTunnelListDropdownOptions(
 		.map((t) => ({
 			value: t.id,
 			label: managedTunnelListLabel(t),
-			group: 'AWG туннели',
+			group: routingGroupLabel('awg'),
 		}));
 }
 

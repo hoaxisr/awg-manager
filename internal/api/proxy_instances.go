@@ -36,12 +36,14 @@ const proxyrtListenMovesPath = "/api/proxyrt/seed/listen-moves"
 // планом (требования 15 и 17); остальные заведены здесь под гейты создания, у
 // каждого из которых своя причина отказа и свой текст для пользователя.
 const (
-	proxyCodeNotSeeded       = "PROXY_NOT_SEEDED"
-	proxyCodeDeclareFailed   = "PROXY_DECLARE_FAILED"
-	proxyCodeNotFound        = "NOT_FOUND"
-	proxyCodeConfigInvalid   = "PROXY_CONFIG_INVALID"
-	proxyCodeOpkgUnsupported = "PROXY_OPKGTUN_UNSUPPORTED"
-	proxyCodeKindSingleton   = "PROXY_KIND_SINGLETON"
+	proxyCodeNotSeeded          = "PROXY_NOT_SEEDED"
+	proxyCodeDeclareFailed      = "PROXY_DECLARE_FAILED"
+	proxyCodeNotFound           = "NOT_FOUND"
+	proxyCodeConfigInvalid      = "PROXY_CONFIG_INVALID"
+	proxyCodeOpkgUnsupported    = "PROXY_OPKGTUN_UNSUPPORTED"
+	proxyCodeKindSingleton      = "PROXY_KIND_SINGLETON"
+	proxyCodeInstanceDisabled   = "PROXY_INSTANCE_DISABLED"
+	proxyCodeRestartUnsupported = "PROXY_RESTART_UNSUPPORTED"
 )
 
 // ProxyManager — узкий срез *manager.Manager, нужный поверхности.
@@ -52,6 +54,7 @@ type ProxyManager interface {
 	SetEnabled(ctx context.Context, key string, on bool) error
 	Delete(ctx context.Context, key string) error
 	Post(key string, k proxyrt.EventKind) bool
+	Restart(ctx context.Context, key string, reason string) error
 	SeedInfo() manager.SeedInfo
 	AckListenMoves() error
 }
@@ -323,6 +326,12 @@ func (h *ProxyInstancesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.apply(w, key)
+	case "restart":
+		if r.Method != http.MethodPost {
+			response.MethodNotAllowed(w)
+			return
+		}
+		h.restart(w, r, key)
 	default:
 		response.ErrorWithStatus(w, http.StatusNotFound, "неизвестный путь", proxyCodeNotFound)
 	}
@@ -658,6 +667,49 @@ func (h *ProxyInstancesHandler) apply(w http.ResponseWriter, key string) {
 	if !h.deps.Manager.Post(key, proxyrt.EventIntentChanged) {
 		response.ErrorWithStatus(w, http.StatusNotFound,
 			"инстанс "+key+" не запущен: будить нечего", proxyCodeNotFound)
+		return
+	}
+	response.Success(w, OkData{Ok: true})
+}
+
+// restart — POST /api/proxyrt/instances/{key}/restart
+//
+//	@Summary		Перезапустить процесс инстанса
+//	@Tags			proxyrt
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			key	path		string	true	"Ключ инстанса (роль:id)"
+//	@Success		200	{object}	OkResponse
+//	@Failure		404	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Failure		503	{object}	APIErrorEnvelope
+//	@Router			/proxyrt/instances/{key}/restart [post]
+func (h *ProxyInstancesHandler) restart(w http.ResponseWriter, r *http.Request, key string) {
+	if !h.requireSeeded(w) {
+		return
+	}
+	rec, ok := h.recordByKey(key)
+	if !ok {
+		h.notFound(w, key)
+		return
+	}
+	if !rec.Enabled {
+		response.ErrorWithStatus(w, http.StatusConflict, "инстанс выключен", proxyCodeInstanceDisabled)
+		return
+	}
+	if err := h.deps.Manager.Restart(r.Context(), key, "запрос пользователя"); err != nil {
+		if errors.Is(err, manager.ErrInstanceNotFound) {
+			response.ErrorWithStatus(w, http.StatusNotFound,
+				"инстанс "+key+" не запущен", proxyCodeNotFound)
+			return
+		}
+		if errors.Is(err, manager.ErrRestartUnsupported) {
+			response.ErrorWithStatus(w, http.StatusConflict,
+				"перезапуск для этой роли не поддерживается", proxyCodeRestartUnsupported)
+			return
+		}
+		response.InternalError(w, err.Error())
 		return
 	}
 	response.Success(w, OkData{Ok: true})

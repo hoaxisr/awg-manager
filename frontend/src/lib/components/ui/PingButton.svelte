@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SingboxDelayState } from '$lib/utils/singboxDelay';
 	import { RefreshCw } from 'lucide-svelte';
 
@@ -57,7 +58,7 @@
 		if (checking || connectivity === 'checking') return '...';
 		if (connectivity === 'connected' && latencyMs !== null) return `${latencyMs}ms`;
 		if (connectivity === 'connected') return 'OK';
-		if (connectivity === 'disconnected') return 'Нет связи';
+		if (connectivity === 'disconnected') return m.tunnels_card_status_no_link();
 		return '...';
 	});
 
@@ -75,10 +76,10 @@
 	let title = $derived(
 		titleProp ??
 			(isSingbox
-				? 'Обновить delay'
+				? m.ui_ping_refresh_delay()
 				: connectivity === 'disconnected'
-					? 'Нет связи. Нажать для проверки'
-					: 'Проверить связь'),
+					? m.ui_ping_no_link_retry()
+					: m.ui_ping_check_link()),
 	);
 
 	let isSpinning = $derived(checking || (!isSingbox && connectivity === 'checking'));

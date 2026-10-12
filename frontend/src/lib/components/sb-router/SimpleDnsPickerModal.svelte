@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { m } from '$lib/i18n';
   import { Modal, SegmentedControl, Input, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
   import type { SegmentedOption } from '$lib/components/ui/segmentedControl';
   import { api } from '$lib/api/client';
@@ -22,6 +23,7 @@
     type DnsPresetProto,
   } from './dnsPresets';
   import { normalizeDnsServerDetour } from '$lib/utils/dnsServerDetour';
+  import { outboundGroupLabel } from '$lib/components/routing/singboxRouter/outboundOptions';
 
   interface Props {
     server: SingboxRouterDNSServer;
@@ -52,25 +54,25 @@
   const subsStore = subscriptionsStore;
 
   const detourOptions = $derived.by<DropdownOption[]>(() => {
-    const opts: DropdownOption[] = [{ value: '', label: 'Напрямую (без VPN)' }];
+    const opts: DropdownOption[] = [{ value: '', label: m.sb_router_dns_picker_detour_direct() }];
 
     // 1. Groups from Mihomo native
     if (mihomoGroups.length > 0) {
       for (const g of mihomoGroups) {
-        opts.push({ value: g.name, label: `${g.name} (${g.type})`, group: 'Группы прокси Mihomo' });
+        opts.push({ value: g.name, label: `${g.name} (${g.type})`, group: m.sb_router_mihomo_groups() });
       }
     }
 
     // 2. AWG / Wireguard tunnels
     const tags = $awgStore?.data ?? [];
     for (const t of tags) {
-      opts.push({ value: t.tag, label: `${t.label} (${t.iface})`, group: 'AWG / WireGuard туннели' });
+      opts.push({ value: t.tag, label: `${t.label} (${t.iface})`, group: m.routing_singbox_group_awg() });
     }
 
     // 3. Mihomo Subscriptions
     if (mihomoSubscriptions.length > 0) {
       for (const s of mihomoSubscriptions) {
-        opts.push({ value: s.name, label: `Подписка: ${s.name}`, group: 'Подписки' });
+        opts.push({ value: s.name, label: `${s.name}`, group: m.tunnels_tab_subscriptions() });
       }
     }
 
@@ -78,7 +80,7 @@
     const fromOptions = ($optionsStore ?? []).flatMap((g) =>
       g.items
         .filter((i) => i.value !== 'direct' && !opts.some((o) => o.value === i.value))
-        .map((i) => ({ value: i.value, label: i.label, group: g.group })),
+        .map((i) => ({ value: i.value, label: i.label, group: outboundGroupLabel(g.id) })),
     );
     opts.push(...fromOptions);
 
@@ -92,10 +94,10 @@
   let choice = $state(initialPreset?.id ?? CUSTOM);
   // svelte-ignore state_referenced_locally
   let customAddr = $state(initialPreset ? '' : server.server);
-  const PROTO_OPTIONS: SegmentedOption[] = [
-    { value: 'udp', label: 'UDP' },
-    { value: 'dot', label: 'DoT' },
+  const PROTO_OPTIONS: SegmentedOption<DnsPresetProto>[] = [
     { value: 'doh', label: 'DoH' },
+    { value: 'dot', label: 'DoT' },
+    { value: 'udp', label: 'UDP' },
   ];
 
   // svelte-ignore state_referenced_locally
@@ -107,6 +109,9 @@
 
   const preset = $derived(DNS_PRESETS.find((p) => p.id === choice));
   const addr = $derived(preset ? preset.ip : customAddr.trim());
+  const effectiveProto = $derived<DnsPresetProto>(preset && allowProtocol ? proto : 'udp');
+  const tlsLoss = $derived(effectiveProto === 'udp' && udpDropsTls(server));
+  const pinLoss = $derived(effectiveProto !== 'udp' && certPinWillReset(server, addr));
   const isTunnelServer = $derived(server.tag !== 'dns-direct' && server.tag !== 'dns-local');
   const canSave = $derived(!busy && addr.length > 0);
 
@@ -115,7 +120,7 @@
     busy = true;
     error = '';
     try {
-      const built = buildDnsServer(server, addr, preset?.sni ?? '', choice === CUSTOM ? 'udp' : proto);
+      const built = buildDnsServer(server, addr, preset?.sni ?? '', effectiveProto);
       if (isTunnelServer) {
         built.detour = selectedDetour;
       }
@@ -130,31 +135,36 @@
   }
 </script>
 
-<Modal open title="Выходной DNS" size="sm" {onclose} closeOnBackdrop={false}>
+<Modal open title={m.sb_router_dns_picker_title()} size="sm" {onclose} closeOnBackdrop={false}>
   {#if allowProtocol}
     <div class="proto">
       <SegmentedControl
+        value={effectiveProto}
         options={PROTO_OPTIONS}
-        value={proto}
+        ariaLabel={m.sb_router_dns_picker_proto_label()}
+        disabled={!preset}
+        fullWidth
         onchange={(v) => (proto = v as DnsPresetProto)}
-        disabled={choice === CUSTOM}
-        ariaLabel="Протокол DNS"
       />
-      {#if choice === CUSTOM}
-        <span class="hint">Свой адрес доступен только по обычному DNS</span>
-      {:else if proto === 'udp' && udpDropsTls(server)}
-        <span class="warn">Настройки TLS будут удалены</span>
+      {#if !preset}
+        <p class="hint">{m.sb_router_dns_picker_custom_udp_only()}</p>
+      {/if}
+      {#if tlsLoss}
+        <p class="warn">{m.sb_router_dns_picker_tls_loss()}</p>
+      {/if}
+      {#if pinLoss}
+        <p class="warn">{m.sb_router_dns_picker_pin_loss()}</p>
       {/if}
     </div>
   {/if}
 
   {#if isTunnelServer}
     <div class="detour-block">
-      <span class="detour-label">Куда направить DNS (Туннель / Группа)</span>
+      <span class="detour-label">{m.sb_router_dns_picker_detour_label()}</span>
       <Dropdown
         options={detourOptions}
         bind:value={selectedDetour}
-        placeholder="Выберите туннель или группу"
+        placeholder={m.sb_router_dns_picker_detour_placeholder()}
       />
     </div>
   {/if}
@@ -178,7 +188,7 @@
         checked={choice === CUSTOM}
         onchange={() => (choice = CUSTOM)}
       />
-      <label class="label" for="dns-custom">Свой адрес</label>
+      <label class="label" for="dns-custom">{m.sb_router_dns_picker_custom()}</label>
       <span class="custom">
         <Input
           bind:value={customAddr}
@@ -195,8 +205,8 @@
   {/if}
 
   {#snippet actions()}
-    <Button variant="ghost" onclick={onclose}>Отмена</Button>
-    <Button variant="primary" disabled={!canSave} onclick={save}>Сохранить</Button>
+    <Button variant="ghost" onclick={onclose}>{m.common_cancel()}</Button>
+    <Button variant="primary" disabled={!canSave} onclick={save}>{m.common_save()}</Button>
   {/snippet}
 </Modal>
 

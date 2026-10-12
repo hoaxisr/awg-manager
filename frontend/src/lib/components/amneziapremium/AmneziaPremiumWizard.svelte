@@ -22,6 +22,7 @@
 
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import Button from '$lib/components/ui/Button.svelte';
 	import ConfirmModal from '$lib/components/ui/ConfirmModal.svelte';
@@ -91,10 +92,13 @@
 	let tunnelName = $state('');
 	let nameEdited = $state(false);
 	let backend = $state<PremiumWizardBackend>('nativewg');
+	/** Текст отказа от бэкенда; пусто — показываем локализованное «сервис недоступен». */
 	let errorText = $state('');
-	let errorHint = $state('');
+	/** Код ошибки бэкенда: подсказка собирается при отрисовке, чтобы следовать языку. */
+	let errorCode = $state('');
 	let retryKind = $state<RetryKind>('init');
-	let retryLabel = $state('Повторить');
+	/** После сбоя выдачи вместо повтора предлагаем вернуться к списку стран. */
+	let retryToList = $state(false);
 	let busy = $state(false);
 	let confirmCountry = $state('');
 	/** Страна, которую подтверждают к отзыву; пусто — подтверждения нет. */
@@ -230,7 +234,7 @@
 		saveWarning = '';
 		confirmCountry = '';
 		errorText = '';
-		errorHint = '';
+		errorCode = '';
 		busy = false;
 		phase = 'loading';
 
@@ -345,7 +349,7 @@
 		nameEdited = false;
 		keyInput = '';
 		errorText = '';
-		errorHint = '';
+		errorCode = '';
 		saveWarning = '';
 		confirmCountry = '';
 		revokeCountry = '';
@@ -370,11 +374,11 @@
 			case 'AMNEZIA_PREMIUM_FORBIDDEN':
 				// Ключ менять не предлагаем: 403 — запрет операции, а не приговор
 				// ключу, и замена рабочего ключа лимит устройств не вернёт.
-				return 'Откройте список стран и проверьте счётчик устройств подписки — ключ при этом менять не нужно.';
+				return m.amnezia_premium_hint_forbidden();
 			case 'AMNEZIA_PREMIUM_KEY_REJECTED':
-				return 'Похоже, ключ подписки больше не действует — введите другой.';
+				return m.amnezia_premium_hint_key_rejected();
 			case 'AMNEZIA_PREMIUM_CONFIG_BUSY':
-				return 'Эта страна уже выдаётся — дождитесь ответа и обновите список стран.';
+				return m.amnezia_premium_hint_config_busy();
 			default:
 				// AMNEZIA_PREMIUM_OUTCOME_UNKNOWN сюда тоже попадает намеренно:
 				// звать что-либо делать после неизвестного исхода расходной
@@ -383,19 +387,21 @@
 		}
 	}
 
+	const errorHint = $derived(premiumErrorHint(errorCode));
+
 	function failWith(e: unknown, source: 'init' | 'login' | 'catalog' | 'config'): void {
-		errorText = e instanceof Error ? e.message : 'Сервис Amnezia недоступен';
-		errorHint = premiumErrorHint(premiumErrorCode(e));
+		errorText = e instanceof Error ? e.message : '';
+		errorCode = premiumErrorCode(e);
 		if (source === 'config') {
 			// Повтор расходной выдачи одной кнопкой не предлагается никогда: он
 			// тратит второй слот устройств. Возврат к списку стран — операция
 			// читающая, и он же показывает счётчик, по которому видно, была ли
 			// выдача на самом деле.
 			retryKind = 'catalog';
-			retryLabel = 'К списку стран';
+			retryToList = true;
 		} else {
 			retryKind = source;
-			retryLabel = 'Повторить';
+			retryToList = false;
 		}
 		phase = 'error';
 	}
@@ -526,7 +532,7 @@
 		</div>
 	{:else if phase === 'error'}
 		<div class="premium-error">
-			<p class="premium-error-text">{errorText}</p>
+			<p class="premium-error-text">{errorText || m.amnezia_premium_service_unavailable()}</p>
 			{#if errorHint}
 				<p class="premium-error-hint">{errorHint}</p>
 			{/if}
@@ -536,7 +542,7 @@
 			<PremiumSubscriptionCard {catalog} {nowMs} />
 			{#if saveWarning}
 				<p class="premium-save-warning">
-					Ключ проверен, но сохранить его на роутере не вышло: {saveWarning}
+					{m.amnezia_premium_save_warning({ error: saveWarning })}
 				</p>
 			{/if}
 			<PremiumDeclaredCountryField
@@ -569,20 +575,20 @@
 			<!-- Выход из подписки доступен прямо здесь: пользователь, пришедший
 			     сменить ключ, не должен искать «забыть» за каталогом. -->
 			<Button variant="ghost" size="md" disabled={busy} onclick={() => void forgetKey()}>
-				Забыть ключ
+				{m.amnezia_premium_forget_key()}
 			</Button>
 		{/if}
-		<Button variant="secondary" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="secondary" size="md" onclick={onclose}>{m.common_cancel()}</Button>
 		<Button variant="primary" size="md" disabled={!canSubmitKey} onclick={() => void submitKey()}>
-			Продолжить
+			{m.common_continue()}
 		</Button>
 	{:else if phase === 'error'}
 		<div class="premium-error-actions">
-		<Button variant="secondary" size="md" onclick={onclose}>Закрыть</Button>
-		<Button variant="secondary" size="md" onclick={retry}>{retryLabel}</Button>
+		<Button variant="secondary" size="md" onclick={onclose}>{m.common_close()}</Button>
+		<Button variant="secondary" size="md" onclick={retry}>{retryToList ? m.amnezia_premium_back_to_countries() : m.common_retry()}</Button>
 		<!-- Без этого действия пользователь с отозванным сохранённым ключом
 		     заперт: вкладки со вставкой vpn:// больше нет. -->
-		<Button variant="primary" size="md" onclick={resetToKeyEntry}>Ввести другой ключ</Button>
+		<Button variant="primary" size="md" onclick={resetToKeyEntry}>{m.amnezia_premium_enter_other_key()}</Button>
 		</div>
 	{:else}
 		<div class="premium-footer">
@@ -590,7 +596,7 @@
 				<!-- Доступна и при загрузке: каталог может висеть на недоступном
 				     зеркале, и запирать выход из подписки до его ответа нельзя. -->
 				<Button variant="ghost" size="md" disabled={busy} onclick={() => void forgetKey()}>
-					Забыть ключ
+					{m.amnezia_premium_forget_key()}
 				</Button>
 			{/if}
 			{#if !replaceTarget}
@@ -613,7 +619,7 @@
 				     устройств подписки — единственный способ это сделать, кроме
 				     личного кабинета Amnezia. -->
 				<Button variant="ghost" size="md" onclick={() => (revokeCountry = selectedCountry)}>
-					Отозвать
+					{m.amnezia_premium_revoke()}
 				</Button>
 			{/if}
 			<Button
@@ -622,7 +628,7 @@
 				disabled={phase !== 'catalog' || !canIssue}
 				onclick={requestConfig}
 			>
-				{replaceTarget ? 'Заменить конфиг' : 'Создать туннель'}
+				{replaceTarget ? m.amnezia_premium_replace_config() : m.amnezia_premium_create_tunnel()}
 			</Button>
 		</div>
 	{/if}
@@ -640,11 +646,11 @@
 
 <ConfirmModal
 	open={revokeCountry !== ''}
-	title="Отозвать конфигурацию?"
-	message={`Конфигурация страны «${revokeCountryName}» будет отозвана у Amnezia, слот устройств подписки вернётся. Туннель, работающий на этой конфигурации, перестанет подключаться.`}
-	secondary="Чтобы пользоваться страной снова, конфигурацию придётся выдать заново — это опять займёт слот."
-	confirmLabel="Отозвать"
-	cancelLabel="Отмена"
+	title={m.amnezia_premium_revoke_title()}
+	message={m.amnezia_premium_revoke_message({ country: revokeCountryName })}
+	secondary={m.amnezia_premium_revoke_secondary()}
+	confirmLabel={m.amnezia_premium_revoke()}
+	cancelLabel={m.common_cancel()}
 	variant="danger"
 	{busy}
 	onConfirm={() => void revokeConfig(revokeCountry)}
@@ -653,15 +659,15 @@
 
 <ConfirmModal
 	open={confirmCountry !== ''}
-	title={confirmIssuedByUs ? 'Выдать конфигурацию повторно?' : 'Страна уже занимает слот — выдать?'}
+	title={confirmIssuedByUs ? m.amnezia_premium_reissue_title() : m.amnezia_premium_slot_taken_title()}
 	message={confirmIssuedByUs
-		? `По стране «${confirmCountryName}» конфигурация уже выдавалась. Повторная выдача займёт ЕЩЁ ОДИН слот устройств подписки.`
-		: `По стране «${confirmCountryName}» конфигурация уже получена вне AWG-M. Выдача займёт ЕЩЁ ОДИН слот устройств подписки.`}
+		? m.amnezia_premium_reissue_message({ country: confirmCountryName })
+		: m.amnezia_premium_outside_message({ country: confirmCountryName })}
 	secondary={confirmIssuedByUs
-		? `Сейчас эта страна занимает слотов подписки: ${confirmSlots}.`
-		: `Сейчас эта страна занимает слотов подписки: ${confirmSlots}. Конфигурацию, полученную вне AWG-M, панель отозвать не может — этот слот отсюда не вернуть.`}
-	confirmLabel={confirmIssuedByUs ? 'Выдать повторно' : 'Выдать'}
-	cancelLabel="Отмена"
+		? m.amnezia_premium_slots_ours({ slots: confirmSlots })
+		: m.amnezia_premium_slots_outside({ slots: confirmSlots })}
+	confirmLabel={confirmIssuedByUs ? m.amnezia_premium_issue_again() : m.amnezia_premium_issue()}
+	cancelLabel={m.common_cancel()}
 	variant="primary"
 	{busy}
 	onConfirm={() => void issueConfig(confirmCountry)}

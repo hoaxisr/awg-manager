@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import { isIPv4 } from '$lib/utils/cidr';
 
 /** Whether a server connect host is empty (WAN fallback) or a valid IPv4/domain. */
@@ -23,11 +24,10 @@ export function resolveClientEndpointHost(
 }
 
 export function emptyEndpointDescription(keenDnsDomain: string): string {
-	const base = 'Хост для подключения в .conf (без порта). Пустое поле —';
 	if (keenDnsDomain.trim()) {
-		return `${base} KeenDNS.`;
+		return m.endpoint_empty_keendns();
 	}
-	return `${base} внешний IP роутера.`;
+	return m.endpoint_empty_wan_ip();
 }
 
 export function emptyEndpointPlaceholder(
@@ -35,7 +35,7 @@ export function emptyEndpointPlaceholder(
 	wanIP: string,
 	loadingWanIP = false,
 ): string {
-	if (loadingWanIP) return 'Определение WAN IP...';
+	if (loadingWanIP) return m.servers_edit_wan_detecting();
 	const keen = keenDnsDomain.trim();
 	if (keen) return keen;
 	return wanIP.trim() || 'WAN IP';

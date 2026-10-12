@@ -5,6 +5,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import type { MatcherChip as MatcherChipData, RuleCardData } from './types';
   import ServiceTile from './ServiceTile.svelte';
   import MatcherChip from './MatcherChip.svelte';
@@ -12,7 +13,7 @@
   import { Badge } from '$lib/components/ui';
   import { Edit3, GripVertical, Lock, Trash2 } from 'lucide-svelte';
   import { outboundDisplayTitle } from './outboundLabelFormat';
-  import { COMPLEX_RULE_EDIT_MESSAGE } from './simpleRule';
+  import { complexRuleEditMessage } from './simpleRule';
 
   interface Props {
     card: RuleCardData;
@@ -60,7 +61,7 @@
   let editTip = $derived(actionTooltip('edit', card, index));
   let deleteTip = $derived(actionTooltip('delete', card, index));
   let editDisabled = $derived(!card.isSystem && !card.simplicity.simple);
-  let editDisabledTip = $derived(editDisabled ? COMPLEX_RULE_EDIT_MESSAGE : editTip);
+  let editDisabledTip = $derived(editDisabled ? complexRuleEditMessage() : editTip);
 
   const isCompositeOutbound = $derived(
     (card.outbound.kind === 'composite' || card.outbound.kind === 'subscription')
@@ -68,8 +69,8 @@
   );
 
   function outboundLabel(cardData: RuleCardData): string {
-    if (cardData.action === 'block' || cardData.outbound.kind === 'block') return 'Заблокировать';
-    if (cardData.outbound.kind === 'direct') return 'Напрямую';
+    if (cardData.action === 'block' || cardData.outbound.kind === 'block') return m.sb_router_wizard_opt_block();
+    if (cardData.outbound.kind === 'direct') return m.sb_router_wizard_opt_direct();
     if (
       (cardData.outbound.kind === 'composite' || cardData.outbound.kind === 'subscription')
       && cardData.outbound.activeMemberLabel
@@ -79,14 +80,13 @@
     return outboundDisplayTitle(cardData.outbound);
   }
 
-  function ruleActionTarget(cardData: RuleCardData, idx: number): string {
-    const n = String(idx).padStart(2, '0');
-    return `правило #${n}: ${cardData.title} → ${outboundLabel(cardData)}`;
-  }
-
   function actionTooltip(action: 'edit' | 'delete', cardData: RuleCardData, idx: number): string {
-    const prefix = action === 'edit' ? 'Редактировать' : 'Удалить';
-    return `${prefix} ${ruleActionTarget(cardData, idx)}`;
+    const params = {
+      n: String(idx).padStart(2, '0'),
+      title: cardData.title,
+      target: outboundLabel(cardData),
+    };
+    return action === 'edit' ? m.sb_router_card_edit_tip(params) : m.sb_router_card_delete_tip(params);
   }
 
   function chipOnclick(chip: MatcherChipData): (() => void) | undefined {
@@ -112,16 +112,16 @@
     const sim = card.simplicity;
     if (sim.simple && sim.kind === 'inline-set' && onInlineListClick) {
       if (chip.kind === 'domain' || chip.kind === 'ip') {
-        return 'Редактировать набор';
+        return m.sb_router_card_edit_set();
       }
     }
     if (sim.simple && sim.kind === 'inline-text' && onTextMatchersClick) {
       if (chip.kind === 'domain' || chip.kind === 'ip') {
-        return 'Редактировать домены и адреса';
+        return m.sb_router_card_edit_matchers();
       }
     }
     if (chip.kind === 'ruleset' && chip.rulesetTag && onRulesetClick && knownRulesetTags?.has(chip.rulesetTag)) {
-      return `Редактировать набор «${chip.label}»`;
+      return m.sb_router_card_edit_ruleset({ label: chip.label });
     }
     return undefined;
   }
@@ -137,7 +137,7 @@
         class="rule-checkbox"
         checked={selected}
         onchange={onToggleSelect}
-        aria-label={`Выбрать правило #${orderStr}`}
+        aria-label={m.sb_router_card_select_aria({ n: orderStr })}
       />
     {:else}
       {orderStr}
@@ -151,8 +151,8 @@
         class="drag-handle"
         class:is-busy={dragDisabled}
         aria-disabled={dragDisabled}
-        aria-label={`Перетащить правило #${orderStr}`}
-        title={dragDisabled ? 'Подождите, правило перемещается…' : `Перетащить правило #${orderStr}`}
+        aria-label={m.sb_router_card_drag_aria({ n: orderStr })}
+        title={dragDisabled ? m.sb_router_card_drag_busy() : m.sb_router_card_drag_aria({ n: orderStr })}
         onpointerdown={dragDisabled ? undefined : onDragHandlePointerDown}
       >
         <GripVertical size={16} />
@@ -192,7 +192,7 @@
           />
         {/each}
         {#if hiddenCount > 0}
-          <span class="more">+{hiddenCount} ещё</span>
+          <span class="more">{m.sb_router_card_more({ count: hiddenCount })}</span>
         {/if}
       </div>
     {/if}
@@ -205,7 +205,7 @@
 
     {#if card.isSystem}
       <div class="right-slot">
-        <Badge variant="muted" size="sm">система</Badge>
+        <Badge variant="muted" size="sm">{m.sb_router_card_system()}</Badge>
       </div>
     {:else if onDelete || onEdit}
       <div class="right-slot">

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { Snippet } from 'svelte';
 	import { ChevronDown } from 'lucide-svelte';
 
@@ -9,7 +10,7 @@
 		children: Snippet;
 	}
 
-	let { title = 'Настройки доступа', persistKey, children }: Props = $props();
+	let { title, persistKey, children }: Props = $props();
 
 	function readCollapsed(): boolean {
 		if (!persistKey || typeof localStorage === 'undefined') return false;
@@ -40,7 +41,7 @@
 		onclick={toggle}
 		aria-expanded={!collapsed}
 	>
-		<span class="settings-panel-title">{title}</span>
+		<span class="settings-panel-title">{title ?? m.servers_settings_panel_title()}</span>
 		<ChevronDown class="settings-panel-chevron" size={16} strokeWidth={2} aria-hidden="true" />
 	</button>
 	{#if !collapsed}

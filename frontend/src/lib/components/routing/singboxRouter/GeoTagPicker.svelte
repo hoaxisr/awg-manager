@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 
 	interface GeoTag {
@@ -51,26 +52,26 @@
 	}
 </script>
 
-<div class="picker" class:compact aria-label="Выбор {kind} тегов">
+<div class="picker" class:compact aria-label={m.routing_singbox_geo_picker_aria({ kind })}>
 	<div class="picker-header">
 		<input
 			class="form-input picker-search"
 			type="text"
-			placeholder="Поиск {kind}:TAG…"
+			placeholder={m.routing_singbox_geo_search_placeholder({ kind })}
 			bind:value={query}
 		/>
 	</div>
 
 	{#if files.length === 0}
 		<div class="picker-empty">
-			Нет загруженных файлов <code>{kind}.dat</code>. Добавьте их на вкладке «Маршрутизация → Гео-данные».
+			{m.routing_singbox_geo_no_files_prefix()} <code>{kind}.dat</code>{m.routing_singbox_geo_no_files_suffix()}
 		</div>
 	{:else if loading}
-		<div class="picker-empty">Загрузка тегов…</div>
+		<div class="picker-empty">{m.routing_singbox_geo_loading()}</div>
 	{:else if filtered.length === 0}
-		<div class="picker-empty">Ничего не найдено</div>
+		<div class="picker-empty">{m.routing_singbox_geo_nothing_found()}</div>
 	{:else}
-		<div class="picker-count">{filtered.length} тегов</div>
+		<div class="picker-count">{m.routing_singbox_geo_tags_count({ count: filtered.length })}</div>
 		<div class="picker-results">
 			{#each filtered as r}
 				{@const tooBig = kind === 'geoip' && maxelem > 0 && r.tag.count >= maxelem}
@@ -82,7 +83,7 @@
 					class:disabled-tag={tooBig}
 					disabled={tooBig}
 					aria-pressed={isSelected}
-					title={tooBig ? `Превышает лимит ipset: ${r.tag.count} ≥ ${maxelem}` : ''}
+					title={tooBig ? m.routing_singbox_geo_too_big({ count: r.tag.count, max: maxelem }) : ''}
 					onclick={() => onToggle(r.tag.name)}
 				>
 					<span class="result-check" aria-hidden="true">{isSelected ? '✓' : ''}</span>

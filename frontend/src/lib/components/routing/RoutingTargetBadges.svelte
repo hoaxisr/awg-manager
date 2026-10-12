@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { tick } from 'svelte';
 	import { Badge } from '$lib/components/ui';
 	import { countVisibleBadges, readBadgeRowBudgetWidth } from '$lib/utils/fittingBadgeLayout';
@@ -10,15 +11,15 @@
 		labels: string[];
 		/** Optional native tooltips; defaults to labels. */
 		titles?: string[];
-		/** Noun for overflow aria-label, e.g. «интерфейсов», «туннелей». */
-		overflowNoun?: string;
+		/** What the overflow aria-label counts: tunnels, interfaces or generic targets. */
+		overflowKind?: 'tunnels' | 'interfaces' | 'targets';
 		/** muted — NDMS cards; tunnel — accent tiles как OutboundTile в RuleCard. */
 		variant?: RoutingTargetBadgeVariant;
 		/** Явный бюджет ширины (px) — RuleCard передаёт зазор до кнопок. */
 		budgetWidth?: number;
 	}
 
-	let { labels, titles = [], overflowNoun = 'целей', variant = 'muted', budgetWidth }: Props = $props();
+	let { labels, titles = [], overflowKind = 'tunnels', variant = 'muted', budgetWidth }: Props = $props();
 
 	let containerEl = $state<HTMLDivElement | null>(null);
 	let measureEl = $state<HTMLDivElement | null>(null);
@@ -28,6 +29,13 @@
 	let overflowCount = $derived(Math.max(0, labels.length - visibleCount));
 	let hiddenLabels = $derived(labels.slice(visibleCount));
 	let hiddenTitles = $derived(titles.slice(visibleCount));
+	let overflowAriaLabel = $derived(
+		overflowKind === 'interfaces'
+			? m.routing_badges_more_interfaces({ count: overflowCount })
+			: overflowKind === 'targets'
+				? m.routing_badges_more_targets({ count: overflowCount })
+				: m.routing_badges_more_tunnels({ count: overflowCount }),
+	);
 	let overflowMeasure = $derived(`+${Math.max(1, labels.length - 1)}`);
 
 	function readGap(): number {
@@ -149,11 +157,11 @@
 					class="overflow-tip"
 					tabindex="0"
 					role="button"
-					aria-label={`Ещё ${overflowCount} ${overflowNoun}`}
+					aria-label={overflowAriaLabel}
 				>
 					<Badge variant="dotted" mono size="xs" compact>+{overflowCount}</Badge>
 					<div class="overflow-pop" role="tooltip">
-						<div class="overflow-pop-title">Ещё {overflowCount}</div>
+						<div class="overflow-pop-title">{m.routing_badges_more({ count: overflowCount })}</div>
 						<ul>
 							{#each hiddenLabels as label, index (`${label}:${index}`)}
 								<li title={hiddenTitles[index] ?? label}>{label}</li>

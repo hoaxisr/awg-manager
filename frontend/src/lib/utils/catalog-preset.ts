@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type { CatalogPreset } from '$lib/types';
 
 /** Preset with optional composite covers (catalog + sing-box router). */
@@ -7,8 +8,9 @@ export type PresetCoverRef = Pick<CatalogPreset, 'id' | 'name' | 'covers'>;
 export const DNS_LARGE_LIST_THRESHOLD = 300;
 
 /** Shown on catalog tiles with large DNS lists (NDMS / HR Neo only). */
-export const DNS_LARGE_LIST_NOTICE =
-	'Список содержит много записей и может работать нестабильно — рекомендуется для использования только в sing-box';
+export function dnsLargeListNotice(): string {
+	return m.catalog_preset_dns_large_list_notice();
+}
 
 export function presetDnsEntryCount(p: CatalogPreset): number {
 	const dns = p.engines.dns;
@@ -119,7 +121,7 @@ export function catalogPresetCardNotice(
 ): string | undefined {
 	const parts: string[] = [];
 	if (warnLargeDnsLists && presetDnsLargeListRisk(p, catalog)) {
-		parts.push(DNS_LARGE_LIST_NOTICE);
+		parts.push(dnsLargeListNotice());
 	}
 	if (p.notice?.trim()) parts.push(p.notice.trim());
 	return parts.length > 0 ? parts.join('\n\n') : undefined;
@@ -268,29 +270,29 @@ export function presetAddedBadge(
 	ruleSetUsage?: Map<string, number>,
 ): PresetBadge {
 	const tags = (preset.engines.singbox?.ruleSets ?? []).map((r) => r.tag);
-	if (!ruleSetUsage || tags.length === 0) return { text: 'добавлено' };
+	if (!ruleSetUsage || tags.length === 0) return { text: m.catalog_preset_added() };
 	const used = tags.some((t) => (ruleSetUsage.get(t) ?? 0) > 0);
 	if (used) {
 		return {
-			text: 'добавлено',
-			tooltip: 'Набор уже добавлен и используется правилами',
+			text: m.catalog_preset_added(),
+			tooltip: m.catalog_preset_added_used_tooltip(),
 		};
 	}
 	return {
-		text: 'добавлено, без правил',
-		tooltip: 'Добавлен как набор — не используется ни одним правилом',
+		text: m.catalog_preset_added_no_rules(),
+		tooltip: m.catalog_preset_added_no_rules_tooltip(),
 	};
 }
 
 /** Wizard (мастер правил): rule set already in config — only a rule will be created. */
 export function presetSetReuseBadge(): PresetBadge {
 	return {
-		text: 'набор уже есть',
-		tooltip: 'Набор уже добавлен — будет создано только правило',
+		text: m.catalog_preset_set_exists(),
+		tooltip: m.catalog_preset_set_exists_tooltip(),
 	};
 }
 
 /** Tooltip for the member-of-added-composite corner mark (#450). */
 export function memberOfAddedCompositeTitle(compositeName: string): string {
-	return `Уже входит в добавленный композитный список «${compositeName}». Можно добавить и отдельно.`;
+	return m.catalog_preset_member_of_composite({ name: compositeName });
 }

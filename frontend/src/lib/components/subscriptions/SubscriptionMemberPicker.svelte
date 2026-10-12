@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { m } from '$lib/i18n';
     import { onMount } from 'svelte';
     import type { SubscriptionMember } from '$lib/types';
     import { singboxDelayHistory } from '$lib/stores/singbox';
@@ -33,7 +34,7 @@
             await onPick(tag);
             onClose();
         } catch (e) {
-            pickError = e instanceof Error ? e.message : 'Не удалось переключить';
+            pickError = e instanceof Error ? e.message : m.subscriptions_picker_switch_failed();
         } finally {
             switching = null;
         }

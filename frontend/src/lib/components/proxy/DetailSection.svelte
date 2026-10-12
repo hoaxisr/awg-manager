@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { Snippet } from 'svelte';
 	import { ChevronDown, ChevronRight } from 'lucide-svelte';
 	import { FieldHint } from '$lib/components/ui';
@@ -31,7 +32,7 @@
 				<span class="title">{title}</span>
 			</button>
 			{#if hint}
-				<FieldHint text={hint} ariaLabel={`Подсказка: ${title}`} />
+				<FieldHint text={hint} ariaLabel={m.proxy_detail_hint_aria({ title })} />
 			{/if}
 		</div>
 		{#if aside}

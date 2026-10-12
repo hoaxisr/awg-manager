@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SystemProcSnapshot } from '$lib/api/client';
 	import type { SystemCpuCore } from '$lib/api/clientSystem';
 	import { Activity, Clock, Layers } from 'lucide-svelte';
@@ -13,7 +14,13 @@
 	const load1Pct = $derived(Math.round((snapshot.loadAvg[0] / numCores) * 100));
 	const loadStatusClass = $derived(load1Pct >= 80 ? 'high' : load1Pct >= 45 ? 'med' : 'low');
 	const loadStatusText = $derived(
-		load1Pct >= 100 ? 'Перегрузка' : load1Pct >= 70 ? 'Высокая' : load1Pct >= 30 ? 'Умеренная' : 'Низкая'
+		load1Pct >= 100
+			? m.system_processes_load_overload()
+			: load1Pct >= 70
+				? m.system_processes_load_high()
+				: load1Pct >= 30
+					? m.system_processes_load_moderate()
+					: m.system_processes_load_low(),
 	);
 
 	function formatUptime(sec: number): string {
@@ -21,38 +28,38 @@
 		const days = Math.floor(sec / 86400);
 		const hours = Math.floor((sec % 86400) / 3600);
 		const minutes = Math.floor((sec % 3600) / 60);
-		if (days > 0) return `${days}д ${hours}ч ${minutes}м`;
-		if (hours > 0) return `${hours}ч ${minutes}м`;
-		return `${minutes}м ${sec % 60}с`;
+		if (days > 0) return m.system_processes_uptime_dhm({ days, hours, minutes });
+		if (hours > 0) return m.system_processes_uptime_hm({ hours, minutes });
+		return m.system_processes_uptime_ms({ minutes, seconds: sec % 60 });
 	}
 </script>
 
 <div class="sys-meta-grid">
 	<div class="meta-item">
-		<div class="meta-k" title="Load Average — среднее число задач в очереди за 1, 5 и 15 минут. Норма для вашего {numCores}-ядерного процессора — до {numCores}.00 (100%).">
+		<div class="meta-k" title={m.system_processes_meta_load_title({ cores: numCores })}>
 			<Activity size={13} />
-			<span>Средняя нагрузка:</span>
+			<span>{m.system_processes_meta_load_label()}</span>
 		</div>
 		<div class="meta-v">
-			<span class="load-status-pill level-{loadStatusClass}" title="Текущий уровень общей нагрузки за 1 минуту: {load1Pct}% от емкости {numCores} ядер">
+			<span class="load-status-pill level-{loadStatusClass}" title={m.system_processes_meta_load_now_title({ pct: load1Pct, cores: numCores })}>
 				<span class="dot"></span>
 				<span>{loadStatusText} ({load1Pct}%)</span>
 			</span>
-			<div class="load-badges-group" title="Load Average: 1 мин · 5 мин · 15 мин">
-				<span class="load-badge">1м: <strong>{snapshot.loadAvg[0].toFixed(2)}</strong></span>
-				<span class="load-badge">5м: <strong>{snapshot.loadAvg[1].toFixed(2)}</strong></span>
-				<span class="load-badge">15м: <strong>{snapshot.loadAvg[2].toFixed(2)}</strong></span>
+			<div class="load-badges-group" title={m.system_processes_meta_load_badges_title()}>
+				<span class="load-badge">{m.system_processes_meta_1m()} <strong>{snapshot.loadAvg[0].toFixed(2)}</strong></span>
+				<span class="load-badge">{m.system_processes_meta_5m()} <strong>{snapshot.loadAvg[1].toFixed(2)}</strong></span>
+				<span class="load-badge">{m.system_processes_meta_15m()} <strong>{snapshot.loadAvg[2].toFixed(2)}</strong></span>
 			</div>
 		</div>
 	</div>
 	<div class="meta-item">
-		<div class="meta-k"><Clock size={13} /> Аптайм роутера:</div>
+		<div class="meta-k"><Clock size={13} /> {m.system_processes_meta_uptime()}</div>
 		<div class="meta-v"><strong>{formatUptime(snapshot.uptimeSeconds)}</strong></div>
 	</div>
 	<div class="meta-item">
-		<div class="meta-k"><Layers size={13} /> Задачи:</div>
+		<div class="meta-k"><Layers size={13} /> {m.system_processes_meta_tasks()}</div>
 		<div class="meta-v">
-			<strong>{snapshot.processSummary.total}</strong> всего (<strong>{snapshot.processSummary.running}</strong> активных, <strong>{snapshot.processSummary.threads}</strong> потоков)
+			<strong>{snapshot.processSummary.total}</strong> {m.system_processes_meta_total()} (<strong>{snapshot.processSummary.running}</strong> {m.system_processes_meta_active()}, <strong>{snapshot.processSummary.threads}</strong> {m.system_processes_meta_threads()})
 		</div>
 	</div>
 </div>

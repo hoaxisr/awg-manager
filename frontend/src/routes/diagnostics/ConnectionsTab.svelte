@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { m } from '$lib/i18n';
 	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import type { ConnectionsResponse, ConnectionBucketAgg, ConntrackConnection } from '$lib/types';
 	import type { DropdownOption } from '$lib/components/ui';
@@ -42,11 +43,11 @@
 	const totalIn = $derived((data?.byTunnel ?? []).reduce((s, b) => s + b.bytesIn, 0));
 
 	const tunnelOptions = $derived.by((): DropdownOption[] => {
-		const opts: DropdownOption[] = [{ value: 'all', label: 'Все' }, { value: 'direct', label: 'Напрямую' }];
+		const opts: DropdownOption[] = [{ value: 'all', label: m.diag_conn_filter_all() }, { value: 'direct', label: m.diag_conn_filter_direct() }];
 		for (const [id, info] of Object.entries(data?.tunnels ?? {})) {
 			if (id === '@direct') continue;
 			if (id === '@singbox') opts.push({ value: 'singbox', label: 'sing-box' });
-			else if (id === '@local') opts.push({ value: 'local', label: 'Локально' });
+			else if (id === '@local') opts.push({ value: 'local', label: m.diag_conn_filter_local() });
 			else opts.push({ value: id, label: info.name });
 		}
 		return opts;
@@ -71,7 +72,7 @@
 			lastFetchedAtTs = Date.now();
 		} catch (e) {
 			if (seq !== requestSeq) return;
-			notifications.error('Не удалось загрузить соединения');
+			notifications.error(m.diag_conn_load_failed());
 			data = null;
 		} finally {
 			if (seq === requestSeq) {
@@ -142,14 +143,14 @@
 			protocol: conn.protocol,
 		});
 		if (ok) {
-			notifications.success('Соединение сброшено');
+			notifications.success(m.diag_conn_killed());
 		} else {
 			// Откат только если за время запроса не прошёл refresh —
 			// иначе затрём свежие данные устаревшим списком.
 			if (seqAtKill === requestSeq) {
 				data = { ...data, connections: prev };
 			}
-			notifications.error('Не удалось сбросить соединение');
+			notifications.error(m.diag_conn_kill_failed());
 		}
 	}
 

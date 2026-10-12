@@ -32,7 +32,7 @@
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { pluralize, SET_WORDS } from '$lib/utils/pluralize';
+	import { m } from '$lib/i18n';
 	import { Plus, LayoutGrid, Pencil, Trash2 } from 'lucide-svelte';
 	import { Button, ConfirmModal } from '$lib/components/ui';
 	import RuleSetAddModal from '$lib/components/routing/singboxRouter/RuleSetAddModal.svelte';
@@ -78,13 +78,13 @@
 		return $storeRuleSets.filter((rs) => resolveRuleSetDisplayType(rs) === filter);
 	});
 
-	const FILTERS: { k: RsFilter; l: string }[] = [
-		{ k: 'all', l: 'Все' },
+	const FILTERS = $derived<{ k: RsFilter; l: string }[]>([
+		{ k: 'all', l: m.fakeip_rulesets_filter_all() },
 		{ k: 'dat', l: 'dat' },
 		{ k: 'remote', l: 'remote' },
 		{ k: 'local', l: 'local' },
 		{ k: 'inline', l: 'inline' },
-	];
+	]);
 
 	// ── «используется в» (DNS #n · Route #m): DNS с 1, route с 0 ─────────
 	const usageRefs = $derived(computeRuleSetUsageRefs($storeDnsRules, $storeRules));
@@ -106,19 +106,18 @@
 	// «N правил в конфиге (.srs собран)» для inline.
 	function sourceFor(rs: SingboxRouterRuleSet): string {
 		const dat = datInfo(rs);
-		if (dat) return `${dat.kind}-каталог (dat-url)`;
+		if (dat) return m.fakeip_rulesets_source_dat_catalog({ kind: dat.kind });
 		if (rs.type === 'remote') return rs.url ?? '—';
 		if (rs.type === 'local') return rs.path ?? '—';
 		if (rs.type === 'inline') {
 			const n = rs.rules?.length ?? 0;
-			return `${pluralize(n, RULE_WORDS)} в конфиге`;
+			return m.fakeip_rulesets_source_inline_count({ count: n });
 		}
 		return '—';
 	}
 	function inlineMaterialized(rs: SingboxRouterRuleSet): boolean {
 		return rs.type === 'inline' && rs.materialized_srs === true;
 	}
-	const RULE_WORDS: [string, string, string] = ['правило', 'правила', 'правил'];
 
 	// «интервал»: update_interval · «—» для inline/local (sing-box тянет сам).
 	function intervalFor(rs: SingboxRouterRuleSet): string {
@@ -139,7 +138,7 @@
 		filtered.filter((rs) => rs.type === 'remote').map((rs) => rs.tag),
 	);
 
-	const bulkDetourOptions = $derived(buildDownloadDetourOptions($storeOptions, '— сбросить —'));
+	const bulkDetourOptions = $derived(buildDownloadDetourOptions($storeOptions, m.sb_router_expert_bulk_reset()));
 
 	function toggleSelectMode(): void {
 		selectMode = true;
@@ -169,12 +168,12 @@
 		bulkBusy = true;
 		try {
 			const { updated } = await api.singboxFakeIPBulkDetour([...selected], value);
-			notifications.success(`Изменено ${updated}`);
+			notifications.success(m.sb_router_rules_bulk_changed({ count: updated }));
 			selectMode = false;
 			selected = new Set();
 			await fakeipConfig.loadAll();
 		} catch (e) {
-			notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+			notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
 		} finally {
 			bulkBusy = false;
 		}
@@ -190,7 +189,7 @@
 		if (selectMode && prevRuleSetsRef !== undefined && current !== prevRuleSetsRef) {
 			selectMode = false;
 			selected = new Set();
-			notifications.info('Список изменился, выбор сброшен');
+			notifications.info(m.sb_router_rules_selection_reset());
 		}
 		prevRuleSetsRef = current;
 	});
@@ -220,17 +219,16 @@
 		rsEditTag !== null ? $storeRuleSets.find((rs) => rs.tag === rsEditTag) : undefined,
 	);
 
-	let pendingConfirm = $state<{ title: string; message: string; run: () => Promise<void> } | null>(
-		null,
-	);
+	// Храним тег (код), а не готовый текст: сообщение выводится при рендере.
+	let pendingDeleteTag = $state<string | null>(null);
 	let confirmBusy = $state(false);
 
 	async function runConfirm(): Promise<void> {
-		if (!pendingConfirm) return;
+		if (pendingDeleteTag === null) return;
 		confirmBusy = true;
 		try {
-			await pendingConfirm.run();
-			pendingConfirm = null;
+			await deleteRuleSet(pendingDeleteTag);
+			pendingDeleteTag = null;
 		} finally {
 			confirmBusy = false;
 		}
@@ -252,19 +250,17 @@
 	}
 
 	function handleDeleteRs(tag: string): void {
-		pendingConfirm = {
-			title: 'Удалить набор',
-			message: `Удалить набор «${displayRuleSetTag(tag)}»?`,
-			run: async () => {
-				try {
-					await api.singboxFakeIPDeleteRuleSet(tag);
-					await fakeipConfig.loadAll();
-					notifications.success('Набор удалён');
-				} catch (e) {
-					notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
-				}
-			},
-		};
+		pendingDeleteTag = tag;
+	}
+
+	async function deleteRuleSet(tag: string): Promise<void> {
+		try {
+			await api.singboxFakeIPDeleteRuleSet(tag);
+			await fakeipConfig.loadAll();
+			notifications.success(m.sb_router_expert_ruleset_deleted());
+		} catch (e) {
+			notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
+		}
 	}
 
 	async function handleRsCatalogConfirm(presets: CatalogPreset[]): Promise<void> {
@@ -279,16 +275,16 @@
 			await fakeipConfig.loadAll();
 
 			if (result.added.length > 0) {
-				notifications.success(`Добавлено ${pluralize(result.added.length, SET_WORDS)} из каталога`);
+				notifications.success(m.sb_router_expert_catalog_added({ count: result.added.length }));
 			} else if (result.failures.length === 0 && result.emptyPresets.length > 0) {
-				notifications.error('У выбранных сервисов нет sing-box наборов');
+				notifications.error(m.sb_router_expert_catalog_no_sets());
 			} else if (result.failures.length === 0) {
-				notifications.info('Выбранные наборы уже есть в конфиге');
+				notifications.info(m.sb_router_expert_catalog_already());
 			}
 
 			if (result.failures.length > 0) {
 				const msg = result.failures.map((f) => `${f.tag}: ${f.error}`).join('; ');
-				notifications.error(`Не удалось добавить: ${msg}`);
+				notifications.error(m.sb_router_expert_add_failed({ message: msg }));
 			} else if (result.added.length > 0 || result.emptyPresets.length === 0) {
 				rsCatalogOpen = false;
 			}
@@ -311,14 +307,14 @@
 					disabled={bulkBusy || filteredSelectableTags.length === 0}
 					onclick={selectAllRs}
 				>
-					Выбрать все
+					{m.sb_router_expert_select_all()}
 				</Button>
 			{:else}
 				{#if hasSelectable}
-					<Button variant="ghost" size="sm" onclick={toggleSelectMode}>Выбрать</Button>
+					<Button variant="ghost" size="sm" onclick={toggleSelectMode}>{m.common_select()}</Button>
 				{/if}
 				<button type="button" class="add ghost" onclick={() => (rsCatalogOpen = true)}>
-					<LayoutGrid size={14} strokeWidth={2} aria-hidden="true" /> Каталог
+					<LayoutGrid size={14} strokeWidth={2} aria-hidden="true" /> {m.sb_router_expert_catalog()}
 				</button>
 				<button type="button" class="add" onclick={() => (rsAddOpen = true)}>
 					<Plus size={14} strokeWidth={2} aria-hidden="true" /> Rule set
@@ -326,13 +322,10 @@
 			{/if}
 		</div>
 	</header>
-	<p class="pd">
-		Списки доменов/CIDR для DNS- и route-правил. remote (URL, sing-box обновляет по интервалу) ·
-		local (файл) · inline.
-	</p>
+	<p class="pd">{m.fakeip_rulesets_desc()}</p>
 
 	<!-- Тип-фильтр-чипы со счётчиками (client-side, «Все» активен по умолчанию) -->
-	<div class="filters" role="tablist" aria-label="Фильтр по типу набора">
+	<div class="filters" role="tablist" aria-label={m.fakeip_rulesets_filter_aria()}>
 		{#each FILTERS as f (f.k)}
 			<button
 				type="button"
@@ -350,16 +343,16 @@
 
 	<div class="table">
 		<div class="thead">
-			<div>имя</div>
-			<div>тип</div>
-			<div>источник</div>
-			<div class="center">интервал</div>
-			<div>используется в</div>
+			<div>{m.fakeip_rulesets_col_name()}</div>
+			<div>{m.fakeip_rulesets_col_type()}</div>
+			<div>{m.fakeip_rulesets_col_source()}</div>
+			<div class="center">{m.fakeip_rulesets_col_interval()}</div>
+			<div>{m.fakeip_rulesets_col_used_in()}</div>
 			<div class="actions-col"></div>
 		</div>
 
 		{#if filtered.length === 0}
-			<div class="empty">Нет наборов</div>
+			<div class="empty">{m.sb_router_rs_empty()}</div>
 		{:else}
 			{#each filtered as rs (rs.tag)}
 				{@const ref = usageRefs.get(displayRuleSetTag(rs.tag))}
@@ -373,12 +366,12 @@
 									class="rs-checkbox"
 									checked={selected.has(rs.tag)}
 									onchange={() => toggleSelect(rs.tag)}
-									aria-label={`Выбрать набор ${displayRuleSetTag(rs.tag)}`}
+									aria-label={m.sb_router_rs_select_aria({ tag: displayRuleSetTag(rs.tag) })}
 								/>
 							{:else}
 								<span
 									class="rs-checkbox-placeholder"
-									title="Download detour применим только к remote"
+									title={m.sb_router_rs_detour_remote_only()}
 									aria-hidden="true"
 								></span>
 							{/if}
@@ -391,7 +384,7 @@
 					</div>
 					<div class="src" title={sourceFor(rs)}>
 						{sourceFor(rs)}
-						{#if inlineMaterialized(rs)}<span class="mut">(.srs собран)</span>{/if}
+						{#if inlineMaterialized(rs)}<span class="mut">{m.fakeip_rulesets_srs_built()}</span>{/if}
 					</div>
 					<div class="interval center">{intervalFor(rs)}</div>
 					<div class="used">
@@ -412,8 +405,8 @@
 							type="button"
 							class="ib"
 							onclick={() => (rsEditTag = rs.tag)}
-							aria-label={`Редактировать набор ${displayRuleSetTag(rs.tag)}`}
-							title={`Редактировать набор «${displayRuleSetTag(rs.tag)}»`}
+							aria-label={m.fakeip_rulesets_edit_aria({ tag: displayRuleSetTag(rs.tag) })}
+							title={m.fakeip_rulesets_edit_title({ tag: displayRuleSetTag(rs.tag) })}
 						>
 							<Pencil size={15} strokeWidth={2} />
 						</button>
@@ -421,8 +414,8 @@
 							type="button"
 							class="ib danger"
 							onclick={() => handleDeleteRs(rs.tag)}
-							aria-label={`Удалить набор ${displayRuleSetTag(rs.tag)}`}
-							title={`Удалить набор «${displayRuleSetTag(rs.tag)}»`}
+							aria-label={m.fakeip_rulesets_delete_aria({ tag: displayRuleSetTag(rs.tag) })}
+							title={m.fakeip_rulesets_delete_title({ tag: displayRuleSetTag(rs.tag) })}
 						>
 							<Trash2 size={15} strokeWidth={2} />
 						</button>
@@ -436,7 +429,7 @@
 		<BulkSelectBar
 			count={selected.size}
 			options={bulkDetourOptions}
-			applyLabel="Применить"
+			applyLabel={m.common_apply()}
 			onapply={applyBulkDetour}
 			oncancel={cancelSelectMode}
 			busy={bulkBusy}
@@ -475,13 +468,15 @@
 {/if}
 
 <ConfirmModal
-	open={pendingConfirm !== null}
-	title={pendingConfirm?.title ?? ''}
-	message={pendingConfirm?.message ?? ''}
+	open={pendingDeleteTag !== null}
+	title={pendingDeleteTag !== null ? m.sb_router_expert_ruleset_delete_title() : ''}
+	message={pendingDeleteTag !== null
+		? m.sb_router_expert_ruleset_delete_message({ tag: displayRuleSetTag(pendingDeleteTag) })
+		: ''}
 	busy={confirmBusy}
 	onConfirm={runConfirm}
 	onClose={() => {
-		if (!confirmBusy) pendingConfirm = null;
+		if (!confirmBusy) pendingDeleteTag = null;
 	}}
 />
 

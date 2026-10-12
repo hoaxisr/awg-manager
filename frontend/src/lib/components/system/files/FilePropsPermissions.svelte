@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api, type SystemFileEntry } from '$lib/api/client';
 	import { Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
@@ -28,10 +29,10 @@
 		parseMode(entry.mode);
 	});
 
-	function parseMode(m: string) {
-		if (!m) return;
-		if (m.length >= 9) {
-			const str = m.slice(-9);
+	function parseMode(mode: string) {
+		if (!mode) return;
+		if (mode.length >= 9) {
+			const str = mode.slice(-9);
 			uR = str[0] === 'r';
 			uW = str[1] === 'w';
 			uX = str[2] === 'x';
@@ -57,10 +58,10 @@
 		try {
 			const rawOctal = octalMode.replace(/^0/, '');
 			await api.systemFilesChmod(entry.path, rawOctal);
-			notifications.success(`Права изменены на ${rawOctal}`);
+			notifications.success(m.system_files_perm_changed({ mode: rawOctal }));
 			onUpdated?.();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось изменить права'));
+			notifications.error(errorMessage(e, m.system_files_perm_failed()));
 		} finally {
 			savingChmod = false;
 		}
@@ -70,30 +71,30 @@
 <div class="section-box">
 	<div class="section-title">
 		<Shield size={15} />
-		<span>Права доступа (chmod {octalMode})</span>
+		<span>{m.system_files_perm_title({ mode: octalMode })}</span>
 	</div>
 
 	<div class="chmod-table">
 		<div class="chmod-header">
 			<span></span>
-			<span>Чтение (r)</span>
-			<span>Запись (w)</span>
-			<span>Запуск (x)</span>
+			<span>{m.system_files_perm_read()}</span>
+			<span>{m.system_files_perm_write()}</span>
+			<span>{m.system_files_perm_exec()}</span>
 		</div>
 		<div class="chmod-row">
-			<span class="role">Владелец:</span>
+			<span class="role">{m.system_files_perm_owner()}</span>
 			<label><input type="checkbox" bind:checked={uR} disabled={readOnly} /></label>
 			<label><input type="checkbox" bind:checked={uW} disabled={readOnly} /></label>
 			<label><input type="checkbox" bind:checked={uX} disabled={readOnly} /></label>
 		</div>
 		<div class="chmod-row">
-			<span class="role">Группа:</span>
+			<span class="role">{m.system_files_perm_group()}</span>
 			<label><input type="checkbox" bind:checked={gR} disabled={readOnly} /></label>
 			<label><input type="checkbox" bind:checked={gW} disabled={readOnly} /></label>
 			<label><input type="checkbox" bind:checked={gX} disabled={readOnly} /></label>
 		</div>
 		<div class="chmod-row">
-			<span class="role">Остальные:</span>
+			<span class="role">{m.system_files_perm_others()}</span>
 			<label><input type="checkbox" bind:checked={oR} disabled={readOnly} /></label>
 			<label><input type="checkbox" bind:checked={oW} disabled={readOnly} /></label>
 			<label><input type="checkbox" bind:checked={oX} disabled={readOnly} /></label>
@@ -103,7 +104,7 @@
 	{#if !readOnly}
 		<div class="chmod-actions">
 			<Button size="sm" variant="secondary" loading={savingChmod} onclick={applyChmod}>
-				Применить права ({octalMode})
+				{m.system_files_perm_apply({ mode: octalMode })}
 			</Button>
 		</div>
 	{/if}

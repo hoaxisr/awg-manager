@@ -597,7 +597,7 @@
 	targetId={kind === 'proxy' ? proxy?.id ?? '' : subscription?.id ?? ''}
 	resourceKind={kind}
 	displayName={title}
-	subjectLabel={kind === 'proxy' ? 'туннель' : 'подписку'}
+	subject={kind === 'proxy' ? 'tunnel' : 'subscription'}
 	iface={bridge?.kernelInterface}
 	unavailableReason={diagnosticsUnavailable}
 	onclose={() => diagnosticsOpen = false}

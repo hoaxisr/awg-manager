@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { ShieldAlert } from 'lucide-svelte';
 
 	interface Props {
@@ -14,7 +15,7 @@
 </script>
 
 {#if service}
-	<span class="svc-badge" title="Служба init.d">{service}</span>
+	<span class="svc-badge" title={m.system_ports_badge_service_title()}>{service}</span>
 {/if}
 {#if isSelf}
 	<span class="self-badge" title={selfTitle}>{selfLabel}</span>

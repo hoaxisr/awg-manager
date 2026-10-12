@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { ALL_HEADERS_PRESET } from './headersParser';
+	import { m } from '$lib/i18n';
+	import { allHeadersPreset } from './headersParser';
 	import { Dropdown } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import type { SubscriptionHeaderProfile } from '$lib/types';
@@ -23,17 +24,17 @@
 
 	let presetOptions = $derived([
 		...profiles.map((p) => ({ value: p.kind, label: p.label })),
-		{ value: 'all', label: 'Полный шаблон заголовков' },
+		{ value: 'all', label: m.subscriptions_headers_preset_full() },
 	]);
 
 	function applyPreset(preset: string): void {
-		if (value.trim() && !confirm('Заменить текущие заголовки пресетом?')) return;
+		if (value.trim() && !confirm(m.subscriptions_headers_replace_confirm())) return;
 		value = preset;
 	}
 
 	async function pickPreset(kind: string): Promise<void> {
 		if (kind === 'all') {
-			applyPreset(ALL_HEADERS_PRESET);
+			applyPreset(allHeadersPreset());
 			return;
 		}
 		// Перезапрос — ради свежих HWID / модели устройства: часть значений
@@ -46,12 +47,12 @@
 
 <div class="head">
 	<div class="head-label">
-		<label class="lbl" for="hdr">Заголовки запроса</label>
+		<label class="lbl" for="hdr">{m.subscriptions_headers_label()}</label>
 		<span class="info-hint">
 			<button
 				type="button"
 				class="info-trigger"
-				aria-label="Подсказка по заголовкам"
+				aria-label={m.subscriptions_headers_help_aria()}
 				aria-expanded={showHelp}
 				onclick={() => (showHelp = !showHelp)}
 			>
@@ -65,7 +66,7 @@
 	</div>
 	<div class="head-actions">
 		<Dropdown
-			placeholder="Подставить пресет"
+			placeholder={m.subscriptions_headers_preset_placeholder()}
 			options={presetOptions}
 			onchange={(v) => void pickPreset(v)}
 		/>
@@ -75,17 +76,17 @@
 {#if showHelp}
 	<div class="help">
 		<div class="help-row">
-			Один заголовок на строку, формат <code>Имя: Значение</code>.
-			Пустые строки и строки с <code>#</code> игнорируются.
+			{m.subscriptions_headers_help_one_per_line()} <code>{m.subscriptions_headers_help_example_name_value()}</code>.
+			{m.subscriptions_headers_help_empty_lines()} <code>#</code> {m.subscriptions_headers_help_ignored()}
 		</div>
 		<div class="help-row">
-			<span class="help-lbl">Поддерживаемые заголовки</span> — любые,
-			кроме служебных: <code>Connection</code>, <code>Host</code>,
+			<span class="help-lbl">{m.subscriptions_headers_help_supported()}</span> {m.subscriptions_headers_help_supported_except()}
+			<code>Connection</code>, <code>Host</code>,
 			<code>Content-Length</code>, <code>Transfer-Encoding</code>,
-			<code>Upgrade</code>. Они управляются Go-клиентом и тихо игнорируются.
+			<code>Upgrade</code>. {m.subscriptions_headers_help_go_client()}
 		</div>
 		<div class="help-row">
-			<span class="help-lbl">Часто требуются провайдерами</span>:
+			<span class="help-lbl">{m.subscriptions_headers_help_often_required()}</span>:
 			<code>User-Agent</code>, <code>X-HWID</code>,
 			<code>X-Device-OS</code>, <code>X-Device-Locale</code>,
 			<code>X-Device-Model</code>, <code>X-Ver-OS</code>,
@@ -99,7 +100,7 @@
 	id="hdr"
 	class="textarea"
 	bind:value
-	placeholder={'# Пример:\nUser-Agent: mihomo/v1.19.20'}
+	placeholder={`# ${m.subscriptions_headers_example()}\nUser-Agent: mihomo/v1.19.20`}
 	rows="8"
 ></textarea>
 

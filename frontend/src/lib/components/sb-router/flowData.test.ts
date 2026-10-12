@@ -10,7 +10,7 @@ const dnsServers: SingboxRouterDNSServer[] = [
 ];
 const globals: SingboxRouterDNSGlobals = { final: 'dns-direct', strategy: 'ipv4_only' };
 const outboundOptions: OutboundGroup[] = [
-  { group: 'AWG туннели', items: [{ value: 'awg-awg10', label: 'Office VPN (t2s10)' }] },
+  { id: 'awg', items: [{ value: 'awg-awg10', label: 'Office VPN (t2s10)' }] },
 ];
 
 const wanIfaces: SingboxRouterWANInterface[] = [

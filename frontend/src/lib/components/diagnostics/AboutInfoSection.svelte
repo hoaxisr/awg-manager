@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Copy } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { formatAboutSection, type AboutInfoRow } from '$lib/utils/about-device';
@@ -16,9 +17,9 @@
 		if (rows.length === 0) return;
 		const ok = await copyToClipboard(formatAboutSection(title, rows));
 		if (ok) {
-			notifications.success(`Блок «${title}» скопирован`);
+			notifications.success(m.diag_about_block_copied({ title }));
 		} else {
-			notifications.error('Не удалось скопировать');
+			notifications.error(m.diag_about_copy_failed());
 		}
 	}
 </script>
@@ -32,22 +33,22 @@
 				class="about-copy-btn"
 				onclick={copyBlock}
 				disabled={rows.length === 0}
-				aria-label="Скопировать блок «{title}»"
-				title="Скопировать блок"
+				aria-label={m.diag_about_copy_block_aria({ title })}
+				title={m.diag_about_copy_block()}
 			>
 				<Copy size={13} aria-hidden="true" />
 			</button>
 		</div>
 		{#if loading}
-			<span class="about-loading" aria-live="polite">обновление…</span>
+			<span class="about-loading" aria-live="polite">{m.diag_about_updating()}</span>
 		{/if}
 	</div>
 
 	<div class="about-rows">
-		{#each rows as row (row.label)}
+		{#each rows as row (row.id)}
 			<div class="setting-row about-row">
 				<span class="about-key">{row.label}</span>
-				<span class="about-val" class:about-val-mono={row.label !== 'User-Agent'} title={row.title}>{row.value}</span>
+				<span class="about-val" class:about-val-mono={row.id !== 'userAgent'} title={row.title}>{row.value}</span>
 			</div>
 		{/each}
 	</div>

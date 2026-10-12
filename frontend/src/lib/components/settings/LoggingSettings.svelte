@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Toggle, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import type { Settings } from '$lib/types';
 	import { usageLevel } from '$lib/stores/settings';
@@ -56,14 +57,14 @@
 		onSave();
 	}
 
-	const hoursOptions: DropdownOption[] = [
-		{ value: '1', label: '1 ч' },
-		{ value: '2', label: '2 ч' },
-		{ value: '4', label: '4 ч' },
-		{ value: '8', label: '8 ч' },
-		{ value: '12', label: '12 ч' },
-		{ value: '24', label: '24 ч' },
-	];
+	const hoursOptions: DropdownOption[] = $derived([
+		{ value: '1', label: m.settings_logging_hours_option({ hours: 1 }) },
+		{ value: '2', label: m.settings_logging_hours_option({ hours: 2 }) },
+		{ value: '4', label: m.settings_logging_hours_option({ hours: 4 }) },
+		{ value: '8', label: m.settings_logging_hours_option({ hours: 8 }) },
+		{ value: '12', label: m.settings_logging_hours_option({ hours: 12 }) },
+		{ value: '24', label: m.settings_logging_hours_option({ hours: 24 }) },
+	]);
 
 	const levelOptions: DropdownOption<AwgmLogLevel>[] = [
 		{ value: 'info', label: 'INFO' },
@@ -105,9 +106,9 @@
 
 <div id="logging" class="setting-row logging-main-row">
 	<div class="flex flex-col gap-1">
-		<span class="font-medium">Логирование</span>
+		<span class="font-medium">{m.settings_logging_label()}</span>
 		<span class="setting-description">
-			Запись событий приложения в память для отладки и аудита.
+			{m.settings_logging_description()}
 		</span>
 	</div>
 	<div class="setting-controls">
@@ -129,8 +130,8 @@
 {#if settings.logging.enabled}
 	<div class="setting-row logging-level-row">
 		<div class="flex flex-col gap-1">
-			<span class="font-medium">Уровень логирования AWGM</span>
-			<span class="setting-description">INFO — результаты операций. FULL — промежуточные шаги и debug-строки sing-box. DEBUG — полная информация, включая trace движка.</span>
+			<span class="font-medium">{m.settings_logging_awgm_level_label()}</span>
+			<span class="setting-description">{m.settings_logging_awgm_level_description()}</span>
 		</div>
 		<div class="hours-select">
 			<Dropdown
@@ -144,8 +145,8 @@
 	</div>
 	<div class="setting-row logging-level-row">
 		<div class="flex flex-col gap-1">
-			<span class="font-medium">Уровень логирования Sing-box</span>
-			<span class="setting-description">Задаёт, что пишет сам движок в свой лог. В журнал приложения строки движка отбирает уровень AWGM выше: debug-строки — с FULL, trace — только с DEBUG.</span>
+			<span class="font-medium">{m.settings_logging_singbox_level_label()}</span>
+			<span class="setting-description">{m.settings_logging_singbox_level_description()}</span>
 		</div>
 		<div class="hours-select">
 			<Dropdown
@@ -160,8 +161,8 @@
 
 	<div class="setting-row logging-buffer-row">
 		<div class="flex flex-col gap-1">
-			<span class="font-medium">Размер буфера приложения</span>
-			<span class="setting-description">Сколько записей удерживать в журнале приложения (туннели, маршрутизация, серверы, система). По умолчанию 5000.</span>
+			<span class="font-medium">{m.settings_logging_app_buffer_label()}</span>
+			<span class="setting-description">{m.settings_logging_app_buffer_description()}</span>
 		</div>
 		<div class="num-input">
 			<input
@@ -179,8 +180,8 @@
 	{#if !isBasic}
 		<div class="setting-row logging-buffer-row">
 			<div class="flex flex-col gap-1">
-				<span class="font-medium">Размер буфера sing-box</span>
-				<span class="setting-description">Sing-box форвардер шумный — отдельный буфер, чтобы не вытеснять записи приложения. По умолчанию 5000.</span>
+				<span class="font-medium">{m.settings_logging_singbox_buffer_label()}</span>
+				<span class="setting-description">{m.settings_logging_singbox_buffer_description()}</span>
 			</div>
 			<div class="num-input">
 				<input

@@ -1,13 +1,16 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Card } from '$lib/components/ui';
 	import { Compass, ShieldCheck, Coffee, Zap } from 'lucide-svelte';
-	import type { PonyDestination } from './types';
+	import type { PonyClass, PonyDestination } from './types';
 
 	interface Props {
 		destinations: PonyDestination[];
-		passengerName: string;
+		/** null — имя по умолчанию, пока пользователь не начал печатать. */
+		passengerName: string | null;
+		/** id направления. */
 		destination: string;
-		serviceClass: string;
+		serviceClass: PonyClass;
 		optVpnImmunity: boolean;
 		optMarshmallow: boolean;
 		optRainbowBoost: boolean;
@@ -28,32 +31,37 @@
 	<div class="form-container">
 		<div class="section-title">
 			<Compass size={18} class="text-pink" />
-			<span>Параметры волшебного путешествия</span>
+			<span>{m.system_ponies_form_title()}</span>
 		</div>
 
 		<label class="p-field">
-			<span class="p-label">Имя пассажира:</span>
-			<input type="text" bind:value={passengerName} placeholder="Введите ваше имя" />
+			<span class="p-label">{m.system_ponies_form_passenger()}</span>
+			<input
+				type="text"
+				value={passengerName ?? m.system_ponies_default_passenger()}
+				oninput={(e) => (passengerName = e.currentTarget.value)}
+				placeholder={m.system_ponies_form_passenger_placeholder()}
+			/>
 		</label>
 
 		<label class="p-field">
-			<span class="p-label">Куда отправляемся:</span>
+			<span class="p-label">{m.system_ponies_form_destination()}</span>
 			<select bind:value={destination}>
 				{#each destinations as d}
-					<option value={d.name}>{d.name}</option>
+					<option value={d.id}>{d.name}</option>
 				{/each}
 			</select>
 		</label>
 
 		<!-- Class of service -->
 		<div class="p-field">
-			<span class="p-label">Класс обслуживания:</span>
+			<span class="p-label">{m.system_ponies_form_class()}</span>
 			<div class="class-selector">
 				<label class="class-card" class:active={serviceClass === 'vip'}>
 					<input type="radio" bind:group={serviceClass} value="vip" />
 					<div class="class-info">
-						<div class="class-name">👑 VIP Пегас</div>
-						<div class="class-sub">Личный пони-массажист и облачный шезлонг</div>
+						<div class="class-name">{m.system_ponies_class_vip_name()}</div>
+						<div class="class-sub">{m.system_ponies_class_vip_sub()}</div>
 					</div>
 					<span class="class-price">999 ✨</span>
 				</label>
@@ -61,8 +69,8 @@
 				<label class="class-card" class:active={serviceClass === 'business'}>
 					<input type="radio" bind:group={serviceClass} value="business" />
 					<div class="class-info">
-						<div class="class-name">🎠 Зефирный Бизнес</div>
-						<div class="class-sub">Карета с панорамным видом на радугу</div>
+						<div class="class-name">{m.system_ponies_class_business_name()}</div>
+						<div class="class-sub">{m.system_ponies_class_business_sub()}</div>
 					</div>
 					<span class="class-price">450 ✨</span>
 				</label>
@@ -70,8 +78,8 @@
 				<label class="class-card" class:active={serviceClass === 'eco'}>
 					<input type="radio" bind:group={serviceClass} value="eco" />
 					<div class="class-info">
-						<div class="class-name">🦄 Эконом-Единорог</div>
-						<div class="class-sub">Ветрено, зато весело и с ветерком</div>
+						<div class="class-name">{m.system_ponies_class_eco_name()}</div>
+						<div class="class-sub">{m.system_ponies_class_eco_sub()}</div>
 					</div>
 					<span class="class-price">100 ✨</span>
 				</label>
@@ -80,24 +88,24 @@
 
 		<!-- Extra options -->
 		<div class="p-field">
-			<span class="p-label">Волшебные доп. опции:</span>
+			<span class="p-label">{m.system_ponies_form_options()}</span>
 			<div class="opts-list">
 				<label class="opt-item">
 					<input type="checkbox" bind:checked={optVpnImmunity} />
 					<ShieldCheck size={16} class="text-pink" />
-					<span>Иммунитет от блокировок Роскомнадзора в полете</span>
+					<span>{m.system_ponies_opt_vpn()}</span>
 					<span class="opt-badge">+50 ✨</span>
 				</label>
 				<label class="opt-item">
 					<input type="checkbox" bind:checked={optMarshmallow} />
 					<Coffee size={16} class="text-pink" />
-					<span>Бесконечный стакан какао с зефирками маршмеллоу</span>
+					<span>{m.system_ponies_opt_marshmallow()}</span>
 					<span class="opt-badge">+20 ✨</span>
 				</label>
 				<label class="opt-item">
 					<input type="checkbox" bind:checked={optRainbowBoost} />
 					<Zap size={16} class="text-pink" />
-					<span>Радужный ускоритель скорости (10 Гбит/с)</span>
+					<span>{m.system_ponies_opt_rainbow()}</span>
 					<span class="opt-badge">+99 ✨</span>
 				</label>
 			</div>

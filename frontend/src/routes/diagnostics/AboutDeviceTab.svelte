@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { systemInfo } from '$lib/stores/system';
@@ -259,17 +260,17 @@
 		const text = buildAboutReportText();
 		const ok = await copyToClipboard(text);
 		if (ok) {
-			notifications.success('Отчёт скопирован в буфер обмена');
+			notifications.success(m.diag_about_copied());
 		} else {
-			notifications.error('Не удалось скопировать');
+			notifications.error(m.diag_about_copy_failed());
 		}
 	}
 
 	function buildAboutReportText(): string {
 		const sections = [
-			{ title: 'Роутер', rows: routerRows },
-			{ title: 'Браузер', rows: browserRows },
-			{ title: 'Клиент в сети роутера', rows: clientRows },
+			{ title: m.diag_about_section_router(), rows: routerRows },
+			{ title: m.diag_about_section_browser(), rows: browserRows },
+			{ title: m.diag_about_section_client(), rows: clientRows },
 			{ title: 'AWGM', rows: servicesRows },
 		];
 		return formatAboutReport(sections);
@@ -279,32 +280,32 @@
 
 <div class="about-toolbar">
 	<Button variant="secondary" size="sm" onclick={() => refresh()} loading={refreshing}>
-		Обновить
+		{m.common_refresh()}
 	</Button>
 	<Button variant="ghost" size="sm" onclick={copyReport} disabled={refreshing || !sysInfo}>
-		Скопировать данные
+		{m.diag_dns_copy_data()}
 	</Button>
 </div>
 
 <NdmsPolicyHintBanner {isOS5} />
 
 {#if !sysInfo && $systemInfo.status === 'loading'}
-	<p class="about-hint">Загрузка данных о роутере…</p>
+	<p class="about-hint">{m.diag_about_loading()}</p>
 {:else if !sysInfo && $systemInfo.status === 'error'}
-	<p class="about-hint about-hint-warn">Не удалось загрузить информацию о роутере.</p>
+	<p class="about-hint about-hint-warn">{m.diag_about_load_failed()}</p>
 {/if}
 
 <div class="about-grid">
 	{#if sysInfo}
-		<AboutInfoSection title="Роутер" rows={routerRows} loading={refreshing && !sysInfo} />
+		<AboutInfoSection title={m.diag_about_section_router()} rows={routerRows} loading={refreshing && !sysInfo} />
 	{/if}
 	<AboutInfoSection
-		title="Клиент в сети роутера"
+		title={m.diag_about_section_client()}
 		rows={clientRows}
 		loading={refreshing && routerClient === null}
 	/>
 	<AboutInfoSection
-		title="Браузер"
+		title={m.diag_about_section_browser()}
 		rows={browserRows}
 		loading={refreshing && !browserSnap}
 	/>

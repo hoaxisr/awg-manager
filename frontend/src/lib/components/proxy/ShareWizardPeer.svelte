@@ -8,6 +8,7 @@
 	// Каталог `serverPeerOptions`, `.conf` пира из API и подстановка локального
 	// Endpoint. Тот же виджет служит модалке «Добавить» абонента (#871): там
 	// пиры отфильтрованы по серверу `-connect` и есть опция «создать нового».
+	import { m } from '$lib/i18n';
 	import { onMount, untrack } from 'svelte';
 	import { Dropdown, Input } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -124,7 +125,7 @@
 				// `onconnect` не звали: адрес остался от прошлого выбора, и ссылка
 				// собралась бы на чужой сервер. Причину уносим наверх (WS-48).
 				listenUnknown = true;
-				notifications.error('Не удалось определить listenPort сервера');
+				notifications.error(m.proxy_share_peer_listen_unknown());
 				return;
 			}
 			onconnect(`127.0.0.1:${listen}`);
@@ -150,32 +151,32 @@
 </script>
 
 <div class="peer-block">
-	<p class="block-label">WG-сервер роутера</p>
-	<p class="block-hint">Сюда FreeTurn отдаст трафик</p>
+	<p class="block-label">{m.proxy_share_peer_title()}</p>
+	<p class="block-hint">{m.proxy_share_peer_hint()}</p>
 
 	<div class="grid">
 		<Dropdown
-			label="Пир"
+			label={m.proxy_share_peer_label()}
 			value={selected}
 			options={options}
-			placeholder={options.length ? 'Выберите…' : 'Нет поднятых WG-серверов с пирами'}
+			placeholder={options.length ? m.proxy_share_peer_choose() : m.proxy_share_peer_none()}
 			disabled={!options.length || loading}
 			onchange={(v) => void pick(v)}
 			fullWidth
 		/>
 		<Input
-			label="Порт"
+			label={m.proxy_common_port()}
 			type="number"
 			value={port}
 			oninput={(v) => (port = v)}
-			hint="Локальный порт FreeTurn-клиента, который смотрит на этот сервер"
+			hint={m.proxy_share_peer_port_hint()}
 			fullWidth
 		/>
 	</div>
 
 	{#if keenetic}
-		<p class="warn">Приватный ключ пира недоступен — вставьте .conf вручную</p>
-		<ConfPasteBox label="Вставить клиентский .conf" bind:value={manualConf} />
+		<p class="warn">{m.proxy_share_peer_key_missing()}</p>
+		<ConfPasteBox label={m.proxy_share_peer_paste()} bind:value={manualConf} />
 	{/if}
 </div>
 

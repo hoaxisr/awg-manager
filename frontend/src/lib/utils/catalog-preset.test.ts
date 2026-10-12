@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CatalogPreset } from '$lib/types';
 import {
 	DNS_LARGE_LIST_THRESHOLD,
-	DNS_LARGE_LIST_NOTICE,
+	dnsLargeListNotice,
 	applyPresetToggle,
 	catalogCardMarker,
 	catalogPresetCardNotice,
@@ -157,7 +157,7 @@ describe('catalogPresetCardNotice', () => {
 			},
 		};
 		const text = catalogPresetCardNotice(p, true);
-		expect(text).toContain(DNS_LARGE_LIST_NOTICE);
+		expect(text).toContain(dnsLargeListNotice());
 		expect(text).toContain('Sensitive');
 	});
 

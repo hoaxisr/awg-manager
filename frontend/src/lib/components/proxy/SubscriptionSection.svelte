@@ -3,6 +3,7 @@
 	// peer (ручка бэкенда), а смена сервера внутри подписки — это повторный
 	// импорт профиля, поэтому он и живёт под «Применить и запустить»
 	// (оговорка факт-чека EX-31/32/33).
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -87,27 +88,27 @@
 	}
 </script>
 
-<DetailSection title="Подписка">
+<DetailSection title={m.proxy_sub_title()}>
 	<p class="line"><code>{client.sub}</code></p>
 	{#if profiles.length}
-		<select class="profile-select" bind:value={selected} aria-label="Подписка">
+		<select class="profile-select" bind:value={selected} aria-label={m.proxy_sub_title()}>
 			{#each profiles as p, idx (idx)}
 				<option value={idx}>{profileLabel(p, idx)}</option>
 			{/each}
 		</select>
 		{#if applied}
-			<p class="line">Этот профиль уже применён</p>
+			<p class="line">{m.proxy_sub_already_applied()}</p>
 		{/if}
 	{/if}
 	<div class="btn-row">
-		<Button variant="secondary" loading={refreshing} onclick={refresh}>Обновить список</Button>
+		<Button variant="secondary" loading={refreshing} onclick={refresh}>{m.proxy_sub_refresh()}</Button>
 		<Button
 			variant="primary"
 			loading={applying}
 			disabled={!profiles.length}
 			onclick={applyAndStart}
 		>
-			Применить и запустить
+			{m.proxy_sub_apply_start()}
 		</Button>
 	</div>
 </DetailSection>

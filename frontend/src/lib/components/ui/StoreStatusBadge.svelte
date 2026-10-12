@@ -1,4 +1,5 @@
 <script lang="ts" generics="T">
+    import { m } from '$lib/i18n';
     import type { PollingStore } from '$lib/stores/polling';
     import Badge from './Badge.svelte';
 
@@ -22,11 +23,11 @@
 
     let s = $derived($store);
 
-    function humanAge(ms: number): string {
-        if (ms === 0) return 'никогда';
+    function updatedText(ms: number): string {
+        if (ms === 0) return m.ui_store_status_updated_never();
         const secs = Math.floor((Date.now() - ms) / 1000);
-        if (secs < 60) return `${secs}с назад`;
-        return `${Math.floor(secs / 60)}мин назад`;
+        if (secs < 60) return m.ui_store_status_updated_secs({ secs });
+        return m.ui_store_status_updated_mins({ mins: Math.floor(secs / 60) });
     }
 
     async function retry() {
@@ -37,8 +38,8 @@
 {#if s.status === 'error' && s.consecutiveFailures >= threshold}
     <span role="status" aria-live="polite">
         <Badge variant="error">
-            <span>обновлено {humanAge(s.lastFetchedAt)}</span>
-            <button type="button" onclick={retry}>повторить</button>
+            <span>{updatedText(s.lastFetchedAt)}</span>
+            <button type="button" onclick={retry}>{m.ui_store_status_retry()}</button>
         </Badge>
     </span>
 {/if}

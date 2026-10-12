@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount, onDestroy } from 'svelte';
   import { contextMenu, closeContextMenu } from './log-row-context-menu';
 
@@ -33,17 +34,17 @@
     role="menu"
   >
     <button type="button" role="menuitem" onclick={() => { $contextMenu.onCopyLine?.(); closeContextMenu(); }}>
-      Скопировать строку
+      {m.diag_logs_menu_copy_line()}
     </button>
     <button type="button" role="menuitem" onclick={() => { $contextMenu.onCopyMessage?.(); closeContextMenu(); }}>
-      Скопировать сообщение
+      {m.diag_logs_menu_copy_message()}
     </button>
     <hr />
     <button type="button" role="menuitem" onclick={() => { $contextMenu.onFilterScope?.(); closeContextMenu(); }}>
-      Фильтр по scope
+      {m.diag_logs_menu_filter_scope()}
     </button>
     <button type="button" role="menuitem" onclick={() => { $contextMenu.onFilterLevel?.(); closeContextMenu(); }}>
-      Фильтр по уровню
+      {m.diag_logs_menu_filter_level()}
     </button>
   </div>
 {/if}

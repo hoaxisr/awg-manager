@@ -1,11 +1,18 @@
+export type PonyClass = 'vip' | 'business' | 'eco';
+export type PonyOption = 'vpn' | 'marshmallow' | 'rainbow';
+
+/**
+ * Заказ хранит только коды: подписи (класс, опции, направление, имя по умолчанию)
+ * вычисляются при отрисовке, чтобы билет следовал за языком интерфейса.
+ */
 export interface TicketOrder {
-	passengerName: string;
-	destination: string;
-	serviceClass: string;
-	options: string[];
+	/** Введённое имя без пробелов по краям; null — поле не трогали (имя по умолчанию). */
+	passengerName: string | null;
+	destinationId: string;
+	serviceClass: PonyClass;
+	options: PonyOption[];
 	ticketNumber: string;
 	seat: string;
-	flightTime: string;
 	priceGlitter: number;
 }
 

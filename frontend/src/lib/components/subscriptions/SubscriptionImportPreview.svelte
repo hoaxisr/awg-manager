@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SubscriptionPreviewMember } from '$lib/types';
 
 	interface Props {
@@ -27,20 +28,20 @@
 	}
 
 	const protocolCounts = $derived.by(() => {
-		const m = new Map<string, number>();
+		const counts = new Map<string, number>();
 		for (const member of members) {
-			m.set(member.protocol, (m.get(member.protocol) ?? 0) + 1);
+			counts.set(member.protocol, (counts.get(member.protocol) ?? 0) + 1);
 		}
-		return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+		return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 	});
 
 	const filtered = $derived.by(() => {
 		const q = filter.trim().toLowerCase();
-		return members.filter((m) => {
-			if (activeProtocol && m.protocol !== activeProtocol) return false;
+		return members.filter((member) => {
+			if (activeProtocol && member.protocol !== activeProtocol) return false;
 			if (!q) return true;
-			const label = (m.label ?? '').toLowerCase();
-			return label.includes(q) || m.server.toLowerCase().includes(q);
+			const label = (member.label ?? '').toLowerCase();
+			return label.includes(q) || member.server.toLowerCase().includes(q);
 		});
 	});
 
@@ -54,25 +55,25 @@
 			class="filter"
 			type="text"
 			bind:value={filter}
-			placeholder="Фильтр по названию или серверу"
-			aria-label="Фильтр серверов"
+			placeholder={m.subscriptions_preview_filter_placeholder()}
+			aria-label={m.subscriptions_preview_filter_aria()}
 		/>
 		<div class="bulk">
-			<button type="button" class="link-btn" onclick={onselectAll}>Выбрать все</button>
+			<button type="button" class="link-btn" onclick={onselectAll}>{m.subscriptions_preview_select_all()}</button>
 			<span class="sep" aria-hidden="true">·</span>
-			<button type="button" class="link-btn" onclick={onselectNone}>Снять все</button>
+			<button type="button" class="link-btn" onclick={onselectNone}>{m.subscriptions_preview_select_none()}</button>
 		</div>
 	</div>
 
 	{#if protocolCounts.length > 1}
-		<div class="chips" role="group" aria-label="Фильтр по протоколу">
+		<div class="chips" role="group" aria-label={m.subscriptions_preview_protocol_filter_aria()}>
 			<button
 				type="button"
 				class="proto-chip"
 				class:active={activeProtocol === ''}
 				onclick={() => (activeProtocol = '')}
 			>
-				Все ({members.length})
+				{m.subscriptions_preview_all_count({ count: members.length })}
 			</button>
 			{#each protocolCounts as [proto, count] (proto)}
 				<button
@@ -88,9 +89,9 @@
 	{/if}
 
 	<div class="counter">
-		<span class="kept">{keptCount} оставить</span>
+		<span class="kept">{m.subscriptions_preview_keep({ count: keptCount })}</span>
 		<span class="sep" aria-hidden="true">·</span>
-		<span class="excluded">{excludedCount} исключить</span>
+		<span class="excluded">{m.subscriptions_preview_exclude({ count: excludedCount })}</span>
 	</div>
 
 	<!-- ponytail: no virtualization; add if 500+ janks -->
@@ -122,7 +123,7 @@
 				</div>
 			</label>
 		{:else}
-			<div class="empty-list">Нет серверов по фильтру.</div>
+			<div class="empty-list">{m.subscriptions_preview_empty()}</div>
 		{/each}
 	</div>
 </div>

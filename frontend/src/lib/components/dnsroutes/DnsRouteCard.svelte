@@ -4,6 +4,7 @@
 	import RoutingTargetBadges from '$lib/components/routing/RoutingTargetBadges.svelte';
 	import { ServiceIcon } from '$lib/components/dnsroutes';
 	import { SquarePen, Trash2, RefreshCw } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		route: DnsRoute;
@@ -50,9 +51,9 @@
 	let hasDedups = $derived(dedupReport && dedupReport.totalRemoved > 0);
 
 	let sourceSummary = $derived.by(() => {
-		if (subCount > 0 && manualCount > 0) return `${subCount} листов + ${manualCount} вручную`;
-		if (subCount > 0) return `${subCount} листов`;
-		if (manualCount > 0) return 'все вручную';
+		if (subCount > 0 && manualCount > 0) return m.routing_search_lists_manual({ lists: subCount, manual: manualCount });
+		if (subCount > 0) return m.routing_search_lists({ count: subCount });
+		if (manualCount > 0) return m.routing_search_all_manual();
 		return '';
 	});
 
@@ -91,8 +92,8 @@
 				class="icon-btn"
 				type="button"
 				onclick={() => onicon()}
-				aria-label="Сменить иконку"
-				title="Сменить иконку"
+				aria-label={m.routing_ip_card_change_icon()}
+				title={m.routing_ip_card_change_icon()}
 			>
 				<ServiceIcon name={route.name} iconUrl={route.iconUrl} size={36} />
 			</button>
@@ -109,7 +110,7 @@
 				<h3 title={route.name}>{route.name}</h3>
 			</div>
 			{#if domainCount > 0}
-				<span class="card-stat">{domainCount} доменов</span>
+				<span class="card-stat">{m.routing_search_domains({ count: domainCount })}</span>
 			{/if}
 			{#if cidrCount > 0}
 				<span class="card-stat">{cidrCount} CIDR</span>
@@ -119,19 +120,19 @@
 			{/if}
 			{#if subCount > 0 && downloadRouteLabel}
 				<span class="card-download-route" title={downloadRouteLabel}>
-					Обновление через {downloadRouteLabel}
+					{m.dns_routes_card_download_via({ route: downloadRouteLabel })}
 				</span>
 			{/if}
 			{#if hasDedups}
 				<span class="card-dedup" title={dedupReport?.items?.map(
-					i => `${i.domain} — ${i.reason === 'exact' ? 'дубль' : 'покрыт'} ${i.coveredBy} (${i.listName || i.listId})`
+					i => (i.reason === 'exact' ? m.dns_routes_card_dedup_exact : m.dns_routes_card_dedup_covered)({ domain: i.domain, coveredBy: i.coveredBy, list: i.listName || i.listId })
 				).join('\n') ?? ''}>
-					{dedupReport?.totalRemoved} убрано
+					{m.dns_routes_card_removed({ count: dedupReport?.totalRemoved ?? 0 })}
 				</span>
 			{/if}
 			{#if routeTargets.length > 0}
 				<div class="card-route">
-					<RoutingTargetBadges labels={routeTargets} overflowNoun="туннелей" />
+					<RoutingTargetBadges labels={routeTargets} />
 				</div>
 			{:else if isOrphan}
 				<div class="card-route">
@@ -139,9 +140,9 @@
 						variant="warning"
 						uppercase
 						size="xs"
-						title="Туннель, к которому был привязан этот список, удалён. Нажмите «Изменить» и выберите новый туннель."
+						title={m.routing_ip_card_orphan_title()}
 					>
-						Без туннеля
+						{m.routing_ip_card_no_tunnel()}
 					</Badge>
 				</div>
 			{/if}
@@ -159,7 +160,7 @@
 			<button
 				type="button"
 				class="route-action-btn"
-				title={`Изменить DNS-маршрут «${route.name}»`}
+				title={m.dns_routes_card_edit_title({ name: route.name })}
 				onclick={() => onedit()}
 			>
 				<SquarePen size={15} />
@@ -168,8 +169,8 @@
 				type="button"
 				class="route-action-btn success"
 				title={downloadRouteLabel
-					? `Обновить подписки DNS-маршрута «${route.name}» через ${downloadRouteLabel}`
-					: `Обновить подписки DNS-маршрута «${route.name}»`}
+					? m.dns_routes_card_refresh_via_title({ name: route.name, route: downloadRouteLabel })
+					: m.dns_routes_card_refresh_title({ name: route.name })}
 				onclick={() => onrefresh()}
 			>
 				<RefreshCw size={15} />
@@ -177,7 +178,7 @@
 			<button
 				type="button"
 				class="route-action-btn danger"
-				title={`Удалить DNS-маршрут «${route.name}»`}
+				title={m.dns_routes_card_delete_title({ name: route.name })}
 				onclick={() => ondelete()}
 			>
 				<Trash2 size={15} />

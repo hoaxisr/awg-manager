@@ -3,6 +3,7 @@
 	import VpnLinkPasteImport from './VpnLinkPasteImport.svelte';
 	import ObfuscatorImportForm, { type ManualObfuscator } from './ObfuscatorImportForm.svelte';
 	import { notifications } from '$lib/stores/notifications';
+	import { m } from '$lib/i18n';
 	import { Upload, Clipboard, Link, Check, Shuffle, Waves } from 'lucide-svelte';
 
 	export type TunnelImportTab = 'file' | 'paste' | 'vpn' | 'phobos' | 'clusterm';
@@ -78,13 +79,13 @@
 			if (content && content.trim()) {
 				importContent = content;
 				onfileloaded?.(file, content);
-				notifications.success(`Файл "${file.name}" загружен`);
+				notifications.success(m.tunnel_edit_import_file_loaded_toast({ name: file.name }));
 			} else {
-				notifications.error(`Файл "${file.name}" пуст`);
+				notifications.error(m.tunnel_edit_import_file_empty_toast({ name: file.name }));
 			}
 		};
 		reader.onerror = () => {
-			notifications.error('Не удалось прочитать файл');
+			notifications.error(m.tunnels_read_file_failed());
 		};
 		reader.readAsText(file);
 	}
@@ -104,7 +105,7 @@
 			onclick={() => (activeTab = 'file')}
 		>
 			<Upload size={16} />
-			{variant === 'page' ? 'Загрузить файл' : 'Файл'}
+			{variant === 'page' ? m.tunnel_edit_import_tab_upload() : m.tunnel_edit_import_tab_file()}
 		</button>
 		<button
 			type="button"
@@ -113,13 +114,13 @@
 			onclick={() => (activeTab = 'paste')}
 		>
 			<Clipboard size={16} />
-			Вставить текст
+			{m.tunnel_edit_import_tab_paste()}
 		</button>
 		<!-- Подпись и иконка постоянные: подписку обслуживает мастер, и
 		     вкладке больше не нужно превращаться в «Amnezia Premium». -->
 		<button type="button" class="tab" class:tab-active={activeTab === 'vpn'} onclick={activateVpnTab}>
 			<Link size={16} aria-hidden="true" />
-			Вставить ссылку
+			{m.tunnel_edit_import_tab_link()}
 		</button>
 		{#if obfuscatorTabs}
 			<button
@@ -168,16 +169,16 @@
 					<div class="drop-content">
 						<Check size={variant === 'page' ? 48 : 36} strokeWidth={1.5} style="flex-shrink:0; color:var(--import-success)" />
 						<div class="drop-text">
-							<p class="drop-title">Файл загружен</p>
-							<p class="drop-hint">Нажмите чтобы заменить</p>
+							<p class="drop-title">{m.tunnel_edit_import_loaded_title()}</p>
+							<p class="drop-hint">{m.tunnel_edit_import_loaded_hint()}</p>
 						</div>
 					</div>
 				{:else}
 					<div class="drop-content">
 						<Upload size={variant === 'page' ? 48 : 36} strokeWidth={1.5} style="flex-shrink:0; color:var(--import-text-muted)" />
 						<div class="drop-text">
-							<p class="drop-title">Перетащите .conf файл сюда</p>
-							<p class="drop-hint">или нажмите для выбора</p>
+							<p class="drop-title">{m.tunnel_edit_import_drop_title()}</p>
+							<p class="drop-hint">{m.tunnel_edit_import_drop_hint()}</p>
 						</div>
 					</div>
 				{/if}

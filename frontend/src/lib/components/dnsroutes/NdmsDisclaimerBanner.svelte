@@ -7,6 +7,7 @@
 	import { CircleCheck, TriangleAlert } from 'lucide-svelte';
 	import { Button } from '$lib/components/ui';
 	import { createPersistedFlag } from '$lib/stores/persisted';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		/** NDMS-движок DNS-маршрутизации существует только на OS5. */
@@ -17,14 +18,14 @@
 
 	const acked = createPersistedFlag('awgm.ndmsDisclaimerAck', false);
 
-	const LIMITS = [
-		'Маршрут работает только для клиентов в политике «Политика по умолчанию». Устройство, привязанное к своей политике доступа, под DNS-маршруты не попадает.',
-		'Своё шифрованное DNS (DoH/DoT) на устройстве или в браузере обходит маршрут — запрос не проходит через резолвер роутера.',
-		'Первые запросы к домену могут уйти мимо маршрута: адреса попадают в таблицу маршрутизации уже после ответа DNS.',
-		'Совпадение идёт по суффиксу: правило на x.com поймает и yandex.com.',
-		'Домены с коротким TTL могут не попадать в таблицу маршрутизации.',
-		'Стороннее ПО в Entware, перехватывающее DNS-запросы, ломает механизм.',
-	];
+	const LIMITS = $derived([
+		m.dns_routes_ndms_limit_policy(),
+		m.dns_routes_ndms_limit_doh(),
+		m.dns_routes_ndms_limit_first_requests(),
+		m.dns_routes_ndms_limit_suffix(),
+		m.dns_routes_ndms_limit_ttl(),
+		m.dns_routes_ndms_limit_entware(),
+	]);
 
 	interface Question {
 		question: string;
@@ -33,30 +34,29 @@
 		explain: string;
 	}
 
-	const QUIZ: Question[] = [
+	const QUIZ: Question[] = $derived([
 		{
-			question:
-				'Устройство привязано к своей политике доступа, а не к «Политике по умолчанию». Попадёт ли его трафик в DNS-маршрут?',
-			options: ['Да, политика на DNS-маршруты не влияет', 'Нет'],
+			question: m.dns_routes_ndms_quiz1_question(),
+			options: [m.dns_routes_ndms_quiz1_option_yes(), m.dns_routes_ndms_quiz_option_no()],
 			correct: 1,
-			explain: 'DNS-маршрутизация обслуживает только «Политику по умолчанию».',
+			explain: m.dns_routes_ndms_quiz1_explain(),
 		},
 		{
-			question: 'В браузере на устройстве включён свой DoH. Сработает ли DNS-маршрут?',
-			options: ['Да, роутер всё равно увидит запрос', 'Нет: запрос уходит мимо резолвера роутера'],
+			question: m.dns_routes_ndms_quiz2_question(),
+			options: [m.dns_routes_ndms_quiz2_option_yes(), m.dns_routes_ndms_quiz2_option_no()],
 			correct: 1,
-			explain: 'Роутер не видит шифрованный запрос и не может добавить адрес в маршрут.',
+			explain: m.dns_routes_ndms_quiz2_explain(),
 		},
 		{
-			question: 'Правило создано на домен x.com. Что ещё попадёт под правило?',
-			options: ['Только x.com и его поддомены', 'Любой домен с таким суффиксом, например yandex.com'],
+			question: m.dns_routes_ndms_quiz3_question(),
+			options: [m.dns_routes_ndms_quiz3_option_exact(), m.dns_routes_ndms_quiz3_option_suffix()],
 			correct: 1,
-			explain: 'Совпадение идёт по суффиксу строки, а не по границе домена.',
+			explain: m.dns_routes_ndms_quiz3_explain(),
 		},
-	];
+	]);
 
 	let quizOpen = $state(false);
-	let answers = $state<(number | null)[]>(QUIZ.map(() => null));
+	let answers = $state<(number | null)[]>([null, null, null]);
 	/** В подтверждённом состоянии — показать список ограничений снова. */
 	let reopened = $state(false);
 
@@ -70,14 +70,14 @@
 	{#if $acked && !reopened}
 		<div class="ndms-ack" role="note">
 			<CircleCheck size={16} />
-			<span>Ограничения NDMS-маршрутизации приняты</span>
-			<button type="button" class="ack-link" onclick={() => (reopened = true)}>Показать</button>
+			<span>{m.dns_routes_ndms_accepted()}</span>
+			<button type="button" class="ack-link" onclick={() => (reopened = true)}>{m.common_show()}</button>
 		</div>
 	{:else}
 		<div class="ndms-disclaimer" role="note">
 			<div class="head">
 				<TriangleAlert size={20} />
-				<h4>Ограничения DNS-маршрутизации NDMS</h4>
+				<h4>{m.dns_routes_ndms_title()}</h4>
 			</div>
 
 			{#if quizOpen && !$acked}
@@ -111,23 +111,23 @@
 					{/each}
 				</ul>
 				<p class="sources">
-					Подробности на форуме Keenetic:
+					{m.dns_routes_ndms_sources()}
 					<a
 						href="https://forum.keenetic.ru/topic/23098-web-маршрутизация-маршруты-dns/"
 						target="_blank"
-						rel="noopener">маршруты DNS</a
+						rel="noopener">{m.dns_routes_ndms_source_dns_routes()}</a
 					>,
 					<a
 						href="https://forum.keenetic.ru/topic/25147-вопросы-связанные-с-работой-dns-маршрутизации-dns-routing/"
 						target="_blank"
-						rel="noopener">вопросы по DNS routing</a
+						rel="noopener">{m.dns_routes_ndms_source_dns_routing()}</a
 					>.
 				</p>
 				{#if $acked}
-					<Button variant="ghost" size="sm" onclick={() => (reopened = false)}>Свернуть</Button>
+					<Button variant="ghost" size="sm" onclick={() => (reopened = false)}>{m.dns_routes_ndms_collapse()}</Button>
 				{:else}
 					<Button variant="secondary" size="sm" onclick={() => (quizOpen = true)}>
-						Я прочитал — проверить себя
+						{m.dns_routes_ndms_check_yourself()}
 					</Button>
 				{/if}
 			{/if}

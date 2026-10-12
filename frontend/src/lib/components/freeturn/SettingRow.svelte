@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { Snippet } from 'svelte';
 	import { ChevronRight } from 'lucide-svelte';
 
@@ -20,7 +21,7 @@
 	<button type="button" class="ft-section-head" aria-expanded={expanded} onclick={() => ontoggle(id)}>
 		<span class="ft-section-chevron" class:open={expanded}><ChevronRight size={14} /></span>
 		<span class="ft-section-label-text">{label}</span>
-		<span class="ft-section-summary" class:dirty>{summary}{dirty ? ' · изменено' : ''}</span>
+		<span class="ft-section-summary" class:dirty>{dirty ? m.proxy_setting_summary_changed({ summary }) : summary}</span>
 	</button>
 	{#if expanded}
 		<div class="ft-section-body">{@render children()}</div>

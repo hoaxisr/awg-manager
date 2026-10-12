@@ -2,6 +2,7 @@
 	// Замок защиты туннеля от изменений (#818). Рисуем SVG вручную, а не берём
 	// lucide Lock: дужка обязана быть отдельным путём, чтобы её поворот при
 	// смене состояния анимировался, а иконка-компонент такого шва не даёт.
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		locked: boolean;
@@ -13,7 +14,7 @@
 	let { locked, onclick, size = 'md' }: Props = $props();
 
 	const px = $derived(size === 'sm' ? 15 : 17);
-	const label = $derived(locked ? 'Защита включена — снять' : 'Защитить от изменений');
+	const label = $derived(locked ? m.tunnels_lock_unlock() : m.tunnels_lock_protect());
 </script>
 
 <button

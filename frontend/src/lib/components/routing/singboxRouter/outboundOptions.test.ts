@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildOutboundOptions } from './outboundOptions';
+import { buildOutboundOptions, outboundGroupLabel } from './outboundOptions';
 import type { AWGTagInfo, SingboxRouterOutbound } from '$lib/types';
 
 const awg: AWGTagInfo[] = [{ tag: 'awg-awg10', label: 'DE', kind: 'managed', iface: 'opkgtun10' }];
@@ -29,8 +29,9 @@ describe('buildOutboundOptions', () => {
 	it('lists an awg3 tag with an empty iface without printing parens', () => {
 		const awg3: AWGTagInfo[] = [{ tag: 'awg3-abc', label: 'RouteBox', kind: 'awg3', iface: '' }];
 		const groups = buildOutboundOptions(awg3, null, null, false);
-		const group = groups.find((g) => g.group === 'AWG3 туннели');
+		const group = groups.find((g) => g.id === 'awg3');
 		expect(group).toBeDefined();
+		expect(outboundGroupLabel(group!.id)).toBe('AWG3 туннели');
 		expect(group?.items).toEqual([{ value: 'awg3-abc', label: 'RouteBox' }]);
 	});
 
@@ -39,6 +40,6 @@ describe('buildOutboundOptions', () => {
 			{ type: 'urltest', tag: 'DE', outbounds: ['awg-awg10'], source: 'router' },
 		];
 		const groups = buildOutboundOptions(null, null, onlySelf, false, null, 'DE');
-		expect(groups.some((g) => g.group === 'Composite outbounds')).toBe(false);
+		expect(groups.some((g) => g.id === 'composite')).toBe(false);
 	});
 });

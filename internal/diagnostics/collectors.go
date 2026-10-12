@@ -125,6 +125,13 @@ func (r *Runner) collectTunnels(ctx context.Context) []TunnelInfo {
 
 	var infos []TunnelInfo
 	for _, t := range tunnels {
+		// Зеркальная запись прокси-выхода WDTT — не наш туннель: её жизненным
+		// циклом ведает прокси-рантайм (оркестратор её не грузит, state.go), и
+		// ни одна kernel-проверка к ней не применима. Имя из id не выводится:
+		// NewNames("wdttraw-…") дал бы opkgtun0 — интерфейс чужого туннеля (F588).
+		if t.Backend == "wdtt-raw" {
+			continue
+		}
 		stored, _ := r.deps.TunnelStore.Get(t.ID)
 
 		backend := "kernel"
@@ -291,9 +298,14 @@ func (r *Runner) collectNativeWGConnection(ti *TunnelInfo, ndmsJSON string) {
 // collectKernelRoutesAndFirewall populates Routes and Firewall for kernel tunnels.
 func (r *Runner) collectKernelRoutesAndFirewall(ctx context.Context, ti *TunnelInfo, ifaceName string) {
 	if result, err := exec.Run(ctx, "/opt/sbin/ip", "route", "show"); err == nil {
-		endpointIP := extractEndpointIP(ti.Connection.RawOutput)
-		ti.Routes.EndpointRoute = extractEndpointRoute(result.Stdout, endpointIP)
 		ti.Routes.DefaultRoute = extractDefaultRoute(result.Stdout, ifaceName)
+		ti.Routes.EndpointRoute = findEndpointRoute(result.Stdout, extractEndpointIP(ti.Connection.RawOutput), func() (string, error) {
+			res, err := exec.Run(ctx, "/opt/sbin/ip", "-6", "route", "show")
+			if err != nil {
+				return "", err
+			}
+			return res.Stdout, nil
+		})
 	}
 	if result, err := exec.Run(ctx, "/opt/sbin/iptables", "-t", "mangle", "-S"); err == nil {
 		ti.Firewall.IPTablesRules = filterRules(result.Stdout, ifaceName)
@@ -508,6 +520,21 @@ func extractEndpointIP(awgShow string) string {
 		}
 	}
 	return ""
+}
+
+// findEndpointRoute ищет маршрут до endpoint в таблице его семейства. До IPv6
+// endpoint оператор ставит маршрут через `ip -6 route replace`
+// (operator_os5_routing.go), и в IPv4-таблице его нет (F586); IPv6-таблица
+// читается только для такого endpoint.
+func findEndpointRoute(v4Table, endpointIP string, v6Table func() (string, error)) string {
+	if ip := net.ParseIP(endpointIP); ip != nil && ip.To4() == nil {
+		table, err := v6Table()
+		if err != nil {
+			return ""
+		}
+		return extractEndpointRoute(table, endpointIP)
+	}
+	return extractEndpointRoute(v4Table, endpointIP)
 }
 
 func extractEndpointRoute(routeTable, endpointIP string) string {

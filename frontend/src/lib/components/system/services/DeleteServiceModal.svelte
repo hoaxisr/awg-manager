@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api, type SystemServiceItem } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, Modal } from '$lib/components/ui';
@@ -21,34 +22,34 @@
 		deleting = true;
 		try {
 			await api.systemServicesDelete(item.script);
-			notifications.success(`Служба ${item.name} удалена`);
+			notifications.success(m.system_services_d_done({ name: item.name }));
 			onclose();
 			await onDeleted();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Ошибка удаления службы'));
+			notifications.error(errorMessage(e, m.system_services_d_failed()));
 		} finally {
 			deleting = false;
 		}
 	}
 </script>
 
-<Modal open={item !== null} title="Удаление службы" size="sm" {onclose}>
+<Modal open={item !== null} title={m.system_services_d_title()} size="sm" {onclose}>
 	{#if item}
 		<div class="delete-modal-content">
 			<AlertTriangle size={28} class="danger-icon" />
 			<div>
-				<p>Вы действительно хотите удалить службу <strong>{item.name}</strong>?</p>
-				<p class="muted-p">Служба будет остановлена, а скрипт <code>{item.script}</code> безвозвратно удален с роутера.</p>
+				<p>{m.system_services_d_q()} <strong>{item.name}</strong>?</p>
+				<p class="muted-p">{m.system_services_d_text_before()} <code>{item.script}</code> {m.system_services_d_text_after()}</p>
 			</div>
 		</div>
 	{/if}
 
 	{#snippet actions()}
 		<div class="modal-footer-btns">
-			<Button variant="ghost" onclick={onclose}>Отмена</Button>
+			<Button variant="ghost" onclick={onclose}>{m.common_cancel()}</Button>
 			<Button variant="danger" loading={deleting} onclick={handleDelete}>
 				{#snippet iconBefore()}<Trash2 size={13} />{/snippet}
-				Удалить службу
+				{m.system_services_d_submit()}
 			</Button>
 		</div>
 	{/snippet}
