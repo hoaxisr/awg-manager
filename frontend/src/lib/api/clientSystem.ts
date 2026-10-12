@@ -223,6 +223,13 @@ export class SystemClient extends TunnelsClient {
 		});
 	}
 
+	async deleteHydraRouteTarget(target: string, revision: string): Promise<{ target: string }> {
+		return this.request('/hydraroute/targets/delete', {
+			method: 'POST',
+			body: JSON.stringify({ target, revision }),
+		});
+	}
+
 	async getWANInterfaces(): Promise<WANInterface[]> {
 		return this.request('/system/wan-interfaces');
 	}

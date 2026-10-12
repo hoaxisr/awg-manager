@@ -29,6 +29,8 @@ export interface HydraRouteConfig {
 	geoIPFiles: string[];
 	geoSiteFiles: string[];
 	policyOrder: string[];
+	/** Ревизия файлов правил HR Neo (domain.conf + ip.list). */
+	hrRevision?: string;
 }
 
 export interface GeoFileEntry {

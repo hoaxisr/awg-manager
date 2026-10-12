@@ -9,6 +9,8 @@
 		ruleCount: number;
 		displayName?: string;
 		broken?: boolean;
+		/** Цель только из PolicyOrder, групп нет (правило HRweb без групп). */
+		empty?: boolean;
 	}
 
 	export type SidebarSelection =
