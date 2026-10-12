@@ -69,6 +69,8 @@ const (
 
 	ResourceDeviceProxyConfig  Resource = "deviceproxy.config"
 	ResourceDeviceProxyRuntime Resource = "deviceproxy.runtime"
+
+	ResourceTelemtStatus Resource = "telemt.status"
 )
 
 // AllResources — перечень всего набора для сверки с фронтом.
@@ -102,6 +104,7 @@ var AllResources = []Resource{
 	ResourceRoutingHydrarouteStatus,
 	ResourceDeviceProxyConfig,
 	ResourceDeviceProxyRuntime,
+	ResourceTelemtStatus,
 }
 
 // Publisher — минимум шины, которого хватает для подсказки инвалидации.

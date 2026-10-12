@@ -1,14 +1,9 @@
 export interface TelemtConfig {
 	enabled: boolean;
-	mode?: 'direct' | 'web';
+	interface: string;
 	port: number;
-	listenIp: string;
 	secret: string;
 	tlsDomain: string;
-	webHost?: string;
-	webCarrier?: string;
-	webDecoy?: string;
-	upstreamDevice?: string;
 }
 
 export interface TelemtStatus {
@@ -21,7 +16,7 @@ export interface TelemtStatus {
 	archSupported?: boolean;
 	binary?: string;
 	arch?: string;
-	source?: 'managed' | 'opkg' | 'external' | string;
+	source?: string;
 	link?: string;
 	error?: string;
 	config?: TelemtConfig;

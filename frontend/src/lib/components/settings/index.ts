@@ -15,3 +15,4 @@ export { default as HttpServerCard } from './HttpServerCard.svelte';
 export { default as BackupRestoreCard } from './BackupRestoreCard.svelte';
 export { default as McpCard } from './McpCard.svelte';
 export { default as ObfuscatorRelayCard } from './ObfuscatorRelayCard.svelte';
+export { default as TelemtCard } from './TelemtCard.svelte';

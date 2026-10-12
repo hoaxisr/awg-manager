@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -23,8 +24,8 @@ func TestNormalizeArch(t *testing.T) {
 		{"mipsel-3.4", "mipsel", false},
 		{"mipsle", "mipsel", false},
 		{"mips-3.4", "mips", false},
-		{"x86_64", "x86_64", true},
-		{"amd64", "x86_64", true},
+		{"x86_64", "x86_64", false},
+		{"amd64", "amd64", false},
 	}
 
 	for _, c := range cases {
@@ -40,12 +41,11 @@ func TestNormalizeArch(t *testing.T) {
 
 func TestGenerateTOML(t *testing.T) {
 	cfg := Config{
-		Enabled:        true,
-		Port:           8443,
-		ListenIP:       "0.0.0.0",
-		Secret:         "0123456789abcdef0123456789abcdef",
-		TLSDomain:      "yandex.ru",
-		UpstreamDevice: "direct",
+		Enabled:   true,
+		Interface: "br0",
+		Port:      8443,
+		Secret:    "0123456789abcdef0123456789abcdef",
+		TLSDomain: "yandex.ru",
 	}
 
 	toml := GenerateTOML(cfg)
@@ -64,7 +64,7 @@ func TestGenerateTOML(t *testing.T) {
 }
 
 func TestGenerateTgLink(t *testing.T) {
-	link := GenerateTgLink(ModeDirect, "192.168.1.1", 8443, "0123456789abcdef0123456789abcdef", "yandex.ru", "")
+	link := GenerateTgLink("192.168.1.1", 8443, "0123456789abcdef0123456789abcdef", "yandex.ru")
 	if !strings.HasPrefix(link, "tg://proxy?") {
 		t.Fatalf("expected tg://proxy? prefix, got: %s", link)
 	}
@@ -79,46 +79,6 @@ func TestGenerateTgLink(t *testing.T) {
 	expectedSecret := "ee0123456789abcdef0123456789abcdef79616e6465782e7275"
 	if !strings.Contains(link, "secret="+expectedSecret) {
 		t.Errorf("expected secret %s in link, got: %s", expectedSecret, link)
-	}
-}
-
-func TestGenerateTOML_Web(t *testing.T) {
-	cfg := Config{
-		Enabled:    true,
-		Mode:       ModeWeb,
-		Port:       8443,
-		ListenIP:   "0.0.0.0",
-		Secret:     "0123456789abcdef0123456789abcdef",
-		WebHost:    "proxy.example.com",
-		WebCarrier: "https-lanes",
-		WebDecoy:   "http://127.0.0.1:80",
-	}
-
-	toml := GenerateTOML(cfg)
-	if !strings.Contains(toml, `transport = "web"`) {
-		t.Errorf("expected transport = web in toml, got: %s", toml)
-	}
-	if !strings.Contains(toml, `host = "proxy.example.com"`) {
-		t.Errorf("expected host in toml, got: %s", toml)
-	}
-	if !strings.Contains(toml, `carrier = "https-lanes"`) {
-		t.Errorf("expected carrier in toml, got: %s", toml)
-	}
-}
-
-func TestGenerateTgLink_Web(t *testing.T) {
-	link := GenerateTgLink(ModeWeb, "192.168.1.1", 8443, "0123456789abcdef0123456789abcdef", "", "proxy.example.com")
-	if !strings.HasPrefix(link, "tg://webproxy?") {
-		t.Fatalf("expected tg://webproxy? prefix, got: %s", link)
-	}
-	if !strings.Contains(link, "server=proxy.example.com") {
-		t.Errorf("expected server in link, got: %s", link)
-	}
-	if !strings.Contains(link, "port=8443") {
-		t.Errorf("expected port in link, got: %s", link)
-	}
-	if !strings.Contains(link, "secret=0123456789abcdef0123456789abcdef") {
-		t.Errorf("expected secret in link, got: %s", link)
 	}
 }
 
@@ -146,7 +106,7 @@ func TestExtractTarGzBinary(t *testing.T) {
 	tmpDir := t.TempDir()
 	outBin := filepath.Join(tmpDir, "telemt")
 
-	if err := extractTarGzBinary(&buf, "telemt", outBin); err != nil {
+	if err := extractTarGzBinary(&buf, "telemt", outBin, 1024*1024); err != nil {
 		t.Fatalf("extractTarGzBinary failed: %v", err)
 	}
 
@@ -167,6 +127,9 @@ func TestService_GetStatus_Mock(t *testing.T) {
 	tmpDir := t.TempDir()
 	svc := New(tmpDir, "aarch64")
 
+	if err := os.MkdirAll(filepath.Dir(svc.binPath), 0755); err != nil {
+		t.Fatalf("mkdir binary dir: %v", err)
+	}
 	if err := os.WriteFile(svc.binPath, []byte("#!/bin/sh\necho 'telemt 3.5.7'\n"), 0755); err != nil {
 		t.Fatalf("write mock binary: %v", err)
 	}
@@ -209,17 +172,24 @@ func TestService_GetStatus_Mock(t *testing.T) {
 
 func TestService_Lifecycle_Enabled(t *testing.T) {
 	tmpDir := t.TempDir()
-	svc := New(tmpDir, "x86_64")
+	svc := New(tmpDir, "aarch64")
 
 	// Initially disabled
 	if svc.GetConfig().Enabled {
 		t.Fatalf("expected initially disabled")
 	}
 
-	// Calling Start when uninstalled returns ErrNotInstalled and doesn't enable
+	// Calling Start when interface is not configured returns ErrInterfaceRequired
 	err := svc.Start(context.Background())
-	if err == nil {
-		t.Fatalf("expected start error when uninstalled")
+	if !errors.Is(err, ErrInterfaceRequired) {
+		t.Fatalf("expected ErrInterfaceRequired, got %v", err)
+	}
+
+	// Calling Start when interface is configured but uninstalled returns ErrNotInstalled
+	svc.config.Interface = "br0"
+	err = svc.Start(context.Background())
+	if !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("expected ErrNotInstalled, got %v", err)
 	}
 	if svc.GetConfig().Enabled {
 		t.Fatalf("expected still disabled after failed start")
@@ -291,7 +261,7 @@ func TestNormalizeTLSDomain(t *testing.T) {
 
 func TestService_Close_DoesNotDisable(t *testing.T) {
 	tmpDir := t.TempDir()
-	svc := New(tmpDir, "x86_64")
+	svc := New(tmpDir, "aarch64")
 
 	// Set Enabled = true
 	svc.config.Enabled = true
@@ -316,7 +286,7 @@ func TestService_Close_DoesNotDisable(t *testing.T) {
 
 func TestService_StartIfEnabled(t *testing.T) {
 	tmpDir := t.TempDir()
-	svc := New(tmpDir, "x86_64")
+	svc := New(tmpDir, "aarch64")
 
 	// Disabled and uninstalled -> returns nil without error
 	if err := svc.StartIfEnabled(context.Background()); err != nil {
@@ -325,6 +295,7 @@ func TestService_StartIfEnabled(t *testing.T) {
 
 	// Enabled but uninstalled -> IsInstalled is false, so returns nil without error
 	svc.config.Enabled = true
+	svc.config.Interface = "br0"
 	if err := svc.StartIfEnabled(context.Background()); err != nil {
 		t.Fatalf("unexpected error for uninstalled StartIfEnabled: %v", err)
 	}
@@ -332,12 +303,12 @@ func TestService_StartIfEnabled(t *testing.T) {
 
 func TestSaveConfig_SecretGeneration(t *testing.T) {
 	tmpDir := t.TempDir()
-	svc := New(tmpDir, "x86_64")
+	svc := New(tmpDir, "aarch64")
 
 	cfg := Config{
 		Enabled:   false,
+		Interface: "br0",
 		Port:      8443,
-		ListenIP:  "0.0.0.0",
 		Secret:    "", // Empty secret
 		TLSDomain: "https://example.com/foo",
 	}
@@ -356,11 +327,14 @@ func TestSaveConfig_SecretGeneration(t *testing.T) {
 	if saved.TLSDomain != "example.com" {
 		t.Fatalf("expected normalized tlsDomain example.com, got %s", saved.TLSDomain)
 	}
+	if saved.Interface != "br0" {
+		t.Fatalf("expected interface br0, got %s", saved.Interface)
+	}
 }
 
 func TestSaveConfig_ReservedPort(t *testing.T) {
 	tmpDir := t.TempDir()
-	svc := New(tmpDir, "x86_64")
+	svc := New(tmpDir, "aarch64")
 
 	for _, port := range []int{22, 2222, 1099, 51820} {
 		cfg := Config{

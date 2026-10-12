@@ -48,7 +48,8 @@ export type ResourceKey =
 	| 'amneziaPremium.catalog'     // ResourceAmneziaPremiumCatalog — данные подписки у портала (счётчик устройств, выданные конфигурации)
 	| 'amneziaPremium.mirror'      // ResourceAmneziaPremiumMirror — адрес зеркала Amnezia
 	| 'amneziaPremium.declaredCountry' // ResourceAmneziaPremiumDeclaredCountry — страна, из которой подключается пользователь
-	| 'bypass-set';                 // публикуется после наполнения AWGM-BYPASS (storeBypassSetOutcome)
+	| 'bypass-set'                  // публикуется после наполнения AWGM-BYPASS (storeBypassSetOutcome)
+	| 'telemt.status';              // ResourceTelemtStatus
 
 /**
  * Resource key → list of polling stores. Multiple stores can register under

@@ -3154,15 +3154,10 @@ const subscription_RefreshResult: v.GenericSchema = v.looseObject({
 
 const telemt_Config: v.GenericSchema = v.looseObject({
 	enabled: v.optional(v.nullable(v.boolean())),
-	listenIp: v.optional(v.nullable(v.string())),
-	mode: v.optional(v.nullable(v.string())),
+	interface: v.optional(v.nullable(v.string())),
 	port: v.optional(v.nullable(v.number())),
 	secret: v.optional(v.nullable(v.string())),
 	tlsDomain: v.optional(v.nullable(v.string())),
-	upstreamDevice: v.optional(v.nullable(v.string())),
-	webCarrier: v.optional(v.nullable(v.string())),
-	webDecoy: v.optional(v.nullable(v.string())),
-	webHost: v.optional(v.nullable(v.string())),
 });
 
 const telemt_Status: v.GenericSchema = v.looseObject({

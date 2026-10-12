@@ -1,20 +1,46 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
-	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/telemt"
 )
 
-type TelemtHandler struct {
-	service *telemt.Service
+// TelemtService defines the interface for telemt management.
+type TelemtService interface {
+	GetStatus(ctx context.Context) telemt.Status
+	GetConfig() telemt.Config
+	SaveConfig(ctx context.Context, cfg telemt.Config) error
+	Install(ctx context.Context) error
+	Update(ctx context.Context) error
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+	Restart(ctx context.Context) error
+	Uninstall(ctx context.Context) error
 }
 
-func NewTelemtHandler(service *telemt.Service) *TelemtHandler {
+type TelemtHandler struct {
+	service TelemtService
+	bus     *events.Bus
+}
+
+func NewTelemtHandler(service TelemtService) *TelemtHandler {
 	return &TelemtHandler{service: service}
+}
+
+func (h *TelemtHandler) SetEventBus(bus *events.Bus) {
+	h.bus = bus
+}
+
+func (h *TelemtHandler) notifyInvalidated(reason string) {
+	if h.bus != nil {
+		h.bus.PublishInvalidated(events.ResourceTelemtStatus, reason)
+	}
 }
 
 func (h *TelemtHandler) RegisterRoutes(mux *http.ServeMux, guarded func(http.HandlerFunc) http.HandlerFunc) {
@@ -89,13 +115,18 @@ func (h *TelemtHandler) handleSaveConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := h.service.SaveConfig(r.Context(), req); err != nil {
-		if strings.Contains(err.Error(), "port") {
+		if errors.Is(err, telemt.ErrInvalidPort) || errors.Is(err, telemt.ErrPortReserved) {
 			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_PORT")
+			return
+		}
+		if errors.Is(err, telemt.ErrInterfaceRequired) {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INTERFACE_REQUIRED")
 			return
 		}
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "SAVE_CONFIG_FAILED")
 		return
 	}
+	h.notifyInvalidated("telemt-config")
 	status := h.service.GetStatus(r.Context())
 	response.Success(w, status)
 }
@@ -107,6 +138,8 @@ func (h *TelemtHandler) handleSaveConfig(w http.ResponseWriter, r *http.Request)
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Success		200	{object}	APIEnvelope{data=telemt.Status}
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Failure		503	{object}	APIErrorEnvelope
 //	@Router			/telemt/install [post]
@@ -116,9 +149,22 @@ func (h *TelemtHandler) handleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.service.Install(r.Context()); err != nil {
+		if errors.Is(err, telemt.ErrArchNotSupported) {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "ARCH_NOT_SUPPORTED")
+			return
+		}
+		if errors.Is(err, telemt.ErrAlreadyInstalling) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "ALREADY_INSTALLING")
+			return
+		}
+		if errors.Is(err, telemt.ErrDiskSpace) {
+			response.ErrorWithStatus(w, http.StatusInsufficientStorage, err.Error(), "INSUFFICIENT_STORAGE")
+			return
+		}
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "INSTALL_FAILED")
 		return
 	}
+	h.notifyInvalidated("telemt-install")
 	status := h.service.GetStatus(r.Context())
 	response.Success(w, status)
 }
@@ -142,6 +188,7 @@ func (h *TelemtHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "UPDATE_FAILED")
 		return
 	}
+	h.notifyInvalidated("telemt-update")
 	status := h.service.GetStatus(r.Context())
 	response.Success(w, status)
 }
@@ -153,6 +200,7 @@ func (h *TelemtHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Success		200	{object}	APIEnvelope{data=telemt.Status}
+//	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Failure		503	{object}	APIErrorEnvelope
 //	@Router			/telemt/start [post]
@@ -162,9 +210,18 @@ func (h *TelemtHandler) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.service.Start(r.Context()); err != nil {
+		if errors.Is(err, telemt.ErrInterfaceRequired) {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INTERFACE_REQUIRED")
+			return
+		}
+		if errors.Is(err, telemt.ErrNotInstalled) {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "NOT_INSTALLED")
+			return
+		}
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "START_FAILED")
 		return
 	}
+	h.notifyInvalidated("telemt-start")
 	status := h.service.GetStatus(r.Context())
 	response.Success(w, status)
 }
@@ -188,6 +245,7 @@ func (h *TelemtHandler) handleStop(w http.ResponseWriter, r *http.Request) {
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "STOP_FAILED")
 		return
 	}
+	h.notifyInvalidated("telemt-stop")
 	status := h.service.GetStatus(r.Context())
 	response.Success(w, status)
 }
@@ -199,6 +257,7 @@ func (h *TelemtHandler) handleStop(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Success		200	{object}	APIEnvelope{data=telemt.Status}
+//	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Failure		503	{object}	APIErrorEnvelope
 //	@Router			/telemt/restart [post]
@@ -208,9 +267,18 @@ func (h *TelemtHandler) handleRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.service.Restart(r.Context()); err != nil {
+		if errors.Is(err, telemt.ErrInterfaceRequired) {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INTERFACE_REQUIRED")
+			return
+		}
+		if errors.Is(err, telemt.ErrNotInstalled) {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "NOT_INSTALLED")
+			return
+		}
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "RESTART_FAILED")
 		return
 	}
+	h.notifyInvalidated("telemt-restart")
 	status := h.service.GetStatus(r.Context())
 	response.Success(w, status)
 }
@@ -234,6 +302,7 @@ func (h *TelemtHandler) handleUninstall(w http.ResponseWriter, r *http.Request) 
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "UNINSTALL_FAILED")
 		return
 	}
+	h.notifyInvalidated("telemt-uninstall")
 	status := h.service.GetStatus(r.Context())
 	response.Success(w, status)
 }

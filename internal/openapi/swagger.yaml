@@ -8755,27 +8755,14 @@ definitions:
     properties:
       enabled:
         type: boolean
-      listenIp:
-        type: string
-      mode:
-        description: '"direct" (Fake-TLS) or "web" (Native Web Proxy)'
+      interface:
+        description: router network interface (e.g. "br0")
         type: string
       port:
         type: integer
       secret:
         type: string
       tlsDomain:
-        type: string
-      upstreamDevice:
-        type: string
-      webCarrier:
-        description: '"https-lanes", "websocket", "https"'
-        type: string
-      webDecoy:
-        description: e.g. "http://127.0.0.1:80"
-        type: string
-      webHost:
-        description: e.g. "proxy.example.com"
         type: string
     type: object
   telemt.Status:
@@ -21162,6 +21149,14 @@ paths:
                 data:
                   $ref: '#/definitions/telemt.Status'
               type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
@@ -21189,6 +21184,10 @@ paths:
                 data:
                   $ref: '#/definitions/telemt.Status'
               type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
@@ -21216,6 +21215,10 @@ paths:
                 data:
                   $ref: '#/definitions/telemt.Status'
               type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:

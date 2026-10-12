@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
@@ -70,4 +71,28 @@ func (a *installerDownloaderAdapter) DownloadFile(ctx context.Context, req insta
 		Path: res.Path,
 		Size: res.Size,
 	}, nil
+}
+
+type telemtDownloaderAdapter struct {
+	svc *downloader.Service
+}
+
+func (a *telemtDownloaderAdapter) DownloadFile(ctx context.Context, url, destPath string, maxBytes int64) error {
+	if a == nil || a.svc == nil {
+		return fmt.Errorf("downloader service is not configured")
+	}
+	_, err := a.svc.DownloadFile(ctx, downloader.FileRequest{
+		Request: downloader.Request{
+			Purpose:   "telemt-binary",
+			UserAgent: appver.UA(),
+			URL:       url,
+			Timeout:   5 * time.Minute,
+		},
+		DestPath:     destPath,
+		TempPath:     destPath,
+		MaxFileBytes: maxBytes,
+		Mode:         0o644,
+		Atomic:       false,
+	})
+	return err
 }

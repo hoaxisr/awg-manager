@@ -28,6 +28,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
+	"github.com/hoaxisr/awg-manager/internal/telemt"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/firewall"
@@ -260,6 +261,9 @@ func runCleanup(dataDir string) {
 	if err := ndmstransport.RevokeToken(); err != nil {
 		fmt.Fprintf(os.Stderr, "revoke rci token: %v\n", err)
 	}
+
+	// Clean up telemt (processes, firewall, hook, directory)
+	telemt.Cleanup(ctx, dataDir)
 
 	// Remove all config/runtime files
 	fmt.Println("Cleaning up files...")

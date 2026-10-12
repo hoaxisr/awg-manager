@@ -80,8 +80,13 @@ func (a *app) setupServer() {
 	a.deferOnExit(func() {
 		_ = a.telemtService.Close()
 	})
-	_ = a.telemtService.StartIfEnabled(context.Background())
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = a.telemtService.StartIfEnabled(ctx)
+	}()
 	a.telemtHandler = api.NewTelemtHandler(a.telemtService)
+	a.telemtHandler.SetEventBus(a.eventBus)
 
 	a.srv = server.New(
 		server.Config{
@@ -319,6 +324,9 @@ func (a *app) setupDeviceProxy() {
 	a.updaterService.SetFeatures(a.usageFeatures)
 	a.updaterService.Start()
 	a.deferOnExit(a.updaterService.Stop)
+	if a.telemtService != nil {
+		a.telemtService.SetDownloader(&telemtDownloaderAdapter{svc: sharedDownloadSvc})
+	}
 	if a.singboxInstaller != nil {
 		a.singboxInstaller.SetDownloader(&installerDownloaderAdapter{svc: sharedDownloadSvc})
 		// Auto-migration goroutine: when legacy sing-box-naive opkg

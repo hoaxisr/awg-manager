@@ -55,8 +55,8 @@ func TestTelemtHandler_Routes(t *testing.T) {
 	// 3. POST /api/telemt/config
 	newCfg := telemt.Config{
 		Enabled:   false,
+		Interface: "br0",
 		Port:      9443,
-		ListenIP:  "0.0.0.0",
 		Secret:    "0123456789abcdef0123456789abcdef",
 		TLSDomain: "cloudflare.com",
 	}
@@ -76,6 +76,9 @@ func TestTelemtHandler_Routes(t *testing.T) {
 	if updated.TLSDomain != "cloudflare.com" {
 		t.Errorf("expected tlsDomain cloudflare.com, got %s", updated.TLSDomain)
 	}
+	if updated.Interface != "br0" {
+		t.Errorf("expected interface br0, got %s", updated.Interface)
+	}
 
 	// 4. POST /api/telemt/config with invalid JSON -> 400
 	req = httptest.NewRequest(http.MethodPost, "/api/telemt/config", strings.NewReader("invalid-json"))
@@ -88,7 +91,8 @@ func TestTelemtHandler_Routes(t *testing.T) {
 	// 4a. POST /api/telemt/config with reserved / invalid ports -> 400
 	for _, badPort := range []int{22, 2222, 1099, 51820, -1, 70000} {
 		badCfg := telemt.Config{
-			Port: badPort,
+			Interface: "br0",
+			Port:      badPort,
 		}
 		badBody, _ := json.Marshal(badCfg)
 		req = httptest.NewRequest(http.MethodPost, "/api/telemt/config", strings.NewReader(string(badBody)))
@@ -101,6 +105,7 @@ func TestTelemtHandler_Routes(t *testing.T) {
 
 	// 4b. POST /api/telemt/config with empty secret and URL domain -> 200 with generated secret and normalized domain
 	urlCfg := telemt.Config{
+		Interface: "br0",
 		Port:      8443,
 		Secret:    "",
 		TLSDomain: "https://example.org/proxy",
@@ -131,20 +136,20 @@ func TestTelemtHandler_Routes(t *testing.T) {
 		t.Fatalf("expected service to be disabled after stop")
 	}
 
-	// 6. POST /api/telemt/start (not installed -> 500)
+	// 6. POST /api/telemt/start (not installed -> 400)
 	req = httptest.NewRequest(http.MethodPost, "/api/telemt/start", nil)
 	w = httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected start 500 when uninstalled, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected start 400 when uninstalled, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// 7. POST /api/telemt/restart (not installed -> 500)
+	// 7. POST /api/telemt/restart (not installed -> 400)
 	req = httptest.NewRequest(http.MethodPost, "/api/telemt/restart", nil)
 	w = httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected restart 500 when uninstalled, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected restart 400 when uninstalled, got %d: %s", w.Code, w.Body.String())
 	}
 
 	// 8. POST /api/telemt/uninstall -> 200

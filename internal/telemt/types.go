@@ -2,16 +2,11 @@ package telemt
 
 // Config describes the configuration for the Telegram MTProto proxy (telemt).
 type Config struct {
-	Enabled        bool   `json:"enabled"`
-	Mode           string `json:"mode"` // "direct" (Fake-TLS) or "web" (Native Web Proxy)
-	Port           int    `json:"port"`
-	ListenIP       string `json:"listenIp"`
-	Secret         string `json:"secret"`
-	TLSDomain      string `json:"tlsDomain"`
-	WebHost        string `json:"webHost,omitempty"`    // e.g. "proxy.example.com"
-	WebCarrier     string `json:"webCarrier,omitempty"` // "https-lanes", "websocket", "https"
-	WebDecoy       string `json:"webDecoy,omitempty"`   // e.g. "http://127.0.0.1:80"
-	UpstreamDevice string `json:"upstreamDevice,omitempty"`
+	Enabled   bool   `json:"enabled"`
+	Interface string `json:"interface"` // router network interface (e.g. "br0")
+	Port      int    `json:"port"`
+	Secret    string `json:"secret"`
+	TLSDomain string `json:"tlsDomain"`
 }
 
 // Status represents the operational status of telemt.
