@@ -7,6 +7,7 @@
 		IPResult,
 		ConnectivityResult,
 		IPCheckService,
+		MihomoDiagnosticResourceKind,
 		SpeedTestInfo,
 		SpeedTestResult,
 	} from '$lib/types';
@@ -15,7 +16,7 @@
 	import { PageContainer } from '$lib/components/layout';
 	import TunnelTestIcon from '$lib/components/tunnels/TunnelTestIcon.svelte';
 
-	type DiagnosticsKind = 'awg' | 'system' | 'singbox' | 'subscription';
+	type DiagnosticsKind = 'awg' | 'system' | 'singbox' | 'subscription' | 'mihomo';
 	type DiagnosticsSubject = 'tunnel' | 'subscription';
 	type DiagnosticsMode = 'page' | 'modal';
 
@@ -27,6 +28,7 @@
 		backLabel: string;
 		subject: DiagnosticsSubject;
 		iface?: string;
+		resourceKind?: MihomoDiagnosticResourceKind;
 		loading?: boolean;
 		unavailableReason?: string;
 		mode?: DiagnosticsMode;
@@ -40,6 +42,7 @@
 		backLabel,
 		subject,
 		iface,
+		resourceKind,
 		loading = false,
 		unavailableReason,
 		mode = 'page',
@@ -146,6 +149,7 @@
 		if (kind === 'awg') return 'AWG';
 		if (kind === 'system') return 'AWG';
 		if (kind === 'singbox') return 'Sing-box';
+		if (kind === 'mihomo') return 'Mihomo';
 		return 'subscription';
 	});
 
@@ -180,6 +184,9 @@
 				connectivityResult = await api.checkConnectivity(targetId);
 			} else if (kind === 'system') {
 				connectivityResult = await api.checkSystemTunnelConnectivity(targetId);
+			} else if (kind === 'mihomo') {
+				if (!resourceKind) throw new Error('Mihomo resource kind is not specified');
+				connectivityResult = await api.mihomoCheckConnectivity(resourceKind, targetId);
 			} else if (kind === 'subscription') {
 				connectivityResult = await api.singboxCheckConnectivity(targetId, iface);
 			} else {
@@ -195,7 +202,7 @@
 	async function checkIP() {
 		if (!targetId || unavailableReason) return;
 
-		const shouldUseCustomService = useCustomService || (kind === 'subscription' && ipServices.length === 0);
+		const shouldUseCustomService = useCustomService || ((kind === 'subscription' || kind === 'mihomo') && ipServices.length === 0);
 
 		let serviceURL = '';
 		if (shouldUseCustomService) {
@@ -215,6 +222,9 @@
 				ipResult = await api.checkIP(targetId, serviceURL || undefined);
 			} else if (kind === 'system') {
 				ipResult = await api.checkSystemTunnelIP(targetId, serviceURL || undefined);
+			} else if (kind === 'mihomo') {
+				if (!resourceKind) throw new Error('Mihomo resource kind is not specified');
+				ipResult = await api.mihomoCheckIP(resourceKind, targetId, serviceURL || undefined);
 			} else if (kind === 'subscription') {
 				ipResult = await api.singboxCheckIP(targetId, serviceURL || undefined, iface);
 			} else {
@@ -350,44 +360,52 @@
 		return new Promise((resolve, reject) => {
 			currentBandwidth = 0;
 			currentSecond = 0;
-			activeEventSource = api.singboxSpeedTestStream(
-				targetId,
-				server,
-				port,
-				(phase) => {
-					speedPhase = phase;
-					currentBandwidth = 0;
-					currentSecond = 0;
-				},
-				(interval) => {
-					currentBandwidth = interval.bandwidth;
-					currentSecond = interval.second;
-				},
-				(result) => {
-					const normalized: SpeedTestResult = {
-						server,
-						direction: result.phase === 'upload' ? 'upload' : 'download',
-						bandwidth: result.bandwidth,
-						bytes: result.bytes,
-						duration: result.duration,
-						retransmits: 0,
-					};
+			const onPhase = (phase: 'download' | 'upload') => {
+				speedPhase = phase;
+				currentBandwidth = 0;
+				currentSecond = 0;
+			};
+			const onInterval = (interval: { bandwidth: number; second: number }) => {
+				currentBandwidth = interval.bandwidth;
+				currentSecond = interval.second;
+			};
+			const onResult = (result: { phase: string; bandwidth: number; bytes: number; duration: number }) => {
+				const normalized: SpeedTestResult = {
+					server,
+					direction: result.phase === 'upload' ? 'upload' : 'download',
+					bandwidth: result.bandwidth,
+					bytes: result.bytes,
+					duration: result.duration,
+					retransmits: 0,
+				};
 
-					if (normalized.direction === 'download') {
-						downloadResult = normalized;
-					} else {
-						uploadResult = normalized;
-					}
-				},
-				() => {
-					activeEventSource = null;
-					resolve();
-				},
-				(error) => {
-					activeEventSource = null;
-					reject(new Error(error));
-				},
-				iface,
+				if (normalized.direction === 'download') {
+					downloadResult = normalized;
+				} else {
+					uploadResult = normalized;
+				}
+			};
+			const onDone = () => {
+				activeEventSource = null;
+				resolve();
+			};
+			const onError = (error: string) => {
+				activeEventSource = null;
+				reject(new Error(error));
+			};
+
+			if (kind === 'mihomo') {
+				if (!resourceKind) {
+					reject(new Error('Mihomo resource kind is not specified'));
+					return;
+				}
+				activeEventSource = api.mihomoSpeedTestStream(
+					resourceKind, targetId, server, port, onPhase, onInterval, onResult, onDone, onError, iface,
+				);
+				return;
+			}
+			activeEventSource = api.singboxSpeedTestStream(
+				targetId, server, port, onPhase, onInterval, onResult, onDone, onError, iface,
 			);
 		});
 	}
@@ -516,7 +534,7 @@
 
 		<p class="test-desc">{subject === 'tunnel' ? m.tunnel_test_ip_desc_tunnel() : m.tunnel_test_ip_desc_subscription()}</p>
 
-		{#if kind === 'subscription' || ipServices.length > 0}
+		{#if kind === 'subscription' || kind === 'mihomo' || ipServices.length > 0}
 			<div class="server-section">
 				<div class="server-header">
 					<span class="server-label">{m.tunnel_test_service()}</span>
@@ -610,7 +628,7 @@
 				<CircleAlert size={16} aria-hidden="true" />
 				{m.tunnel_test_iperf_missing()}
 			</p>
-		{:else if kind === 'singbox' && !iface}
+		{:else if (kind === 'singbox' || kind === 'subscription' || kind === 'mihomo') && !iface}
 			<p class="test-desc unavailable">
 				<CircleAlert size={16} aria-hidden="true" />
 				{m.tunnel_test_iperf_needs_proxy()}

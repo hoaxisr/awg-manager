@@ -39,7 +39,7 @@
   const FULL_TIMESTAMP_KEY = `${storagePrefix}.logsFullTimestamp`;
   const PAGE_SIZE = 200;
   type LogsQueryParams = {
-    bucket: 'app' | 'singbox';
+    bucket: LogBucket;
     groups: string[];
     subgroups: string[];
     limit: number;

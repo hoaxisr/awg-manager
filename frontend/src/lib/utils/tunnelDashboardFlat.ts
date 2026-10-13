@@ -1,6 +1,8 @@
 import type {
 	Awg3Tunnel,
 	ExternalTunnel,
+	MihomoNativeProxy,
+	MihomoNativeSubscription,
 	Subscription,
 	SubscriptionMember,
 	SingboxTunnel,
@@ -20,6 +22,8 @@ export type TunnelDashboardFlatItem =
 	| { kind: 'awg-external'; key: string; name: string; tunnel: ExternalTunnel }
 	| { kind: 'awg3'; key: string; name: string; tunnel: Awg3Tunnel; index: number }
 	| { kind: 'singbox'; key: string; name: string; tunnel: SingboxTunnel; index: number }
+	| { kind: 'mihomo-proxy'; key: string; name: string; proxy: MihomoNativeProxy; index: number }
+	| { kind: 'mihomo-subscription'; key: string; name: string; subscription: MihomoNativeSubscription; index: number }
 	| { kind: 'sub-active'; key: string; name: string; card: SubscriptionActiveCard; index: number }
 	| { kind: 'sub-stopped'; key: string; name: string; subscription: Subscription };
 
@@ -30,8 +34,10 @@ const FLAT_DASHBOARD_KIND_ORDER: Record<TunnelDashboardFlatItem['kind'], number>
 	'awg-external': 2,
 	awg3: 3,
 	singbox: 4,
-	'sub-active': 5,
-	'sub-stopped': 6,
+	'mihomo-proxy': 5,
+	'mihomo-subscription': 6,
+	'sub-active': 7,
+	'sub-stopped': 8,
 };
 
 function compareFlatDashboardItems(a: TunnelDashboardFlatItem, b: TunnelDashboardFlatItem): number {
@@ -46,6 +52,8 @@ export function buildFlatDashboardItems(input: {
 	external: ExternalTunnel[];
 	awg3: Awg3Tunnel[];
 	singbox: SingboxTunnel[];
+	mihomoProxies?: MihomoNativeProxy[];
+	mihomoSubscriptions?: MihomoNativeSubscription[];
 	subscriptionsActive: SubscriptionActiveCard[];
 	subscriptionsStopped: Subscription[];
 }): TunnelDashboardFlatItem[] {
@@ -95,6 +103,26 @@ export function buildFlatDashboardItems(input: {
 			key: `singbox:${tunnel.tag}`,
 			name: tunnel.tag,
 			tunnel,
+			index,
+		});
+	});
+
+	(input.mihomoProxies ?? []).forEach((proxy, index) => {
+		items.push({
+			kind: 'mihomo-proxy',
+			key: `mihomo-proxy:${proxy.id}`,
+			name: proxy.name,
+			proxy,
+			index,
+		});
+	});
+
+	(input.mihomoSubscriptions ?? []).forEach((subscription, index) => {
+		items.push({
+			kind: 'mihomo-subscription',
+			key: `mihomo-subscription:${subscription.id}`,
+			name: subscription.name,
+			subscription,
 			index,
 		});
 	});

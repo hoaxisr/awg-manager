@@ -5,12 +5,18 @@
   import { copyToClipboard } from '$lib/utils/clipboard';
   import { engineFatalHint, engineFatalFallback } from './engineFatalHints';
 
+  import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
+
   interface Props {
     open: boolean;
     lastError: string;
+    engine?: string;
     onclose: () => void;
   }
-  let { open, lastError, onclose }: Props = $props();
+  let { open, lastError, engine, onclose }: Props = $props();
+
+  const settingsStore = singboxRouterStore.settings;
+  const activeEngine = $derived(engine || ($settingsStore?.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box'));
 
   let copied = $state(false);
   const hint = $derived(lastError ? (engineFatalHint(lastError) ?? engineFatalFallback()) : null);
@@ -27,7 +33,7 @@
   });
 </script>
 
-<Modal {open} {onclose} title={m.sb_router_fatal_title()} size="lg">
+<Modal {open} {onclose} title={m.sb_router_fatal_title({ engine: activeEngine })} size="lg">
   {#if hint}
     <p class="hint">{hint}</p>
   {/if}
