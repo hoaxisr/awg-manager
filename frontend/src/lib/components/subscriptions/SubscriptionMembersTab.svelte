@@ -17,12 +17,13 @@
 
 	interface Props {
 		subscription: Subscription;
+		engine?: 'sing-box' | 'mihomo';
 		onUpdated: () => void;
 		autoDelayCheckNonce?: number;
 		liveActiveMember?: string | null;
 		layout?: SingboxLayoutMode;
 	}
-	let { subscription, onUpdated, autoDelayCheckNonce = 0, liveActiveMember = null, layout = 'compact' }: Props = $props();
+	let { subscription, engine = 'sing-box', onUpdated, autoDelayCheckNonce = 0, liveActiveMember = null, layout = 'compact' }: Props = $props();
 
 	let refreshing = $state(false);
 	let switching = $state<string | null>(null);
@@ -183,6 +184,12 @@
 		const beforeInfo = infoItems.length;
 		const beforeRejected = rejectedMembers.length;
 		try {
+			if (engine === 'mihomo') {
+				await api.mihomoNativeRefreshSubscription(subscription.id);
+				notifications.success(m.subscriptions_members_mihomo_refreshed());
+				onUpdated();
+				return;
+			}
 			const result = await api.refreshSubscription(subscription.id);
 			// skippedOther здесь НЕТ намеренно: неподдерживаемый протокол бэкенд
 			// считает и в счётчике, и в ошибках разбора (vlink: clash.go,
@@ -244,7 +251,13 @@
 		switching = memberTag;
 		lastError = '';
 		try {
-			await api.setSubscriptionActiveMember(subscription.id, memberTag);
+			if (engine === 'mihomo') {
+				const groupName = subscription.selectorTag || `Mihomo: ${subscription.label}`;
+				await api.mihomoRuntimeSelect(groupName, memberTag);
+				subscription.activeMember = memberTag;
+			} else {
+				await api.setSubscriptionActiveMember(subscription.id, memberTag);
+			}
 			onUpdated();
 		} catch (e) {
 			lastError = e instanceof Error ? e.message : m.subscriptions_picker_switch_failed();
@@ -253,8 +266,50 @@
 		}
 	}
 
+	async function testMihomoHealthcheck(): Promise<void> {
+		if (batchTesting) return;
+		batchTesting = true;
+		lastError = '';
+		try {
+			const providerName = (subscription as { providerName?: string }).providerName || (subscription.id ? `mnp-${subscription.id.slice(0, 8)}` : '');
+			if (providerName) {
+				await api.mihomoRuntimeProviderHealthcheck(providerName);
+			}
+			const providers = await api.mihomoRuntimeProviders();
+			const prov = providers.providers?.[providerName];
+			if (prov?.proxies) {
+				for (const p of prov.proxies) {
+					if (p.history && p.history.length > 0) {
+						const delays = p.history.map((h) => h.delay);
+						singboxDelayHistory.update((map) => {
+							const next = new Map(map);
+							next.set(p.name, delays);
+							return next;
+						});
+					}
+				}
+			}
+		} catch (e) {
+			lastError = e instanceof Error ? e.message : m.subscriptions_members_mihomo_test_failed();
+		} finally {
+			batchTesting = false;
+		}
+	}
+
+	async function testOne(tag: string): Promise<void> {
+		if (engine === 'mihomo') {
+			await testMihomoHealthcheck();
+			return;
+		}
+		await triggerDelayCheck(tag);
+	}
+
 	async function testAll(): Promise<void> {
 		if (batchTesting) return;
+		if (engine === 'mihomo') {
+			await testMihomoHealthcheck();
+			return;
+		}
 		const tags = memberList.map((member) => member.tag);
 		if (tags.length === 0) return;
 		batchTesting = true;
@@ -533,6 +588,7 @@
 			onremove={requestRemove}
 			ontoggle={toggleSel}
 			onexclude={excludeOne}
+			ontest={testOne}
 		/>
 	{/if}
 

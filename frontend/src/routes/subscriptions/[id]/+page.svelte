@@ -4,13 +4,21 @@
 	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
-	import type { Subscription, SubscriptionMember } from '$lib/types';
+	import {
+		DEFAULT_SUBSCRIPTION_URLTEST,
+		type Subscription,
+		type SubscriptionMember,
+		type SubscriptionMode,
+		type MihomoRuntimeProxy,
+		type MihomoRuntimeProvider,
+	} from '$lib/types';
 	import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
 	import { Tabs, LayoutViewToggle } from '$lib/components/ui';
 	import SubscriptionMembersTab from '$lib/components/subscriptions/SubscriptionMembersTab.svelte';
 	import SubscriptionExcludedSection from '$lib/components/subscriptions/SubscriptionExcludedSection.svelte';
 	import SubscriptionSettingsTab from '$lib/components/subscriptions/SubscriptionSettingsTab.svelte';
 	import { usageLevel } from '$lib/stores/settings';
+	import { singboxDelayHistory } from '$lib/stores/singbox';
 	import {
 		SINGBOX_LAYOUT_STORAGE_KEY,
 		parseSingboxLayoutMode,
@@ -30,6 +38,10 @@
 	const PROGRESS_BAR_THRESHOLD = 5;
 
 	const id = $derived($page.params.id ?? '');
+	const engineParam = $derived($page.url.searchParams.get('engine'));
+	let detectedEngine = $state<'sing-box' | 'mihomo'>('sing-box');
+	const effectiveEngine = $derived(engineParam === 'mihomo' || detectedEngine === 'mihomo' ? 'mihomo' : 'sing-box');
+
 	let subscription = $state<Subscription | null>(null);
 	let loading = $state(true);
 	let error = $state<UiText>('');
@@ -81,8 +93,97 @@
 		}
 	}
 
+	async function loadMihomo(): Promise<void> {
+		if (!id) return;
+		loading = true;
+		error = '';
+		subscription = null;
+		try {
+			const sub = await api.mihomoNativeSubscription(id);
+			detectedEngine = 'mihomo';
+			const [runtimeProxies, runtimeProviders] = await Promise.all([
+				api.mihomoRuntimeProxies().catch(() => ({ proxies: {} as Record<string, MihomoRuntimeProxy> })),
+				api.mihomoRuntimeProviders().catch(() => ({ providers: {} as Record<string, MihomoRuntimeProvider> })),
+			]);
+			const provider = sub.providerName ? runtimeProviders.providers?.[sub.providerName] : undefined;
+			const group = sub.groupName ? runtimeProxies.proxies?.[sub.groupName] : undefined;
+			const rawMembers: MihomoRuntimeProxy[] = (provider?.proxies ?? []) as MihomoRuntimeProxy[];
+			let members: SubscriptionMember[] = [];
+			if (sub.members && sub.members.length > 0) {
+				members = sub.members.map((member) => ({
+					tag: member.tag,
+					label: member.label || member.tag,
+					protocol: member.protocol?.toLowerCase() || 'vless',
+					server: member.server || member.tag,
+					port: member.port || 0,
+					sni: member.sni,
+					transport: member.transport,
+					security: member.security,
+				}));
+			} else {
+				members = rawMembers.map((p: MihomoRuntimeProxy) => ({
+					tag: p.name,
+					label: p.name,
+					protocol: p.type?.toLowerCase() || 'vless',
+					server: p.name,
+					port: 0,
+				}));
+			}
+			for (const p of rawMembers) {
+				if (p.history && p.history.length > 0) {
+					const delays = p.history.map((h: { time?: string; delay: number }) => h.delay);
+					singboxDelayHistory.update((map) => {
+						const next = new Map(map);
+						next.set(p.name, delays);
+						return next;
+					});
+				}
+			}
+			subscription = {
+				id: sub.id,
+				label: sub.name,
+				url: sub.url ?? '',
+				inline: sub.inline ?? '',
+				isInline: sub.format === 'share-links',
+				enabled: sub.enabled,
+				mode: (sub.mode === 'url-test' ? 'urltest' : 'selector') as SubscriptionMode,
+				urlTest: {
+					url: sub.testUrl || DEFAULT_SUBSCRIPTION_URLTEST.url,
+					intervalSec: sub.testInterval || DEFAULT_SUBSCRIPTION_URLTEST.intervalSec,
+					toleranceMs: sub.testTolerance || DEFAULT_SUBSCRIPTION_URLTEST.toleranceMs,
+				},
+				filterInclude: sub.filterInclude ?? '',
+				filterExclude: sub.filterExclude ?? '',
+				bindInterface: sub.bindInterface ?? '',
+				refreshHours: sub.refreshHours ?? 0,
+				headers: sub.headers ? Object.entries(sub.headers).map(([name, values]) => ({ name, value: values.join(', ') })) : [],
+				providerName: sub.providerName || (sub.id ? `mnp-${sub.id.slice(0, 8)}` : ''),
+				members,
+				memberTags: members.map((member) => member.tag),
+				activeMember: group?.now || members[0]?.tag || '',
+				selectorTag: sub.groupName || `Mihomo: ${sub.name}`,
+				orphanTags: [],
+				rejectedMembers: [],
+				infoItems: [],
+				excludedTags: [],
+				excludedMembers: [],
+				filteredMembers: [],
+			} as unknown as Subscription;
+			progressTotal = members.length;
+			progressLoaded = members.length;
+		} catch (e) {
+			error = e instanceof Error ? e.message : () => m.subscriptions_page_load_failed();
+		} finally {
+			loading = false;
+		}
+	}
+
 	function loadStream(): void {
 		if (!id) return;
+		if (effectiveEngine === 'mihomo') {
+			void loadMihomo();
+			return;
+		}
 		const isMockDev = isMockDevMode();
 		progressLoaded = 0;
 		progressTotal = 0;
@@ -174,6 +275,21 @@
 
 		evtSrc.onerror = async () => {
 			if (streamDone) return; // already completed cleanly — ignore connection-close error
+			if (progressLoaded === 0 && !fallbackTried) {
+				fallbackTried = true;
+				try {
+					const sub = await api.mihomoNativeSubscription(id);
+					if (sub && sub.id) {
+						detectedEngine = 'mihomo';
+						evtSrc?.close();
+						evtSrc = null;
+						void loadMihomo();
+						return;
+					}
+				} catch {
+					// continue
+				}
+			}
 			// Prism mock backend does not emulate SSE streaming events reliably.
 			// Fall back to the regular subscription GET so local mock UI remains usable.
 			if (isMockDev && !fallbackTried && progressLoaded === 0) {
@@ -242,8 +358,14 @@
 		let cancelled = false;
 		const tick = async (): Promise<void> => {
 			try {
-				const res = await api.getSubscriptionActiveNow(sub.id);
-				if (!cancelled) liveActiveMember = res.now || null;
+				if (effectiveEngine === 'mihomo') {
+					const res = await api.mihomoRuntimeProxies();
+					const group = res.proxies?.[sub.selectorTag || `Mihomo: ${sub.label}`];
+					if (!cancelled) liveActiveMember = group?.now || null;
+				} else {
+					const res = await api.getSubscriptionActiveNow(sub.id);
+					if (!cancelled) liveActiveMember = res.now || null;
+				}
 			} catch {
 				if (!cancelled) liveActiveMember = null;
 			}
@@ -342,6 +464,7 @@
 				{/if}
 				<SubscriptionMembersTab
 					{subscription}
+					engine={effectiveEngine}
 					{liveActiveMember}
 					onUpdated={loadStream}
 					autoDelayCheckNonce={membersAutoDelayCheckNonce}
@@ -357,6 +480,7 @@
 				<div class="edit-wrapper">
 					<SubscriptionSettingsTab
 						{subscription}
+						engine={effectiveEngine}
 						onUpdated={loadStream}
 						onEnabledChanged={patchSubscriptionEnabled}
 					/>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
-	import type { SingboxStatus, HydraRouteStatus } from '$lib/types';
+	import type { SingboxStatus, HydraRouteStatus, MihomoStatus } from '$lib/types';
 	import type { ProxySubsystem } from '$lib/api/proxyInstances';
 	import { Button, ConfirmModal, Input, Modal, StatusDot } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
@@ -55,6 +55,20 @@
 		clashPortError?: string | null;
 		/** Подсистемы прокси (WDTT, FreeTurn); пусто — блок не рисуется. */
 		proxyBinaries?: ProxyBinaryRow[];
+		/** Mihomo интеграция */
+		mihomoStatus?: MihomoStatus | null;
+		mihomoStatusLoading?: boolean;
+		mihomoInstalling?: boolean;
+		mihomoUpdating?: boolean;
+		mihomoRestarting?: boolean;
+		mihomoUninstalling?: boolean;
+		mihomoInstallError?: string | null;
+		mihomoUpdateError?: string | null;
+		oninstallMihomo?: () => void;
+		onupdateMihomo?: () => void;
+		onrestartMihomo?: () => void;
+		onuninstallMihomo?: () => void;
+		showMihomo?: boolean;
 	}
 
 	let {
@@ -81,6 +95,19 @@
 		clashPortSaving = false,
 		clashPortError = null,
 		proxyBinaries = [],
+		mihomoStatus = null,
+		mihomoStatusLoading = false,
+		mihomoInstalling = false,
+		mihomoUpdating = false,
+		mihomoUninstalling = false,
+		mihomoRestarting = false,
+		mihomoInstallError = null,
+		mihomoUpdateError = null,
+		oninstallMihomo,
+		onupdateMihomo,
+		onrestartMihomo,
+		onuninstallMihomo,
+		showMihomo = false,
 	}: Props = $props();
 
 	// Подсистема, ожидающая подтверждения удаления.
@@ -121,10 +148,14 @@
 	const clashPortDirty = $derived(clashPortValue !== (clashPort || DEFAULT_CLASH_PORT));
 
 	let confirmUninstall = $state(false);
+	let confirmUninstallMihomo = $state(false);
 
 	const singboxInstalled = $derived(singboxStatus?.installed ?? false);
 	const singboxRunning = $derived(singboxStatus?.running ?? false);
 	const singboxNeedsUpdate = $derived(singboxStatus?.updateAvailable ?? false);
+	const mihomoInstalled = $derived(mihomoStatus?.installed ?? false);
+	const mihomoRunning = $derived(mihomoStatus?.running ?? false);
+	const mihomoNeedsUpdate = $derived(mihomoStatus?.updateAvailable ?? false);
 	const hydraInstalled = $derived(hydraStatus?.installed ?? false);
 	const hydraRunning = $derived(hydraStatus?.running ?? false);
 	const hydraProcessState = $derived(
@@ -198,7 +229,7 @@
 	});
 </script>
 
-{#if showSingbox || showHydra || proxyBinaries.length > 0}
+{#if showSingbox || showMihomo || showHydra || proxyBinaries.length > 0}
 	<div class="settings-block">
 		<div class="card">
 		<SettingsSectionLabel label={m.settings_integrations_title()} icon={Blocks} tone="purple" header />
@@ -358,6 +389,81 @@
 					</div>
 				</div>
 			{/if}
+		{/if}
+
+		{#if showMihomo}
+			<div class="setting-row">
+				<div class="integration-item">
+					<StatusDot
+						variant={mihomoStatusLoading ? 'muted' : (mihomoInstalled && mihomoRunning ? 'success' : 'muted')}
+						size="md"
+						ariaLabel={
+							mihomoStatusLoading
+								? m.settings_integrations_mihomo_loading_aria()
+								: mihomoInstalled && mihomoRunning
+									? m.settings_integrations_mihomo_running_aria()
+									: m.settings_integrations_mihomo_stopped_aria()
+						}
+					/>
+					<div class="integration-meta">
+						<span class="font-medium">Mihomo</span>
+						{#if mihomoStatusLoading}
+							<span class="integration-sub">{m.settings_integrations_loading()}</span>
+						{:else if mihomoInstalled && mihomoStatus}
+							<span class="integration-sub">
+								v{mihomoStatus.version ?? mihomoStatus.currentVersion ?? '?'}
+								{#if mihomoRunning && mihomoStatus.pid}· pid {mihomoStatus.pid}{:else if !mihomoRunning}· {m.settings_integrations_stopped()}{/if}
+							</span>
+							{#if mihomoNeedsUpdate}
+								<span class="setting-description warning">
+									{m.settings_integrations_needs_update({ current: mihomoStatus.currentVersion ?? '—', required: mihomoStatus.requiredVersion ?? '' })}
+								</span>
+							{/if}
+							{#if mihomoUpdateError}
+								<span class="install-error-row">
+									<span class="install-error-label">{m.settings_integrations_mihomo_update_error({ error: mihomoUpdateError })}</span>
+								</span>
+							{/if}
+						{:else}
+							<span class="setting-description">
+								{m.settings_integrations_mihomo_description()}
+							</span>
+							{#if mihomoInstallError}
+								<span class="install-error-row">
+									<span class="install-error-label">{m.settings_integrations_mihomo_install_error({ error: mihomoInstallError })}</span>
+								</span>
+							{/if}
+						{/if}
+					</div>
+				</div>
+				{#if mihomoInstalled}
+					<div class="integration-actions">
+						{#if mihomoNeedsUpdate && onupdateMihomo}
+							<Button variant="primary" size="sm" onclick={onupdateMihomo} loading={mihomoUpdating}>
+								{mihomoUpdating ? m.settings_integrations_updating() : m.common_update()}
+							</Button>
+						{:else}
+							<Button variant="secondary" size="sm" href="/routing?tab=mihomo">{m.settings_integrations_open()}</Button>
+						{/if}
+						{#if onuninstallMihomo}
+							<Button
+								variant="outline-danger"
+								size="sm"
+								loading={mihomoUninstalling}
+								onclick={() => (confirmUninstallMihomo = true)}
+							>
+								{mihomoUninstalling ? m.settings_integrations_uninstalling() : m.common_delete()}
+							</Button>
+						{/if}
+					</div>
+				{:else if mihomoStatusLoading}
+					<Button variant="secondary" size="sm" disabled>{m.settings_integrations_waiting()}</Button>
+				{:else if oninstallMihomo}
+					<Button variant="primary" size="sm" onclick={oninstallMihomo} loading={mihomoInstalling}>
+						{mihomoInstalling ? m.settings_integrations_installing() : m.settings_integrations_install()}
+					</Button>
+				{/if}
+			</div>
 		{/if}
 
 		{#each proxyBinaries as p (p.key)}
@@ -526,6 +632,23 @@
 			onuninstallSingbox?.();
 		}}
 		onClose={() => (confirmUninstall = false)}
+	/>
+{/if}
+
+{#if confirmUninstallMihomo}
+	<ConfirmModal
+		open={confirmUninstallMihomo}
+		title={m.settings_integrations_remove_mihomo_title()}
+		message={m.settings_integrations_remove_mihomo_message()}
+		secondary={m.settings_integrations_remove_mihomo_secondary()}
+		confirmLabel={m.common_delete()}
+		variant="danger"
+		busy={mihomoUninstalling}
+		onConfirm={() => {
+			confirmUninstallMihomo = false;
+			onuninstallMihomo?.();
+		}}
+		onClose={() => (confirmUninstallMihomo = false)}
 	/>
 {/if}
 
