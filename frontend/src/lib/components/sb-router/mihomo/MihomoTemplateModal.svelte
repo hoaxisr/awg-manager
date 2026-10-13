@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Modal, Button } from '$lib/components/ui';
   import {
     ShieldCheck, Globe, Lock, Check, AlertTriangle, ArrowRight, Layers, Wifi, Radio
@@ -44,7 +45,7 @@
 
   // Collect all usable VPN / Proxy outbounds
   const availableOutbounds = $derived.by(() => {
-    const list: Array<{ value: string; label: string; group: string }> = [];
+    const list: Array<{ value: string; label: string; group: string; groupKey: string }> = [];
 
     // Proxy groups (Fastest, Select, Fallback)
     for (const g of groups) {
@@ -52,7 +53,8 @@
         list.push({
           value: g.name,
           label: `${g.name} (${g.type})`,
-          group: 'Группы Mihomo'
+          group: m.mihomo_group_label_groups(),
+          groupKey: 'groups'
         });
       }
     }
@@ -60,7 +62,7 @@
     // Native Mihomo subscriptions
     for (const s of subscriptions) {
       if (s.enabled && s.groupName && !list.some(i => i.value === s.groupName)) {
-        list.push({ value: s.groupName, label: s.name, group: 'Подписки Mihomo' });
+        list.push({ value: s.groupName, label: s.name, group: m.mihomo_group_label_subs(), groupKey: 'subs' });
       }
     }
 
@@ -71,7 +73,8 @@
         list.push({
           value: t.tag,
           label: t.label ? `${t.label} (${t.tag})` : t.tag,
-          group: t.kind === 'system' ? 'Системные WireGuard' : 'AWG туннели'
+          group: t.kind === 'system' ? m.mihomo_group_label_sys_wg() : m.mihomo_group_label_awg(),
+          groupKey: t.kind === 'system' ? 'sys_wg' : 'awg'
         });
       }
     }
@@ -83,7 +86,8 @@
         list.push({
           value: t.tag,
           label: t.kernelInterface ? `${t.tag} (${t.kernelInterface})` : t.tag,
-          group: 'Туннели Sing-box'
+          group: m.mihomo_group_label_sb_tunnels(),
+          groupKey: 'sb_tunnels'
         });
       }
     }
@@ -91,7 +95,7 @@
     // Mihomo Proxies
     for (const p of proxies) {
       if (p.enabled && !list.some(i => i.value === p.name)) {
-        list.push({ value: p.name, label: p.name, group: 'Прокси узлы' });
+        list.push({ value: p.name, label: p.name, group: m.mihomo_group_label_proxies(), groupKey: 'proxies' });
       }
     }
 
@@ -102,79 +106,80 @@
   $effect(() => {
     if (availableOutbounds.length > 0 && !selectedOutbound) {
       // Prefer URL-Test or select group if available, else first tunnel
-      const best = availableOutbounds.find(o => o.value.includes('Самый быстрый') || o.value.includes('url-test'))
-        || availableOutbounds.find(o => o.group === 'Группы Mihomo')
+      const urlTestGroup = groups.find(g => g.enabled && g.type === 'url-test');
+      const best = (urlTestGroup && availableOutbounds.find(o => o.value === urlTestGroup.name))
+        || availableOutbounds.find(o => o.groupKey === 'groups')
         || availableOutbounds[0];
       if (best) selectedOutbound = best.value;
     }
   });
 
-  const TEMPLATES = [
+  const TEMPLATES = $derived([
     {
       id: 'smart_bypass' as TemplateId,
-      title: 'Умный обход (Только заблокированное в VPN)',
-      badge: 'Рекомендуется',
+      title: m.mihomo_tpl_smart_title(),
+      badge: m.mihomo_tpl_smart_badge(),
       badgeTone: 'green',
       icon: ShieldCheck,
-      desc: 'Вся Россия, банки, Госуслуги и обычные сайты идут напрямую на полной скорости провайдера. В туннель направляются только заблокированные реестры, YouTube, Discord, Instagram и AI-сервисы.',
+      desc: m.mihomo_tpl_smart_desc(),
       pros: [
-        'Банки и Госуслуги никогда не блокируют доступ',
-        'Туннель не забивается российским тяжелым видео и торрентами',
-        'Быстрый отклик и отсутствие лишних капч'
+        m.mihomo_tpl_smart_pro1(),
+        m.mihomo_tpl_smart_pro2(),
+        m.mihomo_tpl_smart_pro3()
       ],
       rulesCount: 6,
-      matchFallback: 'DIRECT (Напрямую)'
+      matchFallback: 'DIRECT'
     },
     {
       id: 'whitelist_mobile' as TemplateId,
-      title: 'Белый список / Мобильный интернет',
-      badge: 'Для сотовых сетей и ТСПУ',
+      title: m.mihomo_tpl_mobile_title(),
+      badge: m.mihomo_tpl_mobile_badge(),
       badgeTone: 'purple',
       icon: Radio,
-      desc: 'Специально для мобильных операторов и условий блокировок по белым спискам. Только проверенные ресурсы РФ, банки, операторы и Госуслуги идут напрямую, а абсолютно весь остальной трафик надежно уходит в туннель.',
+      desc: m.mihomo_tpl_mobile_desc(),
       pros: [
-        'Идеально для модемов и условий жестких мобильных фильтраций',
-        'Банки, Госуслуги и личные кабинеты операторов работают напрямую',
-        'Весь мировой и заблокированный интернет спасается через защищенный туннель'
+        m.mihomo_tpl_mobile_pro1(),
+        m.mihomo_tpl_mobile_pro2(),
+        m.mihomo_tpl_mobile_pro3()
       ],
       rulesCount: 5,
-      matchFallback: 'VPN (Туннель)'
+      matchFallback: 'VPN'
     },
     {
       id: 'russia_direct_world_vpn' as TemplateId,
-      title: 'Вся Россия напрямую, остальной мир через VPN',
-      badge: 'Анти-ТСПУ / XKeen',
+      title: m.mihomo_tpl_ru_world_title(),
+      badge: m.mihomo_tpl_ru_world_badge(),
       badgeTone: 'blue',
       icon: Globe,
-      desc: 'Выверенная база российских сервисов (VK, Яндекс, Госуслуги, банки, маркетплейсы, провайдеры) и локальная сеть идут напрямую. Все зарубежные сайты открываются через туннель.',
+      desc: m.mihomo_tpl_ru_world_desc(),
       pros: [
-        'Все иностранные ресурсы работают без замедлений ТСПУ',
-        'Российские сервисы распознают домашний регион без капч',
-        'Полная защита от цензуры для любых зарубежных доменов'
+        m.mihomo_tpl_ru_world_pro1(),
+        m.mihomo_tpl_ru_world_pro2(),
+        m.mihomo_tpl_ru_world_pro3()
       ],
       rulesCount: 5,
-      matchFallback: 'VPN (Туннель)'
+      matchFallback: 'VPN'
     },
     {
       id: 'full_tunnel' as TemplateId,
-      title: 'Полный туннель (Весь трафик через VPN)',
-      badge: 'Максимальная приватность',
+      title: m.mihomo_tpl_full_title(),
+      badge: m.mihomo_tpl_full_badge(),
       badgeTone: 'amber',
       icon: Lock,
-      desc: 'Весь интернет-трафик заворачивается в туннель, исключая только локальные адреса вашей домашней сети (192.168.x.x).',
+      desc: m.mihomo_tpl_full_desc(),
       pros: [
-        'Провайдер вообще не видит, куда вы заходите',
-        'Максимальное шифрование и анонимность'
+        m.mihomo_tpl_full_pro1(),
+        m.mihomo_tpl_full_pro2()
       ],
-      caution: 'Российские банки (Сбер, Т-Банк, ВТБ) и Госуслуги могут блокировать вход с зарубежных IP!',
+      caution: m.mihomo_tpl_full_caution(),
       rulesCount: 2,
-      matchFallback: 'VPN (Туннель)'
+      matchFallback: 'VPN'
     }
-  ];
+  ]);
 
   async function handleApplyTemplate() {
     if (!selectedOutbound) {
-      notifications.error('Выберите исходящий туннель или прокси-группу');
+      notifications.error(m.mihomo_tpl_err_select_outbound());
       return;
     }
 
@@ -261,33 +266,33 @@
         }, isLast);
       }
 
-      notifications.success(`Шаблон успешно применён! Сформировано правил: ${newRules.length}`);
+      notifications.success(m.mihomo_tpl_applied_success({ count: newRules.length }));
       onApplied();
       onClose();
     } catch (err) {
-      notifications.error(err instanceof Error ? err.message : 'Ошибка при применении шаблона');
+      notifications.error(err instanceof Error ? err.message : m.mihomo_tpl_apply_error());
     } finally {
       applying = false;
     }
   }
 </script>
 
-<Modal {open} title="⚡ Готовые шаблоны маршрутизации (Сценарии)" onclose={onClose} size="lg">
+<Modal {open} title={m.mihomo_tpl_modal_title()} onclose={onClose} size="lg">
   <div class="template-modal">
     <p class="modal-subtitle">
-      Выберите один из проверенных сценариев. Роутер автоматически выстроит правильную очередность правил, исключения для банков и действие по умолчанию.
+      {m.mihomo_tpl_modal_subtitle()}
     </p>
 
     <!-- Outbound Destination Selector -->
     <div class="target-box">
       <div class="target-title">
         <Layers size={16} />
-        <span>Куда направлять туннелируемый трафик:</span>
+        <span>{m.mihomo_tpl_target_lbl()}</span>
       </div>
       <div class="target-select-wrap">
         <select bind:value={selectedOutbound} class="text-input select-styled">
           {#if availableOutbounds.length === 0}
-            <option value="">Нет доступных туннелей или групп</option>
+            <option value="">{m.mihomo_tpl_no_outbounds()}</option>
           {/if}
           {#each availableOutbounds as item}
             <option value={item.value}>[{item.group}] {item.label}</option>
@@ -299,6 +304,7 @@
     <!-- Templates Cards -->
     <div class="cards-grid">
       {#each TEMPLATES as t}
+        {@const Icon = t.icon}
         <button
           type="button"
           class="tpl-card"
@@ -307,7 +313,7 @@
         >
           <div class="card-header">
             <div class="card-icon tone-{t.badgeTone}">
-              <svelte:component this={t.icon} size={20} />
+              <Icon size={20} />
             </div>
             <div class="card-title-wrap">
               <div class="title-row">
@@ -336,9 +342,9 @@
           {/if}
 
           <div class="card-footer">
-            <span class="rules-badge">Правил: {t.rulesCount}</span>
+            <span class="rules-badge">{m.mihomo_tpl_rules_count_badge({ count: t.rulesCount })}</span>
             <span class="fallback-badge">
-              Остальное → <strong>{t.matchFallback === 'DIRECT' ? 'DIRECT (Дома)' : 'VPN'}</strong>
+              {m.mihomo_tpl_fallback_lbl()} <strong>{t.matchFallback === 'DIRECT' ? m.mihomo_tpl_fallback_direct() : 'VPN'}</strong>
             </span>
           </div>
         </button>
@@ -347,14 +353,14 @@
 
     <label class="replace-toggle">
       <input type="checkbox" bind:checked={replaceExisting} />
-      <span>Заменить существующие правила маршрутизации этим шаблоном</span>
+      <span>{m.mihomo_tpl_replace_existing_lbl()}</span>
     </label>
   </div>
 
   {#snippet actions()}
-    <Button variant="ghost" onclick={onClose} disabled={applying}>Отмена</Button>
+    <Button variant="ghost" onclick={onClose} disabled={applying}>{m.common_cancel()}</Button>
     <Button variant="primary" onclick={handleApplyTemplate} loading={applying} disabled={applying || !selectedOutbound}>
-      Применить шаблон
+      {m.mihomo_tpl_apply_btn()}
     </Button>
   {/snippet}
 </Modal>

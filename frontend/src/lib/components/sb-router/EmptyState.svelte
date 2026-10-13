@@ -351,9 +351,6 @@
   }
   .t-chip.selected { background: var(--accent-soft); border-color: var(--accent); }
   .t-chip .tag { font-family: var(--font-mono); font-size: 12px; font-weight: 500; }
-  .icon-accent {
-    color: var(--accent);
-  }
   .type-badge {
     font-size: 10px;
     padding: 1px 4px;

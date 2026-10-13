@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { m, uiText, type UiText } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import type {
 		MihomoEnginePreference,
@@ -29,7 +30,7 @@
 
 	let loading = $state(false);
 	let saving = $state(false);
-	let error = $state('');
+	let error = $state<UiText>('');
 	let loadedKey = $state('');
 	let loadSequence = 0;
 	let initialFingerprint = $state('');
@@ -138,7 +139,7 @@
 			if (sequence === loadSequence) initialFingerprint = currentFingerprint;
 		} catch (loadError) {
 			if (sequence === loadSequence) {
-				error = loadError instanceof Error ? loadError.message : 'Не удалось загрузить ресурс Mihomo';
+				error = loadError instanceof Error ? loadError.message : () => m.mihomo_native_edit_load_failed();
 			}
 		} finally {
 			if (sequence === loadSequence) loading = false;
@@ -169,10 +170,10 @@
 		try {
 			parsed = JSON.parse(manualConfig.trim() || '{}');
 		} catch {
-			throw new Error('Дополнительные параметры должны быть корректным JSON');
+			throw new Error(m.mihomo_native_edit_err_json());
 		}
 		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-			throw new Error('Дополнительные параметры должны быть JSON-объектом');
+			throw new Error(m.mihomo_native_edit_err_json_object());
 		}
 		return parsed as Record<string, unknown>;
 	}
@@ -184,18 +185,18 @@
 		try {
 			let saved: MihomoNativeProxy | MihomoNativeSubscription;
 			if (kind === 'proxy') {
-				if (!proxyName.trim()) throw new Error('Укажите название прокси');
+				if (!proxyName.trim()) throw new Error(m.mihomo_native_edit_err_proxy_name());
 				if (proxySourceMode === 'uri') {
-					if (!proxyURI.trim()) throw new Error('Вставьте share-ссылку прокси');
+					if (!proxyURI.trim()) throw new Error(m.mihomo_native_edit_err_proxy_uri());
 					saved = await api.mihomoNativeUpdateProxy(resourceId, {
 						uri: uriWithName(proxyURI, proxyName),
 						enginePreference,
 						enabled,
 					});
 				} else {
-					if (!manualServer.trim()) throw new Error('Укажите сервер прокси');
+					if (!manualServer.trim()) throw new Error(m.mihomo_native_edit_err_proxy_server());
 					if (!Number.isInteger(manualPort) || manualPort < 1 || manualPort > 65535) {
-						throw new Error('Порт должен быть от 1 до 65535');
+						throw new Error(m.mihomo_native_edit_err_port_range());
 					}
 					saved = await api.mihomoNativeUpdateProxy(resourceId, {
 						manual: {
@@ -210,16 +211,16 @@
 					});
 				}
 			} else {
-				if (!subscriptionName.trim()) throw new Error('Укажите название подписки');
+				if (!subscriptionName.trim()) throw new Error(m.mihomo_native_edit_err_sub_name());
 				const normalizedFormat = normalizeMihomoSubscriptionFormat(subscriptionFormat, {
 					url: subscriptionURL,
 					inline: subscriptionInline,
 				});
 				const isInline = normalizedFormat === 'share-links';
-				if (isInline && !subscriptionInline.trim()) throw new Error('Добавьте хотя бы одну share-ссылку');
-				if (!isInline && !subscriptionURL.trim()) throw new Error('Укажите URL proxy-provider');
+				if (isInline && !subscriptionInline.trim()) throw new Error(m.mihomo_native_edit_err_sub_inline());
+				if (!isInline && !subscriptionURL.trim()) throw new Error(m.mihomo_native_edit_err_sub_url());
 				if (!isInline && (!Number.isInteger(refreshHours) || refreshHours < 0)) {
-					throw new Error('Интервал обновления должен быть целым неотрицательным числом');
+					throw new Error(m.mihomo_native_edit_err_refresh_hours());
 				}
 				saved = await api.mihomoNativeUpdateSubscription(resourceId, {
 					name: subscriptionName.trim(),
@@ -233,12 +234,12 @@
 				});
 			}
 			await onupdated?.(saved);
-			notifications.success(kind === 'proxy' ? 'Прокси Mihomo обновлён' : 'Подписка Mihomo обновлена');
+			notifications.success(kind === 'proxy' ? m.mihomo_native_edit_proxy_updated() : m.mihomo_native_edit_sub_updated());
 			initialFingerprint = currentFingerprint;
 			onclose();
 		} catch (saveError) {
-			error = saveError instanceof Error ? saveError.message : 'Не удалось сохранить ресурс Mihomo';
-			notifications.error(error);
+			error = saveError instanceof Error ? saveError.message : () => m.mihomo_native_edit_save_failed();
+			notifications.error(uiText(error));
 		} finally {
 			saving = false;
 		}
@@ -251,63 +252,63 @@
 
 <Modal
 	{open}
-	title={kind === 'proxy' ? 'Изменить прокси Mihomo' : 'Изменить подписку Mihomo'}
+	title={kind === 'proxy' ? m.mihomo_native_edit_title_proxy() : m.mihomo_native_edit_title_sub()}
 	size="lg"
 	onclose={close}
 	hasUnsavedChanges={() => dirty}
 >
 	{#if loading}
-		<div class="loading-state"><span class="spinner"></span><span>Загружаем настройки…</span></div>
+		<div class="loading-state"><span class="spinner"></span><span>{m.mihomo_native_edit_loading()}</span></div>
 	{:else}
 		<form class="edit-form" onsubmit={(event) => { event.preventDefault(); void save(); }}>
-			{#if error}<div class="error-box" role="alert">{error}</div>{/if}
+			{#if uiText(error)}<div class="error-box" role="alert">{uiText(error)}</div>{/if}
 
 			<div class="enabled-row">
 				<div>
-					<strong>{enabled ? 'Ресурс включён' : 'Ресурс выключен'}</strong>
-					<span>{enabled ? 'Участвует в конфигурации и маршрутизации Mihomo' : 'Сохранён, но исключён из конфигурации'}</span>
+					<strong>{enabled ? m.mihomo_native_edit_enabled_on() : m.mihomo_native_edit_enabled_off()}</strong>
+					<span>{enabled ? m.mihomo_native_edit_enabled_on_hint() : m.mihomo_native_edit_enabled_off_hint()}</span>
 				</div>
 				<FormToggle bind:checked={enabled} disabled={saving} />
 			</div>
 
 			{#if kind === 'proxy'}
-				<Input label="Название" bind:value={proxyName} required fullWidth disabled={saving} />
+				<Input label={m.mihomo_native_edit_label_name()} bind:value={proxyName} required fullWidth disabled={saving} />
 				{#if proxySourceMode === 'uri'}
 					<label class="field-block">
-						<span class="field-label">Share-ссылка</span>
+						<span class="field-label">{m.mihomo_native_edit_label_uri()}</span>
 						<ShareLinksTextarea bind:value={proxyURI} rows={6} disabled={saving} placeholder="vless://… / hysteria2://… / tuic://…" />
-						<span class="field-hint">Название синхронизируется с фрагментом ссылки после символа #.</span>
+						<span class="field-hint">{m.mihomo_native_edit_uri_hint()}</span>
 					</label>
 				{:else}
 					<div class="field-grid">
-						<Dropdown label="Протокол" bind:value={manualProtocol} options={protocolOptions} fullWidth disabled={saving} />
-						<Input label="Сервер" bind:value={manualServer} required fullWidth disabled={saving} />
+						<Dropdown label={m.mihomo_native_edit_label_protocol()} bind:value={manualProtocol} options={protocolOptions} fullWidth disabled={saving} />
+						<Input label={m.mihomo_native_edit_label_server()} bind:value={manualServer} required fullWidth disabled={saving} />
 					</div>
 					<label class="field-block">
-						<span class="field-label">Порт</span>
+						<span class="field-label">{m.mihomo_native_edit_label_port()}</span>
 						<input class="native-input" type="number" min="1" max="65535" bind:value={manualPort} disabled={saving} />
 					</label>
 					<label class="field-block">
-						<span class="field-label">Дополнительные параметры Mihomo (JSON)</span>
+						<span class="field-label">{m.mihomo_native_edit_label_extra_json()}</span>
 						<textarea class="code-editor" bind:value={manualConfig} rows="10" spellcheck="false" disabled={saving}></textarea>
-						<span class="field-hint">Поля name, type, server и port задаются выше. Остальные поля проверяются по выбранному протоколу.</span>
+						<span class="field-hint">{m.mihomo_native_edit_extra_json_hint()}</span>
 					</label>
 				{/if}
 			{:else}
-				<Input label="Название" bind:value={subscriptionName} required fullWidth disabled={saving} />
+				<Input label={m.mihomo_native_edit_label_name()} bind:value={subscriptionName} required fullWidth disabled={saving} />
 				{#if subscriptionFormat === 'share-links'}
 					<label class="field-block">
-						<span class="field-label">Серверы подписки</span>
+						<span class="field-label">{m.mihomo_native_edit_label_sub_servers()}</span>
 						<ShareLinksTextarea bind:value={subscriptionInline} rows={10} disabled={saving} placeholder={'vless://…\nhysteria2://…\ntuic://…'} />
-						<span class="field-hint">Одна share-ссылка на строку. Состав группы будет пересобран при сохранении.</span>
+						<span class="field-hint">{m.mihomo_native_edit_sub_servers_hint()}</span>
 					</label>
 				{:else}
-					<Input label="URL proxy-provider" type="url" bind:value={subscriptionURL} required fullWidth disabled={saving} />
+					<Input label={m.mihomo_native_edit_label_provider_url()} type="url" bind:value={subscriptionURL} required fullWidth disabled={saving} />
 					<HeadersTextarea bind:value={headersText} />
 					<label class="field-block">
-						<span class="field-label">Автообновление, часов</span>
+						<span class="field-label">{m.mihomo_native_edit_label_refresh_hours()}</span>
 						<input class="native-input" type="number" min="0" bind:value={refreshHours} disabled={saving} />
-						<span class="field-hint">0 — обновлять только вручную.</span>
+						<span class="field-hint">{m.mihomo_native_edit_refresh_hours_hint()}</span>
 					</label>
 				{/if}
 			{/if}
@@ -315,8 +316,8 @@
 	{/if}
 
 	{#snippet actions()}
-		<Button variant="ghost" disabled={saving} onclick={close}>Отмена</Button>
-		<Button variant="primary" loading={saving} disabled={loading || saving} onclick={save}>Сохранить</Button>
+		<Button variant="ghost" disabled={saving} onclick={close}>{m.common_cancel()}</Button>
+		<Button variant="primary" loading={saving} disabled={loading || saving} onclick={save}>{m.common_save()}</Button>
 	{/snippet}
 </Modal>
 

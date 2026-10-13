@@ -3,6 +3,7 @@
 	import { untrack } from 'svelte';
 	import { Eye, EyeOff } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
+	import { m } from '$lib/i18n';
 	import { isCardNestedInteraction } from '$lib/utils/cardClick';
 	import { notifications } from '$lib/stores/notifications';
 	import { mihomoNativeResources } from '$lib/stores/mihomoNative';
@@ -89,9 +90,9 @@
 	const listenPort = $derived(bridge?.listenPort ? `:${bridge.listenPort}` : '');
 
 	const diagnosticsUnavailable = $derived.by(() => {
-		if (!enabled) return 'Ресурс выключен. Включите его и сохраните настройки перед тестированием.';
-		if (!bridge?.kernelInterface) return 'Для ресурса ещё не создан kernel-интерфейс NDMS Proxy.';
-		if (!activeRuntime || activeRuntime.alive === false) return 'Ресурс недоступен в работающем runtime Mihomo.';
+		if (!enabled) return m.mihomo_card_diag_disabled();
+		if (!bridge?.kernelInterface) return m.mihomo_card_diag_no_bridge();
+		if (!activeRuntime || activeRuntime.alive === false) return m.mihomo_card_diag_unavailable();
 		return undefined;
 	});
 	const running = $derived(Boolean(enabled && activeRuntime && activeRuntime.alive !== false));
@@ -219,7 +220,7 @@
 			localHistory = [...localHistory, delay].slice(-14);
 		} catch (error) {
 			localHistory = [...localHistory, 0].slice(-14);
-			notifications.error(error instanceof Error ? error.message : 'Не удалось проверить Mihomo proxy');
+			notifications.error(error instanceof Error ? error.message : m.mihomo_card_err_check());
 		} finally {
 			checking = false;
 		}
@@ -240,9 +241,9 @@
 		try {
 			await api.mihomoRuntimeSelect(groupName, name);
 			await mihomoNativeResources.refetch();
-			notifications.success(`Mihomo переключён на ${name}`);
+			notifications.success(m.mihomo_card_switched_to({ name }));
 		} catch (error) {
-			notifications.error(error instanceof Error ? error.message : 'Не удалось переключить сервер');
+			notifications.error(error instanceof Error ? error.message : m.mihomo_card_err_switch());
 		} finally {
 			switching = false;
 		}
@@ -256,9 +257,9 @@
 			else if (subscription) await api.mihomoNativeDeleteSubscription(subscription.id);
 			await mihomoNativeResources.refetch();
 			confirmDeleteOpen = false;
-			notifications.success(kind === 'proxy' ? 'Прокси-туннель Mihomo удалён' : 'Подписка Mihomo удалена');
+			notifications.success(kind === 'proxy' ? m.mihomo_card_proxy_deleted() : m.mihomo_card_sub_deleted());
 		} catch (error) {
-			notifications.error(error instanceof Error ? error.message : 'Не удалось удалить ресурс Mihomo');
+			notifications.error(error instanceof Error ? error.message : m.mihomo_card_err_delete());
 		} finally {
 			deleting = false;
 		}
@@ -290,7 +291,7 @@
 						{#if kernelIface}<span class="meta-dot" aria-hidden="true">·</span><span>{kernelIface}</span>{/if}
 						{#if listenPort}<span class="meta-dot" aria-hidden="true">·</span><span>{listenPort}</span>{/if}
 					{:else}
-						<span>NDMS-мост создаётся при применении</span>
+						<span>{m.mihomo_card_bridge_pending()}</span>
 					{/if}
 				</TunnelMetaText>
 			</div>
@@ -310,10 +311,10 @@
 		{/if}
 		<td class="lc lc-traffic"><TunnelListTrafficCell rxRate={inlineRxRate} txRate={inlineTxRate} rxData={trafficSparkSeries.rx} txData={trafficSparkSeries.tx} /></td>
 		<td class="lc"><TunnelDelaySparkBars {history} state={cardState} layout="list" onclick={triggerCheck} /></td>
-		<td class="lc-actions col-actions"><TunnelListActions onEdit={() => handleEdit()} editLabel="Изменить" onTest={() => diagnosticsOpen = true} onDelete={() => confirmDeleteOpen = true} {deleting} /></td>
+		<td class="lc-actions col-actions"><TunnelListActions onEdit={() => handleEdit()} editLabel={m.mihomo_card_edit_btn()} onTest={() => diagnosticsOpen = true} onDelete={() => confirmDeleteOpen = true} {deleting} /></td>
 	</tr>
 {:else if layout === 'dense' || renderMode === 'list-card'}
-	<div class="card view-dense card-clickable" class:view-list={renderMode === 'list-card'} class:ok={cardState === 'ok'} class:slow={cardState === 'slow'} class:fail={cardState === 'fail'} class:unknown={cardState === 'unknown'} class:stopped={!enabled} role="button" tabindex="0" onclick={(e) => handleEdit(e)}>
+	<div class="card view-dense card-clickable" class:view-list={renderMode === 'list-card'} class:ok={cardState === 'ok'} class:slow={cardState === 'slow'} class:fail={cardState === 'fail'} class:unknown={cardState === 'unknown'} class:stopped={!enabled} role="button" tabindex="0" onclick={(e) => handleEdit(e)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleEdit(e); }}>
 		<div class="header header-dense">
 			<div class="header-dense-body">
 				<div class="title-row-dense">
@@ -321,7 +322,7 @@
 						{#snippet badges()}
 							<Badge variant="accent" size="sm">Mihomo</Badge>
 							{#if kind === 'subscription'}
-								<Badge variant="accent" size="sm">{subscription?.format === 'share-links' ? 'группа' : 'подписка'}</Badge>
+								<Badge variant="accent" size="sm">{subscription?.format === 'share-links' ? m.mihomo_card_badge_group() : m.mihomo_card_badge_sub()}</Badge>
 							{/if}
 						{/snippet}
 					</TunnelTitleRow>
@@ -333,7 +334,7 @@
 							{#if kernelIface}<span class="meta-dot" aria-hidden="true">·</span><span>{kernelIface}</span>{/if}
 							{#if listenPort}<span class="meta-dot" aria-hidden="true">·</span><span>{listenPort}</span>{/if}
 						{:else}
-							<span>NDMS-мост</span>
+							<span>{m.mihomo_card_bridge_short()}</span>
 						{/if}
 					</span>
 					<span class="badge proto">{protocol}</span>
@@ -361,7 +362,7 @@
 				<div class="details-dense-cols">
 					<div class="details-dense-col">
 						<div class="kv-stacked-stat">
-							<span class="kv-stacked-label">{kind === 'proxy' ? 'Сервер' : (isURLTest ? 'Авто' : 'Активный сервер')}</span>
+							<span class="kv-stacked-label">{kind === 'proxy' ? m.mihomo_card_label_server() : (isURLTest ? m.mihomo_card_label_auto() : m.mihomo_card_label_active_server())}</span>
 							<span class="kv-endpoint">
 								<span class="kv-stacked-value" title={showEndpoint ? activeEndpointTitle : (listActiveServerName || hiddenEndpointText)}>
 									{#if showEndpoint}
@@ -372,7 +373,7 @@
 										{hiddenEndpointText}
 									{/if}
 								</span>
-								<button type="button" class="eye-btn" onclick={(e) => { e.stopPropagation(); showEndpoint = !showEndpoint; }} aria-label={showEndpoint ? 'Скрыть IP' : 'Показать IP'}>
+								<button type="button" class="eye-btn" onclick={(e) => { e.stopPropagation(); showEndpoint = !showEndpoint; }} aria-label={showEndpoint ? m.mihomo_card_hide_ip() : m.mihomo_card_show_ip()}>
 									{#if showEndpoint}<Eye size={12} aria-hidden="true" />{:else}<EyeOff size={12} aria-hidden="true" />{/if}
 								</button>
 							</span>
@@ -381,15 +382,15 @@
 				</div>
 				{#if kind === 'subscription'}
 					<div class="dense-meta-line mono">
-						<span>{members.length} серверов</span>
-						<span>обновлено: {lastFetchedHuman}</span>
+						<span>{m.mihomo_servers_count({ count: members.length })}</span>
+						<span>{m.mihomo_card_updated_colon({ time: lastFetchedHuman })}</span>
 					</div>
 				{/if}
 			</div>
 		{/if}
 
 		<div class="actions">
-			<TunnelListActions variant="labeled" onEdit={() => handleEdit()} editLabel="Изменить" onTest={() => diagnosticsOpen = true} onDelete={() => confirmDeleteOpen = true} {deleting} />
+			<TunnelListActions variant="labeled" onEdit={() => handleEdit()} editLabel={m.mihomo_card_edit_btn()} onTest={() => diagnosticsOpen = true} onDelete={() => confirmDeleteOpen = true} {deleting} />
 		</div>
 
 		{#if renderMode !== 'list-card'}
@@ -402,21 +403,21 @@
 					</div>
 				</div>
 				<div class="chart-inline delay-inline">
-					<div class="chart-inline-head"><span class="chart-inline-label">Delay (5 мин)</span></div>
+					<div class="chart-inline-head"><span class="chart-inline-label">{m.mihomo_card_delay_5m()}</span></div>
 					<TunnelDelaySparkBars {history} state={cardState} layout="dense" onclick={triggerCheck} />
 				</div>
 			</div>
 		{/if}
 	</div>
 {:else}
-	<div class="card view-compact card-clickable" class:ok={cardState === 'ok'} class:slow={cardState === 'slow'} class:fail={cardState === 'fail'} class:unknown={cardState === 'unknown'} class:stopped={!enabled} role="button" tabindex="0" onclick={(e) => handleEdit(e)}>
+	<div class="card view-compact card-clickable" class:ok={cardState === 'ok'} class:slow={cardState === 'slow'} class:fail={cardState === 'fail'} class:unknown={cardState === 'unknown'} class:stopped={!enabled} role="button" tabindex="0" onclick={(e) => handleEdit(e)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleEdit(e); }}>
 		<div class="tunnel-card-intro">
 			<div class="title-row">
 				<TunnelTitleRow {title} dotVariant={statusVariant} dotPulse={running} staticTitle>
 					{#snippet badges()}
 						<Badge variant="accent" size="sm">Mihomo</Badge>
 						{#if kind === 'subscription'}
-							<Badge variant="accent" size="sm">{subscription?.format === 'share-links' ? 'группа' : 'подписка'}</Badge>
+							<Badge variant="accent" size="sm">{subscription?.format === 'share-links' ? m.mihomo_card_badge_group() : m.mihomo_card_badge_sub()}</Badge>
 						{/if}
 					{/snippet}
 				</TunnelTitleRow>
@@ -427,7 +428,7 @@
 					<span>{proxyIface}</span>
 					{#if kernelIface}<span class="meta-dot" aria-hidden="true">·</span><span>{kernelIface}</span>{/if}
 				{:else}
-					<span>NDMS-мост создаётся при применении</span>
+					<span>{m.mihomo_card_bridge_pending()}</span>
 				{/if}
 				{#if listenPort}<span class="meta-dot" aria-hidden="true">·</span><span>{listenPort}</span>{/if}
 			</div>
@@ -445,15 +446,15 @@
 		{#if kind === 'subscription'}
 			<div class="sub-meta">
 				<div>
-					<span>{members.length} серверов</span>
+					<span>{m.mihomo_servers_count({ count: members.length })}</span>
 					{#if activeName}
-						<span>· активен <span class="mono">{listActiveServerName || activeName}</span></span>
+						<span>· {m.mihomo_card_active_prefix()} <span class="mono">{listActiveServerName || activeName}</span></span>
 					{/if}
 				</div>
 				<div>
-					<span>обновлено {lastFetchedHuman}</span>
+					<span>{m.mihomo_card_updated_space({ time: lastFetchedHuman })}</span>
 					{#if (subscription?.refreshHours ?? 0) > 0}
-						<span>· auto {subscription?.refreshHours}ч</span>
+						<span>· {m.mihomo_card_auto_hours({ hours: subscription?.refreshHours ?? 0 })}</span>
 					{/if}
 				</div>
 			</div>
@@ -464,14 +465,14 @@
 		{#if kind === 'proxy'}
 			<div class="divider divider-dashed"></div>
 			<div class="row">
-				<span class="label">Сервер</span>
+				<span class="label">{m.mihomo_card_label_server()}</span>
 				<div class="server-row value">
 					{#if showEndpoint}
 						<span class="server-text mono">{server || '—'}</span>
 					{:else}
 						<span class="server-hidden">●●●●●●●●</span>
 					{/if}
-					<button class="icon-btn" onclick={(e) => { e.stopPropagation(); showEndpoint = !showEndpoint; }} aria-label={showEndpoint ? 'Скрыть' : 'Показать'}>
+					<button class="icon-btn" onclick={(e) => { e.stopPropagation(); showEndpoint = !showEndpoint; }} aria-label={showEndpoint ? m.mihomo_card_hide() : m.mihomo_card_show()}>
 						{#if showEndpoint}<EyeOff size={12} aria-hidden="true" />{:else}<Eye size={12} aria-hidden="true" />{/if}
 					</button>
 					{#if port > 0}<span class="port mono">:{port}</span>{/if}
@@ -492,7 +493,7 @@
 		{:else}
 			<div class="server-section">
 				<div class="server-row">
-					<span class="label">{isURLTest ? 'Авто' : 'Активный сервер'}</span>
+					<span class="label">{isURLTest ? m.mihomo_card_label_auto() : m.mihomo_card_label_active_server()}</span>
 					<div class="picker-anchor">
 						<div class="server-control">
 							<button
@@ -502,7 +503,7 @@
 									e.stopPropagation();
 									if (isURLTest) {
 										notifications.info(
-											'Включён автовыбор (URLTest). Чтобы выбирать сервер вручную, откройте подписку → вкладка «Настройки» → режим «Вручную».',
+											m.mihomo_card_urltest_info(),
 											{ duration: 9000 },
 										);
 										return;
@@ -511,7 +512,7 @@
 								}}
 								aria-haspopup={isURLTest ? undefined : 'listbox'}
 								aria-expanded={isURLTest ? undefined : pickerOpen}
-								title={isURLTest ? 'Mihomo выбирает самый быстрый сервер автоматически' : ''}
+								title={isURLTest ? m.mihomo_card_urltest_title() : ''}
 							>
 								<span
 									class="server-text"
@@ -537,8 +538,8 @@
 									e.stopPropagation();
 									showEndpoint = !showEndpoint;
 								}}
-								title={showEndpoint ? 'Скрыть IP' : 'Показать IP'}
-								aria-label={showEndpoint ? 'Скрыть IP сервера' : 'Показать IP сервера'}
+								title={showEndpoint ? m.mihomo_card_hide_ip() : m.mihomo_card_show_ip()}
+								aria-label={showEndpoint ? m.mihomo_card_hide_server_ip() : m.mihomo_card_show_server_ip()}
 							>
 								{#if showEndpoint}
 									<Eye size={14} aria-hidden="true" />
@@ -561,15 +562,15 @@
 		{/if}
 
 		<div class="actions actions--bar">
-			<TunnelListActions variant="labeled" onEdit={() => handleEdit()} editLabel="Изменить" onTest={() => diagnosticsOpen = true} onDelete={() => confirmDeleteOpen = true} {deleting} />
+			<TunnelListActions variant="labeled" onEdit={() => handleEdit()} editLabel={m.mihomo_card_edit_btn()} onTest={() => diagnosticsOpen = true} onDelete={() => confirmDeleteOpen = true} {deleting} />
 		</div>
 
 		<div class="chart-section">
 			<div class="chart-body">
-				<div class="chart-head"><span>Delay (5 мин)</span></div>
+				<div class="chart-head"><span>{m.mihomo_card_delay_5m()}</span></div>
 				<TunnelDelaySparkBars {history} state={cardState} layout="compact" onclick={triggerCheck} />
 				<div class="chart-head traffic-head">
-					<span>Трафик</span>
+					<span>{m.mihomo_card_traffic()}</span>
 					<span class="stats">↓ {formatBytes(traffic?.download ?? 0)} · ↑ {formatBytes(traffic?.upload ?? 0)}</span>
 				</div>
 				<TrafficChart {rxRates} {txRates} rxTotal={traffic?.download ?? 0} txTotal={traffic?.upload ?? 0} height={56} onclick={handleEdit} />
@@ -578,9 +579,9 @@
 	</div>
 {/if}
 
-<Modal open={confirmDeleteOpen} title={kind === 'proxy' ? 'Удалить прокси-туннель?' : 'Удалить подписку?'} size="sm" onclose={() => { if (!deleting) confirmDeleteOpen = false; }}>
-	<p>Удалить <strong>{title}</strong> из нативной конфигурации Mihomo?</p>
-	{#snippet actions()}<Button variant="ghost" disabled={deleting} onclick={() => confirmDeleteOpen = false}>Отмена</Button><Button variant="danger" loading={deleting} onclick={remove}>Удалить</Button>{/snippet}
+<Modal open={confirmDeleteOpen} title={kind === 'proxy' ? m.mihomo_card_delete_proxy_title() : m.mihomo_card_delete_sub_title()} size="sm" onclose={() => { if (!deleting) confirmDeleteOpen = false; }}>
+	<p>{m.mihomo_card_delete_confirm_pre()} <strong>{title}</strong> {m.mihomo_card_delete_confirm_post()}</p>
+	{#snippet actions()}<Button variant="ghost" disabled={deleting} onclick={() => confirmDeleteOpen = false}>{m.common_cancel()}</Button><Button variant="danger" loading={deleting} onclick={remove}>{m.common_delete()}</Button>{/snippet}
 </Modal>
 
 <MihomoNativeEditModal

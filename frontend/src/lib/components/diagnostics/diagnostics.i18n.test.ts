@@ -84,10 +84,10 @@ describe('diagnostics i18n', () => {
 
 	it('describeRouterReference и подсказки AWG берут текст при вызове', () => {
 		const loc = 'route.rules[4]';
-		expect(describeRouterReference(loc).text).toContain('Используется в правиле #4');
+		expect(describeRouterReference(loc).text).toBe('Используется в правиле #4');
 		expect(awgParamHints().jc).toContain('Диапазон: 0-128');
 		locale.set('en');
-		expect(describeRouterReference(loc).text).toContain('Used in rule #4');
+		expect(describeRouterReference(loc).text).toBe('Used in rule #4');
 		expect(awgParamHints().jc).toContain('Range: 0-128');
 	});
 

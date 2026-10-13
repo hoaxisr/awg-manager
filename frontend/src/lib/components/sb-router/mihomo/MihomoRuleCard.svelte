@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import {
     Tv, Send, MessageSquare, Camera, Sparkles, Film, Music, Gamepad2,
     Globe, Network, Layers, Zap, ShieldOff, Edit3, Trash2, GripVertical, Check
@@ -80,8 +81,8 @@
         <button
           type="button"
           class="drag-handle"
-          aria-label={`Перетащить правило #${orderStr}`}
-          title="Перетащите для изменения порядка"
+          aria-label={m.mihomo_rule_card_drag_aria({ order: orderStr })}
+          title={m.mihomo_rule_card_drag_title()}
         >
           <GripVertical size={16} />
         </button>
@@ -115,17 +116,17 @@
       <div class="action">
         <span class="arrow-sep">›</span>
         {#if targetKind === 'direct'}
-          <div class="tone-chip tone-direct" title="Прямое соединение мимо VPN">
+          <div class="tone-chip tone-direct" title={m.mihomo_rule_card_direct_title()}>
             <Globe size={13} />
-            <span>direct (мимо VPN)</span>
+            <span>{m.mihomo_rule_card_direct_lbl()}</span>
           </div>
         {:else if targetKind === 'reject'}
-          <div class="tone-chip tone-block" title="Блокировка трафика">
+          <div class="tone-chip tone-block" title={m.mihomo_rule_card_block_title()}>
             <ShieldOff size={13} />
-            <span>Заблокировать</span>
+            <span>{m.mihomo_rule_card_block_lbl()}</span>
           </div>
         {:else}
-          <div class="tone-chip tone-composite" title={`Выход: ${formatOutbound(card.outbound)}`}>
+          <div class="tone-chip tone-composite" title={m.mihomo_rule_card_outbound_title({ outbound: formatOutbound(card.outbound) })}>
             <Zap size={13} />
             <span class="outbound-label-text">{formatOutbound(card.outbound)}</span>
             {#if liveTargetNode && liveTargetNode !== card.outbound}
@@ -142,8 +143,8 @@
           type="button"
           class="route-action-btn"
           onclick={() => onEdit(card.rules[0])}
-          aria-label={`Редактировать правило #${orderStr}`}
-          title="Редактировать правило"
+          aria-label={m.mihomo_rule_card_edit_aria({ order: orderStr })}
+          title={m.mihomo_rule_card_edit_title()}
         >
           <Edit3 size={15} />
         </button>
@@ -152,8 +153,8 @@
           type="button"
           class="route-action-btn danger"
           onclick={() => onDelete(card.rules)}
-          aria-label={`Удалить правило #${orderStr}`}
-          title="Удалить правило"
+          aria-label={m.mihomo_rule_card_delete_aria({ order: orderStr })}
+          title={m.mihomo_rule_card_delete_title()}
         >
           <Trash2 size={15} />
         </button>
@@ -163,8 +164,6 @@
 </div>
 
 <style>
-  @import '../outboundTone.css';
-
   .card-wrap {
     position: relative;
     min-width: 0;
@@ -357,7 +356,7 @@
       min-width: 0;
     }
 
-    .action .tone-chip {
+    .action :global(.tone-chip) {
       width: 100%;
       max-width: 100%;
       box-sizing: border-box;
@@ -407,7 +406,7 @@
       min-width: 0;
     }
 
-    .action .tone-chip {
+    .action :global(.tone-chip) {
       width: 100%;
       max-width: 100%;
       box-sizing: border-box;

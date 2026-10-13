@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Modal, Button } from '$lib/components/ui';
   import { Globe, Shield, Sparkles, Check, ChevronDown, ChevronUp } from 'lucide-svelte';
   import type {
@@ -47,11 +48,11 @@
     recommendedProxy: 'DIRECT' | 'VPN';
   }
 
-  const PRESETS: PresetItem[] = [
+  const PRESETS: PresetItem[] = $derived([
     {
       id: 'rkn-antizapret',
-      title: 'Антизапрет (РКН / Заблокированное)',
-      description: 'Автообновляемый список запрещённых и заблокированных в РФ сайтов',
+      title: m.mihomo_prov_preset_antizapret_title(),
+      description: m.mihomo_prov_preset_antizapret_desc(),
       icon: '🛡️',
       category: 'bypass',
       behavior: 'domain',
@@ -63,7 +64,7 @@
     {
       id: 'youtube',
       title: 'YouTube & Google Video',
-      description: 'Все CDN, стриминг, googlevideo и домены сервисов YouTube',
+      description: m.mihomo_prov_preset_youtube_desc(),
       icon: '▶️',
       category: 'media',
       behavior: 'domain',
@@ -75,7 +76,7 @@
     {
       id: 'openai',
       title: 'ChatGPT & OpenAI',
-      description: 'ChatGPT, API, auth0, cdn.oaistatic и сопутствующие сервисы',
+      description: m.mihomo_prov_preset_openai_desc(),
       icon: '🤖',
       category: 'popular',
       behavior: 'domain',
@@ -87,7 +88,7 @@
     {
       id: 'meta-social',
       title: 'Instagram & Facebook (Meta)',
-      description: 'Все домены и CDN-серверы Instagram, Facebook, Threads, WhatsApp',
+      description: m.mihomo_prov_preset_meta_desc(),
       icon: '📸',
       category: 'bypass',
       behavior: 'domain',
@@ -98,8 +99,8 @@
     },
     {
       id: 'telegram-cidr',
-      title: 'Telegram CIDR (IP-сети)',
-      description: 'Прямые диапазоны IP-серверов Telegram для стабильных звонков и медиа',
+      title: m.mihomo_prov_preset_telegram_title(),
+      description: m.mihomo_prov_preset_telegram_desc(),
       icon: '✈️',
       category: 'popular',
       behavior: 'ipcidr',
@@ -111,7 +112,7 @@
     {
       id: 'discord',
       title: 'Discord',
-      description: 'Голосовые шлюзы, веб-клиент, CDN и медиа-серверы Discord',
+      description: m.mihomo_prov_preset_discord_desc(),
       icon: '💬',
       category: 'media',
       behavior: 'domain',
@@ -123,7 +124,7 @@
     {
       id: 'tiktok',
       title: 'TikTok',
-      description: 'Мобильные CDN и видео-потоки TikTok (ByteDance)',
+      description: m.mihomo_prov_preset_tiktok_desc(),
       icon: '🎵',
       category: 'media',
       behavior: 'domain',
@@ -134,8 +135,8 @@
     },
     {
       id: 'category-ru',
-      title: 'Российские ресурсы (.RU / РФ)',
-      description: 'Госуслуги, банки, российские порталы и локальные сервисы',
+      title: m.mihomo_prov_preset_ru_title(),
+      description: m.mihomo_prov_preset_ru_desc(),
       icon: '🇷🇺',
       category: 'bypass',
       behavior: 'domain',
@@ -146,8 +147,8 @@
     },
     {
       id: 'adaway',
-      title: 'Блокировка рекламы (AdGuard / AdAway)',
-      description: 'Списки рекламных сетей, телеметрии и аналитики',
+      title: m.mihomo_prov_preset_adaway_title(),
+      description: m.mihomo_prov_preset_adaway_desc(),
       icon: '🚫',
       category: 'security',
       behavior: 'domain',
@@ -156,7 +157,7 @@
       interval: 86400,
       recommendedProxy: 'DIRECT',
     },
-  ];
+  ]);
 
   let id = $state('');
   let name = $state('');
@@ -173,29 +174,39 @@
   // Manual advanced fields accordion
   let showAdvanced = $state(false);
 
+  const proxyOutboundGroupLabels = $derived([
+    m.routing_group_system(),
+    m.mihomo_group_label_groups(),
+    m.mihomo_group_label_subs(),
+    m.mihomo_group_label_proxies(),
+    m.mihomo_group_label_awg(),
+    m.mihomo_group_label_sys_wg(),
+    m.mihomo_group_label_sb_tunnels(),
+  ]);
+
   // List of outbound tunnels for downloading rule provider
   const availableProxyOutbounds = $derived.by(() => {
     const list: Array<{ value: string; label: string; group: string }> = [
-      { value: '', label: 'По умолчанию (Система / Direct)', group: 'Системные' },
-      { value: 'DIRECT', label: 'DIRECT (Напрямую через провайдера РФ)', group: 'Системные' },
+      { value: '', label: m.mihomo_prov_proxy_default(), group: m.routing_group_system() },
+      { value: 'DIRECT', label: m.mihomo_prov_proxy_direct(), group: m.routing_group_system() },
     ];
 
     // Groups
     for (const g of groups) {
-      if (g.enabled) list.push({ value: g.name, label: `${g.name} (${g.type})`, group: 'Группы Mihomo' });
+      if (g.enabled) list.push({ value: g.name, label: `${g.name} (${g.type})`, group: m.mihomo_group_label_groups() });
     }
 
     // Subscriptions
     for (const s of subscriptions) {
       if (s.enabled && s.groupName && !list.some(i => i.value === s.groupName)) {
-        list.push({ value: s.groupName, label: s.name, group: 'Подписки Mihomo' });
+        list.push({ value: s.groupName, label: s.name, group: m.mihomo_group_label_subs() });
       }
     }
 
     // Standalone Proxies
     for (const p of proxies) {
       if (p.enabled && !list.some(i => i.value === p.name)) {
-        list.push({ value: p.name, label: p.name, group: 'Прокси Mihomo' });
+        list.push({ value: p.name, label: p.name, group: m.mihomo_group_label_proxies() });
       }
     }
 
@@ -206,7 +217,7 @@
         list.push({
           value: t.tag,
           label: t.label ? `${t.label} (${t.tag})` : t.tag,
-          group: t.kind === 'system' ? 'Системные WG' : 'AWG туннели',
+          group: t.kind === 'system' ? m.mihomo_group_label_sys_wg() : m.mihomo_group_label_awg(),
         });
       }
     }
@@ -218,7 +229,7 @@
         list.push({
           value: t.tag,
           label: t.kernelInterface ? `${t.tag} (${t.kernelInterface})` : t.tag,
-          group: 'Туннели Sing-box',
+          group: m.mihomo_group_label_sb_tunnels(),
         });
       }
     }
@@ -280,15 +291,15 @@
   async function handleSave() {
     if (saving) return;
     if (!name.trim()) {
-      notifications.error('Укажите имя набора правил');
+      notifications.error(m.mihomo_prov_err_name_required());
       return;
     }
     if (type === 'http' && !url.trim()) {
-      notifications.error('Укажите URL для загрузки набора правил');
+      notifications.error(m.mihomo_prov_err_url_required());
       return;
     }
     if (type === 'file' && !path.trim()) {
-      notifications.error('Укажите путь к локальному файлу');
+      notifications.error(m.mihomo_prov_err_path_required());
       return;
     }
     saving = true;
@@ -305,27 +316,27 @@
         proxy: type === 'http' && proxy.trim() ? proxy.trim() : undefined,
         enabled,
       });
-      notifications.success('Rule Provider сохранён');
+      notifications.success(m.mihomo_prov_saved());
       onSaved();
       onClose();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения Rule Provider');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_prov_save_error());
     } finally {
       saving = false;
     }
   }
 </script>
 
-<Modal {open} title={provider ? `Редактирование: ${provider.name}` : 'Провайдер правил (Rule Provider)'} onclose={onClose} size="lg">
+<Modal {open} title={provider ? m.mihomo_prov_modal_edit({ name: provider.name }) : m.mihomo_prov_modal_create()} onclose={onClose} size="lg">
   <div class="form-stack">
     {#if !provider}
       <div class="preset-section">
         <div class="section-header">
           <div class="header-left">
             <Sparkles size={16} class="accent-icon" />
-            <span class="section-title">Быстрый выбор из каталога</span>
+            <span class="section-title">{m.mihomo_prov_catalog_title()}</span>
           </div>
-          <span class="section-desc">Кликните, чтобы заполнить проверенными ссылками</span>
+          <span class="section-desc">{m.mihomo_prov_catalog_desc()}</span>
         </div>
 
         <div class="presets-grid">
@@ -358,22 +369,22 @@
     <div class="card-box">
       <div class="two-col">
         <label class="form-group">
-          <span class="label-text">Имя набора (Tag) <span class="req">*</span></span>
+          <span class="label-text">{m.mihomo_prov_name_lbl()} <span class="req">*</span></span>
           <input type="text" bind:value={name} placeholder="youtube, openai, antizapret..." class="text-input" />
         </label>
 
         <label class="form-group">
-          <span class="label-text">Тип источника</span>
+          <span class="label-text">{m.mihomo_prov_source_type_lbl()}</span>
           <select bind:value={type} class="select-input">
-            <option value="http">HTTP / HTTPS (Удаленный URL)</option>
-            <option value="file">Локальный файл на роутере</option>
+            <option value="http">{m.mihomo_prov_source_http()}</option>
+            <option value="file">{m.mihomo_prov_source_file()}</option>
           </select>
         </label>
       </div>
 
       {#if type === 'http'}
         <label class="form-group mt-3">
-          <span class="label-text">URL источника правил <span class="req">*</span></span>
+          <span class="label-text">{m.mihomo_prov_url_lbl()} <span class="req">*</span></span>
           <input type="text" bind:value={url} placeholder="https://raw.githubusercontent.com/.../ruleset.mrs" class="text-input font-mono" />
         </label>
 
@@ -382,14 +393,14 @@
           <div class="route-header">
             <div class="route-title">
               <Globe size={15} class="route-icon" />
-              <span>Маршрут загрузки и обновления списка</span>
+              <span>{m.mihomo_prov_route_title()}</span>
             </div>
-            <span class="route-tip">Через что роутер будет скачивать этот файл</span>
+            <span class="route-tip">{m.mihomo_prov_route_tip()}</span>
           </div>
 
           <div class="proxy-selector-row">
             <select bind:value={proxy} class="select-input proxy-select">
-              {#each ['Системные', 'Группы Mihomo', 'Подписки Mihomo', 'Прокси Mihomo', 'AWG туннели', 'Системные WG', 'Туннели Sing-box'] as grp}
+              {#each proxyOutboundGroupLabels as grp}
                 {@const items = availableProxyOutbounds.filter(o => o.group === grp)}
                 {#if items.length > 0}
                   <optgroup label={grp}>
@@ -404,15 +415,15 @@
 
           <div class="proxy-hint">
             {#if !proxy || proxy === 'DIRECT'}
-              <span>Прямое скачивание (без VPN). Подходит, если GitHub / источник не заблокирован.</span>
+              <span>{m.mihomo_prov_route_hint_direct()}</span>
             {:else}
-              <span class="vpn-hint">✓ Загружается через туннель <strong>{proxy}</strong> (поможет обойти блокировку GitHub/CDN провайдером).</span>
+              <span class="vpn-hint">{m.mihomo_prov_route_hint_vpn({ proxy })}</span>
             {/if}
           </div>
         </div>
       {:else}
         <label class="form-group mt-3">
-          <span class="label-text">Путь к файлу на роутере <span class="req">*</span></span>
+          <span class="label-text">{m.mihomo_prov_path_lbl()} <span class="req">*</span></span>
           <input type="text" bind:value={path} placeholder="/opt/etc/awg-manager/rules.yaml" class="text-input font-mono" />
         </label>
       {/if}
@@ -425,7 +436,7 @@
         class="advanced-toggle-btn"
         onclick={() => (showAdvanced = !showAdvanced)}
       >
-        <span>Дополнительные параметры (формат, интервал, поведение)</span>
+        <span>{m.mihomo_prov_advanced_toggle()}</span>
         {#if showAdvanced}
           <ChevronUp size={16} />
         {:else}
@@ -437,31 +448,31 @@
         <div class="advanced-panel">
           <div class="two-col">
             <label class="form-group">
-              <span class="label-text">Поведение (Behavior)</span>
+              <span class="label-text">{m.mihomo_prov_behavior_lbl()}</span>
               <select bind:value={behavior} class="select-input">
-                <option value="domain">domain (Только домены — быстро)</option>
-                <option value="ipcidr">ipcidr (Только IP-подсети)</option>
-                <option value="classical">classical (Смешанные правила)</option>
+                <option value="domain">{m.mihomo_prov_behavior_domain()}</option>
+                <option value="ipcidr">{m.mihomo_prov_behavior_ipcidr()}</option>
+                <option value="classical">{m.mihomo_prov_behavior_classical()}</option>
               </select>
             </label>
 
             <label class="form-group">
-              <span class="label-text">Формат файла</span>
+              <span class="label-text">{m.mihomo_prov_format_lbl()}</span>
               <select bind:value={format} class="select-input">
-                <option value="mrs">mrs (Бинарный .mrs — минимум RAM/CPU)</option>
-                <option value="text">text (Построчный список доменов/IP)</option>
-                <option value="yaml">yaml (Стандартный YAML)</option>
+                <option value="mrs">{m.mihomo_prov_format_mrs()}</option>
+                <option value="text">{m.mihomo_prov_format_text()}</option>
+                <option value="yaml">{m.mihomo_prov_format_yaml()}</option>
               </select>
             </label>
           </div>
 
           {#if type === 'http'}
             <label class="form-group mt-3">
-              <span class="label-text">Интервал авто-обновления (секунды)</span>
+              <span class="label-text">{m.mihomo_prov_interval_lbl()}</span>
               <div class="interval-row">
                 <input type="number" min="300" max="604800" bind:value={interval} class="text-input" />
                 <span class="interval-hint">
-                  {interval === 86400 ? 'Раз в сутки (24 часа)' : interval === 43200 ? 'Раз в 12 часов' : `${Math.round(interval / 3600)} ч.`}
+                  {interval === 86400 ? m.mihomo_prov_interval_24h() : interval === 43200 ? m.mihomo_prov_interval_12h() : m.mihomo_prov_interval_hours({ count: Math.round(interval / 3600) })}
                 </span>
               </div>
             </label>
@@ -472,13 +483,13 @@
 
     <label class="check-label">
       <input type="checkbox" bind:checked={enabled} />
-      <span>Провайдер активен и загружается в конфигурацию</span>
+      <span>{m.mihomo_prov_enabled_lbl()}</span>
     </label>
   </div>
 
   {#snippet actions()}
-    <Button variant="ghost" onclick={onClose} disabled={saving}>Отмена</Button>
-    <Button variant="primary" loading={saving} onclick={handleSave}>Сохранить</Button>
+    <Button variant="ghost" onclick={onClose} disabled={saving}>{m.common_cancel()}</Button>
+    <Button variant="primary" loading={saving} onclick={handleSave}>{m.common_save()}</Button>
   {/snippet}
 </Modal>
 
@@ -588,6 +599,7 @@
     line-height: 1.3;
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
@@ -695,10 +707,6 @@
   .proxy-hint {
     font-size: 11px;
     color: var(--text-muted, #9ca3af);
-  }
-
-  .vpn-hint strong {
-    color: #60a5fa;
   }
 
   .advanced-section {

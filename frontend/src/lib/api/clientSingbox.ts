@@ -320,7 +320,7 @@ export class SingboxClient extends RoutingClient {
 		});
 		es.addEventListener('done', () => { onDone(); es.close(); });
 		es.addEventListener('error', (e) => {
-			const msg = e instanceof MessageEvent ? String(e.data) : 'Соединение потеряно';
+			const msg = e instanceof MessageEvent ? String(e.data) : m.api_connection_lost();
 			onError(msg);
 			es.close();
 		});

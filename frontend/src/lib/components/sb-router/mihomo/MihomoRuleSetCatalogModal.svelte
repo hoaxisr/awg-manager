@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Modal, Button } from '$lib/components/ui';
   import { Search, Globe, Check, Layers, Sparkles } from 'lucide-svelte';
   import { ServiceIcon } from '$lib/components/dnsroutes';
@@ -44,32 +45,32 @@
   let targetOutbound = $state<string>('');
   let adding = $state(false);
 
-  const CATEGORY_LABELS: Record<string, string> = {
-    all: 'Все',
-    social: 'Соцсети',
-    media: 'Медиа',
+  const CATEGORY_LABELS: Record<string, string> = $derived({
+    all: m.routing_singbox_all(),
+    social: m.mihomo_cat_social(),
+    media: m.mihomo_cat_media(),
     ai: 'AI',
-    developer: 'Разработка',
-    cloud: 'Облако',
-    gaming: 'Игры',
-    block: 'Блокировки'
-  };
+    developer: m.mihomo_cat_developer(),
+    cloud: m.mihomo_cat_cloud(),
+    gaming: m.mihomo_cat_gaming(),
+    block: m.mihomo_cat_block()
+  });
 
   // Collect available outbounds / proxies for downloading providers
   const availableDownloadRoutes = $derived.by(() => {
-    const list: Array<{ value: string; label: string; group: string }> = [
-      { value: 'DIRECT', label: 'DIRECT (Напрямую через провайдера)', group: 'Системные' }
+    const list: Array<{ value: string; label: string; group: string; groupKey: string }> = [
+      { value: 'DIRECT', label: m.mihomo_prov_proxy_direct(), group: m.routing_group_system(), groupKey: 'system' }
     ];
 
     for (const g of groups) {
       if (g.enabled) {
-        list.push({ value: g.name, label: `${g.name} (${g.type})`, group: 'Группы Mihomo' });
+        list.push({ value: g.name, label: `${g.name} (${g.type})`, group: m.mihomo_group_label_groups(), groupKey: 'groups' });
       }
     }
 
     for (const s of subscriptions) {
       if (s.enabled && s.groupName && !list.some(i => i.value === s.groupName)) {
-        list.push({ value: s.groupName, label: s.name, group: 'Подписки Mihomo' });
+        list.push({ value: s.groupName, label: s.name, group: m.mihomo_group_label_subs(), groupKey: 'subs' });
       }
     }
 
@@ -79,7 +80,8 @@
         list.push({
           value: t.tag,
           label: t.label ? `${t.label} (${t.tag})` : t.tag,
-          group: t.kind === 'system' ? 'Системные WireGuard' : 'AWG туннели'
+          group: t.kind === 'system' ? m.mihomo_group_label_sys_wg() : m.mihomo_group_label_awg(),
+          groupKey: t.kind === 'system' ? 'sys_wg' : 'awg'
         });
       }
     }
@@ -90,14 +92,15 @@
         list.push({
           value: t.tag,
           label: t.kernelInterface ? `${t.tag} (${t.kernelInterface})` : t.tag,
-          group: 'Туннели Sing-box'
+          group: m.mihomo_group_label_sb_tunnels(),
+          groupKey: 'sb_tunnels'
         });
       }
     }
 
     for (const p of proxies) {
       if (p.enabled && !list.some(i => i.value === p.name)) {
-        list.push({ value: p.name, label: p.name, group: 'Прокси узлы' });
+        list.push({ value: p.name, label: p.name, group: m.mihomo_group_label_proxies(), groupKey: 'proxies' });
       }
     }
 
@@ -106,20 +109,20 @@
 
   // Target outbounds / groups for routing rule
   const availableTargetOutbounds = $derived.by(() => {
-    const list: Array<{ value: string; label: string; group: string }> = [
-      { value: 'DIRECT', label: 'DIRECT (Напрямую в интернет)', group: 'Системные' },
-      { value: 'REJECT', label: 'REJECT (Блокировать трафик)', group: 'Системные' }
+    const list: Array<{ value: string; label: string; group: string; groupKey: string }> = [
+      { value: 'DIRECT', label: m.sb_router_direct_option(), group: m.routing_group_system(), groupKey: 'system' },
+      { value: 'REJECT', label: m.sb_router_reject_option(), group: m.routing_group_system(), groupKey: 'system' }
     ];
 
     for (const g of groups) {
       if (g.enabled) {
-        list.push({ value: g.name, label: `${g.name} (${g.type})`, group: 'Группы Mihomo' });
+        list.push({ value: g.name, label: `${g.name} (${g.type})`, group: m.mihomo_group_label_groups(), groupKey: 'groups' });
       }
     }
 
     for (const s of subscriptions) {
       if (s.enabled && s.groupName && !list.some(i => i.value === s.groupName)) {
-        list.push({ value: s.groupName, label: s.name, group: 'Подписки Mihomo' });
+        list.push({ value: s.groupName, label: s.name, group: m.mihomo_group_label_subs(), groupKey: 'subs' });
       }
     }
 
@@ -129,7 +132,8 @@
         list.push({
           value: t.tag,
           label: t.label ? `${t.label} (${t.tag})` : t.tag,
-          group: t.kind === 'system' ? 'Системные WireGuard' : 'AWG туннели'
+          group: t.kind === 'system' ? m.mihomo_group_label_sys_wg() : m.mihomo_group_label_awg(),
+          groupKey: t.kind === 'system' ? 'sys_wg' : 'awg'
         });
       }
     }
@@ -140,14 +144,15 @@
         list.push({
           value: t.tag,
           label: t.kernelInterface ? `${t.tag} (${t.kernelInterface})` : t.tag,
-          group: 'Туннели Sing-box'
+          group: m.mihomo_group_label_sb_tunnels(),
+          groupKey: 'sb_tunnels'
         });
       }
     }
 
     for (const p of proxies) {
       if (p.enabled && !list.some(i => i.value === p.name)) {
-        list.push({ value: p.name, label: p.name, group: 'Прокси узлы' });
+        list.push({ value: p.name, label: p.name, group: m.mihomo_group_label_proxies(), groupKey: 'proxies' });
       }
     }
 
@@ -158,7 +163,7 @@
     if (!targetOutbound && availableTargetOutbounds.length > 0) {
       // Pick first user group, subscription or tunnel if available, else first item
       const preferred = availableTargetOutbounds.find(
-        (o) => o.group === 'Группы Mihomo' || o.group === 'Подписки Mihomo' || o.group === 'AWG туннели' || o.group === 'Туннели Sing-box'
+        (o) => o.groupKey === 'groups' || o.groupKey === 'subs' || o.groupKey === 'awg' || o.groupKey === 'sb_tunnels'
       );
       targetOutbound = preferred ? preferred.value : availableTargetOutbounds[0].value;
     }
@@ -274,22 +279,22 @@
       }
 
       if (rulesCount > 0) {
-        notifications.success(`Добавлено наборов .mrs: ${addedCount}, создано правил: ${rulesCount} → ${targetOutbound}`);
+        notifications.success(m.mihomo_catalog_added_with_rules({ added: addedCount, rules: rulesCount, outbound: targetOutbound }));
       } else {
-        notifications.success(`Добавлено наборов правил: ${addedCount}`);
+        notifications.success(m.mihomo_catalog_added_only({ count: addedCount }));
       }
       selected = new Set();
       onAdded();
       onClose();
     } catch (err) {
-      notifications.error(err instanceof Error ? err.message : 'Ошибка при добавлении наборов');
+      notifications.error(err instanceof Error ? err.message : m.mihomo_catalog_add_error());
     } finally {
       adding = false;
     }
   }
 </script>
 
-<Modal {open} title="📚 Каталог наборов правил (Rule Providers)" onclose={onClose} size="xl">
+<Modal {open} title={m.mihomo_catalog_modal_title()} onclose={onClose} size="xl">
   <div class="catalog-modal">
     <!-- Search and Categories Toolbar -->
     <div class="toolbar">
@@ -298,7 +303,7 @@
         <input
           type="text"
           bind:value={query}
-          placeholder="Поиск по названию или домену (youtube, discord, ai...)"
+          placeholder={m.mihomo_catalog_search_placeholder()}
           class="search-input"
         />
         {#if query}
@@ -326,7 +331,7 @@
       <div class="setting-item">
         <div class="route-label">
           <Globe size={15} />
-          <span>Маршрут скачивания (.mrs):</span>
+          <span>{m.mihomo_catalog_download_route_lbl()}</span>
         </div>
         <div class="route-select-wrap">
           <select bind:value={selectedProxy} class="route-select">
@@ -341,7 +346,7 @@
       <div class="setting-item routing-rule-box">
         <label class="checkbox-label">
           <input type="checkbox" bind:checked={createRouteRules} />
-          <span class="chk-text">Сразу создать правило маршрутизации:</span>
+          <span class="chk-text">{m.mihomo_catalog_auto_rule_lbl()}</span>
         </label>
         {#if createRouteRules}
           <div class="route-select-wrap target-select-wrap">
@@ -355,9 +360,9 @@
       </div>
 
       <div class="selection-actions">
-        <button type="button" class="link-btn" onclick={selectAllFiltered}>Выбрать все</button>
+        <button type="button" class="link-btn" onclick={selectAllFiltered}>{m.mihomo_catalog_select_all_btn()}</button>
         {#if selected.size > 0}
-          <button type="button" class="link-btn" onclick={clearSelection}>Сбросить ({selected.size})</button>
+          <button type="button" class="link-btn" onclick={clearSelection}>{m.mihomo_catalog_clear_selection_btn({ count: selected.size })}</button>
         {/if}
       </div>
     </div>
@@ -366,7 +371,7 @@
     <div class="items-grid">
       {#if filteredItems.length === 0}
         <div class="empty-hint">
-          По запросу «{query}» ничего не найдено
+          {m.mihomo_catalog_empty_query({ query })}
         </div>
       {/if}
 
@@ -385,7 +390,7 @@
           <div class="card-left">
             <div class="card-check">
               {#if isAdded}
-                <span class="added-badge">Уже в списке</span>
+                <span class="added-badge">{m.mihomo_catalog_already_added()}</span>
               {:else if isSelected}
                 <div class="checkbox-circle checked">
                   <Check size={12} />
@@ -415,13 +420,13 @@
     <div class="modal-footer-row">
       <span class="selected-summary">
         {#if selected.size > 0}
-          Выбрано: <strong>{selected.size}</strong>
+          {m.mihomo_catalog_selected_lbl()} <strong>{selected.size}</strong>
         {:else}
-          Выберите наборы
+          {m.mihomo_catalog_select_sets_hint()}
         {/if}
       </span>
       <div class="btn-group">
-        <Button variant="ghost" onclick={onClose} disabled={adding}>Отмена</Button>
+        <Button variant="ghost" onclick={onClose} disabled={adding}>{m.common_cancel()}</Button>
         <Button
           variant="primary"
           onclick={handleBatchAdd}
@@ -431,7 +436,7 @@
           {#snippet iconBefore()}
             <Sparkles size={14} />
           {/snippet}
-          Добавить ({selected.size})
+          {m.mihomo_catalog_add_count_btn({ count: selected.size })}
         </Button>
       </div>
     </div>
@@ -718,7 +723,7 @@
     color: var(--text-secondary, #94a3b8);
   }
 
-  .card-type {
+  .card-type-badge {
     font-size: 10px;
     color: var(--text-muted, #64748b);
   }

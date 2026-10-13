@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { Modal, Button, Badge, SegmentedControl } from '$lib/components/ui';
   import { Zap, Check, Search, Globe, RefreshCw, Radio, Layers, ShieldCheck, Activity } from 'lucide-svelte';
@@ -6,7 +7,6 @@
   import { notifications } from '$lib/stores/notifications';
   import { subscriptionsStore } from '$lib/stores/subscriptions';
   import type { Subscription, SubscriptionMember, MihomoNativeSubscription, MihomoRuntimeProxy } from '$lib/types';
-  import { pluralize } from '$lib/utils/pluralize';
 
   interface Props {
     open: boolean;
@@ -237,8 +237,8 @@
         currentMode = nextMode;
         notifications.success(
           nextMode === 'auto'
-            ? `Включен автовыбор узлов для подписки «${subName}»`
-            : `Включен ручной выбор узлов для подписки «${subName}»`
+            ? m.mihomo_sub_picker_auto_notif({ name: subName })
+            : m.mihomo_sub_picker_manual_notif({ name: subName })
         );
       } else if (matchedSingboxSub) {
         const sbMode = nextMode === 'auto' ? 'urltest' : 'selector';
@@ -246,13 +246,13 @@
         currentMode = nextMode;
         notifications.success(
           nextMode === 'auto'
-            ? `Включен автовыбор узлов для подписки «${subName}»`
-            : `Включен ручной выбор узлов для подписки «${subName}»`
+            ? m.mihomo_sub_picker_auto_notif({ name: subName })
+            : m.mihomo_sub_picker_manual_notif({ name: subName })
         );
       }
       onUpdated?.();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка переключения режима');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_sub_picker_mode_err());
     } finally {
       switchingMode = false;
     }
@@ -277,7 +277,7 @@
         }
         await api.mihomoRuntimeSelect(matchedMihomoSub.groupName || matchedMihomoSub.name, server.tag);
         activeMemberTag = server.tag;
-        notifications.success(`Выбран сервер «${server.label}»`);
+        notifications.success(m.mihomo_sub_picker_selected_notif({ label: server.label }));
       } else if (matchedSingboxSub) {
         if (currentMode === 'auto') {
           await api.updateSubscription(matchedSingboxSub.id, { mode: 'selector' }).catch(() => {});
@@ -285,18 +285,18 @@
         }
         await api.setSubscriptionActiveMember(matchedSingboxSub.id, server.tag);
         activeMemberTag = server.tag;
-        notifications.success(`Выбран сервер «${server.label}»`);
+        notifications.success(m.mihomo_sub_picker_selected_notif({ label: server.label }));
       }
       onUpdated?.();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка выбора сервера');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_sub_picker_select_err());
     } finally {
       selectingTag = null;
     }
   }
 </script>
 
-<Modal {open} onclose={onClose} title={`Подписка: ${subName}`} size="lg">
+<Modal {open} onclose={onClose} title={m.mihomo_sub_picker_title({ name: subName })} size="lg">
   <div class="sub-picker-container">
     <div class="sub-header-strip">
       <div class="sub-meta">
@@ -306,19 +306,19 @@
           </Badge>
         </span>
         <span class="sub-count">
-          {pluralize(servers.length, ['сервер', 'сервера', 'серверов'])}
+          {m.mihomo_servers_count({ count: servers.length })}
         </span>
       </div>
 
       <div class="mode-control-row">
-        <span class="control-label">Режим:</span>
+        <span class="control-label">{m.mihomo_sub_picker_mode_lbl()}</span>
         <SegmentedControl
           value={currentMode}
           options={[
-            { value: 'auto', label: 'Автовыбор' },
-            { value: 'manual', label: 'Ручной выбор' },
+            { value: 'auto', label: m.mihomo_sub_picker_mode_auto() },
+            { value: 'manual', label: m.mihomo_sub_picker_mode_manual() },
           ]}
-          ariaLabel="Режим выбора сервера"
+          ariaLabel={m.mihomo_sub_picker_mode_aria()}
           onchange={handleModeChange}
         />
       </div>
@@ -329,7 +329,7 @@
         <Search size={14} class="search-icon" />
         <input
           type="text"
-          placeholder="Поиск по названию или серверу..."
+          placeholder={m.mihomo_sub_picker_search_placeholder()}
           bind:value={searchQuery}
           class="sub-search-input"
         />
@@ -340,17 +340,17 @@
         class="test-btn"
         disabled={testing}
         onclick={updateDelays}
-        title="Замерить задержки серверов"
+        title={m.mihomo_sub_picker_test_title()}
       >
         <RefreshCw size={13} class={testing ? 'spin' : ''} />
-        <span>{testing ? 'Замер...' : 'Замерить пинг'}</span>
+        <span>{testing ? m.mihomo_sub_picker_testing_btn() : m.mihomo_sub_picker_test_btn()}</span>
       </button>
     </div>
 
     <div class="server-list-scroll">
       {#if filteredServers.length === 0}
         <div class="empty-list">
-          <span>Серверы не найдены</span>
+          <span>{m.mihomo_sub_picker_empty()}</span>
         </div>
       {:else}
         {#each filteredServers as s (s.tag)}
@@ -378,7 +378,7 @@
               <div class="server-name-row">
                 <span class="server-name" title={s.label}>{s.label}</span>
                 {#if isActive}
-                  <span class="active-badge">Активен</span>
+                  <span class="active-badge">{m.mihomo_sub_picker_active_badge()}</span>
                 {/if}
               </div>
               <div class="server-details-row">
@@ -398,7 +398,7 @@
             <div class="delay-col">
               {#if delay !== null}
                 <span class="delay-pill tone-{tone}">
-                  {delay > 0 ? `${delay} мс` : 'timeout'}
+                  {delay > 0 ? m.mihomo_delay_ms({ delay }) : 'timeout'}
                 </span>
               {:else}
                 <span class="delay-pill tone-none">—</span>
@@ -411,7 +411,7 @@
 
     <div class="modal-footer-row">
       <Button variant="secondary" onclick={onClose}>
-        Закрыть
+        {m.mihomo_sub_picker_close_btn()}
       </Button>
     </div>
   </div>

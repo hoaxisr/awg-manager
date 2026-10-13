@@ -800,7 +800,7 @@ export class SbRouterClient extends SingboxClient {
 			method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: proxy }),
 		});
-		if (!response.ok) throw new Error(`Не удалось переключить группу (${response.status})`);
+		if (!response.ok) throw new Error(`Mihomo select proxy: ${response.status}`);
 	}
 
 	async mihomoRuntimeDelay(proxy: string, url = 'https://www.gstatic.com/generate_204', timeout = 5000): Promise<number> {

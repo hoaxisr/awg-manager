@@ -304,11 +304,6 @@
     border: 1px solid var(--border);
     color: var(--text-primary);
   }
-  .managed-label {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-style: italic;
-  }
   .table {
     width: 100%;
     min-width: 0;

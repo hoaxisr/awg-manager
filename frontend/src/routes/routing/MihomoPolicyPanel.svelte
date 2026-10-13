@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { AlertTriangle, ChevronDown, ChevronUp, Pencil, Plus, RefreshCw, Save, Trash2, Users, Waypoints } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
@@ -14,7 +15,7 @@
 	let rulesRevision = $state<number>(0);
 	let confirmedRules = $state<MihomoNativeRule[]>([]);
 	let ruleMutationInFlight = $state(false);
-	let ruleStatusMessage = $state('');
+	let ruleStatusKind = $state<'' | 'updating' | 'creating' | 'deleting' | 'reordering'>('');
 
 	let reorderInFlight = false;
 	let pendingReorder: string[] | null = null;
@@ -70,7 +71,23 @@
 	let providerFormat = $state<MihomoNativeRuleProvider['format']>('yaml');
 	let providerInterval = $state(86400);
 
-	const ruleTypes = MIHOMO_SUPPORTED_RULE_TYPES;
+	function ruleCategoryLabel(firstItem: string, fallback: string): string {
+		switch (firstItem) {
+			case 'DOMAIN': return m.mihomo_rule_cat_domains();
+			case 'IP-CIDR': return m.mihomo_rule_cat_ip_nets();
+			case 'DST-PORT': return m.mihomo_rule_cat_ports_inbounds();
+			case 'PROCESS-PATH': return m.mihomo_rule_cat_process();
+			case 'RULE-SET': return m.mihomo_rule_cat_composite();
+			default: return fallback;
+		}
+	}
+
+	const ruleTypes = $derived(
+		MIHOMO_SUPPORTED_RULE_TYPES.map((cat) => ({
+			...cat,
+			label: ruleCategoryLabel(cat.items[0] ?? '', cat.label),
+		})),
+	);
 
 	function displayName(name: string): string {
 		const native = subscriptions.find((sub) => sub.groupName === name);
@@ -163,7 +180,7 @@
 				includeAllProxies: groupIncludeAllProxies, includeAllProviders: groupIncludeAllProviders,
 				filter: groupFilter, excludeFilter: groupExcludeFilter, excludeType: groupExcludeType, expectedStatus: groupExpectedStatus, enabled: true,
 			});
-			groupForm = false; resetGroup(); await load(); notifications.success('Группа Mihomo применена');
+			groupForm = false; resetGroup(); await load(); notifications.success(m.mihomo_policy_group_applied());
 		} catch (error) {
 			notifications.error(error instanceof Error ? error.message : String(error));
 		} finally { saving = false; }
@@ -186,7 +203,7 @@
 		if (saving || ruleMutationInFlight) return;
 		saving = true;
 		ruleMutationInFlight = true;
-		ruleStatusMessage = editRuleId ? 'Обновление правила…' : 'Создание правила…';
+		ruleStatusKind = editRuleId ? 'updating' : 'creating';
 		try {
 			cancelPendingReorder();
 			const mutation = await api.mihomoNativeSaveRuleDetailed({ id: editRuleId || undefined, type: ruleType, payload: ruleType === 'MATCH' ? '' : rulePayload, outbound: ruleOutbound, noResolve: ruleNoResolve, enabled: true });
@@ -195,13 +212,13 @@
 			rulesRevision = mutation.revision ?? rulesRevision;
 			ruleForm = false;
 			resetRule();
-			notifications.success('Правило Mihomo применено');
+			notifications.success(m.mihomo_policy_rule_applied());
 		} catch (error) {
 			notifications.error(error instanceof Error ? error.message : String(error));
 		} finally {
 			saving = false;
 			ruleMutationInFlight = false;
-			ruleStatusMessage = '';
+			ruleStatusKind = '';
 		}
 	}
 
@@ -210,20 +227,20 @@
 		const prev = [...rules];
 		rules = rules.filter((r) => r.id !== rule.id);
 		ruleMutationInFlight = true;
-		ruleStatusMessage = 'Удаление правила…';
+		ruleStatusKind = 'deleting';
 		try {
 			cancelPendingReorder();
 			const mutation = await api.mihomoNativeDeleteRuleDetailed(rule.id);
 			rules = [...(mutation.items ?? [])];
 			confirmedRules = [...rules];
 			rulesRevision = mutation.revision ?? rulesRevision;
-			notifications.success('Правило удалено');
+			notifications.success(m.mihomo_policy_rule_deleted());
 		} catch (error) {
 			rules = prev;
 			notifications.error(error instanceof Error ? error.message : String(error));
 		} finally {
 			ruleMutationInFlight = false;
-			ruleStatusMessage = '';
+			ruleStatusKind = '';
 		}
 	}
 
@@ -233,14 +250,14 @@
 		try {
 			const ids = unsupportedRules.map((r) => r.id);
 			await api.mihomoNativeDeleteUnsupportedRules(ids, unsupportedRevision, true);
-			notifications.success('Неподдерживаемые правила удалены');
+			notifications.success(m.mihomo_policy_unsupported_deleted());
 			unsupportedModalOpen = false;
 			await load();
 		} catch (error: unknown) {
 			const err = error as { status?: number; body?: { code?: string }; message?: string };
 			const is409 = err?.status === 409 || err?.body?.code === 'MIHOMO_RULES_STALE' || String(err?.message).includes('MIHOMO_RULES_STALE') || String(err?.message).includes('rules have been modified');
 			if (is409) {
-				notifications.warning('Список правил изменился, данные обновлены');
+				notifications.warning(m.mihomo_policy_rules_stale_warn());
 				try {
 					const refreshed = await api.mihomoNativeUnsupportedRules();
 					unsupportedRules = refreshed.items ?? [];
@@ -263,7 +280,7 @@
 	function editProvider(provider: MihomoNativeRuleProvider) { editProviderId = provider.id; providerName = provider.name; providerType = provider.type; providerURL = provider.url ?? ''; providerPath = provider.path ?? ''; providerBehavior = provider.behavior; providerFormat = provider.format; providerInterval = provider.interval || 86400; providerForm = true; }
 	async function saveProvider() {
 		saving = true;
-		try { await api.mihomoNativeSaveRuleProvider({ id: editProviderId || undefined, name: providerName, type: providerType, url: providerType === 'http' ? providerURL : '', path: providerPath, behavior: providerBehavior, format: providerFormat, interval: providerInterval, enabled: true }); resetProvider(); providerForm = false; await load(); notifications.success('Rule provider применён'); }
+		try { await api.mihomoNativeSaveRuleProvider({ id: editProviderId || undefined, name: providerName, type: providerType, url: providerType === 'http' ? providerURL : '', path: providerPath, behavior: providerBehavior, format: providerFormat, interval: providerInterval, enabled: true }); resetProvider(); providerForm = false; await load(); notifications.success(m.mihomo_policy_provider_applied()); }
 		catch (error) { notifications.error(error instanceof Error ? error.message : String(error)); }
 		finally { saving = false; }
 	}
@@ -286,7 +303,7 @@
 		}
 		reorderInFlight = true;
 		ruleMutationInFlight = true;
-		ruleStatusMessage = 'Применение порядка правил…';
+		ruleStatusKind = 'reordering';
 		try {
 			const res = await api.mihomoNativeReorderRules(ids, rulesRevision);
 			if (res.revision !== undefined) {
@@ -304,7 +321,7 @@
 			const err = error as { status?: number; code?: string; body?: { code?: string; data?: { items?: MihomoNativeRule[]; revision?: number } }; message?: string; data?: { items?: MihomoNativeRule[]; revision?: number } };
 			const is409 = err?.status === 409 || err?.code === 'MIHOMO_RULES_STALE' || err?.body?.code === 'MIHOMO_RULES_STALE' || String(err?.message).includes('MIHOMO_RULES_STALE') || String(err?.message).includes('rules have been modified');
 			if (is409) {
-				notifications.warning('Список правил изменился, данные обновлены с сервера');
+				notifications.warning(m.mihomo_policy_rules_stale_server_warn());
 				const serverData = err?.data || err?.body?.data;
 				if (serverData?.items) {
 					rules = serverData.items;
@@ -329,7 +346,7 @@
 		} finally {
 			reorderInFlight = false;
 			ruleMutationInFlight = false;
-			ruleStatusMessage = '';
+			ruleStatusKind = '';
 			if (pendingReorder) {
 				const nextIds = pendingReorder;
 				pendingReorder = null;
@@ -353,70 +370,81 @@
 
 <section class="policy-panel">
 	<div class="panel-head">
-		<div><h3>Политики Mihomo</h3><p>Собственные правила, rule-providers и proxy-группы. Изменения проверяются ядром перед переключением трафика.</p></div>
+		<div><h3>{m.mihomo_policy_title()}</h3><p>{m.mihomo_policy_subtitle()}</p></div>
 		<div class="head-actions">
 			{#if ruleMutationInFlight}
-				<span class="mutation-badge"><span class="spin"><RefreshCw size={12} /></span> {ruleStatusMessage}</span>
+				<span class="mutation-badge">
+					<span class="spin"><RefreshCw size={12} /></span>
+					{ruleStatusKind === 'updating'
+						? m.mihomo_policy_status_updating()
+						: ruleStatusKind === 'creating'
+							? m.mihomo_policy_status_creating()
+							: ruleStatusKind === 'deleting'
+								? m.mihomo_policy_status_deleting()
+								: ruleStatusKind === 'reordering'
+									? m.mihomo_policy_status_reordering()
+									: ''}
+				</span>
 			{/if}
-			<SegmentedControl value={section} options={[{ value: 'groups', label: `Группы (${groups.length + subscriptions.filter((sub) => sub.enabled && sub.groupName).length})` }, { value: 'rules', label: `Правила (${rules.length})` }]} onchange={(value) => section = value as typeof section} ariaLabel="Настройки маршрутизации Mihomo" />
-			<button class="icon" onclick={load} disabled={ruleMutationInFlight} aria-label="Обновить"><span class:spin={loading}><RefreshCw size={15} /></span></button>
+			<SegmentedControl value={section} options={[{ value: 'groups', label: m.mihomo_policy_tab_groups({ count: groups.length + subscriptions.filter((sub) => sub.enabled && sub.groupName).length }) }, { value: 'rules', label: m.mihomo_policy_tab_rules({ count: rules.length }) }]} onchange={(value) => section = value as typeof section} ariaLabel={m.mihomo_policy_section_aria()} />
+			<button class="icon" onclick={load} disabled={ruleMutationInFlight} aria-label={m.mihomo_config_refresh_btn()}><span class:spin={loading}><RefreshCw size={15} /></span></button>
 		</div>
 	</div>
 
 	{#if section === 'groups'}
-		<div class="section-tools"><div><strong>Proxy-группы</strong><span>Ручной выбор, автотест, резервирование, балансировка и цепочки Relay.</span></div><Button variant="primary" size="sm" onclick={() => { resetGroup(); groupForm = !groupForm; }}><Plus size={15} />Группа</Button></div>
+		<div class="section-tools"><div><strong>{m.mihomo_policy_groups_title()}</strong><span>{m.mihomo_policy_groups_subtitle()}</span></div><Button variant="primary" size="sm" onclick={() => { resetGroup(); groupForm = !groupForm; }}><Plus size={15} />{m.mihomo_policy_add_group_btn()}</Button></div>
 		{#if groupForm}
 			<Card padding="lg"><div class="editor">
-				<div class="form-grid"><label><span>Название</span><input bind:value={groupName} placeholder="Заблокированные сервисы" /></label><label><span>Тип</span><select bind:value={groupType}><option value="select">Select · ручной выбор</option><option value="url-test">URLTest · минимальная задержка</option><option value="fallback">Fallback · первый доступный</option><option value="load-balance">Load Balance</option><option value="relay">Relay · цепочка</option></select></label>{#if groupType !== 'select' && groupType !== 'relay'}<label><span>Интервал, сек.</span><input type="number" min="0" bind:value={groupInterval} /></label>{/if}</div>
-				{#if groupType !== 'select' && groupType !== 'relay'}<label><span>URL проверки</span><input bind:value={groupURL} /></label>{/if}
-				{#if groupType === 'load-balance'}<label><span>Стратегия</span><select bind:value={groupStrategy}><option value="consistent-hashing">Consistent hashing</option><option value="round-robin">Round robin</option><option value="sticky-sessions">Sticky sessions</option></select></label>{/if}
-				<div><span class="field-title">Прокси и вложенные группы</span><div class="checks">{#each memberOptions as option}<button type="button" title={option.value} class:selected={groupMembers.includes(option.value)} onclick={() => toggleMember(option.value)}>{option.label}</button>{/each}</div></div>
-				{#if subscriptions.some((sub) => sub.providerName)}<div><span class="field-title">Подписки / proxy-providers</span><div class="checks">{#each subscriptions.filter((sub) => sub.providerName) as sub}<button type="button" class:selected={groupProviders.includes(sub.providerName!)} onclick={() => toggleProvider(sub.providerName!)}>{sub.name}</button>{/each}</div></div>{/if}
-				<button class="advanced-toggle" onclick={() => groupAdvanced = !groupAdvanced}>{groupAdvanced ? 'Скрыть' : 'Показать'} дополнительные параметры</button>
-				{#if groupAdvanced}<div class="advanced-grid"><label class="inline-check"><input type="checkbox" bind:checked={groupIncludeAllProxies} /> Все локальные прокси</label><label class="inline-check"><input type="checkbox" bind:checked={groupIncludeAllProviders} /> Все providers</label><label class="inline-check"><input type="checkbox" bind:checked={groupLazy} /> Lazy health-check</label><label class="inline-check"><input type="checkbox" bind:checked={groupDisableUDP} /> Отключить UDP</label><label><span>Таймаут, мс</span><input type="number" min="0" bind:value={groupTimeout} /></label><label><span>Ошибок до перепроверки</span><input type="number" min="0" bind:value={groupMaxFailedTimes} /></label>{#if groupType === 'url-test'}<label><span>Tolerance, мс</span><input type="number" min="0" bind:value={groupTolerance} /></label>{/if}<label><span>Ожидаемый HTTP-статус</span><input bind:value={groupExpectedStatus} placeholder="204 или 200/302" /></label><label><span>Фильтр имён (regex)</span><input bind:value={groupFilter} /></label><label><span>Исключить имена (regex)</span><input bind:value={groupExcludeFilter} /></label><label><span>Исключить типы</span><input bind:value={groupExcludeType} placeholder="Shadowsocks|Http" /></label></div>{/if}
-				<div class="editor-actions"><Button variant="ghost" size="sm" onclick={() => groupForm = false}>Отмена</Button><Button variant="primary" size="sm" onclick={saveGroup} loading={saving}><Save size={14} />Сохранить и применить</Button></div>
+				<div class="form-grid"><label><span>{m.mihomo_policy_group_name_lbl()}</span><input bind:value={groupName} placeholder={m.mihomo_policy_group_name_placeholder()} /></label><label><span>{m.mihomo_policy_group_type_lbl()}</span><select bind:value={groupType}><option value="select">{m.mihomo_policy_type_select()}</option><option value="url-test">{m.mihomo_policy_type_urltest()}</option><option value="fallback">{m.mihomo_policy_type_fallback()}</option><option value="load-balance">Load Balance</option><option value="relay">{m.mihomo_policy_type_relay()}</option></select></label>{#if groupType !== 'select' && groupType !== 'relay'}<label><span>{m.mihomo_policy_interval_sec_lbl()}</span><input type="number" min="0" bind:value={groupInterval} /></label>{/if}</div>
+				{#if groupType !== 'select' && groupType !== 'relay'}<label><span>{m.mihomo_policy_check_url_lbl()}</span><input bind:value={groupURL} /></label>{/if}
+				{#if groupType === 'load-balance'}<label><span>{m.mihomo_policy_strategy_lbl()}</span><select bind:value={groupStrategy}><option value="consistent-hashing">Consistent hashing</option><option value="round-robin">Round robin</option><option value="sticky-sessions">Sticky sessions</option></select></label>{/if}
+				<div><span class="field-title">{m.mihomo_policy_members_lbl()}</span><div class="checks">{#each memberOptions as option}<button type="button" title={option.value} class:selected={groupMembers.includes(option.value)} onclick={() => toggleMember(option.value)}>{option.label}</button>{/each}</div></div>
+				{#if subscriptions.some((sub) => sub.providerName)}<div><span class="field-title">{m.mihomo_policy_providers_lbl()}</span><div class="checks">{#each subscriptions.filter((sub) => sub.providerName) as sub}<button type="button" class:selected={groupProviders.includes(sub.providerName!)} onclick={() => toggleProvider(sub.providerName!)}>{sub.name}</button>{/each}</div></div>{/if}
+				<button class="advanced-toggle" onclick={() => groupAdvanced = !groupAdvanced}>{groupAdvanced ? m.mihomo_policy_adv_hide() : m.mihomo_policy_adv_show()}</button>
+				{#if groupAdvanced}<div class="advanced-grid"><label class="inline-check"><input type="checkbox" bind:checked={groupIncludeAllProxies} /> {m.mihomo_policy_include_all_proxies()}</label><label class="inline-check"><input type="checkbox" bind:checked={groupIncludeAllProviders} /> {m.mihomo_policy_include_all_providers()}</label><label class="inline-check"><input type="checkbox" bind:checked={groupLazy} /> Lazy health-check</label><label class="inline-check"><input type="checkbox" bind:checked={groupDisableUDP} /> {m.mihomo_policy_disable_udp()}</label><label><span>{m.mihomo_policy_timeout_ms_lbl()}</span><input type="number" min="0" bind:value={groupTimeout} /></label><label><span>{m.mihomo_policy_max_failed_lbl()}</span><input type="number" min="0" bind:value={groupMaxFailedTimes} /></label>{#if groupType === 'url-test'}<label><span>{m.mihomo_policy_tolerance_ms_lbl()}</span><input type="number" min="0" bind:value={groupTolerance} /></label>{/if}<label><span>{m.mihomo_policy_expected_status_lbl()}</span><input bind:value={groupExpectedStatus} placeholder={m.mihomo_policy_expected_status_placeholder()} /></label><label><span>{m.mihomo_policy_filter_regex_lbl()}</span><input bind:value={groupFilter} /></label><label><span>{m.mihomo_policy_exclude_regex_lbl()}</span><input bind:value={groupExcludeFilter} /></label><label><span>{m.mihomo_policy_exclude_type_lbl()}</span><input bind:value={groupExcludeType} placeholder="Shadowsocks|Http" /></label></div>{/if}
+				<div class="editor-actions"><Button variant="ghost" size="sm" onclick={() => groupForm = false}>{m.common_cancel()}</Button><Button variant="primary" size="sm" onclick={saveGroup} loading={saving}><Save size={14} />{m.mihomo_policy_save_apply_btn()}</Button></div>
 			</div></Card>
 		{/if}
 
 		<div class="cards">
-			{#each groups as group (group.id)}<article class="group-row"><div class="kind-icon"><Users size={17} /></div><div><strong>{group.name}</strong><span>{group.type} · {(group.proxies?.length ?? 0)} прокси · {(group.use?.length ?? 0)} providers</span></div><Badge variant="accent">Mihomo</Badge><button class="icon" onclick={() => editGroup(group)} aria-label="Изменить"><Pencil size={14} /></button><button class="icon danger" onclick={() => removeGroup(group)} aria-label="Удалить"><Trash2 size={14} /></button></article>{/each}
+			{#each groups as group (group.id)}<article class="group-row"><div class="kind-icon"><Users size={17} /></div><div><strong>{group.name}</strong><span>{m.mihomo_policy_group_row_sub({ type: group.type, proxies: group.proxies?.length ?? 0, providers: group.use?.length ?? 0 })}</span></div><Badge variant="accent">Mihomo</Badge><button class="icon" onclick={() => editGroup(group)} aria-label={m.mihomo_policy_edit_aria()}><Pencil size={14} /></button><button class="icon danger" onclick={() => removeGroup(group)} aria-label={m.common_delete()}><Trash2 size={14} /></button></article>{/each}
 			{#each subscriptions.filter((sub) => sub.enabled && sub.groupName) as sub (sub.id)}
 				{@const provider = runtimeProviders.find((item) => item.name === sub.providerName)}
-				<article class="group-row provider-row"><div class="kind-icon"><Users size={17} /></div><div><strong>{sub.name}</strong><span>{sub.groupName} · provider · {provider?.proxies?.length ?? 0} узлов{provider?.updatedAt ? ` · ${new Date(provider.updatedAt).toLocaleString()}` : ''}</span>{#if sub.lastError}<em>{sub.lastError}</em>{/if}</div><Badge variant={provider ? 'success' : 'warning'}>{provider ? 'загружена' : 'ожидание'}</Badge></article>
+				<article class="group-row provider-row"><div class="kind-icon"><Users size={17} /></div><div><strong>{sub.name}</strong><span>{m.mihomo_policy_sub_row_sub({ group: sub.groupName ?? '', count: provider?.proxies?.length ?? 0 })}{provider?.updatedAt ? ` · ${new Date(provider.updatedAt).toLocaleString()}` : ''}</span>{#if sub.lastError}<em>{sub.lastError}</em>{/if}</div><Badge variant={provider ? 'success' : 'warning'}>{provider ? m.mihomo_policy_sub_loaded() : m.mihomo_policy_sub_waiting()}</Badge></article>
 			{/each}
-			{#if !loading && groups.length === 0 && subscriptions.filter((sub) => sub.enabled && sub.groupName).length === 0}<div class="empty">Создайте группу или подписку Mihomo. Существующая маршрутизация пока остаётся безопасным fallback.</div>{/if}
+			{#if !loading && groups.length === 0 && subscriptions.filter((sub) => sub.enabled && sub.groupName).length === 0}<div class="empty">{m.mihomo_policy_groups_empty()}</div>{/if}
 		</div>
 	{:else}
-		<div class="section-tools"><div><strong>Правила</strong><span>Первое совпадение сверху побеждает. Если ничего не подошло, используется DIRECT.</span></div><div class="tool-buttons"><Button variant="secondary" size="sm" onclick={() => { resetProvider(); providerForm = !providerForm; }}><Plus size={15} />Rule provider</Button><Button variant="primary" size="sm" onclick={() => { resetRule(); ruleForm = !ruleForm; }}><Plus size={15} />Правило</Button></div></div>
+		<div class="section-tools"><div><strong>{m.mihomo_policy_rules_title()}</strong><span>{m.mihomo_policy_rules_subtitle()}</span></div><div class="tool-buttons"><Button variant="secondary" size="sm" onclick={() => { resetProvider(); providerForm = !providerForm; }}><Plus size={15} />Rule provider</Button><Button variant="primary" size="sm" onclick={() => { resetRule(); ruleForm = !ruleForm; }}><Plus size={15} />{m.mihomo_policy_add_rule_btn()}</Button></div></div>
 		{#if unsupportedRules.length > 0}
 			<div class="unsupported-banner">
 				<div class="unsupported-banner-content">
 					<AlertTriangle size={18} class="unsupported-icon" />
 					<div>
-						<strong>Обнаружены неподдерживаемые правила ({unsupportedRules.length})</strong>
-						<p>В конфигурации сохранены правила типов, не поддерживаемых текущей версией ядра Mihomo.</p>
+						<strong>{m.mihomo_policy_unsupported_banner_title({ count: unsupportedRules.length })}</strong>
+						<p>{m.mihomo_policy_unsupported_banner_desc()}</p>
 					</div>
 				</div>
 				<Button variant="danger" size="sm" onclick={() => unsupportedModalOpen = true}>
-					Просмотреть и удалить
+					{m.mihomo_policy_unsupported_view_btn()}
 				</Button>
 			</div>
 		{/if}
-		{#if providerForm}<Card padding="lg"><div class="editor"><div class="form-grid"><label><span>Название набора</span><input bind:value={providerName} placeholder="youtube" /></label><label><span>Источник</span><select bind:value={providerType}><option value="http">HTTP</option><option value="file">Локальный файл</option></select></label><label><span>Формат</span><select bind:value={providerFormat}><option value="yaml">YAML</option><option value="text">Text</option><option value="mrs">MRS</option></select></label></div>{#if providerType === 'http'}<label><span>URL</span><input bind:value={providerURL} placeholder="https://…/rules.mrs" /></label>{:else}<label><span>Путь к файлу</span><input bind:value={providerPath} placeholder="./rules/local.yaml" /></label>{/if}<div class="form-grid"><label><span>Поведение</span><select bind:value={providerBehavior}><option value="classical">Classical</option><option value="domain">Domains</option><option value="ipcidr">IP CIDR</option></select></label><label><span>Интервал, сек.</span><input type="number" min="0" bind:value={providerInterval} /></label></div><div class="editor-actions"><Button variant="ghost" size="sm" onclick={() => providerForm = false}>Отмена</Button><Button variant="primary" size="sm" onclick={saveProvider} loading={saving}>Сохранить provider</Button></div></div></Card>{/if}
-		{#if ruleProviders.length > 0}<div class="provider-chips">{#each ruleProviders as provider (provider.id)}<span><strong>{provider.name}</strong> · {provider.behavior}/{provider.format}<button onclick={() => editProvider(provider)} aria-label="Изменить provider"><Pencil size={12} /></button><button onclick={() => removeProvider(provider)} aria-label="Удалить provider"><Trash2 size={12} /></button></span>{/each}</div>{/if}
-		{#if ruleForm}<Card padding="lg"><div class="editor"><div class="form-grid rule-grid"><label><span>Условие</span><select bind:value={ruleType}>{#each ruleTypes as category}<optgroup label={category.label}>{#each category.items as item}<option value={item}>{item}</option>{/each}</optgroup>{/each}</select></label>{#if ruleType !== 'MATCH'}<label><span>Значение</span>{#if ruleType === 'RULE-SET' && ruleProviders.length > 0}<select bind:value={rulePayload}><option value="">Выберите provider</option>{#each ruleProviders as provider}<option value={provider.name}>{provider.name}</option>{/each}</select>{:else}<input bind:value={rulePayload} placeholder={ruleType === 'AND' || ruleType === 'OR' || ruleType === 'NOT' ? '((DOMAIN,example.com),(NETWORK,UDP))' : 'значение'} />{/if}</label>{/if}<label><span>Выход</span><select bind:value={ruleOutbound}>{#each outputOptions as output}<option value={output.value}>{output.label}</option>{/each}</select></label></div>{#if ['IP-CIDR','IP-CIDR6','IP-SUFFIX','IP-ASN','GEOIP'].includes(ruleType)}<label class="inline-check"><input type="checkbox" bind:checked={ruleNoResolve} /> Не выполнять DNS-resolve</label>{/if}<div class="editor-actions"><Button variant="ghost" size="sm" onclick={() => ruleForm = false}>Отмена</Button><Button variant="primary" size="sm" onclick={saveRule} loading={saving} disabled={ruleMutationInFlight}><Save size={14} />Сохранить и применить</Button></div></div></Card>{/if}
-		<div class="rule-list">{#each rules as rule, index (rule.id)}<article class="rule-row"><span class="order">{index + 1}</span><div class="kind-icon"><Waypoints size={17} /></div><div><strong>{rule.type}{rule.payload ? `, ${rule.payload}` : ''}</strong><span>→ {displayName(rule.outbound)}{rule.noResolve ? ' · no-resolve' : ''}</span></div><div class="reorder"><button onclick={() => moveRule(index, -1)} disabled={ruleMutationInFlight || index === 0}><ChevronUp size={14} /></button><button onclick={() => moveRule(index, 1)} disabled={ruleMutationInFlight || index === rules.length - 1}><ChevronDown size={14} /></button></div><button class="icon" onclick={() => editRule(rule)} disabled={ruleMutationInFlight} aria-label="Изменить"><Pencil size={14} /></button><button class="icon danger" onclick={() => removeRule(rule)} disabled={ruleMutationInFlight} aria-label="Удалить"><Trash2 size={14} /></button></article>{/each}{#if !loading && rules.length === 0}<div class="empty">Нативных правил ещё нет. Текущий набор маршрутизации продолжает работать как fallback; новые правила Mihomo будут иметь более высокий приоритет.</div>{/if}</div>
+		{#if providerForm}<Card padding="lg"><div class="editor"><div class="form-grid"><label><span>{m.mihomo_policy_prov_name_lbl()}</span><input bind:value={providerName} placeholder="youtube" /></label><label><span>{m.mihomo_policy_prov_source_lbl()}</span><select bind:value={providerType}><option value="http">HTTP</option><option value="file">{m.mihomo_policy_prov_source_file()}</option></select></label><label><span>{m.mihomo_policy_prov_format_lbl()}</span><select bind:value={providerFormat}><option value="yaml">YAML</option><option value="text">Text</option><option value="mrs">MRS</option></select></label></div>{#if providerType === 'http'}<label><span>URL</span><input bind:value={providerURL} placeholder="https://…/rules.mrs" /></label>{:else}<label><span>{m.mihomo_policy_prov_path_lbl()}</span><input bind:value={providerPath} placeholder="./rules/local.yaml" /></label>{/if}<div class="form-grid"><label><span>{m.mihomo_policy_prov_behavior_lbl()}</span><select bind:value={providerBehavior}><option value="classical">Classical</option><option value="domain">Domains</option><option value="ipcidr">IP CIDR</option></select></label><label><span>{m.mihomo_policy_interval_sec_lbl()}</span><input type="number" min="0" bind:value={providerInterval} /></label></div><div class="editor-actions"><Button variant="ghost" size="sm" onclick={() => providerForm = false}>{m.common_cancel()}</Button><Button variant="primary" size="sm" onclick={saveProvider} loading={saving}>{m.mihomo_policy_save_prov_btn()}</Button></div></div></Card>{/if}
+		{#if ruleProviders.length > 0}<div class="provider-chips">{#each ruleProviders as provider (provider.id)}<span><strong>{provider.name}</strong> · {provider.behavior}/{provider.format}<button onclick={() => editProvider(provider)} aria-label={m.mihomo_policy_edit_prov_aria()}><Pencil size={12} /></button><button onclick={() => removeProvider(provider)} aria-label={m.mihomo_policy_delete_prov_aria()}><Trash2 size={12} /></button></span>{/each}</div>{/if}
+		{#if ruleForm}<Card padding="lg"><div class="editor"><div class="form-grid rule-grid"><label><span>{m.mihomo_policy_rule_cond_lbl()}</span><select bind:value={ruleType}>{#each ruleTypes as category}<optgroup label={category.label}>{#each category.items as item}<option value={item}>{item}</option>{/each}</optgroup>{/each}</select></label>{#if ruleType !== 'MATCH'}<label><span>{m.mihomo_policy_rule_val_lbl()}</span>{#if ruleType === 'RULE-SET' && ruleProviders.length > 0}<select bind:value={rulePayload}><option value="">{m.mihomo_policy_select_prov_placeholder()}</option>{#each ruleProviders as provider}<option value={provider.name}>{provider.name}</option>{/each}</select>{:else}<input bind:value={rulePayload} placeholder={ruleType === 'AND' || ruleType === 'OR' || ruleType === 'NOT' ? '((DOMAIN,example.com),(NETWORK,UDP))' : m.mihomo_policy_rule_val_placeholder()} />{/if}</label>{/if}<label><span>{m.mihomo_policy_rule_out_lbl()}</span><select bind:value={ruleOutbound}>{#each outputOptions as output}<option value={output.value}>{output.label}</option>{/each}</select></label></div>{#if ['IP-CIDR','IP-CIDR6','IP-SUFFIX','IP-ASN','GEOIP'].includes(ruleType)}<label class="inline-check"><input type="checkbox" bind:checked={ruleNoResolve} /> {m.mihomo_policy_no_resolve_lbl()}</label>{/if}<div class="editor-actions"><Button variant="ghost" size="sm" onclick={() => ruleForm = false}>{m.common_cancel()}</Button><Button variant="primary" size="sm" onclick={saveRule} loading={saving} disabled={ruleMutationInFlight}><Save size={14} />{m.mihomo_policy_save_apply_btn()}</Button></div></div></Card>{/if}
+		<div class="rule-list">{#each rules as rule, index (rule.id)}<article class="rule-row"><span class="order">{index + 1}</span><div class="kind-icon"><Waypoints size={17} /></div><div><strong>{rule.type}{rule.payload ? `, ${rule.payload}` : ''}</strong><span>→ {displayName(rule.outbound)}{rule.noResolve ? ' · no-resolve' : ''}</span></div><div class="reorder"><button onclick={() => moveRule(index, -1)} disabled={ruleMutationInFlight || index === 0}><ChevronUp size={14} /></button><button onclick={() => moveRule(index, 1)} disabled={ruleMutationInFlight || index === rules.length - 1}><ChevronDown size={14} /></button></div><button class="icon" onclick={() => editRule(rule)} disabled={ruleMutationInFlight} aria-label={m.mihomo_policy_edit_aria()}><Pencil size={14} /></button><button class="icon danger" onclick={() => removeRule(rule)} disabled={ruleMutationInFlight} aria-label={m.common_delete()}><Trash2 size={14} /></button></article>{/each}{#if !loading && rules.length === 0}<div class="empty">{m.mihomo_policy_rules_empty()}</div>{/if}</div>
 	{/if}
 </section>
 
-<Modal open={unsupportedModalOpen} title="Неподдерживаемые правила Mihomo" size="md" onclose={() => { if (!deletingUnsupported) unsupportedModalOpen = false; }}>
+<Modal open={unsupportedModalOpen} title={m.mihomo_policy_unsupported_modal_title()} size="md" onclose={() => { if (!deletingUnsupported) unsupportedModalOpen = false; }}>
 	<div class="unsupported-modal">
 		<p class="modal-desc">
-			Следующие правила имеют типы, не поддерживаемые ядром Mihomo. Вы можете удалить весь набор неподдерживаемых правил разом.
+			{m.mihomo_policy_unsupported_modal_desc()}
 		</p>
 		{#if unsupportedRevision}
 			<div class="revision-token">
-				<span>Ревизия снимка:</span>
+				<span>{m.mihomo_policy_revision_lbl()}</span>
 				<code>{unsupportedRevision}</code>
 			</div>
 		{/if}
@@ -437,11 +465,11 @@
 		</div>
 		<div class="modal-actions">
 			<Button variant="ghost" size="sm" onclick={() => unsupportedModalOpen = false} disabled={deletingUnsupported}>
-				Отмена
+				{m.common_cancel()}
 			</Button>
 			<Button variant="danger" size="sm" onclick={deleteUnsupportedRules} loading={deletingUnsupported} disabled={deletingUnsupported || unsupportedRules.length === 0}>
 				<Trash2 size={14} />
-				Удалить неподдерживаемые правила ({unsupportedRules.length})
+				{m.mihomo_policy_unsupported_delete_btn({ count: unsupportedRules.length })}
 			</Button>
 		</div>
 	</div>

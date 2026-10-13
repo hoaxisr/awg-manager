@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount } from 'svelte';
   import {
     Plus, Globe, Zap, ShieldOff, Layers, Activity, RefreshCw, Sparkles,
@@ -19,7 +20,6 @@
   import { awgTags as awgTagsStore } from '$lib/stores/awgTags';
   import { subscriptionsStore } from '$lib/stores/subscriptions';
   import { formatOutboundHumanName } from '$lib/utils/outboundHumanName';
-  import { pluralize, RULE_WORDS } from '$lib/utils/pluralize';
   import type {
     MihomoNativeGroup,
     MihomoNativeProxy,
@@ -78,7 +78,7 @@
     if (loading && !isEngineActive) return { value: '...', tone: 'muted' };
     return isEngineActive
       ? { value: 'ON', tone: 'success' }
-      : { value: 'СБОЙ', tone: 'error' };
+      : { value: m.mihomo_stat_engine_fail(), tone: 'error' };
   });
 
   const nameContext = $derived({
@@ -435,7 +435,7 @@
       localStorage.removeItem(CUSTOM_HEIGHTS_KEY);
       localStorage.removeItem(SPLIT_STORAGE_KEY);
     } catch {}
-    notifications.success('Расположение и размеры окон сброшены по умолчанию');
+    notifications.success(m.mihomo_layout_reset_success());
   }
 
   function scrollToSection(id: string, sectionKey?: ExpertPanelSection) {
@@ -516,10 +516,10 @@
     try {
       await api.singboxRouterDeleteDNSServer(tag);
       await singboxRouterStore.loadAll();
-      notifications.success(`DNS-сервер «${tag}» удален`);
+      notifications.success(m.mihomo_dns_server_deleted({ tag }));
       onReload();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка удаления DNS-сервера');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_dns_server_delete_err());
     }
   }
 
@@ -543,10 +543,10 @@
     try {
       await api.singboxRouterDeleteDNSRule(idx);
       await singboxRouterStore.loadAll();
-      notifications.success('DNS-правило удалено');
+      notifications.success(m.mihomo_dns_rule_deleted());
       onReload();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка удаления DNS-правила');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_dns_rule_delete_err());
     }
   }
 
@@ -562,7 +562,7 @@
       onReload();
     } catch (e) {
       singboxRouterStore.applyDNSRules(snapshot);
-      notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.mihomo_dns_rule_move_err({ error: e instanceof Error ? e.message : String(e) }));
     }
   }
 
@@ -604,59 +604,59 @@
   // Top metric stat strip
   let statCells = $derived<StatCellData[]>([
     {
-      label: 'ДВИЖОК',
+      label: m.mihomo_stat_engine_lbl(),
       value: engineStat.value,
       tone: engineStat.tone,
-      helpTitle: 'Ядро маршрутизации Mihomo',
-      helpText: 'Mihomo выполняет интерцепцию TProxy и маршрутизацию сетевых пакетов.',
+      helpTitle: m.mihomo_stat_engine_help_title(),
+      helpText: m.mihomo_stat_engine_help_text(),
     },
     {
-      label: 'ПАМЯТЬ',
+      label: m.mihomo_stat_mem_lbl(),
       value: memCellValue,
       tone: isEngineActive && $singboxMemory > 0 ? undefined : 'muted',
-      helpTitle: 'Память Mihomo',
-      helpText: 'Память Go-рантайма Mihomo по данным Clash API. Обновляется каждые ~2 секунды, пока движок работает.',
+      helpTitle: m.mihomo_stat_mem_help_title(),
+      helpText: m.mihomo_stat_mem_help_text(),
     },
     {
-      label: 'ТРАФИК ↓',
+      label: m.mihomo_stat_traffic_lbl(),
       value: rateCellValue,
       tone: isEngineActive && liveStats.rate.hasRate ? undefined : 'muted',
-      helpTitle: 'Трафик через Mihomo',
-      helpText: 'Агрегатная скорость скачивания через Mihomo (кумулятивные счётчики Clash).',
+      helpTitle: m.mihomo_stat_traffic_help_title(),
+      helpText: m.mihomo_stat_traffic_help_text(),
       helpItems: [
-        `Отдача: ${isEngineActive && liveStats.rate.hasRate ? formatByteRate(liveStats.rate.uploadRate) : '—'}`,
-        `За сессию: ${isEngineActive ? formatBytes(liveStats.totals.downloadBytes + liveStats.totals.uploadBytes) : '—'}`,
+        m.mihomo_stat_traffic_upload({ rate: isEngineActive && liveStats.rate.hasRate ? formatByteRate(liveStats.rate.uploadRate) : '—' }),
+        m.mihomo_stat_traffic_session({ total: isEngineActive ? formatBytes(liveStats.totals.downloadBytes + liveStats.totals.uploadBytes) : '—' }),
       ],
     },
     {
-      label: 'ПРАВИЛ',
+      label: m.mihomo_stat_rules_lbl(),
       value: String(rules.length),
-      helpTitle: 'Правила маршрутизации',
-      helpText: 'Количество правил в цепочке first-match.',
+      helpTitle: m.mihomo_stat_rules_help_title(),
+      helpText: m.mihomo_stat_rules_help_text(),
     },
     {
       label: 'RULE-SETS',
       value: String(ruleProviders.length),
-      helpTitle: 'Провайдеры правил',
-      helpText: 'Внешние и локальные списки правил (RULE-SET).',
+      helpTitle: m.mihomo_stat_rulesets_help_title(),
+      helpText: m.mihomo_stat_rulesets_help_text(),
     },
     {
       label: 'OUTBOUNDS',
       value: String(groups.length),
-      helpTitle: 'Группы прокси',
-      helpText: 'Группы автоматического или ручного выбора узлов.',
+      helpTitle: m.mihomo_beg_groups_title(),
+      helpText: m.mihomo_stat_outbounds_help_text(),
     },
     {
       label: 'DNS',
       value: '1',
-      helpTitle: 'Встроенный DNS',
+      helpTitle: m.mihomo_stat_dns_help_title(),
       helpText: 'Mihomo DNS (enhanced-mode: redir-host).',
     },
     {
-      label: 'ПРОКСИ',
+      label: m.mihomo_stat_proxies_lbl(),
       value: String(proxies.length + subscriptions.length),
-      helpTitle: 'Прокси и подписки',
-      helpText: 'Всего настроенных прокси-узлов и подписок.',
+      helpTitle: m.mihomo_stat_proxies_help_title(),
+      helpText: m.mihomo_stat_proxies_help_text(),
     },
   ]);
 
@@ -738,7 +738,7 @@
       await api.mihomoNativeReorderRules(ids);
       onReload();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Не удалось переместить правило');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_rule_move_err());
     }
   }
 
@@ -746,10 +746,10 @@
     refreshingProvider = name;
     try {
       await api.mihomoRuntimeRefreshProvider(name);
-      notifications.success(`Провайдер «${name}» обновлён`);
+      notifications.success(m.mihomo_prov_refreshed({ name }));
       onReload();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка обновления провайдера');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_prov_refresh_err());
     } finally {
       refreshingProvider = null;
     }
@@ -759,10 +759,10 @@
     checkingGroupDelay = name;
     try {
       const delay = await api.mihomoRuntimeDelay(name);
-      notifications.success(`Задержка «${name}»: ${delay} мс`);
+      notifications.success(m.mihomo_group_delay_result({ name, delay }));
       onReload();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка проверки задержки группы');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_group_delay_err());
     } finally {
       checkingGroupDelay = null;
     }
@@ -773,17 +773,17 @@
     try {
       if (deleteType === 'rule') {
         await api.mihomoNativeDeleteRule(deleteId);
-        notifications.success('Правило удалено');
+        notifications.success(m.mihomo_rule_deleted_success());
       } else if (deleteType === 'group') {
         await api.mihomoNativeDeleteGroup(deleteId);
-        notifications.success('Группа прокси удалена');
+        notifications.success(m.mihomo_exp_group_deleted());
       } else if (deleteType === 'provider') {
         await api.mihomoNativeDeleteRuleProvider(deleteId);
-        notifications.success('Провайдер правил удален');
+        notifications.success(m.mihomo_exp_prov_deleted());
       }
       onReload();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка при удалении');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_delete_err());
     } finally {
       deleteConfirmOpen = false;
       deleteId = null;
@@ -803,7 +803,7 @@
       <input
         type="text"
         class="search-input"
-        placeholder="Поиск по правилам (домен, IP, geoip, прямой выход)..."
+        placeholder={m.mihomo_exp_search_placeholder()}
         bind:value={ruleSearchQuery}
       />
       {#if ruleSearchQuery}
@@ -811,7 +811,7 @@
           type="button"
           class="search-clear-btn"
           onclick={() => (ruleSearchQuery = '')}
-          title="Очистить поиск"
+          title={m.mihomo_exp_search_clear_title()}
         >
           <X size={14} />
         </button>
@@ -824,10 +824,10 @@
         class="toolbar-toggle-btn"
         class:active={isCompact}
         onclick={toggleCompact}
-        title={isCompact ? 'Переключить на стандартный вид' : 'Переключить на компактный вид'}
+        title={isCompact ? m.mihomo_exp_compact_off_title() : m.mihomo_exp_compact_on_title()}
       >
         <SlidersHorizontal size={14} />
-        <span>Компактный вид</span>
+        <span>{m.mihomo_exp_compact_btn()}</span>
       </button>
 
       <div class="layout-toggle-group">
@@ -836,20 +836,20 @@
           class="layout-btn"
           class:active={layoutMode === 'split'}
           onclick={() => setLayoutMode('split')}
-          title="2 колонки (широкий экран)"
+          title={m.mihomo_win_2col_title()}
         >
           <Columns size={14} />
-          <span class="btn-text">2 колонки</span>
+          <span class="btn-text">{m.mihomo_win_2col_btn()}</span>
         </button>
         <button
           type="button"
           class="layout-btn"
           class:active={layoutMode === 'stack'}
           onclick={() => setLayoutMode('stack')}
-          title="1 колонка (стек)"
+          title={m.mihomo_win_1col_title()}
         >
           <LayoutGrid size={14} />
-          <span class="btn-text">1 колонка</span>
+          <span class="btn-text">{m.mihomo_win_1col_btn()}</span>
         </button>
       </div>
 
@@ -857,18 +857,18 @@
         type="button"
         class="toolbar-toggle-btn"
         onclick={resetAllLayout}
-        title="Сбросить расположение и размеры всех окон по умолчанию"
+        title={m.mihomo_win_reset_all_title()}
       >
         <RotateCcw size={14} />
-        <span>Сброс окон</span>
+        <span>{m.mihomo_win_reset_all_btn()}</span>
       </button>
     </div>
   </div>
 
     {#snippet renderRules()}
     <SidePanel
-            title="Правила маршрутизации"
-            count={ruleSearchQuery.trim() ? `${filteredRules.length} из ${rules.length}` : String(rules.length)}
+            title={m.mihomo_stat_rules_help_title()}
+            count={ruleSearchQuery.trim() ? m.mihomo_exp_count_of({ filtered: filteredRules.length, total: rules.length }) : String(rules.length)}
             section="rules"
           >
             {#snippet headerBefore()}
@@ -877,10 +877,10 @@
                 draggable="true"
                 ondragstart={(e) => handleBlockDragStart(e, 'rules')}
                 ondragend={handleBlockDragEnd}
-                title="Зажмите и перетащите блок «Правила» мышкой в любое место"
+                title={m.mihomo_exp_rules_drag_title()}
                 role="button"
                 tabindex="0"
-                aria-label="Перетащить блок «Правила»"
+                aria-label={m.mihomo_beg_rules_drag_aria()}
               >
                 <GripVertical size={14} class="drag-grip-icon" />
               </div>
@@ -890,16 +890,16 @@
                 {#snippet iconBefore()}
                   <Sparkles size={14} aria-hidden="true" />
                 {/snippet}
-                Шаблоны
+                {m.mihomo_templates_btn()}
               </Button>
               <Button variant="secondary" size="sm" onclick={openAddWizard}>
                 {#snippet iconBefore()}
                   <LayoutGrid size={14} aria-hidden="true" />
                 {/snippet}
-                Каталог
+                {m.mihomo_exp_catalog_btn()}
               </Button>
               <Button variant="primary" size="sm" onclick={handleAddRule}>
-                + Правило
+                {m.mihomo_add_rule_short_btn()}
               </Button>
               <div class="panel-win-btns">
                 {#if customHeights['rules']}
@@ -907,8 +907,8 @@
                     type="button"
                     class="panel-win-btn"
                     onclick={() => resetSectionHeight('rules')}
-                    title="Сбросить высоту к исходной (двойной клик на нижней границе)"
-                    aria-label="Сбросить высоту"
+                    title={m.mihomo_win_reset_height_title()}
+                    aria-label={m.mihomo_win_reset_height_aria()}
                   >
                     <RotateCcw size={12} />
                   </button>
@@ -918,8 +918,8 @@
                   class="panel-win-btn"
                   class:active={maximizedSection === 'rules'}
                   onclick={() => toggleMaximize('rules')}
-                  title={maximizedSection === 'rules' ? 'Восстановить размер окна' : 'Развернуть во весь экран'}
-                  aria-label={maximizedSection === 'rules' ? 'Восстановить' : 'Развернуть'}
+                  title={maximizedSection === 'rules' ? m.mihomo_win_restore_title() : m.mihomo_win_maximize_title()}
+                  aria-label={maximizedSection === 'rules' ? m.mihomo_win_restore_aria() : m.mihomo_win_maximize_aria()}
                 >
                   {#if maximizedSection === 'rules'}
                     <Minimize2 size={13} />
@@ -931,23 +931,23 @@
             {/snippet}
 
           <div class="first-match-bar">
-            <span class="fm-tag">FIRST-MATCH-WINS · ЕСЛИ НИЧЕГО НЕ ПОДОШЛО →</span>
+            <span class="fm-tag">{m.mihomo_exp_first_match_tag()}</span>
             <button
               type="button"
               class="fm-chip-btn"
               onclick={handleEditDefaultFallback}
-              title="Нажмите, чтобы изменить действие по умолчанию (MATCH)"
+              title={m.mihomo_exp_first_match_edit_title()}
             >
               {#if (fallbackOutbound || '').toUpperCase() === 'DIRECT'}
                 <div class="tone-chip tone-chip-compact tone-direct">
                   <Globe size={11} />
-                  <span>direct (мимо VPN)</span>
+                  <span>{m.mihomo_rule_card_direct_chip()}</span>
                   <Edit3 size={10} class="edit-icon" />
                 </div>
               {:else if (fallbackOutbound || '').toUpperCase() === 'REJECT' || (fallbackOutbound || '').toUpperCase() === 'BLOCK'}
                 <div class="tone-chip tone-chip-compact tone-block">
                   <ShieldOff size={11} />
-                  <span>Заблокировать</span>
+                  <span>{m.mihomo_rule_card_block_chip()}</span>
                   <Edit3 size={10} class="edit-icon" />
                 </div>
               {:else}
@@ -965,11 +965,11 @@
               <thead>
                 <tr>
                   <th class="col-num">#</th>
-                  <th class="col-order">Порядок</th>
-                  <th class="col-action">Действие</th>
-                  <th class="col-matchers">Условия</th>
-                  <th class="col-outbound">Выход</th>
-                  <th class="col-actions">Действия</th>
+                  <th class="col-order">{m.mihomo_exp_th_order()}</th>
+                  <th class="col-action">{m.mihomo_exp_th_action()}</th>
+                  <th class="col-matchers">{m.mihomo_exp_th_matchers()}</th>
+                  <th class="col-outbound">{m.mihomo_exp_th_outbound()}</th>
+                  <th class="col-actions">{m.mihomo_exp_th_actions()}</th>
                 </tr>
               </thead>
               <tbody>
@@ -979,7 +979,7 @@
                   <tr class="susanin-rule-row">
                     <td class="col-num font-mono">⚡</td>
                     <td class="col-order">
-                      <Badge variant="success" size="sm">РАДАР</Badge>
+                      <Badge variant="success" size="sm">{m.mihomo_exp_susanin_badge()}</Badge>
                     </td>
                     <td class="col-action">
                       <span class="action-tag">ROUTE</span>
@@ -998,8 +998,8 @@
                       </div>
                     </td>
                     <td class="col-actions">
-                      <span class="managed-label" title="Динамическое правило Susanin формируется автоматически">
-                        Радар Susanin
+                      <span class="managed-label" title={m.mihomo_exp_susanin_managed_title()}>
+                        {m.mihomo_exp_susanin_managed_lbl()}
                       </span>
                     </td>
                   </tr>
@@ -1008,14 +1008,14 @@
                 {#if rules.length === 0 && !$storeSettings?.susaninEnabled}
                   <tr>
                     <td colspan="6" class="empty-cell">
-                      Нет настроенных правил. Нажмите «+ Правило», чтобы добавить.
+                      {m.mihomo_exp_rules_empty()}
                     </td>
                   </tr>
                 {:else if filteredRules.length === 0}
                   <tr>
                     <td colspan="6" class="empty-cell">
-                      <span>По запросу «{ruleSearchQuery}» ничего не найдено.</span>
-                      <button type="button" class="btn-clear-search" onclick={() => (ruleSearchQuery = '')}>Сбросить фильтр</button>
+                      <span>{m.mihomo_catalog_empty_query({ query: ruleSearchQuery })}</span>
+                      <button type="button" class="btn-clear-search" onclick={() => (ruleSearchQuery = '')}>{m.mihomo_exp_reset_filter_btn()}</button>
                     </td>
                   </tr>
                 {:else}
@@ -1034,7 +1034,7 @@
                             class="order-btn"
                             disabled={isSearching || origIdx <= 0}
                             onclick={() => handleMoveRule(origIdx, 'up')}
-                            title={isSearching ? 'Сортировка отключена во время поиска' : 'Поднять выше'}
+                            title={isSearching ? m.mihomo_exp_sort_disabled_search() : m.mihomo_exp_move_up_title()}
                           >
                             <ChevronUp size={14} />
                           </button>
@@ -1043,7 +1043,7 @@
                             class="order-btn"
                             disabled={isSearching || origIdx < 0 || origIdx >= rules.length - 1}
                             onclick={() => handleMoveRule(origIdx, 'down')}
-                            title={isSearching ? 'Сортировка отключена во время поиска' : 'Опустить ниже'}
+                            title={isSearching ? m.mihomo_exp_sort_disabled_search() : m.mihomo_exp_move_down_title()}
                           >
                             <ChevronDown size={14} />
                           </button>
@@ -1070,19 +1070,19 @@
                         {#if isDirect}
                           <div class="tone-chip tone-chip-compact tone-direct">
                             <Globe size={11} />
-                            <span>direct (мимо VPN)</span>
+                            <span>{m.mihomo_rule_card_direct_chip()}</span>
                           </div>
                         {:else if isReject}
                           <div class="tone-chip tone-chip-compact tone-block">
                             <ShieldOff size={11} />
-                            <span>Заблокировать</span>
+                            <span>{m.mihomo_rule_card_block_chip()}</span>
                           </div>
                         {:else}
                           <div class="tone-chip tone-chip-compact tone-composite">
                             <Zap size={11} />
                             <span>{formatOutbound(rule.outbound)}</span>
                             {#if runtime?.now && runtime.now !== rule.outbound}
-                              <span class="live-dot" title={`Активен: ${formatOutbound(runtime.now)}`}>➜ {formatOutbound(runtime.now)}</span>
+                              <span class="live-dot" title={m.mihomo_exp_active_node_title({ node: formatOutbound(runtime.now) })}>➜ {formatOutbound(runtime.now)}</span>
                             {/if}
                           </div>
                         {/if}
@@ -1093,7 +1093,7 @@
                             type="button"
                             class="act-btn"
                             onclick={() => handleEditRule(rule)}
-                            title="Редактировать правило"
+                            title={m.mihomo_rule_card_edit_title()}
                           >
                             <Edit3 size={14} />
                           </button>
@@ -1101,7 +1101,7 @@
                             type="button"
                             class="act-btn danger"
                             onclick={() => handleDeleteRule(rule.id)}
-                            title="Удалить правило"
+                            title={m.mihomo_rule_card_delete_title()}
                           >
                             <Trash2 size={14} />
                           </button>
@@ -1118,7 +1118,7 @@
 
   {#snippet renderOutbounds()}
     <SidePanel
-                title="Outbounds / Группы прокси"
+                title={m.mihomo_exp_outbounds_title()}
                 count={String(groups.length)}
                 section="outbounds"
               >
@@ -1128,17 +1128,17 @@
                     draggable="true"
                     ondragstart={(e) => handleBlockDragStart(e, 'outbounds')}
                     ondragend={handleBlockDragEnd}
-                    title="Зажмите и перетащите блок «Outbounds» мышкой в любое место"
+                    title={m.mihomo_exp_outbounds_drag_title()}
                     role="button"
                     tabindex="0"
-                    aria-label="Перетащить блок «Outbounds»"
+                    aria-label={m.mihomo_exp_outbounds_drag_aria()}
                   >
                     <GripVertical size={14} class="drag-grip-icon" />
                   </div>
                 {/snippet}
                 {#snippet actions()}
                   <Button variant="primary" size="sm" onclick={handleAddGroup}>
-                    + Группа
+                    {m.mihomo_exp_add_group_btn()}
                   </Button>
                   <div class="panel-win-btns">
                     {#if customHeights['outbounds']}
@@ -1146,8 +1146,8 @@
                         type="button"
                         class="panel-win-btn"
                         onclick={() => resetSectionHeight('outbounds')}
-                        title="Сбросить высоту к исходной (двойной клик на нижней границе)"
-                        aria-label="Сбросить высоту"
+                        title={m.mihomo_win_reset_height_title()}
+                        aria-label={m.mihomo_win_reset_height_aria()}
                       >
                         <RotateCcw size={12} />
                       </button>
@@ -1157,8 +1157,8 @@
                       class="panel-win-btn"
                       class:active={maximizedSection === 'outbounds'}
                       onclick={() => toggleMaximize('outbounds')}
-                      title={maximizedSection === 'outbounds' ? 'Восстановить размер окна' : 'Развернуть во весь экран'}
-                      aria-label={maximizedSection === 'outbounds' ? 'Восстановить' : 'Развернуть'}
+                      title={maximizedSection === 'outbounds' ? m.mihomo_win_restore_title() : m.mihomo_win_maximize_title()}
+                      aria-label={maximizedSection === 'outbounds' ? m.mihomo_win_restore_aria() : m.mihomo_win_maximize_aria()}
                     >
                       {#if maximizedSection === 'outbounds'}
                         <Minimize2 size={13} />
@@ -1172,7 +1172,7 @@
                 <div class="outbounds-list">
                   {#if groups.length === 0}
                     <div class="empty-cell" style="padding: 16px;">
-                      Нет созданных групп прокси. Нажмите «+ Группа», чтобы добавить.
+                      {m.mihomo_exp_outbounds_empty()}
                     </div>
                   {:else}
                     {#each groups as group (group.id || group.name)}
@@ -1192,7 +1192,7 @@
 
   {#snippet renderRuleSets()}
     <SidePanel
-                title="Rule-sets / Провайдеры"
+                title={m.mihomo_exp_rulesets_title()}
                 count={String(ruleProviders.length)}
                 section="ruleSets"
               >
@@ -1202,10 +1202,10 @@
                     draggable="true"
                     ondragstart={(e) => handleBlockDragStart(e, 'ruleSets')}
                     ondragend={handleBlockDragEnd}
-                    title="Зажмите и перетащите блок «Rule-sets» мышкой в любое место"
+                    title={m.mihomo_exp_rulesets_drag_title()}
                     role="button"
                     tabindex="0"
-                    aria-label="Перетащить блок «Rule-sets»"
+                    aria-label={m.mihomo_exp_rulesets_drag_aria()}
                   >
                     <GripVertical size={14} class="drag-grip-icon" />
                   </div>
@@ -1215,10 +1215,10 @@
                     {#snippet iconBefore()}
                       <LayoutGrid size={14} aria-hidden="true" />
                     {/snippet}
-                    Каталог
+                    {m.mihomo_exp_catalog_btn()}
                   </Button>
                   <Button variant="primary" size="sm" onclick={handleAddProvider}>
-                    + Провайдер
+                    {m.mihomo_exp_add_prov_btn()}
                   </Button>
                   <div class="panel-win-btns">
                     {#if customHeights['ruleSets']}
@@ -1226,8 +1226,8 @@
                         type="button"
                         class="panel-win-btn"
                         onclick={() => resetSectionHeight('ruleSets')}
-                        title="Сбросить высоту к исходной (двойной клик на нижней границе)"
-                        aria-label="Сбросить высоту"
+                        title={m.mihomo_win_reset_height_title()}
+                        aria-label={m.mihomo_win_reset_height_aria()}
                       >
                         <RotateCcw size={12} />
                       </button>
@@ -1237,8 +1237,8 @@
                       class="panel-win-btn"
                       class:active={maximizedSection === 'ruleSets'}
                       onclick={() => toggleMaximize('ruleSets')}
-                      title={maximizedSection === 'ruleSets' ? 'Восстановить размер окна' : 'Развернуть во весь экран'}
-                      aria-label={maximizedSection === 'ruleSets' ? 'Восстановить' : 'Развернуть'}
+                      title={maximizedSection === 'ruleSets' ? m.mihomo_win_restore_title() : m.mihomo_win_maximize_title()}
+                      aria-label={maximizedSection === 'ruleSets' ? m.mihomo_win_restore_aria() : m.mihomo_win_maximize_aria()}
                     >
                       {#if maximizedSection === 'ruleSets'}
                         <Minimize2 size={13} />
@@ -1257,7 +1257,7 @@
                     class:active={providerTab === 'all'}
                     onclick={() => (providerTab = 'all')}
                   >
-                    Все <span class="tab-cnt">({ruleProviders.length})</span>
+                    {m.routing_singbox_all()} <span class="tab-cnt">({ruleProviders.length})</span>
                   </button>
                   <button
                     type="button"
@@ -1281,19 +1281,19 @@
                   <table class="data-table">
                     <thead>
                       <tr>
-                        <th>Тег / Имя</th>
-                        <th>Тип</th>
-                        <th>Формат / Поведение</th>
-                        <th>Источник (URL / Path)</th>
-                        <th>Загрузка через</th>
-                        <th>Интервал</th>
-                        <th class="col-actions">Действия</th>
+                        <th>{m.mihomo_exp_prov_th_name()}</th>
+                        <th>{m.mihomo_exp_prov_th_type()}</th>
+                        <th>{m.mihomo_exp_prov_th_format()}</th>
+                        <th>{m.mihomo_exp_prov_th_source()}</th>
+                        <th>{m.mihomo_exp_prov_th_via()}</th>
+                        <th>{m.mihomo_exp_prov_th_interval()}</th>
+                        <th class="col-actions">{m.mihomo_exp_th_actions()}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {#if filteredProviders.length === 0}
                         <tr>
-                          <td colspan="7" class="empty-cell">Нет провайдеров правил</td>
+                          <td colspan="7" class="empty-cell">{m.mihomo_exp_prov_empty()}</td>
                         </tr>
                       {:else}
                         {#each filteredProviders as provider (provider.id || provider.name)}
@@ -1325,11 +1325,11 @@
                                   <span class="text-xs text-muted">DIRECT</span>
                                 {/if}
                               {:else}
-                                <span class="text-xs text-muted">Локально</span>
+                                <span class="text-xs text-muted">{m.mihomo_exp_prov_local()}</span>
                               {/if}
                             </td>
                             <td class="text-sm text-secondary">
-                              {provider.interval ? `${provider.interval}с` : '—'}
+                              {provider.interval ? m.routing_singbox_timeout_seconds({ count: provider.interval }) : '—'}
                             </td>
                             <td class="col-actions">
                               <div class="row-actions">
@@ -1339,7 +1339,7 @@
                                     class="act-btn"
                                     disabled={refreshingProvider === provider.name}
                                     onclick={() => handleRefreshProvider(provider.name)}
-                                    title="Обновить правила сейчас"
+                                    title={m.mihomo_exp_prov_refresh_title()}
                                   >
                                     <RefreshCw size={14} class={refreshingProvider === provider.name ? 'spin' : ''} />
                                   </button>
@@ -1348,7 +1348,7 @@
                                   type="button"
                                   class="act-btn"
                                   onclick={() => handleEditProvider(provider)}
-                                  title="Редактировать провайдер"
+                                  title={m.mihomo_exp_prov_edit_title()}
                                 >
                                   <Edit3 size={14} />
                                 </button>
@@ -1356,7 +1356,7 @@
                                   type="button"
                                   class="act-btn danger"
                                   onclick={() => handleDeleteProvider(provider.id)}
-                                  title="Удалить провайдер"
+                                  title={m.mihomo_exp_prov_delete_title()}
                                 >
                                   <Trash2 size={14} />
                                 </button>
@@ -1375,7 +1375,7 @@
     <div class="dns-content-wrap">
       <SidePanel
                 section="dnsServers"
-                title="DNS-серверы и правила"
+                title={m.mihomo_exp_dns_title()}
                 count={String($storeDnsServers.length)}
               >
                 {#snippet headerBefore()}
@@ -1384,10 +1384,10 @@
                     draggable="true"
                     ondragstart={(e) => handleBlockDragStart(e, 'dns')}
                     ondragend={handleBlockDragEnd}
-                    title="Зажмите и перетащите блок «DNS» мышкой в любое место"
+                    title={m.mihomo_exp_dns_drag_title()}
                     role="button"
                     tabindex="0"
-                    aria-label="Перетащить блок «DNS»"
+                    aria-label={m.mihomo_exp_dns_drag_aria()}
                   >
                     <GripVertical size={14} class="drag-grip-icon" />
                   </div>
@@ -1395,10 +1395,10 @@
                 {#snippet actions()}
                   <div style="display: flex; align-items: center; gap: 8px;">
                     <Button variant="secondary" size="sm" onclick={() => (dnsRuleAddOpen = true)}>
-                      + Правило
+                      {m.mihomo_add_rule_short_btn()}
                     </Button>
                     <Button variant="primary" size="sm" onclick={() => (dnsServerAddOpen = true)}>
-                      + Сервер
+                      {m.mihomo_exp_add_server_btn()}
                     </Button>
                     <div class="panel-win-btns">
                       {#if customHeights['dns']}
@@ -1406,8 +1406,8 @@
                           type="button"
                           class="panel-win-btn"
                           onclick={() => resetSectionHeight('dns')}
-                          title="Сбросить высоту к исходной (двойной клик на нижней границе)"
-                          aria-label="Сбросить высоту"
+                          title={m.mihomo_win_reset_height_title()}
+                          aria-label={m.mihomo_win_reset_height_aria()}
                         >
                           <RotateCcw size={12} />
                         </button>
@@ -1417,8 +1417,8 @@
                         class="panel-win-btn"
                         class:active={maximizedSection === 'dns'}
                         onclick={() => toggleMaximize('dns')}
-                        title={maximizedSection === 'dns' ? 'Восстановить размер окна' : 'Развернуть во весь экран'}
-                        aria-label={maximizedSection === 'dns' ? 'Восстановить' : 'Развернуть'}
+                        title={maximizedSection === 'dns' ? m.mihomo_win_restore_title() : m.mihomo_win_maximize_title()}
+                        aria-label={maximizedSection === 'dns' ? m.mihomo_win_restore_aria() : m.mihomo_win_maximize_aria()}
                       >
                         {#if maximizedSection === 'dns'}
                           <Minimize2 size={13} />
@@ -1449,6 +1449,7 @@
     <div
       id={`section-${secKey}`}
       class="expert-section"
+      role="region"
       class:is-dragging={draggedSection === secKey}
       class:has-custom-height={Boolean(customHeights[secKey])}
       class:is-resizing={resizingSection === secKey}
@@ -1479,8 +1480,10 @@
       {#if layoutMode === 'split' && colIndex === 1 && !maximizedSection}
         <div
           class="win-resize-edge-e"
+          role="separator"
+          aria-orientation="vertical"
           onpointerdown={(e) => handleStartResize(e, secKey, 'e', colIndex)}
-          title="Потяните правую границу окна для изменения ширины (как в Windows OS)"
+          title={m.mihomo_win_resize_e_title()}
         ></div>
       {/if}
 
@@ -1489,16 +1492,17 @@
         class="win-resize-bar"
         onpointerdown={(e) => handleStartResize(e, secKey, 's')}
         ondblclick={() => resetSectionHeight(secKey)}
-        title="Потяните для изменения высоты окна (двойной клик — сброс)"
+        title={m.mihomo_win_resize_s_title()}
         role="separator"
-        aria-label="Изменить высоту блока"
+        aria-label={m.mihomo_win_resize_s_aria()}
       >
         <div class="win-resize-line"></div>
         <div class="win-resize-pill"></div>
         <div
           class="win-resize-corner"
+          role="separator"
           onpointerdown={(e) => handleStartResize(e, secKey, 'se')}
-          title="Потяните угол для изменения размера (как в Windows OS)"
+          title={m.mihomo_win_resize_se_title()}
         >
           <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
             <circle cx="2" cy="8" r="1" fill="currentColor" opacity="0.6" />
@@ -1533,6 +1537,7 @@
           {#if !maximizedSection}
             <div
               class="col-drop-zone"
+              role="region"
               class:is-active={draggedSection && dragOverCol === 1}
               ondragover={(e) => handleColDragOver(e, 1)}
               ondragleave={handleColDragLeave}
@@ -1541,7 +1546,7 @@
               {#if draggedSection && dragOverCol === 1}
                 <div class="drop-zone-content">
                   <Plus size={14} />
-                  <span>Переместить в левую колонку</span>
+                  <span>{m.mihomo_win_move_left_col()}</span>
                 </div>
               {/if}
             </div>
@@ -1555,12 +1560,11 @@
           class="expert-col-splitter"
           class:dragging={isDraggingSplitter}
           role="separator"
-          tabindex="0"
           aria-orientation="vertical"
-          aria-label="Изменить ширину колонок"
+          aria-label={m.mihomo_win_splitter_aria()}
           onpointerdown={handleSplitterPointerDown}
           ondblclick={resetSplitter}
-          title="Потяните для изменения ширины колонок (двойной клик — сброс 58%)"
+          title={m.mihomo_win_splitter_58_title()}
         >
           <div class="splitter-hover-glow"></div>
         </div>
@@ -1577,6 +1581,7 @@
           {#if !maximizedSection}
             <div
               class="col-drop-zone"
+              role="region"
               class:is-active={draggedSection && dragOverCol === 2}
               ondragover={(e) => handleColDragOver(e, 2)}
               ondragleave={handleColDragLeave}
@@ -1585,7 +1590,7 @@
               {#if draggedSection && dragOverCol === 2}
                 <div class="drop-zone-content">
                   <Plus size={14} />
-                  <span>Переместить в правую колонку</span>
+                  <span>{m.mihomo_win_move_right_col()}</span>
                 </div>
               {/if}
             </div>
@@ -1740,13 +1745,13 @@
   <!-- Delete Confirm Modal -->
   <ConfirmModal
     open={deleteConfirmOpen}
-    title={deleteType === 'group' ? 'Удалить группу прокси?' : deleteType === 'provider' ? 'Удалить провайдер правил?' : 'Удалить правило?'}
+    title={deleteType === 'group' ? m.mihomo_confirm_del_group_title() : deleteType === 'provider' ? m.mihomo_confirm_del_prov_title() : m.mihomo_confirm_del_rule_title()}
     message={deleteType === 'group'
-      ? 'Вы действительно хотите удалить эту группу прокси Mihomo? Связанные с ней правила могут потребовать обновления.'
+      ? m.mihomo_exp_confirm_del_group_msg()
       : deleteType === 'provider'
-        ? 'Вы действительно хотите удалить этот провайдер правил Mihomo?'
-        : 'Вы действительно хотите удалить это правило маршрутизации Mihomo?'}
-    confirmLabel="Удалить"
+        ? m.mihomo_exp_confirm_del_prov_msg()
+        : m.mihomo_confirm_del_rule_msg()}
+    confirmLabel={m.common_delete()}
     variant="danger"
     onConfirm={confirmDelete}
     onClose={() => {
@@ -1758,7 +1763,63 @@
 </div>
 
 <style>
-  @import '../outboundTone.css';
+  .tone-chip :global(svg) {
+    flex-shrink: 0;
+  }
+
+  .tone-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    line-height: 1.25;
+    border: 1px solid transparent;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  .tone-chip.tone-chip-compact {
+    gap: 0.25rem;
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    line-height: 1.35;
+    font-weight: 500;
+  }
+
+  .tone-chip.tone-chip-compact.tone-direct {
+    font-weight: 500;
+  }
+
+  .tone-chip :global(.chip-label),
+  .tone-chip :global(.chip-main),
+  .tone-chip :global(.chip-meta) {
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+  }
+
+  .tone-chip.tone-composite {
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-color: var(--accent-line);
+  }
+
+  .tone-chip.tone-block {
+    color: var(--error);
+    background: rgba(181, 101, 119, 0.12);
+    border-color: rgba(181, 101, 119, 0.3);
+  }
+
+  .tone-chip.tone-direct {
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.04);
+    border-color: var(--border);
+    font-weight: 500;
+  }
 
   .expert-view {
     display: flex;
@@ -2003,7 +2064,7 @@
     gap: 6px;
   }
 
-  .icon-muted {
+  :global(.icon-muted) {
     color: var(--text-muted);
   }
 
@@ -2018,84 +2079,6 @@
   .outbounds-list {
     display: flex;
     flex-direction: column;
-  }
-
-  .outbound-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    transition: background var(--t-fast);
-  }
-
-  .outbound-item:last-child {
-    border-bottom: none;
-  }
-
-  .outbound-item:hover {
-    background: var(--bg-hover, rgba(255, 255, 255, 0.02));
-  }
-
-  .outbound-main {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 160px;
-  }
-
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--color-success, #22c55e);
-  }
-
-  .outbound-titles {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .outbound-name {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .outbound-sub {
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-
-  .outbound-runtime {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .now-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    color: var(--text-secondary);
-  }
-
-  .now-lbl {
-    color: var(--text-muted);
-  }
-
-  .now-val {
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .outbound-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
   }
 
   .font-mono {
@@ -2126,7 +2109,7 @@
     to { transform: rotate(360deg); }
   }
 
-  .spin {
+  :global(.spin) {
     animation: spin 1s linear infinite;
   }
 
@@ -2347,26 +2330,6 @@
     display: block !important;
   }
 
-  .expert-col-main {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    min-width: 0;
-  }
-
-  .expert-col-side {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    min-width: 0;
-  }
-
-  .expert-col-main.is-full-width,
-  .expert-col-side.is-full-width {
-    width: 100% !important;
-    max-width: 100% !important;
-  }
-
   .expert-col-splitter {
     width: 16px;
     margin: 0 -2px;
@@ -2388,54 +2351,6 @@
   .expert-col-splitter:hover,
   .expert-col-splitter.dragging {
     background: rgba(59, 130, 246, 0.08);
-  }
-
-  .splitter-line {
-    width: 2px;
-    height: 100%;
-    min-height: 250px;
-    background: var(--border);
-    transition: background 0.15s ease, width 0.15s ease;
-    border-radius: 1px;
-  }
-
-  .expert-col-splitter:hover .splitter-line,
-  .expert-col-splitter.dragging .splitter-line {
-    background: var(--color-accent, #3b82f6);
-    width: 3px;
-  }
-
-  .splitter-handle {
-    position: sticky;
-    top: 40vh;
-    width: 12px;
-    height: 38px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-    z-index: 11;
-  }
-
-  .expert-col-splitter:hover .splitter-handle,
-  .expert-col-splitter.dragging .splitter-handle {
-    border-color: var(--color-accent, #3b82f6);
-    background: var(--bg-tertiary);
-  }
-
-  .splitter-dots {
-    width: 2px;
-    height: 16px;
-    background: repeating-linear-gradient(
-      to bottom,
-      var(--text-muted) 0px,
-      var(--text-muted) 2px,
-      transparent 2px,
-      transparent 4px
-    );
   }
 
   .panel-win-btns {
@@ -2501,8 +2416,6 @@
       gap: 16px !important;
     }
     .expert-col,
-    .expert-col-main,
-    .expert-col-side,
     .expert-col-1,
     .expert-col-2 {
       width: 100% !important;
@@ -2775,8 +2688,6 @@
   }
 
   .expert-col,
-  .expert-col-main,
-  .expert-col-side,
   .expert-col-1,
   .expert-col-2,
   .expert-col-stack {

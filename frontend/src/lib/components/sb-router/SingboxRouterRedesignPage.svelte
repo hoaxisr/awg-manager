@@ -275,9 +275,9 @@
       <div class="boot-loading"><LoadingSpinner size="sm" /></div>
     {:else if $singboxLoadError}
       <div class="boot-error" role="alert">
-        <strong>Не удалось загрузить маршрутизацию</strong>
+        <strong>{m.sb_router_boot_error_title()}</strong>
         <span>{$singboxLoadError}</span>
-        <button type="button" onclick={() => void singboxRouterStore.loadAll()}>Повторить</button>
+        <button type="button" onclick={() => void singboxRouterStore.loadAll()}>{m.sb_router_boot_error_retry()}</button>
       </div>
     {:else if singboxRulesCount === 0}
       <EmptyState />

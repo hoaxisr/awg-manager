@@ -3,21 +3,13 @@
 	import { EmptyState } from '$lib/components/layout';
 	import { Plus, Trash2, Pencil, Activity, Check, Zap, Search, Layers, Radio } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
+	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import { awgTags as awgTagsStore } from '$lib/stores/awgTags';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { singboxDelayHistory } from '$lib/stores/singbox';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { formatOutboundHumanName } from '$lib/utils/outboundHumanName';
-
-	function pluralGroups(n: number): string {
-		const m100 = n % 100;
-		if (m100 >= 11 && m100 <= 14) return 'групп';
-		const m10 = n % 10;
-		if (m10 === 1) return 'группа';
-		if (m10 >= 2 && m10 <= 4) return 'группы';
-		return 'групп';
-	}
 	import type {
 		MihomoNativeGroup,
 		MihomoNativeProxy,
@@ -178,10 +170,10 @@
 		switchingMember[groupName] = true;
 		try {
 			await api.mihomoSelectProxy(groupName, memberName);
-			notifications.success(`Активный узел переключён на ${memberName}`);
+			notifications.success(m.mihomo_groups_tab_switched({ member: memberName }));
 			onGroupChanged?.();
 		} catch (err) {
-			notifications.error(`Не удалось переключить узел: ${err instanceof Error ? err.message : String(err)}`);
+			notifications.error(m.mihomo_groups_tab_switch_failed({ error: err instanceof Error ? err.message : String(err) }));
 		} finally {
 			switchingMember[groupName] = false;
 		}
@@ -210,10 +202,10 @@
 					})
 				);
 			}
-			notifications.success(`Задержки для «${groupName}» обновлены`);
+			notifications.success(m.mihomo_groups_tab_delays_updated({ group: groupName }));
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
-			notifications.warning(`Тест группы ${groupName}: ошибка (${msg})`);
+			notifications.warning(m.mihomo_groups_tab_test_error({ group: groupName, error: msg }));
 		} finally {
 			testingDelay = { ...testingDelay, [groupName]: false };
 		}
@@ -236,26 +228,26 @@
 	async function handleDelete(id: string) {
 		try {
 			await api.mihomoNativeDeleteGroup(id);
-			notifications.success('Группа удалена');
+			notifications.success(m.mihomo_groups_tab_deleted());
 			deletingId = null;
 			onGroupChanged?.();
 		} catch (err) {
-			notifications.error(`Ошибка при удалении: ${err instanceof Error ? err.message : String(err)}`);
+			notifications.error(m.mihomo_groups_tab_delete_error({ error: err instanceof Error ? err.message : String(err) }));
 		}
 	}
 
 	function groupTypeLabel(type: string): string {
 		switch (type) {
 			case 'select':
-				return 'Ручной выбор (Select)';
+				return m.mihomo_groups_tab_type_select();
 			case 'url-test':
-				return 'Авто (наименьшая задержка)';
+				return m.mihomo_groups_tab_type_urltest();
 			case 'fallback':
-				return 'Отказоустойчивость (Fallback)';
+				return m.mihomo_groups_tab_type_fallback();
 			case 'load-balance':
-				return 'Балансировка (Load Balance)';
+				return m.mihomo_groups_tab_type_loadbalance();
 			case 'relay':
-				return 'Цепочка (Relay)';
+				return m.mihomo_groups_tab_type_relay();
 			default:
 				return type;
 		}
@@ -285,7 +277,7 @@
 	<!-- Toolbar matching standard TunnelsToolbar across the app -->
 	<div class="tunnels-toolbar">
 		<span class="tunnel-count">
-			{groups.length} {pluralGroups(groups.length)}
+			{m.mihomo_groups_tab_count({ count: groups.length })}
 		</span>
 		<div class="toolbar-actions">
 			<div class="relative flex items-center">
@@ -293,12 +285,12 @@
 				<input
 					type="text"
 					bind:value={searchQuery}
-					placeholder="Поиск групп или узлов..."
+					placeholder={m.mihomo_groups_tab_search_placeholder()}
 					class="w-48 sm:w-64 pl-8 pr-3 h-8 text-xs bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-md text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-accent)]"
 				/>
 			</div>
 			<Button variant="primary" size="md" onclick={openCreate} iconBefore={createIcon}>
-				Создать группу
+				{m.mihomo_groups_tab_create_btn()}
 			</Button>
 		</div>
 	</div>
@@ -307,18 +299,18 @@
 	{#if filteredGroups.length === 0}
 		{#if searchQuery}
 			<EmptyState
-				title="Ничего не найдено"
-				description="По запросу «{searchQuery}» группы не найдены."
+				title={m.routing_singbox_geo_nothing_found()}
+				description={m.mihomo_groups_tab_not_found_desc({ query: searchQuery })}
 			/>
 		{:else}
 			<EmptyState
-				title="Нет прокси-групп"
-				description="Создайте первую группу для объединения прокси, подписок и туннелей с автоматическим выбором или балансировкой."
+				title={m.mihomo_groups_tab_empty_title()}
+				description={m.mihomo_groups_tab_empty_desc()}
 			>
 				{#snippet action()}
 					<Button variant="primary" size="sm" onclick={openCreate}>
 						<Plus class="w-3.5 h-3.5 mr-1" />
-						Создать группу
+						{m.mihomo_groups_tab_create_btn()}
 					</Button>
 				{/snippet}
 			</EmptyState>
@@ -334,7 +326,7 @@
 						<!-- Compact Header Row -->
 						<div class="group-card-header flex items-start justify-between gap-2">
 							<div class="flex items-center gap-1.5 flex-wrap min-w-0">
-								<span class="w-2 h-2 rounded-full shrink-0 {group.enabled !== false ? 'bg-[var(--color-success)]' : 'bg-gray-400'}" title={group.enabled !== false ? 'Включена' : 'Отключена'}></span>
+								<span class="w-2 h-2 rounded-full shrink-0 {group.enabled !== false ? 'bg-[var(--color-success)]' : 'bg-gray-400'}" title={group.enabled !== false ? m.mihomo_groups_tab_enabled() : m.mihomo_groups_tab_disabled()}></span>
 								<Layers class="w-4 h-4 text-[var(--color-accent)] shrink-0" />
 								<h3 class="font-semibold text-sm text-[var(--color-text-primary)] leading-tight truncate">
 									{group.name}
@@ -354,7 +346,7 @@
 							<div class="group-card-actions flex items-center gap-1 shrink-0">
 								<button
 									class="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors cursor-pointer"
-									title="Проверить задержки всех узлов группы"
+									title={m.mihomo_groups_tab_test_all_title()}
 									disabled={testingDelay[group.name]}
 									onclick={() => testGroupDelay(group)}
 								>
@@ -362,14 +354,14 @@
 								</button>
 								<button
 									class="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors cursor-pointer"
-									title="Редактировать группу"
+									title={m.mihomo_groups_tab_edit_title()}
 									onclick={() => openEdit(group)}
 								>
 									<Pencil class="w-3.5 h-3.5" />
 								</button>
 								<button
 									class="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-colors cursor-pointer"
-									title="Удалить группу"
+									title={m.mihomo_groups_tab_delete_title()}
 									onclick={() => (deletingId = group.id)}
 								>
 									<Trash2 class="w-3.5 h-3.5" />
@@ -381,9 +373,9 @@
 						<div class="group-active-node flex items-center justify-between gap-2 rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-xs">
 							<div class="flex items-center gap-1.5 min-w-0">
 								<Zap class="w-3.5 h-3.5 text-amber-500 shrink-0" />
-								<span class="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-text-muted)] shrink-0">Активен:</span>
+								<span class="text-[10px] uppercase tracking-wider font-semibold text-[var(--color-text-muted)] shrink-0">{m.mihomo_groups_tab_active_label()}</span>
 								<span class="font-mono text-xs text-[var(--color-text-primary)] font-medium truncate" title={activeNow}>
-									{memberLabel(activeNow) || 'Не определён'}
+									{memberLabel(activeNow) || m.mihomo_groups_tab_not_determined()}
 								</span>
 							</div>
 
@@ -392,11 +384,11 @@
 									{@const activeDelay = delays[group.name] ?? getMemberDelay(activeNow)}
 									{@const activeTone = getDelayTone(activeDelay)}
 									<span class="text-[11px] font-mono font-medium px-1.5 py-0.5 rounded {activeTone === 'good' ? 'text-[var(--color-success)] bg-[var(--color-success)]/10' : activeTone === 'medium' ? 'text-amber-500 bg-amber-500/10' : 'text-[var(--color-error)] bg-[var(--color-error)]/10'}">
-										{activeDelay && activeDelay > 0 ? `${activeDelay} мс` : 'таймаут'}
+										{activeDelay && activeDelay > 0 ? m.mihomo_delay_ms({ delay: activeDelay }) : m.mihomo_sub_picker_timeout()}
 									</span>
 								{/if}
 								{#if group.type === 'select'}
-									<span class="text-[10px] text-[var(--color-accent)] hidden sm:inline">кликните узел для выбора</span>
+									<span class="text-[10px] text-[var(--color-accent)] hidden sm:inline">{m.mihomo_groups_tab_click_to_select()}</span>
 								{/if}
 							</div>
 						</div>
@@ -405,9 +397,9 @@
 						{#if (group.proxies || []).length > 0}
 							<div class="group-members">
 								<div class="flex items-center justify-between text-[10px] uppercase tracking-wider font-semibold text-[var(--color-text-muted)]">
-									<span>Узлы ({group.proxies?.length || 0})</span>
+									<span>{m.mihomo_groups_tab_nodes_count({ count: group.proxies?.length || 0 })}</span>
 									{#if (group.use || []).length > 0}
-										<span>+ {group.use.length} подписок</span>
+										<span>{m.mihomo_groups_tab_plus_subs({ count: group.use.length })}</span>
 									{/if}
 								</div>
 								<div class="group-member-list flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
@@ -422,7 +414,7 @@
 												class="px-2 py-1 text-xs rounded-md border transition-all flex items-center gap-1.5 cursor-pointer {isSelected ? 'bg-[var(--color-accent-tint)] border-[var(--color-accent)] text-[var(--color-accent)] font-medium shadow-xs' : 'bg-[var(--color-bg-tertiary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-hover)] hover:text-[var(--color-text-primary)]'}"
 												disabled={switchingMember[group.name]}
 												onclick={() => selectMember(group.name, member)}
-												title="Сделать узел активным"
+												title={m.mihomo_groups_tab_make_active_title()}
 											>
 												{#if isSelected}
 													<Check class="w-3 h-3 text-[var(--color-accent)] shrink-0" />
@@ -433,7 +425,7 @@
 													tabindex={0}
 													class="delay-badge {tone} text-[10px] font-mono px-1 py-0.5 rounded shrink-0 flex items-center gap-0.5 hover:opacity-80 transition-opacity border-0"
 													class:animate-pulse={isTesting}
-													title="Проверить задержку узла"
+													title={m.mihomo_groups_tab_check_node_title()}
 													onclick={(e) => {
 														e.stopPropagation();
 														void testMemberDelay(member, group.url);
@@ -448,7 +440,7 @@
 													{#if isTesting}
 														<span class="text-[8px] animate-spin">↻</span>
 													{/if}
-													<span>{delay !== null ? (delay > 0 ? `${delay} мс` : 'таймаут') : '...'}</span>
+													<span>{delay !== null ? (delay > 0 ? m.mihomo_delay_ms({ delay }) : m.mihomo_sub_picker_timeout()) : '...'}</span>
 												</span>
 											</button>
 										{:else}
@@ -462,7 +454,7 @@
 													tabindex={0}
 													class="delay-badge {tone} text-[10px] font-mono px-1 py-0.5 rounded shrink-0 flex items-center gap-0.5 hover:opacity-80 transition-opacity border-0 cursor-pointer"
 													class:animate-pulse={isTesting}
-													title="Проверить задержку узла"
+													title={m.mihomo_groups_tab_check_node_title()}
 													onclick={(e) => {
 														e.stopPropagation();
 														void testMemberDelay(member, group.url);
@@ -477,7 +469,7 @@
 													{#if isTesting}
 														<span class="text-[8px] animate-spin">↻</span>
 													{/if}
-													<span>{delay !== null ? (delay > 0 ? `${delay} мс` : 'таймаут') : '...'}</span>
+													<span>{delay !== null ? (delay > 0 ? m.mihomo_delay_ms({ delay }) : m.mihomo_sub_picker_timeout()) : '...'}</span>
 												</span>
 											</span>
 										{/if}
@@ -492,10 +484,10 @@
 					<div class="group-card-footer border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-center justify-between">
 							<div class="flex items-center gap-2">
 								{#if group.interval}
-									<span>Интервал: <strong class="text-[var(--color-text-primary)]">{group.interval} с</strong></span>
+									<span>{m.mihomo_groups_tab_interval_label()} <strong class="text-[var(--color-text-primary)]">{m.routing_singbox_timeout_seconds({ count: group.interval })}</strong></span>
 								{/if}
 								{#if group.tolerance}
-									<span>Допуск: <strong class="text-[var(--color-text-primary)]">{group.tolerance} мс</strong></span>
+									<span>{m.mihomo_groups_tab_tolerance_label()} <strong class="text-[var(--color-text-primary)]">{m.mihomo_delay_ms({ delay: group.tolerance })}</strong></span>
 								{/if}
 							</div>
 							{#if group.lazy}
@@ -533,20 +525,20 @@
 	{@const target = groups.find((g) => g.id === deletingId)}
 	<Modal
 		open={Boolean(deletingId)}
-		title="Удаление прокси-группы"
+		title={m.mihomo_groups_tab_delete_modal_title()}
 		onclose={() => (deletingId = null)}
 	>
 		<div class="p-4 space-y-4">
 			<p class="text-sm text-[var(--color-text-primary)]">
-				Вы действительно хотите удалить группу <strong class="text-[var(--color-error)]">{target?.name}</strong>?
+				{m.mihomo_groups_tab_delete_modal_question_pre()} <strong class="text-[var(--color-error)]">{target?.name}</strong>?
 			</p>
 			<p class="text-xs text-[var(--color-text-muted)]">
-				Правила маршрутизации, ссылавшиеся на эту группу, будут перенаправлены на DIRECT.
+				{m.mihomo_groups_tab_delete_modal_hint()}
 			</p>
 			<div class="flex justify-end gap-2 pt-2">
-				<Button variant="secondary" onclick={() => (deletingId = null)}>Отмена</Button>
+				<Button variant="secondary" onclick={() => (deletingId = null)}>{m.common_cancel()}</Button>
 				<Button variant="danger" onclick={() => deletingId && handleDelete(deletingId)}>
-					Удалить
+					{m.common_delete()}
 				</Button>
 			</div>
 		</div>

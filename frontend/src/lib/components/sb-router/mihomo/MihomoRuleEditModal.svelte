@@ -4,6 +4,7 @@
   import { AlertTriangle } from 'lucide-svelte';
   import type { MihomoNativeRule, MihomoNativeGroup, MihomoNativeProxy, MihomoNativeSubscription, MihomoNativeRuleProvider } from '$lib/types';
   import { api } from '$lib/api/client';
+  import { m } from '$lib/i18n';
   import { notifications } from '$lib/stores/notifications';
   import { singboxTunnels } from '$lib/stores/singbox';
   import { singboxProxies } from '$lib/stores/singboxProxies';
@@ -46,35 +47,35 @@
   const selectedGroupObj = $derived(groups.find((g) => g.name === outbound));
   const isLoadBalanceSelected = $derived(selectedGroupObj?.type === 'load-balance');
 
-  const RULE_TYPE_GROUPS = [
+  const RULE_TYPE_GROUPS = $derived([
     {
-      group: 'Домены и категории',
+      group: m.mihomo_rule_edit_grp_domains(),
       items: [
-        { value: 'GEOSITE', label: 'GEOSITE (Категория geosite.dat, напр. youtube)' },
-        { value: 'DOMAIN-SUFFIX', label: 'DOMAIN-SUFFIX (Домен и поддомены, напр. google.com)' },
-        { value: 'DOMAIN', label: 'DOMAIN (Точный домен, напр. example.com)' },
-        { value: 'DOMAIN-KEYWORD', label: 'DOMAIN-KEYWORD (Ключевое слово, напр. google)' },
-        { value: 'DOMAIN-WILDCARD', label: 'DOMAIN-WILDCARD (Маска, напр. *.google.*)' },
-        { value: 'DOMAIN-REGEX', label: 'DOMAIN-REGEX (Регулярное выражение)' },
+        { value: 'GEOSITE', label: m.mihomo_rule_edit_type_geosite() },
+        { value: 'DOMAIN-SUFFIX', label: m.mihomo_rule_edit_type_domain_suffix() },
+        { value: 'DOMAIN', label: m.mihomo_rule_edit_type_domain() },
+        { value: 'DOMAIN-KEYWORD', label: m.mihomo_rule_edit_type_domain_keyword() },
+        { value: 'DOMAIN-WILDCARD', label: m.mihomo_rule_edit_type_domain_wildcard() },
+        { value: 'DOMAIN-REGEX', label: m.mihomo_rule_edit_type_domain_regex() },
       ]
     },
     {
-      group: 'IP-адреса и сети',
+      group: m.mihomo_rule_edit_grp_ips(),
       items: [
-        { value: 'IP-CIDR', label: 'IP-CIDR (IPv4/IPv6 подсеть, напр. 91.108.4.0/22)' },
-        { value: 'IP-CIDR6', label: 'IP-CIDR6 (IPv6 подсеть)' },
-        { value: 'GEOIP', label: 'GEOIP (Страна по базе geoip.dat, напр. RU, US)' },
-        { value: 'IP-ASN', label: 'IP-ASN (Номер автономной системы, напр. 13335)' },
+        { value: 'IP-CIDR', label: m.mihomo_rule_edit_type_ip_cidr() },
+        { value: 'IP-CIDR6', label: m.mihomo_rule_edit_type_ip_cidr6() },
+        { value: 'GEOIP', label: m.mihomo_rule_edit_type_geoip() },
+        { value: 'IP-ASN', label: m.mihomo_rule_edit_type_ip_asn() },
       ]
     },
     {
-      group: 'Наборы правил и прочие',
+      group: m.mihomo_rule_edit_grp_rulesets(),
       items: [
-        { value: 'RULE-SET', label: 'RULE-SET (Внешний rule-provider)' },
-        { value: 'MATCH', label: 'MATCH (Все остальные запросы / Default)' },
+        { value: 'RULE-SET', label: m.mihomo_rule_edit_type_ruleset() },
+        { value: 'MATCH', label: m.mihomo_rule_edit_type_match() },
       ]
     }
-  ];
+  ]);
 
   $effect(() => {
     if (open) {
@@ -105,26 +106,26 @@
 
   const availableOutbounds = $derived.by(() => {
     const list: Array<{ value: string; label: string; group: string }> = [
-      { value: 'DIRECT', label: 'DIRECT (Прямое подключение / мимо VPN)', group: 'Системные' },
-      { value: 'REJECT', label: 'REJECT (Блокировать)', group: 'Системные' },
+      { value: 'DIRECT', label: m.sb_router_direct_option(), group: m.routing_group_system() },
+      { value: 'REJECT', label: m.sb_router_reject_option(), group: m.routing_group_system() },
     ];
 
     // Groups
     for (const g of groups) {
-      if (g.enabled) list.push({ value: g.name, label: `${g.name} (${g.type})`, group: 'Группы прокси Mihomo' });
+      if (g.enabled) list.push({ value: g.name, label: `${g.name} (${g.type})`, group: m.mihomo_out_grp_groups() });
     }
 
     // Native Mihomo subscriptions
     for (const s of subscriptions) {
       if (s.enabled && s.groupName && !list.some(i => i.value === s.groupName)) {
-        list.push({ value: s.groupName, label: s.name, group: 'Подписки Mihomo' });
+        list.push({ value: s.groupName, label: s.name, group: m.mihomo_out_grp_subs() });
       }
     }
 
     // Native Mihomo standalone proxies
     for (const p of proxies) {
       if (p.enabled && !list.some(i => i.value === p.name)) {
-        list.push({ value: p.name, label: p.name, group: 'Прокси Mihomo' });
+        list.push({ value: p.name, label: p.name, group: m.mihomo_out_grp_proxies() });
       }
     }
 
@@ -135,7 +136,7 @@
         list.push({
           value: t.tag,
           label: t.label ? `${t.label} (${t.tag})` : t.tag,
-          group: t.kind === 'system' ? 'Системные WireGuard' : 'AWG туннели',
+          group: t.kind === 'system' ? m.mihomo_out_grp_sys_wg() : m.mihomo_out_grp_awg(),
         });
       }
     }
@@ -147,7 +148,7 @@
         list.push({
           value: t.tag,
           label: t.kernelInterface ? `${t.tag} (${t.kernelInterface})` : t.tag,
-          group: 'Туннели Sing-box',
+          group: m.mihomo_out_grp_sb_tunnels(),
         });
       }
     }
@@ -170,7 +171,7 @@
           list.push({
             value: subTag,
             label: `${subLabel} (${subTag})`,
-            group: 'Подписки Sing-box',
+            group: m.mihomo_out_grp_sb_subs(),
           });
         }
       }
@@ -184,7 +185,7 @@
         list.push({
           value: p.tag,
           label: p.tag,
-          group: 'Прокси Sing-box',
+          group: m.mihomo_out_grp_sb_proxies(),
         });
       }
     }
@@ -195,7 +196,7 @@
   async function handleSave() {
     if (saving) return;
     if (type !== 'MATCH' && !payload.trim()) {
-      notifications.error('Укажите значение (Payload) для правила');
+      notifications.error(m.mihomo_rule_edit_err_payload());
       return;
     }
     saving = true;
@@ -208,11 +209,11 @@
         noResolve,
         enabled,
       });
-      notifications.success('Правило сохранено и применено');
+      notifications.success(m.mihomo_rule_edit_saved());
       onSaved();
       onClose();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения правила');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_rule_edit_err_save());
     } finally {
       saving = false;
     }
@@ -221,19 +222,19 @@
 
 <Modal
   {open}
-  title={isFallback ? 'Маршрут по умолчанию (Если ничего не подошло)' : rule ? 'Редактирование правила Mihomo' : 'Новое правило Mihomo'}
+  title={isFallback ? m.mihomo_rule_edit_title_fallback() : rule ? m.mihomo_rule_edit_title_edit() : m.mihomo_rule_edit_title_new()}
   onclose={onClose}
   size="md"
 >
   <div class="form-stack">
     {#if isFallback}
       <p class="modal-hint">
-        Куда направлять трафик, если ни одно из настроенных правил маршрутизации не подошло:
+        {m.mihomo_rule_edit_fallback_hint()}
       </p>
     {:else}
       {#if !rule}
         <div class="quick-templates">
-          <span class="quick-label">Каталог популярных сервисов:</span>
+          <span class="quick-label">{m.mihomo_rule_edit_quick_label()}</span>
           <div class="chips-row">
             {#each [
               { label: 'YouTube', t: 'GEOSITE', p: 'youtube' },
@@ -265,7 +266,7 @@
       {/if}
 
       <label class="form-group">
-        <span class="label-text">Тип правила</span>
+        <span class="label-text">{m.mihomo_rule_edit_label_type()}</span>
         <select bind:value={type} class="select-input">
           {#each RULE_TYPE_GROUPS as grp}
             <optgroup label={grp.group}>
@@ -279,10 +280,10 @@
 
       {#if type !== 'MATCH'}
         <label class="form-group">
-          <span class="label-text">Значение (Payload)</span>
+          <span class="label-text">{m.mihomo_rule_edit_label_payload()}</span>
           {#if type === 'RULE-SET' && ruleProviders.length > 0}
             <select bind:value={payload} class="select-input">
-              <option value="">-- Выберите провайдер правил --</option>
+              <option value="">{m.mihomo_rule_edit_choose_provider()}</option>
               {#each ruleProviders as rp}
                 <option value={rp.name}>{rp.name} ({rp.behavior})</option>
               {/each}
@@ -300,7 +301,7 @@
     {/if}
 
     <label class="form-group">
-      <span class="label-text">Назначение (Целевой выход)</span>
+      <span class="label-text">{m.mihomo_rule_edit_label_outbound()}</span>
       <select bind:value={outbound} class="select-input">
         {#each availableOutbounds as ob}
           <option value={ob.value}>{ob.label}</option>
@@ -312,10 +313,10 @@
       <div class="load-balance-warning">
         <div class="warning-header">
           <AlertTriangle size={14} class="warning-icon" />
-          <span class="warning-title">Балансировщик нагрузки ({outbound})</span>
+          <span class="warning-title">{m.mihomo_rule_edit_lb_warn_title({ outbound })}</span>
         </div>
         <p class="warning-desc">
-          Группа распределяет соединения между разными IP-адресами. Это может вызывать разрыв воспроизведения <strong>YouTube и стримингов</strong>, а также сброс авторизаций на сайтах. Для видео рекомендуется группа <strong>url-test</strong> или <strong>fallback</strong>.
+          {@html m.mihomo_rule_edit_lb_warn_desc()}
         </p>
       </div>
     {/if}
@@ -324,19 +325,19 @@
       <div class="checkbox-row">
         <label class="check-label">
           <input type="checkbox" bind:checked={noResolve} />
-          <span>no-resolve (не разрешать DNS при сопоставлении IP-правил)</span>
+          <span>{m.mihomo_rule_edit_no_resolve()}</span>
         </label>
         <label class="check-label">
           <input type="checkbox" bind:checked={enabled} />
-          <span>Правило включено</span>
+          <span>{m.mihomo_rule_edit_enabled()}</span>
         </label>
       </div>
     {/if}
   </div>
 
   {#snippet actions()}
-    <Button variant="ghost" onclick={onClose} disabled={saving}>Отмена</Button>
-    <Button variant="primary" loading={saving} onclick={handleSave}>Сохранить</Button>
+    <Button variant="ghost" onclick={onClose} disabled={saving}>{m.common_cancel()}</Button>
+    <Button variant="primary" loading={saving} onclick={handleSave}>{m.common_save()}</Button>
   {/snippet}
 </Modal>
 

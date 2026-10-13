@@ -24,7 +24,7 @@
 
 	let isHrPolicy = $derived(isHydraRouteAccessPolicy(policy));
 
-	let description = $state(policy.description ?? '');
+	let description = $state('');
 	let dragOver = $state(false);
 	const VALID_PATTERN = /^[a-zA-Z0-9_-]*$/;
 	const MAX_LEN = 256;

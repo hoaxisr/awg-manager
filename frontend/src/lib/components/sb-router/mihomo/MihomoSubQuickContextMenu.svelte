@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { untrack } from 'svelte';
   import { Zap, Search, RefreshCw, Layers, Check, Radio, SlidersHorizontal } from 'lucide-svelte';
   import { api } from '$lib/api/client';
@@ -7,7 +8,6 @@
   import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
   import { runWithConcurrency } from '$lib/utils/runWithConcurrency';
   import type { Subscription, MihomoNativeSubscription, MihomoRuntimeProxy } from '$lib/types';
-  import { pluralize } from '$lib/utils/pluralize';
 
   interface Props {
     open: boolean;
@@ -360,8 +360,8 @@
     currentMode = nextMode;
     notifications.success(
       nextMode === 'auto'
-        ? `Автовыбор для «${subName}»`
-        : `Ручной выбор для «${subName}»`
+        ? m.mihomo_sub_menu_auto_notif({ name: subName })
+        : m.mihomo_sub_menu_manual_notif({ name: subName })
     );
     onUpdated?.();
 
@@ -383,7 +383,7 @@
           await api.updateSubscription(matchedSingboxSub.id, { mode: sbMode });
         }
       } catch (e) {
-        notifications.error(e instanceof Error ? e.message : 'Ошибка смены режима');
+        notifications.error(e instanceof Error ? e.message : m.mihomo_sub_menu_mode_err());
       } finally {
         switchingMode = false;
       }
@@ -394,7 +394,7 @@
     if (selectingTag) return;
     selectingTag = server.tag;
     activeMemberTag = server.tag;
-    notifications.success(`Выбран: ${server.label}`);
+    notifications.success(m.mihomo_sub_menu_selected_notif({ label: server.label }));
     onClose();
     onUpdated?.();
 
@@ -428,7 +428,7 @@
           ]);
         }
       } catch (e) {
-        notifications.error(e instanceof Error ? e.message : 'Ошибка выбора сервера');
+        notifications.error(e instanceof Error ? e.message : m.mihomo_sub_picker_select_err());
       } finally {
         selectingTag = null;
       }
@@ -472,7 +472,7 @@
           <span class="engine-tag">{isMihomo ? 'Mihomo' : 'Sing-box'}</span>
         </div>
         <span class="server-count-text">
-          {pluralize(servers.length, ['сервер', 'сервера', 'серверов'])}
+          {m.mihomo_servers_count({ count: servers.length })}
         </span>
       </div>
 
@@ -481,7 +481,7 @@
         class="ping-test-btn"
         disabled={testing}
         onclick={updateDelays}
-        title="Замерить задержки серверов"
+        title={m.mihomo_sub_picker_test_title()}
       >
         <RefreshCw size={11} class={testing ? 'spin' : ''} />
       </button>
@@ -489,7 +489,7 @@
 
     <!-- Mode switch row -->
     <div class="mode-toggle-strip">
-      <span class="mode-lbl">Режим:</span>
+      <span class="mode-lbl">{m.mihomo_sub_picker_mode_lbl()}</span>
       <div class="mini-toggle-group">
         <button
           type="button"
@@ -499,7 +499,7 @@
           onclick={() => handleModeToggle('auto')}
         >
           <Zap size={10} />
-          <span>Автовыбор</span>
+          <span>{m.mihomo_sub_picker_mode_auto()}</span>
         </button>
         <button
           type="button"
@@ -509,7 +509,7 @@
           onclick={() => handleModeToggle('manual')}
         >
           <SlidersHorizontal size={10} />
-          <span>Ручной</span>
+          <span>{m.mihomo_sub_menu_mode_manual()}</span>
         </button>
       </div>
     </div>
@@ -520,7 +520,7 @@
         <Search size={12} class="search-ic" />
         <input
           type="text"
-          placeholder="Поиск по серверу..."
+          placeholder={m.mihomo_sub_menu_search_placeholder()}
           bind:value={searchQuery}
           class="search-input"
         />
@@ -530,7 +530,7 @@
     <!-- Servers List -->
     <div class="servers-scroll">
       {#if filteredServers.length === 0}
-        <div class="empty-hint">Серверы не найдены</div>
+        <div class="empty-hint">{m.mihomo_sub_picker_empty()}</div>
       {:else}
         {#each filteredServers as s (s.tag)}
           {@const isActive = activeMemberTag === s.tag || activeMemberTag === s.label || activeMemberTag === s.server}

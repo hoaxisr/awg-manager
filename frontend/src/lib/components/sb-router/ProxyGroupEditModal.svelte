@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { X } from 'lucide-svelte';
 	import SingboxSettingsModal from '../routing/singboxRouter/SingboxSettingsModal.svelte';
@@ -13,23 +14,31 @@
   }
   let { group, outboundOptions, onClose, onSave }: Props = $props();
 
-  let name = $state(group?.name ?? '');
-  let type = $state(group?.type ?? 'fallback');
-  let proxies = $state<string[]>([...(group?.proxies ?? [])]);
-  let url = $state(group?.url ?? 'http://www.gstatic.com/generate_204');
-  let interval = $state(group?.interval ?? 300);
+  let name = $state('');
+  let type = $state<ProxyGroup['type']>('fallback');
+  let proxies = $state<string[]>([]);
+  let url = $state('http://www.gstatic.com/generate_204');
+  let interval = $state(300);
+
+  $effect(() => {
+    name = group?.name ?? '';
+    type = group?.type ?? 'fallback';
+    proxies = [...(group?.proxies ?? [])];
+    url = group?.url ?? 'http://www.gstatic.com/generate_204';
+    interval = group?.interval ?? 300;
+  });
 
   let memberPicker = $state('');
 
-  const typeOptions: DropdownOption[] = [
-    { value: 'fallback', label: 'Fallback (Резервирование)' },
-    { value: 'load-balance', label: 'Load Balance (Балансировка)' },
-    { value: 'url-test', label: 'URL-Test (Автовыбор быстрого)' },
-    { value: 'select', label: 'Select (Ручной выбор)' },
-  ];
+  const typeOptions = $derived<DropdownOption[]>([
+    { value: 'fallback', label: m.sb_router_pg_modal_type_fallback() },
+    { value: 'load-balance', label: m.sb_router_pg_modal_type_load_balance() },
+    { value: 'url-test', label: m.sb_router_pg_modal_type_url_test() },
+    { value: 'select', label: m.sb_router_pg_modal_type_select() },
+  ]);
 
   const outboundDropdownOptions = $derived<DropdownOption[]>([
-    { value: '', label: '— выберите —' },
+    { value: '', label: m.sb_router_pg_modal_select_placeholder() },
     ...outboundOptions.flatMap((g) =>
       g.items.map((i) => ({ value: i.value, label: i.label, group: outboundGroupLabel(g.id) })),
     ),
@@ -66,25 +75,25 @@
 </script>
 
 <SingboxSettingsModal
-	title={group ? 'Изменить Proxy-группу' : 'Новая Proxy-группа'}
+	title={group ? m.sb_router_pg_modal_title_edit() : m.sb_router_pg_modal_title_new()}
 	{onClose}
 	hasUnsavedChanges={() => isDirty}
 >
 	<div class="field">
-		<label class="label" for="pg-name">Имя (Tag)</label>
+		<label class="label" for="pg-name">{m.sb_router_pg_modal_name_lbl()}</label>
 		<div class="control">
 			<input
 				id="pg-name"
 				class="form-input"
 				type="text"
-				placeholder="Например: my-fallback"
+				placeholder={m.sb_router_pg_modal_name_placeholder()}
 				bind:value={name}
 			/>
 		</div>
 	</div>
 
 	<div class="field">
-		<label class="label" for="pg-type">Тип группы</label>
+		<label class="label" for="pg-type">{m.sb_router_pg_modal_type_lbl()}</label>
 		<div class="control">
 			<Dropdown
 				options={typeOptions}
@@ -96,7 +105,7 @@
 	{#if type !== 'select'}
 		<div class="field-row" style="display: flex; gap: 1rem; margin-top: 1rem;">
 			<div class="field" style="flex: 2;">
-				<label class="label" for="pg-url">URL для проверки</label>
+				<label class="label" for="pg-url">{m.sb_router_pg_modal_url_lbl()}</label>
 				<div class="control">
 					<input
 						id="pg-url"
@@ -107,7 +116,7 @@
 				</div>
 			</div>
 			<div class="field" style="flex: 1;">
-				<label class="label" for="pg-interval">Интервал (сек)</label>
+				<label class="label" for="pg-interval">{m.sb_router_pg_modal_interval_lbl()}</label>
 				<div class="control">
 					<input
 						id="pg-interval"
@@ -121,7 +130,7 @@
 	{/if}
 
 	<div class="field" style="margin-top: 1rem;">
-		<label class="label" for="pg-members">Участники ({proxies.length})</label>
+		<label class="label" for="pg-members">{m.sb_router_pg_modal_members_lbl({ count: proxies.length })}</label>
 
 		{#if proxies.length > 0}
 			<div class="members-list" style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; background: var(--sbr-control-bg); padding: 0.75rem; border-radius: var(--sbr-control-radius); border: 1px dashed var(--sbr-control-border);">
@@ -140,20 +149,20 @@
 			<Dropdown
 				options={outboundDropdownOptions}
 				bind:value={memberPicker}
-				placeholder="Добавить outbound..."
+				placeholder={m.sb_router_pg_modal_add_outbound_placeholder()}
 				onchange={(v) => addMember(v)}
 			/>
 		</div>
 	</div>
 
 	{#snippet actions()}
-		<Button variant="ghost" onclick={onClose}>Отмена</Button>
+		<Button variant="ghost" onclick={onClose}>{m.common_cancel()}</Button>
 		<Button
 			variant="primary"
 			disabled={!name.trim() || !isDirty}
 			onclick={handleSave}
 		>
-			Сохранить
+			{m.common_save()}
 		</Button>
 	{/snippet}
 </SingboxSettingsModal>

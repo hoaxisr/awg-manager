@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { SideDrawer, Button } from '$lib/components/ui';
   import { api } from '$lib/api/client';
   import { copyToClipboard } from '$lib/utils/clipboard';
@@ -36,12 +37,12 @@
     const ok = await copyToClipboard(yaml);
     if (ok) {
       copied = true;
-      notifications.success('YAML скопирован в буфер обмена');
+      notifications.success(m.mihomo_yaml_drawer_copied_notif());
       setTimeout(() => {
         copied = false;
       }, 1500);
     } else {
-      notifications.error('Не удалось скопировать');
+      notifications.error(m.mihomo_yaml_drawer_copy_failed());
     }
   }
 
@@ -55,13 +56,13 @@
   });
 </script>
 
-<SideDrawer {open} {onClose} title="Конфигурация Mihomo (YAML)" width={720}>
+<SideDrawer {open} {onClose} title={m.mihomo_yaml_drawer_title()} width={720}>
   <div class="content">
     <div class="toolbar">
       <span class="file-path">/opt/etc/awg-manager/mihomo/config.yaml</span>
       <div style="flex:1"></div>
       <Button variant="secondary" size="sm" onclick={load} disabled={loading}>
-        {loading ? 'Загрузка…' : 'Обновить'}
+        {loading ? m.mihomo_yaml_drawer_loading_btn() : m.mihomo_config_refresh_btn()}
       </Button>
       <Button
         variant="secondary"
@@ -69,16 +70,16 @@
         onclick={onCopy}
         disabled={loading || !yaml}
       >
-        {copied ? 'Скопировано' : 'Копировать'}
+        {copied ? m.mihomo_yaml_drawer_copied_btn() : m.mihomo_yaml_drawer_copy_btn()}
       </Button>
     </div>
 
     <div class="state">
       {#if loading && !yaml}
-        <div class="placeholder">Загрузка конфига…</div>
+        <div class="placeholder">{m.mihomo_yaml_drawer_loading_placeholder()}</div>
       {:else if error}
         <div class="error">
-          <div class="error-title">Не удалось загрузить конфиг</div>
+          <div class="error-title">{m.mihomo_yaml_drawer_error_title()}</div>
           <div class="error-message">{error}</div>
         </div>
       {:else}

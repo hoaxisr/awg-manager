@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount } from 'svelte';
   import {
     ArrowLeft, Check, Globe, Shield, ShieldOff, Zap, Plus, Layers, Network,
@@ -45,20 +46,20 @@
   let saving = $state(false);
 
   // Popular Services Catalog with icons and Mihomo GEOSITE tags
-  const CATALOG_SERVICES = [
-    { name: 'YouTube', type: 'GEOSITE', payload: 'youtube', icon: Tv, desc: 'Видео и стриминг YouTube/Google Video' },
-    { name: 'Telegram', type: 'GEOSITE', payload: 'telegram', icon: Send, desc: 'Мессенджер Telegram и звонки' },
-    { name: 'Discord', type: 'GEOSITE', payload: 'discord', icon: MessageSquare, desc: 'Голосовые и текстовые чаты Discord' },
-    { name: 'Instagram', type: 'GEOSITE', payload: 'instagram', icon: Camera, desc: 'Instagram и сервисы Meta' },
-    { name: 'Twitter / X', type: 'GEOSITE', payload: 'twitter', icon: Globe, desc: 'Социальная сеть X (Twitter)' },
-    { name: 'OpenAI / ChatGPT', type: 'GEOSITE', payload: 'openai', icon: Sparkles, desc: 'ChatGPT, API и веб-сервисы OpenAI' },
-    { name: 'TikTok', type: 'GEOSITE', payload: 'tiktok', icon: Film, desc: 'Сервисы видео TikTok' },
-    { name: 'Spotify', type: 'GEOSITE', payload: 'spotify', icon: Music, desc: 'Музыкальный стриминг Spotify' },
-    { name: 'Twitch', type: 'GEOSITE', payload: 'twitch', icon: Tv, desc: 'Стриминговая платформа Twitch' },
-    { name: 'Steam', type: 'GEOSITE', payload: 'steam', icon: Gamepad2, desc: 'Магазин и сообщество Steam' },
-    { name: 'Netflix', type: 'GEOSITE', payload: 'netflix', icon: Film, desc: 'Онлайн-кинотеатр Netflix' },
-    { name: 'RuTracker', type: 'DOMAIN-SUFFIX', payload: 'rutracker.org', icon: Globe, desc: 'Трекер rutracker.org и зеркала' },
-  ];
+  const CATALOG_SERVICES = $derived([
+    { name: 'YouTube', type: 'GEOSITE', payload: 'youtube', icon: Tv, desc: m.mihomo_wiz_svc_youtube_desc() },
+    { name: 'Telegram', type: 'GEOSITE', payload: 'telegram', icon: Send, desc: m.mihomo_wiz_svc_telegram_desc() },
+    { name: 'Discord', type: 'GEOSITE', payload: 'discord', icon: MessageSquare, desc: m.mihomo_wiz_svc_discord_desc() },
+    { name: 'Instagram', type: 'GEOSITE', payload: 'instagram', icon: Camera, desc: m.mihomo_wiz_svc_instagram_desc() },
+    { name: 'Twitter / X', type: 'GEOSITE', payload: 'twitter', icon: Globe, desc: m.mihomo_wiz_svc_twitter_desc() },
+    { name: 'OpenAI / ChatGPT', type: 'GEOSITE', payload: 'openai', icon: Sparkles, desc: m.mihomo_wiz_svc_openai_desc() },
+    { name: 'TikTok', type: 'GEOSITE', payload: 'tiktok', icon: Film, desc: m.mihomo_wiz_svc_tiktok_desc() },
+    { name: 'Spotify', type: 'GEOSITE', payload: 'spotify', icon: Music, desc: m.mihomo_wiz_svc_spotify_desc() },
+    { name: 'Twitch', type: 'GEOSITE', payload: 'twitch', icon: Tv, desc: m.mihomo_wiz_svc_twitch_desc() },
+    { name: 'Steam', type: 'GEOSITE', payload: 'steam', icon: Gamepad2, desc: m.mihomo_wiz_svc_steam_desc() },
+    { name: 'Netflix', type: 'GEOSITE', payload: 'netflix', icon: Film, desc: m.mihomo_wiz_svc_netflix_desc() },
+    { name: 'RuTracker', type: 'DOMAIN-SUFFIX', payload: 'rutracker.org', icon: Globe, desc: m.mihomo_wiz_svc_rutracker_desc() },
+  ]);
 
   // Available groups
   const availableGroups = $derived.by(() => {
@@ -100,13 +101,16 @@
       ? `${selectedService.name} (${selectedService.type}: ${selectedService.payload})`
       : `${customType}: ${customPayload.trim()}`;
 
-    let target = 'DIRECT (Напрямую)';
-    if (outboundType === 'reject') target = 'REJECT (Блокировать)';
-    else if (outboundType === 'proxy') target = `Прокси: ${selectedProxy}`;
-    else if (outboundType === 'group') {
-      if (createNewGroup) target = `Новая группа: ${newGroupName || 'Без имени'} (${newGroupType})`;
-      else target = `Группа: ${selectedGroup}`;
-    }
+    const target =
+      outboundType === 'reject'
+        ? m.mihomo_wiz_target_reject()
+        : outboundType === 'proxy'
+          ? m.mihomo_wiz_target_proxy({ name: selectedProxy })
+          : outboundType === 'group'
+            ? createNewGroup
+              ? m.mihomo_wiz_target_new_group({ name: newGroupName || m.mihomo_wiz_unnamed(), type: newGroupType })
+              : m.mihomo_wiz_target_group({ name: selectedGroup })
+            : m.mihomo_wiz_target_direct();
     return { matcher, target };
   });
 
@@ -163,11 +167,11 @@
         enabled: true,
       }, true);
 
-      notifications.success('Правило Mihomo успешно создано и применено');
+      notifications.success(m.mihomo_wiz_created_success());
       onSaved();
       onClose();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка создания правила');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_wiz_create_error());
     } finally {
       saving = false;
     }
@@ -178,20 +182,20 @@
   <div class="wizard-container">
     <div class="wizard-header">
       <div class="wizard-title-row">
-        <button type="button" class="back-btn" onclick={onClose} aria-label="Закрыть мастер">
-          <ArrowLeft size={16} /> Назад к правилам
+        <button type="button" class="back-btn" onclick={onClose} aria-label={m.mihomo_wiz_close_aria()}>
+          <ArrowLeft size={16} /> {m.mihomo_wiz_back_to_rules()}
         </button>
-        <h2>Мастер добавления правила Mihomo</h2>
+        <h2>{m.mihomo_wiz_title()}</h2>
       </div>
       <div class="stepper">
         <div class="step-pill" class:active={currentStep === 1} class:done={currentStep > 1}>
-          <span class="num">1</span> Что маршрутизировать
+          <span class="num">1</span> {m.mihomo_wiz_step1_pill()}
         </div>
         <div class="step-pill" class:active={currentStep === 2} class:done={currentStep > 2}>
-          <span class="num">2</span> Куда направлять
+          <span class="num">2</span> {m.mihomo_wiz_step2_pill()}
         </div>
         <div class="step-pill" class:active={currentStep === 3}>
-          <span class="num">3</span> Применение
+          <span class="num">3</span> {m.mihomo_wiz_step3_pill()}
         </div>
       </div>
     </div>
@@ -200,18 +204,18 @@
       {#if currentStep === 1}
         <div class="step-pane">
           <div class="pane-header">
-            <h3>Шаг 1. Выберите сервис или укажите назначение</h3>
-            <p class="pane-hint">Выберите готовый сервис из каталога или введите домен / IP-сеть вручную.</p>
+            <h3>{m.mihomo_wiz_step1_title()}</h3>
+            <p class="pane-hint">{m.mihomo_wiz_step1_hint()}</p>
           </div>
 
           <div class="tab-switch">
             <SegmentedControl
               value={matcherTab}
               options={[
-                { value: 'catalog', label: 'Каталог сервисов' },
-                { value: 'custom', label: 'Вручную (Домен / IP / GeoSite)' }
+                { value: 'catalog', label: m.mihomo_wiz_tab_catalog() },
+                { value: 'custom', label: m.mihomo_wiz_tab_custom() }
               ]}
-              ariaLabel="Тип назначения правила"
+              ariaLabel={m.mihomo_wiz_matcher_aria()}
               onchange={(v) => matcherTab = v as typeof matcherTab}
             />
           </div>
@@ -241,18 +245,18 @@
           {:else}
             <div class="custom-form">
               <label class="form-group">
-                <span class="label-text">Тип сопоставления</span>
+                <span class="label-text">{m.mihomo_wiz_custom_type_lbl()}</span>
                 <select bind:value={customType} class="select-input">
-                  <option value="GEOSITE">GEOSITE (Категория из базы данных, напр. youtube)</option>
-                  <option value="DOMAIN-SUFFIX">DOMAIN-SUFFIX (Домен и все его поддомены, напр. google.com)</option>
-                  <option value="DOMAIN">DOMAIN (Точное совпадение домена, напр. site.com)</option>
-                  <option value="IP-CIDR">IP-CIDR (IPv4/IPv6 подсеть, напр. 91.108.4.0/22)</option>
-                  <option value="RULE-SET">RULE-SET (Внешний набор правил из Rule Provider)</option>
+                  <option value="GEOSITE">{m.mihomo_wiz_type_geosite()}</option>
+                  <option value="DOMAIN-SUFFIX">{m.mihomo_wiz_type_domain_suffix()}</option>
+                  <option value="DOMAIN">{m.mihomo_wiz_type_domain()}</option>
+                  <option value="IP-CIDR">{m.mihomo_wiz_type_ip_cidr()}</option>
+                  <option value="RULE-SET">{m.mihomo_wiz_type_rule_set()}</option>
                 </select>
               </label>
 
               <label class="form-group">
-                <span class="label-text">Значение (Payload)</span>
+                <span class="label-text">{m.mihomo_wiz_payload_lbl()}</span>
                 <input
                   type="text"
                   bind:value={customPayload}
@@ -266,8 +270,8 @@
       {:else if currentStep === 2}
         <div class="step-pane">
           <div class="pane-header">
-            <h3>Шаг 2. Куда направлять трафик</h3>
-            <p class="pane-hint">Выберите группу прокси для авто-выбора лучшего сервера, конкретный туннель или действие.</p>
+            <h3>{m.mihomo_wiz_step2_title()}</h3>
+            <p class="pane-hint">{m.mihomo_wiz_step2_hint()}</p>
           </div>
 
           <div class="outbound-options">
@@ -279,8 +283,8 @@
             >
               <div class="tile-icon icon-group"><Zap size={20} /></div>
               <div class="tile-content">
-                <strong>Группа прокси (Автовыбор / URL-Test)</strong>
-                <span>Mihomo автоматически тестирует задержку и переключает на лучший узел</span>
+                <strong>{m.mihomo_wiz_out_group_title()}</strong>
+                <span>{m.mihomo_wiz_out_group_sub()}</span>
               </div>
             </button>
 
@@ -288,7 +292,7 @@
               <div class="sub-options">
                 {#if availableGroups.length > 0 && !createNewGroup}
                   <label class="form-group">
-                    <span class="label-text">Выберите существующую группу</span>
+                    <span class="label-text">{m.mihomo_wiz_select_group_lbl()}</span>
                     <select bind:value={selectedGroup} class="select-input">
                       {#each availableGroups as g}
                         <option value={g.name}>{g.label} ({g.type})</option>
@@ -300,26 +304,26 @@
                     <div class="load-balance-warning">
                       <div class="warning-header">
                         <AlertTriangle size={14} class="warning-icon" />
-                        <span class="warning-title">Балансировщик нагрузки ({selectedGroup})</span>
+                        <span class="warning-title">{m.mihomo_wiz_lb_warn_title({ group: selectedGroup })}</span>
                       </div>
                       <p class="warning-desc">
-                        Группа распределяет запросы между разными IP-адресами. Это может вызывать разрыв воспроизведения <strong>YouTube и видеосервисов</strong>. Для видео рекомендуется группа <strong>URL-Test</strong> или <strong>Fallback</strong>.
+                        {m.mihomo_wiz_lb_warn_desc()}
                       </p>
                     </div>
                   {/if}
 
                   <Button variant="ghost" size="sm" onclick={() => createNewGroup = true}>
-                    <Plus size={14} /> Создать новую группу URL-Test
+                    <Plus size={14} /> {m.mihomo_wiz_create_new_group_btn()}
                   </Button>
                 {:else}
                   <div class="new-group-box">
-                    <h4>Новая группа авто-выбора (URL-Test)</h4>
+                    <h4>{m.mihomo_wiz_new_group_title()}</h4>
                     <label class="form-group">
-                      <span class="label-text">Название группы</span>
-                      <input type="text" bind:value={newGroupName} placeholder="Например: Media-Fast" class="text-input" />
+                      <span class="label-text">{m.mihomo_wiz_new_group_name_lbl()}</span>
+                      <input type="text" bind:value={newGroupName} placeholder={m.mihomo_wiz_new_group_placeholder()} class="text-input" />
                     </label>
                     <label class="form-group">
-                      <span class="label-text">Серверы / Подписки для группы</span>
+                      <span class="label-text">{m.mihomo_wiz_new_group_members_lbl()}</span>
                       <div class="members-picker">
                         {#each availableProxies as p}
                           <label class="member-check">
@@ -328,7 +332,7 @@
                               checked={newGroupMembers.includes(p.name)}
                               onchange={(e) => {
                                 if (e.currentTarget.checked) newGroupMembers = [...newGroupMembers, p.name];
-                                else newGroupMembers = newGroupMembers.filter(m => m !== p.name);
+                                else newGroupMembers = newGroupMembers.filter(item => item !== p.name);
                               }}
                             />
                             <span>{p.label}</span>
@@ -338,7 +342,7 @@
                     </label>
                     {#if availableGroups.length > 0}
                       <Button variant="ghost" size="sm" onclick={() => createNewGroup = false}>
-                        Отмена, выбрать существующую
+                        {m.mihomo_wiz_cancel_new_group_btn()}
                       </Button>
                     {/if}
                   </div>
@@ -354,15 +358,15 @@
             >
               <div class="tile-icon icon-proxy"><Network size={20} /></div>
               <div class="tile-content">
-                <strong>Конкретный прокси / узел</strong>
-                <span>Всегда направлять в один постоянный сервер</span>
+                <strong>{m.mihomo_wiz_out_proxy_title()}</strong>
+                <span>{m.mihomo_wiz_out_proxy_sub()}</span>
               </div>
             </button>
 
             {#if outboundType === 'proxy'}
               <div class="sub-options">
                 <label class="form-group">
-                  <span class="label-text">Выберите сервер</span>
+                  <span class="label-text">{m.mihomo_wiz_select_server_lbl()}</span>
                   <select bind:value={selectedProxy} class="select-input">
                     {#each availableProxies as p}
                       <option value={p.name}>{p.label}</option>
@@ -380,8 +384,8 @@
             >
               <div class="tile-icon icon-direct"><Globe size={20} /></div>
               <div class="tile-content">
-                <strong>DIRECT (Прямое подключение)</strong>
-                <span>Напрямую через провайдера без VPN и шифрования</span>
+                <strong>{m.mihomo_wiz_out_direct_title()}</strong>
+                <span>{m.mihomo_wiz_out_direct_sub()}</span>
               </div>
             </button>
 
@@ -393,8 +397,8 @@
             >
               <div class="tile-icon icon-reject"><ShieldOff size={20} /></div>
               <div class="tile-content">
-                <strong>REJECT (Блокировать)</strong>
-                <span>Заблокировать доступ к этим адресам</span>
+                <strong>{m.mihomo_wiz_out_reject_title()}</strong>
+                <span>{m.mihomo_wiz_out_reject_sub()}</span>
               </div>
             </button>
           </div>
@@ -402,18 +406,18 @@
       {:else}
         <div class="step-pane">
           <div class="pane-header">
-            <h3>Шаг 3. Подтверждение и создание правила</h3>
-            <p class="pane-hint">Проверьте параметры нового маршрута перед применением в Mihomo.</p>
+            <h3>{m.mihomo_wiz_step3_title()}</h3>
+            <p class="pane-hint">{m.mihomo_wiz_step3_hint()}</p>
           </div>
 
           <div class="summary-card">
             <div class="summary-row">
-              <span class="summary-label">Что направляем:</span>
+              <span class="summary-label">{m.mihomo_wiz_summary_what_lbl()}</span>
               <strong class="summary-val">{ruleSummary.matcher}</strong>
             </div>
             <div class="summary-divider"></div>
             <div class="summary-row">
-              <span class="summary-label">Куда направляем:</span>
+              <span class="summary-label">{m.mihomo_wiz_summary_where_lbl()}</span>
               <strong class="summary-val highlight">{ruleSummary.target}</strong>
             </div>
           </div>
@@ -424,11 +428,11 @@
     <div class="wizard-footer">
       {#if currentStep > 1}
         <Button variant="secondary" onclick={() => currentStep -= 1} disabled={saving}>
-          Назад
+          {m.mihomo_wiz_back_btn()}
         </Button>
       {:else}
         <Button variant="ghost" onclick={onClose} disabled={saving}>
-          Отмена
+          {m.common_cancel()}
         </Button>
       {/if}
 
@@ -439,7 +443,7 @@
             disabled={(currentStep === 1 && !step1Valid) || (currentStep === 2 && !step2Valid)}
             onclick={() => currentStep += 1}
           >
-            Далее
+            {m.mihomo_wiz_next_btn()}
           </Button>
         {:else}
           <Button
@@ -447,7 +451,7 @@
             loading={saving}
             onclick={handleCreateRule}
           >
-            Создать и применить
+            {m.mihomo_wiz_create_apply_btn()}
           </Button>
         {/if}
       </div>

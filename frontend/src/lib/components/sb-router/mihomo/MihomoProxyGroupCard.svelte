@@ -3,8 +3,8 @@
   import { Zap, Activity, Edit3, Trash2, CheckCircle2, Shield, Shuffle, ArrowDownUp, Disc, RefreshCw, Layers } from 'lucide-svelte';
   import { Badge } from '$lib/components/ui';
   import { api } from '$lib/api/client';
+  import { m } from '$lib/i18n';
   import { notifications } from '$lib/stores/notifications';
-  import { pluralize } from '$lib/utils/pluralize';
   import { awgTags as awgTagsStore } from '$lib/stores/awgTags';
   import { subscriptionsStore } from '$lib/stores/subscriptions';
   import { singboxDelayHistory } from '$lib/stores/singbox';
@@ -137,10 +137,10 @@
           localDelays = { ...localDelays, [name]: 0 };
         }
       });
-      notifications.success(`Задержки для «${group.name}» обновлены`);
+      notifications.success(m.mihomo_groups_tab_delays_updated({ group: group.name }));
       onReload?.();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка проверки задержки');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_pg_card_err_delay());
     } finally {
       testing = false;
     }
@@ -155,13 +155,13 @@
       const delay = await api.mihomoRuntimeDelay(name, testUrl, 3000);
       localDelays = { ...localDelays, [name]: delay };
       if (delay > 0) {
-        notifications.success(`Задержка для «${formatMemberName(name)}»: ${delay}ms`);
+        notifications.success(m.mihomo_pg_card_delay_ok({ name: formatMemberName(name), delay }));
       } else {
-        notifications.warning(`Узел «${formatMemberName(name)}» недоступен (таймаут)`);
+        notifications.warning(m.mihomo_pg_card_delay_timeout({ name: formatMemberName(name) }));
       }
     } catch {
       localDelays = { ...localDelays, [name]: 0 };
-      notifications.warning(`Узел «${formatMemberName(name)}» недоступен (таймаут)`);
+      notifications.warning(m.mihomo_pg_card_delay_timeout({ name: formatMemberName(name) }));
     } finally {
       testingMembers = { ...testingMembers, [name]: false };
     }
@@ -172,12 +172,12 @@
     if (currentNow === memberName || selecting) return;
     selecting = true;
     activeMember = memberName;
-    notifications.success(`Выбран узел «${formatMemberName(memberName)}»`);
+    notifications.success(m.mihomo_pg_card_node_selected({ name: formatMemberName(memberName) }));
     try {
       await api.mihomoRuntimeSelect(group.name, memberName);
       onReload?.();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка переключения узла');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_pg_card_err_switch());
       onReload?.();
     } finally {
       selecting = false;
@@ -255,13 +255,13 @@
   function getGroupTypeTooltip(type: string): string {
     switch (type) {
       case 'url-test':
-        return 'URL-TEST: Автовыбор самого быстрого узла по пингу. Подходит для веб-серфинга и YouTube.';
+        return m.mihomo_pg_card_tooltip_urltest();
       case 'fallback':
-        return 'FALLBACK: Отказоустойчивый резерв. Держит основной узел и переключается только при сбое.';
+        return m.mihomo_pg_card_tooltip_fallback();
       case 'select':
-        return 'SELECT: Ручной выбор. Трафик не переключается автоматически. Максимальная стабильность.';
+        return m.mihomo_pg_card_tooltip_select();
       case 'load-balance':
-        return 'LOAD-BALANCE: Балансировка соединений. Не подходит для YouTube и стриминга (вызывает ошибки 403 и буферизацию).';
+        return m.mihomo_pg_card_tooltip_loadbalance();
       default:
         return type.toUpperCase();
     }
@@ -281,9 +281,9 @@
         <Badge variant={group.type === 'load-balance' ? 'warning' : 'accent'} size="sm">{group.type.toUpperCase()}</Badge>
       </span>
       <span class="group-meta">
-        {pluralize(memberNames.length, ['узел', 'узла', 'узлов'])}
+        {m.mihomo_nodes_count({ count: memberNames.length })}
         {#if group.interval && group.type !== 'select'}
-          · {group.interval}с
+          · {m.mihomo_seconds_short({ count: group.interval })}
         {/if}
       </span>
     </div>
@@ -294,10 +294,10 @@
         class="compact-btn test-btn"
         disabled={testing}
         onclick={handleTestAll}
-        title="Проверить задержки всех узлов"
+        title={m.mihomo_pg_card_test_all_title()}
       >
         <Zap size={12} class={testing ? 'spin' : ''} />
-        <span>{testing ? 'Замер...' : 'Тест'}</span>
+        <span>{testing ? m.mihomo_pg_card_testing() : m.mihomo_pg_card_test_btn()}</span>
       </button>
 
       {#if onEdit}
@@ -305,7 +305,7 @@
           type="button"
           class="compact-btn icon-only"
           onclick={() => onEdit(group)}
-          title="Редактировать группу"
+          title={m.mihomo_groups_tab_edit_title()}
         >
           <Edit3 size={13} />
         </button>
@@ -316,7 +316,7 @@
           type="button"
           class="compact-btn icon-only danger"
           onclick={() => onDelete(group.id || group.name)}
-          title="Удалить группу"
+          title={m.mihomo_groups_tab_delete_title()}
         >
           <Trash2 size={13} />
         </button>
@@ -344,12 +344,12 @@
         tabindex={0}
         onclick={(e) => handleMemberClick(name, isSub, e)}
         onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && handleMemberClick(name, isSub, e)}
-        title={isSub ? `Подписка «${humanLabel}» — нажмите для выбора сервера` : isSelectable ? `Нажмите, чтобы выбрать ${humanLabel}` : isLoadBalance ? `Узел балансировки: ${humanLabel}` : isActive ? `Активный узел: ${humanLabel}` : humanLabel}
+        title={isSub ? m.mihomo_pg_card_chip_sub_title({ label: humanLabel }) : isSelectable ? m.mihomo_pg_card_chip_select_title({ label: humanLabel }) : isLoadBalance ? m.mihomo_pg_card_chip_lb_title({ label: humanLabel }) : isActive ? m.mihomo_pg_card_chip_active_title({ label: humanLabel }) : humanLabel}
       >
         <span class="member-dot" class:active={isActive}></span>
         <span class="member-name">{humanLabel}</span>
         {#if isSub}
-          <span class="sub-indicator-icon" title="Подписка">
+          <span class="sub-indicator-icon" title={m.mihomo_pg_card_sub_badge_title()}>
             <Layers size={11} />
           </span>
         {/if}
@@ -357,7 +357,7 @@
           type="button"
           class="delay-btn {tone}"
           class:checking={isChecking}
-          title="Замерить скорость узла"
+          title={m.mihomo_pg_card_check_speed_title()}
           onclick={(e) => handleTestSingleMember(name, e)}
         >
           <span class="delay-val">{delay !== null ? (delay > 0 ? `${delay}ms` : 'timeout') : '...'}</span>
@@ -624,20 +624,20 @@
     color: var(--color-error, #f87171);
   }
 
-  .delay-btn .refresh-icon {
+  .delay-btn :global(.refresh-icon) {
     opacity: 0;
     transition: opacity 0.15s ease;
   }
 
-  .delay-btn:hover .refresh-icon {
+  .delay-btn:hover :global(.refresh-icon) {
     opacity: 0.8;
   }
 
-  .delay-btn.checking .spin {
+  .delay-btn.checking :global(.spin) {
     animation: spin 1s linear infinite;
   }
 
-  .spin {
+  :global(.spin) {
     animation: spin 1s linear infinite;
   }
 

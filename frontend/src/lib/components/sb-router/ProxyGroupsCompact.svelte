@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import type { ProxyGroup } from '$lib/types/sbRouter';
   import { Edit3, Trash2 } from 'lucide-svelte';
   import { Button } from '$lib/components/ui';
@@ -31,23 +32,23 @@
       >
         <div class="meta">
           <div class="tag">{g.name}</div>
-          <div class="sub">Тип: {g.type} · Участников: {g.proxies.length}</div>
+          <div class="sub">{m.sb_router_pg_compact_sub({ type: g.type, count: g.proxies.length })}</div>
         </div>
       </button>
 
       <div class="actions">
-        <button type="button" class="action-btn" onclick={() => onEdit(g.name)} title="Редактировать">
+        <button type="button" class="action-btn" onclick={() => onEdit(g.name)} title={m.sb_router_pg_compact_edit()}>
           <Edit3 size={14} aria-hidden="true" />
         </button>
         {#if onDelete}
-          <button type="button" class="action-btn text-error-500" onclick={() => onDelete(g.name)} title="Удалить">
+          <button type="button" class="action-btn text-error-500" onclick={() => onDelete(g.name)} title={m.common_delete()}>
             <Trash2 size={14} aria-hidden="true" />
           </button>
         {/if}
       </div>
     </div>
   {:else}
-    <div class="empty">Нет настроенных proxy-групп</div>
+    <div class="empty">{m.sb_router_pg_compact_empty()}</div>
   {/each}
 </div>
 

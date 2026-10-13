@@ -3,6 +3,7 @@
   import { ChevronUp, ChevronDown, X, Zap, Disc, Shield, ArrowDownUp, AlertTriangle } from 'lucide-svelte';
   import type { MihomoNativeGroup, MihomoNativeProxy, MihomoNativeSubscription, MihomoRuntimeProxy } from '$lib/types';
   import { api } from '$lib/api/client';
+  import { m } from '$lib/i18n';
   import { notifications } from '$lib/stores/notifications';
   import { awgTags } from '$lib/stores/awgTags';
   import { singboxProxies } from '$lib/stores/singboxProxies';
@@ -75,16 +76,16 @@
 
   const availableMembers = $derived.by(() => {
     const list: Array<{ value: string; label: string; group: string }> = [
-      { value: 'DIRECT', label: 'DIRECT (Прямое подключение)', group: 'Системные' },
-      { value: 'REJECT', label: 'REJECT (Блокировать)', group: 'Системные' },
+      { value: 'DIRECT', label: m.mihomo_group_edit_direct_label(), group: m.routing_group_system() },
+      { value: 'REJECT', label: m.sb_router_reject_option(), group: m.routing_group_system() },
     ];
 
     // AWG and Native WireGuard tunnels
     const awgList = $awgTags.data ?? [];
     for (const t of awgList) {
       const gName = t.kind === 'managed'
-        ? 'AWG туннели (Kernel)'
-        : (t.kind === 'system' ? 'Системные WireGuard (Native)' : 'AWG3 туннели');
+        ? m.mihomo_group_edit_grp_awg_kernel()
+        : (t.kind === 'system' ? m.mihomo_group_edit_grp_sys_wg() : m.mihomo_group_edit_grp_awg3());
       if (!list.some((i) => i.value === t.tag)) {
         list.push({
           value: t.tag,
@@ -97,14 +98,14 @@
     // Native Mihomo proxies
     for (const p of proxies) {
       if (p.enabled && !list.some((i) => i.value === p.name)) {
-        list.push({ value: p.name, label: p.name, group: 'Нативные прокси Mihomo' });
+        list.push({ value: p.name, label: p.name, group: m.mihomo_group_edit_grp_native_proxies() });
       }
     }
 
     // Native Mihomo subscriptions
     for (const s of subscriptions) {
       if (s.enabled && s.groupName && !list.some((i) => i.value === s.groupName)) {
-        list.push({ value: s.groupName, label: s.name, group: 'Подписки Mihomo' });
+        list.push({ value: s.groupName, label: s.name, group: m.mihomo_out_grp_subs() });
       }
     }
 
@@ -115,7 +116,7 @@
         list.push({
           value: t.tag,
           label: t.kernelInterface ? `${t.tag} (${t.kernelInterface})` : t.tag,
-          group: 'Sing-box туннели',
+          group: m.mihomo_out_grp_sb_tunnels(),
         });
       }
     }
@@ -138,7 +139,7 @@
           list.push({
             value: subTag,
             label: `${subLabel} (${subTag})`,
-            group: 'Подписки Sing-box',
+            group: m.mihomo_out_grp_sb_subs(),
           });
         }
       }
@@ -152,7 +153,7 @@
         list.push({
           value: p.tag,
           label: p.tag,
-          group: 'Прокси Sing-box',
+          group: m.mihomo_out_grp_sb_proxies(),
         });
       }
     }
@@ -164,7 +165,7 @@
         list.push({
           value: g.name,
           label: `${g.name} (${g.type.toUpperCase()})`,
-          group: 'Группы прокси Mihomo',
+          group: m.mihomo_out_grp_groups(),
         });
       }
     }
@@ -179,7 +180,7 @@
         !allGroups.some((g) => g.name === rp.name) &&
         !list.some((i) => i.value === rp.name)
       ) {
-        list.push({ value: rp.name, label: rp.name, group: 'Runtime узлы' });
+        list.push({ value: rp.name, label: rp.name, group: m.mihomo_group_edit_grp_runtime() });
       }
     }
 
@@ -211,11 +212,11 @@
   async function handleSave() {
     if (saving) return;
     if (!name.trim()) {
-      notifications.error('Укажите название группы');
+      notifications.error(m.mihomo_group_edit_err_name());
       return;
     }
     if (selectedProxies.length === 0) {
-      notifications.error('Выберите хотя бы один сервер или туннель для группы');
+      notifications.error(m.mihomo_group_edit_err_members());
       return;
     }
     saving = true;
@@ -233,26 +234,26 @@
         strategy: type === 'load-balance' ? strategy : undefined,
         enabled,
       });
-      notifications.success('Группа прокси сохранена');
+      notifications.success(m.mihomo_group_edit_saved());
       onSaved();
       onClose();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения группы');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_group_edit_err_save());
     } finally {
       saving = false;
     }
   }
 </script>
 
-<Modal {open} title={group ? `Редактирование группы: ${group.name}` : 'Новая группа прокси'} onclose={onClose} size="lg">
+<Modal {open} title={group ? m.mihomo_group_edit_title_edit({ name: group.name }) : m.mihomo_group_edit_title_new()} onclose={onClose} size="lg">
   <div class="form-stack">
     <label class="form-group">
-      <span class="label-text">Название группы</span>
-      <input type="text" bind:value={name} placeholder="Например: Fast-Proxy или Media" class="text-input" />
+      <span class="label-text">{m.mihomo_group_edit_label_name()}</span>
+      <input type="text" bind:value={name} placeholder={m.mihomo_group_edit_name_placeholder()} class="text-input" />
     </label>
 
     <div class="form-group">
-      <span class="label-text">Тип группы</span>
+      <span class="label-text">{m.mihomo_group_edit_label_type()}</span>
       <div class="type-selector-grid">
         <button
           type="button"
@@ -263,7 +264,7 @@
           <div class="type-card-icon url-test"><Zap size={16} /></div>
           <div class="type-card-info">
             <span class="type-card-name">url-test</span>
-            <span class="type-card-desc">Авто-выбор самого быстрого</span>
+            <span class="type-card-desc">{m.mihomo_group_edit_type_urltest_short()}</span>
           </div>
         </button>
 
@@ -276,7 +277,7 @@
           <div class="type-card-icon select"><Disc size={16} /></div>
           <div class="type-card-info">
             <span class="type-card-name">select</span>
-            <span class="type-card-desc">Ручной выбор активного узла</span>
+            <span class="type-card-desc">{m.mihomo_group_edit_type_select_short()}</span>
           </div>
         </button>
 
@@ -289,7 +290,7 @@
           <div class="type-card-icon fallback"><Shield size={16} /></div>
           <div class="type-card-info">
             <span class="type-card-name">fallback</span>
-            <span class="type-card-desc">Отказоустойчивый резерв</span>
+            <span class="type-card-desc">{m.mihomo_group_edit_type_fallback_short()}</span>
           </div>
         </button>
 
@@ -302,7 +303,7 @@
           <div class="type-card-icon load-balance"><ArrowDownUp size={16} /></div>
           <div class="type-card-info">
             <span class="type-card-name">load-balance</span>
-            <span class="type-card-desc">Балансировка нагрузки</span>
+            <span class="type-card-desc">{m.mihomo_group_edit_type_lb_short()}</span>
           </div>
         </button>
       </div>
@@ -311,67 +312,67 @@
         <div class="type-explanation-box">
           <div class="type-explanation-header">
             <Zap size={14} class="type-icon-accent" />
-            <span class="type-explanation-title">URL-Test (Автовыбор самого быстрого)</span>
+            <span class="type-explanation-title">{m.mihomo_group_edit_urltest_title()}</span>
           </div>
           <p class="type-explanation-desc">
-            Mihomo регулярно проверяет задержку серверов и направляет трафик через узел с наименьшим откликом.
+            {m.mihomo_group_edit_urltest_desc()}
           </p>
           <div class="type-scenario">
-            <span class="scenario-badge good">Рекомендуется</span>
-            <span>Для веб-серфинга, YouTube и стриминговых сервисов, где важна минимальная задержка.</span>
+            <span class="scenario-badge good">{m.mihomo_group_edit_recommended()}</span>
+            <span>{m.mihomo_group_edit_urltest_scenario()}</span>
           </div>
         </div>
       {:else if type === 'select'}
         <div class="type-explanation-box">
           <div class="type-explanation-header">
             <Disc size={14} class="type-icon-accent" />
-            <span class="type-explanation-title">Select (Ручной выбор)</span>
+            <span class="type-explanation-title">{m.mihomo_group_edit_select_title()}</span>
           </div>
           <p class="type-explanation-desc">
-            Трафик направляется строго в тот узел, который вы вручную выбрали в карточке группы.
+            {m.mihomo_group_edit_select_desc()}
           </p>
           <div class="type-scenario">
-            <span class="scenario-badge good">Рекомендуется</span>
-            <span>Для онлайн-банкинга, криптобирж и задач, требующих постоянного неизменного IP-адреса.</span>
+            <span class="scenario-badge good">{m.mihomo_group_edit_recommended()}</span>
+            <span>{m.mihomo_group_edit_select_scenario()}</span>
           </div>
         </div>
       {:else if type === 'fallback'}
         <div class="type-explanation-box">
           <div class="type-explanation-header">
             <Shield size={14} class="type-icon-accent" />
-            <span class="type-explanation-title">Fallback (Отказоустойчивый резерв)</span>
+            <span class="type-explanation-title">{m.mihomo_group_edit_fallback_title()}</span>
           </div>
           <p class="type-explanation-desc">
-            Трафик всегда идет через первый узел в списке, переключаясь на резервный только при его недоступности.
+            {m.mihomo_group_edit_fallback_desc()}
           </p>
           <div class="type-scenario">
-            <span class="scenario-badge good">Рекомендуется</span>
-            <span>Для каскадов туннелей (AWG → Sing-box → DIRECT) и максимальной отказоустойчивости.</span>
+            <span class="scenario-badge good">{m.mihomo_group_edit_recommended()}</span>
+            <span>{m.mihomo_group_edit_fallback_scenario()}</span>
           </div>
         </div>
       {:else if type === 'load-balance'}
         <div class="type-explanation-box warning-box">
           <div class="type-explanation-header warning">
             <AlertTriangle size={14} class="warning-icon" />
-            <span class="type-explanation-title warning">Load-Balance (Балансировка нагрузки)</span>
+            <span class="type-explanation-title warning">{m.mihomo_group_edit_lb_title()}</span>
           </div>
           <p class="type-explanation-desc">
-            Mihomo распределяет каждое новое соединение между всеми серверами группы.
+            {m.mihomo_group_edit_lb_desc()}
           </p>
           <div class="warning-notice">
-            <span class="scenario-badge warn">Предостережение</span>
-            <span><strong>Не подходит для YouTube, онлайн-кинотеатров и авторизованных сайтов:</strong> потоки разбиваются на чанки, и смена IP между запросами приводит к остановке видео (ошибка 403 / буферизация).</span>
+            <span class="scenario-badge warn">{m.mihomo_group_edit_caution_badge()}</span>
+            <span>{@html m.mihomo_group_edit_lb_caution()}</span>
           </div>
           <div class="type-scenario mt-2">
-            <span class="scenario-badge info">Подходит для</span>
-            <span>Многопоточных загрузок файлов, торрент-клиентов и распределения общего объема данных.</span>
+            <span class="scenario-badge info">{m.mihomo_group_edit_suitable_badge()}</span>
+            <span>{m.mihomo_group_edit_lb_scenario()}</span>
           </div>
         </div>
       {/if}
     </div>
 
     <div class="form-group">
-      <span class="label-text">Выбор участников (Серверы / Туннели / Подписки)</span>
+      <span class="label-text">{m.mihomo_group_edit_label_members()}</span>
       <div class="members-picker">
         {#each Object.entries(groupedMembers) as [categoryName, members]}
           <div class="category-header">{categoryName}</div>
@@ -396,8 +397,8 @@
       <div class="form-group">
         <span class="label-text">
           {type === 'fallback'
-            ? 'Порядок приоритета (1-й — основной, далее по очереди при сбое):'
-            : 'Порядок участников в группе:'}
+            ? m.mihomo_group_edit_order_fallback()
+            : m.mihomo_group_edit_order_default()}
         </span>
         <div class="order-list">
           {#each selectedProxies as proxyVal, idx (proxyVal)}
@@ -408,9 +409,9 @@
               <span class="order-name">{label}</span>
               {#if type === 'fallback'}
                 {#if idx === 0}
-                  <span class="priority-badge primary">Основной</span>
+                  <span class="priority-badge primary">{m.mihomo_group_edit_badge_primary()}</span>
                 {:else}
-                  <span class="priority-badge backup">Резерв #{idx}</span>
+                  <span class="priority-badge backup">{m.mihomo_group_edit_badge_backup({ index: idx })}</span>
                 {/if}
               {/if}
               <div class="order-btn-group">
@@ -419,7 +420,7 @@
                   class="order-btn"
                   disabled={idx === 0}
                   onclick={() => moveProxy(idx, -1)}
-                  title="Поднять выше (выше приоритет)"
+                  title={m.mihomo_group_edit_move_up_title()}
                 >
                   <ChevronUp size={13} />
                 </button>
@@ -428,7 +429,7 @@
                   class="order-btn"
                   disabled={idx === selectedProxies.length - 1}
                   onclick={() => moveProxy(idx, 1)}
-                  title="Опустить ниже (ниже приоритет)"
+                  title={m.mihomo_group_edit_move_down_title()}
                 >
                   <ChevronDown size={13} />
                 </button>
@@ -436,7 +437,7 @@
                   type="button"
                   class="order-btn remove"
                   onclick={() => removeProxy(proxyVal)}
-                  title="Удалить из группы"
+                  title={m.mihomo_group_edit_remove_member_title()}
                 >
                   <X size={13} />
                 </button>
@@ -450,19 +451,19 @@
     {#if type === 'url-test' || type === 'fallback'}
       <div class="test-settings-grid">
         <label class="form-group">
-          <span class="label-text">URL проверки задержки</span>
+          <span class="label-text">{m.mihomo_group_edit_label_url()}</span>
           <input type="text" bind:value={url} class="text-input" />
         </label>
 
         <div class="two-col">
           <label class="form-group">
-            <span class="label-text">Интервал теста (сек)</span>
+            <span class="label-text">{m.mihomo_group_edit_label_interval()}</span>
             <input type="number" min="10" max="86400" bind:value={interval} class="text-input" />
           </label>
 
           {#if type === 'url-test'}
             <label class="form-group">
-              <span class="label-text">Толерантность (мс)</span>
+              <span class="label-text">{m.mihomo_group_edit_label_tolerance()}</span>
               <input type="number" min="0" max="1000" bind:value={tolerance} class="text-input" />
             </label>
           {/if}
@@ -472,11 +473,11 @@
 
     {#if type === 'load-balance'}
       <label class="form-group">
-        <span class="label-text">Стратегия балансировки</span>
+        <span class="label-text">{m.mihomo_group_edit_label_strategy()}</span>
         <select bind:value={strategy} class="select-input">
-          <option value="consistent-hashing">Consistent Hashing (По хэшу источника/назначения)</option>
-          <option value="round-robin">Round Robin (Поочерёдно)</option>
-          <option value="sticky-sessions">Sticky Sessions (Привязка к сессии)</option>
+          <option value="consistent-hashing">{m.mihomo_group_edit_strategy_hashing()}</option>
+          <option value="round-robin">{m.mihomo_group_edit_strategy_rr()}</option>
+          <option value="sticky-sessions">{m.mihomo_group_edit_strategy_sticky()}</option>
         </select>
       </label>
     {/if}
@@ -485,12 +486,12 @@
       {#if type === 'url-test' || type === 'fallback'}
         <label class="check-label">
           <input type="checkbox" bind:checked={lazy} />
-          <span>Lazy (тестировать только когда группа используется трафиком)</span>
+          <span>{m.mihomo_group_edit_lazy()}</span>
         </label>
       {/if}
       <label class="check-label">
         <input type="checkbox" bind:checked={enabled} />
-        <span>Группа включена</span>
+        <span>{m.mihomo_group_edit_enabled()}</span>
       </label>
     </div>
   </div>
@@ -506,11 +507,11 @@
         }}
         disabled={saving}
       >
-        Удалить группу
+        {m.mihomo_groups_tab_delete_title()}
       </Button>
     {/if}
-    <Button variant="ghost" onclick={onClose} disabled={saving}>Отмена</Button>
-    <Button variant="primary" loading={saving} onclick={handleSave}>Сохранить</Button>
+    <Button variant="ghost" onclick={onClose} disabled={saving}>{m.common_cancel()}</Button>
+    <Button variant="primary" loading={saving} onclick={handleSave}>{m.common_save()}</Button>
   {/snippet}
 </Modal>
 

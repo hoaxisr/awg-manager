@@ -1,11 +1,11 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { api } from '$lib/api/client';
   import { notifications } from '$lib/stores/notifications';
   import { Button, ConfirmModal, SectionLabel } from '$lib/components/ui';
   import { LoadingSpinner } from '$lib/components/layout';
   import { Sparkles, GripVertical, RotateCcw, Maximize2, Minimize2, Columns, LayoutGrid, Plus } from 'lucide-svelte';
-  import { pluralize, RULE_WORDS } from '$lib/utils/pluralize';
   import FlowGraph from '../FlowGraph.svelte';
   import { openAddWizard } from '../addWizardStore';
   import type {
@@ -76,119 +76,119 @@
       return {
         serviceKey: 'youtube',
         title: 'YouTube',
-        subtitle: 'Видеосервис',
-        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: youtube' : 'набор: youtube' }],
+        subtitle: m.mihomo_svc_youtube_sub(),
+        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: youtube' : m.mihomo_chip_ruleset({ name: 'youtube' }) }],
       };
     }
     if (p.includes('telegram')) {
       return {
         serviceKey: 'telegram',
         title: 'Telegram',
-        subtitle: 'Мессенджер',
-        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: telegram' : 'набор: telegram' }],
+        subtitle: m.mihomo_svc_telegram_sub(),
+        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: telegram' : m.mihomo_chip_ruleset({ name: 'telegram' }) }],
       };
     }
     if (p.includes('discord')) {
       return {
         serviceKey: 'discord',
         title: 'Discord',
-        subtitle: 'Голосовой и текстовый чат',
-        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: discord' : 'набор: discord' }],
+        subtitle: m.mihomo_svc_discord_sub(),
+        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: discord' : m.mihomo_chip_ruleset({ name: 'discord' }) }],
       };
     }
     if (p.includes('instagram')) {
       return {
         serviceKey: 'instagram',
         title: 'Instagram',
-        subtitle: 'Социальная сеть',
-        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: instagram' : 'набор: instagram' }],
+        subtitle: m.mihomo_svc_instagram_sub(),
+        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: instagram' : m.mihomo_chip_ruleset({ name: 'instagram' }) }],
       };
     }
     if (p.includes('gemini') || p.includes('google-gemini')) {
       return {
         serviceKey: 'gemini',
         title: 'Gemini',
-        subtitle: 'Искусственный интеллект Google',
-        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: google-gemini' : 'набор: google-gemini' }],
+        subtitle: m.mihomo_svc_gemini_sub(),
+        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: google-gemini' : m.mihomo_chip_ruleset({ name: 'google-gemini' }) }],
       };
     }
     if (p.includes('anthropic') || p.includes('claude')) {
       return {
         serviceKey: 'anthropic',
         title: 'Claude / Anthropic',
-        subtitle: 'Искусственный интеллект',
-        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: anthropic' : 'набор: anthropic' }],
+        subtitle: m.mihomo_svc_ai_sub(),
+        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: anthropic' : m.mihomo_chip_ruleset({ name: 'anthropic' }) }],
       };
     }
     if (p.includes('openai') || p.includes('chatgpt')) {
       return {
         serviceKey: 'chatgpt',
         title: 'ChatGPT / OpenAI',
-        subtitle: 'Искусственный интеллект',
-        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: openai' : 'набор: openai' }],
+        subtitle: m.mihomo_svc_ai_sub(),
+        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: openai' : m.mihomo_chip_ruleset({ name: 'openai' }) }],
       };
     }
     if (p.includes('xai') || p.includes('grok')) {
       return {
         serviceKey: 'grok',
         title: 'Grok (xAI)',
-        subtitle: 'Искусственный интеллект',
-        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: xai' : 'набор: xai' }],
+        subtitle: m.mihomo_svc_ai_sub(),
+        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: xai' : m.mihomo_chip_ruleset({ name: 'xai' }) }],
       };
     }
     if (p.includes('tiktok')) {
       return {
         serviceKey: 'tiktok',
         title: 'TikTok',
-        subtitle: 'Короткие видео',
-        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: tiktok' : 'набор: tiktok' }],
+        subtitle: m.mihomo_svc_tiktok_sub(),
+        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: tiktok' : m.mihomo_chip_ruleset({ name: 'tiktok' }) }],
       };
     }
     if (p.includes('spotify')) {
       return {
         serviceKey: 'spotify',
         title: 'Spotify',
-        subtitle: 'Музыкальный стриминг',
-        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: spotify' : 'набор: spotify' }],
+        subtitle: m.mihomo_svc_spotify_sub(),
+        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: spotify' : m.mihomo_chip_ruleset({ name: 'spotify' }) }],
       };
     }
     if (p.includes('steam')) {
       return {
         serviceKey: 'steam',
         title: 'Steam',
-        subtitle: 'Игровая платформа',
-        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: steam' : 'набор: steam' }],
+        subtitle: m.mihomo_svc_steam_sub(),
+        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: steam' : m.mihomo_chip_ruleset({ name: 'steam' }) }],
       };
     }
     if (p.includes('netflix')) {
       return {
         serviceKey: 'netflix',
         title: 'Netflix',
-        subtitle: 'Кино и сериалы',
-        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: netflix' : 'набор: netflix' }],
+        subtitle: m.mihomo_svc_netflix_sub(),
+        chips: [{ kind: chipKind, label: type === 'GEOIP' ? 'geoip: netflix' : m.mihomo_chip_ruleset({ name: 'netflix' }) }],
       };
     }
     if (p.includes('category-ru') || p.includes('russian-services')) {
       return {
         serviceKey: 'russian-services',
-        title: 'Российские сервисы',
-        subtitle: 'Яндекс, VK, Mail.ru, Госуслуги',
+        title: m.mihomo_svc_ru_title(),
+        subtitle: m.mihomo_svc_ru_sub(),
         chips: [{ kind: chipKind, label: 'geosite: category-ru' }],
       };
     }
     if (p.includes('category-media-ru-blocked') || p.includes('rkn') || p.includes('all-blocked') || p.includes('unavailable-in-russia')) {
       return {
         serviceKey: 'rkn',
-        title: 'Заблокировано в РФ',
-        subtitle: 'Сайты и СМИ из реестра блокировок',
+        title: m.mihomo_svc_rkn_title(),
+        subtitle: m.mihomo_svc_rkn_sub(),
         chips: [{ kind: chipKind, label: 'geosite: category-media-ru-blocked' }],
       };
     }
     if (p.includes('category-ads-all') || p.includes('adblock') || p === 'ads') {
       return {
         serviceKey: 'ads',
-        title: 'Блокировка рекламы',
-        subtitle: 'Баннеры и трекеры',
+        title: m.mihomo_svc_ads_title(),
+        subtitle: m.mihomo_svc_ads_sub(),
         chips: [{ kind: chipKind, label: 'geosite: category-ads-all' }],
       };
     }
@@ -196,7 +196,7 @@
     if (type.startsWith('IP-CIDR') || type === 'GEOIP' || type === 'IP-ASN') {
       return {
         title: payload || type,
-        subtitle: 'IP-адреса и подсети',
+        subtitle: m.mihomo_svc_ip_sub(),
         chips: [{ kind: 'ip' as const, label: type === 'GEOIP' ? `geoip: ${payload}` : payload }],
       };
     }
@@ -204,7 +204,7 @@
     if (type.startsWith('DOMAIN')) {
       return {
         title: payload || type,
-        subtitle: 'Доменные имена',
+        subtitle: m.mihomo_svc_domain_sub(),
         chips: [{ kind: 'domain' as const, label: payload }],
       };
     }
@@ -212,15 +212,15 @@
     if (type === 'GEOSITE') {
       return {
         title: payload || type,
-        subtitle: 'Набор доменов',
-        chips: [{ kind: 'ruleset' as const, label: `набор: ${payload}` }],
+        subtitle: m.mihomo_svc_geosite_sub(),
+        chips: [{ kind: 'ruleset' as const, label: m.mihomo_chip_ruleset({ name: payload }) }],
       };
     }
 
     if (type === 'RULE-SET') {
       return {
         title: payload || type,
-        subtitle: 'Внешний набор правил (.mrs)',
+        subtitle: m.mihomo_svc_ruleset_sub(),
         chips: [{ kind: 'ruleset' as const, label: `rule-set: ${payload}` }],
       };
     }
@@ -304,10 +304,10 @@
         if (deletingGroup.id) {
           await api.mihomoNativeDeleteGroup(deletingGroup.id, true);
         }
-        notifications.success(`Группа «${deletingGroup.name}» удалена`);
+        notifications.success(m.mihomo_group_deleted_success({ name: deletingGroup.name }));
         onReload();
       } catch (e) {
-        notifications.error(e instanceof Error ? e.message : 'Не удалось удалить группу');
+        notifications.error(e instanceof Error ? e.message : m.mihomo_group_delete_error());
       } finally {
         deletingGroup = null;
         deleteConfirmOpen = false;
@@ -324,10 +324,10 @@
           await api.mihomoNativeDeleteRule(r.id, isLast);
         }
       }
-      notifications.success(deletingRules.length > 1 ? 'Правила удалены' : 'Правило удалено');
+      notifications.success(deletingRules.length > 1 ? m.mihomo_rules_deleted_success() : m.mihomo_rule_deleted_success());
       onReload();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Не удалось удалить правила');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_rules_delete_error());
     } finally {
       deletingRules = [];
       deleteConfirmOpen = false;
@@ -347,7 +347,7 @@
       }
       onReload();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Не удалось обновить статус правил');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_rules_toggle_error());
     }
   }
 
@@ -380,10 +380,10 @@
       const ids = allReorderedRules.map((r) => r.id);
       await api.mihomoNativeReorderRules(ids);
       await api.mihomoReload();
-      notifications.success('Порядок правил обновлён');
+      notifications.success(m.mihomo_rules_reordered_success());
       onReload();
     } catch (e) {
-      notifications.error(e instanceof Error ? e.message : 'Не удалось сохранить порядок правил');
+      notifications.error(e instanceof Error ? e.message : m.mihomo_rules_reorder_error());
     }
   }
 
@@ -500,7 +500,7 @@
       localStorage.removeItem(STORAGE_KEY_COLUMNS);
       localStorage.removeItem(STORAGE_KEY_HEIGHTS);
     } catch {}
-    notifications.success('Расположение и размеры окон возвращены к умолчанию');
+    notifications.success(m.mihomo_layout_reset_success());
   }
 
   function handleBlockDragStart(e: DragEvent, secKey: SectionKey) {
@@ -701,8 +701,8 @@
   <!-- View Toolbar: Layout Toggle & Reset Windows -->
   <div class="beginner-view-toolbar">
     <div class="toolbar-title-hint">
-      <span class="mode-tag">Простой режим</span>
-      <span class="mode-sub">Блоки можно перетаскивать мышкой и растягивать по высоте</span>
+      <span class="mode-tag">{m.mihomo_beg_mode_tag()}</span>
+      <span class="mode-sub">{m.mihomo_beg_mode_sub()}</span>
     </div>
     <div class="toolbar-actions">
       <div class="layout-toggle-group">
@@ -711,20 +711,20 @@
           class="layout-btn"
           class:active={layoutMode === 'split'}
           onclick={() => setLayoutMode('split')}
-          title="2 колонки (широкий экран)"
+          title={m.mihomo_win_2col_title()}
         >
           <Columns size={14} />
-          <span class="btn-text">2 колонки</span>
+          <span class="btn-text">{m.mihomo_win_2col_btn()}</span>
         </button>
         <button
           type="button"
           class="layout-btn"
           class:active={layoutMode === 'stack'}
           onclick={() => setLayoutMode('stack')}
-          title="1 колонка (стек)"
+          title={m.mihomo_win_1col_title()}
         >
           <LayoutGrid size={14} />
-          <span class="btn-text">1 колонка</span>
+          <span class="btn-text">{m.mihomo_win_1col_btn()}</span>
         </button>
       </div>
 
@@ -732,10 +732,10 @@
         type="button"
         class="toolbar-toggle-btn"
         onclick={resetAllLayout}
-        title="Сбросить расположение и размеры всех окон по умолчанию"
+        title={m.mihomo_win_reset_all_title()}
       >
         <RotateCcw size={14} />
-        <span>Сброс окон</span>
+        <span>{m.mihomo_win_reset_all_btn()}</span>
       </button>
     </div>
   </div>
@@ -749,16 +749,16 @@
             draggable="true"
             ondragstart={(e) => handleBlockDragStart(e, 'flow')}
             ondragend={handleBlockDragEnd}
-            title="Зажмите и перетащите блок «Схема потоков» мышкой"
+            title={m.mihomo_beg_flow_drag_title()}
             role="button"
             tabindex="0"
-            aria-label="Перетащить блок «Схема потоков»"
+            aria-label={m.mihomo_beg_flow_drag_aria()}
           >
             <GripVertical size={14} class="drag-grip-icon" />
           </div>
           <div>
-            <div class="section-card-title">Схема потоков</div>
-            <div class="section-card-sub">интерактивная карта трафика</div>
+            <div class="section-card-title">{m.mihomo_beg_flow_title()}</div>
+            <div class="section-card-sub">{m.mihomo_beg_flow_sub()}</div>
           </div>
         </div>
         <div class="panel-win-btns">
@@ -767,8 +767,8 @@
               type="button"
               class="panel-win-btn"
               onclick={() => resetSectionHeight('flow')}
-              title="Сбросить высоту к исходной (двойной клик на нижней границе)"
-              aria-label="Сбросить высоту"
+              title={m.mihomo_win_reset_height_title()}
+              aria-label={m.mihomo_win_reset_height_aria()}
             >
               <RotateCcw size={12} />
             </button>
@@ -778,8 +778,8 @@
             class="panel-win-btn"
             class:active={maximizedSection === 'flow'}
             onclick={() => toggleMaximize('flow')}
-            title={maximizedSection === 'flow' ? 'Восстановить размер окна' : 'Развернуть во весь экран'}
-            aria-label={maximizedSection === 'flow' ? 'Восстановить' : 'Развернуть'}
+            title={maximizedSection === 'flow' ? m.mihomo_win_restore_title() : m.mihomo_win_maximize_title()}
+            aria-label={maximizedSection === 'flow' ? m.mihomo_win_restore_aria() : m.mihomo_win_maximize_aria()}
           >
             {#if maximizedSection === 'flow'}
               <Minimize2 size={13} />
@@ -810,16 +810,16 @@
             draggable="true"
             ondragstart={(e) => handleBlockDragStart(e, 'groups')}
             ondragend={handleBlockDragEnd}
-            title="Зажмите и перетащите блок «Группы прокси» мышкой"
+            title={m.mihomo_beg_groups_drag_title()}
             role="button"
             tabindex="0"
-            aria-label="Перетащить блок «Группы прокси»"
+            aria-label={m.mihomo_beg_groups_drag_aria()}
           >
             <GripVertical size={14} class="drag-grip-icon" />
           </div>
           <div>
-            <div class="section-card-title">Группы прокси</div>
-            <div class="section-card-sub">автопереключение и задержки · {groups.length}</div>
+            <div class="section-card-title">{m.mihomo_beg_groups_title()}</div>
+            <div class="section-card-sub">{m.mihomo_beg_groups_sub({ count: groups.length })}</div>
           </div>
         </div>
         <div class="panel-win-btns">
@@ -828,8 +828,8 @@
               type="button"
               class="panel-win-btn"
               onclick={() => resetSectionHeight('groups')}
-              title="Сбросить высоту к исходной (двойной клик на нижней границе)"
-              aria-label="Сбросить высоту"
+              title={m.mihomo_win_reset_height_title()}
+              aria-label={m.mihomo_win_reset_height_aria()}
             >
               <RotateCcw size={12} />
             </button>
@@ -839,8 +839,8 @@
             class="panel-win-btn"
             class:active={maximizedSection === 'groups'}
             onclick={() => toggleMaximize('groups')}
-            title={maximizedSection === 'groups' ? 'Восстановить размер окна' : 'Развернуть во весь экран'}
-            aria-label={maximizedSection === 'groups' ? 'Восстановить' : 'Развернуть'}
+            title={maximizedSection === 'groups' ? m.mihomo_win_restore_title() : m.mihomo_win_maximize_title()}
+            aria-label={maximizedSection === 'groups' ? m.mihomo_win_restore_aria() : m.mihomo_win_maximize_aria()}
           >
             {#if maximizedSection === 'groups'}
               <Minimize2 size={13} />
@@ -852,7 +852,7 @@
       </div>
       <div class="groups-inner-scroll">
         {#if groups.length === 0}
-          <div class="empty-compact">Нет созданных групп прокси</div>
+          <div class="empty-compact">{m.mihomo_beg_groups_empty()}</div>
         {:else}
           <div class="groups-list">
             {#each groups as group (group.id || group.name)}
@@ -883,31 +883,31 @@
             draggable="true"
             ondragstart={(e) => handleBlockDragStart(e, 'rules')}
             ondragend={handleBlockDragEnd}
-            title="Зажмите и перетащите блок «Что и куда отправлять» мышкой"
+            title={m.mihomo_beg_rules_drag_title()}
             role="button"
             tabindex="0"
-            aria-label="Перетащить блок «Правила»"
+            aria-label={m.mihomo_beg_rules_drag_aria()}
           >
             <GripVertical size={14} class="drag-grip-icon" />
           </div>
           <div class="title-group">
-            <h2 class="title">Что и куда отправлять</h2>
-            <p class="sub">Правила применяются сверху вниз. Срабатывает первое подходящее.</p>
+            <h2 class="title">{m.mihomo_beg_rules_title()}</h2>
+            <p class="sub">{m.mihomo_beg_rules_sub()}</p>
           </div>
         </div>
 
         <div class="header-right">
           <div class="counter">
-            {pluralize(groupedCards.length, RULE_WORDS)}
+            {m.mihomo_rules_count({ count: groupedCards.length })}
           </div>
           <Button variant="secondary" size="sm" onclick={handleOpenTemplates}>
             {#snippet iconBefore()}
               <Sparkles size={14} aria-hidden="true" />
             {/snippet}
-            Шаблоны
+            {m.mihomo_templates_btn()}
           </Button>
           <Button variant="primary" size="sm" onclick={handleOpenAdd}>
-            + Правило
+            {m.mihomo_add_rule_short_btn()}
           </Button>
           <div class="panel-win-btns">
             {#if customHeights['rules']}
@@ -915,8 +915,8 @@
                 type="button"
                 class="panel-win-btn"
                 onclick={() => resetSectionHeight('rules')}
-                title="Сбросить высоту к исходной (двойной клик на нижней границе)"
-                aria-label="Сбросить высоту"
+                title={m.mihomo_win_reset_height_title()}
+                aria-label={m.mihomo_win_reset_height_aria()}
               >
                 <RotateCcw size={12} />
               </button>
@@ -926,8 +926,8 @@
               class="panel-win-btn"
               class:active={maximizedSection === 'rules'}
               onclick={() => toggleMaximize('rules')}
-              title={maximizedSection === 'rules' ? 'Восстановить размер окна' : 'Развернуть во весь экран'}
-              aria-label={maximizedSection === 'rules' ? 'Восстановить' : 'Развернуть'}
+              title={maximizedSection === 'rules' ? m.mihomo_win_restore_title() : m.mihomo_win_maximize_title()}
+              aria-label={maximizedSection === 'rules' ? m.mihomo_win_restore_aria() : m.mihomo_win_maximize_aria()}
             >
               {#if maximizedSection === 'rules'}
                 <Minimize2 size={13} />
@@ -946,19 +946,19 @@
           </div>
         {:else if groupedCards.length === 0}
           <div class="empty">
-            <SectionLabel>Пока нет правил</SectionLabel>
+            <SectionLabel>{m.mihomo_beg_rules_empty_title()}</SectionLabel>
             <p class="empty-text">
-              Воспользуйтесь мастером настройки, чтобы направить нужные сервисы (YouTube, Telegram, Discord и др.) через прокси-группы.
+              {m.mihomo_beg_rules_empty_desc()}
             </p>
             <div class="empty-action">
               <Button variant="secondary" size="sm" onclick={handleOpenTemplates}>
                 {#snippet iconBefore()}
                   <Sparkles size={14} aria-hidden="true" />
                 {/snippet}
-                Шаблоны
+                {m.mihomo_templates_btn()}
               </Button>
               <Button variant="primary" size="sm" onclick={handleOpenAdd}>
-                + Создать правило через мастер
+                {m.mihomo_beg_create_wizard_btn()}
               </Button>
             </div>
           </div>
@@ -995,6 +995,7 @@
     <div
       id={`section-${secKey}`}
       class="expert-section"
+      role="region"
       class:is-dragging={draggedSection === secKey}
       class:has-custom-height={Boolean(customHeights[secKey])}
       class:is-resizing={resizingSection === secKey}
@@ -1023,8 +1024,10 @@
       {#if layoutMode === 'split' && colIndex === 1 && !maximizedSection}
         <div
           class="win-resize-edge-e"
+          role="separator"
+          aria-orientation="vertical"
           onpointerdown={(e) => handleStartResize(e, secKey, 'e', colIndex)}
-          title="Потяните правую границу окна для изменения ширины (как в Windows OS)"
+          title={m.mihomo_win_resize_e_title()}
         ></div>
       {/if}
 
@@ -1033,16 +1036,17 @@
         class="win-resize-bar"
         onpointerdown={(e) => handleStartResize(e, secKey, 's')}
         ondblclick={() => resetSectionHeight(secKey)}
-        title="Потяните для изменения высоты окна (двойной клик — сброс)"
+        title={m.mihomo_win_resize_s_title()}
         role="separator"
-        aria-label="Изменить высоту блока"
+        aria-label={m.mihomo_win_resize_s_aria()}
       >
         <div class="win-resize-line"></div>
         <div class="win-resize-pill"></div>
         <div
           class="win-resize-corner"
+          role="separator"
           onpointerdown={(e) => handleStartResize(e, secKey, 'se')}
-          title="Потяните угол для изменения размера (как в Windows OS)"
+          title={m.mihomo_win_resize_se_title()}
         >
           <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
             <circle cx="2" cy="8" r="1" fill="currentColor" opacity="0.6" />
@@ -1076,6 +1080,7 @@
           {#if !maximizedSection}
             <div
               class="col-drop-zone"
+              role="region"
               class:is-active={draggedSection && dragOverCol === 1}
               ondragover={(e) => handleColDragOver(e, 1)}
               ondragleave={handleColDragLeave}
@@ -1084,7 +1089,7 @@
               {#if draggedSection && dragOverCol === 1}
                 <div class="drop-zone-content">
                   <Plus size={14} />
-                  <span>Переместить в левую колонку</span>
+                  <span>{m.mihomo_win_move_left_col()}</span>
                 </div>
               {/if}
             </div>
@@ -1098,12 +1103,11 @@
           class="beginner-col-splitter"
           class:dragging={isDraggingSplitter}
           role="separator"
-          tabindex="0"
           aria-orientation="vertical"
-          aria-label="Изменить ширину колонок"
+          aria-label={m.mihomo_win_splitter_aria()}
           onpointerdown={handleSplitterPointerDown}
           ondblclick={resetSplitter}
-          title="Потяните для изменения ширины колонок (двойной клик — сброс 55%)"
+          title={m.mihomo_win_splitter_55_title()}
         >
           <div class="splitter-hover-glow"></div>
         </div>
@@ -1120,6 +1124,7 @@
           {#if !maximizedSection}
             <div
               class="col-drop-zone"
+              role="region"
               class:is-active={draggedSection && dragOverCol === 2}
               ondragover={(e) => handleColDragOver(e, 2)}
               ondragleave={handleColDragLeave}
@@ -1128,7 +1133,7 @@
               {#if draggedSection && dragOverCol === 2}
                 <div class="drop-zone-content">
                   <Plus size={14} />
-                  <span>Переместить в правую колонку</span>
+                  <span>{m.mihomo_win_move_right_col()}</span>
                 </div>
               {/if}
             </div>
@@ -1207,13 +1212,13 @@
   <!-- Delete Rule Confirm Modal -->
   <ConfirmModal
     open={deleteConfirmOpen}
-    title={deletingGroup ? 'Удалить группу прокси?' : 'Удалить правило?'}
+    title={deletingGroup ? m.mihomo_confirm_del_group_title() : m.mihomo_confirm_del_rule_title()}
     message={deletingGroup
-      ? `Вы действительно хотите удалить группу «${deletingGroup.name}»? Связанные с ней правила могут потребовать обновления.`
+      ? m.mihomo_confirm_del_group_msg({ name: deletingGroup.name })
       : deletingRules.length > 1
-        ? `Удалить ${deletingRules.length} правил(а) для этого сервиса?`
-        : 'Вы действительно хотите удалить это правило маршрутизации Mihomo?'}
-    confirmLabel="Удалить"
+        ? m.mihomo_confirm_del_rules_multi_msg({ count: deletingRules.length })
+        : m.mihomo_confirm_del_rule_msg()}
+    confirmLabel={m.common_delete()}
     variant="danger"
     onConfirm={confirmDelete}
     onClose={() => {
@@ -1229,12 +1234,6 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-  }
-
-  .rules-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
   }
 
   .panel-header {
@@ -1291,32 +1290,6 @@
 
   .card-shell.is-drag-over {
     border-top: 2px solid var(--accent);
-  }
-
-  .groups-panel {
-    margin-bottom: 16px;
-  }
-
-  .groups-header {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-bottom: 8px;
-    padding: 0 2px;
-  }
-
-  .groups-title {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-
-  .groups-sub {
-    font-size: 12px;
-    color: var(--text-muted);
-    opacity: 0.85;
   }
 
   .loading-box {

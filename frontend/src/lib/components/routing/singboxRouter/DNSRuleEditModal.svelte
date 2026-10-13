@@ -605,7 +605,7 @@
 
 			{#if domainCapableRules && domainCapableRules.length > 0}
 				<div class="template-section">
-					<div class="template-label">Скопировать условия из правил маршрутизации:</div>
+					<div class="template-label">{m.routing_singbox_dnsrule_copy_from_rules()}</div>
 					<div class="rule-import-chips">
 						{#each domainCapableRules as r}
 							{@const label = r.payload || r.name || ''}
@@ -614,7 +614,7 @@
 									type="button"
 									class="rule-chip"
 									onclick={() => applyExistingRule(r)}
-									title={`Импортировать домены из правила ${r.type ? `${r.type}: ` : ''}${label}`}
+									title={m.routing_singbox_dnsrule_import_domains_title({ rule: `${r.type ? `${r.type}: ` : ''}${label}` })}
 								>
 									📋 {r.type ? `${r.type}: ` : ''}{label}
 								</button>
@@ -766,12 +766,12 @@
 		font-weight: 600;
 		color: var(--text-secondary);
 	}
-	.template-chips, .rule-import-chips {
+	.rule-import-chips {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 5px;
 	}
-	.tpl-chip, .rule-chip {
+	.rule-chip {
 		display: inline-flex;
 		align-items: center;
 		padding: 3px 8px;
@@ -784,17 +784,9 @@
 		cursor: pointer;
 		transition: all 0.15s ease;
 	}
-	.tpl-chip:hover, .rule-chip:hover {
+	.rule-chip:hover {
 		border-color: var(--color-primary, #3b82f6);
 		background: var(--color-primary-bg, rgba(59, 130, 246, 0.1));
 		color: var(--color-primary, #3b82f6);
-	}
-	.rule-import-box {
-		margin-top: 4px;
-		padding-top: 4px;
-		border-top: 1px dashed var(--border);
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
 	}
 </style>

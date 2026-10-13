@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { Activity, RefreshCw, Search, Zap } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
@@ -88,7 +89,7 @@
 		try {
 			await api.mihomoRuntimeRefreshProvider(provider.name);
 			await load(true);
-			notifications.success(`Провайдер «${provider.name}» обновлён`);
+			notifications.success(m.mihomo_runtime_provider_refreshed({ name: provider.name }));
 		} catch (error) { notifications.error(error instanceof Error ? error.message : String(error)); }
 		finally { refreshingProvider = null; }
 	}
@@ -105,9 +106,9 @@
 
 <section class="runtime">
 	<div class="toolbar">
-		<SegmentedControl value={view} options={[{ value: 'groups', label: `Прокси (${groups.length})` }, { value: 'providers', label: `Провайдеры (${providers.length})` }]} onchange={(value) => view = value as typeof view} ariaLabel="Раздел Mihomo" />
-		<label class="search"><Search size={15} /><input bind:value={query} placeholder="Поиск групп и прокси" /></label>
-		<Button variant="secondary" size="sm" onclick={() => load()} disabled={loading}><span class:spin={loading}><RefreshCw size={14} /></span>Обновить</Button>
+		<SegmentedControl value={view} options={[{ value: 'groups', label: m.mihomo_runtime_tab_proxies({ count: groups.length }) }, { value: 'providers', label: m.mihomo_runtime_tab_providers({ count: providers.length }) }]} onchange={(value) => view = value as typeof view} ariaLabel={m.mihomo_runtime_section_aria()} />
+		<label class="search"><Search size={15} /><input bind:value={query} placeholder={m.mihomo_runtime_search_placeholder()} /></label>
+		<Button variant="secondary" size="sm" onclick={() => load()} disabled={loading}><span class:spin={loading}><RefreshCw size={14} /></span>{m.mihomo_config_refresh_btn()}</Button>
 	</div>
 
 	{#if view === 'groups'}
@@ -115,8 +116,8 @@
 			{#each visibleGroups as group (group.name)}
 				<article class="group-card">
 					<header>
-						<div><h3>{displayName(group.name)}</h3><span>{group.type} · выбрано {group.now ? displayName(group.now) : '—'}</span></div>
-						<button class="test" onclick={() => testGroup(group)} disabled={testing !== null} title="Проверить задержку"><span class:spin={testing === group.name}><Zap size={15} /></span></button>
+						<div><h3>{displayName(group.name)}</h3><span>{m.mihomo_runtime_group_selected({ type: group.type ?? '', now: group.now ? displayName(group.now) : '—' })}</span></div>
+						<button class="test" onclick={() => testGroup(group)} disabled={testing !== null} title={m.mihomo_runtime_check_delay_title()}><span class:spin={testing === group.name}><Zap size={15} /></span></button>
 					</header>
 					<div class="nodes">
 						{#each group.all ?? [] as name}
@@ -129,18 +130,18 @@
 					</div>
 				</article>
 			{/each}
-			{#if !loading && visibleGroups.length === 0}<div class="empty">Группы не найдены. Примените конфигурацию Mihomo или измените поиск.</div>{/if}
+			{#if !loading && visibleGroups.length === 0}<div class="empty">{m.mihomo_runtime_groups_empty()}</div>{/if}
 		</div>
 	{:else}
 		<div class="providers">
 			{#each providers as provider (provider.name)}
 				<article class="provider-card">
 					<div class="provider-icon"><Activity size={18} /></div>
-					<div><h3>{providerName(provider.name)}</h3><p><span title={provider.name}>{provider.vehicleType || provider.type}</span> · {provider.proxies?.length ?? 0} прокси{provider.updatedAt ? ` · ${new Date(provider.updatedAt).toLocaleString()}` : ''}</p></div>
-					<Button variant="secondary" size="sm" onclick={() => refreshProvider(provider)} loading={refreshingProvider === provider.name}>Обновить</Button>
+					<div><h3>{providerName(provider.name)}</h3><p><span title={provider.name}>{provider.vehicleType || provider.type}</span> · {m.mihomo_runtime_provider_proxies_count({ count: provider.proxies?.length ?? 0 })}{provider.updatedAt ? ` · ${new Date(provider.updatedAt).toLocaleString()}` : ''}</p></div>
+					<Button variant="secondary" size="sm" onclick={() => refreshProvider(provider)} loading={refreshingProvider === provider.name}>{m.mihomo_config_refresh_btn()}</Button>
 				</article>
 			{/each}
-			{#if !loading && providers.length === 0}<div class="empty">Провайдеров пока нет.</div>{/if}
+			{#if !loading && providers.length === 0}<div class="empty">{m.mihomo_runtime_providers_empty()}</div>{/if}
 		</div>
 	{/if}
 </section>

@@ -357,52 +357,6 @@
   .dns-btn:hover {
     color: var(--text-primary);
   }
-  .out-sub-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 6px;
-    padding-top: 5px;
-    border-top: 1px dashed var(--border);
-    font-size: 11px;
-    color: var(--text-muted);
-    min-width: 0;
-    overflow: hidden;
-  }
-  .wan-link-btn,
-  .dns-link-btn {
-    background: transparent;
-    border: none;
-    padding: 0;
-    font-family: inherit;
-    font-size: 11px;
-    color: var(--text-muted);
-    cursor: pointer;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    overflow: hidden;
-    text-decoration: underline;
-    text-decoration-style: dashed;
-    text-underline-offset: 2px;
-  }
-  .wan-link-btn {
-    flex-shrink: 1;
-  }
-  .wan-link-btn:hover,
-  .dns-link-btn:hover {
-    color: var(--accent);
-  }
-  .dns-text {
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    overflow: hidden;
-    flex-shrink: 0;
-  }
-  .sub-sep {
-    color: var(--text-muted);
-    opacity: 0.6;
-    flex-shrink: 0;
-  }
   .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: middle; }
   .dot.muted { background: var(--text-muted); }
   .acc { color: var(--accent); font-weight: 600; }

@@ -894,16 +894,16 @@
               <span class="susanin-icon font-mono">⚡</span>
               <div class="susanin-meta">
                 <div class="susanin-title-line">
-                  <Badge variant="success" size="sm">РАДАР</Badge>
-                  <span class="susanin-title">Адаптивный радар Susanin</span>
+                  <Badge variant="success" size="sm">{m.sb_router_susanin_radar_badge()}</Badge>
+                  <span class="susanin-title">{m.sb_router_susanin_sec_title()}</span>
                 </div>
                 <div class="susanin-desc">
-                  <span class="font-mono">RULE-SET: susanin</span> · автоматический обход заблокированных IP
+                  <span class="font-mono">RULE-SET: susanin</span> · {m.sb_router_susanin_radar_card_desc()}
                 </div>
               </div>
             </div>
             <div class="susanin-radar-right">
-              <span class="susanin-outbound-label">Выход:</span>
+              <span class="susanin-outbound-label">{m.sb_router_susanin_radar_outbound_lbl()}</span>
               <div class="susanin-outbound-chip">
                 <Zap size={12} />
                 <span>{susaninOutbound}</span>

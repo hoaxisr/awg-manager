@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { api } from '$lib/api/client';
   import { notifications } from '$lib/stores/notifications';
   import { Button } from '$lib/components/ui';
@@ -21,8 +22,11 @@
     activeAction = action;
     try {
       await api.mihomoReconcile(action, true);
-      const actionLabel = action === 'rollback_to_lkg' ? 'Откат к рабочей копии (LKG)' : 'Пересборка конфигурации';
-      notifications.success(`${actionLabel} выполнен успешно`);
+      notifications.success(
+        action === 'rollback_to_lkg'
+          ? m.mihomo_recovery_rollback_success()
+          : m.mihomo_recovery_regen_success()
+      );
       onRestored?.();
     } catch (e) {
       notifications.error(e instanceof Error ? e.message : String(e));
@@ -45,7 +49,7 @@
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
-      notifications.success('Отчёт об аварии сохранён');
+      notifications.success(m.mihomo_recovery_evidence_saved());
     } catch (e) {
       notifications.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -61,9 +65,9 @@
       <AlertTriangle size={22} class="alert-icon" />
     </div>
     <div class="banner-text">
-      <h4>Требуется восстановление конфигурации Mihomo</h4>
+      <h4>{m.mihomo_recovery_title()}</h4>
       <p>
-        Произошел сбой при сохранении настроек или после обновления пакета. Система перешла в безопасный режим (Recovery Mode), чтобы предотвратить потерю сетевого доступа. Выберите подходящий вариант восстановления:
+        {m.mihomo_recovery_desc()}
       </p>
     </div>
   </div>
@@ -75,15 +79,15 @@
       <div class="card-head">
         <div class="card-title-row">
           <RefreshCw size={16} class="card-head-icon text-accent" />
-          <span class="card-title">Пересобрать из настроек</span>
+          <span class="card-title">{m.mihomo_recovery_regen_title()}</span>
         </div>
-        <span class="badge badge-accent">Рекомендуется</span>
+        <span class="badge badge-accent">{m.mihomo_recovery_recommended_badge()}</span>
       </div>
       <p class="card-desc">
-        Заново скомпилирует конфигурацию из ваших текущих правил и пересоздаст сетевые интерфейсы роутера. <strong>Ваши добавленные сервисы и правила сохранятся.</strong>
+        {@html m.mihomo_recovery_regen_desc()}
       </p>
       <div class="card-meta">
-        <span class="meta-label">Когда жать:</span> после обновления пакета, перезагрузки роутера или если сбой был временным.
+        <span class="meta-label">{m.mihomo_recovery_when_lbl()}</span> {m.mihomo_recovery_regen_when()}
       </div>
       <div class="card-action">
         <Button
@@ -94,7 +98,7 @@
           fullWidth
         >
           <RefreshCw size={14} class={reconciling && activeAction === 'regenerate_from_desired' ? 'spin' : ''} />
-          {reconciling && activeAction === 'regenerate_from_desired' ? 'Пересборка…' : 'Пересобрать конфигурацию'}
+          {reconciling && activeAction === 'regenerate_from_desired' ? m.mihomo_recovery_regen_busy() : m.mihomo_recovery_regen_btn()}
         </Button>
       </div>
     </div>
@@ -104,15 +108,15 @@
       <div class="card-head">
         <div class="card-title-row">
           <RotateCcw size={16} class="card-head-icon text-danger" />
-          <span class="card-title">Откатить к рабочей копии</span>
+          <span class="card-title">{m.mihomo_recovery_rollback_title()}</span>
         </div>
-        <span class="badge badge-warning">При сбое настроек</span>
+        <span class="badge badge-warning">{m.mihomo_recovery_rollback_badge()}</span>
       </div>
       <p class="card-desc">
-        Отменит последние изменения и вернет роутер к предыдущей гарантированно рабочей точке (Last Known Good), когда всё работало без сбоев.
+        {m.mihomo_recovery_rollback_desc()}
       </p>
       <div class="card-meta">
-        <span class="meta-label">Когда жать:</span> если вы вручную изменили правила или узел, после чего пропал интернет.
+        <span class="meta-label">{m.mihomo_recovery_when_lbl()}</span> {m.mihomo_recovery_rollback_when()}
       </div>
       <div class="card-action">
         <Button
@@ -123,7 +127,7 @@
           fullWidth
         >
           <RotateCcw size={14} class={reconciling && activeAction === 'rollback_to_lkg' ? 'spin' : ''} />
-          {reconciling && activeAction === 'rollback_to_lkg' ? 'Откат…' : 'Откатить к LKG'}
+          {reconciling && activeAction === 'rollback_to_lkg' ? m.mihomo_recovery_rollback_busy() : m.mihomo_recovery_rollback_btn()}
         </Button>
       </div>
     </div>
@@ -138,7 +142,7 @@
       aria-expanded={showFaq}
     >
       <Info size={14} class="faq-icon" />
-      <span>Что такое LKG и безопасный режим? Пояснение для пользователя</span>
+      <span>{m.mihomo_recovery_faq_toggle()}</span>
       {#if showFaq}
         <ChevronUp size={14} class="faq-chevron" />
       {:else}
@@ -151,28 +155,28 @@
         <div class="faq-item">
           <div class="faq-item-title">
             <CheckCircle2 size={14} class="text-accent inline-icon" />
-            Что такое LKG (Last Known Good)?
+            {m.mihomo_recovery_faq_q1()}
           </div>
           <p>
-            Это автоматическая <strong>«точка восстановления»</strong> маршрутизации. Каждый раз, когда Mihomo успешно применяет настройки и все порты работают штатно, система сохраняет проверенный снимок (правила, прокси и мосты). Если в будущем при редактировании возникнет ошибка, вы всегда сможете мгновенно вернуться к рабочему состоянию.
+            {@html m.mihomo_recovery_faq_a1()}
           </p>
         </div>
         <div class="faq-item">
           <div class="faq-item-title">
             <AlertTriangle size={14} class="text-danger inline-icon" />
-            Почему добавление правил сейчас заблокировано?
+            {m.mihomo_recovery_faq_q2()}
           </div>
           <p>
-            Чтобы роутер не ушел в циклический сбой, сторож транзакций блокирует изменение правил, пока текущий сбой не устранен. Как только вы нажмете <em>«Пересобрать конфигурацию»</em> или <em>«Откатить к LKG»</em>, блокировка немедленно снимется.
+            {@html m.mihomo_recovery_faq_a2()}
           </p>
         </div>
         <div class="faq-item">
           <div class="faq-item-title">
             <Sparkles size={14} class="text-accent inline-icon" />
-            Что делать, если ошибка повторяется?
+            {m.mihomo_recovery_faq_q3()}
           </div>
           <p>
-            Вы можете скачать технический отчет об аварии с помощью кнопки ниже или открыть <strong>ИИ-помощник</strong> в правом верхнем углу — он умеет автоматически диагностировать туннели и исправлять маршрутизацию роутера.
+            {@html m.mihomo_recovery_faq_a3()}
           </p>
         </div>
       </div>
@@ -188,7 +192,7 @@
       disabled={downloading}
     >
       <Download size={14} class={downloading ? 'spin' : ''} />
-      {downloading ? 'Сохранение…' : 'Скачать отчёт об аварии (Evidence)'}
+      {downloading ? m.mihomo_recovery_evidence_busy() : m.mihomo_recovery_evidence_btn()}
     </Button>
   </div>
 </div>
@@ -324,10 +328,6 @@
     color: var(--text-secondary, #94a3b8);
   }
 
-  .card-desc strong {
-    color: var(--text-primary, #f8fafc);
-  }
-
   .card-meta {
     font-size: 11.5px;
     line-height: 1.4;
@@ -410,11 +410,6 @@
     font-size: 12px;
     line-height: 1.45;
     color: var(--text-secondary, #94a3b8);
-  }
-
-  .faq-item p em,
-  .faq-item p strong {
-    color: var(--text-primary, #f8fafc);
   }
 
   /* Footer */
