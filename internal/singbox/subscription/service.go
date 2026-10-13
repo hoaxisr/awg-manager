@@ -72,6 +72,13 @@ type ConfigMutator interface {
 	SubscriptionOutbounds() []map[string]any
 }
 
+// ProxyOwnershipDescription is the stable NDMS description for a persisted
+// subscription or aggregate group. User labels are editable and therefore
+// cannot safely prove ownership of a retained ProxyN slot.
+func ProxyOwnershipDescription(kind, id string) string {
+	return "awg-manager:singbox:" + kind + ":" + id
+}
+
 // Service is the subscription business-logic facade.
 type Service struct {
 	store   *Store

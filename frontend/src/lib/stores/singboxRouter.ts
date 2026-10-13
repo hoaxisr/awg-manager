@@ -4,6 +4,7 @@ import { api } from '$lib/api/client';
 import { awgTags } from './awgTags';
 import { subscriptionsStore } from './subscriptions';
 import { singboxTunnels } from './singbox';
+import { mihomoInventoryStore } from './mihomoNative';
 import { buildOutboundOptions, type OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
 import { reconcileRuleUiKeys } from '$lib/utils/ruleUiKeys';
 import {
@@ -25,6 +26,7 @@ import type {
 } from '$lib/types';
 
 function createSingboxRouterStore() {
+	const initialLoadTimeoutMs = 12_000;
 	const status = writable<SingboxRouterStatus | null>(null);
 	const settings = writable<SingboxRouterSettings | null>(null);
 	const rules = writable<SingboxRouterRule[]>([]);
@@ -40,21 +42,30 @@ function createSingboxRouterStore() {
 	const loading = writable(false);
 	const initialized = writable(false);
 	const error = writable<string | null>(null);
+	let loadAllPromise: Promise<void> | null = null;
 
 	// options — unified outbound dropdown groups for sub-tabs and wizard.
 	// Combines awgTags + sing-box tunnels + composite outbounds, with
 	// subscription labels mixed in for source='subscription' composites.
 	// Defensive: components subscribing during cold-load see [] groups.
 	const options = derived(
-		[outbounds, singboxTunnels, awgTags, subscriptionsStore],
-		([$outbounds, $sb, $awg, $subs]) =>
-			buildOutboundOptions(
+		[outbounds, singboxTunnels, awgTags, subscriptionsStore, settings, mihomoInventoryStore],
+		([$outbounds, $sb, $awg, $subs, $settings, $mihomo]) => {
+			const groups = ($mihomo.data?.groups && $mihomo.data.groups.length > 0)
+				? $mihomo.data.groups
+				: ($settings?.proxyGroups ?? []);
+			const proxies = $mihomo.data?.proxies ?? [];
+			return buildOutboundOptions(
 				$awg.data,
 				$sb.data,
 				$outbounds,
 				true,
 				$subs.data,
-			),
+				null,
+				groups,
+				proxies
+			);
+		},
 	);
 
 	// optionsReady — true once all PollingStore sources for `options`
@@ -63,11 +74,11 @@ function createSingboxRouterStore() {
 	// brief cold-load window where `outbounds` is populated but the
 	// PollingStore-backed sources are still 'idle'/'loading'.
 	const optionsReady = derived(
-		[singboxTunnels, awgTags, subscriptionsStore],
-		([$sb, $awg, $subs]) => {
+		[singboxTunnels, awgTags, subscriptionsStore, mihomoInventoryStore],
+		([$sb, $awg, $subs, $mihomo]) => {
 			const settled = (s: 'idle' | 'loading' | 'fresh' | 'stale' | 'error'): boolean =>
 				s === 'fresh' || s === 'stale' || s === 'error';
-			return settled($sb.status) && settled($awg.status) && settled($subs.status);
+			return settled($sb.status) && settled($awg.status) && settled($subs.status) && settled($mihomo.status);
 		},
 	);
 
@@ -83,11 +94,22 @@ function createSingboxRouterStore() {
 		ruleSets.set(normalizeRuleSetsForUI(next));
 	}
 
-	async function loadAll(): Promise<void> {
+	function loadAll(): Promise<void> {
+		// Several routing panels mount together and each may request the same
+		// initial snapshot. Coalesce those calls: one page opening must produce
+		// one batch of API requests, not N panels x 10 endpoints.
+		if (loadAllPromise) return loadAllPromise;
+		loadAllPromise = loadAllOnce().finally(() => {
+			loadAllPromise = null;
+		});
+		return loadAllPromise;
+	}
+
+	async function loadAllOnce(): Promise<void> {
 		loading.set(true);
 		error.set(null);
 		try {
-			const [st, s, r, rs, o, p, ds, dr, drw, dg] = await Promise.all([
+			const snapshot = Promise.all([
 				api.singboxRouterStatus(),
 				api.singboxRouterGetSettings(),
 				api.singboxRouterListRules(),
@@ -99,6 +121,16 @@ function createSingboxRouterStore() {
 				api.singboxRouterListDNSRewrites(),
 				api.singboxRouterGetDNSGlobals(),
 			]);
+			let timeoutId: ReturnType<typeof setTimeout> | undefined;
+			const timeout = new Promise<never>((_, reject) => {
+				timeoutId = setTimeout(
+					() => reject(new Error(m.singbox_router_load_failed())),
+					initialLoadTimeoutMs,
+				);
+			});
+			const [st, s, r, rs, o, p, ds, dr, drw, dg] = await Promise.race([snapshot, timeout]).finally(() => {
+				if (timeoutId !== undefined) clearTimeout(timeoutId);
+			});
 			status.set(st);
 			settings.set(s);
 			setRulesWithKeys(r);

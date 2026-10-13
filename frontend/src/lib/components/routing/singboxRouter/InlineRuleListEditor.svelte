@@ -16,8 +16,9 @@
 		showPreview?: boolean;
 		/** Компактный geo-picker (половинная высота списка тегов). */
 		compactGeoPicker?: boolean;
+		isMihomo?: boolean;
 	}
-	let { value = $bindable(''), showPreview = true, compactGeoPicker = true }: Props = $props();
+	let { value = $bindable(''), showPreview = true, compactGeoPicker = true, isMihomo = false }: Props = $props();
 
 	// ── constants ────────────────────────────────────────────────
 	const RULES_LIST_PLACEHOLDER = $derived(`# ${m.routing_singbox_list_ph_domains()}
@@ -39,6 +40,23 @@ domain:claude.ai
 # ${m.routing_singbox_list_ph_extra()}
 keyword:youtube
 geosite:xai`);
+
+	const MIHOMO_RULES_LIST_PLACEHOLDER = $derived(`# ${m.routing_singbox_list_ph_domains()}
+chatgpt.com
+*.openai.com
+https://gemini.google.com/app
+
+# ${m.routing_singbox_list_ph_domain()}
+domain:claude.ai
+
+# IP / CIDR
+1.1.1.1
+8.8.8.0/24
+2606:4700::/32
+
+# ${m.routing_singbox_list_ph_extra()}
+geosite:google-gemini
+geoip:telegram`);
 
 	// ── geo state ────────────────────────────────────────────────
 	let geoFiles = $state<GeoFileEntry[]>([]);
@@ -170,7 +188,7 @@ geosite:xai`);
 				highlight={highlightInlineRuleListContent}
 				wrap="pre-wrap"
 				class="rules-list-ta"
-				placeholder={RULES_LIST_PLACEHOLDER}
+				placeholder={isMihomo ? MIHOMO_RULES_LIST_PLACEHOLDER : RULES_LIST_PLACEHOLDER}
 				onscroll={syncRulesListLineNumbersScroll}
 			/>
 		</div>
@@ -179,78 +197,127 @@ geosite:xai`);
 		<summary>{m.routing_singbox_list_help_summary()}</summary>
 
 		<div class="inline-help-body">
-			<p class="inline-help-intro">
-				{m.routing_singbox_list_help_intro_1()} <br>
-				{m.routing_singbox_list_help_intro_2_pre()} <code>#</code>, <code>//</code>, <code>;</code> {m.routing_singbox_list_help_intro_2_post()} <br>
-				{m.routing_singbox_list_help_intro_3()}
-			</p>
+			{#if isMihomo}
+				<p class="inline-help-intro">
+					{m.routing_mihomo_list_help_intro_1()} <br>
+					{m.routing_mihomo_list_help_intro_2_pre()} <code>#</code>, <code>//</code>, <code>;</code> {m.routing_mihomo_list_help_intro_2_post()} <br>
+					{m.routing_mihomo_list_help_intro_3()}
+				</p>
 
-			<section class="inline-help-section">
-				<div class="help-label">{m.routing_singbox_list_help_domains_label()}</div>
-				<ul>
-					<li><code>domain.com</code>, <code>*.domain.com</code>, <code>domain_suffix:domain.com</code> {m.routing_singbox_list_help_host_and_subs()} <code>"domain.com"</code> {m.routing_singbox_list_help_no_dot()}</li>
-					<li><code>https://example.domain.com/…</code> {m.routing_singbox_list_help_url()}</li>
-					<li><code>*.рф</code> {m.routing_singbox_list_help_zone()} <code>xn--p1ai</code> {m.routing_singbox_list_help_no_leading_dot()}</li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">{m.routing_singbox_list_help_domains_label()}</div>
+					<ul>
+						<li><code>domain.com</code>, <code>*.domain.com</code>, <code>domain_suffix:domain.com</code> {m.routing_mihomo_list_help_domains_item()}</li>
+						<li><code>https://example.domain.com/…</code> {m.routing_mihomo_list_help_url()}</li>
+						<li><code>*.rf</code> {m.routing_mihomo_list_help_zone()}</li>
+					</ul>
+				</section>
 
-			<section class="inline-help-section">
-				<div class="help-label">{m.routing_singbox_list_help_sub_only_label()} <code>domain</code>)</div>
-				<ul>
-					<li><code>.domain.com</code> {m.routing_singbox_list_help_suffix()} <em>{m.routing_singbox_list_help_with()}</em> {m.routing_singbox_list_help_dot_in_json()} <code>[".domain.com"]</code> {m.routing_singbox_list_help_apex()}</li>
-					<li><code>domain_suffix:.domain.com</code> {m.routing_singbox_list_help_dotted()} <code>".domain.com"</code></li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">{m.routing_mihomo_list_help_exact_label()}</div>
+					<ul>
+						<li><code>domain:domain.com</code>, <code>exact:domain.com</code> {m.routing_mihomo_list_help_exact_item()}</li>
+					</ul>
+				</section>
 
-			<section class="inline-help-section">
-				<div class="help-label">{m.routing_singbox_list_help_exact_label()}</div>
-				<ul>
-					<li><code>domain:domain.com</code> {m.routing_singbox_list_help_only()} <code>domain</code>, {m.routing_singbox_list_help_no_subdomains()}</li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">{m.routing_mihomo_list_help_keyword_label()}</div>
+					<ul>
+						<li><code>keyword:word</code> {m.routing_mihomo_list_help_keyword_item()}</li>
+					</ul>
+				</section>
 
-			<section class="inline-help-section">
-				<div class="help-label">{m.routing_singbox_list_help_ip_label()}</div>
-				<ul>
-					<li><code>1.1.1.1</code> {m.routing_singbox_list_help_in_json_as()} <code>1.1.1.1/32</code>; {m.routing_singbox_list_help_reverse_bare_ip()}</li>
-					<li><code>8.8.8.0/24</code> {m.routing_singbox_list_help_cidr_as_is()} <code>/32</code> {m.routing_singbox_list_help_not_compressed()}</li>
-					<li>{m.routing_singbox_list_help_prefixes()} <code>ip:</code>, <code>cidr:</code>, <code>src_ip:</code> {m.routing_singbox_list_help_same_rule()}</li>
-					<li>{m.routing_singbox_list_help_ipv6_unsupported()}</li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">{m.routing_mihomo_list_help_ip_label()}</div>
+					<ul>
+						<li><code>1.1.1.1</code> {m.routing_mihomo_list_help_ip_single()}</li>
+						<li><code>8.8.8.0/24</code> {m.routing_mihomo_list_help_ip_subnet()}</li>
+						<li><code>2a00:1450::/32</code> {m.routing_mihomo_list_help_ip_v6()}</li>
+						<li>{m.routing_mihomo_list_help_ip_prefixes()}</li>
+					</ul>
+				</section>
 
-			<section class="inline-help-section">
-				<div class="help-label">{m.routing_singbox_list_help_geo_label()}</div>
-				<ul>
-					<li><code>geosite:TAG</code> {m.routing_singbox_list_help_geosite_pre()} <strong>{m.routing_singbox_list_help_without()}</strong> {m.routing_singbox_list_help_leading_dot_as()} <code>domain.com</code>)</li>
-					<li><code>geoip:TAG</code> {m.routing_singbox_list_help_geoip()} <code>/32</code></li>
-					<li><code>keyword:TAG</code>, <code>regex:…</code> {m.routing_singbox_list_help_keyword_regex()}</li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">{m.routing_mihomo_list_help_geo_label()}</div>
+					<ul>
+						<li><code>geosite:TAG</code> {m.routing_mihomo_list_help_geosite()}</li>
+						<li><code>geoip:TAG</code> {m.routing_mihomo_list_help_geoip()}</li>
+					</ul>
+				</section>
+			{:else}
+				<p class="inline-help-intro">
+					{m.routing_singbox_list_help_intro_1()} <br>
+					{m.routing_singbox_list_help_intro_2_pre()} <code>#</code>, <code>//</code>, <code>;</code> {m.routing_singbox_list_help_intro_2_post()} <br>
+					{m.routing_singbox_list_help_intro_3()}
+				</p>
 
-			<section class="inline-help-section">
-				<div class="help-label">{m.routing_singbox_list_help_advanced_label()}</div>
-				<ul>
-					<li><code>port:443</code>, <code>process:curl</code>, <code>package:…</code>, <code>network:tcp|udp</code></li>
-					<li>{m.routing_singbox_list_help_advanced_group()}</li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">{m.routing_singbox_list_help_domains_label()}</div>
+					<ul>
+						<li><code>domain.com</code>, <code>*.domain.com</code>, <code>domain_suffix:domain.com</code> {m.routing_singbox_list_help_host_and_subs()} <code>"domain.com"</code> {m.routing_singbox_list_help_no_dot()}</li>
+						<li><code>https://example.domain.com/…</code> {m.routing_singbox_list_help_url()}</li>
+						<li><code>*.рф</code> {m.routing_singbox_list_help_zone()} <code>xn--p1ai</code> {m.routing_singbox_list_help_no_leading_dot()}</li>
+					</ul>
+				</section>
 
-			<section class="inline-help-section">
-				<div class="help-label">{m.routing_singbox_list_help_careful_label()}</div>
-				<ul>
-					<li><code>port:443</code> {m.routing_singbox_list_help_port()}</li>
-					<li><code>process:</code> / <code>process_path:</code> {m.routing_singbox_list_help_process()}</li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">{m.routing_singbox_list_help_sub_only_label()} <code>domain</code>)</div>
+					<ul>
+						<li><code>.domain.com</code> {m.routing_singbox_list_help_suffix()} <em>{m.routing_singbox_list_help_with()}</em> {m.routing_singbox_list_help_dot_in_json()} <code>[".domain.com"]</code> {m.routing_singbox_list_help_apex()}</li>
+						<li><code>domain_suffix:.domain.com</code> {m.routing_singbox_list_help_dotted()} <code>".domain.com"</code></li>
+					</ul>
+				</section>
 
-			<section class="inline-help-section">
-				<div class="help-label">{m.routing_singbox_list_help_not_yet_label()}</div>
-				<ul>
-					<li>{m.routing_singbox_list_help_ipv6_exceptions()} <code>@@</code>, <code>port_range:</code></li>
-					<li>{m.routing_singbox_list_help_logic()} <code>and</code> / <code>or</code> {m.routing_singbox_list_help_extra_fields()} <code>JSON</code></li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">{m.routing_singbox_list_help_exact_label()}</div>
+					<ul>
+						<li><code>domain:domain.com</code> {m.routing_singbox_list_help_only()} <code>domain</code>, {m.routing_singbox_list_help_no_subdomains()}</li>
+					</ul>
+				</section>
+
+				<section class="inline-help-section">
+					<div class="help-label">{m.routing_singbox_list_help_ip_label()}</div>
+					<ul>
+						<li><code>1.1.1.1</code> {m.routing_singbox_list_help_in_json_as()} <code>1.1.1.1/32</code>; {m.routing_singbox_list_help_reverse_bare_ip()}</li>
+						<li><code>8.8.8.0/24</code> {m.routing_singbox_list_help_cidr_as_is()} <code>/32</code> {m.routing_singbox_list_help_not_compressed()}</li>
+						<li>{m.routing_singbox_list_help_prefixes()} <code>ip:</code>, <code>cidr:</code>, <code>src_ip:</code> {m.routing_singbox_list_help_same_rule()}</li>
+						<li>{m.routing_singbox_list_help_ipv6_unsupported()}</li>
+					</ul>
+				</section>
+
+				<section class="inline-help-section">
+					<div class="help-label">{m.routing_singbox_list_help_geo_label()}</div>
+					<ul>
+						<li><code>geosite:TAG</code> {m.routing_singbox_list_help_geosite_pre()} <strong>{m.routing_singbox_list_help_without()}</strong> {m.routing_singbox_list_help_leading_dot_as()} <code>domain.com</code>)</li>
+						<li><code>geoip:TAG</code> {m.routing_singbox_list_help_geoip()} <code>/32</code></li>
+						<li><code>keyword:TAG</code>, <code>regex:…</code> {m.routing_singbox_list_help_keyword_regex()}</li>
+					</ul>
+				</section>
+
+				<section class="inline-help-section">
+					<div class="help-label">{m.routing_singbox_list_help_advanced_label()}</div>
+					<ul>
+						<li><code>port:443</code>, <code>process:curl</code>, <code>package:…</code>, <code>network:tcp|udp</code></li>
+						<li>{m.routing_singbox_list_help_advanced_group()}</li>
+					</ul>
+				</section>
+
+				<section class="inline-help-section">
+					<div class="help-label">{m.routing_singbox_list_help_careful_label()}</div>
+					<ul>
+						<li><code>port:443</code> {m.routing_singbox_list_help_port()}</li>
+						<li><code>process:</code> / <code>process_path:</code> {m.routing_singbox_list_help_process()}</li>
+					</ul>
+				</section>
+
+				<section class="inline-help-section">
+					<div class="help-label">{m.routing_singbox_list_help_not_yet_label()}</div>
+					<ul>
+						<li>{m.routing_singbox_list_help_ipv6_exceptions()} <code>@@</code>, <code>port_range:</code></li>
+						<li>{m.routing_singbox_list_help_logic()} <code>and</code> / <code>or</code> {m.routing_singbox_list_help_extra_fields()} <code>JSON</code></li>
+					</ul>
+				</section>
+			{/if}
 		</div>
 	</details>
 

@@ -85,6 +85,7 @@ func main() {
 	a.setupOrchestrator()
 	a.setupEventWiring()
 	a.setupSingbox()
+	a.setupMihomo()
 	a.setupServer()
 	a.setupDeviceProxy()
 	a.setupRouter()

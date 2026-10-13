@@ -39,7 +39,7 @@
   const FULL_TIMESTAMP_KEY = `${storagePrefix}.logsFullTimestamp`;
   const PAGE_SIZE = 200;
   type LogsQueryParams = {
-    bucket: 'app' | 'singbox';
+    bucket: LogBucket;
     groups: string[];
     subgroups: string[];
     limit: number;
@@ -123,8 +123,9 @@
   function initialFilter(): LogsFilter {
     const f = loadFilter();
     const singbox = new Set<string>(SINGBOX_GROUPS);
+    const isEngine = lockBucket === 'singbox' || lockBucket === 'mihomo';
     const groups = f.groups.filter((g) =>
-      lockBucket === 'singbox' ? singbox.has(g) : !singbox.has(g),
+      isEngine ? singbox.has(g) : !singbox.has(g),
     );
     if (groups.length === f.groups.length) return f;
     return { ...f, groups, subgroups: [] };
@@ -198,10 +199,10 @@
 
   // Initial fetch + every bucket switch: replace the entire active store.
   function buildLogQuery(limit: number, offset = 0): LogsQueryParams {
-    if (bucket === 'singbox') {
+    if (bucket === 'singbox' || bucket === 'mihomo') {
       return {
         bucket,
-        groups: ['singbox'],
+        groups: [bucket],
         subgroups: filter.groups,
         limit,
         offset,
@@ -246,7 +247,7 @@
   }
 
   async function refreshSubgroups() {
-    if (bucket === 'singbox') {
+    if (bucket === 'singbox' || bucket === 'mihomo') {
       // Sing-box bucket flattens subgroups as the user-facing "groups" in the
       // toolbar — no separate subgroup row needed.
       availableSubgroups = [];
@@ -397,7 +398,7 @@
       const set = new Set(filter.levels);
       arr = arr.filter((l) => set.has(l.level));
     }
-    if (bucket === 'singbox') {
+    if (bucket === 'singbox' || bucket === 'mihomo') {
       if (filter.groups.length > 0) {
         const set = new Set(filter.groups);
         arr = arr.filter((l) => set.has(l.subgroup));
@@ -432,7 +433,7 @@
   });
 
   async function handleClickScope(group: string, subgroup: string) {
-    if (bucket === 'singbox') {
+    if (bucket === 'singbox' || bucket === 'mihomo') {
       filter = { ...filter, groups: subgroup ? [subgroup] : [], subgroups: [] };
     } else {
       filter = { ...filter, groups: group ? [group] : [], subgroups: subgroup ? [subgroup] : [] };
@@ -528,7 +529,7 @@
       if (!set.has(log.level)) return false;
     }
 
-    if (bucket === 'singbox') {
+    if (bucket === 'singbox' || bucket === 'mihomo') {
       if (currentFilter.groups.length > 0) {
         const set = new Set(currentFilter.groups);
         if (!set.has(log.subgroup)) return false;

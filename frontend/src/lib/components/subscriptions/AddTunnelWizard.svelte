@@ -8,6 +8,7 @@
 	import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { mihomoNativeResources } from '$lib/stores/mihomoNative';
 	import { usageLevel } from '$lib/stores/settings';
 	import {
 		DEFAULT_SUBSCRIPTION_URLTEST,
@@ -50,6 +51,7 @@
 	let kind = $state<WizardKind | 'choose'>('choose');
 	let submitting = $state(false);
 	let error = $state<UiText>('');
+	let targetEngine = $state<'sing-box' | 'mihomo'>('sing-box');
 
 	// "Один сервер" state — paste of N share-links, each becomes its
 	// own sing-box tunnel via /singbox/import-links.
@@ -63,6 +65,7 @@
 	let showFilePicker = $state(false);
 	let inlineText = $state('');
 	let headersText = $state(DEFAULT_PRESET);
+	const MIHOMO_HEADERS_PRESET = 'User-Agent: Mihomo';
 	let refreshHoursStr = $state('24');
 	let refreshHours = $state(24);
 	let enabled = $state(true);
@@ -229,6 +232,7 @@
 		lastDetectedUrl = '';
 		lastNormalizedUrl = '';
 		error = '';
+		targetEngine = 'sing-box';
 	}
 
 	function close(): void {
@@ -315,6 +319,22 @@
 		file: m.subscriptions_wizard_kind_file(),
 	});
 
+	function selectTargetEngine(engine: 'sing-box' | 'mihomo'): void {
+		const headersWereAutomatic = headersText === DEFAULT_PRESET || detectedNotice !== '' || lastDetectedUrl !== '' || lastNormalizedUrl !== '';
+		if (engine === 'mihomo' && headersWereAutomatic) headersText = MIHOMO_HEADERS_PRESET;
+		if (engine === 'sing-box' && headersText === MIHOMO_HEADERS_PRESET) headersText = DEFAULT_PRESET;
+		targetEngine = engine;
+		urlStep = 'form';
+		previewMembers = [];
+		excludedKeys = new Set();
+		detectSeq++;
+		detectingHeaders = false;
+		detectedNotice = '';
+		detectStatus = 'ok';
+		lastDetectedUrl = '';
+		lastNormalizedUrl = '';
+	}
+
 	async function submitSingle(): Promise<void> {
 		singleLinks = normalizeSpaceSeparatedShareLinks(singleLinks);
 		if (!singleLinks.trim() || submitting) return;
@@ -322,6 +342,24 @@
 		error = '';
 		singleResult = null;
 		try {
+			if (targetEngine === 'mihomo') {
+				const links = singleLinks.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+				const created = [];
+				try {
+					for (const link of links) created.push(...(await api.mihomoNativeCreateProxy(link, 'mihomo')).items);
+				} catch (createError) {
+					for (const proxy of [...created].reverse()) {
+						await api.mihomoNativeDeleteProxy(proxy.id).catch(() => undefined);
+					}
+					throw createError;
+				}
+				await mihomoNativeResources.refetch();
+				singleResult = { imported: links.length, errors: [] };
+				open = false;
+				reset();
+				goto('/?tab=singbox');
+				return;
+			}
 			const res = await api.singboxImportLinks(singleLinks);
 			singboxTunnels.applyMutationResponse(res.tunnels);
 			singleResult = {
@@ -420,6 +458,53 @@
 		submitting = true;
 		error = '';
 		try {
+			if (targetEngine === 'mihomo') {
+				if (isInline) {
+					await api.mihomoNativeCreateSubscription({
+						name: label.trim() || 'Mihomo group',
+						inline: inlineText.trim(),
+						format: 'share-links',
+						enginePreference: 'mihomo',
+						refreshHours: 0,
+						enabled,
+						mode,
+						testUrl: mode === 'urltest' ? utUrl : undefined,
+						testInterval: mode === 'urltest' ? utIntervalSec : undefined,
+						testTolerance: mode === 'urltest' ? utToleranceMs : undefined,
+					});
+				} else {
+					let filterExclude: string | undefined;
+					if (excludedKeys.size > 0 && previewMembers.length > 0) {
+						const excludedNames = previewMembers
+							.filter((member) => excludedKeys.has(member.key))
+							.map((member) => member.label || member.server)
+							.filter(Boolean);
+						if (excludedNames.length > 0) {
+							const escaped = excludedNames.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+							filterExclude = escaped.join('|');
+						}
+					}
+					await api.mihomoNativeCreateSubscription({
+						name: label.trim() || 'Mihomo subscription',
+						url: url.trim(),
+						format: 'mihomo-provider',
+						enginePreference: 'mihomo',
+						refreshHours,
+						enabled,
+						headers: parseHeadersText(headersText),
+						mode,
+						testUrl: mode === 'urltest' ? utUrl : undefined,
+						testInterval: mode === 'urltest' ? utIntervalSec : undefined,
+						testTolerance: mode === 'urltest' ? utToleranceMs : undefined,
+						filterExclude,
+					});
+				}
+				await mihomoNativeResources.refetch();
+				open = false;
+				reset();
+				goto('/?tab=subscriptions');
+				return;
+			}
 			const sub = await api.createSubscription({
 				label,
 				url: kind === 'url' ? url : undefined,
@@ -452,6 +537,14 @@
 		}
 	}
 </script>
+
+{#snippet enginePicker()}
+	<div class="engine-picker" role="group" aria-label={m.subscriptions_wizard_engine_aria()}>
+		<span>{m.subscriptions_wizard_engine_label()}</span>
+		<button type="button" class:active={targetEngine === 'sing-box'} onclick={() => selectTargetEngine('sing-box')}>sing-box</button>
+		<button type="button" class:active={targetEngine === 'mihomo'} onclick={() => selectTargetEngine('mihomo')}>Mihomo</button>
+	</div>
+{/snippet}
 
 <Modal
 	{open}
@@ -509,8 +602,9 @@
 				void submitSingle();
 			}}
 		>
+			{@render enginePicker()}
 			<p class="lead">
-				{m.subscriptions_wizard_single_lead_1()} <code>vless://</code>, <code>hy2://</code>,
+				{targetEngine === 'mihomo' ? m.subscriptions_wizard_single_lead_mihomo() : m.subscriptions_wizard_single_lead_1()} <code>vless://</code>, <code>hy2://</code>,
 				<code>trojan://</code>, <code>ss://</code>, <code>hysteria2://</code>,
 				<code>mieru://</code>, <code>mierus://</code>,
 				<code>naive+http://</code>, <code>naive+https://</code>,
@@ -518,7 +612,7 @@
 				{m.subscriptions_wizard_single_lead_3()}
 				<code>mieru apply config</code>) {m.subscriptions_wizard_single_lead_4()}
 			</p>
-			{#if !singboxInstalled}
+			{#if targetEngine === 'sing-box' && !singboxInstalled}
 				<div class="warn">
 					{m.subscriptions_wizard_no_singbox()}
 				</div>
@@ -527,7 +621,7 @@
 				bind:value={singleLinks}
 				placeholder={`vless://uuid@host:443?...#Germany\nhysteria2://pass@host:8443#Finland\nmierus://user:pass@host?profile=default&port=443&protocol=TCP\ntt://?AQ92cG4uZXhh...`}
 				rows={6}
-				disabled={!singboxInstalled || submitting}
+				disabled={(targetEngine === 'sing-box' && !singboxInstalled) || submitting}
 				onpaste={(e) => onShareListPaste(e, () => singleLinks, (v) => (singleLinks = v))}
 			/>
 			<RoutingImportDropZone
@@ -570,6 +664,7 @@
 				else void submitSubscription();
 			}}
 		>
+			{@render enginePicker()}
 			{#if hasPreviewStep}
 				<div class="steps" aria-hidden="true">
 					<span class="step current">{kind === 'file' ? m.subscriptions_wizard_step_file() : m.subscriptions_wizard_step_url()}</span>
@@ -766,7 +861,7 @@
 			<Button
 				variant="primary"
 				onclick={submitSingle}
-				disabled={submitting || !singleLinks.trim() || !singboxInstalled}
+				disabled={submitting || !singleLinks.trim() || (targetEngine === 'sing-box' && !singboxInstalled)}
 				loading={submitting}
 			>
 				{submitting ? m.subscriptions_wizard_importing() : m.subscriptions_wizard_import()}
@@ -823,6 +918,10 @@
 />
 
 <style>
+	.engine-picker{display:flex;align-items:center;gap:6px;padding:8px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-bg-secondary)}
+	.engine-picker span{margin-right:auto;color:var(--color-text-secondary);font-size:12px;font-weight:600}
+	.engine-picker button{padding:6px 12px;border:1px solid var(--color-border);border-radius:6px;background:var(--color-bg-primary);color:var(--color-text-secondary);font:inherit;font-size:12px;cursor:pointer}
+	.engine-picker button.active{border-color:var(--color-primary);background:var(--color-primary-light,var(--accent-soft));color:var(--color-primary)}
 	.lead { color: var(--color-text-muted); font-size: 0.85rem; line-height: 1.5; margin: 0 0 0.8rem; }
 	.lead code {
 		background: var(--color-bg-tertiary, var(--color-bg-primary));

@@ -84,4 +84,24 @@ describe('buildFlatDashboardItems', () => {
 		expect(active[0].key).toBe('sub:sub-1');
 		expect(stopped[0].key).toBe('sub:sub-1');
 	});
+
+	it('includes native Mihomo proxies and subscriptions in dashboard inventory', () => {
+		const items = buildFlatDashboardItems({
+			awg: [],
+			system: [],
+			external: [],
+			awg3: [],
+			singbox: [],
+			mihomoProxies: [{ id: 'proxy-1', name: 'Native proxy' } as never],
+			mihomoSubscriptions: [{ id: 'provider-1', name: 'Native subscription' } as never],
+			subscriptionsActive: [],
+			subscriptionsStopped: [],
+		});
+
+		expect(items.map((item) => item.kind)).toEqual(['mihomo-proxy', 'mihomo-subscription']);
+		expect(items.map((item) => item.key)).toEqual([
+			'mihomo-proxy:proxy-1',
+			'mihomo-subscription:provider-1',
+		]);
+	});
 });

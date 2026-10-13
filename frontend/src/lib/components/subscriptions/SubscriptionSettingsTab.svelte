@@ -20,11 +20,12 @@
 
 	interface Props {
 		subscription: Subscription;
+		engine?: 'sing-box' | 'mihomo';
 		onUpdated: () => void;
 		/** Только поле enabled — без полной перезагрузки подписки. */
 		onEnabledChanged?: (enabled: boolean) => void;
 	}
-	let { subscription, onUpdated, onEnabledChanged }: Props = $props();
+	let { subscription, engine = 'sing-box', onUpdated, onEnabledChanged }: Props = $props();
 
 	let label = $state(untrack(() => subscription.label));
 	let url = $state(untrack(() => subscription.url));
@@ -102,10 +103,33 @@
 		if (togglingEnabled) return;
 		togglingEnabled = true;
 		try {
-			const saved = await api.updateSubscription(subscription.id, { enabled: next });
-			enabled = saved.enabled;
-			onEnabledChanged?.(saved.enabled);
-			notifications.success(saved.enabled ? m.subscriptions_settings_toast_enabled() : m.subscriptions_settings_toast_disabled());
+			if (engine === 'mihomo') {
+				const headersArr = parseHeadersText(headersText).map((h) => ({ name: h.name, value: h.value }));
+				const saved = await api.mihomoNativeUpdateSubscription(subscription.id, {
+					name: label,
+					enabled: next,
+					url: !subscription.isInline ? url : undefined,
+					inline: subscription.isInline ? (subscription as { inline?: string }).inline : undefined,
+					format: (subscription.isInline ? 'share-links' : 'mihomo-provider'),
+					enginePreference: 'mihomo',
+					refreshHours,
+					headers: headersArr,
+					mode: mode === 'urltest' ? 'url-test' : 'select',
+					testUrl: utUrl,
+					testInterval: utIntervalSec,
+					testTolerance: utToleranceMs,
+					filterInclude: filterInclude.trim(),
+					filterExclude: filterExclude.trim(),
+					bindInterface: bindInterface.trim(),
+				});
+				enabled = saved.enabled;
+				onEnabledChanged?.(saved.enabled);
+			} else {
+				const saved = await api.updateSubscription(subscription.id, { enabled: next });
+				enabled = saved.enabled;
+				onEnabledChanged?.(saved.enabled);
+			}
+			notifications.success(enabled ? m.subscriptions_settings_toast_enabled() : m.subscriptions_settings_toast_disabled());
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.subscriptions_settings_toggle_failed());
 		} finally {
@@ -116,24 +140,45 @@
 	async function save(): Promise<void> {
 		saving = true;
 		try {
-			const patch: Parameters<typeof api.updateSubscription>[1] = {
-				label,
-				enabled,
-				mode,
-				urlTest:
-					mode === 'urltest'
-						? { url: utUrl, intervalSec: utIntervalSec, toleranceMs: utToleranceMs }
-						: undefined,
-				filterInclude: filterInclude.trim(),
-				filterExclude: filterExclude.trim(),
-				bindInterface: bindInterface.trim(),
-			};
-			if (!subscription.isInline && !subscription.isFile) {
-				patch.url = url;
-				patch.headers = parseHeadersText(headersText);
-				patch.refreshHours = refreshHours;
+			if (engine === 'mihomo') {
+				const headersArr = parseHeadersText(headersText).map((h) => ({ name: h.name, value: h.value }));
+				await api.mihomoNativeUpdateSubscription(subscription.id, {
+					name: label,
+					enabled,
+					mode: mode === 'urltest' ? 'url-test' : 'select',
+					testUrl: utUrl,
+					testInterval: utIntervalSec,
+					testTolerance: utToleranceMs,
+					filterInclude: filterInclude.trim(),
+					filterExclude: filterExclude.trim(),
+					bindInterface: bindInterface.trim(),
+					url: !subscription.isInline ? url : undefined,
+					inline: subscription.isInline ? (subscription as { inline?: string }).inline : undefined,
+					format: (subscription.isInline ? 'share-links' : 'mihomo-provider'),
+					enginePreference: 'mihomo',
+					refreshHours: !subscription.isInline ? refreshHours : 0,
+					headers: !subscription.isInline ? headersArr : undefined,
+				});
+			} else {
+				const patch: Parameters<typeof api.updateSubscription>[1] = {
+					label,
+					enabled,
+					mode,
+					urlTest:
+						mode === 'urltest'
+							? { url: utUrl, intervalSec: utIntervalSec, toleranceMs: utToleranceMs }
+							: undefined,
+					filterInclude: filterInclude.trim(),
+					filterExclude: filterExclude.trim(),
+					bindInterface: bindInterface.trim(),
+				};
+				if (!subscription.isInline && !subscription.isFile) {
+					patch.url = url;
+					patch.headers = parseHeadersText(headersText);
+					patch.refreshHours = refreshHours;
+				}
+				await api.updateSubscription(subscription.id, patch);
 			}
-			await api.updateSubscription(subscription.id, patch);
 			onUpdated();
 		} catch (e) {
 			// Сервер отвечает 400 на невалидный regex-фильтр (RE2) —
@@ -147,7 +192,11 @@
 	async function doDelete(): Promise<void> {
 		deleting = true;
 		try {
-			await api.deleteSubscription(subscription.id);
+			if (engine === 'mihomo') {
+				await api.mihomoNativeDeleteSubscription(subscription.id);
+			} else {
+				await api.deleteSubscription(subscription.id);
+			}
 			goto('/?tab=subscriptions');
 		} catch (e) {
 			const name = subscription.label || subscription.selectorTag || subscription.id;

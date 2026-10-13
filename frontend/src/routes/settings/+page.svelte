@@ -110,6 +110,14 @@
 	let singboxUpdating = $state(false);
 	let singboxUpdateError = $state<string | null>(null);
 	let singboxBusy = $state(false);
+	let mihomoStatusValue = $state<import('$lib/types').MihomoStatus | null>(null);
+	let mihomoStatusLoading = $state(false);
+	let mihomoInstalling = $state(false);
+	let mihomoInstallError = $state<string | null>(null);
+	let mihomoUpdating = $state(false);
+	let mihomoUpdateError = $state<string | null>(null);
+	let mihomoUninstalling = $state(false);
+	let mihomoRestarting = $state(false);
 	let ndmsProxyBusy = $state(false);
 	let ndmsProxyConfirmOpen = $state(false);
 	let ndmsProxyConfirmEnable = $state(false); // true = подтверждение включения; false = выключения
@@ -136,6 +144,8 @@
 	const hydraStatusError = $derived($hydrarouteStatus.error);
 	const hydraInstalled = $derived(hydraStatusValue?.installed ?? false);
 	const hydraRunning = $derived(hydraStatusValue?.running ?? false);
+	const mihomoInstalled = $derived(mihomoStatusValue?.installed ?? false);
+	const mihomoRunning = $derived(mihomoStatusValue?.running ?? false);
 
 	function handleNDMSProxyToggleClick(next: boolean) {
 		// next — желаемое состояние после клика. Открываем confirm-modal
@@ -244,6 +254,68 @@
 		}
 	}
 
+	async function fetchMihomoStatus() {
+		mihomoStatusLoading = true;
+		try {
+			mihomoStatusValue = await api.mihomoStatus();
+		} catch {
+			// ignore if not configured
+		} finally {
+			mihomoStatusLoading = false;
+		}
+	}
+
+	async function installMihomo() {
+		mihomoInstalling = true;
+		mihomoInstallError = null;
+		try {
+			mihomoStatusValue = await api.mihomoInstall();
+			notifications.success(m.settings_page_mihomo_installed());
+		} catch (e) {
+			mihomoInstallError = e instanceof Error ? e.message : String(e);
+		} finally {
+			mihomoInstalling = false;
+		}
+	}
+
+	async function updateMihomo() {
+		mihomoUpdating = true;
+		mihomoUpdateError = null;
+		try {
+			mihomoStatusValue = await api.mihomoUpdate();
+			notifications.success(m.settings_page_mihomo_updated());
+		} catch (e) {
+			mihomoUpdateError = e instanceof Error ? e.message : String(e);
+		} finally {
+			mihomoUpdating = false;
+		}
+	}
+
+	async function uninstallMihomo() {
+		mihomoUninstalling = true;
+		try {
+			mihomoStatusValue = await api.mihomoUninstall();
+			notifications.success(m.settings_page_mihomo_removed());
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.settings_page_mihomo_remove_failed());
+		} finally {
+			mihomoUninstalling = false;
+		}
+	}
+
+	async function restartMihomo() {
+		mihomoRestarting = true;
+		try {
+			await api.mihomoRestart();
+			notifications.success(m.settings_page_mihomo_restarted());
+			await fetchMihomoStatus();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.settings_page_mihomo_restart_failed());
+		} finally {
+			mihomoRestarting = false;
+		}
+	}
+
 	async function fetchSystemInfo(silent = true) {
 		if (systemInfoInFlight) {
 			return systemInfoInFlight;
@@ -286,7 +358,7 @@
 		);
 	}
 
-	async function selectDownloadRoute(routeTag: string, routeKind?: 'direct' | 'awg' | 'singbox' | 'subscription') {
+	async function selectDownloadRoute(routeTag: string, routeKind?: import('$lib/types').DownloadRoute['kind']) {
 		if (!settings) return;
 		saving = true;
 		try {
@@ -398,7 +470,12 @@ onMount(() => {
 	// меняет сам пользователь с этой же страницы, и те пути перечитывают
 	// сами — поэтому это страховка, а не источник, и 30 с ей ни к чему.
 	// Фоновая вкладка не спрашивает вовсе.
-	const stopSystemInfoPoll = startVisiblePoll(() => fetchSystemInfo(true), 120000);
+	const stopSystemInfoPoll = startVisiblePoll(() => {
+		void fetchSystemInfo(true);
+		void fetchMihomoStatus();
+	}, 120000);
+
+	void fetchMihomoStatus();
 
 	void (async () => {
 		try {
@@ -938,6 +1015,19 @@ $effect(() => {
 					{clashPortError}
 					onsaveClashPort={saveClashPort}
 					proxyBinaries={proxyBinaryRows}
+					mihomoStatus={mihomoStatusValue}
+					{mihomoStatusLoading}
+					{mihomoInstalling}
+					{mihomoUpdating}
+					{mihomoRestarting}
+					{mihomoUninstalling}
+					{mihomoInstallError}
+					{mihomoUpdateError}
+					oninstallMihomo={installMihomo}
+					onupdateMihomo={updateMihomo}
+					onrestartMihomo={restartMihomo}
+					onuninstallMihomo={uninstallMihomo}
+					showMihomo={showSingboxIntegration}
 				/>
 				</div>
 			</aside>
@@ -1253,6 +1343,27 @@ $effect(() => {
 					{restarting ? m.settings_page_restarting_button() : m.common_restart()}
 				</Button>
 			</div>
+
+			{#if mihomoInstalled && showSingboxIntegration}
+				<div class="setting-row">
+					<div class="flex flex-col gap-1">
+						<span class="font-medium">Mihomo</span>
+						<span class="setting-description">
+							{mihomoRunning ? m.settings_page_process_running() : m.settings_page_process_stopped()}
+						</span>
+					</div>
+					<div class="action-buttons">
+						<Button
+							variant="secondary"
+							size="sm"
+							onclick={restartMihomo}
+							loading={mihomoRestarting}
+						>
+							{m.common_restart()}
+						</Button>
+					</div>
+				</div>
+			{/if}
 
 			{#if singboxInstalled && showSingboxIntegration}
 				<div class="setting-row">

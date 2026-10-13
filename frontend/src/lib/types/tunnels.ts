@@ -227,6 +227,8 @@ export interface TunnelListItem {
 		failCount: number;
 		failThreshold: number;
 	};
+	/** При true тумблер вкл/выкл заблокирован замком (#818). */
+	toggleLocked?: boolean;
 	/** При true туннель защищён от изменений: выключить, изменить и удалить нельзя (#818). */
 	locked?: boolean;
 	statusDetails?: string;

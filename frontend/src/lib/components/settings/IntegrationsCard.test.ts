@@ -53,6 +53,34 @@ describe('IntegrationsCard — удаление sing-box', () => {
 	});
 });
 
+describe('IntegrationsCard — Mihomo', () => {
+	it('не установлен — отображается кнопка Установить', () => {
+		render(IntegrationsCard, {
+			...baseProps,
+			singboxStatus: status(false),
+			showSingbox: false,
+			showMihomo: true,
+			mihomoStatus: { installed: false, running: false, engine: 'mihomo', pid: 0, binary: '', error: '' },
+			oninstallMihomo: vi.fn(),
+		});
+		expect(screen.queryByText('Установить')).not.toBeNull();
+		expect(screen.queryByText('Mihomo')).not.toBeNull();
+	});
+
+	it('установлен — отображаются кнопки Открыть и Удалить', () => {
+		render(IntegrationsCard, {
+			...baseProps,
+			singboxStatus: status(false),
+			showSingbox: false,
+			showMihomo: true,
+			mihomoStatus: { installed: true, running: true, engine: 'mihomo', pid: 1234, binary: '/opt/bin/mihomo', error: '', version: '1.19.29' },
+			onuninstallMihomo: vi.fn(),
+		});
+		expect(screen.queryByText('Открыть')).not.toBeNull();
+		expect(screen.queryByText('Удалить')).not.toBeNull();
+	});
+});
+
 describe('IntegrationsCard — HydraRoute', () => {
 	const hydra = (installed: boolean): HydraRouteStatus => ({ installed, running: false });
 

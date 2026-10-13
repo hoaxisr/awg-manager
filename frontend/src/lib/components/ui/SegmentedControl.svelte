@@ -15,7 +15,7 @@
 	}
 
 	let {
-		value,
+		value = $bindable(),
 		options,
 		ariaLabel,
 		disabled = false,
@@ -33,7 +33,8 @@
 	function select(next: T) {
 		const option = options.find((o) => o.value === next);
 		if (!option || isOptionDisabled(option) || next === value) return;
-		onchange(next);
+		value = next;
+		onchange?.(next);
 	}
 </script>
 

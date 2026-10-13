@@ -22,6 +22,7 @@
 		onremove: (member: SubscriptionMember) => void;
 		ontoggle: (tag: string) => void;
 		onexclude: (tag: string) => void;
+		ontest?: (tag: string) => Promise<void>;
 	}
 	let {
 		members,
@@ -39,6 +40,7 @@
 		onremove,
 		ontoggle,
 		onexclude,
+		ontest,
 	}: Props = $props();
 </script>
 
@@ -111,6 +113,7 @@
 					switching={switching === member.tag}
 					disabled={switching !== null}
 					onclick={() => onpick(member.tag)}
+					ontest={ontest ? () => ontest(member.tag) : undefined}
 					layout="list"
 				/>
 				{#if isInline}
@@ -178,6 +181,7 @@
 				switching={switching === member.tag}
 				disabled={switching !== null}
 				onclick={() => (selectMode ? ontoggle(member.tag) : onpick(member.tag))}
+				ontest={ontest ? () => ontest(member.tag) : undefined}
 			/>
 			{#if isInline}
 				<button

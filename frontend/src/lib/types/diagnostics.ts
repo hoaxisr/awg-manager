@@ -22,7 +22,7 @@ export interface LogsResponse {
 	enabled: boolean;
 	logs: LogEntry[];
 	total: number;
-	bucket: 'app' | 'singbox';
+	bucket: 'app' | 'singbox' | 'mihomo';
 	bufferSize: number;
 	bufferCapacity: number;
 	/** true when every returned entry was sanitized by backend. */

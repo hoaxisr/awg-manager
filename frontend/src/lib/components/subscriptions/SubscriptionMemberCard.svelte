@@ -12,9 +12,10 @@
 		switching: boolean;
 		disabled: boolean;
 		onclick: () => void;
+		ontest?: () => Promise<void>;
 		layout?: SingboxLayoutMode;
 	}
-	let { member, active, switching, disabled, onclick, layout = 'compact' }: Props = $props();
+	let { member, active, switching, disabled, onclick, ontest, layout = 'compact' }: Props = $props();
 
 	const history = $derived($singboxDelayHistory.get(member.tag) ?? []);
 	const delayPresentation = $derived(singboxDelayFromHistory(history));
@@ -27,7 +28,11 @@
 		if (testing) return;
 		testing = true;
 		try {
-			await triggerDelayCheck(member.tag);
+			if (ontest) {
+				await ontest();
+			} else {
+				await triggerDelayCheck(member.tag);
+			}
 		} finally {
 			testing = false;
 		}
@@ -71,7 +76,11 @@
 		</div>
 		<div class="c c-name">
 			<span class="n1" title={heading}>{heading}</span>
-			<span class="n2 mono" title={member.tag}>{member.server}:{member.port}</span>
+			{#if member.port > 0}
+				<span class="n2 mono" title={member.tag}>{member.server}:{member.port}</span>
+			{:else if member.server !== heading}
+				<span class="n2 mono" title={member.tag}>{member.server}</span>
+			{/if}
 		</div>
 	<div class="c c-badges">
 		<span class="badge proto">{protocolLabel}</span>
@@ -127,7 +136,9 @@
 	<div class="header">
 		<span class="led" class:on={active} aria-hidden="true"></span>
 		<span class="title" title={heading}>{heading}</span>
-		<span class="port mono">:{member.port}</span>
+		{#if member.port > 0}
+			<span class="port mono">:{member.port}</span>
+		{/if}
 	</div>
 	<div class="badges">
 		<span class="badge proto">{protocolLabel}</span>
@@ -140,8 +151,10 @@
 			<span class="badge tls">TLS</span>
 		{/if}
 	</div>
-	{#if member.label}
+	{#if member.label && member.server !== member.label && member.port > 0}
 		<div class="server-line mono" title={member.tag}>{member.server}:{member.port}</div>
+	{:else if member.label && member.server !== member.label}
+		<div class="server-line mono" title={member.tag}>{member.server}</div>
 	{/if}
 	{#if member.sni}
 		<div class="sni-row">

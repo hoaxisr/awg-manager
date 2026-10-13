@@ -108,6 +108,7 @@ type Server struct {
 	exposureGuard              *api.ExposureGuard
 	exposureGuardStop          context.CancelFunc
 	singboxHandler             *api.SingboxHandler
+	mihomoHandler              *api.MihomoHandler
 	singboxConnsHandler        *api.SingboxConnectionsHandler
 	singboxRouterHandler       *api.SingboxRouterHandler
 	connectionsMarkProvider    func(context.Context) (string, bool)
@@ -243,6 +244,9 @@ type Deps struct {
 	// its key-management routes entirely (they are never registered).
 	McpKeys *storage.McpKeyStore
 
+	// MihomoHandler wires the REST API for the Mihomo engine.
+	MihomoHandler *api.MihomoHandler
+
 	// ObfuscatorRelayChanged — смена выключателя ядро/процесс релея Phobos
 	// (спека §4.8); nil — смена вступит в силу со следующим Start туннеля.
 	ObfuscatorRelayChanged func()
@@ -312,6 +316,7 @@ func New(cfg Config, deps Deps) *Server {
 		obfuscatorRelayChanged: deps.ObfuscatorRelayChanged,
 		authMiddleware:         auth.NewMiddleware(deps.Sessions, deps.Settings, &authLoggerAdapter{log: appLog}),
 		mcpKeys:                deps.McpKeys,
+		mihomoHandler:          deps.MihomoHandler,
 		instanceID:             id,
 	}
 }

@@ -25,6 +25,8 @@
     onPatch,
   }: Props = $props();
 
+  const engineName = $derived(cfg.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box');
+
   const policyLabel = $derived(
     variant === 'expert' ? m.sb_router_source_policy_only_expert() : m.sb_router_source_policy_only_beginner(),
   );
@@ -35,7 +37,7 @@
   const allHint = $derived(
     variant === 'expert'
       ? m.sb_router_source_all_hint_expert()
-      : m.sb_router_source_all_hint_beginner(),
+      : m.sb_router_source_all_hint_beginner({ engine: engineName }),
   );
 
   function setDeviceMode(mode: 'policy' | 'all') {
@@ -85,7 +87,7 @@
         {m.sb_router_source_manage_devices()}
       </Button>
     {:else}
-      <p class="hint">{m.sb_router_source_pick_policy()}</p>
+      <p class="hint">{m.sb_router_source_pick_policy({ engine: engineName })}</p>
     {/if}
     {#if cfg.policyName && policyExists === false}
       <p class="warn">{m.sb_router_source_policy_missing({ name: cfg.policyName })}</p>

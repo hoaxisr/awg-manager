@@ -178,7 +178,7 @@
 			// Old backends (pre-2.9.10) didn't include bucket; default to "app"
 			// so the terminal still fills until the user upgrades.
 			onLogEntry: (data) => {
-				const bucket: LogBucket = data.bucket === 'singbox' ? 'singbox' : 'app';
+				const bucket: LogBucket = data.bucket === 'singbox' || data.bucket === 'mihomo' ? data.bucket : 'app';
 				logStoreFor(bucket).append(data);
 			},
 			onMonitoringMatrixUpdate: (data) => {

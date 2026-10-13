@@ -160,7 +160,9 @@
     debug: 'DEBUG',
   };
 
-  const groupOptions = $derived(bucket === 'singbox' ? SINGBOX_GROUPS : APP_GROUPS);
+  const groupOptions = $derived(
+    bucket === 'singbox' || bucket === 'mihomo' ? SINGBOX_GROUPS : APP_GROUPS,
+  );
 
   /** `profiling` has a dedicated expert-only chip — never duplicate it in subgroup chips. */
   const visibleSubgroups = $derived(availableSubgroups.filter((s) => s !== 'profiling'));
@@ -249,7 +251,9 @@
   );
 
   const bucketTitle = $derived(
-    bucket === 'singbox' ? m.diag_logs_clear_title_singbox() : m.diag_logs_clear_title_app(),
+    bucket === 'singbox' || bucket === 'mihomo'
+      ? m.diag_logs_clear_title_singbox()
+      : m.diag_logs_clear_title_app(),
   );
 </script>
 
@@ -334,7 +338,7 @@
     </span>
   </div>
 
-  {#if availableSubgroups.length > 0 && (filter.groups.length > 0 || bucket === 'singbox')}
+  {#if availableSubgroups.length > 0 && (filter.groups.length > 0 || bucket === 'singbox' || bucket === 'mihomo')}
     <div class="row row-subgroups">
       <span class="sub-label">{m.diag_logs_subgroup()}</span>
       <span class="chip-row" role="group" aria-label={m.diag_logs_filter_subgroup_aria()}>
@@ -440,7 +444,7 @@
   onclose={() => (confirmClearOpen = false)}
 >
   <p class="confirm-text">
-    {m.common_delete()} <strong>{totalEntries}</strong> {bucket === 'singbox' ? m.diag_logs_clear_confirm_singbox({ count: totalEntries }) : m.diag_logs_clear_confirm_app({ count: totalEntries })}
+    {m.common_delete()} <strong>{totalEntries}</strong> {bucket === 'singbox' || bucket === 'mihomo' ? m.diag_logs_clear_confirm_singbox({ count: totalEntries }) : m.diag_logs_clear_confirm_app({ count: totalEntries })}
   </p>
   <p class="confirm-hint">
     {m.diag_logs_clear_hint()}

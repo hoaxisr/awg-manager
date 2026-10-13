@@ -133,12 +133,50 @@ export function filterPolicyGlobalInterfaces(
 	return catalog.filter((g) => !shouldOmitT2sWhenProxyPresent(g.name, proxyNames));
 }
 
-export function policyInterfaceDisplayLabel(gi: PolicyGlobalInterface): string {
+/**
+ * Strips internal awg-manager ownership tokens like "[awg-manager:...]" from NDMS descriptions
+ * and resolves raw "awg-manager:<engine>:<kind>:<id>" strings to human-readable names.
+ */
+export function cleanPolicyInterfaceLabel(
+	label: string | undefined | null,
+	idResolver?: (id: string) => string | undefined,
+): string {
+	const trimmed = (label ?? '').trim();
+	if (!trimmed) return '';
+
+	// 1. If formatted as "Friendly Name [awg-manager:...]", strip the bracketed token
+	const bracketMatch = trimmed.match(/^(.*?)\s*\[awg-manager:[^\]]+\]$/);
+	if (bracketMatch && bracketMatch[1].trim()) {
+		return bracketMatch[1].trim();
+	}
+
+	// 2. If it's a raw canonical token: awg-manager:<engine>:<kind>:<id>
+	const tokenMatch = trimmed.match(/^awg-manager:(?:mihomo|singbox):(?:proxy|subscription|group):([a-zA-Z0-9_-]+)$/);
+	if (tokenMatch) {
+		const id = tokenMatch[1];
+		if (idResolver) {
+			const resolved = idResolver(id);
+			if (resolved && resolved.trim()) {
+				return resolved.trim();
+			}
+		}
+	}
+
+	return trimmed;
+}
+
+export function policyInterfaceDisplayLabel(
+	gi: PolicyGlobalInterface,
+	idResolver?: (id: string) => string | undefined,
+): string {
 	const name = gi.name.trim();
-	const label = (gi.label ?? '').trim();
-	if (!label) return name;
-	if (label.toLowerCase().includes(name.toLowerCase())) return label;
-	return `${label} (${name})`;
+	const clean = cleanPolicyInterfaceLabel(gi.label, idResolver);
+	if (!clean) return name;
+	if (clean.toLowerCase().includes(name.toLowerCase())) return clean;
+	if (clean.startsWith('awg-manager:')) {
+		return name;
+	}
+	return `${clean} (${name})`;
 }
 
 export interface PolicyInterfaceGroup {

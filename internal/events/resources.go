@@ -69,6 +69,11 @@ const (
 
 	ResourceDeviceProxyConfig  Resource = "deviceproxy.config"
 	ResourceDeviceProxyRuntime Resource = "deviceproxy.runtime"
+
+	ResourceMihomoStatus Resource = "mihomo.status"
+	ResourceMihomoConfig Resource = "mihomo.config"
+	ResourceMihomoRules  Resource = "mihomo.rules"
+	ResourceMihomoNodes  Resource = "mihomo.nodes"
 )
 
 // AllResources — перечень всего набора для сверки с фронтом.
@@ -102,6 +107,10 @@ var AllResources = []Resource{
 	ResourceRoutingHydrarouteStatus,
 	ResourceDeviceProxyConfig,
 	ResourceDeviceProxyRuntime,
+	ResourceMihomoStatus,
+	ResourceMihomoConfig,
+	ResourceMihomoRules,
+	ResourceMihomoNodes,
 }
 
 // Publisher — минимум шины, которого хватает для подсказки инвалидации.
