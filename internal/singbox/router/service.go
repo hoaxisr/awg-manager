@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -352,6 +353,11 @@ type Deps struct {
 	// not loop back into sing-box. Optional — when nil, NewService
 	// defaults to the production collector backed by d.Log.
 	WANIPCollector WANIPCollector
+	// LocalAddrs — адреса интерфейсов роутера, против них проверяется
+	// inet4_bind_address DNS-сервера. Спрашиваем ядро, а не NDMS: bind
+	// sing-box отказывает (EADDRNOTAVAIL) именно по адресам ядра. Optional —
+	// при nil NewService ставит net.InterfaceAddrs.
+	LocalAddrs func() ([]net.Addr, error)
 	// WANInterfaces lists router WAN interfaces for the WAN-binding
 	// picker. Optional — when nil, ListWANInterfaces returns an empty
 	// slice (UI shows just the "auto" option). Production wiring in
@@ -712,6 +718,9 @@ func NewService(d Deps) *ServiceImpl {
 	appLog := logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubSingboxRouter)
 	if d.WANIPCollector == nil {
 		d.WANIPCollector = NewWANIPCollector(&routerLoggerAdapter{log: appLog})
+	}
+	if d.LocalAddrs == nil {
+		d.LocalAddrs = net.InterfaceAddrs
 	}
 	if d.OpkgTunPool == nil {
 		// Не отказ: юнит-тесты собирают сервис без пула намеренно. Но в проде

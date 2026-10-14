@@ -3,6 +3,8 @@ package router
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/netip"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -16,16 +18,58 @@ func (s *ServiceImpl) ListDNSServers(ctx context.Context) ([]DNSServer, error) {
 }
 
 func (s *ServiceImpl) AddDNSServer(ctx context.Context, srv DNSServer) error {
+	if err := s.dnsBindAddressLocal(srv); err != nil {
+		return err
+	}
 	return s.withConfig(ctx, "dns-servers", func(c *RouterConfig) error { return c.AddDNSServer(srv) })
 }
 
 func (s *ServiceImpl) UpdateDNSServer(ctx context.Context, tag string, srv DNSServer) error {
+	bindErr := s.dnsBindAddressLocal(srv)
 	return s.withConfig(ctx, "dns-servers", func(c *RouterConfig) error {
+		if bindErr != nil && !keepsDNSBindAddress(c, tag, srv) {
+			return bindErr
+		}
 		if err := c.UpdateDNSServer(tag, srv); err != nil {
 			return err
 		}
 		return s.captureDNSChainServerRename(tag, srv.Tag)
 	})
+}
+
+// dnsBindAddressLocal — inet4_bind_address назначен интерфейсу роутера.
+// Считается ДО мутатора: список адресов читается из ядра. Неразборчивый адрес
+// и не-IPv4 пропускаются — их отвергнет validateDNSServer с точной причиной.
+func (s *ServiceImpl) dnsBindAddressLocal(srv DNSServer) error {
+	want, err := netip.ParseAddr(srv.Inet4BindAddress)
+	if err != nil || !want.Is4() {
+		return nil
+	}
+	addrs, err := s.deps.LocalAddrs()
+	if err != nil {
+		return fmt.Errorf("адреса интерфейсов роутера: %w", err)
+	}
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok {
+			if ip, ok := netip.AddrFromSlice(n.IP); ok && ip.Unmap() == want {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("%w: %s не назначен ни одному интерфейсу роутера", ErrDNSBindAddress, want)
+}
+
+// keepsDNSBindAddress — у записи tag в c тот же inet4_bind_address. Однажды
+// принятый адрес Update не перепроверяет: адрес мог пропасть вместе с
+// интерфейсом, и правка остальных полей от этого ломаться не должна — как
+// keepsBind у direct-выходов (#961).
+func keepsDNSBindAddress(c *RouterConfig, tag string, srv DNSServer) bool {
+	for _, e := range c.DNS.Servers {
+		if e.Tag == tag {
+			return e.Inet4BindAddress == srv.Inet4BindAddress
+		}
+	}
+	return false
 }
 
 func (s *ServiceImpl) DeleteDNSServer(ctx context.Context, tag string, force bool) error {

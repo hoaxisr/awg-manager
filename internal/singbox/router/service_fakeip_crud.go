@@ -31,11 +31,20 @@ func (s *ServiceImpl) FakeIPListDNSServers(ctx context.Context) ([]DNSServer, er
 }
 
 func (s *ServiceImpl) FakeIPAddDNSServer(ctx context.Context, srv DNSServer) error {
+	if err := s.dnsBindAddressLocal(srv); err != nil {
+		return err
+	}
 	return s.fakeipWithConfig(ctx, "dns-servers", func(c *RouterConfig) error { return c.AddDNSServer(srv) })
 }
 
 func (s *ServiceImpl) FakeIPUpdateDNSServer(ctx context.Context, tag string, srv DNSServer) error {
-	return s.fakeipWithConfig(ctx, "dns-servers", func(c *RouterConfig) error { return c.UpdateDNSServer(tag, srv) })
+	bindErr := s.dnsBindAddressLocal(srv)
+	return s.fakeipWithConfig(ctx, "dns-servers", func(c *RouterConfig) error {
+		if bindErr != nil && !keepsDNSBindAddress(c, tag, srv) {
+			return bindErr
+		}
+		return c.UpdateDNSServer(tag, srv)
+	})
 }
 
 func (s *ServiceImpl) FakeIPDeleteDNSServer(ctx context.Context, tag string, force bool) error {

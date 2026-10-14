@@ -297,6 +297,9 @@ func (h *SingboxRouterHandler) handleErr(w http.ResponseWriter, action string, e
 	case errors.Is(err, router.ErrBindNotSelectable):
 		// 400: bind_interface вне каталога — ввод пользователя, не сбой (F429).
 		response.Error(w, err.Error(), "BIND_NOT_SELECTABLE")
+	case errors.Is(err, router.ErrDNSBindAddress):
+		// 400: адрес отправителя DNS-сервера — ввод пользователя, не сбой.
+		response.Error(w, err.Error(), "DNS_BIND_ADDRESS_INVALID")
 	case errors.Is(err, router.ErrReservedInboundTag):
 		// 400: user rules must not claim the reserved qos-* inbound namespace
 		// (they'd be inert shadow rules — the managed slot merges first).

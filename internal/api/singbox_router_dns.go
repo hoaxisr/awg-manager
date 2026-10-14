@@ -38,6 +38,8 @@ type SingboxDNSServerDTO struct {
 	Strategy       string                         `json:"domain_strategy,omitempty" example:"prefer_ipv4"`
 	DomainResolver *SingboxDomainResolverDTO      `json:"domain_resolver,omitempty"`
 	TLS            *SingboxDNSClientTLSOptionsDTO `json:"tls,omitempty"`
+	// Адрес отправителя; несовместим с detour.
+	Inet4BindAddress string `json:"inet4_bind_address,omitempty" example:"10.0.20.1"`
 }
 
 // SingboxDNSServersListResponse is the envelope for

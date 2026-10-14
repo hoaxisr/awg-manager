@@ -61,6 +61,9 @@ func (h *SingboxFakeIPConfigHandler) handleErr(w http.ResponseWriter, action str
 	case errors.Is(err, router.ErrBindNotSelectable):
 		// 400: bind_interface вне каталога — ввод пользователя, не сбой (F429).
 		response.Error(w, err.Error(), "BIND_NOT_SELECTABLE")
+	case errors.Is(err, router.ErrDNSBindAddress):
+		// 400: адрес отправителя DNS-сервера — ввод пользователя, не сбой.
+		response.Error(w, err.Error(), "DNS_BIND_ADDRESS_INVALID")
 	case errors.Is(err, router.ErrInvalidMatchers),
 		errors.Is(err, router.ErrDNSInvalidServer):
 		response.Error(w, err.Error(), "INVALID_MATCHERS")

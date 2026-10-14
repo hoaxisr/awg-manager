@@ -109,4 +109,9 @@ var (
 	// интерфейсов: ошибка ввода (400), в отличие от сбоя чтения каталога
 	// (500) (F429).
 	ErrBindNotSelectable = errors.New("bind_interface is not a selectable interface")
+
+	// ErrDNSBindAddress — адрес отправителя DNS-сервера неприменим: не IPv4,
+	// не назначен роутеру или задан там, где sing-box его не использует.
+	// Ошибка ввода (400); сбой чтения адресов роутера идёт мимо него (500).
+	ErrDNSBindAddress = errors.New("адрес отправителя DNS-сервера неприменим")
 )

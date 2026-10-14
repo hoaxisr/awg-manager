@@ -3076,6 +3076,8 @@
 	"routing_singbox_dns_final_direct_post": "(WAN). The",
 	"routing_singbox_dns_detour_not_written": "key is not written to the config.",
 	"routing_singbox_dns_detour_hint": "Which outbound the DNS server uses to reach the resolver’s IP. “Direct” — from the router (WAN), the",
+	"routing_singbox_dns_bind_address_label": "Source address",
+	"routing_singbox_dns_bind_address_hint": "Optional. The router’s IPv4 address the query is sent from. sing-box then does not pin the query to the WAN interface, and it follows the router’s routing table, so it reaches a site-to-site link without its own interface (IPsec). The address must be assigned to the router.",
 	"routing_singbox_dns_strategy_label": "Strategy (IPv4/IPv6)",
 	"routing_singbox_dns_bootstrap": "Bootstrap resolver (for the server domain)",
 	"routing_singbox_dns_bootstrap_toggle": "Use a different DNS to resolve this server’s domain",

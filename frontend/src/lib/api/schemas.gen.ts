@@ -1632,6 +1632,7 @@ const api_SingboxDNSServerDTO: v.GenericSchema = v.looseObject({
 	detour: v.optional(v.nullable(v.string())),
 	domain_resolver: v.optional(v.nullable(v.lazy(() => api_SingboxDomainResolverDTO))),
 	domain_strategy: v.optional(v.nullable(v.string())),
+	inet4_bind_address: v.optional(v.nullable(v.string())),
 	path: v.optional(v.nullable(v.string())),
 	server: v.optional(v.nullable(v.string())),
 	server_port: v.optional(v.nullable(v.number())),

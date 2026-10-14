@@ -561,6 +561,8 @@ export interface SingboxRouterDNSServer {
 	domain_strategy?: SingboxRouterDNSStrategy;
 	domain_resolver?: SingboxRouterDNSDomainResolver;
 	tls?: SingboxRouterDNSClientTLSOptions;
+	/** Адрес отправителя; бэкенд отвергает его вместе с detour. */
+	inet4_bind_address?: string;
 }
 
 export interface SingboxRouterDNSRule {

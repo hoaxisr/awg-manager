@@ -97,6 +97,9 @@ func validateDNSServer(s DNSServer) error {
 	if !validDNSTypes[s.Type] {
 		return fmt.Errorf("dns server %q: unknown type %q", s.Tag, s.Type)
 	}
+	if err := validateDNSBindAddress(s); err != nil {
+		return err
+	}
 	if s.Type == "fakeip" {
 		if strings.TrimSpace(s.Inet4Range) == "" && strings.TrimSpace(s.Inet6Range) == "" {
 			return fmt.Errorf("dns server %q: fakeip requires inet4_range or inet6_range", s.Tag)
@@ -151,6 +154,27 @@ func validateDNSServer(s DNSServer) error {
 		if s.TLS.MinVersion != "" && s.TLS.MaxVersion != "" && validTLSVersions[s.TLS.MinVersion] > validTLSVersions[s.TLS.MaxVersion] {
 			return fmt.Errorf("dns server %q: tls min_version must not exceed max_version", s.Tag)
 		}
+	}
+	return nil
+}
+
+// validateDNSBindAddress проверяет форму inet4_bind_address. Что адрес
+// назначен роутеру, проверяет сервисный слой: для этого нужен список адресов.
+func validateDNSBindAddress(s DNSServer) error {
+	a := s.Inet4BindAddress
+	if a == "" {
+		return nil
+	}
+	if ip, err := netip.ParseAddr(a); err != nil || !ip.Is4() || ip.IsUnspecified() {
+		return fmt.Errorf("%w: %q у %q — не IPv4-адрес", ErrDNSBindAddress, a, s.Tag)
+	}
+	switch {
+	case s.Type == "local" || s.Type == "fakeip":
+		return fmt.Errorf("%w: тип %q у %q не подключается к серверу", ErrDNSBindAddress, s.Type, s.Tag)
+	case s.Tag == managedDNSDirectTag:
+		return fmt.Errorf("%w: %q управляется приложением", ErrDNSBindAddress, s.Tag)
+	case s.Detour != "":
+		return fmt.Errorf("%w: у %q задан detour, с ним sing-box адрес отправителя игнорирует", ErrDNSBindAddress, s.Tag)
 	}
 	return nil
 }

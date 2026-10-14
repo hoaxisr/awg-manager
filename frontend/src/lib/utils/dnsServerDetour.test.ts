@@ -82,6 +82,19 @@ describe('sanitizeDnsServerForApi', () => {
 			detour: 'wg-nl',
 		});
 	});
+
+	it('keeps inet4_bind_address only on a direct non-managed server', () => {
+		const base = { type: 'udp' as const, server: '10.0.10.53', inet4_bind_address: ' 10.0.20.1 ' };
+		expect(sanitizeDnsServerForApi({ ...base, tag: 's2s' })).toEqual({
+			tag: 's2s',
+			type: 'udp',
+			server: '10.0.10.53',
+			inet4_bind_address: '10.0.20.1',
+		});
+		expect(sanitizeDnsServerForApi({ ...base, tag: 's2s', detour: 'wg-nl' }).inet4_bind_address).toBeUndefined();
+		expect(sanitizeDnsServerForApi({ ...base, tag: DNS_DIRECT_SERVER_TAG }).inet4_bind_address).toBeUndefined();
+		expect(sanitizeDnsServerForApi({ ...base, tag: 's2s', inet4_bind_address: '  ' }).inet4_bind_address).toBeUndefined();
+	});
 });
 
 describe('isDnsServerEmptyDetour', () => {

@@ -1187,3 +1187,19 @@ func TestHandleErr_BindNotSelectable400(t *testing.T) {
 		}
 	}
 }
+
+// Адрес отправителя DNS-сервера — ввод (400 DNS_BIND_ADDRESS_INVALID), а не
+// 500; у слота fakeip свой handleErr, проверяются оба.
+func TestHandleErr_DNSBindAddress400(t *testing.T) {
+	err := fmt.Errorf("%w: 10.0.20.2 не назначен ни одному интерфейсу роутера", router.ErrDNSBindAddress)
+	for name, h := range map[string]func(http.ResponseWriter, string, error){
+		"router": newMockRouterHandler(&mockRouterSvc{}).handleErr,
+		"fakeip": newTestFakeIPConfigHandler(t).handleErr,
+	} {
+		rr := httptest.NewRecorder()
+		h(rr, "dns-server-add", err)
+		if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "DNS_BIND_ADDRESS_INVALID") {
+			t.Errorf("%s: status=%d body=%s", name, rr.Code, rr.Body.String())
+		}
+	}
+}

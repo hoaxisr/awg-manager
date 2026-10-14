@@ -3170,6 +3170,8 @@
 	"routing_singbox_dns_final_direct_post": "(WAN). Ключ",
 	"routing_singbox_dns_detour_not_written": "в конфиг не пишется.",
 	"routing_singbox_dns_detour_hint": "Через какой outbound DNS-сервер достучится до IP резолвера. «Напрямую» — с роутера (WAN), ключ",
+	"routing_singbox_dns_bind_address_label": "Адрес отправителя",
+	"routing_singbox_dns_bind_address_hint": "Необязательно. IPv4-адрес роутера, с которого уходит запрос. Тогда sing-box не привязывает запрос к WAN-интерфейсу, и запрос идёт по таблице маршрутов роутера — так он попадает в site-to-site без своего интерфейса (IPsec). Адрес должен быть назначен роутеру.",
 	"routing_singbox_dns_strategy_label": "Стратегия (IPv4/IPv6)",
 	"routing_singbox_dns_bootstrap": "Bootstrap resolver (для домена сервера)",
 	"routing_singbox_dns_bootstrap_toggle": "Использовать другой DNS для резолва домена этого сервера",

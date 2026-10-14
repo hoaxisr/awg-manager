@@ -4591,6 +4591,10 @@ definitions:
       domain_strategy:
         example: prefer_ipv4
         type: string
+      inet4_bind_address:
+        description: Адрес отправителя; несовместим с detour.
+        example: 10.0.20.1
+        type: string
       path:
         example: /dns-query
         type: string

@@ -368,6 +368,12 @@ type DNSServer struct {
 	TLS            *DNSClientTLSOptions `json:"tls,omitempty"`
 	Inet4Range     string               `json:"inet4_range,omitempty"`
 	Inet6Range     string               `json:"inet6_range,omitempty"`
+	// Inet4BindAddress — адрес отправителя запросов. В sing-box он снимает
+	// привязку к route.default_interface/auto_detect_interface, и запрос идёт
+	// по таблице маршрутов ядра: так он попадает в IPsec site-to-site без
+	// своего интерфейса. С detour несовместим — там поля подключения
+	// игнорируются.
+	Inet4BindAddress string `json:"inet4_bind_address,omitempty"`
 }
 
 // DNSMatchResponse — union sing-box `match_response`: true | "<tag>"
