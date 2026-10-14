@@ -231,6 +231,8 @@ type SingboxRouterSettings struct {
 	// "fakeip-tun" routes via a fake-IP DNS pool + tun device;
 	// "policy-tun" captures traffic via an NDMS access policy + tun device.
 	RoutingMode    string `json:"routingMode,omitempty"`
+	// RoutingEngine: "sing-box" (default) or "mihomo".
+	RoutingEngine  string `json:"routingEngine,omitempty"`
 	SnifferEnabled bool   `json:"snifferEnabled"`
 	// WANAutoDetect is the discriminator for the WAN-binding mode.
 	// true (default) → sing-box uses route.auto_detect_interface; the
