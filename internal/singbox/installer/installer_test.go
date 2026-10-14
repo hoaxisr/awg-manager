@@ -488,3 +488,42 @@ func TestEvaluateInstallState_UPXPacked_MatchesOnlySameVersion(t *testing.T) {
 		t.Fatalf("unknown version: got %q, want %q", got, InstallStateOutdatedNoSpace)
 	}
 }
+
+// #964: на ubifs бинарь ложится сжатым, поэтому гейт считает его размер
+// делённым на ubifsCompressFactor. Граница — ровно RequiredDiskBytes.
+func TestEvaluateInstallState_UBIFS_ToleratesCompression(t *testing.T) {
+	const size = 100 << 20
+	need := int64(size/ubifsCompressFactor + safetyMargin + diskReserveBytes)
+	for _, c := range []struct {
+		name  string
+		ubifs bool
+		free  int64
+		want  InstallState
+	}{
+		{"ubifs, ровно впритык", true, need, InstallStateMissing},
+		{"ubifs, байта не хватает", true, need - 1, InstallStateMissingNoSpace},
+		{"не ubifs, те же байты", false, need, InstallStateMissingNoSpace},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			inst := New(filepath.Join(t.TempDir(), "sing-box"), "test-arch", BinarySpec{Version: "1.2.3", URL: "u", SHA256: "s", Size: size}, nil)
+			inst.SetFreeDiskFn(func(string) (int64, bool) { return c.free, true })
+			inst.isUBIFS = func(string) bool { return c.ubifs }
+			if got := inst.EvaluateInstallState(""); got != c.want {
+				t.Fatalf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestRequiredDiskBytes(t *testing.T) {
+	const size = 100 << 20
+	inst := New(filepath.Join(t.TempDir(), "sing-box"), "test-arch", BinarySpec{Size: size}, nil)
+	inst.isUBIFS = func(string) bool { return false }
+	if got, want := inst.RequiredDiskBytes(), int64(size+safetyMargin+diskReserveBytes); got != want {
+		t.Errorf("не ubifs: %d, want %d", got, want)
+	}
+	inst.isUBIFS = func(string) bool { return true }
+	if got, want := inst.RequiredDiskBytes(), int64(size/ubifsCompressFactor+safetyMargin+diskReserveBytes); got != want {
+		t.Errorf("ubifs: %d, want %d", got, want)
+	}
+}

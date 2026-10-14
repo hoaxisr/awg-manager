@@ -2104,7 +2104,7 @@ func TestRemoveDNSFinalFromBase_MalformedJSON_NoOp(t *testing.T) {
 	}
 }
 
-func TestOperator_Install_NoSpace_ReturnsNil(t *testing.T) {
+func TestOperator_Install_NoSpace_ReturnsErrNoSpace(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "sing-box") // не существует
 	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
@@ -2114,15 +2114,15 @@ func TestOperator_Install_NoSpace_ReturnsNil(t *testing.T) {
 	inst.SetFreeDiskFn(func(string) (int64, bool) { return 50 << 20, true })
 	op.SetInstaller(inst)
 
-	if err := op.Install(context.Background()); err != nil {
-		t.Fatalf("Install returned error, expected nil: %v", err)
+	if err := op.Install(context.Background()); !errors.Is(err, ErrNoSpace) {
+		t.Fatalf("Install = %v, want ErrNoSpace", err)
 	}
 	if got := inst.EvaluateInstallState(""); got != installer.InstallStateMissingNoSpace {
 		t.Fatalf("EvaluateInstallState=%q, want %q", got, installer.InstallStateMissingNoSpace)
 	}
 }
 
-func TestOperator_Update_NoSpace_ReturnsNil(t *testing.T) {
+func TestOperator_Update_NoSpace_ReturnsErrNoSpace(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "sing-box")
 	if err := os.WriteFile(binary, []byte("old-content"), 0o755); err != nil {
@@ -2135,8 +2135,8 @@ func TestOperator_Update_NoSpace_ReturnsNil(t *testing.T) {
 	inst.SetFreeDiskFn(func(string) (int64, bool) { return 50 << 20, true })
 	op.SetInstaller(inst)
 
-	if err := op.Update(context.Background()); err != nil {
-		t.Fatalf("Update returned error, expected nil: %v", err)
+	if err := op.Update(context.Background()); !errors.Is(err, ErrNoSpace) {
+		t.Fatalf("Update = %v, want ErrNoSpace", err)
 	}
 	if got := inst.EvaluateInstallState(""); got != installer.InstallStateOutdatedNoSpace {
 		t.Fatalf("EvaluateInstallState=%q, want %q", got, installer.InstallStateOutdatedNoSpace)

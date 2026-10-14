@@ -69,7 +69,7 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 	}
 	if o.inst != nil {
 		s.InstallState = string(o.inst.EvaluateInstallState(s.CurrentVersion))
-		s.RequiredBytes = o.inst.RequiredSize() + installer.SafetyMargin
+		s.RequiredBytes = o.inst.RequiredDiskBytes()
 		if free, ok := o.inst.FreeBytes(); ok {
 			s.FreeBytes = free
 		}
@@ -333,9 +333,9 @@ func (o *Operator) Install(ctx context.Context) error {
 	}
 	if o.inst.EvaluateInstallState("") == installer.InstallStateMissingNoSpace {
 		if o.installProgress != nil {
-			o.installProgress("install", "error", 0, 0, "недостаточно места на диске")
+			o.installProgress("install", "error", 0, 0, ErrNoSpace.Error())
 		}
-		return nil // намеренно не error: фронт показывает баннер из GetStatus
+		return ErrNoSpace
 	}
 	report := func(phase string, downloaded, total int64, errMsg string) {
 		if o.installProgress != nil {
@@ -426,9 +426,9 @@ func (o *Operator) Update(ctx context.Context) error {
 	// версия на решение гейта больше не влияет.
 	if o.inst.EvaluateInstallState("") == installer.InstallStateOutdatedNoSpace {
 		if o.installProgress != nil {
-			o.installProgress("update", "error", 0, 0, "недостаточно места для обновления")
+			o.installProgress("update", "error", 0, 0, ErrNoSpace.Error())
 		}
-		return nil
+		return ErrNoSpace
 	}
 	report := func(phase string, downloaded, total int64, errMsg string) {
 		if o.installProgress != nil {

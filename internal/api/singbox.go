@@ -342,6 +342,7 @@ func (h *SingboxHandler) Status(w http.ResponseWriter, r *http.Request) {
 //	@Security		CookieAuth
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/install [post]
 func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
@@ -352,6 +353,10 @@ func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 	if err := h.op.Install(r.Context()); err != nil {
 		if errors.Is(err, singbox.ErrInstallInProgress) {
 			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_IN_PROGRESS")
+			return
+		}
+		if errors.Is(err, singbox.ErrNoSpace) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "NO_SPACE")
 			return
 		}
 		response.InternalError(w, err.Error())
@@ -451,6 +456,10 @@ func (h *SingboxHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err := h.op.Update(r.Context()); err != nil {
 		if errors.Is(err, singbox.ErrInstallInProgress) {
 			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_IN_PROGRESS")
+			return
+		}
+		if errors.Is(err, singbox.ErrNoSpace) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "NO_SPACE")
 			return
 		}
 		response.InternalError(w, err.Error())
