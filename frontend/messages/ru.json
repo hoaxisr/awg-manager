@@ -1769,6 +1769,7 @@
 	"singbox_banner_missing_title": "sing-box не установлен",
 	"singbox_banner_no_space": "Не хватает места: требуется {required}, свободно {free}.",
 	"singbox_banner_outdated_title": "Обновление sing-box недоступно",
+	"singbox_error_no_space": "Недостаточно места на диске для sing-box.",
 	"singbox_banner_outdated_desc": "Установлено: {current} (работает). До {required} нужно {needed}, свободно {free}.",
 	"singbox_tabs_one_server_desc": "Вставь share-link — получишь sing-box туннель со своим Proxy NDMS.",
 	"singbox_tabs_group_desc": "Несколько ссылок одной группой с общим Proxy: ручной выбор или автовыбор по скорости.",

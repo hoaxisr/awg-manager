@@ -18,6 +18,14 @@ import type {
 } from '$lib/types';
 import { RoutingClient } from './clientRouting';
 
+// Текст NO_SPACE приходит с бэкенда по-русски — переводим по коду.
+function localizeNoSpace(e: unknown): never {
+	if ((e as { body?: { code?: string } })?.body?.code === 'NO_SPACE') {
+		throw new Error(m.singbox_error_no_space());
+	}
+	throw e;
+}
+
 export class SingboxClient extends RoutingClient {
 	// ─────────────────────────────────────────────
 	// #region Sing-box
@@ -56,11 +64,11 @@ export class SingboxClient extends RoutingClient {
 	}
 
 	async singboxInstall(): Promise<SingboxStatus> {
-		return this.request('/singbox/install', { method: 'POST' });
+		return this.request<SingboxStatus>('/singbox/install', { method: 'POST' }).catch(localizeNoSpace);
 	}
 
 	async singboxUpdate(): Promise<SingboxStatus> {
-		return this.request('/singbox/update', { method: 'POST' });
+		return this.request<SingboxStatus>('/singbox/update', { method: 'POST' }).catch(localizeNoSpace);
 	}
 
 	async singboxUninstall(): Promise<SingboxStatus> {

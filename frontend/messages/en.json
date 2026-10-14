@@ -1719,6 +1719,7 @@
 	"singbox_banner_missing_title": "sing-box is not installed",
 	"singbox_banner_no_space": "Not enough space: {required} required, {free} free.",
 	"singbox_banner_outdated_title": "sing-box update unavailable",
+	"singbox_error_no_space": "Not enough disk space for sing-box.",
 	"singbox_banner_outdated_desc": "Installed: {current} (running). Updating to {required} needs {needed}, {free} free.",
 	"singbox_tabs_one_server_desc": "Paste a share link — you get a sing-box tunnel with its own NDMS Proxy.",
 	"singbox_tabs_group_desc": "Several links as one group with a shared Proxy: manual selection or auto-selection by speed.",
