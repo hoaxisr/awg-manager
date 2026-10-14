@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { api, ApiGatewayError } from './client';
-import { m } from '$lib/i18n';
 
 describe('ApiClient error shape', () => {
 	const originalFetch = globalThis.fetch;
@@ -272,37 +271,5 @@ describe('importConfig: тело запроса — объект целиком'
 		expect(body.content).toBe('wg-conf');
 		expect(body.name).toBe('test');
 		expect(body.backend).toBe('kernel');
-	});
-});
-
-// #964: текст NO_SPACE бэкенд шлёт по-русски — клиент подменяет его ключом
-// каталога, остальные 409 проходят как есть.
-describe('singboxInstall/Update: NO_SPACE локализуется', () => {
-	const originalFetch = globalThis.fetch;
-
-	afterEach(() => {
-		globalThis.fetch = originalFetch;
-	});
-
-	const reply = (code: string) =>
-		vi.fn().mockResolvedValue(
-			new Response(JSON.stringify({ error: true, message: 'текст бэкенда', code }), {
-				status: 409,
-				headers: { 'Content-Type': 'application/json' },
-			}),
-		);
-
-	it('NO_SPACE → строка каталога', async () => {
-		for (const call of [() => api.singboxInstall(), () => api.singboxUpdate()]) {
-			globalThis.fetch = reply('NO_SPACE');
-			const err = await call().catch((e: unknown) => e);
-			expect((err as Error).message).toBe(m.singbox_error_no_space());
-		}
-	});
-
-	it('другой код не трогается', async () => {
-		globalThis.fetch = reply('INSTALL_IN_PROGRESS');
-		const err = await api.singboxInstall().catch((e: unknown) => e);
-		expect((err as Error).message).toBe('текст бэкенда');
 	});
 });

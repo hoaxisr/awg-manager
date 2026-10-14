@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -541,5 +542,17 @@ func TestEvaluateInstallState_MissingDir_ProbesParent(t *testing.T) {
 	}
 	if probed != root {
 		t.Fatalf("probed %q, want %q", probed, root)
+	}
+}
+
+// Сжатие оказалось хуже ubifsCompressFactor, запись упёрлась в ENOSPC — это
+// тот же отказ «нет места», а не безымянная ошибка скачивания.
+func TestInstaller_Download_ENOSPC_IsErrNoSpace(t *testing.T) {
+	inst := New(filepath.Join(t.TempDir(), "sing-box"), "test-arch", BinarySpec{Version: "1.2.3", URL: "u", SHA256: "s", Size: 10}, nil)
+	inst.SetDownloader(&fakeDownloader{downloadFileFn: func(context.Context, DownloadFileRequest) (DownloadFileResult, error) {
+		return DownloadFileResult{}, fmt.Errorf("write file: %w", &os.PathError{Op: "write", Path: "x", Err: syscall.ENOSPC})
+	}})
+	if _, err := inst.Download(context.Background(), nil); !errors.Is(err, ErrNoSpace) {
+		t.Fatalf("got %v, want ErrNoSpace", err)
 	}
 }

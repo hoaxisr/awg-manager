@@ -331,6 +331,7 @@ func (o *Operator) Install(ctx context.Context) error {
 	if o.inst == nil {
 		return fmt.Errorf("installer not wired")
 	}
+	o.inst.DiscardStaleTmp()
 	if o.inst.EvaluateInstallState("").NoSpace() {
 		// Текст ошибки пустой: кадр только закрывает прогресс, а локализованную
 		// причину UI берёт из кода NO_SPACE в ответе.
@@ -349,7 +350,7 @@ func (o *Operator) Install(ctx context.Context) error {
 	}
 	tmp, err := o.inst.Download(ctx, bytesProgress)
 	if err != nil {
-		report("error", 0, 0, err.Error())
+		report("error", 0, 0, progressErrText(err))
 		return fmt.Errorf("download sing-box: %w", err)
 	}
 	report("activate", 0, 0, "")
@@ -360,6 +361,16 @@ func (o *Operator) Install(ctx context.Context) error {
 	o.recordPinnedVersion()
 	report("done", 0, 0, "")
 	return nil
+}
+
+// progressErrText — текст ошибки для кадра прогресса. Для ErrNoSpace пустой:
+// причину UI локализует по коду NO_SPACE из ответа, русский текст бэкенда
+// в кадре обошёл бы перевод.
+func progressErrText(err error) string {
+	if errors.Is(err, ErrNoSpace) {
+		return ""
+	}
+	return err.Error()
 }
 
 // Uninstall снимает установленный движок: останавливает процесс и удаляет
@@ -418,6 +429,7 @@ func (o *Operator) Update(ctx context.Context) error {
 	if o.inst == nil {
 		return fmt.Errorf("installer not wired")
 	}
+	o.inst.DiscardStaleTmp()
 	// MatchesPinnedBytes сам требует версию pinned, когда SHA не совпал
 	// (UPX-копия); при совпавшем SHA версия не важна — байты уже наши.
 	cur, _ := o.detectVersionAndFeaturesCached(ctx)
@@ -442,7 +454,7 @@ func (o *Operator) Update(ctx context.Context) error {
 	}
 	tmp, err := o.inst.Download(ctx, bytesProgress)
 	if err != nil {
-		report("error", 0, 0, err.Error())
+		report("error", 0, 0, progressErrText(err))
 		return fmt.Errorf("download sing-box: %w", err)
 	}
 	wasRunning, _ := o.proc.IsRunning()

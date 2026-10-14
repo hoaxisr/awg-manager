@@ -2175,6 +2175,49 @@ func TestOperator_InstallUpdate_CrossStateNoSpace(t *testing.T) {
 	}
 }
 
+// Брошенный оборванным скачиванием .tmp съедает место. Install/Update сносят
+// его до гейта, иначе отказ «нет места» был бы вечным.
+func TestOperator_InstallUpdate_DiscardStaleTmpBeforeGate(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		present bool
+		call    func(*Operator) error
+	}{
+		{"Install", false, func(o *Operator) error { return o.Install(context.Background()) }},
+		{"Update", true, func(o *Operator) error { return o.Update(context.Background()) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binary := filepath.Join(dir, "sing-box")
+			if c.present {
+				if err := os.WriteFile(binary, []byte("old-content"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tmp := binary + ".tmp"
+			if err := os.WriteFile(tmp, []byte("half"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+			inst := installer.New(binary, "test-arch", installer.BinarySpec{
+				Version: "1.2.3", URL: "u", SHA256: "different-sha", Size: 100 << 20,
+			}, nil)
+			// Места хватает, только пока tmp удалён.
+			inst.SetFreeDiskFn(func(string) (int64, bool) {
+				if _, err := os.Stat(tmp); err == nil {
+					return 50 << 20, true
+				}
+				return 1 << 30, true
+			})
+			op.SetInstaller(inst)
+			// Downloader не подключён — дальше гейта упадёт с другой ошибкой.
+			if err := c.call(op); errors.Is(err, ErrNoSpace) {
+				t.Fatalf("got ErrNoSpace: брошенный tmp не снесён до гейта")
+			}
+		})
+	}
+}
+
 // same-version+same-sha → MatchesPinnedBytes==true → Update должен быть no-op
 // без обращения к gate (gate стоит ПОСЛЕ этого early-return).
 // UPX-копия pinned-версии: Update — no-op, скачивания нет. Downloader не

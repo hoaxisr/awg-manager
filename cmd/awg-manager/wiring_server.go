@@ -26,7 +26,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
 	singboxcfg "github.com/hoaxisr/awg-manager/internal/singbox/configmerge"
 	"github.com/hoaxisr/awg-manager/internal/singbox/dnsrewrite"
-	"github.com/hoaxisr/awg-manager/internal/singbox/installer"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
@@ -327,7 +326,7 @@ func (a *app) setupDeviceProxy() {
 			// Skip migration if there is not enough disk space — GetStatus
 			// will surface InstallStateMissingNoSpace automatically; no
 			// point burning bandwidth on a download that will fail.
-			if a.singboxInstaller.EvaluateInstallState("") == installer.InstallStateMissingNoSpace {
+			if a.singboxInstaller.EvaluateInstallState("").NoSpace() {
 				a.bootLog.Warn("singbox-auto-migration", "", "skipped: not enough disk space")
 				return
 			}

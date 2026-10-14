@@ -10,12 +10,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -65,6 +67,10 @@ type Installer struct {
 	shaSize int64
 	shaMod  time.Time
 }
+
+// ErrNoSpace — бинарь не помещается на диск: отказ гейта или ENOSPC при
+// записи (сжатие ubifs оказалось хуже ubifsCompressFactor).
+var ErrNoSpace = errors.New("недостаточно места на диске")
 
 type Downloader interface {
 	DownloadFile(ctx context.Context, req DownloadFileRequest) (DownloadFileResult, error)
@@ -144,9 +150,6 @@ func (i *Installer) RequiredVersion() string { return i.spec.Version }
 // RequiredSHA256 is the checksum this awg-manager build is pinned to.
 func (i *Installer) RequiredSHA256() string { return i.spec.SHA256 }
 
-// RequiredSize is the expected size of the pinned binary (bytes, uncompressed).
-// Zero means unknown — disk-gate is skipped.
-func (i *Installer) RequiredSize() int64 { return i.spec.Size }
 
 // CurrentSHA256 returns the checksum of the installed managed binary,
 // served from the (size, mtime) cache when the file is unchanged.
@@ -243,6 +246,9 @@ func (i *Installer) Download(ctx context.Context, onProgress httpdownload.Progre
 	})
 	if err != nil {
 		_ = os.Remove(tmp)
+		if errors.Is(err, syscall.ENOSPC) {
+			return "", fmt.Errorf("download %s: %w: %w", i.spec.URL, ErrNoSpace, err)
+		}
 		return "", fmt.Errorf("download %s: %w", i.spec.URL, err)
 	}
 	got, err := sha256File(tmp)
@@ -293,6 +299,13 @@ func (i *Installer) FreeBytes() (int64, bool) {
 		return 0, false
 	}
 	return i.freeDisk(i.probeDir())
+}
+
+// DiscardStaleTmp удаляет <binary>.tmp, брошенный оборванным скачиванием
+// (демон убит, питание): он съедает место, и гейт отказывал бы навсегда —
+// сам Download чистит tmp только после гейта. Звать под installBusy.
+func (i *Installer) DiscardStaleTmp() {
+	_ = os.Remove(i.binaryPath + ".tmp")
 }
 
 // probeDir — ближайший существующий каталог на пути к бинарю. Uninstall
