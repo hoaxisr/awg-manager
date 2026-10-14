@@ -24,12 +24,9 @@ export interface Tab {
     // Dropdown group: one chip in the row, children picked from a menu.
     // `id` is the default child when activating the group. Active when any
     // child id matches `active`. With a single child, renders as a plain tab.
-    // When the whole row fits flattened, children render as separate chips.
+    // When the whole row fits flattened, children render as separate chips —
+    // so child ids must be unique across the whole row, not just the group.
     children?: TabChild[];
-    // When true, the tab label is rendered extra-subdued (dormant) to signal
-    // an inactive mutually-exclusive mode (e.g. the TProxy tab while FakeIP is
-    // the active routing mode). Stays clickable; the `active` style overrides.
-    muted?: boolean;
 }
 
 export function leafIds(tab: Tab): string[] {
@@ -56,7 +53,6 @@ export function flattenTabs(tabs: Tab[]): Tab[] {
                 badge: leaf.badge ?? tab.badge,
                 badgeTone: leaf.badgeTone ?? tab.badgeTone,
                 separatorBefore: tab.separatorBefore,
-                muted: tab.muted,
             }];
         }
         return tab.children!.map((c, i) => ({
@@ -65,7 +61,6 @@ export function flattenTabs(tabs: Tab[]): Tab[] {
             badge: c.badge,
             badgeTone: c.badgeTone,
             separatorBefore: i === 0 ? tab.separatorBefore : undefined,
-            muted: tab.muted,
         }));
     });
 }

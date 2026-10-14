@@ -218,7 +218,10 @@
         // Re-run when tabs change (labels and badges move chip widths);
         // reuse cached container width so we don't force a redundant
         // layout read here.
+        // The collapsed group chip shows the picked child's label and the
+        // hidden-items dot, so its width follows `active` too.
         void flatTabs.map((t) => t.label + (t.badge ?? '')).join();
+        void active;
         recalc();
     });
 
@@ -295,14 +298,15 @@
     {@const menu = isMenuTab(tab)}
     {@const open = interactive && menuOpenId === tab.id}
     {@const current = menu ? resolvedMenuChild(tab) : activeChild(tab)}
+    {@const hidden = menu && hasHiddenItems(tab, current?.id)}
     {#if menu}
         <div class="menu-tab-wrap">
             <button
                 class="tab menu-tab"
                 class:active={interactive && isTabActive(tab)}
-                class:muted={tab.muted}
                 class:open
                 tabindex={interactive ? undefined : -1}
+                title={hidden ? m.ui_tabs_hidden_items() : undefined}
                 aria-haspopup="menu"
                 aria-expanded={open}
                 onclick={interactive ? () => onMenuTabClick(tab) : undefined}
@@ -318,8 +322,8 @@
                         onActive={interactive && isTabActive(tab)}
                     />
                 {/if}
-                {#if hasHiddenItems(tab, current?.id)}
-                    <span class="tab-dot" role="img" aria-label={m.ui_tabs_hidden_items()} title={m.ui_tabs_hidden_items()}></span>
+                {#if hidden}
+                    <span class="tab-dot" aria-hidden="true"></span>
                 {/if}
                 <ChevronDown size={14} strokeWidth={2.5} class="menu-chevron" />
             </button>
@@ -332,7 +336,6 @@
         <button
             class="tab"
             class:active={interactive && isTabActive(tab)}
-            class:muted={tab.muted}
             tabindex={interactive ? undefined : -1}
             onclick={interactive ? () => selectTab(leaf?.id ?? tab.id) : undefined}
         >
@@ -469,12 +472,6 @@
     .tab.active {
         color: var(--text-primary);
         border-bottom-color: var(--accent);
-    }
-
-    /* Dormant mutually-exclusive mode (e.g. TProxy while FakeIP is active).
-       Extra-subdued vs a normal inactive tab; opening it (active) restores full. */
-    .tab.muted:not(.active) {
-        opacity: 0.45;
     }
 
     .menu-tab-wrap {

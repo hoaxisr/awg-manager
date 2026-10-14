@@ -266,7 +266,6 @@
         badge?: number | string;
         badgeTone?: 'default' | 'success' | 'warning' | 'muted';
         separatorBefore?: boolean;
-        muted?: boolean;
         children?: TabChildItem[];
     };
 
