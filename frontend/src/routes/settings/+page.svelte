@@ -5,6 +5,7 @@
 	import { afterNavigate } from "$app/navigation";
 	import { page } from "$app/stores";
 	import { api } from "$lib/api/client";
+	import { singboxErrorText } from "$lib/utils/singboxError";
 	import { notifications } from "$lib/stores/notifications";
 	import { singboxStatus } from "$lib/stores/singbox";
 	import { hydrarouteStatus } from "$lib/stores/hydraroute";
@@ -58,7 +59,7 @@
 		type UsageLevel,
 	} from "$lib/types/usageLevel";
 	import { usageLevel } from "$lib/stores/settings";
-	import { m } from "$lib/i18n";
+	import { m, type UiText } from "$lib/i18n";
 	import RichText from "$lib/components/ui/RichText.svelte";
 	import { waitForBackendRestart } from "$lib/restartRecovery";
 	import { hasDevelopChannelQuizPassed } from "$lib/utils/developChannelGate";
@@ -106,9 +107,9 @@
 	let hydraBusy = $state(false);
 	let singboxInstalling = $state(false);
 	let singboxUninstalling = $state(false);
-	let singboxInstallError = $state<string | null>(null);
+	let singboxInstallError = $state<UiText | null>(null);
 	let singboxUpdating = $state(false);
-	let singboxUpdateError = $state<string | null>(null);
+	let singboxUpdateError = $state<UiText | null>(null);
 	let singboxBusy = $state(false);
 	let ndmsProxyBusy = $state(false);
 	let ndmsProxyConfirmOpen = $state(false);
@@ -211,7 +212,7 @@
 			singboxStatus.applyMutationResponse(fresh);
 			notifications.success(m.settings_page_singbox_installed());
 		} catch (e) {
-			singboxInstallError = e instanceof Error ? e.message : String(e);
+			singboxInstallError = singboxErrorText(e);
 		} finally {
 			singboxInstalling = false;
 		}
@@ -238,7 +239,7 @@
 			singboxStatus.applyMutationResponse(fresh);
 			notifications.success(m.settings_page_singbox_updated());
 		} catch (e) {
-			singboxUpdateError = e instanceof Error ? e.message : String(e);
+			singboxUpdateError = singboxErrorText(e);
 		} finally {
 			singboxUpdating = false;
 		}

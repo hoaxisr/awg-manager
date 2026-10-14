@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { m } from '$lib/i18n';
+	import { m, uiText, type UiText } from '$lib/i18n';
 	import type { SingboxStatus, HydraRouteStatus } from '$lib/types';
 	import type { ProxySubsystem } from '$lib/api/proxyInstances';
 	import { Button, ConfirmModal, Input, Modal, StatusDot } from '$lib/components/ui';
@@ -36,8 +36,8 @@
 		hydraStatusError?: string | null;
 		singboxInstalling: boolean;
 		singboxUpdating?: boolean;
-		singboxInstallError: string | null;
-		singboxUpdateError?: string | null;
+		singboxInstallError: UiText | null;
+		singboxUpdateError?: UiText | null;
 		oninstallSingbox: () => void;
 		onupdateSingbox?: () => void;
 		onuninstallSingbox?: () => void;
@@ -186,7 +186,7 @@
 	async function copyError() {
 		const err = singboxInstallError ?? singboxUpdateError;
 		if (err) {
-			await copyToClipboard(err);
+			await copyToClipboard(uiText(err));
 		}
 	}
 
@@ -486,7 +486,7 @@
 	size="lg"
 	onclose={() => (errorModalOpen = false)}
 >
-	<pre class="error-pre">{singboxInstallError ?? singboxUpdateError ?? ''}</pre>
+	<pre class="error-pre">{uiText(singboxInstallError ?? singboxUpdateError)}</pre>
 	{#snippet actions()}
 		<Button variant="ghost" size="sm" onclick={copyError}>{m.settings_integrations_copy()}</Button>
 		<Button variant="primary" size="sm" onclick={() => (errorModalOpen = false)}>

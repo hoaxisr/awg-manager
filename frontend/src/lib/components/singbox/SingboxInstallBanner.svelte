@@ -1,14 +1,15 @@
 <script lang="ts">
-	import { m } from '$lib/i18n';
+	import { m, uiText, type UiText } from '$lib/i18n';
 	import { singboxStatus } from '$lib/stores/singbox';
 	import { singboxInstallProgress } from '$lib/stores/singboxInstall';
 	import { api } from '$lib/api/client';
 	import { Button, IconButton } from '$lib/components/ui';
 	import { formatBytes } from '$lib/utils/format';
+	import { singboxErrorText } from '$lib/utils/singboxError';
 
 	let installing = $state(false);
 	let updating = $state(false);
-	let error = $state<string | null>(null);
+	let error = $state<UiText | null>(null);
 	let dismissedKey = $state<string>('');
 
 	const progress = $derived($singboxInstallProgress);
@@ -86,7 +87,7 @@
 			const fresh = await api.singboxInstall();
 			singboxStatus.applyMutationResponse(fresh);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = singboxErrorText(e);
 		} finally {
 			installing = false;
 		}
@@ -99,7 +100,7 @@
 			const fresh = await api.singboxUpdate();
 			singboxStatus.applyMutationResponse(fresh);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = singboxErrorText(e);
 		} finally {
 			updating = false;
 		}
@@ -133,7 +134,7 @@
 			</div>
 		{/if}
 		{#if error}
-			<div class="error">{error}</div>
+			<div class="error">{uiText(error)}</div>
 		{/if}
 	</div>
 {:else if visible && issue === 'no-proxy-component'}
@@ -185,7 +186,7 @@
 			</div>
 		{/if}
 		{#if error}
-			<div class="error">{error}</div>
+			<div class="error">{uiText(error)}</div>
 		{/if}
 	</div>
 {:else if visible && issue === 'missing-no-space'}
