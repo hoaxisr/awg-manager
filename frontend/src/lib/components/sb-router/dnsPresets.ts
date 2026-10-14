@@ -104,6 +104,9 @@ export function buildDnsServer(
 	if (base.detour) out.detour = base.detour;
 	if (base.domain_strategy) out.domain_strategy = base.domain_strategy;
 	if (base.domain_resolver) out.domain_resolver = { ...base.domain_resolver };
+	// Адрес отправителя не зависит от провайдера и протокола; с detour бэкенд
+	// его не примет.
+	if (base.inet4_bind_address && !base.detour) out.inet4_bind_address = base.inet4_bind_address;
 
 	if (proto === 'udp') return out;
 

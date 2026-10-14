@@ -81,6 +81,13 @@ describe('udpDropsTls', () => {
 });
 
 describe('buildDnsServer', () => {
+  it('переносит адрес отправителя при смене провайдера и протокола, но не с detour', () => {
+    const bound = { ...udpBase, inet4_bind_address: '10.0.20.1' };
+    expect(buildDnsServer(bound, '8.8.8.8', 'dns.google', 'udp').inet4_bind_address).toBe('10.0.20.1');
+    expect(buildDnsServer(bound, '1.1.1.1', 'cloudflare-dns.com', 'doh').inet4_bind_address).toBe('10.0.20.1');
+    expect(buildDnsServer({ ...bound, detour: 'wg-nl' }, '8.8.8.8', 'dns.google', 'udp').inet4_bind_address).toBeUndefined();
+  });
+
   it('udp: адрес без порта, пути и tls', () => {
     expect(buildDnsServer(udpBase, '8.8.8.8', 'dns.google', 'udp')).toEqual({
       tag: 'dns-direct',

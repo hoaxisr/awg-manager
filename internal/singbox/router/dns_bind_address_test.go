@@ -72,6 +72,17 @@ func stubLocalAddrs(svc *ServiceImpl, addrs *[]string) {
 // адреса проверяется заново.
 func assertDNSBindAddressLocality(t *testing.T, local *[]string, add func(DNSServer) error, update func(string, DNSServer) error, list func() ([]DNSServer, error)) {
 	t.Helper()
+	// Адрес, вписанный правкой серверу без адреса, проверяется так же, как
+	// при добавлении: пустой адрес — не «принятая привязка».
+	plain := DNSServer{Tag: "plain", Type: "udp", Server: "10.0.10.53"}
+	if err := add(plain); err != nil {
+		t.Fatalf("сервер без адреса отвергнут: %v", err)
+	}
+	plain.Inet4BindAddress = "10.0.20.2"
+	if err := update("plain", plain); !errors.Is(err, ErrDNSBindAddress) {
+		t.Fatalf("чужой адрес правкой: ожидался ErrDNSBindAddress, получено %v", err)
+	}
+
 	srv := DNSServer{Tag: "s2s", Type: "udp", Server: "10.0.10.53", Inet4BindAddress: "10.0.20.2"}
 	if err := add(srv); !errors.Is(err, ErrDNSBindAddress) {
 		t.Fatalf("чужой адрес: ожидался ErrDNSBindAddress, получено %v", err)
@@ -132,4 +143,32 @@ func TestFakeIPDNSServerBindAddressLocality(t *testing.T) {
 		func(s DNSServer) error { return svc.FakeIPAddDNSServer(ctx, s) },
 		func(tag string, s DNSServer) error { return svc.FakeIPUpdateDNSServer(ctx, tag, s) },
 		func() ([]DNSServer, error) { return svc.FakeIPListDNSServers(ctx) })
+}
+
+// Сбой чтения адресов роутера — не ошибка ввода (500, а не 400) и не повод
+// пропустить новый адрес; прежний адрес правку не блокирует.
+func TestDNSServerBindAddressLocalAddrsFailure(t *testing.T) {
+	svc, _ := newOrchedTestService(t)
+	ctx := context.Background()
+	local := []string{"10.0.20.1/24"}
+	stubLocalAddrs(svc, &local)
+	srv := DNSServer{Tag: "s2s", Type: "udp", Server: "10.0.10.53", Inet4BindAddress: "10.0.20.1"}
+	if err := svc.AddDNSServer(ctx, srv); err != nil {
+		t.Fatal(err)
+	}
+	svc.deps.LocalAddrs = func() ([]net.Addr, error) { return nil, errors.New("netlink down") }
+
+	notInput := func(what string, err error) {
+		t.Helper()
+		if err == nil || errors.Is(err, ErrDNSBindAddress) {
+			t.Fatalf("%s: ожидался сбой (не ErrDNSBindAddress), получено %v", what, err)
+		}
+	}
+	notInput("Add", svc.AddDNSServer(ctx, DNSServer{Tag: "other", Type: "udp", Server: "10.0.10.53", Inet4BindAddress: "10.0.20.1"}))
+	srv.Server = "10.0.10.54"
+	if err := svc.UpdateDNSServer(ctx, "s2s", srv); err != nil {
+		t.Fatalf("правка с прежним адресом при сбое отвергнута: %v", err)
+	}
+	srv.Inet4BindAddress = "10.0.20.9"
+	notInput("Update с новым адресом", svc.UpdateDNSServer(ctx, "s2s", srv))
 }

@@ -39,6 +39,43 @@ describe('DNSServerEditModal', () => {
 		expect(screen.queryByText('Bootstrap resolver (для домена сервера)')).toBeNull();
 	});
 
+	it('sends the source address of a direct server', async () => {
+		const onSave = vi.fn().mockResolvedValue(undefined);
+		render(DNSServerEditModal, {
+			props: { ...baseProps, server: { tag: 's2s', type: 'udp', server: '10.0.10.53' }, onSave },
+		});
+
+		await fireEvent.input(screen.getByPlaceholderText('10.0.20.1'), { target: { value: '10.0.20.1' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+
+		expect(onSave).toHaveBeenCalledWith({
+			tag: 's2s', type: 'udp', server: '10.0.10.53', inet4_bind_address: '10.0.20.1',
+		});
+	});
+
+	it('hides the source address with an outbound detour and on an engine-managed server', () => {
+		const { unmount } = render(DNSServerEditModal, {
+			props: {
+				...baseProps,
+				server: { tag: 'dot', type: 'udp', server: '9.9.9.9', detour: 'tunnel' },
+				outboundOptions: [{ id: 'awg', items: [{ value: 'tunnel', label: 'Tunnel' }] }],
+				onSave: vi.fn(),
+			},
+		});
+		expect(screen.queryByPlaceholderText('10.0.20.1')).toBeNull();
+		unmount();
+
+		render(DNSServerEditModal, {
+			props: {
+				...baseProps,
+				server: { tag: 'real', type: 'udp', server: '77.88.8.8' },
+				bindAddressLocked: true,
+				onSave: vi.fn(),
+			},
+		});
+		expect(screen.queryByPlaceholderText('10.0.20.1')).toBeNull();
+	});
+
 	it('resets non-tag fields when type changes and serializes TLS lists', async () => {
 		const onSave = vi.fn().mockResolvedValue(undefined);
 		render(DNSServerEditModal, {
