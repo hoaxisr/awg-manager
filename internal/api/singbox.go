@@ -356,6 +356,9 @@ func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, singbox.ErrNoSpace) {
+			// Статус мог устареть с последнего опроса — пусть UI перечитает
+			// required/free и покажет баннер «нет места».
+			h.bus.PublishInvalidated(events.ResourceSingboxStatus, "no-space")
 			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "NO_SPACE")
 			return
 		}
@@ -459,6 +462,9 @@ func (h *SingboxHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, singbox.ErrNoSpace) {
+			// Статус мог устареть с последнего опроса — пусть UI перечитает
+			// required/free и покажет баннер «нет места».
+			h.bus.PublishInvalidated(events.ResourceSingboxStatus, "no-space")
 			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "NO_SPACE")
 			return
 		}

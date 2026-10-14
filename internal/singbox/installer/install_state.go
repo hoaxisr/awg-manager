@@ -25,3 +25,8 @@ const (
 	// InstallStateError — последняя установка/апгрейд завершились ошибкой.
 	InstallStateError InstallState = "error"
 )
+
+// NoSpace — гейт отказывает по месту, неважно, ставим с нуля или поверх старого.
+func (s InstallState) NoSpace() bool {
+	return s == InstallStateMissingNoSpace || s == InstallStateOutdatedNoSpace
+}

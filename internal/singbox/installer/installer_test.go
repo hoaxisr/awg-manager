@@ -527,3 +527,19 @@ func TestRequiredDiskBytes(t *testing.T) {
 		t.Errorf("ubifs: %d, want %d", got, want)
 	}
 }
+
+// После Uninstall каталога бинаря нет — проба места идёт по ближайшему
+// существующему родителю, иначе гейт молча отключался.
+func TestEvaluateInstallState_MissingDir_ProbesParent(t *testing.T) {
+	root := t.TempDir()
+	inst := New(filepath.Join(root, "gone", "singbox", "sing-box"), "test-arch", BinarySpec{Version: "1.2.3", URL: "u", SHA256: "s", Size: 100 << 20}, nil)
+	var probed string
+	inst.SetFreeDiskFn(func(p string) (int64, bool) { probed = p; return 1 << 20, true })
+	inst.isUBIFS = func(string) bool { return false }
+	if got := inst.EvaluateInstallState(""); got != InstallStateMissingNoSpace {
+		t.Fatalf("got %q, want %q", got, InstallStateMissingNoSpace)
+	}
+	if probed != root {
+		t.Fatalf("probed %q, want %q", probed, root)
+	}
+}

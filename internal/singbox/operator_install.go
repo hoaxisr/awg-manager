@@ -331,9 +331,11 @@ func (o *Operator) Install(ctx context.Context) error {
 	if o.inst == nil {
 		return fmt.Errorf("installer not wired")
 	}
-	if o.inst.EvaluateInstallState("") == installer.InstallStateMissingNoSpace {
+	if o.inst.EvaluateInstallState("").NoSpace() {
+		// Текст ошибки пустой: кадр только закрывает прогресс, а локализованную
+		// причину UI берёт из кода NO_SPACE в ответе.
 		if o.installProgress != nil {
-			o.installProgress("install", "error", 0, 0, ErrNoSpace.Error())
+			o.installProgress("install", "error", 0, 0, "")
 		}
 		return ErrNoSpace
 	}
@@ -424,9 +426,9 @@ func (o *Operator) Update(ctx context.Context) error {
 	}
 	// "" — UPX-копия pinned-версии уже отсечена проверкой выше,
 	// версия на решение гейта больше не влияет.
-	if o.inst.EvaluateInstallState("") == installer.InstallStateOutdatedNoSpace {
+	if o.inst.EvaluateInstallState("").NoSpace() {
 		if o.installProgress != nil {
-			o.installProgress("update", "error", 0, 0, ErrNoSpace.Error())
+			o.installProgress("update", "error", 0, 0, "")
 		}
 		return ErrNoSpace
 	}

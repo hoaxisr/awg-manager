@@ -33,9 +33,19 @@ func TestSingboxHandler_Install_NoSpace_409(t *testing.T) {
 	if w.Code != http.StatusConflict {
 		t.Fatalf("код = %d, ожидался 409: %s", w.Code, w.Body.String())
 	}
+	// Ровно одна подсказка: перечитать статус. Ни «installed», ни sysinfo.
 	select {
 	case ev := <-ch:
-		t.Fatalf("опубликовано событие %+v, ожидалась тишина", ev)
+		inv, ok := ev.Data.(events.ResourceInvalidatedEvent)
+		if !ok || inv.Resource != events.ResourceSingboxStatus || inv.Reason != "no-space" {
+			t.Fatalf("событие %+v, ожидалось singbox status / no-space", ev)
+		}
+	default:
+		t.Fatal("подсказка перечитать статус не опубликована")
+	}
+	select {
+	case ev := <-ch:
+		t.Fatalf("лишнее событие %+v", ev)
 	default:
 	}
 }

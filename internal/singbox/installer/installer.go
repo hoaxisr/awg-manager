@@ -230,7 +230,7 @@ func (i *Installer) Download(ctx context.Context, onProgress httpdownload.Progre
 		return "", fmt.Errorf("downloader is not configured")
 	}
 
-	free, freeOK := routerinfo.FreeBytes(filepath.Dir(i.binaryPath))
+	free, freeOK := i.FreeBytes()
 	maxBytes := downloadByteLimit(free, freeOK, binaryMaxBytes, diskReserveBytes, i.compressRatio())
 
 	res, err := dl.DownloadFile(ctx, DownloadFileRequest{
@@ -292,7 +292,24 @@ func (i *Installer) FreeBytes() (int64, bool) {
 	if i.freeDisk == nil {
 		return 0, false
 	}
-	return i.freeDisk(filepath.Dir(i.binaryPath))
+	return i.freeDisk(i.probeDir())
+}
+
+// probeDir — ближайший существующий каталог на пути к бинарю. Uninstall
+// сносит каталог sing-box целиком, и statfs по нему вернул бы ENOENT —
+// гейт места молча отключился бы до следующей установки.
+func (i *Installer) probeDir() string {
+	dir := filepath.Dir(i.binaryPath)
+	for {
+		if _, err := os.Stat(dir); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return dir
+		}
+		dir = parent
+	}
 }
 
 // SetFreeDiskFn overrides the free-disk probe (tests only).
@@ -313,7 +330,7 @@ const safetyMargin = 5 << 20
 // compressRatio — сколько байт бинаря из сети ложится в один байт на диске
 // каталога установки.
 func (i *Installer) compressRatio() int64 {
-	if i.isUBIFS != nil && i.isUBIFS(filepath.Dir(i.binaryPath)) {
+	if i.isUBIFS != nil && i.isUBIFS(i.probeDir()) {
 		return ubifsCompressFactor
 	}
 	return 1
@@ -344,10 +361,7 @@ func (i *Installer) EvaluateInstallState(currentVersion string) InstallState {
 		return InstallStateInstalled
 	}
 
-	freeBytes, ok := int64(0), false
-	if i.freeDisk != nil {
-		freeBytes, ok = i.freeDisk(filepath.Dir(i.binaryPath))
-	}
+	freeBytes, ok := i.FreeBytes()
 	noSpace := ok && i.spec.Size > 0 && freeBytes < i.RequiredDiskBytes()
 
 	if !installed {

@@ -2143,6 +2143,38 @@ func TestOperator_Update_NoSpace_ReturnsErrNoSpace(t *testing.T) {
 	}
 }
 
+// Install поверх устаревшего бинаря и Update без бинаря — тот же гейт места:
+// раньше каждый метод сверял только «своё» NoSpace-состояние и скачивал.
+func TestOperator_InstallUpdate_CrossStateNoSpace(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		present bool
+		call    func(*Operator) error
+	}{
+		{"Install поверх старого", true, func(o *Operator) error { return o.Install(context.Background()) }},
+		{"Update без бинаря", false, func(o *Operator) error { return o.Update(context.Background()) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binary := filepath.Join(dir, "sing-box")
+			if c.present {
+				if err := os.WriteFile(binary, []byte("old-content"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+			inst := installer.New(binary, "test-arch", installer.BinarySpec{
+				Version: "1.2.3", URL: "u", SHA256: "different-sha", Size: 100 << 20,
+			}, nil)
+			inst.SetFreeDiskFn(func(string) (int64, bool) { return 50 << 20, true })
+			op.SetInstaller(inst)
+			if err := c.call(op); !errors.Is(err, ErrNoSpace) {
+				t.Fatalf("got %v, want ErrNoSpace", err)
+			}
+		})
+	}
+}
+
 // same-version+same-sha → MatchesPinnedBytes==true → Update должен быть no-op
 // без обращения к gate (gate стоит ПОСЛЕ этого early-return).
 // UPX-копия pinned-версии: Update — no-op, скачивания нет. Downloader не

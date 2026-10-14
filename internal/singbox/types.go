@@ -91,10 +91,10 @@ type Status struct {
 	// InstallState классифицирует состояние managed binary относительно
 	// pin-версии и доступного места. UI рендерит на его основе.
 	InstallState string `json:"installState"`
-	// RequiredBytes — сколько свободного места нужно гейту установки (байты), см. installer.RequiredDiskBytes.
-	// 0 когда RequiredSize неизвестен (старая схема).
+	// RequiredBytes — сколько свободного места нужно гейту установки (байты),
+	// см. installer.RequiredDiskBytes; резерв уже внутри.
 	RequiredBytes int64 `json:"requiredBytes"`
-	// FreeBytes — свободное место на FS managed binary dir (после diskReserveBytes-минус).
+	// FreeBytes — свободное место на FS managed binary dir, как его видит statfs.
 	// 0 когда statfs недоступен.
 	FreeBytes int64 `json:"freeBytes"`
 }
