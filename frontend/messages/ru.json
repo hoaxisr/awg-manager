@@ -3224,6 +3224,7 @@
 	"routing_singbox_dnsrule_keyword": "Domain keyword (через запятую)",
 	"routing_singbox_dnsrule_regex": "Domain regex (по строке)",
 	"routing_singbox_dnsrule_qtype": "Query type (через запятую)",
+	"routing_singbox_dnsrule_source_hint": "Адреса или подсети клиентов, по строке. Пусто — запросы от всех.",
 	"routing_singbox_dnsrule_by_response": "По DNS-ответу",
 	"routing_singbox_dnsrule_evaluate_response": "Ответ evaluate",
 	"routing_singbox_dnsrule_no_evaluate_above": "Нет evaluate-правил выше — сначала создайте правило с действием Evaluate",

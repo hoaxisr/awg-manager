@@ -3130,6 +3130,7 @@
 	"routing_singbox_dnsrule_keyword": "Domain keyword (comma-separated)",
 	"routing_singbox_dnsrule_regex": "Domain regex (one per line)",
 	"routing_singbox_dnsrule_qtype": "Query type (comma-separated)",
+	"routing_singbox_dnsrule_source_hint": "Client addresses or subnets, one per line. Empty — queries from everyone.",
 	"routing_singbox_dnsrule_by_response": "By DNS response",
 	"routing_singbox_dnsrule_evaluate_response": "Evaluate response",
 	"routing_singbox_dnsrule_no_evaluate_above": "There are no evaluate rules above — first create a rule with the Evaluate action",

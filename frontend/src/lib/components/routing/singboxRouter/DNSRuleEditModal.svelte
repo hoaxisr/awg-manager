@@ -86,6 +86,8 @@
 	let domainRegexStr = $state((rule?.domain_regex ?? []).join('\n'));
 	// svelte-ignore state_referenced_locally
 	let queryTypeStr = $state((rule?.query_type ?? []).join(', '));
+	// svelte-ignore state_referenced_locally
+	let sourceIpCidrStr = $state((rule?.source_ip_cidr ?? []).join('\n'));
 
 	function initAction(r?: SingboxRouterDNSRule): ActionKind {
 		if (r?.action === 'evaluate' || r?.action === 'respond') return r.action;
@@ -241,6 +243,7 @@
 	let initialDomainKeywordStr = $state('');
 	let initialDomainRegexStr = $state('');
 	let initialQueryTypeStr = $state('');
+	let initialSourceIpCidrStr = $state('');
 	let initialAction: ActionKind = $state('route');
 	let initialBlockMethod: 'nxdomain' | 'refused' | 'drop' = $state('refused');
 	let initialServer = $state('');
@@ -264,6 +267,7 @@
 			initialDomainKeywordStr = (rule.domain_keyword ?? []).join(', ');
 			initialDomainRegexStr = (rule.domain_regex ?? []).join('\n');
 			initialQueryTypeStr = (rule.query_type ?? []).join(', ');
+			initialSourceIpCidrStr = (rule.source_ip_cidr ?? []).join('\n');
 			initialAction = initAction(rule);
 			initialBlockMethod = initBlockMethod(rule);
 			initialServer = rule.server ?? '';
@@ -284,6 +288,7 @@
 			initialDomainKeywordStr = '';
 			initialDomainRegexStr = '';
 			initialQueryTypeStr = '';
+			initialSourceIpCidrStr = '';
 			initialAction = 'route';
 			initialBlockMethod = 'refused';
 			initialServer = '';
@@ -308,6 +313,7 @@
 			domainKeywordStr !== initialDomainKeywordStr ||
 			domainRegexStr !== initialDomainRegexStr ||
 			queryTypeStr !== initialQueryTypeStr ||
+			sourceIpCidrStr !== initialSourceIpCidrStr ||
 			action !== initialAction ||
 			blockMethod !== initialBlockMethod ||
 			server !== initialServer ||
@@ -335,6 +341,7 @@
 			const domain_keyword = domainKeywordStr.split(',').map((s) => s.trim()).filter(Boolean);
 			const domain_regex = domainRegexStr.split('\n').map((s) => s.trim()).filter(Boolean);
 			const query_type = queryTypeStr.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+			const source_ip_cidr = sourceIpCidrStr.split('\n').map((s) => s.trim()).filter(Boolean);
 
 			const ip_cidr = ipCidrStr.split('\n').map((s) => s.trim()).filter(Boolean);
 			const response_answer = responseAnswerStr.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -348,6 +355,7 @@
 				domain_keyword.length > 0 ||
 				domain_regex.length > 0 ||
 				query_type.length > 0 ||
+				source_ip_cidr.length > 0 ||
 				// match_response — полноценный матчер (backend dnsRuleHasMatcher):
 				// respond с одним match_response обязан проходить гейт.
 				responseOn;
@@ -370,6 +378,7 @@
 						domain_keyword: domain_keyword.length ? domain_keyword : undefined,
 						domain_regex: domain_regex.length ? domain_regex : undefined,
 						query_type: query_type.length ? query_type : undefined,
+						source_ip_cidr: source_ip_cidr.length ? source_ip_cidr : undefined,
 					};
 
 			// Поля ответа sing-box 1.14 живут только вместе с match_response
@@ -515,6 +524,12 @@
 			<label class="field">
 				<div class="lbl">{m.routing_singbox_dnsrule_qtype()}</div>
 				<input bind:value={queryTypeStr} placeholder="A, AAAA, HTTPS" />
+			</label>
+
+			<label class="field">
+				<div class="lbl">Source IP CIDR</div>
+				<textarea bind:value={sourceIpCidrStr} rows="2" placeholder="10.0.20.0/24"></textarea>
+				<div class="hint">{m.routing_singbox_dnsrule_source_hint()}</div>
 			</label>
 
 			<div class="action-section">

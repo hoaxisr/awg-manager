@@ -177,6 +177,39 @@ describe('DNSRuleEditModal', () => {
 		});
 	});
 
+	it('source_ip_cidr: вводится и переживает правку', async () => {
+		const onSave = vi.fn().mockResolvedValue(undefined);
+		render(DNSRuleEditModal, { props: { ...baseProps, onSave } });
+
+		await fireEvent.input(screen.getByPlaceholderText('10.0.20.0/24'), {
+			target: { value: ' 10.0.20.0/24 \n\n192.168.1.50' },
+		});
+		await openDropdown('— выберите —');
+		await pickOption(/dns-direct/);
+		await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+
+		expect(onSave).toHaveBeenCalledWith({
+			source_ip_cidr: ['10.0.20.0/24', '192.168.1.50'],
+			action: 'route',
+			server: 'dns-direct',
+		});
+	});
+
+	it('правило с source_ip_cidr не теряет его при сохранении', async () => {
+		const onSave = vi.fn().mockResolvedValue(undefined);
+		const rule: SingboxRouterDNSRule = {
+			source_ip_cidr: ['10.0.20.0/24'],
+			domain_suffix: ['corp.lan'],
+			action: 'route',
+			server: 'dns-direct',
+		};
+		render(DNSRuleEditModal, { props: { ...baseProps, rule, onSave } });
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+
+		expect(onSave).toHaveBeenCalledWith(rule);
+	});
+
 	it('catch-all + evaluate сохраняет action/server/tag', async () => {
 		const onSave = vi.fn().mockResolvedValue(undefined);
 		render(DNSRuleEditModal, { props: { ...baseProps, onSave } });
