@@ -3,35 +3,19 @@
     import { goto } from '$app/navigation';
     import { page } from '$app/stores';
     import { ChevronDown } from 'lucide-svelte';
-
-    interface TabChild {
-        id: string;
-        label: string;
-        badge?: number | string;
-        badgeTone?: 'default' | 'success' | 'warning' | 'muted';
-    }
-
-    interface Tab {
-        id: string;
-        label: string;
-        badge?: number | string;
-        // Optional visual tone for status-style string badges. Numbers keep
-        // the neutral default. `success` = green, `warning` = amber,
-        // `muted` = subdued grey (e.g. "stopped").
-        badgeTone?: 'default' | 'success' | 'warning' | 'muted';
-        // When true, renders a small vertical divider + extra spacing before
-        // this tab. Used to visually group tabs into clusters (e.g. legacy
-        // NDMS-stack tabs vs sing-box stack on /routing).
-        separatorBefore?: boolean;
-        // Dropdown group: one chip in the row, children picked from a menu.
-        // `id` is the default child when activating the group. Active when any
-        // child id matches `active`. With a single child, renders as a plain tab.
-        children?: TabChild[];
-        // When true, the tab label is rendered extra-subdued (dormant) to signal
-        // an inactive mutually-exclusive mode (e.g. the TProxy tab while FakeIP is
-        // the active routing mode). Stays clickable; the `active` style overrides.
-        muted?: boolean;
-    }
+    import { m } from '$lib/i18n';
+    import TabBadge from './TabBadge.svelte';
+    import TabsMenu from './TabsMenu.svelte';
+    import {
+        countFitting,
+        flattenTabs,
+        hasHiddenItems,
+        isMenuTab,
+        leafIds,
+        type MeasuredItem,
+        type Tab,
+        type TabChild,
+    } from './tabs-model';
 
     interface Props {
         tabs: Tab[];
@@ -56,6 +40,9 @@
 
     let containerEl: HTMLDivElement | undefined = $state();
     let measureEl: HTMLDivElement | undefined = $state();
+    let flatMeasureEl: HTMLDivElement | undefined = $state();
+    // Whole row fits with menu groups flattened into separate chips.
+    let expanded = $state(false);
     let visibleCount = $state(Infinity);
     let overflowOpen = $state(false);
     let menuOpenId = $state<string | null>(null);
@@ -119,23 +106,12 @@
     // conditional tab appears, losing the deep-link value.
     let urlConsumed = $state(false);
 
-    function leafIds(tab: Tab): string[] {
-        if (tab.children && tab.children.length > 0) {
-            return tab.children.map((c) => c.id);
-        }
-        return [tab.id];
-    }
-
     function findTabForId(id: string): Tab | undefined {
         return tabs.find((t) => leafIds(t).includes(id));
     }
 
     function isTabActive(tab: Tab): boolean {
         return leafIds(tab).includes(active);
-    }
-
-    function isMenuTab(tab: Tab): boolean {
-        return (tab.children?.length ?? 0) > 1;
     }
 
     function activeChild(tab: Tab): TabChild | undefined {
@@ -202,58 +178,47 @@
         writeUrl(active);
     });
 
-    let visibleTabs = $derived(tabs.slice(0, visibleCount));
-    let overflowTabs = $derived(tabs.slice(visibleCount));
+    let flatTabs = $derived(flattenTabs(tabs));
+    let hasMenus = $derived(tabs.some(isMenuTab));
+    let rowTabs = $derived(expanded ? flatTabs : tabs);
+    let visibleTabs = $derived(rowTabs.slice(0, visibleCount));
+    let overflowTabs = $derived(rowTabs.slice(visibleCount));
     let hasOverflowActive = $derived(overflowTabs.some((t) => isTabActive(t)));
+
+    // Space reserved for the "+N" chip.
+    const MORE_CHIP_WIDTH = 60;
+
+    function measure(row: HTMLDivElement): MeasuredItem[] {
+        // getBoundingClientRect() returns fractional pixels and, inside a
+        // ResizeObserver callback, does not force an additional layout.
+        // Children are tab chips plus span.tab-separator dividers.
+        return (Array.from(row.children) as HTMLElement[]).map((el) => ({
+            width: el.getBoundingClientRect().width,
+            separator: el.tagName === 'SPAN',
+        }));
+    }
 
     // containerWidth is passed in from ResizeObserver entries (free — no forced
     // layout) and cached so the tabs-change effect can reuse the last known
     // width without reading offsetWidth again.
     function recalc(containerWidth = cachedContainerWidth) {
         if (!measureEl || containerWidth === 0) return;
-        const children = Array.from(measureEl.children) as HTMLElement[];
-        if (children.length === 0) return;
-
-        // Available width minus space for the "+N" chip (≈60px)
-        const chipWidth = 60;
-        let usedWidth = 0;
-        let tabsFit = 0;
-        const totalTabs = tabs.length;
-
-        // Children are a mix of button.tab (real tabs) and span.tab-separator
-        // (visual dividers). We count only the buttons toward fits, but
-        // include separator widths in the running total when we cross them.
-        let pendingSeparator = 0;
-        for (const child of children) {
-            // getBoundingClientRect() returns fractional pixels and, inside a
-            // ResizeObserver callback, does not force an additional layout.
-            const w = child.getBoundingClientRect().width;
-            if (child.tagName === 'SPAN') {
-                // separator — accumulate; only "spent" once we accept the
-                // following tab.
-                pendingSeparator += w;
-                continue;
-            }
-            const isLastTab = tabsFit === totalTabs - 1;
-            const cost = w + pendingSeparator + (isLastTab ? 0 : chipWidth);
-            if (usedWidth + cost <= containerWidth) {
-                usedWidth += w + pendingSeparator;
-                pendingSeparator = 0;
-                tabsFit++;
-            } else {
-                break;
-            }
+        if (hasMenus && flatMeasureEl && countFitting(measure(flatMeasureEl), containerWidth, MORE_CHIP_WIDTH) === flatTabs.length) {
+            expanded = true;
+            visibleCount = Infinity;
+            return;
         }
-
-        // At least 1 tab visible
-        visibleCount = Math.max(1, tabsFit);
+        expanded = false;
+        const items = measure(measureEl);
+        if (items.length === 0) return;
+        visibleCount = countFitting(items, containerWidth, MORE_CHIP_WIDTH);
     }
 
     $effect(() => {
-        // Re-run when tabs change; reuse cached container width so we don't
-        // force a redundant layout read here.
-        void tabs.length;
-        void tabs.map((t) => t.label + (t.children?.length ?? 0)).join();
+        // Re-run when tabs change (labels and badges move chip widths);
+        // reuse cached container width so we don't force a redundant
+        // layout read here.
+        void flatTabs.map((t) => t.label + (t.badge ?? '')).join();
         recalc();
     });
 
@@ -326,33 +291,6 @@
     });
 </script>
 
-{#snippet badgeSpan(badge: number | string, tone?: TabChild['badgeTone'], activeChip?: boolean)}
-    <span
-        class="tab-badge"
-        class:success={tone === 'success'}
-        class:warning={tone === 'warning'}
-        class:muted={tone === 'muted'}
-        class:on-active={activeChip}
-    >{badge}</span>
-{/snippet}
-
-{#snippet childMenu(tab: Tab, align: 'left' | 'right' = 'left')}
-    <div class="dropdown" class:align-left={align === 'left'} class:align-right={align === 'right'}>
-        {#each tab.children ?? [] as child (child.id)}
-            <button
-                class="dropdown-item"
-                class:active={child.id === active}
-                onclick={() => selectTab(child.id)}
-            >
-                {child.label}
-                {#if child.badge !== undefined}
-                    {@render badgeSpan(child.badge, child.badgeTone)}
-                {/if}
-            </button>
-        {/each}
-    </div>
-{/snippet}
-
 {#snippet tabChip(tab: Tab, interactive: boolean)}
     {@const menu = isMenuTab(tab)}
     {@const open = interactive && menuOpenId === tab.id}
@@ -374,16 +312,19 @@
                     <span class="menu-tab-current">{current.label}</span>
                 {/if}
                 {#if (current?.badge ?? tab.badge) !== undefined}
-                    {@render badgeSpan(
-                        (current?.badge ?? tab.badge)!,
-                        current?.badgeTone ?? tab.badgeTone,
-                        interactive && isTabActive(tab),
-                    )}
+                    <TabBadge
+                        badge={(current?.badge ?? tab.badge)!}
+                        tone={current?.badgeTone ?? tab.badgeTone}
+                        onActive={interactive && isTabActive(tab)}
+                    />
+                {/if}
+                {#if hasHiddenItems(tab, current?.id)}
+                    <span class="tab-dot" role="img" aria-label={m.ui_tabs_hidden_items()} title={m.ui_tabs_hidden_items()}></span>
                 {/if}
                 <ChevronDown size={14} strokeWidth={2.5} class="menu-chevron" />
             </button>
             {#if open}
-                {@render childMenu(tab, 'left')}
+                <TabsMenu items={tab.children ?? []} {active} align="left" onselect={selectTab} />
             {/if}
         </div>
     {:else}
@@ -397,7 +338,11 @@
         >
             {leaf?.label ?? tab.label}
             {#if (leaf?.badge ?? tab.badge) !== undefined}
-                {@render badgeSpan((leaf?.badge ?? tab.badge)!, leaf?.badgeTone ?? tab.badgeTone, interactive && isTabActive(tab))}
+                <TabBadge
+                    badge={(leaf?.badge ?? tab.badge)!}
+                    tone={leaf?.badgeTone ?? tab.badgeTone}
+                    onActive={interactive && isTabActive(tab)}
+                />
             {/if}
         </button>
     {/if}
@@ -413,6 +358,16 @@
             {@render tabChip(tab, false)}
         {/each}
     </div>
+    {#if hasMenus}
+        <div class="measure-row" bind:this={flatMeasureEl} aria-hidden="true">
+            {#each flatTabs as tab, i (tab.id)}
+                {#if tab.separatorBefore && i > 0}
+                    <span class="tab-separator"></span>
+                {/if}
+                {@render tabChip(tab, false)}
+            {/each}
+        </div>
+    {/if}
 
     <div class="tab-row">
         {#each visibleTabs as tab, i (tab.id)}
@@ -437,39 +392,7 @@
                 </button>
 
                 {#if overflowOpen}
-                    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-                    <div class="dropdown align-right">
-                        {#each overflowTabs as tab (tab.id)}
-                            {#if isMenuTab(tab)}
-                                {#each tab.children ?? [] as child (child.id)}
-                                    <button
-                                        class="dropdown-item"
-                                        class:active={child.id === active}
-                                        onclick={() => selectTab(child.id)}
-                                    >
-                                        {tab.label} · {child.label}
-                                        {#if child.badge !== undefined}
-                                            {@render badgeSpan(child.badge, child.badgeTone)}
-                                        {/if}
-                                    </button>
-                                {/each}
-                            {:else}
-                                {@const leaf = tab.children?.[0]}
-                                <button
-                                    class="dropdown-item"
-                                    class:active={isTabActive(tab)}
-                                    onclick={() => selectTab(leaf?.id ?? tab.id)}
-                                >
-                                    {leaf
-                                        ? `${tab.label} · ${leaf.label}`
-                                        : tab.label}
-                                    {#if (leaf?.badge ?? tab.badge) !== undefined}
-                                        {@render badgeSpan((leaf?.badge ?? tab.badge)!, leaf?.badgeTone ?? tab.badgeTone)}
-                                    {/if}
-                                </button>
-                            {/if}
-                        {/each}
-                    </div>
+                    <TabsMenu items={flattenTabs(overflowTabs)} {active} align="right" onselect={selectTab} />
                 {/if}
             </div>
         {/if}
@@ -483,10 +406,14 @@
        --z-sticky-secondary (50) so sub-stickys like TunnelEditHeader paint
        over idle tab chips. When the dropdown opens, .has-dropdown bumps to
        --z-page-overlay so the dropdown lifts above sub-stickys. */
+    /* contain: inline-size — the row's own width must not size the container
+       it is measured against: inside a shrink-to-fit parent the expanded row
+       would prop the container open and never collapse back. */
     .overflow-tabs {
         position: relative;
         z-index: 41;
         margin-bottom: 1rem;
+        contain: inline-size;
     }
 
     .overflow-tabs.has-dropdown {
@@ -578,52 +505,12 @@
         transform: rotate(180deg);
     }
 
-    .tab-badge {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 1.25rem;
-        height: 1.25rem;
-        padding: 0 0.375rem;
-        border-radius: var(--radius-pill);
-        background: var(--bg-hover);
-        color: var(--text-muted);
-        font-size: 0.6875rem;
-        font-weight: 600;
-    }
-
-    .tab.active .tab-badge,
-    .tab-badge.on-active {
+    .tab-dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 50%;
         background: var(--accent);
-        color: var(--color-accent-contrast, #fff);
-    }
-
-    .tab-badge.success {
-        background: rgba(158, 206, 106, 0.18);
-        color: var(--success);
-    }
-    .tab-badge.warning {
-        background: rgba(224, 175, 104, 0.18);
-        color: var(--warning);
-    }
-    .tab-badge.muted {
-        background: var(--bg-hover);
-        color: var(--text-muted);
-        opacity: 0.75;
-    }
-    /* Active-tab overrides keep contrast on the selected tab. */
-    .tab.active .tab-badge.success,
-    .tab.active .tab-badge.warning,
-    .tab-badge.on-active.success,
-    .tab-badge.on-active.warning {
-        color: var(--color-success-contrast, #fff);
-    }
-    .tab.active .tab-badge.success,
-    .tab-badge.on-active.success { background: var(--success); }
-    .tab.active .tab-badge.warning,
-    .tab-badge.on-active.warning {
-        background: var(--warning);
-        color: var(--color-warning-contrast, #fff);
+        flex-shrink: 0;
     }
 
     /* ─── More chip ─── */
@@ -656,67 +543,5 @@
 
     .more-chip.has-active {
         border-bottom-color: var(--accent);
-    }
-
-    /* ─── Dropdown ─── */
-    .dropdown {
-        position: absolute;
-        top: calc(100% + 6px);
-        background: var(--bg-tertiary);
-        border: 1px solid var(--border-bright, var(--border));
-        border-radius: var(--radius);
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-        min-width: 180px;
-        z-index: var(--z-page-overlay);
-        overflow: hidden;
-    }
-
-    .dropdown.align-left {
-        left: 0;
-    }
-
-    .dropdown.align-right {
-        right: 0;
-    }
-
-    @media (max-width: 768px) {
-        .dropdown {
-            max-height: calc(100vh - 200px);
-            overflow-y: auto;
-        }
-    }
-
-    .dropdown-group-label {
-        padding: 0.5rem 0.875rem 0.25rem;
-        font-size: 0.6875rem;
-        font-weight: 600;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: var(--text-muted);
-        opacity: 0.7;
-    }
-
-    .dropdown-item {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.625rem 0.875rem;
-        width: 100%;
-        background: none;
-        border: none;
-        color: var(--text-secondary, var(--text-primary));
-        font-size: 0.8125rem;
-        cursor: pointer;
-        text-align: left;
-        transition: background 0.1s;
-    }
-
-    .dropdown-item:hover {
-        background: var(--bg-hover);
-    }
-
-    .dropdown-item.active {
-        color: var(--accent);
-        font-weight: 600;
     }
 </style>

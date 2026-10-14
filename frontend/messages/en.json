@@ -6201,6 +6201,7 @@
 	"terminal_page_starting": "Starting the terminal...",
 	"terminal_page_busy": "The terminal is already open in another tab",
 	"terminal_page_error": "Failed to connect to the terminal",
+	"ui_tabs_hidden_items": "Other sections have items",
 	"ui_chip_select_placeholder": "Not selected",
 	"ui_chip_select_orphan_title": "Set not found in the current config",
 	"ui_chip_select_orphan_badge": "orphaned",

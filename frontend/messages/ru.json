@@ -6571,6 +6571,7 @@
 	"terminal_page_starting": "Запуск терминала...",
 	"terminal_page_busy": "Терминал уже открыт в другой вкладке",
 	"terminal_page_error": "Ошибка подключения к терминалу",
+	"ui_tabs_hidden_items": "В других разделах есть записи",
 	"ui_chip_select_placeholder": "Не выбрано",
 	"ui_chip_select_orphan_title": "Набор не найден в текущем конфиге",
 	"ui_chip_select_orphan_badge": "сирота / orphaned",

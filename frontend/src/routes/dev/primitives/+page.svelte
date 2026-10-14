@@ -19,6 +19,16 @@
     { id: 'logs', label: 'Журнал' },
     { id: 'connections', label: 'Соединения', badge: 47 },
     { id: 'checks', label: 'Проверки' },
+    {
+      id: 'singbox',
+      label: 'Sing-box',
+      separatorBefore: true,
+      children: [
+        { id: 'singbox', label: 'Туннели', badge: 0 },
+        { id: 'subscriptions', label: 'Подписки', badge: 2 },
+        { id: 'awg3', label: 'WG endpoints', badge: 0 },
+      ],
+    },
   ];
 
   let inputBasic = $state('');
