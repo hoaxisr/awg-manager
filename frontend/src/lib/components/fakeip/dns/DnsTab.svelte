@@ -593,6 +593,7 @@
 	/>
 {/if}
 
+<!-- real ведёт fakeip-tun: бэкенд (guardFakeIPLocked) правит у него только server -->
 {#if dnsServerEditTag !== null && dnsServerEditTarget !== undefined}
 	<DNSServerEditModal
 		server={dnsServerEditTarget}
@@ -600,6 +601,7 @@
 		outboundOptions={$storeOptions}
 		onClose={() => (dnsServerEditTag = null)}
 		onSave={handleDnsServerEditSave}
+		bindAddressLocked={dnsServerEditTarget.tag === 'real'}
 	/>
 {/if}
 

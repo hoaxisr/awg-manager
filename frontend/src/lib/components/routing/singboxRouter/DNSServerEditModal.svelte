@@ -21,8 +21,10 @@
 		outboundOptions: OutboundGroup[];
 		onClose: () => void;
 		onSave: (server: SingboxRouterDNSServer) => Promise<void> | void;
+		/** Сервер ведёт движок, адрес отправителя бэкенд отвергнет — поле не показываем. */
+		bindAddressLocked?: boolean;
 	}
-	let { server, servers, outboundOptions, onClose, onSave }: Props = $props();
+	let { server, servers, outboundOptions, onClose, onSave, bindAddressLocked = false }: Props = $props();
 
 	const TYPE_OPTIONS = $derived<DropdownOption<SingboxRouterDNSType>[]>([
 		{ value: 'udp', label: m.routing_singbox_dns_type_udp() },
@@ -396,7 +398,7 @@
 							{m.routing_singbox_dns_detour_hint()} <code>detour</code> {m.routing_singbox_dns_detour_not_written()}
 						</div>
 					</label>
-					{#if !hasOutboundDetour}
+					{#if !hasOutboundDetour && !bindAddressLocked}
 						<label class="field">
 							<div class="lbl">{m.routing_singbox_dns_bind_address_label()}</div>
 							<input bind:value={bindAddress} placeholder="10.0.20.1" />

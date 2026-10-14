@@ -94,8 +94,14 @@ func assertDNSBindAddressLocality(t *testing.T, local *[]string, add func(DNSSer
 	if err := update("s2s", srv); err != nil {
 		t.Fatalf("правка с прежним адресом отвергнута: %v", err)
 	}
+	// Запись ищется по старому тегу: переименование с тем же адресом —
+	// та же принятая привязка.
+	srv.Tag = "s2s-renamed"
+	if err := update("s2s", srv); err != nil {
+		t.Fatalf("переименование с прежним адресом отвергнуто: %v", err)
+	}
 	srv.Inet4BindAddress = "10.0.20.3"
-	if err := update("s2s", srv); !errors.Is(err, ErrDNSBindAddress) {
+	if err := update("s2s-renamed", srv); !errors.Is(err, ErrDNSBindAddress) {
 		t.Fatalf("смена на чужой адрес: ожидался ErrDNSBindAddress, получено %v", err)
 	}
 }
