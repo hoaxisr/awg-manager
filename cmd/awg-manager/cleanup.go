@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
+	"github.com/hoaxisr/awg-manager/internal/mihomo"
+	"github.com/hoaxisr/awg-manager/internal/mihomo/installer"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsevents "github.com/hoaxisr/awg-manager/internal/ndms/events"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -278,6 +281,18 @@ func runCleanup(dataDir string) {
 		fmt.Fprintf(os.Stderr, "save config after tun cleanup: %v\n", err)
 	}
 
+	// Mihomo process and ipset cleanup
+	mihomoConfigDir := filepath.Join(dataDir, "mihomo")
+	mihomoOp := mihomo.NewOperator(installer.DefaultBinaryPath, mihomoConfigDir)
+	if running, _ := mihomoOp.IsRunning(); running {
+		if err := mihomoOp.Stop(); err != nil {
+			fmt.Fprintf(os.Stderr, "mihomo stop error: %v\n", err)
+		}
+	}
+	for _, set := range []string{"AWGM-CLOUD", "AWGM-MIHOMO"} {
+		_ = exec.Command("ipset", "destroy", set).Run()
+	}
+
 	// Токен RCI — последним: всё выше ходит в RCI с ним.
 	if err := ndmstransport.RevokeToken(ndmsinfo.KnownWithoutRCIToken()); err != nil {
 		fmt.Fprintf(os.Stderr, "revoke rci token: %v\n", err)
@@ -286,6 +301,10 @@ func runCleanup(dataDir string) {
 	// Remove all config/runtime files
 	fmt.Println("Cleaning up files...")
 	os.RemoveAll(filepath.Join(dataDir, "tunnels"))
+	os.RemoveAll(mihomoConfigDir)
+	_ = os.Remove(installer.DefaultBinaryPath)
+	_ = os.Remove("/tmp/mihomo.log")
+	_ = os.Remove(filepath.Join(dataDir, "mihomo.log"))
 	files, _ := filepath.Glob(filepath.Join(dataDir, "*.conf"))
 	for _, f := range files {
 		os.Remove(f)

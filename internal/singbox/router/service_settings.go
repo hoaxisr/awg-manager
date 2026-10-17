@@ -321,6 +321,18 @@ func NormalizeSingboxRouterSettings(sr storage.SingboxRouterSettings) (storage.S
 	default:
 		return sr, fmt.Errorf("cacheFileLocation: invalid value %q (must be \"flash\" or \"tmp\")", sr.CacheFileLocation)
 	}
+	if sr.RoutingEngine == "" {
+		sr.RoutingEngine = "sing-box"
+	}
+	if sr.RoutingEngine != "sing-box" && sr.RoutingEngine != "mihomo" {
+		return sr, fmt.Errorf("invalid routingEngine %q (want sing-box|mihomo)", sr.RoutingEngine)
+	}
+	if sr.MihomoTrafficMode == "" {
+		sr.MihomoTrafficMode = "rule"
+	}
+	if sr.MihomoMixedPort == 0 {
+		sr.MihomoMixedPort = 1099
+	}
 	return sr, nil
 }
 

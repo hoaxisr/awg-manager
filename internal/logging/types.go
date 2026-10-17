@@ -33,6 +33,7 @@ const (
 	GroupServer  = "server"
 	GroupSystem  = "system"
 	GroupSingbox = "singbox"
+	GroupMihomo  = "mihomo"
 )
 
 // Subgroups — app-buckets (tunnel/routing/server/system)
@@ -102,13 +103,17 @@ type Bucket string
 const (
 	BucketApp     Bucket = "app"
 	BucketSingbox Bucket = "singbox"
+	BucketMihomo  Bucket = "mihomo"
 )
 
 // BucketForGroup returns which bucket receives entries from the given group.
-// All groups except `singbox` go to the app bucket.
+// All groups except `singbox` and `mihomo` go to the app bucket.
 func BucketForGroup(group string) Bucket {
 	if group == GroupSingbox {
 		return BucketSingbox
+	}
+	if group == GroupMihomo {
+		return BucketMihomo
 	}
 	return BucketApp
 }
@@ -138,6 +143,9 @@ var KnownSubgroups = map[string][]string{
 	GroupSingbox: {
 		SubSBProcess, SubSBInbound, SubSBOutbound, SubSBDNS, SubSBRouter, SubSBRuntime,
 		SubAwg3,
+	},
+	GroupMihomo: {
+		SubSBProcess, SubSBInbound, SubSBOutbound, SubSBDNS, SubSBRouter, SubSBRuntime,
 	},
 }
 

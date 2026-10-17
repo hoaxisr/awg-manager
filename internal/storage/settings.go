@@ -334,7 +334,10 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			// Явный дефолт v6-пула: с v35 пустое значение ЗНАЧИМО («v6
 			// выключен»), поэтому свежая установка обязана нести его дословно.
 			// Литерал — дубль DefaultFakeIPTunParams().Inet6Range.
-			FakeIPPool6: "fc00::/18",
+			FakeIPPool6:       "fc00::/18",
+			RoutingEngine:     "sing-box",
+			MihomoMixedPort:   1099,
+			MihomoTrafficMode: "rule",
 		},
 		CreateNDMSProxyForSingbox: true,
 		// Fresh installs have no legacy peers — nothing to sweep. Only
