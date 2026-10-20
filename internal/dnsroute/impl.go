@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -219,6 +218,23 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 		return nil, err
 	}
 
+	// Подписки проверяются загрузкой ДО записи, и загруженное сразу идёт в
+	// список: отвергнутый список не попадает на диск, а каждая подписка
+	// скачивается один раз (F696).
+	if len(list.Subscriptions) > 0 {
+		fetched, err := s.validateSubscriptions(ctx, &list, list.Subscriptions)
+		if err != nil {
+			return nil, err
+		}
+		results := make([]subscriptionFetch, len(fetched))
+		for i, domains := range fetched {
+			results[i] = subscriptionFetch{domains: domains}
+		}
+		if err := applySubscriptionFetches(&list, results, now); err != nil {
+			return nil, err
+		}
+	}
+
 	s.dedup(data, &list)
 
 	data.Lists = append(data.Lists, list)
@@ -229,31 +245,11 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 
 	s.appLog.Info("create", list.ID, "list created: "+list.Name)
 
-	// Validate subscriptions by fetching them. If any URL fails (wrong
-	// Content-Type, unreachable, etc.), reject the entire Create.
-	if len(list.Subscriptions) > 0 {
-		if err := s.validateSubscriptions(ctx, &list, list.Subscriptions); err != nil {
-			// Remove the just-appended list. После записи data — сам кэш:
-			// откат правит свой черновик, а не кэш на месте (F695).
-			rollback := s.store.Draft()
-			rollback.Lists = slices.DeleteFunc(rollback.Lists, func(l DomainList) bool { return l.ID == list.ID })
-			if serr := s.store.Save(rollback); serr != nil {
-				s.logError("create", list.ID, "Rollback save failed", serr.Error())
-			}
-			return nil, err
-		}
-		if err := s.refreshSubscriptions(ctx, list.ID); err != nil {
-			s.logError("create", list.ID, "Refresh subscriptions failed", err.Error())
-		}
-	} else {
-		if err := s.reconcileAll(ctx); err != nil {
-			s.logError("create", list.ID, "Reconcile failed", err.Error())
-		}
+	if err := s.reconcileAll(ctx); err != nil {
+		s.logError("create", list.ID, "Reconcile failed", err.Error())
 	}
 
-	// Re-read the list after refresh (Domains may have been updated).
-	// Из кэша: обновление подписок записало свой черновик, data устарел
-	// (F695). Копия: ответ кодируется вне opMu (F667).
+	// Копия из кэша: ответ кодируется вне opMu (F667).
 	cur := s.store.GetCached()
 	for i := range cur.Lists {
 		if cur.Lists[i].ID == list.ID {
@@ -415,7 +411,7 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	// Validate any new subscription URLs before saving.
 	newSubs := findNewSubscriptions(existing.Subscriptions, list.Subscriptions)
 	if len(newSubs) > 0 {
-		if err := s.validateSubscriptions(ctx, &list, newSubs); err != nil {
+		if _, err := s.validateSubscriptions(ctx, &list, newSubs); err != nil {
 			return nil, err
 		}
 	}
@@ -775,31 +771,34 @@ func (e redactedError) Unwrap() error { return e.err }
 
 // validateSubscriptions fetches each subscription URL and verifies it returns
 // text/plain with at least one parseable domain. Returns the first error encountered.
-func (s *ServiceImpl) validateSubscriptions(ctx context.Context, list *DomainList, subs []Subscription) error {
+// На успехе отдаёт загруженные домены — по подписке, в порядке subs.
+func (s *ServiceImpl) validateSubscriptions(ctx context.Context, list *DomainList, subs []Subscription) ([][]string, error) {
 	seenSubnets := make(map[string]struct{})
+	fetched := make([][]string, 0, len(subs))
 	for _, sub := range subs {
 		domains, err := s.fetchSubscription(ctx, sub.URL)
 		// The error goes back to REST and to the MCP tools that create a
 		// list: the address and the fetch error keep scheme and host only,
 		// since both can carry a token (a redirect hop's too).
 		if err != nil {
-			return redactedError{
+			return nil, redactedError{
 				msg: fmt.Sprintf("подписка %s: %s", logging.RedactURLs(sub.URL), logging.RedactURLs(err.Error())),
 				err: err,
 			}
 		}
 		if len(domains) == 0 {
-			return fmt.Errorf("подписка %s: список пуст — URL не содержит доменов", logging.RedactURLs(sub.URL))
+			return nil, fmt.Errorf("подписка %s: список пуст — URL не содержит доменов", logging.RedactURLs(sub.URL))
 		}
 		_, subnets := splitDomainsAndSubnets(domains)
 		for _, subnet := range list.routedSubnets(subnets) {
 			seenSubnets[subnet] = struct{}{}
 		}
 		if err := validateSubnetsLimit(len(seenSubnets)); err != nil {
-			return err
+			return nil, err
 		}
+		fetched = append(fetched, domains)
 	}
-	return nil
+	return fetched, nil
 }
 
 // RefreshSubscriptions fetches all subscriptions for a single list and merges domains.
@@ -830,36 +829,20 @@ func (s *ServiceImpl) refreshSubscriptions(ctx context.Context, id string) error
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	// Fetch each subscription
-	var allSubDomains [][]string
-	for i := range list.Subscriptions {
-		sub := &list.Subscriptions[i]
+	results := make([]subscriptionFetch, len(list.Subscriptions))
+	for i, sub := range list.Subscriptions {
 		domains, err := s.fetchSubscription(ctx, sub.URL)
-		sub.LastFetched = now
 		if err != nil {
-			// net/http quotes the address whole, a redirect hop's too, and
-			// a list's address can carry a token in its path or query. The
-			// stored text is what REST, the web interface and MCP read, so
-			// it keeps only scheme and host.
-			reason := logging.RedactURLs(err.Error())
-			sub.LastError = reason
-			sub.LastCount = 0
 			// The journal line is scrubbed by logging.Service.AppLog.
 			s.appLog.Warn("subscription-fetch", id, fmt.Sprintf("url=%s err=%s", sub.URL, err.Error()))
 			// Keep going — one failed subscription shouldn't block others
-			continue
 		}
-		sub.LastError = ""
-		sub.LastCount = len(domains)
-		allSubDomains = append(allSubDomains, domains)
+		results[i] = subscriptionFetch{domains: domains, err: err}
 	}
 
-	// Merge manual + subscription domains, then classify CIDRs → Subnets.
-	merged := mergeDomains(list.ManualDomains, allSubDomains)
-	domains, subnets := splitDomainsAndSubnets(merged)
-	if err := validateSubnetsLimit(len(list.routedSubnets(subnets))); err != nil {
+	if err := applySubscriptionFetches(list, results, now); err != nil {
 		return err
 	}
-	list.Domains, list.Subnets = domains, subnets
 	s.dedup(data, list)
 	list.UpdatedAt = now
 
@@ -870,6 +853,47 @@ func (s *ServiceImpl) refreshSubscriptions(ctx context.Context, id string) error
 	s.appLog.Info("subscription-refresh", id, fmt.Sprintf("totalDomains=%d", len(list.Domains)))
 
 	return s.reconcileAll(ctx)
+}
+
+// subscriptionFetch — итог загрузки одной подписки.
+type subscriptionFetch struct {
+	domains []string
+	err     error
+}
+
+// applySubscriptionFetches переносит итоги загрузки (results[i] — для
+// list.Subscriptions[i]) в список: состояние каждой подписки, затем
+// Domains/Subnets из ручных доменов и загруженного. Неудачная загрузка
+// не фатальна — подписка просто не даёт доменов. Ошибка — только лимит
+// подсетей; тогда Domains/Subnets не тронуты.
+func applySubscriptionFetches(list *DomainList, results []subscriptionFetch, now string) error {
+	var allSubDomains [][]string
+	for i := range list.Subscriptions {
+		sub := &list.Subscriptions[i]
+		res := results[i]
+		sub.LastFetched = now
+		if res.err != nil {
+			// net/http quotes the address whole, a redirect hop's too, and
+			// a list's address can carry a token in its path or query. The
+			// stored text is what REST, the web interface and MCP read, so
+			// it keeps only scheme and host.
+			sub.LastError = logging.RedactURLs(res.err.Error())
+			sub.LastCount = 0
+			continue
+		}
+		sub.LastError = ""
+		sub.LastCount = len(res.domains)
+		allSubDomains = append(allSubDomains, res.domains)
+	}
+
+	// Merge manual + subscription domains, then classify CIDRs → Subnets.
+	merged := mergeDomains(list.ManualDomains, allSubDomains)
+	domains, subnets := splitDomainsAndSubnets(merged)
+	if err := validateSubnetsLimit(len(list.routedSubnets(subnets))); err != nil {
+		return err
+	}
+	list.Domains, list.Subnets = domains, subnets
+	return nil
 }
 
 func validateSubnetsLimit(count int) error {
