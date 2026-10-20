@@ -33,8 +33,8 @@
 			const hRanges = systemInfo?.supportsHRanges ?? false;
 			const generated = generateASCParams({ extended, hRanges });
 			// Сервер 3.1 (#688): при защите заголовков прошивка отвергает S < 12,
-			// а H шифруются — 1..4. Ключи 3.x бэкенд переносит сам (KeepASC3).
-			// ponytail: max() сдвигает распределение S3/S4 к 12 — для обфускации неважно.
+			// а H шифруются — 1..4. max() сдвигает распределение S3/S4 к 12 —
+			// для обфускации неважно.
 			if (classifyAwgVersionFromAsc(ascParams) === 'awg3.1') {
 				Object.assign(generated, {
 					s3: Math.max(generated.s3 ?? 0, 12),
@@ -45,6 +45,9 @@
 
 			ascParams = extended
 				? ({
+						// Ключи 3.x остаются в объекте: без них повторная генерация
+						// не узнает сервер 3.1 и даст S < 12.
+						...ascParams,
 						...generated,
 						s3: generated.s3!,
 						s4: generated.s4!,

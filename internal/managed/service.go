@@ -143,16 +143,15 @@ func New(
 	appLogger logging.AppLogger,
 ) *Service {
 	return &Service{
-		transport: transport,
-		saveCoord: saveCoord,
-		queries:   queries,
-		commands:  commands,
-		settings:  settings,
-		log:       log,
-		appLog:    logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubManaged),
-		wgRun:     realWgRunner,
-		keyGen:    realKeyGen{},
-
+		transport:    transport,
+		saveCoord:    saveCoord,
+		queries:      queries,
+		commands:     commands,
+		settings:     settings,
+		log:          log,
+		appLog:       logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubManaged),
+		wgRun:        realWgRunner,
+		keyGen:       realKeyGen{},
 		supportsASC3: ndmsinfo.SupportsWireguardASC3,
 	}
 }

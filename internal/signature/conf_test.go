@@ -127,3 +127,16 @@ func TestWriteASCConf_ASC3(t *testing.T) {
 		}
 	}
 }
+
+// ASC 3.1 с Jc = 0 (сервер junk не шлёт) — не «обычный WireGuard»: без S/H/HP
+// клиент не подключится (ревью #688).
+func TestWriteASCConf_ASC3WithoutJunk(t *testing.T) {
+	var b strings.Builder
+	WriteASCConf(&b, json.RawMessage(`{"jc":0,"s1":16,"s2":17,"s3":18,"s4":19,"h1":"1","h2":"2","h3":"3","h4":"4","header-protection-key":"K=","random-trailers":1}`), GeneratedPackets{})
+	got := b.String()
+	for _, want := range []string{"S1 = 16\n", "S4 = 19\n", "HeaderProtectionKey = K=\n", "RandomTrailers = on\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("нет %q:\n%s", want, got)
+		}
+	}
+}

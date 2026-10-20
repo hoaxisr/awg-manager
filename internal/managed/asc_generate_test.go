@@ -118,10 +118,11 @@ func TestCreate_ModeRejectedBeforeRCI(t *testing.T) {
 		req     CreateServerRequest
 		asc3    bool
 		wantErr error
+		wantMsg string
 	}{
-		"3.1 без ASC3":      {CreateServerRequest{Mode: ModeAWG31}, false, ErrASC3Unsupported},
-		"3.0":               {CreateServerRequest{Mode: "3.0"}, true, nil},
-		"3.1 без генерации": {CreateServerRequest{Mode: ModeAWG31, GenerateASC: &no}, true, nil},
+		"3.1 без ASC3":      {CreateServerRequest{Mode: ModeAWG31}, false, ErrASC3Unsupported, ""},
+		"3.0":               {CreateServerRequest{Mode: "3.0"}, true, nil, "неизвестный режим"},
+		"3.1 без генерации": {CreateServerRequest{Mode: ModeAWG31, GenerateASC: &no}, true, nil, "только со сгенерированным ASC"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			svc, _, _ := newCreateTestService(t)
@@ -131,7 +132,7 @@ func TestCreate_ModeRejectedBeforeRCI(t *testing.T) {
 			if err == nil || (tc.wantErr != nil && !errors.Is(err, tc.wantErr)) {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
 			}
-			if tc.wantErr == nil && !strings.Contains(err.Error(), "3.") {
+			if tc.wantErr == nil && !strings.Contains(err.Error(), tc.wantMsg) {
 				t.Fatalf("ошибка не о режиме: %v", err)
 			}
 			if posts := svc.transport.(*recordingPoster).posts; len(posts) != 0 {
