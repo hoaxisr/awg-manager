@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
-	import { hrTokenError } from '$lib/utils/hrToken';
 
 	interface Props {
 		domains: string[];
@@ -57,18 +56,16 @@
 			if (line.startsWith('#')) continue;
 			if (!isValidDomain(line)) {
 				errors.push(i + 1);
-				continue;
+			} else {
+				// Preserve geosite: tags as-is (case-sensitive tag names)
+				if (/^geosite:/i.test(line)) {
+					validDomains.push(line);
+				} else {
+					// Strip leading dots (.ru → ru)
+					let normalized = line.replace(/^\.+/, '');
+					if (normalized) validDomains.push(normalized);
+				}
 			}
-			// Preserve geosite: tags as-is (case-sensitive tag names);
-			// strip leading dots elsewhere (.ru → ru)
-			const value = /^geosite:/i.test(line) ? line : line.replace(/^\.+/, '');
-			if (!value) continue;
-			// HydraRoute: HRweb refuses to save any rule while one such token is in the files (#1045)
-			if (allowGeoTags && hrTokenError(value)) {
-				errors.push(i + 1);
-				continue;
-			}
-			validDomains.push(value);
 		}
 
 		return {
