@@ -35,6 +35,14 @@ func TestNDMSList_GeoTagRejectedOnWrite(t *testing.T) {
 			_, err := svc.Create(ctx, DomainList{Name: "g", ManualDomains: []string{"a.example"}, Excludes: []string{"geoip:ru"}, Routes: routedOpkgTun0})
 			return err
 		}},
+		{"CreateMixedCasePrefix", func(svc *ServiceImpl, _ string) error {
+			_, err := svc.Create(ctx, DomainList{Name: "g", ManualDomains: []string{"a.example", "GeoSite:x"}, Routes: routedOpkgTun0})
+			return err
+		}},
+		{"UpdateMixedCasePrefix", func(svc *ServiceImpl, id string) error {
+			_, err := svc.Update(ctx, DomainList{ID: id, ManualDomains: []string{"seed.example", "GeoSite:x"}})
+			return err
+		}},
 		{"UpdateManual", func(svc *ServiceImpl, id string) error {
 			_, err := svc.Update(ctx, DomainList{ID: id, ManualDomains: []string{"seed.example", "geosite:google"}})
 			return err
@@ -77,6 +85,24 @@ func TestNDMSList_GeoTagRejectedOnWrite(t *testing.T) {
 				t.Errorf("ушли POST: %d → %d", posts, got)
 			}
 		})
+	}
+}
+
+// Комментарий с geo-тегом — не тег: запись проходит, строка остаётся в
+// сыром тексте редактора.
+func TestNDMSList_GeoTagCommentAccepted(t *testing.T) {
+	svc, _, _ := newCreateSubsService(t, &urlDownloader{})
+	text := "example.com\n# geosite:x\n"
+	created, err := svc.Create(context.Background(), DomainList{Name: "c", ManualText: &text, Routes: routedOpkgTun0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := storedList(t, svc, created.ID)
+	if stored.ManualText == nil || *stored.ManualText != text {
+		t.Errorf("ManualText = %q, want %q", deref(stored.ManualText), text)
+	}
+	if strings.Join(stored.ManualDomains, ",") != "example.com" {
+		t.Errorf("ManualDomains = %v, want example.com", stored.ManualDomains)
 	}
 }
 
