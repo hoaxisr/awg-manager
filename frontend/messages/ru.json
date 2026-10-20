@@ -1456,7 +1456,7 @@
 	"servers_asc_page_title": "Обфускация — AWG Manager",
 	"servers_asc_heading": "Обфускация (ASC)",
 	"servers_asc_badge_managed": "Управляемый сервер",
-	"servers_asc_awg31_readonly": "Параметры AWG 3.1 заданы при создании сервера и общие для всех клиентов: их смена отключит каждого клиента, поэтому здесь они только для чтения.",
+	"servers_asc_awg31_readonly": "Параметры AWG 3.x заданы при создании сервера и общие для всех клиентов: их смена отключит каждого клиента, поэтому здесь они только для чтения.",
 	"servers_asc_clear": "Убрать ASC",
 	"servers_asc_generate_params": "Сгенерировать параметры",
 	"servers_page_egress_load_failed": "Не удалось загрузить настройки egress",

@@ -30,10 +30,15 @@
 		['KeepaliveTimeout', 'keepalive-timeout'],
 		['MaxHandshakeAttempts', 'max-handshake-attempts'],
 	];
+	// Признак 3.x — ключ защиты заголовков, как на бэкенде (WriteASCConf): именно
+	// при нём прошивка требует S ≥ 12, флаги 3.1 тут ни при чём.
+	let headerKey = $derived(
+		String((ascParams as unknown as Record<string, unknown> | null)?.['header-protection-key'] ?? ''),
+	);
 	let awg31Rows = $derived.by(() => {
-		if (classifyAwgVersionFromAsc(ascParams) !== 'awg3.1') return [];
+		if (!headerKey) return [];
 		const p = ascParams as unknown as Record<string, unknown>;
-		const rows: [string, string][] = [['HeaderProtectionKey', String(p['header-protection-key'] ?? '')]];
+		const rows: [string, string][] = [['HeaderProtectionKey', headerKey]];
 		for (const [name, key] of ASC31_RANGES) {
 			const lo = Number(p[`${key}-start`] ?? 0);
 			const hi = Number(p[`${key}-end`] ?? 0);
@@ -57,10 +62,10 @@
 			const extended = systemInfo?.supportsExtendedASC ?? false;
 			const hRanges = systemInfo?.supportsHRanges ?? false;
 			const generated = generateASCParams({ extended, hRanges });
-			// Сервер 3.1 (#688): при защите заголовков прошивка отвергает S < 12,
+			// Сервер 3.x (#688): при защите заголовков прошивка отвергает S < 12,
 			// а H шифруются — 1..4. max() сдвигает распределение S3/S4 к 12 —
 			// для обфускации неважно.
-			if (classifyAwgVersionFromAsc(ascParams) === 'awg3.1') {
+			if (headerKey) {
 				Object.assign(generated, {
 					s3: Math.max(generated.s3 ?? 0, 12),
 					s4: Math.max(generated.s4 ?? 0, 12),
@@ -172,7 +177,7 @@
 			<h1 class="page-title">{m.servers_asc_heading()}</h1>
 			<span class="badge-managed">{m.servers_asc_badge_managed()}</span>
 			{#if awg31Rows.length}
-				<VersionBadge kind="awg" value="awg3.1" />
+				<VersionBadge kind="awg" value={classifyAwgVersionFromAsc(ascParams)} />
 			{/if}
 		</div>
 		<div class="header-actions">
