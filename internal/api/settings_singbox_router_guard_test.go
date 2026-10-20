@@ -9,16 +9,13 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
-// Вторая дверь к смене режима: SettingsPatch.SingboxRouter копируется
-// ApplyPatch целиком, поэтому POST /settings/update писал бы чужой
-// routingMode/enabled прямо в персист — мимо SwitchRoutingMode, без
-// нормализации и без transitionMu. Reconcile отсюда не зовётся, но тик
-// планировщика (30 с) подхватил бы новый режим и оставил ресурсы прежнего
-// жить (см. шапку internal/singbox/router/fakeip_transition.go).
-//
-// Прочие поля блока обязаны продолжать доезжать до персиста — этот путь
-// используется round-trip'ом страницы настроек.
-func TestUpdate_SingboxRouterModeAndEnabledIgnored(t *testing.T) {
+// Блок singboxRouter через POST /settings/update не пишется вовсе (F684): у
+// роутера свои ручки (/singbox/router/settings, /mode, /enable, /disable), а
+// здесь частичный блок затёр бы пресеты обхода, пулы FakeIP и QoS, и чужой
+// routingMode/enabled ушёл бы в персист мимо SwitchRoutingMode (см. шапку
+// internal/singbox/router/fakeip_transition.go). Фронт этот блок не шлёт:
+// ответа /settings/get он не содержит.
+func TestUpdate_SingboxRouterBlockIgnored(t *testing.T) {
 	h, store := newSettingsHandlerForTest(t)
 	all, err := store.Load()
 	if err != nil {
@@ -27,6 +24,7 @@ func TestUpdate_SingboxRouterModeAndEnabledIgnored(t *testing.T) {
 	cp := *all
 	cp.SingboxRouter.RoutingMode = "tproxy"
 	cp.SingboxRouter.Enabled = true
+	cp.SingboxRouter.BypassExtraPorts = "53 UDP"
 	if err := store.Update(func(cur *storage.Settings) error { *cur = cp; return nil }); err != nil {
 		t.Fatalf("seed Update: %v", err)
 	}
@@ -49,7 +47,7 @@ func TestUpdate_SingboxRouterModeAndEnabledIgnored(t *testing.T) {
 	if !saved.SingboxRouter.Enabled {
 		t.Error("Enabled сброшен через /settings/update")
 	}
-	if saved.SingboxRouter.BypassExtraPorts != "8080 TCP" {
-		t.Errorf("прочие поля блока не сохранились: BypassExtraPorts = %q", saved.SingboxRouter.BypassExtraPorts)
+	if saved.SingboxRouter.BypassExtraPorts != "53 UDP" {
+		t.Errorf("блок роутера записан через /settings/update: BypassExtraPorts = %q", saved.SingboxRouter.BypassExtraPorts)
 	}
 }

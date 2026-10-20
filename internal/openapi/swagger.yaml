@@ -8594,19 +8594,15 @@ definitions:
       statusText:
         type: string
     type: object
-  storage.DNSRouteSettings:
+  storage.DNSRouteSettingsPatch:
     properties:
       autoRefreshEnabled:
-        description: 'default: false'
         type: boolean
       refreshDailyTime:
-        description: '"HH:MM" 24h format, e.g. "03:00"'
         type: string
       refreshIntervalHours:
-        description: 'default: 0 (user must choose)'
         type: integer
       refreshMode:
-        description: '"interval" (default/empty) or "daily"'
         type: string
     type: object
   storage.DownloadSettingsPatch:
@@ -8616,19 +8612,15 @@ definitions:
       routeTag:
         type: string
     type: object
-  storage.GeoFileSettings:
+  storage.GeoFileSettingsPatch:
     properties:
       autoRefreshEnabled:
-        description: 'default: false'
         type: boolean
       refreshDailyTime:
-        description: '"HH:MM" 24h, e.g. "03:00"'
         type: string
       refreshIntervalHours:
-        description: 'default: 0 (user chooses)'
         type: integer
       refreshMode:
-        description: '"interval" (default) or "daily"'
         type: string
     type: object
   storage.LoggingSettingsPatch:
@@ -8646,46 +8638,31 @@ definitions:
       singboxMaxEntries:
         type: integer
     type: object
-  storage.PingCheckDefaults:
+  storage.PingCheckDefaultsPatch:
     properties:
       deadInterval:
-        description: dead tunnel check interval in seconds, default 120
         type: integer
       failThreshold:
-        description: failures before marking dead, default 3
         type: integer
       interval:
-        description: check interval in seconds, default 45
         type: integer
       method:
-        description: '"http" or "icmp"'
         type: string
       target:
-        description: ICMP target, default "8.8.8.8"
         type: string
     type: object
-  storage.PingCheckSettings:
+  storage.PingCheckSettingsPatch:
     properties:
       defaults:
-        $ref: '#/definitions/storage.PingCheckDefaults'
+        $ref: '#/definitions/storage.PingCheckDefaultsPatch'
       enabled:
         type: boolean
     type: object
-  storage.ServerSettings:
+  storage.ServerSettingsPatch:
     properties:
       interface:
-        description: |-
-          Interface is the legacy single bind interface. Superseded by
-          Interfaces (migrateToV30 copies it there); kept populated so a
-          downgrade to an older release still binds where it used to.
-          New code must read Interfaces only.
         type: string
       interfaces:
-        description: |-
-          Interfaces lists kernel interface names (e.g. "br0") whose IPv4
-          addresses the HTTP server binds to (one listener per interface, plus
-          an always-on 127.0.0.1 listener for the NDMS reverse proxy and health
-          probes). Empty = bind all interfaces (0.0.0.0).
         items:
           type: string
         type: array
@@ -8705,11 +8682,11 @@ definitions:
       disableMemorySaving:
         type: boolean
       dnsRoute:
-        $ref: '#/definitions/storage.DNSRouteSettings'
+        $ref: '#/definitions/storage.DNSRouteSettingsPatch'
       download:
         $ref: '#/definitions/storage.DownloadSettingsPatch'
       geoFile:
-        $ref: '#/definitions/storage.GeoFileSettings'
+        $ref: '#/definitions/storage.GeoFileSettingsPatch'
       logging:
         $ref: '#/definitions/storage.LoggingSettingsPatch'
       managedPeerAllowIPsMigrated:
@@ -8725,11 +8702,11 @@ definitions:
           type: string
         type: array
       pingCheck:
-        $ref: '#/definitions/storage.PingCheckSettings'
+        $ref: '#/definitions/storage.PingCheckSettingsPatch'
       schemaVersion:
         type: integer
       server:
-        $ref: '#/definitions/storage.ServerSettings'
+        $ref: '#/definitions/storage.ServerSettingsPatch'
       serverInterfaces:
         items:
           type: string
@@ -8742,246 +8719,24 @@ definitions:
         type: integer
       singboxManuallyStopped:
         type: boolean
-      singboxRouter:
-        $ref: '#/definitions/storage.SingboxRouterSettings'
       updates:
-        $ref: '#/definitions/storage.UpdateSettings'
+        $ref: '#/definitions/storage.UpdateSettingsPatch'
       usageLevel:
         type: string
     type: object
-  storage.SingboxQoSClass:
-    properties:
-      dscp:
-        type: integer
-      enabled:
-        type: boolean
-      name:
-        type: string
-      outbound:
-        type: string
-      slot:
-        description: |-
-          Slot is the persisted 0-based listen-port slot (0..MaxQoSClasses-1)
-          the class's inbound pair derives from (router.QoSClassPorts). It is
-          backend-owned: the UI contract stays {dscp,name,outbound,enabled} —
-          clients PUT classes without slots and router.UpdateSettings
-          re-associates each incoming class with its stored slot by DSCP (the
-          unique key), so disabling or removing one class never shifts another
-          class's ports (a shift would RST/blackhole untouched flows). Brand-new
-          DSCPs get the first free slot.
-        type: integer
-    type: object
-  storage.SingboxRouterSettings:
-    properties:
-      bypassExtraPorts:
-        description: |-
-          BypassExtraPorts is a user-supplied comma-separated list of extra port
-          exclusions in "PORT UDP|TCP" format (e.g. "51820 UDP, 1194 TCP").
-          Parsed at iptables generation time. Empty = no extras.
-        type: string
-      bypassExtraSubnets:
-        description: |-
-          BypassExtraSubnets — пользовательский список IP/CIDR через
-          запятую/пробел (напр. "203.0.113.0/24, 10.8.0.5, 2001:db8::/32"). Трафик
-          к ним идёт целиком мимо sing-box (включая DNS/53). Голый IP трактуется
-          как /32, голый IPv6 — как /128. IPv6-записи действуют при перехвате IPv6
-          (InterceptFamily).
-          Парсится в момент генерации правил. Пусто = нет исключений.
-        type: string
-      bypassGeoipTags:
-        description: |-
-          BypassGeoIPTags — geoip-теги из настроенных .dat, чьи CIDR уходят в WAN
-          мимо sing-box через ipset AWGM-BYPASS (та же семантика полного обхода,
-          что у BypassExtraSubnets, но масштаб geoip требует ipset вместо
-          дискретных правил). Пусто — набора и правила нет.
-        items:
-          type: string
-        type: array
-      bypassPresets:
-        description: |-
-          BypassPresets lists named protocol presets to exclude from TPROXY/REDIRECT
-          (port-based) or to drive related behaviour. Valid values: "l2tp", "ntp",
-          "netbios-smb" (ports), "keendns" (имена KeenDNS/CrazeDNS резолвит сам
-          роутер, а его адреса идут мимо sing-box). Default for fresh installs
-          and post-v33 migrations includes "keendns".
-        items:
-          type: string
-        type: array
-      cacheFileLocation:
-        description: |-
-          CacheFileLocation — место хранения cache.db sing-box (issue #842):
-          "flash" — /opt/etc/awg-manager/singbox/cache.db на флеше, "tmp" —
-          /tmp/singbox-cache.db в RAM, чтобы записи кэша не изнашивали флеш; ""
-          (не задано) — путь из 00-base.json как есть, рукописный сохраняется,
-          негодный заменяется флешем.
-        type: string
-      deviceMode:
-        description: |-
-          DeviceMode controls which LAN devices are routed through sing-box.
-          "policy" (default) keeps the historical NDMS access-policy mark
-          filter. "all" installs unmarked PREROUTING jumps so every LAN
-          device that reaches the router netfilter path is filtered.
-        type: string
-      enabled:
-        type: boolean
-      fakeipMtu:
-        description: FakeIPMTU is the tun MTU (default 1500).
-        type: integer
-      fakeipPool4:
-        description: FakeIPPool4 is the fakeip v4 pool CIDR (default "198.18.0.0/15").
-        type: string
-      fakeipPool6:
-        description: FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18");
-          "" disables v6.
-        type: string
-      fakeipRealServer:
-        description: |-
-          FakeIPRealServer is the true upstream resolver the engine-managed "real"
-          DNS server forwards to (default "1.1.1.1"). Must be a plain IP address —
-          the fakeip topology resolves every domain through "real" itself, so a
-          domain upstream could never bootstrap. Captured from a user edit of the
-          "real" server address in the fakeip DNS panel (issue #487) or set
-          directly via the settings API.
-        type: string
-      fakeipStack:
-        description: |-
-          --- fakeip-tun engine settings (USER-editable) ---
-          These mirror the static fakeip-tun engine knobs (default
-          DefaultFakeIPTunParams) but persisted + validated so the UI can edit them.
-          Unlike OpkgTunState (backend-managed operational state) these are user
-          intent, defaulted by NormalizeSingboxRouterSettings.
-
-          FakeIPStack selects the sing-tun stack for BOTH tun modes (fakeip-tun и
-          policy-tun). Пустое ЗНАЧИМО: ключ `stack` не пишется в конфиг вовсе, и
-          sing-box берёт собственный стек sing-tun («go», с 1.15.0) — он же наш
-          дефолт. Legacy-значения "gvisor", "system", "mixed" пишутся дословно:
-          1.15 принимает их с deprecation-warning, 1.16 потребует
-          ENABLE_DEPRECATED_TUN_STACK=true, 1.17 удалит.
-        type: string
-      fakeipTunAddr4:
-        description: |-
-          FakeIPTunAddr4 — адрес OpkgTun обоих tun-режимов, хост /30 (default
-          "172.18.0.1/30"); второй хост /30 — DNS туннеля. Пересечение с сетями
-          интерфейсов роутера — забота пользователя; меняется только при
-          выключенном режиме (ErrTunAddrLocked).
-        type: string
-      ingressInterfaces:
-        description: |-
-          IngressInterfaces — ref'ы интерфейсов, чей ingress-трафик заворачивается
-          в sing-box. Формат: "managed:Wireguard3" (резолвится в kernel-имя на
-          сборке спека) или "iface:nwg5" (kernel-имя как есть). Пусто = выключено.
-        items:
-          type: string
-        type: array
-      interceptFamily:
-        description: |-
-          InterceptFamily — какие семейства адресов перехватывает режим tproxy:
-          "ipv4_only" (по умолчанию, историческое поведение), "both" или
-          "ipv6_only". Пусто = "ipv4_only": установки, обновившиеся с версии без
-          поля, не начинают перехватывать IPv6 сами. В tun-режимах не участвует —
-          там семейства задаёт адресация tun-интерфейса.
-        type: string
-      policyName:
-        type: string
-      policyTunDescription:
-        description: |-
-          PolicyTunDescription — NDMS-описание интерфейса policy-tun: под этим
-          именем OpkgTun виден в веб-интерфейсе роутера и в политиках доступа.
-          Пусто — штатное "awgm policy-tun". Применённое к интерфейсу описание
-          хранит запись владения (OpkgTunState.Description), переименование живого
-          интерфейса доводит reconcile.
-        type: string
-      policyTunNatSegments:
-        description: |-
-          PolicyTunNATSegments — выбранные пользователем сегменты для source-preserve
-          (редактируемый предпоказ в UI). Пусто при выключенной опции.
-        items:
-          type: string
-        type: array
-      policyTunSourcePreserve:
-        description: |-
-          PolicyTunSourcePreserve: в режиме policy-tun переводить выбранные сегменты
-          на static-NAT (no ip nat + ip static → WAN), чтобы sing-box видел реальные
-          LAN-source (иначе маскарад: все клиенты = tun-адрес). Default false.
-        type: boolean
-      qosClasses:
-        description: |-
-          QoSClasses lists DSCP-based QoS traffic classes (issue #371). Each
-          enabled class gets its own iptables `-m dscp` dispatch (mangle TPROXY +
-          nat REDIRECT), a dedicated pair of sing-box inbounds and a managed route
-          rule sending the class to Outbound. Only meaningful when RoutingMode ==
-          "tproxy". Validated by router.NormalizeSingboxRouterSettings: at most 8
-          classes, DSCP 0-63 unique across classes, Name ≤ 32 chars, Outbound
-          non-empty. Empty slice = feature off; no schema migration needed (the
-          zero value is the correct default, same as BypassPresets).
-        items:
-          $ref: '#/definitions/storage.SingboxQoSClass'
-        type: array
-      routingMode:
-        description: |-
-          RoutingMode selects the sing-box routing path:
-          "tproxy" (default) keeps the historical TPROXY/REDIRECT behavior;
-          "fakeip-tun" routes via a fake-IP DNS pool + tun device;
-          "policy-tun" captures traffic via an NDMS access policy + tun device.
-        type: string
-      snifferEnabled:
-        type: boolean
-      udpNatMax:
-        description: |-
-          UDPNATMax — потолок UDP-NAT-сессий для tproxy-in / tun-in / QoS-inbound'ов
-          (sing-box 1.14). 0 = движок выбирает сам по объёму памяти.
-        type: integer
-      udpTimeout:
-        description: |-
-          UDPTimeout задаёт таймаут UDP-сессий в tproxy-in / fakeip tun-in inbound
-          (формат Go duration, например "5m0s", "10m0s"). Пустая строка = значение по
-          умолчанию (DefaultUDPTimeout, 5m). Увеличение помогает играм и другим
-          UDP-приложениям, которые могут молчать дольше и терять сессию.
-        type: string
-      wanAutoDetect:
-        description: |-
-          WANAutoDetect is the discriminator for the WAN-binding mode.
-          true (default) → sing-box uses route.auto_detect_interface; the
-          WANInterface field is ignored and must be empty (enforced by
-          validateSingboxRouterSettings).
-          false → sing-box pins outbound traffic to WANInterface via
-          route.default_interface; WANInterface must be a non-empty kernel
-          system-name (enforced by the same validator).
-          Two-field shape on purpose: an empty WANInterface string alone is
-          ambiguous ("not chosen yet" vs "auto"); the explicit bool makes
-          the intent unambiguous in storage and in every consumer.
-        type: boolean
-      wanInterface:
-        description: |-
-          WANInterface is the kernel system-name of the user-pinned WAN
-          (e.g. "ppp0", "eth3"). NEVER stores the NDMS interface ID — NDMS
-          IDs (ISP, PPPoE0, …) can change on interface re-creation, kernel
-          system-names don't. The UI layer translates between the two.
-          Only meaningful when WANAutoDetect == false.
-        type: string
-    type: object
-  storage.UpdateSettings:
+  storage.UpdateSettingsPatch:
     properties:
       autoInstallEnabled:
-        description: 'default: false'
         type: boolean
       autoInstallIntervalDays:
-        description: 'default: 7, valid 1-30'
         type: integer
       autoInstallTime:
-        description: '"HH:MM", default: "05:00"'
         type: string
       channel:
-        description: '"stable" (default) | "develop"'
         type: string
       checkEnabled:
-        description: 'default: true'
         type: boolean
       statsEnabled:
-        description: |-
-          StatsEnabled — анонимная статистика установок: ID установки и флаги
-          используемых механизмов уходят заголовками ТОЛЬКО в запросе проверки
-          обновлений (см. internal/updater/stats.go). Default: true.
         type: boolean
     type: object
   subscription.RefreshResponse:
@@ -14630,13 +14385,13 @@ paths:
       consumes:
       - application/json
       description: 'Persists Settings via patch semantics: any field omitted from
-        the payload is preserved, including top-level bool flags. Send only the fields
-        you want to change, or send the full Settings object to update everything
-        atomically. ApiKey preserved when omitted (rotate via /settings/regenerate-api-key).
-        singboxRouter.routingMode and singboxRouter.enabled are ignored: the routing
-        mode changes only via POST /singbox/router/mode, enable/disable only via the
-        dedicated endpoints. obfuscatorRelayProcess is ignored: switch it via POST
-        /settings/obfuscator-relay.'
+        the payload is preserved, including top-level bool flags and fields inside
+        nested blocks (server, pingCheck and pingCheck.defaults, logging, updates,
+        download, dnsRoute, geoFile) — send only the fields you want to change. ApiKey
+        preserved when omitted (rotate via /settings/regenerate-api-key). singboxRouter
+        is not accepted here: use /singbox/router/settings, /singbox/router/mode and
+        the enable/disable endpoints. obfuscatorRelayProcess is ignored: switch it
+        via POST /settings/obfuscator-relay.'
       parameters:
       - description: Settings patch — any subset of fields
         in: body

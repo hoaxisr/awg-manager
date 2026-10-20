@@ -409,7 +409,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Update saves settings.
 //
 //	@Summary		Update settings
-//	@Description	Persists Settings via patch semantics: any field omitted from the payload is preserved, including top-level bool flags. Send only the fields you want to change, or send the full Settings object to update everything atomically. ApiKey preserved when omitted (rotate via /settings/regenerate-api-key). singboxRouter.routingMode and singboxRouter.enabled are ignored: the routing mode changes only via POST /singbox/router/mode, enable/disable only via the dedicated endpoints. obfuscatorRelayProcess is ignored: switch it via POST /settings/obfuscator-relay.
+//	@Description	Persists Settings via patch semantics: any field omitted from the payload is preserved, including top-level bool flags and fields inside nested blocks (server, pingCheck and pingCheck.defaults, logging, updates, download, dnsRoute, geoFile) — send only the fields you want to change. ApiKey preserved when omitted (rotate via /settings/regenerate-api-key). singboxRouter is not accepted here: use /singbox/router/settings, /singbox/router/mode and the enable/disable endpoints. obfuscatorRelayProcess is ignored: switch it via POST /settings/obfuscator-relay.
 //	@Tags			settings
 //	@Accept			json
 //	@Produce		json
