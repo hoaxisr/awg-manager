@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +23,9 @@ import (
 // scLagRouter — oracleRouter, у которого sc-вид dns-proxy route отстаёт на
 // сносах: снесённая строка видна до save. Сносы строк считаются в deletes,
 // повторный снос отсутствующей — ещё и в dupDeletes. saveErr — отказ save.
+// Правки по index и перестановки `rule` sc тоже не показывает до save (стенд
+// 20.10): с первой такой правки sc отдаёт снимок pinned, к которому
+// дописаны строки, поставленные после него обычной записью; rc — живой.
 type scLagRouter struct {
 	*oracleRouter
 	mu         sync.Mutex
@@ -29,6 +33,15 @@ type scLagRouter struct {
 	deletes    int
 	dupDeletes int
 	saveErr    error
+	pinned     []fakeRoute
+	edited     map[string]bool // group|interface строк, полученных правкой по index
+}
+
+func routeWire(rt fakeRoute) map[string]any {
+	return map[string]any{
+		"group": rt.group, "interface": rt.iface, "auto": true,
+		"reject": rt.reject, "index": rt.index, "disable": rt.disabled,
+	}
 }
 
 func (r *scLagRouter) GetRaw(ctx context.Context, path string) ([]byte, error) {
@@ -41,13 +54,29 @@ func (r *scLagRouter) GetRaw(ctx context.Context, path string) ([]byte, error) {
 		return nil, err
 	}
 	r.mu.Lock()
-	for _, g := range r.ghosts {
-		arr = append(arr, map[string]any{
-			"group": g.group, "interface": g.iface, "auto": true,
-			"reject": g.reject, "index": g.index, "disable": g.disabled,
-		})
+	defer r.mu.Unlock()
+	shown := map[string]bool{}
+	if r.pinned != nil {
+		live := arr
+		arr = nil
+		for _, rt := range r.pinned {
+			arr = append(arr, routeWire(rt))
+			shown[rt.index] = true
+		}
+		for _, m := range live {
+			idx, _ := m["index"].(string)
+			key := fmt.Sprint(m["group"], "|", m["interface"])
+			if !shown[idx] && !r.edited[key] {
+				arr = append(arr, m)
+				shown[idx] = true
+			}
+		}
 	}
-	r.mu.Unlock()
+	for _, g := range r.ghosts {
+		if !shown[g.index] {
+			arr = append(arr, routeWire(g))
+		}
+	}
 	return json.Marshal(arr)
 }
 
@@ -72,6 +101,7 @@ func (r *scLagRouter) Post(ctx context.Context, payload any) (json.RawMessage, e
 				return nil, r.saveErr
 			}
 			r.ghosts = nil
+			r.pinned, r.edited = nil, nil
 		}
 	}
 	if dp, ok := p["dns-proxy"].(map[string]any); ok {
@@ -82,13 +112,25 @@ func (r *scLagRouter) Post(ctx context.Context, payload any) (json.RawMessage, e
 			r.mu.Lock()
 			for _, e := range entries {
 				m, _ := e.(map[string]any)
-				if no, _ := m["no"].(bool); !no {
+				idx, byIndex := m["index"].(string)
+				_, isRule := m["rule"]
+				no, _ := m["no"].(bool)
+				if (byIndex && !no) || isRule {
+					if r.pinned == nil {
+						r.pinned = append([]fakeRoute{}, live...)
+						r.edited = map[string]bool{}
+					}
+					if !isRule {
+						r.edited[fmt.Sprint(m["group"], "|", m["interface"])] = true
+					}
+				}
+				if !no {
 					continue
 				}
 				r.deletes++
 				found := false
 				for _, rt := range live {
-					if rt.group == m["group"] && rt.iface == m["interface"] {
+					if (byIndex && rt.index == idx) || (!byIndex && rt.group == m["group"] && rt.iface == m["interface"]) {
 						r.ghosts = append(r.ghosts, rt)
 						found = true
 						break

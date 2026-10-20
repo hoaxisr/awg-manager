@@ -49,10 +49,18 @@ func (o *oracleRouter) Post(ctx context.Context, payload any) (json.RawMessage, 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := o.fakeRouter.Post(ctx, payload); err != nil {
+	own, err := o.fakeRouter.Post(ctx, payload)
+	if err != nil {
 		return nil, err
 	}
-	return resp, nil
+	// Отказы обеих моделей доезжают до разбора статусов.
+	switch {
+	case string(own) == "{}":
+		return resp, nil
+	case string(resp) == "{}":
+		return own, nil
+	}
+	return json.Marshal([]json.RawMessage{resp, own})
 }
 
 func newDNSRouteServiceWithOracle(t *testing.T, f *query.FakeNDMS, data StoreData) (*ServiceImpl, *oracleRouter) {
@@ -200,8 +208,9 @@ func TestReconcile_ListError_NoPosts(t *testing.T) {
 	}
 }
 
-// Строка из выдачи роутера на уже отсутствующий интерфейс сносится по
-// DNSRouteRef — строкой как есть, без подтверждения. Примет ли NDMS такой
+// Строка из выдачи роутера на уже отсутствующий интерфейс сносится по ссылке
+// из этой выдачи, без подтверждения: у существующей группы — по index (путь
+// «на месте», #1023). Примет ли NDMS такой
 // снос без E в журнале — не проверено (стенд); оракул считает любую ссылку
 // на отсутствующий интерфейс за E, поэтому E здесь не ассертится.
 func TestReconcile_StaleLineToAbsentDeletedByRef(t *testing.T) {
@@ -219,7 +228,7 @@ func TestReconcile_StaleLineToAbsentDeletedByRef(t *testing.T) {
 	waitQuiet(t, o.fakeRouter)
 	var del bool
 	for _, p := range f.Posts {
-		if strings.Contains(p, `{"group":"absent_p1","interface":"Wireguard7","no":true}`) {
+		if strings.Contains(p, `{"index":"i7","no":true}`) {
 			del = true
 		}
 	}
