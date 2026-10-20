@@ -188,22 +188,21 @@ func isLocalIP(ip net.IP) bool {
 
 // mergeDomains combines manual domains and subscription results into a single deduplicated list.
 // Manual domains are added first, preserving their order priority.
+// Ручные строки нормализуются тем же правилом, что в deduplicateDomains:
+// geo-тег хранится как введён, иначе нижний регистр; сверка дублей — без
+// учёта регистра (F698). Строки подписок уже нормализованы parseDomainLine.
 func mergeDomains(manual []string, subscriptionDomains [][]string) []string {
-	seen := make(map[string]bool)
 	var result []string
-
-	for _, d := range manual {
-		d = strings.ToLower(strings.TrimSpace(d))
-		if d != "" && !seen[d] {
-			seen[d] = true
-			result = append(result, d)
-		}
+	result = append(result, deduplicateDomains(manual)...) // пусто → nil, как раньше
+	seen := make(map[string]bool, len(result))
+	for _, d := range result {
+		seen[strings.ToLower(d)] = true
 	}
 
 	for _, domains := range subscriptionDomains {
 		for _, d := range domains {
-			if !seen[d] {
-				seen[d] = true
+			if key := strings.ToLower(d); !seen[key] {
+				seen[key] = true
 				result = append(result, d)
 			}
 		}

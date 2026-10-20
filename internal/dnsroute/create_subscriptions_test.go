@@ -646,3 +646,13 @@ func TestSubscriptions_SkipIPv6_LimitCountsRoutedOnly(t *testing.T) {
 		})
 	}
 }
+
+// F698: mergeDomains нормализует ручные строки тем же правилом, что
+// deduplicateDomains — geo-тег как введён, иначе нижний регистр; дубли
+// с подписками сверяются без учёта регистра.
+func TestMergeDomains_GeoTagDedupCaseInsensitive(t *testing.T) {
+	got := mergeDomains([]string{" geosite:GOOGLE ", "Example.COM"}, [][]string{{"geosite:google", "example.com", "b.example"}})
+	if want := "geosite:GOOGLE,example.com,b.example"; strings.Join(got, ",") != want {
+		t.Fatalf("mergeDomains = %v, want %s", got, want)
+	}
+}
