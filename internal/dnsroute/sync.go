@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -283,6 +284,12 @@ func routedEntries(list *DomainList) (items, excludes []string) {
 	items = append(items, list.Domains...)
 	items = append(items, list.Subnets...)
 	excludes = list.Excludes
+	// Geo-тег NDMS отвергает в любом регистре (стенд KN-1810 5.02.B.1, 20.10:
+	// error 101582220 «invalid FQDN or IP address», E в журнале ndm), а
+	// сверка слала бы его заново каждый прогон. Запись такие теги уже не
+	// пропускает (F700); здесь — списки, записанные раньше.
+	items = slices.DeleteFunc(items, hasGeoPrefix)
+	excludes = slices.DeleteFunc(slices.Clone(excludes), hasGeoPrefix)
 	if list.SkipsIPv6() {
 		items = ipfamily.WithoutIPv6(items)
 		excludes = ipfamily.WithoutIPv6(excludes)

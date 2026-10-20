@@ -93,6 +93,11 @@ func parseDomainLine(line string) string {
 	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
 		return ""
 	}
+	// Geo-тег в подписке — не домен: разбор host:port ниже делал из него
+	// мусорный домен «geosite». NDMS тегов не принимает (F700).
+	if hasGeoPrefix(line) {
+		return ""
+	}
 
 	// Adblock basic format: ||domain.com^
 	if strings.HasPrefix(line, "||") {

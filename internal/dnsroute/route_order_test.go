@@ -329,6 +329,12 @@ func applyEntries(dst *[]string, v any) {
 			}
 			continue
 		}
+		// NDMS отвергает geo-тег в include/exclude в любом регистре (стенд
+		// KN-1810 5.02.B.1, 20.10: status error 101582220 «invalid FQDN or IP
+		// address»); соседние элементы применяются.
+		if l := strings.ToLower(addr); strings.HasPrefix(l, "geosite:") || strings.HasPrefix(l, "geoip:") {
+			continue
+		}
 		*dst = append(*dst, addr)
 	}
 }

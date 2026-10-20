@@ -189,6 +189,9 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 
 	applyManualText(&list)
 	applyExcludesText(&list)
+	if err := rejectGeoTags(&list); err != nil {
+		return nil, err
+	}
 
 	if len(list.ManualDomains) == 0 && len(list.Subscriptions) == 0 {
 		return nil, fmt.Errorf("at least one domain or subscription is required")
@@ -407,6 +410,10 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 		if list.ExcludesText != nil {
 			applyExcludesText(&list)
 		}
+	}
+
+	if err := rejectGeoTags(&list); err != nil {
+		return nil, err
 	}
 
 	// Validate any new subscription URLs before saving. Скачанное проверкой
@@ -670,6 +677,9 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 		}
 		if len(list.ManualDomains) == 0 && len(list.Subscriptions) == 0 {
 			continue
+		}
+		if err := rejectGeoTags(&list); err != nil {
+			return nil, fmt.Errorf("%q: %w", list.Name, err)
 		}
 
 		if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
@@ -1227,6 +1237,28 @@ func deduplicateDomains(domains []string) []string {
 // must be preserved for HR Neo's byte-for-byte tag match.
 func isGeoTag(s string) bool {
 	return strings.HasPrefix(s, "geosite:") || strings.HasPrefix(s, "geoip:")
+}
+
+// hasGeoPrefix — geosite:/geoip: в любом регистре. NDMS не принимает
+// geo-теги в object-group fqdn вообще (стенд KN-1810 5.02.B.1, 20.10:
+// status error 101582220 «invalid FQDN or IP address», E в журнале ndm), их
+// понимает только HydraRoute (F700).
+func hasGeoPrefix(s string) bool {
+	l := strings.ToLower(strings.TrimSpace(s))
+	return strings.HasPrefix(l, "geosite:") || strings.HasPrefix(l, "geoip:")
+}
+
+// rejectGeoTags отвергает NDMS-список с geo-тегом в ручных строках или
+// исключениях (после применения ManualText/ExcludesText).
+func rejectGeoTags(list *DomainList) error {
+	for _, entries := range [][]string{list.ManualDomains, list.Excludes, list.ExcludeSubnets} {
+		for _, e := range entries {
+			if hasGeoPrefix(e) {
+				return fmt.Errorf("geo-тег %s не поддерживается NDMS-маршрутизацией", strings.TrimSpace(e))
+			}
+		}
+	}
+	return nil
 }
 
 // subscriptionDomains returns the domains that came from subscriptions (present in

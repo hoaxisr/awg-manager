@@ -747,10 +747,12 @@ func TestRoutedSubnets_LimitCountsWhatTheRouterGets(t *testing.T) {
 	}
 	q, c, _, _ := newTestNDMS()
 	svc := &ServiceImpl{store: store, queries: q, commands: c}
+	// Geo-тег NDMS-список на записи не примет (F700) — в Create без него.
+	ndmsEntries := append([]string{"10.0.0.0/8", "2001:db8::/32"}, entries[3:]...)
 	big := func(skipIPv6 *bool) DomainList {
 		return DomainList{
 			Name:          "big v6",
-			ManualDomains: entries,
+			ManualDomains: ndmsEntries,
 			Routes:        []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}},
 			SkipIPv6:      skipIPv6,
 		}
