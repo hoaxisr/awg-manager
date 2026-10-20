@@ -405,3 +405,25 @@ func TestFetchIPRules_ErrorNegativeCached(t *testing.T) {
 		t.Errorf("GetStream calls = %d, want 1 (error negative-cached)", ndms.calls)
 	}
 }
+
+// F694: группа списка с коллидирующим именем зовётся по сохранённому слагу
+// с суффиксом — разметка обязана найти список по нему, а не по имени.
+func TestBuildIPRuleMap_StoredGroupSlug(t *testing.T) {
+	groups := []runtimeGroup{
+		{Name: "youtube_p1", Entries: []runtimeEntry{{FQDN: "a.example", Parent: "a.example", IPs: []string{"198.51.100.1"}}}},
+		{Name: "youtube_2_p1", Entries: []runtimeEntry{{FQDN: "b.example", Parent: "b.example", IPs: []string{"203.0.113.1"}}}},
+	}
+	lister := &fakeLister{lists: []dnsroute.DomainList{
+		{ID: "list_1", Name: "YouTube", GroupSlug: "youtube"},
+		{ID: "list_2", Name: "youtube", GroupSlug: "youtube_2"},
+	}}
+
+	m := buildIPRuleMap(context.Background(), groups, lister)
+
+	for ip, want := range map[string]string{"198.51.100.1": "list_1", "203.0.113.1": "list_2"} {
+		hits := m[ip]
+		if len(hits) != 1 || hits[0].ListID != want {
+			t.Errorf("%s: hits = %+v, ожидался %s", ip, hits, want)
+		}
+	}
+}

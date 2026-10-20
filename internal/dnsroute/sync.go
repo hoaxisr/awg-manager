@@ -322,7 +322,7 @@ func buildTargetState(data *StoreData, failedTunnels, absentIfaces map[string]st
 		chunks := chunkWithReserve(items, MaxDomainsPerGroup, len(excludes))
 
 		for i, chunk := range chunks {
-			groupName := buildGroupName(list.ID, list.Name, i+1)
+			groupName := buildGroupName(ListGroupSlug(&list), i+1)
 
 			g := targetGroup{
 				name:     groupName,
@@ -847,13 +847,11 @@ func routesEqual(current []currentRoute, target []targetRoute) bool {
 
 // buildGroupName generates a short NDMS object-group name.
 // Format: {slug}_p{chunk}
-// Example: list_2 "hetzner" chunk 1 → "hetzner_p1"
+// Example: slug "hetzner" chunk 1 → "hetzner_p1"
 //
-// slug is the sanitized list name. If the name sanitizes to empty (e.g. only
-// punctuation), the numeric portion of listID is used as a fallback so the
-// group name is never "_pN".
-func buildGroupName(listID, listName string, chunk int) string {
-	return fmt.Sprintf("%s_p%d", GroupSlug(listID, listName), chunk)
+// slug — ListGroupSlug списка (F694).
+func buildGroupName(slug string, chunk int) string {
+	return fmt.Sprintf("%s_p%d", slug, chunk)
 }
 
 // GroupSlug returns the slug segment of an awg-managed group name (the part
@@ -869,6 +867,38 @@ func GroupSlug(listID, listName string) string {
 		num = strings.TrimPrefix(listID, "list_")
 	}
 	return num
+}
+
+// ListGroupSlug — основа имени NDMS-группы списка: сохранённый GroupSlug.
+// Пустой бывает только у записи, не прошедшей Load/Create (тесты), — для неё
+// прежнее правило по имени. Exported for connections.rules.
+func ListGroupSlug(l *DomainList) string {
+	if l.GroupSlug != "" {
+		return l.GroupSlug
+	}
+	return GroupSlug(l.ID, l.Name)
+}
+
+// uniqueGroupSlug — слаг для списка id/name, не занятый ни одним из taken:
+// GroupSlug(id, name), а при занятости — с суффиксом _<num> (num — ID без
+// list_), дописываемым до свободного. Строка растёт на каждом шаге, taken
+// конечен — цикл сходится.
+func uniqueGroupSlug(id, name string, taken map[string]bool) string {
+	slug := GroupSlug(id, name)
+	suffix := "_" + strings.TrimPrefix(id, "list_")
+	for taken[slug] {
+		slug += suffix
+	}
+	return slug
+}
+
+// assignGroupSlug назначает новому списку слаг, не занятый списками lists.
+func assignGroupSlug(list *DomainList, lists []DomainList) {
+	taken := make(map[string]bool, len(lists))
+	for i := range lists {
+		taken[ListGroupSlug(&lists[i])] = true
+	}
+	list.GroupSlug = uniqueGroupSlug(list.ID, list.Name, taken)
 }
 
 // awgGroupNameRE matches group names produced by buildGroupName: a slug of

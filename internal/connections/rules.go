@@ -123,7 +123,7 @@ func buildIPRuleMap(ctx context.Context, groups []runtimeGroup, lister DNSListLi
 	if lister != nil {
 		if lists, err := lister.List(ctx); err == nil {
 			for _, l := range lists {
-				slugs[dnsroute.GroupSlug(l.ID, l.Name)] = listRef{id: l.ID, name: l.Name}
+				slugs[dnsroute.ListGroupSlug(&l)] = listRef{id: l.ID, name: l.Name}
 			}
 		}
 	}

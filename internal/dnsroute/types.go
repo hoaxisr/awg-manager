@@ -51,6 +51,13 @@ type DomainList struct {
 	// the next reconcile without a refetch. NDMS lists only. A pointer, so
 	// a partial update that does not send it keeps the stored value.
 	SkipIPv6 *bool `json:"skipIPv6,omitempty"`
+	// GroupSlug — основа имени NDMS-группы списка ({slug}_p{N}). Назначается
+	// один раз при создании (или миграцией при Load), уникальна среди списков
+	// и не следует за переименованием: смена имени группы — снос и создание,
+	// а с ними строки dns-proxy route уходят в хвост (F694, класс #1023).
+	// Пришедшее извне значение игнорируется: Create назначает своё, Update
+	// переносит из существующей записи.
+	GroupSlug string `json:"groupSlug,omitempty"`
 }
 
 // clone — копия без общих с кэшем хранилища срезов и указателей: правка

@@ -196,6 +196,7 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	list.ID = nextListID(data.Lists)
+	assignGroupSlug(&list, data.Lists)
 	list.Enabled = true
 	list.CreatedAt = now
 	list.UpdatedAt = now
@@ -339,6 +340,7 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	// Preserve fields not sent by the frontend update payload.
 	list.CreatedAt = existing.CreatedAt
 	list.ID = existing.ID
+	list.GroupSlug = existing.GroupSlug
 	list.Enabled = existing.Enabled
 	list.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
@@ -619,6 +621,7 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 		}
 
 		list.ID = nextListID(data.Lists)
+		assignGroupSlug(&list, data.Lists)
 		list.Enabled = true
 		list.CreatedAt = now
 		list.UpdatedAt = now
@@ -977,7 +980,7 @@ func tunnelRouteRefs(list *DomainList, iface string) []command.DNSRouteRef {
 	n := len(chunkWithReserve(items, MaxDomainsPerGroup, len(excludes)))
 	refs := make([]command.DNSRouteRef, 0, n)
 	for i := 1; i <= n; i++ {
-		refs = append(refs, command.DNSRouteRef{Group: buildGroupName(list.ID, list.Name, i), Interface: iface})
+		refs = append(refs, command.DNSRouteRef{Group: buildGroupName(ListGroupSlug(list), i), Interface: iface})
 	}
 	return refs
 }

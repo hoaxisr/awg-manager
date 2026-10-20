@@ -59,9 +59,10 @@ func (s *Store) Load() (*StoreData, error) {
 	forkMigrated := migrateRuleSetSubscriptionURLs(&data)
 	discordMigrated := migrateDiscordDNSSubnet(&data)
 	errorsScrubbed := scrubSubscriptionErrors(&data)
+	slugsAssigned := migrateGroupSlugs(&data)
 
 	s.data = &data
-	if dropped > 0 || forkMigrated || discordMigrated || errorsScrubbed {
+	if dropped > 0 || forkMigrated || discordMigrated || errorsScrubbed || slugsAssigned {
 		// Persist the cleanup so the file itself is cleaned, not just the
 		// in-memory cache. Best-effort: on write error the cache is already
 		// clean and the next Save() rewrites disk — failing startup over
@@ -340,4 +341,32 @@ func normalizeLists(lists []DomainList) {
 			lists[i].Routes = []RouteTarget{}
 		}
 	}
+}
+
+// migrateGroupSlugs назначает GroupSlug спискам, записанным до F694.
+// Уже заданные слаги заняты; остальные идут по порядку хранилища, и первый
+// из коллидирующих сохраняет нынешнее имя группы — на роутере ничего не
+// меняется, суффикс получают только последующие. Возвращает true, если
+// что-то изменено (caller персистит). Идемпотентно.
+func migrateGroupSlugs(data *StoreData) bool {
+	if data == nil {
+		return false
+	}
+	taken := make(map[string]bool, len(data.Lists))
+	for _, l := range data.Lists {
+		if l.GroupSlug != "" {
+			taken[l.GroupSlug] = true
+		}
+	}
+	changed := false
+	for i := range data.Lists {
+		l := &data.Lists[i]
+		if l.GroupSlug != "" {
+			continue
+		}
+		l.GroupSlug = uniqueGroupSlug(l.ID, l.Name, taken)
+		taken[l.GroupSlug] = true
+		changed = true
+	}
+	return changed
 }

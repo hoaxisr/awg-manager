@@ -45,7 +45,7 @@ func TestOnTunnelDelete_NoReadNoReconcile(t *testing.T) {
 		b, _ := json.Marshal(p)
 		got = append(got, string(b))
 	}
-	want := `{"dns-proxy":{"route":[{"group":"` + buildGroupName(list.ID, list.Name, 1) + `","interface":"Wireguard0","no":true}]}}`
+	want := `{"dns-proxy":{"route":[{"group":"` + buildGroupName(ListGroupSlug(list), 1) + `","interface":"Wireguard0","no":true}]}}`
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("POST на сносе %v, ждали только снос своей строки %s", got, want)
 	}
