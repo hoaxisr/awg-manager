@@ -116,6 +116,14 @@ func (s *Service) restoreOne(ctx context.Context, sv ManagedServerExport, opts R
 		s.appLog.Warn("managed-restore-server-conflict", sv.InterfaceName, "Invalid server private key in backup input")
 		return outcome
 	}
+	// Сервер 3.1 на прошивке без ASC 3.x поднялся бы сервером 2.0, к которому
+	// не подключится ни один его клиент (#688, F682) — отказ до любого RCI.
+	if hasASC3(sv.ASC) && !s.supportsASC3() {
+		outcome.Action = "conflict"
+		outcome.Conflicts = []string{ErrASC3Unsupported.Error()}
+		s.appLog.Warn("managed-restore-server-conflict", sv.InterfaceName, ErrASC3Unsupported.Error())
+		return outcome
+	}
 
 	existingStorage, hasStorage := s.findStorageOccupant(sv.InterfaceName)
 	liveExists, liveSameIdentity, err := s.liveInterfaceIdentity(ctx, sv)

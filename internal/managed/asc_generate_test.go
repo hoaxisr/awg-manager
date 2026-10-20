@@ -168,3 +168,47 @@ func TestCreate_AWG31SilentlyIgnoredIsNotApplied(t *testing.T) {
 		t.Fatal("сервер сохранён, хотя ASC 3.1 не применился")
 	}
 }
+
+// Бэкап → восстановление сервера 3.1 (F682): снимок ASC несёт ключи 3.x, и
+// восстановление пишет их полным набором; на прошивке без ASC 3.x — конфликт
+// до любого RCI, а не сервер 2.0, к которому не подключится ни один клиент.
+func TestRestore_AWG31(t *testing.T) {
+	src, _, _ := newCreateTestService(t)
+	src.supportsASC3 = func() bool { return true }
+	server, err := src.Create(context.Background(), CreateServerRequest{
+		Address: "10.57.0.1", Mask: "24", ListenPort: 52057, Mode: ModeAWG31,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	snap, err := src.GetASCParams(context.Background(), server.InterfaceName)
+	if err != nil || !hasASC3(snap) {
+		t.Fatalf("снимок ASC без 3.x: %s (%v)", snap, err)
+	}
+	export := ManagedServerExport{
+		InterfaceName: "Wireguard0", Address: "10.58.0.1", Mask: "255.255.255.0", ListenPort: 52058,
+		PrivateKey: validPrivateKey(1), Policy: "none", ASC: snap,
+	}
+
+	for _, asc3 := range []bool{true, false} {
+		dst, _, _ := newCreateTestService(t)
+		dst.supportsASC3 = func() bool { return asc3 }
+		out := dst.Restore(context.Background(), []ManagedServerExport{export}, RestoreOptions{})
+		posts := dst.transport.(*recordingPoster).posts
+		if !asc3 {
+			if len(out) != 1 || out[0].Action != "conflict" || len(posts) != 0 {
+				t.Fatalf("без ASC3: %+v, постов %d", out, len(posts))
+			}
+			continue
+		}
+		if len(out) != 1 || out[0].Action != "created" {
+			t.Fatalf("восстановление: %+v", out)
+		}
+		asc := ascPostOf(posts, "Wireguard0")
+		for _, k := range ndms.ASC3Keys {
+			if _, ok := asc[k]; !ok {
+				t.Fatalf("восстановление не записало %s: %v", k, asc)
+			}
+		}
+	}
+}

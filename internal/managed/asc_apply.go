@@ -301,6 +301,18 @@ func (s *Service) applyASCParams(ctx context.Context, iface query.Confirmed, raw
 	return nil
 }
 
+// hasASC3 — в ASC есть параметры 3.x (снимок сервера 3.1).
+func hasASC3(raw json.RawMessage) bool {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil {
+		return false
+	}
+	return slices.ContainsFunc(ndms.ASC3Keys, func(k string) bool {
+		_, ok := obj[k]
+		return ok
+	})
+}
+
 // ValidateASCParams exposes managed ASC validation for callers that need to
 // decide whether ASC payload is exportable/applicable.
 func ValidateASCParams(raw json.RawMessage) error {
