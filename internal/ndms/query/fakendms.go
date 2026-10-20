@@ -222,6 +222,14 @@ func (f *FakeNDMS) ShowHidden() {
 	f.mu.Unlock()
 }
 
+// PostCount — len(Posts) под замком: POST прилетает и из горутины
+// координатора сохранения, голое чтение среза из теста — гонка данных.
+func (f *FakeNDMS) PostCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.Posts)
+}
+
 func (f *FakeNDMS) Has(name string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()

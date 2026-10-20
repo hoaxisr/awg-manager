@@ -72,7 +72,7 @@ func (b *deviceBackend) exists(iface string) bool {
 // как снятие и появление (под up-записью — 0ba1).
 func (b *deviceBackend) Start(_ context.Context, iface string) error {
 	b.StartCalls = append(b.StartCalls, iface)
-	b.startPosts = append(b.startPosts, len(b.f.Posts))
+	b.startPosts = append(b.startPosts, b.f.PostCount())
 	if b.exists(iface) && b.amneziawg {
 		return nil
 	}
@@ -89,7 +89,7 @@ func (b *deviceBackend) Start(_ context.Context, iface string) error {
 
 func (b *deviceBackend) Stop(_ context.Context, iface string) error {
 	b.StopCalls = append(b.StopCalls, iface)
-	b.stopPosts = append(b.stopPosts, len(b.f.Posts))
+	b.stopPosts = append(b.stopPosts, b.f.PostCount())
 	if b.held != nil && !b.amneziawg {
 		return b.held
 	}
@@ -111,7 +111,7 @@ func (b *deviceBackend) WaitReady(context.Context, string, time.Duration) error 
 // так, как идёт в ядре: живое устройство снято (del), затем tun (tuntap add).
 func (b *deviceBackend) ReplaceWithTun(_ context.Context, iface string) error {
 	b.ReplaceCalls = append(b.ReplaceCalls, iface)
-	b.replacePosts = append(b.replacePosts, len(b.f.Posts))
+	b.replacePosts = append(b.replacePosts, b.f.PostCount())
 	if b.held != nil && !b.amneziawg {
 		return b.held
 	}
