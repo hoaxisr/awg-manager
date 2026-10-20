@@ -344,10 +344,18 @@ func normalizeLists(lists []DomainList) {
 }
 
 // migrateGroupSlugs назначает GroupSlug спискам, записанным до F694.
-// Уже заданные слаги заняты; остальные идут по порядку хранилища, и первый
-// из коллидирующих сохраняет нынешнее имя группы — на роутере ничего не
-// меняется, суффикс получают только последующие. Возвращает true, если
-// что-то изменено (caller персистит). Идемпотентно.
+// Уже заданные слаги заняты. Два прохода по спискам без слага, в порядке
+// хранилища:
+//  1. список с содержимым получает нынешнюю основу GroupSlug(ID, Name), если
+//     она ещё свободна, — его группа на роутере не меняется. Пустой список
+//     пропускается: группы у него нет (buildTargetState), и основу он не
+//     отнимает у списка, который группой владеет;
+//  2. оставшиеся — uniqueGroupSlug с суффиксом. Суффиксы раздаются после
+//     того, как все основы зарезервированы, иначе суффикс коллидирующего
+//     списка мог бы занять нынешнее имя более позднего («youtube» + «_2» =
+//     основа «youtube 2») и увести его группу в хвост (класс #1023).
+//
+// Возвращает true, если что-то изменено (caller персистит). Идемпотентно.
 func migrateGroupSlugs(data *StoreData) bool {
 	if data == nil {
 		return false
@@ -359,6 +367,17 @@ func migrateGroupSlugs(data *StoreData) bool {
 		}
 	}
 	changed := false
+	for i := range data.Lists {
+		l := &data.Lists[i]
+		if l.GroupSlug != "" || len(l.Domains)+len(l.Subnets) == 0 {
+			continue
+		}
+		if base := GroupSlug(l.ID, l.Name); !taken[base] {
+			l.GroupSlug = base
+			taken[base] = true
+			changed = true
+		}
+	}
 	for i := range data.Lists {
 		l := &data.Lists[i]
 		if l.GroupSlug != "" {

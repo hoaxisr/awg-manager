@@ -44,6 +44,29 @@ func TestMigrateGroupSlugs(t *testing.T) {
 	})
 }
 
+// Суффикс коллидирующего списка не должен занимать нынешнее имя группы
+// более позднего списка без коллизии: «youtube 2» уже владеет youtube_2_p1.
+func TestMigrateGroupSlugs_SuffixDoesNotStealLaterBase(t *testing.T) {
+	data := &StoreData{Lists: []DomainList{
+		{ID: "list_1", Name: "YouTube", Domains: []string{"a.example"}},
+		{ID: "list_2", Name: "youtube", Domains: []string{"b.example"}},
+		{ID: "list_3", Name: "youtube 2", Domains: []string{"c.example"}},
+	}}
+	migrateGroupSlugs(data)
+	assertSeq(t, "слаги", slugsOf(data.Lists), "youtube", "youtube_2_2", "youtube_2")
+}
+
+// Пустой список группы на роутере не имеет (buildTargetState его пропускает)
+// и не отнимает основу у непустого, который группой владеет.
+func TestMigrateGroupSlugs_EmptyListYieldsBase(t *testing.T) {
+	data := &StoreData{Lists: []DomainList{
+		{ID: "list_1", Name: "YouTube"},
+		{ID: "list_2", Name: "youtube", Subnets: []string{"198.51.100.0/24"}},
+	}}
+	migrateGroupSlugs(data)
+	assertSeq(t, "слаги", slugsOf(data.Lists), "youtube_1", "youtube")
+}
+
 func TestStoreLoadMigratesGroupSlugs(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
