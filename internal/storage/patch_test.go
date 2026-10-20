@@ -439,6 +439,12 @@ func TestSettingsPatchMirrorsSettings(t *testing.T) {
 			t.Errorf("Settings.%s (json:%q) has no corresponding field in SettingsPatch", f.Name, tag)
 			continue
 		}
+		// ApplyPatch ищет поле назначения по Go-имени: с тем же тегом, но
+		// другим именем поле не писалось бы никогда, молча.
+		if patchF.Name != f.Name {
+			t.Errorf("SettingsPatch.%s (json:%q): Go-имя должно совпадать с Settings.%s", patchF.Name, tag, f.Name)
+			continue
+		}
 		if patchF.Type.Kind() != reflect.Pointer {
 			t.Errorf("SettingsPatch.%s (json:%q) must be a pointer, got %s", patchF.Name, tag, patchF.Type)
 			continue
@@ -501,6 +507,9 @@ func TestBlockPatchesMirrorBlocks(t *testing.T) {
 			switch {
 			case !ok:
 				t.Errorf("%s.%s (json:%q) нет в %s", blockT.Name(), f.Name, tag, patchT.Name())
+			case patchF.Name != f.Name:
+				// ApplyPatch ищет поле по Go-имени — иначе поле не пишется, молча.
+				t.Errorf("%s.%s (json:%q): Go-имя должно совпадать с %s.%s", patchT.Name(), patchF.Name, tag, blockT.Name(), f.Name)
 			case patchF.Type.Kind() != reflect.Pointer:
 				t.Errorf("%s.%s должен быть указателем, а не %s", patchT.Name(), patchF.Name, patchF.Type)
 			case f.Type.Kind() == reflect.Struct:

@@ -79,3 +79,27 @@ func TestUpdate_PartialBlockKeepsSiblings(t *testing.T) {
 		})
 	}
 }
+
+// Проверяется только присланное: испорченное время автоустановки, уже лежащее
+// в settings.json, не запирает переключение статистики, а присланное
+// испорченное — отвергается.
+func TestUpdate_UpdatesValidatesOnlySentFields(t *testing.T) {
+	h, store := newSettingsHandlerForTest(t)
+	if err := store.Update(func(cur *storage.Settings) error {
+		cur.Updates = storage.UpdateSettings{StatsEnabled: true, AutoInstallIntervalDays: 7, AutoInstallTime: "5:00"}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	post := func(body string) int {
+		rec := httptest.NewRecorder()
+		h.Update(rec, httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader([]byte(body))))
+		return rec.Code
+	}
+	if code := post(`{"updates":{"statsEnabled":false}}`); code != http.StatusOK {
+		t.Fatalf("правка соседнего поля: status %d, want 200", code)
+	}
+	if code := post(`{"updates":{"autoInstallTime":"25:99"}}`); code != http.StatusBadRequest {
+		t.Fatalf("присланное испорченное время: status %d, want 400", code)
+	}
+}

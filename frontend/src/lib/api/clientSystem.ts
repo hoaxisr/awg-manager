@@ -304,17 +304,18 @@ export class SystemClient extends TunnelsClient {
 		});
 		// Prism mock is stateless: it often returns schema examples instead of
 		// echoing persisted values. In mock-dev mode keep UI controls usable by
-		// merging the patch into current settings snapshot (blocks by field).
+		// merging the patch into current settings snapshot — by field at every
+		// level, as the backend does (pingCheck.defaults included).
 		if (this.isMockDevMode()) {
 			const current = await this.getSettings().catch(() => ({} as Settings));
-			const merged: Record<string, unknown> = { ...current };
-			for (const [k, v] of Object.entries(patch)) {
-				const cur = merged[k];
-				merged[k] = v && typeof v === 'object' && !Array.isArray(v) && cur && typeof cur === 'object'
-					? { ...cur, ...v }
-					: v;
-			}
-			return merged as unknown as Settings;
+			const isObj = (x: unknown): x is Record<string, unknown> =>
+				!!x && typeof x === 'object' && !Array.isArray(x);
+			const merge = (base: unknown, p: unknown): unknown =>
+				isObj(base) && isObj(p)
+					? Object.fromEntries([...new Set([...Object.keys(base), ...Object.keys(p)])].map((k) =>
+						[k, k in p ? merge(base[k], p[k]) : base[k]]))
+					: p;
+			return merge(current, patch) as Settings;
 		}
 		return updated;
 	}

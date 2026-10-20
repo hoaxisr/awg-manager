@@ -154,13 +154,14 @@ func (h *SettingsHandler) deriveSettingsTail(cur *storage.Settings, patch *stora
 	}
 	cur.Logging.SingboxLogLevel = storage.NormalizeSingboxLogLevel(cur.Logging.SingboxLogLevel)
 
-	// Расписание автоустановки проверяем только когда клиент прислал блок
-	// updates: проверяется итог слияния, лежащее значение не запирает правку.
-	if patch.Updates != nil {
-		if cur.Updates.AutoInstallIntervalDays < 1 || cur.Updates.AutoInstallIntervalDays > 30 {
+	// Расписание автоустановки проверяем ТОЛЬКО присланное — тот же контракт,
+	// что у sessionTtlHours выше: испорченное значение, уже лежащее в
+	// settings.json, не должно запирать правку соседних полей блока (F684).
+	if u := patch.Updates; u != nil {
+		if u.AutoInstallIntervalDays != nil && (cur.Updates.AutoInstallIntervalDays < 1 || cur.Updates.AutoInstallIntervalDays > 30) {
 			return settingsErr("updates.autoInstallIntervalDays must be between 1 and 30", "INVALID_AUTO_INSTALL_INTERVAL")
 		}
-		if !autoInstallTimePattern.MatchString(cur.Updates.AutoInstallTime) {
+		if u.AutoInstallTime != nil && !autoInstallTimePattern.MatchString(cur.Updates.AutoInstallTime) {
 			return settingsErr("updates.autoInstallTime must be in HH:MM (24h) format", "INVALID_AUTO_INSTALL_TIME")
 		}
 	}
