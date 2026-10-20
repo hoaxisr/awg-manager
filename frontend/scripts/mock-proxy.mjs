@@ -4224,13 +4224,23 @@ const MOCK_KEENETIC_PROFILES = {
 		firmwareRelease: '5.1.0 (5.01.A.0-0)',
 		isOS5: true,
 	},
+	// ASC прошивки знает параметры 3.x — доступен сервер AWG 3.1 (#688).
+	'5.2': {
+		key: '5.2',
+		extended: true,
+		asc3: true,
+		keeneticOS: '5.2',
+		firmwareVersion: '5.2.0 (5.02.B.1.0-3)',
+		firmwareRelease: '5.2.0 (5.02.B.1.0-3)',
+		isOS5: true,
+	},
 };
 
 const DEFAULT_MOCK_KEENETIC_OS = '5.1';
 
 function resolveMockKeeneticProfileKey() {
 	const forced = process.env.MOCK_KEENETIC_OS?.trim();
-	if (forced === '5.0' || forced === '5.1') return forced;
+	if (forced in MOCK_KEENETIC_PROFILES) return forced;
 	return DEFAULT_MOCK_KEENETIC_OS;
 }
 
@@ -4257,6 +4267,7 @@ function applyMockKeeneticProfile(data) {
 	data.isOS5 = mockKeeneticProfile.isOS5;
 	data.supportsExtendedASC = mockKeeneticProfile.extended;
 	data.supportsHRanges = mockKeeneticProfile.extended;
+	data.supportsWireguardASC3 = !!mockKeeneticProfile.asc3;
 	if (data.routerDetails && typeof data.routerDetails === 'object') {
 		data.routerDetails.firmwareRelease = mockKeeneticProfile.firmwareRelease;
 	}
@@ -9226,7 +9237,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => {
 	console.log(`mock-proxy on http://127.0.0.1:${PORT} → ${UPSTREAM} (usageLevel=${usageLevel})`);
 	console.log('[mock-proxy] controls: GET /__mock/capabilities, GET /__mock/tunnels, POST /__mock/reset-runtime, POST /__mock/singbox-install-fail, POST /__mock/singbox-running, POST /__mock/hydraroute-installed, POST /__mock/download-faults, POST /__mock/keenetic-os');
-	console.log(`[mock-proxy] keenetic-os: ${mockKeeneticProfile.key} (supportsExtendedASC=${mockKeeneticProfile.extended}; default: 5.1, force: MOCK_KEENETIC_OS=5.0|5.1, switch: POST /__mock/keenetic-os)`);
+	console.log(`[mock-proxy] keenetic-os: ${mockKeeneticProfile.key} (supportsExtendedASC=${mockKeeneticProfile.extended}; default: 5.1, force: MOCK_KEENETIC_OS=5.0|5.1|5.2, switch: POST /__mock/keenetic-os)`);
 	console.log(`[mock-proxy] download faults: enabled=${downloadFaultsEnabled} p=${downloadFaultProbability} (disable: MOCK_DOWNLOAD_FAULTS=0)`);
 });
 
