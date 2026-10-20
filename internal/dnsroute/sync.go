@@ -333,7 +333,11 @@ func buildTargetState(data *StoreData, failedTunnels, absentIfaces map[string]st
 			ts.groups = append(ts.groups, g)
 
 			// Filter out failed tunnels, reassign fallback to last active route.
+			// Повтор интерфейса (список, записанный до проверки на записи, F691)
+			// схлопывается до первого вхождения: NDMS держит одну строку на
+			// (группа, интерфейс), иначе цель никогда не сошлась бы с роутером.
 			var activeRoutes []RouteTarget
+			seen := make(map[string]bool, len(list.Routes))
 			for _, rt := range list.Routes {
 				if failedTunnels != nil {
 					if _, failed := failedTunnels[rt.TunnelID]; failed {
@@ -343,6 +347,10 @@ func buildTargetState(data *StoreData, failedTunnels, absentIfaces map[string]st
 				if _, gone := absentIfaces[rt.Interface]; gone {
 					continue
 				}
+				if seen[rt.Interface] {
+					continue
+				}
+				seen[rt.Interface] = true
 				activeRoutes = append(activeRoutes, rt)
 			}
 			for j, rt := range activeRoutes {
@@ -650,16 +658,12 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff, confirmed map
 		}
 		ups := make([]command.DNSRouteSpec, 0, len(rb.upserts))
 		ifaces := make([]string, 0, len(rb.upserts))
-		dupIface := false
 		for _, ro := range rb.upserts {
 			iface, ok := confirmed[ro.Iface]
 			if !ok {
 				// Неподтверждённая цель в target не попадает (confirmTargets);
 				// нулевой Confirmed ушёл бы в NDMS пустым именем.
 				return fmt.Errorf("replace routes for %s: интерфейс %s не подтверждён", rb.group, ro.Iface)
-			}
-			for _, seen := range ifaces {
-				dupIface = dupIface || seen == iface.Name()
 			}
 			ups = append(ups, command.DNSRouteSpec{
 				Group:     ro.Group,
@@ -670,10 +674,7 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff, confirmed map
 			ifaces = append(ifaces, iface.Name())
 		}
 
-		// Интерфейс дважды в цели (F691: уникальность маршрутов списка не
-		// проверяется) — планировщик на месте запланировал бы дубль строки на
-		// роутере, поэтому такая группа идёт прежним сносом+записью.
-		if len(rb.deletes) > 0 && !dupIface {
+		if len(rb.deletes) > 0 {
 			disables, err := s.rewriteInPlace(ctx, rb, confirmed)
 			if err == nil {
 				postDisables = append(postDisables, disables...)

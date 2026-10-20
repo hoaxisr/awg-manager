@@ -213,6 +213,9 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 	if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
 		return nil, fmt.Errorf("resolve routes: %w", err)
 	}
+	if err := checkRouteInterfacesUnique(list.Routes); err != nil {
+		return nil, err
+	}
 
 	s.dedup(&list)
 
@@ -425,6 +428,9 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
 		return nil, fmt.Errorf("resolve routes: %w", err)
 	}
+	if err := checkRouteInterfacesUnique(list.Routes); err != nil {
+		return nil, err
+	}
 
 	s.dedup(&list)
 
@@ -620,6 +626,9 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 
 		if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
 			return nil, fmt.Errorf("resolve routes for %q: %w", list.Name, err)
+		}
+		if err := checkRouteInterfacesUnique(list.Routes); err != nil {
+			return nil, fmt.Errorf("%q: %w", list.Name, err)
 		}
 
 		s.dedup(&list)
@@ -1004,6 +1013,22 @@ func (s *ServiceImpl) resolveRouteInterfaces(ctx context.Context, routes []Route
 			return fmt.Errorf("resolve tunnel %s: %w", routes[i].TunnelID, err)
 		}
 		routes[i].Interface = iface
+	}
+	return nil
+}
+
+// checkRouteInterfacesUnique отвергает маршруты, где интерфейс указан дважды.
+// NDMS держит одну строку dns-proxy route на пару (группа, интерфейс): повторная
+// запись лишь обновляет её, и цель сверки никогда не сошлась бы с роутером (F691).
+// Идентичность — разрешённый RouteTarget.Interface, поэтому вызывать после
+// resolveRouteInterfaces.
+func checkRouteInterfacesUnique(routes []RouteTarget) error {
+	seen := make(map[string]bool, len(routes))
+	for _, rt := range routes {
+		if seen[rt.Interface] {
+			return fmt.Errorf("интерфейс %s указан в маршрутах дважды", rt.Interface)
+		}
+		seen[rt.Interface] = true
 	}
 	return nil
 }

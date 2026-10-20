@@ -9,6 +9,7 @@ package dnsroute
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -295,19 +296,90 @@ func TestIssue1023_NoRebuildAfterInPlace(t *testing.T) {
 	assertSeq(t, "first", r.ifaceOrder("first_p"), "Wireguard3")
 }
 
-// F691: в списке маршрутов один интерфейс дважды. Планировщик на месте
-// запланировал бы дубль строки на роутере, поэтому группа идёт прежним
-// сносом+записью.
-func TestIssue1023_DuplicateIfaceTakesLegacyPath(t *testing.T) {
+// F691: список с повтором интерфейса, записанный до проверки на записи.
+// NDMS держит одну строку на (группа, интерфейс), поэтому цель схлопывается
+// до первого вхождения и сверка сходится.
+func TestF691_StoredDuplicateCollapses(t *testing.T) {
 	r := newFakeRouter()
 	svc := newServiceWithRouter(t, r)
-	first := mustCreate(t, svc, "first", "Wireguard1")
-	before := r.indexedCount()
+	mustCreate(t, svc, "first", "Wireguard1")
 
-	mustUpdateRoutes(t, svc, first, "Wireguard2", "Wireguard2")
-
-	if got := r.indexedCount(); got != before {
-		t.Errorf("правка по index/rule при дубле интерфейса: %d элементов", got-before)
+	data := svc.store.GetCached()
+	data.Lists[0].Routes = routes("Wireguard2", "Wireguard2")
+	if err := svc.store.Save(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	assertSeq(t, "first", r.ifaceOrder("first_p"), "Wireguard2")
+
+	waitQuiet(t, r)
+	before := r.dnsPostCount()
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.dnsPostCount() - before; got != 0 {
+		t.Errorf("повторная сверка сделала %d POST-ов dns-proxy", got)
+	}
+}
+
+// F691: повтор интерфейса в маршрутах отвергается на записи — без сохранения
+// и без POST-ов на роутер.
+func TestF691_RepeatedInterfaceRejectedOnWrite(t *testing.T) {
+	ctx := context.Background()
+	assertRejected := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "Wireguard1") {
+			t.Fatalf("ошибка = %v, ожидалась с именем интерфейса Wireguard1", err)
+		}
+	}
+	dup := DomainList{
+		Name:          "dup",
+		ManualDomains: []string{"dup.example"},
+		Routes:        routes("Wireguard1", "Wireguard1"),
+	}
+
+	t.Run("Create", func(t *testing.T) {
+		r := newFakeRouter()
+		svc := newServiceWithRouter(t, r)
+		_, err := svc.Create(ctx, dup)
+		assertRejected(t, err)
+		if n := len(svc.store.GetCached().Lists); n != 0 {
+			t.Errorf("сохранено списков: %d", n)
+		}
+		if n := r.snapshotCount(); n != 0 {
+			t.Errorf("POST-ов: %d", n)
+		}
+	})
+
+	t.Run("CreateBatch", func(t *testing.T) {
+		r := newFakeRouter()
+		svc := newServiceWithRouter(t, r)
+		_, err := svc.CreateBatch(ctx, []DomainList{dup})
+		assertRejected(t, err)
+		if n := len(svc.store.GetCached().Lists); n != 0 {
+			t.Errorf("сохранено списков: %d", n)
+		}
+		if n := r.snapshotCount(); n != 0 {
+			t.Errorf("POST-ов: %d", n)
+		}
+	})
+
+	t.Run("Update", func(t *testing.T) {
+		r := newFakeRouter()
+		svc := newServiceWithRouter(t, r)
+		l := mustCreate(t, svc, "first", "Wireguard2")
+		before := waitQuiet(t, r)
+		upd := *l
+		upd.Routes = routes("Wireguard1", "Wireguard1")
+		_, err := svc.Update(ctx, upd)
+		assertRejected(t, err)
+		if got := svc.store.GetCached().Lists[0].Routes; fmt.Sprint(got) != fmt.Sprint(routes("Wireguard2")) {
+			t.Errorf("сохранены маршруты %v", got)
+		}
+		if n := r.snapshotCount() - before; n != 0 {
+			t.Errorf("POST-ов: %d", n)
+		}
+	})
 }

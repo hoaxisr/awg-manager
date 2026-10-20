@@ -329,14 +329,13 @@ func TestF692_PausedLegacyFallbackDisabled(t *testing.T) {
 	}
 }
 
-// F692 + F691: список на паузе с повтором интерфейса в целях идёт сносом+
-// записью (ReplaceRoutes), строки обязаны записаться выключенными.
-func TestF692_PausedDupIface(t *testing.T) {
+// F692 + F691: список на паузе с повтором интерфейса, записанный до проверки
+// на записи, — строка одна и выключена, повторная сверка ничего не пишет.
+func TestF691_PausedStoredDuplicateCollapses(t *testing.T) {
 	r := newFakeRouter()
 	lag := &scLagRouter{oracleRouter: newOracle4(r)}
 	svc := newServiceOver(t, lag, time.Hour, time.Hour)
 	mustCreate(t, svc, "first", "Wireguard1")
-	before := r.indexedCount()
 
 	data := svc.store.GetCached()
 	data.Lists[0].Enabled = false
@@ -347,13 +346,15 @@ func TestF692_PausedDupIface(t *testing.T) {
 	if err := svc.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-
-	if got := r.indexedCount(); got != before {
-		t.Errorf("правка по index/rule при дубле интерфейса: %d элементов", got-before)
-	}
 	assertSeq(t, "first", r.ifaceOrder("first_p"), "Wireguard2")
 	r.assertGroupDisabled(t, "first_p")
-	if got := r.toggleCount(); got != 0 {
-		t.Errorf("toggle-POST-ов disable: %d, пауза обязана ехать в записи", got)
+
+	waitQuiet(t, r)
+	before := r.dnsPostCount()
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.dnsPostCount() - before; got != 0 {
+		t.Errorf("повторная сверка сделала %d POST-ов dns-proxy", got)
 	}
 }

@@ -155,6 +155,32 @@ func TestBuildTargetState(t *testing.T) {
 		}
 	})
 
+	// F691: NDMS держит одну строку на (группа, интерфейс) — повтор в
+	// маршрутах схлопывается до первого вхождения, fallback исходного
+	// последнего маршрута наследует последний из схлопнутых.
+	t.Run("repeated interface collapses to first occurrence", func(t *testing.T) {
+		data := &StoreData{Lists: []DomainList{
+			{
+				ID: "list_1", Name: "foo", Enabled: true,
+				Domains: []string{"a.com"},
+				Routes: []RouteTarget{
+					{Interface: "A", TunnelID: "a"},
+					{Interface: "B", TunnelID: "b"},
+					{Interface: "A", TunnelID: "a", Fallback: "reject"},
+				},
+			},
+		}}
+		ts := buildTargetState(data, nil, nil)
+		got := fmt.Sprint(ts.routes)
+		want := fmt.Sprint([]targetRoute{
+			{group: "foo_p1", iface: "A"},
+			{group: "foo_p1", iface: "B", fallback: "reject"},
+		})
+		if got != want {
+			t.Errorf("routes = %s, want %s", got, want)
+		}
+	})
+
 	t.Run("single list single chunk", func(t *testing.T) {
 		data := &StoreData{Lists: []DomainList{
 			{
