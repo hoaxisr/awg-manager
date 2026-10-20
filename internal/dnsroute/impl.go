@@ -411,38 +411,72 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 
 	// Validate any new subscription URLs before saving. Скачанное проверкой
 	// сразу идёт в список — без второй загрузки и без ожидания обновления.
-	newSubs := findNewSubscriptions(existing.Subscriptions, list.Subscriptions)
-	var newDomains []string
+	// Повтор адреса в запросе качается один раз.
+	var newSubs []Subscription
+	for _, sub := range findNewSubscriptions(existing.Subscriptions, list.Subscriptions) {
+		if !slices.ContainsFunc(newSubs, func(n Subscription) bool { return n.URL == sub.URL }) {
+			newSubs = append(newSubs, sub)
+		}
+	}
+	fetchedByURL := make(map[string]subscriptionFetch, len(list.Subscriptions))
 	if len(newSubs) > 0 {
 		fetched, err := s.validateSubscriptions(ctx, &list, newSubs)
 		if err != nil {
 			return nil, err
 		}
-		byURL := make(map[string][]string, len(newSubs))
 		for i, sub := range newSubs {
-			byURL[sub.URL] = fetched[i]
-			newDomains = append(newDomains, fetched[i]...)
-		}
-		for i := range list.Subscriptions {
-			if domains, ok := byURL[list.Subscriptions[i].URL]; ok {
-				recordSubscriptionFetch(&list.Subscriptions[i], subscriptionFetch{domains: domains}, list.UpdatedAt)
-			}
+			fetchedByURL[sub.URL] = subscriptionFetch{domains: fetched[i]}
 		}
 	}
 
-	// Merge domains: manual domains + existing subscription domains + new
-	// subscriptions' domains, then classify into DNS-style domains vs CIDR
-	// subnets so HR Neo writes them into the correct file (domain.conf vs ip.list).
-	manual := deduplicateDomains(list.ManualDomains)
-	// Содержимое стоящих подписок — Domains и Subnets за вычетом ручных
-	// строк: подсети подписок лежат в Subnets и иначе терялись (F697).
-	// Concat, а не append: Domains общий с кэшем (Draft), append мог бы
-	// писать в его массив.
-	subDomains := subscriptionDomains(slices.Concat(existing.Domains, existing.Subnets), existing.ManualDomains)
-	merged := append(append(manual, subDomains...), newDomains...)
-	list.Domains, list.Subnets = splitDomainsAndSubnets(deduplicateDomains(merged))
-	if err := validateSubnetsLimit(len(list.routedSubnets(list.Subnets))); err != nil {
-		return nil, err
+	if len(findNewSubscriptions(list.Subscriptions, existing.Subscriptions)) > 0 {
+		// Снята хоть одна подписка: её строки в Domains/Subnets не отделить
+		// от строк остальных, и перенос держал бы их до обновления (а с
+		// ними и место в лимите). Список пересобирается из ручных и свежей
+		// загрузки всех текущих подписок; отказ стоящей не фатален — как
+		// при обновлении.
+		results := make([]subscriptionFetch, len(list.Subscriptions))
+		for i, sub := range list.Subscriptions {
+			res, ok := fetchedByURL[sub.URL]
+			if !ok {
+				domains, err := s.fetchSubscription(ctx, sub.URL)
+				if err != nil {
+					// The journal line is scrubbed by logging.Service.AppLog.
+					s.appLog.Warn("subscription-fetch", list.ID, fmt.Sprintf("url=%s err=%s", sub.URL, err.Error()))
+				}
+				res = subscriptionFetch{domains: domains, err: err}
+				fetchedByURL[sub.URL] = res
+			}
+			results[i] = res
+		}
+		if err := applySubscriptionFetches(&list, results, list.UpdatedAt); err != nil {
+			return nil, err
+		}
+	} else {
+		var newDomains []string
+		for _, sub := range newSubs {
+			newDomains = append(newDomains, fetchedByURL[sub.URL].domains...)
+		}
+		for i := range list.Subscriptions {
+			if res, ok := fetchedByURL[list.Subscriptions[i].URL]; ok {
+				recordSubscriptionFetch(&list.Subscriptions[i], res, list.UpdatedAt)
+			}
+		}
+
+		// Merge domains: manual domains + existing subscription domains + new
+		// subscriptions' domains, then classify into DNS-style domains vs CIDR
+		// subnets so HR Neo writes them into the correct file (domain.conf vs ip.list).
+		manual := deduplicateDomains(list.ManualDomains)
+		// Содержимое стоящих подписок — Domains и Subnets за вычетом ручных
+		// строк: подсети подписок лежат в Subnets и иначе терялись (F697).
+		// Concat, а не append: Domains общий с кэшем (Draft), append мог бы
+		// писать в его массив.
+		subDomains := subscriptionDomains(slices.Concat(existing.Domains, existing.Subnets), existing.ManualDomains)
+		merged := append(append(manual, subDomains...), newDomains...)
+		list.Domains, list.Subnets = splitDomainsAndSubnets(deduplicateDomains(merged))
+		if err := validateSubnetsLimit(len(list.routedSubnets(list.Subnets))); err != nil {
+			return nil, err
+		}
 	}
 
 	list.Excludes, list.ExcludeSubnets = splitDomainsAndSubnets(deduplicateDomains(list.Excludes))

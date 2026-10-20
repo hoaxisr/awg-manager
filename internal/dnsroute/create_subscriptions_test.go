@@ -204,17 +204,16 @@ func TestCreate_Subscriptions_RejectedLeavesNothing(t *testing.T) {
 // Update применяет новую подписку сразу, теми доменами, что скачала
 // проверка: одна загрузка на новый адрес, старые не перекачиваются.
 
-// newUpdateSubsService — сервис со списком «subs» из ручных manual и
-// подписки subURL1; счётчик загрузок обнулён, страж «файл не тронут» снят.
-func newUpdateSubsService(t *testing.T, dl *urlDownloader, manual []string) (*ServiceImpl, *fakePoster, string) {
+// newUpdateSubsService — сервис со списком seed (имя по умолчанию «subs»);
+// счётчик загрузок обнулён, страж «файл не тронут» снят. Без seed.Routes
+// сверка ничего не шлёт — так тесты на тысячи подсетей остаются быстрыми.
+func newUpdateSubsService(t *testing.T, dl *urlDownloader, seed DomainList) (*ServiceImpl, *fakePoster, string) {
 	t.Helper()
 	svc, poster, _ := newCreateSubsService(t, dl)
-	created, err := svc.Create(context.Background(), DomainList{
-		Name:          "subs",
-		ManualDomains: manual,
-		Subscriptions: []Subscription{{URL: subURL1}},
-		Routes:        []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}},
-	})
+	if seed.Name == "" {
+		seed.Name = "subs"
+	}
+	created, err := svc.Create(context.Background(), seed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,12 +222,58 @@ func newUpdateSubsService(t *testing.T, dl *urlDownloader, manual []string) (*Se
 	return svc, poster, created.ID
 }
 
+// newStoredSubsService — как newUpdateSubsService, но список кладётся в
+// store напрямую, минуя Create: сверка подсетей в dedup квадратична, и
+// посев на десятки тысяч подсетей через Create стоит секунды под -race.
+func newStoredSubsService(t *testing.T, dl *urlDownloader, seed DomainList) (*ServiceImpl, *fakePoster, string) {
+	t.Helper()
+	svc, poster, _ := newCreateSubsService(t, dl)
+	d := svc.store.Draft()
+	seed.ID = nextListID(d.Lists)
+	seed.Name = "subs"
+	seed.Enabled = true
+	d.Lists = append(d.Lists, seed)
+	if err := svc.store.Save(d); err != nil {
+		t.Fatal(err)
+	}
+	dl.onRead = nil
+	dl.calls = map[string]int{}
+	return svc, poster, seed.ID
+}
+
+var routedOpkgTun0 = []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}}
+
+// storedList — запись списка id в кэше.
+func storedList(t *testing.T, svc *ServiceImpl, id string) *DomainList {
+	t.Helper()
+	for i := range svc.store.GetCached().Lists {
+		if l := &svc.store.GetCached().Lists[i]; l.ID == id {
+			return l
+		}
+	}
+	t.Fatal("список не в кэше")
+	return nil
+}
+
+// subnetLines — n строк-подсетей /24 в сети first.0.0.0/8.
+func subnetLines(first, n int) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "%d.%d.%d.0/24\n", first, i/256, i%256)
+	}
+	return b.String()
+}
+
 func TestUpdate_NewSubscription_AppliedOnce(t *testing.T) {
 	dl := &urlDownloader{bodies: map[string]string{
 		subURL1: "a.example\n",
 		subURL2: "c.example\nd.example\n9.9.9.0/24\n",
 	}}
-	svc, poster, id := newUpdateSubsService(t, dl, []string{"m.example"})
+	svc, poster, id := newUpdateSubsService(t, dl, DomainList{
+		ManualDomains: []string{"m.example"},
+		Subscriptions: []Subscription{{URL: subURL1}},
+		Routes:        routedOpkgTun0,
+	})
 	posts := len(poster.Payloads())
 
 	got, err := svc.Update(context.Background(), DomainList{
@@ -289,15 +334,14 @@ func TestUpdate_NewSubscription_AppliedOnce(t *testing.T) {
 
 func TestUpdate_NewSubscription_MergedLimitRejected(t *testing.T) {
 	// Подсети стоящей подписки и новой порознь в лимите, вместе — за ним.
-	half := func(first int) string {
-		var b strings.Builder
-		for i := 0; i < MaxSubnetsPerList/2+1; i++ {
-			fmt.Fprintf(&b, "%d.%d.%d.0/24\n", first, i/256, i%256)
-		}
-		return b.String()
-	}
-	dl := &urlDownloader{bodies: map[string]string{subURL1: half(1), subURL2: half(2)}}
-	svc, poster, id := newUpdateSubsService(t, dl, []string{"m.example"})
+	half := MaxSubnetsPerList/2 + 1
+	dl := &urlDownloader{bodies: map[string]string{subURL2: subnetLines(2, half)}}
+	svc, poster, id := newStoredSubsService(t, dl, DomainList{
+		ManualDomains: []string{"m.example"},
+		Domains:       []string{"m.example"},
+		Subnets:       strings.Fields(subnetLines(1, half)),
+		Subscriptions: []Subscription{{URL: subURL1}},
+	})
 	before, err := os.ReadFile(svc.store.path)
 	if err != nil {
 		t.Fatal(err)
@@ -341,7 +385,11 @@ func TestUpdate_KeepsSubscriptionSubnets(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dl := &urlDownloader{bodies: map[string]string{subURL1: "a.example\n9.9.9.0/24\n"}}
-			svc, poster, id := newUpdateSubsService(t, dl, []string{"m.example", "5.5.5.0/24"})
+			svc, poster, id := newUpdateSubsService(t, dl, DomainList{
+				ManualDomains: []string{"m.example", "5.5.5.0/24"},
+				Subscriptions: []Subscription{{URL: subURL1}},
+				Routes:        routedOpkgTun0,
+			})
 			posts := len(poster.Payloads())
 
 			upd := tc.upd
@@ -372,6 +420,228 @@ func TestUpdate_KeepsSubscriptionSubnets(t *testing.T) {
 			}
 			if !sent {
 				t.Error("подсеть подписки не дошла до роутера после Update")
+			}
+		})
+	}
+}
+
+const subURL3 = "https://9.9.9.9/c.txt"
+
+// Удаление подписки в Update: содержимое стоящих подписок не переносится,
+// список пересобирается из ручных и свежей загрузки всех текущих подписок.
+
+func TestUpdate_SwapSubscription_RebuildsWithoutRemoved(t *testing.T) {
+	// A вместе с B за лимитом, B с ручными в нём: перенос A ложно
+	// отвергал замену. A лежит в store готовым, как после обновления.
+	n := 100
+	dl := &urlDownloader{bodies: map[string]string{subURL2: "b.example\n" + subnetLines(2, n)}}
+	svc, _, id := newStoredSubsService(t, dl, DomainList{
+		ManualDomains: []string{"m.example"},
+		Domains:       []string{"m.example", "a.example"},
+		Subnets:       strings.Fields(subnetLines(1, MaxSubnetsPerList)),
+		Subscriptions: []Subscription{{URL: subURL1}},
+	})
+
+	if _, err := svc.Update(context.Background(), DomainList{
+		ID:            id,
+		Subscriptions: []Subscription{{URL: subURL2}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if dl.calls[subURL1] != 0 || dl.calls[subURL2] != 1 {
+		t.Errorf("загрузки %v, ждали только %s один раз", dl.calls, subURL2)
+	}
+	stored := storedList(t, svc, id)
+	if want := "m.example,b.example"; strings.Join(stored.Domains, ",") != want {
+		t.Errorf("Domains = %v, want %s", stored.Domains, want)
+	}
+	if len(stored.Subnets) != n {
+		t.Errorf("подсетей %d, want %d", len(stored.Subnets), n)
+	}
+	for _, sn := range stored.Subnets {
+		if !strings.HasPrefix(sn, "2.") {
+			t.Fatalf("подсеть снятой подписки осталась: %s", sn)
+		}
+	}
+}
+
+func TestUpdate_RemovalRefetchesKept(t *testing.T) {
+	dl := &urlDownloader{bodies: map[string]string{
+		subURL1: "a.example\n",
+		subURL2: "b.example\n2.2.2.0/24\n",
+		subURL3: "c.example\n",
+	}}
+	svc, poster, id := newUpdateSubsService(t, dl, DomainList{
+		ManualDomains: []string{"m.example"},
+		Subscriptions: []Subscription{{URL: subURL1}, {URL: subURL2}},
+		Routes:        routedOpkgTun0,
+	})
+
+	t.Run("KeptFailsNonFatal", func(t *testing.T) {
+		dl.fail = map[string]error{subURL2: errors.New("i/o timeout")}
+		posts := len(poster.Payloads())
+		if _, err := svc.Update(context.Background(), DomainList{
+			ID:            id,
+			Subscriptions: []Subscription{{URL: subURL2}, {URL: subURL3}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		for u, want := range map[string]int{subURL1: 0, subURL2: 1, subURL3: 1} {
+			if dl.calls[u] != want {
+				t.Errorf("%s загружена %d раз, want %d", u, dl.calls[u], want)
+			}
+		}
+		stored := storedList(t, svc, id)
+		if want := "m.example,c.example"; strings.Join(stored.Domains, ",") != want {
+			t.Errorf("Domains = %v, want %s", stored.Domains, want)
+		}
+		if len(stored.Subnets) != 0 {
+			t.Errorf("Subnets = %v, want пусто", stored.Subnets)
+		}
+		kept, added := stored.Subscriptions[0], stored.Subscriptions[1]
+		if !strings.Contains(kept.LastError, "i/o timeout") || kept.LastCount != 0 || kept.LastFetched == "" {
+			t.Errorf("стоящая подписка = %+v, want LastError, LastCount=0", kept)
+		}
+		if added.LastCount != 1 || added.LastError != "" {
+			t.Errorf("новая подписка = %+v, want LastCount=1", added)
+		}
+		sent := false
+		for _, p := range poster.Payloads()[posts:] {
+			if strings.Contains(fmt.Sprint(p), "c.example") {
+				sent = true
+			}
+		}
+		if !sent {
+			t.Error("сверка не довезла новую подписку до роутера")
+		}
+	})
+
+	t.Run("NewFailsRejected", func(t *testing.T) {
+		dl.fail = map[string]error{subURL1: errors.New("i/o timeout")}
+		dl.calls = map[string]int{}
+		before, err := os.ReadFile(svc.store.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cached := snapshot(t, svc.store)
+		posts := len(poster.Payloads())
+
+		// Снята subURL2, новая subURL1 не грузится.
+		_, err = svc.Update(context.Background(), DomainList{
+			ID:            id,
+			Subscriptions: []Subscription{{URL: subURL3}, {URL: subURL1}},
+		})
+		if err == nil || !strings.Contains(err.Error(), "подписка https://9.9.9.9") && !strings.Contains(err.Error(), "i/o timeout") {
+			t.Fatalf("err = %v, want отказ новой подписки", err)
+		}
+		now, rerr := os.ReadFile(svc.store.path)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		if !bytes.Equal(now, before) {
+			t.Error("файл store изменён отвергнутым Update")
+		}
+		if after := snapshot(t, svc.store); after != cached {
+			t.Error("кэш изменён отвергнутым Update")
+		}
+		if got := len(poster.Payloads()); got != posts {
+			t.Errorf("отвергнутый Update отправил POST: %d → %d", posts, got)
+		}
+	})
+}
+
+func TestUpdate_DuplicateNewURLFetchedOnce(t *testing.T) {
+	dl := &urlDownloader{bodies: map[string]string{subURL1: "a.example\n", subURL2: "b.example\n"}}
+	svc, _, id := newUpdateSubsService(t, dl, DomainList{
+		ManualDomains: []string{"m.example"},
+		Subscriptions: []Subscription{{URL: subURL1}},
+	})
+	if _, err := svc.Update(context.Background(), DomainList{
+		ID:            id,
+		Subscriptions: []Subscription{{URL: subURL1}, {URL: subURL2}, {URL: subURL2}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n := dl.calls[subURL2]; n != 1 {
+		t.Errorf("повторённый новый адрес загружен %d раз, ждали 1", n)
+	}
+	if want := "m.example,a.example,b.example"; strings.Join(storedList(t, svc, id).Domains, ",") != want {
+		t.Errorf("Domains = %v, want %s", storedList(t, svc, id).Domains, want)
+	}
+}
+
+// Create: ручные подсети и подсети подписки порознь в лимите, вместе — за
+// ним (предел ловит общий помощник, не validateSubscriptions).
+func TestCreate_ManualPlusSubscriptionOverLimit(t *testing.T) {
+	half := MaxSubnetsPerList/2 + 1
+	dl := &urlDownloader{bodies: map[string]string{subURL1: subnetLines(2, half)}}
+	svc, poster, before := newCreateSubsService(t, dl)
+	cached := snapshot(t, svc.store)
+	posts := len(poster.Payloads())
+
+	_, err := svc.Create(context.Background(), DomainList{
+		Name:          "subs",
+		ManualDomains: strings.Fields(subnetLines(1, half)),
+		Subscriptions: []Subscription{{URL: subURL1}},
+		Routes:        routedOpkgTun0,
+	})
+	if err == nil || !strings.Contains(err.Error(), "слишком много подсетей") {
+		t.Fatalf("err = %v, want лимит подсетей", err)
+	}
+	now, rerr := os.ReadFile(svc.store.path)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !bytes.Equal(now, before) {
+		t.Error("файл store изменён отвергнутым Create")
+	}
+	if after := snapshot(t, svc.store); after != cached {
+		t.Error("кэш изменён отвергнутым Create")
+	}
+	if got := len(poster.Payloads()); got != posts {
+		t.Errorf("отвергнутый Create отправил POST: %d → %d", posts, got)
+	}
+}
+
+// SkipIPv6: лимит считает только то, что уходит на роутер; IPv6-сети
+// подписки остаются в списке, но в счёт не идут.
+func TestSubscriptions_SkipIPv6_LimitCountsRoutedOnly(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i <= MaxSubnetsPerList; i++ {
+		fmt.Fprintf(&b, "2a00:%x:%x::/48\n", i/65536+1, i%65536)
+	}
+	b.WriteString("1.1.1.0/24\n8.8.8.0/24\n")
+	body := b.String()
+	skip := true
+	// Проверка и сборка списка — без Create: в dedup сверка подсетей
+	// квадратична, 20 тыс. подсетей стоят минуту под -race.
+	for _, tc := range []struct {
+		name    string
+		skip    *bool
+		wantErr bool
+	}{
+		{"SkipIPv6", &skip, false},
+		{"Default", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewService(nil, nil, nil, nil, nil)
+			svc.SetDownloader(&urlDownloader{bodies: map[string]string{subURL1: body}, calls: map[string]int{}})
+			list := DomainList{SkipIPv6: tc.skip, Subscriptions: []Subscription{{URL: subURL1}}}
+			fetched, err := svc.validateSubscriptions(context.Background(), &list, list.Subscriptions)
+			if err == nil {
+				err = applySubscriptionFetches(&list, []subscriptionFetch{{domains: fetched[0]}}, "now")
+			}
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "слишком много подсетей") {
+					t.Fatalf("err = %v, want лимит подсетей", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := MaxSubnetsPerList + 3; len(list.Subnets) != want {
+				t.Errorf("подсетей %d, want %d (IPv6 остаются в списке)", len(list.Subnets), want)
 			}
 		})
 	}
