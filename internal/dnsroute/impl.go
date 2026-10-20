@@ -590,6 +590,11 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 	var hrCreated []*DomainList
 	hasSubs := false
 
+	// Первый проход — без побочных эффектов: нормализация, пропуски и
+	// проверки маршрутов всех списков. Ошибка любого списка отвергает батч
+	// целиком до записи HR-файлов и правки кэша (F693): иначе ранние списки
+	// оставались в живом кэше и доезжали до роутера со следующим Save.
+	prepared := make([]DomainList, 0, len(lists))
 	for _, list := range lists {
 		applyManualText(&list)
 		applyExcludesText(&list)
@@ -602,6 +607,27 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 			if len(list.ManualDomains) == 0 {
 				continue
 			}
+			prepared = append(prepared, list)
+			continue
+		}
+		if strings.TrimSpace(list.Name) == "" {
+			continue
+		}
+		if len(list.ManualDomains) == 0 && len(list.Subscriptions) == 0 {
+			continue
+		}
+
+		if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
+			return nil, fmt.Errorf("resolve routes for %q: %w", list.Name, err)
+		}
+		if err := checkRouteInterfacesUnique(list.Routes); err != nil {
+			return nil, fmt.Errorf("%q: %w", list.Name, err)
+		}
+		prepared = append(prepared, list)
+	}
+
+	for _, list := range prepared {
+		if isHydraRoute(list.Backend) {
 			if len(list.Subscriptions) > 0 {
 				s.logInfo("create-batch", list.Name, "HR rule: subscriptions unsupported, ignored")
 			}
@@ -613,12 +639,6 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 			hrCreated = append(hrCreated, dl)
 			continue
 		}
-		if strings.TrimSpace(list.Name) == "" {
-			continue
-		}
-		if len(list.ManualDomains) == 0 && len(list.Subscriptions) == 0 {
-			continue
-		}
 
 		list.ID = nextListID(data.Lists)
 		assignGroupSlug(&list, data.Lists)
@@ -626,13 +646,6 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 		list.CreatedAt = now
 		list.UpdatedAt = now
 		list.Domains = deduplicateDomains(list.ManualDomains)
-
-		if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
-			return nil, fmt.Errorf("resolve routes for %q: %w", list.Name, err)
-		}
-		if err := checkRouteInterfacesUnique(list.Routes); err != nil {
-			return nil, fmt.Errorf("%q: %w", list.Name, err)
-		}
 
 		s.dedup(&list)
 		data.Lists = append(data.Lists, list)

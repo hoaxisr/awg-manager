@@ -9,6 +9,7 @@ package dnsroute
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -382,4 +383,47 @@ func TestF691_RepeatedInterfaceRejectedOnWrite(t *testing.T) {
 			t.Errorf("POST-ов: %d", n)
 		}
 	})
+}
+
+// F693: ошибка на позднем списке батча не оставляет ранние в кэше — иначе
+// следующая несвязанная запись сохранила бы их, а сверка довезла до роутера.
+func TestCreateBatch_ErrorLeavesCacheUntouched(t *testing.T) {
+	ctx := context.Background()
+	r := newFakeRouter()
+	svc := newServiceWithRouter(t, r)
+
+	_, err := svc.CreateBatch(ctx, []DomainList{
+		{Name: "batch-a", ManualDomains: []string{"a.example"}, Routes: routes("Wireguard2")},
+		{Name: "batch-b", ManualDomains: []string{"b.example"}, Routes: routes("Wireguard1", "Wireguard1")},
+	})
+	if err == nil || !strings.Contains(err.Error(), "Wireguard1") {
+		t.Fatalf("ошибка = %v, ожидалась с именем интерфейса Wireguard1", err)
+	}
+	if n := len(svc.store.GetCached().Lists); n != 0 {
+		t.Fatalf("в кэше списков: %d", n)
+	}
+	if n := r.snapshotCount(); n != 0 {
+		t.Errorf("POST-ов: %d", n)
+	}
+
+	mustCreate(t, svc, "after-c", "Wireguard3")
+	waitQuiet(t, r)
+	for _, l := range svc.store.GetCached().Lists {
+		if l.Name != "after-c" {
+			t.Errorf("в кэше чужой список %q", l.Name)
+		}
+	}
+	reloaded := NewStore(filepath.Dir(svc.store.path))
+	data, err := reloaded.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Lists) != 1 || data.Lists[0].Name != "after-c" {
+		t.Errorf("на диске списки %+v, ожидался только after-c", data.Lists)
+	}
+	for _, g := range r.groupOrder() {
+		if strings.HasPrefix(g, "batch") {
+			t.Errorf("на роутер доехала группа %s", g)
+		}
+	}
 }

@@ -87,3 +87,33 @@ func TestCreateBatch_HydraRouteSubscriptions(t *testing.T) {
 		t.Fatal("subscription-only HR entry should be skipped")
 	}
 }
+
+// F693: HR-правило из батча не создаётся, если NDMS-список того же батча
+// отвергнут — проверка всех списков идёт до любой записи.
+func TestCreateBatch_InvalidNDMSSkipsHRCreate(t *testing.T) {
+	resolver := &stubResolver{kernelByTunnel: map[string]string{"t1": "nwg0"}}
+	svc, hydra := newHRTestSvc(t, resolver)
+
+	_, err := svc.CreateBatch(context.Background(), []DomainList{
+		{Name: "hr-rule", Backend: "hydraroute", ManualDomains: []string{"2ip.ru"},
+			Routes: []RouteTarget{{TunnelID: "t1"}}},
+		{Name: "ndms-dup", Backend: "ndms", ManualDomains: []string{"a.com"},
+			Routes: routes("Wireguard1", "Wireguard1")},
+	})
+	if err == nil {
+		t.Fatal("ожидалась ошибка повтора интерфейса")
+	}
+
+	rs, err := hydra.ListRuleSet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tg := range rs.Targets {
+		if len(tg.Groups) != 0 {
+			t.Fatalf("HR-правило создано несмотря на ошибку батча: %+v", tg.Groups)
+		}
+	}
+	if n := len(svc.store.GetCached().Lists); n != 0 {
+		t.Errorf("в кэше списков: %d", n)
+	}
+}
