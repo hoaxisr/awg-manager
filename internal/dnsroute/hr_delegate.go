@@ -3,6 +3,7 @@ package dnsroute
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"time"
@@ -75,16 +76,21 @@ func (s *ServiceImpl) listHydraRoute(ctx context.Context) ([]DomainList, error) 
 	}
 
 	icons := map[string]string{}
-	if data := s.store.GetCached(); data != nil {
-		if data.HRRuleIcons == nil {
-			data.HRRuleIcons = map[string]string{}
+	// Сводится копия map, а не кэш: при отказе записи правка в кэше не
+	// остаётся (F695). Черновик всего store — только когда есть что писать:
+	// List вызывается часто. Ответ строится по сведённым иконкам и при
+	// отказе — как прежде.
+	if cached := s.store.GetCached(); cached != nil {
+		if c := maps.Clone(cached.HRRuleIcons); c != nil {
+			icons = c
 		}
-		if reconcileHRIcons(data.HRRuleIcons, rs) {
+		if reconcileHRIcons(icons, rs) {
+			data := s.store.Draft()
+			data.HRRuleIcons = icons
 			if err := s.store.Save(data); err != nil {
 				s.appLog.Warn("hydraroute-icons", "", "save reconciled icons: "+err.Error())
 			}
 		}
-		icons = data.HRRuleIcons
 	}
 
 	systemByIface := s.systemTunnelsByIface(ctx)
@@ -210,7 +216,7 @@ func hrGroupFromList(list DomainList) hydraroute.Group {
 // setHRIcon пишет иконку группы с описанием; устаревшие ключи убирает
 // reconcileHRIcons при следующем List.
 func (s *ServiceImpl) setHRIcon(target, description, iconURL string) error {
-	data := s.store.GetCached()
+	data := s.store.Draft()
 	if data == nil || description == "" {
 		return nil
 	}

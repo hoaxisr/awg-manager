@@ -3,6 +3,7 @@ package dnsroute
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -313,6 +314,43 @@ func (s *Store) GetCached() *StoreData {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.data
+}
+
+// Draft возвращает копию кэша для правки: мутатор меняет её и отдаёт в
+// Save, а кэш заменяется только успешной записью (writeLocked). Правка
+// живого кэша при отказе записи оставалась в нём, и её довозили до роутера
+// следующая сверка и до диска следующий успешный Save (F695). Nil, если
+// store не загружен.
+//
+// Глубина — ровно то, что пути правки пакета пишут на месте:
+//   - Lists — свой массив: присваивание Lists[i] и полей элемента
+//     (Update, SetEnabled, OnTunnelDelete, refreshSubscriptions), сдвиг
+//     append(Lists[:i], Lists[i+1:]...) в Delete, append в Create/CreateBatch;
+//   - Subscriptions каждого списка — refreshSubscriptions пишет поля
+//     Subscriptions[j] через указатель;
+//   - Routes каждого списка — Update без присланных маршрутов берёт срез
+//     записи, и resolveRouteInterfaces пишет в него Interface на месте;
+//   - HRRuleIcons — запись и delete в map (setHRIcon).
+//
+// Остальные срезы и указатели элемента (Domains, Excludes, ManualText, …)
+// общие с кэшем: пути правки их только читают или заменяют присваиванием
+// поля. Путь, пишущий внутрь такого среза на месте, обязан углубить копию.
+// Полная копия (DomainList.clone) не нужна: списки доменов бывают в тысячи
+// строк, а роутеры — MIPS с малой памятью.
+func (s *Store) Draft() *StoreData {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data == nil {
+		return nil
+	}
+	d := *s.data
+	d.Lists = slices.Clone(d.Lists)
+	for i := range d.Lists {
+		d.Lists[i].Subscriptions = slices.Clone(d.Lists[i].Subscriptions)
+		d.Lists[i].Routes = slices.Clone(d.Lists[i].Routes)
+	}
+	d.HRRuleIcons = maps.Clone(d.HRRuleIcons)
+	return &d
 }
 
 // defaultStoreData returns empty store data with initialized collections.
