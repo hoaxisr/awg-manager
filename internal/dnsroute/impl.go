@@ -408,20 +408,34 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 		}
 	}
 
-	// Validate any new subscription URLs before saving.
+	// Validate any new subscription URLs before saving. Скачанное проверкой
+	// сразу идёт в список — без второй загрузки и без ожидания обновления.
 	newSubs := findNewSubscriptions(existing.Subscriptions, list.Subscriptions)
+	var newDomains []string
 	if len(newSubs) > 0 {
-		if _, err := s.validateSubscriptions(ctx, &list, newSubs); err != nil {
+		fetched, err := s.validateSubscriptions(ctx, &list, newSubs)
+		if err != nil {
 			return nil, err
+		}
+		byURL := make(map[string][]string, len(newSubs))
+		for i, sub := range newSubs {
+			byURL[sub.URL] = fetched[i]
+			newDomains = append(newDomains, fetched[i]...)
+		}
+		for i := range list.Subscriptions {
+			if domains, ok := byURL[list.Subscriptions[i].URL]; ok {
+				recordSubscriptionFetch(&list.Subscriptions[i], subscriptionFetch{domains: domains}, list.UpdatedAt)
+			}
 		}
 	}
 
-	// Merge domains: manual domains + existing subscription domains, then
-	// classify into DNS-style domains vs CIDR subnets so HR Neo writes them
-	// into the correct file (domain.conf vs ip.list).
+	// Merge domains: manual domains + existing subscription domains + new
+	// subscriptions' domains, then classify into DNS-style domains vs CIDR
+	// subnets so HR Neo writes them into the correct file (domain.conf vs ip.list).
 	manual := deduplicateDomains(list.ManualDomains)
 	subDomains := subscriptionDomains(existing.Domains, existing.ManualDomains)
-	list.Domains, list.Subnets = splitDomainsAndSubnets(deduplicateDomains(append(manual, subDomains...)))
+	merged := append(append(manual, subDomains...), newDomains...)
+	list.Domains, list.Subnets = splitDomainsAndSubnets(deduplicateDomains(merged))
 	if err := validateSubnetsLimit(len(list.routedSubnets(list.Subnets))); err != nil {
 		return nil, err
 	}
@@ -869,21 +883,10 @@ type subscriptionFetch struct {
 func applySubscriptionFetches(list *DomainList, results []subscriptionFetch, now string) error {
 	var allSubDomains [][]string
 	for i := range list.Subscriptions {
-		sub := &list.Subscriptions[i]
-		res := results[i]
-		sub.LastFetched = now
-		if res.err != nil {
-			// net/http quotes the address whole, a redirect hop's too, and
-			// a list's address can carry a token in its path or query. The
-			// stored text is what REST, the web interface and MCP read, so
-			// it keeps only scheme and host.
-			sub.LastError = logging.RedactURLs(res.err.Error())
-			sub.LastCount = 0
-			continue
+		recordSubscriptionFetch(&list.Subscriptions[i], results[i], now)
+		if results[i].err == nil {
+			allSubDomains = append(allSubDomains, results[i].domains)
 		}
-		sub.LastError = ""
-		sub.LastCount = len(res.domains)
-		allSubDomains = append(allSubDomains, res.domains)
 	}
 
 	// Merge manual + subscription domains, then classify CIDRs → Subnets.
@@ -894,6 +897,22 @@ func applySubscriptionFetches(list *DomainList, results []subscriptionFetch, now
 	}
 	list.Domains, list.Subnets = domains, subnets
 	return nil
+}
+
+// recordSubscriptionFetch пишет в подписку итог её загрузки.
+func recordSubscriptionFetch(sub *Subscription, res subscriptionFetch, now string) {
+	sub.LastFetched = now
+	if res.err != nil {
+		// net/http quotes the address whole, a redirect hop's too, and
+		// a list's address can carry a token in its path or query. The
+		// stored text is what REST, the web interface and MCP read, so
+		// it keeps only scheme and host.
+		sub.LastError = logging.RedactURLs(res.err.Error())
+		sub.LastCount = 0
+		return
+	}
+	sub.LastError = ""
+	sub.LastCount = len(res.domains)
 }
 
 func validateSubnetsLimit(count int) error {

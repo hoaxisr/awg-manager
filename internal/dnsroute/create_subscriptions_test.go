@@ -200,3 +200,134 @@ func TestCreate_Subscriptions_RejectedLeavesNothing(t *testing.T) {
 		})
 	}
 }
+
+// Update применяет новую подписку сразу, теми доменами, что скачала
+// проверка: одна загрузка на новый адрес, старые не перекачиваются.
+
+// newUpdateSubsService — сервис со списком «subs» из ручных manual и
+// подписки subURL1; счётчик загрузок обнулён, страж «файл не тронут» снят.
+func newUpdateSubsService(t *testing.T, dl *urlDownloader, manual []string) (*ServiceImpl, *fakePoster, string) {
+	t.Helper()
+	svc, poster, _ := newCreateSubsService(t, dl)
+	created, err := svc.Create(context.Background(), DomainList{
+		Name:          "subs",
+		ManualDomains: manual,
+		Subscriptions: []Subscription{{URL: subURL1}},
+		Routes:        []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dl.onRead = nil
+	dl.calls = map[string]int{}
+	return svc, poster, created.ID
+}
+
+func TestUpdate_NewSubscription_AppliedOnce(t *testing.T) {
+	dl := &urlDownloader{bodies: map[string]string{
+		subURL1: "a.example\n",
+		subURL2: "c.example\nd.example\n9.9.9.0/24\n",
+	}}
+	svc, poster, id := newUpdateSubsService(t, dl, []string{"m.example"})
+	posts := len(poster.Payloads())
+
+	got, err := svc.Update(context.Background(), DomainList{
+		ID:            id,
+		Subscriptions: []Subscription{{URL: subURL1}, {URL: subURL2}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := dl.calls[subURL1]; n != 0 {
+		t.Errorf("старая подписка перекачана %d раз", n)
+	}
+	if n := dl.calls[subURL2]; n != 1 {
+		t.Errorf("новая подписка загружена %d раз, ждали 1", n)
+	}
+
+	var stored *DomainList
+	for i := range svc.store.GetCached().Lists {
+		if l := &svc.store.GetCached().Lists[i]; l.ID == id {
+			stored = l
+		}
+	}
+	if stored == nil {
+		t.Fatal("список не в кэше")
+	}
+	if want := "m.example,a.example,c.example,d.example"; strings.Join(stored.Domains, ",") != want {
+		t.Errorf("Domains = %v, want %s", stored.Domains, want)
+	}
+	if want := "9.9.9.0/24"; strings.Join(stored.Subnets, ",") != want {
+		t.Errorf("Subnets = %v, want %s", stored.Subnets, want)
+	}
+	if sub := stored.Subscriptions[1]; sub.LastCount != 3 || sub.LastFetched == "" || sub.LastError != "" {
+		t.Errorf("новая подписка = %+v, want LastCount=3, LastFetched set", sub)
+	}
+	if fmt.Sprint(got.Domains) != fmt.Sprint(stored.Domains) {
+		t.Errorf("ответ %v расходится с записью %v", got.Domains, stored.Domains)
+	}
+
+	reloaded := NewStore(filepath.Dir(svc.store.path))
+	data, err := reloaded.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(data.Lists); n != 2 || strings.Join(data.Lists[1].Domains, ",") != strings.Join(stored.Domains, ",") {
+		t.Errorf("на диске %+v, ждали seed и %v", data.Lists, stored.Domains)
+	}
+
+	sent := false
+	for _, p := range poster.Payloads()[posts:] {
+		if strings.Contains(fmt.Sprint(p), "d.example") {
+			sent = true
+		}
+	}
+	if !sent {
+		t.Error("сверка не довезла домены новой подписки до роутера")
+	}
+}
+
+func TestUpdate_NewSubscription_MergedLimitRejected(t *testing.T) {
+	// Ручные подсети и новая подписка порознь в лимите, вместе — за ним.
+	// Подсети уже стоящей подписки сюда не годятся: Update их не переносит
+	// (subscriptionDomains берёт только Domains).
+	half := func(first int) []string {
+		out := make([]string, 0, MaxSubnetsPerList/2+1)
+		for i := 0; i < MaxSubnetsPerList/2+1; i++ {
+			out = append(out, fmt.Sprintf("%d.%d.%d.0/24", first, i/256, i%256))
+		}
+		return out
+	}
+	dl := &urlDownloader{bodies: map[string]string{
+		subURL1: "a.example\n",
+		subURL2: strings.Join(half(2), "\n"),
+	}}
+	svc, poster, id := newUpdateSubsService(t, dl, half(1))
+	before, err := os.ReadFile(svc.store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached := snapshot(t, svc.store)
+	posts := len(poster.Payloads())
+
+	_, err = svc.Update(context.Background(), DomainList{
+		ID:            id,
+		Subscriptions: []Subscription{{URL: subURL1}, {URL: subURL2}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "слишком много подсетей") {
+		t.Fatalf("err = %v, want лимит подсетей", err)
+	}
+	now, err := os.ReadFile(svc.store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(now, before) {
+		t.Error("файл store изменён отвергнутым Update")
+	}
+	if after := snapshot(t, svc.store); after != cached {
+		t.Error("кэш изменён отвергнутым Update")
+	}
+	if got := len(poster.Payloads()); got != posts {
+		t.Errorf("отвергнутый Update отправил POST: %d → %d", posts, got)
+	}
+}
