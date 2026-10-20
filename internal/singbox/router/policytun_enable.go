@@ -358,7 +358,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	cfg.Outbounds = stripAutoManagedDirect(cfg.Outbounds, s.foreignIfaces())
 	cfg.EnsureSystemRules(sr.SnifferEnabled)
 	cfg.EnsureUDPTimeoutRule(resolveUDPTimeout(sr.UDPTimeout))
-	qosClasses := activeQoSClasses(sr.QoSClasses)
+	qosClasses := routedQoSClasses(activeQoSClasses(sr.QoSClasses))
 	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout, sr.UDPNATMax)
 	cfg.EnsureRouteWAN(sr.WANAutoDetect, sr.WANInterface)
 

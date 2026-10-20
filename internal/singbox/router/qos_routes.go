@@ -90,6 +90,7 @@ func marshalQoSRoutesSlot(rules []Rule) ([]byte, error) {
 // exactly like EnsureSystemRules does, and cannot shorten the timeout above —
 // route/conn.go prefers metadata.UDPTimeout over the sniffed-protocol defaults.
 func buildQoSRouteRules(classes []qosClass, sr storage.SingboxRouterSettings) []Rule {
+	classes = routedQoSClasses(classes)
 	if len(classes) == 0 {
 		return nil
 	}
@@ -144,13 +145,19 @@ func (s *ServiceImpl) filterQoSClassesWithKnownOutbounds(ctx context.Context, cl
 	}
 	known = make([]qosClass, 0, len(classes))
 	for _, c := range classes {
-		if s.isKnownOutboundTag(ctx, c.Outbound, cfg) {
+		if s.isKnownQoSOutbound(ctx, c.Outbound, cfg) {
 			known = append(known, c)
 			continue
 		}
 		missing = append(missing, c)
 	}
 	return known, missing
+}
+
+// isKnownQoSOutbound — isKnownOutboundTag плюс зарезервированный
+// QoSBypassOutbound, который outbound'ом sing-box не является.
+func (s *ServiceImpl) isKnownQoSOutbound(ctx context.Context, tag string, cfg *RouterConfig) bool {
+	return tag == QoSBypassOutbound || s.isKnownOutboundTag(ctx, tag, cfg)
 }
 
 // syncQoSRoutesSlot writes the managed QoS route rules into

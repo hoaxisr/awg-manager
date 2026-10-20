@@ -1638,3 +1638,97 @@ func TestReconcilePolicyTunQoS_UninstallTearsDownBypassSet(t *testing.T) {
 
 	seq.requireTeardownAfterUninstall(t)
 }
+
+// ── Класс «мимо sing-box» (QoSBypassOutbound) ───────────────────────────────
+
+func TestQoSBypass_IPTablesReturnInsteadOfDispatch(t *testing.T) {
+	spec := RestoreInputSpec{
+		PolicyMark: "0xffffaaa",
+		QoSClasses: []QoSClassSpec{
+			{DSCP: 8, TProxyPort: 51281, RedirectPort: 51301, Bypass: true},
+			{DSCP: 46, TProxyPort: 51282, RedirectPort: 51302},
+		},
+	}
+	mangle := buildMangleRestoreInput(spec)
+	nat := buildNatRestoreInput(spec)
+	if strings.Contains(mangle+nat, "--on-port 51281") || strings.Contains(mangle+nat, "--to-ports 51301") {
+		t.Errorf("класс-обход не должен диспатчиться в порты:\n%s%s", mangle, nat)
+	}
+	ret := indexOf(t, mangle, "-A AWGM-TPROXY -p udp -m dscp --dscp 8 -j RETURN")
+	catchAll := indexOf(t, mangle, "-A AWGM-TPROXY -p udp -j TPROXY")
+	if ret > catchAll {
+		t.Errorf("RETURN класса-обхода стоит после catch-all:\n%s", mangle)
+	}
+	retTCP := indexOf(t, nat, "-A AWGM-REDIRECT -p tcp -m dscp --dscp 8 -j RETURN")
+	catchAllTCP := indexOf(t, nat, "-A AWGM-REDIRECT -p tcp -j REDIRECT")
+	if retTCP > catchAllTCP {
+		t.Errorf("RETURN класса-обхода стоит после catch-all:\n%s", nat)
+	}
+	// Обычный класс по-прежнему диспатчится.
+	indexOf(t, mangle, "-A AWGM-TPROXY -p udp -m dscp --dscp 46 -j TPROXY --on-port 51282")
+
+	bh := buildBlackholeRestoreInput(spec)
+	if indexOf(t, bh, "-A AWGM-BLACKHOLE -m dscp --dscp 8 -j RETURN") > indexOf(t, bh, "-j DROP") {
+		t.Errorf("fail-closed должен пропускать класс-обход до DROP:\n%s", bh)
+	}
+	if strings.Contains(bh, "--dscp 46") {
+		t.Errorf("обычный класс при мёртвом движке дропается, а не пропускается:\n%s", bh)
+	}
+}
+
+func TestQoSBypass_IPTables6ReturnInsteadOfDispatch(t *testing.T) {
+	spec := testV6Spec()
+	spec.QoSClasses = []QoSClassSpec{{DSCP: 8, TProxyPort: 51341, RedirectPort: 51361, Bypass: true}}
+	mangle := buildMangleRestoreInput6(spec)
+	nat := buildNatRestoreInput6(spec)
+	if strings.Contains(mangle+nat, "--on-port 51341") || strings.Contains(mangle+nat, "--to-ports 51361") {
+		t.Errorf("класс-обход не должен диспатчиться в порты:\n%s%s", mangle, nat)
+	}
+	if indexOf(t, mangle, "-A AWGM6-TPROXY -p udp -m dscp --dscp 8 -j RETURN") >
+		indexOf(t, mangle, "-A AWGM6-TPROXY -i br0 -p udp -j TPROXY") {
+		t.Errorf("RETURN класса-обхода стоит после catch-all:\n%s", mangle)
+	}
+	if indexOf(t, nat, "-A AWGM6-REDIRECT -p tcp -m dscp --dscp 8 -j RETURN") >
+		indexOf(t, nat, "-A AWGM6-REDIRECT -p tcp -j REDIRECT") {
+		t.Errorf("RETURN класса-обхода стоит после catch-all:\n%s", nat)
+	}
+	bh := buildBlackholeRestoreInput6(spec)
+	if indexOf(t, bh, "-A AWGM6-BLACKHOLE -m dscp --dscp 8 -j RETURN") > indexOf(t, bh, "-j DROP") {
+		t.Errorf("fail-closed должен пропускать класс-обход до DROP:\n%s", bh)
+	}
+}
+
+func TestQoSBypass_NoInboundsNoRouteRules(t *testing.T) {
+	classes := activeQoSClasses([]storage.SingboxQoSClass{
+		{DSCP: 8, Outbound: QoSBypassOutbound, Enabled: true, Slot: 0},
+	})
+	if len(classes) != 1 || !classes[0].Bypass {
+		t.Fatalf("класс-обход должен остаться активным с Bypass: %+v", classes)
+	}
+	if specs := qosIPTablesSpecs(classes); len(specs) != 1 || !specs[0].Bypass {
+		t.Errorf("iptables-спек потерял Bypass: %+v", specs)
+	}
+	if got, _ := ensureQoSInbounds(nil, classes, "", 0); len(got) != 0 {
+		t.Errorf("у класса-обхода не должно быть инбаундов: %+v", got)
+	}
+	if rules := buildQoSRouteRules(classes, storage.SingboxRouterSettings{SnifferEnabled: true}); rules != nil {
+		t.Errorf("у класса-обхода не должно быть правил маршрутизации: %+v", rules)
+	}
+	// policy-tun: RETURN там ничего не обходит — класс выпадает целиком.
+	if routed := routedQoSClasses(classes); len(routed) != 0 {
+		t.Errorf("routedQoSClasses должен отбросить класс-обход: %+v", routed)
+	}
+}
+
+func TestUpdateSettings_AcceptsQoSBypassOutbound(t *testing.T) {
+	svc := newQoSLifecycleService(t, storage.SingboxRouterSettings{WANAutoDetect: true}, "vpn-a")
+	err := svc.UpdateSettings(context.Background(), storage.SingboxRouterSettings{
+		WANAutoDetect: true,
+		QoSClasses: []storage.SingboxQoSClass{
+			{DSCP: 8, Outbound: QoSBypassOutbound, Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("класс-обход должен приниматься: %v", err)
+	}
+}

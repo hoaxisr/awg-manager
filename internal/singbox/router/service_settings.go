@@ -226,7 +226,7 @@ func (s *ServiceImpl) validateQoSClassOutbounds(ctx context.Context, classes []s
 		if !c.Enabled {
 			continue
 		}
-		if !s.isKnownOutboundTag(ctx, c.Outbound, cfg) {
+		if !s.isKnownQoSOutbound(ctx, c.Outbound, cfg) {
 			return fmt.Errorf("%w: qosClasses[%d]: неизвестный outbound %q", ErrQoSClassesInvalid, i, c.Outbound)
 		}
 	}

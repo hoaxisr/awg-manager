@@ -67,6 +67,13 @@ const (
 	qosRedirectTagPrefix = "redirect-qos-"
 )
 
+// QoSBypassOutbound — зарезервированное значение Outbound класса «мимо
+// sing-box»: вместо TPROXY/REDIRECT класс получает `-j RETURN` в цепочках
+// перехвата, и пакет идёт по маршрутизации NDMS (default своей политики или
+// роутера). Инбаундов и правила маршрутизации у такого класса нет. Действует
+// только в режиме tproxy: в policy-tun default политики — сам tun движка.
+const QoSBypassOutbound = "@bypass"
+
 func qosTProxyTag(dscp int) string   { return fmt.Sprintf("%s%d", qosTProxyTagPrefix, dscp) }
 func qosRedirectTag(dscp int) string { return fmt.Sprintf("%s%d", qosRedirectTagPrefix, dscp) }
 
@@ -95,6 +102,8 @@ type qosClass struct {
 	// V6 — классу нужна IPv6-пара инбаундов (перехват IPv6 включён). Ставит
 	// qosClassesFor; у activeQoSClasses он всегда false.
 	V6 bool
+	// Bypass — класс «мимо sing-box» (Outbound == QoSBypassOutbound).
+	Bypass bool
 }
 
 // activeQoSClasses filters settings classes down to the enabled, valid ones
@@ -134,6 +143,7 @@ func activeQoSClasses(classes []storage.SingboxQoSClass) []qosClass {
 			RedirectPort:  rp,
 			TProxy6Port:   tp6,
 			Redirect6Port: rp6,
+			Bypass:        outbound == QoSBypassOutbound,
 		})
 	}
 	return out
@@ -166,6 +176,18 @@ func qosClassesFor(sr storage.SingboxRouterSettings) []qosClass {
 	return classes
 }
 
+// routedQoSClasses — классы без «мимо sing-box». Режим policy-tun ставит
+// netfilter только под диспатч в движок: RETURN там ничего не обходит.
+func routedQoSClasses(classes []qosClass) []qosClass {
+	out := make([]qosClass, 0, len(classes))
+	for _, c := range classes {
+		if !c.Bypass {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // qosIPTablesSpecs6 — проекция классов для правил ip6tables: тот же DTO, что у
 // IPv4, но с портами IPv6-пары. Классы без V6 пропускаются.
 func qosIPTablesSpecs6(classes []qosClass) []QoSClassSpec {
@@ -178,6 +200,7 @@ func qosIPTablesSpecs6(classes []qosClass) []QoSClassSpec {
 			DSCP:         c.DSCP,
 			TProxyPort:   c.TProxy6Port,
 			RedirectPort: c.Redirect6Port,
+			Bypass:       c.Bypass,
 		})
 	}
 	return out
@@ -195,6 +218,7 @@ func qosIPTablesSpecs(classes []qosClass) []QoSClassSpec {
 			DSCP:         c.DSCP,
 			TProxyPort:   c.TProxyPort,
 			RedirectPort: c.RedirectPort,
+			Bypass:       c.Bypass,
 		})
 	}
 	return out
@@ -226,6 +250,9 @@ func ensureQoSInbounds(in []Inbound, classes []qosClass, udpTimeout string, udpN
 		kept = append(kept, i)
 	}
 	for _, c := range classes {
+		if c.Bypass {
+			continue // трафик класса в движок не попадает
+		}
 		kept = append(kept, Inbound{
 			Type:        "tproxy",
 			Tag:         qosTProxyTag(c.DSCP),

@@ -1649,7 +1649,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// re-point or disable it.
 	if sr.RoutingMode != "fakeip-tun" {
 		for _, c := range qosActive {
-			if !s.isKnownOutboundTag(ctx, c.Outbound, cfg) {
+			if !s.isKnownQoSOutbound(ctx, c.Outbound, cfg) {
 				issues = append(issues, Issue{
 					Severity: "warning",
 					Kind:     "qos-outbound-missing",
@@ -2103,8 +2103,10 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	bypassGeoTagsChanged := !slices.Equal(s.currentBypassGeoIPTags, sr.BypassGeoIPTags)
 
 	// QoS-DSCP change detection: only the iptables-relevant projection
-	// (DSCP + ports). An outbound-only change does not need an iptables
-	// re-Install — the healQoSConfig call below converges the sing-box side.
+	// (DSCP + ports + Bypass). An outbound-only change between real outbounds
+	// does not need an iptables re-Install — the healQoSConfig call below
+	// converges the sing-box side; a switch to/from QoSBypassOutbound flips
+	// Bypass and does.
 	// Graceful degradation happens HERE, before change detection: when
 	// xt_dscp support is missing the desired dispatch set degrades to empty
 	// (feature-off; xtDscpUsable logs availability transitions) — gating

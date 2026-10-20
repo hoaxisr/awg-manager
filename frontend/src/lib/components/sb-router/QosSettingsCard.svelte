@@ -7,6 +7,8 @@
   Семантика: работает в режимах TProxy и «Политики + tun» (DSCP-перехват —
   единственный netfilter policy-tun), но не в fakeip-tun; трафик с меткой
   DSCP N уходит в outbound класса, минуя остальные правила маршрутизации.
+  Outbound «мимо sing-box» (только TProxy) — трафик класса в движок не
+  заходит и идёт по маршруту политики устройства или роутера.
 -->
 <script lang="ts">
   import { outboundGroupLabel } from '$lib/components/routing/singboxRouter/outboundOptions';
@@ -31,6 +33,7 @@
     removeQosClass,
     resolveOutboundOptions,
     createSaveQueue,
+    QOS_BYPASS_OUTBOUND,
   } from './qosClasses';
 
   interface Props {
@@ -66,6 +69,13 @@
       g.items.map((i) => ({ value: i.value, label: i.label, group: outboundGroupLabel(g.id) })),
     ),
   );
+  // Пункт «Мимо sing-box» добавляется к строке поверх resolveOutboundOptions,
+  // а не в общий список: иначе список никогда не пуст, и пока опции грузятся,
+  // живой outbound класса показывался бы «не найденным».
+  const bypassOption = $derived<DropdownOption>({ value: QOS_BYPASS_OUTBOUND, label: m.sb_router_qos_bypass_option() });
+  // «Мимо sing-box» — RETURN в цепочках TProxy; в policy-tun default политики
+  // и есть tun движка, обходить нечем.
+  const bypassInert = $derived(cfg.routingMode === 'policy-tun');
   // Новый класс по умолчанию направляем в первый туннель (не direct):
   // класс с outbound=direct не имеет смысла для «направить в туннель».
   const defaultOutbound = $derived(
@@ -162,7 +172,10 @@
           <span></span>
         </div>
         {#each classes as cls, idx (cls.dscp)}
-          {@const outboundView = resolveOutboundOptions(outboundDropdownOptions, cls.outbound)}
+          {@const outboundView = resolveOutboundOptions(
+            outboundDropdownOptions,
+            cls.outbound === QOS_BYPASS_OUTBOUND ? '' : cls.outbound,
+          )}
           <div class="qos-row" class:row-off={!cls.enabled}>
             <div class="qos-grid">
               <input
@@ -206,7 +219,7 @@
             </div>
             <Dropdown
               value={cls.outbound}
-              options={outboundView.options}
+              options={[bypassOption, ...outboundView.options]}
               placeholder={m.sb_router_qos_outbound_placeholder()}
               fullWidth
               onchange={(v) => handleOutboundChange(idx, String(v))}
@@ -215,6 +228,12 @@
               <p class="qos-warn">
                 <TriangleAlert size={12} aria-hidden="true" />
                 {m.sb_router_qos_outbound_missing()}
+              </p>
+            {/if}
+            {#if bypassInert && cls.outbound === QOS_BYPASS_OUTBOUND}
+              <p class="qos-warn">
+                <TriangleAlert size={12} aria-hidden="true" />
+                {m.sb_router_qos_bypass_tproxy_only()}
               </p>
             {/if}
           </div>

@@ -109,6 +109,7 @@
         </li>
         <li>{m.sb_router_qos_help_macos()}</li>
         <li>{m.sb_router_qos_help_wmm()}</li>
+        <li>{m.sb_router_qos_help_torrent()}</li>
       </ul>
     </section>
   </div>

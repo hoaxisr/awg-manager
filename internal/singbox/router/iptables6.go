@@ -343,6 +343,10 @@ func buildMangleRestoreInput6(spec V6Spec) string {
 	emitGenericTProxy6(&b, "-p udp --dport 53", spec)
 	emitBypassReturns6(&b, Chain6Name, spec.LocalCIDRs)
 	for _, q := range spec.QoSClasses {
+		if q.Bypass {
+			fmt.Fprintf(&b, "-A %s -p udp -m dscp --dscp %d -j RETURN\n", Chain6Name, q.DSCP)
+			continue
+		}
 		emitTProxy6(&b, fmt.Sprintf("-p udp -m dscp --dscp %d", q.DSCP), q.TProxyPort)
 	}
 	for _, br := range spec.Bridges {
@@ -373,6 +377,10 @@ func buildNatRestoreInput6(spec V6Spec) string {
 	if len(spec.QoSClasses) > 0 {
 		fmt.Fprintf(&b, "-A %s -p tcp --dport 53 -j REDIRECT --to-ports %d\n", Redirect6Chain, Redirect6Port)
 		for _, q := range spec.QoSClasses {
+			if q.Bypass {
+				fmt.Fprintf(&b, "-A %s -p tcp -m dscp --dscp %d -j RETURN\n", Redirect6Chain, q.DSCP)
+				continue
+			}
 			fmt.Fprintf(&b, "-A %s -p tcp -m dscp --dscp %d -j REDIRECT --to-ports %d\n",
 				Redirect6Chain, q.DSCP, q.RedirectPort)
 		}
@@ -401,6 +409,11 @@ func buildBlackholeRestoreInput6(spec V6Spec) string {
 		fmt.Fprintf(&b, "-A %s -p tcp --dport %s -j RETURN\n", Blackhole6Chain, pr.String())
 	}
 	emitBypassReturns6(&b, Blackhole6Chain, spec.LocalCIDRs)
+	for _, q := range spec.QoSClasses {
+		if q.Bypass {
+			fmt.Fprintf(&b, "-A %s -m dscp --dscp %d -j RETURN\n", Blackhole6Chain, q.DSCP)
+		}
+	}
 	fmt.Fprintf(&b, "-A %s -j DROP\n", Blackhole6Chain)
 	emitJumps6(&b, Blackhole6Chain, spec, true)
 	b.WriteString("COMMIT\n")

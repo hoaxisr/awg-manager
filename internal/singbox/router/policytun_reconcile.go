@@ -593,7 +593,7 @@ func (s *ServiceImpl) ensurePolicyTunPermit(ctx context.Context, sr storage.Sing
 // пустому слайсу». Uninstall заодно снимает fail-closed blackhole, оставшийся от
 // tproxy: в policy-tun он не применяется.
 func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.SingboxRouterSettings) {
-	qosClasses := activeQoSClasses(sr.QoSClasses)
+	qosClasses := routedQoSClasses(activeQoSClasses(sr.QoSClasses))
 	qosSpecs := qosIPTablesSpecs(qosClasses)
 	if len(qosSpecs) > 0 {
 		if e := EnsureXtDscpModule(ctx); e != nil {

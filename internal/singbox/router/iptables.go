@@ -520,6 +520,8 @@ type QoSClassSpec struct {
 	DSCP         int
 	TProxyPort   int
 	RedirectPort int
+	// Bypass — класс «мимо sing-box»: `-j RETURN` вместо диспатча в порты.
+	Bypass bool
 }
 
 // equalInstalledSpec и equalBlackholeSpec сравнивают ЖЕЛАЕМЫЙ спек с
@@ -674,6 +676,13 @@ func buildBlackholeRestoreInput(spec RestoreInputSpec) string {
 	// the interception chain so the exclusion set cannot drift and the blackhole
 	// can never over-block router-local, LAN-to-LAN, or management traffic.
 	emitBypassReturns(&b, BlackholeChain, spec.WANIPs)
+	// Классы «мимо sing-box» в движок не ходят и при живом движке — мёртвый
+	// движок не повод их дропать.
+	for _, q := range spec.QoSClasses {
+		if q.Bypass {
+			fmt.Fprintf(&b, "-A %s -m dscp --dscp %d -j RETURN\n", BlackholeChain, q.DSCP)
+		}
+	}
 	// Everything else that belongs to the policy: drop it (fail-closed).
 	fmt.Fprintf(&b, "-A %s -j DROP\n", BlackholeChain)
 	// Same PREROUTING selector as the real interception jump (connmark policy
@@ -779,6 +788,10 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 	//   - BEFORE the catch-all: otherwise the unconditional TPROXY eats the
 	//     packet first and the class rule is dead.
 	for _, q := range spec.QoSClasses {
+		if q.Bypass {
+			fmt.Fprintf(&b, "-A %s -p udp -m dscp --dscp %d -j RETURN\n", ChainName, q.DSCP)
+			continue
+		}
 		fmt.Fprintf(&b, "-A %s -p udp -m dscp --dscp %d -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
 			ChainName, q.DSCP, q.TProxyPort, Fwmark)
 	}
@@ -875,6 +888,10 @@ func buildNatRestoreInput(spec RestoreInputSpec) string {
 		fmt.Fprintf(&b, "-A %s -p tcp --dport 53 -j REDIRECT --to-ports %d\n",
 			RedirectChain, RedirectPort)
 		for _, q := range spec.QoSClasses {
+			if q.Bypass {
+				fmt.Fprintf(&b, "-A %s -p tcp -m dscp --dscp %d -j RETURN\n", RedirectChain, q.DSCP)
+				continue
+			}
 			fmt.Fprintf(&b, "-A %s -p tcp -m dscp --dscp %d -j REDIRECT --to-ports %d\n",
 				RedirectChain, q.DSCP, q.RedirectPort)
 		}

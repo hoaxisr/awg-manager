@@ -120,6 +120,9 @@ export interface StaleOutboundOption {
   disabled: true;
 }
 
+/** Зарезервированный outbound класса «мимо sing-box» (бэкенд: router.QoSBypassOutbound). */
+export const QOS_BYPASS_OUTBOUND = '@bypass';
+
 /**
  * Options for a row's outbound dropdown, handling a stored tag that is
  * absent from the current option list:
