@@ -621,10 +621,10 @@
 			placeholder="youtube.com&#10;googlevideo.com&#10;geosite:GOOGLE"
 		></textarea>
 		{#if domainErrors.chars.length > 0}
-			<div class="error-text">{m.hrneo_edit_tokens_invalid({ tokens: domainErrors.chars.join(', ') })}</div>
+			<div class="error-text visible">{m.hrneo_edit_tokens_invalid({ tokens: domainErrors.chars.join(', ') })}</div>
 		{/if}
 		{#if domainErrors.mask.length > 0}
-			<div class="error-text">{m.hrneo_edit_tokens_mask({ tokens: domainErrors.mask.join(', ') })}</div>
+			<div class="error-text visible">{m.hrneo_edit_tokens_mask({ tokens: domainErrors.mask.join(', ') })}</div>
 		{/if}
 		<div class="form-hint">
 			{m.hrneo_edit_domains_hint()}
@@ -664,10 +664,10 @@
 			placeholder="10.0.0.0/8&#10;2001:db8::/32&#10;geoip:RU"
 		></textarea>
 		{#if cidrErrors.chars.length > 0}
-			<div class="error-text">{m.hrneo_edit_tokens_invalid({ tokens: cidrErrors.chars.join(', ') })}</div>
+			<div class="error-text visible">{m.hrneo_edit_tokens_invalid({ tokens: cidrErrors.chars.join(', ') })}</div>
 		{/if}
 		{#if cidrErrors.mask.length > 0}
-			<div class="error-text">{m.hrneo_edit_tokens_mask({ tokens: cidrErrors.mask.join(', ') })}</div>
+			<div class="error-text visible">{m.hrneo_edit_tokens_mask({ tokens: cidrErrors.mask.join(', ') })}</div>
 		{/if}
 		<div class="form-hint">{m.hrneo_edit_cidr_hint()}</div>
 	</section>
