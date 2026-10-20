@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -433,7 +434,11 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	// subscriptions' domains, then classify into DNS-style domains vs CIDR
 	// subnets so HR Neo writes them into the correct file (domain.conf vs ip.list).
 	manual := deduplicateDomains(list.ManualDomains)
-	subDomains := subscriptionDomains(existing.Domains, existing.ManualDomains)
+	// Содержимое стоящих подписок — Domains и Subnets за вычетом ручных
+	// строк: подсети подписок лежат в Subnets и иначе терялись (F697).
+	// Concat, а не append: Domains общий с кэшем (Draft), append мог бы
+	// писать в его массив.
+	subDomains := subscriptionDomains(slices.Concat(existing.Domains, existing.Subnets), existing.ManualDomains)
 	merged := append(append(manual, subDomains...), newDomains...)
 	list.Domains, list.Subnets = splitDomainsAndSubnets(deduplicateDomains(merged))
 	if err := validateSubnetsLimit(len(list.routedSubnets(list.Subnets))); err != nil {

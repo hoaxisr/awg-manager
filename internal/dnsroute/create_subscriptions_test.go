@@ -288,21 +288,16 @@ func TestUpdate_NewSubscription_AppliedOnce(t *testing.T) {
 }
 
 func TestUpdate_NewSubscription_MergedLimitRejected(t *testing.T) {
-	// Ручные подсети и новая подписка порознь в лимите, вместе — за ним.
-	// Подсети уже стоящей подписки сюда не годятся: Update их не переносит
-	// (subscriptionDomains берёт только Domains).
-	half := func(first int) []string {
-		out := make([]string, 0, MaxSubnetsPerList/2+1)
+	// Подсети стоящей подписки и новой порознь в лимите, вместе — за ним.
+	half := func(first int) string {
+		var b strings.Builder
 		for i := 0; i < MaxSubnetsPerList/2+1; i++ {
-			out = append(out, fmt.Sprintf("%d.%d.%d.0/24", first, i/256, i%256))
+			fmt.Fprintf(&b, "%d.%d.%d.0/24\n", first, i/256, i%256)
 		}
-		return out
+		return b.String()
 	}
-	dl := &urlDownloader{bodies: map[string]string{
-		subURL1: "a.example\n",
-		subURL2: strings.Join(half(2), "\n"),
-	}}
-	svc, poster, id := newUpdateSubsService(t, dl, half(1))
+	dl := &urlDownloader{bodies: map[string]string{subURL1: half(1), subURL2: half(2)}}
+	svc, poster, id := newUpdateSubsService(t, dl, []string{"m.example"})
 	before, err := os.ReadFile(svc.store.path)
 	if err != nil {
 		t.Fatal(err)
@@ -329,5 +324,55 @@ func TestUpdate_NewSubscription_MergedLimitRejected(t *testing.T) {
 	}
 	if got := len(poster.Payloads()); got != posts {
 		t.Errorf("отвергнутый Update отправил POST: %d → %d", posts, got)
+	}
+}
+
+// F697: Update переносит содержимое стоящих подписок из Domains и Subnets
+// за вычетом ручных строк — подсети подписок не теряются до обновления.
+func TestUpdate_KeepsSubscriptionSubnets(t *testing.T) {
+	cases := []struct {
+		name        string
+		upd         DomainList
+		wantSubnets string
+	}{
+		{"RenameOnly", DomainList{Name: "renamed"}, "5.5.5.0/24,9.9.9.0/24"},
+		{"ManualCIDRRemoved", DomainList{ManualDomains: []string{"m.example"}}, "9.9.9.0/24"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dl := &urlDownloader{bodies: map[string]string{subURL1: "a.example\n9.9.9.0/24\n"}}
+			svc, poster, id := newUpdateSubsService(t, dl, []string{"m.example", "5.5.5.0/24"})
+			posts := len(poster.Payloads())
+
+			upd := tc.upd
+			upd.ID = id
+			if _, err := svc.Update(context.Background(), upd); err != nil {
+				t.Fatal(err)
+			}
+			if n := dl.calls[subURL1]; n != 0 {
+				t.Errorf("подписка перекачана %d раз", n)
+			}
+			var stored *DomainList
+			for i := range svc.store.GetCached().Lists {
+				if l := &svc.store.GetCached().Lists[i]; l.ID == id {
+					stored = l
+				}
+			}
+			if got := strings.Join(stored.Subnets, ","); got != tc.wantSubnets {
+				t.Errorf("Subnets = %s, want %s", got, tc.wantSubnets)
+			}
+			if want := "m.example,a.example"; strings.Join(stored.Domains, ",") != want {
+				t.Errorf("Domains = %v, want %s", stored.Domains, want)
+			}
+			sent := false
+			for _, p := range poster.Payloads()[posts:] {
+				if strings.Contains(fmt.Sprint(p), "9.9.9.0/24") {
+					sent = true
+				}
+			}
+			if !sent {
+				t.Error("подсеть подписки не дошла до роутера после Update")
+			}
+		})
 	}
 }
