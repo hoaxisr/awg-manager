@@ -13,6 +13,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 )
 
 // ManagedServerService defines the interface for managed WireGuard server operations.
@@ -109,6 +110,9 @@ type Service struct {
 	serverSubnetMu sync.Mutex
 	inflight       map[*usedSubnet]struct{}
 	inflightPorts  map[*usedPort]struct{}
+	// supportsASC3 — ASC прошивки знает параметры 3.x (сервер 3.1, #688);
+	// продакшен — ndmsinfo.SupportsWireguardASC3, тесты подменяют.
+	supportsASC3 func() bool
 }
 
 // keyGenerator produces WireGuard key material for a new peer.
@@ -148,6 +152,8 @@ func New(
 		appLog:    logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubManaged),
 		wgRun:     realWgRunner,
 		keyGen:    realKeyGen{},
+
+		supportsASC3: ndmsinfo.SupportsWireguardASC3,
 	}
 }
 

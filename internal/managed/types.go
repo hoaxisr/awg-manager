@@ -28,7 +28,16 @@ type CreateServerRequest struct {
 	DNS         string `json:"dns,omitempty"`         // custom DNS for client configs
 	MTU         int    `json:"mtu,omitempty"`         // MTU for the server interface and client configs; 0 = DefaultMTU
 	GenerateASC *bool  `json:"generateAsc,omitempty"` // nil/true => generate ASC on create; false => skip
+	// Mode — протокол сервера: "" — AWG 2.0 (как было), ModeAWG31 — AWG 3.1
+	// (ASC прошивки 5.02.A.11+, #688). Выбирается только при создании.
+	Mode string `json:"mode,omitempty"`
 }
+
+// ModeAWG31 — сервер AWG 3.1: защита заголовков и случайные хвосты в ASC прошивки.
+const ModeAWG31 = "3.1"
+
+// ErrASC3Unsupported — режим 3.1 на прошивке, чей ASC не знает параметров 3.x.
+var ErrASC3Unsupported = errors.New("сервер AWG 3.1 требует KeeneticOS 5.02.A.11 или новее")
 
 // ShouldGenerateASC resolves optional GenerateASC with backward-compatible
 // default=true for callers that do not send the field.

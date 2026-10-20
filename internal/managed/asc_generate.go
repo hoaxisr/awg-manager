@@ -1,6 +1,7 @@
 package managed
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -86,4 +87,35 @@ func generateASCParamsRaw(extended bool, hRanges bool, src rand.Source) (json.Ra
 		S4: rndInt(r, 6, 18),
 	}
 	return marshalNoEscape(ext)
+}
+
+// generateASC31ParamsRaw — ASC сервера AWG 3.1. Набор 3.x прошивка принимает
+// только целиком (неполный молча игнорирует), поэтому пишется весь
+// ndms.ASCParamsAWG3. При защите заголовков nonce берётся из первых 12 байт
+// S-паддинга: каждый S ≥ 12, иначе прошивка отказывает («S1-S4 must be at
+// least 12 when HeaderProtectionKey is set», стенд 5.02.B.1). Заголовок
+// шифруется, поэтому H — 1..4. Тайминги и content padding — 0 («не задано»).
+func generateASC31ParamsRaw(src rand.Source, hpKey []byte) (json.RawMessage, error) {
+	r := rand.New(src)
+	jmin := rndInt(r, 64, 128)
+	p := ndms.ASCParamsAWG3{
+		ASCParamsExtended: ndms.ASCParamsExtended{
+			ASCParams: ndms.ASCParams{
+				Jc:   rndInt(r, 3, 8),
+				Jmin: jmin,
+				Jmax: rndInt(r, 256, 512),
+				S1:   rndInt(r, 15, 32),
+				S2:   rndInt(r, 15, 32),
+				H1:   "1",
+				H2:   "2",
+				H3:   "3",
+				H4:   "4",
+			},
+			S3: rndInt(r, 12, 24),
+			S4: rndInt(r, 12, 18),
+		},
+		HeaderProtectionKey: base64.StdEncoding.EncodeToString(hpKey),
+		RandomTrailers:      1,
+	}
+	return marshalNoEscape(p)
 }

@@ -26,6 +26,18 @@ const (
 // Ошибка с ErrASCUnverified приходит вместе с НЕ-nil сервером: он создан и
 // сохранён, не сверен только ASC (R44, L4).
 func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage.ManagedServer, error) {
+	switch req.Mode {
+	case "":
+	case ModeAWG31:
+		if !req.ShouldGenerateASC() {
+			return nil, fmt.Errorf("сервер AWG 3.1 создаётся только со сгенерированным ASC")
+		}
+		if !s.supportsASC3() {
+			return nil, ErrASC3Unsupported
+		}
+	default:
+		return nil, fmt.Errorf("неизвестный режим сервера %q", req.Mode)
+	}
 	// Validate; подсеть занята за этим созданием до выхода (F554).
 	release, err := s.reserveServerSubnet(ctx, req.Address, req.Mask, req.ListenPort, "")
 	if err != nil {
@@ -93,7 +105,7 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 	// успехом это не является, handler говорит об этом пользователю (L4).
 	var unverified error
 	if req.ShouldGenerateASC() {
-		asc, err := s.generateDefaultASCParams()
+		asc, err := s.generateDefaultASCParams(req.Mode)
 		if err != nil {
 			s.cleanupInterface(ctx, iface)
 			return nil, fmt.Errorf("generate ASC params: %w", err)

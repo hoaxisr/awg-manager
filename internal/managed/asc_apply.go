@@ -3,6 +3,7 @@ package managed
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -241,7 +242,14 @@ func validateASCParamsRequired(raw json.RawMessage) error {
 	return nil
 }
 
-func (s *Service) generateDefaultASCParams() (json.RawMessage, error) {
+func (s *Service) generateDefaultASCParams(mode string) (json.RawMessage, error) {
+	if mode == ModeAWG31 {
+		key := make([]byte, 32)
+		if _, err := crand.Read(key); err != nil {
+			return nil, fmt.Errorf("header protection key: %w", err)
+		}
+		return generateASC31ParamsRaw(rand.NewSource(time.Now().UnixNano()), key)
+	}
 	extended := osdetect.AtLeast(5, 1)
 	hRanges := ndmsinfo.SupportsHRanges()
 	return generateASCParamsRaw(extended, hRanges, rand.NewSource(time.Now().UnixNano()))
