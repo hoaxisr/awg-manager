@@ -111,9 +111,9 @@ type devicesOut struct {
 
 // validateDomains checks only that the list is non-empty and every entry
 // is non-blank. The grammar itself belongs to the dnsroute service, which
-// accepts plain domains, bare labels, CIDR subnets and geosite:/geoip:
-// tags — a second, stricter grammar here would reject entries the service
-// is happy with (and would drift from it on the next change).
+// accepts plain domains, bare labels and CIDR subnets and rejects
+// geosite:/geoip: tags for NDMS lists (F700) — a second grammar here would
+// drift from the service's on the next change.
 func validateDomains(domains []string) error {
 	if len(domains) == 0 {
 		return fmt.Errorf("domains must not be empty")

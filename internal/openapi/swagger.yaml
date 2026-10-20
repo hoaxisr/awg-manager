@@ -1553,7 +1553,6 @@ definitions:
         example:
         - youtube.com
         - .googlevideo.com
-        - geosite:GOOGLE
         items:
           type: string
         type: array

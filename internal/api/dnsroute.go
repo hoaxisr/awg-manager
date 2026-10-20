@@ -67,7 +67,7 @@ type DnsRouteDTO struct {
 // DnsRouteUpsertRequest is the request body for DNS/HR route list create/update.
 type DnsRouteUpsertRequest struct {
 	Name               string                    `json:"name" example:"Youtube"`
-	ManualDomains      []string                  `json:"manualDomains" example:"youtube.com,.googlevideo.com,geosite:GOOGLE"`
+	ManualDomains      []string                  `json:"manualDomains" example:"youtube.com,.googlevideo.com"`
 	ManualText         string                    `json:"manualText,omitempty" example:"# game servers\nexample.com\n203.0.113.0/24"`
 	Subscriptions      []DnsRouteSubscriptionDTO `json:"subscriptions,omitempty"`
 	Excludes           []string                  `json:"excludes,omitempty" example:"ads.youtube.com"`
