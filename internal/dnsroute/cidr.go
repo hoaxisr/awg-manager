@@ -1,6 +1,9 @@
 package dnsroute
 
-import "net"
+import (
+	"net"
+	"net/netip"
+)
 
 // cidrCovers returns true if network a fully contains network b.
 func cidrCovers(a, b *net.IPNet) bool {
@@ -34,25 +37,45 @@ func candidateInHoles(c *net.IPNet, holes []*net.IPNet) bool {
 	return false
 }
 
-// subnetIndex — сети по каноничной строке (n.String()) в порядке
-// добавления. Ищется не перебором, а проходом по длинам префикса
-// кандидата: сеть, покрывающая кандидата, равна его адресу, обрезанному
-// по её длине (F699: перебор был O(n·(m+n)), 20 тыс. подсетей — секунды).
+// subnetIndex — сети в порядке добавления с двумя ключами: каноничная
+// строка (n.String()) для точного совпадения и netip.Prefix для поиска
+// покрывающих. Ищется не перебором, а проходом по длинам префикса
+// кандидата: сеть, покрывающая кандидата, равна его адресу, обрезанному по
+// её длине (F699: перебор был O(n·(m+n)), 20 тыс. подсетей — секунды).
+// Ключ-Prefix сравним и без выделений памяти; строка на каждую длину
+// префикса стоила миллион выделений на 20 тыс. кандидатов.
 type subnetIndex struct {
-	byKey map[string][]int // ключ → номера в entries, по возрастанию
-	// lens — длины префикса, что есть в индексе, по разрядности (32/128):
-	// пустые длины не обрезаются и не ищутся.
+	byRaw    map[string][]int       // строка → номера в entries, по возрастанию
+	byPrefix map[netip.Prefix][]int // Prefix → номера в entries, по возрастанию
+	// lens — длины префикса, что есть в индексе, по разрядности маски
+	// (32/128): пустые длины не ищутся.
 	lens    map[int]*[129]bool
 	entries []parsedSubnet
 }
 
 func newSubnetIndex() *subnetIndex {
-	return &subnetIndex{byKey: make(map[string][]int), lens: make(map[int]*[129]bool)}
+	return &subnetIndex{
+		byRaw:    make(map[string][]int),
+		byPrefix: make(map[netip.Prefix][]int),
+		lens:     make(map[int]*[129]bool),
+	}
+}
+
+// subnetPrefix — n как netip.Prefix. v4-mapped адрес остаётся 4in6 (16 байт
+// у net.ParseCIDR), так что IPv4 и v4-mapped не путаются ключом; что
+// покрывает на самом деле, решает cidrCovers.
+func subnetPrefix(n *net.IPNet) netip.Prefix {
+	addr, _ := netip.AddrFromSlice(n.IP)
+	ones, _ := n.Mask.Size()
+	return netip.PrefixFrom(addr, ones).Masked()
 }
 
 func (x *subnetIndex) add(p parsedSubnet) {
-	x.byKey[p.raw] = append(x.byKey[p.raw], len(x.entries))
+	i := len(x.entries)
 	x.entries = append(x.entries, p)
+	x.byRaw[p.raw] = append(x.byRaw[p.raw], i)
+	key := subnetPrefix(p.net)
+	x.byPrefix[key] = append(x.byPrefix[key], i)
 	ones, bits := p.net.Mask.Size()
 	if x.lens[bits] == nil {
 		x.lens[bits] = new([129]bool)
@@ -68,7 +91,7 @@ func (x *subnetIndex) first(n *net.IPNet, normalized string) int {
 	// сеть печатается как IPv4 ("::ffff:a.b.c.d/120" → "a.b.c.d/24"), и
 	// прежний перебор сравнивал именно строки.
 	best := -1
-	if ids := x.byKey[normalized]; len(ids) > 0 {
+	if ids := x.byRaw[normalized]; len(ids) > 0 {
 		best = ids[0]
 	}
 	ones, bits := n.Mask.Size()
@@ -76,19 +99,22 @@ func (x *subnetIndex) first(n *net.IPNet, normalized string) int {
 	if lens == nil {
 		return best
 	}
+	addr, _ := netip.AddrFromSlice(n.IP)
 	for p := 0; p <= ones; p++ {
 		if !lens[p] {
 			continue
 		}
-		m := net.CIDRMask(p, bits)
-		key := (&net.IPNet{IP: n.IP.Mask(m), Mask: m}).String()
-		for _, i := range x.byKey[key] {
+		parent, err := addr.Prefix(p)
+		if err != nil {
+			continue
+		}
+		for _, i := range x.byPrefix[parent] {
 			if best != -1 && i >= best {
 				break
 			}
 			e := x.entries[i]
-			// cidrCovers отсекает то, что совпало строкой, но не покрывает
-			// по правилам net.IPNet.Contains (v4-mapped против обычного v6).
+			// cidrCovers отсекает то, что совпало ключом, но не покрывает по
+			// правилам net.IPNet.Contains (обычный v6 против v4-mapped).
 			if e.raw == normalized || (cidrCovers(e.net, n) && !candidateInHoles(n, e.holes)) {
 				best = i
 				break

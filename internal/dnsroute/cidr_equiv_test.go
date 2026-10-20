@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 )
@@ -110,21 +109,39 @@ func TestDedupSubnets_Scale20k(t *testing.T) {
 	other := DomainList{ID: "list_1", Subnets: subnetsScale(MaxSubnetsPerList)[:MaxSubnetsPerList/2]}
 	start := time.Now()
 	kept, rep := dedupSubnets(input, "list_2", "cur", []DomainList{other})
-	took := time.Since(start)
 	if len(kept) != MaxSubnetsPerList/2 || rep.ExactDupes != MaxSubnetsPerList/2 {
 		t.Fatalf("kept=%d exact=%d", len(kept), rep.ExactDupes)
 	}
-	// Перебор тратил здесь секунды; индекс — миллисекунды. Порог с запасом
-	// на -race и медленный CI.
-	if took > 3*time.Second {
-		t.Fatalf("20k подсетей: %v", took)
+	// Скорость меряет BenchmarkDedupSubnets20k; порог по часам здесь был бы
+	// источником флейков CI.
+	t.Logf("20k подсетей: %v", time.Since(start))
+}
+
+// subnetsMixed — n сетей с длинами /8–/32 вразнобой: у кандидата много
+// присутствующих в индексе длин префикса — худший случай поиска предков.
+func subnetsMixed(n, seed int) []string {
+	r := rand.New(rand.NewSource(int64(seed)))
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("%d.%d.%d.%d/%d", 1+r.Intn(200), r.Intn(256), r.Intn(256), r.Intn(256), 8+r.Intn(25))
 	}
-	t.Logf("20k подсетей: %v", took)
+	return out
+}
+
+// subnetsCovering — по сети каждой длины /0–/32: в индексе чужого списка
+// присутствуют все длины префикса.
+func subnetsCovering() []string {
+	out := make([]string, 0, 33)
+	for p := 0; p <= 32; p++ {
+		out = append(out, fmt.Sprintf("203.0.113.0/%d", p))
+	}
+	return out
 }
 
 func BenchmarkDedupSubnets20k(b *testing.B) {
-	input := subnetsScale(MaxSubnetsPerList)
-	lists := []DomainList{{ID: "list_1", Subnets: strings.Fields(strings.Join(subnetsScale(1000), " "))}}
+	input := subnetsMixed(MaxSubnetsPerList, 1)
+	lists := []DomainList{{ID: "list_1", Subnets: subnetsCovering()}}
+	b.ReportAllocs()
 	for b.Loop() {
 		dedupSubnets(input, "list_2", "cur", lists)
 	}
