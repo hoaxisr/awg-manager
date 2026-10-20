@@ -7,6 +7,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/netif"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
 )
 
 // seedASC кладёт в фейковый NDMS числовые ASC-параметры интерфейса. Без них
@@ -138,5 +139,65 @@ func TestGenerateConf_ClientAllowedIPs(t *testing.T) {
 	conf, err = svc.GenerateConf(context.Background(), "Wireguard1", "PUB2", "")
 	if err != nil || !strings.Contains(conf, "\nAllowedIPs = 10.0.0.0/24, 192.168.1.0/24\n") || strings.Contains(conf, "0.0.0.0/0") {
 		t.Fatalf("custom: %v\n%s", err, conf)
+	}
+}
+
+// Сервер 3.1 (#688, F681): .conf пира несёт HeaderProtectionKey и
+// RandomTrailers сервера, и наш же импорт узнаёт в нём 3.1. Без этих строк
+// клиент не подключается — 0 ответов (проба на стенде 20.10).
+func TestGenerateConf_AWG31CarriesASC3(t *testing.T) {
+	svc, _, getter := newCreateTestService(t)
+	svc.supportsASC3 = func() bool { return true }
+	server, err := svc.Create(context.Background(), CreateServerRequest{
+		Address: "10.55.0.1", Mask: "24", ListenPort: 52055, Endpoint: "vpn.example.org", Mode: ModeAWG31,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	peer, err := svc.AddPeer(context.Background(), server.InterfaceName, AddPeerRequest{Description: "phone"})
+	if err != nil {
+		t.Fatalf("AddPeer: %v", err)
+	}
+	conf, err := svc.GenerateConf(context.Background(), server.InterfaceName, peer.PublicKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	getter.mu.Lock()
+	hp := getter.asc[server.InterfaceName]["header-protection-key"]
+	getter.mu.Unlock()
+	if hp == "" || !strings.Contains(conf, "\nHeaderProtectionKey = "+hp+"\n") || !strings.Contains(conf, "\nRandomTrailers = on\n") {
+		t.Fatalf("conf без параметров 3.1:\n%s", conf)
+	}
+	if strings.Contains(conf, "RekeyAfterTime") || strings.Contains(conf, "DisableCookies") {
+		t.Fatalf("незаданное попало в conf:\n%s", conf)
+	}
+	parsed, err := config.Parse(conf)
+	if err != nil {
+		t.Fatalf("наш импорт не принял conf: %v\n%s", err, conf)
+	}
+	if v := config.ClassifyAWGVersion(&parsed.Interface); v != "awg3.1" {
+		t.Fatalf("импорт классифицирует как %s:\n%s", v, conf)
+	}
+}
+
+// Сервер 2.0: ни одной строки 3.x — конфиг как до #688.
+func TestGenerateConf_AWG20HasNoASC3(t *testing.T) {
+	svc, _, _ := newCreateTestService(t)
+	server, err := svc.Create(context.Background(), CreateServerRequest{
+		Address: "10.56.0.1", Mask: "24", ListenPort: 52056, Endpoint: "vpn.example.org",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	peer, err := svc.AddPeer(context.Background(), server.InterfaceName, AddPeerRequest{Description: "phone"})
+	if err != nil {
+		t.Fatalf("AddPeer: %v", err)
+	}
+	conf, err := svc.GenerateConf(context.Background(), server.InterfaceName, peer.PublicKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(conf, "Jc = ") || strings.Contains(conf, "HeaderProtectionKey") || strings.Contains(conf, "RandomTrailers") {
+		t.Fatalf("conf сервера 2.0:\n%s", conf)
 	}
 }

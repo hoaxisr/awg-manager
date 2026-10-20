@@ -643,7 +643,11 @@ func ascParams(name string, rc json.RawMessage, extended bool) (json.RawMessage,
 		S1: atoiSafe(raw["s1"]), S2: atoiSafe(raw["s2"]),
 		H1: raw["h1"], H2: raw["h2"], H3: raw["h3"], H4: raw["h4"],
 	}
-	return json.Marshal(params)
+	out, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+	return withASC3(out, fields)
 }
 
 // withASC3 добавляет к ASC ключи 3.x интерфейса (ndms.ASC3Keys), какие есть:
