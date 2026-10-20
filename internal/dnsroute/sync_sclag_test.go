@@ -274,10 +274,11 @@ func (r *fakeRouter) assertGroupDisabled(t *testing.T, prefix string) {
 	}
 }
 
-// F692: новая группа списка на паузе. sc на 5.02 не показывает добавленную
-// строку до save, поэтому выключить её отдельным toggle по index после записи
-// нечем — пауза обязана ехать в самой строке записи.
-func TestF692_PausedListCreatedDisabled(t *testing.T) {
+// F692: новая группа у списка, уже стоящего на паузе (например, новый чанк
+// _pN; Create паузу не ставит — impl.go форсирует Enabled). sc на 5.02 не
+// показывает добавленную строку до save, поэтому выключить её отдельным
+// toggle по index после записи нечем — пауза обязана ехать в строке записи.
+func TestF692_PausedListNewGroupDisabled(t *testing.T) {
 	r := newFakeRouter()
 	lag := &scLagRouter{oracleRouter: newOracle4(r)}
 	svc := newServiceOver(t, lag, time.Hour, time.Hour)
@@ -322,6 +323,35 @@ func TestF692_PausedLegacyFallbackDisabled(t *testing.T) {
 		t.Fatal("попытки правки на месте не было — откат не проверен")
 	}
 	assertSeq(t, "first", r.ifaceOrder("first_p"), "Wireguard3")
+	r.assertGroupDisabled(t, "first_p")
+	if got := r.toggleCount(); got != 0 {
+		t.Errorf("toggle-POST-ов disable: %d, пауза обязана ехать в записи", got)
+	}
+}
+
+// F692 + F691: список на паузе с повтором интерфейса в целях идёт сносом+
+// записью (ReplaceRoutes), строки обязаны записаться выключенными.
+func TestF692_PausedDupIface(t *testing.T) {
+	r := newFakeRouter()
+	lag := &scLagRouter{oracleRouter: newOracle4(r)}
+	svc := newServiceOver(t, lag, time.Hour, time.Hour)
+	mustCreate(t, svc, "first", "Wireguard1")
+	before := r.indexedCount()
+
+	data := svc.store.GetCached()
+	data.Lists[0].Enabled = false
+	data.Lists[0].Routes = routes("Wireguard2", "Wireguard2")
+	if err := svc.store.Save(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := r.indexedCount(); got != before {
+		t.Errorf("правка по index/rule при дубле интерфейса: %d элементов", got-before)
+	}
+	assertSeq(t, "first", r.ifaceOrder("first_p"), "Wireguard2")
 	r.assertGroupDisabled(t, "first_p")
 	if got := r.toggleCount(); got != 0 {
 		t.Errorf("toggle-POST-ов disable: %d, пауза обязана ехать в записи", got)

@@ -159,6 +159,9 @@ func (c *DNSRouteCommands) SetDisabled(ctx context.Context, index string, disabl
 // а на больших списках между сносом и записью успевает пройти обновление
 // object-group — сотни миллисекунд без DNS-маршрутизации. NDMS применяет
 // элементы payload по порядку, поэтому один POST закрывает окно.
+// Предусловие: записываемая пара обязана сноситься раньше в том же батче,
+// иначе upsert оставит существующей строке её флаг disable — запись
+// `disable:false` не шлёт (F692).
 func (c *DNSRouteCommands) ReplaceRoutes(ctx context.Context, deletes []DNSRouteRef, upserts []DNSRouteSpec) error {
 	if !c.isOS5() {
 		return query.ErrNotSupportedOnOS4

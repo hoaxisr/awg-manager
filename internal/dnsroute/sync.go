@@ -738,8 +738,8 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff, confirmed map
 // выстраивающие строки группы подряд от первой в порядке приоритета
 // (planMoves по rc после POST 1), только если что-то стоит не на месте.
 // Возвращает правки disable строк, правленных на месте: правка флаг
-// сохраняет; добавленная строка паузу несёт сама (F692). Интерфейсы целей подтверждены вызывающим;
-// нулевой Confirmed RewriteInPlace всё равно отвергает без POST (F546).
+// сохраняет; добавленная строка паузу несёт сама (F692). Интерфейсы целей
+// подтверждены вызывающим; нулевой Confirmed RewriteInPlace всё равно отвергает без POST (F546).
 func (s *ServiceImpl) rewriteInPlace(ctx context.Context, rb rciRouteRebuild, confirmed map[string]query.Confirmed) ([]rciRouteDisable, error) {
 	ordered, err := s.queries.DNSProxy.FetchOrdered(ctx)
 	if err != nil {
