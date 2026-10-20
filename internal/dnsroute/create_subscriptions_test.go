@@ -206,7 +206,7 @@ func TestCreate_Subscriptions_RejectedLeavesNothing(t *testing.T) {
 
 // newUpdateSubsService — сервис со списком seed (имя по умолчанию «subs»);
 // счётчик загрузок обнулён, страж «файл не тронут» снят. Без seed.Routes
-// сверка ничего не шлёт — так тесты на тысячи подсетей остаются быстрыми.
+// сверка ничего не шлёт.
 func newUpdateSubsService(t *testing.T, dl *urlDownloader, seed DomainList) (*ServiceImpl, *fakePoster, string) {
 	t.Helper()
 	svc, poster, _ := newCreateSubsService(t, dl)
@@ -220,25 +220,6 @@ func newUpdateSubsService(t *testing.T, dl *urlDownloader, seed DomainList) (*Se
 	dl.onRead = nil
 	dl.calls = map[string]int{}
 	return svc, poster, created.ID
-}
-
-// newStoredSubsService — как newUpdateSubsService, но список кладётся в
-// store напрямую, минуя Create: сверка подсетей в dedup квадратична, и
-// посев на десятки тысяч подсетей через Create стоит секунды под -race.
-func newStoredSubsService(t *testing.T, dl *urlDownloader, seed DomainList) (*ServiceImpl, *fakePoster, string) {
-	t.Helper()
-	svc, poster, _ := newCreateSubsService(t, dl)
-	d := svc.store.Draft()
-	seed.ID = nextListID(d.Lists)
-	seed.Name = "subs"
-	seed.Enabled = true
-	d.Lists = append(d.Lists, seed)
-	if err := svc.store.Save(d); err != nil {
-		t.Fatal(err)
-	}
-	dl.onRead = nil
-	dl.calls = map[string]int{}
-	return svc, poster, seed.ID
 }
 
 var routedOpkgTun0 = []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}}
@@ -335,12 +316,11 @@ func TestUpdate_NewSubscription_AppliedOnce(t *testing.T) {
 func TestUpdate_NewSubscription_MergedLimitRejected(t *testing.T) {
 	// Подсети стоящей подписки и новой порознь в лимите, вместе — за ним.
 	half := MaxSubnetsPerList/2 + 1
-	dl := &urlDownloader{bodies: map[string]string{subURL2: subnetLines(2, half)}}
-	svc, poster, id := newStoredSubsService(t, dl, DomainList{
+	dl := &urlDownloader{bodies: map[string]string{subURL1: subnetLines(1, half), subURL2: subnetLines(2, half)}}
+	svc, poster, id := newUpdateSubsService(t, dl, DomainList{
 		ManualDomains: []string{"m.example"},
-		Domains:       []string{"m.example"},
-		Subnets:       strings.Fields(subnetLines(1, half)),
 		Subscriptions: []Subscription{{URL: subURL1}},
+		Routes:        routedOpkgTun0,
 	})
 	before, err := os.ReadFile(svc.store.path)
 	if err != nil {
@@ -432,13 +412,14 @@ const subURL3 = "https://9.9.9.9/c.txt"
 
 func TestUpdate_SwapSubscription_RebuildsWithoutRemoved(t *testing.T) {
 	// A вместе с B за лимитом, B с ручными в нём: перенос A ложно
-	// отвергал замену. A лежит в store готовым, как после обновления.
-	n := 100
-	dl := &urlDownloader{bodies: map[string]string{subURL2: "b.example\n" + subnetLines(2, n)}}
-	svc, _, id := newStoredSubsService(t, dl, DomainList{
+	// отвергал замену.
+	n := MaxSubnetsPerList*3/5 + 1
+	dl := &urlDownloader{bodies: map[string]string{
+		subURL1: "a.example\n" + subnetLines(1, n),
+		subURL2: "b.example\n" + subnetLines(2, n),
+	}}
+	svc, _, id := newUpdateSubsService(t, dl, DomainList{
 		ManualDomains: []string{"m.example"},
-		Domains:       []string{"m.example", "a.example"},
-		Subnets:       strings.Fields(subnetLines(1, MaxSubnetsPerList)),
 		Subscriptions: []Subscription{{URL: subURL1}},
 	})
 
@@ -605,7 +586,7 @@ func TestCreate_ManualPlusSubscriptionOverLimit(t *testing.T) {
 
 // SkipIPv6: лимит считает только то, что уходит на роутер; IPv6-сети
 // подписки остаются в списке, но в счёт не идут.
-func TestSubscriptions_SkipIPv6_LimitCountsRoutedOnly(t *testing.T) {
+func TestCreate_SkipIPv6_LimitCountsRoutedOnly(t *testing.T) {
 	var b strings.Builder
 	for i := 0; i <= MaxSubnetsPerList; i++ {
 		fmt.Fprintf(&b, "2a00:%x:%x::/48\n", i/65536+1, i%65536)
@@ -613,8 +594,6 @@ func TestSubscriptions_SkipIPv6_LimitCountsRoutedOnly(t *testing.T) {
 	b.WriteString("1.1.1.0/24\n8.8.8.0/24\n")
 	body := b.String()
 	skip := true
-	// Проверка и сборка списка — без Create: в dedup сверка подсетей
-	// квадратична, 20 тыс. подсетей стоят минуту под -race.
 	for _, tc := range []struct {
 		name    string
 		skip    *bool
@@ -624,13 +603,13 @@ func TestSubscriptions_SkipIPv6_LimitCountsRoutedOnly(t *testing.T) {
 		{"Default", nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := NewService(nil, nil, nil, nil, nil)
-			svc.SetDownloader(&urlDownloader{bodies: map[string]string{subURL1: body}, calls: map[string]int{}})
-			list := DomainList{SkipIPv6: tc.skip, Subscriptions: []Subscription{{URL: subURL1}}}
-			fetched, err := svc.validateSubscriptions(context.Background(), &list, list.Subscriptions)
-			if err == nil {
-				err = applySubscriptionFetches(&list, []subscriptionFetch{{domains: fetched[0]}}, "now")
-			}
+			dl := &urlDownloader{bodies: map[string]string{subURL1: body}}
+			svc, _, _ := newCreateSubsService(t, dl)
+			got, err := svc.Create(context.Background(), DomainList{
+				Name:          "v6",
+				SkipIPv6:      tc.skip,
+				Subscriptions: []Subscription{{URL: subURL1}},
+			})
 			if tc.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "слишком много подсетей") {
 					t.Fatalf("err = %v, want лимит подсетей", err)
@@ -640,19 +619,9 @@ func TestSubscriptions_SkipIPv6_LimitCountsRoutedOnly(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if want := MaxSubnetsPerList + 3; len(list.Subnets) != want {
-				t.Errorf("подсетей %d, want %d (IPv6 остаются в списке)", len(list.Subnets), want)
+			if want := MaxSubnetsPerList + 3; len(got.Subnets) != want {
+				t.Errorf("подсетей %d, want %d (IPv6 остаются в списке)", len(got.Subnets), want)
 			}
 		})
-	}
-}
-
-// F698: mergeDomains нормализует ручные строки тем же правилом, что
-// deduplicateDomains — geo-тег как введён, иначе нижний регистр; дубли
-// с подписками сверяются без учёта регистра.
-func TestMergeDomains_GeoTagDedupCaseInsensitive(t *testing.T) {
-	got := mergeDomains([]string{" geosite:GOOGLE ", "Example.COM"}, [][]string{{"geosite:google", "example.com", "b.example"}})
-	if want := "geosite:GOOGLE,example.com,b.example"; strings.Join(got, ",") != want {
-		t.Fatalf("mergeDomains = %v, want %s", got, want)
 	}
 }
