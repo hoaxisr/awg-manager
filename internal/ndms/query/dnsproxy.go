@@ -74,6 +74,34 @@ func (s *DNSProxyStore) fetch(ctx context.Context) ([]ndms.DNSRouteRule, error) 
 	if err != nil {
 		return nil, fmt.Errorf("fetch dns-proxy routes: %w", err)
 	}
+	out, err := decodeDNSProxyRoutes(raw)
+	if err != nil {
+		return nil, err
+	}
+	// SliceStable, а не Slice: относительный порядок строк внутри одной группы
+	// — это приоритет выбора туннеля (порядок строк `dns-proxy route` в
+	// running-config). Нестабильная сортировка его перемешивала, и diff считал
+	// приоритет по случайной выдаче (#801).
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Group < out[j].Group })
+	return out, nil
+}
+
+// FetchOrdered — свежее чтение /show/rc/dns-proxy/route мимо кэша с порядком
+// выдачи роутера (без сортировки): порядок строк — приоритет между группами.
+// rc, а не sc: sc не видит правок по index и переносов `rule` до
+// `system configuration save` (стенд 20.10), rc отражает их сразу.
+func (s *DNSProxyStore) FetchOrdered(ctx context.Context) ([]ndms.DNSRouteRule, error) {
+	if !s.isOS5() {
+		return nil, ErrNotSupportedOnOS4
+	}
+	raw, err := s.getter.GetRaw(ctx, "/show/rc/dns-proxy/route")
+	if err != nil {
+		return nil, fmt.Errorf("fetch dns-proxy routes (rc): %w", err)
+	}
+	return decodeDNSProxyRoutes(raw)
+}
+
+func decodeDNSProxyRoutes(raw []byte) ([]ndms.DNSRouteRule, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
 		return nil, nil
@@ -120,10 +148,5 @@ func (s *DNSProxyStore) fetch(ctx context.Context) ([]ndms.DNSRouteRule, error) 
 	default:
 		return nil, fmt.Errorf("dns-proxy routes: unexpected JSON shape, first byte %q", trimmed[0])
 	}
-	// SliceStable, а не Slice: относительный порядок строк внутри одной группы
-	// — это приоритет выбора туннеля (порядок строк `dns-proxy route` в
-	// running-config). Нестабильная сортировка его перемешивала, и diff считал
-	// приоритет по случайной выдаче (#801).
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Group < out[j].Group })
 	return out, nil
 }

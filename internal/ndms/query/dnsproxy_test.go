@@ -142,3 +142,47 @@ func TestDNSProxyStore_KeepsIntraGroupOrder(t *testing.T) {
 		t.Errorf("порядок внутри группы = %v, want %v", order, want)
 	}
 }
+
+func TestDNSProxyStore_FetchOrdered_KeepsGlobalOrder(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON("/show/rc/dns-proxy/route", `[
+		{"group":"b","interface":"W1","index":"i1"},
+		{"group":"a","interface":"W0","index":"i2","disable":true},
+		{"group":"b","interface":"W2","index":"i3"}
+	]`)
+	s := NewDNSProxyStore(fg, NopLogger(), func() bool { return true })
+
+	got, err := s.FetchOrdered(context.Background())
+	if err != nil {
+		t.Fatalf("FetchOrdered: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len: want 3, got %d", len(got))
+	}
+	wantGroups := []string{"b", "a", "b"}
+	wantIdx := []string{"i1", "i2", "i3"}
+	for i, r := range got {
+		if r.Group != wantGroups[i] || r.Index != wantIdx[i] {
+			t.Errorf("[%d]: want %s/%s, got %s/%s", i, wantGroups[i], wantIdx[i], r.Group, r.Index)
+		}
+		if r.Disabled != (i == 1) {
+			t.Errorf("[%d] Disabled: got %v", i, r.Disabled)
+		}
+	}
+	if n := fg.Calls(dnsProxyPath); n != 0 {
+		t.Errorf("sc calls: want 0, got %d", n)
+	}
+}
+
+func TestDNSProxyStore_FetchOrdered_OS4(t *testing.T) {
+	fg := newFakeGetter()
+	s := NewDNSProxyStore(fg, NopLogger(), func() bool { return false })
+
+	_, err := s.FetchOrdered(context.Background())
+	if !errors.Is(err, ErrNotSupportedOnOS4) {
+		t.Errorf("err: want ErrNotSupportedOnOS4, got %v", err)
+	}
+	if n := fg.Calls("/show/rc/dns-proxy/route"); n != 0 {
+		t.Errorf("calls: want 0, got %d", n)
+	}
+}
