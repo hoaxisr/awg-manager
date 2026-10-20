@@ -17,6 +17,8 @@ package dnsroute
 //     содержимое даёт полный дубль с тем же index;
 //   - снос по index и правка при дублях — первая совпавшая строка;
 //   - `rule` переставляет строку на new-index (с нуля), index не меняется;
+//   - `disable:true` в элементе записи ставит строку выключенной, в том числе
+//     upsert существующей; запись без disable её флаг не трогает (F692);
 //   - неизвестный index — status:"error" (4457098 у правки/сноса, 4457748 у
 //     `rule`), new-index за концом — 4457648.
 
@@ -74,6 +76,8 @@ type fakeRouter struct {
 	// rcObjectForm — rc отдаёт форму-объект с ключом по группе (одна запись
 	// на группу, порядок map): по ней порядок невосстановим.
 	rcObjectForm bool
+	// toggles — POST-ы `dns-proxy.route.disable` (SetDisabled).
+	toggles int
 }
 
 // waitQuiet ждёт, пока число POST-ов перестанет расти, и возвращает его.
@@ -176,6 +180,7 @@ func (r *fakeRouter) Post(_ context.Context, payload any) (json.RawMessage, erro
 			}
 		case map[string]any:
 			if dis, ok := route["disable"].(map[string]any); ok {
+				r.toggles++
 				idx, _ := dis["index"].(string)
 				no, _ := dis["no"].(bool)
 				for i := range r.routes {
@@ -252,7 +257,8 @@ func (r *fakeRouter) applyRouteElem(m map[string]any) map[string]any {
 		r.deleteRoute(group, iface)
 	default:
 		reject, _ := m["reject"].(bool)
-		r.upsertRoute(group, iface, reject)
+		disable, _ := m["disable"].(bool)
+		r.upsertRoute(group, iface, reject, disable)
 	}
 	return nil
 }
@@ -326,16 +332,17 @@ func applyEntries(dst *[]string, v any) {
 	}
 }
 
-func (r *fakeRouter) upsertRoute(group, iface string, reject bool) {
+func (r *fakeRouter) upsertRoute(group, iface string, reject, disable bool) {
 	for i := range r.routes {
 		if r.routes[i].group == group && r.routes[i].iface == iface {
 			r.routes[i].reject = reject // позиция сохраняется
+			r.routes[i].disabled = r.routes[i].disabled || disable
 			return
 		}
 	}
 	r.seq++
 	r.routes = append(r.routes, fakeRoute{
-		group: group, iface: iface, reject: reject,
+		group: group, iface: iface, reject: reject, disabled: disable,
 		index: fmt.Sprintf("idx%d", r.seq),
 	})
 }

@@ -370,3 +370,49 @@ func TestRewriteInPlaceAndMove_Empty_NoOp(t *testing.T) {
 		t.Errorf("POST на пустом входе: %d", poster.Calls())
 	}
 }
+
+// F692: пауза едет в строке записи — `disable:true` у записи ставит строку
+// выключенной сразу (стенд 5.02.B.1). Без паузы ключа нет вовсе:
+// `disable:false` не шлём.
+func TestReplaceRoutes_DisabledSpecCarriesDisable(t *testing.T) {
+	cmds, poster := newTestDNSRouteCommands(t, true)
+	err := cmds.ReplaceRoutes(context.Background(), nil, []DNSRouteSpec{
+		{Group: "g1", Interface: confirmed(t, "Wireguard0"), Disabled: true},
+		{Group: "g1", Interface: confirmed(t, "Wireguard1")},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceRoutes: %v", err)
+	}
+	route := dnsRoutePayload(t, poster)
+	if r := route[0].(map[string]any); r["disable"] != true {
+		t.Errorf("запись на паузе без disable:true: %#v", r)
+	}
+	if r := route[1].(map[string]any); r["disable"] != nil {
+		t.Errorf("запись без паузы несёт disable: %#v", r)
+	}
+}
+
+// F692: добавление RewriteInPlace несёт disable так же; правка по index —
+// никогда: disable правкой не трогается, его наводит planMoves.
+func TestRewriteInPlace_DisableOnlyOnAdds(t *testing.T) {
+	cmds, poster := newTestDNSRouteCommands(t, true)
+	err := cmds.RewriteInPlace(context.Background(), nil,
+		[]DNSRouteUpdate{{Index: "i1", Spec: DNSRouteSpec{Group: "g1", Interface: confirmed(t, "Wireguard2"), Disabled: true}}},
+		[]DNSRouteSpec{
+			{Group: "g1", Interface: confirmed(t, "Wireguard3"), Disabled: true},
+			{Group: "g1", Interface: confirmed(t, "Wireguard1")},
+		})
+	if err != nil {
+		t.Fatalf("RewriteInPlace: %v", err)
+	}
+	route := dnsRoutePayload(t, poster)
+	if r := route[0].(map[string]any); r["disable"] != nil {
+		t.Errorf("правка по index несёт disable: %#v", r)
+	}
+	if r := route[1].(map[string]any); r["disable"] != true {
+		t.Errorf("добавление на паузе без disable:true: %#v", r)
+	}
+	if r := route[2].(map[string]any); r["disable"] != nil {
+		t.Errorf("добавление без паузы несёт disable: %#v", r)
+	}
+}

@@ -32,6 +32,9 @@ type DNSRouteSpec struct {
 	Group     string
 	Interface query.Confirmed
 	Reject    bool
+	// Disabled — строка ставится выключенной: `disable:true` в элементе
+	// записи (F692). Правка по index его не несёт — флаг она не трогает.
+	Disabled bool
 }
 
 // DNSRouteRef — снос строки, взятой из выдачи роутера: интерфейс в ней —
@@ -43,7 +46,8 @@ type DNSRouteRef struct {
 // FlushPendingSave синхронно сохраняет конфигурацию, если sc-вид dns-proxy
 // route грязен с последнего завершённого сохранения (F568).
 // `/show/sc/dns-proxy/route` показывает снесённую через RCI строку до
-// `system configuration save` (добавленную — сразу; стенд): без сохранения
+// `system configuration save`, а добавленную на 5.02.B.1 не показывает до
+// него (стенд, F692): без сохранения
 // сверка видит уже снесённый маршрут и сносит его повторно — E «unable to
 // find the DNS route» в журнале ndm. Гейт — эпохи координатора, а не
 // PendingCount: ожидающее сохранение после чужих правок (снос туннелей
@@ -179,15 +183,7 @@ func (c *DNSRouteCommands) ReplaceRoutes(ctx context.Context, deletes []DNSRoute
 	}
 	upsertIfaces := make(map[string]bool, len(upserts))
 	for _, s := range upserts {
-		route := map[string]any{
-			"group":     s.Group,
-			"interface": s.Interface.Name(),
-			"auto":      true,
-		}
-		if s.Reject {
-			route["reject"] = true
-		}
-		routes = append(routes, route)
+		routes = append(routes, dnsRouteAdd(s))
 		upsertIfaces[s.Interface.Name()] = true
 	}
 	payload := map[string]any{
@@ -267,7 +263,7 @@ func (c *DNSRouteCommands) RewriteInPlace(ctx context.Context, deleteIndexes []s
 		routes = append(routes, r)
 	}
 	for _, s := range adds {
-		routes = append(routes, dnsRouteBody(s))
+		routes = append(routes, dnsRouteAdd(s))
 	}
 	payload := map[string]any{
 		"dns-proxy": map[string]any{"route": routes},
@@ -288,6 +284,18 @@ func dnsRouteBody(s DNSRouteSpec) map[string]any {
 	}
 	if s.Reject {
 		r["reject"] = true
+	}
+	return r
+}
+
+// dnsRouteAdd — тело записи строки (не правки по index): пауза едет в той же
+// строке, `disable:true` ставит её выключенной сразу, в том числе upsert
+// существующей (стенд 5.02.B.1, F692). Ключ только при true: запись без него
+// даёт включённую строку, `disable:false` не шлём.
+func dnsRouteAdd(s DNSRouteSpec) map[string]any {
+	r := dnsRouteBody(s)
+	if s.Disabled {
+		r["disable"] = true
 	}
 	return r
 }

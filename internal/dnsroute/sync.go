@@ -86,9 +86,8 @@ type rciRouteRebuild struct {
 }
 
 // rciRouteDisable is a toggle of the `disable` flag on an existing route,
-// keyed by Keenetic's stable index hash. Pending disables for routes that
-// were just written (no index yet) are carried by rciRouteOp.Disabled
-// and applied after a post-write refetch.
+// keyed by Keenetic's stable index hash. Записанные строки флаг несут сами
+// (rciRouteOp.Disabled → `disable` в элементе записи, F692).
 type rciRouteDisable struct {
 	Index    string
 	Disabled bool
@@ -108,10 +107,11 @@ type rciRouteOp struct {
 	Iface  string `json:"interface"`
 	Auto   bool   `json:"auto,omitempty"`
 	Reject bool   `json:"reject,omitempty"`
-	// Disabled — desired disable state. The route payload has no `disable`
-	// field, and a rewritten route comes back enabled with a fresh index, so
-	// applyDiff re-fetches indexes after the rewrite and settles the flag with
-	// SetDisabled in BOTH directions (set on new-disabled, clear on re-enabled).
+	// Disabled — желаемая пауза. Запись (ReplaceRoutes и добавления
+	// RewriteInPlace) несёт её `disable:true` в той же строке (F692): sc на
+	// 5.02 добавленную строку до save не показывает, и выключить её после
+	// записи по index нечем. Строке, правленной на месте, флаг наводит
+	// planMoves через SetDisabled в обе стороны.
 	Disabled bool `json:"-"`
 }
 
@@ -639,11 +639,10 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff, confirmed map
 	// иначе между POST-ами группа осталась бы без правил (на больших списках —
 	// сотни миллисекунд без DNS-маршрутизации).
 	//
-	// postDisables/written собираются здесь для Phase 5. Строки, переписанные
-	// на месте, в written не идут: Phase 5a читает sc, а sc правок по index до
-	// сохранения не видит — их disable planMoves считает по rc.
+	// Записанные строки несут паузу сами (DNSRouteSpec.Disabled, F692); в
+	// postDisables для Phase 5 — toggles диффа и правки disable строк,
+	// переписанных на месте (planMoves по rc).
 	postDisables := append([]rciRouteDisable{}, diff.routeDisables...)
-	var written []rciRouteOp
 	for _, rb := range diff.routeRebuilds {
 		dels := make([]command.DNSRouteRef, 0, len(rb.deletes))
 		for _, iface := range rb.deletes {
@@ -666,6 +665,7 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff, confirmed map
 				Group:     ro.Group,
 				Interface: iface,
 				Reject:    ro.Reject,
+				Disabled:  ro.Disabled,
 			})
 			ifaces = append(ifaces, iface.Name())
 		}
@@ -704,54 +704,12 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff, confirmed map
 				fmt.Sprintf("Phase4: ReplaceRoutes(-%d/+%d) failed", len(dels), len(ups)), err.Error())
 			return fmt.Errorf("replace routes for %s: %w", rb.group, err)
 		}
-		written = append(written, rb.upserts...)
 		s.logInfo("applyDiff", rb.group,
 			fmt.Sprintf("Phase4: route block rewritten in priority order: %v", ifaces))
 	}
 
-	// Phase 5a: re-fetch router state so routes written by ReplaceRoutes get
-	// their freshly assigned indexes, needed for the disable toggles below. A
-	// newly written route always comes back enabled, so a paused list must have
-	// its flag re-applied here — otherwise the UI shows it paused while the
-	// router routes traffic (#489).
-	if len(written) > 0 {
-		fresh, err := s.queries.DNSProxy.Fetch(ctx)
-		if err != nil {
-			s.logError("applyDiff", "", "Phase5a: refetch dns-proxy after rewrite", err.Error())
-			// Non-fatal: the next reconcile will catch up.
-		} else {
-			indexByKey := make(map[string]string, len(fresh))
-			disabledByKey := make(map[string]bool, len(fresh))
-			for _, r := range fresh {
-				if r.Index == "" {
-					continue
-				}
-				key := r.Group + "|" + r.Interface
-				indexByKey[key] = r.Index
-				disabledByKey[key] = r.Disabled
-			}
-			for _, ro := range written {
-				key := ro.Group + "|" + ro.Iface
-				idx, ok := indexByKey[key]
-				if !ok || idx == "" {
-					s.logError("applyDiff", "", fmt.Sprintf("Phase5a: no index for %s", key), "route not in post-rewrite show")
-					continue
-				}
-				if disabledByKey[key] == ro.Disabled {
-					continue // router already in the desired state
-				}
-				postDisables = append(postDisables, rciRouteDisable{
-					Index:    idx,
-					Disabled: ro.Disabled,
-					Group:    ro.Group,
-					Iface:    ro.Iface,
-				})
-			}
-		}
-	}
-
-	// Phase 5b: apply disable toggles (pre-existing routes + newly-upserted
-	// ones whose index we just learned).
+	// Phase 5: правки disable по index — строки, чьё содержимое совпало с
+	// целью (toggles диффа), и строки, переписанные на месте.
 	for _, rd := range postDisables {
 		if rd.Index == "" {
 			continue
@@ -759,13 +717,13 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff, confirmed map
 		if err := s.commands.DNSRoutes.SetDisabled(ctx, rd.Index, rd.Disabled); err != nil {
 			s.logError("applyDiff",
 				fmt.Sprintf("%s->%s", rd.Group, rd.Iface),
-				fmt.Sprintf("Phase5b: SetDisabled(%v) failed", rd.Disabled),
+				fmt.Sprintf("Phase5: SetDisabled(%v) failed", rd.Disabled),
 				err.Error())
 			return fmt.Errorf("set disabled %s->%s: %w", rd.Group, rd.Iface, err)
 		}
 		s.logInfo("applyDiff",
 			fmt.Sprintf("%s->%s", rd.Group, rd.Iface),
-			fmt.Sprintf("Phase5b: SetDisabled=%v OK (index=%s)", rd.Disabled, rd.Index))
+			fmt.Sprintf("Phase5: SetDisabled=%v OK (index=%s)", rd.Disabled, rd.Index))
 	}
 
 	if len(groupErrors) > 0 {
@@ -779,8 +737,8 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff, confirmed map
 // добавления (planInPlace по свежему rc); POST 2 — перестановки `rule`,
 // выстраивающие строки группы подряд от первой в порядке приоритета
 // (planMoves по rc после POST 1), только если что-то стоит не на месте.
-// Возвращает правки disable: правка на месте флаг сохраняет, а добавленная
-// строка приходит включённой. Интерфейсы целей подтверждены вызывающим;
+// Возвращает правки disable строк, правленных на месте: правка флаг
+// сохраняет; добавленная строка паузу несёт сама (F692). Интерфейсы целей подтверждены вызывающим;
 // нулевой Confirmed RewriteInPlace всё равно отвергает без POST (F546).
 func (s *ServiceImpl) rewriteInPlace(ctx context.Context, rb rciRouteRebuild, confirmed map[string]query.Confirmed) ([]rciRouteDisable, error) {
 	ordered, err := s.queries.DNSProxy.FetchOrdered(ctx)
@@ -800,7 +758,7 @@ func (s *ServiceImpl) rewriteInPlace(ctx context.Context, rb rciRouteRebuild, co
 		cur = append(cur, r)
 	}
 	spec := func(ro rciRouteOp) command.DNSRouteSpec {
-		return command.DNSRouteSpec{Group: ro.Group, Interface: confirmed[ro.Iface], Reject: ro.Reject}
+		return command.DNSRouteSpec{Group: ro.Group, Interface: confirmed[ro.Iface], Reject: ro.Reject, Disabled: ro.Disabled}
 	}
 	dels, edits, adds := planInPlace(cur, rb.upserts)
 	updates := make([]command.DNSRouteUpdate, 0, len(edits))
