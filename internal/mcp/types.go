@@ -340,7 +340,7 @@ func (d DNSRouteDetail) Summary() DNSRoute {
 // A list created through MCP is always enabled; disable it from the web UI.
 type DNSRouteInput struct {
 	Name     string   `json:"name" jsonschema:"human-readable list name"`
-	Domains  []string `json:"domains" jsonschema:"domains to route (suffix match), e.g. [\"youtube.com\"]; geosite:/geoip: tags and CIDR subnets are also accepted"`
+	Domains  []string `json:"domains" jsonschema:"domains to route (suffix match), e.g. [\"youtube.com\"]; CIDR subnets are also accepted, geosite:/geoip: tags are not (NDMS rejects them)"`
 	TunnelID string   `json:"tunnelId" jsonschema:"target tunnel id from list_tunnels"`
 }
 
