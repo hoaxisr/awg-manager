@@ -36,4 +36,15 @@ describe('ConfGeneratorModal', () => {
 		expect(conf).not.toContain('Jc =');
 		expect(conf).not.toContain('HeaderProtectionKey');
 	});
+
+	// Паритет с бэкендом (WriteASCConf): пустой H — номер типа (F167), S3/S4 —
+	// только если заданы.
+	it('пустые H — 1..4, нулевые S3/S4 не пишутся', async () => {
+		const conf = await preview(asc({
+			jc: 0, jmin: 0, jmax: 0, s1: 16, s2: 17, s3: 0, s4: 0, h1: '', h2: '', h3: '', h4: '',
+			'header-protection-key': 'K=', 'random-trailers': 1,
+		}));
+		for (const want of ['H1 = 1\n', 'H2 = 2\n', 'H3 = 3\n', 'H4 = 4\n']) expect(conf).toContain(want);
+		expect(conf).not.toContain('S3 =');
+	});
 });
