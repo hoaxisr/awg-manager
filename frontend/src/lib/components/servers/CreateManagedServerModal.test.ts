@@ -46,4 +46,33 @@ describe('CreateManagedServerModal', () => {
 		expect(onclose).not.toHaveBeenCalled();
 		expect(onCreated).not.toHaveBeenCalled();
 	});
+
+	// #688: сервер 3.1 — только со сгенерированным ASC и на прошивке с ASC 3.x.
+	it('AWG 3.1 уходит в запрос режимом 3.1', async () => {
+		vi.mocked(api.createManagedServer).mockResolvedValue({ interfaceName: 'Wireguard0' } as never);
+		const { getByText, getByLabelText } = render(CreateManagedServerModal, {
+			open: true, onclose: vi.fn(), onCreated: vi.fn(), supportsAwg31: true,
+		});
+		await fireEvent.click(document.querySelector('input[type="checkbox"]') as HTMLInputElement);
+		await fireEvent.click(getByLabelText('Протокол AWG 3.1'));
+		await fireEvent.click(getByText('Создать').closest('button') as HTMLButtonElement);
+		await waitFor(() => expect(api.createManagedServer).toHaveBeenCalledTimes(1));
+		expect(vi.mocked(api.createManagedServer).mock.calls[0][0]).toMatchObject({ generateAsc: true, mode: '3.1' });
+	});
+
+	it('без ASC 3.x переключатель 3.1 недоступен и назван причиной', async () => {
+		const { getByText, getByLabelText } = render(CreateManagedServerModal, {
+			open: true, onclose: vi.fn(), onCreated: vi.fn(),
+		});
+		await fireEvent.click(document.querySelector('input[type="checkbox"]') as HTMLInputElement);
+		expect((getByLabelText('Протокол AWG 3.1') as HTMLInputElement).disabled).toBe(true);
+		expect(getByText('Нужна KeeneticOS 5.02.A.11 или новее')).toBeTruthy();
+	});
+
+	it('без генерации ASC режим не уходит', async () => {
+		vi.mocked(api.createManagedServer).mockResolvedValue({ interfaceName: 'Wireguard0' } as never);
+		await submit();
+		await waitFor(() => expect(api.createManagedServer).toHaveBeenCalledTimes(1));
+		expect(vi.mocked(api.createManagedServer).mock.calls[0][0].mode).toBeUndefined();
+	});
 });

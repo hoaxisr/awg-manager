@@ -326,6 +326,7 @@
 	<CreateManagedServerModal
 		bind:open={createManagedOpen}
 		existingListenPorts={occupiedListenPorts}
+		supportsAwg31={!!$systemInfo.data?.supportsWireguardASC3}
 		onclose={() => createManagedOpen = false}
 		onCreated={onManagedCreated}
 	/>

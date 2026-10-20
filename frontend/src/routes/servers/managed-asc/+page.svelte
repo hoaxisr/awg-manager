@@ -12,6 +12,7 @@
 	import { ArrowLeft } from 'lucide-svelte';
 	import { Button } from '$lib/components/ui';
 	import { generateASCParams } from '$lib/utils/asc-generator';
+	import { classifyAwgVersionFromAsc } from '$lib/utils/classifyAwgVersion';
 
 	let serverId = $derived($page.url.searchParams.get('id') ?? '');
 
@@ -31,6 +32,16 @@
 			const extended = systemInfo?.supportsExtendedASC ?? false;
 			const hRanges = systemInfo?.supportsHRanges ?? false;
 			const generated = generateASCParams({ extended, hRanges });
+			// Сервер 3.1 (#688): при защите заголовков прошивка отвергает S < 12,
+			// а H шифруются — 1..4. Ключи 3.x бэкенд переносит сам (KeepASC3).
+			// ponytail: max() сдвигает распределение S3/S4 к 12 — для обфускации неважно.
+			if (classifyAwgVersionFromAsc(ascParams) === 'awg3.1') {
+				Object.assign(generated, {
+					s3: Math.max(generated.s3 ?? 0, 12),
+					s4: Math.max(generated.s4 ?? 0, 12),
+					h1: '1', h2: '2', h3: '3', h4: '4',
+				});
+			}
 
 			ascParams = extended
 				? ({

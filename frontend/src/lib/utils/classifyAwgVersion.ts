@@ -13,9 +13,16 @@ function hasAnySignaturePacket(params: ASCParams): boolean {
 	return !!(ext.i1 || ext.i2 || ext.i3 || ext.i4 || ext.i5);
 }
 
+// ASC сервера и системного туннеля приходит в форме NDMS: ключи 3.x —
+// kebab-case, флаги — числа (internal/ndms ASC3Keys, #688).
+function ndmsKey(params: ASCParams, key: string): unknown {
+	return (params as unknown as Record<string, unknown>)[key];
+}
+
 function hasAnyAwg3Param(params: ASCParams): boolean {
 	const ext = params as ASCParamsExtended;
 	return !!(
+		ndmsKey(params, 'header-protection-key') ||
 		ext.headerProtectionKey || ext.contentPaddingAddition || ext.rekeyAfterTime ||
 		ext.rekeyTimeout || ext.rejectAfterTime || ext.keepaliveTimeout || ext.maxHandshakeAttempts
 	);
@@ -23,7 +30,10 @@ function hasAnyAwg3Param(params: ASCParams): boolean {
 
 function hasAnyAwg31Param(params: ASCParams): boolean {
 	const ext = params as ASCParamsExtended;
-	return !!(ext.randomTrailers || ext.disableCookies);
+	return !!(
+		ext.randomTrailers || ext.disableCookies ||
+		Number(ndmsKey(params, 'random-trailers')) || Number(ndmsKey(params, 'disable-cookies'))
+	);
 }
 
 /** Mirrors backend config.ClassifyAWGVersion — AWG 3.1 → 3.0 → 2.0 → 1.5 → 1.0 → WG. */

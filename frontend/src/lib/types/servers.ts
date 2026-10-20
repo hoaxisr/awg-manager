@@ -141,6 +141,7 @@ export interface CreateManagedServerRequest {
 	dns?: string;
 	mtu?: number;
 	generateAsc?: boolean;
+	mode?: '3.1';
 }
 
 // UpdateManagedServerRequest matches the Go-side pointer-field semantics:

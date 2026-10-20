@@ -10,6 +10,8 @@
 		onclose: () => void;
 		onCreated: (serverId?: string) => void;
 		existingListenPorts?: number[];
+		// ASC прошивки знает параметры 3.x (5.02.A.11+): только тогда доступен сервер 3.1 (#688).
+		supportsAwg31?: boolean;
 	}
 
 	const DEFAULT_LISTEN_PORT = 51820;
@@ -32,6 +34,7 @@
 		onclose,
 		onCreated,
 		existingListenPorts = [],
+		supportsAwg31 = false,
 	}: Props = $props();
 
 	let address = $state('10.0.0.1');
@@ -44,6 +47,7 @@
 	let endpoint = $state('');
 	let mtu = $state(1376);
 	let generateAsc = $state(false);
+	let awg31 = $state(false);
 	let creating = $state(false);
 	let wanIP = $state('');
 	let loadingWanIP = $state(false);
@@ -75,6 +79,7 @@
 			endpoint = '';
 			mtu = 1376;
 			generateAsc = false;
+			awg31 = false;
 			initialAddress = '10.0.0.1';
 			initialMask = '24';
 			initialListenPort = suggestedPort;
@@ -127,7 +132,8 @@
 		description !== initialDescription ||
 		endpoint !== initialEndpoint ||
 		mtu !== initialMtu ||
-		generateAsc !== initialGenerateAsc
+		generateAsc !== initialGenerateAsc ||
+		awg31
 	);
 
 
@@ -146,6 +152,8 @@
 				endpoint: endpoint || undefined,
 				mtu,
 				generateAsc,
+				// Сервер 3.1 создаётся только со сгенерированным ASC — бэкенд иное отвергает.
+				mode: generateAsc && awg31 ? '3.1' : undefined,
 			});
 			onclose();
 			onCreated(created.interfaceName);
@@ -260,6 +268,24 @@
 				</p>
 			{/if}
 		</div>
+
+		{#if generateAsc}
+			<div class="form-group">
+				<div class="label-row asc-label-row">
+					<span class="label">{m.servers_create_awg31()}</span>
+					<Toggle
+						checked={awg31}
+						onchange={(checked) => awg31 = checked}
+						disabled={!supportsAwg31}
+						ariaLabel={m.servers_create_awg31()}
+						size="sm"
+					/>
+				</div>
+				<span class="field-hint">
+					{supportsAwg31 ? m.servers_create_awg31_hint() : m.servers_create_awg31_unsupported()}
+				</span>
+			</div>
+		{/if}
 	</div>
 
 	{#snippet actions()}

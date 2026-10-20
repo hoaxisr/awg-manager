@@ -79,6 +79,17 @@ describe('classifyAwgVersionFromAsc', () => {
 			want: 'awg3.1',
 		},
 		{
+			// ASC сервера в форме NDMS (#688): H = 1..4, ключи 3.x kebab, флаги — числа.
+			name: 'NDMS-form AWG 3.1 server',
+			params: { h1: '1', h2: '2', h3: '3', h4: '4', 'header-protection-key': 'a2V5', 'random-trailers': 1, 'disable-cookies': 0 } as unknown as ASCParams,
+			want: 'awg3.1',
+		},
+		{
+			name: 'NDMS-form flags off',
+			params: { h1: '1', h2: '2', h3: '3', h4: '4', 'header-protection-key': '', 'random-trailers': 0, 'disable-cookies': 0 } as unknown as ASCParams,
+			want: 'awg1.0',
+		},
+		{
 			name: 'both flags off stay out of the way',
 			params: { h1: '1', h2: '2', h3: '3', h4: '4', randomTrailers: false, disableCookies: false } as ASCParams,
 			want: 'awg1.0',
