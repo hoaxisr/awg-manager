@@ -256,10 +256,56 @@ func TestGroupValidation(t *testing.T) {
 		{"P", Group{Domains: []string{" a.com"}}},
 		{"a/b", Group{Domains: []string{"a.com"}}},
 		{"#P", Group{Domains: []string{"a.com"}}},
+		{"P", Group{Domains: []string{"_dmarc.a.com"}}},
+		{"P", Group{Subnets: []string{"1.2.3.4"}}},
 	}
 	for i, tc := range bad {
 		if _, err := svc.CreateGroup(tc.target, tc.g); err == nil {
 			t.Errorf("case %d accepted: %q %+v", i, tc.target, tc.g)
+		}
+	}
+}
+
+// Ожидания сняты прогоном JS из /opt/bin/hrweb 1.68.0 (save → classifyLine +
+// InputValidator.isValidToken), а не выведены вручную.
+func TestHRwebTokenError(t *testing.T) {
+	for _, tc := range []struct {
+		token string
+		want  error // nil — принят
+	}{
+		{"a.com", nil},
+		{"Example.COM", nil},
+		{"xn--80ak6aa92e.com", nil},
+		{"sub-1.a.com", nil},
+		{"ru", nil},
+		{"geosite:category-ads-all", nil},
+		{"geoip:ru", nil},
+		{"geoip:ru-x", nil},
+		{"1.2.3.0/24", nil},
+		{"2a00:1450::/32", nil},
+		{"10.0.0.1-10.0.0.9", nil},
+		{"::/0", errHRwebChars},
+		{"_dmarc.a.com", errHRwebChars},
+		{"a_b", errHRwebChars},
+		{"*.a.com", errHRwebChars},
+		{".a.com", errHRwebChars},
+		{"a.com.", errHRwebChars},
+		{"a..com", errHRwebChars},
+		{"a-.com", errHRwebChars},
+		{"-a.com", errHRwebChars},
+		{"geosite:google@cn", errHRwebChars},
+		{"geosite:", errHRwebChars},
+		{"a b.com", errHRwebChars},
+		{"a.com:", errHRwebChars},
+		{"1.2.3.0/24-x", errHRwebChars},
+		{"1.2.3.0//24", errHRwebChars},
+		{"1.2.3.4", errHRwebMask},
+		{"2a00::1", errHRwebMask},
+		{"full:a.com", errHRwebMask},
+	} {
+		err := hrwebTokenError(tc.token)
+		if (err == nil) != (tc.want == nil) || (tc.want != nil && !errors.Is(err, tc.want)) {
+			t.Errorf("%q: got %v, want %v", tc.token, err, tc.want)
 		}
 	}
 }

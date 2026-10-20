@@ -3,6 +3,7 @@ package hydraroute
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -351,12 +352,54 @@ func validateGroup(target string, g Group) error {
 		if d == "" || d != strings.TrimSpace(d) || strings.ContainsAny(d, "/,\r\n") || strings.HasPrefix(d, "#") {
 			return fmt.Errorf("invalid domain %q", d)
 		}
+		if err := hrwebTokenError(d); err != nil {
+			return err
+		}
 	}
 	for _, c := range g.Subnets {
 		// Пустая строка закрыла бы блок ip.list, `/X` открыл бы блок другой цели.
 		if c == "" || c != strings.TrimSpace(c) || strings.ContainsAny(c, "\r\n") || strings.HasPrefix(c, "#") || strings.HasPrefix(c, "/") {
 			return fmt.Errorf("invalid subnet %q", c)
 		}
+		if err := hrwebTokenError(c); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+var (
+	hrwebBadChar  = regexp.MustCompile(`[^A-Za-z0-9.\-:/]`)            //nolint:gochecknoglobals
+	hrwebEdge     = regexp.MustCompile(`^[.\-:/]|[.\-:/]$`)            //nolint:gochecknoglobals
+	hrwebAdjacent = regexp.MustCompile(`[.:/]{2}|-\.|\.-|-/|/-|:-|-:`) //nolint:gochecknoglobals
+	hrwebIPv4     = regexp.MustCompile(`^\d{1,3}(\.\d{1,3}){3}$`)      //nolint:gochecknoglobals
+
+	errHRwebMask  = errors.New("IP address needs a network mask (/32 or /128)")                                                        //nolint:gochecknoglobals
+	errHRwebChars = errors.New("HydraRoute Neo allows only latin letters, digits, '.', '-', ':' and '/', not at the edges or doubled") //nolint:gochecknoglobals
+)
+
+// hrwebTokenError повторяет classifyLine + InputValidator.isValidToken из
+// HRweb (JS вшит в /opt/bin/hrweb, сверено с 1.68.0). HRweb при
+// сохранении прогоняет этим ВСЕ токены обоих файлов, и один отвергнутый токен
+// в любой группе запрещает сохранить в HRweb любое правило (#1045).
+func hrwebTokenError(t string) error {
+	geosite := strings.HasPrefix(t, "geosite:")
+	cidr := strings.HasPrefix(t, "geoip:") || (!geosite && strings.Contains(t, "/"))
+	maskless := !cidr && !geosite && (hrwebIPv4.MatchString(t) || strings.Contains(t, ":"))
+	if maskless && hrwebValid(t, true) {
+		return fmt.Errorf("%q: %w", t, errHRwebMask)
+	}
+	if maskless || !hrwebValid(t, cidr) {
+		return fmt.Errorf("%q: %w", t, errHRwebChars)
+	}
+	return nil
+}
+
+func hrwebValid(t string, cidr bool) bool {
+	adj := t
+	if cidr {
+		adj = strings.ReplaceAll(t, "::", "x")
+	}
+	return !hrwebBadChar.MatchString(t) && !hrwebEdge.MatchString(t) && !hrwebAdjacent.MatchString(adj) &&
+		(!cidr || strings.HasPrefix(t, "geoip:") || strings.HasPrefix(t, "geosite:") || !strings.Contains(t, "-"))
 }

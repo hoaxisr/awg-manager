@@ -123,3 +123,27 @@ describe('HrNeoEditModal: группа без имени', () => {
 		expect(onsave).toHaveBeenCalledWith(expect.objectContaining({ name: '', iconUrl: '' }));
 	});
 });
+
+describe('HrNeoEditModal: токены, которые HRweb не примет (#1045)', () => {
+	it('показывает их сразу и держит сохранение', async () => {
+		const { onsave } = openCreate({ kind: 'interface', name: 'nwg0', tunnelId: 'awg10' });
+		const domains = document.querySelector<HTMLTextAreaElement>('textarea[placeholder^="youtube.com"]')!;
+		const cidr = document.querySelector<HTMLTextAreaElement>('textarea[placeholder^="10.0.0.0/8"]')!;
+		const save = screen.getByRole<HTMLButtonElement>('button', { name: 'Сохранить' });
+
+		await fireEvent.input(domains, { target: { value: 'youtube.com\n_dmarc.a.com' } });
+		expect(screen.getByText(/HydraRoute Neo не примет: _dmarc\.a\.com\./)).toBeTruthy();
+		expect(save.disabled).toBe(true);
+
+		await fireEvent.input(domains, { target: { value: 'youtube.com' } });
+		await fireEvent.input(cidr, { target: { value: '1.2.3.4' } });
+		expect(screen.getByText(/Укажите маску сети \(\/32 или \/128\): 1\.2\.3\.4/)).toBeTruthy();
+		expect(save.disabled).toBe(true);
+
+		await fireEvent.input(cidr, { target: { value: '1.2.3.4/32' } });
+		expect(screen.queryByText(/не примет|маску сети/)).toBeNull();
+		expect(save.disabled).toBe(false);
+		await fireEvent.click(save);
+		expect(onsave).toHaveBeenCalledWith(expect.objectContaining({ manualDomains: ['youtube.com', '1.2.3.4/32'] }));
+	});
+});

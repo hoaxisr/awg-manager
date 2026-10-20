@@ -4684,7 +4684,9 @@
 	"hrneo_edit_policy_name_hint": "Только латинские буквы (a–Z), до {max} символов.",
 	"hrneo_edit_policy_created_hint": "Политика и привязки создаются после нажатия «Сохранить».",
 	"hrneo_edit_domains": "Домены",
-	"hrneo_edit_domains_hint": "Домены · .суффикс · geosite:TAG — строкой на запись. Записываются через запятую в одну строку.",
+	"hrneo_edit_domains_hint": "Домены · geosite:TAG — строкой на запись. Записываются через запятую в одну строку.",
+	"hrneo_edit_tokens_invalid": "HydraRoute Neo не примет: {tokens}. Допустимы латиница, цифры, «.», «-», «:» и «/» — не по краям и не подряд.",
+	"hrneo_edit_tokens_mask": "Укажите маску сети (/32 или /128): {tokens}",
 	"hrneo_edit_cidr_hint": "CIDR · geoip:TAG — строкой на запись. Блок в ip.list.",
 	"hrneo_edit_catalog_entries": [
 		{

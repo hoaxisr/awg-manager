@@ -17,6 +17,7 @@
 	import HrNeoGeoTagPicker from './HrNeoGeoTagPicker.svelte';
 	import { buildRoutingTunnelDropdownOptions } from '$lib/utils/routingTunnelOptions';
 	import { formatIconUrlHint } from '$lib/utils/custom-icon';
+	import { hrTokenError } from '$lib/utils/hrToken';
 	import { LayoutGrid } from 'lucide-svelte';
 	import { m } from '$lib/i18n';
 
@@ -310,12 +311,29 @@
 		splitLines(domainsText).length > 0 || splitLines(cidrText).length > 0,
 	);
 
+	// HRweb отказывается сохранять ЛЮБОЕ правило, пока в файлах есть хоть один
+	// такой токен (#1045), поэтому не пускаем их в файлы.
+	function tokenErrors(text: string): { chars: string[]; mask: string[] } {
+		const out = { chars: [] as string[], mask: [] as string[] };
+		for (const t of splitLines(text)) {
+			const kind = hrTokenError(t);
+			if (kind) out[kind].push(t);
+		}
+		return out;
+	}
+	let domainErrors = $derived(tokenErrors(domainsText));
+	let cidrErrors = $derived(tokenErrors(cidrText));
+	let hasTokenErrors = $derived(
+		domainErrors.chars.length + domainErrors.mask.length + cidrErrors.chars.length + cidrErrors.mask.length > 0,
+	);
+
 	let showCatalogEntry = $derived(!!onpickcatalog && !hasDomainOrCidrContent);
 
 	let canSave = $derived.by(() => {
 		const d = splitLines(domainsText);
 		const c = splitLines(cidrText);
 		if (d.length === 0 && c.length === 0) return false;
+		if (hasTokenErrors) return false;
 		if (mode === 'interface') return !!tunnelId;
 		if (policyChoice === 'existing') return !!existingPolicyName;
 		// New policy: name must pass validation, must not duplicate an existing
@@ -600,8 +618,14 @@
 		{/if}
 
 		<textarea class="field-textarea" rows="8" bind:value={domainsText}
-			placeholder="youtube.com&#10;.googlevideo.com&#10;geosite:GOOGLE"
+			placeholder="youtube.com&#10;googlevideo.com&#10;geosite:GOOGLE"
 		></textarea>
+		{#if domainErrors.chars.length > 0}
+			<div class="error-text">{m.hrneo_edit_tokens_invalid({ tokens: domainErrors.chars.join(', ') })}</div>
+		{/if}
+		{#if domainErrors.mask.length > 0}
+			<div class="error-text">{m.hrneo_edit_tokens_mask({ tokens: domainErrors.mask.join(', ') })}</div>
+		{/if}
 		<div class="form-hint">
 			{m.hrneo_edit_domains_hint()}
 		</div>
@@ -639,6 +663,12 @@
 		<textarea class="field-textarea" rows="5" bind:value={cidrText}
 			placeholder="10.0.0.0/8&#10;2001:db8::/32&#10;geoip:RU"
 		></textarea>
+		{#if cidrErrors.chars.length > 0}
+			<div class="error-text">{m.hrneo_edit_tokens_invalid({ tokens: cidrErrors.chars.join(', ') })}</div>
+		{/if}
+		{#if cidrErrors.mask.length > 0}
+			<div class="error-text">{m.hrneo_edit_tokens_mask({ tokens: cidrErrors.mask.join(', ') })}</div>
+		{/if}
 		<div class="form-hint">{m.hrneo_edit_cidr_hint()}</div>
 	</section>
 

@@ -4390,7 +4390,9 @@
 	"hrneo_edit_policy_name_hint": "Latin letters only (a–Z), up to {max} characters.",
 	"hrneo_edit_policy_created_hint": "The policy and bindings are created after you click “Save”.",
 	"hrneo_edit_domains": "Domains",
-	"hrneo_edit_domains_hint": "Domains · .suffix · geosite:TAG — one per line. They are written comma-separated on a single line.",
+	"hrneo_edit_domains_hint": "Domains · geosite:TAG — one per line. They are written comma-separated on a single line.",
+	"hrneo_edit_tokens_invalid": "HydraRoute Neo will not accept: {tokens}. Only latin letters, digits, “.”, “-”, “:” and “/” are allowed, not at the edges or doubled.",
+	"hrneo_edit_tokens_mask": "Add a network mask (/32 or /128): {tokens}",
 	"hrneo_edit_cidr_hint": "CIDR · geoip:TAG — one per line. A block in ip.list.",
 	"hrneo_edit_catalog_entries": [
 		{
