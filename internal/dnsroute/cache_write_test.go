@@ -124,6 +124,7 @@ func TestFailedWrite_LeavesCacheUntouched(t *testing.T) {
 			if after := snapshot(t, svc.store); after != before {
 				t.Fatalf("кэш изменён без записи:\nдо:    %s\nпосле: %s", before, after)
 			}
+			// Холостое для этого дефекта: мутаторы выходят по ошибке Save до сверки; утечку до роутера ловит TestFailedWrite_NotResurrectedByLaterSave.
 			if got := len(poster.Payloads()); got != posts {
 				t.Fatalf("после отказа записи ушли POST: %d → %d", posts, got)
 			}

@@ -237,7 +237,9 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 			// откат правит свой черновик, а не кэш на месте (F695).
 			rollback := s.store.Draft()
 			rollback.Lists = slices.DeleteFunc(rollback.Lists, func(l DomainList) bool { return l.ID == list.ID })
-			_ = s.store.Save(rollback)
+			if serr := s.store.Save(rollback); serr != nil {
+				s.logError("create", list.ID, "Rollback save failed", serr.Error())
+			}
 			return nil, err
 		}
 		if err := s.refreshSubscriptions(ctx, list.ID); err != nil {
@@ -1062,7 +1064,6 @@ func checkRouteInterfacesUnique(routes []RouteTarget) error {
 // нему, а не по кэшу, — списки, уже добавленные тем же CreateBatch, в кэш
 // до записи не попадают, но дубли с ними отсекаются, как прежде.
 func (s *ServiceImpl) dedup(data *StoreData, list *DomainList) {
-
 	// Build index from all lists except the current one.
 	idx := BuildIndex(data.Lists, list.ID)
 	names := listNameMap(data.Lists)
