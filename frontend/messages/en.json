@@ -1426,6 +1426,7 @@
 	"servers_asc_page_title": "Obfuscation — AWG Manager",
 	"servers_asc_heading": "Obfuscation (ASC)",
 	"servers_asc_badge_managed": "Managed server",
+	"servers_asc_awg31_readonly": "AWG 3.1 parameters are set when the server is created and shared by all clients: changing them would disconnect every client, so they are read-only here.",
 	"servers_asc_clear": "Remove ASC",
 	"servers_asc_generate_params": "Generate parameters",
 	"servers_page_egress_load_failed": "Failed to load egress settings",

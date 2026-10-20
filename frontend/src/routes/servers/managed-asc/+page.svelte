@@ -10,7 +10,7 @@
 	import { ASCEditor } from '$lib/components/asc';
 	import { applyDisabledASCState, isZeroASCState, validateASCBeforeSave } from '$lib/utils/asc-validation';
 	import { ArrowLeft } from 'lucide-svelte';
-	import { Button } from '$lib/components/ui';
+	import { Button, VersionBadge } from '$lib/components/ui';
 	import { generateASCParams } from '$lib/utils/asc-generator';
 	import { classifyAwgVersionFromAsc } from '$lib/utils/classifyAwgVersion';
 
@@ -18,6 +18,31 @@
 
 	let ascParams = $state<ASCParams | null>(null);
 	let systemInfo = $state<SystemInfo | null>(null);
+
+	// Параметры 3.1 (#688) приходят в форме NDMS (kebab, пары start/end). Задаются
+	// при создании и общие для всех клиентов: смена отключит каждого, поэтому
+	// здесь только показ, а запись переносит их как есть (KeepASC3).
+	const ASC31_RANGES: [string, string][] = [
+		['ContentPaddingAddition', 'content-padding-addition'],
+		['RekeyAfterTime', 'rekey-after-time'],
+		['RekeyTimeout', 'rekey-timeout'],
+		['RejectAfterTime', 'reject-after-time'],
+		['KeepaliveTimeout', 'keepalive-timeout'],
+		['MaxHandshakeAttempts', 'max-handshake-attempts'],
+	];
+	let awg31Rows = $derived.by(() => {
+		if (classifyAwgVersionFromAsc(ascParams) !== 'awg3.1') return [];
+		const p = ascParams as unknown as Record<string, unknown>;
+		const rows: [string, string][] = [['HeaderProtectionKey', String(p['header-protection-key'] ?? '')]];
+		for (const [name, key] of ASC31_RANGES) {
+			const lo = Number(p[`${key}-start`] ?? 0);
+			const hi = Number(p[`${key}-end`] ?? 0);
+			if (lo || hi) rows.push([name, lo === hi ? `${lo}` : `${lo}-${hi}`]);
+		}
+		if (Number(p['random-trailers'])) rows.push(['RandomTrailers', 'on']);
+		if (Number(p['disable-cookies'])) rows.push(['DisableCookies', 'on']);
+		return rows;
+	});
 	let saving = $state(false);
 	let loading = $state(true);
 	let error = $state<UiText | null>(null);
@@ -146,6 +171,9 @@
 			</Button>
 			<h1 class="page-title">{m.servers_asc_heading()}</h1>
 			<span class="badge-managed">{m.servers_asc_badge_managed()}</span>
+			{#if awg31Rows.length}
+				<VersionBadge kind="awg" value="awg3.1" />
+			{/if}
 		</div>
 		<div class="header-actions">
 			{#if canClearASC}
@@ -186,6 +214,17 @@
 		<div class="py-12 text-center text-error-500">{uiText(error)}</div>
 	{:else if ascParams}
 		<div class="tab-content">
+			{#if awg31Rows.length}
+				<section class="awg31-info">
+					<p class="awg31-note">{m.servers_asc_awg31_readonly()}</p>
+					<dl>
+						{#each awg31Rows as [name, value] (name)}
+							<dt>{name}</dt>
+							<dd class="mono">{value}</dd>
+						{/each}
+					</dl>
+				</section>
+			{/if}
 			<ASCEditor bind:params={ascParams} signatureModes="none" idPrefix="managed-" />
 		</div>
 	{/if}
@@ -197,6 +236,42 @@
 {/snippet}
 
 <style>
+	.awg31-info {
+		margin-bottom: 1rem;
+		padding: 0.75rem;
+		background: var(--bg-tertiary, rgba(255, 255, 255, 0.03));
+		border: 1px solid var(--border);
+		border-radius: 6px;
+	}
+
+	.awg31-note {
+		margin: 0 0 0.5rem;
+		font-size: 0.75rem;
+		color: var(--text-muted);
+	}
+
+	.awg31-info dl {
+		display: grid;
+		grid-template-columns: max-content minmax(0, 1fr);
+		gap: 0.25rem 0.75rem;
+		margin: 0;
+		font-size: 0.8125rem;
+	}
+
+	.awg31-info dt {
+		color: var(--text-secondary);
+	}
+
+	.awg31-info dd {
+		margin: 0;
+		color: var(--text-primary);
+		overflow-wrap: anywhere;
+	}
+
+	.mono {
+		font-family: var(--font-mono, monospace);
+	}
+
 	.sticky-header {
 		display: flex;
 		align-items: center;
