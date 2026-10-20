@@ -3,7 +3,9 @@ package dnsroute
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -11,8 +13,8 @@ import (
 // F700: NDMS не принимает geo-теги в object-group fqdn ни в каком регистре
 // (стенд KN-1810 5.02.B.1, 20.10: include geosite:GOOGLE / geosite:google /
 // geoip:ru → status error 101582220 «invalid FQDN or IP address» и E в
-// журнале ndm). NDMS-список с тегом отвергается на записи; уже записанные
-// теги не уходят на роутер; строка-тег в подписке пропускается.
+// журнале ndm). NDMS-список с тегом отвергается на записи; записанные
+// раньше теги снимает миграция store; строка-тег в подписке пропускается.
 
 func TestNDMSList_GeoTagRejectedOnWrite(t *testing.T) {
 	ctx := context.Background()
@@ -96,53 +98,99 @@ func TestHRList_GeoTagStillAccepted(t *testing.T) {
 	}
 }
 
-// Уже записанный тег (список до F700) не уходит на роутер: иначе каждая
-// сверка заново слала бы отвергнутый include — E в журнале ndm на прогон.
-func TestReconcile_StoredGeoTagNotSent(t *testing.T) {
-	ctx := context.Background()
-	r := newFakeRouter()
-	svc := newServiceWithRouter(t, r)
-	d := svc.store.Draft()
-	d.Lists = append(d.Lists, DomainList{
-		ID: "list_1", Name: "legacy", Enabled: true, GroupSlug: "legacy",
-		ManualDomains: []string{"geosite:google", "example.com"},
-		Domains:       []string{"geosite:google", "example.com"},
-		Subnets:       []string{"geoip:ru"},
-		Excludes:      []string{"geosite:ads", "ads.example.com"},
-		Routes:        routes("Wireguard0"),
-	})
-	if err := svc.store.Save(d); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := svc.Reconcile(ctx); err != nil {
-		t.Fatal(err)
-	}
-	waitQuiet(t, r)
-	r.mu.Lock()
-	var inc, exc []string
-	for _, g := range r.groups {
-		inc = append(inc, g.includes...)
-		exc = append(exc, g.excludes...)
-	}
-	r.mu.Unlock()
-	if strings.Join(inc, ",") != "example.com" || strings.Join(exc, ",") != "ads.example.com" {
-		t.Errorf("на роутере include=%v exclude=%v, want только example.com / ads.example.com", inc, exc)
-	}
-
-	n := waitQuiet(t, r)
-	if err := svc.Reconcile(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := waitQuiet(t, r); got != n {
-		t.Errorf("повторная сверка сделала %d POST, ждали 0", got-n)
-	}
-}
-
 func TestParseDomainLine_GeoTagSkipped(t *testing.T) {
 	for _, in := range []string{"geosite:google", "geoip:ru", "GEOSITE:Google", " geoip:RU "} {
 		if got := parseDomainLine(in); got != "" {
 			t.Errorf("parseDomainLine(%q) = %q, want \"\"", in, got)
 		}
 	}
+}
+
+// Миграция store снимает geo-теги, записанные до F700, отовсюду, откуда они
+// доехали бы до роутера или вернулись бы следующим Update через ManualText.
+func TestStoreLoad_DropsGeoTags(t *testing.T) {
+	dir := t.TempDir()
+	manual := "# мой список\nexample.com\ngeosite:GOOGLE\n\n# geosite:comment остаётся\n10.0.0.0/8\r\n GEOIP:ru \n"
+	excl := "ads.example.com\ngeosite:ads\n"
+	legacy := DomainList{
+		ID: "list_1", Name: "legacy", Enabled: true, GroupSlug: "legacy",
+		ManualText:     &manual,
+		ManualDomains:  []string{"example.com", "geosite:GOOGLE", "10.0.0.0/8", "GEOIP:ru"},
+		Domains:        []string{"example.com", "geosite:google"},
+		Subnets:        []string{"10.0.0.0/8", "geoip:ru"},
+		ExcludesText:   &excl,
+		Excludes:       []string{"ads.example.com", "geosite:ads"},
+		ExcludeSubnets: []string{"geoip:cn", "1.2.3.0/24"},
+	}
+	raw, err := json.Marshal(StoreData{Lists: []DomainList{legacy}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "dns-routes.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := NewStore(dir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(l DomainList) {
+		t.Helper()
+		for name, got := range map[string][]string{
+			"ManualDomains":  l.ManualDomains,
+			"Domains":        l.Domains,
+			"Subnets":        l.Subnets,
+			"Excludes":       l.Excludes,
+			"ExcludeSubnets": l.ExcludeSubnets,
+		} {
+			for _, e := range got {
+				if hasGeoPrefix(e) {
+					t.Errorf("%s: geo-тег остался: %v", name, got)
+				}
+			}
+		}
+		if want := "example.com,10.0.0.0/8"; strings.Join(l.ManualDomains, ",") != want {
+			t.Errorf("ManualDomains = %v, want %s", l.ManualDomains, want)
+		}
+		if want := "# мой список\nexample.com\n\n# geosite:comment остаётся\n10.0.0.0/8\r\n"; l.ManualText == nil || *l.ManualText != want {
+			t.Errorf("ManualText = %q, want %q", deref(l.ManualText), want)
+		}
+		if want := "ads.example.com\n"; l.ExcludesText == nil || *l.ExcludesText != want {
+			t.Errorf("ExcludesText = %q, want %q", deref(l.ExcludesText), want)
+		}
+		if strings.Join(l.Domains, ",") != "example.com" || strings.Join(l.Subnets, ",") != "10.0.0.0/8" ||
+			strings.Join(l.Excludes, ",") != "ads.example.com" || strings.Join(l.ExcludeSubnets, ",") != "1.2.3.0/24" {
+			t.Errorf("прочие строки задеты: %+v", l)
+		}
+	}
+	check(data.Lists[0])
+
+	// Файл переписан: перечитанный список уже чист, и повторный Load его не трогает.
+	st1, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := NewStore(dir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(again.Lists[0])
+	st2, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(st1, st2) || !st1.ModTime().Equal(st2.ModTime()) {
+		t.Error("повторный Load переписал файл")
+	}
+	if migrateNDMSGeoTags(again) {
+		t.Error("повторная миграция сообщила об изменении")
+	}
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return "<nil>"
+	}
+	return *p
 }

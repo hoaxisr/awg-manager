@@ -61,9 +61,10 @@ func (s *Store) Load() (*StoreData, error) {
 	discordMigrated := migrateDiscordDNSSubnet(&data)
 	errorsScrubbed := scrubSubscriptionErrors(&data)
 	slugsAssigned := migrateGroupSlugs(&data)
+	geoDropped := migrateNDMSGeoTags(&data)
 
 	s.data = &data
-	if dropped > 0 || forkMigrated || discordMigrated || errorsScrubbed || slugsAssigned {
+	if dropped > 0 || forkMigrated || discordMigrated || errorsScrubbed || slugsAssigned || geoDropped {
 		// Persist the cleanup so the file itself is cleaned, not just the
 		// in-memory cache. Best-effort: on write error the cache is already
 		// clean and the next Save() rewrites disk — failing startup over
@@ -265,6 +266,47 @@ func migrateRawEditorText(data *StoreData) {
 			list.ExcludesText = &raw
 		}
 	}
+}
+
+// migrateNDMSGeoTags снимает geo-теги (geosite:/geoip:, любой регистр) со
+// всех хранимых списков — после dropLegacyHRRows это только NDMS-списки.
+// NDMS тегов не принимает (стенд KN-1810 5.02.B.1, 20.10: error 101582220
+// «invalid FQDN or IP address», E в журнале ndm), запись их уже отвергает
+// (F700); здесь — списки, записанные раньше. Строки снимаются и из сырого
+// текста редактора, иначе следующий Update вернул бы их через
+// applyManualText. Комментарии и прочие строки не трогаются. Идемпотентна.
+func migrateNDMSGeoTags(data *StoreData) bool {
+	changed := false
+	drop := func(entries *[]string) {
+		if n := len(*entries); n > 0 {
+			*entries = slices.DeleteFunc(*entries, hasGeoPrefix)
+			changed = changed || len(*entries) != n
+		}
+	}
+	dropLines := func(text *string) {
+		if text == nil {
+			return
+		}
+		lines := strings.Split(*text, "\n")
+		kept := slices.DeleteFunc(slices.Clone(lines), func(l string) bool {
+			return hasGeoPrefix(strings.TrimSuffix(l, "\r"))
+		})
+		if len(kept) != len(lines) {
+			*text = strings.Join(kept, "\n")
+			changed = true
+		}
+	}
+	for i := range data.Lists {
+		l := &data.Lists[i]
+		drop(&l.ManualDomains)
+		drop(&l.Domains)
+		drop(&l.Subnets)
+		drop(&l.Excludes)
+		drop(&l.ExcludeSubnets)
+		dropLines(l.ManualText)
+		dropLines(l.ExcludesText)
+	}
+	return changed
 }
 
 // writeLocked marshals and atomically writes data, updating the cache.
