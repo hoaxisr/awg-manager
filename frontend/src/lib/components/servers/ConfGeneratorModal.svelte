@@ -2,6 +2,7 @@
 	import { m } from '$lib/i18n';
 	import type { WireguardServerConfig, WireguardServerPeerConfig, ASCParams } from '$lib/types';
 	import { Modal, Button } from '$lib/components/ui';
+	import { asc3ConfLines, headerProtectionKey } from '$lib/utils/asc3Conf';
 
 	interface Props {
 		open: boolean;
@@ -35,9 +36,10 @@
 
 		// Сигнатуры (I1-I5) здесь нет: она принадлежит пиру (CONTEXT.md
 		// «Сигнатура AWG»), а этот генератор открывается как раз для пиров,
-		// чьих ключей у нас нет. Jc == 0 — сервер без обфускации: числовые
-		// параметры в конфиг не пишем, как и на бэкенде.
-		if (ascParams && ascParams.jc > 0) {
+		// чьих ключей у нас нет. Jc == 0 и нет защиты заголовков — сервер без
+		// обфускации: числовые параметры в конфиг не пишем, как и на бэкенде.
+		// ASC 3.x с Jc == 0 легален, и без S/H/HP клиент не подключится (F685).
+		if (ascParams && (ascParams.jc > 0 || headerProtectionKey(ascParams))) {
 			lines.push(`Jc = ${ascParams.jc}`);
 			lines.push(`Jmin = ${ascParams.jmin}`);
 			lines.push(`Jmax = ${ascParams.jmax}`);
@@ -51,6 +53,7 @@
 				lines.push(`S3 = ${ascParams.s3}`);
 				lines.push(`S4 = ${ascParams.s4}`);
 			}
+			lines.push(...asc3ConfLines(ascParams));
 		}
 
 		lines.push('');

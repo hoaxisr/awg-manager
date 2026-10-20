@@ -13,41 +13,19 @@
 	import { Button, VersionBadge } from '$lib/components/ui';
 	import { generateASCParams } from '$lib/utils/asc-generator';
 	import { classifyAwgVersionFromAsc } from '$lib/utils/classifyAwgVersion';
+	import { asc3ConfLines, headerProtectionKey } from '$lib/utils/asc3Conf';
 
 	let serverId = $derived($page.url.searchParams.get('id') ?? '');
 
 	let ascParams = $state<ASCParams | null>(null);
 	let systemInfo = $state<SystemInfo | null>(null);
 
-	// Параметры 3.1 (#688) приходят в форме NDMS (kebab, пары start/end). Задаются
-	// при создании и общие для всех клиентов: смена отключит каждого, поэтому
-	// здесь только показ, а запись переносит их как есть (KeepASC3).
-	const ASC31_RANGES: [string, string][] = [
-		['ContentPaddingAddition', 'content-padding-addition'],
-		['RekeyAfterTime', 'rekey-after-time'],
-		['RekeyTimeout', 'rekey-timeout'],
-		['RejectAfterTime', 'reject-after-time'],
-		['KeepaliveTimeout', 'keepalive-timeout'],
-		['MaxHandshakeAttempts', 'max-handshake-attempts'],
-	];
-	// Признак 3.x — ключ защиты заголовков, как на бэкенде (WriteASCConf): именно
-	// при нём прошивка требует S ≥ 12, флаги 3.1 тут ни при чём.
-	let headerKey = $derived(
-		String((ascParams as unknown as Record<string, unknown> | null)?.['header-protection-key'] ?? ''),
-	);
-	let awg31Rows = $derived.by(() => {
-		if (!headerKey) return [];
-		const p = ascParams as unknown as Record<string, unknown>;
-		const rows: [string, string][] = [['HeaderProtectionKey', headerKey]];
-		for (const [name, key] of ASC31_RANGES) {
-			const lo = Number(p[`${key}-start`] ?? 0);
-			const hi = Number(p[`${key}-end`] ?? 0);
-			if (lo || hi) rows.push([name, lo === hi ? `${lo}` : `${lo}-${hi}`]);
-		}
-		if (Number(p['random-trailers'])) rows.push(['RandomTrailers', 'on']);
-		if (Number(p['disable-cookies'])) rows.push(['DisableCookies', 'on']);
-		return rows;
-	});
+	// Параметры 3.x (#688) задаются при создании и общие для всех клиентов: смена
+	// отключит каждого, поэтому здесь только показ, а запись переносит их как
+	// есть (KeepASC3). Признак 3.x — ключ защиты заголовков, как на бэкенде:
+	// именно при нём прошивка требует S ≥ 12.
+	let headerKey = $derived(headerProtectionKey(ascParams));
+	let awg31Rows = $derived(headerKey ? asc3ConfLines(ascParams).map((l) => l.split(' = ')) : []);
 	let saving = $state(false);
 	let loading = $state(true);
 	let error = $state<UiText | null>(null);
