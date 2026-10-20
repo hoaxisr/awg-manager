@@ -264,6 +264,17 @@ export interface GeoFileSettings {
 	refreshDailyTime?: string;
 }
 
+/** Частичное значение: вложенные объекты — тоже по полям, массивы — целиком. */
+type PatchOf<T> = T extends readonly unknown[] ? T : T extends object ? { [K in keyof T]?: PatchOf<T[K]> } : T;
+
+/**
+ * Тело POST /settings/update: только меняемые поля, в том числе внутри блоков —
+ * бэкенд накладывает их по полям, опущенное сохраняется (F684). Слать весь
+ * снимок настроек нельзя: устаревший снимок другой вкладки откатил бы чужие
+ * изменения (например, перевыпущенный apiKey).
+ */
+export type SettingsPatch = PatchOf<Settings>;
+
 export interface Settings {
 	schemaVersion?: number;
 	authEnabled: boolean;

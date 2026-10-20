@@ -30,13 +30,11 @@
 		saving = true;
 		try {
 			settings = await api.updateSettings({
-				...settings,
 				geoFile: {
-					...settings.geoFile,
 					autoRefreshEnabled: enabled,
-					refreshIntervalHours:
-						enabled && settings.geoFile.refreshIntervalHours === 0 ? 6 : settings.geoFile.refreshIntervalHours,
-					refreshMode: settings.geoFile.refreshMode || 'interval',
+					// Дефолты дописываем, только если их нет: остальное блока не трогаем.
+					...(enabled && settings.geoFile.refreshIntervalHours === 0 ? { refreshIntervalHours: 6 } : {}),
+					...(settings.geoFile.refreshMode ? {} : { refreshMode: 'interval' as const }),
 				},
 			});
 			notifications.success(enabled ? m.routing_geo_autorefresh_on() : m.routing_geo_autorefresh_off());
@@ -51,7 +49,7 @@
 		if (!settings) return;
 		saving = true;
 		try {
-			settings = await api.updateSettings({ ...settings, geoFile: next });
+			settings = await api.updateSettings({ geoFile: next });
 			notifications.success(m.routing_geo_settings_saved());
 		} catch {
 			notifications.error(m.routing_geo_save_error());

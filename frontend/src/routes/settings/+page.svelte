@@ -442,7 +442,7 @@ $effect(() => {
 		if (!settings) return;
 		saving = true;
 		try {
-			settings = await api.updateSettings({ ...settings, authEnabled: enabled });
+			settings = await api.updateSettings({ authEnabled: enabled });
 			setGlobalSettings(settings);
 			notifications.success(enabled ? m.settings_page_auth_enabled() : m.settings_page_auth_disabled());
 		} catch {
@@ -469,7 +469,7 @@ $effect(() => {
 		sessionTtlLocal = hours;
 		saving = true;
 		try {
-			settings = await api.updateSettings({ ...settings, sessionTtlHours: hours });
+			settings = await api.updateSettings({ sessionTtlHours: hours });
 			setGlobalSettings(settings);
 			notifications.success(m.settings_page_session_ttl_saved());
 		} catch (e) {
@@ -500,7 +500,7 @@ $effect(() => {
 		if (!settings) return;
 		saving = true;
 		try {
-			settings = await api.updateSettings({ ...settings, mcpEnabled: enabled });
+			settings = await api.updateSettings({ mcpEnabled: enabled });
 			setGlobalSettings(settings);
 			notifications.success(enabled ? m.settings_page_mcp_enabled() : m.settings_page_mcp_disabled());
 		} catch (e) {
@@ -575,10 +575,7 @@ $effect(() => {
 		if (!settings) return;
 		saving = true;
 		try {
-			settings = await api.updateSettings({
-				...settings,
-				logging: { ...settings.logging, enabled },
-			});
+			settings = await api.updateSettings({ logging: { enabled } });
 			setGlobalSettings(settings);
 			notifications.success(enabled ? m.settings_page_logging_enabled() : m.settings_page_logging_disabled());
 		} catch {
@@ -592,7 +589,7 @@ $effect(() => {
 		if (!settings) return;
 		saving = true;
 		try {
-			settings = await api.updateSettings({ ...settings, logging });
+			settings = await api.updateSettings({ logging });
 			setGlobalSettings(settings);
 			notifications.success(m.settings_page_logging_saved());
 		} catch {
@@ -607,15 +604,11 @@ $effect(() => {
 		saving = true;
 		try {
 			settings = await api.updateSettings({
-				...settings,
 				dnsRoute: {
-					...settings.dnsRoute,
 					autoRefreshEnabled: enabled,
-					refreshIntervalHours:
-						enabled && settings.dnsRoute.refreshIntervalHours === 0
-							? 6
-							: settings.dnsRoute.refreshIntervalHours,
-					refreshMode: settings.dnsRoute.refreshMode || "interval",
+					// Дефолты дописываем, только если их нет: остальное блока не трогаем.
+					...(enabled && settings.dnsRoute.refreshIntervalHours === 0 ? { refreshIntervalHours: 6 } : {}),
+					...(settings.dnsRoute.refreshMode ? {} : { refreshMode: "interval" as const }),
 				},
 			});
 			setGlobalSettings(settings);
@@ -631,7 +624,7 @@ $effect(() => {
 		if (!settings) return;
 		saving = true;
 		try {
-			settings = await api.updateSettings({ ...settings, dnsRoute });
+			settings = await api.updateSettings({ dnsRoute });
 			setGlobalSettings(settings);
 			notifications.success(m.settings_page_dns_auto_saved());
 		} catch {
@@ -646,13 +639,7 @@ $effect(() => {
 		saving = true;
 		try {
 			settings = await api.updateSettings({
-				pingCheck: {
-					...settings.pingCheck,
-					defaults: {
-						...settings.pingCheck.defaults,
-						target: settings.pingCheck.defaults.target,
-					},
-				},
+				pingCheck: { defaults: { target: settings.pingCheck.defaults.target } },
 				connectivityCheckUrl: settings.connectivityCheckUrl,
 			});
 			setGlobalSettings(settings);
@@ -672,7 +659,7 @@ $effect(() => {
 		if (!settings) return;
 		savingBootstrapDNS = true;
 		try {
-			settings = await api.updateSettings({ ...settings, singboxBootstrapDNS: value });
+			settings = await api.updateSettings({ singboxBootstrapDNS: value });
 			setGlobalSettings(settings);
 			notifications.success(
 				value
@@ -698,7 +685,7 @@ $effect(() => {
 		savingClashPort = true;
 		clashPortError = null;
 		try {
-			settings = await api.updateSettings({ ...settings, singboxClashPort: value });
+			settings = await api.updateSettings({ singboxClashPort: value });
 			setGlobalSettings(settings);
 			notifications.success(m.settings_page_clash_port_saved({ value }));
 		} catch (e) {
@@ -714,10 +701,7 @@ $effect(() => {
 		if (!settings) return;
 		saving = true;
 		try {
-			settings = await api.updateSettings({
-				...settings,
-				updates: { ...settings.updates, checkEnabled: enabled },
-			});
+			settings = await api.updateSettings({ updates: { checkEnabled: enabled } });
 			setGlobalSettings(settings);
 			notifications.success(enabled ? m.settings_page_update_check_enabled() : m.settings_page_update_check_disabled());
 		} catch {
@@ -740,10 +724,7 @@ $effect(() => {
 		if (!settings || settings.updates.channel === channel) return;
 		saving = true;
 		try {
-			settings = await api.updateSettings({
-				...settings,
-				updates: { ...settings.updates, channel },
-			});
+			settings = await api.updateSettings({ updates: { channel } });
 			setGlobalSettings(settings);
 			// Кэш проверки относится к прежнему каналу — перепроверяем.
 			updateInfo = await api.checkUpdate(true);
@@ -768,7 +749,7 @@ $effect(() => {
 		if (!settings) return;
 		saving = true;
 		try {
-			settings = await api.updateSettings({ ...settings, usageLevel: level });
+			settings = await api.updateSettings({ usageLevel: level });
 			setGlobalSettings(settings);
 			notifications.success(m.settings_level_saved({ level: usageLevelLabel(level) }));
 		} catch {

@@ -121,10 +121,7 @@
 	async function toggleStats(enabled: boolean) {
 		savingStats = true;
 		try {
-			settings = await api.updateSettings({
-				...settings,
-				updates: { ...settings.updates, statsEnabled: enabled },
-			});
+			settings = await api.updateSettings({ updates: { statsEnabled: enabled } });
 			setGlobalSettings(settings);
 		} catch (e) {
 			notifications.error(m.settings_update_stats_failed({ error: downloadErrorToText(e) }));
@@ -136,10 +133,7 @@
 	async function toggleAutoInstall(enabled: boolean) {
 		savingAutoInstall = true;
 		try {
-			settings = await api.updateSettings({
-				...settings,
-				updates: { ...settings.updates, autoInstallEnabled: enabled },
-			});
+			settings = await api.updateSettings({ updates: { autoInstallEnabled: enabled } });
 			setGlobalSettings(settings);
 			notifications.success(
 				enabled ? m.settings_update_auto_enabled() : m.settings_update_auto_disabled()
@@ -155,12 +149,7 @@
 		savingAutoInstall = true;
 		try {
 			settings = await api.updateSettings({
-				...settings,
-				updates: {
-					...settings.updates,
-					autoInstallIntervalDays: localIntervalDays,
-					autoInstallTime: localTime,
-				},
+				updates: { autoInstallIntervalDays: localIntervalDays, autoInstallTime: localTime },
 			});
 			setGlobalSettings(settings);
 			notifications.success(m.settings_update_schedule_saved());
