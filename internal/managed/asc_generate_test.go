@@ -140,3 +140,31 @@ func TestCreate_ModeRejectedBeforeRCI(t *testing.T) {
 		})
 	}
 }
+
+// Прошивка неполный набор 3.x молча игнорирует (ответ «set ASC parameters»,
+// на интерфейсе 2.0): сверка обязана это увидеть, иначе сервер 3.1 молча
+// создаётся сервером 2.0 и ни один клиент к нему не подключится (F682).
+func TestCreate_AWG31SilentlyIgnoredIsNotApplied(t *testing.T) {
+	svc, store, getter := newCreateTestService(t)
+	svc.supportsASC3 = func() bool { return true }
+	poster := svc.transport.(*recordingPoster)
+	poster.onPost = func(p map[string]interface{}) {
+		getter.applyPost(p)
+		getter.mu.Lock()
+		for _, st := range getter.asc {
+			for _, k := range ndms.ASC3Keys {
+				delete(st, k)
+			}
+		}
+		getter.mu.Unlock()
+	}
+	server, err := svc.Create(context.Background(), CreateServerRequest{
+		Address: "10.54.0.1", Mask: "24", ListenPort: 52054, Mode: ModeAWG31,
+	})
+	if !errors.Is(err, ErrASCNotApplied) || server != nil {
+		t.Fatalf("Create: сервер %v, err %v; want отказ ErrASCNotApplied", server, err)
+	}
+	if len(store.GetManagedServers()) != 0 {
+		t.Fatal("сервер сохранён, хотя ASC 3.1 не применился")
+	}
+}

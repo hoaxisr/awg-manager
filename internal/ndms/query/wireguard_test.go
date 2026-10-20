@@ -466,6 +466,9 @@ func TestWGServerStore_GetASCParams(t *testing.T) {
 	if string(ext["s3"]) != "300" {
 		t.Errorf("s3: %s", ext["s3"])
 	}
+	if len(ext) != 16 {
+		t.Errorf("у интерфейса 2.0 ответ — ровно 16 ключей 2.0: %s", raw2)
+	}
 	if string(ext["i5"]) != `"i5v"` {
 		t.Errorf("i5: %s", ext["i5"])
 	}
@@ -683,6 +686,11 @@ func TestWGServerStore_GetASCParams_NumericForm(t *testing.T) {
 	json.Unmarshal(raw, &got)
 	if got["jc"] != 4.0 || got["s3"] != 36.0 || got["h1"] != "100000-100100" || got["i1"] != "<r 32>" {
 		t.Fatalf("разбор: %s", raw)
+	}
+	// Ключи 3.x интерфейса идут в ответ (#688, F681): по нему строятся .conf
+	// пира, бэкап и сверка записи.
+	if got["header-protection-key"] != "K" || got["random-trailers"] != 1.0 {
+		t.Fatalf("нет ключей 3.x: %s", raw)
 	}
 	asc3, err := s.ASC3Fields(context.Background(), "Wireguard1")
 	if err != nil || len(asc3) != 2 || string(asc3["random-trailers"]) != "1" {

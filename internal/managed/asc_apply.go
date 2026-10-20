@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"slices"
 	"strings"
 	"time"
 
@@ -342,6 +343,23 @@ func normalizeASCForCompare(raw json.RawMessage) (map[string]string, bool, error
 		case "jc", "jmin", "jmax", "s1", "s2", "s3", "s4":
 			if isASCRequiredValueEmpty(trimmed) {
 				out[k] = "0"
+				continue
+			}
+			var n float64
+			if err := json.Unmarshal(trimmed, &n); err != nil {
+				return nil, false, err
+			}
+			out[k] = fmt.Sprintf("%g", n)
+		default:
+			// Ключи 3.x (#688): прошивка неполный набор молча игнорирует, и
+			// без сравнения отказ записи сервера 3.1 прошёл бы как успех (F682).
+			// rc отдаёт числа, ключ HP — строкой.
+			if !slices.Contains(ndms.ASC3Keys, k) {
+				continue
+			}
+			var str string
+			if json.Unmarshal(trimmed, &str) == nil {
+				out[k] = strings.TrimSpace(str)
 				continue
 			}
 			var n float64

@@ -622,7 +622,11 @@ func ascParams(name string, rc json.RawMessage, extended bool) (json.RawMessage,
 			S3: atoiSafe(raw["s3"]), S4: atoiSafe(raw["s4"]),
 			I1: raw["i1"], I2: raw["i2"], I3: raw["i3"], I4: raw["i4"], I5: raw["i5"],
 		}
-		return json.Marshal(params)
+		out, err := json.Marshal(params)
+		if err != nil {
+			return nil, err
+		}
+		return withASC3(out, fields)
 	}
 	params := struct {
 		Jc   int    `json:"jc"`
@@ -640,6 +644,29 @@ func ascParams(name string, rc json.RawMessage, extended bool) (json.RawMessage,
 		H1: raw["h1"], H2: raw["h2"], H3: raw["h3"], H4: raw["h4"],
 	}
 	return json.Marshal(params)
+}
+
+// withASC3 добавляет к ASC ключи 3.x интерфейса (ndms.ASC3Keys), какие есть:
+// без них .conf пира, бэкап и сверка записи сервера 3.1 видят его как 2.0
+// (#688, F681, F682). До 5.02.A.11 их нет — ответ прежний.
+func withASC3(out json.RawMessage, fields map[string]json.RawMessage) (json.RawMessage, error) {
+	var obj map[string]json.RawMessage
+	for _, k := range ndms.ASC3Keys {
+		v, ok := fields[k]
+		if !ok {
+			continue
+		}
+		if obj == nil {
+			if err := json.Unmarshal(out, &obj); err != nil {
+				return nil, err
+			}
+		}
+		obj[k] = v
+	}
+	if obj == nil {
+		return out, nil
+	}
+	return json.Marshal(obj)
 }
 
 // ASC3Fields читает с роутера (свежее дерево rc, мимо кэша) параметры ASC
