@@ -126,7 +126,14 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 	// Сигнатура принадлежит пиру: генерируем по дефолтному профилю. Отказ
 	// генерации — отказ создания пира (fail closed), молча выдавать пира
 	// без имитации нельзя.
-	sig, err := signature.Generate(signature.DefaultProfile)
+	// У сервера 3.1 строки 3.x поверх quic_initial с PSK (~2850 символов)
+	// переваливают потолок QR 2953 (F177), dtls — ~680 (#688). Сбой чтения ASC
+	// пира не ломает: конфиг рабочий, рискует только QR.
+	profile := signature.DefaultProfile
+	if asc, err := s.GetASCParams(ctx, id); err == nil && hasASC3(asc) {
+		profile = "dtls"
+	}
+	sig, err := signature.Generate(profile)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrSignatureGenerate, err)
 	}

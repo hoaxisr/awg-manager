@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
@@ -162,6 +163,11 @@ func TestGenerateConf_AWG31CarriesASC3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// QR (F177): потолок 2953 символа при EC=L; ключи фейка короче настоящих
+	// на ~120 символов — запас 300 их покрывает.
+	if peer.SignatureProfile != "dtls" || len(conf)+300 > 2953 {
+		t.Fatalf("профиль %q, длина conf %d — QR не влезет", peer.SignatureProfile, len(conf))
+	}
 	getter.mu.Lock()
 	hp := getter.asc[server.InterfaceName]["header-protection-key"]
 	getter.mu.Unlock()
@@ -196,6 +202,9 @@ func TestGenerateConf_AWG20HasNoASC3(t *testing.T) {
 	conf, err := svc.GenerateConf(context.Background(), server.InterfaceName, peer.PublicKey, "")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if peer.SignatureProfile != signature.DefaultProfile {
+		t.Fatalf("профиль пира сервера 2.0: %q", peer.SignatureProfile)
 	}
 	if !strings.Contains(conf, "Jc = ") || strings.Contains(conf, "HeaderProtectionKey") || strings.Contains(conf, "RandomTrailers") {
 		t.Fatalf("conf сервера 2.0:\n%s", conf)
