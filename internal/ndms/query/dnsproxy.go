@@ -57,9 +57,9 @@ func (s *DNSProxyStore) Fetch(ctx context.Context) ([]ndms.DNSRouteRule, error) 
 // as a JSON object keyed by group name (group as the key, no "group"
 // field). Empty data is rendered as `[]`. All three shapes are handled.
 //
-// Index and Disable are only present on /show/sc/dns-proxy/route — that's
-// the path this Store fetches, because we need Index to issue
-// disable.index toggles without delete-recreate.
+// Index and Disable are returned by both /show/sc/ and /show/rc/
+// dns-proxy/route; we need Index to issue disable.index toggles, in-place
+// edits and moves without delete-recreate.
 type dnsProxyRouteWire struct {
 	Group     string `json:"group,omitempty"`
 	Interface string `json:"interface"`

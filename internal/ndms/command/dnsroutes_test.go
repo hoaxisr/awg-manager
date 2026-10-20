@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -248,4 +249,124 @@ func waitEpochSaved(t *testing.T, sc *SaveCoordinator, want uint64) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("saved < %d", want)
+}
+
+func dnsRoutePayload(t *testing.T, poster *fakePoster) []any {
+	t.Helper()
+	return poster.Payloads()[0].(map[string]any)["dns-proxy"].(map[string]any)["route"].([]any)
+}
+
+// Снос, правка по index и добавление — один POST в этом порядке: сносы
+// первыми освобождают место, правка держит позицию строки (#1023).
+func TestRewriteInPlace_OneBatchDeletesUpdatesAdds(t *testing.T) {
+	cmds, poster := newTestDNSRouteCommands(t, true)
+	err := cmds.RewriteInPlace(context.Background(),
+		[]string{"i9"},
+		[]DNSRouteUpdate{{Index: "i1", Spec: DNSRouteSpec{Group: "g1", Interface: confirmed(t, "Wireguard2")}}},
+		[]DNSRouteSpec{{Group: "g1", Interface: confirmed(t, "Wireguard3"), Reject: true}})
+	if err != nil {
+		t.Fatalf("RewriteInPlace: %v", err)
+	}
+	if poster.Calls() != 1 {
+		t.Fatalf("POST-ов: %d, want 1", poster.Calls())
+	}
+	route := dnsRoutePayload(t, poster)
+	if len(route) != 3 {
+		t.Fatalf("route len: %d, want 3", len(route))
+	}
+	del := route[0].(map[string]any)
+	if del["index"] != "i9" || del["no"] != true || len(del) != 2 {
+		t.Errorf("снос: %#v", del)
+	}
+	upd := route[1].(map[string]any)
+	if upd["group"] != "g1" || upd["interface"] != "Wireguard2" || upd["auto"] != true || upd["index"] != "i1" {
+		t.Errorf("правка: %#v", upd)
+	}
+	if _, has := upd["reject"]; has {
+		t.Errorf("правка без reject несёт ключ reject: %#v", upd)
+	}
+	add := route[2].(map[string]any)
+	if add["interface"] != "Wireguard3" || add["reject"] != true {
+		t.Errorf("добавление: %#v", add)
+	}
+	if _, has := add["index"]; has {
+		t.Errorf("добавление несёт index: %#v", add)
+	}
+}
+
+func TestMoveRoutes_SequentialRules(t *testing.T) {
+	cmds, poster := newTestDNSRouteCommands(t, true)
+	err := cmds.MoveRoutes(context.Background(), []DNSRouteMove{{Index: "i3", Position: 4}, {Index: "i1", Position: 5}})
+	if err != nil {
+		t.Fatalf("MoveRoutes: %v", err)
+	}
+	if poster.Calls() != 1 {
+		t.Fatalf("POST-ов: %d, want 1", poster.Calls())
+	}
+	route := dnsRoutePayload(t, poster)
+	if len(route) != 2 {
+		t.Fatalf("route len: %d", len(route))
+	}
+	for i, want := range []struct {
+		idx string
+		pos int
+	}{{"i3", 4}, {"i1", 5}} {
+		r := route[i].(map[string]any)["rule"].(map[string]any)
+		if r["index"] != want.idx || r["new-index"] != want.pos || len(r) != 2 {
+			t.Errorf("rule[%d] = %#v", i, r)
+		}
+	}
+}
+
+// Любой status:"error" — ошибка: «unable to find … with index» одинаков у
+// сноса и правки, безобидный отказ не отличить.
+func TestRewriteInPlace_RouterErrorSurfaces(t *testing.T) {
+	cmds, poster := newTestDNSRouteCommands(t, true)
+	poster.SetResponse(`{"dns-proxy":{"route":[{"status":[{"status":"error","code":"4457098","message":"unable to find the DNS route rule with index \"i1\"."}]}]}}`)
+	err := cmds.RewriteInPlace(context.Background(), nil,
+		[]DNSRouteUpdate{{Index: "i1", Spec: DNSRouteSpec{Group: "g1", Interface: confirmed(t, "Wireguard2")}}}, nil)
+	if err == nil || !strings.Contains(err.Error(), `unable to find the DNS route rule with index "i1"`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRewriteInPlace_ZeroInterface_Refused(t *testing.T) {
+	cmds, poster := newTestDNSRouteCommands(t, true)
+	if err := cmds.RewriteInPlace(context.Background(), nil,
+		[]DNSRouteUpdate{{Index: "i1", Spec: DNSRouteSpec{Group: "g1"}}}, nil); err == nil {
+		t.Fatal("правка без интерфейса обязана отказывать")
+	}
+	if err := cmds.RewriteInPlace(context.Background(), []string{"i9"}, nil,
+		[]DNSRouteSpec{{Group: "g1"}}); err == nil {
+		t.Fatal("добавление без интерфейса обязано отказывать")
+	}
+	if poster.Calls() != 0 {
+		t.Fatalf("в NDMS ушло %d POST", poster.Calls())
+	}
+}
+
+func TestRewriteInPlaceAndMove_OS4_NotSupported(t *testing.T) {
+	cmds, poster := newTestDNSRouteCommands(t, false)
+	if err := cmds.RewriteInPlace(context.Background(), []string{"i1"}, nil, nil); !errors.Is(err, query.ErrNotSupportedOnOS4) {
+		t.Errorf("RewriteInPlace err: %v", err)
+	}
+	if err := cmds.MoveRoutes(context.Background(), []DNSRouteMove{{Index: "i1", Position: 0}}); !errors.Is(err, query.ErrNotSupportedOnOS4) {
+		t.Errorf("MoveRoutes err: %v", err)
+	}
+	if poster.Calls() != 0 {
+		t.Errorf("POST на OS4: %d", poster.Calls())
+	}
+}
+
+func TestRewriteInPlaceAndMove_Empty_NoOp(t *testing.T) {
+	cmds, poster := newTestDNSRouteCommands(t, true)
+	if err := cmds.RewriteInPlace(context.Background(), nil, nil, nil); err != nil {
+		t.Errorf("RewriteInPlace: %v", err)
+	}
+	if err := cmds.MoveRoutes(context.Background(), nil); err != nil {
+		t.Errorf("MoveRoutes: %v", err)
+	}
+	if poster.Calls() != 0 {
+		t.Errorf("POST на пустом входе: %d", poster.Calls())
+	}
 }
