@@ -789,9 +789,15 @@ func (s *ServiceImpl) rewriteInPlace(ctx context.Context, rb rciRouteRebuild, co
 	}
 	var cur []ndms.DNSRouteRule
 	for _, r := range ordered {
-		if r.Group == rb.group {
-			cur = append(cur, r)
+		if r.Group != rb.group {
+			continue
 		}
+		// Семантика `"index":""` в NDMS неизвестна — без index строку на месте
+		// не правим, откат на ReplaceRoutes.
+		if r.Index == "" {
+			return nil, fmt.Errorf("строка %s/%s без index", r.Group, r.Interface)
+		}
+		cur = append(cur, r)
 	}
 	spec := func(ro rciRouteOp) command.DNSRouteSpec {
 		return command.DNSRouteSpec{Group: ro.Group, Interface: confirmed[ro.Iface], Reject: ro.Reject}

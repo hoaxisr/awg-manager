@@ -98,6 +98,11 @@ func (s *DNSProxyStore) FetchOrdered(ctx context.Context) ([]ndms.DNSRouteRule, 
 	if err != nil {
 		return nil, fmt.Errorf("fetch dns-proxy routes (rc): %w", err)
 	}
+	// Форма-объект с ключом по группе теряет порядок (map) и сводит группу к
+	// одной записи — по ней правка на месте спланировала бы дубль строки.
+	if t := bytes.TrimSpace(raw); len(t) > 0 && t[0] == '{' {
+		return nil, fmt.Errorf("fetch dns-proxy routes (rc): выдача-объект, порядок невосстановим")
+	}
 	return decodeDNSProxyRoutes(raw)
 }
 

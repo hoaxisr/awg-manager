@@ -33,6 +33,12 @@ func (r *fakeRouter) dnsPostCount() int {
 	return r.dnsPosts
 }
 
+func (r *fakeRouter) rejectedCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rejected
+}
+
 func (r *fakeRouter) indexedCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -178,8 +184,49 @@ func TestIssue1023_LegacyFallback(t *testing.T) {
 
 	mustUpdateRoutes(t, svc, first, "Wireguard3")
 
+	if r.rejectedCount() == 0 {
+		t.Fatal("попытки правки на месте не было — откат не проверен")
+	}
 	assertSeq(t, "first", r.ifaceOrder("first_p"), "Wireguard3")
 	assertSeq(t, "порядок групп", r.groupOrder(), "second_p1", "first_p1")
+}
+
+// rc в форме-объекте: порядок невосстановим, FetchOrdered — ошибка, группа
+// идёт откатом без единого элемента по index; состав — цель. Без отказа
+// свёрнутая выдача (first = [W2] вместо [W1,W2]) дала бы правку W2→W1 —
+// дубль уже стоящей строки W1.
+func TestIssue1023_RCObjectFormFallsBack(t *testing.T) {
+	r := newFakeRouter()
+	r.rcObjectForm = true
+	svc := newServiceWithRouter(t, r)
+	first := mustCreate(t, svc, "first", "Wireguard1", "Wireguard2")
+	mustCreate(t, svc, "second", "Wireguard3")
+
+	mustUpdateRoutes(t, svc, first, "Wireguard1", "Wireguard0")
+
+	if got := r.indexedCount(); got != 0 {
+		t.Errorf("элементов по index/rule: %d, ожидался откат", got)
+	}
+	assertSeq(t, "first", r.ifaceOrder("first_p"), "Wireguard1", "Wireguard0")
+	assertSeq(t, "порядок групп", r.groupOrder(), "second_p1", "first_p1")
+}
+
+// Строка группы без index: правка на месте не пробуется (`"index":""` не
+// уходит), откат дописывает цель.
+func TestIssue1023_EmptyIndexFallsBack(t *testing.T) {
+	r := newFakeRouter()
+	svc := newServiceWithRouter(t, r)
+	first := mustCreate(t, svc, "first", "Wireguard1")
+	r.mu.Lock()
+	r.routes[0].index = ""
+	r.mu.Unlock()
+
+	mustUpdateRoutes(t, svc, first, "Wireguard3")
+
+	if got := r.indexedCount(); got != 0 {
+		t.Errorf("элементов по index/rule: %d, ожидался откат", got)
+	}
+	assertSeq(t, "first", r.ifaceOrder("first_p"), "Wireguard3")
 }
 
 // Правка на месте прошла, перестановка нет: откат обязан дописать группу
@@ -213,6 +260,9 @@ func TestIssue1023_SwapSinglePost(t *testing.T) {
 
 	mustUpdateRoutes(t, svc, first, "Wireguard2")
 
+	if r.indexedCount() == 0 {
+		t.Fatal("правка прошла не на месте — тест холостой")
+	}
 	assertSeq(t, "first", r.ifaceOrder("first_p"), "Wireguard2")
 	if got := r.dnsPostCount() - before; got != 1 {
 		t.Errorf("POST-ов dns-proxy = %d, ожидался 1", got)

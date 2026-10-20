@@ -69,6 +69,11 @@ type fakeRouter struct {
 	legacyOnly bool
 	// failRule — ошибка только на rule: правка на месте прошла, перестановка нет.
 	failRule bool
+	// rejected — элементы index/rule, отвергнутые в режиме legacyOnly.
+	rejected int
+	// rcObjectForm — rc отдаёт форму-объект с ключом по группе (одна запись
+	// на группу, порядок map): по ней порядок невосстановим.
+	rcObjectForm bool
 }
 
 // waitQuiet ждёт, пока число POST-ов перестанет расти, и возвращает его.
@@ -102,6 +107,16 @@ func (r *fakeRouter) Get(context.Context, string, any) error { return nil }
 func (r *fakeRouter) GetRaw(_ context.Context, path string) ([]byte, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if path == "/show/rc/dns-proxy/route" && r.rcObjectForm {
+		m := map[string]any{}
+		for _, rt := range r.routes {
+			m[rt.group] = map[string]any{
+				"interface": rt.iface, "auto": true, "reject": rt.reject,
+				"index": rt.index, "disable": rt.disabled,
+			}
+		}
+		return json.Marshal(m)
+	}
 	switch path {
 	case "/show/sc/dns-proxy/route", "/show/rc/dns-proxy/route":
 		arr := make([]map[string]any, 0, len(r.routes))
@@ -205,6 +220,7 @@ func (r *fakeRouter) applyRouteElem(m map[string]any) map[string]any {
 	if byIndex || isRule {
 		r.indexed++
 		if r.legacyOnly {
+			r.rejected++
 			// Текст и код отказа — тоже гипотеза: 5.00 не мерили.
 			return routeErr("", "unknown argument")
 		}

@@ -186,3 +186,24 @@ func TestDNSProxyStore_FetchOrdered_OS4(t *testing.T) {
 		t.Errorf("calls: want 0, got %d", n)
 	}
 }
+
+func TestDNSProxyStore_FetchOrdered_ObjectFormRejected(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON("/show/rc/dns-proxy/route", ` {"a":{"interface":"W0","index":"i1"}}`)
+	s := NewDNSProxyStore(fg, NopLogger(), func() bool { return true })
+
+	if _, err := s.FetchOrdered(context.Background()); err == nil {
+		t.Fatal("выдача-объект обязана быть ошибкой: порядок невосстановим")
+	}
+}
+
+func TestDNSProxyStore_FetchOrdered_EmptyArray(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON("/show/rc/dns-proxy/route", `[]`)
+	s := NewDNSProxyStore(fg, NopLogger(), func() bool { return true })
+
+	got, err := s.FetchOrdered(context.Background())
+	if err != nil || len(got) != 0 {
+		t.Fatalf("FetchOrdered([]) = %v, %v", got, err)
+	}
+}
