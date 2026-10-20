@@ -150,7 +150,6 @@ func (i *Installer) RequiredVersion() string { return i.spec.Version }
 // RequiredSHA256 is the checksum this awg-manager build is pinned to.
 func (i *Installer) RequiredSHA256() string { return i.spec.SHA256 }
 
-
 // CurrentSHA256 returns the checksum of the installed managed binary,
 // served from the (size, mtime) cache when the file is unchanged.
 func (i *Installer) CurrentSHA256() (string, error) {
