@@ -165,7 +165,14 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 			}
 			return nil, err
 		}
-		return s.deps.Settings.Get()
+		saved, err := s.deps.Settings.Get()
+		if err != nil {
+			return nil, err
+		}
+		if err := s.reapplyRouteWAN(ctx, saved.SingboxRouter); err != nil {
+			return nil, err
+		}
+		return saved, nil
 	}()
 	if err != nil {
 		return err
@@ -186,6 +193,26 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	// no-op (набор уже совпадает).
 	s.syncKeenDNSPreset(ctx, normalized)
 	return s.Reconcile(ctx)
+}
+
+// reapplyRouteWAN переносит выбор WAN в применённый 20-router.json
+// включённого tproxy/policy-tun (F703): EnsureRouteWAN иначе звучит только на
+// Enable, и сохранённый выбор не доезжал до sing-box до выключения/включения
+// режима. Байт-идентичный результат persistSlotDirect не пишет. Слот ещё не
+// поднят (окно провижининга) — пропуск: WAN выставит сам Enable.
+func (s *ServiceImpl) reapplyRouteWAN(ctx context.Context, sr storage.SingboxRouterSettings) error {
+	if s.deps.Orch == nil || !sr.Enabled || (sr.RoutingMode != stateTProxy && sr.RoutingMode != statePolicyTun) {
+		return nil
+	}
+	if !s.routerSlotEnabled() {
+		return nil
+	}
+	cfg, err := s.loadAppliedRouterConfig()
+	if err != nil {
+		return err
+	}
+	cfg.EnsureRouteWAN(sr.WANAutoDetect, sr.WANInterface)
+	return s.persistConfigDirect(ctx, cfg)
 }
 
 // reapplyFakeIPOverlay перегенерирует fakeip-overlay на ВКЛЮЧЁННОМ и

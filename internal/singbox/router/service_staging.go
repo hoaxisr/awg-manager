@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -41,6 +42,9 @@ func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.Validation
 	if err := s.syncDraftTunExternal(); err != nil {
 		s.appLog.Warn("staging", "tun-in", "выровнять external_configuration черновика: "+err.Error())
 	}
+	if err := s.syncDraftRouteWAN(); err != nil {
+		s.appLog.Warn("staging", "route-wan", "выровнять выбор WAN черновика: "+err.Error())
+	}
 	res, err := s.deps.Orch.ApplyDraft(orchestrator.SlotRouter)
 	if err == nil && res.Ok() {
 		// A staged rule-set delete/rename is final now — reap the orphaned
@@ -73,6 +77,64 @@ func (s *ServiceImpl) restoreEffectiveRuleSetArtifacts() error {
 	m := s.ruleSetMaterializer()
 	_, err = m.materializeConfig(orchestrator.SlotRouter, m.restoreConfig(cfg))
 	return err
+}
+
+// routeWANKeys — поля route, которыми владеют настройки (выбор WAN,
+// EnsureRouteWAN), а не пользователь.
+var routeWANKeys = []string{"auto_detect_interface", "default_interface"}
+
+// syncDraftRouteWAN переносит выбор WAN из применённого слота в черновик
+// (F703): черновик — снимок момента первой правки, и его применение вернуло
+// бы прежний WAN мимо настроек. Правка по сырому JSON — как у
+// syncDraftTunExternal.
+func (s *ServiceImpl) syncDraftRouteWAN() error {
+	if !s.deps.Orch.HasDraft(orchestrator.SlotRouter) {
+		return nil
+	}
+	rawApplied, err := s.deps.Orch.LoadApplied(orchestrator.SlotRouter)
+	if err != nil || rawApplied == nil {
+		return err
+	}
+	var applied struct {
+		Route map[string]any `json:"route"`
+	}
+	if err := json.Unmarshal(rawApplied, &applied); err != nil {
+		return err
+	}
+	raw, err := s.deps.Orch.LoadEffective(orchestrator.SlotRouter)
+	if err != nil {
+		return err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return err
+	}
+	route, _ := doc["route"].(map[string]any)
+	if route == nil {
+		route = map[string]any{}
+		doc["route"] = route
+	}
+	changed := false
+	for _, k := range routeWANKeys {
+		want, ok := applied.Route[k]
+		have, had := route[k]
+		switch {
+		case ok && (!had || !reflect.DeepEqual(have, want)):
+			route[k] = want
+			changed = true
+		case !ok && had:
+			delete(route, k)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return s.deps.Orch.SaveDraft(orchestrator.SlotRouter, out)
 }
 
 // syncDraftTunExternal переносит флаг external_configuration tun-in из
