@@ -42,8 +42,8 @@ func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.Validation
 	if err := s.syncDraftTunExternal(); err != nil {
 		s.appLog.Warn("staging", "tun-in", "выровнять external_configuration черновика: "+err.Error())
 	}
-	if err := s.syncDraftRouteWAN(); err != nil {
-		s.appLog.Warn("staging", "route-wan", "выровнять выбор WAN черновика: "+err.Error())
+	if err := s.syncDraftRouterSettings(); err != nil {
+		s.appLog.Warn("staging", "router-settings", "выровнять WAN/сниффер черновика: "+err.Error())
 	}
 	res, err := s.deps.Orch.ApplyDraft(orchestrator.SlotRouter)
 	if err == nil && res.Ok() {
@@ -83,11 +83,12 @@ func (s *ServiceImpl) restoreEffectiveRuleSetArtifacts() error {
 // EnsureRouteWAN), а не пользователь.
 var routeWANKeys = []string{"auto_detect_interface", "default_interface"}
 
-// syncDraftRouteWAN переносит выбор WAN из применённого слота в черновик
-// (F703): черновик — снимок момента первой правки, и его применение вернуло
-// бы прежний WAN мимо настроек. Правка по сырому JSON — как у
-// syncDraftTunExternal.
-func (s *ServiceImpl) syncDraftRouteWAN() error {
+// syncDraftRouterSettings переносит в черновик то, чем в слоте владеют
+// настройки: выбор WAN из применённого слота (F703) и наличие системного
+// правила sniff по snifferEnabled (F704). Черновик — снимок момента первой
+// правки, и его применение вернуло бы прежнее мимо настроек. Правка по сырому
+// JSON — как у syncDraftTunExternal.
+func (s *ServiceImpl) syncDraftRouterSettings() error {
 	if !s.deps.Orch.HasDraft(orchestrator.SlotRouter) {
 		return nil
 	}
@@ -115,6 +116,9 @@ func (s *ServiceImpl) syncDraftRouteWAN() error {
 		doc["route"] = route
 	}
 	changed := false
+	if settings, err := s.deps.Settings.Get(); err == nil {
+		changed = syncDraftSniffRule(route, settings.SingboxRouter.SnifferEnabled)
+	}
 	for _, k := range routeWANKeys {
 		want, ok := applied.Route[k]
 		have, had := route[k]
@@ -135,6 +139,33 @@ func (s *ServiceImpl) syncDraftRouteWAN() error {
 		return err
 	}
 	return s.deps.Orch.SaveDraft(orchestrator.SlotRouter, out)
+}
+
+// syncDraftSniffRule приводит системное правило sniff (`{"action":"sniff"}`
+// без условий, см. isSystemSniffRule) в route.rules черновика к want: снимает
+// все такие правила или ставит одно первым, как EnsureSystemRules.
+func syncDraftSniffRule(route map[string]any, want bool) bool {
+	rules, _ := route["rules"].([]any)
+	kept := make([]any, 0, len(rules))
+	has := false
+	for _, v := range rules {
+		if m, ok := v.(map[string]any); ok && len(m) == 1 && m["action"] == "sniff" {
+			has = true
+			if !want {
+				continue
+			}
+		}
+		kept = append(kept, v)
+	}
+	switch {
+	case want && !has:
+		route["rules"] = append([]any{map[string]any{"action": "sniff"}}, kept...)
+		return true
+	case !want && has:
+		route["rules"] = kept
+		return true
+	}
+	return false
 }
 
 // syncDraftTunExternal переносит флаг external_configuration tun-in из

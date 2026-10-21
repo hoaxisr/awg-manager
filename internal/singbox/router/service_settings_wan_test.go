@@ -92,3 +92,91 @@ func TestApplyStaging_KeepsRouteWANFromApplied(t *testing.T) {
 		t.Errorf("after ApplyStaging route WAN = %v / %v; want pinned ppp0", ad, iface)
 	}
 }
+
+func hasSystemSniff(t *testing.T, path string) bool {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Route struct {
+			Rules []map[string]any `json:"rules"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range doc.Route.Rules {
+		if r["action"] == "sniff" && len(r) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// F704: переключатель сниффера при включённом маршрутизаторе доезжает до
+// 20-router.json сразу (EnsureSystemRules звучал только на Enable).
+// Стенд 21.10: PUT snifferEnabled:false → правило sniff осталось.
+func TestUpdateSettings_SnifferAppliedToActiveRouterSlot(t *testing.T) {
+	h := newTransitionHarness(t)
+	ctx := context.Background()
+	h.seedState(t, stateOff, false)
+	if err := h.svc.SwitchRoutingMode(ctx, "tproxy"); err != nil {
+		t.Fatalf("switch to tproxy: %v", err)
+	}
+	slot := filepath.Join(h.dir, "20-router.json")
+	sr, err := h.svc.GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sr.SnifferEnabled = true
+	_ = h.svc.UpdateSettings(ctx, sr)
+	if !hasSystemSniff(t, slot) {
+		t.Fatal("sniff rule not added by snifferEnabled=true")
+	}
+
+	sr.SnifferEnabled = false
+	_ = h.svc.UpdateSettings(ctx, sr)
+	if hasSystemSniff(t, slot) {
+		t.Error("sniff rule survived snifferEnabled=false")
+	}
+	sr.SnifferEnabled = true
+	_ = h.svc.UpdateSettings(ctx, sr)
+	if !hasSystemSniff(t, slot) {
+		t.Error("sniff rule not restored by snifferEnabled=true")
+	}
+}
+
+// Черновик, снятый при включённом сниффере, при применении не возвращает
+// sniff после выключения сниффера в настройках.
+func TestApplyStaging_KeepsSnifferFromSettings(t *testing.T) {
+	h := newTransitionHarness(t)
+	ctx := context.Background()
+	h.seedState(t, stateOff, false)
+	if err := h.svc.SwitchRoutingMode(ctx, "tproxy"); err != nil {
+		t.Fatalf("switch to tproxy: %v", err)
+	}
+	sr, err := h.svc.GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sr.SnifferEnabled = true
+	_ = h.svc.UpdateSettings(ctx, sr)
+	applied, err := h.svc.deps.Orch.LoadApplied(orchestrator.SlotRouter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.deps.Orch.SaveDraft(orchestrator.SlotRouter, applied); err != nil {
+		t.Fatal(err)
+	}
+	sr.SnifferEnabled = false
+	_ = h.svc.UpdateSettings(ctx, sr)
+
+	if _, err := h.svc.ApplyStaging(ctx); err != nil {
+		t.Fatalf("ApplyStaging: %v", err)
+	}
+	if hasSystemSniff(t, filepath.Join(h.dir, "20-router.json")) {
+		t.Error("stale draft brought sniff back")
+	}
+}

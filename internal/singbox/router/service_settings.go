@@ -169,7 +169,7 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 		if err != nil {
 			return nil, err
 		}
-		if err := s.reapplyRouteWAN(ctx, saved.SingboxRouter); err != nil {
+		if err := s.reapplyRouterSettings(ctx, saved.SingboxRouter); err != nil {
 			return nil, err
 		}
 		return saved, nil
@@ -195,12 +195,13 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	return s.Reconcile(ctx)
 }
 
-// reapplyRouteWAN переносит выбор WAN в применённый 20-router.json
-// включённого tproxy/policy-tun (F703): EnsureRouteWAN иначе звучит только на
-// Enable, и сохранённый выбор не доезжал до sing-box до выключения/включения
+// reapplyRouterSettings переносит в применённый 20-router.json включённого
+// tproxy/policy-tun то, чем в нём владеют настройки: выбор WAN (F703) и
+// системные правила со сниффером (F704). Ensure* иначе звучат только на
+// Enable, и сохранённое не доезжало до sing-box до выключения/включения
 // режима. Байт-идентичный результат persistSlotDirect не пишет. Слот ещё не
-// поднят (окно провижининга) — пропуск: WAN выставит сам Enable.
-func (s *ServiceImpl) reapplyRouteWAN(ctx context.Context, sr storage.SingboxRouterSettings) error {
+// поднят (окно провижининга) — пропуск: всё выставит сам Enable.
+func (s *ServiceImpl) reapplyRouterSettings(ctx context.Context, sr storage.SingboxRouterSettings) error {
 	if s.deps.Orch == nil || !sr.Enabled || (sr.RoutingMode != stateTProxy && sr.RoutingMode != statePolicyTun) {
 		return nil
 	}
@@ -211,6 +212,7 @@ func (s *ServiceImpl) reapplyRouteWAN(ctx context.Context, sr storage.SingboxRou
 	if err != nil {
 		return err
 	}
+	cfg.EnsureSystemRules(sr.SnifferEnabled)
 	cfg.EnsureRouteWAN(sr.WANAutoDetect, sr.WANInterface)
 	return s.persistConfigDirect(ctx, cfg)
 }
