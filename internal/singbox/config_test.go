@@ -435,7 +435,7 @@ func TestConfig_EnsureDeviceProxy_Full(t *testing.T) {
 	}
 
 	// Route rules at front: LAN names, LAN → direct, then the binding (F701/F702).
-	rules := c.routeRules()[1:]
+	rules := c.routeRules()[3:] // [0..1] — отказ loopback, [2] — LAN-имена
 	if len(rules) < 2 {
 		t.Fatalf("route rules = %v, want private-direct + binding", rules)
 	}

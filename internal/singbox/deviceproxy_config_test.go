@@ -126,7 +126,7 @@ func TestBuildDeviceProxyConfig_PrivateDirectBeforeBinding(t *testing.T) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		t.Fatal(err)
 	}
-	rules := cfg.routeRules()[1:] // [0] — LAN-имена, см. TestBuildDeviceProxyConfig_LANNamesViaLocalDNS
+	rules := cfg.routeRules()[3:] // [0..1] — отказ loopback, [2] — LAN-имена
 	want := []string{
 		`{"inbound":"device-proxy-in","ip_is_private":true,"outbound":"device-proxy-lan"}`,
 		`{"inbound":"device-proxy-in","outbound":"device-proxy-selector"}`,
@@ -179,7 +179,7 @@ func TestDeviceProxyInstance_NamedLANOutbound(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	first, _ := cfg.routeRules()[0].(map[string]any)
+	first, _ := cfg.routeRules()[2].(map[string]any)
 	if first["outbound"] != "device-proxy-kids-lan" || first["domain_regex"] == nil {
 		t.Errorf("first rule = %v, want outbound device-proxy-kids-lan", first)
 	}
@@ -223,7 +223,7 @@ func TestBuildDeviceProxyConfig_LANNamesViaLocalDNS(t *testing.T) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		t.Fatal(err)
 	}
-	rules := cfg.routeRules()
+	rules := cfg.routeRules()[2:] // [0..1] — отказ loopback
 	if len(rules) != 3 {
 		t.Fatalf("rules = %v, want lan-names, private, binding", rules)
 	}
@@ -269,4 +269,39 @@ func deviceProxyDNSServers(c *Config) []map[string]any {
 		}
 	}
 	return out
+}
+
+// Безопасность: ip_is_private в sing-box ловит и loopback, и правило LAN
+// уводило 127.0.0.1 в direct — через прокси для устройств отвечал RCI роутера
+// на 127.0.0.1:79 без авторизации (стенд 21.10: /rci/show/version). Первые
+// правила инстанса — отказ loopback по адресу и по имени localhost.
+func TestBuildDeviceProxyConfig_RejectsLoopbackFirst(t *testing.T) {
+	data, err := BuildDeviceProxyConfig(DeviceProxySpec{
+		Enabled: true, ListenAddr: "0.0.0.0", Port: 1099, SelectedTag: "direct",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := NewConfig()
+	if err := json.Unmarshal(data, cfg); err != nil {
+		t.Fatal(err)
+	}
+	rules := cfg.routeRules()
+	want := []string{
+		`{"action":"reject","inbound":"device-proxy-in","ip_cidr":["127.0.0.0/8","::1/128"]}`,
+		`{"action":"reject","domain_suffix":["localhost"],"inbound":"device-proxy-in"}`,
+	}
+	if len(rules) < len(want) {
+		t.Fatalf("rules = %v", rules)
+	}
+	for i, w := range want {
+		got, _ := json.Marshal(rules[i])
+		if string(got) != w {
+			t.Errorf("rule %d = %s, want %s", i, got, w)
+		}
+	}
+	cfg.RemoveDeviceProxy()
+	if n := len(cfg.routeRules()); n != 0 {
+		t.Errorf("after RemoveDeviceProxy %d rules left", n)
+	}
 }

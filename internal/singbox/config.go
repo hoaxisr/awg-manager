@@ -1176,6 +1176,19 @@ func (c *Config) ensureDeviceProxyInstanceRouteRule(inboundTag, selectorTag, lan
 		"ip_is_private": true,
 		"outbound":      lanTag,
 	}
+	// Loopback роутера наружу не отдаём: ip_is_private его ловит, а на
+	// 127.0.0.1 слушают RCI (:79, без авторизации), Clash API, панель —
+	// через прокси для устройств они отвечали любому клиенту (стенд 21.10).
+	rejectLoopback := map[string]any{
+		"inbound": inboundTag,
+		"ip_cidr": []any{"127.0.0.0/8", "::1/128"},
+		"action":  "reject",
+	}
+	rejectLocalhost := map[string]any{
+		"inbound":       inboundTag,
+		"domain_suffix": []any{"localhost"},
+		"action":        "reject",
+	}
 	// SOCKS5h/HTTP передают имя — ip_is_private по нему не сработает.
 	lanNames := map[string]any{
 		"inbound":       inboundTag,
@@ -1200,7 +1213,7 @@ func (c *Config) ensureDeviceProxyInstanceRouteRule(inboundTag, selectorTag, lan
 		}
 		filtered = append(filtered, v)
 	}
-	c.setRouteRules(append([]any{lanNames, privateDirect, rule}, filtered...))
+	c.setRouteRules(append([]any{rejectLoopback, rejectLocalhost, lanNames, privateDirect, rule}, filtered...))
 }
 
 func (c *Config) removeDeviceProxyInstanceRouteRule(inboundTag string) {
