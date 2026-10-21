@@ -202,9 +202,14 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 // системные правила со сниффером (F704). Ensure* иначе звучат только на
 // Enable, и сохранённое не доезжало до sing-box до выключения/включения
 // режима. Байт-идентичный результат persistSlotDirect не пишет. Слот ещё не
-// поднят (окно провижининга) — пропуск: всё выставит сам Enable.
+// поднят (окно провижининга) — пропуск: всё выставит сам Enable. Зовётся и
+// из Reconcile: долечивает состояние, сохранённое до мгновенного применения.
 func (s *ServiceImpl) reapplyRouterSettings(ctx context.Context, sr storage.SingboxRouterSettings) error {
-	if s.deps.Orch == nil || !sr.Enabled || (sr.RoutingMode != stateTProxy && sr.RoutingMode != statePolicyTun) {
+	mode := sr.RoutingMode
+	if mode == "" {
+		mode = stateTProxy // legacy-дефолт, как в currentState
+	}
+	if s.deps.Orch == nil || !sr.Enabled || (mode != stateTProxy && mode != statePolicyTun) {
 		return nil
 	}
 	if !s.routerSlotEnabled() {

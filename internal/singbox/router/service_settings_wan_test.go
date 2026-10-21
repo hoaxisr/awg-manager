@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 func routeWANOf(t *testing.T, path string) (autoDetect any, iface any) {
@@ -46,7 +47,7 @@ func TestUpdateSettings_WANAppliedToActiveRouterSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	sr.WANAutoDetect, sr.WANInterface = false, "ppp0"
-	_ = h.svc.UpdateSettings(ctx, sr) // ошибка Reconcile не важна — ассерт по слоту
+	updateSettingsKeepGoing(t, h.svc, sr)
 
 	ad, iface := routeWANOf(t, slot)
 	if ad != nil || iface != "ppp0" {
@@ -54,7 +55,7 @@ func TestUpdateSettings_WANAppliedToActiveRouterSlot(t *testing.T) {
 	}
 
 	sr.WANAutoDetect, sr.WANInterface = true, ""
-	_ = h.svc.UpdateSettings(ctx, sr)
+	updateSettingsKeepGoing(t, h.svc, sr)
 	if ad, iface := routeWANOf(t, slot); ad != true || iface != nil {
 		t.Errorf("route WAN back to auto = %v / %v", ad, iface)
 	}
@@ -83,7 +84,7 @@ func TestApplyStaging_KeepsRouteWANFromApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 	sr.WANAutoDetect, sr.WANInterface = false, "ppp0"
-	_ = h.svc.UpdateSettings(ctx, sr)
+	updateSettingsKeepGoing(t, h.svc, sr)
 
 	if _, err := h.svc.ApplyStaging(ctx); err != nil {
 		t.Fatalf("ApplyStaging: %v", err)
@@ -132,18 +133,18 @@ func TestUpdateSettings_SnifferAppliedToActiveRouterSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	sr.SnifferEnabled = true
-	_ = h.svc.UpdateSettings(ctx, sr)
+	updateSettingsKeepGoing(t, h.svc, sr)
 	if !hasSystemSniff(t, slot) {
 		t.Fatal("sniff rule not added by snifferEnabled=true")
 	}
 
 	sr.SnifferEnabled = false
-	_ = h.svc.UpdateSettings(ctx, sr)
+	updateSettingsKeepGoing(t, h.svc, sr)
 	if hasSystemSniff(t, slot) {
 		t.Error("sniff rule survived snifferEnabled=false")
 	}
 	sr.SnifferEnabled = true
-	_ = h.svc.UpdateSettings(ctx, sr)
+	updateSettingsKeepGoing(t, h.svc, sr)
 	if !hasSystemSniff(t, slot) {
 		t.Error("sniff rule not restored by snifferEnabled=true")
 	}
@@ -163,7 +164,7 @@ func TestApplyStaging_KeepsSnifferFromSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	sr.SnifferEnabled = true
-	_ = h.svc.UpdateSettings(ctx, sr)
+	updateSettingsKeepGoing(t, h.svc, sr)
 	applied, err := h.svc.deps.Orch.LoadApplied(orchestrator.SlotRouter)
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +173,7 @@ func TestApplyStaging_KeepsSnifferFromSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	sr.SnifferEnabled = false
-	_ = h.svc.UpdateSettings(ctx, sr)
+	updateSettingsKeepGoing(t, h.svc, sr)
 
 	if _, err := h.svc.ApplyStaging(ctx); err != nil {
 		t.Fatalf("ApplyStaging: %v", err)
@@ -192,5 +193,37 @@ func TestApplyStaging_RejectedDuringTransition(t *testing.T) {
 	defer h.svc.transitionMu.Unlock()
 	if _, err := h.svc.ApplyStaging(context.Background()); !errors.Is(err, ErrTransitionInProgress) {
 		t.Fatalf("ApplyStaging under transitionMu: err = %v, want ErrTransitionInProgress", err)
+	}
+}
+
+// Долечивание: выбор WAN, сохранённый до версии с мгновенным применением
+// (или в обход UpdateSettings), доезжает до слота на проходе Reconcile — без
+// пересохранения настроек пользователем.
+func TestReconcile_HealsStoredWANIntoRouterSlot(t *testing.T) {
+	h := newTransitionHarness(t)
+	ctx := context.Background()
+	h.seedState(t, stateOff, false)
+	if err := h.svc.SwitchRoutingMode(ctx, "tproxy"); err != nil {
+		t.Fatalf("switch to tproxy: %v", err)
+	}
+	if err := h.svc.deps.Settings.Update(func(cur *storage.Settings) error {
+		cur.SingboxRouter.WANAutoDetect, cur.SingboxRouter.WANInterface = false, "ppp0"
+		cur.SingboxRouter.RoutingMode = "" // legacy-запись: пусто = tproxy
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = h.svc.Reconcile(ctx)
+	if ad, iface := routeWANOf(t, filepath.Join(h.dir, "20-router.json")); ad != nil || iface != "ppp0" {
+		t.Errorf("after Reconcile route WAN = %v / %v; want pinned ppp0", ad, iface)
+	}
+}
+
+// updateSettingsKeepGoing — ошибку Reconcile обвязки игнорируем (ассерт по
+// слоту), но не отказ транзакцией: с ним ассерт падал бы с невнятной причиной.
+func updateSettingsKeepGoing(t *testing.T, s *ServiceImpl, sr storage.SingboxRouterSettings) {
+	t.Helper()
+	if err := s.UpdateSettings(context.Background(), sr); errors.Is(err, ErrTransitionInProgress) {
+		t.Fatalf("UpdateSettings: %v", err)
 	}
 }

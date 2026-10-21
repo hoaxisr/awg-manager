@@ -116,6 +116,7 @@ func (s *ServiceImpl) withLocalDNSBind(srv DNSServer) DNSServer {
 	}
 	addrs, err := s.deps.LocalAddrs()
 	if err != nil {
+		s.appLog.Warn("dns-servers", srv.Tag, "адреса интерфейсов роутера: "+err.Error()+" — адрес отправителя не подставлен")
 		return srv
 	}
 	if bind, ok := localDNSSelfBind(srv, addrs); ok {

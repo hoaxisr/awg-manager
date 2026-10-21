@@ -2160,6 +2160,12 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// rules (18-qos-routes.json). Converges class add/remove/disable and
 	// outbound edits applied through UpdateSettings→Reconcile, and cleans
 	// stale qos-* artifacts. No-op (no write, no reload) when converged.
+	// Долечивание F703/F704: выбор WAN и сниффер, сохранённые до версии с
+	// мгновенным применением, доезжают до слота без пересохранения настроек.
+	// Сошлось — ни записи, ни reload.
+	if err := s.reapplyRouterSettings(ctx, sr); err != nil {
+		s.appLog.Warn("reconcile", "router-settings", err.Error())
+	}
 	qosHealed := false
 	if healed, err := s.healQoSConfig(ctx, sr); err != nil {
 		s.appLog.Warn("heal-qos", "", err.Error())

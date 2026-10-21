@@ -362,6 +362,12 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if s.healTunSettings(ctx, orchestrator.SlotRouter, sr) {
 		s.completeExternalFlip(ctx, sr, iface, ndmsName, "policy-tun-reconcile")
 	}
+	// Долечивание F703/F704: выбор WAN и сниффер, сохранённые до версии с
+	// мгновенным применением, доезжают до слота без пересохранения настроек.
+	// Сошлось — ни записи, ни reload.
+	if err := s.reapplyRouterSettings(ctx, sr); err != nil {
+		s.appLog.Warn("reconcile", "router-settings", err.Error())
+	}
 
 	// Ingress-заворот: и drift-heal после сброса firewall NDMS, и применение
 	// смены состава ingress-интерфейсов (UpdateSettings завершается Reconcile'ом).
