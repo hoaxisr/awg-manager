@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -636,4 +637,48 @@ func TestReconcileBootstrapServer_LeavesNonObjectDNSAlone(t *testing.T) {
 			t.Fatalf("запись не создана: %#v", dns)
 		}
 	})
+}
+
+// F702 (хвост): dns-bootstrap на собственном адресе роутера (#770 позволяет
+// любой IP) при включённом маршрутизаторе висит — sing-box биндит сокет к
+// интерфейсу-владельцу адреса. Как у DNS-серверов маршрутизатора: адрес
+// отправителя = адрес сервера; выведенный снимается при смене адреса, явный
+// (отличный от адреса сервера) не трогается.
+func TestReconcileBootstrapServer_LocalSelfBind(t *testing.T) {
+	prev := routerLocalAddrs
+	t.Cleanup(func() { routerLocalAddrs = prev })
+	routerLocalAddrs = func() ([]net.Addr, error) {
+		return []net.Addr{&net.IPNet{IP: net.ParseIP("192.168.0.1"), Mask: net.CIDRMask(24, 32)}}, nil
+	}
+	bindOf := func(base map[string]any) any {
+		for _, v := range base["dns"].(map[string]any)["servers"].([]any) {
+			if s := v.(map[string]any); s["tag"] == "dns-bootstrap" {
+				return s["inet4_bind_address"]
+			}
+		}
+		return "missing"
+	}
+
+	base := map[string]any{"dns": map[string]any{"servers": []any{bootstrapEntry("192.168.0.1")}}}
+	if !reconcileBootstrapServer(base, "") || bindOf(base) != "192.168.0.1" {
+		t.Fatalf("router address: bind = %v", bindOf(base))
+	}
+	if reconcileBootstrapServer(base, "") {
+		t.Error("second pass changed base — not idempotent")
+	}
+	if !reconcileBootstrapServer(base, "8.8.8.8") || bindOf(base) != nil {
+		t.Errorf("derived bind after → 8.8.8.8: %v", bindOf(base))
+	}
+
+	created := map[string]any{}
+	if !reconcileBootstrapServer(created, "192.168.0.1") || bindOf(created) != "192.168.0.1" {
+		t.Errorf("created entry on router address: bind = %v", bindOf(created))
+	}
+
+	explicit := map[string]any{"dns": map[string]any{"servers": []any{map[string]any{
+		"type": "udp", "tag": "dns-bootstrap", "server": "192.168.0.1", "inet4_bind_address": "10.0.20.1"}}}}
+	reconcileBootstrapServer(explicit, "8.8.8.8")
+	if bindOf(explicit) != "10.0.20.1" {
+		t.Errorf("explicit bind lost: %v", bindOf(explicit))
+	}
 }

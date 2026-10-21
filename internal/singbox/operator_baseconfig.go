@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -584,6 +585,8 @@ func setClashController(m map[string]any, want string) bool {
 // запись — этим занимается reconcileBootstrapServer, который решает, что
 // делать при отсутствующей записи.
 func setBootstrapServer(m map[string]any, want string) bool {
+	// Выведенный адрес отправителя (= прежнему адресу сервера, см.
+	// bootstrapSelfBind) уходит вместе с прежним адресом.
 	dns, _ := m["dns"].(map[string]any)
 	if dns == nil {
 		return false
@@ -596,6 +599,9 @@ func setBootstrapServer(m map[string]any, want string) bool {
 		}
 		if s["server"] == want {
 			return false
+		}
+		if s["inet4_bind_address"] != nil && s["inet4_bind_address"] == s["server"] {
+			delete(s, "inet4_bind_address")
 		}
 		s["server"] = want
 		return true
@@ -650,12 +656,38 @@ func reconcileBootstrapServer(base map[string]any, want string) bool {
 		if s == nil || s["tag"] != "dns-bootstrap" {
 			continue
 		}
-		if want == "" {
-			return false
-		}
-		return setBootstrapServer(base, want)
+		changed := want != "" && setBootstrapServer(base, want)
+		return bootstrapSelfBind(s) || changed
 	}
-	dns["servers"] = append(servers, map[string]any{"type": "udp", "tag": "dns-bootstrap", "server": bootstrapAddr(want)})
+	entry := map[string]any{"type": "udp", "tag": "dns-bootstrap", "server": bootstrapAddr(want)}
+	bootstrapSelfBind(entry)
+	dns["servers"] = append(servers, entry)
+	return true
+}
+
+// routerLocalAddrs — адреса интерфейсов роутера; переменная пакета ради тестов.
+var routerLocalAddrs = net.InterfaceAddrs
+
+// bootstrapSelfBind ставит dns-bootstrap на собственном адресе роутера тот же
+// адрес отправителя (F702, как router.localDNSSelfBind у DNS-серверов
+// маршрутизатора): при включённом маршрутизаторе sing-box биндит сокет к
+// интерфейсу-владельцу адреса, и на ядре Keenetic запрос висит — домены
+// исходящих не резолвятся вовсе. Только при пустом адресе отправителя и без
+// detour; сбой чтения адресов — без подстановки.
+func bootstrapSelfBind(s map[string]any) bool {
+	if s["inet4_bind_address"] != nil || s["detour"] != nil {
+		return false
+	}
+	server, _ := s["server"].(string)
+	ip, err := netip.ParseAddr(server)
+	if err != nil || !ip.Is4() {
+		return false
+	}
+	addrs, err := routerLocalAddrs()
+	if err != nil || !router.AddrIsLocal(addrs, ip) {
+		return false
+	}
+	s["inet4_bind_address"] = server
 	return true
 }
 

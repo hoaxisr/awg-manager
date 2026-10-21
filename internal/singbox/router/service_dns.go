@@ -52,13 +52,14 @@ func (s *ServiceImpl) dnsBindAddressLocal(srv DNSServer) error {
 	if err != nil {
 		return fmt.Errorf("адреса интерфейсов роутера: %w", err)
 	}
-	if addrIsLocal(addrs, want) {
+	if AddrIsLocal(addrs, want) {
 		return nil
 	}
 	return fmt.Errorf("%w: %s не назначен ни одному интерфейсу роутера", ErrDNSBindAddress, want)
 }
 
-func addrIsLocal(addrs []net.Addr, want netip.Addr) bool {
+// AddrIsLocal — want назначен одному из интерфейсов (addrs из net.InterfaceAddrs).
+func AddrIsLocal(addrs []net.Addr, want netip.Addr) bool {
 	for _, a := range addrs {
 		if n, ok := a.(*net.IPNet); ok {
 			if ip, ok := netip.AddrFromSlice(n.IP); ok && ip.Unmap() == want {
@@ -81,7 +82,7 @@ func localDNSSelfBind(srv DNSServer, addrs []net.Addr) (string, bool) {
 		return "", false
 	}
 	ip, err := netip.ParseAddr(srv.Server)
-	if err != nil || !ip.Is4() || !addrIsLocal(addrs, ip) {
+	if err != nil || !ip.Is4() || !AddrIsLocal(addrs, ip) {
 		return "", false
 	}
 	return ip.String(), true
