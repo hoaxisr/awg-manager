@@ -39,6 +39,13 @@ func (s *ServiceImpl) StagingStatus(ctx context.Context) StagingStatus {
 // success it emits "singbox.router.staging" + "singbox.router.rules" SSE
 // invalidations.
 func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.ValidationResult, error) {
+	// Под transitionMu: тот же 20-router.json пишут смена режима и
+	// UpdateSettings (reapplyRouterSettings) — иначе перенос WAN/сниффера в
+	// черновик и запись применённого слота гоняются (F703/F704).
+	if !s.transitionMu.TryLock() {
+		return orchestrator.ValidationResult{}, ErrTransitionInProgress
+	}
+	defer s.transitionMu.Unlock()
 	if err := s.syncDraftTunExternal(); err != nil {
 		s.appLog.Warn("staging", "tun-in", "выровнять external_configuration черновика: "+err.Error())
 	}

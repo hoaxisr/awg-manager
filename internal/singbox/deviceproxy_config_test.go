@@ -249,8 +249,11 @@ func TestBuildDeviceProxyConfig_LANNamesViaLocalDNS(t *testing.T) {
 	if lan["domain_resolver"] != "device-proxy-lan-dns" {
 		t.Errorf("device-proxy-lan domain_resolver = %v, want device-proxy-lan-dns", lan["domain_resolver"])
 	}
-	if srv := deviceProxyDNSServers(cfg); len(srv) != 1 || srv[0]["tag"] != "device-proxy-lan-dns" || srv[0]["type"] != "local" {
-		t.Errorf("dns servers = %v, want one local device-proxy-lan-dns", srv)
+	// Без адреса отправителя local-сервер при выбранном WAN (default_interface)
+	// биндится к нему, и запрос к 127.0.0.1 резолвера роутера висит — тот же
+	// механизм, что F702.
+	if srv := deviceProxyDNSServers(cfg); len(srv) != 1 || srv[0]["tag"] != "device-proxy-lan-dns" || srv[0]["type"] != "local" || srv[0]["inet4_bind_address"] != "0.0.0.0" {
+		t.Errorf("dns servers = %v, want one local device-proxy-lan-dns bound to 0.0.0.0", srv)
 	}
 
 	cfg.RemoveDeviceProxy()

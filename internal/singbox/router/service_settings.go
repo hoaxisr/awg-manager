@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -80,6 +81,9 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	// Персист-окно под transitionMu: см. ErrTransitionInProgress. Reconcile
 	// ниже остаётся ВНЕ окна — он сам берёт transitionMu через TryLock и под
 	// нашим локом молча съел бы тик (мьютекс нерекурсивный).
+	// Сбой переноса настроек в слот не отменяет уже сохранённое и не
+	// пропускает остальные шаги — его возвращаем в конце.
+	var reapplyErr error
 	settings, err := func() (*storage.Settings, error) {
 		if !s.transitionMu.TryLock() {
 			return nil, ErrTransitionInProgress
@@ -169,9 +173,7 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 		if err != nil {
 			return nil, err
 		}
-		if err := s.reapplyRouterSettings(ctx, saved.SingboxRouter); err != nil {
-			return nil, err
-		}
+		reapplyErr = s.reapplyRouterSettings(ctx, saved.SingboxRouter)
 		return saved, nil
 	}()
 	if err != nil {
@@ -192,7 +194,7 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	// снятие пресета молча не доехало бы. Повторный вызов из Reconcile —
 	// no-op (набор уже совпадает).
 	s.syncKeenDNSPreset(ctx, normalized)
-	return s.Reconcile(ctx)
+	return errors.Join(reapplyErr, s.Reconcile(ctx))
 }
 
 // reapplyRouterSettings переносит в применённый 20-router.json включённого

@@ -910,7 +910,9 @@ func (c *Config) EnsureDeviceProxyInstance(spec DeviceProxyInstanceSpec) error {
 	// на ядре Keenetic соединение висит до таймаута (F702, стенд 21.10).
 	lanTag := deviceProxyLANTag(spec.ID)
 	lanDNSTag := deviceProxyLANDNSTag(spec.ID)
-	c.upsertDNSServer(lanDNSTag, map[string]any{"type": "local", "tag": lanDNSTag})
+	// Адрес отправителя — по той же причине, что у lanTag ниже: иначе
+	// local-сервер под default_interface/auto_detect биндится к интерфейсу.
+	c.upsertDNSServer(lanDNSTag, map[string]any{"type": "local", "tag": lanDNSTag, "inet4_bind_address": "0.0.0.0"})
 	c.upsertOutbound(lanTag, map[string]any{
 		"type":               "direct",
 		"tag":                lanTag,

@@ -26,6 +26,7 @@ func (s *ServiceImpl) AddDNSServer(ctx context.Context, srv DNSServer) error {
 }
 
 func (s *ServiceImpl) UpdateDNSServer(ctx context.Context, tag string, srv DNSServer) error {
+	srv = s.dropDerivedDNSBind(tag, srv)
 	srv = s.withLocalDNSBind(srv)
 	bindErr := s.dnsBindAddressLocal(srv)
 	return s.withConfig(ctx, "dns-servers", func(c *RouterConfig) error {
@@ -84,6 +85,26 @@ func localDNSSelfBind(srv DNSServer, addrs []net.Addr) (string, bool) {
 		return "", false
 	}
 	return ip.String(), true
+}
+
+// dropDerivedDNSBind снимает выведенный адрес отправителя (равный адресу
+// сервера, см. localDNSSelfBind), когда адрес сервера меняется, а адрес
+// отправителя пришёл прежним: окно правки шлёт сохранённое обратно, и
+// подстановка прилипла бы — запросы к новому серверу шли бы с LAN-адреса мимо
+// выбора WAN. withLocalDNSBind затем вычислит его заново. Явный адрес
+// (отличный от адреса сервера) — выбор пользователя, его не трогаем.
+func (s *ServiceImpl) dropDerivedDNSBind(tag string, srv DNSServer) DNSServer {
+	cfg, err := s.loadRouterConfig()
+	if err != nil {
+		return srv
+	}
+	for _, old := range cfg.DNS.Servers {
+		if old.Tag == tag && old.Inet4BindAddress != "" && old.Inet4BindAddress == old.Server &&
+			srv.Inet4BindAddress == old.Inet4BindAddress && srv.Server != old.Server {
+			srv.Inet4BindAddress = ""
+		}
+	}
+	return srv
 }
 
 // withLocalDNSBind — localDNSSelfBind при сохранении сервера. Сбой чтения

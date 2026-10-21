@@ -41,8 +41,12 @@ func TestDNSServer_LocalAddressGetsSelfBind(t *testing.T) {
 	}
 	for tag, bind := range want {
 		i := slices.IndexFunc(servers, func(s DNSServer) bool { return s.Tag == tag })
-		if i < 0 || servers[i].Inet4BindAddress != bind {
-			t.Errorf("%s: inet4_bind_address = %q, want %q (%#v)", tag, servers[i].Inet4BindAddress, bind, servers)
+		if i < 0 {
+			t.Errorf("%s missing: %#v", tag, servers)
+			continue
+		}
+		if servers[i].Inet4BindAddress != bind {
+			t.Errorf("%s: inet4_bind_address = %q, want %q", tag, servers[i].Inet4BindAddress, bind)
 		}
 	}
 
@@ -51,8 +55,8 @@ func TestDNSServer_LocalAddressGetsSelfBind(t *testing.T) {
 		t.Fatal(err)
 	}
 	servers, _ = svc.ListDNSServers(ctx)
-	if i := slices.IndexFunc(servers, func(s DNSServer) bool { return s.Tag == "lan-host" }); servers[i].Inet4BindAddress != "10.0.20.1" {
-		t.Errorf("update to router address: inet4_bind_address = %q", servers[i].Inet4BindAddress)
+	if i := slices.IndexFunc(servers, func(s DNSServer) bool { return s.Tag == "lan-host" }); i < 0 || servers[i].Inet4BindAddress != "10.0.20.1" {
+		t.Errorf("update to router address: %#v", servers)
 	}
 
 	// Сбой чтения адресов не мешает сохранить сервер — подстановка лишь не случится.
@@ -120,5 +124,49 @@ func TestMigrateLocalDNSBind(t *testing.T) {
 
 	if changed, err := MigrateLocalDNSBind(dir, local); err != nil || changed {
 		t.Errorf("second run: changed=%v err=%v, want idempotent", changed, err)
+	}
+}
+
+// Выведенный адрес отправителя (равен адресу сервера) — не выбор
+// пользователя: окно правки шлёт его обратно, и при смене адреса сервера он
+// прилип бы — запросы к публичному резолверу шли бы с LAN-адреса мимо WAN.
+// Явный (отличный от адреса сервера) остаётся.
+func TestDNSServer_DerivedBindFollowsServer(t *testing.T) {
+	svc, _ := newOrchedTestService(t)
+	ctx := context.Background()
+	local := []string{"192.168.0.1/24", "10.0.20.1/24"}
+	stubLocalAddrs(svc, &local)
+	bindOf := func(tag string) string {
+		t.Helper()
+		servers, err := svc.ListDNSServers(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := slices.IndexFunc(servers, func(s DNSServer) bool { return s.Tag == tag })
+		if i < 0 {
+			t.Fatalf("server %q missing: %#v", tag, servers)
+		}
+		return servers[i].Inet4BindAddress
+	}
+
+	if err := svc.AddDNSServer(ctx, DNSServer{Tag: "d", Type: "udp", Server: "192.168.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+	// Окно правки шлёт сохранённый адрес отправителя обратно вместе с новым сервером.
+	if err := svc.UpdateDNSServer(ctx, "d", DNSServer{Tag: "d", Type: "udp", Server: "1.1.1.1", Inet4BindAddress: "192.168.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+	if b := bindOf("d"); b != "" {
+		t.Errorf("derived bind stuck after server → 1.1.1.1: %q", b)
+	}
+
+	if err := svc.AddDNSServer(ctx, DNSServer{Tag: "e", Type: "udp", Server: "192.168.0.1", Inet4BindAddress: "10.0.20.1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.UpdateDNSServer(ctx, "e", DNSServer{Tag: "e", Type: "udp", Server: "1.1.1.1", Inet4BindAddress: "10.0.20.1"}); err != nil {
+		t.Fatal(err)
+	}
+	if b := bindOf("e"); b != "10.0.20.1" {
+		t.Errorf("explicit bind lost: %q", b)
 	}
 }

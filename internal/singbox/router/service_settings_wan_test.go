@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -178,5 +179,18 @@ func TestApplyStaging_KeepsSnifferFromSettings(t *testing.T) {
 	}
 	if hasSystemSniff(t, filepath.Join(h.dir, "20-router.json")) {
 		t.Error("stale draft brought sniff back")
+	}
+}
+
+// ApplyStaging пишет тот же 20-router.json, что UpdateSettings
+// (reapplyRouterSettings) и смена режима: без общего transitionMu перенос
+// WAN/сниффера в черновик и запись применённого слота гонялись бы.
+func TestApplyStaging_RejectedDuringTransition(t *testing.T) {
+	h := newTransitionHarness(t)
+	h.seedState(t, stateOff, false)
+	h.svc.transitionMu.Lock()
+	defer h.svc.transitionMu.Unlock()
+	if _, err := h.svc.ApplyStaging(context.Background()); !errors.Is(err, ErrTransitionInProgress) {
+		t.Fatalf("ApplyStaging under transitionMu: err = %v, want ErrTransitionInProgress", err)
 	}
 }

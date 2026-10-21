@@ -8,6 +8,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 )
 
 // validationDTOFrom converts orchestrator.ValidationResult to the DTO.
@@ -91,6 +92,10 @@ func (h *SingboxRouterHandler) PostStagingApply(w http.ResponseWriter, r *http.R
 	res, err := h.svc.ApplyStaging(r.Context())
 	if errors.Is(err, orchestrator.ErrNoDraft) {
 		response.ErrorWithStatus(w, http.StatusConflict, "no draft to apply", "NO_DRAFT")
+		return
+	}
+	if errors.Is(err, router.ErrTransitionInProgress) {
+		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "TRANSITION_IN_PROGRESS")
 		return
 	}
 	if err != nil {
