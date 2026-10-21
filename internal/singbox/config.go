@@ -808,8 +808,8 @@ func deviceProxyLANTag(id string) string {
 	return "device-proxy-" + id + "-lan"
 }
 
-// deviceProxyLANDNSTag — локальный DNS-сервер инстанса: им device-proxy-lan
-// резолвит LAN-имена (127.0.0.1 роутера их знает, публичный резолвер — нет).
+// deviceProxyLANDNSTag — DNS-сервер инстанса: резолвер роутера на 127.0.0.1,
+// им device-proxy-lan резолвит LAN-имена (публичный резолвер их не знает).
 func deviceProxyLANDNSTag(id string) string { return deviceProxyLANTag(id) + "-dns" }
 
 func isDeviceProxyDNSServerTag(tag string) bool {
@@ -819,8 +819,10 @@ func isDeviceProxyDNSServerTag(tag string) bool {
 // deviceProxyLANSuffixes / deviceProxyLANNameRegex — имена, которые
 // резолвятся только в LAN: зоны для локальных сетей, однословные имена и
 // собственные имена роутера (my.keenetic.net резолвится в адрес роутера,
-// не обязательно частный — ip_is_private его не ловит).
-var deviceProxyLANSuffixes = []any{"lan", "local", "home.arpa", "internal", "my.keenetic.net", "my.netcraze.net"}
+// не обязательно частный — ip_is_private его не ловит). Узко намеренно
+// (решение владельца 21.10): без .local (mDNS) и .internal — корпоративные
+// имена должны уходить в выбранный туннель.
+var deviceProxyLANSuffixes = []any{"lan", "home.arpa", "my.keenetic.net", "my.netcraze.net"}
 
 const deviceProxyLANNameRegex = "^[^.]+$"
 
@@ -910,9 +912,10 @@ func (c *Config) EnsureDeviceProxyInstance(spec DeviceProxyInstanceSpec) error {
 	// на ядре Keenetic соединение висит до таймаута (F702, стенд 21.10).
 	lanTag := deviceProxyLANTag(spec.ID)
 	lanDNSTag := deviceProxyLANDNSTag(spec.ID)
-	// Адрес отправителя — по той же причине, что у lanTag ниже: иначе
-	// local-сервер под default_interface/auto_detect биндится к интерфейсу.
-	c.upsertDNSServer(lanDNSTag, map[string]any{"type": "local", "tag": lanDNSTag, "inet4_bind_address": "0.0.0.0"})
+	// udp на 127.0.0.1, а не type:local: тот уводит .local в mDNS мультикастом
+	// во все интерфейсы, включая WAN. Адрес отправителя — по той же причине,
+	// что у lanTag ниже: иначе под default_interface сокет биндится к WAN.
+	c.upsertDNSServer(lanDNSTag, map[string]any{"type": "udp", "tag": lanDNSTag, "server": "127.0.0.1", "inet4_bind_address": "0.0.0.0"})
 	c.upsertOutbound(lanTag, map[string]any{
 		"type":               "direct",
 		"tag":                lanTag,

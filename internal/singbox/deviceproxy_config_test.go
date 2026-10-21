@@ -232,7 +232,9 @@ func TestBuildDeviceProxyConfig_LANNamesViaLocalDNS(t *testing.T) {
 		t.Errorf("rule 0 = %v, want LAN names → device-proxy-lan", names)
 	}
 	got, _ := json.Marshal(map[string]any{"domain_suffix": names["domain_suffix"], "domain_regex": names["domain_regex"]})
-	want := `{"domain_regex":["^[^.]+$"],"domain_suffix":["lan","local","home.arpa","internal","my.keenetic.net","my.netcraze.net"]}`
+	// Узко (решение владельца 21.10): без .local (mDNS) и .internal —
+	// корпоративные имена должны уходить в выбранный туннель.
+	want := `{"domain_regex":["^[^.]+$"],"domain_suffix":["lan","home.arpa","my.keenetic.net","my.netcraze.net"]}`
 	if string(got) != want {
 		t.Errorf("LAN names matcher = %s, want %s", got, want)
 	}
@@ -249,11 +251,13 @@ func TestBuildDeviceProxyConfig_LANNamesViaLocalDNS(t *testing.T) {
 	if lan["domain_resolver"] != "device-proxy-lan-dns" {
 		t.Errorf("device-proxy-lan domain_resolver = %v, want device-proxy-lan-dns", lan["domain_resolver"])
 	}
-	// Без адреса отправителя local-сервер при выбранном WAN (default_interface)
-	// биндится к нему, и запрос к 127.0.0.1 резолвера роутера висит — тот же
-	// механизм, что F702.
-	if srv := deviceProxyDNSServers(cfg); len(srv) != 1 || srv[0]["tag"] != "device-proxy-lan-dns" || srv[0]["type"] != "local" || srv[0]["inet4_bind_address"] != "0.0.0.0" {
-		t.Errorf("dns servers = %v, want one local device-proxy-lan-dns bound to 0.0.0.0", srv)
+	// udp на резолвер роутера, а не type:local — тот уводит .local в mDNS
+	// мультикастом во все интерфейсы, включая WAN. Адрес отправителя: без него
+	// при выбранном WAN (default_interface) сокет биндится к нему, и запрос к
+	// 127.0.0.1 висит — тот же механизм, что F702.
+	got, _ = json.Marshal(deviceProxyDNSServers(cfg))
+	if want := `[{"inet4_bind_address":"0.0.0.0","server":"127.0.0.1","tag":"device-proxy-lan-dns","type":"udp"}]`; string(got) != want {
+		t.Errorf("dns servers = %s, want %s", got, want)
 	}
 
 	cfg.RemoveDeviceProxy()
