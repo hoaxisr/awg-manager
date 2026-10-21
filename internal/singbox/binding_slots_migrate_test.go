@@ -79,3 +79,28 @@ func TestMigrateBindingSlotOrder_NoOp(t *testing.T) {
 	}
 	assertFile(t, filepath.Join(dir, "12-deviceproxy.json"), `{}`)
 }
+
+// Переименование обязано случиться внутри NewOperator, до шагов примирения:
+// stepOutboundCompat читает слот подписок уже по новому имени.
+func TestNewOperator_MigratesBindingSlotsBeforeReconcile(t *testing.T) {
+	dir := t.TempDir()
+	cd := filepath.Join(dir, "config.d")
+	// naive без udp_over_tcp лечит stepOutboundCompat — след того, что шаг
+	// увидел слот уже под новым именем.
+	writeFile(t, filepath.Join(cd, "40-subscriptions.json"),
+		`{"outbounds":[{"type":"naive","tag":"nv","server":"s","server_port":443}]}`)
+
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: filepath.Join(dir, "sing-box")})
+
+	if !op.BindingSlotsMigrated() {
+		t.Error("BindingSlotsMigrated() = false, want true")
+	}
+	assertAbsent(t, filepath.Join(cd, "40-subscriptions.json"))
+	m := readJSONMap(t, filepath.Join(cd, "13-subscriptions.json"))
+	if m == nil {
+		t.Fatal("13-subscriptions.json missing")
+	}
+	if _, ok := findOutboundByTag(t, m, "nv")["udp_over_tcp"]; !ok {
+		t.Error("naive не пропатчен: stepOutboundCompat прошёл до переименования")
+	}
+}

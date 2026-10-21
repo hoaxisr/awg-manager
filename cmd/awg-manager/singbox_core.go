@@ -92,11 +92,9 @@ func buildSingboxCore(d singboxCoreDeps) singboxCore {
 	// actually moves the file out of sing-box's view (config.d/disabled/)
 	// instead of leaving stale content behind.
 	singboxConfigDir := op.ConfigDir()
-	// Первой: следующие миграции и Bootstrap работают с новыми именами слотов.
-	bindingSlotsMigrated, err := singbox.MigrateBindingSlotOrder(singboxConfigDir)
-	if err != nil {
-		d.bootLog.Warn("binding-slot-order-migration", "", err.Error())
-	}
+	// Слоты привязок (F701) переименовал уже NewOperator — до своих шагов
+	// примирения; здесь только флаг для reload.
+	bindingSlotsMigrated := op.BindingSlotsMigrated()
 	deviceProxyMigrated, err := singbox.MigrateDeviceProxyOutOfTunnels(singboxConfigDir)
 	if err != nil {
 		d.bootLog.Warn("deviceproxy-migration", "", err.Error())

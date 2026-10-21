@@ -2378,7 +2378,7 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 		),
 	},
 	deviceproxy: {
-		filename: '30-deviceproxy.json',
+		filename: '12-deviceproxy.json',
 		content: JSON.stringify(
 			{
 				inbounds: [{ tag: 'device-proxy-in', type: 'mixed', listen: '0.0.0.0', listen_port: 1099 }],
@@ -2388,7 +2388,7 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 		),
 	},
 	subscriptions: {
-		filename: '40-subscriptions.json',
+		filename: '13-subscriptions.json',
 		content: JSON.stringify(
 			{
 				outbounds: [
@@ -5934,8 +5934,8 @@ const server = http.createServer(async (req, res) => {
 					{ slot: 'dns', filename: '05-dns.json', ownership: 'system', enabled: true, hasDraft: false, size: 612, mtime: '2026-07-05T21:14:02Z' },
 					{ slot: 'router', filename: '10-router.json', ownership: 'system', enabled: true, hasDraft: true, size: 3961, mtime: '2026-07-06T08:03:41Z' },
 					{ slot: 'tunnels', filename: '20-tunnels.json', ownership: 'system', enabled: true, hasDraft: false, size: 2210, mtime: '2026-07-05T21:14:02Z' },
-					{ slot: 'deviceproxy', filename: '30-deviceproxy.json', ownership: 'system', enabled: true, hasDraft: false, size: 344, mtime: '2026-07-05T21:14:02Z' },
-					{ slot: 'subscriptions', filename: '40-subscriptions.json', ownership: 'system', enabled: false, hasDraft: false, size: 5133, mtime: '2026-07-04T11:32:19Z' },
+					{ slot: 'deviceproxy', filename: '12-deviceproxy.json', ownership: 'system', enabled: true, hasDraft: false, size: 344, mtime: '2026-07-05T21:14:02Z' },
+					{ slot: 'subscriptions', filename: '13-subscriptions.json', ownership: 'system', enabled: false, hasDraft: false, size: 5133, mtime: '2026-07-04T11:32:19Z' },
 					{
 						slot: 'user',
 						filename: '90-user.json',

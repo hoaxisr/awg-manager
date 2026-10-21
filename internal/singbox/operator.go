@@ -151,6 +151,8 @@ type Operator struct {
 	cacheFileLocation func() string
 	configPath        string
 	pidPath           string
+	// bindingSlotsMigrated — см. BindingSlotsMigrated.
+	bindingSlotsMigrated bool
 
 	proc      *Process
 	validator *Validator
@@ -404,28 +406,36 @@ func NewOperator(d OperatorDeps) *Operator {
 	configPath := filepath.Join(dir, "config.d")
 	pidPath := filepath.Join(dir, "sing-box.pid")
 
+	// До шагов примирения: stepOutboundCompat уже читает слот подписок по
+	// новому имени.
+	bindingSlotsMigrated, err := MigrateBindingSlotOrder(configPath)
+	if err != nil {
+		log.Warn("singbox binding slot order migration", "err", err)
+	}
+
 	for _, s := range reconcileConfigSteps(dir, configPath, desiredSingboxLogLevel, desiredBootstrapDNS, desiredClashPort, desiredCacheLocation, log) {
 		s.run()
 	}
 
 	op := &Operator{
-		log:               log,
-		bootstrapDNS:      d.BootstrapDNS,
-		clashPort:         d.ClashPort,
-		singboxLogLevel:   d.SingboxLogLevel,
-		cacheFileLocation: d.CacheFileLocation,
-		dir:               dir,
-		binary:            binary,
-		configPath:        configPath,
-		pidPath:           pidPath,
-		proc:              NewProcess(binary, configPath, pidPath),
-		validator:         NewValidator(binary),
-		proxyMgr:          NewProxyManager(d.Queries, d.Commands),
-		clash:             NewClashClient(ClashAddr(desiredClashPort)),
-		processLogger:     logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBProcess),
-		runtimeLogger:     logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBRuntime),
-		persistManualStop: d.SetManuallyStopped,
-		bus:               d.Bus,
+		log:                  log,
+		bootstrapDNS:         d.BootstrapDNS,
+		clashPort:            d.ClashPort,
+		singboxLogLevel:      d.SingboxLogLevel,
+		cacheFileLocation:    d.CacheFileLocation,
+		dir:                  dir,
+		binary:               binary,
+		configPath:           configPath,
+		pidPath:              pidPath,
+		bindingSlotsMigrated: bindingSlotsMigrated,
+		proc:                 NewProcess(binary, configPath, pidPath),
+		validator:            NewValidator(binary),
+		proxyMgr:             NewProxyManager(d.Queries, d.Commands),
+		clash:                NewClashClient(ClashAddr(desiredClashPort)),
+		processLogger:        logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBProcess),
+		runtimeLogger:        logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBRuntime),
+		persistManualStop:    d.SetManuallyStopped,
+		bus:                  d.Bus,
 	}
 	op.manuallyStopped.Store(d.InitialManuallyStopped)
 	op.ndmsProxyEnabledFn = d.IsNDMSProxyEnabled
@@ -539,6 +549,10 @@ func (o *Operator) SetInstallProgressReporter(fn InstallProgressFn) {
 // ConfigDir returns the config.d directory path (used by sing-box-router
 // to drop additional config fragments alongside ours).
 func (o *Operator) ConfigDir() string { return o.configPath }
+
+// BindingSlotsMigrated — NewOperator переименовал слоты привязок (F701):
+// живому sing-box нужен reload.
+func (o *Operator) BindingSlotsMigrated() bool { return o.bindingSlotsMigrated }
 
 // Binary returns the path to the sing-box executable. Used by the
 // router's Inspect path to shell out to `sing-box rule-set match` when
