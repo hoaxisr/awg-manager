@@ -434,14 +434,18 @@ func TestConfig_EnsureDeviceProxy_Full(t *testing.T) {
 		}
 	}
 
-	// Route rule at front
+	// Route rules at front: LAN → direct, then the binding (F701).
 	rules := c.routeRules()
-	if len(rules) == 0 {
-		t.Fatalf("no route rules")
+	if len(rules) < 2 {
+		t.Fatalf("route rules = %v, want private-direct + binding", rules)
 	}
 	first := rules[0].(map[string]any)
-	if first["inbound"] != "device-proxy-in" || first["outbound"] != "device-proxy-selector" {
+	if first["inbound"] != "device-proxy-in" || first["ip_is_private"] != true || first["outbound"] != "direct" {
 		t.Fatalf("first rule = %v", first)
+	}
+	second := rules[1].(map[string]any)
+	if second["inbound"] != "device-proxy-in" || second["outbound"] != "device-proxy-selector" {
+		t.Fatalf("second rule = %v", second)
 	}
 }
 

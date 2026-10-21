@@ -1065,6 +1065,13 @@ func (c *Config) pruneAWGOutbounds(keep map[string]string) {
 }
 
 func (c *Config) ensureDeviceProxyInstanceRouteRule(inboundTag, selectorTag string) {
+	// LAN-адреса — мимо туннеля. Слот грузится раньше правил маршрутизатора
+	// (F701), и его системное ip_is_private → direct до этого входа не доходит.
+	privateDirect := map[string]any{
+		"inbound":       inboundTag,
+		"ip_is_private": true,
+		"outbound":      "direct",
+	}
 	rule := map[string]any{
 		"inbound":  inboundTag,
 		"outbound": selectorTag,
@@ -1082,7 +1089,7 @@ func (c *Config) ensureDeviceProxyInstanceRouteRule(inboundTag, selectorTag stri
 		}
 		filtered = append(filtered, v)
 	}
-	c.setRouteRules(append([]any{rule}, filtered...))
+	c.setRouteRules(append([]any{privateDirect, rule}, filtered...))
 }
 
 func (c *Config) removeDeviceProxyInstanceRouteRule(inboundTag string) {

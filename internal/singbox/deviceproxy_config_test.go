@@ -100,3 +100,40 @@ func TestBuildDeviceProxyConfigDisabled(t *testing.T) {
 		}
 	}
 }
+
+// F701: слот прокси для устройств стоит раньше правил маршрутизатора, и
+// системное `ip_is_private → direct` маршрутизатора до его входа больше не
+// доходит. Своё правило — перед привязкой: иначе LAN-адреса через прокси
+// уходят в выбранный туннель. Снятие инстанса уносит оба правила.
+func TestBuildDeviceProxyConfig_PrivateDirectBeforeBinding(t *testing.T) {
+	data, err := BuildDeviceProxyConfig(DeviceProxySpec{
+		Enabled: true, ListenAddr: "192.168.1.1", Port: 1080,
+		SelectedTag: "awg-vpn0", AWGTags: []string{"awg-vpn0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := NewConfig()
+	if err := json.Unmarshal(data, cfg); err != nil {
+		t.Fatal(err)
+	}
+	rules := cfg.routeRules()
+	want := []string{
+		`{"inbound":"device-proxy-in","ip_is_private":true,"outbound":"direct"}`,
+		`{"inbound":"device-proxy-in","outbound":"device-proxy-selector"}`,
+	}
+	if len(rules) != len(want) {
+		t.Fatalf("rules = %v, want %v", rules, want)
+	}
+	for i, r := range rules {
+		got, _ := json.Marshal(r)
+		if string(got) != want[i] {
+			t.Errorf("rule %d = %s, want %s", i, got, want[i])
+		}
+	}
+
+	cfg.RemoveDeviceProxy()
+	if n := len(cfg.routeRules()); n != 0 {
+		t.Errorf("after RemoveDeviceProxy %d rules left: %v", n, cfg.routeRules())
+	}
+}
