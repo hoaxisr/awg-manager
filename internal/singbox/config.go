@@ -845,7 +845,6 @@ func (c *Config) EnsureDeviceProxyInstance(spec DeviceProxyInstanceSpec) error {
 		"type":               "direct",
 		"tag":                lanTag,
 		"inet4_bind_address": "0.0.0.0",
-		"inet6_bind_address": "::",
 	})
 
 	c.ensureDeviceProxyInstanceRouteRule(inboundTag, selectorTag, lanTag)

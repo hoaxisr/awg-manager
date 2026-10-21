@@ -146,8 +146,8 @@ func TestBuildDeviceProxyConfig_PrivateDirectBeforeBinding(t *testing.T) {
 	if lan == nil {
 		t.Fatalf("outbound device-proxy-lan missing: %v", cfg.outbounds())
 	}
-	if lan["type"] != "direct" || lan["inet4_bind_address"] != "0.0.0.0" || lan["inet6_bind_address"] != "::" {
-		t.Errorf("device-proxy-lan = %v, want direct bound to 0.0.0.0 / ::", lan)
+	if lan["type"] != "direct" || lan["inet4_bind_address"] != "0.0.0.0" {
+		t.Errorf("device-proxy-lan = %v, want direct bound to 0.0.0.0", lan)
 	}
 
 	cfg.RemoveDeviceProxy()
