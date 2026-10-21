@@ -138,12 +138,12 @@ func TestValidateDuplicateOutbound(t *testing.T) {
 func TestValidateDuplicateInbound(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
-	_ = o.Register(SlotMeta{Slot: SlotDeviceProxy, Filename: "30-deviceproxy.json"})
+	_ = o.Register(SlotMeta{Slot: SlotDeviceProxy, Filename: "12-deviceproxy.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	writeSlot(t, dir, "20-router.json", `{"inbounds":[{"tag":"tproxy-in"}]}`)
-	writeSlot(t, dir, "30-deviceproxy.json", `{"inbounds":[{"tag":"tproxy-in"}]}`)
+	writeSlot(t, dir, "12-deviceproxy.json", `{"inbounds":[{"tag":"tproxy-in"}]}`)
 	o.enabled[SlotRouter] = true
 	o.enabled[SlotDeviceProxy] = true
 	res := o.Validate()

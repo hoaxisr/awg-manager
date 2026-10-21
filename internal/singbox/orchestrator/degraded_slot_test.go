@@ -1,6 +1,6 @@
 package orchestrator
 
-// Тесты контракта issue #465: деградированный слот 30-deviceproxy.json
+// Тесты контракта issue #465: деградированный слот 12-deviceproxy.json
 // (селектор без ссылок на композиты выключенного слота 20-router,
 // default = default-член композита) должен пережить prune байт-в-байт,
 // а EnabledOutboundTags — отдавать ровно ту видимость тегов, по которой
@@ -70,7 +70,7 @@ func TestPrune_DegradedDeviceProxySlot_IsNoOp(t *testing.T) {
   ],
   "route": {"rules": [{"inbound": ["device-proxy-office-in"], "outbound": "device-proxy-office-selector"}]}
 }`)
-	dpPath := filepath.Join(dir, "30-deviceproxy.json")
+	dpPath := filepath.Join(dir, "12-deviceproxy.json")
 	if err := os.WriteFile(dpPath, dpJSON, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestPrune_DegradedDeviceProxySlot_NoDefault_IsNoOp(t *testing.T) {
   ],
   "route": {"rules": [{"inbound": ["device-proxy-office-in"], "outbound": "device-proxy-office-selector"}]}
 }`)
-	dpPath := filepath.Join(dir, "30-deviceproxy.json")
+	dpPath := filepath.Join(dir, "12-deviceproxy.json")
 	if err := os.WriteFile(dpPath, dpJSON, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestPrune_DanglingCompositeRefInDeviceProxySlot_StillPruned(t *testing.T) {
     {"type": "selector", "tag": "device-proxy-office-selector", "outbounds": ["direct", "vpn"], "default": "vpn"}
   ]
 }`)
-	dpPath := filepath.Join(dir, "30-deviceproxy.json")
+	dpPath := filepath.Join(dir, "12-deviceproxy.json")
 	if err := os.WriteFile(dpPath, dpJSON, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestEnabledOutboundTags_VisibilityMatchesPrune(t *testing.T) {
     {"type": "selector", "tag": "device-proxy-office-selector", "outbounds": ["direct", "awg-awg10"]}
   ]
 }`)
-	if err := os.WriteFile(filepath.Join(dir, "30-deviceproxy.json"), dpJSON, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "12-deviceproxy.json"), dpJSON, 0644); err != nil {
 		t.Fatal(err)
 	}
 

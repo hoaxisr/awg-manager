@@ -13,7 +13,7 @@ import (
 // slotPath — путь, по которому LoadFromDisk ищет слот. Совпадение с тем,
 // куда его кладёт оркестратор, тест проверяет явно: разойдись они, адаптер
 // стартовал бы с пустой памятью при живом файле на диске.
-func slotPath(dir string) string { return filepath.Join(dir, "40-subscriptions.json") }
+func slotPath(dir string) string { return filepath.Join(dir, "13-subscriptions.json") }
 
 func newTestAdapter(t *testing.T, dir string) *OperatorAdapter {
 	t.Helper()

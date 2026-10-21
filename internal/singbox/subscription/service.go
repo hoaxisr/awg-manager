@@ -483,7 +483,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, er
 	if _, err := s.refreshLocked(ctx, sub.ID); err != nil {
 		// refreshLocked accumulates member outbounds / selector / inbound /
 		// route into the in-memory slot but commits only at Reload (#331).
-		// On a mid-failure nothing was flushed to 40-subscriptions.json, so
+		// On a mid-failure nothing was flushed to 13-subscriptions.json, so
 		// discard the uncommitted batch — otherwise the partial would linger
 		// in memory and get committed by the next operation (issue #287).
 		// Ошибки applyDiff уже откатаны внутри его txMu-секции; этот Rollback

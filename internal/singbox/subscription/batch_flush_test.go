@@ -171,7 +171,7 @@ func TestFlush_DropsOutboundByMergedInitializeIndex(t *testing.T) {
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	// Two outbounds in 10-tunnels.json — lexically before 40-subscriptions.json,
+	// Two outbounds in 10-tunnels.json — lexically before 13-subscriptions.json,
 	// shifting merged indexes of our outbounds by 2.
 	if err := orch.Register(orchestrator.SlotMeta{
 		Slot: orchestrator.SlotTunnels, Filename: "10-tunnels.json", AlwaysOn: true,

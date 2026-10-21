@@ -9,7 +9,7 @@ import (
 // BuildDeviceProxyConfig produces a standalone JSON document containing
 // ONLY the device-proxy inbound + selector outbound + route rule for
 // the given spec. The result is suitable for a direct write to the
-// orchestrator slot 30-deviceproxy.json.
+// orchestrator slot 12-deviceproxy.json.
 //
 // AWG-direct outbounds referenced by the spec (spec.AWGTags) are NOT
 // included — they live in 15-awg.json owned by the awgoutbounds

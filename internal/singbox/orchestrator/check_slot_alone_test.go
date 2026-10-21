@@ -34,7 +34,7 @@ func newAloneTestOrch(t *testing.T) (*Orchestrator, *recordingAloneValidator) {
 	if err := o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Register(SlotMeta{Slot: SlotSubscriptions, Filename: "40-subscriptions.json"}); err != nil {
+	if err := o.Register(SlotMeta{Slot: SlotSubscriptions, Filename: "13-subscriptions.json"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.Bootstrap(); err != nil {
@@ -63,8 +63,8 @@ func TestCheckSlotAlone_SnapshotsOnlyTargetSlot(t *testing.T) {
 	if !res.Ok() {
 		t.Fatalf("expected ok, got %v", res.Errors)
 	}
-	if len(v.seenFiles) != 1 || v.seenFiles[0] != "40-subscriptions.json" {
-		t.Errorf("snapshot files = %v, want only 40-subscriptions.json", v.seenFiles)
+	if len(v.seenFiles) != 1 || v.seenFiles[0] != "13-subscriptions.json" {
+		t.Errorf("snapshot files = %v, want only 13-subscriptions.json", v.seenFiles)
 	}
 }
 

@@ -61,7 +61,7 @@
     return o.type;
   }
 
-  // #572: outbound'ы подписок/групп живут в слоте 40-subscriptions —
+  // #572: outbound'ы подписок/групп живут в слоте 13-subscriptions —
   // generic-редактор router-слота их менять не может (падал бы с
   // «outbound not found»). Редактирование — в своих разделах.
   function editBlockReason(o: SingboxRouterOutbound): string | null {

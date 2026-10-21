@@ -47,8 +47,8 @@ func TestMigrateDeviceProxyOutOfTunnelsHappyPath(t *testing.T) {
 		t.Error("migrated = false, want true: файлы переписаны")
 	}
 
-	// 30-deviceproxy.json must exist with the device-proxy artefacts.
-	dpData, err := os.ReadFile(filepath.Join(dir, "30-deviceproxy.json"))
+	// 12-deviceproxy.json must exist with the device-proxy artefacts.
+	dpData, err := os.ReadFile(filepath.Join(dir, "12-deviceproxy.json"))
 	if err != nil {
 		t.Fatalf("read deviceproxy: %v", err)
 	}
@@ -102,18 +102,18 @@ func TestMigrateDeviceProxyOutOfTunnelsHappyPath(t *testing.T) {
 	}
 }
 
-// Частичный провал миграции: 30-deviceproxy.json уже записан, а перезапись
+// Частичный провал миграции: 12-deviceproxy.json уже записан, а перезапись
 // 10-tunnels.json упала — device-proxy остался в ОБОИХ слотах (дубль
 // device-proxy-in валит preflight холодного старта). Следующий вызов обязан
 // долечить: гард смотрит на СОДЕРЖИМОЕ 10-tunnels, а не на существование
-// 30-файла (F73).
+// 12-файла (F73).
 func TestMigrateHealsPartialSplit(t *testing.T) {
 	dir := t.TempDir()
 
-	// 30-файл-маркер: его владелец с момента раскола — Reconcile сервиса,
+	// 12-файл-маркер: его владелец с момента раскола — Reconcile сервиса,
 	// добор миграции обязан оставить его нетронутым.
 	marker := []byte(`{"inbounds":[{"tag":"device-proxy-in","type":"mixed"}]}`)
-	if err := os.WriteFile(filepath.Join(dir, "30-deviceproxy.json"), marker, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "12-deviceproxy.json"), marker, 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -163,23 +163,23 @@ func TestMigrateHealsPartialSplit(t *testing.T) {
 		t.Errorf("пользовательский туннель потерян: %s", tunnelsData)
 	}
 
-	// 30-файл не перезаписан: им владеет Reconcile, наша копия протухла бы.
-	dpData, err := os.ReadFile(filepath.Join(dir, "30-deviceproxy.json"))
+	// 12-файл не перезаписан: им владеет Reconcile, наша копия протухла бы.
+	dpData, err := os.ReadFile(filepath.Join(dir, "12-deviceproxy.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(dpData) != string(marker) {
-		t.Errorf("30-deviceproxy.json перезаписан: %s", dpData)
+		t.Errorf("12-deviceproxy.json перезаписан: %s", dpData)
 	}
 }
 
-// Штатный no-op: раскол уже завершён — 30-файл есть, 10-tunnels чист.
+// Штатный no-op: раскол уже завершён — 12-файл есть, 10-tunnels чист.
 //
 // Прежняя редакция этого теста («30 есть + 10-tunnels ЕЩЁ несёт device-proxy
 // → no-op») закрепляла дефект F73 и переписана.
 func TestMigrateNoOpWhenAlreadySplitAndTunnelsClean(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "30-deviceproxy.json"), []byte(`{}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "12-deviceproxy.json"), []byte(`{}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 	cfg := NewConfig()
@@ -202,12 +202,12 @@ func TestMigrateNoOpWhenAlreadySplitAndTunnelsClean(t *testing.T) {
 	if migrated {
 		t.Error("migrated = true, want false: раскол уже чист")
 	}
-	dpData, err := os.ReadFile(filepath.Join(dir, "30-deviceproxy.json"))
+	dpData, err := os.ReadFile(filepath.Join(dir, "12-deviceproxy.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(dpData) != `{}` {
-		t.Errorf("30-deviceproxy.json тронут: %s", dpData)
+		t.Errorf("12-deviceproxy.json тронут: %s", dpData)
 	}
 }
 
@@ -220,7 +220,7 @@ func TestMigrateNoOpWhenNoTunnelsFile(t *testing.T) {
 	if migrated {
 		t.Error("migrated = true, want false: мигрировать было нечего")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "30-deviceproxy.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "12-deviceproxy.json")); !os.IsNotExist(err) {
 		t.Errorf("deviceproxy file should not exist")
 	}
 }
@@ -243,7 +243,7 @@ func TestMigrateNoOpWhenTunnelsHasNoDeviceProxy(t *testing.T) {
 	if migrated {
 		t.Error("migrated = true, want false: device-proxy в источнике не было")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "30-deviceproxy.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "12-deviceproxy.json")); !os.IsNotExist(err) {
 		t.Errorf("deviceproxy file should not be created when source had none")
 	}
 }

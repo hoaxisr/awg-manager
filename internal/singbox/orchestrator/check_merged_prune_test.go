@@ -18,8 +18,8 @@ func setupPruneOrch(t *testing.T) (*Orchestrator, string) {
 	dir := t.TempDir()
 	o := New(dir, nil)
 	for _, m := range []SlotMeta{
-		{Slot: SlotDeviceProxy, Filename: "30-deviceproxy.json"},
-		{Slot: SlotSubscriptions, Filename: "40-subscriptions.json"},
+		{Slot: SlotDeviceProxy, Filename: "12-deviceproxy.json"},
+		{Slot: SlotSubscriptions, Filename: "13-subscriptions.json"},
 		{Slot: SlotUser, Filename: "90-user.json"},
 	} {
 		if err := o.Register(m); err != nil {
@@ -44,7 +44,7 @@ func TestCheckMerged_DanglingSiblingSelectorMemberIsPruned(t *testing.T) {
 	o.enabled[SlotDeviceProxy] = true
 	// Device-proxy selector references sub-x (a subscription outbound) as
 	// member AND default — the reporter's exact shape.
-	writeSlotFile(t, dir, "30-deviceproxy.json",
+	writeSlotFile(t, dir, "12-deviceproxy.json",
 		`{"outbounds":[{"type":"selector","tag":"proxy-out","outbounds":["direct","sub-x"],"default":"sub-x"}]}`)
 
 	// Candidate: subscriptions slot after deleting the sub-x subscription.
@@ -63,7 +63,7 @@ func TestCheckMerged_AllDanglingSelectorStillFails(t *testing.T) {
 	// CheckMerged must keep reporting it.
 	o, dir := setupPruneOrch(t)
 	o.enabled[SlotDeviceProxy] = true
-	writeSlotFile(t, dir, "30-deviceproxy.json",
+	writeSlotFile(t, dir, "12-deviceproxy.json",
 		`{"outbounds":[{"type":"selector","tag":"proxy-out","outbounds":["sub-x"]}]}`)
 
 	res, err := o.CheckMerged(SlotSubscriptions, []byte(`{"outbounds":[{"type":"vless","tag":"sub-y"}]}`))
@@ -123,7 +123,7 @@ func TestCheckMerged_SiblingRouteRuleRefStillFails(t *testing.T) {
 	// so CheckMerged must too.
 	o, dir := setupPruneOrch(t)
 	o.enabled[SlotDeviceProxy] = true
-	writeSlotFile(t, dir, "30-deviceproxy.json",
+	writeSlotFile(t, dir, "12-deviceproxy.json",
 		`{"route":{"rules":[{"inbound":["px-in"],"outbound":"sub-x"}]}}`)
 
 	res, err := o.CheckMerged(SlotSubscriptions, []byte(`{"outbounds":[{"type":"vless","tag":"sub-y"}]}`))

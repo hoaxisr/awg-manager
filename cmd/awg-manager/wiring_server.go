@@ -262,7 +262,7 @@ func (a *app) setupDeviceProxy() {
 	})
 	// Reflect deviceproxy storage state into the orchestrator slot so
 	// the saved Enabled flag matches the on-disk active/disabled
-	// location of 30-deviceproxy.json from boot.
+	// location of 12-deviceproxy.json from boot.
 	_ = a.sbOrch.SetEnabled(singboxorch.SlotDeviceProxy, deviceProxyStore.Get().Enabled)
 	a.deviceProxySvc.SetTunnelInboundPorts(func() []int {
 		cfg, err := a.singboxOp.LoadCurrentConfig()

@@ -673,7 +673,7 @@ func TestBootstrap_SweepsStaleTempFiles(t *testing.T) {
 	// one in each dir slot writes can land in.
 	staleTmps := []string{
 		filepath.Join(dir, "20-router.json.tmp.1234.5678"),
-		filepath.Join(dir, disabledSubdir, "40-subscriptions.json.tmp.1.2"),
+		filepath.Join(dir, disabledSubdir, "13-subscriptions.json.tmp.1.2"),
 		filepath.Join(dir, "pending", "90-user.json.tmp.9.9"),
 	}
 	for _, p := range staleTmps {
@@ -1184,10 +1184,10 @@ func TestSetEnabledReconcilesMapDiskDrift(t *testing.T) {
 // members (and a dangling default) from the slot file before applying.
 func TestReloadPrunesDanglingSelectorRefs(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotDeviceProxy, Filename: "30-deviceproxy.json"})
+	_ = o.Register(SlotMeta{Slot: SlotDeviceProxy, Filename: "12-deviceproxy.json"})
 
 	// Active slot: selector references "direct" (builtin, ok) + "YC-FIN" (gone).
-	active := filepath.Join(dir, "30-deviceproxy.json")
+	active := filepath.Join(dir, "12-deviceproxy.json")
 	dp := `{"inbounds":[{"type":"mixed","tag":"device-proxy-in","listen_port":1090}],` +
 		`"outbounds":[{"type":"selector","tag":"device-proxy-selector","outbounds":["direct","YC-FIN"],"default":"YC-FIN"}]}`
 	if err := os.WriteFile(active, []byte(dp), 0o644); err != nil {

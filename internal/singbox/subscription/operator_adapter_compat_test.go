@@ -12,7 +12,7 @@ import (
 
 func slotOutboundByTag(t *testing.T, dir, tag string) map[string]any {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(dir, "40-subscriptions.json"))
+	raw, err := os.ReadFile(filepath.Join(dir, "13-subscriptions.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

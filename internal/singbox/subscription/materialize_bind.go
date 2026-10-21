@@ -11,7 +11,7 @@ import (
 var sysClassNet = "/sys/class/net" //nolint:gochecknoglobals // overridden in tests
 
 // materializeMemberOutbound patches tag and optional bind_interface onto a
-// parsed member outbound before it is committed to 40-subscriptions.json.
+// parsed member outbound before it is committed to 13-subscriptions.json.
 // If bindInterface is specified but does not exist in the kernel, it is dropped
 // (fail-open to avoid sing-box FATAL) and a warning is logged.
 func materializeMemberOutbound(raw []byte, tag, bindInterface string, logWarn func(action, target, msg string)) []byte {

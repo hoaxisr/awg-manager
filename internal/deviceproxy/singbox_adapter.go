@@ -15,7 +15,7 @@ import (
 // deviceproxy, deviceproxy depends on singbox.
 //
 // Production wiring also injects the orchestrator: ApplyDeviceProxy
-// writes its standalone fragment (30-deviceproxy.json) through
+// writes its standalone fragment (12-deviceproxy.json) through
 // SlotDeviceProxy and toggles the slot via SetEnabled. Прежний фолбэк без
 // оркестратора (device-proxy, встроенный в 10-tunnels.json) снят — без
 // оркестратора адаптер отказывает явно.

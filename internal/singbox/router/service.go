@@ -322,7 +322,7 @@ type Deps struct {
 	AWGOutboundsRefresh func(ctx context.Context) error
 	SingboxTunnels      SingboxTunnelCatalog // optional — when nil, computeIssues skips cross-slot tunnel tags
 	// SubscriptionComposites lists composite outbounds owned by the
-	// subscription slot (40-subscriptions.json). Optional — when nil,
+	// subscription slot (13-subscriptions.json). Optional — when nil,
 	// ListCompositeOutbounds returns only this service's own composites.
 	SubscriptionComposites *SubscriptionCompositesAdapter
 	// Orch is the config.d orchestrator. When non-nil (production),

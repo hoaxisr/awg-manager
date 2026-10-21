@@ -140,12 +140,12 @@ func reconcileConfigSteps(dir, configPath, desiredLogLevel, desiredBootstrapDNS 
 		{stepMigrateLegacyTunnels, func() { ensureLegacyConfigMigrated(dir, log) }},
 		{stepStripBaseOwnedBlocks, func() { patchTunnelsSlotStripBaseOwnedBlocks(tunnels, log) }},
 		// Компат-фиксы нужны каждому продюсеру outbound'ов: 10-tunnels пишет
-		// UI, 40-subscriptions — подписочный адаптер. Только активный путь
+		// UI, 13-subscriptions — подписочный адаптер. Только активный путь
 		// config.d/ — слоты в disabled/ и pending/ не трогаются (та же
 		// семантика, что у stripStrayDirectPlaceholder: их нет в merged).
 		{stepOutboundCompat, func() {
 			patchSlotOutboundCompat(tunnels, log)
-			patchSlotOutboundCompat(filepath.Join(configPath, "40-subscriptions.json"), log)
+			patchSlotOutboundCompat(filepath.Join(configPath, "13-subscriptions.json"), log)
 		}},
 		{stepStripStrayDirect, func() { stripStrayDirectPlaceholder(configPath, log) }},
 		{stepRemoveRouteFinal, func() { removeFinalFromBase(base, log) }},
@@ -348,7 +348,7 @@ func ensureLegacyConfigMigrated(dir string, loggers ...*slog.Logger) {
 	}
 
 	// Legacy may include device-proxy artefacts; modern code emits those
-	// in their own 30-deviceproxy.json slot. Strip leftovers so the user
+	// in their own 12-deviceproxy.json slot. Strip leftovers so the user
 	// can re-enable device proxy without tag collisions on next start.
 	inbounds := filterOutDeviceProxyTags(cfg.inbounds())
 	// Тот же стриж, что и у шага пролога: слот рождается здесь уже без
@@ -417,7 +417,7 @@ func filterOutDirectPlaceholder(in []any) []any {
 
 // filterOutDeviceProxyTags drops inbound/outbound entries whose "tag"
 // field starts with "device-proxy". Those artefacts belong in the
-// dedicated 30-deviceproxy.json slot; keeping them in 10-tunnels.json
+// dedicated 12-deviceproxy.json slot; keeping them in 10-tunnels.json
 // causes a tag-collision FATAL when deviceproxy.Service later writes its
 // own slot.
 func filterOutDeviceProxyTags(in []any) []any {

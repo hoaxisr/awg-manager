@@ -64,11 +64,11 @@ func TestSingboxInboundsHandler_AttributionPerSlot(t *testing.T) {
 		`{"inbounds":[{"type":"tproxy","tag":"tproxy-in","listen":"127.0.0.1","listen_port":51280},{"type":"redirect","tag":"redirect-in","listen":"127.0.0.1","listen_port":51300}]}`)
 	writeSlot(t, dir, "21-fakeip.json",
 		`{"inbounds":[{"type":"tun","tag":"tun-in"}]}`)
-	writeSlot(t, dir, "30-deviceproxy.json",
+	writeSlot(t, dir, "12-deviceproxy.json",
 		`{"inbounds":[{"type":"mixed","tag":"device-proxy-abc-in","listen":"0.0.0.0","listen_port":1099}]}`)
 	// route.rules: строковая и массивная формы "inbound" — обе валидны для
 	// sing-box, парсер должен принимать обе.
-	writeSlot(t, dir, "40-subscriptions.json",
+	writeSlot(t, dir, "13-subscriptions.json",
 		`{"inbounds":[
 			{"type":"mixed","tag":"sub-11112222-in","listen":"127.0.0.1","listen_port":1200},
 			{"type":"mixed","tag":"agg-33334444-in","listen":"127.0.0.1","listen_port":1201}],
@@ -211,11 +211,11 @@ func TestSingboxInboundsHandler_IdleMatrix(t *testing.T) {
 				`{"inbounds":[{"type":"tproxy","tag":"tproxy-qos-1","listen":"127.0.0.1","listen_port":51282}]}`)
 			writeSlot(t, dir, "20-router.json",
 				`{"inbounds":[{"type":"tproxy","tag":"tproxy-in","listen":"127.0.0.1","listen_port":51280}]}`)
-			writeSlot(t, dir, "30-deviceproxy.json",
+			writeSlot(t, dir, "12-deviceproxy.json",
 				`{"inbounds":[{"type":"mixed","tag":"device-proxy-in","listen":"0.0.0.0","listen_port":1099}]}`)
 			// sub-eeeeffff-in — inbound без route-правила даже при routed=true
 			// (случай «включённая сущность, но конфиг порт не питает»).
-			writeSlot(t, dir, "40-subscriptions.json",
+			writeSlot(t, dir, "13-subscriptions.json",
 				`{"inbounds":[
 					{"type":"mixed","tag":"sub-aaaabbbb-in","listen":"127.0.0.1","listen_port":1300},
 					{"type":"mixed","tag":"agg-ccccdddd-in","listen":"127.0.0.1","listen_port":1301},
@@ -239,7 +239,7 @@ func TestSingboxInboundsHandler_UnreadableSlotWarning(t *testing.T) {
 	dir := t.TempDir()
 	writeSlot(t, dir, "10-tunnels.json",
 		`{"inbounds":[{"type":"mixed","tag":"ok-in","listen":"127.0.0.1","listen_port":1081}]}`)
-	writeSlot(t, dir, "40-subscriptions.json", `{broken json`)
+	writeSlot(t, dir, "13-subscriptions.json", `{broken json`)
 
 	h := NewSingboxInboundsHandler(SingboxInboundsDeps{
 		ConfigDir: func() string { return dir },
@@ -252,7 +252,7 @@ func TestSingboxInboundsHandler_UnreadableSlotWarning(t *testing.T) {
 	if len(resp.Warnings) != 1 {
 		t.Fatalf("expected 1 warning, got %v", resp.Warnings)
 	}
-	if got := resp.Warnings[0]; !strings.Contains(got, "40-subscriptions.json") {
+	if got := resp.Warnings[0]; !strings.Contains(got, "13-subscriptions.json") {
 		t.Errorf("warning does not name the unreadable slot: %q", got)
 	}
 }
@@ -298,7 +298,7 @@ func TestSingboxInboundsHandler_ActiveSlotsOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	writeSlot(t, filepath.Join(dir, "disabled"), "40-subscriptions.json",
+	writeSlot(t, filepath.Join(dir, "disabled"), "13-subscriptions.json",
 		`{"inbounds":[{"type":"mixed","tag":"parked-in","listen":"127.0.0.1","listen_port":1300}]}`)
 	writeSlot(t, filepath.Join(dir, "pending"), "20-router.json",
 		`{"inbounds":[{"type":"tproxy","tag":"draft-in","listen":"127.0.0.1","listen_port":51280}]}`)

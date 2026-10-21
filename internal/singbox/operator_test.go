@@ -1426,7 +1426,7 @@ func TestStripStrayDirectPlaceholder_NoOpWhenCleanTree(t *testing.T) {
 		"00-base.json":          `{"outbounds":[{"type":"direct","tag":"direct"}]}`,
 		"10-tunnels.json":       `{"outbounds":[{"type":"vless","tag":"x","server":"h","server_port":443,"uuid":"u"}]}`,
 		"15-awg.json":           `{"outbounds":[{"type":"direct","tag":"awg-x","bind_interface":"t2s0"}]}`,
-		"40-subscriptions.json": `{"outbounds":[{"type":"selector","tag":"sub","outbounds":["sub-x"]}]}`,
+		"13-subscriptions.json": `{"outbounds":[{"type":"selector","tag":"sub","outbounds":["sub-x"]}]}`,
 	}
 	mtimes := map[string]int64{}
 	for name, body := range files {

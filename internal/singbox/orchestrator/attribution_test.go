@@ -17,7 +17,7 @@ func setupAttrOrch(t *testing.T) (*Orchestrator, string) {
 	if err := o.Register(SlotMeta{Slot: SlotTunnels, Filename: "10-tunnels.json", AlwaysOn: true}); err != nil {
 		t.Fatalf("register tunnels: %v", err)
 	}
-	if err := o.Register(SlotMeta{Slot: SlotSubscriptions, Filename: "40-subscriptions.json"}); err != nil {
+	if err := o.Register(SlotMeta{Slot: SlotSubscriptions, Filename: "13-subscriptions.json"}); err != nil {
 		t.Fatalf("register subscriptions: %v", err)
 	}
 	if err := o.Bootstrap(); err != nil {
@@ -80,7 +80,7 @@ func TestCheckMerged_AttributesDecodeIndex(t *testing.T) {
 	// Decode errors carry the slot filename and a per-file index — no
 	// offset translation. Message shape captured from issue #350.
 	res := checkMergedWithError(t,
-		"sing-box check failed: FATAL[0000] decode config at /tmp/.save-check-1/40-subscriptions.json: outbounds[1].tls.certificate_public_key_sha256: (illegal base64 data at input byte 4 | json: cannot unmarshal string into Go value of type [][]uint8)\n: exit status 1")
+		"sing-box check failed: FATAL[0000] decode config at /tmp/.save-check-1/13-subscriptions.json: outbounds[1].tls.certificate_public_key_sha256: (illegal base64 data at input byte 4 | json: cannot unmarshal string into Go value of type [][]uint8)\n: exit status 1")
 	e := res.Errors[0]
 	if e.OutboundIndex == nil {
 		t.Fatal("expected attributed OutboundIndex, got nil")

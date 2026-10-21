@@ -34,7 +34,7 @@ func (s *ServiceImpl) computeIssues(cfg *RouterConfig) []Issue {
 			}
 		}
 	}
-	// Subscription composites live in 40-subscriptions.json owned by subscription slot.
+	// Subscription composites live in 13-subscriptions.json owned by subscription slot.
 	// Their tags are valid route targets but invisible to a router-only view of cfg.Outbounds.
 	if s.deps.SubscriptionComposites != nil {
 		for _, o := range s.deps.SubscriptionComposites.ListSubscriptionComposites() {

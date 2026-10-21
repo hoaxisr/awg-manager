@@ -64,7 +64,7 @@ func (s *ServiceImpl) isKnownOutboundTag(ctx context.Context, tag string, cfg *R
 			return true
 		}
 	}
-	// Subscription composites (40-subscriptions.json)
+	// Subscription composites (13-subscriptions.json)
 	if s.deps.SubscriptionComposites != nil {
 		for _, o := range s.deps.SubscriptionComposites.ListSubscriptionComposites() {
 			if o.Tag == tag {

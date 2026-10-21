@@ -16,10 +16,10 @@ import (
 
 // SlotSubscriptionsMeta is the SlotMeta registered on startup.
 // The slot constant itself lives in internal/singbox/orchestrator as
-// SlotSubscriptions ("subscriptions" / 40-subscriptions.json).
+// SlotSubscriptions ("subscriptions" / 13-subscriptions.json).
 var SlotSubscriptionsMeta = orchestrator.SlotMeta{
 	Slot:     orchestrator.SlotSubscriptions,
-	Filename: "40-subscriptions.json",
+	Filename: "13-subscriptions.json",
 	AlwaysOn: false,
 }
 
@@ -31,7 +31,7 @@ const subscriptionPortBase = 11000
 // subscriptionPortMax is the inclusive upper bound of the subscription port range.
 const subscriptionPortMax = 11999
 
-// slotConfig is the in-memory shape persisted to 40-subscriptions.json.
+// slotConfig is the in-memory shape persisted to 13-subscriptions.json.
 // It intentionally omits log/dns/experimental (those are in 00-base.json).
 type slotConfig struct {
 	Inbounds  []any          `json:"inbounds"`
@@ -59,7 +59,7 @@ type ClashSelector interface {
 }
 
 // OperatorAdapter implements ConfigMutator by maintaining its own
-// config slot (40-subscriptions.json) written through the orchestrator.
+// config slot (13-subscriptions.json) written through the orchestrator.
 //
 // Mutations (Add*/Update*/Remove*) only accumulate in-memory; the full slot
 // is validated, written via orch.Save and SIGHUP'd ONCE when Reload() commits
@@ -89,7 +89,7 @@ type OperatorAdapter struct {
 	mu  sync.Mutex
 	cfg slotConfig
 	// loadErr — отказ LoadFromDisk прочитать существующий слот. flush()
-	// пишет 40-subscriptions.json ЦЕЛИКОМ из памяти, поэтому память, не
+	// пишет 13-subscriptions.json ЦЕЛИКОМ из памяти, поэтому память, не
 	// сверенная с диском, стирает ВСЕ подписки при первой же операции над
 	// одной из них — а зовёт эту операцию планировщик автообновления сам,
 	// раз в минуту, без участия человека. Пока признак стоит, писать нельзя.
@@ -178,12 +178,12 @@ func NewOperatorAdapter(orch *orchestrator.Orchestrator, pm ProxyRegistrar, clas
 	}
 }
 
-// LoadFromDisk reads an existing 40-subscriptions.json (if any) into the
+// LoadFromDisk reads an existing 13-subscriptions.json (if any) into the
 // in-memory config. Call once after orch.Bootstrap() so the adapter is
 // consistent with what is on disk. Missing file is treated as an empty
 // slot (not an error).
 func (a *OperatorAdapter) LoadFromDisk(configDir string) error {
-	path := fmt.Sprintf("%s/40-subscriptions.json", configDir)
+	path := fmt.Sprintf("%s/13-subscriptions.json", configDir)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

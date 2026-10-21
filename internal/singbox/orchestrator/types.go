@@ -24,9 +24,9 @@ const (
 	SlotQoSRoutes     Slot = "qos-routes"    // 18-qos-routes.json
 	SlotRouter        Slot = "router"        // 20-router.json
 	SlotFakeIP        Slot = "fakeip"        // 21-fakeip.json
-	SlotDeviceProxy   Slot = "deviceproxy"   // 30-deviceproxy.json
+	SlotDeviceProxy   Slot = "deviceproxy"   // 12-deviceproxy.json
 	SlotDownloadProxy Slot = "downloadproxy" // 35-download-proxy.json
-	SlotSubscriptions Slot = "subscriptions" // 40-subscriptions.json
+	SlotSubscriptions Slot = "subscriptions" // 13-subscriptions.json
 	SlotUser          Slot = "user"          // 90-user.json — эксперт-редактор
 	SlotDefaults      Slot = "defaults"      // 99-defaults.json — дефолты условных скаляров
 )
@@ -69,6 +69,13 @@ func KnownSlots() []SlotMeta {
 	return []SlotMeta{
 		{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true},
 		{Slot: SlotTunnels, Filename: "10-tunnels.json", AlwaysOn: true},
+		// 12/13 merge BEFORE 20/21 on purpose (F701): their route rules bind
+		// an inbound to its own outbound, and the user rules of 20/21 are
+		// not inbound-scoped — merged after them, a rule like
+		// "youtube → X" would steal device-proxy / NDMS-proxy traffic.
+		// Were 30/40 before; MigrateBindingSlotOrder renames on boot.
+		{Slot: SlotDeviceProxy, Filename: "12-deviceproxy.json"},
+		{Slot: SlotSubscriptions, Filename: "13-subscriptions.json"},
 		{Slot: SlotAwg, Filename: "15-awg.json", AlwaysOn: true},
 		{Slot: SlotAwg3, Filename: "16-awg3.json", AlwaysOn: true},
 		{Slot: SlotDNSRewrites, Filename: "17-dns-rewrites.json"},
@@ -78,9 +85,7 @@ func KnownSlots() []SlotMeta {
 		{Slot: SlotQoSRoutes, Filename: "18-qos-routes.json"},
 		{Slot: SlotRouter, Filename: "20-router.json"},
 		{Slot: SlotFakeIP, Filename: "21-fakeip.json"},
-		{Slot: SlotDeviceProxy, Filename: "30-deviceproxy.json"},
 		{Slot: SlotDownloadProxy, Filename: "35-download-proxy.json"},
-		{Slot: SlotSubscriptions, Filename: "40-subscriptions.json"},
 		// Пользовательский слот эксперт-редактора. НИКАКОЙ продюсер не
 		// пишет в него — только draft-пайплайн (SaveDraft/ApplyDraft) по
 		// явному действию пользователя; массивы (outbounds/inbounds/

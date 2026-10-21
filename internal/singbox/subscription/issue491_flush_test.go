@@ -15,7 +15,7 @@ import (
 
 // issue491Validator скриптует sing-box check: outbound с тегом, содержащим
 // "bad", валится decode-ошибкой с индексом; считает вызовы отдельно для
-// standalone-снапшота (в директории ТОЛЬКО 40-subscriptions.json) и merged
+// standalone-снапшота (в директории ТОЛЬКО 13-subscriptions.json) и merged
 // (есть соседние слоты).
 type issue491Validator struct {
 	standaloneCalls int
@@ -32,7 +32,7 @@ func (v *issue491Validator) Validate(_ context.Context, dir string) error {
 	} else {
 		v.mergedCalls++
 	}
-	path := filepath.Join(dir, "40-subscriptions.json")
+	path := filepath.Join(dir, "13-subscriptions.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil // наш слот не в снапшоте — нечего валидировать

@@ -103,7 +103,7 @@ func dirtyTreeFixture(t *testing.T) string {
 		"dns":   map[string]any{"strategy": "ipv4_only", "final": "dns-doh"},
 		"route": map[string]any{"final": "direct"},
 	})
-	writeFixtureJSON(t, filepath.Join(cd, "40-subscriptions.json"), map[string]any{
+	writeFixtureJSON(t, filepath.Join(cd, "13-subscriptions.json"), map[string]any{
 		"outbounds": []any{
 			map[string]any{"type": "naive", "tag": "sub-nv", "server": "s", "server_port": 443},
 			map[string]any{"type": "hysteria2", "tag": "sub-h2", "server": "s", "server_port": 443,
@@ -369,7 +369,7 @@ func TestReconcileConfigSteps_EachStepIdempotent(t *testing.T) {
 			})
 			return dir
 		},
-		stepOutboundCompat: func(t *testing.T) string { // naive + hysteria2 в 10-tunnels и 40-subscriptions
+		stepOutboundCompat: func(t *testing.T) string { // naive + hysteria2 в 10-tunnels и 13-subscriptions
 			dir := t.TempDir()
 			writeFixtureJSON(t, filepath.Join(dir, "config.d", "10-tunnels.json"), map[string]any{
 				"outbounds": []any{
@@ -378,7 +378,7 @@ func TestReconcileConfigSteps_EachStepIdempotent(t *testing.T) {
 						"tls": map[string]any{"disable_sni": true, "insecure": false}},
 				},
 			})
-			writeFixtureJSON(t, filepath.Join(dir, "config.d", "40-subscriptions.json"), map[string]any{
+			writeFixtureJSON(t, filepath.Join(dir, "config.d", "13-subscriptions.json"), map[string]any{
 				"outbounds": []any{
 					map[string]any{"type": "naive", "tag": "sub-nv", "server": "s", "server_port": 443},
 					map[string]any{"type": "hysteria2", "tag": "sub-h2", "server": "s", "server_port": 443,
@@ -471,7 +471,7 @@ func findReconcileStep(t *testing.T, dir, name string) reconcileStep {
 
 // КРАСНЫЙ ДО ФИКСА (против набора, где шаг outbound-compat целится только в
 // 10-tunnels.json): шаг обязан лечить ОБА слота-продюсера outbound'ов — и
-// 10-tunnels.json (пишет UI), и 40-subscriptions.json (пишет подписочный
+// 10-tunnels.json (пишет UI), и 13-subscriptions.json (пишет подписочный
 // адаптер). Идемпотентности здесь мало: no-op тоже идемпотентен, поэтому
 // нацеливание закрепляется ассертом на результат.
 func TestReconcileConfigSteps_OutboundCompatHealsBothSlots(t *testing.T) {
@@ -487,11 +487,11 @@ func TestReconcileConfigSteps_OutboundCompatHealsBothSlots(t *testing.T) {
 		}
 	}
 	writeFixtureJSON(t, filepath.Join(cd, "10-tunnels.json"), incompatible())
-	writeFixtureJSON(t, filepath.Join(cd, "40-subscriptions.json"), incompatible())
+	writeFixtureJSON(t, filepath.Join(cd, "13-subscriptions.json"), incompatible())
 
 	runReconcile(t, dir, false)
 
-	for _, slot := range []string{"10-tunnels.json", "40-subscriptions.json"} {
+	for _, slot := range []string{"10-tunnels.json", "13-subscriptions.json"} {
 		m := readJSONMap(t, filepath.Join(cd, slot))
 		if m == nil {
 			t.Fatalf("слот %s пропал", slot)

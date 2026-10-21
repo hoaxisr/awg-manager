@@ -185,7 +185,7 @@ func TestBuildSingboxCore_DeviceProxyMigrationSetsMigratedFlag(t *testing.T) {
 	if !core.migrated {
 		t.Error("core.migrated = false: миграция device-proxy не попала в reload-триггер")
 	}
-	if _, err := os.Stat(filepath.Join(configD, "30-deviceproxy.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(configD, "12-deviceproxy.json")); err != nil {
 		t.Fatalf("миграция не отработала: %v", err)
 	}
 }

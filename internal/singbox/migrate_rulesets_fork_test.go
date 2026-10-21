@@ -44,7 +44,7 @@ func TestMigrateRuleSetURLsToFork(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	untouched := filepath.Join(dir, "30-deviceproxy.json")
+	untouched := filepath.Join(dir, "12-deviceproxy.json")
 	if err := os.WriteFile(untouched, []byte(clean), 0o644); err != nil {
 		t.Fatal(err)
 	}

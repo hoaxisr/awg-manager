@@ -156,7 +156,7 @@ func TestMerge_SkipsDisabledSubdir(t *testing.T) {
 	if err := os.MkdirAll(disabled, 0755); err != nil {
 		t.Fatal(err)
 	}
-	writeJSON(t, disabled, "30-deviceproxy.json", `{"inbounds":[{"tag":"parked","type":"socks"}]}`)
+	writeJSON(t, disabled, "12-deviceproxy.json", `{"inbounds":[{"tag":"parked","type":"socks"}]}`)
 
 	out, err := MergeDir(dir)
 	if err != nil {
