@@ -913,9 +913,9 @@ func (c *Config) EnsureDeviceProxyInstance(spec DeviceProxyInstanceSpec) error {
 	lanTag := deviceProxyLANTag(spec.ID)
 	lanDNSTag := deviceProxyLANDNSTag(spec.ID)
 	// udp на 127.0.0.1, а не type:local: тот уводит .local в mDNS мультикастом
-	// во все интерфейсы, включая WAN. Адрес отправителя — по той же причине,
-	// что у lanTag ниже: иначе под default_interface сокет биндится к WAN.
-	c.upsertDNSServer(lanDNSTag, map[string]any{"type": "udp", "tag": lanDNSTag, "server": "127.0.0.1", "inet4_bind_address": "0.0.0.0"})
+	// во все интерфейсы, включая WAN. Адрес отправителя не нужен: к loopback
+	// sing-box сокет к интерфейсу не привязывает (control/bind.go, IsVirtual).
+	c.upsertDNSServer(lanDNSTag, map[string]any{"type": "udp", "tag": lanDNSTag, "server": "127.0.0.1"})
 	c.upsertOutbound(lanTag, map[string]any{
 		"type":               "direct",
 		"tag":                lanTag,
@@ -1181,10 +1181,11 @@ func (c *Config) ensureDeviceProxyInstanceRouteRule(inboundTag, selectorTag, lan
 		"ip_is_private": true,
 		"outbound":      lanTag,
 	}
-	// Loopback роутера — не назначение для клиентов прокси.
+	// Loopback и unspecified-адреса роутера — не назначение для клиентов
+	// прокси (ip_is_private ниже включает и те, и другие).
 	rejectLoopback := map[string]any{
 		"inbound": inboundTag,
-		"ip_cidr": []any{"127.0.0.0/8", "::1/128"},
+		"ip_cidr": []any{"127.0.0.0/8", "::1/128", "0.0.0.0/32", "::/128"},
 		"action":  "reject",
 	}
 	rejectLocalhost := map[string]any{

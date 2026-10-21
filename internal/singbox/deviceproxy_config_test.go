@@ -252,11 +252,11 @@ func TestBuildDeviceProxyConfig_LANNamesViaLocalDNS(t *testing.T) {
 		t.Errorf("device-proxy-lan domain_resolver = %v, want device-proxy-lan-dns", lan["domain_resolver"])
 	}
 	// udp на резолвер роутера, а не type:local — тот уводит .local в mDNS
-	// мультикастом во все интерфейсы, включая WAN. Адрес отправителя: без него
-	// при выбранном WAN (default_interface) сокет биндится к нему, и запрос к
-	// 127.0.0.1 висит — тот же механизм, что F702.
+	// мультикастом во все интерфейсы, включая WAN. Адрес отправителя не нужен:
+	// к loopback-назначению sing-box сокет к интерфейсу не привязывает
+	// (sing/common/control/bind.go, N.IsVirtual).
 	got, _ = json.Marshal(deviceProxyDNSServers(cfg))
-	if want := `[{"inet4_bind_address":"0.0.0.0","server":"127.0.0.1","tag":"device-proxy-lan-dns","type":"udp"}]`; string(got) != want {
+	if want := `[{"server":"127.0.0.1","tag":"device-proxy-lan-dns","type":"udp"}]`; string(got) != want {
 		t.Errorf("dns servers = %s, want %s", got, want)
 	}
 
@@ -278,9 +278,9 @@ func deviceProxyDNSServers(c *Config) []map[string]any {
 	return out
 }
 
-// ip_is_private в sing-box включает loopback: без явного отказа правило LAN
-// отдавало бы 127.0.0.0/8 клиентам прокси. Первые правила инстанса — отказ
-// loopback по адресу и по имени localhost.
+// ip_is_private в sing-box включает loopback и unspecified: без явного отказа
+// правило LAN отдавало бы их клиентам прокси. Первые правила инстанса — отказ
+// по адресу и по имени localhost.
 func TestBuildDeviceProxyConfig_RejectsLoopbackFirst(t *testing.T) {
 	data, err := BuildDeviceProxyConfig(DeviceProxySpec{
 		Enabled: true, ListenAddr: "0.0.0.0", Port: 1099, SelectedTag: "direct",
@@ -294,7 +294,7 @@ func TestBuildDeviceProxyConfig_RejectsLoopbackFirst(t *testing.T) {
 	}
 	rules := cfg.routeRules()
 	want := []string{
-		`{"action":"reject","inbound":"device-proxy-in","ip_cidr":["127.0.0.0/8","::1/128"]}`,
+		`{"action":"reject","inbound":"device-proxy-in","ip_cidr":["127.0.0.0/8","::1/128","0.0.0.0/32","::/128"]}`,
 		`{"action":"reject","domain_suffix":["localhost"],"inbound":"device-proxy-in"}`,
 	}
 	if len(rules) < len(want) {
