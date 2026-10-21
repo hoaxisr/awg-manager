@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"net"
 	"slices"
 	"strings"
 
@@ -190,11 +191,25 @@ func (s *ServiceImpl) policyTunIngressSpec(ctx context.Context, iface, ndmsName 
 		s.appLog.Warn("policy-tun-ingress", iface, "список политик: "+err.Error())
 		return FakeIPIngressSpec{}, false
 	}
+	// F705: пока tun лежит (рестарт/перечитывание движка), NDMS убирает из
+	// таблицы политики маршрут 0.0.0.0/0 через него, и набор выходов пуст —
+	// это не «политик нет». Снятие перехвата DNS (и хука) в это окно пускало
+	// резолвинг мимо туннеля до следующего тика (стенд 21.10: ~50 с).
+	if len(exits) == 0 && !tunLinkRunning(iface) {
+		return FakeIPIngressSpec{}, false
+	}
 	spec.TunDNS = tunDNS
 	for _, e := range exits {
 		spec.Marks = append(spec.Marks, e.Mark)
 	}
 	return spec, true
+}
+
+// tunLinkRunning — tun-интерфейс поднят и с несущей (sing-box держит его fd).
+// Шов для тестов.
+var tunLinkRunning = func(iface string) bool {
+	ifi, err := net.InterfaceByName(iface)
+	return err == nil && ifi.Flags&net.FlagUp != 0 && ifi.Flags&net.FlagRunning != 0
 }
 
 // portRangesContain — вхождение порта в набор диапазонов bypass.

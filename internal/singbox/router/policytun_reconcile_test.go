@@ -1747,7 +1747,15 @@ func TestPolicyTunIngressSpecSkipsTickOnRCIError(t *testing.T) {
 	}
 }
 
+func stubTunLinkRunning(t *testing.T, up bool) {
+	t.Helper()
+	prev := tunLinkRunning
+	t.Cleanup(func() { tunLinkRunning = prev })
+	tunLinkRunning = func(string) bool { return up }
+}
+
 func TestPolicyTunIngressSpecEmptyOnNoPolicies(t *testing.T) {
+	stubTunLinkRunning(t, true)
 	s := newServiceWithExits(t, nil, nil)
 	spec, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", storage.SingboxRouterSettings{})
 	if !ok {
@@ -1755,6 +1763,24 @@ func TestPolicyTunIngressSpecEmptyOnNoPolicies(t *testing.T) {
 	}
 	if len(spec.Marks) != 0 || spec.dnatHalf() {
 		t.Error("без политик перехвата быть не должно")
+	}
+}
+
+// F705: пока tun лежит (рестарт/перечитывание движка), NDMS убирает из
+// таблицы политики маршрут 0.0.0.0/0 через OpkgTun — стенд 21.10: ~3 с
+// route=0 при рестарте sing-box. Пустой набор выходов в это окно — не «политик
+// нет»: снятие перехвата DNS (и хука) открывало окно резолвинга мимо туннеля
+// до следующего тика (стенд: хук пропал на ~50 с, NDMS «unable to open»).
+func TestPolicyTunIngressSpecSkipsTickWhileTunDown(t *testing.T) {
+	stubTunLinkRunning(t, false)
+	s := newServiceWithExits(t, nil, nil)
+	if _, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", storage.SingboxRouterSettings{}); ok {
+		t.Error("пустой набор выходов при лежащем tun обязан давать skip")
+	}
+	// Непустой набор — применим и при лежащем tun: снимать нечего.
+	s = newServiceWithExits(t, []query.PolicyDefaultExit{{Name: "Policy1", Mark: "0xffffaab"}}, nil)
+	if _, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", storage.SingboxRouterSettings{}); !ok {
+		t.Error("непустой набор выходов — применимый спек")
 	}
 }
 
