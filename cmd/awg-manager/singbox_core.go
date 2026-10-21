@@ -2,6 +2,7 @@ package main
 
 import (
 	"log/slog"
+	"net"
 	"path/filepath"
 	"runtime"
 
@@ -111,6 +112,10 @@ func buildSingboxCore(d singboxCoreDeps) singboxCore {
 	if err != nil {
 		d.bootLog.Warn("dns-matchsource-migration", "", err.Error())
 	}
+	localDNSBindMigrated, err := router.MigrateLocalDNSBind(singboxConfigDir, net.InterfaceAddrs)
+	if err != nil {
+		d.bootLog.Warn("local-dns-bind-migration", "", err.Error())
+	}
 	orch := singboxorch.New(singboxConfigDir, op.OrchestratorProcess())
 	orch.SetLogger(func(level, msg string) {
 		switch level {
@@ -168,7 +173,7 @@ func buildSingboxCore(d singboxCoreDeps) singboxCore {
 		op:        op,
 		orch:      orch,
 		awg3Store: awg3Store,
-		migrated:  ruleSetURLsMigrated || addressOrMigrated || deviceProxyMigrated || dnsMatchSourceMigrated || bindingSlotsMigrated,
+		migrated:  ruleSetURLsMigrated || addressOrMigrated || deviceProxyMigrated || dnsMatchSourceMigrated || bindingSlotsMigrated || localDNSBindMigrated,
 	}
 }
 

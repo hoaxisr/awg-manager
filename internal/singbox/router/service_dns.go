@@ -18,6 +18,7 @@ func (s *ServiceImpl) ListDNSServers(ctx context.Context) ([]DNSServer, error) {
 }
 
 func (s *ServiceImpl) AddDNSServer(ctx context.Context, srv DNSServer) error {
+	srv = s.withLocalDNSBind(srv)
 	if err := s.dnsBindAddressLocal(srv); err != nil {
 		return err
 	}
@@ -25,6 +26,7 @@ func (s *ServiceImpl) AddDNSServer(ctx context.Context, srv DNSServer) error {
 }
 
 func (s *ServiceImpl) UpdateDNSServer(ctx context.Context, tag string, srv DNSServer) error {
+	srv = s.withLocalDNSBind(srv)
 	bindErr := s.dnsBindAddressLocal(srv)
 	return s.withConfig(ctx, "dns-servers", func(c *RouterConfig) error {
 		if bindErr != nil && !keepsDNSBindAddress(c, tag, srv) {
@@ -49,14 +51,55 @@ func (s *ServiceImpl) dnsBindAddressLocal(srv DNSServer) error {
 	if err != nil {
 		return fmt.Errorf("адреса интерфейсов роутера: %w", err)
 	}
+	if addrIsLocal(addrs, want) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s не назначен ни одному интерфейсу роутера", ErrDNSBindAddress, want)
+}
+
+func addrIsLocal(addrs []net.Addr, want netip.Addr) bool {
 	for _, a := range addrs {
 		if n, ok := a.(*net.IPNet); ok {
 			if ip, ok := netip.AddrFromSlice(n.IP); ok && ip.Unmap() == want {
-				return nil
+				return true
 			}
 		}
 	}
-	return fmt.Errorf("%w: %s не назначен ни одному интерфейсу роутера", ErrDNSBindAddress, want)
+	return false
+}
+
+// localDNSSelfBind — адрес отправителя для DNS-сервера на собственном адресе
+// роутера (F702): под auto_detect_interface/default_interface sing-box биндит
+// сокет к интерфейсу-владельцу адреса, и на ядре Keenetic запрос к своему
+// адресу висит — DNS через sing-box мёртв целиком (стенд 21.10). Любой адрес
+// отправителя снимает автопривязку; собственный — единственный, что пропустит
+// dnsBindAddressLocal. Только пустое поле и без detour (с ним поля
+// подключения игнорируются): явный выбор пользователя не трогаем.
+func localDNSSelfBind(srv DNSServer, addrs []net.Addr) (string, bool) {
+	if srv.Inet4BindAddress != "" || srv.Detour != "" || srv.Type == "local" || srv.Type == "fakeip" || srv.Tag == managedDNSDirectTag {
+		return "", false
+	}
+	ip, err := netip.ParseAddr(srv.Server)
+	if err != nil || !ip.Is4() || !addrIsLocal(addrs, ip) {
+		return "", false
+	}
+	return ip.String(), true
+}
+
+// withLocalDNSBind — localDNSSelfBind при сохранении сервера. Сбой чтения
+// адресов роутера сохранение не роняет: подстановка лишь не случится.
+func (s *ServiceImpl) withLocalDNSBind(srv DNSServer) DNSServer {
+	if ip, err := netip.ParseAddr(srv.Server); err != nil || !ip.Is4() || s.deps.LocalAddrs == nil {
+		return srv
+	}
+	addrs, err := s.deps.LocalAddrs()
+	if err != nil {
+		return srv
+	}
+	if bind, ok := localDNSSelfBind(srv, addrs); ok {
+		srv.Inet4BindAddress = bind
+	}
+	return srv
 }
 
 // keepsDNSBindAddress — у записи tag в c тот же inet4_bind_address. Однажды
