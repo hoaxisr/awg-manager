@@ -748,9 +748,20 @@ func isDeviceProxyInboundTag(tag string) bool {
 		(strings.HasPrefix(tag, "device-proxy-") && strings.HasSuffix(tag, "-in"))
 }
 
-func isDeviceProxySelectorTag(tag string) bool {
+// deviceProxyLANTag — direct-outbound инстанса для LAN-адресов (F702).
+func deviceProxyLANTag(id string) string {
+	if id == "" || id == "default" {
+		return "device-proxy-lan"
+	}
+	return "device-proxy-" + id + "-lan"
+}
+
+// isDeviceProxyOutboundTag — outbound'ы, которые слот прокси для устройств
+// создаёт сам: селектор и LAN-direct инстанса.
+func isDeviceProxyOutboundTag(tag string) bool {
 	return tag == deviceProxySelectorTag ||
-		(strings.HasPrefix(tag, "device-proxy-") && strings.HasSuffix(tag, "-selector"))
+		(strings.HasPrefix(tag, "device-proxy-") &&
+			(strings.HasSuffix(tag, "-selector") || strings.HasSuffix(tag, "-lan")))
 }
 
 // EnsureDeviceProxy writes (or overwrites) the inbound + selector
@@ -825,7 +836,19 @@ func (c *Config) EnsureDeviceProxyInstance(spec DeviceProxyInstanceSpec) error {
 	}
 	c.upsertOutbound(selectorTag, selector)
 
-	c.ensureDeviceProxyInstanceRouteRule(inboundTag, selectorTag)
+	// Любой *_bind_address отключает автопривязку sing-box к интерфейсу
+	// (common/dialer/default.go, disableDefaultBind): под auto_detect_interface
+	// сокет к собственному адресу роутера привязывается к его интерфейсу, и
+	// на ядре Keenetic соединение висит до таймаута (F702, стенд 21.10).
+	lanTag := deviceProxyLANTag(spec.ID)
+	c.upsertOutbound(lanTag, map[string]any{
+		"type":               "direct",
+		"tag":                lanTag,
+		"inet4_bind_address": "0.0.0.0",
+		"inet6_bind_address": "::",
+	})
+
+	c.ensureDeviceProxyInstanceRouteRule(inboundTag, selectorTag, lanTag)
 	return nil
 }
 
@@ -840,6 +863,7 @@ func (c *Config) RemoveDeviceProxyInstance(id string) {
 	inboundTag, selectorTag := deviceProxyInstanceTags(id)
 	c.removeInbound(inboundTag)
 	c.removeOutbound(selectorTag)
+	c.removeOutbound(deviceProxyLANTag(id))
 	c.pruneAWGOutbounds(nil)
 	c.removeDeviceProxyInstanceRouteRule(inboundTag)
 }
@@ -872,7 +896,7 @@ func (c *Config) RemoveAllDeviceProxyInstances() {
 			continue
 		}
 		tag, _ := ob["tag"].(string)
-		if isDeviceProxySelectorTag(tag) {
+		if isDeviceProxyOutboundTag(tag) {
 			continue
 		}
 		nextOutbounds = append(nextOutbounds, v)
@@ -944,7 +968,7 @@ func (c *Config) ExtractDeviceProxy() *Config {
 		if !ok {
 			continue
 		}
-		if t, _ := ob["tag"].(string); isDeviceProxySelectorTag(t) {
+		if t, _ := ob["tag"].(string); isDeviceProxyOutboundTag(t) {
 			out.upsertOutbound(t, ob)
 		}
 	}
@@ -1064,13 +1088,13 @@ func (c *Config) pruneAWGOutbounds(keep map[string]string) {
 	c.setOutbounds(out)
 }
 
-func (c *Config) ensureDeviceProxyInstanceRouteRule(inboundTag, selectorTag string) {
+func (c *Config) ensureDeviceProxyInstanceRouteRule(inboundTag, selectorTag, lanTag string) {
 	// LAN-адреса — мимо туннеля. Слот грузится раньше правил маршрутизатора
 	// (F701), и его системное ip_is_private → direct до этого входа не доходит.
 	privateDirect := map[string]any{
 		"inbound":       inboundTag,
 		"ip_is_private": true,
-		"outbound":      "direct",
+		"outbound":      lanTag,
 	}
 	rule := map[string]any{
 		"inbound":  inboundTag,

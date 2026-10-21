@@ -440,7 +440,7 @@ func TestConfig_EnsureDeviceProxy_Full(t *testing.T) {
 		t.Fatalf("route rules = %v, want private-direct + binding", rules)
 	}
 	first := rules[0].(map[string]any)
-	if first["inbound"] != "device-proxy-in" || first["ip_is_private"] != true || first["outbound"] != "direct" {
+	if first["inbound"] != "device-proxy-in" || first["ip_is_private"] != true || first["outbound"] != "device-proxy-lan" {
 		t.Fatalf("first rule = %v", first)
 	}
 	second := rules[1].(map[string]any)
