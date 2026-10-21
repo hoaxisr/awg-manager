@@ -1181,9 +1181,7 @@ func (c *Config) ensureDeviceProxyInstanceRouteRule(inboundTag, selectorTag, lan
 		"ip_is_private": true,
 		"outbound":      lanTag,
 	}
-	// Loopback роутера наружу не отдаём: ip_is_private его ловит, а на
-	// 127.0.0.1 слушают RCI (:79, без авторизации), Clash API, панель —
-	// через прокси для устройств они отвечали любому клиенту (стенд 21.10).
+	// Loopback роутера — не назначение для клиентов прокси.
 	rejectLoopback := map[string]any{
 		"inbound": inboundTag,
 		"ip_cidr": []any{"127.0.0.0/8", "::1/128"},

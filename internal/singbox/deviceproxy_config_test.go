@@ -278,10 +278,9 @@ func deviceProxyDNSServers(c *Config) []map[string]any {
 	return out
 }
 
-// Безопасность: ip_is_private в sing-box ловит и loopback, и правило LAN
-// уводило 127.0.0.1 в direct — через прокси для устройств отвечал RCI роутера
-// на 127.0.0.1:79 без авторизации (стенд 21.10: /rci/show/version). Первые
-// правила инстанса — отказ loopback по адресу и по имени localhost.
+// ip_is_private в sing-box включает loopback: без явного отказа правило LAN
+// отдавало бы 127.0.0.0/8 клиентам прокси. Первые правила инстанса — отказ
+// loopback по адресу и по имени localhost.
 func TestBuildDeviceProxyConfig_RejectsLoopbackFirst(t *testing.T) {
 	data, err := BuildDeviceProxyConfig(DeviceProxySpec{
 		Enabled: true, ListenAddr: "0.0.0.0", Port: 1099, SelectedTag: "direct",
