@@ -20,8 +20,10 @@ import (
 // remove the slot's effect should also call orchestrator.SetEnabled
 // with false to move the file under disabled/.
 //
-// The result intentionally omits log/dns/experimental keys: those are
-// owned by 00-base.json and must not collide across config.d slots.
+// The result intentionally omits log/experimental keys and dns scalars:
+// those are owned by 00-base.json and must not collide across config.d
+// slots. dns.servers is the exception — it concatenates across slots and
+// carries the instance's local LAN resolver (F702).
 func BuildDeviceProxyConfig(spec DeviceProxySpec) ([]byte, error) {
 	return BuildDeviceProxyInstancesConfig([]DeviceProxyInstanceSpec{
 		{
