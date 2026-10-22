@@ -14,14 +14,16 @@ describe('partitionOutbounds', () => {
 		expect(composite).toEqual([]);
 	});
 
-	it('routes selector / urltest / loadbalance to composite', () => {
+	it('routes selector / urltest / loadbalance / fallback / load-balance to composite', () => {
 		const { atomic, composite } = partitionOutbounds([
 			ob('s', 'selector'),
 			ob('u', 'urltest'),
 			ob('l', 'loadbalance'),
+			ob('f', 'fallback'),
+			ob('lb', 'load-balance'),
 		]);
 		expect(atomic).toEqual([]);
-		expect(composite.map((o) => o.tag)).toEqual(['s', 'u', 'l']);
+		expect(composite.map((o) => o.tag)).toEqual(['s', 'u', 'l', 'f', 'lb']);
 	});
 
 	it('preserves order within each bucket', () => {

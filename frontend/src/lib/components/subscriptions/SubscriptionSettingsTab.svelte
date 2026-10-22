@@ -122,7 +122,7 @@
 				enabled,
 				mode,
 				urlTest:
-					mode === 'urltest'
+					mode !== 'selector'
 						? { url: utUrl, intervalSec: utIntervalSec, toleranceMs: utToleranceMs }
 						: undefined,
 				filterInclude: filterInclude.trim(),
@@ -245,8 +245,44 @@
 						</span>
 					{/if}
 				</button>
+				<button
+					type="button"
+					role="radio"
+					aria-checked={mode === 'fallback'}
+					class="mode-card"
+					class:selected={mode === 'fallback'}
+					onclick={() => (mode = 'fallback')}
+				>
+					<div class="mode-title">{m.subscriptions_form_mode_fallback_title()}</div>
+					<div class="mode-desc">
+						{m.subscriptions_form_mode_fallback_desc()}
+					</div>
+					{#if mode === 'fallback'}
+						<span class="mode-check" aria-hidden="true">
+							<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+						</span>
+					{/if}
+				</button>
+				<button
+					type="button"
+					role="radio"
+					aria-checked={mode === 'load-balance'}
+					class="mode-card"
+					class:selected={mode === 'load-balance'}
+					onclick={() => (mode = 'load-balance')}
+				>
+					<div class="mode-title">{m.subscriptions_form_mode_loadbalance_title()}</div>
+					<div class="mode-desc">
+						{m.subscriptions_form_mode_loadbalance_desc()}
+					</div>
+					{#if mode === 'load-balance'}
+						<span class="mode-check" aria-hidden="true">
+							<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+						</span>
+					{/if}
+				</button>
 			</div>
-			{#if mode === 'urltest'}
+			{#if mode === 'urltest' || mode === 'fallback' || mode === 'load-balance'}
 				<div class="urltest-block">
 					<label class="row">
 						<span class="lbl">{m.subscriptions_form_check_url()}</span>
@@ -262,10 +298,12 @@
 							<span class="lbl">{m.subscriptions_form_interval()}</span>
 							<input class="inp" type="number" min="10" max="3600" bind:value={utIntervalSec} />
 						</label>
-						<label class="ut-col">
-							<span class="lbl">{m.subscriptions_form_tolerance()}</span>
-							<input class="inp" type="number" min="0" max="2000" bind:value={utToleranceMs} />
-						</label>
+						{#if mode === 'urltest'}
+							<label class="ut-col">
+								<span class="lbl">{m.subscriptions_form_tolerance()}</span>
+								<input class="inp" type="number" min="0" max="2000" bind:value={utToleranceMs} />
+							</label>
+						{/if}
 					</div>
 				</div>
 			{/if}
@@ -299,7 +337,7 @@
 					<span class="summary-label">{m.subscriptions_settings_summary_source()}</span>
 				</div>
 				<div class="summary-item">
-					<span class="summary-value">{mode === 'urltest' ? m.subscriptions_settings_summary_auto_select() : m.subscriptions_settings_summary_manual_select()}</span>
+					<span class="summary-value">{mode === 'urltest' ? m.subscriptions_settings_summary_auto_select() : mode === 'fallback' ? m.subscriptions_form_mode_fallback_title() : mode === 'load-balance' ? m.subscriptions_form_mode_loadbalance_title() : m.subscriptions_settings_summary_manual_select()}</span>
 					<span class="summary-label">{m.subscriptions_settings_summary_mode()}</span>
 				</div>
 				<div class="summary-item">

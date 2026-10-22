@@ -36,6 +36,16 @@ describe('findMatchingComposite', () => {
   it('не находит при другом составе', () => {
     expect(findMatchingComposite(outbounds, ['warp'])).toBeUndefined();
   });
+
+  it('для fallback учитывает строгий порядок участников', () => {
+    const fallbackOutbounds: SingboxRouterOutbound[] = [
+      { type: 'fallback', tag: 'fb-group', outbounds: ['warp', 'awg10'] },
+    ];
+    // Exact order matches
+    expect(findMatchingComposite(fallbackOutbounds, ['warp', 'awg10'], 'fallback')?.tag).toBe('fb-group');
+    // Inverted order does NOT match because priority differs
+    expect(findMatchingComposite(fallbackOutbounds, ['awg10', 'warp'], 'fallback')).toBeUndefined();
+  });
 });
 
 describe('nextCustomCompositeTag', () => {

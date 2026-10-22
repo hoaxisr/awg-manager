@@ -4,9 +4,9 @@ import { resolveMemberLabel } from '$lib/utils/memberLabel';
 import { resolveSubscriptionMemberTag } from '$lib/utils/subscriptionMember';
 import { outboundDisplay as compositeTitle } from './outboundLabel';
 
-export const COMPOSITE_OUTBOUND_TYPES = new Set(['selector', 'urltest', 'loadbalance']);
+export const COMPOSITE_OUTBOUND_TYPES = new Set(['selector', 'urltest', 'loadbalance', 'fallback', 'load-balance']);
 
-export type CompositeOutboundType = 'selector' | 'urltest' | 'loadbalance';
+export type CompositeOutboundType = 'selector' | 'urltest' | 'loadbalance' | 'fallback' | 'load-balance';
 
 export interface CompositeOutboundView {
 	compositeType: CompositeOutboundType;
@@ -30,6 +30,8 @@ function memberTagsFor(
 }
 
 function subscriptionCompositeType(sub: Subscription): CompositeOutboundType {
+	if (sub.mode === 'fallback') return 'fallback';
+	if (sub.mode === 'load-balance') return 'load-balance';
 	return sub.mode === 'urltest' ? 'urltest' : 'selector';
 }
 

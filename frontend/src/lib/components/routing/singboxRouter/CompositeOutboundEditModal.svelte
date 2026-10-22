@@ -170,10 +170,13 @@
 
 	// Advisory: warn when the group's tag matches an existing outbound's
 	// display name (e.g. a composite named "DE" like the AWG tunnel "DE").
-	const tagCollision = $derived(
-		tag.trim() !== '' &&
-			outboundOptions.some((g) => g.items.some((i) => i.value === tag.trim() || i.label === tag.trim()))
-	);
+	const tagCollision = $derived.by(() => {
+		const t = tag.trim();
+		if (!t) return false;
+		return outboundOptions.some((g) =>
+			g.items.some((i) => i.value !== t && i.label.replace(/\s*\(.*\)\s*$/, '') === t)
+		);
+	});
 
 	// Default candidate options: only current members of this group.
 	const defaultOptions = $derived<DropdownOption[]>(
@@ -181,12 +184,12 @@
 	);
 
 	const strategyOptions: DropdownOption[] = [
-		{ value: 'round-robin', label: 'Round-robin (по кругу)' },
-		{ value: 'consistent-hashing', label: 'Consistent hashing (по IP назначения)' }
+		{ value: 'round-robin', label: m.sb_router_strategy_round_robin() },
+		{ value: 'consistent-hashing', label: m.sb_router_strategy_consistent_hashing() }
 	];
 
 	function memberLabel(tagOrName: string): string {
-		return resolveMemberLabel(tagOrName, outboundOptions);
+		return resolveMemberLabel(tagOrName, subsData, outboundOptions);
 	}
 
 	function addMember(v: string): void {
@@ -342,7 +345,7 @@
 													type="button"
 													class="member-chip-nav"
 													aria-label="Move up"
-													title={type === 'load-balance' ? 'Переместить раньше' : 'Поднять выше (к #1)'}
+													title={type === 'load-balance' ? m.routing_singbox_outbound_move_earlier() : m.routing_singbox_outbound_move_up_prio()}
 													onclick={() => moveMember(i, -1)}
 												>
 													<ChevronUp size={11} />
@@ -353,7 +356,7 @@
 													type="button"
 													class="member-chip-nav"
 													aria-label="Move down"
-													title={type === 'load-balance' ? 'Переместить позже' : 'Опустить ниже'}
+													title={type === 'load-balance' ? m.routing_singbox_outbound_move_later() : m.routing_singbox_outbound_move_down_prio()}
 													onclick={() => moveMember(i, 1)}
 												>
 													<ChevronDown size={11} />
@@ -415,7 +418,7 @@
 				</label>
 			{:else if type === 'load-balance'}
 				<div class="field">
-					<div class="lbl">Стратегия балансировки</div>
+					<div class="lbl">{m.routing_singbox_outbound_strategy_label()}</div>
 					<Dropdown
 						bind:value={strategy}
 						options={strategyOptions}

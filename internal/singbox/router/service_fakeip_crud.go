@@ -266,7 +266,7 @@ func (s *ServiceImpl) FakeIPUpdateCompositeOutbound(ctx context.Context, tag str
 // не объясняя пользователю, что чинить (#567).
 func (s *ServiceImpl) validateCompositeMembers(ctx context.Context, o Outbound, c *RouterConfig) error {
 	switch strings.ToLower(o.Type) {
-	case "selector", "urltest":
+	case "selector", "urltest", "loadbalance", "fallback", "load-balance":
 	default:
 		return nil
 	}

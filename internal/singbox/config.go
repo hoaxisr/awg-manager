@@ -178,7 +178,7 @@ func (c *Config) userOutbounds() []map[string]any {
 			continue
 		}
 		t, _ := ob["type"].(string)
-		if t == "direct" || t == "block" || t == "dns" || t == "selector" {
+		if t == "direct" || t == "block" || t == "dns" || t == "selector" || t == "urltest" || t == "fallback" || t == "load-balance" || t == "loadbalance" {
 			continue
 		}
 		out = append(out, ob)

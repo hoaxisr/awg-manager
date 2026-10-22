@@ -137,7 +137,7 @@ func (h *SingboxProxiesHandler) List(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		t := strings.ToLower(p.Type)
-		if t != "selector" && t != "urltest" && t != "loadbalance" {
+		if t != "selector" && t != "urltest" && t != "loadbalance" && t != "fallback" && t != "load-balance" {
 			continue
 		}
 		members := make([]SingboxProxyMember, 0, len(p.All))

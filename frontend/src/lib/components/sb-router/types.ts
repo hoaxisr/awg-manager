@@ -54,8 +54,8 @@ export interface OutboundDisplay {
   tone?: import('./outboundTileTone').OutboundTileTone;
   /** Подсказка для invalid/warning chip */
   invalidHint?: string;
-  /** Тип composite (selector / urltest / loadbalance) */
-  compositeType?: 'selector' | 'urltest' | 'loadbalance';
+  /** Тип composite (selector / urltest / loadbalance / fallback / load-balance) */
+  compositeType?: 'selector' | 'urltest' | 'loadbalance' | 'fallback' | 'load-balance';
   /** Активный участник composite (clash now / selector / urltest) */
   activeMemberLabel?: string;
   activeMemberTitle?: string;

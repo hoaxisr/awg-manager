@@ -232,11 +232,11 @@
 		subscriptionSurfaceEntryNonce += 1;
 	});
 
-	// Poll Clash live "now" every 5s for urltest mode. Selector mode doesn't need
+	// Poll Clash live "now" every 5s for urltest / fallback mode. Selector mode doesn't need
 	// this — its activeMember is whatever the user picked and Clash echoes it.
 	$effect(() => {
 		const sub = subscription;
-		if (loading || error || !sub || sub.mode !== 'urltest' || active !== 'members') {
+		if (loading || error || !sub || (sub.mode !== 'urltest' && sub.mode !== 'fallback') || active !== 'members') {
 			liveActiveMember = null;
 			return;
 		}

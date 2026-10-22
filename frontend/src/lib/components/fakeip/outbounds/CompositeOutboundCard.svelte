@@ -111,13 +111,15 @@
 	const canSelect = $derived(live && compositeType === 'selector');
 
 	// Сабтайтл по типу группы (мокап): urltest → авто по задержке + интервал;
-	// selector → ручной выбор; loadbalance — честная формулировка.
+	// fallback → автопереход + интервал; selector → ручной выбор; loadbalance — честная формулировка.
 	const subtitle = $derived(
 		compositeType === 'urltest'
 			? `auto by latency${outbound.interval ? ` · interval ${outbound.interval}` : ''}`
-			: compositeType === 'selector'
-				? m.fakeip_outbounds_subtitle_manual()
-				: m.fakeip_outbounds_subtitle_balancing(),
+			: compositeType === 'fallback'
+				? `auto fallback${outbound.interval ? ` · interval ${outbound.interval}` : ''}`
+				: compositeType === 'selector'
+					? m.fakeip_outbounds_subtitle_manual()
+					: m.fakeip_outbounds_subtitle_balancing(),
 	);
 
 	function memberLabel(tag: string): string {

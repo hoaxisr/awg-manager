@@ -99,23 +99,23 @@
   });
   const canSave = $derived(step1Ok && step2Ok);
 
-  const compositeModeOptions: SegmentedOption<WizardCompositeMode>[] = [
-    { value: 'urltest', label: 'Автовыбор' },
-    { value: 'fallback', label: 'Резерв' },
-    { value: 'load-balance', label: 'Балансировка' },
-    { value: 'selector', label: 'Селектор' },
-  ];
+  const compositeModeOptions = $derived<SegmentedOption<WizardCompositeMode>[]>([
+    { value: 'urltest', label: m.sb_router_wizard_mode_urltest() },
+    { value: 'fallback', label: m.sb_router_wizard_mode_fallback() },
+    { value: 'load-balance', label: m.sb_router_wizard_mode_loadbalance() },
+    { value: 'selector', label: m.sb_router_wizard_mode_selector() },
+  ]);
 
   function compositeModeDescription(mode: WizardCompositeMode): string {
     switch (mode) {
       case 'urltest':
-        return 'Автоматически направляет трафик через самый быстрый туннель (проверка задержки).';
+        return m.sb_router_wizard_mode_urltest_desc();
       case 'fallback':
-        return 'Использует первый рабочий туннель в списке; при отказе переключает на следующий.';
+        return m.sb_router_wizard_mode_fallback_desc();
       case 'load-balance':
-        return 'Распределяет подключения поочерёдно между всеми туннелями (round-robin).';
+        return m.sb_router_wizard_mode_loadbalance_desc();
       case 'selector':
-        return 'Ручной выбор активного туннеля через селектор в панели.';
+        return m.sb_router_wizard_mode_selector_desc();
     }
   }
 
@@ -406,13 +406,13 @@
       {#if $wizardOutboundCategory === 'tunnel' && $wizardTunnelTags.length >= 2}
         <div class="composite-mode-card">
           <div class="composite-mode-header">
-            <span class="composite-mode-title">Режим группы туннелей</span>
-            <span class="composite-mode-count">{$wizardTunnelTags.length} туннеля</span>
+            <span class="composite-mode-title">{m.sb_router_wizard_composite_group_mode()}</span>
+            <span class="composite-mode-count">{m.sb_router_wizard_tunnels_count({ count: $wizardTunnelTags.length })}</span>
           </div>
           <SegmentedControl
             value={$wizardCompositeMode}
             options={compositeModeOptions}
-            ariaLabel="Режим прокси-группы"
+            ariaLabel={m.sb_router_wizard_composite_group_mode()}
             fullWidth
             onchange={(val) => setWizardCompositeMode(val)}
           />

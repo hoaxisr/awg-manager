@@ -609,6 +609,7 @@ func (c *RouterConfig) SetRouteFinal(tag string) error {
 }
 
 func (c *RouterConfig) AddCompositeOutbound(o Outbound) error {
+	ensureSafeIdleTimeout(&o)
 	if err := validateOutbound(o); err != nil {
 		return err
 	}
@@ -626,6 +627,7 @@ func (c *RouterConfig) AddCompositeOutbound(o Outbound) error {
 }
 
 func (c *RouterConfig) UpdateCompositeOutbound(tag string, o Outbound) error {
+	ensureSafeIdleTimeout(&o)
 	if err := validateOutbound(o); err != nil {
 		return err
 	}

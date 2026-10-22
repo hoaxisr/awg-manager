@@ -166,13 +166,15 @@
 			const fresh = await api.singboxUpdateTunnel(tunnel.tag, ob);
 			singboxTunnels.applyMutationResponse(fresh);
 			notifications.success(
-				`${tunnel.tag}: транспорт изменён на ${!currentQuic ? 'QUIC (HTTP/3)' : 'TCP (HTTP/2)'}`
+				!currentQuic
+					? m.tunnels_transport_switched_quic({ tag: tunnel.tag })
+					: m.tunnels_transport_switched_tcp({ tag: tunnel.tag })
 			);
 			setTimeout(() => {
 				untrack(() => void triggerCheck());
 			}, 300);
 		} catch (err) {
-			notifications.error(err instanceof Error ? err.message : 'Не удалось изменить транспорт');
+			notifications.error(err instanceof Error ? err.message : m.tunnels_transport_switch_failed());
 		} finally {
 			togglingTransport = false;
 		}
@@ -259,28 +261,13 @@
 						class:is-tcp={tunnel.transport !== 'quic'}
 						disabled={togglingTransport}
 						onclick={toggleTrustTunnelTransport}
-						title="Нажмите, чтобы переключить транспорт на {tunnel.transport === 'quic' ? 'TCP (HTTP/2)' : 'QUIC (HTTP/3)'}"
+						title={m.singbox_tunnel_transport_toggle_hint({ target: tunnel.transport === 'quic' ? 'TCP (HTTP/2)' : 'QUIC (HTTP/3)' })}
 					>
 						{tunnel.transport === 'quic' ? 'QUIC' : 'TCP'}
 						<span class="toggle-symbol">⇄</span>
 					</button>
 				{:else}
-					{#if tunnel.protocol === 'trusttunnel'}
-			<button
-				type="button"
-				class="badge b-transport b-transport-toggle"
-				class:is-quic={tunnel.transport === 'quic'}
-				class:is-tcp={tunnel.transport !== 'quic'}
-				disabled={togglingTransport}
-				onclick={toggleTrustTunnelTransport}
-				title="Нажмите, чтобы переключить транспорт на {tunnel.transport === 'quic' ? 'TCP (HTTP/2)' : 'QUIC (HTTP/3)'}"
-			>
-				{tunnel.transport === 'quic' ? 'QUIC' : 'TCP'}
-				<span class="toggle-symbol">⇄</span>
-			</button>
-		{:else}
-			<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
-		{/if}
+					<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
 				{/if}
 			</div>
 		</td>
@@ -354,28 +341,13 @@
 						class:is-tcp={tunnel.transport !== 'quic'}
 						disabled={togglingTransport}
 						onclick={toggleTrustTunnelTransport}
-						title="Нажмите, чтобы переключить транспорт на {tunnel.transport === 'quic' ? 'TCP (HTTP/2)' : 'QUIC (HTTP/3)'}"
+						title={m.singbox_tunnel_transport_toggle_hint({ target: tunnel.transport === 'quic' ? 'TCP (HTTP/2)' : 'QUIC (HTTP/3)' })}
 					>
 						{tunnel.transport === 'quic' ? 'QUIC' : 'TCP'}
 						<span class="toggle-symbol">⇄</span>
 					</button>
 				{:else}
-					{#if tunnel.protocol === 'trusttunnel'}
-			<button
-				type="button"
-				class="badge b-transport b-transport-toggle"
-				class:is-quic={tunnel.transport === 'quic'}
-				class:is-tcp={tunnel.transport !== 'quic'}
-				disabled={togglingTransport}
-				onclick={toggleTrustTunnelTransport}
-				title="Нажмите, чтобы переключить транспорт на {tunnel.transport === 'quic' ? 'TCP (HTTP/2)' : 'QUIC (HTTP/3)'}"
-			>
-				{tunnel.transport === 'quic' ? 'QUIC' : 'TCP'}
-				<span class="toggle-symbol">⇄</span>
-			</button>
-		{:else}
-			<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
-		{/if}
+					<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
 				{/if}
 			</div>
 		</div>
@@ -522,7 +494,7 @@
 				class:is-tcp={tunnel.transport !== 'quic'}
 				disabled={togglingTransport}
 				onclick={toggleTrustTunnelTransport}
-				title="Нажмите, чтобы переключить транспорт на {tunnel.transport === 'quic' ? 'TCP (HTTP/2)' : 'QUIC (HTTP/3)'}"
+				title={m.singbox_tunnel_transport_toggle_hint({ target: tunnel.transport === 'quic' ? 'TCP (HTTP/2)' : 'QUIC (HTTP/3)' })}
 			>
 				{tunnel.transport === 'quic' ? 'QUIC' : 'TCP'}
 				<span class="toggle-symbol">⇄</span>

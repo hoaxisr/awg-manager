@@ -743,24 +743,24 @@
 				</section>
 
 				<section class="card tunnel-section">
-					<SettingsSectionLabel label="Транспорт" icon={Zap} tone="amber" header />
+					<SettingsSectionLabel label={m.singbox_trusttunnel_transport_section()} icon={Zap} tone="amber" header />
 
 					<div class="form-group">
 						<Dropdown
 							id="tt_transport"
-							label="Протокол соединения"
+							label={m.singbox_trusttunnel_transport_label()}
 							value={getFieldBool(['quic']) ? 'quic' : 'tcp'}
 							options={[
-								{ value: 'tcp', label: 'HTTP/2 over TLS (TCP) — стандартный' },
-								{ value: 'quic', label: 'HTTP/3 over QUIC (UDP) — быстрый' }
+								{ value: 'tcp', label: m.singbox_trusttunnel_transport_tcp() },
+								{ value: 'quic', label: m.singbox_trusttunnel_transport_quic() }
 							]}
 							onchange={(v) => setField(['quic'], v === 'quic')}
 						/>
 						<p class="section-hint">
 							{#if getFieldBool(['quic'])}
-								Используется HTTP/3 (QUIC/UDP). Если провайдер или ТСПУ глушат UDP-пакеты (таймаут или ошибки пинга), переключите на HTTP/2 (TCP).
+								{m.singbox_trusttunnel_hint_quic()}
 							{:else}
-								Используется HTTP/2 (TCP). Стабильно работает через большинство провайдеров и мобильных сетей даже при блокировках UDP.
+								{m.singbox_trusttunnel_hint_tcp()}
 							{/if}
 						</p>
 					</div>

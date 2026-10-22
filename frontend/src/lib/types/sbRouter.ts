@@ -459,7 +459,7 @@ export interface SingboxProxyMember {
 
 export interface SingboxProxyGroup {
 	tag: string;
-	type: 'selector' | 'urltest' | 'loadbalance';
+	type: 'selector' | 'urltest' | 'loadbalance' | 'fallback' | 'load-balance';
 	now: string;
 	members: SingboxProxyMember[];
 }

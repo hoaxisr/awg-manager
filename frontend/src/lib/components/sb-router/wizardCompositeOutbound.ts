@@ -30,8 +30,13 @@ export function findMatchingComposite(
 ): SingboxRouterOutbound | undefined {
   return outbounds.find((o) => {
     if (!isCompositeOutboundType(o.type)) return false;
-    if (mode && normalizeCompositeType(o.type) !== mode) return false;
+    const normalizedType = normalizeCompositeType(o.type);
+    if (mode && normalizedType !== mode) return false;
     const members = o.outbounds ?? [];
+    if (mode === 'fallback' || normalizedType === 'fallback') {
+      if (members.length !== tunnelTags.length) return false;
+      return members.every((m, idx) => m === tunnelTags[idx]);
+    }
     return sameOutboundMemberSet(members, tunnelTags);
   });
 }
@@ -56,14 +61,14 @@ export type WizardOutboundCategory = 'tunnel' | 'direct' | 'block';
 function compositeModeLabel(mode?: WizardCompositeMode): string {
   switch (mode) {
     case 'fallback':
-      return 'резерв с переключением';
+      return m.sb_router_wizard_mode_fallback_label();
     case 'load-balance':
-      return 'балансировка round-robin';
+      return m.sb_router_wizard_mode_loadbalance_label();
     case 'selector':
-      return 'ручной выбор';
+      return m.sb_router_wizard_mode_selector_label();
     case 'urltest':
     default:
-      return 'автовыбор по скорости';
+      return m.sb_router_wizard_mode_urltest_label();
   }
 }
 
