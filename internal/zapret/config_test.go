@@ -170,7 +170,7 @@ func TestStrategyWarnings(t *testing.T) {
 		}
 	})
 	t.Run("hostlist count error has a localized code and detail", func(t *testing.T) {
-		s := Strategy{Hostlists: []StrategyHostlist{{Note: hostlistCountErrorNotePrefix + "permission denied"}}}
+		s := Strategy{Hostlists: []StrategyHostlist{{countErr: "permission denied"}}}
 		warnings := strategyWarnings(s, false)
 		if len(warnings) != 1 || warnings[0].Code != "hostlist_count_failed" || warnings[0].Detail != "permission denied" {
 			t.Fatalf("unexpected warning payload: %+v", warnings)

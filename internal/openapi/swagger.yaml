@@ -9256,8 +9256,6 @@ definitions:
       ipOnly:
         description: IPOnly — в списке только адреса, ни одного домена.
         type: boolean
-      note:
-        type: string
       path:
         type: string
     type: object

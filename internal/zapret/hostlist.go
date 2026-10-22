@@ -18,7 +18,6 @@ import (
 // Реальные списки RKN/YouTube весят сотни килобайт, так что 2 МиБ —
 // с большим запасом; больше означает, что открыли не тот файл.
 const maxHostlistBytes = 2 << 20
-const hostlistCountErrorNotePrefix = "count error: "
 
 const maxHostlistCountCacheEntries = 1024
 
@@ -127,7 +126,7 @@ func newHostlistRef(path string) StrategyHostlist {
 		ref.HasIPs = counts.ips > 0
 		ref.IPOnly = ref.HasIPs && ref.Entries == counts.ips
 	} else {
-		ref.Note = hostlistCountErrorNotePrefix + err.Error()
+		ref.countErr = err.Error()
 	}
 	return ref
 }

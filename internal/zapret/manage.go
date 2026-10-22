@@ -65,8 +65,6 @@ func (s *Service) GetStrategies() (Strategies, error) {
 		out.ParseWarnings = append(out.ParseWarnings,
 			Warning{Code: "strategies_limit_reached", Detail: strconv.Itoa(maxProfiles)})
 	}
-	// Ссылки на списки резолвим в файлы: без этого UI не может показать,
-	// пуст ли список, и не может предупредить, что nfqws2 не стартует.
 	hydrateHostlistRefs(l, out.Items)
 	for i := range out.Items {
 		out.Items[i].Warnings = strategyWarnings(out.Items[i], l.optVar == optVarV2)
@@ -74,63 +72,54 @@ func (s *Service) GetStrategies() (Strategies, error) {
 	return out, nil
 }
 
+// hydrateHostlistRefs резолвит ссылки на списки в файлы: без этого UI не
+// может показать, пуст ли список, и предупредить, что nfqws2 не стартует.
+//
+// Кроме путей zapret и его форки пишут в конфиг плейсхолдер <HOSTLIST>,
+// который init-скрипт при старте разворачивает в несколько реальных списков
+// (common/list.sh: filter_apply_hostlist_target). Файлом он не является:
+// не развернув его, карточка показала бы «файла нет» на работающей
+// стратегии. Развёрнутые списки идут первыми — они задают основной список
+// доменов — и каждый попадает в свой вид: исключение — это
+// --hostlist-exclude, автосписок — --hostlist-auto, иначе на них сработали
+// бы предупреждения включающего списка.
 func hydrateHostlistRefs(l layout, items []Strategy) {
 	for i := range items {
-		// Плейсхолдеры разворачиваем первыми: они задают основной список
-		// доменов стратегии и должны идти перед явными путями. Исключение
-		// из <HOSTLIST> — это --hostlist-exclude, а не --hostlist: иначе на
-		// нём сработали бы предупреждения включающего списка.
-		var hosts, excludes []StrategyHostlist
+		var hosts, excludes, auto []StrategyHostlist
 		for _, ph := range items[i].Placeholders {
-			h, e := expandHostlistRef(l, ph)
-			hosts, excludes = append(hosts, h...), append(excludes, e...)
+			for _, sp := range placeholderTargets[ph] {
+				ref := newHostlistRef(resolveHostlistRef(l, sp.filename))
+				ref.FromPlaceholder = ph
+				switch sp.kind {
+				case placeholderExclude:
+					excludes = append(excludes, ref)
+				case placeholderAuto:
+					auto = append(auto, ref)
+				default:
+					hosts = append(hosts, ref)
+				}
+			}
 		}
 		items[i].Hostlists = append(hosts, hydrateRefs(l, items[i].Hostlists)...)
 		items[i].HostlistExcludes = append(excludes, hydrateRefs(l, items[i].HostlistExcludes)...)
-		items[i].HostlistAuto = hydrateRefs(l, items[i].HostlistAuto)
+		items[i].HostlistAuto = append(auto, hydrateRefs(l, items[i].HostlistAuto)...)
 		items[i].Ipsets = hydrateRefs(l, items[i].Ipsets)
 	}
 }
 
+// hydrateRefs резолвит явные пути. Ссылки могут быть относительными —
+// nfqws2 резолвит их относительно каталога демона, и мы повторяем именно
+// это. Плейсхолдер в значении (--hostlist=<HOSTLIST>) parseStrategy уже
+// учёл среди Placeholders, второй раз его не разворачиваем.
 func hydrateRefs(l layout, refs []StrategyHostlist) []StrategyHostlist {
 	out := make([]StrategyHostlist, 0, len(refs))
 	for _, ref := range refs {
-		hosts, excludes := expandHostlistRef(l, ref.Path)
-		out = append(append(out, hosts...), excludes...)
+		if _, isPlaceholder := placeholderTargets[ref.Path]; isPlaceholder {
+			continue
+		}
+		out = append(out, newHostlistRef(resolveRefPath(l, ref.Path)))
 	}
 	return out
-}
-
-// expandHostlistRef разворачивает ссылку на список.
-//
-// Ссылка бывает двух видов. Обычная — путь к файлу, и тогда мы просто
-// считаем его содержимое. Но zapret и его форки часто пишут в конфиг
-// плейсхолдер <HOSTLIST>, который init-скрипт разворачивает при старте в
-// несколько реальных списков (common/list.sh: filter_apply_hostlist_target).
-// Такой «путь» файлом не является: если не развернуть его, карточка
-// показала бы «файла нет» на работающей стратегии и ругалась бы на то,
-// на что ругаться нечего.
-func expandHostlistRef(l layout, path string) (hosts, excludes []StrategyHostlist) {
-	specs, isPlaceholder := placeholderTargets[path]
-	if !isPlaceholder {
-		// Ссылки могут быть относительными — nfqws2 резолвит их
-		// относительно каталога демона, и мы обязаны повторить именно
-		// это, иначе покажем «файл не найден» для существующего списка.
-		return []StrategyHostlist{newHostlistRef(resolveRefPath(l, path))}, nil
-	}
-
-	for _, sp := range specs {
-		// Плейсхолдер указывает не на один файл: пометка объясняет, что
-		// список на карточке пришёл из <HOSTLIST>, а не из явного пути.
-		resolved := newHostlistRef(resolveHostlistRef(l, sp.filename))
-		resolved.FromPlaceholder = path
-		if sp.exclude {
-			excludes = append(excludes, resolved)
-		} else {
-			hosts = append(hosts, resolved)
-		}
-	}
-	return hosts, excludes
 }
 
 // resolveHostlistRef ищет файл списка с учётом .gz, как это делает
@@ -140,31 +129,40 @@ func resolveHostlistRef(l layout, filename string) string {
 	return path
 }
 
+// placeholderKind — каким ключом init-скрипт подключает развёрнутый список.
+type placeholderKind int
+
+const (
+	placeholderHost    placeholderKind = iota // --hostlist
+	placeholderExclude                        // --hostlist-exclude
+	placeholderAuto                           // --hostlist-auto
+)
+
 // placeholderSpec — один список, в который разворачивается плейсхолдер.
 type placeholderSpec struct {
 	filename string
-	exclude  bool
+	kind     placeholderKind
 }
 
 // placeholderTargets раскрывает плейсхолдер в список целей.
 //
 // Состав взят из filter_apply_hostlist_target в common/list.sh:
 //
-//	--hostlist=<user> --hostlist=<main> --hostlist-exclude=<exclude>
+//	--hostlist=<user> --hostlist=<main> --hostlist-exclude=<exclude> --hostlist-auto=<auto>
 //
-// а <HOSTLIST_NOAUTO> отличается лишь тем, что не добавляет автосписок
-// (--hostlist-auto=<auto>), который дописывает сам nfqws2.
+// а <HOSTLIST_NOAUTO> отличается лишь тем, что не добавляет автосписок,
+// который дописывает сам nfqws2.
 var placeholderTargets = map[string][]placeholderSpec{
 	"<HOSTLIST>": {
 		{filename: "zapret-hosts-user.txt"},
 		{filename: "zapret-hosts.txt"},
-		{filename: "zapret-hosts-user-exclude.txt", exclude: true},
-		{filename: "zapret-hosts-auto.txt"},
+		{filename: "zapret-hosts-user-exclude.txt", kind: placeholderExclude},
+		{filename: "zapret-hosts-auto.txt", kind: placeholderAuto},
 	},
 	"<HOSTLIST_NOAUTO>": {
 		{filename: "zapret-hosts-user.txt"},
 		{filename: "zapret-hosts.txt"},
-		{filename: "zapret-hosts-user-exclude.txt", exclude: true},
+		{filename: "zapret-hosts-user-exclude.txt", kind: placeholderExclude},
 	},
 }
 
@@ -184,36 +182,35 @@ func resolveRefPath(l layout, p string) string {
 // нетронутыми, потому что мы их не понимаем и затирать их не имеем
 // права. Пользователь после этого обязан перезапустить демон: nfqws2
 // читает опции ровно один раз, при старте процесса.
-func (s *Service) saveStrategies(items []Strategy, revision string) (Strategies, error) {
+func (s *Service) saveStrategies(items []Strategy, revision string) error {
 	l, err := s.resolveLayout()
 	if err != nil {
-		return Strategies{}, err
+		return err
 	}
 	if err := checkWriteTarget(l, l.config); err != nil {
-		return Strategies{}, err
+		return err
 	}
 	if err := checkRevision(l.config, revision); err != nil {
-		return Strategies{}, err
+		return err
 	}
 
-	// Карточки приходят из браузера; пересобираем тело из Raw, а не из
-	// разобранных полей — иначе любое поле, которое мы не покрыли
-	// парсером, молча потерялось бы при сохранении.
+	// Тело собираем из Raw, а не из разобранных полей — иначе любое поле,
+	// которое мы не покрыли парсером, молча потерялось бы при сохранении.
 	body := strategiesToBody(items)
 	if err := validateProfiles(splitProfiles(body)); err != nil {
-		return Strategies{}, err
+		return err
 	}
 	if err := checkRevision(l.config, revision); err != nil {
-		return Strategies{}, err
+		return err
 	}
 	if err := s.checkSelected(l); err != nil {
-		return Strategies{}, err
+		return err
 	}
 	if err := writeOptBlock(l.config, l.optVar, body, fileMode(l.config)); err != nil {
-		return Strategies{}, err
+		return err
 	}
 	s.appLog.Info("strategies", l.config, fmt.Sprintf("записано стратегий: %d", len(items)))
-	return s.GetStrategies()
+	return nil
 }
 
 // ReorderStrategies двигает карточку в списке. Порядок — приоритет:
@@ -239,7 +236,7 @@ func (s *Service) ReorderStrategies(from, to int, revision string) (Strategies, 
 	copy(items[to+1:], items[to:])
 	items[to] = moved
 
-	if _, err := s.saveStrategies(reindex(items), revision); err != nil {
+	if err := s.saveStrategies(reindex(items), revision); err != nil {
 		return Strategies{}, err
 	}
 	s.appLog.Info("strategies", cur.Config, fmt.Sprintf("порядок изменён: %d → %d", from+1, to+1))

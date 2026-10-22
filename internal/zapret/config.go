@@ -308,7 +308,8 @@ func writeOptBlock(configPath, optVar, value string, mode os.FileMode) error {
 // quoteOptTemplate returns the contents of a double-quoted shell assignment.
 // Preserve existing shell escapes so repeated saves do not accumulate them.
 // Only $NAME and ${NAME} may expand; substitutions and parameter operators
-// remain literal text. The UI's Raw field uses this same config notation.
+// remain literal text. Raw приходит из уже записанного конфига, поэтому его
+// экранирование при повторной записи сохраняется как есть.
 func quoteOptTemplate(value string) string {
 	var out strings.Builder
 	for i := 0; i < len(value); i++ {

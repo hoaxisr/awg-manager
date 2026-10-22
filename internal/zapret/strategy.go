@@ -88,7 +88,9 @@ type StrategyHostlist struct {
 	// плейсхолдером <HOSTLIST>: его init-скрипт zapret разворачивает в
 	// несколько реальных списков при старте. Пусто = путь указан явно.
 	FromPlaceholder string `json:"fromPlaceholder,omitempty"`
-	Note            string `json:"note,omitempty"`
+	// countErr — почему список не удалось посчитать; уходит клиенту
+	// предупреждением hostlist_count_failed, а не полем.
+	countErr string
 }
 
 // LuaInstance — один вызов --lua-desync.
@@ -152,19 +154,19 @@ func parseStrategy(index int, raw string) Strategy {
 			s.Payload = val
 		case "--hostlist":
 			if hasVal {
-				s.Hostlists = append(s.Hostlists, newHostlistRef(val))
+				s.Hostlists = append(s.Hostlists, StrategyHostlist{Path: val})
 			}
 		case "--hostlist-exclude":
 			if hasVal {
-				s.HostlistExcludes = append(s.HostlistExcludes, newHostlistRef(val))
+				s.HostlistExcludes = append(s.HostlistExcludes, StrategyHostlist{Path: val})
 			}
 		case "--hostlist-auto":
 			if hasVal {
-				s.HostlistAuto = append(s.HostlistAuto, newHostlistRef(val))
+				s.HostlistAuto = append(s.HostlistAuto, StrategyHostlist{Path: val})
 			}
 		case "--ipset":
 			if hasVal {
-				s.Ipsets = append(s.Ipsets, newHostlistRef(val))
+				s.Ipsets = append(s.Ipsets, StrategyHostlist{Path: val})
 			}
 		}
 	}
@@ -212,8 +214,8 @@ func strategyWarnings(s Strategy, usesLuaDesync bool) []Warning {
 	countFailureReported := false
 	for _, refs := range [][]StrategyHostlist{s.Hostlists, s.HostlistExcludes, s.HostlistAuto, s.Ipsets} {
 		for _, h := range refs {
-			if strings.HasPrefix(h.Note, hostlistCountErrorNotePrefix) {
-				w = append(w, Warning{Code: "hostlist_count_failed", Detail: strings.TrimPrefix(h.Note, hostlistCountErrorNotePrefix)})
+			if h.countErr != "" {
+				w = append(w, Warning{Code: "hostlist_count_failed", Detail: h.countErr})
 				countFailureReported = true
 				break
 			}

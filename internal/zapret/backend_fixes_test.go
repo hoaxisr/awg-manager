@@ -62,7 +62,7 @@ func TestCountHostlistStreamsLongAndCompressedFiles(t *testing.T) {
 	if _, err := countHostlist(broken, nil); err == nil {
 		t.Fatal("invalid gzip input must return an error")
 	}
-	if ref := newHostlistRef(broken); !strings.HasPrefix(ref.Note, hostlistCountErrorNotePrefix) {
+	if ref := newHostlistRef(broken); ref.countErr == "" {
 		t.Fatal("hostlist reference must retain the counting error")
 	}
 }
@@ -373,5 +373,26 @@ func TestGetStatusDoesNotWaitForProbesAndPublishesTheirResult(t *testing.T) {
 	}
 	if st := svc.GetStatus(); st.Package != "zapret2" || st.Version != "2.1.0" {
 		t.Fatalf("status after probes = %+v", st)
+	}
+}
+
+func TestPlaceholderAsOptionValueIsExpandedOnce(t *testing.T) {
+	base := setupInstall(t)
+	config := "NFQWS2_OPT=\"--filter-tcp=443 --hostlist=<HOSTLIST> --lua-desync=fake\"\n"
+	if err := os.WriteFile(filepath.Join(base, "config"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := NewService(t.TempDir(), nil).GetStrategies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := got.Items[0]
+	for _, h := range item.Hostlists {
+		if h.Path == "<HOSTLIST>" || strings.Contains(h.Path, "exclude") || strings.Contains(h.Path, "auto") {
+			t.Fatalf("placeholder leaked into include lists: %+v", item.Hostlists)
+		}
+	}
+	if len(item.Hostlists) != 2 || len(item.HostlistExcludes) != 1 || len(item.HostlistAuto) != 1 {
+		t.Fatalf("expanded lists = %d/%d/%d, want 2/1/1", len(item.Hostlists), len(item.HostlistExcludes), len(item.HostlistAuto))
 	}
 }

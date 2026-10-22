@@ -3,6 +3,7 @@ package zapret
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -226,14 +227,18 @@ func TestHostlistPlaceholderIsExpanded(t *testing.T) {
 		t.Fatalf("стратегий: %d", len(got.Items))
 	}
 	refs := got.Items[0].Hostlists
-	if len(refs) != 3 {
-		t.Fatalf("плейсхолдер развёрнут в %d включающих списков, ожидалось 3 (user, main, auto): %+v", len(refs), refs)
+	if len(refs) != 2 {
+		t.Fatalf("плейсхолдер развёрнут в %d включающих списков, ожидалось 2 (user, main): %+v", len(refs), refs)
 	}
 	excl := got.Items[0].HostlistExcludes
 	if len(excl) != 1 || filepath.Base(excl[0].Path) != "zapret-hosts-user-exclude.txt" {
 		t.Fatalf("исключение из плейсхолдера: %+v", excl)
 	}
-	for _, r := range append(append([]StrategyHostlist(nil), refs...), excl...) {
+	auto := got.Items[0].HostlistAuto
+	if len(auto) != 1 || filepath.Base(auto[0].Path) != "zapret-hosts-auto.txt" {
+		t.Fatalf("автосписок из плейсхолдера: %+v", auto)
+	}
+	for _, r := range slices.Concat(refs, excl, auto) {
 		if r.Path == "<HOSTLIST>" || !strings.HasPrefix(r.Path, "/") {
 			t.Errorf("остался неразвёрнутый плейсхолдер: %+v", r)
 		}

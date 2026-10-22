@@ -76,7 +76,6 @@ export interface ZapretStrategyHostlist {
 	 * реальных списков при старте. Пусто = путь указан явно.
 	 */
 	fromPlaceholder?: string;
-	note?: string;
 }
 
 /** Один вызов --lua-desync. Их порядок и есть сама стратегия. */

@@ -3296,7 +3296,6 @@ const zapret_StrategyHostlist: v.GenericSchema = v.looseObject({
 	fromPlaceholder: v.optional(v.nullable(v.string())),
 	hasIps: v.optional(v.nullable(v.boolean())),
 	ipOnly: v.optional(v.nullable(v.boolean())),
-	note: v.optional(v.nullable(v.string())),
 	path: v.optional(v.nullable(v.string())),
 });
 
