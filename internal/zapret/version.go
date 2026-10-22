@@ -14,6 +14,9 @@ import (
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
+// versionArgs — nfqws2 печатает версию на --version и на голый запуск.
+var versionArgs = [][]string{{"--version"}, {"-v"}}
+
 func defaultRunVersion(ctx context.Context, binary string) (string, error) {
 	var lastErr error
 	for _, args := range versionArgs {

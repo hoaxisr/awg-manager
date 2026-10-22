@@ -8,6 +8,10 @@ import (
 	"strings"
 )
 
+// nfqProcessesHook is a seam for resolver tests. Production reads /proc;
+// tests can model more than one daemon without launching one.
+var nfqProcessesHook = nfqProcesses
+
 // nfqProc — найденный процесс демона zapret.
 type nfqProc struct {
 	pid int
@@ -85,7 +89,7 @@ func nfqExeInDir(dir string) (string, bool) {
 		}
 		// Симлинк недоступен: у процесса, запущенного не нами, прав
 		// может не хватать. comm уже совпал — считаем своим, иначе
-		// работающий демон воссит как остановленный.
+		// работающий демон висит как остановленный.
 		return "", true
 	}
 	// Принадлежность проверяем по пути: /opt/zapret22/… и есть наш

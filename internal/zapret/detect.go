@@ -27,13 +27,7 @@ var (
 		"nfqws2",
 		"nfqws",
 	}
-	// versionArgs — nfqws2 печатает версию на --version и на голый запуск.
-	versionArgs = [][]string{{"--version"}, {"-v"}}
 )
-
-// nfqProcessesHook is a seam for resolver tests. Production reads /proc;
-// tests can model more than one daemon without launching one.
-var nfqProcessesHook = nfqProcesses
 
 // initDirs — каталоги init-скриптов. z2k кладёт свой S99zapret2 обычным
 // файлом (cp, не симлинк) в /opt/etc/init.d, KZM2 —

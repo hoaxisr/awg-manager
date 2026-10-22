@@ -86,10 +86,6 @@ func (s *Service) resolveLayoutState() (layoutResolution, error) {
 		}
 	}
 
-	if len(r.candidates) == 0 {
-		return r, ErrNotInstalled
-	}
-
 	cached, err := s.readLastRunningBase()
 	if err != nil {
 		return r, fmt.Errorf("%w: could not read the last running installation: %v", ErrConflict, err)

@@ -177,8 +177,9 @@ func isExpertPath(p string) bool {
 }
 
 // Каждая регистрация /api/* обёрнута в гард на месте регистрации: auth —
-// везде, кроме allow-списка; expert — ровно на разделе «Система» и expertRoutes. Читается из
-// исходника, поэтому новая ручка без h.guarded(...) роняет тест сама.
+// везде, кроме allow-списка; expert — ровно на разделе «Система» и
+// expertRoutes. Читается из исходника, поэтому новая ручка без
+// h.guarded(...) роняет тест сама.
 func TestAPIRoutes_EveryRegistrationGuarded(t *testing.T) {
 	for _, r := range routeRegistrations(t) {
 		if !strings.HasPrefix(r.path, "/api/") {

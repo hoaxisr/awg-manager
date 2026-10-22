@@ -308,7 +308,7 @@ func (s *Service) control(action, base string) error {
 		return err
 	}
 	l := r.layout
-	if base == "" || base != l.base {
+	if base != l.base {
 		return ErrConflict
 	}
 	// A broad nfqws process match can also include independent scanner runs.
