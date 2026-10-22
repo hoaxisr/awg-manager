@@ -105,4 +105,26 @@ describe('tab memory across sections', () => {
         const view = render(Host, { tabs, persistKey: 'routing-sections', skipMemorySearchParams: ['policy'] });
         await waitFor(() => expect(view.getByTestId('active').textContent).toBe('first'));
     });
+
+    it('skips restoration when the page prefers its own start tab', async () => {
+        writeTabMemory(key, 'second');
+        const view = render(Host, { tabs, persistKey: 'routing-sections', restoreMemory: false });
+        await Promise.resolve();
+        expect(view.getByTestId('active').textContent).toBe('first');
+    });
+
+    it('keeps the menu child when the group id changes with access level', async () => {
+        const group = (children: { id: string; label: string }[]) => ({ id: children[0].id, label: 'Group', children });
+        const a = { id: 'a', label: 'A' };
+        const b = { id: 'b', label: 'B' };
+        const view = render(Host, { tabs: [tabs[0], group([a, b])], persistKey: 'routing-sections' });
+        const chip = () => view.getAllByRole('button').find((el) => el.getAttribute('aria-haspopup') === 'menu')!;
+        await fireEvent.click(chip());
+        await fireEvent.click(chip());
+        await fireEvent.click(view.getByRole('button', { name: 'B' }));
+        await fireEvent.click(view.getByRole('button', { name: 'First' }));
+        await view.rerender({ tabs: [tabs[0], group([{ id: 'z', label: 'Z' }, a, b])] });
+        await fireEvent.click(chip());
+        await waitFor(() => expect(view.getByTestId('active').textContent).toBe('b'));
+    });
 });

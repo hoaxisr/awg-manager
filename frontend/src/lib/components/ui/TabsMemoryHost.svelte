@@ -9,10 +9,11 @@
         reject?: boolean;
         persistKey?: string;
         skipMemorySearchParams?: string[];
+        restoreMemory?: boolean;
     }
 
-    let { tabs, ready = true, reject = false, persistKey, skipMemorySearchParams }: Props = $props();
+    let { tabs, ready = true, reject = false, persistKey, skipMemorySearchParams, restoreMemory }: Props = $props();
     let active = $state('first');
 </script>
-<Tabs {tabs} {active} onchange={(id) => { if (!reject) active = id; }} urlParam="tab" memoryReady={ready} {persistKey} {skipMemorySearchParams} />
+<Tabs {tabs} {active} onchange={(id) => { if (!reject) active = id; }} urlParam="tab" memoryReady={ready} {persistKey} {skipMemorySearchParams} {restoreMemory} />
 <p data-testid="active">{active}</p>
