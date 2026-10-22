@@ -12109,6 +12109,40 @@
           "type": "object",
           "properties": {
             "type": {
+              "const": "fallback"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "outbounds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "x-tag-reference": "outbound"
+              }
+            },
+            "url": {
+              "type": "string"
+            },
+            "interval": {
+              "$ref": "#/$defs/Duration"
+            },
+            "idle_timeout": {
+              "$ref": "#/$defs/Duration"
+            },
+            "interrupt_exist_connections": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
               "const": "http"
             },
             "tag": {
@@ -19296,5 +19330,5 @@
       ]
     }
   },
-  "x-singbox-version": "1.15.0-alpha.12-awgm.33"
+  "x-singbox-version": "1.15.0-alpha.12-awgm.34"
 }

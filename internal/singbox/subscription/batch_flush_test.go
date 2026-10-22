@@ -202,7 +202,9 @@ func TestFlush_DropsOutboundByMergedInitializeIndex(t *testing.T) {
 	}
 }
 
-// unknownTypeValidator отвечает как sing-box без поддержки fallback.
+// unknownTypeValidator отвечает как sing-box без поддержки fallback: ошибка
+// декодирования с путём файла и индексом внутри него (форма проверена на
+// awgm.34 с load-balance).
 type unknownTypeValidator struct{}
 
 func (unknownTypeValidator) Validate(_ context.Context, dir string) error {
@@ -210,9 +212,9 @@ func (unknownTypeValidator) Validate(_ context.Context, dir string) error {
 	if err != nil {
 		return err
 	}
-	idx := 0
 	for _, e := range entries {
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		path := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -222,11 +224,10 @@ func (unknownTypeValidator) Validate(_ context.Context, dir string) error {
 		if err := json.Unmarshal(data, &c); err != nil {
 			return err
 		}
-		for _, ob := range c.Outbounds {
+		for i, ob := range c.Outbounds {
 			if ob["type"] == "fallback" {
-				return fmt.Errorf("sing-box check failed: FATAL[0000] initialize outbound[%d]: unknown outbound type: fallback: exit status 1", idx)
+				return fmt.Errorf("sing-box check failed: FATAL[0000] decode config at %s: outbounds[%d]: unknown outbound type: fallback: exit status 1", path, i)
 			}
-			idx++
 		}
 	}
 	return nil
