@@ -9,7 +9,7 @@
 	import { notifications } from "$lib/stores/notifications";
 	import { singboxStatus } from "$lib/stores/singbox";
 	import { hydrarouteStatus } from "$lib/stores/hydraroute";
-	import { zapretStatus } from "$lib/stores/zapret";
+	import { zapretStatusForUser } from "$lib/stores/zapret";
 	import { runZapretControl } from '$lib/components/zapret';
 	import { mcpKeys } from "$lib/stores/mcpKeys";
 	import type { PollingState } from "$lib/stores/polling";
@@ -140,7 +140,7 @@
 	const hydraStatusError = $derived($hydrarouteStatus.error);
 	const hydraInstalled = $derived(hydraStatusValue?.installed ?? false);
 	const hydraRunning = $derived(hydraStatusValue?.running ?? false);
-	const zapretStatusValue = $derived($zapretStatus.data ?? null);
+	const zapretStatusValue = $derived($zapretStatusForUser?.data ?? null);
 	const zapretInstalled = $derived(zapretStatusValue?.installed ?? false);
 	const zapretRunning = $derived(zapretStatusValue?.running ?? false);
 	let zapretBusy = $state(false);
@@ -214,7 +214,7 @@
 	async function controlZapret(action: 'start' | 'stop' | 'restart') {
 		zapretBusy = true;
 		try {
-			await runZapretControl(action, $zapretStatus.data?.base ?? '');
+			await runZapretControl(action, zapretStatusValue?.base ?? '');
 		} finally {
 			zapretBusy = false;
 		}

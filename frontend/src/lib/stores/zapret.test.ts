@@ -14,7 +14,9 @@ vi.mock('$lib/stores/notifications', () => ({
 }));
 
 import { invalidateResource } from './storeRegistry';
-import { zapretStatus } from './zapret';
+import { settings } from './settings';
+import { zapretStatus, zapretStatusForUser } from './zapret';
+import type { Settings } from '$lib/types';
 import { runZapretControl } from '$lib/components/zapret/control';
 
 function status(installed: boolean, running = false): ZapretStatus {
@@ -80,5 +82,23 @@ describe('Zapret control action', () => {
 		await expect(runZapretControl('stop', '/opt/zapret22')).resolves.toBeNull();
 		expect(mocks.error).toHaveBeenCalledWith('control failed');
 		expect(zapretStatus.peek().lastFetchedAt).toBe(0);
+	});
+});
+
+describe('Zapret status for shared pages', () => {
+	it('does not request status below expert and starts once the level is expert', async () => {
+		zapretStatus.invalidate();
+		settings.set({ usageLevel: 'advanced' } as Settings);
+		const seen: unknown[] = [];
+		const unsubscribe = zapretStatusForUser.subscribe((v) => seen.push(v));
+		await flushPromises();
+		expect(mocks.getStatus).not.toHaveBeenCalled();
+		expect(seen.at(-1)).toBeNull();
+
+		settings.set({ usageLevel: 'expert' } as Settings);
+		await flushPromises();
+		expect(mocks.getStatus).toHaveBeenCalledTimes(1);
+		unsubscribe();
+		settings.set(null);
 	});
 });

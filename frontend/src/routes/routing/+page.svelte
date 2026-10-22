@@ -15,7 +15,7 @@
         hydrarouteStatusStore,
     } from '$lib/stores/routing';
     import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
-    import { zapretStatus as zapretStatusStore } from '$lib/stores/zapret';
+    import { zapretStatusForUser } from '$lib/stores/zapret';
     import { systemInfo } from '$lib/stores/system';
     import { api } from '$lib/api/client';
     import { notifications } from '$lib/stores/notifications';
@@ -109,7 +109,7 @@
     let singboxInstalled = $derived($systemInfo.data?.singbox?.installed ?? false);
     // Zapret ставит пользователь, а не AWGM, поэтому вкладка появляется
     // только когда движок реально найден на роутере.
-    let zapretInstalled = $derived($zapretStatusStore.data?.installed ?? false);
+    let zapretInstalled = $derived($zapretStatusForUser?.data?.installed ?? false);
 
     let pendingTab = $state<string | null>(null);
 
@@ -406,13 +406,14 @@
             if (activeTab === 'fakeip' && $singboxSettings === null) return;
         }
 
-        // Вкладка Zapret гейтится по zapret-status. Пока ответ не пришёл,
-        // вкладки в списке ещё нет — иначе deep-link ?tab=zapret (например,
-        // из Настроек) откатился бы на первую вкладку до загрузки статуса.
+        // Вкладка Zapret гейтится уровнем и zapret-status. Пока не пришли
+        // настройки или (у expert) статус, вкладки в списке ещё нет — иначе
+        // deep-link ?tab=zapret (например, из Настроек) откатился бы на
+        // первую вкладку до загрузки.
         if (
-            !$zapretStatusStore.lastFetchedAt &&
             activeTab === 'zapret' &&
-            !tabsInclude(items, activeTab)
+            !tabsInclude(items, activeTab) &&
+            ($settings === null || ($zapretStatusForUser !== null && !$zapretStatusForUser.lastFetchedAt))
         ) {
             return;
         }
