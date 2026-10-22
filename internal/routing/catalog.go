@@ -40,8 +40,6 @@ type RoutingSnapshot struct {
 	PolicyDevices    interface{} `json:"policyDevices"`
 	PolicyInterfaces interface{} `json:"policyInterfaces"`
 	ClientRoutes     interface{} `json:"clientRoutes"`
-	HydraRouteStatus interface{} `json:"hydrarouteStatus,omitempty"`
-	ZapretStatus     interface{} `json:"zapretStatus,omitempty"`
 	Missing          []string    `json:"missing"`
 }
 
@@ -174,8 +172,6 @@ type CatalogImpl struct {
 	snapPolicyDevices    SnapshotFunc
 	snapPolicyInterfaces SnapshotFunc
 	snapClientRoutes     SnapshotFunc
-	snapHydraRouteStatus SnapshotFunc
-	snapZapretStatus     SnapshotFunc
 }
 
 // NewCatalog creates a new CatalogImpl.
@@ -438,8 +434,10 @@ func (c *CatalogImpl) GetKernelIfaceName(ctx context.Context, tunnelID string) (
 
 // SetSnapshotProvider registers a named snapshot provider function.
 // Valid names: "dnsRoutes", "staticRoutes", "accessPolicies",
-// "policyDevices", "policyInterfaces", "clientRoutes", "hydrarouteStatus",
-// and "zapretStatus".
+// "policyDevices", "policyInterfaces", "clientRoutes". Статусы HR Neo и
+// Zapret сюда не входят: GetStatus не возвращает ошибок, в missing они не
+// попали бы никогда, а снимок refresh клиенту не отдаёт — стоило бы это
+// обхода /proc впустую. Свежесть их статуса даёт инвалидация стора.
 func (c *CatalogImpl) SetSnapshotProvider(name string, fn SnapshotFunc) {
 	switch name {
 	case "dnsRoutes":
@@ -454,10 +452,6 @@ func (c *CatalogImpl) SetSnapshotProvider(name string, fn SnapshotFunc) {
 		c.snapPolicyInterfaces = fn
 	case "clientRoutes":
 		c.snapClientRoutes = fn
-	case "hydrarouteStatus":
-		c.snapHydraRouteStatus = fn
-	case "zapretStatus":
-		c.snapZapretStatus = fn
 	}
 }
 
@@ -484,8 +478,6 @@ func (c *CatalogImpl) SnapshotAll(ctx context.Context) *RoutingSnapshot {
 	c.fillSection(ctx, "policyDevices", c.snapPolicyDevices, &snap.PolicyDevices, &snap.Missing)
 	c.fillSection(ctx, "policyInterfaces", c.snapPolicyInterfaces, &snap.PolicyInterfaces, &snap.Missing)
 	c.fillSection(ctx, "clientRoutes", c.snapClientRoutes, &snap.ClientRoutes, &snap.Missing)
-	c.fillSection(ctx, "hydrarouteStatus", c.snapHydraRouteStatus, &snap.HydraRouteStatus, &snap.Missing)
-	c.fillSection(ctx, "zapretStatus", c.snapZapretStatus, &snap.ZapretStatus, &snap.Missing)
 
 	return snap
 }

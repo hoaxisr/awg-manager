@@ -14,6 +14,7 @@ vi.mock('$lib/stores/notifications', () => ({
 }));
 
 import { invalidateResource } from './storeRegistry';
+import { invalidateAllRouting } from './routing';
 import { settings } from './settings';
 import { zapretStatus, zapretStatusIfExpert } from './zapret';
 import type { Settings } from '$lib/types';
@@ -61,6 +62,11 @@ describe('Zapret status store', () => {
 		await flushPromises();
 		expect(mocks.getStatus).toHaveBeenCalledTimes(2);
 		expect(zapretStatus.peek().data).toEqual(installed);
+
+		// Кнопка «Обновить» в Маршрутизации перечитывает и статус Zapret.
+		invalidateAllRouting();
+		await flushPromises();
+		expect(mocks.getStatus).toHaveBeenCalledTimes(3);
 		unsubscribe();
 	});
 });

@@ -59,12 +59,6 @@ func (a *app) setupServer() {
 	a.catalog.SetSnapshotProvider("clientRoutes", func(ctx context.Context) (interface{}, error) {
 		return a.clientRouteService.List()
 	})
-	a.catalog.SetSnapshotProvider("hydrarouteStatus", func(ctx context.Context) (interface{}, error) {
-		return a.hydraService.GetStatus(), nil
-	})
-	a.catalog.SetSnapshotProvider("zapretStatus", func(ctx context.Context) (interface{}, error) {
-		return a.zapretService.GetStatus(), nil
-	})
 
 	var slowHTTPThreshold time.Duration
 	if a.slowReqMS > 0 {

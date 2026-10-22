@@ -18,6 +18,7 @@ import { derived, type Readable } from 'svelte/store';
 import { createPollingStore, type PollingStore, type PollingState } from './polling';
 import { registerStore, type ResourceKey } from './storeRegistry';
 import { hydrarouteStatus as hydrarouteStatusStore } from './hydraroute';
+import { zapretStatus } from './zapret';
 import type {
 	DnsRoute,
 	StaticRouteList,
@@ -169,8 +170,8 @@ export function subscribeRouting(): () => void {
 }
 
 /**
- * invalidateAllRouting — triggers immediate refetch across all eight
- * section stores. Used by the `/api/routing/refresh` button handler so
+ * invalidateAllRouting — triggers immediate refetch across every routing
+ * section store. Used by the `/api/routing/refresh` button handler so
  * the user sees fresh data even when some sections previously errored.
  */
 export function invalidateAllRouting(): void {
@@ -182,4 +183,6 @@ export function invalidateAllRouting(): void {
 	clientRoutesStore.invalidate();
 	routingTunnelsStore.invalidate();
 	hydrarouteStatusStore.invalidate();
+	// Без подписчиков (уровень ниже expert) только помечает устаревшим.
+	zapretStatus.invalidate();
 }
