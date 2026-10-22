@@ -76,17 +76,14 @@ export function formatTunnelOutboundPreview(preview: TunnelOutboundPreview): str
   if (preview.tunnelCount === 1) {
     return m.sb_router_wizard_preview_route({ tag: preview.outboundTag });
   }
-  const modeSuffix = compositeModeLabel(preview.mode);
-  if (preview.willCreate) {
-    return `${m.sb_router_wizard_preview_create_composite({
-      tag: preview.outboundTag,
-      count: preview.tunnelCount,
-    })} — ${modeSuffix}`;
-  }
-  return `${m.sb_router_wizard_preview_use_composite({
+  const params = {
     tag: preview.outboundTag,
     count: preview.tunnelCount,
-  })} — ${modeSuffix}`;
+    mode: compositeModeLabel(preview.mode),
+  };
+  return preview.willCreate
+    ? m.sb_router_wizard_preview_create_composite(params)
+    : m.sb_router_wizard_preview_use_composite(params);
 }
 
 export function formatWizardOutboundPreview(

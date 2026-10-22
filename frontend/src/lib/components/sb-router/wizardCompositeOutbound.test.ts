@@ -101,7 +101,7 @@ describe('formatTunnelOutboundPreview', () => {
         tunnelCount: 2,
         mode: 'fallback',
       }),
-    ).toContain('резерв с переключением');
+    ).toBe('Будет использован composite outbound «custom-composite-1» из выбранных туннелей (2) — резерв с переключением');
     expect(
       formatTunnelOutboundPreview({
         outboundTag: 'custom-composite-2',
@@ -109,7 +109,7 @@ describe('formatTunnelOutboundPreview', () => {
         tunnelCount: 2,
         mode: 'selector',
       }),
-    ).toContain('ручной выбор');
+    ).toBe('Будет создан composite outbound «custom-composite-2» из выбранных туннелей (2) — ручной выбор');
   });
 });
 

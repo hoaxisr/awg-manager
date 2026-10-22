@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { subscriptionName } from '$lib/utils/subscriptionMember';
 	import { m } from '$lib/i18n';
-	import { isAutoSelectMode } from '$lib/utils/subscriptionMode';
+	import { isAutoSelectMode, subscriptionModeLabel } from '$lib/utils/subscriptionMode';
 	import RichText from '$lib/components/ui/RichText.svelte';
 	import {
 		DEFAULT_SUBSCRIPTION_URLTEST,
@@ -355,7 +355,7 @@
 				</div>
 				<div class="summary-item">
 					<span class="summary-value mono">{subscription.selectorTag}</span>
-					<span class="summary-label">selector</span>
+					<span class="summary-label">{subscriptionModeLabel(subscription.mode)}</span>
 				</div>
 			</div>
 		</div>
