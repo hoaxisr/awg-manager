@@ -12,6 +12,7 @@ const baseProps = {
 	singboxInstallError: null,
 	oninstallSingbox: vi.fn(),
 	showHydra: false,
+	showZapret: false,
 };
 
 describe('IntegrationsCard — удаление sing-box', () => {

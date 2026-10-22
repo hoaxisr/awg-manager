@@ -32,6 +32,12 @@ describe('isRoutingSubTabVisible', () => {
 	it('shows accessPolicies on the basic level', () => {
 		expect(isRoutingSubTabVisible('basic', 'accessPolicies')).toBe(true);
 	});
+
+	it('shows Zapret only on the expert level', () => {
+		expect(isRoutingSubTabVisible('basic', 'zapret')).toBe(false);
+		expect(isRoutingSubTabVisible('advanced', 'zapret')).toBe(false);
+		expect(isRoutingSubTabVisible('expert', 'zapret')).toBe(true);
+	});
 });
 
 describe('подписи уровней и разделов (i18n)', () => {

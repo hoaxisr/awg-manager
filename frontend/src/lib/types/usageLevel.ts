@@ -38,6 +38,7 @@ export type RoutingSubTab =
 	| 'dnsRoutes'
 	| 'ipRoutes'
 	| 'hrNeo'
+	| 'zapret'
 	| 'geoData'
 	| 'singboxRouter';
 
@@ -61,6 +62,9 @@ const ROUTING_SUBTAB_MIN_LEVEL: Record<RoutingSubTab, UsageLevel> = {
 	dnsRoutes: 'basic',
 	ipRoutes: 'advanced',
 	hrNeo: 'expert',
+	// Zapret — правка параметров чужого демона и его списков: тот же
+	// уровень доверия, что у HR Neo.
+	zapret: 'expert',
 	geoData: 'expert',
 	singboxRouter: 'expert',
 };

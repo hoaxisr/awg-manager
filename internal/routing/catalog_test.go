@@ -638,3 +638,22 @@ func TestListAll_SystemServerFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestSnapshotAllIncludesZapretStatus(t *testing.T) {
+	cat := NewCatalog(&mockTunnelProvider{}, nil, nil, noExits(), nil)
+	want := map[string]any{"installed": true, "running": true}
+	cat.SetSnapshotProvider("zapretStatus", func(context.Context) (interface{}, error) {
+		return want, nil
+	})
+
+	snap := cat.SnapshotAll(context.Background())
+	got, ok := snap.ZapretStatus.(map[string]any)
+	if !ok || got["installed"] != true || got["running"] != true {
+		t.Fatalf("zapretStatus snapshot = %#v, want %#v", snap.ZapretStatus, want)
+	}
+	for _, missing := range snap.Missing {
+		if missing == "zapretStatus" {
+			t.Fatal("successful zapretStatus provider was marked missing")
+		}
+	}
+}

@@ -7641,5 +7641,160 @@
 	"proxy_auto_reconnect_4h": "Каждые 4 часа",
 	"proxy_auto_reconnect_8h": "Каждые 8 часов",
 	"proxy_auto_reconnect_12h": "Каждые 12 часов",
-	"proxy_auto_reconnect_24h": "Каждые 24 часа"
+	"proxy_auto_reconnect_24h": "Каждые 24 часа",
+	"zapret_action_restarted": "Zapret перезапущен",
+	"zapret_action_started": "Zapret запущен",
+	"zapret_action_stopped": "Zapret остановлен",
+	"zapret_error_control": "Не удалось управлять Zapret",
+	"zapret_error_read_hostlist": "Не удалось загрузить список хостов",
+	"zapret_error_read_hostlists": "Не удалось загрузить списки хостов",
+	"zapret_error_read_strategies": "Не удалось загрузить стратегии Zapret",
+	"zapret_error_reorder_strategies": "Не удалось изменить порядок стратегий",
+	"zapret_error_save_hostlist": "Не удалось сохранить список хостов",
+	"zapret_hostlist_empty_hint": "Список пуст. В режиме MODE_FILTER=hostlist стратегия без доменов не выберется ни для одного хоста, поэтому обхода не будет.",
+	"zapret_hostlist_file_missing": "Файл не найден",
+	"zapret_hostlist_generated_hint": "Zapret пересобирает список автоматически. AWGM показывает число записей для справки.",
+	"zapret_hostlist_gzipped": "сжатый",
+	"zapret_hostlist_label_auto": "Автоматический",
+	"zapret_hostlist_label_exclude": "Исключения",
+	"zapret_hostlist_label_main": "Основной",
+	"zapret_hostlist_label_user": "Пользовательский",
+	"zapret_hostlist_note_auto": "Заполняется nfqws2; AWGM показывает список без редактирования",
+	"zapret_hostlist_note_exclude": "Хосты, для которых обход не применяется",
+	"zapret_hostlist_note_main": "Пересобирается ночью из внешних источников; AWGM не изменяет список",
+	"zapret_hostlist_note_user": "Домены для обхода; сохраняются при обновлении Zapret",
+	"zapret_hostlist_placeholder": "Введите домен или IP-адрес в каждой строке",
+	"zapret_hostlist_restart_failed": "Список сохранён, но перезапустить только демоны не удалось: {error}",
+	"zapret_hostlist_saved": "Список хостов сохранён",
+	"zapret_hostlist_unsaved_changes": "Есть несохранённые изменения",
+	"zapret_loading_hostlists": "Загрузка списков хостов…",
+	"zapret_no_hostlists": "Списки хостов недоступны.",
+	"zapret_loading_strategies": "Загрузка стратегий…",
+	"zapret_no_strategies": "Стратегий нет: переменная {optVar} в {config} пуста.",
+	"zapret_no_strategies_hint": "Без единой стратегии nfqws2 не будет обходить DPI. Проверьте, что в конфиге задано NFQWS2_ENABLE=1.",
+	"zapret_warning_hostlist_count_failed": "Не удалось подсчитать записи в списке: {detail}",
+	"zapret_warning_hostlist_ip_only": "В списке только IP-адреса и CIDR. В режиме MODE_FILTER=hostlist nfqws2 их игнорирует; нужны домены или MODE_FILTER=ipset.",
+	"zapret_warning_circular_missing_key": "У circular не задан key=, поэтому выбранный вариант не сохраняется для следующих хостов.",
+	"zapret_warning_strategy_no_lua_desync": "В профиле нет --lua-desync. Фильтр срабатывает, но обход DPI не выполняется.",
+	"zapret_warning_strategies_empty": "Переменная {optVar} пуста, стратегии не заданы.",
+	"zapret_warning_strategies_limit_reached": "Достигнут предел отображения. Показаны первые {limit} стратегий.",
+	"zapret_warning_unknown": "Zapret сообщил предупреждение, которое эта версия AWGM не распознаёт.",
+	"zapret_not_installed_description": "Zapret на роутере не найден. AWGM не устанавливает его: установите пакет вручную через opkg или установщик Zapret.",
+	"zapret_not_installed_detection_hint": "AWGM ищет работающий процесс, файлы в /opt или пакет, в имени которого есть «zapret» (например, zapret22 или zapret2). После установки обновите статус.",
+	"zapret_order_hint": "nfqws2 проверяет фильтры сверху вниз и применяет первый подошедший. Перестановка карточек меняет {config}; чтобы применить изменения, перезапустите Zapret.",
+	"zapret_service_aria": "Сервис Zapret",
+	"zapret_service_subtitle": "Активная установка: {base}",
+	"zapret_service_subtitle_without_path": "Путь установки недоступен",
+	"zapret_strategy_filter_l3_title": "Фильтр уровня L3",
+	"zapret_strategy_filter_l7_title": "Фильтр уровня L7",
+	"zapret_strategy_filter_packet_range_title": "Фильтр диапазона пакетов",
+	"zapret_strategy_filter_payload_title": "Фильтр содержимого пакета",
+	"zapret_strategy_filter_tcp_title": "Фильтр TCP-портов",
+	"zapret_strategy_filter_udp_title": "Фильтр UDP-портов",
+	"zapret_strategy_hostlists_missing": "Ни один из списков хостов не найден",
+	"zapret_strategy_hostlists_missing_title": "nfqws2 не запустится без существующего непустого файла списка",
+	"zapret_strategy_move_down_title": "Переместить стратегию ниже",
+	"zapret_strategy_move_up_title": "Переместить стратегию выше",
+	"zapret_strategy_no_filter": "без фильтра",
+	"zapret_strategy_order_hint": "Порядок карточек совпадает с порядком строк в NFQWS2_OPT. Первый подошедший фильтр выигрывает; остальные для этого потока не применяются.",
+	"zapret_strategy_placeholder_title": "При запуске init-скрипт Zapret раскрывает маркер в списки хостов ниже",
+	"zapret_strategy_pool_key_title": "Ключ пула: circular запоминает, на каком варианте остановился",
+	"zapret_strategy_priority_title": "Приоритет: nfqws2 проверяет фильтры сверху вниз; выигрывает первый подошедший",
+	"zapret_strategy_raw_summary": "Параметры как в конфиге",
+	"zapret_tab_hostlists": "Списки хостов",
+	"zapret_tab_strategies": "Стратегии",
+	"zapret_apply_restart_aria": "Перезапустить Zapret, чтобы применить изменения",
+	"zapret_apply_restart_title": "Перезапустить Zapret, чтобы применить изменения",
+	"zapret_apply_start_aria": "Запустить Zapret, чтобы применить изменения",
+	"zapret_apply_start_title": "Запустить Zapret, чтобы применить изменения",
+	"zapret_restart_required": "Изменения вступят в силу после перезапуска Zapret.",
+	"zapret_service_open_settings_aria": "Открыть настройки Zapret",
+	"zapret_service_open_settings_title": "Стратегии и списки Zapret",
+	"zapret_state_not_installed": "Не установлен",
+	"zapret_state_running": "Работает",
+	"zapret_state_stopped": "Остановлен",
+	"zapret_strategy_move_down_aria": "Переместить стратегию вниз",
+	"zapret_strategy_move_up_aria": "Переместить стратегию вверх",
+	"zapret_toggle_conflict_title": "Найдено несколько установок Zapret",
+	"zapret_toggle_loading_title": "Обновляется статус Zapret",
+	"zapret_toggle_start_aria": "Запустить Zapret",
+	"zapret_toggle_start_title": "Запустить Zapret",
+	"zapret_toggle_stop_aria": "Остановить Zapret",
+	"zapret_toggle_stop_title": "Остановить Zapret",
+	"zapret_toggle_unavailable_title": "Zapret недоступен",
+	"settings_integrations_zapret_running_aria": "Zapret работает",
+	"settings_integrations_zapret_stopped_aria": "Zapret остановлен",
+	"zapret_hostlist_entries_count": [
+		{
+			"declarations": [
+				"input count",
+				"input formatted",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{formatted} запись",
+				"countPlural=few": "{formatted} записи",
+				"countPlural=many": "{formatted} записей",
+				"countPlural=*": "{formatted} записи"
+			}
+		}
+	],
+	"zapret_hostlist_domains_count": [
+		{
+			"declarations": [
+				"input count",
+				"input formatted",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{formatted} домен",
+				"countPlural=few": "{formatted} домена",
+				"countPlural=many": "{formatted} доменов",
+				"countPlural=*": "{formatted} домена"
+			}
+		}
+	],
+	"zapret_hostlist_addresses_count": [
+		{
+			"declarations": [
+				"input count",
+				"input formatted",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{formatted} IP-адрес",
+				"countPlural=few": "{formatted} IP-адреса",
+				"countPlural=many": "{formatted} IP-адресов",
+				"countPlural=*": "{formatted} IP-адреса"
+			}
+		}
+	],
+	"zapret_hostlist_lines_to_write": [
+		{
+			"declarations": [
+				"input count",
+				"input formatted",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{formatted} строка для записи",
+				"countPlural=few": "{formatted} строки для записи",
+				"countPlural=many": "{formatted} строк для записи",
+				"countPlural=*": "{formatted} строки для записи"
+			}
+		}
+	],
+	"zapret_strategy_reordered": "Стратегия перемещена с позиции {from} на {to}"
 }

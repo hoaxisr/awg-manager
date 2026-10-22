@@ -27,6 +27,7 @@ export type ResourceKey =
 	| 'routing.clientRoutes'        // ResourceRoutingClientRoutes
 	| 'routing.tunnels'             // ResourceRoutingTunnels
 	| 'routing.hydrarouteStatus'    // ResourceRoutingHydrarouteStatus
+	| 'routing.zapretStatus'        // ResourceRoutingZapretStatus
 	| 'deviceproxy.config'           // ResourceDeviceProxyConfig   — also clears missing-target banner
 	| 'deviceproxy.outbounds'       // публикатора НЕТ: ключ живёт ради invalidateAll() при выходе из отказа
 	| 'deviceproxy.runtime'         // ResourceDeviceProxyRuntime

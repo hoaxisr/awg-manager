@@ -7255,5 +7255,152 @@
 	"proxy_auto_reconnect_4h": "Every 4 hours",
 	"proxy_auto_reconnect_8h": "Every 8 hours",
 	"proxy_auto_reconnect_12h": "Every 12 hours",
-	"proxy_auto_reconnect_24h": "Every 24 hours"
+	"proxy_auto_reconnect_24h": "Every 24 hours",
+	"zapret_action_restarted": "Zapret restarted",
+	"zapret_action_started": "Zapret started",
+	"zapret_action_stopped": "Zapret stopped",
+	"zapret_error_control": "Could not control Zapret",
+	"zapret_error_read_hostlist": "Could not load the hostlist",
+	"zapret_error_read_hostlists": "Could not load hostlists",
+	"zapret_error_read_strategies": "Could not load Zapret strategies",
+	"zapret_error_reorder_strategies": "Could not reorder strategies",
+	"zapret_error_save_hostlist": "Could not save the hostlist",
+	"zapret_hostlist_empty_hint": "This list is empty. With MODE_FILTER=hostlist, a strategy with no domains will not match any host, so bypassing will not work.",
+	"zapret_hostlist_file_missing": "File not found",
+	"zapret_hostlist_generated_hint": "Zapret rebuilds this list automatically. AWGM shows its entry count for reference.",
+	"zapret_hostlist_gzipped": "compressed",
+	"zapret_hostlist_label_auto": "Automatic",
+	"zapret_hostlist_label_exclude": "Excluded",
+	"zapret_hostlist_label_main": "Main",
+	"zapret_hostlist_label_user": "User",
+	"zapret_hostlist_note_auto": "Populated by nfqws2; read-only in AWGM",
+	"zapret_hostlist_note_exclude": "Hosts excluded from bypass",
+	"zapret_hostlist_note_main": "Rebuilt nightly from external sources; AWGM does not edit it",
+	"zapret_hostlist_note_user": "Domains to bypass; preserved across Zapret updates",
+	"zapret_hostlist_placeholder": "Enter one domain or IP address per line",
+	"zapret_hostlist_restart_failed": "Hostlist saved, but daemon-only restart failed: {error}",
+	"zapret_hostlist_saved": "Hostlist saved",
+	"zapret_hostlist_unsaved_changes": "Unsaved changes",
+	"zapret_loading_hostlists": "Loading hostlists…",
+	"zapret_no_hostlists": "No hostlists are available.",
+	"zapret_loading_strategies": "Loading strategies…",
+	"zapret_no_strategies": "No strategies found: {optVar} in {config} is empty.",
+	"zapret_no_strategies_hint": "Without a strategy, nfqws2 cannot bypass DPI. Check that NFQWS2_ENABLE=1 is set in the config.",
+	"zapret_warning_hostlist_count_failed": "Could not count hostlist entries: {detail}",
+	"zapret_warning_hostlist_ip_only": "This list contains only IP addresses or CIDRs. In MODE_FILTER=hostlist, nfqws2 ignores them; use domains or MODE_FILTER=ipset.",
+	"zapret_warning_circular_missing_key": "circular has no key=, so its selection state is not shared between hosts.",
+	"zapret_warning_strategy_no_lua_desync": "This profile has no --lua-desync option. Its filter matches, but no DPI bypass runs.",
+	"zapret_warning_strategies_empty": "{optVar} is empty, so no strategies are configured.",
+	"zapret_warning_strategies_limit_reached": "The display limit was reached. Showing the first {limit} strategies.",
+	"zapret_warning_unknown": "Zapret reported a warning that this version of AWGM does not recognize.",
+	"zapret_not_installed_description": "Zapret was not found on the router. AWGM does not install it; install it manually with opkg or a Zapret installer.",
+	"zapret_not_installed_detection_hint": "AWGM detects Zapret through a running process, files under /opt, or a package name containing “zapret” (such as zapret22 or zapret2). Refresh status after installation.",
+	"zapret_order_hint": "nfqws2 checks filters from top to bottom and applies the first match. Reordering these cards changes {config}; restart Zapret to apply the change.",
+	"zapret_service_aria": "Zapret service",
+	"zapret_service_subtitle": "Active installation: {base}",
+	"zapret_service_subtitle_without_path": "Installation path unavailable",
+	"zapret_strategy_filter_l3_title": "Layer 3 filter",
+	"zapret_strategy_filter_l7_title": "Layer 7 filter",
+	"zapret_strategy_filter_packet_range_title": "Packet range filter",
+	"zapret_strategy_filter_payload_title": "Payload filter",
+	"zapret_strategy_filter_tcp_title": "TCP port filter",
+	"zapret_strategy_filter_udp_title": "UDP port filter",
+	"zapret_strategy_hostlists_missing": "None of the hostlists was found",
+	"zapret_strategy_hostlists_missing_title": "nfqws2 will not start without an existing, non-empty hostlist file",
+	"zapret_strategy_move_down_title": "Move strategy down",
+	"zapret_strategy_move_up_title": "Move strategy up",
+	"zapret_strategy_no_filter": "no filter",
+	"zapret_strategy_order_hint": "Card order matches line order in NFQWS2_OPT. The first matching filter wins; the rest do not apply to that flow.",
+	"zapret_strategy_placeholder_title": "The Zapret init script expands this marker into the hostlists shown below at startup",
+	"zapret_strategy_pool_key_title": "Pool key: circular remembers which variant it stopped on",
+	"zapret_strategy_priority_title": "Priority: nfqws2 checks filters top to bottom; the first match wins",
+	"zapret_strategy_raw_summary": "Parameters as they appear in the config",
+	"zapret_tab_hostlists": "Hostlists",
+	"zapret_tab_strategies": "Strategies",
+	"zapret_apply_restart_aria": "Restart Zapret to apply changes",
+	"zapret_apply_restart_title": "Restart Zapret to apply changes",
+	"zapret_apply_start_aria": "Start Zapret to apply changes",
+	"zapret_apply_start_title": "Start Zapret to apply changes",
+	"zapret_restart_required": "Changes apply after Zapret restarts.",
+	"zapret_service_open_settings_aria": "Open Zapret settings",
+	"zapret_service_open_settings_title": "Strategies and hostlists",
+	"zapret_state_not_installed": "Not installed",
+	"zapret_state_running": "Running",
+	"zapret_state_stopped": "Stopped",
+	"zapret_strategy_move_down_aria": "Move strategy down",
+	"zapret_strategy_move_up_aria": "Move strategy up",
+	"zapret_toggle_conflict_title": "Multiple Zapret installations were found",
+	"zapret_toggle_loading_title": "Updating Zapret status",
+	"zapret_toggle_start_aria": "Start Zapret",
+	"zapret_toggle_start_title": "Start Zapret",
+	"zapret_toggle_stop_aria": "Stop Zapret",
+	"zapret_toggle_stop_title": "Stop Zapret",
+	"zapret_toggle_unavailable_title": "Zapret is unavailable",
+	"settings_integrations_zapret_running_aria": "Zapret is running",
+	"settings_integrations_zapret_stopped_aria": "Zapret is stopped",
+	"zapret_hostlist_entries_count": [
+		{
+			"declarations": [
+				"input count",
+				"input formatted",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{formatted} entry",
+				"countPlural=*": "{formatted} entries"
+			}
+		}
+	],
+	"zapret_hostlist_domains_count": [
+		{
+			"declarations": [
+				"input count",
+				"input formatted",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{formatted} domain",
+				"countPlural=*": "{formatted} domains"
+			}
+		}
+	],
+	"zapret_hostlist_addresses_count": [
+		{
+			"declarations": [
+				"input count",
+				"input formatted",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{formatted} IP address",
+				"countPlural=*": "{formatted} IP addresses"
+			}
+		}
+	],
+	"zapret_hostlist_lines_to_write": [
+		{
+			"declarations": [
+				"input count",
+				"input formatted",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{formatted} line to write",
+				"countPlural=*": "{formatted} lines to write"
+			}
+		}
+	],
+	"zapret_strategy_reordered": "Moved strategy from position {from} to {to}"
 }

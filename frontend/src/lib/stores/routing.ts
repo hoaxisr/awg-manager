@@ -18,6 +18,7 @@ import { derived, type Readable } from 'svelte/store';
 import { createPollingStore, type PollingStore, type PollingState } from './polling';
 import { registerStore, type ResourceKey } from './storeRegistry';
 import { hydrarouteStatus as hydrarouteStatusStore } from './hydraroute';
+import { zapretStatus as zapretStatusStore } from './zapret';
 import type {
 	DnsRoute,
 	StaticRouteList,
@@ -76,6 +77,7 @@ export const routingTunnelsStore = createSection<RoutingTunnel[]>(
 );
 
 export { hydrarouteStatusStore };
+export { zapretStatusStore as zapretStatus };
 
 /** First successful fetch or terminal error — section can render cached/empty body. */
 function sectionFetched(s: PollingState<unknown>): boolean {
@@ -164,6 +166,9 @@ export function subscribeRouting(): () => void {
 		clientRoutesStore.subscribe(() => {}),
 		routingTunnelsStore.subscribe(() => {}),
 		hydrarouteStatusStore.subscribe(() => {}),
+		// Zapret status fetches once while this page is subscribed; backend
+		// mutations refresh it through SSE invalidations.
+		zapretStatusStore.subscribe(() => {}),
 	];
 	return () => unsubs.forEach((u) => u());
 }

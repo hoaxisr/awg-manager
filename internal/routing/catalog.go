@@ -41,6 +41,7 @@ type RoutingSnapshot struct {
 	PolicyInterfaces interface{} `json:"policyInterfaces"`
 	ClientRoutes     interface{} `json:"clientRoutes"`
 	HydraRouteStatus interface{} `json:"hydrarouteStatus,omitempty"`
+	ZapretStatus     interface{} `json:"zapretStatus,omitempty"`
 	Missing          []string    `json:"missing"`
 }
 
@@ -174,6 +175,7 @@ type CatalogImpl struct {
 	snapPolicyInterfaces SnapshotFunc
 	snapClientRoutes     SnapshotFunc
 	snapHydraRouteStatus SnapshotFunc
+	snapZapretStatus     SnapshotFunc
 }
 
 // NewCatalog creates a new CatalogImpl.
@@ -436,7 +438,8 @@ func (c *CatalogImpl) GetKernelIfaceName(ctx context.Context, tunnelID string) (
 
 // SetSnapshotProvider registers a named snapshot provider function.
 // Valid names: "dnsRoutes", "staticRoutes", "accessPolicies",
-// "policyDevices", "policyInterfaces", "clientRoutes".
+// "policyDevices", "policyInterfaces", "clientRoutes", "hydrarouteStatus",
+// and "zapretStatus".
 func (c *CatalogImpl) SetSnapshotProvider(name string, fn SnapshotFunc) {
 	switch name {
 	case "dnsRoutes":
@@ -453,6 +456,8 @@ func (c *CatalogImpl) SetSnapshotProvider(name string, fn SnapshotFunc) {
 		c.snapClientRoutes = fn
 	case "hydrarouteStatus":
 		c.snapHydraRouteStatus = fn
+	case "zapretStatus":
+		c.snapZapretStatus = fn
 	}
 }
 
@@ -480,6 +485,7 @@ func (c *CatalogImpl) SnapshotAll(ctx context.Context) *RoutingSnapshot {
 	c.fillSection(ctx, "policyInterfaces", c.snapPolicyInterfaces, &snap.PolicyInterfaces, &snap.Missing)
 	c.fillSection(ctx, "clientRoutes", c.snapClientRoutes, &snap.ClientRoutes, &snap.Missing)
 	c.fillSection(ctx, "hydrarouteStatus", c.snapHydraRouteStatus, &snap.HydraRouteStatus, &snap.Missing)
+	c.fillSection(ctx, "zapretStatus", c.snapZapretStatus, &snap.ZapretStatus, &snap.Missing)
 
 	return snap
 }

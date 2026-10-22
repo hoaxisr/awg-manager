@@ -455,6 +455,38 @@ func (s *Server) registerRoutingRoutes(mux *http.ServeMux, h *routeHandlers) {
 	resolveHandler := api.NewResolveHandler()
 	mux.HandleFunc("/api/routing/resolve", h.guarded(resolveHandler.Resolve))
 
+	// Zapret (внешний anti-DPI движок). Не требует ExpertOnly: чтение
+	// состояния и списков безопасно, а запись ограничена сервисом
+	// пользовательскими файлами. Ставится только если сервис есть —
+	// без него вкладка всё равно не показывается.
+	if s.zapretService != nil {
+		zapretHandler := api.NewZapretHandler(s.zapretService, h.appLog)
+		zapretHandler.SetEventBus(s.bus)
+		mux.HandleFunc("/api/zapret/status", h.guarded(zapretHandler.Status))
+		mux.HandleFunc("/api/zapret/control", h.guarded(zapretHandler.Control))
+		mux.HandleFunc("/api/zapret/strategies", h.guarded(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				zapretHandler.Strategies(w, r)
+			case http.MethodPut:
+				zapretHandler.SaveStrategies(w, r)
+			default:
+				response.MethodNotAllowed(w)
+			}
+		}))
+		mux.HandleFunc("/api/zapret/strategies/reorder", h.guarded(zapretHandler.ReorderStrategy))
+		mux.HandleFunc("/api/zapret/hostlists", h.guarded(zapretHandler.Hostlists))
+		mux.HandleFunc("/api/zapret/hostlist", h.guarded(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				zapretHandler.Hostlist(w, r)
+			case http.MethodPut:
+				zapretHandler.SaveHostlist(w, r)
+			default:
+				response.MethodNotAllowed(w)
+			}
+		}))
+	}
 }
 
 // registerSettingsRoutes — settings, ping check, monitoring matrix, NDMS ping-check.

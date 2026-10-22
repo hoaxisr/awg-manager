@@ -15,6 +15,7 @@
         hydrarouteStatusStore,
     } from '$lib/stores/routing';
     import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
+    import { zapretStatus as zapretStatusStore } from '$lib/stores/routing';
     import { systemInfo } from '$lib/stores/system';
     import { api } from '$lib/api/client';
     import { notifications } from '$lib/stores/notifications';
@@ -29,6 +30,7 @@
     import { HrNeoTab } from '$lib/components/hrneo';
     import { hrPosKey } from '$lib/components/hrneo/hrIds';
     import { SingboxRouterRedesignPage } from '$lib/components/sb-router';
+    import { ZapretTab } from '$lib/components/zapret';
     import FakeIPTab from '$lib/components/fakeip/FakeIPTab.svelte';
     import ModeSwitchHost from '$lib/components/routing/ModeSwitchHost.svelte';
     import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
@@ -64,7 +66,7 @@
         unsubRouting?.();
     });
 
-    const ROUTING_TABS = ['hrneo', 'geodata', 'dns', 'ip', 'policy', 'clientvpn', 'singbox', 'fakeip'] as const;
+    const ROUTING_TABS = ['hrneo', 'geodata', 'dns', 'ip', 'policy', 'clientvpn', 'singbox', 'fakeip', 'zapret'] as const;
     type RoutingTab = (typeof ROUTING_TABS)[number];
 
     // «Любимая» вкладка — открывается первой вместо NDMS. Per-browser
@@ -105,6 +107,9 @@
     let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
     let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
     let singboxInstalled = $derived($systemInfo.data?.singbox?.installed ?? false);
+    // Zapret ставит пользователь, а не AWGM, поэтому вкладка появляется
+    // только когда движок реально найден на роутере.
+    let zapretInstalled = $derived($zapretStatusStore.data?.installed ?? false);
 
     let pendingTab = $state<string | null>(null);
 
@@ -275,6 +280,7 @@
         dns: 'dnsRoutes',
         ip: 'ipRoutes',
         hrneo: 'hrNeo',
+        zapret: 'zapret',
         geodata: 'geoData',
         singbox: 'singboxRouter',
     };
@@ -335,6 +341,15 @@
                 : null,
             // HR Neo is a separate routing engine (not sing-box) — divider before it.
             hydrarouteInstalled ? { id: 'hrneo', label: 'HR Neo', badge: hrRuleCount, separatorBefore: true } : null,
+            // Zapret — тоже отдельный движок, и ставит его пользователь, а не
+            // AWGM. Вкладка появляется только когда движок найден на роутере.
+            zapretInstalled
+                ? {
+                      id: 'zapret',
+                      label: 'Zapret',
+                      separatorBefore: true,
+                  }
+                : null,
             (hydrarouteInstalled || singboxInstalled)
                 ? { id: 'geodata', label: m.routing_page_tab_geodata(), badge: geoFileCount, separatorBefore: true }
                 : null,
@@ -389,6 +404,17 @@
             const levelGated = activeTab === 'hrneo' || activeTab === 'geodata' || activeTab === 'singbox' || activeTab === 'fakeip';
             if (levelGated && $settings === null) return;
             if (activeTab === 'fakeip' && $singboxSettings === null) return;
+        }
+
+        // Вкладка Zapret гейтится по zapret-status. Пока ответ не пришёл,
+        // вкладки в списке ещё нет — иначе deep-link ?tab=zapret (например,
+        // из Настроек) откатился бы на первую вкладку до загрузки статуса.
+        if (
+            !$zapretStatusStore.lastFetchedAt &&
+            activeTab === 'zapret' &&
+            !tabsInclude(items, activeTab)
+        ) {
+            return;
         }
 
         if (!tabsInclude(items, activeTab)) {
@@ -497,6 +523,8 @@
         <SingboxRouterRedesignPage />
     {:else if activeTab === 'fakeip'}
         <FakeIPTab />
+    {:else if activeTab === 'zapret'}
+        <ZapretTab />
     {/if}
     <ModeSwitchHost />
     </div>

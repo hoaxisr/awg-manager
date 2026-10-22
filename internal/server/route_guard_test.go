@@ -24,6 +24,7 @@ import (
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/zapret"
 )
 
 // routeReg — одна регистрация маршрута в server_routes.go: путь-литерал и
@@ -248,6 +249,7 @@ func newGuardServer(t *testing.T) (*Server, *auth.SessionStore) {
 		// маршрутов. Без них пути не регистрируются вовсе, и гард на них
 		// проверить нечем.
 		hydraService:       &hydraroute.Service{},
+		zapretService:      &zapret.Service{},
 		dnsCheckService:    &dnscheck.Service{},
 		managedServiceImpl: &managed.Service{},
 		presetCatalog:      &presets.Catalog{},
