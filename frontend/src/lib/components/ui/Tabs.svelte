@@ -115,29 +115,29 @@
     // overwrite `?tab=policy` with the default tab's empty URL before the
     // conditional tab appears, losing the deep-link value.
     let urlConsumed = $state(false);
-    let memoryConsumedFor = $state('');
-    const memoryKey = $derived(persistKey ? tabMemoryKey(persistKey) : '');
+    // The remembered tab is restored once, when the page reports its tabs as
+    // known (memoryReady), or never if the user or the URL picks a tab first.
+    // A remembered tab that appears later does not pull the user away.
+    let memoryChecked = $state(false);
 
     function restoreLastTab(): boolean {
-        if (!persistKey) return true;
-        if (memoryConsumedFor === memoryKey) return true;
+        if (!persistKey || memoryChecked) return true;
         if (!memoryReady) return false;
-        // Explicit navigation, including policy/rule links, always wins.
+        memoryChecked = true;
+        // Caller deep-link params and an explicit page preference win.
         const query = $page.url.searchParams;
-        if (!restoreMemory || (urlParam && query.has(urlParam)) || skipMemorySearchParams.some((key) => query.has(key))) {
-            memoryConsumedFor = memoryKey;
-            return true;
-        }
-        const saved = readTabMemory(memoryKey, tabs.flatMap(leafIds));
-        // Optional sections can arrive after the page's initial readiness
-        // signal. Keep listening until the remembered tab exists or the user
-        // explicitly selects one; a temporary fallback must not consume it.
-        if (saved) {
-            memoryConsumedFor = memoryKey;
-            if (saved !== untrack(() => active)) onchange(saved);
-        }
+        if (!restoreMemory || skipMemorySearchParams.some((key) => query.has(key))) return true;
+        const saved = readTabMemory(tabMemoryKey(persistKey), tabs.flatMap(leafIds));
+        if (saved && saved !== untrack(() => active)) onchange(saved);
         return true;
     }
+
+    // Persist the open tab once restore is settled, like the menu child below:
+    // clicks, URL and parent switches alike. A rejected click leaves `active`
+    // unchanged and is not stored.
+    $effect(() => {
+        if (persistKey && memoryChecked) writeTabMemory(tabMemoryKey(persistKey), active);
+    });
 
     function findTabForId(id: string): Tab | undefined {
         return tabs.find((t) => leafIds(t).includes(id));
@@ -195,6 +195,7 @@
         if (!urlParam) { urlConsumed = restoreLastTab(); return; }
         const fromUrl = $page.url.searchParams.get(urlParam);
         if (fromUrl == null) { urlConsumed = restoreLastTab(); return; }
+        memoryChecked = true;
         if (fromUrl === untrack(() => active)) { urlConsumed = true; return; }
         if (!findTabForId(fromUrl)) return;
         urlConsumed = true;
@@ -273,14 +274,8 @@
     function selectTab(id: string) {
         overflowOpen = false;
         menuOpenId = null;
-        if (persistKey) memoryConsumedFor = memoryKey;
-        const selectedKey = memoryKey;
+        memoryChecked = true;
         onchange(id);
-        // A parent may reject a switch (for example, an unsaved-draft guard).
-        // Store only a selection it actually accepted after Svelte updates.
-        queueMicrotask(() => {
-            if (persistKey && untrack(() => active) === id) writeTabMemory(selectedKey, id);
-        });
     }
 
     function toggleMenu(tab: Tab) {

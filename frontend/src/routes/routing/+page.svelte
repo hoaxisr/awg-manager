@@ -1,6 +1,5 @@
 <script lang="ts">
     import { m } from '$lib/i18n';
-    import { tabMemoryKey, writeTabMemory } from '$lib/components/ui/tab-memory';
     import { onMount, onDestroy, tick } from 'svelte';
     import { get } from 'svelte/store';
     import { goto } from '$app/navigation';
@@ -119,10 +118,7 @@
         activeTab = id as typeof activeTab;
     }
     function confirmLeave(): void {
-        if (pendingTab) {
-            activeTab = pendingTab as typeof activeTab;
-            writeTabMemory(tabMemoryKey('routing-sections'), activeTab);
-        }
+        if (pendingTab) activeTab = pendingTab as typeof activeTab;
         pendingTab = null;
     }
 

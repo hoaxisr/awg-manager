@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/svelte';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, waitFor } from '@testing-library/svelte';
 import { page } from '$app/stores';
 import type { Writable } from 'svelte/store';
 import { tabMemoryKey, readTabMemory, writeTabMemory } from './tab-memory';
@@ -16,8 +16,6 @@ const key = tabMemoryKey('routing-sections');
 const location = page as unknown as Writable<{ url: URL; route: { id: string } }>;
 
 vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
-
-afterEach(cleanup);
 
 beforeEach(() => {
     localStorage.clear();
@@ -48,12 +46,12 @@ describe('tab memory across sections', () => {
         await waitFor(() => expect(view.getByTestId('active').textContent).toBe('second'));
     });
 
-    it('restores a remembered optional section that arrives after initial readiness', async () => {
+    it('does not pull the user to a remembered tab that appears after readiness', async () => {
         writeTabMemory(key, 'second');
         const view = render(Host, { tabs: [tabs[0]], ready: true, persistKey: 'routing-sections' });
-        expect(view.getByTestId('active').textContent).toBe('first');
         await view.rerender({ tabs, ready: true });
-        await waitFor(() => expect(view.getByTestId('active').textContent).toBe('second'));
+        await Promise.resolve();
+        expect(view.getByTestId('active').textContent).toBe('first');
     });
 
     it('keeps a manual choice when a remembered optional section arrives later', async () => {
@@ -70,7 +68,8 @@ describe('tab memory across sections', () => {
         location.set({ url: new URL('http://localhost/routing?tab=first'), route: { id: '/routing' } });
         const view = render(Host, { tabs, persistKey: 'routing-sections' });
         await waitFor(() => expect(view.getByTestId('active').textContent).toBe('first'));
-        expect(readTabMemory(key, ['first', 'second'])).toBe('second');
+        // The tab opened by the link is now the last open one.
+        expect(readTabMemory(key, ['first', 'second'])).toBe('first');
     });
 
     it('persists an accepted user click', async () => {
@@ -85,11 +84,12 @@ describe('tab memory across sections', () => {
         await waitFor(() => expect(readTabMemory(key, ['first', 'second'])).toBe('second'));
     });
 
-    it('does not persist rejected switches or automatic fallbacks', async () => {
+    it('does not persist rejected switches', async () => {
         const view = render(Host, { tabs, reject: true, persistKey: 'routing-sections' });
         await fireEvent.click(view.getByRole('button', { name: 'Second' }));
         await Promise.resolve();
-        expect(readTabMemory(key, ['first', 'second'])).toBeNull();
+        expect(view.getByTestId('active').textContent).toBe('first');
+        expect(readTabMemory(key, ['first', 'second'])).toBe('first');
     });
 
     it('does not persist tab choices without an explicit key', async () => {
