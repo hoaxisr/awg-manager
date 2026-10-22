@@ -15,7 +15,7 @@
         hydrarouteStatusStore,
     } from '$lib/stores/routing';
     import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
-    import { zapretStatus as zapretStatusStore } from '$lib/stores/routing';
+    import { zapretStatus as zapretStatusStore } from '$lib/stores/zapret';
     import { systemInfo } from '$lib/stores/system';
     import { api } from '$lib/api/client';
     import { notifications } from '$lib/stores/notifications';

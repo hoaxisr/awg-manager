@@ -10,6 +10,9 @@
 /** Тот же закрытый набор, что у hydraroute, чтобы переиспользовать бейджи. */
 export type ZapretProcessState = 'not_installed' | 'stopped' | 'running';
 
+/** Действия POST /api/zapret/control. */
+export type ZapretControlAction = 'start' | 'stop' | 'restart' | 'restart-daemons';
+
 /** Stable backend diagnostic code; user-facing copy is localized in the UI. */
 export interface ZapretWarning {
 	code: string;

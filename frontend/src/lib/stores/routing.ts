@@ -77,7 +77,6 @@ export const routingTunnelsStore = createSection<RoutingTunnel[]>(
 );
 
 export { hydrarouteStatusStore };
-export { zapretStatusStore as zapretStatus };
 
 /** First successful fetch or terminal error — section can render cached/empty body. */
 function sectionFetched(s: PollingState<unknown>): boolean {

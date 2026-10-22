@@ -65,7 +65,7 @@
     {title}
   >
     {#if loading}
-      <span class="loader" aria-hidden="true"></span>
+      <span class="spinner" aria-hidden="true"></span>
     {:else}
       {@render children()}
     {/if}
@@ -121,21 +121,5 @@
     width: 16px;
     height: 16px;
     flex-shrink: 0;
-  }
-
-  .loader {
-    width: 14px;
-    height: 14px;
-    border: 2px solid currentColor;
-    border-right-color: transparent;
-    border-radius: 50%;
-  }
-
-  @media (prefers-reduced-motion: no-preference) {
-    .loader { animation: icon-button-spin 0.8s linear infinite; }
-  }
-
-  @keyframes icon-button-spin {
-    to { transform: rotate(360deg); }
   }
 </style>

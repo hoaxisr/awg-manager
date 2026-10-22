@@ -6,6 +6,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { zapretStatus } from '$lib/stores/zapret';
 	import type {
+		ZapretControlAction,
 		ZapretHostlistContent,
 		ZapretHostlistId,
 		ZapretHostlistInfo,
@@ -149,7 +150,7 @@
 		}
 	}
 
-	async function oncontrol(action: 'start' | 'stop' | 'restart' | 'restart-daemons') {
+	async function oncontrol(action: ZapretControlAction) {
 		if (controlBusy || status?.conflict || !status?.initScript) return;
 		controlBusy = true;
 		try {

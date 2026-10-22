@@ -8,6 +8,7 @@ import type {
 	ZapretHostlistContent,
 	ZapretHostlistId,
 	ZapretHostlistInfo,
+	ZapretControlAction,
 	ZapretStatus,
 	ZapretStrategies
 } from '$lib/types';
@@ -267,7 +268,7 @@ export class RoutingClient extends ServersClient {
 		return res?.zapretStatus ?? emptyZapretStatus();
 	}
 
-	async controlZapret(action: 'start' | 'stop' | 'restart' | 'restart-daemons', base: string): Promise<ZapretStatus> {
+	async controlZapret(action: ZapretControlAction, base: string): Promise<ZapretStatus> {
 		const res = await this.request<{ zapretStatus: ZapretStatus | null }>('/zapret/control', {
 			method: 'POST',
 			body: JSON.stringify({ action, base })

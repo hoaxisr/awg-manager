@@ -2,9 +2,7 @@ import { api } from '$lib/api/client';
 import { m } from '$lib/i18n';
 import { notifications } from '$lib/stores/notifications';
 import { zapretStatus } from '$lib/stores/zapret';
-import type { ZapretStatus } from '$lib/types';
-
-export type ZapretControlAction = 'start' | 'stop' | 'restart' | 'restart-daemons';
+import type { ZapretControlAction, ZapretStatus } from '$lib/types';
 
 /** Run a Zapret control action and keep the shared status store in sync. */
 export async function runZapretControl(
