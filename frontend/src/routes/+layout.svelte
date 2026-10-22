@@ -20,6 +20,7 @@
 	} from '$lib/stores/tunnelDashboardPrefs';
 	import { settingsSectionIconMode } from '$lib/stores/settingsSectionIconMode';
 	import { serviceLetterIcons } from '$lib/stores/serviceLetterIcons';
+	import { countryFlagEmojis } from '$lib/stores/countryFlagEmojis';
 	import { showSummary } from '$lib/stores/showSummary';
 	import { auth, isAuthenticated, isLoading } from '$lib/stores/auth';
 	import { notifications } from '$lib/stores/notifications';
@@ -390,6 +391,7 @@
 		compactLayout.init();
 		settingsSectionIconMode.init();
 		serviceLetterIcons.init();
+		countryFlagEmojis.init();
 		showSummary.init();
 		tunnelDashboardMode.init();
 		tunnelDashboardLayout.init();
