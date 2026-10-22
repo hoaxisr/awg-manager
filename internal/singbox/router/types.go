@@ -255,14 +255,14 @@ type RuleSet struct {
 }
 
 type Outbound struct {
-	Type          string   `json:"type"`
-	Tag           string   `json:"tag"`
-	BindInterface string   `json:"bind_interface,omitempty"`
-	Outbounds     []string `json:"outbounds,omitempty"`
-	URL           string   `json:"url,omitempty"`
-	Interval      string   `json:"interval,omitempty"`
-	Tolerance     int      `json:"tolerance,omitempty"`
-	Default       string   `json:"default,omitempty"`
+	Type                      string   `json:"type"`
+	Tag                       string   `json:"tag"`
+	BindInterface             string   `json:"bind_interface,omitempty"`
+	Outbounds                 []string `json:"outbounds,omitempty"`
+	URL                       string   `json:"url,omitempty"`
+	Interval                  string   `json:"interval,omitempty"`
+	Tolerance                 int      `json:"tolerance,omitempty"`
+	Default                   string   `json:"default,omitempty"`
 	Strategy                  string   `json:"strategy,omitempty"`
 	InterruptExistConnections bool     `json:"interrupt_exist_connections,omitempty"`
 	IdleTimeout               string   `json:"idle_timeout,omitempty"`

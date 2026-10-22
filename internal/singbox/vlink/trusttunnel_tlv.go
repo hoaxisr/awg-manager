@@ -13,12 +13,12 @@ import (
 const ttMaxVersion = 1
 
 const (
-	ttTagVersion     = 0x00
-	ttTagHostname    = 0x01
-	ttTagAddresses   = 0x02
-	ttTagCustomSNI   = 0x03
-	ttTagUsername    = 0x05
-	ttTagPassword    = 0x06
+	ttTagVersion          = 0x00
+	ttTagHostname         = 0x01
+	ttTagAddresses        = 0x02
+	ttTagCustomSNI        = 0x03
+	ttTagUsername         = 0x05
+	ttTagPassword         = 0x06
 	ttTagSkipVerify       = 0x07
 	ttTagCertificate      = 0x08
 	ttTagUpstreamProtocol = 0x09
