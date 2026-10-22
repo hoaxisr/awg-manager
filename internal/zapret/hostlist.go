@@ -75,7 +75,6 @@ type HostlistInfo struct {
 	Editable  bool      `json:"editable"`
 	Gzipped   bool      `json:"gzipped"`
 	Generated bool      `json:"generated"`
-	Note      string    `json:"note,omitempty"`
 	Warnings  []Warning `json:"warnings,omitempty"`
 }
 
@@ -86,31 +85,14 @@ type hostlistSpec struct {
 	filename  string
 	editable  bool
 	generated bool
-	note      string
 }
 
 func hostlistSpecs() []hostlistSpec {
 	return []hostlistSpec{
-		{
-			id: HostlistUser, filename: "zapret-hosts-user.txt",
-			editable: true,
-			note:     "домены для обхода; переживает обновления zapret",
-		},
-		{
-			id: HostlistExclude, filename: "zapret-hosts-user-exclude.txt",
-			editable: true,
-			note:     "исключения: к этим хостам обход не применяется",
-		},
-		{
-			id: HostlistAuto, filename: "zapret-hosts-auto.txt",
-			editable: false, generated: true,
-			note: "наполняется самим nfqws2; AWGM показывает его без редактирования",
-		},
-		{
-			id: HostlistMain, filename: "zapret-hosts.txt",
-			generated: true,
-			note:      "пересобирается ночной задачей из внешних источников; AWGM не правит",
-		},
+		{id: HostlistUser, filename: "zapret-hosts-user.txt", editable: true},
+		{id: HostlistExclude, filename: "zapret-hosts-user-exclude.txt", editable: true},
+		{id: HostlistAuto, filename: "zapret-hosts-auto.txt", generated: true},
+		{id: HostlistMain, filename: "zapret-hosts.txt", generated: true},
 	}
 }
 
@@ -224,22 +206,6 @@ func entryMeaningful(line string) bool {
 	return line != "" && !strings.HasPrefix(line, "#")
 }
 
-func countEntries(path string) int {
-	counts, err := countHostlist(path, nil)
-	if err != nil {
-		return 0
-	}
-	return counts.entries
-}
-
-func countIPs(path string) int {
-	counts, err := countHostlist(path, nil)
-	if err != nil {
-		return 0
-	}
-	return counts.ips
-}
-
 // looksLikeIP отличает адрес/подсеть от домена. Разбор настоящий, через
 // netip: самодельная эвристика по точкам путала IPv6 с hex-буквами
 // (2001:db8::1) и домен с четыремя числовыми сегментами, а нам нужно
@@ -277,7 +243,6 @@ func listHostlists(l layout) []HostlistInfo {
 			Editable:  sp.editable,
 			Generated: sp.generated,
 			Gzipped:   gz,
-			Note:      sp.note,
 		}
 		if st, err := os.Stat(path); err == nil {
 			info.Exists = true

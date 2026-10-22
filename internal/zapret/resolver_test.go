@@ -247,9 +247,9 @@ func TestFindInitScriptOnlyReturnsScriptOwnedBySelectedBase(t *testing.T) {
 	bases := setupResolverInstalls(t, "zapret-one", "zapret-two")
 	initDirs = []string{filepath.Join(bases[1], "init.d", "sysv")}
 
-	dir, got := findInitScript(bases[0])
+	got := findInitScript(bases[0])
 	want := filepath.Join(bases[0], "init.d", "sysv", "zapret2")
-	if got != want || dir != filepath.Dir(want) {
-		t.Fatalf("findInitScript = (%s, %s), want (%s, %s)", dir, got, filepath.Dir(want), want)
+	if got != want {
+		t.Fatalf("findInitScript = %s, want %s", got, want)
 	}
 }

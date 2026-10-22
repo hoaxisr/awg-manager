@@ -429,7 +429,7 @@ func TestInitScriptPrefersWiredSymlink(t *testing.T) {
 	t.Cleanup(func() { initDirs = prevInit })
 	initDirs = []string{globalDir}
 
-	_, got := findInitScript(base)
+	got := findInitScript(base)
 	if got != link {
 		t.Errorf("найден %q, ожидался включённый скрипт %q", got, link)
 	}

@@ -336,7 +336,7 @@ type zapretHostlistWriteRequest struct {
 // errBadHostlistID отделяем, чтобы отдать конкретный код, а не общий
 // ZAPRET_ERROR: клиент послал мусор, это его ошибка, а не состояние
 // роутера.
-var errBadHostlistID = errors.New("неизвестный список zapret")
+var errBadHostlistID = errors.New("unknown zapret hostlist")
 
 func zapretHostlistID(raw string) (zapret.HostlistID, error) {
 	switch zapret.HostlistID(raw) {

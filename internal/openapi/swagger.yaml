@@ -9025,8 +9025,6 @@ definitions:
         $ref: '#/definitions/zapret.HostlistID'
       ips:
         type: integer
-      note:
-        type: string
       path:
         type: string
       warnings:

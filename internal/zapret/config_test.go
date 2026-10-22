@@ -152,9 +152,6 @@ func TestParseStrategiesExtractsFilters(t *testing.T) {
 	if s.LuaDesync[1].Slot != "1" {
 		t.Errorf("slot: %q", s.LuaDesync[1].Slot)
 	}
-	if got := slotCount(s); got != 1 {
-		t.Errorf("slotCount=%d", got)
-	}
 }
 
 func TestStrategyWarnings(t *testing.T) {

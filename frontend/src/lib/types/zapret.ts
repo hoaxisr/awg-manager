@@ -152,7 +152,6 @@ export interface ZapretHostlistInfo {
 	editable: boolean;
 	gzipped: boolean;
 	generated: boolean;
-	note?: string;
 	warnings?: ZapretWarning[];
 }
 

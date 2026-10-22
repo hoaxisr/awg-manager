@@ -27,10 +27,6 @@ var (
 	}
 	// versionArgs — nfqws2 печатает версию на --version и на голый запуск.
 	versionArgs = [][]string{{"--version"}, {"-v"}}
-	// pidFileGlob оставлен для диагностики: имя инстанса различается
-	// между форками (nfqws2.pid, nfqws2_1.pid), и читать его не нужно —
-	// живость надёжнее определяется по /proc.
-	_ = "nfqws2*.pid"
 )
 
 // nfqProcessesHook is a seam for resolver tests. Production reads /proc;
@@ -52,13 +48,12 @@ var initDirs = []string{
 // layout — разобранное содержимое установленного zapret: где лежит база,
 // какой файл конфига и в какой переменной живут опции демона.
 type layout struct {
-	base    string
-	config  string
-	binary  string
-	optVar  string // "NFQWS2_OPT" (zapret2) или "NFQWS_OPT" (zapret)
-	ipset   string // каталог со списками доменов
-	initDir string // каталог, где нашёлся init-скрипт
-	init    string // полный путь к init-скрипту, "" если не найден
+	base   string
+	config string
+	binary string
+	optVar string // "NFQWS2_OPT" (zapret2) или "NFQWS_OPT" (zapret)
+	ipset  string // каталог со списками доменов
+	init   string // полный путь к init-скрипту, "" если не найден
 }
 
 // baseOfExe выделяет корень установки из пути к исполняемому файлу:
@@ -147,7 +142,7 @@ func discoverLayouts() []layout {
 			continue
 		}
 		l.binary = findBinary(base)
-		l.initDir, l.init = findInitScript(base)
+		l.init = findInitScript(base)
 		out = append(out, l)
 	}
 	return out
@@ -242,7 +237,7 @@ func isExecutable(path string) bool {
 // оно S99zapret2 (z2k), S90-zapret2 (KZM2), zapret2 (stock sysv),
 // S99zapret (zapret v1) — список разъезжается с каждым форком, а
 // совпадение по подстроке переживает все четыре.
-func findInitScript(base string) (dir, path string) {
+func findInitScript(base string) string {
 	base = filepath.Clean(base)
 	identity := canonicalBase(base)
 	// A global init entry is usable only when its resolved target belongs to
@@ -276,10 +271,10 @@ func findInitScript(base string) (dir, path string) {
 			if err != nil || !pathWithin(identity, resolved) && !initPinsBase(resolved, identity) {
 				continue
 			}
-			return d, full
+			return full
 		}
 	}
-	return "", ""
+	return ""
 }
 
 // initPinsBase reports whether an init script outside the installation

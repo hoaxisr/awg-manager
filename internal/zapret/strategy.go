@@ -2,7 +2,6 @@ package zapret
 
 import (
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -178,11 +177,10 @@ func parseStrategy(index int, raw string) Strategy {
 		s.Placeholders = append(s.Placeholders, ph)
 	}
 
-	// Имя профиля: явный --name= побеждает выведенное из --lua-desync.
+	// Имя профиля — только явный --name=: подпись по фильтрам собирает UI
+	// на языке пользователя.
 	if m := nameOptRe.FindStringSubmatch(raw); len(m) == 2 {
 		s.Name = m[1]
-	} else {
-		s.Name = defaultProfileName(s)
 	}
 
 	for _, call := range luaCallRe.FindAllStringSubmatch(raw, -1) {
@@ -203,32 +201,6 @@ func parseStrategy(index int, raw string) Strategy {
 	}
 
 	return s
-}
-
-// defaultProfileName подписывает карточку так, как её увидит человек.
-// Явного имени обычно нет, поэтому собираем из того, что реально
-// различает стратегии: порты и протокол.
-func defaultProfileName(s Strategy) string {
-	proto := "TCP"
-	switch {
-	case s.FilterUDP != "":
-		proto = "UDP"
-	case s.FilterTCP != "":
-		proto = "TCP"
-	case s.FilterICMP != "":
-		proto = "ICMP"
-	}
-	ports := s.FilterTCP
-	if ports == "" {
-		ports = s.FilterUDP
-	}
-	if ports == "" {
-		if s.FilterL7 != "" {
-			return proto + " " + s.FilterL7
-		}
-		return proto + " (без фильтра)"
-	}
-	return proto + " " + ports
 }
 
 // strategyWarnings собирает грабли, которые не видно из значений полей,
@@ -299,19 +271,4 @@ func reindex(items []Strategy) []Strategy {
 		items[i].Index = i
 	}
 	return items
-}
-
-// slotCount считает, сколько вариантов перебирает circular в стратегии:
-// максимальный :strategy=N плюс один, потому что нумерация с единицы.
-func slotCount(s Strategy) int {
-	maxSlot := 0
-	for _, inst := range s.LuaDesync {
-		if inst.Slot == "" {
-			continue
-		}
-		if n, err := strconv.Atoi(inst.Slot); err == nil && n > maxSlot {
-			maxSlot = n
-		}
-	}
-	return maxSlot
 }

@@ -3223,7 +3223,6 @@ const zapret_HostlistInfo: v.GenericSchema = v.looseObject({
 	gzipped: v.optional(v.nullable(v.boolean())),
 	id: v.optional(v.nullable(v.lazy(() => zapret_HostlistID))),
 	ips: v.optional(v.nullable(v.number())),
-	note: v.optional(v.nullable(v.string())),
 	path: v.optional(v.nullable(v.string())),
 	warnings: v.optional(v.nullable(v.array(v.lazy(() => zapret_Warning)))),
 });
