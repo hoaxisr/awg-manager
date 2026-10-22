@@ -48,7 +48,7 @@ export interface SubscriptionPreviewMember {
 	security?: string;
 }
 
-export type SubscriptionMode = 'selector' | 'urltest' | 'fallback' | 'load-balance';
+export type SubscriptionMode = 'selector' | 'urltest' | 'fallback';
 
 export interface SubscriptionURLTest {
 	url: string;

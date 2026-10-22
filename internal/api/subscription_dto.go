@@ -95,7 +95,7 @@ type CreateSubscriptionRequest struct {
 	Headers       []SubscriptionHeader    `json:"headers"`
 	RefreshHours  int                     `json:"refreshHours" example:"24"`
 	Enabled       bool                    `json:"enabled" example:"true"`
-	Mode          string                  `json:"mode,omitempty"` // "selector" (default) | "urltest"
+	Mode          string                  `json:"mode,omitempty"` // "selector" (default) | "urltest" | "fallback"
 	URLTest       *SubscriptionURLTestDTO `json:"urlTest,omitempty"`
 	ExcludedKeys  []string                `json:"excludedKeys,omitempty"`                            // identity-суффиксы серверов, снятых в import-preview
 	FilterInclude string                  `json:"filterInclude,omitempty" example:"(?i)(DE|NL)"`     // regex «включать только» (по имени сервера)
@@ -257,7 +257,7 @@ func toSubscriptionDTO(s subscription.Subscription, ndmsProxyEnabled bool) Subsc
 	}
 	mode := string(s.EffectiveMode())
 	var urltest *SubscriptionURLTestDTO
-	if s.EffectiveMode() == subscription.ModeURLTest {
+	if s.EffectiveMode().AutoSelect() {
 		ut := s.EffectiveURLTest()
 		urltest = &SubscriptionURLTestDTO{
 			URL:         ut.URL,
@@ -368,7 +368,7 @@ func buildSubscriptionMetaDTO(s subscription.Subscription, ndmsProxyEnabled bool
 	}
 	mode := string(s.EffectiveMode())
 	var urltest *SubscriptionURLTestDTO
-	if s.EffectiveMode() == subscription.ModeURLTest {
+	if s.EffectiveMode().AutoSelect() {
 		ut := s.EffectiveURLTest()
 		urltest = &SubscriptionURLTestDTO{
 			URL:         ut.URL,
@@ -465,10 +465,10 @@ func parseSubscriptionMode(s string) (subscription.SubscriptionMode, error) {
 		return subscription.ModeSelector, nil
 	case string(subscription.ModeSelector):
 		return subscription.ModeSelector, nil
-	case string(subscription.ModeURLTest):
-		return subscription.ModeURLTest, nil
+	case string(subscription.ModeURLTest), string(subscription.ModeFallback):
+		return subscription.SubscriptionMode(s), nil
 	default:
-		return "", fmt.Errorf("invalid mode %q (expected \"selector\" or \"urltest\")", s)
+		return "", fmt.Errorf("invalid mode %q (expected \"selector\", \"urltest\" or \"fallback\")", s)
 	}
 }
 

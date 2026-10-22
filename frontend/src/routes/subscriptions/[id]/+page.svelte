@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { subscriptionName } from '$lib/utils/subscriptionMember';
 	import { m, uiText, type UiText } from '$lib/i18n';
+	import { isAutoSelectMode } from '$lib/utils/subscriptionMode';
 	import { page } from '$app/stores';
 	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { onMount, onDestroy } from 'svelte';
@@ -232,11 +233,11 @@
 		subscriptionSurfaceEntryNonce += 1;
 	});
 
-	// Poll Clash live "now" every 5s for urltest / fallback mode. Selector mode doesn't need
+	// Poll Clash live "now" every 5s in auto-select modes. Selector mode doesn't need
 	// this — its activeMember is whatever the user picked and Clash echoes it.
 	$effect(() => {
 		const sub = subscription;
-		if (loading || error || !sub || (sub.mode !== 'urltest' && sub.mode !== 'fallback') || active !== 'members') {
+		if (loading || error || !sub || !isAutoSelectMode(sub.mode) || active !== 'members') {
 			liveActiveMember = null;
 			return;
 		}

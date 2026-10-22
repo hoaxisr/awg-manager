@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { subscriptionModeLabel } from '$lib/utils/subscriptionMode';
 	import { m } from '$lib/i18n';
 	import type { Subscription } from '$lib/types';
 	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
@@ -126,7 +127,6 @@
 	let selectorTag = $derived(subscription.selectorTag ?? '');
 	const proxyIface = $derived(subscription.proxyIndex >= 0 ? `Proxy${subscription.proxyIndex}` : '');
 	let kernelIface = $derived(subscription.proxyIndex >= 0 ? `t2s${subscription.proxyIndex}` : '');
-	const isURLTest = $derived(subscription.mode === 'urltest');
 	const resolvedMember = $derived(
 		subscription.members?.find((member) => member.tag === resolvedMemberTag) ?? null,
 	);
@@ -146,7 +146,7 @@
 	const feedStatusLabel = $derived(
 		!subscription.enabled ? m.subscriptions_card_feed_off() : subscription.lastError ? m.common_error() : 'OK',
 	);
-	const modeLabel = $derived(subscription.mode === 'urltest' ? 'URLTest' : 'Selector');
+	const modeLabel = $derived(subscriptionModeLabel(subscription.mode));
 	const isInlineGroup = $derived(
 		subscription.isInline || (!subscription.isFile && !subscription.url?.trim()),
 	);

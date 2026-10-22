@@ -2,7 +2,6 @@ package vlink
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -20,7 +19,6 @@ type ttTOMLEndpoint struct {
 	Certificate      string   `toml:"certificate"`
 	AntiDPI          bool     `toml:"anti_dpi"`
 	Name             string   `toml:"name"`
-	UpstreamProtocol string   `toml:"upstream_protocol"`
 }
 
 type ttTOMLDoc struct {
@@ -69,12 +67,10 @@ func ParseTrustTunnelTOML(body []byte) BatchResult {
 	if !e.complete() {
 		return fail("TOML TrustTunnel: нужны hostname, addresses, username, password")
 	}
-	quic := strings.EqualFold(e.UpstreamProtocol, "http3") || strings.EqualFold(e.UpstreamProtocol, "quic")
 	parsed, err := ttEndpointToOutbounds(ttEndpoint{
 		Hostname: e.Hostname, Addresses: e.Addresses, CustomSNI: e.CustomSNI,
 		Username: e.Username, Password: e.Password, SkipVerification: e.SkipVerification,
 		Certificate: e.Certificate, AntiDPI: e.AntiDPI, Name: e.Name,
-		QUIC: quic,
 	}, "")
 	if err != nil {
 		return fail(fmt.Sprintf("TOML TrustTunnel: %s", err))

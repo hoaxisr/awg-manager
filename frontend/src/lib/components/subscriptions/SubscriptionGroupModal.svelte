@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { isAutoSelectMode } from '$lib/utils/subscriptionMode';
 	import { subscriptionName } from '$lib/utils/subscriptionMember';
 	import { m } from '$lib/i18n';
 	import {
@@ -84,7 +85,7 @@
 				label: label.trim(),
 				mode,
 				urlTest:
-					mode !== 'selector'
+					isAutoSelectMode(mode)
 						? { url: utUrl, intervalSec: utIntervalSec, toleranceMs: utToleranceMs }
 						: undefined,
 				useSubscriptionIds: selectedIds,
@@ -190,19 +191,8 @@
 					<div class="mode-title">{m.subscriptions_form_mode_fallback_title()}</div>
 					<div class="mode-desc">{m.subscriptions_form_mode_fallback_desc()}</div>
 				</button>
-				<button
-					type="button"
-					role="radio"
-					aria-checked={mode === 'load-balance'}
-					class="mode-card"
-					class:selected={mode === 'load-balance'}
-					onclick={() => (mode = 'load-balance')}
-				>
-					<div class="mode-title">{m.subscriptions_form_mode_loadbalance_title()}</div>
-					<div class="mode-desc">{m.subscriptions_form_mode_loadbalance_desc()}</div>
-				</button>
 			</div>
-			{#if mode === 'urltest' || mode === 'fallback' || mode === 'load-balance'}
+			{#if isAutoSelectMode(mode)}
 				<div class="urltest-block">
 					<label class="row">
 						<span class="lbl">{m.subscriptions_form_check_url()}</span>

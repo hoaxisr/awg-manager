@@ -963,6 +963,12 @@ func TestService_RemoveMember_BumpsActiveOnRemoval(t *testing.T) {
 }
 
 func TestService_SetActiveMember_RejectsURLTestMode(t *testing.T) {
+	for _, mode := range []SubscriptionMode{ModeURLTest, ModeFallback} {
+		t.Run(string(mode), func(t *testing.T) { testSetActiveMemberRejected(t, mode) })
+	}
+}
+
+func testSetActiveMemberRejected(t *testing.T, mode SubscriptionMode) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(
 			"vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h1.example:443?security=tls&sni=h\n",
@@ -978,7 +984,7 @@ func TestService_SetActiveMember_RejectsURLTestMode(t *testing.T) {
 		Label:   "test",
 		URL:     srv.URL,
 		Enabled: true,
-		Mode:    ModeURLTest,
+		Mode:    mode,
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)

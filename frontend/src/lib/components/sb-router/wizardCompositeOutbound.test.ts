@@ -107,9 +107,9 @@ describe('formatTunnelOutboundPreview', () => {
         outboundTag: 'custom-composite-2',
         willCreate: true,
         tunnelCount: 2,
-        mode: 'load-balance',
+        mode: 'selector',
       }),
-    ).toContain('балансировка round-robin');
+    ).toContain('ручной выбор');
   });
 });
 
@@ -140,17 +140,6 @@ describe('buildWizardCompositeOutbound', () => {
       url: 'https://www.gstatic.com/generate_204',
       interval: '60s',
       interrupt_exist_connections: true,
-    });
-  });
-
-  it('создаёт load-balance со стратегией round-robin', () => {
-    expect(buildWizardCompositeOutbound('custom-composite-1', ['warp', 'awg10'], 'load-balance')).toEqual({
-      type: 'load-balance',
-      tag: 'custom-composite-1',
-      outbounds: ['warp', 'awg10'],
-      strategy: 'round-robin',
-      url: 'https://www.gstatic.com/generate_204',
-      interval: '60s',
     });
   });
 

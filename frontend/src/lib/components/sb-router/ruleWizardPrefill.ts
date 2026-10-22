@@ -41,11 +41,10 @@ function outboundFromRule(
   }
   const ob = outbounds.find((o) => o.tag === rule.outbound);
   if (ob && isCompositeOutboundType(ob.type) && (ob.outbounds?.length ?? 0) > 0) {
-    const rawMode = normalizeCompositeType(ob.type);
     return {
       outboundCategory: 'tunnel',
       tunnelTags: [...ob.outbounds!],
-      compositeMode: rawMode as WizardCompositeMode,
+      compositeMode: normalizeCompositeType(ob.type),
     };
   }
   return { outboundCategory: 'tunnel', tunnelTags: [rule.outbound] };

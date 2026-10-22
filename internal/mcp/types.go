@@ -48,7 +48,7 @@ type SingboxSubscription struct {
 	SourceType      string `json:"sourceType" jsonschema:"url|inline|file — where the server list comes from"`
 	Host            string `json:"host,omitempty" jsonschema:"host of the subscription URL; the rest of the URL is never returned. Empty unless sourceType is url"`
 	Enabled         bool   `json:"enabled" jsonschema:"false stops scheduled refresh and removes its servers from aggregate groups; it does NOT stop traffic through groupTag"`
-	Mode            string `json:"mode" jsonschema:"selector (one server chosen by the user) or urltest (the engine picks the fastest)"`
+	Mode            string `json:"mode" jsonschema:"selector (one server chosen by the user), urltest (the engine picks the fastest) or fallback (the engine uses the first live server in list order)"`
 	GroupTag        string `json:"groupTag" jsonschema:"the group this subscription owns — pass it to get_singbox_outbound to see its servers and which one is in use"`
 	MemberCount     int    `json:"memberCount" jsonschema:"servers currently in the group"`
 	ExcludedCount   int    `json:"excludedCount" jsonschema:"servers the user excluded"`
@@ -108,7 +108,7 @@ const MaxGroupMembersInOutput = 100
 // unapplied draft (see OutOfSync).
 type SingboxOutbound struct {
 	Tag  string `json:"tag"`
-	Type string `json:"type" jsonschema:"selector|urltest|loadbalance, or direct for an outbound bound to an interface; only selector and urltest have an active member"`
+	Type string `json:"type" jsonschema:"selector|urltest|fallback|loadbalance, or direct for an outbound bound to an interface; only selector, urltest and fallback have an active member"`
 	// Source says where the group came from: made in the sing-box router,
 	// or generated for a subscription (router.CompositeOutboundView).
 	Source      string `json:"source,omitempty" jsonschema:"router (made in the sing-box router) or subscription"`

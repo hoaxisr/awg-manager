@@ -839,3 +839,40 @@ func TestNormalizeSingboxRouterSettings_DeviceMode(t *testing.T) {
 		})
 	}
 }
+
+// sing-box отвергает группу с interval > idle_timeout (по умолчанию 30m).
+func TestCompositeOutboundIdleTimeoutGuard(t *testing.T) {
+	cfg := NewEmptyConfig()
+	if err := cfg.AddCompositeOutbound(Outbound{Tag: "long", Type: "fallback", Outbounds: []string{"awg10"}, Interval: "1h"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.AddCompositeOutbound(Outbound{Tag: "short", Type: "urltest", Outbounds: []string{"awg10"}, Interval: "3m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.AddCompositeOutbound(Outbound{Tag: "day", Type: "urltest", Outbounds: []string{"awg10"}, Interval: "1d"}); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, o := range cfg.Outbounds {
+		got[o.Tag] = o.IdleTimeout
+	}
+	if got["long"] != "7200s" {
+		t.Errorf("interval 1h: idle_timeout = %q, want 7200s", got["long"])
+	}
+	if got["day"] != "172800s" {
+		t.Errorf("interval 1d: idle_timeout = %q, want 172800s", got["day"])
+	}
+	if got["short"] != "" {
+		t.Errorf("interval 3m: idle_timeout = %q, want empty", got["short"])
+	}
+}
+
+// F715: тип группы — закрытое множество; legacy loadbalance роняет sing-box.
+func TestCompositeOutboundRejectsUnknownType(t *testing.T) {
+	cfg := NewEmptyConfig()
+	for _, typ := range []string{"loadbalance", "load-balance", "URLTest", ""} {
+		if err := cfg.AddCompositeOutbound(Outbound{Tag: "g", Type: typ, Outbounds: []string{"awg10"}}); err == nil || !contains(err.Error(), "unsupported group type") {
+			t.Errorf("type %q: err = %v, want unsupported group type", typ, err)
+		}
+	}
+}

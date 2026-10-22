@@ -742,11 +742,14 @@ func (a *OperatorAdapter) flush() error {
 			// Unknown error class — cannot isolate, give up.
 			return fmt.Errorf("%w: could not isolate outbound: %s", ErrValidation, res.Error())
 		}
+		reason := strings.TrimSpace(res.Error())
+		if err := rejectedGroupErr(&a.cfg, idx, reason); err != nil {
+			return err
+		}
 		tag, err := dropOutboundAndCleanRefs(&a.cfg, idx)
 		if err != nil {
 			return fmt.Errorf("subscription adapter: drop idx %d: %w", idx, err)
 		}
-		reason := strings.TrimSpace(res.Error())
 		dropped = append(dropped, DropReason{Tag: tag, Reason: reason})
 		// Остальные пер-outbound отбраковки собираем дешёвыми standalone-
 		// проверками (issue #491), чтобы не пересобирать merged-снапшот
@@ -817,6 +820,9 @@ func (a *OperatorAdapter) drainStandaloneRejects(dropped *[]DropReason) error {
 			// который различает конфликты с user-слотом и висячие
 			// cross-slot ссылки.
 			return nil
+		}
+		if err := rejectedGroupErr(&a.cfg, idx, res.Error()); err != nil {
+			return err
 		}
 		if time.Now().After(deadline) {
 			return dropLoopExhaustedErr(*dropped)

@@ -3,9 +3,11 @@ package subscription
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -197,5 +199,62 @@ func TestFlush_DropsOutboundByMergedInitializeIndex(t *testing.T) {
 	tags := adapter.DeclaredOutboundTags()
 	if len(tags) != 2 || tags[0] != "s0" || tags[1] != "s2" {
 		t.Errorf("kept tags = %v, want [s0 s2] (only the attributed outbound dropped)", tags)
+	}
+}
+
+// unknownTypeValidator отвечает как sing-box без поддержки fallback.
+type unknownTypeValidator struct{}
+
+func (unknownTypeValidator) Validate(_ context.Context, dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	idx := 0
+	for _, e := range entries {
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return err
+		}
+		var c struct {
+			Outbounds []map[string]any `json:"outbounds"`
+		}
+		if err := json.Unmarshal(data, &c); err != nil {
+			return err
+		}
+		for _, ob := range c.Outbounds {
+			if ob["type"] == "fallback" {
+				return fmt.Errorf("sing-box check failed: FATAL[0000] initialize outbound[%d]: unknown outbound type: fallback: exit status 1", idx)
+			}
+			idx++
+		}
+	}
+	return nil
+}
+
+// F714: группу, которую отверг движок, нельзя молча выбросить — подписка
+// осталась бы без маршрутизации при «включённом» режиме в UI.
+func TestFlush_RejectedGroupIsAnErrorNotADrop(t *testing.T) {
+	dir := t.TempDir()
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
+	if err := orch.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	orch.SetValidator(unknownTypeValidator{})
+	adapter := NewOperatorAdapter(orch, nil, nil)
+	if err := adapter.AddOutbound("s0", validVlessJSON("192.0.2.1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.AddOutbound("sub-g", BuildFallback("sub-g", []string{"s0"}, URLTestConfig{})); err != nil {
+		t.Fatal(err)
+	}
+
+	err := adapter.Reload(context.Background())
+	if !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), "обновите sing-box") {
+		t.Fatalf("Reload = %v, want ErrValidation asking to update sing-box", err)
+	}
+	if len(adapter.LastFilterDrops()) != 0 {
+		t.Errorf("drops = %v, want none", adapter.LastFilterDrops())
 	}
 }

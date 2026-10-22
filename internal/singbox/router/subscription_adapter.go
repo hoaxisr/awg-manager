@@ -45,7 +45,7 @@ func (a *SubscriptionCompositesAdapter) ListSubscriptionComposites() []Outbound 
 			continue
 		}
 		switch o.Type {
-		case "selector", "urltest", "loadbalance", "fallback", "load-balance":
+		case "selector", "urltest", "loadbalance", "fallback":
 			out = append(out, o)
 		}
 	}

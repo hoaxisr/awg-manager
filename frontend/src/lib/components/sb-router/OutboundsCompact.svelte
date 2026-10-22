@@ -50,14 +50,14 @@
 
   function toneFor(type: string): 'success' | 'accent' | 'info' | 'muted' | 'error' {
     if (type === 'direct') return 'muted';
-    if (type === 'selector' || type === 'urltest' || type === 'loadbalance' || type === 'fallback' || type === 'load-balance') return 'accent';
+    if (type === 'selector' || type === 'urltest' || type === 'loadbalance' || type === 'fallback') return 'accent';
     return 'info';
   }
 
   function kindLabel(o: SingboxRouterOutbound): string {
     if (isGroupOutbound(o, groups)) return m.sb_router_outbounds_kind_group();
     if (isSubscriptionOutbound(o, subscriptions)) return 'subscription';
-    if (o.type === 'selector' || o.type === 'urltest' || o.type === 'loadbalance' || o.type === 'fallback' || o.type === 'load-balance') return 'composite';
+    if (o.type === 'selector' || o.type === 'urltest' || o.type === 'loadbalance' || o.type === 'fallback') return 'composite';
     return o.type;
   }
 
@@ -95,7 +95,7 @@
           <div class="tag">{d.title}</div>
           <div class="sub">{d.subtitle}</div>
           {#if av}
-            <div class="active-line" title={m.sb_router_outbounds_current_choice({ type: o.type === 'selector' ? 'selector' : 'urltest' })}>
+            <div class="active-line" title={m.sb_router_outbounds_current_choice({ type: o.type === 'selector' || o.type === 'fallback' ? o.type : 'urltest' })}>
               <span class="active-dot" aria-hidden="true"></span>
               <span class="active-label">{m.sb_router_outbounds_active({ label: av.activeMemberLabel })}</span>
               {#if av.otherMemberTags.length > 0}

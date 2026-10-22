@@ -527,7 +527,7 @@ func (l *Local) switchFailure(id string, before, wanted bool) error {
 }
 
 // SetSingboxSubscriptionMode switches a subscription's group between
-// selector and urltest. Only Mode is sent, for the reason
+// selector, urltest and fallback. Only Mode is sent, for the reason
 // SetSingboxSubscriptionEnabled gives; the urltest tuning stays as stored,
 // and a subscription that never had any gets the service's defaults
 // (Subscription.EffectiveURLTest).
@@ -552,8 +552,10 @@ func (l *Local) SetSingboxSubscriptionMode(_ context.Context, id, mode string) (
 		want = subscription.ModeSelector
 	case "urltest":
 		want = subscription.ModeURLTest
+	case "fallback":
+		want = subscription.ModeFallback
 	default:
-		return mcpsrv.SingboxSubscription{}, fmt.Errorf("mode must be selector or urltest")
+		return mcpsrv.SingboxSubscription{}, fmt.Errorf("mode must be selector, urltest or fallback")
 	}
 	current, err := l.c.Subscriptions.Get(id)
 	if err != nil || current == nil {
@@ -617,8 +619,8 @@ func (l *Local) SetSingboxSubscriptionActiveMember(ctx context.Context, id, memb
 	if err != nil || current == nil {
 		return mcpsrv.SingboxSubscription{}, errSubscriptionNotFound(id)
 	}
-	if current.EffectiveMode() == subscription.ModeURLTest {
-		return mcpsrv.SingboxSubscription{}, fmt.Errorf("the subscription is in urltest mode: sing-box picks its server itself and a server cannot be chosen by hand. Switch it to selector with set_singbox_subscription_mode first")
+	if current.EffectiveMode().AutoSelect() {
+		return mcpsrv.SingboxSubscription{}, fmt.Errorf("the subscription is in %s mode: sing-box picks its server itself and a server cannot be chosen by hand. Switch it to selector with set_singbox_subscription_mode first", current.EffectiveMode())
 	}
 	// MemberTags holds exactly the servers of the group: the ones the user
 	// excluded and the ones a filter hides are not written there

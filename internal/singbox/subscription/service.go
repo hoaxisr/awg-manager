@@ -1294,12 +1294,12 @@ func (s *Service) stageGroupRebuild(sub *Subscription) error {
 }
 
 // ErrActiveMemberOnURLTest is returned by SetActiveMember when the
-// caller tries to pin a member on a urltest-mode subscription. Sing-box's
-// Clash-compat API only exposes member-selection on `selector` outbounds —
-// urltest groups are auto-managed and reject the switch with a runtime
+// caller tries to pin a member on an auto-select subscription (urltest,
+// fallback). Sing-box's Clash-compat API only exposes
+// member-selection on `selector` outbounds — auto-select groups and reject the switch with a runtime
 // error. Callers (HTTP handlers) should map this to 409 Conflict so the
 // UI can hide the picker rather than spam errors.
-var ErrActiveMemberOnURLTest = errors.New("subscription: SetActiveMember not supported in urltest mode")
+var ErrActiveMemberOnURLTest = errors.New("subscription: SetActiveMember not supported in auto-select modes")
 
 // SetActiveMember updates the selector's "default" pointer to memberTag.
 // It persists the active member in the store and in the slot file (no
@@ -1315,7 +1315,7 @@ func (s *Service) SetActiveMember(ctx context.Context, id, memberTag string) err
 	if err != nil {
 		return err
 	}
-	if sub.EffectiveMode() == ModeURLTest {
+	if sub.EffectiveMode().AutoSelect() {
 		return ErrActiveMemberOnURLTest
 	}
 	found := false

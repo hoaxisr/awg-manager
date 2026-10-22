@@ -61,12 +61,7 @@ func preFilterOutbounds(outbounds []any, singboxFeatures []string) ([]any, []Dro
 }
 
 func isGroupOutbound(typ string) bool {
-	switch strings.ToLower(typ) {
-	case "selector", "urltest", "fallback", "load-balance", "loadbalance":
-		return true
-	default:
-		return false
-	}
+	return typ == "selector" || typ == "urltest" || typ == "fallback"
 }
 
 // classifyOutbound returns "" when the outbound passes Pass 1 rules,
@@ -267,6 +262,27 @@ func subscriptionsOutboundIndex(res orchestrator.ValidationResult) (int, bool) {
 		}
 	}
 	return -1, false
+}
+
+// rejectedGroupErr — ошибка вместо дропа, когда движок отверг групповой
+// outbound. Группы в слоте собираем только мы (BuildGroupOutbound,
+// BuildAggregateGroupOutbound; группы из sing-box JSON vlink отбрасывает
+// при разборе), так что это не мусор подписки: выбросить её значит молча
+// снять маршрутизацию на подписку, а UI показывал бы режим включённым
+// (F714). Типичный случай — fallback на sing-box старше пина.
+func rejectedGroupErr(cfg *slotConfig, idx int, reason string) error {
+	if idx < 0 || idx >= len(cfg.Outbounds) {
+		return nil
+	}
+	ob, _ := cfg.Outbounds[idx].(map[string]any)
+	typ, _ := ob["type"].(string)
+	if !isGroupOutbound(typ) {
+		return nil
+	}
+	if strings.Contains(reason, "unknown outbound type") {
+		return fmt.Errorf("%w: установленный sing-box не поддерживает группы типа %q — обновите sing-box", ErrValidation, typ)
+	}
+	return fmt.Errorf("%w: sing-box отверг группу %q: %s", ErrValidation, outboundTag(ob), reason)
 }
 
 // dropOutboundAndCleanRefs removes the outbound at index `idx` from cfg

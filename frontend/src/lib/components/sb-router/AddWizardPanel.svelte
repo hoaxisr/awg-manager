@@ -46,9 +46,6 @@
   import {
     previewTunnelOutboundResolution,
     formatWizardOutboundPreview,
-    findMatchingComposite,
-    isCompositeOutboundType,
-    normalizeCompositeType,
   } from './wizardCompositeOutbound';
 
   const outbounds = singboxRouterStore.outbounds;
@@ -102,39 +99,19 @@
   const compositeModeOptions = $derived<SegmentedOption<WizardCompositeMode>[]>([
     { value: 'urltest', label: m.sb_router_wizard_mode_urltest() },
     { value: 'fallback', label: m.sb_router_wizard_mode_fallback() },
-    { value: 'load-balance', label: m.sb_router_wizard_mode_loadbalance() },
     { value: 'selector', label: m.sb_router_wizard_mode_selector() },
   ]);
 
-  function compositeModeDescription(mode: WizardCompositeMode): string {
-    switch (mode) {
+  function compositeModeDescription(compositeMode: WizardCompositeMode): string {
+    switch (compositeMode) {
       case 'urltest':
         return m.sb_router_wizard_mode_urltest_desc();
       case 'fallback':
         return m.sb_router_wizard_mode_fallback_desc();
-      case 'load-balance':
-        return m.sb_router_wizard_mode_loadbalance_desc();
       case 'selector':
         return m.sb_router_wizard_mode_selector_desc();
     }
   }
-
-  let lastSyncedTunnels = $state('');
-  $effect(() => {
-    if ($wizardOutboundCategory === 'tunnel' && $wizardTunnelTags.length >= 2) {
-      const key = [...$wizardTunnelTags].sort().join(',');
-      if (key !== lastSyncedTunnels) {
-        lastSyncedTunnels = key;
-        const existing = findMatchingComposite($outbounds, $wizardTunnelTags);
-        if (existing && isCompositeOutboundType(existing.type)) {
-          const normalized = normalizeCompositeType(existing.type) as WizardCompositeMode;
-          if (normalized && normalized !== $wizardCompositeMode) {
-            setWizardCompositeMode(normalized);
-          }
-        }
-      }
-    }
-  });
 
   const tunnelOutboundPreview = $derived.by(() => {
     if ($wizardOutboundCategory !== 'tunnel' || $wizardTunnelTags.length === 0) return null;

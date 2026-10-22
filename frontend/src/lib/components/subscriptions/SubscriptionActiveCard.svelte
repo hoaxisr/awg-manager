@@ -1,6 +1,7 @@
 <script lang="ts">
     import { subscriptionName } from '$lib/utils/subscriptionMember';
     import { m } from '$lib/i18n';
+    import { isAutoSelectMode, subscriptionModeHint, subscriptionModeLabel } from '$lib/utils/subscriptionMode';
     import RichText from '$lib/components/ui/RichText.svelte';
     import { untrack } from 'svelte';
     import { Eye, EyeOff } from 'lucide-svelte';
@@ -122,7 +123,8 @@
     const activeEndpointTitle = $derived(
         listActiveServerName ? `${listActiveServerName} · ${endpointText}` : endpointText,
     );
-    const isURLTest = $derived(subscription.mode === 'urltest');
+    const isURLTest = $derived(isAutoSelectMode(subscription.mode));
+    const modeLabel = $derived(subscriptionModeLabel(subscription.mode));
     /** URL feed vs inline server list (wizard: «Подписка» / «Группа серверов»). */
     const isInlineGroup = $derived(
         subscription.isInline || (!subscription.isFile && !subscription.url?.trim()),
@@ -270,7 +272,7 @@
                             {#if kernelIface}<span class="meta-dot" aria-hidden="true">·</span><span>{kernelIface}</span>{/if}
                             <span class="meta-dot" aria-hidden="true">·</span>
                         {/if}
-                        <span>{isURLTest ? 'URLTest' : 'Selector'}</span>
+                        <span>{modeLabel}</span>
                     </TunnelMetaText>
                 </div>
             </td>
@@ -387,7 +389,7 @@
                 {:else if activeMember.security === 'tls'}
                     <span class="badge tls">TLS</span>
                 {/if}
-                <span class="badge mode">{isURLTest ? 'URLTest' : 'Selector'}</span>
+                <span class="badge mode">{modeLabel}</span>
             </div>
         </div>
         <div class="dense-toolbar">
@@ -609,7 +611,7 @@
                         e.stopPropagation();
                         if (isURLTest) {
                             notifications.info(
-                                m.subscriptions_active_urltest_info(),
+                                m.subscriptions_active_urltest_info({ mode: modeLabel }),
                                 { duration: 9000 },
                             );
                             return;
@@ -618,7 +620,7 @@
                     }}
                     aria-haspopup={isURLTest ? undefined : 'listbox'}
                     aria-expanded={isURLTest ? undefined : pickerOpen}
-                    title={isURLTest ? m.subscriptions_active_urltest_title() : ''}
+                    title={isURLTest ? subscriptionModeHint(subscription.mode) : ''}
                 >
                     <span
                         class="server-text"

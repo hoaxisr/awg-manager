@@ -91,6 +91,7 @@
 	import { isMockDevMode as getIsMockDevMode } from '$lib/env';
 	import { Eye, EyeOff, Server, Upload, LayoutGrid, Link, Globe, TriangleAlert } from 'lucide-svelte';
 	import { m } from '$lib/i18n';
+	import { isAutoSelectMode } from '$lib/utils/subscriptionMode';
 	import TunnelSectionHeader from '$lib/components/tunnels/TunnelSectionHeader.svelte';
 	import {
 		tunnelDashboardLayout,
@@ -491,7 +492,7 @@
 
 	$effect(() => {
 		const urltestSubs = ($subscriptionsStore.data ?? []).filter(
-			(s) => s.enabled && s.mode === 'urltest',
+			(s) => s.enabled && isAutoSelectMode(s.mode),
 		);
 		if (urltestSubs.length === 0) {
 			liveActives = {};

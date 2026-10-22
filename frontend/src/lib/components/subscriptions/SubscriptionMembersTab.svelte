@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
+	import { isAutoSelectMode, subscriptionModeHint, subscriptionModeLabel } from '$lib/utils/subscriptionMode';
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import type { Subscription, SubscriptionMember } from '$lib/types';
@@ -165,12 +166,8 @@
 		};
 	});
 
-	const modeLabel = $derived(subscription.mode === 'urltest' ? 'URLTest' : 'Selector');
-	const modeHint = $derived(
-		subscription.mode === 'urltest'
-			? m.subscriptions_members_hint_urltest()
-			: m.subscriptions_members_hint_selector(),
-	);
+	const modeLabel = $derived(subscriptionModeLabel(subscription.mode));
+	const modeHint = $derived(subscriptionModeHint(subscription.mode));
 
 	// For urltest mode, liveActiveMember reflects the auto-selected member as reported
 	// by the running Clash API (polled every 5s by the parent page). For selector mode
@@ -233,9 +230,9 @@
 	async function pickActive(memberTag: string): Promise<void> {
 		// Urltest auto-selects fastest member; manual pick is rejected by backend
 		// with 409. Tell the user how to switch to selector mode.
-		if (subscription.mode === 'urltest') {
+		if (isAutoSelectMode(subscription.mode)) {
 			notifications.info(
-				m.subscriptions_members_urltest_notice(),
+				m.subscriptions_members_urltest_notice({ mode: subscriptionModeLabel(subscription.mode) }),
 				{ duration: 9000 },
 			);
 			return;

@@ -743,30 +743,6 @@
 				</section>
 
 				<section class="card tunnel-section">
-					<SettingsSectionLabel label={m.singbox_trusttunnel_transport_section()} icon={Zap} tone="amber" header />
-
-					<div class="form-group">
-						<Dropdown
-							id="tt_transport"
-							label={m.singbox_trusttunnel_transport_label()}
-							value={getFieldBool(['quic']) ? 'quic' : 'tcp'}
-							options={[
-								{ value: 'tcp', label: m.singbox_trusttunnel_transport_tcp() },
-								{ value: 'quic', label: m.singbox_trusttunnel_transport_quic() }
-							]}
-							onchange={(v) => setField(['quic'], v === 'quic')}
-						/>
-						<p class="section-hint">
-							{#if getFieldBool(['quic'])}
-								{m.singbox_trusttunnel_hint_quic()}
-							{:else}
-								{m.singbox_trusttunnel_hint_tcp()}
-							{/if}
-						</p>
-					</div>
-				</section>
-
-				<section class="card tunnel-section">
 					<SettingsSectionLabel label="TLS" icon={Lock} tone="blue" header />
 
 					<div class="form-group">

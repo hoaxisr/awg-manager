@@ -1072,7 +1072,7 @@ func TestLocal_SetSingboxSubscriptionModeRefusals(t *testing.T) {
 	l := New(Config{Subscriptions: subs})
 	ctx := context.Background()
 
-	if _, err := l.SetSingboxSubscriptionMode(ctx, subAutoID, "fallback"); err == nil {
+	if _, err := l.SetSingboxSubscriptionMode(ctx, subAutoID, "load-balance"); err == nil {
 		t.Fatal("an unknown mode must be refused")
 	}
 	_, err := l.SetSingboxSubscriptionMode(ctx, "00000000aabbccddeeff0011", "selector")

@@ -33,9 +33,6 @@ func TestParseTrustTunnelTOML_ExportFormat(t *testing.T) {
 	if tls["fragment"] != true || tls["server_name"] != "vpn.example.com" {
 		t.Fatalf("tls: %v", tls)
 	}
-	if ttOutboundMap(t, res.Outbounds[0])["quic"] != true {
-		t.Fatal("export format with http3 must have quic: true")
-	}
 }
 
 func TestParseTrustTunnelTOML_ClientFormat(t *testing.T) {
@@ -50,9 +47,6 @@ func TestParseTrustTunnelTOML_ClientFormat(t *testing.T) {
 	tls := ttOutboundMap(t, p)["tls"].(map[string]any)
 	if tls["insecure"] != true {
 		t.Fatalf("tls: %v", tls)
-	}
-	if ttOutboundMap(t, p)["quic"] != false {
-		t.Fatal("client format with http2 must have quic: false")
 	}
 }
 

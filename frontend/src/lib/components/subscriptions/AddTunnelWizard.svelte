@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { isAutoSelectMode } from '$lib/utils/subscriptionMode';
 	import { m, uiText, type UiText } from '$lib/i18n';
 	import { goto } from '$app/navigation';
 	import { Modal, Button, Dropdown } from '$lib/components/ui';
@@ -432,7 +433,7 @@
 				enabled,
 				mode,
 				urlTest:
-					mode !== 'selector'
+					isAutoSelectMode(mode)
 						? { url: utUrl, intervalSec: utIntervalSec, toleranceMs: utToleranceMs }
 						: undefined,
 				excludedKeys: isInline ? undefined : [...excludedKeys],
@@ -740,28 +741,10 @@
 							</span>
 						{/if}
 					</button>
-					<button
-						type="button"
-						role="radio"
-						aria-checked={mode === 'load-balance'}
-						class="mode-card"
-						class:selected={mode === 'load-balance'}
-						onclick={() => (mode = 'load-balance')}
-					>
-						<div class="mode-title">{m.subscriptions_form_mode_loadbalance_title()}</div>
-						<div class="mode-desc">
-							{m.subscriptions_form_mode_loadbalance_desc()}
-						</div>
-						{#if mode === 'load-balance'}
-							<span class="mode-check" aria-hidden="true">
-								<Check size={12} strokeWidth={3} aria-hidden="true" />
-							</span>
-						{/if}
-					</button>
 				</div>
 			</div>
 
-			{#if mode === 'urltest' || mode === 'fallback' || mode === 'load-balance'}
+			{#if isAutoSelectMode(mode)}
 				<div class="urltest-block">
 					<label class="row">
 						<span class="lbl">{m.subscriptions_form_check_url()}</span>

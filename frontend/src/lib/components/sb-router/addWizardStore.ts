@@ -5,7 +5,7 @@ import { clearSelection } from './templatesStore';
 import type { WizardEditMode } from './ruleWizardPrefill';
 
 export type OutboundCategory = 'tunnel' | 'direct' | 'block';
-export type WizardCompositeMode = 'urltest' | 'fallback' | 'load-balance' | 'selector';
+export type WizardCompositeMode = 'urltest' | 'fallback' | 'selector';
 
 export interface CustomMatcherFields {
   rulesList: string;

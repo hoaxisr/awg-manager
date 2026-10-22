@@ -36,18 +36,16 @@ var supportedSingboxTypes = map[string]bool{
 // to a sing-box config (selector logic, DNS, blackhole, etc.) — not real
 // proxies. Silently dropped, no error, no counter.
 var servicedSingboxTypes = map[string]bool{
-	"direct":       true,
-	"block":        true,
-	"dns":          true,
-	"selector":     true,
-	"urltest":      true,
-	"fallback":     true,
-	"load-balance": true,
-	"loadbalance":  true,
-	"tor":          true,
-	"ssh":          true,
-	"socks":        true,
-	"http":         true,
+	"direct":   true,
+	"block":    true,
+	"dns":      true,
+	"selector": true,
+	"urltest":  true,
+	"fallback": true,
+	"tor":      true,
+	"ssh":      true,
+	"socks":    true,
+	"http":     true,
 }
 
 // IsSingboxJSON reports whether body looks like a sing-box native JSON

@@ -427,7 +427,7 @@ export interface SingboxRouterRuleSet {
 }
 
 export interface SingboxRouterOutbound {
-	type: 'direct' | 'urltest' | 'selector' | 'loadbalance' | 'fallback' | 'load-balance';
+	type: 'direct' | 'urltest' | 'selector' | 'loadbalance' | 'fallback';
 	tag: string;
 	bind_interface?: string;
 	outbounds?: string[];
@@ -459,7 +459,7 @@ export interface SingboxProxyMember {
 
 export interface SingboxProxyGroup {
 	tag: string;
-	type: 'selector' | 'urltest' | 'loadbalance' | 'fallback' | 'load-balance';
+	type: 'selector' | 'urltest' | 'loadbalance' | 'fallback';
 	now: string;
 	members: SingboxProxyMember[];
 }

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -64,42 +65,43 @@ func LoadConfig(path string) (*RouterConfig, error) {
 	return cfg, nil
 }
 
-func parseDurationSafe(s string) (time.Duration, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, nil
-	}
-	if d, err := strconv.Atoi(s); err == nil {
-		return time.Duration(d) * time.Second, nil
-	}
+// singboxDefaultIdleTimeout — C.DefaultURLTestIdleTimeout в sing-box.
+const singboxDefaultIdleTimeout = 30 * time.Minute
+
+var singboxDayUnit = regexp.MustCompile(`(\d+)d`)
+
+// parseSingboxDuration — time.ParseDuration плюс единица «d» (сутки),
+// которую понимает badoption.Duration в sing-box.
+func parseSingboxDuration(s string) (time.Duration, error) {
+	s = singboxDayUnit.ReplaceAllStringFunc(strings.TrimSpace(s), func(d string) string {
+		n, _ := strconv.Atoi(strings.TrimSuffix(d, "d"))
+		return strconv.Itoa(n*24) + "h"
+	})
 	return time.ParseDuration(s)
 }
 
-// ensureSafeIdleTimeout guards sing-box from fatal crashes on startup.
-// In sing-box, endpoint urltest and fallback require interval <= idle_timeout.
-// When idle_timeout is omitted, sing-box defaults to 30m. Any interval > 30m
-// crashes the service unless idle_timeout is explicitly configured.
+// ensureSafeIdleTimeout guards sing-box from refusing to start: urltest and
+// fallback require interval <= idle_timeout, and an omitted
+// idle_timeout means 30m. A longer interval gets idle_timeout = 2×interval.
 func ensureSafeIdleTimeout(o *Outbound) {
-	if o == nil || o.Interval == "" {
+	interval, err := parseSingboxDuration(o.Interval)
+	if err != nil || interval <= 0 {
 		return
 	}
-	intDur, err := parseDurationSafe(o.Interval)
-	if err != nil || intDur <= 0 {
-		return
-	}
-	var idleDur time.Duration
+	idle := singboxDefaultIdleTimeout
 	if o.IdleTimeout != "" {
-		idleDur, _ = parseDurationSafe(o.IdleTimeout)
-	} else {
-		idleDur = 30 * time.Minute
+		if idle, err = parseSingboxDuration(o.IdleTimeout); err != nil {
+			return
+		}
 	}
-	if intDur > idleDur {
-		o.IdleTimeout = fmt.Sprintf("%ds", int(intDur.Seconds()*2))
+	if interval > idle {
+		o.IdleTimeout = fmt.Sprintf("%ds", int(interval.Seconds()*2))
 	}
 }
 
 func SaveConfig(path string, cfg *RouterConfig) error {
 	if cfg != nil {
+		// Лечит и группы, сохранённые до появления защиты.
 		for i := range cfg.Outbounds {
 			ensureSafeIdleTimeout(&cfg.Outbounds[i])
 		}
@@ -658,19 +660,26 @@ func (c *RouterConfig) UpdateCompositeOutbound(tag string, o Outbound) error {
 
 // validateCompositeOutbound rejects shapes that compile but produce
 // surprising behavior at runtime. In particular `direct` as a member of
-// a urltest/loadbalance group lets traffic bypass the proxy silently or
-// always win latency tests — a known footgun in sing-box composite groups.
+// a urltest group lets traffic bypass the proxy silently or always win
+// latency tests — a known footgun in sing-box composite groups.
 // For `selector` and `fallback`, `direct` is a legitimate choice (manual bypass or backup).
 func validateCompositeOutbound(o Outbound) error {
 	if strings.TrimSpace(o.Tag) == "" {
 		return fmt.Errorf("outbound tag is required")
 	}
+	// Закрытое множество: иной тип (legacy loadbalance, опечатка) sing-box
+	// отвергает на старте, и слот router не поднялся бы (F715).
+	switch o.Type {
+	case "selector", "urltest", "fallback":
+	default:
+		return fmt.Errorf("outbound %q: unsupported group type %q (expected selector, urltest or fallback)", o.Tag, o.Type)
+	}
 	if len(o.Outbounds) == 0 {
 		return fmt.Errorf("outbound %q: at least one member is required", o.Tag)
 	}
-	isAutoBalance := strings.EqualFold(o.Type, "urltest") || strings.EqualFold(o.Type, "loadbalance") || strings.EqualFold(o.Type, "load-balance")
+	isURLTest := o.Type == "urltest"
 	for _, m := range o.Outbounds {
-		if strings.EqualFold(strings.TrimSpace(m), "direct") && isAutoBalance {
+		if strings.EqualFold(strings.TrimSpace(m), "direct") && isURLTest {
 			return fmt.Errorf("outbound %q: member %q is not allowed in %s groups (would bypass proxy silently)", o.Tag, m, o.Type)
 		}
 		// Exact match (not EqualFold): sing-box outbound tags are
@@ -679,7 +688,7 @@ func validateCompositeOutbound(o Outbound) error {
 			return fmt.Errorf("outbound %q: member %q references itself (would create a circular dependency and crash sing-box)", o.Tag, m)
 		}
 	}
-	if strings.EqualFold(strings.TrimSpace(o.Default), "direct") && isAutoBalance {
+	if strings.EqualFold(strings.TrimSpace(o.Default), "direct") && isURLTest {
 		return fmt.Errorf("outbound %q: default %q is not allowed in %s groups", o.Tag, o.Default, o.Type)
 	}
 	return nil

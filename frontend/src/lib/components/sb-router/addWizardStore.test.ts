@@ -164,8 +164,8 @@ describe('addWizardStore', () => {
       wasInlineText: false,
     });
     expect(get(m.wizardCompositeMode)).toBe('fallback');
-    m.setWizardCompositeMode('load-balance');
-    expect(get(m.wizardCompositeMode)).toBe('load-balance');
+    m.setWizardCompositeMode('selector');
+    expect(get(m.wizardCompositeMode)).toBe('selector');
   });
 
   it('openEditWizard external mode', async () => {

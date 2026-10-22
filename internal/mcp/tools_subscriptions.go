@@ -69,7 +69,7 @@ func subscriptionNotice(sub SingboxSubscription) string {
 
 type setSubscriptionModeIn struct {
 	SubscriptionID string `json:"subscriptionId" jsonschema:"subscription id from list_singbox_subscriptions"`
-	Mode           string `json:"mode" jsonschema:"selector (one server chosen by the user) or urltest (sing-box picks the fastest)"`
+	Mode           string `json:"mode" jsonschema:"selector (one server chosen by the user), urltest (sing-box picks the fastest) or fallback (sing-box uses the first live server in list order)"`
 }
 
 type setSubscriptionActiveMemberIn struct {
@@ -88,6 +88,10 @@ type setSubscriptionActiveMemberOut struct {
 func subscriptionModeNotice(sub SingboxSubscription) string {
 	if sub.Mode == "urltest" {
 		return fmt.Sprintf("The subscription's group %q is in urltest mode: sing-box tests its servers periodically and routes through the fastest. "+
+			"A server cannot be chosen by hand in this mode; get_singbox_outbound with this groupTag shows the one in use.", sub.GroupTag)
+	}
+	if sub.Mode == "fallback" {
+		return fmt.Sprintf("The subscription's group %q is in fallback mode: sing-box tests its servers periodically and routes through the first live one in list order. "+
 			"A server cannot be chosen by hand in this mode; get_singbox_outbound with this groupTag shows the one in use.", sub.GroupTag)
 	}
 	return fmt.Sprintf("The subscription's group %q is in selector mode: it routes through one server chosen by the user, the one stored as active. "+
@@ -133,9 +137,9 @@ func registerSubscriptionTools(s *mcp.Server, d Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "set_singbox_subscription_mode",
-		Description: "Switch one sing-box subscription's group between selector (it routes through one server chosen by the user) and urltest (sing-box tests the servers and routes through the fastest). " +
+		Description: "Switch one sing-box subscription's group between selector (it routes through one server chosen by the user), urltest (sing-box tests the servers and routes through the fastest) and fallback (sing-box routes through the first live server in list order). " +
 			"Routing rules that point at the group keep pointing at it. A change rebuilds the group and reloads sing-box, which can interrupt open connections for a moment; a call that changes nothing reloads nothing. " +
-			"Reversible: call it again with the other mode.",
+			"Reversible: call it again with the previous mode.",
 		Annotations: safeWrite("Set sing-box subscription mode", true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setSubscriptionModeIn) (*mcp.CallToolResult, SingboxSubscription, error) {
 		id, err := requireSubscriptionID(in.SubscriptionID)
@@ -154,7 +158,7 @@ func registerSubscriptionTools(s *mcp.Server, d Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "set_singbox_subscription_active_member",
 		Description: "Choose the server a selector-mode sing-box subscription routes through. memberTag is a server tag that get_singbox_outbound lists for the subscription's groupTag. " +
-			"Refused in urltest mode, where sing-box picks the server itself: switch the mode with set_singbox_subscription_mode first. " +
+			"Refused in urltest and fallback modes, where sing-box picks the server itself: switch the mode with set_singbox_subscription_mode first. " +
 			"The running group switches at once, without reloading sing-box. Reversible: choose another server.",
 		Annotations: safeWrite("Choose sing-box subscription server", true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setSubscriptionActiveMemberIn) (*mcp.CallToolResult, setSubscriptionActiveMemberOut, error) {

@@ -758,7 +758,8 @@ func (s *Scheduler) augmentSingboxClashData(ctx context.Context, tunnels []Tunne
 	// authoritatively).
 	urltestOf := make(map[string]string)
 	for _, c := range composites {
-		if strings.ToLower(c.Type) != "urltest" {
+		// fallback ведёт историю задержек так же, как urltest.
+		if t := strings.ToLower(c.Type); t != "urltest" && t != "fallback" {
 			continue
 		}
 		for _, m := range c.Members {

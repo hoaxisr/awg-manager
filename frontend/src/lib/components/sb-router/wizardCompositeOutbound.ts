@@ -2,7 +2,7 @@ import { m } from '$lib/i18n';
 import { DEFAULT_SUBSCRIPTION_URLTEST, type SingboxRouterOutbound } from '$lib/types';
 import type { WizardCompositeMode } from './addWizardStore';
 
-const COMPOSITE_TYPES = new Set(['selector', 'urltest', 'loadbalance', 'fallback', 'load-balance']);
+const COMPOSITE_TYPES = new Set(['selector', 'urltest', 'loadbalance', 'fallback']);
 
 export function sameOutboundMemberSet(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
@@ -17,9 +17,10 @@ export function isCompositeOutboundType(type: string): boolean {
   return COMPOSITE_TYPES.has(type);
 }
 
-export function normalizeCompositeType(type: string): WizardCompositeMode | string {
-  if (type === 'loadbalance') return 'load-balance';
-  return type;
+/** Режим визарда для типа composite; legacy `loadbalance` и не-composite → undefined. */
+export function normalizeCompositeType(type: string): WizardCompositeMode | undefined {
+  if (type === 'selector' || type === 'urltest' || type === 'fallback') return type;
+  return undefined;
 }
 
 /** Ищет composite outbound с ровно тем же набором участников (и типом, если передан). */
@@ -62,8 +63,6 @@ function compositeModeLabel(mode?: WizardCompositeMode): string {
   switch (mode) {
     case 'fallback':
       return m.sb_router_wizard_mode_fallback_label();
-    case 'load-balance':
-      return m.sb_router_wizard_mode_loadbalance_label();
     case 'selector':
       return m.sb_router_wizard_mode_selector_label();
     case 'urltest':
@@ -119,7 +118,7 @@ export function previewTunnelOutboundResolution(
   }
   const existing = findMatchingComposite(outbounds, tunnelTags, mode);
   if (existing) {
-    const existingMode = normalizeCompositeType(existing.type) as WizardCompositeMode;
+    const existingMode = normalizeCompositeType(existing.type);
     return {
       outboundTag: existing.tag,
       willCreate: false,
@@ -154,10 +153,6 @@ export function buildWizardCompositeOutbound(
     base.url = DEFAULT_SUBSCRIPTION_URLTEST.url;
     base.interval = `${DEFAULT_SUBSCRIPTION_URLTEST.intervalSec}s`;
     base.interrupt_exist_connections = true;
-  } else if (mode === 'load-balance') {
-    base.strategy = 'round-robin';
-    base.url = DEFAULT_SUBSCRIPTION_URLTEST.url;
-    base.interval = `${DEFAULT_SUBSCRIPTION_URLTEST.intervalSec}s`;
   } else if (mode === 'selector') {
     base.default = tunnelTags[0];
   }

@@ -52,7 +52,7 @@ type CreateSubscriptionGroupRequest struct {
 	Label string `json:"label" example:"Все европейские"`
 	// Tag — пользовательский outbound-тег (#572); пусто = авто "agg-<id8>".
 	Tag                string                  `json:"tag,omitempty" example:"eu-all"`
-	Mode               string                  `json:"mode,omitempty" example:"urltest"` // "urltest" (default) | "selector"
+	Mode               string                  `json:"mode,omitempty" example:"urltest"` // "urltest" (default) | "selector" | "fallback"
 	URLTest            *SubscriptionURLTestDTO `json:"urlTest,omitempty"`
 	UseSubscriptionIDs []string                `json:"useSubscriptionIds"`
 	FilterInclude      string                  `json:"filterInclude,omitempty"`
@@ -85,10 +85,10 @@ func parseGroupMode(s string) (subscription.SubscriptionMode, error) {
 		return subscription.ModeURLTest, nil
 	case string(subscription.ModeSelector):
 		return subscription.ModeSelector, nil
-	case string(subscription.ModeURLTest):
-		return subscription.ModeURLTest, nil
+	case string(subscription.ModeURLTest), string(subscription.ModeFallback):
+		return subscription.SubscriptionMode(s), nil
 	default:
-		return "", errors.New("invalid mode (expected \"selector\" or \"urltest\")")
+		return "", errors.New("invalid mode (expected \"selector\", \"urltest\" or \"fallback\")")
 	}
 }
 
@@ -105,7 +105,7 @@ func (h *SubscriptionHandler) toSubscriptionGroupDTO(g subscription.AggregateGro
 		members[i] = SubscriptionGroupMemberDTO{Tag: m.Tag, Label: m.Label}
 	}
 	var urltest *SubscriptionURLTestDTO
-	if g.EffectiveMode() == subscription.ModeURLTest {
+	if g.EffectiveMode().AutoSelect() {
 		ut := g.EffectiveURLTest()
 		urltest = &SubscriptionURLTestDTO{
 			URL:         ut.URL,

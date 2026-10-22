@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { subscriptionModeLabel } from '$lib/utils/subscriptionMode';
 	import { subscriptionName } from '$lib/utils/subscriptionMember';
 	import { m } from '$lib/i18n';
 	import RichText from '$lib/components/ui/RichText.svelte';
@@ -112,7 +113,7 @@
 							</div>
 							<div class="group-meta">
 								{m.subscriptions_groups_meta({
-									mode: g.mode === 'urltest' ? m.subscriptions_groups_mode_urltest() : m.subscriptions_groups_mode_selector(),
+									mode: g.mode === 'urltest' ? m.subscriptions_groups_mode_urltest() : g.mode === 'selector' ? m.subscriptions_groups_mode_selector() : subscriptionModeLabel(g.mode),
 									count: g.memberCount,
 								})}
 								{#if g.listenPort}

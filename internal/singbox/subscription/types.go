@@ -38,11 +38,17 @@ type MemberInfo struct {
 type SubscriptionMode string
 
 const (
-	ModeSelector    SubscriptionMode = "selector"
-	ModeURLTest     SubscriptionMode = "urltest"
-	ModeFallback    SubscriptionMode = "fallback"
-	ModeLoadBalance SubscriptionMode = "load-balance"
+	ModeSelector SubscriptionMode = "selector"
+	ModeURLTest  SubscriptionMode = "urltest"
+	ModeFallback SubscriptionMode = "fallback"
 )
+
+// AutoSelect reports whether sing-box picks the member itself from URL
+// tests (urltest, fallback): such a group carries URLTest config and has
+// no hand-picked active member.
+func (m SubscriptionMode) AutoSelect() bool {
+	return m == ModeURLTest || m == ModeFallback
+}
 
 // URLTestConfig holds the urltest-specific tuning. All fields have
 // safe defaults; an empty struct yields gstatic 60s 50ms.
