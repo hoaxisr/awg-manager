@@ -192,7 +192,7 @@ func (s *GroupStore) Create(in GroupCreateInput) (*AggregateGroup, error) {
 		mode = ModeURLTest
 	}
 	var urlTest *URLTestConfig
-	if mode == ModeURLTest {
+	if mode == ModeURLTest || mode == ModeFallback || mode == ModeLoadBalance {
 		cfg := DefaultURLTestConfig()
 		if in.URLTest != nil {
 			if in.URLTest.URL != "" {
@@ -292,7 +292,7 @@ func applyGroupPatch(g *AggregateGroup, patch GroupUpdatePatch) {
 	}
 	if patch.Mode != nil {
 		g.Mode = *patch.Mode
-		if g.Mode == ModeURLTest && g.URLTest == nil {
+		if (g.Mode == ModeURLTest || g.Mode == ModeFallback || g.Mode == ModeLoadBalance) && g.URLTest == nil {
 			cfg := DefaultURLTestConfig()
 			g.URLTest = &cfg
 		}

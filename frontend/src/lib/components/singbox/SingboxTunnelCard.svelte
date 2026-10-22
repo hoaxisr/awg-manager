@@ -152,6 +152,32 @@
 		goto(`/singbox/${encodeURIComponent(tunnel.tag)}`);
 	}
 
+	let togglingTransport = $state(false);
+
+	async function toggleTrustTunnelTransport(e: MouseEvent): Promise<void> {
+		e.stopPropagation();
+		if (togglingTransport || tunnel.protocol !== 'trusttunnel') return;
+		togglingTransport = true;
+		try {
+			const res = await api.singboxGetTunnel(tunnel.tag);
+			const ob = (res.outbound || {}) as Record<string, unknown>;
+			const currentQuic = ob.quic === true;
+			ob.quic = !currentQuic;
+			const fresh = await api.singboxUpdateTunnel(tunnel.tag, ob);
+			singboxTunnels.applyMutationResponse(fresh);
+			notifications.success(
+				`${tunnel.tag}: транспорт изменён на ${!currentQuic ? 'QUIC (HTTP/3)' : 'TCP (HTTP/2)'}`
+			);
+			setTimeout(() => {
+				untrack(() => void triggerCheck());
+			}, 300);
+		} catch (err) {
+			notifications.error(err instanceof Error ? err.message : 'Не удалось изменить транспорт');
+		} finally {
+			togglingTransport = false;
+		}
+	}
+
 	// ─── Traffic sparkline (rate history fed by +layout SSE handler) ─
 	let rxRates = $state<number[]>([]);
 	let txRates = $state<number[]>([]);
@@ -225,7 +251,37 @@
 				{:else if tunnel.security === 'tls'}
 					<span class="badge b-tls">TLS</span>
 				{/if}
-				<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
+				{#if tunnel.protocol === 'trusttunnel'}
+					<button
+						type="button"
+						class="badge b-transport b-transport-toggle"
+						class:is-quic={tunnel.transport === 'quic'}
+						class:is-tcp={tunnel.transport !== 'quic'}
+						disabled={togglingTransport}
+						onclick={toggleTrustTunnelTransport}
+						title="Нажмите, чтобы переключить транспорт на {tunnel.transport === 'quic' ? 'TCP (HTTP/2)' : 'QUIC (HTTP/3)'}"
+					>
+						{tunnel.transport === 'quic' ? 'QUIC' : 'TCP'}
+						<span class="toggle-symbol">⇄</span>
+					</button>
+				{:else}
+					{#if tunnel.protocol === 'trusttunnel'}
+			<button
+				type="button"
+				class="badge b-transport b-transport-toggle"
+				class:is-quic={tunnel.transport === 'quic'}
+				class:is-tcp={tunnel.transport !== 'quic'}
+				disabled={togglingTransport}
+				onclick={toggleTrustTunnelTransport}
+				title="Нажмите, чтобы переключить транспорт на {tunnel.transport === 'quic' ? 'TCP (HTTP/2)' : 'QUIC (HTTP/3)'}"
+			>
+				{tunnel.transport === 'quic' ? 'QUIC' : 'TCP'}
+				<span class="toggle-symbol">⇄</span>
+			</button>
+		{:else}
+			<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
+		{/if}
+				{/if}
 			</div>
 		</td>
 		<td class="list-cell list-cell-run tunnel-list-cell tunnel-list-cell--run">
@@ -290,7 +346,37 @@
 				{:else if tunnel.security === 'tls'}
 					<span class="badge b-tls">TLS</span>
 				{/if}
-				<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
+				{#if tunnel.protocol === 'trusttunnel'}
+					<button
+						type="button"
+						class="badge b-transport b-transport-toggle"
+						class:is-quic={tunnel.transport === 'quic'}
+						class:is-tcp={tunnel.transport !== 'quic'}
+						disabled={togglingTransport}
+						onclick={toggleTrustTunnelTransport}
+						title="Нажмите, чтобы переключить транспорт на {tunnel.transport === 'quic' ? 'TCP (HTTP/2)' : 'QUIC (HTTP/3)'}"
+					>
+						{tunnel.transport === 'quic' ? 'QUIC' : 'TCP'}
+						<span class="toggle-symbol">⇄</span>
+					</button>
+				{:else}
+					{#if tunnel.protocol === 'trusttunnel'}
+			<button
+				type="button"
+				class="badge b-transport b-transport-toggle"
+				class:is-quic={tunnel.transport === 'quic'}
+				class:is-tcp={tunnel.transport !== 'quic'}
+				disabled={togglingTransport}
+				onclick={toggleTrustTunnelTransport}
+				title="Нажмите, чтобы переключить транспорт на {tunnel.transport === 'quic' ? 'TCP (HTTP/2)' : 'QUIC (HTTP/3)'}"
+			>
+				{tunnel.transport === 'quic' ? 'QUIC' : 'TCP'}
+				<span class="toggle-symbol">⇄</span>
+			</button>
+		{:else}
+			<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
+		{/if}
+				{/if}
 			</div>
 		</div>
 		<div class="dense-toolbar">
@@ -428,7 +514,22 @@
 		{:else if tunnel.security === 'tls'}
 			<span class="badge b-tls">TLS</span>
 		{/if}
-		<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
+		{#if tunnel.protocol === 'trusttunnel'}
+			<button
+				type="button"
+				class="badge b-transport b-transport-toggle"
+				class:is-quic={tunnel.transport === 'quic'}
+				class:is-tcp={tunnel.transport !== 'quic'}
+				disabled={togglingTransport}
+				onclick={toggleTrustTunnelTransport}
+				title="Нажмите, чтобы переключить транспорт на {tunnel.transport === 'quic' ? 'TCP (HTTP/2)' : 'QUIC (HTTP/3)'}"
+			>
+				{tunnel.transport === 'quic' ? 'QUIC' : 'TCP'}
+				<span class="toggle-symbol">⇄</span>
+			</button>
+		{:else}
+			<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
+		{/if}
 	</div>
 	</div>
 
@@ -902,6 +1003,45 @@
 	.b-reality { background: rgba(236, 72, 153, 0.15); color: #f472b6; }
 	.b-tls { background: rgba(139, 92, 246, 0.15); color: #a78bfa; }
 	.b-transport { background: rgba(100, 100, 100, 0.3); color: var(--text-muted); }
+	.b-transport-toggle {
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		border: 1px solid transparent;
+		transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+		padding: 1px 6px;
+		font-family: inherit;
+		user-select: none;
+	}
+	.b-transport-toggle:active {
+		transform: scale(0.96);
+	}
+	.b-transport-toggle:disabled {
+		opacity: 0.6;
+		cursor: wait;
+	}
+	.b-transport-toggle.is-quic {
+		background: rgba(234, 179, 8, 0.18);
+		color: #facc15;
+	}
+	.b-transport-toggle.is-quic:hover {
+		background: rgba(234, 179, 8, 0.32);
+		border-color: rgba(234, 179, 8, 0.5);
+	}
+	.b-transport-toggle.is-tcp {
+		background: rgba(59, 130, 246, 0.18);
+		color: #60a5fa;
+	}
+	.b-transport-toggle.is-tcp:hover {
+		background: rgba(59, 130, 246, 0.32);
+		border-color: rgba(59, 130, 246, 0.5);
+	}
+	.toggle-symbol {
+		font-size: 11px;
+		line-height: 1;
+		opacity: 0.8;
+	}
 
 	.row {
 		display: flex;

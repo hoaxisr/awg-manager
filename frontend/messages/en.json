@@ -3045,6 +3045,8 @@
 	"routing_singbox_outbound_type_interface": "Interface",
 	"routing_singbox_outbound_desc_direct": "A direct connection through the selected interface (IPSec/IKEv2/other VPN). The rule’s traffic will go through this interface.",
 	"routing_singbox_outbound_desc_urltest": "Periodically pings each member and automatically routes through the fastest one.",
+	"routing_singbox_outbound_desc_fallback": "Uses the first available server in priority order, falling back to the next if it fails.",
+	"routing_singbox_outbound_desc_loadbalance": "Distributes new connections across available healthy servers (Round-robin).",
 	"routing_singbox_outbound_desc_selector": "Manual switching via the Clash API. New connections go through the selected default.",
 	"routing_singbox_outbound_edit_title": "Edit outbound",
 	"routing_singbox_outbound_new_title": "New outbound",

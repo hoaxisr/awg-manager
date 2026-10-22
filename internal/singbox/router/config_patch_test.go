@@ -569,10 +569,10 @@ func TestEnsureSystemRules_LegacyHijackRecognized(t *testing.T) {
 func TestCompositeOutboundRejectsDirectMember(t *testing.T) {
 	cfg := NewEmptyConfig()
 
-	// Add: direct as member rejected.
+	// Add: direct as member rejected for urltest.
 	err := cfg.AddCompositeOutbound(Outbound{Tag: "auto", Type: "urltest", Outbounds: []string{"awg10", "direct"}})
-	if err == nil || !contains(err.Error(), "not allowed in composite groups") {
-		t.Errorf("expected 'not allowed' error for direct member, got %v", err)
+	if err == nil || !contains(err.Error(), "not allowed in urltest groups") {
+		t.Errorf("expected 'not allowed in urltest groups' error for direct member, got %v", err)
 	}
 
 	// Add: case-insensitive direct also rejected.
@@ -581,10 +581,20 @@ func TestCompositeOutboundRejectsDirectMember(t *testing.T) {
 		t.Error("expected case-insensitive direct to be rejected")
 	}
 
-	// Add: direct as default rejected.
-	err = cfg.AddCompositeOutbound(Outbound{Tag: "auto", Type: "selector", Outbounds: []string{"awg10"}, Default: "direct"})
+	// Add: direct as default rejected for urltest.
+	err = cfg.AddCompositeOutbound(Outbound{Tag: "auto", Type: "urltest", Outbounds: []string{"awg10"}, Default: "direct"})
 	if err == nil || !contains(err.Error(), "default") {
 		t.Errorf("expected 'default' error for direct default, got %v", err)
+	}
+
+	// Add: fallback and selector allow direct as member.
+	err = cfg.AddCompositeOutbound(Outbound{Tag: "fb", Type: "fallback", Outbounds: []string{"awg10", "direct"}})
+	if err != nil {
+		t.Errorf("expected fallback to allow direct member, got %v", err)
+	}
+	err = cfg.AddCompositeOutbound(Outbound{Tag: "sel", Type: "selector", Outbounds: []string{"awg10", "direct"}, Default: "direct"})
+	if err != nil {
+		t.Errorf("expected selector to allow direct member and default, got %v", err)
 	}
 
 	// Empty members rejected.

@@ -743,6 +743,30 @@
 				</section>
 
 				<section class="card tunnel-section">
+					<SettingsSectionLabel label="Транспорт" icon={Zap} tone="amber" header />
+
+					<div class="form-group">
+						<Dropdown
+							id="tt_transport"
+							label="Протокол соединения"
+							value={getFieldBool(['quic']) ? 'quic' : 'tcp'}
+							options={[
+								{ value: 'tcp', label: 'HTTP/2 over TLS (TCP) — стандартный' },
+								{ value: 'quic', label: 'HTTP/3 over QUIC (UDP) — быстрый' }
+							]}
+							onchange={(v) => setField(['quic'], v === 'quic')}
+						/>
+						<p class="section-hint">
+							{#if getFieldBool(['quic'])}
+								Используется HTTP/3 (QUIC/UDP). Если провайдер или ТСПУ глушат UDP-пакеты (таймаут или ошибки пинга), переключите на HTTP/2 (TCP).
+							{:else}
+								Используется HTTP/2 (TCP). Стабильно работает через большинство провайдеров и мобильных сетей даже при блокировках UDP.
+							{/if}
+						</p>
+					</div>
+				</section>
+
+				<section class="card tunnel-section">
 					<SettingsSectionLabel label="TLS" icon={Lock} tone="blue" header />
 
 					<div class="form-group">

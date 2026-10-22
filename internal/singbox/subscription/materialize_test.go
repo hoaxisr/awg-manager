@@ -138,4 +138,51 @@ func TestBuildGroupOutbound_DispatchesByMode(t *testing.T) {
 	check(t, BuildGroupOutbound(subSel, members, "m1"), "selector")
 	check(t, BuildGroupOutbound(subUT, members, "m1"), "urltest")
 	check(t, BuildGroupOutbound(subEmpty, members, "m1"), "selector")
+
+	subFB := Subscription{SelectorTag: "sub-x", Mode: ModeFallback}
+	subLB := Subscription{SelectorTag: "sub-x", Mode: ModeLoadBalance}
+	check(t, BuildGroupOutbound(subFB, members, "m1"), "fallback")
+	check(t, BuildGroupOutbound(subLB, members, "m1"), "load-balance")
+}
+
+func TestBuildFallback(t *testing.T) {
+	members := []string{"m1", "m2"}
+	raw := BuildFallback("sub-fb", members, URLTestConfig{
+		URL:         "https://example.com/check",
+		IntervalSec: 3600,
+	})
+	var ob map[string]any
+	if err := json.Unmarshal(raw, &ob); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if ob["type"] != "fallback" || ob["tag"] != "sub-fb" {
+		t.Errorf("wrong fallback outbound: %+v", ob)
+	}
+	if ob["interrupt_exist_connections"] != true {
+		t.Errorf("expected interrupt_exist_connections=true, got %v", ob["interrupt_exist_connections"])
+	}
+	if ob["idle_timeout"] != "7200s" {
+		t.Errorf("expected safe idle_timeout=7200s, got %v", ob["idle_timeout"])
+	}
+}
+
+func TestBuildLoadBalance(t *testing.T) {
+	members := []string{"m1", "m2"}
+	raw := BuildLoadBalance("sub-lb", members, "round-robin", URLTestConfig{
+		URL:         "https://example.com/check",
+		IntervalSec: 2000,
+	})
+	var ob map[string]any
+	if err := json.Unmarshal(raw, &ob); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if ob["type"] != "load-balance" || ob["tag"] != "sub-lb" {
+		t.Errorf("wrong load-balance outbound: %+v", ob)
+	}
+	if ob["strategy"] != "round-robin" {
+		t.Errorf("expected round-robin, got %v", ob["strategy"])
+	}
+	if ob["idle_timeout"] != "4000s" {
+		t.Errorf("expected safe idle_timeout=4000s, got %v", ob["idle_timeout"])
+	}
 }

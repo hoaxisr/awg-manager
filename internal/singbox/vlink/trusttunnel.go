@@ -21,12 +21,16 @@ func parseTrustTunnelLink(input string) ([]ParsedOutbound, error) {
 	return ttEndpointToOutbounds(ep, "")
 }
 
-func isTrustTunnelConnectURL(input string) bool {
+func IsTrustTunnelConnectURL(input string) bool {
 	u, err := url.Parse(strings.TrimSpace(input))
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
 		return false
 	}
 	return u.Query().Get("d") != ""
+}
+
+func isTrustTunnelConnectURL(input string) bool {
+	return IsTrustTunnelConnectURL(input)
 }
 
 func parseTrustTunnelConnectURL(input string) ([]ParsedOutbound, error) {
@@ -86,7 +90,7 @@ func ttEndpointToOutbounds(ep ttEndpoint, label string) ([]ParsedOutbound, error
 			"server_port": port,
 			"username":    ep.Username,
 			"password":    ep.Password,
-			"quic":        false, // H2-only; http3 во входе намеренно понижается
+			"quic":        ep.QUIC,
 			"tls":         tls,
 		}
 		raw, err := json.Marshal(ob)

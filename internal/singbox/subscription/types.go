@@ -38,8 +38,10 @@ type MemberInfo struct {
 type SubscriptionMode string
 
 const (
-	ModeSelector SubscriptionMode = "selector"
-	ModeURLTest  SubscriptionMode = "urltest"
+	ModeSelector    SubscriptionMode = "selector"
+	ModeURLTest     SubscriptionMode = "urltest"
+	ModeFallback    SubscriptionMode = "fallback"
+	ModeLoadBalance SubscriptionMode = "load-balance"
 )
 
 // URLTestConfig holds the urltest-specific tuning. All fields have

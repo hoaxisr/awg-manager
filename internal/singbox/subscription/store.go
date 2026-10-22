@@ -188,7 +188,7 @@ func (s *Store) Create(in CreateInput) (*Subscription, error) {
 		mode = ModeSelector
 	}
 	var urlTest *URLTestConfig
-	if mode == ModeURLTest {
+	if mode == ModeURLTest || mode == ModeFallback || mode == ModeLoadBalance {
 		cfg := DefaultURLTestConfig()
 		if in.URLTest != nil {
 			if in.URLTest.URL != "" {
@@ -291,7 +291,7 @@ func (s *Store) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		}
 		if patch.Mode != nil {
 			sub.Mode = *patch.Mode
-			if sub.Mode == ModeURLTest && sub.URLTest == nil {
+			if (sub.Mode == ModeURLTest || sub.Mode == ModeFallback || sub.Mode == ModeLoadBalance) && sub.URLTest == nil {
 				cfg := DefaultURLTestConfig()
 				sub.URLTest = &cfg
 			}

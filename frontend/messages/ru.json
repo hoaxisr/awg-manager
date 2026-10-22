@@ -3139,6 +3139,8 @@
 	"routing_singbox_outbound_type_interface": "Интерфейс",
 	"routing_singbox_outbound_desc_direct": "Прямое соединение через выбранный интерфейс (IPSec/IKEv2/др. VPN). Трафик правила пойдёт через этот интерфейс.",
 	"routing_singbox_outbound_desc_urltest": "Периодически пингует каждого члена и автоматически направляет через самого быстрого.",
+	"routing_singbox_outbound_desc_fallback": "Использует первый доступный сервер по порядку списка. При падении автоматически переключается на следующий.",
+	"routing_singbox_outbound_desc_loadbalance": "Распределяет новые соединения между доступными серверами (Round-robin).",
 	"routing_singbox_outbound_desc_selector": "Ручное переключение через Clash API. Новые подключения идут через выбранный default.",
 	"routing_singbox_outbound_edit_title": "Редактировать outbound",
 	"routing_singbox_outbound_new_title": "Новый outbound",
