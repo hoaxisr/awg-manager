@@ -155,7 +155,19 @@ var expertPrefixes = []string{
 	"/api/system/proc/", "/api/system/services/",
 }
 
+// expertRoutes — ручки вне «Системы», целиком закрытые expert: управление
+// внешним демоном Zapret и запись его конфига. PUT /api/zapret/hostlist
+// закрыт внутри диспетчера по методу (GET того же пути открыт) и проверяется
+// живым запросом в zapret_routes_test.go.
+var expertRoutes = map[string]bool{
+	"/api/zapret/control":            true,
+	"/api/zapret/strategies/reorder": true,
+}
+
 func isExpertPath(p string) bool {
+	if expertRoutes[p] {
+		return true
+	}
 	for _, pre := range expertPrefixes {
 		if strings.HasPrefix(p, pre) {
 			return true
@@ -165,7 +177,7 @@ func isExpertPath(p string) bool {
 }
 
 // Каждая регистрация /api/* обёрнута в гард на месте регистрации: auth —
-// везде, кроме allow-списка; expert — ровно на разделе «Система». Читается из
+// везде, кроме allow-списка; expert — ровно на разделе «Система» и expertRoutes. Читается из
 // исходника, поэтому новая ручка без h.guarded(...) роняет тест сама.
 func TestAPIRoutes_EveryRegistrationGuarded(t *testing.T) {
 	for _, r := range routeRegistrations(t) {
@@ -179,9 +191,9 @@ func TestAPIRoutes_EveryRegistrationGuarded(t *testing.T) {
 		case !allowed && r.guard == "none":
 			t.Errorf("%s зарегистрирован БЕЗ гарда", r.path)
 		case isExpertPath(r.path) && r.guard != "expert":
-			t.Errorf("%s — раздел «Система», ждали expertGuarded, получили %q", r.path, r.guard)
+			t.Errorf("%s — expert-ручка («Система» или expertRoutes), ждали expertGuarded, получили %q", r.path, r.guard)
 		case !isExpertPath(r.path) && r.guard == "expert":
-			t.Errorf("%s обёрнут в expertGuarded вне раздела «Система»", r.path)
+			t.Errorf("%s обёрнут в expertGuarded вне раздела «Система» и expertRoutes", r.path)
 		}
 	}
 }
