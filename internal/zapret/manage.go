@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -404,17 +403,13 @@ func managedDaemonPIDs(l layout, live []int) []int {
 	return managed
 }
 
-var caseLabelRe = regexp.MustCompile(`(?m)^\s*([A-Za-z0-9_|-]+)\s*\)`)
-
 // daemonRestartVerb returns the daemon-only restart verb as the init script's
 // case statement spells it: stock zapret accepts restart-daemons, z2k only
 // restart_daemons. Empty means the script has no such verb.
 func daemonRestartVerb(body []byte) string {
-	for _, m := range caseLabelRe.FindAllSubmatch(body, -1) {
-		for _, label := range strings.Split(string(m[1]), "|") {
-			if label == "restart-daemons" || label == "restart_daemons" {
-				return label
-			}
+	for _, label := range caseLabels(body) {
+		if label == "restart-daemons" || label == "restart_daemons" {
+			return label
 		}
 	}
 	return ""

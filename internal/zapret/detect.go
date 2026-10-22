@@ -3,6 +3,8 @@ package zapret
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -268,7 +270,7 @@ func findInitScript(base string) string {
 				continue
 			}
 			resolved, err := filepath.EvalSymlinks(full)
-			if err != nil || !pathWithin(identity, resolved) && !initPinsBase(resolved, identity) {
+			if err != nil || (!pathWithin(identity, resolved) && !initPinsBase(resolved, identity)) {
 				continue
 			}
 			return full
@@ -278,18 +280,38 @@ func findInitScript(base string) string {
 }
 
 // initPinsBase reports whether an init script outside the installation
-// assigns ZAPRET_BASE to it literally. The script is read, never sourced: a
-// value with expansions does not identify an installation and is ignored.
+// drives it: the script has a start verb and assigns ZAPRET_BASE to it
+// literally. Other zapret-named helpers (GUI, schedulers) may name the base
+// too, but they are not init scripts and must not receive start/stop. The
+// script is read, never sourced: a value with expansions is ignored.
 func initPinsBase(script, identity string) bool {
 	body, err := os.ReadFile(script)
-	if err != nil {
+	if err != nil || !slices.Contains(caseLabels(body), "start") {
 		return false
 	}
-	base := strings.Trim(findAssignment(string(body), "ZAPRET_BASE"), "\"'")
+	// Unquoted assignments may carry a trailing comment or separator.
+	value := strings.Trim(findAssignment(string(body), "ZAPRET_BASE"), "\"'")
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return false
+	}
+	base := strings.TrimSuffix(fields[0], ";")
 	if !filepath.IsAbs(base) || strings.ContainsAny(base, "$`") {
 		return false
 	}
 	return canonicalBase(base) == identity
+}
+
+var caseLabelRe = regexp.MustCompile(`(?m)^\s*([A-Za-z0-9_|-]+)\s*\)`)
+
+// caseLabels returns the alternatives of every `label)` line in a shell
+// case statement, as an init script spells its verbs.
+func caseLabels(body []byte) []string {
+	var out []string
+	for _, m := range caseLabelRe.FindAllSubmatch(body, -1) {
+		out = append(out, strings.Split(string(m[1]), "|")...)
+	}
+	return out
 }
 
 func pathWithin(root, path string) bool {

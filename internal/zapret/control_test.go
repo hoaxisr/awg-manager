@@ -207,12 +207,18 @@ func TestHostlistSaveRestartsZ2KStyleGlobalInit(t *testing.T) {
 	}
 	globalDir := t.TempDir()
 	calls := filepath.Join(t.TempDir(), "actions")
-	script := fmt.Sprintf("#!/bin/sh\nZAPRET_BASE=%s\ncase \"$1\" in\nrestart_daemons) printf '%%s\\n' \"$1\" >> %q; printf 102 > %q;;\n*) exit 9;;\nesac\n", base, calls, state)
+	script := fmt.Sprintf("#!/bin/sh\nZAPRET_BASE=%s # z2k\ncase \"$1\" in\n    start)\n        exit 9\n        ;;\n    restart_daemons)\n        printf '%%s\\n' \"$1\" >> %q; printf 102 > %q\n        ;;\nesac\n", base, calls, state)
 	if err := os.WriteFile(filepath.Join(globalDir, "S99zapret2"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	foreign := "#!/bin/sh\nZAPRET_BASE=/opt/zapret-other\n"
+	// Сортируются раньше S99zapret2: чужая установка и помощник без
+	// глаголов init-скрипта, но с той же ZAPRET_BASE.
+	foreign := "#!/bin/sh\nZAPRET_BASE=/opt/zapret-other\ncase \"$1\" in\nstart) exit 9;;\nesac\n"
 	if err := os.WriteFile(filepath.Join(globalDir, "S98zapret"), []byte(foreign), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	helper := fmt.Sprintf("#!/bin/sh\nZAPRET_BASE=%s\nexec /bin/false\n", base)
+	if err := os.WriteFile(filepath.Join(globalDir, "S50zapret-gui"), []byte(helper), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	initDirs = []string{globalDir}
