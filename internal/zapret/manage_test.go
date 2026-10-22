@@ -102,8 +102,12 @@ func TestReorderStrategiesWritesOrder(t *testing.T) {
 func TestReorderStrategiesMovesCard(t *testing.T) {
 	setupInstall(t)
 	svc := NewService(t.TempDir(), nil)
+	cur, err := svc.GetStrategies()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	got, err := svc.ReorderStrategies(0, 1)
+	got, err := svc.ReorderStrategies(0, 1, cur.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +115,7 @@ func TestReorderStrategiesMovesCard(t *testing.T) {
 		t.Errorf("карточка не переехала: %+v", got.Items[0])
 	}
 
-	if _, err := svc.ReorderStrategies(5, 0); err == nil {
+	if _, err := svc.ReorderStrategies(5, 0, got.Revision); err == nil {
 		t.Error("выход за границы должен отклоняться")
 	}
 }
@@ -428,17 +432,18 @@ func TestInitScriptPrefersWiredSymlink(t *testing.T) {
 }
 
 func TestControlRejectsUnknownAction(t *testing.T) {
-	setupInstall(t)
-	if err := NewService(t.TempDir(), nil).Control("переустановить"); err == nil {
-		t.Error("неизвестное действие должно отклоняться")
+	base := setupInstall(t)
+	err := NewService(t.TempDir(), nil).Control("переустановить", base)
+	if err == nil || !strings.Contains(err.Error(), "unknown action") {
+		t.Errorf("неизвестное действие должно отклоняться: %v", err)
 	}
 }
 
 func TestControlWithoutInitScript(t *testing.T) {
-	setupInstall(t, func(base string) {
+	base := setupInstall(t, func(base string) {
 		_ = os.Remove(filepath.Join(base, "init.d", "sysv", "zapret2"))
 	})
-	err := NewService(t.TempDir(), nil).Control("restart")
+	err := NewService(t.TempDir(), nil).Control("restart", base)
 	if err == nil {
 		t.Fatal("ожидалась ошибка при отсутствии init-скрипта")
 	}

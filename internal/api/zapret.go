@@ -18,11 +18,11 @@ type ZapretService interface {
 	GetStatus() zapret.Status
 	Recheck() zapret.Status
 	GetStrategies() (zapret.Strategies, error)
-	ReorderStrategies(from, to int, expected ...string) (zapret.Strategies, error)
+	ReorderStrategies(from, to int, revision string) (zapret.Strategies, error)
 	GetHostlists() ([]zapret.HostlistInfo, error)
 	ReadHostlist(id zapret.HostlistID) (zapret.HostlistID, string, string, error)
-	WriteHostlist(id zapret.HostlistID, content string, expected ...string) (zapret.HostlistID, string, error)
-	Control(action string, expected ...string) error
+	WriteHostlist(id zapret.HostlistID, content, revision string) (zapret.HostlistID, string, error)
+	Control(action, base string) error
 }
 
 // ZapretHandler — HTTP-обвязка над zapret.

@@ -331,7 +331,7 @@ func readHostlist(l layout, id HostlistID) (path, content string, err error) {
 }
 
 // writeHostlist заменяет содержимое списка.
-func (s *Service) writeHostlist(l layout, id HostlistID, content string, expected ...string) (string, error) {
+func (s *Service) writeHostlist(l layout, id HostlistID, content, revision string) (string, error) {
 	spec, ok := findSpec(id)
 	if !ok {
 		return "", fmt.Errorf("unknown hostlist %q", id)
@@ -360,7 +360,7 @@ func (s *Service) writeHostlist(l layout, id HostlistID, content string, expecte
 	if err := checkWriteTarget(l, resolved); err != nil {
 		return "", err
 	}
-	if err := checkRevision(resolved, expected); err != nil {
+	if err := checkRevision(resolved, revision); err != nil {
 		return "", err
 	}
 	if err := s.checkSelected(l); err != nil {

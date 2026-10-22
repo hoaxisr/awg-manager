@@ -32,7 +32,7 @@ func (s *zapretServiceStub) Recheck() zapret.Status   { return s.status }
 func (s *zapretServiceStub) GetStrategies() (zapret.Strategies, error) {
 	return s.strategies, s.stratErr
 }
-func (s *zapretServiceStub) ReorderStrategies(from, to int, expected ...string) (zapret.Strategies, error) {
+func (s *zapretServiceStub) ReorderStrategies(from, to int, _ string) (zapret.Strategies, error) {
 	s.reorderFrom, s.reorderTo = from, to
 	if s.stratErr != nil {
 		return zapret.Strategies{}, s.stratErr
@@ -45,13 +45,13 @@ func (s *zapretServiceStub) GetHostlists() ([]zapret.HostlistInfo, error) {
 func (s *zapretServiceStub) ReadHostlist(id zapret.HostlistID) (zapret.HostlistID, string, string, error) {
 	return id, "/opt/zapret2/ipset/zapret-hosts-user.txt", s.content, s.readErr
 }
-func (s *zapretServiceStub) WriteHostlist(id zapret.HostlistID, _ string, expected ...string) (zapret.HostlistID, string, error) {
+func (s *zapretServiceStub) WriteHostlist(id zapret.HostlistID, _, _ string) (zapret.HostlistID, string, error) {
 	if s.writeErr != nil {
 		return "", "", s.writeErr
 	}
 	return id, "/opt/zapret2/ipset/" + string(id) + ".txt", nil
 }
-func (s *zapretServiceStub) Control(string, ...string) error { return s.controlErr }
+func (s *zapretServiceStub) Control(string, string) error { return s.controlErr }
 
 func newZapretHandlerForTest(svc ZapretService, bus *events.Bus) *ZapretHandler {
 	h := NewZapretHandler(svc, nil)

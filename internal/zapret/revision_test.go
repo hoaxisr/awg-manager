@@ -79,7 +79,7 @@ func TestHostlistWriteRefusesExternalSymlink(t *testing.T) {
 	if err := os.Symlink(outside, target); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.WriteHostlist(HostlistUser, "replace\n"); err == nil {
+	if _, _, err := s.WriteHostlist(HostlistUser, "replace\n", Revision(target, "keep\n")); err == nil {
 		t.Fatal("accepted symlink write")
 	}
 	got, _ := os.ReadFile(outside)
@@ -88,5 +88,22 @@ func TestHostlistWriteRefusesExternalSymlink(t *testing.T) {
 	}
 	if _, err := os.Readlink(target); err != nil {
 		t.Fatal("replaced symlink")
+	}
+}
+
+func TestWritesWithoutRevisionAreConflicts(t *testing.T) {
+	base := setupInstall(t)
+	s := NewService(t.TempDir(), nil)
+	if _, err := s.ReorderStrategies(0, 1, ""); !errors.Is(err, ErrConflict) {
+		t.Fatalf("reorder without revision: %v, want ErrConflict", err)
+	}
+	if _, _, err := s.WriteHostlist(HostlistUser, "x.example\n", ""); !errors.Is(err, ErrConflict) {
+		t.Fatalf("hostlist write without revision: %v, want ErrConflict", err)
+	}
+	if err := s.Control("restart", ""); !errors.Is(err, ErrConflict) {
+		t.Fatalf("control without base: %v, want ErrConflict", err)
+	}
+	if err := s.Control("restart", base+"-other"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("control with foreign base: %v, want ErrConflict", err)
 	}
 }

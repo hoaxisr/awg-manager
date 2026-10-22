@@ -27,10 +27,9 @@ func revisionForState(path, state, content string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(input)))
 }
 
-func checkRevision(path string, expected []string) error {
-	if len(expected) == 0 {
-		return nil
-	} // Internal callers may deliberately omit a precondition.
+// checkRevision requires the revision the client last read: an empty one is a
+// conflict, so a write can never skip the precondition.
+func checkRevision(path, expected string) error {
 	body, err := os.ReadFile(path)
 	var current string
 	if errors.Is(err, os.ErrNotExist) {
@@ -40,7 +39,7 @@ func checkRevision(path string, expected []string) error {
 	} else {
 		current = revisionForState(path, "present", string(body))
 	}
-	if expected[0] == "" || expected[0] != current {
+	if expected == "" || expected != current {
 		return ErrConflict
 	}
 	return nil

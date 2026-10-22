@@ -208,7 +208,6 @@ func parseStrategy(index int, raw string) Strategy {
 		s.LuaDesync = append(s.LuaDesync, inst)
 	}
 
-	s.Warnings = strategyWarnings(s)
 	return s
 }
 
@@ -239,10 +238,11 @@ func defaultProfileName(s Strategy) string {
 }
 
 // strategyWarnings собирает грабли, которые не видно из значений полей,
-// но которые ломают стратегию «молча».
-func strategyWarnings(s Strategy, nfqws2 ...bool) []Warning {
+// но которые ломают стратегию «молча». Считается после hydrateHostlistRefs:
+// до развёртывания <HOSTLIST> у карточки нет списков. usesLuaDesync —
+// только у nfqws2: у zapret v1 и tpws цепочки --lua-desync нет вовсе.
+func strategyWarnings(s Strategy, usesLuaDesync bool) []Warning {
 	var w []Warning
-	usesLuaDesync := len(nfqws2) == 0 || nfqws2[0]
 	countFailureReported := false
 	for _, refs := range [][]StrategyHostlist{s.Hostlists, s.HostlistExcludes, s.HostlistAuto, s.Ipsets} {
 		for _, h := range refs {

@@ -189,7 +189,7 @@ func resolveRefPath(l layout, p string) string {
 // нетронутыми, потому что мы их не понимаем и затирать их не имеем
 // права. Пользователь после этого обязан перезапустить демон: nfqws2
 // читает опции ровно один раз, при старте процесса.
-func (s *Service) saveStrategies(items []Strategy, expected ...string) (Strategies, error) {
+func (s *Service) saveStrategies(items []Strategy, revision string) (Strategies, error) {
 	l, err := s.resolveLayout()
 	if err != nil {
 		return Strategies{}, err
@@ -197,7 +197,7 @@ func (s *Service) saveStrategies(items []Strategy, expected ...string) (Strategi
 	if err := checkWriteTarget(l, l.config); err != nil {
 		return Strategies{}, err
 	}
-	if err := checkRevision(l.config, expected); err != nil {
+	if err := checkRevision(l.config, revision); err != nil {
 		return Strategies{}, err
 	}
 
@@ -208,7 +208,7 @@ func (s *Service) saveStrategies(items []Strategy, expected ...string) (Strategi
 	if err := validateProfiles(splitProfiles(body)); err != nil {
 		return Strategies{}, err
 	}
-	if err := checkRevision(l.config, expected); err != nil {
+	if err := checkRevision(l.config, revision); err != nil {
 		return Strategies{}, err
 	}
 	if err := s.checkSelected(l); err != nil {
@@ -224,7 +224,7 @@ func (s *Service) saveStrategies(items []Strategy, expected ...string) (Strategi
 // ReorderStrategies двигает карточку в списке. Порядок — приоритет:
 // nfqws2 проверяет фильтры строго слева направо и выигрывает первый
 // подошедший, поэтому это не косметика.
-func (s *Service) ReorderStrategies(from, to int, expected ...string) (Strategies, error) {
+func (s *Service) ReorderStrategies(from, to int, revision string) (Strategies, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 	cur, err := s.GetStrategies()
@@ -244,7 +244,7 @@ func (s *Service) ReorderStrategies(from, to int, expected ...string) (Strategie
 	copy(items[to+1:], items[to:])
 	items[to] = moved
 
-	if _, err := s.saveStrategies(reindex(items), expected...); err != nil {
+	if _, err := s.saveStrategies(reindex(items), revision); err != nil {
 		return Strategies{}, err
 	}
 	s.appLog.Info("strategies", cur.Config, fmt.Sprintf("порядок изменён: %d → %d", from+1, to+1))
@@ -278,14 +278,14 @@ func (e *HostlistApplyError) Error() string { return e.Err.Error() }
 func (e *HostlistApplyError) Unwrap() error { return e.Err }
 
 // WriteHostlist saves the list and reapplies it only when this installation is running.
-func (s *Service) WriteHostlist(id HostlistID, content string, expected ...string) (HostlistID, string, error) {
+func (s *Service) WriteHostlist(id HostlistID, content, revision string) (HostlistID, string, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 	l, err := s.resolveLayout()
 	if err != nil {
 		return "", "", err
 	}
-	path, err := s.writeHostlist(l, id, content, expected...)
+	path, err := s.writeHostlist(l, id, content, revision)
 	if err != nil {
 		return id, path, err
 	}
@@ -300,21 +300,23 @@ func (s *Service) WriteHostlist(id HostlistID, content string, expected ...strin
 }
 
 // Control запускает/останавливает/перезапускает zapret через его
-// собственный init-скрипт. Для применения правок используем только
-// restart-daemons, чтобы не пересоздавать правила firewall.
-func (s *Service) Control(action string, expected ...string) error {
+// собственный init-скрипт. base — установка, которую видел клиент: если
+// выбор сменился, команда уйдёт не туда, поэтому это конфликт. Для
+// применения правок используем только restart-daemons, чтобы не
+// пересоздавать правила firewall.
+func (s *Service) Control(action, base string) error {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
-	return s.control(action, expected...)
+	return s.control(action, base)
 }
 
-func (s *Service) control(action string, expected ...string) error {
+func (s *Service) control(action, base string) error {
 	r, err := s.resolveLayoutState()
 	if err != nil {
 		return err
 	}
 	l := r.layout
-	if len(expected) > 0 && (expected[0] == "" || expected[0] != l.base) {
+	if base == "" || base != l.base {
 		return ErrConflict
 	}
 	// A broad nfqws process match can also include independent scanner runs.

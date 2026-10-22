@@ -348,7 +348,11 @@ func TestHostlistRoundTripPreservesMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := (&Service{dataDir: t.TempDir()}).writeHostlist(l, HostlistUser, "example.com"); err != nil {
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&Service{dataDir: t.TempDir()}).writeHostlist(l, HostlistUser, "example.com", Revision(path, string(before))); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -375,7 +379,7 @@ func TestWriteHostlistRejectsGenerated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (&Service{dataDir: t.TempDir()}).writeHostlist(l, HostlistMain, "example.com"); err == nil {
+	if _, err := (&Service{dataDir: t.TempDir()}).writeHostlist(l, HostlistMain, "example.com", missingRevision(filepath.Join(l.ipset, "zapret-hosts.txt"))); err == nil {
 		t.Error("запись в генерируемый список должна отклоняться")
 	}
 }
@@ -386,7 +390,17 @@ func TestWriteHostlistRejectsNUL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (&Service{dataDir: t.TempDir()}).writeHostlist(l, HostlistUser, "ok.example\x00bad"); err == nil {
+	if _, err := (&Service{dataDir: t.TempDir()}).writeHostlist(l, HostlistUser, "ok.example\x00bad", userListRevision(t, l)); err == nil {
 		t.Error("NUL-байт должен отклоняться")
 	}
+}
+
+func userListRevision(t *testing.T, l layout) string {
+	t.Helper()
+	path := filepath.Join(l.ipset, "zapret-hosts-user.txt")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Revision(path, string(body))
 }

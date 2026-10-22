@@ -160,12 +160,14 @@ func TestParseStrategiesExtractsFilters(t *testing.T) {
 func TestStrategyWarnings(t *testing.T) {
 	t.Run("filter без обхода", func(t *testing.T) {
 		s := parseStrategy(0, "--filter-tcp=443 --filter-l7=tls")
+		s.Warnings = strategyWarnings(s, true)
 		if !hasWarning(s, "strategy_no_lua_desync") {
 			t.Errorf("нет предупреждения о пустом профиле: %v", s.Warnings)
 		}
 	})
 	t.Run("circular без key", func(t *testing.T) {
 		s := parseStrategy(0, "--filter-tcp=443 --lua-desync=circular:fails=3")
+		s.Warnings = strategyWarnings(s, true)
 		if !hasWarning(s, "circular_missing_key") {
 			t.Errorf("нет предупреждения про key: %v", s.Warnings)
 		}

@@ -290,7 +290,7 @@ func TestStatusAndControlIgnoreIndependentScanProcesses(t *testing.T) {
 		t.Fatalf("scanner-only status = %+v, want stopped with no managed PIDs", status)
 	}
 
-	if err := svc.Control("start"); err != nil {
+	if err := svc.Control("start", base); err != nil {
 		t.Fatalf("start with independent scanner: %v", err)
 	}
 	status = svc.GetStatus()
@@ -298,7 +298,7 @@ func TestStatusAndControlIgnoreIndependentScanProcesses(t *testing.T) {
 		t.Fatalf("running status = %+v, want only managed PID 42", status)
 	}
 
-	if err := svc.Control("stop"); err != nil {
+	if err := svc.Control("stop", base); err != nil {
 		t.Fatalf("stop with independent scanner: %v", err)
 	}
 	status = svc.GetStatus()
