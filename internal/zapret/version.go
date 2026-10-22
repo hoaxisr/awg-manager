@@ -74,7 +74,24 @@ func binaryFingerprint(path string) string {
 		st.ModTime().UTC().Format(time.RFC3339Nano), st.Mode().String(), st.Size())
 }
 
-// versionCached returns the cached daemon version and probes outside mu.
+// versionCache — последняя прочитанная версия демона и последняя неудачная
+// проба, каждая привязана к отпечатку бинаря. Защищается Service.mu.
+type versionCache struct {
+	value, finger  string
+	at             time.Time
+	err, errFinger string
+	errAt          time.Time
+	inFlight       bool
+}
+
+// expire заставляет следующее чтение статуса пробовать заново, но оставляет
+// прошлое значение для показа, пока проба идёт.
+func (c *versionCache) expire() {
+	c.at, c.finger = time.Time{}, ""
+	c.err, c.errAt, c.errFinger = "", time.Time{}, ""
+}
+
+// getVersionCached returns the cached daemon version and probes outside mu.
 func (s *Service) getVersionCached(binary string) string {
 	finger := binaryFingerprint(binary)
 	if finger == "" {
@@ -82,27 +99,19 @@ func (s *Service) getVersionCached(binary string) string {
 	}
 
 	s.mu.Lock()
-	if s.versionFinger != "" && s.versionFinger != finger {
-		s.versionCached, s.versionAt, s.versionFinger = "", time.Time{}, ""
-		s.versionError, s.versionErrorAt, s.versionErrorFinger = "", time.Time{}, ""
+	c := &s.version
+	if c.finger != "" && c.finger != finger {
+		*c = versionCache{inFlight: c.inFlight}
 	}
 	now := s.currentTime()
-	if s.versionFinger == finger && !s.versionAt.IsZero() && now.Sub(s.versionAt) < versionTTL {
-		version := s.versionCached
+	fresh := c.finger == finger && !c.at.IsZero() && now.Sub(c.at) < versionTTL
+	failedRecently := c.errFinger == finger && !c.errAt.IsZero() && now.Sub(c.errAt) >= 0 && now.Sub(c.errAt) < versionRetryTTL
+	if fresh || failedRecently || c.inFlight {
+		version := c.value
 		s.mu.Unlock()
 		return version
 	}
-	if s.versionErrorFinger == finger && !s.versionErrorAt.IsZero() && now.Sub(s.versionErrorAt) >= 0 && now.Sub(s.versionErrorAt) < versionRetryTTL {
-		version := s.versionCached
-		s.mu.Unlock()
-		return version
-	}
-	if s.versionProbeInFlight {
-		version := s.versionCached
-		s.mu.Unlock()
-		return version
-	}
-	s.versionProbeInFlight = true
+	c.inFlight = true
 	s.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), versionProbeTimeout)
@@ -113,18 +122,13 @@ func (s *Service) getVersionCached(binary string) string {
 	}
 
 	s.mu.Lock()
-	s.versionProbeInFlight = false
+	defer s.mu.Unlock()
+	c.inFlight = false
 	if err != nil {
-		s.versionError = fmt.Sprintf("zapret version: %v", err)
-		s.versionErrorAt = s.currentTime()
-		s.versionErrorFinger = finger
-		version := s.versionCached
-		s.mu.Unlock()
-		return version
+		c.err, c.errAt, c.errFinger = fmt.Sprintf("zapret version: %v", err), s.currentTime(), finger
+		return c.value
 	}
 	v = strings.TrimSpace(v)
-	s.versionCached, s.versionAt, s.versionFinger = v, s.currentTime(), finger
-	s.versionError, s.versionErrorAt, s.versionErrorFinger = "", time.Time{}, ""
-	s.mu.Unlock()
+	*c = versionCache{value: v, at: s.currentTime(), finger: finger}
 	return v
 }

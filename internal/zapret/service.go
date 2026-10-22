@@ -126,13 +126,7 @@ type Service struct {
 	absentStatusAt  time.Time
 	absentRootStamp string
 
-	versionCached        string
-	versionAt            time.Time
-	versionFinger        string
-	versionError         string
-	versionErrorAt       time.Time
-	versionErrorFinger   string
-	versionProbeInFlight bool
+	version versionCache
 
 	lastError string
 }
@@ -245,13 +239,13 @@ func (s *Service) GetStatus() Status {
 func (s *Service) errorSnapshot() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.versionError == "" {
+	if s.version.err == "" {
 		return s.lastError
 	}
 	if s.lastError == "" {
-		return s.versionError
+		return s.version.err
 	}
-	return s.lastError + "; " + s.versionError
+	return s.lastError + "; " + s.version.err
 }
 
 func (s *Service) currentTime() time.Time {
@@ -314,11 +308,7 @@ func (s *Service) Recheck() Status {
 	s.packagesErrorAt = time.Time{}
 	s.absentStatusAt = time.Time{}
 	s.absentRootStamp = ""
-	s.versionAt = time.Time{}
-	s.versionFinger = ""
-	s.versionError = ""
-	s.versionErrorAt = time.Time{}
-	s.versionErrorFinger = ""
+	s.version.expire()
 	s.mu.Unlock()
 	return s.GetStatus()
 }

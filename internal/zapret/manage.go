@@ -361,7 +361,7 @@ func (s *Service) control(action, base string) error {
 	}
 	s.appLog.Info(action, l.init, "zapret: команда выполнена")
 	s.mu.Lock()
-	s.versionAt = time.Time{}
+	s.version.expire()
 	s.mu.Unlock()
 	return nil
 }
