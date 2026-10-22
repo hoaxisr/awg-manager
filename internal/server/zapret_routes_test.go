@@ -17,7 +17,7 @@ func TestZapretRoutesDispatchWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/zapret/hostlist", "/api/zapret/strategies"} {
+	for _, path := range []string{"/api/zapret/hostlist"} {
 		t.Run(path, func(t *testing.T) {
 			// A malformed payload must reach the write handler's JSON
 			// validation, rather than the GET handler's method rejection.

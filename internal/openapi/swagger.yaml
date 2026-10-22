@@ -21922,33 +21922,6 @@ paths:
       summary: Zapret strategies
       tags:
       - zapret
-    put:
-      consumes:
-      - application/json
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/zapret.Strategies'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Save zapret strategies
-      tags:
-      - zapret
   /zapret/strategies/reorder:
     post:
       consumes:

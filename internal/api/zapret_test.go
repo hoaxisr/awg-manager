@@ -23,7 +23,6 @@ type zapretServiceStub struct {
 	readErr     error
 	writeErr    error
 	controlErr  error
-	savedItems  []zapret.Strategy
 	reorderFrom int
 	reorderTo   int
 }
@@ -32,13 +31,6 @@ func (s *zapretServiceStub) GetStatus() zapret.Status { return s.status }
 func (s *zapretServiceStub) Recheck() zapret.Status   { return s.status }
 func (s *zapretServiceStub) GetStrategies() (zapret.Strategies, error) {
 	return s.strategies, s.stratErr
-}
-func (s *zapretServiceStub) SaveStrategies(items []zapret.Strategy, expected ...string) (zapret.Strategies, error) {
-	s.savedItems = items
-	if s.stratErr != nil {
-		return zapret.Strategies{}, s.stratErr
-	}
-	return s.strategies, nil
 }
 func (s *zapretServiceStub) ReorderStrategies(from, to int, expected ...string) (zapret.Strategies, error) {
 	s.reorderFrom, s.reorderTo = from, to
@@ -226,31 +218,6 @@ func TestZapretStrategiesNotInstalled(t *testing.T) {
 	}
 }
 
-func TestZapretSaveStrategiesForwardsItems(t *testing.T) {
-	svc := &zapretServiceStub{strategies: zapret.Strategies{Items: []zapret.Strategy{{Index: 0}}}}
-	h := newZapretHandlerForTest(svc, nil)
-	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"items":[{"index":0,"raw":"--filter-tcp=443 --lua-desync=fake"}]}`)
-	h.SaveStrategies(rec, httptest.NewRequest(http.MethodPut, "/api/zapret/strategies", body))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("код: %d body=%s", rec.Code, rec.Body.String())
-	}
-	if len(svc.savedItems) != 1 || svc.savedItems[0].Raw != "--filter-tcp=443 --lua-desync=fake" {
-		t.Errorf("сохранено: %+v", svc.savedItems)
-	}
-}
-
-func TestZapretSaveStrategiesRejectsBadJSON(t *testing.T) {
-	h := newZapretHandlerForTest(&zapretServiceStub{}, nil)
-	rec := httptest.NewRecorder()
-	h.SaveStrategies(rec, httptest.NewRequest(http.MethodPut, "/api/zapret/strategies",
-		strings.NewReader(`{"items":`)))
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("код: %d, ожидался 400", rec.Code)
-	}
-}
-
 func TestZapretReorderForwardsIndices(t *testing.T) {
 	svc := &zapretServiceStub{}
 	h := newZapretHandlerForTest(svc, nil)
@@ -367,7 +334,7 @@ func TestZapretConflictStatus(t *testing.T) {
 	svc := &zapretServiceStub{stratErr: zapret.ErrConflict}
 	h := newZapretHandlerForTest(svc, nil)
 	rec := httptest.NewRecorder()
-	h.SaveStrategies(rec, httptest.NewRequest(http.MethodPut, "/api/zapret/strategies", strings.NewReader(`{"revision":"stale","items":[]}`)))
+	h.ReorderStrategy(rec, httptest.NewRequest(http.MethodPost, "/api/zapret/strategies/reorder", strings.NewReader(`{"revision":"stale","from":0,"to":1}`)))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("got %d: %s", rec.Code, rec.Body.String())
 	}

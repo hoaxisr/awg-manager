@@ -59,7 +59,7 @@ func TestGetStrategiesParseWarningsAreCoded(t *testing.T) {
 	}
 }
 
-func TestSaveStrategiesWritesOrder(t *testing.T) {
+func TestReorderStrategiesWritesOrder(t *testing.T) {
 	base := setupInstall(t)
 	svc := NewService(t.TempDir(), nil)
 
@@ -68,8 +68,7 @@ func TestSaveStrategiesWritesOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Переворачиваем порядок и сохраняем.
-	reversed := []Strategy{cur.Items[1], cur.Items[0]}
-	if _, err := svc.SaveStrategies(reversed); err != nil {
+	if _, err := svc.ReorderStrategies(1, 0, cur.Revision); err != nil {
 		t.Fatal(err)
 	}
 
@@ -132,7 +131,7 @@ func TestInlineStrategiesSaveAndReorderPreserveBoundaries(t *testing.T) {
 	if len(cur.Items) != 3 {
 		t.Fatalf("inline config has %d profiles, want 3", len(cur.Items))
 	}
-	saved, err := svc.SaveStrategies(cur.Items, cur.Revision)
+	saved, err := svc.ReorderStrategies(0, 0, cur.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}

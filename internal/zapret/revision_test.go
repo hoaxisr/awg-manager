@@ -17,13 +17,13 @@ func TestConcurrentStrategyEditsRejectStaleRevision(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
-	for _, raw := range []string{"--filter-tcp=443", "--filter-tcp=80"} {
+	for range 2 {
 		wg.Add(1)
-		go func(raw string) {
+		go func() {
 			defer wg.Done()
-			_, err := s.SaveStrategies([]Strategy{{Raw: raw}}, before.Revision)
+			_, err := s.ReorderStrategies(0, 1, before.Revision)
 			results <- err
-		}(raw)
+		}()
 	}
 	wg.Wait()
 	close(results)

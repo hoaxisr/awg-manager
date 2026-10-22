@@ -182,19 +182,13 @@ func resolveRefPath(l layout, p string) string {
 	return filepath.Join(l.base, p)
 }
 
-// SaveStrategies записывает карточки обратно в конфиг.
+// saveStrategies записывает карточки обратно в конфиг. Вызывающий держит opMu.
 //
 // Пишется ТОЛЬКО блок переменной опций (см. writeOptBlock): остальные
 // ключи config'а — NFQWS2_ENABLE, QNUM, IFACE_WAN и прочие — остаются
 // нетронутыми, потому что мы их не понимаем и затирать их не имеем
 // права. Пользователь после этого обязан перезапустить демон: nfqws2
 // читает опции ровно один раз, при старте процесса.
-func (s *Service) SaveStrategies(items []Strategy, expected ...string) (Strategies, error) {
-	s.opMu.Lock()
-	defer s.opMu.Unlock()
-	return s.saveStrategies(items, expected...)
-}
-
 func (s *Service) saveStrategies(items []Strategy, expected ...string) (Strategies, error) {
 	l, err := s.resolveLayout()
 	if err != nil {

@@ -18,7 +18,6 @@ type ZapretService interface {
 	GetStatus() zapret.Status
 	Recheck() zapret.Status
 	GetStrategies() (zapret.Strategies, error)
-	SaveStrategies(items []zapret.Strategy, expected ...string) (zapret.Strategies, error)
 	ReorderStrategies(from, to int, expected ...string) (zapret.Strategies, error)
 	GetHostlists() ([]zapret.HostlistInfo, error)
 	ReadHostlist(id zapret.HostlistID) (zapret.HostlistID, string, string, error)
@@ -160,46 +159,6 @@ func (h *ZapretHandler) Strategies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, got)
-}
-
-// SaveStrategies replaces the option block, preserving all other keys.
-//
-//	@Summary		Save zapret strategies
-//	@Tags			zapret
-//	@Accept			json
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Success		200	{object}	zapret.Strategies
-//	@Failure		400	{object}	APIErrorEnvelope
-//	@Failure		409	{object}	APIErrorEnvelope
-//	@Failure		404	{object}	APIErrorEnvelope
-//	@Router			/zapret/strategies [put]
-func (h *ZapretHandler) SaveStrategies(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		response.MethodNotAllowed(w)
-		return
-	}
-	if h.svc == nil {
-		response.ErrorWithStatus(w, http.StatusNotFound, zapret.ErrNotInstalled.Error(), "ZAPRET_NOT_INSTALLED")
-		return
-	}
-	req, ok := parseJSON[zapretStrategiesRequest](w, r, http.MethodPut)
-	if !ok {
-		return
-	}
-	got, err := h.svc.SaveStrategies(req.Items, req.Revision)
-	if err != nil {
-		status, msg, code := zapretErrStatus(err)
-		response.ErrorWithStatus(w, status, msg, code)
-		return
-	}
-	h.publishZapretUpdated("save-strategies")
-	response.Success(w, got)
-}
-
-type zapretStrategiesRequest struct {
-	Revision string            `json:"revision"`
-	Items    []zapret.Strategy `json:"items"`
 }
 
 // ReorderStrategy moves one card. Order is priority in nfqws2, so this

@@ -9,8 +9,7 @@ import type {
 	ZapretHostlistId,
 	ZapretHostlistInfo,
 	ZapretStatus,
-	ZapretStrategies,
-	ZapretStrategy
+	ZapretStrategies
 } from '$lib/types';
 import { ServersClient } from './clientServers';
 
@@ -278,18 +277,6 @@ export class RoutingClient extends ServersClient {
 
 	async getZapretStrategies(): Promise<ZapretStrategies> {
 		return this.request('/zapret/strategies');
-	}
-
-	/**
-	 * Перезаписывает блок опций, сохраняя остальные ключи конфига.
-	 * После этого демон обязательно нужно перезапустить: nfqws2 читает
-	 * опции ровно один раз, при старте процесса.
-	 */
-	async saveZapretStrategies(items: ZapretStrategy[], revision: string): Promise<ZapretStrategies> {
-		return this.request('/zapret/strategies', {
-			method: 'PUT',
-			body: JSON.stringify({ items, revision })
-		});
 	}
 
 	/** Порядок карточек = приоритет фильтров в nfqws2. */

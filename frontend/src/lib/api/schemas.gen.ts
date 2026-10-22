@@ -3779,5 +3779,4 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"PUT /singbox/subscriptions/update": v.lazy(() => api_SubscriptionResponse),
 	"PUT /singbox/tunnels": v.lazy(() => api_SingboxTunnelsResponse),
 	"PUT /zapret/hostlist": v.lazy(() => api_zapretHostlistResponse),
-	"PUT /zapret/strategies": v.lazy(() => zapret_Strategies),
 };

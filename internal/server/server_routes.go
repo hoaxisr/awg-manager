@@ -464,16 +464,7 @@ func (s *Server) registerRoutingRoutes(mux *http.ServeMux, h *routeHandlers) {
 		zapretHandler.SetEventBus(s.bus)
 		mux.HandleFunc("/api/zapret/status", h.guarded(zapretHandler.Status))
 		mux.HandleFunc("/api/zapret/control", h.guarded(zapretHandler.Control))
-		mux.HandleFunc("/api/zapret/strategies", h.guarded(func(w http.ResponseWriter, r *http.Request) {
-			switch r.Method {
-			case http.MethodGet:
-				zapretHandler.Strategies(w, r)
-			case http.MethodPut:
-				zapretHandler.SaveStrategies(w, r)
-			default:
-				response.MethodNotAllowed(w)
-			}
-		}))
+		mux.HandleFunc("/api/zapret/strategies", h.guarded(zapretHandler.Strategies))
 		mux.HandleFunc("/api/zapret/strategies/reorder", h.guarded(zapretHandler.ReorderStrategy))
 		mux.HandleFunc("/api/zapret/hostlists", h.guarded(zapretHandler.Hostlists))
 		mux.HandleFunc("/api/zapret/hostlist", h.guarded(func(w http.ResponseWriter, r *http.Request) {
