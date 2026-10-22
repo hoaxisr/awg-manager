@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
@@ -103,11 +102,6 @@ const (
 	opkgTimeout         = 30 * time.Second
 )
 
-var (
-	watchdogInterval           = 30 * time.Second
-	watchdogAbsentDiscoveryTTL = 5 * time.Minute
-)
-
 // Service — фасад над обнаружением и правкой zapret.
 type Service struct {
 	appLog *logging.ScopedLogger
@@ -146,8 +140,7 @@ type Service struct {
 	versionErrorFinger   string
 	versionProbeInFlight bool
 
-	lastError    string
-	watchdogWake chan []layout
+	lastError string
 }
 
 // NewService создаёт сервис. appLogger может быть nil — ScopedLogger
@@ -184,14 +177,7 @@ func (s *Service) resolveLayout() (layout, error) {
 }
 
 func (s *Service) resolveLayoutState() (layoutResolution, error) {
-	return s.resolveLayoutStateWith(discoverLayouts(), nfqProcessesHook())
-}
-
-// resolveLayoutStateWith resolves one snapshot of installation candidates and
-// live processes. The process watchdog reuses the initial candidates so each
-// tick scans /proc without rescanning the installation tree.
-func (s *Service) resolveLayoutStateWith(candidates []layout, processes []nfqProc) (layoutResolution, error) {
-	r := layoutResolution{candidates: candidates}
+	r := layoutResolution{candidates: discoverLayouts()}
 	byBase := make(map[string]layout, len(r.candidates))
 	for _, candidate := range r.candidates {
 		byBase[canonicalBase(candidate.base)] = candidate
@@ -199,7 +185,7 @@ func (s *Service) resolveLayoutStateWith(candidates []layout, processes []nfqPro
 
 	owners := make(map[string][]int)
 	var unknown []int
-	for _, proc := range processes {
+	for _, proc := range nfqProcessesHook() {
 		if proc.exe == "" {
 			// The process name matched nfqws/tpws, but /proc did not let us
 			// identify its executable. Do not fall back to a stopped copy.
@@ -528,7 +514,6 @@ func (s *Service) GetStatus() Status {
 		}
 		return st
 	}
-	s.notifyWatchdogInstalled(r.candidates)
 	s.clearAbsentStatus()
 	l := r.layout
 
@@ -563,9 +548,7 @@ func (s *Service) GetStatus() Status {
 		st.Version = s.getVersionCached(l.binary)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), versionProbeTimeout)
-	defer cancel()
-	if pkgs := s.listInstalledPackages(ctx); len(pkgs) > 0 {
+	if pkgs := s.listInstalledPackages(context.Background()); len(pkgs) > 0 {
 		// Показываем первый пакет по имени как основной, остальные — в
 		// отдельном поле не влезает; версии достаточно для диагностики.
 		st.Package = sortedKeys(pkgs)[0]
@@ -632,33 +615,6 @@ func (s *Service) clearAbsentStatus() {
 	s.absentStatusAt = time.Time{}
 	s.absentRootStamp = ""
 	s.mu.Unlock()
-}
-
-func (s *Service) notifyWatchdogInstalled(candidates []layout) {
-	if len(candidates) == 0 {
-		return
-	}
-	s.mu.Lock()
-	wake := s.watchdogWake
-	s.mu.Unlock()
-	if wake == nil {
-		return
-	}
-	select {
-	case wake <- candidates:
-		return
-	default:
-	}
-	// Coalesce repeated status requests while preserving the freshest install
-	// snapshot for the sleeping observer.
-	select {
-	case <-wake:
-	default:
-	}
-	select {
-	case wake <- candidates:
-	default:
-	}
 }
 
 // statusRootStamp is intentionally only a stat: a changed /opt mtime means a
@@ -761,126 +717,6 @@ func (s *Service) Recheck() Status {
 	s.versionErrorFinger = ""
 	s.mu.Unlock()
 	return s.GetStatus()
-}
-
-// StatusPublisher is the event-bus operation required by the process
-// watchdog. Keeping this narrow lets the observer run without depending on
-// HTTP or app wiring.
-type StatusPublisher interface {
-	PublishInvalidated(resource events.Resource, reason string)
-}
-
-// StartWatchdog watches Zapret process state and publishes status
-// invalidations when it changes. Once installed, candidates are cached and
-// subsequent ticks inspect only /proc and the selected init helper's PID
-// files. While absent, it stats /opt only; it rediscovers on a root-stamp
-// change or a slow fallback interval for changes beneath an existing entry.
-func (s *Service) StartWatchdog(ctx context.Context, pub StatusPublisher) func() {
-	if pub == nil || s == nil {
-		return func() {}
-	}
-	ctx, cancel := context.WithCancel(ctx)
-	wake := make(chan []layout, 1)
-	s.mu.Lock()
-	s.watchdogWake = wake
-	s.mu.Unlock()
-	rootStamp := statusRootStamp()
-	candidates := discoverLayouts()
-	active := len(candidates) > 0
-	previous := string(StateNotInstalled)
-	if active {
-		initial, err := s.resolveLayoutStateWith(candidates, nfqProcessesHook())
-		previous = processObservation(initial, err)
-	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(watchdogInterval)
-		defer ticker.Stop()
-		lastDiscovery := s.currentTime()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case installedCandidates := <-wake:
-				if len(installedCandidates) == 0 {
-					continue
-				}
-				candidates = installedCandidates
-				current, currentErr := s.resolveLayoutStateWith(candidates, nfqProcessesHook())
-				observation := processObservation(current, currentErr)
-				wasActive := active
-				changed := !wasActive || observation != previous
-				active = true
-				rootStamp = statusRootStamp()
-				lastDiscovery = s.currentTime()
-				previous = observation
-				if changed {
-					pub.PublishInvalidated(events.ResourceRoutingZapretStatus, "watchdog")
-				}
-			case <-ticker.C:
-				if ctx.Err() != nil {
-					return
-				}
-				if !active {
-					currentStamp := statusRootStamp()
-					now := s.currentTime()
-					if currentStamp == rootStamp && now.Sub(lastDiscovery) < watchdogAbsentDiscoveryTTL {
-						continue
-					}
-					rootStamp = currentStamp
-					lastDiscovery = now
-					candidates = discoverLayouts()
-					if len(candidates) == 0 {
-						continue
-					}
-					current, currentErr := s.resolveLayoutStateWith(candidates, nfqProcessesHook())
-					previous = processObservation(current, currentErr)
-					active = true
-					pub.PublishInvalidated(events.ResourceRoutingZapretStatus, "watchdog")
-					continue
-				}
-				current, currentErr := s.resolveLayoutStateWith(candidates, nfqProcessesHook())
-				observation := processObservation(current, currentErr)
-				if observation == previous {
-					continue
-				}
-				previous = observation
-				pub.PublishInvalidated(events.ResourceRoutingZapretStatus, "watchdog")
-			}
-		}
-	}()
-	return func() {
-		cancel()
-		<-done
-		s.mu.Lock()
-		if s.watchdogWake == wake {
-			s.watchdogWake = nil
-		}
-		s.mu.Unlock()
-	}
-}
-
-func processObservation(r layoutResolution, err error) string {
-	if err != nil {
-		state := StateStopped
-		if errors.Is(err, ErrNotInstalled) {
-			state = StateNotInstalled
-		} else if r.anyOwned {
-			state = StateRunning
-		}
-		return fmt.Sprintf("%s|conflict=%t|%s", state, errors.Is(err, ErrConflict), err)
-	}
-	pids := managedDaemonPIDs(r.layout, r.selectedPIDs)
-	if len(pids) == 0 {
-		return string(StateStopped)
-	}
-	sort.Ints(pids)
-	pidIDs := make([]string, len(pids))
-	for i, pid := range pids {
-		pidIDs[i] = strconv.Itoa(pid)
-	}
-	return string(StateRunning) + "|" + canonicalBase(r.layout.base) + "|" + strings.Join(pidIDs, ",")
 }
 
 // nfqProc — найденный процесс демона zapret.

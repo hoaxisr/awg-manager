@@ -306,3 +306,25 @@ func TestStatusAndControlIgnoreIndependentScanProcesses(t *testing.T) {
 		t.Fatalf("post-stop status = %+v, want stopped while scanner remains", status)
 	}
 }
+
+func TestGetStatusDoesNotCutOpkgToVersionBudget(t *testing.T) {
+	setupResolverInstalls(t, "zapret-opkg")
+	var deadline time.Duration
+	svc := &Service{
+		now:        time.Now,
+		runVersion: func(context.Context, string) (string, error) { return "2.1.0", nil },
+		opkgListInstalled: func(ctx context.Context) (string, error) {
+			if d, ok := ctx.Deadline(); ok {
+				deadline = time.Until(d)
+			}
+			return "zapret2 - 2.1.0\n", nil
+		},
+	}
+	st := svc.GetStatus()
+	if st.Package != "zapret2" {
+		t.Fatalf("package = %q, want zapret2", st.Package)
+	}
+	if deadline != 0 && deadline <= versionProbeTimeout {
+		t.Fatalf("opkg got %v, which is the version probe budget, not opkgTimeout", deadline)
+	}
+}

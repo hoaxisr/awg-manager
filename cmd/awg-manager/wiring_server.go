@@ -688,7 +688,6 @@ func (a *app) setupShutdown() {
 
 	// Start the monitoring scheduler now that shutdownCtx exists.
 	a.monitoringService.Start(a.shutdownCtx)
-	a.startZapretWatchdog()
 	// Прокси-рантайм. Точка встраивания выбрана здесь, а не сразу за
 	// присвоением a.routerSvc: ingress-адаптер сервера действительно требует
 	// готового router-сервиса, но замыкания проводки держат ДОЛГОЖИВУЩИЙ
@@ -743,17 +742,4 @@ func (a *app) setupShutdown() {
 	a.srv.AddShutdownHook(a.trafficHistory.Stop)
 	a.srv.AddShutdownHook(func() { a.terminalManager.Shutdown(context.Background()) })
 
-}
-
-// startZapretWatchdog binds the external-process observer to the daemon's
-// shutdown context and waits for it on both normal exit and syscall.Exec.
-func (a *app) startZapretWatchdog() {
-	if a.zapretService == nil {
-		return
-	}
-	stop := a.zapretService.StartWatchdog(a.shutdownCtx, a.eventBus)
-	a.deferOnExit(stop)
-	if a.srv != nil {
-		a.srv.AddShutdownHook(stop)
-	}
 }
