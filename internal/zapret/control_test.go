@@ -197,3 +197,44 @@ func TestHostlistSaveLeavesIndependentScanRunning(t *testing.T) {
 		})
 	}
 }
+
+// z2k ставит S99zapret2 обычным файлом в /opt/etc/init.d с литеральным
+// ZAPRET_BASE и знает только restart_daemons (files/S99zapret2.new).
+func TestHostlistSaveRestartsZ2KStyleGlobalInit(t *testing.T) {
+	svc, base, state := controlFixture(t, true)
+	if err := os.Remove(filepath.Join(base, "init.d", "sysv", "zapret2")); err != nil {
+		t.Fatal(err)
+	}
+	globalDir := t.TempDir()
+	calls := filepath.Join(t.TempDir(), "actions")
+	script := fmt.Sprintf("#!/bin/sh\nZAPRET_BASE=%s\ncase \"$1\" in\nrestart_daemons) printf '%%s\\n' \"$1\" >> %q; printf 102 > %q;;\n*) exit 9;;\nesac\n", base, calls, state)
+	if err := os.WriteFile(filepath.Join(globalDir, "S99zapret2"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := "#!/bin/sh\nZAPRET_BASE=/opt/zapret-other\n"
+	if err := os.WriteFile(filepath.Join(globalDir, "S98zapret"), []byte(foreign), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initDirs = []string{globalDir}
+
+	path := filepath.Join(base, "ipset", "zapret-hosts-user.txt")
+	if _, _, err := svc.WriteHostlist(HostlistUser, "after.example\n", missingRevision(path)); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(calls)
+	if err != nil || string(body) != "restart_daemons\n" {
+		t.Fatalf("expected z2k daemon restart, got %q, %v", body, err)
+	}
+}
+
+func TestDaemonRestartVerb(t *testing.T) {
+	for body, want := range map[string]string{
+		"case \"$1\" in\nrestart-daemons|restart_daemons) x;;\nesac\n":        "restart-daemons",
+		"case \"$1\" in\n    restart_daemons)\n        x\n        ;;\nesac\n": "restart_daemons",
+		"case \"$1\" in\nrestart) x;;\nrestart_fw) y;;\nesac\n":               "",
+	} {
+		if got := daemonRestartVerb([]byte(body)); got != want {
+			t.Errorf("daemonRestartVerb(%q) = %q, want %q", body, got, want)
+		}
+	}
+}

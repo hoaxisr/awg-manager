@@ -37,7 +37,8 @@ var (
 // tests can model more than one daemon without launching one.
 var nfqProcessesHook = nfqProcesses
 
-// initDirs — каталоги init-скриптов. z2k ставит свой S99zapret2, KZM2 —
+// initDirs — каталоги init-скриптов. z2k кладёт свой S99zapret2 обычным
+// файлом (cp, не симлинк) в /opt/etc/init.d, KZM2 —
 // симлинк S90-zapret2 на штатный init.d/sysv/zapret2, «чистый» zapret2
 // кладёт sysv/zapret2 внутрь себя. Вместо угадывания имени перебираем
 // каталоги и ищем файл, в имени которого есть «zapret».
@@ -245,7 +246,9 @@ func findInitScript(base string) (dir, path string) {
 	base = filepath.Clean(base)
 	identity := canonicalBase(base)
 	// A global init entry is usable only when its resolved target belongs to
-	// this installation. Then search the selected base's own init directory.
+	// this installation or the script pins ZAPRET_BASE to it (z2k copies its
+	// S99zapret2 as a plain file). Then search the selected base's own init
+	// directory.
 	dirs := append([]string{}, initDirs...)
 	if base != "" {
 		dirs = append(dirs, filepath.Join(base, "init.d", "sysv"))
@@ -270,13 +273,28 @@ func findInitScript(base string) (dir, path string) {
 				continue
 			}
 			resolved, err := filepath.EvalSymlinks(full)
-			if err != nil || !pathWithin(identity, resolved) {
+			if err != nil || !pathWithin(identity, resolved) && !initPinsBase(resolved, identity) {
 				continue
 			}
 			return d, full
 		}
 	}
 	return "", ""
+}
+
+// initPinsBase reports whether an init script outside the installation
+// assigns ZAPRET_BASE to it literally. The script is read, never sourced: a
+// value with expansions does not identify an installation and is ignored.
+func initPinsBase(script, identity string) bool {
+	body, err := os.ReadFile(script)
+	if err != nil {
+		return false
+	}
+	base := strings.Trim(findAssignment(string(body), "ZAPRET_BASE"), "\"'")
+	if !filepath.IsAbs(base) || strings.ContainsAny(base, "$`") {
+		return false
+	}
+	return canonicalBase(base) == identity
 }
 
 func pathWithin(root, path string) bool {

@@ -331,6 +331,7 @@ func (s *Service) control(action, base string) error {
 		return fmt.Errorf("unknown action %q; available actions are start, stop, restart, and restart-daemons", action)
 	}
 
+	verb := action
 	if action == "restart-daemons" {
 		if len(r.selectedPIDs) == 0 {
 			return nil
@@ -340,7 +341,7 @@ func (s *Service) control(action, base string) error {
 			return err
 		}
 		// Never fall back to a full restart: it can reorder firewall rules.
-		if !daemonRestartCase.Match(body) {
+		if verb = daemonRestartVerb(body); verb == "" {
 			return fmt.Errorf("daemon-only restart is not supported by %s", l.init)
 		}
 	}
@@ -350,7 +351,7 @@ func (s *Service) control(action, base string) error {
 	if err := s.checkSelected(l); err != nil {
 		return err
 	}
-	result, err := sysexec.RunWithOptions(ctx, l.init, []string{action}, sysexec.Options{Timeout: controlTimeout})
+	result, err := sysexec.RunWithOptions(ctx, l.init, []string{verb}, sysexec.Options{Timeout: controlTimeout})
 	if err != nil {
 		// Init-скрипты zapret печатаютUsage в stderr и кодом 1 при
 		// неизвестном аргументе, а часть из них (stock sysv zapret2) вообще
@@ -407,7 +408,21 @@ func managedDaemonPIDs(l layout, live []int) []int {
 	return managed
 }
 
-var daemonRestartCase = regexp.MustCompile(`(?m)^\s*(?:restart-daemons(?:\|restart_daemons)?|restart_daemons\|restart-daemons)\s*\)`)
+var caseLabelRe = regexp.MustCompile(`(?m)^\s*([A-Za-z0-9_|-]+)\s*\)`)
+
+// daemonRestartVerb returns the daemon-only restart verb as the init script's
+// case statement spells it: stock zapret accepts restart-daemons, z2k only
+// restart_daemons. Empty means the script has no such verb.
+func daemonRestartVerb(body []byte) string {
+	for _, m := range caseLabelRe.FindAllSubmatch(body, -1) {
+		for _, label := range strings.Split(string(m[1]), "|") {
+			if label == "restart-daemons" || label == "restart_daemons" {
+				return label
+			}
+		}
+	}
+	return ""
+}
 
 // Init scripts can exit successfully without changing the daemon. Confirm the
 // selected installation's live processes twice before reporting success. A
