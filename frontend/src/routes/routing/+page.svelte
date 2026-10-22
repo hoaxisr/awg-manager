@@ -398,11 +398,12 @@
         // Любимую не сбрасываем, пока не пришло то, от чего зависит её
         // видимость: до загрузки настроек usageLevel = 'advanced' и
         // expert-вкладки скрыты; FakeIP ниже expert виден только по
-        // routingMode из настроек sing-box. Ждём лишь эти вкладки, чтобы
-        // упавшая загрузка не держала остальные вечно.
+        // routingMode из настроек sing-box. Ждём лишь эти вкладки и лишь
+        // пока настройки не отказали, чтобы упавшая загрузка не держала
+        // их вечно.
         if (activeTab === savedFavoriteTab && !tabsInclude(items, activeTab)) {
             const levelGated = activeTab === 'hrneo' || activeTab === 'geodata' || activeTab === 'singbox' || activeTab === 'fakeip';
-            if (levelGated && $settings === null) return;
+            if (levelGated && $settings === null && !$settingsUnavailable) return;
             if (activeTab === 'fakeip' && $singboxSettings === null) return;
         }
 
