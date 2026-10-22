@@ -5,9 +5,9 @@ import type {
   SingboxRouterRuleSet,
 } from '$lib/types';
 import { stringifyInlineRuleListForWizard } from '$lib/utils/singboxInlineRules';
-import type { OutboundCategory } from './addWizardStore';
+import type { OutboundCategory, WizardCompositeMode } from './addWizardStore';
 import { classifyRuleSimplicity, templateIdForExternalRuleSetTag } from './simpleRule';
-import { isCompositeOutboundType } from './wizardCompositeOutbound';
+import { isCompositeOutboundType, normalizeCompositeType } from './wizardCompositeOutbound';
 
 export type WizardEditMode = 'inline' | 'external';
 
@@ -18,6 +18,7 @@ export interface WizardPrefill {
   rulesList: string;
   outboundCategory: OutboundCategory;
   tunnelTags: string[];
+  compositeMode?: WizardCompositeMode;
   /** Inline rule_set для update in-place (inline-set). */
   existingInlineRuleSetTag?: string;
   /** Было inline-text — при сохранении конвертировать в новый custom-N. */
@@ -30,6 +31,7 @@ function outboundFromRule(
 ): {
   outboundCategory: OutboundCategory;
   tunnelTags: string[];
+  compositeMode?: WizardCompositeMode;
 } {
   if (rule.action === 'reject') {
     return { outboundCategory: 'block', tunnelTags: [] };
@@ -39,7 +41,12 @@ function outboundFromRule(
   }
   const ob = outbounds.find((o) => o.tag === rule.outbound);
   if (ob && isCompositeOutboundType(ob.type) && (ob.outbounds?.length ?? 0) > 0) {
-    return { outboundCategory: 'tunnel', tunnelTags: [...ob.outbounds!] };
+    const rawMode = normalizeCompositeType(ob.type);
+    return {
+      outboundCategory: 'tunnel',
+      tunnelTags: [...ob.outbounds!],
+      compositeMode: rawMode as WizardCompositeMode,
+    };
   }
   return { outboundCategory: 'tunnel', tunnelTags: [rule.outbound] };
 }

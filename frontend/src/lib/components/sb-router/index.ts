@@ -92,6 +92,7 @@ export {
   addWizardOpen,
   wizardOutboundCategory,
   wizardTunnelTags,
+  wizardCompositeMode,
   wizardCustom,
   wizardEditRuleIndex,
   wizardEditMode,
@@ -102,10 +103,12 @@ export {
   closeAddWizard,
   setOutboundCategory,
   setTunnelTags,
+  setWizardCompositeMode,
   toggleTunnelTag,
   updateCustomField,
   resetWizardState,
   type OutboundCategory,
+  type WizardCompositeMode,
   type CustomMatcherFields,
 } from './addWizardStore';
 export {

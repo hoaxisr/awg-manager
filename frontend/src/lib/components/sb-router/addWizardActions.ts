@@ -15,7 +15,7 @@ import { parseInlineRuleList, isInlineRuleListEmpty } from '$lib/utils/singboxIn
 import { expandGeoLinesInInput } from '$lib/utils/singboxInlineGeoExpand';
 import { submitTemplates, type SubmitResult } from './templatesActions';
 import type { TemplateGroup, TemplateItem } from './templatesData';
-import type { CustomMatcherFields, OutboundCategory } from './addWizardStore';
+import type { CustomMatcherFields, OutboundCategory, WizardCompositeMode } from './addWizardStore';
 import type { WizardEditMode } from './ruleWizardPrefill';
 import { singleRuleSetTagFromTemplateId } from './simpleRule';
 
@@ -29,15 +29,18 @@ export class ValidationError extends Error {
 export async function resolveTunnelOutbound(
   tunnelTags: string[],
   existingOutbounds: SingboxRouterOutbound[],
+  compositeMode?: WizardCompositeMode,
 ): Promise<string> {
   if (tunnelTags.length === 0) throw new ValidationError(m.sb_router_wizard_err_pick_tunnel());
   if (tunnelTags.length === 1) return tunnelTags[0];
 
-  const existing = findMatchingComposite(existingOutbounds, tunnelTags);
+  const existing = findMatchingComposite(existingOutbounds, tunnelTags, compositeMode)
+    ?? (!compositeMode ? findMatchingComposite(existingOutbounds, tunnelTags) : undefined);
   if (existing) return existing.tag;
 
+  const mode = compositeMode || 'urltest';
   const tag = nextCustomCompositeTag(existingOutbounds.map((o) => o.tag));
-  await api.singboxRouterAddOutbound(buildWizardCompositeOutbound(tag, tunnelTags));
+  await api.singboxRouterAddOutbound(buildWizardCompositeOutbound(tag, tunnelTags, mode));
   return tag;
 }
 
@@ -45,9 +48,10 @@ export async function resolveOutbound(
   category: OutboundCategory,
   tunnelTags: string[],
   existingOutbounds: SingboxRouterOutbound[] = [],
+  compositeMode?: WizardCompositeMode,
 ): Promise<string> {
   if (category === 'tunnel') {
-    return resolveTunnelOutbound(tunnelTags, existingOutbounds);
+    return resolveTunnelOutbound(tunnelTags, existingOutbounds, compositeMode);
   }
   if (category === 'direct') return 'direct';
   return 'block';
@@ -79,6 +83,7 @@ export interface SubmitWizardArgs {
   customFields: CustomMatcherFields;
   outboundCategory: OutboundCategory;
   tunnelTags: string[];
+  compositeMode?: WizardCompositeMode;
   groups: TemplateGroup[];
   existingRuleSetTags: string[];
   existingOutbounds: SingboxRouterOutbound[];
@@ -89,6 +94,7 @@ export async function submitWizard(args: SubmitWizardArgs): Promise<SubmitResult
     args.outboundCategory,
     args.tunnelTags,
     args.existingOutbounds,
+    args.compositeMode,
   );
   const hasCustom = !isInlineRuleListEmpty(args.customFields.rulesList);
 
@@ -162,6 +168,7 @@ export interface SubmitWizardEditArgs {
   customFields: CustomMatcherFields;
   outboundCategory: OutboundCategory;
   tunnelTags: string[];
+  compositeMode?: WizardCompositeMode;
   groups: TemplateGroup[];
   presets: SingboxRouterPreset[];
   existingRuleSetTags: string[];
@@ -176,6 +183,7 @@ export async function submitWizardEdit(args: SubmitWizardEditArgs): Promise<void
     args.outboundCategory,
     args.tunnelTags,
     args.existingOutbounds,
+    args.compositeMode,
   );
 
   if (args.editMode === 'external') {
