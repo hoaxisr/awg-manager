@@ -10,7 +10,6 @@
 		type SettingsSectionIconMode,
 	} from '$lib/stores/settingsSectionIconMode';
 	import { serviceLetterIcons } from '$lib/stores/serviceLetterIcons';
-	import { countryFlagEmojis } from '$lib/stores/countryFlagEmojis';
 	import { showSummary } from '$lib/stores/showSummary';
 	import { tunnelDashboardMode } from '$lib/stores/tunnelDashboardMode';
 	import { usageLevel } from '$lib/stores/settings';
@@ -280,18 +279,6 @@
 			onchange={(enabled) => serviceLetterIcons.setEnabled(enabled)}
 		/>
 	</div>
-	<div class="setting-row country-flags-row">
-		<div class="flex flex-col gap-1">
-			<span class="font-medium">{m.settings_country_flags_title()}</span>
-			<span class="setting-description">
-				{m.settings_country_flags_description()}
-			</span>
-		</div>
-		<Toggle
-			checked={$countryFlagEmojis}
-			onchange={(enabled) => countryFlagEmojis.setEnabled(enabled)}
-		/>
-	</div>
 	</div>
 </div>
 
@@ -299,8 +286,7 @@
 	.compact-layout-row,
 	.dashboard-mode-row,
 	.summary-row,
-	.letter-icons-row,
-	.country-flags-row {
+	.letter-icons-row {
 		align-items: center;
 	}
 
@@ -308,8 +294,7 @@
 		.compact-layout-row,
 		.dashboard-mode-row,
 		.summary-row,
-		.letter-icons-row,
-		.country-flags-row {
+		.letter-icons-row {
 			flex-direction: row;
 			align-items: center;
 			flex-wrap: nowrap;
@@ -319,8 +304,7 @@
 		.compact-layout-row > *:first-child,
 		.dashboard-mode-row > *:first-child,
 		.summary-row > *:first-child,
-		.letter-icons-row > *:first-child,
-		.country-flags-row > *:first-child {
+		.letter-icons-row > *:first-child {
 			flex: 1 1 auto;
 			min-width: 0;
 		}

@@ -199,8 +199,6 @@
 	"settings_summary_description": "Плашка статистики (KPI) наверху страниц туннелей и серверов.",
 	"settings_letter_icons_title": "Буквенные иконки",
 	"settings_letter_icons_description": "Цветная плитка с первой буквой названия для списков маршрутизации (если не был найден логотип).",
-	"settings_country_flags_title": "Флаги стран",
-	"settings_country_flags_description": "Отображение графических эмодзи флагов стран (вместо буквенных кодов вроде «LV», «NL», «FI» в Windows).",
 	"settings_relay_title": "Релей обфускатора",
 	"settings_relay_phobos_label": "Phobos в ядре",
 	"settings_relay_phobos_description": "Туннели через обфускатор Phobos работают модулем ядра awgm_relay — меньше нагрузка на процессор. Выключите, если модуль ведёт себя нестабильно: туннели перезапустятся на userspace-процессе.",

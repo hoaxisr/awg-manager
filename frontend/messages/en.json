@@ -193,8 +193,6 @@
 	"settings_summary_description": "The statistics (KPI) strip at the top of the tunnels and servers pages.",
 	"settings_letter_icons_title": "Letter icons",
 	"settings_letter_icons_description": "A colored tile with the first letter of the name for routing lists (when no logo was found).",
-	"settings_country_flags_title": "Country flags",
-	"settings_country_flags_description": "Display color country flag emojis (instead of letter codes like \"LV\", \"NL\", \"FI\" in Windows).",
 	"settings_relay_title": "Obfuscator relay",
 	"settings_relay_phobos_label": "Phobos in kernel",
 	"settings_relay_phobos_description": "Tunnels through the Phobos obfuscator run on the awgm_relay kernel module, which reduces CPU load. Turn it off if the module is unstable: tunnels will restart on a userspace process.",
