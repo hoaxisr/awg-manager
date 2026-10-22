@@ -162,40 +162,50 @@ func TestParseZapretPackagesEmptyOutput(t *testing.T) {
 }
 
 func TestServicePackagesTTLasymmetric(t *testing.T) {
-	setupInstall(t)
+	now := time.Now()
+	probe := func(svc *Service) map[string]string {
+		svc.installedPackages()
+		svc.probes.Wait()
+		return svc.installedPackages()
+	}
 
-	var calls int
+	// Наличие меняется редко, а list-installed стоит около секунды на MIPS:
+	// через 11 минут пакет ещё в кэше.
+	var present int
 	svc := &Service{
-		now: time.Now,
+		now: func() time.Time { return now },
 		opkgListInstalled: func(context.Context) (string, error) {
-			calls++
+			present++
 			return "zapret22 - 2.0.1\n", nil
 		},
 	}
-	// С записью в кэше повторный вызов не должен дёргать opkg: наличие
-	// zapret меняется редко, а list-installed стоит около секунды на MIPS.
-	for range 3 {
-		if got := svc.listInstalledPackages(context.Background()); got["zapret22"] != "2.0.1" {
-			t.Fatalf("пакет не найден: %v", got)
-		}
+	if got := probe(svc); got["zapret22"] != "2.0.1" {
+		t.Fatalf("пакет не найден: %v", got)
 	}
-	if calls != 1 {
-		t.Errorf("opkg вызван %d раз, ожидался 1 (кэш при наличии)", calls)
+	now = now.Add(packagesTTLAbsent + time.Minute)
+	probe(svc)
+	if present != 1 {
+		t.Errorf("opkg вызван %d раз, ожидался 1 (кэш при наличии)", present)
 	}
 
-	// Отрицательный сценарий: кэш на 10 минут, и повторный запрос
-	// переспрашивает уже по истечении.
+	// Отсутствие переспрашиваем через 10 минут, но не раньше.
+	var absentCalls int
 	absent := &Service{
-		now: func() time.Time { return time.Now().Add(packagesTTLAbsent + time.Minute) },
+		now: func() time.Time { return now },
 		opkgListInstalled: func(context.Context) (string, error) {
-			calls++
+			absentCalls++
 			return "", nil
 		},
 	}
-	_ = absent.listInstalledPackages(context.Background())
-	_ = absent.listInstalledPackages(context.Background())
-	if calls != 2 {
-		t.Errorf("opkg вызван %d раз, ожидался 2 (отсутствие переспрашиваем)", calls)
+	probe(absent)
+	probe(absent)
+	if absentCalls != 1 {
+		t.Errorf("opkg вызван %d раз до истечения, ожидался 1", absentCalls)
+	}
+	now = now.Add(packagesTTLAbsent + time.Minute)
+	probe(absent)
+	if absentCalls != 2 {
+		t.Errorf("opkg вызван %d раз, ожидался 2 (отсутствие переспрашиваем)", absentCalls)
 	}
 }
 
@@ -210,11 +220,13 @@ func TestServiceRecheckInvalidatesCaches(t *testing.T) {
 		},
 		runVersion: func(context.Context, string) (string, error) { return "2.1.0", nil },
 	}
-	svc.opkgListInstalled(context.Background())
+	svc.GetStatus()
+	svc.probes.Wait()
 	before := calls
 	svc.Recheck()
+	svc.probes.Wait()
 	if calls == before {
-		t.Error("Recheck не сбросил кэш пакетов — кнопка «Обновить» не даст эффекта")
+		t.Error("Recheck не сбросил кэш пакетов — после управления демоном пакет не перечитается")
 	}
 }
 

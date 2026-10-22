@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/events"
 )
 
 func TestCountHostlistStreamsLongAndCompressedFiles(t *testing.T) {
@@ -170,92 +172,6 @@ func TestGetStrategiesWarningsUseHydratedListsAndFlavor(t *testing.T) {
 	}
 }
 
-func TestPackageProbeDoesNotHoldServiceMutex(t *testing.T) {
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	var calls atomic.Int32
-	svc := &Service{
-		now: time.Now,
-		opkgListInstalled: func(context.Context) (string, error) {
-			calls.Add(1)
-			close(entered)
-			<-release
-			return "", errors.New("probe failed")
-		},
-	}
-	done := make(chan struct{})
-	go func() {
-		svc.listInstalledPackages(context.Background())
-		close(done)
-	}()
-	<-entered
-	locked := make(chan struct{})
-	go func() {
-		svc.mu.Lock()
-		svc.mu.Unlock()
-		close(locked)
-	}()
-	select {
-	case <-locked:
-	case <-time.After(time.Second):
-		t.Fatal("package probe held the service mutex")
-	}
-	if got := svc.listInstalledPackages(context.Background()); len(got) != 0 {
-		t.Fatalf("unexpected package snapshot: %v", got)
-	}
-	if calls.Load() != 1 {
-		t.Fatalf("concurrent package probe calls = %d, want 1", calls.Load())
-	}
-	close(release)
-	<-done
-	if !svc.packagesAt.IsZero() {
-		t.Fatal("failed opkg probe was cached as package absence")
-	}
-}
-
-func TestVersionProbeDoesNotHoldServiceMutexAndStartsLazily(t *testing.T) {
-	base := setupInstall(t)
-	binary := filepath.Join(base, "nfq2", "nfqws2")
-	marker := filepath.Join(filepath.Dir(binary), "version-probed")
-	script := "#!/bin/sh\ntouch \"$(dirname \"$0\")/version-probed\"\nprintf 'version 2.1.0\\n'\n"
-	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	_ = NewService(t.TempDir(), nil)
-	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("NewService synchronously ran --version: stat err=%v", err)
-	}
-
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	svc := &Service{
-		now: time.Now,
-		runVersion: func(context.Context, string) (string, error) {
-			close(entered)
-			<-release
-			return "2.1.0", nil
-		},
-	}
-	versionDone := make(chan string, 1)
-	go func() { versionDone <- svc.getVersionCached(binary) }()
-	<-entered
-	locked := make(chan struct{})
-	go func() {
-		svc.mu.Lock()
-		svc.mu.Unlock()
-		close(locked)
-	}()
-	select {
-	case <-locked:
-	case <-time.After(time.Second):
-		t.Fatal("version probe held the service mutex")
-	}
-	close(release)
-	if got := <-versionDone; got != "2.1.0" {
-		t.Fatalf("version = %q, want 2.1.0", got)
-	}
-}
-
 func TestStatusAndControlIgnoreIndependentScanProcesses(t *testing.T) {
 	base := setupInstall(t)
 	pidDir := filepath.Join(t.TempDir(), "pids")
@@ -307,28 +223,6 @@ func TestStatusAndControlIgnoreIndependentScanProcesses(t *testing.T) {
 	}
 }
 
-func TestGetStatusDoesNotCutOpkgToVersionBudget(t *testing.T) {
-	setupResolverInstalls(t, "zapret-opkg")
-	var deadline time.Duration
-	svc := &Service{
-		now:        time.Now,
-		runVersion: func(context.Context, string) (string, error) { return "2.1.0", nil },
-		opkgListInstalled: func(ctx context.Context) (string, error) {
-			if d, ok := ctx.Deadline(); ok {
-				deadline = time.Until(d)
-			}
-			return "zapret2 - 2.1.0\n", nil
-		},
-	}
-	st := svc.GetStatus()
-	if st.Package != "zapret2" {
-		t.Fatalf("package = %q, want zapret2", st.Package)
-	}
-	if deadline != 0 && deadline <= versionProbeTimeout {
-		t.Fatalf("opkg got %v, which is the version probe budget, not opkgTimeout", deadline)
-	}
-}
-
 func TestPlaceholderExcludeIsNotAnIncludeList(t *testing.T) {
 	base := setupInstall(t)
 	ipset := filepath.Join(base, "ipset")
@@ -366,5 +260,118 @@ func TestSplitProfilesKeepsLongLines(t *testing.T) {
 	got := splitProfiles(long + " --new\n--filter-udp=443 --lua-desync=fake\n")
 	if len(got) != 2 || got[0] != long {
 		t.Fatalf("long profile lost: %d profiles", len(got))
+	}
+}
+
+func TestPackageProbeRunsOnceInBackgroundAndKeepsErrorsApart(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	svc := &Service{
+		now: time.Now,
+		opkgListInstalled: func(context.Context) (string, error) {
+			calls.Add(1)
+			close(entered)
+			<-release
+			return "", errors.New("probe failed")
+		},
+	}
+	done := make(chan map[string]string, 1)
+	go func() { done <- svc.installedPackages() }()
+	select {
+	case got := <-done:
+		if len(got) != 0 {
+			t.Fatalf("unexpected package snapshot: %v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("status read waited for opkg")
+	}
+	<-entered
+	svc.installedPackages()
+	if calls.Load() != 1 {
+		t.Fatalf("concurrent package probe calls = %d, want 1", calls.Load())
+	}
+	close(release)
+	svc.probes.Wait()
+	if !svc.packages.at.IsZero() || svc.packages.err == "" {
+		t.Fatalf("failed opkg probe cached as absence: %+v", svc.packages)
+	}
+}
+
+func TestVersionProbeRunsInBackgroundAndStartsLazily(t *testing.T) {
+	base := setupInstall(t)
+	binary := filepath.Join(base, "nfq2", "nfqws2")
+	marker := filepath.Join(filepath.Dir(binary), "version-probed")
+	script := "#!/bin/sh\ntouch \"$(dirname \"$0\")/version-probed\"\nprintf 'version 2.1.0\\n'\n"
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = NewService(t.TempDir(), nil)
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("NewService ran --version: stat err=%v", err)
+	}
+
+	release := make(chan struct{})
+	svc := &Service{
+		now: time.Now,
+		runVersion: func(context.Context, string) (string, error) {
+			<-release
+			return "2.1.0", nil
+		},
+	}
+	if got := svc.cachedVersion(binary); got != "" {
+		t.Fatalf("version before probe = %q, want empty", got)
+	}
+	close(release)
+	svc.probes.Wait()
+	if got := svc.cachedVersion(binary); got != "2.1.0" {
+		t.Fatalf("version after probe = %q, want 2.1.0", got)
+	}
+}
+
+// GetStatus на слабом MIPS не должен ждать opkg (секунды) и --version:
+// он отдаёт кэш, а свежий ответ приходит инвалидацией статуса.
+func TestGetStatusDoesNotWaitForProbesAndPublishesTheirResult(t *testing.T) {
+	setupResolverInstalls(t, "zapret-probes")
+	release := make(chan struct{})
+	svc := &Service{
+		now: time.Now,
+		runVersion: func(context.Context, string) (string, error) {
+			<-release
+			return "2.1.0", nil
+		},
+		opkgListInstalled: func(context.Context) (string, error) {
+			<-release
+			return "zapret2 - 2.1.0\n", nil
+		},
+	}
+	bus := events.NewBus()
+	_, ch, unsubscribe := bus.Subscribe()
+	defer unsubscribe()
+	svc.SetEventBus(bus)
+
+	got := make(chan Status, 1)
+	go func() { got <- svc.GetStatus() }()
+	select {
+	case st := <-got:
+		if st.Package != "" || st.Version != "" {
+			t.Fatalf("status before probes = %+v", st)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("GetStatus waited for external probes")
+	}
+	close(release)
+	svc.probes.Wait()
+	select {
+	case ev := <-ch:
+		inv, ok := ev.Data.(events.ResourceInvalidatedEvent)
+		if !ok || inv.Resource != events.ResourceRoutingZapretStatus {
+			t.Fatalf("unexpected event %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("probe result was not published")
+	}
+	if st := svc.GetStatus(); st.Package != "zapret2" || st.Version != "2.1.0" {
+		t.Fatalf("status after probes = %+v", st)
 	}
 }

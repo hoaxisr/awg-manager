@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
@@ -22,9 +23,9 @@ func defaultRunVersion(ctx context.Context, binary string) (string, error) {
 			}
 			break
 		}
-		ctxRun, cancel := context.WithTimeout(ctx, versionProbeTimeout)
-		result, err := sysexec.RunWithOptions(ctxRun, binary, args, sysexec.Options{Timeout: versionProbeTimeout})
-		cancel()
+		// Бюджет на каждую попытку свой: повисший --version не должен
+		// съесть время запасного -v.
+		result, err := sysexec.RunWithOptions(ctx, binary, args, sysexec.Options{Timeout: versionProbeTimeout})
 		if err != nil {
 			lastErr = sysexec.FormatError(result, err)
 			if ctx.Err() != nil {
@@ -91,14 +92,16 @@ func (c *versionCache) expire() {
 	c.err, c.errAt, c.errFinger = "", time.Time{}, ""
 }
 
-// getVersionCached returns the cached daemon version and probes outside mu.
-func (s *Service) getVersionCached(binary string) string {
+// cachedVersion отдаёт кэш версии демона и, если он устарел, запускает
+// пробу в фоне: статус её не ждёт, свежий ответ приходит инвалидацией
+// routing.zapretStatus.
+func (s *Service) cachedVersion(binary string) string {
 	finger := binaryFingerprint(binary)
 	if finger == "" {
 		return ""
 	}
-
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	c := &s.version
 	if c.finger != "" && c.finger != finger {
 		*c = versionCache{inFlight: c.inFlight}
@@ -106,29 +109,36 @@ func (s *Service) getVersionCached(binary string) string {
 	now := s.currentTime()
 	fresh := c.finger == finger && !c.at.IsZero() && now.Sub(c.at) < versionTTL
 	failedRecently := c.errFinger == finger && !c.errAt.IsZero() && now.Sub(c.errAt) >= 0 && now.Sub(c.errAt) < versionRetryTTL
-	if fresh || failedRecently || c.inFlight {
-		version := c.value
-		s.mu.Unlock()
-		return version
+	if !fresh && !failedRecently && !c.inFlight {
+		c.inFlight = true
+		s.probes.Add(1)
+		go s.probeVersion(binary, finger)
 	}
-	c.inFlight = true
-	s.mu.Unlock()
+	return c.value
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), versionProbeTimeout)
-	v, err := s.runVersion(ctx, binary)
-	cancel()
-	if err == nil && strings.TrimSpace(v) == "" {
+func (s *Service) probeVersion(binary, finger string) {
+	defer s.probes.Done()
+	v, err := s.runVersion(context.Background(), binary)
+	v = strings.TrimSpace(v)
+	if err == nil && v == "" {
 		err = errors.New("version probe returned no version")
 	}
-
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	c := &s.version
 	c.inFlight = false
+	var changed bool
 	if err != nil {
-		c.err, c.errAt, c.errFinger = fmt.Sprintf("zapret version: %v", err), s.currentTime(), finger
-		return c.value
+		msg := fmt.Sprintf("zapret version: %v", err)
+		changed = c.err != msg
+		c.err, c.errAt, c.errFinger = msg, s.currentTime(), finger
+	} else {
+		changed = c.err != "" || c.value != v
+		*c = versionCache{value: v, at: s.currentTime(), finger: finger}
 	}
-	v = strings.TrimSpace(v)
-	*c = versionCache{value: v, at: s.currentTime(), finger: finger}
-	return v
+	pub := s.pub
+	s.mu.Unlock()
+	if changed {
+		events.PublishInvalidatedTo(pub, events.ResourceRoutingZapretStatus, "zapret-version")
+	}
 }

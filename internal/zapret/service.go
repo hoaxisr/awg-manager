@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
 
@@ -67,24 +68,17 @@ const (
 	StateRunning      ProcessState = "running"
 )
 
-// Времена. Обнаружение разделено на два яруса по стоимости, и это
-// единственное место, где нужны числа:
-//
-//   - resolveLayoutState reads the installation tree and /proc for each
-//     request, so selection always follows current process ownership.
-//   - listInstalledPackages — opkg list-installed, около секунды на
-//     MIPS. Кэшируется. Симметричный TTL здесь был бы ошибкой:
-//     отсутствие zapret мы хотим узнать быстро (пользователь только что
-//     поставил пакет и ждёт, что он появится), а наличие — редко
-//     меняется. Это ровно та асимметрия, что применена в
-//     singbox/router/bypassset для ipset.
+// Времена внешних проб. Статус их не ждёт: выбор установки и /proc читаются
+// на каждый запрос, а opkg и --version идут в фоне и кэшируются (см.
+// packagesCache.due и cachedVersion).
 const (
 	packagesTTLPresent = 24 * time.Hour
 	packagesTTLAbsent  = 10 * time.Minute
+	packagesRetryTTL   = 30 * time.Second
 	versionTTL         = 6 * time.Hour
 	versionRetryTTL    = 30 * time.Second
-	// versionProbeTimeout ограничивает --version: демон печатает версию
-	// на старте, но если что-то пойдёт не так, не будем висеть.
+	// versionProbeTimeout — на каждую попытку --version / -v: демон
+	// печатает версию на старте, но если что-то пойдёт не так, не висим.
 	versionProbeTimeout = 3 * time.Second
 	opkgTimeout         = 30 * time.Second
 )
@@ -102,6 +96,10 @@ type Service struct {
 	runVersion func(ctx context.Context, binary string) (string, error)
 	// now — seam для тестов TTL.
 	now func() time.Time
+	// pub получает инвалидацию статуса, когда фоновая проба принесла новое.
+	pub events.Publisher
+	// probes — фоновые пробы opkg и --version; тесты ждут их завершения.
+	probes sync.WaitGroup
 
 	mu sync.Mutex
 	// opMu serializes config, list, and service mutations.
@@ -109,16 +107,9 @@ type Service struct {
 
 	lastRunningLoaded bool
 	lastRunningBase   string
-	// packagesCached хранит пары имя→версия целиком: терять версию нельзя,
-	// она идёт в карточку установки.
-	packagesCached  map[string]string
-	packagesAt      time.Time
-	packagesErrorAt time.Time
-	probeInFlight   bool
 
-	version versionCache
-
-	lastError string
+	packages packagesCache
+	version  versionCache
 }
 
 // NewService создаёт сервис. appLogger может быть nil — ScopedLogger
@@ -134,30 +125,37 @@ func NewService(dataDir string, appLogger logging.AppLogger) *Service {
 	return s
 }
 
+// SetEventBus подключает шину: по ней фоновые пробы сообщают, что статус
+// изменился.
+func (s *Service) SetEventBus(pub events.Publisher) {
+	s.mu.Lock()
+	s.pub = pub
+	s.mu.Unlock()
+}
+
 // ErrConflict is returned when the target changed or selection would be
 // ambiguous or unsafe. Callers should reread state before retrying.
 var ErrConflict = errors.New("Zapret state changed; reload before retrying")
 
-// GetStatus возвращает актуальный снимок. Без установки это один ReadDir
-// /opt; с установкой — ещё обход /proc и кэши версии и пакетов.
+// GetStatus возвращает актуальный снимок и внешних процессов не ждёт. Без
+// установки это один ReadDir /opt; с установкой — ещё обход /proc, а версия
+// и пакет берутся из кэша, который обновляют фоновые пробы.
 func (s *Service) GetStatus() Status {
 	r, resolveErr := s.resolveLayoutState()
 	if resolveErr != nil {
 		if errors.Is(resolveErr, ErrNotInstalled) {
 			return Status{ProcessState: StateNotInstalled, LastError: s.errorSnapshot()}
 		}
+		// Конфликт возможен только при найденных установках.
 		st := Status{
-			Installed: len(r.candidates) > 0,
-			Running:   r.anyOwned,
-			Conflict:  true,
-			LastError: resolveErr.Error(),
+			Installed:    true,
+			Running:      r.anyOwned,
+			Conflict:     true,
+			LastError:    resolveErr.Error(),
+			ProcessState: StateStopped,
 		}
 		if st.Running {
 			st.ProcessState = StateRunning
-		} else if st.Installed {
-			st.ProcessState = StateStopped
-		} else {
-			st.ProcessState = StateNotInstalled
 		}
 		for _, candidate := range r.candidates {
 			st.OtherInstalls = append(st.OtherInstalls, candidate.base)
@@ -194,10 +192,10 @@ func (s *Service) GetStatus() Status {
 	}
 
 	if l.binary != "" {
-		st.Version = s.getVersionCached(l.binary)
+		st.Version = s.cachedVersion(l.binary)
 	}
 
-	if pkgs := s.listInstalledPackages(context.Background()); len(pkgs) > 0 {
+	if pkgs := s.installedPackages(); len(pkgs) > 0 {
 		// Показываем первый пакет по имени как основной, остальные — в
 		// отдельном поле не влезает; версии достаточно для диагностики.
 		st.Package = sortedKeys(pkgs)[0]
@@ -223,12 +221,12 @@ func (s *Service) errorSnapshot() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.version.err == "" {
-		return s.lastError
+		return s.packages.err
 	}
-	if s.lastError == "" {
+	if s.packages.err == "" {
 		return s.version.err
 	}
-	return s.lastError + "; " + s.version.err
+	return s.packages.err + "; " + s.version.err
 }
 
 func (s *Service) currentTime() time.Time {
@@ -238,12 +236,11 @@ func (s *Service) currentTime() time.Time {
 	return time.Now()
 }
 
-// Recheck сбрасывает кэш и перечитывает состояние — для кнопки
-// «Обновить» и после действий пользователя.
+// Recheck сбрасывает кэши проб и перечитывает состояние — после управления
+// демоном: версия и пакет могли смениться.
 func (s *Service) Recheck() Status {
 	s.mu.Lock()
-	s.packagesAt = time.Time{}
-	s.packagesErrorAt = time.Time{}
+	s.packages.expire()
 	s.version.expire()
 	s.mu.Unlock()
 	return s.GetStatus()

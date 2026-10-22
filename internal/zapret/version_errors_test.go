@@ -50,11 +50,15 @@ func TestGetVersionCachedRetriesAfterEmptyProbeWithoutCachingItAsVersion(t *test
 			return "2.1.0", nil
 		},
 	}
-	if got := svc.getVersionCached(binary); got != "" {
+	svc.cachedVersion(binary)
+	svc.probes.Wait()
+	if got := svc.cachedVersion(binary); got != "" {
 		t.Fatalf("first version = %q, want empty after empty probe", got)
 	}
 	now = now.Add(time.Minute)
-	if got := svc.getVersionCached(binary); got != "2.1.0" {
+	svc.cachedVersion(binary)
+	svc.probes.Wait()
+	if got := svc.cachedVersion(binary); got != "2.1.0" {
 		t.Fatalf("version after retry = %q, want 2.1.0", got)
 	}
 	if calls != 2 {
@@ -69,8 +73,22 @@ func TestGetStatusReportsVersionProbeFailureAfterPackageProbeSucceeds(t *testing
 		return "", errors.New("probe timed out")
 	}
 	svc.opkgListInstalled = func(context.Context) (string, error) { return "", nil }
+	svc.GetStatus()
+	svc.probes.Wait()
 	status := svc.GetStatus()
 	if !strings.Contains(status.LastError, "zapret version: probe timed out") {
 		t.Fatalf("LastError = %q, want version-probe failure", status.LastError)
+	}
+}
+
+func TestDefaultRunVersionFallsBackWhenVersionFlagHangs(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "nfqws2")
+	script := "#!/bin/sh\n[ \"$1\" = --version ] && exec /bin/sleep 10\nprintf 'version 2.1.0\\n'\n"
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := defaultRunVersion(context.Background(), binary)
+	if err != nil || got != "2.1.0" {
+		t.Fatalf("version = %q, %v; want -v fallback after hung --version", got, err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	osexec "os/exec"
 	"regexp"
@@ -11,12 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
 func defaultOpkgListInstalled(ctx context.Context) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, opkgTimeout)
-	defer cancel()
 	result, err := sysexec.RunWithOptions(ctx, "/opt/bin/opkg", []string{"list-installed"}, sysexec.Options{Timeout: opkgTimeout})
 	if err != nil {
 		// A missing opkg binary means the router has no Entware package
@@ -30,7 +30,7 @@ func defaultOpkgListInstalled(ctx context.Context) (string, error) {
 	return result.Stdout, nil
 }
 
-// zapretPackageKeyword — по которему ищем пакет. Пользователь ставит
+// zapretPackageKeyword — по которому ищем пакет. Пользователь ставит
 // zapret22 / zapret2 / zapret / zapret-gui-keenetic; в репозитории
 // Entware такого пакета нет вовсе (проверено по Packages.gz), поэтому
 // сравнение по точному имени здесь бесполезно — ищем по подстроке.
@@ -39,67 +39,74 @@ const zapretPackageKeyword = "zapret"
 // installedLineRe разбирает строку «имя - версия» из opkg list-installed.
 var installedLineRe = regexp.MustCompile(`^(\S+)\s+-\s+(\S+)`)
 
-// listInstalledPackages отдаёт пары (имя, версия) zapret-пакетов.
-//
-// Кэш: TTL 24 часа при наличии, 10 минут при отсутствии. Промах по
-// отрицательному ответу стоит пользователю 10 минут ожидания перед
-// появлением установленного пакета; промах по положительному —
-// сутки устаревания версии, что для anti-DPI некритично.
-func (s *Service) listInstalledPackages(ctx context.Context) map[string]string {
-	s.mu.Lock()
-	ttl := packagesTTLAbsent
-	if len(s.packagesCached) > 0 {
-		ttl = packagesTTLPresent
-	}
-	now := s.currentTime()
-	if !s.packagesAt.IsZero() && now.Sub(s.packagesAt) < ttl {
-		cached := s.cachedPackagesLocked()
-		s.mu.Unlock()
-		return cached
-	}
-	// A failed command has a short retry delay, separate from the absence
-	// cache, so a broken opkg cannot turn into a cached "not installed".
-	if !s.packagesErrorAt.IsZero() && now.Sub(s.packagesErrorAt) < 30*time.Second {
-		cached := s.cachedPackagesLocked()
-		s.mu.Unlock()
-		return cached
-	}
-	// Keep the previous snapshot while one caller probes opkg. The command
-	// runs without mu so other status and mutation requests can proceed.
-	if s.probeInFlight {
-		cached := s.cachedPackagesLocked()
-		s.mu.Unlock()
-		return cached
-	}
-	s.probeInFlight = true
-	s.mu.Unlock()
-
-	out, err := s.opkgListInstalled(ctx)
-	s.mu.Lock()
-	s.probeInFlight = false
-	if err != nil {
-		s.lastError = fmt.Sprintf("opkg list-installed: %v", err)
-		s.packagesErrorAt = s.currentTime()
-		cached := s.cachedPackagesLocked()
-		s.mu.Unlock()
-		return cached
-	}
-
-	found := parseZapretPackages(out)
-	s.packagesCached = found
-	s.packagesAt = s.currentTime()
-	s.packagesErrorAt = time.Time{}
-	s.lastError = ""
-	s.mu.Unlock()
-	return found
+// packagesCache — последний ответ opkg и последняя неудачная проба.
+// Защищается Service.mu. found хранит пары имя→версия целиком: версия идёт
+// в карточку установки.
+type packagesCache struct {
+	found    map[string]string
+	at       time.Time
+	err      string
+	errAt    time.Time
+	inFlight bool
 }
 
-func (s *Service) cachedPackagesLocked() map[string]string {
-	out := make(map[string]string, len(s.packagesCached))
-	for k, v := range s.packagesCached {
-		out[k] = v
+// due сообщает, пора ли снова спрашивать opkg. TTL несимметричный:
+// появление пакета хотим увидеть быстро (10 минут), а наличие меняется
+// редко (сутки) — та же асимметрия, что в singbox/router/bypassset для
+// ipset. Ошибка повторяется через packagesRetryTTL и никогда не
+// кэшируется как «пакета нет».
+func (c *packagesCache) due(now time.Time) bool {
+	if c.inFlight {
+		return false
 	}
-	return out
+	ttl := packagesTTLAbsent
+	if len(c.found) > 0 {
+		ttl = packagesTTLPresent
+	}
+	if !c.at.IsZero() && now.Sub(c.at) < ttl {
+		return false
+	}
+	return c.errAt.IsZero() || now.Sub(c.errAt) >= packagesRetryTTL
+}
+
+// expire заставляет следующее чтение статуса спросить opkg заново.
+func (c *packagesCache) expire() { c.at, c.errAt = time.Time{}, time.Time{} }
+
+// installedPackages отдаёт кэш zapret-пакетов и, если он устарел, запускает
+// opkg в фоне: статус его не ждёт (на MIPS это секунды), а свежий ответ
+// приходит инвалидацией routing.zapretStatus.
+func (s *Service) installedPackages() map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.packages.due(s.currentTime()) {
+		s.packages.inFlight = true
+		s.probes.Add(1)
+		go s.probePackages()
+	}
+	return maps.Clone(s.packages.found)
+}
+
+func (s *Service) probePackages() {
+	defer s.probes.Done()
+	out, err := s.opkgListInstalled(context.Background())
+	s.mu.Lock()
+	c := &s.packages
+	c.inFlight = false
+	var changed bool
+	if err != nil {
+		msg := fmt.Sprintf("opkg list-installed: %v", err)
+		changed = c.err != msg
+		c.err, c.errAt = msg, s.currentTime()
+	} else {
+		found := parseZapretPackages(out)
+		changed = c.err != "" || !maps.Equal(found, c.found)
+		*c = packagesCache{found: found, at: s.currentTime()}
+	}
+	pub := s.pub
+	s.mu.Unlock()
+	if changed {
+		events.PublishInvalidatedTo(pub, events.ResourceRoutingZapretStatus, "zapret-packages")
+	}
 }
 
 // parseZapretPackages отбирает из вывода opkg всё, что похоже на zapret.

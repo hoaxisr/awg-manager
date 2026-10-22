@@ -156,10 +156,11 @@ func (a *app) setupTunnels() {
 		return out
 	})
 
-	// Zapret integration (optional — detected at startup). AWGM только
-	// читает состояние и правит пользовательские файлы: пакет zapret
-	// ставит пользователь, и NewService сам определяет, есть ли он.
+	// Zapret integration. AWGM только читает состояние и правит
+	// пользовательские файлы: пакет zapret ставит пользователь, а наличие
+	// установки определяется лениво, на запрос статуса.
 	a.zapretService = zapret.NewService(a.dataDir, a.loggingService)
+	a.zapretService.SetEventBus(a.eventBus)
 
 	// HydraRoute Neo integration (optional — detected at startup)
 	a.hydraService = hydraroute.NewService(a.catalog, a.loggingService)
