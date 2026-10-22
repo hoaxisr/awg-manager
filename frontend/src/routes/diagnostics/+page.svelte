@@ -186,6 +186,8 @@
 		active={activeTab}
 		onchange={(id) => (activeTab = id as ActiveTab)}
 		urlParam="tab"
+		persistKey="diagnostics-sections"
+		memoryReady={$settings !== null}
 		defaultTab="logs"
 	/>
 

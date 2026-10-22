@@ -34,7 +34,7 @@
 	import { awg3Tunnels } from '$lib/stores/awg3';
 	import { Awg3TunnelsSection, Awg3ImportModal } from '$lib/components/awg3';
 	import { getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
-	import { usageLevel } from '$lib/stores/settings';
+	import { usageLevel, settings } from '$lib/stores/settings';
 	import { isSectionVisible, isTunnelDashboardAvailable } from '$lib/types/usageLevel';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import SubscriptionsTabSection from '$lib/components/subscriptions/SubscriptionsTabSection.svelte';
@@ -1763,6 +1763,8 @@
 				active={activeTab}
 				onchange={(id) => (activeTab = id as TunnelTab)}
 				urlParam="tab"
+				persistKey="dashboard-tunnels"
+				memoryReady={$settings !== null && $systemInfoStore.lastFetchedAt > 0}
 				defaultTab="awg"
 			/>
 		{/if}

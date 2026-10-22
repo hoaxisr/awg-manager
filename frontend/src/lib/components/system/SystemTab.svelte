@@ -77,7 +77,7 @@
 		</span>
 	</div>
 
-	<Tabs tabs={views} active={activeView} onchange={(id) => setView(id as SystemView)} />
+	<Tabs urlParam="view" persistKey="system-views" tabs={views} active={activeView} onchange={(id) => setView(id as SystemView)} />
 
 	<div class="panel">
 		{#if activeView === 'files'}

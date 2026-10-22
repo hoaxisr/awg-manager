@@ -5,6 +5,7 @@
     import { ChevronDown } from 'lucide-svelte';
     import { m } from '$lib/i18n';
     import TabBadge from './TabBadge.svelte';
+    import { tabMemoryKey, readTabMemory, writeTabMemory } from './tab-memory';
     import TabsMenu from './TabsMenu.svelte';
     import {
         countFitting,
@@ -34,9 +35,17 @@
          * tabs[0]?.id.
          */
         defaultTab?: string;
+        /** Wait for installation/permission-dependent tabs before restoring. */
+        memoryReady?: boolean;
+        /** Opt in to remembering this row with a stable, feature-specific key. */
+        persistKey?: string;
+        /** Query params that indicate an explicit navigation outside tab memory. */
+        skipMemorySearchParams?: string[];
+        /** Explicit page preference, such as a pinned favorite, takes priority. */
+        restoreMemory?: boolean;
     }
 
-    let { tabs, active, onchange, urlParam, defaultTab }: Props = $props();
+    let { tabs, active, onchange, urlParam, defaultTab, memoryReady = true, persistKey, skipMemorySearchParams = [], restoreMemory = true }: Props = $props();
 
     let containerEl: HTMLDivElement | undefined = $state();
     let measureEl: HTMLDivElement | undefined = $state();
@@ -55,11 +64,11 @@
     const MENU_MEMORY_PREFIX = 'ui.tabs.menuLast:';
 
     function menuMemoryKey(tab: Tab): string {
-        // Include leaf ids so two "Sing-box" menus (tunnels vs routing) don't clash.
-        return `${tab.label}:${leafIds(tab).slice().sort().join(',')}`;
+        return `${persistKey}:${tab.id}`;
     }
 
     function readStoredMenuChild(tab: Tab): string | null {
+        if (!persistKey) return null;
         if (typeof localStorage === 'undefined') return null;
         try {
             const raw = localStorage.getItem(MENU_MEMORY_PREFIX + menuMemoryKey(tab));
@@ -71,6 +80,7 @@
     }
 
     function rememberMenuChild(tab: Tab, childId: string) {
+        if (!persistKey) return;
         if (!leafIds(tab).includes(childId)) return;
         const key = menuMemoryKey(tab);
         if (menuMemory[key] === childId) return;
@@ -105,6 +115,29 @@
     // overwrite `?tab=policy` with the default tab's empty URL before the
     // conditional tab appears, losing the deep-link value.
     let urlConsumed = $state(false);
+    let memoryConsumedFor = $state('');
+    const memoryKey = $derived(persistKey ? tabMemoryKey(persistKey) : '');
+
+    function restoreLastTab(): boolean {
+        if (!persistKey) return true;
+        if (memoryConsumedFor === memoryKey) return true;
+        if (!memoryReady) return false;
+        // Explicit navigation, including policy/rule links, always wins.
+        const query = $page.url.searchParams;
+        if (!restoreMemory || (urlParam && query.has(urlParam)) || skipMemorySearchParams.some((key) => query.has(key))) {
+            memoryConsumedFor = memoryKey;
+            return true;
+        }
+        const saved = readTabMemory(memoryKey, tabs.flatMap(leafIds));
+        // Optional sections can arrive after the page's initial readiness
+        // signal. Keep listening until the remembered tab exists or the user
+        // explicitly selects one; a temporary fallback must not consume it.
+        if (saved) {
+            memoryConsumedFor = memoryKey;
+            if (saved !== untrack(() => active)) onchange(saved);
+        }
+        return true;
+    }
 
     function findTabForId(id: string): Tab | undefined {
         return tabs.find((t) => leafIds(t).includes(id));
@@ -159,9 +192,9 @@
     // that branch leaves urlConsumed=false so outbound holds off until
     // `tabs` updates (effect re-fires on the tabs.find dependency).
     $effect(() => {
-        if (!urlParam) { urlConsumed = true; return; }
+        if (!urlParam) { urlConsumed = restoreLastTab(); return; }
         const fromUrl = $page.url.searchParams.get(urlParam);
-        if (fromUrl == null) { urlConsumed = true; return; }
+        if (fromUrl == null) { urlConsumed = restoreLastTab(); return; }
         if (fromUrl === untrack(() => active)) { urlConsumed = true; return; }
         if (!findTabForId(fromUrl)) return;
         urlConsumed = true;
@@ -240,7 +273,14 @@
     function selectTab(id: string) {
         overflowOpen = false;
         menuOpenId = null;
+        if (persistKey) memoryConsumedFor = memoryKey;
+        const selectedKey = memoryKey;
         onchange(id);
+        // A parent may reject a switch (for example, an unsaved-draft guard).
+        // Store only a selection it actually accepted after Svelte updates.
+        queueMicrotask(() => {
+            if (persistKey && untrack(() => active) === id) writeTabMemory(selectedKey, id);
+        });
     }
 
     function toggleMenu(tab: Tab) {
@@ -262,7 +302,7 @@
             overflowOpen = false;
             menuOpenId = null;
             const target = resolvedMenuChild(tab)?.id ?? tab.id;
-            onchange(target);
+            selectTab(target);
             return;
         }
         toggleMenu(tab);

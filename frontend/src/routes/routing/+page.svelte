@@ -1,5 +1,6 @@
 <script lang="ts">
     import { m } from '$lib/i18n';
+    import { tabMemoryKey, writeTabMemory } from '$lib/components/ui/tab-memory';
     import { onMount, onDestroy, tick } from 'svelte';
     import { get } from 'svelte/store';
     import { goto } from '$app/navigation';
@@ -118,7 +119,10 @@
         activeTab = id as typeof activeTab;
     }
     function confirmLeave(): void {
-        if (pendingTab) activeTab = pendingTab as typeof activeTab;
+        if (pendingTab) {
+            activeTab = pendingTab as typeof activeTab;
+            writeTabMemory(tabMemoryKey('routing-sections'), activeTab);
+        }
         pendingTab = null;
     }
 
@@ -446,6 +450,10 @@
         active={activeTab}
         onchange={(id) => requestTab(id)}
         urlParam="tab"
+        persistKey="routing-sections"
+        skipMemorySearchParams={['policy', 'rule', 'edit']}
+        memoryReady={$settings !== null && $systemInfo.lastFetchedAt > 0 && $hydrarouteStatusStore.lastFetchedAt > 0 && (!singboxInstalled || $singboxSettings !== null)}
+        restoreMemory={favoriteTab === null}
         defaultTab={favoriteTab ?? 'dns'}
     />
 

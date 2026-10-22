@@ -6,7 +6,7 @@
  * документу, а дыры были В САМОМ документе. Эти три идут путями живого
  * человека, а не структурой кода.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.hoisted(() => {
   Object.defineProperty(globalThis, "matchMedia", {
@@ -99,8 +99,11 @@ const notify = vi.hoisted(() => ({
 }));
 vi.mock("$lib/stores/notifications", () => ({ notifications: notify }));
 
-import { render, waitFor, fireEvent } from "@testing-library/svelte";
+import { render, waitFor, fireEvent, cleanup } from "@testing-library/svelte";
 import ProxyPage from "../../../routes/proxy/+page.svelte";
+
+beforeEach(() => localStorage.clear());
+afterEach(cleanup);
 
 /** Клиент как его отдаёт бэкенд (форма shim'а, все поля на месте). */
 function wdttClientCfg(over: Record<string, unknown> = {}) {

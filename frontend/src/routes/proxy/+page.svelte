@@ -280,6 +280,7 @@
 			{tabs}
 			active={activeTab}
 			urlParam="tab"
+			persistKey="proxy-sections"
 			defaultTab="exit"
 			onchange={(id) => (activeTab = id as TabId)}
 		/>
