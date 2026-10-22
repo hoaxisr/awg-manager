@@ -27,6 +27,11 @@ func (s *Service) resolveLayout() (layout, error) {
 
 func (s *Service) resolveLayoutState() (layoutResolution, error) {
 	r := layoutResolution{candidates: discoverLayouts()}
+	// Без установок выбирать не из чего, и /proc не сканируем: на роутерах
+	// без Zapret это единственный путь статуса, он обязан быть дешёвым.
+	if len(r.candidates) == 0 {
+		return r, ErrNotInstalled
+	}
 	byBase := make(map[string]layout, len(r.candidates))
 	for _, candidate := range r.candidates {
 		byBase[canonicalBase(candidate.base)] = candidate

@@ -3,9 +3,6 @@ package zapret
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -85,11 +82,7 @@ const (
 	packagesTTLPresent = 24 * time.Hour
 	packagesTTLAbsent  = 10 * time.Minute
 	versionTTL         = 6 * time.Hour
-	// A missing installation is common on routers without Zapret. Check the
-	// /opt directory mtime on each status read, but avoid walking /opt and
-	// /proc again until it changes or this short fallback expires.
-	statusAbsentTTL = 10 * time.Second
-	versionRetryTTL = 30 * time.Second
+	versionRetryTTL    = 30 * time.Second
 	// versionProbeTimeout ограничивает --version: демон печатает версию
 	// на старте, но если что-то пойдёт не так, не будем висеть.
 	versionProbeTimeout = 3 * time.Second
@@ -122,9 +115,6 @@ type Service struct {
 	packagesAt      time.Time
 	packagesErrorAt time.Time
 	probeInFlight   bool
-	absentStatus    Status
-	absentStatusAt  time.Time
-	absentRootStamp string
 
 	version versionCache
 
@@ -148,20 +138,14 @@ func NewService(dataDir string, appLogger logging.AppLogger) *Service {
 // ambiguous or unsafe. Callers should reread state before retrying.
 var ErrConflict = errors.New("Zapret state changed; reload before retrying")
 
-// GetStatus возвращает актуальный снимок. Дёшево: os.Stat плюс, возможно,
-// кэш версии и пакетов.
+// GetStatus возвращает актуальный снимок. Без установки это один ReadDir
+// /opt; с установкой — ещё обход /proc и кэши версии и пакетов.
 func (s *Service) GetStatus() Status {
-	if st, ok := s.cachedAbsentStatus(); ok {
-		return st
-	}
 	r, resolveErr := s.resolveLayoutState()
 	if resolveErr != nil {
 		if errors.Is(resolveErr, ErrNotInstalled) {
-			st := Status{ProcessState: StateNotInstalled, LastError: s.errorSnapshot()}
-			s.rememberAbsentStatus(st)
-			return st
+			return Status{ProcessState: StateNotInstalled, LastError: s.errorSnapshot()}
 		}
-		s.clearAbsentStatus()
 		st := Status{
 			Installed: len(r.candidates) > 0,
 			Running:   r.anyOwned,
@@ -180,7 +164,6 @@ func (s *Service) GetStatus() Status {
 		}
 		return st
 	}
-	s.clearAbsentStatus()
 	l := r.layout
 
 	st := Status{
@@ -255,59 +238,12 @@ func (s *Service) currentTime() time.Time {
 	return time.Now()
 }
 
-func (s *Service) cachedAbsentStatus() (Status, bool) {
-	rootStamp := statusRootStamp()
-	now := s.currentTime()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.absentStatusAt.IsZero() || now.Sub(s.absentStatusAt) < 0 || now.Sub(s.absentStatusAt) >= statusAbsentTTL || rootStamp != s.absentRootStamp {
-		return Status{}, false
-	}
-	return s.absentStatus, true
-}
-
-func (s *Service) rememberAbsentStatus(st Status) {
-	rootStamp := statusRootStamp()
-	s.mu.Lock()
-	s.absentStatus = st
-	s.absentStatusAt = s.currentTime()
-	s.absentRootStamp = rootStamp
-	s.mu.Unlock()
-}
-
-func (s *Service) clearAbsentStatus() {
-	s.mu.Lock()
-	s.absentStatus = Status{}
-	s.absentStatusAt = time.Time{}
-	s.absentRootStamp = ""
-	s.mu.Unlock()
-}
-
-// statusRootStamp is intentionally only a stat: a changed /opt mtime means a
-// Zapret-shaped directory may have appeared. The TTL below covers changes
-// beneath an already-existing candidate directory.
-func statusRootStamp() string {
-	root := filepath.Clean(optRoot)
-	info, err := os.Stat(root)
-	if err == nil {
-		return fmt.Sprintf("%s|%d|%d|%s", root, info.ModTime().UnixNano(), info.Size(), info.Mode())
-	}
-	parent := filepath.Dir(root)
-	parentInfo, parentErr := os.Stat(parent)
-	if parentErr == nil {
-		return fmt.Sprintf("%s|missing|%d|%d", root, parentInfo.ModTime().UnixNano(), parentInfo.Size())
-	}
-	return root + "|missing"
-}
-
 // Recheck сбрасывает кэш и перечитывает состояние — для кнопки
 // «Обновить» и после действий пользователя.
 func (s *Service) Recheck() Status {
 	s.mu.Lock()
 	s.packagesAt = time.Time{}
 	s.packagesErrorAt = time.Time{}
-	s.absentStatusAt = time.Time{}
-	s.absentRootStamp = ""
 	s.version.expire()
 	s.mu.Unlock()
 	return s.GetStatus()
