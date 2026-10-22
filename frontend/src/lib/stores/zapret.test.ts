@@ -15,7 +15,7 @@ vi.mock('$lib/stores/notifications', () => ({
 
 import { invalidateResource } from './storeRegistry';
 import { settings } from './settings';
-import { zapretStatus, zapretStatusForUser } from './zapret';
+import { zapretStatus, zapretStatusIfExpert } from './zapret';
 import type { Settings } from '$lib/types';
 import { runZapretControl } from '$lib/components/zapret/control';
 
@@ -90,7 +90,7 @@ describe('Zapret status for shared pages', () => {
 		zapretStatus.invalidate();
 		settings.set({ usageLevel: 'advanced' } as Settings);
 		const seen: unknown[] = [];
-		const unsubscribe = zapretStatusForUser.subscribe((v) => seen.push(v));
+		const unsubscribe = zapretStatusIfExpert.subscribe((v) => seen.push(v));
 		await flushPromises();
 		expect(mocks.getStatus).not.toHaveBeenCalled();
 		expect(seen.at(-1)).toBeNull();

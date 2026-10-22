@@ -65,7 +65,7 @@
     {title}
   >
     {#if loading}
-      <span class="spinner" aria-hidden="true"></span>
+      <span class="loader" aria-hidden="true"></span>
     {:else}
       {@render children()}
     {/if}
@@ -121,5 +121,20 @@
     width: 16px;
     height: 16px;
     flex-shrink: 0;
+  }
+
+  /* Не общий .spinner из app.css: тот 16px в цветах акцента, а внутри
+     иконочной кнопки спиннер заменяет иконку — её размер и currentColor.
+     Ключевые кадры общие (spin из app.css). */
+  .loader {
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .loader { animation: spin 0.8s linear infinite; }
   }
 </style>

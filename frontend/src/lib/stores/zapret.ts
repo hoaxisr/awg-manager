@@ -28,7 +28,10 @@ registerStore('routing.zapretStatus', zapretStatus);
  * запрашивают вовсе: подписка на zapretStatus открывается лишь у expert.
  * null — уровень ниже expert (или настройки ещё не пришли).
  */
-export const zapretStatusForUser: Readable<PollingState<ZapretStatus> | null> = derived(
+export const zapretStatusIfExpert: Readable<PollingState<ZapretStatus> | null> = derived<
+	typeof usageLevel,
+	PollingState<ZapretStatus> | null
+>(
 	usageLevel,
 	($level, set) => {
 		if (!isRoutingSubTabVisible($level, 'zapret')) {
@@ -37,5 +40,5 @@ export const zapretStatusForUser: Readable<PollingState<ZapretStatus> | null> = 
 		}
 		return zapretStatus.subscribe(set);
 	},
-	null as PollingState<ZapretStatus> | null,
+	null,
 );

@@ -15,7 +15,7 @@
         hydrarouteStatusStore,
     } from '$lib/stores/routing';
     import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
-    import { zapretStatusForUser } from '$lib/stores/zapret';
+    import { zapretStatusIfExpert } from '$lib/stores/zapret';
     import { systemInfo } from '$lib/stores/system';
     import { api } from '$lib/api/client';
     import { notifications } from '$lib/stores/notifications';
@@ -36,7 +36,7 @@
     import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
     import GeoDataTab from './GeoDataTab.svelte';
     import { isRoutingSubTabVisible, type RoutingSubTab, type UsageLevel } from '$lib/types/usageLevel';
-    import { usageLevel, settings } from '$lib/stores/settings';
+    import { usageLevel, settings, settingsUnavailable } from '$lib/stores/settings';
 
     // Per-section polling stores — subscribe here so all 8 fetch while
     // the routing page is open. Unsubscribed on destroy to stop polling.
@@ -109,7 +109,7 @@
     let singboxInstalled = $derived($systemInfo.data?.singbox?.installed ?? false);
     // Zapret ставит пользователь, а не AWGM, поэтому вкладка появляется
     // только когда движок реально найден на роутере.
-    let zapretInstalled = $derived($zapretStatusForUser?.data?.installed ?? false);
+    let zapretInstalled = $derived($zapretStatusIfExpert?.data?.installed ?? false);
 
     let pendingTab = $state<string | null>(null);
 
@@ -409,11 +409,12 @@
         // Вкладка Zapret гейтится уровнем и zapret-status. Пока не пришли
         // настройки или (у expert) статус, вкладки в списке ещё нет — иначе
         // deep-link ?tab=zapret (например, из Настроек) откатился бы на
-        // первую вкладку до загрузки.
+        // первую вкладку до загрузки. Не загрузились настройки — не ждём.
+        const zapretPending = $zapretStatusIfExpert !== null && !$zapretStatusIfExpert.lastFetchedAt;
         if (
             activeTab === 'zapret' &&
             !tabsInclude(items, activeTab) &&
-            ($settings === null || ($zapretStatusForUser !== null && !$zapretStatusForUser.lastFetchedAt))
+            (($settings === null && !$settingsUnavailable) || zapretPending)
         ) {
             return;
         }

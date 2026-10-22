@@ -32,7 +32,7 @@
 	} from '$lib/components/ui';
 	import { singboxDelayHistory, singboxStatus, singboxTraffic, singboxTunnels } from '$lib/stores/singbox';
 	import { awg3Tunnels } from '$lib/stores/awg3';
-	import { zapretStatusForUser } from '$lib/stores/zapret';
+	import { zapretStatusIfExpert } from '$lib/stores/zapret';
 	import { runZapretControl, ZapretServiceCard } from '$lib/components/zapret';
 	import { Awg3TunnelsSection, Awg3ImportModal } from '$lib/components/awg3';
 	import { getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
@@ -66,7 +66,7 @@
 		systemStatusVariant,
 	} from '$lib/components/tunnels/tunnelPageSelectors';
 	import type { AwgTabContext } from '$lib/components/tunnels/awgTabContext';
-	import type { ExternalTunnel, Subscription, SubscriptionMember, SystemTunnel, TunnelListItem } from '$lib/types';
+	import type { ExternalTunnel, Subscription, SubscriptionMember, SystemTunnel, TunnelListItem, ZapretControlAction } from '$lib/types';
 	import { formatBitRate, formatBytes, formatDuration, formatRelativeTime, secondsSince } from '$lib/utils/format';
 	import { showOutboundReferencedError } from '$lib/utils/outboundReferenced';
 	import {
@@ -567,10 +567,10 @@
 	// Zapret — карточка сервиса на странице туннелей.
 	let zapretBusy = $state(false);
 
-	async function controlZapret(action: 'start' | 'stop' | 'restart') {
+	async function controlZapret(action: ZapretControlAction) {
 		zapretBusy = true;
 		try {
-			await runZapretControl(action, $zapretStatusForUser?.data?.base ?? '');
+			await runZapretControl(action, $zapretStatusIfExpert?.data?.base ?? '');
 		} finally {
 			zapretBusy = false;
 		}
@@ -1790,9 +1790,9 @@
 		     в «Маршрутизации» одна: она нужна рядом с туннелями, потому что
 		     отвечает на тот же вопрос — «чем сейчас обрабатывается мой
 		     трафик». Подробная настройка стратегий живёт на /routing?tab=zapret. -->
-		{#if $zapretStatusForUser?.data?.installed}
+		{#if $zapretStatusIfExpert?.data?.installed}
 			<ZapretServiceCard
-				status={$zapretStatusForUser.data}
+				status={$zapretStatusIfExpert.data}
 				busy={zapretBusy}
 				oncontrol={controlZapret}
 				onopen={openZapretSettings}

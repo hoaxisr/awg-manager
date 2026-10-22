@@ -35,7 +35,6 @@
 		hydraStatusLoading?: boolean;
 		hydraStatusError?: string | null;
 		zapretStatus?: ZapretStatus | null;
-		showZapret?: boolean;
 		singboxInstalling: boolean;
 		singboxUpdating?: boolean;
 		singboxInstallError: UiText | null;
@@ -66,7 +65,6 @@
 		hydraStatusLoading = false,
 		hydraStatusError = null,
 		zapretStatus = null,
-		showZapret = true,
 		singboxInstalling,
 		singboxUpdating = false,
 		singboxInstallError,
@@ -483,7 +481,7 @@
 			</div>
 		{/if}
 
-		{#if showZapret && zapretInstalled}
+		{#if zapretInstalled}
 			<div class="setting-row">
 				<div class="integration-item">
 					<StatusDot
