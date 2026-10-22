@@ -132,8 +132,8 @@ func resolveHostlistFile(dir string, filename string) (path string, gzipped bool
 }
 
 // newHostlistRef строит ссылку на список для карточки стратегии.
-func newHostlistRef(path string, isExclude bool) StrategyHostlist {
-	ref := StrategyHostlist{Path: path, Editable: isExclude}
+func newHostlistRef(path string) StrategyHostlist {
+	ref := StrategyHostlist{Path: path}
 	st, err := os.Stat(path)
 	if err != nil {
 		return ref

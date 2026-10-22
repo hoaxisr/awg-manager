@@ -64,7 +64,6 @@ export interface ZapretStrategyHostlist {
 	 */
 	exists: boolean;
 	entries: number;
-	editable: boolean;
 	hasIps: boolean;
 	ipOnly: boolean;
 

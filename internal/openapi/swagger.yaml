@@ -9236,8 +9236,6 @@ definitions:
     type: object
   zapret.StrategyHostlist:
     properties:
-      editable:
-        type: boolean
       entries:
         type: integer
       exists:

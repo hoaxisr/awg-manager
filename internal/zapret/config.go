@@ -1,7 +1,6 @@
 package zapret
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -179,15 +178,14 @@ func readOptBlockFromString(body, name string) (optBlock, bool) {
 // приоритет: выигрывает первый подошедший. Поэтому перестановка
 // карточек в UI обязана менять файл, а не только вид. Пустые профили
 // (после двух подряд --new или от хвостового перевода строки) отбрасываем:
-// это артефакт форматирования, а не стратегия.
+// это артефакт форматирования, а не стратегия. Значение уже в памяти,
+// поэтому режем по строкам без сканера: у того предел длины строки, и
+// длинный профиль молча обрезал бы список.
 func splitProfiles(value string) []string {
-	sc := bufio.NewScanner(strings.NewReader(value))
-	sc.Buffer(make([]byte, 0, 64*1024), maxOptBlockBytes)
-
 	var out []string
 	var cur strings.Builder
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}

@@ -3292,7 +3292,6 @@ const zapret_Strategy: v.GenericSchema = v.looseObject({
 });
 
 const zapret_StrategyHostlist: v.GenericSchema = v.looseObject({
-	editable: v.optional(v.nullable(v.boolean())),
 	entries: v.optional(v.nullable(v.number())),
 	exists: v.optional(v.nullable(v.boolean())),
 	fromPlaceholder: v.optional(v.nullable(v.string())),

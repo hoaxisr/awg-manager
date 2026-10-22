@@ -12,11 +12,6 @@ import (
 // стартует, но мы не должны этому способствовать.
 const maxProfiles = 64
 
-// maxOptBlockBytes ограничивает разбор значения переменной опций: файл
-// config на клиентской машине — это текст в несколько килобайт, всё
-// больше означает, что мы читаем не то.
-const maxOptBlockBytes = 1 << 20
-
 // Warning is a stable diagnostic code with optional dynamic detail. The UI
 // owns the localized wording so API responses do not expose server-language
 // prose to users of another locale.
@@ -82,9 +77,8 @@ type StrategyHostlist struct {
 	Path string `json:"path"`
 	// Exists=false означает, что nfqws2 не запустится: RegisterHostlist
 	// требует существующий непустой файл иначе завершает процесс.
-	Exists   bool `json:"exists"`
-	Entries  int  `json:"entries"`
-	Editable bool `json:"editable"`
+	Exists  bool `json:"exists"`
+	Entries int  `json:"entries"`
 	// HasIPs — в списке есть адреса или подсети. Значимо только в паре с
 	// Domains: если адреса есть, а доменов нет, список не сработает в
 	// MODE_FILTER=hostlist (см. strategyWarnings).
@@ -159,19 +153,19 @@ func parseStrategy(index int, raw string) Strategy {
 			s.Payload = val
 		case "--hostlist":
 			if hasVal {
-				s.Hostlists = append(s.Hostlists, newHostlistRef(val, false))
+				s.Hostlists = append(s.Hostlists, newHostlistRef(val))
 			}
 		case "--hostlist-exclude":
 			if hasVal {
-				s.HostlistExcludes = append(s.HostlistExcludes, newHostlistRef(val, true))
+				s.HostlistExcludes = append(s.HostlistExcludes, newHostlistRef(val))
 			}
 		case "--hostlist-auto":
 			if hasVal {
-				s.HostlistAuto = append(s.HostlistAuto, newHostlistRef(val, false))
+				s.HostlistAuto = append(s.HostlistAuto, newHostlistRef(val))
 			}
 		case "--ipset":
 			if hasVal {
-				s.Ipsets = append(s.Ipsets, newHostlistRef(val, false))
+				s.Ipsets = append(s.Ipsets, newHostlistRef(val))
 			}
 		}
 	}

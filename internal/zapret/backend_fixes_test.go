@@ -60,7 +60,7 @@ func TestCountHostlistStreamsLongAndCompressedFiles(t *testing.T) {
 	if _, err := countHostlist(broken, nil); err == nil {
 		t.Fatal("invalid gzip input must return an error")
 	}
-	if ref := newHostlistRef(broken, false); !strings.HasPrefix(ref.Note, hostlistCountErrorNotePrefix) {
+	if ref := newHostlistRef(broken); !strings.HasPrefix(ref.Note, hostlistCountErrorNotePrefix) {
 		t.Fatal("hostlist reference must retain the counting error")
 	}
 }
@@ -326,5 +326,45 @@ func TestGetStatusDoesNotCutOpkgToVersionBudget(t *testing.T) {
 	}
 	if deadline != 0 && deadline <= versionProbeTimeout {
 		t.Fatalf("opkg got %v, which is the version probe budget, not opkgTimeout", deadline)
+	}
+}
+
+func TestPlaceholderExcludeIsNotAnIncludeList(t *testing.T) {
+	base := setupInstall(t)
+	ipset := filepath.Join(base, "ipset")
+	if err := os.WriteFile(filepath.Join(ipset, "zapret-hosts-user.txt"), []byte("example.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exclude := filepath.Join(ipset, "zapret-hosts-user-exclude.txt")
+	if err := os.WriteFile(exclude, []byte("192.0.2.0/24\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := "NFQWS2_OPT=\"--filter-tcp=443 <HOSTLIST> --lua-desync=fake\"\n"
+	if err := os.WriteFile(filepath.Join(base, "config"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := NewService(t.TempDir(), nil).GetStrategies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := got.Items[0]
+	if hasWarning(item, "hostlist_ip_only") {
+		t.Fatalf("IP-only exclude list raised an include-list warning: %+v", item.Warnings)
+	}
+	if len(item.HostlistExcludes) != 1 || item.HostlistExcludes[0].Path != exclude || item.HostlistExcludes[0].FromPlaceholder != "<HOSTLIST>" {
+		t.Fatalf("placeholder exclude not routed to excludes: %+v", item.HostlistExcludes)
+	}
+	for _, h := range item.Hostlists {
+		if h.Path == exclude {
+			t.Fatalf("exclude list listed as include: %+v", item.Hostlists)
+		}
+	}
+}
+
+func TestSplitProfilesKeepsLongLines(t *testing.T) {
+	long := "--filter-tcp=443 --lua-desync=fake:blob=" + strings.Repeat("a", 2<<20)
+	got := splitProfiles(long + " --new\n--filter-udp=443 --lua-desync=fake\n")
+	if len(got) != 2 || got[0] != long {
+		t.Fatalf("long profile lost: %d profiles", len(got))
 	}
 }

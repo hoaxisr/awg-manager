@@ -78,13 +78,16 @@ func (s *Service) GetStrategies() (Strategies, error) {
 func hydrateHostlistRefs(l layout, items []Strategy) {
 	for i := range items {
 		// Плейсхолдеры разворачиваем первыми: они задают основной список
-		// доменов стратегии и должны идти перед явными путями.
+		// доменов стратегии и должны идти перед явными путями. Исключение
+		// из <HOSTLIST> — это --hostlist-exclude, а не --hostlist: иначе на
+		// нём сработали бы предупреждения включающего списка.
+		var hosts, excludes []StrategyHostlist
 		for _, ph := range items[i].Placeholders {
-			items[i].Hostlists = append(items[i].Hostlists,
-				expandHostlistRef(l, StrategyHostlist{Path: ph})...)
+			h, e := expandHostlistRef(l, ph)
+			hosts, excludes = append(hosts, h...), append(excludes, e...)
 		}
-		items[i].Hostlists = hydrateRefs(l, items[i].Hostlists)
-		items[i].HostlistExcludes = hydrateRefs(l, items[i].HostlistExcludes)
+		items[i].Hostlists = append(hosts, hydrateRefs(l, items[i].Hostlists)...)
+		items[i].HostlistExcludes = append(excludes, hydrateRefs(l, items[i].HostlistExcludes)...)
 		items[i].HostlistAuto = hydrateRefs(l, items[i].HostlistAuto)
 		items[i].Ipsets = hydrateRefs(l, items[i].Ipsets)
 	}
@@ -93,17 +96,8 @@ func hydrateHostlistRefs(l layout, items []Strategy) {
 func hydrateRefs(l layout, refs []StrategyHostlist) []StrategyHostlist {
 	out := make([]StrategyHostlist, 0, len(refs))
 	for _, ref := range refs {
-		// Уже развёрнутый плейсхолдер пересобирать нельзя: путь теперь
-		// абсолютный и реальный, а пометка происхождения из <HOSTLIST>
-		// должна дожить до карточки — по ней UI объясняет пользователю,
-		// откуда взялся этот список.
-		if ref.FromPlaceholder != "" {
-			refreshed := newHostlistRef(resolveRefPath(l, ref.Path), refIsExclude(ref.Path))
-			refreshed.FromPlaceholder = ref.FromPlaceholder
-			out = append(out, refreshed)
-			continue
-		}
-		out = append(out, expandHostlistRef(l, ref)...)
+		hosts, excludes := expandHostlistRef(l, ref.Path)
+		out = append(append(out, hosts...), excludes...)
 	}
 	return out
 }
@@ -117,25 +111,27 @@ func hydrateRefs(l layout, refs []StrategyHostlist) []StrategyHostlist {
 // Такой «путь» файлом не является: если не развернуть его, карточка
 // показала бы «файла нет» на работающей стратегии и ругалась бы на то,
 // на что ругаться нечего.
-func expandHostlistRef(l layout, ref StrategyHostlist) []StrategyHostlist {
-	specs, isPlaceholder := placeholderTargets[ref.Path]
+func expandHostlistRef(l layout, path string) (hosts, excludes []StrategyHostlist) {
+	specs, isPlaceholder := placeholderTargets[path]
 	if !isPlaceholder {
 		// Ссылки могут быть относительными — nfqws2 резолвит их
 		// относительно каталога демона, и мы обязаны повторить именно
 		// это, иначе покажем «файл не найден» для существующего списка.
-		return []StrategyHostlist{newHostlistRef(resolveRefPath(l, ref.Path), refIsExclude(ref.Path))}
+		return []StrategyHostlist{newHostlistRef(resolveRefPath(l, path))}, nil
 	}
 
-	out := make([]StrategyHostlist, 0, len(specs)+1)
 	for _, sp := range specs {
-		// Плейсхолдер всегда указывает на существующий набор файлов, но
-		// указывает не на один: пометка explains, что список на карточке
-		// пришёл из <HOSTLIST>, а не из явного пути.
-		resolved := newHostlistRef(resolveHostlistRef(l, sp.filename), sp.exclude)
-		resolved.FromPlaceholder = ref.Path
-		out = append(out, resolved)
+		// Плейсхолдер указывает не на один файл: пометка объясняет, что
+		// список на карточке пришёл из <HOSTLIST>, а не из явного пути.
+		resolved := newHostlistRef(resolveHostlistRef(l, sp.filename))
+		resolved.FromPlaceholder = path
+		if sp.exclude {
+			excludes = append(excludes, resolved)
+		} else {
+			hosts = append(hosts, resolved)
+		}
 	}
-	return out
+	return hosts, excludes
 }
 
 // resolveHostlistRef ищет файл списка с учётом .gz, как это делает

@@ -24,11 +24,3 @@ func findHostlistRef(base, ref string) (string, bool) {
 	}
 	return ref, false
 }
-
-// refIsExclude отличает список исключений от включающего: у zapret
-// «exclude» есть и в имени файла, и в названии ipsets, и в переменной
-// конфига nozapret.
-func refIsExclude(p string) bool {
-	lower := strings.ToLower(p)
-	return strings.Contains(lower, "exclude") || strings.Contains(lower, "nozapret")
-}

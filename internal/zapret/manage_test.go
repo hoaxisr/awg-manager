@@ -226,10 +226,14 @@ func TestHostlistPlaceholderIsExpanded(t *testing.T) {
 		t.Fatalf("стратегий: %d", len(got.Items))
 	}
 	refs := got.Items[0].Hostlists
-	if len(refs) != 4 {
-		t.Fatalf("плейсхолдер развёрнут в %d списков, ожидалось 4 (user, main, exclude, auto): %+v", len(refs), refs)
+	if len(refs) != 3 {
+		t.Fatalf("плейсхолдер развёрнут в %d включающих списков, ожидалось 3 (user, main, auto): %+v", len(refs), refs)
 	}
-	for _, r := range refs {
+	excl := got.Items[0].HostlistExcludes
+	if len(excl) != 1 || filepath.Base(excl[0].Path) != "zapret-hosts-user-exclude.txt" {
+		t.Fatalf("исключение из плейсхолдера: %+v", excl)
+	}
+	for _, r := range append(append([]StrategyHostlist(nil), refs...), excl...) {
 		if r.Path == "<HOSTLIST>" || !strings.HasPrefix(r.Path, "/") {
 			t.Errorf("остался неразвёрнутый плейсхолдер: %+v", r)
 		}
