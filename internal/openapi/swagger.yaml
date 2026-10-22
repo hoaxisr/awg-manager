@@ -21827,7 +21827,8 @@ paths:
       summary: Zapret hostlist content
       tags:
       - zapret
-    put:
+  /zapret/hostlist/save:
+    post:
       consumes:
       - application/json
       produces:

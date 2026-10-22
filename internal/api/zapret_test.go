@@ -286,7 +286,7 @@ func TestZapretHostlistSaveRejectsUnknownID(t *testing.T) {
 	h := newZapretHandlerForTest(&zapretServiceStub{}, nil)
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"id":"../../etc/shadow","content":"x"}`)
-	h.SaveHostlist(rec, httptest.NewRequest(http.MethodPut, "/api/zapret/hostlist", body))
+	h.SaveHostlist(rec, httptest.NewRequest(http.MethodPost, "/api/zapret/hostlist/save", body))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("код: %d, ожидался 400", rec.Code)
@@ -301,7 +301,7 @@ func TestZapretHostlistSavePublishedInvalidation(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"id":"user","content":"example.com"}`)
-	h.SaveHostlist(rec, httptest.NewRequest(http.MethodPut, "/api/zapret/hostlist", body))
+	h.SaveHostlist(rec, httptest.NewRequest(http.MethodPost, "/api/zapret/hostlist/save", body))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("код: %d body=%s", rec.Code, rec.Body.String())
@@ -347,7 +347,7 @@ func TestZapretHostlistSaveReportsRestartFailureAsSaved(t *testing.T) {
 	h := newZapretHandlerForTest(&zapretServiceStub{writeErr: &zapret.HostlistApplyError{Err: fmt.Errorf("unsupported daemon restart")}}, nil)
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"id":"user","content":"example.com","revision":"current"}`)
-	h.SaveHostlist(rec, httptest.NewRequest(http.MethodPut, "/api/zapret/hostlist", body))
+	h.SaveHostlist(rec, httptest.NewRequest(http.MethodPost, "/api/zapret/hostlist/save", body))
 	var got zapretHostlistResponse
 	zapretData(t, rec, &got)
 	if got.RestartError != "unsupported daemon restart" {

@@ -298,8 +298,8 @@ export class RoutingClient extends ServersClient {
 	}
 
 	async saveZapretHostlist(id: ZapretHostlistId, content: string, revision: string): Promise<ZapretHostlistContent> {
-		return this.request('/zapret/hostlist', {
-			method: 'PUT',
+		return this.request('/zapret/hostlist/save', {
+			method: 'POST',
 			body: JSON.stringify({ id, content, revision })
 		});
 	}

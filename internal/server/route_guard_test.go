@@ -155,13 +155,12 @@ var expertPrefixes = []string{
 	"/api/system/proc/", "/api/system/services/",
 }
 
-// expertRoutes — ручки вне «Системы», целиком закрытые expert: управление
-// внешним демоном Zapret и запись его конфига. PUT /api/zapret/hostlist
-// закрыт внутри диспетчера по методу (GET того же пути открыт) и проверяется
-// живым запросом в zapret_routes_test.go.
+// expertRoutes — ручки вне «Системы», закрытые expert: управление внешним
+// демоном Zapret и запись его конфига и списков.
 var expertRoutes = map[string]bool{
 	"/api/zapret/control":            true,
 	"/api/zapret/strategies/reorder": true,
+	"/api/zapret/hostlist/save":      true,
 }
 
 func isExpertPath(p string) bool {

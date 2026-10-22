@@ -281,9 +281,9 @@ func (h *ZapretHandler) Hostlist(w http.ResponseWriter, r *http.Request) {
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		404	{object}	APIErrorEnvelope
-//	@Router			/zapret/hostlist [put]
+//	@Router			/zapret/hostlist/save [post]
 func (h *ZapretHandler) SaveHostlist(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
+	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
 		return
 	}
@@ -291,7 +291,7 @@ func (h *ZapretHandler) SaveHostlist(w http.ResponseWriter, r *http.Request) {
 		response.ErrorWithStatus(w, http.StatusNotFound, zapret.ErrNotInstalled.Error(), "ZAPRET_NOT_INSTALLED")
 		return
 	}
-	req, ok := parseJSON[zapretHostlistWriteRequest](w, r, http.MethodPut)
+	req, ok := parseJSON[zapretHostlistWriteRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}

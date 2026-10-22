@@ -3760,6 +3760,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /tunnels/replace": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/update": v.lazy(() => api_APIEnvelope),
 	"POST /zapret/control": v.lazy(() => api_zapretStatusResponse),
+	"POST /zapret/hostlist/save": v.lazy(() => api_zapretHostlistResponse),
 	"POST /zapret/strategies/reorder": v.lazy(() => zapret_Strategies),
 	"PUT /hydraroute/config/update": v.lazy(() => api_HydraRouteConfigResponse),
 	"PUT /managed-servers/{id}": v.lazy(() => api_ServersAllResponse),
@@ -3775,5 +3776,4 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"PUT /singbox/subscriptions/groups/update": v.lazy(() => api_SubscriptionGroupResponse),
 	"PUT /singbox/subscriptions/update": v.lazy(() => api_SubscriptionResponse),
 	"PUT /singbox/tunnels": v.lazy(() => api_SingboxTunnelsResponse),
-	"PUT /zapret/hostlist": v.lazy(() => api_zapretHostlistResponse),
 };
