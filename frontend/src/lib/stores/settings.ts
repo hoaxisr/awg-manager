@@ -14,6 +14,10 @@ import { api } from '$lib/api/client';
 
 export const settings = writable<Settings | null>(null);
 
+/** Настройки не загрузились ни разу: экраны, которые ждут их ради видимости
+ *  вкладок, перестают ждать и откатываются на доступное. */
+export const settingsUnavailable = writable(false);
+
 // Safe fallback: when the store is empty we return 'advanced' so the UI
 // doesn't flicker by hiding things it should show.
 export const usageLevel = derived(
@@ -29,8 +33,10 @@ export async function reloadSettings(): Promise<Settings | null> {
 	try {
 		const s = await api.getSettings();
 		settings.set(s);
+		settingsUnavailable.set(false);
 		return s;
 	} catch {
+		if (get(settings) === null) settingsUnavailable.set(true);
 		return get(settings);
 	}
 }

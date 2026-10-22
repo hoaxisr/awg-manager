@@ -9,6 +9,8 @@
 	import { notifications } from "$lib/stores/notifications";
 	import { singboxStatus } from "$lib/stores/singbox";
 	import { hydrarouteStatus } from "$lib/stores/hydraroute";
+	import { zapretStatusIfExpert } from "$lib/stores/zapret";
+	import { runZapretControl } from '$lib/components/zapret';
 	import { mcpKeys } from "$lib/stores/mcpKeys";
 	import type { PollingState } from "$lib/stores/polling";
 	import { PageContainer, PageHeader, LoadingSpinner } from "$lib/components/layout";
@@ -47,6 +49,7 @@
 		UpdateInfo,
 		McpKey,
 		McpKeyCreated,
+		ZapretControlAction,
 	} from "$lib/types";
 	import { proxyInstallStatus, type ProxySubsystem } from "$lib/stores/proxyInstall";
 	import {
@@ -137,6 +140,10 @@
 	const hydraStatusError = $derived($hydrarouteStatus.error);
 	const hydraInstalled = $derived(hydraStatusValue?.installed ?? false);
 	const hydraRunning = $derived(hydraStatusValue?.running ?? false);
+	const zapretStatusValue = $derived($zapretStatusIfExpert?.data ?? null);
+	const zapretInstalled = $derived(zapretStatusValue?.installed ?? false);
+	const zapretRunning = $derived(zapretStatusValue?.running ?? false);
+	let zapretBusy = $state(false);
 
 	function handleNDMSProxyToggleClick(next: boolean) {
 		// next — желаемое состояние после клика. Открываем confirm-modal
@@ -201,6 +208,15 @@
 			notifications.error(e instanceof Error ? e.message : m.settings_page_hydra_control_failed());
 		} finally {
 			hydraBusy = false;
+		}
+	}
+
+	async function controlZapret(action: ZapretControlAction) {
+		zapretBusy = true;
+		try {
+			await runZapretControl(action, zapretStatusValue?.base ?? '');
+		} finally {
+			zapretBusy = false;
 		}
 	}
 
@@ -912,6 +928,7 @@ $effect(() => {
 					{singboxUninstalling}
 					showSingbox={showSingboxIntegration}
 					showHydra={showHydraIntegration}
+					zapretStatus={zapretStatusValue}
 					bootstrapDNS={settings.singboxBootstrapDNS ?? ''}
 					bootstrapSaving={savingBootstrapDNS}
 					onsaveBootstrapDNS={saveBootstrapDNS}
@@ -1279,6 +1296,25 @@ $effect(() => {
 							<Button variant="danger" size="sm" onclick={() => controlHydra('stop')} loading={hydraBusy}>{m.common_stop()}</Button>
 						{:else}
 							<Button variant="success" size="sm" onclick={() => controlHydra('start')} loading={hydraBusy}>{m.common_start()}</Button>
+						{/if}
+					</div>
+				</div>
+			{/if}
+
+			{#if zapretInstalled}
+				<div class="setting-row">
+					<div class="flex flex-col gap-1">
+						<span class="font-medium">Zapret</span>
+						<span class="setting-description">
+							{zapretRunning ? m.settings_page_daemon_running() : m.settings_page_daemon_stopped()}
+						</span>
+					</div>
+					<div class="action-buttons">
+						{#if zapretRunning}
+							<Button variant="secondary" size="sm" onclick={() => controlZapret('restart')} loading={zapretBusy}>{m.common_restart()}</Button>
+							<Button variant="danger" size="sm" onclick={() => controlZapret('stop')} loading={zapretBusy}>{m.common_stop()}</Button>
+						{:else}
+							<Button variant="success" size="sm" onclick={() => controlZapret('start')} loading={zapretBusy}>{m.common_start()}</Button>
 						{/if}
 					</div>
 				</div>

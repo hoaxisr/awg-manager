@@ -36,6 +36,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
+	"github.com/hoaxisr/awg-manager/internal/zapret"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
@@ -103,6 +104,7 @@ type Server struct {
 	clientRouteService         clientroute.Service
 	catalog                    routing.Catalog
 	hydraService               *hydraroute.Service
+	zapretService              *zapret.Service
 	orch                       *orchestrator.Orchestrator
 	bus                        *events.Bus
 	exposureGuard              *api.ExposureGuard
@@ -218,6 +220,7 @@ type Deps struct {
 	Orch                 *orchestrator.Orchestrator
 	Bus                  *events.Bus
 	HydraService         *hydraroute.Service
+	ZapretService        *zapret.Service
 	SingboxHandler       *api.SingboxHandler
 	SingboxOrch          *singboxorch.Orchestrator
 	ClashProxy           *api.ClashProxy
@@ -296,6 +299,7 @@ func New(cfg Config, deps Deps) *Server {
 		clientRouteService:     deps.ClientRouteSvc,
 		catalog:                deps.Catalog,
 		hydraService:           deps.HydraService,
+		zapretService:          deps.ZapretService,
 		orch:                   deps.Orch,
 		bus:                    deps.Bus,
 		singboxHandler:         deps.SingboxHandler,

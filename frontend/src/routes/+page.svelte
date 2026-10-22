@@ -32,9 +32,11 @@
 	} from '$lib/components/ui';
 	import { singboxDelayHistory, singboxStatus, singboxTraffic, singboxTunnels } from '$lib/stores/singbox';
 	import { awg3Tunnels } from '$lib/stores/awg3';
+	import { zapretStatusIfExpert } from '$lib/stores/zapret';
+	import { runZapretControl, ZapretServiceCard } from '$lib/components/zapret';
 	import { Awg3TunnelsSection, Awg3ImportModal } from '$lib/components/awg3';
 	import { getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
-	import { usageLevel } from '$lib/stores/settings';
+	import { usageLevel, settings } from '$lib/stores/settings';
 	import { isSectionVisible, isTunnelDashboardAvailable } from '$lib/types/usageLevel';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import SubscriptionsTabSection from '$lib/components/subscriptions/SubscriptionsTabSection.svelte';
@@ -64,7 +66,7 @@
 		systemStatusVariant,
 	} from '$lib/components/tunnels/tunnelPageSelectors';
 	import type { AwgTabContext } from '$lib/components/tunnels/awgTabContext';
-	import type { ExternalTunnel, Subscription, SubscriptionMember, SystemTunnel, TunnelListItem } from '$lib/types';
+	import type { ExternalTunnel, Subscription, SubscriptionMember, SystemTunnel, TunnelListItem, ZapretControlAction } from '$lib/types';
 	import { formatBitRate, formatBytes, formatDuration, formatRelativeTime, secondsSince } from '$lib/utils/format';
 	import { showOutboundReferencedError } from '$lib/utils/outboundReferenced';
 	import {
@@ -562,6 +564,23 @@
 	});
 
 	// Tabs
+	// Zapret — карточка сервиса на странице туннелей.
+	let zapretBusy = $state(false);
+
+	async function controlZapret(action: ZapretControlAction) {
+		zapretBusy = true;
+		try {
+			await runZapretControl(action, $zapretStatusIfExpert?.data?.base ?? '');
+		} finally {
+			zapretBusy = false;
+		}
+	}
+
+	/** Детальная настройка стратегий и списков — на вкладке Zapret в Маршрутизации. */
+	function openZapretSettings() {
+		void goto('/routing?tab=zapret');
+	}
+
 	let activeTab = $state<TunnelTab>('awg');
 	let awgViewMode = $state<AwgTunnelViewMode>('compact');
 	let awgViewModeReady = false;
@@ -1763,7 +1782,22 @@
 				active={activeTab}
 				onchange={(id) => (activeTab = id as TunnelTab)}
 				urlParam="tab"
+				persistKey="dashboard-tunnels"
+				memoryReady={$settings !== null && $systemInfoStore.lastFetchedAt > 0}
 				defaultTab="awg"
+			/>
+		{/if}
+
+		<!-- Zapret — сторонний движок обхода DPI. Карточка стоит здесь, а не
+		     в «Маршрутизации» одна: она нужна рядом с туннелями, потому что
+		     отвечает на тот же вопрос — «чем сейчас обрабатывается мой
+		     трафик». Подробная настройка стратегий живёт на /routing?tab=zapret. -->
+		{#if $zapretStatusIfExpert?.data?.installed}
+			<ZapretServiceCard
+				status={$zapretStatusIfExpert.data}
+				busy={zapretBusy}
+				oncontrol={controlZapret}
+				onopen={openZapretSettings}
 			/>
 		{/if}
 

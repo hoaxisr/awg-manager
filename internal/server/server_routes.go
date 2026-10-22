@@ -455,6 +455,21 @@ func (s *Server) registerRoutingRoutes(mux *http.ServeMux, h *routeHandlers) {
 	resolveHandler := api.NewResolveHandler()
 	mux.HandleFunc("/api/routing/resolve", h.guarded(resolveHandler.Resolve))
 
+	// Zapret (внешний anti-DPI движок). Чтение — любому вошедшему, а
+	// управление демоном и запись его файлов — только expert: UI показывает
+	// вкладку тому же уровню, что и HR Neo, и API не должен быть шире UI.
+	// Ставится только если сервис есть — без него вкладка не показывается.
+	if s.zapretService != nil {
+		zapretHandler := api.NewZapretHandler(s.zapretService, h.appLog)
+		zapretHandler.SetEventBus(s.bus)
+		mux.HandleFunc("/api/zapret/status", h.guarded(zapretHandler.Status))
+		mux.HandleFunc("/api/zapret/control", h.expertGuarded(zapretHandler.Control))
+		mux.HandleFunc("/api/zapret/strategies", h.guarded(zapretHandler.Strategies))
+		mux.HandleFunc("/api/zapret/strategies/reorder", h.expertGuarded(zapretHandler.ReorderStrategy))
+		mux.HandleFunc("/api/zapret/hostlists", h.guarded(zapretHandler.Hostlists))
+		mux.HandleFunc("/api/zapret/hostlist", h.guarded(zapretHandler.Hostlist))
+		mux.HandleFunc("/api/zapret/hostlist/save", h.expertGuarded(zapretHandler.SaveHostlist))
+	}
 }
 
 // registerSettingsRoutes — settings, ping check, monitoring matrix, NDMS ping-check.

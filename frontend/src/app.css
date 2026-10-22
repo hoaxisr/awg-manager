@@ -77,6 +77,19 @@
   unicode-range: U+0400-04FF, U+0500-052F;
 }
 
+/* ─── Флаги стран: Windows рисует их буквами («NL»). Подмножество Twemoji Mozilla
+   (country-flag-emoji-polyfill), CC-BY 4.0 © Twitter, Inc. and other contributors.
+   unicode-range: файл качается только при флаге на странице ─── */
+@font-face {
+  font-family: 'Twemoji Country Flags';
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/TwemojiCountryFlags.woff2') format('woff2');
+  unicode-range: U+1F1E6-1F1FF, U+1F3F4, U+E0062-E0063, U+E0065, U+E0067,
+    U+E006C, U+E006E, U+E0073-E0074, U+E0077, U+E007F;
+}
+
 /* ─── Design tokens (Tailwind v4 @theme — single source of truth) ─── */
 @theme {
   /* Colors — semantic */
@@ -109,8 +122,8 @@
   --color-border-hover: #565f89;
 
   /* Typography */
-  --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: 'IBM Plex Mono', 'SF Mono', SFMono-Regular, ui-monospace, monospace;
+  --font-sans: 'Twemoji Country Flags', 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'Twemoji Country Flags', 'IBM Plex Mono', 'SF Mono', SFMono-Regular, ui-monospace, monospace;
 
   /* Radii — bumped 8/4 → 12/6 per design */
   --radius: 12px;

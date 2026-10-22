@@ -59,9 +59,6 @@ func (a *app) setupServer() {
 	a.catalog.SetSnapshotProvider("clientRoutes", func(ctx context.Context) (interface{}, error) {
 		return a.clientRouteService.List()
 	})
-	a.catalog.SetSnapshotProvider("hydrarouteStatus", func(ctx context.Context) (interface{}, error) {
-		return a.hydraService.GetStatus(), nil
-	})
 
 	var slowHTTPThreshold time.Duration
 	if a.slowReqMS > 0 {
@@ -109,6 +106,7 @@ func (a *app) setupServer() {
 			Orch:                a.orch,
 			Bus:                 a.eventBus,
 			HydraService:        a.hydraService,
+			ZapretService:       a.zapretService,
 			SingboxHandler:      a.singboxHandler,
 			SingboxOrch:         a.sbOrch,
 			ClashProxy:          a.clashProxy,

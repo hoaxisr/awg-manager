@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { m, uiText, type UiText } from '$lib/i18n';
-	import type { SingboxStatus, HydraRouteStatus } from '$lib/types';
+	import type { SingboxStatus, HydraRouteStatus, ZapretStatus } from '$lib/types';
 	import type { ProxySubsystem } from '$lib/api/proxyInstances';
 	import { Button, ConfirmModal, Input, Modal, StatusDot } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
@@ -34,6 +34,7 @@
 		hydraStatus: HydraRouteStatus | null;
 		hydraStatusLoading?: boolean;
 		hydraStatusError?: string | null;
+		zapretStatus?: ZapretStatus | null;
 		singboxInstalling: boolean;
 		singboxUpdating?: boolean;
 		singboxInstallError: UiText | null;
@@ -63,6 +64,7 @@
 		hydraStatus,
 		hydraStatusLoading = false,
 		hydraStatusError = null,
+		zapretStatus = null,
 		singboxInstalling,
 		singboxUpdating = false,
 		singboxInstallError,
@@ -130,6 +132,8 @@
 	const hydraProcessState = $derived(
 		hydraStatus?.processState ?? (hydraStatus?.running ? 'running' : hydraStatus?.installed ? 'stopped' : 'not_installed')
 	);
+	const zapretInstalled = $derived(zapretStatus?.installed ?? false);
+	const zapretRunning = $derived(zapretStatus?.running ?? false);
 	const singboxFatalLines = $derived.by(() => {
 		const raw = stripAnsi(singboxStatus?.lastError ?? '').trim();
 		if (!raw) return '';
@@ -474,6 +478,32 @@
 						{m.settings_integrations_hydra_guide()}
 					</Button>
 				{/if}
+			</div>
+		{/if}
+
+		{#if zapretInstalled}
+			<div class="setting-row">
+				<div class="integration-item">
+					<StatusDot
+						variant={zapretRunning ? 'success' : 'muted'}
+						size="md"
+						ariaLabel={
+							zapretRunning
+								? m.settings_integrations_zapret_running_aria()
+								: m.settings_integrations_zapret_stopped_aria()
+						}
+					/>
+					<div class="integration-meta">
+						<span class="font-medium">Zapret</span>
+						<span class="integration-sub">
+							{zapretRunning ? m.zapret_state_running() : m.zapret_state_stopped()}
+						</span>
+						{#if zapretStatus?.lastError}
+							<span class="setting-description warning" title={zapretStatus.lastError}>{zapretStatus.lastError}</span>
+						{/if}
+					</div>
+				</div>
+				<Button variant="secondary" size="sm" href="/routing?tab=zapret">{m.settings_integrations_open()}</Button>
 			</div>
 		{/if}
 		</div>

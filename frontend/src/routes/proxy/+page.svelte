@@ -280,6 +280,8 @@
 			{tabs}
 			active={activeTab}
 			urlParam="tab"
+			persistKey="proxy-sections"
+			skipMemorySearchParams={['instance']}
 			defaultTab="exit"
 			onchange={(id) => (activeTab = id as TabId)}
 		/>

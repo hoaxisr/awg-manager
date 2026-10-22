@@ -9,6 +9,7 @@
     variant?: IconButtonVariant;
     size?: IconButtonSize;
     disabled?: boolean;
+    loading?: boolean;
     ariaLabel: string;
     title?: string;
     href?: string;
@@ -20,12 +21,15 @@
     variant = 'default',
     size = 'sm',
     disabled = false,
+    loading = false,
     ariaLabel,
     title,
     href,
     onclick,
     children,
   }: Props = $props();
+
+  let unavailable = $derived(disabled || loading);
 </script>
 
 {#if href}
@@ -36,12 +40,12 @@
     class:variant-warm={variant === 'warm'}
     class:size-sm={size === 'sm'}
     class:size-md={size === 'md'}
-    class:is-disabled={disabled}
-    {href}
+    class:is-disabled={unavailable}
+    href={unavailable ? undefined : href}
     {title}
     aria-label={ariaLabel}
-    aria-disabled={disabled}
-    tabindex={disabled ? -1 : 0}
+    aria-disabled={unavailable}
+    tabindex={unavailable ? -1 : 0}
   >
     {@render children()}
   </a>
@@ -54,12 +58,17 @@
     class:variant-warm={variant === 'warm'}
     class:size-sm={size === 'sm'}
     class:size-md={size === 'md'}
-    {disabled}
+    disabled={unavailable}
     aria-label={ariaLabel}
+    aria-busy={loading ? 'true' : undefined}
     {onclick}
     {title}
   >
-    {@render children()}
+    {#if loading}
+      <span class="loader" aria-hidden="true"></span>
+    {:else}
+      {@render children()}
+    {/if}
   </button>
 {/if}
 
@@ -112,5 +121,20 @@
     width: 16px;
     height: 16px;
     flex-shrink: 0;
+  }
+
+  /* Не общий .spinner из app.css: тот 16px в цветах акцента, а внутри
+     иконочной кнопки спиннер заменяет иконку — её размер и currentColor.
+     Ключевые кадры общие (spin из app.css). */
+  .loader {
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .loader { animation: spin 0.8s linear infinite; }
   }
 </style>

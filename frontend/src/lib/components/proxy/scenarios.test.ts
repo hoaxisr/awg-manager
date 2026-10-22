@@ -102,6 +102,8 @@ vi.mock("$lib/stores/notifications", () => ({ notifications: notify }));
 import { render, waitFor, fireEvent } from "@testing-library/svelte";
 import ProxyPage from "../../../routes/proxy/+page.svelte";
 
+beforeEach(() => localStorage.clear());
+
 /** Клиент как его отдаёт бэкенд (форма shim'а, все поля на месте). */
 function wdttClientCfg(over: Record<string, unknown> = {}) {
   return {

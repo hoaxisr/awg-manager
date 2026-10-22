@@ -15,6 +15,7 @@
         hydrarouteStatusStore,
     } from '$lib/stores/routing';
     import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
+    import { zapretStatusIfExpert } from '$lib/stores/zapret';
     import { systemInfo } from '$lib/stores/system';
     import { api } from '$lib/api/client';
     import { notifications } from '$lib/stores/notifications';
@@ -29,12 +30,13 @@
     import { HrNeoTab } from '$lib/components/hrneo';
     import { hrPosKey } from '$lib/components/hrneo/hrIds';
     import { SingboxRouterRedesignPage } from '$lib/components/sb-router';
+    import { ZapretTab } from '$lib/components/zapret';
     import FakeIPTab from '$lib/components/fakeip/FakeIPTab.svelte';
     import ModeSwitchHost from '$lib/components/routing/ModeSwitchHost.svelte';
     import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
     import GeoDataTab from './GeoDataTab.svelte';
     import { isRoutingSubTabVisible, type RoutingSubTab, type UsageLevel } from '$lib/types/usageLevel';
-    import { usageLevel, settings } from '$lib/stores/settings';
+    import { usageLevel, settings, settingsUnavailable } from '$lib/stores/settings';
 
     // Per-section polling stores — subscribe here so all 8 fetch while
     // the routing page is open. Unsubscribed on destroy to stop polling.
@@ -64,7 +66,7 @@
         unsubRouting?.();
     });
 
-    const ROUTING_TABS = ['hrneo', 'geodata', 'dns', 'ip', 'policy', 'clientvpn', 'singbox', 'fakeip'] as const;
+    const ROUTING_TABS = ['hrneo', 'geodata', 'dns', 'ip', 'policy', 'clientvpn', 'singbox', 'fakeip', 'zapret'] as const;
     type RoutingTab = (typeof ROUTING_TABS)[number];
 
     // «Любимая» вкладка — открывается первой вместо NDMS. Per-browser
@@ -105,6 +107,9 @@
     let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
     let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
     let singboxInstalled = $derived($systemInfo.data?.singbox?.installed ?? false);
+    // Zapret ставит пользователь, а не AWGM, поэтому вкладка появляется
+    // только когда движок реально найден на роутере.
+    let zapretInstalled = $derived($zapretStatusIfExpert?.data?.installed ?? false);
 
     let pendingTab = $state<string | null>(null);
 
@@ -275,6 +280,7 @@
         dns: 'dnsRoutes',
         ip: 'ipRoutes',
         hrneo: 'hrNeo',
+        zapret: 'zapret',
         geodata: 'geoData',
         singbox: 'singboxRouter',
     };
@@ -335,6 +341,15 @@
                 : null,
             // HR Neo is a separate routing engine (not sing-box) — divider before it.
             hydrarouteInstalled ? { id: 'hrneo', label: 'HR Neo', badge: hrRuleCount, separatorBefore: true } : null,
+            // Zapret — тоже отдельный движок, и ставит его пользователь, а не
+            // AWGM. Вкладка появляется только когда движок найден на роутере.
+            zapretInstalled
+                ? {
+                      id: 'zapret',
+                      label: 'Zapret',
+                      separatorBefore: true,
+                  }
+                : null,
             (hydrarouteInstalled || singboxInstalled)
                 ? { id: 'geodata', label: m.routing_page_tab_geodata(), badge: geoFileCount, separatorBefore: true }
                 : null,
@@ -383,12 +398,26 @@
         // Любимую не сбрасываем, пока не пришло то, от чего зависит её
         // видимость: до загрузки настроек usageLevel = 'advanced' и
         // expert-вкладки скрыты; FakeIP ниже expert виден только по
-        // routingMode из настроек sing-box. Ждём лишь эти вкладки, чтобы
-        // упавшая загрузка не держала остальные вечно.
+        // routingMode из настроек sing-box. Ждём лишь эти вкладки и лишь
+        // пока настройки не отказали, чтобы упавшая загрузка не держала
+        // их вечно.
         if (activeTab === savedFavoriteTab && !tabsInclude(items, activeTab)) {
             const levelGated = activeTab === 'hrneo' || activeTab === 'geodata' || activeTab === 'singbox' || activeTab === 'fakeip';
-            if (levelGated && $settings === null) return;
+            if (levelGated && $settings === null && !$settingsUnavailable) return;
             if (activeTab === 'fakeip' && $singboxSettings === null) return;
+        }
+
+        // Вкладка Zapret гейтится уровнем и zapret-status. Пока не пришли
+        // настройки или (у expert) статус, вкладки в списке ещё нет — иначе
+        // deep-link ?tab=zapret (например, из Настроек) откатился бы на
+        // первую вкладку до загрузки. Не загрузились настройки — не ждём.
+        const zapretPending = $zapretStatusIfExpert !== null && !$zapretStatusIfExpert.lastFetchedAt;
+        if (
+            activeTab === 'zapret' &&
+            !tabsInclude(items, activeTab) &&
+            (($settings === null && !$settingsUnavailable) || zapretPending)
+        ) {
+            return;
         }
 
         if (!tabsInclude(items, activeTab)) {
@@ -446,6 +475,10 @@
         active={activeTab}
         onchange={(id) => requestTab(id)}
         urlParam="tab"
+        persistKey="routing-sections"
+        skipMemorySearchParams={['policy', 'rule', 'edit']}
+        memoryReady={$settings !== null && $systemInfo.lastFetchedAt > 0 && $hydrarouteStatusStore.lastFetchedAt > 0 && (!singboxInstalled || $singboxSettings !== null)}
+        restoreMemory={savedFavoriteTab === null}
         defaultTab={favoriteTab ?? 'dns'}
     />
 
@@ -497,6 +530,8 @@
         <SingboxRouterRedesignPage />
     {:else if activeTab === 'fakeip'}
         <FakeIPTab />
+    {:else if activeTab === 'zapret'}
+        <ZapretTab />
     {/if}
     <ModeSwitchHost />
     </div>

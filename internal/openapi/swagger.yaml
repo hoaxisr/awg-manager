@@ -7969,6 +7969,31 @@ definitions:
       enabled:
         type: boolean
     type: object
+  api.zapretHostlistResponse:
+    properties:
+      content:
+        type: string
+      id:
+        $ref: '#/definitions/zapret.HostlistID'
+      path:
+        type: string
+      restartError:
+        type: string
+      revision:
+        type: string
+    type: object
+  api.zapretHostlistsResponse:
+    properties:
+      hostlists:
+        items:
+          $ref: '#/definitions/zapret.HostlistInfo'
+        type: array
+    type: object
+  api.zapretStatusResponse:
+    properties:
+      zapretStatus:
+        $ref: '#/definitions/zapret.Status'
+    type: object
   captcha.ClientStatus:
     properties:
       active:
@@ -8964,6 +8989,282 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  zapret.HostlistID:
+    enum:
+    - user
+    - exclude
+    - auto
+    - main
+    type: string
+    x-enum-varnames:
+    - HostlistUser
+    - HostlistExclude
+    - HostlistAuto
+    - HostlistMain
+  zapret.HostlistInfo:
+    properties:
+      domains:
+        description: |-
+          Domains/IPs — разбор содержимого. Для zapret-hosts-user.txt это
+          важно: IP там разрешаются в отдельный список ipset'ом, но сами
+          демоны в MODE_FILTER=hostlist их не видят.
+        type: integer
+      editable:
+        type: boolean
+      entries:
+        description: Entries — число непустых строк (минус комментарии).
+        type: integer
+      exists:
+        type: boolean
+      generated:
+        type: boolean
+      gzipped:
+        type: boolean
+      id:
+        $ref: '#/definitions/zapret.HostlistID'
+      ips:
+        type: integer
+      path:
+        type: string
+      warnings:
+        items:
+          $ref: '#/definitions/zapret.Warning'
+        type: array
+    type: object
+  zapret.LuaInstance:
+    properties:
+      args:
+        description: Args — остальные аргументы после двоеточия, как есть.
+        type: string
+      function:
+        description: Function — имя функции (fake, multisplit, circular, send, drop…).
+        type: string
+      key:
+        description: Key — значение :key=, метка пула для циклического перебора.
+        type: string
+      slot:
+        description: |-
+          Strategy — значение :strategy=N, если есть. Именно по нему
+          circular перебирает варианты, поэтому это полезно показать.
+        type: string
+    type: object
+  zapret.ProcessState:
+    enum:
+    - not_installed
+    - stopped
+    - running
+    type: string
+    x-enum-varnames:
+    - StateNotInstalled
+    - StateStopped
+    - StateRunning
+  zapret.Status:
+    properties:
+      activeBase:
+        description: |-
+          ActiveBase — каталог, из которого реально запущен демон. Пусто, если
+          демон сейчас не запущен и выбрать нечего.
+        type: string
+      base:
+        type: string
+      binary:
+        type: string
+      config:
+        type: string
+      conflict:
+        description: |-
+          Conflict means the resolver found candidates but could not safely map
+          one selected installation (for example, two live bases or an unknown
+          process owner). Mutating endpoints reject the same condition.
+        type: boolean
+      flavor:
+        description: 'Flavor — что именно нашлось: "zapret2" или "zapret".'
+        type: string
+      hasUserHostlist:
+        description: HasUserHostlist — есть ли непустой пользовательский список.
+        type: boolean
+      hostlistCount:
+        type: integer
+      initScript:
+        type: string
+      installed:
+        description: Installed — найдены каталог с config'ом и переменная опций.
+        type: boolean
+      lastError:
+        type: string
+      optVar:
+        description: |-
+          OptVar — NFQWS2_OPT или NFQWS_OPT; в каких именно переменных
+          лежат стратегии, показываем явно, иначе непонятно что править.
+        type: string
+      otherInstalls:
+        description: |-
+          OtherInstalls — прочие найденные установки, кроме Base. На роутере
+          их бывает несколько (zapret v1 в /opt/zapret, zapret2 в
+          /opt/zapret2 и, скажем, zapret22 в /opt/zapret22), и пользователю
+          полезно знать, что AWGM смотрит только на рабочую: иначе непонятно,
+          почему правка в одном каталоге не изменила поведение.
+        items:
+          type: string
+        type: array
+      package:
+        description: |-
+          Package — имя opkg-пакета, если zapret ставился пакетом. В
+          репозитории Entware его нет, поэтому это всегда локальный .ipk.
+        type: string
+      packageVersion:
+        type: string
+      pids:
+        items:
+          type: integer
+        type: array
+      processState:
+        $ref: '#/definitions/zapret.ProcessState'
+      running:
+        type: boolean
+      strategyCount:
+        description: StrategyCount / HostlistCount — сводка для бейджа вкладки.
+        type: integer
+      version:
+        description: Version — nfqws2 --version, если удалось получить.
+        type: string
+    type: object
+  zapret.Strategies:
+    properties:
+      config:
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/zapret.Strategy'
+        type: array
+      optVar:
+        type: string
+      parseWarnings:
+        description: ParseWarnings — проблемы уровня файла (а не отдельной стратегии).
+        items:
+          $ref: '#/definitions/zapret.Warning'
+        type: array
+      raw:
+        description: |-
+          Raw — значение переменной как есть. Нужно для «показать как есть»
+          и для отладки: парсер не обязан понимать все опции nfqws2.
+        type: string
+      revision:
+        type: string
+    type: object
+  zapret.Strategy:
+    properties:
+      filterIcmp:
+        type: string
+      filterIpp:
+        type: string
+      filterL3:
+        type: string
+      filterL7:
+        type: string
+      filterTcp:
+        type: string
+      filterUdp:
+        type: string
+      hostlistAuto:
+        description: |-
+          HostlistAuto — автосписок (--hostlist-auto=). В отличие от
+          прочих, его пишет сам nfqws2 по итогам детекта блокировок.
+        items:
+          $ref: '#/definitions/zapret.StrategyHostlist'
+        type: array
+      hostlistExcludes:
+        description: HostlistExcludes — списки исключений (--hostlist-exclude=).
+        items:
+          $ref: '#/definitions/zapret.StrategyHostlist'
+        type: array
+      hostlists:
+        description: |-
+          Hostlists — подключённые к профилю списки доменов (--hostlist=).
+          Ключ — путь из конфига, значение — сколько доменов в файле.
+        items:
+          $ref: '#/definitions/zapret.StrategyHostlist'
+        type: array
+      inRange:
+        type: string
+      index:
+        description: |-
+          Index — позиция в файле. 0-based; приоритет = чем меньше, тем
+          раньше проверяется фильтр.
+        type: integer
+      ipsets:
+        description: Ipsets — списки адресов (--ipset=).
+        items:
+          $ref: '#/definitions/zapret.StrategyHostlist'
+        type: array
+      luaDesync:
+        description: |-
+          LuaDesync — цепочка вызовов Lua, из которых и состоит собственно
+          обход. Порядок значит и здесь тоже.
+        items:
+          $ref: '#/definitions/zapret.LuaInstance'
+        type: array
+      name:
+        type: string
+      outRange:
+        type: string
+      payload:
+        type: string
+      placeholders:
+        description: |-
+          Placeholders — маркеры <HOSTLIST> / <HOSTLIST_NOAUTO>, найденные в
+          профиле как отдельные токены. Их разворачивает init-скрипт zapret
+          при старте, поэтому на карточке они показываются как развёрнутые
+          в конкретные файлы, а не как путь.
+        items:
+          type: string
+        type: array
+      raw:
+        description: Raw — исходная строка опций профиля без завершающего --new.
+        type: string
+      warnings:
+        description: |-
+          Warnings — предупреждения о конкретных граблях этой стратегии
+          (например, ipset-фильтр, который молча ничего не делает в
+          режиме MODE_FILTER=hostlist). Показываются прямо на карточке.
+        items:
+          $ref: '#/definitions/zapret.Warning'
+        type: array
+    type: object
+  zapret.StrategyHostlist:
+    properties:
+      entries:
+        type: integer
+      exists:
+        description: |-
+          Exists=false означает, что nfqws2 не запустится: RegisterHostlist
+          требует существующий непустой файл иначе завершает процесс.
+        type: boolean
+      fromPlaceholder:
+        description: |-
+          FromPlaceholder заполнен, когда ссылка пришла не явным путём, а
+          плейсхолдером <HOSTLIST>: его init-скрипт zapret разворачивает в
+          несколько реальных списков при старте. Пусто = путь указан явно.
+        type: string
+      hasIps:
+        description: |-
+          HasIPs — в списке есть адреса или подсети. Значимо только в паре с
+          Domains: если адреса есть, а доменов нет, список не сработает в
+          MODE_FILTER=hostlist (см. strategyWarnings).
+        type: boolean
+      ipOnly:
+        description: IPOnly — в списке только адреса, ни одного домена.
+        type: boolean
+      path:
+        type: string
+    type: object
+  zapret.Warning:
+    properties:
+      code:
+        type: string
+      detail:
+        type: string
     type: object
 info:
   contact: {}
@@ -21472,6 +21773,178 @@ paths:
       summary: WAN status
       tags:
       - wan
+  /zapret/control:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.zapretStatusResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Zapret control
+      tags:
+      - zapret
+  /zapret/hostlist:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.zapretHostlistResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Zapret hostlist content
+      tags:
+      - zapret
+  /zapret/hostlist/save:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.zapretHostlistResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Save zapret hostlist
+      tags:
+      - zapret
+  /zapret/hostlists:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.zapretHostlistsResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Zapret hostlists
+      tags:
+      - zapret
+  /zapret/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.zapretStatusResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Zapret status
+      tags:
+      - zapret
+  /zapret/strategies:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/zapret.Strategies'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Zapret strategies
+      tags:
+      - zapret
+  /zapret/strategies/reorder:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/zapret.Strategies'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Reorder zapret strategy
+      tags:
+      - zapret
 securityDefinitions:
   CookieAuth:
     description: Session cookie set by POST /auth/login. Omit for public routes.

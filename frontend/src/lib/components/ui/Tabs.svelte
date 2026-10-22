@@ -5,6 +5,7 @@
     import { ChevronDown } from 'lucide-svelte';
     import { m } from '$lib/i18n';
     import TabBadge from './TabBadge.svelte';
+    import { tabMemoryKey, readTabMemory, writeTabMemory } from './tab-memory';
     import TabsMenu from './TabsMenu.svelte';
     import {
         countFitting,
@@ -34,9 +35,17 @@
          * tabs[0]?.id.
          */
         defaultTab?: string;
+        /** Wait for installation/permission-dependent tabs before restoring. */
+        memoryReady?: boolean;
+        /** Opt in to remembering this row with a stable, feature-specific key. */
+        persistKey?: string;
+        /** Query params that indicate an explicit navigation outside tab memory. */
+        skipMemorySearchParams?: string[];
+        /** Explicit page preference, such as a pinned favorite, takes priority. */
+        restoreMemory?: boolean;
     }
 
-    let { tabs, active, onchange, urlParam, defaultTab }: Props = $props();
+    let { tabs, active, onchange, urlParam, defaultTab, memoryReady = true, persistKey, skipMemorySearchParams = [], restoreMemory = true }: Props = $props();
 
     let containerEl: HTMLDivElement | undefined = $state();
     let measureEl: HTMLDivElement | undefined = $state();
@@ -48,36 +57,33 @@
     let menuOpenId = $state<string | null>(null);
     let cachedContainerWidth = 0;
     // Last picked child per menu group — survives leaving to AWG/etc. (and reload).
-    let menuMemory = $state<Record<string, string>>({});
+    // One list per row, newest first; a group's entry is the first id that belongs
+    // to it, so the group's id, label and child set may change with access level.
+    let menuMemory = $state<string[] | null>(null);
 
     let anyDropdownOpen = $derived(overflowOpen || menuOpenId !== null);
 
     const MENU_MEMORY_PREFIX = 'ui.tabs.menuLast:';
 
-    function menuMemoryKey(tab: Tab): string {
-        // Include leaf ids so two "Sing-box" menus (tunnels vs routing) don't clash.
-        return `${tab.label}:${leafIds(tab).slice().sort().join(',')}`;
-    }
-
-    function readStoredMenuChild(tab: Tab): string | null {
-        if (typeof localStorage === 'undefined') return null;
+    function storedMenuChildren(): string[] {
+        if (menuMemory) return menuMemory;
         try {
-            const raw = localStorage.getItem(MENU_MEMORY_PREFIX + menuMemoryKey(tab));
-            if (raw && leafIds(tab).includes(raw)) return raw;
+            const raw = JSON.parse(localStorage.getItem(MENU_MEMORY_PREFIX + persistKey) ?? '[]');
+            return Array.isArray(raw) ? raw : [];
         } catch {
-            /* private mode */
+            return []; // private mode, no storage, foreign value
         }
-        return null;
     }
 
     function rememberMenuChild(tab: Tab, childId: string) {
-        if (!leafIds(tab).includes(childId)) return;
-        const key = menuMemoryKey(tab);
-        if (menuMemory[key] === childId) return;
-        menuMemory = { ...menuMemory, [key]: childId };
-        if (typeof localStorage === 'undefined') return;
+        if (!persistKey) return;
+        const ids = leafIds(tab);
+        if (!ids.includes(childId)) return;
+        const stored = storedMenuChildren();
+        if (stored.find((id) => ids.includes(id)) === childId) return;
+        menuMemory = [childId, ...stored.filter((id) => id !== childId && !ids.includes(id))];
         try {
-            localStorage.setItem(MENU_MEMORY_PREFIX + key, childId);
+            localStorage.setItem(MENU_MEMORY_PREFIX + persistKey, JSON.stringify(menuMemory));
         } catch {
             /* private mode */
         }
@@ -88,12 +94,8 @@
         if (!kids?.length) return undefined;
         const activeHit = kids.find((c) => c.id === active);
         if (activeHit) return activeHit;
-        const mem = menuMemory[menuMemoryKey(tab)] ?? readStoredMenuChild(tab);
-        if (mem) {
-            const hit = kids.find((c) => c.id === mem);
-            if (hit) return hit;
-        }
-        return kids[0];
+        const mem = persistKey ? storedMenuChildren().find((id) => kids.some((c) => c.id === id)) : undefined;
+        return kids.find((c) => c.id === mem) ?? kids[0];
     }
 
     // Gates the outbound URL writer until the inbound effect has had a chance
@@ -105,6 +107,34 @@
     // overwrite `?tab=policy` with the default tab's empty URL before the
     // conditional tab appears, losing the deep-link value.
     let urlConsumed = $state(false);
+    // The remembered tab is restored once, when the page reports its tabs as
+    // known (memoryReady), or never if a click or a `?urlParam=` value (even an
+    // unknown one) comes first. A remembered tab that appears later does not
+    // pull the user away.
+    let memoryChecked = $state(false);
+
+    // Returns false while restore is pending: the outbound URL writer holds off,
+    // so a parent's early bounce off a hidden default tab (OS4 `dns`) does not
+    // land in the URL and cancel the restore. Cost: if memoryReady never comes
+    // (status fetch failed), parent switches skip the URL until the first click.
+    function restoreLastTab(): boolean {
+        if (!persistKey || memoryChecked) return true;
+        if (!memoryReady) return false;
+        memoryChecked = true;
+        // Caller deep-link params and an explicit page preference win.
+        const query = $page.url.searchParams;
+        if (!restoreMemory || skipMemorySearchParams.some((key) => query.has(key))) return true;
+        const saved = readTabMemory(tabMemoryKey(persistKey), tabs.flatMap(leafIds));
+        if (saved && saved !== untrack(() => active)) onchange(saved);
+        return true;
+    }
+
+    // Persist the open tab once restore is settled, like the menu child below:
+    // clicks, URL and parent switches alike. A rejected click leaves `active`
+    // unchanged and is not stored.
+    $effect(() => {
+        if (persistKey && memoryChecked) writeTabMemory(tabMemoryKey(persistKey), active);
+    });
 
     function findTabForId(id: string): Tab | undefined {
         return tabs.find((t) => leafIds(t).includes(id));
@@ -159,9 +189,10 @@
     // that branch leaves urlConsumed=false so outbound holds off until
     // `tabs` updates (effect re-fires on the tabs.find dependency).
     $effect(() => {
-        if (!urlParam) { urlConsumed = true; return; }
+        if (!urlParam) { urlConsumed = restoreLastTab(); return; }
         const fromUrl = $page.url.searchParams.get(urlParam);
-        if (fromUrl == null) { urlConsumed = true; return; }
+        if (fromUrl == null) { urlConsumed = restoreLastTab(); return; }
+        memoryChecked = true;
         if (fromUrl === untrack(() => active)) { urlConsumed = true; return; }
         if (!findTabForId(fromUrl)) return;
         urlConsumed = true;
@@ -240,6 +271,7 @@
     function selectTab(id: string) {
         overflowOpen = false;
         menuOpenId = null;
+        memoryChecked = true;
         onchange(id);
     }
 
@@ -262,7 +294,7 @@
             overflowOpen = false;
             menuOpenId = null;
             const target = resolvedMenuChild(tab)?.id ?? tab.id;
-            onchange(target);
+            selectTab(target);
             return;
         }
         toggleMenu(tab);

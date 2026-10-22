@@ -4,9 +4,27 @@ import type {
 	DnsRoute,
 	PolicyDevice,
 	ResolveResult,
-	StaticRouteList
+	StaticRouteList,
+	ZapretHostlistContent,
+	ZapretHostlistId,
+	ZapretHostlistInfo,
+	ZapretControlAction,
+	ZapretStatus,
+	ZapretStrategies
 } from '$lib/types';
 import { ServersClient } from './clientServers';
+
+/** Статус для случая «сервис не подключён» — рисуем то же, что и 404. */
+function emptyZapretStatus(): ZapretStatus {
+	return {
+		installed: false,
+		running: false,
+		processState: 'not_installed',
+		strategyCount: 0,
+		hostlistCount: 0,
+		hasUserHostlist: false
+	};
+}
 
 export class RoutingClient extends ServersClient {
 	// ─────────────────────────────────────────────
@@ -236,5 +254,55 @@ export class RoutingClient extends ServersClient {
 
 	// #endregion
 
+	// ─────────────────────────────────────────────
+	// #region Zapret (внешний anti-DPI движок)
+	// ─────────────────────────────────────────────
 
+	// AWGM не ставит zapret: пакет устанавливает пользователь. Эти методы
+	// читают состояние найденной установки и правят пользовательские
+	// файлы. Отсутствие zapret приходит как 404 — это штатное состояние,
+	// а не ошибка, поэтому вызывающий рисует карточку «не установлено».
+
+	async getZapretStatus(): Promise<ZapretStatus> {
+		const res = await this.request<{ zapretStatus: ZapretStatus | null }>('/zapret/status');
+		return res?.zapretStatus ?? emptyZapretStatus();
+	}
+
+	async controlZapret(action: ZapretControlAction, base: string): Promise<ZapretStatus> {
+		const res = await this.request<{ zapretStatus: ZapretStatus | null }>('/zapret/control', {
+			method: 'POST',
+			body: JSON.stringify({ action, base })
+		});
+		return res?.zapretStatus ?? emptyZapretStatus();
+	}
+
+	async getZapretStrategies(): Promise<ZapretStrategies> {
+		return this.request('/zapret/strategies');
+	}
+
+	/** Порядок карточек = приоритет фильтров в nfqws2. */
+	async reorderZapretStrategy(from: number, to: number, revision: string): Promise<ZapretStrategies> {
+		return this.request('/zapret/strategies/reorder', {
+			method: 'POST',
+			body: JSON.stringify({ from, to, revision })
+		});
+	}
+
+	async getZapretHostlists(): Promise<ZapretHostlistInfo[]> {
+		const res = await this.request<{ hostlists: ZapretHostlistInfo[] }>('/zapret/hostlists');
+		return res?.hostlists ?? [];
+	}
+
+	async getZapretHostlist(id: ZapretHostlistId): Promise<ZapretHostlistContent> {
+		return this.request(`/zapret/hostlist?id=${encodeURIComponent(id)}`);
+	}
+
+	async saveZapretHostlist(id: ZapretHostlistId, content: string, revision: string): Promise<ZapretHostlistContent> {
+		return this.request('/zapret/hostlist/save', {
+			method: 'POST',
+			body: JSON.stringify({ id, content, revision })
+		});
+	}
+
+	// #endregion
 }

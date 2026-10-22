@@ -34,6 +34,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/state"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
+	"github.com/hoaxisr/awg-manager/internal/zapret"
 )
 
 // setupTunnels wires the tunnel core (wg/backend/state/firewall, NDMS
@@ -154,6 +155,12 @@ func (a *app) setupTunnels() {
 		}
 		return out
 	})
+
+	// Zapret integration. AWGM только читает состояние и правит
+	// пользовательские файлы: пакет zapret ставит пользователь, а наличие
+	// установки определяется лениво, на запрос статуса.
+	a.zapretService = zapret.NewService(a.dataDir, a.loggingService)
+	a.zapretService.SetEventBus(a.eventBus)
 
 	// HydraRoute Neo integration (optional — detected at startup)
 	a.hydraService = hydraroute.NewService(a.catalog, a.loggingService)

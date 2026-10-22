@@ -56,6 +56,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 	"github.com/hoaxisr/awg-manager/internal/updater"
+	"github.com/hoaxisr/awg-manager/internal/zapret"
 )
 
 // app is the composition root of the daemon: every subsystem constructed by
@@ -144,6 +145,7 @@ type app struct {
 
 	// routing / aux services
 	hydraService        *hydraroute.Service
+	zapretService       *zapret.Service
 	geoDataStore        *hydraroute.GeoDataStore
 	geoRefreshScheduler *hydraroute.GeoRefreshScheduler
 	dnsRouteStore       *dnsroute.Store

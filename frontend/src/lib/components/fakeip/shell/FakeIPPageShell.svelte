@@ -160,6 +160,7 @@
 		active={activeChip}
 		onchange={onChipChange}
 		urlParam="chip"
+		persistKey="fakeip-page-shell"
 		defaultTab={chips[0]?.id}
 	/>
 

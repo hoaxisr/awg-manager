@@ -2807,6 +2807,22 @@ const api_WireguardServerPeerDTO: v.GenericSchema = v.looseObject({
 	txBytes: v.optional(v.nullable(v.number())),
 });
 
+const api_zapretHostlistResponse: v.GenericSchema = v.looseObject({
+	content: v.optional(v.nullable(v.string())),
+	id: v.optional(v.nullable(v.lazy(() => zapret_HostlistID))),
+	path: v.optional(v.nullable(v.string())),
+	restartError: v.optional(v.nullable(v.string())),
+	revision: v.optional(v.nullable(v.string())),
+});
+
+const api_zapretHostlistsResponse: v.GenericSchema = v.looseObject({
+	hostlists: v.optional(v.nullable(v.array(v.lazy(() => zapret_HostlistInfo)))),
+});
+
+const api_zapretStatusResponse: v.GenericSchema = v.looseObject({
+	zapretStatus: v.optional(v.nullable(v.lazy(() => zapret_Status))),
+});
+
 const captcha_ClientStatus: v.GenericSchema = v.looseObject({
 	active: v.optional(v.nullable(v.boolean())),
 	canOpen: v.optional(v.nullable(v.boolean())),
@@ -3196,6 +3212,98 @@ const wdttusers_UsersStatusResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const zapret_HostlistID: v.GenericSchema = v.string();
+
+const zapret_HostlistInfo: v.GenericSchema = v.looseObject({
+	domains: v.optional(v.nullable(v.number())),
+	editable: v.optional(v.nullable(v.boolean())),
+	entries: v.optional(v.nullable(v.number())),
+	exists: v.optional(v.nullable(v.boolean())),
+	generated: v.optional(v.nullable(v.boolean())),
+	gzipped: v.optional(v.nullable(v.boolean())),
+	id: v.optional(v.nullable(v.lazy(() => zapret_HostlistID))),
+	ips: v.optional(v.nullable(v.number())),
+	path: v.optional(v.nullable(v.string())),
+	warnings: v.optional(v.nullable(v.array(v.lazy(() => zapret_Warning)))),
+});
+
+const zapret_LuaInstance: v.GenericSchema = v.looseObject({
+	args: v.optional(v.nullable(v.string())),
+	function: v.optional(v.nullable(v.string())),
+	key: v.optional(v.nullable(v.string())),
+	slot: v.optional(v.nullable(v.string())),
+});
+
+const zapret_ProcessState: v.GenericSchema = v.string();
+
+const zapret_Status: v.GenericSchema = v.looseObject({
+	activeBase: v.optional(v.nullable(v.string())),
+	base: v.optional(v.nullable(v.string())),
+	binary: v.optional(v.nullable(v.string())),
+	config: v.optional(v.nullable(v.string())),
+	conflict: v.optional(v.nullable(v.boolean())),
+	flavor: v.optional(v.nullable(v.string())),
+	hasUserHostlist: v.optional(v.nullable(v.boolean())),
+	hostlistCount: v.optional(v.nullable(v.number())),
+	initScript: v.optional(v.nullable(v.string())),
+	installed: v.optional(v.nullable(v.boolean())),
+	lastError: v.optional(v.nullable(v.string())),
+	optVar: v.optional(v.nullable(v.string())),
+	otherInstalls: v.optional(v.nullable(v.array(v.string()))),
+	package: v.optional(v.nullable(v.string())),
+	packageVersion: v.optional(v.nullable(v.string())),
+	pids: v.optional(v.nullable(v.array(v.number()))),
+	processState: v.optional(v.nullable(v.lazy(() => zapret_ProcessState))),
+	running: v.optional(v.nullable(v.boolean())),
+	strategyCount: v.optional(v.nullable(v.number())),
+	version: v.optional(v.nullable(v.string())),
+});
+
+const zapret_Strategies: v.GenericSchema = v.looseObject({
+	config: v.optional(v.nullable(v.string())),
+	items: v.optional(v.nullable(v.array(v.lazy(() => zapret_Strategy)))),
+	optVar: v.optional(v.nullable(v.string())),
+	parseWarnings: v.optional(v.nullable(v.array(v.lazy(() => zapret_Warning)))),
+	raw: v.optional(v.nullable(v.string())),
+	revision: v.optional(v.nullable(v.string())),
+});
+
+const zapret_Strategy: v.GenericSchema = v.looseObject({
+	filterIcmp: v.optional(v.nullable(v.string())),
+	filterIpp: v.optional(v.nullable(v.string())),
+	filterL3: v.optional(v.nullable(v.string())),
+	filterL7: v.optional(v.nullable(v.string())),
+	filterTcp: v.optional(v.nullable(v.string())),
+	filterUdp: v.optional(v.nullable(v.string())),
+	hostlistAuto: v.optional(v.nullable(v.array(v.lazy(() => zapret_StrategyHostlist)))),
+	hostlistExcludes: v.optional(v.nullable(v.array(v.lazy(() => zapret_StrategyHostlist)))),
+	hostlists: v.optional(v.nullable(v.array(v.lazy(() => zapret_StrategyHostlist)))),
+	inRange: v.optional(v.nullable(v.string())),
+	index: v.optional(v.nullable(v.number())),
+	ipsets: v.optional(v.nullable(v.array(v.lazy(() => zapret_StrategyHostlist)))),
+	luaDesync: v.optional(v.nullable(v.array(v.lazy(() => zapret_LuaInstance)))),
+	name: v.optional(v.nullable(v.string())),
+	outRange: v.optional(v.nullable(v.string())),
+	payload: v.optional(v.nullable(v.string())),
+	placeholders: v.optional(v.nullable(v.array(v.string()))),
+	raw: v.optional(v.nullable(v.string())),
+	warnings: v.optional(v.nullable(v.array(v.lazy(() => zapret_Warning)))),
+});
+
+const zapret_StrategyHostlist: v.GenericSchema = v.looseObject({
+	entries: v.optional(v.nullable(v.number())),
+	exists: v.optional(v.nullable(v.boolean())),
+	fromPlaceholder: v.optional(v.nullable(v.string())),
+	hasIps: v.optional(v.nullable(v.boolean())),
+	ipOnly: v.optional(v.nullable(v.boolean())),
+	path: v.optional(v.nullable(v.string())),
+});
+
+const zapret_Warning: v.GenericSchema = v.looseObject({
+	code: v.optional(v.nullable(v.string())),
+	detail: v.optional(v.nullable(v.string())),
+});
+
 /**
  * 2xx response envelope schema per "METHOD /path" (path как в swagger,
  * без basePath /api; шаблонные сегменты — {param}).
@@ -3403,6 +3511,10 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /tunnels/pingcheck": v.lazy(() => api_NativePingCheckStatusResponse),
 	"GET /tunnels/traffic": v.lazy(() => api_TunnelTrafficResponse),
 	"GET /wan/status": v.lazy(() => api_WANStatusEnvelope),
+	"GET /zapret/hostlist": v.lazy(() => api_zapretHostlistResponse),
+	"GET /zapret/hostlists": v.lazy(() => api_zapretHostlistsResponse),
+	"GET /zapret/status": v.lazy(() => api_zapretStatusResponse),
+	"GET /zapret/strategies": v.lazy(() => zapret_Strategies),
 	"PATCH /awg3-endpoints/{id}": v.lazy(() => api_Awg3ListResponse),
 	"PATCH /proxyrt/instances/{key}": v.lazy(() => api_ProxyRtInstanceResponse),
 	"PATCH /proxyrt/instances/{key}/users/{password}": v.lazy(() => wdttusers_UsersStatusResponse),
@@ -3647,6 +3759,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /tunnels/pingcheck/remove": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/replace": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/update": v.lazy(() => api_APIEnvelope),
+	"POST /zapret/control": v.lazy(() => api_zapretStatusResponse),
+	"POST /zapret/hostlist/save": v.lazy(() => api_zapretHostlistResponse),
+	"POST /zapret/strategies/reorder": v.lazy(() => zapret_Strategies),
 	"PUT /hydraroute/config/update": v.lazy(() => api_HydraRouteConfigResponse),
 	"PUT /managed-servers/{id}": v.lazy(() => api_ServersAllResponse),
 	"PUT /managed-servers/{id}/asc": v.lazy(() => api_ASCParamsResponse),
