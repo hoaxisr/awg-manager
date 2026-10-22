@@ -1022,7 +1022,7 @@ definitions:
         example: Все европейские
         type: string
       mode:
-        description: '"urltest" (default) | "selector"'
+        description: '"urltest" (default) | "selector" | "fallback"'
         example: urltest
         type: string
       tag:
@@ -1068,7 +1068,7 @@ definitions:
         example: Demo Provider
         type: string
       mode:
-        description: '"selector" (default) | "urltest"'
+        description: '"selector" (default) | "urltest" | "fallback"'
         type: string
       path:
         example: /opt/etc/awg-manager/sub.txt
