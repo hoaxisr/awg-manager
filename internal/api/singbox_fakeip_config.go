@@ -74,6 +74,9 @@ func (h *SingboxFakeIPConfigHandler) handleErr(w http.ResponseWriter, action str
 	case errors.Is(err, router.ErrCompositeMemberUnknown):
 		// 400: member-тег композита не существует ни в одном каталоге (#567).
 		response.Error(w, err.Error(), "COMPOSITE_MEMBER_UNKNOWN")
+	case errors.Is(err, router.ErrOutboundInvalid):
+		// 400: форма outbound не прошла проверку — ошибка ввода, не сбой.
+		response.Error(w, err.Error(), "OUTBOUND_INVALID")
 	case errors.Is(err, router.ErrBulkInvalidSelection):
 		// 400: non-empty but invalid bulk selection (duplicate index/tag,
 		// non-route rule, unknown outbound tag, non-remote rule set).

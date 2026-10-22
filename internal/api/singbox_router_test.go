@@ -1220,3 +1220,22 @@ func TestHandleErr_DNSBindAddress400(t *testing.T) {
 		}
 	}
 }
+
+// Отвергнутая validateOutbound форма группы (тип, участники, direct в
+// urltest) — ввод (400 OUTBOUND_INVALID), а не 500; проверяются оба слота.
+func TestHandleErr_OutboundInvalid400(t *testing.T) {
+	err := router.NewEmptyConfig().AddCompositeOutbound(router.Outbound{Tag: "lb", Type: "loadbalance", Outbounds: []string{"awg10"}})
+	if !errors.Is(err, router.ErrOutboundInvalid) {
+		t.Fatalf("AddCompositeOutbound err = %v, want ErrOutboundInvalid", err)
+	}
+	for name, h := range map[string]func(http.ResponseWriter, string, error){
+		"router": newMockRouterHandler(&mockRouterSvc{}).handleErr,
+		"fakeip": newTestFakeIPConfigHandler(t).handleErr,
+	} {
+		rr := httptest.NewRecorder()
+		h(rr, "add-outbound", err)
+		if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "OUTBOUND_INVALID") {
+			t.Errorf("%s: status=%d body=%s", name, rr.Code, rr.Body.String())
+		}
+	}
+}

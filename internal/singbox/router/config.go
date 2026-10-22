@@ -698,10 +698,16 @@ func validateCompositeOutbound(o Outbound) error {
 // bind_interface and no composite fields; selector/urltest go through the
 // composite validator.
 func validateOutbound(o Outbound) error {
+	var err error
 	if strings.EqualFold(o.Type, "direct") {
-		return validateInterfaceOutbound(o)
+		err = validateInterfaceOutbound(o)
+	} else {
+		err = validateCompositeOutbound(o)
 	}
-	return validateCompositeOutbound(o)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrOutboundInvalid, err)
+	}
+	return nil
 }
 
 // validateInterfaceOutbound checks a user-created direct outbound bound to

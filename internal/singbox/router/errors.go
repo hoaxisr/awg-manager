@@ -28,7 +28,10 @@ var (
 	ErrDatRuleSetForbidden = errors.New("dat rule set token is invalid")
 	ErrOutboundTagConflict = errors.New("outbound with this tag already exists")
 	// ErrCompositeMemberUnknown — член selector/urltest ссылается на несуществующий выход (#567).
-	ErrCompositeMemberUnknown   = errors.New("неизвестный член композита")
+	ErrCompositeMemberUnknown = errors.New("неизвестный член композита")
+	// ErrOutboundInvalid — форма outbound отвергнута validateOutbound (тип,
+	// участники, direct в urltest, ссылка на себя). Ввод, не сбой: API — 400.
+	ErrOutboundInvalid          = errors.New("некорректный outbound")
 	ErrOutboundNotFound         = errors.New("outbound not found")
 	ErrDNSServerTagConflict     = errors.New("dns server with this tag already exists")
 	ErrDNSServerReferenced      = errors.New("dns server is referenced by one or more dns rules or used as final/default")

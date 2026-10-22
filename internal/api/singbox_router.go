@@ -284,6 +284,9 @@ func (h *SingboxRouterHandler) handleErr(w http.ResponseWriter, action string, e
 	case errors.Is(err, router.ErrCompositeMemberUnknown):
 		// 400: member-тег композита не существует ни в одном каталоге (#567).
 		response.Error(w, err.Error(), "COMPOSITE_MEMBER_UNKNOWN")
+	case errors.Is(err, router.ErrOutboundInvalid):
+		// 400: форма outbound не прошла проверку — ошибка ввода, не сбой.
+		response.Error(w, err.Error(), "OUTBOUND_INVALID")
 	case errors.Is(err, router.ErrInvalidMatchers),
 		errors.Is(err, router.ErrDNSInvalidServer):
 		response.Error(w, err.Error(), "INVALID_MATCHERS")
