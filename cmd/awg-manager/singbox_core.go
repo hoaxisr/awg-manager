@@ -130,8 +130,12 @@ func buildSingboxCore(d singboxCoreDeps) singboxCore {
 	orch.SetValidator(&orchValidatorAdapter{v: singbox.NewValidator(op.Binary())})
 	// Propagate the sticky-stop intent so reload-triggered cold-starts
 	// (slot-file writes from router/deviceproxy/subscriptions) respect a
-	// user-pressed Stop in the same way the watchdog does.
-	orch.SetShouldRun(func() bool { return !op.IsManuallyStopped() })
+	// user-pressed Stop in the same way the watchdog does. Удалённый движок
+	// тоже не стартуем — гард сторожа по той же причине (F722).
+	orch.SetShouldRun(func() bool {
+		installed, _ := op.IsInstalled()
+		return installed && !op.IsManuallyStopped()
+	})
 	// AWG3 imported endpoints — store owns awg3.json, service projects it into
 	// the 16-awg3.json slot. Constructed here so the SlotAwg3 HasContent closure
 	// (below) can read the store, mirroring SlotTunnels' HasUserTunnels gate.

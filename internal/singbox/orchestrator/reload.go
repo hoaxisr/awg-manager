@@ -174,7 +174,7 @@ func (o *Orchestrator) Reload() error {
 			// daemon merely because a slot file changed. SIGHUP and
 			// stop branches stay unaffected — they don't cold-start.
 			if shouldRun != nil && !shouldRun() {
-				o.log("info", "orchestrator: cold-start suppressed by manual-stop intent")
+				o.log("info", "orchestrator: cold-start suppressed (manual stop or sing-box not installed)")
 				saveApplied = true // process stays down — record "nothing applied"
 				break
 			}

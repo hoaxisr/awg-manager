@@ -520,6 +520,15 @@ func (o *Operator) Reconcile(ctx context.Context) error {
 		}
 		return nil
 	}
+	// Бинаря нет (удалён кнопкой «Удалить» или руками) — запускать нечего:
+	// включённые слоты в settings.json переживают удаление, и без гарда
+	// сторож каждые 30 с упирался в fork/exec (F722).
+	if !isExecutable(o.binary) {
+		if o.runtimeLogger != nil {
+			o.runtimeLogger.Debug("reconcile", "", "skipped: sing-box not installed")
+		}
+		return nil
+	}
 	// Mutex не берём: Reconcile — watchdog hot path (тикает каждые 30s).
 	// Если Migrate*/On сейчас активны — Reconcile может race'ить с ними
 	// безопасно: SyncProxies идемпотент, orphan cleanup CAS-флаг тоже.

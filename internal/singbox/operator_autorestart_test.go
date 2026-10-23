@@ -49,6 +49,23 @@ func TestOperator_Reconcile_RestartsOnActiveWorkWithoutTunnels(t *testing.T) {
 	}
 }
 
+// F722: движок удалён, а слоты в settings.json остались включены — сторож
+// не должен пытаться стартовать отсутствующий бинарь.
+func TestOperator_Reconcile_SkipsWhenNotInstalled(t *testing.T) {
+	op := newTestOperator(t, nil)
+	op.activeWorkFn = func() bool { return true }
+	waitStarts, plainStarts := seedStartSeam(op)
+	if err := os.Remove(op.binary); err != nil {
+		t.Fatal(err)
+	}
+	if err := op.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if *waitStarts+*plainStarts != 0 {
+		t.Fatalf("starts = %d, want 0 (sing-box not installed)", *waitStarts+*plainStarts)
+	}
+}
+
 // Пустой tunnels-файл (существует, но без туннелей) + активная работа →
 // тоже перезапуск.
 func TestOperator_Reconcile_RestartsOnActiveWorkWithEmptyTunnelsFile(t *testing.T) {
