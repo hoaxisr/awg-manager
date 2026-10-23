@@ -134,7 +134,10 @@ func TestApplyConfig_WithoutOrchestratorFails(t *testing.T) {
 // fakeProxies — второй адаптер шва ndmsProxies. В проде за швом ProxyManager
 // поверх RCI; здесь — запись вызовов, чтобы пути, трогающие NDMS-прокси,
 // вообще запускались из теста.
-type fakeProxies struct{ removed []int }
+type fakeProxies struct {
+	removed   []int
+	removeErr error // ответ RemoveProxy (вызов записывается и при ошибке)
+}
 
 func (f *fakeProxies) EnsureProxy(context.Context, int, int, string, string) error { return nil }
 func (f *fakeProxies) RelabelProxy(context.Context, int, int, string, string) error {
@@ -145,7 +148,7 @@ func (f *fakeProxies) NextFreeIndex(context.Context, map[int]bool) (int, error) 
 }
 func (f *fakeProxies) RemoveProxy(_ context.Context, index int, _ string) error {
 	f.removed = append(f.removed, index)
-	return nil
+	return f.removeErr
 }
 func (f *fakeProxies) OwnedProxies(context.Context, map[string]string, map[string]string) ([]ProxyMark, error) {
 	return nil, nil

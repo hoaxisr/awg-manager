@@ -359,6 +359,15 @@ func (o *Operator) Install(ctx context.Context) error {
 		return fmt.Errorf("activate sing-box: %w", err)
 	}
 	o.recordPinnedVersion()
+	// Uninstall снял ProxyN подписок, а сами подписки пережили его в
+	// settings.json: возвращаем их прокси (F723). Движок уже на месте, поэтому
+	// отказ NDMS установку не валит — подписка поднимет прокси при следующей
+	// правке или переключении режима NDMS Proxy.
+	if o.subProxySync != nil {
+		if err := o.subProxySync(ctx); err != nil {
+			o.log.Warn("install: subscription proxies not restored", "err", err)
+		}
+	}
 	report("done", 0, 0, "")
 	return nil
 }
@@ -392,6 +401,10 @@ func (o *Operator) Uninstall(ctx context.Context) error {
 	}
 	defer o.installBusy.Store(false)
 
+	if err := o.removeEngineProxies(ctx); err != nil {
+		return err
+	}
+
 	// Стоп до удаления файлов: работающий процесс держал бы конфиг и pid, а
 	// снесённый под ним бинарь оставил бы демона-сироту без возможности
 	// перезапуска.
@@ -415,6 +428,47 @@ func (o *Operator) Uninstall(ctx context.Context) error {
 		return errors.Join(errs...)
 	}
 	o.resetVersionCache()
+	return nil
+}
+
+// removeEngineProxies снимает NDMS ProxyN туннелей из 10-tunnels.json и
+// подписок: без движка все они — прокси на мёртвый порт. Туннели к тому же
+// исчезают вместе с каталогом, и их прокси остались бы сиротами, неудаляемыми
+// из панели (F723); прокси подписок возвращает Install. Снимается только своё
+// (description = тег / Label), как в RemoveTunnel. Метку отложенного сноса
+// здесь не ставим: файл меток лежит в том же каталоге и сносится вместе с ним,
+// — поэтому отказ NDMS прерывает удаление до того, как что-то стёрто, и его
+// можно повторить.
+func (o *Operator) removeEngineProxies(ctx context.Context) error {
+	o.migrationMu.Lock()
+	defer o.migrationMu.Unlock()
+	cfg, err := o.loadConfig()
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read tunnels: %w", err)
+	}
+	var owned []ProxyMark
+	if cfg != nil {
+		for _, t := range cfg.Tunnels() {
+			owned = append(owned, ProxyMark{Name: t.ProxyInterface, Desc: t.Tag})
+		}
+	}
+	for _, sp := range o.subscriptionProxies() {
+		owned = append(owned, ProxyMark{Name: proxyName(sp.Index), Desc: sp.Label})
+	}
+	for _, m := range owned {
+		idx, err := parseProxyIdx(m.Name)
+		if err != nil || idx < 0 {
+			continue
+		}
+		err = o.proxyMgr.RemoveProxy(ctx, idx, m.Desc)
+		if errors.Is(err, ErrProxyForeign) {
+			o.log.Warn("uninstall: proxy skipped, not ours", "name", m.Name, "err", err)
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("remove %s (%s): %w", m.Name, m.Desc, err)
+		}
+	}
 	return nil
 }
 
