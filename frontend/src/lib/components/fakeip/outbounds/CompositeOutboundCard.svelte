@@ -29,7 +29,7 @@
 		Subscription,
 	} from '$lib/types';
 	import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
-	import { Edit3, Gauge } from 'lucide-svelte';
+	import { Edit3, Gauge, RefreshCw } from 'lucide-svelte';
 	import { m } from '$lib/i18n';
 	import { resolveCompositeOutboundView } from '$lib/components/sb-router/compositeOutboundDisplay';
 	import { resolveMemberLabel } from '$lib/utils/memberLabel';
@@ -49,11 +49,14 @@
 		testing: boolean;
 		/** Member-select in flight for this group. */
 		selecting: boolean;
+		/** Member-level latency test in flight (tag → boolean). */
+		memberTesting?: Record<string, boolean>;
 		/** Время последнего теста этой группы (hh:mm) — «· last hh:mm». */
 		lastTestAt?: string;
 		onEdit: (tag: string) => void;
 		onDelete: (tag: string) => void;
 		onTest: (tag: string) => void;
+		onTestMember?: (groupTag: string, memberTag: string, memberLabel: string) => void;
 		onSelect: (group: string, member: string) => void;
 	}
 
@@ -67,10 +70,12 @@
 		testDelays,
 		testing,
 		selecting,
+		memberTesting,
 		lastTestAt,
 		onEdit,
 		onDelete,
 		onTest,
+		onTestMember,
 		onSelect,
 	}: Props = $props();
 
@@ -172,24 +177,87 @@
 				{@const isActive = live && tag === activeTag}
 				{@const delay = live ? memberDelay(tag) : undefined}
 				{@const health = delayHealth(delay)}
+				{@const isTestingThis = !!memberTesting?.[tag]}
+				{@const label = memberLabel(tag)}
 				{#if canSelect && !isActive}
 					<button
 						type="button"
 						class="mem selectable"
-						disabled={selecting}
+						disabled={selecting || isTestingThis}
 						onclick={() => onSelect(outbound.tag, tag)}
 						title={m.fakeip_outbounds_make_active()}
 					>
 						<span class="dot" data-health={health} aria-hidden="true"></span>
-						<span class="mem-label">{memberLabel(tag)}</span>
-						{#if delay !== undefined}
+						<span class="mem-label">{label}</span>
+						{#if isTestingThis}
+							<span class="mem-delay-spin" title={m.fakeip_outbounds_testing()}>
+								<RefreshCw size={11} class="spin" />
+							</span>
+						{:else if delay !== undefined}
+							<span
+								class="mem-delay click-target"
+								role="button"
+								tabindex="0"
+								onclick={(e) => {
+									e.stopPropagation();
+									onTestMember?.(outbound.tag, tag, label);
+								}}
+								onkeydown={(e) => {
+									if (e.key === 'Enter' || e.key === ' ') {
+										e.stopPropagation();
+										e.preventDefault();
+										onTestMember?.(outbound.tag, tag, label);
+									}
+								}}
+								data-health={health}
+								title={m.fakeip_outbounds_test_member({ name: label })}
+							>{formatDelay(delay)}</span>
+						{:else if live && onTestMember}
+							<span
+								class="mem-delay click-target none"
+								role="button"
+								tabindex="0"
+								onclick={(e) => {
+									e.stopPropagation();
+									onTestMember?.(outbound.tag, tag, label);
+								}}
+								onkeydown={(e) => {
+									if (e.key === 'Enter' || e.key === ' ') {
+										e.stopPropagation();
+										e.preventDefault();
+										onTestMember?.(outbound.tag, tag, label);
+									}
+								}}
+								title={m.fakeip_outbounds_test_member({ name: label })}
+							>—</span>
+						{/if}
+					</button>
+				{:else if live && onTestMember}
+					<button
+						type="button"
+						class="mem testable"
+						class:act={isActive}
+						disabled={isTestingThis}
+						onclick={() => onTestMember(outbound.tag, tag, label)}
+						title={m.fakeip_outbounds_test_member({ name: label })}
+					>
+						<span class="dot" data-health={isActive ? 'ok' : health} aria-hidden="true"></span>
+						<span class="mem-label">{label}</span>
+						{#if isActive}
+							<span class="badge">active</span>
+						{/if}
+						{#if isTestingThis}
+							<span class="mem-delay-spin" title={m.fakeip_outbounds_testing()}>
+								<RefreshCw size={11} class="spin" />
+							</span>
+						{:else if delay !== undefined}
 							<span class="mem-delay" data-health={health}>{formatDelay(delay)}</span>
 						{/if}
 					</button>
 				{:else}
 					<div class="mem" class:act={isActive}>
 						<span class="dot" data-health={isActive ? 'ok' : health} aria-hidden="true"></span>
-						<span class="mem-label">{memberLabel(tag)}</span>
+						<span class="mem-label">{label}</span>
 						{#if isActive}
 							<span class="badge">active</span>
 						{/if}
@@ -321,16 +389,24 @@
 		background: transparent;
 		border: 0;
 	}
-	.mem.selectable {
+	.mem.selectable,
+	.mem.testable {
 		cursor: pointer;
 		border-radius: var(--radius-sm);
+		transition: background-color 0.12s ease;
 	}
-	.mem.selectable:hover:not(:disabled) {
+	.mem.selectable:hover:not(:disabled),
+	.mem.testable:hover:not(:disabled) {
 		color: var(--text-primary);
+		background: var(--bg-hover, rgba(255, 255, 255, 0.06));
 	}
-	.mem.selectable:disabled {
+	.mem.selectable:disabled,
+	.mem.testable:disabled {
 		opacity: 0.5;
 		cursor: default;
+	}
+	.mem.testable:disabled {
+		cursor: wait;
 	}
 	.mem.act {
 		color: var(--color-accent);
@@ -362,6 +438,38 @@
 	}
 	.mem-delay[data-health='down'] {
 		color: var(--color-error, #dc2626);
+	}
+
+	.mem-delay.click-target {
+		cursor: pointer;
+		padding: 1px 4px;
+		border-radius: 3px;
+		border: 1px solid transparent;
+		transition: all 0.12s ease;
+	}
+	.mem-delay.click-target:hover {
+		border-color: var(--color-accent);
+		background: var(--accent-soft, rgba(59, 130, 246, 0.15));
+	}
+
+	.mem-delay-spin {
+		margin-left: auto;
+		display: inline-flex;
+		align-items: center;
+		color: var(--color-accent);
+	}
+
+	.badge + .mem-delay,
+	.badge + .mem-delay-spin {
+		margin-left: 0.5rem;
+	}
+
+	:global(.spin) {
+		animation: spin 1s linear infinite;
+	}
+	@keyframes spin {
+		from { transform: rotate(0deg); }
+		to { transform: rotate(360deg); }
 	}
 
 	.mem-label {

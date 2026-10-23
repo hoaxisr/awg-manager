@@ -160,6 +160,53 @@
 		}
 	}
 
+	// ── Runtime: per-member тест задержки в composite-группе ────────────
+	let memberTesting = $state<Record<string, boolean>>({});
+
+	async function handleMemberTest(
+		groupTag: string,
+		memberTag: string,
+		memberLabel: string,
+	): Promise<void> {
+		if (memberTesting[memberTag]) return;
+		memberTesting = { ...memberTesting, [memberTag]: true };
+		try {
+			const res = await api.singboxDelayCheck(memberTag).catch(async () => {
+				if (memberLabel && memberLabel !== memberTag) {
+					return await api.singboxDelayCheck(memberLabel);
+				}
+				throw new Error('Timeout');
+			});
+			const delay = res?.delay ?? 0;
+			const currentGroup = testResults[groupTag] ?? {};
+			testResults = {
+				...testResults,
+				[groupTag]: { ...currentGroup, [memberTag]: delay },
+			};
+			const stamp = nowHHMM();
+			lastTestAt = { ...lastTestAt, [groupTag]: stamp };
+			lastTestAtAny = stamp;
+			if (delay > 0) {
+				notifications.success(
+					m.fakeip_outbounds_member_delay_result({ name: memberLabel, delay }),
+				);
+			} else {
+				notifications.warning(
+					m.fakeip_outbounds_member_timeout({ name: memberLabel }),
+				);
+			}
+			await singboxProxies.refetch();
+		} catch (e) {
+			notifications.error(
+				m.fakeip_outbounds_test_failed({ message: e instanceof Error ? e.message : String(e) }),
+			);
+		} finally {
+			const next = { ...memberTesting };
+			delete next[memberTag];
+			memberTesting = next;
+		}
+	}
+
 	// ── Runtime: per-egress тест задержки ────────────────────────────────
 	// Тот же механизм, что у страниц туннелей/подписок: triggerDelayCheck(tag)
 	// запускает Clash-замер по тегу — работает И для туннелей, И для подписочных
@@ -258,10 +305,12 @@
 						testDelays={testResults[o.tag]}
 						testing={testingTag === o.tag}
 						selecting={selectingTag === o.tag}
+						{memberTesting}
 						lastTestAt={lastTestAt[o.tag]}
 						onEdit={(tag) => (editTag = tag)}
 						onDelete={requestDelete}
 						onTest={handleTest}
+						onTestMember={handleMemberTest}
 						onSelect={handleSelect}
 					/>
 				{/each}
