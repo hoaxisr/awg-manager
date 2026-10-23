@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/netdev"
-	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
 const (
@@ -49,11 +48,11 @@ func (e *HeldError) Error() string {
 	return fmt.Sprintf("интерфейс %s занят сторонней программой %s (pid %d)", e.Iface, e.Comm, e.PID)
 }
 
-// Швы для тестов: бэкенд зовёт ip (только чтение: `ip -d link show`; снос и
-// создание — у netdev.Swapper) и читает /proc и /sys напрямую.
+// Швы для тестов: бэкенд читает /proc и /sys напрямую; снос и создание
+// устройства — у netdev.Swapper.
 var (
-	kernelRun   = exec.Run
 	tunHolder   = func(iface string) *HeldError { return findTunHolder("/proc", iface) }
+	isAmneziaWG = func(iface string) bool { return devType("/sys/class/net", iface) == "amneziawg" }
 	ifaceExists = func(iface string) bool {
 		_, err := os.Stat("/sys/class/net/" + iface)
 		return err == nil
@@ -243,17 +242,24 @@ func (b *KernelBackend) foreignHolder(ctx context.Context, ifaceName string) *He
 // Returns (running, pid) where pid is always 0 for kernel backend.
 // At boot NDMS recreates opkgtun* devices as plain "tun" — we must verify the type.
 func (b *KernelBackend) IsRunning(ctx context.Context, ifaceName string) (bool, int) {
-	if !ifaceExists(ifaceName) {
-		return false, 0
-	}
+	return isAmneziaWG(ifaceName), 0
+}
 
-	// Verify interface is actually amneziawg (not plain tun recreated by NDMS)
-	result, err := kernelRun(ctx, "/opt/sbin/ip", "-d", "link", "show", "dev", ifaceName)
+// devType — DEVTYPE из uevent устройства ("" — устройства нет или тип не
+// задан, как у plain tun). Модуль amneziawg ставит его равным имени модуля —
+// то же, что `ip -d link` печатает как kind. Читаем sysfs, а не ip: busybox-овый
+// ip kind не печатает, и живой туннель считался незапущенным (F721).
+func devType(sysNet, iface string) string {
+	data, err := os.ReadFile(filepath.Join(sysNet, iface, "uevent"))
 	if err != nil {
-		return false, 0
+		return ""
 	}
-
-	return strings.Contains(result.Stdout, "amneziawg"), 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if v, ok := strings.CutPrefix(line, "DEVTYPE="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // WaitReady waits for the kernel interface to be ready.

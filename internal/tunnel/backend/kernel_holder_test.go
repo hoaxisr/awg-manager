@@ -13,20 +13,26 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
-// stubKernelRun подменяет оба шва ip — свой (чтение типа) и netdev.Swapper
-// (снос/создание) — и отдаёт общий журнал вызовов.
+// stubKernelRun подменяет шов ip у netdev.Swapper (снос/создание) и отдаёт
+// журнал вызовов; тип устройства — plain tun (см. stubIsAmneziaWG).
 func stubKernelRun(t *testing.T) *[]string {
 	t.Helper()
-	old := kernelRun
 	var calls []string
 	rec := func(_ context.Context, name string, args ...string) (*exec.Result, error) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		return &exec.Result{}, nil
 	}
-	kernelRun = rec
 	t.Cleanup(netdev.StubRunIP(rec))
-	t.Cleanup(func() { kernelRun = old })
+	stubIsAmneziaWG(t, false)
 	return &calls
+}
+
+// stubIsAmneziaWG подменяет чтение типа устройства из sysfs.
+func stubIsAmneziaWG(t *testing.T, ours bool) {
+	t.Helper()
+	old := isAmneziaWG
+	isAmneziaWG = func(string) bool { return ours }
+	t.Cleanup(func() { isAmneziaWG = old })
 }
 
 // stubTunHolder подменяет детектор держателя и отдаёт счётчик сканов.
@@ -63,8 +69,8 @@ func TestStart_HeldByForeignProcess_RefusesWithoutDelete(t *testing.T) {
 	if !strings.Contains(err.Error(), "занят сторонней программой") {
 		t.Fatalf("текст отказа не для человека: %q", err.Error())
 	}
-	if want := []string{"/opt/sbin/ip -d link show dev opkgtun7"}; !slices.Equal(*calls, want) {
-		t.Fatalf("ip calls = %v, want только проверку типа %v", *calls, want)
+	if len(*calls) != 0 {
+		t.Fatalf("ip calls = %v, want ни одного", *calls)
 	}
 }
 
@@ -79,7 +85,6 @@ func TestStart_UnheldTun_DeletesAndRecreates(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"/opt/sbin/ip -d link show dev opkgtun7",
 		"/opt/sbin/ip link del dev opkgtun7",
 		"/opt/sbin/ip link add dev opkgtun7 type amneziawg",
 	}
@@ -102,8 +107,8 @@ func TestStop_HeldByForeignProcess_Refuses(t *testing.T) {
 	if !errors.As(err, &held) {
 		t.Fatalf("err = %v, want *HeldError", err)
 	}
-	if want := []string{"/opt/sbin/ip -d link show dev opkgtun7"}; !slices.Equal(*calls, want) {
-		t.Fatalf("ip calls = %v, want только проверку типа %v", *calls, want)
+	if len(*calls) != 0 {
+		t.Fatalf("ip calls = %v, want ни одного", *calls)
 	}
 }
 
@@ -122,22 +127,15 @@ func TestHolderScan_OnlyForExistingForeignTypedDevice(t *testing.T) {
 		}
 	})
 	t.Run("наше amneziawg", func(t *testing.T) {
-		old := kernelRun
-		var calls []string
-		rec := func(_ context.Context, name string, args ...string) (*exec.Result, error) {
-			calls = append(calls, name+" "+strings.Join(args, " "))
-			return &exec.Result{Stdout: "7: opkgtun7: <POINTOPOINT,NOARP,UP> mtu 1420\n    amneziawg"}, nil
-		}
-		kernelRun = rec
-		t.Cleanup(netdev.StubRunIP(rec))
-		t.Cleanup(func() { kernelRun = old })
+		calls := stubKernelRun(t)
+		stubIsAmneziaWG(t, true)
 		stubIfaceExists(t, true)
 		scans := stubTunHolder(t, &HeldError{Iface: "opkgtun7", PID: 1, Comm: "x"})
 		if err := NewKernel(&netdev.SwapGate{}).Stop(ctx, "opkgtun7"); err != nil {
 			t.Fatalf("Stop нашего amneziawg: %v", err)
 		}
-		if *scans != 0 || !slices.Contains(calls, "/opt/sbin/ip link del dev opkgtun7") {
-			t.Fatalf("сканов %d (want 0), calls %v", *scans, calls)
+		if *scans != 0 || !slices.Contains(*calls, "/opt/sbin/ip link del dev opkgtun7") {
+			t.Fatalf("сканов %d (want 0), calls %v", *scans, *calls)
 		}
 	})
 }

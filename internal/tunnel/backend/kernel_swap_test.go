@@ -37,10 +37,8 @@ func (r *swapRig) scans() int {
 func newSwapRig(t *testing.T, exists bool, held *HeldError) *swapRig {
 	t.Helper()
 	r := &swapRig{}
-	oldRun, oldHolder := kernelRun, tunHolder
-	kernelRun = func(context.Context, string, ...string) (*exec.Result, error) {
-		return &exec.Result{Stdout: "tun"}, nil // не amneziawg
-	}
+	oldHolder := tunHolder
+	stubIsAmneziaWG(t, false)
 	tunHolder = func(string) *HeldError {
 		r.mu.Lock()
 		defer r.mu.Unlock()
@@ -54,7 +52,7 @@ func newSwapRig(t *testing.T, exists bool, held *HeldError) *swapRig {
 		r.link = append(r.link, name+" "+strings.Join(args, " "))
 		return &exec.Result{}, nil
 	}))
-	t.Cleanup(func() { kernelRun, tunHolder = oldRun, oldHolder })
+	t.Cleanup(func() { tunHolder = oldHolder })
 	return r
 }
 
