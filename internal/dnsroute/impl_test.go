@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -365,6 +366,53 @@ func TestServiceImpl_UpdatePartialPreservesExcludesTextSubnets(t *testing.T) {
 	}
 	if len(updated.ExcludeSubnets) != 1 || updated.ExcludeSubnets[0] != "10.0.0.0/8" {
 		t.Fatalf("updated ExcludeSubnets = %#v, want [10.0.0.0/8]", updated.ExcludeSubnets)
+	}
+}
+
+// TestServiceImpl_UpdateKeepsExcludeSubnetsWithoutText — список, созданный
+// массивами (API, MCP), не имеет ExcludesText. Правка, которая исключений
+// не касается, не должна терять их подсети; присланные отдельно подсети
+// встают рядом с доменами, а полный Excludes заменяет всё.
+func TestServiceImpl_UpdateKeepsExcludeSubnetsWithoutText(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	created, err := svc.Create(ctx, DomainList{
+		Name:          "array excludes",
+		ManualDomains: []string{"example.com"},
+		Excludes:      []string{"bank.example.com", "10.0.0.0/8"},
+		Routes:        []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	updated, err := svc.Update(ctx, DomainList{ID: created.ID, Name: "renamed"})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if !slices.Equal(updated.Excludes, []string{"bank.example.com"}) || !slices.Equal(updated.ExcludeSubnets, []string{"10.0.0.0/8"}) {
+		t.Fatalf("an update not touching excludes kept %v / %v", updated.Excludes, updated.ExcludeSubnets)
+	}
+	updated, err = svc.Update(ctx, DomainList{ID: created.ID, ExcludeSubnets: []string{"192.168.5.0/24"}})
+	if err != nil {
+		t.Fatalf("Update subnets: %v", err)
+	}
+	if !slices.Equal(updated.Excludes, []string{"bank.example.com"}) || !slices.Equal(updated.ExcludeSubnets, []string{"192.168.5.0/24"}) {
+		t.Fatalf("subnets sent alone replace the subnets only: %v / %v", updated.Excludes, updated.ExcludeSubnets)
+	}
+	updated, err = svc.Update(ctx, DomainList{ID: created.ID, Excludes: []string{"other.example.com"}})
+	if err != nil {
+		t.Fatalf("Update excludes: %v", err)
+	}
+	if !slices.Equal(updated.Excludes, []string{"other.example.com"}) || len(updated.ExcludeSubnets) != 0 {
+		t.Fatalf("a full excludes list replaces both halves: %v / %v", updated.Excludes, updated.ExcludeSubnets)
+	}
+	updated, err = svc.Update(ctx, DomainList{ID: created.ID, Excludes: []string{"a.example.com"}, ExcludeSubnets: []string{"172.16.0.0/12"}})
+	if err != nil {
+		t.Fatalf("Update both: %v", err)
+	}
+	if !slices.Equal(updated.Excludes, []string{"a.example.com"}) || !slices.Equal(updated.ExcludeSubnets, []string{"172.16.0.0/12"}) {
+		t.Fatalf("excludes and subnets sent together are both kept: %v / %v", updated.Excludes, updated.ExcludeSubnets)
 	}
 }
 

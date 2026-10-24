@@ -243,18 +243,72 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	edited, err := h.EditTunnel(r.Context(), id, req)
+	if err != nil {
+		var editErr *TunnelEditError
+		if errors.As(err, &editErr) {
+			response.ErrorWithStatus(w, editErr.Status, editErr.Message, editErr.Code)
+			return
+		}
+		response.Error(w, err.Error(), "UPDATE_FAILED")
+		return
+	}
+	if edited.Raw != nil {
+		response.Success(w, h.buildWdttRawResponse(edited.Raw))
+		return
+	}
+
+	resp, err := BuildTunnelResponse(r, h.svc, h.store, id, h.quiescentFor(id))
+	if err != nil {
+		response.Error(w, err.Error(), "UPDATE_FAILED")
+		return
+	}
+	if len(edited.Warnings) > 0 {
+		resp["warnings"] = edited.Warnings
+	}
+	response.Success(w, resp)
+}
+
+// TunnelEditError — отказ правки туннеля: HTTP-статус и код API, с
+// которыми его отвечает REST. MCP берёт из него текст.
+type TunnelEditError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+func (e *TunnelEditError) Error() string { return e.Message }
+
+// editRefused — отказ со статусом 400, как response.Error.
+func editRefused(message, code string) error {
+	return &TunnelEditError{Status: http.StatusBadRequest, Code: code, Message: message}
+}
+
+// EditedTunnel — итог EditTunnel. Raw задан у зеркальной записи wdtt-raw:
+// её ответ строится из записи, а не из состояния туннеля. Warnings —
+// конфликты адресов после правки.
+type EditedTunnel struct {
+	Raw      *storage.AWGTunnel
+	Warnings []string
+}
+
+// EditTunnel применяет правку req к туннелю id — всё, что делает POST
+// /tunnels/update, кроме разбора запроса и сборки ответа: проверки, правку
+// работающего интерфейса, запись, ping-check, перезапуск при смене
+// WAN-подключения и публикацию списка. req — частичная правка в форме
+// storage.AWGTunnel (см. applyTunnelUpdate). Вынесено из обработчика,
+// чтобы MCP правил туннель тем же путём, что и веб-интерфейс.
+func (h *TunnelsHandler) EditTunnel(ctx context.Context, id string, req storage.AWGTunnel) (EditedTunnel, error) {
 	// Get existing tunnel
 	existing, err := h.store.Get(id)
 	if err != nil {
-		response.Error(w, "tunnel not found", "NOT_FOUND")
-		return
+		return EditedTunnel{}, editRefused("tunnel not found", "NOT_FOUND")
 	}
 
 	// Защита (#818) отвергает правку до всякого побочного действия: и до
 	// ветки зеркальной записи, которая пишет сама, и до svc.Update.
 	if existing.Locked {
-		response.ErrorWithStatus(w, http.StatusForbidden, tunnelLockedMessage, "TUNNEL_LOCKED")
-		return
+		return EditedTunnel{}, &TunnelEditError{Status: http.StatusForbidden, Code: "TUNNEL_LOCKED", Message: tunnelLockedMessage}
 	}
 
 	if existing.Backend == backendWdttRaw {
@@ -263,8 +317,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			// перезаписывает его на каждом объявлении (exitreg/mirror.go:105).
 			// Принять переименование здесь значит подтвердить правку, которую
 			// ближайшее объявление молча откатит.
-			response.Error(w, "имя raw-записи задаётся инстансом WDTT — переименуйте инстанс", "WDTT_RAW_NAME_READONLY")
-			return
+			return EditedTunnel{}, editRefused("имя raw-записи задаётся инстансом WDTT — переименуйте инстанс", "WDTT_RAW_NAME_READONLY")
 		}
 		// Маршрутизацией raw-выхода распоряжается прокси-рантайм: и маршрут
 		// по умолчанию, и WAN-подключение он выставляет сам по конфигу
@@ -278,8 +331,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// один connectivityCheck) ловил бы ложный отказ, и это было бы хуже
 		// исходной потери.
 		if req.DefaultRouteSet && req.DefaultRoute != existing.DefaultRoute {
-			response.Error(w, "маршрут по умолчанию raw-записи ведёт прокси-рантайм — меняйте в настройках инстанса WDTT", "WDTT_RAW_ROUTING_READONLY")
-			return
+			return EditedTunnel{}, editRefused("маршрут по умолчанию raw-записи ведёт прокси-рантайм — меняйте в настройках инстанса WDTT", "WDTT_RAW_ROUTING_READONLY")
 		}
 		if req.ISPInterface != "" {
 			// "auto" — это способ прислать пустое значение (нормализация
@@ -289,8 +341,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 				wantISP = ""
 			}
 			if wantISP != existing.ISPInterface {
-				response.Error(w, "WAN-подключение raw-записи ведёт прокси-рантайм — меняйте в настройках инстанса WDTT", "WDTT_RAW_WAN_READONLY")
-				return
+				return EditedTunnel{}, editRefused("WAN-подключение raw-записи ведёт прокси-рантайм — меняйте в настройках инстанса WDTT", "WDTT_RAW_WAN_READONLY")
 			}
 		}
 		updated := *existing
@@ -318,8 +369,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		}); err != nil {
-			response.Error(w, err.Error(), "UPDATE_FAILED")
-			return
+			return EditedTunnel{}, editRefused(err.Error(), "UPDATE_FAILED")
 		}
 		// Монитор поднимается ЗДЕСЬ, как и у обычных туннелей (:543-550):
 		// иначе включённая пользователем проверка легла бы на диск и молчала
@@ -328,7 +378,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			oldOn := existing.PingCheck != nil && existing.PingCheck.Enabled
 			newOn := updated.PingCheck != nil && updated.PingCheck.Enabled
 			if oldOn != newOn {
-				if newOn && h.svc.GetState(r.Context(), id).State == tunnel.StateRunning {
+				if newOn && h.svc.GetState(ctx, id).State == tunnel.StateRunning {
 					h.pingCheck.StartMonitoring(id, updated.Name)
 				} else if !newOn {
 					h.pingCheck.StopMonitoring(id)
@@ -336,9 +386,8 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		h.log.Info("update", updated.Name, "WDTT raw metadata updated")
-		h.publishTunnelList(r.Context())
-		response.Success(w, h.buildWdttRawResponse(&updated))
-		return
+		h.publishTunnelList(ctx)
+		return EditedTunnel{Raw: &updated}, nil
 	}
 
 	// Detect changes before applying the patch.
@@ -373,49 +422,42 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	newPingCheckEnabled := merged.PingCheck != nil && merged.PingCheck.Enabled
 
 	if err := config.ValidateKeepalive(merged.Peer.PersistentKeepalive); err != nil {
-		response.Error(w, err.Error(), "INVALID_KEEPALIVE")
-		return
+		return EditedTunnel{}, editRefused(err.Error(), "INVALID_KEEPALIVE")
 	}
 	// Запрет нулевой нижней границы — только на ПРИСЛАННОМ значении: на слитой
 	// записи он запер бы туннель, сохранённый с "0-80" до запрета. Признак
 	// «блок пира прислали» — тот же, по которому его применяет mergedPeer.
 	if req.Peer.PublicKey != "" {
 		if err := config.ValidateKeepaliveSubmitted(req.Peer.PersistentKeepalive); err != nil {
-			response.Error(w, err.Error(), "INVALID_KEEPALIVE")
-			return
+			return EditedTunnel{}, editRefused(err.Error(), "INVALID_KEEPALIVE")
 		}
 	}
 	if err := config.ValidateObfuscation(&merged.Interface.AWGObfuscation); err != nil {
-		response.Error(w, err.Error(), awg3ErrorCode(err))
-		return
+		return EditedTunnel{}, editRefused(err.Error(), awg3ErrorCode(err))
 	}
 	if err := obfuscator.Validate(merged.Obfuscator); err != nil {
-		response.Error(w, err.Error(), "INVALID_OBFUSCATOR")
-		return
+		return EditedTunnel{}, editRefused(err.Error(), "INVALID_OBFUSCATOR")
 	}
 	// UI этого не шлёт (endpoint disabled, вкладка «Обфускация» скрыта), а
 	// MCP/curl — может: чужой endpoint увёл бы WG мимо релея, а AWG-параметры
 	// легли бы ASC-обфускацией поверх обфускации релея.
 	if existing.Obfuscator != nil {
 		if merged.Peer.Endpoint != existing.Peer.Endpoint {
-			response.Error(w, "endpoint обфусцированного туннеля не правится", "INVALID_OBFUSCATOR")
-			return
+			return EditedTunnel{}, editRefused("endpoint обфусцированного туннеля не правится", "INVALID_OBFUSCATOR")
 		}
 		// Сравнение с записью, а не абсолютное состояние: ручной импорт
 		// ClusterM принимает любой .conf, в том числе с AWG-параметрами, и
 		// такой туннель иначе стал бы вечно нередактируемым.
 		if config.IsAWGObfuscated(&merged.Interface) &&
 			merged.Interface.AWGObfuscation != existing.Interface.AWGObfuscation {
-			response.Error(w, "параметры AWG несовместимы с обфускатором", "INVALID_OBFUSCATOR")
-			return
+			return EditedTunnel{}, editRefused("параметры AWG несовместимы с обфускатором", "INVALID_OBFUSCATOR")
 		}
 	}
 
 	// Validate endpoint resolves (only if changed)
 	if merged.Peer.Endpoint != existing.Peer.Endpoint {
 		if _, _, err := netutil.ResolveEndpoint(merged.Peer.Endpoint); err != nil {
-			response.Error(w, "endpoint не резолвится: "+err.Error(), "INVALID_ENDPOINT")
-			return
+			return EditedTunnel{}, editRefused("endpoint не резолвится: "+err.Error(), "INVALID_ENDPOINT")
 		}
 	}
 
@@ -424,23 +466,20 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// happens AFTER service runs. Fail-closed: if the service can't apply
 	// the change to the running interface, we don't persist it either,
 	// otherwise on-disk state would diverge from the live state.
-	if err := h.svc.Update(r.Context(), existing, &merged); err != nil {
+	if err := h.svc.Update(ctx, existing, &merged); err != nil {
 		if errors.Is(err, tunnel.ErrOperationInProgress) {
 			// Занятый per-tunnel замок — ретраибельный конфликт, а не отказ
 			// правки: карточка цела, туннель просто занят своим действием
 			// (WAN-up, рестарт по ping-check). Тот же контракт, что у
 			// delete выше и у start/stop/restart в control.go.
-			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "OPERATION_IN_PROGRESS")
-			return
+			return EditedTunnel{}, &TunnelEditError{Status: http.StatusConflict, Code: "OPERATION_IN_PROGRESS", Message: err.Error()}
 		}
 		if errors.Is(err, tunnel.ErrPathSwitchNotRunning) {
 			// Карточка цела, повтор после подключения пройдёт (F658).
-			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "PATH_SWITCH_NOT_RUNNING")
-			return
+			return EditedTunnel{}, &TunnelEditError{Status: http.StatusConflict, Code: "PATH_SWITCH_NOT_RUNNING", Message: err.Error()}
 		}
 		h.log.Warn("update", merged.Name, "Service update failed: "+err.Error())
-		response.Error(w, err.Error(), "UPDATE_FAILED")
-		return
+		return EditedTunnel{}, editRefused(err.Error(), "UPDATE_FAILED")
 	}
 
 	// svc.Update выше — секунды RCI-обменов; за это время запись могли
@@ -462,11 +501,9 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		h.log.Warn("update", merged.Name, "Failed to update tunnel: "+err.Error())
 		if errors.Is(err, storage.ErrNotFound) {
 			// Туннель удалили, пока шёл RCI-обмен svc.Update.
-			response.Error(w, "tunnel not found", "NOT_FOUND")
-			return
+			return EditedTunnel{}, editRefused("tunnel not found", "NOT_FOUND")
 		}
-		response.Error(w, err.Error(), "UPDATE_FAILED")
-		return
+		return EditedTunnel{}, editRefused(err.Error(), "UPDATE_FAILED")
 	}
 
 	// Sync orchestrator's in-memory cache with the new storage state
@@ -479,7 +516,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Handle pingCheck changes
 	if h.pingCheck != nil {
-		stateInfo := h.svc.GetState(r.Context(), id)
+		stateInfo := h.svc.GetState(ctx, id)
 		isRunning := stateInfo.State == tunnel.StateRunning
 
 		if oldPingCheckEnabled != newPingCheckEnabled {
@@ -498,9 +535,9 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Routing is only applied during Start, so restart the tunnel to pick up changes.
 	routeChanged := merged.ISPInterface != oldISPInterface
 	if routeChanged {
-		stateInfo := h.svc.GetState(r.Context(), id)
+		stateInfo := h.svc.GetState(ctx, id)
 		if stateInfo.State == tunnel.StateRunning {
-			if err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
+			if err := h.orch.HandleEvent(ctx, orchestrator.Event{
 				Type: orchestrator.EventRestart, Tunnel: id,
 			}); err != nil {
 				h.log.Warn("update", merged.Name, "Restart for routing changes failed: "+err.Error())
@@ -511,17 +548,9 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("update", merged.Name, "Tunnel updated")
-	h.publishTunnelList(r.Context())
+	h.publishTunnelList(ctx)
 
-	resp, err := BuildTunnelResponse(r, h.svc, h.store, id, h.quiescentFor(id))
-	if err != nil {
-		response.Error(w, err.Error(), "UPDATE_FAILED")
-		return
-	}
-	if warnings := h.svc.CheckAddressConflicts(r.Context(), id); len(warnings) > 0 {
-		resp["warnings"] = warnings
-	}
-	response.Success(w, resp)
+	return EditedTunnel{Warnings: h.svc.CheckAddressConflicts(ctx, id)}, nil
 }
 
 // tunnelLockedMessage — текст 403 у всех шести защищённых операций (#818).

@@ -9,6 +9,12 @@ var (
 	ErrOutboundReferenced        = errors.New("outbound is referenced by one or more rules")
 	ErrInvalidMatchers           = errors.New("rule must have at least one matcher")
 	ErrRuleIndexOutOfRange       = errors.New("rule index out of range")
+	// ErrRuleProtected — правило системное или managed: правки MCP его не
+	// трогают (InsertRule и соседи). Ввод, не сбой.
+	ErrRuleProtected = errors.New("правило защищено")
+	// ErrRuleUnsupported — правило из MCP не route с известным outbound и
+	// не reject. Ввод, не сбой.
+	ErrRuleUnsupported = errors.New("правило не поддерживается")
 	// ErrBulkEmptyIndices / ErrBulkEmptyTags reject an empty selection passed
 	// to a bulk rule/ruleset mutation (nothing to do — client error). Mapped
 	// to 400 by the API.
@@ -39,6 +45,10 @@ var (
 	ErrDNSRuleIndexOutOfRange   = errors.New("dns rule index out of range")
 	ErrDNSServerIndexOutOfRange = errors.New("dns server index out of range")
 	ErrDNSInvalidServer         = errors.New("dns rule references unknown server tag")
+	// ErrDNSServerDetour — detour сервера отвергнут SetDNSServerDetour:
+	// неизвестный outbound или сервер, который никуда не подключается. Ввод,
+	// не сбой.
+	ErrDNSServerDetour = errors.New("недопустимый detour DNS-сервера")
 
 	// ErrIfaceAbsent — интерфейса нет в свежем списке NDMS; команда по нему не
 	// уходила (адаптеры подтверждения cmd/awg-manager, F546).

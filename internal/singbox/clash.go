@@ -65,6 +65,67 @@ func (c *ClashClient) GetProxies() (map[string]ClashProxy, error) {
 	return wrap.Proxies, nil
 }
 
+// ClashConnection is one open connection as the Clash API's /connections
+// reports it. Chains runs from the outbound that carries the connection
+// back to the one the rule chose (a group's member first, the group last).
+type ClashConnection struct {
+	ID       string `json:"id"`
+	Metadata struct {
+		Network         string     `json:"network"`
+		Type            string     `json:"type"`
+		SourceIP        string     `json:"sourceIP"`
+		SourcePort      FlexString `json:"sourcePort"`
+		DestinationIP   string     `json:"destinationIP"`
+		DestinationPort FlexString `json:"destinationPort"`
+		Host            string     `json:"host"`
+	} `json:"metadata"`
+	Upload      int64    `json:"upload"`
+	Download    int64    `json:"download"`
+	Start       string   `json:"start"`
+	Chains      []string `json:"chains"`
+	Rule        string   `json:"rule"`
+	RulePayload string   `json:"rulePayload"`
+}
+
+// FlexString takes a JSON string or number: the Clash API writes ports as
+// strings, and an implementation that writes numbers must not break the
+// read.
+type FlexString string
+
+func (f *FlexString) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*f = FlexString(s)
+		return nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	*f = FlexString(n.String())
+	return nil
+}
+
+// GetConnections reads the open connections once (GET /connections).
+func (c *ClashClient) GetConnections() ([]ClashConnection, error) {
+	u := fmt.Sprintf("http://%s/connections", c.Address())
+	resp, err := c.http.Get(u)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("connections status: %d", resp.StatusCode)
+	}
+	var wrap struct {
+		Connections []ClashConnection `json:"connections"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrap); err != nil {
+		return nil, err
+	}
+	return wrap.Connections, nil
+}
+
 // HasOutbound reports whether an outbound with the given tag is
 // currently present in the running sing-box (queried via Clash
 // /proxies). Used by the operator to decide tunnel.Running in

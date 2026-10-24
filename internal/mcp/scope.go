@@ -42,15 +42,24 @@ var readOnlyTools = map[string]bool{
 	"get_singbox_staging":        true,
 	"list_singbox_subscriptions": true,
 	"get_singbox_outbound":       true,
+	"list_singbox_dns_servers":   true,
+	"list_singbox_rulesets":      true,
+	"get_singbox_router_status":  true,
+	"list_singbox_dns_rules":     true,
+	"list_singbox_dns_rewrites":  true,
+	"list_routing_targets":       true,
+	"list_singbox_connections":   true,
+	"run_tunnel_diagnostics":     true,
+	"list_policy_interfaces":     true,
 }
 
 // credentialTools change nothing on the router but hand out material
-// that connects to it — a tunnel's or a peer's private key. A read-only
-// key is what an admin gives an agent they do not fully trust, and the
-// UI promises it "cannot change anything on the router"; a key that can
-// also walk away with VPN credentials is not that. So these tools keep
-// their read-only annotation (they ARE reads) and are still refused for
-// a read-only key.
+// that connects to it — a tunnel's or a peer's private key, an outbound's
+// password. A read-only key is what an admin gives an agent they do not
+// fully trust, and the UI promises it "cannot change anything on the
+// router"; a key that can also walk away with VPN credentials is not that.
+// So these tools keep their read-only annotation (they ARE reads) and are
+// still refused for a read-only key.
 //
 // Опасный ФЛАГ у читающего инструмента (get_logs raw=true — немаскированные
 // адреса) здесь не выразить: middleware аргументы не разбирает. Такой флаг
@@ -59,6 +68,9 @@ var readOnlyTools = map[string]bool{
 var credentialTools = map[string]bool{
 	"export_tunnel_config":   true,
 	"get_server_peer_config": true,
+	// 90-user.json is hand-written sing-box JSON and can carry outbound
+	// credentials.
+	"get_singbox_user_config": true,
 }
 
 // IsReadOnlyTool reports whether name is allowed on a read-only key. An
@@ -103,7 +115,7 @@ func RequireWriteScope() mcp.Middleware {
 				return &mcp.CallToolResult{
 					IsError: true,
 					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
-						"Tool %q returns private keys, and this MCP key is read-only. Nothing was changed. "+
+						"Tool %q returns credentials (private keys, passwords), and this MCP key is read-only. Nothing was changed. "+
 							"Ask the user for a full-access key, or have them export the configuration from the web interface.", name)}},
 				}, nil
 			}

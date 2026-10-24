@@ -68,6 +68,12 @@ func (h *SubscriptionHandler) SetOutboundRefCheckers(dp tunnelservice.DeviceProx
 	h.routerRefs = r
 }
 
+// OutboundRefCheckers returns the guards SetOutboundRefCheckers wired, for
+// MCP to refuse the same deletions.
+func (h *SubscriptionHandler) OutboundRefCheckers() (tunnelservice.DeviceProxyRefChecker, tunnelservice.RouterRefChecker) {
+	return h.deviceProxyRefs, h.routerRefs
+}
+
 // ndmsProxyEnabled reads the toggler; defaults to true when the toggler
 // is not wired (tests, legacy bootstrap paths).
 func (h *SubscriptionHandler) ndmsProxyEnabled() bool {
