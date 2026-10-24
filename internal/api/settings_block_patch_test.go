@@ -38,6 +38,12 @@ func TestUpdate_PartialBlockKeepsSiblings(t *testing.T) {
 				t.Errorf("updates = %+v", u)
 			}
 		}},
+		{"updates.snapshotDisabled", `{"updates":{"snapshotDisabled":true}}`, func(t *testing.T, s *storage.Settings) {
+			u := s.Updates
+			if !u.SnapshotDisabled || !u.StatsEnabled || !u.CheckEnabled || u.Channel != "develop" || u.AutoInstallTime != "04:30" {
+				t.Errorf("updates = %+v", u)
+			}
+		}},
 		{"dnsRoute", `{"dnsRoute":{"refreshDailyTime":"02:00"}}`, func(t *testing.T, s *storage.Settings) {
 			d := s.DNSRoute
 			if !d.AutoRefreshEnabled || d.RefreshIntervalHours != 6 || d.RefreshMode != "daily" || d.RefreshDailyTime != "02:00" {

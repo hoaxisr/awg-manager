@@ -35,6 +35,7 @@ export type ResourceKey =
 	| 'singbox.router.rules'        // emitted by emitRulesEvent — triggers loadRulesSnapshot()
 	| 'proxyrt.instances'             // ResourceProxyInstances — состав инстансов прокси
 	| 'mcpKeys'                     // ResourceMcpKeys — ключи MCP-сервера
+	| 'updateSnapshots'             // ResourceUpdateSnapshots — снимки настроек перед обновлением
 	| 'bypass-set';                 // публикуется после наполнения AWGM-BYPASS (storeBypassSetOutcome)
 
 /**

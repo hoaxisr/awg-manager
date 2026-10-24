@@ -65,6 +65,11 @@ rm -f /opt/etc/ndm/netfilter.d/51-awgm-tunnel-fw.sh /opt/etc/awg-manager/tunnel-
 # именуются NN-awgm-*.sh — подметаем разом.
 rm -f /opt/etc/ndm/netfilter.d/*-awgm-*.sh
 
+# Снимки настроек перед обновлением: архивы с ключами в открытом виде,
+# которые нужны только для отката свежего обновления. Каталог данных при
+# удалении остаётся, а снимки в нём — нет.
+rm -rf /opt/etc/awg-manager/update-snapshots
+
 # Каталоги лока и старого PID, логи и недокачанный IPK на накопителе (#854).
 rm -rf /opt/var/lock/awg-manager /opt/var/run/awg-manager
 rm -f /opt/tmp/awg-manager-upgrade.log /opt/tmp/awg-manager-stderr.log /opt/tmp/awg-manager_*.ipk

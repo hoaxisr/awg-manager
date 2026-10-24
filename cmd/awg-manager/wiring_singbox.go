@@ -93,6 +93,7 @@ func (a *app) setupSingbox() {
 	// auto-install path needs a.singboxOp, which does not exist yet at
 	// that earlier point in main.go's setup sequence.
 	a.updaterService = updater.New(version, a.settingsStore, a.loggingService, a.dataDir, &singboxUpdaterAdapter{op: a.singboxOp})
+	a.updaterService.SetEventBus(a.eventBus)
 	// Start — в wiring_server, после SetDownloader/SetFeatures: SetDownloader
 	// пишет поля без синхронизации с горутиной проверок.
 }

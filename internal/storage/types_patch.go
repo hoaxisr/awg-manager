@@ -94,6 +94,7 @@ type UpdateSettingsPatch struct {
 	AutoInstallIntervalDays *int    `json:"autoInstallIntervalDays,omitempty"`
 	AutoInstallTime         *string `json:"autoInstallTime,omitempty"`
 	StatsEnabled            *bool   `json:"statsEnabled,omitempty"`
+	SnapshotDisabled        *bool   `json:"snapshotDisabled,omitempty"`
 }
 
 // DNSRouteSettingsPatch — блок dnsRoute (F684).

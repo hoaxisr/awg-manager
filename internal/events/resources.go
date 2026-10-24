@@ -26,6 +26,9 @@ const (
 	ResourceAwg3           Resource = "awg3"
 	ResourceProxyInstances Resource = "proxyrt.instances"
 	ResourceMcpKeys        Resource = "mcpKeys"
+	// ResourceUpdateSnapshots — снимки настроек перед обновлением: появляются
+	// при автообновлении и уходят по сроку без участия страницы.
+	ResourceUpdateSnapshots Resource = "updateSnapshots"
 
 	ResourceSingboxStatus        Resource = "singbox.status"
 	ResourceSingboxTunnels       Resource = "singbox.tunnels"
@@ -60,6 +63,7 @@ var AllResources = []Resource{
 	ResourceAwg3,
 	ResourceProxyInstances,
 	ResourceMcpKeys,
+	ResourceUpdateSnapshots,
 	ResourceSingboxStatus,
 	ResourceSingboxTunnels,
 	ResourceSingboxSubscriptions,

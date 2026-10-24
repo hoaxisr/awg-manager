@@ -5,6 +5,10 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { downloadBlob } from '$lib/utils/download';
+	import { formatBytes, formatDate } from '$lib/utils/format';
+	import { updateSnapshots } from '$lib/stores/updateSnapshots';
+	import type { PollingState } from '$lib/stores/polling';
+	import type { UpdateSnapshot, UpdateSnapshotsData } from '$lib/types';
 	import { waitForBackendRestart } from '$lib/restartRecovery';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 
@@ -13,6 +17,21 @@
 	let restoreConfirmOpen = $state(false);
 	let pendingFile = $state<File | null>(null);
 	let fileInput = $state<HTMLInputElement | null>(null);
+
+	// Список — через стор: снимок, снятый автообновлением, и удаление в другой
+	// вкладке приходят SSE-подсказкой без перезагрузки страницы.
+	let snapshotsState = $state<PollingState<UpdateSnapshotsData> | null>(null);
+	$effect(() => updateSnapshots.subscribe((s) => (snapshotsState = s)));
+	let snapshots = $derived(snapshotsState?.data?.snapshots ?? []);
+	let snapshotKeep = $derived(snapshotsState?.data?.keep ?? 3);
+	let snapshotTtlDays = $derived(snapshotsState?.data?.ttlDays ?? 7);
+	// Ошибку загрузки не выдаём за «снимков нет».
+	let snapshotsError = $derived(snapshotsState?.status === 'error' ? snapshotsState.error : null);
+	let snapshotsLoaded = $derived(snapshotsState?.data != null);
+	let snapshotBusy = $state<string | null>(null);
+	let pendingSnapshot = $state<UpdateSnapshot | null>(null);
+	let deleteSnapshotTarget = $state<UpdateSnapshot | null>(null);
+
 
 	async function readBackendInstanceId(): Promise<string | null> {
 		const res = await fetch('/api/health', {
@@ -57,13 +76,13 @@
 		restoreConfirmOpen = true;
 	}
 
-	async function confirmRestore() {
-		if (!pendingFile) return;
-		restoreConfirmOpen = false;
+	// Общий путь восстановления из файла и из снимка: запрос, затем ожидание
+	// перезапуска демона и перезагрузка страницы.
+	async function runRestore(action: () => Promise<unknown>) {
 		restoring = true;
 		const before = await readBackendInstanceId().catch(() => null);
 		try {
-			await api.importFullBackup(pendingFile);
+			await action();
 			notifications.success(m.settings_backup_restored());
 			const waitResult = await waitForBackendRestart({
 				previousInstanceId: before,
@@ -81,9 +100,56 @@
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.settings_backup_restore_failed());
 			restoring = false;
-		} finally {
-			pendingFile = null;
 		}
+	}
+
+	async function confirmRestore() {
+		const file = pendingFile;
+		const snap = pendingSnapshot;
+		restoreConfirmOpen = false;
+		pendingFile = null;
+		pendingSnapshot = null;
+		if (file) {
+			await runRestore(() => api.importFullBackup(file));
+		} else if (snap) {
+			await runRestore(() => api.restoreUpdateSnapshot(snap.id));
+		}
+	}
+
+	function askRestoreSnapshot(snap: UpdateSnapshot) {
+		pendingSnapshot = snap;
+		restoreConfirmOpen = true;
+	}
+
+	async function downloadSnapshot(snap: UpdateSnapshot) {
+		snapshotBusy = snap.id;
+		try {
+			downloadBlob(await api.downloadUpdateSnapshot(snap.id), `awg-manager-${snap.id}`);
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.settings_backup_snapshot_download_failed());
+		} finally {
+			snapshotBusy = null;
+		}
+	}
+
+	async function confirmDeleteSnapshot() {
+		const snap = deleteSnapshotTarget;
+		if (!snap) return;
+		snapshotBusy = snap.id;
+		try {
+			updateSnapshots.applyMutationResponse(await api.deleteUpdateSnapshot(snap.id));
+			deleteSnapshotTarget = null;
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.settings_backup_snapshot_delete_failed());
+		} finally {
+			snapshotBusy = null;
+		}
+	}
+
+	function snapshotLabel(snap: UpdateSnapshot): string {
+		return snap.appVersion
+			? m.settings_backup_snapshot_name({ date: formatDate(snap.createdAt), version: snap.appVersion })
+			: formatDate(snap.createdAt);
 	}
 </script>
 
@@ -127,6 +193,62 @@
 		</Button>
 	</div>
 
+	<div class="snapshots">
+		<div class="flex flex-col gap-1">
+			<span class="font-medium">{m.settings_backup_snapshots_label()}</span>
+			<span class="setting-description">
+				{m.settings_backup_snapshots_description({ keep: snapshotKeep, days: snapshotTtlDays })}
+			</span>
+		</div>
+		{#if snapshotsError}
+			<div class="snapshots-error">
+				<p class="setting-description">{m.settings_backup_snapshots_load_failed({ error: snapshotsError })}</p>
+				<Button variant="ghost" size="sm" onclick={() => updateSnapshots.refetch()}>{m.common_retry()}</Button>
+			</div>
+		{:else if !snapshotsLoaded}
+			<!-- Пока список грузится, пустым его не показываем. -->
+		{:else if snapshots.length === 0}
+			<p class="setting-description snapshots-empty">{m.settings_backup_snapshots_empty()}</p>
+		{:else}
+			<ul class="snapshot-list">
+				{#each snapshots as snap (snap.id)}
+					<li class="snapshot-row">
+						<div class="flex flex-col">
+							<span class="snapshot-name">{snapshotLabel(snap)}</span>
+							<span class="setting-description">{formatBytes(snap.size, 1)}</span>
+						</div>
+						<div class="snapshot-actions">
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={restoring || snapshotBusy !== null}
+								onclick={() => downloadSnapshot(snap)}
+							>
+								{m.common_download()}
+							</Button>
+							<Button
+								variant="outline-danger"
+								size="sm"
+								disabled={restoring || snapshotBusy !== null}
+								onclick={() => askRestoreSnapshot(snap)}
+							>
+								{m.settings_backup_restore()}
+							</Button>
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={restoring || snapshotBusy !== null}
+								onclick={() => (deleteSnapshotTarget = snap)}
+							>
+								{m.common_delete()}
+							</Button>
+						</div>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</div>
+
 	<input
 		bind:this={fileInput}
 		type="file"
@@ -141,15 +263,31 @@
 	title={m.settings_backup_confirm_title()}
 	message={pendingFile
 		? m.settings_backup_confirm_message({ name: pendingFile.name })
-		: ''}
+		: pendingSnapshot
+			? m.settings_backup_snapshot_confirm_message({ name: snapshotLabel(pendingSnapshot) })
+			: ''}
 	confirmLabel={m.settings_backup_restore()}
 	variant="danger"
 	busy={restoring}
 	onClose={() => {
 		restoreConfirmOpen = false;
 		pendingFile = null;
+		pendingSnapshot = null;
 	}}
 	onConfirm={confirmRestore}
+/>
+
+<ConfirmModal
+	open={deleteSnapshotTarget !== null}
+	title={m.settings_backup_snapshot_delete_title()}
+	message={deleteSnapshotTarget
+		? m.settings_backup_snapshot_delete_message({ name: snapshotLabel(deleteSnapshotTarget) })
+		: ''}
+	confirmLabel={m.common_delete()}
+	variant="danger"
+	busy={snapshotBusy !== null}
+	onClose={() => (deleteSnapshotTarget = null)}
+	onConfirm={confirmDeleteSnapshot}
 />
 
 <style>
@@ -177,9 +315,56 @@
 		line-height: 1.45;
 	}
 
-	/* File input is the last child — keep row padding like other cards. */
-	.backup-card > .setting-row:last-of-type {
-		padding-bottom: 0;
+	.snapshots {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		padding-top: 0.875rem;
+		border-top: 1px solid var(--border);
+	}
+
+	.snapshots-empty {
+		margin: 0;
+	}
+
+	.snapshots-error {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.snapshots-error p {
+		margin: 0;
+		color: var(--warning, var(--color-warning));
+	}
+
+	.snapshot-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.snapshot-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		padding: 0.5rem 0;
+	}
+
+	.snapshot-name {
+		font-size: 0.875rem;
+	}
+
+	.snapshot-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.375rem;
 	}
 
 	.sr-only {

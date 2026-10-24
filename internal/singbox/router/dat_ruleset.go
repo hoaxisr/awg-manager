@@ -243,7 +243,7 @@ func (s *ServiceImpl) ensureDatRuleSetToken() (string, error) {
 		return "", fmt.Errorf("generate dat rule-set token: %w", err)
 	}
 	token := hex.EncodeToString(buf)
-	if err := os.WriteFile(path, []byte(token+"\n"), 0600); err != nil {
+	if err := storage.AtomicWritePerm(path, []byte(token+"\n"), 0600); err != nil {
 		return "", fmt.Errorf("write dat rule-set token: %w", err)
 	}
 	return token, nil

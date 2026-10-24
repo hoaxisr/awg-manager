@@ -75,6 +75,9 @@ type UpdateSettingsDTO struct {
 	// StatsEnabled — анонимная статистика установок: случайный ID установки
 	// и флаги используемых механизмов в запросе проверки обновлений.
 	StatsEnabled bool `json:"statsEnabled" example:"true"`
+	// SnapshotDisabled — не сохранять снимок каталога данных перед
+	// установкой обновления. По умолчанию false: снимок сохраняется.
+	SnapshotDisabled bool `json:"snapshotDisabled" example:"false"`
 }
 
 type DownloadSettingsDTO struct {
@@ -354,6 +357,7 @@ func settingsResponse(s *storage.Settings) SettingsData {
 			AutoInstallIntervalDays: s.Updates.AutoInstallIntervalDays,
 			AutoInstallTime:         s.Updates.AutoInstallTime,
 			StatsEnabled:            s.Updates.StatsEnabled,
+			SnapshotDisabled:        s.Updates.SnapshotDisabled,
 		},
 		Download: DownloadSettingsDTO{
 			RouteTag:  s.Download.RouteTag,
