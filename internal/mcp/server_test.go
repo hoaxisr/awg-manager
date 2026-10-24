@@ -94,6 +94,20 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 		"list_singbox_rules", "list_singbox_outbounds", "get_singbox_staging", "set_singbox_rule_outbound", "apply_singbox_staging", "discard_singbox_staging",
 		"list_singbox_subscriptions", "get_singbox_outbound", "set_singbox_subscription_enabled",
 		"set_singbox_subscription_mode", "set_singbox_subscription_active_member",
+		"list_singbox_dns_servers", "list_singbox_rulesets", "create_singbox_outbound_group", "set_singbox_outbound_group_members",
+		"set_singbox_dns_server_detour", "set_singbox_ruleset_detour",
+		"create_singbox_subscription_group", "add_singbox_subscription_server",
+		"get_singbox_router_status", "list_singbox_dns_rules", "list_singbox_dns_rewrites",
+		"add_singbox_rule", "update_singbox_rule", "move_singbox_rule", "delete_singbox_rule",
+		"set_singbox_route_final", "add_singbox_ruleset", "delete_singbox_ruleset",
+		"list_routing_targets", "update_static_route",
+		"create_singbox_subscription", "delete_singbox_subscription", "refresh_singbox_subscription", "set_singbox_subscription_settings",
+		"exclude_singbox_subscription_servers", "restore_singbox_subscription_servers", "add_singbox_tunnel", "delete_singbox_tunnel",
+		"update_tunnel_settings", "list_singbox_connections", "run_tunnel_diagnostics",
+		"list_policy_interfaces", "create_access_policy", "delete_access_policy", "update_access_policy", "set_access_policy_interface", "assign_device_policy",
+		"set_singbox_router_mode", "set_singbox_router_settings", "get_singbox_user_config", "save_singbox_user_config", "apply_singbox_user_config", "discard_singbox_user_config",
+		"list_wireguard_server_options", "create_wireguard_server", "update_wireguard_server", "set_wireguard_server_access", "set_wireguard_server_enabled", "set_wireguard_server_obfuscation",
+		"get_hydraroute_status", "control_hydraroute", "set_hydraroute_settings", "list_hydraroute_geo_files", "update_hydraroute_geo_files", "remove_hydraroute_disabled_tag",
 	}
 	for _, n := range want {
 		if byName[n] == nil {
@@ -117,10 +131,33 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 	}
 	// Deleting a routing list is permanent and MCP cannot recreate it, so
 	// the host must get the chance to ask the user first.
-	for _, n := range []string{"remove_dns_route", "remove_static_route"} {
+	// A deletion in the shared draft is destructive (README "Annotations"):
+	// once applied, nothing in MCP recreates the rule or the set.
+	for _, n := range []string{"remove_dns_route", "remove_static_route", "delete_singbox_rule", "delete_singbox_ruleset", "delete_singbox_subscription", "delete_singbox_tunnel", "delete_access_policy", "discard_singbox_user_config"} {
 		a := byName[n].Annotations
 		if a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint {
 			t.Errorf("%s must be annotated destructive", n)
+		}
+	}
+	// The sing-box edits destroy nothing: a router edit sits in the draft,
+	// and what the subscription writes create the user removes in the web
+	// interface. Creating twice is refused (the tag is taken) or makes a
+	// second object, so neither create tool is idempotent.
+	for _, n := range []string{"create_singbox_outbound_group", "set_singbox_outbound_group_members", "set_singbox_dns_server_detour",
+		"set_singbox_ruleset_detour", "create_singbox_subscription_group", "add_singbox_subscription_server"} {
+		a := byName[n].Annotations
+		if a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
+			t.Errorf("%s must be a non-destructive write", n)
+		}
+	}
+	for _, n := range []string{"create_singbox_outbound_group", "create_singbox_subscription_group", "add_singbox_subscription_server", "update_dns_route"} {
+		if byName[n].Annotations.IdempotentHint {
+			t.Errorf("%s must not claim to be idempotent", n)
+		}
+	}
+	for _, n := range []string{"list_singbox_dns_servers", "list_singbox_rulesets", "get_singbox_router_status", "list_singbox_dns_rules", "list_singbox_dns_rewrites"} {
+		if !byName[n].Annotations.ReadOnlyHint {
+			t.Errorf("%s must be read-only", n)
 		}
 	}
 }

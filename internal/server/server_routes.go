@@ -18,6 +18,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	sysports "github.com/hoaxisr/awg-manager/internal/sys/ports"
+	tunnelservice "github.com/hoaxisr/awg-manager/internal/tunnel/service"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -1123,6 +1124,26 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 			routerForMcp = svc
 		}
 	}
+	// fakeip-tun читается тем же экземпляром, что у страниц fakeip, — по
+	// тем же причинам, что и маршрутизатор выше.
+	var fakeipForMcp localdeps.FakeIPRouter
+	if s.singboxFakeIPConfigHandler != nil {
+		if svc := s.singboxFakeIPConfigHandler.Service(); svc != nil {
+			fakeipForMcp = svc
+		}
+	}
+	var userConfigForMcp localdeps.SingboxSlots
+	if s.singboxConfigEditorHandler != nil {
+		if o := s.singboxConfigEditorHandler.Orchestrator(); o != nil {
+			userConfigForMcp = o
+		}
+	}
+	var rewritesForMcp localdeps.DNSRewriteLister
+	if s.dnsRewritesHandler != nil {
+		if svc := s.dnsRewritesHandler.Service(); svc != nil {
+			rewritesForMcp = svc
+		}
+	}
 	var connsForMcp localdeps.ConnectionLister
 	if h.connectionsService != nil {
 		connsForMcp = h.connectionsService
@@ -1155,10 +1176,13 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// Конкретные типы под проверкой на nil: интерфейс с nil-указателем
 	// внутри сравнение с nil проходит и роняет демон на первом вызове.
 	var subsForMcp localdeps.SubscriptionService
+	var deviceProxyRefs tunnelservice.DeviceProxyRefChecker
+	var routerRefs tunnelservice.RouterRefChecker
 	if s.subscriptionHandler != nil {
 		if svc := s.subscriptionHandler.Service(); svc != nil {
 			subsForMcp = svc
 		}
+		deviceProxyRefs, routerRefs = s.subscriptionHandler.OutboundRefCheckers()
 	}
 	var clashForMcp localdeps.ClashState
 	if s.singboxOp != nil {
@@ -1170,39 +1194,64 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.bus != nil {
 		bus = s.bus
 	}
+	// Интерфейсы, а не указатели: nil-указатель в интерфейсе — не nil.
+	var (
+		hydraForMcp     localdeps.HydraRoute
+		hydraGeoForMcp  localdeps.HydraGeo
+		downloadsForMcp localdeps.Downloads
+	)
+	if s.hydraService != nil {
+		hydraForMcp = s.hydraService
+		if gds := s.hydraService.GetGeoData(); gds != nil {
+			hydraGeoForMcp = gds
+		}
+	}
+	if s.downloadSvc != nil {
+		downloadsForMcp = s.downloadSvc
+	}
 	var pingSnapshot func()
 	if h.pingCheckHandler != nil {
 		pingSnapshot = h.pingCheckHandler.PublishSnapshot
 	}
 
 	local := localdeps.New(localdeps.Config{
-		Version:        s.config.Version,
-		InstanceID:     s.instanceID,
-		BootInProgress: s.bootStatusFn,
-		AuthEnabled:    s.settings.IsAuthEnabled,
-		Tunnels:        s.tunnelService,
-		TunnelStore:    s.tunnels,
-		Orch:           orch,
-		Traffic:        trafficStats,
-		DNSRoutes:      s.dnsRouteService,
-		StaticRoutes:   s.staticRouteService,
-		ClientRoutes:   s.clientRouteService,
-		Policies:       s.accessPolicyService,
-		Logs:           logs,
-		Testing:        connTester,
-		Monitoring:     mon,
-		PingCheck:      s.pingCheckService,
-		ListServers:    h.serverHandler.ListServers,
-		Managed:        managedForMcp,
-		Connections:    connsForMcp,
-		Router:         routerForMcp,
-		Diagnostics:    diagForMcp,
-		Singbox:        singboxOp,
-		Subscriptions:  subsForMcp,
-		Clash:          clashForMcp,
-		SystemInfo:     h.systemHandler.InfoData,
-		Resolve:        resolveHost,
-		Bus:            bus,
+		Version:         s.config.Version,
+		InstanceID:      s.instanceID,
+		BootInProgress:  s.bootStatusFn,
+		AuthEnabled:     s.settings.IsAuthEnabled,
+		Tunnels:         s.tunnelService,
+		TunnelStore:     s.tunnels,
+		Orch:            orch,
+		Traffic:         trafficStats,
+		DNSRoutes:       s.dnsRouteService,
+		StaticRoutes:    s.staticRouteService,
+		Targets:         s.catalog,
+		ClientRoutes:    s.clientRouteService,
+		Policies:        s.accessPolicyService,
+		Logs:            logs,
+		Testing:         connTester,
+		Monitoring:      mon,
+		PingCheck:       s.pingCheckService,
+		ListServers:     h.serverHandler.ListServers,
+		Managed:         managedForMcp,
+		Connections:     connsForMcp,
+		Hydra:           hydraForMcp,
+		HydraGeo:        hydraGeoForMcp,
+		Downloads:       downloadsForMcp,
+		Router:          routerForMcp,
+		TunnelEdit:      h.tunnelsHandler.EditTunnel,
+		FakeIP:          fakeipForMcp,
+		DNSRewrites:     rewritesForMcp,
+		UserConfig:      userConfigForMcp,
+		Diagnostics:     diagForMcp,
+		Singbox:         singboxOp,
+		Subscriptions:   subsForMcp,
+		DeviceProxyRefs: deviceProxyRefs,
+		RouterRefs:      routerRefs,
+		Clash:           clashForMcp,
+		SystemInfo:      h.systemHandler.InfoData,
+		Resolve:         resolveHost,
+		Bus:             bus,
 
 		PingCheckSnapshot: pingSnapshot,
 		AppLog:            appLog,

@@ -26,6 +26,10 @@ type SingboxConfigEditorHandler struct {
 	log  *logging.ScopedLogger
 }
 
+// Orchestrator returns the sing-box orchestrator the editor writes through,
+// for MCP to edit the same slot and draft.
+func (h *SingboxConfigEditorHandler) Orchestrator() *orchestrator.Orchestrator { return h.orch }
+
 // NewSingboxConfigEditorHandler constructs the handler.
 // appLogger may be nil — the scoped logger is nil-safe.
 func NewSingboxConfigEditorHandler(orch *orchestrator.Orchestrator, appLogger logging.AppLogger) *SingboxConfigEditorHandler {

@@ -1719,10 +1719,40 @@ type fakeSingboxOp struct {
 	asked   []string
 	err     error
 	listed  int // ListTunnels calls
+	// AddTunnels and RemoveTunnel record what they got; addErrs makes the
+	// operator report the link as unusable, addDup as a known duplicate,
+	// addProxyErr as added with its NDMS proxy setup failed.
+	addedLinks   []string
+	addErrs      bool
+	addDup       bool
+	addProxyErr  bool
+	removed      []string
+	notInstalled bool
+}
+
+func (f *fakeSingboxOp) AddTunnels(_ context.Context, links string) ([]singbox.TunnelInfo, []singbox.BatchError, error) {
+	f.addedLinks = append(f.addedLinks, links)
+	switch {
+	case f.addErrs:
+		return nil, []singbox.BatchError{{Line: 1, Input: links, Err: fmt.Errorf("bad link %s", links)}}, nil
+	case f.addDup:
+		return nil, []singbox.BatchError{{Input: "new-proxy", Err: fmt.Errorf("duplicate of existing tunnel %q", "new-proxy")}}, nil
+	}
+	t := singbox.TunnelInfo{Tag: "new-proxy", Protocol: "vless", Server: "n.example.net", Port: 443}
+	f.tunnels = append(f.tunnels, t)
+	if f.addProxyErr {
+		return []singbox.TunnelInfo{t}, []singbox.BatchError{{Input: t.Tag, Err: fmt.Errorf("ndms proxy setup for %s: rci timeout", t.Tag)}}, nil
+	}
+	return []singbox.TunnelInfo{t}, nil, nil
+}
+
+func (f *fakeSingboxOp) RemoveTunnel(_ context.Context, tag string) error {
+	f.removed = append(f.removed, tag)
+	return nil
 }
 
 func (f *fakeSingboxOp) GetStatus(context.Context) singbox.Status {
-	return singbox.Status{Installed: true, Running: true, TunnelCount: len(f.tunnels)}
+	return singbox.Status{Installed: !f.notInstalled, Running: true, TunnelCount: len(f.tunnels)}
 }
 func (f *fakeSingboxOp) Control(context.Context, string) error { return nil }
 func (f *fakeSingboxOp) ListTunnels(context.Context) ([]singbox.TunnelInfo, error) {
@@ -1864,14 +1894,24 @@ func TestLocal_SingboxToolsWithoutTheEngineSaySo(t *testing.T) {
 
 // fakeManaged implements the managed-server surface MCP needs.
 type fakeManaged struct {
-	servers  []storage.ManagedServer
-	added    managed.AddPeerRequest
-	addedTo  string
-	toggled  []string
-	confFor  string
-	confErr  error
-	addErr   error
-	confText string
+	// Server writes (wg_servers_test.go).
+	createReq   *managed.CreateServerRequest
+	createErr   error
+	updateReq   *managed.UpdateServerRequest
+	calls       []string
+	asc         json.RawMessage
+	ascSet      json.RawMessage
+	ascErr      error
+	invalidated []string
+	policyErr   error
+	servers     []storage.ManagedServer
+	added       managed.AddPeerRequest
+	addedTo     string
+	toggled     []string
+	confFor     string
+	confErr     error
+	addErr      error
+	confText    string
 }
 
 func (f *fakeManaged) List() []storage.ManagedServer { return f.servers }
@@ -2216,9 +2256,20 @@ type fakeDiag struct {
 	report []byte
 	repErr error
 	runs   int
+	opts   diagnostics.RunOptions
 }
 
-func (f *fakeDiag) Run(context.Context) error     { f.runs++; return f.runErr }
+func (f *fakeDiag) RunWithStream(_ context.Context, opts diagnostics.RunOptions) (<-chan diagnostics.DiagEvent, error) {
+	f.runs++
+	f.opts = opts
+	if f.runErr != nil {
+		return nil, f.runErr
+	}
+	ch := make(chan diagnostics.DiagEvent, 1)
+	ch <- diagnostics.DiagEvent{Type: "done"}
+	close(ch)
+	return ch, nil
+}
 func (f *fakeDiag) Status() diagnostics.RunStatus { return f.status }
 func (f *fakeDiag) Result() ([]byte, error)       { return f.report, f.repErr }
 
@@ -2235,7 +2286,7 @@ func TestLocal_DiagnosticsResultPutsFailuresFirst(t *testing.T) {
 	fd := &fakeDiag{status: diagnostics.RunStatus{Status: "done"}, report: []byte(report)}
 	l := New(Config{Diagnostics: fd})
 
-	got, err := l.DiagnosticsResult(context.Background())
+	got, err := l.DiagnosticsResult(context.Background(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2262,7 +2313,7 @@ func TestLocal_DiagnosticsResultWithoutAReportIsExplicit(t *testing.T) {
 	fd := &fakeDiag{repErr: errors.New("no report available")}
 	l := New(Config{Diagnostics: fd})
 
-	if _, err := l.DiagnosticsResult(context.Background()); err == nil {
+	if _, err := l.DiagnosticsResult(context.Background(), false); err == nil {
 		t.Fatal("with no report the call must fail loudly, not return an all-clear")
 	}
 }
@@ -2273,7 +2324,7 @@ func TestLocal_RunDiagnosticsAlreadyRunning(t *testing.T) {
 	fd := &fakeDiag{runErr: errors.New("diagnostics already running"), status: diagnostics.RunStatus{Status: "running"}}
 	l := New(Config{Diagnostics: fd})
 
-	got, err := l.RunDiagnostics(context.Background())
+	got, err := l.RunDiagnostics(context.Background(), false)
 	if err != nil {
 		t.Fatalf("a sweep already in progress is not a failure: %v", err)
 	}
@@ -2283,18 +2334,28 @@ func TestLocal_RunDiagnosticsAlreadyRunning(t *testing.T) {
 	if got.Status != "running" {
 		t.Fatalf("status = %q", got.Status)
 	}
+	if fd.runs != 0 {
+		t.Fatal("a sweep in progress must not be joined: its options are not ours")
+	}
 }
 
+// TestLocal_RunDiagnosticsStarts — Runner.Run всегда добавляет
+// restart-тест, а он останавливает и запускает каждый работающий
+// kernel-туннель. Прогон из MCP без него ничего не меняет; с ним — только
+// по явной просьбе.
 func TestLocal_RunDiagnosticsStarts(t *testing.T) {
 	fd := &fakeDiag{}
 	l := New(Config{Diagnostics: fd})
 
-	got, err := l.RunDiagnostics(context.Background())
+	got, err := l.RunDiagnostics(context.Background(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Started || fd.runs != 1 {
-		t.Fatalf("got %+v after %d runs", got, fd.runs)
+	if !got.Started || fd.runs != 1 || fd.opts.IncludeRestart || fd.opts.TunnelID != "" {
+		t.Fatalf("got %+v after %d runs with %+v", got, fd.runs, fd.opts)
+	}
+	if _, err := l.RunDiagnostics(context.Background(), true); err != nil || !fd.opts.IncludeRestart {
+		t.Fatalf("the restart test must be passed on when asked: %+v, %v", fd.opts, err)
 	}
 }
 
@@ -2314,6 +2375,32 @@ type fakeRouter struct {
 	// listErr mirrors a draft or config file the router cannot parse
 	// (orchestrator.LoadEffective).
 	listErr error
+
+	settings storage.SingboxRouterSettings
+	status   router.Status
+	switched chan string
+	dns      []router.DNSServer
+	dnsRules []router.DNSRule
+	dnsFinal string
+	ruleSets []router.RuleSet
+	// The edits record what they received; editErr fails every one of
+	// them, and edits counts the calls that reached the router.
+	addedGroup  router.Outbound
+	membersTag  string
+	members     []string
+	dnsTag      string
+	dnsDetour   string
+	ruleSetTags []string
+	ruleSetVia  string
+	editErr     error
+	edits       int
+	ruleAt      int
+	ruleTo      int
+	rule        router.Rule
+	final       string
+	addedSet    router.RuleSet
+	deletedSet  string
+	deleteForce bool
 }
 
 func (f *fakeRouter) ListRules(context.Context) ([]router.Rule, error) { return f.rules, nil }
@@ -2333,6 +2420,85 @@ func (f *fakeRouter) ApplyStaging(context.Context) (singboxorch.ValidationResult
 	return f.applyRes, f.applyErr
 }
 func (f *fakeRouter) DiscardStaging(context.Context) error { f.discarded++; return nil }
+func (f *fakeRouter) GetSettings(context.Context) (storage.SingboxRouterSettings, error) {
+	return f.settings, nil
+}
+func (f *fakeRouter) GetStatus(context.Context) (router.Status, error) { return f.status, nil }
+func (f *fakeRouter) UpdateSettings(_ context.Context, s storage.SingboxRouterSettings) error {
+	f.edits++
+	f.settings = s
+	return f.editErr
+}
+func (f *fakeRouter) SwitchRoutingMode(_ context.Context, mode string) error {
+	f.switched <- mode
+	return nil
+}
+func (f *fakeRouter) ListDNSRules(context.Context) ([]router.DNSRule, error) {
+	return f.dnsRules, nil
+}
+func (f *fakeRouter) GetDNSGlobals(context.Context) (string, string, string, error) {
+	return f.dnsFinal, "prefer_ipv4", "", nil
+}
+func (f *fakeRouter) ListDNSServers(context.Context) ([]router.DNSServer, error) { return f.dns, nil }
+func (f *fakeRouter) ListRuleSets(context.Context) ([]router.RuleSet, error)     { return f.ruleSets, nil }
+func (f *fakeRouter) AddCompositeOutbound(_ context.Context, o router.Outbound) error {
+	f.edits++
+	f.addedGroup = o
+	return f.editErr
+}
+func (f *fakeRouter) SetCompositeOutboundMembers(_ context.Context, tag string, members []string) error {
+	f.edits++
+	f.membersTag, f.members = tag, members
+	return f.editErr
+}
+func (f *fakeRouter) SetDNSServerDetour(_ context.Context, tag, detour string) error {
+	f.edits++
+	f.dnsTag, f.dnsDetour = tag, detour
+	return f.editErr
+}
+func (f *fakeRouter) InsertRule(_ context.Context, index int, r router.Rule) error {
+	f.edits++
+	f.ruleAt, f.rule = index, r
+	return f.editErr
+}
+func (f *fakeRouter) ReplaceUserRule(_ context.Context, index int, r router.Rule) error {
+	f.edits++
+	f.ruleAt, f.rule = index, r
+	return f.editErr
+}
+func (f *fakeRouter) DeleteUserRule(_ context.Context, index int) (router.Rule, error) {
+	f.edits++
+	f.ruleAt = index
+	if f.editErr != nil {
+		return router.Rule{}, f.editErr
+	}
+	return f.rules[index], nil
+}
+func (f *fakeRouter) MoveUserRule(_ context.Context, from, to int) error {
+	f.edits++
+	f.ruleAt, f.ruleTo = from, to
+	return f.editErr
+}
+func (f *fakeRouter) SetRouteFinal(_ context.Context, tag string) error {
+	f.edits++
+	f.final = tag
+	return f.editErr
+}
+func (f *fakeRouter) AddRuleSet(_ context.Context, rs router.RuleSet) error {
+	f.edits++
+	f.addedSet = rs
+	return f.editErr
+}
+func (f *fakeRouter) DeleteRuleSet(_ context.Context, tag string, force bool) error {
+	f.edits++
+	f.deletedSet, f.deleteForce = tag, force
+	return f.editErr
+}
+func (f *fakeRouter) BulkSetRuleSetDetour(_ context.Context, tags []string, detour string) error {
+	f.edits++
+	f.ruleSetTags, f.ruleSetVia = tags, detour
+	return f.editErr
+}
 
 func routerHarness() *fakeRouter {
 	yes := true
@@ -2377,6 +2543,12 @@ func TestLocal_ListSingboxRulesRendersAMatchSummary(t *testing.T) {
 	// read as "this rule does nothing".
 	if got[1].Action != "route" {
 		t.Fatalf("action = %q, want route for an omitted action", got[1].Action)
+	}
+	if got[0].System || got[1].System {
+		t.Fatal("user rules are not system rules")
+	}
+	if r := singboxRule(0, router.Rule{Action: "sniff"}); !r.System {
+		t.Fatal("the sniff rule kept on top must be marked system: protected edits point the agent at that flag")
 	}
 	if !got[2].Managed {
 		t.Error("a rule carrying awgm_managed must be marked")
@@ -2757,7 +2929,7 @@ func TestLocal_DiagnosticsResultWhileRunningSaysSo(t *testing.T) {
 	fd := &fakeDiag{status: diagnostics.RunStatus{Status: "running", Progress: "checking tunnels"}, repErr: errors.New("no report available")}
 	l := New(Config{Diagnostics: fd})
 
-	got, err := l.DiagnosticsResult(context.Background())
+	got, err := l.DiagnosticsResult(context.Background(), false)
 	if err != nil {
 		t.Fatalf("a sweep in progress is a state, not a missing report: %v", err)
 	}
@@ -2864,5 +3036,83 @@ func TestLocal_GetDNSRouteCarriesNoFetchErrorText(t *testing.T) {
 	}
 	if !got.Subscriptions[0].LastFetchFailed || got.Subscriptions[1].LastFetchFailed {
 		t.Fatalf("lastFetchFailed = %v, %v; want true, false", got.Subscriptions[0].LastFetchFailed, got.Subscriptions[1].LastFetchFailed)
+	}
+}
+
+// streamDiag answers RunWithStream with prepared events, as a
+// single-tunnel run does: no report, results on the stream only.
+type streamDiag struct {
+	fakeDiag
+	events []diagnostics.DiagEvent
+}
+
+func (f *streamDiag) RunWithStream(_ context.Context, opts diagnostics.RunOptions) (<-chan diagnostics.DiagEvent, error) {
+	f.runs++
+	f.opts = opts
+	ch := make(chan diagnostics.DiagEvent, len(f.events))
+	for _, ev := range f.events {
+		ch <- ev
+	}
+	close(ch)
+	return ch, nil
+}
+
+// TestLocal_RunTunnelDiagnostics — проверка одного туннеля не оставляет
+// отчёта, поэтому результаты читаются с потока событий; идущий прогон не
+// подхватывается.
+func TestLocal_RunTunnelDiagnostics(t *testing.T) {
+	fd := &streamDiag{events: []diagnostics.DiagEvent{
+		{Type: "phase", Phase: "tunnels"},
+		{Type: "test", Test: &diagnostics.TestEvent{Name: "handshake", Status: "fail", Detail: "no handshake\nfor 10 min", TunnelID: "tn-1", TunnelName: "AMS"}},
+		{Type: "test", Test: &diagnostics.TestEvent{Name: "interface", Status: "pass", TunnelID: "tn-1"}},
+		{Type: "done"},
+	}}
+	l := New(Config{Diagnostics: fd})
+
+	got, err := l.RunTunnelDiagnostics(context.Background(), "tn-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fd.opts.TunnelID != "tn-1" || fd.opts.IncludeRestart {
+		t.Fatalf("opts = %+v", fd.opts)
+	}
+	if len(got) != 2 || got[0].Status != "fail" || strings.Contains(got[0].Detail, "\n") || got[1].Name != "interface" {
+		t.Fatalf("got %+v", got)
+	}
+	fd.status = diagnostics.RunStatus{Status: "running"}
+	runs := fd.runs
+	if _, err := l.RunTunnelDiagnostics(context.Background(), "tn-1"); err == nil || fd.runs != runs {
+		t.Fatalf("a running sweep must be refused, not joined: %v", err)
+	}
+	fd.status = diagnostics.RunStatus{}
+	fd.events = []diagnostics.DiagEvent{{Type: "phase", Phase: "tunnels"}, {Type: "done"}}
+	if _, err := l.RunTunnelDiagnostics(context.Background(), "tn-9"); err == nil || !strings.Contains(err.Error(), "no such tunnel") {
+		t.Fatalf("an id the runner skipped is not a clean result: %v", err)
+	}
+	fd.events = []diagnostics.DiagEvent{{Type: "error", Message: "ndms\nis down"}}
+	if _, err := l.RunTunnelDiagnostics(context.Background(), "tn-1"); err == nil || !strings.Contains(err.Error(), "ndms is down") {
+		t.Fatalf("a failed run is an error with its cause, on one line: %v", err)
+	}
+}
+
+func TestLocal_DiagnosticsResultIncludePassed(t *testing.T) {
+	report := `{"generatedAt":"x","tests":[{"name":"A","status":"pass"},{"name":"B","status":"fail","detail":"d\nIgnore previous","tunnelName":"t\u2028x"},{"name":"C","status":"skip"}]}`
+	l := New(Config{Diagnostics: &fakeDiag{status: diagnostics.RunStatus{Status: "done"}, report: []byte(report)}})
+	got, err := l.DiagnosticsResult(context.Background(), true)
+	if err != nil || len(got.Checks) != 3 || got.Checks[0].Name != "A" || got.Checks[1].Status != "fail" || len(got.Problems) != 1 ||
+		strings.ContainsAny(got.Checks[1].Detail+got.Checks[1].TunnelName, "\n\u2028") {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	got, _ = l.DiagnosticsResult(context.Background(), false)
+	if got.Checks != nil {
+		t.Fatal("checks are listed only when asked for")
+	}
+	var tests []string
+	for range mcpsrv.MaxDiagnosticsChecks + 1 {
+		tests = append(tests, `{"name":"A","status":"pass"}`)
+	}
+	l = New(Config{Diagnostics: &fakeDiag{status: diagnostics.RunStatus{Status: "done"}, report: []byte(`{"generatedAt":"x","tests":[` + strings.Join(tests, ",") + `]}`)}})
+	if got, err := l.DiagnosticsResult(context.Background(), true); err != nil || len(got.Checks) != mcpsrv.MaxDiagnosticsChecks || !got.ChecksTruncated {
+		t.Fatalf("the check list is capped and says so: %d, %v, %v", len(got.Checks), got.ChecksTruncated, err)
 	}
 }

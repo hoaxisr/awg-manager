@@ -623,6 +623,10 @@ func isPublicAddr(ip net.IP) bool {
 		ip.IsUnspecified())
 }
 
+// IsPrivateAddr is the ip_is_private matcher: the negation of
+// isPublicAddr (sing's N.IsPublicAddr).
+func IsPrivateAddr(ip net.IP) bool { return !isPublicAddr(ip) }
+
 // cidrContains parses cidr (CIDR notation OR a bare IP literal) and
 // checks whether it contains ip. Bare IP literals are treated as a
 // single-host network so "ip_cidr: ['8.8.8.8']" still works.
