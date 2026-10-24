@@ -50,6 +50,12 @@ type Service interface {
 	PolicyTunNATPreview(ctx context.Context) (NATPreview, error)
 
 	SetRouteFinal(ctx context.Context, tag string) error
+	// InsertRule, ReplaceUserRule, DeleteUserRule и MoveUserRule — правки
+	// правил пользователя для MCP, см. service_user_rules.go.
+	InsertRule(ctx context.Context, index int, r Rule) error
+	ReplaceUserRule(ctx context.Context, index int, r Rule) error
+	DeleteUserRule(ctx context.Context, index int) (Rule, error)
+	MoveUserRule(ctx context.Context, from, to int) error
 
 	ListRules(ctx context.Context) ([]Rule, error)
 	AddRule(ctx context.Context, rule Rule) error
@@ -75,6 +81,9 @@ type Service interface {
 	ListCompositeOutbounds(ctx context.Context) ([]CompositeOutboundView, error)
 	AddCompositeOutbound(ctx context.Context, o Outbound) error
 	UpdateCompositeOutbound(ctx context.Context, tag string, o Outbound) error
+	// SetCompositeOutboundMembers заменяет только состав группы — см.
+	// ServiceImpl.SetCompositeOutboundMembers.
+	SetCompositeOutboundMembers(ctx context.Context, tag string, members []string) error
 	DeleteCompositeOutbound(ctx context.Context, tag string, force bool) error
 
 	ApplyPreset(ctx context.Context, presetID, outboundTag string) error
@@ -89,6 +98,9 @@ type Service interface {
 	ListDNSServers(ctx context.Context) ([]DNSServer, error)
 	AddDNSServer(ctx context.Context, s DNSServer) error
 	UpdateDNSServer(ctx context.Context, tag string, s DNSServer) error
+	// SetDNSServerDetour меняет только detour сервера — см.
+	// ServiceImpl.SetDNSServerDetour.
+	SetDNSServerDetour(ctx context.Context, tag, detour string) error
 	DeleteDNSServer(ctx context.Context, tag string, force bool) error
 	MoveDNSServer(ctx context.Context, from, to int) error
 
