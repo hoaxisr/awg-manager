@@ -68,6 +68,10 @@ func NewDNSRewritesHandler(svc DNSRewritesService, appLogger logging.AppLogger) 
 	}
 }
 
+// Service returns the DNS Rewrite service, for MCP to read the same
+// instance.
+func (h *DNSRewritesHandler) Service() DNSRewritesService { return h.svc }
+
 // List returns all DNS rewrites in priority order.
 //
 //	@Summary		List singbox-router DNS rewrites

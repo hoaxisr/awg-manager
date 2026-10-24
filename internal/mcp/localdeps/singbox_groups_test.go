@@ -39,6 +39,98 @@ type fakeSubs struct {
 	activeCalls  int
 	activeErr    error
 	activeStored bool
+	// createIn records what CreateGroup received; createErr fails it.
+	createIn  *subscription.GroupCreateInput
+	createErr error
+	// addLink records the share link AddManualMember received; addErr fails
+	// the call. addRejected mirrors a link the service stores among the
+	// rejected entries: no member is added and no error is returned.
+	addLink     string
+	addErr      error
+	addRejected bool
+	// Subscription management: createdIn records Create's input and
+	// mgmtErr fails Create, Delete, Refresh, Exclude and Restore alike.
+	createdIn *subscription.CreateInput
+	deletedID string
+	mgmtErr   error
+	refreshed string
+	excluded  []string
+	restored  []string
+}
+
+func (f *fakeSubs) Create(_ context.Context, in subscription.CreateInput) (*subscription.Subscription, error) {
+	f.createdIn = &in
+	if f.mgmtErr != nil {
+		return nil, f.mgmtErr
+	}
+	sub := subscription.Subscription{ID: "c0de00000000000000000001", Label: in.Label, URL: in.URL, Inline: in.Inline, SelectorTag: "sub-c0de0000",
+		MemberTags: []string{"sub-c0de0000-a"}, Enabled: in.Enabled, Mode: in.Mode, RefreshHours: in.RefreshHours}
+	f.subs = append(f.subs, sub)
+	return &sub, nil
+}
+
+func (f *fakeSubs) Delete(_ context.Context, id string) error {
+	f.deletedID = id
+	return f.mgmtErr
+}
+
+func (f *fakeSubs) Refresh(_ context.Context, id string) (*subscription.RefreshResult, error) {
+	f.refreshed = id
+	if f.mgmtErr != nil {
+		return nil, f.mgmtErr
+	}
+	return &subscription.RefreshResult{Added: 2, Updated: 1, Orphaned: 1, SkippedVmess: 1, SkippedDuplicate: 2, ParseErrors: []string{"line 3: vless://SECRET@x"}}, nil
+}
+
+func (f *fakeSubs) ExcludeMembers(_ context.Context, id string, tags []string) (*subscription.Subscription, error) {
+	f.excluded = tags
+	if f.mgmtErr != nil {
+		return nil, f.mgmtErr
+	}
+	return f.Get(id)
+}
+
+func (f *fakeSubs) RestoreMembers(_ context.Context, id string, tags []string) (*subscription.Subscription, error) {
+	f.restored = tags
+	if f.mgmtErr != nil {
+		return nil, f.mgmtErr
+	}
+	return f.Get(id)
+}
+
+func (f *fakeSubs) CreateGroup(_ context.Context, in subscription.GroupCreateInput) (*subscription.AggregateGroup, error) {
+	f.createIn = &in
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
+	tag := in.Tag
+	if tag == "" {
+		tag = "agg-c0ffee00"
+	}
+	return &subscription.AggregateGroup{
+		ID: "c0ffee00c0ffee00c0ffee00", Label: in.Label, Tag: tag, ProxyIndex: 3,
+		Mode: in.Mode, UseSubscriptionIDs: in.UseSubscriptionIDs, Enabled: in.Enabled,
+	}, nil
+}
+
+func (f *fakeSubs) AddManualMember(_ context.Context, id, shareLink string) (*subscription.Subscription, error) {
+	f.addLink = shareLink
+	if f.addErr != nil {
+		return nil, f.addErr
+	}
+	for i := range f.subs {
+		if f.subs[i].ID != id {
+			continue
+		}
+		if !f.addRejected {
+			tag := f.subs[i].SelectorTag + "-n1"
+			f.subs[i].Members = append(f.subs[i].Members, subscription.MemberInfo{Tag: tag, Label: "from the link"})
+			f.subs[i].MemberTags = append(f.subs[i].MemberTags, tag)
+		}
+		c := f.subs[i]
+		return &c, nil
+	}
+	return nil, fmt.Errorf("subscription %q not found", id)
 }
 
 // List mirrors subscription.Store.List: sorted by label, then id.
