@@ -98,20 +98,50 @@ func registerObservabilityTools(s *mcp.Server, d Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "run_diagnostics",
 		Description: "Start a full diagnostic sweep of the router in the background: interfaces, routes, firewall, kernel module, per-tunnel checks. " +
-			"It takes tens of seconds; call get_diagnostics afterwards for the outcome. Changes nothing.",
+			"It takes tens of seconds; call get_diagnostics afterwards for the outcome. Changes nothing — unless includeRestart is true: " +
+			"then the sweep also stops and starts every running kernel tunnel to time the cycle, which drops their connections for a few seconds. Ask the user before passing it.",
 		Annotations: readOnly("Run diagnostics"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, DiagnosticsRun, error) {
-		out, err := d.RunDiagnostics(ctx)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in runDiagnosticsIn) (*mcp.CallToolResult, DiagnosticsRun, error) {
+		// The restart test writes — it stops and starts tunnels — so a
+		// read-only key is refused it here, as get_logs refuses raw: the
+		// scope middleware does not read arguments (scope.go, MC12).
+		if key, ok := KeyFromContext(ctx); ok && key.ReadOnly && in.IncludeRestart {
+			return nil, DiagnosticsRun{}, fmt.Errorf("includeRestart stops and starts tunnels, and this MCP key is read-only. Nothing was started. Call run_diagnostics without it, or ask the user for a full-access key")
+		}
+		out, err := d.RunDiagnostics(ctx, in.IncludeRestart)
 		return nil, out, err
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name: "run_tunnel_diagnostics",
+		Description: "Check one tunnel or sing-box proxy now and wait for the result — the per-tunnel checks of a full sweep (interface, handshake, connectivity, DNS leak and the like), without the system-wide ones and without the restart test. " +
+			"Takes up to a few tens of seconds. Changes nothing; refused while a full sweep runs.",
+		Annotations: readOnly("Run tunnel diagnostics"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in tunnelDiagnosticsIn) (*mcp.CallToolResult, tunnelDiagnosticsOut, error) {
+		id := strings.TrimSpace(in.TunnelID)
+		if tag, ok := strings.CutPrefix(id, "singbox:"); ok {
+			t, err := requireSingboxTag(tag, "list_singbox_tunnels")
+			if err != nil {
+				return nil, tunnelDiagnosticsOut{}, err
+			}
+			id = "singbox:" + t
+		} else if err := requireTunnelID(id); err != nil {
+			return nil, tunnelDiagnosticsOut{}, err
+		}
+		checks, err := d.RunTunnelDiagnostics(ctx, id)
+		if err != nil {
+			return nil, tunnelDiagnosticsOut{}, err
+		}
+		return nil, tunnelDiagnosticsOut{TunnelID: id, Checks: orEmpty(checks)}, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name: "get_diagnostics",
-		Description: "Outcome of the last diagnostic sweep: how many checks passed, and every check that did NOT — failures first, each with the detail explaining it. " +
-			"The full report is far larger than a tool result and stays in the web interface; this is the part that says what is wrong.",
+		Description: "Outcome of the last diagnostic sweep: how many checks passed, and every check that did NOT — failures first, each with the detail explaining it. includePassed lists every check as well. " +
+			"The raw report (merged configuration, journal excerpts) is far larger than a tool result and stays in the web interface.",
 		Annotations: readOnly("Diagnostics result"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, DiagnosticsResult, error) {
-		out, err := d.DiagnosticsResult(ctx)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getDiagnosticsIn) (*mcp.CallToolResult, DiagnosticsResult, error) {
+		out, err := d.DiagnosticsResult(ctx, in.IncludePassed)
 		if err != nil {
 			return nil, DiagnosticsResult{}, err
 		}
@@ -125,6 +155,23 @@ func registerObservabilityTools(s *mcp.Server, d Deps) {
 		}
 		return nil, out, nil
 	})
+}
+
+type getDiagnosticsIn struct {
+	IncludePassed bool `json:"includePassed,omitempty" jsonschema:"also list every check, passed and skipped ones included, in report order"`
+}
+
+type tunnelDiagnosticsIn struct {
+	TunnelID string `json:"tunnelId" jsonschema:"tunnel id from list_tunnels, or singbox:<tag> for a proxy from list_singbox_tunnels"`
+}
+
+type tunnelDiagnosticsOut struct {
+	TunnelID string             `json:"tunnelId"`
+	Checks   []DiagnosticsCheck `json:"checks"`
+}
+
+type runDiagnosticsIn struct {
+	IncludeRestart bool `json:"includeRestart,omitempty" jsonschema:"also run the restart test: every running kernel tunnel is stopped and started, dropping its connections for a few seconds. Default false"`
 }
 
 // ErrNoDiagnostics is what DiagnosticsResult reports when nothing has run

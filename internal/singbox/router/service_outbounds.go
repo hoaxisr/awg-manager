@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -190,6 +191,34 @@ func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o
 		}
 	}
 	return nil
+}
+
+// SetCompositeOutboundMembers заменяет состав группы tag, не трогая прочие
+// поля, — правка участников без пересылки всей записи (MCP). Чтение и запись
+// в одном withConfig, как у SetDNSServerDetour. Порядок members сохраняется:
+// fallback идёт по нему. Default селектора, выпавший из нового состава,
+// переходит на первого участника — как форма при пустом default.
+func (s *ServiceImpl) SetCompositeOutboundMembers(ctx context.Context, tag string, members []string) error {
+	return s.withConfig(ctx, "outbounds", func(c *RouterConfig) error {
+		i := slices.IndexFunc(c.Outbounds, func(o Outbound) bool { return o.Tag == tag })
+		if i < 0 {
+			return fmt.Errorf("%w: %q", ErrOutboundNotFound, tag)
+		}
+		o := c.Outbounds[i]
+		switch o.Type {
+		case "selector", "urltest", "fallback":
+		default:
+			return fmt.Errorf("%w: outbound %q типа %q — не группа участников", ErrOutboundInvalid, tag, o.Type)
+		}
+		o.Outbounds = slices.Clone(members)
+		if o.Type == "selector" && o.Default != "" && !slices.Contains(members, o.Default) && len(members) > 0 {
+			o.Default = members[0]
+		}
+		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
+			return err
+		}
+		return c.UpdateCompositeOutbound(tag, o)
+	})
 }
 
 // directBindErr — вердикт проверки bind_interface для direct; nil у прочих

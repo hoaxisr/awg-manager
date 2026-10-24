@@ -572,14 +572,7 @@ func (r *Runner) closeSubscribers() {
 // RunWithStream starts a diagnostic run and returns a channel of events.
 // If a run is already in progress, it subscribes to the existing run.
 func (r *Runner) RunWithStream(ctx context.Context, opts RunOptions) (<-chan DiagEvent, error) {
-	r.mu.Lock()
-	alreadyRunning := r.status.Status == "running"
-	if !alreadyRunning {
-		r.status = RunStatus{Status: "running", Progress: "Запуск диагностики..."}
-		r.result = nil
-		r.opts = opts
-	}
-	r.mu.Unlock()
+	alreadyRunning := r.begin(opts)
 
 	ch := r.subscribe()
 
@@ -588,6 +581,24 @@ func (r *Runner) RunWithStream(ctx context.Context, opts RunOptions) (<-chan Dia
 	}
 
 	return ch, nil
+}
+
+// begin marks a run started unless one is, and reports whether one was.
+// Only a full run replaces the report: a single-target run produces none
+// (executeStream keeps the report for full runs only), so clearing it would
+// leave nothing behind but the previous full sweep lost.
+func (r *Runner) begin(opts RunOptions) (alreadyRunning bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.status.Status == "running" {
+		return true
+	}
+	r.status = RunStatus{Status: "running", Progress: "Запуск диагностики..."}
+	if opts.TunnelID == "" {
+		r.result = nil
+	}
+	r.opts = opts
+	return false
 }
 
 func (r *Runner) execute(ctx context.Context) {

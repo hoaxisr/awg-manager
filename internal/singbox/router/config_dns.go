@@ -62,7 +62,9 @@ var validRejectMethods = map[string]bool{
 	"": true, "default": true, "drop": true,
 }
 
-const managedDNSDirectTag = "dns-direct"
+// ManagedDNSDirectTag — управляемый сервер прямого DNS: ходит только
+// напрямую, detour у него не пишется.
+const ManagedDNSDirectTag = "dns-direct"
 
 // scrubDNSServerDetourForSingbox clears detour values that must not reach
 // sing-box: empty, explicit "direct", and any detour on dns-direct. A named
@@ -70,7 +72,7 @@ const managedDNSDirectTag = "dns-direct"
 // domain resolver instead of retaining a misleading configuration.
 func scrubDNSServerDetourForSingbox(s *DNSServer) {
 	d := strings.TrimSpace(s.Detour)
-	if d == "" || d == "direct" || s.Tag == managedDNSDirectTag {
+	if d == "" || d == "direct" || s.Tag == ManagedDNSDirectTag {
 		s.Detour = ""
 	} else {
 		s.Detour = d
@@ -171,7 +173,7 @@ func validateDNSBindAddress(s DNSServer) error {
 	switch {
 	case s.Type == "local" || s.Type == "fakeip":
 		return fmt.Errorf("%w: тип %q у %q не подключается к серверу", ErrDNSBindAddress, s.Type, s.Tag)
-	case s.Tag == managedDNSDirectTag:
+	case s.Tag == ManagedDNSDirectTag:
 		return fmt.Errorf("%w: %q управляется приложением", ErrDNSBindAddress, s.Tag)
 	case s.Detour != "":
 		return fmt.Errorf("%w: у %q задан detour, с ним sing-box адрес отправителя игнорирует", ErrDNSBindAddress, s.Tag)

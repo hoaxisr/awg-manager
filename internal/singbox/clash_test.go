@@ -213,3 +213,29 @@ func TestClashClient_SelectorActive(t *testing.T) {
 		t.Fatal("503 → ошибка")
 	}
 }
+
+// Порты Clash API пишет строками; реализация, пишущая числами, не должна
+// ломать чтение.
+func TestClashClient_GetConnections(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/connections" {
+			t.Errorf("path: %s", r.URL.Path)
+		}
+		w.Write([]byte(`{"downloadTotal":10,"uploadTotal":5,"connections":[
+ {"id":"a","metadata":{"network":"tcp","sourceIP":"192.168.1.10","sourcePort":"51234","destinationIP":"142.250.1.1","destinationPort":"443","host":"www.youtube.com"},
+  "upload":100,"download":2000,"start":"2026-10-24T10:00:00Z","chains":["sub-1-a1","sub-1"],"rule":"rule_set=geosite-youtube","rulePayload":""},
+ {"id":"b","metadata":{"network":"udp","sourceIP":"192.168.1.11","sourcePort":5353,"destinationIP":"1.1.1.1","destinationPort":53},"chains":["direct"],"rule":"final"}]}`))
+	}))
+	defer ts.Close()
+
+	got, err := NewClashClient(strings.TrimPrefix(ts.URL, "http://")).GetConnections()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Metadata.Host != "www.youtube.com" || got[0].Metadata.DestinationPort != "443" || got[0].Chains[0] != "sub-1-a1" || got[0].Rule != "rule_set=geosite-youtube" {
+		t.Fatalf("got %+v", got)
+	}
+	if got[1].Metadata.SourcePort != "5353" {
+		t.Fatalf("a numeric port must read as its digits: %q", got[1].Metadata.SourcePort)
+	}
+}
