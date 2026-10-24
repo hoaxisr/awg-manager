@@ -121,6 +121,18 @@ func TestTools_RunDiagnostics(t *testing.T) {
 	}
 }
 
+// TestTools_RunDiagnosticsRestartIsOptIn — restart-тест обрывает соединения
+// туннелей: по умолчанию его нет, и ключу «только чтение» он закрыт.
+func TestTools_RunDiagnosticsRestartIsOptIn(t *testing.T) {
+	s, f := newTestSession(t)
+	if res, _ := callTool(t, s, "run_diagnostics", nil); res.IsError || f.DiagnosticsRestart {
+		t.Fatalf("the default sweep must not restart tunnels: %s / %v", toolText(res), f.DiagnosticsRestart)
+	}
+	if res, _ := callTool(t, s, "run_diagnostics", map[string]any{"includeRestart": true}); res.IsError || !f.DiagnosticsRestart {
+		t.Fatalf("includeRestart must reach Deps: %s", toolText(res))
+	}
+}
+
 // TestTools_GetDiagnosticsReportsFailuresFirst — отчёт целиком в контекст
 // модели не влезает, а нужен из него в первую очередь список
 // непройденных проверок.
@@ -161,5 +173,38 @@ func TestTools_GetDiagnostics(t *testing.T) {
 	}
 	if first["name"] == "" || first["detail"] == "" {
 		t.Fatalf("a problem without a name or detail is not actionable: %v", first)
+	}
+}
+
+func TestTools_RunTunnelDiagnostics(t *testing.T) {
+	s, f := newTestSession(t)
+	res, out := callTool(t, s, "run_tunnel_diagnostics", map[string]any{"tunnelId": "tn-1"})
+	if res.IsError || len(out["checks"].([]any)) != 2 {
+		t.Fatalf("%s / %v", toolText(res), out)
+	}
+	if res, _ := callTool(t, s, "run_tunnel_diagnostics", map[string]any{"tunnelId": "singbox:vless-nl"}); res.IsError {
+		t.Fatalf("a sing-box proxy is checked as singbox:<tag>: %s", toolText(res))
+	}
+	for _, id := range []string{"../x", "singbox:", "singbox:a\nb"} {
+		if res, _ := callTool(t, s, "run_tunnel_diagnostics", map[string]any{"tunnelId": id}); !res.IsError {
+			t.Errorf("%q must be refused", id)
+		}
+	}
+	f.DiagnosticsRunning = true
+	if res, _ := callTool(t, s, "run_tunnel_diagnostics", map[string]any{"tunnelId": "tn-1"}); !res.IsError {
+		t.Error("a running sweep must refuse the tunnel check")
+	}
+}
+
+func TestTools_GetDiagnosticsIncludePassed(t *testing.T) {
+	s, _ := newTestSession(t)
+	callTool(t, s, "run_diagnostics", nil)
+	_, out := callTool(t, s, "get_diagnostics", map[string]any{"includePassed": true})
+	if checks, _ := out["checks"].([]any); len(checks) != 4 {
+		t.Fatalf("out = %v", out)
+	}
+	_, out = callTool(t, s, "get_diagnostics", nil)
+	if out["checks"] != nil {
+		t.Fatalf("checks only when asked: %v", out["checks"])
 	}
 }

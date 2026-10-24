@@ -216,6 +216,23 @@ func TestScope_ReadOnlyKeyGetsMaskedLogsOnly(t *testing.T) {
 	}
 }
 
+// TestScope_ReadOnlyKeyGetsDiagnosticsWithoutRestart — прогон диагностики
+// читает, а restart-тест останавливает и запускает туннели: ключу «только
+// чтение» он закрыт, обычный прогон — открыт.
+func TestScope_ReadOnlyKeyGetsDiagnosticsWithoutRestart(t *testing.T) {
+	ro := scopedSession(t, true)
+	res, _ := callTool(t, ro, "run_diagnostics", map[string]any{"includeRestart": true})
+	if !res.IsError || !strings.Contains(strings.ToLower(toolText(res)), "read-only") {
+		t.Fatalf("the restart test must be refused to a read-only key: %q", toolText(res))
+	}
+	if res, _ := callTool(t, ro, "run_diagnostics", nil); res.IsError {
+		t.Errorf("a plain sweep must stay open to a read-only key: %q", toolText(res))
+	}
+	if res, _ := callTool(t, scopedSession(t, false), "run_diagnostics", map[string]any{"includeRestart": true}); res.IsError {
+		t.Errorf("a full-access key may ask for the restart test: %q", toolText(res))
+	}
+}
+
 // TestScope_ReadOnlyKeyAndSubscriptions — ключ «только чтение» читает
 // подписки и группы, но переключить подписку им нельзя: это
 // перезагружает sing-box.
@@ -255,6 +272,137 @@ func TestScope_ReadOnlyKeyAndSubscriptions(t *testing.T) {
 	} {
 		if res, _ := callTool(t, s, name, args); res.IsError {
 			t.Errorf("%s must be allowed on a read-only key: %s", name, toolText(res))
+		}
+	}
+}
+
+// TestScope_ReadOnlyKeyAndSingboxEdits — новые правки sing-box для ключа
+// «только чтение» закрыты: правка роутера ложится в общий с веб-интерфейсом
+// черновик, а запись подписок применяется сразу. Списки DNS-серверов и
+// наборов правил ему открыты. Аргументы у каждого вызова рабочие: отказ
+// говорит о ключе, а не о вводе.
+func TestScope_ReadOnlyKeyAndSingboxEdits(t *testing.T) {
+	s := scopedSession(t, true)
+	for name, args := range map[string]map[string]any{
+		"create_singbox_outbound_group":      {"tag": "new-group", "type": "selector", "members": []any{"vless-nl"}},
+		"set_singbox_outbound_group_members": {"tag": "auto", "members": []any{"vless-nl"}},
+		"set_singbox_dns_server_detour":      {"tag": "dns-remote", "detour": "vless-nl"},
+		"set_singbox_ruleset_detour":         {"tags": []any{"geosite-ru"}, "detour": "vless-nl"},
+		"create_singbox_subscription_group":  {"label": "Both", "subscriptionIds": []any{"706dcf33aabbccddeeff0011"}},
+		"add_singbox_subscription_server":    {"subscriptionId": "706dcf33aabbccddeeff0011", "shareLink": "vless://u@h.example.net:443#x"},
+	} {
+		res, _ := callTool(t, s, name, args)
+		if !res.IsError || !strings.Contains(strings.ToLower(toolText(res)), "read-only") {
+			t.Errorf("%s: a read-only key must be refused with the cause named: %q", name, toolText(res))
+		}
+	}
+	_, out := callTool(t, s, "list_singbox_dns_servers", nil)
+	for _, srv := range out["servers"].([]any) {
+		if m := srv.(map[string]any); m["tag"] == "dns-remote" && m["detour"] != nil {
+			t.Fatalf("a refused write must not have been applied: %v", m)
+		}
+	}
+	if res, _ := callTool(t, s, "list_singbox_rulesets", nil); res.IsError {
+		t.Errorf("list_singbox_rulesets must be allowed on a read-only key: %s", toolText(res))
+	}
+}
+
+// TestScope_ReadOnlyKeyReadsTheRouterSetup — состояние маршрутизатора, DNS-
+// правила и DNS Rewrite только читаются и ключу «только чтение» открыты.
+func TestScope_ReadOnlyKeyReadsTheRouterSetup(t *testing.T) {
+	s := scopedSession(t, true)
+	for _, name := range []string{"get_singbox_router_status", "list_singbox_dns_rules", "list_singbox_dns_rewrites"} {
+		if res, _ := callTool(t, s, name, nil); res.IsError {
+			t.Errorf("%s must be allowed on a read-only key: %s", name, toolText(res))
+		}
+	}
+}
+
+// TestScope_ReadOnlyKeyAndRuleEdits — правки правил и наборов ложатся в
+// общий черновик; ключу «только чтение» они закрыты.
+func TestScope_ReadOnlyKeyAndRuleEdits(t *testing.T) {
+	s := scopedSession(t, true)
+	for name, args := range map[string]map[string]any{
+		"add_singbox_rule":        {"domain": []any{"a.example"}, "action": "reject"},
+		"update_singbox_rule":     {"index": 0, "domain": []any{"a.example"}, "action": "reject"},
+		"move_singbox_rule":       {"from": 0, "to": 1},
+		"delete_singbox_rule":     {"index": 0},
+		"set_singbox_route_final": {"outbound": "auto"},
+		"add_singbox_ruleset":     {"tag": "x", "type": "inline", "domain": []any{"a.example"}},
+		"delete_singbox_ruleset":  {"tag": "my-sites"},
+	} {
+		res, _ := callTool(t, s, name, args)
+		if !res.IsError || !strings.Contains(strings.ToLower(toolText(res)), "read-only") {
+			t.Errorf("%s: a read-only key must be refused with the cause named: %q", name, toolText(res))
+		}
+	}
+}
+
+// TestScope_ReadOnlyKeyAndRoutingTargets — список целей читается, правка
+// IP-списка — нет.
+func TestScope_ReadOnlyKeyAndRoutingTargets(t *testing.T) {
+	s := scopedSession(t, true)
+	if res, _ := callTool(t, s, "list_routing_targets", nil); res.IsError {
+		t.Errorf("list_routing_targets must be allowed on a read-only key: %s", toolText(res))
+	}
+	res, _ := callTool(t, s, "update_static_route", map[string]any{"routeId": "sr-1", "name": "x"})
+	if !res.IsError || !strings.Contains(strings.ToLower(toolText(res)), "read-only") {
+		t.Errorf("update_static_route: a read-only key must be refused: %q", toolText(res))
+	}
+}
+
+// TestScope_ReadOnlyKeyAndSingboxManagement — создание, обновление и
+// удаление подписок и прокси ключу «только чтение» закрыты.
+func TestScope_ReadOnlyKeyAndSingboxManagement(t *testing.T) {
+	s := scopedSession(t, true)
+	id := "706dcf33aabbccddeeff0011"
+	for name, args := range map[string]map[string]any{
+		"create_singbox_subscription":          {"label": "x", "url": "https://a.example/l"},
+		"delete_singbox_subscription":          {"subscriptionId": id},
+		"refresh_singbox_subscription":         {"subscriptionId": id},
+		"set_singbox_subscription_settings":    {"subscriptionId": id, "refreshHours": 1},
+		"exclude_singbox_subscription_servers": {"subscriptionId": id, "tags": []any{"sub-706dcf33-a1"}},
+		"restore_singbox_subscription_servers": {"subscriptionId": id, "tags": []any{"sub-706dcf33-a1"}},
+		"add_singbox_tunnel":                   {"shareLink": "vless://u@h.example.net:443#x"},
+		"delete_singbox_tunnel":                {"tag": "hy2-de"},
+	} {
+		res, _ := callTool(t, s, name, args)
+		if !res.IsError || !strings.Contains(strings.ToLower(toolText(res)), "read-only") {
+			t.Errorf("%s: a read-only key must be refused: %q", name, toolText(res))
+		}
+	}
+}
+
+func TestScope_ReadOnlyKeyAndTunnelSettings(t *testing.T) {
+	s := scopedSession(t, true)
+	res, _ := callTool(t, s, "update_tunnel_settings", map[string]any{"tunnelId": "tn-1", "mtu": 1400})
+	if !res.IsError || !strings.Contains(strings.ToLower(toolText(res)), "read-only") {
+		t.Errorf("update_tunnel_settings: a read-only key must be refused: %q", toolText(res))
+	}
+}
+
+func TestScope_ReadOnlyKeyReadsSingboxConnections(t *testing.T) {
+	s := scopedSession(t, true)
+	if res, _ := callTool(t, s, "list_singbox_connections", nil); res.IsError {
+		t.Errorf("list_singbox_connections must be allowed on a read-only key: %s", toolText(res))
+	}
+}
+
+func TestScope_ReadOnlyKeyAndAccessPolicies(t *testing.T) {
+	s := scopedSession(t, true)
+	if res, _ := callTool(t, s, "list_policy_interfaces", nil); res.IsError {
+		t.Errorf("list_policy_interfaces must be allowed on a read-only key: %s", toolText(res))
+	}
+	for name, args := range map[string]map[string]any{
+		"create_access_policy":        {"description": "x"},
+		"delete_access_policy":        {"policy": "Policy0"},
+		"update_access_policy":        {"policy": "Policy0", "standalone": true},
+		"set_access_policy_interface": {"policy": "Policy0", "interface": "ISP", "permit": true},
+		"assign_device_policy":        {"mac": "aa:bb:cc:dd:ee:ff", "policy": ""},
+	} {
+		res, _ := callTool(t, s, name, args)
+		if !res.IsError || !strings.Contains(strings.ToLower(toolText(res)), "read-only") {
+			t.Errorf("%s: a read-only key must be refused: %q", name, toolText(res))
 		}
 	}
 }

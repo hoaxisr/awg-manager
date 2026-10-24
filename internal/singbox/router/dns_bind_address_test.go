@@ -29,7 +29,7 @@ func TestValidateDNSBindAddress(t *testing.T) {
 		"0.0.0.0":    {Tag: "x", Type: "udp", Server: "10.0.10.53", Inet4BindAddress: "0.0.0.0"},
 		"local":      {Tag: "x", Type: "local", Inet4BindAddress: "10.0.20.1"},
 		"fakeip":     {Tag: "x", Type: "fakeip", Inet4Range: "198.18.0.0/15", Inet4BindAddress: "10.0.20.1"},
-		"dns-direct": {Tag: managedDNSDirectTag, Type: "udp", Server: "77.88.8.8", Inet4BindAddress: "10.0.20.1"},
+		"dns-direct": {Tag: ManagedDNSDirectTag, Type: "udp", Server: "77.88.8.8", Inet4BindAddress: "10.0.20.1"},
 		"с detour":   {Tag: "x", Type: "udp", Server: "10.0.10.53", Detour: "wg-nl", Inet4BindAddress: "10.0.20.1"},
 	}
 	for name, s := range bad {
