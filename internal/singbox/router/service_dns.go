@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -37,6 +39,48 @@ func (s *ServiceImpl) UpdateDNSServer(ctx context.Context, tag string, srv DNSSe
 			return err
 		}
 		return s.captureDNSChainServerRename(tag, srv.Tag)
+	})
+}
+
+// SetDNSServerDetour меняет у сервера tag только detour — «Detour (outbound)»
+// формы без пересылки всей записи (MCP). Запись читается и пишется в одном
+// withConfig, поэтому правка прочих полей между чтением и записью не
+// теряется. Пустой detour и "direct" его снимают, как и форма.
+//
+// С detour sing-box игнорирует поля подключения, поэтому адрес отправителя и
+// bootstrap-резолвер уходят — форма их тогда тоже не отправляет. При снятии
+// detour адрес отправителя подставляется заново, как при сохранении формы
+// (withLocalDNSBind). Тег detour обязан быть известным выходом: форма даёт
+// выбрать только из списка, а здесь его пишет агент.
+func (s *ServiceImpl) SetDNSServerDetour(ctx context.Context, tag, detour string) error {
+	detour = strings.TrimSpace(detour)
+	if detour == "direct" {
+		detour = ""
+	}
+	return s.withConfig(ctx, "dns-servers", func(c *RouterConfig) error {
+		i := slices.IndexFunc(c.DNS.Servers, func(e DNSServer) bool { return e.Tag == tag })
+		if i < 0 {
+			return fmt.Errorf("%w: %q", ErrDNSServerNotFound, tag)
+		}
+		srv := c.DNS.Servers[i]
+		if detour != "" {
+			switch {
+			case srv.Tag == ManagedDNSDirectTag:
+				return fmt.Errorf("%w: %q управляется приложением и ходит напрямую", ErrDNSServerDetour, tag)
+			case srv.Type == "local" || srv.Type == "fakeip":
+				return fmt.Errorf("%w: тип %q у %q не подключается к серверу", ErrDNSServerDetour, srv.Type, tag)
+			case !s.isKnownOutboundTag(ctx, detour, c):
+				return fmt.Errorf("%w: неизвестный outbound %q", ErrDNSServerDetour, detour)
+			}
+			// Резолвер снимет scrubDNSServerDetourForSingbox в UpdateDNSServer;
+			// адрес — здесь: с detour validateDNSBindAddress его отвергает.
+			srv.Inet4BindAddress = ""
+		}
+		srv.Detour = detour
+		if detour == "" {
+			srv = s.withLocalDNSBind(srv)
+		}
+		return c.UpdateDNSServer(tag, srv)
 	})
 }
 
@@ -78,7 +122,7 @@ func AddrIsLocal(addrs []net.Addr, want netip.Addr) bool {
 // dnsBindAddressLocal. Только пустое поле и без detour (с ним поля
 // подключения игнорируются): явный выбор пользователя не трогаем.
 func localDNSSelfBind(srv DNSServer, addrs []net.Addr) (string, bool) {
-	if srv.Inet4BindAddress != "" || srv.Detour != "" || srv.Type == "local" || srv.Type == "fakeip" || srv.Tag == managedDNSDirectTag {
+	if srv.Inet4BindAddress != "" || srv.Detour != "" || srv.Type == "local" || srv.Type == "fakeip" || srv.Tag == ManagedDNSDirectTag {
 		return "", false
 	}
 	ip, err := netip.ParseAddr(srv.Server)

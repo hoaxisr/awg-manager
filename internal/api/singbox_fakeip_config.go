@@ -29,6 +29,10 @@ func NewSingboxFakeIPConfigHandler(svc router.FakeIPConfigService, appLogger log
 	}
 }
 
+// Service returns the fakeip-tun configuration service, for MCP to read the
+// same instance.
+func (h *SingboxFakeIPConfigHandler) Service() router.FakeIPConfigService { return h.svc }
+
 // handleErr maps domain sentinel errors to appropriate HTTP statuses.
 // ErrFakeIPLockedField → 400 (clear client error, field is engine-managed).
 // Reference/conflict errors → 400 CONFLICT (mirror router convention).

@@ -75,6 +75,9 @@ type Service interface {
 	ListCompositeOutbounds(ctx context.Context) ([]CompositeOutboundView, error)
 	AddCompositeOutbound(ctx context.Context, o Outbound) error
 	UpdateCompositeOutbound(ctx context.Context, tag string, o Outbound) error
+	// SetCompositeOutboundMembers заменяет только состав группы — см.
+	// ServiceImpl.SetCompositeOutboundMembers.
+	SetCompositeOutboundMembers(ctx context.Context, tag string, members []string) error
 	DeleteCompositeOutbound(ctx context.Context, tag string, force bool) error
 
 	ApplyPreset(ctx context.Context, presetID, outboundTag string) error
@@ -89,6 +92,9 @@ type Service interface {
 	ListDNSServers(ctx context.Context) ([]DNSServer, error)
 	AddDNSServer(ctx context.Context, s DNSServer) error
 	UpdateDNSServer(ctx context.Context, tag string, s DNSServer) error
+	// SetDNSServerDetour меняет только detour сервера — см.
+	// ServiceImpl.SetDNSServerDetour.
+	SetDNSServerDetour(ctx context.Context, tag, detour string) error
 	DeleteDNSServer(ctx context.Context, tag string, force bool) error
 	MoveDNSServer(ctx context.Context, from, to int) error
 

@@ -39,6 +39,10 @@ var (
 	ErrDNSRuleIndexOutOfRange   = errors.New("dns rule index out of range")
 	ErrDNSServerIndexOutOfRange = errors.New("dns server index out of range")
 	ErrDNSInvalidServer         = errors.New("dns rule references unknown server tag")
+	// ErrDNSServerDetour — detour сервера отвергнут SetDNSServerDetour:
+	// неизвестный outbound или сервер, который никуда не подключается. Ввод,
+	// не сбой.
+	ErrDNSServerDetour = errors.New("недопустимый detour DNS-сервера")
 
 	// ErrIfaceAbsent — интерфейса нет в свежем списке NDMS; команда по нему не
 	// уходила (адаптеры подтверждения cmd/awg-manager, F546).
