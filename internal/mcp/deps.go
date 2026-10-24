@@ -76,8 +76,10 @@ type Deps interface {
 	ListConnections(ctx context.Context, q ConnectionsQuery) (page []Connection, total int, err error)
 	// PingCheckLogs returns the health-check journal, newest first.
 	PingCheckLogs(ctx context.Context, tunnelID string, limit int) ([]PingCheckLogEntry, error)
-	// RunDiagnostics starts a sweep without waiting for it.
-	RunDiagnostics(ctx context.Context) (DiagnosticsRun, error)
+	// RunDiagnostics starts a sweep without waiting for it. includeRestart
+	// adds the restart test, which stops and starts every running kernel
+	// tunnel; without it the sweep changes nothing.
+	RunDiagnostics(ctx context.Context, includeRestart bool) (DiagnosticsRun, error)
 	// DiagnosticsResult summarises the last completed sweep. With none, it
 	// returns ErrNoDiagnostics rather than an empty, reassuring report.
 	DiagnosticsResult(ctx context.Context) (DiagnosticsResult, error)

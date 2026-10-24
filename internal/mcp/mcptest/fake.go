@@ -90,6 +90,9 @@ type Fake struct {
 	// DiagnosticsRunning makes DiagnosticsResult answer as the real
 	// runner does mid-sweep: no report yet, status running.
 	DiagnosticsRunning bool
+	// DiagnosticsRestart records whether the last run asked for the
+	// restart test.
+	DiagnosticsRestart bool
 	// Err, when set, is returned by every method — for error-path tests.
 	Err error
 }
@@ -740,12 +743,13 @@ func (f *Fake) PingCheckLogs(_ context.Context, tunnelID string, limit int) ([]m
 	return out, nil
 }
 
-func (f *Fake) RunDiagnostics(context.Context) (mcpsrv.DiagnosticsRun, error) {
+func (f *Fake) RunDiagnostics(_ context.Context, includeRestart bool) (mcpsrv.DiagnosticsRun, error) {
 	if f.Err != nil {
 		return mcpsrv.DiagnosticsRun{}, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.DiagnosticsRestart = includeRestart
 	// The fake completes instantly; the real runner takes tens of seconds.
 	f.Diagnostics = &mcpsrv.DiagnosticsResult{
 		Status: "done", GeneratedAt: "2026-09-02T10:05:00Z",

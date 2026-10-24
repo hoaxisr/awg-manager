@@ -216,6 +216,23 @@ func TestScope_ReadOnlyKeyGetsMaskedLogsOnly(t *testing.T) {
 	}
 }
 
+// TestScope_ReadOnlyKeyGetsDiagnosticsWithoutRestart — прогон диагностики
+// читает, а restart-тест останавливает и запускает туннели: ключу «только
+// чтение» он закрыт, обычный прогон — открыт.
+func TestScope_ReadOnlyKeyGetsDiagnosticsWithoutRestart(t *testing.T) {
+	ro := scopedSession(t, true)
+	res, _ := callTool(t, ro, "run_diagnostics", map[string]any{"includeRestart": true})
+	if !res.IsError || !strings.Contains(strings.ToLower(toolText(res)), "read-only") {
+		t.Fatalf("the restart test must be refused to a read-only key: %q", toolText(res))
+	}
+	if res, _ := callTool(t, ro, "run_diagnostics", nil); res.IsError {
+		t.Errorf("a plain sweep must stay open to a read-only key: %q", toolText(res))
+	}
+	if res, _ := callTool(t, scopedSession(t, false), "run_diagnostics", map[string]any{"includeRestart": true}); res.IsError {
+		t.Errorf("a full-access key may ask for the restart test: %q", toolText(res))
+	}
+}
+
 // TestScope_ReadOnlyKeyAndSubscriptions — ключ «только чтение» читает
 // подписки и группы, но переключить подписку им нельзя: это
 // перезагружает sing-box.

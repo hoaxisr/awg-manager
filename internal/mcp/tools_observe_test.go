@@ -121,6 +121,18 @@ func TestTools_RunDiagnostics(t *testing.T) {
 	}
 }
 
+// TestTools_RunDiagnosticsRestartIsOptIn — restart-тест обрывает соединения
+// туннелей: по умолчанию его нет, и ключу «только чтение» он закрыт.
+func TestTools_RunDiagnosticsRestartIsOptIn(t *testing.T) {
+	s, f := newTestSession(t)
+	if res, _ := callTool(t, s, "run_diagnostics", nil); res.IsError || f.DiagnosticsRestart {
+		t.Fatalf("the default sweep must not restart tunnels: %s / %v", toolText(res), f.DiagnosticsRestart)
+	}
+	if res, _ := callTool(t, s, "run_diagnostics", map[string]any{"includeRestart": true}); res.IsError || !f.DiagnosticsRestart {
+		t.Fatalf("includeRestart must reach Deps: %s", toolText(res))
+	}
+}
+
 // TestTools_GetDiagnosticsReportsFailuresFirst — отчёт целиком в контекст
 // модели не влезает, а нужен из него в первую очередь список
 // непройденных проверок.
