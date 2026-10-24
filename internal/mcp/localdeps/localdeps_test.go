@@ -2314,6 +2314,31 @@ type fakeRouter struct {
 	// listErr mirrors a draft or config file the router cannot parse
 	// (orchestrator.LoadEffective).
 	listErr error
+
+	settings storage.SingboxRouterSettings
+	status   router.Status
+	dns      []router.DNSServer
+	dnsRules []router.DNSRule
+	dnsFinal string
+	ruleSets []router.RuleSet
+	// The edits record what they received; editErr fails every one of
+	// them, and edits counts the calls that reached the router.
+	addedGroup  router.Outbound
+	membersTag  string
+	members     []string
+	dnsTag      string
+	dnsDetour   string
+	ruleSetTags []string
+	ruleSetVia  string
+	editErr     error
+	edits       int
+	ruleAt      int
+	ruleTo      int
+	rule        router.Rule
+	final       string
+	addedSet    router.RuleSet
+	deletedSet  string
+	deleteForce bool
 }
 
 func (f *fakeRouter) ListRules(context.Context) ([]router.Rule, error) { return f.rules, nil }
@@ -2333,6 +2358,76 @@ func (f *fakeRouter) ApplyStaging(context.Context) (singboxorch.ValidationResult
 	return f.applyRes, f.applyErr
 }
 func (f *fakeRouter) DiscardStaging(context.Context) error { f.discarded++; return nil }
+func (f *fakeRouter) GetSettings(context.Context) (storage.SingboxRouterSettings, error) {
+	return f.settings, nil
+}
+func (f *fakeRouter) GetStatus(context.Context) (router.Status, error) { return f.status, nil }
+func (f *fakeRouter) ListDNSRules(context.Context) ([]router.DNSRule, error) {
+	return f.dnsRules, nil
+}
+func (f *fakeRouter) GetDNSGlobals(context.Context) (string, string, string, error) {
+	return f.dnsFinal, "prefer_ipv4", "", nil
+}
+func (f *fakeRouter) ListDNSServers(context.Context) ([]router.DNSServer, error) { return f.dns, nil }
+func (f *fakeRouter) ListRuleSets(context.Context) ([]router.RuleSet, error)     { return f.ruleSets, nil }
+func (f *fakeRouter) AddCompositeOutbound(_ context.Context, o router.Outbound) error {
+	f.edits++
+	f.addedGroup = o
+	return f.editErr
+}
+func (f *fakeRouter) SetCompositeOutboundMembers(_ context.Context, tag string, members []string) error {
+	f.edits++
+	f.membersTag, f.members = tag, members
+	return f.editErr
+}
+func (f *fakeRouter) SetDNSServerDetour(_ context.Context, tag, detour string) error {
+	f.edits++
+	f.dnsTag, f.dnsDetour = tag, detour
+	return f.editErr
+}
+func (f *fakeRouter) InsertRule(_ context.Context, index int, r router.Rule) error {
+	f.edits++
+	f.ruleAt, f.rule = index, r
+	return f.editErr
+}
+func (f *fakeRouter) ReplaceUserRule(_ context.Context, index int, r router.Rule) error {
+	f.edits++
+	f.ruleAt, f.rule = index, r
+	return f.editErr
+}
+func (f *fakeRouter) DeleteUserRule(_ context.Context, index int) (router.Rule, error) {
+	f.edits++
+	f.ruleAt = index
+	if f.editErr != nil {
+		return router.Rule{}, f.editErr
+	}
+	return f.rules[index], nil
+}
+func (f *fakeRouter) MoveUserRule(_ context.Context, from, to int) error {
+	f.edits++
+	f.ruleAt, f.ruleTo = from, to
+	return f.editErr
+}
+func (f *fakeRouter) SetRouteFinal(_ context.Context, tag string) error {
+	f.edits++
+	f.final = tag
+	return f.editErr
+}
+func (f *fakeRouter) AddRuleSet(_ context.Context, rs router.RuleSet) error {
+	f.edits++
+	f.addedSet = rs
+	return f.editErr
+}
+func (f *fakeRouter) DeleteRuleSet(_ context.Context, tag string, force bool) error {
+	f.edits++
+	f.deletedSet, f.deleteForce = tag, force
+	return f.editErr
+}
+func (f *fakeRouter) BulkSetRuleSetDetour(_ context.Context, tags []string, detour string) error {
+	f.edits++
+	f.ruleSetTags, f.ruleSetVia = tags, detour
+	return f.editErr
+}
 
 func routerHarness() *fakeRouter {
 	yes := true
@@ -2377,6 +2472,12 @@ func TestLocal_ListSingboxRulesRendersAMatchSummary(t *testing.T) {
 	// read as "this rule does nothing".
 	if got[1].Action != "route" {
 		t.Fatalf("action = %q, want route for an omitted action", got[1].Action)
+	}
+	if got[0].System || got[1].System {
+		t.Fatal("user rules are not system rules")
+	}
+	if r := singboxRule(0, router.Rule{Action: "sniff"}); !r.System {
+		t.Fatal("the sniff rule kept on top must be marked system: protected edits point the agent at that flag")
 	}
 	if !got[2].Managed {
 		t.Error("a rule carrying awgm_managed must be marked")

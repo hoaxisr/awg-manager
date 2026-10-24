@@ -48,7 +48,16 @@ type Deps interface {
 	// the user. See tools_routing.go removedDNSOut.
 	RemoveDNSRoute(ctx context.Context, id string) (DNSRoute, error)
 
+	// ListRoutingTargets returns what a routing list can send traffic
+	// through, as the web interface's target picker lists it, without the
+	// WireGuard servers.
+	ListRoutingTargets(ctx context.Context) ([]RoutingTarget, error)
+
 	ListStaticRoutes(ctx context.Context) ([]StaticRoute, error)
+	// UpdateStaticRoute applies a partial edit and returns the list as it
+	// stands afterwards; the kill switch, the icon and the on/off state
+	// survive an edit that does not name them.
+	UpdateStaticRoute(ctx context.Context, in StaticRouteUpdate) (StaticRoute, error)
 	AddStaticRoute(ctx context.Context, in StaticRouteInput) (StaticRoute, error)
 	// SetStaticRouteEnabled is SetDNSRouteEnabled for subnet lists.
 	SetStaticRouteEnabled(ctx context.Context, id string, enabled bool) (StaticRoute, error)
@@ -102,7 +111,10 @@ type Deps interface {
 	ControlSingbox(ctx context.Context, action string) (SingboxStatus, error)
 	ListSingboxTunnels(ctx context.Context) ([]SingboxTunnel, error)
 	// ListSingboxRules returns the router's rules in evaluation order.
-	// hasDraft reports whether they come from an unapplied draft.
+	// hasDraft reports whether they come from an unapplied draft. Like
+	// every router read here (groups, DNS, rule sets), it reads the
+	// configuration the router routes by: in fakeip-tun mode that mode's
+	// own, which has no draft.
 	ListSingboxRules(ctx context.Context) (rules []SingboxRule, hasDraft bool, err error)
 	// ListSingboxOutbounds returns every group. An engine that does not
 	// answer is not an error: the entries come back with RuntimeKnown
@@ -116,8 +128,72 @@ type Deps interface {
 	GetSingboxOutbound(ctx context.Context, tag string) (SingboxOutboundDetail, error)
 	SingboxStaging(ctx context.Context) (SingboxStaging, error)
 	// SetSingboxRuleOutbound retargets one rule. The write lands in the
-	// draft; nothing changes for traffic until ApplySingboxStaging.
+	// draft; nothing changes for traffic until ApplySingboxStaging. Refused
+	// in fakeip-tun mode, as the writes below are.
 	SetSingboxRuleOutbound(ctx context.Context, index int, outbound string) error
+	// ListSingboxDNSServers returns the router's DNS servers in
+	// configuration order. hasDraft is ListSingboxRules's: the list comes
+	// from the draft when one exists.
+	ListSingboxDNSServers(ctx context.Context) (servers []SingboxDNSServer, hasDraft bool, err error)
+	// SingboxRouterStatus describes how the router is set up and whether
+	// it works. It asks NDMS and probes the kernel, as the web page does,
+	// so it is slower than the lists.
+	SingboxRouterStatus(ctx context.Context) (SingboxRouterStatus, error)
+	// ListSingboxDNSRules returns the router's DNS rules in evaluation
+	// order with the DNS final and strategy, hasDraft as
+	// ListSingboxDNSServers.
+	ListSingboxDNSRules(ctx context.Context) (SingboxDNSRules, error)
+	// ListSingboxDNSRewrites returns the DNS Rewrite entries in order.
+	ListSingboxDNSRewrites(ctx context.Context) ([]SingboxDNSRewrite, error)
+	// ListSingboxRuleSets returns every rule set in configuration order,
+	// hasDraft as ListSingboxDNSServers. The tool pages the result;
+	// implementations must not truncate it.
+	ListSingboxRuleSets(ctx context.Context) (sets []SingboxRuleSet, hasDraft bool, err error)
+
+	// The four router writes below land in the draft, as
+	// SetSingboxRuleOutbound does, and are refused while the router runs in
+	// fakeip-tun mode: that mode routes by a configuration of its own, so an
+	// edit here would be applied to one nothing reads.
+
+	// CreateSingboxOutboundGroup adds a selector, urltest or fallback group
+	// to the router. A tag already taken and a member that is not a known
+	// outbound are errors.
+	CreateSingboxOutboundGroup(ctx context.Context, in SingboxGroupInput) error
+	// SetSingboxOutboundGroupMembers replaces a router group's members,
+	// keeping their order and the group's other settings. A subscription's
+	// group is an error that names the tools that change it.
+	SetSingboxOutboundGroupMembers(ctx context.Context, tag string, members []string) error
+	// SetSingboxDNSServerDetour points one DNS server at an outbound; ""
+	// dials it directly again.
+	SetSingboxDNSServerDetour(ctx context.Context, tag, detour string) error
+	// SetSingboxRuleSetDetour sets the download detour of every rule set in
+	// tags, all or none; "" downloads them directly again. Only remote sets
+	// are downloaded, so any other kind is an error.
+	SetSingboxRuleSetDetour(ctx context.Context, tags []string, detour string) error
+
+	// The rule and rule set writes below land in the draft and are refused
+	// in fakeip-tun mode, as the writes above are. System rules (sniff,
+	// hijack-dns, the private-address bypass) and rules awg-manager manages
+	// are neither edited nor moved, and nothing is put above a system rule.
+
+	// AddSingboxRule inserts a rule at position; -1 appends it.
+	AddSingboxRule(ctx context.Context, position int, in SingboxRuleInput) error
+	// UpdateSingboxRule replaces rule index whole.
+	UpdateSingboxRule(ctx context.Context, index int, in SingboxRuleInput) error
+	// DeleteSingboxRule removes rule index and returns it as it was.
+	DeleteSingboxRule(ctx context.Context, index int) (SingboxRule, error)
+	// MoveSingboxRule moves rule from to position to.
+	MoveSingboxRule(ctx context.Context, from, to int) error
+	// SetSingboxRouteFinal sets the outbound for traffic no rule matched.
+	SetSingboxRouteFinal(ctx context.Context, outbound string) error
+	// AddSingboxRuleSet adds a rule set; a tag already taken is an error.
+	AddSingboxRuleSet(ctx context.Context, in SingboxRuleSetInput) error
+	// DeleteSingboxRuleSet removes a rule set and returns it as it was. A
+	// set rules still use is refused unless force; with force the
+	// references go, and a rule left without any matcher goes with them —
+	// affected are those rules as they were.
+	DeleteSingboxRuleSet(ctx context.Context, tag string, force bool) (SingboxRuleSetDeletion, error)
+
 	ApplySingboxStaging(ctx context.Context) error
 	DiscardSingboxStaging(ctx context.Context) error
 	// CheckSingboxDelay probes one outbound: a proxy, a subscription
@@ -155,6 +231,21 @@ type Deps interface {
 	// fallback subscription, an unknown id and a tag that is not a server of the
 	// subscription's group are errors, and nothing is written.
 	SetSingboxSubscriptionActiveMember(ctx context.Context, id, memberTag string) (SingboxSubscription, error)
+
+	// CreateSingboxAggregateGroup creates an enabled group over the servers
+	// of the given subscriptions and applies it at once: no draft, a sing-box
+	// reload, and a Keenetic ProxyN interface when NDMS proxy mode is on. An
+	// unknown subscription id or a tag already taken is an error and nothing
+	// is left behind.
+	CreateSingboxAggregateGroup(ctx context.Context, in SingboxAggregateGroupInput) (SingboxAggregateGroup, error)
+
+	// AddSingboxSubscriptionServer adds one server, given as a share link,
+	// to a pasted (inline) subscription and applies it at once. The link
+	// carries the server's credentials: implementations never put it, or
+	// text derived from it, into an error or the journal. A link the
+	// subscription does not take as a server is an error, even where the
+	// service records it among the rejected entries and returns no error.
+	AddSingboxSubscriptionServer(ctx context.Context, id, shareLink string) (SingboxServerAdded, error)
 
 	OpenAPISpec() []byte
 }

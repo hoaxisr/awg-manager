@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,7 +33,9 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/openapi"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
+	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
+	"github.com/hoaxisr/awg-manager/internal/singbox/dnsrewrite"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
@@ -81,12 +84,49 @@ type (
 	// land in the router's staging draft; nothing reaches traffic until
 	// ApplyStaging runs.
 	SingboxRouter interface {
+		GetStatus(ctx context.Context) (router.Status, error)
+		GetSettings(ctx context.Context) (storage.SingboxRouterSettings, error)
 		ListRules(ctx context.Context) ([]router.Rule, error)
 		ListCompositeOutbounds(ctx context.Context) ([]router.CompositeOutboundView, error)
+		ListDNSServers(ctx context.Context) ([]router.DNSServer, error)
+		ListDNSRules(ctx context.Context) ([]router.DNSRule, error)
+		GetDNSGlobals(ctx context.Context) (final, strategy, timeout string, err error)
+		ListRuleSets(ctx context.Context) ([]router.RuleSet, error)
 		StagingStatus(ctx context.Context) router.StagingStatus
 		BulkSetRuleOutbound(ctx context.Context, indices []int, outbound string) error
+		AddCompositeOutbound(ctx context.Context, o router.Outbound) error
+		SetCompositeOutboundMembers(ctx context.Context, tag string, members []string) error
+		SetDNSServerDetour(ctx context.Context, tag, detour string) error
+		BulkSetRuleSetDetour(ctx context.Context, tags []string, detour string) error
+		InsertRule(ctx context.Context, index int, r router.Rule) error
+		ReplaceUserRule(ctx context.Context, index int, r router.Rule) error
+		DeleteUserRule(ctx context.Context, index int) (router.Rule, error)
+		MoveUserRule(ctx context.Context, from, to int) error
+		SetRouteFinal(ctx context.Context, tag string) error
+		AddRuleSet(ctx context.Context, rs router.RuleSet) error
+		DeleteRuleSet(ctx context.Context, tag string, force bool) error
 		ApplyStaging(ctx context.Context) (singboxorch.ValidationResult, error)
 		DiscardStaging(ctx context.Context) error
+	}
+	// RoutingCatalog is the read half of routing.Catalog: the targets the
+	// web interface's picker offers.
+	RoutingCatalog interface {
+		ListAll(ctx context.Context) []routing.TunnelEntry
+	}
+	// FakeIPRouter is the read half of router.FakeIPConfigService: the
+	// configuration the router routes by in fakeip-tun mode. It has no
+	// draft — the web interface edits it directly.
+	FakeIPRouter interface {
+		FakeIPListRules(ctx context.Context) ([]router.Rule, error)
+		FakeIPListCompositeOutbounds(ctx context.Context) ([]router.CompositeOutboundView, error)
+		FakeIPListDNSServers(ctx context.Context) ([]router.DNSServer, error)
+		FakeIPListDNSRules(ctx context.Context) ([]router.DNSRule, error)
+		FakeIPGetDNSGlobals(ctx context.Context) (final, strategy, timeout string, err error)
+		FakeIPListRuleSets(ctx context.Context) ([]router.RuleSet, error)
+	}
+	// DNSRewriteLister is the read half of *dnsrewrite.Service.
+	DNSRewriteLister interface {
+		List() ([]dnsrewrite.DNSRewrite, error)
 	}
 	// SubscriptionService is the subset of *subscription.Service MCP
 	// uses. List is sorted by label and then id (subscription.Store.List).
@@ -96,6 +136,8 @@ type (
 		Update(id string, patch subscription.UpdatePatch) (*subscription.Subscription, error)
 		ListGroups() []subscription.AggregateGroup
 		SetActiveMember(ctx context.Context, id, memberTag string) error
+		CreateGroup(ctx context.Context, in subscription.GroupCreateInput) (*subscription.AggregateGroup, error)
+		AddManualMember(ctx context.Context, id, shareLink string) (*subscription.Subscription, error)
 	}
 	// ClashState reads the running engine: which member each group routes
 	// through and the delays it has on record. Satisfied by
@@ -138,6 +180,9 @@ type Config struct {
 	Traffic      TrafficStats
 	DNSRoutes    api.DNSRouteService
 	StaticRoutes api.StaticRouteService
+	// Targets lists what a routing list can send traffic through. nil
+	// leaves target ids unchecked here; the routing services resolve them.
+	Targets      RoutingCatalog
 	ClientRoutes clientroute.Service
 	Policies     accesspolicy.Service
 	Logs         LogReader
@@ -153,8 +198,14 @@ type Config struct {
 	Connections ConnectionLister
 	Diagnostics DiagnosticsRunner
 	// Router serves the sing-box routing-rule tools.
-	Router  SingboxRouter
-	Singbox SingboxOperator
+	Router SingboxRouter
+	// FakeIP reads the fakeip-tun configuration, which the router routes
+	// by in that mode instead of the tproxy one Router edits. nil makes the
+	// router's reads report it unavailable in fakeip-tun mode.
+	FakeIP FakeIPRouter
+	// DNSRewrites serves list_singbox_dns_rewrites.
+	DNSRewrites DNSRewriteLister
+	Singbox     SingboxOperator
 	// Subscriptions serves the subscription tools. nil makes them report
 	// that sing-box subscriptions are unavailable on this router.
 	Subscriptions SubscriptionService
@@ -922,10 +973,21 @@ func (l *Local) AddDNSRoute(ctx context.Context, in mcpsrv.DNSRouteInput) (mcpsr
 	// Only ManualDomains is passed: dnsroute.Create recomputes Domains (and
 	// Subnets) from it, and handing the same backing array to both fields
 	// would alias one slice across two fields of the same struct.
-	created, err := l.c.DNSRoutes.Create(ctx, dnsroute.DomainList{
-		Name: in.Name, ManualDomains: in.Domains,
-		Routes: []dnsroute.RouteTarget{{TunnelID: in.TunnelID}},
-	})
+	targets := in.Targets
+	if len(targets) == 0 {
+		targets = []string{in.TunnelID}
+	}
+	if err := l.checkTargets(ctx, targets); err != nil {
+		return mcpsrv.DNSRoute{}, err
+	}
+	list := dnsroute.DomainList{
+		Name: in.Name, ManualDomains: in.Domains, Excludes: in.Excludes,
+		Routes: routeTargets(targets, in.KillSwitch),
+	}
+	for _, u := range in.SubscriptionURLs {
+		list.Subscriptions = append(list.Subscriptions, dnsroute.Subscription{URL: u})
+	}
+	created, err := l.c.DNSRoutes.Create(ctx, list)
 	if err != nil {
 		l.dnsLog.Warn("create", in.Name, "Failed to create DNS route list (MCP): "+err.Error())
 		return mcpsrv.DNSRoute{}, err
@@ -963,6 +1025,17 @@ func (l *Local) UpdateDNSRoute(ctx context.Context, in mcpsrv.DNSRouteUpdate) (m
 		patch.Name = existing.Name
 	}
 	if existing.Backend == "hydraroute" {
+		// HydraRoute takes one target and none of the NDMS-only features
+		// (hr_delegate.go); refusing here beats a write that drops them.
+		switch {
+		case len(in.Targets) > 1:
+			return mcpsrv.DNSRoute{}, nil, fmt.Errorf("dns route %q is a HydraRoute list, which routes through one target only", in.RouteID)
+		case in.KillSwitch != nil || in.Excludes != nil || len(in.AddSubscriptionURLs) > 0 || len(in.RemoveSubscriptions) > 0:
+			return mcpsrv.DNSRoute{}, nil, fmt.Errorf("dns route %q is a HydraRoute list, which has no kill switch, excludes or subscriptions", in.RouteID)
+		}
+		if len(in.Targets) == 1 {
+			in.TunnelID, in.Targets = in.Targets[0], nil
+		}
 		// The HR path rewrites the whole group and restores nothing from
 		// the stored one: a sparse patch read as an interface group with
 		// no tunnel, no domains and no icon (F632). Start from what is
@@ -991,9 +1064,39 @@ func (l *Local) UpdateDNSRoute(ctx context.Context, in mcpsrv.DNSRouteUpdate) (m
 	if in.TunnelID != "" {
 		if n := len(existing.Routes); n > 1 {
 			warnings = append(warnings, fmt.Sprintf(
-				"the list routed to %d targets; they were replaced by the single tunnel %q — re-add the others from the web UI if that was not intended", n, in.TunnelID))
+				"the list routed to %d targets; they were replaced by the single tunnel %q — pass targets instead to keep several", n, in.TunnelID))
 		}
-		patch.Routes = []dnsroute.RouteTarget{{TunnelID: in.TunnelID}}
+		in.Targets = []string{in.TunnelID}
+	}
+	if in.Targets != nil {
+		if err := l.checkTargets(ctx, in.Targets); err != nil {
+			return mcpsrv.DNSRoute{}, nil, err
+		}
+		// A new target list keeps the kill switch as it was unless the
+		// caller sets it: the fallback rides on the last target.
+		killSwitch := lastFallback(existing.Routes) == "reject"
+		if in.KillSwitch != nil {
+			killSwitch = *in.KillSwitch
+		}
+		patch.Routes = routeTargets(in.Targets, killSwitch)
+	} else if in.KillSwitch != nil {
+		if len(existing.Routes) == 0 {
+			return mcpsrv.DNSRoute{}, nil, fmt.Errorf("dns route %q has no target to put a kill switch on; pass targets as well", in.RouteID)
+		}
+		patch.Routes = slices.Clone(existing.Routes)
+		patch.Routes[len(patch.Routes)-1].Fallback = fallbackFor(*in.KillSwitch)
+	}
+	if in.Excludes != nil {
+		// Non-nil and empty clears them: dnsroute.Update restores only a
+		// nil slice from the stored list.
+		patch.Excludes = append([]string{}, in.Excludes...)
+	}
+	if len(in.AddSubscriptionURLs) > 0 || len(in.RemoveSubscriptions) > 0 {
+		subs, err := editSubscriptions(existing.Subscriptions, in.AddSubscriptionURLs, in.RemoveSubscriptions)
+		if err != nil {
+			return mcpsrv.DNSRoute{}, nil, err
+		}
+		patch.Subscriptions = subs
 	}
 
 	updated, err := l.c.DNSRoutes.Update(ctx, patch)
@@ -1007,6 +1110,61 @@ func (l *Local) UpdateDNSRoute(ctx context.Context, in mcpsrv.DNSRouteUpdate) (m
 	l.dnsLog.Info("update", updated.Name, "DNS route list updated (MCP)")
 	l.publish(events.ResourceRoutingDnsRoutes, "mcp-update")
 	return dnsRoute(updated), warnings, nil
+}
+
+// routeTargets builds a failover list in priority order. The fallback
+// rides on the last target: NDMS applies it when every target is down
+// (dnsroute sync.go, buildTargetState).
+func routeTargets(ids []string, killSwitch bool) []dnsroute.RouteTarget {
+	out := make([]dnsroute.RouteTarget, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, dnsroute.RouteTarget{TunnelID: id})
+	}
+	if len(out) > 0 {
+		out[len(out)-1].Fallback = fallbackFor(killSwitch)
+	}
+	return out
+}
+
+func fallbackFor(killSwitch bool) string {
+	if killSwitch {
+		return "reject"
+	}
+	return ""
+}
+
+func lastFallback(routes []dnsroute.RouteTarget) string {
+	if len(routes) == 0 {
+		return ""
+	}
+	return routes[len(routes)-1].Fallback
+}
+
+// editSubscriptions removes the subscriptions at the given positions and
+// appends new ones. Positions, not URLs: an agent sees only the host of a
+// stored URL (dnsRouteDetail), so it could never name one exactly.
+func editSubscriptions(existing []dnsroute.Subscription, add []string, remove []int) ([]dnsroute.Subscription, error) {
+	drop := make(map[int]bool, len(remove))
+	for _, i := range remove {
+		if i < 0 || i >= len(existing) {
+			return nil, fmt.Errorf("removeSubscriptions: position %d is out of range (the list has %d subscriptions; get_dns_route lists them)", i, len(existing))
+		}
+		drop[i] = true
+	}
+	out := make([]dnsroute.Subscription, 0, len(existing)+len(add))
+	for i, sub := range existing {
+		if !drop[i] {
+			out = append(out, sub)
+		}
+	}
+	for _, u := range add {
+		// A URL the list already has is not added twice: dnsroute.Update
+		// dedups only the new subscriptions against each other.
+		if !slices.ContainsFunc(out, func(s dnsroute.Subscription) bool { return s.URL == u }) {
+			out = append(out, dnsroute.Subscription{URL: u})
+		}
+	}
+	return out, nil
 }
 
 // droppedManualSubnets lists the CIDR entries of before that after no
@@ -1135,8 +1293,13 @@ func (l *Local) AddStaticRoute(ctx context.Context, in mcpsrv.StaticRouteInput) 
 	if l.c.StaticRoutes == nil {
 		return mcpsrv.StaticRoute{}, errUnavailable("static routes")
 	}
+	if err := l.checkTargets(ctx, []string{in.TunnelID}); err != nil {
+		return mcpsrv.StaticRoute{}, err
+	}
 	enabled := in.Enabled == nil || *in.Enabled
-	created, err := l.c.StaticRoutes.Create(ctx, storage.StaticRouteList{Name: in.Name, TunnelID: in.TunnelID, Subnets: in.Subnets, Enabled: enabled})
+	created, err := l.c.StaticRoutes.Create(ctx, storage.StaticRouteList{
+		Name: in.Name, TunnelID: in.TunnelID, Subnets: in.Subnets, Enabled: enabled, Fallback: fallbackFor(in.KillSwitch),
+	})
 	if err != nil {
 		l.staticLog.Warn("create", in.Name, "Failed to create static route list (MCP): "+err.Error())
 		return mcpsrv.StaticRoute{}, err
@@ -1147,6 +1310,90 @@ func (l *Local) AddStaticRoute(ctx context.Context, in mcpsrv.StaticRouteInput) 
 		return mcpsrv.StaticRoute{}, fmt.Errorf("static route create returned no list")
 	}
 	return staticRoute(created), nil
+}
+
+// UpdateStaticRoute edits a subnet list. staticroute.Update restores only
+// the name, the target and the subnets when they are zero; the fallback,
+// the icon and the on/off state it takes as sent. So the stored record is
+// the base and the caller's fields are laid over it: a sparse patch would
+// switch the kill switch off and the list with it.
+func (l *Local) UpdateStaticRoute(ctx context.Context, in mcpsrv.StaticRouteUpdate) (mcpsrv.StaticRoute, error) {
+	if l.c.StaticRoutes == nil {
+		return mcpsrv.StaticRoute{}, errUnavailable("static routes")
+	}
+	existing, err := l.c.StaticRoutes.Get(in.RouteID)
+	if err != nil || existing == nil {
+		return mcpsrv.StaticRoute{}, fmt.Errorf("static route %q not found (use list_static_routes)", in.RouteID)
+	}
+	next := *existing
+	if in.Name != "" {
+		next.Name = in.Name
+	}
+	if in.TunnelID != "" {
+		if err := l.checkTargets(ctx, []string{in.TunnelID}); err != nil {
+			return mcpsrv.StaticRoute{}, err
+		}
+		next.TunnelID = in.TunnelID
+	}
+	if in.Subnets != nil {
+		next.Subnets = slices.Clone(in.Subnets)
+	}
+	if in.KillSwitch != nil {
+		next.Fallback = fallbackFor(*in.KillSwitch)
+	}
+	updated, err := l.c.StaticRoutes.Update(ctx, next)
+	if err != nil {
+		l.staticLog.Warn("update", existing.Name, "Failed to update static route list (MCP): "+err.Error())
+		return mcpsrv.StaticRoute{}, err
+	}
+	if updated == nil {
+		return mcpsrv.StaticRoute{}, fmt.Errorf("static route update returned no list")
+	}
+	l.staticLog.Info("update", updated.Name, "Static route list updated (MCP)")
+	l.publish(events.ResourceRoutingStaticRoutes, "mcp-update")
+	return staticRoute(updated), nil
+}
+
+// ListRoutingTargets lists the catalog the way the web interface's picker
+// does, without the WireGuard servers: a server is where clients come in,
+// not a way out.
+func (l *Local) ListRoutingTargets(ctx context.Context) ([]mcpsrv.RoutingTarget, error) {
+	if l.c.Targets == nil {
+		return nil, errUnavailable("the routing target list")
+	}
+	var out []mcpsrv.RoutingTarget
+	for _, e := range l.c.Targets.ListAll(ctx) {
+		if e.Server {
+			continue
+		}
+		out = append(out, mcpsrv.RoutingTarget{
+			ID: e.ID, Name: sanitizeLabel(e.Name), Type: token(e.Type), Status: token(e.Status), Available: e.Available,
+			Warning: sanitizeText(e.Warning, maxMessageRunes),
+		})
+	}
+	return out, nil
+}
+
+// checkTargets refuses an id the catalog does not list. The routing
+// services resolve an id when they install routes, and an unknown managed
+// or system id is not caught there (dnsroute resolveRouteInterfaces): the
+// list would be saved routing nowhere.
+func (l *Local) checkTargets(ctx context.Context, ids []string) error {
+	if l.c.Targets == nil {
+		return nil
+	}
+	known := map[string]bool{}
+	for _, e := range l.c.Targets.ListAll(ctx) {
+		if !e.Server {
+			known[e.ID] = true
+		}
+	}
+	for _, id := range ids {
+		if !known[id] {
+			return fmt.Errorf("%q is not a routing target (use list_routing_targets)", id)
+		}
+	}
+	return nil
 }
 
 // SetStaticRouteEnabled flips one subnet list and reads it back.
@@ -1707,53 +1954,101 @@ func (l *Local) ServerPeerConfig(ctx context.Context, serverID, publicKey string
 // ruleMatchSummary renders a rule's matchers in words. A model picks a
 // rule by meaning ("the YouTube rule"), and reconstructing that from raw
 // matcher arrays is exactly the step it gets wrong.
-func ruleMatchSummary(r router.Rule) string {
-	var parts []string
-	add := func(label string, values []string) {
-		if len(values) > 0 {
-			parts = append(parts, label+" "+strings.Join(values, ", "))
+//
+// The connectives are spelled out the way sing-box combines a default rule
+// (configuration/route/rule): the destination fields are alternatives to
+// one another, so are the source ones, and the groups and every remaining
+// field must all hold. Within one field the values are alternatives too
+// ("domain_suffix a, b"). A rule set is rendered as a field of its own,
+// which is how sing-box matches all but a set holding one plain rule; that
+// one it folds into the destination group.
+//
+// extra carries fields router.Rule has no place for (a DNS rule's), as
+// label/values pairs: name ones join the destination alternatives, and
+// ones each add a condition.
+func ruleMatchSummary(r router.Rule, extra ...matchExtra) string {
+	field := func(label string, values []string) string {
+		if len(values) == 0 {
+			return ""
+		}
+		return label + " " + strings.Join(values, ", ")
+	}
+	var groups []string
+	anyOf := func(items ...string) {
+		var set []string
+		for _, it := range items {
+			if it != "" {
+				set = append(set, it)
+			}
+		}
+		switch len(set) {
+		case 0:
+		case 1:
+			groups = append(groups, set[0])
+		default:
+			groups = append(groups, "("+strings.Join(set, " OR ")+")")
 		}
 	}
-	add("domain_suffix", r.DomainSuffix)
-	add("domain", r.Domain)
-	add("ip_cidr", r.IPCIDR)
-	add("source_ip_cidr", r.SourceIPCIDR)
-	add("source_mac", r.SourceMACAddress)
-	add("rule_set", r.RuleSet)
-	add("inbound", r.Inbound)
+	private := ""
+	if r.IPIsPrivate != nil && *r.IPIsPrivate {
+		private = "destination is private"
+	}
+	destination := []string{field("domain_suffix", r.DomainSuffix), field("domain", r.Domain), field("ip_cidr", r.IPCIDR), private}
+	var conditions []string
+	for _, e := range extra {
+		for _, f := range e.name {
+			if f[1] != "" {
+				destination = append(destination, f[0]+" "+f[1])
+			}
+		}
+		for _, f := range e.and {
+			if f[1] != "" {
+				conditions = append(conditions, f[0]+" "+f[1])
+			}
+		}
+	}
+	anyOf(destination...)
+	ports := make([]string, 0, len(r.Port))
+	for _, p := range r.Port {
+		ports = append(ports, strconv.Itoa(p))
+	}
+	anyOf(field("port", ports))
+	anyOf(field("source_ip_cidr", r.SourceIPCIDR))
+	anyOf(field("source_mac", r.SourceMACAddress))
+	anyOf(field("rule_set", r.RuleSet))
+	anyOf(field("inbound", r.Inbound))
 	if r.Protocol != "" {
-		parts = append(parts, "protocol "+r.Protocol)
+		anyOf("protocol " + r.Protocol)
 	}
 	if r.Network != "" {
-		parts = append(parts, "network "+r.Network)
+		anyOf("network " + r.Network)
 	}
-	if len(r.Port) > 0 {
-		ports := make([]string, 0, len(r.Port))
-		for _, p := range r.Port {
-			ports = append(ports, strconv.Itoa(p))
-		}
-		parts = append(parts, "port "+strings.Join(ports, ", "))
-	}
-	if r.IPIsPrivate != nil && *r.IPIsPrivate {
-		parts = append(parts, "destination is private")
+	for _, c := range conditions {
+		anyOf(c)
 	}
 	if r.Type == "logical" && len(r.Rules) > 0 {
 		nested := make([]string, 0, len(r.Rules))
 		for _, sub := range r.Rules {
-			nested = append(nested, ruleMatchSummary(sub))
+			nested = append(nested, "("+ruleMatchSummary(sub)+")")
 		}
-		mode := r.Mode
+		mode := strings.ToUpper(r.Mode)
 		if mode == "" {
-			mode = "or"
+			mode = "OR"
 		}
-		parts = append(parts, "("+strings.Join(nested, " "+mode+" ")+")")
+		groups = append(groups, "("+strings.Join(nested, " "+mode+" ")+")")
 	}
-	if len(parts) == 0 {
+	if len(groups) == 0 {
 		// A rule with no matchers matches everything; saying nothing here
 		// would read as "this rule is empty".
 		return "everything"
 	}
-	return strings.Join(parts, "; ")
+	return strings.Join(groups, " AND ")
+}
+
+// matchExtra is a set of extra fields for ruleMatchSummary.
+type matchExtra struct {
+	name [][2]string
+	and  [][2]string
 }
 
 func singboxRule(i int, r router.Rule) mcpsrv.SingboxRule {
@@ -1765,18 +2060,23 @@ func singboxRule(i int, r router.Rule) mcpsrv.SingboxRule {
 	}
 	return mcpsrv.SingboxRule{
 		Index: i, Match: ruleMatchSummary(r), Action: action,
-		Outbound: r.Outbound, Managed: r.AwgmManaged != "",
+		Outbound: r.Outbound, Managed: r.AwgmManaged != "", System: router.IsSystemRule(r),
 	}
 }
 
 // ListSingboxRules reads through the staging slot, as the service does,
 // so an edit is visible at once — and reports hasDraft, because the rules
-// returned are then NOT what traffic is following.
+// returned are then NOT what traffic is following. In fakeip-tun mode the
+// rules come from that mode's configuration (routerReads).
 func (l *Local) ListSingboxRules(ctx context.Context) ([]mcpsrv.SingboxRule, bool, error) {
 	if l.c.Router == nil {
 		return nil, false, errUnavailable("sing-box router")
 	}
-	rules, err := l.c.Router.ListRules(ctx)
+	rr, err := l.routerReads(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	rules, err := rr.rules(ctx)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1784,7 +2084,7 @@ func (l *Local) ListSingboxRules(ctx context.Context) ([]mcpsrv.SingboxRule, boo
 	for i, r := range rules {
 		out = append(out, singboxRule(i, r))
 	}
-	return out, l.c.Router.StagingStatus(ctx).HasDraft, nil
+	return out, l.hasDraft(ctx, rr.fakeIP), nil
 }
 
 func (l *Local) SingboxStaging(ctx context.Context) (mcpsrv.SingboxStaging, error) {
@@ -1810,6 +2110,9 @@ func (l *Local) SingboxStaging(ctx context.Context) (mcpsrv.SingboxStaging, erro
 func (l *Local) SetSingboxRuleOutbound(ctx context.Context, index int, outbound string) error {
 	if l.c.Router == nil {
 		return errUnavailable("sing-box router")
+	}
+	if err := l.requireTProxyRouter(ctx); err != nil {
+		return err
 	}
 	rules, err := l.c.Router.ListRules(ctx)
 	if err != nil {

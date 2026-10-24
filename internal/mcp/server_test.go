@@ -94,6 +94,13 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 		"list_singbox_rules", "list_singbox_outbounds", "get_singbox_staging", "set_singbox_rule_outbound", "apply_singbox_staging", "discard_singbox_staging",
 		"list_singbox_subscriptions", "get_singbox_outbound", "set_singbox_subscription_enabled",
 		"set_singbox_subscription_mode", "set_singbox_subscription_active_member",
+		"list_singbox_dns_servers", "list_singbox_rulesets", "create_singbox_outbound_group", "set_singbox_outbound_group_members",
+		"set_singbox_dns_server_detour", "set_singbox_ruleset_detour",
+		"create_singbox_subscription_group", "add_singbox_subscription_server",
+		"get_singbox_router_status", "list_singbox_dns_rules", "list_singbox_dns_rewrites",
+		"add_singbox_rule", "update_singbox_rule", "move_singbox_rule", "delete_singbox_rule",
+		"set_singbox_route_final", "add_singbox_ruleset", "delete_singbox_ruleset",
+		"list_routing_targets", "update_static_route",
 	}
 	for _, n := range want {
 		if byName[n] == nil {
@@ -117,10 +124,33 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 	}
 	// Deleting a routing list is permanent and MCP cannot recreate it, so
 	// the host must get the chance to ask the user first.
-	for _, n := range []string{"remove_dns_route", "remove_static_route"} {
+	// A deletion in the shared draft is destructive (README "Annotations"):
+	// once applied, nothing in MCP recreates the rule or the set.
+	for _, n := range []string{"remove_dns_route", "remove_static_route", "delete_singbox_rule", "delete_singbox_ruleset"} {
 		a := byName[n].Annotations
 		if a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint {
 			t.Errorf("%s must be annotated destructive", n)
+		}
+	}
+	// The sing-box edits destroy nothing: a router edit sits in the draft,
+	// and what the subscription writes create the user removes in the web
+	// interface. Creating twice is refused (the tag is taken) or makes a
+	// second object, so neither create tool is idempotent.
+	for _, n := range []string{"create_singbox_outbound_group", "set_singbox_outbound_group_members", "set_singbox_dns_server_detour",
+		"set_singbox_ruleset_detour", "create_singbox_subscription_group", "add_singbox_subscription_server"} {
+		a := byName[n].Annotations
+		if a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
+			t.Errorf("%s must be a non-destructive write", n)
+		}
+	}
+	for _, n := range []string{"create_singbox_outbound_group", "create_singbox_subscription_group", "add_singbox_subscription_server", "update_dns_route"} {
+		if byName[n].Annotations.IdempotentHint {
+			t.Errorf("%s must not claim to be idempotent", n)
+		}
+	}
+	for _, n := range []string{"list_singbox_dns_servers", "list_singbox_rulesets", "get_singbox_router_status", "list_singbox_dns_rules", "list_singbox_dns_rewrites"} {
+		if !byName[n].Annotations.ReadOnlyHint {
+			t.Errorf("%s must be read-only", n)
 		}
 	}
 }

@@ -39,6 +39,50 @@ type fakeSubs struct {
 	activeCalls  int
 	activeErr    error
 	activeStored bool
+	// createIn records what CreateGroup received; createErr fails it.
+	createIn  *subscription.GroupCreateInput
+	createErr error
+	// addLink records the share link AddManualMember received; addErr fails
+	// the call. addRejected mirrors a link the service stores among the
+	// rejected entries: no member is added and no error is returned.
+	addLink     string
+	addErr      error
+	addRejected bool
+}
+
+func (f *fakeSubs) CreateGroup(_ context.Context, in subscription.GroupCreateInput) (*subscription.AggregateGroup, error) {
+	f.createIn = &in
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
+	tag := in.Tag
+	if tag == "" {
+		tag = "agg-c0ffee00"
+	}
+	return &subscription.AggregateGroup{
+		ID: "c0ffee00c0ffee00c0ffee00", Label: in.Label, Tag: tag, ProxyIndex: 3,
+		Mode: in.Mode, UseSubscriptionIDs: in.UseSubscriptionIDs, Enabled: in.Enabled,
+	}, nil
+}
+
+func (f *fakeSubs) AddManualMember(_ context.Context, id, shareLink string) (*subscription.Subscription, error) {
+	f.addLink = shareLink
+	if f.addErr != nil {
+		return nil, f.addErr
+	}
+	for i := range f.subs {
+		if f.subs[i].ID != id {
+			continue
+		}
+		if !f.addRejected {
+			tag := f.subs[i].SelectorTag + "-n1"
+			f.subs[i].Members = append(f.subs[i].Members, subscription.MemberInfo{Tag: tag, Label: "from the link"})
+			f.subs[i].MemberTags = append(f.subs[i].MemberTags, tag)
+		}
+		c := f.subs[i]
+		return &c, nil
+	}
+	return nil, fmt.Errorf("subscription %q not found", id)
 }
 
 // List mirrors subscription.Store.List: sorted by label, then id.

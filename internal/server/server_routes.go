@@ -1123,6 +1123,20 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 			routerForMcp = svc
 		}
 	}
+	// fakeip-tun читается тем же экземпляром, что у страниц fakeip, — по
+	// тем же причинам, что и маршрутизатор выше.
+	var fakeipForMcp localdeps.FakeIPRouter
+	if s.singboxFakeIPConfigHandler != nil {
+		if svc := s.singboxFakeIPConfigHandler.Service(); svc != nil {
+			fakeipForMcp = svc
+		}
+	}
+	var rewritesForMcp localdeps.DNSRewriteLister
+	if s.dnsRewritesHandler != nil {
+		if svc := s.dnsRewritesHandler.Service(); svc != nil {
+			rewritesForMcp = svc
+		}
+	}
 	var connsForMcp localdeps.ConnectionLister
 	if h.connectionsService != nil {
 		connsForMcp = h.connectionsService
@@ -1186,6 +1200,7 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 		Traffic:        trafficStats,
 		DNSRoutes:      s.dnsRouteService,
 		StaticRoutes:   s.staticRouteService,
+		Targets:        s.catalog,
 		ClientRoutes:   s.clientRouteService,
 		Policies:       s.accessPolicyService,
 		Logs:           logs,
@@ -1196,6 +1211,8 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 		Managed:        managedForMcp,
 		Connections:    connsForMcp,
 		Router:         routerForMcp,
+		FakeIP:         fakeipForMcp,
+		DNSRewrites:    rewritesForMcp,
 		Diagnostics:    diagForMcp,
 		Singbox:        singboxOp,
 		Subscriptions:  subsForMcp,
