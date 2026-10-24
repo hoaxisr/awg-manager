@@ -15,7 +15,19 @@ import (
 // separators become a space, format characters (bidi overrides,
 // zero-width) are dropped, runs of space collapse, and the result is
 // capped on a rune boundary.
-func sanitizeLabel(s string) string {
+func sanitizeLabel(s string) string { return sanitizeText(s, mcpsrv.MaxSingboxLabelRunes) }
+
+// maxMessageRunes caps a generated message (a router issue): longer than a
+// label, still one line.
+const maxMessageRunes = 300
+
+// maxSettingRunes caps a list the user typed into one setting (ports,
+// subnets). It is far above any real list: cutting one short would read
+// as "not listed".
+const maxSettingRunes = 8192
+
+// sanitizeText is sanitizeLabel with a cap of the caller's choosing.
+func sanitizeText(s string, maxRunes int) string {
 	spaced := strings.Map(func(r rune) rune {
 		switch {
 		case unicode.IsControl(r), r == '\u2028', r == '\u2029':
@@ -26,8 +38,8 @@ func sanitizeLabel(s string) string {
 		return r
 	}, s)
 	clean := strings.Join(strings.Fields(spaced), " ")
-	if runes := []rune(clean); len(runes) > mcpsrv.MaxSingboxLabelRunes {
-		clean = strings.TrimSpace(string(runes[:mcpsrv.MaxSingboxLabelRunes]))
+	if runes := []rune(clean); len(runes) > maxRunes {
+		clean = strings.TrimSpace(string(runes[:maxRunes]))
 	}
 	return clean
 }
@@ -47,6 +59,31 @@ func hostOf(raw string) string {
 		return ""
 	}
 	return hostShaped(u.Host)
+}
+
+// probeURL returns a group's test URL as scheme, host and path. It is the
+// user's setting, a public endpoint as a rule; userinfo, query and fragment
+// are dropped all the same, as for any URL this package hands out, and so
+// is anything that is not an http or https URL with a host-shaped host.
+func probeURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	if scheme := strings.ToLower(u.Scheme); scheme != "http" && scheme != "https" {
+		return ""
+	}
+	host := hostShaped(u.Host)
+	if host == "" {
+		return ""
+	}
+	path := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, u.EscapedPath())
+	return strings.ToLower(u.Scheme) + "://" + host + path
 }
 
 var (
