@@ -18,7 +18,7 @@ at best and a silent hole at worst.
 | 2 | `internal/mcp/deps.go` | The `Deps` method. The comment states the contract the tool relies on (ordering, what an error means, what nil means). |
 | 3 | `internal/mcp/tools_<area>.go` | The tool: validation, annotations, description, output shaping. Register it in `server.go` if it starts a new `register*` group. |
 | 4 | `internal/mcp/mcptest/fake.go` | The in-memory fake. It must mirror the REAL service's semantics — see "The fake must not agree with you" below. |
-| 5 | `internal/mcp/localdeps/` | The production adapter over the daemon's services. Linux-only; see "Testing". sing-box subscriptions and groups live in `singbox_groups.go`, sanitisers in `sanitize.go`. |
+| 5 | `internal/mcp/localdeps/` | The production adapter over the daemon's services. Linux-only; see "Testing". sing-box subscriptions and groups live in `singbox_groups.go`, the router's DNS server, rule set and group edits in `singbox_router.go`, sanitisers in `sanitize.go`. |
 | 6 | `internal/mcp/scope.go` and `server_test.go` | Add read-only tools to `readOnlyTools`; add every tool to the catalogue list in `TestServer_ListsToolsWithAnnotations`. |
 
 Wire new daemon services into `localdeps.Config` from
@@ -172,11 +172,11 @@ the agent can undo on its own, and "ask the user to discard a draft that may
 hold their other edits" is not that. Two agents given this case chose
 differently; settle it this way.
 
-A tool that changes nothing but returns private keys (`export_tunnel_config`,
-`get_server_peer_config`) is annotated read-only AND listed in
-`credentialTools`, so a read-only key is still refused. The UI promises that
-key "cannot change anything"; walking away with VPN credentials is not that.
-For the same reason `get_logs` refuses `raw=true` on a read-only key: the
+A tool that changes nothing but returns credentials (`export_tunnel_config`,
+`get_server_peer_config`, `get_singbox_user_config`) is annotated read-only
+AND listed in `credentialTools`, so a read-only key is still refused. The UI
+promises that key "cannot change anything"; walking away with VPN credentials
+is not that. For the same reason `get_logs` refuses `raw=true` on a read-only key: the
 masked journal is the read-only view.
 
 ## Secrets stay behind the boundary

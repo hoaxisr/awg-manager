@@ -77,6 +77,10 @@ type explainOut struct {
 	DefaultRouteTunnelID string               `json:"defaultRouteTunnelId,omitempty" jsonschema:"tunnel carrying the default route; traffic matching no rule goes here, or straight out the WAN when empty"`
 	DefaultRouteTunnel   string               `json:"defaultRouteTunnelName,omitempty"`
 	Note                 string               `json:"note" jsonschema:"how the matches above relate to each other in plain words"`
+	// Singbox is the sing-box router's side: its rules decide for traffic
+	// the router hands to sing-box, which the NDMS lists above do not show.
+	Singbox      *SingboxRouteExplanation `json:"singbox,omitempty" jsonschema:"how the sing-box router's rules treat the target; absent when there is no sing-box router"`
+	SingboxError string                   `json:"singboxError,omitempty" jsonschema:"why the sing-box rules could not be judged"`
 }
 
 // normalizeDomain lowercases and strips the root dot so "WWW.Example.COM."
@@ -176,10 +180,14 @@ func explainNote(out *explainOut) string {
 		parts = append(parts, "more than one list covers this target; the router applies them in its own order, so treat the list above as candidates rather than a decision")
 	}
 	// The NDMS lists are only half the picture wherever sing-box does the
-	// routing: its rules are evaluated separately and this tool does not
-	// read them. Saying so on every answer beats confidently naming a
-	// tunnel that sing-box then overrides.
-	parts = append(parts, "if the sing-box router is in use, its own rules apply too and are not covered here — check list_singbox_rules")
+	// routing: its rules are judged separately, under singbox. Saying so on
+	// every answer beats confidently naming a tunnel that sing-box then
+	// overrides; without that section the rules were not read at all.
+	if out.Singbox != nil {
+		parts = append(parts, "the sing-box router's own verdict is under singbox; which of the two carries a flow depends on how the router hands traffic to sing-box (get_singbox_router_status)")
+	} else {
+		parts = append(parts, "if the sing-box router is in use, its own rules apply too and are not covered here — check list_singbox_rules")
+	}
 	if len(parts) == 1 {
 		return "one routing list covers this target; " + parts[0]
 	}
@@ -191,7 +199,8 @@ func registerExplainTools(s *mcp.Server, d Deps) {
 		Name: "explain_route",
 		Description: "Explain which routing rules cover a domain or IP: the domain lists that match it (checked against every domain, not the truncated list view), " +
 			"the subnet lists containing its addresses, the device's own route when clientIp is given, and the default route it falls back to. " +
-			"Reports the candidates and how they relate; it does not simulate the router's rule priorities, and lists using geosite:/geoip: tags are reported as unevaluated rather than assumed not to match.",
+			"Reports the candidates and how they relate; it does not simulate the router's rule priorities, and lists using geosite:/geoip: tags are reported as unevaluated rather than assumed not to match. " +
+			"The singbox part judges the sing-box router's rules in order: the first rule that certainly matches, and the earlier ones that may (a port, a sniffed protocol or a downloaded rule set cannot be checked here).",
 		Annotations: readOnly("Explain route"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in explainIn) (*mcp.CallToolResult, explainOut, error) {
 		target := normalizeDomain(in.Target)
@@ -332,6 +341,19 @@ func registerExplainTools(s *mcp.Server, d Deps) {
 			})
 		}
 
+		// The sing-box router's rules: judged for the same target, and
+		// reported beside the NDMS answer rather than merged into it — which
+		// of the two carries a flow depends on how the router hands traffic
+		// to sing-box (get_singbox_router_status).
+		clientIP := ""
+		if in.ClientIP != "" {
+			clientIP = net.ParseIP(strings.TrimSpace(in.ClientIP)).To4().String()
+		}
+		if sb, err := d.ExplainSingboxRoute(ctx, target, out.ResolvedIPs, clientIP); err == nil {
+			out.Singbox = &sb
+		} else if !strings.Contains(err.Error(), "not available") {
+			out.SingboxError = err.Error()
+		}
 		out.Note = explainNote(&out)
 		return nil, out, nil
 	})

@@ -91,7 +91,9 @@ func TestTools_TunnelIDIsValidatedBeforeDeps(t *testing.T) {
 			t.Errorf("%s accepted a traversal id", name)
 			continue
 		}
-		if txt := toolText(res); !strings.Contains(txt, "not a valid tunnel id") {
+		// add_static_route takes any routing target (wan:, system:), so its
+		// refusal names a target id; the traversal is refused all the same.
+		if txt := toolText(res); !strings.Contains(txt, "not a valid tunnel id") && !strings.Contains(txt, "not a target id") {
 			t.Errorf("%s: error does not name the cause: %s", name, txt)
 		}
 	}
