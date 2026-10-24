@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -458,9 +459,9 @@ func (l *Local) CheckSingboxDelay(ctx context.Context, tag string) (mcpsrv.Singb
 // and keeps the stored value, so a sparse patch is what leaves the
 // filters, the mode and the URL alone.
 //
-// No invalidation event is published, because the REST handler publishes
-// none: there is no subscription resource in internal/events, and an
-// open web tab sees the change on its next fetch either way.
+// No invalidation event is published here, as in the REST handler: the
+// subscription store publishes singbox.subscriptions itself on every save
+// (SetOnChange in cmd/awg-manager), whoever made the change.
 func (l *Local) SetSingboxSubscriptionEnabled(_ context.Context, id string, enabled bool) (mcpsrv.SingboxSubscription, []string, error) {
 	if l.c.Subscriptions == nil {
 		return mcpsrv.SingboxSubscription{}, nil, errUnavailable("sing-box subscriptions")
@@ -667,4 +668,155 @@ func (l *Local) activeMemberFailure(id, label, memberTag, before string) error {
 // формулировка с подсказкой, какой инструмент даёт id.
 func errSubscriptionNotFound(id string) error {
 	return fmt.Errorf("sing-box subscription %q not found (use list_singbox_subscriptions)", id)
+}
+
+// CreateSingboxAggregateGroup creates an enabled aggregate group, as the
+// web form does by default. The mode is validated here, as in
+// SetSingboxSubscriptionMode; empty is urltest, the service's default for
+// aggregate groups (AggregateGroup.EffectiveMode).
+//
+// The subscriptions are read first so that a refusal names the id: the
+// service's own refusal (ErrGroupSubscriptionNotFound) is in Russian. A
+// refused tag is described in our words, not the service's: its message
+// quotes the label of the subscription that holds the tag, which is the
+// provider's text for a fetched one.
+//
+// No invalidation event is published, as in the REST handler (CreateGroup
+// publishes none). The group lives in the group store, which, unlike the
+// subscription store, has no change hook: an open web page shows the group
+// once it reloads its data.
+func (l *Local) CreateSingboxAggregateGroup(ctx context.Context, in mcpsrv.SingboxAggregateGroupInput) (mcpsrv.SingboxAggregateGroup, error) {
+	if l.c.Subscriptions == nil {
+		return mcpsrv.SingboxAggregateGroup{}, errUnavailable("sing-box subscriptions")
+	}
+	var mode subscription.SubscriptionMode
+	switch in.Mode {
+	case "", "urltest":
+		mode = subscription.ModeURLTest
+	case "selector":
+		mode = subscription.ModeSelector
+	case "fallback":
+		mode = subscription.ModeFallback
+	default:
+		return mcpsrv.SingboxAggregateGroup{}, fmt.Errorf("mode must be urltest, selector or fallback")
+	}
+	for _, id := range in.SubscriptionIDs {
+		if sub, err := l.c.Subscriptions.Get(id); err != nil || sub == nil {
+			return mcpsrv.SingboxAggregateGroup{}, errSubscriptionNotFound(id)
+		}
+	}
+	label := sanitizeLabel(in.Label)
+
+	g, err := l.c.Subscriptions.CreateGroup(ctx, subscription.GroupCreateInput{
+		Label: in.Label, Tag: in.Tag, Mode: mode, UseSubscriptionIDs: in.SubscriptionIDs, Enabled: true,
+	})
+	switch {
+	case errors.Is(err, subscription.ErrGroupsDisabled):
+		return mcpsrv.SingboxAggregateGroup{}, errUnavailable("aggregate subscription groups")
+	case errors.Is(err, subscription.ErrValidation) && groupTagRefused(err, in.Tag):
+		l.subLog.Warn("subscription-group-create", label, "Aggregate group refused (MCP): tag not allowed or taken")
+		return mcpsrv.SingboxAggregateGroup{}, fmt.Errorf("the tag %q is not allowed or already taken. A tag is Latin letters, digits and . _ - (up to 32, starting with a letter or digit, not starting with sub-); or leave tag empty to let awg-manager name the group", in.Tag)
+	case errors.Is(err, subscription.ErrGroupSubscriptionNotFound):
+		return mcpsrv.SingboxAggregateGroup{}, fmt.Errorf("one of the subscriptions was deleted meanwhile (use list_singbox_subscriptions); the group was not created")
+	case err != nil:
+		// The REST handler journals the cause the same way
+		// (respondGroupServiceError): it is the sing-box check or an NDMS
+		// answer, and nothing here carries a share link.
+		l.subLog.Warn("subscription-group-create", label, "Failed to create aggregate group (MCP): "+err.Error())
+		return mcpsrv.SingboxAggregateGroup{}, fmt.Errorf(`the aggregate group could not be created, and the service removed what it had made of it. The cause is in the journal — get_logs with bucket "singbox"`)
+	case g == nil:
+		return mcpsrv.SingboxAggregateGroup{}, fmt.Errorf("group creation returned no record")
+	}
+	l.subLog.Info("subscription-group-create", label, "Aggregate group created (MCP)")
+	return aggregateGroup(g), nil
+}
+
+// groupTagRefused tells a refusal of the group's own tag from the other
+// ErrValidation answers of CreateGroup — sing-box rejecting the group, an
+// unread slot, nothing left after filtering — which are not the agent's
+// tag and go to the journal instead. The service has no typed error for
+// it: its tag messages (validateGroupTag, the taken checks, a clash with
+// 90-user.json) all quote the tag after the word "тег", and the sub-
+// prefix one names the prefix.
+func groupTagRefused(err error, tag string) bool {
+	if tag == "" {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "тег "+strconv.Quote(tag)) || strings.Contains(msg, `префикс "sub-"`)
+}
+
+func aggregateGroup(g *subscription.AggregateGroup) mcpsrv.SingboxAggregateGroup {
+	out := mcpsrv.SingboxAggregateGroup{
+		ID: g.ID, Label: sanitizeLabel(g.Label), Tag: g.Tag, Mode: string(g.EffectiveMode()),
+		SubscriptionIDs: slices.Clone(g.UseSubscriptionIDs), Enabled: g.Enabled,
+	}
+	if g.ProxyIndex >= 0 {
+		out.ProxyInterface = fmt.Sprintf("Proxy%d", g.ProxyIndex)
+	}
+	return out
+}
+
+// AddSingboxSubscriptionServer adds one server to a pasted subscription.
+// The share link carries the server's credentials, so neither it nor any
+// text derived from it goes into an error or the journal: the service's
+// refusals are mapped to our own words, and a failure we cannot classify
+// is journalled without its cause.
+//
+// The service may take the link without adding a server: a link that
+// parses but is not a usable server is stored among the subscription's
+// rejected or informational entries, and AddManualMember returns the
+// subscription with no error. That is told apart by the stored members
+// (Members): the new server's tag is the one that was not there before.
+//
+// No invalidation event is published, for the reason
+// SetSingboxSubscriptionEnabled gives: the REST handler publishes none.
+func (l *Local) AddSingboxSubscriptionServer(ctx context.Context, id, shareLink string) (mcpsrv.SingboxServerAdded, error) {
+	if l.c.Subscriptions == nil {
+		return mcpsrv.SingboxServerAdded{}, errUnavailable("sing-box subscriptions")
+	}
+	current, err := l.c.Subscriptions.Get(id)
+	if err != nil || current == nil {
+		return mcpsrv.SingboxServerAdded{}, errSubscriptionNotFound(id)
+	}
+	if !current.IsInline() {
+		return mcpsrv.SingboxServerAdded{}, errNotInline()
+	}
+	label := sanitizeLabel(current.Label)
+	before := make(map[string]bool, len(current.Members))
+	for _, m := range current.Members {
+		before[m.Tag] = true
+	}
+
+	updated, err := l.c.Subscriptions.AddManualMember(ctx, id, shareLink)
+	switch {
+	case errors.Is(err, subscription.ErrManualMemberOnURLSub):
+		return mcpsrv.SingboxServerAdded{}, errNotInline()
+	case errors.Is(err, subscription.ErrShareLinkInvalid):
+		return mcpsrv.SingboxServerAdded{}, fmt.Errorf("shareLink is not one server share link sing-box can use; nothing was added")
+	case errors.Is(err, subscription.ErrMemberDuplicate):
+		return mcpsrv.SingboxServerAdded{}, fmt.Errorf("this server is already in the subscription; nothing was added")
+	case err != nil:
+		l.subLog.Warn("subscription-member-add", label, "Failed to add a server (MCP); the cause is not journalled here because it can quote the share link")
+		return mcpsrv.SingboxServerAdded{}, fmt.Errorf("the server could not be added and the subscription is unchanged. Adding the same link in the web interface shows why")
+	case updated == nil:
+		return mcpsrv.SingboxServerAdded{}, fmt.Errorf("adding the server returned no record")
+	}
+	var added string
+	for _, m := range updated.Members {
+		if !before[m.Tag] {
+			added = m.Tag
+			break
+		}
+	}
+	if added == "" {
+		l.subLog.Warn("subscription-member-add", label, "Share link stored among rejected or informational entries, no server added (MCP)")
+		return mcpsrv.SingboxServerAdded{}, fmt.Errorf("the link was not taken as a server: the subscription recorded it among its rejected or informational entries, and its servers are unchanged. The web interface shows why")
+	}
+	l.subLog.Info("subscription-member-add", label, "Server added (MCP)")
+	return mcpsrv.SingboxServerAdded{SubscriptionID: id, GroupTag: updated.SelectorTag, MemberTag: added, MemberCount: len(updated.MemberTags)}, nil
+}
+
+func errNotInline() error {
+	return fmt.Errorf("only a pasted (sourceType inline) subscription takes servers by hand; this one gets its list from its source")
 }

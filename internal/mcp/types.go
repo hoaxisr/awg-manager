@@ -168,6 +168,74 @@ type SingboxStaging struct {
 	ValidationError string `json:"validationError,omitempty" jsonschema:"non-empty means applying this draft would fail"`
 }
 
+// SingboxDNSServer is one DNS server of the sing-box router. Detour is what
+// the "Detour (outbound)" field of the web form shows; empty means the
+// server is dialled directly.
+type SingboxDNSServer struct {
+	Tag        string `json:"tag" jsonschema:"id set_singbox_dns_server_detour takes"`
+	Type       string `json:"type" jsonschema:"udp|tls|https|quic|h3|local|fakeip; local and fakeip connect to no server and take no detour"`
+	Server     string `json:"server,omitempty"`
+	ServerPort int    `json:"serverPort,omitempty"`
+	Detour     string `json:"detour,omitempty" jsonschema:"outbound the server is reached through; empty means directly"`
+	// Managed marks the server awg-manager keeps dialled directly; it
+	// takes no detour.
+	Managed bool `json:"managed" jsonschema:"true means awg-manager owns this server and it always goes directly — it takes no detour"`
+}
+
+// MaxRuleSetsInOutput caps one page of list_singbox_rulesets: a router
+// can carry a geosite set per category.
+const MaxRuleSetsInOutput = 100
+
+// SingboxRuleSet is one rule set of the sing-box router. Only the host of
+// a remote set's URL is returned, as for a subscription: a self-hosted list
+// can carry a token in its path or query.
+type SingboxRuleSet struct {
+	Tag            string `json:"tag" jsonschema:"id set_singbox_ruleset_detour takes"`
+	Type           string `json:"type" jsonschema:"remote (downloaded by sing-box), local or inline; only remote sets are downloaded and take a download detour"`
+	Format         string `json:"format,omitempty" jsonschema:"binary|source"`
+	Host           string `json:"host,omitempty" jsonschema:"host of a remote set's URL; the rest of the URL is never returned"`
+	DownloadDetour string `json:"downloadDetour,omitempty" jsonschema:"outbound a remote set is downloaded through (\"Скачивать через\" in the web interface); empty means directly"`
+}
+
+// SingboxGroupInput is a new group of the sing-box router. The probe
+// settings are not taken: the group gets the ones the web form starts
+// with, and the user tunes them in the web interface.
+type SingboxGroupInput struct {
+	Tag     string
+	Type    string // selector|urltest|fallback, trimmed and lowercased
+	Members []string
+}
+
+// SingboxAggregateGroup is a group that gathers the servers of several
+// subscriptions.
+type SingboxAggregateGroup struct {
+	ID              string   `json:"id"`
+	Label           string   `json:"label" jsonschema:"the user's name for it"`
+	Tag             string   `json:"tag" jsonschema:"the group's outbound tag — what routing rules point at and get_singbox_outbound takes"`
+	Mode            string   `json:"mode" jsonschema:"selector|urltest|fallback"`
+	SubscriptionIDs []string `json:"subscriptionIds" jsonschema:"subscriptions whose servers it gathers, in member order"`
+	Enabled         bool     `json:"enabled"`
+	ProxyInterface  string   `json:"proxyInterface,omitempty" jsonschema:"Keenetic Proxy0/Proxy1… interface created for it, when NDMS proxy mode is on"`
+}
+
+// SingboxAggregateGroupInput is a new aggregate group. Mode arrives
+// trimmed and lowercased; empty means urltest, the service's default for
+// aggregate groups.
+type SingboxAggregateGroupInput struct {
+	Label           string
+	Tag             string // "" lets the service name it agg-<id>
+	Mode            string
+	SubscriptionIDs []string
+}
+
+// SingboxServerAdded is the result of adding a server to a subscription.
+type SingboxServerAdded struct {
+	SubscriptionID string `json:"subscriptionId"`
+	GroupTag       string `json:"groupTag" jsonschema:"the subscription's group, now with the new server"`
+	MemberTag      string `json:"memberTag" jsonschema:"tag of the new server in that group"`
+	MemberCount    int    `json:"memberCount" jsonschema:"servers in the group after the call"`
+}
+
 // SingboxDelay is one latency probe. Reachable exists because the delay
 // test answers 0 both for "did not respond" and for a real zero, and 0 ms
 // reads as an excellent result.

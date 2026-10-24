@@ -81,10 +81,17 @@ type (
 	// land in the router's staging draft; nothing reaches traffic until
 	// ApplyStaging runs.
 	SingboxRouter interface {
+		GetSettings(ctx context.Context) (storage.SingboxRouterSettings, error)
 		ListRules(ctx context.Context) ([]router.Rule, error)
 		ListCompositeOutbounds(ctx context.Context) ([]router.CompositeOutboundView, error)
+		ListDNSServers(ctx context.Context) ([]router.DNSServer, error)
+		ListRuleSets(ctx context.Context) ([]router.RuleSet, error)
 		StagingStatus(ctx context.Context) router.StagingStatus
 		BulkSetRuleOutbound(ctx context.Context, indices []int, outbound string) error
+		AddCompositeOutbound(ctx context.Context, o router.Outbound) error
+		SetCompositeOutboundMembers(ctx context.Context, tag string, members []string) error
+		SetDNSServerDetour(ctx context.Context, tag, detour string) error
+		BulkSetRuleSetDetour(ctx context.Context, tags []string, detour string) error
 		ApplyStaging(ctx context.Context) (singboxorch.ValidationResult, error)
 		DiscardStaging(ctx context.Context) error
 	}
@@ -96,6 +103,8 @@ type (
 		Update(id string, patch subscription.UpdatePatch) (*subscription.Subscription, error)
 		ListGroups() []subscription.AggregateGroup
 		SetActiveMember(ctx context.Context, id, memberTag string) error
+		CreateGroup(ctx context.Context, in subscription.GroupCreateInput) (*subscription.AggregateGroup, error)
+		AddManualMember(ctx context.Context, id, shareLink string) (*subscription.Subscription, error)
 	}
 	// ClashState reads the running engine: which member each group routes
 	// through and the delays it has on record. Satisfied by

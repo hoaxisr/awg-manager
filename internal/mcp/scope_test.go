@@ -258,3 +258,34 @@ func TestScope_ReadOnlyKeyAndSubscriptions(t *testing.T) {
 		}
 	}
 }
+
+// TestScope_ReadOnlyKeyAndSingboxEdits — новые правки sing-box для ключа
+// «только чтение» закрыты: правка роутера ложится в общий с веб-интерфейсом
+// черновик, а запись подписок применяется сразу. Списки DNS-серверов и
+// наборов правил ему открыты. Аргументы у каждого вызова рабочие: отказ
+// говорит о ключе, а не о вводе.
+func TestScope_ReadOnlyKeyAndSingboxEdits(t *testing.T) {
+	s := scopedSession(t, true)
+	for name, args := range map[string]map[string]any{
+		"create_singbox_outbound_group":      {"tag": "new-group", "type": "selector", "members": []any{"vless-nl"}},
+		"set_singbox_outbound_group_members": {"tag": "auto", "members": []any{"vless-nl"}},
+		"set_singbox_dns_server_detour":      {"tag": "dns-remote", "detour": "vless-nl"},
+		"set_singbox_ruleset_detour":         {"tags": []any{"geosite-ru"}, "detour": "vless-nl"},
+		"create_singbox_subscription_group":  {"label": "Both", "subscriptionIds": []any{"706dcf33aabbccddeeff0011"}},
+		"add_singbox_subscription_server":    {"subscriptionId": "706dcf33aabbccddeeff0011", "shareLink": "vless://u@h.example.net:443#x"},
+	} {
+		res, _ := callTool(t, s, name, args)
+		if !res.IsError || !strings.Contains(strings.ToLower(toolText(res)), "read-only") {
+			t.Errorf("%s: a read-only key must be refused with the cause named: %q", name, toolText(res))
+		}
+	}
+	_, out := callTool(t, s, "list_singbox_dns_servers", nil)
+	for _, srv := range out["servers"].([]any) {
+		if m := srv.(map[string]any); m["tag"] == "dns-remote" && m["detour"] != nil {
+			t.Fatalf("a refused write must not have been applied: %v", m)
+		}
+	}
+	if res, _ := callTool(t, s, "list_singbox_rulesets", nil); res.IsError {
+		t.Errorf("list_singbox_rulesets must be allowed on a read-only key: %s", toolText(res))
+	}
+}

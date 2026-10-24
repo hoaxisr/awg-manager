@@ -141,6 +141,9 @@ func (m *mockRouterSvc) AddCompositeOutbound(ctx context.Context, o router.Outbo
 func (m *mockRouterSvc) UpdateCompositeOutbound(ctx context.Context, tag string, o router.Outbound) error {
 	return nil
 }
+func (m *mockRouterSvc) SetCompositeOutboundMembers(ctx context.Context, tag string, members []string) error {
+	return nil
+}
 func (m *mockRouterSvc) DeleteCompositeOutbound(ctx context.Context, tag string, force bool) error {
 	return nil
 }
@@ -168,6 +171,9 @@ func (m *mockRouterSvc) ListDNSServers(ctx context.Context) ([]router.DNSServer,
 }
 func (m *mockRouterSvc) AddDNSServer(ctx context.Context, s router.DNSServer) error { return nil }
 func (m *mockRouterSvc) UpdateDNSServer(ctx context.Context, tag string, s router.DNSServer) error {
+	return nil
+}
+func (m *mockRouterSvc) SetDNSServerDetour(ctx context.Context, tag, detour string) error {
 	return nil
 }
 func (m *mockRouterSvc) DeleteDNSServer(ctx context.Context, tag string, force bool) error {

@@ -2314,6 +2314,21 @@ type fakeRouter struct {
 	// listErr mirrors a draft or config file the router cannot parse
 	// (orchestrator.LoadEffective).
 	listErr error
+
+	settings storage.SingboxRouterSettings
+	dns      []router.DNSServer
+	ruleSets []router.RuleSet
+	// The edits record what they received; editErr fails every one of
+	// them, and edits counts the calls that reached the router.
+	addedGroup  router.Outbound
+	membersTag  string
+	members     []string
+	dnsTag      string
+	dnsDetour   string
+	ruleSetTags []string
+	ruleSetVia  string
+	editErr     error
+	edits       int
 }
 
 func (f *fakeRouter) ListRules(context.Context) ([]router.Rule, error) { return f.rules, nil }
@@ -2333,6 +2348,31 @@ func (f *fakeRouter) ApplyStaging(context.Context) (singboxorch.ValidationResult
 	return f.applyRes, f.applyErr
 }
 func (f *fakeRouter) DiscardStaging(context.Context) error { f.discarded++; return nil }
+func (f *fakeRouter) GetSettings(context.Context) (storage.SingboxRouterSettings, error) {
+	return f.settings, nil
+}
+func (f *fakeRouter) ListDNSServers(context.Context) ([]router.DNSServer, error) { return f.dns, nil }
+func (f *fakeRouter) ListRuleSets(context.Context) ([]router.RuleSet, error)     { return f.ruleSets, nil }
+func (f *fakeRouter) AddCompositeOutbound(_ context.Context, o router.Outbound) error {
+	f.edits++
+	f.addedGroup = o
+	return f.editErr
+}
+func (f *fakeRouter) SetCompositeOutboundMembers(_ context.Context, tag string, members []string) error {
+	f.edits++
+	f.membersTag, f.members = tag, members
+	return f.editErr
+}
+func (f *fakeRouter) SetDNSServerDetour(_ context.Context, tag, detour string) error {
+	f.edits++
+	f.dnsTag, f.dnsDetour = tag, detour
+	return f.editErr
+}
+func (f *fakeRouter) BulkSetRuleSetDetour(_ context.Context, tags []string, detour string) error {
+	f.edits++
+	f.ruleSetTags, f.ruleSetVia = tags, detour
+	return f.editErr
+}
 
 func routerHarness() *fakeRouter {
 	yes := true

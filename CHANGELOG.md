@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Добавлено
+
+- **Группы, detour и подписки sing-box через MCP.** Новые инструменты делают через MCP то, что раньше было только в веб-интерфейсе: `create_singbox_outbound_group` создаёт группу selector, urltest или fallback с теми же настройками проверки, что и форма, `set_singbox_outbound_group_members` меняет её состав, `set_singbox_dns_server_detour` и `set_singbox_ruleset_detour` выбирают outbound для DNS-сервера («Detour (outbound)») и для скачивания наборов правил («Скачивать через»), а `list_singbox_dns_servers` и `list_singbox_rulesets` показывают, что можно менять. Эти правки попадают в черновик и действуют после `apply_singbox_staging`; в режиме fakeip-tun они отклоняются — он маршрутизирует по своему конфигу. `create_singbox_subscription_group` создаёт сводную группу из подписок, `add_singbox_subscription_server` добавляет сервер по ссылке во вставленную подписку — обе правки применяются сразу. Ссылка с учётными данными сервера не попадает ни в ответ агенту, ни в журнал. Ключ «только чтение» эти правки не делает.
+
 ## [2.19.20] - 2026-10-23
 
 ### Добавлено

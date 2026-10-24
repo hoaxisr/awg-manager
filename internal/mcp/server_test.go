@@ -94,6 +94,9 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 		"list_singbox_rules", "list_singbox_outbounds", "get_singbox_staging", "set_singbox_rule_outbound", "apply_singbox_staging", "discard_singbox_staging",
 		"list_singbox_subscriptions", "get_singbox_outbound", "set_singbox_subscription_enabled",
 		"set_singbox_subscription_mode", "set_singbox_subscription_active_member",
+		"list_singbox_dns_servers", "list_singbox_rulesets", "create_singbox_outbound_group", "set_singbox_outbound_group_members",
+		"set_singbox_dns_server_detour", "set_singbox_ruleset_detour",
+		"create_singbox_subscription_group", "add_singbox_subscription_server",
 	}
 	for _, n := range want {
 		if byName[n] == nil {
@@ -121,6 +124,27 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 		a := byName[n].Annotations
 		if a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint {
 			t.Errorf("%s must be annotated destructive", n)
+		}
+	}
+	// The sing-box edits destroy nothing: a router edit sits in the draft,
+	// and what the subscription writes create the user removes in the web
+	// interface. Creating twice is refused (the tag is taken) or makes a
+	// second object, so neither create tool is idempotent.
+	for _, n := range []string{"create_singbox_outbound_group", "set_singbox_outbound_group_members", "set_singbox_dns_server_detour",
+		"set_singbox_ruleset_detour", "create_singbox_subscription_group", "add_singbox_subscription_server"} {
+		a := byName[n].Annotations
+		if a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
+			t.Errorf("%s must be a non-destructive write", n)
+		}
+	}
+	for _, n := range []string{"create_singbox_outbound_group", "create_singbox_subscription_group", "add_singbox_subscription_server"} {
+		if byName[n].Annotations.IdempotentHint {
+			t.Errorf("%s must not claim to be idempotent", n)
+		}
+	}
+	for _, n := range []string{"list_singbox_dns_servers", "list_singbox_rulesets"} {
+		if !byName[n].Annotations.ReadOnlyHint {
+			t.Errorf("%s must be read-only", n)
 		}
 	}
 }
