@@ -3,6 +3,7 @@
 package mcptest
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net"
@@ -74,7 +75,21 @@ type Fake struct {
 	// engine's configuration to the reason: excluded by the user, or
 	// hidden by the subscription's filter.
 	NotOutbound map[string]string
-	Servers     []mcpsrv.ManagedServer
+	// DNSServers and RuleSets are the router's DNS servers and rule sets.
+	// Edits to them and to router groups change these fields at once and
+	// only mark the draft as present: the fake's draft holds rules alone, so
+	// applying or discarding it leaves such an edit in place.
+	DNSServers []mcpsrv.SingboxDNSServer
+	RuleSets   []mcpsrv.SingboxRuleSet
+	// RoutingMode is the sing-box router's routing mode; "fakeip-tun"
+	// makes the router edits refused, as localdeps does.
+	RoutingMode string
+	// DNSRules, DNSRewrites and RouterStatus back the router reads;
+	// RouterStatus.RoutingMode is taken from RoutingMode.
+	DNSRules     mcpsrv.SingboxDNSRules
+	DNSRewrites  []mcpsrv.SingboxDNSRewrite
+	RouterStatus mcpsrv.SingboxRouterStatus
+	Servers      []mcpsrv.ManagedServer
 	// Peers maps a server id to its clients; ServerAddresses maps it to
 	// the server's own tunnel address, which the allocator counts from.
 	Peers           map[string][]mcpsrv.ServerPeer
@@ -135,13 +150,39 @@ func New() *Fake {
 		NotOutbound: map[string]string{
 			"sub-706dcf33-x9": `it is excluded from subscription "AXO auto" by the user, so it is not an outbound`,
 		},
+		DNSServers: []mcpsrv.SingboxDNSServer{
+			{Tag: "dns-direct", Type: "udp", Server: "77.88.8.8", Managed: true},
+			{Tag: "dns-remote", Type: "https", Server: "dns.google"},
+			{Tag: "dns-local", Type: "local"},
+		},
+		DNSRules: mcpsrv.SingboxDNSRules{
+			Rules: []mcpsrv.SingboxDNSRule{
+				{Index: 0, Match: "rule_set geosite-ru", Action: "route", Server: "dns-direct"},
+				{Index: 1, Match: "(domain_suffix youtube.com OR domain_keyword google)", Action: "route", Server: "dns-remote"},
+			},
+			Final: "dns-remote", Strategy: "prefer_ipv4",
+		},
+		DNSRewrites: []mcpsrv.SingboxDNSRewrite{
+			{Pattern: "nas.home", IPs: []string{"192.168.1.5"}},
+			{Pattern: "*.keenetic.link", IPs: []string{"192.168.1.1"}, Managed: true},
+		},
+		RouterStatus: mcpsrv.SingboxRouterStatus{
+			Enabled: true, Active: true, DeviceMode: "policy", PolicyName: "VPN", PolicyExists: true, DeviceCount: 3,
+			Sniffer: true, Final: "direct", UDPTimeout: "5m",
+			QoSClasses: []mcpsrv.SingboxQoSClass{{Name: "games", DSCP: 46, Outbound: "direct", Enabled: true}},
+		},
+		RuleSets: []mcpsrv.SingboxRuleSet{
+			{Tag: "geosite-ru", Type: "remote", Format: "binary", Host: "raw.githubusercontent.com"},
+			{Tag: "geoip-ru", Type: "remote", Format: "binary", Host: "raw.githubusercontent.com", DownloadDetour: "vless-nl"},
+			{Tag: "my-sites", Type: "inline"},
+		},
 		Rules: []mcpsrv.SingboxRule{
 			{Index: 0, Match: "domain_suffix youtube.com, googlevideo.com", Action: "route", Outbound: "vless-nl"},
 			{Index: 1, Match: "rule_set geosite-ru", Action: "route", Outbound: "direct"},
 			{Index: 2, Match: "protocol dns", Action: "hijack-dns", Managed: true},
 		},
 		RouterOutbounds: []mcpsrv.SingboxOutbound{
-			{Tag: "auto", Type: "urltest", Source: "router"},
+			{Tag: "auto", Type: "urltest", Source: "router", ProbeURL: "https://www.gstatic.com/generate_204", ProbeInterval: "3m", ToleranceMs: 50},
 			{Tag: "manual", Type: "selector", Source: "router"},
 			{Tag: "sub-706dcf33", Type: "urltest", Source: "subscription", SubscriptionID: "706dcf33aabbccddeeff0011"},
 			{Tag: "sub-1a00ae3b", Type: "selector", Source: "subscription", SubscriptionID: "1a00ae3b0011223344556677"},
@@ -1337,6 +1378,9 @@ func (f *Fake) SetSingboxRuleOutbound(_ context.Context, index int, outbound str
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.RoutingMode == "fakeip-tun" {
+		return fmt.Errorf("the sing-box router runs in fakeip-tun mode, which routes by a configuration of its own that MCP does not edit; make this change in the web interface")
+	}
 	rules := f.routerRules()
 	if index < 0 || index >= len(rules) {
 		return fmt.Errorf("rule index %d is out of range (%d rules)", index, len(rules))
@@ -1391,6 +1435,492 @@ func (f *Fake) ControlSingbox(_ context.Context, action string) (mcpsrv.SingboxS
 		return mcpsrv.SingboxStatus{}, fmt.Errorf("unknown action %q (start|stop|restart)", action)
 	}
 	return f.Singbox, nil
+}
+
+func (f *Fake) ListSingboxDNSServers(context.Context) ([]mcpsrv.SingboxDNSServer, bool, error) {
+	if f.Err != nil {
+		return nil, false, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]mcpsrv.SingboxDNSServer(nil), f.DNSServers...), f.Draft != nil, nil
+}
+
+func (f *Fake) SingboxRouterStatus(context.Context) (mcpsrv.SingboxRouterStatus, error) {
+	if f.Err != nil {
+		return mcpsrv.SingboxRouterStatus{}, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st := f.RouterStatus
+	st.RoutingMode = f.RoutingMode
+	if st.RoutingMode == "" {
+		st.RoutingMode = "tproxy"
+	}
+	return st, nil
+}
+
+func (f *Fake) ListSingboxDNSRules(context.Context) (mcpsrv.SingboxDNSRules, error) {
+	if f.Err != nil {
+		return mcpsrv.SingboxDNSRules{}, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := f.DNSRules
+	out.Rules = append([]mcpsrv.SingboxDNSRule(nil), f.DNSRules.Rules...)
+	out.HasDraft = f.Draft != nil
+	return out, nil
+}
+
+func (f *Fake) ListSingboxDNSRewrites(context.Context) ([]mcpsrv.SingboxDNSRewrite, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]mcpsrv.SingboxDNSRewrite(nil), f.DNSRewrites...), nil
+}
+
+func (f *Fake) ListSingboxRuleSets(context.Context) ([]mcpsrv.SingboxRuleSet, bool, error) {
+	if f.Err != nil {
+		return nil, false, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]mcpsrv.SingboxRuleSet(nil), f.RuleSets...), f.Draft != nil, nil
+}
+
+// stageRouterEdit refuses a router edit in fakeip-tun mode and otherwise
+// marks the draft as present, as localdeps and the router service do.
+// Called with f.mu held.
+func (f *Fake) stageRouterEdit() error {
+	if f.RoutingMode == "fakeip-tun" {
+		return fmt.Errorf("the sing-box router runs in fakeip-tun mode, which routes by a configuration of its own that MCP does not edit; make this change in the web interface")
+	}
+	if f.Draft == nil {
+		f.Draft = append([]mcpsrv.SingboxRule{}, f.Rules...)
+	}
+	return nil
+}
+
+// groupMemberOf describes a member tag the way GetSingboxOutbound lists
+// one. Called with f.mu held.
+func (f *Fake) groupMemberOf(tag string) mcpsrv.SingboxGroupMember {
+	for _, o := range f.RouterOutbounds {
+		if o.Tag == tag {
+			return mcpsrv.SingboxGroupMember{Tag: tag, Kind: "group"}
+		}
+	}
+	for _, t := range f.SingboxTunnels {
+		if t.Tag == tag {
+			return mcpsrv.SingboxGroupMember{Tag: tag, Kind: "proxy", Protocol: t.Protocol, Server: t.Server, Port: t.Port, Transport: t.Transport, Security: t.Security}
+		}
+	}
+	return mcpsrv.SingboxGroupMember{Tag: tag, Kind: "other"}
+}
+
+// checkGroupMembers mirrors the service's member checks. Called with f.mu
+// held.
+func (f *Fake) checkGroupMembers(tag, kind string, members []string) error {
+	for _, m := range members {
+		switch {
+		case m == tag:
+			return fmt.Errorf("outbound %q: member %q references itself", tag, m)
+		case m == "direct" && kind == "urltest":
+			return fmt.Errorf("outbound %q: member %q is not allowed in urltest groups", tag, m)
+		case !f.knownOutbound(m):
+			return fmt.Errorf("unknown composite member: %s (members come from list_singbox_outbounds and list_singbox_tunnels)", m)
+		}
+	}
+	return nil
+}
+
+// fakeRuleMatch renders a rule input for the fake's rule list: enough for
+// a test to recognise the rule, not the adapter's full rendering.
+func fakeRuleMatch(in mcpsrv.SingboxRuleInput) string {
+	var parts []string
+	for label, values := range map[string][]string{"domain_suffix": in.DomainSuffix, "domain": in.Domain, "ip_cidr": in.IPCIDR, "rule_set": in.RuleSet} {
+		if len(values) > 0 {
+			parts = append(parts, label+" "+strings.Join(values, ", "))
+		}
+	}
+	slices.Sort(parts)
+	if len(parts) == 0 {
+		return "everything"
+	}
+	return strings.Join(parts, " AND ")
+}
+
+// editableRule mirrors the router's guard: a managed rule is neither
+// edited nor moved. Called with f.mu held.
+func (f *Fake) editableRule(rules []mcpsrv.SingboxRule, i int) error {
+	if i < 0 || i >= len(rules) {
+		return fmt.Errorf("rule index out of range (positions come from list_singbox_rules)")
+	}
+	if rules[i].Managed {
+		return fmt.Errorf("правило защищено: rule %d is managed by awg-manager", i)
+	}
+	return nil
+}
+
+func (f *Fake) checkRuleInput(in mcpsrv.SingboxRuleInput) error {
+	if in.Action == "route" && !f.knownOutbound(in.Outbound) {
+		return fmt.Errorf("правило не поддерживается: неизвестный outbound %q", in.Outbound)
+	}
+	for _, tag := range in.RuleSet {
+		if !slices.ContainsFunc(f.RuleSets, func(rs mcpsrv.SingboxRuleSet) bool { return rs.Tag == tag }) {
+			return fmt.Errorf("rule set %q not found", tag)
+		}
+	}
+	return nil
+}
+
+// reindex renumbers rules after an edit. Called with f.mu held.
+func reindex(rules []mcpsrv.SingboxRule) []mcpsrv.SingboxRule {
+	for i := range rules {
+		rules[i].Index = i
+	}
+	return rules
+}
+
+func (f *Fake) AddSingboxRule(_ context.Context, position int, in mcpsrv.SingboxRuleInput) error {
+	if f.Err != nil {
+		return f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rules := append([]mcpsrv.SingboxRule(nil), f.routerRules()...)
+	if position < 0 {
+		position = len(rules)
+	}
+	if position > len(rules) {
+		return fmt.Errorf("rule index out of range (positions come from list_singbox_rules)")
+	}
+	if err := f.checkRuleInput(in); err != nil {
+		return err
+	}
+	if err := f.stageRouterEdit(); err != nil {
+		return err
+	}
+	rule := mcpsrv.SingboxRule{Match: fakeRuleMatch(in), Action: in.Action, Outbound: in.Outbound}
+	f.Draft = reindex(slices.Insert(rules, position, rule))
+	return nil
+}
+
+func (f *Fake) UpdateSingboxRule(_ context.Context, index int, in mcpsrv.SingboxRuleInput) error {
+	if f.Err != nil {
+		return f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rules := append([]mcpsrv.SingboxRule(nil), f.routerRules()...)
+	if err := f.editableRule(rules, index); err != nil {
+		return err
+	}
+	if err := f.checkRuleInput(in); err != nil {
+		return err
+	}
+	if err := f.stageRouterEdit(); err != nil {
+		return err
+	}
+	rules[index] = mcpsrv.SingboxRule{Index: index, Match: fakeRuleMatch(in), Action: in.Action, Outbound: in.Outbound}
+	f.Draft = rules
+	return nil
+}
+
+func (f *Fake) DeleteSingboxRule(_ context.Context, index int) (mcpsrv.SingboxRule, error) {
+	if f.Err != nil {
+		return mcpsrv.SingboxRule{}, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rules := append([]mcpsrv.SingboxRule(nil), f.routerRules()...)
+	if err := f.editableRule(rules, index); err != nil {
+		return mcpsrv.SingboxRule{}, err
+	}
+	if err := f.stageRouterEdit(); err != nil {
+		return mcpsrv.SingboxRule{}, err
+	}
+	deleted := rules[index]
+	f.Draft = reindex(slices.Delete(rules, index, index+1))
+	return deleted, nil
+}
+
+func (f *Fake) MoveSingboxRule(_ context.Context, from, to int) error {
+	if f.Err != nil {
+		return f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rules := append([]mcpsrv.SingboxRule(nil), f.routerRules()...)
+	if err := f.editableRule(rules, from); err != nil {
+		return err
+	}
+	if to < 0 || to >= len(rules) {
+		return fmt.Errorf("rule index out of range (positions come from list_singbox_rules)")
+	}
+	if err := f.stageRouterEdit(); err != nil {
+		return err
+	}
+	r := rules[from]
+	rules = slices.Delete(rules, from, from+1)
+	f.Draft = reindex(slices.Insert(rules, to, r))
+	return nil
+}
+
+func (f *Fake) SetSingboxRouteFinal(_ context.Context, outbound string) error {
+	if f.Err != nil {
+		return f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.knownOutbound(outbound) {
+		return fmt.Errorf("unknown outbound tag %q for route.final", outbound)
+	}
+	if err := f.stageRouterEdit(); err != nil {
+		return err
+	}
+	f.RouterStatus.Final = outbound
+	return nil
+}
+
+func (f *Fake) AddSingboxRuleSet(_ context.Context, in mcpsrv.SingboxRuleSetInput) error {
+	if f.Err != nil {
+		return f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if slices.ContainsFunc(f.RuleSets, func(rs mcpsrv.SingboxRuleSet) bool { return rs.Tag == in.Tag }) {
+		return fmt.Errorf("rule set with this tag already exists: %q", in.Tag)
+	}
+	if err := f.stageRouterEdit(); err != nil {
+		return err
+	}
+	rs := mcpsrv.SingboxRuleSet{Tag: in.Tag, Type: in.Type}
+	if in.Type == "remote" {
+		rs.Format = cmp.Or(in.Format, "binary")
+		if i := strings.Index(in.URL, "://"); i >= 0 {
+			rs.Host, _, _ = strings.Cut(in.URL[i+3:], "/")
+		}
+	}
+	f.RuleSets = append(f.RuleSets, rs)
+	return nil
+}
+
+func (f *Fake) DeleteSingboxRuleSet(_ context.Context, tag string, force bool) (mcpsrv.SingboxRuleSetDeletion, error) {
+	if f.Err != nil {
+		return mcpsrv.SingboxRuleSetDeletion{}, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i := slices.IndexFunc(f.RuleSets, func(rs mcpsrv.SingboxRuleSet) bool { return rs.Tag == tag })
+	if i < 0 {
+		return mcpsrv.SingboxRuleSetDeletion{}, fmt.Errorf("rule set not found: %q (use list_singbox_rulesets)", tag)
+	}
+	var users []mcpsrv.SingboxRule
+	var indexes []int
+	for _, r := range f.routerRules() {
+		if strings.Contains(r.Match, "rule_set "+tag) {
+			users = append(users, r)
+			indexes = append(indexes, r.Index)
+		}
+	}
+	if len(users) > 0 && !force {
+		return mcpsrv.SingboxRuleSetDeletion{}, fmt.Errorf("rule set is referenced by one or more rules: %q referenced by route rules %v (edit or delete those rules first, or pass force)", tag, indexes)
+	}
+	if err := f.stageRouterEdit(); err != nil {
+		return mcpsrv.SingboxRuleSetDeletion{}, err
+	}
+	deleted := f.RuleSets[i]
+	f.RuleSets = slices.Delete(f.RuleSets, i, i+1)
+	return mcpsrv.SingboxRuleSetDeletion{Deleted: deleted, Rules: users}, nil
+}
+
+func (f *Fake) CreateSingboxOutboundGroup(_ context.Context, in mcpsrv.SingboxGroupInput) error {
+	if f.Err != nil {
+		return f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	switch in.Type {
+	case "selector", "urltest", "fallback":
+	default:
+		return fmt.Errorf("type must be selector, urltest or fallback")
+	}
+	if f.knownOutbound(in.Tag) {
+		return fmt.Errorf("outbound with this tag already exists: %q", in.Tag)
+	}
+	if err := f.checkGroupMembers(in.Tag, in.Type, in.Members); err != nil {
+		return err
+	}
+	if err := f.stageRouterEdit(); err != nil {
+		return err
+	}
+	f.RouterOutbounds = append(f.RouterOutbounds, mcpsrv.SingboxOutbound{Tag: in.Tag, Type: in.Type, Source: "router"})
+	if f.GroupMembers == nil {
+		f.GroupMembers = map[string][]mcpsrv.SingboxGroupMember{}
+	}
+	members := make([]mcpsrv.SingboxGroupMember, 0, len(in.Members))
+	for _, m := range in.Members {
+		members = append(members, f.groupMemberOf(m))
+	}
+	f.GroupMembers[in.Tag] = members
+	return nil
+}
+
+func (f *Fake) SetSingboxOutboundGroupMembers(_ context.Context, tag string, members []string) error {
+	if f.Err != nil {
+		return f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i := slices.IndexFunc(f.RouterOutbounds, func(o mcpsrv.SingboxOutbound) bool { return o.Tag == tag })
+	if i < 0 {
+		return fmt.Errorf("outbound not found: %q (use list_singbox_outbounds)", tag)
+	}
+	o := f.RouterOutbounds[i]
+	if o.Source == "subscription" {
+		return fmt.Errorf("%q is a subscription's group: its servers come from the subscription. Add one with add_singbox_subscription_server", tag)
+	}
+	if err := f.checkGroupMembers(tag, o.Type, members); err != nil {
+		return err
+	}
+	if err := f.stageRouterEdit(); err != nil {
+		return err
+	}
+	list := make([]mcpsrv.SingboxGroupMember, 0, len(members))
+	for _, m := range members {
+		list = append(list, f.groupMemberOf(m))
+	}
+	f.GroupMembers[tag] = list
+	return nil
+}
+
+func (f *Fake) SetSingboxDNSServerDetour(_ context.Context, tag, detour string) error {
+	if f.Err != nil {
+		return f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if detour == "direct" {
+		detour = ""
+	}
+	i := slices.IndexFunc(f.DNSServers, func(s mcpsrv.SingboxDNSServer) bool { return s.Tag == tag })
+	if i < 0 {
+		return fmt.Errorf("dns server not found: %q (use list_singbox_dns_servers)", tag)
+	}
+	s := f.DNSServers[i]
+	if detour != "" {
+		switch {
+		case s.Managed:
+			return fmt.Errorf("dns server %q is managed by awg-manager and always goes directly", tag)
+		case s.Type == "local" || s.Type == "fakeip":
+			return fmt.Errorf("dns server %q of type %q connects to no server", tag, s.Type)
+		case !f.knownOutbound(detour):
+			return fmt.Errorf("unknown outbound %q", detour)
+		}
+	}
+	if err := f.stageRouterEdit(); err != nil {
+		return err
+	}
+	f.DNSServers[i].Detour = detour
+	return nil
+}
+
+func (f *Fake) SetSingboxRuleSetDetour(_ context.Context, tags []string, detour string) error {
+	if f.Err != nil {
+		return f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if detour != "" && !f.knownOutbound(detour) {
+		return fmt.Errorf("invalid bulk selection: unknown outbound tag %q", detour)
+	}
+	idx := make([]int, 0, len(tags))
+	for _, tag := range tags {
+		i := slices.IndexFunc(f.RuleSets, func(rs mcpsrv.SingboxRuleSet) bool { return rs.Tag == tag })
+		if i < 0 {
+			return fmt.Errorf("rule set not found: %q (use list_singbox_rulesets)", tag)
+		}
+		if f.RuleSets[i].Type != "remote" {
+			return fmt.Errorf("invalid bulk selection: rule set %q is not type=remote (got %q)", tag, f.RuleSets[i].Type)
+		}
+		idx = append(idx, i)
+	}
+	if err := f.stageRouterEdit(); err != nil {
+		return err
+	}
+	for _, i := range idx {
+		f.RuleSets[i].DownloadDetour = detour
+	}
+	return nil
+}
+
+func (f *Fake) CreateSingboxAggregateGroup(_ context.Context, in mcpsrv.SingboxAggregateGroupInput) (mcpsrv.SingboxAggregateGroup, error) {
+	if f.Err != nil {
+		return mcpsrv.SingboxAggregateGroup{}, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	mode := in.Mode
+	switch mode {
+	case "":
+		mode = "urltest"
+	case "urltest", "selector", "fallback":
+	default:
+		return mcpsrv.SingboxAggregateGroup{}, fmt.Errorf("mode must be urltest, selector or fallback")
+	}
+	for _, id := range in.SubscriptionIDs {
+		if !slices.ContainsFunc(f.Subscriptions, func(s mcpsrv.SingboxSubscription) bool { return s.ID == id }) {
+			return mcpsrv.SingboxAggregateGroup{}, fmt.Errorf("sing-box subscription %q not found (use list_singbox_subscriptions)", id)
+		}
+	}
+	id := fmt.Sprintf("%024x", 0xa66+f.seq)
+	f.seq++
+	tag := in.Tag
+	if tag == "" {
+		// The daemon takes the id's first eight characters, which are
+		// random there; here the sequence sits at the end.
+		tag = "agg-" + id[len(id)-8:]
+	}
+	if f.knownOutbound(tag) {
+		return mcpsrv.SingboxAggregateGroup{}, fmt.Errorf("the tag %q is not allowed or already taken", tag)
+	}
+	f.RouterOutbounds = append(f.RouterOutbounds, mcpsrv.SingboxOutbound{Tag: tag, Type: mode, Source: "subscription", AggregateOf: slices.Clone(in.SubscriptionIDs)})
+	return mcpsrv.SingboxAggregateGroup{ID: id, Label: in.Label, Tag: tag, Mode: mode, SubscriptionIDs: slices.Clone(in.SubscriptionIDs), Enabled: true}, nil
+}
+
+// AddSingboxSubscriptionServer takes any link of the form scheme://… as a
+// server, except one whose fragment is "info" — the fake's stand-in for a
+// link the real service records as an informational entry instead.
+func (f *Fake) AddSingboxSubscriptionServer(_ context.Context, id, shareLink string) (mcpsrv.SingboxServerAdded, error) {
+	if f.Err != nil {
+		return mcpsrv.SingboxServerAdded{}, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i := slices.IndexFunc(f.Subscriptions, func(s mcpsrv.SingboxSubscription) bool { return s.ID == id })
+	if i < 0 {
+		return mcpsrv.SingboxServerAdded{}, fmt.Errorf("sing-box subscription %q not found (use list_singbox_subscriptions)", id)
+	}
+	sub := f.Subscriptions[i]
+	if sub.SourceType != "inline" {
+		return mcpsrv.SingboxServerAdded{}, fmt.Errorf("only a pasted (sourceType inline) subscription takes servers by hand")
+	}
+	if !strings.Contains(shareLink, "://") {
+		return mcpsrv.SingboxServerAdded{}, fmt.Errorf("shareLink is not one server share link sing-box can use; nothing was added")
+	}
+	if strings.HasSuffix(shareLink, "#info") {
+		return mcpsrv.SingboxServerAdded{}, fmt.Errorf("the link was not taken as a server: the subscription recorded it among its rejected or informational entries")
+	}
+	f.seq++
+	tag := fmt.Sprintf("%s-m%d", sub.GroupTag, f.seq)
+	if f.GroupMembers == nil {
+		f.GroupMembers = map[string][]mcpsrv.SingboxGroupMember{}
+	}
+	f.GroupMembers[sub.GroupTag] = append(f.GroupMembers[sub.GroupTag], mcpsrv.SingboxGroupMember{Tag: tag, Kind: "member"})
+	f.Subscriptions[i].MemberCount++
+	return mcpsrv.SingboxServerAdded{SubscriptionID: id, GroupTag: sub.GroupTag, MemberTag: tag, MemberCount: f.Subscriptions[i].MemberCount}, nil
 }
 
 func (f *Fake) OpenAPISpec() []byte { return f.Spec }

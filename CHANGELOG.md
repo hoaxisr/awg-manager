@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Добавлено
+
+- **Группы, detour и подписки sing-box через MCP.** Новые инструменты делают через MCP то, что раньше было только в веб-интерфейсе: `create_singbox_outbound_group` создаёт группу selector, urltest или fallback с теми же настройками проверки, что и форма, `set_singbox_outbound_group_members` меняет её состав, `set_singbox_dns_server_detour` и `set_singbox_ruleset_detour` выбирают outbound для DNS-сервера («Detour (outbound)») и для скачивания наборов правил («Скачивать через»), а `list_singbox_dns_servers` и `list_singbox_rulesets` показывают, что можно менять. Эти правки попадают в черновик и действуют после `apply_singbox_staging`; в режиме fakeip-tun они отклоняются — он маршрутизирует по своему конфигу. `create_singbox_subscription_group` создаёт сводную группу из подписок, `add_singbox_subscription_server` добавляет сервер по ссылке во вставленную подписку — обе правки применяются сразу. Ссылка с учётными данными сервера не попадает ни в ответ агенту, ни в журнал. Ключ «только чтение» эти правки не делает.
+- **Состояние маршрутизатора sing-box и DNS через MCP.** `get_singbox_router_status` показывает режим (tproxy, fakeip-tun, policy-tun), активен ли перехват, устройства, sniff, final, исключения портов и подсетей, DSCP-классы и проблемы конфигурации; `list_singbox_dns_rules` — DNS-правила с final и стратегией, `list_singbox_dns_rewrites` — записи DNS Rewrite; `get_singbox_outbound` и `list_singbox_outbounds` показывают адрес, интервал и допуск проверки групп urltest и fallback. В `list_singbox_rules` условия правила записываются явными OR и AND, как их объединяет sing-box, — раньше они склеивались через «;». В режиме fakeip-tun инструменты правил, групп, DNS и наборов правил читают конфиг этого режима, а не tproxy, а `set_singbox_rule_outbound` отклоняется, как и остальные правки маршрутизатора.
+- **Правила и наборы правил sing-box через MCP.** `add_singbox_rule` вставляет правило в нужную позицию (условия, route через outbound или reject), `update_singbox_rule` заменяет его целиком, `move_singbox_rule` переставляет, `delete_singbox_rule` удаляет; `set_singbox_route_final` меняет outbound для трафика, не попавшего под правила; `add_singbox_ruleset` добавляет набор remote или inline, `delete_singbox_ruleset` удаляет его (если набор используется, только с `force`). Системные правила (sniff, hijack-dns, обход приватных адресов) и правила awg-manager не правятся и не сдвигаются, выше системных ничего не ставится, outbound правила проверяется до записи. Всё — через черновик; в режиме fakeip-tun правки отклоняются.
+
 ## [2.19.20] - 2026-10-23
 
 ### Добавлено

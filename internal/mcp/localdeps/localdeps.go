@@ -33,6 +33,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
+	"github.com/hoaxisr/awg-manager/internal/singbox/dnsrewrite"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
@@ -81,12 +82,44 @@ type (
 	// land in the router's staging draft; nothing reaches traffic until
 	// ApplyStaging runs.
 	SingboxRouter interface {
+		GetStatus(ctx context.Context) (router.Status, error)
+		GetSettings(ctx context.Context) (storage.SingboxRouterSettings, error)
 		ListRules(ctx context.Context) ([]router.Rule, error)
 		ListCompositeOutbounds(ctx context.Context) ([]router.CompositeOutboundView, error)
+		ListDNSServers(ctx context.Context) ([]router.DNSServer, error)
+		ListDNSRules(ctx context.Context) ([]router.DNSRule, error)
+		GetDNSGlobals(ctx context.Context) (final, strategy, timeout string, err error)
+		ListRuleSets(ctx context.Context) ([]router.RuleSet, error)
 		StagingStatus(ctx context.Context) router.StagingStatus
 		BulkSetRuleOutbound(ctx context.Context, indices []int, outbound string) error
+		AddCompositeOutbound(ctx context.Context, o router.Outbound) error
+		SetCompositeOutboundMembers(ctx context.Context, tag string, members []string) error
+		SetDNSServerDetour(ctx context.Context, tag, detour string) error
+		BulkSetRuleSetDetour(ctx context.Context, tags []string, detour string) error
+		InsertRule(ctx context.Context, index int, r router.Rule) error
+		ReplaceUserRule(ctx context.Context, index int, r router.Rule) error
+		DeleteUserRule(ctx context.Context, index int) (router.Rule, error)
+		MoveUserRule(ctx context.Context, from, to int) error
+		SetRouteFinal(ctx context.Context, tag string) error
+		AddRuleSet(ctx context.Context, rs router.RuleSet) error
+		DeleteRuleSet(ctx context.Context, tag string, force bool) error
 		ApplyStaging(ctx context.Context) (singboxorch.ValidationResult, error)
 		DiscardStaging(ctx context.Context) error
+	}
+	// FakeIPRouter is the read half of router.FakeIPConfigService: the
+	// configuration the router routes by in fakeip-tun mode. It has no
+	// draft — the web interface edits it directly.
+	FakeIPRouter interface {
+		FakeIPListRules(ctx context.Context) ([]router.Rule, error)
+		FakeIPListCompositeOutbounds(ctx context.Context) ([]router.CompositeOutboundView, error)
+		FakeIPListDNSServers(ctx context.Context) ([]router.DNSServer, error)
+		FakeIPListDNSRules(ctx context.Context) ([]router.DNSRule, error)
+		FakeIPGetDNSGlobals(ctx context.Context) (final, strategy, timeout string, err error)
+		FakeIPListRuleSets(ctx context.Context) ([]router.RuleSet, error)
+	}
+	// DNSRewriteLister is the read half of *dnsrewrite.Service.
+	DNSRewriteLister interface {
+		List() ([]dnsrewrite.DNSRewrite, error)
 	}
 	// SubscriptionService is the subset of *subscription.Service MCP
 	// uses. List is sorted by label and then id (subscription.Store.List).
@@ -96,6 +129,8 @@ type (
 		Update(id string, patch subscription.UpdatePatch) (*subscription.Subscription, error)
 		ListGroups() []subscription.AggregateGroup
 		SetActiveMember(ctx context.Context, id, memberTag string) error
+		CreateGroup(ctx context.Context, in subscription.GroupCreateInput) (*subscription.AggregateGroup, error)
+		AddManualMember(ctx context.Context, id, shareLink string) (*subscription.Subscription, error)
 	}
 	// ClashState reads the running engine: which member each group routes
 	// through and the delays it has on record. Satisfied by
@@ -153,8 +188,14 @@ type Config struct {
 	Connections ConnectionLister
 	Diagnostics DiagnosticsRunner
 	// Router serves the sing-box routing-rule tools.
-	Router  SingboxRouter
-	Singbox SingboxOperator
+	Router SingboxRouter
+	// FakeIP reads the fakeip-tun configuration, which the router routes
+	// by in that mode instead of the tproxy one Router edits. nil makes the
+	// router's reads report it unavailable in fakeip-tun mode.
+	FakeIP FakeIPRouter
+	// DNSRewrites serves list_singbox_dns_rewrites.
+	DNSRewrites DNSRewriteLister
+	Singbox     SingboxOperator
 	// Subscriptions serves the subscription tools. nil makes them report
 	// that sing-box subscriptions are unavailable on this router.
 	Subscriptions SubscriptionService
@@ -1707,53 +1748,101 @@ func (l *Local) ServerPeerConfig(ctx context.Context, serverID, publicKey string
 // ruleMatchSummary renders a rule's matchers in words. A model picks a
 // rule by meaning ("the YouTube rule"), and reconstructing that from raw
 // matcher arrays is exactly the step it gets wrong.
-func ruleMatchSummary(r router.Rule) string {
-	var parts []string
-	add := func(label string, values []string) {
-		if len(values) > 0 {
-			parts = append(parts, label+" "+strings.Join(values, ", "))
+//
+// The connectives are spelled out the way sing-box combines a default rule
+// (configuration/route/rule): the destination fields are alternatives to
+// one another, so are the source ones, and the groups and every remaining
+// field must all hold. Within one field the values are alternatives too
+// ("domain_suffix a, b"). A rule set is rendered as a field of its own,
+// which is how sing-box matches all but a set holding one plain rule; that
+// one it folds into the destination group.
+//
+// extra carries fields router.Rule has no place for (a DNS rule's), as
+// label/values pairs: name ones join the destination alternatives, and
+// ones each add a condition.
+func ruleMatchSummary(r router.Rule, extra ...matchExtra) string {
+	field := func(label string, values []string) string {
+		if len(values) == 0 {
+			return ""
+		}
+		return label + " " + strings.Join(values, ", ")
+	}
+	var groups []string
+	anyOf := func(items ...string) {
+		var set []string
+		for _, it := range items {
+			if it != "" {
+				set = append(set, it)
+			}
+		}
+		switch len(set) {
+		case 0:
+		case 1:
+			groups = append(groups, set[0])
+		default:
+			groups = append(groups, "("+strings.Join(set, " OR ")+")")
 		}
 	}
-	add("domain_suffix", r.DomainSuffix)
-	add("domain", r.Domain)
-	add("ip_cidr", r.IPCIDR)
-	add("source_ip_cidr", r.SourceIPCIDR)
-	add("source_mac", r.SourceMACAddress)
-	add("rule_set", r.RuleSet)
-	add("inbound", r.Inbound)
+	private := ""
+	if r.IPIsPrivate != nil && *r.IPIsPrivate {
+		private = "destination is private"
+	}
+	destination := []string{field("domain_suffix", r.DomainSuffix), field("domain", r.Domain), field("ip_cidr", r.IPCIDR), private}
+	var conditions []string
+	for _, e := range extra {
+		for _, f := range e.name {
+			if f[1] != "" {
+				destination = append(destination, f[0]+" "+f[1])
+			}
+		}
+		for _, f := range e.and {
+			if f[1] != "" {
+				conditions = append(conditions, f[0]+" "+f[1])
+			}
+		}
+	}
+	anyOf(destination...)
+	ports := make([]string, 0, len(r.Port))
+	for _, p := range r.Port {
+		ports = append(ports, strconv.Itoa(p))
+	}
+	anyOf(field("port", ports))
+	anyOf(field("source_ip_cidr", r.SourceIPCIDR))
+	anyOf(field("source_mac", r.SourceMACAddress))
+	anyOf(field("rule_set", r.RuleSet))
+	anyOf(field("inbound", r.Inbound))
 	if r.Protocol != "" {
-		parts = append(parts, "protocol "+r.Protocol)
+		anyOf("protocol " + r.Protocol)
 	}
 	if r.Network != "" {
-		parts = append(parts, "network "+r.Network)
+		anyOf("network " + r.Network)
 	}
-	if len(r.Port) > 0 {
-		ports := make([]string, 0, len(r.Port))
-		for _, p := range r.Port {
-			ports = append(ports, strconv.Itoa(p))
-		}
-		parts = append(parts, "port "+strings.Join(ports, ", "))
-	}
-	if r.IPIsPrivate != nil && *r.IPIsPrivate {
-		parts = append(parts, "destination is private")
+	for _, c := range conditions {
+		anyOf(c)
 	}
 	if r.Type == "logical" && len(r.Rules) > 0 {
 		nested := make([]string, 0, len(r.Rules))
 		for _, sub := range r.Rules {
-			nested = append(nested, ruleMatchSummary(sub))
+			nested = append(nested, "("+ruleMatchSummary(sub)+")")
 		}
-		mode := r.Mode
+		mode := strings.ToUpper(r.Mode)
 		if mode == "" {
-			mode = "or"
+			mode = "OR"
 		}
-		parts = append(parts, "("+strings.Join(nested, " "+mode+" ")+")")
+		groups = append(groups, "("+strings.Join(nested, " "+mode+" ")+")")
 	}
-	if len(parts) == 0 {
+	if len(groups) == 0 {
 		// A rule with no matchers matches everything; saying nothing here
 		// would read as "this rule is empty".
 		return "everything"
 	}
-	return strings.Join(parts, "; ")
+	return strings.Join(groups, " AND ")
+}
+
+// matchExtra is a set of extra fields for ruleMatchSummary.
+type matchExtra struct {
+	name [][2]string
+	and  [][2]string
 }
 
 func singboxRule(i int, r router.Rule) mcpsrv.SingboxRule {
@@ -1765,18 +1854,23 @@ func singboxRule(i int, r router.Rule) mcpsrv.SingboxRule {
 	}
 	return mcpsrv.SingboxRule{
 		Index: i, Match: ruleMatchSummary(r), Action: action,
-		Outbound: r.Outbound, Managed: r.AwgmManaged != "",
+		Outbound: r.Outbound, Managed: r.AwgmManaged != "", System: router.IsSystemRule(r),
 	}
 }
 
 // ListSingboxRules reads through the staging slot, as the service does,
 // so an edit is visible at once — and reports hasDraft, because the rules
-// returned are then NOT what traffic is following.
+// returned are then NOT what traffic is following. In fakeip-tun mode the
+// rules come from that mode's configuration (routerReads).
 func (l *Local) ListSingboxRules(ctx context.Context) ([]mcpsrv.SingboxRule, bool, error) {
 	if l.c.Router == nil {
 		return nil, false, errUnavailable("sing-box router")
 	}
-	rules, err := l.c.Router.ListRules(ctx)
+	rr, err := l.routerReads(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	rules, err := rr.rules(ctx)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1784,7 +1878,7 @@ func (l *Local) ListSingboxRules(ctx context.Context) ([]mcpsrv.SingboxRule, boo
 	for i, r := range rules {
 		out = append(out, singboxRule(i, r))
 	}
-	return out, l.c.Router.StagingStatus(ctx).HasDraft, nil
+	return out, l.hasDraft(ctx, rr.fakeIP), nil
 }
 
 func (l *Local) SingboxStaging(ctx context.Context) (mcpsrv.SingboxStaging, error) {
@@ -1810,6 +1904,9 @@ func (l *Local) SingboxStaging(ctx context.Context) (mcpsrv.SingboxStaging, erro
 func (l *Local) SetSingboxRuleOutbound(ctx context.Context, index int, outbound string) error {
 	if l.c.Router == nil {
 		return errUnavailable("sing-box router")
+	}
+	if err := l.requireTProxyRouter(ctx); err != nil {
+		return err
 	}
 	rules, err := l.c.Router.ListRules(ctx)
 	if err != nil {
