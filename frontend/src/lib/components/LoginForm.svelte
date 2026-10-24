@@ -5,7 +5,7 @@
 	import type { SegmentedOption } from '$lib/components/ui/segmentedControl';
 	import BrandLogoMark from '$lib/components/layout/BrandLogoMark.svelte';
 	import type { LoginMethod } from '$lib/types';
-	import { m } from '$lib/i18n';
+	import { m, locale, LOCALES, LOCALE_LABELS, type Locale } from '$lib/i18n';
 
 	let login = $state('');
 	let password = $state('');
@@ -25,6 +25,13 @@
 	});
 	const isEntware = $derived($method === 'entware');
 
+	// Язык выбирают и до входа: настройки за авторизацией, а форма входа —
+	// первое, что видит пользователь. Самоназвания языков не переводятся.
+	const languageOptions: SegmentedOption<Locale>[] = LOCALES.map((value) => ({
+		value,
+		label: LOCALE_LABELS[value]
+	}));
+
 	async function handleSubmit() {
 		if (!login || !password) return;
 
@@ -42,6 +49,15 @@
 
 <div class="login-container">
 	<div class="login-card">
+		<div class="login-language">
+			<SegmentedControl
+				value={locale.current}
+				options={languageOptions}
+				ariaLabel={m.settings_language_label()}
+				onchange={(next) => locale.set(next)}
+			/>
+		</div>
+
 		<div class="login-header">
 			<div class="login-brand">
 				<BrandLogoMark dimension={52} />
@@ -144,6 +160,12 @@
 		border-radius: var(--radius);
 		border: 1px solid var(--border);
 		box-shadow: var(--shadow);
+	}
+
+	.login-language {
+		display: flex;
+		justify-content: flex-end;
+		margin: -0.75rem -0.75rem 0.5rem 0;
 	}
 
 	.login-header {
