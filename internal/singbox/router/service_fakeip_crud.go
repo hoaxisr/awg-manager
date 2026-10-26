@@ -269,6 +269,8 @@ func (s *ServiceImpl) FakeIPUpdateCompositeOutbound(ctx context.Context, tag str
 // туннелем sing-box, AWG-выходом, композитом подписки или встроенным
 // (direct/block/dns). Конфликт внутри своего слота ловит сам RouterConfig;
 // пустой конфиг здесь оставляет в isKnownOutboundTag только чужие каталоги.
+// Каталоги знают не всё (серверы подписок, прокси устройств, ручной слот),
+// поэтому сверяемся и с outbound'ами включённых слотов, кроме своих двух.
 // sing-box с одинаковым тегом в двух слотах не стартует (F732). oldTag —
 // прежний тег при правке: неизменённый тег не перепроверяется.
 func (s *ServiceImpl) validateCompositeTag(ctx context.Context, oldTag string, o Outbound) error {
@@ -276,7 +278,11 @@ func (s *ServiceImpl) validateCompositeTag(ctx context.Context, oldTag string, o
 	if tag == "" || tag == oldTag {
 		return nil
 	}
-	if s.isKnownOutboundTag(ctx, tag, NewEmptyConfig()) {
+	taken := s.isKnownOutboundTag(ctx, tag, NewEmptyConfig())
+	if !taken && s.deps.Orch != nil {
+		taken = s.deps.Orch.EnabledOutboundTags(orchestrator.SlotRouter, orchestrator.SlotFakeIP)[tag]
+	}
+	if taken {
 		return fmt.Errorf("%w: %q", ErrOutboundTagConflict, tag)
 	}
 	return nil
