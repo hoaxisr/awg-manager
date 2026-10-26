@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 )
 
 // Sentinel errors для Batcher (DataLoader pattern для RCI reads).
@@ -33,11 +34,24 @@ type HTTPError struct {
 	Method string
 	Path   string
 	Status int
+	Detail string // X-Detail отказа NDMS («0x2312, not identified»); без него 403 в журнале неразличимы (#1080)
 	Body   []byte
 }
 
+func newHTTPError(method, path string, resp *http.Response, body []byte) *HTTPError {
+	return &HTTPError{Method: method, Path: path, Status: resp.StatusCode, Detail: resp.Header.Get("X-Detail"), Body: body}
+}
+
+// status — «status 403» или «status 403 (0x2312, not identified)».
+func (e *HTTPError) status() string {
+	if e.Detail == "" {
+		return fmt.Sprintf("status %d", e.Status)
+	}
+	return fmt.Sprintf("status %d (%s)", e.Status, e.Detail)
+}
+
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("rci %s %s: status %d", e.Method, e.Path, e.Status)
+	return fmt.Sprintf("rci %s %s: %s", e.Method, e.Path, e.status())
 }
 
 // NDMSAppError represents an application-level NDMS failure: HTTP 200 but

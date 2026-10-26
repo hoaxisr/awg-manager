@@ -129,6 +129,35 @@ func TestClient_Get_NonOKStatus(t *testing.T) {
 	}
 }
 
+// #1080: без X-Detail тысячи 403 в журнале неразличимы — код отказа NDMS
+// обязан дойти и до ошибки, и до журнала.
+func TestClient_NonOKStatus_CarriesXDetail(t *testing.T) {
+	c, _ := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Detail", "0x2312, not identified")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	rec := &recordingLogger{}
+	c.SetAppLogger(rec)
+
+	var dst map[string]any
+	getErr := c.Get(context.Background(), "/show/version", &dst)
+	_, postErr := c.Post(context.Background(), map[string]any{})
+	for _, err := range []error{getErr, postErr} {
+		var herr *HTTPError
+		if !errors.As(err, &herr) || herr.Detail != "0x2312, not identified" {
+			t.Errorf("err = %v, want HTTPError with X-Detail", err)
+		}
+	}
+	if len(rec.entries) != 2 {
+		t.Fatalf("expected 2 log entries, got %d", len(rec.entries))
+	}
+	for _, e := range rec.entries {
+		if e.message != "status 403 (0x2312, not identified)" {
+			t.Errorf("log message = %q", e.message)
+		}
+	}
+}
+
 func TestClient_Get_DecodeError(t *testing.T) {
 	c, _ := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `not-json`)
