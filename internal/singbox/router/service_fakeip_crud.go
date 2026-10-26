@@ -239,6 +239,9 @@ func (s *ServiceImpl) FakeIPAddCompositeOutbound(ctx context.Context, o Outbound
 		}
 	}
 	return s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error {
+		if err := s.validateCompositeTag(ctx, "", o); err != nil {
+			return err
+		}
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
 			return err
 		}
@@ -252,11 +255,31 @@ func (s *ServiceImpl) FakeIPUpdateCompositeOutbound(ctx context.Context, tag str
 		if bindErr != nil && !keepsBind(c, tag, o) {
 			return bindErr
 		}
+		if err := s.validateCompositeTag(ctx, tag, o); err != nil {
+			return err
+		}
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
 			return err
 		}
 		return c.UpdateCompositeOutbound(tag, o)
 	})
+}
+
+// validateCompositeTag отклоняет тег группы, занятый выходом другого каталога:
+// туннелем sing-box, AWG-выходом, композитом подписки или встроенным
+// (direct/block/dns). Конфликт внутри своего слота ловит сам RouterConfig;
+// пустой конфиг здесь оставляет в isKnownOutboundTag только чужие каталоги.
+// sing-box с одинаковым тегом в двух слотах не стартует (F732). oldTag —
+// прежний тег при правке: неизменённый тег не перепроверяется.
+func (s *ServiceImpl) validateCompositeTag(ctx context.Context, oldTag string, o Outbound) error {
+	tag := strings.TrimSpace(o.Tag)
+	if tag == "" || tag == oldTag {
+		return nil
+	}
+	if s.isKnownOutboundTag(ctx, tag, NewEmptyConfig()) {
+		return fmt.Errorf("%w: %q", ErrOutboundTagConflict, tag)
+	}
+	return nil
 }
 
 // validateCompositeMembers отклоняет selector/urltest с member-тегами,

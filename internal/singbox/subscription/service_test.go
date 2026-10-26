@@ -2908,3 +2908,38 @@ func TestService_AddManualMember_ReloadFailureRollsBackStore(t *testing.T) {
 		t.Fatalf("MemberTags = %v, want прежние %v", got.MemberTags, sub.MemberTags)
 	}
 }
+
+// F733: член с тем же тегом, но другими метаданными (коллизия 4-байтового
+// хэша тега) — отказ, а не перезапись чужого outbound по тегу.
+func TestAddManualMember_TagCollisionRejected(t *testing.T) {
+	svc, _ := newTestService(t)
+	sub, err := svc.Create(context.Background(), CreateInput{
+		Label:   "manual",
+		Inline:  "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@seed.example:443?security=tls&sni=s.sni#S",
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ручной член получает тег по полному ключу — как и повторное добавление.
+	link := "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a.sni#A"
+	added, err := svc.AddManualMember(context.Background(), sub.ID, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Тот же тег, другой сервер — так выглядит коллизия: проверка по
+	// метаданным его не узнаёт.
+	members := append([]MemberInfo(nil), added.Members...)
+	members[len(members)-1].Server = "other.example"
+	if err := svc.store.SetMembers(sub.ID, members, nil); err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.AddManualMember(context.Background(), sub.ID, link)
+	if !errors.Is(err, ErrMemberDuplicate) {
+		t.Fatalf("tag collision must be ErrMemberDuplicate, got %v", err)
+	}
+	got, _ := svc.store.Get(sub.ID)
+	if len(got.MemberTags) != 2 {
+		t.Fatalf("MemberTags=%v, want the two members before the collision", got.MemberTags)
+	}
+}

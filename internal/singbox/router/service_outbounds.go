@@ -163,6 +163,9 @@ func (s *ServiceImpl) AddCompositeOutbound(ctx context.Context, o Outbound) erro
 		}
 	}
 	return s.withConfig(ctx, "outbounds", func(c *RouterConfig) error {
+		if err := s.validateCompositeTag(ctx, "", o); err != nil {
+			return err
+		}
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
 			return err
 		}
@@ -175,6 +178,9 @@ func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o
 	if err := s.withConfig(ctx, "outbounds", func(c *RouterConfig) error {
 		if bindErr != nil && !keepsBind(c, tag, o) {
 			return bindErr
+		}
+		if err := s.validateCompositeTag(ctx, tag, o); err != nil {
+			return err
 		}
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
 			return err

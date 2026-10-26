@@ -1521,6 +1521,11 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 		}
 		return nil, ErrMemberDuplicate
 	}
+	// Тот же тег при других метаданных — коллизия 4-байтового хэша тега:
+	// AddOutbound пишет по тегу и молча перезаписал бы чужой сервер (F733).
+	if slices.Contains(sub.MemberTags, tag) {
+		return nil, fmt.Errorf("%w: tag %s collides with an existing member", ErrMemberDuplicate, tag)
+	}
 
 	// Fail-closed write order: mutate sing-box config (idempotent
 	// upserts) BEFORE persisting to storage. If either AddOutbound
