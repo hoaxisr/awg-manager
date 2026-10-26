@@ -23,7 +23,7 @@ awg-manager/
 
 ### Бекенд
 
-Требуется Go 1.23. Для запуска бекенда локально — стандартный `go run`:
+Требуется Go **не ниже 1.25.0** — минимальная версия указана в `go.mod` корня и вложенного модуля `awgmproto`. Для совпадения с CI используйте **Go 1.26.4**; этот же выпуск закреплён в тестовом Docker-образе. Для запуска бекенда локально — стандартный `go run`:
 
 ```bash
 go run ./cmd/awg-manager
@@ -186,13 +186,13 @@ IPK-пакет для Entware (Keenetic):
 
 ## Тестирование
 
-Команды ниже одинаково работают на macOS, Linux и Windows — нужен только Docker (Desktop или Engine) с Compose v2.
+Для backend-тестов на macOS, Linux и Windows нужен Docker (Desktop или Engine) с Linux-контейнерами и Compose v2 или новее. Все команды запускаются из корня репозитория. Для frontend-тестов отдельно нужны Node.js и npm.
 
 ### Backend (Go)
 
-Большая часть backend-тестов завязана на Linux (ndms, iptables, sing-box и т.д.). Локально их гоняют в Linux-контейнере из `Dockerfile.go-test`.
+Большая часть backend-тестов завязана на Linux (ndms, iptables, sing-box и т.д.). `docker-compose.go-test.yml` использует официальный образ `golang:1.26.4-bookworm`; отдельный Dockerfile не нужен. В образе есть C-компилятор для `-race`. Рабочий каталог монтируется в `/src`, а кэши Go сохраняются между запусками. Разрешение `NET_RAW` нужно тесту ICMP на loopback; доступ к устройствам роутера и privileged-режим не требуются.
 
-**Обёртка (удобнее всего):**
+**Обёртка для macOS/Linux (Bash):**
 
 ```bash
 ./scripts/dev/go-test-docker.sh start
@@ -202,6 +202,19 @@ IPK-пакет для Entware (Keenetic):
 ./scripts/dev/go-test-docker.sh coverage
 ./scripts/dev/go-test-docker.sh stop
 ```
+
+**Обёртка для Windows (PowerShell или cmd):**
+
+```powershell
+.\scripts\dev\dev-backend-tests.bat start
+.\scripts\dev\dev-backend-tests.bat run ./internal/managed
+.\scripts\dev\dev-backend-tests.bat run ./internal/managed -run TestService_Create
+.\scripts\dev\dev-backend-tests.bat full
+.\scripts\dev\dev-backend-tests.bat coverage
+.\scripts\dev\dev-backend-tests.bat stop
+```
+
+Обе обёртки используют фиксированное имя контейнера `awgm-go-test-runner`: одновременно работает один runner. Остановите его перед сменой способа запуска или рабочей копии проекта. Команды Compose ниже можно запускать и из PowerShell.
 
 **Или напрямую через docker compose:**
 
@@ -218,6 +231,17 @@ docker compose -f docker-compose.go-test.yml --profile oneshot run --rm test ./i
 ```
 
 Кэши Go (`go-build`, `go-mod`) сохраняются в `.cache/docker-go-test/` между запусками.
+
+Для проверок с теми же флагами, что в CI, запустите постоянный `runner` одной из обёрток или через Compose и выполните:
+
+```bash
+docker exec awgm-go-test-runner go vet ./...
+docker exec awgm-go-test-runner go test ./... -count=1 -race
+docker exec -w /src/awgmproto awgm-go-test-runner go vet ./...
+docker exec -w /src/awgmproto awgm-go-test-runner go test ./... -count=1 -race
+```
+
+`awgmproto` — отдельный Go-модуль: `./...` из корня его не проверяет. При первом обращении к его зависимостям контейнеру нужен доступ к сети. Сам Go на хосте для этих команд не требуется.
 
 **Как прогонять во время разработки:**
 
@@ -251,7 +275,7 @@ git rebase origin/develop
 
 - В описании PR кратко опиши что изменилось и зачем.
 - Если добавлял/менял API — убедись, что `swagger.yaml` обновлён и закоммичен.
-- Перед PR прогони проверки из раздела [CI](#ci): backend — `gofmt -l`, `go vet ./...`, `./scripts/dev/go-test-docker.sh full` (и `-race`, если трогал конкурентный код); frontend — `npm run check`, `npm run lint`, `npm test` во `frontend/` (если менялся соответствующий код).
+- Перед PR прогони проверки из раздела [CI](#ci), если менялся соответствующий код: backend — `gofmt -l` без `vendor/`, `go vet ./...` и `go test ./... -count=1 -race` в корне и отдельно в `awgmproto`; frontend — `npm run check -- --threshold warning`, `npm run lint`, `npm test` во `frontend/`. Локальный `full` обеих обёрток проверяет только корневой Go-модуль без `-race` и не заменяет весь набор CI.
 - Старайся не смешивать рефакторинг и новую функциональность в одном PR.
 
 ## Conventional Commits

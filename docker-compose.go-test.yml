@@ -1,0 +1,26 @@
+x-go-test: &go-test
+  image: golang:1.26.4-bookworm
+  working_dir: /src
+  environment:
+    GOCACHE: /go-build-cache
+    GOMODCACHE: /go/pkg/mod
+    GOTOOLCHAIN: local
+  volumes:
+    - .:/src
+    - ./.cache/docker-go-test/go-build:/go-build-cache
+    - ./.cache/docker-go-test/go-mod:/go/pkg/mod
+  cap_add:
+    - NET_RAW
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  runner:
+    <<: *go-test
+    container_name: awgm-go-test-runner
+    command: ["sleep", "infinity"]
+  test:
+    <<: *go-test
+    profiles: ["oneshot"]
+    entrypoint: ["go", "test", "-count=1"]
+    command: ["./..."]

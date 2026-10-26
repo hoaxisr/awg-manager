@@ -25,7 +25,7 @@ for %%I in ("%SCRIPT_DIR%..\..") do set "REPO_ROOT=%%~fI"
 set "REPO_ROOT=%REPO_ROOT:\=/%"
 
 set "CONTAINER_NAME=awgm-go-test-runner"
-set "IMAGE=golang:1.24-bullseye"
+set "IMAGE=golang:1.26.4-bookworm"
 set "CACHE_ROOT=%REPO_ROOT%/.cache/docker-go-test"
 set "GOCACHE_DIR=%CACHE_ROOT%/go-build"
 set "GOMODCACHE_DIR=%CACHE_ROOT%/go-mod"
