@@ -836,8 +836,9 @@ func (a *OperatorAdapter) drainStandaloneRejects(dropped *[]DropReason) error {
 	return dropLoopExhaustedErr(*dropped)
 }
 
-// DeclaredOutboundTags returns the outbound tags present in the committed
-// subscriptions slot (after the last flush). The Service uses it to prune
+// DeclaredOutboundTags returns the outbound tags present in the working
+// subscriptions slot: the last flush plus any staged changes of an open
+// batch. The Service uses it to prune
 // stored MemberTags down to servers that actually materialized, so
 // flush-dropped servers don't linger as dangling group members.
 func (a *OperatorAdapter) DeclaredOutboundTags() []string {
