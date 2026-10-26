@@ -122,8 +122,9 @@ var modelToSoC = map[string]SoC{
 	"1811": SoCMT7622, // Ultra / Titan
 	"2710": SoCMT7622, // Peak
 
-	// MT7981 — AARCH64 (12 models)
+	// MT7981 — AARCH64 (14 models)
 	"1012": SoCMT7981, // Giga / Hero
+	"1013": SoCMT7981, // Netcraze Giga (MT7987, ядро как у mt7981; uses KN-3811 module)
 	"2312": SoCMT7981, // Hopper 4G+
 	"3411": SoCMT7981, // Buddy 6
 	"3611": SoCMT7981, // Hopper DSL (uses KN-3811 module)

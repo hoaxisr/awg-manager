@@ -107,6 +107,11 @@ var modelAlias = map[string]string{
 	"KN-3812": "KN-3811",
 	"KN-3611": "KN-3811",
 	"KN-4110": "KN-3811",
+	// Netcraze Giga NC-1013 (MT7987, 2×A53): цели в SDK нет. Штатные модули
+	// прошивки 5.01.C.8 совпадают с KN-3811 в 263 из 267 (расходятся только
+	// драйверы железа: hw_nat, warp, phr, mtdoops_proc), с KN-1812 — в 227.
+	// Раскладка FOE в ra_nat.h у mt7987 та же, что у mt7981 (NETSYS_V2).
+	"KN-1013": "KN-3811",
 	// aarch64: mt7622
 	"KN-2710": "KN-1811",
 	// aarch64: mt7988. Titan SE появился в SDK 5.01: amneziawg.ko и

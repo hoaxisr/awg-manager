@@ -11,6 +11,8 @@ func TestParseModelToSoC_Table(t *testing.T) {
 		// две записи из больших групп — по одной на MT7628/MT7981
 		// (номера из карты soc.go:27-140; MT7621 уже покрыт KN-1810 выше).
 		"KN-1110": "mt7628", "KN-1012": "mt7981",
+		// MT7987 без своей цели в SDK — группа mt7981.
+		"NC-1013": "mt7981",
 	}
 	for model, want := range cases {
 		if got := ParseModelToSoC(model); got != want {

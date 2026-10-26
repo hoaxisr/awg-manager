@@ -28,6 +28,15 @@ So this directory holds one file per group and `modelAlias` in
 `internal/sys/kmod/loader.go` points the rest at it. The mipsel IPK carries
 0.7 MB of modules instead of 5 MB.
 
+**NC-1013 (Netcraze Giga, MT7987)** has no target in the Keenetic SDK (5.01.C.8
+knows `TARGET_mt7987` only in package dependencies, there is no
+`target/linux/mt7987`). It is aliased to `KN-3811`: in the 5.01.C.8.0-2
+firmware its stock modules match KN-3811 in 263 of 267 (only the hardware
+drivers `hw_nat`, `warp`, `phr`, `mtdoops_proc` differ) against 227 of 271 for
+KN-1812, both SoCs are 2×Cortex-A53, and `ra_nat.h` gives mt7987 the same
+`PdmaRxDescInfo4` layout as mt7981 (`NETSYS_V3` only changes `gmac_info`, which
+the hwnat patch does not use). Not yet verified on hardware.
+
 Regrouping after a rebuild:
 
 ```

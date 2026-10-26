@@ -77,6 +77,15 @@ func TestResolveKoPathFor(t *testing.T) {
 			wantPath: kmod.ModulesDir + "/awg_proxy.ko",
 		},
 		{
+			// NC-1013 (MT7987) не было в карте SoC — отказ «не значится в
+			// карте SoC». Ядро у него как у mt7981, берётся сборка mt7981.
+			name:     "Netcraze Giga (NC-1013) gets the mt7981 build",
+			model:    "KN-1013",
+			soc:      kmod.ParseModelToSoC("NC-1013"),
+			exists:   have("awg_proxy-mt7981.ko"),
+			wantPath: dir + "awg_proxy-mt7981.ko",
+		},
+		{
 			name:     "unknown hardware still gets the arch default",
 			model:    "",
 			soc:      kmod.SoCUnknown,
