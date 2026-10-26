@@ -439,6 +439,7 @@ type SingboxSubMember struct {
 type Deps struct {
 	TunnelService        TunnelServiceForDiag
 	NDMSQueries          *query.Queries
+	NDMSGetter           query.Getter // общий клиент RCI для routerinfo
 	KmodLoader           *kmod.Loader
 	TunnelStore          *storage.AWGTunnelStore
 	LogService           LogServiceForDiag

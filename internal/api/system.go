@@ -190,6 +190,7 @@ type SystemHandler struct {
 	tunnelService          TunnelService
 	pingCheckService       PingCheckService
 	ndmsQueries            *ndmsquery.Queries
+	ndmsRCI                ndmsquery.Getter // чтения routerinfo
 	restartFn              func()
 	bootStatusFn           func() bool // returns true if boot is still in progress
 	slowRequestThresholdMs int         // 0 = slow HTTP profiling disabled
@@ -253,6 +254,11 @@ func (h *SystemHandler) SetPingCheckService(svc PingCheckService) {
 // SetNDMSQueries sets the NDMS query registry for the new CQRS layer.
 func (h *SystemHandler) SetNDMSQueries(q *ndmsquery.Queries) {
 	h.ndmsQueries = q
+}
+
+// SetNDMSGetter задаёт общий клиент RCI для сведений о роутере.
+func (h *SystemHandler) SetNDMSGetter(g ndmsquery.Getter) {
+	h.ndmsRCI = g
 }
 
 // SetRestartFunc sets the callback to trigger daemon self-restart.
@@ -526,7 +532,7 @@ func (h *SystemHandler) getRouterDetailsCached() *RouterDetails {
 		ifaces, _ = h.ndmsQueries.Interfaces.Snapshot(ctx, ndmsquery.SnapshotRecent)
 		cancel()
 	}
-	fresh := routerinfo.Collect(ifaces)
+	fresh := routerinfo.Collect(context.Background(), h.ndmsRCI, ifaces)
 
 	h.routerDetailsMu.Lock()
 	h.routerDetailsCache = fresh

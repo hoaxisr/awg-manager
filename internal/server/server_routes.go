@@ -120,6 +120,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.systemHandler.SetTunnelService(s.tunnelService)
 	h.systemHandler.SetPingCheckService(s.pingCheckService)
 	h.systemHandler.SetNDMSQueries(s.ndmsQueries)
+	h.systemHandler.SetNDMSGetter(s.ndmsTransport)
 	h.systemHandler.SetRestartFunc(s.ScheduleRestart)
 	if s.bootStatusFn != nil {
 		h.systemHandler.SetBootStatusFunc(s.bootStatusFn)
@@ -186,6 +187,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.diagRunner = diagnostics.NewRunner(diagnostics.Deps{
 		TunnelService:        s.tunnelService,
 		NDMSQueries:          s.ndmsQueries,
+		NDMSGetter:           s.ndmsTransport,
 		KmodLoader:           s.kmodLoader,
 		TunnelStore:          s.tunnels,
 		LogService:           &diagLogAdapter{svc: s.loggingService},

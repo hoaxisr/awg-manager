@@ -71,7 +71,7 @@ func (r *Runner) collectSystem(ctx context.Context) SystemInfo {
 	if r.deps.NDMSQueries != nil {
 		ifaces, _ = r.deps.NDMSQueries.Interfaces.Snapshot(ctx, query.SnapshotRecent)
 	}
-	info.RouterDetails = routerinfo.Collect(ifaces)
+	info.RouterDetails = routerinfo.Collect(ctx, r.deps.NDMSGetter, ifaces)
 
 	return info
 }
