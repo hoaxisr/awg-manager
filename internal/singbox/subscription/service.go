@@ -745,11 +745,17 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	// Reconcile against what actually materialized: flush() may have dropped
 	// servers sing-box rejected. Keeping them in MemberTags would re-create
 	// dangling group members on the next rebuild (cross-slot unknown-outbound).
-	declared := make(map[string]bool)
-	for _, t := range s.mutator.DeclaredOutboundTags() {
+	declaredTags := s.mutator.DeclaredOutboundTags()
+	declared := make(map[string]bool, len(declaredTags))
+	for _, t := range declaredTags {
 		declared[t] = true
 	}
 	newMembers, prunedTags := filterDeclaredMembers(newMembers, declared)
+	memberTags := make([]string, len(newMembers))
+	for i, m := range newMembers {
+		memberTags[i] = m.Tag
+	}
+	orphans := slotOrphans(sub, declaredTags, memberTags, diff.Orphan)
 	// Added считается по членам, реально попавшим в подписку: серверы,
 	// скрытые фильтром или исключением, в MemberTags не пишутся и потому
 	// приходят из ApplyDiff новыми на КАЖДОМ обновлении. len(diff.New) завышал
@@ -783,7 +789,7 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 		}
 		s.logInfo("subscription-refresh", id, fmt.Sprintf("migrated %d excluded tag(s) to the current identity scheme", len(sub.ExcludedTags)))
 	}
-	if err := s.store.SetMembersExtras(id, newMembers, diff.Orphan, rejected, info, excludedMembers, filteredMembers); err != nil {
+	if err := s.store.SetMembersExtras(id, newMembers, orphans, rejected, info, excludedMembers, filteredMembers); err != nil {
 		return nil, err
 	}
 
@@ -842,6 +848,31 @@ func filterDeclaredMembers(members []MemberInfo, declared map[string]bool) (kept
 		}
 	}
 	return kept, dropped
+}
+
+// slotOrphans — outbound'ы подписки, лежащие в слоте вне её состава (issue
+// #1081). Считаются по слоту, а не копятся списком: OrphanTags хранил только
+// сирот последнего обновления, старые поколения выпадали из учёта и навсегда
+// оставались в конфиге. Свои outbound'ы узнаём по префиксу selector-тега —
+// все теги членов строит stableTagFromKey, а "sub-" зарезервирован за
+// подписками (validateGroupTag). Пустой declared — мутатор не умеет
+// отчитаться (как в filterDeclaredMembers): тогда fallback.
+func slotOrphans(sub *Subscription, declared, members, fallback []string) []string {
+	if len(declared) == 0 {
+		return fallback
+	}
+	keep := make(map[string]bool, len(members))
+	for _, t := range members {
+		keep[t] = true
+	}
+	prefix := sub.SelectorTag + "-"
+	var out []string
+	for _, t := range declared {
+		if strings.HasPrefix(t, prefix) && !keep[t] {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // applyDiff commits the diff to sing-box config. Selector + mixed inbound +
@@ -994,6 +1025,9 @@ func (s *Service) deleteLocked(ctx context.Context, id string) error {
 		s.mutator.RemoveOutbound(sub.SelectorTag)
 		for _, m := range sub.MemberTags {
 			s.mutator.RemoveOutbound(m)
+		}
+		for _, t := range slotOrphans(sub, s.mutator.DeclaredOutboundTags(), sub.MemberTags, sub.OrphanTags) {
+			s.mutator.RemoveOutbound(t)
 		}
 		return s.reloadWithGroups(ctx)
 	}); err != nil {
@@ -2116,8 +2150,9 @@ func (s *Service) RemoveInfoItem(ctx context.Context, id, itemID string) (*Subsc
 	return s.store.Get(id)
 }
 
-// DeleteOrphans removes orphan-flagged outbounds from sing-box config and
-// clears the OrphanTags slice in the store.
+// DeleteOrphans removes the subscription's orphan outbounds from sing-box
+// config and clears the OrphanTags slice in the store. Сироты считаются по
+// слоту на момент вызова (slotOrphans), а не по сохранённому списку.
 func (s *Service) DeleteOrphans(ctx context.Context, id string) error {
 	s.logInfo("subscription-orphans-delete", id, "delete requested")
 	mu := s.lockSub(id)
@@ -2127,9 +2162,11 @@ func (s *Service) DeleteOrphans(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	var orphans []string
 	// Stage + store + Reload — одна txMu-секция (общий батч адаптера).
 	if err := s.withTx(func() error {
-		for _, t := range sub.OrphanTags {
+		orphans = slotOrphans(sub, s.mutator.DeclaredOutboundTags(), sub.MemberTags, sub.OrphanTags)
+		for _, t := range orphans {
 			s.mutator.RemoveOutbound(t)
 		}
 		if err := s.store.SetMembership(id, sub.MemberTags, nil); err != nil {
@@ -2144,6 +2181,6 @@ func (s *Service) DeleteOrphans(ctx context.Context, id string) error {
 	}); err != nil {
 		return err
 	}
-	s.logInfo("subscription-orphans-delete", id, fmt.Sprintf("deleted %d orphan outbounds", len(sub.OrphanTags)))
+	s.logInfo("subscription-orphans-delete", id, fmt.Sprintf("deleted %d orphan outbounds", len(orphans)))
 	return nil
 }

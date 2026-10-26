@@ -59,6 +59,7 @@ type fakeMutator struct {
 	createNotOurs    bool              // CreateProxy: индекс занят чужим (ours=false)
 	createErr        error             // CreateProxy возвращает эту ошибку
 	ensureErrs       map[int]error     // EnsureProxy по индексу возвращает эту ошибку
+	slot             map[string]bool   // не nil — живой слот: Add/Update/Remove отражаются в DeclaredOutboundTags
 }
 
 func (m *fakeMutator) reset() {
@@ -146,6 +147,9 @@ func (f *fakeMutator) AllocProxyIndex(_ context.Context) (int, error) {
 }
 func (f *fakeMutator) AddOutbound(tag string, jsonBody []byte) error {
 	f.addedOutbounds = append(f.addedOutbounds, tag)
+	if f.slot != nil {
+		f.slot[tag] = true
+	}
 	if f.bodies == nil {
 		f.bodies = map[string][]byte{}
 	}
@@ -154,6 +158,9 @@ func (f *fakeMutator) AddOutbound(tag string, jsonBody []byte) error {
 }
 func (f *fakeMutator) UpdateOutbound(tag string, jsonBody []byte) error {
 	f.updatedOutbounds = append(f.updatedOutbounds, tag)
+	if f.slot != nil {
+		f.slot[tag] = true
+	}
 	if f.bodies == nil {
 		f.bodies = map[string][]byte{}
 	}
@@ -162,6 +169,7 @@ func (f *fakeMutator) UpdateOutbound(tag string, jsonBody []byte) error {
 }
 func (f *fakeMutator) RemoveOutbound(tag string) error {
 	f.removedOutbounds = append(f.removedOutbounds, tag)
+	delete(f.slot, tag)
 	return nil
 }
 func (f *fakeMutator) AddInbound(tag string, jsonBody []byte) error {
@@ -199,8 +207,17 @@ func (f *fakeMutator) Reload(ctx context.Context) error {
 	f.reloads++
 	return nil
 }
-func (f *fakeMutator) Rollback()                      { f.rollbacks++ }
-func (f *fakeMutator) DeclaredOutboundTags() []string { return f.declaredTags }
+func (f *fakeMutator) Rollback() { f.rollbacks++ }
+func (f *fakeMutator) DeclaredOutboundTags() []string {
+	if f.slot != nil {
+		tags := make([]string, 0, len(f.slot))
+		for t := range f.slot {
+			tags = append(tags, t)
+		}
+		return tags
+	}
+	return f.declaredTags
+}
 func (f *fakeMutator) PersistSelectorDefault(selectorTag, memberTag string) error {
 	f.persistedDefault = append(f.persistedDefault, selectorTag+"→"+memberTag)
 	return nil
