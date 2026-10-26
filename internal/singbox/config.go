@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -886,13 +887,15 @@ func (c *Config) EnsureDeviceProxyInstance(spec DeviceProxyInstanceSpec) error {
 	// era. AWG outbounds now live in 15-awg.json.
 	c.pruneAWGOutbounds(nil)
 
-	members := []any{"direct"}
-	for _, tag := range spec.SBTags {
-		members = append(members, tag)
-	}
+	tags := append([]string{"direct"}, spec.SBTags...)
 	awgTagsCopy := append([]string(nil), spec.AWGTags...)
 	sort.Strings(awgTagsCopy)
-	for _, tag := range awgTagsCopy {
+	tags = append(tags, awgTagsCopy...)
+	// Источники членов независимы: тег композита маршрутизатора не сверяется
+	// с тегами туннелей и с "direct", — повтор свёртываем, с ним sing-box
+	// не стартует (F731).
+	members := []any{}
+	for _, tag := range router.UniqueMemberTags(tags) {
 		members = append(members, tag)
 	}
 

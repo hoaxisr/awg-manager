@@ -311,3 +311,39 @@ func TestBuildDeviceProxyConfig_RejectsLoopbackFirst(t *testing.T) {
 		t.Errorf("after RemoveDeviceProxy %d rules left", n)
 	}
 }
+
+// F731: члены селектора собираются из независимых источников (туннели,
+// композиты маршрутизатора, AWG), и тег может совпасть — повтор sing-box 1.15
+// отвергает, не стартуя целиком. Селектор обязан свернуть его.
+func TestBuildDeviceProxyConfig_CollapsesDuplicateSelectorMembers(t *testing.T) {
+	spec := DeviceProxySpec{
+		Enabled:    true,
+		ListenAddr: "192.168.1.1",
+		Port:       1080,
+		SBTags:     []string{"sb-x", "direct", "awg-vpn0", "sb-x"},
+		AWGTags:    []string{"awg-vpn0"},
+	}
+	data, err := BuildDeviceProxyConfig(spec)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var raw struct {
+		Outbounds []struct {
+			Tag       string   `json:"tag"`
+			Outbounds []string `json:"outbounds"`
+		} `json:"outbounds"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, ob := range raw.Outbounds {
+		if ob.Tag != deviceProxySelectorTag {
+			continue
+		}
+		if got := strings.Join(ob.Outbounds, ","); got != "direct,sb-x,awg-vpn0" {
+			t.Fatalf("selector members = %s, want direct,sb-x,awg-vpn0", got)
+		}
+		return
+	}
+	t.Fatalf("selector outbound %q missing in: %s", deviceProxySelectorTag, data)
+}

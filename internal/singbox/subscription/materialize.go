@@ -3,11 +3,14 @@ package subscription
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 )
 
 // BuildSelector emits a sing-box selector outbound JSON wrapping memberTags.
 // defaultTag must be one of memberTags; if empty, the first member is used.
 func BuildSelector(selectorTag string, memberTags []string, defaultTag string) json.RawMessage {
+	memberTags = router.UniqueMemberTags(memberTags) // повтор члена валит sing-box (F731)
 	if defaultTag == "" && len(memberTags) > 0 {
 		defaultTag = memberTags[0]
 	}
@@ -42,7 +45,7 @@ func probedGroup(typ, tag string, memberTags []string, cfg URLTestConfig) map[st
 	out := map[string]any{
 		"type":      typ,
 		"tag":       tag,
-		"outbounds": memberTags,
+		"outbounds": router.UniqueMemberTags(memberTags), // повтор члена валит sing-box (F731)
 		"url":       cfg.URL,
 		"interval":  fmt.Sprintf("%ds", cfg.IntervalSec),
 	}

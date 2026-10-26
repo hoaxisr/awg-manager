@@ -678,7 +678,14 @@ func validateCompositeOutbound(o Outbound) error {
 		return fmt.Errorf("outbound %q: at least one member is required", o.Tag)
 	}
 	isURLTest := o.Type == "urltest"
+	seen := make(map[string]bool, len(o.Outbounds))
 	for _, m := range o.Outbounds {
+		// Повтор члена sing-box 1.15 отвергает («duplicate tag») и не
+		// стартует целиком (F731). Сравнение точное — как у sing-box.
+		if seen[m] {
+			return fmt.Errorf("outbound %q: member %q is listed more than once (sing-box refuses duplicate group members)", o.Tag, m)
+		}
+		seen[m] = true
 		if strings.EqualFold(strings.TrimSpace(m), "direct") && isURLTest {
 			return fmt.Errorf("outbound %q: member %q is not allowed in %s groups (would bypass proxy silently)", o.Tag, m, o.Type)
 		}
@@ -824,7 +831,9 @@ func (c *RouterConfig) renameOutboundReferences(oldTag, newTag string) {
 		c.Route.Final = newTag
 	}
 	for i := range c.Outbounds {
-		c.Outbounds[i].Outbounds = rewriteTagSlice(c.Outbounds[i].Outbounds, oldTag, newTag)
+		// Группа могла уже содержать newTag — без свёртки переименование
+		// дало бы повтор члена, с которым sing-box не стартует (F731).
+		c.Outbounds[i].Outbounds = UniqueMemberTags(rewriteTagSlice(c.Outbounds[i].Outbounds, oldTag, newTag))
 		if c.Outbounds[i].Default == oldTag {
 			c.Outbounds[i].Default = newTag
 		}
@@ -985,6 +994,25 @@ func rewriteTagSlice(tags []string, from, to string) []string {
 	return mapTagSlice(tags, func(tag string) (string, bool) {
 		return to, tag == from
 	})
+}
+
+// UniqueMemberTags убирает повторы из состава группы, сохраняя порядок первых
+// вхождений (fallback идёт по нему). Без повторов возвращает исходный срез.
+// sing-box 1.15 не стартует с группой, где член указан дважды (F731), —
+// общая свёртка для всех, кто собирает составы групп сам.
+func UniqueMemberTags(tags []string) []string {
+	seen := make(map[string]bool, len(tags))
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	if len(out) == len(tags) {
+		return tags
+	}
+	return out
 }
 
 func removeTagRefs(tags []string, tag string) []string {

@@ -2,6 +2,7 @@ package subscription
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -161,5 +162,28 @@ func TestBuildFallback(t *testing.T) {
 	}
 	if ob["idle_timeout"] != "7200s" {
 		t.Errorf("expected safe idle_timeout=7200s, got %v", ob["idle_timeout"])
+	}
+}
+
+// F731: повтор члена sing-box 1.15 отвергает и не стартует — сборщики групп
+// подписок сворачивают повторы при любом режиме, порядок сохраняется.
+func TestBuildGroupOutbound_CollapsesDuplicateMembers(t *testing.T) {
+	members := []string{"m2", "m1", "m2"}
+	for _, mode := range []SubscriptionMode{ModeSelector, ModeURLTest, ModeFallback} {
+		t.Run(string(mode), func(t *testing.T) {
+			raw := BuildGroupOutbound(Subscription{SelectorTag: "sub-x", Mode: mode}, members, "")
+			var ob struct {
+				Outbounds []string `json:"outbounds"`
+			}
+			if err := json.Unmarshal(raw, &ob); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if strings.Join(ob.Outbounds, ",") != "m2,m1" {
+				t.Errorf("outbounds = %v, want [m2 m1]", ob.Outbounds)
+			}
+		})
+	}
+	if strings.Join(members, ",") != "m2,m1,m2" {
+		t.Errorf("входной срез изменён: %v", members)
 	}
 }
