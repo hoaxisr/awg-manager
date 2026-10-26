@@ -77,6 +77,29 @@ type Deps interface {
 	SetClientRouteEnabled(ctx context.Context, clientIP string, enabled bool) (ClientRoute, error)
 
 	ListAccessPolicies(ctx context.Context) ([]AccessPolicy, error)
+	// ListPolicyInterfaces returns the router interfaces a policy can
+	// permit.
+	ListPolicyInterfaces(ctx context.Context) ([]PolicyInterface, error)
+	// The access policy writes below apply at once in NDMS. HydraRoute's
+	// own policies are refused by the service.
+
+	// CreateAccessPolicy creates a policy in the first free PolicyN slot.
+	CreateAccessPolicy(ctx context.Context, description string) (AccessPolicy, error)
+	// DeleteAccessPolicy removes a policy and returns it as it was; the
+	// policy the sing-box router routes by is refused.
+	DeleteAccessPolicy(ctx context.Context, name string) (AccessPolicy, error)
+	// UpdateAccessPolicy changes the description and the standalone flag;
+	// nil keeps a field.
+	UpdateAccessPolicy(ctx context.Context, name string, description *string, standalone *bool) (AccessPolicy, error)
+	// SetAccessPolicyInterface permits iface at position order, or denies
+	// it, and returns the policy afterwards.
+	// order -1 puts a permitted interface last. A write that went through
+	// but could not be read back is not an error: the result carries the
+	// policy as it was and says so (AccessPolicy.Unconfirmed).
+	SetAccessPolicyInterface(ctx context.Context, name, iface string, permit bool, order int, expectOrder []string) (AccessPolicy, error)
+	// AssignDevicePolicy moves a device (by MAC) to a policy; "" returns it
+	// to the router's default.
+	AssignDevicePolicy(ctx context.Context, mac, policy string) (Device, error)
 	ListDevices(ctx context.Context) ([]Device, error)
 
 	GetLogs(ctx context.Context, q LogsQuery) ([]LogEntry, int, error) // entries, total matched
@@ -102,9 +125,15 @@ type Deps interface {
 	// adds the restart test, which stops and starts every running kernel
 	// tunnel; without it the sweep changes nothing.
 	RunDiagnostics(ctx context.Context, includeRestart bool) (DiagnosticsRun, error)
-	// DiagnosticsResult summarises the last completed sweep. With none, it
+	// RunTunnelDiagnostics checks one tunnel (an AWG tunnel id, or
+	// singbox:<tag> for a proxy) and waits for the result: a single-tunnel
+	// run keeps no report for get_diagnostics. Refused while another sweep
+	// runs.
+	RunTunnelDiagnostics(ctx context.Context, tunnelID string) ([]DiagnosticsCheck, error)
+	// DiagnosticsResult summarises the last completed sweep; includePassed
+	// adds every check. With none, it
 	// returns ErrNoDiagnostics rather than an empty, reassuring report.
-	DiagnosticsResult(ctx context.Context) (DiagnosticsResult, error)
+	DiagnosticsResult(ctx context.Context, includePassed bool) (DiagnosticsResult, error)
 	// RunPingCheck starts a check of every monitored tunnel without
 	// waiting for it and returns the last completed statuses.
 	RunPingCheck(ctx context.Context) (PingCheckRun, error)

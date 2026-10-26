@@ -273,6 +273,7 @@ type Local struct {
 	dnsLog     *logging.ScopedLogger
 	staticLog  *logging.ScopedLogger
 	clientLog  *logging.ScopedLogger
+	policyLog  *logging.ScopedLogger
 	serverLog  *logging.ScopedLogger
 	singboxLog *logging.ScopedLogger
 	subLog     *logging.ScopedLogger
@@ -289,6 +290,7 @@ func New(cfg Config) *Local {
 		dnsLog:           logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubDnsRoute),
 		staticLog:        logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubStaticRoute),
 		clientLog:        logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubClientRoute),
+		policyLog:        logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubAccessPolicy),
 		serverLog:        logging.NewScopedLogger(cfg.AppLog, logging.GroupServer, logging.SubManaged),
 		singboxLog:       logging.NewScopedLogger(cfg.AppLog, logging.GroupSingbox, logging.SubSBRouter),
 		// Same scope as api.SubscriptionHandler: user actions on
@@ -1636,18 +1638,7 @@ func (l *Local) ListAccessPolicies(ctx context.Context) ([]mcpsrv.AccessPolicy, 
 	}
 	out := make([]mcpsrv.AccessPolicy, 0, len(list))
 	for _, p := range list {
-		// Denied interfaces are "in the list but not used" — the tool
-		// documents Interfaces as the interfaces the policy PERMITS, and an
-		// agent that saw a denied interface here could route traffic over a
-		// path the policy actually blocks.
-		names := make([]string, 0, len(p.Interfaces))
-		for _, iface := range p.Interfaces {
-			if iface.Denied || iface.Name == "" {
-				continue
-			}
-			names = append(names, iface.Name)
-		}
-		out = append(out, mcpsrv.AccessPolicy{Name: p.Name, Description: p.Description, Interfaces: names, DeviceCount: p.DeviceCount, IsStandard: p.IsStandard})
+		out = append(out, accessPolicy(p))
 	}
 	return out, nil
 }
@@ -1819,13 +1810,13 @@ type diagnosticsReport struct {
 // first. Returning the whole report is not an option — it carries the
 // merged sing-box config and journal excerpts, orders of magnitude more
 // than a tool result should ever hold.
-func (l *Local) DiagnosticsResult(context.Context) (mcpsrv.DiagnosticsResult, error) {
+func (l *Local) DiagnosticsResult(_ context.Context, includePassed bool) (mcpsrv.DiagnosticsResult, error) {
 	if l.c.Diagnostics == nil {
 		return mcpsrv.DiagnosticsResult{}, errUnavailable("diagnostics")
 	}
 	raw, err := l.c.Diagnostics.Result()
 	if err != nil || len(raw) == 0 {
-		// Run clears the previous report the moment a sweep starts, so
+		// A full run clears the previous report the moment it starts, so
 		// "no report" also covers the whole of a sweep in progress. That
 		// is a state to report, not a missing run: telling the model to
 		// call run_diagnostics here sends it round in a circle.
@@ -1846,6 +1837,13 @@ func (l *Local) DiagnosticsResult(context.Context) (mcpsrv.DiagnosticsResult, er
 	}
 	var warnings []mcpsrv.DiagnosticsProblem
 	for _, t := range report.Tests {
+		if includePassed {
+			if len(out.Checks) < mcpsrv.MaxDiagnosticsChecks {
+				out.Checks = append(out.Checks, mcpsrv.DiagnosticsCheck{Name: t.Name, Status: t.Status, Detail: sanitizeText(t.Detail, maxMessageRunes), TunnelID: t.TunnelID, TunnelName: sanitizeLabel(t.TunnelName)})
+			} else {
+				out.ChecksTruncated = true
+			}
+		}
 		switch t.Status {
 		case diagnostics.StatusPass:
 			out.Passed++
@@ -1867,6 +1865,50 @@ func (l *Local) DiagnosticsResult(context.Context) (mcpsrv.DiagnosticsResult, er
 	// see the worst thing, not whichever check happened to run first.
 	out.Problems = append(out.Problems, warnings...)
 	return out, nil
+}
+
+// RunTunnelDiagnostics runs the per-tunnel checks for one tunnel and reads
+// them off the event stream: the runner keeps a report only for a full
+// sweep. A sweep already running is refused rather than joined — its events
+// are not about this tunnel alone — and Runner.Start decides that in the
+// same step as it starts ours.
+func (l *Local) RunTunnelDiagnostics(ctx context.Context, tunnelID string) ([]mcpsrv.DiagnosticsCheck, error) {
+	if l.c.Diagnostics == nil {
+		return nil, errUnavailable("diagnostics")
+	}
+	events, started := l.c.Diagnostics.Start(diagnostics.RunOptions{TunnelID: tunnelID})
+	if !started {
+		return nil, fmt.Errorf("a diagnostic sweep is running; check the tunnel once it is done (get_diagnostics shows when)")
+	}
+	out := []mcpsrv.DiagnosticsCheck{}
+	for {
+		select {
+		case <-ctx.Done():
+			// The run goes on without us; drain it so it never blocks.
+			go func() {
+				for range events {
+				}
+			}()
+			return out, fmt.Errorf("the tunnel check did not finish in time; %d checks were done", len(out))
+		case ev, ok := <-events:
+			if !ok {
+				// The runner skips an id it does not know without a word;
+				// an empty answer would read as "nothing wrong".
+				if len(out) == 0 {
+					return out, fmt.Errorf("no checks ran for %q: there is no such tunnel (list_tunnels) or sing-box proxy (list_singbox_tunnels), or sing-box is not running", tunnelID)
+				}
+				return out, nil
+			}
+			switch ev.Type {
+			case "test":
+				if ev.Test != nil {
+					out = append(out, mcpsrv.DiagnosticsCheck{Name: ev.Test.Name, Status: ev.Test.Status, Detail: sanitizeText(ev.Test.Detail, maxMessageRunes), TunnelID: ev.Test.TunnelID, TunnelName: sanitizeLabel(ev.Test.TunnelName)})
+				}
+			case "error":
+				return out, fmt.Errorf("the tunnel check failed: %s", sanitizeText(ev.Message, maxMessageRunes))
+			}
+		}
+	}
 }
 
 // ListManagedServers unites two id spaces on purpose. The NDMS listing

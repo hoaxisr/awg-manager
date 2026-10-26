@@ -103,7 +103,8 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 		"list_routing_targets", "update_static_route",
 		"create_singbox_subscription", "delete_singbox_subscription", "refresh_singbox_subscription", "set_singbox_subscription_settings",
 		"exclude_singbox_subscription_servers", "restore_singbox_subscription_servers", "add_singbox_tunnel", "delete_singbox_tunnel",
-		"update_tunnel_settings", "list_singbox_connections",
+		"update_tunnel_settings", "list_singbox_connections", "run_tunnel_diagnostics",
+		"list_policy_interfaces", "create_access_policy", "delete_access_policy", "update_access_policy", "set_access_policy_interface", "assign_device_policy",
 	}
 	for _, n := range want {
 		if byName[n] == nil {
@@ -134,7 +135,7 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 	// the host must get the chance to ask the user first.
 	// A deletion in the shared draft is destructive (README "Annotations"):
 	// once applied, nothing in MCP recreates the rule or the set.
-	for _, n := range []string{"remove_dns_route", "remove_static_route", "delete_singbox_rule", "delete_singbox_ruleset", "delete_singbox_subscription", "delete_singbox_tunnel"} {
+	for _, n := range []string{"remove_dns_route", "remove_static_route", "delete_singbox_rule", "delete_singbox_ruleset", "delete_singbox_subscription", "delete_singbox_tunnel", "delete_access_policy"} {
 		a := byName[n].Annotations
 		if a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint {
 			t.Errorf("%s must be annotated destructive", n)

@@ -185,7 +185,7 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 		default:
 			return nil, fmt.Errorf("vlink: unsupported xhttp mode %q", s.Mode)
 		}
-		s.XHTTPExtra = parseXHTTPExtra(q.Get("extra"))
+		s.XHTTPExtra = parseXHTTPExtra(q.Get("extra"), s.Mode)
 	}
 
 	// TLS / Reality

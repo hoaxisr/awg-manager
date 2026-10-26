@@ -581,20 +581,13 @@ func (r *Runner) RunWithStream(ctx context.Context, opts RunOptions) (<-chan Dia
 // started false: another run — with its own options — is going, and
 // nothing was subscribed. RunWithStream joins that run instead; a caller
 // whose options matter (MCP: no restart test unless asked) must not, and
-// the check and the start are one step under r.mu here.
+// the check and the start are one step under r.mu here (begin).
 func (r *Runner) Start(opts RunOptions) (events <-chan DiagEvent, started bool) {
 	return r.start(opts, false)
 }
 
 func (r *Runner) start(opts RunOptions, join bool) (<-chan DiagEvent, bool) {
-	r.mu.Lock()
-	alreadyRunning := r.status.Status == "running"
-	if !alreadyRunning {
-		r.status = RunStatus{Status: "running", Progress: "Запуск диагностики..."}
-		r.result = nil
-		r.opts = opts
-	}
-	r.mu.Unlock()
+	alreadyRunning := r.begin(opts)
 
 	if alreadyRunning && !join {
 		return nil, false
@@ -606,6 +599,24 @@ func (r *Runner) start(opts RunOptions, join bool) (<-chan DiagEvent, bool) {
 	}
 
 	return ch, !alreadyRunning
+}
+
+// begin marks a run started unless one is, and reports whether one was.
+// Only a full run replaces the report: a single-target run produces none
+// (executeStream keeps the report for full runs only), so clearing it would
+// leave nothing behind but the previous full sweep lost.
+func (r *Runner) begin(opts RunOptions) (alreadyRunning bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.status.Status == "running" {
+		return true
+	}
+	r.status = RunStatus{Status: "running", Progress: "Запуск диагностики..."}
+	if opts.TunnelID == "" {
+		r.result = nil
+	}
+	r.opts = opts
+	return false
 }
 
 func (r *Runner) execute(ctx context.Context) {

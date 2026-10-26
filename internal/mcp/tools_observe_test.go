@@ -178,3 +178,36 @@ func TestTools_GetDiagnostics(t *testing.T) {
 		t.Fatalf("a problem without a name or detail is not actionable: %v", first)
 	}
 }
+
+func TestTools_RunTunnelDiagnostics(t *testing.T) {
+	s, f := newTestSession(t)
+	res, out := callTool(t, s, "run_tunnel_diagnostics", map[string]any{"tunnelId": "tn-1"})
+	if res.IsError || len(out["checks"].([]any)) != 2 {
+		t.Fatalf("%s / %v", toolText(res), out)
+	}
+	if res, _ := callTool(t, s, "run_tunnel_diagnostics", map[string]any{"tunnelId": "singbox:vless-nl"}); res.IsError {
+		t.Fatalf("a sing-box proxy is checked as singbox:<tag>: %s", toolText(res))
+	}
+	for _, id := range []string{"../x", "singbox:", "singbox:a\nb"} {
+		if res, _ := callTool(t, s, "run_tunnel_diagnostics", map[string]any{"tunnelId": id}); !res.IsError {
+			t.Errorf("%q must be refused", id)
+		}
+	}
+	f.DiagnosticsRunning = true
+	if res, _ := callTool(t, s, "run_tunnel_diagnostics", map[string]any{"tunnelId": "tn-1"}); !res.IsError {
+		t.Error("a running sweep must refuse the tunnel check")
+	}
+}
+
+func TestTools_GetDiagnosticsIncludePassed(t *testing.T) {
+	s, _ := newTestSession(t)
+	callTool(t, s, "run_diagnostics", nil)
+	_, out := callTool(t, s, "get_diagnostics", map[string]any{"includePassed": true})
+	if checks, _ := out["checks"].([]any); len(checks) != 4 {
+		t.Fatalf("out = %v", out)
+	}
+	_, out = callTool(t, s, "get_diagnostics", nil)
+	if out["checks"] != nil {
+		t.Fatalf("checks only when asked: %v", out["checks"])
+	}
+}

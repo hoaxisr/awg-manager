@@ -387,3 +387,22 @@ func TestScope_ReadOnlyKeyReadsSingboxConnections(t *testing.T) {
 		t.Errorf("list_singbox_connections must be allowed on a read-only key: %s", toolText(res))
 	}
 }
+
+func TestScope_ReadOnlyKeyAndAccessPolicies(t *testing.T) {
+	s := scopedSession(t, true)
+	if res, _ := callTool(t, s, "list_policy_interfaces", nil); res.IsError {
+		t.Errorf("list_policy_interfaces must be allowed on a read-only key: %s", toolText(res))
+	}
+	for name, args := range map[string]map[string]any{
+		"create_access_policy":        {"description": "x"},
+		"delete_access_policy":        {"policy": "Policy0"},
+		"update_access_policy":        {"policy": "Policy0", "standalone": true},
+		"set_access_policy_interface": {"policy": "Policy0", "interface": "ISP", "permit": true},
+		"assign_device_policy":        {"mac": "aa:bb:cc:dd:ee:ff", "policy": ""},
+	} {
+		res, _ := callTool(t, s, name, args)
+		if !res.IsError || !strings.Contains(strings.ToLower(toolText(res)), "read-only") {
+			t.Errorf("%s: a read-only key must be refused: %q", name, toolText(res))
+		}
+	}
+}

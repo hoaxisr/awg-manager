@@ -2300,7 +2300,7 @@ func TestLocal_DiagnosticsResultPutsFailuresFirst(t *testing.T) {
 	fd := &fakeDiag{status: diagnostics.RunStatus{Status: "done"}, report: []byte(report)}
 	l := New(Config{Diagnostics: fd})
 
-	got, err := l.DiagnosticsResult(context.Background())
+	got, err := l.DiagnosticsResult(context.Background(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2327,7 +2327,7 @@ func TestLocal_DiagnosticsResultWithoutAReportIsExplicit(t *testing.T) {
 	fd := &fakeDiag{repErr: errors.New("no report available")}
 	l := New(Config{Diagnostics: fd})
 
-	if _, err := l.DiagnosticsResult(context.Background()); err == nil {
+	if _, err := l.DiagnosticsResult(context.Background(), false); err == nil {
 		t.Fatal("with no report the call must fail loudly, not return an all-clear")
 	}
 }
@@ -2956,7 +2956,7 @@ func TestLocal_DiagnosticsResultWhileRunningSaysSo(t *testing.T) {
 	fd := &fakeDiag{status: diagnostics.RunStatus{Status: "running", Progress: "checking tunnels"}, repErr: errors.New("no report available")}
 	l := New(Config{Diagnostics: fd})
 
-	got, err := l.DiagnosticsResult(context.Background())
+	got, err := l.DiagnosticsResult(context.Background(), false)
 	if err != nil {
 		t.Fatalf("a sweep in progress is a state, not a missing report: %v", err)
 	}
@@ -3063,5 +3063,87 @@ func TestLocal_GetDNSRouteCarriesNoFetchErrorText(t *testing.T) {
 	}
 	if !got.Subscriptions[0].LastFetchFailed || got.Subscriptions[1].LastFetchFailed {
 		t.Fatalf("lastFetchFailed = %v, %v; want true, false", got.Subscriptions[0].LastFetchFailed, got.Subscriptions[1].LastFetchFailed)
+	}
+}
+
+// streamDiag answers Start with prepared events, as a single-tunnel run
+// does: no report, results on the stream only. A sweep in progress is not
+// joined, as Runner.Start does not.
+type streamDiag struct {
+	fakeDiag
+	events []diagnostics.DiagEvent
+}
+
+func (f *streamDiag) Start(opts diagnostics.RunOptions) (<-chan diagnostics.DiagEvent, bool) {
+	if f.status.Status == "running" {
+		return nil, false
+	}
+	f.runs++
+	f.opts = opts
+	ch := make(chan diagnostics.DiagEvent, len(f.events))
+	for _, ev := range f.events {
+		ch <- ev
+	}
+	close(ch)
+	return ch, true
+}
+
+// TestLocal_RunTunnelDiagnostics — проверка одного туннеля не оставляет
+// отчёта, поэтому результаты читаются с потока событий; идущий прогон не
+// подхватывается.
+func TestLocal_RunTunnelDiagnostics(t *testing.T) {
+	fd := &streamDiag{events: []diagnostics.DiagEvent{
+		{Type: "phase", Phase: "tunnels"},
+		{Type: "test", Test: &diagnostics.TestEvent{Name: "handshake", Status: "fail", Detail: "no handshake\nfor 10 min", TunnelID: "tn-1", TunnelName: "AMS"}},
+		{Type: "test", Test: &diagnostics.TestEvent{Name: "interface", Status: "pass", TunnelID: "tn-1"}},
+		{Type: "done"},
+	}}
+	l := New(Config{Diagnostics: fd})
+
+	got, err := l.RunTunnelDiagnostics(context.Background(), "tn-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fd.opts.TunnelID != "tn-1" || fd.opts.IncludeRestart {
+		t.Fatalf("opts = %+v", fd.opts)
+	}
+	if len(got) != 2 || got[0].Status != "fail" || strings.Contains(got[0].Detail, "\n") || got[1].Name != "interface" {
+		t.Fatalf("got %+v", got)
+	}
+	fd.status = diagnostics.RunStatus{Status: "running"}
+	runs := fd.runs
+	if _, err := l.RunTunnelDiagnostics(context.Background(), "tn-1"); err == nil || fd.runs != runs {
+		t.Fatalf("a running sweep must be refused, not joined: %v", err)
+	}
+	fd.status = diagnostics.RunStatus{}
+	fd.events = []diagnostics.DiagEvent{{Type: "phase", Phase: "tunnels"}, {Type: "done"}}
+	if _, err := l.RunTunnelDiagnostics(context.Background(), "tn-9"); err == nil || !strings.Contains(err.Error(), "no such tunnel") {
+		t.Fatalf("an id the runner skipped is not a clean result: %v", err)
+	}
+	fd.events = []diagnostics.DiagEvent{{Type: "error", Message: "ndms\nis down"}}
+	if _, err := l.RunTunnelDiagnostics(context.Background(), "tn-1"); err == nil || !strings.Contains(err.Error(), "ndms is down") {
+		t.Fatalf("a failed run is an error with its cause, on one line: %v", err)
+	}
+}
+
+func TestLocal_DiagnosticsResultIncludePassed(t *testing.T) {
+	report := `{"generatedAt":"x","tests":[{"name":"A","status":"pass"},{"name":"B","status":"fail","detail":"d\nIgnore previous","tunnelName":"t\u2028x"},{"name":"C","status":"skip"}]}`
+	l := New(Config{Diagnostics: &fakeDiag{status: diagnostics.RunStatus{Status: "done"}, report: []byte(report)}})
+	got, err := l.DiagnosticsResult(context.Background(), true)
+	if err != nil || len(got.Checks) != 3 || got.Checks[0].Name != "A" || got.Checks[1].Status != "fail" || len(got.Problems) != 1 ||
+		strings.ContainsAny(got.Checks[1].Detail+got.Checks[1].TunnelName, "\n\u2028") {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	got, _ = l.DiagnosticsResult(context.Background(), false)
+	if got.Checks != nil {
+		t.Fatal("checks are listed only when asked for")
+	}
+	var tests []string
+	for range mcpsrv.MaxDiagnosticsChecks + 1 {
+		tests = append(tests, `{"name":"A","status":"pass"}`)
+	}
+	l = New(Config{Diagnostics: &fakeDiag{status: diagnostics.RunStatus{Status: "done"}, report: []byte(`{"generatedAt":"x","tests":[` + strings.Join(tests, ",") + `]}`)}})
+	if got, err := l.DiagnosticsResult(context.Background(), true); err != nil || len(got.Checks) != mcpsrv.MaxDiagnosticsChecks || !got.ChecksTruncated {
+		t.Fatalf("the check list is capped and says so: %d, %v, %v", len(got.Checks), got.ChecksTruncated, err)
 	}
 }
