@@ -3,6 +3,7 @@ package vlink
 import (
 	"encoding/json"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -31,12 +32,16 @@ const (
 	kindBool
 	kindInt
 	kindHeaders
+	kindString // непустая строка: пустая значит «умолчание», его форк подставит сам
+	kindEnum   // строка из extraEnumValues
 )
 
 // extraFields maps the camelCase keys of Xray's xhttpSettings to the
 // snake_case fields of option.V2RayXHTTPBaseOptions in our fork. Keys carried
 // by dedicated query parameters (host, path, mode) and downloadSettings — a
-// whole nested outbound — are deliberately absent.
+// whole nested outbound — are deliberately absent. Также нет sessionIDTable и
+// sessionIDLength (Xray #6258): у форка этих полей нет, а sing-box разбирает
+// JSON строго — неизвестный ключ ломает конфигурацию целиком.
 var extraFields = map[string]struct {
 	key  string
 	kind extraKind
@@ -45,6 +50,25 @@ var extraFields = map[string]struct {
 	"xPaddingBytes": {"x_padding_bytes", kindPositiveRange},
 	"noGRPCHeader":  {"no_grpc_header", kindBool},
 	"noSSEHeader":   {"no_sse_header", kindBool},
+
+	// Обфускация паддинга и размещение session/seq/данных uplink: сервер с
+	// нестандартными значениями отвечает на запрос без них 400.
+	"xPaddingObfsMode":    {"x_padding_obfs_mode", kindBool},
+	"xPaddingKey":         {"x_padding_key", kindString},
+	"xPaddingHeader":      {"x_padding_header", kindString},
+	"xPaddingPlacement":   {"x_padding_placement", kindEnum},
+	"xPaddingMethod":      {"x_padding_method", kindEnum},
+	"uplinkHTTPMethod":    {"uplink_http_method", kindString}, // регистр форк приводит сам
+	"sessionIDPlacement":  {"session_placement", kindEnum},
+	"sessionIDKey":        {"session_key", kindString},
+	"seqPlacement":        {"seq_placement", kindEnum},
+	"seqKey":              {"seq_key", kindString},
+	"uplinkDataPlacement": {"uplink_data_placement", kindEnum},
+	"uplinkDataKey":       {"uplink_data_key", kindString},
+	// Ноль у uplink_chunk_size значит «умолчание» и у Xray, и у форка
+	// (GetNormalizedUplinkChunkSize проверяет To == 0), поэтому обычный Range.
+	"uplinkChunkSize": {"uplink_chunk_size", kindRange},
+
 	// sc*-диапазоны — positive: ноль у них означает РАЗНОЕ у Xray и у нашего
 	// sing-box, и расхождение стоит процесса. Xray считает нулевую верхнюю
 	// границу признаком «не задано» и подставляет умолчание
@@ -60,13 +84,30 @@ var extraFields = map[string]struct {
 	"scStreamUpServerSecs": {"sc_stream_up_server_secs", kindPositiveRange},
 }
 
+// extraEnumValues — допустимые значения полей kindEnum, ровно те, что
+// принимает checkV2RayXHTTPBaseOptions форка (option/v2ray_transport.go): иное
+// он отвергает при загрузке, и падает вся конфигурация, а не один аутбаунд.
+// Сравнение там точное, с учётом регистра.
+var extraEnumValues = map[string][]string{
+	"x_padding_placement":   {"cookie", "header", "query", "queryInHeader"},
+	"x_padding_method":      {"repeat-x", "tokenish"},
+	"session_placement":     {"path", "cookie", "header", "query"},
+	"seq_placement":         {"path", "cookie", "header", "query"},
+	"uplink_data_placement": {"auto", "body", "cookie", "header"},
+}
+
+// legacyExtraNames — имена, под которыми Xray до #6258 принимал поля session.
+// Новый Xray старых не понимает, но ссылки и подписки со старыми ещё ходят;
+// если в объекте есть оба имени, побеждает новое — его и прочтёт Xray.
+var legacyExtraNames = map[string]string{
+	"sessionPlacement": "sessionIDPlacement",
+	"sessionKey":       "sessionIDKey",
+}
+
 // clashXHTTPFields maps mihomo's kebab-case xhttp-opts keys to the camelCase
 // keys Xray uses inside extra=, so a Clash import goes through exactly the same
-// mapping and validation as a share link. Deliberately partial: mihomo also
-// carries the padding/session/seq/uplink knobs our fork has fields for, but
-// they never travel in a share link, so both import paths stay identical and
-// drop them. session-table / session-length have no field in the fork at all,
-// and download-settings is a whole nested outbound.
+// mapping and validation as a share link. session-table / session-length have
+// no field in the fork at all, and download-settings is a whole nested outbound.
 // Reference: mihomo adapter/outbound/vless.go (XHTTPOptions).
 var clashXHTTPFields = map[string]string{
 	"headers":                  "headers",
@@ -74,6 +115,19 @@ var clashXHTTPFields = map[string]string{
 	"no-grpc-header":           "noGRPCHeader",
 	"sc-max-each-post-bytes":   "scMaxEachPostBytes",
 	"sc-min-posts-interval-ms": "scMinPostsIntervalMs",
+	"x-padding-obfs-mode":      "xPaddingObfsMode",
+	"x-padding-key":            "xPaddingKey",
+	"x-padding-header":         "xPaddingHeader",
+	"x-padding-placement":      "xPaddingPlacement",
+	"x-padding-method":         "xPaddingMethod",
+	"uplink-http-method":       "uplinkHTTPMethod",
+	"session-placement":        "sessionIDPlacement",
+	"session-key":              "sessionIDKey",
+	"seq-placement":            "seqPlacement",
+	"seq-key":                  "seqKey",
+	"uplink-data-placement":    "uplinkDataPlacement",
+	"uplink-data-key":          "uplinkDataKey",
+	"uplink-chunk-size":        "uplinkChunkSize",
 }
 
 // clashXmuxFields maps mihomo's reuse-settings — its name for xmux — to the
@@ -120,8 +174,9 @@ func xhttpExtraFromClash(opts map[string]any) string {
 // parseXHTTPExtra decodes the Xray ?extra= object into sing-box xhttp
 // transport fields. sing-box decodes strictly, so anything unknown or of the
 // wrong type is dropped rather than passed on: one bad share link must not
-// make the whole config unloadable.
-func parseXHTTPExtra(raw string) map[string]any {
+// make the whole config unloadable. mode — режим xhttp из ссылки: от него
+// зависит, какие значения форк примет.
+func parseXHTTPExtra(raw, mode string) map[string]any {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
@@ -129,6 +184,14 @@ func parseXHTTPExtra(raw string) map[string]any {
 	var extra map[string]any
 	if json.Unmarshal([]byte(raw), &extra) != nil {
 		return nil
+	}
+	for old, cur := range legacyExtraNames {
+		if v, ok := extra[old]; ok {
+			if _, has := extra[cur]; !has {
+				extra[cur] = v
+			}
+			delete(extra, old)
+		}
 	}
 
 	out := map[string]any{}
@@ -162,6 +225,24 @@ func parseXHTTPExtra(raw string) map[string]any {
 			if h := stringMap(v); len(h) > 0 {
 				out[f.key] = h
 			}
+		case kindString:
+			if s, ok := v.(string); ok && s != "" {
+				out[f.key] = s
+			}
+		case kindEnum:
+			if s, ok := v.(string); ok && slices.Contains(extraEnumValues[f.key], s) {
+				out[f.key] = s
+			}
+		}
+	}
+	// Метод GET и данные uplink в cookie/header форк, как и Xray, допускает
+	// только в packet-up; при пустом режиме он подставляет auto.
+	if mode != "packet-up" {
+		if m, _ := out["uplink_http_method"].(string); strings.EqualFold(m, "GET") {
+			delete(out, "uplink_http_method")
+		}
+		if p := out["uplink_data_placement"]; p == "cookie" || p == "header" {
+			delete(out, "uplink_data_placement")
 		}
 	}
 	if xmuxRaw, ok := extra["xmux"].(map[string]any); ok {
