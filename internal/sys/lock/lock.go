@@ -53,8 +53,16 @@ func (l *Lock) TryLock() error {
 		return fmt.Errorf("acquire lock: %w", err)
 	}
 
+	// pid — через rename: os.WriteFile создаёт файл пустым и лишь потом пишет,
+	// а cleanStale сносит неразборный pid сразу — ждущий в этом окне снимал
+	// живой лок (F295). Каталог без pid снимается только по StaleAge.
 	pidFile := filepath.Join(l.path, "pid")
-	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+	tmp := pidFile + ".tmp"
+	err := os.WriteFile(tmp, []byte(strconv.Itoa(os.Getpid())), 0644)
+	if err == nil {
+		err = os.Rename(tmp, pidFile)
+	}
+	if err != nil {
 		os.RemoveAll(l.path)
 		return fmt.Errorf("write lock PID: %w", err)
 	}
