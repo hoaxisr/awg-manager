@@ -46,7 +46,7 @@ func stableTagFromKey(subID, key string) string {
 // Two refreshes of the same provider produce the same tag for the same
 // logical server.
 func StableTag(subID string, p vlink.ParsedOutbound) string {
-	return stableTagFromKey(subID, identityKey(p))
+	return stableTagFromKey(subID, keysOf(p).narrow)
 }
 
 // IdentityHash returns the subID-independent suffix of StableTag for the
@@ -54,30 +54,54 @@ func StableTag(subID string, p vlink.ParsedOutbound) string {
 // exclusion keys members by this hash because the full StableTag depends on
 // the not-yet-allocated subID.
 func IdentityHash(p vlink.ParsedOutbound) string {
-	return suffixOf(identityKey(p))
+	return suffixOf(keysOf(p).narrow)
 }
 
-// identityKey builds the input for the stable hash: protocol + server +
-// port + the user-credential field appropriate to the protocol.
-func identityKey(p vlink.ParsedOutbound) string {
+// memberKeys holds every identity tier of one outbound, computed from a single
+// parse of its body: chooseKeys needs all four per member, and re-parsing the
+// JSON per tier is measurable on MIPS with large subscriptions (F736).
+type memberKeys struct {
+	// narrow: protocol + server + port + the user-credential field
+	// appropriate to the protocol.
+	narrow string
+	// ext widens narrow with the reality-masking fields that distinguish
+	// endpoints sharing one server:port:credential — SNI and the reality
+	// short_id. Used only for servers whose narrow key collides.
+	ext string
+	// full widens ext with the transport fields.
+	//
+	// realm_id дописывается только когда он есть: узлы за одним реле hysteria2
+	// делят server:port (это адрес реле) и пароль и различаются лишь им — без
+	// него один пропадал как дубликат (F366). Без realm ключ прежний, и теги уже
+	// расширенных групп не переезжают.
+	full string
+	// cred separates accounts that share the credential selected by narrow,
+	// such as SOCKS/Naive users with the same password. Keep the legacy keys
+	// intact: only groups they cannot distinguish use this tier.
+	cred string
+}
+
+func keysOf(p vlink.ParsedOutbound) memberKeys {
 	var ob map[string]any
-	json.Unmarshal(p.Outbound, &ob)
+	if json.Unmarshal(p.Outbound, &ob) != nil {
+		// Битое тело: ключ по сырым байтам. Пустые поля вместо него склеили
+		// бы любые два битых outbound'а одного server:port в один (F736).
+		k := "raw|" + string(p.Outbound)
+		return memberKeys{narrow: k, ext: k, full: k, cred: k}
+	}
+	uuid, _ := ob["uuid"].(string)
+	password, _ := ob["password"].(string)
+	username, _ := ob["username"].(string)
 	cred := ""
-	for _, k := range []string{"uuid", "password", "username"} {
-		if v, ok := ob[k].(string); ok && v != "" {
+	for _, v := range []string{uuid, password, username} {
+		if v != "" {
 			cred = v
 			break
 		}
 	}
-	return p.Protocol + "|" + p.Server + "|" + itoa(p.Port) + "|" + cred
-}
+	var k memberKeys
+	k.narrow = p.Protocol + "|" + p.Server + "|" + itoa(p.Port) + "|" + cred
 
-// extendedKey widens identityKey with the reality-masking fields that
-// distinguish endpoints sharing one server:port:credential — SNI and the
-// reality short_id. Used only for servers whose narrow key collides.
-func extendedKey(p vlink.ParsedOutbound) string {
-	var ob map[string]any
-	json.Unmarshal(p.Outbound, &ob)
 	sni, sid := "", ""
 	if tls, ok := ob["tls"].(map[string]any); ok {
 		sni, _ = tls["server_name"].(string)
@@ -85,7 +109,20 @@ func extendedKey(p vlink.ParsedOutbound) string {
 			sid, _ = r["short_id"].(string)
 		}
 	}
-	return identityKey(p) + "|" + sni + "|" + sid
+	k.ext = k.narrow + "|" + sni + "|" + sid
+
+	k.full = k.ext + "|" + transportKey(ob)
+	if r, ok := ob["realm"].(map[string]any); ok {
+		if id, _ := r["realm_id"].(string); id != "" {
+			k.full += "|realm:" + id
+		}
+	}
+
+	// Encode the tuple rather than joining credentials with a separator that
+	// may itself occur in a username or password.
+	credKey, _ := json.Marshal([4]string{k.full, uuid, password, username})
+	k.cred = string(credKey)
+	return k
 }
 
 // transportKey collects the transport fields that make two endpoints on one
@@ -126,39 +163,6 @@ func transportKey(ob map[string]any) string {
 	return typ + "|" + path + "|" + host + "|" + service + "|" + mode
 }
 
-// fullKey widens extendedKey with the transport fields.
-//
-// realm_id дописывается только когда он есть: узлы за одним реле hysteria2
-// делят server:port (это адрес реле) и пароль и различаются лишь им — без
-// него один пропадал как дубликат (F366). Без realm ключ прежний, и теги уже
-// расширенных групп не переезжают.
-func fullKey(p vlink.ParsedOutbound) string {
-	var ob map[string]any
-	json.Unmarshal(p.Outbound, &ob)
-	k := extendedKey(p) + "|" + transportKey(ob)
-	if r, ok := ob["realm"].(map[string]any); ok {
-		if id, _ := r["realm_id"].(string); id != "" {
-			k += "|realm:" + id
-		}
-	}
-	return k
-}
-
-// credentialKey separates accounts that share the credential selected by
-// identityKey, such as SOCKS/Naive users with the same password. Keep the
-// legacy keys intact: only groups they cannot distinguish use this tier.
-func credentialKey(p vlink.ParsedOutbound) string {
-	var ob map[string]any
-	json.Unmarshal(p.Outbound, &ob)
-	uuid, _ := ob["uuid"].(string)
-	password, _ := ob["password"].(string)
-	username, _ := ob["username"].(string)
-	// Encode the tuple rather than joining credentials with a separator that
-	// may itself occur in a username or password.
-	key, _ := json.Marshal([4]string{fullKey(p), uuid, password, username})
-	return string(key)
-}
-
 func itoa(p uint16) string {
 	if p == 0 {
 		return "0"
@@ -172,31 +176,33 @@ func itoa(p uint16) string {
 }
 
 // chooseKeys uses the narrowest tier that distinguishes every account in a
-// narrow-key group: identityKey, extendedKey (masking, issue #373), fullKey
-// (transport, issue #625), or credentialKey (remaining credential fields).
+// narrow-key group: narrow, ext (masking, issue #373), full (transport,
+// issue #625), or cred (remaining credential fields) — see memberKeys.
 // Groups the legacy tiers already distinguish retain their previous tags;
 // true duplicates stay on the narrow key.
 // Deterministic over the set (frequency is set-, not order-, dependent). Both
 // ApplyDiff and the import preview build on this so the exclusion suffix
 // (preview) and the final tag (refresh) agree.
 func chooseKeys(parsed []vlink.ParsedOutbound) []string {
+	all := make([]memberKeys, len(parsed))
 	distinctExt := make(map[string]map[string]struct{}, len(parsed))
 	distinctFull := make(map[string]map[string]struct{}, len(parsed))
 	distinctCredentials := make(map[string]map[string]struct{}, len(parsed))
-	for _, p := range parsed {
-		nk := identityKey(p)
-		if distinctExt[nk] == nil {
-			distinctExt[nk] = make(map[string]struct{})
-			distinctFull[nk] = make(map[string]struct{})
-			distinctCredentials[nk] = make(map[string]struct{})
+	for i, p := range parsed {
+		k := keysOf(p)
+		all[i] = k
+		if distinctExt[k.narrow] == nil {
+			distinctExt[k.narrow] = make(map[string]struct{})
+			distinctFull[k.narrow] = make(map[string]struct{})
+			distinctCredentials[k.narrow] = make(map[string]struct{})
 		}
-		distinctExt[nk][extendedKey(p)] = struct{}{}
-		distinctFull[nk][fullKey(p)] = struct{}{}
-		distinctCredentials[nk][credentialKey(p)] = struct{}{}
+		distinctExt[k.narrow][k.ext] = struct{}{}
+		distinctFull[k.narrow][k.full] = struct{}{}
+		distinctCredentials[k.narrow][k.cred] = struct{}{}
 	}
 	keys := make([]string, len(parsed))
-	for i, p := range parsed {
-		nk := identityKey(p)
+	for i, k := range all {
+		nk := k.narrow
 		switch {
 		case len(distinctCredentials[nk]) <= 1:
 			// Byte-identical duplicates: narrow key keeps the tag stable
@@ -207,14 +213,14 @@ func chooseKeys(parsed []vlink.ParsedOutbound) []string {
 			// extended key keeps tags of already-widened groups unchanged —
 			// widening further would re-tag subscriptions that never had the
 			// bug.
-			keys[i] = extendedKey(p)
+			keys[i] = k.ext
 		case len(distinctFull[nk]) == len(distinctCredentials[nk]):
 			// Endpoints share masking and differ only by transport
 			// (issue #625): only the full key separates them.
-			keys[i] = fullKey(p)
+			keys[i] = k.full
 		default:
 			// Shared passwords do not make different usernames duplicates.
-			keys[i] = credentialKey(p)
+			keys[i] = k.cred
 		}
 	}
 	return keys

@@ -1509,7 +1509,7 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	// дыру, из-за которой разные ws-пути считались одним сервером; у записей,
 	// сделанных до появления поля, он пуст — для них остаётся прежнее грубое
 	// сравнение, иначе точный повтор проскочил бы под тем же тегом.
-	tag := stableTagFromKey(sub.ID, fullKey(out))
+	tag := stableTagFromKey(sub.ID, keysOf(out).full)
 	mi := toMemberInfo(tag, out)
 	for _, existing := range sub.Members {
 		if existing.Server != mi.Server || existing.Port != mi.Port ||

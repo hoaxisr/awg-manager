@@ -25,7 +25,7 @@ func wsFeed() (a, b, other vlink.ParsedOutbound) {
 // пользователя его нет. Заполнить его здесь означало бы тестировать
 // несуществующие данные и скрыть поведение грубого сравнения.
 func narrowInfo(p vlink.ParsedOutbound) MemberInfo {
-	mi := toMemberInfo(stableTagFromKey("sub", identityKey(p)), p)
+	mi := toMemberInfo(stableTagFromKey("sub", keysOf(p).narrow), p)
 	mi.TransportKey = ""
 	return mi
 }
@@ -33,7 +33,7 @@ func narrowInfo(p vlink.ParsedOutbound) MemberInfo {
 // currentInfo — запись, сделанная уже новым кодом: тег полного ключа и
 // заполненный TransportKey.
 func currentInfo(p vlink.ParsedOutbound) MemberInfo {
-	return toMemberInfo(stableTagFromKey("sub", fullKey(p)), p)
+	return toMemberInfo(stableTagFromKey("sub", keysOf(p).full), p)
 }
 
 func TestRemapStaleTags_ExpandsCollapsedGroup(t *testing.T) {
@@ -141,7 +141,7 @@ func TestRemapStaleTags_NoContagionWhenTransportKnown(t *testing.T) {
 	diff := ApplyDiff("sub", nil, []vlink.ParsedOutbound{a, b, other})
 	// Запись сделана новым кодом, но её тег протух (группа успела схлопнуться).
 	stale := currentInfo(a)
-	stale.Tag = stableTagFromKey("sub", identityKey(a))
+	stale.Tag = stableTagFromKey("sub", keysOf(a).narrow)
 
 	got, _, changed := remapStaleTags([]string{stale.Tag}, []MemberInfo{stale}, diff, "", nil)
 	if !changed {
@@ -150,7 +150,7 @@ func TestRemapStaleTags_NoContagionWhenTransportKnown(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("got %v, want exactly the endpoint the user excluded", got)
 	}
-	if want := stableTagFromKey("sub", fullKey(a)); got[0] != want {
+	if want := stableTagFromKey("sub", keysOf(a).full); got[0] != want {
 		t.Errorf("got %q, want %q (/path1)", got[0], want)
 	}
 }

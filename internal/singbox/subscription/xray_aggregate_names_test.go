@@ -13,7 +13,7 @@ func xrayProfile(remarks string, servers []string, extra string) string {
 	obs := make([]string, 0, len(servers)+1)
 	for _, srv := range servers {
 		// Пароль выводится из адреса: один и тот же сервер обязан дать один
-		// ключ идентичности (identityKey) в любом профиле, иначе дедупликация
+		// ключ идентичности (memberKeys.narrow) в любом профиле, иначе дедупликация
 		// его не увидит и проверять будет нечего.
 		pw := srv[strings.LastIndex(srv, ".")+1:]
 		obs = append(obs, `{"protocol":"trojan","settings":{"servers":[{"address":"`+srv+
