@@ -10930,8 +10930,10 @@ paths:
     put:
       consumes:
       - application/json
-      description: Persists the HydraRoute (HrNeo) config and schedules a neo restart.
-        The cached status becomes stale and is invalidated via SSE.
+      description: Changes the HydraRoute (HrNeo) config fields present in the body
+        (others keep their values; policyOrder and geo file lists are not changed
+        here) and schedules a neo restart. The cached status becomes stale and is
+        invalidated via SSE.
       parameters:
       - description: hydraroute.Config
         in: body

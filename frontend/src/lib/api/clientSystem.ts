@@ -146,10 +146,11 @@ export class SystemClient extends TunnelsClient {
 		return this.request('/hydraroute/config');
 	}
 
-	async updateHydraRouteConfig(config: HydraRouteConfig): Promise<HydraRouteConfig> {
+	/** Пишет только присланные поля; policyOrder и списки geo-файлов не меняет. */
+	async updateHydraRouteConfig(changes: Partial<HydraRouteConfig>): Promise<HydraRouteConfig> {
 		return this.request('/hydraroute/config/update', {
 			method: 'PUT',
-			body: JSON.stringify(config),
+			body: JSON.stringify(changes),
 		});
 	}
 

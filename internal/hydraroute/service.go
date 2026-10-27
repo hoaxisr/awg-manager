@@ -370,19 +370,12 @@ func (s *Service) ReadConfig() (*Config, error) {
 	return ReadConfig()
 }
 
-// WriteConfig syncs geo file paths from geodata (if set), writes the config, and schedules a restart.
-func (s *Service) WriteConfig(cfg *Config) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.writeConfigLocked(cfg)
-}
-
 // ErrNoConfig is UpdateConfig refused: hrneo.conf does not exist — HR Neo
 // is not installed, or has not written its configuration yet.
 var ErrNoConfig = errors.New("hrneo.conf does not exist")
 
-// UpdateConfig reads hrneo.conf, lets edit change it and writes it as
-// WriteConfig does, all under s.mu — the lock SetPolicyOrder and
+// UpdateConfig reads hrneo.conf, lets edit change it and writes it via
+// writeConfigLocked, all under s.mu — the lock SetPolicyOrder and
 // SyncGeoFilesToConfig write their parts under. A caller that changes a few
 // settings must not write back a whole copy read before such a write: the
 // policy order dragged in the web interface meanwhile would be lost. An
@@ -412,7 +405,8 @@ func (s *Service) UpdateConfig(edit func(*Config) error) (*Config, error) {
 	return cfg, nil
 }
 
-// writeConfigLocked is WriteConfig under s.mu.
+// writeConfigLocked syncs geo file paths from geodata (if set), writes the
+// config and schedules a restart. Caller holds s.mu.
 func (s *Service) writeConfigLocked(cfg *Config) error {
 	if s.geodata != nil {
 		geoIP, geoSite := s.geodata.GeoFilePaths()

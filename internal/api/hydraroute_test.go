@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -199,5 +200,57 @@ func TestGetConfig_HasRevision(t *testing.T) {
 	rev, _ := svc.RulesRevision()
 	if !strings.Contains(rec.Body.String(), `"hrRevision":"`+rev+`"`) {
 		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+// Вкладка настроек шлёт только изменённые поля. Порядок политик, поменянный
+// после открытия вкладки, и неприсланные поля переживают сохранение;
+// policyOrder в теле ручкой не пишется (F728).
+func TestUpdateConfig_ChangesOnlySentFields(t *testing.T) {
+	h, svc := newHydraRouteTestHandler(t)
+	// Без Installed сервис не заводит таймер рестарта neo.
+	svc.SetStatusForTest(false)
+	if err := hydraroute.WriteConfig(&hydraroute.Config{IpsetTimeout: 300, IpsetMaxElem: 65536, PolicyOrder: []string{"A", "B"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetPolicyOrder([]string{"B", "A"}); err != nil {
+		t.Fatal(err)
+	}
+	body := strings.NewReader(`{"conntrackFlush":true,"policyOrder":["X"]}`)
+	rec := httptest.NewRecorder()
+	h.UpdateConfig(rec, httptest.NewRequest(http.MethodPut, "/api/hydraroute/config/update", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	cfg, err := hydraroute.ReadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ConntrackFlush {
+		t.Error("sent field conntrackFlush not written")
+	}
+	if cfg.IpsetTimeout != 300 {
+		t.Errorf("unsent ipsetTimeout = %d, want 300", cfg.IpsetTimeout)
+	}
+	if strings.Join(cfg.PolicyOrder, ",") != "B,A" {
+		t.Errorf("policyOrder = %v, want [B A]", cfg.PolicyOrder)
+	}
+}
+
+// Каждое поле hydraroute.Config либо правится этой ручкой (есть в
+// hydraRouteConfigPatch), либо защищено — новое поле без решения роняет тест.
+func TestHydraRouteConfigPatch_FieldInventoryComplete(t *testing.T) {
+	protected := map[string]bool{"GeoIPFiles": true, "GeoSiteFiles": true, "PolicyOrder": true}
+	patch := reflect.TypeOf(hydraRouteConfigPatch{})
+	cfg := reflect.TypeOf(hydraroute.Config{})
+	for i := 0; i < cfg.NumField(); i++ {
+		name := cfg.Field(i).Name
+		_, editable := patch.FieldByName(name)
+		if editable == protected[name] {
+			t.Errorf("hydraroute.Config.%s: editable=%v protected=%v — exactly one must hold", name, editable, protected[name])
+		}
+	}
+	if patch.NumField() != cfg.NumField()-len(protected) {
+		t.Errorf("patch has %d fields, want %d", patch.NumField(), cfg.NumField()-len(protected))
 	}
 }

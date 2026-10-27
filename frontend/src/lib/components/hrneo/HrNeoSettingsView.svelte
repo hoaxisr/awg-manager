@@ -12,6 +12,10 @@
 	let { embedded = true }: Props = $props();
 
 	let cfg = $state<HydraRouteConfig | null>(null);
+	// Отправляются только изменённые поля: cfg — снимок с момента открытия
+	// вкладки, и запись целиком откатила бы порядок политик и правки MCP,
+	// сделанные за это время (F728).
+	let changes = $state<Partial<HydraRouteConfig>>({});
 	let dirty = $state(false);
 	let saving = $state(false);
 	let err = $state('');
@@ -21,6 +25,7 @@
 		err = '';
 		try {
 			cfg = await api.getHydraRouteConfig();
+			changes = {};
 			dirty = false;
 		} catch (e: unknown) {
 			err = e instanceof Error ? e.message : String(e);
@@ -32,7 +37,8 @@
 		saving = true;
 		err = '';
 		try {
-			cfg = await api.updateHydraRouteConfig(cfg);
+			cfg = await api.updateHydraRouteConfig(changes);
+			changes = {};
 			dirty = false;
 		} catch (e: unknown) {
 			err = e instanceof Error ? e.message : String(e);
@@ -48,6 +54,7 @@
 	function touch<K extends keyof HydraRouteConfig>(key: K, val: HydraRouteConfig[K]) {
 		if (!cfg) return;
 		cfg = { ...cfg, [key]: val };
+		changes = { ...changes, [key]: val };
 		dirty = true;
 	}
 </script>

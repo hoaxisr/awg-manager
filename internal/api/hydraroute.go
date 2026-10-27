@@ -248,10 +248,49 @@ func (h *HydraRouteHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	}{cfg, rev})
 }
 
-// UpdateConfig writes the HydraRoute config.
+// hydraRouteConfigPatch — поля hrneo.conf, правимые из веба; nil — поле не
+// прислали, в файле остаётся своё. Вкладка настроек держит снимок с момента
+// открытия, и запись целиком откатывала то, что поменяли за это время:
+// порядок политик (SetPolicyOrder) и правки MCP (F728). PolicyOrder и списки
+// geo-файлов этой ручкой не меняются — их пишут SetPolicyOrder и сервис.
+type hydraRouteConfigPatch struct {
+	AutoStart          *bool   `json:"autoStart"`
+	ClearIPSet         *bool   `json:"clearIPSet"`
+	CIDR               *bool   `json:"cidr"`
+	IpsetEnableTimeout *bool   `json:"ipsetEnableTimeout"`
+	IpsetTimeout       *int    `json:"ipsetTimeout"`
+	IpsetMaxElem       *int    `json:"ipsetMaxElem"`
+	DirectRouteEnabled *bool   `json:"directRouteEnabled"`
+	GlobalRouting      *bool   `json:"globalRouting"`
+	ConntrackFlush     *bool   `json:"conntrackFlush"`
+	Log                *string `json:"log"`
+	LogFile            *string `json:"logFile"`
+}
+
+func (p hydraRouteConfigPatch) apply(c *hydraroute.Config) {
+	assignSent(&c.AutoStart, p.AutoStart)
+	assignSent(&c.ClearIPSet, p.ClearIPSet)
+	assignSent(&c.CIDR, p.CIDR)
+	assignSent(&c.IpsetEnableTimeout, p.IpsetEnableTimeout)
+	assignSent(&c.IpsetTimeout, p.IpsetTimeout)
+	assignSent(&c.IpsetMaxElem, p.IpsetMaxElem)
+	assignSent(&c.DirectRouteEnabled, p.DirectRouteEnabled)
+	assignSent(&c.GlobalRouting, p.GlobalRouting)
+	assignSent(&c.ConntrackFlush, p.ConntrackFlush)
+	assignSent(&c.Log, p.Log)
+	assignSent(&c.LogFile, p.LogFile)
+}
+
+func assignSent[T any](dst, sent *T) {
+	if sent != nil {
+		*dst = *sent
+	}
+}
+
+// UpdateConfig changes the HydraRoute config fields present in the body.
 //
 //	@Summary		Update HydraRoute config
-//	@Description	Persists the HydraRoute (HrNeo) config and schedules a neo restart. The cached status becomes stale and is invalidated via SSE.
+//	@Description	Changes the HydraRoute (HrNeo) config fields present in the body (others keep their values; policyOrder and geo file lists are not changed here) and schedules a neo restart. The cached status becomes stale and is invalidated via SSE.
 //	@Tags			hydraroute
 //	@Accept			json
 //	@Produce		json
@@ -267,13 +306,17 @@ func (h *HydraRouteHandler) UpdateConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var cfg hydraroute.Config
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+	var patch hydraRouteConfigPatch
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		response.Error(w, "invalid request body: "+err.Error(), "BAD_REQUEST")
 		return
 	}
 
-	if err := h.svc.WriteConfig(&cfg); err != nil {
+	cfg, err := h.svc.UpdateConfig(func(c *hydraroute.Config) error {
+		patch.apply(c)
+		return nil
+	})
+	if err != nil {
 		response.Error(w, err.Error(), "CONFIG_WRITE_ERROR")
 		return
 	}
