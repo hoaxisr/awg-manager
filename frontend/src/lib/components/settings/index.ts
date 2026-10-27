@@ -17,3 +17,4 @@ export { default as McpCard } from './McpCard.svelte';
 export { default as ObfuscatorRelayCard } from './ObfuscatorRelayCard.svelte';
 export { default as McpSection } from './McpSection.svelte';
 export { default as AccessCard } from './AccessCard.svelte';
+export { default as PingTargetsCard } from './PingTargetsCard.svelte';
