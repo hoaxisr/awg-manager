@@ -457,12 +457,15 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 
 	if req.Description != peer.Description {
 		if err := s.rciSetPeerComment(ctx, iface, pubkey, strings.TrimSpace(req.Description)); err != nil {
-			// Пира нет на роутере — не «косметика»: запись о нём не пишется,
-			// откатывать адрес не у кого.
-			if errors.Is(err, peersubnet.ErrPeerNotFound) {
-				return fmt.Errorf("set peer comment: %w", err)
+			// Пира нет на роутере — запись о нём не пишется, откатывать адрес
+			// не у кого. Иначе — отказ целиком, как у прочих шагов: с новым
+			// именем в записи и старым в NDMS они разошлись бы (F669).
+			if !errors.Is(err, peersubnet.ErrPeerNotFound) {
+				rbCtx, cancel := detachedCtx(ctx)
+				revertTunnelIP(rbCtx, "отказа смены имени")
+				cancel()
 			}
-			s.log.Warn("failed to set peer comment", "error", err)
+			return fmt.Errorf("set peer comment: %w", err)
 		}
 	}
 

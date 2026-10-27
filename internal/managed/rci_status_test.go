@@ -280,3 +280,32 @@ func TestRciPost_FailureStillSavesAndInvalidates(t *testing.T) {
 		t.Error("кэш списка WG-серверов не инвалидирован на отказе")
 	}
 }
+
+// Роутер не принял новое имя пира — сохранение целиком отказ: в записи
+// прежние имя и адрес, адрес на роутере возвращён. Иначе в записи новое имя,
+// в NDMS старое (F669).
+func TestUpdatePeer_CommentFailureIsFailureAndNotStored(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	seedSimPeer(t, store, sim)
+	poster.respond = func(m map[string]interface{}) json.RawMessage {
+		p := peerPayload(m, "Wireguard1")
+		if _, ok := p["comment"]; ok {
+			return nestedError("Wireguard1", "comment rejected")
+		}
+		return nil
+	}
+	before, _ := store.GetManagedServerByID("Wireguard1")
+	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "renamed", TunnelIP: "10.66.66.3/32"})
+	if err == nil || !strings.Contains(err.Error(), "comment rejected") {
+		t.Fatalf("err = %v, want отказ роутера", err)
+	}
+	sv, _ := store.GetManagedServerByID("Wireguard1")
+	if sv.Peers[0].Description != before.Peers[0].Description || sv.Peers[0].TunnelIP != "10.66.66.2/32" {
+		t.Fatalf("запись изменена при отказе имени: %+v", sv.Peers[0])
+	}
+	ips, _ := peerPayload(poster.posts[len(poster.posts)-1], "Wireguard1")["allow-ips"].([]map[string]interface{})
+	if len(ips) != 1 || ips[0]["no"] != nil || ips[0]["address"] != "10.66.66.2" {
+		t.Fatalf("старый /32 не восстановлен последним шагом: %v", poster.posts)
+	}
+}
