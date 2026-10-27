@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -75,4 +76,40 @@ func TestServersHandler_AddServerPeer_RCReadFailureKeepsSecrets(t *testing.T) {
 	if posts := poster.snapshot(); len(posts) != 0 {
 		t.Fatalf("пир ушёл на роутер без проверки адреса: %v", posts)
 	}
+}
+
+// rc без блока wireguard (сбой формы) разбирается в пустой список — уборка не
+// снимает секреты пиров, которых видно в списке сервера.
+func TestServersHandler_AddServerPeer_EmptyRCKeepsListedSecrets(t *testing.T) {
+	h, store, _, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, `[]`)
+	stubPeerKeygen(t)
+	if err := store.SetServerPeerSecret("Wireguard0", otherPeerPubKey, storage.ServerPeerSecret{PrivateKey: "P"}); err != nil {
+		t.Fatal(err)
+	}
+	fg.SetRC("Wireguard0", `{}`)
+	_ = postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32"}`)
+	if _, ok := store.GetServerPeerSecret("Wireguard0", otherPeerPubKey); !ok {
+		t.Fatal("секрет пира из списка снят по пустому rc")
+	}
+}
+
+// F245: добавление без сетей за клиентом тоже ждёт общую блокировку — иначе
+// перепроверка адреса и добавление двух запросов перемежаются.
+func TestServersHandler_AddServerPeer_AlwaysTakesLock(t *testing.T) {
+	h, _, _, _, _ := newServersSubnetHarness(t, `[]`, `[]`)
+	stubPeerKeygen(t)
+	unlock := h.managedSvc.LockPeerSubnets()
+	done := make(chan struct{})
+	go func() {
+		postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32"}`)
+		close(done)
+	}()
+	select {
+	case <-done:
+		unlock()
+		t.Fatal("добавление прошло, пока блокировка занята")
+	case <-time.After(300 * time.Millisecond):
+	}
+	unlock()
+	<-done
 }

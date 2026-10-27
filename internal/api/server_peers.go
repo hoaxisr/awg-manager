@@ -260,8 +260,8 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 	// awg — не под ней); отпускается до публикации и writeAll (I2).
 	//
 	// Берётся всегда, не только с сетями за клиентом: адрес проверен выше по
-	// снимку, а две вкладки (или вкладка и MCP) с одним свободным адресом
-	// прошли бы проверку обе (F245). Под блокировкой — перепроверка по свежему
+	// снимку, а два запроса (две вкладки, клиент API) с одним свободным
+	// адресом прошли бы проверку оба (F245). Под блокировкой — перепроверка по свежему
 	// rc и уборка секретов пиров, снятых мимо панели (F528).
 	unlock := func() {}
 	if h.managedSvc != nil {
@@ -277,7 +277,7 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		response.Error(w, "tunnel IP already in use", "TUNNEL_IP_IN_USE")
 		return
 	}
-	h.pruneOrphanPeerSecrets(name, peers)
+	h.pruneOrphanPeerSecrets(name, peers, server)
 	remote, ok := h.validateRemoteSubnets(r.Context(), w, req.RemoteSubnets, managed.PeerRef{Iface: name}, "ADD_PEER_FAILED")
 	if !ok {
 		return
@@ -707,7 +707,7 @@ func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request
 	// не трогаем: исчезновение сервера уборкой секретов не считаем.
 	if present {
 		if peers, err := h.queries.WGServers.PeersRC(r.Context(), iface); err == nil {
-			h.pruneOrphanPeerSecrets(name, peers)
+			h.pruneOrphanPeerSecrets(name, peers, server)
 		}
 	}
 	unlock()
@@ -986,10 +986,19 @@ func serverWithPeers(peers []ndms.WireguardServerPeerConfig) *ndms.WireguardServ
 // в settings навсегда — в UI его не видно (F528). Звать под lockPeerSubnets:
 // AddServerPeer пишет секрет ДО добавления пира на роутер, и уборка вне
 // блокировки снесла бы секрет добавляемого.
-func (h *ServersHandler) pruneOrphanPeerSecrets(serverID string, peers []ndms.WireguardServerPeerConfig) {
+//
+// Удаление необратимо, поэтому ключ должен отсутствовать и в снимке списка
+// (snapshot.Peers — другой источник): rc без блока wireguard или в новой форме
+// разобрался бы в пустой список, и уборка снесла бы ключи всех живых пиров.
+func (h *ServersHandler) pruneOrphanPeerSecrets(serverID string, peers []ndms.WireguardServerPeerConfig, snapshot *ndms.WireguardServer) {
 	live := make(map[string]bool, len(peers))
 	for _, p := range peers {
 		live[p.PublicKey] = true
+	}
+	if snapshot != nil {
+		for _, p := range snapshot.Peers {
+			live[p.PublicKey] = true
+		}
 	}
 	for pubkey := range h.settings.GetServerPeerSecrets()[serverID] {
 		if live[pubkey] {
