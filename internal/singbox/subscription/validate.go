@@ -113,13 +113,18 @@ func classifyOutbound(ob map[string]any) string {
 			}
 		}
 	}
+	// mieru и hysteria2 принимают вместо server_port диапазоны server_ports:
+	// sing-box требует хотя бы одно из двух (protocol/mieru/outbound.go),
+	// и vlink строит mieru из Clash port-range без server_port (F740).
+	ranges, _ := ob["server_ports"].([]any)
+	viaRanges := (typ == "mieru" || typ == "hysteria2") && len(ranges) > 0
 	port := portValue(ob["server_port"])
 	if port < 1 || port > 65535 {
 		switch typ {
 		case "direct", "block", "dns":
 			// ok
 		default:
-			if !viaRealm {
+			if !viaRealm && !viaRanges {
 				return "missing or invalid server_port"
 			}
 		}

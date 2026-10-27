@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 )
 
 // Test fixtures use RFC 5737 documentation IPs (192.0.2.x) and
@@ -430,5 +431,41 @@ func TestPreFilterOutbounds_DropsUnusableRealm(t *testing.T) {
 				t.Fatalf("kept/dropped = %d/%d, reasons=%v", len(kept), len(dropped), dropped)
 			}
 		})
+	}
+}
+
+// mieru и hysteria2 только с диапазонами server_ports sing-box принимает
+// (sing-box check, форк awgm.35) — отбраковывать их нельзя. Протоколу без
+// диапазонов server_ports не заменяет server_port, а mieru без портов вовсе
+// sing-box отвергает (F740).
+func TestPreFilterOutbounds_ServerPortsInsteadOfServerPort(t *testing.T) {
+	ranges := []any{"3000-3010"}
+	for _, tc := range []struct {
+		ob   map[string]any
+		keep bool
+	}{
+		{map[string]any{"type": "mieru", "tag": "m", "server": "192.0.2.10", "server_ports": ranges,
+			"transport": "TCP", "username": "u", "password": "p"}, true},
+		{map[string]any{"type": "hysteria2", "tag": "h", "server": "192.0.2.10", "server_ports": []any{"20000:21000"},
+			"password": "p", "tls": map[string]any{"enabled": true, "server_name": "example.com"}}, true},
+		{map[string]any{"type": "mieru", "tag": "none", "server": "192.0.2.10",
+			"transport": "TCP", "username": "u", "password": "p"}, false},
+		{map[string]any{"type": "trojan", "tag": "t", "server": "192.0.2.10", "server_ports": ranges,
+			"password": "p"}, false},
+	} {
+		kept, dropped := preFilterOutbounds([]any{tc.ob}, nil)
+		if got := len(kept) == 1; got != tc.keep {
+			t.Errorf("%s: kept=%v want %v (dropped=%v)", tc.ob["tag"], got, tc.keep, dropped)
+		}
+	}
+}
+
+// Сквозной путь подписки: mieru из Clash только с port-range доходит до
+// Valid, а не уходит в отклонённые (F740).
+func TestPartition_MieruPortRangeOnlyIsValid(t *testing.T) {
+	yaml := "proxies:\n  - {name: A, type: mieru, server: h.example, port-range: 3000-3010, transport: TCP, username: u, password: p}\n"
+	parts := partitionParsedOutbounds("sub", vlink.ParseClashBody([]byte(yaml)).Outbounds)
+	if len(parts.Valid) != 1 {
+		t.Fatalf("want 1 valid member, got %d (rejected=%v)", len(parts.Valid), parts.Rejected)
 	}
 }
