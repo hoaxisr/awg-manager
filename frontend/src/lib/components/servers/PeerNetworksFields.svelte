@@ -96,25 +96,16 @@
 
 <style>
 	/* Поля — примитивы app.css (.field-label/.field-input/.field-textarea, там же
-	   :disabled). Поправки ниже — под соседние поля модалки: их .label —
-	   0.8125rem, а input'ы рисует глобальный сброс `input:not(…)` (он перебивает
-	   и .field-input), textarea же он не перебивает — выравниваем руками. */
+	   :disabled), как и у соседних полей модалки. Шрифт textarea — как у них:
+	   общий .field-textarea моноширинный. */
 	.form-group {
 		display: flex;
 		flex-direction: column;
 		gap: 0.375rem;
 	}
 
-	.field-label {
-		font-size: 0.8125rem;
-	}
-
 	.field-textarea {
-		resize: vertical;
 		font-family: inherit;
-		font-size: 0.875rem;
-		padding: 0.5rem 0.75rem;
-		background: var(--bg-secondary);
 	}
 
 	.preset-row {

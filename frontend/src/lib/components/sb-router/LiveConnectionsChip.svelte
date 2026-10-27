@@ -62,7 +62,7 @@
     aria-label={stateAria}
   >
     <span class="dot" data-stale={isStale}></span>
-    <span class="label">{countLabel}</span>
+    <span class="live-label">{countLabel}</span>
   </button>
 {/if}
 
@@ -94,8 +94,8 @@
   .live-chip.active:hover {
     border-color: var(--color-success, #22c55e);
   }
-  .live-chip.active .label { color: var(--color-success, #22c55e); }
+  .live-chip.active .live-label { color: var(--color-success, #22c55e); }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-success, #22c55e); flex-shrink: 0; }
   .dot[data-stale='true'] { background: var(--color-warning, #dab856); }
-  .label { color: var(--text-primary); font-weight: 500; }
+  .live-label { color: var(--text-primary); font-weight: 500; }
 </style>

@@ -602,7 +602,7 @@
 
     <div class="server-section">
     <div class="server-row">
-        <span class="label">{isURLTest ? m.subscriptions_active_auto() : m.subscriptions_active_server()}</span>
+        <span class="active-label">{isURLTest ? m.subscriptions_active_auto() : m.subscriptions_active_server()}</span>
         <div class="picker-anchor">
             <div class="server-control">
                 <button
@@ -1135,7 +1135,7 @@
         align-items: center;
         margin: 0;
     }
-    .label {
+    .active-label {
         color: var(--color-text-muted);
         font-size: var(--sbx-card-label);
         text-transform: uppercase;

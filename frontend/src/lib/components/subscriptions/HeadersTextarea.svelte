@@ -98,7 +98,7 @@
 
 <textarea
 	id="hdr"
-	class="textarea"
+	class="headers-textarea"
 	bind:value
 	placeholder={`# ${m.subscriptions_headers_example()}\nUser-Agent: mihomo/v1.19.20`}
 	rows="8"
@@ -195,7 +195,7 @@
 		font-size: 12px;
 		color: var(--color-text-primary);
 	}
-	.textarea {
+	.headers-textarea {
 		width: 100%;
 		min-height: 180px;
 		font-family: var(--font-mono, ui-monospace, monospace);

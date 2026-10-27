@@ -489,7 +489,7 @@
 	</header>
 	<p class="pd">{m.fakeip_routes_desc()}</p>
 
-	<div class="table">
+	<div class="routes-table">
 		<div class="thead">
 			<span class="th-grip" aria-hidden="true"></span>
 			<span class="th-num">#</span>
@@ -708,7 +708,7 @@
 		font-size: 0.8125rem;
 	}
 
-	.table {
+	.routes-table {
 		min-width: 0;
 	}
 

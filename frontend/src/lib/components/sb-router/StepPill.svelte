@@ -25,8 +25,8 @@
       {n}
     {/if}
   </span>
-  <span class="label label-full">{label}</span>
-  <span class="label label-short">{shortLabel ?? label}</span>
+  <span class="pill-label label-full">{label}</span>
+  <span class="pill-label label-short">{shortLabel ?? label}</span>
 </div>
 
 <style>
@@ -68,12 +68,12 @@
     background: var(--color-success, #22c55e);
     color: #fff;
   }
-  .label {
+  .pill-label {
     font-size: 12.5px;
     font-weight: 500;
     color: var(--text-muted);
   }
-  .pill.active .label {
+  .pill.active .pill-label {
     font-weight: 600;
     color: var(--text-primary);
   }

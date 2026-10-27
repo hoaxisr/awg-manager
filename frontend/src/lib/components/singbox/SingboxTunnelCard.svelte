@@ -435,7 +435,7 @@
 	<div class="divider divider-dashed"></div>
 
 	<div class="row">
-		<span class="label">{m.tunnels_card_server()}</span>
+		<span class="row-label">{m.tunnels_card_server()}</span>
 		<div class="server-row value">
 			{#if showServer}
 				<span class="server-text">{tunnel.server}</span>
@@ -451,12 +451,12 @@
 
 	{#if tunnel.protocol === 'naive'}
 		<div class="row">
-			<span class="label">{m.login_label_login()}</span>
+			<span class="row-label">{m.login_label_login()}</span>
 			<span class="value">{tunnel.username || '—'}</span>
 		</div>
 	{:else if tunnel.sni}
 		<div class="row">
-			<span class="label">SNI</span>
+			<span class="row-label">SNI</span>
 			<span class="value">
 				{#if showServer}
 					{tunnel.sni}
@@ -908,7 +908,7 @@
 		align-items: center;
 		margin: 0;
 	}
-	.row .label {
+	.row .row-label {
 		color: var(--color-text-muted);
 		font-size: var(--sbx-card-label);
 		text-transform: uppercase;

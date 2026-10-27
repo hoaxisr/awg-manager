@@ -93,7 +93,7 @@
 
 		<div class="state">
 			{#if loading && !json}
-				<div class="placeholder">{m.singbox_routing_json_loading()}</div>
+				<div class="json-placeholder">{m.singbox_routing_json_loading()}</div>
 			{:else if error}
 				<div class="error">
 					<div class="error-title">{m.singbox_routing_json_load_failed()}</div>
@@ -102,7 +102,7 @@
 			{:else if json}
 				<pre class="json">{json}</pre>
 			{:else}
-				<div class="placeholder">{m.singbox_routing_json_empty()}</div>
+				<div class="json-placeholder">{m.singbox_routing_json_empty()}</div>
 			{/if}
 		</div>
 	</div>
@@ -142,7 +142,7 @@
 		flex-direction: column;
 	}
 
-	.placeholder {
+	.json-placeholder {
 		padding: 1.5rem;
 		text-align: center;
 		color: var(--color-text-secondary);

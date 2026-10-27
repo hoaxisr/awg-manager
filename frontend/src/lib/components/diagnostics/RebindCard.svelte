@@ -8,7 +8,7 @@
 
 <div class="rebind">
 	<div class="head">
-		<span class="label">{m.diag_rebind_title()}</span>
+		<span class="rebind-label">{m.diag_rebind_title()}</span>
 		<span class="status">
 			<StatusDot variant={rebind.enabled ? 'success' : 'muted'} size="sm" />
 			{rebind.enabled ? m.diag_rebind_on() : m.diag_rebind_off()}
@@ -32,7 +32,7 @@
 
 <style>
 	.head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-	.label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+	.rebind-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
 	.status { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; }
 	.kv { display: flex; gap: 28px; flex-wrap: wrap; }
 	.kv .k { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 6px; }

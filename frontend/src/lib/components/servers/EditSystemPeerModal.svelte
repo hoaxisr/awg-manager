@@ -106,19 +106,19 @@
 <Modal {open} title={m.servers_peer_edit_title()} size="sm" {onclose}>
 	<div class="form-fields">
 		<div class="form-group">
-			<label class="label" for="esp-desc">{m.servers_peer_label_desc()}</label>
-			<input type="text" id="esp-desc" class="input" bind:value={description} />
+			<label class="field-label" for="esp-desc">{m.servers_peer_label_desc()}</label>
+			<input type="text" id="esp-desc" class="field-input" bind:value={description} />
 		</div>
 		<div class="form-group">
-			<label class="label" for="esp-ip">Tunnel IP (CIDR)</label>
-			<input type="text" id="esp-ip" class="input" bind:value={tunnelIP} />
+			<label class="field-label" for="esp-ip">Tunnel IP (CIDR)</label>
+			<input type="text" id="esp-ip" class="field-input" bind:value={tunnelIP} />
 		</div>
 		<div class="form-group">
-			<label class="label" for="esp-dns">{m.servers_peer_label_dns()}</label>
+			<label class="field-label" for="esp-dns">{m.servers_peer_label_dns()}</label>
 			<input
 				type="text"
 				id="esp-dns"
-				class="input"
+				class="field-input"
 				bind:value={dns}
 				placeholder="192.168.1.1"
 				disabled={useRouterDNS}
@@ -182,20 +182,7 @@
 		gap: 0.375rem;
 	}
 
-	.label {
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--text-secondary);
-	}
 
-	.input {
-		padding: 8px 12px;
-		font-size: 13px;
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		color: var(--text-primary);
-	}
 
 	.toggle-row {
 		display: flex;
@@ -218,8 +205,4 @@
 		color: var(--color-error, #f87171);
 	}
 
-	.input:focus {
-		outline: none;
-		border-color: var(--accent);
-	}
 </style>

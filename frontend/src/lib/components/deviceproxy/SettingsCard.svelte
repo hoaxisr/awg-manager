@@ -224,7 +224,7 @@
 						<span class="font-medium">{m.device_proxy_listen_label()}</span>
 						<span class="setting-description">{m.device_proxy_listen_hint()}</span>
 					</div>
-					<div class="setting-control select">
+					<div class="setting-control control-select">
 						<Dropdown
 							value={listenChoice}
 							options={listenOpts}
@@ -239,7 +239,7 @@
 						<span class="font-medium">{m.device_proxy_default_out_label()}</span>
 						<span class="setting-description">{m.device_proxy_default_out_hint()}</span>
 					</div>
-					<div class="setting-control select">
+					<div class="setting-control control-select">
 						<Dropdown bind:value={draft.selectedOutbound} options={outboundOpts} fullWidth />
 					</div>
 				</div>
@@ -400,7 +400,7 @@
 	}
 	.num-input { width: 120px; }
 	.text-input { min-width: 200px; }
-	.select { min-width: 240px; }
+	.control-select { min-width: 240px; }
 
 	@media (max-width: 640px) {
 		.card-head {
@@ -462,7 +462,7 @@
 
 		.setting-row-field .num-input,
 		.setting-row-field .text-input,
-		.setting-row-field .select {
+		.setting-row-field .control-select {
 			width: 100%;
 			min-width: 0;
 			max-width: 100%;

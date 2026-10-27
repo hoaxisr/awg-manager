@@ -61,7 +61,7 @@
 	{:else if entries.length === 0}
 		<div class="empty-state">{m.system_files_table_empty()}</div>
 	{:else}
-		<div class="table-wrap">
+		<div class="files-table-wrap">
 			<table class="fm-table" oncontextmenu={(e) => onContextMenu(e, null)}>
 				<thead>
 					<tr>
@@ -153,7 +153,7 @@
 	.files-table-container {
 		min-width: 0;
 	}
-	.table-wrap {
+	.files-table-wrap {
 		max-height: 520px;
 		overflow-y: auto;
 		border: 1px solid var(--color-border);

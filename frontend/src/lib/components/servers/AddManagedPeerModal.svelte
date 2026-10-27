@@ -95,12 +95,12 @@
 <Modal {open} title={m.servers_peer_add_title()} size="sm" {onclose} hasUnsavedChanges={() => isDirty}>
 	<div class="form-fields">
 		<div class="form-group">
-			<label class="label" for="amp-desc">{m.servers_peer_label_desc()}</label>
-			<input type="text" id="amp-desc" class="input" bind:value={description} placeholder={m.servers_peer_desc_placeholder()} />
+			<label class="field-label" for="amp-desc">{m.servers_peer_label_desc()}</label>
+			<input type="text" id="amp-desc" class="field-input" bind:value={description} placeholder={m.servers_peer_desc_placeholder()} />
 		</div>
 		<div class="form-group">
-			<label class="label" for="amp-ip">Tunnel IP (CIDR)</label>
-			<input type="text" id="amp-ip" class="input" bind:value={tunnelIP} placeholder="10.0.0.2/32" />
+			<label class="field-label" for="amp-ip">Tunnel IP (CIDR)</label>
+			<input type="text" id="amp-ip" class="field-input" bind:value={tunnelIP} placeholder="10.0.0.2/32" />
 			{#if ipError}
 				<span class="field-hint is-error">{ipError}</span>
 			{:else}
@@ -108,8 +108,8 @@
 			{/if}
 		</div>
 		<div class="form-group">
-			<label class="label" for="amp-dns">{m.servers_peer_label_dns()}</label>
-			<input type="text" id="amp-dns" class="input" bind:value={dns} placeholder="192.168.1.1" disabled={useRouterDNS} />
+			<label class="field-label" for="amp-dns">{m.servers_peer_label_dns()}</label>
+			<input type="text" id="amp-dns" class="field-input" bind:value={dns} placeholder="192.168.1.1" disabled={useRouterDNS} />
 			{#if routerIP}
 				<div class="toggle-row">
 					<span class="toggle-label">{m.servers_peer_router_dns({ ip: routerIP })}<FieldHint text={routerDnsHint()} ariaLabel={m.servers_peer_router_dns_aria()} /></span>
@@ -151,25 +151,8 @@
 		gap: 0.375rem;
 	}
 
-	.label {
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--text-secondary);
-	}
 
-	.input {
-		padding: 8px 12px;
-		font-size: 13px;
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		color: var(--text-primary);
-	}
 
-	.input:focus {
-		outline: none;
-		border-color: var(--accent);
-	}
 
 	.hint-text {
 		font-size: 0.6875rem;

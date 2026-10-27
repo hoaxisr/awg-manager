@@ -143,7 +143,7 @@
   );
 </script>
 
-<div class="table" class:bare>
+<div class="routing-table" class:bare>
   <div class="header">
     <div>#</div>
     <div>{m.sb_router_table_col_order()}</div>
@@ -242,7 +242,7 @@
 </div>
 
 <style>
-  .table {
+  .routing-table {
     width: 100%;
     min-width: 0;
     background: var(--bg-secondary);
@@ -378,7 +378,7 @@
     gap: 4px;
   }
   @media (max-width: 768px) {
-    .table {
+    .routing-table {
       overflow-x: visible;
       border: 0;
       background: transparent;
@@ -515,7 +515,7 @@
     }
   }
   /* Bare mode для embed внутри SidePanel — parent даёт chrome */
-  .table.bare {
+  .routing-table.bare {
     width: 100%;
     min-width: 0;
     background: transparent;

@@ -209,7 +209,7 @@
 			{#if loading && available.length === 0}
 				<p class="muted">{m.system_packages_catalog_loading()}</p>
 			{:else}
-				<div class="table-wrap">
+				<div class="packages-table-wrap">
 					<table class="pkg">
 						<thead>
 							<tr>
@@ -249,7 +249,7 @@
 				<h3>{m.system_packages_installed_title({ count: installed.length })}</h3>
 				<input bind:value={installedQuery} placeholder={m.system_packages_search_placeholder()} />
 			</div>
-			<div class="table-wrap">
+			<div class="packages-table-wrap">
 				<table class="pkg">
 					<thead>
 						<tr>
@@ -361,7 +361,7 @@
 	.pkg th:nth-child(4) { width: 20%; }
 	.desc { font-size: 0.82rem; opacity: 0.85; word-break: break-word; }
 	.act { text-align: right; white-space: nowrap; }
-	.table-wrap { max-height: 420px; overflow: auto; }
+	.packages-table-wrap { max-height: 420px; overflow: auto; }
 	.pager { display: flex; gap: 0.75rem; align-items: center; justify-content: flex-end; margin-top: 0.5rem; font-size: 0.85rem; }
 	.output { margin: 0; white-space: pre-wrap; font-size: 0.8rem; max-height: 200px; overflow: auto; }
 	.muted { opacity: 0.7; }

@@ -37,7 +37,7 @@
 	<ul class="steps">
 		{#each rows as row (row.title)}
 			<li class="step state-{row.state}">
-				<span class="mark">
+				<span class="switch-mark">
 					{#if row.state === 'done'}<Check size={18} strokeWidth={2.5} />
 					{:else if row.state === 'error'}<X size={18} strokeWidth={2.5} />
 					{:else if row.state === 'current'}<Loader size={18} class="spin" />
@@ -89,7 +89,7 @@
 		border-bottom: none;
 	}
 
-	.mark {
+	.switch-mark {
 		flex: 0 0 1.375rem;
 		display: inline-flex;
 		align-items: center;
@@ -98,13 +98,13 @@
 		color: var(--text-muted);
 	}
 
-	.step.state-done .mark {
+	.step.state-done .switch-mark {
 		color: var(--color-success);
 	}
-	.step.state-current .mark {
+	.step.state-current .switch-mark {
 		color: var(--color-accent, var(--accent));
 	}
-	.step.state-error .mark {
+	.step.state-error .switch-mark {
 		color: var(--color-error);
 	}
 

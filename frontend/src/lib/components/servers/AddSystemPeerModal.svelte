@@ -79,19 +79,19 @@
 <Modal {open} title={m.servers_peer_add_title()} size="sm" {onclose}>
 	<div class="form-fields">
 		<div class="form-group">
-			<label class="label" for="ssp-desc">{m.servers_peer_label_desc()}</label>
-			<input type="text" id="ssp-desc" class="input" bind:value={description} placeholder={m.servers_peer_desc_placeholder_short()} />
+			<label class="field-label" for="ssp-desc">{m.servers_peer_label_desc()}</label>
+			<input type="text" id="ssp-desc" class="field-input" bind:value={description} placeholder={m.servers_peer_desc_placeholder_short()} />
 		</div>
 		<div class="form-group">
-			<label class="label" for="ssp-ip">Tunnel IP (CIDR)</label>
-			<input type="text" id="ssp-ip" class="input" bind:value={tunnelIP} placeholder="10.0.0.2/32" />
+			<label class="field-label" for="ssp-ip">Tunnel IP (CIDR)</label>
+			<input type="text" id="ssp-ip" class="field-input" bind:value={tunnelIP} placeholder="10.0.0.2/32" />
 		</div>
 		<div class="form-group">
-			<label class="label" for="ssp-dns">{m.servers_peer_label_dns()}</label>
+			<label class="field-label" for="ssp-dns">{m.servers_peer_label_dns()}</label>
 			<input
 				type="text"
 				id="ssp-dns"
-				class="input"
+				class="field-input"
 				bind:value={dns}
 				placeholder="192.168.1.1"
 				disabled={useRouterDNS}
@@ -151,20 +151,7 @@
 		gap: 0.375rem;
 	}
 
-	.label {
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--text-secondary);
-	}
 
-	.input {
-		padding: 8px 12px;
-		font-size: 13px;
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		color: var(--text-primary);
-	}
 
 	.toggle-row {
 		display: flex;
@@ -187,8 +174,4 @@
 		color: var(--color-error, #f87171);
 	}
 
-	.input:focus {
-		outline: none;
-		border-color: var(--accent);
-	}
 </style>

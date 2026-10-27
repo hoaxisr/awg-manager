@@ -63,7 +63,7 @@
 		/>
 		{#if fraction > 0}
 			<circle
-				class="progress"
+				class="gauge-progress"
 				cx="100"
 				cy="100"
 				r={radius}
@@ -96,7 +96,7 @@
 		width: 100%;
 		height: 100%;
 	}
-	.progress {
+	.gauge-progress {
 		transition: stroke 0.3s ease-out;
 	}
 	.gauge-text {

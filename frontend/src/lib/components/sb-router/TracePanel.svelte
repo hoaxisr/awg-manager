@@ -123,7 +123,7 @@
     <div class="input-wrap">
       <span class="globe"><Globe size={16} aria-hidden={true} /></span>
       <input
-        class="input"
+        class="trace-input"
         type="text"
         placeholder={m.sb_router_trace_placeholder()}
         value={input.domain}
@@ -324,7 +324,7 @@
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent);
   }
   .globe { display: inline-flex; align-items: center; flex-shrink: 0; color: var(--accent); }
-  .input {
+  .trace-input {
     flex: 1;
     background: transparent;
     border: 0;

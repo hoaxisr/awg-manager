@@ -360,6 +360,8 @@
 		}
 
 		.name-input {
+			/* В колонке flex: 1 (база 0) отменяет height — поле сжималось. */
+			flex: none;
 			width: 100%;
 			max-width: none;
 		}

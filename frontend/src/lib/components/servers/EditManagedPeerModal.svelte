@@ -111,17 +111,17 @@
 <Modal {open} title={m.servers_peer_edit_title()} size="sm" {onclose} hasUnsavedChanges={() => isDirty}>
 	<div class="form-fields">
 		<div class="form-group">
-			<label class="label" for="emp-desc">{m.servers_peer_label_desc()}</label>
-			<input type="text" id="emp-desc" class="input" bind:value={description} />
+			<label class="field-label" for="emp-desc">{m.servers_peer_label_desc()}</label>
+			<input type="text" id="emp-desc" class="field-input" bind:value={description} />
 		</div>
 		<div class="form-group">
-			<label class="label" for="emp-ip">Tunnel IP (CIDR)</label>
-			<input type="text" id="emp-ip" class="input" bind:value={tunnelIP} />
+			<label class="field-label" for="emp-ip">Tunnel IP (CIDR)</label>
+			<input type="text" id="emp-ip" class="field-input" bind:value={tunnelIP} />
 			{#if ipError}<span class="field-hint is-error">{ipError}</span>{/if}
 		</div>
 		<div class="form-group">
-			<label class="label" for="emp-dns">{m.servers_peer_label_dns()}</label>
-			<input type="text" id="emp-dns" class="input" bind:value={dns} placeholder="192.168.1.1" disabled={useRouterDNS} />
+			<label class="field-label" for="emp-dns">{m.servers_peer_label_dns()}</label>
+			<input type="text" id="emp-dns" class="field-input" bind:value={dns} placeholder="192.168.1.1" disabled={useRouterDNS} />
 			{#if routerIP}
 				<div class="toggle-row">
 					<span class="toggle-label">{m.servers_peer_router_dns({ ip: routerIP })}<FieldHint text={routerDnsHint()} ariaLabel={m.servers_peer_router_dns_aria()} /></span>
@@ -168,25 +168,8 @@
 		gap: 0.375rem;
 	}
 
-	.label {
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--text-secondary);
-	}
 
-	.input {
-		padding: 8px 12px;
-		font-size: 13px;
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		color: var(--text-primary);
-	}
 
-	.input:focus {
-		outline: none;
-		border-color: var(--accent);
-	}
 
 	.field-hint {
 		font-size: 0.6875rem;

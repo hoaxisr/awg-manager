@@ -104,7 +104,7 @@
     {/if}
   </div>
 
-  <div class="table" class:bare>
+  <div class="rs-table" class:bare>
     <div class="header">
       <div>{m.sb_router_rs_col_tag()}</div>
       <div>{m.sb_router_rs_col_type()}</div>
@@ -225,7 +225,7 @@
     border-right: 0;
     border-left: 1px solid var(--border);
   }
-  .table {
+  .rs-table {
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -357,7 +357,7 @@
       border-radius: 0;
     }
 
-    .table {
+    .rs-table {
       border: 0;
       background: transparent;
       overflow: visible;
@@ -449,7 +449,7 @@
     }
   }
   /* Bare mode для embed внутри SidePanel — parent даёт chrome */
-  .table.bare {
+  .rs-table.bare {
     background: transparent;
     border: 0;
     border-radius: 0;

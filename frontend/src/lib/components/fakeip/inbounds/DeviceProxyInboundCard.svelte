@@ -68,7 +68,7 @@
 	<div class="foot">
 		<button
 			type="button"
-			class="del"
+			class="delete-btn"
 			onclick={onDelete}
 			aria-label={m.sb_router_device_proxy_delete_title({ name })}
 			title={m.sb_router_device_proxy_delete_title({ name })}
@@ -218,7 +218,7 @@
 		border-color: var(--text-muted);
 	}
 
-	.del {
+	.delete-btn {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -230,7 +230,7 @@
 		border-radius: 6px;
 	}
 
-	.del:hover {
+	.delete-btn:hover {
 		color: var(--color-error);
 		background: color-mix(in srgb, var(--color-error) 12%, transparent);
 	}

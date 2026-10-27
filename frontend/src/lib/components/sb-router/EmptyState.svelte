@@ -193,7 +193,7 @@
       padding-inline: 0.5rem;
     }
 
-    .stepper :global(.label),
+    .stepper :global(.pill-label),
     .stepper :global(.step-label),
     .stepper :global(.wizard-step-label) {
       min-width: 0;

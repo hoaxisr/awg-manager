@@ -483,7 +483,7 @@
 			text-align: center;
 		}
 
-		.settings-toolbar :global(.btn .label) {
+		.settings-toolbar :global(.btn .btn-label) {
 			justify-content: center;
 			text-align: center;
 		}

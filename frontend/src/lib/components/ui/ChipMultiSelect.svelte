@@ -207,7 +207,7 @@
         }}
     >
         {#if values.length === 0}
-            <span class="placeholder">{placeholder ?? m.ui_chip_select_placeholder()}</span>
+            <span class="chips-placeholder">{placeholder ?? m.ui_chip_select_placeholder()}</span>
         {/if}
         {#each knownChips as opt (opt.value)}
             <span class="value-chip">
@@ -320,7 +320,7 @@
         border-radius: 4px;
         min-height: 2rem;
     }
-    .placeholder {
+    .chips-placeholder {
         color: var(--text-muted);
         font-size: 0.85rem;
         padding: 0 0.25rem;

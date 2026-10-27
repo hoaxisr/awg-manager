@@ -157,7 +157,7 @@
 		white-space: normal;
 	}
 
-	.feedback-actions :global(.btn .label) {
+	.feedback-actions :global(.btn .btn-label) {
 		display: block;
 		line-height: 1.25;
 		text-align: center;

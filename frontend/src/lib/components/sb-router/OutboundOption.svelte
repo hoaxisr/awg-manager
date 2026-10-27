@@ -35,7 +35,7 @@
 >
   {#if icon}<div class="icon">{@render icon()}</div>{/if}
   <div class="text">
-    <div class="label">{label}</div>
+    <div class="outbound-label">{label}</div>
     <div class="sub">{sub}</div>
   </div>
   {#if count}<div class="count">{count}</div>{/if}
@@ -82,7 +82,7 @@
   .opt.tone-accent .icon { color: var(--accent); }
   .opt.tone-muted .icon { color: var(--text-muted); }
   .opt.tone-error .icon { color: var(--color-error, #dc2626); }
-  .label {
+  .outbound-label {
     font-weight: 600;
     font-size: 13.5px;
   }

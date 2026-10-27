@@ -189,30 +189,30 @@
 		</div>
 
 		<div class="form-group">
-			<label class="label" for="ms-description">{m.servers_edit_label_name()}</label>
+			<label class="field-label" for="ms-description">{m.servers_edit_label_name()}</label>
 			<input
 				type="text"
 				id="ms-description"
-				class="input"
+				class="field-input"
 				bind:value={description}
 				placeholder="AWGM WG Server"
 				maxlength="64"
 			/>
 		</div>
 		<div class="form-group">
-			<label class="label" for="ms-address">{m.servers_edit_label_ip()}</label>
-			<input type="text" id="ms-address" class="input" bind:value={address} oninput={() => addressDirty = true} placeholder="10.10.0.1" />
+			<label class="field-label" for="ms-address">{m.servers_edit_label_ip()}</label>
+			<input type="text" id="ms-address" class="field-input" bind:value={address} oninput={() => addressDirty = true} placeholder="10.10.0.1" />
 		</div>
 		<div class="form-group">
-			<label class="label" for="ms-mask">{m.servers_edit_label_mask()}</label>
-			<input type="text" id="ms-mask" class="input" bind:value={mask} oninput={() => maskDirty = true} placeholder="24" />
+			<label class="field-label" for="ms-mask">{m.servers_edit_label_mask()}</label>
+			<input type="text" id="ms-mask" class="field-input" bind:value={mask} oninput={() => maskDirty = true} placeholder="24" />
 		</div>
 		<div class="form-group">
-			<label class="label" for="ms-port">{m.tunnels_card_port()}</label>
+			<label class="field-label" for="ms-port">{m.tunnels_card_port()}</label>
 			<input
 				type="number"
 				id="ms-port"
-				class="input"
+				class="field-input"
 				bind:value={listenPort}
 				min={1}
 				max={65535}
@@ -224,7 +224,7 @@
 
 		<div class="form-group">
 			<div class="label-row">
-				<label class="label" for="ms-endpoint">Endpoint</label>
+				<label class="field-label" for="ms-endpoint">Endpoint</label>
 				<button type="button" class="hint-toggle" onclick={() => showEndpointHint = !showEndpointHint}>?</button>
 			</div>
 			{#if showEndpointHint}
@@ -233,20 +233,20 @@
 			<input
 				type="text"
 				id="ms-endpoint"
-				class="input"
+				class="field-input"
 				bind:value={endpoint}
 				placeholder={loadingWanIP ? m.servers_edit_wan_detecting() : (wanIP || 'WAN IP')}
 			/>
 		</div>
 		<div class="form-group">
-			<label class="label" for="ms-mtu">MTU</label>
-			<input type="number" id="ms-mtu" class="input" bind:value={mtu} min={1280} max={1500} />
+			<label class="field-label" for="ms-mtu">MTU</label>
+			<input type="number" id="ms-mtu" class="field-input" bind:value={mtu} min={1280} max={1500} />
 			<span class="field-hint">{m.servers_edit_mtu_hint()}</span>
 		</div>
 
 		<div class="form-group">
 			<div class="label-row asc-label-row">
-				<span class="label">{m.servers_create_gen_asc()}</span>
+				<span class="field-label">{m.servers_create_gen_asc()}</span>
 				<button
 					type="button"
 					class="hint-toggle"
@@ -272,7 +272,7 @@
 		{#if generateAsc}
 			<div class="form-group">
 				<div class="label-row asc-label-row">
-					<span class="label">{m.servers_create_awg31()}</span>
+					<span class="field-label">{m.servers_create_awg31()}</span>
 					<Toggle
 						checked={awg31}
 						onchange={(checked) => awg31 = checked}
@@ -314,30 +314,9 @@
 		gap: 0.375rem;
 	}
 
-	.label {
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--text-secondary);
-	}
 
-	.input {
-		padding: 8px 12px;
-		font-size: 13px;
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		color: var(--text-primary);
-	}
 
-	.input:focus {
-		outline: none;
-		border-color: var(--accent);
-	}
 
-	.input[type="number"] {
-		-moz-appearance: textfield;
-		appearance: textfield;
-	}
 
 	.separator {
 		border-top: 1px solid var(--border);
@@ -425,7 +404,7 @@
 		justify-content: space-between;
 	}
 
-	.asc-label-row .label {
+	.asc-label-row .field-label {
 		margin-right: auto;
 	}
 

@@ -35,7 +35,7 @@
 						{i + 1}
 					{/if}
 				</span>
-				<span class="label">{label}</span>
+				<span class="wizard-label">{label}</span>
 			</button>
 		</li>
 	{/each}
@@ -115,7 +115,7 @@
 		color: var(--color-success);
 	}
 
-	.label {
+	.wizard-label {
 		white-space: nowrap;
 	}
 

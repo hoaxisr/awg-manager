@@ -418,7 +418,7 @@
 				? m.ui_traffic_chart_volume_server()
 				: m.ui_traffic_chart_volume_estimate()}
 		>
-			<span class="label">{m.ui_traffic_chart_traffic()}</span>
+			<span class="chart-label">{m.ui_traffic_chart_traffic()}</span>
 			{#if !loading && stats.points > 0}
 				<span class="val rx">↓ {formatBytes(periodRxBytes)}</span>
 				<span class="sep">/</span>
@@ -429,14 +429,14 @@
 		</span>
 		<span class="sep">·</span>
 		<span class="stat">
-			<span class="label">{m.ui_traffic_chart_peak()}</span>
+			<span class="chart-label">{m.ui_traffic_chart_peak()}</span>
 			<span class="val">{formatBitRate(stats.peakRate)}</span>
 		</span>
 		<span class="sep">·</span>
 		<span class="stat">
-			<span class="label">{m.ui_traffic_chart_avg()}</span>
+			<span class="chart-label">{m.ui_traffic_chart_avg()}</span>
 			<span class="val rx">↓ {formatBitRate(stats.avgRx)}</span>
-			<span class="label">/</span>
+			<span class="chart-label">/</span>
 			<span class="val tx">↑ {formatBitRate(stats.avgTx)}</span>
 		</span>
 	</div>
@@ -578,7 +578,7 @@
 			</div>
 			<div class="chart-bottom">
 				<span class="time">{showChart ? timeStart : ''}</span>
-				<span class="legend">
+				<span class="chart-legend">
 					<span class="dot rx"></span>{m.ui_traffic_chart_rx()} <span class="val rx">{formatBitRate(liveCurrentRx)}</span>
 					<span class="sep">·</span>
 					<span class="dot tx"></span>{m.ui_traffic_chart_tx()} <span class="val tx">{formatBitRate(liveCurrentTx)}</span>
@@ -688,7 +688,7 @@
 		max-width: 100%;
 	}
 
-	.stats-line .label {
+	.stats-line .chart-label {
 		color: var(--text-muted);
 		font-size: 0.75rem;
 	}
@@ -784,7 +784,7 @@
 	.chart-bottom .time:last-child {
 		justify-self: end;
 	}
-	.chart-bottom .legend {
+	.chart-bottom .chart-legend {
 		display: inline-flex;
 		align-items: center;
 		gap: 4px;
@@ -793,28 +793,28 @@
 		justify-content: center;
 		row-gap: 2px;
 	}
-	.chart-bottom .legend .dot {
+	.chart-bottom .chart-legend .dot {
 		width: 7px;
 		height: 7px;
 		border-radius: 50%;
 		display: inline-block;
 	}
-	.chart-bottom .legend .dot.rx {
+	.chart-bottom .chart-legend .dot.rx {
 		background: var(--accent);
 	}
-	.chart-bottom .legend .dot.tx {
+	.chart-bottom .chart-legend .dot.tx {
 		background: var(--success, #4ade80);
 	}
-	.chart-bottom .legend .val {
+	.chart-bottom .chart-legend .val {
 		font-variant-numeric: tabular-nums;
 	}
-	.chart-bottom .legend .val.rx {
+	.chart-bottom .chart-legend .val.rx {
 		color: var(--accent);
 	}
-	.chart-bottom .legend .val.tx {
+	.chart-bottom .chart-legend .val.tx {
 		color: var(--success, #4ade80);
 	}
-	.chart-bottom .legend .sep {
+	.chart-bottom .chart-legend .sep {
 		color: var(--text-muted);
 		opacity: 0.4;
 		margin: 0 4px;

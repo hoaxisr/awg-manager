@@ -395,7 +395,9 @@ a:hover {
  * their native rendering — applying width:100% / padding / bg here
  * stretched checkboxes to fill the parent flex row and broke layouts
  * that mix a checkbox with text content (e.g. import preview rows). */
-input:not([type="checkbox"]):not([type="radio"]), textarea, select {
+/* :where — нулевой вес (F506): сброс прежде весил (0,2,1) и перебивал любой
+ * класс поля (.field-input, scoped .input), а textarea/select — нет. */
+:where(input:not([type="checkbox"]):not([type="radio"]), textarea, select) {
 	width: 100%;
 	padding: 0.5rem 0.75rem;
 	background: var(--bg-secondary);
@@ -406,7 +408,7 @@ input:not([type="checkbox"]):not([type="radio"]), textarea, select {
 	transition: border-color 0.15s ease;
 }
 
-input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus, select:focus {
+:where(input:not([type="checkbox"]):not([type="radio"]), textarea, select):focus {
 	outline: none;
 	border-color: var(--accent);
 }

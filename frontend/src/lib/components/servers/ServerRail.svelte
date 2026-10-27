@@ -35,7 +35,7 @@
 
 <aside class="rail" aria-label={m.servers_rail_aria()}>
   <header class="rail-header">
-    <span class="label">{m.servers_rail_label({ count: items.length })}</span>
+    <span class="rail-label">{m.servers_rail_label({ count: items.length })}</span>
   </header>
 
   {#each items as item (item.id)}
@@ -129,7 +129,7 @@
     padding: 6px 8px 8px;
   }
 
-  .label {
+  .rail-label {
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.05em;

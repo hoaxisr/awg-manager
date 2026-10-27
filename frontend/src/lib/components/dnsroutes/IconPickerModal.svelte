@@ -368,7 +368,7 @@
 							size={44}
 							alt={name}
 						/>
-						<span class="label">{name.replace(/_/g, ' ')}</span>
+						<span class="picker-label">{name.replace(/_/g, ' ')}</span>
 					</button>
 				{/each}
 			</div>
@@ -548,7 +548,7 @@
 		background: var(--bg-hover);
 		border-color: var(--accent);
 	}
-	.tile .label {
+	.tile .picker-label {
 		font-size: 0.625rem;
 		color: var(--text-muted);
 		max-width: 100%;
@@ -556,7 +556,7 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.tile.selected .label {
+	.tile.selected .picker-label {
 		color: var(--text-primary);
 	}
 	.custom-section {

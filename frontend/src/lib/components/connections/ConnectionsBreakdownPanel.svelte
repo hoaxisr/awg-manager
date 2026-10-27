@@ -100,7 +100,7 @@
 			<div class="pie-lbl">conn</div>
 		</div>
 
-		<div class="legend">
+		<div class="breakdown-legend">
 			{#each donutSlices as s}
 				<div class="legend-row">
 					<span class="legend-dot" style="background:{s.color}"></span>
@@ -191,7 +191,7 @@
 		font-size: 9px; color: var(--color-text-muted);
 		text-transform: uppercase; letter-spacing: 0.05em;
 	}
-	.legend {
+	.breakdown-legend {
 		display: flex; flex-direction: column;
 		gap: 4px; font-size: 11px; flex: 1; min-width: 0;
 	}

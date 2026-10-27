@@ -27,7 +27,7 @@
 <div class="dep-row">
   <StatusDot variant={dotVariant} size="sm" />
   <div class="content">
-    <div class="label">{label}</div>
+    <div class="dep-label">{label}</div>
     {#if hint}<div class="hint">{hint}</div>{/if}
   </div>
 </div>
@@ -42,7 +42,7 @@
     background: var(--bg-tertiary);
   }
   .content { flex: 1; min-width: 0; }
-  .label {
+  .dep-label {
     font-size: 12px;
     font-weight: 600;
     color: var(--text-primary);

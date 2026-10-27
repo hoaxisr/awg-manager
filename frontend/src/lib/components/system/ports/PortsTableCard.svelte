@@ -66,7 +66,7 @@
 	{:else if groups.length === 0}
 		<p class="muted">{m.system_ports_pt_none()}</p>
 	{:else}
-		<div class="table-wrap">
+		<div class="ports-table-wrap">
 			<table class="ports-table">
 				<thead>
 					<tr>
@@ -227,7 +227,7 @@
 		outline: none;
 	}
 
-	.table-wrap {
+	.ports-table-wrap {
 		max-height: 480px;
 		overflow-y: auto;
 		border: 1px solid var(--color-border);

@@ -184,7 +184,7 @@
 					<div class="error-message">{listError}</div>
 				</div>
 			{:else if listLoading && slots.length === 0}
-				<div class="placeholder">{m.common_loading()}</div>
+				<div class="slots-placeholder">{m.common_loading()}</div>
 			{:else}
 				<div class="slot-list">
 					{#each slots as s (s.slot)}
@@ -291,7 +291,7 @@
 		line-height: 1.4;
 	}
 
-	.placeholder {
+	.slots-placeholder {
 		padding: 1.5rem;
 		text-align: center;
 		color: var(--color-text-secondary);

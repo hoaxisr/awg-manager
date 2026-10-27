@@ -82,7 +82,7 @@
 		{/key}
 	</span>
 	<span class="label-wrap">
-		<span class="label-text">{label}</span>
+		<span class="section-label-text">{label}</span>
 		<span class="label-divider" class:hidden={iconMode === 'strict'} aria-hidden="true"></span>
 	</span>
 </div>
@@ -146,7 +146,7 @@
 		max-width: 100%;
 	}
 
-	.label-text {
+	.section-label-text {
 		font-size: 0.9375rem;
 		font-weight: 600;
 		line-height: 1.25;
@@ -220,7 +220,7 @@
 		}
 	}
 
-	.settings-section-label.inline .label-text {
+	.settings-section-label.inline .section-label-text {
 		font-size: 0.9375rem;
 	}
 </style>

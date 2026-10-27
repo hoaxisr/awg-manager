@@ -52,7 +52,7 @@
 			<p>{m.system_services_t_none({ query: searchQuery })}</p>
 		</div>
 	{:else}
-		<div class="table-wrap">
+		<div class="services-table-wrap">
 			<table class="svc-table">
 				<thead>
 					<tr>
@@ -197,7 +197,7 @@
 
 <style>
 	/* Table */
-	.table-wrap {
+	.services-table-wrap {
 		overflow-x: auto;
 		border-radius: var(--radius-sm, 6px);
 		border: 1px solid var(--color-border);

@@ -100,7 +100,7 @@
     {#each DNS_PRESETS as p (p.id)}
       <label class="row">
         <input type="radio" name="dns-preset" value={p.id} checked={choice === p.id} onchange={() => (choice = p.id)} />
-        <span class="label">{p.label}</span>
+        <span class="dns-label">{p.label}</span>
         <span class="ip">{p.ip}</span>
       </label>
     {/each}
@@ -115,7 +115,7 @@
         checked={choice === CUSTOM}
         onchange={() => (choice = CUSTOM)}
       />
-      <label class="label" for="dns-custom">{m.sb_router_dns_picker_custom()}</label>
+      <label class="dns-label" for="dns-custom">{m.sb_router_dns_picker_custom()}</label>
       <span class="custom">
         <Input
           bind:value={customAddr}
@@ -177,7 +177,7 @@
       background: color-mix(in srgb, var(--bg-hover) 70%, transparent);
     }
   }
-  .label {
+  .dns-label {
     font-size: 13px;
   }
   .ip {

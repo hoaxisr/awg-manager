@@ -72,7 +72,7 @@
     {:else if iconBefore}
       <span class="icon icon-before" aria-hidden="true">{@render iconBefore()}</span>
     {/if}
-    <span class="label">{@render children()}</span>
+    <span class="btn-label">{@render children()}</span>
     {#if iconAfter && !loading}
       <span class="icon icon-after" aria-hidden="true">{@render iconAfter()}</span>
     {/if}
@@ -103,7 +103,7 @@
     {:else if iconBefore}
       <span class="icon icon-before" aria-hidden="true">{@render iconBefore()}</span>
     {/if}
-    <span class="label">{@render children()}</span>
+    <span class="btn-label">{@render children()}</span>
     {#if iconAfter && !loading}
       <span class="icon icon-after" aria-hidden="true">{@render iconAfter()}</span>
     {/if}
@@ -136,7 +136,7 @@
     appearance: none;
   }
 
-  .btn .label {
+  .btn .btn-label {
     display: inline-flex;
     justify-content: center;
     align-items: center;
@@ -157,12 +157,12 @@
     text-align: center;
   }
 
-  .btn.full-width .label {
+  .btn.full-width .btn-label {
     justify-content: center;
     text-align: center;
   }
 
-  .btn.full-width:not(:has(.icon-before)):not(:has(.icon-after)):not(:has(.spinner)) .label {
+  .btn.full-width:not(:has(.icon-before)):not(:has(.icon-after)):not(:has(.spinner)) .btn-label {
     flex: 1;
   }
 

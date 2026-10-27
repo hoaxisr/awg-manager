@@ -76,7 +76,7 @@
 
 <div class="peer-views">
 <div class="desktop-peer-table">
-	<div class="table-wrap">
+	<div class="peers-table-wrap">
 		<table class="managed-peer-table">
 			<thead>
 				<tr>
@@ -156,7 +156,7 @@
 {/if}
 
 <style>
-	.table-wrap { overflow-x: auto; }
+	.peers-table-wrap { overflow-x: auto; }
 	.managed-peer-table { width: 100%; border-collapse: collapse; }
 	.managed-peer-table th {
 		text-align: left;

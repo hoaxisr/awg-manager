@@ -341,7 +341,7 @@
 		{/each}
 	</div>
 
-	<div class="table">
+	<div class="rulesets-table">
 		<div class="thead">
 			<div>{m.fakeip_rulesets_col_name()}</div>
 			<div>{m.fakeip_rulesets_col_type()}</div>
@@ -584,7 +584,7 @@
 	}
 
 	/* ── Таблица ── */
-	.table {
+	.rulesets-table {
 		min-width: 0;
 	}
 	.thead,

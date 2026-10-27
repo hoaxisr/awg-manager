@@ -96,7 +96,9 @@
 		border-radius: var(--radius-sm);
 		background: var(--bg-primary);
 		color: var(--text-primary);
-		font-size: 0.6875rem;
+		/* 0.875rem — размер, который поле имело под глобальным сбросом до F506;
+		   0.6875rem при корневых 14px давал 9.6px. */
+		font-size: 0.875rem;
 	}
 
 	.tunnel-search::placeholder {

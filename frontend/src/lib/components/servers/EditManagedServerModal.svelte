@@ -105,34 +105,34 @@
 <Modal {open} title={m.servers_edit_title()} size="sm" {onclose} hasUnsavedChanges={() => isDirty}>
 	<div class="form-fields">
 		<div class="form-group">
-			<label class="label" for="ems-description">{m.servers_edit_label_name()}</label>
+			<label class="field-label" for="ems-description">{m.servers_edit_label_name()}</label>
 			<input
 				type="text"
 				id="ems-description"
-				class="input"
+				class="field-input"
 				bind:value={description}
 				placeholder="AWGM WG Server"
 				maxlength="64"
 			/>
 		</div>
 		<div class="form-group">
-			<label class="label" for="ems-address">{m.servers_edit_label_ip()}</label>
-			<input type="text" id="ems-address" class="input" bind:value={address} />
+			<label class="field-label" for="ems-address">{m.servers_edit_label_ip()}</label>
+			<input type="text" id="ems-address" class="field-input" bind:value={address} />
 		</div>
 		<div class="form-group">
-			<label class="label" for="ems-mask">{m.servers_edit_label_mask()}</label>
-			<input type="text" id="ems-mask" class="input" bind:value={mask} />
+			<label class="field-label" for="ems-mask">{m.servers_edit_label_mask()}</label>
+			<input type="text" id="ems-mask" class="field-input" bind:value={mask} />
 		</div>
 		<div class="form-group">
-			<label class="label" for="ems-port">{m.tunnels_card_port()}</label>
-			<input type="number" id="ems-port" class="input" bind:value={listenPort} min={1} max={65535} />
+			<label class="field-label" for="ems-port">{m.tunnels_card_port()}</label>
+			<input type="number" id="ems-port" class="field-input" bind:value={listenPort} min={1} max={65535} />
 		</div>
 
 		<div class="separator"></div>
 
 		<div class="form-group">
 			<div class="label-row">
-				<label class="label" for="ems-endpoint">Endpoint</label>
+				<label class="field-label" for="ems-endpoint">Endpoint</label>
 				<button type="button" class="hint-toggle" onclick={() => showEndpointHint = !showEndpointHint}>?</button>
 			</div>
 			{#if showEndpointHint}
@@ -141,7 +141,7 @@
 			<input
 				type="text"
 				id="ems-endpoint"
-				class="input"
+				class="field-input"
 				bind:value={endpoint}
 				placeholder={loadingWanIP ? m.servers_edit_wan_detecting() : (wanIP || 'WAN IP')}
 			/>
@@ -150,8 +150,8 @@
 			{/if}
 		</div>
 		<div class="form-group">
-			<label class="label" for="ems-mtu">MTU</label>
-			<input type="number" id="ems-mtu" class="input" bind:value={mtu} min={1280} max={1500} />
+			<label class="field-label" for="ems-mtu">MTU</label>
+			<input type="number" id="ems-mtu" class="field-input" bind:value={mtu} min={1280} max={1500} />
 			<span class="field-hint">{m.servers_edit_mtu_hint()}</span>
 		</div>
 	</div>
@@ -177,30 +177,9 @@
 		gap: 0.375rem;
 	}
 
-	.label {
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--text-secondary);
-	}
 
-	.input {
-		padding: 8px 12px;
-		font-size: 13px;
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		color: var(--text-primary);
-	}
 
-	.input:focus {
-		outline: none;
-		border-color: var(--accent);
-	}
 
-	.input[type="number"] {
-		-moz-appearance: textfield;
-		appearance: textfield;
-	}
 
 	.separator {
 		border-top: 1px solid var(--border);

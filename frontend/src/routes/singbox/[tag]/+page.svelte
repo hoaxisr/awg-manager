@@ -276,30 +276,30 @@
 				<SettingsSectionLabel label={m.singbox_edit_section_main()} icon={Globe} tone="slate" header />
 
 				<div class="form-group">
-					<label class="label" for="tag">{m.singbox_edit_label_tag()}</label>
+					<label class="field-label" for="tag">{m.singbox_edit_label_tag()}</label>
 					<input
 						id="tag"
-						class="input"
+						class="field-input"
 						bind:value={editableTag}
 						autocomplete="off"
 					/>
 				</div>
 
 				<div class="form-group">
-					<label class="label" for="server">{m.tunnels_card_server()}</label>
+					<label class="field-label" for="server">{m.tunnels_card_server()}</label>
 					<input
 						id="server"
-						class="input"
+						class="field-input"
 						value={getFieldString(['server'])}
 						oninput={(e) => setField(['server'], (e.target as HTMLInputElement).value)}
 					/>
 				</div>
 
 				<div class="form-group">
-					<label class="label" for="server_port">{m.tunnels_card_port()}</label>
+					<label class="field-label" for="server_port">{m.tunnels_card_port()}</label>
 					<input
 						id="server_port"
-						class="input"
+						class="field-input"
 						type="number"
 						value={getFieldString(['server_port'])}
 						oninput={(e) => setField(['server_port'], parseInt((e.target as HTMLInputElement).value, 10))}
@@ -312,20 +312,20 @@
 					<SettingsSectionLabel label="VLESS" icon={Link2} tone="purple" header />
 
 					<div class="form-group">
-						<label class="label" for="uuid">UUID</label>
+						<label class="field-label" for="uuid">UUID</label>
 						<input
 							id="uuid"
-							class="input"
+							class="field-input"
 							value={getFieldString(['uuid'])}
 							oninput={(e) => setField(['uuid'], (e.target as HTMLInputElement).value)}
 						/>
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="flow">Flow</label>
+						<label class="field-label" for="flow">Flow</label>
 						<input
 							id="flow"
-							class="input"
+							class="field-input"
 							value={getFieldString(['flow'])}
 							oninput={(e) => setField(['flow'], (e.target as HTMLInputElement).value)}
 						/>
@@ -337,20 +337,20 @@
 						<SettingsSectionLabel label="Reality" icon={ScanEye} tone="indigo" header />
 
 						<div class="form-group">
-							<label class="label" for="reality_pubkey">Public Key</label>
+							<label class="field-label" for="reality_pubkey">Public Key</label>
 							<input
 								id="reality_pubkey"
-								class="input"
+								class="field-input"
 								value={getFieldString(['tls', 'reality', 'public_key'])}
 								oninput={(e) => setField(['tls', 'reality', 'public_key'], (e.target as HTMLInputElement).value)}
 							/>
 						</div>
 
 						<div class="form-group">
-							<label class="label" for="reality_short_id">Short ID</label>
+							<label class="field-label" for="reality_short_id">Short ID</label>
 							<input
 								id="reality_short_id"
-								class="input"
+								class="field-input"
 								value={getFieldString(['tls', 'reality', 'short_id'])}
 								oninput={(e) => setField(['tls', 'reality', 'short_id'], (e.target as HTMLInputElement).value)}
 							/>
@@ -371,10 +371,10 @@
 					<SettingsSectionLabel label="TLS" icon={Lock} tone="blue" header />
 
 					<div class="form-group">
-						<label class="label" for="sni">SNI</label>
+						<label class="field-label" for="sni">SNI</label>
 						<input
 							id="sni"
-							class="input"
+							class="field-input"
 							value={getFieldString(['tls', 'server_name'])}
 							oninput={(e) => setField(['tls', 'server_name'], (e.target as HTMLInputElement).value)}
 						/>
@@ -403,10 +403,10 @@
 						<SettingsSectionLabel label="Transport (gRPC)" icon={Waypoints} tone="teal" header />
 
 						<div class="form-group">
-							<label class="label" for="grpc_service">Service Name</label>
+							<label class="field-label" for="grpc_service">Service Name</label>
 							<input
 								id="grpc_service"
-								class="input"
+								class="field-input"
 								value={getFieldString(['transport', 'service_name'])}
 								oninput={(e) => setField(['transport', 'service_name'], (e.target as HTMLInputElement).value)}
 							/>
@@ -420,21 +420,21 @@
 						<p class="section-hint">{m.singbox_edit_imported_readonly()}</p>
 
 						<div class="form-group">
-							<label class="label" for="ws_path">Path</label>
-							<input id="ws_path" class="input" value={getFieldString(['transport', 'path']) || '/'} readonly />
+							<label class="field-label" for="ws_path">Path</label>
+							<input id="ws_path" class="field-input" value={getFieldString(['transport', 'path']) || '/'} readonly />
 						</div>
 
 						{#if getField(['transport', 'headers', 'Host'])}
 							<div class="form-group">
-								<label class="label" for="ws_host">Host header</label>
-								<input id="ws_host" class="input" value={getFieldString(['transport', 'headers', 'Host'])} readonly />
+								<label class="field-label" for="ws_host">Host header</label>
+								<input id="ws_host" class="field-input" value={getFieldString(['transport', 'headers', 'Host'])} readonly />
 							</div>
 						{/if}
 
 						{#if getField(['transport', 'early_data_header_name'])}
 							<div class="form-group">
-								<label class="label" for="ws_ed">Early Data Header</label>
-								<input id="ws_ed" class="input" value={getFieldString(['transport', 'early_data_header_name'])} readonly />
+								<label class="field-label" for="ws_ed">Early Data Header</label>
+								<input id="ws_ed" class="field-input" value={getFieldString(['transport', 'early_data_header_name'])} readonly />
 							</div>
 						{/if}
 					</section>
@@ -445,10 +445,10 @@
 					<SettingsSectionLabel label="Trojan" icon={Link2} tone="orange" header />
 
 					<div class="form-group">
-						<label class="label" for="trojan_password">{m.login_label_password()}</label>
+						<label class="field-label" for="trojan_password">{m.login_label_password()}</label>
 						<input
 							id="trojan_password"
-							class="input"
+							class="field-input"
 							type="password"
 							value={getFieldString(['password'])}
 							oninput={(e) => setField(['password'], (e.target as HTMLInputElement).value)}
@@ -460,10 +460,10 @@
 					<SettingsSectionLabel label="TLS" icon={Lock} tone="blue" header />
 
 					<div class="form-group">
-						<label class="label" for="trojan_sni">SNI</label>
+						<label class="field-label" for="trojan_sni">SNI</label>
 						<input
 							id="trojan_sni"
-							class="input"
+							class="field-input"
 							value={getFieldString(['tls', 'server_name'])}
 							oninput={(e) => setField(['tls', 'server_name'], (e.target as HTMLInputElement).value)}
 						/>
@@ -501,10 +501,10 @@
 						<SettingsSectionLabel label="Transport (gRPC)" icon={Waypoints} tone="teal" header />
 
 						<div class="form-group">
-							<label class="label" for="trojan_grpc_service">Service Name</label>
+							<label class="field-label" for="trojan_grpc_service">Service Name</label>
 							<input
 								id="trojan_grpc_service"
-								class="input"
+								class="field-input"
 								value={getFieldString(['transport', 'service_name'])}
 								oninput={(e) => setField(['transport', 'service_name'], (e.target as HTMLInputElement).value)}
 							/>
@@ -518,14 +518,14 @@
 						<p class="section-hint">{m.singbox_edit_imported_readonly()}</p>
 
 						<div class="form-group">
-							<label class="label" for="trojan_ws_path">Path</label>
-							<input id="trojan_ws_path" class="input" value={getFieldString(['transport', 'path']) || '/'} readonly />
+							<label class="field-label" for="trojan_ws_path">Path</label>
+							<input id="trojan_ws_path" class="field-input" value={getFieldString(['transport', 'path']) || '/'} readonly />
 						</div>
 
 						{#if getField(['transport', 'headers', 'Host'])}
 							<div class="form-group">
-								<label class="label" for="trojan_ws_host">Host header</label>
-								<input id="trojan_ws_host" class="input" value={getFieldString(['transport', 'headers', 'Host'])} readonly />
+								<label class="field-label" for="trojan_ws_host">Host header</label>
+								<input id="trojan_ws_host" class="field-input" value={getFieldString(['transport', 'headers', 'Host'])} readonly />
 							</div>
 						{/if}
 					</section>
@@ -536,10 +536,10 @@
 					<SettingsSectionLabel label="Shadowsocks" icon={ScanEye} tone="slate" header />
 
 					<div class="form-group">
-						<label class="label" for="ss_method">{m.singbox_edit_cipher()}</label>
+						<label class="field-label" for="ss_method">{m.singbox_edit_cipher()}</label>
 						<input
 							id="ss_method"
-							class="input"
+							class="field-input"
 							value={getFieldString(['method'])}
 							oninput={(e) => setField(['method'], (e.target as HTMLInputElement).value)}
 							placeholder="aes-256-gcm"
@@ -547,10 +547,10 @@
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="ss_password">{m.login_label_password()}</label>
+						<label class="field-label" for="ss_password">{m.login_label_password()}</label>
 						<input
 							id="ss_password"
-							class="input"
+							class="field-input"
 							type="password"
 							value={getFieldString(['password'])}
 							oninput={(e) => setField(['password'], (e.target as HTMLInputElement).value)}
@@ -558,10 +558,10 @@
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="ss_plugin">Plugin</label>
+						<label class="field-label" for="ss_plugin">Plugin</label>
 						<input
 							id="ss_plugin"
-							class="input"
+							class="field-input"
 							value={getFieldString(['plugin'])}
 							oninput={(e) => setField(['plugin'], (e.target as HTMLInputElement).value)}
 							placeholder="obfs-local, v2ray-plugin…"
@@ -569,10 +569,10 @@
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="ss_plugin_opts">Plugin opts</label>
+						<label class="field-label" for="ss_plugin_opts">Plugin opts</label>
 						<textarea
 							id="ss_plugin_opts"
-							class="input textarea"
+							class="field-input textarea"
 							rows="2"
 							value={getFieldString(['plugin_opts'])}
 							oninput={(e) => setField(['plugin_opts'], (e.target as HTMLTextAreaElement).value)}
@@ -586,10 +586,10 @@
 					<SettingsSectionLabel label="Hysteria2" icon={Zap} tone="pink" header />
 
 					<div class="form-group">
-						<label class="label" for="password">{m.login_label_password()}</label>
+						<label class="field-label" for="password">{m.login_label_password()}</label>
 						<input
 							id="password"
-							class="input"
+							class="field-input"
 							type="password"
 							value={getFieldString(['password'])}
 							oninput={(e) => setField(['password'], (e.target as HTMLInputElement).value)}
@@ -601,10 +601,10 @@
 					<SettingsSectionLabel label="TLS" icon={Lock} tone="blue" header />
 
 					<div class="form-group">
-						<label class="label" for="hy2_sni">SNI</label>
+						<label class="field-label" for="hy2_sni">SNI</label>
 						<input
 							id="hy2_sni"
-							class="input"
+							class="field-input"
 							value={getFieldString(['tls', 'server_name'])}
 							oninput={(e) => setField(['tls', 'server_name'], (e.target as HTMLInputElement).value)}
 						/>
@@ -625,20 +625,20 @@
 					<SettingsSectionLabel label="NaiveProxy" icon={UserRound} tone="green" header />
 
 					<div class="form-group">
-						<label class="label" for="username">{m.singbox_edit_user()}</label>
+						<label class="field-label" for="username">{m.singbox_edit_user()}</label>
 						<input
 							id="username"
-							class="input"
+							class="field-input"
 							value={getFieldString(['username'])}
 							oninput={(e) => setField(['username'], (e.target as HTMLInputElement).value)}
 						/>
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="naive_password">{m.login_label_password()}</label>
+						<label class="field-label" for="naive_password">{m.login_label_password()}</label>
 						<input
 							id="naive_password"
-							class="input"
+							class="field-input"
 							type="password"
 							value={getFieldString(['password'])}
 							oninput={(e) => setField(['password'], (e.target as HTMLInputElement).value)}
@@ -650,20 +650,20 @@
 					<SettingsSectionLabel label="Mieru" icon={Boxes} tone="indigo" header />
 
 					<div class="form-group">
-						<label class="label" for="mieru_username">{m.singbox_edit_user()}</label>
+						<label class="field-label" for="mieru_username">{m.singbox_edit_user()}</label>
 						<input
 							id="mieru_username"
-							class="input"
+							class="field-input"
 							value={getFieldString(['username'])}
 							oninput={(e) => setField(['username'], (e.target as HTMLInputElement).value)}
 						/>
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="mieru_password">{m.login_label_password()}</label>
+						<label class="field-label" for="mieru_password">{m.login_label_password()}</label>
 						<input
 							id="mieru_password"
-							class="input"
+							class="field-input"
 							type="password"
 							value={getFieldString(['password'])}
 							oninput={(e) => setField(['password'], (e.target as HTMLInputElement).value)}
@@ -685,10 +685,10 @@
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="mieru_server_ports">{m.singbox_edit_extra_ports()}</label>
+						<label class="field-label" for="mieru_server_ports">{m.singbox_edit_extra_ports()}</label>
 						<textarea
 							id="mieru_server_ports"
-							class="input textarea"
+							class="field-input textarea"
 							rows="3"
 							value={serverPortsText(getField(['server_ports']))}
 							oninput={(e) => setField(['server_ports'], parseServerPorts((e.target as HTMLTextAreaElement).value))}
@@ -696,20 +696,20 @@
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="mieru_multiplexing">Multiplexing</label>
+						<label class="field-label" for="mieru_multiplexing">Multiplexing</label>
 						<input
 							id="mieru_multiplexing"
-							class="input"
+							class="field-input"
 							value={getFieldString(['multiplexing'])}
 							oninput={(e) => setField(['multiplexing'], (e.target as HTMLInputElement).value)}
 						/>
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="mieru_traffic_pattern">Traffic pattern</label>
+						<label class="field-label" for="mieru_traffic_pattern">Traffic pattern</label>
 						<textarea
 							id="mieru_traffic_pattern"
-							class="input textarea"
+							class="field-input textarea"
 							rows="3"
 							value={getFieldString(['traffic_pattern'])}
 							oninput={(e) => setField(['traffic_pattern'], (e.target as HTMLTextAreaElement).value)}
@@ -721,20 +721,20 @@
 					<SettingsSectionLabel label="TrustTunnel" icon={UserRound} tone="green" header />
 
 					<div class="form-group">
-						<label class="label" for="tt_username">{m.singbox_edit_user()}</label>
+						<label class="field-label" for="tt_username">{m.singbox_edit_user()}</label>
 						<input
 							id="tt_username"
-							class="input"
+							class="field-input"
 							value={getFieldString(['username'])}
 							oninput={(e) => setField(['username'], (e.target as HTMLInputElement).value)}
 						/>
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="tt_password">{m.login_label_password()}</label>
+						<label class="field-label" for="tt_password">{m.login_label_password()}</label>
 						<input
 							id="tt_password"
-							class="input"
+							class="field-input"
 							type="password"
 							value={getFieldString(['password'])}
 							oninput={(e) => setField(['password'], (e.target as HTMLInputElement).value)}
@@ -746,10 +746,10 @@
 					<SettingsSectionLabel label="TLS" icon={Lock} tone="blue" header />
 
 					<div class="form-group">
-						<label class="label" for="tt_sni">SNI</label>
+						<label class="field-label" for="tt_sni">SNI</label>
 						<input
 							id="tt_sni"
-							class="input"
+							class="field-input"
 							value={getFieldString(['tls', 'server_name'])}
 							oninput={(e) => setField(['tls', 'server_name'], (e.target as HTMLInputElement).value)}
 						/>
@@ -876,38 +876,6 @@
 
 	.form-group:last-child {
 		margin-bottom: 0;
-	}
-
-	.label {
-		font-size: 13px;
-		font-weight: 500;
-		color: var(--text-secondary);
-	}
-
-	.input {
-		padding: 8px 12px;
-		font-size: 13px;
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		color: var(--text-primary);
-		transition: border-color 0.15s;
-	}
-
-	.input:focus {
-		outline: none;
-		border-color: var(--accent);
-	}
-
-	.input[type="number"] {
-		-moz-appearance: textfield;
-		appearance: textfield;
-	}
-
-	.input[type="number"]::-webkit-outer-spin-button,
-	.input[type="number"]::-webkit-inner-spin-button {
-		-webkit-appearance: none;
-		margin: 0;
 	}
 
 	.checkbox-label {

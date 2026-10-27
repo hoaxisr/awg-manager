@@ -75,11 +75,11 @@
 	<div class="signature-fields">
 		{#each FIELDS as field (field)}
 			<div class="form-group">
-				<label class="label" for={`peer-sig-${field}`}>{field.toUpperCase()}</label>
+				<label class="sig-label" for={`peer-sig-${field}`}>{field.toUpperCase()}</label>
 				<input
 					type="text"
 					id={`peer-sig-${field}`}
-					class="input"
+					class="sig-input"
 					value={packets[field]}
 					oninput={(e) => onchange({ profile: '', packets: { ...packets, [field]: e.currentTarget.value } })}
 				/>
@@ -136,14 +136,14 @@
 		gap: 0.5rem;
 	}
 
-	.label {
+	.sig-label {
 		width: 1.75rem;
 		font-size: 0.75rem;
 		font-weight: 500;
 		color: var(--text-secondary);
 	}
 
-	.input {
+	.sig-input {
 		flex: 1;
 		min-width: 0;
 		padding: 6px 10px;
@@ -155,7 +155,7 @@
 		color: var(--text-primary);
 	}
 
-	.input:focus {
+	.sig-input:focus {
 		outline: none;
 		border-color: var(--accent);
 	}

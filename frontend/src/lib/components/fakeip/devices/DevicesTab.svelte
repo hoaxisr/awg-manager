@@ -193,7 +193,7 @@
 		{m.fakeip_devices_desc_direct()}
 	</p>
 
-	<div class="table">
+	<div class="devices-table">
 		<div class="thead">
 			<span class="th-dev">{m.fakeip_devices_col_device()}</span>
 			<span class="th-addr">{m.fakeip_devices_col_address()}</span>
@@ -351,7 +351,7 @@
 		font-size: 0.8125rem;
 	}
 
-	.table {
+	.devices-table {
 		min-width: 0;
 	}
 	/* Грид-раскладка общая для шапки и строк. */

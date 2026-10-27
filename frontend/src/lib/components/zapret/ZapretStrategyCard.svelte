@@ -129,7 +129,7 @@
 			<ListFilter size={13} />
 			<div class="list-body">
 				{#if usesPlaceholder}
-					<span class="placeholder" title={m.zapret_strategy_placeholder_title()}>
+					<span class="strategy-placeholder" title={m.zapret_strategy_placeholder_title()}>
 						{strategy.placeholders?.join(', ')}
 					</span>
 				{/if}
@@ -266,7 +266,7 @@
 		min-width: 0;
 	}
 
-	.placeholder {
+	.strategy-placeholder {
 		font-family: var(--font-mono);
 		font-size: 0.625rem;
 		color: var(--accent);

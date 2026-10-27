@@ -10,7 +10,7 @@
 
 <div class="stat">
 	<span class="value">{value}</span>
-	<span class="label">{label}</span>
+	<span class="stat-label">{label}</span>
 	{#if sub}
 		<span class="sub">{sub}</span>
 	{/if}
@@ -34,7 +34,7 @@
 		text-overflow: ellipsis;
 	}
 
-	.label {
+	.stat-label {
 		font: 600 0.6875rem/1.2 var(--font-sans);
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
@@ -57,7 +57,7 @@
 			font-size: 0.9375rem;
 		}
 
-		.label {
+		.stat-label {
 			font-size: 0.625rem;
 			letter-spacing: 0.04em;
 		}

@@ -75,7 +75,7 @@
     <section class="block">
       <div class="blk-cap">{m.sb_router_qos_help_windows_cap()}</div>
       <div class="code-row">
-        <pre class="code">{psSnippet}</pre>
+        <pre class="qos-code">{psSnippet}</pre>
         <IconButton size="sm" ariaLabel={m.sb_router_qos_help_copy_ps_aria()} title={m.common_copy()} onclick={() => void copy(psSnippet)}>
           <Copy size={14} />
         </IconButton>
@@ -91,7 +91,7 @@
     <section class="block">
       <div class="blk-cap">{m.sb_router_qos_help_nla_cap()}</div>
       <div class="code-row">
-        <pre class="code">{regSnippet}</pre>
+        <pre class="qos-code">{regSnippet}</pre>
         <IconButton size="sm" ariaLabel={m.sb_router_qos_help_copy_reg_aria()} title={m.common_copy()} onclick={() => void copy(regSnippet)}>
           <Copy size={14} />
         </IconButton>
@@ -145,7 +145,7 @@
     align-items: flex-start;
     gap: 6px;
   }
-  .code {
+  .qos-code {
     flex: 1;
     min-width: 0;
     margin: 0;

@@ -625,7 +625,7 @@
 						{m.diag_awg_analyzer_write_to_tunnel()}
 					</Button>
 				{/if}
-				<span class="kbd">⌘/Ctrl+Enter</span>
+				<span class="analyzer-kbd">⌘/Ctrl+Enter</span>
 			</div>
 			{#if selectedTunnelId && rawChangedSinceAnalyze}
 				<p class="bar-hint" role="status">
@@ -944,7 +944,7 @@
 			min-width: 0;
 		}
 
-		.kbd {
+		.analyzer-kbd {
 			display: none;
 		}
 
@@ -988,7 +988,7 @@
 		margin-bottom: 14px;
 	}
 
-	.kbd {
+	.analyzer-kbd {
 		margin-left: auto;
 		font-size: 11px;
 		padding: 4px 8px;

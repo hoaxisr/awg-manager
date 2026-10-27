@@ -82,7 +82,7 @@
       {value}
       oninput={handleInput}
       onchange={handleChange}
-      class="input"
+      class="input-control"
       class:has-prefix={!!prefix}
       class:has-suffix={!!suffix}
     />
@@ -120,7 +120,7 @@
     align-items: stretch;
   }
 
-  .input {
+  .input-control {
     width: 100%;
     background: var(--color-bg-primary);
     border: 1px solid var(--color-border);
@@ -133,26 +133,26 @@
     transition: border-color var(--t-fast) ease;
   }
 
-  .input::placeholder {
+  .input-control::placeholder {
     color: var(--color-text-muted);
   }
 
-  .input:focus {
+  .input-control:focus {
     outline: none;
     border-color: var(--color-accent);
   }
 
-  .input:disabled {
+  .input-control:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  .has-error .input {
+  .has-error .input-control {
     border-color: var(--color-error);
   }
 
-  .input.has-prefix { padding-left: 2rem; border-top-left-radius: 0; border-bottom-left-radius: 0; }
-  .input.has-suffix { padding-right: 2rem; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  .input-control.has-prefix { padding-left: 2rem; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+  .input-control.has-suffix { padding-right: 2rem; border-top-right-radius: 0; border-bottom-right-radius: 0; }
 
   .affix {
     display: inline-flex;
