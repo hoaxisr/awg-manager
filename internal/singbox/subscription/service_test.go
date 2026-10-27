@@ -1951,12 +1951,15 @@ func TestAddManualMember_ExactRepeatRejected(t *testing.T) {
 }
 
 // Другая учётка на том же адресе — не повтор: при общем пароле naive-логины
-// различаются только username, у vless — только uuid (F734).
+// различаются только username, у vless — только uuid (F734), у hysteria2 —
+// только паролем обфускации (F737).
 func TestAddManualMember_OtherAccountOnSameEndpoint(t *testing.T) {
 	for _, tc := range []struct{ seed, other string }{
 		{"naive+https://alice:shared@h.example:443#A", "naive+https://bob:shared@h.example:443#B"},
 		{"vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a.sni#A",
 			"vless://3a3b1c2e-9999-4321-aaaa-1234567890cd@h.example:443?security=tls&sni=a.sni#B"},
+		{"hysteria2://shared@h.example:443?sni=h&obfs=salamander&obfs-password=one#A",
+			"hysteria2://shared@h.example:443?sni=h&obfs=salamander&obfs-password=two#B"},
 	} {
 		svc, _ := newTestService(t)
 		sub, err := svc.Create(context.Background(), CreateInput{Label: "manual", Inline: tc.seed, Enabled: true})

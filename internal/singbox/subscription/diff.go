@@ -71,6 +71,12 @@ type memberKeys struct {
 	// such as SOCKS/Naive users with the same password. Keep the legacy keys
 	// intact: only groups they cannot distinguish use this tier.
 	cred string
+	// wire widens cred with the on-wire cipher and obfuscation: shadowsocks
+	// method/plugin/plugin_opts and hysteria2 obfs. Two servers on one
+	// server:port:password with a different cipher are different servers
+	// (F737). Its own tier, not part of cred: cred tags are already released.
+	// vless flow is left out — it is a client mode of the same server.
+	wire string
 }
 
 func keysOf(p vlink.ParsedOutbound) memberKeys {
@@ -117,6 +123,17 @@ func keysFromOutbound(protocol, server string, port uint16, ob map[string]any) m
 	// may itself occur in a username or password.
 	credKey, _ := json.Marshal([4]string{k.full, uuid, password, username})
 	k.cred = string(credKey)
+
+	method, _ := ob["method"].(string)
+	plugin, _ := ob["plugin"].(string)
+	pluginOpts, _ := ob["plugin_opts"].(string)
+	obfsType, obfsPassword := "", ""
+	if o, ok := ob["obfs"].(map[string]any); ok {
+		obfsType, _ = o["type"].(string)
+		obfsPassword, _ = o["password"].(string)
+	}
+	wireKey, _ := json.Marshal([6]string{k.cred, method, plugin, pluginOpts, obfsType, obfsPassword})
+	k.wire = string(wireKey)
 	return k
 }
 
@@ -172,7 +189,8 @@ func itoa(p uint16) string {
 
 // chooseKeys uses the narrowest tier that distinguishes every account in a
 // narrow-key group: narrow, ext (masking, issue #373), full (transport,
-// issue #625), or cred (remaining credential fields) — see memberKeys.
+// issue #625), cred (remaining credential fields) or wire (cipher and
+// obfuscation, F737) — see memberKeys.
 // Groups the legacy tiers already distinguish retain their previous tags;
 // true duplicates stay on the narrow key.
 // Deterministic over the set (frequency is set-, not order-, dependent). Both
@@ -183,6 +201,7 @@ func chooseKeys(parsed []vlink.ParsedOutbound) []string {
 	distinctExt := make(map[string]map[string]struct{}, len(parsed))
 	distinctFull := make(map[string]map[string]struct{}, len(parsed))
 	distinctCredentials := make(map[string]map[string]struct{}, len(parsed))
+	distinctWire := make(map[string]map[string]struct{}, len(parsed))
 	for i, p := range parsed {
 		k := keysOf(p)
 		all[i] = k
@@ -190,32 +209,37 @@ func chooseKeys(parsed []vlink.ParsedOutbound) []string {
 			distinctExt[k.narrow] = make(map[string]struct{})
 			distinctFull[k.narrow] = make(map[string]struct{})
 			distinctCredentials[k.narrow] = make(map[string]struct{})
+			distinctWire[k.narrow] = make(map[string]struct{})
 		}
 		distinctExt[k.narrow][k.ext] = struct{}{}
 		distinctFull[k.narrow][k.full] = struct{}{}
 		distinctCredentials[k.narrow][k.cred] = struct{}{}
+		distinctWire[k.narrow][k.wire] = struct{}{}
 	}
 	keys := make([]string, len(parsed))
 	for i, k := range all {
 		nk := k.narrow
 		switch {
-		case len(distinctCredentials[nk]) <= 1:
+		case len(distinctWire[nk]) <= 1:
 			// Byte-identical duplicates: narrow key keeps the tag stable
 			// across refreshes and matches previously stored narrow tags.
 			keys[i] = nk
-		case len(distinctExt[nk]) == len(distinctCredentials[nk]):
+		case len(distinctExt[nk]) == len(distinctWire[nk]):
 			// Masking alone tells them apart (issue #373). Staying on the
 			// extended key keeps tags of already-widened groups unchanged —
 			// widening further would re-tag subscriptions that never had the
 			// bug.
 			keys[i] = k.ext
-		case len(distinctFull[nk]) == len(distinctCredentials[nk]):
+		case len(distinctFull[nk]) == len(distinctWire[nk]):
 			// Endpoints share masking and differ only by transport
 			// (issue #625): only the full key separates them.
 			keys[i] = k.full
-		default:
+		case len(distinctCredentials[nk]) == len(distinctWire[nk]):
 			// Shared passwords do not make different usernames duplicates.
 			keys[i] = k.cred
+		default:
+			// Same account, different cipher or obfuscation (F737).
+			keys[i] = k.wire
 		}
 	}
 	return keys

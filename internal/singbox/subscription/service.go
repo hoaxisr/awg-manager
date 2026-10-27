@@ -1438,8 +1438,8 @@ var ErrShareLinkInvalid = errors.New("subscription: share-link did not parse to 
 
 // ErrMemberDuplicate is returned when AddManualMember is given a server the
 // subscription already has: same outbound body by the widest identity key
-// (credentials included), or, for a member without a body in the config
-// slot, the same metadata.
+// (credentials and cipher included), or, for a member without a body in the
+// config slot, the same metadata.
 var ErrMemberDuplicate = errors.New("subscription: member already exists")
 
 // ErrMemberNotFound is returned by RemoveMember when the supplied tag
@@ -1498,8 +1498,8 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	out := parts.Valid[0]
 	// Набор для chooseKeys недоступен, поэтому тег считаем по самому широкому
 	// ключу: два эндпоинта одного сервера, различающиеся только транспортом
-	// (issue #625) или только логином при общем пароле (F734), обязаны
-	// получить РАЗНЫЕ теги, иначе второй outbound перезаписал бы первый.
+	// (issue #625), логином при общем пароле (F734) или шифром (F737),
+	// обязаны получить РАЗНЫЕ теги, иначе второй outbound перезаписал бы первый.
 	//
 	// Повтор ловим по телам существующих членов из слота конфига — тем же
 	// широким ключом, с учётными данными. Их теги могли быть посчитаны на
@@ -1508,7 +1508,7 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	// TransportKey закрывает разные ws-пути, у записей до появления поля он
 	// пуст — для них грубое сравнение, иначе точный повтор проскочил бы.
 	keys := keysOf(out)
-	tag := stableTagFromKey(sub.ID, keys.cred)
+	tag := stableTagFromKey(sub.ID, keys.wire)
 	mi := toMemberInfo(tag, out)
 	bodies := make(map[string]map[string]any)
 	for _, ob := range s.mutator.SubscriptionOutbounds() {
@@ -1516,7 +1516,7 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	}
 	for _, existing := range sub.Members {
 		if ob, ok := bodies[existing.Tag]; ok {
-			if keysFromOutbound(existing.Protocol, existing.Server, existing.Port, ob).cred == keys.cred {
+			if keysFromOutbound(existing.Protocol, existing.Server, existing.Port, ob).wire == keys.wire {
 				return nil, ErrMemberDuplicate
 			}
 			continue

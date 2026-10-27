@@ -1,6 +1,7 @@
 package subscription
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -85,5 +86,77 @@ func TestApplyDiff_DistinctUsernamesWithSharedPassword(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Один server:port:пароль с другим шифром или обфускацией — другой сервер, а
+// не дубль (F737).
+func TestApplyDiff_DistinctCipherOnSharedPassword(t *testing.T) {
+	ss := func(method string) string {
+		return "ss://" + base64.RawURLEncoding.EncodeToString([]byte(method+":shared")) + "@h.example:8388#" + method
+	}
+	for name, links := range map[string][]string{
+		"shadowsocks method": {ss("aes-128-gcm"), ss("chacha20-ietf-poly1305"), ss("aes-128-gcm")},
+		"hysteria2 obfs": {
+			"hysteria2://shared@h.example:443?sni=h&obfs=salamander&obfs-password=one#A",
+			"hysteria2://shared@h.example:443?sni=h&obfs=salamander&obfs-password=two#B",
+			"hysteria2://shared@h.example:443?sni=h&obfs=salamander&obfs-password=one#A",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var parsed []vlink.ParsedOutbound
+			for _, link := range links {
+				p, err := vlink.ParseLink(link)
+				if err != nil {
+					t.Fatalf("parse %q: %v", link, err)
+				}
+				parsed = append(parsed, *p)
+			}
+			first := ApplyDiff("ciphers", nil, parsed)
+			if len(first.New) != 2 || first.SkippedDuplicate != 1 || first.New[0].Tag == first.New[1].Tag {
+				t.Fatalf("want 2 distinct servers and 1 duplicate: %+v", first)
+			}
+			var current []string
+			for _, m := range first.New {
+				current = append(current, m.Tag)
+			}
+
+			preview, err := (&Service{}).previewBody([]byte(strings.Join(links, "\n")), "text/plain")
+			if err != nil {
+				t.Fatal(err)
+			}
+			previewKeys := map[string]bool{}
+			for _, m := range preview {
+				previewKeys[m.Key] = true
+			}
+			for _, tag := range current {
+				if !previewKeys[tag[len(tag)-8:]] {
+					t.Errorf("preview key does not match refresh tag %q", tag)
+				}
+			}
+
+			next := ApplyDiff("ciphers", current, []vlink.ParsedOutbound{parsed[1], parsed[2], parsed[0]})
+			if len(next.Existing) != 2 || len(next.New) != 0 || len(next.Orphan) != 0 {
+				t.Fatalf("reordered feed changed tags: %+v", next)
+			}
+		})
+	}
+}
+
+// Группа, которую различает уже уровень cred (#1092, вышел в 2.19.21), не
+// должна переехать на новый уровень wire.
+func TestChooseKeys_CredTierGroupKeepsTags(t *testing.T) {
+	var parsed []vlink.ParsedOutbound
+	for _, user := range []string{"alice", "bob"} {
+		p, err := vlink.ParseLink("naive+https://" + user + ":shared@h.example:443")
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed = append(parsed, *p)
+	}
+	for i, k := range chooseKeys(parsed) {
+		if k != keysOf(parsed[i]).cred {
+			t.Errorf("member %d moved off the cred tier", i)
+		}
 	}
 }
