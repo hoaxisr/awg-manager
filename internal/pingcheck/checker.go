@@ -3,6 +3,8 @@ package pingcheck
 import (
 	"context"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/httpprobe"
@@ -64,6 +66,24 @@ func performCheck(ctx context.Context, ifaceName string, method string, target s
 	case "icmp":
 		return checkICMP(ctx, ifaceName, target, dnsServers)
 	default: // "http" is default
-		return checkHTTP(ctx, ifaceName, checkURL, dnsServers)
+		return checkHTTP(ctx, ifaceName, httpCheckURL(target, checkURL), dnsServers)
+	}
+}
+
+// httpCheckURL — адрес HTTP-проверки: цель из настроек туннеля (хост без
+// схемы → https://), пустая цель → общий ConnectivityCheckURL. Голый IP —
+// тоже общий URL: поле цели задумано под ICMP, и умолчания (общие настройки:
+// http + 8.8.8.8) разложили IP по записям с методом http. https://<IP> у
+// большинства адресов без сертификата на IP — вечный провал и снятие туннеля
+// со всех политик после обновления (ревью 27.10).
+func httpCheckURL(target, fallback string) string {
+	target = strings.TrimSpace(target)
+	switch {
+	case target == "" || net.ParseIP(target) != nil:
+		return fallback
+	case strings.Contains(target, "://"):
+		return target
+	default:
+		return "https://" + target
 	}
 }
