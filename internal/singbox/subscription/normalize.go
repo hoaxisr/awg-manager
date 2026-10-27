@@ -15,8 +15,9 @@ const shareSchemeCore = `(?:vless|trojan|ss|hysteria2|hy2|naive\+\w+|vpn|mieru|m
 // links on one line still split correctly (old [^\s]+ truncated at the first space anywhere).
 var shareURLStartPlain = regexp.MustCompile(`(?i)(?:^|\s+)(` + shareSchemeCore + `://)`)
 
-// shareURLStartHTML is like plain but allows common HTML/JSON delimiters before the scheme.
-var shareURLStartHTML = regexp.MustCompile(`(?i)(?:^|[\s"'<>=]+)(` + shareSchemeCore + `://)`)
+// shareURLStartHTML also accepts HTML/JSON delimiters and JSON-escaped
+// slashes in the scheme delimiter.
+var shareURLStartHTML = regexp.MustCompile(`(?i)(?:^|[\s"'<>=]+)(` + shareSchemeCore + `:(?://|\\/\\/))`)
 
 // trimShareURLSuffix removes trailing delimiters often glued after a URL in HTML/JSON
 // (quotes, commas, angle brackets, whitespace).
@@ -165,12 +166,12 @@ func isHTML(body []byte, contentType string) bool {
 // embedded as JSON-escaped strings inside React/Vue/etc. payloads. The
 // motivating case is GitHub's blob view: it serialises the file body
 // as a JSON string inside a script tag, so a real `&` separator in a
-// share-link surfaces in the HTML as the six-character literal `&`.
+// share-link surfaces in the HTML as the six-character literal `\u0026`.
 // The legacy schemeLineRegex used [^\s]+ which truncated URLs at the first space
 // (common in URI fragments: "#📆 Осталось: 28 дней"). We now slice from each scheme://
 // to the next scheme boundary.
 //
-// Other JSON escapes worth unwrapping (`<` / `>` / `'` /
+// Other JSON escapes worth unwrapping (`\u003c` / `\u003e` / `\u0027` /
 // `\/` / `\"` / `\\`) appear in the same envelope for similar reasons.
 // The order of replacements is significant — backslash must be last so
 // we don't mangle the front of the other escapes mid-pass.
@@ -204,10 +205,10 @@ func jsonUnescapeURL(s string) string {
 		return s
 	}
 	r := strings.NewReplacer(
-		`&`, "&",
-		`<`, "<",
-		`>`, ">",
-		`'`, "'",
+		`\u0026`, "&",
+		`\u003c`, "<",
+		`\u003e`, ">",
+		`\u0027`, "'",
 		`\/`, "/",
 		`\"`, `"`,
 		`\\`, `\`, // last — must not chew the leading backslash of the others
