@@ -12,7 +12,7 @@
 	import { zapretStatusIfExpert } from "$lib/stores/zapret";
 	import { runZapretControl } from '$lib/components/zapret';
 	import { PageContainer, PageHeader, LoadingSpinner } from "$lib/components/layout";
-	import { Toggle, Modal, Button, ConfirmModal, SegmentedControl } from "$lib/components/ui";
+	import { Toggle, Modal, Button, SegmentedControl } from "$lib/components/ui";
 	import {
 		SystemInfoGrid,
 		LoggingSettings,
@@ -25,6 +25,7 @@
 		UsageLevelCard,
 		AccessCard,
 		PingTargetsCard,
+		AdvancedCard,
 		BackupRestoreCard,
 		DevelopChannelGateModal,
 		ExperimentalSettingsCard,
@@ -33,7 +34,6 @@
 		McpSection,
 		ObfuscatorRelayCard,
 	} from "$lib/components/settings";
-	import HappKeysModal from "$lib/components/subscriptions/HappKeysModal.svelte";
 	import { setSettings as setGlobalSettings } from "$lib/stores/settings";
 	import {
 		downloadOutbounds,
@@ -60,21 +60,17 @@
 	} from "$lib/types/usageLevel";
 	import { usageLevel } from "$lib/stores/settings";
 	import { m, type UiText } from "$lib/i18n";
-	import RichText from "$lib/components/ui/RichText.svelte";
 	import { waitForBackendRestart } from "$lib/restartRecovery";
 	import { hasDevelopChannelQuizPassed } from "$lib/utils/developChannelGate";
-	import { developFeedbackFabVisible } from "$lib/stores/developFeedbackFab";
 	import { experimentalSettingsUnlocked } from "$lib/stores/experimentalSettingsUnlocked";
 	import { settingsUpdateHighlight } from "$lib/stores/settingsUpdateHighlight";
 	import {
 		CircleArrowDown,
 		CloudDownload,
 		ScrollText,
-		Wrench,
 		Power,
 	} from "lucide-svelte";
 	import { downloadErrorToText } from "$lib/utils/downloadError";
-	import { copyToClipboard } from "$lib/utils/clipboard";
 
 	const expandUsageLevel = $derived($page.url.searchParams.has('mode'));
 	const highlightFeedbackFab = $derived($page.url.searchParams.has('feedbackFab'));
@@ -101,15 +97,11 @@
 	let singboxUpdating = $state(false);
 	let singboxUpdateError = $state<UiText | null>(null);
 	let singboxBusy = $state(false);
-	let ndmsProxyBusy = $state(false);
-	let ndmsProxyConfirmOpen = $state(false);
-	let ndmsProxyConfirmEnable = $state(false); // true = подтверждение включения; false = выключения
 	let systemInfoRefreshing = $state(false);
 	let systemInfoUpdatedAt = $state<string | null>(null);
 	let systemInfoInFlight: Promise<void> | null = null;
 	let developGateOpen = $state(false);
 	let footerPatrolWidth = $state(0);
-	let showHappKeysModal = $state(false);
 
 	const singboxStatusValue = $derived($singboxStatus.data ?? null);
 	const singboxStatusLoading = $derived(
@@ -118,7 +110,6 @@
 	);
 	const singboxInstalled = $derived(singboxStatusValue?.installed ?? false);
 	const singboxRunning = $derived(singboxStatusValue?.running ?? false);
-	const ndmsProxyEnabled = $derived(singboxStatusValue?.ndmsProxyEnabled ?? true);
 	const hydraStatusValue = $derived($hydrarouteStatus.data ?? null);
 	const hydraStatusLoading = $derived(
 		$hydrarouteStatus.lastFetchedAt === 0 &&
@@ -131,40 +122,6 @@
 	const zapretInstalled = $derived(zapretStatusValue?.installed ?? false);
 	const zapretRunning = $derived(zapretStatusValue?.running ?? false);
 	let zapretBusy = $state(false);
-
-	function handleNDMSProxyToggleClick(next: boolean) {
-		// next — желаемое состояние после клика. Открываем confirm-modal
-		// с предупреждением (warning-only — мы не сканим NDMS-policies).
-		ndmsProxyConfirmEnable = next;
-		ndmsProxyConfirmOpen = true;
-	}
-
-	async function applyNDMSProxyToggle() {
-		const enabled = ndmsProxyConfirmEnable;
-		ndmsProxyBusy = true;
-		try {
-			const res = await api.singboxToggleNDMSProxy(enabled);
-			ndmsProxyConfirmOpen = false;
-			// Обновим стор статуса оптимистично — SSE invalidate тоже придёт.
-			if (singboxStatusValue) {
-				singboxStatus.applyMutationResponse({ ...singboxStatusValue, ndmsProxyEnabled: res.enabled });
-			}
-			notifications.success(
-				res.migrated
-					? (enabled ? m.settings_page_ndms_proxy_enabled_toast() : m.settings_page_ndms_proxy_disabled_toast())
-					: m.settings_page_state_unchanged(),
-			);
-		} catch (e) {
-			const msg = e instanceof Error ? e.message : m.settings_page_ndms_proxy_toggle_failed();
-			if (msg.includes('PROXY_COMPONENT_MISSING') || msg.includes("'proxy'")) {
-				notifications.error(m.settings_page_ndms_component_missing());
-			} else {
-				notifications.error(msg);
-			}
-		} finally {
-			ndmsProxyBusy = false;
-		}
-	}
 
 	async function controlSingbox(action: 'start' | 'stop' | 'restart') {
 		singboxBusy = true;
@@ -490,20 +447,6 @@ $effect(() => {
 		// over plain HTTP (router LAN context), so the backend produces
 		// the UUID via crypto/rand and persists it in one round-trip.
 		return save(() => api.regenerateApiKey(), m.settings_page_apikey_generated(), m.settings_page_apikey_generate_failed());
-	}
-
-	async function copyApiKey() {
-		if (!settings) return;
-		const key = (settings.apiKey ?? "").trim();
-		if (!key) {
-			notifications.info(m.settings_page_apikey_generate_first());
-			return;
-		}
-		if (await copyToClipboard(key)) {
-			notifications.success(m.settings_page_apikey_copied());
-		} else {
-			notifications.error(m.settings_page_apikey_copy_failed());
-		}
 	}
 
 	function toggleLogging(enabled: boolean) {
@@ -911,100 +854,15 @@ $effect(() => {
 					onsave={savePingTargetsSettings}
 				/>
 
-				<div class="settings-block">
-					<div
-						id="feedback-fab"
-						class="card settings-highlight-target"
-						class:highlighted={highlightFeedbackFab}
-					>
-					<SettingsSectionLabel label={m.settings_page_advanced_title()} icon={Wrench} tone="indigo" header />
-					<div class="setting-row api-key-setting">
-						<div class="flex flex-col gap-1">
-							<span class="font-medium">API Key</span>
-							<span class="setting-description">
-								<RichText
-									text={m.settings_page_apikey_description({
-										endpoint: `${origin}/api/`,
-										token: m.settings_page_apikey_token(),
-									})}
-								/>
-							</span>
-						</div>
-						<div class="api-key-controls">
-							<input
-								type="text"
-								class="api-key-input"
-								value={settings.apiKey ?? ""}
-								readonly
-								placeholder={m.settings_page_apikey_placeholder()}
-								onclick={copyApiKey}
-								title={settings.apiKey?.trim()
-									? m.settings_page_apikey_click_to_copy()
-									: m.settings_page_apikey_generate_hint()}
-							/>
-							<div class="api-key-action">
-								<Button variant="secondary" size="md" onclick={generateApiKey} disabled={saving}>
-									{m.common_generate()}
-								</Button>
-							</div>
-						</div>
-					</div>
-					{#if settings.updates.channel === 'develop'}
-					<div class="setting-row toggle-inline-row">
-						<div class="flex flex-col gap-1">
-							<span class="font-medium">{m.settings_page_feedback_label()}</span>
-							<span class="setting-description">
-								{m.settings_page_feedback_description()}
-							</span>
-						</div>
-						<Toggle
-							checked={$developFeedbackFabVisible}
-							onchange={(v) => developFeedbackFabVisible.set(v)}
-						/>
-					</div>
-					{/if}
-
-					<div class="setting-row toggle-inline-row">
-						<div class="flex flex-col gap-1">
-							<span class="font-medium">{m.settings_page_happ_label()}</span>
-							<span class="setting-description">
-								{m.settings_page_happ_description()}
-							</span>
-						</div>
-						<Button
-							variant="secondary"
-							size="md"
-							onclick={() => (showHappKeysModal = true)}
-							disabled={saving}
-						>
-							{m.settings_page_happ_manage()}
-						</Button>
-					</div>
-
-					{#if singboxInstalled && showSingboxIntegration}
-						<div class="setting-row toggle-inline-row">
-							<div class="flex flex-col gap-1">
-								<span class="font-medium">{m.settings_page_ndms_proxy_label()}</span>
-								<span class="setting-description">
-									{#if ndmsProxyEnabled}
-										{m.settings_page_ndms_proxy_on_1()}
-										<br>
-										{m.settings_page_ndms_proxy_on_2()}
-									{:else}
-										{m.settings_page_ndms_proxy_off()}
-									{/if}
-								</span>
-							</div>
-							<Toggle
-								checked={ndmsProxyEnabled}
-								controlled
-								disabled={ndmsProxyBusy}
-								onchange={handleNDMSProxyToggleClick}
-							/>
-						</div>
-					{/if}
-					</div>
-				</div>
+				<AdvancedCard
+					apiKey={settings.apiKey}
+					{origin}
+					{saving}
+					showFeedback={settings.updates.channel === 'develop'}
+					showNdmsProxy={singboxInstalled && showSingboxIntegration}
+					highlighted={highlightFeedbackFab}
+					ongenerateApiKey={generateApiKey}
+				/>
 
 				<McpSection
 					enabled={settings.mcpEnabled ?? false}
@@ -1134,22 +992,6 @@ $effect(() => {
 		onpassed={confirmDevelopChannel}
 	/>
 
-	<ConfirmModal
-		open={ndmsProxyConfirmOpen}
-		title={ndmsProxyConfirmEnable ? m.settings_page_ndms_confirm_enable_title() : m.settings_page_ndms_confirm_disable_title()}
-		message={ndmsProxyConfirmEnable
-			? m.settings_page_ndms_confirm_enable_message()
-			: m.settings_page_ndms_confirm_disable_message()}
-		secondary={ndmsProxyConfirmEnable
-			? m.settings_page_ndms_confirm_enable_secondary()
-			: m.settings_page_ndms_confirm_disable_secondary()}
-		confirmLabel={ndmsProxyConfirmEnable ? m.common_enable() : m.common_disable()}
-		variant={ndmsProxyConfirmEnable ? 'primary' : 'danger'}
-		busy={ndmsProxyBusy}
-		onConfirm={applyNDMSProxyToggle}
-		onClose={() => (ndmsProxyConfirmOpen = false)}
-	/>
-
 	<Modal
 		open={restartConfirmOpen}
 		title={m.settings_page_restart_modal_title()}
@@ -1165,10 +1007,6 @@ $effect(() => {
 		{/snippet}
 	</Modal>
 
-	<HappKeysModal
-		bind:open={showHappKeysModal}
-		onclose={() => (showHappKeysModal = false)}
-	/>
 </PageContainer>
 
 <style>
@@ -1245,90 +1083,7 @@ $effect(() => {
 		}
 	}
 
-	.api-key-controls {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
-		align-items: stretch;
-		gap: 0.5rem;
-		width: 100%;
-		min-width: 0;
-	}
-
-	.api-key-input {
-		cursor: pointer;
-	}
-
-	.api-key-action {
-		display: flex;
-		align-items: stretch;
-		white-space: nowrap;
-	}
-
-	.api-key-action :global(.btn) {
-		height: 32px;
-		min-height: 32px;
-		max-height: 32px;
-		box-sizing: border-box;
-		padding-block: 0;
-	}
-
-	.api-key-setting {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, min(50%, 34rem));
-		gap: 1rem;
-		align-items: center;
-	}
-	.api-key-setting > *:first-child {
-		min-width: 0;
-	}
-
-	@media (min-width: 641px) {
-		.api-key-setting {
-			grid-template-columns: minmax(0, 1fr) minmax(0, min(50%, 34rem));
-			align-items: center;
-		}
-
-		.api-key-setting > *:first-child {
-			display: flex;
-			flex-direction: column;
-			align-items: flex-start;
-			gap: 0.25rem;
-		}
-
-		.api-key-setting .setting-description {
-			white-space: normal;
-			overflow: visible;
-			text-overflow: clip;
-		}
-
-		.api-key-controls {
-			width: 100%;
-			grid-template-columns: minmax(0, 1fr) auto;
-			align-items: stretch;
-		}
-
-		.api-key-action {
-			display: flex;
-		}
-
-		.api-key-action :global(.btn) {
-			width: auto;
-			min-width: 7.5rem;
-			height: 32px;
-			min-height: 32px;
-			max-height: 32px;
-		}
-	}
-
 	@media (max-width: 640px) {
-		.api-key-controls {
-			grid-template-columns: minmax(0, 1fr) auto;
-		}
-
-		.api-key-setting {
-			grid-template-columns: 1fr;
-		}
-
 		.toggle-inline-row {
 			flex-direction: row;
 			align-items: center;
@@ -1400,19 +1155,5 @@ $effect(() => {
 		.settings-left-sticky {
 			position: static;
 		}
-	}
-
-	.settings-highlight-target.highlighted {
-		animation: settings-target-glow 2.8s ease-out forwards;
-	}
-
-	@keyframes settings-target-glow {
-		0%   { box-shadow: none; }
-		12%  { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 55%, transparent), 0 0 18px 2px color-mix(in srgb, var(--color-accent) 22%, transparent); }
-		30%  { box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent); }
-		48%  { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 40%, transparent), 0 0 14px 2px color-mix(in srgb, var(--color-accent) 15%, transparent); }
-		65%  { box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 15%, transparent); }
-		82%  { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 22%, transparent), 0 0 8px 1px color-mix(in srgb, var(--color-accent) 10%, transparent); }
-		100% { box-shadow: none; }
 	}
 </style>

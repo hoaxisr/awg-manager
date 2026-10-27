@@ -7,7 +7,7 @@ describe('PingTargetsCard', () => {
 	it('сохраняет отредактированные цели, не трогая пропсы', async () => {
 		const onsave = vi.fn();
 		render(PingTargetsCard, { props: { target: '8.8.8.8', url: 'http://a/204', onsave } });
-		const [icmp, http] = screen.getAllByRole('textbox') as HTMLInputElement[];
+		const [icmp, http] = screen.getAllByRole<HTMLInputElement>('textbox');
 		expect(icmp.value).toBe('8.8.8.8');
 		await fireEvent.input(icmp, { target: { value: '1.1.1.1' } });
 		await fireEvent.click(screen.getByRole('button', { name: /сохранить/i }));
