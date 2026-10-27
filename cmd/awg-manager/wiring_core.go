@@ -157,8 +157,8 @@ func (a *app) setupNDMS() {
 	// (internal/sys/ndmsinfo/info.go) — значит медленный, но успешный ответ
 	// RCI бюджетом не отсекается вовсе, сколько его ни увеличивай. Отсекается
 	// только быстрый отказ (:79 ещё не слушает), и лечится он не ожиданием, а
-	// вторым каналом: при исчерпании бюджета ndmsinfo спрашивает ndm через
-	// unix-сокет. Чем короче бюджет, тем быстрее до этого канала доходит.
+	// повторным ndmc: при исчерпании бюджета ndmsinfo снова спрашивает ndm
+	// через unix-сокет (первым он спрашивает его же, F742).
 	ndmsTimeout := time.Second // normal restart: single attempt, дальше ndmc
 	if a.uptime > 0 && a.uptime < 120 {
 		ndmsTimeout = 30 * time.Second // boot: ждём, пока NDMS вообще поднимется
@@ -172,11 +172,10 @@ func (a *app) setupNDMS() {
 		// (выбор оператора, режим файрвола, гейт DNS-маршрутов) замерзает
 		// снимком прямо здесь и не переигрывается никогда.
 		a.waitForNDMSVersion(err)
-	} else if src := ndmsinfo.Source(); src != ndmsinfo.SourceRCI {
-		// Запасной канал сработал — значит RCI не ответил. Туннельный тракт
-		// при этом в порядке, но это ранний признак залипшей HTTP-морды NDMS.
+	} else if src := ndmsinfo.Source(); src != ndmsinfo.SourceNdmc {
+		// Основной канал (ndmc, F742) не ответил — выручил запасной.
 		a.bootLog.Warn("ndms-version", "",
-			"RCI не ответил, версия получена каналом "+src+": "+osdetect.ReleaseString())
+			"ndmc не ответил, версия получена каналом "+src+": "+osdetect.ReleaseString())
 	}
 
 	// Остатки восстановлений удалены в main — здесь только след в журнале.

@@ -88,8 +88,8 @@ func runCleanup(dataDir string) {
 		SwapGate: gate,
 	})
 
-	// Init NDMS info (needed for OS detection). Запасной канал (ndmc через
-	// unix-сокет) живёт внутри Init, так что деинсталляция получает его даром.
+	// Init NDMS info (needed for OS detection). Каналы (ndmc, RCI, файл)
+	// живут внутри Init, так что деинсталляция получает их даром.
 	//
 	// В отличие от демона, здесь НЕ ждём: повиснуть в деинсталляции хуже, чем
 	// прибрать по умолчанию. Цена известна и названа в сообщении — если
@@ -103,9 +103,9 @@ func runCleanup(dataDir string) {
 		bootLog.Warn("ndms-version", "",
 			"версия NDMS не определена ни через RCI, ни через ndmc, ни из файла ("+err.Error()+
 				") — уборка идёт по умолчанию "+string(osdetect.Get())+", часть остатков может уцелеть")
-	} else if ndmsinfo.Source() != ndmsinfo.SourceRCI {
+	} else if ndmsinfo.Source() != ndmsinfo.SourceNdmc {
 		bootLog.Info("ndms-version", "",
-			"ndm не ответил, версия получена каналом "+ndmsinfo.Source()+": "+osdetect.ReleaseString())
+			"ndmc не ответил, версия получена каналом "+ndmsinfo.Source()+": "+osdetect.ReleaseString())
 	}
 
 	// Create service components

@@ -29,10 +29,9 @@ type errNoRCIType struct{}
 
 func (errNoRCIType) Error() string { return "RCI молчит" }
 
-// Разбор ответа ndmc проверен отдельно, но смысл второго канала — в том, что
-// он ПОДКЛЮЧЁН: без вызова из Init демон остаётся без версии и (после фикса
-// F197) не поднимается вовсе. Эта развилка и есть цена ветки.
-func TestInit_FallsBackToNdmcWhenRCISilent(t *testing.T) {
+// F742: версию первым даёт ndmc, и RCI при этом не трогается вовсе — до
+// версии транспорт шлёт RCI без токена, и ndm на 5.2 пишет W на каждый старт.
+func TestInit_AsksNdmcFirst(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
 	fakeNdmc(t, standNdmcOutput, 0)
@@ -44,15 +43,15 @@ func TestInit_FallsBackToNdmcWhenRCISilent(t *testing.T) {
 	if err := Init(context.Background(), sysInfo, 10*time.Millisecond); err != nil {
 		t.Fatalf("Init при живом ndmc обязан вернуть версию: %v", err)
 	}
-	if g.calls.Load() == 0 {
-		t.Error("RCI обязан быть опрошен ДО запасного канала")
+	if n := g.calls.Load(); n != 0 {
+		t.Errorf("ndmc ответил, а RCI опрошен %d раз", n)
 	}
 	if Source() != SourceNdmc {
 		t.Errorf("источник = %q, ожидали %q", Source(), SourceNdmc)
 	}
 	v := Get()
 	if v == nil || v.Release != "5.01.C.3.0-1" {
-		t.Fatalf("версия из запасного канала не доехала до store: %+v", v)
+		t.Fatalf("версия из ndmc не доехала до store: %+v", v)
 	}
 	if len(v.Components) == 0 {
 		t.Error("компоненты обязаны доехать вместе с релизом")
@@ -86,6 +85,7 @@ func TestInit_FailsWhenBothChannelsSilent(t *testing.T) {
 func TestInit_RCIAnswerIsNotOverwrittenByNdmc(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
+	fakeNdmc(t, "", 1) // ndmc молчит — версию даёт запасной RCI
 
 	sysInfo := query.NewSystemInfoStore(liveGetter{}, nil)
 	if err := Init(context.Background(), sysInfo, time.Second); err != nil {
@@ -171,6 +171,7 @@ func TestInit_FileChannelGivesReleaseWithoutNDM(t *testing.T) {
 func TestInit_FullAnswerReplacesPartial(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
+	fakeNdmc(t, "", 1) // ndmc молчит — версию даёт запасной RCI
 	writeComponentsXML(t, standComponentsXML)
 
 	sysInfo := query.NewSystemInfoStore(liveGetter{}, nil)

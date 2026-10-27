@@ -95,12 +95,12 @@ func (s *SystemInfoStore) Init(ctx context.Context) error {
 	return err
 }
 
-// Adopt принимает версию, добытую запасным каналом: ndmc через unix-сокет
-// (internal/sys/ndmsinfo/ndmc.go) или файл /etc/components.xml. Уже
-// загруженное значение не трогает — живой ответ RCI считается точнее.
+// Adopt принимает версию, добытую не RCI: ndmc через unix-сокет (основной
+// канал, internal/sys/ndmsinfo/ndmc.go) или файл /etc/components.xml. Уже
+// загруженное значение не трогает.
 //
-// source обязателен: по нему диагностика отличает «RCI жив» от «RCI молчал,
-// выручил запасной канал», а без него эти случаи неразличимы.
+// source обязателен: по нему диагностика отличает «ndm ответил» от «молчали
+// обе службы, выручил файл», а без него эти случаи неразличимы.
 func (s *SystemInfoStore) Adopt(v ndms.Version, source string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -125,14 +125,6 @@ func (s *SystemInfoStore) Source() string {
 // sourceRCI дублирует ndmsinfo.SourceRCI: импортировать тот пакет отсюда
 // нельзя, он сам зависит от query.
 const sourceRCI = "rci"
-
-// Adopted сообщает, что версия получена НЕ от RCI, а запасным каналом.
-// Обёртка над Source(): диагностике нужен и факт, и имя канала.
-func (s *SystemInfoStore) Adopted() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.loaded && s.source != sourceRCI
-}
 
 // Get returns the cached Version. Returns ErrNotInitialized if Init was
 // never called successfully.
