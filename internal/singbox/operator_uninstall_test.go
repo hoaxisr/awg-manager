@@ -204,3 +204,42 @@ func TestOperator_Uninstall_ForeignProxySkipped(t *testing.T) {
 		t.Fatalf("каталог движка остался: %v", err)
 	}
 }
+
+// F724: удаление пакета (Cleanup) снимает ProxyN не только туннелей, но и
+// подписок со сводными группами — иначе они остаются в NDMS на мёртвом порту.
+func TestOperator_Cleanup_RemovesTunnelAndSubscriptionProxies(t *testing.T) {
+	dir := t.TempDir()
+	binary, _ := seedInstallation(t, dir)
+	seedTunnels(t, dir)
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	proxies := &fakeProxies{}
+	op.proxyMgr = proxies
+	op.subProxies = &staticSubProxies{list: []SubscriptionProxy{{Index: 7, Port: 1087, Label: "sub1"}, {Index: 9, Port: 1089, Label: "group1"}}}
+
+	if err := op.Cleanup(context.Background()); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+	if !slices.Equal(proxies.removed, []int{1, 2, 7, 9}) {
+		t.Fatalf("сняты прокси %v, want [1 2 7 9] (туннели, подписка, группа)", proxies.removed)
+	}
+}
+
+// Нечитаемый 10-tunnels.json не мешает снять прокси подписок.
+func TestOperator_Cleanup_BrokenTunnelsFileStillRemovesSubscriptionProxies(t *testing.T) {
+	dir := t.TempDir()
+	binary, _ := seedInstallation(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "config.d", "10-tunnels.json"), []byte("{broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	proxies := &fakeProxies{}
+	op.proxyMgr = proxies
+	op.subProxies = &staticSubProxies{list: []SubscriptionProxy{{Index: 7, Port: 1087, Label: "sub1"}}}
+
+	if err := op.Cleanup(context.Background()); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+	if !slices.Equal(proxies.removed, []int{7}) {
+		t.Fatalf("сняты прокси %v, want [7]", proxies.removed)
+	}
+}

@@ -25,6 +25,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
+	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
@@ -206,6 +207,18 @@ func runCleanup(dataDir string) {
 		initialManuallyStopped: cleanupSettings != nil && cleanupSettings.SingboxManuallyStopped,
 	})
 	singboxOp := core.op
+	// Прокси подписок и сводных групп — тот же набор, что видит демон: без
+	// него Cleanup снимал только ProxyN туннелей (F724). Сбой чтения — уборка
+	// без них, как раньше.
+	subStore, err := subscription.NewStore(filepath.Join(dataDir, "subscriptions.json"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: subscriptions: %v\n", err)
+	}
+	subGroupStore, err := subscription.NewGroupStore(filepath.Join(dataDir, "subscription-groups.json"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: subscription groups: %v\n", err)
+	}
+	singboxOp.SetSubscriptionProxySet(subProxySet{store: subStore, groups: subGroupStore})
 
 	accessPolicySvc := accesspolicy.New(cleanupNDMSCommands.Policies, cleanupNDMSCommands.Interfaces, cleanupNDMSQueries, settingsStore, nil, ndmsquery.NewPolicyMarkStore(cleanupNDMSTransport, nil))
 

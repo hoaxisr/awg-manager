@@ -574,7 +574,8 @@ func (o *Operator) Clash() *ClashClient { return o.clash }
 
 // Cleanup tears down all sing-box-managed state during package uninstall:
 //   - stops the detached sing-box daemon (SIGTERM → SIGKILL)
-//   - deletes every NDMS Proxy interface we created
+//   - deletes every NDMS Proxy interface we created (tunnels, subscriptions,
+//     subscription groups)
 //   - removes the on-disk config and pid/log files
 //
 // Best-effort: individual errors are logged and do not abort the sequence —
@@ -586,22 +587,20 @@ func (o *Operator) Cleanup(ctx context.Context) error {
 		o.log.Warn("cleanup: stop sing-box failed", "err", err)
 	}
 
-	// Read the config (if present) to discover which Proxy interfaces we
-	// still own. A missing config means nothing to tear down.
-	cfg, err := o.loadConfig()
-	if err != nil && !os.IsNotExist(err) {
+	// Proxy-интерфейсы туннелей и подписок (F724: прокси подписок и групп
+	// переживали удаление пакета). Чужие пропускаются RemoveProxy.
+	owned, err := o.ownedEngineProxies()
+	if err != nil {
 		o.log.Warn("cleanup: load config failed", "err", err)
 	}
-	if cfg != nil {
-		for _, t := range cfg.Tunnels() {
-			idx, perr := parseProxyIdx(t.ProxyInterface)
-			if perr != nil {
-				o.log.Warn("cleanup: bad proxy iface", "tag", t.Tag, "iface", t.ProxyInterface, "err", perr)
-				continue
-			}
-			if err := o.proxyMgr.RemoveProxy(ctx, idx, t.Tag); err != nil {
-				o.log.Warn("cleanup: remove proxy failed", "tag", t.Tag, "err", err)
-			}
+	for _, m := range owned {
+		idx, perr := parseProxyIdx(m.Name)
+		if perr != nil {
+			o.log.Warn("cleanup: bad proxy iface", "desc", m.Desc, "iface", m.Name, "err", perr)
+			continue
+		}
+		if err := o.proxyMgr.RemoveProxy(ctx, idx, m.Desc); err != nil {
+			o.log.Warn("cleanup: remove proxy failed", "desc", m.Desc, "err", err)
 		}
 	}
 

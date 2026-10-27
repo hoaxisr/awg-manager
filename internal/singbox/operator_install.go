@@ -431,6 +431,29 @@ func (o *Operator) Uninstall(ctx context.Context) error {
 	return nil
 }
 
+// ownedEngineProxies — NDMS ProxyN движка: туннелей из 10-tunnels.json и
+// подписок со сводными группами (description = тег / Label). Отказ чтения
+// туннелей возвращается вместе с прокси подписок — уборка пакета снимает хотя
+// бы их (F724).
+func (o *Operator) ownedEngineProxies() ([]ProxyMark, error) {
+	var owned []ProxyMark
+	cfg, err := o.loadConfig()
+	if err != nil && !os.IsNotExist(err) {
+		err = fmt.Errorf("read tunnels: %w", err)
+	} else {
+		err = nil
+	}
+	if cfg != nil {
+		for _, t := range cfg.Tunnels() {
+			owned = append(owned, ProxyMark{Name: t.ProxyInterface, Desc: t.Tag})
+		}
+	}
+	for _, sp := range o.subscriptionProxies() {
+		owned = append(owned, ProxyMark{Name: proxyName(sp.Index), Desc: sp.Label})
+	}
+	return owned, err
+}
+
 // removeEngineProxies снимает NDMS ProxyN туннелей из 10-tunnels.json и
 // подписок: без движка все они — прокси на мёртвый порт. Туннели к тому же
 // исчезают вместе с каталогом, и их прокси остались бы сиротами, неудаляемыми
@@ -442,18 +465,9 @@ func (o *Operator) Uninstall(ctx context.Context) error {
 func (o *Operator) removeEngineProxies(ctx context.Context) error {
 	o.migrationMu.Lock()
 	defer o.migrationMu.Unlock()
-	cfg, err := o.loadConfig()
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read tunnels: %w", err)
-	}
-	var owned []ProxyMark
-	if cfg != nil {
-		for _, t := range cfg.Tunnels() {
-			owned = append(owned, ProxyMark{Name: t.ProxyInterface, Desc: t.Tag})
-		}
-	}
-	for _, sp := range o.subscriptionProxies() {
-		owned = append(owned, ProxyMark{Name: proxyName(sp.Index), Desc: sp.Label})
+	owned, err := o.ownedEngineProxies()
+	if err != nil {
+		return err
 	}
 	for _, m := range owned {
 		idx, err := parseProxyIdx(m.Name)
