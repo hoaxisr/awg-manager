@@ -10,9 +10,8 @@
 	import { singboxStatus } from "$lib/stores/singbox";
 	import { hydrarouteStatus } from "$lib/stores/hydraroute";
 	import { zapretStatusIfExpert } from "$lib/stores/zapret";
-	import { runZapretControl } from '$lib/components/zapret';
 	import { PageContainer, PageHeader, LoadingSpinner } from "$lib/components/layout";
-	import { Toggle, Modal, Button, SegmentedControl } from "$lib/components/ui";
+	import { Toggle, Button, SegmentedControl } from "$lib/components/ui";
 	import {
 		SystemInfoGrid,
 		LoggingSettings,
@@ -26,6 +25,7 @@
 		AccessCard,
 		PingTargetsCard,
 		AdvancedCard,
+		ServiceActionsCard,
 		BackupRestoreCard,
 		DevelopChannelGateModal,
 		ExperimentalSettingsCard,
@@ -46,7 +46,6 @@
 		SystemInfo,
 		Settings,
 		UpdateInfo,
-		ZapretControlAction,
 	} from "$lib/types";
 	import { proxyInstallStatus, type ProxySubsystem } from "$lib/stores/proxyInstall";
 	import {
@@ -60,7 +59,6 @@
 	} from "$lib/types/usageLevel";
 	import { usageLevel } from "$lib/stores/settings";
 	import { m, type UiText } from "$lib/i18n";
-	import { waitForBackendRestart } from "$lib/restartRecovery";
 	import { hasDevelopChannelQuizPassed } from "$lib/utils/developChannelGate";
 	import { experimentalSettingsUnlocked } from "$lib/stores/experimentalSettingsUnlocked";
 	import { settingsUpdateHighlight } from "$lib/stores/settingsUpdateHighlight";
@@ -68,7 +66,6 @@
 		CircleArrowDown,
 		CloudDownload,
 		ScrollText,
-		Power,
 	} from "lucide-svelte";
 	import { downloadErrorToText } from "$lib/utils/downloadError";
 
@@ -88,15 +85,11 @@
 	const downloadRouteLabel = $derived(resolveDownloadRouteLabel(settings, $downloadOutbounds));
 	const visibleDownloadRouteLabel = $derived(showDownloadRouteDetails ? downloadRouteLabel : '');
 	let updateInfo: UpdateInfo | null = $state(null);
-	let restarting = $state(false);
-	let restartConfirmOpen = $state(false);
-	let hydraBusy = $state(false);
 	let singboxInstalling = $state(false);
 	let singboxUninstalling = $state(false);
 	let singboxInstallError = $state<UiText | null>(null);
 	let singboxUpdating = $state(false);
 	let singboxUpdateError = $state<UiText | null>(null);
-	let singboxBusy = $state(false);
 	let systemInfoRefreshing = $state(false);
 	let systemInfoUpdatedAt = $state<string | null>(null);
 	let systemInfoInFlight: Promise<void> | null = null;
@@ -109,60 +102,13 @@
 		($singboxStatus.status === 'idle' || $singboxStatus.status === 'loading')
 	);
 	const singboxInstalled = $derived(singboxStatusValue?.installed ?? false);
-	const singboxRunning = $derived(singboxStatusValue?.running ?? false);
 	const hydraStatusValue = $derived($hydrarouteStatus.data ?? null);
 	const hydraStatusLoading = $derived(
 		$hydrarouteStatus.lastFetchedAt === 0 &&
 		($hydrarouteStatus.status === 'idle' || $hydrarouteStatus.status === 'loading')
 	);
 	const hydraStatusError = $derived($hydrarouteStatus.error);
-	const hydraInstalled = $derived(hydraStatusValue?.installed ?? false);
-	const hydraRunning = $derived(hydraStatusValue?.running ?? false);
 	const zapretStatusValue = $derived($zapretStatusIfExpert?.data ?? null);
-	const zapretInstalled = $derived(zapretStatusValue?.installed ?? false);
-	const zapretRunning = $derived(zapretStatusValue?.running ?? false);
-	let zapretBusy = $state(false);
-
-	async function controlSingbox(action: 'start' | 'stop' | 'restart') {
-		singboxBusy = true;
-		try {
-			const fresh = await api.singboxControl(action);
-			singboxStatus.applyMutationResponse(fresh);
-			notifications.success(
-				action === 'restart' ? m.settings_page_singbox_restarted() :
-				action === 'stop' ? m.settings_page_singbox_stopped() : m.settings_page_singbox_started(),
-			);
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : m.settings_page_singbox_control_failed());
-		} finally {
-			singboxBusy = false;
-		}
-	}
-
-	async function controlHydra(action: 'start' | 'stop' | 'restart') {
-		hydraBusy = true;
-		try {
-			const fresh = await api.controlHydraRoute(action);
-			hydrarouteStatus.applyMutationResponse(fresh);
-			notifications.success(
-				action === 'restart' ? m.settings_page_hydra_restarted() :
-				action === 'stop' ? m.settings_page_hydra_stopped() : m.settings_page_hydra_started(),
-			);
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : m.settings_page_hydra_control_failed());
-		} finally {
-			hydraBusy = false;
-		}
-	}
-
-	async function controlZapret(action: ZapretControlAction) {
-		zapretBusy = true;
-		try {
-			await runZapretControl(action, zapretStatusValue?.base ?? '');
-		} finally {
-			zapretBusy = false;
-		}
-	}
 
 	async function installSingbox() {
 		singboxInstalling = true;
@@ -588,87 +534,6 @@ $effect(() => {
 		);
 	}
 
-	async function restartDaemon() {
-		restartConfirmOpen = false;
-		restarting = true;
-		const before = await readBackendInstanceId().catch(() => null);
-		try {
-			const result = await requestDaemonRestart();
-			if (result === 'accepted') {
-				notifications.success(m.settings_page_restarting());
-			} else {
-				notifications.warning(m.settings_page_connection_dropped());
-			}
-			const waitResult = await waitForDaemonRestart(before);
-			if (waitResult === 'timeout') {
-				restarting = false;
-				notifications.warning(m.settings_page_restart_unconfirmed());
-				return;
-			}
-			location.reload();
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : m.settings_page_restart_failed());
-			restarting = false;
-		}
-	}
-
-	async function requestDaemonRestart(): Promise<'accepted' | 'network-drop'> {
-		try {
-			const response = await fetch('/api/system/restart', {
-				method: 'POST',
-				credentials: 'same-origin',
-				cache: 'no-store',
-				headers: { 'Content-Type': 'application/json' },
-			});
-
-			if (response.status === 401) {
-				throw new Error(m.settings_page_session_expired());
-			}
-
-			if (!response.ok) {
-				const text = await response.text().catch(() => '');
-				throw new Error(m.settings_page_restart_http_failed({ status: response.status, text: text.substring(0, 120) }));
-			}
-
-			return 'accepted';
-		} catch (e) {
-			if (e instanceof TypeError) {
-				return 'network-drop';
-			}
-			throw e;
-		}
-	}
-
-	async function readBackendInstanceId(): Promise<string | null> {
-		const res = await fetch('/api/health', {
-			method: 'GET',
-			cache: 'no-store',
-			credentials: 'same-origin',
-		});
-		if (!res.ok) {
-			return null;
-		}
-		const body = await res.json().catch(() => null);
-		const id = body?.data?.instanceId;
-		return typeof id === 'string' && id.length > 0 ? id : null;
-	}
-
-	function sleep(ms: number) {
-		return new Promise<void>((resolve) => setTimeout(resolve, ms));
-	}
-
-	async function waitForDaemonRestart(previousInstanceId: string | null) {
-		return waitForBackendRestart({
-			previousInstanceId,
-			readInstanceId: readBackendInstanceId,
-			sleep,
-			now: () => Date.now(),
-			timeoutMs: 45_000,
-			pollMs: 750,
-			stableOnlineMs: 3_000,
-		});
-	}
-
 	async function refreshSystemInfo() {
 		await fetchSystemInfo(false);
 	}
@@ -889,92 +754,10 @@ $effect(() => {
 			</main>
 		</div>
 
-		<div class="settings-block" id="settings-actions">
-			<div class="card actions-card">
-			<SettingsSectionLabel label={m.settings_page_actions_title()} icon={Power} tone="red" header />
-			<div class="setting-row">
-				<div class="flex flex-col gap-1">
-					<span class="font-medium">{m.settings_page_restart_label()}</span>
-					<span class="setting-description">{m.settings_page_restart_description()}</span>
-				</div>
-				<Button
-					variant="secondary"
-					size="sm"
-					onclick={() => (restartConfirmOpen = true)}
-					loading={restarting}
-				>
-					{restarting ? m.settings_page_restarting_button() : m.common_restart()}
-				</Button>
-			</div>
-
-			{#if singboxInstalled && showSingboxIntegration}
-				<div class="setting-row">
-					<div class="flex flex-col gap-1">
-						<span class="font-medium">Sing-box</span>
-						<span class="setting-description">
-							{singboxRunning ? m.settings_page_process_running() : m.settings_page_process_stopped()}
-						</span>
-					</div>
-					<div class="action-buttons">
-						{#if singboxRunning}
-							<span title={singboxStatusValue?.updateAvailable ? m.settings_page_singbox_update_first({ version: singboxStatusValue.requiredVersion }) : ''}>
-								<Button
-									variant="secondary"
-									size="sm"
-									onclick={() => controlSingbox('restart')}
-									loading={singboxBusy}
-									disabled={singboxStatusValue?.updateAvailable ?? false}
-								>
-									{m.common_restart()}
-								</Button>
-							</span>
-							<Button variant="danger" size="sm" onclick={() => controlSingbox('stop')} loading={singboxBusy}>{m.common_stop()}</Button>
-						{:else}
-							<Button variant="success" size="sm" onclick={() => controlSingbox('start')} loading={singboxBusy}>{m.common_start()}</Button>
-						{/if}
-					</div>
-				</div>
-			{/if}
-
-			{#if hydraInstalled && showHydraIntegration}
-				<div class="setting-row">
-					<div class="flex flex-col gap-1">
-						<span class="font-medium">HydraRoute Neo</span>
-						<span class="setting-description">
-							{hydraRunning ? m.settings_page_daemon_running() : m.settings_page_daemon_stopped()}
-						</span>
-					</div>
-					<div class="action-buttons">
-						{#if hydraRunning}
-							<Button variant="secondary" size="sm" onclick={() => controlHydra('restart')} loading={hydraBusy}>{m.common_restart()}</Button>
-							<Button variant="danger" size="sm" onclick={() => controlHydra('stop')} loading={hydraBusy}>{m.common_stop()}</Button>
-						{:else}
-							<Button variant="success" size="sm" onclick={() => controlHydra('start')} loading={hydraBusy}>{m.common_start()}</Button>
-						{/if}
-					</div>
-				</div>
-			{/if}
-
-			{#if zapretInstalled}
-				<div class="setting-row">
-					<div class="flex flex-col gap-1">
-						<span class="font-medium">Zapret</span>
-						<span class="setting-description">
-							{zapretRunning ? m.settings_page_daemon_running() : m.settings_page_daemon_stopped()}
-						</span>
-					</div>
-					<div class="action-buttons">
-						{#if zapretRunning}
-							<Button variant="secondary" size="sm" onclick={() => controlZapret('restart')} loading={zapretBusy}>{m.common_restart()}</Button>
-							<Button variant="danger" size="sm" onclick={() => controlZapret('stop')} loading={zapretBusy}>{m.common_stop()}</Button>
-						{:else}
-							<Button variant="success" size="sm" onclick={() => controlZapret('start')} loading={zapretBusy}>{m.common_start()}</Button>
-						{/if}
-					</div>
-				</div>
-			{/if}
-			</div>
-		</div>
+		<ServiceActionsCard
+			showSingbox={showSingboxIntegration}
+			showHydra={showHydraIntegration}
+		/>
 
 		<div class="settings-doc-block" id="settings-footer-block">
 			<div class="settings-footer-patrol-host" bind:clientWidth={footerPatrolWidth}>
@@ -992,20 +775,6 @@ $effect(() => {
 		onpassed={confirmDevelopChannel}
 	/>
 
-	<Modal
-		open={restartConfirmOpen}
-		title={m.settings_page_restart_modal_title()}
-		size="sm"
-		onclose={() => (restartConfirmOpen = false)}
-	>
-		<p class="modal-text">
-			{m.settings_page_restart_modal_text()}
-		</p>
-		{#snippet actions()}
-			<Button variant="ghost" size="md" onclick={() => (restartConfirmOpen = false)}>{m.common_cancel()}</Button>
-			<Button variant="primary" size="md" onclick={restartDaemon}>{m.common_restart()}</Button>
-		{/snippet}
-	</Modal>
 
 </PageContainer>
 
@@ -1043,45 +812,11 @@ $effect(() => {
 		width: 100%;
 	}
 
-	.modal-text {
-		color: var(--color-text-secondary);
-		font-size: 0.875rem;
-		margin: 0;
-	}
-
 	.settings-footer-patrol-host {
 		position: relative;
 		overflow: visible;
 	}
 
-	.actions-card > .setting-row {
-		align-items: center;
-	}
-
-	.action-buttons {
-		display: inline-flex;
-		gap: 0.375rem;
-		flex-shrink: 0;
-		align-items: center;
-		justify-content: flex-end;
-	}
-
-	@media (min-width: 641px) {
-		.actions-card > .setting-row > :global(.btn),
-		.action-buttons :global(.btn) {
-			width: 7.5rem;
-			min-width: 7.5rem;
-		}
-
-		.action-buttons > span {
-			display: inline-flex;
-		}
-
-		.action-buttons > span :global(.btn) {
-			width: 7.5rem;
-			min-width: 7.5rem;
-		}
-	}
 
 	@media (max-width: 640px) {
 		.toggle-inline-row {
@@ -1096,56 +831,6 @@ $effect(() => {
 			min-width: 0;
 		}
 
-		.actions-card > .setting-row:has(.action-buttons) {
-			flex-direction: column;
-			align-items: stretch;
-			flex-wrap: nowrap;
-			gap: 0.625rem;
-		}
-
-		.actions-card > .setting-row:has(.action-buttons) > *:first-child {
-			flex: initial;
-			width: 100%;
-		}
-
-		.actions-card > .setting-row {
-			flex-direction: row;
-			align-items: center;
-			flex-wrap: nowrap;
-			gap: 0.75rem;
-		}
-
-		.actions-card > .setting-row > *:first-child {
-			flex: 1 1 auto;
-			min-width: 0;
-		}
-
-		.action-buttons {
-			display: grid;
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-			justify-content: stretch;
-			flex-wrap: nowrap;
-			width: 100%;
-			gap: 0.5rem;
-		}
-
-		.actions-card > .setting-row > :global(.btn) {
-			width: min(50%, 10rem);
-			min-width: 0;
-			margin-left: auto;
-		}
-
-		.action-buttons > span {
-			display: block;
-			width: 100%;
-			min-width: 0;
-		}
-
-		.action-buttons > span :global(.btn),
-		.action-buttons :global(.btn) {
-			width: 100%;
-			min-width: 0;
-		}
 	}
 
 	@media (max-width: 900px) {
