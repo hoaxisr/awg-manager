@@ -119,42 +119,93 @@ func TestApplyDiff_DistinctCipherOnSharedPassword(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			var parsed []vlink.ParsedOutbound
-			for _, link := range links {
-				p, err := vlink.ParseLink(link)
-				if err != nil {
-					t.Fatalf("parse %q: %v", link, err)
-				}
-				parsed = append(parsed, *p)
-			}
-			first := ApplyDiff("ciphers", nil, parsed)
-			if len(first.New) != 2 || first.SkippedDuplicate != 1 || first.New[0].Tag == first.New[1].Tag {
-				t.Fatalf("want 2 distinct servers and 1 duplicate: %+v", first)
-			}
-			var current []string
-			for _, m := range first.New {
-				current = append(current, m.Tag)
-			}
-
-			preview, err := (&Service{}).previewBody([]byte(strings.Join(links, "\n")), "text/plain")
-			if err != nil {
-				t.Fatal(err)
-			}
-			previewKeys := map[string]bool{}
-			for _, m := range preview {
-				previewKeys[m.Key] = true
-			}
-			for _, tag := range current {
-				if !previewKeys[tag[len(tag)-8:]] {
-					t.Errorf("preview key does not match refresh tag %q", tag)
-				}
-			}
-
-			next := ApplyDiff("ciphers", current, []vlink.ParsedOutbound{parsed[1], parsed[2], parsed[0]})
-			if len(next.Existing) != 2 || len(next.New) != 0 || len(next.Orphan) != 0 {
-				t.Fatalf("reordered feed changed tags: %+v", next)
-			}
+			checkTwoServersOneDuplicate(t, strings.Join(links, "\n"))
 		})
+	}
+}
+
+// checkTwoServersOneDuplicate: выдача из трёх записей — два разных сервера и
+// точный повтор первого. Разбор и отбраковка — рабочим путём, как у refresh и
+// превью. Оба сервера выживают с разными тегами, ключи превью совпадают с
+// тегами refresh, перестановка строк теги не меняет.
+func checkTwoServersOneDuplicate(t *testing.T, body string) {
+	t.Helper()
+	parsed := partitionParsedOutbounds("feed", parseSubscriptionBody([]byte(body), "text/plain").Outbounds).Valid
+	if len(parsed) != 3 {
+		t.Fatalf("feed must hold 3 members, got %d", len(parsed))
+	}
+	first := ApplyDiff("feed", nil, parsed)
+	if len(first.New) != 2 || first.SkippedDuplicate != 1 || first.New[0].Tag == first.New[1].Tag {
+		t.Fatalf("want 2 distinct servers and 1 duplicate: %+v", first)
+	}
+	var current []string
+	for _, m := range first.New {
+		current = append(current, m.Tag)
+	}
+
+	preview, err := (&Service{}).previewBody([]byte(body), "text/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previewKeys := map[string]bool{}
+	for _, m := range preview {
+		previewKeys[m.Key] = true
+	}
+	for _, tag := range current {
+		if !previewKeys[tag[len(tag)-8:]] {
+			t.Errorf("preview key does not match refresh tag %q", tag)
+		}
+	}
+
+	next := ApplyDiff("feed", current, []vlink.ParsedOutbound{parsed[1], parsed[2], parsed[0]})
+	if len(next.Existing) != 2 || len(next.New) != 0 || len(next.Orphan) != 0 {
+		t.Fatalf("reordered feed changed tags: %+v", next)
+	}
+}
+
+// Один адрес и учётка, но другой транспорт-строкой (mieru TCP/UDP) или другие
+// диапазоны портов (mieru, hysteria2 mport) — другой сервер (F738, F739).
+func TestApplyDiff_DistinctPortsOrPlainTransport(t *testing.T) {
+	mieruClash := func(name, transport string) string {
+		return "  - {name: " + name + ", type: mieru, server: h.example, port: 2999, transport: " + transport + ", username: u, password: p}\n"
+	}
+	// Диапазон без основного порта отбраковывает partitionParsedOutbounds,
+	// поэтому у сервера есть и порт, и диапазон. Разбирается только активный
+	// профиль, так что варианты — серверы одного профиля.
+	mieruServer := func(portRange string) string {
+		return `{"ipAddress":"h.example","portBindings":[{"port":2999,"protocol":"TCP"},{"portRange":"` + portRange + `","protocol":"TCP"}]}`
+	}
+	for name, body := range map[string]string{
+		"mieru transport": "proxies:\n" + mieruClash("A", "TCP") + mieruClash("B", "UDP") + mieruClash("A", "TCP"),
+		"mieru port range": `{"profiles":[{"profileName":"default","user":{"name":"u","password":"p"},"servers":[` +
+			mieruServer("3000-3010") + "," + mieruServer("4000-4010") + "," + mieruServer("3000-3010") + `]}]}`,
+		"hysteria2 mport": strings.Join([]string{
+			"hysteria2://shared@h.example:443?sni=h&mport=20000-21000#A",
+			"hysteria2://shared@h.example:443?sni=h&mport=30000-31000#B",
+			"hysteria2://shared@h.example:443?sni=h&mport=20000-21000#A",
+		}, "\n"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			checkTwoServersOneDuplicate(t, body)
+		})
+	}
+}
+
+// Группа, которую различает уже уровень wire (F737), не должна переехать на
+// уровень ports.
+func TestChooseKeys_WireTierGroupKeepsTags(t *testing.T) {
+	var parsed []vlink.ParsedOutbound
+	for _, pass := range []string{"one", "two"} {
+		p, err := vlink.ParseLink("hysteria2://shared@h.example:443?sni=h&obfs=salamander&obfs-password=" + pass)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed = append(parsed, *p)
+	}
+	for i, k := range chooseKeys(parsed) {
+		if k != keysOf(parsed[i]).wire {
+			t.Errorf("member %d moved off the wire tier", i)
+		}
 	}
 }
 

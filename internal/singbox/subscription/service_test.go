@@ -2000,6 +2000,27 @@ func TestAddManualMember_CipherVariantsGetDistinctTags(t *testing.T) {
 	}
 }
 
+// То же для вариантов, различающихся только диапазоном портов: тег — по
+// уровню ports (F739).
+func TestAddManualMember_PortRangeVariantsGetDistinctTags(t *testing.T) {
+	svc, _ := newTestService(t)
+	hy2 := func(mport string) string {
+		return "hysteria2://shared@h.example:443?sni=h&mport=" + mport + "#" + mport
+	}
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "manual", Inline: hy2("20000-21000"), Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mport := range []string{"30000-31000", "40000-41000"} {
+		if _, err := svc.AddManualMember(context.Background(), sub.ID, hy2(mport)); err != nil {
+			t.Fatalf("%s must add, got %v", mport, err)
+		}
+	}
+	if _, err := svc.AddManualMember(context.Background(), sub.ID, hy2("20000-21000")); !errors.Is(err, ErrMemberDuplicate) {
+		t.Fatalf("repeat must be ErrMemberDuplicate, got %v", err)
+	}
+}
+
 // Члена без тела в слоте (сброшен flush'ем) повтор ловится по метаданным.
 func TestAddManualMember_RepeatOfMemberWithoutBody(t *testing.T) {
 	svc, mut := newTestService(t)

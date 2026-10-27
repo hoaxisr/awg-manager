@@ -77,6 +77,19 @@ type memberKeys struct {
 	// (F737). Its own tier, not part of cred: cred tags are already released.
 	// vless flow is left out — it is a client mode of the same server.
 	wire string
+	// ports widens wire with what picks the server socket besides
+	// server:port: the transport when it is a plain string (mieru TCP/UDP —
+	// transportKey reads only the object form) and the server_ports ranges
+	// (mieru, hysteria2 mport). A range is served by the server's own DNAT,
+	// so different ranges are different servers or one of them is broken —
+	// keeping both beats silently dropping the working one (F738, F739).
+	ports string
+}
+
+// tiers lists the keys from narrowest to widest — the order chooseKeys
+// tries them in.
+func (k memberKeys) tiers() []string {
+	return []string{k.narrow, k.ext, k.full, k.cred, k.wire, k.ports}
 }
 
 func keysOf(p vlink.ParsedOutbound) memberKeys {
@@ -134,6 +147,10 @@ func keysFromOutbound(protocol, server string, port uint16, ob map[string]any) m
 	}
 	wireKey, _ := json.Marshal([6]string{k.cred, method, plugin, pluginOpts, obfsType, obfsPassword})
 	k.wire = string(wireKey)
+
+	plainTransport, _ := ob["transport"].(string)
+	portsKey, _ := json.Marshal([]any{k.wire, plainTransport, ob["server_ports"]})
+	k.ports = string(portsKey)
 	return k
 }
 
@@ -189,57 +206,48 @@ func itoa(p uint16) string {
 
 // chooseKeys uses the narrowest tier that distinguishes every account in a
 // narrow-key group: narrow, ext (masking, issue #373), full (transport,
-// issue #625), cred (remaining credential fields) or wire (cipher and
-// obfuscation, F737) — see memberKeys.
+// issue #625), cred (remaining credential fields), wire (cipher and
+// obfuscation, F737) or ports (string transport and port ranges, F738/F739)
+// — see memberKeys.
 // Groups the legacy tiers already distinguish retain their previous tags;
 // true duplicates stay on the narrow key.
 // Deterministic over the set (frequency is set-, not order-, dependent). Both
 // ApplyDiff and the import preview build on this so the exclusion suffix
 // (preview) and the final tag (refresh) agree.
 func chooseKeys(parsed []vlink.ParsedOutbound) []string {
-	all := make([]memberKeys, len(parsed))
-	distinctExt := make(map[string]map[string]struct{}, len(parsed))
-	distinctFull := make(map[string]map[string]struct{}, len(parsed))
-	distinctCredentials := make(map[string]map[string]struct{}, len(parsed))
-	distinctWire := make(map[string]map[string]struct{}, len(parsed))
+	all := make([][]string, len(parsed))
+	// distinct[narrow][tier] — the set of that tier's keys within the group.
+	distinct := make(map[string][]map[string]struct{}, len(parsed))
 	for i, p := range parsed {
-		k := keysOf(p)
-		all[i] = k
-		if distinctExt[k.narrow] == nil {
-			distinctExt[k.narrow] = make(map[string]struct{})
-			distinctFull[k.narrow] = make(map[string]struct{})
-			distinctCredentials[k.narrow] = make(map[string]struct{})
-			distinctWire[k.narrow] = make(map[string]struct{})
+		tiers := keysOf(p).tiers()
+		all[i] = tiers
+		d := distinct[tiers[0]]
+		if d == nil {
+			d = make([]map[string]struct{}, len(tiers))
+			for t := range d {
+				d[t] = make(map[string]struct{})
+			}
+			distinct[tiers[0]] = d
 		}
-		distinctExt[k.narrow][k.ext] = struct{}{}
-		distinctFull[k.narrow][k.full] = struct{}{}
-		distinctCredentials[k.narrow][k.cred] = struct{}{}
-		distinctWire[k.narrow][k.wire] = struct{}{}
+		for t, key := range tiers {
+			d[t][key] = struct{}{}
+		}
 	}
 	keys := make([]string, len(parsed))
-	for i, k := range all {
-		nk := k.narrow
-		switch {
-		case len(distinctWire[nk]) <= 1:
-			// Byte-identical duplicates: narrow key keeps the tag stable
-			// across refreshes and matches previously stored narrow tags.
-			keys[i] = nk
-		case len(distinctExt[nk]) == len(distinctWire[nk]):
-			// Masking alone tells them apart (issue #373). Staying on the
-			// extended key keeps tags of already-widened groups unchanged —
-			// widening further would re-tag subscriptions that never had the
-			// bug.
-			keys[i] = k.ext
-		case len(distinctFull[nk]) == len(distinctWire[nk]):
-			// Endpoints share masking and differ only by transport
-			// (issue #625): only the full key separates them.
-			keys[i] = k.full
-		case len(distinctCredentials[nk]) == len(distinctWire[nk]):
-			// Shared passwords do not make different usernames duplicates.
-			keys[i] = k.cred
-		default:
-			// Same account, different cipher or obfuscation (F737).
-			keys[i] = k.wire
+	for i, tiers := range all {
+		d := distinct[tiers[0]]
+		widest := len(d[len(d)-1])
+		// The narrowest tier that separates the group as well as the widest
+		// one. A group with nothing to separate (true duplicates) stops at
+		// narrow — its count is always 1 — so the tag stays stable across
+		// refreshes; a group an older tier already separates stays on it,
+		// since widening further would re-tag subscriptions that never had
+		// the bug.
+		for t, key := range tiers {
+			if len(d[t]) == widest {
+				keys[i] = key
+				break
+			}
 		}
 	}
 	return keys
