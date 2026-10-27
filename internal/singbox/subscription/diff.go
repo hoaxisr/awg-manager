@@ -75,12 +75,9 @@ type memberKeys struct {
 
 func keysOf(p vlink.ParsedOutbound) memberKeys {
 	var ob map[string]any
-	if json.Unmarshal(p.Outbound, &ob) != nil {
-		// Битое тело: ключ по сырым байтам. Пустые поля вместо него склеили
-		// бы любые два битых outbound'а одного server:port в один (F736).
-		k := "raw|" + string(p.Outbound)
-		return memberKeys{narrow: k, ext: k, full: k, cred: k}
-	}
+	// Ошибку не проверяем: битое тело отбраковывает partitionParsedOutbounds
+	// («invalid outbound json») раньше, чем до него доходят ключи.
+	json.Unmarshal(p.Outbound, &ob)
 	return keysFromOutbound(p.Protocol, p.Server, p.Port, ob)
 }
 

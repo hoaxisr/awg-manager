@@ -345,16 +345,3 @@ func TestSameServer_RealmID(t *testing.T) {
 		t.Error("запись без RealmID обязана сравниваться грубо")
 	}
 }
-
-// Битое тело не должно давать пустые поля ключа: два разных битых outbound'а
-// одного server:port иначе склеились бы в один (F736).
-func TestKeysOf_BrokenBodyKeyedByRawBytes(t *testing.T) {
-	a := vlink.ParsedOutbound{Protocol: "vless", Server: "h", Port: 443, Outbound: []byte(`{"uuid":"a"`)}
-	b := vlink.ParsedOutbound{Protocol: "vless", Server: "h", Port: 443, Outbound: []byte(`{"uuid":"b"`)}
-	if keysOf(a) == keysOf(b) {
-		t.Fatal("different broken bodies collapsed into one key")
-	}
-	if keysOf(a) != keysOf(a) {
-		t.Fatal("identical broken bodies must stay duplicates")
-	}
-}

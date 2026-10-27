@@ -1970,8 +1970,10 @@ func TestAddManualMember_OtherAccountOnSameEndpoint(t *testing.T) {
 		if len(updated.MemberTags) != 2 {
 			t.Fatalf("%s: MemberTags=%d want 2", tc.other, len(updated.MemberTags))
 		}
-		if _, err := svc.AddManualMember(context.Background(), sub.ID, tc.other); !errors.Is(err, ErrMemberDuplicate) {
-			t.Fatalf("%s: repeat must be ErrMemberDuplicate, got %v", tc.other, err)
+		// Повтор засеянной записи: её тег узкий, у повтора — широкий, так что
+		// поймать его может только сравнение тел, а не совпадение тегов.
+		if _, err := svc.AddManualMember(context.Background(), sub.ID, tc.seed); !errors.Is(err, ErrMemberDuplicate) {
+			t.Fatalf("%s: repeat must be ErrMemberDuplicate, got %v", tc.seed, err)
 		}
 	}
 }

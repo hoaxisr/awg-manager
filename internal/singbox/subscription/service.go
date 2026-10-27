@@ -1436,10 +1436,10 @@ const (
 // the supplied share-link into exactly one outbound.
 var ErrShareLinkInvalid = errors.New("subscription: share-link did not parse to a single outbound")
 
-// ErrMemberDuplicate is returned when AddManualMember would create a
-// member with a tag that already exists for this subscription. Tags are
-// derived from the server identity (StableTag), so the same vless://
-// twice produces the same tag.
+// ErrMemberDuplicate is returned when AddManualMember is given a server the
+// subscription already has: same outbound body by the widest identity key
+// (credentials included), or, for a member without a body in the config
+// slot, the same metadata.
 var ErrMemberDuplicate = errors.New("subscription: member already exists")
 
 // ErrMemberNotFound is returned by RemoveMember when the supplied tag
@@ -1447,9 +1447,8 @@ var ErrMemberDuplicate = errors.New("subscription: member already exists")
 var ErrMemberNotFound = errors.New("subscription: member not found")
 
 // AddManualMember parses a single share-link, validates it, and adds it
-// to an inline subscription as a new member. Re-uses the same StableTag
-// derivation as the URL refresh path so adding the same server twice
-// short-circuits with ErrMemberDuplicate.
+// to an inline subscription as a new member. Adding a server the
+// subscription already has short-circuits with ErrMemberDuplicate.
 //
 // On selector-mode subs the new member becomes available for picking;
 // on urltest-mode subs it joins the auto-test pool. Active member is
