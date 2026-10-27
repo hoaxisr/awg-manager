@@ -89,11 +89,11 @@
 <Modal {open} title={m.servers_confgen_title({ peer: peer.description || m.servers_confgen_peer_fallback() })} size="lg" {onclose}>
 	<div class="conf-form">
 		<div class="form-field">
-			<label class="label" for="private-key">{m.servers_confgen_private_key_label()}</label>
+			<label class="field-label" for="private-key">{m.servers_confgen_private_key_label()}</label>
 			<input
 				id="private-key"
 				type="text"
-				class="input"
+				class="field-input"
 				placeholder={m.servers_confgen_private_key_placeholder()}
 				bind:value={privateKey}
 				autocomplete="off"
@@ -129,7 +129,7 @@
 
 		{#if preview}
 			<div class="preview-section">
-				<span class="label">{m.servers_confgen_preview()}</span>
+				<span class="field-label">{m.servers_confgen_preview()}</span>
 				<pre class="conf-preview">{preview}</pre>
 			</div>
 		{/if}

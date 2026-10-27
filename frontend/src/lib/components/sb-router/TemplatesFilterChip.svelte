@@ -18,7 +18,7 @@
 </script>
 
 <button type="button" class="filter-chip" class:active aria-pressed={active} {onclick} data-value={value}>
-  <span class="label">{label}</span>
+  <span class="chip-text">{label}</span>
   <span class="count">{count}</span>
 </button>
 

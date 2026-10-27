@@ -253,8 +253,7 @@
     :global(.wz-step :global(button)),
     :global(.wz-step :global(.btn)),
     :global(.wz-step :global(select)),
-    :global(.wz-step :global(.dropdown)),
-    :global(.wz-step :global(.select)) {
+    :global(.wz-step :global(.dropdown)) {
       min-width: 0;
       max-width: 100%;
     }

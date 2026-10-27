@@ -919,7 +919,7 @@ button.tunnel-list-traffic-cell:focus-visible {
 .tunnel-grid.tunnel-grid--dense .detail-label,
 .tunnel-grid.tunnel-grid--dense .kv-label,
 .tunnel-grid.tunnel-grid--dense .iface,
-.tunnel-grid.tunnel-grid--dense .label,
+.tunnel-grid.tunnel-grid--dense .btn-label,
 .tunnel-grid.tunnel-grid--dense .chart-label {
 	font-size: var(--tunnel-card-label-size);
 }

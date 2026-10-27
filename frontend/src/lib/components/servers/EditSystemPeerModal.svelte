@@ -182,8 +182,6 @@
 		gap: 0.375rem;
 	}
 
-
-
 	.toggle-row {
 		display: flex;
 		align-items: center;

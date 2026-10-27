@@ -66,7 +66,6 @@
 		return String(bits);
 	}
 
-
 	async function handleSave() {
 		if (!isValidEndpointHost(endpoint)) {
 			notifications.error(m.servers_edit_endpoint_invalid());
@@ -176,10 +175,6 @@
 		flex-direction: column;
 		gap: 0.375rem;
 	}
-
-
-
-
 
 	.separator {
 		border-top: 1px solid var(--border);

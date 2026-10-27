@@ -151,9 +151,6 @@
 		gap: 0.375rem;
 	}
 
-
-
-
 	.hint-text {
 		font-size: 0.6875rem;
 		color: var(--text-muted);

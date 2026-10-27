@@ -572,7 +572,7 @@
 						<label class="field-label" for="ss_plugin_opts">Plugin opts</label>
 						<textarea
 							id="ss_plugin_opts"
-							class="field-input textarea"
+							class="field-textarea"
 							rows="2"
 							value={getFieldString(['plugin_opts'])}
 							oninput={(e) => setField(['plugin_opts'], (e.target as HTMLTextAreaElement).value)}
@@ -688,7 +688,7 @@
 						<label class="field-label" for="mieru_server_ports">{m.singbox_edit_extra_ports()}</label>
 						<textarea
 							id="mieru_server_ports"
-							class="field-input textarea"
+							class="field-textarea"
 							rows="3"
 							value={serverPortsText(getField(['server_ports']))}
 							oninput={(e) => setField(['server_ports'], parseServerPorts((e.target as HTMLTextAreaElement).value))}
@@ -709,7 +709,7 @@
 						<label class="field-label" for="mieru_traffic_pattern">Traffic pattern</label>
 						<textarea
 							id="mieru_traffic_pattern"
-							class="field-input textarea"
+							class="field-textarea"
 							rows="3"
 							value={getFieldString(['traffic_pattern'])}
 							oninput={(e) => setField(['traffic_pattern'], (e.target as HTMLTextAreaElement).value)}
