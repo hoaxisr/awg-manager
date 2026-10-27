@@ -299,22 +299,30 @@
 		);
 	}
 
-	async function selectDownloadRoute(routeTag: string, routeKind?: 'direct' | 'awg' | 'singbox' | 'subscription') {
+	// Общая схема сохранения настроек: запрос → общий стор → уведомление.
+	// backendError — показать текст ошибки бэкенда (валидация), иначе fail.
+	async function save(request: () => Promise<Settings>, ok: string, fail: string, backendError = false) {
 		if (!settings) return;
 		saving = true;
 		try {
-			const normalizedTag = routeTag.trim() || 'direct';
-			const normalizedKind = normalizedTag === 'direct' ? 'direct' : routeKind;
-			settings = await api.updateSettings({
-				download: { routeTag: normalizedTag, routeKind: normalizedKind },
-			});
+			settings = await request();
 			setGlobalSettings(settings);
-			notifications.success(m.settings_page_download_route_saved());
-		} catch {
-			notifications.error(m.settings_page_download_route_save_failed());
+			notifications.success(ok);
+		} catch (e) {
+			notifications.error(backendError && e instanceof Error ? e.message : fail);
 		} finally {
 			saving = false;
 		}
+	}
+
+	function selectDownloadRoute(routeTag: string, routeKind?: 'direct' | 'awg' | 'singbox' | 'subscription') {
+		const normalizedTag = routeTag.trim() || 'direct';
+		const normalizedKind = normalizedTag === 'direct' ? 'direct' : routeKind;
+		return save(
+			() => api.updateSettings({ download: { routeTag: normalizedTag, routeKind: normalizedKind } }),
+			m.settings_page_download_route_saved(),
+			m.settings_page_download_route_save_failed(),
+		);
 	}
 
 	function scrollToSettingsHashTarget() {
@@ -450,18 +458,12 @@ $effect(() => {
 	}
 });
 
-	async function toggleAuth(enabled: boolean) {
-		if (!settings) return;
-		saving = true;
-		try {
-			settings = await api.updateSettings({ authEnabled: enabled });
-			setGlobalSettings(settings);
-			notifications.success(enabled ? m.settings_page_auth_enabled() : m.settings_page_auth_disabled());
-		} catch {
-			notifications.error(m.settings_page_save_error());
-		} finally {
-			saving = false;
-		}
+	function toggleAuth(enabled: boolean) {
+		return save(
+			() => api.updateSettings({ authEnabled: enabled }),
+			enabled ? m.settings_page_auth_enabled() : m.settings_page_auth_disabled(),
+			m.settings_page_save_error(),
+		);
 	}
 
 	// «Время жизни сессии» — local state + changed-derived + save button
@@ -475,66 +477,42 @@ $effect(() => {
 		sessionTtlLocal = savedSessionTtl;
 	});
 
-	async function saveSessionTtl() {
+	function saveSessionTtl() {
 		if (!settings) return;
 		const hours = clampSessionTtlHours(sessionTtlLocal);
 		sessionTtlLocal = hours;
-		saving = true;
-		try {
-			settings = await api.updateSettings({ sessionTtlHours: hours });
-			setGlobalSettings(settings);
-			notifications.success(m.settings_page_session_ttl_saved());
-		} catch (e) {
-			// 400 с русским сообщением от бэкенда (валидация 1..720) — показываем как есть.
-			notifications.error(e instanceof Error ? e.message : m.settings_page_save_error());
-		} finally {
-			saving = false;
-		}
+		// 400 с русским сообщением от бэкенда (валидация 1..720) — показываем как есть.
+		return save(
+			() => api.updateSettings({ sessionTtlHours: hours }),
+			m.settings_page_session_ttl_saved(),
+			m.settings_page_save_error(),
+			true,
+		);
 	}
 
-	async function toggleMcp(enabled: boolean) {
-		if (!settings) return;
-		saving = true;
-		try {
-			settings = await api.updateSettings({ mcpEnabled: enabled });
-			setGlobalSettings(settings);
-			notifications.success(enabled ? m.settings_page_mcp_enabled() : m.settings_page_mcp_disabled());
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : m.settings_page_save_error());
-		} finally {
-			saving = false;
-		}
+	function toggleMcp(enabled: boolean) {
+		return save(
+			() => api.updateSettings({ mcpEnabled: enabled }),
+			enabled ? m.settings_page_mcp_enabled() : m.settings_page_mcp_disabled(),
+			m.settings_page_save_error(),
+			true,
+		);
 	}
 
-	async function toggleObfuscatorRelay(process: boolean) {
-		if (!settings) return;
-		saving = true;
-		try {
-			settings = await api.setObfuscatorRelay(process);
-			setGlobalSettings(settings);
-			notifications.success(process ? m.settings_page_phobos_userspace() : m.settings_page_phobos_kernel());
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : m.settings_page_save_error());
-		} finally {
-			saving = false;
-		}
+	function toggleObfuscatorRelay(process: boolean) {
+		return save(
+			() => api.setObfuscatorRelay(process),
+			process ? m.settings_page_phobos_userspace() : m.settings_page_phobos_kernel(),
+			m.settings_page_save_error(),
+			true,
+		);
 	}
 
-	async function generateApiKey() {
-		if (!settings) return;
-		saving = true;
-		try {
-			// Server-side generation: WebCrypto's randomUUID is unavailable
-			// over plain HTTP (router LAN context), so the backend produces
-			// the UUID via crypto/rand and persists it in one round-trip.
-			settings = await api.regenerateApiKey();
-			setGlobalSettings(settings);
-			notifications.success(m.settings_page_apikey_generated());
-		} catch {
-			notifications.error(m.settings_page_apikey_generate_failed());
-		} finally {
-			saving = false;
-		}
+	function generateApiKey() {
+		// Server-side generation: WebCrypto's randomUUID is unavailable
+		// over plain HTTP (router LAN context), so the backend produces
+		// the UUID via crypto/rand and persists it in one round-trip.
+		return save(() => api.regenerateApiKey(), m.settings_page_apikey_generated(), m.settings_page_apikey_generate_failed());
 	}
 
 	async function copyApiKey() {
@@ -551,84 +529,50 @@ $effect(() => {
 		}
 	}
 
-	async function toggleLogging(enabled: boolean) {
-		if (!settings) return;
-		saving = true;
-		try {
-			settings = await api.updateSettings({ logging: { enabled } });
-			setGlobalSettings(settings);
-			notifications.success(enabled ? m.settings_page_logging_enabled() : m.settings_page_logging_disabled());
-		} catch {
-			notifications.error(m.settings_page_save_error());
-		} finally {
-			saving = false;
-		}
+	function toggleLogging(enabled: boolean) {
+		return save(
+			() => api.updateSettings({ logging: { enabled } }),
+			enabled ? m.settings_page_logging_enabled() : m.settings_page_logging_disabled(),
+			m.settings_page_save_error(),
+		);
 	}
 
-	async function saveLoggingSettings(logging: Settings["logging"]) {
-		if (!settings) return;
-		saving = true;
-		try {
-			settings = await api.updateSettings({ logging });
-			setGlobalSettings(settings);
-			notifications.success(m.settings_page_logging_saved());
-		} catch {
-			notifications.error(m.settings_page_save_error());
-		} finally {
-			saving = false;
-		}
+	function saveLoggingSettings(logging: Settings["logging"]) {
+		return save(() => api.updateSettings({ logging }), m.settings_page_logging_saved(), m.settings_page_save_error());
 	}
 
-	async function toggleDnsAutoRefresh(enabled: boolean) {
+	function toggleDnsAutoRefresh(enabled: boolean) {
 		if (!settings) return;
-		saving = true;
-		try {
-			settings = await api.updateSettings({
-				dnsRoute: {
-					autoRefreshEnabled: enabled,
-					// Дефолты дописываем, только если их нет: остальное блока не трогаем.
-					...(enabled && settings.dnsRoute.refreshIntervalHours === 0 ? { refreshIntervalHours: 6 } : {}),
-					...(settings.dnsRoute.refreshMode ? {} : { refreshMode: "interval" as const }),
-				},
-			});
-			setGlobalSettings(settings);
-			notifications.success(enabled ? m.settings_page_dns_auto_enabled() : m.settings_page_dns_auto_disabled());
-		} catch {
-			notifications.error(m.settings_page_save_error());
-		} finally {
-			saving = false;
-		}
+		const current = settings.dnsRoute;
+		return save(
+			() =>
+				api.updateSettings({
+					dnsRoute: {
+						autoRefreshEnabled: enabled,
+						// Дефолты дописываем, только если их нет: остальное блока не трогаем.
+						...(enabled && current.refreshIntervalHours === 0 ? { refreshIntervalHours: 6 } : {}),
+						...(current.refreshMode ? {} : { refreshMode: "interval" as const }),
+					},
+				}),
+			enabled ? m.settings_page_dns_auto_enabled() : m.settings_page_dns_auto_disabled(),
+			m.settings_page_save_error(),
+		);
 	}
 
-	async function saveDnsRouteSettings(dnsRoute: Settings["dnsRoute"]) {
-		if (!settings) return;
-		saving = true;
-		try {
-			settings = await api.updateSettings({ dnsRoute });
-			setGlobalSettings(settings);
-			notifications.success(m.settings_page_dns_auto_saved());
-		} catch {
-			notifications.error(m.settings_page_save_error());
-		} finally {
-			saving = false;
-		}
+	function saveDnsRouteSettings(dnsRoute: Settings["dnsRoute"]) {
+		return save(() => api.updateSettings({ dnsRoute }), m.settings_page_dns_auto_saved(), m.settings_page_save_error());
 	}
 
-	async function savePingTargetsSettings() {
+	function savePingTargetsSettings() {
 		if (!settings) return;
-		saving = true;
-		try {
-			settings = await api.updateSettings({
-				pingCheck: { defaults: { target: settings.pingCheck.defaults.target } },
-				connectivityCheckUrl: settings.connectivityCheckUrl,
-			});
-			setGlobalSettings(settings);
-			notifications.success(m.settings_page_ping_targets_saved());
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : m.settings_page_ping_targets_save_failed());
-		} finally {
-			saving = false;
-		}
+		const target = settings.pingCheck.defaults.target;
+		const connectivityCheckUrl = settings.connectivityCheckUrl;
+		return save(
+			() => api.updateSettings({ pingCheck: { defaults: { target } }, connectivityCheckUrl }),
+			m.settings_page_ping_targets_saved(),
+			m.settings_page_ping_targets_save_failed(),
+			true,
+		);
 	}
 
 	let savingBootstrapDNS = $state(false);
@@ -677,18 +621,12 @@ $effect(() => {
 		}
 	}
 
-	async function toggleUpdateCheck(enabled: boolean) {
-		if (!settings) return;
-		saving = true;
-		try {
-			settings = await api.updateSettings({ updates: { checkEnabled: enabled } });
-			setGlobalSettings(settings);
-			notifications.success(enabled ? m.settings_page_update_check_enabled() : m.settings_page_update_check_disabled());
-		} catch {
-			notifications.error(m.settings_page_save_error());
-		} finally {
-			saving = false;
-		}
+	function toggleUpdateCheck(enabled: boolean) {
+		return save(
+			() => api.updateSettings({ updates: { checkEnabled: enabled } }),
+			enabled ? m.settings_page_update_check_enabled() : m.settings_page_update_check_disabled(),
+			m.settings_page_save_error(),
+		);
 	}
 
 	function requestChannel(channel: 'stable' | 'develop') {
@@ -725,18 +663,12 @@ $effect(() => {
 		await selectChannel('develop');
 	}
 
-	async function selectUsageLevel(level: UsageLevel) {
-		if (!settings) return;
-		saving = true;
-		try {
-			settings = await api.updateSettings({ usageLevel: level });
-			setGlobalSettings(settings);
-			notifications.success(m.settings_level_saved({ level: usageLevelLabel(level) }));
-		} catch {
-			notifications.error(m.settings_page_level_save_failed());
-		} finally {
-			saving = false;
-		}
+	function selectUsageLevel(level: UsageLevel) {
+		return save(
+			() => api.updateSettings({ usageLevel: level }),
+			m.settings_level_saved({ level: usageLevelLabel(level) }),
+			m.settings_page_level_save_failed(),
+		);
 	}
 
 	async function restartDaemon() {
