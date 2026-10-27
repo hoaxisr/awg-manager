@@ -16,7 +16,7 @@
 	// вкладки, и запись целиком откатила бы порядок политик и правки MCP,
 	// сделанные за это время (F728).
 	let changes = $state<Partial<HydraRouteConfig>>({});
-	let dirty = $state(false);
+	const dirty = $derived(Object.keys(changes).length > 0);
 	let saving = $state(false);
 	let err = $state('');
 	let advancedOpen = $state(false);
@@ -26,7 +26,6 @@
 		try {
 			cfg = await api.getHydraRouteConfig();
 			changes = {};
-			dirty = false;
 		} catch (e: unknown) {
 			err = e instanceof Error ? e.message : String(e);
 		}
@@ -36,11 +35,15 @@
 		if (!cfg) return;
 		saving = true;
 		err = '';
+		// Правка, сделанная, пока запрос в полёте, остаётся в changes: ответ
+		// сервера её не стирает, а при ошибке отправленное возвращается.
+		const sent = changes;
+		changes = {};
 		try {
-			cfg = await api.updateHydraRouteConfig(changes);
-			changes = {};
-			dirty = false;
+			const saved = await api.updateHydraRouteConfig(sent);
+			cfg = { ...saved, ...changes };
 		} catch (e: unknown) {
+			changes = { ...sent, ...changes };
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
 			saving = false;
@@ -55,7 +58,6 @@
 		if (!cfg) return;
 		cfg = { ...cfg, [key]: val };
 		changes = { ...changes, [key]: val };
-		dirty = true;
 	}
 </script>
 

@@ -316,6 +316,10 @@ func (h *HydraRouteHandler) UpdateConfig(w http.ResponseWriter, r *http.Request)
 		patch.apply(c)
 		return nil
 	})
+	if errors.Is(err, hydraroute.ErrNoConfig) {
+		response.Error(w, "HR Neo has not written hrneo.conf yet — start HR Neo, then save again", "NO_CONFIG")
+		return
+	}
 	if err != nil {
 		response.Error(w, err.Error(), "CONFIG_WRITE_ERROR")
 		return

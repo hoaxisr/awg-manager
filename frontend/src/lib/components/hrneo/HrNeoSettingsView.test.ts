@@ -41,4 +41,31 @@ describe('HrNeoSettingsView', () => {
 
 		expect(api.updateHydraRouteConfig).toHaveBeenCalledWith({ autoStart: true });
 	});
+
+	// Правка во время сохранения не стирается ответом и уходит следующим
+	// сохранением; отправленное при ошибке возвращается в очередь.
+	it('keeps an edit made while saving and resends on failure', async () => {
+		vi.mocked(api.getHydraRouteConfig).mockResolvedValue(cfg);
+		let resolveFirst: (v: HydraRouteConfig) => void = () => {};
+		vi.mocked(api.updateHydraRouteConfig)
+			.mockReset()
+			.mockImplementationOnce(() => new Promise((r) => (resolveFirst = r)))
+			.mockRejectedValueOnce(new Error('boom'))
+			.mockResolvedValue(cfg);
+		const { container } = render(HrNeoSettingsView, { props: { embedded: true } });
+		await vi.waitFor(() => expect(container.querySelectorAll('input[type="checkbox"]').length).toBeGreaterThan(1));
+		const boxes = () => container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+		const save = async () => fireEvent.click(await screen.findByRole('button', { name: /Сохранить|Save/ }));
+
+		await fireEvent.input(boxes()[0], { target: { checked: true } });
+		await save();
+		await fireEvent.input(boxes()[1], { target: { checked: true } });
+		resolveFirst({ ...cfg, autoStart: true });
+		await vi.waitFor(() => expect(boxes()[1].checked).toBe(true));
+
+		await save();
+		expect(api.updateHydraRouteConfig).toHaveBeenLastCalledWith({ clearIPSet: true });
+		await save();
+		expect(api.updateHydraRouteConfig).toHaveBeenLastCalledWith({ clearIPSet: true });
+	});
 });

@@ -254,3 +254,42 @@ func TestHydraRouteConfigPatch_FieldInventoryComplete(t *testing.T) {
 		t.Errorf("patch has %d fields, want %d", patch.NumField(), cfg.NumField()-len(protected))
 	}
 }
+
+// apply пишет каждое поле патча в одноимённое поле конфига и только в него.
+func TestHydraRouteConfigPatch_ApplyAssignsByName(t *testing.T) {
+	pt := reflect.TypeOf(hydraRouteConfigPatch{})
+	for i := 0; i < pt.NumField(); i++ {
+		f := pt.Field(i)
+		var patch hydraRouteConfigPatch
+		val := reflect.New(f.Type.Elem())
+		switch f.Type.Elem().Kind() {
+		case reflect.Bool:
+			val.Elem().SetBool(true)
+		case reflect.Int:
+			val.Elem().SetInt(int64(1000 + i))
+		case reflect.String:
+			val.Elem().SetString("v" + f.Name)
+		default:
+			t.Fatalf("%s: unhandled kind %s", f.Name, f.Type.Elem().Kind())
+		}
+		reflect.ValueOf(&patch).Elem().Field(i).Set(val)
+
+		var got hydraroute.Config
+		patch.apply(&got)
+		want := hydraroute.Config{}
+		reflect.ValueOf(&want).Elem().FieldByName(f.Name).Set(val.Elem())
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: apply wrote %+v, want %+v", f.Name, got, want)
+		}
+	}
+}
+
+func TestUpdateConfig_NoConfigFileIsClearError(t *testing.T) {
+	h, svc := newHydraRouteTestHandler(t)
+	svc.SetStatusForTest(false)
+	rec := httptest.NewRecorder()
+	h.UpdateConfig(rec, httptest.NewRequest(http.MethodPut, "/api/hydraroute/config/update", strings.NewReader(`{"autoStart":true}`)))
+	if !strings.Contains(rec.Body.String(), "NO_CONFIG") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
