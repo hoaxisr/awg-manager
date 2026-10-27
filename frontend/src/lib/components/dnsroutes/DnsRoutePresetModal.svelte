@@ -6,18 +6,14 @@
         open: boolean;
         existingNames: string[];
         tunnels: RoutingTunnel[];
-        isOS5?: boolean;
-        hydrarouteInstalled?: boolean;
         onclose: () => void;
-        oncreate: (presets: CatalogPreset[], tunnelId: string, backend: 'ndms' | 'hydraroute') => void;
+        oncreate: (presets: CatalogPreset[], tunnelId: string) => void;
     }
 
     let {
         open = $bindable(false),
         existingNames,
         tunnels,
-        isOS5 = false,
-        hydrarouteInstalled = false,
         onclose,
         oncreate,
     }: Props = $props();
@@ -28,13 +24,9 @@
         if (!open) creating = false;
     });
 
-    function handleCreate(
-        presets: CatalogPreset[],
-        tunnelId: string,
-        backend: 'ndms' | 'hydraroute',
-    ) {
+    function handleCreate(presets: CatalogPreset[], tunnelId: string) {
         creating = true;
-        oncreate(presets, tunnelId, backend);
+        oncreate(presets, tunnelId);
     }
 </script>
 
@@ -44,8 +36,6 @@
     {existingNames}
     footer="tunnel"
     {tunnels}
-    {isOS5}
-    {hydrarouteInstalled}
     submitting={creating}
     {onclose}
     oncreate={handleCreate}

@@ -22,11 +22,9 @@
 		saving: boolean;
 		onsave: (data: Partial<DnsRoute>) => void;
 		onclose: () => void;
-		isOS5?: boolean;
-		hydrarouteInstalled?: boolean;
 	}
 
-	let { open, route, tunnels: rawTunnels, saving, onsave, onclose, isOS5 = false, hydrarouteInstalled = false }: Props = $props();
+	let { open, route, tunnels: rawTunnels, saving, onsave, onclose }: Props = $props();
 	let tunnels = $derived((rawTunnels ?? []).filter(t => t.available || t.type === 'wan'));
 
 	// Form state
@@ -39,23 +37,8 @@
 	let subscriptions = $state<DnsRouteSubscription[]>([]);
 	let routes = $state<DnsRouteTarget[]>([]);
 	let newSubUrl = $state('');
-	let backend = $state<'ndms' | 'hydraroute'>('ndms');
-
-	// New state variables
-	let hrRouteMode = $state<'interface' | 'policy'>('interface');
-	let hrPolicyName = $state('');
 	let excludesText = $state('');
 	let excludesTextareaEl = $state<HTMLTextAreaElement | null>(null);
-	let hrInterfaceId = $state('');
-
-	let showBackendSelector = $derived(isOS5 && hydrarouteInstalled);
-	let isHydraRouteBackend = $derived(backend === 'hydraroute');
-
-	// New derived
-	let isHR = $derived(backend === 'hydraroute');
-	let isNDMS = $derived(backend !== 'hydraroute');
-	let isPolicyMode = $derived(isHR && hrRouteMode === 'policy');
-	let isInterfaceMode = $derived(isHR && hrRouteMode === 'interface');
 
 	let isInitialized = $state(false);
 	let attempted = $state(false);
@@ -66,11 +49,7 @@
 	let initialManualText = $state('');
 	let initialSubscriptions = $state<DnsRouteSubscription[]>([]);
 	let initialRoutes = $state<DnsRouteTarget[]>([]);
-	let initialBackend = $state<'ndms' | 'hydraroute'>('ndms');
-	let initialHrRouteMode = $state<'interface' | 'policy'>('interface');
-	let initialHrPolicyName = $state('');
 	let initialExcludesText = $state('');
-	let initialHrInterfaceId = $state('');
 	let initialIconUrl = $state<string | undefined>(undefined);
 	let initialSkipIPv6 = $state(false);
 
@@ -88,11 +67,7 @@
 					manualText = route.manualText ?? manualDomains.join('\n');
 					subscriptions = (route.subscriptions ?? []).map((s) => ({ ...s }));
 					routes = (route.routes ?? []).map((r) => ({ ...r }));
-					backend = route.backend || (isOS5 ? 'ndms' : hydrarouteInstalled ? 'hydraroute' : 'ndms');
-					hrRouteMode = route.hrRouteMode || 'interface';
-					hrPolicyName = route.hrPolicyName || '';
 					excludesText = route.excludesText ?? [...(route.excludes ?? []), ...(route.excludeSubnets ?? [])].join('\n');
-					hrInterfaceId = (isHR && route.routes?.[0]?.tunnelId) || tunnels[0]?.id || '';
 					iconUrl = route.iconUrl;
 					skipIPv6 = route.skipIPv6 ?? false;
 					// Capture snapshot for isDirty
@@ -101,11 +76,7 @@
 					initialManualText = manualText;
 					initialSubscriptions = (route.subscriptions ?? []).map((s) => ({ ...s }));
 					initialRoutes = (route.routes ?? []).map((r) => ({ ...r }));
-					initialBackend = backend;
-					initialHrRouteMode = hrRouteMode;
-					initialHrPolicyName = hrPolicyName;
 					initialExcludesText = excludesText;
-					initialHrInterfaceId = hrInterfaceId;
 					initialIconUrl = iconUrl;
 					initialSkipIPv6 = skipIPv6;
 				} else {
@@ -114,11 +85,7 @@
 					manualText = '';
 					subscriptions = [];
 					routes = [];
-					backend = isOS5 ? 'ndms' : (hydrarouteInstalled ? 'hydraroute' : 'ndms');
-					hrRouteMode = 'interface';
-					hrPolicyName = '';
 					excludesText = '';
-					hrInterfaceId = tunnels[0]?.id || '';
 					iconUrl = undefined;
 					skipIPv6 = false;
 					// Capture snapshot for isDirty (create mode defaults)
@@ -127,11 +94,7 @@
 					initialManualText = '';
 					initialSubscriptions = [];
 					initialRoutes = [];
-					initialBackend = backend;
-					initialHrRouteMode = 'interface';
-					initialHrPolicyName = '';
 					initialExcludesText = '';
-					initialHrInterfaceId = hrInterfaceId;
 					initialIconUrl = undefined;
 					initialSkipIPv6 = false;
 				}
@@ -177,7 +140,7 @@
 
 	let groupCount = $derived(Math.ceil(totalDomains / 300) || 0);
 
-	let canSave = $derived(name.trim() !== '' && (isInterfaceMode ? !!hrInterfaceId : routes.length > 0));
+	let canSave = $derived(name.trim() !== '' && routes.length > 0);
 
 	// isDirty: deep comparison with snapshot (edit mode) or with defaults (create mode)
 	let isDirty = $derived.by(() => {
@@ -202,11 +165,7 @@
 			compareDomains(manualDomains, initialManualDomains) ||
 			compareSubscriptions(subscriptions, initialSubscriptions) ||
 			compareRoutes(routes, initialRoutes) ||
-			backend !== initialBackend ||
-			hrRouteMode !== initialHrRouteMode ||
-			hrPolicyName !== initialHrPolicyName ||
 			excludesText !== initialExcludesText ||
-			hrInterfaceId !== initialHrInterfaceId ||
 			iconUrl !== initialIconUrl ||
 			skipIPv6 !== initialSkipIPv6
 		);
@@ -278,13 +237,6 @@
 		return findRoutingTunnelLabel(tunnels, tunnelId);
 	}
 
-	const hrInterfaceTunnelOpts = $derived(
-		buildRoutingTunnelDropdownOptions(tunnels, {
-			filter: (t) =>
-				(t.type === 'managed' && t.available) || t.type === 'system' || t.type === 'wan',
-		}),
-	);
-
 	const addRouteTunnelOpts = $derived(
 		buildRoutingTunnelDropdownOptions(availableTunnels),
 	);
@@ -318,24 +270,17 @@
 
 		const parsedExcludes = parseExcludesForPayload(excludesText);
 
-		// Build routes based on mode
-		let saveRoutes = routes;
-		if (isInterfaceMode) {
-			saveRoutes = hrInterfaceId ? [{ tunnelId: hrInterfaceId, interface: hrInterfaceId, fallback: '' as const }] : [];
-		}
-
 		const data: Partial<DnsRoute> = {
 			name: name.trim(),
 			manualDomains,
 			manualText,
 			subscriptions,
-			routes: saveRoutes,
-			backend,
-			excludes: isNDMS ? parsedExcludes : undefined,
-			excludesText: isNDMS ? excludesText : undefined,
-			skipIPv6: isNDMS ? skipIPv6 : undefined,
-			hrRouteMode: isHR ? hrRouteMode : undefined,
-			hrPolicyName: isPolicyMode ? (hrPolicyName || `AWG_${name.trim().replace(/\s+/g, '_')}`) : undefined,
+			routes,
+			// Правила HR Neo правит HrNeoEditModal — здесь только NDMS (F689).
+			backend: 'ndms',
+			excludes: parsedExcludes,
+			excludesText,
+			skipIPv6,
 			iconUrl: iconUrl || undefined,
 		};
 		onsave(data);
@@ -475,32 +420,13 @@
 		</div>
 	</div>
 
-	<!-- Backend selector -->
-	{#if showBackendSelector}
-		<div class="form-group">
-			<Dropdown
-				label={m.dns_routes_edit_engine_label()}
-				bind:value={backend}
-				options={[
-					{ value: 'ndms' as const, label: m.dns_routes_edit_engine_ndms() },
-					{ value: 'hydraroute' as const, label: 'HydraRoute Neo' },
-				]}
-				fullWidth
-			/>
-		</div>
-	{/if}
-
 	<!-- Manual domains -->
 	<div class="form-section">
 		<div class="section-title">{m.dns_routes_edit_manual_domains()}</div>
-		{#if isHydraRouteBackend}
-			<span class="field-hint geo-hint">{m.dns_routes_edit_geo_hint()}</span>
-		{/if}
 		<DnsRouteDomainEditor
 			domains={manualDomains}
 			textValue={manualText}
 			onchange={handleDomainsChange}
-			allowGeoTags={isHydraRouteBackend}
 		/>
 	</div>
 
@@ -549,132 +475,96 @@
 		</div>
 	</div>
 
-	<!-- HR Mode Tabs (only for hydraroute) -->
-	{#if isHR}
-		<div class="section-title">{m.dns_routes_edit_route()}</div>
-		<div class="mode-tabs">
-			<button class="mode-tab" class:active={hrRouteMode === 'interface'} onclick={() => hrRouteMode = 'interface'}>{m.dns_routes_edit_mode_interface()}</button>
-			<button class="mode-tab" class:active={hrRouteMode === 'policy'} onclick={() => hrRouteMode = 'policy'}>{m.dns_routes_edit_mode_policy()}</button>
-		</div>
-	{/if}
-
-	<!-- HR Interface mode: single selector -->
-	{#if isInterfaceMode}
-		<div class="form-group">
-			<Dropdown
-				label={m.dns_routes_edit_target_interface()}
-				bind:value={hrInterfaceId}
-				options={hrInterfaceTunnelOpts}
-				hint={m.dns_routes_edit_target_interface_hint()}
-				fullWidth
-			/>
-		</div>
-	{/if}
-
-	<!-- Route chain (for NDMS and HR Policy mode) -->
-	{#if isNDMS || isPolicyMode}
-		<div class="form-section">
-			{#if isNDMS}
-				<div class="section-title">{m.dns_routes_edit_route_order()}</div>
-			{/if}
-			{#if routes.length === 0}
-				<p class="route-hint" class:route-hint-error={routeError}>{m.dns_routes_edit_route_required()}</p>
-			{/if}
-			{#if routes.length > 0}
-				<div class="route-list">
-					{#each routes as target, i (i)}
-						<div class="route-item">
-							<span class="route-index">{i + 1}.</span>
-							<span class="route-name">{tunnelName(target.tunnelId)}</span>
-							<span class="route-id" title={target.tunnelId}>{target.tunnelId}</span>
-							<div class="route-actions">
-								<button class="btn-move" onclick={() => moveRoute(i, -1)} disabled={i === 0} title={m.dns_routes_edit_move_up()}>&uarr;</button>
-								<button class="btn-move" onclick={() => moveRoute(i, 1)} disabled={i === routes.length - 1} title={m.dns_routes_edit_move_down()}>&darr;</button>
-								<button class="btn-remove" onclick={() => removeRoute(i)} title={m.common_delete()}>&times;</button>
-							</div>
+	<!-- Route chain -->
+	<div class="form-section">
+		<div class="section-title">{m.dns_routes_edit_route_order()}</div>
+		{#if routes.length === 0}
+			<p class="route-hint" class:route-hint-error={routeError}>{m.dns_routes_edit_route_required()}</p>
+		{/if}
+		{#if routes.length > 0}
+			<div class="route-list">
+				{#each routes as target, i (i)}
+					<div class="route-item">
+						<span class="route-index">{i + 1}.</span>
+						<span class="route-name">{tunnelName(target.tunnelId)}</span>
+						<span class="route-id" title={target.tunnelId}>{target.tunnelId}</span>
+						<div class="route-actions">
+							<button class="btn-move" onclick={() => moveRoute(i, -1)} disabled={i === 0} title={m.dns_routes_edit_move_up()}>&uarr;</button>
+							<button class="btn-move" onclick={() => moveRoute(i, 1)} disabled={i === routes.length - 1} title={m.dns_routes_edit_move_down()}>&darr;</button>
+							<button class="btn-remove" onclick={() => removeRoute(i)} title={m.common_delete()}>&times;</button>
 						</div>
-					{/each}
+					</div>
+				{/each}
+			</div>
+		{/if}
+		{#if availableTunnels.length > 0}
+			<div class="route-add">
+				<div class="route-add-select">
+					<Dropdown
+						value={newRouteTunnelId || availableTunnels[0]?.id || ''}
+						options={addRouteTunnelOpts}
+						onchange={(v) => (newRouteTunnelId = v)}
+						fullWidth
+					/>
 				</div>
-			{/if}
-			{#if availableTunnels.length > 0}
-				<div class="route-add">
-					<div class="route-add-select">
-						<Dropdown
-							value={newRouteTunnelId || availableTunnels[0]?.id || ''}
-							options={addRouteTunnelOpts}
-							onchange={(v) => (newRouteTunnelId = v)}
-							fullWidth
+				<Button variant="primary" size="sm" onclick={addRoute} iconBefore={createIcon}>
+					{m.common_add()}
+				</Button>
+			</div>
+		{/if}
+
+		{#if routes.length > 0}
+			<div class="fallback-group">
+				<!-- svelte-ignore a11y_label_has_associated_control -->
+				<label class="field-label">{m.dns_routes_edit_fallback_label()}</label>
+				<div class="fallback-options">
+					<label class="fallback-option">
+						<input
+							type="radio"
+							name="fallback"
+							value="auto"
+							checked={currentFallback === 'auto'}
+							onchange={() => handleFallbackChange('auto')}
 						/>
-					</div>
-					<Button variant="primary" size="sm" onclick={addRoute} iconBefore={createIcon}>
-						{m.common_add()}
-					</Button>
+						<span>{m.dns_routes_edit_fallback_provider()}</span>
+					</label>
+					<label class="fallback-option">
+						<input
+							type="radio"
+							name="fallback"
+							value="reject"
+							checked={currentFallback === 'reject'}
+							onchange={() => handleFallbackChange('reject')}
+						/>
+						<span>{m.dns_routes_edit_fallback_exclusive()}</span>
+					</label>
 				</div>
-			{/if}
+			</div>
+		{/if}
+	</div>
 
-			{#if isNDMS && routes.length > 0}
-				<div class="fallback-group">
-					<!-- svelte-ignore a11y_label_has_associated_control -->
-					<label class="field-label">{m.dns_routes_edit_fallback_label()}</label>
-					<div class="fallback-options">
-						<label class="fallback-option">
-							<input
-								type="radio"
-								name="fallback"
-								value="auto"
-								checked={currentFallback === 'auto'}
-								onchange={() => handleFallbackChange('auto')}
-							/>
-							<span>{m.dns_routes_edit_fallback_provider()}</span>
-						</label>
-						<label class="fallback-option">
-							<input
-								type="radio"
-								name="fallback"
-								value="reject"
-								checked={currentFallback === 'reject'}
-								onchange={() => handleFallbackChange('reject')}
-							/>
-							<span>{m.dns_routes_edit_fallback_exclusive()}</span>
-						</label>
-					</div>
-				</div>
-			{/if}
-
-			{#if isPolicyMode}
-				<div class="policy-name-row">
-					<span class="policy-label">{m.dns_routes_edit_policy_name()}</span>
-					<input class="policy-input" value={hrPolicyName} oninput={(e) => hrPolicyName = (e.target as HTMLInputElement).value} placeholder="HydraRoute">
-				</div>
-				<span class="field-hint">{m.dns_routes_edit_policy_hint()}</span>
-			{/if}
-		</div>
-	{/if}
-
-	<!-- Excludes (NDMS only) -->
-	{#if isNDMS}
-		<div class="form-section">
-			<div class="section-title">{m.dns_routes_edit_excludes()}</div>
-			<textarea
-				bind:this={excludesTextareaEl}
-				class="field-textarea excludes-textarea"
-				rows="3"
-				placeholder={m.dns_routes_edit_excludes_placeholder()}
-				value={excludesText}
-				oninput={(e) => excludesText = (e.target as HTMLTextAreaElement).value}
-				onkeydown={handleExcludesKeydown}
-			></textarea>
-			<span class="field-hint excludes-hint">{m.dns_routes_edit_excludes_hint()}</span>
-		</div>
-		<div class="form-section">
-			<FormToggle
-				bind:checked={skipIPv6}
-				size="sm"
-				label={m.dns_routes_edit_skip_ipv6()}
-				hint={m.dns_routes_edit_skip_ipv6_hint()}
-			/>
-		</div>
-	{/if}
+	<!-- Excludes -->
+	<div class="form-section">
+		<div class="section-title">{m.dns_routes_edit_excludes()}</div>
+		<textarea
+			bind:this={excludesTextareaEl}
+			class="field-textarea excludes-textarea"
+			rows="3"
+			placeholder={m.dns_routes_edit_excludes_placeholder()}
+			value={excludesText}
+			oninput={(e) => excludesText = (e.target as HTMLTextAreaElement).value}
+			onkeydown={handleExcludesKeydown}
+		></textarea>
+		<span class="field-hint excludes-hint">{m.dns_routes_edit_excludes_hint()}</span>
+	</div>
+	<div class="form-section">
+		<FormToggle
+			bind:checked={skipIPv6}
+			size="sm"
+			label={m.dns_routes_edit_skip_ipv6()}
+			hint={m.dns_routes_edit_skip_ipv6_hint()}
+		/>
+	</div>
 
 	{#if hasDedups && dedupReport}
 		<details class="dedup-details">
@@ -1030,75 +920,4 @@
 		font-size: 0.6875rem;
 		margin-bottom: 0.375rem;
 	}
-
-	.geo-hint {
-		color: var(--color-accent);
-		font-style: italic;
-	}
-
-	/* Mode tabs */
-	.mode-tabs {
-		display: flex;
-		gap: 0;
-		margin-bottom: 0.75rem;
-		background: var(--color-bg-primary);
-		border-radius: 6px;
-		padding: 3px;
-	}
-
-	.mode-tab {
-		flex: 1;
-		padding: 0.375rem 0.75rem;
-		text-align: center;
-		font-size: 0.75rem;
-		font-weight: 500;
-		border-radius: 4px;
-		cursor: pointer;
-		border: none;
-		background: transparent;
-		color: var(--color-text-muted);
-		font-family: inherit;
-		transition: all 0.15s;
-	}
-
-	.mode-tab.active {
-		background: var(--color-bg-hover);
-		color: var(--color-text-primary);
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-	}
-
-	/* Policy name row */
-	.policy-name-row {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin-top: 0.75rem;
-		padding: 0.5rem 0.625rem;
-		background: var(--color-bg-primary);
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-	}
-
-	.policy-label {
-		font-size: 0.75rem;
-		color: var(--color-text-muted);
-		white-space: nowrap;
-	}
-
-	.policy-input {
-		flex: 1;
-		padding: 0.25rem 0.5rem;
-		border: 1px solid var(--color-border);
-		border-radius: 4px;
-		background: var(--color-bg-secondary);
-		color: var(--color-text-primary);
-		font-size: 0.8125rem;
-		font-family: inherit;
-	}
-
-	.policy-input:focus {
-		outline: none;
-		border-color: var(--color-accent);
-	}
-
 </style>

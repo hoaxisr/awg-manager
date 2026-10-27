@@ -307,7 +307,7 @@
         }
     }
 
-    async function handlePresetCreate(presets: CatalogPreset[], tunnelId: string, presetBackend: 'ndms' | 'hydraroute' = 'ndms') {
+    async function handlePresetCreate(presets: CatalogPreset[], tunnelId: string) {
         try {
             const catalog = $presetCatalog;
             const lists = presets.flatMap((preset) => {
@@ -322,7 +322,7 @@
                         : undefined,
                     enabled: true,
                     routes: [{ tunnelId, interface: tunnelId, fallback: 'auto' as const }],
-                    backend: presetBackend,
+                    backend: 'ndms' as const,
                 }];
             });
             if (lists.length === 0) {
@@ -492,8 +492,6 @@
     saving={dnsSaving}
     onsave={editingDnsRoute ? updateDnsRoute : createDnsRoute}
     onclose={() => { dnsModalOpen = false; editingDnsRoute = null; }}
-    {isOS5}
-    hydrarouteInstalled={false}
 />
 
 <DnsRouteImportModal
@@ -508,8 +506,6 @@
     bind:open={dnsPresetOpen}
     existingNames={dnsRoutes.map(r => r.name)}
     tunnels={routingTunnels}
-    {isOS5}
-    hydrarouteInstalled={false}
     onclose={() => dnsPresetOpen = false}
     oncreate={handlePresetCreate}
 />

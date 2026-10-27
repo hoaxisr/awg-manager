@@ -41,8 +41,6 @@
         ruleSetUsage?: Map<string, number>;
         footer?: FooterMode;
         tunnels?: RoutingTunnel[];
-        isOS5?: boolean;
-        hydrarouteInstalled?: boolean;
         /** When false, only one preset can be selected (HR Neo). */
         multiple?: boolean;
         /** Pre-select when opening (e.g. sing-box router wizard). */
@@ -55,11 +53,7 @@
         /** Picker footer — return selected presets (HR Neo / inline pick). */
         onconfirm?: (presets: CatalogPreset[]) => void;
         /** Tunnel footer — batch create (NDMS). */
-        oncreate?: (
-            presets: CatalogPreset[],
-            tunnelId: string,
-            backend: 'ndms' | 'hydraroute',
-        ) => void;
+        oncreate?: (presets: CatalogPreset[], tunnelId: string) => void;
     }
 
     let {
@@ -72,8 +66,6 @@
         ruleSetUsage = undefined,
         footer = 'none',
         tunnels = [],
-        isOS5 = false,
-        hydrarouteInstalled = false,
         multiple = true,
         initialSelectedIds = [],
         warnLargeDnsLists = true,
@@ -86,7 +78,6 @@
 
     let selected = $state<Set<string>>(new Set());
     let defaultTunnelId = $state('');
-    let backend = $state<'ndms' | 'hydraroute'>('ndms');
     let wasOpen = $state(false);
     let query = $state('');
     let categoryFilter = $state<string>('all');
@@ -102,7 +93,6 @@
     };
     const CATEGORY_ORDER = ['social', 'media', 'ai', 'developer', 'cloud', 'gaming', 'block'];
 
-    let showBackendSelector = $derived(footer === 'tunnel' && isOS5 && hydrarouteInstalled);
     let noTunnels = $derived(tunnels.filter((t) => t.available).length === 0);
     let showTunnelFooter = $derived(footer === 'tunnel');
 
@@ -190,7 +180,6 @@
         if (open && !wasOpen) {
             selected = normalizeCatalogSelection(new Set(initialSelectedIds), sortedPresets);
             defaultTunnelId = tunnels.find((t) => t.available)?.id ?? '';
-            backend = isOS5 ? 'ndms' : hydrarouteInstalled ? 'hydraroute' : 'ndms';
             query = '';
             categoryFilter = 'all';
         }
@@ -226,7 +215,7 @@
         if (presets.length === 0) return;
         if (showTunnelFooter) {
             if (!defaultTunnelId || !oncreate) return;
-            oncreate(presets, defaultTunnelId, backend);
+            oncreate(presets, defaultTunnelId);
             return;
         }
         onconfirm?.(presets);
@@ -389,20 +378,6 @@
 
                 {#if showTunnelFooter}
                     <div class="tunnel-row">
-                        {#if showBackendSelector}
-                            <span class="tunnel-label">{m.dns_routes_catalog_engine()}</span>
-                            <div class="tunnel-control tunnel-control-engine">
-                                <Dropdown
-                                    bind:value={backend}
-                                    options={[
-                                        { value: 'ndms' as const, label: 'NDMS' },
-                                        { value: 'hydraroute' as const, label: 'HydraRoute Neo' },
-                                    ]}
-                                    disabled={submitting}
-                                    fullWidth
-                                />
-                            </div>
-                        {/if}
                         <span class="tunnel-label">{m.routing_ip_tunnel()}</span>
                         <div class="tunnel-control tunnel-control-main">
                             <Dropdown
@@ -696,10 +671,6 @@
 
     .tunnel-control {
         min-width: 0;
-    }
-
-    .tunnel-control-engine {
-        width: min(180px, 100%);
     }
 
     .tunnel-control-main {
