@@ -15,6 +15,7 @@
 	import SubscriptionMemberList from './SubscriptionMemberList.svelte';
 	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
+	import { formatHostPort } from '$lib/utils/endpoint';
 
 	interface Props {
 		subscription: Subscription;
@@ -594,7 +595,7 @@
 	{#if pendingRemove}
 		<p>
 			{m.subscriptions_list_col_server()}
-			<strong>{pendingRemove.label || `${pendingRemove.server}:${pendingRemove.port}`}</strong>
+			<strong>{pendingRemove.label || formatHostPort(pendingRemove.server, pendingRemove.port)}</strong>
 			{m.subscriptions_members_remove_after()}
 		</p>
 		{#if memberList.length === 1}
@@ -634,7 +635,7 @@
 	{#if pendingExclude}
 		<p>
 			{m.subscriptions_list_col_server()}
-			<strong>{pendingExclude.label || `${pendingExclude.server}:${pendingExclude.port}`}</strong>
+			<strong>{pendingExclude.label || formatHostPort(pendingExclude.server, pendingExclude.port)}</strong>
 			{m.subscriptions_members_exclude_after()}
 		</p>
 	{/if}
@@ -719,9 +720,9 @@
 				{#each filteredMembers as member (member.tag)}
 					<div class="filtered-card">
 						<div class="filtered-main">
-							<div class="filtered-title">{member.label || `${member.server}:${member.port}`}</div>
+							<div class="filtered-title">{member.label || formatHostPort(member.server, member.port)}</div>
 							<div class="filtered-meta mono">
-								{member.protocol} · {member.server}:{member.port}
+								{member.protocol} · {formatHostPort(member.server, member.port)}
 							</div>
 						</div>
 					</div>

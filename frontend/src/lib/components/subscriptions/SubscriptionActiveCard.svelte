@@ -33,6 +33,7 @@
     import SubscriptionMemberPicker from './SubscriptionMemberPicker.svelte';
     import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
     import TunnelDiagnosticsModal from '$lib/components/testing/TunnelDiagnosticsModal.svelte';
+    import { formatHostPort } from '$lib/utils/endpoint';
 
     interface Props {
         subscription: Subscription;
@@ -112,8 +113,8 @@
         const tag = trafficMemberTag;
         untrack(() => loadHistory(tag));
     });
-    const endpointText = $derived(`${activeMember.server}:${activeMember.port}`);
-    const hiddenEndpointText = $derived(`••••••••:${activeMember.port}`);
+    const endpointText = $derived(formatHostPort(activeMember.server, activeMember.port));
+    const hiddenEndpointText = $derived(formatHostPort('••••••••', activeMember.port));
     const inlineRxRate = $derived(rxRates.length > 0 ? rxRates[rxRates.length - 1] : 0);
     const inlineTxRate = $derived(txRates.length > 0 ? txRates[txRates.length - 1] : 0);
     /** List row: title above IP — prefer remark, else outbound tag. */

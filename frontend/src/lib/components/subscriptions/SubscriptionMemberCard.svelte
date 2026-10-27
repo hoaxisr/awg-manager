@@ -5,6 +5,7 @@
 	import { PingButton } from '$lib/components/ui';
 	import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
 	import { singboxDelayFromHistory } from '$lib/utils/singboxDelay';
+	import { formatHostPort } from '$lib/utils/endpoint';
 
 	interface Props {
 		member: SubscriptionMember;
@@ -71,7 +72,7 @@
 		</div>
 		<div class="c c-name">
 			<span class="n1" title={heading}>{heading}</span>
-			<span class="n2 mono" title={member.tag}>{member.server}:{member.port}</span>
+			<span class="n2 mono" title={member.tag}>{formatHostPort(member.server, member.port)}</span>
 		</div>
 	<div class="c c-badges">
 		<span class="badge proto">{protocolLabel}</span>
@@ -141,7 +142,7 @@
 		{/if}
 	</div>
 	{#if member.label}
-		<div class="server-line mono" title={member.tag}>{member.server}:{member.port}</div>
+		<div class="server-line mono" title={member.tag}>{formatHostPort(member.server, member.port)}</div>
 	{/if}
 	{#if member.sni}
 		<div class="sni-row">

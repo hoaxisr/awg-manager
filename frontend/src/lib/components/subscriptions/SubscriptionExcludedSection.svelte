@@ -3,6 +3,7 @@
 	import type { SubscriptionMember } from '$lib/types';
 	import { RotateCcw } from 'lucide-svelte';
 	import { Button } from '$lib/components/ui';
+	import { formatHostPort } from '$lib/utils/endpoint';
 
 	interface Props {
 		members: SubscriptionMember[];
@@ -67,9 +68,9 @@
 						/>
 					</label>
 					<div class="excluded-main">
-						<div class="excluded-title">{member.label || `${member.server}:${member.port}`}</div>
+						<div class="excluded-title">{member.label || formatHostPort(member.server, member.port)}</div>
 						<div class="excluded-meta mono">
-							{member.protocol} · {member.server}:{member.port} · {tagSuffix(member.tag)}
+							{member.protocol} · {formatHostPort(member.server, member.port)} · {tagSuffix(member.tag)}
 						</div>
 					</div>
 					<Button

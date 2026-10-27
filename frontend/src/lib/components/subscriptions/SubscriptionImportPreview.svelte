@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
 	import type { SubscriptionPreviewMember } from '$lib/types';
+	import { formatHostPort } from '$lib/utils/endpoint';
 
 	interface Props {
 		members: SubscriptionPreviewMember[];
@@ -106,9 +107,9 @@
 				/>
 				<div class="main">
 					<div class="name" class:empty={!member.label}>
-						{member.label || `${member.server}:${member.port}`}
+						{member.label || formatHostPort(member.server, member.port)}
 					</div>
-					<div class="addr mono">{member.server}:{member.port}</div>
+					<div class="addr mono">{formatHostPort(member.server, member.port)}</div>
 				</div>
 				<div class="badges">
 					<span class="badge proto">{protocolLabel(member.protocol)}</span>

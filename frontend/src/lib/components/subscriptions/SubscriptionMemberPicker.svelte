@@ -3,6 +3,7 @@
     import { onMount } from 'svelte';
     import type { SubscriptionMember } from '$lib/types';
     import { singboxDelayHistory } from '$lib/stores/singbox';
+    import { formatHostPort } from '$lib/utils/endpoint';
 
     interface Props {
         members: SubscriptionMember[];
@@ -84,7 +85,7 @@
             onclick={() => pick(m.tag)}
         >
             <span class="led" class:on={isActive}></span>
-            <span class="server">{m.server}:{m.port}</span>
+            <span class="server">{formatHostPort(m.server, m.port)}</span>
             <span class="proto">{m.protocol.toUpperCase()}</span>
             <span class="delay {d.cls}">{d.text}</span>
         </button>

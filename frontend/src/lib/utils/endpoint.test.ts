@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	emptyEndpointDescription,
 	emptyEndpointPlaceholder,
+	formatHostPort,
 	isValidEndpointHost,
 	resolveClientEndpointHost,
 } from './endpoint';
@@ -40,5 +41,12 @@ describe('isValidEndpointHost', () => {
 	it('rejects out-of-range IPv4 octets', () => {
 		expect(isValidEndpointHost('999.999.999.999')).toBe(false);
 		expect(isValidEndpointHost('256.0.0.1')).toBe(false);
+	});
+});
+
+describe('formatHostPort', () => {
+	it('joins host and port, omits port 0 (server with port ranges only)', () => {
+		expect(formatHostPort('h.example', 443)).toBe('h.example:443');
+		expect(formatHostPort('h.example', 0)).toBe('h.example');
 	});
 });

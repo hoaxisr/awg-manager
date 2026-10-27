@@ -1,4 +1,5 @@
 import type { Subscription } from '$lib/types';
+import { formatHostPort } from '$lib/utils/endpoint';
 
 /**
  * Результат клиентского превью состава сводной группы.
@@ -88,7 +89,7 @@ export function resolveGroupPreview(
 			const label = m.label ?? '';
 			if (include.re && !include.re.test(label)) continue;
 			if (exclude.re && exclude.re.test(label)) continue;
-			labels.push(label || `${m.server}:${m.port}`);
+			labels.push(label || formatHostPort(m.server, m.port));
 		}
 	}
 	return {

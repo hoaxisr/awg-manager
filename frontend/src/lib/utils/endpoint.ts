@@ -40,3 +40,11 @@ export function emptyEndpointPlaceholder(
 	if (keen) return keen;
 	return wanIP.trim() || 'WAN IP';
 }
+
+/**
+ * host:port для показа. Порт 0 — у сервера только диапазоны портов (mieru
+ * с одним port-range): «:0» вводил бы в заблуждение, показываем один хост.
+ */
+export function formatHostPort(host: string, port: number): string {
+	return port ? `${host}:${port}` : host;
+}
