@@ -76,6 +76,16 @@ var fakeIPScheduleDrain = func(removeReject func()) {
 // the reject route — it survives the iface deletion still rejecting, which keeps
 // the pool fail-closed for the whole drain window.
 //
+// НА 5.02 ЭТО НЕ ТАК (стенд KN-1810, 5.02.B.1, 27.10, F244): маршрутов пула v4
+// и v6 в конфигурации NDMS нет уже через ~3 с после выключения, `unreachable` в
+// ядре не появляется, удаление OpkgTun уносит и reject-маршрут. Окна drain
+// фактически нет: клиент с кэшированным fake-адресом сразу уходит по дефолту
+// (WAN). Принято как риск: пулы 198.18.0.0/15 и fc00::/7 в интернете не
+// маршрутизируются, наружу уходит лишь первый пакет до перерезолва. Почему NDMS
+// снимает маршрут раньше интерфейса, не установлено. Drain без привязки к
+// интерфейсу (REJECT по dst-пулу в своей цепочке netfilter на окно) — если
+// понадобится fail-closed на 5.02.
+//
 // Safe ordering (each step is leak-conscious; the inline (N) markers below match
 // these numbers):
 //  1. nothing provisioned → just persist Enabled=false (idempotent).
@@ -92,15 +102,12 @@ var fakeIPScheduleDrain = func(removeReject func()) {
 // worse than a fully-attempted teardown, so the teardown steps never abort; only
 // the persist and the drain schedule are mandatory.
 //
-// v6 asymmetry (FAIL-OPEN, honest): the v6 route form (StaticRouteSpec.V6)
-// carries no reject flag, so v6 gets NO explicit reject route — its drain is the
-// pool-route removal alone. On a dual-stack router that has a v6 WAN default
-// route (::/0), removing the pool's more-specific v6 route does NOT drop
-// fakeip-v6 packets — they fall through to ::/0 via WAN and LEAK. The v6 drain is
-// therefore currently fail-open. Closing it needs a v6 reject/blackhole route,
-// which requires extending the v6 route form to support reject — see the
-// TODO(fakeip-v6-drain) marker below. Only v4 gets a real fail-closed reject
-// route today.
+// v6 asymmetry (FAIL-OPEN): v6 gets NO reject route — its drain is the pool-route
+// removal alone, so on a dual-stack router with a v6 default (::/0) fakeip-v6
+// packets fall through to WAN. The v6 form accepts reject since F238
+// (`ipv6 route <prefix> <iface> auto reject`), but renewing it here would not
+// help on 5.02: NDMS drops it together with the interface (see above, F244 —
+// accepted risk).
 func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Settings) error {
 	st, _ := opkgTunOwned(settings, stateFakeIPTun)
 
@@ -172,15 +179,6 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	// dual-stack router with a v6 default it does NOT drop, it leaks). Best-effort.
 	// v4 needs NO auto-route removal here — step 2 renewed the single pool route in
 	// place; the async drain (step 7) removes it after the window.
-	// TODO(fakeip-v6-drain): v6 is fail-open on dual-stack routers with a v6 default
-	// route. Форма больше не препятствие: стенд 5.01 принял v6-reject
-	// (`ipv6 route <prefix> <iface> auto reject`), и AddStaticRoute его
-	// доставляет. Осталась работа в самом drain — обновить маршрут пула как
-	// reject вместо снятия, симметрично шагу 2 у v4. Ловушка на этом пути:
-	// снятие v6-маршрута идёт через mutateTolerant(isNoSuchInterface), а к
-	// моменту уборки интерфейс tun уже удалён — отказ будет проглочен, и
-	// reject-маршрут останется резать префикс навсегда. У v4 от этого есть
-	// стартовый sweep, у v6 его нет.
 	if haveV6 {
 		if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
 			V6: true, Network: inet6Range, Interface: ndmsName,
