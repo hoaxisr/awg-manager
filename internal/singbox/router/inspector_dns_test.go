@@ -335,3 +335,50 @@ func TestInspectDNS_RuleSetUndefined_Note(t *testing.T) {
 		t.Errorf("Note = %q, want substring rule_set", got.Note)
 	}
 }
+
+// F334: набор в DNS-правиле движок сверяет доменной частью с доменом запроса,
+// CIDR-частью — с адресом клиента (rule_set_ip_cidr_match_source). IP во
+// вводе (адрес назначения) с набором не сверяется.
+func TestInspectDNS_RuleSetCIDRMatchesSourceNotDestination(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "tg.srs")
+	if err := os.WriteFile(tmp, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var probed []string
+	origExec := ruleSetMatchExec
+	ruleSetMatchExec = func(_ string, args []string) (string, string, error) {
+		in := args[len(args)-1]
+		probed = append(probed, in)
+		if in == "149.154.167.50" || in == "192.168.1.5" {
+			return "", "match rules.\n", nil
+		}
+		return "", "", &fakeExitErr{}
+	}
+	defer func() { ruleSetMatchExec = origExec }()
+	ruleSets := []RuleSet{{Tag: "tg", Type: "local", Path: tmp, Format: "binary"}}
+	rules := []DNSRule{{RuleSet: []string{"tg"}, Server: "fakeip"}}
+	cond := func(r InspectDNSResult) string { return strings.Join(r.Matches[0].Conditions, " | ") }
+
+	dst := InspectDNS(InspectDNSInput{Domain: "149.154.167.50"}, rules, dnsTestServers(), ruleSets, "google", "/usr/bin/sing-box", nil)
+	if dst.MatchedRule != -1 || !strings.Contains(cond(dst), "адрес назначения в DNS-правиле не оценивается") {
+		t.Errorf("IP назначения: MatchedRule=%d, условия %q", dst.MatchedRule, cond(dst))
+	}
+	if len(probed) != 0 {
+		t.Errorf("IP назначения сверялся с набором: %v", probed)
+	}
+
+	src := InspectDNS(InspectDNSInput{Domain: "example.org", SourceIP: "192.168.1.5"}, rules, dnsTestServers(), ruleSets, "google", "/usr/bin/sing-box", nil)
+	if src.MatchedRule != 0 || !strings.Contains(cond(src), "по адресу клиента") {
+		t.Errorf("адрес клиента в CIDR набора: MatchedRule=%d, условия %q", src.MatchedRule, cond(src))
+	}
+
+	// match_response: флага match_source у правила нет — клиент не сверяется.
+	probed = nil
+	resp := []DNSRule{{RuleSet: []string{"tg"}, Server: "fakeip", MatchResponse: &DNSMatchResponse{Enabled: true}}}
+	r := InspectDNS(InspectDNSInput{Domain: "example.org", SourceIP: "192.168.1.5"}, resp, dnsTestServers(), ruleSets, "google", "/usr/bin/sing-box", nil)
+	for _, p := range probed {
+		if p == "192.168.1.5" {
+			t.Errorf("правило match_response сверило адрес клиента: %+v", r.Matches)
+		}
+	}
+}

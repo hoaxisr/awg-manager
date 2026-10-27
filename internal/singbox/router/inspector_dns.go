@@ -257,10 +257,24 @@ func evaluateDNSRule(input InspectDNSInput, parsedIP net.IP, rule DNSRule, env *
 		sourcePart    partial
 	)
 
-	// rule_set — OR semantics, first hit wins. Mirrors evaluateRule.
+	// rule_set — OR semantics, first hit wins. Наборы в DNS-правиле движок
+	// сверяет не как в маршруте: applyDNSRuleSetMatchSource ставит всем
+	// правилам, кроме match_response, rule_set_ip_cidr_match_source — доменная
+	// часть набора сверяется с доменом запроса, CIDR-часть с адресом КЛИЕНТА
+	// (F334). Адреса назначения в DNS-фазе ещё нет, поэтому IP во вводе с
+	// набором не сверяется.
 	if len(rule.RuleSet) > 0 {
 		ruleSetPart.present = true
-		probeInput := input.Domain
+		type probe struct{ input, via string }
+		var probes []probe
+		if parsedIP == nil {
+			probes = append(probes, probe{input.Domain, "по домену"})
+		} else {
+			out.Conditions = append(out.Conditions, "rule_set: адрес назначения в DNS-правиле не оценивается")
+		}
+		if input.SourceIP != "" && !rule.MatchResponse.IsEnabled() {
+			probes = append(probes, probe{input.SourceIP, "по адресу клиента (IP-часть набора в DNS-правиле сверяется с клиентом)"})
+		}
 		for _, tag := range rule.RuleSet {
 			rs, known := env.ruleSetByTag[tag]
 			if !known {
@@ -270,21 +284,31 @@ func evaluateDNSRule(input InspectDNSInput, parsedIP net.IP, rule DNSRule, env *
 				}
 				continue
 			}
-			matched, supported, mErr := matchRuleSet(probeInput, rs, env.singboxBinary, env.cache, nil)
+			hitVia, checked := "", true
+			for _, p := range probes {
+				matched, supported, mErr := matchRuleSet(p.input, rs, env.singboxBinary, env.cache, nil)
+				if !supported {
+					reason := "не удалось проверить (нет sing-box или файла)"
+					if mErr != nil {
+						reason = fmt.Sprintf("ошибка: %v", mErr)
+					}
+					out.Conditions = append(out.Conditions, fmt.Sprintf("rule_set %q → %s", tag, reason))
+					if env != nil {
+						env.unsupported = append(env.unsupported, fmt.Sprintf("%s (%s)", tag, reason))
+					}
+					checked = false
+					break
+				}
+				if matched {
+					hitVia = p.via
+					break
+				}
+			}
 			switch {
-			case !supported:
-				reason := "не удалось проверить (нет sing-box или файла)"
-				if mErr != nil {
-					reason = fmt.Sprintf("ошибка: %v", mErr)
-				}
-				out.Conditions = append(out.Conditions, fmt.Sprintf("rule_set %q → %s", tag, reason))
-				if env != nil {
-					env.unsupported = append(env.unsupported, fmt.Sprintf("%s (%s)", tag, reason))
-				}
-			case matched:
-				out.Conditions = append(out.Conditions, fmt.Sprintf("rule_set %q → совпало", tag))
+			case hitVia != "":
+				out.Conditions = append(out.Conditions, fmt.Sprintf("rule_set %q → совпало %s", tag, hitVia))
 				ruleSetPart.hit = true
-			default:
+			case checked && len(probes) > 0:
 				out.Conditions = append(out.Conditions, fmt.Sprintf("rule_set %q → не совпало", tag))
 			}
 			if ruleSetPart.hit {
