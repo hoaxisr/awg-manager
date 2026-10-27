@@ -258,11 +258,26 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 	// F508: занятые → валидация → запись → роутер под одной блокировкой,
 	// общей с managed-путём. Берётся после генерации ключей и сигнатуры (exec
 	// awg — не под ней); отпускается до публикации и writeAll (I2).
+	//
+	// Берётся всегда, не только с сетями за клиентом: адрес проверен выше по
+	// снимку, а две вкладки (или вкладка и MCP) с одним свободным адресом
+	// прошли бы проверку обе (F245). Под блокировкой — перепроверка по свежему
+	// rc и уборка секретов пиров, снятых мимо панели (F528).
 	unlock := func() {}
-	if len(req.RemoteSubnets) > 0 && h.managedSvc != nil {
+	if h.managedSvc != nil {
 		unlock = h.lockPeerSubnets()
 	}
 	defer unlock()
+	peers, err := h.queries.WGServers.PeersRC(r.Context(), iface)
+	if err != nil {
+		response.Error(w, err.Error(), "ADD_PEER_FAILED")
+		return
+	}
+	if peerTunnelIPInUse(serverWithPeers(peers), req.TunnelIP, h.storedPeerHost(name)) {
+		response.Error(w, "tunnel IP already in use", "TUNNEL_IP_IN_USE")
+		return
+	}
+	h.pruneOrphanPeerSecrets(name, peers)
 	remote, ok := h.validateRemoteSubnets(r.Context(), w, req.RemoteSubnets, managed.PeerRef{Iface: name}, "ADD_PEER_FAILED")
 	if !ok {
 		return
@@ -688,6 +703,13 @@ func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request
 	if err := h.settings.DeleteServerPeerSecret(name, pubkey); err != nil {
 		h.log.Warn("delete-peer", name, "peer removed from router but its secret stayed in store: "+err.Error())
 	}
+	// Секреты остальных пиров, снятых мимо панели (F528). Интерфейса нет —
+	// не трогаем: исчезновение сервера уборкой секретов не считаем.
+	if present {
+		if peers, err := h.queries.WGServers.PeersRC(r.Context(), iface); err == nil {
+			h.pruneOrphanPeerSecrets(name, peers)
+		}
+	}
 	unlock()
 	h.bus.PublishInvalidated(events.ResourceServers, "server-peer-deleted")
 	h.writeAll(w, r)
@@ -948,6 +970,37 @@ func peerTunnelIPInUse(server *ndms.WireguardServer, tunnelIP string, storedHost
 		}
 	}
 	return false
+}
+
+// serverWithPeers — пиры свежего rc в форме, которую ждёт peerTunnelIPInUse.
+func serverWithPeers(peers []ndms.WireguardServerPeerConfig) *ndms.WireguardServer {
+	srv := &ndms.WireguardServer{Peers: make([]ndms.WireguardServerPeer, len(peers))}
+	for i, p := range peers {
+		srv.Peers[i] = ndms.WireguardServerPeer{PublicKey: p.PublicKey, AllowedIPs: p.AllowedIPs}
+	}
+	return srv
+}
+
+// pruneOrphanPeerSecrets снимает секреты пиров сервера, ключей которых нет в
+// свежем rc: пир снят в веб-морде роутера, а приватный ключ без пира остался бы
+// в settings навсегда — в UI его не видно (F528). Звать под lockPeerSubnets:
+// AddServerPeer пишет секрет ДО добавления пира на роутер, и уборка вне
+// блокировки снесла бы секрет добавляемого.
+func (h *ServersHandler) pruneOrphanPeerSecrets(serverID string, peers []ndms.WireguardServerPeerConfig) {
+	live := make(map[string]bool, len(peers))
+	for _, p := range peers {
+		live[p.PublicKey] = true
+	}
+	for pubkey := range h.settings.GetServerPeerSecrets()[serverID] {
+		if live[pubkey] {
+			continue
+		}
+		if err := h.settings.DeleteServerPeerSecret(serverID, pubkey); err != nil {
+			h.log.Warn("prune-peer-secret", serverID, "secret of a peer removed outside the panel stayed: "+err.Error())
+			continue
+		}
+		h.log.Info("prune-peer-secret", serverID, "removed the secret of a peer no longer on the router: "+pubkey)
+	}
 }
 
 // isHostCIDR — CIDR с маской хоста (/32, для IPv6 /128).

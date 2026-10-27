@@ -148,8 +148,9 @@ func TestServersHandler_AddServerPeer_OverlapWithOtherIfaceRoute(t *testing.T) {
 	}
 }
 
-// Секрет пира, снятого в веб-морде, сети не занимает: новый пир берёт её.
-// Пир на роутере есть — сеть занята. Секрет не удаляется.
+// Секрет пира, снятого в веб-морде, сети не занимает: новый пир берёт её, а
+// сам секрет добавление убирает (F528). Пир на роутере есть — сеть занята,
+// секрет остаётся.
 func TestServersHandler_AddServerPeer_SubnetOfPeerGoneFromRouterIsFree(t *testing.T) {
 	for _, onRouter := range []bool{false, true} {
 		other := ""
@@ -167,8 +168,8 @@ func TestServersHandler_AddServerPeer_SubnetOfPeerGoneFromRouterIsFree(t *testin
 		} else if rr.Code != http.StatusOK {
 			t.Fatalf("пир снят: code=%d body=%s", rr.Code, rr.Body.String())
 		}
-		if _, ok := store.GetServerPeerSecret("Wireguard0", otherPeerPubKey); !ok {
-			t.Fatal("секрет удалён")
+		if _, ok := store.GetServerPeerSecret("Wireguard0", otherPeerPubKey); ok != onRouter {
+			t.Fatalf("секрет есть=%v, want %v (пир на роутере=%v)", ok, onRouter, onRouter)
 		}
 	}
 }
