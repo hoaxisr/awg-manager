@@ -72,6 +72,8 @@ type fakeRouter struct {
 	legacyOnly bool
 	// failRule — ошибка только на rule: правка на месте прошла, перестановка нет.
 	failRule bool
+	// rcRouteReads — чтения /show/rc/dns-proxy/route (порядок строк).
+	rcRouteReads int
 	// rejected — элементы index/rule, отвергнутые в режиме legacyOnly.
 	rejected int
 	// rcObjectForm — rc отдаёт форму-объект с ключом по группе (одна запись
@@ -121,6 +123,9 @@ func (r *fakeRouter) GetRaw(_ context.Context, path string) ([]byte, error) {
 			}
 		}
 		return json.Marshal(m)
+	}
+	if path == "/show/rc/dns-proxy/route" {
+		r.rcRouteReads++
 	}
 	switch path {
 	case "/show/sc/dns-proxy/route", "/show/rc/dns-proxy/route":

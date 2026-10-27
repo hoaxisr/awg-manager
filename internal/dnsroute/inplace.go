@@ -123,6 +123,17 @@ func planMoves(ordered []ndms.DNSRouteRule, group string, tgts []rciRouteOp) ([]
 // packGroupRE — имя пакета списка: слаг и номер _pN (buildGroupName).
 var packGroupRE = regexp.MustCompile(`^(.+)_p([0-9]+)$`)
 
+// packLess — порядок обхода групп: пакеты одного списка по номеру, остальное
+// по имени.
+func packLess(a, b string) bool {
+	sa, na, oka := packOf(a)
+	sb, nb, okb := packOf(b)
+	if oka && okb && sa == sb {
+		return na < nb
+	}
+	return a < b
+}
+
 func packOf(group string) (slug string, n int, ok bool) {
 	m := packGroupRE.FindStringSubmatch(group)
 	if m == nil {
@@ -137,7 +148,8 @@ func packOf(group string) (slug string, n int, ok bool) {
 // первым пакетом с большим. Новая строка NDMS уходит в хвост, а первая
 // совпавшая группа выигрывает: пакет, выросший у списка при обновлении
 // подписки, иначе проигрывал бы пересечения всем правилам ниже своих (#1107).
-// Пакетов-братьев нет (новый список) — место в хвосте, перестановок нет.
+// Зовётся только для нового пакета списка, у которого на роутере уже есть
+// строки (rciRouteRebuild.nearSiblings).
 //
 // ordered — весь список в порядке роутера. Строки пакета обязаны стоять ниже
 // якоря (запись новой группы — в хвост): тогда перенос строки i на anchor+i не

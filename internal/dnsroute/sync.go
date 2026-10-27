@@ -83,6 +83,11 @@ type rciRouteRebuild struct {
 	group   string
 	deletes []string     // интерфейсы текущих строк группы
 	upserts []rciRouteOp // целевые строки в порядке приоритета
+	// nearSiblings — новый пакет списка, у которого на роутере уже есть
+	// строки других пакетов: после записи в хвост его ставят к ним
+	// (placeNewPack, #1107). Пакеты нового списка пишутся подряд в числовом
+	// порядке и в перестановке не нуждаются — порядок строк не читается.
+	nearSiblings bool
 }
 
 // rciRouteDisable is a toggle of the `disable` flag on an existing route,
@@ -528,11 +533,19 @@ func computeDiff(current currentState, target targetState) rciDiff {
 	//
 	// Обход по отсортированным именам: map даёт случайный порядок, и без
 	// сортировки последовательность POST-ов гуляла бы от прогона к прогону.
+	// Пакеты одного списка — по номеру (p2 раньше p10): новые строки ложатся в
+	// хвост в порядке записи, и лексический порядок перемешал бы пакеты.
 	groupNames := make([]string, 0, len(targetByGroup))
 	for group := range targetByGroup {
 		groupNames = append(groupNames, group)
 	}
-	sort.Strings(groupNames)
+	sort.Slice(groupNames, func(i, j int) bool { return packLess(groupNames[i], groupNames[j]) })
+	routedSlugs := make(map[string]bool, len(current.routes))
+	for _, cr := range current.routes {
+		if slug, _, ok := packOf(cr.group); ok {
+			routedSlugs[slug] = true
+		}
+	}
 
 	for _, group := range groupNames {
 		tgts := targetByGroup[group]
@@ -558,6 +571,9 @@ func computeDiff(current currentState, target targetState) rciDiff {
 		}
 
 		rb := rciRouteRebuild{group: group}
+		if slug, _, ok := packOf(group); ok && len(curs) == 0 && routedSlugs[slug] {
+			rb.nearSiblings = true
+		}
 		for _, cr := range curs {
 			rb.deletes = append(rb.deletes, cr.iface)
 		}
@@ -708,7 +724,7 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff, confirmed map
 		}
 		s.logInfo("applyDiff", rb.group,
 			fmt.Sprintf("Phase4: route block rewritten in priority order: %v", ifaces))
-		if len(rb.deletes) == 0 {
+		if rb.nearSiblings {
 			s.placeNewPack(ctx, rb.group)
 		}
 	}
@@ -794,8 +810,9 @@ func (s *ServiceImpl) rewriteInPlace(ctx context.Context, rb rciRouteRebuild, co
 }
 
 // placeNewPack переставляет строки только что записанной группы к пакетам её
-// списка (planPackMoves, #1107). Best-effort: отказ (OS4 без `rule`, сбой
-// RCI) оставляет пакет в хвосте — как было до правки, reconcile не падает.
+// списка (planPackMoves, #1107). Best-effort: отказ (5.00 без `rule` — по
+// гипотезе, как у rewriteInPlace; сбой RCI) оставляет пакет в хвосте — как
+// было до правки, reconcile не падает. На OS4 reconcile сюда не доходит.
 func (s *ServiceImpl) placeNewPack(ctx context.Context, group string) {
 	ordered, err := s.queries.DNSProxy.FetchOrdered(ctx)
 	if err != nil {
