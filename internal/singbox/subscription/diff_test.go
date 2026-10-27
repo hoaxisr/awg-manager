@@ -179,13 +179,13 @@ func TestApplyDiff_NoCollisionUsesNarrowTag(t *testing.T) {
 	}
 }
 
-func TestIdentityHash_SubIDIndependent(t *testing.T) {
+func TestStableTag_SuffixSubIDIndependent(t *testing.T) {
 	p := vlink.ParsedOutbound{Protocol: "vless", Server: "a.example", Port: 443, Outbound: []byte(`{"uuid":"u1"}`)}
-	h := IdentityHash(p)
+	h := suffixOf(keysOf(p).narrow)
 	if len(h) != 8 {
 		t.Fatalf("want 8 hex chars, got %q", h)
 	}
-	// Полный тег для разных subID должен совпадать суффиксом = IdentityHash.
+	// Полный тег для разных subID должен совпадать суффиксом — ключом исключения.
 	t1 := StableTag("aaaaaaaa1111", p)
 	t2 := StableTag("bbbbbbbb2222", p)
 	if t1[len(t1)-8:] != h || t2[len(t2)-8:] != h {

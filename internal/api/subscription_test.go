@@ -134,11 +134,7 @@ func TestSubscriptionHandler_Create_ExcludedKeys(t *testing.T) {
 
 	linkA := "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443?security=tls&sni=a#A"
 	linkB := "vless://3a3b1c2e-9999-4321-aaaa-1234567890a2@b.example:443?security=tls&sni=b#B"
-	parsed := vlink.ParseBatch([]string{linkB})
-	if len(parsed.Outbounds) != 1 {
-		t.Fatalf("want 1 parsed outbound, got %d (errors=%v)", len(parsed.Outbounds), parsed.Errors)
-	}
-	keyB := subscription.IdentityHash(parsed.Outbounds[0])
+	keyB := exclusionKeyOf(t, linkB)
 
 	body, _ := json.Marshal(CreateSubscriptionRequest{
 		Label:        "x",
@@ -188,9 +184,9 @@ func TestSubscriptionHandler_ExcludeLifecycle(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	keyA := identityHashOf(t, linkA)
-	keyB := identityHashOf(t, linkB)
-	keyC := identityHashOf(t, linkC)
+	keyA := exclusionKeyOf(t, linkA)
+	keyB := exclusionKeyOf(t, linkB)
+	keyC := exclusionKeyOf(t, linkC)
 
 	store, err := subscription.NewStore(filepath.Join(t.TempDir(), "sub.json"))
 	if err != nil {
@@ -200,7 +196,7 @@ func TestSubscriptionHandler_ExcludeLifecycle(t *testing.T) {
 	h := NewSubscriptionHandler(svc, &fakePresenceProbe{installed: true})
 
 	// 1+2. Preview: real handler must fetch+parse the URL and return all 3
-	// members keyed by IdentityHash (8 hex chars).
+	// members keyed by the tag suffix (8 hex chars).
 	previewBody, _ := json.Marshal(PreviewURLRequest{URL: srv.URL})
 	prr := httptest.NewRecorder()
 	h.PreviewURL(prr, httptest.NewRequest(http.MethodPost, "/preview", strings.NewReader(string(previewBody))))
@@ -333,13 +329,16 @@ func TestSubscriptionHandler_ExcludeLifecycle(t *testing.T) {
 	}
 }
 
-func identityHashOf(t *testing.T, link string) string {
+func exclusionKeyOf(t *testing.T, link string) string {
 	t.Helper()
 	parsed := vlink.ParseBatch([]string{link})
 	if len(parsed.Outbounds) != 1 {
 		t.Fatalf("link %q: want 1 parsed outbound, got %d (errors=%v)", link, len(parsed.Outbounds), parsed.Errors)
 	}
-	return subscription.IdentityHash(parsed.Outbounds[0])
+	// Суффикс узкого тега совпадает с ключом превью, пока в фиде нет коллизий
+	// узкого ключа — у фидов этих тестов их нет.
+	tag := subscription.StableTag("x", parsed.Outbounds[0])
+	return tag[len(tag)-8:]
 }
 
 func memberDTOHasTag(ms []SubscriptionMemberDTO, tag string) bool {

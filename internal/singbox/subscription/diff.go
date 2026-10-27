@@ -49,14 +49,6 @@ func StableTag(subID string, p vlink.ParsedOutbound) string {
 	return stableTagFromKey(subID, keysOf(p).narrow)
 }
 
-// IdentityHash returns the subID-independent suffix of StableTag for the
-// narrow key: the first 4 bytes of sha256(identityKey) as hex. Import-time
-// exclusion keys members by this hash because the full StableTag depends on
-// the not-yet-allocated subID.
-func IdentityHash(p vlink.ParsedOutbound) string {
-	return suffixOf(keysOf(p).narrow)
-}
-
 // memberKeys holds every identity tier of one outbound, computed from a single
 // parse of its body: chooseKeys needs all four per member, and re-parsing the
 // JSON per tier is measurable on MIPS with large subscriptions (F736).

@@ -1876,7 +1876,7 @@ func TestCreate_ExcludedKeys(t *testing.T) {
 	if len(parsed.Outbounds) != 1 {
 		t.Fatalf("want 1 parsed outbound, got %d (errors=%v)", len(parsed.Outbounds), parsed.Errors)
 	}
-	keyB := IdentityHash(parsed.Outbounds[0])
+	keyB := suffixOf(keysOf(parsed.Outbounds[0]).narrow)
 	sub, err := svc.Create(context.Background(), CreateInput{Label: "x", Inline: links, ExcludedKeys: []string{keyB}})
 	if err != nil {
 		t.Fatal(err)
