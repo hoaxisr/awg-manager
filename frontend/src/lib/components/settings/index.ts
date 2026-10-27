@@ -20,3 +20,4 @@ export { default as AccessCard } from './AccessCard.svelte';
 export { default as PingTargetsCard } from './PingTargetsCard.svelte';
 export { default as AdvancedCard } from './AdvancedCard.svelte';
 export { default as ServiceActionsCard } from './ServiceActionsCard.svelte';
+export { default as IntegrationsSection } from './IntegrationsSection.svelte';
