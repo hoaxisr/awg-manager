@@ -92,7 +92,16 @@ func SanitizeDNSConfig(cfg *RouterConfig) {
 	}
 }
 
+// validateDNSServer оборачивает отказ checkDNSServer в ErrDNSServerInvalid:
+// API отдаёт его как ошибку ввода (400), а не сбой (F671).
 func validateDNSServer(s DNSServer) error {
+	if err := checkDNSServer(s); err != nil {
+		return fmt.Errorf("%w: %w", ErrDNSServerInvalid, err)
+	}
+	return nil
+}
+
+func checkDNSServer(s DNSServer) error {
 	if strings.TrimSpace(s.Tag) == "" {
 		return fmt.Errorf("dns server tag is required")
 	}

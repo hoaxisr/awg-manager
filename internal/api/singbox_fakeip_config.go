@@ -68,6 +68,9 @@ func (h *SingboxFakeIPConfigHandler) handleErr(w http.ResponseWriter, action str
 	case errors.Is(err, router.ErrDNSBindAddress):
 		// 400: адрес отправителя DNS-сервера — ввод пользователя, не сбой.
 		response.Error(w, err.Error(), "DNS_BIND_ADDRESS_INVALID")
+	case errors.Is(err, router.ErrDNSServerInvalid):
+		// 400: поля DNS-сервера не прошли проверку — ввод, не сбой (F671).
+		response.Error(w, err.Error(), "DNS_SERVER_INVALID")
 	case errors.Is(err, router.ErrInvalidMatchers),
 		errors.Is(err, router.ErrDNSInvalidServer):
 		response.Error(w, err.Error(), "INVALID_MATCHERS")
