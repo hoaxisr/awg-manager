@@ -1497,21 +1497,31 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 		return updated, nil
 	}
 	out := parts.Valid[0]
-	// Набор для chooseKeys недоступен (credential существующих членов не
-	// хранится), поэтому тег считаем по полному ключу: два эндпоинта одного
-	// сервера, различающиеся
-	// только транспортом, обязаны получить РАЗНЫЕ теги, иначе второй outbound
-	// перезаписал бы первый (issue #625).
+	// Набор для chooseKeys недоступен, поэтому тег считаем по самому широкому
+	// ключу: два эндпоинта одного сервера, различающиеся только транспортом
+	// (issue #625) или только логином при общем пароле (F734), обязаны
+	// получить РАЗНЫЕ теги, иначе второй outbound перезаписал бы первый.
 	//
-	// Повтор по-прежнему ловим по метаданным: точного ключа существующих
-	// членов взять неоткуда (мутатор не отдаёт тела outbound'ов), а их теги
-	// могли быть посчитаны на любом уровне ключа. TransportKey закрывает ту
-	// дыру, из-за которой разные ws-пути считались одним сервером; у записей,
-	// сделанных до появления поля, он пуст — для них остаётся прежнее грубое
-	// сравнение, иначе точный повтор проскочил бы под тем же тегом.
-	tag := stableTagFromKey(sub.ID, keysOf(out).full)
+	// Повтор ловим по телам существующих членов из слота конфига — тем же
+	// широким ключом, с учётными данными. Их теги могли быть посчитаны на
+	// любом уровне ключа, поэтому сравниваются тела, а не теги. Члена без
+	// тела в слоте (сброшен flush'ем) сравниваем по метаданным, как раньше:
+	// TransportKey закрывает разные ws-пути, у записей до появления поля он
+	// пуст — для них грубое сравнение, иначе точный повтор проскочил бы.
+	keys := keysOf(out)
+	tag := stableTagFromKey(sub.ID, keys.cred)
 	mi := toMemberInfo(tag, out)
+	bodies := make(map[string]map[string]any)
+	for _, ob := range s.mutator.SubscriptionOutbounds() {
+		bodies[outboundTag(ob)] = ob
+	}
 	for _, existing := range sub.Members {
+		if ob, ok := bodies[existing.Tag]; ok {
+			if keysFromOutbound(existing.Protocol, existing.Server, existing.Port, ob).cred == keys.cred {
+				return nil, ErrMemberDuplicate
+			}
+			continue
+		}
 		if existing.Server != mi.Server || existing.Port != mi.Port ||
 			existing.Protocol != mi.Protocol || existing.SNI != mi.SNI {
 			continue

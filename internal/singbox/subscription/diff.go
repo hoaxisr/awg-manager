@@ -81,6 +81,12 @@ func keysOf(p vlink.ParsedOutbound) memberKeys {
 		k := "raw|" + string(p.Outbound)
 		return memberKeys{narrow: k, ext: k, full: k, cred: k}
 	}
+	return keysFromOutbound(p.Protocol, p.Server, p.Port, ob)
+}
+
+// keysFromOutbound — то же по уже разобранному телу: ручное добавление берёт
+// тела существующих членов из слота конфига, а не из выдачи (F734).
+func keysFromOutbound(protocol, server string, port uint16, ob map[string]any) memberKeys {
 	uuid, _ := ob["uuid"].(string)
 	password, _ := ob["password"].(string)
 	username, _ := ob["username"].(string)
@@ -92,7 +98,7 @@ func keysOf(p vlink.ParsedOutbound) memberKeys {
 		}
 	}
 	var k memberKeys
-	k.narrow = p.Protocol + "|" + p.Server + "|" + itoa(p.Port) + "|" + cred
+	k.narrow = protocol + "|" + server + "|" + itoa(port) + "|" + cred
 
 	sni, sid := "", ""
 	if tls, ok := ob["tls"].(map[string]any); ok {

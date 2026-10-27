@@ -1950,6 +1950,46 @@ func TestAddManualMember_ExactRepeatRejected(t *testing.T) {
 	}
 }
 
+// Другая учётка на том же адресе — не повтор: при общем пароле naive-логины
+// различаются только username, у vless — только uuid (F734).
+func TestAddManualMember_OtherAccountOnSameEndpoint(t *testing.T) {
+	for _, tc := range []struct{ seed, other string }{
+		{"naive+https://alice:shared@h.example:443#A", "naive+https://bob:shared@h.example:443#B"},
+		{"vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a.sni#A",
+			"vless://3a3b1c2e-9999-4321-aaaa-1234567890cd@h.example:443?security=tls&sni=a.sni#B"},
+	} {
+		svc, _ := newTestService(t)
+		sub, err := svc.Create(context.Background(), CreateInput{Label: "manual", Inline: tc.seed, Enabled: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		updated, err := svc.AddManualMember(context.Background(), sub.ID, tc.other)
+		if err != nil {
+			t.Fatalf("%s: other account must add, got %v", tc.other, err)
+		}
+		if len(updated.MemberTags) != 2 {
+			t.Fatalf("%s: MemberTags=%d want 2", tc.other, len(updated.MemberTags))
+		}
+		if _, err := svc.AddManualMember(context.Background(), sub.ID, tc.other); !errors.Is(err, ErrMemberDuplicate) {
+			t.Fatalf("%s: repeat must be ErrMemberDuplicate, got %v", tc.other, err)
+		}
+	}
+}
+
+// Члена без тела в слоте (сброшен flush'ем) повтор ловится по метаданным.
+func TestAddManualMember_RepeatOfMemberWithoutBody(t *testing.T) {
+	svc, mut := newTestService(t)
+	link := "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a.sni#A"
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "manual", Inline: link, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mut.bodies = nil
+	if _, err := svc.AddManualMember(context.Background(), sub.ID, link); !errors.Is(err, ErrMemberDuplicate) {
+		t.Fatalf("repeat must be ErrMemberDuplicate, got %v", err)
+	}
+}
+
 // TestCreate_InlineMieruClientJSON: вставка канонического mieru client
 // config JSON (экспорт панелей, формат mieru apply config) как inline-тела
 // подписки материализует членов — TCP и UDP outbound одного профиля.
