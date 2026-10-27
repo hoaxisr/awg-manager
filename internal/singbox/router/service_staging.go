@@ -46,13 +46,19 @@ func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.Validation
 		return orchestrator.ValidationResult{}, ErrTransitionInProgress
 	}
 	defer s.transitionMu.Unlock()
-	if err := s.syncDraftTunExternal(); err != nil {
-		s.appLog.Warn("staging", "tun-in", "выровнять external_configuration черновика: "+err.Error())
-	}
-	if err := s.syncDraftRouterSettings(); err != nil {
-		s.appLog.Warn("staging", "router-settings", "выровнять WAN/сниффер черновика: "+err.Error())
-	}
-	res, err := s.deps.Orch.ApplyDraft(orchestrator.SlotRouter)
+	// Черновик пишет и withConfig: правка, вставшая между переносом в
+	// черновик и его применением, иначе не попала бы в применённое (F741).
+	res, err := func() (orchestrator.ValidationResult, error) {
+		s.routerCfgMu.Lock()
+		defer s.routerCfgMu.Unlock()
+		if err := s.syncDraftTunExternal(); err != nil {
+			s.appLog.Warn("staging", "tun-in", "выровнять external_configuration черновика: "+err.Error())
+		}
+		if err := s.syncDraftRouterSettings(); err != nil {
+			s.appLog.Warn("staging", "router-settings", "выровнять WAN/сниффер черновика: "+err.Error())
+		}
+		return s.deps.Orch.ApplyDraft(orchestrator.SlotRouter)
+	}()
 	if err == nil && res.Ok() {
 		// A staged rule-set delete/rename is final now — reap the orphaned
 		// inline/dat artifacts (issue #448: files were never deleted).
@@ -65,10 +71,16 @@ func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.Validation
 
 // DiscardStaging removes the pending draft for the router slot.
 func (s *ServiceImpl) DiscardStaging(ctx context.Context) error {
-	if err := s.deps.Orch.DiscardDraft(orchestrator.SlotRouter); err != nil {
-		return err
-	}
-	if err := s.restoreEffectiveRuleSetArtifacts(); err != nil {
+	// Под routerCfgMu: withConfig, стоящий в мутаторе, иначе записал бы после
+	// сброса черновик со сброшенными правками (F741).
+	if err := func() error {
+		s.routerCfgMu.Lock()
+		defer s.routerCfgMu.Unlock()
+		if err := s.deps.Orch.DiscardDraft(orchestrator.SlotRouter); err != nil {
+			return err
+		}
+		return s.restoreEffectiveRuleSetArtifacts()
+	}(); err != nil {
 		return err
 	}
 	s.emitStagingEvent("discarded")

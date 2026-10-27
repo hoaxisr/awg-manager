@@ -59,10 +59,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	if err != nil {
 		return fmt.Errorf("enable fakeip-tun: load fakeip config: %w", err)
 	}
-	if fakeIPConfigEmpty(fcfg) {
-		fcfg.DNS.Rules = append(fcfg.DNS.Rules, DNSRule{Action: "route", Server: "fakeip", QueryType: []string{"A", "AAAA"}})
-		fcfg.Route.Final = "direct"
-	}
+	seedFakeIPDefaults(fcfg)
 
 	// C. Egress validation from the fakeip config.
 	// "direct" is a built-in known outbound — passes. Refuse to provision with
@@ -316,7 +313,6 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 
 		ExternalConfiguration: s.tunExternalWant(),
 	}
-	ensureFakeIPOverlay(fcfg, spec)
 
 	// D. Slot XOR: enable SlotFakeIP, disable SlotRouter (fakeip and tproxy router
 	// slots are mutually exclusive — sing-box must load exactly one routing config).
@@ -372,7 +368,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 			s.appLog.Warn("fakeip-enable", "awg-outbounds", "refresh 15-awg.json: "+e.Error())
 		}
 	}
-	if err = s.persistFakeIPConfig(ctx, fcfg); err != nil {
+	if err = s.persistFakeIPConfigFresh(ctx, spec); err != nil {
 		return fmt.Errorf("enable fakeip-tun: persist fakeip config: %w", err)
 	}
 	// Slot XOR выше поменял видимость композитов (20 припаркован, 21 активен) —
@@ -568,4 +564,30 @@ func bareAddrFromCIDR(cidr string) (string, error) {
 		return "", fmt.Errorf("parse %q: %w", cidr, err)
 	}
 	return p.Addr().String(), nil
+}
+
+// seedFakeIPDefaults: на пустом слоте (первое включение) — стартовое правило
+// A/AAAA→fakeip, чтобы чип показал полезные умолчания, и route.final на
+// встроенный "direct" (всегда известен, висячей ссылки нет).
+func seedFakeIPDefaults(cfg *RouterConfig) {
+	if fakeIPConfigEmpty(cfg) {
+		cfg.DNS.Rules = append(cfg.DNS.Rules, DNSRule{Action: "route", Server: "fakeip", QueryType: []string{"A", "AAAA"}})
+		cfg.Route.Final = "direct"
+	}
+}
+
+// persistFakeIPConfigFresh пишет слот fakeip по свежему чтению под
+// fakeipCfgMu, а не снимок, прочитанный в начале включения: после записи
+// provisioned слот уже правят fakeipWithConfig (веб, MCP), и запись снимка
+// затёрла бы их правку (F741).
+func (s *ServiceImpl) persistFakeIPConfigFresh(ctx context.Context, spec FakeIPTunSpec) error {
+	s.fakeipCfgMu.Lock()
+	defer s.fakeipCfgMu.Unlock()
+	cfg, err := s.loadFakeIPConfig()
+	if err != nil {
+		return err
+	}
+	seedFakeIPDefaults(cfg)
+	ensureFakeIPOverlay(cfg, spec)
+	return s.persistFakeIPConfig(ctx, cfg)
 }

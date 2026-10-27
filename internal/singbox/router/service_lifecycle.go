@@ -1111,6 +1111,11 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string, 
 // inbound alone would leave a missing/stale rule unhealed forever once the
 // inbound fields happen to already be correct (fix round 1, review finding).
 func (s *ServiceImpl) healTunSettings(ctx context.Context, slot orchestrator.Slot, sr storage.SingboxRouterSettings) (externalFlipped bool) {
+	if slot == orchestrator.SlotFakeIP {
+		// Слот fakeip без черновика: fakeipWithConfig пишет тот же файл (F741).
+		s.fakeipCfgMu.Lock()
+		defer s.fakeipCfgMu.Unlock()
+	}
 	var (
 		cfg *RouterConfig
 		err error
@@ -1231,6 +1236,11 @@ func systemUDPTimeoutRuleOK(rules []Rule, effective string) bool {
 // active/disabled-only read in referencedRuleSetArtifactBases) and persists
 // via persistFakeIPConfig.
 func (s *ServiceImpl) heal1140SlotMigration(ctx context.Context, slot orchestrator.Slot) {
+	if slot == orchestrator.SlotFakeIP {
+		// Слот fakeip без черновика: fakeipWithConfig пишет тот же файл (F741).
+		s.fakeipCfgMu.Lock()
+		defer s.fakeipCfgMu.Unlock()
+	}
 	if s.deps.Orch != nil {
 		activePath, err := s.deps.Orch.ActivePath(slot)
 		if err != nil {

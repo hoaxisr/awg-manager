@@ -511,8 +511,12 @@ type ServiceImpl struct {
 	// fakeipWithConfig: «прочитал → мутатор → записал» без замка терял
 	// параллельную правку (веб + MCP, F727). Порядок: после mu и
 	// transitionMu; под ними ни mu, ни transitionMu не берутся, событие
-	// публикуется уже после отпускания. Системные записи слота
-	// (persistConfigDirect и т.п.) их пока не берут — F741.
+	// публикуется уже после отпускания. Системные записи слота fakeip
+	// (enableFakeIPTun, healTunSettings, heal1140SlotMigration) берут
+	// fakeipCfgMu — черновика у fakeip нет, они пишут тот же файл (F741).
+	// ApplyStaging/DiscardStaging берут routerCfgMu: черновик пишет и
+	// withConfig. Системные записи применённого 20-router.json замок не берут:
+	// пользовательская правка идёт в черновик, а они все под transitionMu.
 	routerCfgMu sync.Mutex
 	fakeipCfgMu sync.Mutex
 	// transitionReadinessProgress emits readiness heartbeats during
