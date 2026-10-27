@@ -290,7 +290,7 @@ func (s *Service) rciSetASCParams(ctx context.Context, iface query.Confirmed, pa
 	if err != nil {
 		return err
 	}
-	return wg.SetASCParams(ctx, iface, params)
+	return s.rciLogged(wg.SetASCParams(ctx, iface, params))
 }
 
 // rciClearASCParams снимает ASC с интерфейса — общей командой: структурную
@@ -301,7 +301,7 @@ func (s *Service) rciClearASCParams(ctx context.Context, iface query.Confirmed) 
 	if err != nil {
 		return err
 	}
-	return wg.ResetASCParams(ctx, iface)
+	return s.rciLogged(wg.ResetASCParams(ctx, iface))
 }
 
 // rciSetHotspotPolicy applies an ip hotspot policy to the interface.
@@ -385,7 +385,7 @@ func (s *Service) rciAddPeer(ctx context.Context, iface query.Confirmed, pubKey,
 	if err != nil {
 		return err
 	}
-	return wg.AddPeer(ctx, iface, pubKey, psk, comment, peerIP, enabled)
+	return s.rciLogged(wg.AddPeer(ctx, iface, pubKey, psk, comment, peerIP, enabled))
 }
 
 // peerCommands — команды пира и ASC, общие с системным путём: формы запросов
@@ -402,6 +402,15 @@ func (s *Service) peerCommands(iface query.Confirmed) (*command.WireguardCommand
 	return s.commands.Wireguard, nil
 }
 
+// rciLogged пишет отказ общей команды в журнал, как rciPostTolerant — иначе
+// отказ роутера уходил только в ответ API и в журнале не оставался.
+func (s *Service) rciLogged(err error) error {
+	if err != nil {
+		s.sysLog().Warn("managed rci post failed", "error", err)
+	}
+	return err
+}
+
 // rciRemovePeer removes a peer by public key; пир, уже снятый мимо панели, —
 // успех (см. command.WireguardCommands.RemovePeer).
 func (s *Service) rciRemovePeer(ctx context.Context, iface query.Confirmed, pubKey string) error {
@@ -409,7 +418,7 @@ func (s *Service) rciRemovePeer(ctx context.Context, iface query.Confirmed, pubK
 	if err != nil {
 		return err
 	}
-	return wg.RemovePeer(ctx, iface, pubKey)
+	return s.rciLogged(wg.RemovePeer(ctx, iface, pubKey))
 }
 
 // rciSetPeerConnect enables or disables a peer. comment must carry the peer's
@@ -421,7 +430,7 @@ func (s *Service) rciSetPeerConnect(ctx context.Context, iface query.Confirmed, 
 	if err != nil {
 		return err
 	}
-	return wg.SetPeerConnect(ctx, iface, pubKey, connect, comment)
+	return s.rciLogged(wg.SetPeerConnect(ctx, iface, pubKey, connect, comment))
 }
 
 // rciSetPeerComment sets the description/comment for a peer. Пира на роутере
@@ -431,7 +440,7 @@ func (s *Service) rciSetPeerComment(ctx context.Context, iface query.Confirmed, 
 	if err != nil {
 		return err
 	}
-	return wg.SetPeerComment(ctx, iface, pubKey, comment)
+	return s.rciLogged(wg.SetPeerComment(ctx, iface, pubKey, comment))
 }
 
 // rciRemovePeerDefaultRoute strips the legacy 0.0.0.0/0 entry from a peer's
@@ -443,7 +452,7 @@ func (s *Service) rciRemovePeerDefaultRoute(ctx context.Context, iface query.Con
 	if err != nil {
 		return err
 	}
-	return wg.RemovePeerAllowIP(ctx, iface, pubKey, "0.0.0.0", "0.0.0.0")
+	return s.rciLogged(wg.RemovePeerAllowIP(ctx, iface, pubKey, "0.0.0.0", "0.0.0.0"))
 }
 
 // rciUpdatePeerAllowIPs removes old allow-ips and sets new ones (снятие
@@ -453,5 +462,5 @@ func (s *Service) rciUpdatePeerAllowIPs(ctx context.Context, iface query.Confirm
 	if err != nil {
 		return err
 	}
-	return wg.UpdatePeerAllowIPs(ctx, iface, pubKey, oldIP, newIP)
+	return s.rciLogged(wg.UpdatePeerAllowIPs(ctx, iface, pubKey, oldIP, newIP))
 }

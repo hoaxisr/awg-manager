@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -327,5 +328,21 @@ func TestPeerCommands_UnconfirmedInterfaceRefused(t *testing.T) {
 	}
 	if len(poster.posts) != 0 {
 		t.Fatalf("POST ушёл без подтверждённого интерфейса: %v", poster.posts)
+	}
+}
+
+// Отказ общей команды пишется в журнал, как раньше у rciPost (ревью F527).
+func TestPeerCommands_FailureLogged(t *testing.T) {
+	var buf strings.Builder
+	poster := &fakePoster{err: errors.New("rci down")}
+	queries := routerWithPeers(t, "PEER_A")
+	s := &Service{transport: poster, queries: queries, log: slog.New(slog.NewTextHandler(&buf, nil))}
+	s.commands = testCommands(poster, queries)
+	iface := confirmed(t, "Wireguard0")
+	if err := s.rciAddPeer(context.Background(), iface, "k", "", "", "10.0.0.2", true); err == nil {
+		t.Fatal("отказ роутера обязан вернуться")
+	}
+	if !strings.Contains(buf.String(), "managed rci post failed") {
+		t.Fatalf("отказ не попал в журнал: %q", buf.String())
 	}
 }
