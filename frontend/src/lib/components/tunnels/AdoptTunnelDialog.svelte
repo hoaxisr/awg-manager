@@ -114,7 +114,7 @@
 		{/if}
 
 		{#if localError}
-			<p class="error-text">{uiText(localError)}</p>
+			<p class="error-text visible">{uiText(localError)}</p>
 		{/if}
 
 	{:else if step === 'instructions'}
@@ -188,11 +188,6 @@
 	.form-group input[type="text"]:focus {
 		outline: none;
 		border-color: var(--accent);
-	}
-
-	.error-text {
-		color: var(--error);
-		font-size: 0.875rem;
 	}
 
 	.alert {

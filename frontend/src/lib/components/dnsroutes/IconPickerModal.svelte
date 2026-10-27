@@ -429,13 +429,13 @@
 				</div>
 
 				{#if customError}
-					<p class="error-text" role="alert">{customError}</p>
+					<p class="error-text visible" role="alert">{customError}</p>
 				{/if}
 
 				{#if showTileBgControls && customPreviewUrl}
 					{@render tileBgBar(customPreviewUrl, customPreviewHint)}
 				{:else if trimmedSvg && !parsedSvg}
-					<p class="error-text">{m.dns_routes_icon_invalid_svg()}</p>
+					<p class="error-text visible">{m.dns_routes_icon_invalid_svg()}</p>
 				{/if}
 
 				<p class="field-hint footer-hint">
@@ -663,11 +663,6 @@
 		cursor: pointer;
 		font-family: inherit;
 		text-decoration: underline;
-	}
-	.error-text {
-		font-size: 0.75rem;
-		color: var(--color-danger, #e74c3c);
-		margin: 0;
 	}
 	.tile-bg-controls {
 		display: grid;

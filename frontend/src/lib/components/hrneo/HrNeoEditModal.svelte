@@ -560,9 +560,9 @@
 							bind:value={newPolicyName}
 						/>
 						{#if attempted && newPolicyNameValidationError !== ''}
-							<div class="error-text">{newPolicyNameValidationError}</div>
+							<div class="error-text visible">{newPolicyNameValidationError}</div>
 						{:else if newPolicyNameDuplicateHint !== ''}
-							<div class="error-text">{newPolicyNameDuplicateHint}</div>
+							<div class="error-text visible">{newPolicyNameDuplicateHint}</div>
 						{:else if newPolicyNameInterfaceHint !== ''}
 							<div class="warn-text">{newPolicyNameInterfaceHint}</div>
 						{:else}
@@ -930,11 +930,6 @@
 
 	.form-hint.muted {
 		color: var(--color-text-muted);
-	}
-	.error-text {
-		color: var(--color-error);
-		font-size: 0.75rem;
-		margin-top: 4px;
 	}
 	.warn-text {
 		color: var(--warning, #f59e0b);
