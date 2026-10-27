@@ -42,7 +42,7 @@ func TestStopMonitoring_DuringTickDoesNotHang(t *testing.T) {
 	t.Cleanup(cancel)
 	lb := NewLogBuffer()
 	t.Cleanup(lb.Stop)
-	s := &Service{tunnels: store, wg: &spyWGClient{}, logBuffer: lb, ctx: ctx, monitors: map[string]*tunnelMonitor{}}
+	s := &Service{tunnels: store, logBuffer: lb, ctx: ctx, monitors: map[string]*tunnelMonitor{}}
 
 	s.StartMonitoring("awg15", "nl")
 	<-d.entered // первый тик внутри проверки

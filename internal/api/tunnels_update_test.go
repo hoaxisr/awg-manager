@@ -885,6 +885,7 @@ func TestTunnelUpdate_FieldInventoryComplete(t *testing.T) {
 		"Enabled":            true,
 		"ActiveWAN":          true,
 		"StartedAt":          true,
+		"PolicyHolds":        true,
 		"ResolvedEndpointIP": true,
 		"WdttClientID":       true,
 		"FreeTurnClientID":   true,

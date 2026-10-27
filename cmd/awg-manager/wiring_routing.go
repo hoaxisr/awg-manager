@@ -14,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmsevents "github.com/hoaxisr/awg-manager/internal/ndms/events"
 	ndmsmetrics "github.com/hoaxisr/awg-manager/internal/ndms/metrics"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -109,6 +110,8 @@ func (a *app) setupOrchestrator() {
 	// lifecycle (NativeWG needs kmod proxy + endpoint rewrite, not a raw NDMS
 	// flip — issue #183). System interfaces keep the raw flip.
 	a.accessPolicySvc.SetTunnelLifecycle(orchLifecycleAdapter{a.orch}, storeManagedTunnelResolver{a.awgStore})
+	// Больной туннель мониторинг уводит из политик снятием permit (F743).
+	a.pingCheckService.SetPolicies(pingcheckPolicies{a.accessPolicySvc, a.ndmsQueries.Policies})
 
 	// HydraRoute NDMS wiring — now that ndmsCommands/Queries are ready.
 	a.hydraService.SetQueries(a.ndmsQueries)
@@ -284,4 +287,16 @@ func existencePublisher(bus *events.Bus) func(publish bool) {
 		bus.PublishInvalidated(events.ResourceTunnels, "ndms-hook")
 		bus.PublishInvalidated(events.ResourceServers, "ndms-hook")
 	}
+}
+
+// pingcheckPolicies — политики для мониторинга (F743): правки через
+// accesspolicy (подтверждение интерфейса, журнал), список — мимо кэша.
+type pingcheckPolicies struct {
+	*accesspolicy.ServiceImpl
+	list *ndmsquery.PolicyStore
+}
+
+func (p pingcheckPolicies) FreshPolicies(ctx context.Context) ([]ndms.Policy, error) {
+	p.list.InvalidateAll()
+	return p.list.List(ctx)
 }

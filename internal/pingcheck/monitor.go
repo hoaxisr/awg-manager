@@ -9,14 +9,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
-const (
-	handshakeTimeout = 30 * time.Second
-	maxBackoff       = 30 * time.Minute
-)
-
-// handshakePollFreq — период опроса wg в waitHandshake; тесты ужимают.
-var handshakePollFreq = 2 * time.Second
-
 // runCmd — шов над exec.Run для команд лечения (`ip link set`, `awg set`); в
 // тестах подменяется рекордером, в проде — exec.Run.
 var runCmd = exec.Run
@@ -98,13 +90,20 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 	if result.Success {
 		s.mu.Lock()
 		m.failCount = 0
+		recovered := m.restartCount > 0
 		m.restartCount = 0
 		s.mu.Unlock()
 
+		// Восстановление — только успешная проверка (F743, F747).
+		s.restorePolicies(m.tunnelID)
+		stateChange := ""
+		if recovered {
+			stateChange = "recovered"
+			s.logInfo(m.tunnelID, "Connectivity restored")
+		}
+
 		// Публикуем на каждом успехе, как NWG-монитор: dnsroute-фейловер
-		// снимает туннель с failedSet только по «pass», а toggle отдаёт «pass»
-		// лишь при рукопожатии в своём окне. Поднялся позже — иначе списки
-		// висят на backup до рестарта демона (#855).
+		// снимает туннель с failedSet только по «pass» (#855).
 		if s.bus != nil {
 			s.bus.Publish("pingcheck:state", events.PingCheckStateEvent{
 				TunnelID: m.tunnelID,
@@ -121,14 +120,15 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 		}
 
 		s.addLogEntry(LogEntry{
-			Timestamp:  now,
-			TunnelID:   m.tunnelID,
-			TunnelName: m.tunnelName,
-			Success:    true,
-			Latency:    result.Latency,
-			FailCount:  0,
-			Threshold:  config.FailThreshold,
-			Backend:    "kernel",
+			Timestamp:   now,
+			TunnelID:    m.tunnelID,
+			TunnelName:  m.tunnelName,
+			Success:     true,
+			Latency:     result.Latency,
+			FailCount:   0,
+			Threshold:   config.FailThreshold,
+			StateChange: stateChange,
+			Backend:     "kernel",
 		})
 		return
 	}
@@ -162,22 +162,25 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 		return
 	}
 
-	s.doLinkToggle(m, config, ifaceName)
+	s.doRepair(m, config, ifaceName)
 }
 
-// doLinkToggle performs link down → re-resolve → link up → wait handshake → backoff.
-func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName string) {
-	// Стор читается здесь и так (шаг 1) — гард лишнего похода не добавляет.
+// doRepair — лечение на пороге: увести политику с туннеля и переприменить
+// переехавший endpoint. Интерфейс не кладём: быстрый `ip link down/up` в
+// обход NDMS оставлял таблицу политики без маршрута по умолчанию (F746), а
+// повтор рукопожатия WireGuard делает сам — `awg set endpoint` на поднятом
+// интерфейсе даёт рукопожатие за ~6 с (стенд 27.10). Восстановлением
+// считается только успешная проверка, не рукопожатие: оно проходит и тогда,
+// когда трафик через туннель не идёт (F747).
+func (s *Service) doRepair(m *tunnelMonitor, config *checkConfig, ifaceName string) {
 	stored, _ := s.tunnels.Get(m.tunnelID)
 	// Зеркальная запись прокси-выхода: её интерфейсом владеет прокси-рантайм
 	// со своим циклом реконсиляции. Измеряем, но не лечим.
 	proxyOwned := stored != nil && stored.Backend == "wdtt-raw"
 
-	msg := fmt.Sprintf("Connectivity lost (%d/%d fails), toggling link",
-		m.failCount, config.FailThreshold)
+	msg := fmt.Sprintf("Connectivity lost (%d/%d fails)", m.failCount, config.FailThreshold)
 	if proxyOwned {
-		msg = fmt.Sprintf("Connectivity lost (%d/%d fails); интерфейс принадлежит прокси-рантайму — восстановление за ним, link toggle пропущен",
-			m.failCount, config.FailThreshold)
+		msg += "; интерфейс принадлежит прокси-рантайму — восстановление за ним"
 	}
 	s.logInfo(m.tunnelID, msg)
 
@@ -190,113 +193,42 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 	}
 	s.bus.PublishInvalidated(events.ResourcePingcheck, "state-change")
 
-	// Дальше идёт лечение, и оно не наше: `ip link set down` уронил бы живой
-	// tun чужого инстанса, `awg set` по не-wg устройству бессмысленен, а
-	// рукопожатия на tun не будет никогда — цикл ушёл бы в вечный backoff по
-	// чужому ресурсу. Публикация выше сохранена: измерение остаётся.
+	// Дальше идёт лечение, и оно не наше: `awg set` по не-wg устройству
+	// бессмысленен, а политика чужого tun — забота его рантайма. Публикация
+	// выше сохранена: измерение остаётся.
 	if proxyOwned {
 		return
 	}
 
-	// 1. Re-resolve DNS endpoint before link down (while DNS may still work)
-	var newEndpoint string
-	if stored != nil {
-		newEndpoint = resolveEndpoint(stored.Peer.Endpoint)
+	s.releasePolicies(m.tunnelID)
+
+	// Только по живому устройству: на модуле старше 3.0.20260731-04 `awg set`
+	// по отсутствующему интерфейсу роняет ядро (prebuilt/kmod/README.md).
+	if stored != nil && deviceExists(ifaceName) {
+		if ep := resolveEndpoint(stored.Peer.Endpoint); ep != "" {
+			if _, err := runCmd(s.ctx, "/opt/sbin/awg", "set", ifaceName,
+				"peer", stored.Peer.PublicKey, "endpoint", ep); err != nil {
+				s.logWarn(m.tunnelID, "awg set endpoint failed: "+err.Error())
+			}
+		}
 	}
-
-	// Канал остановки снимаем под локом ДО лечения: StopMonitoring закрывает
-	// его и обнуляет поле под s.mu, а чтение поля из середины лечения могло
-	// застать nil — и ожидание рукопожатия с backoff шли бы до конца.
-	s.mu.RLock()
-	stopCh := m.stopCh
-	s.mu.RUnlock()
-	if stopCh == nil {
-		return
-	}
-
-	// Штамп рукопожатия ДО down: ядро (wireguard и amneziawg, стенд
-	// 2026-09-06) сохраняет latest-handshake через down/up, а ключи сессии
-	// сбрасывает — трафик пойдёт только после НОВОГО рукопожатия. «Штамп
-	// моложе N минут» после up отдавал ложное «восстановлено».
-	baseline := s.lastHandshake(ifaceName)
-
-	// 2. Link down — NDMS switches to fallback immediately
-	//    conf: running preserved (user intent intact), link: pending
-	linkDown := true
-	if _, err := runCmd(s.ctx, "/opt/sbin/ip", "link", "set", ifaceName, "down"); err != nil {
-		s.logWarn(m.tunnelID, "ip link set down failed: "+err.Error())
-		linkDown = false
-	}
-
-	// 3. Re-apply endpoint if resolved to new IP.
-	//    Only when the link went down: on a module older than 3.0.20260731-04
-	//    `awg set` panics the kernel when the interface is gone, and this path
-	//    runs exactly when connectivity is lost (prebuilt/kmod/README.md).
-	if linkDown && newEndpoint != "" && stored != nil {
-		runCmd(s.ctx, "/opt/sbin/awg", "set", ifaceName,
-			"peer", stored.Peer.PublicKey,
-			"endpoint", newEndpoint)
-	}
-
-	// 4. Link up — WireGuard re-initiates handshake
-	if _, err := runCmd(s.ctx, "/opt/sbin/ip", "link", "set", ifaceName, "up"); err != nil {
-		s.logWarn(m.tunnelID, "ip link set up failed: "+err.Error())
-	}
-
-	// 5. Wait for handshake (interruptible by monitor stop signal)
-	ok := s.waitHandshake(ifaceName, baseline, stopCh)
 
 	s.mu.Lock()
 	m.restartCount++
 	m.failCount = 0
-	if ok {
-		// Иначе статус «recovering» висел бы до следующего тика.
-		m.lastResult = &CheckResult{Success: true}
-	}
-	restartCount := m.restartCount
 	s.mu.Unlock()
 
-	stateChange := "link_toggle"
-	if ok {
-		stateChange = "recovered"
-		s.logInfo(m.tunnelID, "Link toggle successful, handshake restored")
-
-		if s.bus != nil {
-			s.bus.Publish("pingcheck:state", events.PingCheckStateEvent{
-				TunnelID:  m.tunnelID,
-				Status:    "pass",
-				FailCount: 0,
-			})
-		}
-		s.bus.PublishInvalidated(events.ResourcePingcheck, "state-change")
-	} else {
-		s.logWarn(m.tunnelID, fmt.Sprintf("Link toggle: no handshake, backoff #%d", restartCount))
-	}
-
 	s.addLogEntry(LogEntry{
-		Timestamp:   time.Now(),
-		TunnelID:    m.tunnelID,
-		TunnelName:  m.tunnelName,
-		Success:     ok,
-		FailCount:   0,
-		Threshold:   config.FailThreshold,
-		StateChange: stateChange,
+		Timestamp:  time.Now(),
+		TunnelID:   m.tunnelID,
+		TunnelName: m.tunnelName,
+		FailCount:  0,
+		Threshold:  config.FailThreshold,
+		// Имя перехода прежнее — его читают MCP и журнал; теперь это попытка
+		// лечения без down/up.
+		StateChange: "link_toggle",
 		Backend:     "kernel",
 	})
-
-	// 6. Backoff if handshake didn't restore
-	if !ok {
-		backoff := time.Duration(config.Interval) * time.Second * time.Duration(restartCount*restartCount)
-		if backoff > maxBackoff {
-			backoff = maxBackoff
-		}
-		s.logInfo(m.tunnelID, fmt.Sprintf("Backoff %v before next cycle", backoff))
-		select {
-		case <-time.After(backoff):
-		case <-stopCh:
-		case <-s.ctx.Done():
-		}
-	}
 }
 
 // tryResolveEndpoint resolves a hostname endpoint to IP:port.
@@ -317,54 +249,4 @@ func tryResolveEndpoint(endpoint string) string {
 		return ""
 	}
 	return net.JoinHostPort(ips[0], port)
-}
-
-// lastHandshake отдаёт точный штамп рукопожатия интерфейса (epoch-секунды
-// ядра). Если штамп прочитать не удалось, отдаёт текущую секунду: тогда
-// восстановлением считается только рукопожатие новее «сейчас» — ложный минус
-// безвреден (следующий успешный тик всё равно публикует pass), ложный плюс
-// по старому штампу — нет.
-func (s *Service) lastHandshake(ifaceName string) time.Time {
-	if s.wg != nil {
-		if hs, err := s.wg.LatestHandshake(s.ctx, ifaceName); err == nil {
-			return hs
-		}
-	}
-	return time.Now().Truncate(time.Second)
-}
-
-// waitHandshake polls awg show after link toggle for a handshake NEWER than
-// baseline (the stamp taken before link down). stopCh allows early exit when
-// StopMonitoring is called during link toggle, preventing the HTTP handler
-// from blocking for up to 30 seconds.
-func (s *Service) waitHandshake(ifaceName string, baseline time.Time, stopCh <-chan struct{}) bool {
-	timeout := s.handshakeTimeout
-	if timeout <= 0 {
-		timeout = handshakeTimeout
-	}
-	deadline := time.After(timeout)
-	poll := time.NewTicker(handshakePollFreq)
-	defer poll.Stop()
-
-	for {
-		select {
-		case <-poll.C:
-			if s.wg == nil {
-				continue
-			}
-			hs, err := s.wg.LatestHandshake(s.ctx, ifaceName)
-			if err != nil {
-				continue
-			}
-			if !hs.IsZero() && hs.After(baseline) {
-				return true
-			}
-		case <-deadline:
-			return false
-		case <-stopCh:
-			return false
-		case <-s.ctx.Done():
-			return false
-		}
-	}
 }

@@ -606,6 +606,7 @@ type AWGTunnel struct {
 	ResolvedEndpointIP string                   `json:"resolvedEndpointIP,omitempty"` // Persisted resolved endpoint IP for reliable cleanup
 	ActiveWAN          string                   `json:"activeWAN,omitempty"`          // Persisted resolved WAN for WAN event matching
 	StartedAt          string                   `json:"startedAt,omitempty"`          // RFC3339 timestamp of last successful start
+	PolicyHolds        []PolicyHold             `json:"policyHolds,omitempty"`        // permit'ы политик, снятые мониторингом (F743); пишет только pingcheck
 	Backend            string                   `json:"backend,omitempty"`            // "nativewg" | "kernel" | "wdtt-raw" | "" (legacy=kernel)
 	FreeTurnClientID   string                   `json:"freeTurnClientId,omitempty"`   // set when AWG tunnel is auto-created from freeturn:// import
 	WdttClientID       string                   `json:"wdttClientId,omitempty"`       // set when AWG tunnel is auto-created from wdtt/qwdtt import
@@ -618,6 +619,12 @@ type AWGTunnel struct {
 	PingCheck          *TunnelPingCheck         `json:"pingCheck,omitempty"`
 	ConnectivityCheck  *ConnectivityCheckConfig `json:"connectivityCheck,omitempty"`
 	Obfuscator         *Obfuscator              `json:"obfuscator,omitempty"` // wg-obfuscator (Phobos/ClusterM); nil = обычный туннель
+}
+
+// PolicyHold — снятый мониторингом permit: политика и позиция в её списке.
+type PolicyHold struct {
+	Policy string `json:"policy"`
+	Order  int    `json:"order"`
 }
 
 // TunnelPingCheck contains per-tunnel ping check configuration.

@@ -3,7 +3,6 @@ package pingcheck
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/httpprobe"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -16,7 +15,6 @@ type peerWG struct{ withPeer map[string]bool }
 func (c peerWG) Show(_ context.Context, iface string) (*wg.ShowResult, error) {
 	return &wg.ShowResult{HasPeer: c.withPeer[iface]}, nil
 }
-func (peerWG) LatestHandshake(context.Context, string) (time.Time, error) { return time.Time{}, nil }
 
 // F626: opkgtunN, созданный NDMS без нашего конфига (старт на буте упал),
 // не «работающий туннель» — монитор на нём лечил бы link toggle-ем вечно.
