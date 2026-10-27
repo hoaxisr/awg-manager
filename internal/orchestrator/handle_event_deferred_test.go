@@ -16,6 +16,7 @@ type ctxRecorder struct {
 func (r *ctxRecorder) OnTunnelStart(context.Context, string, string) error { return nil }
 func (r *ctxRecorder) OnTunnelStop(context.Context, string) error          { return nil }
 func (r *ctxRecorder) OnTunnelDelete(context.Context, string) error        { return nil }
+func (r *ctxRecorder) ForgetTunnel(context.Context, string) error          { return nil }
 func (r *ctxRecorder) Reconcile(ctx context.Context) error {
 	r.calls++
 	r.got = ctx

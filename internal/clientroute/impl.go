@@ -293,19 +293,27 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 		}
 	}
 
-	// Remove all routes from store.
+	// Записи и номер таблицы снимает ForgetTunnel — после успешного удаления
+	// туннеля: при отказе удаления правила вернёт следующий старт туннеля
+	// (F609).
+
+	s.appLog.Info("tunnel-delete", tunnelID, "client rules removed")
+	return nil
+}
+
+// ForgetTunnel снимает клиентские маршруты удалённого туннеля из хранилища и
+// освобождает его таблицу — только после успешного удаления туннеля (F609).
+func (s *ServiceImpl) ForgetTunnel(_ context.Context, tunnelID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := s.store.RemoveByTunnel(tunnelID); err != nil {
 		s.appLog.Warn("remove-routes", tunnelID, fmt.Sprintf("failed to remove routes from store: %v", err))
 	}
-
-	// Free table allocation.
-	if hasTable {
+	if _, hasTable := s.store.GetTableForTunnel(tunnelID); hasTable {
 		if err := s.store.FreeTable(tunnelID); err != nil {
 			s.appLog.Warn("free-table", tunnelID, fmt.Sprintf("failed to free table: %v", err))
 		}
 	}
-
-	s.appLog.Info("tunnel-delete", tunnelID, "removed all client routes")
 	return nil
 }
 

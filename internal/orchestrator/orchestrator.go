@@ -51,6 +51,9 @@ type PingCheckExecutor interface {
 type DNSRouteExecutor interface {
 	Reconcile(ctx context.Context) error
 	OnTunnelDelete(ctx context.Context, tunnelID string) error
+	// ForgetTunnel убирает удалённый туннель из хранилища правил — только
+	// после успешного удаления туннеля (F609).
+	ForgetTunnel(ctx context.Context, tunnelID string) error
 }
 
 // StaticRouteExecutor is the interface for static route operations.
@@ -58,6 +61,9 @@ type StaticRouteExecutor interface {
 	OnTunnelStart(ctx context.Context, tunnelID, tunnelIface string) error
 	OnTunnelStop(ctx context.Context, tunnelID string) error
 	OnTunnelDelete(ctx context.Context, tunnelID string) error
+	// ForgetTunnel убирает удалённый туннель из хранилища правил — только
+	// после успешного удаления туннеля (F609).
+	ForgetTunnel(ctx context.Context, tunnelID string) error
 	Reconcile(ctx context.Context) error
 }
 
@@ -66,6 +72,9 @@ type ClientRouteExecutor interface {
 	OnTunnelStart(ctx context.Context, tunnelID string, kernelIface string) error
 	OnTunnelStop(ctx context.Context, tunnelID string) error
 	OnTunnelDelete(ctx context.Context, tunnelID string) error
+	// ForgetTunnel убирает удалённый туннель из хранилища правил — только
+	// после успешного удаления туннеля (F609).
+	ForgetTunnel(ctx context.Context, tunnelID string) error
 }
 
 // NativeWGExecutor is the interface for NativeWG operations.

@@ -94,7 +94,7 @@ func TestFailedWrite_LeavesCacheUntouched(t *testing.T) {
 			})
 			return err
 		}},
-		{"OnTunnelDelete", func(svc *ServiceImpl) error { return svc.OnTunnelDelete(ctx, "t1") }},
+		{"ForgetTunnel", func(svc *ServiceImpl) error { return svc.ForgetTunnel(ctx, "t1") }},
 		{"setHRIcon", func(svc *ServiceImpl) error {
 			return svc.setHRIcon("Wireguard0", "group", "https://1.1.1.1/i.png")
 		}},

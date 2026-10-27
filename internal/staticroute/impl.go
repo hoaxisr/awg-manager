@@ -484,7 +484,22 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 		}
 	}
 
-	// Unbind: clear TunnelID but keep the list in storage.
+	// Отвязку списков (хранилище) делает ForgetTunnel — после успешного
+	// удаления туннеля: отказ удаления иначе оставлял бы живой туннель без
+	// правил (F609).
+	return nil
+}
+
+// ForgetTunnel отвязывает списки от удалённого туннеля: TunnelID очищается,
+// сам список остаётся. Только после успешного удаления туннеля (F609).
+func (s *ServiceImpl) ForgetTunnel(_ context.Context, tunnelID string) error {
+	if tunnelID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	lists := s.allListsForTunnel(tunnelID)
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, rl := range lists {
 		s.setPending(rl.ID, false)
@@ -494,8 +509,9 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 			s.appLog.Warn("orphan-list", rl.ID, err.Error())
 		}
 	}
-
-	s.appLog.Info("tunnel-deleted", tunnelID, fmt.Sprintf("%d route lists orphaned", len(lists)))
+	if len(lists) > 0 {
+		s.appLog.Info("tunnel-deleted", tunnelID, fmt.Sprintf("%d route lists orphaned", len(lists)))
+	}
 	return nil
 }
 

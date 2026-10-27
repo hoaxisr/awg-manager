@@ -1042,22 +1042,27 @@ func (s *ServiceImpl) OnTunnelStart(ctx context.Context) error {
 	return s.reconcileAll(ctx)
 }
 
-// OnTunnelDelete removes route targets referencing the deleted tunnel.
-// Also clears any failover state for the deleted tunnel.
+// OnTunnelDelete снимает в NDMS строки удаляемого туннеля; хранилище и
+// failover-состояние не трогает — это ForgetTunnel после удаления (F609).
 //
 // Без сверки и без чтения sc-вида (Н10b): строки удаляемого туннеля известны
 // из своего хранилища — снимаются одним пакетом по (группа, интерфейс) до
 // сноса интерфейса, чужие маршруты не меняются. Сверка здесь читала бы
 // `/show/sc/dns-proxy/route` и сохраняла конфигурацию перед чтением (F568) —
 // под замком туннеля, на каждое удаление пачки. Туннель в failover — сверка,
-// как прежде: его строки failover уже снял, а MarkRecovered меняет чужие.
+// в ForgetTunnel: его строки failover уже снял, а MarkRecovered меняет чужие.
 // Вид sc после сноса устарел до сохранения — его ведёт эпоха DNSRoutes
 // (FlushPendingSave первой следующей сверки).
 func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error {
-	// Clean up failover state first (uses its own mutex, before opMu lock).
-	failed := s.failover != nil && s.failover.IsFailed(tunnelID)
-	if failed {
-		_ = s.failover.MarkRecovered(tunnelID)
+	// Только снятие строк в NDMS, пока интерфейс жив. Цели туннеля в
+	// хранилище убирает ForgetTunnel — после успешного удаления туннеля:
+	// отказ удаления (список интерфейсов не прочитан) иначе оставлял бы
+	// живой туннель без правил (F609).
+	//
+	// Туннель в failover: его строк нет — их держит fallback; пересчёт после
+	// снятия целей — в ForgetTunnel.
+	if s.failover != nil && s.failover.IsFailed(tunnelID) {
+		return nil
 	}
 
 	s.opMu.Lock()
@@ -1069,34 +1074,15 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 	}
 
 	var refs []command.DNSRouteRef
-	changed := false
 	for i := range data.Lists {
 		list := &data.Lists[i]
-		var kept []RouteTarget
 		for _, rt := range list.Routes {
-			if rt.TunnelID != tunnelID {
-				kept = append(kept, rt)
-				continue
+			if rt.TunnelID == tunnelID {
+				refs = append(refs, tunnelRouteRefs(list, rt.Interface)...)
 			}
-			changed = true
-			refs = append(refs, tunnelRouteRefs(list, rt.Interface)...)
 		}
-		if kept == nil {
-			kept = []RouteTarget{}
-		}
-		list.Routes = kept
 	}
 
-	if changed {
-		if err := s.store.Save(data); err != nil {
-			return fmt.Errorf("save after tunnel delete cleanup: %w", err)
-		}
-		s.appLog.Info("cleanup-targets", tunnelID, "removed from dns route targets")
-	}
-
-	if failed {
-		return s.reconcileAll(ctx)
-	}
 	// Строку ставит только сверка и только на подтверждённый интерфейс
 	// (buildTargetState, F548): у цели без интерфейса строки нет, и `no` по
 	// ней — E в журнале ndm (L5 финального ревью F595; туннель-цель, ни разу
@@ -1123,6 +1109,47 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 	}
 	if err := s.commands.DNSRoutes.DeleteRoutes(ctx, refs); err != nil && !errors.Is(err, query.ErrNotSupportedOnOS4) {
 		return fmt.Errorf("delete dns-proxy routes of tunnel %s: %w", tunnelID, err)
+	}
+	return nil
+}
+
+// ForgetTunnel убирает удалённый туннель из целей правил — только после
+// успешного удаления туннеля (F609). Туннель был в failover — пересчёт, чтобы
+// fallback-строки встали по оставшимся целям.
+func (s *ServiceImpl) ForgetTunnel(ctx context.Context, tunnelID string) error {
+	failed := s.failover != nil && s.failover.IsFailed(tunnelID)
+	if failed {
+		_ = s.failover.MarkRecovered(tunnelID)
+	}
+
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	data := s.store.Draft()
+	if data == nil {
+		return nil
+	}
+	changed := false
+	for i := range data.Lists {
+		list := &data.Lists[i]
+		kept := []RouteTarget{}
+		for _, rt := range list.Routes {
+			if rt.TunnelID == tunnelID {
+				changed = true
+				continue
+			}
+			kept = append(kept, rt)
+		}
+		list.Routes = kept
+	}
+	if changed {
+		if err := s.store.Save(data); err != nil {
+			return fmt.Errorf("save after tunnel delete cleanup: %w", err)
+		}
+		s.appLog.Info("cleanup-targets", tunnelID, "removed from dns route targets")
+	}
+	if failed {
+		return s.reconcileAll(ctx)
 	}
 	return nil
 }

@@ -260,6 +260,13 @@ func TestOnTunnelDelete_NDMS_UninstallsRoutesAndOrphansLists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OnTunnelDelete: %v", err)
 	}
+	// F609: до ForgetTunnel списки ещё привязаны — удаление может отказать.
+	if lists := svc.allListsForTunnel("awg10"); len(lists) == 0 {
+		t.Fatal("OnTunnelDelete отвязал списки раньше успешного удаления")
+	}
+	if err := svc.ForgetTunnel(context.Background(), "awg10"); err != nil {
+		t.Fatalf("ForgetTunnel: %v", err)
+	}
 
 	// Routes for the enabled list should have been uninstalled via NDMS.
 	if len(poster.Payloads()) == 0 {
@@ -310,6 +317,9 @@ func TestOnTunnelDelete_OS4Kernel_SkipsRoutesAndOrphansLists(t *testing.T) {
 	err := svc.OnTunnelDelete(context.Background(), "awgm0")
 	if err != nil {
 		t.Fatalf("OnTunnelDelete: %v", err)
+	}
+	if err := svc.ForgetTunnel(context.Background(), "awgm0"); err != nil {
+		t.Fatalf("ForgetTunnel: %v", err)
 	}
 
 	// No NDMS calls for OS4 kernel tunnel.

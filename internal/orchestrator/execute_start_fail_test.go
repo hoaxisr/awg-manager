@@ -22,6 +22,7 @@ func (r *routeRecorder) OnTunnelStart(_ context.Context, id, _ string) error {
 }
 func (r *routeRecorder) OnTunnelStop(context.Context, string) error   { return nil }
 func (r *routeRecorder) OnTunnelDelete(context.Context, string) error { return nil }
+func (r *routeRecorder) ForgetTunnel(context.Context, string) error   { return nil }
 func (r *routeRecorder) Reconcile(context.Context) error              { return nil }
 
 // startFailNWG — Start отказывает для одного туннеля (снятый WireguardN),

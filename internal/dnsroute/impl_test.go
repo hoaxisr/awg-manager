@@ -519,10 +519,13 @@ func TestServiceImpl_OnTunnelDelete_CleansFailoverState(t *testing.T) {
 	if err := svc.OnTunnelDelete(context.Background(), "doomed-tunnel"); err != nil {
 		t.Fatalf("OnTunnelDelete: %v", err)
 	}
+	if err := svc.ForgetTunnel(context.Background(), "doomed-tunnel"); err != nil {
+		t.Fatalf("ForgetTunnel: %v", err)
+	}
 
 	// Failover state should be cleaned up
 	if fm.IsFailed("doomed-tunnel") {
-		t.Error("expected failover state cleared after OnTunnelDelete")
+		t.Error("expected failover state cleared after ForgetTunnel")
 	}
 }
 
@@ -563,6 +566,15 @@ func TestServiceImpl_OnTunnelDelete_PreservesListDomains(t *testing.T) {
 
 	if err := svc.OnTunnelDelete(context.Background(), "doomed"); err != nil {
 		t.Fatalf("OnTunnelDelete: %v", err)
+	}
+	// F609: до ForgetTunnel цели в хранилище целы — удаление ещё может отказать.
+	for _, l := range store.Draft().Lists {
+		if l.Name == "solo" && len(l.Routes) != 1 {
+			t.Fatalf("OnTunnelDelete тронул хранилище: solo.Routes = %+v", l.Routes)
+		}
+	}
+	if err := svc.ForgetTunnel(context.Background(), "doomed"); err != nil {
+		t.Fatalf("ForgetTunnel: %v", err)
 	}
 
 	data := store.GetCached()

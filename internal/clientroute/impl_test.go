@@ -520,6 +520,13 @@ func TestOnTunnelDelete_CleansEverything(t *testing.T) {
 	if err := svc.OnTunnelDelete(context.Background(), "tun1"); err != nil {
 		t.Fatalf("OnTunnelDelete() error = %v", err)
 	}
+	// F609: до ForgetTunnel записи и таблица на месте — удаление может отказать.
+	if len(store.FindByTunnel("tun1")) != 3 || store.tables["tun1"] != 400 {
+		t.Fatal("OnTunnelDelete тронул хранилище раньше успешного удаления")
+	}
+	if err := svc.ForgetTunnel(context.Background(), "tun1"); err != nil {
+		t.Fatalf("ForgetTunnel() error = %v", err)
+	}
 
 	// Should remove rules for 2 enabled routes only.
 	if len(op.removeCalls) != 2 {
