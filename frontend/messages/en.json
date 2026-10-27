@@ -6382,7 +6382,6 @@
 	"pingcheck_host": "Host",
 	"pingcheck_port": "Port",
 	"pingcheck_interval_sec": "Interval (sec)",
-	"pingcheck_dead_interval_sec": "Interval when dead (sec)",
 	"pingcheck_fail_threshold": "Failure threshold",
 	"pingcheck_max_fails": "Max failures",
 	"pingcheck_min_success": "Min successes",

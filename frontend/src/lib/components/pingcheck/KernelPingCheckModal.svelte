@@ -23,7 +23,6 @@
 	let method = $state('http');
 	let target = $state('8.8.8.8');
 	let interval = $state(45);
-	let deadInterval = $state(120);
 	let failThreshold = $state(3);
 
 	let wasOpen = $state(false);
@@ -53,7 +52,6 @@
 				method = tunnel.pingCheck.method || 'http';
 				target = tunnel.pingCheck.target || '8.8.8.8';
 				interval = tunnel.pingCheck.interval || 45;
-				deadInterval = tunnel.pingCheck.deadInterval || 120;
 				failThreshold = tunnel.pingCheck.failThreshold || 3;
 			}
 		} catch (e) {
@@ -72,7 +70,6 @@
 				method,
 				target,
 				interval,
-				deadInterval,
 				failThreshold
 			};
 			await api.updateTunnel(tunnelId, tunnel);
@@ -106,17 +103,12 @@
 
 			<div class="field">
 				<label class="field-label" for="kpc-target">{m.pingcheck_target()}</label>
-				<input id="kpc-target" type="text" class="field-input" bind:value={target} placeholder="8.8.8.8" />
+				<input id="kpc-target" type="text" class="field-input" bind:value={target} placeholder={method === 'http' ? 'cp.cloudflare.com' : '8.8.8.8'} />
 			</div>
 
 			<div class="field">
 				<label class="field-label" for="kpc-interval">{m.pingcheck_interval_sec()}</label>
 				<input id="kpc-interval" type="number" class="field-input" bind:value={interval} min="10" max="600" />
-			</div>
-
-			<div class="field">
-				<label class="field-label" for="kpc-dead">{m.pingcheck_dead_interval_sec()}</label>
-				<input id="kpc-dead" type="number" class="field-input" bind:value={deadInterval} min="30" max="600" />
 			</div>
 
 			<div class="field">

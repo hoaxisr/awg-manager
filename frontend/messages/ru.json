@@ -6756,7 +6756,6 @@
 	"pingcheck_host": "Хост",
 	"pingcheck_port": "Порт",
 	"pingcheck_interval_sec": "Интервал (сек)",
-	"pingcheck_dead_interval_sec": "Интервал при dead (сек)",
 	"pingcheck_fail_threshold": "Порог ошибок",
 	"pingcheck_max_fails": "Максимум сбоев",
 	"pingcheck_min_success": "Минимум успехов",
