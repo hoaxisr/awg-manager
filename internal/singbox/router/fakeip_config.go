@@ -286,47 +286,55 @@ func fakeIPConfigEmpty(cfg *RouterConfig) bool {
 //   - inserts ensureFakeIPOverlayFromState after the guard so locked bits
 //     always win on every write.
 func (s *ServiceImpl) fakeipWithConfig(ctx context.Context, event string, fn func(*RouterConfig) error) error {
-	cfg, err := s.loadFakeIPConfig()
-	if err != nil {
-		return err
-	}
-	cfg = s.ruleSetMaterializer().restoreConfig(cfg)
-	before, err := cloneRouterConfig(cfg) // deep copy via json round-trip
-	if err != nil {
-		return err
-	}
-	if err := fn(cfg); err != nil {
-		return err
-	}
-	if err := guardFakeIPLocked(before, cfg); err != nil {
-		return err
-	}
-	if err := s.captureFakeIPRealServerEdit(before, cfg); err != nil {
-		return err
-	}
-	if err := s.ensureFakeIPOverlayFromState(cfg); err != nil {
-		return err
-	}
-	if err := s.persistFakeIPConfig(ctx, cfg); err != nil {
-		return err
-	}
-	// Sync specific CIDR routes to the tun for proxy-routed dst CIDRs.
-	// Best-effort; never fails the CRUD. fakeipWithConfig runs only when
-	// provisioned (ensureFakeIPOverlayFromState above errors on a nil record).
-	//
-	// Имя берётся из записи владения, поэтому доказанно чужой интерфейс на нашем
-	// индексе (наш умер, номер занял посторонний) обязан быть пропущен: это не
-	// снос, но правка ЕГО маршрутов. «Недоступный скан ≠ чужой» — без скана и на
-	// его ошибке синхронизируем как раньше.
-	if settings, serr := s.deps.Settings.Load(); serr == nil {
-		if st, ok := opkgTunOwned(settings, stateFakeIPTun); ok {
-			ndmsName := tunNDMSName(st.Index)
-			if s.provenForeignOpkgTun(ctx, ndmsName, fakeIPTunDescription) {
-				s.appLog.Warn("fakeip-cidr", ndmsName, "на этом номере нет нашего OpkgTun — CIDR-маршруты не тронуты")
-			} else {
-				s.syncTunCIDRRoutes(ctx, ndmsName, before, cfg)
+	cfg, err := func() (*RouterConfig, error) {
+		s.fakeipCfgMu.Lock()
+		defer s.fakeipCfgMu.Unlock()
+		cfg, err := s.loadFakeIPConfig()
+		if err != nil {
+			return nil, err
+		}
+		cfg = s.ruleSetMaterializer().restoreConfig(cfg)
+		before, err := cloneRouterConfig(cfg) // deep copy via json round-trip
+		if err != nil {
+			return nil, err
+		}
+		if err := fn(cfg); err != nil {
+			return nil, err
+		}
+		if err := guardFakeIPLocked(before, cfg); err != nil {
+			return nil, err
+		}
+		if err := s.captureFakeIPRealServerEdit(before, cfg); err != nil {
+			return nil, err
+		}
+		if err := s.ensureFakeIPOverlayFromState(cfg); err != nil {
+			return nil, err
+		}
+		if err := s.persistFakeIPConfig(ctx, cfg); err != nil {
+			return nil, err
+		}
+		// Sync specific CIDR routes to the tun for proxy-routed dst CIDRs.
+		// Best-effort; never fails the CRUD. fakeipWithConfig runs only when
+		// provisioned (ensureFakeIPOverlayFromState above errors on a nil record).
+		//
+		// Имя берётся из записи владения, поэтому доказанно чужой интерфейс на нашем
+		// индексе (наш умер, номер занял посторонний) обязан быть пропущен: это не
+		// снос, но правка ЕГО маршрутов. «Недоступный скан ≠ чужой» — без скана и на
+		// его ошибке синхронизируем как раньше.
+		if settings, serr := s.deps.Settings.Load(); serr == nil {
+			if st, ok := opkgTunOwned(settings, stateFakeIPTun); ok {
+				ndmsName := tunNDMSName(st.Index)
+				if s.provenForeignOpkgTun(ctx, ndmsName, fakeIPTunDescription) {
+					s.appLog.Warn("fakeip-cidr", ndmsName, "на этом номере нет нашего OpkgTun — CIDR-маршруты не тронуты")
+				} else {
+					s.syncTunCIDRRoutes(ctx, ndmsName, before, cfg)
+				}
 			}
 		}
+		return cfg, nil
+	}()
+	if err != nil {
+		return err
 	}
 	s.emitCfgEvent(event, cfg)
 	return nil
