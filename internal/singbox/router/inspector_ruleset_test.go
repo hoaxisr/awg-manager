@@ -25,7 +25,7 @@ func TestRuleSetCache_DownloadAndHit(t *testing.T) {
 	dir := t.TempDir()
 	cache := newRuleSetCache(dir)
 
-	first, err := cache.getOrDownload(srv.URL+"/list.srs", "binary", nil, "list.srs")
+	first, err := cache.getOrDownload(srv.URL+"/list.srs", "binary", nil, "list.srs", "")
 	if err != nil {
 		t.Fatalf("first getOrDownload: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestRuleSetCache_DownloadAndHit(t *testing.T) {
 		t.Errorf("cache path %q does not end in .srs", first)
 	}
 
-	second, err := cache.getOrDownload(srv.URL+"/list.srs", "binary", nil, "list.srs")
+	second, err := cache.getOrDownload(srv.URL+"/list.srs", "binary", nil, "list.srs", "")
 	if err != nil {
 		t.Fatalf("second getOrDownload: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestRuleSetCache_TTLExpiry(t *testing.T) {
 
 	cache := newRuleSetCache(t.TempDir())
 
-	if _, err := cache.getOrDownload(srv.URL+"/x.srs", "binary", nil, "x.srs"); err != nil {
+	if _, err := cache.getOrDownload(srv.URL+"/x.srs", "binary", nil, "x.srs", ""); err != nil {
 		t.Fatalf("download: %v", err)
 	}
 	if hits != 1 {
@@ -81,7 +81,7 @@ func TestRuleSetCache_TTLExpiry(t *testing.T) {
 	}
 	cache.mu.Unlock()
 
-	if _, err := cache.getOrDownload(srv.URL+"/x.srs", "binary", nil, "x.srs"); err != nil {
+	if _, err := cache.getOrDownload(srv.URL+"/x.srs", "binary", nil, "x.srs", ""); err != nil {
 		t.Fatalf("download after expiry: %v", err)
 	}
 	if hits != 2 {
@@ -96,7 +96,7 @@ func TestRuleSetCache_NonOK(t *testing.T) {
 	}))
 	defer srv.Close()
 	cache := newRuleSetCache(t.TempDir())
-	_, err := cache.getOrDownload(srv.URL, "binary", nil, "x")
+	_, err := cache.getOrDownload(srv.URL, "binary", nil, "x", "")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

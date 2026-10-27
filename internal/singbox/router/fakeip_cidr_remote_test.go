@@ -11,7 +11,7 @@ func TestRemoteTunCIDRs(t *testing.T) {
 	origDL, origDC := ruleSetDownload, ruleSetDecompileExec
 	t.Cleanup(func() { ruleSetDownload, ruleSetDecompileExec = origDL, origDC })
 
-	ruleSetDownload = func(_ context.Context, url, _format string) (string, error) {
+	ruleSetDownload = func(_ context.Context, url, _format, _ string) (string, error) {
 		return "/tmp/fake-" + url + ".srs", nil
 	}
 	ruleSetDecompileExec = func(_ context.Context, _binary, _srsPath string) ([]byte, error) {
@@ -40,7 +40,7 @@ func TestRemoteTunCIDRs_NonLoopSafeRuleYieldsNothing(t *testing.T) {
 	origDL, origDC := ruleSetDownload, ruleSetDecompileExec
 	t.Cleanup(func() { ruleSetDownload, ruleSetDecompileExec = origDL, origDC })
 
-	ruleSetDownload = func(_ context.Context, url, _format string) (string, error) {
+	ruleSetDownload = func(_ context.Context, url, _format, _ string) (string, error) {
 		return "/tmp/fake-" + url + ".srs", nil
 	}
 	ruleSetDecompileExec = func(_ context.Context, _binary, _srsPath string) ([]byte, error) {
@@ -67,7 +67,7 @@ func TestRemoteTunCIDRs_NonMergeableSetUnderOwnIPCIDR(t *testing.T) {
 	origDL, origDC := ruleSetDownload, ruleSetDecompileExec
 	t.Cleanup(func() { ruleSetDownload, ruleSetDecompileExec = origDL, origDC })
 
-	ruleSetDownload = func(_ context.Context, url, _format string) (string, error) {
+	ruleSetDownload = func(_ context.Context, url, _format, _ string) (string, error) {
 		return "/tmp/fake-" + url + ".srs", nil
 	}
 	ruleSetDecompileExec = func(_ context.Context, _binary, _srsPath string) ([]byte, error) {
@@ -112,7 +112,7 @@ func TestRemoteTunCIDRs_DecompilesOncePerFile(t *testing.T) {
 	}
 
 	calls := 0
-	ruleSetDownload = func(_ context.Context, url, _format string) (string, error) {
+	ruleSetDownload = func(_ context.Context, url, _format, _ string) (string, error) {
 		return paths[url], nil
 	}
 	ruleSetDecompileExec = func(_ context.Context, _binary, _srsPath string) ([]byte, error) {
@@ -157,7 +157,7 @@ func TestRemoteTunCIDRs_RedecompilesWhenFileChanges(t *testing.T) {
 
 	calls := 0
 	cidr := "149.154.160.0/20"
-	ruleSetDownload = func(_ context.Context, _url, _format string) (string, error) { return p, nil }
+	ruleSetDownload = func(_ context.Context, _url, _format, _ string) (string, error) { return p, nil }
 	ruleSetDecompileExec = func(_ context.Context, _binary, _srsPath string) ([]byte, error) {
 		calls++
 		return []byte(`{"version":3,"rules":[{"ip_cidr":["` + cidr + `"]}]}`), nil

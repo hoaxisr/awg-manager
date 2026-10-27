@@ -115,6 +115,10 @@ type Rule struct {
 	// it to bind a per-class inbound pair (tproxy-qos-N / redirect-qos-N) to
 	// the class outbound; user rules may use it too.
 	Inbound []string `json:"inbound,omitempty"`
+	// AuthUser — имя пользователя, с которым соединение вошло в inbound
+	// (sing-box auth_user). Им служебный вход загрузки наборов выбирает
+	// detour (ruleset_fetch.go).
+	AuthUser []string `json:"auth_user,omitempty"`
 	// IPIsPrivate, when set, matches packets whose destination is an
 	// RFC1918/loopback/link-local/multicast/unspecified address — the
 	// negation of sing's N.IsPublicAddr. CGNAT (100.64/10) is NOT among
@@ -252,6 +256,9 @@ type RuleSet struct {
 	// MaterializedSRS is set by ListRuleSets when a compiled .srs sibling
 	// exists for an inline ruleset. Not persisted in router JSON.
 	MaterializedSRS bool `json:"materialized_srs,omitempty"`
+	// fetchVia — прокси служебного входа, через который наша копия набора
+	// качается его detour'ом (withRuleSetFetchVia). Только в памяти.
+	fetchVia string
 }
 
 type Outbound struct {
@@ -315,6 +322,13 @@ type Inbound struct {
 	// ExternalConfiguration (форк sing-box): адрес tun'а ставит и держит
 	// NDMS, sing-tun его не добавляет и не снимает при Close/SIGHUP.
 	ExternalConfiguration bool `json:"external_configuration,omitempty"`
+	// Users — пользователи mixed-inbound (служебный вход загрузки наборов).
+	Users []InboundUser `json:"users,omitempty"`
+}
+
+type InboundUser struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 type Route struct {

@@ -982,6 +982,8 @@ func parseRouterConfigBytes(data []byte) (*RouterConfig, error) {
 		cfg.Route.RuleSet = []RuleSet{}
 	}
 	cfg.Route.Rules = withoutMDNSDrop(cfg.Route.Rules) // на диске его кладёт materializeConfig
+	// И служебный вход загрузки наборов — его тоже кладёт materializeConfig (F690).
+	stripRuleSetFetch(cfg)
 	if cfg.DNS.Servers == nil {
 		cfg.DNS.Servers = []DNSServer{}
 	}

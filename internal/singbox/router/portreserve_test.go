@@ -8,7 +8,7 @@ import (
 
 func TestRouterListenPortsCoversEveryInbound(t *testing.T) {
 	ports := routerListenPorts()
-	want := map[int]bool{TPROXYPort: false, RedirectPort: false}
+	want := map[int]bool{TPROXYPort: false, RedirectPort: false, ruleSetFetchPortRouter: false, ruleSetFetchPortFakeIP: false}
 	for slot := 0; slot < MaxQoSClasses; slot++ {
 		tp, rp := QoSClassPorts(slot)
 		want[tp], want[rp] = false, false
@@ -125,7 +125,7 @@ func TestReserveListenPortsWritesMergedSpec(t *testing.T) {
 
 func TestReserveListenPortsSkipsWriteWhenCovered(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ip_local_reserved_ports")
-	covered := "51271-51272,51281-51288,51301-51308\n"
+	covered := "51271-51272,51275-51276,51281-51288,51301-51308\n"
 	if err := os.WriteFile(path, []byte(covered), 0o644); err != nil {
 		t.Fatal(err)
 	}

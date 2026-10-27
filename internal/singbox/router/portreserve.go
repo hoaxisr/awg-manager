@@ -21,7 +21,7 @@ const reservedPortsSysctl = "/proc/sys/net/ipv4/ip_local_reserved_ports"
 // IPv6 включён (ReserveV6ListenPorts), — при "ipv4_only" слой не оставляет на
 // роутере ничего, в том числе и в этом sysctl.
 func routerListenPorts() []int {
-	ports := []int{TPROXYPort, RedirectPort}
+	ports := []int{TPROXYPort, RedirectPort, ruleSetFetchPortRouter, ruleSetFetchPortFakeIP}
 	for slot := 0; slot < MaxQoSClasses; slot++ {
 		tp, rp := QoSClassPorts(slot)
 		ports = append(ports, tp, rp)

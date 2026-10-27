@@ -381,7 +381,7 @@ func (s *ServiceImpl) inspectSlotConfig() (*RouterConfig, orchestrator.Slot, err
 // to no-match and a Note is appended to the result — the rest of the
 // inspector still works.
 func (s *ServiceImpl) Inspect(ctx context.Context, input InspectInput) (InspectResult, error) {
-	cfg, _, err := s.inspectSlotConfig()
+	cfg, slot, err := s.inspectSlotConfig()
 	if err != nil {
 		return InspectResult{}, err
 	}
@@ -393,7 +393,7 @@ func (s *ServiceImpl) Inspect(ctx context.Context, input InspectInput) (InspectR
 	// как в UI и в остальных блоках трейса), карта наборов — с алиасами
 	// материализованных inline'ов. Алиасы считаются до restoreConfig.
 	m := s.ruleSetMaterializer()
-	ruleSets := m.inspectRuleSetsWithInlineAliases(cfg)
+	ruleSets := withRuleSetFetchVia(slot, m.inspectRuleSetsWithInlineAliases(cfg))
 	rules := m.restoreConfig(cfg).Route.Rules
 	binary := ""
 	if s.deps.Singbox != nil {
@@ -413,7 +413,7 @@ func (s *ServiceImpl) Inspect(ctx context.Context, input InspectInput) (InspectR
 // out to `sing-box rule-set match`. Reads the persisted config of the
 // ACTIVE routing mode (tproxy or fakeip-tun slot).
 func (s *ServiceImpl) InspectDNS(ctx context.Context, input InspectDNSInput) (InspectDNSResult, error) {
-	cfg, _, err := s.inspectSlotConfig()
+	cfg, slot, err := s.inspectSlotConfig()
 	if err != nil {
 		return InspectDNSResult{}, err
 	}
@@ -425,7 +425,7 @@ func (s *ServiceImpl) InspectDNS(ctx context.Context, input InspectDNSInput) (In
 	// Алиасы считаются ДО restoreConfig: восстановление переписывает
 	// ссылки правил через общие backing-массивы (out := *cfg), и «сырого»
 	// вида ссылок после него уже нет.
-	ruleSets := m.inspectRuleSetsWithInlineAliases(cfg)
+	ruleSets := withRuleSetFetchVia(slot, m.inspectRuleSetsWithInlineAliases(cfg))
 	dnsRules := m.restoreConfig(cfg).DNS.Rules
 	binary := ""
 	if s.deps.Singbox != nil {
@@ -471,7 +471,7 @@ func (s *ServiceImpl) InspectStream(ctx context.Context, input InspectInput) (<-
 		// Восстановленные правила + алиасы — как в Inspect/InspectDNS,
 		// чтобы теги в прогрессе/условиях совпадали с UI (без -srs).
 		m := s.ruleSetMaterializer()
-		ruleSets := m.inspectRuleSetsWithInlineAliases(cfg)
+		ruleSets := withRuleSetFetchVia(slot, m.inspectRuleSetsWithInlineAliases(cfg))
 		rules := m.restoreConfig(cfg).Route.Rules
 		if !emitEvent(InspectStreamEvent{Type: "progress", Progress: &InspectProgress{
 			Phase:        "config_loaded",

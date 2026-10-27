@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
@@ -111,11 +113,33 @@ func newRuleSetHTTPClient() *http.Client {
 	return &http.Client{Timeout: ruleSetDownloadTimeout, Transport: tr}
 }
 
+// ruleSetGet качает набор с download_detour через служебный вход sing-box
+// (via), то есть тем же outbound'ом, что и сам sing-box (F690). Вход
+// отказывает в соединении, когда sing-box не запущен или слот с входом ещё
+// не применён, — тогда напрямую, как до входа. Иной отказ прокси (407, обрыв
+// detour'а) — ошибка: молча уйти напрямую значило бы снова качать мимо detour.
+func ruleSetGet(rawURL, via string) (*http.Response, error) {
+	if via == "" {
+		return ruleSetHTTPClient.Get(rawURL)
+	}
+	tr, err := httpclient.NewTransport(httpclient.TransportConfig{ProxyURL: via})
+	if err != nil {
+		return nil, err
+	}
+	tr.DisableKeepAlives = true // транспорт на один запрос: без простаивающих соединений
+	resp, err := (&http.Client{Timeout: ruleSetDownloadTimeout, Transport: tr}).Get(rawURL)
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return ruleSetHTTPClient.Get(rawURL)
+	}
+	return resp, err
+}
+
 // getOrDownload returns the local file path for url, downloading and
 // caching it on first call (or after the TTL expires). Format only
 // influences the cache filename extension — the file content is whatever
-// the URL serves.
-func (c *ruleSetCache) getOrDownload(url, format string, emit InspectProgressFunc, tag string) (string, error) {
+// the URL serves. via — прокси служебного входа (RuleSet.fetchVia), "" —
+// напрямую.
+func (c *ruleSetCache) getOrDownload(url, format string, emit InspectProgressFunc, tag, via string) (string, error) {
 	if emit != nil {
 		emit(InspectProgress{Phase: "rule_set_cache_check", Message: fmt.Sprintf("Проверяем cache rule_set %s", tag), RuleSetTag: tag})
 	}
@@ -156,7 +180,7 @@ func (c *ruleSetCache) getOrDownload(url, format string, emit InspectProgressFun
 	if emit != nil {
 		emit(InspectProgress{Phase: "rule_set_download_start", Message: fmt.Sprintf("Скачиваем rule_set %s…", tag), RuleSetTag: tag})
 	}
-	resp, err := ruleSetHTTPClient.Get(url)
+	resp, err := ruleSetGet(url, via)
 	if err != nil {
 		if emit != nil {
 			emit(InspectProgress{Phase: "rule_set_download_error", Message: fmt.Sprintf("Ошибка скачивания rule_set %s", tag), RuleSetTag: tag})
@@ -263,7 +287,7 @@ func matchRuleSet(input string, rs RuleSet, singboxBinary string, cache *ruleSet
 		if cache == nil {
 			return false, false, nil
 		}
-		p, dlErr := cache.getOrDownload(rs.URL, format, emit, rs.Tag)
+		p, dlErr := cache.getOrDownload(rs.URL, format, emit, rs.Tag, rs.fetchVia)
 		if dlErr != nil {
 			return false, false, fmt.Errorf("download: %w", dlErr)
 		}

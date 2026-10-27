@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
@@ -23,8 +24,8 @@ const ruleSetDecompileTimeout = 5 * time.Minute
 // Exec/IO seams (mirror ruleSetMatchExec / inlineRuleSetCompileExec) so the
 // network + binary integration is replaced in tests. Production paths call the
 // default* implementations against the real cache + sing-box.
-var ruleSetDownload = func(ctx context.Context, url, format string) (string, error) {
-	return defaultRuleSetDownload(ctx, url, format)
+var ruleSetDownload = func(ctx context.Context, url, format, via string) (string, error) {
+	return defaultRuleSetDownload(ctx, url, format, via)
 }
 var ruleSetDecompileExec = func(ctx context.Context, binary, srsPath string) ([]byte, error) {
 	return defaultRuleSetDecompile(ctx, binary, srsPath)
@@ -51,11 +52,11 @@ func sharedRemoteCIDRCache() *ruleSetCache {
 // local file path. Reuses ruleSetCache.getOrDownload — the same machinery the
 // inspector uses. format influences only the cache filename extension. emit is
 // nil here (no Inspect progress channel during reconcile); tag is best-effort.
-func defaultRuleSetDownload(_ context.Context, url, format string) (string, error) {
+func defaultRuleSetDownload(_ context.Context, url, format, via string) (string, error) {
 	if format == "" {
 		format = inferFormat(url)
 	}
-	return sharedRemoteCIDRCache().getOrDownload(url, format, nil, "")
+	return sharedRemoteCIDRCache().getOrDownload(url, format, nil, "", via)
 }
 
 // defaultRuleSetDecompileToFile runs sing-box rule-set decompile into a temp JSON
@@ -225,7 +226,7 @@ func (s *ServiceImpl) remoteTunCIDRs(ctx context.Context, cfg *RouterConfig) (v4
 		}
 	}
 	for _, rs := range want {
-		path, err := ruleSetDownload(ctx, rs.URL, rs.Format)
+		path, err := ruleSetDownload(ctx, rs.URL, rs.Format, ruleSetFetchVia(orchestrator.SlotFakeIP, rs))
 		if err != nil {
 			s.appLog.Warn("fakeip-cidr-remote", rs.Tag, "download: "+err.Error())
 			continue

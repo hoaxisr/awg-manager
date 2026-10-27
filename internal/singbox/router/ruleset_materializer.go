@@ -180,6 +180,7 @@ func (m ruleSetMaterializer) materializeConfig(slot orchestrator.Slot, cfg *Rout
 		out.Route.RuleSet = append(out.Route.RuleSet, local)
 	}
 	applyHTTPClients(&out)
+	applyRuleSetFetch(slot, &out)
 	applyDNSRuleSetMatchSource(&out)
 	out.Route.Rules = append([]Rule{mdnsDropRule()}, withoutMDNSDrop(out.Route.Rules)...)
 	return &out, nil
@@ -434,6 +435,7 @@ func (m ruleSetMaterializer) restoreConfig(cfg *RouterConfig) *RouterConfig {
 	m.rewritePersistedSRSRefsToInline(cfg, &out)
 	m.rewriteSRSSuffixRuleSetRefs(&out)
 	restoreHTTPClients(&out)
+	stripRuleSetFetch(&out)
 	out.Route.Rules = withoutMDNSDrop(out.Route.Rules)
 	return &out
 }

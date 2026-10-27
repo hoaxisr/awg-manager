@@ -55,6 +55,8 @@ func LoadConfig(path string) (*RouterConfig, error) {
 		cfg.Route.RuleSet = []RuleSet{}
 	}
 	cfg.Route.Rules = withoutMDNSDrop(cfg.Route.Rules) // на диске его кладёт materializeConfig
+	// И служебный вход загрузки наборов — его тоже кладёт materializeConfig (F690).
+	stripRuleSetFetch(cfg)
 	if cfg.DNS.Servers == nil {
 		cfg.DNS.Servers = []DNSServer{}
 	}
@@ -391,13 +393,14 @@ func normalizeAddressOrRule(r Rule) Rule {
 		Port:             r.Port,
 		Protocol:         r.Protocol,
 		Inbound:          r.Inbound,
+		AuthUser:         r.AuthUser,
 		Network:          r.Network,
 	}
 
 	out := r
 	out.RuleSet, out.Domain, out.DomainSuffix, out.IPCIDR = nil, nil, nil, nil
 	out.SourceIPCIDR, out.Port, out.Protocol, out.Inbound = nil, nil, "", nil
-	out.SourceMACAddress = nil
+	out.SourceMACAddress, out.AuthUser = nil, nil
 	out.Network, out.IPIsPrivate = "", nil
 	out.Type, out.Mode = "logical", "or"
 	out.Rules = addressOr.Rules
@@ -1116,7 +1119,7 @@ func (r Rule) hasAnyMatcher() bool {
 	return len(r.Domain) > 0 || len(r.DomainSuffix) > 0 || len(r.IPCIDR) > 0 ||
 		len(r.SourceIPCIDR) > 0 || len(r.SourceMACAddress) > 0 ||
 		len(r.Port) > 0 || len(r.RuleSet) > 0 || r.Protocol != "" || len(r.Rules) > 0 ||
-		(r.IPIsPrivate != nil && *r.IPIsPrivate) || len(r.Inbound) > 0 || r.Network != ""
+		(r.IPIsPrivate != nil && *r.IPIsPrivate) || len(r.Inbound) > 0 || len(r.AuthUser) > 0 || r.Network != ""
 }
 
 // isSystemUDPTimeoutRule reports whether r is the system route-options rule that
