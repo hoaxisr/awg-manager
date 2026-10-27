@@ -54,6 +54,7 @@ func TestMigratePeerAllowIPs_StripsDefaultRoute(t *testing.T) {
 		{PublicKey: "PEER_B", TunnelIP: "10.0.0.3/32"},
 	}, false)
 	s := &Service{settings: store, transport: poster, queries: routerWithPeers(t, "PEER_A", "PEER_B")}
+	s.commands = testCommands(s.transport, s.queries)
 
 	s.MigratePeerAllowIPs(context.Background())
 
@@ -77,6 +78,7 @@ func TestMigratePeerAllowIPs_SkipsWhenMigrated(t *testing.T) {
 		{PublicKey: "PEER_A", TunnelIP: "10.0.0.2/32"},
 	}, true)
 	s := &Service{settings: store, transport: poster, queries: routerWithPeers(t, "PEER_A", "PEER_B")}
+	s.commands = testCommands(s.transport, s.queries)
 
 	s.MigratePeerAllowIPs(context.Background())
 
@@ -91,6 +93,7 @@ func TestMigratePeerAllowIPs_RetriesWhenAllFail(t *testing.T) {
 	}, false)
 	poster.err = errors.New("ndms unreachable")
 	s := &Service{settings: store, transport: poster, queries: routerWithPeers(t, "PEER_A", "PEER_B")}
+	s.commands = testCommands(s.transport, s.queries)
 
 	s.MigratePeerAllowIPs(context.Background())
 
@@ -108,6 +111,7 @@ func TestMigratePeerAllowIPs_AbsentPeerSkipped(t *testing.T) {
 		{PublicKey: "GONE", TunnelIP: "10.0.0.3/32"},
 	}, false)
 	s := &Service{settings: store, transport: poster, queries: routerWithPeers(t, "PEER_A")}
+	s.commands = testCommands(s.transport, s.queries)
 	s.MigratePeerAllowIPs(context.Background())
 	if len(poster.posts) != 1 {
 		t.Fatalf("posts = %v", poster.posts)
@@ -127,6 +131,7 @@ func TestMigratePeerAllowIPs_PeerReadFailure_NoPostsRetry(t *testing.T) {
 	fg := fakeWithPeers("PEER_A")
 	fg.SetError("/show/rc/interface/", errors.New("rci down"))
 	s := &Service{settings: store, transport: poster, queries: query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})}
+	s.commands = testCommands(s.transport, s.queries)
 	s.MigratePeerAllowIPs(context.Background())
 	if len(poster.posts) != 0 || store.IsManagedPeerAllowIPsMigrated() {
 		t.Fatalf("posts=%v migrated=%v", poster.posts, store.IsManagedPeerAllowIPsMigrated())
@@ -153,6 +158,7 @@ func TestMigratePeerAllowIPs_OneServerReadFails_NoFlag(t *testing.T) {
 	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"},"Wireguard1":{"id":"Wireguard1","type":"Wireguard"}}`)
 	fg.SetError("/show/rc/interface/", errors.New("rci down"))
 	s := &Service{settings: store, transport: poster, queries: query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})}
+	s.commands = testCommands(s.transport, s.queries)
 	s.MigratePeerAllowIPs(context.Background())
 	if len(poster.posts) != 0 {
 		t.Fatalf("posts = %v", poster.posts)
@@ -168,6 +174,7 @@ func TestMigratePeerAllowIPs_InterfaceGone_Processed(t *testing.T) {
 	store, poster := seedAllowIPsStore(t, []storage.ManagedPeer{{PublicKey: "PEER_A", TunnelIP: "10.0.0.2/32"}}, false)
 	addSecondServer(t, store) // Wireguard1 на роутере нет
 	s := &Service{settings: store, transport: poster, queries: routerWithPeers(t, "PEER_A")}
+	s.commands = testCommands(s.transport, s.queries)
 	s.MigratePeerAllowIPs(context.Background())
 	if len(poster.posts) != 1 {
 		t.Fatalf("posts = %v", poster.posts)
@@ -183,6 +190,7 @@ func TestMigratePeerAllowIPs_InterfaceListFails_NoFlag(t *testing.T) {
 	fg := fakeWithPeers("PEER_A")
 	fg.SetError("/show/interface/", errors.New("rci down"))
 	s := &Service{settings: store, transport: poster, queries: query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})}
+	s.commands = testCommands(s.transport, s.queries)
 	s.MigratePeerAllowIPs(context.Background())
 	if len(poster.posts) != 0 || store.IsManagedPeerAllowIPsMigrated() {
 		t.Fatalf("posts=%v migrated=%v", poster.posts, store.IsManagedPeerAllowIPsMigrated())

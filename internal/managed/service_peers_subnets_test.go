@@ -724,6 +724,7 @@ func TestRestore_MergeClearsUnappliedRemoteSubnets(t *testing.T) {
 	ifaces := query.NewInterfaceStoreWithTTL(getter, query.NopLogger(), 0, 0)
 	queries := &query.Queries{Interfaces: ifaces, WGServers: query.NewWGServerStore(getter, query.NopLogger(), ifaces)}
 	s := &Service{settings: store, transport: &fakePoster{onPost: getter.applyPost}, queries: queries}
+	s.commands = testCommands(s.transport, s.queries)
 	in := []storage.ManagedPeer{{PublicKey: validPeerKey(59), TunnelIP: "10.64.0.2/32", Enabled: true, RemoteSubnets: []string{"192.168.91.0/24"}}}
 	out := s.Restore(context.Background(), []ManagedServerExport{{InterfaceName: "Wireguard0", Address: "10.64.0.1", Mask: "255.255.255.0", ListenPort: 51854, PrivateKey: priv, Policy: "none", Peers: in}}, RestoreOptions{})
 	if len(out) != 1 || out[0].Action != "merged" || out[0].AddedPeers != 1 {

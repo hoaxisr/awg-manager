@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -210,6 +211,7 @@ func TestMigratePeerAllowIPs_NoSuchNetTolerated(t *testing.T) {
 			return nestedError("Wireguard0", tc.msg)
 		}}
 		s := &Service{settings: store, transport: poster, queries: routerWithPeers(t, "PEER_A")}
+		s.commands = testCommands(s.transport, s.queries)
 		s.MigratePeerAllowIPs(context.Background())
 		if got := store.IsManagedPeerAllowIPsMigrated(); got != tc.wantMigrated {
 			t.Errorf("%q: флаг миграции %v, want %v", tc.msg, got, tc.wantMigrated)
@@ -307,5 +309,23 @@ func TestUpdatePeer_CommentFailureIsFailureAndNotStored(t *testing.T) {
 	ips, _ := peerPayload(poster.posts[len(poster.posts)-1], "Wireguard1")["allow-ips"].([]map[string]interface{})
 	if len(ips) != 1 || ips[0]["no"] != nil || ips[0]["address"] != "10.66.66.2" {
 		t.Fatalf("старый /32 не восстановлен последним шагом: %v", poster.posts)
+	}
+}
+
+// Команды пира и ASC без подтверждённого интерфейса отказывают без POST
+// (защита rciPost сохранена при переезде на общие команды, F527).
+func TestPeerCommands_UnconfirmedInterfaceRefused(t *testing.T) {
+	poster := &fakePoster{}
+	s := &Service{transport: poster}
+	s.commands = testCommands(poster, query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger()}))
+	var zero query.Confirmed
+	if err := s.rciAddPeer(context.Background(), zero, "k", "", "", "10.0.0.2", true); err == nil {
+		t.Fatal("пустое имя интерфейса обязано дать отказ")
+	}
+	if err := s.rciClearASCParams(context.Background(), zero); err == nil {
+		t.Fatal("пустое имя интерфейса обязано дать отказ")
+	}
+	if len(poster.posts) != 0 {
+		t.Fatalf("POST ушёл без подтверждённого интерфейса: %v", poster.posts)
 	}
 }

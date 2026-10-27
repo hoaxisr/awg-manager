@@ -270,31 +270,18 @@ func TestSetASCParams_AllowsZeroDisabledState_UsesClearPath(t *testing.T) {
 		t.Fatalf("SetASCParams: %v", err)
 	}
 
+	// Сброс — строковой формой (F527): структурную {"asc":{"no":true}}
+	// 5.01.C.3 не принимал.
 	poster := svc.transport.(*recordingPoster)
+	want := "interface " + server.InterfaceName + " no wireguard asc"
 	foundClear := false
 	for _, post := range poster.posts {
-		iface, ok := post["interface"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		row, ok := iface[server.InterfaceName].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		wg, ok := row["wireguard"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		asc, ok := wg["asc"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if no, ok := asc["no"].(bool); ok && no {
+		if post["parse"] == want {
 			foundClear = true
 		}
 	}
 	if !foundClear {
-		t.Fatalf("expected clear ASC payload with no=true")
+		t.Fatalf("expected ASC reset via parse %q", want)
 	}
 }
 

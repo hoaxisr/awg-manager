@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"reflect"
 	"slices"
 	"sort"
@@ -162,7 +163,27 @@ func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error 
 	return json.Unmarshal(b, out)
 }
 
+// ascCleared — состояние ASC после сброса строковой формой.
+var ascCleared = map[string]string{
+	"jc": "0", "jmin": "0", "jmax": "0", "s1": "0", "s2": "0",
+	"h1": "", "h2": "", "h3": "", "h4": "",
+	"s3": "0", "s4": "0",
+}
+
 func (g *stateAwareGetter) applyPost(payload map[string]interface{}) {
+	// Сброс ASC — только строковой формой, как у ResetASCParams (F527):
+	// структурную {"asc":{"no":true}} 5.01.C.3 не принимал.
+	if line, ok := payload["parse"].(string); ok {
+		if name, ok := strings.CutSuffix(strings.TrimPrefix(line, "interface "), " no wireguard asc"); ok && name != line {
+			g.mu.Lock()
+			if g.asc == nil {
+				g.asc = map[string]map[string]string{}
+			}
+			g.asc[name] = maps.Clone(ascCleared)
+			g.mu.Unlock()
+		}
+		return
+	}
 	intf, ok := payload["interface"].(map[string]interface{})
 	if !ok {
 		return
@@ -211,17 +232,6 @@ func (g *stateAwareGetter) applyPost(payload map[string]interface{}) {
 		g.mu.Lock()
 		if g.asc == nil {
 			g.asc = map[string]map[string]string{}
-		}
-		if clear, ok := ascRaw.(map[string]interface{}); ok {
-			if no, ok := clear["no"].(bool); ok && no {
-				g.asc[ifaceName] = map[string]string{
-					"jc": "0", "jmin": "0", "jmax": "0", "s1": "0", "s2": "0",
-					"h1": "", "h2": "", "h3": "", "h4": "",
-					"s3": "0", "s4": "0",
-				}
-				g.mu.Unlock()
-				continue
-			}
 		}
 		ascMap, ok := ascRaw.(map[string]interface{})
 		if !ok {

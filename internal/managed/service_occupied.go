@@ -393,7 +393,7 @@ func (s *Service) peerRouter() (peersubnet.Router, error) {
 // peerPresent — есть ли пир на интерфейсе по свежему rc. Перед allow-ips в
 // откатах: на отсутствующий ключ NDMS их принимает, создавая пира.
 func (s *Service) peerPresent(ctx context.Context, iface query.Confirmed, pubkey string) (bool, error) {
-	wg, err := s.peerCommands()
+	wg, err := s.peerCommands(iface)
 	if err != nil {
 		return false, err
 	}
