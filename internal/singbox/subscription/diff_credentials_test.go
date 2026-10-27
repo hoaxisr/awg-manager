@@ -97,6 +97,21 @@ func TestApplyDiff_DistinctCipherOnSharedPassword(t *testing.T) {
 	}
 	for name, links := range map[string][]string{
 		"shadowsocks method": {ss("aes-128-gcm"), ss("chacha20-ietf-poly1305"), ss("aes-128-gcm")},
+		"shadowsocks obfs host": {
+			"ss://aes-256-gcm:shared@h.example:8388?plugin=obfs-local%3Bobfs%3Dtls%3Bobfs-host%3Da.example#A",
+			"ss://aes-256-gcm:shared@h.example:8388?plugin=obfs-local%3Bobfs%3Dtls%3Bobfs-host%3Db.example#B",
+			"ss://aes-256-gcm:shared@h.example:8388?plugin=obfs-local%3Bobfs%3Dtls%3Bobfs-host%3Da.example#A",
+		},
+		"shadowsocks plugin": {
+			"ss://aes-256-gcm:shared@h.example:8388?plugin=obfs-local%3Bmode%3Dwebsocket#A",
+			"ss://aes-256-gcm:shared@h.example:8388?plugin=v2ray-plugin%3Bmode%3Dwebsocket#B",
+			"ss://aes-256-gcm:shared@h.example:8388?plugin=obfs-local%3Bmode%3Dwebsocket#A",
+		},
+		"hysteria2 obfs type": {
+			"hysteria2://shared@h.example:443?sni=h&obfs=salamander&obfs-password=one#A",
+			"hysteria2://shared@h.example:443?sni=h&obfs=gecko&obfs-password=one#B",
+			"hysteria2://shared@h.example:443?sni=h&obfs=salamander&obfs-password=one#A",
+		},
 		"hysteria2 obfs": {
 			"hysteria2://shared@h.example:443?sni=h&obfs=salamander&obfs-password=one#A",
 			"hysteria2://shared@h.example:443?sni=h&obfs=salamander&obfs-password=two#B",

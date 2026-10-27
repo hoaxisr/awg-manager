@@ -1981,6 +1981,25 @@ func TestAddManualMember_OtherAccountOnSameEndpoint(t *testing.T) {
 	}
 }
 
+// Ручные варианты одного сервера с разным шифром получают разные теги: тег
+// считается по wire, а не по cred, иначе третий вариант совпал бы тегом со
+// вторым и был бы отвергнут как коллизия (F737).
+func TestAddManualMember_CipherVariantsGetDistinctTags(t *testing.T) {
+	svc, _ := newTestService(t)
+	ss := func(method string) string {
+		return "ss://" + method + ":shared@h.example:8388#" + method
+	}
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "manual", Inline: ss("aes-128-gcm"), Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"aes-256-gcm", "chacha20-ietf-poly1305"} {
+		if _, err := svc.AddManualMember(context.Background(), sub.ID, ss(method)); err != nil {
+			t.Fatalf("%s must add, got %v", method, err)
+		}
+	}
+}
+
 // Члена без тела в слоте (сброшен flush'ем) повтор ловится по метаданным.
 func TestAddManualMember_RepeatOfMemberWithoutBody(t *testing.T) {
 	svc, mut := newTestService(t)
