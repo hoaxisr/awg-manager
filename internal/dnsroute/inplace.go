@@ -2,6 +2,8 @@ package dnsroute
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
@@ -116,4 +118,67 @@ func planMoves(ordered []ndms.DNSRouteRule, group string, tgts []rciRouteOp) ([]
 		}
 	}
 	return moves, disables, nil
+}
+
+// packGroupRE — имя пакета списка: слаг и номер _pN (buildGroupName).
+var packGroupRE = regexp.MustCompile(`^(.+)_p([0-9]+)$`)
+
+func packOf(group string) (slug string, n int, ok bool) {
+	m := packGroupRE.FindStringSubmatch(group)
+	if m == nil {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(m[2])
+	return m[1], n, err == nil
+}
+
+// planPackMoves ставит строки нового пакета списка рядом с его же пакетами:
+// сразу за последней строкой пакета с меньшим номером, а без такого — перед
+// первым пакетом с большим. Новая строка NDMS уходит в хвост, а первая
+// совпавшая группа выигрывает: пакет, выросший у списка при обновлении
+// подписки, иначе проигрывал бы пересечения всем правилам ниже своих (#1107).
+// Пакетов-братьев нет (новый список) — место в хвосте, перестановок нет.
+//
+// ordered — весь список в порядке роутера. Строки пакета обязаны стоять ниже
+// якоря (запись новой группы — в хвост): тогда перенос строки i на anchor+i не
+// сдвигает следующие строки пакета, и позиции берутся из ordered как есть.
+// Строка выше якоря (порядок правили руками) — не трогаем.
+func planPackMoves(ordered []ndms.DNSRouteRule, group string) []command.DNSRouteMove {
+	slug, n, ok := packOf(group)
+	if !ok {
+		return nil
+	}
+	var pos []int
+	var rest []ndms.DNSRouteRule
+	for i, r := range ordered {
+		if r.Group == group {
+			pos = append(pos, i)
+		} else {
+			rest = append(rest, r)
+		}
+	}
+	anchor := -1
+	for i, r := range rest {
+		if s, k, ok := packOf(r.Group); ok && s == slug && k < n {
+			anchor = i + 1
+		}
+	}
+	if anchor < 0 {
+		for i, r := range rest {
+			if s, k, ok := packOf(r.Group); ok && s == slug && k > n {
+				anchor = i
+				break
+			}
+		}
+	}
+	if anchor < 0 || len(pos) == 0 || pos[0] < anchor {
+		return nil
+	}
+	var moves []command.DNSRouteMove
+	for i, p := range pos {
+		if want := anchor + i; p != want {
+			moves = append(moves, command.DNSRouteMove{Index: ordered[p].Index, Position: want})
+		}
+	}
+	return moves
 }

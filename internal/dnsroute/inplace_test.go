@@ -1,6 +1,7 @@
 package dnsroute
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -165,4 +166,33 @@ func TestPlanMoves(t *testing.T) {
 			t.Errorf("disables = %+v, want %+v", disables, want)
 		}
 	})
+}
+
+func TestPlanPackMoves(t *testing.T) {
+	rr := func(spec ...string) []ndms.DNSRouteRule {
+		var out []ndms.DNSRouteRule
+		for i, g := range spec {
+			out = append(out, ndms.DNSRouteRule{Group: g, Interface: "Wireguard1", Index: fmt.Sprintf("i%d", i)})
+		}
+		return out
+	}
+	cases := []struct {
+		name    string
+		ordered []ndms.DNSRouteRule
+		group   string
+		want    string
+	}{
+		{"за младшим пакетом", rr("a_p1", "b_p1", "a_p2"), "a_p2", "[{i2 1}]"},
+		{"перед старшим пакетом", rr("a_p2", "b_p1", "a_p1"), "a_p1", "[{i2 0}]"},
+		{"уже на месте", rr("a_p1", "a_p2", "b_p1"), "a_p2", "[]"},
+		{"нет братьев — хвост", rr("a_p1", "b_p1"), "b_p1", "[]"},
+		{"строка выше якоря — не трогаем", rr("a_p2", "a_p1", "b_p1"), "a_p2", "[]"},
+		{"не пакет", rr("a_p1", "manual"), "manual", "[]"},
+	}
+	for _, c := range cases {
+		got := fmt.Sprint(planPackMoves(c.ordered, c.group))
+		if got != c.want {
+			t.Errorf("%s: %s, ожидалось %s", c.name, got, c.want)
+		}
+	}
 }

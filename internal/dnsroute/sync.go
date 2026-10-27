@@ -643,7 +643,8 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff, confirmed map
 	// на месте (rewriteInPlace): снос+запись через ReplaceRoutes увёл бы его в
 	// хвост, а строка в хвосте проигрывает пересечения доменов всем группам
 	// выше (#1023). ReplaceRoutes остаётся для новой группы (ей и так место в
-	// хвосте) и для отката. В обоих путях снос и запись едут одним POST-ом,
+	// хвосте, а пакет существующего списка затем переставляется к своим —
+	// placeNewPack, #1107) и для отката. В обоих путях снос и запись едут одним POST-ом,
 	// иначе между POST-ами группа осталась бы без правил (на больших списках —
 	// сотни миллисекунд без DNS-маршрутизации).
 	//
@@ -707,6 +708,9 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff, confirmed map
 		}
 		s.logInfo("applyDiff", rb.group,
 			fmt.Sprintf("Phase4: route block rewritten in priority order: %v", ifaces))
+		if len(rb.deletes) == 0 {
+			s.placeNewPack(ctx, rb.group)
+		}
 	}
 
 	// Phase 5: правки disable по index — строки, чьё содержимое совпало с
@@ -787,6 +791,26 @@ func (s *ServiceImpl) rewriteInPlace(ctx context.Context, rb rciRouteRebuild, co
 		return nil, err
 	}
 	return disables, nil
+}
+
+// placeNewPack переставляет строки только что записанной группы к пакетам её
+// списка (planPackMoves, #1107). Best-effort: отказ (OS4 без `rule`, сбой
+// RCI) оставляет пакет в хвосте — как было до правки, reconcile не падает.
+func (s *ServiceImpl) placeNewPack(ctx context.Context, group string) {
+	ordered, err := s.queries.DNSProxy.FetchOrdered(ctx)
+	if err != nil {
+		s.appLog.Warn("reconcile-pack-order", group, "порядок строк не прочитан, пакет остался в хвосте: "+err.Error())
+		return
+	}
+	moves := planPackMoves(ordered, group)
+	if len(moves) == 0 {
+		return
+	}
+	if err := s.commands.DNSRoutes.MoveRoutes(ctx, moves); err != nil {
+		s.appLog.Warn("reconcile-pack-order", group, "пакет не переставлен к своему списку, остался в хвосте: "+err.Error())
+		return
+	}
+	s.logInfo("applyDiff", group, fmt.Sprintf("Phase4: new pack moved next to its list (%d rows)", len(moves)))
 }
 
 // --- Helper functions ---
