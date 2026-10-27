@@ -11,8 +11,6 @@
 	import { hydrarouteStatus } from "$lib/stores/hydraroute";
 	import { zapretStatusIfExpert } from "$lib/stores/zapret";
 	import { runZapretControl } from '$lib/components/zapret';
-	import { mcpKeys } from "$lib/stores/mcpKeys";
-	import type { PollingState } from "$lib/stores/polling";
 	import { PageContainer, PageHeader, LoadingSpinner } from "$lib/components/layout";
 	import { Toggle, Modal, Button, ConfirmModal, SegmentedControl } from "$lib/components/ui";
 	import {
@@ -31,7 +29,7 @@
 		ExperimentalSettingsCard,
 		PukhososPatrol,
 		SettingsSectionLabel,
-		McpCard,
+		McpSection,
 		ObfuscatorRelayCard,
 	} from "$lib/components/settings";
 	import HappKeysModal from "$lib/components/subscriptions/HappKeysModal.svelte";
@@ -47,8 +45,6 @@
 		SystemInfo,
 		Settings,
 		UpdateInfo,
-		McpKey,
-		McpKeyCreated,
 		ZapretControlAction,
 	} from "$lib/types";
 	import { proxyInstallStatus, type ProxySubsystem } from "$lib/stores/proxyInstall";
@@ -496,22 +492,6 @@ $effect(() => {
 		}
 	}
 
-	// Ключи запрашиваются только пока MCP включён; SSE «mcpKeys» обновляет
-	// список через стор, поэтому после create/revoke руками ничего не грузим.
-	let mcpKeysState = $state<PollingState<McpKey[]> | null>(null);
-	$effect(() => {
-		if (!settings?.mcpEnabled) {
-			mcpKeysState = null;
-			return;
-		}
-		return mcpKeys.subscribe((s) => {
-			if (s.status === "error" && mcpKeysState?.status !== "error") {
-				notifications.error(s.error ?? m.settings_page_mcp_keys_load_failed());
-			}
-			mcpKeysState = s;
-		});
-	});
-
 	async function toggleMcp(enabled: boolean) {
 		if (!settings) return;
 		saving = true;
@@ -537,22 +517,6 @@ $effect(() => {
 			notifications.error(e instanceof Error ? e.message : m.settings_page_save_error());
 		} finally {
 			saving = false;
-		}
-	}
-
-	async function createMcpKey(name: string, readOnly: boolean): Promise<McpKeyCreated> {
-		const created = await api.createMcpKey(name, readOnly);
-		await mcpKeys.refetch();
-		return created;
-	}
-
-	async function revokeMcpKey(id: string) {
-		try {
-			await api.revokeMcpKey(id);
-			notifications.success(m.settings_page_key_revoked());
-			await mcpKeys.refetch();
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : m.settings_page_key_revoke_failed());
 		}
 	}
 
@@ -1206,15 +1170,11 @@ $effect(() => {
 					</div>
 				</div>
 
-				<McpCard
+				<McpSection
 					enabled={settings.mcpEnabled ?? false}
 					{saving}
-					keys={mcpKeysState?.data ?? []}
-					keysLoading={mcpKeysState?.status === "loading"}
 					{origin}
 					ontoggle={toggleMcp}
-					oncreate={createMcpKey}
-					onrevoke={revokeMcpKey}
 				/>
 
 				<ObfuscatorRelayCard
