@@ -159,6 +159,10 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 		// перегенерирует слот 30 до ближайшего reload (issue #465).
 		s.notifyRoutingSlotsChanged()
 	}
+	// Отпустить tun до удержания (5): включение fakeip-tun забирает
+	// удержанную запись через releaseForeignOpkgTun → delete, а sing-box с
+	// невыгруженным tun-in держал бы устройство (F447, стенд 28.10).
+	s.releaseTunNow("policy-tun-disable", iface)
 
 	// Uninstall БЕЗУСЛОВНО: он идемпотентен и снимает остатки dscp-правил даже
 	// тогда, когда классы QoS только что удалили из настроек (тогда enable их

@@ -713,3 +713,18 @@ func (o *orderLog) requireTeardownAfterUninstall(t *testing.T) {
 		t.Errorf("снос набора ДО конца Uninstall: ipset ответит «set is in use» (%v)", o.seen)
 	}
 }
+
+// Policy-tun отпускает tun ДО удержания интерфейса: включение fakeip-tun
+// забирает удержанную запись через delete, а невыгруженный tun-in держал бы
+// устройство (F447, стенд 28.10).
+func TestPolicyTunDisable_ReleasesTunBeforeHold(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	stubOrphanNetdev(t, true)
+	provisionPolicyTunForDisable(t, h)
+	stubReleaseTunApply(t, h.log)
+
+	if err := h.svc.disable(context.Background()); err != nil {
+		t.Fatalf("Disable(policy-tun): %v", err)
+	}
+	mustOrderCalls(t, h.log, "ApplyNow", "ClearAddress:OpkgTun0")
+}

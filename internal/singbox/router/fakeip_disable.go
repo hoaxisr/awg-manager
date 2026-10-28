@@ -204,6 +204,7 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		// перегенерирует слот 30 до ближайшего reload (issue #465).
 		s.notifyRoutingSlotsChanged()
 	}
+	s.releaseTunNow("fakeip-disable", iface)
 
 	// (4b) Tear the iface down (delete; on delete failure — clear the
 	// configured addresses, then down, see teardownOpkgTun) — NDMS name. With the pool
@@ -363,6 +364,22 @@ func (s *ServiceImpl) holdOpkgTun(ctx context.Context, ndmsName, scope string) e
 	}
 	return err
 }
+
+// releaseTunNow применяет конфиг без tun-инбаунда сразу, до того как NDMS
+// снесёт или переконфигурирует OpkgTun. Под HoldReloads (SwitchRoutingMode)
+// reload иначе копится до конца перехода, и sing-box держит tun открытым,
+// пока NDMS удаляет запись: C 0xcffd003b в ndm и «engine wait: connection
+// reset by peer» у движка — на каждом переходе с OpkgTun (F447/F638, стенд
+// 28.10). ReloadNow работает под hold и снимает накопленное, лишнего reload
+// на выходе нет. Провал — Warn: дальше идём, как шли раньше.
+func (s *ServiceImpl) releaseTunNow(scope, iface string) {
+	if err := releaseTunApply(s); err != nil {
+		s.appLog.Warn(scope, iface, "apply config without tun: "+err.Error())
+	}
+}
+
+// releaseTunApply — шов над немедленным применением для тестов порядка.
+var releaseTunApply = (*ServiceImpl).orchestratorApplyNow
 
 // teardownOpkgTun best-effort сносит NDMS OpkgTun: delete; при провале delete
 // снимает сконфигурированные v4/v6 адреса и гасит интерфейс. Единственное место, где живёт

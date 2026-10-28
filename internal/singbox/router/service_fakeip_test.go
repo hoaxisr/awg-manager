@@ -1944,3 +1944,29 @@ func TestUpdateSettings_CacheFileLocationReachesOverlayAndBase(t *testing.T) {
 		t.Errorf("overlay cache_file.path не переехал в RAM: %s", data)
 	}
 }
+
+// stubReleaseTunApply пишет немедленное применение конфига в журнал вызовов.
+func stubReleaseTunApply(t *testing.T, log *callLog) {
+	t.Helper()
+	old := releaseTunApply
+	releaseTunApply = func(*ServiceImpl) error { log.add("ApplyNow"); return nil }
+	t.Cleanup(func() { releaseTunApply = old })
+}
+
+// Конфиг без tun-инбаунда применяется ДО сноса OpkgTun: под HoldReloads
+// перехода reload иначе копится до выхода, и NDMS удаляет устройство, которое
+// держит sing-box — C 0xcffd003b и «connection reset by peer» (F447/F638).
+func TestDisableFakeIPTun_ReleasesTunBeforeDelete(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	captureDrain(t)
+	provisionForDisable(t, h)
+	stubReleaseTunApply(t, h.log)
+
+	if err := h.svc.disable(context.Background()); err != nil {
+		t.Fatalf("Disable(fakeip-tun): %v", err)
+	}
+	ia, id := h.log.idxOf("ApplyNow"), h.log.idxOf("Delete:OpkgTun0")
+	if ia < 0 || id < 0 || ia > id {
+		t.Fatalf("ApplyNow (#%d) обязан идти до Delete:OpkgTun0 (#%d): %v", ia, id, h.log.calls)
+	}
+}
