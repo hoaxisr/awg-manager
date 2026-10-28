@@ -39,6 +39,16 @@
 	// плоская форма WireGuard, обфускатор в неё не вписывается.
 	let obf = $state<TunnelObfuscator | null>(null);
 	let obfError = $state('');
+	let obfKeyError = $state('');
+	// Ошибка поля снимается его правкой, а не следующим «Сохранить» (F119 6.9).
+	$effect(() => {
+		void obf?.target;
+		obfError = '';
+	});
+	$effect(() => {
+		void obf?.key;
+		obfKeyError = '';
+	});
 
 	type TunnelDetailTab = 'basic' | 'obfuscation' | 'obfuscator' | 'routing' | 'awgConfig';
 	let activeTab = $state<TunnelDetailTab>('basic');
@@ -274,8 +284,12 @@
 	// Сервер обфускатора не проходит через zod-схему формы — проверяем руками.
 	function obfTargetInvalid(): boolean {
 		obfError = obf && !/^\[?[^\s\]]+\]?:\d{1,5}$/.test(obf.target.trim()) ? m.tunnel_detail_need_host_port() : '';
+		// Пустой ключ бэкенд молча пропускает (оставляет прежний), а «Сохранено»
+		// выглядело бы как успех правки (F119 6.5).
+		obfKeyError = obf && !obf.key.trim() ? m.tunnel_detail_need_key() : '';
 		if (obfError) notifications.error(m.tunnel_detail_obf_server_error({ error: obfError }));
-		return !!obfError;
+		else if (obfKeyError) notifications.error(obfKeyError);
+		return !!obfError || !!obfKeyError;
 	}
 
 	async function handleSaveOnly() {
@@ -513,7 +527,7 @@
 					<section class="card tunnel-section">
 						<SettingsSectionLabel label={m.tunnel_detail_section_obfuscator()} icon={Shuffle} tone="indigo" header />
 						<div class="obf-fields">
-							<ObfuscatorParams bind:obfuscator={obf} error={obfError} />
+							<ObfuscatorParams bind:obfuscator={obf} error={obfError} keyError={obfKeyError} />
 						</div>
 					</section>
 				</div>

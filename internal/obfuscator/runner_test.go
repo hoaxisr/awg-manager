@@ -269,3 +269,22 @@ func TestRunner_AliveRequiresOurBinary(t *testing.T) {
 		t.Fatal("foreign pid must not count as alive")
 	}
 }
+
+// Бинаря для нового конфига нет — старый релей не гасится: иначе туннель
+// остался бы без релея вовсе (F119 1.8).
+func TestRunner_StartKeepsOldRelayWhenBinaryMissing(t *testing.T) {
+	r, _ := newTestRunner(t)
+	o := obf()
+	if err := r.Start(context.Background(), "awg20", o, "203.0.113.5"); err != nil {
+		t.Fatal(err)
+	}
+	pid := r.pid("awg20")
+	r.deps.BinaryFor = func(context.Context, string) (string, error) { return "", os.ErrNotExist }
+	o.Key = "changed"
+	if err := r.Start(context.Background(), "awg20", o, "203.0.113.5"); err == nil {
+		t.Fatal("Start без бинаря обязан вернуть ошибку")
+	}
+	if !r.Alive("awg20") || r.pid("awg20") != pid {
+		t.Fatal("старый релей погашен, хотя новый запустить нечем")
+	}
+}

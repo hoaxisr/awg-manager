@@ -105,6 +105,18 @@ func TestNormalizeNoneValues(t *testing.T) {
 	}
 }
 
+// masking = none у Phobos — режим «без маскировки», а не «не задано»:
+// строка переживает нормализацию и разбирается в NONE (F119 5.1).
+func TestNormalizeNoneValues_KeepsMaskingNone(t *testing.T) {
+	for _, line := range []string{"masking = none", "masking = NONE"} {
+		conf := NormalizeNoneValues("[instance]\ntarget = h:1\nkey = k\n" + line + "\n")
+		o, _, present, err := ParseInstance(conf)
+		if err != nil || !present || o.Masking != "NONE" {
+			t.Fatalf("%q: masking = %q (err %v, present %v)", line, o.Masking, err, present)
+		}
+	}
+}
+
 func TestDecodePhobosLink(t *testing.T) {
 	payload := base64.RawURLEncoding.EncodeToString([]byte(phobosConf))
 	conf, name, err := DecodePhobosLink("phobos://" + payload + "#Mobil%20phone")

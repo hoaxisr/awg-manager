@@ -948,6 +948,7 @@
 	"tunnel_detail_load_error": "Ошибка загрузки: {message}",
 	"tunnel_detail_download_failed": "Не удалось скачать конфиг",
 	"tunnel_detail_need_host_port": "Нужен host:port",
+	"tunnel_detail_need_key": "Нужен ключ",
 	"tunnel_detail_obf_server_error": "Сервер обфускатора: {error}",
 	"tunnel_detail_saved": "Туннель сохранён",
 	"tunnel_detail_saved_restarted": "Туннель сохранён и перезапущен",

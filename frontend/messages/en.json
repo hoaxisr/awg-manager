@@ -930,6 +930,7 @@
 	"tunnel_detail_load_error": "Load error: {message}",
 	"tunnel_detail_download_failed": "Failed to download the config",
 	"tunnel_detail_need_host_port": "host:port is required",
+	"tunnel_detail_need_key": "Key is required",
 	"tunnel_detail_obf_server_error": "Obfuscator server: {error}",
 	"tunnel_detail_saved": "Tunnel saved",
 	"tunnel_detail_saved_restarted": "Tunnel saved and restarted",

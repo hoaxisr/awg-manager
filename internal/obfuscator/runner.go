@@ -64,13 +64,16 @@ func (r *Runner) Start(ctx context.Context, tunnelID string, o *storage.Obfuscat
 	if same && r.alive(tunnelID) {
 		return nil
 	}
-	_ = r.stopLocked(tunnelID)
-	if !PortFree(o.LocalPort) {
-		return fmt.Errorf("loopback-порт %d занят другим процессом (родная установка Phobos?)", o.LocalPort)
-	}
+	// Бинарь — до остановки старого релея: без него новый не стартует, и
+	// туннель остался бы вовсе без релея (F119 1.8). Порт проверяется после:
+	// его обычно держит наш же старый релей.
 	bin, err := r.deps.BinaryFor(ctx, o.Flavor)
 	if err != nil {
 		return fmt.Errorf("бинарь обфускатора %s: %w", o.Flavor, err)
+	}
+	_ = r.stopLocked(tunnelID)
+	if !PortFree(o.LocalPort) {
+		return fmt.Errorf("loopback-порт %d занят другим процессом (родная установка Phobos?)", o.LocalPort)
 	}
 	// Тот же текст уже на диске — не переписываем: /opt — флеш, а рестарт
 	// релея с прежним конфигом (Stop→Start, бут) частый (F119 4.5).

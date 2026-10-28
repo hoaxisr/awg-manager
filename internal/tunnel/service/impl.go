@@ -967,10 +967,20 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	parsed.FreeTurnClientID = strings.TrimSpace(link.FreeTurnClientID)
 
 	if link.Obfuscator != nil {
+		// Ручной ClusterM принимает любой .conf, а AWG-параметры легли бы
+		// ASC-обфускацией поверх обфускации релея — правка туннеля это уже
+		// отвергает (applyTunnelUpdate), импорт был несимметричен (F119 5.7).
+		if link.Obfuscator.Flavor == storage.ObfuscatorFlavorClusterM && config.IsAWGObfuscated(&parsed.Interface) {
+			return nil, fmt.Errorf("параметры AWG несовместимы с обфускатором ClusterM: уберите Jc/Jmin/Jmax/S1–S4/H1–H4/I1–I5 из .conf")
+		}
+		// Выбор порта и запись — под одним importIDMu: иначе два параллельных
+		// импорта видят один свободный порт по стору и оба его занимают (F119 4.1).
+		s.importIDMu.Lock()
+		defer s.importIDMu.Unlock()
 		if err := prepareObfuscatorImport(parsed, link.Obfuscator, s.obfuscatorPortTaken); err != nil {
 			return nil, err
 		}
-		backend = parsed.Backend
+		return s.importNativeWGLocked(ctx, parsed)
 	}
 
 	if backend == "nativewg" {
@@ -1141,6 +1151,13 @@ func identifierHolders(tunnels []storage.AWGTunnel) opkgtun.Taken {
 
 // importNativeWG creates a tunnel using the NativeWG backend.
 func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTunnel) (*TunnelWithStatus, error) {
+	s.importIDMu.Lock()
+	defer s.importIDMu.Unlock()
+	return s.importNativeWGLocked(ctx, parsed)
+}
+
+// importNativeWGLocked — importNativeWG под уже взятым importIDMu.
+func (s *ServiceImpl) importNativeWGLocked(ctx context.Context, parsed *storage.AWGTunnel) (*TunnelWithStatus, error) {
 	if s.nwgOperator == nil {
 		return nil, fmt.Errorf("NativeWG backend not available")
 	}
@@ -1150,9 +1167,7 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 	// вовсе (storage.nwgFloor). Пересечение было бы гонкой, а не просто
 	// чересполосицей: номер kernel'а выдаёт пул, и открытую резервацию этот
 	// перебор не видит — проигравший получил бы «tunnel already exists» без
-	// ретрая (F317).
-	s.importIDMu.Lock()
-	defer s.importIDMu.Unlock()
+	// ретрая (F317). importIDMu держит вызывающий.
 	tunnelID, err := s.store.NextAvailableID("nativewg")
 	if err != nil {
 		return nil, fmt.Errorf("generate ID: %w", err)

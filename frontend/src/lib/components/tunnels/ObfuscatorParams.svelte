@@ -4,8 +4,9 @@
 	interface Props {
 		obfuscator: TunnelObfuscator;
 		error?: string;
+		keyError?: string;
 	}
-	let { obfuscator = $bindable(), error }: Props = $props();
+	let { obfuscator = $bindable(), error, keyError }: Props = $props();
 	const maskings: ObfuscatorMasking[] = $derived(
 		obfuscator.flavor === 'phobos' ? ['STUN', 'MEDIA', 'AUTO', 'NONE'] : ['STUN', 'AUTO', 'NONE']
 	);
@@ -25,6 +26,7 @@
 <div class="flex flex-col gap-1.5">
 	<label class="field-label" for="obf-key">{m.tunnel_edit_obf_key()}</label>
 	<input id="obf-key" class="field-input" bind:value={obfuscator.key}>
+	{#if keyError}<p class="field-hint is-error">{keyError}</p>{/if}
 </div>
 <div class="flex flex-col gap-1.5">
 	<label class="field-label" for="obf-masking">{m.tunnel_edit_obf_masking()}</label>

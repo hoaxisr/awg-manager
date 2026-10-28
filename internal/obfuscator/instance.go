@@ -108,10 +108,15 @@ func RenderInstance(o *storage.Obfuscator) string {
 
 // NormalizeNoneValues убирает строки `ключ = none` во всех секциях: так
 // phobos:// дописывает отсутствующие «обязательные» поля (docs/phobos-link-format.md §2.3).
+// Кроме masking: у Phobos NONE — режим «без маскировки», и отсутствующий
+// masking его клиент тоже читает как NONE (Ground-Zerro/Phobos:
+// windows/conf/parser.go, src/app/utils/phobosLink.ts). Выброшенная строка
+// давала бы наш дефолт AUTO — другой режим, чем задал сервер (F119 5.1).
 func NormalizeNoneValues(conf string) string {
 	var out []string
 	for _, raw := range strings.Split(conf, "\n") {
-		if _, v, ok := strings.Cut(raw, "="); ok && strings.EqualFold(strings.TrimSpace(v), "none") {
+		k, v, ok := strings.Cut(raw, "=")
+		if ok && strings.EqualFold(strings.TrimSpace(v), "none") && !strings.EqualFold(strings.TrimSpace(k), "masking") {
 			continue
 		}
 		out = append(out, raw)
