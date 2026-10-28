@@ -181,13 +181,23 @@ func holdNames(holds []storage.PolicyHold) []string {
 	return out
 }
 
-// holdIface — имя, под которым туннель снят с политик (то же, что берёт
-// releasePolicies); без удержаний пусто.
-func holdIface(tunnelID string, held bool) string {
-	if !held {
-		return ""
+// HeldInterfaces — интерфейсы, снятые мониторингом до восстановления связи,
+// по политикам: имя политики → имена NDMS (те же, что снимает
+// releasePolicies). Страница политик помечает их, иначе туннель выглядит
+// удалённым из политики (F752).
+func (s *Service) HeldInterfaces() (map[string][]string, error) {
+	tunnels, err := s.tunnels.List()
+	if err != nil {
+		return nil, err
 	}
-	return tunnel.NewNames(tunnelID).NDMSName
+	out := map[string][]string{}
+	for _, t := range tunnels {
+		iface := tunnel.NewNames(t.ID).NDMSName
+		for _, h := range t.PolicyHolds {
+			out[h.Policy] = append(out[h.Policy], iface)
+		}
+	}
+	return out, nil
 }
 
 // permitted — интерфейс в политике разрешён (не снят и не запрещён).

@@ -75,6 +75,7 @@ const api_AccessPoliciesListResponse: v.GenericSchema = v.looseObject({
 const api_AccessPolicyDTO: v.GenericSchema = v.looseObject({
 	description: v.optional(v.nullable(v.string())),
 	deviceCount: v.optional(v.nullable(v.number())),
+	held: v.optional(v.nullable(v.array(v.string()))),
 	interfaces: v.optional(v.nullable(v.array(v.lazy(() => api_AccessPolicyInterfaceDTO)))),
 	isStandard: v.optional(v.nullable(v.boolean())),
 	name: v.optional(v.nullable(v.string())),
@@ -2635,7 +2636,6 @@ const api_TunnelPingStatusDTO: v.GenericSchema = v.looseObject({
 	lastLatency: v.optional(v.nullable(v.number())),
 	latencyNote: v.optional(v.nullable(v.string())),
 	method: v.optional(v.nullable(v.string())),
-	ndmsName: v.optional(v.nullable(v.string())),
 	policyHolds: v.optional(v.nullable(v.array(v.string()))),
 	restartCount: v.optional(v.nullable(v.number())),
 	status: v.optional(v.nullable(v.string())),

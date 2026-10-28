@@ -292,7 +292,6 @@ func (s *Service) GetStatus() []TunnelStatus {
 			TunnelRunning: running,
 			CheckTarget:   target,
 			PolicyHolds:   holds,
-			NDMSName:      holdIface(tunnelID, len(holds) > 0),
 		})
 	}
 
@@ -333,7 +332,6 @@ func (s *Service) GetStatus() []TunnelStatus {
 				// Мониторинг выключен, а возврат permit упал — удержание висит,
 				// и вернуть его некому: хотя бы видно (ревью F748).
 				PolicyHolds: holdNames(t.PolicyHolds),
-				NDMSName:    holdIface(t.ID, len(t.PolicyHolds) > 0),
 			})
 		}
 	}

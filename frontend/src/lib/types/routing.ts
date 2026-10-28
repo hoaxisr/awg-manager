@@ -114,6 +114,8 @@ export interface AccessPolicy {
 	deviceCount: number;
 	/** true for Policy0..PolicyN; false for HydraRoute Neo and other custom NDMS profiles */
 	isStandard?: boolean;
+	/** Интерфейсы, снятые мониторингом до восстановления связи (F752). */
+	held?: string[];
 }
 
 export interface AccessPolicyInterface {

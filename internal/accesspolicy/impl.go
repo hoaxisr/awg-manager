@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -58,6 +59,12 @@ type ManagedTunnelResolver interface {
 	ManagedTunnelByNDMSName(ctx context.Context, ndmsName string) (id string, ok bool)
 }
 
+// PolicyHoldSource — интерфейсы, снятые мониторингом с политик:
+// имя политики → имена NDMS (F752).
+type PolicyHoldSource interface {
+	HeldInterfaces() (map[string][]string, error)
+}
+
 // ServiceImpl implements Service on top of the NDMS CQRS layer
 // (command.PolicyCommands for writes, query.Queries for reads).
 // InterfaceCommands is plumbed in so SetInterfaceUp can reuse the
@@ -78,7 +85,13 @@ type ServiceImpl struct {
 	// SetTunnelLifecycle after construction.
 	lifecycle      TunnelLifecycle
 	tunnelResolver ManagedTunnelResolver
+
+	// holds — пометка туннелей, снятых мониторингом (F752). Опционально.
+	holds PolicyHoldSource
 }
+
+// SetPolicyHolds подключает удержания мониторинга к списку политик.
+func (s *ServiceImpl) SetPolicyHolds(src PolicyHoldSource) { s.holds = src }
 
 // SetTunnelLifecycle wires managed-tunnel lifecycle routing for
 // SetInterfaceUp. Call once after construction. Pass nil resolver or
@@ -159,6 +172,8 @@ func (s *ServiceImpl) List(ctx context.Context) ([]Policy, error) {
 		}
 	}
 
+	s.markHeld(policies)
+
 	// Stable sort: PolicyN by number first, then custom policies alphabetically
 	sort.Slice(policies, func(i, j int) bool {
 		pi, pj := query.PolicyIndex(policies[i].Name), query.PolicyIndex(policies[j].Name)
@@ -169,6 +184,26 @@ func (s *ServiceImpl) List(ctx context.Context) ([]Policy, error) {
 	})
 
 	return policies, nil
+}
+
+// markHeld заполняет Held. Интерфейс, уже стоящий в политике (deny монитора
+// не прошёл, permit вернули руками), не дублируется.
+func (s *ServiceImpl) markHeld(policies []Policy) {
+	if s.holds == nil {
+		return
+	}
+	held, err := s.holds.HeldInterfaces()
+	if err != nil {
+		s.appLog.Warn("policy-holds", "", err.Error())
+		return
+	}
+	for i := range policies {
+		for _, iface := range held[policies[i].Name] {
+			if !slices.ContainsFunc(policies[i].Interfaces, func(pi PermittedIface) bool { return pi.Name == iface }) {
+				policies[i].Held = append(policies[i].Held, iface)
+			}
+		}
+	}
 }
 
 // validateDescription checks that the description conforms to NDMS requirements:

@@ -410,8 +410,6 @@ export interface TunnelPingStatus {
 	checkTarget?: string;
 	/** Политики, с которых мониторинг снял туннель до восстановления связи (F748). */
 	policyHolds?: string[];
-	/** Имя интерфейса в политиках (OpkgTunN) — только при policyHolds (F752). */
-	ndmsName?: string;
 }
 
 export interface PingLogEntry {

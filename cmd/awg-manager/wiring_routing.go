@@ -112,6 +112,7 @@ func (a *app) setupOrchestrator() {
 	a.accessPolicySvc.SetTunnelLifecycle(orchLifecycleAdapter{a.orch}, storeManagedTunnelResolver{a.awgStore})
 	// Больной туннель мониторинг уводит из политик снятием permit (F743).
 	a.pingCheckService.SetPolicies(pingcheckPolicies{a.accessPolicySvc, a.ndmsQueries.Policies})
+	a.accessPolicySvc.SetPolicyHolds(a.pingCheckService)
 
 	// HydraRoute NDMS wiring — now that ndmsCommands/Queries are ready.
 	a.hydraService.SetQueries(a.ndmsQueries)

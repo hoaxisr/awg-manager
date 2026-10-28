@@ -181,6 +181,12 @@ definitions:
       deviceCount:
         example: 5
         type: integer
+      held:
+        example:
+        - OpkgTun10
+        items:
+          type: string
+        type: array
       interfaces:
         items:
           $ref: '#/definitions/api.AccessPolicyInterfaceDTO'
@@ -7371,9 +7377,6 @@ definitions:
         type: string
       method:
         example: http
-        type: string
-      ndmsName:
-        example: OpkgTun10
         type: string
       policyHolds:
         example:

@@ -26,6 +26,7 @@ type AccessPolicyDTO struct {
 	Interfaces  []AccessPolicyInterfaceDTO `json:"interfaces"`
 	DeviceCount int                        `json:"deviceCount" example:"5"`
 	IsStandard  bool                       `json:"isStandard" example:"true"`
+	Held        []string                   `json:"held,omitempty" example:"OpkgTun10"`
 }
 
 // AccessPoliciesListResponse is the envelope for GET /access-policies.

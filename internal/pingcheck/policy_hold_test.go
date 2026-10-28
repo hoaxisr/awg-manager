@@ -350,3 +350,22 @@ func TestPolicyHold_ServiceStopKeepsHolds(t *testing.T) {
 		t.Fatal("Stop потерял позиции")
 	}
 }
+
+// Удержания по политикам — под именами NDMS, которые снимал releasePolicies.
+func TestHeldInterfaces(t *testing.T) {
+	s, _, _, _ := newKernelSensorService(t)
+	if err := s.tunnels.Update("awg7", func(tn *storage.AWGTunnel) error {
+		tn.PolicyHolds = []storage.PolicyHold{{Policy: "HydraRoute"}, {Policy: "Policy1", Order: 2}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.HeldInterfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{"HydraRoute": {"OpkgTun7"}, "Policy1": {"OpkgTun7"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("held = %v, want %v", got, want)
+	}
+}

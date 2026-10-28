@@ -14,25 +14,17 @@ vi.hoisted(() => {
 		}),
 	});
 });
-vi.mock('$lib/stores/pingcheck', async () => {
-	const { writable } = await import('svelte/store');
-	return {
-		pingCheckStatus: writable({
-			data: [{ tunnelId: 'awg10', policyHolds: ['HydraRoute'], ndmsName: 'OpkgTun10' }],
-		}),
-	};
-});
 import { render, fireEvent } from '@testing-library/svelte';
 import InterfaceList from './InterfaceList.svelte';
 
-const props = (policyName?: string) => ({
+const props = (held?: string[]) => ({
 	interfaces: [{ name: 'PPPoE0', order: 0, denied: false }],
 	availableInterfaces: [
 		{ name: 'PPPoE0', label: 'WAN', up: true },
 		{ name: 'OpkgTun10', label: 'warp', up: true },
 		{ name: 'Wireguard1', label: 'wg', up: true },
 	],
-	policyName,
+	held,
 	onpermit: () => {},
 	ondeny: () => {},
 	onreorder: () => {},
@@ -43,7 +35,7 @@ const props = (policyName?: string) => ({
 // к добавлению: монитор вернёт его сам (F752).
 describe('InterfaceList: снятый мониторингом туннель', () => {
 	it('показан с пометкой и исключён из «Добавить»', async () => {
-		const { container, getByText } = render(InterfaceList, { props: props('HydraRoute') });
+		const { container, getByText } = render(InterfaceList, { props: props(['OpkgTun10']) });
 		const held = container.querySelectorAll('.iface-row.held');
 		expect(held).toHaveLength(1);
 		expect(held[0].querySelector('.iface-label')?.getAttribute('title')).toBe('OpkgTun10');
@@ -54,7 +46,7 @@ describe('InterfaceList: снятый мониторингом туннель', 
 		expect(offered.join('|')).toContain('wg');
 	});
 
-	it('без имени политики пометки нет', () => {
+	it('без удержаний пометки нет', () => {
 		const { container } = render(InterfaceList, { props: props() });
 		expect(container.querySelectorAll('.iface-row.held')).toHaveLength(0);
 	});

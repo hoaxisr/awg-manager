@@ -10,6 +10,10 @@ type Policy struct {
 	// IsStandard is true for built-in Policy0..PolicyN profiles (AWGM / router UI).
 	// false for custom profiles created by HydraRoute Neo and similar subsystems.
 	IsStandard bool `json:"isStandard"`
+	// Held — интерфейсы, снятые мониторингом с этой политики до восстановления
+	// связи (F743): выборка политики их не показывает (`no permit`), и без
+	// пометки туннель выглядит удалённым (F752). Без тех, что уже в Interfaces.
+	Held []string `json:"held,omitempty"`
 }
 
 // PermittedIface represents an interface in a policy (permitted or denied).

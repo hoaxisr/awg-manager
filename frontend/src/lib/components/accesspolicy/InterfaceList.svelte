@@ -6,8 +6,6 @@
 	import { Power, ChevronUp, ChevronDown, Check, Ban, TriangleAlert } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { pingCheckStatus } from '$lib/stores/pingcheck';
-	import { heldPolicyInterfaces } from '$lib/utils/accessPolicy';
 	import {
 		filterPolicyGlobalInterfaces,
 		groupPolicyGlobalInterfaces,
@@ -19,8 +17,8 @@
 		availableInterfaces: PolicyGlobalInterface[];
 		/** scroll: toggle + capped scroll. panel: toggle + full list без скролла (HR Neo, политики доступа). */
 		addPickerVariant?: 'scroll' | 'panel';
-		/** Имя политики: по нему показываются туннели, снятые мониторингом (F752). */
-		policyName?: string;
+		/** Интерфейсы, снятые мониторингом с политики до восстановления связи (F752). */
+		held?: string[];
 		onpermit: (iface: string, order: number) => void;
 		ondeny: (iface: string) => void;
 		onreorder: (iface: string, newOrder: number) => void;
@@ -31,7 +29,7 @@
 		interfaces: rawInterfaces,
 		availableInterfaces,
 		addPickerVariant = 'scroll',
-		policyName,
+		held = [],
 		onpermit,
 		ondeny,
 		onreorder,
@@ -46,9 +44,6 @@
 	let sorted = $derived([...interfaces].sort((a, b) => a.order - b.order));
 
 	let catalog = $derived(filterPolicyGlobalInterfaces(availableInterfaces));
-
-	// Стор мониторинга без таймера (только SSE) — опроса страница не получает.
-	let held = $derived(policyName ? heldPolicyInterfaces(policyName, $pingCheckStatus.data ?? []) : []);
 
 	// Снятый мониторингом туннель не предлагаем добавить: монитор вернёт его сам
 	// на прежнюю позицию, ручной permit сломал бы порядок.
