@@ -120,6 +120,12 @@ func globalEgressInterfaces(lines []string) []string {
 // и та же строка под чужим интерфейсом нашей не является. Без `ip global`
 // интерфейс пропадает из списка выходов политики, то есть режим тихо мёртв.
 func policyTunIPGlobalPresent(lines []string, ndmsName string) bool {
+	return ifaceBlockHas(lines, ndmsName, "ip global")
+}
+
+// ifaceBlockHas ищет директиву (строку целиком или с аргументами) в блоке
+// интерфейса ndmsName running-config.
+func ifaceBlockHas(lines []string, ndmsName, directive string) bool {
 	inBlock := false
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -131,7 +137,7 @@ func policyTunIPGlobalPresent(lines []string, ndmsName string) bool {
 			inBlock = len(f) == 2 && f[0] == "interface" && f[1] == ndmsName
 			continue
 		}
-		if inBlock && (trimmed == "ip global" || strings.HasPrefix(trimmed, "ip global ")) {
+		if inBlock && (trimmed == directive || strings.HasPrefix(trimmed, directive+" ")) {
 			return true
 		}
 	}
@@ -412,9 +418,10 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 	wantV6 := s.resolveFakeIPParams(sr).TunAddr6 != ""
 
 	v4, v6 := policyTunDefaultRoutePresent(lines, ndmsName)
+	addr6 := ifaceBlockHas(lines, ndmsName, "ipv6 address")
 	global := policyTunIPGlobalPresent(lines, ndmsName)
 	permitted := policyTunPermitted(lines, ndmsName, sr.PolicyName)
-	healthy := v4 && global && permitted && (!wantV6 || v6)
+	healthy := v4 && global && permitted && (!wantV6 || v6) && (wantV6 || !v6 && !addr6)
 	if !healthy {
 		// По кэшу всё плохо — перечитываем и решаем по свежим данным: иначе
 		// починка мимо нас (пользователь в веб-морде) выглядела бы дрейфом и
@@ -422,6 +429,7 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 		if fresh, ferr := s.deps.RunningConfig.Fetch(ctx); ferr == nil {
 			lines = fresh
 			v4, v6 = policyTunDefaultRoutePresent(fresh, ndmsName)
+			addr6 = ifaceBlockHas(fresh, ndmsName, "ipv6 address")
 			global = policyTunIPGlobalPresent(fresh, ndmsName)
 			permitted = policyTunPermitted(fresh, ndmsName, sr.PolicyName)
 		}
@@ -442,6 +450,9 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 	// WAN, разрешённый в политике мимо нас (веб-морда, прежний tproxy), снова
 	// стал бы обходом туннеля — снимаем на тике (F440).
 	s.denyPolicyWAN(ctx, sr, lines)
+	if !wantV6 {
+		s.dropPolicyTunV6(ctx, iface, ndmsName, v6, addr6)
+	}
 	if s.deps.DefaultRoute == nil {
 		return
 	}
@@ -467,6 +478,28 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 			s.appLog.Warn("policy-tun-reconcile", iface, "re-add ipv6 default route: "+e.Error())
 		} else {
 			s.appLog.Info("policy-tun-reconcile", iface, "v6-дефолт пропал — переустановлен (drift-heal)")
+		}
+	}
+}
+
+// dropPolicyTunV6 снимает v6 с интерфейса, когда пул v6 выключен на живом
+// режиме (F754): сверка умела только ставить, и v6 членов политики уходил в tun
+// до выключения режима. Маршрут — раньше адреса, обратно установке. v6-ACL
+// остаётся: без адреса и маршрута он ничего не пропускает, а на повторном
+// включении пула policyTunACLv6Asserted считает его стоящим.
+func (s *ServiceImpl) dropPolicyTunV6(ctx context.Context, iface, ndmsName string, route6, addr6 bool) {
+	if route6 && s.deps.DefaultRoute != nil {
+		if e := s.deps.DefaultRoute.RemoveIPv6DefaultRoute(ctx, ndmsName); e != nil {
+			s.appLog.Warn("policy-tun-reconcile", iface, "remove ipv6 default route: "+e.Error())
+		} else {
+			s.appLog.Info("policy-tun-reconcile", iface, "пул v6 выключен — v6-дефолт снят")
+		}
+	}
+	if addr6 && s.deps.OpkgTun != nil {
+		if e := s.deps.OpkgTun.ClearIPv6Address(ctx, ndmsName); e != nil {
+			s.appLog.Warn("policy-tun-reconcile", iface, "clear ipv6 address: "+e.Error())
+		} else {
+			s.appLog.Info("policy-tun-reconcile", iface, "пул v6 выключен — v6-адрес снят")
 		}
 	}
 }

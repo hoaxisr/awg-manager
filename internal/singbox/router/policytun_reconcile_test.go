@@ -318,6 +318,52 @@ func TestReconcilePolicyTun_ReaddsMissingIPv6DefaultRoute(t *testing.T) {
 	}
 }
 
+// Пул v6 выключен на живом режиме (fakeipPool6="") → v6-дефолт и v6-адрес
+// снимаются, маршрут раньше адреса; v4 не трогается (F754, стенд 28.10).
+func TestReconcilePolicyTun_DropsV6WhenPoolDisabled(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	sr.FakeIPPool6 = ""
+	rc := &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "    ipv6 address fdfe:dcba:9876::1/128", "!",
+		"ip route default OpkgTun0",
+		"ipv6 route default OpkgTun0",
+		"ip policy Policy0", "    permit global OpkgTun0",
+	}}
+	h.svc.deps.RunningConfig = rc
+	h.log.calls = nil
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	mustOrderCalls(t, h.log, "RemoveIPv6DefaultRoute:OpkgTun0", "ClearIPv6Address:OpkgTun0")
+	for _, c := range []string{"SetIPv6DefaultRoute:OpkgTun0", "RemoveDefaultRoute:OpkgTun0", "ClearAddress:OpkgTun0"} {
+		if h.log.has(c) {
+			t.Errorf("лишняя мутация %s: %v", c, h.log.calls)
+		}
+	}
+}
+
+// Пул v6 выключен, а v6 на интерфейсе и так нет — ни одной v6-мутации.
+func TestReconcilePolicyTun_NoV6DropWhenAbsent(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	sr.FakeIPPool6 = ""
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip route default OpkgTun0",
+		"ip policy Policy0", "    permit global OpkgTun0",
+	}}
+	h.log.calls = nil
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if h.log.has("RemoveIPv6DefaultRoute:OpkgTun0") || h.log.has("ClearIPv6Address:OpkgTun0") {
+		t.Errorf("снимать нечего, а мутации есть: %v", h.log.calls)
+	}
+}
+
 // Диспатч: в policy-tun Reconcile уходит в свой арм (а не в installed-switch
 // tproxy, который при отсутствующих цепочках гнал бы Enable каждый тик), и реап,
 // идущий первым, ingress-заворот не сносит.
