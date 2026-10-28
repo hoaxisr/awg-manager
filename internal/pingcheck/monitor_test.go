@@ -2,6 +2,7 @@ package pingcheck
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -535,5 +536,33 @@ func TestCheckNow_LinkDownLogged(t *testing.T) {
 	}
 	if len(s.logBuffer.GetAll()) != 0 {
 		t.Fatal("проверка опущенного линка попала в журнал мониторинга")
+	}
+}
+
+// Время записи в SSE — той же строкой, что в снимке GET /pingcheck/logs
+// (time.Time в JSON): по ней фронт склеивает одну запись из двух источников и
+// различает записи одной секунды (F751).
+func TestAddLogEntry_SSETimestampMatchesSnapshot(t *testing.T) {
+	s, _, _, _ := newKernelSensorService(t)
+	bus := events.NewBus()
+	s.bus = bus
+	_, ch, unsub := bus.Subscribe()
+	t.Cleanup(unsub)
+
+	ts := time.Date(2026, 10, 28, 19, 14, 49, 123456789, time.FixedZone("MSK", 3*3600))
+	s.addLogEntry(LogEntry{Timestamp: ts, TunnelID: "awg7"})
+
+	snap, err := json.Marshal(s.logBuffer.GetAll()[0].Timestamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev := <-ch:
+		got := ev.Data.(events.PingCheckLogEvent).Timestamp
+		if `"`+got+`"` != string(snap) {
+			t.Fatalf("SSE %q ≠ снимок %s", got, snap)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("pingcheck:log не опубликован")
 	}
 }

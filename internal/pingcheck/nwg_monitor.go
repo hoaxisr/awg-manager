@@ -117,7 +117,9 @@ func (m *nwgMonitor) publishLog(entry LogEntry) {
 		return
 	}
 	m.bus.Publish("pingcheck:log", events.PingCheckLogEvent{
-		Timestamp:   entry.Timestamp.Format(time.RFC3339),
+		// Формат как у GET /pingcheck/logs (time.Time в JSON): иначе дедуп
+		// стора на фронте не узнаёт одну запись из снимка и из SSE (F751).
+		Timestamp:   entry.Timestamp.Format(time.RFC3339Nano),
 		TunnelID:    entry.TunnelID,
 		TunnelName:  entry.TunnelName,
 		Success:     entry.Success,

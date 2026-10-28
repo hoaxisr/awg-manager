@@ -112,7 +112,10 @@
 				<TunnelDelaySparkBars history={stats.history} state="ok" maxBars={12} colorPerBar title={m.pingcheck_check_now()} onclick={onCheckNow} />
 			</div>
 			<div class="wd-log">
-				{#each stats.recent as e (e.timestamp + e.tunnelId)}
+				<!-- Без ключа: три строки только для показа, состояния у них нет, а
+				     время двух записей бывает одинаковым (провал и лечение в одну
+				     секунду, грубые часы роутера) — ключ по нему падал (F751). -->
+				{#each stats.recent as e}
 					<div class="wd-log-row">
 						<span class="ts">{formatTime(e.timestamp)}</span>
 						<span class="ico" class:ok={e.success} class:bad={!e.success}>

@@ -2,8 +2,11 @@ package pingcheck
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/events"
 )
 
 func newTestNwgMonitor(buf *LogBuffer) *nwgMonitor {
@@ -459,5 +462,25 @@ func TestNwgDelta_NoEscalationWhenRestartDisabled(t *testing.T) {
 	case id := <-restarted:
 		t.Fatalf("настройка выключена, а туннель перезапустили: %s", id)
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// NativeWG публикует время записи той же строкой, что снимок GET /logs (F751).
+func TestNwgPublishLog_TimestampMatchesSnapshot(t *testing.T) {
+	m := newTestNwgMonitor(nil)
+	m.bus = events.NewBus()
+	_, ch, unsub := m.bus.Subscribe()
+	t.Cleanup(unsub)
+
+	ts := time.Date(2026, 10, 28, 19, 14, 49, 123456789, time.UTC)
+	m.publishLog(LogEntry{Timestamp: ts, TunnelID: m.tunnelID})
+	snap, _ := json.Marshal(ts)
+	select {
+	case ev := <-ch:
+		if got := ev.Data.(events.PingCheckLogEvent).Timestamp; `"`+got+`"` != string(snap) {
+			t.Fatalf("SSE %q ≠ снимок %s", got, snap)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("pingcheck:log не опубликован")
 	}
 }
