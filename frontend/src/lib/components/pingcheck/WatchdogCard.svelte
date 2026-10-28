@@ -75,12 +75,16 @@
 	{#if isWatchdog && stats}
 		<!-- Config line -->
 		<div class="wd-config">{configLine}</div>
+	{/if}
 
-		<!-- Снятие с политик иначе видно только в журнале: туннель просто
-		     пропадает из списка политики (F748). -->
-		{#if policyHolds.length > 0}
-			<div class="wd-latency-note wd-policy-hold"><TriangleAlert size={13} />{m.pingcheck_policy_holds({ policies: policyHolds.join(', ') })}</div>
-		{/if}
+	<!-- Снятие с политик иначе видно только в журнале: туннель просто
+	     пропадает из списка политики (F748). Вне блока watchdog: мониторинг
+	     выключен, а возврат permit не прошёл — удержание висит и без него. -->
+	{#if policyHolds.length > 0}
+		<div class="wd-latency-note wd-policy-hold"><TriangleAlert size={13} />{m.pingcheck_policy_holds({ policies: policyHolds.join(', ') })}</div>
+	{/if}
+
+	{#if isWatchdog && stats}
 
 		<!-- Stats grid -->
 		<div class="wd-stats">
@@ -225,6 +229,8 @@
 	/* Config line */
 	.wd-config {
 		padding: 8px 14px;
+		/* Полный URL проверки без пробелов (F749) не влезает в узкую карточку. */
+		overflow-wrap: anywhere;
 		font-family: var(--font-mono);
 		font-size: 11px;
 		line-height: 1.6;

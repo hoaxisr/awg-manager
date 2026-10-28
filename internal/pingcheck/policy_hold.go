@@ -172,6 +172,15 @@ func (s *Service) restoreAllPolicies() {
 	}
 }
 
+// holdNames — имена политик удержаний для статуса (F748).
+func holdNames(holds []storage.PolicyHold) []string {
+	var out []string
+	for _, h := range holds {
+		out = append(out, h.Policy)
+	}
+	return out
+}
+
 // permitted — интерфейс в политике разрешён (не снят и не запрещён).
 func permitted(p ndms.Policy, iface string) bool {
 	for _, pi := range p.Interfaces {

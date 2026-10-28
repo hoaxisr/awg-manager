@@ -168,28 +168,6 @@ func TestIfaceUpDefault(t *testing.T) {
 	}
 }
 
-// Лежащий интерфейс во время лечения (failCount на пороге) — «recovering», не «stopped»:
-// окно down/up наше собственное.
-func TestGetStatus_KernelHealingWindowIsRecovering(t *testing.T) {
-	store := newTunnelStore(t)
-	if err := store.Create(&storage.AWGTunnel{
-		ID: "awg3", Name: "Kernel",
-		PingCheck: &storage.TunnelPingCheck{Enabled: true, Method: "http", Interval: 30, FailThreshold: 3},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	s := &Service{
-		tunnels:  store,
-		monitors: map[string]*tunnelMonitor{"awg3": {tunnelID: "awg3", tunnelName: "Kernel", failCount: 3}},
-	}
-	old := ifaceUp
-	t.Cleanup(func() { ifaceUp = old })
-	ifaceUp = func(string) bool { return false }
-	if got := s.GetStatus(); len(got) != 1 || got[0].Status != "recovering" {
-		t.Fatalf("статус %+v, ожидали recovering", got)
-	}
-}
-
 // Карточка туннеля и страница мониторинга оценивают монитор одинаково:
 // окно лечения у kernel — «recovering» в обоих; у зеркала wdtt-raw порог
 // счётчика лечением не является.
@@ -262,5 +240,46 @@ func TestGetStatus_CheckTargetAndPolicyHolds(t *testing.T) {
 	}
 	if h := got["awg4"].PolicyHolds; len(h) != 0 {
 		t.Errorf("awg4: policyHolds = %v, ожидали пусто", h)
+	}
+}
+
+// Опущенный линк — «stopped», даже если до опускания шло лечение: проверок
+// на нём нет, и «recovering» висел бы всё время, пока линк лежит (ревью F750).
+func TestGetStatus_LinkDownIsStoppedEvenAfterRepair(t *testing.T) {
+	store := newTunnelStore(t)
+	if err := store.Create(&storage.AWGTunnel{ID: "awg3", Name: "k",
+		PingCheck: &storage.TunnelPingCheck{Enabled: true, Method: "http", FailThreshold: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	old := ifaceUp
+	t.Cleanup(func() { ifaceUp = old })
+	ifaceUp = func(string) bool { return false }
+	// Прежде «окно лечения» (failCount на пороге при лежащем линке) было
+	// «recovering»: лечение само клало линк. С F746 оно линк не трогает.
+	for _, m := range []*tunnelMonitor{
+		{tunnelID: "awg3", restartCount: 1, lastResult: &CheckResult{Success: false}},
+		{tunnelID: "awg3", failCount: 3},
+	} {
+		s := &Service{tunnels: store, monitors: map[string]*tunnelMonitor{"awg3": m}}
+		if got := s.GetStatus(); len(got) != 1 || got[0].Status != "stopped" {
+			t.Fatalf("монитор %+v: статус = %+v, want stopped", m, got)
+		}
+	}
+}
+
+// Мониторинг выключен, а возврат permit не прошёл: удержание видно и без
+// монитора (ревью F748).
+func TestGetStatus_HoldsWithoutMonitor(t *testing.T) {
+	store := newTunnelStore(t)
+	if err := store.Create(&storage.AWGTunnel{ID: "awg3", Name: "k", Backend: "kernel",
+		PingCheck:   &storage.TunnelPingCheck{Enabled: false},
+		PolicyHolds: []storage.PolicyHold{{Policy: "HydraRoute"}}}); err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{tunnels: store, monitors: map[string]*tunnelMonitor{}}
+	stubDeviceExists(t, true)
+	got := s.GetStatus()
+	if len(got) != 1 || len(got[0].PolicyHolds) != 1 || got[0].PolicyHolds[0] != "HydraRoute" {
+		t.Fatalf("статус = %+v", got)
 	}
 }

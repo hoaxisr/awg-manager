@@ -2,7 +2,6 @@ package pingcheck
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"os"
 	"sort"
@@ -67,6 +66,9 @@ type tunnelMonitor struct {
 	// tickMu сериализует sensorTick между циклом монитора и check-now:
 	// два параллельных лечения на одном интерфейсе недопустимы.
 	tickMu sync.Mutex
+	// linkDown — линк был опущен на прошлом тике (под tickMu): переход
+	// пишется в журнал один раз (linkUp).
+	linkDown bool
 }
 
 // checkConfig holds resolved check configuration for a tunnel.
@@ -242,18 +244,17 @@ func (s *Service) GetStatus() []TunnelStatus {
 			if stored.Backend != "" {
 				backend = stored.Backend
 			}
-			for _, h := range stored.PolicyHolds {
-				holds = append(holds, h.Policy)
-			}
+			holds = holdNames(stored.PolicyHolds)
 		}
 
-		// Как nwgCardStatus: лежащий интерфейс — «stopped», но не во время
-		// лечения (см. pingStatus).
+		// Как nwgCardStatus: лежащий интерфейс — «stopped». Лечение линк больше
+		// не кладёт (F746), а на опущенном линке проверок нет (F750) — иначе
+		// «recovering» прошлого порога висел бы всё время, пока линк лежит.
 		running := ifaceUp(s.resolveIfaceName(tunnelID))
 		status := "disabled"
 		if config != nil {
 			status = pingStatus(m, config.FailThreshold, backend)
-			if status == "alive" && !running {
+			if !running {
 				status = "stopped"
 			}
 		}
@@ -316,7 +317,7 @@ func (s *Service) GetStatus() []TunnelStatus {
 			}
 			// Fast sysfs check — no subprocess or network call
 			ifaceName := s.resolveIfaceName(t.ID)
-			if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", ifaceName)); err != nil {
+			if !deviceExists(ifaceName) {
 				continue
 			}
 			result = append(result, TunnelStatus{
@@ -328,6 +329,9 @@ func (s *Service) GetStatus() []TunnelStatus {
 				Method:        "http",
 				FailThreshold: 3,
 				TunnelRunning: ifaceUp(ifaceName),
+				// Мониторинг выключен, а возврат permit упал — удержание висит,
+				// и вернуть его некому: хотя бы видно (ревью F748).
+				PolicyHolds: holdNames(t.PolicyHolds),
 			})
 		}
 	}
@@ -436,6 +440,12 @@ func (s *Service) checkNowAsync(m *tunnelMonitor, config *checkConfig) {
 		case <-stopCh:
 			return
 		default:
+		}
+		// Тик на опущенном линке молчит (переход уже в журнале), а «проверить
+		// сейчас» нажали руками — ответ нужен.
+		if !ifaceUp(s.resolveIfaceName(m.tunnelID)) {
+			s.logInfo(m.tunnelID, "Check skipped: link is down")
+			return
 		}
 		s.sensorTick(m, config)
 	}()

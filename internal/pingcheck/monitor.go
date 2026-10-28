@@ -76,15 +76,20 @@ func (s *Service) lockedTick(m *tunnelMonitor, config *checkConfig) {
 // sensorTick performs one check cycle.
 func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 	ifaceName := s.resolveIfaceName(m.tunnelID)
-	// Опущенный линк не проверяем: это Suspend на падении WAN, и политику
-	// NDMS с такого интерфейса уводит сама (стенд 27.10, F743). Проверка
-	// здесь только набирала порог и снимала permit — с записью во флеш на
-	// каждый туннель при каждом флапе WAN (F750).
-	if !ifaceUp(ifaceName) {
+	// Опущенный линк не проверяем: чаще всего это Suspend на падении WAN, и
+	// политику NDMS с такого интерфейса уводит сама (стенд 27.10, F743).
+	// Проверка здесь только набирала порог и снимала permit — с записью во
+	// флеш на каждый туннель при каждом флапе WAN (F750).
+	if !s.linkUp(m, ifaceName) {
 		return
 	}
 	result := performCheck(s.ctx, ifaceName, config.Method, config.Target, config.CheckURL, config.DNSServers)
 	if s.ctx.Err() != nil {
+		return
+	}
+	// Проба идёт до 7 с: линк могли опустить, пока она летела, и её провал —
+	// след опускания, а не отказ туннеля (ревью F750).
+	if !s.linkUp(m, ifaceName) {
 		return
 	}
 
@@ -170,6 +175,23 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 	}
 
 	s.doRepair(m, config, ifaceName)
+}
+
+// linkUp — поднят ли линк туннеля. Пока он опущен, проверок нет; переход в
+// обе стороны пишется в журнал один раз, иначе монитор молчал бы без следа
+// (ручной down, пропавшее устройство). Вызывается под m.tickMu.
+func (s *Service) linkUp(m *tunnelMonitor, ifaceName string) bool {
+	up := ifaceUp(ifaceName)
+	if up != m.linkDown {
+		return up
+	}
+	m.linkDown = !up
+	if up {
+		s.logInfo(m.tunnelID, "Link is up, checks resumed")
+	} else {
+		s.logInfo(m.tunnelID, "Link is down, checks paused until it is up")
+	}
+	return up
 }
 
 // doRepair — лечение на пороге: увести политику с туннеля и переприменить
