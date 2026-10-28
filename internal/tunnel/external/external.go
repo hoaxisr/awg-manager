@@ -418,7 +418,6 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (*service.TunnelW
 				Method:        defaults.Method,
 				Target:        defaults.Target,
 				Interval:      defaults.Interval,
-				DeadInterval:  defaults.DeadInterval,
 				FailThreshold: defaults.FailThreshold,
 				MinSuccess:    1,
 				Timeout:       5,

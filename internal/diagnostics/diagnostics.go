@@ -224,7 +224,6 @@ type PingCheckConfig struct {
 	Target        string `json:"target"`
 	Interval      int    `json:"interval"`
 	FailThreshold int    `json:"failThreshold"`
-	DeadInterval  int    `json:"deadInterval"`
 }
 
 // PingCheckInfo contains runtime ping check status from facade.

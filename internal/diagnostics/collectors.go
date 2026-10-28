@@ -437,7 +437,6 @@ func buildTunnelSettings(stored *storage.AWGTunnel) TunnelSettings {
 			Target:        stored.PingCheck.Target,
 			Interval:      stored.PingCheck.Interval,
 			FailThreshold: stored.PingCheck.FailThreshold,
-			DeadInterval:  stored.PingCheck.DeadInterval,
 		}
 	}
 	return ts

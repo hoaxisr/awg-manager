@@ -1370,7 +1370,6 @@ function buildSingleTunnel(id) {
 			method: p?.method ?? 'icmp',
 			target: p?.target ?? '8.8.8.8',
 			interval: 30,
-			deadInterval: 120,
 			failThreshold: 3,
 			minSuccess: 1,
 			timeout: 5,

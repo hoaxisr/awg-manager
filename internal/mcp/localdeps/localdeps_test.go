@@ -1191,7 +1191,7 @@ func TestLocal_ImportTunnelWritesPingCheckDefaults(t *testing.T) {
 	}
 	pc := stored.PingCheck
 	if pc.Enabled || pc.Method != "icmp" || pc.Target != "8.8.8.8" || pc.Interval != 45 ||
-		pc.DeadInterval != 120 || pc.FailThreshold != 3 || pc.MinSuccess != 1 || pc.Timeout != 5 || !pc.Restart {
+		pc.FailThreshold != 3 || pc.MinSuccess != 1 || pc.Timeout != 5 || !pc.Restart {
 		t.Fatalf("defaults differ from the REST import handler: %+v", pc)
 	}
 }

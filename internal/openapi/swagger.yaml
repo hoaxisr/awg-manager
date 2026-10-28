@@ -3006,9 +3006,6 @@ definitions:
     type: object
   api.PingCheckDefaultsDTO:
     properties:
-      deadInterval:
-        example: 120
-        type: integer
       failThreshold:
         example: 3
         type: integer
@@ -8709,8 +8706,6 @@ definitions:
     type: object
   storage.PingCheckDefaultsPatch:
     properties:
-      deadInterval:
-        type: integer
       failThreshold:
         type: integer
       interval:

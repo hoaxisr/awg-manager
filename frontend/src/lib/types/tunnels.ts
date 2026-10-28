@@ -115,7 +115,6 @@ export interface TunnelPingCheck {
 	method: string;
 	target: string;
 	interval: number;
-	deadInterval: number;
 	failThreshold: number;
 	minSuccess: number;
 	timeout: number;

@@ -205,7 +205,7 @@ func TestSettingsStore_BackwardCompatibility(t *testing.T) {
 		"schemaVersion": 2,
 		"authEnabled": true,
 		"server": {"port": 2222, "interface": "br0"},
-		"pingCheck": {"enabled": false, "defaults": {"method": "http", "target": "8.8.8.8", "interval": 45, "deadInterval": 120, "failThreshold": 3}}
+		"pingCheck": {"enabled": false, "defaults": {"method": "http", "target": "8.8.8.8", "interval": 45, "failThreshold": 3}}
 	}`
 	os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(oldSettings), 0644)
 
@@ -419,7 +419,7 @@ func TestLoadUpgradeFromV15SetsAdvanced(t *testing.T) {
 		"authEnabled": false,
 		"onboardingCompleted": true,
 		"server": {"port": 2222, "interface": "br0"},
-		"pingCheck": {"enabled": false, "defaults": {"method":"http","target":"8.8.8.8","interval":45,"deadInterval":120,"failThreshold":3}},
+		"pingCheck": {"enabled": false, "defaults": {"method":"http","target":"8.8.8.8","interval":45,"failThreshold":3}},
 		"logging": {"enabled": true, "maxAge": 2},
 		"disableMemorySaving": false,
 		"updates": {"checkEnabled": true},

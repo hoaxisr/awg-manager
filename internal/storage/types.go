@@ -531,7 +531,6 @@ type PingCheckDefaults struct {
 	Method        string `json:"method"`        // "http" or "icmp"
 	Target        string `json:"target"`        // ICMP target, default "8.8.8.8"
 	Interval      int    `json:"interval"`      // check interval in seconds, default 45
-	DeadInterval  int    `json:"deadInterval"`  // dead tunnel check interval in seconds, default 120
 	FailThreshold int    `json:"failThreshold"` // failures before marking dead, default 3
 }
 
@@ -633,7 +632,6 @@ type TunnelPingCheck struct {
 	Method        string `json:"method"`         // "icmp", "connect", "tls", "uri"
 	Target        string `json:"target"`         // host to check
 	Interval      int    `json:"interval"`       // check interval in seconds
-	DeadInterval  int    `json:"deadInterval"`   // dead tunnel check interval (kernel only)
 	FailThreshold int    `json:"failThreshold"`  // max fails before dead
 	MinSuccess    int    `json:"minSuccess"`     // min successes to recover (nativewg, default 1)
 	Timeout       int    `json:"timeout"`        // check timeout seconds (nativewg, default 5)
@@ -652,7 +650,6 @@ func DefaultTunnelPingCheck() *TunnelPingCheck {
 		Method:        "icmp",
 		Target:        "8.8.8.8",
 		Interval:      45,
-		DeadInterval:  120,
 		FailThreshold: 3,
 		MinSuccess:    1,
 		Timeout:       5,

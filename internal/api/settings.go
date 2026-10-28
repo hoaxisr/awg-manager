@@ -39,7 +39,6 @@ type PingCheckDefaultsDTO struct {
 	Method        string `json:"method" example:"http"`
 	Target        string `json:"target" example:"8.8.8.8"`
 	Interval      int    `json:"interval" example:"30"`
-	DeadInterval  int    `json:"deadInterval" example:"120"`
 	FailThreshold int    `json:"failThreshold" example:"3"`
 }
 
@@ -336,7 +335,6 @@ func settingsResponse(s *storage.Settings) SettingsData {
 				Method:        s.PingCheck.Defaults.Method,
 				Target:        s.PingCheck.Defaults.Target,
 				Interval:      s.PingCheck.Defaults.Interval,
-				DeadInterval:  s.PingCheck.Defaults.DeadInterval,
 				FailThreshold: s.PingCheck.Defaults.FailThreshold,
 			},
 		},
@@ -928,7 +926,6 @@ func (h *SettingsHandler) enablePingCheckOnAllTunnels(settings *storage.Settings
 					Method:        defaults.Method,
 					Target:        defaults.Target,
 					Interval:      defaults.Interval,
-					DeadInterval:  defaults.DeadInterval,
 					FailThreshold: defaults.FailThreshold,
 					MinSuccess:    1,
 					Timeout:       5,

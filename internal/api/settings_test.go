@@ -192,7 +192,7 @@ func TestUpdateUsageLevelInvalidRejected(t *testing.T) {
 		"schemaVersion": 16,
 		"authEnabled": false,
 		"server": {"port": 2222, "interface": "br0"},
-		"pingCheck": {"enabled": false, "defaults": {"method":"http","target":"8.8.8.8","interval":45,"deadInterval":120,"failThreshold":3}},
+		"pingCheck": {"enabled": false, "defaults": {"method":"http","target":"8.8.8.8","interval":45,"failThreshold":3}},
 		"logging": {"enabled": true, "maxAge": 2},
 		"disableMemorySaving": false,
 		"updates": {"checkEnabled": true},
@@ -237,7 +237,7 @@ func TestUpdateUsageLevelEmptyPreserves(t *testing.T) {
 		"schemaVersion": 16,
 		"authEnabled": false,
 		"server": {"port": 2222, "interface": "br0"},
-		"pingCheck": {"enabled": false, "defaults": {"method":"http","target":"8.8.8.8","interval":45,"deadInterval":120,"failThreshold":3}},
+		"pingCheck": {"enabled": false, "defaults": {"method":"http","target":"8.8.8.8","interval":45,"failThreshold":3}},
 		"logging": {"enabled": true, "maxAge": 2},
 		"disableMemorySaving": false,
 		"updates": {"checkEnabled": true, "autoInstallIntervalDays": 7, "autoInstallTime": "05:00"},
@@ -440,7 +440,7 @@ func TestUpdate_DownloadRoute_NormalizesEmptyToDirect(t *testing.T) {
 func TestUpdate_PingCheckTargetValidAndEmpty(t *testing.T) {
 	h, store := newSettingsHandlerForTest(t)
 
-	body := []byte(`{"pingCheck":{"enabled":false,"defaults":{"method":"http","target":"  1.1.1.1  ","interval":45,"deadInterval":120,"failThreshold":3}}}`)
+	body := []byte(`{"pingCheck":{"enabled":false,"defaults":{"method":"http","target":"  1.1.1.1  ","interval":45,"failThreshold":3}}}`)
 	req := httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	h.Update(rec, req)
@@ -452,7 +452,7 @@ func TestUpdate_PingCheckTargetValidAndEmpty(t *testing.T) {
 		t.Fatalf("target = %q, want 1.1.1.1", got.PingCheck.Defaults.Target)
 	}
 
-	body = []byte(`{"pingCheck":{"enabled":false,"defaults":{"method":"http","target":"  ","interval":45,"deadInterval":120,"failThreshold":3}}}`)
+	body = []byte(`{"pingCheck":{"enabled":false,"defaults":{"method":"http","target":"  ","interval":45,"failThreshold":3}}}`)
 	req = httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))
 	rec = httptest.NewRecorder()
 	h.Update(rec, req)
@@ -467,7 +467,7 @@ func TestUpdate_PingCheckTargetValidAndEmpty(t *testing.T) {
 
 func TestUpdate_PingCheckTargetInvalidRejected(t *testing.T) {
 	h, _ := newSettingsHandlerForTest(t)
-	body := []byte(`{"pingCheck":{"enabled":false,"defaults":{"method":"http","target":"https://example.com","interval":45,"deadInterval":120,"failThreshold":3}}}`)
+	body := []byte(`{"pingCheck":{"enabled":false,"defaults":{"method":"http","target":"https://example.com","interval":45,"failThreshold":3}}}`)
 	req := httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	h.Update(rec, req)

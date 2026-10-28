@@ -82,7 +82,6 @@ type PingCheckDefaultsPatch struct {
 	Method        *string `json:"method,omitempty"`
 	Target        *string `json:"target,omitempty"`
 	Interval      *int    `json:"interval,omitempty"`
-	DeadInterval  *int    `json:"deadInterval,omitempty"`
 	FailThreshold *int    `json:"failThreshold,omitempty"`
 }
 

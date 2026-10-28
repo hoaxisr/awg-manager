@@ -1094,7 +1094,6 @@ const api_PeerPresetsResponse: v.GenericSchema = v.looseObject({
 });
 
 const api_PingCheckDefaultsDTO: v.GenericSchema = v.looseObject({
-	deadInterval: v.optional(v.nullable(v.number())),
 	failThreshold: v.optional(v.nullable(v.number())),
 	interval: v.optional(v.nullable(v.number())),
 	method: v.optional(v.nullable(v.string())),

@@ -298,7 +298,6 @@ func (s *SettingsStore) defaultSettings() *Settings {
 				Method:        "http",
 				Target:        DefaultPingCheckTarget,
 				Interval:      45,
-				DeadInterval:  120,
 				FailThreshold: 3,
 			},
 		},

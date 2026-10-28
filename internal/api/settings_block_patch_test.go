@@ -28,7 +28,7 @@ func TestUpdate_PartialBlockKeepsSiblings(t *testing.T) {
 		}},
 		{"pingCheck.defaults", `{"pingCheck":{"defaults":{"interval":90}}}`, func(t *testing.T, s *storage.Settings) {
 			d := s.PingCheck.Defaults
-			if !s.PingCheck.Enabled || d.Interval != 90 || d.Method != "icmp" || d.DeadInterval != 300 || d.FailThreshold != 7 {
+			if !s.PingCheck.Enabled || d.Interval != 90 || d.Method != "icmp" || d.FailThreshold != 7 {
 				t.Errorf("pingCheck = %+v", s.PingCheck)
 			}
 		}},
@@ -62,7 +62,7 @@ func TestUpdate_PartialBlockKeepsSiblings(t *testing.T) {
 			if err := store.Update(func(cur *storage.Settings) error {
 				cur.Server = storage.ServerSettings{Port: 2222, Interface: "br0", Interfaces: []string{"br0"}}
 				cur.PingCheck = storage.PingCheckSettings{Enabled: true, Defaults: storage.PingCheckDefaults{
-					Method: "icmp", Target: "8.8.8.8", Interval: 45, DeadInterval: 300, FailThreshold: 7}}
+					Method: "icmp", Target: "8.8.8.8", Interval: 45, FailThreshold: 7}}
 				cur.Updates = storage.UpdateSettings{CheckEnabled: true, Channel: "develop", StatsEnabled: true,
 					AutoInstallIntervalDays: 14, AutoInstallTime: "04:30"}
 				cur.DNSRoute = storage.DNSRouteSettings{AutoRefreshEnabled: true, RefreshIntervalHours: 6,

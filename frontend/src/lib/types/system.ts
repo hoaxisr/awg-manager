@@ -218,7 +218,6 @@ export interface PingCheckDefaults {
 	method: 'http' | 'icmp';
 	target: string;
 	interval: number;
-	deadInterval: number;
 	failThreshold: number;
 }
 

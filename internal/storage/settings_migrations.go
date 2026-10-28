@@ -30,9 +30,6 @@ func (s *SettingsStore) migrateToV2(settings *Settings) error {
 	if settings.PingCheck.Defaults.Interval == 0 {
 		settings.PingCheck.Defaults.Interval = 45
 	}
-	if settings.PingCheck.Defaults.DeadInterval == 0 {
-		settings.PingCheck.Defaults.DeadInterval = 120
-	}
 	if settings.PingCheck.Defaults.FailThreshold == 0 {
 		settings.PingCheck.Defaults.FailThreshold = 3
 	}
