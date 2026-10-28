@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/clientip"
+	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
 // loopbackRejectLogInterval bounds how often an unauthenticated request
@@ -103,9 +104,7 @@ func KeyMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if cfg.Enabled == nil || !cfg.Enabled() {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"error":true,"message":"not found","code":"NOT_FOUND"}`))
+			response.ErrorWithStatus(w, http.StatusNotFound, "not found", "NOT_FOUND")
 			return
 		}
 		ip := clientip.FromRequest(r)
@@ -125,9 +124,7 @@ func KeyMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 			if retry, blocked := throttle.Begin(ip); blocked {
 				logf("MCP: throttled %s %q from %s (retry in %s)", r.Method, r.URL.Path, ip, retry.Round(time.Second))
 				w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusTooManyRequests)
-				_, _ = w.Write([]byte(`{"error":true,"message":"too many failed attempts","code":"THROTTLED"}`))
+				response.ErrorWithStatus(w, http.StatusTooManyRequests, "too many failed attempts", "THROTTLED")
 				return
 			}
 		}
@@ -165,9 +162,7 @@ func KeyMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 		if !ok {
 			logReject(r, ip)
 			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer resource_metadata="%s/.well-known/oauth-protected-resource"`, externalOrigin(r)))
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":true,"message":"unauthorized","code":"AUTH_REQUIRED"}`))
+			response.ErrorWithStatus(w, http.StatusUnauthorized, "unauthorized", "AUTH_REQUIRED")
 			return
 		}
 		if cfg.Touch != nil {

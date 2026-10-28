@@ -2,6 +2,7 @@ package mcp_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -156,6 +157,7 @@ func TestKeyMiddleware_LanClientStillThrottled(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("blocked LAN client: status = %d, want 429", rec.Code)
 	}
+	mustErrCode(t, rec, "THROTTLED")
 }
 
 func TestKeyMiddleware_Matrix(t *testing.T) {
@@ -219,6 +221,7 @@ func TestKeyMiddleware_EnabledNil(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
+	mustErrCode(t, rec, "NOT_FOUND")
 	if rec.Header().Get("WWW-Authenticate") != "" {
 		t.Fatal("nil Enabled must not advertise auth")
 	}
@@ -235,6 +238,22 @@ func TestKeyMiddleware_VerifyNil(t *testing.T) {
 	rec := do(h, "Bearer whatever")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	mustErrCode(t, rec, "AUTH_REQUIRED")
+}
+
+// mustErrCode — тело ошибки в общем формате API: {error:true, code}.
+func mustErrCode(t *testing.T, rec *httptest.ResponseRecorder, code string) {
+	t.Helper()
+	var body struct {
+		Error bool   `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || !body.Error || body.Code != code {
+		t.Fatalf("тело = %q, want error с code %s", rec.Body.String(), code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("Content-Type = %q", ct)
 	}
 }
 
