@@ -53,3 +53,18 @@ export function isDeviceOnline(d?: { active?: boolean; link?: string; ip?: strin
 	return true;
 }
 
+
+/**
+ * Интерфейсы, которые мониторинг снял с политики до восстановления связи
+ * (F743). В выборке политики их нет — запись `no permit` скрыта, — и без
+ * пометки туннель выглядит удалённым из политики, а в «Добавить» — свободным
+ * (F752).
+ */
+export function heldPolicyInterfaces(
+	policyName: string,
+	statuses: { policyHolds?: string[]; ndmsName?: string }[],
+): string[] {
+	return statuses
+		.filter((s) => s.ndmsName && s.policyHolds?.includes(policyName))
+		.map((s) => s.ndmsName as string);
+}

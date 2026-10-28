@@ -238,6 +238,11 @@ func TestGetStatus_CheckTargetAndPolicyHolds(t *testing.T) {
 	if h := got["awg3"].PolicyHolds; len(h) != 2 || h[0] != "HydraRoute" || h[1] != "Policy1" {
 		t.Errorf("awg3: policyHolds = %v", h)
 	}
+	// Имя интерфейса в политиках — для пометки на странице политик (F752);
+	// без удержаний его нет.
+	if got["awg3"].NDMSName != "OpkgTun3" || got["awg4"].NDMSName != "" {
+		t.Errorf("ndmsName: awg3=%q awg4=%q", got["awg3"].NDMSName, got["awg4"].NDMSName)
+	}
 	if h := got["awg4"].PolicyHolds; len(h) != 0 {
 		t.Errorf("awg4: policyHolds = %v, ожидали пусто", h)
 	}
@@ -279,7 +284,7 @@ func TestGetStatus_HoldsWithoutMonitor(t *testing.T) {
 	s := &Service{tunnels: store, monitors: map[string]*tunnelMonitor{}}
 	stubDeviceExists(t, true)
 	got := s.GetStatus()
-	if len(got) != 1 || len(got[0].PolicyHolds) != 1 || got[0].PolicyHolds[0] != "HydraRoute" {
+	if len(got) != 1 || len(got[0].PolicyHolds) != 1 || got[0].PolicyHolds[0] != "HydraRoute" || got[0].NDMSName != "OpkgTun3" {
 		t.Fatalf("статус = %+v", got)
 	}
 }

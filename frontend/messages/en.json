@@ -2590,6 +2590,7 @@
 	"access_policy_interfaces_title": "Interfaces (priority)",
 	"access_policy_no_allowed_interfaces": "No allowed interfaces",
 	"access_policy_denied": "denied",
+	"access_policy_held_by_monitoring": "removed by monitoring until connectivity returns",
 	"access_policy_iface_turn_off": "Turn off interface",
 	"access_policy_iface_turn_on": "Turn on interface",
 	"access_policy_up": "Up",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	findPolicyForInterface,
+	heldPolicyInterfaces,
 	isHydraRouteAccessPolicy,
 	isStandardAccessPolicyName,
 	isDeviceOnline
@@ -144,3 +145,17 @@ describe('isDeviceOnline', () => {
 	});
 });
 
+
+describe('heldPolicyInterfaces', () => {
+	it('returns NDMS names of tunnels held off this policy only', () => {
+		const statuses = [
+			{ policyHolds: ['HydraRoute', 'Policy1'], ndmsName: 'OpkgTun10' },
+			{ policyHolds: ['Policy1'], ndmsName: 'OpkgTun11' },
+			{ ndmsName: undefined },
+			{ policyHolds: ['HydraRoute'] },
+		];
+		expect(heldPolicyInterfaces('HydraRoute', statuses)).toEqual(['OpkgTun10']);
+		expect(heldPolicyInterfaces('Policy1', statuses)).toEqual(['OpkgTun10', 'OpkgTun11']);
+		expect(heldPolicyInterfaces('Policy0', statuses)).toEqual([]);
+	});
+});

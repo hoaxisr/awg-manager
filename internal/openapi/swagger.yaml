@@ -7372,6 +7372,9 @@ definitions:
       method:
         example: http
         type: string
+      ndmsName:
+        example: OpkgTun10
+        type: string
       policyHolds:
         example:
         - HydraRoute

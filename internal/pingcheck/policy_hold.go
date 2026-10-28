@@ -181,6 +181,15 @@ func holdNames(holds []storage.PolicyHold) []string {
 	return out
 }
 
+// holdIface — имя, под которым туннель снят с политик (то же, что берёт
+// releasePolicies); без удержаний пусто.
+func holdIface(tunnelID string, held bool) string {
+	if !held {
+		return ""
+	}
+	return tunnel.NewNames(tunnelID).NDMSName
+}
+
 // permitted — интерфейс в политике разрешён (не снят и не запрещён).
 func permitted(p ndms.Policy, iface string) bool {
 	for _, pi := range p.Interfaces {

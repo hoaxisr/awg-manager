@@ -170,6 +170,7 @@
 			interfaces={localInterfaces}
 			availableInterfaces={globalInterfaces}
 			addPickerVariant="panel"
+			policyName={policy.name}
 			onpermit={handlePermit}
 			ondeny={handleDeny}
 			onreorder={handleReorder}

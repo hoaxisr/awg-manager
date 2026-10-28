@@ -33,6 +33,7 @@ type TunnelPingStatusDTO struct {
 	TunnelRunning bool     `json:"tunnelRunning" example:"true"`
 	CheckTarget   string   `json:"checkTarget,omitempty" example:"https://cp.cloudflare.com/generate_204"`
 	PolicyHolds   []string `json:"policyHolds,omitempty" example:"HydraRoute"`
+	NDMSName      string   `json:"ndmsName,omitempty" example:"OpkgTun10"`
 }
 
 // PingCheckStatusData mirrors frontend PingCheckStatus.

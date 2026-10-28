@@ -2656,6 +2656,7 @@
 	"access_policy_interfaces_title": "Интерфейсы (приоритет)",
 	"access_policy_no_allowed_interfaces": "Нет разрешённых интерфейсов",
 	"access_policy_denied": "запрещён",
+	"access_policy_held_by_monitoring": "снят мониторингом до восстановления связи",
 	"access_policy_iface_turn_off": "Выключить интерфейс",
 	"access_policy_iface_turn_on": "Включить интерфейс",
 	"access_policy_up": "Вверх",

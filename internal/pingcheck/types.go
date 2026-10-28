@@ -48,6 +48,9 @@ type TunnelStatus struct {
 	// PolicyHolds — политики, с которых мониторинг снял туннель до
 	// восстановления связи (F743, F748).
 	PolicyHolds []string `json:"policyHolds,omitempty"`
+	// NDMSName — имя интерфейса в политиках (OpkgTunN): по нему страница
+	// политик ставит пометку снятого туннеля (F752). Только при PolicyHolds.
+	NDMSName string `json:"ndmsName,omitempty"`
 }
 
 // TunnelPingInfo is a lightweight status for embedding in tunnel list responses.

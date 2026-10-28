@@ -528,6 +528,7 @@
 							interfaces={selectedPolicy.interfaces ?? []}
 							availableInterfaces={policyInterfaces}
 							addPickerVariant="panel"
+							policyName={selectedPolicy.name}
 							onpermit={policyPermit}
 							ondeny={policyDeny}
 							onreorder={policyPermit}
@@ -577,6 +578,7 @@
 									interfaces={pol.interfaces ?? []}
 									availableInterfaces={policyInterfaces}
 									addPickerVariant="panel"
+									policyName={t.name}
 									onpermit={(iface, order) => permitInterfaceFor(t.name, iface, order)}
 									ondeny={(iface) => denyInterfaceFor(t.name, iface)}
 									onreorder={(iface, order) => permitInterfaceFor(t.name, iface, order)}

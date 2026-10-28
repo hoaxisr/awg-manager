@@ -2635,6 +2635,7 @@ const api_TunnelPingStatusDTO: v.GenericSchema = v.looseObject({
 	lastLatency: v.optional(v.nullable(v.number())),
 	latencyNote: v.optional(v.nullable(v.string())),
 	method: v.optional(v.nullable(v.string())),
+	ndmsName: v.optional(v.nullable(v.string())),
 	policyHolds: v.optional(v.nullable(v.array(v.string()))),
 	restartCount: v.optional(v.nullable(v.number())),
 	status: v.optional(v.nullable(v.string())),
