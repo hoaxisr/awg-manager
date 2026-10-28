@@ -424,7 +424,7 @@
 							{#if isMirror}
 								<p class="field-hint">{m.tunnel_detail_mirror_name_hint()}</p>
 							{/if}
-							{#if $errors.name}<p class="text-xs text-error-500 mt-1">{$errors.name}</p>{/if}
+							{#if $errors.name}<p class="field-hint is-error">{$errors.name}</p>{/if}
 						</div>
 					</section>
 
@@ -438,7 +438,7 @@
 							<div class="flex flex-col gap-1.5" style="width:120px">
 								<label class="field-label" for="mtu">MTU</label>
 								<input type="number" id="mtu" class="field-input" bind:value={$form.mtu} />
-								{#if $errors.mtu}<p class="text-xs text-error-500 mt-1">{$errors.mtu}</p>{/if}
+								{#if $errors.mtu}<p class="field-hint is-error">{$errors.mtu}</p>{/if}
 							</div>
 						</div>
 						<div class="flex flex-col gap-1.5" style="margin-top:12px">
@@ -448,7 +448,7 @@
 						{#if addressDisabled && tunnel?.backend !== 'nativewg'}
 							<p class="field-hint">{m.tunnel_detail_address_locked_kernel()}</p>
 						{/if}
-						{#if $errors.address}<p class="text-xs text-error-500 mt-1">{$errors.address}</p>{/if}
+						{#if $errors.address}<p class="field-hint is-error">{$errors.address}</p>{/if}
 						<div class="flex flex-col gap-1.5" style="margin-top:12px">
 							<label class="field-label" for="dns">DNS</label>
 							<input type="text" id="dns" class="field-input" bind:value={$form.dns} placeholder="1.1.1.1, 8.8.8.8" />
@@ -469,19 +469,19 @@
 								<p class="field-hint">{m.tunnel_detail_endpoint_obf_hint()}</p>
 							{:else}
 								<input type="text" id="endpoint" class="field-input" placeholder={m.tunnel_detail_endpoint_placeholder()} bind:value={$form.endpoint} />
-								{#if $errors.endpoint}<p class="text-xs text-error-500 mt-1">{$errors.endpoint}</p>{/if}
+								{#if $errors.endpoint}<p class="field-hint is-error">{$errors.endpoint}</p>{/if}
 							{/if}
 						</div>
 						<div class="inline-fields">
 							<div class="flex flex-col gap-1.5" style="flex:1">
 								<label class="field-label" for="allowedIPs">AllowedIPs</label>
 								<input type="text" id="allowedIPs" class="field-input" bind:value={$form.allowedIPs} />
-								{#if $errors.allowedIPs}<p class="text-xs text-error-500 mt-1">{$errors.allowedIPs}</p>{/if}
+								{#if $errors.allowedIPs}<p class="field-hint is-error">{$errors.allowedIPs}</p>{/if}
 							</div>
 							<div class="flex flex-col gap-1.5" style="width:120px">
 								<label class="field-label" for="persistentKeepalive">Keepalive</label>
 								<input type="text" inputmode="text" id="persistentKeepalive" class="field-input" bind:value={$form.persistentKeepalive} />
-								{#if $errors.persistentKeepalive}<p class="text-xs text-error-500 mt-1">{$errors.persistentKeepalive}</p>{/if}
+								{#if $errors.persistentKeepalive}<p class="field-hint is-error">{$errors.persistentKeepalive}</p>{/if}
 							</div>
 						</div>
 						{#if keepaliveApplied !== null}

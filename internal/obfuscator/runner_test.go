@@ -121,6 +121,32 @@ func TestRunner_StartIsIdempotentAndRestartsOnConfChange(t *testing.T) {
 	}
 }
 
+// Перезапуск с прежним конфигом не переписывает файл: /opt — флеш (F119 4.5).
+func TestRunner_StartSkipsRewriteOfSameConf(t *testing.T) {
+	r, _ := newTestRunner(t)
+	o := obf()
+	if err := r.Start(context.Background(), "awg20", o, "203.0.113.5"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Stop("awg20"); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(ConfPath("awg20"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Start(context.Background(), "awg20", o, "203.0.113.5"); err != nil {
+		t.Fatal(err)
+	}
+	if !r.Alive("awg20") {
+		t.Fatal("релей не поднялся")
+	}
+	st, err := os.Stat(ConfPath("awg20"))
+	if err != nil || !st.ModTime().Equal(old) {
+		t.Fatalf("конфиг переписан при том же тексте: mtime %v, ждали %v (%v)", st.ModTime(), old, err)
+	}
+}
+
 // Тот же конфиг, другой IP сервера — перезапуск: на этом держится доставка
 // нового DDNS-адреса процессному релею.
 func TestRunner_StartRestartsOnIPChange(t *testing.T) {
@@ -160,6 +186,13 @@ func TestRunner_AdoptAll(t *testing.T) {
 	}
 	if !r2.Alive("awg20") || r2.Alive("awg21") {
 		t.Fatalf("alive: awg20=%v awg21=%v", r2.Alive("awg20"), r2.Alive("awg21"))
+	}
+	// Конфиг с ключом погашенной сироты убран, живого туннеля — на месте (F119 1.9).
+	if _, err := os.Stat(ConfPath("awg21")); !os.IsNotExist(err) {
+		t.Fatal("конфиг сироты с ключом остался на флеше")
+	}
+	if _, err := os.Stat(ConfPath("awg20")); err != nil {
+		t.Fatalf("конфиг усыновлённого туннеля пропал: %v", err)
 	}
 	// Мёртвый pidfile — убирается.
 	_ = os.WriteFile(filepath.Join(RunDir, "awg22.pid"), []byte("999999"), 0o644)

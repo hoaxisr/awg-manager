@@ -194,7 +194,7 @@
 	{#if loading}
 		<div class="py-12 text-center text-surface-400">{m.tunnels_loading()}</div>
 	{:else if error}
-		<div class="py-12 text-center text-error-500">{uiText(error)}</div>
+		<div class="py-12 text-center text-[var(--color-error)]">{uiText(error)}</div>
 	{:else if ascParams}
 		<div class="tab-content">
 			{#if awg31Rows.length}

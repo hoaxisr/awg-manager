@@ -199,3 +199,18 @@ func TestUninstallReleasesInstallingFlag(t *testing.T) {
 		t.Fatal("флаг занятости не снят после отказа гейта")
 	}
 }
+
+// У подсистемы без серверного бинаря строка журнала — без хвоста «, » (F119 2).
+func TestUninstallLogWithoutServerBin(t *testing.T) {
+	var infos []string
+	s := newTestService(t, Deps{InstanceCount: countOf(nil), Info: func(m string) { infos = append(infos, m) }})
+	sub := s.subs[SubsystemObfPhobos]
+	sub.serverBin = "" // как в проде: у obf-подсистем серверного бинаря нет
+	writeBin(t, sub.clientBin, "client")
+	if err := s.Uninstall(string(SubsystemObfPhobos)); err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || strings.HasSuffix(infos[0], ", ") || !strings.HasSuffix(infos[0], sub.clientBin) {
+		t.Fatalf("журнал удаления: %q", infos)
+	}
+}

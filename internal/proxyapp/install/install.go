@@ -435,7 +435,11 @@ func (s *Service) Uninstall(subsystem string) error {
 		return errors.Join(errs...)
 	}
 	// Кеш сверки с пином ключуется по mtime+size бинарей и инвалидируется сам.
-	s.info(fmt.Sprintf("%s удалён: %s, %s", sub.name, sub.clientBin, sub.serverBin))
+	if sub.serverBin == "" {
+		s.info(fmt.Sprintf("%s удалён: %s", sub.name, sub.clientBin))
+	} else {
+		s.info(fmt.Sprintf("%s удалён: %s, %s", sub.name, sub.clientBin, sub.serverBin))
+	}
 	return nil
 }
 

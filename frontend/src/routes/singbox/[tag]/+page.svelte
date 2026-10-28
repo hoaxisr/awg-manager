@@ -263,7 +263,7 @@
 	{#if loading}
 		<div class="py-12 text-center text-surface-400">{m.tunnels_loading()}</div>
 	{:else if !outbound}
-		<div class="py-12 text-center text-error-500">{error ? uiText(error) : m.singbox_edit_not_found()}</div>
+		<div class="py-12 text-center text-[var(--color-error)]">{error ? uiText(error) : m.singbox_edit_not_found()}</div>
 	{:else}
 		<form class="tab-form" onsubmit={(e) => { e.preventDefault(); save(); }}>
 			{#if rawMode}

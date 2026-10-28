@@ -201,7 +201,9 @@
 			case 'needs_stop':
 				return m.tunnels_card_status_stopping();
 			case 'broken':
-				return tunnel.statusDetails ?? '';
+				// Без деталей — хотя бы «Сломан»: пустая строка оставляла статус и
+				// aria-label точки пустыми (F119 6.15).
+				return tunnel.statusDetails || m.tunnels_state_broken();
 			case 'disabled':
 				return m.tunnels_status_off();
 			default:

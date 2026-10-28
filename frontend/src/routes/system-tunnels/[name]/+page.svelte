@@ -93,7 +93,7 @@
 	{#if loading}
 		<div class="py-12 text-center text-surface-400">{m.tunnels_loading()}</div>
 	{:else if error}
-		<div class="py-12 text-center text-error-500">{error}</div>
+		<div class="py-12 text-center text-[var(--color-error)]">{error}</div>
 	{:else if tunnel && ascParams}
 		<div class="section">
 			<h2 class="section-title">{m.system_tunnels_info()}</h2>

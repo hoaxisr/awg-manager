@@ -59,7 +59,9 @@ func (r *Runner) Start(ctx context.Context, tunnelID string, o *storage.Obfuscat
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	want := RenderConf(o, ip)
-	if cur, err := os.ReadFile(ConfPath(tunnelID)); err == nil && string(cur) == want && r.alive(tunnelID) {
+	cur, err := os.ReadFile(ConfPath(tunnelID))
+	same := err == nil && string(cur) == want
+	if same && r.alive(tunnelID) {
 		return nil
 	}
 	_ = r.stopLocked(tunnelID)
@@ -70,8 +72,12 @@ func (r *Runner) Start(ctx context.Context, tunnelID string, o *storage.Obfuscat
 	if err != nil {
 		return fmt.Errorf("бинарь обфускатора %s: %w", o.Flavor, err)
 	}
-	if err := WriteConf(tunnelID, o, ip); err != nil {
-		return err
+	// Тот же текст уже на диске — не переписываем: /opt — флеш, а рестарт
+	// релея с прежним конфигом (Stop→Start, бут) частый (F119 4.5).
+	if !same {
+		if err := WriteConf(tunnelID, o, ip); err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(RunDir, 0o755); err != nil {
 		return err
@@ -168,10 +174,16 @@ func (r *Runner) AdoptAll(keep func(tunnelID string) bool) []string {
 			// Через stopLocked, а не os.Remove: у мёртвого процесса мог
 			// остаться хвост stderr — иначе горутина висит вечно.
 			_ = r.stopLocked(id)
+			if !keep(id) {
+				RemoveConf(id)
+			}
 			continue
 		}
 		if !keep(id) {
 			_ = r.stopLocked(id)
+			// Конфиг сироты несёт ключ: у удалённого туннеля его иначе не
+			// уберёт никто. Включённому туннелю Start напишет его заново (F119 1.9).
+			RemoveConf(id)
 			r.deps.Log.Info("obfuscator", id, "сирота остановлен (туннель удалён или выключен)")
 			continue
 		}
