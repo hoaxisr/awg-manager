@@ -2628,12 +2628,14 @@ const api_TunnelPingCheckStatus: v.GenericSchema = v.looseObject({
 
 const api_TunnelPingStatusDTO: v.GenericSchema = v.looseObject({
 	backend: v.optional(v.nullable(v.string())),
+	checkTarget: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	failCount: v.optional(v.nullable(v.number())),
 	failThreshold: v.optional(v.nullable(v.number())),
 	lastLatency: v.optional(v.nullable(v.number())),
 	latencyNote: v.optional(v.nullable(v.string())),
 	method: v.optional(v.nullable(v.string())),
+	policyHolds: v.optional(v.nullable(v.array(v.string()))),
 	restartCount: v.optional(v.nullable(v.number())),
 	status: v.optional(v.nullable(v.string())),
 	tunnelId: v.optional(v.nullable(v.string())),

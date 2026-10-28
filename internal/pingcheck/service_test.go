@@ -224,3 +224,43 @@ func TestGetTunnelPingStatus_MatchesGetStatus(t *testing.T) {
 		}
 	}
 }
+
+// Карточка показывает то, что проверяется (F749), и политики, с которых
+// мониторинг снял туннель (F748).
+func TestGetStatus_CheckTargetAndPolicyHolds(t *testing.T) {
+	store := newTunnelStore(t)
+	for _, tun := range []*storage.AWGTunnel{
+		{ID: "awg3", Name: "ip", PingCheck: &storage.TunnelPingCheck{Enabled: true, Method: "http", Target: "8.8.8.8"},
+			PolicyHolds: []storage.PolicyHold{{Policy: "HydraRoute", Order: 0}, {Policy: "Policy1", Order: 2}}},
+		{ID: "awg4", Name: "host", PingCheck: &storage.TunnelPingCheck{Enabled: true, Method: "http", Target: "example.com"}},
+		{ID: "awg5", Name: "icmp", PingCheck: &storage.TunnelPingCheck{Enabled: true, Method: "icmp", Target: "1.1.1.1"}},
+	} {
+		if err := store.Create(tun); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &Service{tunnels: store, monitors: map[string]*tunnelMonitor{
+		"awg3": {tunnelID: "awg3"}, "awg4": {tunnelID: "awg4"}, "awg5": {tunnelID: "awg5"},
+	}}
+
+	got := map[string]TunnelStatus{}
+	for _, st := range s.GetStatus() {
+		got[st.TunnelID] = st
+	}
+	want := map[string]string{
+		"awg3": storage.DefaultConnectivityCheckURL,
+		"awg4": "https://example.com",
+		"awg5": "1.1.1.1",
+	}
+	for id, w := range want {
+		if got[id].CheckTarget != w {
+			t.Errorf("%s: checkTarget = %q, want %q", id, got[id].CheckTarget, w)
+		}
+	}
+	if h := got["awg3"].PolicyHolds; len(h) != 2 || h[0] != "HydraRoute" || h[1] != "Policy1" {
+		t.Errorf("awg3: policyHolds = %v", h)
+	}
+	if h := got["awg4"].PolicyHolds; len(h) != 0 {
+		t.Errorf("awg4: policyHolds = %v, ожидали пусто", h)
+	}
+}

@@ -116,6 +116,38 @@ func TestPolicyHold_ReleasedAtThresholdRestoredOnSuccess(t *testing.T) {
 	}
 }
 
+// Линк опущен (Suspend на падении WAN) — проверок нет: порог не набирается,
+// permit не снимается, во флеш ничего не пишется. Политику с такого
+// интерфейса NDMS уводит сам (F750).
+func TestPolicyHold_SuspendedLinkNotChecked(t *testing.T) {
+	orig := httpprobe.Client
+	t.Cleanup(func() { httpprobe.Client = orig })
+	s, m, config, _ := newKernelSensorService(t)
+	fp := &fakePolicies{lists: map[string][]string{"HydraRoute": {"OpkgTun7", "PPPoE0"}}}
+	s.SetPolicies(fp)
+	httpprobe.Client = alwaysFailDoer{}
+
+	stubIfaceUp(t, false)
+	for range 5 {
+		s.sensorTick(m, config)
+	}
+	if fp.denies != 0 || m.failCount != 0 || repairs(s) != 0 {
+		t.Fatalf("опущенный линк проверялся: denies=%d failCount=%d repairs=%d", fp.denies, m.failCount, repairs(s))
+	}
+	if len(s.logBuffer.GetAll()) != 0 {
+		t.Fatal("в журнал попали проверки опущенного линка")
+	}
+
+	// Линк поднят (Resume) — мониторинг работает как прежде.
+	stubIfaceUp(t, true)
+	for range 3 {
+		s.sensorTick(m, config)
+	}
+	if fp.denies != 1 {
+		t.Fatalf("после подъёма линка порог не сработал: denies=%d", fp.denies)
+	}
+}
+
 // Возврат: удалённая политика и вернувшийся руками интерфейс пропускаются,
 // позиция за концом укороченного списка прижимается к концу, неудачный
 // возврат остаётся в записи до следующей попытки.

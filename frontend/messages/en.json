@@ -6395,6 +6395,7 @@
 	"pingcheck_tab_load_failed": "Failed to load monitoring",
 	"pingcheck_config_line_short": "{method} · threshold {threshold}",
 	"pingcheck_config_line_full": "{method} → {target} · {interval}s · threshold {threshold}",
+	"pingcheck_policy_holds": "Removed from policies: {policies} — returns when connectivity is restored",
 	"pingcheck_check_started": "Check started",
 	"pingcheck_check_start_failed": "Failed to start the check",
 	"pingcheck_no_saved_settings": "No saved monitoring settings",

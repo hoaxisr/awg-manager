@@ -30,6 +30,7 @@ func TestStopMonitoring_DuringTickDoesNotHang(t *testing.T) {
 	d := parkedDoer{entered: make(chan struct{}), release: make(chan struct{})}
 	httpprobe.Client = d
 	stubRunCmd(t)
+	stubIfaceUp(t, true)
 
 	store := newTunnelStore(t)
 	if err := store.Create(&storage.AWGTunnel{ID: "awg15", Name: "nl", Backend: "kernel",

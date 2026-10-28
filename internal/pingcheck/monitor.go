@@ -76,6 +76,13 @@ func (s *Service) lockedTick(m *tunnelMonitor, config *checkConfig) {
 // sensorTick performs one check cycle.
 func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 	ifaceName := s.resolveIfaceName(m.tunnelID)
+	// Опущенный линк не проверяем: это Suspend на падении WAN, и политику
+	// NDMS с такого интерфейса уводит сама (стенд 27.10, F743). Проверка
+	// здесь только набирала порог и снимала permit — с записью во флеш на
+	// каждый туннель при каждом флапе WAN (F750).
+	if !ifaceUp(ifaceName) {
+		return
+	}
 	result := performCheck(s.ctx, ifaceName, config.Method, config.Target, config.CheckURL, config.DNSServers)
 	if s.ctx.Err() != nil {
 		return

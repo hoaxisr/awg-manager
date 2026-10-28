@@ -7351,6 +7351,9 @@ definitions:
       backend:
         example: nativewg
         type: string
+      checkTarget:
+        example: https://cp.cloudflare.com/generate_204
+        type: string
       enabled:
         example: true
         type: boolean
@@ -7369,6 +7372,12 @@ definitions:
       method:
         example: http
         type: string
+      policyHolds:
+        example:
+        - HydraRoute
+        items:
+          type: string
+        type: array
       restartCount:
         example: 0
         type: integer

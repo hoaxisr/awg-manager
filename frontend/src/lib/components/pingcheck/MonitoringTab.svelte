@@ -64,11 +64,13 @@
 		return tunnelMeta.find((t) => t.id === id);
 	}
 
-	function configLine(cfg: AWGTunnel['pingCheck'] | undefined, method: string, failThreshold: number): string {
+	// checkTarget из статуса — то, что проверяется на деле: HTTP с IP-целью ходит
+	// на общий URL, а не на IP из настроек (F749).
+	function configLine(cfg: AWGTunnel['pingCheck'] | undefined, method: string, failThreshold: number, checkTarget?: string): string {
 		if (!cfg) return m.pingcheck_config_line_short({ method: method.toUpperCase(), threshold: failThreshold });
 		return m.pingcheck_config_line_full({
 			method: (cfg.method || method).toUpperCase(),
-			target: cfg.target,
+			target: checkTarget || cfg.target,
 			interval: cfg.interval,
 			threshold: cfg.failThreshold,
 		});
@@ -91,7 +93,8 @@
 				isWatchdog,
 				// Активный мониторинг ИЛИ есть сохранённый конфиг → «настроен».
 				configured: isWatchdog || !!cfg,
-				configLine: configLine(cfg, s.method, s.failThreshold),
+				configLine: configLine(cfg, s.method, s.failThreshold, s.checkTarget),
+				policyHolds: s.policyHolds ?? [],
 				stats: computeCardStats(logsByTunnel.get(s.tunnelId) ?? [], s),
 				latencyNote: s.latencyNote,
 			};
@@ -209,6 +212,7 @@
 					configLine={c.configLine}
 					stats={c.stats}
 					latencyNote={c.latencyNote}
+					policyHolds={c.policyHolds}
 					onConfigure={() => openConfig(c.id, c.name, c.backend)}
 					onCheckNow={checkNow}
 					onDisable={() => disablePingcheck(c.id, c.name, c.backend)}

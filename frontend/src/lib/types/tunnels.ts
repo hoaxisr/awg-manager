@@ -406,6 +406,10 @@ export interface TunnelPingStatus {
 	failThreshold: number;
 	restartCount: number;
 	tunnelRunning?: boolean;
+	/** Фактическая цель проверки: для HTTP с IP-целью — общий URL (F749). */
+	checkTarget?: string;
+	/** Политики, с которых мониторинг снял туннель до восстановления связи (F748). */
+	policyHolds?: string[];
 }
 
 export interface PingLogEntry {

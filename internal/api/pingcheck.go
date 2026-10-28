@@ -19,18 +19,20 @@ import (
 
 // TunnelPingStatusDTO mirrors frontend TunnelPingStatus.
 type TunnelPingStatusDTO struct {
-	TunnelId      string `json:"tunnelId" example:"tun_abc123"`
-	TunnelName    string `json:"tunnelName" example:"My VPN"`
-	Enabled       bool   `json:"enabled" example:"true"`
-	Backend       string `json:"backend" example:"nativewg"`
-	Status        string `json:"status" example:"alive"`
-	Method        string `json:"method" example:"http"`
-	LastLatency   int    `json:"lastLatency" example:"35"`
-	LatencyNote   string `json:"latencyNote,omitempty" example:"метод проверки не измеряет время отклика"`
-	FailCount     int    `json:"failCount" example:"0"`
-	FailThreshold int    `json:"failThreshold" example:"3"`
-	RestartCount  int    `json:"restartCount" example:"0"`
-	TunnelRunning bool   `json:"tunnelRunning" example:"true"`
+	TunnelId      string   `json:"tunnelId" example:"tun_abc123"`
+	TunnelName    string   `json:"tunnelName" example:"My VPN"`
+	Enabled       bool     `json:"enabled" example:"true"`
+	Backend       string   `json:"backend" example:"nativewg"`
+	Status        string   `json:"status" example:"alive"`
+	Method        string   `json:"method" example:"http"`
+	LastLatency   int      `json:"lastLatency" example:"35"`
+	LatencyNote   string   `json:"latencyNote,omitempty" example:"метод проверки не измеряет время отклика"`
+	FailCount     int      `json:"failCount" example:"0"`
+	FailThreshold int      `json:"failThreshold" example:"3"`
+	RestartCount  int      `json:"restartCount" example:"0"`
+	TunnelRunning bool     `json:"tunnelRunning" example:"true"`
+	CheckTarget   string   `json:"checkTarget,omitempty" example:"https://cp.cloudflare.com/generate_204"`
+	PolicyHolds   []string `json:"policyHolds,omitempty" example:"HydraRoute"`
 }
 
 // PingCheckStatusData mirrors frontend PingCheckStatus.

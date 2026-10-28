@@ -6769,6 +6769,7 @@
 	"pingcheck_tab_load_failed": "Не удалось загрузить мониторинг",
 	"pingcheck_config_line_short": "{method} · порог {threshold}",
 	"pingcheck_config_line_full": "{method} → {target} · {interval}с · порог {threshold}",
+	"pingcheck_policy_holds": "Снят с политик: {policies} — вернётся после восстановления связи",
 	"pingcheck_check_started": "Проверка запущена",
 	"pingcheck_check_start_failed": "Не удалось запустить проверку",
 	"pingcheck_no_saved_settings": "Нет сохранённых настроек мониторинга",

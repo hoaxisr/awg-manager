@@ -237,8 +237,14 @@ func (s *Service) GetStatus() []TunnelStatus {
 		// зеркальную запись прокси-выхода этот цикл тоже перечисляет, и
 		// зашитое "kernel" врало о её природе.
 		backend := "kernel"
-		if stored, err := s.tunnels.Get(tunnelID); err == nil && stored.Backend != "" {
-			backend = stored.Backend
+		var holds []string
+		if stored, err := s.tunnels.Get(tunnelID); err == nil {
+			if stored.Backend != "" {
+				backend = stored.Backend
+			}
+			for _, h := range stored.PolicyHolds {
+				holds = append(holds, h.Policy)
+			}
 		}
 
 		// Как nwgCardStatus: лежащий интерфейс — «stopped», но не во время
@@ -259,10 +265,12 @@ func (s *Service) GetStatus() []TunnelStatus {
 
 		failThreshold := 3
 		method := "http"
+		target := ""
 		lastLatency := 0
 		if config != nil {
 			failThreshold = config.FailThreshold
 			method = config.Method
+			target = checkTarget(config.Method, config.Target, config.CheckURL)
 		}
 		if m.lastResult != nil {
 			lastLatency = m.lastResult.Latency
@@ -281,6 +289,8 @@ func (s *Service) GetStatus() []TunnelStatus {
 			FailThreshold: failThreshold,
 			RestartCount:  m.restartCount,
 			TunnelRunning: running,
+			CheckTarget:   target,
+			PolicyHolds:   holds,
 		})
 	}
 

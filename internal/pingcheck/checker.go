@@ -70,6 +70,15 @@ func performCheck(ctx context.Context, ifaceName string, method string, target s
 	}
 }
 
+// checkTarget — что фактически проверяет performCheck: для показа на карточке
+// (F749), чтобы не рисовать «HTTP → 8.8.8.8», когда ходим на общий URL.
+func checkTarget(method, target, checkURL string) string {
+	if method == "icmp" {
+		return target
+	}
+	return httpCheckURL(target, checkURL)
+}
+
 // httpCheckURL — адрес HTTP-проверки: цель из настроек туннеля (хост без
 // схемы → https://), пустая цель → общий ConnectivityCheckURL. Голый IP —
 // тоже общий URL: поле цели задумано под ICMP, и умолчания (общие настройки:

@@ -2,7 +2,7 @@
 <script lang="ts">
 	import { StatusDot, VersionBadge, Badge, Button, type StatusDotVariant, type BadgeVariant } from '$lib/components/ui';
 	import { TunnelDelaySparkBars } from '$lib/components/tunnels';
-	import { Settings, Power, PowerOff, Info, Check, X, RotateCcw } from 'lucide-svelte';
+	import { Settings, Power, PowerOff, Info, Check, X, RotateCcw, TriangleAlert } from 'lucide-svelte';
 	import { formatTime } from '$lib/utils/format';
 	import { m } from '$lib/i18n';
 	import type { CardStats } from '$lib/utils/pingStats';
@@ -18,13 +18,15 @@
 		stats: CardStats | null;
 		/** Почему время отклика не измерено; пусто — измеряется нормально. */
 		latencyNote?: string;
+		/** Политики, с которых мониторинг снял туннель до восстановления (F748). */
+		policyHolds?: string[];
 		onConfigure: () => void;
 		onCheckNow: () => void;
 		onDisable: () => void;
 		onEnable: () => void;
 	}
 
-	let { name, backend, awgVersion, statusKind, hasPingcheck, isWatchdog, configLine, stats, latencyNote, onConfigure, onCheckNow, onDisable, onEnable }: Props =
+	let { name, backend, awgVersion, statusKind, hasPingcheck, isWatchdog, configLine, stats, latencyNote, policyHolds = [], onConfigure, onCheckNow, onDisable, onEnable }: Props =
 		$props();
 
 	const STATUS: Record<Props['statusKind'], { dot: StatusDotVariant; pulse: boolean; badge: BadgeVariant }> = {
@@ -73,6 +75,12 @@
 	{#if isWatchdog && stats}
 		<!-- Config line -->
 		<div class="wd-config">{configLine}</div>
+
+		<!-- Снятие с политик иначе видно только в журнале: туннель просто
+		     пропадает из списка политики (F748). -->
+		{#if policyHolds.length > 0}
+			<div class="wd-latency-note wd-policy-hold"><TriangleAlert size={13} />{m.pingcheck_policy_holds({ policies: policyHolds.join(', ') })}</div>
+		{/if}
 
 		<!-- Stats grid -->
 		<div class="wd-stats">
@@ -233,6 +241,10 @@
 		line-height: 1.5;
 		color: var(--color-text-muted);
 		border-bottom: 1px solid var(--color-border);
+	}
+
+	.wd-policy-hold {
+		color: var(--color-warning);
 	}
 
 	.wd-latency-note :global(svg) {

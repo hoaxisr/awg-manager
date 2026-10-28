@@ -51,6 +51,7 @@ func TestSensorTick_WdttRawNeverTouchesInterface(t *testing.T) {
 	defer lb.Stop()
 	rec := stubRunCmd(t)
 	stubDeviceExists(t, true)
+	stubIfaceUp(t, true)
 	// Endpoint из записи пустой, поэтому команда лечения — только если резолв
 	// что-то вернёт; отдаём адрес, чтобы пропуск гарда был виден в rec.
 	stubResolveEndpoint(t, func(string) string { return "203.0.113.9:51820" })
@@ -150,6 +151,7 @@ func newKernelSensorService(t *testing.T) (*Service, *tunnelMonitor, *checkConfi
 	stopCh := make(chan struct{})
 	close(stopCh)
 	m := &tunnelMonitor{tunnelID: "awg7", tunnelName: "Нидерланды", stopCh: stopCh}
+	stubIfaceUp(t, true)
 	return s, m, config, stubRunCmd(t)
 }
 
@@ -284,6 +286,13 @@ func stubDeviceExists(t *testing.T, v bool) {
 	old := deviceExists
 	deviceExists = func(string) bool { return v }
 	t.Cleanup(func() { deviceExists = old })
+}
+
+func stubIfaceUp(t *testing.T, v bool) {
+	t.Helper()
+	old := ifaceUp
+	ifaceUp = func(string) bool { return v }
+	t.Cleanup(func() { ifaceUp = old })
 }
 
 // #855: провал до порога → лечение → проверка снова успешна. Туннель

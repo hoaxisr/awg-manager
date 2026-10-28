@@ -42,6 +42,12 @@ type TunnelStatus struct {
 	FailThreshold int    `json:"failThreshold"`
 	RestartCount  int    `json:"restartCount"`
 	TunnelRunning bool   `json:"tunnelRunning"` // whether the tunnel interface is actually up
+	// CheckTarget — фактическая цель проверки: для HTTP с голым IP или пустой
+	// целью это общий URL, а не IP из настроек (F749).
+	CheckTarget string `json:"checkTarget,omitempty"`
+	// PolicyHolds — политики, с которых мониторинг снял туннель до
+	// восстановления связи (F743, F748).
+	PolicyHolds []string `json:"policyHolds,omitempty"`
 }
 
 // TunnelPingInfo is a lightweight status for embedding in tunnel list responses.
