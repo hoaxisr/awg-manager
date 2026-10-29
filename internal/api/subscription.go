@@ -333,12 +333,9 @@ func (h *SubscriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		if sub.Label != "" {
 			label = sub.Label
 		}
-		tags := make([]string, 0, 1+len(sub.MemberTags))
-		if sub.SelectorTag != "" {
-			tags = append(tags, sub.SelectorTag)
-		}
-		tags = append(tags, sub.MemberTags...)
-		if err := tunnelservice.CheckOutboundTagsReferenced(id, tags, h.deviceProxyRefs, h.routerRefs); err != nil {
+		// Все outbound'ы подписки в слоте, а не только группа и члены: сироты
+		// и исключённые остаются там именно из-за ссылок (F761).
+		if err := tunnelservice.CheckOutboundTagsReferenced(id, h.svc.OwnedOutboundTags(sub), h.deviceProxyRefs, h.routerRefs); err != nil {
 			var refErr tunnelservice.ErrTunnelReferenced
 			if errors.As(err, &refErr) {
 				h.log.Info("subscription-delete", id, "Refused: "+refErr.Error())

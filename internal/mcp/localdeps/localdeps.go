@@ -173,6 +173,7 @@ type (
 		Refresh(ctx context.Context, id string) (*subscription.RefreshResult, error)
 		ExcludeMembers(ctx context.Context, id string, tags []string) (*subscription.Subscription, error)
 		RestoreMembers(ctx context.Context, id string, tags []string) (*subscription.Subscription, error)
+		OwnedOutboundTags(sub *subscription.Subscription) []string
 	}
 	// ClashState reads the running engine: which member each group routes
 	// through and the delays it has on record. Satisfied by

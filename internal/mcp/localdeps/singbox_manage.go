@@ -75,16 +75,6 @@ func (l *Local) CreateSingboxSubscription(ctx context.Context, in mcpsrv.Singbox
 	return singboxSubscription(created), nil
 }
 
-// subscriptionTags lists the outbound tags of a subscription that a rule,
-// a group or the device proxy may point at: its group and its servers.
-func subscriptionTags(sub *subscription.Subscription) []string {
-	tags := make([]string, 0, 1+len(sub.MemberTags))
-	if sub.SelectorTag != "" {
-		tags = append(tags, sub.SelectorTag)
-	}
-	return append(tags, sub.MemberTags...)
-}
-
 // refusedForReferences runs the REST handlers' check
 // (service.CheckOutboundTagsReferenced): deleting an outbound that a rule
 // or the device proxy names would leave sing-box a configuration it
@@ -107,7 +97,9 @@ func (l *Local) DeleteSingboxSubscription(ctx context.Context, id string) (mcpsr
 		return mcpsrv.SingboxSubscription{}, errSubscriptionNotFound(id)
 	}
 	label := sanitizeLabel(current.Label)
-	if err := l.refusedForReferences(id, subscriptionTags(current)); err != nil {
+	// Как у REST: все outbound'ы подписки в слоте, а не только группа и
+	// члены — сироты и исключённые остаются там из-за ссылок (F761).
+	if err := l.refusedForReferences(id, l.c.Subscriptions.OwnedOutboundTags(current)); err != nil {
 		l.subLog.Info("subscription-delete", label, "Refused (MCP): still referenced")
 		return mcpsrv.SingboxSubscription{}, err
 	}

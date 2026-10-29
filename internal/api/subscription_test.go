@@ -710,3 +710,50 @@ func TestSubscriptionHandler_Update_URLOnInline_400(t *testing.T) {
 func (noopMutator) CreateProxy(context.Context, int, int, string) (bool, error) {
 	return true, nil
 }
+
+// orphanMutator — noopMutator, у которого в слоте лежит ещё и сирота
+// подписки (оставлена из-за ссылки).
+type orphanMutator struct {
+	noopMutator
+	extra string
+}
+
+func (m *orphanMutator) DeclaredOutboundTags() []string { return []string{m.extra} }
+
+// routerRefsFor — роутер ссылается правилом #2 ровно на один тег.
+type routerRefsFor string
+
+func (r routerRefsFor) RulesReferencing(tag string) []int {
+	if tag == string(r) {
+		return []int{2}
+	}
+	return nil
+}
+func (routerRefsFor) OutboundReferenceLocations(string) []string { return nil }
+
+// Удаление подписки проверяет ссылки по всем её outbound'ам в слоте, включая
+// сироту, а не только по группе и членам (F761).
+func TestSubscriptionHandler_Delete_RefusesReferencedOrphan(t *testing.T) {
+	store, err := subscription.NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mut := &orphanMutator{}
+	h := NewSubscriptionHandler(subscription.NewService(store, mut), &fakePresenceProbe{installed: true})
+	body, _ := json.Marshal(CreateSubscriptionRequest{Label: "x", Enabled: true,
+		Inline: "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443?security=tls&sni=a#A"})
+	rr := httptest.NewRecorder()
+	h.Create(rr, httptest.NewRequest(http.MethodPost, "/api/singbox/subscriptions/create", strings.NewReader(string(body))))
+	var created SubscriptionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil || rr.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	mut.extra = created.Data.SelectorTag + "-deadbeef"
+	h.SetOutboundRefCheckers(nil, routerRefsFor(mut.extra))
+
+	rr = httptest.NewRecorder()
+	h.Delete(rr, httptest.NewRequest(http.MethodDelete, "/api/singbox/subscriptions/delete?id="+created.Data.ID, nil))
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("сирота со ссылкой из правила: %d %s, want 409", rr.Code, rr.Body.String())
+	}
+}

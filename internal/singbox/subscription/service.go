@@ -922,10 +922,16 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 		return ErrAllMembersFiltered
 	}
 
+	inSlot := make(map[string]bool)
+	for _, t := range s.mutator.DeclaredOutboundTags() {
+		inSlot[t] = true
+	}
 	for _, n := range diff.New {
-		if skip(n.Tag, n.Out.Label) {
+		if skip(n.Tag, n.Out.Label) && !inSlot[n.Tag] {
 			continue // исключённый / отфильтрованный сервер не материализуем
 		}
+		// Пропускаемый, но лежащий в слоте (исключён, на него ссылается другой
+		// слот, F761) — обновляем тело; снимет его, если нужно, чистка сирот.
 		jsonWithTag := materializeMemberOutbound(n.Out.Outbound, n.Tag, sub.BindInterface, s.logWarn)
 		if err := s.mutator.AddOutbound(n.Tag, jsonWithTag); err != nil {
 			return err
@@ -933,7 +939,9 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 	}
 	for _, e := range diff.Existing {
 		if skip(e.Tag, e.Out.Label) {
-			s.mutator.RemoveOutbound(e.Tag) // на случай, если ранее был активен
+			// Не снимаем сами: вне состава он — сирота, и ниже его снимет
+			// removeUnreferencedOrphans, если на него не ссылается другой слот
+			// (F761). Тело на следующих обновлениях освежает ветка New выше.
 			continue
 		}
 		jsonWithTag := materializeMemberOutbound(e.Out.Outbound, e.Tag, sub.BindInterface, s.logWarn)
@@ -1004,7 +1012,8 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 // ссылкой остаётся: группа соседнего слота иначе молча потеряла бы члена —
 // висячих членов валидатор вычищает без ошибки, а Reload — на диске (#1081).
 // Слоты не прочитаны — не снимаем ничего (по неполному ответу нельзя) и
-// возвращаем ошибку: обновление её глотает, ручная очистка — отдаёт.
+// возвращаем ошибку: обновление, исключение и удаление члена её глотают
+// (outbound остаётся сиротой до следующей попытки), ручная очистка — отдаёт.
 func (s *Service) removeUnreferencedOrphans(orphans []string) (removed int, kept []string, err error) {
 	if len(orphans) == 0 {
 		return 0, nil, nil
@@ -1025,6 +1034,15 @@ func (s *Service) removeUnreferencedOrphans(orphans []string) (removed int, kept
 		removed++
 	}
 	return removed, kept, nil
+}
+
+// OwnedOutboundTags — группа подписки, её члены и сироты (slotOrphans: в т.ч.
+// исключённые, оставленные из-за ссылок). По ним проверяются ссылки перед
+// удалением подписки (F761) — группы и членов мало: остальные лежат в слоте
+// именно потому, что на них ссылаются.
+func (s *Service) OwnedOutboundTags(sub *Subscription) []string {
+	tags := append([]string{sub.SelectorTag}, sub.MemberTags...)
+	return append(tags, slotOrphans(sub, s.mutator.DeclaredOutboundTags(), sub.MemberTags, sub.OrphanTags)...)
 }
 
 // Delete tears down a subscription unconditionally: the NDMS ProxyN, mixed
@@ -1732,8 +1750,11 @@ func (s *Service) RemoveMember(ctx context.Context, id, memberTag string) (*Subs
 		}
 
 		// Selector now references newTags only; safe to drop the old member
-		// outbound. RemoveOutbound is idempotent.
-		s.mutator.RemoveOutbound(memberTag)
+		// outbound — кроме упомянутого в другом слоте: соседняя группа иначе
+		// молча потеряла бы члена (F761), такой остаётся сиротой.
+		if _, _, err := s.removeUnreferencedOrphans([]string{memberTag}); err != nil {
+			s.logWarn("subscription-member-remove", id, "member outbound kept, other slots unreadable: "+err.Error())
+		}
 
 		newMembers := append([]MemberInfo{}, sub.Members[:idx]...)
 		newMembers = append(newMembers, sub.Members[idx+1:]...)
@@ -1817,9 +1838,15 @@ func (s *Service) ExcludeMembers(ctx context.Context, id string, tags []string) 
 		if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, keepTags, newActive)); err != nil {
 			return fmt.Errorf("rebuild group outbound: %w", err)
 		}
-		// (2) снять outbounds исключённых (идемпотентно).
-		for _, m := range moved {
-			s.mutator.RemoveOutbound(m.Tag)
+		// (2) снять outbounds исключённых (идемпотентно) — кроме упомянутых в
+		// других слотах: группа соседнего слота иначе молча потеряла бы члена
+		// (F761). Такой остаётся в слоте сиротой; слоты не прочитаны — тоже.
+		movedTags := make([]string, len(moved))
+		for i, m := range moved {
+			movedTags[i] = m.Tag
+		}
+		if _, _, err := s.removeUnreferencedOrphans(movedTags); err != nil {
+			s.logWarn("subscription-exclude", id, "excluded outbounds kept, other slots unreadable: "+err.Error())
 		}
 		// (3) union ExcludedTags + ExcludedMembers, atomic store-write.
 		excludedTags := append(append([]string{}, sub.ExcludedTags...), tags...)

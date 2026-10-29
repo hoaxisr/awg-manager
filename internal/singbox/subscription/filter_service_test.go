@@ -91,6 +91,7 @@ func TestService_Create_InvalidFilterRejected(t *testing.T) {
 
 func TestService_Update_FilterChange_RemovesStoppedMatching(t *testing.T) {
 	svc, mut := newTestService(t)
+	mut.slot = map[string]bool{} // состав слота — чистка сирот снимает по нему (F761)
 	body := namedLinks("DE-Berlin", "RU-Moscow")
 	srv := serveLinks(t, &body)
 
@@ -167,6 +168,7 @@ func TestService_Update_InvalidFilterRejected(t *testing.T) {
 
 func TestService_InlineSub_FilterChange_ReparsesInline(t *testing.T) {
 	svc, mut := newTestService(t)
+	mut.slot = map[string]bool{} // состав слота — чистка сирот снимает по нему (F761)
 	sub, err := svc.Create(context.Background(), CreateInput{
 		Label:  "x",
 		Inline: "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443?security=tls&sni=a#Keep\nvless://3a3b1c2e-9999-4321-aaaa-1234567890a2@b.example:443?security=tls&sni=b#Hide-me",

@@ -652,6 +652,39 @@ var (
 	dropLoopBudget   = 90 * time.Second
 )
 
+// flushCheckIterations — сколько раз Pass 2 вправе перепроверить merged-
+// снапшот. Каждая итерация либо снимает outbound, либо чистит новую висячую
+// ссылку группы, поэтому outbound'ов + ссылок в группах + 1 хватает заведомо:
+// исчерпание — уже не «долго сходилось», а дефект, и писать слот нельзя (F760).
+// Var — тесты ужимают.
+var flushCheckIterations = func(outboundsAndRefs int) int { return outboundsAndRefs + 1 }
+
+// groupMemberRefs — сколько ссылок на outbound'ы держит слот: члены и default
+// групп плюс правила маршрута и final (их чистит тот же cleanReferencesToTag) —
+// верхняя граница числа чисток висячих ссылок в Pass 2.
+func groupMemberRefs(cfg *slotConfig) int {
+	n := 1 // route.final
+	if cfg.Route != nil {
+		rules, _ := cfg.Route["rules"].([]any)
+		n += len(rules)
+	}
+	for _, raw := range cfg.Outbounds {
+		ob, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if typ, _ := ob["type"].(string); !isGroupOutbound(typ) {
+			continue
+		}
+		members, _ := ob["outbounds"].([]any)
+		n += len(members)
+		if def, _ := ob["default"].(string); def != "" {
+			n++
+		}
+	}
+	return n
+}
+
 // dropLoopExhaustedErr — честная ошибка вместо бесконечного «крутится»:
 // подписка с сотнями неподдерживаемых записей прерывается с внятным
 // объяснением и списком уже отброшенного.
@@ -695,8 +728,9 @@ func (a *OperatorAdapter) flush() error {
 	// entries are drained via cheap standalone checks (issue #491) before
 	// the next merged re-check. Cap iterations to outbound count so a
 	// parser bug cannot loop forever.
-	maxIter := len(a.cfg.Outbounds) + 1
+	maxIter := flushCheckIterations(len(a.cfg.Outbounds) + groupMemberRefs(&a.cfg))
 	xSlotCleaned := map[string]bool{} // cross-slot tags already cleaned — guards against re-reporting a ref we can't actually remove
+	checked := false
 	for iter := 0; iter < maxIter; iter++ {
 		data, err := json.MarshalIndent(a.cfg, "", "  ")
 		if err != nil {
@@ -707,6 +741,7 @@ func (a *OperatorAdapter) flush() error {
 			return fmt.Errorf("subscription adapter: check-merged: %w", err)
 		}
 		if res.Ok() {
+			checked = true
 			break
 		}
 		// Ошибки, атрибутированные user-слоту (90-user.json), drop-циклом
@@ -763,6 +798,11 @@ func (a *OperatorAdapter) flush() error {
 		if err := a.drainStandaloneRejects(&dropped); err != nil {
 			return err
 		}
+	}
+	// Лимит исчерпан, а последняя проверка не прошла: записывать нельзя —
+	// иначе слот уходит на диск и в движок непроверенным (F760).
+	if !checked {
+		return fmt.Errorf("%w: проверка конфига подписок не сошлась за %d итераций — слот не записан", ErrValidation, maxIter)
 	}
 
 	// An empty slot is fatal only for an additive op (Create/Refresh) where

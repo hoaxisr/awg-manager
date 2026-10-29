@@ -90,6 +90,10 @@ func (f *fakeSubs) ExcludeMembers(_ context.Context, id string, tags []string) (
 	return f.Get(id)
 }
 
+func (f *fakeSubs) OwnedOutboundTags(sub *subscription.Subscription) []string {
+	return append([]string{sub.SelectorTag}, sub.MemberTags...)
+}
+
 func (f *fakeSubs) RestoreMembers(_ context.Context, id string, tags []string) (*subscription.Subscription, error) {
 	f.restored = tags
 	if f.mgmtErr != nil {
