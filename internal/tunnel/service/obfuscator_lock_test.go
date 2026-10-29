@@ -112,13 +112,20 @@ func TestUpdate_NativeWGDiffTakesTunnelLock(t *testing.T) {
 
 // fakeRelay — минимальный ObfuscatorRunner: релей нам нужен живым, чтобы Start
 // дошёл до резолва target'а и положил адрес в трекер оператора.
-type fakeRelay struct{ alive map[string]bool }
+// last/lastIP — с чем релей запущен последним: по ним видно, что до него
+// доехали параметры правки, а не прежние.
+type fakeRelay struct {
+	alive  map[string]bool
+	last   storage.Obfuscator
+	lastIP string
+}
 
-func (f *fakeRelay) Start(_ context.Context, id string, _ *storage.Obfuscator, _ string) error {
+func (f *fakeRelay) Start(_ context.Context, id string, o *storage.Obfuscator, targetIP string) error {
 	if f.alive == nil {
 		f.alive = map[string]bool{}
 	}
 	f.alive[id] = true
+	f.last, f.lastIP = *o, targetIP
 	return nil
 }
 func (f *fakeRelay) Stop(id string) error  { delete(f.alive, id); return nil }
@@ -158,5 +165,106 @@ func TestReplaceConfig_PersistsObfuscatorTargetIP(t *testing.T) {
 	}
 	if saved.ResolvedEndpointIP != "203.0.113.9" {
 		t.Fatalf("адрес target'а не сохранён: %q", saved.ResolvedEndpointIP)
+	}
+}
+
+// obfTunnelInStore — работающий обфусцированный nativewg-туннель в сторе
+// (target 203.0.113.9) и сервис поверх заглушки RCI с живым релеем.
+func obfTunnelInStore(t *testing.T) (*ServiceImpl, *storage.AWGTunnelStore, *fakeRelay, *storage.AWGTunnel) {
+	t.Helper()
+	relay := &fakeRelay{}
+	op := nwgOperatorOnStub(t)
+	op.SetObfuscator(relay)
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	s := &ServiceImpl{store: store, state: NewMockStateManager(), nwgOperator: op}
+	rec := &storage.AWGTunnel{
+		ID: "awg20", Name: "obf", Backend: "nativewg", Enabled: true, NWGIndex: 0,
+		Interface:          storage.AWGInterface{Address: "10.9.0.2/32", MTU: 1420, PrivateKey: "k"},
+		Peer:               storage.AWGPeer{PublicKey: "PUB", Endpoint: "127.0.0.1:39000"},
+		ResolvedEndpointIP: "203.0.113.9",
+		Obfuscator: &storage.Obfuscator{
+			Flavor: storage.ObfuscatorFlavorPhobos, Target: "203.0.113.9:51820",
+			Key: "k", Masking: "STUN", MaxDummy: 4, LocalPort: 39000,
+		},
+	}
+	if err := store.Create(rec); err != nil {
+		t.Fatalf("подготовка: %v", err)
+	}
+	return s, store, relay, rec
+}
+
+// Правка параметров релея у работающего туннеля перезапускает релей с новыми
+// параметрами (без рестарта туннеля) и сохраняет адрес нового target'а сама:
+// handler на ошибке до записи не дойдёт, а host-route уже переставлен.
+func TestUpdate_ObfuscatorDiffRestartsRelayAndPersistsTarget(t *testing.T) {
+	s, store, relay, old := obfTunnelInStore(t)
+	updated := *old
+	o := *old.Obfuscator
+	o.Target, o.Key, o.Masking = "203.0.113.10:51820", "k2", "AUTO"
+	updated.Obfuscator = &o
+
+	if err := s.Update(context.Background(), old, &updated); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	if relay.last.Target != "203.0.113.10:51820" || relay.last.Key != "k2" || relay.last.Masking != "AUTO" {
+		t.Fatalf("релей запущен не с новыми параметрами: %+v", relay.last)
+	}
+	if relay.lastIP != "203.0.113.10" {
+		t.Fatalf("релей получил адрес target'а %q", relay.lastIP)
+	}
+	if updated.ResolvedEndpointIP != "203.0.113.10" {
+		t.Fatalf("адрес target'а не отдан handler'у: %q", updated.ResolvedEndpointIP)
+	}
+	saved, err := store.Get("awg20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.ResolvedEndpointIP != "203.0.113.10" {
+		t.Fatalf("адрес target'а не сохранён в стор: %q", saved.ResolvedEndpointIP)
+	}
+}
+
+// [instance] в новом .conf обновляет пользовательские поля релея; Flavor и
+// LocalPort остаются прежними, пир по-прежнему смотрит на loopback.
+func TestReplaceConfig_InstanceUpdatesRelayParams(t *testing.T) {
+	s, store, relay, _ := obfTunnelInStore(t)
+	conf := sampleConf + `
+[instance]
+mode = wireguard
+target = 203.0.113.10:51820
+key = k2
+masking = media
+max-dummy = 8
+idle-timeout = 300
+obfuscate-bytes = 16
+`
+	if err := s.ReplaceConfig(context.Background(), "awg20", conf, ""); err != nil {
+		t.Fatalf("ReplaceConfig: %v", err)
+	}
+
+	saved, err := store.Get("awg20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := storage.Obfuscator{
+		Flavor: storage.ObfuscatorFlavorPhobos, Target: "203.0.113.10:51820", Key: "k2",
+		Masking: "MEDIA", MaxDummy: 8, IdleTimeout: 300, ObfuscateBytes: 16, LocalPort: 39000,
+	}
+	if saved.Obfuscator == nil || *saved.Obfuscator != want {
+		t.Fatalf("параметры релея в записи: %+v, ждали %+v", saved.Obfuscator, want)
+	}
+	if saved.Peer.Endpoint != "127.0.0.1:39000" {
+		t.Fatalf("пир обязан остаться на loopback релея: %q", saved.Peer.Endpoint)
+	}
+	if saved.Peer.PublicKey != "hOPHc7ZBk0dGrLLDFrCG7WHYzZ8SS5xBWMzOJ9CkNFo=" {
+		t.Fatalf("пир не из нового .conf: %q", saved.Peer.PublicKey)
+	}
+	if relay.last != want || relay.lastIP != "203.0.113.10" {
+		t.Fatalf("релей перезапущен с %+v / %q", relay.last, relay.lastIP)
+	}
+	if saved.ResolvedEndpointIP != "203.0.113.10" {
+		t.Fatalf("адрес нового target'а не сохранён: %q", saved.ResolvedEndpointIP)
 	}
 }
