@@ -76,6 +76,34 @@ func TestAccessPolicy_PermitDenyPresent_Sends(t *testing.T) {
 	oracleClean(t, f)
 }
 
+// Удержание мониторингом (F753): тот же deny с тем же подтверждением, но без
+// запроса сохранения во флеш; DenyInterface сохранение запрашивает.
+func TestAccessPolicy_HoldInterface_NoSave(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"})
+	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	sc := command.NewSaveCoordinator(f, nil, time.Hour, time.Hour, 0, nil)
+	cmds := command.NewCommands(command.Deps{Poster: f, Queries: q, Save: sc, IsOS5: func() bool { return true }})
+	s := &ServiceImpl{policies: cmds.Policies, interfaces: cmds.Interfaces, queries: q}
+	ctx := context.Background()
+
+	if err := s.HoldInterface(ctx, "Policy0", "Wireguard3"); err != nil {
+		t.Fatalf("HoldInterface: %v", err)
+	}
+	if len(f.Posts) == 0 {
+		t.Fatal("deny не отправлен")
+	}
+	if st := sc.Status().State; st == command.SaveStatePending {
+		t.Fatalf("удержание запросило сохранение: %v", st)
+	}
+	if err := s.DenyInterface(ctx, "Policy0", "Wireguard3"); err != nil {
+		t.Fatalf("DenyInterface: %v", err)
+	}
+	if st := sc.Status().State; st != command.SaveStatePending {
+		t.Fatalf("DenyInterface: want Pending, got %v", st)
+	}
+	oracleClean(t, f)
+}
+
 // Сырой флип по отсутствующему: up — отказ, down — nil; команд нет (иначе
 // `interface X up` создал бы X).
 func TestAccessPolicy_SetInterfaceUpAbsent(t *testing.T) {
@@ -104,6 +132,7 @@ func TestAccessPolicy_ListError_NoCommand(t *testing.T) {
 	for name, call := range map[string]func() error{
 		"permit": func() error { return s.PermitInterface(ctx, "Policy0", "Wireguard3", 0) },
 		"deny":   func() error { return s.DenyInterface(ctx, "Policy0", "Wireguard3") },
+		"hold":   func() error { return s.HoldInterface(ctx, "Policy0", "Wireguard3") },
 		"up":     func() error { return s.SetInterfaceUp(ctx, "Wireguard3", true) },
 		"down":   func() error { return s.SetInterfaceUp(ctx, "Wireguard3", false) },
 	} {

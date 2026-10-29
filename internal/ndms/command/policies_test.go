@@ -81,6 +81,28 @@ func TestPolicyCommands_DenyInterface(t *testing.T) {
 	}
 }
 
+// Снятие мониторингом во флеш не пишется (F753): та же команда, сохранение
+// не запрошено. Сохраняющий DenyInterface — запрашивает.
+func TestPolicyCommands_DenyInterfaceUnsaved(t *testing.T) {
+	cmds, poster, sc := newTestPolicyCommands(t)
+	if err := cmds.DenyInterfaceUnsaved(context.Background(), "Policy0", confirmed(t, "Wireguard0")); err != nil {
+		t.Fatal(err)
+	}
+	p := poster.Payloads()[0].(map[string]any)
+	permit := p["ip"].(map[string]any)["policy"].(map[string]any)["Policy0"].(map[string]any)["permit"].(map[string]any)
+	if permit["no"] != true || permit["interface"] != "Wireguard0" {
+		t.Errorf("deny: %#v", permit)
+	}
+	if st := sc.Status().State; st == SaveStatePending {
+		t.Fatalf("снятие без сохранения запросило сохранение: %v", st)
+	}
+
+	_ = cmds.DenyInterface(context.Background(), "Policy0", confirmed(t, "Wireguard0"))
+	if st := sc.Status().State; st != SaveStatePending {
+		t.Fatalf("DenyInterface: want Pending, got %v", st)
+	}
+}
+
 func TestPolicyCommands_AssignDevice(t *testing.T) {
 	cmds, poster, sc := newTestPolicyCommands(t)
 	_ = cmds.AssignDevice(context.Background(), "aa:bb:cc:dd:ee:ff", "Policy0")

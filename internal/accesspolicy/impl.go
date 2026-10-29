@@ -376,6 +376,19 @@ func (s *ServiceImpl) PermitInterface(ctx context.Context, name, iface string, o
 
 // DenyInterface removes an interface from a policy's permitted list.
 func (s *ServiceImpl) DenyInterface(ctx context.Context, name, iface string) error {
+	return s.deny(ctx, name, iface, s.policies.DenyInterface, "denied")
+}
+
+// HoldInterface — DenyInterface без сохранения во флеш: временное снятие
+// мониторингом до возврата связи (F753).
+func (s *ServiceImpl) HoldInterface(ctx context.Context, name, iface string) error {
+	return s.deny(ctx, name, iface, s.policies.DenyInterfaceUnsaved, "held by monitoring (unsaved)")
+}
+
+// done — исход в журнале: удержание мониторингом отличимо от снятия
+// пользователем, иначе не понять, вернёт ли permit перезагрузка.
+func (s *ServiceImpl) deny(ctx context.Context, name, iface string,
+	post func(context.Context, string, query.Confirmed) error, done string) error {
 	if !isValidPolicyName(name) {
 		return fmt.Errorf("invalid policy name: %s", name)
 	}
@@ -387,14 +400,14 @@ func (s *ServiceImpl) DenyInterface(ctx context.Context, name, iface string) err
 		return nil
 	}
 	if err == nil {
-		err = s.policies.DenyInterface(ctx, name, c)
+		err = post(ctx, name, c)
 	}
 	if err != nil {
 		s.appLog.Warn("deny", name, fmt.Sprintf("Failed to deny %s: %v", iface, err))
 		return err
 	}
 
-	s.appLog.Info("deny", name, fmt.Sprintf("Policy %s: interface %s denied", name, iface))
+	s.appLog.Info("deny", name, fmt.Sprintf("Policy %s: interface %s %s", name, iface, done))
 	return nil
 }
 

@@ -95,7 +95,22 @@ func (c *PolicyCommands) PermitInterface(ctx context.Context, name string, iface
 }
 
 func (c *PolicyCommands) DenyInterface(ctx context.Context, name string, iface query.Confirmed) error {
-	payload := map[string]any{
+	return postMutationChecked(ctx, c.poster, c.save, denyPayload(name, iface), "deny "+iface.Name()+" on "+name,
+		c.queries.Policies.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
+}
+
+// DenyInterfaceUnsaved — DenyInterface без сохранения во флеш: временное
+// снятие мониторингом (F753). Перезагрузка вернёт сохранённый permit, а
+// чужое сохранение, захватившее снятие, отменит возврат — он сохраняется.
+func (c *PolicyCommands) DenyInterfaceUnsaved(ctx context.Context, name string, iface query.Confirmed) error {
+	return PostChecked(ctx, c.poster, denyPayload(name, iface), "deny "+iface.Name()+" on "+name, nil,
+		c.queries.Policies.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
+}
+
+func denyPayload(name string, iface query.Confirmed) map[string]any {
+	return map[string]any{
 		"ip": map[string]any{
 			"policy": map[string]any{
 				name: map[string]any{
@@ -108,9 +123,6 @@ func (c *PolicyCommands) DenyInterface(ctx context.Context, name string, iface q
 			},
 		},
 	}
-	return postMutationChecked(ctx, c.poster, c.save, payload, "deny "+iface.Name()+" on "+name,
-		c.queries.Policies.InvalidateAll,
-		c.queries.RunningConfig.InvalidateAll)
 }
 
 func (c *PolicyCommands) AssignDevice(ctx context.Context, mac, policyName string) error {

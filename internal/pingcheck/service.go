@@ -57,6 +57,7 @@ type tunnelMonitor struct {
 	tunnelID      string
 	tunnelName    string
 	failCount     int
+	okCount       int // удачных проверок подряд (restoreAfterSuccesses)
 	restartCount  int
 	failThreshold int
 	lastCheck     time.Time

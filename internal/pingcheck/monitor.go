@@ -102,12 +102,17 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 	if result.Success {
 		s.mu.Lock()
 		m.failCount = 0
+		m.okCount++
+		okCount := m.okCount
 		recovered := m.restartCount > 0
 		m.restartCount = 0
 		s.mu.Unlock()
 
-		// Восстановление — только успешная проверка (F743, F747).
-		s.restorePolicies(m.tunnelID)
+		// Восстановление — только успешные проверки (F743, F747), и не одна:
+		// иначе мигающая связь писала бы флеш на каждом цикле (F753).
+		if okCount >= restoreAfterSuccesses {
+			s.restorePolicies(m.tunnelID)
+		}
 		stateChange := ""
 		if recovered {
 			stateChange = "recovered"
@@ -147,6 +152,7 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 
 	s.mu.Lock()
 	m.failCount++
+	m.okCount = 0
 	failCount := m.failCount
 	s.mu.Unlock()
 
@@ -186,6 +192,13 @@ func (s *Service) linkUp(m *tunnelMonitor, ifaceName string) bool {
 		return up
 	}
 	m.linkDown = !up
+	if !up {
+		// Проверки через опускание линка не «подряд» (F753): после подъёма
+		// возврат снова ждёт restoreAfterSuccesses успехов.
+		s.mu.Lock()
+		m.okCount = 0
+		s.mu.Unlock()
+	}
 	if up {
 		s.logInfo(m.tunnelID, "Link is up, checks resumed")
 	} else {

@@ -37,7 +37,7 @@ func (f *fakePolicies) FreshPolicies(context.Context) ([]ndms.Policy, error) {
 	return out, nil
 }
 
-func (f *fakePolicies) DenyInterface(_ context.Context, name, iface string) error {
+func (f *fakePolicies) HoldInterface(_ context.Context, name, iface string) error {
 	f.denies++
 	if f.onDeny != nil {
 		f.onDeny(name)
@@ -75,8 +75,8 @@ func holdsOf(t *testing.T, s *Service) []storage.PolicyHold {
 }
 
 // Порог → туннель уходит из политики, следующий интерфейс становится первым;
-// дальнейшие провалы позиции не перезаписывают; первая успешная проверка
-// возвращает его на прежнее место (F743).
+// дальнейшие провалы позиции не перезаписывают; две успешные проверки подряд
+// возвращают его на прежнее место (F743, F753).
 func TestPolicyHold_ReleasedAtThresholdRestoredOnSuccess(t *testing.T) {
 	orig := httpprobe.Client
 	t.Cleanup(func() { httpprobe.Client = orig })
@@ -110,11 +110,68 @@ func TestPolicyHold_ReleasedAtThresholdRestoredOnSuccess(t *testing.T) {
 
 	httpprobe.Client = okDoer{}
 	s.sensorTick(m, config)
+	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"OpkgTun8", "Proxy1"}) {
+		t.Fatalf("после первого успеха политика = %v, возврат — только после второго", got)
+	}
+	s.sensorTick(m, config)
 	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"OpkgTun7", "OpkgTun8", "Proxy1"}) {
 		t.Fatalf("после успеха политика = %v, туннель должен вернуться первым", got)
 	}
 	if got := holdsOf(t, s); len(got) != 0 {
 		t.Fatalf("holds после возврата = %+v", got)
+	}
+}
+
+// Мигающая связь: одиночный успех между сериями отказов permit не возвращает —
+// иначе каждый цикл стоил бы снятия и возврата с записью во флеш (F753).
+func TestPolicyHold_SingleSuccessBetweenFailuresKeepsHold(t *testing.T) {
+	orig := httpprobe.Client
+	t.Cleanup(func() { httpprobe.Client = orig })
+	s, m, config, _ := newKernelSensorService(t)
+	fp := &fakePolicies{lists: map[string][]string{"HydraRoute": {"OpkgTun7", "PPPoE0"}}}
+	s.SetPolicies(fp)
+
+	for range 3 {
+		httpprobe.Client = alwaysFailDoer{}
+		for range 3 {
+			s.sensorTick(m, config)
+		}
+		httpprobe.Client = okDoer{}
+		s.sensorTick(m, config)
+	}
+	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"PPPoE0"}) {
+		t.Fatalf("политика = %v: одиночный успех вернул permit", got)
+	}
+	if fp.denies != 1 {
+		t.Fatalf("denies = %d: permit возвращался и снимался заново", fp.denies)
+	}
+}
+
+// Успехи по разные стороны опускания линка — не «подряд» (ревью F753): после
+// подъёма возврат снова ждёт двух успешных проверок.
+func TestPolicyHold_LinkDownResetsSuccessRun(t *testing.T) {
+	orig := httpprobe.Client
+	t.Cleanup(func() { httpprobe.Client = orig })
+	s, m, config, _ := newKernelSensorService(t)
+	fp := &fakePolicies{lists: map[string][]string{"HydraRoute": {"OpkgTun7", "PPPoE0"}}}
+	s.SetPolicies(fp)
+
+	httpprobe.Client = alwaysFailDoer{}
+	for range 3 {
+		s.sensorTick(m, config)
+	}
+	httpprobe.Client = okDoer{}
+	s.sensorTick(m, config)
+	stubIfaceUp(t, false)
+	s.sensorTick(m, config)
+	stubIfaceUp(t, true)
+	s.sensorTick(m, config)
+	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"PPPoE0"}) {
+		t.Fatalf("политика = %v: успехи через опускание линка засчитаны подряд", got)
+	}
+	s.sensorTick(m, config)
+	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"OpkgTun7", "PPPoE0"}) {
+		t.Fatalf("политика = %v: два успеха после подъёма не вернули permit", got)
 	}
 }
 

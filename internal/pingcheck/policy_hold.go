@@ -19,8 +19,14 @@ import (
 type policyPermits interface {
 	FreshPolicies(ctx context.Context) ([]ndms.Policy, error)
 	PermitInterface(ctx context.Context, name, iface string, order int) error
-	DenyInterface(ctx context.Context, name, iface string) error
+	// HoldInterface снимает permit без сохранения во флеш (F753); возврат —
+	// PermitInterface, с сохранением.
+	HoldInterface(ctx context.Context, name, iface string) error
 }
+
+// restoreAfterSuccesses — удачных проверок подряд до возврата permit (F753):
+// мигающая связь иначе стоила бы записи во флеш на каждый цикл.
+const restoreAfterSuccesses = 2
 
 // policyHoldTimeout — потолок RCI-похода на снятие/возврат вне s.ctx
 // (StopMonitoring и Stop зовут возврат, когда s.ctx уже может быть отменён).
@@ -33,7 +39,8 @@ func (s *Service) SetPolicies(p policyPermits) { s.policies = p }
 // releasePolicies снимает permit туннеля во всех политиках, где он разрешён,
 // и запоминает позиции для возврата. Политика NDMS сразу переходит на
 // следующий интерфейс, а сам туннель остаётся поднятым — проверки через него
-// продолжаются, и permit вернётся на первой успешной (restorePolicies).
+// продолжаются, и permit вернётся после restoreAfterSuccesses успешных подряд
+// (restorePolicies).
 // Прежний способ — держать link down — не давал проверять, а toggle
 // поднимал интерфейс сразу, и политика с туннеля не уходила (F743, стенд 27.10).
 func (s *Service) releasePolicies(tunnelID string) {
@@ -64,9 +71,9 @@ func (s *Service) releasePolicies(tunnelID string) {
 	}
 
 	// Запись раньше deny: упади демон между ними — вернём permit, который не
-	// снимали (идемпотентно), а не потеряем снятый. Сохранение конфигурации
-	// роутера идёт с каждой правкой политики, так что без этой записи снятый
-	// permit пережил бы и перезагрузку.
+	// снимали (идемпотентно), а не потеряем снятый. Снятие во флеш не
+	// сохраняется, но его захватит любое другое сохранение конфигурации
+	// роутера, и без этой записи снятый permit пережил бы перезагрузку.
 	if err := s.tunnels.Update(tunnelID, func(t *storage.AWGTunnel) error {
 		t.PolicyHolds = mergeHolds(t.PolicyHolds, live)
 		return nil
@@ -76,7 +83,7 @@ func (s *Service) releasePolicies(tunnelID string) {
 	}
 	denied := false
 	for _, h := range live {
-		if err := s.policies.DenyInterface(ctx, h.Policy, iface); err != nil {
+		if err := s.policies.HoldInterface(ctx, h.Policy, iface); err != nil {
 			s.logWarn(tunnelID, fmt.Sprintf("policy release %s: %v", h.Policy, err))
 			continue
 		}
