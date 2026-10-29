@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -154,5 +155,51 @@ func TestParseProcRouteHex(t *testing.T) {
 	}
 	if _, ok := parseProcRouteHex("ZZZZZZZZ"); ok {
 		t.Error("must reject non-hex input")
+	}
+}
+
+// Разбор маршрутов tun (F756), с клоном кэша на ядрах до 4.15: ошибка здесь — снятие нужного маршрута на
+// каждом тике, поэтому проверяется на живом формате обеих таблиц.
+func TestParseTunRoutes(t *testing.T) {
+	v4 := "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n" +
+		"opkgtun0\t" + procRouteHex([4]byte{57, 144, 0, 0}) + "\t00000000\t0001\t0\t0\t0\t" + procRouteHex([4]byte{255, 252, 0, 0}) + "\t0\t0\t0\n" +
+		"opkgtun0\t" + procRouteHex([4]byte{198, 18, 0, 0}) + "\t00000000\t0001\t0\t0\t0\t" + procRouteHex([4]byte{255, 254, 0, 0}) + "\t0\t0\t0\n" +
+		"eth3\t" + procRouteHex([4]byte{8, 8, 8, 0}) + "\t00000000\t0001\t0\t0\t0\t" + procRouteHex([4]byte{255, 255, 255, 0}) + "\t0\t0\t0\n"
+	v6 := "2a032880000000000000000000000000 20 00000000000000000000000000000000 00 00000000000000000000000000000000 00000400 00000001 00000000 00000001 opkgtun0\n" +
+		"2a032880000000000000000000000000 20 00000000000000000000000000000000 00 00000000000000000000000000000000 00000400 00000001 00000000 00000001 opkgtun0\n" +
+		// клон кэша (RTF_CACHE) — не маршрут, в список не идёт
+		"2a032880f00a00080face00b00c00002 80 00000000000000000000000000000000 00 00000000000000000000000000000000 00000000 00000001 00000003 01000001 opkgtun0\n" +
+		"fe800000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000001 00000000 00000001 eth3\n"
+	got := parseTunRoutes("opkgtun0", v4, v6)
+	want := []netip.Prefix{
+		netip.MustParsePrefix("57.144.0.0/14"),
+		netip.MustParsePrefix("198.18.0.0/15"),
+		netip.MustParsePrefix("2a03:2880::/32"),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseTunRoutes = %v, want %v", got, want)
+	}
+}
+
+// Ядро без IPv6 (на Keenetic компонент отключаемый): /proc/net/ipv6_route нет —
+// v4-маршруты всё равно читаются, иначе снос и пробы молча выключились бы.
+func TestLiveFakeIPTunRoutes_NoIPv6Table(t *testing.T) {
+	dir := t.TempDir()
+	v4 := filepath.Join(dir, "route")
+	data := "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n" +
+		"opkgtun0\t" + procRouteHex([4]byte{57, 144, 0, 0}) + "\t00000000\t0001\t0\t0\t0\t" + procRouteHex([4]byte{255, 252, 0, 0}) + "\t0\t0\t0\n"
+	if err := os.WriteFile(v4, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old4, old6 := procNetRoute, procNetIPv6Route
+	procNetRoute, procNetIPv6Route = v4, filepath.Join(dir, "absent")
+	t.Cleanup(func() { procNetRoute, procNetIPv6Route = old4, old6 })
+
+	got, err := liveFakeIPTunRoutes("opkgtun0")
+	if err != nil {
+		t.Fatalf("нет ipv6_route — не ошибка: %v", err)
+	}
+	if want := []netip.Prefix{netip.MustParsePrefix("57.144.0.0/14")}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }

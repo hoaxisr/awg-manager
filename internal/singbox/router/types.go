@@ -259,6 +259,10 @@ type RuleSet struct {
 	// fetchVia — прокси служебного входа, через который наша копия набора
 	// качается его detour'ом (withRuleSetFetchVia). Только в памяти.
 	fetchVia string
+	// restoreFailed — источник управляемого локального набора не прочитан
+	// (restoreRuleSet): Rules пуст не потому, что набор пуст. Снос маршрутов
+	// tun по такому конфигу снял бы рабочие (F756). Только в памяти.
+	restoreFailed bool
 }
 
 type Outbound struct {

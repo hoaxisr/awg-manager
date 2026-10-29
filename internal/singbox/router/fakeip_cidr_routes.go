@@ -406,3 +406,77 @@ func (s *ServiceImpl) applyCIDRRouteDiff(ctx context.Context, routes func() (Bou
 			fmt.Sprintf("cidr routes synced: +%d -%d (v6=%v, desired=%d)", adds, removes, v6, len(next)))
 	}
 }
+
+// staleTunCIDRs — маршруты tun, которых нет в keep (#1133, F756). Маршруты
+// remote-наборов ставит только reconcile, а diff при правке их не видит (в
+// конфиге у набора пустой Rules): удалённое правило, outbound, сменённый на
+// direct, или сократившийся у источника список оставляли маршрут навсегда, и
+// трафик по нему петлял direct → tun. keep обязан быть ПОЛНЫМ — пул, адреса
+// tun, Tier 1 и Tier 2 при скачанных наборах, — иначе сбой сети снял бы
+// рабочие маршруты. Маршрут по умолчанию и excludedAddr (link-local,
+// private…) не трогаем.
+func staleTunCIDRs(live []netip.Prefix, keep map[netip.Prefix]bool) []netip.Prefix {
+	var out []netip.Prefix
+	for _, p := range live {
+		if p.Bits() == 0 || excludedAddr(p.Addr()) || keep[p.Masked()] {
+			continue
+		}
+		out = append(out, p.Masked())
+	}
+	return out
+}
+
+// removeStaleTunCIDRRoutes снимает stale. Владение интерфейсом — тем же гейтом,
+// что у сноса OpkgTun (teardownGate): «не знаем» ≠ «наш», и маршруты чужого
+// интерфейса на нашем номере не трогаются; скан — только если снимать есть что.
+// Неснимаемый маршрут (не статический в NDMS) повторяется на каждом тике —
+// памяти об отказах нет.
+func (s *ServiceImpl) removeStaleTunCIDRRoutes(ctx context.Context, routes func() (BoundStaticRoutes, error), iface, ndmsName string, stale []netip.Prefix) {
+	if len(stale) == 0 {
+		return
+	}
+	if ok, _ := s.teardownGate(ctx, ndmsName, "fakeip-reconcile", fakeIPTunDescription); !ok {
+		return
+	}
+	removed := 0
+	for _, p := range stale {
+		rt, e := routes()
+		if e != nil {
+			if !errors.Is(e, ErrIfaceAbsent) {
+				s.appLog.Warn("fakeip-reconcile", iface, "stale cidr routes: "+e.Error())
+			}
+			break
+		}
+		if e := s.removeCIDRRoute(ctx, rt, ndmsName, p.String(), p.Addr().Is6()); e != nil {
+			s.appLog.Warn("fakeip-reconcile", iface, "remove stale cidr route "+p.String()+": "+e.Error())
+			continue
+		}
+		removed++
+	}
+	if removed > 0 {
+		s.appLog.Info("fakeip-reconcile", iface, fmt.Sprintf("stale cidr routes removed: %d", removed))
+	}
+}
+
+// restoreFailedAny — хоть один управляемый локальный набор не восстановлен.
+func restoreFailedAny(cfg *RouterConfig) bool {
+	for _, rs := range cfg.Route.RuleSet {
+		if rs.restoreFailed {
+			return true
+		}
+	}
+	return false
+}
+
+// prefixSet — разобранные префиксы (маскированные) из строк CIDR.
+func prefixSet(lists ...[]string) map[netip.Prefix]bool {
+	out := map[netip.Prefix]bool{}
+	for _, l := range lists {
+		for _, c := range l {
+			if p, err := netip.ParsePrefix(c); err == nil {
+				out[p.Masked()] = true
+			}
+		}
+	}
+	return out
+}

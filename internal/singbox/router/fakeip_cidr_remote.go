@@ -177,9 +177,11 @@ func (s *ServiceImpl) factsForRuleSetFile(ctx context.Context, path, format stri
 // matchers are ip_cidr/rule_set, so a by-IP packet to those CIDRs is guaranteed to
 // proxy and never fall through to route.final=direct (which would loop back to the
 // tun). Best-effort: any per-set failure is skipped (logged, not fatal).
-func (s *ServiceImpl) remoteTunCIDRs(ctx context.Context, cfg *RouterConfig) (v4 []string, v6 []string) {
+// complete=false — хотя бы один набор не скачан или не разобран: результат
+// неполон, и снимать маршруты по нему нельзя (F756).
+func (s *ServiceImpl) remoteTunCIDRs(ctx context.Context, cfg *RouterConfig) (v4 []string, v6 []string, complete bool) {
 	if cfg == nil {
-		return nil, nil
+		return nil, nil, true
 	}
 	byTag := make(map[string]RuleSet, len(cfg.Route.RuleSet))
 	for _, rs := range cfg.Route.RuleSet {
@@ -225,15 +227,18 @@ func (s *ServiceImpl) remoteTunCIDRs(ctx context.Context, cfg *RouterConfig) (v4
 			v6 = append(v6, norm)
 		}
 	}
+	complete = true
 	for _, rs := range want {
 		path, err := ruleSetDownload(ctx, rs.URL, rs.Format, ruleSetFetchVia(orchestrator.SlotFakeIP, rs))
 		if err != nil {
 			s.appLog.Warn("fakeip-cidr-remote", rs.Tag, "download: "+err.Error())
+			complete = false
 			continue
 		}
 		facts, err := s.factsForRuleSetFile(ctx, path, rs.Format)
 		if err != nil {
 			s.appLog.Warn("fakeip-cidr-remote", rs.Tag, err.Error())
+			complete = false
 			continue
 		}
 		// Тот же beta.1-гейт merged matching, что в desiredTunCIDRs, но по
@@ -250,5 +255,5 @@ func (s *ServiceImpl) remoteTunCIDRs(ctx context.Context, cfg *RouterConfig) (v4
 			add(c)
 		}
 	}
-	return v4, v6
+	return v4, v6, complete
 }

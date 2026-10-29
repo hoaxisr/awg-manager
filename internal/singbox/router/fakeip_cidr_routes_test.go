@@ -2,12 +2,14 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -435,8 +437,9 @@ func TestReconcileFakeIPTun_ReaddsCIDRRouteWhenMissing(t *testing.T) {
 	}
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
 
-	// All routes drifted away (the CIDR probe shares this seam) → re-add fires.
+	// All routes drifted away: пул по своей пробе, CIDR — пустой список tun.
 	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return false })
+	stubFakeIPTunRoutes(t)
 
 	h.log.calls = nil
 
@@ -484,6 +487,7 @@ func TestReconcileFakeIPTun_V6CIDRSelfHealNoV4(t *testing.T) {
 	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return true })
 	// v6 CIDR route ABSENT → the new probe must drive a re-add.
 	stubFakeIPPoolRoute6Present(t, func(string, netip.Prefix) bool { return false })
+	stubFakeIPTunRoutes(t) // v6-маршрута на tun нет
 
 	h.log.calls = nil
 
@@ -526,6 +530,8 @@ func TestReconcileFakeIPTun_V6CIDRGatedOnPresenceProbe(t *testing.T) {
 	// it and assert specifically on the CIDR route 2001:b28::/32.
 	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return true })
 	stubFakeIPPoolRoute6Present(t, func(string, netip.Prefix) bool { return true })
+	// Присутствие CIDR-маршрутов Tier 1/2 читается одним списком tun (F756).
+	stubFakeIPTunRoutes(t, "149.154.160.0/20", "2001:b28::/32")
 
 	h.log.calls = nil
 
@@ -745,5 +751,251 @@ func TestSyncTunCIDRRoutes_AbsentOrListError_NoCommands(t *testing.T) {
 		if rec.binds != 2 || len(rec.log.calls) != 0 {
 			t.Fatalf("%s: binds=%d calls=%v, want 2 (по одному на вызов) и 0 команд", name, rec.binds, rec.log.calls)
 		}
+	}
+}
+
+// stubFakeIPTunRoutes подменяет список маршрутов ядра через tun.
+func stubFakeIPTunRoutes(t *testing.T, routes ...string) {
+	t.Helper()
+	var ps []netip.Prefix
+	for _, r := range routes {
+		ps = append(ps, netip.MustParsePrefix(r))
+	}
+	old := fakeIPTunRoutes
+	fakeIPTunRoutes = func(string) ([]netip.Prefix, error) { return ps, nil }
+	t.Cleanup(func() { fakeIPTunRoutes = old })
+}
+
+// reconcileWithFakeIPConfig — включённый fakeip с данным 21-fakeip.json, все
+// маршруты «на месте» (добавлений нет), затем один тик reconcile; prep (если
+// задан) правит обвязку перед тиком.
+func reconcileWithFakeIPConfig(t *testing.T, fcfg string, prep ...func(*fakeIPEnableHarness)) *fakeIPEnableHarness {
+	t.Helper()
+	h := newFakeIPEnableHarness(t, "")
+	if err := os.WriteFile(filepath.Join(h.dir, "21-fakeip.json"), []byte(fcfg), 0644); err != nil {
+		t.Fatalf("write 21-fakeip.json: %v", err)
+	}
+	if err := h.svc.enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return true })
+	stubFakeIPPoolRoute6Present(t, func(string, netip.Prefix) bool { return true })
+	for _, f := range prep {
+		f(h)
+	}
+	h.log.calls = nil
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+	return h
+}
+
+func removals(calls []string) []string {
+	var out []string
+	for _, c := range calls {
+		if strings.HasPrefix(c, "Remove") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// #1133 (F756): маршрут через tun, которого нет в желаемом наборе (правило
+// удалено), снимается reconcile'ом. Пул, CIDR живого правила, свои адреса
+// tun, link-local и маршрут по умолчанию остаются.
+func TestReconcileFakeIPTun_PrunesStaleCIDRRoutes(t *testing.T) {
+	p := DefaultFakeIPTunParams()
+	stubFakeIPTunRoutes(t, p.Inet4Range, p.Inet6Range, "149.154.160.0/20",
+		"57.144.0.0/14", "2a03:2880::/32", "172.18.0.0/30", "fe80::/64", "::/0")
+	h := reconcileWithFakeIPConfig(t, `{"outbounds":[{"tag":"proxy","type":"direct"}],`+
+		`"route":{"final":"direct","rules":[{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20"]}]}}`)
+
+	got := removals(h.log.calls)
+	want := []string{"RemoveRoute:57.144.0.0:OpkgTun0", "RemoveRoute6:2a03:2880::/32:OpkgTun0"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("снятия = %v, want %v", got, want)
+	}
+}
+
+// Снос — только на подтверждённом интерфейсе и при известном пуле (ревью
+// F756): проба индексов упала — принадлежность не доказана; пул в записи
+// неизвестен — 198.18.0.0/15 (не private) ушёл бы под снос.
+func TestReconcileFakeIPTun_PruneGatedOnProbeAndPool(t *testing.T) {
+	p := DefaultFakeIPTunParams()
+	stubFakeIPTunRoutes(t, p.Inet4Range, "57.144.0.0/14")
+	cfg := `{"outbounds":[{"tag":"proxy","type":"direct"}],"route":{"final":"direct","rules":[]}}`
+
+	probeFails := func(h *fakeIPEnableHarness) {
+		h.svc.deps.OpkgTunIndices = &recIndices{err: errors.New("rci down")}
+	}
+	if got := removals(reconcileWithFakeIPConfig(t, cfg, probeFails).log.calls); len(got) != 0 {
+		t.Fatalf("проба индексов упала, а маршруты сняты: %v", got)
+	}
+
+	poolUnknown := func(h *fakeIPEnableHarness) {
+		if err := h.store.Update(func(cur *storage.Settings) error {
+			cur.OpkgTun.FakeIP = nil
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := removals(reconcileWithFakeIPConfig(t, cfg, poolUnknown).log.calls); len(got) != 0 {
+		t.Fatalf("пул неизвестен, а маршруты сняты: %v", got)
+	}
+
+	if got := removals(reconcileWithFakeIPConfig(t, cfg).log.calls); !reflect.DeepEqual(got, []string{"RemoveRoute:57.144.0.0:OpkgTun0"}) {
+		t.Fatalf("контроль: снятия = %v", got)
+	}
+}
+
+// remote-набор не скачался — набор неполон, снимать нельзя: его маршруты
+// выглядели бы удалёнными. Скачался — его CIDR остаются, лишнее снимается.
+func TestReconcileFakeIPTun_PruneGatedOnRemoteComplete(t *testing.T) {
+	origDL, origDC := ruleSetDownload, ruleSetDecompileExec
+	t.Cleanup(func() { ruleSetDownload, ruleSetDecompileExec = origDL, origDC })
+	ruleSetDecompileExec = func(context.Context, string, string) ([]byte, error) {
+		return []byte(`{"version":3,"rules":[{"ip_cidr":["2a03:2880::/32"]}]}`), nil
+	}
+	cfg := `{"outbounds":[{"tag":"proxy","type":"direct"}],` +
+		`"route":{"final":"direct","rules":[{"action":"route","outbound":"proxy","rule_set":["meta"]}],` +
+		`"rule_set":[{"tag":"meta","type":"remote","url":"https://example.invalid/meta.srs","format":"binary"}]}}`
+	stubFakeIPTunRoutes(t, "2a03:2880::/32", "57.144.0.0/14")
+
+	ruleSetDownload = func(context.Context, string, string, string) (string, error) {
+		return "", errors.New("network down")
+	}
+	if got := removals(reconcileWithFakeIPConfig(t, cfg).log.calls); len(got) != 0 {
+		t.Fatalf("набор не скачан, а маршруты сняты: %v", got)
+	}
+
+	ruleSetDownload = func(context.Context, string, string, string) (string, error) {
+		return filepath.Join(t.TempDir(), "meta.srs"), nil
+	}
+	got := removals(reconcileWithFakeIPConfig(t, cfg).log.calls)
+	if want := []string{"RemoveRoute:57.144.0.0:OpkgTun0"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("снятия = %v, want %v", got, want)
+	}
+}
+
+// Правка конфига, прошедшая, пока reconcile качал remote-наборы, уже поставила
+// свой маршрут; снос по снимку начала тика снял бы его (ревью F756). Снос идёт
+// по свежему конфигу под fakeipCfgMu — маршрут правки остаётся.
+func TestReconcileFakeIPTun_PruneSeesEditDuringDownload(t *testing.T) {
+	origDL, origDC := ruleSetDownload, ruleSetDecompileExec
+	t.Cleanup(func() { ruleSetDownload, ruleSetDecompileExec = origDL, origDC })
+	ruleSetDecompileExec = func(context.Context, string, string) ([]byte, error) {
+		return []byte(`{"version":3,"rules":[{"ip_cidr":["2a03:2880::/32"]}]}`), nil
+	}
+	stubFakeIPTunRoutes(t, "2a03:2880::/32", "1.1.1.0/24")
+	cfg := `{"outbounds":[{"tag":"proxy","type":"direct"}],` +
+		`"route":{"final":"direct","rules":[{"action":"route","outbound":"proxy","rule_set":["meta"]}],` +
+		`"rule_set":[{"tag":"meta","type":"remote","url":"https://example.invalid/meta.srs","format":"binary"}]}}`
+
+	var h *fakeIPEnableHarness
+	edited := false
+	ruleSetDownload = func(ctx context.Context, _, _, _ string) (string, error) {
+		if h != nil && !edited {
+			edited = true
+			if err := h.svc.fakeipWithConfig(ctx, "test", func(c *RouterConfig) error {
+				c.Route.Rules = append(c.Route.Rules, Rule{Action: "route", Outbound: "proxy", IPCIDR: []string{"1.1.1.0/24"}})
+				return nil
+			}); err != nil {
+				t.Errorf("правка: %v", err)
+			}
+		}
+		return filepath.Join(t.TempDir(), "meta.srs"), nil
+	}
+	reconcileWithFakeIPConfig(t, cfg, func(x *fakeIPEnableHarness) { h = x })
+	if !edited {
+		t.Fatal("правка во время скачивания не случилась — тест ничего не проверил")
+	}
+	if got := removals(h.log.calls); len(got) != 0 {
+		t.Fatalf("маршрут правки снят по устаревшему снимку: %v", got)
+	}
+}
+
+// Источник управляемого локального набора не прочитан — Rules пуст не потому,
+// что набор пуст: по такому конфигу снос снял бы его рабочие маршруты (ревью
+// F756). Тик без сноса; контроль — тот же конфиг без набора снимает.
+func TestReconcileFakeIPTun_PruneSkipsUnreadableLocalSet(t *testing.T) {
+	stubFakeIPTunRoutes(t, "57.144.0.0/14")
+	cfg := `{"outbounds":[{"tag":"proxy","type":"direct"}],"route":{"final":"direct","rules":[]}}`
+	addLocal := func(h *fakeIPEnableHarness) {
+		// Прямо в слот, мимо fakeipWithConfig: тот компилирует набор бинарём.
+		slot := filepath.Join(h.dir, "21-fakeip.json")
+		raw, err := os.ReadFile(slot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		route := doc["route"].(map[string]any)
+		route["rule_set"] = []any{map[string]any{"tag": "loc", "type": "local", "format": "binary",
+			"path": filepath.Join(h.svc.ruleSetMaterializer().configDir, "rule-sets", "inline", "loc.srs")}}
+		route["rules"] = []any{map[string]any{"action": "route", "outbound": "proxy", "rule_set": []any{"loc"}}}
+		if raw, err = json.Marshal(doc); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(slot, raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := removals(reconcileWithFakeIPConfig(t, cfg, addLocal).log.calls); len(got) != 0 {
+		t.Fatalf("локальный набор не прочитан, а маршруты сняты: %v", got)
+	}
+	if got := removals(reconcileWithFakeIPConfig(t, cfg).log.calls); len(got) != 1 {
+		t.Fatalf("контроль: снятия = %v", got)
+	}
+}
+
+// Скан владения упал — «не знаем» ≠ «наш»: маршруты на этом номере не
+// снимаются (teardownGate, ревью F756).
+func TestReconcileFakeIPTun_PruneSkipsUnknownOwnership(t *testing.T) {
+	stubFakeIPTunRoutes(t, "57.144.0.0/14")
+	cfg := `{"outbounds":[{"tag":"proxy","type":"direct"}],"route":{"final":"direct","rules":[]}}`
+	scanFails := func(h *fakeIPEnableHarness) {
+		h.svc.deps.OpkgTunScan = scanReturning(nil, errors.New("rci down"))
+	}
+	if got := removals(reconcileWithFakeIPConfig(t, cfg, scanFails).log.calls); len(got) != 0 {
+		t.Fatalf("владение не доказано, а маршруты сняты: %v", got)
+	}
+	scanOurs := func(h *fakeIPEnableHarness) {
+		h.svc.deps.OpkgTunScan = scanReturning([]string{"OpkgTun0"}, nil)
+	}
+	if got := removals(reconcileWithFakeIPConfig(t, cfg, scanOurs).log.calls); len(got) != 1 {
+		t.Fatalf("наш интерфейс: снятия = %v", got)
+	}
+}
+
+// CIDR и в собственном ip_cidr правила, и в remote-наборе ставится один раз:
+// список tun читается раз на тик, поставленное помечается (ревью F756).
+func TestReconcileFakeIPTun_CIDRInBothTiersAddedOnce(t *testing.T) {
+	origDL, origDC := ruleSetDownload, ruleSetDecompileExec
+	t.Cleanup(func() { ruleSetDownload, ruleSetDecompileExec = origDL, origDC })
+	ruleSetDownload = func(context.Context, string, string, string) (string, error) {
+		return filepath.Join(t.TempDir(), "tg.srs"), nil
+	}
+	ruleSetDecompileExec = func(context.Context, string, string) ([]byte, error) {
+		return []byte(`{"version":3,"rules":[{"ip_cidr":["149.154.160.0/20"]}]}`), nil
+	}
+	cfg := `{"outbounds":[{"tag":"proxy","type":"direct"}],` +
+		`"route":{"final":"direct","rules":[{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20"]},` +
+		`{"action":"route","outbound":"proxy","rule_set":["tg"]}],` +
+		`"rule_set":[{"tag":"tg","type":"remote","url":"https://example.invalid/tg.srs","format":"binary"}]}}`
+	h := reconcileWithFakeIPConfig(t, cfg)
+	n := 0
+	for _, c := range h.log.calls {
+		if c == "AddRoute:149.154.160.0:255.255.240.0:OpkgTun0" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("маршрут поставлен %d раз, want 1; calls=%v", n, h.log.calls)
 	}
 }

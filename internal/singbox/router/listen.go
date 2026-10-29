@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -209,33 +210,7 @@ func liveFakeIPPoolRoutePresent(iface string, pool netip.Prefix) bool {
 	if err != nil {
 		return false
 	}
-	wantDest := pool.Masked().Addr().As4()
-	wantMask := net.CIDRMask(pool.Bits(), 32) // big-endian 4 bytes
-	lines := strings.Split(string(data), "\n")
-	for i, line := range lines {
-		if i == 0 { // header
-			continue
-		}
-		f := strings.Fields(line)
-		if len(f) < 8 {
-			continue
-		}
-		if f[0] != iface {
-			continue
-		}
-		dest, ok := parseProcRouteHex(f[1])
-		if !ok || dest != wantDest {
-			continue
-		}
-		mask, ok := parseProcRouteHex(f[7])
-		if !ok {
-			continue
-		}
-		if mask == [4]byte(wantMask) {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(parseRoutes4(iface, string(data)), pool.Masked())
 }
 
 // fakeIPPoolRoute6Present is the seam for "a v6 CIDR route to the tun iface
@@ -247,13 +222,9 @@ func liveFakeIPPoolRoutePresent(iface string, pool netip.Prefix) bool {
 // signal) and keeps steady-state POSTs at zero.
 var fakeIPPoolRoute6Present = liveFakeIPPoolRoute6Present
 
-// liveFakeIPPoolRoute6Present parses /proc/net/ipv6_route and reports whether a
-// v6 route for the given prefix out the given iface is installed. Columns:
-// destination(32 hex) dest_prefix_len(2 hex) source(32) src_prefix_len(2)
-// next_hop(32) metric flags refcnt use iface. The IPv6 address is 128-bit / 32
-// hex chars in NATIVE order (no little-endian swap, unlike /proc/net/route v4).
-// The caller passes pool already .Masked(); a row matches when its iface equals
-// iface and its (destination, prefix_len) equals the pool.
+// liveFakeIPPoolRoute6Present reports whether a v6 route for the given prefix
+// out the given iface is installed in /proc/net/ipv6_route (format —
+// parseRoutes6).
 func liveFakeIPPoolRoute6Present(iface string, pool netip.Prefix) bool {
 	if iface == "" || !pool.IsValid() || !pool.Addr().Is6() {
 		return false
@@ -262,24 +233,92 @@ func liveFakeIPPoolRoute6Present(iface string, pool netip.Prefix) bool {
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	return slices.Contains(parseRoutes6(iface, string(data)), pool.Masked())
+}
+
+// fakeIPTunRoutes — маршруты ядра через iface, оба семейства, без повторов
+// (/proc/net/ipv6_route показывает и таблицы политик). Шов для тестов.
+// Ошибка чтения — ошибка: по неполному списку снимать нельзя (F756). Нет
+// /proc/net/ipv6_route (ядро без IPv6) — не ошибка: v6-маршрутов нет.
+var fakeIPTunRoutes = liveFakeIPTunRoutes
+
+// rtfCache — RTF_CACHE из include/uapi/linux/ipv6_route.h.
+const rtfCache = 0x01000000
+
+// procNetRoute / procNetIPv6Route — пути таблиц маршрутов (подмена в тестах).
+var procNetRoute, procNetIPv6Route = "/proc/net/route", "/proc/net/ipv6_route"
+
+func liveFakeIPTunRoutes(iface string) ([]netip.Prefix, error) {
+	v4, err := os.ReadFile(procNetRoute)
+	if err != nil {
+		return nil, err
+	}
+	v6, err := os.ReadFile(procNetIPv6Route)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	return parseTunRoutes(iface, string(v4), string(v6)), nil
+}
+
+// parseTunRoutes — маршруты iface из обеих таблиц, без повторов.
+func parseTunRoutes(iface, v4, v6 string) []netip.Prefix {
+	var out []netip.Prefix
+	seen := map[netip.Prefix]bool{}
+	for _, p := range append(parseRoutes4(iface, v4), parseRoutes6(iface, v6)...) {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// parseRoutes4 — маршруты iface из /proc/net/route: Destination и Mask —
+// hex в порядке хоста (parseProcRouteHex); первая строка — заголовок.
+func parseRoutes4(iface, data string) []netip.Prefix {
+	var out []netip.Prefix
+	for i, line := range strings.Split(data, "\n") {
+		f := strings.Fields(line)
+		if i == 0 || len(f) < 8 || f[0] != iface {
+			continue
+		}
+		dest, ok1 := parseProcRouteHex(f[1])
+		mask, ok2 := parseProcRouteHex(f[7])
+		if !ok1 || !ok2 {
+			continue
+		}
+		if bits, size := net.IPMask(mask[:]).Size(); size == 32 {
+			out = append(out, netip.PrefixFrom(netip.AddrFrom4(dest), bits))
+		}
+	}
+	return out
+}
+
+// parseRoutes6 — маршруты iface из /proc/net/ipv6_route. Колонки:
+// destination(32 hex) dest_prefix_len(2 hex) source(32) src_prefix_len(2)
+// next_hop(32) metric refcnt use flags iface; адрес — в сетевом порядке, без
+// перестановки байтов (в отличие от v4).
+func parseRoutes6(iface, data string) []netip.Prefix {
+	var out []netip.Prefix
+	for _, line := range strings.Split(data, "\n") {
 		f := strings.Fields(line)
 		if len(f) < 10 || f[len(f)-1] != iface {
 			continue
 		}
 		raw, derr := hex.DecodeString(f[0])
-		if derr != nil || len(raw) != 16 {
-			continue
-		}
 		plen, perr := strconv.ParseUint(f[1], 16, 8)
-		if perr != nil {
+		flags, ferr := strconv.ParseUint(f[8], 16, 32)
+		if derr != nil || perr != nil || ferr != nil || len(raw) != 16 {
 			continue
 		}
-		if netip.PrefixFrom(netip.AddrFrom16([16]byte(raw)), int(plen)) == pool {
-			return true
+		// Клоны кэша (до 4.15 живут в дереве и видны здесь) — не маршруты:
+		// в NDMS их нет, снятие было бы ошибкой с E на каждом тике.
+		if flags&rtfCache != 0 {
+			continue
 		}
+		out = append(out, netip.PrefixFrom(netip.AddrFrom16([16]byte(raw)), int(plen)))
 	}
-	return false
+	return out
 }
 
 // parseProcRouteHex decodes a /proc/net/route Destination/Mask field (8 hex

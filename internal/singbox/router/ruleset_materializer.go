@@ -731,11 +731,11 @@ func (m ruleSetMaterializer) restoreRuleSet(rs RuleSet) RuleSet {
 	}
 	raw, err := os.ReadFile(strings.TrimSuffix(rs.Path, ".srs") + ".json")
 	if err != nil {
-		return RuleSet{Tag: inlineTag, Type: "inline", MaterializedSRS: true}
+		return RuleSet{Tag: inlineTag, Type: "inline", MaterializedSRS: true, restoreFailed: true}
 	}
 	var source inlineRuleSetSource
 	if err := json.Unmarshal(raw, &source); err != nil {
-		return RuleSet{Tag: inlineTag, Type: "inline", MaterializedSRS: true}
+		return RuleSet{Tag: inlineTag, Type: "inline", MaterializedSRS: true, restoreFailed: true}
 	}
 	if len(source.Rules) == 0 {
 		return RuleSet{Tag: inlineTag, Type: "inline", MaterializedSRS: true}
