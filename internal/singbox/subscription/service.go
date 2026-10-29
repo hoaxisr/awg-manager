@@ -28,6 +28,9 @@ type ConfigMutator interface {
 	AddOutbound(tag string, jsonBody []byte) error
 	UpdateOutbound(tag string, jsonBody []byte) error
 	RemoveOutbound(tag string) error
+	// ReferencedAmong — какие из tags упомянуты в файлах остальных слотов
+	// (черновик, активный, выключенный): такую сироту не снимаем (#1081).
+	ReferencedAmong(tags []string) (map[string]bool, error)
 	AddInbound(tag string, jsonBody []byte) error
 	RemoveInbound(tag string) error
 	AddRouteRule(jsonBody []byte) error
@@ -877,8 +880,12 @@ func slotOrphans(sub *Subscription, declared, members, fallback []string) []stri
 
 // applyDiff commits the diff to sing-box config. Selector + mixed inbound +
 // route rule are recreated each refresh (they may not exist yet on first
-// run). Per-member outbounds are added/updated/left alone — orphans are NOT
-// removed (the UI offers explicit deletion).
+// run). Per-member outbounds are added/updated; orphans — серверы подписки,
+// выпавшие из выдачи, — снимаются в том же пакете (#1081): в группе их нет,
+// трафик через них не идёт, а без снятия они копились без предела (тысячи
+// outbound и мегабайты слота при почасовом обновлении у провайдера с ротацией).
+// Сироту, тег которой упомянут в любом другом слоте (включая выключенный и
+// черновик), не трогаем (removeUnreferencedOrphans).
 //
 // Сервер пропускается (а для Existing — снимается из конфига), когда он
 // исключён по тегу ИЛИ отвергнут regex-фильтром по имени. Оба механизма
@@ -952,6 +959,13 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 	if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, memberTags, defaultTag)); err != nil {
 		return err
 	}
+	// Сироты — по слоту, как у ручной очистки: все поколения, а не только
+	// выпавшие в этом обновлении. Без отчёта мутатора (пустой declared) —
+	// не трогаем ничего.
+	removed, kept, rerr := s.removeUnreferencedOrphans(slotOrphans(sub, s.mutator.DeclaredOutboundTags(), memberTags, nil))
+	if rerr != nil {
+		s.logWarn("subscription-refresh", sub.ID, "orphans kept, other slots unreadable: "+rerr.Error())
+	}
 
 	// Mixed inbound — add only if not present (first time).
 	if sub.ListenPort != 0 {
@@ -976,7 +990,41 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 	}
 	s.stageGroups(map[string][]MemberInfo{sub.ID: fresh})
 
-	return s.mutator.Reload(ctx)
+	if err := s.mutator.Reload(ctx); err != nil {
+		return err
+	}
+	if removed > 0 {
+		s.logInfo("subscription-refresh", sub.ID, fmt.Sprintf("orphans removed: %d, kept: %d (referenced by other slots)", removed, len(kept)))
+	}
+	return nil
+}
+
+// removeUnreferencedOrphans снимает (staged) сирот, которых не упоминает ни
+// один другой слот, и возвращает число снятых и оставленные теги. Сирота со
+// ссылкой остаётся: группа соседнего слота иначе молча потеряла бы члена —
+// висячих членов валидатор вычищает без ошибки, а Reload — на диске (#1081).
+// Слоты не прочитаны — не снимаем ничего (по неполному ответу нельзя) и
+// возвращаем ошибку: обновление её глотает, ручная очистка — отдаёт.
+func (s *Service) removeUnreferencedOrphans(orphans []string) (removed int, kept []string, err error) {
+	if len(orphans) == 0 {
+		return 0, nil, nil
+	}
+	refs, err := s.mutator.ReferencedAmong(orphans)
+	if err != nil {
+		return 0, orphans, err
+	}
+	for _, t := range orphans {
+		if refs[t] {
+			kept = append(kept, t)
+			continue
+		}
+		if s.mutator.RemoveOutbound(t) != nil {
+			kept = append(kept, t) // не снят — остаётся сиротой в учёте
+			continue
+		}
+		removed++
+	}
+	return removed, kept, nil
 }
 
 // Delete tears down a subscription unconditionally: the NDMS ProxyN, mixed
@@ -2166,8 +2214,9 @@ func (s *Service) RemoveInfoItem(ctx context.Context, id, itemID string) (*Subsc
 }
 
 // DeleteOrphans removes the subscription's orphan outbounds from sing-box
-// config and clears the OrphanTags slice in the store. Сироты считаются по
-// слоту на момент вызова (slotOrphans), а не по сохранённому списку.
+// config. Сироты считаются по слоту на момент вызова (slotOrphans), а не по
+// сохранённому списку; упомянутые в других слотах остаются в слоте и в
+// OrphanTags (removeUnreferencedOrphans), не прочитаны слоты — отказ.
 func (s *Service) DeleteOrphans(ctx context.Context, id string) error {
 	s.logInfo("subscription-orphans-delete", id, "delete requested")
 	mu := s.lockSub(id)
@@ -2178,6 +2227,7 @@ func (s *Service) DeleteOrphans(ctx context.Context, id string) error {
 		return err
 	}
 	var orphans []string
+	removed, keptCount := 0, 0
 	// Stage + store + Reload — одна txMu-секция (общий батч адаптера).
 	if err := s.withTx(func() error {
 		orphans = slotOrphans(sub, s.mutator.DeclaredOutboundTags(), sub.MemberTags, sub.OrphanTags)
@@ -2189,10 +2239,17 @@ func (s *Service) DeleteOrphans(ctx context.Context, id string) error {
 			s.logWarn("subscription-orphans-delete", id, err.Error())
 			return err
 		}
-		for _, t := range orphans {
-			s.mutator.RemoveOutbound(t)
+		// Та же проверка ссылок, что у автоудаления: член группы соседнего
+		// слота иначе вычистился бы на диске молча (#1081).
+		var kept []string
+		var rerr error
+		if removed, kept, rerr = s.removeUnreferencedOrphans(orphans); rerr != nil {
+			err := fmt.Errorf("%w: очистка отменена: не удалось прочитать конфигурацию других слотов, проверить ссылки на серверы нельзя: %v", ErrValidation, rerr)
+			s.logWarn("subscription-orphans-delete", id, err.Error())
+			return err
 		}
-		if err := s.store.SetMembership(id, sub.MemberTags, nil); err != nil {
+		keptCount = len(kept)
+		if err := s.store.SetMembership(id, sub.MemberTags, kept); err != nil {
 			s.logWarn("subscription-orphans-delete", id, "failed to clear orphan list in store: "+err.Error())
 			return err
 		}
@@ -2204,7 +2261,7 @@ func (s *Service) DeleteOrphans(ctx context.Context, id string) error {
 	}); err != nil {
 		return err
 	}
-	s.logInfo("subscription-orphans-delete", id, fmt.Sprintf("deleted %d orphan outbounds", len(orphans)))
+	s.logInfo("subscription-orphans-delete", id, fmt.Sprintf("deleted %d orphan outbounds, kept %d", removed, keptCount))
 	return nil
 }
 

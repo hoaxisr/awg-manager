@@ -2125,7 +2125,7 @@
 	"subscriptions_members_filtered_title": "Hidden by filter ({count})",
 	"subscriptions_members_filtered_hint": "These servers are hidden by the subscription regex filter and do not take part in selection. To bring a server back, change the filter in the settings.",
 	"subscriptions_members_orphans_title": "Orphans ({count})",
-	"subscriptions_members_orphans_hint": "These servers were in the previous version of the subscription but did not come back on the last refresh. They do not take part in selection but stay in the sing-box config until cleaned up.",
+	"subscriptions_members_orphans_hint": "These servers dropped out of the subscription, but the refresh did not remove them: another part of the configuration (a rule, a group or the user config) references them, or it could not be read. They do not take part in selection. Cleanup also skips servers that are still referenced, so remove those references first.",
 	"subscriptions_members_clearing": "Clearing...",
 	"subscriptions_members_clear_orphans": "Clear orphans",
 	"subscriptions_refresh_manual": "Manual only",

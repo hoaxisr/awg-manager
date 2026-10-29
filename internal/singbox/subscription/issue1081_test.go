@@ -8,10 +8,10 @@ import (
 	"testing"
 )
 
-// Регрессия issue #1081: сирота прошлого обновления обязана оставаться в
-// учёте, пока её outbound лежит в слоте. Раньше OrphanTags перезаписывался
-// сиротами ПОСЛЕДНЕГО обновления, старые поколения выпадали из учёта и
-// копились в 40-subscriptions.json навсегда — DeleteOrphans их не видел.
+// Регрессия issue #1081: серверы, выпавшие из выдачи, копились в
+// слоте подписок без предела (тысячи outbound и мегабайты слота при
+// почасовом обновлении у провайдера с ротацией хостов). Теперь обновление
+// снимает сирот всех поколений в том же пакете.
 
 // issue1081Gens поднимает фид, который на каждом обновлении отдаёт другое
 // поколение серверов (провайдер ротирует хосты), и подписку на живом слоте.
@@ -64,44 +64,37 @@ func sortedCopy(in []string) []string {
 	return out
 }
 
-func TestIssue1081_OrphansOfAllGenerationsTracked(t *testing.T) {
+func TestIssue1081_OrphansOfAllGenerationsRemovedOnRefresh(t *testing.T) {
 	svc, mut, sub, gen := issue1081Gens(t)
-	genA := sortedCopy(sub.MemberTags)
 	*gen = "b"
-	genB := sortedCopy(issue1081Refresh(t, svc, sub.ID).MemberTags)
+	issue1081Refresh(t, svc, sub.ID)
 	*gen = "c"
 	after := issue1081Refresh(t, svc, sub.ID)
 
-	want := sortedCopy(append(append([]string(nil), genA...), genB...))
-	if got := sortedCopy(after.OrphanTags); !sameTags(got, want) {
-		t.Fatalf("OrphanTags после A→B→C = %v, ожидались A+B %v", got, want)
+	if got := slotTagsOf(mut, sub); !sameTags(got, sortedCopy(after.MemberTags)) {
+		t.Fatalf("после A→B→C в слоте %v, ожидались только члены C %v", got, sortedCopy(after.MemberTags))
 	}
-
-	if err := svc.DeleteOrphans(context.Background(), sub.ID); err != nil {
-		t.Fatal(err)
-	}
-	cleaned, _ := svc.Get(sub.ID)
-	if got := slotTagsOf(mut, sub); !sameTags(got, sortedCopy(cleaned.MemberTags)) {
-		t.Errorf("после DeleteOrphans в слоте %v, ожидались только члены %v", got, sortedCopy(cleaned.MemberTags))
-	}
-	if len(cleaned.OrphanTags) != 0 {
-		t.Errorf("после DeleteOrphans OrphanTags = %v, ожидался пустой", cleaned.OrphanTags)
+	if len(after.OrphanTags) != 0 {
+		t.Errorf("OrphanTags = %v, ожидался пустой", after.OrphanTags)
 	}
 }
 
-// Вернувшийся в выдачу сервер снова член, а не сирота.
+// Вернувшийся в выдачу сервер снова член; выпавшее поколение снято.
 func TestIssue1081_ReturnedServerIsMemberNotOrphan(t *testing.T) {
-	svc, _, sub, gen := issue1081Gens(t)
+	svc, mut, sub, gen := issue1081Gens(t)
 	genA := sortedCopy(sub.MemberTags)
 	*gen = "b"
-	genB := sortedCopy(issue1081Refresh(t, svc, sub.ID).MemberTags)
+	issue1081Refresh(t, svc, sub.ID)
 	*gen = "a"
 	after := issue1081Refresh(t, svc, sub.ID)
 	if got := sortedCopy(after.MemberTags); !sameTags(got, genA) {
 		t.Errorf("члены = %v, ожидалось поколение A %v", got, genA)
 	}
-	if got := sortedCopy(after.OrphanTags); !sameTags(got, genB) {
-		t.Errorf("сироты = %v, ожидалось поколение B %v", got, genB)
+	if got := slotTagsOf(mut, sub); !sameTags(got, genA) {
+		t.Errorf("в слоте %v, ожидалось только поколение A %v", got, genA)
+	}
+	if len(after.OrphanTags) != 0 {
+		t.Errorf("сироты = %v, ожидался пустой список", after.OrphanTags)
 	}
 }
 

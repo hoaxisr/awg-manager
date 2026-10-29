@@ -172,6 +172,8 @@ func (f *fakeMutator) RemoveOutbound(tag string) error {
 	delete(f.slot, tag)
 	return nil
 }
+func (f *fakeMutator) ReferencedAmong([]string) (map[string]bool, error) { return nil, nil }
+
 func (f *fakeMutator) AddInbound(tag string, jsonBody []byte) error {
 	f.addedInbounds = append(f.addedInbounds, tag)
 	return nil

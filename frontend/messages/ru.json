@@ -2189,7 +2189,7 @@
 	"subscriptions_members_filtered_title": "Скрыто фильтром ({count})",
 	"subscriptions_members_filtered_hint": "Эти серверы скрыты regex-фильтром подписки и не участвуют в выборе. Чтобы вернуть сервер, измените фильтр в настройках.",
 	"subscriptions_members_orphans_title": "Сироты ({count})",
-	"subscriptions_members_orphans_hint": "Эти серверы были в прошлой версии подписки, но не вернулись при последнем обновлении. Они не участвуют в выборе, но остаются в конфиге sing-box до очистки.",
+	"subscriptions_members_orphans_hint": "Эти серверы выпали из подписки, но обновление их не удалило: на них ссылается другая часть конфигурации (правило, группа или пользовательский конфиг) или её не удалось прочитать. В выборе они не участвуют. Очистка тоже не тронет серверы, на которые есть ссылки, — сначала уберите ссылки.",
 	"subscriptions_members_clearing": "Очищаем...",
 	"subscriptions_members_clear_orphans": "Очистить сироты",
 	"subscriptions_refresh_manual": "Только вручную",

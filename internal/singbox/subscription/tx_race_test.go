@@ -49,6 +49,7 @@ func (m *txRaceMutator) AllocProxyIndex(_ context.Context) (int, error)         
 func (m *txRaceMutator) AddOutbound(string, []byte) error                            { m.stage(); return nil }
 func (m *txRaceMutator) UpdateOutbound(string, []byte) error                         { m.stage(); return nil }
 func (m *txRaceMutator) RemoveOutbound(string) error                                 { m.stage(); return nil }
+func (m *txRaceMutator) ReferencedAmong([]string) (map[string]bool, error)           { return nil, nil }
 func (m *txRaceMutator) AddInbound(string, []byte) error                             { m.stage(); return nil }
 func (m *txRaceMutator) RemoveInbound(string) error                                  { m.stage(); return nil }
 func (m *txRaceMutator) AddRouteRule([]byte) error                                   { m.stage(); return nil }

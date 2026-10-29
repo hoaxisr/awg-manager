@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -92,6 +94,77 @@ func (o *Orchestrator) loadEffectiveLocked(slot Slot, meta SlotMeta) ([]byte, er
 		return nil, fmt.Errorf("LoadEffective disabled %s: %w", slot, err)
 	}
 	return data, nil
+}
+
+// ReferencedAmong — какие из tags упомянуты строкой хоть где-то в файлах
+// (черновик, активный, выключенный) зарегистрированных слотов, кроме except.
+// Для вопроса «ссылается ли кто-нибудь на тег» (сироты подписок, #1081): тег —
+// уникальная строка, по какому ключу он записан, неважно, а выключенный слот и
+// черновик включатся позже со своей ссылкой. Файлы читаются вне o.mu (пути —
+// под ним). Файл без общего префикса тегов пропускается одним проходом; иначе
+// — потоковый разбор по токенам, без карты всех строк конфига. Невалидный JSON
+// (черновик сохраняется без проверки) не блокирует ответ: в нём ищется сам
+// тег в кавычках — консервативно. Ошибка — только когда файл не прочитан.
+func (o *Orchestrator) ReferencedAmong(except Slot, tags []string) (map[string]bool, error) {
+	found := map[string]bool{}
+	if len(tags) == 0 {
+		return found, nil
+	}
+	want := make(map[string]bool, len(tags))
+	prefix := tags[0]
+	for _, t := range tags {
+		want[t] = true
+		for !strings.HasPrefix(t, prefix) {
+			prefix = prefix[:len(prefix)-1]
+		}
+	}
+	quotedPrefix := []byte(`"` + prefix)
+	o.mu.Lock()
+	var paths []string
+	for slot, meta := range o.slots {
+		if slot != except {
+			paths = append(paths, o.pendingPath(meta), o.activePath(meta), o.disabledPath(meta))
+		}
+	}
+	o.mu.Unlock()
+	for _, path := range paths {
+		data, err := readIfExists(path)
+		if err != nil {
+			return nil, fmt.Errorf("ReferencedAmong %s: %w", path, err)
+		}
+		if !bytes.Contains(data, quotedPrefix) {
+			continue
+		}
+		if !tokenStrings(data, want, found) {
+			for t := range want {
+				if bytes.Contains(data, []byte(`"`+t+`"`)) {
+					found[t] = true
+				}
+			}
+		}
+		if len(found) == len(want) {
+			break
+		}
+	}
+	return found, nil
+}
+
+// tokenStrings отмечает в found строки JSON-документа data, входящие в want;
+// false — документ не разобрался (found при этом мог частично заполниться).
+func tokenStrings(data []byte, want, found map[string]bool) bool {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			return true
+		}
+		if err != nil {
+			return false
+		}
+		if s, ok := tok.(string); ok && want[s] {
+			found[s] = true
+		}
+	}
 }
 
 // LoadDraft returns the bytes of the slot's pending (draft) file, or

@@ -25,6 +25,7 @@ func (noopMutator) AllocProxyIndex(context.Context) (int, error)                
 func (noopMutator) AddOutbound(string, []byte) error                            { return nil }
 func (noopMutator) UpdateOutbound(string, []byte) error                         { return nil }
 func (noopMutator) RemoveOutbound(string) error                                 { return nil }
+func (noopMutator) ReferencedAmong([]string) (map[string]bool, error)           { return nil, nil }
 func (noopMutator) AddInbound(string, []byte) error                             { return nil }
 func (noopMutator) RemoveInbound(string) error                                  { return nil }
 func (noopMutator) AddRouteRule([]byte) error                                   { return nil }

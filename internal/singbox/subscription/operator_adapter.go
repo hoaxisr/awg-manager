@@ -325,6 +325,12 @@ func (a *OperatorAdapter) RemoveOutbound(tag string) error {
 	return nil
 }
 
+// ReferencedAmong — какие из tags упомянуты в файлах остальных слотов
+// (orchestrator.ReferencedAmong): такую сироту не снимаем (#1081).
+func (a *OperatorAdapter) ReferencedAmong(tags []string) (map[string]bool, error) {
+	return a.orch.ReferencedAmong(orchestrator.SlotSubscriptions, tags)
+}
+
 // SubscriptionOutbounds returns a snapshot of every outbound currently
 // stored in this slot. The returned slice is freshly allocated; the
 // inner maps are shared (callers MUST treat them as read-only). Callers
