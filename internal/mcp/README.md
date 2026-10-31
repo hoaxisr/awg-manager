@@ -218,6 +218,35 @@ with exactly this mistake and cost a CI round trip.
 
 ## Mirror the REST handler's side effects
 
+### DNS Rewrite writes
+
+`add_singbox_dns_rewrite`, `update_singbox_dns_rewrite` and
+`delete_singbox_dns_rewrite` reuse the DNS Rewrite service instance exposed by
+the REST handler. They save the `dns-rewrites` slot immediately, also in
+fakeip-tun mode. They never touch the shared routing draft and do not require
+`apply_singbox_staging`.
+
+`list_singbox_dns_rewrites` returns each entry's zero-based `index` and the
+`revision` of the complete ordered list. Read it before an update or deletion
+and pass that revision as `expectRevision`. Any intervening list change,
+including an IP-only edit or an index shift onto an identical duplicate, refuses
+the write under the service lock. Update replaces the whole pattern/IP list.
+Preset-owned entries cannot be changed; delete is annotated destructive and
+every write requires a full-access MCP key.
+
+Inputs accept ASCII domains (punycode for IDNs), a domain glob with one `*`, and
+1–64 IPv4/IPv6 addresses without ports, prefixes or zone identifiers. The service
+keeps the web UI's compilation behavior, including opposite-family NODATA for
+single-stack rewrites. Add appends, so an earlier matching entry takes priority.
+
+Success returns `saved: true` and the list read back after the write; it does not
+verify the running DNS engine. If read-back fails, `stateKnown: false` and an
+explicit text warning replace an empty-state claim. A slot-save failure can
+occur after storage changed: the tool reports uncertainty and asks for a fresh
+list before retrying. Never automatically retry an add, which can duplicate it.
+
+### Invalidation and journal
+
 - Publish the same invalidation event the HTTP handler publishes
   (`l.publish(events.Resource…, "mcp-<action>")`), or an open web tab keeps
   showing pre-MCP state.

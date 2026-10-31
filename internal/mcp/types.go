@@ -260,9 +260,23 @@ type SingboxDNSRules struct {
 // SingboxDNSRewrite is one DNS Rewrite entry: names matching Pattern are
 // answered with IPs by sing-box itself.
 type SingboxDNSRewrite struct {
-	Pattern string   `json:"pattern" jsonschema:"domain or glob (*.example.com) the entry answers for"`
-	IPs     []string `json:"ips" jsonschema:"addresses returned for it"`
-	Managed bool     `json:"managed" jsonschema:"true means a preset owns the entry (KeenDNS) and rewrites it itself"`
+	Index    int      `json:"index" jsonschema:"zero-based position; positions shift after deletion or reordering, so read the list again before editing"`
+	Revision string   `json:"revision" jsonschema:"opaque revision of the complete ordered list this entry was read from; any list change invalidates it; required as expectRevision for update and delete"`
+	Pattern  string   `json:"pattern" jsonschema:"domain or glob (*.example.com) the entry answers for"`
+	IPs      []string `json:"ips" jsonschema:"addresses returned for it"`
+	Managed  bool     `json:"managed" jsonschema:"true means a preset owns the entry (KeenDNS) and rewrites it itself"`
+}
+
+// SingboxDNSRewriteInput replaces the whole user-owned entry, never its owner.
+type SingboxDNSRewriteInput struct {
+	Pattern string   `json:"pattern" jsonschema:"ASCII domain (use punycode for IDNs) or domain glob with at most one asterisk, e.g. *.example.com or node*.example.com"`
+	IPs     []string `json:"ips" jsonschema:"complete nonempty list of IPv4 or IPv6 addresses, at most 64; no ports, subnets or zone identifiers"`
+}
+
+type SingboxDNSRewriteResult struct {
+	Saved      bool                `json:"saved" jsonschema:"true means the store and DNS Rewrite slot were saved immediately, NOT staged; runtime DNS operation is not verified by this result"`
+	StateKnown bool                `json:"stateKnown" jsonschema:"whether the rewrites list was read back after saving; false means read list_singbox_dns_rewrites before retrying, especially an add"`
+	Rewrites   []SingboxDNSRewrite `json:"rewrites" jsonschema:"current entries read back after saving; empty with stateKnown=false means unavailable, not an empty configuration"`
 }
 
 // SingboxRouterStatus is how the sing-box router is set up and whether it

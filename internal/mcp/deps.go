@@ -245,6 +245,14 @@ type Deps interface {
 	ListSingboxDNSRules(ctx context.Context) (SingboxDNSRules, error)
 	// ListSingboxDNSRewrites returns the DNS Rewrite entries in order.
 	ListSingboxDNSRewrites(ctx context.Context) ([]SingboxDNSRewrite, error)
+	// DNS Rewrite writes save the dedicated slot at once, outside router
+	// staging (also in fakeip-tun). Read back state on success; a failed
+	// read-back must report StateKnown=false rather than inviting a retry.
+	AddSingboxDNSRewrite(ctx context.Context, in SingboxDNSRewriteInput) (SingboxDNSRewriteResult, error)
+	// The complete ordered-list revision is mandatory and compared under the
+	// service write lock, so a stale index never edits a different entry.
+	UpdateSingboxDNSRewrite(ctx context.Context, index int, expectRevision string, in SingboxDNSRewriteInput) (SingboxDNSRewriteResult, error)
+	DeleteSingboxDNSRewrite(ctx context.Context, index int, expectRevision string) (SingboxDNSRewriteResult, error)
 	// ListSingboxRuleSets returns every rule set in configuration order,
 	// hasDraft as ListSingboxDNSServers. The tool pages the result;
 	// implementations must not truncate it.

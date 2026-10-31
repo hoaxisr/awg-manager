@@ -14,6 +14,20 @@ type recDNSRewritesSvc struct {
 	err   error
 }
 
+func TestDNSRewritesHandlerExposesOnlyConcreteService(t *testing.T) {
+	svc := dnsrewrite.NewService(nil, nil)
+	if got := NewDNSRewritesHandler(svc, nil).Service(); got != svc {
+		t.Fatal("MCP must share the REST service and its lock")
+	}
+	if got := NewDNSRewritesHandler(&recDNSRewritesSvc{}, nil).Service(); got != nil {
+		t.Fatal("alternative implementation must not enter production wiring")
+	}
+	var absent *dnsrewrite.Service
+	if got := NewDNSRewritesHandler(absent, nil).Service(); got != nil {
+		t.Fatal("a typed nil must not pass MCP's availability check")
+	}
+}
+
 func (s *recDNSRewritesSvc) rec(format string, a ...any) error {
 	s.calls = append(s.calls, fmt.Sprintf(format, a...))
 	return s.err

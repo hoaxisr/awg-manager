@@ -1787,7 +1787,7 @@ func (f *Fake) ListSingboxDNSRewrites(context.Context) ([]mcpsrv.SingboxDNSRewri
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]mcpsrv.SingboxDNSRewrite(nil), f.DNSRewrites...), nil
+	return f.rewriteListLocked(), nil
 }
 
 func (f *Fake) ListSingboxRuleSets(context.Context) ([]mcpsrv.SingboxRuleSet, bool, error) {

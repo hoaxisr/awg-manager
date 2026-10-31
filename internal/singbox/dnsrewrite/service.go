@@ -1,6 +1,7 @@
 package dnsrewrite
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -54,8 +55,17 @@ func NewService(store Store, orch Orchestrator) *Service {
 func (s *Service) List() ([]DNSRewrite, error) { return s.store.List() }
 
 func (s *Service) Add(r DNSRewrite) error {
+	return s.AddContext(context.Background(), r)
+}
+
+// AddContext appends an entry, refusing a cancelled caller under the same
+// lock as the save so a caller waiting behind another edit cannot write late.
+func (s *Service) AddContext(ctx context.Context, r DNSRewrite) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.Managed = "" // API/user path cannot forge managed ownership
 	if _, err := compileRewrite(r); err != nil {
 		return err
@@ -67,17 +77,39 @@ func (s *Service) Add(r DNSRewrite) error {
 }
 
 func (s *Service) Update(index int, r DNSRewrite) error {
+	return s.update(context.Background(), index, r, "")
+}
+
+// UpdateChecked compares the list under the write lock shared by REST and
+// preset reconciliation, before storing anything or rebuilding the slot.
+func (s *Service) UpdateChecked(ctx context.Context, index int, r DNSRewrite, expectRevision string) error {
+	if expectRevision == "" {
+		return ErrConflict
+	}
+	return s.update(ctx, index, r, expectRevision)
+}
+
+func (s *Service) update(ctx context.Context, index int, r DNSRewrite, expectRevision string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	items, err := s.store.List()
 	if err != nil {
 		return err
 	}
 	if index < 0 || index >= len(items) {
+		if expectRevision != "" {
+			return ErrConflict
+		}
 		return fmt.Errorf("dns rewrite index %d out of range", index)
 	}
+	if expectRevision != "" && Revision(items) != expectRevision {
+		return ErrConflict
+	}
 	if id := items[index].Managed; id != "" {
-		return fmt.Errorf("перезапись управляется пресетом %q — снимите пресет в настройках движка", id)
+		return fmt.Errorf("%w %q — снимите пресет в настройках движка", ErrManaged, id)
 	}
 	r.Managed = ""
 	if _, err := compileRewrite(r); err != nil {
@@ -90,17 +122,38 @@ func (s *Service) Update(index int, r DNSRewrite) error {
 }
 
 func (s *Service) Delete(index int) error {
+	return s.delete(context.Background(), index, "")
+}
+
+// DeleteChecked refuses an entry changed or shifted since the caller listed it.
+func (s *Service) DeleteChecked(ctx context.Context, index int, expectRevision string) error {
+	if expectRevision == "" {
+		return ErrConflict
+	}
+	return s.delete(ctx, index, expectRevision)
+}
+
+func (s *Service) delete(ctx context.Context, index int, expectRevision string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	items, err := s.store.List()
 	if err != nil {
 		return err
 	}
 	if index < 0 || index >= len(items) {
+		if expectRevision != "" {
+			return ErrConflict
+		}
 		return fmt.Errorf("dns rewrite index %d out of range", index)
 	}
+	if expectRevision != "" && Revision(items) != expectRevision {
+		return ErrConflict
+	}
 	if id := items[index].Managed; id != "" {
-		return fmt.Errorf("перезапись управляется пресетом %q — снимите пресет в настройках движка", id)
+		return fmt.Errorf("%w %q — снимите пресет в настройках движка", ErrManaged, id)
 	}
 	if err := s.store.Delete(index); err != nil {
 		return err

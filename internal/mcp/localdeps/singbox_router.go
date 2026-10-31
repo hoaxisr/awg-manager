@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	mcpsrv "github.com/hoaxisr/awg-manager/internal/mcp"
+	"github.com/hoaxisr/awg-manager/internal/singbox/dnsrewrite"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 )
 
@@ -368,14 +369,15 @@ func (l *Local) ListSingboxDNSRewrites(_ context.Context) ([]mcpsrv.SingboxDNSRe
 		return nil, err
 	}
 	out := make([]mcpsrv.SingboxDNSRewrite, 0, len(list))
-	for _, r := range list {
+	revision := dnsrewrite.Revision(list)
+	for index, r := range list {
 		ips := make([]string, 0, len(r.IPs))
 		for _, ip := range r.IPs {
 			if h := hostShaped(ip); h != "" {
 				ips = append(ips, h)
 			}
 		}
-		out = append(out, mcpsrv.SingboxDNSRewrite{Pattern: sanitizeText(r.Pattern, 253), IPs: ips, Managed: r.Managed != ""})
+		out = append(out, mcpsrv.SingboxDNSRewrite{Index: index, Revision: revision, Pattern: sanitizeText(r.Pattern, 253), IPs: ips, Managed: r.Managed != ""})
 	}
 	return out, nil
 }

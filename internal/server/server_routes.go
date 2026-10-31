@@ -1148,7 +1148,7 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 			userConfigForMcp = o
 		}
 	}
-	var rewritesForMcp localdeps.DNSRewriteLister
+	var rewritesForMcp localdeps.DNSRewriteService
 	if s.dnsRewritesHandler != nil {
 		if svc := s.dnsRewritesHandler.Service(); svc != nil {
 			rewritesForMcp = svc

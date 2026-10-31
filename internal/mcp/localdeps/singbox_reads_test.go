@@ -257,15 +257,18 @@ func TestSingboxDNSRule_EvaluateChain(t *testing.T) {
 	}
 }
 
-type fakeRewrites []dnsrewrite.DNSRewrite
+type fakeRewrites struct {
+	DNSRewriteService
+	items []dnsrewrite.DNSRewrite
+}
 
-func (f fakeRewrites) List() ([]dnsrewrite.DNSRewrite, error) { return f, nil }
+func (f fakeRewrites) List() ([]dnsrewrite.DNSRewrite, error) { return f.items, nil }
 
 func TestLocal_ListSingboxDNSRewrites(t *testing.T) {
-	l := New(Config{DNSRewrites: fakeRewrites{
+	l := New(Config{DNSRewrites: fakeRewrites{items: []dnsrewrite.DNSRewrite{
 		{Pattern: "nas.home", IPs: []string{"192.168.1.5", "fd00::5", "not an\naddress"}},
 		{Pattern: "*.keenetic.link", IPs: []string{"192.168.1.1"}, Managed: "keendns"},
-	}})
+	}}})
 	got, err := l.ListSingboxDNSRewrites(context.Background())
 	if err != nil {
 		t.Fatal(err)

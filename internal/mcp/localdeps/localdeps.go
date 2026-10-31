@@ -154,9 +154,13 @@ type (
 		DiscardDraft(slot singboxorch.Slot) error
 		SetEnabled(slot singboxorch.Slot, enabled bool) error
 	}
-	// DNSRewriteLister is the read half of *dnsrewrite.Service.
-	DNSRewriteLister interface {
+	// DNSRewriteService is the shared REST/preset service. Checked writes
+	// compare revisions under its lock, never in this adapter alone.
+	DNSRewriteService interface {
 		List() ([]dnsrewrite.DNSRewrite, error)
+		AddContext(context.Context, dnsrewrite.DNSRewrite) error
+		UpdateChecked(context.Context, int, dnsrewrite.DNSRewrite, string) error
+		DeleteChecked(context.Context, int, string) error
 	}
 	// SubscriptionService is the subset of *subscription.Service MCP
 	// uses. List is sorted by label and then id (subscription.Store.List).
@@ -251,8 +255,8 @@ type Config struct {
 	FakeIP FakeIPRouter
 	// UserConfig is the sing-box orchestrator, for the 90-user.json tools.
 	UserConfig SingboxSlots
-	// DNSRewrites serves list_singbox_dns_rewrites.
-	DNSRewrites DNSRewriteLister
+	// DNSRewrites serves the immediate DNS Rewrite reads and writes.
+	DNSRewrites DNSRewriteService
 	Singbox     SingboxOperator
 	// Subscriptions serves the subscription tools. nil makes them report
 	// that sing-box subscriptions are unavailable on this router.
@@ -310,6 +314,7 @@ type Local struct {
 	policyLog  *logging.ScopedLogger
 	serverLog  *logging.ScopedLogger
 	singboxLog *logging.ScopedLogger
+	rewriteLog *logging.ScopedLogger
 	subLog     *logging.ScopedLogger
 }
 
@@ -327,6 +332,7 @@ func New(cfg Config) *Local {
 		policyLog:        logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubAccessPolicy),
 		serverLog:        logging.NewScopedLogger(cfg.AppLog, logging.GroupServer, logging.SubManaged),
 		singboxLog:       logging.NewScopedLogger(cfg.AppLog, logging.GroupSingbox, logging.SubSBRouter),
+		rewriteLog:       logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubSingboxRouter),
 		// Same scope as api.SubscriptionHandler: user actions on
 		// subscriptions go to routing/subscription, not the sing-box bucket.
 		subLog: logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubSubscription),
