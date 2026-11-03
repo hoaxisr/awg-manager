@@ -12,6 +12,9 @@ import (
 	"strings"
 )
 
+// procRoot — корень procfs; шов для тестов, которые собирают поддельный /proc.
+var procRoot = "/proc"
+
 // LookupListener finds the process bound to host:port (TCP LISTEN or UDP bind).
 func LookupListener(host string, port int, proto Proto) (ListenerInfo, error) {
 	info := ListenerInfo{Host: host, Port: port, Proto: string(proto)}
@@ -38,19 +41,52 @@ func LookupListener(host string, port int, proto Proto) (ListenerInfo, error) {
 }
 
 // KillListener terminates the process owning host:port (SIGTERM → SIGKILL).
+//
+// host — адрес, на который делает bind управляемый инстанс (берётся из его
+// конфига, не из запроса): цель — только сокет, конфликтующий с этим bind.
+// Любая неоднозначность — отказ без сигнала.
 func KillListener(host string, port int, proto Proto) (ListenerInfo, error) {
-	info, err := LookupListener(host, port, proto)
+	info := ListenerInfo{Host: host, Port: port, Proto: string(proto)}
+	if port <= 0 || port > 65535 {
+		return info, errInvalidPort
+	}
+	free := fmt.Errorf("порт %s:%d (%s) не занят процессом", host, port, proto)
+	want, ok := newAddrMatch(host, port)
+	if !ok {
+		return info, free
+	}
+	inodes := listenerInodes(proto, want)
+	if len(inodes) == 0 {
+		return info, free
+	}
+	info.Open = true
+	pids, err := listenerPIDs(inodes)
 	if err != nil {
 		return info, err
 	}
-	if !info.Open || info.PID <= 0 {
-		return info, fmt.Errorf("порт %s:%d (%s) не занят процессом", host, port, proto)
+	if len(pids) == 0 {
+		return info, free
 	}
-	// Себя и init не трогаем ни при каких настройках инстанса.
-	if info.PID == os.Getpid() || info.PID == 1 {
-		return info, fmt.Errorf("процесс %d (%s) остановке не подлежит", info.PID, info.Comm)
+	// Себя и init не трогаем ни при каких настройках инстанса. Проверяются все
+	// держатели сокета: пока его держит защищённый процесс, остановка соседа
+	// порт не освободит.
+	for _, pid := range pids {
+		if pid == os.Getpid() || pid == 1 {
+			info.PID, info.Comm = pid, readComm(pid)
+			return info, fmt.Errorf("процесс %d (%s) остановке не подлежит", info.PID, info.Comm)
+		}
 	}
-	if err := terminatePID(info.PID); err != nil {
+	info.PID = pids[0]
+	info.Comm = readComm(info.PID)
+	start, ok := processStartTime(info.PID)
+	if !ok {
+		return info, fmt.Errorf("процесс %d не удалось опознать — сигнал не отправлен", info.PID)
+	}
+	target := killTarget{pid: info.PID, start: start}
+	if !target.holdsListener(proto, want) {
+		return info, fmt.Errorf("процесс %d сменился или освободил порт — сигнал не отправлен", info.PID)
+	}
+	if err := terminatePID(target); err != nil {
 		return info, err
 	}
 	after, _ := LookupListener(host, port, proto)
@@ -62,12 +98,12 @@ func KillListener(host string, port int, proto Proto) (ListenerInfo, error) {
 
 func listenerInodes(proto Proto, want addrMatch) map[string]struct{} {
 	out := make(map[string]struct{})
-	files := []string{"/proc/net/udp", "/proc/net/udp6"}
+	files := []string{"udp", "udp6"}
 	if proto == ProtoTCP {
-		files = []string{"/proc/net/tcp", "/proc/net/tcp6"}
+		files = []string{"tcp", "tcp6"}
 	}
 	for _, procFile := range files {
-		f, err := os.Open(procFile)
+		f, err := os.Open(filepath.Join(procRoot, "net", procFile))
 		if err != nil {
 			continue
 		}
@@ -97,9 +133,31 @@ func collectListenerInodes(r io.Reader, proto Proto, want addrMatch, out map[str
 }
 
 func findListenerPIDByInodes(inodes map[string]struct{}) (int, bool) {
-	entries, err := os.ReadDir("/proc")
+	found := 0
+	err := walkListenerPIDs(inodes, func(pid int) bool {
+		found = pid
+		return false
+	})
+	return found, err == nil && found > 0
+}
+
+// listenerPIDs — все процессы, держащие один из inodes (сокет наследуется
+// при fork, держателей бывает несколько). Порядок — порядок обхода /proc.
+func listenerPIDs(inodes map[string]struct{}) ([]int, error) {
+	var pids []int
+	err := walkListenerPIDs(inodes, func(pid int) bool {
+		pids = append(pids, pid)
+		return true
+	})
+	return pids, err
+}
+
+// walkListenerPIDs зовёт fn для каждого процесса, держащего один из inodes;
+// fn=false останавливает обход.
+func walkListenerPIDs(inodes map[string]struct{}, fn func(pid int) bool) error {
+	entries, err := os.ReadDir(procRoot)
 	if err != nil {
-		return 0, false
+		return err
 	}
 	for _, ent := range entries {
 		if !ent.IsDir() {
@@ -109,15 +167,15 @@ func findListenerPIDByInodes(inodes map[string]struct{}) (int, bool) {
 		if err != nil {
 			continue
 		}
-		if pidOwnsInodes(pid, inodes) {
-			return pid, true
+		if pidOwnsInodes(pid, inodes) && !fn(pid) {
+			return nil
 		}
 	}
-	return 0, false
+	return nil
 }
 
 func pidOwnsInodes(pid int, inodes map[string]struct{}) bool {
-	fdDir := filepath.Join("/proc", strconv.Itoa(pid), "fd")
+	fdDir := filepath.Join(procRoot, strconv.Itoa(pid), "fd")
 	fds, err := os.ReadDir(fdDir)
 	if err != nil {
 		return false
@@ -139,7 +197,7 @@ func pidOwnsInodes(pid int, inodes map[string]struct{}) bool {
 }
 
 func readComm(pid int) string {
-	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "comm"))
+	data, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "comm"))
 	if err != nil {
 		return ""
 	}

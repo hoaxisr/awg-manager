@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -25,52 +26,91 @@ type listenerKey struct {
 	proto procport.Proto
 }
 
-// ownsListener — убивать разрешено только процесс на порту нашего же инстанса.
-// Демон работает от root, и без этой проверки один POST сносит ndm (:79),
-// DNS (:53) или SSH. Хост в ключ не входит: он ничего не защищает (процесс на
-// этом порту находится по любому адресу), зато расхождение 0.0.0.0 против
-// 127.0.0.1 ломало бы легитимный сценарий «освободить свой порт».
-func (h *ProxyListenerHandler) ownsListener(port int, proto procport.Proto) bool {
-	owned := make(map[listenerKey]bool)
-	add := func(listen string, proto procport.Proto) {
-		if _, p, ok := procport.ParseListenHostPort(listen, "127.0.0.1"); ok {
-			owned[listenerKey{port: p, proto: proto}] = true
+// Шов для тестов: настоящий KillListener шлёт сигналы от root.
+var killListener = procport.KillListener
+
+// ownedBindHosts — адреса, на которые инстансы прокси-рантайма делают bind на
+// (port, proto). Убивать разрешено только процесс, мешающий такому bind'у:
+// демон работает от root, и без этой проверки один POST сносит ndm (:79), DNS
+// (:53) или SSH. Хост берётся из конфига, а не из запроса: procport ищет
+// сокеты, конфликтующие с переданным адресом (для 0.0.0.0 — любой адрес на
+// порту), и хост клиента позволял бы снести процесс на чужом IP с тем же
+// номером порта.
+//
+// Хост без адреса (":56000") бинарь поднимает на всех адресах, поэтому у
+// серверов он 0.0.0.0. Клиенты слушают только 127.0.0.1 (localListen).
+func (h *ProxyListenerHandler) ownedBindHosts(port int, proto procport.Proto) []string {
+	owned := make(map[listenerKey][]string)
+	add := func(listen, defaultHost string, proto procport.Proto) {
+		if host, p, ok := procport.ParseListenHostPort(listen, defaultHost); ok {
+			k := listenerKey{port: p, proto: proto}
+			host = canonicalBindHost(host)
+			if !slices.Contains(owned[k], host) {
+				owned[k] = append(owned[k], host)
+			}
 		}
 	}
 	if h.records == nil {
-		return false
+		return nil
 	}
 	st, err := h.records.Load()
 	if err != nil {
-		return false
+		return nil
 	}
 	for _, rec := range st.Records {
 		switch {
 		case rec.WdttClient != nil:
-			add(rec.WdttClient.Listen, procport.ProtoUDP)
+			add(rec.WdttClient.Listen, "127.0.0.1", procport.ProtoUDP)
 		case rec.FreeTurnClient != nil:
-			add(rec.FreeTurnClient.Listen, procport.ProtoUDP)
+			add(rec.FreeTurnClient.Listen, "127.0.0.1", procport.ProtoUDP)
 		case rec.WdttServer != nil:
 			// Паритет ServerListenAddrs старого мира: DTLS, raw (явный либо
-			// DTLS+1), direct (если отличается от DTLS) и внутренний WG на
-			// localhost.
-			add(rec.WdttServer.Listen, procport.ProtoUDP)
-			add(rec.WdttServer.EffectiveRawListen(), procport.ProtoUDP)
+			// DTLS+1), direct (если отличается от DTLS) и внутренний WG.
+			add(rec.WdttServer.Listen, "0.0.0.0", procport.ProtoUDP)
+			add(rec.WdttServer.EffectiveRawListen(), "0.0.0.0", procport.ProtoUDP)
 			if d := strings.TrimSpace(rec.WdttServer.DirectListen); d != "" && d != rec.WdttServer.Listen {
-				add(d, procport.ProtoUDP)
+				add(d, "0.0.0.0", procport.ProtoUDP)
 			}
+			// wireguard-go слушает wg-port на ВСЕХ адресах (см. validatePorts).
 			if rec.WdttServer.WgPort > 0 {
-				add(net.JoinHostPort("127.0.0.1", strconv.Itoa(rec.WdttServer.WgPort)), procport.ProtoUDP)
+				add(net.JoinHostPort("0.0.0.0", strconv.Itoa(rec.WdttServer.WgPort)), "0.0.0.0", procport.ProtoUDP)
 			}
 		case rec.FreeTurnServer != nil:
 			serverProto := procport.ProtoUDP
 			if strings.EqualFold(strings.TrimSpace(rec.FreeTurnServer.Mode), "tcp") {
 				serverProto = procport.ProtoTCP
 			}
-			add(rec.FreeTurnServer.Listen, serverProto)
+			add(rec.FreeTurnServer.Listen, "0.0.0.0", serverProto)
 		}
 	}
 	return owned[listenerKey{port: port, proto: proto}]
+}
+
+// killBindHost — адрес bind'а, конфликт с которым разрешено снять. Хост из
+// запроса ничего не расширяет: он лишь выбирает один из адресов конфига, когда
+// их на этом порту несколько. Единственный адрес конфига берётся как есть —
+// UI шлёт хост, нормализованный по-своему (":port" у него 127.0.0.1).
+func (h *ProxyListenerHandler) killBindHost(reqHost string, port int, proto procport.Proto) (string, bool) {
+	hosts := h.ownedBindHosts(port, proto)
+	if len(hosts) == 1 {
+		return hosts[0], true
+	}
+	reqHost = canonicalBindHost(reqHost)
+	if slices.Contains(hosts, reqHost) {
+		return reqHost, true
+	}
+	return "", false
+}
+
+func canonicalBindHost(host string) string {
+	host = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(host), "["), "]")
+	if host == "" || host == "localhost" {
+		return "127.0.0.1"
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.String()
+	}
+	return host
 }
 
 // GetListener handles GET /api/proxy/listener?host=127.0.0.1&port=9000&proto=udp
@@ -147,12 +187,13 @@ func (h *ProxyListenerHandler) KillListener(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	proto := procport.NormalizeProto(req.Proto)
-	if !h.ownsListener(req.Port, proto) {
+	bindHost, ok := h.killBindHost(host, req.Port, proto)
+	if !ok {
 		response.ErrorWithStatus(w, http.StatusForbidden,
 			"порт не принадлежит ни одному инстансу прокси-рантайма", "PROXY_LISTENER_NOT_OWNED")
 		return
 	}
-	info, err := procport.KillListener(host, req.Port, proto)
+	info, err := killListener(bindHost, req.Port, proto)
 	if err != nil {
 		response.Error(w, err.Error(), "PROXY_LISTENER_KILL_FAILED")
 		return
