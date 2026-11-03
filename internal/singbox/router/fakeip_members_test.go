@@ -266,3 +266,77 @@ func TestCompositeOutbound_RejectsTagOfEnabledSlotOutbound(t *testing.T) {
 		t.Fatalf("free tag rejected: %v", err)
 	}
 }
+
+// Сервер подписки — выход включённого слота, его можно класть в группу.
+// Выключенный слот для включённого роутера этого выхода не содержит.
+func TestCompositeOutbound_AcceptsLiveSubscriptionMember(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+	ctx := context.Background()
+	if err := svc.deps.Orch.Register(orchestrator.SlotMeta{
+		Slot: orchestrator.SlotSubscriptions, Filename: "13-subscriptions.json",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const member = "sub-40be7ea6-bf59e907"
+	if err := svc.deps.Orch.Save(orchestrator.SlotSubscriptions, []byte(`{"outbounds":[{"tag":"`+member+`","type":"vless"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.deps.Orch.SetEnabledSilent(orchestrator.SlotSubscriptions, true); err != nil {
+		t.Fatal(err)
+	}
+	routerCfg := `{"outbounds":[{"tag":"direct","type":"direct"}],"route":{"final":"direct","rules":[]}}`
+	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(routerCfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddCompositeOutbound(ctx, Outbound{
+		Tag: "combo", Type: "urltest", Outbounds: []string{member, "direct"},
+	}); err != nil {
+		t.Fatalf("live subscription server must be a valid member: %v", err)
+	}
+
+	if err := svc.deps.Orch.SetEnabledSilent(orchestrator.SlotSubscriptions, false); err != nil {
+		t.Fatal(err)
+	}
+	err := svc.AddCompositeOutbound(ctx, Outbound{
+		Tag: "combo2", Type: "urltest", Outbounds: []string{member, "direct"},
+	})
+	if !errors.Is(err, ErrCompositeMemberUnknown) || !strings.Contains(err.Error(), member) {
+		t.Fatalf("parked subscription slot must name the missing server, got %v", err)
+	}
+}
+
+func TestUnknownMembersDetail_CollapsesOneSubscription(t *testing.T) {
+	tags := []string{
+		"sub-40be7ea6-bf59e907",
+		"sub-40be7ea6-e88b2885",
+		"sub-40be7ea6-59c39adc",
+		"sub-40be7ea6-abee46c5",
+	}
+	got := unknownMembersDetail(tags)
+	if strings.Contains(got, "bf59e907") || !strings.Contains(got, "4 серверов подписки sub-40be7ea6") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestUpdateComposite_SubscriptionOwnedDoesNotListMembers(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+	svc.deps.SubscriptionComposites = NewSubscriptionCompositesAdapter(&fakeSubscriptionSource{tags: []string{"sub-40be7ea6"}})
+	ctx := context.Background()
+	routerCfg := `{"outbounds":[{"tag":"direct","type":"direct"}],"route":{"final":"direct","rules":[]}}`
+	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(routerCfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := svc.UpdateCompositeOutbound(ctx, "sub-40be7ea6", Outbound{
+		Tag: "sub-40be7ea6", Type: "urltest",
+		Outbounds: []string{"sub-40be7ea6-bf59e907", "sub-40be7ea6-e88b2885"},
+	})
+	if !errors.Is(err, ErrCompositeOwnedBySubscription) {
+		t.Fatalf("got %v", err)
+	}
+	if strings.Contains(err.Error(), "bf59e907") {
+		t.Fatalf("must not list members: %v", err)
+	}
+	if got := ClientMessage(err, ErrCompositeOwnedBySubscription); got != "Группу «sub-40be7ea6» меняют в разделе «Подписки»" {
+		t.Fatalf("client message = %q", got)
+	}
+}

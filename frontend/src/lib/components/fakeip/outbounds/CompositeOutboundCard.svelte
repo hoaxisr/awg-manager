@@ -27,11 +27,13 @@
 		SingboxRouterOutbound,
 		SingboxProxyGroup,
 		Subscription,
+		SubscriptionGroup,
 	} from '$lib/types';
 	import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
 	import { Edit3, Gauge, RefreshCw } from 'lucide-svelte';
 	import { m } from '$lib/i18n';
 	import { resolveCompositeOutboundView } from '$lib/components/sb-router/compositeOutboundDisplay';
+	import { isGroupOutbound, isSubscriptionOutbound } from '$lib/components/sb-router/outboundLabel';
 	import { resolveMemberLabel } from '$lib/utils/memberLabel';
 	import { delayHealth, formatDelay } from './formatDelay';
 
@@ -40,6 +42,7 @@
 		outbounds: SingboxRouterOutbound[];
 		outboundOptions: OutboundGroup[];
 		subscriptions: Subscription[];
+		groups?: SubscriptionGroup[];
 		proxyGroups: SingboxProxyGroup[];
 		/** Runtime live? Gates active-member / health / select / test. */
 		live: boolean;
@@ -65,6 +68,7 @@
 		outbounds,
 		outboundOptions,
 		subscriptions,
+		groups = [],
 		proxyGroups,
 		live,
 		testDelays,
@@ -109,6 +113,15 @@
 	const activeTag = $derived(liveGroup?.now || view?.activeMemberTag || '');
 
 	const groupTitle = $derived(view?.groupTitle || outbound.tag);
+	// Группа подписки живёт в 13-subscriptions.json. Карандаш здесь пишет
+	// в слот fakeip и получает отказ по каждому серверу.
+	const editReason = $derived(
+		isGroupOutbound(outbound, groups)
+			? m.sb_router_outbounds_edit_in_groups()
+			: isSubscriptionOutbound(outbound, subscriptions)
+				? m.sb_router_outbounds_edit_in_subs()
+				: null,
+	);
 	const compositeType = $derived(view?.compositeType || outbound.type);
 
 	// selector groups support an explicit active-member pick; urltest /
@@ -146,18 +159,20 @@
 		<button
 			type="button"
 			class="ib"
+			disabled={editReason !== null}
 			onclick={() => onEdit(outbound.tag)}
 			aria-label={m.fakeip_outbounds_edit_aria({ tag: outbound.tag })}
-			title={m.fakeip_outbounds_edit_title({ title: groupTitle })}
+			title={editReason ?? m.fakeip_outbounds_edit_title({ title: groupTitle })}
 		>
 			<Edit3 size={14} aria-hidden="true" />
 		</button>
 		<button
 			type="button"
 			class="ib danger"
+			disabled={editReason !== null}
 			onclick={() => onDelete(outbound.tag)}
 			aria-label={m.sb_router_outbounds_delete_aria({ tag: outbound.tag })}
-			title={m.fakeip_outbounds_delete_title({ title: groupTitle })}
+			title={editReason ?? m.fakeip_outbounds_delete_title({ title: groupTitle })}
 		>
 			<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 				<path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
@@ -338,11 +353,15 @@
 	.ib:first-of-type {
 		margin-left: auto;
 	}
-	.ib:hover {
+	.ib:hover:not(:disabled) {
 		color: var(--text-primary);
 		background: var(--bg-hover);
 	}
-	.ib.danger:hover {
+	.ib:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+	.ib.danger:hover:not(:disabled) {
 		color: var(--color-error, #dc2626);
 	}
 

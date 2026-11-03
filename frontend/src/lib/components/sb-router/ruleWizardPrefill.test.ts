@@ -80,6 +80,36 @@ describe('prefillWizardFromRule — external', () => {
     expect(r.outboundCategory).toBe('tunnel');
     expect(r.tunnelTags).toEqual(['warp', 'awg10']);
   });
+
+  it('подписка остаётся одним выходом', () => {
+    const rule: SingboxRouterRule = {
+      rule_set: ['geosite-discord'],
+      action: 'route',
+      outbound: 'sub-40be7ea6',
+    };
+    const r = prefillWizardFromRule(rule, presets, [remoteDiscord], [
+      {
+        type: 'urltest',
+        tag: 'sub-40be7ea6',
+        source: 'subscription',
+        outbounds: ['sub-40be7ea6-a', 'sub-40be7ea6-b'],
+      },
+    ]);
+    expect(r.tunnelTags).toEqual(['sub-40be7ea6']);
+    expect(r.compositeMode).toBe('urltest');
+  });
+
+  it('тег sub-<8 hex> не разворачивается и без source', () => {
+    const rule: SingboxRouterRule = {
+      rule_set: ['geosite-discord'],
+      action: 'route',
+      outbound: 'sub-40be7ea6',
+    };
+    const r = prefillWizardFromRule(rule, presets, [remoteDiscord], [
+      { type: 'selector', tag: 'sub-40be7ea6', outbounds: ['sub-40be7ea6-a', 'sub-40be7ea6-b'] },
+    ]);
+    expect(r.tunnelTags).toEqual(['sub-40be7ea6']);
+  });
 });
 
 describe('prefillWizardFromRule — inline', () => {

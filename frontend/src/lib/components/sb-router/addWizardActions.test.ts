@@ -85,6 +85,21 @@ describe('resolveTunnelOutbound', () => {
     expect(api.singboxRouterAddOutbound).not.toHaveBeenCalled();
   });
 
+  it('набор серверов подписки — это сама подписка, новая группа не создаётся', async () => {
+    const tag = await resolveTunnelOutbound(
+      ['sub-40be7ea6-a', 'sub-40be7ea6-b'],
+      [{
+        type: 'selector',
+        tag: 'sub-40be7ea6',
+        source: 'subscription',
+        outbounds: ['sub-40be7ea6-b', 'sub-40be7ea6-a'],
+      }],
+      'urltest',
+    );
+    expect(tag).toBe('sub-40be7ea6');
+    expect(api.singboxRouterAddOutbound).not.toHaveBeenCalled();
+  });
+
   it('создаёт custom-composite-N при отсутствии совпадения', async () => {
     (api.singboxRouterAddOutbound as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     const tag = await resolveTunnelOutbound(['warp', 'awg20'], [
