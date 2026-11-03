@@ -3,6 +3,7 @@
 package procport
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
@@ -17,12 +18,16 @@ var (
 	killGrace        = 3 * time.Second
 )
 
-// killTarget — процесс, прошедший проверку. Номер сам по себе идентичностью не
-// является: между обходом /proc и сигналом процесс может завершиться, а номер
-// достаться другому. Поэтому сигнал получает только тот же (pid, starttime).
+// killTarget — процесс, прошедший проверку, и конфликт, ради которого его
+// останавливают. Номер сам по себе идентичностью не является: между обходом
+// /proc и сигналом процесс может завершиться, а номер достаться другому.
+// Поэтому сигнал получает только тот же (pid, starttime), пока он держит
+// конфликтующий сокет.
 type killTarget struct {
 	pid   int
 	start uint64
+	proto Proto
+	want  addrMatch
 }
 
 // sameProcess — под номером всё ещё тот процесс, что прошёл проверку.
@@ -35,33 +40,46 @@ func (t killTarget) sameProcess() bool {
 // holdsListener — процесс всё ещё держит сокет, конфликтующий с want.
 // Таблица /proc/net перечитывается заново: сокет мог закрыться. Отпечаток
 // сверяется до и после чтения fd — иначе fd могли принадлежать новому
-// процессу, получившему тот же номер.
-func (t killTarget) holdsListener(proto Proto, want addrMatch) bool {
+// процессу, получившему тот же номер. Ошибка — проверить не удалось.
+func (t killTarget) holdsListener() (bool, error) {
 	if !t.sameProcess() {
-		return false
+		return false, nil
 	}
-	inodes := listenerInodes(proto, want)
-	if len(inodes) == 0 || !pidOwnsInodes(t.pid, inodes) {
-		return false
+	inodes, err := listenerInodes(t.proto, t.want)
+	if err != nil {
+		return false, err
 	}
-	return t.sameProcess()
+	if len(inodes) == 0 {
+		return false, nil
+	}
+	owns, err := pidOwnsInodes(t.pid, inodes)
+	if err != nil {
+		return false, err
+	}
+	return owns && t.sameProcess(), nil
 }
 
 // terminatePID — SIGTERM, затем SIGKILL по истечении grace. Добивается только
-// тот же процесс: за grace номер мог освободиться и достаться другому.
+// тот же процесс и только пока он держит конфликтующий сокет: процесс, который
+// по SIGTERM закрыл сокет и дочищает работу, порт уже освободил, а номер за
+// grace мог достаться другому. Не удалось проверить — SIGKILL не уходит.
 func terminatePID(t killTarget) error {
 	if err := sigTerm(t.pid); err != nil {
 		return err
 	}
 	deadline := time.Now().Add(killGrace)
-	for time.Now().Before(deadline) {
-		if !t.sameProcess() {
+	for {
+		held, err := t.holdsListener()
+		if err != nil {
+			return fmt.Errorf("процесс %d после SIGTERM не удалось проверить — SIGKILL не отправлен: %w", t.pid, err)
+		}
+		if !held {
 			return nil
 		}
+		if !time.Now().Before(deadline) {
+			break
+		}
 		time.Sleep(100 * time.Millisecond)
-	}
-	if !t.sameProcess() {
-		return nil
 	}
 	return sigKill(t.pid)
 }

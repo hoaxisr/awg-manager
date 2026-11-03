@@ -4,12 +4,15 @@ package procport
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // procRoot — корень procfs; шов для тестов, которые собирают поддельный /proc.
@@ -26,7 +29,8 @@ func LookupListener(host string, port int, proto Proto) (ListenerInfo, error) {
 		return info, nil
 	}
 
-	inodes := listenerInodes(proto, want)
+	// Ошибки /proc здесь не фатальны: это диагностика, а не повод для сигнала.
+	inodes, _ := listenerInodes(proto, want)
 	if len(inodes) == 0 {
 		return info, nil
 	}
@@ -44,7 +48,8 @@ func LookupListener(host string, port int, proto Proto) (ListenerInfo, error) {
 //
 // host — адрес, на который делает bind управляемый инстанс (берётся из его
 // конфига, не из запроса): цель — только сокет, конфликтующий с этим bind.
-// Любая неоднозначность — отказ без сигнала.
+// Любая неоднозначность — отказ без сигнала: в том числе неполная картина
+// /proc, где невидимым мог остаться защищённый совладелец сокета.
 func KillListener(host string, port int, proto Proto) (ListenerInfo, error) {
 	info := ListenerInfo{Host: host, Port: port, Proto: string(proto)}
 	if port <= 0 || port > 65535 {
@@ -55,14 +60,17 @@ func KillListener(host string, port int, proto Proto) (ListenerInfo, error) {
 	if !ok {
 		return info, free
 	}
-	inodes := listenerInodes(proto, want)
+	inodes, err := listenerInodes(proto, want)
+	if err != nil {
+		return info, fmt.Errorf("таблица сокетов не прочитана — сигнал не отправлен: %w", err)
+	}
 	if len(inodes) == 0 {
 		return info, free
 	}
 	info.Open = true
 	pids, err := listenerPIDs(inodes)
 	if err != nil {
-		return info, err
+		return info, fmt.Errorf("владельцы сокета известны не все — сигнал не отправлен: %w", err)
 	}
 	if len(pids) == 0 {
 		return info, free
@@ -82,40 +90,58 @@ func KillListener(host string, port int, proto Proto) (ListenerInfo, error) {
 	if !ok {
 		return info, fmt.Errorf("процесс %d не удалось опознать — сигнал не отправлен", info.PID)
 	}
-	target := killTarget{pid: info.PID, start: start}
-	if !target.holdsListener(proto, want) {
+	target := killTarget{pid: info.PID, start: start, proto: proto, want: want}
+	held, err := target.holdsListener()
+	if err != nil {
+		return info, fmt.Errorf("процесс %d не удалось проверить — сигнал не отправлен: %w", info.PID, err)
+	}
+	if !held {
 		return info, fmt.Errorf("процесс %d сменился или освободил порт — сигнал не отправлен", info.PID)
 	}
 	if err := terminatePID(target); err != nil {
 		return info, err
 	}
-	after, _ := LookupListener(host, port, proto)
-	if after.Open && after.PID > 0 {
+	// Успех — только проверенно свободный порт: сокет без видимого владельца
+	// и нечитаемая таблица — тоже «не освободился».
+	after, err := listenerInodes(proto, want)
+	if err != nil {
+		return info, fmt.Errorf("сигнал процессу %d отправлен, но освобождение порта не проверено: %w", info.PID, err)
+	}
+	if len(after) > 0 {
 		return info, fmt.Errorf("процесс %d не освободил порт после SIGTERM/SIGKILL", info.PID)
 	}
 	return info, nil
 }
 
-func listenerInodes(proto Proto, want addrMatch) map[string]struct{} {
+// listenerInodes — inode'ы сокетов, конфликтующих с want. Ошибка — картина
+// неполная (таблица не прочитана целиком); найденное до неё всё равно
+// возвращается. Отсутствие tcp6/udp6 ошибкой не считается: так выглядит ядро
+// без IPv6.
+func listenerInodes(proto Proto, want addrMatch) (map[string]struct{}, error) {
 	out := make(map[string]struct{})
 	files := []string{"udp", "udp6"}
 	if proto == ProtoTCP {
 		files = []string{"tcp", "tcp6"}
 	}
+	var firstErr error
 	for _, procFile := range files {
 		f, err := os.Open(filepath.Join(procRoot, "net", procFile))
-		if err != nil {
+		if err == nil {
+			err = collectListenerInodes(f, proto, want, out)
+			f.Close()
+		} else if strings.HasSuffix(procFile, "6") && errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		collectListenerInodes(f, proto, want, out)
-		f.Close()
+		if err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("/proc/net/%s: %w", procFile, err)
+		}
 	}
-	return out
+	return out, firstErr
 }
 
 // collectListenerInodes сканирует таблицу /proc/net/{tcp,udp}[6] и складывает
 // inode'ы сокетов, занявших искомый порт.
-func collectListenerInodes(r io.Reader, proto Proto, want addrMatch, out map[string]struct{}) {
+func collectListenerInodes(r io.Reader, proto Proto, want addrMatch, out map[string]struct{}) error {
 	sc := bufio.NewScanner(r)
 	sc.Scan() // header
 	for sc.Scan() {
@@ -130,15 +156,17 @@ func collectListenerInodes(r io.Reader, proto Proto, want addrMatch, out map[str
 			out[fields[9]] = struct{}{}
 		}
 	}
+	return sc.Err()
 }
 
 func findListenerPIDByInodes(inodes map[string]struct{}) (int, bool) {
 	found := 0
-	err := walkListenerPIDs(inodes, func(pid int) bool {
+	// Для диагностики неполный обход не фатален: найденный владелец полезен.
+	_ = walkListenerPIDs(inodes, func(pid int) bool {
 		found = pid
 		return false
 	})
-	return found, err == nil && found > 0
+	return found, found > 0
 }
 
 // listenerPIDs — все процессы, держащие один из inodes (сокет наследуется
@@ -153,12 +181,15 @@ func listenerPIDs(inodes map[string]struct{}) ([]int, error) {
 }
 
 // walkListenerPIDs зовёт fn для каждого процесса, держащего один из inodes;
-// fn=false останавливает обход.
+// fn=false останавливает обход. Процесс, чьи fd прочитать не удалось, обход не
+// прерывает, но даёт ошибку: картина владельцев неполная. Процесс, завершившийся
+// во время обхода, ошибкой не считается.
 func walkListenerPIDs(inodes map[string]struct{}, fn func(pid int) bool) error {
 	entries, err := os.ReadDir(procRoot)
 	if err != nil {
 		return err
 	}
+	var firstErr error
 	for _, ent := range entries {
 		if !ent.IsDir() {
 			continue
@@ -167,33 +198,50 @@ func walkListenerPIDs(inodes map[string]struct{}, fn func(pid int) bool) error {
 		if err != nil {
 			continue
 		}
-		if pidOwnsInodes(pid, inodes) && !fn(pid) {
-			return nil
+		owns, err := pidOwnsInodes(pid, inodes)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if owns && !fn(pid) {
+			return firstErr
 		}
 	}
-	return nil
+	return firstErr
 }
 
-func pidOwnsInodes(pid int, inodes map[string]struct{}) bool {
+// pidOwnsInodes — держит ли pid один из inodes. Исчезнувший процесс или fd
+// (ENOENT/ESRCH) — «не держит»; любая другая ошибка возвращается.
+func pidOwnsInodes(pid int, inodes map[string]struct{}) (bool, error) {
 	fdDir := filepath.Join(procRoot, strconv.Itoa(pid), "fd")
 	fds, err := os.ReadDir(fdDir)
 	if err != nil {
-		return false
+		if gone(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("fd процесса %d: %w", pid, err)
 	}
 	for _, fd := range fds {
 		link, err := os.Readlink(filepath.Join(fdDir, fd.Name()))
 		if err != nil {
-			continue
+			if gone(err) {
+				continue
+			}
+			return false, fmt.Errorf("fd процесса %d: %w", pid, err)
 		}
 		if !strings.HasPrefix(link, "socket:[") {
 			continue
 		}
 		inode := strings.TrimSuffix(strings.TrimPrefix(link, "socket:["), "]")
 		if _, ok := inodes[inode]; ok {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
+}
+
+// gone — объект /proc исчез, пока его читали: процесс или fd закрылся.
+func gone(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH)
 }
 
 func readComm(pid int) string {

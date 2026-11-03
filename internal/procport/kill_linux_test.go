@@ -153,6 +153,32 @@ func (f *fakeProc) closeSocket(inode string) {
 	}
 }
 
+// breakTable — таблица /proc/net есть, но не читается: на её месте каталог,
+// os.Open проходит, чтение падает (EISDIR). Не зависит от прав: CI и root
+// видят одно и то же.
+func (f *fakeProc) breakTable(table string) {
+	f.t.Helper()
+	path := filepath.Join(f.root, "net", table)
+	if err := os.Remove(path); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// breakFD — /proc/<pid>/fd не читается (на его месте файл, ENOTDIR).
+func (f *fakeProc) breakFD(pid int) {
+	f.t.Helper()
+	path := filepath.Join(f.root, strconv.Itoa(pid), "fd")
+	if err := os.RemoveAll(path); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
 func (f *fakeProc) noSignals() {
 	f.t.Helper()
 	if len(f.terms) != 0 || len(f.kills) != 0 {
@@ -338,6 +364,119 @@ func TestKillListenerFailsClosedOnRaces(t *testing.T) {
 		_, _ = KillListener("127.0.0.1", 9000, ProtoUDP)
 		if len(f.terms) != 1 || len(f.kills) != 1 || f.kills[0] != 100 {
 			t.Fatalf("SIGTERM %v, SIGKILL %v; want оба по 100", f.terms, f.kills)
+		}
+	})
+}
+
+// Процесс обработал SIGTERM и закрыл сокет, но ещё жив (дочищает работу):
+// порт свободен, добивать его незачем.
+func TestKillListenerNoSigkillAfterPortReleased(t *testing.T) {
+	f := newFakeProc(t)
+	f.process(100, "graceful")
+	f.listen(100, "udp", hexLoopback9000, "5001")
+	f.onTerm = func(int) { f.closeSocket("5001") }
+
+	if _, err := KillListener("127.0.0.1", 9000, ProtoUDP); err != nil {
+		t.Fatalf("порт освобождён, ошибки быть не должно: %v", err)
+	}
+	if len(f.terms) != 1 || len(f.kills) != 0 {
+		t.Fatalf("SIGTERM %v, SIGKILL %v; want SIGTERM [100] без SIGKILL", f.terms, f.kills)
+	}
+}
+
+// Успех — только когда порт проверенно свободен.
+func TestKillListenerReportsUnverifiedRelease(t *testing.T) {
+	setup := func(t *testing.T) *fakeProc {
+		f := newFakeProc(t)
+		f.process(100, "squatter")
+		f.listen(100, "udp", hexLoopback9000, "5001")
+		return f
+	}
+	// Процесс исчез, а сокет остался за владельцем, которого не видно.
+	t.Run("сокет остался без владельца", func(t *testing.T) {
+		f := setup(t)
+		f.onTerm = func(pid int) {
+			if err := os.RemoveAll(filepath.Join(f.root, strconv.Itoa(pid))); err != nil {
+				t.Fatal(err)
+			}
+			delete(f.start, pid)
+		}
+		if _, err := KillListener("127.0.0.1", 9000, ProtoUDP); err == nil {
+			t.Fatal("порт всё ещё занят: успеха быть не должно")
+		}
+	})
+	t.Run("повторная диагностика не читается", func(t *testing.T) {
+		f := setup(t)
+		f.onTerm = func(pid int) {
+			f.exit(pid)
+			f.breakTable("udp")
+		}
+		if _, err := KillListener("127.0.0.1", 9000, ProtoUDP); err == nil {
+			t.Fatal("освобождение не проверено: успеха быть не должно")
+		}
+	})
+}
+
+// Неполная картина /proc — отказ без сигнала: невидимым мог остаться
+// защищённый совладелец порта.
+func TestKillListenerFailsClosedOnPartialProc(t *testing.T) {
+	t.Run("таблица udp не читается", func(t *testing.T) {
+		f := newFakeProc(t)
+		f.process(1, "init")
+		f.listen(1, "udp", hexLoopback9000, "5001")
+		f.process(100, "squatter")
+		f.listen(100, "udp6", hexAny6_9000, "5002")
+		f.breakTable("udp")
+		if _, err := KillListener("127.0.0.1", 9000, ProtoUDP); err == nil {
+			t.Fatal("таблица сокетов прочитана не целиком: отказ")
+		}
+		f.noSignals()
+	})
+	t.Run("fd совладельца не читается", func(t *testing.T) {
+		f := newFakeProc(t)
+		f.process(1, "init")
+		f.listen(1, "udp", hexLoopback9000, "5001")
+		f.process(100, "child")
+		if err := os.Symlink("socket:[5001]", filepath.Join(f.root, "100", "fd", "5001")); err != nil {
+			t.Fatal(err)
+		}
+		f.breakFD(1)
+		if _, err := KillListener("127.0.0.1", 9000, ProtoUDP); err == nil {
+			t.Fatal("владельцы сокета известны не все: отказ")
+		}
+		f.noSignals()
+	})
+	// После SIGTERM /proc перестал читаться: опознать процесс нельзя —
+	// SIGKILL не уходит.
+	t.Run("после SIGTERM /proc не читается", func(t *testing.T) {
+		f := newFakeProc(t)
+		f.process(100, "squatter")
+		f.listen(100, "udp", hexLoopback9000, "5001")
+		f.onTerm = func(int) { f.breakTable("udp") }
+		if _, err := KillListener("127.0.0.1", 9000, ProtoUDP); err == nil {
+			t.Fatal("процесс после SIGTERM не проверен: успеха быть не должно")
+		}
+		if len(f.terms) != 1 || len(f.kills) != 0 {
+			t.Fatalf("SIGTERM %v, SIGKILL %v; want SIGTERM [100] без SIGKILL", f.terms, f.kills)
+		}
+	})
+	// Ядро без IPv6 (бывает на старых прошивках Keenetic): таблиц tcp6/udp6
+	// нет вовсе — это не ошибка, освобождение работает.
+	t.Run("ядро без IPv6", func(t *testing.T) {
+		f := newFakeProc(t)
+		f.process(100, "squatter")
+		f.listen(100, "udp", hexLoopback9000, "5001")
+		if err := os.Remove(filepath.Join(f.root, "net", "udp6")); err != nil {
+			t.Fatal(err)
+		}
+		f.onTerm = func(pid int) {
+			f.exit(pid)
+		}
+		if _, err := KillListener("127.0.0.1", 9000, ProtoUDP); err != nil {
+			t.Fatalf("без udp6 освобождение обязано работать: %v", err)
+		}
+		if len(f.terms) != 1 || f.terms[0] != 100 {
+			t.Fatalf("SIGTERM %v, want [100]", f.terms)
 		}
 	})
 }
