@@ -85,7 +85,7 @@ describe('resolveTunnelOutbound', () => {
     expect(api.singboxRouterAddOutbound).not.toHaveBeenCalled();
   });
 
-  it('набор серверов подписки — это сама подписка, новая группа не создаётся', async () => {
+  it('серверы подписки в её режиме — это сама подписка', async () => {
     const tag = await resolveTunnelOutbound(
       ['sub-40be7ea6-a', 'sub-40be7ea6-b'],
       [{
@@ -94,10 +94,31 @@ describe('resolveTunnelOutbound', () => {
         source: 'subscription',
         outbounds: ['sub-40be7ea6-b', 'sub-40be7ea6-a'],
       }],
-      'urltest',
+      'selector',
     );
     expect(tag).toBe('sub-40be7ea6');
     expect(api.singboxRouterAddOutbound).not.toHaveBeenCalled();
+  });
+
+  it('серверы подписки в другом режиме — своя группа с порядком пользователя', async () => {
+    (api.singboxRouterAddOutbound as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    const tag = await resolveTunnelOutbound(
+      ['sub-40be7ea6-a', 'sub-40be7ea6-b'],
+      [{
+        type: 'selector',
+        tag: 'sub-40be7ea6',
+        source: 'subscription',
+        outbounds: ['sub-40be7ea6-b', 'sub-40be7ea6-a'],
+      }],
+      'fallback',
+    );
+    expect(tag).toBe('custom-composite-1');
+    expect(api.singboxRouterAddOutbound).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'fallback',
+        outbounds: ['sub-40be7ea6-a', 'sub-40be7ea6-b'],
+      }),
+    );
   });
 
   it('создаёт custom-composite-N при отсутствии совпадения', async () => {
