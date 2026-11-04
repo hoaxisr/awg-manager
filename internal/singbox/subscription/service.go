@@ -1290,37 +1290,28 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 			return nil, err
 		}
 	} else if bindChanged || mlkemChanged {
-		if sub.IsInline() && bindChanged {
-			// Inline: re-parse сохранённого тела; refresh сам пересобирает
-			// group outbound, поэтому смену mode отдельно доделывать не нужно.
-			if _, err := s.refreshLockedOpts(context.Background(), id, true); err != nil {
-				return rollback(err, "refresh")
+		// Ре-материализация из уже сохранённых членов БЕЗ fetch и re-parse: так
+		// можно переключить uplink, когда текущий интернет лежит (#709), а у
+		// inline не теряются добавленные вручную серверы (F769). Смена mode в
+		// том же сохранении едет одной транзакцией и одним SIGHUP — иначе на
+		// одно нажатие «Сохранить» приходилось два.
+		//
+		// Снятие MLKEM — сначала refresh: только источник знает, прислал ли флаг
+		// сам провайдер, и помнит отпечаток. Источник лежит — флаг снимается с
+		// сохранённых тел, а остальное вернёт следующий refresh: выключить опцию
+		// должно быть можно и без него. У inline refresh нет: флаг из вставленной
+		// ссылки снимается вместе с остальными, отпечаток остаётся chrome.
+		refreshed := false
+		if mlkemOff && !sub.IsInline() {
+			if _, err := s.refreshLockedOpts(context.Background(), id, false); err != nil {
+				s.logWarn("subscription-update", id, "refresh after MLKEM off failed, clearing stored members: "+err.Error())
+			} else {
+				refreshed = true
 			}
-		} else {
-			// URL-подписка: ре-материализация из уже сохранённых членов БЕЗ сетевого fetch (#709).
-			// Позволяет переключить uplink даже когда текущий интернет лежит.
-			// Смена mode в том же сохранении едет одной транзакцией и одним
-			// SIGHUP — иначе на одно нажатие «Сохранить» приходилось два.
-			//
-			// Снятие MLKEM — сначала refresh: только источник знает, прислал
-			// ли флаг сам провайдер, и помнит отпечаток. Источник лежит —
-			// флаг снимается с сохранённых тел, а остальное вернёт следующий
-			// refresh: выключить опцию должно быть можно и без него. У inline
-			// refresh нет, его re-parse выбрасывает ручные серверы: флаг из
-			// вставленной ссылки снимается вместе с остальными, отпечаток
-			// остаётся chrome.
-			refreshed := false
-			if mlkemOff && !sub.IsInline() {
-				if _, err := s.refreshLockedOpts(context.Background(), id, false); err != nil {
-					s.logWarn("subscription-update", id, "refresh after MLKEM off failed, clearing stored members: "+err.Error())
-				} else {
-					refreshed = true
-				}
-			}
-			if !refreshed {
-				if err := s.rematerializeMembersBind(context.Background(), sub, modeChanged, mlkemOff); err != nil {
-					return rollback(err, "rematerialize")
-				}
+		}
+		if !refreshed {
+			if err := s.rematerializeMembersBind(context.Background(), sub, modeChanged, mlkemOff); err != nil {
+				return rollback(err, "rematerialize")
 			}
 		}
 		sub, err = s.store.Get(id)
@@ -1378,34 +1369,48 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 
 func (s *Service) rematerializeMembersBind(ctx context.Context, sub *Subscription, rebuildGroup, clearMLKEM bool) error {
 	return s.withTx(func() error {
-		obs := s.mutator.SubscriptionOutbounds()
-		tagSet := make(map[string]bool, len(sub.MemberTags))
-		for _, tag := range sub.MemberTags {
-			tagSet[tag] = true
-		}
-		for _, ob := range obs {
-			tag, _ := ob["tag"].(string)
-			if tagSet[tag] {
-				raw, err := json.Marshal(ob)
-				if err != nil {
-					return fmt.Errorf("marshal outbound %s: %w", tag, err)
-				}
-				if clearMLKEM {
-					raw = clearRealityMLKEM(raw)
-				}
-				jsonWithTag := materializeMemberOutbound(raw, tag, sub.BindInterface, sub.RealityMLKEM, s.logWarn)
-				if err := s.mutator.UpdateOutbound(tag, jsonWithTag); err != nil {
-					return err
-				}
-			}
-		}
-		if rebuildGroup {
-			if err := s.stageGroupRebuild(sub); err != nil {
-				return err
-			}
+		if err := s.stageMemberRematerialize(sub, rebuildGroup, clearMLKEM); err != nil {
+			// Откат настроек в Update трогает только store: батч с частично
+			// обновлёнными телами иначе закоммитил бы следующий Reload.
+			s.mutator.Rollback()
+			return err
 		}
 		return s.reloadWithGroups(ctx)
 	})
+}
+
+// stageMemberRematerialize переписывает тела из уже сохранённых. Кроме состава
+// обходит и сирот, оставленных в слоте ссылкой другого слота (F761): без
+// fetch их тела обновить больше некому, а у inline refresh не приходит вовсе.
+func (s *Service) stageMemberRematerialize(sub *Subscription, rebuildGroup, clearMLKEM bool) error {
+	tagSet := make(map[string]bool, len(sub.MemberTags))
+	for _, tag := range sub.MemberTags {
+		tagSet[tag] = true
+	}
+	for _, tag := range slotOrphans(sub, s.mutator.DeclaredOutboundTags(), sub.MemberTags, nil) {
+		tagSet[tag] = true
+	}
+	for _, ob := range s.mutator.SubscriptionOutbounds() {
+		tag, _ := ob["tag"].(string)
+		if !tagSet[tag] {
+			continue
+		}
+		raw, err := json.Marshal(ob)
+		if err != nil {
+			return fmt.Errorf("marshal outbound %s: %w", tag, err)
+		}
+		if clearMLKEM {
+			raw = clearRealityMLKEM(raw)
+		}
+		jsonWithTag := materializeMemberOutbound(raw, tag, sub.BindInterface, sub.RealityMLKEM, s.logWarn)
+		if err := s.mutator.UpdateOutbound(tag, jsonWithTag); err != nil {
+			return err
+		}
+	}
+	if rebuildGroup {
+		return s.stageGroupRebuild(sub)
+	}
+	return nil
 }
 
 // stageGroupRebuild пересобирает group outbound подписки в открытом батче

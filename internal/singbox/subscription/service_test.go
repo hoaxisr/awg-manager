@@ -56,6 +56,7 @@ type fakeMutator struct {
 	reloads          int               // сколько раз вызывался Reload (батч-коммит)
 	rollbacks        int               // сколько раз вызывался Rollback (сброс батча)
 	reloadErr        error             // если задан, Reload возвращает эту ошибку
+	updateErr        error             // если задан, UpdateOutbound возвращает эту ошибку
 	createNotOurs    bool              // CreateProxy: индекс занят чужим (ours=false)
 	createErr        error             // CreateProxy возвращает эту ошибку
 	ensureErrs       map[int]error     // EnsureProxy по индексу возвращает эту ошибку
@@ -157,6 +158,9 @@ func (f *fakeMutator) AddOutbound(tag string, jsonBody []byte) error {
 	return nil
 }
 func (f *fakeMutator) UpdateOutbound(tag string, jsonBody []byte) error {
+	if f.updateErr != nil {
+		return f.updateErr
+	}
 	f.updatedOutbounds = append(f.updatedOutbounds, tag)
 	if f.slot != nil {
 		f.slot[tag] = true
