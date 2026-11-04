@@ -36,12 +36,12 @@
 	type Phase = 'lockout' | 'disclaimer' | 'quiz' | 'result';
 
 	const disclaimerItems = $derived([
-		m.settings_develop_gate_item_1,
-		m.settings_develop_gate_item_2,
-		m.settings_develop_gate_item_3,
-		m.settings_develop_gate_item_4,
-		m.settings_develop_gate_item_5,
-		m.settings_develop_gate_item_6
+		m.settings_develop_gate_item_1(),
+		m.settings_develop_gate_item_2(),
+		m.settings_develop_gate_item_3(),
+		m.settings_develop_gate_item_4(),
+		m.settings_develop_gate_item_5(),
+		m.settings_develop_gate_item_6()
 	]);
 
 	let phase = $state<Phase>('disclaimer');
