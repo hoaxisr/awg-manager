@@ -170,15 +170,6 @@ func (r *recStaticRoutes) AddStaticRoute(_ context.Context, route StaticRouteSpe
 		}
 		return nil
 	}
-	if route.Reject {
-		// The reject route is a kill-switch FLAG renewed onto the pool→OpkgTun
-		// route — it carries the NDMS Interface (stand-verified), so record it.
-		r.log.add("AddRejectRoute:" + route.Network + ":" + route.Mask + ":" + route.Interface)
-		if r.failAt == "AddRejectRoute" {
-			return errors.New("injected: AddRejectRoute")
-		}
-		return nil
-	}
 	r.log.add("AddRoute:" + route.Network + ":" + route.Mask + ":" + route.Interface)
 	if r.failAt == "AddRoute" {
 		return errors.New("injected: AddRoute")
@@ -188,13 +179,6 @@ func (r *recStaticRoutes) AddStaticRoute(_ context.Context, route StaticRouteSpe
 func (r *recStaticRoutes) RemoveStaticRoute(_ context.Context, route StaticRouteSpec) error {
 	if route.V6 {
 		r.log.add("RemoveRoute6:" + route.Network + ":" + route.Interface)
-		return nil
-	}
-	if route.Reject {
-		r.log.add("RemoveRejectRoute:" + route.Network + ":" + route.Mask + ":" + route.Interface)
-		if r.failAt == "RemoveRejectRoute" {
-			return errors.New("injected: RemoveRejectRoute")
-		}
 		return nil
 	}
 	r.log.add("RemoveRoute:" + route.Network + ":" + route.Interface)
@@ -1053,21 +1037,8 @@ func TestEnableFakeIPTun_ReprovisionsWhenIfaceGone(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Disable(fakeip-tun): safe-ordering teardown + fail-closed drain (Task 1D.3a)
+// Disable(fakeip-tun): порядок сноса
 // ---------------------------------------------------------------------------
-
-// captureDrain overrides the fakeIPScheduleDrain seam so the removeReject
-// closure is captured (not run via a real sleep) and can be invoked
-// synchronously by the test. Returns a getter for the captured closure (nil
-// until scheduled). Restores the seam via t.Cleanup.
-func captureDrain(t *testing.T) func() func() {
-	t.Helper()
-	old := fakeIPScheduleDrain
-	var captured func()
-	fakeIPScheduleDrain = func(removeReject func()) { captured = removeReject }
-	t.Cleanup(func() { fakeIPScheduleDrain = old })
-	return func() func() { return captured }
-}
 
 // provisionForDisable runs Enable so the service is fully provisioned, then
 // clears the call log so subsequent Disable assertions see only teardown calls.
@@ -1134,7 +1105,6 @@ func stubOrphanNetdev(t *testing.T, present bool) func() int {
 // lingers after DeleteOpkgTun, the teardown reaps it via `ip link delete`.
 func TestDisableFakeIPTun_OrphanNetdevDeleted(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	captureDrain(t)
 	provisionForDisable(t, h)
 	deletes := stubOrphanNetdev(t, true) // orphan present
 
@@ -1150,7 +1120,6 @@ func TestDisableFakeIPTun_OrphanNetdevDeleted(t *testing.T) {
 // already gone (NDMS cleaned it up), no `ip link delete` is attempted.
 func TestDisableFakeIPTun_NoOrphanNoDelete(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	captureDrain(t)
 	provisionForDisable(t, h)
 	deletes := stubOrphanNetdev(t, false) // netdev absent
 
@@ -1164,7 +1133,6 @@ func TestDisableFakeIPTun_NoOrphanNoDelete(t *testing.T) {
 
 func TestDisableFakeIPTun_Ordering(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	getDrain := captureDrain(t)
 	provisionForDisable(t, h)
 
 	// NDMS RCI ops + the route Interface take the CamelCase OpkgTun0; the kernel
@@ -1187,30 +1155,23 @@ func TestDisableFakeIPTun_Ordering(t *testing.T) {
 		}
 	}
 
-	// Bug 2: the reject route is the pool→OpkgTun route RENEWED with reject:true ON
-	// the OpkgTun interface (kill-switch flag), NOT an interface-less blackhole.
-	renewReject := "AddRejectRoute:198.18.0.0:255.254.0.0:" + ndmsName
-	rmAuto6 := "RemoveRoute6:fc00::/18:" + ndmsName
-
-	// The pool route is renewed to a reject kill-switch (interface-bound) FIRST —
-	// awg-manager no longer touches client DNS, so teardown opens with the route.
-	if first := h.log.calls[0]; first != renewReject {
-		t.Errorf("first call = %q, want %q first", first, renewReject)
-	}
-	// Bug 2: there must be NO separate auto-route removal before the iface delete —
-	// the single pool route is the kill-switch and is only removed by the async
-	// drain LAST.
-	if h.log.has("RemoveRoute:198.18.0.0:" + ndmsName) {
-		t.Errorf("v4 auto-route removed inline; the kill-switch route must survive until the async drain: %v", h.log.calls)
-	}
-	// v6 pool route removed (no v6 reject equivalent — fail-open, see disable doc).
-	if !h.log.has(rmAuto6) {
-		t.Errorf("v6 auto-route not removed: %v", h.log.calls)
-	}
-	// reject-renew before iface torn down, then delete (NDMS name). Down на
+	// Маршруты пула снимаются первыми, пока интерфейс их адресует. Down на
 	// happy-path НЕТ: любая мутация имени создаёт интерфейс заново, а teardown
 	// зовут и на уже снесённом (см. teardownOpkgTun).
-	mustOrder(renewReject, "Delete:"+ndmsName)
+	rmPool := "RemoveRoute:198.18.0.0:" + ndmsName
+	if first := h.log.calls[0]; first != rmPool {
+		t.Errorf("first call = %q, want %q", first, rmPool)
+	}
+	mustOrder(rmPool, "Delete:"+ndmsName)
+	mustOrder("RemoveRoute6:fc00::/18:"+ndmsName, "Delete:"+ndmsName)
+
+	// F758: выключение не ставит маршрутов — reject застревает в ядре до
+	// перезагрузки, и снять его через NDMS уже нельзя.
+	for _, call := range h.log.calls {
+		if strings.HasPrefix(call, "AddRoute") {
+			t.Errorf("disable must not add routes: %q in %v", call, h.log.calls)
+		}
+	}
 
 	// persist: FakeIP cleared, Enabled=false.
 	if st := h.loadFakeIP(t); st != nil {
@@ -1220,27 +1181,6 @@ func TestDisableFakeIPTun_Ordering(t *testing.T) {
 	if all.SingboxRouter.Enabled {
 		t.Error("SingboxRouter.Enabled must be false after Disable")
 	}
-
-	// The kill-switch route must NOT yet be removed (drain scheduled, not run
-	// inline). The stand-verified REMOVE form is {network,mask,interface,no:true}
-	// WITHOUT a reject flag (the fake records that as RemoveRoute on the iface).
-	rmKillSwitch := "RemoveRoute:198.18.0.0:" + ndmsName
-	if h.log.has(rmKillSwitch) {
-		t.Errorf("kill-switch route removed before drain window: %v", h.log.calls)
-	}
-
-	// Invoke the captured drain closure → kill-switch route removed LAST, on the NDMS iface.
-	drain := getDrain()
-	if drain == nil {
-		t.Fatal("drain closure was not scheduled")
-	}
-	drain()
-	if !h.log.has(rmKillSwitch) {
-		t.Fatalf("kill-switch route not removed after drain: %v", h.log.calls)
-	}
-	if last := h.log.calls[len(h.log.calls)-1]; last != rmKillSwitch {
-		t.Errorf("last call = %q, want kill-switch removal LAST", last)
-	}
 }
 
 // Happy-path teardown (delete succeeds) must NOT issue the address clears —
@@ -1248,7 +1188,6 @@ func TestDisableFakeIPTun_Ordering(t *testing.T) {
 // and on the normal path they would be wasted RCI round-trips.
 func TestDisableFakeIPTun_NoAddressClearsOnHappyPath(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	_ = captureDrain(t)
 	provisionForDisable(t, h)
 
 	const ndmsName = "OpkgTun0"
@@ -1276,7 +1215,6 @@ func TestDisableFakeIPTun_NoAddressClearsOnHappyPath(t *testing.T) {
 // 2026-07-15).
 func TestDisableFakeIPTun_DeleteFailureClearsAddresses(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	_ = captureDrain(t)
 	provisionForDisable(t, h)
 	h.svc.deps.OpkgTun = &recOpkgTun{log: h.log, failAt: "Delete"}
 
@@ -1351,117 +1289,32 @@ func TestEnableFakeIPTun_RollbackSurvivesCtxCancel(t *testing.T) {
 	}
 }
 
-// The reject removal must be scheduled via the seam, not run inline: before the
-// captured closure is invoked, the reject route is still "present".
-func TestDisableFakeIPTun_DrainOffLock(t *testing.T) {
-	h := newFakeIPEnableHarness(t, "")
-	getDrain := captureDrain(t)
-	provisionForDisable(t, h)
-
-	if err := h.svc.disable(context.Background()); err != nil {
-		t.Fatalf("Disable: %v", err)
-	}
-
-	// Reject renew happened (on the OpkgTun0 iface); kill-switch removal has NOT
-	// (still scheduled off-lock via the seam). The remove form is a plain
-	// RemoveRoute on the iface (stand-verified {…,no:true}, no reject flag).
-	if !h.log.has("AddRejectRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
-		t.Fatalf("reject route was not renewed: %v", h.log.calls)
-	}
-	if h.log.has("RemoveRoute:198.18.0.0:OpkgTun0") {
-		t.Errorf("kill-switch removal ran inline (must be off-lock via seam): %v", h.log.calls)
-	}
-	if getDrain() == nil {
-		t.Error("drain closure was not scheduled via the seam")
-	}
-}
-
-// Best-effort push-through: a mid-step failure (reject-renew, or a v6 route op)
-// must NOT abort teardown — persist clear + Enabled=false + drain schedule still
-// run (asymmetric vs Enable's rollback-on-first-error).
-//
-// Bug 2 model: there is no longer a separate v4 auto-route REMOVAL during disable
-// (the single pool route is renewed in place to a reject kill-switch and only the
-// async drain removes it). So the meaningful injectable failure is AddRejectRoute
-// (the reject-renew) — when it fails, no drain is scheduled (no kill-switch route
-// was established to remove). RemoveRejectRoute exercises a drain-time failure but
-// teardown is already done, so it is covered via the drain closure elsewhere.
+// Сбой снятия маршрута пула не прерывает выключение: снос идёт до конца
+// (асимметрия с откатом Enable), запись владения очищается, режим выключается.
 func TestDisableFakeIPTun_BestEffort(t *testing.T) {
-	for _, failAt := range []string{"AddRejectRoute"} {
-		t.Run(failAt, func(t *testing.T) {
-			h := newFakeIPEnableHarness(t, "")
-			getDrain := captureDrain(t)
-			provisionForDisable(t, h)
-			// Inject the failure into the routes fake for the Disable phase.
-			h.routes.failAt = failAt
-
-			if err := h.svc.disable(context.Background()); err != nil {
-				t.Fatalf("Disable must push through best-effort errors, got: %v", err)
-			}
-
-			// Mandatory steps still ran.
-			if st := h.loadFakeIP(t); st != nil {
-				t.Errorf("FakeIP persist = %+v, want nil (push-through must clear)", st)
-			}
-			all, _ := h.store.Load()
-			if all.SingboxRouter.Enabled {
-				t.Error("Enabled must be false (push-through must persist disabled)")
-			}
-			// An AddRejectRoute failure leaves no kill-switch route to remove, so no
-			// drain must be scheduled (the plain pool route is kept; the startup sweep
-			// is the safety net).
-			if failAt == "AddRejectRoute" && getDrain() != nil {
-				t.Error("no drain must be scheduled when reject-renew failed (no kill-switch route to remove)")
-			}
-		})
-	}
-}
-
-// Fix 2: a failed reject-add must NOT open a WAN-leak window. The v4 auto-route
-// removal is GATED on reject-add success — when the reject add fails, the v4 pool
-// auto-route is KEPT (traffic dead-ends at the about-to-be-deleted tun = dropped,
-// not leaked). The rest of teardown still pushes through (persist clear + Enabled
-// false), and no drain is scheduled (no reject route to remove).
-func TestDisableFakeIPTun_RejectAddFailKeepsAutoRoute(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	getDrain := captureDrain(t)
 	provisionForDisable(t, h)
-	h.routes.failAt = "AddRejectRoute"
+	h.routes.failAt = "RemoveRoute"
 
-	const ndmsName = "OpkgTun0"
 	if err := h.svc.disable(context.Background()); err != nil {
-		t.Fatalf("Disable must push through, got: %v", err)
+		t.Fatalf("Disable must push through best-effort errors, got: %v", err)
 	}
-
-	// Reject renew was attempted but failed (on the OpkgTun0 iface).
-	if !h.log.has("AddRejectRoute:198.18.0.0:255.254.0.0:" + ndmsName) {
-		t.Fatalf("reject renew was not attempted: %v", h.log.calls)
+	if !h.log.has("Delete:OpkgTun0") {
+		t.Errorf("teardown must reach iface delete: %v", h.log.calls)
 	}
-	// The plain v4 pool route must NOT have been removed (Bug 2 model: disable never
-	// removes the pool route inline; a failed reject-renew leaves it plain + present,
-	// so there is no WAN-leak window — traffic dead-ends at the deleted tun).
-	if h.log.has("RemoveRoute:198.18.0.0:" + ndmsName) {
-		t.Errorf("v4 pool route removed despite failed reject-renew (WAN-leak window): %v", h.log.calls)
-	}
-	// Teardown still reached the mandatory persist steps.
 	if st := h.loadFakeIP(t); st != nil {
-		t.Errorf("FakeIP persist = %+v, want nil (teardown must reach SetOpkgTunState(nil))", st)
+		t.Errorf("FakeIP persist = %+v, want nil (push-through must clear)", st)
 	}
 	all, _ := h.store.Load()
 	if all.SingboxRouter.Enabled {
-		t.Error("Enabled must be false after teardown")
-	}
-	// No drain scheduled: there is no reject route to remove later.
-	if getDrain() != nil {
-		t.Error("no drain must be scheduled when the reject route was never added")
+		t.Error("Enabled must be false (push-through must persist disabled)")
 	}
 }
 
 // FakeIP nil (not provisioned) → idempotent: persist Enabled=false, no NDMS
-// teardown, no drain, no panic.
+// teardown, no panic.
 func TestDisableFakeIPTun_NotProvisioned(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	getDrain := captureDrain(t)
 	// Do NOT provision: FakeIP persist is nil. Seed Enabled=true to prove Disable
 	// flips it.
 	all, _ := h.store.Load()
@@ -1477,9 +1330,6 @@ func TestDisableFakeIPTun_NotProvisioned(t *testing.T) {
 
 	if len(h.log.calls) != 0 {
 		t.Errorf("no NDMS teardown expected when not provisioned, got %v", h.log.calls)
-	}
-	if getDrain() != nil {
-		t.Error("no drain should be scheduled when not provisioned")
 	}
 	after, _ := h.store.Load()
 	if after.SingboxRouter.Enabled {
@@ -1497,7 +1347,6 @@ func TestDisableFakeIPTun_NotProvisioned(t *testing.T) {
 // the prior Enable's XOR flip).
 func TestDisableFakeIPTun_DisablesSlotFakeIPNotSlotRouter(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	captureDrain(t)
 	provisionForDisable(t, h) // provisions fakeip: SlotFakeIP ON, SlotRouter OFF
 
 	// Sanity pre-condition: Enable flipped the slots correctly.
@@ -1529,7 +1378,6 @@ func TestDisableFakeIPTun_DisablesSlotFakeIPNotSlotRouter(t *testing.T) {
 // through to the tproxy body (which would orphan the opkgtun/routes/DHCP).
 func TestDisableFakeIPTun_DispatchOnRawModeDespiteNormalizeError(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	captureDrain(t)
 	provisionForDisable(t, h)
 
 	// Corrupt DeviceMode so NormalizeSingboxRouterSettings returns an error, while
@@ -1547,8 +1395,8 @@ func TestDisableFakeIPTun_DispatchOnRawModeDespiteNormalizeError(t *testing.T) {
 		t.Fatalf("Disable: %v", err)
 	}
 
-	// Fakeip teardown ran (the reject-route renew is a fakeip-only call).
-	if !h.log.has("AddRejectRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
+	// Fakeip teardown ran (снятие маршрута пула есть только у fakeip).
+	if !h.log.has("RemoveRoute:198.18.0.0:OpkgTun0") {
 		t.Errorf("raw-mode dispatch failed: fakeip teardown not run, got %v", h.log.calls)
 	}
 	if st := h.loadFakeIP(t); st != nil {
@@ -1685,7 +1533,6 @@ func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 // существования), Disable снимает через teardownOpkgTun.
 func TestFakeIPTun_PermitACL_EnableSetsDisableRemoves(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	_ = captureDrain(t)
 
 	if err := h.svc.enable(context.Background()); err != nil {
 		t.Fatalf("Enable: %v", err)
@@ -1958,7 +1805,6 @@ func stubReleaseTunApply(t *testing.T, log *callLog) {
 // держит sing-box — C 0xcffd003b и «connection reset by peer» (F447/F638).
 func TestDisableFakeIPTun_ReleasesTunBeforeDelete(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	captureDrain(t)
 	provisionForDisable(t, h)
 	stubReleaseTunApply(t, h.log)
 

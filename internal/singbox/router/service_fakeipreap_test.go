@@ -151,10 +151,9 @@ func TestReapOrphaned_DeleteFailureKeepsPersist(t *testing.T) {
 	}
 }
 
-// Fix 1: in NON-fakeip mode the reap also best-effort sweeps a stale v4 drain
-// reject route for the CONFIGURED pool (startup safety net for a drain
-// interrupted by restart / an async-remove that didn't match).
-func TestReapOrphaned_SweepsStaleRejectRoute(t *testing.T) {
+// Вне режима fakeip реап best-effort снимает оставшийся маршрут пула: страховка
+// на случай, когда снятие при выключении не дошло, а запись владения осталась.
+func TestReapOrphaned_SweepsStalePoolRoute(t *testing.T) {
 	store := newReapSettingsStore(t, "tproxy", 3, true)
 	opkg := &recordingOpkgTunProvisioner{}
 	log := &callLog{}
@@ -169,16 +168,13 @@ func TestReapOrphaned_SweepsStaleRejectRoute(t *testing.T) {
 	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
 		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
 	}
-	// Bug 2 model: the kill-switch reject route is interface-bound, so the sweep
-	// targets it by the persisted index's NDMS name (OpkgTun3) via the stand-
-	// verified remove form ({…,no:true}, no reject flag → fake records RemoveRoute).
+	// Маршрут привязан к интерфейсу: адресуется NDMS-именем записанного индекса.
 	if !log.has("RemoveRoute:198.18.0.0:OpkgTun3") {
-		t.Errorf("stale kill-switch route sweep missing, got %v", log.calls)
+		t.Errorf("stale pool route sweep missing, got %v", log.calls)
 	}
 }
 
-// Fix 1: in fakeip-tun mode the reap early-returns BEFORE the sweep — the active
-// owner manages its own drain; the startup sweep must NOT touch it.
+// В режиме fakeip-tun реап выходит ДО свипа: маршрут принадлежит активному режиму.
 func TestReapOrphaned_NoSweepInFakeIPMode(t *testing.T) {
 	store := newReapSettingsStore(t, "fakeip-tun", 2, true)
 	opkg := &recordingOpkgTunProvisioner{}
@@ -195,7 +191,7 @@ func TestReapOrphaned_NoSweepInFakeIPMode(t *testing.T) {
 		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
 	}
 	if log.has("RemoveRoute:198.18.0.0:OpkgTun2") {
-		t.Errorf("fakeip-tun mode must NOT sweep the reject route (early return), got %v", log.calls)
+		t.Errorf("fakeip-tun mode must NOT sweep the pool route (early return), got %v", log.calls)
 	}
 }
 
@@ -320,7 +316,6 @@ func TestReapOrphaned_ScanErrorDefersPersistReap(t *testing.T) {
 // (persisted) iface is untouched.
 func TestReconcile_ReapsForeignOrphanEachTick(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	_ = captureDrain(t)
 	provisionForDisable(t, h) // fakeip-tun включён, OpkgTun0 — owned, лог очищен
 	h.svc.deps.OpkgTunScan = scanReturning([]string{"OpkgTun0", "OpkgTun7"}, nil)
 
@@ -371,9 +366,9 @@ func newReapStoreWithPools(t *testing.T, mode, cfgPool4, persistPool4 string) *s
 	return store
 }
 
-// F11: свип протухшего drain-маршрута адресует ЗАПИСАННЫЙ пул (тот, с которым
-// drain и ставился), а не проводной дефолт 198.18.0.0/15.
-func TestReapOrphaned_SweepsStaleRejectRouteUsesPersistedPool(t *testing.T) {
+// F11: свип оставшегося маршрута адресует ЗАПИСАННЫЙ пул (тот, с которым маршрут
+// и ставился), а не проводной дефолт 198.18.0.0/15.
+func TestReapOrphaned_SweepsStalePoolRouteUsesPersistedPool(t *testing.T) {
 	store := newReapStoreWithPools(t, "tproxy", "10.80.0.0/16", "10.90.0.0/16")
 	log := &callLog{}
 	svc := newTestService(t, Deps{

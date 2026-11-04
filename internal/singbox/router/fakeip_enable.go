@@ -230,7 +230,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// rbCtx: рулбэк обязан доехать и когда Enable упал ИЗ-ЗА отмены ctx (клиент
 	// отвалился во время 60s waitForSingbox) — иначе NDMS-вызовы отката no-op'ятся
 	// с context.Canceled и OpkgTun остаётся с настроенным адресом (nginx-loop, см.
-	// teardownOpkgTun). Тот же приём, что у scheduleFakeIPDrain.
+	// teardownOpkgTun).
 	rbCtx := context.WithoutCancel(ctx)
 	// Переиспользованную запись откат удерживает (M1): её создавал не этот
 	// enable, и снос унёс бы привязанные к имени разрешения.
