@@ -289,7 +289,7 @@ func TestCompositeOutbound_AcceptsLiveSubscriptionMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := svc.AddCompositeOutbound(ctx, Outbound{
-		Tag: "combo", Type: "urltest", Outbounds: []string{member, "direct"},
+		Tag: "combo", Type: "selector", Outbounds: []string{member, "direct"},
 	}); err != nil {
 		t.Fatalf("live subscription server must be a valid member: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestCompositeOutbound_AcceptsLiveSubscriptionMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := svc.AddCompositeOutbound(ctx, Outbound{
-		Tag: "combo2", Type: "urltest", Outbounds: []string{member, "direct"},
+		Tag: "combo2", Type: "selector", Outbounds: []string{member, "direct"},
 	})
 	if !errors.Is(err, ErrCompositeMemberUnknown) || !strings.Contains(err.Error(), member) {
 		t.Fatalf("parked subscription slot must name the missing server, got %v", err)
