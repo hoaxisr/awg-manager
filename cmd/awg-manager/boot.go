@@ -285,11 +285,15 @@ func (a *app) startBootSequence() {
 			// вполне могла упасть fail-closed. Эндпоинты связанных туннелей
 			// чинит ресурс linked_endpoint роли, отдельный проход не нужен.
 			// Горутиной: бут прокси может ждать загрузки бинарей (F98).
+			a.proxyColdBooted = make(chan struct{})
 			go a.proxyRuntimeNudge("cold-boot", proxyrt.EventBoot)
 
 			// Wait for background migrations to finish (non-critical but
 			// we track them so they don't leak on shutdown).
 			bgDone.Wait()
+			// bootDone — конец бута вместе с прокси (F304). Отмена shutdownCtx
+			// прерывает и загрузку бинарей внутри нуджа.
+			<-a.proxyColdBooted
 
 			atomic.StoreInt32(&a.bootDone, 1)
 			a.bootLog.Info("startup", "",

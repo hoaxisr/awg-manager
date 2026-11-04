@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -24,6 +25,7 @@ type SubscriptionHandler struct {
 	svc             *subscription.Service
 	presence        SingboxPresenceProbe
 	log             *logging.ScopedLogger
+	leftoverRefs    func(tags []string) []string
 	deviceProxyRefs tunnelservice.DeviceProxyRefChecker
 	routerRefs      tunnelservice.RouterRefChecker
 	// settings reads the global "create NDMS Proxy for sing-box" flag.
@@ -60,6 +62,9 @@ func (h *SubscriptionHandler) Service() *subscription.Service { return h.svc }
 // fields. Without this setter, every subscription DTO surfaces the stored
 // ProxyIndex unconditionally.
 func (h *SubscriptionHandler) SetNDMSProxyToggler(s ndmsProxyToggler) { h.settings = s }
+
+// SetLeftoverRefs подключает поиск ссылок на теги в файлах слотов; nil — без него.
+func (h *SubscriptionHandler) SetLeftoverRefs(fn func(tags []string) []string) { h.leftoverRefs = fn }
 
 // SetOutboundRefCheckers wires device-proxy and router reference guards for
 // subscription deletion (refuse when selector/members are still referenced).
@@ -329,6 +334,7 @@ func (h *SubscriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	label := id
+	var owned []string
 	if sub, err := h.svc.Get(id); err == nil {
 		if sub.Label != "" {
 			label = sub.Label
@@ -336,10 +342,18 @@ func (h *SubscriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		if h.refusedReferenced(w, "subscription-delete", id, sub) {
 			return
 		}
+		owned = h.svc.OwnedOutboundTags(sub)
 	}
 	if err := h.svc.Delete(r.Context(), id); err != nil {
 		response.InternalError(w, err.Error())
 		return
+	}
+	// Черновик или выключенная копия со ссылкой отказом не блокируются: их
+	// не поправить из этого окна. Предупреждение остаётся в журнале (F761).
+	if h.leftoverRefs != nil {
+		if tags := h.leftoverRefs(owned); len(tags) > 0 {
+			h.log.Warn("subscription-delete", id, "В файлах слотов остались ссылки на удалённые outbound: "+strings.Join(tags, ", "))
+		}
 	}
 	h.log.Info("subscription-delete", id, "Subscription deleted: "+label)
 	response.Success(w, struct {

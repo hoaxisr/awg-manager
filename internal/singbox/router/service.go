@@ -687,6 +687,13 @@ type ServiceImpl struct {
 	fakeipACLv6NextAssert    time.Time
 	policyTunACLNextAssert   time.Time
 	policyTunACLv6NextAssert time.Time
+	// permitACLFreshAt — когда сверка ACL последний раз читала мимо кэша.
+	permitACLFreshAt time.Time
+
+	// policyTunV6RouteLost / policyTunV6RouteStrikes — есть ли `::/0` в таблице
+	// политики и сколько тиков подряд его нет. Только из Reconcile.
+	policyTunV6RouteLost    bool
+	policyTunV6RouteStrikes int
 
 	// qosApplyFailed remembers a failed sing-box apply of the QoS routes
 	// slot so the next heal re-applies even when disk state is byte-equal.

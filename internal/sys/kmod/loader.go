@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
@@ -45,6 +46,8 @@ type Loader struct {
 
 	// Warn reports a condition worth surfacing in the app journal. nil = silent.
 	Warn func(msg string)
+
+	ensureErr atomic.Value // string, см. LastEnsureError
 }
 
 // New creates a new kernel module loader.
@@ -288,9 +291,24 @@ func (l *Loader) LoadedVersion() string {
 	return strings.TrimSpace(string(data))
 }
 
+// LastEnsureError — причина последнего отказа EnsureModule ("" — отказа не было).
+func (l *Loader) LastEnsureError() string {
+	if v, ok := l.ensureErr.Load().(string); ok {
+		return v
+	}
+	return ""
+}
+
 // EnsureModule selects a bundled module (if available from IPK install/upgrade),
 // then loads the module via insmod if not already loaded.
-func (l *Loader) EnsureModule(ctx context.Context) error {
+func (l *Loader) EnsureModule(ctx context.Context) (err error) {
+	defer func() {
+		msg := ""
+		if err != nil {
+			msg = err.Error()
+		}
+		l.ensureErr.Store(msg)
+	}()
 	// Select from bundled (fresh install or upgrade)
 	l.selectBundledModule()
 

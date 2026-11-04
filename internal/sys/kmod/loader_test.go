@@ -122,6 +122,9 @@ func TestEnsureModule_RefusesOnlyModuleOfAnotherModel(t *testing.T) {
 			if !tc.wantInsmod && (err == nil || !strings.Contains(err.Error(), "refusing")) {
 				t.Errorf("ожидался отказ с причиной, got %v", err)
 			}
+			if !tc.wantInsmod && l.LastEnsureError() != err.Error() {
+				t.Errorf("причина для панели: %q", l.LastEnsureError())
+			}
 		})
 	}
 }

@@ -6717,6 +6717,9 @@ definitions:
       kernelModuleExists:
         example: true
         type: boolean
+      kernelModuleLoadError:
+        example: ""
+        type: string
       kernelModuleLoaded:
         example: false
         type: boolean

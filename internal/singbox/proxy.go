@@ -74,7 +74,7 @@ type ProxyManager struct {
 // на любом пути создания; голая запись (description "") наша, только пока
 // есть метка (name, "") — доказательство, что её создали мы.
 type proxyMarks interface {
-	deferLeftProxy(name, desc string)
+	deferLeftProxy(name, desc, alt string)
 	bareMarked(name string) bool
 	clearBareMark(name string)
 }
@@ -172,7 +172,7 @@ func (pm *ProxyManager) CreateProxy(ctx context.Context, index, port int, descri
 	// description, который у записи там; на любом пути создания (F577 N1).
 	var left *command.LeftCreatedError
 	if errors.As(err, &left) && pm.marks != nil {
-		pm.marks.deferLeftProxy(left.Name, left.Desc)
+		pm.marks.deferLeftProxy(left.Name, left.Desc, left.Intended)
 	}
 	if err == nil {
 		// Создано и настроено заново — прежняя метка голой записи с этим
@@ -239,6 +239,8 @@ func foreignProxy(name string, iface *ndms.Interface, want string) error {
 type ProxyMark struct {
 	Name string `json:"name"`
 	Desc string `json:"desc"`
+	// Alt — второй допустимый description: метка поставлена без чтения списка (F593).
+	Alt string `json:"alt,omitempty"`
 }
 
 // errProxyListUnread — RemoveMarkedProxy не прочитал список: следующие метки
@@ -313,7 +315,7 @@ func (pm *ProxyManager) RemoveMarkedProxy(ctx context.Context, m ProxyMark) (Mar
 	if !ok {
 		return MarkedAbsent, nil
 	}
-	if iface == nil || iface.Description != m.Desc {
+	if iface == nil || iface.Description != m.Desc && (m.Alt == "" || iface.Description != m.Alt) {
 		return MarkedForeign, nil
 	}
 	_ = pm.commands.Proxies.ProxyDown(ctx, c) // ignore error — may be already down

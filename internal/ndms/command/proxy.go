@@ -52,16 +52,17 @@ func (c *ProxyCommands) CreateProxy(ctx context.Context, name, description, upst
 		if derr == nil {
 			return query.Confirmed{}, reply, err
 		}
-		return query.Confirmed{}, reply, c.leftConfigured(ctx, name, errors.Join(err, derr))
+		return query.Confirmed{}, reply, c.leftConfigured(ctx, name, description, errors.Join(err, derr))
 	}
 	return conf, reply, nil
 }
 
 // LeftCreatedError — ProxyN Name, созданный этой командой, остался на
-// роутере; Desc — его description там ("" у голой записи).
+// роутере; Desc — его description там ("" у голой записи). Intended —
+// задуманный description, когда список не прочитан и фактический неизвестен.
 type LeftCreatedError struct {
-	Name, Desc string
-	Err        error
+	Name, Desc, Intended string
+	Err                  error
 }
 
 func (e *LeftCreatedError) Error() string { return e.Err.Error() }
@@ -69,14 +70,13 @@ func (e *LeftCreatedError) Unwrap() error { return e.Err }
 
 // leftConfigured — настройки отвергнуты, снос тоже: description на роутере
 // читается свежим списком (элементы настроек NDMS мог применить частично).
-// Записи нет — оставлять нечего. Список не прочитан — "": отказ настроек и
-// сноса обычно один сбой RCI; метка с не тем description снимется тиком без
-// сноса (MarkedForeign) — сирота, но не снос чужого.
-func (c *ProxyCommands) leftConfigured(ctx context.Context, name string, err error) error {
+// Записи нет — оставлять нечего. Список не прочитан — неизвестно, дошёл ли
+// description: Desc "" и Intended, метка примет любой из двух (F593).
+func (c *ProxyCommands) leftConfigured(ctx context.Context, name, description string, err error) error {
 	_, rec, ok, lerr := c.queries.Interfaces.Confirm(ctx, name)
 	switch {
 	case lerr != nil:
-		return &LeftCreatedError{Name: name, Err: err}
+		return &LeftCreatedError{Name: name, Intended: description, Err: err}
 	case !ok:
 		return err
 	case rec == nil:

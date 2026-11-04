@@ -601,3 +601,14 @@ func TestScenario_RenameTunnel_ProxyOwnedByOldTag(t *testing.T) {
 	}
 	clean(t, f)
 }
+
+// Метка без чтения списка принимает оба description: задуманный дошёл до
+// роутера — запись снимается, а не теряется как чужая (F593).
+func TestScenario_DeferredMark_IntendedDescription_Removed(t *testing.T) {
+	op, w, f, _ := f562Stand(t)
+	op.deferLeftProxy("Proxy5", "", "user")
+	w.tick(context.Background())
+	if f.Has("Proxy5") || len(op.deferredProxies) != 0 {
+		t.Fatalf("запись с задуманным description осталась: has=%v метки=%v", f.Has("Proxy5"), op.deferredProxies)
+	}
+}

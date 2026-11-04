@@ -1342,13 +1342,23 @@ func parseIPResult(stdout string) (string, bool) {
 	return ip, net.ParseIP(ip) != nil
 }
 
+// ipCheckCall — запрос замера IP. Прямой замер не идёт через прокси окружения:
+// иначе «IP изменился» считался бы от адреса прокси (P048).
+func ipCheckCall(serviceURL, proxyURL string) httpclient.CallConfig {
+	cfg := httpclient.CallConfig{
+		URL:      serviceURL,
+		ProxyURL: proxyURL,
+		MaxTime:  instanceIPMaxTimeSec * time.Second,
+	}
+	if proxyURL == "" {
+		cfg.Proxy = httpclient.ProxyDirect
+	}
+	return cfg
+}
+
 func fetchIPViaHTTP(ctx context.Context, serviceURL string, proxyURL string) (string, string, error) {
 	if serviceURL != "" {
-		res, err := httpclient.DefaultClient.Do(ctx, httpclient.CallConfig{
-			URL:      serviceURL,
-			ProxyURL: proxyURL,
-			MaxTime:  instanceIPMaxTimeSec * time.Second,
-		})
+		res, err := httpclient.DefaultClient.Do(ctx, ipCheckCall(serviceURL, proxyURL))
 		if err != nil {
 			return "", "", fmt.Errorf("%s: %w", serviceURL, err)
 		}

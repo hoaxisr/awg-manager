@@ -83,6 +83,8 @@ type app struct {
 	// process state
 	uptime   float64
 	bootDone int32 // 0 = booting, 1 = done (atomic; /api/system/info)
+	// proxyColdBooted закрывается концом cold-boot-нуджа прокси-рантайма (F304).
+	proxyColdBooted chan struct{}
 
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc

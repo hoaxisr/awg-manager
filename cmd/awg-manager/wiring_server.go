@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -572,6 +573,20 @@ func (a *app) setupRouter() {
 	subHandler := api.NewSubscriptionHandler(a.subSvc, a.singboxOp, a.loggingService)
 	subHandler.SetNDMSProxyToggler(a.settingsStore)
 	subHandler.SetOutboundRefCheckers(a.deviceProxySvc, routerSvc)
+	// Прокси для устройств вписывает группы подписок сам и пересобирается, его
+	// слот не в счёт.
+	subHandler.SetLeftoverRefs(func(tags []string) []string {
+		found, err := a.sbOrch.ReferencedAmong(singboxorch.SlotDeviceProxy, tags)
+		if err != nil {
+			return nil
+		}
+		out := make([]string, 0, len(found))
+		for tag := range found {
+			out = append(out, tag)
+		}
+		sort.Strings(out)
+		return out
+	})
 	a.srv.SetSubscriptionHandler(subHandler)
 	a.srv.AddShutdownHook(subSched.Stop)
 

@@ -642,3 +642,21 @@ func TestSetLANSegments_BoundList_FullSequence(t *testing.T) {
 		t.Fatalf("acl = %q\nwant %q", got, want)
 	}
 }
+
+// В списке правило, которого нет в плане по записи (откат оставил сироту):
+// точечная правка его не снимет, нужна пересборка (F526).
+func TestUpdatePeer_OrphanRule_Rebuilds(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, rcOurs77)
+	sim := newSimRouter(t, fg, poster, rcOurs77)
+	seedSimPeer(t, store, sim, "192.168.77.0/24")
+	setLANSegments(t, store, "Wireguard1", "Bridge0", "Bridge1")
+	setRunningConfig(fg, "access-list AWGM_Wireguard1", "    permit ip 10.66.66.0 255.255.255.0 "+segBr0,
+		"    permit ip 10.9.9.0 255.255.255.0 "+segBr0, "!",
+		"interface Wireguard1", "    ip access-group AWGM_Wireguard1 in", "!")
+	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.78.0/24"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(aclParses(poster), acl1+"10.66.66.0 255.255.255.0 "+segBr0) {
+		t.Fatalf("ждали пересборку всего списка: %q", aclParses(poster))
+	}
+}

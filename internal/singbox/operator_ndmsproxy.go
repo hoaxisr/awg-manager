@@ -152,6 +152,7 @@ const (
 // deferredProxy — метка отложенного сноса одного ProxyN (ключ — имя).
 type deferredProxy struct {
 	desc  string        // description на момент метки — второе условие сноса
+	alt   string        // допустимый второй description (ProxyMark.Alt)
 	next  time.Time     // раньше — не пробовать; ноль — на ближайшем тике
 	delay time.Duration // выдержка после последнего отказа
 	gen   uint64        // растёт на каждой метке: снятие по устаревшей попытке её не теряет
@@ -224,7 +225,7 @@ func (o *Operator) saveDeferredLocked() {
 	}
 	marks := make([]ProxyMark, 0, len(o.deferredProxies))
 	for name, d := range o.deferredProxies {
-		marks = append(marks, ProxyMark{Name: name, Desc: d.desc})
+		marks = append(marks, ProxyMark{Name: name, Desc: d.desc, Alt: d.alt})
 	}
 	slices.SortFunc(marks, func(a, b ProxyMark) int { return strings.Compare(a.Name, b.Name) })
 	b, _ := json.Marshal(marks)
@@ -253,7 +254,7 @@ func (o *Operator) loadDeferredProxies() {
 	o.deferredProxies = make(map[string]*deferredProxy, len(marks))
 	for _, m := range marks {
 		if m.Name != "" {
-			o.deferredProxies[m.Name] = &deferredProxy{desc: m.Desc}
+			o.deferredProxies[m.Name] = &deferredProxy{desc: m.Desc, alt: m.Alt}
 		}
 	}
 }
@@ -309,7 +310,7 @@ func (o *Operator) retryDeferredProxyRemovals(ctx context.Context, now time.Time
 	var due []dueMark
 	for name, d := range o.deferredProxies {
 		if !now.Before(d.next) {
-			due = append(due, dueMark{ProxyMark{Name: name, Desc: d.desc}, d.gen})
+			due = append(due, dueMark{ProxyMark{Name: name, Desc: d.desc, Alt: d.alt}, d.gen})
 		}
 	}
 	o.deferredProxyMu.Unlock()
@@ -436,9 +437,18 @@ func (r *SubscriptionProxyRegistrar) RemoveProxy(ctx context.Context, idx int, l
 // который у него на роутере ("" у голого, F577 N1). Голая запись на имени,
 // которое нужно туннелю или подписке, не сносится, а усыновляется владельцем
 // (bareMarked).
-func (o *Operator) deferLeftProxy(name, desc string) {
+func (o *Operator) deferLeftProxy(name, desc, alt string) {
 	o.log.Warn("created proxy left on router, deferred", "name", name, "desc", desc)
 	o.deferProxyRemoval(name, desc)
+	if alt == "" {
+		return
+	}
+	o.deferredProxyMu.Lock()
+	defer o.deferredProxyMu.Unlock()
+	if d := o.deferredProxies[name]; d != nil {
+		d.alt = alt
+		o.saveDeferredLocked()
+	}
 }
 
 // bareMarked — есть метка голой записи (name, ""): мы её создали (F577 R1).

@@ -146,6 +146,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// rollback is a LIFO stack of inverse operations; each resource-creating
 	// step pushes its undo AFTER it succeeds.
 	var rollback []func()
+	tunLeft := false // откат не снёс созданный интерфейс
 	defer func() {
 		if err == nil {
 			return
@@ -257,6 +258,13 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			}
 			restore.PendingDescription = wantDesc
 		}
+		// Снос не прошёл, а записи нет: интерфейс с пользовательским именем
+		// стал бы сиротой, реап по штатному описанию его не найдёт (F617).
+		// Запись с намерением передаёт его персист-реапу.
+		if restore == nil && tunLeft {
+			restore = &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: idx,
+				Description: storedPolicyTunDescription(wantDesc)}
+		}
 		if e := s.deps.Settings.SetOpkgTunState(restore); e != nil {
 			s.appLog.Warn("policy-tun-rollback", iface, "restore policy-tun persist: "+e.Error())
 		}
@@ -303,7 +311,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			_ = s.holdOpkgTun(rbCtx, ndmsName, "policy-tun-rollback")
 			return
 		}
-		_ = s.teardownOpkgTun(rbCtx, ndmsName, "policy-tun-rollback")
+		tunLeft = s.teardownOpkgTun(rbCtx, ndmsName, "policy-tun-rollback") != nil
 	})
 
 	// `ip global` — без него интерфейс не появляется в списке выходов политики

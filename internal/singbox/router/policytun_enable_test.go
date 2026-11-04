@@ -965,3 +965,20 @@ func TestEnablePolicyTun_RefreshesAWGOutbounds(t *testing.T) {
 		t.Fatal("AWGOutboundsRefresh не вызван при enable policy-tun: каталог AWG-тегов может быть протухшим на валидирующем reload")
 	}
 }
+
+// Откат не снёс созданный интерфейс: запись остаётся, иначе интерфейс с
+// пользовательским именем никто не найдёт (F617).
+func TestPolicyTunEnable_RollbackKeepsRecordWhenTeardownFails(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "SetDefaultRoute")
+	h.svc.deps.OpkgTun.(*recPolicyTunOpkg).failAt = "Delete"
+	if err := h.svc.enable(context.Background()); err == nil {
+		t.Fatal("ждали отказ")
+	}
+	st := h.loadPolicyTun(t)
+	if st == nil {
+		t.Fatal("запись потеряна: интерфейс остался сиротой")
+	}
+	if st.Provisioned || st.Index != 0 {
+		t.Fatalf("%+v", st)
+	}
+}
