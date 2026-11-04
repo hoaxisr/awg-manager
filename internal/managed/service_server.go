@@ -937,7 +937,7 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface query.Confirmed
 // журнале. Отказы команд — Debug: пересборка идёт дальше.
 func (s *Service) clearLANACL(ctx context.Context, iface query.Confirmed) {
 	acl := "AWGM_" + iface.Name()
-	exists, bound, err := s.lanACLState(ctx, iface.Name())
+	exists, bound, _, err := s.lanACLState(ctx, iface.Name())
 	if err != nil {
 		s.log.Debug("ACL state unreadable, clearing blindly", "error", err, "iface", iface.Name())
 		exists, bound = true, true
@@ -947,7 +947,7 @@ func (s *Service) clearLANACL(ctx context.Context, iface query.Confirmed) {
 			s.log.Debug("unbind ACL", "error", err, "iface", iface.Name())
 		}
 		if exists {
-			if e, _, err := s.lanACLState(ctx, iface.Name()); err == nil {
+			if e, _, _, err := s.lanACLState(ctx, iface.Name()); err == nil {
 				exists = e
 			}
 		}

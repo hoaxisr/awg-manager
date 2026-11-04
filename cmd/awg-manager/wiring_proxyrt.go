@@ -1140,6 +1140,9 @@ func proxyNudge(ctx context.Context, mgr proxyRuntime, kind proxyrt.EventKind) (
 // proxyRuntimeNudge — proxyNudge с журналом, точка вызова из фаз боота и
 // WAN-хука.
 func (a *app) proxyRuntimeNudge(reason string, kind proxyrt.EventKind) {
+	if reason == "cold-boot" {
+		defer close(a.proxyColdBooted)
+	}
 	if a.proxyMgr == nil {
 		return
 	}

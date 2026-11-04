@@ -272,7 +272,9 @@ export function routerStaticRows(info: SystemInfo, level: UsageLevel): AboutInfo
 				value: info.kernelModuleLoaded
 					? m.about_device_value_kernel_loaded({ model: info.kernelModuleModel || '?' })
 					: info.kernelModuleExists
-						? m.about_device_value_kernel_present_not_loaded()
+						? info.kernelModuleLoadError
+							? `${m.about_device_value_kernel_present_not_loaded()}: ${info.kernelModuleLoadError}`
+							: m.about_device_value_kernel_present_not_loaded()
 						: m.about_device_value_no(),
 			},
 		);

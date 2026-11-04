@@ -58,7 +58,7 @@ type AuthHandler struct {
 	settings *storage.SettingsStore
 	throttle *auth.LoginThrottle
 	// routerThrottle — лимит входа через роутер, ключ один на всех (F459).
-	routerThrottle *auth.LoginThrottle
+	routerThrottle *auth.RouterLimiter
 	// failureDelay is overridable in tests (0 disables the sleep).
 	failureDelay time.Duration
 	log          *logging.ScopedLogger
@@ -72,7 +72,7 @@ func NewAuthHandler(keenetic KeeneticAuthenticator, sessions *auth.SessionStore,
 		sessions:       sessions,
 		settings:       settings,
 		throttle:       auth.NewLoginThrottle(),
-		routerThrottle: auth.NewRouterLoginThrottle(),
+		routerThrottle: auth.NewRouterLimiter(),
 		failureDelay:   loginFailureDelay,
 		log:            logging.NewScopedLogger(appLogger, logging.GroupSystem, logging.SubAuth),
 	}
@@ -83,9 +83,6 @@ const (
 	loginMethodRouter  = "router"
 	loginMethodEntware = "entware"
 )
-
-// routerThrottleKey — единственный ключ routerThrottle.
-const routerThrottleKey = "router"
 
 // weakEntwarePassword — пароль root из инструкции по установке Entware на
 // Keenetic. Способ входа выбирается на форме без тумблера в настройках, и
@@ -113,7 +110,7 @@ type LoginRequest struct {
 // notifications and no router lockout).
 //
 //	@Summary		Login
-//	@Description	Authenticates by the chosen method (router — Keenetic credentials, the default; entware — Entware system credentials verified locally); sets HttpOnly session cookie awg_session. Every failed attempt in which credentials were checked is delayed 300ms and counted; after 5 such failures per client IP the endpoint responds 429 for 30 seconds. Router logins additionally share one counter across all clients: after 4 failures they respond 429 for 3 minutes. Unavailable router or Entware shadow db is not counted (503). A correct Entware password that is too weak is refused with 403.
+//	@Description	Authenticates by the chosen method (router — Keenetic credentials, the default; entware — Entware system credentials verified locally); sets HttpOnly session cookie awg_session. Every failed attempt in which credentials were checked is delayed 300ms and counted; after 5 such failures per client IP the endpoint responds 429 for 30 seconds. Router logins additionally share one counter across all clients: 4 failures within a 3-minute window respond 429 until the oldest one leaves it. Unavailable router or Entware shadow db is not counted (503). A correct Entware password that is too weak is refused with 403.
 //	@Tags			auth
 //	@Accept			json
 //	@Produce		json
@@ -158,16 +155,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	switch req.Method {
 	case "", loginMethodRouter:
 		req.Method = loginMethodRouter
-		retryAfter, blocked := h.routerThrottle.Begin(routerThrottleKey)
+		retryAfter, blocked := h.routerThrottle.Begin()
 		if blocked {
 			writeTooManyAttempts(w, retryAfter)
 			return
 		}
-		defer h.routerThrottle.Done(routerThrottleKey)
+		defer h.routerThrottle.Done()
 		err = h.keenetic.Authenticate(r.Context(), req.Login, req.Password)
-		if err == nil {
-			h.routerThrottle.Success(routerThrottleKey)
-		}
 	case loginMethodEntware:
 		err = h.entware.Verify(req.Login, req.Password)
 		// После проверки, а не до: чужому логину с этим паролем — обычный 401.
@@ -241,7 +235,7 @@ func (h *AuthHandler) finishFailedLogin(w http.ResponseWriter, login, method, cl
 		h.log.Warn("login", login, "Login failed: "+err.Error())
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "Вход через Entware недоступен", "ENTWARE_UNAVAILABLE")
 	case method == loginMethodEntware || errors.Is(err, auth.ErrInvalidCredentials):
-		if method == loginMethodRouter && h.routerThrottle.Fail(routerThrottleKey) {
+		if method == loginMethodRouter && h.routerThrottle.Fail() {
 			h.log.Warn("login-throttle", clientIP, "router login blocked after repeated failures")
 		}
 		h.registerFailure(clientIP)

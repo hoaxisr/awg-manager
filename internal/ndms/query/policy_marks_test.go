@@ -167,3 +167,21 @@ func TestPolicyMarkStore_ListByDefaultInterface_SkipsInvalidMarks(t *testing.T) 
 		t.Fatalf("nil-логгер: %v", err)
 	}
 }
+
+// DefaultV6 — `::/0` через тот же интерфейс в таблице той же политики (F385).
+func TestPolicyMarkStore_DefaultV6(t *testing.T) {
+	fg := NewFakeGetter()
+	fg.SetRaw("/show/ip/policy", []byte(`{
+  "Policy1": {"mark":"ffffaab","route4":{"route":[{"destination":"0.0.0.0/0","interface":"OpkgTun0"}]},
+    "route6":{"route6":[{"destination":"::/0","interface":"OpkgTun0"}]}},
+  "Policy2": {"mark":"ffffaac","route4":{"route":[{"destination":"0.0.0.0/0","interface":"OpkgTun0"}]},
+    "route6":{"route6":[{"destination":"::/0","interface":"PPPoE0"}]}}
+}`))
+	got, err := NewPolicyMarkStore(fg, NopLogger()).ListByDefaultInterface(context.Background(), "OpkgTun0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || !got[0].DefaultV6 || got[1].DefaultV6 {
+		t.Fatalf("%+v", got)
+	}
+}

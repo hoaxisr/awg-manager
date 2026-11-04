@@ -2321,6 +2321,7 @@ const api_SystemInfoData: v.GenericSchema = v.looseObject({
 	isOS5: v.optional(v.nullable(v.boolean())),
 	keeneticOS: v.optional(v.nullable(v.string())),
 	kernelModuleExists: v.optional(v.nullable(v.boolean())),
+	kernelModuleLoadError: v.optional(v.nullable(v.string())),
 	kernelModuleLoaded: v.optional(v.nullable(v.boolean())),
 	kernelModuleLoadedVersion: v.optional(v.nullable(v.string())),
 	kernelModuleModel: v.optional(v.nullable(v.string())),

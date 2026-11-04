@@ -3,6 +3,7 @@ package httpclient
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 	"time"
 )
@@ -131,5 +132,14 @@ func TestResolveResilient_CacheKeyedByIface(t *testing.T) {
 	ip1, _ := ResolveIPv4Resilient(context.Background(), "geo.example.com", []string{"10.0.1.1"}, "nwg1")
 	if ip0 != "1.1.1.1" || ip1 != "2.2.2.2" {
 		t.Fatalf("ip0=%q ip1=%q — кеш не разделён по iface", ip0, ip1)
+	}
+}
+
+// Привязанное соединение к адресу v6 нельзя форсить в tcp4 (F132).
+func TestBoundNetwork(t *testing.T) {
+	for in, want := range map[string]string{"2606:4700::1111": "tcp", "1.1.1.1": "tcp4", "": "tcp4"} {
+		if got := boundNetwork(net.ParseIP(in)); got != want {
+			t.Errorf("%q: %s, want %s", in, got, want)
+		}
 	}
 }

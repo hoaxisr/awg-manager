@@ -67,29 +67,56 @@ func (s *Service) planPeerSubnetsACL(ctx context.Context, server *storage.Manage
 	if len(addRules)+len(removeRules) == 0 {
 		return peerACLEdit{}, nil
 	}
-	exists, bound, err := s.lanACLState(ctx, server.InterfaceName)
+	oldNets := serverPeerSubnets(server.Peers)
+	exists, bound, rules, err := s.lanACLState(ctx, server.InterfaceName)
 	if err != nil {
 		return peerACLEdit{}, err
 	}
 	if !exists || !bound {
-		return peerACLEdit{rebuild: true, newNets: newNets, oldNets: serverPeerSubnets(server.Peers)}, nil
+		return peerACLEdit{rebuild: true, newNets: newNets, oldNets: oldNets}, nil
+	}
+	orphans, err := s.lanACLHasOrphans(ctx, server, oldNets, rules)
+	if err != nil {
+		return peerACLEdit{}, err
+	}
+	if orphans {
+		return peerACLEdit{rebuild: true, newNets: newNets, oldNets: oldNets}, nil
 	}
 	return peerACLEdit{add: addRules, remove: removeRules}, nil
+}
+
+// lanACLHasOrphans — есть ли в списке правило, которого нет в плане по записи:
+// откат точечной правки мог оставить чужой для записи permit (F526).
+func (s *Service) lanACLHasOrphans(ctx context.Context, server *storage.ManagedServer, nets, rules []string) (bool, error) {
+	bridges, err := s.queries.Interfaces.ListLANBridges(ctx)
+	if err != nil {
+		return false, fmt.Errorf("list LAN bridges: %w", err)
+	}
+	plan, err := resolveLANSegmentsPlan(server.Address, server.Mask, nets, server.LANSegments, bridges)
+	if err != nil {
+		return false, err
+	}
+	want := make(map[string]bool, len(plan))
+	for _, r := range plan {
+		want[fmt.Sprintf("permit ip %s %s %s %s", r.srcSub, r.srcMask, r.dstSub, r.dstMask)] = true
+	}
+	return slices.ContainsFunc(rules, func(r string) bool { return !want[r] }), nil
 }
 
 // lanACLState — есть ли список AWGM_<iface> в running-config и привязан ли
 // он к интерфейсу. Чтение свежее (Fetch, мимо кэша): список мог снять кто
 // угодно мимо нас, а хук ndm на такую правку к нам не приходит.
-func (s *Service) lanACLState(ctx context.Context, iface string) (exists, bound bool, err error) {
+func (s *Service) lanACLState(ctx context.Context, iface string) (exists, bound bool, rules []string, err error) {
 	if s.queries == nil || s.queries.RunningConfig == nil {
-		return false, false, fmt.Errorf("running-config store not wired")
+		return false, false, nil, fmt.Errorf("running-config store not wired")
 	}
 	lines, err := s.queries.RunningConfig.Fetch(ctx)
 	if err != nil {
-		return false, false, fmt.Errorf("read running-config: %w", err)
+		return false, false, nil, fmt.Errorf("read running-config: %w", err)
 	}
 	acl := "AWGM_" + iface
-	return slices.Contains(lines, "access-list "+acl), slices.Contains(query.InterfaceAccessGroupsOf(lines, iface, query.ACLv4), acl), nil
+	header := "access-list " + acl
+	return slices.Contains(lines, header), slices.Contains(query.InterfaceAccessGroupsOf(lines, iface, query.ACLv4), acl), query.ACLRulesOf(lines, header), nil
 }
 
 // applyPeerSubnetsACL применяет правку: permit добавленных сетей в каждый

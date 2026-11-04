@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -796,5 +797,38 @@ func TestSubscriptionHandler_RemoveMember_LastRefusedWhileReferenced(t *testing.
 	}
 	if _, err := store.Get(id); err == nil {
 		t.Fatal("без ссылок последний член сносит подписку")
+	}
+}
+
+// Ссылки в неактивных копиях не блокируют удаление, но ищутся после него (F761).
+func TestSubscriptionHandler_Delete_LooksForLeftoverRefs(t *testing.T) {
+	store, err := subscription.NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewSubscriptionHandler(subscription.NewService(store, &noopMutator{}), &fakePresenceProbe{installed: true})
+	body, _ := json.Marshal(CreateSubscriptionRequest{Label: "x", Enabled: true,
+		Inline: "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443?security=tls&sni=a#A"})
+	rr := httptest.NewRecorder()
+	h.Create(rr, httptest.NewRequest(http.MethodPost, "/api/singbox/subscriptions/create", strings.NewReader(string(body))))
+	var created SubscriptionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil || rr.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	var asked []string
+	h.SetLeftoverRefs(func(tags []string) []string {
+		if _, err := store.Get(created.Data.ID); err == nil {
+			t.Error("поиск ссылок раньше удаления")
+		}
+		asked = tags
+		return tags
+	})
+	rr = httptest.NewRecorder()
+	h.Delete(rr, httptest.NewRequest(http.MethodDelete, "/api/singbox/subscriptions/delete?id="+created.Data.ID, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("%d %s", rr.Code, rr.Body.String())
+	}
+	if !slices.Contains(asked, created.Data.SelectorTag) {
+		t.Fatalf("теги: %v", asked)
 	}
 }

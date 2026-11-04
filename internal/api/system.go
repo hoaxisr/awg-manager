@@ -65,6 +65,7 @@ type SystemInfoData struct {
 	KernelModuleModel           string                        `json:"kernelModuleModel" example:"MT7981"`
 	KernelModuleVersion         string                        `json:"kernelModuleVersion" example:""`
 	KernelModuleLoadedVersion   string                        `json:"kernelModuleLoadedVersion" example:"3.1.20260812"`
+	KernelModuleLoadError       string                        `json:"kernelModuleLoadError,omitempty" example:""`
 	AwgProxyVersion             string                        `json:"awgProxyVersion" example:"1.4.0"`
 	AwgProxyExpectedVersion     string                        `json:"awgProxyExpectedVersion" example:"1.4.0"`
 	IsAarch64                   bool                          `json:"isAarch64" example:"true"`
@@ -179,6 +180,7 @@ type KmodLoader interface {
 	SoC() kmod.SoC
 	OnDiskVersion() string
 	LoadedVersion() string
+	LastEnsureError() string
 }
 
 // SystemHandler handles system information endpoints.
@@ -446,6 +448,13 @@ func (h *SystemHandler) InfoData() map[string]interface{} {
 	return h.buildSystemInfo(disableMemorySaving, gcMemLimit, gogc, kernelModuleExists, kernelModuleLoaded, kernelModuleModel, kernelModuleVersion, kernelModuleLoadedVersion, isAarch64, activeBackendType, routerIP)
 }
 
+func (h *SystemHandler) kernelModuleLoadError() string {
+	if h.kmodLoader == nil {
+		return ""
+	}
+	return h.kmodLoader.LastEnsureError()
+}
+
 func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, gogc string, kernelModuleExists, kernelModuleLoaded bool, kernelModuleModel, kernelModuleVersion, kernelModuleLoadedVersion string, isAarch64 bool, activeBackendType, routerIP string) map[string]interface{} {
 	singboxInstalled, singboxVersion := h.getSingboxInfoFast()
 	routerDetails := h.getRouterDetailsCached()
@@ -479,6 +488,7 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 		"kernelModuleModel":           kernelModuleModel,
 		"kernelModuleVersion":         kernelModuleVersion,
 		"kernelModuleLoadedVersion":   kernelModuleLoadedVersion,
+		"kernelModuleLoadError":       h.kernelModuleLoadError(),
 		"awgProxyVersion":             awgProxyLoadedVersion(),
 		"awgProxyExpectedVersion":     nwg.ExpectedKmodVersion,
 		"isAarch64":                   isAarch64,

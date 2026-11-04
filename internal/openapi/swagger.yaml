@@ -6717,6 +6717,9 @@ definitions:
       kernelModuleExists:
         example: true
         type: boolean
+      kernelModuleLoadError:
+        example: ""
+        type: string
       kernelModuleLoaded:
         example: false
         type: boolean
@@ -9671,9 +9674,10 @@ paths:
         HttpOnly session cookie awg_session. Every failed attempt in which credentials
         were checked is delayed 300ms and counted; after 5 such failures per client
         IP the endpoint responds 429 for 30 seconds. Router logins additionally share
-        one counter across all clients: after 4 failures they respond 429 for 3 minutes.
-        Unavailable router or Entware shadow db is not counted (503). A correct Entware
-        password that is too weak is refused with 403.'
+        one counter across all clients: 4 failures within a 3-minute window respond
+        429 until the oldest one leaves it. Unavailable router or Entware shadow db
+        is not counted (503). A correct Entware password that is too weak is refused
+        with 403.'
       parameters:
       - description: Login, password and method
         in: body

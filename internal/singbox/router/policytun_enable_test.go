@@ -897,6 +897,20 @@ func TestPolicyTunEnable_DoubleRCIFailureKeepsRecordedNAT(t *testing.T) {
 		}
 	})
 
+	t.Run("снос не прошёл: запись с payload называет описание (F617)", func(t *testing.T) {
+		h := setup(t, nil)
+		setPolicyTunDescription(t, h.store, "Awgmanager")
+		h.svc.deps.OpkgTun.(*recPolicyTunOpkg).failAt = "Delete"
+
+		if err := h.svc.enable(context.Background()); err == nil {
+			t.Fatal("expected error when SetStaticNAT fails")
+		}
+		st := h.loadPolicyTun(t)
+		if st == nil || st.Description != "Awgmanager" {
+			t.Fatalf("запись не называет описание, реап не узнает интерфейс: %+v", st)
+		}
+	})
+
 	t.Run("первый enable: запись остаётся с payload", func(t *testing.T) {
 		h := setup(t, nil)
 
@@ -963,5 +977,22 @@ func TestEnablePolicyTun_RefreshesAWGOutbounds(t *testing.T) {
 	}
 	if called == 0 {
 		t.Fatal("AWGOutboundsRefresh не вызван при enable policy-tun: каталог AWG-тегов может быть протухшим на валидирующем reload")
+	}
+}
+
+// Откат не снёс созданный интерфейс: запись остаётся, иначе интерфейс с
+// пользовательским именем никто не найдёт (F617).
+func TestPolicyTunEnable_RollbackKeepsRecordWhenTeardownFails(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "SetDefaultRoute")
+	h.svc.deps.OpkgTun.(*recPolicyTunOpkg).failAt = "Delete"
+	if err := h.svc.enable(context.Background()); err == nil {
+		t.Fatal("ждали отказ")
+	}
+	st := h.loadPolicyTun(t)
+	if st == nil {
+		t.Fatal("запись потеряна: интерфейс остался сиротой")
+	}
+	if st.Provisioned || st.Index != 0 {
+		t.Fatalf("%+v", st)
 	}
 }

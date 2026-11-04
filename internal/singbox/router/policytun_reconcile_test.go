@@ -2574,12 +2574,66 @@ func TestReconcilePolicyTun_PermitACLDriftHealed(t *testing.T) {
 		t.Fatalf("после паузы: %d вызовов, ждали 2", n)
 	}
 
+	// Снятие без событий NDMS: кэш ещё здоров, но раз в период чтение идёт мимо
+	// него и видит правду (F766).
+	rc.lines, rc.fresh = healthy, base
+	h.svc.policyTunACLNextAssert = time.Time{}
+	h.svc.permitACLFreshAt = time.Now().Add(-permitACLFreshEvery - time.Second)
+	before := h.log.count("SetPermitACL:OpkgTun0")
+	tick()
+	if n := h.log.count("SetPermitACL:OpkgTun0"); n != before+1 {
+		t.Fatalf("снятие мимо кэша не замечено: %d вызовов, было %d", n, before)
+	}
+	rc.fresh = nil
+	before = h.log.count("SetPermitACL:OpkgTun0")
+
 	// Появился — пауза снята: следующее снятие чинится сразу, а не через час.
 	rc.lines = healthy
 	tick()
 	rc.lines = base
 	tick()
-	if n := h.log.count("SetPermitACL:OpkgTun0"); n != 3 {
-		t.Fatalf("снятие после восстановления: %d вызовов, ждали 3", n)
+	if n := h.log.count("SetPermitACL:OpkgTun0"); n != before+1 {
+		t.Fatalf("снятие после восстановления: %d вызовов, ждали %d", n, before+1)
+	}
+}
+
+// `::/0` пропал из таблицы политики при живом v4: возврат той же лестницей,
+// с пределом попыток (F385).
+func TestReconcilePolicyTun_V6RouteLostHealedWithLimit(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	h.svc.deps.XtDscpProbe = func(context.Context) bool { return false }
+	pol := h.withPolicy(t, "Policy0")
+	sr := provisionPolicyTunForReconcile(t, h)
+	sr.PolicyName = "Policy0"
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	h.svc.deps.IPTables = (&ingressRecorder{natDump: "-P PREROUTING ACCEPT\n"}).tables()
+	pol.exits = []query.PolicyDefaultExit{{Name: "Policy0", Mark: "0xffffaaa", DefaultV6: true}}
+	tick := func() {
+		t.Helper()
+		if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tick()
+	h.log.calls = nil
+	tick()
+	if h.log.has("SetIPv6DefaultRoute:OpkgTun0") {
+		t.Fatalf("маршрут на месте: %v", h.log.calls)
+	}
+
+	pol.exits[0].DefaultV6 = false
+	for i := 0; i < 10; i++ {
+		tick()
+	}
+	if n := h.log.count("SetIPv6DefaultRoute:OpkgTun0"); n != len(policyTunRouteHealAttempts) {
+		t.Fatalf("постановок %d, ждали %d", n, len(policyTunRouteHealAttempts))
+	}
+
+	// Выключение обнуляет лестницу: следующий инцидент получает все попытки.
+	if err := h.svc.disable(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.svc.policyTunV6RouteStrikes != 0 {
+		t.Fatalf("счётчик после выключения: %d", h.svc.policyTunV6RouteStrikes)
 	}
 }

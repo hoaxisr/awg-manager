@@ -311,3 +311,17 @@ func TestProxyUpDown_ConfCreditOnlyWhenEffective(t *testing.T) {
 		t.Fatal("действующий down: ждали ровно один кредит disabled")
 	}
 }
+
+// Список не прочитан: метка получает задуманный description (F593).
+func TestLeftConfigured_ListUnread_KeepsIntended(t *testing.T) {
+	_, f, q := newOracleCommands(t, nil)
+	cmds := NewProxyCommands(f, noBusSave(NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)), q)
+	f.FailList(errors.New("rci down"))
+	var left *LeftCreatedError
+	if !errors.As(cmds.leftConfigured(context.Background(), "Proxy0", "tag", errors.New("x")), &left) {
+		t.Fatal("ждали LeftCreatedError")
+	}
+	if left.Desc != "" || left.Intended != "tag" {
+		t.Fatalf("%+v", left)
+	}
+}

@@ -177,6 +177,18 @@ func TestBackupImport_PartialRestoreKeepsServicesDown(t *testing.T) {
 	}
 }
 
+// Частичная замена параллельным запросом случилась, пока этот ждал очереди:
+// его отказ по негодному архиву не поднимает службы (F457).
+func TestBackupImport_ConcurrentPartialBlocksResume(t *testing.T) {
+	bh := newBackupHarness(t, nil)
+	bh.h.quiesce = func(context.Context) error { bh.h.partial.Store(true); return nil }
+	rr := httptest.NewRecorder()
+	bh.h.Import(rr, backupUpload(t, "backup.tar.gz", []byte("not gzip")))
+	if rr.Code == 200 || len(bh.events) != 0 {
+		t.Fatalf("%d events=%v", rr.Code, bh.events)
+	}
+}
+
 func TestBackupImport_RejectsBadFormatAndQuiesceFailure(t *testing.T) {
 	bh := newBackupHarness(t, nil)
 	rr := httptest.NewRecorder()

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 )
 
@@ -46,15 +47,21 @@ func NewPolicyMarkStore(g Getter, log Logger) *PolicyMarkStore {
 	return &PolicyMarkStore{getter: g, log: log}
 }
 
+type policyRouteWire struct {
+	Destination string `json:"destination"`
+	Interface   string `json:"interface"`
+}
+
 type policyMarkWire struct {
 	Mark   string `json:"mark"`
 	Table4 int    `json:"table4"`
 	Route4 struct {
-		Route []struct {
-			Destination string `json:"destination"`
-			Interface   string `json:"interface"`
-		} `json:"route"`
+		Route []policyRouteWire `json:"route"`
 	} `json:"route4"`
+	// Вложенный ключ у v6 другой, чем у v4: route6.route6 (стенд 5.02.B.1).
+	Route6 struct {
+		Route []policyRouteWire `json:"route6"`
+	} `json:"route6"`
 }
 
 // Get returns the hex-formatted mark (e.g. "0xffffaaa") for policyName.
@@ -108,6 +115,8 @@ func isBareHex(s string) bool {
 type PolicyDefaultExit struct {
 	Name string
 	Mark string
+	// DefaultV6 — в таблице политики есть и `::/0` через тот же интерфейс.
+	DefaultV6 bool
 }
 
 // ListByDefaultInterface возвращает политики, у которых в эффективной таблице
@@ -143,7 +152,8 @@ func (s *PolicyMarkStore) ListByDefaultInterface(ctx context.Context, iface stri
 		}
 		for _, r := range p.Route4.Route {
 			if r.Destination == "0.0.0.0/0" && r.Interface == iface {
-				out = append(out, PolicyDefaultExit{Name: name, Mark: "0x" + p.Mark})
+				out = append(out, PolicyDefaultExit{Name: name, Mark: "0x" + p.Mark,
+					DefaultV6: slices.Contains(p.Route6.Route, policyRouteWire{Destination: "::/0", Interface: iface})})
 				break
 			}
 		}

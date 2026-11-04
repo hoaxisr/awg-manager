@@ -146,6 +146,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// rollback is a LIFO stack of inverse operations; each resource-creating
 	// step pushes its undo AFTER it succeeds.
 	var rollback []func()
+	tunLeft := false // откат не снёс созданный интерфейс
 	defer func() {
 		if err == nil {
 			return
@@ -257,6 +258,19 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			}
 			restore.PendingDescription = wantDesc
 		}
+		// Снос не прошёл, а запись его описания не называет: интерфейс с
+		// пользовательским именем стал бы сиротой, реап по штатному описанию
+		// его не найдёт (F617). Запись с описанием передаёт его персист-реапу.
+		// ponytail: запись одна на все режимы. Прежняя запись fakeip или другого
+		// индекса остаётся, снос откатился вслепую — нужен второй слот записи.
+		if tunLeft && (restore == nil || restore != prevRecord) {
+			left := storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: idx}
+			if restore != nil {
+				left = *restore
+			}
+			left.Description = storedPolicyTunDescription(wantDesc)
+			restore = &left
+		}
 		if e := s.deps.Settings.SetOpkgTunState(restore); e != nil {
 			s.appLog.Warn("policy-tun-rollback", iface, "restore policy-tun persist: "+e.Error())
 		}
@@ -303,7 +317,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			_ = s.holdOpkgTun(rbCtx, ndmsName, "policy-tun-rollback")
 			return
 		}
-		_ = s.teardownOpkgTun(rbCtx, ndmsName, "policy-tun-rollback")
+		tunLeft = s.teardownOpkgTun(rbCtx, ndmsName, "policy-tun-rollback") != nil
 	})
 
 	// `ip global` — без него интерфейс не появляется в списке выходов политики
@@ -476,6 +490,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// вместе эти два места закрывают и ручное off→on (лечение, которое мы сами
 	// советуем при #932), и полный re-provision из drift-heal.
 	s.policyTunRouteStrikes.Store(0)
+	s.policyTunV6RouteStrikes, s.policyTunV6RouteLost = 0, false
 	push(func() {
 		if e := s.deps.DefaultRoute.RemoveDefaultRoute(rbCtx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-rollback", iface, "remove default route: "+e.Error())

@@ -380,10 +380,8 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 //
 // У v4-дефолта конфигом проверка не заканчивается: запись в нём — кандидатура,
 // а не установленный маршрут, поэтому присутствующая запись дополнительно
-// сверяется с рантайм-таблицей политики (policyTunRouteInstalled). У v6 такой
-// сверки НЕТ: в наблюдении по #932 v6-маршрут уцелел, а механизм этой разницы
-// не установлен — рантайм-запрос разбирает только route4
-// (query/policy_marks.go), и симметрия потребовала бы route6 в нём.
+// сверяется с рантайм-таблицей политики (policyTunRouteInstalled); v6 — той же
+// выборкой, но своей лестницей попыток (reassertPolicyTunV6Route, F385).
 //
 // Кэш running-config (TTL 60 мин) инвалидируется ТОЛЬКО когда по кэшу состояние
 // нездорово: RCI на роутере медленный, а сброс кэша на каждом тике превратил бы
@@ -455,6 +453,13 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 		// постановка (а с ней запись startup-config) шла бы раз в минуту.
 	} else if installed {
 		s.policyTunRouteStrikes.Store(0)
+		switch {
+		case !wantV6 || !v6:
+		case s.policyTunV6RouteLost:
+			s.reassertPolicyTunV6Route(ctx, sr, iface, ndmsName)
+		default:
+			s.policyTunV6RouteStrikes = 0
+		}
 	} else {
 		s.reassertPolicyTunDefaultRoute(ctx, sr, iface, ndmsName)
 	}
@@ -472,15 +477,26 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 // правила нет и не будет) каждый тик платил бы чтением running-config и E.
 const permitACLAssertPause = time.Hour
 
+// permitACLFreshEvery — как часто сверка ACL читает running-config мимо кэша.
+const permitACLFreshEvery = 5 * time.Minute
+
 // assertPermitACL возвращает permit-ACL интерфейса, если его нет, кем бы он ни
 // был снят (F382): список наш, без него режим не работает, поэтому и снятая в
 // веб-морде галка вернётся. Запись только при расхождении: постановка — это
 // RCI-мутации с сохранением конфигурации и чтение running-config мимо кэша
-// (≈89 тиков ndm). Сверка идёт по кэшу, поэтому внешнее снятие замечается при
-// его обновлении: по событиям NDMS или через TTL.
+// (≈89 тиков ndm). Сверка идёт по кэшу, раз в permitACLFreshEvery — мимо него.
 func (s *ServiceImpl) assertPermitACL(ctx context.Context, scope, iface, ndmsName string, v6 bool, next *time.Time) {
 	if s.deps.RunningConfig != nil {
-		lines, err := s.deps.RunningConfig.Lines(ctx)
+		// Снятие ACL событий NDMS не даёт (F766): раз в permitACLFreshEvery
+		// читаем мимо кэша, это же чтение обновляет кэш для второго семейства.
+		read := s.deps.RunningConfig.Lines
+		if s.permitACLFreshAt.IsZero() {
+			s.permitACLFreshAt = time.Now()
+		} else if time.Since(s.permitACLFreshAt) >= permitACLFreshEvery {
+			read = s.deps.RunningConfig.Fetch
+			s.permitACLFreshAt = time.Now()
+		}
+		lines, err := read(ctx)
 		if err != nil {
 			s.appLog.Warn(scope, iface, "running-config: "+err.Error())
 			return
@@ -501,6 +517,7 @@ func (s *ServiceImpl) assertPermitACL(ctx context.Context, scope, iface, ndmsNam
 		s.appLog.Warn(scope, iface, label+": "+err.Error())
 		return
 	}
+	s.appLog.Info(scope, iface, label+": постановка выполнена (drift-heal)")
 	*next = time.Now().Add(permitACLAssertPause)
 }
 
@@ -567,10 +584,29 @@ func (s *ServiceImpl) policyTunRouteInstalled(ctx context.Context, sr storage.Si
 	}
 	for _, e := range exits {
 		if e.Name == sr.PolicyName {
+			s.policyTunV6RouteLost = !e.DefaultV6
 			return true, true
 		}
 	}
 	return false, true
+}
+
+// reassertPolicyTunV6Route — близнец reassertPolicyTunDefaultRoute для `::/0`
+// (F385): та же лестница попыток, свой счётчик, чтобы v6 не съедал попытки v4.
+func (s *ServiceImpl) reassertPolicyTunV6Route(ctx context.Context, sr storage.SingboxRouterSettings, iface, ndmsName string) {
+	if !tunReadyProbe(iface) {
+		s.policyTunV6RouteStrikes = 0
+		return
+	}
+	s.policyTunV6RouteStrikes++
+	if !slices.Contains(policyTunRouteHealAttempts[:], s.policyTunV6RouteStrikes) {
+		return
+	}
+	if e := s.deps.DefaultRoute.SetIPv6DefaultRoute(ctx, ndmsName); e != nil {
+		s.appLog.Warn("policy-tun-reconcile", iface, "re-assert ipv6 default route: "+e.Error())
+		return
+	}
+	s.appLog.Warn("policy-tun-reconcile", iface, "запись v6-дефолта есть, а маршрута в таблице политики "+sr.PolicyName+" нет — переустановлен (drift-heal)")
 }
 
 // policyTunRouteHealAttempts — на каком по счёту ПОДРЯД тике «маршрута нет»
