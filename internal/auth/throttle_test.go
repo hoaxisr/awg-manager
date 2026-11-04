@@ -148,25 +148,58 @@ func TestThrottle_SweepDropsStaleEntries(t *testing.T) {
 	}
 }
 
-// Лимит входа через роутер: блокировка 3 мин, после неё одна попытка (F459).
-func TestRouterLoginThrottle_Block(t *testing.T) {
+// Редкие отказы никого не закрывают; предел в окне закрывает до выхода старшего
+// отказа из окна; успех счётчик не сбрасывает (F459).
+func TestRouterLimiter_SlidingWindow(t *testing.T) {
 	now := time.Unix(1000, 0)
-	th := NewRouterLoginThrottle()
-	th.now = func() time.Time { return now }
+	l := NewRouterLimiter()
+	l.now = func() time.Time { return now }
+	try := func() bool {
+		t.Helper()
+		_, blocked := l.Begin()
+		if !blocked {
+			l.Fail()
+			l.Done()
+		}
+		return blocked
+	}
 
-	for i := 0; i < 4; i++ {
-		th.Fail("router")
+	for i := 0; i < 20; i++ { // раз в окно — вход никогда не закрыт
+		if try() {
+			t.Fatalf("редкий отказ #%d закрыл вход", i)
+		}
+		now = now.Add(routerWindow)
 	}
-	now = now.Add(3*time.Minute - time.Second)
-	if _, blocked := th.Begin("router"); !blocked {
-		t.Fatal("до конца окна попытка не должна проходить")
+
+	for i := 0; i < routerMaxFailures; i++ {
+		if try() {
+			t.Fatalf("попытка %d в окне закрыта раньше предела", i+1)
+		}
+		now = now.Add(time.Second)
 	}
-	now = now.Add(2 * time.Second)
-	if _, blocked := th.Begin("router"); blocked {
-		t.Fatal("после окна одна попытка проходит")
+	retry, blocked := l.Begin()
+	if !blocked || retry <= 0 || retry > routerWindow {
+		t.Fatalf("предел набран: blocked=%v retry=%v", blocked, retry)
 	}
-	th.Done("router")
-	if !th.Fail("router") {
-		t.Fatal("одна неудача после окна снова запирает")
+	now = now.Add(retry)
+	if _, blocked := l.Begin(); blocked {
+		t.Fatal("старший отказ вышел из окна, одна попытка должна пройти")
+	}
+}
+
+// Попытки в полёте занимают предел: рывок не проскочит мимо счётчика.
+func TestRouterLimiter_InFlightCounts(t *testing.T) {
+	l := NewRouterLimiter()
+	for i := 0; i < routerMaxFailures; i++ {
+		if _, blocked := l.Begin(); blocked {
+			t.Fatalf("слот %d", i)
+		}
+	}
+	if _, blocked := l.Begin(); !blocked {
+		t.Fatal("предел в полёте не учтён")
+	}
+	l.Done()
+	if _, blocked := l.Begin(); blocked {
+		t.Fatal("Done не освободил слот")
 	}
 }

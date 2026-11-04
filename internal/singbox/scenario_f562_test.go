@@ -612,3 +612,15 @@ func TestScenario_DeferredMark_IntendedDescription_Removed(t *testing.T) {
 		t.Fatalf("запись с задуманным description осталась: has=%v метки=%v", f.Has("Proxy5"), op.deferredProxies)
 	}
 }
+
+// Метка от создания: прочитанный description сильнее голой метки, Alt не
+// протухает (ревью F593).
+func TestDeferLeftProxy_FreshDescriptionReplacesBareMark(t *testing.T) {
+	op, _, _, _ := f562Stand(t)
+	op.deferLeftProxy("Proxy5", "", "tagA")
+	op.deferLeftProxy("Proxy5", "labelB", "")
+	d := op.deferredProxies["Proxy5"]
+	if d == nil || d.desc != "labelB" || d.alt != "" {
+		t.Fatalf("%+v", d)
+	}
+}

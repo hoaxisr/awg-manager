@@ -258,12 +258,18 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			}
 			restore.PendingDescription = wantDesc
 		}
-		// Снос не прошёл, а записи нет: интерфейс с пользовательским именем
-		// стал бы сиротой, реап по штатному описанию его не найдёт (F617).
-		// Запись с намерением передаёт его персист-реапу.
-		if restore == nil && tunLeft {
-			restore = &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: idx,
-				Description: storedPolicyTunDescription(wantDesc)}
+		// Снос не прошёл, а запись его описания не называет: интерфейс с
+		// пользовательским именем стал бы сиротой, реап по штатному описанию
+		// его не найдёт (F617). Запись с описанием передаёт его персист-реапу.
+		// ponytail: запись одна на все режимы. Прежняя запись fakeip или другого
+		// индекса остаётся, снос откатился вслепую — нужен второй слот записи.
+		if tunLeft && (restore == nil || restore != prevRecord) {
+			left := storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: idx}
+			if restore != nil {
+				left = *restore
+			}
+			left.Description = storedPolicyTunDescription(wantDesc)
+			restore = &left
 		}
 		if e := s.deps.Settings.SetOpkgTunState(restore); e != nil {
 			s.appLog.Warn("policy-tun-rollback", iface, "restore policy-tun persist: "+e.Error())
@@ -484,6 +490,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// вместе эти два места закрывают и ручное off→on (лечение, которое мы сами
 	// советуем при #932), и полный re-provision из drift-heal.
 	s.policyTunRouteStrikes.Store(0)
+	s.policyTunV6RouteStrikes, s.policyTunV6RouteLost = 0, false
 	push(func() {
 		if e := s.deps.DefaultRoute.RemoveDefaultRoute(rbCtx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-rollback", iface, "remove default route: "+e.Error())

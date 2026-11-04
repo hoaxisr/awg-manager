@@ -18,11 +18,11 @@ const (
 	throttleSweepInterval = 5 * time.Minute
 	throttleEntryTTL      = 10 * time.Minute
 
-	// routerMaxFailures / routerBlockDuration — лимит входа через роутер, он
-	// строже лимита самого роутера (F459).
+	// routerMaxFailures / routerWindow — лимит входа через роутер, он строже
+	// лимита самого роутера (F459). Окно скользящее и с запасом в 5 с.
 	// ponytail: значения зашиты; читать настройку роутера, если понадобится.
-	routerMaxFailures   = 4
-	routerBlockDuration = 3 * time.Minute
+	routerMaxFailures = 4
+	routerWindow      = 3*time.Minute + 5*time.Second
 )
 
 // LoginThrottle is a minimal in-memory anti-brute-force guard for the login
@@ -36,9 +36,6 @@ type LoginThrottle struct {
 	entries   map[string]*throttleEntry
 	lastSweep time.Time
 	now       func() time.Time // injectable for tests
-	// Порог и длительность блокировки.
-	maxFailures int
-	block       time.Duration
 }
 
 type throttleEntry struct {
@@ -51,19 +48,9 @@ type throttleEntry struct {
 // NewLoginThrottle creates an empty throttle.
 func NewLoginThrottle() *LoginThrottle {
 	return &LoginThrottle{
-		entries:     make(map[string]*throttleEntry),
-		now:         time.Now,
-		maxFailures: throttleMaxFailures,
-		block:       throttleBlockDuration,
+		entries: make(map[string]*throttleEntry),
+		now:     time.Now,
 	}
-}
-
-// NewRouterLoginThrottle — общий на всю панель счётчик отказов роутера.
-func NewRouterLoginThrottle() *LoginThrottle {
-	t := NewLoginThrottle()
-	t.maxFailures = routerMaxFailures
-	t.block = routerBlockDuration
-	return t
 }
 
 // Check reports whether ip is currently blocked by its block window and, if
@@ -118,15 +105,15 @@ func (t *LoginThrottle) Begin(ip string) (retryAfter time.Duration, blocked bool
 		// block (matching the historical semantics — only Success fully
 		// resets), while the guard below still admits this attempt.
 		e.blockedUntil = time.Time{}
-		e.failures = t.maxFailures - 1
+		e.failures = throttleMaxFailures - 1
 	}
-	if e.failures+e.inFlight >= t.maxFailures {
+	if e.failures+e.inFlight >= throttleMaxFailures {
 		// Burst guard: the limit is already committed across recorded failures
 		// and concurrently in-flight attempts. Reject without reserving a slot
 		// so at most throttleMaxFailures attempts ever reach verification
 		// before the block arms. Not persisted as a window; it resolves once
 		// the in-flight attempts drain or a real failure arms blockedUntil.
-		return t.block, true
+		return throttleBlockDuration, true
 	}
 	e.inFlight++
 	e.lastSeen = now
@@ -171,9 +158,9 @@ func (t *LoginThrottle) Fail(ip string) (nowBlocked bool) {
 	}
 	e.failures++
 	e.lastSeen = now
-	if e.failures >= t.maxFailures {
+	if e.failures >= throttleMaxFailures {
 		nowBlocked = e.blockedUntil.Before(now) || e.blockedUntil.IsZero()
-		e.blockedUntil = now.Add(t.block)
+		e.blockedUntil = now.Add(throttleBlockDuration)
 	}
 	return nowBlocked
 }
@@ -209,4 +196,62 @@ func (t *LoginThrottle) sweepLocked() {
 			delete(t.entries, ip)
 		}
 	}
+}
+
+// RouterLimiter — общий на всю панель лимит отказов роутера за скользящее окно.
+// Редкие отказы никого не закрывают: блокировка держится, только пока в окне
+// набран предел. Успех счётчик не сбрасывает: неизвестно, сбрасывает ли его
+// роутер, а лишняя пауза дешевле (F459).
+type RouterLimiter struct {
+	mu       sync.Mutex
+	failures []time.Time
+	inFlight int
+	now      func() time.Time // injectable for tests
+}
+
+// NewRouterLimiter creates an empty limiter.
+func NewRouterLimiter() *RouterLimiter {
+	return &RouterLimiter{now: time.Now}
+}
+
+func (l *RouterLimiter) pruneLocked(now time.Time) {
+	i := 0
+	for i < len(l.failures) && now.Sub(l.failures[i]) >= routerWindow {
+		i++
+	}
+	l.failures = l.failures[i:]
+}
+
+// Begin резервирует попытку. blocked=true: предел набран, слот не занят, Done
+// не вызывать; retryAfter — когда освободится ближайшее место.
+func (l *RouterLimiter) Begin() (retryAfter time.Duration, blocked bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	l.pruneLocked(now)
+	if len(l.failures)+l.inFlight < routerMaxFailures {
+		l.inFlight++
+		return 0, false
+	}
+	if len(l.failures) == 0 {
+		return time.Second, true // предел заняли попытки в полёте
+	}
+	return routerWindow - now.Sub(l.failures[0]), true
+}
+
+// Done освобождает слот, занятый успешным Begin.
+func (l *RouterLimiter) Done() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.inFlight--
+}
+
+// Fail записывает отказ и сообщает, набран ли этим предел.
+func (l *RouterLimiter) Fail() (limitReached bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	l.pruneLocked(now)
+	l.failures = append(l.failures, now)
+	return len(l.failures) >= routerMaxFailures
 }

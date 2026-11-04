@@ -578,20 +578,20 @@ func TestAuthLogin_ThrottleIgnoresSourcePort(t *testing.T) {
 }
 
 func TestAuthLogin_ThrottleResetsOnSuccess(t *testing.T) {
-	ke := &fakeKeenetic{err: auth.ErrInvalidCredentials}
-	h, _ := newLoginHandlerForTest(t, ke, &fakeEntware{})
+	en := &fakeEntware{err: auth.ErrInvalidCredentials}
+	h, _ := newLoginHandlerForTest(t, &fakeKeenetic{}, en)
 
-	for i := 0; i < 3; i++ {
-		doLogin(t, h)
+	for i := 0; i < 4; i++ {
+		doLoginAs(t, h, loginMethodEntware, "x")
 	}
-	ke.err = nil // correct credentials now
-	if rr := doLogin(t, h); rr.Code != http.StatusOK {
+	en.err = nil // correct credentials now
+	if rr := doLoginAs(t, h, loginMethodEntware, "strong-password"); rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rr.Code)
 	}
-	// Counter must have reset: 3 more failures still allowed.
-	ke.err = auth.ErrInvalidCredentials
-	for i := 0; i < 3; i++ {
-		if rr := doLogin(t, h); rr.Code != http.StatusUnauthorized {
+	// Counter must have reset: 4 more failures still allowed.
+	en.err = auth.ErrInvalidCredentials
+	for i := 0; i < 4; i++ {
+		if rr := doLoginAs(t, h, loginMethodEntware, "x"); rr.Code != http.StatusUnauthorized {
 			t.Fatalf("post-reset attempt %d: status = %d, want 401", i+1, rr.Code)
 		}
 	}

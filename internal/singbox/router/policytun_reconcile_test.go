@@ -2628,4 +2628,12 @@ func TestReconcilePolicyTun_V6RouteLostHealedWithLimit(t *testing.T) {
 	if n := h.log.count("SetIPv6DefaultRoute:OpkgTun0"); n != len(policyTunRouteHealAttempts) {
 		t.Fatalf("постановок %d, ждали %d", n, len(policyTunRouteHealAttempts))
 	}
+
+	// Выключение обнуляет лестницу: следующий инцидент получает все попытки.
+	if err := h.svc.disable(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.svc.policyTunV6RouteStrikes != 0 {
+		t.Fatalf("счётчик после выключения: %d", h.svc.policyTunV6RouteStrikes)
+	}
 }

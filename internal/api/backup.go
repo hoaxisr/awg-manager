@@ -207,7 +207,9 @@ func (h *BackupHandler) restoreFrom(w http.ResponseWriter, r *http.Request, src 
 	if err := backup.Restore(h.dataDir, src); err != nil {
 		if errors.Is(err, backup.ErrPartialRestore) {
 			h.partial.Store(true)
-		} else if quiesced && h.resume != nil {
+		} else if quiesced && h.resume != nil && !h.partial.Load() {
+			// partial перечитан: параллельное восстановление могло оставить
+			// частичные данные, пока этот запрос ждал своей очереди.
 			h.resume(r.Context())
 		}
 		if h.log != nil {

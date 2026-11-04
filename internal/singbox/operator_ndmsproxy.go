@@ -178,6 +178,12 @@ func proxyName(idx int) string { return fmt.Sprintf("%s%d", proxyIfacePrefix, id
 // сирота стала бы чужой навсегда. Гард здесь, а не у вызывающих: их
 // несколько (RemoveTunnel, SubscriptionProxyRegistrar, MigrateOff, …).
 func (o *Operator) deferProxyRemoval(name, desc string) {
+	o.markProxy(name, desc, "", false)
+}
+
+// markProxy — общая часть меток. left: метка от создания (deferLeftProxy), её
+// description только что прочитан и сильнее голой метки, а alt заменяется целиком.
+func (o *Operator) markProxy(name, desc, alt string, left bool) {
 	if name == "" {
 		return
 	}
@@ -189,11 +195,17 @@ func (o *Operator) deferProxyRemoval(name, desc string) {
 	d := o.deferredProxies[name]
 	switch {
 	case d == nil:
-		d = &deferredProxy{desc: desc}
+		d = &deferredProxy{desc: desc, alt: alt}
 		o.deferredProxies[name] = d
 		o.saveDeferredLocked()
 		o.wakeProxyCleanupLocked()
-	case d.desc != desc && d.desc != "":
+	case left && (desc != "" && d.desc != desc || d.alt != alt):
+		if desc != "" {
+			d.desc = desc
+		}
+		d.alt = alt
+		o.saveDeferredLocked()
+	case !left && d.desc != desc && d.desc != "":
 		d.desc = desc
 		o.saveDeferredLocked()
 	}
@@ -439,16 +451,7 @@ func (r *SubscriptionProxyRegistrar) RemoveProxy(ctx context.Context, idx int, l
 // (bareMarked).
 func (o *Operator) deferLeftProxy(name, desc, alt string) {
 	o.log.Warn("created proxy left on router, deferred", "name", name, "desc", desc)
-	o.deferProxyRemoval(name, desc)
-	if alt == "" {
-		return
-	}
-	o.deferredProxyMu.Lock()
-	defer o.deferredProxyMu.Unlock()
-	if d := o.deferredProxies[name]; d != nil {
-		d.alt = alt
-		o.saveDeferredLocked()
-	}
+	o.markProxy(name, desc, alt, true)
 }
 
 // bareMarked — есть метка голой записи (name, ""): мы её создали (F577 R1).

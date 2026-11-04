@@ -897,6 +897,20 @@ func TestPolicyTunEnable_DoubleRCIFailureKeepsRecordedNAT(t *testing.T) {
 		}
 	})
 
+	t.Run("снос не прошёл: запись с payload называет описание (F617)", func(t *testing.T) {
+		h := setup(t, nil)
+		setPolicyTunDescription(t, h.store, "Awgmanager")
+		h.svc.deps.OpkgTun.(*recPolicyTunOpkg).failAt = "Delete"
+
+		if err := h.svc.enable(context.Background()); err == nil {
+			t.Fatal("expected error when SetStaticNAT fails")
+		}
+		st := h.loadPolicyTun(t)
+		if st == nil || st.Description != "Awgmanager" {
+			t.Fatalf("запись не называет описание, реап не узнает интерфейс: %+v", st)
+		}
+	})
+
 	t.Run("первый enable: запись остаётся с payload", func(t *testing.T) {
 		h := setup(t, nil)
 
