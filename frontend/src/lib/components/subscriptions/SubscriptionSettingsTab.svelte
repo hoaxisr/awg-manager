@@ -14,7 +14,7 @@
 	import HeadersTextarea from './HeadersTextarea.svelte';
 	import { parseHeadersText, serializeHeaders } from './headersParser';
 	import { Save, Trash2 } from 'lucide-svelte';
-	import { Button, Dropdown, Modal, Toggle } from '$lib/components/ui';
+	import { Button, Dropdown, FormToggle, Modal, Toggle } from '$lib/components/ui';
 	import { untrack } from 'svelte';
 	import { showOutboundReferencedError } from '$lib/utils/outboundReferenced';
 	import { softCompileGoRegex } from '$lib/utils/subscriptionGroupPreview';
@@ -47,6 +47,7 @@
 	let filterInclude = $state(untrack(() => subscription.filterInclude ?? ''));
 	let filterExclude = $state(untrack(() => subscription.filterExclude ?? ''));
 	let bindInterface = $state(untrack(() => subscription.bindInterface ?? ''));
+	let realityMlkem = $state(untrack(() => subscription.realityMlkem ?? false));
 	let saving = $state(false);
 	let togglingEnabled = $state(false);
 	let confirmDelete = $state(false);
@@ -68,6 +69,7 @@
 		filterInclude = subscription.filterInclude ?? '';
 		filterExclude = subscription.filterExclude ?? '';
 		bindInterface = subscription.bindInterface ?? '';
+		realityMlkem = subscription.realityMlkem ?? false;
 	});
 
 	// Мягкая клиентская проверка regex — НЕ авторитетна; финальная валидация
@@ -129,6 +131,7 @@
 				filterInclude: filterInclude.trim(),
 				filterExclude: filterExclude.trim(),
 				bindInterface: bindInterface.trim(),
+				realityMlkem,
 			};
 			if (!subscription.isInline && !subscription.isFile) {
 				patch.url = url;
@@ -298,6 +301,14 @@
 				label=""
 				bind:value={bindInterface}
 				hint={m.subscriptions_settings_bind_hint()}
+			/>
+		</div>
+
+		<div class="bind-section">
+			<FormToggle
+				bind:checked={realityMlkem}
+				label={m.subscriptions_reality_mlkem_label()}
+				hint={m.subscriptions_reality_mlkem_hint()}
 			/>
 		</div>
 

@@ -2146,6 +2146,7 @@ const api_SubscriptionDTO: v.GenericSchema = v.looseObject({
 	orphanTags: v.optional(v.nullable(v.array(v.string()))),
 	path: v.optional(v.nullable(v.string())),
 	proxyIndex: v.optional(v.nullable(v.number())),
+	realityMlkem: v.optional(v.nullable(v.boolean())),
 	refreshHours: v.optional(v.nullable(v.number())),
 	rejectedMembers: v.optional(v.nullable(v.array(v.lazy(() => api_SubscriptionRejectedDTO)))),
 	selectorTag: v.optional(v.nullable(v.string())),

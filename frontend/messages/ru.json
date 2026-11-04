@@ -2083,6 +2083,8 @@
 	"subscriptions_settings_enabled_hint_off": "Подписка выключена — кроме singbox маршрутизации",
 	"subscriptions_settings_bind_title": "Исходящий интерфейс",
 	"subscriptions_settings_bind_hint": "Весь трафик серверов этой подписки будет dial'иться через выбранный uplink. Удобно для модема, отдельного WAN или Wi‑Fi.",
+	"subscriptions_reality_mlkem_label": "X25519MLKEM768 для всех Reality-серверов",
+	"subscriptions_reality_mlkem_hint": "Для серверов на Xray 26.9.8 и новее, которые без постквантового ключа не пускают. Отпечаток Reality-серверов заменяется на chrome: ключ есть только у него. ClientHello вырастает до 1,7 КБ, на части сетей новые соединения могут глушиться, поэтому включайте только для такого сервера.",
 	"subscriptions_settings_summary_title": "Данные подписки",
 	"subscriptions_settings_summary_active": "активна",
 	"subscriptions_settings_summary_off": "выключена",

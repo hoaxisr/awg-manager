@@ -65,6 +65,7 @@ type SubscriptionDTO struct {
 	Mode            string                    `json:"mode" example:"selector"`
 	URLTest         *SubscriptionURLTestDTO   `json:"urlTest,omitempty"`
 	BindInterface   string                    `json:"bindInterface,omitempty" example:"eth3"`
+	RealityMLKEM    bool                      `json:"realityMlkem,omitempty"` // X25519MLKEM768 всем Reality-серверам
 }
 
 // SubscriptionHeader is a single custom HTTP header for the fetch request.
@@ -101,6 +102,7 @@ type CreateSubscriptionRequest struct {
 	FilterInclude string                  `json:"filterInclude,omitempty" example:"(?i)(DE|NL)"`     // regex «включать только» (по имени сервера)
 	FilterExclude string                  `json:"filterExclude,omitempty" example:"(?i)(RU|Russia)"` // regex «исключать» (по имени сервера)
 	BindInterface string                  `json:"bindInterface,omitempty" example:"eth3"`
+	RealityMLKEM  bool                    `json:"realityMlkem,omitempty"` // X25519MLKEM768 всем Reality-серверам
 }
 
 // UpdateSubscriptionRequest is the body for PUT /api/singbox/subscriptions/update.
@@ -116,6 +118,7 @@ type UpdateSubscriptionRequest struct {
 	FilterInclude *string                 `json:"filterInclude,omitempty" example:"(?i)(DE|NL)"`     // regex «включать только»; "" снимает фильтр
 	FilterExclude *string                 `json:"filterExclude,omitempty" example:"(?i)(RU|Russia)"` // regex «исключать»; "" снимает фильтр
 	BindInterface *string                 `json:"bindInterface,omitempty" example:"eth3"`            // "" clears egress bind
+	RealityMLKEM  *bool                   `json:"realityMlkem,omitempty"`                            // X25519MLKEM768 всем Reality-серверам
 }
 
 // ActiveMemberRequest is the body for POST /api/singbox/subscriptions/active-member.
@@ -299,6 +302,7 @@ func toSubscriptionDTO(s subscription.Subscription, ndmsProxyEnabled bool) Subsc
 		Mode:            mode,
 		URLTest:         urltest,
 		BindInterface:   s.BindInterface,
+		RealityMLKEM:    s.RealityMLKEM,
 	}
 }
 
@@ -330,6 +334,7 @@ type SubscriptionMetaDTO struct {
 	FilterInclude   string                    `json:"filterInclude,omitempty"`
 	FilterExclude   string                    `json:"filterExclude,omitempty"`
 	BindInterface   string                    `json:"bindInterface,omitempty" example:"eth3"`
+	RealityMLKEM    bool                      `json:"realityMlkem,omitempty"` // X25519MLKEM768 всем Reality-серверам
 }
 
 // SubscriptionStreamMemberDTO wraps a single member with its index for
@@ -404,6 +409,7 @@ func buildSubscriptionMetaDTO(s subscription.Subscription, ndmsProxyEnabled bool
 		FilterInclude:   s.FilterInclude,
 		FilterExclude:   s.FilterExclude,
 		BindInterface:   s.BindInterface,
+		RealityMLKEM:    s.RealityMLKEM,
 	}
 }
 
