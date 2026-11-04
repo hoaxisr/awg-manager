@@ -69,6 +69,28 @@ func ResolveIPv4Resilient(ctx context.Context, host string, dnsServers []string,
 	return "", err
 }
 
+// resolveIPv6Resilient — AAAA с той же защитой от дрожащего резолвера, что у
+// IPv4: свежий ответ из кэша, при отказе последний удачный (F132). Системного
+// резолвера в цепочке нет: запрос через туннель не должен уходить мимо него.
+func resolveIPv6Resilient(ctx context.Context, host string, dnsServers []string, bindIface string) (string, error) {
+	key := bindIface + "|6|" + host
+	resolveMu.Lock()
+	entry, cached := resolveCache[key]
+	resolveMu.Unlock()
+	if cached && time.Since(entry.resolvedAt) < resolveTTL {
+		return entry.ip, nil
+	}
+	ip, err := lookupIPv6(ctx, host, dnsServers, bindIface)
+	if err == nil {
+		storeResolved(key, ip)
+		return ip, nil
+	}
+	if cached {
+		return entry.ip, nil
+	}
+	return "", err
+}
+
 func storeResolved(key, ip string) {
 	resolveMu.Lock()
 	resolveCache[key] = resolveEntry{ip: ip, resolvedAt: time.Now()}

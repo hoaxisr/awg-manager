@@ -45,6 +45,15 @@ func buildDialContext(bindIface string, dnsServers []string, connectTimeout time
 // резолва или соединения AAAA. Туннель без IPv4 иначе не проходит проверку (F132).
 func dialBoundHost(ctx context.Context, dial func(context.Context, string, string) (net.Conn, error),
 	host, port string, dnsServers []string, bindIface string) (net.Conn, error) {
+	// DNS туннеля только по IPv6: шаг IPv4 заведомо пуст, а его откат на
+	// системный резолвер увёл бы имя мимо туннеля.
+	if onlyIPv6Servers(dnsServers) {
+		ip6, err := resolveIPv6Resilient(ctx, host, dnsServers, bindIface)
+		if err != nil {
+			return nil, err
+		}
+		return dial(ctx, "tcp", net.JoinHostPort(ip6, port))
+	}
 	ip4, err := ResolveIPv4Resilient(ctx, host, dnsServers, bindIface)
 	if err == nil {
 		var conn net.Conn
@@ -55,9 +64,26 @@ func dialBoundHost(ctx context.Context, dial func(context.Context, string, strin
 	if ctx.Err() != nil {
 		return nil, err
 	}
-	ip6, lerr := lookupIPv6(ctx, host, dnsServers, bindIface)
+	// AAAA — лишь запасной путь: его отказ не должен подменять причину IPv4.
+	ip6, lerr := resolveIPv6Resilient(ctx, host, dnsServers, bindIface)
 	if lerr != nil {
-		return nil, err // причина — отказ IPv4: AAAA лишь запасной путь
+		return nil, err
 	}
-	return dial(ctx, "tcp", net.JoinHostPort(ip6, port))
+	conn, derr := dial(ctx, "tcp", net.JoinHostPort(ip6, port))
+	if derr != nil {
+		return nil, err
+	}
+	return conn, nil
+}
+
+func onlyIPv6Servers(servers []string) bool {
+	found := false
+	for _, s := range servers {
+		ip := net.ParseIP(strings.TrimSpace(s))
+		if ip == nil || ip.To4() != nil {
+			return false
+		}
+		found = true
+	}
+	return found
 }

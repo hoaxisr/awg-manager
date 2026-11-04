@@ -228,6 +228,14 @@ func TestRouterLimiter_SurvivesRestart(t *testing.T) {
 		t.Fatal("отказы старше окна не должны считаться")
 	}
 
+	// Часы перевели назад: штампы из будущего не закрывают вход (ревью F767).
+	backward := NewRouterLimiter()
+	backward.now = func() time.Time { return time.Now().Add(-time.Hour) }
+	backward.PersistTo(path)
+	if _, blocked := backward.Begin(); blocked {
+		t.Fatal("штампы из будущего закрыли вход")
+	}
+
 	if err := os.WriteFile(path, []byte("мусор"), 0o600); err != nil {
 		t.Fatal(err)
 	}

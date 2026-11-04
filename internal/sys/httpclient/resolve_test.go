@@ -185,8 +185,77 @@ func TestDialBoundHost(t *testing.T) {
 		t.Fatalf("%v, want %v", dialed, want)
 	}
 
+	// Отказ соединения по IPv6 и отказ AAAA не подменяют причину IPv4.
+	resetResolveCache()
+	v6Refused := errors.New("v6 unreachable")
+	failBoth := func(_ context.Context, network, _ string) (net.Conn, error) {
+		if network == "tcp4" {
+			return nil, v4Refused
+		}
+		return nil, v6Refused
+	}
+	if _, err := dialBoundHost(context.Background(), failBoth, "a.example", "443", nil, "x"); !errors.Is(err, v4Refused) {
+		t.Fatalf("err=%v, want отказ IPv4", err)
+	}
+	resetResolveCache()
 	v6Err = errors.New("no AAAA")
 	if _, err := dialBoundHost(context.Background(), dial(true), "a.example", "443", nil, "x"); !errors.Is(err, v4Refused) {
 		t.Fatalf("err=%v, want отказ IPv4", err)
+	}
+}
+
+// DNS туннеля только по IPv6: шага IPv4 нет, имя не уходит мимо туннеля (ревью F132).
+func TestDialBoundHost_IPv6DNSSkipsIPv4(t *testing.T) {
+	origV4, origV6 := lookupIPv4, lookupIPv6
+	t.Cleanup(func() { lookupIPv4, lookupIPv6 = origV4, origV6; resetResolveCache() })
+	v4Lookups := 0
+	lookupIPv4 = func(context.Context, string, []string, string) (string, error) {
+		v4Lookups++
+		return "192.0.2.1", nil
+	}
+	lookupIPv6 = func(context.Context, string, []string, string) (string, error) { return "2001:db8::1", nil }
+	conn, server := net.Pipe()
+	defer conn.Close()
+	defer server.Close()
+	var dialed []string
+	dial := func(_ context.Context, network, addr string) (net.Conn, error) {
+		dialed = append(dialed, network+" "+addr)
+		return conn, nil
+	}
+	if _, err := dialBoundHost(context.Background(), dial, "a.example", "443", []string{"2001:db8::53"}, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if v4Lookups != 0 || !slices.Equal(dialed, []string{"tcp [2001:db8::1]:443"}) {
+		t.Fatalf("A-запросов %d, соединения %v", v4Lookups, dialed)
+	}
+	if onlyIPv6Servers(nil) || onlyIPv6Servers([]string{"2001:db8::53", "1.1.1.1"}) {
+		t.Fatal("смешанный или пустой список идёт обычным путём")
+	}
+}
+
+// Дрожащий резолвер не даёт ложного отказа: действует последний удачный AAAA.
+func TestResolveIPv6Resilient_KeepsLastGood(t *testing.T) {
+	orig := lookupIPv6
+	t.Cleanup(func() { lookupIPv6 = orig; resetResolveCache() })
+	calls := 0
+	var fail error
+	lookupIPv6 = func(context.Context, string, []string, string) (string, error) {
+		calls++
+		return "2001:db8::1", fail
+	}
+	if ip, err := resolveIPv6Resilient(context.Background(), "a.example", nil, "x"); err != nil || ip == "" {
+		t.Fatalf("%q %v", ip, err)
+	}
+	if _, err := resolveIPv6Resilient(context.Background(), "a.example", nil, "x"); err != nil || calls != 1 {
+		t.Fatalf("свежий ответ не из кэша: calls=%d err=%v", calls, err)
+	}
+	resolveMu.Lock()
+	e := resolveCache["x|6|a.example"]
+	e.resolvedAt = time.Now().Add(-2 * resolveTTL)
+	resolveCache["x|6|a.example"] = e
+	resolveMu.Unlock()
+	fail = errors.New("flaky")
+	if ip, err := resolveIPv6Resilient(context.Background(), "a.example", nil, "x"); err != nil || ip != "2001:db8::1" {
+		t.Fatalf("устаревший ответ не сработал: %q %v", ip, err)
 	}
 }

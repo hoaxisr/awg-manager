@@ -9,9 +9,6 @@ import (
 	"time"
 )
 
-// LookupIPv4ForBind resolves host to an IPv4 address. When dnsServers is
-// non-empty, queries are sent over UDP bound to bindIface (tunnel DNS).
-// Otherwise the system resolver is used (ip4 only).
 // lookupIPv6 is swappable in tests.
 var lookupIPv6 = lookupIPv6ForBind
 
@@ -46,6 +43,9 @@ func boundResolver(server, bindIface string) *net.Resolver {
 	}}
 }
 
+// LookupIPv4ForBind resolves host to an IPv4 address. When dnsServers is
+// non-empty, queries are sent over UDP bound to bindIface (tunnel DNS).
+// Otherwise the system resolver is used (ip4 only).
 func LookupIPv4ForBind(ctx context.Context, host string, dnsServers []string, bindIface string) (string, error) {
 	host = strings.TrimSuffix(strings.TrimSpace(host), ".")
 	if host == "" {

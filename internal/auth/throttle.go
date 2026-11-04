@@ -232,8 +232,13 @@ func (l *RouterLimiter) PersistTo(path string) {
 	if json.Unmarshal(data, &stamps) != nil {
 		return
 	}
+	// Штампы из файла идут по стенным часам: из будущего (часы перевели назад)
+	// вытеснить нечем, вход закрылся бы на величину перевода.
+	now := l.now()
 	for _, ns := range stamps {
-		l.failures = append(l.failures, time.Unix(0, ns))
+		if t := time.Unix(0, ns); !t.After(now) {
+			l.failures = append(l.failures, t)
+		}
 	}
 }
 
