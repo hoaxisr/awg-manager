@@ -92,7 +92,11 @@
 
 	// Тот же WS, что у sb-router LiveConnectionsChip — для счётчика «Соединения».
 	// Возврат из onMount = отпуск на размонтировании.
-	onMount(() => bindLiveConnectionsStore());
+	onMount(() => {
+		// Чипы Обзор, Outbounds и Rule sets читают стор, но сами его не грузят (F763).
+		void fakeipConfig.loadAll();
+		return bindLiveConnectionsStore();
+	});
 
 	const status = singboxRouter.status;
 	const dnsRules = fakeipConfig.dnsRules;
