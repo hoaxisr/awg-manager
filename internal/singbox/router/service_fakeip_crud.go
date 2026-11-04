@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -242,7 +243,7 @@ func (s *ServiceImpl) FakeIPAddCompositeOutbound(ctx context.Context, o Outbound
 		if err := s.validateCompositeTag(ctx, "", o); err != nil {
 			return err
 		}
-		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
+		if err := s.validateCompositeMembers(ctx, o, c, orchestrator.SlotFakeIP); err != nil {
 			return err
 		}
 		return c.AddCompositeOutbound(o)
@@ -255,10 +256,13 @@ func (s *ServiceImpl) FakeIPUpdateCompositeOutbound(ctx context.Context, tag str
 		if bindErr != nil && !keepsBind(c, tag, o) {
 			return bindErr
 		}
+		if err := s.rejectSubscriptionCompositeEdit(c, tag); err != nil {
+			return err
+		}
 		if err := s.validateCompositeTag(ctx, tag, o); err != nil {
 			return err
 		}
-		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
+		if err := s.validateCompositeMembers(ctx, o, c, orchestrator.SlotFakeIP); err != nil {
 			return err
 		}
 		return c.UpdateCompositeOutbound(tag, o)
@@ -289,19 +293,24 @@ func (s *ServiceImpl) validateCompositeTag(ctx context.Context, oldTag string, o
 }
 
 // validateCompositeMembers отклоняет selector/urltest с member-тегами,
-// которых нет ни в одном каталоге (слотовые выходы, subscription-композиты,
-// AWG-теги, sing-box туннели, builtins). Молча сохранённый мёртвый член
-// валит enable fakeip-tun кросс-слот валидацией с откатом в «Выключен»,
-// не объясняя пользователю, что чинить (#567).
-func (s *ServiceImpl) validateCompositeMembers(ctx context.Context, o Outbound, c *RouterConfig) error {
+// которых нет ни в конфиге своего слота, ни в каталогах, ни среди выходов
+// включённых слотов. Серверы подписки (sub-<id>-<hash> в 13-subscriptions.json)
+// — обычные выходы: каталог композитов их не видит, слот — видит (#567).
+// own исключается из слотов: правда по своему конфигу — это c, включая
+// ещё не записанный черновик.
+func (s *ServiceImpl) validateCompositeMembers(ctx context.Context, o Outbound, c *RouterConfig, own orchestrator.Slot) error {
 	switch strings.ToLower(o.Type) {
 	case "selector", "urltest", "fallback":
 	default:
 		return nil
 	}
+	var live map[string]bool
+	if s.deps.Orch != nil {
+		live = s.deps.Orch.EnabledOutboundTags(own)
+	}
 	var unknown []string
 	for _, m := range o.Outbounds {
-		if m == o.Tag || s.isKnownOutboundTag(ctx, m, c) {
+		if m == o.Tag || live[m] || s.isKnownOutboundTag(ctx, m, c) {
 			continue
 		}
 		unknown = append(unknown, m)
@@ -309,7 +318,64 @@ func (s *ServiceImpl) validateCompositeMembers(ctx context.Context, o Outbound, 
 	if len(unknown) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%w: %s — такие выходы больше не существуют (туннель пересоздан или переименован), выберите членов заново", ErrCompositeMemberUnknown, strings.Join(unknown, ", "))
+	return fmt.Errorf("%w: %s", ErrCompositeMemberUnknown, unknownMembersDetail(unknown))
+}
+
+// subMemberTag — сервер подписки: sub-<8 hex id>-<hash>.
+var subMemberTag = regexp.MustCompile(`^sub-([0-9a-f]{8})-[0-9a-f]+$`)
+
+// unknownMembersDetail — одна фраза вместо простыни тегов. Пачка серверов
+// одной подписки схлопывается: «58 серверов подписки sub-40be7ea6…».
+func unknownMembersDetail(tags []string) string {
+	if id, ok := oneSubscriptionID(tags); ok && len(tags) >= 4 {
+		return fmt.Sprintf("%d серверов подписки sub-%s нет в конфиге — откройте группу и выберите серверы заново", len(tags), id)
+	}
+	shown := tags
+	tail := ""
+	if len(tags) > 3 {
+		shown = tags[:3]
+		tail = fmt.Sprintf(" и ещё %d", len(tags)-3)
+	}
+	return fmt.Sprintf("%s%s нет в конфиге — выберите участников заново", strings.Join(shown, ", "), tail)
+}
+
+func oneSubscriptionID(tags []string) (string, bool) {
+	if len(tags) == 0 {
+		return "", false
+	}
+	id := ""
+	for _, t := range tags {
+		m := subMemberTag.FindStringSubmatch(t)
+		if m == nil {
+			return "", false
+		}
+		if id == "" {
+			id = m[1]
+		} else if id != m[1] {
+			return "", false
+		}
+	}
+	return id, true
+}
+
+// rejectSubscriptionCompositeEdit отказывает в правке группы, которой нет
+// в этом слоте и которая принадлежит подписке. Иначе валидация членов
+// перечисляет все серверы подписки как несуществующие.
+func (s *ServiceImpl) rejectSubscriptionCompositeEdit(c *RouterConfig, tag string) error {
+	for _, o := range c.Outbounds {
+		if o.Tag == tag {
+			return nil
+		}
+	}
+	if s.deps.SubscriptionComposites == nil {
+		return nil
+	}
+	for _, o := range s.deps.SubscriptionComposites.ListSubscriptionComposites() {
+		if o.Tag == tag {
+			return fmt.Errorf("%w: Группу «%s» меняют в разделе «Подписки»", ErrCompositeOwnedBySubscription, tag)
+		}
+	}
+	return nil
 }
 
 func (s *ServiceImpl) FakeIPDeleteCompositeOutbound(ctx context.Context, tag string, force bool) error {

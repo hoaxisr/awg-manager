@@ -166,7 +166,7 @@ func (s *ServiceImpl) AddCompositeOutbound(ctx context.Context, o Outbound) erro
 		if err := s.validateCompositeTag(ctx, "", o); err != nil {
 			return err
 		}
-		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
+		if err := s.validateCompositeMembers(ctx, o, c, orchestrator.SlotRouter); err != nil {
 			return err
 		}
 		return c.AddCompositeOutbound(o)
@@ -179,10 +179,13 @@ func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o
 		if bindErr != nil && !keepsBind(c, tag, o) {
 			return bindErr
 		}
+		if err := s.rejectSubscriptionCompositeEdit(c, tag); err != nil {
+			return err
+		}
 		if err := s.validateCompositeTag(ctx, tag, o); err != nil {
 			return err
 		}
-		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
+		if err := s.validateCompositeMembers(ctx, o, c, orchestrator.SlotRouter); err != nil {
 			return err
 		}
 		return c.UpdateCompositeOutbound(tag, o)
@@ -220,7 +223,7 @@ func (s *ServiceImpl) SetCompositeOutboundMembers(ctx context.Context, tag strin
 		if o.Type == "selector" && o.Default != "" && !slices.Contains(members, o.Default) && len(members) > 0 {
 			o.Default = members[0]
 		}
-		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
+		if err := s.validateCompositeMembers(ctx, o, c, orchestrator.SlotRouter); err != nil {
 			return err
 		}
 		return c.UpdateCompositeOutbound(tag, o)

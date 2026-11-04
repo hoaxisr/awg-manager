@@ -10,6 +10,7 @@ import {
   buildWizardCompositeOutbound,
   findMatchingComposite,
   nextCustomCompositeTag,
+  subscriptionGroupForMembers,
 } from './wizardCompositeOutbound';
 import { parseInlineRuleList, isInlineRuleListEmpty } from '$lib/utils/singboxInlineRules';
 import { expandGeoLinesInInput } from '$lib/utils/singboxInlineGeoExpand';
@@ -33,6 +34,9 @@ export async function resolveTunnelOutbound(
 ): Promise<string> {
   if (tunnelTags.length === 0) throw new ValidationError(m.sb_router_wizard_err_pick_tunnel());
   if (tunnelTags.length === 1) return tunnelTags[0];
+
+  const subscription = subscriptionGroupForMembers(tunnelTags, existingOutbounds);
+  if (subscription) return subscription;
 
   const existing = findMatchingComposite(existingOutbounds, tunnelTags, compositeMode)
     ?? (!compositeMode ? findMatchingComposite(existingOutbounds, tunnelTags) : undefined);

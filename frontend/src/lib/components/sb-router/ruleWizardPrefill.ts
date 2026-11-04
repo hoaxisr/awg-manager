@@ -41,6 +41,16 @@ function outboundFromRule(
   }
   const ob = outbounds.find((o) => o.tag === rule.outbound);
   if (ob && isCompositeOutboundType(ob.type) && (ob.outbounds?.length ?? 0) > 0) {
+    // Подписка и сводная группа — один выход. Раскрытие в серверы
+    // заставляет простой визард собрать новую группу из sub-… и получить отказ.
+    // Тег sub-<8 hex> — селектор подписки, даже если source не приехал в списке.
+    if (ob.source === 'subscription' || /^sub-[0-9a-f]{8}$/i.test(ob.tag)) {
+      return {
+        outboundCategory: 'tunnel',
+        tunnelTags: [ob.tag],
+        compositeMode: normalizeCompositeType(ob.type),
+      };
+    }
     return {
       outboundCategory: 'tunnel',
       tunnelTags: [...ob.outbounds!],

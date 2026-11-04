@@ -1,6 +1,9 @@
 package router
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 var (
 	ErrNetfilterComponentMissing = errors.New("kernel module xt_TPROXY.ko not found: install the router firmware 'Netfilter kernel modules' component")
@@ -35,6 +38,9 @@ var (
 	ErrOutboundTagConflict = errors.New("outbound with this tag already exists")
 	// ErrCompositeMemberUnknown — член selector/urltest ссылается на несуществующий выход (#567).
 	ErrCompositeMemberUnknown = errors.New("неизвестный член композита")
+	// ErrCompositeOwnedBySubscription — правка группы, которая живёт в слоте
+	// подписок, через CRUD роутера или fakeip. Состав меняется в разделе подписок.
+	ErrCompositeOwnedBySubscription = errors.New("группа принадлежит подписке")
 	// ErrOutboundInvalid — форма outbound отвергнута validateOutbound (тип,
 	// участники, direct в urltest, ссылка на себя). Ввод, не сбой: API — 400.
 	ErrOutboundInvalid          = errors.New("некорректный outbound")
@@ -137,3 +143,14 @@ var (
 	// порт, диапазоны fakeip, стратегия…): ошибка ввода (400), не сбой (F671).
 	ErrDNSServerInvalid = errors.New("dns server is invalid")
 )
+
+// ClientMessage — текст после «sentinel: » для тоста. Сентинел остаётся
+// для errors.Is и в интерфейс не попадает.
+func ClientMessage(err, sentinel error) string {
+	msg := err.Error()
+	prefix := sentinel.Error() + ": "
+	if strings.HasPrefix(msg, prefix) {
+		return strings.TrimSpace(msg[len(prefix):])
+	}
+	return msg
+}

@@ -23,6 +23,26 @@ export function normalizeCompositeType(type: string): WizardCompositeMode | unde
   return undefined;
 }
 
+const SUBSCRIPTION_SELECTOR = /^sub-[0-9a-f]{8}$/i;
+
+/**
+ * Подписка с тем же составом, что и выбранные теги. Простой визард
+ * возвращает её тег и не собирает custom-composite из серверов.
+ */
+export function subscriptionGroupForMembers(
+  tunnelTags: string[],
+  outbounds: SingboxRouterOutbound[],
+): string | undefined {
+  if (tunnelTags.length < 2) return undefined;
+  for (const o of outbounds) {
+    if (!isCompositeOutboundType(o.type)) continue;
+    if (o.source !== 'subscription' && !SUBSCRIPTION_SELECTOR.test(o.tag)) continue;
+    const members = o.outbounds ?? [];
+    if (members.length >= 2 && sameOutboundMemberSet(members, tunnelTags)) return o.tag;
+  }
+  return undefined;
+}
+
 /** Ищет composite outbound с ровно тем же набором участников (и типом, если передан). */
 export function findMatchingComposite(
   outbounds: SingboxRouterOutbound[],
@@ -112,6 +132,16 @@ export function previewTunnelOutboundResolution(
   if (tunnelTags.length === 0) return null;
   if (tunnelTags.length === 1) {
     return { outboundTag: tunnelTags[0], willCreate: false, tunnelCount: 1, mode };
+  }
+  const subscription = subscriptionGroupForMembers(tunnelTags, outbounds);
+  if (subscription) {
+    const ob = outbounds.find((o) => o.tag === subscription);
+    return {
+      outboundTag: subscription,
+      willCreate: false,
+      tunnelCount: tunnelTags.length,
+      mode: (ob && normalizeCompositeType(ob.type)) || mode,
+    };
   }
   const existing = findMatchingComposite(outbounds, tunnelTags, mode);
   if (existing) {

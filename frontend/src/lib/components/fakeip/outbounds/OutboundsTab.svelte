@@ -42,7 +42,7 @@
 	import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
 	import { singboxDelayFromHistory } from '$lib/utils/singboxDelay';
 	import { singboxTunnels } from '$lib/stores/singbox';
-	import { subscriptionsStore } from '$lib/stores/subscriptions';
+	import { subscriptionGroupsStore, subscriptionsStore } from '$lib/stores/subscriptions';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
 	import { ConfirmModal } from '$lib/components/ui';
@@ -71,6 +71,7 @@
 
 	const partitioned = $derived(partitionOutbounds($storeOutbounds));
 	const subscriptions = $derived($subscriptionsStore.data ?? []);
+	const groups = $derived($subscriptionGroupsStore.data ?? []);
 	const proxyGroups = $derived($singboxProxies.data ?? []);
 
 	// ATOMIC section = the proxy egress pool (AWG/NWG tunnels + subscription
@@ -300,6 +301,7 @@
 						outbounds={$storeOutbounds}
 						outboundOptions={$storeOptions}
 						{subscriptions}
+						{groups}
 						{proxyGroups}
 						{live}
 						testDelays={testResults[o.tag]}
