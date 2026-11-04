@@ -2023,6 +2023,8 @@
 	"subscriptions_settings_enabled_hint_off": "The subscription is disabled — except for sing-box routing",
 	"subscriptions_settings_bind_title": "Outgoing interface",
 	"subscriptions_settings_bind_hint": "All traffic of this subscription's servers will be dialed through the selected uplink. Handy for a modem, a separate WAN or Wi‑Fi.",
+	"subscriptions_reality_mlkem_label": "X25519MLKEM768 for all Reality servers",
+	"subscriptions_reality_mlkem_hint": "For servers on Xray 26.9.8 or newer that reject clients without the post-quantum key. The fingerprint of Reality servers is replaced with chrome, the only one that has the key. ClientHello grows to 1.7 KB and some networks may throttle new connections, so enable it only for such a server.",
 	"subscriptions_settings_summary_title": "Subscription data",
 	"subscriptions_settings_summary_active": "active",
 	"subscriptions_settings_summary_off": "disabled",

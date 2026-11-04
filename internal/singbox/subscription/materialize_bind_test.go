@@ -16,7 +16,7 @@ func TestMaterializeMemberOutbound(t *testing.T) {
 	t.Cleanup(func() { sysClassNet = oldRoot })
 
 	raw := []byte(`{"type":"vless","server":"1.2.3.4","server_port":443}`)
-	got := materializeMemberOutbound(raw, "sub-abc-def", "eth3", nil)
+	got := materializeMemberOutbound(raw, "sub-abc-def", "eth3", false, nil)
 	var ob map[string]any
 	if err := json.Unmarshal(got, &ob); err != nil {
 		t.Fatal(err)
@@ -28,7 +28,7 @@ func TestMaterializeMemberOutbound(t *testing.T) {
 		t.Fatalf("bind_interface = %v", ob["bind_interface"])
 	}
 
-	cleared := materializeMemberOutbound(got, "sub-abc-def", "", nil)
+	cleared := materializeMemberOutbound(got, "sub-abc-def", "", false, nil)
 	var clearedOb map[string]any
 	if err := json.Unmarshal(cleared, &clearedOb); err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestMaterializeMemberOutbound(t *testing.T) {
 		loggedTarget = target
 		loggedMsg = msg
 	}
-	missing := materializeMemberOutbound(raw, "sub-abc-def", "eth-missing", logFn)
+	missing := materializeMemberOutbound(raw, "sub-abc-def", "eth-missing", false, logFn)
 	var missingOb map[string]any
 	if err := json.Unmarshal(missing, &missingOb); err != nil {
 		t.Fatal(err)

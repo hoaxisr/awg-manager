@@ -103,6 +103,11 @@ type Subscription struct {
 	URLTest          *URLTestConfig         `json:"urlTest,omitempty"` // populated when Mode == ModeURLTest
 	// BindInterface — kernel iface for dialing all member outbounds (modem/WAN/Wi‑Fi).
 	BindInterface string `json:"bindInterface,omitempty"`
+	// RealityMLKEM включает X25519MLKEM768 всем Reality-членам и заменяет их
+	// отпечаток на chrome: провайдер этот ключ mihomo обычно не присылает, а
+	// Xray 26.9.8+ без него не пускает. По умолчанию выключено из-за цены из
+	// #944 (ClientHello ~1,7 КБ).
+	RealityMLKEM bool `json:"realityMlkem,omitempty"`
 }
 
 // IsInline reports whether the subscription's content is paste-supplied
@@ -172,6 +177,7 @@ type CreateInput struct {
 	FilterInclude string           // regex-фильтр «включать только» (валидируется в Service.Create)
 	FilterExclude string           // regex-фильтр «исключать» (валидируется в Service.Create)
 	BindInterface string           // egress kernel iface for all members; "" = default route
+	RealityMLKEM  bool             // X25519MLKEM768 всем Reality-членам
 }
 
 // UpdatePatch is partial update; nil pointers mean "leave as-is".
@@ -186,6 +192,7 @@ type UpdatePatch struct {
 	FilterInclude *string        // regex-фильтр «включать только»; "" = снять фильтр
 	FilterExclude *string        // regex-фильтр «исключать»; "" = снять фильтр
 	BindInterface *string        // egress kernel iface; "" clears bind
+	RealityMLKEM  *bool          // X25519MLKEM768 всем Reality-членам
 }
 
 // RefreshResult is the outcome of a single refresh cycle.
