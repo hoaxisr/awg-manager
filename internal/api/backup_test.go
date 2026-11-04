@@ -122,6 +122,61 @@ func TestBackupImport_RestoreFailureResumesAndDoesNotRestart(t *testing.T) {
 	}
 }
 
+// Отказ на замене данных: службы не поднимаются поверх смеси, экспорт закрыт,
+// повтор тем же файлом не трогает quiesce и кончается перезапуском (F457).
+func TestBackupImport_PartialRestoreKeepsServicesDown(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root обходит права каталога")
+	}
+	bh := newBackupHarness(t, nil)
+	locked := filepath.Join(bh.dataDir, "tunnels")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "awg0.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	archive := archiveOf(t, `{"version":1,"marker":"AFTER"}`)
+
+	rr := httptest.NewRecorder()
+	bh.h.Import(rr, backupUpload(t, "backup.tar.gz", archive))
+	if decodeJSONBody(t, rr)["code"] != "BACKUP_IMPORT_FAILED" {
+		t.Fatalf("ожидался BACKUP_IMPORT_FAILED: %d %s", rr.Code, rr.Body.String())
+	}
+	if want := []string{"quiesce"}; !reflect.DeepEqual(bh.events, want) {
+		t.Fatalf("после частичной замены: %v, want %v", bh.events, want)
+	}
+
+	// Негодный архив при повторе тоже не поднимает службы.
+	rr = httptest.NewRecorder()
+	bh.h.Import(rr, backupUpload(t, "backup.tar.gz", []byte("not gzip")))
+	if rr.Code == 200 || !reflect.DeepEqual(bh.events, []string{"quiesce"}) {
+		t.Fatalf("плохой повтор: %d events=%v", rr.Code, bh.events)
+	}
+
+	rr = httptest.NewRecorder()
+	bh.h.Export(rr, httptest.NewRequest(http.MethodGet, "/api/system/backup/export", nil))
+	if rr.Code != http.StatusConflict || !reflect.DeepEqual(bh.events, []string{"quiesce"}) {
+		t.Fatalf("экспорт поверх смеси: %d events=%v", rr.Code, bh.events)
+	}
+
+	if err := os.Chmod(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rr = httptest.NewRecorder()
+	bh.h.Import(rr, backupUpload(t, "backup.tar.gz", archive))
+	if rr.Code != 200 {
+		t.Fatalf("повтор: %d %s", rr.Code, rr.Body.String())
+	}
+	if want := []string{"quiesce", "restart:restored"}; !reflect.DeepEqual(bh.events, want) {
+		t.Fatalf("после повтора: %v, want %v", bh.events, want)
+	}
+}
+
 func TestBackupImport_RejectsBadFormatAndQuiesceFailure(t *testing.T) {
 	bh := newBackupHarness(t, nil)
 	rr := httptest.NewRecorder()

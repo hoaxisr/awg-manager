@@ -679,22 +679,14 @@ type ServiceImpl struct {
 	// After Install succeeds the flag is set to true until Disable resets it.
 	netfilterStateKnown bool
 
-	// fakeipACLAsserted — one-shot флаг drift-heal'а: permit-ACL fakeip-tun
-	// переассертится один раз за жизнь процесса (апгрейд поверх включённого
-	// fakeip / ручное удаление списка). Доступ только из Reconcile
-	// (сериализован transitionMu).
-	fakeipACLAsserted bool
-
-	// policyTunACLAsserted — тот же one-shot флаг для policy-tun (свой, чтобы
-	// смена режима не съедала ассерт соседа). Доступ только из Reconcile.
-	policyTunACLAsserted bool
-
-	// *ACLv6Asserted — отдельные флаги v6-разрешения: у NDMS под IPv6 своё
-	// пространство списков, и v4-ассерт его не ставит. Свой флаг на каждый, а
-	// не общий с v4: иначе успех v4 гасил бы ретрай упавшего v6, и интерфейс
-	// молча остался бы без v6-разрешения до перезапуска режима.
-	fakeipACLv6Asserted    bool
-	policyTunACLv6Asserted bool
+	// *ACLNextAssert — раньше этого момента permit-ACL не ставим повторно
+	// (assertPermitACL). Свой на режим и семейство: успех v4 не должен гасить
+	// ретрай упавшего v6, у NDMS под IPv6 своё пространство списков. Доступ
+	// только из Reconcile (сериализован transitionMu).
+	fakeipACLNextAssert      time.Time
+	fakeipACLv6NextAssert    time.Time
+	policyTunACLNextAssert   time.Time
+	policyTunACLv6NextAssert time.Time
 
 	// qosApplyFailed remembers a failed sing-box apply of the QoS routes
 	// slot so the next heal re-applies even when disk state is byte-equal.

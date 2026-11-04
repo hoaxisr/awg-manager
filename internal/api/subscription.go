@@ -333,15 +333,8 @@ func (h *SubscriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		if sub.Label != "" {
 			label = sub.Label
 		}
-		// Все outbound'ы подписки в слоте, а не только группа и члены: сироты
-		// и исключённые остаются там именно из-за ссылок (F761).
-		if err := tunnelservice.CheckOutboundTagsReferenced(id, h.svc.OwnedOutboundTags(sub), h.deviceProxyRefs, h.routerRefs); err != nil {
-			var refErr tunnelservice.ErrTunnelReferenced
-			if errors.As(err, &refErr) {
-				h.log.Info("subscription-delete", id, "Refused: "+refErr.Error())
-				WriteTunnelReferenced(w, refErr)
-				return
-			}
+		if h.refusedReferenced(w, "subscription-delete", id, sub) {
+			return
 		}
 	}
 	if err := h.svc.Delete(r.Context(), id); err != nil {
@@ -352,6 +345,20 @@ func (h *SubscriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, struct {
 		OK bool `json:"ok"`
 	}{true})
+}
+
+// refusedReferenced отвечает 409, если на outbound'ы подписки есть ссылки.
+// Проверяются все outbound'ы подписки в слоте, а не только группа и члены:
+// сироты и исключённые остаются там именно из-за ссылок (F761).
+func (h *SubscriptionHandler) refusedReferenced(w http.ResponseWriter, op, id string, sub *subscription.Subscription) bool {
+	err := tunnelservice.CheckOutboundTagsReferenced(id, h.svc.OwnedOutboundTags(sub), h.deviceProxyRefs, h.routerRefs)
+	var refErr tunnelservice.ErrTunnelReferenced
+	if !errors.As(err, &refErr) {
+		return false
+	}
+	h.log.Info(op, id, "Refused: "+refErr.Error())
+	WriteTunnelReferenced(w, refErr)
+	return true
 }
 
 // SubscriptionRefreshData mirrors subscription.RefreshResult for swagger

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/backup"
@@ -40,6 +41,9 @@ type BackupHandler struct {
 	// запрещено: opkg с postinst и Restore боролись бы за одни данные.
 	upgrading func() bool
 	bus       *events.Bus
+	// partial — восстановление оборвалось на замене данных: службы остановлены
+	// и до перезапуска демона подниматься не должны (backup.ErrPartialRestore).
+	partial atomic.Bool
 }
 
 // SetUpgradeGuard подключает проверку «идёт обновление»; nil — без проверки (тесты).
@@ -69,11 +73,16 @@ func NewBackupHandler(dataDir, appVersion string, quiesce BackupQuiescer, resume
 //	@Security		CookieAuth
 //	@Success		200	{file}		binary
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope	"Восстановление оборвалось, данные заменены частично"
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/system/backup/export [get]
 func (h *BackupHandler) Export(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
+		return
+	}
+	if h.partial.Load() {
+		response.ErrorWithStatus(w, http.StatusConflict, backup.ErrPartialRestore.Error(), "BACKUP_PARTIAL_RESTORE")
 		return
 	}
 	ctx := r.Context()
@@ -181,8 +190,11 @@ func (h *BackupHandler) restoreFrom(w http.ResponseWriter, r *http.Request, src 
 			"идёт установка обновления — восстановление будет доступно после перезапуска AWG Manager", "BACKUP_UPGRADE_IN_PROGRESS")
 		return
 	}
+	// Повтор после частичной замены: службы уже стоят, а LoadState внутри
+	// quiesce читал бы смесь данных.
+	partial := h.partial.Load()
 	quiesced := false
-	if h.quiesce != nil {
+	if !partial && h.quiesce != nil {
 		if err := h.quiesce(r.Context()); err != nil {
 			if h.log != nil {
 				h.log.Warn(op, "", "quiesce: "+err.Error())
@@ -193,7 +205,9 @@ func (h *BackupHandler) restoreFrom(w http.ResponseWriter, r *http.Request, src 
 		quiesced = true
 	}
 	if err := backup.Restore(h.dataDir, src); err != nil {
-		if quiesced && h.resume != nil {
+		if errors.Is(err, backup.ErrPartialRestore) {
+			h.partial.Store(true)
+		} else if quiesced && h.resume != nil {
 			h.resume(r.Context())
 		}
 		if h.log != nil {

@@ -9666,13 +9666,14 @@ paths:
     post:
       consumes:
       - application/json
-      description: Authenticates by the chosen method (router — Keenetic credentials,
+      description: 'Authenticates by the chosen method (router — Keenetic credentials,
         the default; entware — Entware system credentials verified locally); sets
         HttpOnly session cookie awg_session. Every failed attempt in which credentials
         were checked is delayed 300ms and counted; after 5 such failures per client
-        IP the endpoint responds 429 for 30 seconds. Unavailable router or Entware
-        shadow db is not counted (503). A correct Entware password that is too weak
-        is refused with 403.
+        IP the endpoint responds 429 for 30 seconds. Router logins additionally share
+        one counter across all clients: after 4 failures they respond 429 for 3 minutes.
+        Unavailable router or Entware shadow db is not counted (503). A correct Entware
+        password that is too weak is refused with 403.'
       parameters:
       - description: Login, password and method
         in: body
@@ -18943,6 +18944,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: 'last member: subscription is referenced'
+          schema:
+            $ref: '#/definitions/api.TunnelReferencedResponse'
         "422":
           description: sing-box validation rejected the remainder
           schema:
@@ -19860,6 +19865,10 @@ paths:
             type: file
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Восстановление оборвалось, данные заменены частично
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "500":

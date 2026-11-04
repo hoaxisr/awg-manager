@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -203,4 +204,22 @@ func (s *RunningConfigStore) fetch(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("parse running-config: %w", err)
 	}
 	return resp.Message, nil
+}
+
+// Правила permit-all в списке `_WEBADMIN_<name>`, как их печатает running-config
+// (стенд 5.01, 2026-09-12).
+const (
+	PermitAllRuleV4 = "permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0"
+	PermitAllRuleV6 = "permit ipv6 ::/0 ::/0"
+)
+
+// PermitAllACLPresent — стоит ли permit-all семейства на интерфейсе name:
+// правило в списке и привязка списка к интерфейсу.
+func PermitAllACLPresent(lines []string, name string, v6 bool) bool {
+	acl, header, rule, f := "_WEBADMIN_"+name, "access-list _WEBADMIN_"+name, PermitAllRuleV4, ACLv4
+	if v6 {
+		header, rule, f = "ipv6 "+header, PermitAllRuleV6, ACLv6
+	}
+	return slices.Contains(ACLRulesOf(lines, header), rule) &&
+		slices.Contains(InterfaceAccessGroupsOf(lines, name, f), acl)
 }

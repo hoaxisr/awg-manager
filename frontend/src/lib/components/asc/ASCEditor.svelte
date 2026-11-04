@@ -64,9 +64,21 @@
 			label: 'DisableCookies',
 		},
 	];
+	// На пути awg_proxy действуют только HeaderProtectionKey и RandomTrailers
+	// (F311): DisableCookies нельзя показывать включённым.
 	const ext31Flags = $derived(
-		AWG31_FLAGS.filter((f) => (params as ASCParamsExtended)[f.key]),
+		AWG31_FLAGS.filter(
+			(f) => (params as ASCParamsExtended)[f.key] && !(awg3Limited && f.key === 'disableCookies'),
+		),
 	);
+	// Значения приходят из импортированного .conf, поля при awg3Limited скрыты.
+	const ignoredParams = $derived.by(() => {
+		if (!awg3Limited) return [];
+		const ext = params as ASCParamsExtended;
+		const names = awg3RangeFields.filter((f) => ext[f.key]).map((f) => f.label);
+		if (ext.disableCookies) names.push('DisableCookies');
+		return names;
+	});
 
 	let selectedProtocol = $state<ProtocolKey>('quic_initial');
 	let generateMode = $state<GenerateMode>('protocol');
@@ -352,6 +364,12 @@
 					<p class="field-error">{errors['headerProtectionKey' as keyof ASCParamsExtended]}</p>
 				{/if}
 			</div>
+
+			{#if ignoredParams.length > 0}
+				<p class="capture-info capture-warning">
+					{m.asc_awg3_ignored_params({ params: ignoredParams.join(', ') })}
+				</p>
+			{/if}
 
 			{#if !awg3Limited}
 				<div class="inline-row inline-row-2">

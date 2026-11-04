@@ -213,6 +213,19 @@ describe('deleteTunnel: два смысла 409', () => {
 		);
 	});
 
+	it('снятие последнего члена подписки со ссылками даёт details для модалки', async () => {
+		globalThis.fetch = reply({
+			error: 'tunnel_referenced',
+			details: { tunnelId: 'sub1', deviceProxy: true, routerRules: [], routerOther: [] },
+		});
+
+		const err = await api.removeSubscriptionMember('sub1', 'tag').catch((e: unknown) => e);
+		expect((err as Error).message).toBe('tunnel_referenced');
+		expect((err as Error & { details?: { deviceProxy?: boolean } }).details?.deviceProxy).toBe(
+			true,
+		);
+	});
+
 	it('занятый замок даёт сообщение бэкенда и НЕ выдаёт себя за tunnel_referenced', async () => {
 		globalThis.fetch = reply({
 			error: true,

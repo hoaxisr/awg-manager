@@ -757,3 +757,44 @@ func TestSubscriptionHandler_Delete_RefusesReferencedOrphan(t *testing.T) {
 		t.Fatalf("сирота со ссылкой из правила: %d %s, want 409", rr.Code, rr.Body.String())
 	}
 }
+
+// Снятие последнего члена inline-подписки сносит её целиком, поэтому проверяет
+// ссылки как Delete, а не теряет outbound молча (F761).
+func TestSubscriptionHandler_RemoveMember_LastRefusedWhileReferenced(t *testing.T) {
+	store, err := subscription.NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewSubscriptionHandler(subscription.NewService(store, &noopMutator{}), &fakePresenceProbe{installed: true})
+	body, _ := json.Marshal(CreateSubscriptionRequest{Label: "x", Enabled: true,
+		Inline: "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443?security=tls&sni=a#A"})
+	rr := httptest.NewRecorder()
+	h.Create(rr, httptest.NewRequest(http.MethodPost, "/api/singbox/subscriptions/create", strings.NewReader(string(body))))
+	var created SubscriptionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil || rr.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
+	}
+	id, tag := created.Data.ID, created.Data.MemberTags[0]
+	remove := func() *httptest.ResponseRecorder {
+		rr := httptest.NewRecorder()
+		h.RemoveMember(rr, httptest.NewRequest(http.MethodPost, "/api/singbox/subscriptions/members/remove?id="+id,
+			strings.NewReader(`{"memberTag":"`+tag+`"}`)))
+		return rr
+	}
+
+	h.SetOutboundRefCheckers(nil, routerRefsFor(tag))
+	if rr := remove(); rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "tunnel_referenced") {
+		t.Fatalf("последний член со ссылкой из правила: %d %s, want 409 tunnel_referenced", rr.Code, rr.Body.String())
+	}
+	if _, err := store.Get(id); err != nil {
+		t.Fatalf("подписка не должна быть снята: %v", err)
+	}
+
+	h.SetOutboundRefCheckers(nil, routerRefsFor("другой-тег"))
+	if rr := remove(); rr.Code != http.StatusOK {
+		t.Fatalf("без ссылок: %d %s, want 200", rr.Code, rr.Body.String())
+	}
+	if _, err := store.Get(id); err == nil {
+		t.Fatal("без ссылок последний член сносит подписку")
+	}
+}

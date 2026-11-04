@@ -404,10 +404,10 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	if mtu == 0 {
 		mtu = 1280
 	}
-	if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "dev", names.IfaceName,
+	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "dev", names.IfaceName,
 		"mtu", fmt.Sprintf("%d", mtu)); err != nil {
 		o.rollbackStart(ctx, cfg, names, iface, justCreated, up, applied)
-		return tunnel.NewOpError("start", cfg.ID, "kernel", fmt.Errorf("configure interface: %w", err))
+		return tunnel.NewOpError("start", cfg.ID, "kernel", fmt.Errorf("configure interface: %w", exec.FormatError(result, err)))
 	}
 	o.logInfo("start", cfg.ID, fmt.Sprintf("Kernel interface configured (mtu=%d)", mtu))
 
@@ -527,8 +527,8 @@ func (o *OperatorOS5Impl) Stop(ctx context.Context, tunnelID, name string) error
 			o.appLog.Info("stop", tunnelID, fmt.Sprintf("Запись %s снята в NDMS — устройство %s удалено", names.NDMSName, names.IfaceName))
 		}
 	case running:
-		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", names.IfaceName); err != nil {
-			o.logWarn("stop", tunnelID, "ip link set down: "+err.Error())
+		if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", names.IfaceName); err != nil {
+			o.logWarn("stop", tunnelID, "ip link set down: "+exec.FormatError(result, err).Error())
 		}
 		// InterfaceDown sets conf: disabled — NDMS won't bring it up on its own.
 		if ok {
@@ -770,9 +770,9 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	if mtu == 0 {
 		mtu = 1280
 	}
-	if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "dev", names.IfaceName,
+	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "dev", names.IfaceName,
 		"mtu", fmt.Sprintf("%d", mtu)); err != nil {
-		return tunnel.NewOpError("reconcile", cfg.ID, "kernel", fmt.Errorf("configure interface: %w", err))
+		return tunnel.NewOpError("reconcile", cfg.ID, "kernel", fmt.Errorf("configure interface: %w", exec.FormatError(result, err)))
 	}
 
 	// === Phase 3: Apply WireGuard configuration ===
@@ -918,8 +918,8 @@ func (o *OperatorOS5Impl) RemoveDefaultRoute(ctx context.Context, tunnelID strin
 // Routes and firewall are NOT touched — NDMS manages failover.
 func (o *OperatorOS5Impl) Suspend(ctx context.Context, tunnelID string) error {
 	names := tunnel.NewNames(tunnelID)
-	if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", names.IfaceName); err != nil {
-		return fmt.Errorf("suspend: ip link set down: %w", err)
+	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", names.IfaceName); err != nil {
+		return fmt.Errorf("suspend: ip link set down: %w", exec.FormatError(result, err))
 	}
 	o.logInfo("suspend", tunnelID, "Interface suspended (link down)")
 	o.appLog.Info("suspend", tunnelID, "Интерфейс приостановлен")
@@ -929,8 +929,8 @@ func (o *OperatorOS5Impl) Suspend(ctx context.Context, tunnelID string) error {
 // Resume sets link up after Suspend. NDMS restores routing automatically.
 func (o *OperatorOS5Impl) Resume(ctx context.Context, tunnelID string) error {
 	names := tunnel.NewNames(tunnelID)
-	if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", names.IfaceName); err != nil {
-		return fmt.Errorf("resume: ip link set up: %w", err)
+	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", names.IfaceName); err != nil {
+		return fmt.Errorf("resume: ip link set up: %w", exec.FormatError(result, err))
 	}
 	o.logInfo("resume", tunnelID, "Interface resumed (link up)")
 	o.appLog.Info("resume", tunnelID, "Интерфейс возобновлён")

@@ -44,3 +44,33 @@ describe('ASCEditor awg3 section', () => {
 		expect(screen.queryByPlaceholderText(/base64-ключ/)).toBeNull();
 	});
 });
+
+describe('ASCEditor awg_proxy path', () => {
+	const limited = (extra: Partial<ASCParamsExtended>) =>
+		render(ASCEditor, {
+			props: { params: { ...params(), ...extra }, extended: true, awg3: true, awg3Limited: true },
+		});
+
+	it('names imported params that are not applied', () => {
+		limited({ rekeyTimeout: '5', disableCookies: true });
+		expect(screen.getByText(/RekeyTimeout, DisableCookies/)).toBeTruthy();
+	});
+
+	it('does not show DisableCookies as enabled', () => {
+		limited({ disableCookies: true });
+		expect(screen.queryByText('AmneziaWG 3.1')).toBeNull();
+	});
+
+	it('keeps RandomTrailers: it does work on this path', () => {
+		limited({ randomTrailers: true });
+		expect(screen.getByText('AmneziaWG 3.1')).toBeTruthy();
+		expect(screen.queryByText(/не применяются|not applied/)).toBeNull();
+	});
+
+	it('stays silent on the full path', () => {
+		render(ASCEditor, {
+			props: { params: { ...params(), rekeyTimeout: '5' }, extended: true, awg3: true },
+		});
+		expect(screen.queryByText(/не применяются|not applied/)).toBeNull();
+	});
+});

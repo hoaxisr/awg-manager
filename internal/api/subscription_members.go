@@ -331,6 +331,7 @@ func (h *SubscriptionHandler) AddMember(w http.ResponseWriter, r *http.Request) 
 //	@Success		200		{object}	APIEnvelope
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		409		{object}	TunnelReferencedResponse	"last member: subscription is referenced"
 //	@Failure		422		{object}	APIErrorEnvelope	"sing-box validation rejected the remainder"
 //	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/subscriptions/members/remove [post]
@@ -347,6 +348,13 @@ func (h *SubscriptionHandler) RemoveMember(w http.ResponseWriter, r *http.Reques
 	var req RemoveMemberRequest
 	if err := decodeBody(r, &req); err != nil {
 		response.ErrorWithStatus(w, http.StatusBadRequest, "bad request body", "INVALID_JSON")
+		return
+	}
+	// Снятие последнего члена inline-подписки сносит её целиком: проверка та
+	// же, что у Delete (F761).
+	if cur, err := h.svc.Get(id); err == nil && cur.IsInline() &&
+		len(cur.Members) == 1 && cur.Members[0].Tag == req.MemberTag &&
+		h.refusedReferenced(w, "subscription-member-remove", id, cur) {
 		return
 	}
 	sub, err := h.svc.RemoveMember(r.Context(), id, req.MemberTag)

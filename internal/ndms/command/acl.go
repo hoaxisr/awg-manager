@@ -206,8 +206,8 @@ func (c *InterfaceCommands) setPermitAllV6(ctx context.Context, iface query.Conf
 // permitAllRuleV4/V6 — наше правило в списке `_WEBADMIN_<name>`, как его
 // печатает running-config (стенд 5.01, 2026-09-12).
 const (
-	permitAllRuleV4 = "permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0"
-	permitAllRuleV6 = "permit ipv6 ::/0 ::/0"
+	permitAllRuleV4 = query.PermitAllRuleV4
+	permitAllRuleV6 = query.PermitAllRuleV6
 )
 
 // hasForeignACLRules — есть ли в списке правила, кроме нашего permit-all.

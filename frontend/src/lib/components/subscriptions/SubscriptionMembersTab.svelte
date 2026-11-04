@@ -12,6 +12,7 @@
 	import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
 	import { notifications } from '$lib/stores/notifications';
 	import { translateKnownError, groupLinkImportErrors } from '$lib/utils/linkImportError';
+	import { showOutboundReferencedError } from '$lib/utils/outboundReferenced';
 	import SubscriptionMemberList from './SubscriptionMemberList.svelte';
 	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
@@ -119,6 +120,11 @@
 			}
 			onUpdated();
 		} catch (e) {
+			const name = subscription.label || subscription.selectorTag || subscription.id;
+			if (showOutboundReferencedError(e, name, m.tunnels_entity_subscription())) {
+				pendingRemove = null;
+				return;
+			}
 			lastError = e instanceof Error ? e.message : m.subscriptions_members_delete_failed();
 		} finally {
 			removingTag = null;

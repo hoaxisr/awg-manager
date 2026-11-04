@@ -1258,3 +1258,29 @@ func TestReconcile_PrevNameDescriptionIsOurs(t *testing.T) {
 		t.Fatalf("описание не переписано на текущее имя: %v", poster.payloads)
 	}
 }
+
+// stderrIPRun отказывает на `ip link set`, как настоящий ip: exit 2 + причина.
+func stderrIPRun(_ context.Context, _ string, args ...string) (*exec.Result, error) {
+	if len(args) >= 2 && args[0] == "link" && args[1] == "set" {
+		return &exec.Result{ExitCode: 2, Stderr: "RTNETLINK answers: Numerical result out of range"}, errors.New("exit status 2")
+	}
+	return &exec.Result{}, nil
+}
+
+// Причина отказа ip обязана дойти до ошибки, а не потеряться (F622).
+func TestIPFailureKeepsStderr(t *testing.T) {
+	for name, call := range map[string]func(o *OperatorOS5Impl) error{
+		"reconcile": func(o *OperatorOS5Impl) error { return o.Reconcile(context.Background(), lifecycleCfg(t)) },
+		"suspend":   func(o *OperatorOS5Impl) error { return o.Suspend(context.Background(), "awg10") },
+		"resume":    func(o *OperatorOS5Impl) error { return o.Resume(context.Background(), "awg10") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			o, _, _ := newOS5Lifecycle(t)
+			o.ipRun = stderrIPRun
+			err := call(o)
+			if err == nil || !strings.Contains(err.Error(), "Numerical result out of range") {
+				t.Fatalf("got %v, want stderr ip в ошибке", err)
+			}
+		})
+	}
+}
