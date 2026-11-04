@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"encoding/json"
+	"os"
 	"sync"
 	"time"
 )
@@ -207,11 +209,44 @@ type RouterLimiter struct {
 	failures []time.Time
 	inFlight int
 	now      func() time.Time // injectable for tests
+	path     string           // "" — только в памяти
 }
 
 // NewRouterLimiter creates an empty limiter.
 func NewRouterLimiter() *RouterLimiter {
 	return &RouterLimiter{now: time.Now}
+}
+
+// PersistTo хранит отказы в файле: счётчик роутера рестарт демона не обнуляет,
+// и пустой наш пропустил бы роутеру лишние отказы (F767). Файл только на tmpfs:
+// пишется на каждый отказ. Нечитаемый файл — пустой счётчик.
+func (l *RouterLimiter) PersistTo(path string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.path = path
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var stamps []int64
+	if json.Unmarshal(data, &stamps) != nil {
+		return
+	}
+	for _, ns := range stamps {
+		l.failures = append(l.failures, time.Unix(0, ns))
+	}
+}
+
+func (l *RouterLimiter) saveLocked() {
+	if l.path == "" {
+		return
+	}
+	stamps := make([]int64, len(l.failures))
+	for i, t := range l.failures {
+		stamps[i] = t.UnixNano()
+	}
+	data, _ := json.Marshal(stamps)
+	_ = os.WriteFile(l.path, data, 0o600) // отказ записи: счётчик остаётся в памяти
 }
 
 func (l *RouterLimiter) pruneLocked(now time.Time) {
@@ -253,5 +288,6 @@ func (l *RouterLimiter) Fail() (limitReached bool) {
 	now := l.now()
 	l.pruneLocked(now)
 	l.failures = append(l.failures, now)
+	l.saveLocked()
 	return len(l.failures) >= routerMaxFailures
 }

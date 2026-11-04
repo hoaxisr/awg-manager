@@ -12,6 +12,40 @@ import (
 // LookupIPv4ForBind resolves host to an IPv4 address. When dnsServers is
 // non-empty, queries are sent over UDP bound to bindIface (tunnel DNS).
 // Otherwise the system resolver is used (ip4 only).
+// lookupIPv6 is swappable in tests.
+var lookupIPv6 = lookupIPv6ForBind
+
+// lookupIPv6ForBind — AAAA через DNS туннеля на bindIface, без них системным
+// резолвером.
+func lookupIPv6ForBind(ctx context.Context, host string, dnsServers []string, bindIface string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	resolvers := []*net.Resolver{}
+	for _, srv := range dnsServers {
+		if srv = strings.TrimSpace(srv); srv != "" {
+			resolvers = append(resolvers, boundResolver(srv, bindIface))
+		}
+	}
+	if len(resolvers) == 0 {
+		resolvers = append(resolvers, net.DefaultResolver)
+	}
+	var lastErr error
+	for _, r := range resolvers {
+		ips, err := r.LookupIP(ctx, "ip6", host)
+		if err == nil && len(ips) > 0 {
+			return ips[0].String(), nil
+		}
+		lastErr = err
+	}
+	return "", fmt.Errorf("httpclient: IPv6 lookup %q: %w", host, lastErr)
+}
+
+func boundResolver(server, bindIface string) *net.Resolver {
+	return &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return bindDialer(bindIface, 3*time.Second).DialContext(ctx, network, net.JoinHostPort(server, "53"))
+	}}
+}
+
 func LookupIPv4ForBind(ctx context.Context, host string, dnsServers []string, bindIface string) (string, error) {
 	host = strings.TrimSuffix(strings.TrimSpace(host), ".")
 	if host == "" {

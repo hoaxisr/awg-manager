@@ -101,6 +101,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	// Create handlers (pass loggingService as AppLogger to constructors)
 	h.appLog = s.loggingService
 	h.authHandler = api.NewAuthHandler(s.keenetic, s.sessions, s.settings, h.appLog)
+	h.authHandler.PersistRouterLimiter()
 	h.tunnelsHandler = api.NewTunnelsHandler(s.tunnelService, s.tunnels, h.appLog)
 	h.tunnelsHandler.SetSettingsStore(s.settings)
 	h.tunnelsHandler.SetPingCheckService(s.pingCheckService)

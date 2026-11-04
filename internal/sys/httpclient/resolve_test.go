@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"slices"
 	"testing"
 	"time"
 )
@@ -141,5 +142,51 @@ func TestBoundNetwork(t *testing.T) {
 		if got := boundNetwork(net.ParseIP(in)); got != want {
 			t.Errorf("%q: %s, want %s", in, got, want)
 		}
+	}
+}
+
+// Отказ IPv4 ведёт на AAAA; успех IPv4 в AAAA не ходит; без AAAA виден отказ
+// IPv4 (F132).
+func TestDialBoundHost(t *testing.T) {
+	origV4, origV6 := lookupIPv4, lookupIPv6
+	t.Cleanup(func() { lookupIPv4, lookupIPv6 = origV4, origV6; resetResolveCache() })
+	lookupIPv4 = func(context.Context, string, []string, string) (string, error) { return "192.0.2.1", nil }
+	v6 := "2001:db8::1"
+	var v6Err error
+	lookupIPv6 = func(context.Context, string, []string, string) (string, error) { return v6, v6Err }
+
+	v4Refused := errors.New("network unreachable")
+	conn, server := net.Pipe()
+	defer conn.Close()
+	defer server.Close()
+	var dialed []string
+	dial := func(failV4 bool) func(context.Context, string, string) (net.Conn, error) {
+		return func(_ context.Context, network, addr string) (net.Conn, error) {
+			dialed = append(dialed, network+" "+addr)
+			if network == "tcp4" && failV4 {
+				return nil, v4Refused
+			}
+			return conn, nil
+		}
+	}
+
+	if _, err := dialBoundHost(context.Background(), dial(false), "a.example", "443", nil, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"tcp4 192.0.2.1:443"}; !slices.Equal(dialed, want) {
+		t.Fatalf("%v, want %v", dialed, want)
+	}
+
+	dialed = nil
+	if _, err := dialBoundHost(context.Background(), dial(true), "a.example", "443", nil, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"tcp4 192.0.2.1:443", "tcp [2001:db8::1]:443"}; !slices.Equal(dialed, want) {
+		t.Fatalf("%v, want %v", dialed, want)
+	}
+
+	v6Err = errors.New("no AAAA")
+	if _, err := dialBoundHost(context.Background(), dial(true), "a.example", "443", nil, "x"); !errors.Is(err, v4Refused) {
+		t.Fatalf("err=%v, want отказ IPv4", err)
 	}
 }

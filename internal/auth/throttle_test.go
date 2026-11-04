@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -201,5 +203,37 @@ func TestRouterLimiter_InFlightCounts(t *testing.T) {
 	l.Done()
 	if _, blocked := l.Begin(); blocked {
 		t.Fatal("Done не освободил слот")
+	}
+}
+
+// Рестарт демона не обнуляет счётчик: роутер свой счётчик помнит (F767).
+func TestRouterLimiter_SurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "router-login.json")
+	first := NewRouterLimiter()
+	first.PersistTo(path)
+	for i := 0; i < routerMaxFailures; i++ {
+		first.Fail()
+	}
+
+	second := NewRouterLimiter()
+	second.PersistTo(path)
+	if _, blocked := second.Begin(); !blocked {
+		t.Fatal("после рестарта предел забыт")
+	}
+
+	expired := NewRouterLimiter()
+	expired.now = func() time.Time { return time.Now().Add(routerWindow + time.Second) }
+	expired.PersistTo(path)
+	if _, blocked := expired.Begin(); blocked {
+		t.Fatal("отказы старше окна не должны считаться")
+	}
+
+	if err := os.WriteFile(path, []byte("мусор"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	broken := NewRouterLimiter()
+	broken.PersistTo(path)
+	if _, blocked := broken.Begin(); blocked {
+		t.Fatal("битый файл — пустой счётчик")
 	}
 }

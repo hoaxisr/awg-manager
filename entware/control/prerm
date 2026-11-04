@@ -73,6 +73,7 @@ rm -rf /opt/etc/awg-manager/update-snapshots
 # Каталоги лока и старого PID, логи и недокачанный IPK на накопителе (#854).
 rm -rf /opt/var/lock/awg-manager /opt/var/run/awg-manager
 rm -f /opt/tmp/awg-manager-upgrade.log /opt/tmp/awg-manager-stderr.log /opt/tmp/awg-manager_*.ipk
+rm -f /tmp/awg-manager-router-login.json
 
 echo ""
 echo "=============================================="

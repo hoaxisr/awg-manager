@@ -78,6 +78,12 @@ func NewAuthHandler(keenetic KeeneticAuthenticator, sessions *auth.SessionStore,
 	}
 }
 
+// routerLimiterFile — счётчик отказов роутера на tmpfs (auth.RouterLimiter.PersistTo).
+const routerLimiterFile = "/tmp/awg-manager-router-login.json"
+
+// PersistRouterLimiter включает хранение счётчика; без вызова он в памяти (тесты).
+func (h *AuthHandler) PersistRouterLimiter() { h.routerThrottle.PersistTo(routerLimiterFile) }
+
 // Способы входа (LoginRequest.Method).
 const (
 	loginMethodRouter  = "router"
