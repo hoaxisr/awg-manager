@@ -572,7 +572,6 @@ func TestFakeIPDisable_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
 	for _, tc := range foreignTeardownCases(fakeIPTunDescription, "OpkgTun0") {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newFakeIPEnableHarness(t, "")
-			captureDrain(t)
 			provisionForDisable(t, h)
 			deletes := stubOrphanNetdev(t, true)
 			h.svc.deps.OpkgTunScan = tc.scan

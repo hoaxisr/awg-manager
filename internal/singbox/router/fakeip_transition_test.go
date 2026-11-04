@@ -80,12 +80,6 @@ func newTransitionHarness(t *testing.T) *transitionHarness {
 	stubFakeIPDNSProbe(t, func(context.Context, string, netip.Prefix) bool { return true })
 	stubLinkAbsent(t)
 
-	// Drain the fakeip drain-schedule synchronously so Disable tests don't leak
-	// goroutines and the reject route gets removed deterministically.
-	oldDrain := fakeIPScheduleDrain
-	fakeIPScheduleDrain = func(removeReject func()) { removeReject() }
-	t.Cleanup(func() { fakeIPScheduleDrain = oldDrain })
-
 	return h
 }
 

@@ -97,7 +97,6 @@ func TestReconcile_TproxyStillUsesSwitch(t *testing.T) {
 
 func TestReconcileFakeIPTun_DisabledDisables(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	captureDrain(t)
 	provisionForDisable(t, h) // provisions + clears log + live index 0
 
 	// Flip persisted Enabled=false so reconcile takes the Disable arm.
@@ -112,8 +111,8 @@ func TestReconcileFakeIPTun_DisabledDisables(t *testing.T) {
 		t.Fatalf("reconcileFakeIPTun: %v", err)
 	}
 
-	// disableFakeIPTun teardown ran (the reject-route renew is a fakeip teardown call).
-	if !h.log.has("AddRejectRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
+	// disableFakeIPTun teardown ran (снятие маршрута пула есть только у fakeip).
+	if !h.log.has("RemoveRoute:198.18.0.0:OpkgTun0") {
 		t.Errorf("disabled reconcile must run teardown, got %v", h.log.calls)
 	}
 	if st := h.loadFakeIP(t); st != nil {
@@ -504,7 +503,6 @@ func TestReconcileFakeIPTun_RevivalEnablesSlotFakeIPNotSlotRouter(t *testing.T) 
 // без tun-in навсегда).
 func TestReconcileFakeIPTun_ParkedSlotAliveEngine_RepromotesSlot(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	captureDrain(t)
 	provisionForDisable(t, h) // Enabled=true персистнут, live index 0
 
 	if err := h.svc.deps.Orch.SetEnabledSilent(orchestrator.SlotFakeIP, false); err != nil {

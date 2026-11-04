@@ -188,8 +188,7 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	// below handles it with its persist-clearing semantics. Best-effort.
 	s.reapOrphansByDescription(ctx, fakeIPTunDescription, owned, "fakeip-reap",
 		func(ctx context.Context, id string) {
-			// pre-delete: пуловый (возможно reject-drain) маршрут переживает
-			// удаление интерфейса — снять, пока имя сироты его адресует.
+			// pre-delete: снять пуловый маршрут, пока имя сироты его адресует.
 			// Best-effort с НАСТРОЕННЫМ пулом: свой пул сироты без персиста
 			// неизвестен.
 			if s.deps.StaticRoutes == nil {
@@ -197,7 +196,7 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 			}
 			if poolNet, poolMask, derr := poolV4NetMask(cfgPool4); derr == nil {
 				if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
-					Network: poolNet, Mask: poolMask, Interface: id, Comment: fakeIPDrainComment,
+					Network: poolNet, Mask: poolMask, Interface: id,
 				}); err != nil {
 					s.appLog.Warn("fakeip-reap", id, "remove pool route: "+err.Error())
 				}
@@ -279,28 +278,23 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 		s.ensureFakeIPIngress(ctx, FakeIPIngressSpec{})
 	}
 
-	// Safety net for the disable drain (Fix 1): the async drain goroutine that
-	// removes the v4 reject route does NOT survive a daemon restart (no
-	// persisted pending-drain). So in NON-fakeip mode best-effort remove a
-	// stale drain reject route for the PERSISTED pool. Derive net/mask exactly
-	// as disableFakeIPTun does (Masked → splitCIDR). NDMS no:true on a
-	// non-existent route is idempotent. The reject route is a kill-switch FLAG
-	// on the pool→OpkgTun route (stand-verified), so its NDMS form is
-	// interface-bound and only addressable via the persisted name; persist-less
-	// orphans get their route swept inside the description scan instead.
+	// Страховка выключения: если снятие маршрута не дошло, а запись владения
+	// осталась, вне режима fakeip best-effort снимаем маршрут ЗАПИСАННОГО пула.
+	// Маршрут привязан к интерфейсу, поэтому адресуется только записанным именем;
+	// сироты без записи получают свою уборку в скане по описанию выше. no:true на
+	// отсутствующем маршруте идемпотентно.
 	if s.deps.StaticRoutes != nil && owned != "" {
-		// Пул — из ПЕРСИСТА (как в disableFakeIPTun): drain ставился теми
-		// значениями, что были на момент выключения. Фолбэк — действующие
-		// настройки, когда payload пуст.
+		// Пул — из ПЕРСИСТА (как в disableFakeIPTun): маршрут ставился с этими
+		// значениями. Фолбэк — действующие настройки, когда payload пуст.
 		pool4 := cfgPool4
 		if st != nil && st.FakeIP != nil && st.FakeIP.Inet4Range != "" {
 			pool4 = st.FakeIP.Inet4Range
 		}
 		if poolNet, poolMask, derr := poolV4NetMask(pool4); derr == nil {
 			if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
-				Network: poolNet, Mask: poolMask, Interface: owned, Comment: fakeIPDrainComment,
+				Network: poolNet, Mask: poolMask, Interface: owned,
 			}); err != nil {
-				s.appLog.Warn("fakeip-reap", owned, "sweep stale drain reject route: "+err.Error())
+				s.appLog.Warn("fakeip-reap", owned, "sweep stale pool route: "+err.Error())
 			}
 		}
 	}

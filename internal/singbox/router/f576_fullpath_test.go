@@ -472,9 +472,6 @@ func TestF576_FakeIPReenableRecreates(t *testing.T) {
 		return err == nil
 	}
 	t.Cleanup(func() { fakeIPLinkPresent = old })
-	oldDrain := fakeIPScheduleDrain
-	fakeIPScheduleDrain = func(removeReject func()) { removeReject() }
-	t.Cleanup(func() { fakeIPScheduleDrain = oldDrain })
 	o.f.ExpectCreate("OpkgTun0")
 	ctx := context.Background()
 

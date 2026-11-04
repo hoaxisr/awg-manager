@@ -382,11 +382,9 @@ func TestEnable_AppliesCIDRRoutes(t *testing.T) {
 }
 
 // TestDisable_RemovesCIDRRoutes proves Task 6 part A: on DISABLE the specific tun
-// CIDR routes are EXPLICITLY removed (not reject-renewed like the synthetic pool).
-// After fakeip is off these real service destinations correctly fall back to the
-// normal WAN exit (direct); only the pool needs a reject. The async pool-drain
-// removes only the pool prefix by net/mask, so the CIDR routes must be removed
-// here or they orphan forever (disable also CLEARS the persisted FakeIP state).
+// CIDR routes are EXPLICITLY removed. After fakeip is off these real service
+// destinations correctly fall back to the normal WAN exit (direct); removed here
+// or they orphan forever (disable also CLEARS the persisted FakeIP state).
 //
 // Harness: the real provisioned enable harness (index 0 → OpkgTun0). We seed
 // 21-fakeip.json with a loop-safe proxy ip_cidr rule (only the ip_cidr matcher)
@@ -395,7 +393,6 @@ func TestEnable_AppliesCIDRRoutes(t *testing.T) {
 // still loadable (21-fakeip.json is not deleted on disable).
 func TestDisable_RemovesCIDRRoutes(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	captureDrain(t) // capture the async pool-drain so it never runs inline
 
 	// Seed the fakeip config with a loop-safe proxy ip_cidr rule before provisioning.
 	fcfg := `{"outbounds":[{"tag":"proxy","type":"direct"}],"dns":{"rules":[{"action":"route","server":"fakeip","query_type":["A","AAAA"]}]},` +
