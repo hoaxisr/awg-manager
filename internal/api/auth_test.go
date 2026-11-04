@@ -454,16 +454,16 @@ func TestAuthLogin_MalformedBodyNotCounted(t *testing.T) {
 }
 
 func TestAuthLogin_Throttle429AfterFiveFailures(t *testing.T) {
-	ke := &fakeKeenetic{err: auth.ErrInvalidCredentials}
-	h, _ := newLoginHandlerForTest(t, ke, &fakeEntware{})
+	en := &fakeEntware{err: auth.ErrInvalidCredentials}
+	h, _ := newLoginHandlerForTest(t, &fakeKeenetic{}, en)
 
 	for i := 0; i < 5; i++ {
-		rr := doLogin(t, h)
+		rr := doLoginAs(t, h, loginMethodEntware, "x")
 		if rr.Code != http.StatusUnauthorized {
 			t.Fatalf("attempt %d: status = %d, want 401", i+1, rr.Code)
 		}
 	}
-	rr := doLogin(t, h)
+	rr := doLoginAs(t, h, loginMethodEntware, "x")
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("6th attempt: status = %d, want 429, body=%s", rr.Code, rr.Body.String())
 	}
@@ -474,10 +474,33 @@ func TestAuthLogin_Throttle429AfterFiveFailures(t *testing.T) {
 		t.Fatalf("missing Russian throttle message, body=%s", rr.Body.String())
 	}
 	// While blocked the credentials are not even checked.
-	before := ke.calls
-	doLogin(t, h)
-	if ke.calls != before {
-		t.Fatalf("keenetic called while throttled (calls %d -> %d)", before, ke.calls)
+	before := en.calls
+	doLoginAs(t, h, loginMethodEntware, "x")
+	if en.calls != before {
+		t.Fatalf("entware called while throttled (calls %d -> %d)", before, en.calls)
+	}
+}
+
+// Счётчик отказов роутера общий на всех клиентов (F459).
+func TestAuthLogin_RouterThrottleIsShared(t *testing.T) {
+	ke := &fakeKeenetic{err: auth.ErrInvalidCredentials}
+	h, _ := newLoginHandlerForTest(t, ke, &fakeEntware{err: auth.ErrInvalidCredentials})
+
+	for i := 0; i < 4; i++ {
+		addr := fmt.Sprintf("203.0.113.%d:40000", i+1) // каждый раз другой клиент
+		if rr := doLoginFrom(t, h, addr); rr.Code != http.StatusUnauthorized {
+			t.Fatalf("попытка %d: код %d, ждали 401", i+1, rr.Code)
+		}
+	}
+	if rr := doLoginFrom(t, h, "203.0.113.9:40000"); rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("новый клиент после 4 отказов: код %d, ждали 429", rr.Code)
+	}
+	if ke.calls != 4 {
+		t.Fatalf("до роутера дошло %d попыток, ждали 4", ke.calls)
+	}
+	// Вход через Entware проверяется локально, этот лимит его не касается.
+	if rr := doLoginAs(t, h, loginMethodEntware, "x"); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("entware при запертом роутере: код %d, ждали 401", rr.Code)
 	}
 }
 
@@ -517,21 +540,21 @@ func TestAuthLogin_SessionCookieIsProtected(t *testing.T) {
 // запирать вход остальным. Иначе один настойчивый бот выключает админку всем,
 // а тест «шестая попытка = 429» этого не заметит — он ходит с одного адреса.
 func TestAuthLogin_ThrottleIsPerClientIP(t *testing.T) {
-	ke := &fakeKeenetic{err: auth.ErrInvalidCredentials}
-	h, _ := newLoginHandlerForTest(t, ke, &fakeEntware{})
+	h, _ := newLoginHandlerForTest(t, &fakeKeenetic{}, &fakeEntware{err: auth.ErrInvalidCredentials})
+	const body = `{"login":"root","password":"x","method":"entware"}`
 
 	const attacker = "203.0.113.7:40001"
 	for i := 0; i < 5; i++ {
-		if rr := doLoginFrom(t, h, attacker); rr.Code != http.StatusUnauthorized {
+		if rr := doLoginBody(t, h, attacker, body); rr.Code != http.StatusUnauthorized {
 			t.Fatalf("попытка %d с %s: код %d, ждали 401", i+1, attacker, rr.Code)
 		}
 	}
-	if rr := doLoginFrom(t, h, attacker); rr.Code != http.StatusTooManyRequests {
+	if rr := doLoginBody(t, h, attacker, body); rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("шестая попытка с %s: код %d, ждали 429", attacker, rr.Code)
 	}
 
 	// Сосед по сети к перебору отношения не имеет — его пускают дальше.
-	if rr := doLoginFrom(t, h, "203.0.113.8:50002"); rr.Code != http.StatusUnauthorized {
+	if rr := doLoginBody(t, h, "203.0.113.8:50002", body); rr.Code != http.StatusUnauthorized {
 		t.Fatalf("чужой адрес заперт вместе с перебирающим: код %d, ждали 401", rr.Code)
 	}
 }
@@ -540,16 +563,16 @@ func TestAuthLogin_ThrottleIsPerClientIP(t *testing.T) {
 // свой, и ключ вместе с портом означал бы, что счётчик не накапливается
 // никогда: переподключился — и перебирай дальше.
 func TestAuthLogin_ThrottleIgnoresSourcePort(t *testing.T) {
-	ke := &fakeKeenetic{err: auth.ErrInvalidCredentials}
-	h, _ := newLoginHandlerForTest(t, ke, &fakeEntware{})
+	h, _ := newLoginHandlerForTest(t, &fakeKeenetic{}, &fakeEntware{err: auth.ErrInvalidCredentials})
+	const body = `{"login":"root","password":"x","method":"entware"}`
 
 	for i := 0; i < 5; i++ {
 		addr := fmt.Sprintf("198.51.100.4:%d", 40000+i) // каждый раз новый порт
-		if rr := doLoginFrom(t, h, addr); rr.Code != http.StatusUnauthorized {
+		if rr := doLoginBody(t, h, addr, body); rr.Code != http.StatusUnauthorized {
 			t.Fatalf("попытка %d с %s: код %d, ждали 401", i+1, addr, rr.Code)
 		}
 	}
-	if rr := doLoginFrom(t, h, "198.51.100.4:49999"); rr.Code != http.StatusTooManyRequests {
+	if rr := doLoginBody(t, h, "198.51.100.4:49999", body); rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("перебор с одного адреса по разным портам не пойман: код %d, ждали 429", rr.Code)
 	}
 }
@@ -558,16 +581,16 @@ func TestAuthLogin_ThrottleResetsOnSuccess(t *testing.T) {
 	ke := &fakeKeenetic{err: auth.ErrInvalidCredentials}
 	h, _ := newLoginHandlerForTest(t, ke, &fakeEntware{})
 
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ {
 		doLogin(t, h)
 	}
 	ke.err = nil // correct credentials now
 	if rr := doLogin(t, h); rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rr.Code)
 	}
-	// Counter must have reset: 4 more failures still allowed.
+	// Counter must have reset: 3 more failures still allowed.
 	ke.err = auth.ErrInvalidCredentials
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ {
 		if rr := doLogin(t, h); rr.Code != http.StatusUnauthorized {
 			t.Fatalf("post-reset attempt %d: status = %d, want 401", i+1, rr.Code)
 		}

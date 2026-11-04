@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -2065,7 +2066,7 @@ func TestReconcilePolicyTun_SkipsPermitACLWhenProbeFailed(t *testing.T) {
 		sr := provisionPolicyTunForReconcile(t, h)
 		h.svc.deps.RunningConfig = &fakeRunningConfig{lines: rcLines}
 		h.svc.deps.OpkgTunIndices = &recIndices{err: errors.New("probe")}
-		h.svc.policyTunACLAsserted = false
+		h.svc.policyTunACLNextAssert = time.Time{}
 
 		if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
 			t.Fatalf("reconcilePolicyTun: %v", err)
@@ -2073,7 +2074,7 @@ func TestReconcilePolicyTun_SkipsPermitACLWhenProbeFailed(t *testing.T) {
 		if h.log.has("SetPermitACL:OpkgTun0") {
 			t.Errorf("permit-ACL поставлен при упавшей пробе: %v", h.log.calls)
 		}
-		if h.svc.policyTunACLAsserted {
+		if !h.svc.policyTunACLNextAssert.IsZero() {
 			t.Error("флаг one-shot взведён без успешной постановки ACL")
 		}
 		// v6-близнец гейта — своя строка кода и свой флаг: обвязка задаёт
@@ -2081,7 +2082,7 @@ func TestReconcilePolicyTun_SkipsPermitACLWhenProbeFailed(t *testing.T) {
 		if h.log.has("SetPermitACLv6:OpkgTun0") {
 			t.Errorf("v6-permit-ACL поставлен при упавшей пробе: %v", h.log.calls)
 		}
-		if h.svc.policyTunACLv6Asserted {
+		if !h.svc.policyTunACLv6NextAssert.IsZero() {
 			t.Error("v6-флаг one-shot взведён без успешной постановки ACL")
 		}
 	})
@@ -2089,7 +2090,7 @@ func TestReconcilePolicyTun_SkipsPermitACLWhenProbeFailed(t *testing.T) {
 		h := newPolicyTunEnableHarness(t, "")
 		sr := provisionPolicyTunForReconcile(t, h)
 		h.svc.deps.RunningConfig = &fakeRunningConfig{lines: rcLines}
-		h.svc.policyTunACLAsserted = false
+		h.svc.policyTunACLNextAssert = time.Time{}
 
 		if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
 			t.Fatalf("reconcilePolicyTun: %v", err)
@@ -2097,13 +2098,13 @@ func TestReconcilePolicyTun_SkipsPermitACLWhenProbeFailed(t *testing.T) {
 		if !h.log.has("SetPermitACL:OpkgTun0") {
 			t.Errorf("permit-ACL не поставлен при здоровой пробе: %v", h.log.calls)
 		}
-		if !h.svc.policyTunACLAsserted {
+		if h.svc.policyTunACLNextAssert.IsZero() {
 			t.Error("флаг one-shot не взведён после успешной постановки ACL")
 		}
 		if !h.log.has("SetPermitACLv6:OpkgTun0") {
 			t.Errorf("v6-permit-ACL не поставлен при здоровой пробе: %v", h.log.calls)
 		}
-		if !h.svc.policyTunACLv6Asserted {
+		if h.svc.policyTunACLv6NextAssert.IsZero() {
 			t.Error("v6-флаг one-shot не взведён после успешной постановки ACL")
 		}
 	})
@@ -2121,8 +2122,8 @@ func TestReconcilePolicyTun_PermitACLAssertOneShot(t *testing.T) {
 		"interface OpkgTun0", "    ip global 65500", "!",
 		"ip policy Policy0", "    permit global OpkgTun0",
 	}}
-	h.svc.policyTunACLAsserted = false
-	h.svc.policyTunACLv6Asserted = false
+	h.svc.policyTunACLNextAssert = time.Time{}
+	h.svc.policyTunACLv6NextAssert = time.Time{}
 
 	for i := 0; i < 3; i++ {
 		if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
@@ -2517,5 +2518,68 @@ func TestReconcilePolicyTun_HealsMissingDNSMode(t *testing.T) {
 	}
 	if got := policyTunInbound(t, h).DNSMode; got != "hijack" {
 		t.Errorf("dns_mode = %q, want hijack", got)
+	}
+}
+
+// Permit-ACL возвращается на любом тике, а не один раз за процесс: при живом
+// интерфейсе список мог снять пользователь или restore конфигурации (F382).
+// Стоящий ACL не даёт записи: постановка — это мутации с сохранением.
+func TestReconcilePolicyTun_PermitACLDriftHealed(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	base := []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip policy Policy0", "    permit global OpkgTun0", "!",
+	}
+	healthy := append(slices.Clone(base[:2]),
+		"    ip access-group _WEBADMIN_OpkgTun0 in", "    ipv6 access-group _WEBADMIN_OpkgTun0 in", "!",
+		"ip policy Policy0", "    permit global OpkgTun0", "!",
+		"access-list _WEBADMIN_OpkgTun0", "    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0", "!",
+		"ipv6 access-list _WEBADMIN_OpkgTun0", "    permit ipv6 ::/0 ::/0", "!",
+	)
+	rc := &fakeRunningConfig{lines: healthy}
+	h.svc.deps.RunningConfig = rc
+	h.svc.policyTunACLNextAssert, h.svc.policyTunACLv6NextAssert = time.Time{}, time.Time{}
+	tick := func() {
+		t.Helper()
+		if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h.log.calls = nil
+	tick()
+	if h.log.has("SetPermitACL:OpkgTun0") || h.log.has("SetPermitACLv6:OpkgTun0") {
+		t.Fatalf("ACL на месте, записи быть не должно: %v", h.log.calls)
+	}
+
+	rc.lines = base // снято мимо нас
+	tick()
+	if n := h.log.count("SetPermitACL:OpkgTun0"); n != 1 {
+		t.Fatalf("v4 после снятия: %d вызовов, ждали 1", n)
+	}
+	if n := h.log.count("SetPermitACLv6:OpkgTun0"); n != 1 {
+		t.Fatalf("v6 после снятия: %d вызовов, ждали 1", n)
+	}
+
+	// Не появился после успеха (прошивка без v6-ACL): тики не долбят постановку.
+	tick()
+	if n := h.log.count("SetPermitACL:OpkgTun0"); n != 1 {
+		t.Fatalf("повтор в паузе: %d вызовов, ждали 1", n)
+	}
+
+	h.svc.policyTunACLNextAssert = time.Now().Add(-time.Second)
+	tick()
+	if n := h.log.count("SetPermitACL:OpkgTun0"); n != 2 {
+		t.Fatalf("после паузы: %d вызовов, ждали 2", n)
+	}
+
+	// Появился — пауза снята: следующее снятие чинится сразу, а не через час.
+	rc.lines = healthy
+	tick()
+	rc.lines = base
+	tick()
+	if n := h.log.count("SetPermitACL:OpkgTun0"); n != 3 {
+		t.Fatalf("снятие после восстановления: %d вызовов, ждали 3", n)
 	}
 }

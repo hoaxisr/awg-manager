@@ -147,3 +147,26 @@ func TestThrottle_SweepDropsStaleEntries(t *testing.T) {
 		t.Fatal("stale entry survived sweep")
 	}
 }
+
+// Лимит входа через роутер: блокировка 3 мин, после неё одна попытка (F459).
+func TestRouterLoginThrottle_Block(t *testing.T) {
+	now := time.Unix(1000, 0)
+	th := NewRouterLoginThrottle()
+	th.now = func() time.Time { return now }
+
+	for i := 0; i < 4; i++ {
+		th.Fail("router")
+	}
+	now = now.Add(3*time.Minute - time.Second)
+	if _, blocked := th.Begin("router"); !blocked {
+		t.Fatal("до конца окна попытка не должна проходить")
+	}
+	now = now.Add(2 * time.Second)
+	if _, blocked := th.Begin("router"); blocked {
+		t.Fatal("после окна одна попытка проходит")
+	}
+	th.Done("router")
+	if !th.Fail("router") {
+		t.Fatal("одна неудача после окна снова запирает")
+	}
+}

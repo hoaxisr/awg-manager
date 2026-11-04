@@ -149,3 +149,22 @@ func TestHasBlockLine_AutoDelete(t *testing.T) {
 		t.Fatal("после unbind блока нет")
 	}
 }
+
+// Список без привязки (снята галка) и привязка без правила — обе половины
+// расхождения: permit-all не действует (F382).
+func TestPermitAllACLPresent(t *testing.T) {
+	rule := []string{"access-list _WEBADMIN_OpkgTun0", "    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0", "!"}
+	bind := []string{"interface OpkgTun0", "    ip access-group _WEBADMIN_OpkgTun0 in", "!"}
+	if !PermitAllACLPresent(append(bind, rule...), "OpkgTun0", false) {
+		t.Error("правило и привязка на месте")
+	}
+	if PermitAllACLPresent(rule, "OpkgTun0", false) {
+		t.Error("нет привязки")
+	}
+	if PermitAllACLPresent(bind, "OpkgTun0", false) {
+		t.Error("нет правила")
+	}
+	if PermitAllACLPresent(append(bind, rule...), "OpkgTun0", true) {
+		t.Error("v4 не означает v6")
+	}
+}

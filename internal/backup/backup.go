@@ -170,6 +170,10 @@ var (
 // Restoring сообщает, идёт ли сейчас восстановление.
 func Restoring() bool { return restoring.Load() }
 
+// ErrPartialRestore — данные заменены не до конца. Поднимать службы поверх них
+// нельзя: они прочли бы смесь старого и нового и начали бы её дописывать.
+var ErrPartialRestore = errors.New("данные заменены частично, службы остановлены: повторите восстановление тем же файлом или перезапустите AWG Manager")
+
 // Restore заменяет данные из архива r (gzip tar) на месте, не подменяя каталог:
 //  1. архив распаковывается в <dataDir>/.restore-tmp и проверяется манифест —
 //     при отказе текущие данные не тронуты;
@@ -224,13 +228,13 @@ func Restore(dataDir string, r io.Reader) error {
 	// С этого места данные меняются: отказ оставляет их частично
 	// заменёнными, и об этом надо сказать прямо — лечится повтором.
 	if _, err := clearBackedUp(dataDir, ""); err != nil {
-		return fmt.Errorf("данные заменены частично, повторите восстановление тем же файлом: %w", err)
+		return fmt.Errorf("%w: %w", ErrPartialRestore, err)
 	}
 	if err := moveInto(staging, dataDir, ""); err != nil {
-		return fmt.Errorf("данные заменены частично, повторите восстановление тем же файлом: %w", err)
+		return fmt.Errorf("%w: %w", ErrPartialRestore, err)
 	}
 	if err := WritePostRestoreMarker(dataDir); err != nil {
-		return fmt.Errorf("не удалось записать маркер post-restore: %w", err)
+		return fmt.Errorf("%w: маркер post-restore: %w", ErrPartialRestore, err)
 	}
 	return nil
 }

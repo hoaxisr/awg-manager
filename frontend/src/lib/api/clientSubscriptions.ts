@@ -118,14 +118,20 @@ export class SubscriptionsClient extends SbRouterClient {
 	 * whole subscription (the caller should navigate away in that case).
 	 */
 	async removeSubscriptionMember(id: string, memberTag: string): Promise<Subscription | null> {
-		const data = await this.request<{ deleted: boolean; subscription?: Subscription }>(
-			`/singbox/subscriptions/members/remove?id=${encodeURIComponent(id)}`,
-			{
-				method: 'POST',
-				body: JSON.stringify({ memberTag }),
-			},
-		);
-		return data.deleted ? null : (data.subscription ?? null);
+		try {
+			const data = await this.request<{ deleted: boolean; subscription?: Subscription }>(
+				`/singbox/subscriptions/members/remove?id=${encodeURIComponent(id)}`,
+				{
+					method: 'POST',
+					body: JSON.stringify({ memberTag }),
+				},
+			);
+			return data.deleted ? null : (data.subscription ?? null);
+		} catch (e) {
+			const body = (e as { body?: { error?: unknown } }).body;
+			if (body?.error === 'tunnel_referenced') this.throwTunnelReferencedFrom409(body, id);
+			throw e;
+		}
 	}
 
 	async excludeSubscriptionMembers(id: string, memberTags: string[]): Promise<Subscription> {

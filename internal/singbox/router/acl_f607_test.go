@@ -213,7 +213,7 @@ func TestReconcileFakeIPTun_PermitACLAssert_NoResendBounded(t *testing.T) {
 	}
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
 	// Новый процесс поверх включённого режима: ассерт ещё не проходил.
-	h.svc.fakeipACLAsserted, h.svc.fakeipACLv6Asserted = false, false
+	h.svc.fakeipACLNextAssert, h.svc.fakeipACLv6NextAssert = time.Time{}, time.Time{}
 	reads0, permits0 := m.readCount(), m.permits()
 
 	all, _ := h.store.Load()
@@ -231,9 +231,6 @@ func TestReconcileFakeIPTun_PermitACLAssert_NoResendBounded(t *testing.T) {
 	}
 	if m.dupes != 0 {
 		t.Errorf("E duplicate = %d, ждали 0", m.dupes)
-	}
-	if !h.svc.fakeipACLAsserted || !h.svc.fakeipACLv6Asserted {
-		t.Error("флаги ассерта не взведены после успеха")
 	}
 }
 
@@ -255,7 +252,7 @@ func TestPermitACL_ForeignRuleOnly_PermitOnceNoDuplicate(t *testing.T) {
 	}
 
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
-	h.svc.fakeipACLAsserted, h.svc.fakeipACLv6Asserted = false, false
+	h.svc.fakeipACLNextAssert, h.svc.fakeipACLv6NextAssert = time.Time{}, time.Time{}
 	all, _ := h.store.Load()
 	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
 	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {

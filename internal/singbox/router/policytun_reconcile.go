@@ -5,7 +5,9 @@ import (
 	"net"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -326,30 +328,13 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 		s.healPolicyTunDescription(ctx, st, sr, iface, ndmsName)
 	}
 
-	// One-shot (до первого УСПЕХА) ассерт permit-ACL: покрывает апгрейд поверх
-	// уже включённого режима и удаление списка мимо нас (В2). Идемпотентен
-	// чтением: permit уходит только без нашего правила в свежем running-config
-	// (F607, без этого — 2 E duplicate на каждое включение); цена ≈89 тиков ndm
-	// на чтение, по одному на семейство за процесс. Гейт probeErr == nil —
-	// живость интерфейса подтверждена, иначе bind упал бы и осиротевший список
-	// остался бы в конфиге навсегда.
-	if !s.policyTunACLAsserted && s.deps.OpkgTun != nil && probeErr == nil {
-		if e := s.deps.OpkgTun.SetPermitAllACL(ctx, ndmsName); e != nil {
-			s.appLog.Warn("policy-tun-reconcile", iface, "permit acl: "+e.Error())
-		} else {
-			s.policyTunACLAsserted = true
-		}
-	}
-	// v6-разрешение — отдельной сущностью и со своим флагом: тот же апгрейд-путь
-	// (режим, поднятый версией без v6-ACL, его не имеет), но успех v4 не должен
-	// гасить ретрай упавшего v6. Гейт по адресу: на интерфейсе без v6 разрешать
-	// нечего.
-	if !s.policyTunACLv6Asserted && s.deps.OpkgTun != nil && probeErr == nil &&
-		s.resolveFakeIPParams(sr).TunAddr6 != "" {
-		if e := s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); e != nil {
-			s.appLog.Warn("policy-tun-reconcile", iface, "permit acl v6: "+e.Error())
-		} else {
-			s.policyTunACLv6Asserted = true
+	// Гейт probeErr == nil: живость интерфейса подтверждена, иначе bind упал
+	// бы и осиротевший список остался бы в конфиге навсегда. Гейт v6 по адресу:
+	// на интерфейсе без v6 разрешать нечего.
+	if s.deps.OpkgTun != nil && probeErr == nil {
+		s.assertPermitACL(ctx, "policy-tun-reconcile", iface, ndmsName, false, &s.policyTunACLNextAssert)
+		if s.resolveFakeIPParams(sr).TunAddr6 != "" {
+			s.assertPermitACL(ctx, "policy-tun-reconcile", iface, ndmsName, true, &s.policyTunACLv6NextAssert)
 		}
 	}
 
@@ -482,11 +467,47 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 	}
 }
 
+// permitACLAssertPause — пауза, если после успешной постановки permit-ACL его
+// всё ещё нет. Без неё на прошивке без v6-ACL (постановка терпит отказ, а
+// правила нет и не будет) каждый тик платил бы чтением running-config и E.
+const permitACLAssertPause = time.Hour
+
+// assertPermitACL возвращает permit-ACL интерфейса, если его нет, кем бы он ни
+// был снят (F382): список наш, без него режим не работает, поэтому и снятая в
+// веб-морде галка вернётся. Запись только при расхождении: постановка — это
+// RCI-мутации с сохранением конфигурации и чтение running-config мимо кэша
+// (≈89 тиков ndm). Сверка идёт по кэшу, поэтому внешнее снятие замечается при
+// его обновлении: по событиям NDMS или через TTL.
+func (s *ServiceImpl) assertPermitACL(ctx context.Context, scope, iface, ndmsName string, v6 bool, next *time.Time) {
+	if s.deps.RunningConfig != nil {
+		lines, err := s.deps.RunningConfig.Lines(ctx)
+		if err != nil {
+			s.appLog.Warn(scope, iface, "running-config: "+err.Error())
+			return
+		}
+		if query.PermitAllACLPresent(lines, ndmsName, v6) {
+			*next = time.Time{}
+			return
+		}
+	}
+	if time.Now().Before(*next) {
+		return
+	}
+	set, label := s.deps.OpkgTun.SetPermitAllACL, "permit acl"
+	if v6 {
+		set, label = s.deps.OpkgTun.SetPermitAllACLv6, "permit acl v6"
+	}
+	if err := set(ctx, ndmsName); err != nil {
+		s.appLog.Warn(scope, iface, label+": "+err.Error())
+		return
+	}
+	*next = time.Now().Add(permitACLAssertPause)
+}
+
 // dropPolicyTunV6 снимает v6 с интерфейса, когда пул v6 выключен на живом
 // режиме (F754): сверка умела только ставить, и v6 членов политики уходил в tun
 // до выключения режима. Маршрут — раньше адреса, обратно установке. v6-ACL
-// остаётся: без адреса и маршрута он ничего не пропускает, а на повторном
-// включении пула policyTunACLv6Asserted считает его стоящим.
+// остаётся: без адреса и маршрута он ничего не пропускает.
 func (s *ServiceImpl) dropPolicyTunV6(ctx context.Context, iface, ndmsName string, route6, addr6 bool) {
 	if route6 && s.deps.DefaultRoute != nil {
 		if e := s.deps.DefaultRoute.RemoveIPv6DefaultRoute(ctx, ndmsName); e != nil {

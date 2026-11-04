@@ -17,6 +17,12 @@ const (
 	// the throttle must be safe to construct in every handler test).
 	throttleSweepInterval = 5 * time.Minute
 	throttleEntryTTL      = 10 * time.Minute
+
+	// routerMaxFailures / routerBlockDuration — лимит входа через роутер, он
+	// строже лимита самого роутера (F459).
+	// ponytail: значения зашиты; читать настройку роутера, если понадобится.
+	routerMaxFailures   = 4
+	routerBlockDuration = 3 * time.Minute
 )
 
 // LoginThrottle is a minimal in-memory anti-brute-force guard for the login
@@ -30,6 +36,9 @@ type LoginThrottle struct {
 	entries   map[string]*throttleEntry
 	lastSweep time.Time
 	now       func() time.Time // injectable for tests
+	// Порог и длительность блокировки.
+	maxFailures int
+	block       time.Duration
 }
 
 type throttleEntry struct {
@@ -42,9 +51,19 @@ type throttleEntry struct {
 // NewLoginThrottle creates an empty throttle.
 func NewLoginThrottle() *LoginThrottle {
 	return &LoginThrottle{
-		entries: make(map[string]*throttleEntry),
-		now:     time.Now,
+		entries:     make(map[string]*throttleEntry),
+		now:         time.Now,
+		maxFailures: throttleMaxFailures,
+		block:       throttleBlockDuration,
 	}
+}
+
+// NewRouterLoginThrottle — общий на всю панель счётчик отказов роутера.
+func NewRouterLoginThrottle() *LoginThrottle {
+	t := NewLoginThrottle()
+	t.maxFailures = routerMaxFailures
+	t.block = routerBlockDuration
+	return t
 }
 
 // Check reports whether ip is currently blocked by its block window and, if
@@ -99,15 +118,15 @@ func (t *LoginThrottle) Begin(ip string) (retryAfter time.Duration, blocked bool
 		// block (matching the historical semantics — only Success fully
 		// resets), while the guard below still admits this attempt.
 		e.blockedUntil = time.Time{}
-		e.failures = throttleMaxFailures - 1
+		e.failures = t.maxFailures - 1
 	}
-	if e.failures+e.inFlight >= throttleMaxFailures {
+	if e.failures+e.inFlight >= t.maxFailures {
 		// Burst guard: the limit is already committed across recorded failures
 		// and concurrently in-flight attempts. Reject without reserving a slot
 		// so at most throttleMaxFailures attempts ever reach verification
 		// before the block arms. Not persisted as a window; it resolves once
 		// the in-flight attempts drain or a real failure arms blockedUntil.
-		return throttleBlockDuration, true
+		return t.block, true
 	}
 	e.inFlight++
 	e.lastSeen = now
@@ -152,9 +171,9 @@ func (t *LoginThrottle) Fail(ip string) (nowBlocked bool) {
 	}
 	e.failures++
 	e.lastSeen = now
-	if e.failures >= throttleMaxFailures {
+	if e.failures >= t.maxFailures {
 		nowBlocked = e.blockedUntil.Before(now) || e.blockedUntil.IsZero()
-		e.blockedUntil = now.Add(throttleBlockDuration)
+		e.blockedUntil = now.Add(t.block)
 	}
 	return nowBlocked
 }

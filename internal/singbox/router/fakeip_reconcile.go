@@ -147,34 +147,14 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		s.completeExternalFlip(ctx, sr, iface, ndmsName, "fakeip-reconcile")
 	}
 
-	// One-shot (до первого УСПЕХА) ассерт permit-ACL: покрывает апгрейд
-	// awg-manager поверх уже включённого fakeip (ACL появился в этой версии)
-	// и удаление списка до старта демона. Идемпотентно чтением: permit уходит
-	// только без нашего правила в свежем running-config (F607; цена ≈89 тиков
-	// ndm на чтение, по одному на семейство за процесс); флаг взводится только
-	// ПОСЛЕ успеха — провал (медленный RCI на буте) ретраится следующим тиком
-	// (ревью).
 	// Гейт probeErr == nil: живость интерфейса подтверждена — иначе permit
 	// создал бы список, bind упал бы, и осиротевший unreferenced-список
-	// (auto-delete не взведён) навсегда сохранился бы в конфиг. Флаг под
-	// transitionMu (Reconcile). Галку _WEBADMIN_, снятую пользователем в
-	// веб-морде при живом процессе, НЕ переустанавливаем намеренно — она
-	// видна в UI как правило firewall, и её снятие — решение пользователя.
-	if !s.fakeipACLAsserted && s.deps.OpkgTun != nil && probeErr == nil {
-		if nerr := s.deps.OpkgTun.SetPermitAllACL(ctx, ndmsName); nerr != nil {
-			s.appLog.Warn("fakeip-reconcile", iface, "permit acl: "+nerr.Error())
-		} else {
-			s.fakeipACLAsserted = true
-		}
-	}
-	// v6-разрешение — отдельная сущность NDMS и свой флаг: успех v4 не должен
-	// гасить ретрай упавшего v6. Гейт по адресу: без v6 разрешать нечего.
-	if !s.fakeipACLv6Asserted && s.deps.OpkgTun != nil && probeErr == nil &&
-		s.resolveFakeIPParams(sr).TunAddr6 != "" {
-		if nerr := s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); nerr != nil {
-			s.appLog.Warn("fakeip-reconcile", iface, "permit acl v6: "+nerr.Error())
-		} else {
-			s.fakeipACLv6Asserted = true
+	// (auto-delete не взведён) навсегда сохранился бы в конфиг. Гейт v6 по
+	// адресу: без v6 разрешать нечего.
+	if s.deps.OpkgTun != nil && probeErr == nil {
+		s.assertPermitACL(ctx, "fakeip-reconcile", iface, ndmsName, false, &s.fakeipACLNextAssert)
+		if s.resolveFakeIPParams(sr).TunAddr6 != "" {
+			s.assertPermitACL(ctx, "fakeip-reconcile", iface, ndmsName, true, &s.fakeipACLv6NextAssert)
 		}
 	}
 
