@@ -333,13 +333,16 @@
         padding: 0.15rem 0.45rem;
         background: var(--bg-tertiary, var(--surface-bg));
         border: 1px solid var(--border);
-        border-radius: 999px;
+        /* Не 999px: у чипа в несколько строк текст упирался бы в углы. */
+        border-radius: 0.75rem;
         font-family: ui-monospace, monospace;
         font-size: 0.78rem;
         font-weight: 600;
         line-height: calc(1 / 0.75);
         color: var(--text-primary);
-        white-space: nowrap;
+    }
+    .chip-label {
+        overflow-wrap: anywhere;
     }
     .chip-orphan {
         border-color: var(--warning, #e0af68);
