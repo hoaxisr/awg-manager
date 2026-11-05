@@ -168,8 +168,8 @@ func TestStaticRoute_ExternalRemoval_ReappliedOnStart(t *testing.T) {
 // потерянной связности.
 func TestStaticRoute_StartRouteReadError_FullApply(t *testing.T) {
 	posts, f := startWithRC(t, fakeRC{err: errors.New("rci down")})
-	if len(posts) != 2 {
-		t.Fatalf("want полную установку (2), got %v", posts)
+	if all := strings.Join(posts, ""); !strings.Contains(all, "10.20.0.0") || !strings.Contains(all, "1.2.3.4") {
+		t.Fatalf("want полную установку обеих подсетей, got %v", posts)
 	}
 	oracleClean(t, f)
 }
@@ -235,8 +235,11 @@ func TestStaticRoute_OneListPerCall(t *testing.T) {
 	if n := f.ListCalls(); n != 1 {
 		t.Fatalf("Reconcile: чтений списка = %d, want 1", n)
 	}
-	if got := routePosts(f); len(got) != 3 {
-		t.Fatalf("Reconcile: маршрутов %d, want 3: %v", len(got), got)
+	got := strings.Join(routePosts(f), "")
+	for _, want := range []string{"10.20.0.0", "10.30.0.0", "1.2.3.4"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Reconcile: нет маршрута %s: %s", want, got)
+		}
 	}
 
 	if _, err := s.Update(ctx, storage.StaticRouteList{ID: "srl1", Name: "a", TunnelID: "awg11", Subnets: []string{"10.20.0.0/16"}, Enabled: true}); err != nil {
@@ -299,10 +302,23 @@ func TestStaticRoute_ListError_UpdateAndSetEnabledKeepRecord(t *testing.T) {
 	}
 }
 
-// rejectPoster — оракул, отвергающий установку маршрута на 10.99.0.0.
+// rejectPoster — оракул, отвергающий установку маршрута на 10.99.0.0. В пакете
+// отказ приходит на свой элемент, как у NDMS (стенд 5.02.B.2): соседние
+// применяются.
 type rejectPoster struct{ f *query.FakeNDMS }
 
 func (p rejectPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	if batch, ok := payload.([]any); ok {
+		replies := make([]json.RawMessage, len(batch))
+		for i, item := range batch {
+			r, err := p.Post(ctx, item)
+			if err != nil {
+				r = json.RawMessage(`{"ip":{"route":{"status":[{"status":"error","message":"injected: route rejected"}]}}}`)
+			}
+			replies[i] = r
+		}
+		return json.Marshal(replies)
+	}
 	js, _ := json.Marshal(payload)
 	if strings.Contains(string(js), `10.99.0.0`) && !strings.Contains(string(js), `"no":true`) {
 		return nil, errors.New("injected: route rejected")
@@ -385,4 +401,240 @@ func TestStaticRoute_RouteRejected_ErrorRollbackNoSave(t *testing.T) {
 		}
 		oracleClean(t, f)
 	})
+}
+
+// reconcileWithRC — Reconcile со списком awg10 из двух подсетей при заданном
+// чтении маршрутов.
+func reconcileWithRC(t *testing.T, rc routeReader) ([]string, *query.FakeNDMS) {
+	t.Helper()
+	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+	s := newOracleStaticRoutes(t, f, []storage.StaticRouteList{
+		{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: []string{"10.20.0.0/16", "1.2.3.4/32"}, Enabled: true},
+	})
+	s.rc = rc
+	if err := s.Reconcile(context.Background()); err != nil {
+		if _, failing := rc.(fakeRC); !failing || rc.(fakeRC).err == nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+	}
+	return routePosts(f), f
+}
+
+// #1157: перезапуск демона при стоящих маршрутах — ни команды, ни сохранения,
+// сколько бы маршрутов ни было.
+func TestReconcile_AllPresent_NoCommands(t *testing.T) {
+	posts, f := reconcileWithRC(t, fakeRC{entries: []query.StaticRouteEntry{
+		{Network: "10.20.0.0", Mask: "255.255.0.0", Interface: "OpkgTun10"},
+		{Host: "1.2.3.4", Interface: "OpkgTun10"},
+	}})
+	if len(f.Posts) != 0 {
+		t.Fatalf("команды при стоящих маршрутах: %v", posts)
+	}
+	oracleClean(t, f)
+}
+
+// Ставится только недостающее; маршрут на ЧУЖОМ интерфейсе не в счёт.
+func TestReconcile_OnlyMissing(t *testing.T) {
+	posts, f := reconcileWithRC(t, fakeRC{entries: []query.StaticRouteEntry{
+		{Host: "1.2.3.4", Interface: "OpkgTun10"},
+		{Network: "10.20.0.0", Mask: "255.255.0.0", Interface: "OpkgTun11"},
+	}})
+	if len(posts) != 1 || !strings.Contains(posts[0], "10.20.0.0") || !strings.Contains(posts[0], "OpkgTun10") {
+		t.Fatalf("want только недостающий 10.20.0.0: %v", posts)
+	}
+	oracleClean(t, f)
+}
+
+// Маршруты не прочитались — ndm занят: ни одной команды. Полная установка
+// вернула бы сценарий #1157 именно под нагрузкой.
+func TestReconcile_RouteReadError_NoCommands(t *testing.T) {
+	_, f := reconcileWithRC(t, fakeRC{err: errors.New("rci down")})
+	if len(f.Posts) != 0 {
+		t.Fatalf("команды при отказе чтения: %v", f.Posts)
+	}
+	oracleClean(t, f)
+}
+
+// Отказ чтения не снимает раздел R37b: записи OpkgTun нет — список ждёт старта.
+func TestReconcile_RouteReadError_KeepsPending(t *testing.T) {
+	f := query.NewFakeNDMS()
+	s := newOracleStaticRoutes(t, f, []storage.StaticRouteList{
+		{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: []string{"1.2.3.4/32"}, Enabled: true},
+	})
+	s.rc = fakeRC{err: errors.New("rci down")}
+	if err := s.Reconcile(context.Background()); err == nil {
+		t.Fatal("отказ чтения проглочен: вызывающий считал бы маршруты восстановленными")
+	}
+	if !s.PendingIDs()["srl1"] {
+		t.Fatal("статус «ждёт старта» потерян")
+	}
+}
+
+// Расхождение reject или comment лечится повторной установкой, иначе после
+// восстановления бэкапа список и роутер остались бы разными навсегда.
+func TestReconcile_ReappliesChangedAttributes(t *testing.T) {
+	for name, entry := range map[string]query.StaticRouteEntry{
+		"reject":  {Host: "1.2.3.4", Interface: "OpkgTun10", Comment: "c"},
+		"comment": {Host: "1.2.3.4", Interface: "OpkgTun10", Reject: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+			s := newOracleStaticRoutes(t, f, []storage.StaticRouteList{
+				{ID: "srl1", Name: "a", TunnelID: "awg10", Fallback: "reject", Subnets: []string{"1.2.3.4/32 !c"}, Enabled: true},
+			})
+			s.rc = fakeRC{entries: []query.StaticRouteEntry{entry}}
+			if err := s.Reconcile(context.Background()); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			posts := routePosts(f)
+			if len(posts) != 1 || !strings.Contains(posts[0], `"reject":true`) || !strings.Contains(posts[0], `"comment":"c"`) {
+				t.Fatalf("want переустановку с reject и comment: %v", posts)
+			}
+		})
+	}
+}
+
+// Совпавшие reject и comment — ни команды.
+func TestReconcile_SameAttributes_NoCommands(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+	s := newOracleStaticRoutes(t, f, []storage.StaticRouteList{
+		{ID: "srl1", Name: "a", TunnelID: "awg10", Fallback: "reject", Subnets: []string{"1.2.3.4/32 !c"}, Enabled: true},
+	})
+	s.rc = fakeRC{entries: []query.StaticRouteEntry{{Host: "1.2.3.4", Interface: "OpkgTun10", Reject: true, Comment: "c"}}}
+	if err := s.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("лишние команды: %v", f.Posts)
+	}
+}
+
+// countingRC считает чтения: одно на весь Reconcile.
+type countingRC struct {
+	fakeRC
+	reads *int
+}
+
+func (r countingRC) Fetch(ctx context.Context) ([]query.StaticRouteEntry, error) {
+	*r.reads++
+	return r.fakeRC.Fetch(ctx)
+}
+
+// Чтение маршрутов одно на проход, сколько бы списков ни было.
+func TestReconcile_ReadsRoutesOnce(t *testing.T) {
+	f := query.NewFakeNDMS(
+		ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"},
+		ndms.Interface{ID: "OpkgTun11", Type: "OpkgTun"},
+	)
+	s := newOracleStaticRoutes(t, f, []storage.StaticRouteList{
+		{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: []string{"1.2.3.4/32"}, Enabled: true},
+		{ID: "srl2", Name: "b", TunnelID: "awg11", Subnets: []string{"1.2.3.5/32"}, Enabled: true},
+	})
+	var reads int
+	s.rc = countingRC{fakeRC{entries: []query.StaticRouteEntry{
+		{Host: "1.2.3.4", Interface: "OpkgTun10"},
+		{Host: "1.2.3.5", Interface: "OpkgTun11"},
+	}}, &reads}
+	if err := s.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if reads != 1 {
+		t.Fatalf("чтений маршрутов %d, want 1", reads)
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("лишние команды: %v", f.Posts)
+	}
+}
+
+// Одна подсеть в двух списках с разными comment и fallback: запись в NDMS одна,
+// и сверка первого списка не должна перезаписывать её вторым на каждом проходе.
+func TestReconcile_DuplicateSubnet_Converges(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+	s := newOracleStaticRoutes(t, f, []storage.StaticRouteList{
+		{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: []string{"1.2.3.4/32 !one"}, Enabled: true},
+		{ID: "srl2", Name: "b", TunnelID: "awg10", Fallback: "reject", Subnets: []string{"1.2.3.4/32 !two"}, Enabled: true},
+	})
+	s.rc = fakeRC{entries: []query.StaticRouteEntry{{Host: "1.2.3.4", Interface: "OpkgTun10", Comment: "one"}}}
+	if err := s.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("запись перезаписана вторым списком: %v", f.Posts)
+	}
+}
+
+// outagePoster — оракул, отвечающий транспортной ошибкой на пакеты установки
+// или снятия, пока down.
+type outagePoster struct {
+	f    *query.FakeNDMS
+	down *bool
+}
+
+func (p outagePoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	if _, batch := payload.([]any); batch && *p.down {
+		return nil, errors.New("timeout")
+	}
+	return p.f.Post(ctx, payload)
+}
+
+func newOutageStaticRoutes(t *testing.T, f *query.FakeNDMS, lists []storage.StaticRouteList, down *bool) *ServiceImpl {
+	t.Helper()
+	s := newOracleStaticRoutes(t, f, lists)
+	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	p := outagePoster{f, down}
+	s.routes = command.NewRouteCommands(p, command.NewSaveCoordinator(p, nil, time.Hour, time.Hour, 0, nil), q)
+	return s
+}
+
+// Обрыв пакета снятия: маршруты могли остаться, запись обязана уцелеть для повтора.
+func TestStaticRoute_RemoveOutage_KeepsRecord(t *testing.T) {
+	ctx := context.Background()
+	lists := []storage.StaticRouteList{{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: []string{"10.20.0.0/16"}, Enabled: true}}
+
+	t.Run("Delete", func(t *testing.T) {
+		f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+		down := true
+		s := newOutageStaticRoutes(t, f, lists, &down)
+		if err := s.Delete(ctx, "srl1"); err == nil {
+			t.Fatal("обрыв проглочен")
+		}
+		if _, err := s.store.GetRouteList("srl1"); err != nil {
+			t.Fatalf("запись потеряна: %v", err)
+		}
+	})
+	t.Run("SetEnabled", func(t *testing.T) {
+		f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+		down := true
+		s := newOutageStaticRoutes(t, f, lists, &down)
+		if err := s.SetEnabled(ctx, "srl1", false); err == nil {
+			t.Fatal("обрыв проглочен")
+		}
+		if got, _ := s.store.GetRouteList("srl1"); !got.Enabled {
+			t.Fatal("список выключен, а маршруты могли остаться")
+		}
+	})
+}
+
+// Ответа на пакет нет — маршруты могли встать, откат обязан снимать и их.
+func TestStaticRoute_ApplyOutage_RollbackIncludesUnknown(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+	down := true
+	s := newOutageStaticRoutes(t, f, nil, &down)
+	got, err := s.applyRoutes(context.Background(), storage.StaticRouteList{ID: "x", TunnelID: "awg10", Subnets: []string{"10.20.0.0/16"}},
+		map[string]query.Confirmed{"OpkgTun10": mustConfirm(t, s, "awg10")}, nil)
+	if err == nil {
+		t.Fatal("обрыв проглочен")
+	}
+	if len(got) != 1 || got[0] != "10.20.0.0/16" {
+		t.Fatalf("неизвестный исход не передан откату: %v", got)
+	}
+}
+
+func mustConfirm(t *testing.T, s *ServiceImpl, id string) query.Confirmed {
+	t.Helper()
+	confirmed, err := s.confirmIfaces(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return confirmed["OpkgTun10"]
 }
