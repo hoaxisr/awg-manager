@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -179,5 +180,40 @@ func TestGetStatus_FakeIPSourcePreserveIsApplied(t *testing.T) {
 	}
 	if st.PolicyTunSourcePreserve == nil || !*st.PolicyTunSourcePreserve {
 		t.Fatalf("после применения = %v, want true", st.PolicyTunSourcePreserve)
+	}
+}
+
+// F775: при isolate-private NDMS не пускает private→private, и LAN не доходит
+// до tun. Tun, созданный прежней версией, переводится на public на тике.
+func TestFakeIPReconcile_HealsPrivateTun(t *testing.T) {
+	rc := func(level string) []string {
+		return []string{"interface OpkgTun0", "    security-level " + level, "!"}
+	}
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		err   error
+		want  bool
+	}{
+		{"прежняя версия", rc("private"), nil, true},
+		{"уже public", rc("public"), nil, false},
+		{"блока нет", nil, nil, false},
+		{"конфиг не прочитан", nil, errors.New("rc down"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newFakeIPEnableHarness(t, "")
+			enableFakeIPLive(t, h)
+			rc := &fakeRunningConfig{lines: tc.lines, err: tc.err}
+			h.svc.deps.RunningConfig = rc
+			h.log.calls = nil
+			reconcileFakeIP(t, h)
+			// Свежее чтение стоит ~89 тиков ndm: на устоявшемся тике его быть не должно.
+			if !tc.want && rc.fetched != 0 {
+				t.Errorf("fetched = %d, want 0", rc.fetched)
+			}
+			if got := h.log.has("SetSecurityLevel:OpkgTun0:public"); got != tc.want {
+				t.Fatalf("SetSecurityLevel = %v, want %v: %v", got, tc.want, h.log.calls)
+			}
+		})
 	}
 }

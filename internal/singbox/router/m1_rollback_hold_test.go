@@ -112,11 +112,11 @@ func TestM1_FakeIPRollbackHoldVsTeardown(t *testing.T) {
 				t.Fatal("Enable обязан упасть на SetMTU")
 			}
 			deleted := h.log.idxOf("Delete:OpkgTun0") >= 0
-			created := h.log.idxOf("Create:OpkgTun0:private") >= 0
+			created := h.log.idxOf("Create:OpkgTun0:public") >= 0
 			if deleted == tc.reused || created == tc.reused {
 				t.Fatalf("reused=%v: Create=%v Delete=%v, calls %v", tc.reused, created, deleted, h.log.calls)
 			}
-			if tc.reused && h.log.idxOf("SetSecurityLevel:OpkgTun0:private") < 0 {
+			if tc.reused && h.log.idxOf("SetSecurityLevel:OpkgTun0:public") < 0 {
 				t.Fatalf("удержанная OpkgTun0 не переиспользована: %v", h.log.calls)
 			}
 			if tc.reused && h.log.idxOf("InterfaceDown:OpkgTun0") < 0 {

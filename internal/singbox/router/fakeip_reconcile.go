@@ -379,6 +379,8 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// Reconcile'ом, поэтому галка у сервера отрабатывает сразу, а не через тик.
 	s.ensureFakeIPIngress(ctx, s.fakeIPIngressSpecFor(ctx, st, sr))
 
+	s.healFakeIPSecurityLevel(ctx, iface, ndmsName)
+
 	// Source-preserve (#1160): при `ip nat` сегмента sing-box видит вместо
 	// клиента адрес tun, и source_ip_cidr не срабатывает. Механизм общий с
 	// policy-tun; применение — только здесь: UpdateSettings и так завершается
@@ -387,4 +389,27 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	s.reconcilePolicyTunNAT(ctx, sr, st, iface)
 
 	return nil
+}
+
+// healFakeIPSecurityLevel переводит tun прежних версий на fakeIPTunSecurityLevel:
+// enable на живом интерфейсе не доходит до provisionOpkgTun, а без этого LAN
+// остался бы отрезан от tun. Решение — по свежему чтению: кэш running-config
+// не видит правку мимо нас. Конфиг молчит или блока нет — ничего не шлём.
+func (s *ServiceImpl) healFakeIPSecurityLevel(ctx context.Context, iface, ndmsName string) {
+	if s.deps.RunningConfig == nil || s.deps.OpkgTun == nil {
+		return
+	}
+	const stale = "security-level private"
+	lines, err := s.deps.RunningConfig.Lines(ctx)
+	if err != nil || !ifaceBlockHas(lines, ndmsName, stale) {
+		return
+	}
+	if lines, err = s.deps.RunningConfig.Fetch(ctx); err != nil || !ifaceBlockHas(lines, ndmsName, stale) {
+		return
+	}
+	if e := s.deps.OpkgTun.SetSecurityLevel(ctx, ndmsName, fakeIPTunSecurityLevel); e != nil {
+		s.appLog.Warn("fakeip-reconcile", iface, "security-level: "+e.Error())
+		return
+	}
+	s.appLog.Info("fakeip-reconcile", iface, "tun переведён на security-level "+fakeIPTunSecurityLevel)
 }

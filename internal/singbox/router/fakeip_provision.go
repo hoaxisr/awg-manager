@@ -46,7 +46,7 @@ type OpkgTunProvisioner interface {
 	// SetDescription — переименование живого интерфейса (настраиваемое
 	// описание policy-tun, healPolicyTunDescription).
 	SetDescription(ctx context.Context, name, description string) error
-	// SetPermitAllACL — NDMS-native разрешение трафика в интерфейс: permit-all
+	// SetPermitAllACL — NDMS-native разрешение трафика с интерфейса: permit-all
 	// access-list `_WEBADMIN_<name>` + `ip access-group … in` + auto-delete (как
 	// галка доступа в веб-морде). Без него firewall NDMS (isolate-private и т.п.)
 	// режет LAN→tun форвард и DNS на tun-адрес.

@@ -316,11 +316,11 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 
 	// Bug 1 guard: the NDMS interface name MUST be CamelCase OpkgTun0, NOT the
 	// lowercase kernel name (which NDMS rejects with "unsupported interface type").
-	createCall := "Create:" + ndmsName + ":private"
+	createCall := "Create:" + ndmsName + ":public"
 	if !h.log.has(createCall) {
 		t.Fatalf("Create with NDMS CamelCase name + private security-level missing: %v", h.log.calls)
 	}
-	if h.log.has("Create:" + iface + ":private") {
+	if h.log.has("Create:" + iface + ":public") {
 		t.Fatalf("Create used the lowercase kernel name (NDMS would reject it): %v", h.log.calls)
 	}
 	// The pool route Interface is the NDMS name.
@@ -959,7 +959,7 @@ func TestEnableFakeIPTun_AllocatesLowestFreeIndex(t *testing.T) {
 		t.Fatalf("FakeIP index = %v, want 2 (0,1 occupied)", st)
 	}
 	// NDMS Create uses the CamelCase name for the allocated index.
-	if !h.log.has("Create:OpkgTun2:private") {
+	if !h.log.has("Create:OpkgTun2:public") {
 		t.Errorf("expected Create OpkgTun2, got %v", h.log.calls)
 	}
 }
@@ -981,7 +981,7 @@ func TestEnableFakeIPTun_IdempotentWhenProvisioned(t *testing.T) {
 	if st1 == nil || !st1.Provisioned || st1.Index != 0 {
 		t.Fatalf("after first Enable FakeIP = %+v, want provisioned index 0", st1)
 	}
-	createCount1 := countCalls(h.log, "Create:OpkgTun0:private")
+	createCount1 := countCalls(h.log, "Create:OpkgTun0:public")
 	if createCount1 != 1 {
 		t.Fatalf("first Enable Create count = %d, want 1", createCount1)
 	}
@@ -997,10 +997,10 @@ func TestEnableFakeIPTun_IdempotentWhenProvisioned(t *testing.T) {
 	}
 
 	// No second Create at all (neither opkgtun0 nor any other index).
-	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 1 {
 		t.Errorf("Create:opkgtun0 count = %d after second Enable, want 1 (no re-provision)", c)
 	}
-	if h.log.has("Create:OpkgTun1:private") {
+	if h.log.has("Create:OpkgTun1:public") {
 		t.Errorf("second Enable allocated a NEW index: %v", h.log.calls)
 	}
 
@@ -1020,7 +1020,7 @@ func TestEnableFakeIPTun_ReprovisionsWhenIfaceGone(t *testing.T) {
 	if err := h.svc.enable(context.Background()); err != nil {
 		t.Fatalf("first Enable: %v", err)
 	}
-	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 1 {
 		t.Fatalf("first Enable Create count = %d, want 1", c)
 	}
 
@@ -1031,7 +1031,7 @@ func TestEnableFakeIPTun_ReprovisionsWhenIfaceGone(t *testing.T) {
 	if err := h.svc.enable(context.Background()); err != nil {
 		t.Fatalf("second Enable (reprovision): %v", err)
 	}
-	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 2 {
+	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 2 {
 		t.Errorf("Create:opkgtun0 count = %d, want 2 (re-provisioned after iface gone): %v", c, h.log.calls)
 	}
 }
@@ -1506,7 +1506,7 @@ func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	if err := h.svc.enable(context.Background()); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
-	createCount1 := countCalls(h.log, "Create:OpkgTun0:private")
+	createCount1 := countCalls(h.log, "Create:OpkgTun0:public")
 	if createCount1 != 1 {
 		t.Fatalf("after Enable Create count = %d, want 1", createCount1)
 	}
@@ -1519,10 +1519,10 @@ func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	if err := h.svc.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 1 {
 		t.Errorf("Create count = %d after Reconcile, want 1 (no re-provision): %v", c, h.log.calls)
 	}
-	if h.log.has("Create:OpkgTun1:private") {
+	if h.log.has("Create:OpkgTun1:public") {
 		t.Errorf("Reconcile leaked a new index: %v", h.log.calls)
 	}
 }
@@ -1537,7 +1537,7 @@ func TestFakeIPTun_PermitACL_EnableSetsDisableRemoves(t *testing.T) {
 	if err := h.svc.enable(context.Background()); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
-	ia, ib := h.log.idxOf("Create:OpkgTun0:private"), h.log.idxOf("SetPermitACL:OpkgTun0")
+	ia, ib := h.log.idxOf("Create:OpkgTun0:public"), h.log.idxOf("SetPermitACL:OpkgTun0")
 	if ib < 0 {
 		t.Fatalf("permit ACL not set on enable: %v", h.log.calls)
 	}
