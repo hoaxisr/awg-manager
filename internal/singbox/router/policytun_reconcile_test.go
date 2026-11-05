@@ -27,11 +27,12 @@ type fakeRunningConfig struct {
 	fresh   []string // если задано — что отдаёт свежее чтение (протухший кэш)
 	reads   int
 	fetched int
+	err     error
 }
 
 func (f *fakeRunningConfig) Lines(context.Context) ([]string, error) {
 	f.reads++
-	return f.lines, nil
+	return f.lines, f.err
 }
 
 func (f *fakeRunningConfig) Fetch(context.Context) ([]string, error) {

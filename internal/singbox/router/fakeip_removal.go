@@ -38,6 +38,13 @@ func ReleaseFakeIPTunForRemoval(ctx context.Context, d Deps) error {
 		appLog: logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubSingboxRouter),
 	}
 	ndmsName := tunNDMSName(st.Index)
+	// Сегменты возвращаем первыми, как в ReleasePolicyTunForRemoval: после
+	// удаления пакета восстановить source-preserve будет неоткуда.
+	if segs := natSegmentsOf(st); len(segs) > 0 {
+		if e := s.restorePolicyTunNAT(ctx, segs); e != nil {
+			s.appLog.Warn("fakeip-remove", ndmsName, "restore segment NAT: "+e.Error())
+		}
+	}
 	// Индекс из записи мог занять ЧУЖОЙ OpkgTun — см. ReleasePolicyTunForRemoval.
 	// Скан упал — отказ ошибкой (F493): `--cleanup` печатает её, интерфейс живёт.
 	if proceed, err := s.teardownGate(ctx, ndmsName, "fakeip-remove", fakeIPTunDescription); !proceed {

@@ -206,7 +206,7 @@ func TestFakeIPEnable_ReprovisionsWhenPersistedIndexForeign(t *testing.T) {
 		t.Fatalf("Enable(fakeip): %v", err)
 	}
 
-	if !h.log.has("Create:OpkgTun0:private") {
+	if !h.log.has("Create:OpkgTun0:public") {
 		t.Errorf("доказанно чужой индекс 2 обязан уйти аллокатору: %v", h.log.calls)
 	}
 	if h.log.has("Delete:OpkgTun2") {
@@ -260,7 +260,7 @@ func TestFakeIPReconcile_ReprovisionsWhenLiveIndexForeign(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	if !h.log.has("Create:OpkgTun0:private") {
+	if !h.log.has("Create:OpkgTun0:public") {
 		t.Errorf("re-provision вместо drift-heal чужого: %v", h.log.calls)
 	}
 	for _, c := range h.log.calls {
@@ -377,7 +377,7 @@ func TestFakeIPEnable_EmptyPool6DisablesV6(t *testing.T) {
 		}
 	}
 	// v4-провижининг при этом идёт как обычно.
-	if !h.log.has("Create:OpkgTun0:private") || !h.log.has("AddRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
+	if !h.log.has("Create:OpkgTun0:public") || !h.log.has("AddRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
 		t.Errorf("v4-провижининг обязан пройти: %v", h.log.calls)
 	}
 }

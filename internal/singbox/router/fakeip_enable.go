@@ -20,6 +20,12 @@ import (
 // migration for ifaces stamped with the old value.
 const fakeIPTunDescription = "awgm fakeip-tun"
 
+// fakeIPTunSecurityLevel — public, как у policy-tun. При isolate-private NDMS
+// разрешает новые соединения только с private на public: приватный tun LAN не
+// достигает, правило `_NDM_SL_FORWARD -o <tun>` появляется лишь у public (F775,
+// стенд 05.11). `ip global` здесь нет, выходом в политиках tun не становится.
+const fakeIPTunSecurityLevel = "public"
+
 // fakeIPPoolRouteComment labels the fakeip pool auto static route so it is
 // recognizable in NDMS running-config and reap.
 const fakeIPPoolRouteComment = "awgm fakeip pool"
@@ -196,12 +202,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		Index:       idx,
 		FakeIP:      &storage.OpkgTunFakeIPData{Inet4Range: p.Inet4Range, Inet6Range: p.Inet6Range},
 	}
-	// Записи NAT-сегментов прежней записи переезжают в новую артефактом
-	// (симметрично enablePolicyTun). Освобождение чужой записи выше —
-	// best-effort: провал restore NAT вместе с провалом teardown потерял бы
-	// единственный след того, каким сегмент был ДО нас, и сегмент навсегда
-	// остался бы на нашем static-NAT. Артефакт не сирота: реап восстанавливает
-	// его и снимает, disable — тоже.
+	// Записи NAT-сегментов прежней записи переезжают в новую (симметрично
+	// enablePolicyTun): это и source-preserve самого fakeip при re-provision, и
+	// артефакт чужой записи — её освобождение выше best-effort, и провал restore
+	// NAT вместе с провалом teardown потерял бы единственный след того, каким
+	// сегмент был ДО нас. Лишние записи снимает сверка режима, остальные — disable.
 	setPolicyPayload(fkState, natSegmentsOf(prevRecord))
 	if err = s.deps.Settings.SetOpkgTunState(fkState); err != nil {
 		return fmt.Errorf("enable fakeip-tun: persist fakeip state: %w", err)
@@ -219,12 +224,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		}
 	})
 
-	// Create the OpkgTun as security-level PRIVATE and WITHOUT `ip global`:
-	// steering is via specific pool/CIDR static routes onto the tun, not via an
-	// access-policy exit (the old policy-exit model is abandoned). A private,
-	// non-global tun routes traffic fine (stand-verified).
+	// Create the OpkgTun WITHOUT `ip global`: steering is via specific pool/CIDR
+	// static routes onto the tun, not via an access-policy exit. Level — см.
+	// fakeIPTunSecurityLevel.
 	var reused bool
-	if reused, err = s.provisionOpkgTun(ctx, ndmsName, fakeIPTunDescription, "private", fakeIPTunDescription); err != nil {
+	if reused, err = s.provisionOpkgTun(ctx, ndmsName, fakeIPTunDescription, fakeIPTunSecurityLevel, fakeIPTunDescription); err != nil {
 		return fmt.Errorf("enable fakeip-tun: create opkgtun: %w", err)
 	}
 	// rbCtx: рулбэк обязан доехать и когда Enable упал ИЗ-ЗА отмены ctx (клиент
@@ -257,11 +261,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 			return fmt.Errorf("enable fakeip-tun: set ipv6 address: %w", err)
 		}
 	}
-	// NDMS-native разрешение трафика в tun: permit-all access-list
+	// NDMS-native разрешение трафика С tun: permit-all access-list
 	// `_WEBADMIN_<iface>` + `ip access-group … in` + auto-delete (как галка
-	// доступа в веб-морде). Восстановлено — потеряно при интеграции PoC; без
-	// него firewall NDMS (isolate-private и т.п.) режет LAN→tun форвард и DNS
-	// на tun-адрес. Снятие — в teardownOpkgTun (rollback идёт через него же);
+	// доступа в веб-морде). Привязка `in` срабатывает на входе с tun, поэтому
+	// путь LAN→tun открывает не она, а уровень (fakeIPTunSecurityLevel).
+	// Снятие — в teardownOpkgTun (rollback идёт через него же);
 	// auto-delete дополнительно каскадит ACL при удалении интерфейса. v6 —
 	// отдельное пространство списков, v4-ACL v6-трафик не покрывает. Оба
 	// семейства — одним чтением running-config (F607) и ПОСЛЕ адресов: v6 и

@@ -211,9 +211,11 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	// Миграционный артефакт: policy-payload на записи ЧУЖОГО режима (v34
 	// перенесла NAT-записи проигравшей записи). Вне policy-tun восстановить и
 	// снять payload; сама запись не трогается — её судьбу решает персист-реап
-	// ниже или её собственный режим.
+	// ниже или её собственный режим. У работающего fakeip записи живые
+	// (source-preserve, #1160): лишние снимет его сверка.
+	fakeIPActive := sr.Enabled && sr.RoutingMode == stateFakeIPTun
 	if st != nil && st.Mode != storage.OpkgTunModePolicyTun && len(natSegmentsOf(st)) > 0 &&
-		sr.RoutingMode != statePolicyTun {
+		sr.RoutingMode != statePolicyTun && !fakeIPActive {
 		if err := s.restorePolicyTunNAT(ctx, natSegmentsOf(st)); err != nil {
 			s.appLog.Warn("policy-tun-reap", "", "restore segment NAT (migrated payload): "+err.Error())
 		} else if err := s.deps.Settings.SetOpkgTunNATSegments(nil); err != nil {
@@ -1763,12 +1765,14 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 			policyTunIface = tunIfaceName(st.Index)
 			policyTunNDMS = tunNDMSName(st.Index)
 		}
+	}
+	if sr.Enabled && (sr.RoutingMode == statePolicyTun || sr.RoutingMode == stateFakeIPTun) {
 		// ПРИМЕНЁННОЕ, а не желаемое: записи персиста — единственный след того,
 		// что static-NAT реально доехал до роутера. Сравнение ПОСЕГМЕНТНОЕ:
 		// длина не видит, что к уже применённому набору дописали сегмент, и
 		// расхождение оставалось бы без подсказки до перезапуска режима.
 		sp := false
-		if st, ok := opkgTunOwned(settings, statePolicyTun); ok {
+		if st, ok := opkgTunOwned(settings, sr.RoutingMode); ok {
 			sp = policyTunNATApplied(sr.PolicyTunNATSegments, natSegmentsOf(st))
 		}
 		policyTunSourcePreserve = &sp

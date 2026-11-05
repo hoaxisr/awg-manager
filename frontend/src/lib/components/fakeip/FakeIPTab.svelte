@@ -180,6 +180,8 @@
 				fakeipMtu={$settings?.fakeipMtu}
 				fakeipIface={$status?.fakeipIface}
 				fakeipDns={$status?.fakeipDns}
+				settings={$settings}
+				status={$status}
 				toggleBusy={switchBusy}
 				onToggleEngine={handleToggleEngine}
 				onRestart={handleRestart}

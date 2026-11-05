@@ -23,6 +23,7 @@ export { drawerOpen, openDrawer, closeDrawer, toggleDrawer } from './drawerStore
 export { default as DepRow } from './DepRow.svelte';
 export { default as IssueRow } from './IssueRow.svelte';
 export { default as PolicyTunCard } from './PolicyTunCard.svelte';
+export { default as SourcePreserveSection } from './SourcePreserveSection.svelte';
 export { default as BypassGeoIPTags } from './BypassGeoIPTags.svelte';
 export {
   aggregateGeoIPTags,

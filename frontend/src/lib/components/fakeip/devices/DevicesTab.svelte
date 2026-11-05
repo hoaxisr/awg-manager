@@ -32,9 +32,10 @@
 	import { Modal, ConfirmModal, Dropdown } from '$lib/components/ui';
 	import type { DropdownOption } from '$lib/components/ui';
 	import { Pencil, X } from 'lucide-svelte';
-	import type { PolicyDevice, SingboxRouterRule } from '$lib/types';
+	import type { PolicyDevice, PolicyTunNATSegmentInfo, SingboxRouterRule } from '$lib/types';
 	import {
 		resolveDeviceTargeting,
+		sourceIsMasked,
 		type DeviceTargeting,
 	} from './deviceTargeting';
 	import type { FakeIPEngineState } from '../engineState';
@@ -49,10 +50,17 @@
 	const storeRules = fakeipConfig.rules;
 	const storeOptions = fakeipConfig.options;
 
+	// NAT сегментов: при динамическом sing-box не видит устройство (#1160).
+	// Не прочитался — предупреждать не о чем: состояние неизвестно.
+	let natSegments = $state<PolicyTunNATSegmentInfo[]>([]);
+
 	onMount(() => {
 		// rules/options живут в fakeipConfig; прямой заход на чип может застать
 		// store холодным — идемпотентно.
 		void fakeipConfig.loadAll();
+		api.getPolicyTunNATPreview()
+			.then((p) => (natSegments = p.segments ?? []))
+			.catch(() => {});
 	});
 
 	const devices = $derived<PolicyDevice[]>($devicesState.data ?? []);
@@ -95,6 +103,13 @@
 			targeting: resolveDeviceTargeting(device.ip, $storeRules),
 			conns: connCountByIP.get(device.ip) ?? 0,
 		})),
+	);
+
+	// Привязки, которые не сработают: правило есть, а источник скрыт маскарадом.
+	const maskedBindings = $derived(
+		rows
+			.filter((r) => r.targeting.mode === 'personal' && sourceIsMasked(r.device.ip, natSegments))
+			.map((r) => r.device.name || r.device.ip),
 	);
 
 	function isOnline(device: PolicyDevice): boolean {
@@ -191,7 +206,11 @@
 		{m.fakeip_devices_desc_personal()}
 		<b class="m-dir">{m.fakeip_devices_mode_direct()}</b>
 		{m.fakeip_devices_desc_direct()}
+		{m.fakeip_devices_tun_scope()}
 	</p>
+	{#if maskedBindings.length > 0}
+		<p class="pd warn">{m.fakeip_devices_source_lost({ names: maskedBindings.join(', ') })}</p>
+	{/if}
 
 	<div class="devices-table">
 		<div class="thead">
@@ -336,6 +355,9 @@
 		font-size: 0.8125rem;
 		line-height: 1.5;
 		margin: 0 0 0.875rem;
+	}
+	.pd.warn {
+		color: var(--color-warning);
 	}
 	.pd .m-pers {
 		color: var(--color-info, #8aa0e0);
