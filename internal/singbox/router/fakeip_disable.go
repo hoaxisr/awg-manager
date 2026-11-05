@@ -173,16 +173,20 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 
 	// (3b) Clear the ownership record — MANDATORY (push through even if a step
 	// above errored). A stale record would make the startup reap chase a gone
-	// iface. Миграционный policy-payload на записи (артефакт v34) сперва
-	// восстанавливаем best-effort — очистка обязательна в любом случае, паритет
-	// с реапом.
+	// iface. Исключение — NAT-записи (source-preserve, #1160), которые не удалось
+	// вернуть: это единственный след того, каким сегмент был до нас, и повторит
+	// восстановление реап.
+	natRestored := true
 	if segs := natSegmentsOf(st); len(segs) > 0 {
 		if err := s.restorePolicyTunNAT(ctx, segs); err != nil {
-			s.appLog.Warn("fakeip-disable", iface, "restore segment NAT (migrated payload): "+err.Error())
+			s.appLog.Warn("fakeip-disable", iface, "restore segment NAT: "+err.Error())
+			natRestored = false
 		}
 	}
-	if err := s.deps.Settings.SetOpkgTunState(nil); err != nil {
-		s.appLog.Warn("fakeip-disable", iface, "clear opkgtun persist: "+err.Error())
+	if natRestored {
+		if err := s.deps.Settings.SetOpkgTunState(nil); err != nil {
+			s.appLog.Warn("fakeip-disable", iface, "clear opkgtun persist: "+err.Error())
+		}
 	}
 
 	// (4) Persist disabled — MANDATORY. This is the durable on/off truth.

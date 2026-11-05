@@ -53,7 +53,8 @@
 	import { ConfirmModal, Dropdown, Button } from '$lib/components/ui';
 	import type { DropdownOption } from '$lib/components/ui';
 	import { GripVertical, Pencil, Trash2, Plus, Check, X } from 'lucide-svelte';
-	import type { SingboxRouterRule } from '$lib/types';
+	import type { PolicyTunNATSegmentInfo, SingboxRouterRule } from '$lib/types';
+	import { ruleSourceMasked } from '../devices/deviceTargeting';
 	import type { RuleCardData } from '$lib/components/sb-router/types';
 
 	// ── Store sub-stores ────────────────────────────────────────────────────
@@ -69,8 +70,15 @@
 
 	let currentFinal = $state('direct');
 
+	// NAT сегментов для метки «адрес скрыт». Не прочитался — состояние
+	// неизвестно, метки нет.
+	let natSegments = $state<PolicyTunNATSegmentInfo[]>([]);
+
 	onMount(() => {
 		void fakeipConfig.loadAll();
+		api.getPolicyTunNATPreview()
+			.then((p) => (natSegments = p.segments ?? []))
+			.catch(() => {});
 	});
 
 	// rulesetLabels: tag → отображаемое имя (у набора нет label, только tag).
@@ -436,6 +444,11 @@
 					title={m.fakeip_routes_ndms_route_title()}
 				>
 					{m.fakeip_routes_ndms_route()}
+				</span>
+			{/if}
+			{#if $storeRules[i] && ruleSourceMasked($storeRules[i], natSegments)}
+				<span class="source-lost-mark" title={m.fakeip_routes_source_lost_title()}>
+					{m.fakeip_routes_source_lost()}
 				</span>
 			{/if}
 		</div>
@@ -984,6 +997,19 @@
 		background: transparent;
 		border: 1px dashed var(--color-border, var(--border));
 		color: var(--text-muted);
+		font-size: 10px;
+		line-height: 1.4;
+		white-space: nowrap;
+		cursor: default;
+	}
+
+	/* Правило не сработает: источник скрыт маскарадом сегмента (#1160). */
+	.source-lost-mark {
+		flex-shrink: 0;
+		padding: 2px 7px;
+		border-radius: 4px;
+		border: 1px dashed var(--color-warning);
+		color: var(--color-warning);
 		font-size: 10px;
 		line-height: 1.4;
 		white-space: nowrap;

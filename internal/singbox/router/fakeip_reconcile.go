@@ -379,5 +379,12 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// Reconcile'ом, поэтому галка у сервера отрабатывает сразу, а не через тик.
 	s.ensureFakeIPIngress(ctx, s.fakeIPIngressSpecFor(ctx, st, sr))
 
+	// Source-preserve (#1160): при `ip nat` сегмента sing-box видит вместо
+	// клиента адрес tun, и source_ip_cidr не срабатывает. Механизм общий с
+	// policy-tun; применение — только здесь: UpdateSettings и так завершается
+	// Reconcile'ом, а enable не должен менять NAT до готовности режима.
+	s.restoreRevokedPolicyTunNAT(ctx, sr, st, iface)
+	s.reconcilePolicyTunNAT(ctx, sr, st, iface)
+
 	return nil
 }

@@ -13,7 +13,7 @@
 	import { m } from '$lib/i18n';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { tunStackLabel } from '$lib/components/sb-router/tunStack';
-	import type { TunStack } from '$lib/types';
+	import type { SingboxRouterSettings, SingboxRouterStatus, TunStack } from '$lib/types';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
 	import { singboxMemory } from '$lib/stores/singboxMemory';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
@@ -21,6 +21,9 @@
 	import OverviewCards from './OverviewCards.svelte';
 	import TrafficPanel from './TrafficPanel.svelte';
 	import EngineSettingsCard from './EngineSettingsCard.svelte';
+	import SourcePreserveSection from '$lib/components/sb-router/SourcePreserveSection.svelte';
+	import { mergeAndSaveSettings } from '$lib/components/sb-router/settingsActions';
+	import { notifications } from '$lib/stores/notifications';
 	import { activeCompositeRows } from './activeComposites';
 
 	interface Props {
@@ -37,6 +40,9 @@
 		fakeipMtu?: number;
 		fakeipIface?: string;
 		fakeipDns?: string;
+		/** Настройки и статус для блока «Сохранять адреса клиентов». */
+		settings: SingboxRouterSettings | null;
+		status: SingboxRouterStatus | null;
 		toggleBusy: boolean;
 		onToggleEngine: (turnOn: boolean) => void;
 		onRestart: () => void;
@@ -54,10 +60,20 @@
 		fakeipMtu,
 		fakeipIface,
 		fakeipDns,
+		settings,
+		status,
 		toggleBusy,
 		onToggleEngine,
 		onRestart,
 	}: Props = $props();
+
+	async function patchPreserve(patch: Partial<SingboxRouterSettings>): Promise<void> {
+		try {
+			await mergeAndSaveSettings(patch);
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.fakeip_engine_save_failed());
+		}
+	}
 
 	// engineLive — gate для живых блоков (composite-выборы, live-трафик).
 	const engineLive = $derived(engineState !== 'stopped' && engineState !== 'clash-down');
@@ -113,9 +129,30 @@
 		{onToggleEngine}
 		{onRestart}
 	/>
+
+	{#if settings}
+		<div class="preserve">
+			<SourcePreserveSection
+				cfg={settings}
+				{status}
+				tunName={fakeipIface || m.sb_router_policy_tun_default_tun_name()}
+				onPatch={patchPreserve}
+			/>
+		</div>
+	{/if}
 </section>
 
 <style>
+	.preserve {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius, 12px);
+		padding: 1rem;
+	}
+
 	.overview {
 		display: flex;
 		flex-direction: column;

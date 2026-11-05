@@ -323,7 +323,7 @@ type SingboxRouterSettings struct {
 	// non-empty. Empty slice = feature off; no schema migration needed (the
 	// zero value is the correct default, same as BypassPresets).
 	QoSClasses []SingboxQoSClass `json:"qosClasses,omitempty"`
-	// PolicyTunSourcePreserve: в режиме policy-tun переводить выбранные сегменты
+	// PolicyTunSourcePreserve: в режимах policy-tun и fakeip-tun переводить выбранные сегменты
 	// на static-NAT (no ip nat + ip static → WAN), чтобы sing-box видел реальные
 	// LAN-source (иначе маскарад: все клиенты = tun-адрес). Default false.
 	PolicyTunSourcePreserve bool `json:"policyTunSourcePreserve,omitempty"`

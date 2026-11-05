@@ -196,12 +196,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		Index:       idx,
 		FakeIP:      &storage.OpkgTunFakeIPData{Inet4Range: p.Inet4Range, Inet6Range: p.Inet6Range},
 	}
-	// Записи NAT-сегментов прежней записи переезжают в новую артефактом
-	// (симметрично enablePolicyTun). Освобождение чужой записи выше —
-	// best-effort: провал restore NAT вместе с провалом teardown потерял бы
-	// единственный след того, каким сегмент был ДО нас, и сегмент навсегда
-	// остался бы на нашем static-NAT. Артефакт не сирота: реап восстанавливает
-	// его и снимает, disable — тоже.
+	// Записи NAT-сегментов прежней записи переезжают в новую (симметрично
+	// enablePolicyTun): это и source-preserve самого fakeip при re-provision, и
+	// артефакт чужой записи — её освобождение выше best-effort, и провал restore
+	// NAT вместе с провалом teardown потерял бы единственный след того, каким
+	// сегмент был ДО нас. Лишние записи снимает сверка режима, остальные — disable.
 	setPolicyPayload(fkState, natSegmentsOf(prevRecord))
 	if err = s.deps.Settings.SetOpkgTunState(fkState); err != nil {
 		return fmt.Errorf("enable fakeip-tun: persist fakeip state: %w", err)
