@@ -470,8 +470,13 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 	}
 	// ACL сегментов — после пиров: план берёт сети за клиентом, принятые
 	// restorePeerSubnets, а не все из бэкапа.
-	if err := s.applyLANSegmentsRaw(ctx, iface, sv.Address, sv.Mask, sv.LANSegments, serverPeerSubnets(peers)); err != nil {
-		return fmt.Errorf("set LAN segments: %w", err)
+	if err := s.applyLANSegmentsRaw(ctx, iface, sv.Address, sv.Mask, sv.LANSegments, serverPeerSubnets(peers), nil); err != nil {
+		if len(sv.LANSegments) > 0 {
+			return fmt.Errorf("set LAN segments: %w", err)
+		}
+		// Снятие при восстановлении best-effort: список без сегментов — не
+		// повод ронять восстановление сервера.
+		s.appLog.Warn("lan-acl", iface.Name(), "список LAN-сегментов не сверен: "+err.Error())
 	}
 	// Persist to settings.json under the (possibly renamed) target.
 	saved := sv

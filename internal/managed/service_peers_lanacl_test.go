@@ -445,7 +445,7 @@ func TestUpdatePeer_LANACLMissing_RemoveOnly_FullRebuild(t *testing.T) {
 		{"списка нет", func(*Service, *query.FakeGetter) {}, nil},
 		{"привязка без списка", func(_ *Service, fg *query.FakeGetter) {
 			setRunningConfig(fg, "interface Wireguard1", "    ip access-group AWGM_Wireguard1 in", "!")
-		}, []string{aclRebind}},
+		}, nil},
 		// Кэш running-config помнит живой список, а на роутере его уже сняли:
 		// решение — по свежему чтению.
 		{"устаревший кэш", func(svc *Service, fg *query.FakeGetter) {
@@ -484,7 +484,9 @@ func TestAddPeer_LANACLUnbound_FullRebuild(t *testing.T) {
 	if _, err := svc.AddPeer(context.Background(), "Wireguard1", AddPeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: []string{"192.168.77.0/24"}}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := aclParses(poster), rebuildParses([]string{"no access-list AWGM_Wireguard1"}, net78, net77); !slices.Equal(got, want) {
+	want := []string{acl1 + net78 + segBr0, acl1 + net77 + segBr0,
+		"interface Wireguard1 ip access-group AWGM_Wireguard1 in", "access-list AWGM_Wireguard1 auto-delete"}
+	if got := aclParses(poster); !slices.Equal(got, want) {
 		t.Fatalf("acl = %q\nwant %q", got, want)
 	}
 }
@@ -521,6 +523,7 @@ func TestUpdatePeer_LANACLRebuild_StoreFailure_RebuildsOld(t *testing.T) {
 				sv.Peers = sv.Peers[1:] // PEER1 удалён параллельно — мутатор откажет
 				return nil
 			})
+			setLANACLRules(fg, ruleServerBr0, "permit ip "+net78+segBr0, "permit ip "+net77+segBr0)
 			sim.after = nil
 		}
 	}
@@ -528,7 +531,8 @@ func TestUpdatePeer_LANACLRebuild_StoreFailure_RebuildsOld(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "save to storage") {
 		t.Fatalf("err = %v", err)
 	}
-	if got, want := aclParses(poster), append(rebuildParses(nil, net77, net78), rebuildParses(nil, net78)...); !slices.Equal(got, want) {
+	// Откат — сверка к прежним сетям: только что поставленная строка снимается.
+	if got, want := aclParses(poster), append(rebuildParses(nil, net77, net78), acl1Off+net77+segBr0); !slices.Equal(got, want) {
 		t.Fatalf("acl = %q\nwant %q", got, want)
 	}
 }
@@ -611,10 +615,10 @@ func TestPeerSubnets_LANACLRunningConfigFails_RefusesBeforeRCI(t *testing.T) {
 	}
 }
 
-// Привязанный список с auto-delete: unbind уносит его сам (стенд 05.09) —
-// `no access-list` после этого был бы E в журнале роутера. Состояние
-// перечитывается после unbind.
-func TestSetLANSegments_UnbindAutoDeletes_NoRemove(t *testing.T) {
+// Снятие сегментов. Привязанный список с auto-delete: unbind уносит его сам
+// (стенд 05.09) — `no access-list` после этого был бы E в журнале роутера.
+// Состояние перечитывается после unbind.
+func TestSetLANSegments_TeardownUnbindAutoDeletes_NoRemove(t *testing.T) {
 	svc, _, poster, fg := newPeerSubnetTestService(t, `[]`)
 	bindLANACL(fg, "Wireguard1")
 	poster.onPost = func(m map[string]interface{}) {
@@ -622,41 +626,152 @@ func TestSetLANSegments_UnbindAutoDeletes_NoRemove(t *testing.T) {
 			setRunningConfig(fg, "interface Wireguard1", "!")
 		}
 	}
-	if err := svc.SetLANSegments(context.Background(), "Wireguard1", []string{"Bridge0"}); err != nil {
+	if err := svc.SetLANSegments(context.Background(), "Wireguard1", nil); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := aclParses(poster), rebuildParses([]string{aclRebind}); !slices.Equal(got, want) {
+	if got, want := aclParses(poster), []string{aclRebind}; !slices.Equal(got, want) {
 		t.Fatalf("acl = %q\nwant %q", got, want)
 	}
 }
 
-// Живой привязанный список без auto-delete-эффекта — прежняя
-// последовательность: unbind, `no access-list`, permit, bind, auto-delete.
-func TestSetLANSegments_BoundList_FullSequence(t *testing.T) {
+// Снятие сегментов, живой список без auto-delete-эффекта: unbind и `no access-list`.
+func TestSetLANSegments_TeardownBoundList_FullSequence(t *testing.T) {
 	svc, _, poster, fg := newPeerSubnetTestService(t, `[]`)
 	bindLANACL(fg, "Wireguard1")
-	if err := svc.SetLANSegments(context.Background(), "Wireguard1", []string{"Bridge0"}); err != nil {
+	if err := svc.SetLANSegments(context.Background(), "Wireguard1", nil); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := aclParses(poster), rebuildParses([]string{aclRebind, "no access-list AWGM_Wireguard1"}); !slices.Equal(got, want) {
+	if got, want := aclParses(poster), []string{aclRebind, "no access-list AWGM_Wireguard1"}; !slices.Equal(got, want) {
 		t.Fatalf("acl = %q\nwant %q", got, want)
 	}
 }
 
-// В списке правило, которого нет в плане по записи (откат оставил сироту):
-// точечная правка его не снимет, нужна пересборка (F526).
-func TestUpdatePeer_OrphanRule_Rebuilds(t *testing.T) {
+// В списке своя строка, которой нет в плане (откат оставил сироту): точечная
+// правка её не снимет, нужна сверка всего списка (F526). Чужая строка живёт.
+func TestUpdatePeer_OrphanRule_Reconciles(t *testing.T) {
 	svc, store, poster, fg := newPeerSubnetTestService(t, rcOurs77)
 	sim := newSimRouter(t, fg, poster, rcOurs77)
 	seedSimPeer(t, store, sim, "192.168.77.0/24")
-	setLANSegments(t, store, "Wireguard1", "Bridge0", "Bridge1")
-	setRunningConfig(fg, "access-list AWGM_Wireguard1", "    permit ip 10.66.66.0 255.255.255.0 "+segBr0,
-		"    permit ip 10.9.9.0 255.255.255.0 "+segBr0, "!",
-		"interface Wireguard1", "    ip access-group AWGM_Wireguard1 in", "!")
+	setLANSegments(t, store, "Wireguard1", "Bridge0")
+	setLANACLRules(fg, ruleServerBr0, "permit ip 192.168.77.0 255.255.255.0 "+segBr1,
+		"permit ip 10.9.9.0 255.255.255.0 "+segBr0)
 	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.78.0/24"}}); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(aclParses(poster), acl1+"10.66.66.0 255.255.255.0 "+segBr0) {
-		t.Fatalf("ждали пересборку всего списка: %q", aclParses(poster))
+	if got, want := aclParses(poster), []string{acl1 + net78 + segBr0, acl1Off + net77 + segBr1}; !slices.Equal(got, want) {
+		t.Fatalf("acl = %q\nwant %q", got, want)
+	}
+}
+
+// #1159: веб-морда пишет новые правила в первый привязанный `in`-список, то
+// есть в наш AWGM_<iface>, поэтому в нём лежат и чужие строки.
+
+const (
+	ruleServerBr0 = "permit ip 10.66.66.0 255.255.255.0 " + segBr0
+	ruleUserICMP  = "permit icmp 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0"
+)
+
+// setLANACLRules — привязанный AWGM_Wireguard1 с auto-delete и строками rules.
+func setLANACLRules(fg *query.FakeGetter, rules ...string) {
+	lines := []string{"access-list AWGM_Wireguard1"}
+	for _, r := range rules {
+		lines = append(lines, "    "+r)
+	}
+	lines = append(lines, "    auto-delete", "!",
+		"interface Wireguard1", "    ip access-group AWGM_Wireguard1 in", "!")
+	setRunningConfig(fg, lines...)
+}
+
+// Рестарт демона: план на месте, чужие строки любой формы — ни одной мутации.
+func TestApplyLANSegments_RestartKeepsUserRules(t *testing.T) {
+	svc, _, poster, fg := newPeerSubnetTestService(t, `[]`)
+	setLANACLRules(fg, ruleServerBr0, ruleUserICMP,
+		"permit ip 10.66.66.0 255.255.255.0 8.8.8.0 255.255.255.0", // наша сеть, но не LAN
+		"permit ip 10.77.0.2 255.255.255.255 "+segBr0)              // LAN, но не наша сеть
+	if err := svc.ApplyLANSegmentsToInterface(context.Background(), "Wireguard1", "10.66.66.1", "255.255.255.0", []string{"Bridge0"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := aclParses(poster); len(got) != 0 {
+		t.Fatalf("мутации при совпавшем плане: %q", got)
+	}
+}
+
+// Правило плана снято в веб-морде: возвращается одно оно, без пересборки.
+func TestApplyLANSegments_MissingRuleAddedInPlace(t *testing.T) {
+	svc, _, poster, fg := newPeerSubnetTestService(t, `[]`)
+	setLANACLRules(fg, ruleUserICMP)
+	if err := svc.ApplyLANSegmentsToInterface(context.Background(), "Wireguard1", "10.66.66.1", "255.255.255.0", []string{"Bridge0"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := aclParses(poster), []string{acl1 + "10.66.66.0 255.255.255.0 " + segBr0}; !slices.Equal(got, want) {
+		t.Fatalf("acl = %q\nwant %q", got, want)
+	}
+}
+
+// Смена сегмента: сначала новый permit, потом снятие своей старой строки;
+// доступ не пропадает, чужое правило на месте.
+func TestSetLANSegments_SwitchKeepsUserRule(t *testing.T) {
+	svc, _, poster, fg := newPeerSubnetTestService(t, `[]`)
+	setLANACLRules(fg, ruleServerBr0, ruleUserICMP)
+	if err := svc.SetLANSegments(context.Background(), "Wireguard1", []string{"Bridge1"}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{acl1 + "10.66.66.0 255.255.255.0 " + segBr1, acl1Off + "10.66.66.0 255.255.255.0 " + segBr0}
+	if got := aclParses(poster); !slices.Equal(got, want) {
+		t.Fatalf("acl = %q\nwant %q", got, want)
+	}
+}
+
+// Сегменты сняты, но в списке чужое правило: список и привязка остаются ему.
+func TestSetLANSegments_TeardownKeepsUserRule(t *testing.T) {
+	svc, _, poster, fg := newPeerSubnetTestService(t, `[]`)
+	setLANACLRules(fg, ruleServerBr0, ruleUserICMP)
+	if err := svc.SetLANSegments(context.Background(), "Wireguard1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := aclParses(poster), []string{acl1Off + "10.66.66.0 255.255.255.0 " + segBr0}; !slices.Equal(got, want) {
+		t.Fatalf("acl = %q\nwant %q", got, want)
+	}
+}
+
+// Смена подсети сервера: строка прежней подсети — своя и снимается, чужая
+// остаётся.
+func TestUpdateServer_SubnetChange_RemovesFormerRule(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	setLANSegments(t, store, "Wireguard1", "Bridge0")
+	setLANACLRules(fg, ruleServerBr0, ruleUserICMP)
+	if err := svc.Update(context.Background(), "Wireguard1", UpdateServerRequest{Address: "10.77.77.1", Mask: "255.255.255.0", ListenPort: 51821}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{acl1 + "10.77.77.0 255.255.255.0 " + segBr0, acl1Off + "10.66.66.0 255.255.255.0 " + segBr0}
+	if got := aclParses(poster); !slices.Equal(got, want) {
+		t.Fatalf("acl = %q\nwant %q", got, want)
+	}
+}
+
+// Список не прочитан — чьи в нём правила, неизвестно: не шлём ничего.
+func TestApplyLANSegments_RunningConfigFails_NoMutation(t *testing.T) {
+	for _, segs := range [][]string{{"Bridge0"}, nil} {
+		svc, _, poster, fg := newPeerSubnetTestService(t, `[]`)
+		fg.SetError("/show/running-config", errors.New("rc down"))
+		err := svc.ApplyLANSegmentsToInterface(context.Background(), "Wireguard1", "10.66.66.1", "255.255.255.0", segs)
+		if err == nil || !strings.Contains(err.Error(), "rc down") {
+			t.Fatalf("segs=%v: err = %v", segs, err)
+		}
+		if got := aclParses(poster); len(got) != 0 {
+			t.Fatalf("segs=%v: мутации вслепую: %q", segs, got)
+		}
+	}
+}
+
+// Снятие при непривязанном списке с чужой строкой: привязывать нечего.
+func TestSetLANSegments_TeardownUnboundList_NoBind(t *testing.T) {
+	svc, _, poster, fg := newPeerSubnetTestService(t, `[]`)
+	setRunningConfig(fg, "access-list AWGM_Wireguard1", "    "+ruleUserICMP, "!", "interface Wireguard1", "!")
+	if err := svc.SetLANSegments(context.Background(), "Wireguard1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := aclParses(poster); len(got) != 0 {
+		t.Fatalf("acl = %q", got)
 	}
 }

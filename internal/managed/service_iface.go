@@ -42,7 +42,7 @@ func (s *Service) ApplyLANSegmentsToInterface(ctx context.Context, ifaceName, ad
 	if err != nil || !ok {
 		return err
 	}
-	return s.applyLANSegmentsRaw(ctx, iface, addr, mask, segments, nil)
+	return s.applyLANSegmentsRaw(ctx, iface, addr, mask, segments, nil, nil)
 }
 
 // ApplyPolicyToInterface sets or clears the ip hotspot policy on an interface.

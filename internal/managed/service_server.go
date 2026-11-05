@@ -229,7 +229,12 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest
 		if fresh, ok := s.settings.GetManagedServerByID(id); ok {
 			peerNets = serverPeerSubnets(fresh.Peers)
 		}
-		err := s.applyLANSegmentsRaw(ctx, iface, req.Address, mask, server.LANSegments, peerNets)
+		// Строки прежней подсети — наши: без этого они остались бы в списке.
+		var former []string
+		if old, err := parseManagedSubnet(changes.oldAddress, changes.oldMask); err == nil {
+			former = []string{old.String()}
+		}
+		err := s.applyLANSegmentsRaw(ctx, iface, req.Address, mask, server.LANSegments, peerNets, former)
 		unlock()
 		if err != nil {
 			// Роутер уже сменил подсеть (rciUpdateServer выше), но storage ещё
@@ -589,8 +594,11 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 			}
 		}
 		if len(server.LANSegments) > 0 {
-			// Teardown-only ветка applyLANSegmentsRaw: unbind + remove ACL (best-effort).
-			_ = s.applyLANSegmentsRaw(ctx, iface, "", "", nil, nil)
+			// Сервер удаляется вместе с интерфейсом: список снимаем целиком
+			// (best-effort), чужим строкам больше не к чему относиться.
+			if s.commands != nil && s.commands.Interfaces != nil {
+				s.clearLANACL(ctx, iface)
+			}
 		}
 
 		// Delete interface (removes all peers too). This is the CRITICAL step:
@@ -780,6 +788,11 @@ type permitRule struct {
 	srcSub, srcMask, dstSub, dstMask, seg string
 }
 
+// line — правило в форме строки running-config.
+func (r permitRule) line() string {
+	return fmt.Sprintf("permit ip %s %s %s %s", r.srcSub, r.srcMask, r.dstSub, r.dstMask)
+}
+
 // resolveLANSegmentsPlan валидирует peer-подсеть и каждый запрошенный сегмент
 // против каталога бриджей БЕЗ обращения к роутеру. Возвращает правила permit
 // или ошибку, если сегмент неизвестен/подсеть не парсится. Вызывать ДО
@@ -789,15 +802,24 @@ type permitRule struct {
 // интерфейс сервера private, и без своего permit трафик из них в LAN режет
 // isolate-private (#713). Порядок правил: источник × сегмент, как переданы.
 func resolveLANSegmentsPlan(addr, mask string, peerNets, segments []string, bridges []query.LANBridge) ([]permitRule, error) {
+	srcs, err := lanACLSources(addr, mask, peerNets)
+	if err != nil {
+		return nil, err
+	}
+	return segmentRules(srcs, segments, bridges)
+}
+
+// lanACLSources — подсеть сервера и сети nets: источники правил списка.
+func lanACLSources(addr, mask string, nets []string) ([]*net.IPNet, error) {
 	cidr, err := parseManagedSubnet(addr, mask)
 	if err != nil {
 		return nil, fmt.Errorf("peer subnet: %w", err)
 	}
-	nets, err := parseCIDRs(peerNets)
+	parsed, err := parseCIDRs(nets)
 	if err != nil {
 		return nil, err
 	}
-	return segmentRules(append([]*net.IPNet{cidr}, nets...), segments, bridges)
+	return append([]*net.IPNet{cidr}, parsed...), nil
 }
 
 // segmentRules — permit каждого источника в каждый сегмент (сегменты
@@ -855,40 +877,48 @@ func serverPeerSubnets(peers []storage.ManagedPeer) []string {
 	return out
 }
 
-// applyLANSegmentsRaw applies LAN-forward ACL rules to an interface without
-// touching storage. Builds the full plan FIRST (no RCI); only after a valid
-// plan does it destroy and rebuild, so a bad request never tears down working
-// access. Empty segments = teardown (unbind+remove best-effort, errors logged
-// only).
+// applyLANSegmentsRaw приводит список `AWGM_<iface>` к плану, не трогая storage.
+// План и чтение списка — до первой мутации: плохой запрос и нечитаемый
+// running-config не меняют рабочий доступ.
 //
-// Трогаем ТОЛЬКО свой список `AWGM_<iface>`. Чужой `_WEBADMIN_<iface>` —
-// правила межсетевого экрана, заведённые пользователем в веб-морде роутера:
-// список именуется по интерфейсу, и в нём лежат ВСЕ его строки, а не только
-// permit-all. Прежний код снимал его по имени, целиком и на каждом старте
-// демона — issue #879 (стенд 12.09: `permit tcp 10.77.0.2 …` исчезал вместе со
-// списком). Показываем его в карточке (`foreignAcls`), не снимаем.
+// Список сверяется, а не пересобирается. Веб-морда роутера пишет правила
+// межсетевого экрана в первый привязанный `in`-список (и лишь без привязки — в
+// `_WEBADMIN_<iface>`), то есть в наш: снос списка на каждом старте демона
+// уносил их (#1159; бандл 5.02.B.2 + стенд 05.11). Своей считается только строка
+// `permit ip <сеть сервера или пира> → <подсеть LAN-бриджа>`, остальные не наши.
+// Цена решения владельца: такая же строка, написанная руками в невыбранный
+// сегмент, снимется — выбор сегментов и есть весь доступ абонента в LAN.
+//
+// Чужой `_WEBADMIN_<iface>` не трогаем вовсе (#879), показываем в карточке
+// (`foreignAcls`).
 //
 // peerNets — сети за клиентом пиров сервера: получают permit в те же сегменты.
-func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface query.Confirmed, addr, mask string, segments, peerNets []string) error {
+// formerNets — прежние источники (старая подсеть сервера, сети до правки пира):
+// их строки — тоже наши, и в плане их уже нет.
+//
+// Empty segments = снятие: нет чужих строк — unbind и remove, есть — только наши
+// строки, список и привязка остаются пользователю.
+func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface query.Confirmed, addr, mask string, segments, peerNets, formerNets []string) error {
 	acl := "AWGM_" + iface.Name()
-	commandsWired := s.commands != nil && s.commands.Interfaces != nil
-
-	if len(segments) == 0 {
-		// Teardown best-effort: без подключённых команд снимать нечем (тестовые
-		// литералы Service / деградация) — прежнее поведение сохраняем.
-		if !commandsWired {
+	if s.commands == nil || s.commands.Interfaces == nil {
+		// Снятие без подключённых команд: снимать нечем (тестовые литералы
+		// Service / деградация) — прежнее поведение сохраняем.
+		if len(segments) == 0 {
 			return nil
 		}
-		s.clearLANACL(ctx, iface)
-		return nil
-	}
-	if !commandsWired {
 		return fmt.Errorf("ndms commands not wired")
 	}
 	aclCmd := s.commands.Interfaces
 
 	// Preflight — собрать план до единой мутации на роутере.
-	if s.queries == nil || s.queries.Interfaces == nil {
+	exists, bound, rules, err := s.lanACLState(ctx, iface.Name())
+	if err != nil {
+		return err // чьи строки в списке, неизвестно: вслепую не снимаем
+	}
+	if len(segments) == 0 && !exists && !bound {
+		return nil
+	}
+	if s.queries.Interfaces == nil {
 		return fmt.Errorf("interface store not wired")
 	}
 	bridges, err := s.queries.Interfaces.ListLANBridges(ctx)
@@ -899,16 +929,51 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface query.Confirmed
 	if err != nil {
 		return err // старый ACL не тронут
 	}
+	srcs, err := lanACLSources(addr, mask, slices.Concat(peerNets, formerNets))
+	if err != nil {
+		return err
+	}
 
-	// Apply — destroy → rebuild.
-	s.clearLANACL(ctx, iface)
+	inPlan := make(map[string]bool, len(plan))
 	for _, r := range plan {
-		// Дубль толерируем (как SetPermitAllACL): best-effort remove выше мог
-		// транзиентно не удалить старый идентичный список — состояние роутера
-		// уже совпадает с планом, падать не за что (ревью).
+		inPlan[r.line()] = true
+	}
+	own := ownLANRules(srcs, bridges)
+	var stale []permitRule
+	foreign := false
+	for _, line := range rules {
+		if inPlan[line] {
+			continue
+		}
+		if r, ok := own[line]; ok {
+			stale = append(stale, r)
+		} else {
+			foreign = true
+		}
+	}
+
+	if len(plan) == 0 && !foreign {
+		s.clearLANACL(ctx, iface)
+		return nil
+	}
+	// Сначала permit, потом снятие: смена сегментов не даёт разрыва доступа.
+	for _, r := range plan {
+		if slices.Contains(rules, r.line()) {
+			continue
+		}
+		// Дубль толерируем (как SetPermitAllACL): чтение могло отстать от
+		// записи — состояние роутера уже совпадает с планом, падать не за что.
 		if err := aclCmd.ACLPermitIP(ctx, acl, r.srcSub, r.srcMask, r.dstSub, r.dstMask); err != nil && !command.IsACLDuplicate(err) {
 			return fmt.Errorf("permit %s/%s → %s: %w", r.srcSub, r.srcMask, r.seg, err)
 		}
+	}
+	for _, r := range stale {
+		if err := aclCmd.ACLRemovePermitIP(ctx, acl, r.srcSub, r.srcMask, r.dstSub, r.dstMask); err != nil {
+			return fmt.Errorf("remove %s/%s → %s: %w", r.srcSub, r.srcMask, r.seg, err)
+		}
+	}
+	if len(plan) == 0 || (exists && bound) {
+		return nil
 	}
 	if err := aclCmd.ACLBind(ctx, iface, acl); err != nil {
 		return err
@@ -926,8 +991,25 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface query.Confirmed
 	return nil
 }
 
-// clearLANACL снимает привязку и список AWGM_<iface> перед пересборкой или
-// при teardown — только то, что есть: unbind без привязки и `no access-list`
+// ownLANRules — строки, которые считаются нашими: каждый источник srcs в каждый
+// LAN-бридж, в форме running-config. Бридж с неразбираемой подсетью пропускается:
+// наших строк на него быть не может.
+func ownLANRules(srcs []*net.IPNet, bridges []query.LANBridge) map[string]permitRule {
+	own := make(map[string]permitRule)
+	for _, b := range bridges {
+		rules, err := segmentRules(srcs, []string{b.Name}, bridges)
+		if err != nil {
+			continue
+		}
+		for _, r := range rules {
+			own[r.line()] = r
+		}
+	}
+	return own
+}
+
+// clearLANACL снимает привязку и список AWGM_<iface> целиком — только когда
+// чужих строк в нём нет или интерфейс удаляется — и только то, что есть: unbind без привязки и `no access-list`
 // без списка NDMS отвергает `argument parse error`, и это E в журнале роутера
 // (стенд 05.09, 28.09). С auto-delete unbind уносит список сам (стенд 05.09),
 // поэтому после него наличие списка читается заново.
@@ -999,7 +1081,7 @@ func (s *Service) SetLANSegments(ctx context.Context, id string, segments []stri
 	if err != nil {
 		return err
 	}
-	if err := s.applyLANSegmentsRaw(ctx, iface, server.Address, server.Mask, segments, serverPeerSubnets(server.Peers)); err != nil {
+	if err := s.applyLANSegmentsRaw(ctx, iface, server.Address, server.Mask, segments, serverPeerSubnets(server.Peers), nil); err != nil {
 		return err
 	}
 	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
