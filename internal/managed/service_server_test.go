@@ -1090,9 +1090,9 @@ func parseStrings(p *recordingPoster) []string {
 	return out
 }
 
-// TestSetLANSegments_RebuildOrder verifies that SetLANSegments posts the five
-// parse commands in the required order and persists LANSegments in storage.
-// Empty-list variant verifies only unbind+remove are sent (no permit/bind).
+// TestSetLANSegments_RebuildOrder verifies the command order of the first
+// enable and persists LANSegments in storage. Empty-list variant verifies only
+// unbind+remove are sent (no permit/bind).
 // Подслучаи с остатком `_WEBADMIN_` пинят снятие чужого permit-all первым.
 func TestSetLANSegments_RebuildOrder(t *testing.T) {
 	const ifaceName = "Wireguard0"
@@ -1110,11 +1110,11 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 		}
 	}
 
-	// Живой привязанный список — прежняя последовательность.
+	// Живой привязанный список с правилом плана.
 	ourACL := []string{"access-list AWGM_Wireguard0", "    permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0", "    auto-delete", "!",
 		"interface Wireguard0", "    security-level private", "    ip access-group AWGM_Wireguard0 in", "!"}
 
-	t.Run("non-empty segments", func(t *testing.T) {
+	t.Run("bound list matching plan: no commands", func(t *testing.T) {
 		svc, store, poster := newLANSegmentsTestService(t)
 		ctx := context.Background()
 		withRunningConfig(svc, ourACL...)
@@ -1125,19 +1125,8 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 			t.Fatalf("SetLANSegments: %v", err)
 		}
 
-		// Expected order:
-		// 1. no interface <iface> ip access-group <acl> in
-		// 2. no access-list <acl>
-		// 3. access-list <acl> permit ip <peerSub> <peerMask> <segSub> <segMask>
-		// 4. interface <iface> ip access-group <acl> in
-		// 5. access-list <acl> auto-delete
-		assertParses(t, parseStrings(poster), []string{
-			fmt.Sprintf("no interface %s ip access-group %s in", ifaceName, acl),
-			"no access-list " + acl,
-			fmt.Sprintf("access-list %s permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0", acl),
-			fmt.Sprintf("interface %s ip access-group %s in", ifaceName, acl),
-			fmt.Sprintf("access-list %s auto-delete", acl),
-		})
+		// Список совпал с планом: мутаций нет, правила веб-морды целы (#1159).
+		assertParses(t, parseStrings(poster), nil)
 
 		// Storage must be updated.
 		saved, ok := store.GetManagedServerByID(ifaceName)

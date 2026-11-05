@@ -86,7 +86,9 @@ func (s *Service) planPeerSubnetsACL(ctx context.Context, server *storage.Manage
 }
 
 // lanACLHasOrphans — есть ли в списке правило, которого нет в плане по записи:
-// откат точечной правки мог оставить чужой для записи permit (F526).
+// откат точечной правки мог оставить чужой для записи permit (F526). Сюда
+// попадают и правила пользователя; для них это лишь сверка вместо точечной
+// правки: applyLANSegmentsRaw снимает только свои строки (#1159).
 func (s *Service) lanACLHasOrphans(ctx context.Context, server *storage.ManagedServer, nets, rules []string) (bool, error) {
 	bridges, err := s.queries.Interfaces.ListLANBridges(ctx)
 	if err != nil {
@@ -98,7 +100,7 @@ func (s *Service) lanACLHasOrphans(ctx context.Context, server *storage.ManagedS
 	}
 	want := make(map[string]bool, len(plan))
 	for _, r := range plan {
-		want[fmt.Sprintf("permit ip %s %s %s %s", r.srcSub, r.srcMask, r.dstSub, r.dstMask)] = true
+		want[r.line()] = true
 	}
 	return slices.ContainsFunc(rules, func(r string) bool { return !want[r] }), nil
 }
@@ -134,11 +136,11 @@ func (s *Service) lanACLState(ctx context.Context, iface string) (exists, bound 
 func (s *Service) applyPeerSubnetsACL(ctx context.Context, conf query.Confirmed, server *storage.ManagedServer, e peerACLEdit) (undo func(context.Context), err error) {
 	iface := server.InterfaceName
 	if e.rebuild {
-		if err := s.applyLANSegmentsRaw(ctx, conf, server.Address, server.Mask, server.LANSegments, e.newNets); err != nil {
+		if err := s.applyLANSegmentsRaw(ctx, conf, server.Address, server.Mask, server.LANSegments, e.newNets, e.oldNets); err != nil {
 			return nil, fmt.Errorf("LAN ACL rebuild: %w", err)
 		}
 		return func(ctx context.Context) {
-			if err := s.applyLANSegmentsRaw(ctx, conf, server.Address, server.Mask, server.LANSegments, e.oldNets); err != nil {
+			if err := s.applyLANSegmentsRaw(ctx, conf, server.Address, server.Mask, server.LANSegments, e.oldNets, e.newNets); err != nil {
 				s.appLog.Warn("lan-acl", iface, "список не пересобран при откате: "+err.Error())
 			}
 		}, nil

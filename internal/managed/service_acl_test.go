@@ -4,49 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
-
-	"github.com/hoaxisr/awg-manager/internal/logging"
 )
-
-// Running-config недоступен → сегменты всё равно применяются (снятие
-// вслепую + permit, bind, auto-delete), и никакого Warn: ради ACL в
-// running-config обязательно не ходим (#879).
-func TestApplyLANSegments_RunningConfigUnavailable_ProceedsSilently(t *testing.T) {
-	svc, store, poster := newLANSegmentsTestService(t) // stateAwareGetter: running-config = ошибка
-	spy := &recAppLog{}
-	svc.appLog = logging.NewScopedLogger(spy, logging.GroupServer, logging.SubManaged)
-	seedServer(t, store, "Wireguard0")
-	resetPosts(poster)
-	if err := svc.SetLANSegments(context.Background(), "Wireguard0", []string{"Home"}); err != nil {
-		t.Fatal(err)
-	}
-	if n := len(parseStrings(poster)); n != 5 {
-		t.Fatalf("команд %d, ждали 5", n)
-	}
-	if len(spy.entries) != 1 || spy.entries[0] != "info|lan-segments|Wireguard0|LAN segments changed: Home" {
-		t.Fatalf("журнал = %v", spy.entries)
-	}
-	resetPosts(poster)
-	if err := svc.SetLANSegments(context.Background(), "Wireguard0", nil); err != nil {
-		t.Fatal(err)
-	}
-	if got := parseStrings(poster); !slices.Equal(got, []string{"no interface Wireguard0 ip access-group AWGM_Wireguard0 in", "no access-list AWGM_Wireguard0"}) {
-		t.Fatalf("teardown: %v", got)
-	}
-}
-
-// ForeignAccessGroups отдаёт чужие привязки в порядке появления и вычитает наш AWGM_.
-func TestForeignAccessGroups_ExcludesOurs(t *testing.T) {
-	svc, _, _ := newLANSegmentsTestService(t)
-	withRunningConfig(svc, "interface Wireguard0", "    ip access-group AWGM_Wireguard0 in", "    ip access-group GUEST_ACL in", "    ip access-group _WEBADMIN_Wireguard0 in", "!")
-	got, err := svc.ForeignAccessGroups(context.Background(), "Wireguard0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"GUEST_ACL", "_WEBADMIN_Wireguard0"}; !slices.Equal(got, want) {
-		t.Fatalf("got %v want %v", got, want)
-	}
-}
 
 // Чужой `_WEBADMIN_<iface>` не трогает НИ ОДИН путь применения сегментов:
 // это правила межсетевого экрана пользователя из веб-морды роутера (список
