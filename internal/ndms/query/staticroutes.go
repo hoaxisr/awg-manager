@@ -11,7 +11,7 @@ import (
 )
 
 // StaticRouteEntry — запись /show/rc/ip/route (стенд 5.02.A.11, 27.09.2026):
-// сетевая форма {network, mask, interface, auto, index, comment}, host-форма
+// сетевая форма {network, mask, interface, auto, reject, index, comment}, host-форма
 // несёт host вместо network+mask. В отличие от /show/ip/route здесь есть
 // комментарий и записи опущенных интерфейсов — по нему сверяется владение
 // маршрутами сетей за клиентом (#713).
@@ -21,6 +21,7 @@ type StaticRouteEntry struct {
 	Host      string `json:"host"`
 	Interface string `json:"interface"`
 	Comment   string `json:"comment"`
+	Reject    bool   `json:"reject"`
 }
 
 // IPv4Net — сеть записи; host-форма — /32. Записи без читаемой IPv4-сети

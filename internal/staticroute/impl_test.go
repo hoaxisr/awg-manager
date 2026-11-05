@@ -135,6 +135,13 @@ func (f *fakePoster) Post(_ context.Context, payload any) (json.RawMessage, erro
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.payloads = append(f.payloads, payload)
+	if batch, ok := payload.([]any); ok { // пакет: ответ на каждый элемент
+		replies := make([]json.RawMessage, len(batch))
+		for i := range replies {
+			replies[i] = json.RawMessage(`{}`)
+		}
+		return json.Marshal(replies)
+	}
 	return json.RawMessage(`{}`), nil
 }
 
@@ -389,7 +396,15 @@ func TestReconcile_SkipsOrphanLists(t *testing.T) {
 func routePayloads(t *testing.T, poster *fakePoster) []string {
 	t.Helper()
 	var out []string
+	var flat []any
 	for _, p := range poster.Payloads() {
+		if batch, ok := p.([]any); ok {
+			flat = append(flat, batch...)
+		} else {
+			flat = append(flat, p)
+		}
+	}
+	for _, p := range flat {
 		m, ok := p.(map[string]any)
 		if !ok {
 			continue

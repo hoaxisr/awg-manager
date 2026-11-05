@@ -2,6 +2,8 @@ package command
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -272,8 +274,16 @@ func commentOf(fields []string) string {
 // в ::/0 — то есть в ДЕФОЛТНЫЙ маршрут интерфейса. Форма стенд-проверена
 // 2026-08-24: сам роутер хранит запись как {prefix, interface, auto, comment}.
 func (c *RouteCommands) AddStaticRoute(ctx context.Context, route StaticRouteSpec) error {
-	if err := requireRouteIface(route); err != nil {
+	payload, op, err := addRoutePayload(route)
+	if err != nil {
 		return err
+	}
+	return c.mutate(ctx, payload, op)
+}
+
+func addRoutePayload(route StaticRouteSpec) (any, string, error) {
+	if err := requireRouteIface(route); err != nil {
+		return nil, "", err
 	}
 	// Общая часть у обеих форм одна и та же; различаются только ключ
 	// назначения (prefix против host|network+mask) и внешний ключ.
@@ -291,10 +301,10 @@ func (c *RouteCommands) AddStaticRoute(ctx context.Context, route StaticRouteSpe
 	if route.V6 {
 		prefix, err := v6Prefix(route)
 		if err != nil {
-			return err
+			return nil, "", err
 		}
 		inner["prefix"] = prefix
-		return c.mutate(ctx, map[string]any{"ipv6": map[string]any{"route": inner}}, "add ipv6 static route")
+		return map[string]any{"ipv6": map[string]any{"route": inner}}, "add ipv6 static route", nil
 	}
 
 	if route.Host != "" {
@@ -303,20 +313,28 @@ func (c *RouteCommands) AddStaticRoute(ctx context.Context, route StaticRouteSpe
 		inner["network"] = route.Network
 		inner["mask"] = route.Mask
 	}
-	return c.mutate(ctx, map[string]any{"ip": map[string]any{"route": inner}}, "add static route")
+	return map[string]any{"ip": map[string]any{"route": inner}}, "add static route", nil
 }
 
 // RemoveStaticRoute removes a previously-added static route. For v6 (route.V6)
 // it emits {prefix, interface, no} under "ipv6" — ключ ИМЕННО prefix, см.
 // v6Prefix; for v4 it emits {interface, no, host|network+mask} under "ip".
 func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRouteSpec) error {
-	if err := requireRouteIface(route); err != nil {
+	payload, op, err := removeRoutePayload(route)
+	if err != nil {
 		return err
+	}
+	return c.mutateTolerant(ctx, payload, op, toleratesRouteRemoval)
+}
+
+func removeRoutePayload(route StaticRouteSpec) (any, string, error) {
+	if err := requireRouteIface(route); err != nil {
+		return nil, "", err
 	}
 	if route.V6 {
 		prefix, err := v6Prefix(route)
 		if err != nil {
-			return err
+			return nil, "", err
 		}
 		payload := map[string]any{
 			"ipv6": map[string]any{
@@ -327,7 +345,7 @@ func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRoute
 				},
 			},
 		}
-		return c.mutateTolerant(ctx, payload, "remove ipv6 static route", toleratesRouteRemoval)
+		return payload, "remove ipv6 static route", nil
 	}
 	inner := map[string]any{
 		"interface": route.Interface.Name(),
@@ -342,7 +360,110 @@ func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRoute
 	payload := map[string]any{
 		"ip": map[string]any{"route": inner},
 	}
-	return c.mutateTolerant(ctx, payload, "remove static route", toleratesRouteRemoval)
+	return payload, "remove static route", nil
+}
+
+// routeBatchSize — маршрутов в одном POST. Стенд KN-1810 5.02.B.2: ~50 команд/с
+// при размере пакета от 100 до 1000 против ~12 POST/с по одному. Размер на
+// скорость не влиял, поэтому взят малый: ~2 с на запрос при таймауте 30 с, запас
+// на роутеры медленнее стенда.
+const routeBatchSize = 100
+
+// Отказ всего пакета, а не маршрута. ErrRouteOutcomeUnknown — пакет ушёл, но
+// ответа нет или он не разобран: часть команд могла примениться, вызывающему,
+// откатывающему правку, снимать и эти маршруты. ErrRouteNotSent — следующие
+// пакеты не отправлялись: ndm не отвечает, и новые команды только добавят ему
+// очереди.
+var (
+	ErrRouteOutcomeUnknown = errors.New("static routes batch: outcome unknown")
+	ErrRouteNotSent        = errors.New("static routes batch: not sent")
+)
+
+// AddStaticRoutes ставит маршруты пакетами. Результат — ошибка на каждый
+// маршрут, по индексу: NDMS отвечает на каждый элемент отдельно, и отказ одного
+// соседним не мешает (стенд 5.02.B.2).
+func (c *RouteCommands) AddStaticRoutes(ctx context.Context, routes []StaticRouteSpec) []error {
+	return c.routeBatches(ctx, routes, addRoutePayload, nil)
+}
+
+// RemoveStaticRoutes — снятие пакетами; те же отказы безобидны, что и у
+// RemoveStaticRoute.
+func (c *RouteCommands) RemoveStaticRoutes(ctx context.Context, routes []StaticRouteSpec) []error {
+	return c.routeBatches(ctx, routes, removeRoutePayload, toleratesRouteRemoval)
+}
+
+func (c *RouteCommands) routeBatches(
+	ctx context.Context,
+	routes []StaticRouteSpec,
+	build func(StaticRouteSpec) (any, string, error),
+	tolerate func(string) bool,
+) []error {
+	errs := make([]error, len(routes))
+	posted := false
+	for start := 0; start < len(routes); start += routeBatchSize {
+		end := min(start+routeBatchSize, len(routes))
+		var payloads []any
+		var index []int // позиция элемента пакета в routes
+		for i := start; i < end; i++ {
+			payload, _, err := build(routes[i])
+			if err != nil {
+				errs[i] = err
+				continue
+			}
+			payloads = append(payloads, payload)
+			index = append(index, i)
+		}
+		if len(payloads) == 0 {
+			continue
+		}
+		posted = true
+		batchErrs, err := c.postRouteBatch(ctx, payloads, tolerate)
+		for i, e := range batchErrs {
+			errs[index[i]] = e
+		}
+		if err != nil {
+			for i := end; i < len(routes); i++ {
+				errs[i] = fmt.Errorf("%w: %w", ErrRouteNotSent, err)
+			}
+			break
+		}
+	}
+	// После всей пачки, а не на пакет: пакет дольше дебаунса сохранения, и
+	// сохранения шли бы между пакетами. Отказ не отменяет: что-то применилось.
+	if posted {
+		c.save.Request()
+		c.queries.Routes.InvalidateAll()
+		c.queries.RunningConfig.InvalidateAll()
+		c.queries.StaticRoutes.InvalidateAll()
+	}
+	return errs
+}
+
+// postRouteBatch — один пакет: ошибки по элементам и причина, если исход всего
+// пакета неизвестен.
+func (c *RouteCommands) postRouteBatch(ctx context.Context, payloads []any, tolerate func(string) bool) ([]error, error) {
+	raw, err := c.poster.Post(ctx, payloads)
+	var replies []json.RawMessage
+	if err == nil {
+		if jerr := json.Unmarshal(raw, &replies); jerr != nil {
+			err = fmt.Errorf("decode reply: %w", jerr)
+		} else if len(replies) != len(payloads) {
+			err = fmt.Errorf("reply has %d elements, sent %d", len(replies), len(payloads))
+		}
+	}
+	errs := make([]error, len(payloads))
+	if err != nil {
+		for i := range errs {
+			errs[i] = fmt.Errorf("%w: %w", ErrRouteOutcomeUnknown, err)
+		}
+		return errs, err
+	}
+	for i, reply := range replies {
+		if msgs := ndmsStatusErrors(reply); len(msgs) > 0 && !allTolerated(msgs, tolerate) {
+			errs[i] = fmt.Errorf("router reported error: %s", strings.Join(msgs, "; "))
+		}
+	}
+	return errs, nil
 }
 
 // requireRouteIface — спека без интерфейса (нулевой Confirmed: поле пропущено
