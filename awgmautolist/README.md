@@ -84,7 +84,19 @@ dismiss/exclude/restore. Постоянных записей из AutoOff или
 
 ## Сборка
 
-Для Keenetic aarch64:
+Готовые IPK для всех поддерживаемых архитектур Keenetic создаются одной
+командой из каталога `awgmautolist`:
+
+```sh
+./build-ipk.sh all
+```
+
+Для одной архитектуры: `./build-ipk.sh aarch64-3.10` (также поддерживаются
+`mipsel-3.4` и `mips-3.4`). Пакеты записываются в `../dist`. Версия по умолчанию
+получается из `internal/autolist/doc.go` с package revision `-1`; для другой
+версии используйте, например, `VERSION=0.1.0-2 ./build-ipk.sh all`.
+
+Для одиночного бинаря Keenetic aarch64:
 
 ```sh
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
