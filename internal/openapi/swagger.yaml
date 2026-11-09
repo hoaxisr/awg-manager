@@ -340,8 +340,8 @@ definitions:
         description: Body — произвольный JSON-тело вызова (опционально).
         type: object
       path:
-        description: 'Path — путь сателлита: /add, /probe, /exclude, /config, /forget
-          или /dismiss.'
+        description: 'Path — путь сателлита: /add, /probe, /exclude, /restore, /config,
+          /forget или /dismiss.'
         example: /add
         type: string
     type: object
@@ -8109,13 +8109,27 @@ definitions:
         type: integer
       host:
         type: string
+      ip:
+        type: string
       lastAt:
+        type: string
+      probeError:
+        type: string
+      probedAt:
         type: string
       sources:
         items:
           type: string
         type: array
+      stage:
+        type: string
       state:
+        type: string
+      tunnelError:
+        type: string
+      tunnelProbedAt:
+        type: string
+      tunnelVerdict:
         type: string
       verdict:
         type: string
@@ -8139,6 +8153,10 @@ definitions:
     type: object
   autolistdetect.Status:
     properties:
+      addsLimit:
+        type: integer
+      addsUsedHour:
+        type: integer
       auto:
         description: Auto — режим автодобавления сателлита (последний /status).
         type: boolean
@@ -8161,14 +8179,24 @@ definitions:
       lastError:
         description: LastError — причина, по которой живой процесс не ответил.
         type: string
+      probesLimit:
+        type: integer
+      probesUsedHour:
+        description: |-
+          Почасовые бюджеты для индикации исчерпания в UI. Нулевой Limit означает,
+          что соответствующий лимит отключён при сборке сателлита.
+        type: integer
       running:
         description: Running — pid-файл существует и процесс жив (kill -0).
         type: boolean
       statusUrl:
         description: StatusURL — адрес статус-сервера сателлита, если найден.
         type: string
+      targetInterface:
+        description: TargetInterface — общий интерфейс tunnel-пробы и новых правил.
+        type: string
       targetOutbound:
-        description: TargetOutbound — цель новых правил (последний /status).
+        description: TargetOutbound — legacy-поле старого конфига сателлита.
         type: string
       version:
         type: string
