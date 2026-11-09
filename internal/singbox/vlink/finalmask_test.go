@@ -105,10 +105,13 @@ func TestCheckSingboxFatal_FinalMaskAndEncryption(t *testing.T) {
 	if err := checkSingboxFatal(ob, "vless"); err == nil {
 		t.Fatal("bad ML-KEM key must be rejected")
 	}
-	ob = map[string]any{"encryption": "mlkem768x25519plus.native.0rtt." + strings.Repeat("A", 43), "flow": "xtls-rprx-vision",
-		"tls": map[string]any{"enabled": true}}
+	enc := "mlkem768x25519plus.native.0rtt." + strings.Repeat("A", 43)
+	if err := checkSingboxFatal(map[string]any{"encryption": enc, "flow": "xtls-rprx-vision"}, "vless"); err != nil {
+		t.Fatalf("vision over encryption on tcp must pass: %v", err)
+	}
+	ob = map[string]any{"encryption": enc, "flow": "xtls-rprx-vision", "transport": map[string]any{"type": "ws"}}
 	if err := checkSingboxFatal(ob, "vless"); err == nil {
-		t.Fatal("flow + encryption must be rejected")
+		t.Fatal("vision over a transport must be rejected even with encryption")
 	}
 	ob = map[string]any{
 		"encryption": "auto",

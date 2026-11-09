@@ -283,10 +283,14 @@ func TestParseVless_EncryptionPassedThrough(t *testing.T) {
 	if err := json.Unmarshal(back.Outbound, &exported); err != nil || exported["encryption"] != enc {
 		t.Fatalf("encryption lost on export: %s", link)
 	}
-	// Vision поверх шифрования форк не умеет и отвергает весь конфиг.
-	_, err = ParseLink("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?type=tcp&security=tls&flow=xtls-rprx-vision&encryption=" + enc + "#n")
-	if err == nil || !strings.Contains(err.Error(), "Encryption") {
-		t.Fatalf("flow + encryption must be rejected, got %v", err)
+	// Vision поверх шифрования работает на голом tcp и без TLS, поверх
+	// транспорта — нет, как и всякий vision.
+	got, err = ParseLink("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?type=tcp&flow=xtls-rprx-vision&encryption=" + enc + "#n")
+	if err != nil || !strings.Contains(string(got.Outbound), `"flow":"xtls-rprx-vision"`) {
+		t.Fatalf("vision over encryption must pass: %v %s", err, got.Outbound)
+	}
+	if _, err = ParseLink("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?type=ws&flow=xtls-rprx-vision&encryption=" + enc + "#n"); err == nil {
+		t.Fatal("vision over ws must be rejected")
 	}
 }
 
