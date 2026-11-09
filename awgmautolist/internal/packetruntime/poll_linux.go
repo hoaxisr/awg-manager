@@ -26,7 +26,7 @@ func pollFDs(ctx context.Context, fds []int, timeout time.Duration) ([]bool, err
 		if word >= len(set.Bits) {
 			return nil, fmt.Errorf("packetruntime: descriptor %d exceeds select capacity", fd)
 		}
-		set.Bits[word] |= int64(1) << bit
+		set.Bits[word] |= 1 << bit
 		if fd > maxFD {
 			maxFD = fd
 		}
@@ -51,7 +51,7 @@ func pollFDs(ctx context.Context, fds []int, timeout time.Duration) ([]bool, err
 	}
 	for i, fd := range fds {
 		if fd >= 0 {
-			ready[i] = set.Bits[fd/64]&(int64(1)<<uint(fd%64)) != 0
+			ready[i] = set.Bits[fd/64]&(1<<uint(fd%64)) != 0
 		}
 	}
 	return ready, nil
