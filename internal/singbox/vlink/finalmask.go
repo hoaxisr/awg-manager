@@ -3,6 +3,7 @@ package vlink
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -21,7 +22,11 @@ func parseFinalMask(raw string) (json.RawMessage, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
 	}
-	var final XrayFinalMask
+	// quicParams сырым: блок выбрасывается, и тип его полей судить незачем.
+	var final struct {
+		TCP []XrayMask `json:"tcp"`
+		UDP []XrayMask `json:"udp"`
+	}
 	if err := json.Unmarshal([]byte(raw), &final); err != nil {
 		return nil, fmt.Errorf("vlink: invalid finalmask")
 	}
@@ -104,11 +109,15 @@ func checkFragmentMask(settings json.RawMessage) error {
 }
 
 // parseMaskRange — диапазон в формах форка (common/xray/json/badoption.Range):
-// число, строка "N" или "N-M", объект {from, to}. Отсутствие значения — 0.
-// Отрицательные значения форк отвергает у всех полей fragment.
+// int32-число, строка "N" или "N-M", объект {from, to}. Отсутствие значения —
+// 0, а явный null форк отвергает (ParseInt("")). Отрицательные значения форк
+// отвергает у всех полей fragment.
 func parseMaskRange(raw json.RawMessage) (from, to int64, err error) {
-	if len(raw) == 0 || string(raw) == "null" {
+	if len(raw) == 0 {
 		return 0, 0, nil
+	}
+	if string(raw) == "null" {
+		return 0, 0, fmt.Errorf("null range")
 	}
 	var n int64
 	var s string
@@ -135,7 +144,7 @@ func parseMaskRange(raw json.RawMessage) (from, to int64, err error) {
 	default:
 		return 0, 0, fmt.Errorf("invalid range %s", raw)
 	}
-	if from < 0 || from > to {
+	if from < 0 || from > to || to > math.MaxInt32 {
 		return 0, 0, fmt.Errorf("invalid range %s", raw)
 	}
 	return from, to, nil

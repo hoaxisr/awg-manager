@@ -700,8 +700,8 @@ func applyXrayHysteriaMasks(stream *XrayStream, out map[string]any) (*xrayEndpoi
 	seen := map[string]bool{}
 	// final.TCP здесь намеренно не смотрим: диалер hysteria держит только
 	// udpmaskManager (hysteria/dialer.go), tcp-масок он не читает вовсе — на
-	// такой узел они не действуют. У остальных протоколов всё наоборот, и там
-	// любая маска — отказ (rejectXrayForeignMasks).
+	// такой узел они не действуют. У остальных протоколов маски идут в общий
+	// сборщик (parseFinalMask): fragment переносится, прочие — отказ.
 	for _, mask := range final.UDP {
 		typ := strings.ToLower(mask.Type)
 		// Xray применяет маски по очереди, sing-box умеет одну каждого рода:

@@ -119,7 +119,7 @@ func TestService_InlineBindChange_KeepsRemovedMemberRemoved(t *testing.T) {
 	}
 }
 
-// Снятие MLKEM вместе со сменой интерфейса идёт тем же путём и снимает флаг.
+// Снятие запрета MLKEM вместе со сменой интерфейса идёт тем же путём и снимает флаг.
 func TestService_InlineBindChange_WithMLKEMOff(t *testing.T) {
 	withFakeIface(t, "eth3")
 	svc, mut := newTestService(t)

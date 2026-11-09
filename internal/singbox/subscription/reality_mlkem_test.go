@@ -180,7 +180,7 @@ func TestService_RealityMLKEM_SurvivesRefresh(t *testing.T) {
 	}
 }
 
-func TestService_RealityMLKEM_EnableNeedsNoFetch(t *testing.T) {
+func TestService_RealityMLKEM_OptOutNeedsNoFetch(t *testing.T) {
 	feed := newMLKEMFeed(t, mlkemRealityURL+"#A\n"+mlkemTLSURL+"#B\n")
 	svc, mut := newTestService(t)
 	ctx := context.Background()
@@ -203,11 +203,11 @@ func TestService_RealityMLKEM_EnableNeedsNoFetch(t *testing.T) {
 		t.Fatalf("flag=%v, want false", got)
 	}
 	if n := feed.hits.Load() - before; n != 0 {
-		t.Fatalf("enable fetched the source %d times", n)
+		t.Fatalf("opt-out fetched the source %d times", n)
 	}
 }
 
-func TestService_RealityMLKEM_DisableRefreshes(t *testing.T) {
+func TestService_RealityMLKEM_RemovingOptOutRefreshes(t *testing.T) {
 	feed := newMLKEMFeed(t, mlkemRealityURL+"#A\n")
 	svc, mut := newTestService(t)
 	ctx := context.Background()
@@ -224,7 +224,7 @@ func TestService_RealityMLKEM_DisableRefreshes(t *testing.T) {
 	}
 }
 
-func TestService_RealityMLKEM_DisableKeepsProviderFlag(t *testing.T) {
+func TestService_RealityMLKEM_RemovingOptOutKeepsProviderFlag(t *testing.T) {
 	feed := newMLKEMFeed(t, mlkemRealityURL+"&support-x25519mlkem768=false#A\n")
 	svc, mut := newTestService(t)
 	ctx := context.Background()
@@ -263,7 +263,7 @@ func TestService_RealityMLKEM_KeepsFingerprint(t *testing.T) {
 
 // Источник лежит: снять опцию всё равно можно, флаг снимается с сохранённых
 // тел.
-func TestService_RealityMLKEM_DisableWorksWhenSourceDown(t *testing.T) {
+func TestService_RealityMLKEM_RemovingOptOutWorksWhenSourceDown(t *testing.T) {
 	const firefox = "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?type=tcp&security=reality&sni=a.example&fp=firefox&pbk=" + mlkemTestKey + "&sid=ab#A\n"
 	feed := newMLKEMFeed(t, firefox)
 	svc, mut := newTestService(t)
@@ -275,7 +275,7 @@ func TestService_RealityMLKEM_DisableWorksWhenSourceDown(t *testing.T) {
 	feed.fail.Store(true)
 	sub, err = svc.Update(sub.ID, mlkemPatch(false))
 	if err != nil {
-		t.Fatalf("disable with source down: %v", err)
+		t.Fatalf("removing opt-out with source down: %v", err)
 	}
 	if sub.MLKEMOff {
 		t.Fatal("option still on")
@@ -285,8 +285,8 @@ func TestService_RealityMLKEM_DisableWorksWhenSourceDown(t *testing.T) {
 	}
 }
 
-// Движок не принял конфиг: опция остаётся включённой.
-func TestService_RealityMLKEM_DisableRollsBackOnReloadFailure(t *testing.T) {
+// Движок не принял конфиг: запрет MLKEM остаётся в силе.
+func TestService_RealityMLKEM_RemovingOptOutRollsBackOnReloadFailure(t *testing.T) {
 	svc, mut := newTestService(t)
 	sub, err := svc.Create(context.Background(), CreateInput{Label: "i", Inline: mlkemRealityURL + "#A\n", Enabled: true, MLKEMOff: true})
 	if err != nil {
@@ -339,7 +339,7 @@ func TestService_RealityMLKEM_InlineKeepsManualMember(t *testing.T) {
 }
 
 // Сбой применения откатывает и опцию: она в общем rollbackPatch.
-func TestService_RealityMLKEM_EnableRollsBackOnReloadFailure(t *testing.T) {
+func TestService_RealityMLKEM_OptOutRollsBackOnReloadFailure(t *testing.T) {
 	feed := newMLKEMFeed(t, mlkemRealityURL+"#A\n")
 	svc, mut := newTestService(t)
 	sub, err := svc.Create(context.Background(), CreateInput{Label: "s", URL: feed.url, Enabled: true})

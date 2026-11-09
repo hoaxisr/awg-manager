@@ -370,14 +370,22 @@ func checkSingboxFatal(ob map[string]any, typ string) error {
 		return fmt.Errorf("unsupported transport type %q", transportType)
 	}
 
-	// finalmask и encryption форк проверяет при создании аутбаунда.
-	if fm, ok := ob["finalmask"]; ok && fm != nil {
+	// finalmask и encryption форк проверяет при создании аутбаунда строже,
+	// чем этот вход (лишние ключи, «бессмысленные» encryption), поэтому в
+	// аутбаунд уходит нормализованное значение, а не присланное.
+	if fm, ok := ob["finalmask"]; ok {
 		raw, err := json.Marshal(fm)
 		if err != nil {
 			return err
 		}
-		if _, err := parseFinalMask(string(raw)); err != nil {
+		normalized, err := parseFinalMask(string(raw))
+		if err != nil {
 			return err
+		}
+		if normalized == nil {
+			delete(ob, "finalmask")
+		} else {
+			ob["finalmask"] = normalized
 		}
 	}
 
@@ -386,6 +394,11 @@ func checkSingboxFatal(ob map[string]any, typ string) error {
 		enc, err := vlessEncryption(asString(ob["encryption"]))
 		if err != nil {
 			return err
+		}
+		if enc == "" {
+			delete(ob, "encryption")
+		} else {
+			ob["encryption"] = enc
 		}
 		if flow := asString(ob["flow"]); flow != "" {
 			// Те же правила, что у ссылок и Clash: собираем из готового

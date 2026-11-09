@@ -1,6 +1,7 @@
 package vlink
 
 import (
+	"crypto/mlkem"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -92,9 +93,16 @@ func checkMLKEMEncryption(encryption string) error {
 	var keys, blocks, maxLen int
 	for _, r := range s[3:] {
 		if len(r) >= 20 {
+			// 32 байта — ключ X25519 (форку годится любой), 1184 — ключ
+			// ML-KEM-768, его кодировку форк проверяет так же.
 			b, err := base64.RawURLEncoding.DecodeString(r)
 			if err != nil || len(b) != 32 && len(b) != 1184 {
 				return errors.New("ключ")
+			}
+			if len(b) == 1184 {
+				if _, err := mlkem.NewEncapsulationKey768(b); err != nil {
+					return errors.New("ключ ML-KEM")
+				}
 			}
 			keys++
 			continue

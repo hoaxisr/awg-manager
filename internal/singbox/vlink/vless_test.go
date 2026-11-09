@@ -243,6 +243,7 @@ func TestParseVless_RealEncryptionRejected(t *testing.T) {
 	for name, enc := range map[string]string{
 		"server form": "mlkem768x25519plus.native.600s.AAAA",
 		"short key":   "mlkem768x25519plus.native.0rtt.AAAAAAAAAAAAAAAAAAAAAAAA",
+		"bad ML-KEM":  "mlkem768x25519plus.native.0rtt." + strings.Repeat("_", 1579),
 		"bad mode":    "mlkem768x25519plus.bogus.0rtt." + key,
 		"no key":      "mlkem768x25519plus.native.0rtt.100-111-1111",
 		"pad first":   "mlkem768x25519plus.native.0rtt.10-5-5." + key,
@@ -268,6 +269,19 @@ func TestParseVless_EncryptionPassedThrough(t *testing.T) {
 	}
 	if ob["encryption"] != enc {
 		t.Fatalf("encryption = %v, want %q", ob["encryption"], enc)
+	}
+	// Экспорт в ссылку обязан нести строку дальше, иначе узел не подключится.
+	link, err := EncodeOutbound(got.Outbound, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := ParseLink(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exported map[string]any
+	if err := json.Unmarshal(back.Outbound, &exported); err != nil || exported["encryption"] != enc {
+		t.Fatalf("encryption lost on export: %s", link)
 	}
 	// Vision поверх шифрования форк не умеет и отвергает весь конфиг.
 	_, err = ParseLink("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?type=tcp&security=tls&flow=xtls-rprx-vision&encryption=" + enc + "#n")

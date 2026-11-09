@@ -65,3 +65,16 @@ func TestParseXrayHysteria_TCPMaskIsInert(t *testing.T) {
 		t.Errorf("obfs = %v", sb["obfs"])
 	}
 }
+
+// Xray JSON: VLESS Encryption вместе с flow форк отвергает при старте.
+func TestParseXrayBody_EncryptionWithFlowRejected(t *testing.T) {
+	body := []byte(`[{"remarks":"F","outbounds":[{"protocol":"vless",
+		"settings":{"vnext":[{"address":"198.51.100.3","port":443,
+			"users":[{"id":"b831381d-6324-4d53-ad4f-8cda48b30811","flow":"xtls-rprx-vision",
+				"encryption":"mlkem768x25519plus.native.0rtt.` + strings.Repeat("A", 43) + `"}]}]},
+		"streamSettings":{"network":"tcp","security":"tls"}}]}]`)
+	res := ParseXrayBody(body)
+	if len(res.Outbounds) != 0 || len(res.Errors) != 1 || !strings.Contains(res.Errors[0].Message, "Encryption") {
+		t.Fatalf("outbounds=%d errors=%v", len(res.Outbounds), res.Errors)
+	}
+}
