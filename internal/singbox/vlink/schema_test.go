@@ -229,10 +229,13 @@ func TestParsedOutboundsMatchSchema(t *testing.T) {
 		"vless grpc reality":          "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=grpc&security=reality&serviceName=svc&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12&fp=chrome#b",
 		// flow живёт только на голом tcp с TLS/Reality — ключ покрывается здесь.
 		"vless tcp reality vision": "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=tcp&security=reality&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12&fp=chrome&flow=xtls-rprx-vision#b2",
-		"vless httpupgrade":        "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=httpupgrade&path=/u&host=h.example.com#c",
-		"trojan ws tls":            "trojan://secret@example.com:443?type=ws&security=tls&path=/t&sni=foo.com#d",
-		"shadowsocks":              "ss://YWVzLTI1Ni1nY206c2VjcmV0@example.com:8388#e",
-		"hysteria2":                "hysteria2://secret@example.com:443?sni=foo.com&obfs=salamander&obfs-password=p#f",
+		// Поля форка awgm.37: finalmask, отказ от MLKEM, VLESS Encryption.
+		"vless reality finalmask + no mlkem": "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=tcp&security=reality&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12&fp=chrome&support-x25519mlkem768=false&fm=%7B%22tcp%22%3A%5B%7B%22type%22%3A%22fragment%22%2C%22settings%22%3A%7B%22packets%22%3A%22tlshello%22%2C%22length%22%3A%22100-200%22%2C%22delay%22%3A%221-3%22%2C%22maxSplit%22%3A%223-5%22%7D%7D%5D%7D#k",
+		"vless encryption":                   "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=tcp&encryption=mlkem768x25519plus.native.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA#l",
+		"vless httpupgrade":                  "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=httpupgrade&path=/u&host=h.example.com#c",
+		"trojan ws tls":                      "trojan://secret@example.com:443?type=ws&security=tls&path=/t&sni=foo.com#d",
+		"shadowsocks":                        "ss://YWVzLTI1Ni1nY206c2VjcmV0@example.com:8388#e",
+		"hysteria2":                          "hysteria2://secret@example.com:443?sni=foo.com&obfs=salamander&obfs-password=p#f",
 		// Пропускная способность, gecko и прыжки по портам — ключи, которых
 		// прежняя выборка не касалась, а ошибка в любом из них роняет разбор
 		// ВСЕЙ конфигурации движка (F360).

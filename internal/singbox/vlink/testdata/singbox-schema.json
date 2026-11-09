@@ -867,6 +867,9 @@
         },
         "fallback_delay": {
           "$ref": "#/$defs/Duration"
+        },
+        "finalmask": {
+          "$ref": "#/$defs/FinalMaskOptions"
         }
       },
       "additionalProperties": false
@@ -2059,6 +2062,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "prefer_go": {
               "type": "boolean"
             },
@@ -2218,6 +2224,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -2397,6 +2406,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "server": {
               "type": "string"
             },
@@ -2531,6 +2543,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "prefer_go": {
               "type": "boolean"
             },
@@ -2660,6 +2675,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "prefer_go": {
               "type": "boolean"
@@ -2852,6 +2870,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "server": {
               "type": "string"
             },
@@ -3022,6 +3043,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "server": {
               "type": "string"
             },
@@ -3143,6 +3167,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -3268,6 +3295,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -3424,6 +3454,9 @@
         },
         "fallback_delay": {
           "$ref": "#/$defs/Duration"
+        },
+        "finalmask": {
+          "$ref": "#/$defs/FinalMaskOptions"
         }
       },
       "additionalProperties": false
@@ -3703,6 +3736,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             }
           },
           "required": [
@@ -3817,6 +3853,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -4245,6 +4284,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "system": {
               "type": "boolean"
             },
@@ -4524,6 +4566,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -5188,6 +5233,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "state_directory": {
               "type": "string"
             },
@@ -5471,6 +5519,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             }
           },
           "required": [
@@ -5494,6 +5545,76 @@
         },
         "debug": {
           "$ref": "#/$defs/DebugOptions"
+        }
+      },
+      "additionalProperties": false
+    },
+    "FinalMask": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "fragment"
+          ]
+        },
+        "settings": {
+          "$ref": "#/$defs/FragmentMaskOptions"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "FinalMaskOptions": {
+      "type": "object",
+      "properties": {
+        "tcp": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FinalMask"
+          }
+        },
+        "udp": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FinalMask"
+          }
+        },
+        "quicParams": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "FragmentMaskOptions": {
+      "type": "object",
+      "properties": {
+        "packets": {
+          "type": "string"
+        },
+        "length": {
+          "$ref": "#/$defs/XrayRange"
+        },
+        "delay": {
+          "$ref": "#/$defs/XrayRange"
+        },
+        "lengths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/XrayRange"
+          }
+        },
+        "delays": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/XrayRange"
+          }
+        },
+        "maxSplit": {
+          "$ref": "#/$defs/XrayRange"
         }
       },
       "additionalProperties": false
@@ -5627,6 +5748,9 @@
         },
         "fallback_delay": {
           "$ref": "#/$defs/Duration"
+        },
+        "finalmask": {
+          "$ref": "#/$defs/FinalMaskOptions"
         },
         "idle_timeout": {
           "$ref": "#/$defs/Duration"
@@ -5800,6 +5924,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "idle_timeout": {
               "$ref": "#/$defs/Duration"
@@ -8237,6 +8364,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             }
           },
           "required": [
@@ -9300,6 +9430,9 @@
         },
         "fallback_delay": {
           "$ref": "#/$defs/Duration"
+        },
+        "finalmask": {
+          "$ref": "#/$defs/FinalMaskOptions"
         }
       },
       "additionalProperties": false
@@ -9737,6 +9870,9 @@
         },
         "fallback_delay": {
           "$ref": "#/$defs/Duration"
+        },
+        "finalmask": {
+          "$ref": "#/$defs/FinalMaskOptions"
         }
       },
       "additionalProperties": false
@@ -11917,6 +12053,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "server": {
               "type": "string"
             },
@@ -12098,6 +12237,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             }
           },
           "required": [
@@ -12246,6 +12388,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -12432,6 +12577,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -12673,6 +12821,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -12935,6 +13086,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "server": {
               "type": "string"
             },
@@ -13084,6 +13238,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -13310,6 +13467,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "server": {
               "type": "string"
             },
@@ -13513,6 +13673,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "server": {
               "type": "string"
             },
@@ -13653,6 +13816,9 @@
                 },
                 "fallback_delay": {
                   "$ref": "#/$defs/Duration"
+                },
+                "finalmask": {
+                  "$ref": "#/$defs/FinalMaskOptions"
                 },
                 "server": {
                   "type": "string"
@@ -13821,6 +13987,9 @@
                 "fallback_delay": {
                   "$ref": "#/$defs/Duration"
                 },
+                "finalmask": {
+                  "$ref": "#/$defs/FinalMaskOptions"
+                },
                 "server": {
                   "type": "string"
                 },
@@ -13983,6 +14152,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -14165,6 +14337,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -14432,6 +14607,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             }
           },
           "required": [
@@ -14546,6 +14724,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "executable_path": {
               "type": "string"
@@ -14678,6 +14859,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -14834,6 +15018,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "server": {
               "type": "string"
             },
@@ -14973,6 +15160,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -15226,6 +15416,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "server": {
               "type": "string"
             },
@@ -15271,6 +15464,9 @@
               "$ref": "#/$defs/V2RayTransport"
             },
             "packet_encoding": {
+              "type": "string"
+            },
+            "encryption": {
               "type": "string"
             }
           },
@@ -15386,6 +15582,9 @@
             },
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
             },
             "server": {
               "type": "string"
@@ -17403,6 +17602,9 @@
                         "fallback_delay": {
                           "$ref": "#/$defs/Duration"
                         },
+                        "finalmask": {
+                          "$ref": "#/$defs/FinalMaskOptions"
+                        },
                         "idle_timeout": {
                           "$ref": "#/$defs/Duration"
                         },
@@ -17584,6 +17786,9 @@
                           },
                           "fallback_delay": {
                             "$ref": "#/$defs/Duration"
+                          },
+                          "finalmask": {
+                            "$ref": "#/$defs/FinalMaskOptions"
                           },
                           "idle_timeout": {
                             "$ref": "#/$defs/Duration"
@@ -18261,6 +18466,9 @@
             "fallback_delay": {
               "$ref": "#/$defs/Duration"
             },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
             "server": {
               "type": "string"
             },
@@ -18553,6 +18761,9 @@
         },
         "fallback_delay": {
           "$ref": "#/$defs/Duration"
+        },
+        "finalmask": {
+          "$ref": "#/$defs/FinalMaskOptions"
         }
       },
       "additionalProperties": false
@@ -19224,5 +19435,5 @@
       ]
     }
   },
-  "x-singbox-version": "1.15.0-alpha.13-awgm.36"
+  "x-singbox-version": "1.15.0-alpha.13-awgm.37"
 }
