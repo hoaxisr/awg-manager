@@ -156,8 +156,10 @@ func clashFieldsToValues(p map[string]any) url.Values {
 		if sid := asString(reality["short-id"]); sid != "" {
 			v.Set("sid", sid)
 		}
-		if asBool(reality["support-x25519mlkem768"]) {
-			v.Set("support-x25519mlkem768", "true")
+		// У mihomo ключ включает шару, у форка она включена по умолчанию, как
+		// у Xray; переносим только явный отказ.
+		if mlkem, ok := reality["support-x25519mlkem768"]; ok && !asBool(mlkem) {
+			v.Set("support-x25519mlkem768", "false")
 		}
 	case asBool(p["tls"]):
 		v.Set("security", "tls")

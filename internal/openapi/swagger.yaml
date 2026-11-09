@@ -1079,8 +1079,8 @@ definitions:
       path:
         example: /opt/etc/awg-manager/sub.txt
         type: string
-      realityMlkem:
-        description: X25519MLKEM768 всем Reality-серверам
+      realityMlkemOff:
+        description: выключить X25519MLKEM768 у Reality-серверов
         type: boolean
       refreshHours:
         example: 24
@@ -6353,8 +6353,8 @@ definitions:
       proxyIndex:
         example: 1
         type: integer
-      realityMlkem:
-        description: X25519MLKEM768 всем Reality-серверам
+      realityMlkemOff:
+        description: выключить X25519MLKEM768 у Reality-серверов
         type: boolean
       refreshHours:
         example: 24
@@ -7757,8 +7757,8 @@ definitions:
       mode:
         example: selector
         type: string
-      realityMlkem:
-        description: X25519MLKEM768 всем Reality-серверам
+      realityMlkemOff:
+        description: выключить X25519MLKEM768 у Reality-серверов
         type: boolean
       refreshHours:
         type: integer

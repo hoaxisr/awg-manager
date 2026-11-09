@@ -932,7 +932,7 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 		}
 		// Пропускаемый, но лежащий в слоте (исключён, на него ссылается другой
 		// слот, F761) — обновляем тело; снимет его, если нужно, чистка сирот.
-		jsonWithTag := materializeMemberOutbound(n.Out.Outbound, n.Tag, sub.BindInterface, sub.RealityMLKEM, s.logWarn)
+		jsonWithTag := materializeMemberOutbound(n.Out.Outbound, n.Tag, sub.BindInterface, sub.MLKEMOff, s.logWarn)
 		if err := s.mutator.AddOutbound(n.Tag, jsonWithTag); err != nil {
 			return err
 		}
@@ -944,7 +944,7 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 			// (F761). Тело на следующих обновлениях освежает ветка New выше.
 			continue
 		}
-		jsonWithTag := materializeMemberOutbound(e.Out.Outbound, e.Tag, sub.BindInterface, sub.RealityMLKEM, s.logWarn)
+		jsonWithTag := materializeMemberOutbound(e.Out.Outbound, e.Tag, sub.BindInterface, sub.MLKEMOff, s.logWarn)
 		if err := s.mutator.UpdateOutbound(e.Tag, jsonWithTag); err != nil {
 			return err
 		}
@@ -1234,8 +1234,8 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		}
 	}
 
-	mlkemChanged := patch.RealityMLKEM != nil && *patch.RealityMLKEM != current.RealityMLKEM
-	mlkemOff := mlkemChanged && !*patch.RealityMLKEM
+	mlkemChanged := patch.MLKEMOff != nil && *patch.MLKEMOff != current.MLKEMOff
+	mlkemRestore := mlkemChanged && !*patch.MLKEMOff
 
 	modeChanged := patch.Mode != nil || patch.URLTest != nil
 	enabledChanged := patch.Enabled != nil && *patch.Enabled != current.Enabled
@@ -1248,7 +1248,7 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		FilterInclude: &current.FilterInclude,
 		FilterExclude: &current.FilterExclude,
 		BindInterface: &current.BindInterface,
-		RealityMLKEM:  &current.RealityMLKEM,
+		MLKEMOff:      &current.MLKEMOff,
 		Mode:          &current.Mode,
 		URLTest:       current.URLTest,
 		Enabled:       &current.Enabled,
@@ -1296,21 +1296,21 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		// том же сохранении едет одной транзакцией и одним SIGHUP — иначе на
 		// одно нажатие «Сохранить» приходилось два.
 		//
-		// Снятие MLKEM — сначала refresh: только источник знает, прислал ли флаг
-		// сам провайдер, и помнит отпечаток. Источник лежит — флаг снимается с
-		// сохранённых тел, а остальное вернёт следующий refresh: выключить опцию
+		// Снятие запрета MLKEM — сначала refresh: только источник знает, прислал
+		// ли явный отказ сам провайдер. Источник лежит — флаг снимается с
+		// сохранённых тел, а провайдерский вернёт следующий refresh: снять опцию
 		// должно быть можно и без него. У inline refresh нет: флаг из вставленной
-		// ссылки снимается вместе с остальными, отпечаток остаётся chrome.
+		// ссылки снимается вместе с остальными.
 		refreshed := false
-		if mlkemOff && !sub.IsInline() {
+		if mlkemRestore && !sub.IsInline() {
 			if _, err := s.refreshLockedOpts(context.Background(), id, false); err != nil {
-				s.logWarn("subscription-update", id, "refresh after MLKEM off failed, clearing stored members: "+err.Error())
+				s.logWarn("subscription-update", id, "refresh after MLKEM opt-out removed failed, clearing stored members: "+err.Error())
 			} else {
 				refreshed = true
 			}
 		}
 		if !refreshed {
-			if err := s.rematerializeMembersBind(context.Background(), sub, modeChanged, mlkemOff); err != nil {
+			if err := s.rematerializeMembersBind(context.Background(), sub, modeChanged, mlkemRestore); err != nil {
 				return rollback(err, "rematerialize")
 			}
 		}
@@ -1402,7 +1402,7 @@ func (s *Service) stageMemberRematerialize(sub *Subscription, rebuildGroup, clea
 		if clearMLKEM {
 			raw = clearRealityMLKEM(raw)
 		}
-		jsonWithTag := materializeMemberOutbound(raw, tag, sub.BindInterface, sub.RealityMLKEM, s.logWarn)
+		jsonWithTag := materializeMemberOutbound(raw, tag, sub.BindInterface, sub.MLKEMOff, s.logWarn)
 		if err := s.mutator.UpdateOutbound(tag, jsonWithTag); err != nil {
 			return err
 		}
@@ -1647,7 +1647,7 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	// адаптера не должен коммититься/откатываться параллельной операцией
 	// между нашим staging и нашим Reload.
 	if err := s.withTx(func() error {
-		if err := s.mutator.AddOutbound(tag, materializeMemberOutbound(out.Outbound, tag, sub.BindInterface, sub.RealityMLKEM, s.logWarn)); err != nil {
+		if err := s.mutator.AddOutbound(tag, materializeMemberOutbound(out.Outbound, tag, sub.BindInterface, sub.MLKEMOff, s.logWarn)); err != nil {
 			s.logWarn("subscription-member-add", id, "failed to add outbound: "+err.Error())
 			return fmt.Errorf("add outbound: %w", err)
 		}

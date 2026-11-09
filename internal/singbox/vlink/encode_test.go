@@ -260,31 +260,29 @@ func min(a, b int) int {
 	return b
 }
 
-// Флаг переживает экспорт в ссылку и обратный импорт; без флага ключа в
-// ссылке нет.
+// Явный отказ от MLKEM переживает экспорт в ссылку и обратный импорт;
+// включённый (умолчание форка, как у Xray) ключа в ссылке не даёт.
 func TestEncodeOutbound_RealitySupportMLKEM_RoundTrip(t *testing.T) {
-	const on = `{"type":"vless","server":"h.com","server_port":443,"uuid":"3a3b1c2e-9999-4321-aaaa-1234567890ab","tls":{"enabled":true,"reality":{"enabled":true,"public_key":"PK","short_id":"ab12","support_x25519mlkem768":true},"server_name":"h.com","utls":{"enabled":true,"fingerprint":"chrome"}}}`
-	link, err := EncodeOutbound([]byte(on), "t")
+	const off = `{"type":"vless","server":"h.com","server_port":443,"uuid":"3a3b1c2e-9999-4321-aaaa-1234567890ab","tls":{"enabled":true,"reality":{"enabled":true,"public_key":"PK","short_id":"ab12","support_x25519mlkem768":false},"server_name":"h.com","utls":{"enabled":true,"fingerprint":"chrome"}}}`
+	link, err := EncodeOutbound([]byte(off), "t")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(link, "support-x25519mlkem768=true") {
-		t.Fatalf("flag lost on export: %q", link)
+	if !strings.Contains(link, "support-x25519mlkem768=false") {
+		t.Fatalf("opt-out lost on export: %q", link)
 	}
 	back, err := ParseLink(link)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v := realityMLKEM(t, back.Outbound); v != true {
-		t.Fatalf("flag lost on re-import: %v", v)
+	if v := realityMLKEM(t, back.Outbound); v != false {
+		t.Fatalf("opt-out lost on re-import: %v", v)
 	}
-
-	off := strings.Replace(on, `,"support_x25519mlkem768":true`, "", 1)
-	link, err = EncodeOutbound([]byte(off), "t")
+	on, err := EncodeOutbound([]byte(strings.Replace(off, `"support_x25519mlkem768":false`, `"support_x25519mlkem768":true`, 1)), "t")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(link, "support-x25519mlkem768") {
-		t.Fatalf("flag appeared without request: %q", link)
+	if strings.Contains(on, "support-x25519mlkem768") {
+		t.Fatalf("default must not reach the link: %q", on)
 	}
 }

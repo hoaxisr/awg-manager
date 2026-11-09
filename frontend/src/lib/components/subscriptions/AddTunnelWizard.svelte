@@ -67,7 +67,7 @@
 	let refreshHoursStr = $state('24');
 	let refreshHours = $state(24);
 	let enabled = $state(true);
-	let realityMlkem = $state(false);
+	let realityMlkemOff = $state(false);
 	let mode = $state<SubscriptionMode>('selector');
 	let utUrl = $state(DEFAULT_SUBSCRIPTION_URLTEST.url);
 	let utIntervalSec = $state(DEFAULT_SUBSCRIPTION_URLTEST.intervalSec);
@@ -217,7 +217,7 @@
 		refreshHoursStr = '24';
 		refreshHours = 24;
 		enabled = true;
-		realityMlkem = false;
+		realityMlkemOff = false;
 		mode = 'selector';
 		utUrl = DEFAULT_SUBSCRIPTION_URLTEST.url;
 		utIntervalSec = DEFAULT_SUBSCRIPTION_URLTEST.intervalSec;
@@ -439,7 +439,7 @@
 						? { url: utUrl, intervalSec: utIntervalSec, toleranceMs: utToleranceMs }
 						: undefined,
 				excludedKeys: isInline ? undefined : [...excludedKeys],
-				realityMlkem,
+				realityMlkemOff,
 			});
 			// Keep tunnels tab + sb-router wizard in sync: list outbounds are not polled.
 			await subscriptionsStore.refetch();
@@ -774,7 +774,7 @@
 			{/if}
 
 			<label class="row chk">
-				<input type="checkbox" bind:checked={realityMlkem} />
+				<input type="checkbox" bind:checked={realityMlkemOff} />
 				<span>{m.subscriptions_reality_mlkem_label()}</span>
 			</label>
 			<span class="hint">{m.subscriptions_reality_mlkem_hint()}</span>

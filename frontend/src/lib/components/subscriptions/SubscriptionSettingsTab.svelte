@@ -47,7 +47,7 @@
 	let filterInclude = $state(untrack(() => subscription.filterInclude ?? ''));
 	let filterExclude = $state(untrack(() => subscription.filterExclude ?? ''));
 	let bindInterface = $state(untrack(() => subscription.bindInterface ?? ''));
-	let realityMlkem = $state(untrack(() => subscription.realityMlkem ?? false));
+	let realityMlkemOff = $state(untrack(() => subscription.realityMlkemOff ?? false));
 	let saving = $state(false);
 	let togglingEnabled = $state(false);
 	let confirmDelete = $state(false);
@@ -69,7 +69,7 @@
 		filterInclude = subscription.filterInclude ?? '';
 		filterExclude = subscription.filterExclude ?? '';
 		bindInterface = subscription.bindInterface ?? '';
-		realityMlkem = subscription.realityMlkem ?? false;
+		realityMlkemOff = subscription.realityMlkemOff ?? false;
 	});
 
 	// Мягкая клиентская проверка regex — НЕ авторитетна; финальная валидация
@@ -131,7 +131,7 @@
 				filterInclude: filterInclude.trim(),
 				filterExclude: filterExclude.trim(),
 				bindInterface: bindInterface.trim(),
-				realityMlkem,
+				realityMlkemOff,
 			};
 			if (!subscription.isInline && !subscription.isFile) {
 				patch.url = url;
@@ -306,7 +306,7 @@
 
 		<div class="bind-section">
 			<FormToggle
-				bind:checked={realityMlkem}
+				bind:checked={realityMlkemOff}
 				label={m.subscriptions_reality_mlkem_label()}
 				hint={m.subscriptions_reality_mlkem_hint()}
 			/>

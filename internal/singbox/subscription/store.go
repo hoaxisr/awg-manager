@@ -218,7 +218,7 @@ func (s *Store) Create(in CreateInput) (*Subscription, error) {
 		FilterInclude:    in.FilterInclude,
 		FilterExclude:    in.FilterExclude,
 		BindInterface:    strings.TrimSpace(in.BindInterface),
-		RealityMLKEM:     in.RealityMLKEM,
+		MLKEMOff:         in.MLKEMOff,
 		SelectorTag:      "sub-" + short,
 		InboundTag:       "sub-" + short + "-in",
 		ProxyIndex:       -1,
@@ -317,8 +317,8 @@ func (s *Store) Update(id string, patch UpdatePatch) (*Subscription, error) {
 			// (#709, PR #732 review non-blocker #11).
 			sub.BindInterface = strings.TrimSpace(*patch.BindInterface)
 		}
-		if patch.RealityMLKEM != nil {
-			sub.RealityMLKEM = *patch.RealityMLKEM
+		if patch.MLKEMOff != nil {
+			sub.MLKEMOff = *patch.MLKEMOff
 		}
 		return nil
 	})
