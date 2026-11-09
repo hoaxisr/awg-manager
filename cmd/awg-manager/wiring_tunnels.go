@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/auth"
+	"github.com/hoaxisr/awg-manager/internal/autolistdetect"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -161,6 +162,10 @@ func (a *app) setupTunnels() {
 	// установки определяется лениво, на запрос статуса.
 	a.zapretService = zapret.NewService(a.dataDir, a.loggingService)
 	a.zapretService.SetEventBus(a.eventBus)
+
+	// awgmautolist integration: сателлит ставит пользователь. Детект ленивый
+	// (pid-файл + loopback-статус на каждый запрос), сервис лёгкий.
+	a.autolistService = autolistdetect.NewService()
 
 	// HydraRoute Neo integration (optional — detected at startup)
 	a.hydraService = hydraroute.NewService(a.catalog, a.loggingService)

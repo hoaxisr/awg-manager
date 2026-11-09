@@ -78,6 +78,16 @@ func TestInspect_MaterializedInlineRuleSetResolves(t *testing.T) {
 	if len(routeRes.Matches) == 0 || !containsCondition(routeRes.Matches[0].Conditions, `rule_set "geo-telegram" → совпало`) {
 		t.Fatalf("route conditions must show the inline tag, got %+v", routeRes.Matches)
 	}
+
+	// The selected-set API must resolve the same inline alias as Inspect,
+	// rather than reporting the original inline type as unsupported.
+	matches, err := svc.MatchRuleSets(ctx, "t.me", []string{"geo-telegram"})
+	if err != nil {
+		t.Fatalf("MatchRuleSets: %v", err)
+	}
+	if len(matches) != 1 || !matches[0].Matched || !matches[0].Supported || matches[0].Error != "" {
+		t.Fatalf("MatchRuleSets materialized inline = %+v, want one supported match", matches)
+	}
 }
 
 func containsCondition(conditions []string, want string) bool {

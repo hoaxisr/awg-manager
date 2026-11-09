@@ -31,6 +31,8 @@
     import { hrPosKey } from '$lib/components/hrneo/hrIds';
     import { SingboxRouterRedesignPage } from '$lib/components/sb-router';
     import { ZapretTab } from '$lib/components/zapret';
+    import { AutolistTab } from '$lib/components/autolist';
+    import { autolistStatus } from '$lib/stores/autolist';
     import FakeIPTab from '$lib/components/fakeip/FakeIPTab.svelte';
     import ModeSwitchHost from '$lib/components/routing/ModeSwitchHost.svelte';
     import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
@@ -66,7 +68,7 @@
         unsubRouting?.();
     });
 
-    const ROUTING_TABS = ['hrneo', 'geodata', 'dns', 'ip', 'policy', 'clientvpn', 'singbox', 'fakeip', 'zapret'] as const;
+    const ROUTING_TABS = ['hrneo', 'geodata', 'dns', 'ip', 'policy', 'clientvpn', 'singbox', 'fakeip', 'zapret', 'autolist'] as const;
     type RoutingTab = (typeof ROUTING_TABS)[number];
 
     // «Любимая» вкладка — открывается первой вместо NDMS. Per-browser
@@ -110,6 +112,15 @@
     // Zapret ставит пользователь, а не AWGM, поэтому вкладка появляется
     // только когда движок реально найден на роутере.
     let zapretInstalled = $derived($zapretStatusIfExpert?.data?.installed ?? false);
+
+    // awgmautolist: вкладка видна и для намеренно отключённого сателлита —
+    // иначе из UI нельзя было бы включить его обратно. Ниже expert статус
+    // не опрашивается (autolistStatusIfExpert в сторе).
+    let autolistCandidateCount = $derived($autolistStatus?.data?.candidates?.length ?? 0);
+    let autolistRunning = $derived($autolistStatus?.data?.running ?? false);
+    let autolistAvailable = $derived(
+        autolistRunning || ($autolistStatus?.data?.installed ?? false),
+    );
 
     let pendingTab = $state<string | null>(null);
 
@@ -282,6 +293,7 @@
         hrneo: 'hrNeo',
         zapret: 'zapret',
         geodata: 'geoData',
+        autolist: 'autolist',
         singbox: 'singboxRouter',
     };
 
@@ -350,6 +362,9 @@
                       separatorBefore: true,
                   }
                 : null,
+            // awgmautolist — сателлит автосписка: вкладка expert-уровня,
+            // видна когда сателлит установлен, даже если намеренно отключён.
+            autolistAvailable ? { id: 'autolist', label: m.routing_page_tab_autolist(), badge: autolistCandidateCount, separatorBefore: true } : null,
             (hydrarouteInstalled || singboxInstalled)
                 ? { id: 'geodata', label: m.routing_page_tab_geodata(), badge: geoFileCount, separatorBefore: true }
                 : null,
@@ -417,6 +432,13 @@
             !tabsInclude(items, activeTab) &&
             (($settings === null && !$settingsUnavailable) || zapretPending)
         ) {
+            return;
+        }
+
+        // Autolist — тот же гейт, что у Zapret: ждём expert-статус сателлита,
+        // пока deep-link ?tab=autolist не откатили на первую вкладку.
+        const autolistPending = $autolistStatus.lastFetchedAt === 0 && $autolistStatus.status !== 'error';
+        if (activeTab === 'autolist' && !tabsInclude(items, activeTab) && autolistPending) {
             return;
         }
 
@@ -532,6 +554,8 @@
         <FakeIPTab />
     {:else if activeTab === 'zapret'}
         <ZapretTab />
+    {:else if activeTab === 'autolist'}
+        <AutolistTab />
     {/if}
     <ModeSwitchHost />
     </div>

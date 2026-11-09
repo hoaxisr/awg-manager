@@ -23,6 +23,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
+	"github.com/hoaxisr/awg-manager/internal/autolistdetect"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
@@ -105,6 +106,7 @@ type Server struct {
 	catalog                    routing.Catalog
 	hydraService               *hydraroute.Service
 	zapretService              *zapret.Service
+	autolistService            *autolistdetect.Service
 	orch                       *orchestrator.Orchestrator
 	bus                        *events.Bus
 	exposureGuard              *api.ExposureGuard
@@ -221,6 +223,7 @@ type Deps struct {
 	Bus                  *events.Bus
 	HydraService         *hydraroute.Service
 	ZapretService        *zapret.Service
+	AutolistService      *autolistdetect.Service
 	SingboxHandler       *api.SingboxHandler
 	SingboxOrch          *singboxorch.Orchestrator
 	ClashProxy           *api.ClashProxy
@@ -300,6 +303,7 @@ func New(cfg Config, deps Deps) *Server {
 		catalog:                deps.Catalog,
 		hydraService:           deps.HydraService,
 		zapretService:          deps.ZapretService,
+		autolistService:        deps.AutolistService,
 		orch:                   deps.Orch,
 		bus:                    deps.Bus,
 		singboxHandler:         deps.SingboxHandler,

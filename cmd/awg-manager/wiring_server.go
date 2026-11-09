@@ -108,6 +108,7 @@ func (a *app) setupServer() {
 			Bus:                 a.eventBus,
 			HydraService:        a.hydraService,
 			ZapretService:       a.zapretService,
+			AutolistService:     a.autolistService,
 			SingboxHandler:      a.singboxHandler,
 			SingboxOrch:         a.sbOrch,
 			ClashProxy:          a.clashProxy,

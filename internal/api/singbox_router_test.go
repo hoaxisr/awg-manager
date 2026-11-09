@@ -58,6 +58,11 @@ type mockRouterSvc struct {
 	discardCalls int
 	// policies backs ListPolicies for composition assertions.
 	policies []router.PolicyInfo
+	// ruleSetMatch* feed MatchRuleSets and capture its read-only query.
+	ruleSetMatchResults []router.RuleSetMatchResult
+	ruleSetMatchErr     error
+	ruleSetMatchInput   string
+	ruleSetMatchTags    []string
 }
 
 func (m *mockRouterSvc) Reconcile(ctx context.Context) error { return nil }
@@ -232,6 +237,11 @@ func (m *mockRouterSvc) InspectDNS(ctx context.Context, input router.InspectDNSI
 		Server: "fakeip", Classification: "fakeip", Pool: "198.18.0.0/15",
 		Matches: []router.DNSRuleMatchResult{}, Final: "fakeip",
 	}, nil
+}
+func (m *mockRouterSvc) MatchRuleSets(ctx context.Context, input string, tags []string) ([]router.RuleSetMatchResult, error) {
+	m.ruleSetMatchInput = input
+	m.ruleSetMatchTags = append([]string(nil), tags...)
+	return m.ruleSetMatchResults, m.ruleSetMatchErr
 }
 func (m *mockRouterSvc) InspectStream(ctx context.Context, input router.InspectInput) (<-chan router.InspectStreamEvent, error) {
 	ch := make(chan router.InspectStreamEvent, 1)

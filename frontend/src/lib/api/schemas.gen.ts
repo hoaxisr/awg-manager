@@ -1904,6 +1904,18 @@ const api_SingboxRouterRuleSetDTO: v.GenericSchema = v.looseObject({
 	url: v.optional(v.nullable(v.string())),
 });
 
+const api_SingboxRouterRuleSetMatchDTO: v.GenericSchema = v.looseObject({
+	error: v.optional(v.nullable(v.string())),
+	matched: v.optional(v.nullable(v.boolean())),
+	supported: v.optional(v.nullable(v.boolean())),
+	tag: v.optional(v.nullable(v.string())),
+});
+
+const api_SingboxRouterRuleSetMatchResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxRouterRuleSetMatchDTO)))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_SingboxRouterRuleSetsListResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxRouterRuleSetDTO)))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -2818,6 +2830,10 @@ const api_WireguardServerPeerDTO: v.GenericSchema = v.looseObject({
 	txBytes: v.optional(v.nullable(v.number())),
 });
 
+const api_autolistStatusResponse: v.GenericSchema = v.looseObject({
+	autolistStatus: v.optional(v.nullable(v.lazy(() => autolistdetect_Status))),
+});
+
 const api_zapretHostlistResponse: v.GenericSchema = v.looseObject({
 	content: v.optional(v.nullable(v.string())),
 	id: v.optional(v.nullable(v.lazy(() => zapret_HostlistID))),
@@ -2832,6 +2848,39 @@ const api_zapretHostlistsResponse: v.GenericSchema = v.looseObject({
 
 const api_zapretStatusResponse: v.GenericSchema = v.looseObject({
 	zapretStatus: v.optional(v.nullable(v.lazy(() => zapret_Status))),
+});
+
+const autolistdetect_Candidate: v.GenericSchema = v.looseObject({
+	domain: v.optional(v.nullable(v.string())),
+	fails: v.optional(v.nullable(v.number())),
+	host: v.optional(v.nullable(v.string())),
+	lastAt: v.optional(v.nullable(v.string())),
+	sources: v.optional(v.nullable(v.array(v.string()))),
+	state: v.optional(v.nullable(v.string())),
+	verdict: v.optional(v.nullable(v.string())),
+	why: v.optional(v.nullable(v.string())),
+});
+
+const autolistdetect_HistoryEntry: v.GenericSchema = v.looseObject({
+	action: v.optional(v.nullable(v.string())),
+	at: v.optional(v.nullable(v.string())),
+	domain: v.optional(v.nullable(v.string())),
+	host: v.optional(v.nullable(v.string())),
+	source: v.optional(v.nullable(v.string())),
+	why: v.optional(v.nullable(v.string())),
+});
+
+const autolistdetect_Status: v.GenericSchema = v.looseObject({
+	auto: v.optional(v.nullable(v.boolean())),
+	candidates: v.optional(v.nullable(v.array(v.lazy(() => autolistdetect_Candidate)))),
+	enabled: v.optional(v.nullable(v.boolean())),
+	history: v.optional(v.nullable(v.array(v.lazy(() => autolistdetect_HistoryEntry)))),
+	installed: v.optional(v.nullable(v.boolean())),
+	lastError: v.optional(v.nullable(v.string())),
+	running: v.optional(v.nullable(v.boolean())),
+	statusUrl: v.optional(v.nullable(v.string())),
+	targetOutbound: v.optional(v.nullable(v.string())),
+	version: v.optional(v.nullable(v.string())),
 });
 
 const backup_Snapshot: v.GenericSchema = v.looseObject({
@@ -3350,6 +3399,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /access-policies/devices": v.lazy(() => api_PolicyDevicesListResponse),
 	"GET /access-policies/interfaces": v.lazy(() => api_PolicyInterfacesListResponse),
 	"GET /auth/status": v.lazy(() => api_AuthStatusResponse),
+	"GET /autolist/status": v.lazy(() => api_autolistStatusResponse),
 	"GET /awg3-endpoints": v.lazy(() => api_Awg3ListResponse),
 	"GET /boot-status": v.lazy(() => api_BootStatusResponse),
 	"GET /client-routes": v.lazy(() => api_ClientRoutesListResponse),
@@ -3548,6 +3598,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /access-policies/standalone": v.lazy(() => api_OkResponse),
 	"POST /auth/login": v.lazy(() => api_LoginResponseRaw),
 	"POST /auth/logout": v.lazy(() => api_APIEnvelope),
+	"POST /autolist/control": v.lazy(() => api_autolistStatusResponse),
+	"POST /autolist/dismiss": v.lazy(() => api_OkResponse),
+	"POST /autolist/proxy": v.lazy(() => api_OkResponse),
 	"POST /awg/analyze": v.lazy(() => api_AwgAnalyzeResponse),
 	"POST /awg3-endpoints": v.lazy(() => api_Awg3ListResponse),
 	"POST /client-routes/create": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
@@ -3710,6 +3763,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/router/rulesets/add": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/rulesets/bulk-detour": v.lazy(() => api_SingboxRouterBulkUpdatedResponse),
 	"POST /singbox/router/rulesets/delete": v.lazy(() => api_OkResponse),
+	"POST /singbox/router/rulesets/match": v.lazy(() => api_SingboxRouterRuleSetMatchResponse),
 	"POST /singbox/router/rulesets/update": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/settings": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/staging/apply": v.lazy(() => api_OkResponse),

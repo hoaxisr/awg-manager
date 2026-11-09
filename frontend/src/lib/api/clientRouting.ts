@@ -10,7 +10,10 @@ import type {
 	ZapretHostlistInfo,
 	ZapretControlAction,
 	ZapretStatus,
-	ZapretStrategies
+	ZapretStrategies,
+	AutolistStatus,
+	AutolistConfig,
+	AutolistControlAction
 } from '$lib/types';
 import { ServersClient } from './clientServers';
 
@@ -301,6 +304,96 @@ export class RoutingClient extends ServersClient {
 		return this.request('/zapret/hostlist/save', {
 			method: 'POST',
 			body: JSON.stringify({ id, content, revision })
+		});
+	}
+
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Autolist (сателлит автосписка неоткрывающихся сайтов)
+	// ─────────────────────────────────────────────
+
+	// awgmautolist ставит пользователь отдельно (как zapret): AWGM читает
+	// его loopback-статус и передаёт dismiss. Отсутствие процесса — не
+	// ошибка: рисуем карточку «не запущено».
+
+	async getAutolistStatus(): Promise<AutolistStatus> {
+		const res = await this.request<{ autolistStatus: AutolistStatus | null }>('/autolist/status');
+		return res?.autolistStatus ?? { running: false, candidates: [], history: [] };
+	}
+
+	/** Сохраняемое включение/отключение через init script сателлита. */
+	async controlAutolist(action: AutolistControlAction): Promise<AutolistStatus> {
+		const res = await this.request<{ autolistStatus: AutolistStatus | null }>('/autolist/control', {
+			method: 'POST',
+			body: JSON.stringify({ action })
+		});
+		return res?.autolistStatus ?? { running: false, candidates: [], history: [] };
+	}
+
+	async dismissAutolistCandidate(domain: string): Promise<void> {
+		await this.request('/autolist/dismiss', {
+			method: 'POST',
+			body: JSON.stringify({ domain })
+		});
+	}
+
+	/** Добавить выбранные домены отдельными правилами (awgmautolist /add). */
+	async addAutolistCandidates(domains: string[]): Promise<Record<string, string | null>> {
+		const res = await this.request<{ results: Record<string, string | null> }>('/autolist/proxy', {
+			method: 'POST',
+			body: JSON.stringify({ path: '/add', body: { domains } })
+		});
+		return res?.results ?? {};
+	}
+
+	/** Навсегда исключить домены из автосписка (awgmautolist /exclude). */
+	async excludeAutolistCandidates(domains: string[]): Promise<void> {
+		await this.request('/autolist/proxy', {
+			method: 'POST',
+			body: JSON.stringify({ path: '/exclude', body: { domains } })
+		});
+	}
+
+	/** Снять временное/постоянное скрытие и удалить его записи из истории. */
+	async restoreAutolistCandidate(domain: string): Promise<void> {
+		await this.request('/autolist/proxy', {
+			method: 'POST',
+			body: JSON.stringify({ path: '/restore', body: { domain } })
+		});
+	}
+
+	/** Немедленная USER-проба хоста (awgmautolist /probe). */
+	async probeAutolistHost(host: string): Promise<string> {
+		const res = await this.request<{ result: string }>('/autolist/proxy', {
+			method: 'POST',
+			body: JSON.stringify({ path: '/probe', body: { host } })
+		});
+		return res?.result ?? 'unknown';
+	}
+
+	/** Конфигурация сателлита (awgmautolist /config). */
+	async getAutolistConfig(): Promise<AutolistConfig> {
+		const res = await this.request<AutolistConfig>('/autolist/proxy', {
+			method: 'POST',
+			body: JSON.stringify({ path: '/config' })
+		});
+		return res ?? { autoAdd: false };
+	}
+
+	/** Применить конфигурацию сателлита (awgmautolist /config). */
+	async setAutolistConfig(cfg: AutolistConfig): Promise<void> {
+		await this.request('/autolist/proxy', {
+			method: 'POST',
+			body: JSON.stringify({ path: '/config', body: cfg })
+		});
+	}
+
+	/** Убрать кандидата без скрытия (awgmautolist /forget). */
+	async forgetAutolistCandidate(domain: string): Promise<void> {
+		await this.request('/autolist/proxy', {
+			method: 'POST',
+			body: JSON.stringify({ path: '/forget', body: { domain } })
 		});
 	}
 

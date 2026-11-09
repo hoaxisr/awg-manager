@@ -16,6 +16,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
+	"github.com/hoaxisr/awg-manager/internal/autolistdetect"
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
@@ -155,12 +156,15 @@ var expertPrefixes = []string{
 	"/api/system/proc/", "/api/system/services/",
 }
 
-// expertRoutes — ручки вне «Системы», закрытые expert: управление внешним
-// демоном Zapret и запись его конфига и списков.
+// expertRoutes — ручки вне «Системы», закрытые expert: управление внешними
+// демонами Zapret/awgmautolist и запись их конфигов и списков.
 var expertRoutes = map[string]bool{
 	"/api/zapret/control":            true,
 	"/api/zapret/strategies/reorder": true,
 	"/api/zapret/hostlist/save":      true,
+	"/api/autolist/control":          true,
+	"/api/autolist/dismiss":          true,
+	"/api/autolist/proxy":            true,
 }
 
 func isExpertPath(p string) bool {
@@ -262,6 +266,7 @@ func newGuardServer(t *testing.T) (*Server, *auth.SessionStore) {
 		// проверить нечем.
 		hydraService:       &hydraroute.Service{},
 		zapretService:      &zapret.Service{},
+		autolistService:    &autolistdetect.Service{},
 		dnsCheckService:    &dnscheck.Service{},
 		managedServiceImpl: &managed.Service{},
 		presetCatalog:      &presets.Catalog{},
