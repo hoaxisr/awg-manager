@@ -234,18 +234,45 @@ func TestParseVless_MeaninglessEncryptionIgnored(t *testing.T) {
 	}
 }
 
-// Настоящий VLESS Encryption (фича Xray) sing-box не умеет вовсе, поэтому
-// сервер не заработает никак. Молча выкинуть параметр — значит отдать
-// пользователю нерабочий сервер без объяснения; отказываем с внятным текстом,
-// он доезжает до UI через BatchResult.Errors.
+// VLESS Encryption (issue #603) форк умеет; строку он проверяет при
+// создании аутбаунда, и битая роняет всю конфигурацию, поэтому битую
+// отвергаем здесь — с внятным текстом, он доезжает до UI через
+// BatchResult.Errors. Серверная форма (600s вместо 0rtt/1rtt) — тоже отказ.
 func TestParseVless_RealEncryptionRejected(t *testing.T) {
-	link := "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?security=tls&type=tcp&encryption=mlkem768x25519plus.native.600s.AAAA#n"
-	_, err := ParseLink(link)
-	if err == nil {
-		t.Fatal("expected rejection: sing-box cannot carry VLESS Encryption")
+	key := strings.Repeat("A", 43)
+	for name, enc := range map[string]string{
+		"server form": "mlkem768x25519plus.native.600s.AAAA",
+		"short key":   "mlkem768x25519plus.native.0rtt.AAAAAAAAAAAAAAAAAAAAAAAA",
+		"bad mode":    "mlkem768x25519plus.bogus.0rtt." + key,
+		"no key":      "mlkem768x25519plus.native.0rtt.100-111-1111",
+		"pad first":   "mlkem768x25519plus.native.0rtt.10-5-5." + key,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseLink("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?type=tcp&encryption=" + enc + "#n")
+			if err == nil || !strings.Contains(err.Error(), "encryption") {
+				t.Fatalf("want rejection naming encryption, got %v", err)
+			}
+		})
 	}
-	if !strings.Contains(err.Error(), "encryption") {
-		t.Fatalf("error must name the culprit, got: %v", err)
+}
+
+func TestParseVless_EncryptionPassedThrough(t *testing.T) {
+	enc := "mlkem768x25519plus.random.0rtt.100-111-1111.75-0-111." + strings.Repeat("A", 43)
+	got, err := ParseLink("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?type=tcp&encryption=" + enc + "#n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ob map[string]any
+	if err := json.Unmarshal(got.Outbound, &ob); err != nil {
+		t.Fatal(err)
+	}
+	if ob["encryption"] != enc {
+		t.Fatalf("encryption = %v, want %q", ob["encryption"], enc)
+	}
+	// Vision поверх шифрования форк не умеет и отвергает весь конфиг.
+	_, err = ParseLink("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?type=tcp&security=tls&flow=xtls-rprx-vision&encryption=" + enc + "#n")
+	if err == nil || !strings.Contains(err.Error(), "Encryption") {
+		t.Fatalf("flow + encryption must be rejected, got %v", err)
 	}
 }
 
@@ -299,9 +326,9 @@ func realityMLKEM(t *testing.T, raw json.RawMessage) any {
 	return ob.TLS.Reality["support_x25519mlkem768"]
 }
 
-// Флаг mihomo support-x25519mlkem768 доходит до outbound из ссылки и из
-// Clash и не появляется, когда его не просили: без него форк вырезает
-// X25519MLKEM768 (#944), с ним — пускает Xray v26.9.8+.
+// Форк, как Xray, шлёт X25519MLKEM768 по умолчанию, поэтому до outbound
+// доходит только явный отказ (support-x25519mlkem768=false из ссылки или
+// Clash); «включено» и отсутствие ключа поле не ставят.
 func TestReality_SupportMLKEM_LinkAndClash(t *testing.T) {
 	const base = "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?security=reality&type=tcp&pbk=PBK&sid=ab12&fp=chrome&sni=foo.com"
 	clash := func(flag any) map[string]any {
@@ -321,12 +348,12 @@ func TestReality_SupportMLKEM_LinkAndClash(t *testing.T) {
 		want any
 		run  func() (*ParsedOutbound, error)
 	}{
-		{"link on", true, func() (*ParsedOutbound, error) { return ParseLink(base + "&support-x25519mlkem768=true#n") }},
+		{"link on", nil, func() (*ParsedOutbound, error) { return ParseLink(base + "&support-x25519mlkem768=true#n") }},
 		{"link off", nil, func() (*ParsedOutbound, error) { return ParseLink(base + "#n") }},
-		{"link false", nil, func() (*ParsedOutbound, error) { return ParseLink(base + "&support-x25519mlkem768=false#n") }},
-		{"clash on", true, func() (*ParsedOutbound, error) { return mapClashVless(clash(true)) }},
+		{"link false", false, func() (*ParsedOutbound, error) { return ParseLink(base + "&support-x25519mlkem768=false#n") }},
+		{"clash on", nil, func() (*ParsedOutbound, error) { return mapClashVless(clash(true)) }},
 		{"clash off", nil, func() (*ParsedOutbound, error) { return mapClashVless(clash(nil)) }},
-		{"clash false", nil, func() (*ParsedOutbound, error) { return mapClashVless(clash(false)) }},
+		{"clash false", false, func() (*ParsedOutbound, error) { return mapClashVless(clash(false)) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := tc.run()
