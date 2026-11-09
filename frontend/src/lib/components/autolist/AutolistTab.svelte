@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
+	import { formatAutolistTime } from './time';
 	import { autolistStatus } from '$lib/stores/autolist';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
@@ -385,12 +386,7 @@
 	}
 
 	function timeText(iso?: string): string {
-		if (!iso) return '—';
-		try {
-			return new Date(iso).toLocaleString();
-		} catch {
-			return iso;
-		}
+		return formatAutolistTime(iso);
 	}
 </script>
 
