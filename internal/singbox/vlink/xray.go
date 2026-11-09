@@ -472,6 +472,7 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 	var server string
 	var port uint16
 	var vlessFlow string
+	var vlessEncryptionValue string
 
 	switch proto {
 	case "vless":
@@ -488,13 +489,18 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		if user.ID == "" {
 			return nil, fmt.Errorf("vless: missing uuid")
 		}
-		if err := checkVlessEncryption(user.Encryption); err != nil {
+		enc, err := vlessEncryption(user.Encryption)
+		if err != nil {
 			return nil, err
 		}
+		vlessEncryptionValue = enc
 		sbOutbound["type"] = "vless"
 		sbOutbound["server"] = server
 		sbOutbound["server_port"] = int(port)
 		sbOutbound["uuid"] = user.ID
+		if vlessEncryptionValue != "" {
+			sbOutbound["encryption"] = vlessEncryptionValue
+		}
 		// Само присваивание ниже, после сборки транспорта: checkVlessFlow
 		// судит по паре (flow, транспорт+TLS), а stream здесь ещё не собран.
 		vlessFlow = normalizeFlow(user.Flow)
@@ -550,15 +556,6 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		return nil, fmt.Errorf("%s: missing or invalid port", proto)
 	}
 
-	// Маски finalmask меняют формат на проводе, и Xray навешивает их на любой
-	// транспорт (transport_internet.go: весь FinalMask.Tcp/Udp уходит в
-	// config.Tcpmasks/Udpmasks). Своего такого слоя у sing-box нет, так что
-	// узел с маской подключился бы вхолостую — отказ честнее молчания. Путь
-	// hysteria сюда не попадает: у него свой разбор udp-масок.
-	if err := rejectXrayForeignMasks(ob.StreamSettings); err != nil {
-		return nil, err
-	}
-
 	// Транспорт и TLS собирает общий слой — тот же, что у share-ссылок и
 	// Clash. Своей реализации здесь больше нет.
 	var stream *StreamBuilder
@@ -574,7 +571,7 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		// Xray-вход раньше ставил flow напрямую и проходил мимо проверки,
 		// которую ссылки и Clash уже получили: подписка в формате Xray несла
 		// чужой flow дальше и роняла применение всей конфигурации.
-		if err := checkVlessFlow(vlessFlow, stream); err != nil {
+		if err := checkVlessFlow(vlessFlow, stream, vlessEncryptionValue); err != nil {
 			return nil, err
 		}
 		sbOutbound["flow"] = vlessFlow
@@ -743,23 +740,6 @@ func applyXrayHysteriaMasks(stream *XrayStream, out map[string]any) (*xrayEndpoi
 		return nil, err
 	}
 	return endpoint, nil
-}
-
-// rejectXrayForeignMasks отвергает узел, если на его транспорт навешаны маски:
-// выразить их нечем. Пустые списки и одни только quicParams формат на проводе
-// не меняют, поэтому проходят.
-func rejectXrayForeignMasks(stream *XrayStream) error {
-	if stream == nil || len(stream.FinalMask) == 0 {
-		return nil
-	}
-	var final XrayFinalMask
-	if err := json.Unmarshal(stream.FinalMask, &final); err != nil {
-		return fmt.Errorf("xray: invalid finalmask")
-	}
-	if n := len(final.TCP) + len(final.UDP); n > 0 {
-		return fmt.Errorf("xray: finalmask has %d mask(s) with no sing-box equivalent", n)
-	}
-	return nil
 }
 
 // xrayEndpoint — точка входа, заданная не полем settings, а маской.
@@ -1380,6 +1360,11 @@ func xrayStreamToValues(stream *XrayStream, defaultHost string) url.Values {
 
 	if iface, _ := stream.Sockopt["interface"].(string); iface != "" {
 		v.Set("bind_interface", iface)
+	}
+	// Маски Xray навешивает на любой транспорт (transport_internet.go); блок
+	// уходит в общий сборщик как fm= ссылки, там же решается, что выразимо.
+	if len(stream.FinalMask) > 0 {
+		v.Set("fm", string(stream.FinalMask))
 	}
 	return v
 }

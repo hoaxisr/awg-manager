@@ -14,8 +14,8 @@ func xrayVlessWithStream(stream string) []byte {
 
 // Xray навешивает finalmask.tcp на ЛЮБОЙ TCP-транспорт
 // (transport_internet.go: весь список уходит в config.Tcpmasks), поэтому узел
-// с маской работает только с ней. В sing-box такого слоя нет — узел
-// подключился бы вхолостую, и отказ здесь честнее молчания.
+// с маской работает только с ней. Форк умеет одну маску, tcp fragment;
+// с любой другой узел подключился бы вхолостую, и отказ честнее молчания.
 func TestParseXrayBody_ForeignMaskRejected(t *testing.T) {
 	cases := map[string]string{
 		"tcp sudoku":        `"network":"tcp","finalmask":{"tcp":[{"type":"sudoku","settings":{}}]}`,

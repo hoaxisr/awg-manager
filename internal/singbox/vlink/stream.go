@@ -1,6 +1,7 @@
 package vlink
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -24,6 +25,8 @@ type StreamBuilder struct {
 	XPaddingBytes       string         // xhttp x_padding_bytes (mandatory, non-zero); defaulted in MergeIntoOutbound
 	XHTTPExtra          map[string]any // xhttp fields from ?extra=, already in sing-box snake_case (#797)
 	BindInterface       string         // egress kernel interface for dial (#709)
+	// finalmask форка (fm=), уже проверенный parseFinalMask.
+	FinalMask json.RawMessage
 }
 
 // outboundTLS is the parsed TLS / Reality block ready to be emitted as
@@ -41,9 +44,10 @@ type outboundTLS struct {
 type outboundRTLS struct {
 	PublicKey string
 	ShortID   string
-	// SupportMLKEM — support-x25519mlkem768 из ссылки (ключ mihomo): без него
-	// форк вырезает X25519MLKEM768, а Xray v26.9.8+ без этой шары не пускает.
-	SupportMLKEM bool
+	// DisableMLKEM — support-x25519mlkem768=false из ссылки (ключ mihomo).
+	// Форк, как Xray, шлёт X25519MLKEM768 по умолчанию (сервер Xray v26.9.8+
+	// без неё не пускает); явный false её вырезает.
+	DisableMLKEM bool
 }
 
 // BuildStreamFromQuery parses transport+security parameters from a URL
@@ -71,6 +75,7 @@ type outboundRTLS struct {
 //	                  Sec-WebSocket-Protocol; пустой eh означает ранние данные
 //	                  прямо в пути. При обоих формах побеждает ed=.
 //	extra           — объект xhttp-настроек Xray (xmux и прочее), см. #797
+//	fm              — блок finalmask Xray (JSON), см. parseFinalMask
 //	bind_interface  — исходящий интерфейс (#709)
 //
 // Добавляя поле в StreamBuilder, заводите ему параметр здесь: иначе форматы,
@@ -217,7 +222,7 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 			Reality: &outboundRTLS{
 				PublicKey:    q.Get("pbk"),
 				ShortID:      sid,
-				SupportMLKEM: boolish(q.Get("support-x25519mlkem768")),
+				DisableMLKEM: falsish(q.Get("support-x25519mlkem768")),
 			},
 		}
 		if s.TLS.ServerName == "" {
@@ -234,6 +239,12 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 	if b := strings.TrimSpace(q.Get("bind_interface")); b != "" {
 		s.BindInterface = b
 	}
+
+	fm, err := parseFinalMask(q.Get("fm"))
+	if err != nil {
+		return nil, err
+	}
+	s.FinalMask = fm
 
 	return s, nil
 }
@@ -265,6 +276,15 @@ func firstNonEmpty(vs ...string) string {
 func boolish(s string) bool {
 	switch strings.ToLower(s) {
 	case "1", "true", "yes":
+		return true
+	}
+	return false
+}
+
+// falsish — явное «нет»; пустое значение и отсутствие ключа сюда не входят.
+func falsish(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "0", "false", "no":
 		return true
 	}
 	return false
@@ -385,8 +405,8 @@ func (s *StreamBuilder) MergeIntoOutbound(out map[string]any) {
 				"public_key": s.TLS.Reality.PublicKey,
 				"short_id":   s.TLS.Reality.ShortID,
 			}
-			if s.TLS.Reality.SupportMLKEM {
-				reality["support_x25519mlkem768"] = true
+			if s.TLS.Reality.DisableMLKEM {
+				reality["support_x25519mlkem768"] = false
 			}
 			tls["reality"] = reality
 		}
@@ -395,5 +415,8 @@ func (s *StreamBuilder) MergeIntoOutbound(out map[string]any) {
 
 	if s.BindInterface != "" {
 		out["bind_interface"] = s.BindInterface
+	}
+	if s.FinalMask != nil {
+		out["finalmask"] = s.FinalMask
 	}
 }
