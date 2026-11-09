@@ -63,6 +63,14 @@ func parseShadowsocks(input string) (*ParsedOutbound, error) {
 				out["udp_over_tcp"] = map[string]any{"version": v}
 			}
 		}
+		// Тот же fm=, что у vless/trojan: экспорт ss-узла его пишет.
+		fm, err := parseFinalMask(q.Get("fm"))
+		if err != nil {
+			return nil, fmt.Errorf("ss: %w", err)
+		}
+		if fm != nil {
+			out["finalmask"] = fm
+		}
 	}
 
 	if tag == "" {

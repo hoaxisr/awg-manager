@@ -96,9 +96,9 @@ func mlkemFingerprint(t *testing.T, mut *fakeMutator, server string) any {
 	return nil
 }
 
-func mlkemPatch(on bool) UpdatePatch { return UpdatePatch{RealityMLKEM: &on} }
+func mlkemPatch(on bool) UpdatePatch { return UpdatePatch{MLKEMOff: &on} }
 
-func TestMaterializeMember_RealityMLKEM(t *testing.T) {
+func TestMaterializeMember_MLKEMOff(t *testing.T) {
 	const firefoxReality = `{"tls":{"utls":{"enabled":true,"fingerprint":"firefox"},"reality":{"enabled":true}}}`
 	cases := []struct {
 		name            string
@@ -107,10 +107,10 @@ func TestMaterializeMember_RealityMLKEM(t *testing.T) {
 		wantFlag        any
 		wantFingerprint any
 	}{
-		{"on sets flag and chrome", firefoxReality, true, true, "chrome"},
-		{"on adds utls", `{"tls":{"reality":{"enabled":true}}}`, true, true, "chrome"},
+		{"on sets false, fingerprint kept", firefoxReality, true, false, "firefox"},
+		{"on without utls", `{"tls":{"reality":{"enabled":true}}}`, true, false, nil},
 		{"off leaves absent", firefoxReality, false, nil, "firefox"},
-		{"off keeps provider flag", `{"tls":{"utls":{"fingerprint":"firefox"},"reality":{"enabled":true,"support_x25519mlkem768":true}}}`, false, true, "firefox"},
+		{"off keeps provider opt-out", `{"tls":{"utls":{"fingerprint":"firefox"},"reality":{"enabled":true,"support_x25519mlkem768":false}}}`, false, false, "firefox"},
 		{"disabled reality untouched", `{"tls":{"utls":{"fingerprint":"firefox"},"reality":{"enabled":false}}}`, true, nil, "firefox"},
 		{"plain tls untouched", `{"tls":{"enabled":true,"utls":{"fingerprint":"firefox"}}}`, true, nil, "firefox"},
 		{"no tls untouched", `{"type":"shadowsocks"}`, true, nil, nil},
@@ -136,7 +136,7 @@ func TestMaterializeMember_RealityMLKEM(t *testing.T) {
 
 // Тела из SubscriptionOutbounds общие с конфигом адаптера: снятие работает с копией.
 func TestClearRealityMLKEM(t *testing.T) {
-	raw := []byte(`{"tls":{"utls":{"fingerprint":"chrome"},"reality":{"enabled":true,"support_x25519mlkem768":true}}}`)
+	raw := []byte(`{"tls":{"utls":{"fingerprint":"chrome"},"reality":{"enabled":true,"support_x25519mlkem768":false}}}`)
 	got := string(clearRealityMLKEM(raw))
 	if strings.Contains(got, "support_x25519mlkem768") {
 		t.Fatalf("flag kept: %s", got)
@@ -149,7 +149,7 @@ func TestClearRealityMLKEM(t *testing.T) {
 	}
 }
 
-// Источник флага не присылает ни в каком формате: опция подписки обязана
+// Источник отказа не присылает ни в каком формате: опция подписки обязана
 // дойти до тела и пережить обновление.
 func TestService_RealityMLKEM_SurvivesRefresh(t *testing.T) {
 	for name, body := range map[string]string{
@@ -161,14 +161,14 @@ func TestService_RealityMLKEM_SurvivesRefresh(t *testing.T) {
 			feed := newMLKEMFeed(t, body)
 			svc, mut := newTestService(t)
 			ctx := context.Background()
-			sub, err := svc.Create(ctx, CreateInput{Label: "s", URL: feed.url, Enabled: true, RealityMLKEM: true})
+			sub, err := svc.Create(ctx, CreateInput{Label: "s", URL: feed.url, Enabled: true, MLKEMOff: true})
 			if err != nil {
 				t.Fatal(err)
 			}
 			check := func(when string) {
 				t.Helper()
-				if got := mlkemStates(t, mut, sub)["h.example"]; got != true {
-					t.Fatalf("%s: flag=%v, want true (sub=%+v)", when, got, sub.MemberTags)
+				if got := mlkemStates(t, mut, sub)["h.example"]; got != false {
+					t.Fatalf("%s: flag=%v, want false (sub=%+v)", when, got, sub.MemberTags)
 				}
 			}
 			check("create")
@@ -180,7 +180,7 @@ func TestService_RealityMLKEM_SurvivesRefresh(t *testing.T) {
 	}
 }
 
-func TestService_RealityMLKEM_EnableNeedsNoFetch(t *testing.T) {
+func TestService_RealityMLKEM_OptOutNeedsNoFetch(t *testing.T) {
 	feed := newMLKEMFeed(t, mlkemRealityURL+"#A\n"+mlkemTLSURL+"#B\n")
 	svc, mut := newTestService(t)
 	ctx := context.Background()
@@ -189,29 +189,29 @@ func TestService_RealityMLKEM_EnableNeedsNoFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := mlkemStates(t, mut, sub)["h.example"]; got != nil {
-		t.Fatalf("flag on by default: %v", got)
+		t.Fatalf("flag set by default: %v", got)
 	}
 	before := feed.hits.Load()
 	sub, err = svc.Update(sub.ID, mlkemPatch(true))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sub.RealityMLKEM {
+	if !sub.MLKEMOff {
 		t.Fatal("option not stored")
 	}
-	if got := mlkemStates(t, mut, sub)["h.example"]; got != true {
-		t.Fatalf("flag=%v, want true", got)
+	if got := mlkemStates(t, mut, sub)["h.example"]; got != false {
+		t.Fatalf("flag=%v, want false", got)
 	}
 	if n := feed.hits.Load() - before; n != 0 {
-		t.Fatalf("enable fetched the source %d times", n)
+		t.Fatalf("opt-out fetched the source %d times", n)
 	}
 }
 
-func TestService_RealityMLKEM_DisableRefreshes(t *testing.T) {
+func TestService_RealityMLKEM_RemovingOptOutRefreshes(t *testing.T) {
 	feed := newMLKEMFeed(t, mlkemRealityURL+"#A\n")
 	svc, mut := newTestService(t)
 	ctx := context.Background()
-	sub, err := svc.Create(ctx, CreateInput{Label: "s", URL: feed.url, Enabled: true, RealityMLKEM: true})
+	sub, err := svc.Create(ctx, CreateInput{Label: "s", URL: feed.url, Enabled: true, MLKEMOff: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,11 +224,11 @@ func TestService_RealityMLKEM_DisableRefreshes(t *testing.T) {
 	}
 }
 
-func TestService_RealityMLKEM_DisableKeepsProviderFlag(t *testing.T) {
-	feed := newMLKEMFeed(t, mlkemRealityURL+"&support-x25519mlkem768=true#A\n")
+func TestService_RealityMLKEM_RemovingOptOutKeepsProviderFlag(t *testing.T) {
+	feed := newMLKEMFeed(t, mlkemRealityURL+"&support-x25519mlkem768=false#A\n")
 	svc, mut := newTestService(t)
 	ctx := context.Background()
-	sub, err := svc.Create(ctx, CreateInput{Label: "s", URL: feed.url, Enabled: true, RealityMLKEM: true})
+	sub, err := svc.Create(ctx, CreateInput{Label: "s", URL: feed.url, Enabled: true, MLKEMOff: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,101 +236,59 @@ func TestService_RealityMLKEM_DisableKeepsProviderFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := mlkemStates(t, mut, sub)["h.example"]; got != true {
-		t.Fatalf("provider flag lost: %v", got)
+	if got := mlkemStates(t, mut, sub)["h.example"]; got != false {
+		t.Fatalf("provider opt-out lost: %v", got)
 	}
 }
 
-// Шара X25519MLKEM768 есть только у chrome: опция заменяет чужой отпечаток, а
-// снятие возвращает его из источника.
-func TestService_RealityMLKEM_ForcesChromeAndRestores(t *testing.T) {
+// Отпечаток опция не трогает: в форке шара MLKEM есть у chrome, firefox и
+// safari, как у Xray.
+func TestService_RealityMLKEM_KeepsFingerprint(t *testing.T) {
+	const firefox = "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?type=tcp&security=reality&sni=a.example&fp=firefox&pbk=" + mlkemTestKey + "&sid=ab#A\n"
+	feed := newMLKEMFeed(t, firefox)
+	svc, mut := newTestService(t)
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "s", URL: feed.url, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, on := range []bool{true, false} {
+		if _, err := svc.Update(sub.ID, mlkemPatch(on)); err != nil {
+			t.Fatal(err)
+		}
+		if got := mlkemFingerprint(t, mut, "h.example"); got != "firefox" {
+			t.Fatalf("option %v: fingerprint=%v, want firefox", on, got)
+		}
+	}
+}
+
+// Источник лежит: снять опцию всё равно можно, флаг снимается с сохранённых
+// тел.
+func TestService_RealityMLKEM_RemovingOptOutWorksWhenSourceDown(t *testing.T) {
 	const firefox = "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?type=tcp&security=reality&sni=a.example&fp=firefox&pbk=" + mlkemTestKey + "&sid=ab#A\n"
 	feed := newMLKEMFeed(t, firefox)
 	svc, mut := newTestService(t)
 	ctx := context.Background()
-	sub, err := svc.Create(ctx, CreateInput{Label: "s", URL: feed.url, Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := mlkemFingerprint(t, mut, "h.example"); got != "firefox" {
-		t.Fatalf("option off: fingerprint=%v, want firefox", got)
-	}
-	if _, err := svc.Update(sub.ID, mlkemPatch(true)); err != nil {
-		t.Fatal(err)
-	}
-	if got := mlkemFingerprint(t, mut, "h.example"); got != "chrome" {
-		t.Fatalf("enabled: fingerprint=%v, want chrome", got)
-	}
-	if _, err := svc.Refresh(ctx, sub.ID); err != nil {
-		t.Fatal(err)
-	}
-	if got := mlkemFingerprint(t, mut, "h.example"); got != "chrome" {
-		t.Fatalf("refresh: fingerprint=%v, want chrome", got)
-	}
-	if _, err := svc.Update(sub.ID, mlkemPatch(false)); err != nil {
-		t.Fatal(err)
-	}
-	if got := mlkemFingerprint(t, mut, "h.example"); got != "firefox" {
-		t.Fatalf("disabled: fingerprint=%v, want firefox from source", got)
-	}
-}
-
-// У inline источника для снятия нет: отпечаток остаётся chrome.
-func TestService_RealityMLKEM_InlineKeepsChromeAfterDisable(t *testing.T) {
-	svc, mut := newTestService(t)
-	sub, err := svc.Create(context.Background(), CreateInput{
-		Label:  "i",
-		Inline: strings.ReplaceAll(mlkemRealityURL, "fp=chrome", "fp=firefox") + "#A\n", Enabled: true, RealityMLKEM: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.Update(sub.ID, mlkemPatch(false)); err != nil {
-		t.Fatal(err)
-	}
-	if got := mlkemFingerprint(t, mut, "h.example"); got != "chrome" {
-		t.Fatalf("fingerprint=%v, want chrome", got)
-	}
-}
-
-// Источник лежит: выключить опцию всё равно можно, флаг снимается с сохранённых
-// тел. Отпечаток вернёт следующий успешный refresh.
-func TestService_RealityMLKEM_DisableWorksWhenSourceDown(t *testing.T) {
-	const firefox = "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?type=tcp&security=reality&sni=a.example&fp=firefox&pbk=" + mlkemTestKey + "&sid=ab#A\n"
-	feed := newMLKEMFeed(t, firefox)
-	svc, mut := newTestService(t)
-	ctx := context.Background()
-	sub, err := svc.Create(ctx, CreateInput{Label: "s", URL: feed.url, Enabled: true, RealityMLKEM: true})
+	sub, err := svc.Create(ctx, CreateInput{Label: "s", URL: feed.url, Enabled: true, MLKEMOff: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	feed.fail.Store(true)
 	sub, err = svc.Update(sub.ID, mlkemPatch(false))
 	if err != nil {
-		t.Fatalf("disable with source down: %v", err)
+		t.Fatalf("removing opt-out with source down: %v", err)
 	}
-	if sub.RealityMLKEM {
+	if sub.MLKEMOff {
 		t.Fatal("option still on")
 	}
 	if flag := mlkemStates(t, mut, sub)["h.example"]; flag != nil {
 		t.Fatalf("flag=%v, want cleared", flag)
 	}
-	if got := mlkemFingerprint(t, mut, "h.example"); got != "chrome" {
-		t.Fatalf("fingerprint=%v, want chrome until refresh", got)
-	}
-	feed.fail.Store(false)
-	if _, err := svc.Refresh(ctx, sub.ID); err != nil {
-		t.Fatal(err)
-	}
-	if got := mlkemFingerprint(t, mut, "h.example"); got != "firefox" {
-		t.Fatalf("fingerprint=%v, want firefox after refresh", got)
-	}
 }
 
-// Движок не принял конфиг: опция остаётся включённой.
-func TestService_RealityMLKEM_DisableRollsBackOnReloadFailure(t *testing.T) {
+// Движок не принял конфиг: запрет MLKEM остаётся в силе.
+func TestService_RealityMLKEM_RemovingOptOutRollsBackOnReloadFailure(t *testing.T) {
 	svc, mut := newTestService(t)
-	sub, err := svc.Create(context.Background(), CreateInput{Label: "i", Inline: mlkemRealityURL + "#A\n", Enabled: true, RealityMLKEM: true})
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "i", Inline: mlkemRealityURL + "#A\n", Enabled: true, MLKEMOff: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +300,7 @@ func TestService_RealityMLKEM_DisableRollsBackOnReloadFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.RealityMLKEM {
+	if !got.MLKEMOff {
 		t.Fatal("option not rolled back")
 	}
 }
@@ -364,8 +322,8 @@ func TestService_RealityMLKEM_InlineKeepsManualMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, server := range []string{"h.example", "m.example"} {
-		if got := mlkemStates(t, mut, sub)[server]; got != true {
-			t.Fatalf("%s: flag=%v, want true", server, got)
+		if got := mlkemStates(t, mut, sub)[server]; got != false {
+			t.Fatalf("%s: flag=%v, want false", server, got)
 		}
 	}
 	if sub, err = svc.Update(sub.ID, mlkemPatch(false)); err != nil {
@@ -381,7 +339,7 @@ func TestService_RealityMLKEM_InlineKeepsManualMember(t *testing.T) {
 }
 
 // Сбой применения откатывает и опцию: она в общем rollbackPatch.
-func TestService_RealityMLKEM_EnableRollsBackOnReloadFailure(t *testing.T) {
+func TestService_RealityMLKEM_OptOutRollsBackOnReloadFailure(t *testing.T) {
 	feed := newMLKEMFeed(t, mlkemRealityURL+"#A\n")
 	svc, mut := newTestService(t)
 	sub, err := svc.Create(context.Background(), CreateInput{Label: "s", URL: feed.url, Enabled: true})
@@ -396,7 +354,7 @@ func TestService_RealityMLKEM_EnableRollsBackOnReloadFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.RealityMLKEM {
+	if got.MLKEMOff {
 		t.Fatal("option not rolled back")
 	}
 }

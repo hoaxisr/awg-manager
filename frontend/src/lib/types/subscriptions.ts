@@ -113,7 +113,7 @@ export interface Subscription {
 	/** Kernel iface для dial всех member-outbound'ов (#709). */
 	bindInterface?: string;
 	/** X25519MLKEM768 всем Reality-серверам подписки. */
-	realityMlkem?: boolean;
+	realityMlkemOff?: boolean;
 }
 
 export interface SubscriptionRefreshResult {
@@ -145,7 +145,7 @@ export interface CreateSubscriptionInput {
 	filterInclude?: string;
 	filterExclude?: string;
 	bindInterface?: string;
-	realityMlkem?: boolean;
+	realityMlkemOff?: boolean;
 }
 
 export interface UpdateSubscriptionInput {
@@ -159,7 +159,7 @@ export interface UpdateSubscriptionInput {
 	filterInclude?: string;
 	filterExclude?: string;
 	bindInterface?: string;
-	realityMlkem?: boolean;
+	realityMlkemOff?: boolean;
 }
 
 // === Subscription aggregate groups (#372) ===

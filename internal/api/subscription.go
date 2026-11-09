@@ -210,7 +210,7 @@ func (h *SubscriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		FilterInclude: req.FilterInclude,
 		FilterExclude: req.FilterExclude,
 		BindInterface: req.BindInterface,
-		RealityMLKEM:  req.RealityMLKEM,
+		MLKEMOff:      req.MLKEMOff,
 	}
 	sub, err := h.svc.Create(r.Context(), in)
 	if err != nil {
@@ -291,7 +291,7 @@ func (h *SubscriptionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		FilterInclude: req.FilterInclude,
 		FilterExclude: req.FilterExclude,
 		BindInterface: req.BindInterface,
-		RealityMLKEM:  req.RealityMLKEM,
+		MLKEMOff:      req.MLKEMOff,
 	}
 	if req.Headers != nil {
 		hh := fromSubscriptionHeaders(*req.Headers)

@@ -370,8 +370,36 @@ func checkSingboxFatal(ob map[string]any, typ string) error {
 		return fmt.Errorf("unsupported transport type %q", transportType)
 	}
 
+	// finalmask и encryption форк проверяет при создании аутбаунда строже,
+	// чем этот вход (лишние ключи, «бессмысленные» encryption), поэтому в
+	// аутбаунд уходит нормализованное значение, а не присланное.
+	if fm, ok := ob["finalmask"]; ok {
+		raw, err := json.Marshal(fm)
+		if err != nil {
+			return err
+		}
+		normalized, err := parseFinalMask(string(raw))
+		if err != nil {
+			return err
+		}
+		if normalized == nil {
+			delete(ob, "finalmask")
+		} else {
+			ob["finalmask"] = normalized
+		}
+	}
+
 	switch typ {
 	case "vless":
+		enc, err := vlessEncryption(asString(ob["encryption"]))
+		if err != nil {
+			return err
+		}
+		if enc == "" {
+			delete(ob, "encryption")
+		} else {
+			ob["encryption"] = enc
+		}
 		if flow := asString(ob["flow"]); flow != "" {
 			// Те же правила, что у ссылок и Clash: собираем из готового
 			// аутбаунда минимальный StreamBuilder, чтобы решение принималось
@@ -383,7 +411,7 @@ func checkSingboxFatal(ob map[string]any, typ string) error {
 			if outboundTLSEnabled(ob) {
 				stream.TLS = &outboundTLS{Enabled: true}
 			}
-			if err := checkVlessFlow(flow, stream); err != nil {
+			if err := checkVlessFlow(flow, stream, enc); err != nil {
 				return err
 			}
 		}

@@ -359,8 +359,8 @@
 						<label class="checkbox-label">
 							<input
 								type="checkbox"
-								checked={getFieldBool(['tls', 'reality', 'support_x25519mlkem768'])}
-								onchange={(e) => setField(['tls', 'reality', 'support_x25519mlkem768'], (e.target as HTMLInputElement).checked)}
+								checked={getField(['tls', 'reality', 'support_x25519mlkem768']) === false}
+								onchange={(e) => setField(['tls', 'reality', 'support_x25519mlkem768'], (e.target as HTMLInputElement).checked ? false : undefined)}
 							/>
 							<span>{m.singbox_edit_reality_mlkem()}</span>
 						</label>

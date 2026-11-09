@@ -1,6 +1,8 @@
 package vlink
 
 import (
+	"crypto/mlkem"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,19 +57,85 @@ var meaninglessEncryption = map[string]bool{
 	"chacha20-poly1305": true,
 }
 
-// checkVlessEncryption rejects links that need real VLESS Encryption (issue
-// #603). sing-box has no encryption field on a VLESS outbound at all
-// (option.VLESSOutboundOptions) and decodes strictly, so passing the value
-// through poisons the whole config with `json: unknown field "encryption"`.
-// Dropping it silently would instead hand the user a server that cannot
-// connect, so anything outside the meaningless set fails here — the list is a
-// whitelist of junk on purpose: an unknown value is more likely a new
-// encryption spec than new junk, and a visible refusal beats a silent break.
-func checkVlessEncryption(encryption string) error {
+// vlessEncryption returns the encryption value for the outbound: "" for the
+// meaningless set, the string itself for VLESS Encryption
+// (mlkem768x25519plus, issue #603). The fork checks the string when the
+// outbound is created and a bad one takes the whole config down, so it is
+// checked here by the same rules (fork protocol/vless/encryption/config.go,
+// Xray infra/conf/vless.go). Anything else is refused: the list of junk is a
+// whitelist on purpose — an unknown value is more likely a new spec than new
+// junk, and a visible refusal beats a silent break.
+func vlessEncryption(encryption string) (string, error) {
 	if meaninglessEncryption[strings.ToLower(strings.TrimSpace(encryption))] {
-		return nil
+		return "", nil
 	}
-	return fmt.Errorf("vless: encryption=%q не поддерживается sing-box (VLESS Encryption) — сервер пропущен", encryption)
+	if err := checkMLKEMEncryption(encryption); err != nil {
+		return "", fmt.Errorf("vless: encryption=%q не поддерживается (VLESS Encryption: %v) — сервер пропущен", encryption, err)
+	}
+	return encryption, nil
+}
+
+func checkMLKEMEncryption(encryption string) error {
+	s := strings.Split(encryption, ".")
+	if len(s) < 4 || s[0] != "mlkem768x25519plus" {
+		return errors.New("неизвестная схема")
+	}
+	switch s[1] {
+	case "native", "xorpub", "random":
+	default:
+		return fmt.Errorf("режим %q", s[1])
+	}
+	switch s[2] {
+	case "1rtt", "0rtt":
+	default:
+		return fmt.Errorf("rtt %q", s[2])
+	}
+	var keys, blocks, maxLen int
+	for _, r := range s[3:] {
+		if len(r) >= 20 {
+			// 32 байта — ключ X25519 (форку годится любой), 1184 — ключ
+			// ML-KEM-768, его кодировку форк проверяет так же.
+			b, err := base64.RawURLEncoding.DecodeString(r)
+			if err != nil || len(b) != 32 && len(b) != 1184 {
+				return errors.New("ключ")
+			}
+			if len(b) == 1184 {
+				if _, err := mlkem.NewEncapsulationKey768(b); err != nil {
+					return errors.New("ключ ML-KEM")
+				}
+			}
+			keys++
+			continue
+		}
+		// Паддинг: блоки a-b-c, чётные — длины, нечётные — паузы
+		// (Xray proxy/vless/encryption/common.go ParsePadding).
+		x := strings.Split(r, "-")
+		if len(x) < 3 {
+			return fmt.Errorf("паддинг %q", r)
+		}
+		var y [3]int
+		for i := range y {
+			n, err := strconv.Atoi(x[i])
+			if err != nil {
+				return fmt.Errorf("паддинг %q", r)
+			}
+			y[i] = n
+		}
+		if blocks == 0 && (y[0] < 100 || y[1] < 35 || y[2] < 35) {
+			return fmt.Errorf("первый блок паддинга %q", r)
+		}
+		if blocks%2 == 0 {
+			maxLen += max(y[1], y[2])
+		}
+		blocks++
+	}
+	if keys == 0 {
+		return errors.New("нет ключа")
+	}
+	if maxLen > 18+65535 {
+		return errors.New("паддинг длиннее 65553")
+	}
+	return nil
 }
 
 // buildVlessOutbound assembles the vless outbound shared by the share-link
@@ -76,7 +144,8 @@ func checkVlessEncryption(encryption string) error {
 // formats — previously the Clash path took flow raw and ignored encryption.
 // tag falls back to vless-<host>-<port> when empty.
 func buildVlessOutbound(host string, port uint16, uuid, flow, encryption string, stream *StreamBuilder, tag, label string) (*ParsedOutbound, error) {
-	if err := checkVlessEncryption(encryption); err != nil {
+	enc, err := vlessEncryption(encryption)
+	if err != nil {
 		return nil, err
 	}
 	out := map[string]any{
@@ -85,8 +154,11 @@ func buildVlessOutbound(host string, port uint16, uuid, flow, encryption string,
 		"server_port": port,
 		"uuid":        uuid,
 	}
+	if enc != "" {
+		out["encryption"] = enc
+	}
 	if f := normalizeFlow(flow); f != "" {
-		if err := checkVlessFlow(f, stream); err != nil {
+		if err := checkVlessFlow(f, stream, enc); err != nil {
 			return nil, err
 		}
 		out["flow"] = f
@@ -166,7 +238,13 @@ func vlessUUIDFallback(userinfo string, q url.Values, authority string) (string,
 //     набрал бы. Отвергаем всё равно: сервер этого не примет — Xray держит
 //     vision только на raw/tcp («XTLS only supports TLS and REALITY directly
 //     for now»), то есть собеседника у такой комбинации нет.
-func checkVlessFlow(flow string, stream *StreamBuilder) error {
+//   - vision поверх VLESS Encryption — у Xray есть, но Vision в sing-vmess
+//     читает буферы TLS-соединения через reflect и поверх шифрования не
+//     работает; форк такой аутбаунд отвергает при создании.
+func checkVlessFlow(flow string, stream *StreamBuilder, encryption string) error {
+	if encryption != "" {
+		return fmt.Errorf("vlink: vless: flow %q with VLESS Encryption is not supported", flow)
+	}
 	if flow != "xtls-rprx-vision" {
 		return fmt.Errorf("vlink: vless: unsupported flow %q (sing-box knows only xtls-rprx-vision)", flow)
 	}

@@ -14,7 +14,7 @@ var sysClassNet = "/sys/class/net" //nolint:gochecknoglobals // overridden in te
 // parsed member outbound before it is committed to 13-subscriptions.json.
 // If bindInterface is specified but does not exist in the kernel, it is dropped
 // (fail-open to avoid sing-box FATAL) and a warning is logged.
-func materializeMemberOutbound(raw []byte, tag, bindInterface string, realityMLKEM bool, logWarn func(action, target, msg string)) []byte {
+func materializeMemberOutbound(raw []byte, tag, bindInterface string, mlkemOff bool, logWarn func(action, target, msg string)) []byte {
 	var ob map[string]any
 	if json.Unmarshal(raw, &ob) != nil {
 		return replaceTag(raw, tag)
@@ -33,9 +33,9 @@ func materializeMemberOutbound(raw []byte, tag, bindInterface string, realityMLK
 	} else {
 		delete(ob, "bind_interface")
 	}
-	// Выключенная опция флаг не снимает: его мог прислать сам провайдер в ссылке.
-	if realityMLKEM {
-		enableRealityMLKEM(ob)
+	// Снятая опция флаг не трогает: явный отказ мог прислать сам провайдер.
+	if mlkemOff {
+		disableRealityMLKEM(ob)
 	}
 	out, err := json.Marshal(ob)
 	if err != nil {
@@ -44,22 +44,20 @@ func materializeMemberOutbound(raw []byte, tag, bindInterface string, realityMLK
 	return out
 }
 
-// enableRealityMLKEM ставит флаг у outbound с включённым Reality и заменяет его
-// отпечаток на chrome: в utls 1.8.7 шара X25519MLKEM768 есть только у него, с
-// другим отпечатком флаг ничего не даёт.
-func enableRealityMLKEM(ob map[string]any) {
+// disableRealityMLKEM вырезает X25519MLKEM768 у outbound с включённым Reality:
+// форк, как Xray, шлёт её по умолчанию, а ClientHello ~1,7 КБ на части сетей
+// глушат (#944).
+func disableRealityMLKEM(ob map[string]any) {
 	tls, _ := ob["tls"].(map[string]any)
 	reality, _ := tls["reality"].(map[string]any)
 	if reality["enabled"] != true {
 		return
 	}
-	reality["support_x25519mlkem768"] = true
-	tls["utls"] = map[string]any{"enabled": true, "fingerprint": "chrome"}
+	reality["support_x25519mlkem768"] = false
 }
 
 // clearRealityMLKEM снимает флаг с копии тела: тела из SubscriptionOutbounds
-// общие с конфигом и снимком батча, менять их на месте нельзя. Отпечаток не
-// возвращается: прежнее значение знает только источник.
+// общие с конфигом и снимком батча, менять их на месте нельзя.
 func clearRealityMLKEM(raw []byte) []byte {
 	var ob map[string]any
 	if json.Unmarshal(raw, &ob) != nil {

@@ -69,6 +69,9 @@ func encodeVless(ob map[string]any, label string) (string, error) {
 	if flow, _ := ob["flow"].(string); flow != "" {
 		q.Set("flow", flow)
 	}
+	if enc, _ := ob["encryption"].(string); enc != "" {
+		q.Set("encryption", enc)
+	}
 	u.RawQuery = q.Encode()
 	if label != "" {
 		u.Fragment = label
@@ -446,6 +449,15 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 		q.Set("type", network)
 	}
 
+	// finalmask уходит как fm= — тот же JSON, что читает parseFinalMask.
+	if fm, ok := ob["finalmask"]; ok && fm != nil {
+		raw, err := json.Marshal(fm)
+		if err != nil {
+			return nil, err
+		}
+		q.Set("fm", string(raw))
+	}
+
 	// bind_interface намеренно не эмитится: это привязка к интерфейсу
 	// конкретного роутера, она меняется в рантайме и на чужом устройстве
 	// в лучшем случае бессмысленна, в худшем — даёт конфиг с несуществующим
@@ -463,8 +475,8 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 				if sid, _ := reality["short_id"].(string); sid != "" {
 					q.Set("sid", sid)
 				}
-				if reality["support_x25519mlkem768"] == true {
-					q.Set("support-x25519mlkem768", "true")
+				if reality["support_x25519mlkem768"] == false {
+					q.Set("support-x25519mlkem768", "false")
 				}
 			} else {
 				q.Set("security", "tls")

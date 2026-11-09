@@ -119,12 +119,12 @@ func TestService_InlineBindChange_KeepsRemovedMemberRemoved(t *testing.T) {
 	}
 }
 
-// Снятие MLKEM вместе со сменой интерфейса идёт тем же путём и снимает флаг.
+// Снятие запрета MLKEM вместе со сменой интерфейса идёт тем же путём и снимает флаг.
 func TestService_InlineBindChange_WithMLKEMOff(t *testing.T) {
 	withFakeIface(t, "eth3")
 	svc, mut := newTestService(t)
 	ctx := context.Background()
-	sub, err := svc.Create(ctx, CreateInput{Label: "i", Inline: mlkemRealityURL + "#A\n", Enabled: true, RealityMLKEM: true})
+	sub, err := svc.Create(ctx, CreateInput{Label: "i", Inline: mlkemRealityURL + "#A\n", Enabled: true, MLKEMOff: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestService_InlineBindChange_WithMLKEMOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	bind, off := "eth3", false
-	if sub, err = svc.Update(sub.ID, UpdatePatch{BindInterface: &bind, RealityMLKEM: &off}); err != nil {
+	if sub, err = svc.Update(sub.ID, UpdatePatch{BindInterface: &bind, MLKEMOff: &off}); err != nil {
 		t.Fatal(err)
 	}
 	if len(sub.MemberTags) != 2 {
