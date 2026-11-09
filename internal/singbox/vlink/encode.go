@@ -433,6 +433,11 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 			if mode, _ := transport["mode"].(string); mode != "" {
 				q.Set("mode", mode)
 			}
+			// Обратно в downloadSettings Xray загрузку не выразить без своего
+			// конвертера TLS; ссылка без неё молча не заработала бы.
+			if transport["download"] != nil {
+				return nil, fmt.Errorf("vlink: xhttp download cannot be exported to a link")
+			}
 			// Everything else xhttp carries travels in Xray's extra= object,
 			// x_padding_bytes included: since #797 it can come from the link
 			// rather than from our default, so dropping it would lose it.

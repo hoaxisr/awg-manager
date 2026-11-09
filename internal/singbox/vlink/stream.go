@@ -27,6 +27,8 @@ type StreamBuilder struct {
 	BindInterface       string         // egress kernel interface for dial (#709)
 	// finalmask форка (fm=), уже проверенный parseFinalMask.
 	FinalMask json.RawMessage
+	// download форка из extra.downloadSettings (parseXHTTPDownload).
+	XHTTPDownload map[string]any
 }
 
 // outboundTLS is the parsed TLS / Reality block ready to be emitted as
@@ -191,6 +193,11 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 			return nil, fmt.Errorf("vlink: unsupported xhttp mode %q", s.Mode)
 		}
 		s.XHTTPExtra = parseXHTTPExtra(q.Get("extra"), s.Mode)
+		download, err := parseXHTTPDownload(q.Get("extra"), s.Mode)
+		if err != nil {
+			return nil, err
+		}
+		s.XHTTPDownload = download
 	}
 
 	// TLS / Reality
@@ -377,6 +384,9 @@ func (s *StreamBuilder) MergeIntoOutbound(out map[string]any) {
 				transport["x_padding_bytes"] = s.XPaddingBytes
 			} else if transport["x_padding_bytes"] == nil {
 				transport["x_padding_bytes"] = "100-1000"
+			}
+			if s.XHTTPDownload != nil {
+				transport["download"] = s.XHTTPDownload
 			}
 		}
 		out["transport"] = transport

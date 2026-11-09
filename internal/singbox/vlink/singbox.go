@@ -426,6 +426,14 @@ func checkSingboxFatal(ob map[string]any, typ string) error {
 	}
 
 	if transportType == "xhttp" {
+		// Те же отказы форка при старте: download в stream-one и негодная
+		// пара session_id_table/session_id_length.
+		if transport["download"] != nil && asString(transport["mode"]) == "stream-one" {
+			return fmt.Errorf("xhttp download in stream-one mode")
+		}
+		if _, ok := transport["session_id_table"]; ok && !checkSessionIDTable(transport["session_id_table"], transport["session_id_length"]) {
+			return fmt.Errorf("xhttp session_id_table/session_id_length is not usable")
+		}
 		// sc_max_each_post_bytes == 0 — паника в рантайме (#908),
 		// x_padding_bytes == 0 — «cannot be disabled», конфигурация не грузится.
 		for _, key := range []string{"sc_max_each_post_bytes", "x_padding_bytes"} {
