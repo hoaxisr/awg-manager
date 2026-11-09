@@ -2854,9 +2854,16 @@ const autolistdetect_Candidate: v.GenericSchema = v.looseObject({
 	domain: v.optional(v.nullable(v.string())),
 	fails: v.optional(v.nullable(v.number())),
 	host: v.optional(v.nullable(v.string())),
+	ip: v.optional(v.nullable(v.string())),
 	lastAt: v.optional(v.nullable(v.string())),
+	probeError: v.optional(v.nullable(v.string())),
+	probedAt: v.optional(v.nullable(v.string())),
 	sources: v.optional(v.nullable(v.array(v.string()))),
+	stage: v.optional(v.nullable(v.string())),
 	state: v.optional(v.nullable(v.string())),
+	tunnelError: v.optional(v.nullable(v.string())),
+	tunnelProbedAt: v.optional(v.nullable(v.string())),
+	tunnelVerdict: v.optional(v.nullable(v.string())),
 	verdict: v.optional(v.nullable(v.string())),
 	why: v.optional(v.nullable(v.string())),
 });
@@ -2871,14 +2878,19 @@ const autolistdetect_HistoryEntry: v.GenericSchema = v.looseObject({
 });
 
 const autolistdetect_Status: v.GenericSchema = v.looseObject({
+	addsLimit: v.optional(v.nullable(v.number())),
+	addsUsedHour: v.optional(v.nullable(v.number())),
 	auto: v.optional(v.nullable(v.boolean())),
 	candidates: v.optional(v.nullable(v.array(v.lazy(() => autolistdetect_Candidate)))),
 	enabled: v.optional(v.nullable(v.boolean())),
 	history: v.optional(v.nullable(v.array(v.lazy(() => autolistdetect_HistoryEntry)))),
 	installed: v.optional(v.nullable(v.boolean())),
 	lastError: v.optional(v.nullable(v.string())),
+	probesLimit: v.optional(v.nullable(v.number())),
+	probesUsedHour: v.optional(v.nullable(v.number())),
 	running: v.optional(v.nullable(v.boolean())),
 	statusUrl: v.optional(v.nullable(v.string())),
+	targetInterface: v.optional(v.nullable(v.string())),
 	targetOutbound: v.optional(v.nullable(v.string())),
 	version: v.optional(v.nullable(v.string())),
 });
