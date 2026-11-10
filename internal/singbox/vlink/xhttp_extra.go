@@ -525,22 +525,28 @@ func clashXHTTPDownload(p map[string]any, mode string) (map[string]any, error) {
 		return nil, fmt.Errorf("vlink: xhttp download-settings in stream-one mode")
 	}
 	for _, k := range []string{"ech-opts", "shadow-tls-opts", "restls-opts", "jls-opts", "certificate", "private-key", "fingerprint", "name-cert-verify"} {
-		if _, ok := ds[k]; ok {
+		if ds[k] != nil {
 			return nil, fmt.Errorf("vlink: xhttp download-settings %s is not supported", k)
 		}
 	}
 	dxh := maps.Clone(xh)
+	// null у mihomo — «не задано», наследуется (поля там указатели).
 	for _, k := range []string{"path", "host", "headers", "reuse-settings"} {
-		if v, ok := ds[k]; ok {
+		if v := ds[k]; v != nil {
 			dxh[k] = v
 		}
 	}
 	dp := maps.Clone(p)
 	dp["xhttp-opts"] = dxh
 	for _, k := range []string{"server", "port", "tls", "alpn", "skip-cert-verify", "servername", "client-fingerprint", "reality-opts"} {
-		if v, ok := ds[k]; ok {
+		if v := ds[k]; v != nil {
 			dp[k] = v
 		}
+	}
+	// clashFieldsToValues ставит reality раньше tls; mihomo такую загрузку
+	// отвергает («REALITY requires TLS»).
+	if len(nestedMap(dp, "reality-opts")) > 0 && !asBool(dp["tls"]) {
+		return nil, fmt.Errorf("vlink: xhttp download-settings: reality requires tls")
 	}
 	server := asString(dp["server"])
 	port, ok := asInt(dp["port"])

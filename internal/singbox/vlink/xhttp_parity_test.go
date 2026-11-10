@@ -136,6 +136,9 @@ func TestClashXHTTPDownloadSettings(t *testing.T) {
 				d["host"] == "h.example" && d["x_padding_bytes"] == "200-400" && d["session_id_table"] == "Base62" &&
 				x["max_concurrency"] == "2-4" && tls["server_name"] == "up.example" && d["download"] == nil
 		}},
+		"null inherits": {map[string]any{"server": nil, "port": nil, "tls": nil, "fingerprint": nil, "path": nil}, func(d, tls map[string]any) bool {
+			return d["server"] == "up.example" && d["server_port"] == float64(443) && d["path"] == "/u" && tls["enabled"] == true
+		}},
 		"own server and reality": {map[string]any{
 			"server": "dl.example", "port": 8443, "servername": "r.example",
 			"reuse-settings": map[string]any{"max-connections": "3"},
@@ -168,6 +171,8 @@ func TestClashXHTTPDownloadSettingsRejected(t *testing.T) {
 		"cert pin":   clashXHTTPVless("packet-up", map[string]any{"fingerprint": "ab"}),
 		"bad port":   clashXHTTPVless("packet-up", map[string]any{"port": 0}),
 		"not a map":  clashXHTTPVless("packet-up", nil),
+		"reality no tls": clashXHTTPVless("packet-up", map[string]any{"tls": false,
+			"reality-opts": map[string]any{"public-key": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0"}}),
 	} {
 		if name == "not a map" {
 			node["xhttp-opts"].(map[string]any)["download-settings"] = "x"
