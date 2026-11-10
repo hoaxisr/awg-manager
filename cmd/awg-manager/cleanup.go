@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
+	"github.com/hoaxisr/awg-manager/internal/autolistdetect"
 	"github.com/hoaxisr/awg-manager/internal/cleanup"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
@@ -307,6 +308,9 @@ func runCleanup(dataDir string) {
 	os.Remove(filepath.Join(dataDir, "dns-routes.json"))
 	os.RemoveAll(obfuscator.ConfDir)
 	os.RemoveAll(obfuscator.RunDir)
+	// Ключ API для сателлита пишем мы; postrm сателлита снимает его со своим
+	// пакетом, а здесь — на случай, когда пакет так и не встал.
+	os.Remove(autolistdetect.KeyFile)
 
 	fmt.Println("Done.")
 }

@@ -52,9 +52,11 @@ After installation, the web interface is available at the router's address, usua
 ## Uninstallation
 
 ```sh
-opkg remove awg-manager
+opkg remove --force-removal-of-dependent-packages awg-manager
 rm -rf /opt/etc/awg-manager /opt/etc/awg-manager.pre-restore-*
 ```
+
+The `--force-removal-of-dependent-packages` flag also removes packages that depend on the panel (the `awgmautolist` satellite); without it opkg refuses while the satellite is installed.
 
 `awg-manager.pre-restore-*` are copies of the data directory left behind by restoring from a backup in versions before 2.19.10.
 

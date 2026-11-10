@@ -194,6 +194,7 @@ type SettingsHandler struct {
 	applyClashPort           func(int) error
 	clashPorts               clashPortInspector
 	onObfuscatorRelayChanged func()
+	onApiKeyChanged          func() error
 	downloadSvc              *downloader.Service
 	log                      *logging.ScopedLogger
 	bus                      *events.Bus
@@ -278,6 +279,25 @@ func (h *SettingsHandler) SetClashPortInspector(insp clashPortInspector) {
 // Phobos-релеев на новом бэкенде (спека §4.8).
 func (h *SettingsHandler) SetOnObfuscatorRelayChanged(fn func()) {
 	h.onObfuscatorRelayChanged = fn
+}
+
+// SetOnApiKeyChanged — ключ сменился (перевыпуск или PATCH): сателлиты,
+// ходящие в API по Bearer, должны получить новый.
+func (h *SettingsHandler) SetOnApiKeyChanged(fn func() error) {
+	h.onApiKeyChanged = fn
+}
+
+// notifyApiKeyChanged зовёт хук в горутине: перезапуск сателлита не должен
+// держать ответ на сохранение настроек.
+func (h *SettingsHandler) notifyApiKeyChanged() {
+	if h.onApiKeyChanged == nil {
+		return
+	}
+	go func() {
+		if err := h.onApiKeyChanged(); err != nil {
+			h.log.Warn("api-key", "", "satellite key update failed: "+err.Error())
+		}
+	}()
 }
 
 func (h *SettingsHandler) SetDownloadService(svc *downloader.Service) {
@@ -681,6 +701,9 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	response.Success(w, settingsResponse(out))
 	h.bus.PublishInvalidated(events.ResourceSettings, "updated")
+	if out.ApiKey != oldSettings.ApiKey {
+		h.notifyApiKeyChanged()
+	}
 
 	// Порт мог смениться — перепроверяем экспозицию. В горутине с
 	// собственным контекстом: проверка ходит в NDMS, а контекст запроса
@@ -728,6 +751,7 @@ func (h *SettingsHandler) RegenerateApiKey(w http.ResponseWriter, r *http.Reques
 	}
 
 	h.log.Info("api-key", "", "API key regenerated")
+	h.notifyApiKeyChanged()
 	response.Success(w, settingsResponse(settings))
 	h.bus.PublishInvalidated(events.ResourceSettings, "api-key-rotated")
 }

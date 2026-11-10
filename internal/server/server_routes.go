@@ -139,6 +139,9 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.settingsHandler.SetPingCheckService(s.pingCheckService)
 	h.settingsHandler.SetMonitoringService(s.monitoringService)
 	h.settingsHandler.SetEventBus(s.bus)
+	if s.autolistService != nil {
+		h.settingsHandler.SetOnApiKeyChanged(s.autolistService.ApiKeyChanged)
+	}
 	if s.ndmsQueries != nil {
 		s.exposureGuard = api.NewExposureGuard(s.settings, s.ndmsQueries.StaticNAT, s.ndmsQueries.HTTPProxy, s.ndmsQueries.Interfaces, h.appLog)
 		s.exposureGuard.SetEventBus(s.bus)
@@ -481,6 +484,21 @@ func (s *Server) registerRoutingRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/zapret/hostlists", h.guarded(zapretHandler.Hostlists))
 		mux.HandleFunc("/api/zapret/hostlist", h.guarded(zapretHandler.Hostlist))
 		mux.HandleFunc("/api/zapret/hostlist/save", h.expertGuarded(zapretHandler.SaveHostlist))
+	}
+
+	// awgmautolist (внешний сателлит автосписка неоткрывающихся сайтов,
+	// см. awgmautolist/ в корне). Ставится пакетом через /install;
+	// отсутствие процесса — штатное состояние. Dismiss меняет состояние
+	// сателлита — на том же уровне доверия, что управление zapret.
+	if s.autolistService != nil {
+		autolistHandler := api.NewAutolistHandler(s.autolistService)
+		mux.HandleFunc("/api/autolist/status", h.guarded(autolistHandler.Status))
+		mux.HandleFunc("/api/autolist/control", h.expertGuarded(autolistHandler.Control))
+		mux.HandleFunc("/api/autolist/install", h.expertGuarded(autolistHandler.Install))
+		mux.HandleFunc("/api/autolist/dismiss", h.expertGuarded(autolistHandler.Dismiss))
+		// add/config — команды, меняющие правила роутера и режим сателлита:
+		// тот же уровень доверия, что expert-правки маршрутизации.
+		mux.HandleFunc("/api/autolist/proxy", h.expertGuarded(autolistHandler.Proxy))
 	}
 }
 
@@ -879,6 +897,7 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/rules/delete", h.guarded(rh.DeleteRule))
 		mux.HandleFunc("/api/singbox/router/rules/move", h.guarded(rh.MoveRule))
 		mux.HandleFunc("/api/singbox/router/rulesets/list", h.guarded(rh.ListRuleSets))
+		mux.HandleFunc("/api/singbox/router/rulesets/match", h.guarded(rh.MatchRuleSets))
 		mux.HandleFunc("/api/singbox/router/rulesets/add", h.guarded(rh.AddRuleSet))
 		mux.HandleFunc("/api/singbox/router/rulesets/update", h.guarded(rh.UpdateRuleSet))
 		mux.HandleFunc("/api/singbox/router/rulesets/bulk-detour", h.guarded(rh.BulkSetRuleSetDetour))

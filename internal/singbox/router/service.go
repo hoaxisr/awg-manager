@@ -125,6 +125,7 @@ type Service interface {
 	Inspect(ctx context.Context, input InspectInput) (InspectResult, error)
 	InspectStream(ctx context.Context, input InspectInput) (<-chan InspectStreamEvent, error)
 	InspectDNS(ctx context.Context, input InspectDNSInput) (InspectDNSResult, error)
+	MatchRuleSets(ctx context.Context, input string, tags []string) ([]RuleSetMatchResult, error)
 
 	StagingStatus(ctx context.Context) StagingStatus
 	ApplyStaging(ctx context.Context) (orchestrator.ValidationResult, error)

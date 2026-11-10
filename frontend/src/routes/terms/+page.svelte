@@ -70,7 +70,7 @@
 			<h2>{m.terms_s7_title()}</h2>
 			<p class="no-support">{m.terms_s7_no_support()}</p>
 			<p>{m.terms_s7_p1()}</p>
-			<pre><code>opkg remove awg-manager</code></pre>
+			<pre><code>opkg remove --force-removal-of-dependent-packages awg-manager</code></pre>
 			<p><RichText text={m.terms_s7_p2()} /></p>
 			<ol>
 				<li>{m.terms_s7_li1()}</li>

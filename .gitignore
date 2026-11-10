@@ -95,3 +95,10 @@ scripts/diag/
 /genpresets
 /internal/presets/decompiled/
 /build/tools/.design/
+
+# awgmautolist generated package artifacts; package sources remain visible
+awgmautolist/*.ipk
+awgmautolist/ipk/data.tar.gz
+awgmautolist/ipk/control.tar.gz
+awgmautolist/ipk/debian-binary
+awgmautolist/ipk/opt/bin/awgmautolist

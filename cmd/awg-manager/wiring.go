@@ -8,6 +8,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
+	"github.com/hoaxisr/awg-manager/internal/autolistdetect"
 	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
@@ -148,6 +149,7 @@ type app struct {
 	// routing / aux services
 	hydraService        *hydraroute.Service
 	zapretService       *zapret.Service
+	autolistService     *autolistdetect.Service
 	geoDataStore        *hydraroute.GeoDataStore
 	geoRefreshScheduler *hydraroute.GeoRefreshScheduler
 	dnsRouteStore       *dnsroute.Store

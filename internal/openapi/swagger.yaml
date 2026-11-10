@@ -321,6 +321,30 @@ definitions:
         example: admin
         type: string
     type: object
+  api.AutolistControlRequest:
+    properties:
+      action:
+        example: disable
+        type: string
+    type: object
+  api.AutolistDismissRequest:
+    properties:
+      domain:
+        example: blocked.example.com
+        type: string
+    type: object
+  api.AutolistProxyRequest:
+    properties:
+      body:
+        additionalProperties: {}
+        description: Body — произвольный JSON-тело вызова (опционально).
+        type: object
+      path:
+        description: 'Path — путь сателлита: /add, /probe, /exclude, /restore, /config,
+          /forget или /dismiss.'
+        example: /add
+        type: string
+    type: object
   api.Awg3ImportRequest:
     properties:
       config:
@@ -5510,6 +5534,41 @@ definitions:
         example: geosite-cn
         type: string
     type: object
+  api.SingboxRouterRuleSetMatchDTO:
+    properties:
+      error:
+        example: rule-set is not defined
+        type: string
+      matched:
+        example: true
+        type: boolean
+      supported:
+        example: true
+        type: boolean
+      tag:
+        example: geosite-google
+        type: string
+    type: object
+  api.SingboxRouterRuleSetMatchRequest:
+    properties:
+      input:
+        example: google.com
+        type: string
+      tags:
+        items:
+          type: string
+        type: array
+    type: object
+  api.SingboxRouterRuleSetMatchResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SingboxRouterRuleSetMatchDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
   api.SingboxRouterRuleSetUpdateRequest:
     properties:
       ruleSet:
@@ -7998,6 +8057,11 @@ definitions:
         example: 524288
         type: integer
     type: object
+  api.autolistStatusResponse:
+    properties:
+      autolistStatus:
+        $ref: '#/definitions/autolistdetect.Status'
+    type: object
   api.killListenerRequest:
     properties:
       host:
@@ -8036,6 +8100,106 @@ definitions:
     properties:
       zapretStatus:
         $ref: '#/definitions/zapret.Status'
+    type: object
+  autolistdetect.Candidate:
+    properties:
+      domain:
+        type: string
+      fails:
+        type: integer
+      host:
+        type: string
+      ip:
+        type: string
+      lastAt:
+        type: string
+      probeError:
+        type: string
+      probedAt:
+        type: string
+      sources:
+        items:
+          type: string
+        type: array
+      stage:
+        type: string
+      state:
+        type: string
+      tunnelError:
+        type: string
+      tunnelProbedAt:
+        type: string
+      tunnelVerdict:
+        type: string
+      verdict:
+        type: string
+      why:
+        type: string
+    type: object
+  autolistdetect.HistoryEntry:
+    properties:
+      action:
+        type: string
+      at:
+        type: string
+      domain:
+        type: string
+      host:
+        type: string
+      source:
+        type: string
+      why:
+        type: string
+    type: object
+  autolistdetect.Status:
+    properties:
+      addsLimit:
+        type: integer
+      addsUsedHour:
+        type: integer
+      auto:
+        description: Auto — режим автодобавления сателлита (последний /status).
+        type: boolean
+      candidates:
+        description: Candidates — таблица кандидатов; пуста, когда сателлит не запущен.
+        items:
+          $ref: '#/definitions/autolistdetect.Candidate'
+        type: array
+      enabled:
+        type: boolean
+      history:
+        description: History — сохранённые добавления и скрытия, новые записи первыми.
+        items:
+          $ref: '#/definitions/autolistdetect.HistoryEntry'
+        type: array
+      installed:
+        description: Installed/Enabled различают отсутствие пакета, намеренное отключение
+          и сбой.
+        type: boolean
+      lastError:
+        description: LastError — причина, по которой живой процесс не ответил.
+        type: string
+      probesLimit:
+        type: integer
+      probesUsedHour:
+        description: |-
+          Почасовые бюджеты для индикации исчерпания в UI. Нулевой Limit означает,
+          что соответствующий лимит отключён при сборке сателлита.
+        type: integer
+      running:
+        description: Running — pid-файл существует и процесс жив (kill -0).
+        type: boolean
+      statusUrl:
+        description: StatusURL — адрес статус-сервера сателлита, если найден.
+        type: string
+      targetInterface:
+        description: TargetInterface — общий интерфейс tunnel-пробы и новых правил.
+        type: string
+      targetOutbound:
+        description: TargetOutbound — legacy-поле старого конфига сателлита.
+        type: string
+      version:
+        type: string
     type: object
   backup.Snapshot:
     properties:
@@ -9765,6 +9929,151 @@ paths:
       summary: Auth status
       tags:
       - auth
+  /autolist/control:
+    post:
+      consumes:
+      - application/json
+      description: Сохраняет намерение enable/disable и запускает или останавливает
+        сателлит. Отключение переживает перезагрузку.
+      parameters:
+      - description: enable или disable
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AutolistControlRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.autolistStatusResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Autolist satellite control
+      tags:
+      - autolist
+  /autolist/dismiss:
+    post:
+      consumes:
+      - application/json
+      description: Прячет кандидата сателлита awgmautolist на сутки.
+      parameters:
+      - description: Домен кандидата
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AutolistDismissRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Autolist dismiss candidate
+      tags:
+      - autolist
+  /autolist/install:
+    post:
+      description: Ставит пакет awgmautolist через opkg (фид repo.hoaxisr.ru), кладёт
+        сателлиту API-ключ и ждёт, пока он ответит. При включённой авторизации требует
+        созданный API-ключ.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.autolistStatusResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Autolist satellite install
+      tags:
+      - autolist
+  /autolist/proxy:
+    post:
+      consumes:
+      - application/json
+      description: 'Проксирует команду к awgmautolist: add (добавить домены отдельными
+        правилами), config (прочитать/применить конфигурацию), forget (убрать кандидата).
+        Тело ответа — ответ сателлита.'
+      parameters:
+      - description: Путь сателлита и тело
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AutolistProxyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Autolist satellite command
+      tags:
+      - autolist
+  /autolist/status:
+    get:
+      description: 'Состояние сателлита awgmautolist: жив ли процесс, режим auto,
+        целевой outbound и таблица кандидатов. Сателлит ставится отдельно; отсутствие
+        процесса — не ошибка, а пустой статус.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.autolistStatusResponse'
+      security:
+      - CookieAuth: []
+      summary: Autolist satellite status
+      tags:
+      - autolist
   /awg/analyze:
     post:
       consumes:
@@ -18036,6 +18345,42 @@ paths:
       security:
       - CookieAuth: []
       summary: List singbox-router rulesets
+      tags:
+      - singbox-router
+  /singbox/router/rulesets/match:
+    post:
+      consumes:
+      - application/json
+      description: Read-only match of a domain or IP against the selected rule-sets
+        in the active routing slot. Uses the same materialization, remote cache and
+        sing-box rule-set match path as the route inspector. Results preserve tag
+        order; an unknown or unsupported rule-set is reported in its own result and
+        does not fail the other tags.
+      parameters:
+      - description: Domain or IP and rule-set tags to test
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterRuleSetMatchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterRuleSetMatchResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Match selected router rule-sets
       tags:
       - singbox-router
   /singbox/router/rulesets/update:

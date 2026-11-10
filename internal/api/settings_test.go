@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -654,4 +655,36 @@ func TestSettingsHandler_RegenerateApiKey_RotatesAndPersists(t *testing.T) {
 	if got := p.invalidated(); len(got) != 0 {
 		t.Fatalf("на 405 публикаций быть не должно: %v", got)
 	}
+}
+
+// Смена ключа любым путём будит хук сателлитов; сохранение без смены — нет.
+func TestSettingsHandler_ApiKeyChangeNotifiesHook(t *testing.T) {
+	h, _ := newSettingsHandlerForTest(t)
+	calls := make(chan struct{}, 4)
+	h.SetOnApiKeyChanged(func() error { calls <- struct{}{}; return nil })
+	expect := func(what string, want bool) {
+		t.Helper()
+		select {
+		case <-calls:
+			if !want {
+				t.Fatalf("%s: лишний вызов хука", what)
+			}
+		case <-time.After(300 * time.Millisecond):
+			if want {
+				t.Fatalf("%s: хук не вызван", what)
+			}
+		}
+	}
+	if rr := perform(h.RegenerateApiKey, http.MethodPost, "/settings/regenerate-api-key", ""); rr.Code != 200 {
+		t.Fatalf("code=%d", rr.Code)
+	}
+	expect("regenerate", true)
+	if rr := perform(h.Update, http.MethodPost, "/settings", `{"apiKey":"custom-key"}`); rr.Code != 200 {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	expect("patch apiKey", true)
+	if rr := perform(h.Update, http.MethodPost, "/settings", `{"usageLevel":"expert"}`); rr.Code != 200 {
+		t.Fatalf("code=%d", rr.Code)
+	}
+	expect("patch без ключа", false)
 }

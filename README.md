@@ -52,9 +52,11 @@ curl -sL https://raw.githubusercontent.com/hoaxisr/awg-manager/develop/scripts/i
 ## Удаление
 
 ```sh
-opkg remove awg-manager
+opkg remove --force-removal-of-dependent-packages awg-manager
 rm -rf /opt/etc/awg-manager /opt/etc/awg-manager.pre-restore-*
 ```
+
+Флаг `--force-removal-of-dependent-packages` удаляет вместе с панелью зависящие от неё пакеты (сателлит `awgmautolist`); без него opkg откажет, если сателлит установлен.
 
 `awg-manager.pre-restore-*` — копии каталога данных, которые оставляло восстановление из бэкапа в версиях до 2.19.10.
 

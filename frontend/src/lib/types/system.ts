@@ -165,6 +165,9 @@ export interface RouterInterface {
 	name: string;
 	label: string;
 	up: boolean;
+	/** Используется автосписком, чтобы не предлагать LAN/bridge как tunnel target. */
+	securityLevel?: string;
+	type?: string;
 }
 
 export interface WANStatus {

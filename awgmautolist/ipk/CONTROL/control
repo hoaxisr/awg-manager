@@ -1,0 +1,7 @@
+Package: awgmautolist
+Version: 0.1.0-1
+Depends: awg-manager, curl
+Section: net
+Architecture: aarch64-3.10
+Maintainer: awgm-community
+Description: Autolist satellite for awg-manager: finds sites that fail to open directly, probes them, and offers routing candidates.

@@ -130,6 +130,7 @@ jobs:
           printf '%s\n' "$IPK_VERSION" > dist/VERSION
 
           SKIP_FRONTEND_BUILD=1 ./scripts/build-ipk.sh "$IPK_VERSION" "${{ matrix.arch }}"
+          VERSION="$IPK_VERSION" ./awgmautolist/build-ipk.sh "${{ matrix.arch }}"
 
       - name: Upload result
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -137,6 +138,7 @@ jobs:
           name: result-${{ matrix.arch }}
           path: |
             dist/awg-manager_*_${{ matrix.arch }}-kn.ipk
+            dist/awgmautolist_*_${{ matrix.arch }}-kn.ipk
             dist/VERSION
           if-no-files-found: error
 
@@ -316,7 +318,7 @@ jobs:
           set -euo pipefail
 
           shopt -s nullglob
-          files=(./dist/awg-manager_* ./dist/VERSION ./dist/CHANGELOG.md ./dist/RELEASED_SHA)
+          files=(./dist/awg-manager_* ./dist/awgmautolist_* ./dist/VERSION ./dist/CHANGELOG.md ./dist/RELEASED_SHA)
 
           if (( ${#files[@]} == 0 )); then
             echo "No release files found in ./dist"
