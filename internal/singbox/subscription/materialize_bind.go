@@ -48,12 +48,26 @@ func materializeMemberOutbound(raw []byte, tag, bindInterface string, mlkemOff b
 // форк, как Xray, шлёт её по умолчанию, а ClientHello ~1,7 КБ на части сетей
 // глушат (#944).
 func disableRealityMLKEM(ob map[string]any) {
-	tls, _ := ob["tls"].(map[string]any)
-	reality, _ := tls["reality"].(map[string]any)
-	if reality["enabled"] != true {
-		return
+	for _, reality := range realityBlocks(ob) {
+		if reality["enabled"] == true {
+			reality["support_x25519mlkem768"] = false
+		}
 	}
-	reality["support_x25519mlkem768"] = false
+}
+
+// realityBlocks — reality самого outbound и отдельной загрузки xhttp
+// (transport.download): у загрузки свой ClientHello.
+func realityBlocks(ob map[string]any) []map[string]any {
+	var out []map[string]any
+	transport, _ := ob["transport"].(map[string]any)
+	download, _ := transport["download"].(map[string]any)
+	for _, holder := range []map[string]any{ob, download} {
+		tls, _ := holder["tls"].(map[string]any)
+		if reality, ok := tls["reality"].(map[string]any); ok {
+			out = append(out, reality)
+		}
+	}
+	return out
 }
 
 // clearRealityMLKEM снимает флаг с копии тела: тела из SubscriptionOutbounds
@@ -63,9 +77,9 @@ func clearRealityMLKEM(raw []byte) []byte {
 	if json.Unmarshal(raw, &ob) != nil {
 		return raw
 	}
-	tls, _ := ob["tls"].(map[string]any)
-	reality, _ := tls["reality"].(map[string]any)
-	delete(reality, "support_x25519mlkem768")
+	for _, reality := range realityBlocks(ob) {
+		delete(reality, "support_x25519mlkem768")
+	}
 	out, err := json.Marshal(ob)
 	if err != nil {
 		return raw
