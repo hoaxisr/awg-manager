@@ -179,9 +179,6 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 		s.EarlyDataHeaderName = q.Get("eh")
 	}
 	s.Host = q.Get("host")
-	if s.Host == "" {
-		s.Host = defaultHost
-	}
 	s.ServiceName = q.Get("serviceName")
 	s.Mode = q.Get("mode")
 	if s.Network == "xhttp" {
@@ -239,6 +236,19 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 		// no TLS
 	default:
 		return nil, fmt.Errorf("vlink: unknown security %q", sec)
+	}
+
+	// Пустой host у ws, httpupgrade и xhttp Xray берёт из SNI, адрес — только
+	// без TLS (transport/internet/{websocket,httpupgrade,splithttp}/dialer.go).
+	// Узел за CDN иначе уходит с Host = IP сервера (F778).
+	if s.Host == "" {
+		s.Host = defaultHost
+		switch s.Network {
+		case "ws", "httpupgrade", "xhttp":
+			if s.TLS != nil {
+				s.Host = s.TLS.ServerName
+			}
+		}
 	}
 
 	// Только каноническое имя поля sing-box: алиасы (bindInterface, bind)

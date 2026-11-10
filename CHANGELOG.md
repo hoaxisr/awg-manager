@@ -13,6 +13,7 @@
 
 - **XHTTP: режим auto как в Xray.** Под REALITY выбирается stream-one, при отдельной загрузке — stream-up; раньше всегда packet-up.
 - **Фрагментация TLS (tls.fragment) режет каждую метку домена**, а не только первую.
+- **Заголовок Host у ws, httpupgrade и xhttp без явного host — как в Xray.** У узлов из ссылок и Xray JSON с TLS или Reality это теперь SNI, а не адрес сервера: узлы за CDN с IP в адресе подключаются. У Clash — как в mihomo: адрес сервера для ws и httpupgrade, servername для xhttp.
 - **Sing-box обновлён до 1.15.0-alpha.13-awgm.38.** Маска fragment, VLESS Encryption (в том числе с Vision), X25519MLKEM768 по умолчанию; отпечатки firefox и safari соответствуют Firefox 148 и Safari 26.3, как в Xray. XHTTP: sessionIDTable, отдельная загрузка, режим auto, умолчания padding и xmux как в Xray.
 - **X25519MLKEM768 для Reality включён по умолчанию, как в Xray.** Опция подписки и галка на карточке сервера теперь выключают его. Прежняя опция «X25519MLKEM768 для всех Reality-серверов» больше не нужна и сброшена. Отпечаток сервера больше не заменяется на chrome: firefox и safari тоже отправляют постквантовый ключ. У подписок «списком», где прежняя опция была включена, отпечаток серверов остаётся chrome: исходный у такой подписки не сохранён.
 
