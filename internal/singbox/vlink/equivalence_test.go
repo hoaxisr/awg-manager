@@ -485,7 +485,7 @@ var eqScenarios = []eqScenario{
 			"tls": {"enabled": true, "server_name": "sni.example.com"}
 		}`,
 		link: "trojan://trojan-secret@t1.example.com:443" +
-			"?type=ws&path=%2Ft&sni=sni.example.com#t1",
+			"?type=ws&path=%2Ft&host=t1.example.com&sni=sni.example.com#t1",
 		clash: `proxies:
   - name: t1
     type: trojan
@@ -496,6 +496,8 @@ var eqScenarios = []eqScenario{
     sni: sni.example.com
     ws-opts:
       path: /t
+      headers:
+        Host: t1.example.com
 `,
 		xray: `{"outbounds":[{
 			"protocol": "trojan",
@@ -509,7 +511,7 @@ var eqScenarios = []eqScenario{
 				"network": "ws",
 				"security": "tls",
 				"tlsSettings": {"serverName": "sni.example.com"},
-				"wsSettings": {"path": "/t"}
+				"wsSettings": {"path": "/t", "host": "t1.example.com"}
 			}
 		}]}`,
 	},

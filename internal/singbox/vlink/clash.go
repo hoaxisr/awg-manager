@@ -73,9 +73,9 @@ func clashFieldsToValues(p map[string]any) url.Values {
 			v.Set("path", path)
 		}
 		hdrs := nestedMap(ws, "headers")
-		if host := asString(hdrs["Host"]); host != "" {
-			v.Set("host", host)
-		}
+		// mihomo без заголовка Host шлёт адрес сервера, а не servername, —
+		// в отличие от Xray, чьё правило применит BuildStreamFromQuery.
+		v.Set("host", firstNonEmpty(asString(hdrs["Host"]), asString(p["server"])))
 		// mihomo encodes httpupgrade as network: ws + ws-opts.v2ray-http-upgrade.
 		// sing-box has a distinct httpupgrade transport, so remap to it (path/
 		// host above are shared) instead of emitting a plain ws outbound.
