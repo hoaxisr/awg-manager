@@ -52,6 +52,7 @@
 		computeAwgTrafficLeader,
 		computeSingboxTunnelListStats,
 		computeSubscriptionsTrafficStats,
+		externalActive,
 		externalStatusLabel,
 		externalStatusVariant,
 		isManagedTunnelOn,
@@ -1019,9 +1020,8 @@
 		confirmExternalDelete = {
 			interfaceName,
 			label: ext?.description ? ` «${ext.description}»` : '',
-			// Живой чужой туннель — отдельная строка предупреждения: рукопожатие
-			// и трафик у него идут прямо сейчас, и снос оборвёт работающее.
-			live: !!ext?.lastHandshake,
+			// Живой чужой туннель — отдельная строка предупреждения: снос оборвёт работающее.
+			live: !!ext && externalActive(ext),
 			conflictsWith: ext?.conflictsWith ?? '',
 			address: ext?.addresses?.[0] ?? '',
 		};

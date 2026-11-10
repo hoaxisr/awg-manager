@@ -306,6 +306,12 @@ func (s *Service) annotate(ctx context.Context, external []TunnelInfo, managed [
 		if len(e.Addresses) == 0 {
 			e.Addresses = ifaceAddresses(e.InterfaceName)
 		}
+		up, rx, tx := ifaceLink(e.InterfaceName)
+		e.Up = up
+		// У AWG счётчики уже пришли из awg show; у остального их иначе не читает никто.
+		if !e.IsAWG {
+			e.RxBytes, e.TxBytes = rx, tx
+		}
 		for _, a := range e.Addresses {
 			if name, dup := owner[a]; dup {
 				e.ConflictsWith = name
@@ -338,6 +344,9 @@ var ifaceAddresses = func(name string) []string {
 	}
 	return out
 }
+
+// ifaceLink — шов над sysinfo.LinkState: статус и счётчики устройства в ядре.
+var ifaceLink = sysinfo.LinkState
 
 // AdoptRequest contains parameters for adopting an external tunnel.
 type AdoptRequest struct {

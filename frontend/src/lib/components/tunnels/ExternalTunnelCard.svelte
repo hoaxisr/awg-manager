@@ -5,6 +5,7 @@
 	import { Badge, Button } from '$lib/components/ui';
 	import { m } from '$lib/i18n';
 	import TunnelTitleRow from '$lib/components/tunnels/TunnelTitleRow.svelte';
+	import { externalActive, externalStatusLabel, externalStatusVariant } from '$lib/components/tunnels/tunnelPageSelectors';
 
 	interface Props {
 		tunnel: ExternalTunnel;
@@ -17,11 +18,9 @@
 	let { tunnel, view = 'cards', onadopt, ondelete, onunmark }: Props = $props();
 
 	let isListCard = $derived(view === 'list');
-	let statusDot = $derived(
-		tunnel.lastHandshake
-			? { variant: 'success' as const, pulse: false, label: m.tunnels_external_connected() }
-			: { variant: 'muted' as const, pulse: false, label: m.tunnels_status_inactive() },
-	);
+	let active = $derived(externalActive(tunnel));
+	let statusLabel = $derived(externalStatusLabel(tunnel));
+	let statusDot = $derived({ variant: externalStatusVariant(tunnel), pulse: false, label: statusLabel });
 
 	// Принять можно только то, поверх чего работает туннель. Без него принимать
 	// нечего: интерфейс есть, конфигурации нет. Отмеченный «сторонним» сервер
@@ -128,10 +127,10 @@
 				</div>
 			</div>
 			<div class="shrink-0">
-				{#if tunnel.lastHandshake}
+				{#if active}
 					<span class="status-badge status-active">
 						<span class="led-dot"></span>
-						{m.tunnels_external_connected()}
+						{statusLabel}
 					</span>
 				{:else}
 					<span class="status-badge status-inactive">

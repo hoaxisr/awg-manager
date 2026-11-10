@@ -259,6 +259,8 @@ export interface ExternalTunnel {
 	kernelDevice?: boolean;
 	/** Интерфейс сторонней программы, отмеченный вручную (issue #935). */
 	foreign?: boolean;
+	/** Устройство в ядре поднято (UP+RUNNING): статус не-AWG интерфейса. */
+	up?: boolean;
 }
 
 /** Кандидат в сторонние интерфейсы для ручной отметки (issue #935). */

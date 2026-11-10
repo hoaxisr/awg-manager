@@ -4,6 +4,7 @@ package sysinfo
 
 import (
 	"context"
+	"net"
 	"os"
 	"regexp"
 	"strconv"
@@ -133,6 +134,10 @@ type ExternalTunnelInfo struct {
 	// Foreign — пользователь отметил интерфейс как сторонний (issue #935):
 	// его не удаляют и не принимают, отметку снимают кнопкой в строке.
 	Foreign bool `json:"foreign,omitempty"`
+
+	// Up — устройство в ядре поднято и работает (UP+RUNNING). Статус не-AWG
+	// интерфейса: рукопожатия у TUN нет, по нему он вечно «неактивен».
+	Up bool `json:"up,omitempty"`
 }
 
 // IsAWGInterface checks if an interface is an AWG tunnel by running awg show.
@@ -201,6 +206,19 @@ func parseField(output, field string) string {
 		}
 	}
 	return ""
+}
+
+// LinkState — поднято ли устройство и его счётчики ядра. Поднято = UP и
+// RUNNING: operstate у TUN всегда «unknown» (стенд 10.11, tunvless1), по нему
+// не судить. Нет устройства — false и нули.
+func LinkState(name string) (up bool, rx, tx int64) {
+	iface, err := net.InterfaceByName(name)
+	if err != nil {
+		return false, 0, 0
+	}
+	up = iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagRunning != 0
+	stats := "/sys/class/net/" + name + "/statistics/"
+	return up, readSysfsInt64(stats + "rx_bytes"), readSysfsInt64(stats + "tx_bytes")
 }
 
 func readSysfsInt64(path string) int64 {

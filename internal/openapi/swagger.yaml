@@ -1723,6 +1723,9 @@ definitions:
       kernelDevice:
         example: true
         type: boolean
+      lastHandshake:
+        example: 1 minute, 5 seconds ago
+        type: string
       ndmsRecord:
         description: |-
           NDMSRecord / KernelDevice — из каких половин состоит интерфейс: они
@@ -1746,6 +1749,12 @@ definitions:
       txBytes:
         example: 524288
         type: integer
+      up:
+        description: |-
+          Up — устройство в ядре поднято и работает (UP+RUNNING): статус не-AWG
+          интерфейса, у которого нет рукопожатия.
+        example: true
+        type: boolean
     type: object
   api.ExternalTunnelsResponse:
     properties:

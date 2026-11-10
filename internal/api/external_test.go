@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -150,5 +152,25 @@ func TestExternalTunnelInfo_JSONSerialization(t *testing.T) {
 	}
 	if decoded.RxBytes != info.RxBytes {
 		t.Errorf("RxBytes = %d, want %d", decoded.RxBytes, info.RxBytes)
+	}
+}
+
+// ExternalTunnelDTO существует только для swagger, а ответ отдаёт
+// sysinfo.ExternalTunnelInfo напрямую: поле, забытое в DTO, пропадает из
+// схемы молча (так выпал lastHandshake). Наборы json-ключей обязаны совпадать.
+func TestExternalTunnelDTO_MirrorsResponseFields(t *testing.T) {
+	keys := func(v any) []string {
+		var out []string
+		rt := reflect.TypeOf(v)
+		for i := range rt.NumField() {
+			name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+			out = append(out, name)
+		}
+		slices.Sort(out)
+		return out
+	}
+	dto, resp := keys(ExternalTunnelDTO{}), keys(sysinfo.ExternalTunnelInfo{})
+	if !slices.Equal(dto, resp) {
+		t.Fatalf("ключи DTO %v\nключи ответа %v", dto, resp)
 	}
 }

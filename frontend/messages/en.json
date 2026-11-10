@@ -796,7 +796,7 @@
 	"tunnels_modals_delete_tunnel_lead": "Delete tunnel",
 	"tunnels_modals_delete_iface_title": "Delete interface",
 	"tunnels_modals_delete_iface_lead": "Delete interface",
-	"tunnels_modals_iface_live_warning": "Traffic is flowing through this interface right now and the handshake is fresh. Deleting it will cut the active connection.",
+	"tunnels_modals_iface_live_warning": "This interface is up right now. Deleting it will cut the active connection.",
 	"tunnels_modals_iface_conflict_warning": "Its address {address} matches the address of tunnel \"{name}\".",
 	"tunnels_modals_iface_delete_note": "Its addresses, routes and permissions in access policies will be removed together with the interface. Recreating one with the same name will not restore them.",
 	"tunnels_modals_unlock_title": "Tunnel is protected from changes",

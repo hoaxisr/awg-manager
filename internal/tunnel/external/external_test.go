@@ -337,3 +337,25 @@ func TestAdopt_RefusesNumberUnderReservation(t *testing.T) {
 		t.Fatalf("запись заведена при отказе: %d", len(list))
 	}
 }
+
+// Не-AWG интерфейс (usque, tunvless) получает статус и счётчики из ядра; AWG
+// сохраняет счётчики из awg show — их ядро не перезаписывает.
+func TestAnnotate_LinkStateAndCountersFromKernel(t *testing.T) {
+	prev := ifaceLink
+	ifaceLink = func(string) (bool, int64, int64) { return true, 100, 200 }
+	t.Cleanup(func() { ifaceLink = prev })
+
+	s := newTestService(t)
+	list := []TunnelInfo{
+		{InterfaceName: "opkgtun18"},
+		{InterfaceName: "opkgtun9", IsAWG: true, RxBytes: 7, TxBytes: 8},
+	}
+	s.annotate(context.Background(), list, nil)
+
+	if !list[0].Up || list[0].RxBytes != 100 || list[0].TxBytes != 200 {
+		t.Errorf("не-AWG = %+v, ждали up и счётчики ядра", list[0])
+	}
+	if !list[1].Up || list[1].RxBytes != 7 || list[1].TxBytes != 8 {
+		t.Errorf("AWG = %+v, ждали up и счётчики awg show", list[1])
+	}
+}

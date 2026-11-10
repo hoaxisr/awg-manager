@@ -21,6 +21,7 @@ type ExternalTunnelDTO struct {
 	IsAWG         bool   `json:"isAWG" example:"true"`
 	PublicKey     string `json:"publicKey,omitempty" example:"KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK="`
 	Endpoint      string `json:"endpoint,omitempty" example:"ext.example.com:51820"`
+	LastHandshake string `json:"lastHandshake,omitempty" example:"1 minute, 5 seconds ago"`
 	RxBytes       int64  `json:"rxBytes" example:"1048576"`
 	TxBytes       int64  `json:"txBytes" example:"524288"`
 
@@ -39,6 +40,9 @@ type ExternalTunnelDTO struct {
 	Removable bool `json:"removable,omitempty" example:"true"`
 	// Foreign — отмечен как сторонний (issue #935): не удаляют и не принимают.
 	Foreign bool `json:"foreign,omitempty" example:"false"`
+	// Up — устройство в ядре поднято и работает (UP+RUNNING): статус не-AWG
+	// интерфейса, у которого нет рукопожатия.
+	Up bool `json:"up,omitempty" example:"true"`
 }
 
 // ExternalTunnelsResponse is the envelope for GET /external-tunnels.

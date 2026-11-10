@@ -102,12 +102,19 @@ export function systemStatusLabel(tunnel: SystemTunnel): string {
 	return tunnel.peer?.online ? m.tunnels_status_active() : m.tunnels_status_no_handshake();
 }
 
+// AWG живой по рукопожатию; у TUN (usque, tunvless) рукопожатия нет —
+// он живой, пока устройство в ядре поднято.
+export function externalActive(tunnel: ExternalTunnel): boolean {
+	return tunnel.isAWG ? !!tunnel.lastHandshake : tunnel.up === true;
+}
+
 export function externalStatusVariant(tunnel: ExternalTunnel): 'success' | 'muted' {
-	return tunnel.lastHandshake ? 'success' : 'muted';
+	return externalActive(tunnel) ? 'success' : 'muted';
 }
 
 export function externalStatusLabel(tunnel: ExternalTunnel): string {
-	return tunnel.lastHandshake ? m.tunnels_external_connected() : m.tunnels_status_inactive();
+	if (!externalActive(tunnel)) return m.tunnels_status_inactive();
+	return tunnel.isAWG ? m.tunnels_external_connected() : m.tunnels_status_active();
 }
 
 export function matchQuery(values: Array<string | null | undefined>, query: string): boolean {

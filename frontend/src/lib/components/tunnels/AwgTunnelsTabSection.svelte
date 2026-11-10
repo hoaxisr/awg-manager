@@ -3,7 +3,7 @@
 	// (класс 2). Разметка перенесена дословно с заменой обращений к
 	// состоянию страницы на ctx.* — единый проп-контекст с live-геттерами
 	// (см. awgTabContext.ts). Сторы сортировки — прямым импортом.
-	import { StatStrip, Stat, LayoutViewToggle, Button, Badge, TableSortHeader, StatusDot, TrafficSparkline, StoreStatusBadge, Toggle } from '$lib/components/ui';
+	import { StatStrip, Stat, LayoutViewToggle, Button, IconButton, Badge, TableSortHeader, StatusDot, TrafficSparkline, StoreStatusBadge, Toggle } from '$lib/components/ui';
 	import { TunnelCard, ExternalTunnelCard, SystemTunnelCard, TunnelToolbarViewRow, AdoptTunnelDialog, TunnelLockGlyph } from '$lib/components/tunnels';
 	import { EmptyState } from '$lib/components/layout';
 	import { awgTunnelTableSort } from '$lib/stores/tunnelTableSort';
@@ -25,13 +25,26 @@
 	import { secondsSince } from '$lib/utils/format';
 	import { awgManagedStatusDot } from '$lib/utils/statusDot';
 	import { awgPingStatusNote, awgShowConnectivityRow, awgRecoveringVisual, awgToggleTint } from '$lib/utils/awgPingStatus';
-	import { Eye, EyeOff, Upload, Download, Server } from 'lucide-svelte';
+	import { Eye, EyeOff, Upload, Download, Server, ChevronDown, ChevronRight } from 'lucide-svelte';
 	import { showSummary } from '$lib/stores/showSummary';
 	import type { AwgTabContext } from './awgTabContext';
 	import { m } from '$lib/i18n';
+	import { createPersistedFlag } from '$lib/stores/persisted';
 
 	let { ctx }: { ctx: AwgTabContext } = $props();
+
+	// Свёрнутость секции «Внешние» — удобство одного зрителя, в localStorage.
+	const externalCollapsed = createPersistedFlag('awg-manager-external-tunnels-collapsed', false);
 </script>
+
+{#snippet externalToggle()}
+	<IconButton
+		ariaLabel={$externalCollapsed ? m.diag_group_expand() : m.diag_group_collapse()}
+		onclick={() => externalCollapsed.set(!$externalCollapsed)}
+	>
+		{#if $externalCollapsed}<ChevronRight size={16} />{:else}<ChevronDown size={16} />{/if}
+	</IconButton>
+{/snippet}
 
 {#snippet createIcon()}
 	<CreateIcon />
@@ -548,18 +561,21 @@
 
 			{#if ctx.sortedFilteredExternalList.length > 0}
 				{#if ctx.dashboardSectionsLayout}
-					<TunnelSectionHeader
-						nested
-						title={m.tunnels_awg_section_external()}
-						count={ctx.sortedFilteredExternalList.length}
-						countLabel={m.tunnels_unit_tunnels({ count: ctx.sortedFilteredExternalList.length })}
-					/>
+					<div class="external-head">
+						<TunnelSectionHeader
+							nested
+							title={m.tunnels_awg_section_external()}
+							count={ctx.sortedFilteredExternalList.length}
+							countLabel={m.tunnels_unit_tunnels({ count: ctx.sortedFilteredExternalList.length })}
+						/>
+						{@render externalToggle()}
+					</div>
 				{:else}
 					<div class="awg-list-row awg-list-row--section">
-						<div class="awg-list-section-title">{m.tunnels_awg_section_external()} · {ctx.sortedFilteredExternalList.length}</div>
+						<div class="awg-list-section-title external-head">{m.tunnels_awg_section_external()} · {ctx.sortedFilteredExternalList.length}{@render externalToggle()}</div>
 					</div>
 				{/if}
-				{#each ctx.sortedFilteredExternalList as tunnel (tunnel.interfaceName)}
+				{#each $externalCollapsed ? [] : ctx.sortedFilteredExternalList as tunnel (tunnel.interfaceName)}
 					{@const isEndpointShown = ctx.endpointVisible('external', tunnel.interfaceName)}
 					<div class="awg-list-row">
 						<div class="awg-list-cell awg-list-cell-toggle">
@@ -600,9 +616,12 @@
 								/>
 								<span class="awg-list-status-text">{ctx.externalStatusLabel(tunnel)}</span>
 							</div>
-							<div class="awg-list-sub awg-list-handshake">
-								Handshake {tunnel.lastHandshake ? formatRelativeTime(tunnel.lastHandshake) : '—'}
-							</div>
+							{#if tunnel.isAWG}
+								<div class="awg-list-sub awg-list-handshake">
+									<!-- lastHandshake — готовая строка awg show («1 minute, 5 seconds ago»), не дата: как в карточке -->
+									Handshake {tunnel.lastHandshake || '—'}
+								</div>
+							{/if}
 							<div class="awg-list-sub">{m.tunnels_awg_not_managed()}</div>
 							{#if tunnel.conflictsWith}
 								<div class="awg-list-sub awg-ext-conflict">
@@ -728,15 +747,22 @@
 				class:external-section={!ctx.dashboardSectionsLayout}
 			>
 				{#if ctx.dashboardSectionsLayout}
-					<TunnelSectionHeader
-						nested
-						title={m.tunnels_awg_section_external()}
-						count={ctx.sortedFilteredExternalList.length}
-						countLabel={m.tunnels_unit_tunnels({ count: ctx.sortedFilteredExternalList.length })}
-					/>
+					<div class="external-head">
+						<TunnelSectionHeader
+							nested
+							title={m.tunnels_awg_section_external()}
+							count={ctx.sortedFilteredExternalList.length}
+							countLabel={m.tunnels_unit_tunnels({ count: ctx.sortedFilteredExternalList.length })}
+						/>
+						{@render externalToggle()}
+					</div>
 				{:else}
-					<h2 class="section-title">{m.tunnels_awg_external_tunnels()}</h2>
+					<div class="external-head">
+						<h2 class="section-title">{m.tunnels_awg_external_tunnels()}</h2>
+						{@render externalToggle()}
+					</div>
 				{/if}
+				{#if !$externalCollapsed}
 				<div
 					class="tunnel-grid"
 					class:tunnel-grid--list={ctx.effectiveAwgRenderMode === 'list-card'}
@@ -753,6 +779,7 @@
 						/>
 					{/each}
 				</div>
+				{/if}
 			</div>
 		{/if}
 		{#if ctx.awgSearchEmpty}
@@ -1054,6 +1081,21 @@
 		font-size: 1rem;
 		font-weight: 600;
 		color: var(--text-secondary);
+		margin-bottom: 1rem;
+	}
+
+	.external-head {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	/* Шапки секций несут свой нижний отступ; кнопку выравниваем по тексту. */
+	.external-head > .section-title {
+		margin-bottom: 0;
+	}
+
+	.external-head:has(+ .tunnel-grid) {
 		margin-bottom: 1rem;
 	}
 

@@ -94,8 +94,15 @@ describe('статусные хелперы', () => {
 		expect(systemStatusVariant(sys({ status: 'up' }))).toBe('success');
 		expect(systemStatusLabel(sys({ status: 'down' }))).toBe('Выключен');
 		expect(systemStatusLabel(sys({ status: 'up', peer: { online: true } as SystemTunnel['peer'] }))).toBe('Активен');
-		expect(externalStatusVariant(ext({ lastHandshake: 'x' }))).toBe('success');
+		expect(externalStatusVariant(ext({ isAWG: true, lastHandshake: 'x' }))).toBe('success');
 		expect(externalStatusLabel(ext({}))).toBe('Неактивен');
+		// TUN без рукопожатия: живой по поднятому устройству (usque, #F784)
+		expect(externalStatusVariant(ext({ isAWG: false, up: true }))).toBe('success');
+		expect(externalStatusLabel(ext({ isAWG: false, up: true }))).toBe('Активен');
+		expect(externalStatusLabel(ext({ isAWG: false, up: false }))).toBe('Неактивен');
+		// AWG по-прежнему по рукопожатию, поднятое устройство его не оживляет
+		expect(externalStatusVariant(ext({ isAWG: true, up: true }))).toBe('muted');
+		expect(externalStatusLabel(ext({ isAWG: true, lastHandshake: 'x' }))).toBe('Подключён');
 	});
 
 	it('matchQuery: пустой запрос всегда true, поиск без регистра', () => {

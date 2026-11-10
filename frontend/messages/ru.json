@@ -810,7 +810,7 @@
 	"tunnels_modals_delete_tunnel_lead": "Удалить туннель",
 	"tunnels_modals_delete_iface_title": "Удалить интерфейс",
 	"tunnels_modals_delete_iface_lead": "Удалить интерфейс",
-	"tunnels_modals_iface_live_warning": "Через этот интерфейс прямо сейчас идёт трафик, рукопожатие свежее. Снос оборвёт работающее соединение.",
+	"tunnels_modals_iface_live_warning": "Интерфейс сейчас работает. Снос оборвёт работающее соединение.",
 	"tunnels_modals_iface_conflict_warning": "Его адрес {address} совпадает с адресом туннеля «{name}».",
 	"tunnels_modals_iface_delete_note": "Вместе с интерфейсом уйдут его адреса, маршруты и разрешения в политиках доступа. Пересоздание одноимённого их не вернёт.",
 	"tunnels_modals_unlock_title": "Туннель защищён от изменений",
