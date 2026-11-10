@@ -22,6 +22,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
+	"github.com/hoaxisr/awg-manager/internal/sys/opkg"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/terminal"
 	"github.com/hoaxisr/awg-manager/internal/testing"
@@ -163,9 +164,10 @@ func (a *app) setupTunnels() {
 	a.zapretService = zapret.NewService(a.dataDir, a.loggingService)
 	a.zapretService.SetEventBus(a.eventBus)
 
-	// awgmautolist integration: сателлит ставит пользователь. Детект ленивый
-	// (pid-файл + loopback-статус на каждый запрос), сервис лёгкий.
+	// awgmautolist integration: пакет ставится из UI через opkg. Детект
+	// ленивый (pid-файл + loopback-статус на каждый запрос), сервис лёгкий.
 	a.autolistService = autolistdetect.NewService()
+	a.autolistService.SetInstaller(opkg.NewClient(), a.settingsStore)
 
 	// HydraRoute Neo integration (optional — detected at startup)
 	a.hydraService = hydraroute.NewService(a.catalog, a.loggingService)

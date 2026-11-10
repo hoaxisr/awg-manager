@@ -13,8 +13,8 @@ import (
 )
 
 // AutolistHandler отдаёт UI состояние сателлита awgmautolist и
-// проксирует его команды (dismiss/add/config). Как и zapret: сателлит
-// ставит пользователь, отсутствие — штатное состояние, а не ошибка.
+// проксирует его команды (dismiss/add/config). Отсутствие сателлита —
+// штатное состояние, а не ошибка: его ставят кнопкой (Install).
 type AutolistHandler struct {
 	svc *autolistdetect.Service
 }
@@ -105,6 +105,33 @@ func (h *AutolistHandler) Control(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "AUTOLIST_CONTROL_FAILED")
+		return
+	}
+	response.Success(w, autolistStatusResponse{AutolistStatus: ptrAutolistStatus(h.svc.GetStatus(r.Context()))})
+}
+
+// Install ставит пакет сателлита из entware-фида роутера и ждёт его запуска.
+//
+//	@Summary		Autolist satellite install
+//	@Description	Ставит пакет awgmautolist через opkg (фид repo.hoaxisr.ru), кладёт сателлиту API-ключ и ждёт, пока он ответит. При включённой авторизации требует созданный API-ключ.
+//	@Tags			autolist
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	autolistStatusResponse
+//	@Failure		409	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/autolist/install [post]
+func (h *AutolistHandler) Install(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if err := h.svc.Install(r.Context()); err != nil {
+		if errors.Is(err, autolistdetect.ErrNeedApiKey) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "AUTOLIST_NEED_API_KEY")
+			return
+		}
+		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "AUTOLIST_INSTALL_FAILED")
 		return
 	}
 	response.Success(w, autolistStatusResponse{AutolistStatus: ptrAutolistStatus(h.svc.GetStatus(r.Context()))})

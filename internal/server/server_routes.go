@@ -139,6 +139,9 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.settingsHandler.SetPingCheckService(s.pingCheckService)
 	h.settingsHandler.SetMonitoringService(s.monitoringService)
 	h.settingsHandler.SetEventBus(s.bus)
+	if s.autolistService != nil {
+		h.settingsHandler.SetOnApiKeyChanged(s.autolistService.ApiKeyChanged)
+	}
 	if s.ndmsQueries != nil {
 		s.exposureGuard = api.NewExposureGuard(s.settings, s.ndmsQueries.StaticNAT, s.ndmsQueries.HTTPProxy, s.ndmsQueries.Interfaces, h.appLog)
 		s.exposureGuard.SetEventBus(s.bus)
@@ -484,13 +487,14 @@ func (s *Server) registerRoutingRoutes(mux *http.ServeMux, h *routeHandlers) {
 	}
 
 	// awgmautolist (внешний сателлит автосписка неоткрывающихся сайтов,
-	// см. awgmautolist/ в корне). Сателлит ставит и запускает пользователь;
+	// см. awgmautolist/ в корне). Ставится пакетом через /install;
 	// отсутствие процесса — штатное состояние. Dismiss меняет состояние
 	// сателлита — на том же уровне доверия, что управление zapret.
 	if s.autolistService != nil {
 		autolistHandler := api.NewAutolistHandler(s.autolistService)
 		mux.HandleFunc("/api/autolist/status", h.guarded(autolistHandler.Status))
 		mux.HandleFunc("/api/autolist/control", h.expertGuarded(autolistHandler.Control))
+		mux.HandleFunc("/api/autolist/install", h.expertGuarded(autolistHandler.Install))
 		mux.HandleFunc("/api/autolist/dismiss", h.expertGuarded(autolistHandler.Dismiss))
 		// add/config — команды, меняющие правила роутера и режим сателлита:
 		// тот же уровень доверия, что expert-правки маршрутизации.

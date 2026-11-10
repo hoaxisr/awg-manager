@@ -32,7 +32,7 @@
     import { SingboxRouterRedesignPage } from '$lib/components/sb-router';
     import { ZapretTab } from '$lib/components/zapret';
     import { AutolistTab } from '$lib/components/autolist';
-    import { autolistStatus } from '$lib/stores/autolist';
+    import { autolistStatusIfExpert } from '$lib/stores/autolist';
     import FakeIPTab from '$lib/components/fakeip/FakeIPTab.svelte';
     import ModeSwitchHost from '$lib/components/routing/ModeSwitchHost.svelte';
     import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
@@ -113,14 +113,11 @@
     // только когда движок реально найден на роутере.
     let zapretInstalled = $derived($zapretStatusIfExpert?.data?.installed ?? false);
 
-    // awgmautolist: вкладка видна и для намеренно отключённого сателлита —
-    // иначе из UI нельзя было бы включить его обратно. Ниже expert статус
-    // не опрашивается (autolistStatusIfExpert в сторе).
-    let autolistCandidateCount = $derived($autolistStatus?.data?.candidates?.length ?? 0);
-    let autolistRunning = $derived($autolistStatus?.data?.running ?? false);
-    let autolistAvailable = $derived(
-        autolistRunning || ($autolistStatus?.data?.installed ?? false),
-    );
+    // awgmautolist: вкладка видна expert-уровню всегда, когда статус получен, —
+    // и неустановленному сателлиту (там кнопка установки), и отключённому.
+    // Ниже expert статус не опрашивается (autolistStatusIfExpert в сторе).
+    let autolistCandidateCount = $derived($autolistStatusIfExpert?.data?.candidates?.length ?? 0);
+    let autolistAvailable = $derived($autolistStatusIfExpert?.data != null);
 
     let pendingTab = $state<string | null>(null);
 
@@ -362,8 +359,7 @@
                       separatorBefore: true,
                   }
                 : null,
-            // awgmautolist — сателлит автосписка: вкладка expert-уровня,
-            // видна когда сателлит установлен, даже если намеренно отключён.
+            // awgmautolist — сателлит автосписка: вкладка expert-уровня.
             autolistAvailable ? { id: 'autolist', label: m.routing_page_tab_autolist(), badge: autolistCandidateCount, separatorBefore: true } : null,
             (hydrarouteInstalled || singboxInstalled)
                 ? { id: 'geodata', label: m.routing_page_tab_geodata(), badge: geoFileCount, separatorBefore: true }
@@ -437,7 +433,7 @@
 
         // Autolist — тот же гейт, что у Zapret: ждём expert-статус сателлита,
         // пока deep-link ?tab=autolist не откатили на первую вкладку.
-        const autolistPending = $autolistStatus.lastFetchedAt === 0 && $autolistStatus.status !== 'error';
+        const autolistPending = $autolistStatusIfExpert?.lastFetchedAt === 0 && $autolistStatusIfExpert.status !== 'error';
         if (activeTab === 'autolist' && !tabsInclude(items, activeTab) && autolistPending) {
             return;
         }

@@ -163,6 +163,7 @@ var expertRoutes = map[string]bool{
 	"/api/zapret/strategies/reorder": true,
 	"/api/zapret/hostlist/save":      true,
 	"/api/autolist/control":          true,
+	"/api/autolist/install":          true,
 	"/api/autolist/dismiss":          true,
 	"/api/autolist/proxy":            true,
 }

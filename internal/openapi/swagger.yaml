@@ -9998,6 +9998,31 @@ paths:
       summary: Autolist dismiss candidate
       tags:
       - autolist
+  /autolist/install:
+    post:
+      description: Ставит пакет awgmautolist через opkg (фид repo.hoaxisr.ru), кладёт
+        сателлиту API-ключ и ждёт, пока он ответит. При включённой авторизации требует
+        созданный API-ключ.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.autolistStatusResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Autolist satellite install
+      tags:
+      - autolist
   /autolist/proxy:
     post:
       consumes:

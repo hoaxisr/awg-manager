@@ -5,6 +5,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
 	import { buildAutolistConfigPayload } from './configPayload';
+	import { errorMessage } from '$lib/utils/errorMessage';
 	import type {
 		AutolistCandidate,
 		AutolistConfig,
@@ -155,6 +156,20 @@
 			await autolistStatus.refetch();
 		} finally {
 			refreshing = false;
+		}
+	}
+
+	async function installSatellite() {
+		if (lifecycleBusy) return;
+		lifecycleBusy = true;
+		try {
+			await api.installAutolist();
+			notifications.success(m.autolist_install_ok());
+			await autolistStatus.refetch();
+		} catch (e) {
+			notifications.error(errorMessage(e, m.autolist_install_err()));
+		} finally {
+			lifecycleBusy = false;
 		}
 	}
 
@@ -432,14 +447,25 @@
 		<div class="card p-6 text-sm opacity-60">…</div>
 	{:else if !running}
 		<div class="card p-6 flex flex-col gap-3">
-			<div class="flex items-center gap-2 font-medium">
-				<CircleAlert size={18} class="text-warning" aria-hidden="true" />
-				{status?.enabled === false ? m.autolist_disabled() : m.autolist_not_running()}
-			</div>
-			<p class="text-sm opacity-70 break-all">
-				{status?.enabled === false ? m.autolist_disabled_hint() : m.autolist_not_running_hint()}
-			</p>
-			{#if status?.installed}
+			{#if !status?.installed}
+				<div class="flex items-center gap-2 font-medium">
+					<CircleAlert size={18} class="text-warning" aria-hidden="true" />
+					{m.autolist_not_installed()}
+				</div>
+				<p class="text-sm opacity-70">{m.autolist_not_installed_hint()}</p>
+				<div>
+					<Button variant="primary" size="sm" onclick={() => void installSatellite()} loading={lifecycleBusy}>
+						{m.autolist_install()}
+					</Button>
+				</div>
+			{:else}
+				<div class="flex items-center gap-2 font-medium">
+					<CircleAlert size={18} class="text-warning" aria-hidden="true" />
+					{status?.enabled === false ? m.autolist_disabled() : m.autolist_not_running()}
+				</div>
+				<p class="text-sm opacity-70 break-all">
+					{status?.enabled === false ? m.autolist_disabled_hint() : m.autolist_not_running_hint()}
+				</p>
 				<div>
 					<Button variant="primary" size="sm" onclick={() => void setSatelliteEnabled(true)} loading={lifecycleBusy}>
 						{#snippet iconBefore()}<Power size={14} strokeWidth={2} aria-hidden="true" />{/snippet}

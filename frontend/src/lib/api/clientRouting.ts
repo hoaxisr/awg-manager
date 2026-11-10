@@ -313,12 +313,20 @@ export class RoutingClient extends ServersClient {
 	// #region Autolist (сателлит автосписка неоткрывающихся сайтов)
 	// ─────────────────────────────────────────────
 
-	// awgmautolist ставит пользователь отдельно (как zapret): AWGM читает
-	// его loopback-статус и передаёт dismiss. Отсутствие процесса — не
-	// ошибка: рисуем карточку «не запущено».
+	// awgmautolist ставится пакетом из фида (installAutolist): AWGM читает
+	// его loopback-статус и передаёт команды. Отсутствие процесса — не
+	// ошибка: рисуем карточку «не установлен»/«не запущен».
 
 	async getAutolistStatus(): Promise<AutolistStatus> {
 		const res = await this.request<{ autolistStatus: AutolistStatus | null }>('/autolist/status');
+		return res?.autolistStatus ?? { running: false, candidates: [], history: [] };
+	}
+
+	/** Установка пакета awgmautolist через opkg; ждёт запуска сателлита. */
+	async installAutolist(): Promise<AutolistStatus> {
+		const res = await this.request<{ autolistStatus: AutolistStatus | null }>('/autolist/install', {
+			method: 'POST'
+		});
 		return res?.autolistStatus ?? { running: false, candidates: [], history: [] };
 	}
 

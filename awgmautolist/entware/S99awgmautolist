@@ -13,6 +13,9 @@ LOGFILE=/opt/var/log/awgmautolist.log
 # Отдельный файл пишет AWGM через expert-only /api/autolist/control.
 # Он не содержит API-ключ и не перетирает ручные аргументы из conf.
 [ -f /opt/etc/awgmautolist.enabled ] && . /opt/etc/awgmautolist.enabled
+# API-ключ пишет AWGM при установке и смене ключа (0600); читается последним,
+# поэтому AWGM_API_KEY из conf им перекрывается.
+[ -f /opt/etc/awgmautolist.key ] && . /opt/etc/awgmautolist.key
 
 ROUTER_URL="${AWGM_ROUTER_URL:-http://127.0.0.1:2222}"
 API_KEY="${AWGM_API_KEY:-}"

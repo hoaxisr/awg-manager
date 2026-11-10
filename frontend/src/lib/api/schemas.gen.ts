@@ -3612,6 +3612,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /auth/logout": v.lazy(() => api_APIEnvelope),
 	"POST /autolist/control": v.lazy(() => api_autolistStatusResponse),
 	"POST /autolist/dismiss": v.lazy(() => api_OkResponse),
+	"POST /autolist/install": v.lazy(() => api_autolistStatusResponse),
 	"POST /autolist/proxy": v.lazy(() => api_OkResponse),
 	"POST /awg/analyze": v.lazy(() => api_AwgAnalyzeResponse),
 	"POST /awg3-endpoints": v.lazy(() => api_Awg3ListResponse),

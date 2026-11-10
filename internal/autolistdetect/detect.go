@@ -1,9 +1,9 @@
 // Package autolistdetect — обнаружение сателлита awgmautolist на роутере.
 //
 // awgmautolist — отдельный процесс (см. awgmautolist/ в корне репозитория):
-// он не установлен этим пакетом и не управляется им, как и zapret. Здесь
-// только детект живого сателлита (pid-файл + его статус-эндпоинт) и
-// проксирование запросов UI к нему. Сам сателлит обязан слушать только
+// awg-manager ставит его пакетом из entware-фида (install.go), включает и
+// выключает init-скриптом, детектит по pid-файлу и статус-эндпоинту и
+// проксирует к нему запросы UI. Сам сателлит обязан слушать только
 // loopback: наружу его статус не отдаётся, доступ к UI awg-manager
 // остаётся единственной дверью.
 package autolistdetect
@@ -112,8 +112,12 @@ type Service struct {
 	controlMu sync.Mutex
 	initPath  string
 	statePath string
+	keyPath   string
 	command   func(context.Context, string, ...string) ([]byte, error)
 	confirm   func(context.Context, bool) error
+
+	pkg  packageManager
+	keys keySource
 }
 
 var ErrNotInstalled = errors.New("сателлит awgmautolist не установлен")
