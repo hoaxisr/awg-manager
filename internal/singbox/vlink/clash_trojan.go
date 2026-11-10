@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // mapClashTrojan converts a Clash YAML "type: trojan" proxy entry into a
@@ -29,6 +30,11 @@ func mapClashTrojan(p map[string]any) (*ParsedOutbound, error) {
 	}
 
 	q := clashFieldsToValues(p)
+	// mihomo trojan, в отличие от vless, без заголовка Host шлёт в ws sni
+	// (adapter/outbound/trojan.go: wsOpts.Host = SNI).
+	if sni := asString(p["sni"]); sni != "" && strings.EqualFold(asString(p["network"]), "ws") && asString(nestedMap(nestedMap(p, "ws-opts"), "headers")["Host"]) == "" {
+		q.Set("host", sni)
+	}
 	if q.Get("security") == "" {
 		q.Set("security", "tls")
 	}

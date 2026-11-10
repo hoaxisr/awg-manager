@@ -69,6 +69,18 @@ func TestEmptyHostDefault(t *testing.T) {
 			}
 		})
 	}
+	// mihomo trojan берёт Host из sni, vless — адрес (выше).
+	for _, upgrade := range []bool{false, true} {
+		ob, err := mapClashTrojan(map[string]any{"name": "t", "type": "trojan", "server": "1.2.3.4", "port": 443,
+			"password": "p", "sni": "cdn.example", "network": "ws",
+			"ws-opts": map[string]any{"path": "/p", "v2ray-http-upgrade": upgrade}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := hostOf(t, ob.Outbound); got != "cdn.example" {
+			t.Errorf("clash trojan upgrade=%v: host=%v, want sni", upgrade, got)
+		}
+	}
 	reality, err := ParseLink("vless://" + uuid + "@1.2.3.4:443?type=xhttp&path=/p&security=reality&sni=r.example&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12#r")
 	if err != nil {
 		t.Fatal(err)
