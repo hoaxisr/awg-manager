@@ -55,17 +55,17 @@ for PKG_ARCH in "${ARCHES[@]}"; do
     fi
 
     cp "$MODULE_DIR/entware/S99awgmautolist" "$PKG_ROOT/opt/etc/init.d/S99awgmautolist"
-    cp "$MODULE_DIR/ipk/CONTROL/postinst" "$MODULE_DIR/ipk/CONTROL/prerm" "$PKG_ROOT/CONTROL/"
+    cp "$MODULE_DIR/ipk/CONTROL/postinst" "$MODULE_DIR/ipk/CONTROL/prerm" "$MODULE_DIR/ipk/CONTROL/postrm" "$PKG_ROOT/CONTROL/"
     sed -e "s/^Version:.*/Version: $VERSION/" \
         -e "s/^Architecture:.*/Architecture: $PKG_ARCH/" \
         "$MODULE_DIR/ipk/CONTROL/control" > "$PKG_ROOT/CONTROL/control"
     chmod 755 "$PKG_ROOT/opt/bin/awgmautolist" "$PKG_ROOT/opt/etc/init.d/S99awgmautolist" \
-        "$PKG_ROOT/CONTROL/postinst" "$PKG_ROOT/CONTROL/prerm"
+        "$PKG_ROOT/CONTROL/postinst" "$PKG_ROOT/CONTROL/prerm" "$PKG_ROOT/CONTROL/postrm"
     chmod 644 "$PKG_ROOT/CONTROL/control"
     printf '2.0\n' > "$BUILD_DIR/debian-binary"
 
     tar -C "$PKG_ROOT/CONTROL" --numeric-owner --owner=0 --group=0 \
-        -czf "$BUILD_DIR/control.tar.gz" control postinst prerm
+        -czf "$BUILD_DIR/control.tar.gz" control postinst prerm postrm
     tar -C "$PKG_ROOT" --numeric-owner --owner=0 --group=0 \
         -czf "$BUILD_DIR/data.tar.gz" ./opt
 

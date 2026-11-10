@@ -11,9 +11,9 @@ import (
 
 const (
 	pkgName = "awgmautolist"
-	// keyFile — API-ключ awg-manager для сателлита. Пишет только awg-manager
+	// KeyFile — API-ключ awg-manager для сателлита. Пишет только awg-manager
 	// (при установке и смене ключа), init-скрипт сателлита читает его последним.
-	keyFile = "/opt/etc/awgmautolist.key"
+	KeyFile = "/opt/etc/awgmautolist.key"
 )
 
 // packageManager — узкий срез opkg.Client.
@@ -40,7 +40,7 @@ func (s *Service) keyFilePath() string {
 	if s.keyPath != "" {
 		return s.keyPath
 	}
-	return keyFile
+	return KeyFile
 }
 
 // writeKey кладёт ключ shell-присваиванием: init-скрипт делает `. файл`,

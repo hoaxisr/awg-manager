@@ -1,0 +1,6 @@
+#!/bin/sh
+# Ключ API кладёт awg-manager (не пакет); уходит вместе с сателлитом.
+# opkg зовёт postrm и при обновлении («upgrade <ver>», стенд 10.11): тогда
+# ключ нужен новой версии, которую postinst сразу запускает.
+[ "$1" = "upgrade" ] || rm -f /opt/etc/awgmautolist.key
+exit 0
