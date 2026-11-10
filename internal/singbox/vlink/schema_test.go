@@ -264,6 +264,19 @@ func TestParsedOutboundsMatchSchema(t *testing.T) {
 			doc.checkKeys(t, "outbound", itemsNode, ob)
 		})
 	}
+	// Загрузка mihomo со своим reality: download.tls.reality ссылки не дают.
+	t.Run("clash xhttp download reality", func(t *testing.T) {
+		p, err := mapClashVless(clashXHTTPVless("packet-up", map[string]any{"server": "dl.example",
+			"reality-opts": map[string]any{"public-key": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0", "support-x25519mlkem768": false}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ob map[string]any
+		if err := json.Unmarshal(p.Outbound, &ob); err != nil {
+			t.Fatal(err)
+		}
+		doc.checkKeys(t, "outbound", itemsNode, ob)
+	})
 }
 
 // Материализованная форма router/fakeip-слота обязана состоять из ключей,

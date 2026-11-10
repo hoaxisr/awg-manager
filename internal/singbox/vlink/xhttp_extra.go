@@ -3,8 +3,10 @@ package vlink
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"math/big"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -111,9 +113,8 @@ var legacyExtraNames = map[string]string{
 
 // clashXHTTPFields maps mihomo's kebab-case xhttp-opts keys to the camelCase
 // keys Xray uses inside extra=, so a Clash import goes through exactly the same
-// mapping and validation as a share link. session-table / session-length have
-// download-settings is a whole nested outbound in mihomo's own shape and is not
-// mapped.
+// mapping and validation as a share link. download-settings is a partial
+// outbound in mihomo's own shape and goes through clashXHTTPDownload instead.
 // Reference: mihomo adapter/outbound/vless.go (XHTTPOptions).
 var clashXHTTPFields = map[string]string{
 	"headers":                  "headers",
@@ -476,19 +477,81 @@ func parseXHTTPDownload(raw, mode string) (map[string]any, error) {
 			}
 		}
 	}
-	s, err := BuildStreamFromQuery(q, endpoint.Address)
+	download, err := xhttpDownloadFromValues(q, endpoint.Address, endpoint.Port)
 	if err != nil {
 		return nil, fmt.Errorf("vlink: xhttp downloadSettings: %w", err)
+	}
+	return download, nil
+}
+
+// xhttpDownloadFromValues собирает download форка из параметров загрузки
+// тем же сборщиком, что и сам узел, поэтому проверки у них общие.
+func xhttpDownloadFromValues(q url.Values, address string, port uint16) (map[string]any, error) {
+	s, err := BuildStreamFromQuery(q, address)
+	if err != nil {
+		return nil, err
 	}
 	tmp := map[string]any{}
 	s.MergeIntoOutbound(tmp)
 	download, _ := tmp["transport"].(map[string]any)
 	delete(download, "type")
 	delete(download, "mode")
-	download["server"] = endpoint.Address
-	download["server_port"] = endpoint.Port
+	download["server"] = address
+	download["server_port"] = port
 	if tls, ok := tmp["tls"]; ok {
 		download["tls"] = tls
+	}
+	return download, nil
+}
+
+// clashXHTTPDownload переводит download-settings mihomo в download форка.
+// У mihomo это частичный прокси: незаданное берётся у основного узла,
+// включая все поля xhttp (adapter/outbound/vless.go, downloadCfg := *cfg).
+// В форке download ничего не наследует, поэтому наследование раскрывается
+// здесь: заданное накладывается на поля узла, и загрузка собирается тем же
+// путём, что сам узел. Чего форку не выразить — отказ узла, как и у
+// downloadSettings Xray: без этого загрузка не заработает.
+func clashXHTTPDownload(p map[string]any, mode string) (map[string]any, error) {
+	xh := nestedMap(p, "xhttp-opts")
+	raw, ok := xh["download-settings"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	ds, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("vlink: invalid xhttp download-settings")
+	}
+	if mode == "stream-one" {
+		return nil, fmt.Errorf("vlink: xhttp download-settings in stream-one mode")
+	}
+	for _, k := range []string{"ech-opts", "shadow-tls-opts", "restls-opts", "jls-opts", "certificate", "private-key", "fingerprint", "name-cert-verify"} {
+		if _, ok := ds[k]; ok {
+			return nil, fmt.Errorf("vlink: xhttp download-settings %s is not supported", k)
+		}
+	}
+	dxh := maps.Clone(xh)
+	for _, k := range []string{"path", "host", "headers", "reuse-settings"} {
+		if v, ok := ds[k]; ok {
+			dxh[k] = v
+		}
+	}
+	dp := maps.Clone(p)
+	dp["xhttp-opts"] = dxh
+	for _, k := range []string{"server", "port", "tls", "alpn", "skip-cert-verify", "servername", "client-fingerprint", "reality-opts"} {
+		if v, ok := ds[k]; ok {
+			dp[k] = v
+		}
+	}
+	server := asString(dp["server"])
+	port, ok := asInt(dp["port"])
+	if server == "" || !ok || port <= 0 || port > 65535 {
+		return nil, fmt.Errorf("vlink: xhttp download-settings: invalid server or port")
+	}
+	q := clashFieldsToValues(dp)
+	q.Del("bind_interface")
+	download, err := xhttpDownloadFromValues(q, server, uint16(port))
+	if err != nil {
+		return nil, fmt.Errorf("vlink: xhttp download-settings: %w", err)
 	}
 	return download, nil
 }
