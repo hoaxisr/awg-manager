@@ -69,12 +69,15 @@ jobs:
           mkdir -p dist
           echo "$IPK_VERSION" > dist/VERSION
           SKIP_FRONTEND_BUILD=1 ./scripts/build-ipk.sh "$IPK_VERSION" "${{ matrix.arch }}"
+          VERSION="$IPK_VERSION" ./awgmautolist/build-ipk.sh "${{ matrix.arch }}"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ipk-${{ matrix.arch }}
-          path: dist/awg-manager_*_${{ matrix.arch }}-kn.ipk
+          path: |
+            dist/awg-manager_*_${{ matrix.arch }}-kn.ipk
+            dist/awgmautolist_*_${{ matrix.arch }}-kn.ipk
           if-no-files-found: error
 
   test:
@@ -171,6 +174,7 @@ jobs:
           fi
           gh release create "$TAG" \
             ./dist/awg-manager_*.ipk \
+            ./dist/awgmautolist_*.ipk \
             CHANGELOG.md VERSION \
             --title "$TAG" \
             --notes-file /tmp/notes.md \
