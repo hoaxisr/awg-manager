@@ -29,6 +29,11 @@ func mapClashVless(p map[string]any) (*ParsedOutbound, error) {
 	if err != nil {
 		return nil, fmt.Errorf("clash vless: %w", err)
 	}
+	if stream.Network == "xhttp" {
+		if stream.XHTTPDownload, err = clashXHTTPDownload(p, stream.Mode); err != nil {
+			return nil, fmt.Errorf("clash vless: %w", err)
+		}
+	}
 
 	return buildVlessOutbound(host, uint16(portN), uuid, asString(p["flow"]), asString(p["encryption"]), stream, "", asString(p["name"]))
 }

@@ -108,3 +108,77 @@ func TestCheckSingboxFatal_XHTTPForkChecks(t *testing.T) {
 		t.Fatal("too small session id space must be rejected")
 	}
 }
+
+func clashXHTTPVless(mode string, ds map[string]any) map[string]any {
+	return map[string]any{
+		"name": "c", "type": "vless", "server": "up.example", "port": 443,
+		"uuid": "b831381d-6324-4d53-ad4f-8cda48b30811", "network": "xhttp",
+		"tls": true, "servername": "up.example", "client-fingerprint": "chrome",
+		"xhttp-opts": map[string]any{
+			"path": "/u", "host": "h.example", "mode": mode,
+			"x-padding-bytes": "200-400", "session-table": "Base62", "session-length": "8-12",
+			"reuse-settings":    map[string]any{"max-concurrency": "2-4"},
+			"download-settings": ds,
+		},
+	}
+}
+
+// download-settings mihomo — частичный прокси: незаданное, включая все поля
+// xhttp, наследуется у основного узла, заданное его перекрывает.
+func TestClashXHTTPDownloadSettings(t *testing.T) {
+	cases := map[string]struct {
+		ds   map[string]any
+		want func(d, tls map[string]any) bool
+	}{
+		"inherit all but path": {map[string]any{"path": "/d"}, func(d, tls map[string]any) bool {
+			x, _ := d["xmux"].(map[string]any)
+			return d["server"] == "up.example" && d["server_port"] == float64(443) && d["path"] == "/d" &&
+				d["host"] == "h.example" && d["x_padding_bytes"] == "200-400" && d["session_id_table"] == "Base62" &&
+				x["max_concurrency"] == "2-4" && tls["server_name"] == "up.example" && d["download"] == nil
+		}},
+		"null inherits": {map[string]any{"server": nil, "port": nil, "tls": nil, "fingerprint": nil, "path": nil}, func(d, tls map[string]any) bool {
+			return d["server"] == "up.example" && d["server_port"] == float64(443) && d["path"] == "/u" && tls["enabled"] == true
+		}},
+		"own server and reality": {map[string]any{
+			"server": "dl.example", "port": 8443, "servername": "r.example",
+			"reuse-settings": map[string]any{"max-connections": "3"},
+			"reality-opts":   map[string]any{"public-key": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0", "short-id": "ab12", "support-x25519mlkem768": false},
+		}, func(d, tls map[string]any) bool {
+			r, _ := tls["reality"].(map[string]any)
+			x, _ := d["xmux"].(map[string]any)
+			return d["server"] == "dl.example" && d["server_port"] == float64(8443) && d["path"] == "/u" &&
+				tls["server_name"] == "r.example" && r["enabled"] == true && r["support_x25519mlkem768"] == false &&
+				x["max_connections"] == "3" && x["max_concurrency"] == nil
+		}},
+	}
+	for name, c := range cases {
+		ob, err := mapClashVless(clashXHTTPVless("packet-up", c.ds))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		d, _ := xhttpTransport(t, ob.Outbound)["download"].(map[string]any)
+		tls, _ := d["tls"].(map[string]any)
+		if !c.want(d, tls) {
+			t.Errorf("%s: download = %v", name, d)
+		}
+	}
+}
+
+func TestClashXHTTPDownloadSettingsRejected(t *testing.T) {
+	for name, node := range map[string]map[string]any{
+		"stream-one": clashXHTTPVless("stream-one", map[string]any{"path": "/d"}),
+		"ech":        clashXHTTPVless("packet-up", map[string]any{"ech-opts": map[string]any{"enable": true}}),
+		"cert pin":   clashXHTTPVless("packet-up", map[string]any{"fingerprint": "ab"}),
+		"bad port":   clashXHTTPVless("packet-up", map[string]any{"port": 0}),
+		"not a map":  clashXHTTPVless("packet-up", nil),
+		"reality no tls": clashXHTTPVless("packet-up", map[string]any{"tls": false,
+			"reality-opts": map[string]any{"public-key": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0"}}),
+	} {
+		if name == "not a map" {
+			node["xhttp-opts"].(map[string]any)["download-settings"] = "x"
+		}
+		if _, err := mapClashVless(node); err == nil || !strings.Contains(err.Error(), "download-settings") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}

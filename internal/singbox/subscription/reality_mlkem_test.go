@@ -358,3 +358,22 @@ func TestService_RealityMLKEM_OptOutRollsBackOnReloadFailure(t *testing.T) {
 		t.Fatal("option not rolled back")
 	}
 }
+
+// У xhttp-загрузки свой reality и свой ClientHello: опция обязана дойти и до него.
+func TestRealityMLKEM_XHTTPDownload(t *testing.T) {
+	raw := []byte(`{"tls":{"reality":{"enabled":true}},"transport":{"type":"xhttp","download":{"tls":{"reality":{"enabled":true}}}}}`)
+	var ob map[string]any
+	if err := json.Unmarshal(materializeMemberOutbound(raw, "t", "", true, nil), &ob); err != nil {
+		t.Fatal(err)
+	}
+	download := ob["transport"].(map[string]any)["download"].(map[string]any)
+	for name, holder := range map[string]map[string]any{"outbound": ob, "download": download} {
+		reality := holder["tls"].(map[string]any)["reality"].(map[string]any)
+		if reality["support_x25519mlkem768"] != false {
+			t.Errorf("%s: flag=%v", name, reality["support_x25519mlkem768"])
+		}
+	}
+	if got := string(clearRealityMLKEM(materializeMemberOutbound(raw, "t", "", true, nil))); strings.Contains(got, "support_x25519mlkem768") {
+		t.Fatalf("flag kept: %s", got)
+	}
+}
