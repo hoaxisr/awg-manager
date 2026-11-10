@@ -950,7 +950,9 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 		}
 	}
 
-	// Selector / urltest — remove old (idempotent) then add fresh.
+	// Selector / urltest — AddOutbound заменяет его на месте. Снятие перед
+	// добавлением уносило селектор в конец слота, и при двух подписках каждое
+	// обновление меняло порядок, а с ним — перезагрузка sing-box (#1174).
 	// BuildGroupOutbound dispatches by sub.Mode.
 	// default = сохранённый активный член (remapStaleTags выше уже перенёс его
 	// на текущую схему тегов): иначе selector стартовал бы с memberTags[0],
@@ -963,7 +965,6 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 			break
 		}
 	}
-	s.mutator.RemoveOutbound(sub.SelectorTag)
 	if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, memberTags, defaultTag)); err != nil {
 		return err
 	}
@@ -1416,7 +1417,6 @@ func (s *Service) stageMemberRematerialize(sub *Subscription, rebuildGroup, clea
 // stageGroupRebuild пересобирает group outbound подписки в открытом батче
 // (без reload — его делает вызывающий, чтобы SIGHUP был один на операцию).
 func (s *Service) stageGroupRebuild(sub *Subscription) error {
-	s.mutator.RemoveOutbound(sub.SelectorTag)
 	if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, sub.MemberTags, sub.ActiveMember)); err != nil {
 		return fmt.Errorf("rebuild group outbound: %w", err)
 	}
