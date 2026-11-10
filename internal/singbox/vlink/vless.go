@@ -238,15 +238,16 @@ func vlessUUIDFallback(userinfo string, q url.Values, authority string) (string,
 //     набрал бы. Отвергаем всё равно: сервер этого не примет — Xray держит
 //     vision только на raw/tcp («XTLS only supports TLS and REALITY directly
 //     for now»), то есть собеседника у такой комбинации нет.
-//   - vision поверх VLESS Encryption — у Xray есть, но Vision в sing-vmess
-//     читает буферы TLS-соединения через reflect и поверх шифрования не
-//     работает; форк такой аутбаунд отвергает при создании.
+//   - vision поверх VLESS Encryption TLS не нужен: Vision работает поверх
+//     шифрования (форк, protocol/vless/vision_encryption.go), но, как и
+//     всякий vision, только на голом tcp.
 func checkVlessFlow(flow string, stream *StreamBuilder, encryption string) error {
-	if encryption != "" {
-		return fmt.Errorf("vlink: vless: flow %q with VLESS Encryption is not supported", flow)
-	}
 	if flow != "xtls-rprx-vision" {
 		return fmt.Errorf("vlink: vless: unsupported flow %q (sing-box knows only xtls-rprx-vision)", flow)
+	}
+	// nil — Xray JSON без streamSettings, то есть голый tcp.
+	if encryption != "" && (stream == nil || stream.Network == "tcp") {
+		return nil
 	}
 	if stream == nil || stream.TLS == nil {
 		return fmt.Errorf("vlink: vless: flow %q requires TLS or Reality", flow)

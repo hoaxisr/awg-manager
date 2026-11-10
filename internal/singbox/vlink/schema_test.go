@@ -236,6 +236,9 @@ func TestParsedOutboundsMatchSchema(t *testing.T) {
 		"trojan ws tls":                      "trojan://secret@example.com:443?type=ws&security=tls&path=/t&sni=foo.com#d",
 		"shadowsocks":                        "ss://YWVzLTI1Ni1nY206c2VjcmV0@example.com:8388#e",
 		"hysteria2":                          "hysteria2://secret@example.com:443?sni=foo.com&obfs=salamander&obfs-password=p#f",
+		// Поля форка awgm.38: session_id_table, download у xhttp, Vision поверх Encryption.
+		"vless xhttp session + download": "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=xhttp&security=tls&sni=foo.com&path=/x&mode=packet-up&extra=%7B%22sessionIDTable%22%3A%22Base62%22%2C%22sessionIDLength%22%3A%228-12%22%2C%22downloadSettings%22%3A%7B%22address%22%3A%22d.example.com%22%2C%22port%22%3A443%2C%22network%22%3A%22xhttp%22%2C%22security%22%3A%22tls%22%2C%22tlsSettings%22%3A%7B%22serverName%22%3A%22d.example.com%22%7D%2C%22xhttpSettings%22%3A%7B%22path%22%3A%22%2Fd%22%7D%7D%7D#m",
+		"vless encryption vision":        "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=tcp&flow=xtls-rprx-vision&encryption=mlkem768x25519plus.native.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA#l2",
 		// Пропускная способность, gecko и прыжки по портам — ключи, которых
 		// прежняя выборка не касалась, а ошибка в любом из них роняет разбор
 		// ВСЕЙ конфигурации движка (F360).

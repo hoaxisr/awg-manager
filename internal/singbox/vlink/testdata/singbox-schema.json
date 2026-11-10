@@ -19186,6 +19186,12 @@
             "uplink_chunk_size": {
               "$ref": "#/$defs/XrayRange"
             },
+            "session_id_table": {
+              "type": "string"
+            },
+            "session_id_length": {
+              "$ref": "#/$defs/XrayRange"
+            },
             "download": {
               "$ref": "#/$defs/V2RayXHTTPDownloadOptions"
             }
@@ -19292,6 +19298,12 @@
           "type": "string"
         },
         "uplink_chunk_size": {
+          "$ref": "#/$defs/XrayRange"
+        },
+        "session_id_table": {
+          "type": "string"
+        },
+        "session_id_length": {
           "$ref": "#/$defs/XrayRange"
         },
         "server": {
@@ -19435,5 +19447,5 @@
       ]
     }
   },
-  "x-singbox-version": "1.15.0-alpha.13-awgm.37"
+  "x-singbox-version": "1.15.0-alpha.13-awgm.38"
 }

@@ -5,11 +5,15 @@
 ### Добавлено
 
 - **Маска fragment из finalmask Xray (#1168).** Узлы подписки в формате Xray JSON и ссылки с параметром `fm=` с маской `fragment` больше не отвергаются: маска режет ClientHello на части, как в Xray. Узлы с другими масками по-прежнему не импортируются.
-- **VLESS Encryption.** Узлы с `encryption=mlkem768x25519plus…` импортируются из ссылок, Xray JSON и Clash. В сочетании с `flow` такие узлы пока не поддерживаются.
+- **VLESS Encryption.** Узлы с `encryption=mlkem768x25519plus…` импортируются из ссылок, Xray JSON и Clash. Работает и вместе с `flow=xtls-rprx-vision`.
+- **XHTTP: downloadSettings из Xray.** Узлы, у которых загрузка идёт отдельным путём или через другой сервер, импортируются из Xray JSON и ссылок. Такой узел пока нельзя экспортировать в ссылку.
+- **XHTTP: sessionIDTable и sessionIDLength.** Формат идентификатора сессии переносится из ссылок, Xray JSON и Clash.
 
 ### Изменено
 
-- **Sing-box обновлён до 1.15.0-alpha.13-awgm.37.** Маска fragment, VLESS Encryption, X25519MLKEM768 по умолчанию; отпечатки firefox и safari соответствуют Firefox 148 и Safari 26.3, как в Xray.
+- **XHTTP: режим auto как в Xray.** Под REALITY выбирается stream-one, при отдельной загрузке — stream-up; раньше всегда packet-up.
+- **Фрагментация TLS (tls.fragment) режет каждую метку домена**, а не только первую.
+- **Sing-box обновлён до 1.15.0-alpha.13-awgm.38.** Маска fragment, VLESS Encryption (в том числе с Vision), X25519MLKEM768 по умолчанию; отпечатки firefox и safari соответствуют Firefox 148 и Safari 26.3, как в Xray. XHTTP: sessionIDTable, отдельная загрузка, режим auto, умолчания padding и xmux как в Xray.
 - **X25519MLKEM768 для Reality включён по умолчанию, как в Xray.** Опция подписки и галка на карточке сервера теперь выключают его. Прежняя опция «X25519MLKEM768 для всех Reality-серверов» больше не нужна и сброшена. Отпечаток сервера больше не заменяется на chrome: firefox и safari тоже отправляют постквантовый ключ. У подписок «списком», где прежняя опция была включена, отпечаток серверов остаётся chrome: исходный у такой подписки не сохранён.
 
 ## [2.19.25] - 2026-11-05

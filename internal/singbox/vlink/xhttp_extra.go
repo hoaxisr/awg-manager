@@ -2,7 +2,9 @@ package vlink
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
+	"math/big"
 	"slices"
 	"strconv"
 	"strings"
@@ -38,10 +40,10 @@ const (
 
 // extraFields maps the camelCase keys of Xray's xhttpSettings to the
 // snake_case fields of option.V2RayXHTTPBaseOptions in our fork. Keys carried
-// by dedicated query parameters (host, path, mode) and downloadSettings — a
-// whole nested outbound — are deliberately absent. Также нет sessionIDTable и
-// sessionIDLength (Xray #6258): у форка этих полей нет, а sing-box разбирает
-// JSON строго — неизвестный ключ ломает конфигурацию целиком.
+// by dedicated query parameters (host, path, mode) are deliberately absent;
+// downloadSettings — целый вложенный StreamConfig — разбирает
+// parseXHTTPDownload, sessionIDTable/sessionIDLength проверяются парой
+// (checkSessionIDTable).
 var extraFields = map[string]struct {
 	key  string
 	kind extraKind
@@ -82,6 +84,9 @@ var extraFields = map[string]struct {
 	"scMinPostsIntervalMs": {"sc_min_posts_interval_ms", kindPositiveRange},
 	"scMaxBufferedPosts":   {"sc_max_buffered_posts", kindInt},
 	"scStreamUpServerSecs": {"sc_stream_up_server_secs", kindPositiveRange},
+
+	"sessionIDTable":  {"session_id_table", kindString},
+	"sessionIDLength": {"session_id_length", kindRange},
 }
 
 // extraEnumValues — допустимые значения полей kindEnum, ровно те, что
@@ -107,7 +112,8 @@ var legacyExtraNames = map[string]string{
 // clashXHTTPFields maps mihomo's kebab-case xhttp-opts keys to the camelCase
 // keys Xray uses inside extra=, so a Clash import goes through exactly the same
 // mapping and validation as a share link. session-table / session-length have
-// no field in the fork at all, and download-settings is a whole nested outbound.
+// download-settings is a whole nested outbound in mihomo's own shape and is not
+// mapped.
 // Reference: mihomo adapter/outbound/vless.go (XHTTPOptions).
 var clashXHTTPFields = map[string]string{
 	"headers":                  "headers",
@@ -128,6 +134,8 @@ var clashXHTTPFields = map[string]string{
 	"uplink-data-placement":    "uplinkDataPlacement",
 	"uplink-data-key":          "uplinkDataKey",
 	"uplink-chunk-size":        "uplinkChunkSize",
+	"session-table":            "sessionIDTable",
+	"session-length":           "sessionIDLength",
 }
 
 // clashXmuxFields maps mihomo's reuse-settings — its name for xmux — to the
@@ -234,6 +242,12 @@ func parseXHTTPExtra(raw, mode string) map[string]any {
 				out[f.key] = s
 			}
 		}
+	}
+	// Таблицу без годной длины (и длину без таблицы) форк отвергает или
+	// игнорирует; переносим только проверенную пару.
+	if !checkSessionIDTable(out["session_id_table"], out["session_id_length"]) {
+		delete(out, "session_id_table")
+		delete(out, "session_id_length")
 	}
 	// Метод GET и данные uplink в cookie/header форк, как и Xray, допускает
 	// только в packet-up; при пустом режиме он подставляет auto.
@@ -372,4 +386,109 @@ func rangeBounds(v any) (lo, hi int64, ok bool) {
 func isWholeNumber(v any) bool {
 	n, ok := v.(float64)
 	return ok && n == math.Trunc(n) && n >= 0 && n <= math.MaxInt32
+}
+
+// xhttpSessionIDTables — предустановки sessionIDTable Xray
+// (splithttp/config.go PredefinedTable); форк разворачивает те же имена.
+var xhttpSessionIDTables = map[string]string{
+	"ALPHABET": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+	"Alphabet": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+	"BASE36":   "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+	"Base62":   "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+	"HEX":      "0123456789ABCDEF",
+	"alphabet": "abcdefghijklmnopqrstuvwxyz",
+	"base36":   "0123456789abcdefghijklmnopqrstuvwxyz",
+	"hex":      "0123456789abcdef",
+	"number":   "0123456789",
+}
+
+// checkSessionIDTable — проверки форка (option/v2ray_transport.go): ASCII,
+// длина с from > 0, пространство идентификаторов не меньше 2^31. Иное форк
+// отвергает при старте, и падает вся конфигурация.
+func checkSessionIDTable(tableValue, lengthValue any) bool {
+	table, _ := tableValue.(string)
+	if table == "" {
+		return false
+	}
+	if predefined, ok := xhttpSessionIDTables[table]; ok {
+		table = predefined
+	}
+	from, to, ok := rangeBounds(lengthValue)
+	if !ok || from <= 0 || to > math.MaxInt32 {
+		return false
+	}
+	for i := 0; i < len(table); i++ {
+		if table[i] >= 0x80 {
+			return false
+		}
+	}
+	room, term := new(big.Int), new(big.Int)
+	base := big.NewInt(int64(len(table)))
+	for k := from; k <= to; k++ {
+		room.Add(room, term.Exp(base, big.NewInt(k), nil))
+	}
+	return room.Cmp(big.NewInt(2<<30)) >= 0
+}
+
+// parseXHTTPDownload переводит downloadSettings Xray (полный StreamConfig с
+// address/port) в download форка. В отличие от прочего extra, молча
+// выбросить его нельзя: загрузка идёт другим путём или на другой сервер, и
+// узел без неё не заработает, поэтому неподдержанное — отказ узла.
+func parseXHTTPDownload(raw, mode string) (map[string]any, error) {
+	var extra map[string]json.RawMessage
+	if strings.TrimSpace(raw) == "" || json.Unmarshal([]byte(raw), &extra) != nil {
+		return nil, nil
+	}
+	ds, ok := extra["downloadSettings"]
+	if !ok || string(ds) == "null" {
+		return nil, nil
+	}
+	if mode == "stream-one" {
+		return nil, fmt.Errorf("vlink: xhttp downloadSettings in stream-one mode")
+	}
+	var endpoint struct {
+		Address string `json:"address"`
+		Port    uint16 `json:"port"`
+	}
+	var stream XrayStream
+	if json.Unmarshal(ds, &endpoint) != nil || json.Unmarshal(ds, &stream) != nil {
+		return nil, fmt.Errorf("vlink: invalid xhttp downloadSettings")
+	}
+	if endpoint.Address == "" || endpoint.Port == 0 {
+		return nil, fmt.Errorf("vlink: xhttp downloadSettings without address or port")
+	}
+	if n := strings.ToLower(stream.Network); n != "xhttp" && n != "splithttp" {
+		return nil, fmt.Errorf("vlink: xhttp downloadSettings network %q is not xhttp", stream.Network)
+	}
+	if len(stream.FinalMask) > 0 {
+		return nil, fmt.Errorf("vlink: finalmask in xhttp downloadSettings is not supported")
+	}
+	q := xrayStreamToValues(&stream, endpoint.Address)
+	q.Del("bind_interface")
+	// Вложенная загрузка у загрузки смысла не имеет; без удаления разбор ушёл
+	// бы в рекурсию.
+	if inner := q.Get("extra"); inner != "" {
+		var m map[string]any
+		if json.Unmarshal([]byte(inner), &m) == nil {
+			delete(m, "downloadSettings")
+			if b, err := json.Marshal(m); err == nil {
+				q.Set("extra", string(b))
+			}
+		}
+	}
+	s, err := BuildStreamFromQuery(q, endpoint.Address)
+	if err != nil {
+		return nil, fmt.Errorf("vlink: xhttp downloadSettings: %w", err)
+	}
+	tmp := map[string]any{}
+	s.MergeIntoOutbound(tmp)
+	download, _ := tmp["transport"].(map[string]any)
+	delete(download, "type")
+	delete(download, "mode")
+	download["server"] = endpoint.Address
+	download["server_port"] = endpoint.Port
+	if tls, ok := tmp["tls"]; ok {
+		download["tls"] = tls
+	}
+	return download, nil
 }
