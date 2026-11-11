@@ -572,6 +572,7 @@ func (a *app) setupRouter() {
 	subSched.SetAppLogger(a.loggingService)
 	subSched.Start(context.Background())
 	subHandler := api.NewSubscriptionHandler(a.subSvc, a.singboxOp, a.loggingService)
+	subHandler.SetTunnelCreator(a.singboxOp)
 	subHandler.SetNDMSProxyToggler(a.settingsStore)
 	subHandler.SetOutboundRefCheckers(a.deviceProxySvc, routerSvc)
 	// Прокси для устройств вписывает группы подписок сам и пересобирается, его

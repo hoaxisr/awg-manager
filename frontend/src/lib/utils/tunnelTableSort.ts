@@ -26,6 +26,15 @@ export const SUBSCRIPTION_SORT_DEFAULTS = {
 	ping: true,
 } as const;
 
+export const SUBSCRIPTION_MEMBERS_SORT_DEFAULTS = {
+	delay: true,
+	server: true,
+	protocol: true,
+	ping: true,
+	tag: true,
+	status: false,
+} as const;
+
 export function compareString(a: string | null | undefined, b: string | null | undefined): number {
 	return String(a ?? '').localeCompare(String(b ?? ''), 'ru', { sensitivity: 'base', numeric: true });
 }

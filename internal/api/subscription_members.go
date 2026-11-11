@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
 )
@@ -455,6 +456,97 @@ func (h *SubscriptionHandler) RestoreMembers(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	response.Success(w, toSubscriptionDTO(*sub, h.ndmsProxyEnabled()))
+}
+
+// CreateTunnelFromMember handles POST /api/singbox/subscriptions/members/to-tunnel?id=
+//
+//	@Summary		Create a standalone sing-box tunnel from a subscription member
+//	@Description	Promotes a subscription member outbound into 10-tunnels.json with the next free listen_port / t2sN NDMS Proxy slot, applies the config, and notifies listeners.
+//	@Tags			subscriptions
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		query		string							true	"Subscription ID"
+//	@Param			body	body		CreateTunnelFromMemberRequest	true	"Member tag to promote"
+//	@Success		200		{object}	CreateTunnelFromMemberResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		409		{object}	APIErrorEnvelope	"A standalone tunnel for this endpoint/credentials already exists (TUNNEL_DUPLICATE)"
+//	@Failure		412		{object}	APIErrorEnvelope	"sing-box binary is not installed (SINGBOX_NOT_INSTALLED)"
+//	@Failure		422		{object}	APIErrorEnvelope	"Validation or sing-box build feature check failed"
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/members/to-tunnel [post]
+func (h *SubscriptionHandler) CreateTunnelFromMember(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	id, ok := requireQueryID(w, r)
+	if !ok {
+		return
+	}
+	if h.presence != nil && !h.presence.IsPresent() {
+		h.log.Warn("subscription-member-to-tunnel", id, "rejected: sing-box is not installed")
+		response.ErrorWithStatus(w, http.StatusPreconditionFailed,
+			"Sing-box не установлен — установите перед созданием туннеля",
+			"SINGBOX_NOT_INSTALLED")
+		return
+	}
+	if h.tunnelCreator == nil {
+		response.InternalError(w, "tunnel creator is not configured")
+		return
+	}
+	var req CreateTunnelFromMemberRequest
+	if err := decodeBody(r, &req); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "bad request body", "INVALID_JSON")
+		return
+	}
+	req.MemberTag = strings.TrimSpace(req.MemberTag)
+	if req.MemberTag == "" {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "memberTag required", "MISSING_MEMBER_TAG")
+		return
+	}
+	h.log.Info("subscription-member-to-tunnel", id, "requested via API member="+req.MemberTag)
+
+	parsed, err := h.svc.GetMemberOutbound(id, req.MemberTag)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") && !errors.Is(err, subscription.ErrMemberNotFound) {
+			response.ErrorWithStatus(w, http.StatusNotFound, err.Error(), "NOT_FOUND")
+			return
+		}
+		h.respondServiceError(w, "subscription-member-to-tunnel", err)
+		return
+	}
+
+	info, err := h.tunnelCreator.AddTunnelFromOutbound(r.Context(), parsed)
+	if err != nil {
+		var dup *singbox.TunnelDuplicateError
+		if errors.As(err, &dup) {
+			response.ErrorWithData(w, http.StatusConflict, err.Error(), "TUNNEL_DUPLICATE", map[string]string{
+				"existingTag": dup.ExistingTag,
+			})
+			return
+		}
+		if errors.Is(err, singbox.ErrTunnelDuplicate) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "TUNNEL_DUPLICATE")
+			return
+		}
+		msg := err.Error()
+		if strings.Contains(msg, "missing sing-box build tag") ||
+			strings.Contains(msg, "sing-box check") ||
+			strings.Contains(msg, "apply:") {
+			response.ErrorWithStatus(w, http.StatusUnprocessableEntity, msg, "VALIDATION_FAILED")
+			return
+		}
+		if strings.Contains(msg, "empty outbound") || strings.Contains(msg, "outbound json:") {
+			response.ErrorWithStatus(w, http.StatusBadRequest, msg, "INVALID_OUTBOUND")
+			return
+		}
+		response.InternalError(w, msg)
+		return
+	}
+
+	response.Success(w, tunnelInfoToDTO(info))
 }
 
 // PreviewURL handles POST /api/singbox/subscriptions/preview

@@ -3034,3 +3034,59 @@ func TestAddManualMember_TagCollisionRejected(t *testing.T) {
 		t.Fatalf("MemberTags=%v, want the two members before the collision", got.MemberTags)
 	}
 }
+
+func TestService_GetMemberOutbound(t *testing.T) {
+	svc, _ := newTestService(t)
+	sub, err := svc.Create(context.Background(), CreateInput{
+		Label: "my-sub",
+		Inline: strings.Join([]string{
+			"vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@de1.example:443?security=tls&sni=de.sni#Germany\t\n1",
+			"trojan://secretpass@tr1.example:8443?security=tls&sni=tr1.sni",
+		}, "\n"),
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(sub.Members) != 2 {
+		t.Fatalf("want 2 members, got %d", len(sub.Members))
+	}
+
+	first := sub.Members[0]
+	out, err := svc.GetMemberOutbound(sub.ID, first.Tag)
+	if err != nil {
+		t.Fatalf("GetMemberOutbound(first): %v", err)
+	}
+	if strings.ContainsAny(out.Tag, "\r\n\t") || out.Tag == "" {
+		t.Fatalf("unexpected sanitized tag: %q", out.Tag)
+	}
+	if out.Protocol != "vless" || out.Server != "de1.example" || out.Port != 443 {
+		t.Fatalf("unexpected metadata: %+v", out)
+	}
+	var ob map[string]any
+	if err := json.Unmarshal(out.Outbound, &ob); err != nil {
+		t.Fatalf("unmarshal outbound: %v", err)
+	}
+	if ob["uuid"] != "3a3b1c2e-9999-4321-aaaa-1234567890ab" {
+		t.Fatalf("unexpected uuid in outbound: %v", ob["uuid"])
+	}
+
+	second := sub.Members[1]
+	out2, err := svc.GetMemberOutbound(sub.ID, second.Tag)
+	if err != nil {
+		t.Fatalf("GetMemberOutbound(second): %v", err)
+	}
+	if out2.Tag == "" || out2.Protocol != "trojan" || out2.Port != 8443 {
+		t.Fatalf("unexpected second outbound: %+v", out2)
+	}
+
+	if _, err := svc.GetMemberOutbound(sub.ID, "nonexistent-tag"); !errors.Is(err, ErrMemberNotFound) {
+		t.Fatalf("missing member: got %v, want ErrMemberNotFound", err)
+	}
+	if _, err := svc.GetMemberOutbound("missing-sub", first.Tag); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("missing subscription: got %v", err)
+	}
+	if _, err := svc.GetMemberOutbound(sub.ID, " "); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("blank member tag: got %v, want ErrInvalidInput", err)
+	}
+}

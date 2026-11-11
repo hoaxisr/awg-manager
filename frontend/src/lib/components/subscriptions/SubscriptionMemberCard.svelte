@@ -6,25 +6,36 @@
 	import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
 	import { singboxDelayFromHistory } from '$lib/utils/singboxDelay';
 	import { formatHostPort } from '$lib/utils/endpoint';
+	import { singboxProtocolLabel } from '$lib/utils/singboxProtocol';
 
 	interface Props {
 		member: SubscriptionMember;
 		active: boolean;
 		switching: boolean;
 		disabled: boolean;
-		onclick: () => void;
+		isAutoSelect?: boolean;
+		selectMode?: boolean;
+		onpick: (tag: string) => void;
 		layout?: SingboxLayoutMode;
 	}
-	let { member, active, switching, disabled, onclick, layout = 'compact' }: Props = $props();
+	let {
+		member,
+		active,
+		switching,
+		disabled,
+		isAutoSelect = false,
+		selectMode = false,
+		onpick,
+		layout = 'compact',
+	}: Props = $props();
 
 	const history = $derived($singboxDelayHistory.get(member.tag) ?? []);
 	const delayPresentation = $derived(singboxDelayFromHistory(history));
-	const latest = $derived(delayPresentation.latest ?? -1);
 
 	let testing = $state(false);
 
 	async function runTest(e?: MouseEvent | KeyboardEvent): Promise<void> {
-		e?.stopPropagation(); // don't trigger card-as-radio click
+		e?.stopPropagation(); // don't bubble into select-mode row toggle
 		if (testing) return;
 		testing = true;
 		try {
@@ -36,25 +47,14 @@
 	function onSparkKeydown(e: KeyboardEvent): void {
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
+			e.stopPropagation();
 			void runTest(e);
 		}
 	}
 	const delayState = $derived(delayPresentation.state);
 	const delayText = $derived(delayPresentation.label);
 
-	const protocolLabel = $derived.by(() => {
-		switch (member.protocol) {
-			case 'vless': return 'VLESS';
-			case 'trojan': return 'Trojan';
-			case 'shadowsocks': return 'Shadowsocks';
-			case 'hysteria2': return 'Hysteria2';
-			case 'naive': return 'Naive';
-			case 'mieru': return 'Mieru';
-			case 'trusttunnel': return 'TrustTunnel';
-			default: return member.protocol;
-		}
-	});
-
+	const protocolLabel = $derived(singboxProtocolLabel(member.protocol));
 	const heading = $derived(member.label || member.server);
 </script>
 
@@ -111,19 +111,29 @@
 			{#if active}
 				<span class="state-badge active-badge">{m.subscriptions_member_active()}</span>
 			{:else if switching}
-				<span class="state-badge switching-badge">…</span>
+				<span class="state-badge switching-badge">{m.subscriptions_member_switching()}</span>
+			{:else if !isAutoSelect && !selectMode}
+				<button
+					type="button"
+					class="activate-btn"
+					{disabled}
+					aria-label={m.subscriptions_list_activate_aria({ name: heading })}
+					onclick={(e) => {
+						e.stopPropagation();
+						onpick(member.tag);
+					}}
+				>
+					{m.subscriptions_list_activate_btn()}
+				</button>
 			{/if}
 		</div>
 	</div>
 {:else}
-<button
-	type="button"
+<div
 	class="card"
 	class:active
 	class:switching
-	{disabled}
-	onclick={onclick}
-	aria-pressed={active}
+	class:disabled
 >
 	<div class="header">
 		<span class="led" class:on={active} aria-hidden="true"></span>
@@ -179,7 +189,7 @@
 			<span class="state-badge switching-badge">{m.subscriptions_member_switching()}</span>
 		{/if}
 	</div>
-</button>
+</div>
 {/if}
 
 <style>
@@ -188,22 +198,17 @@
 		flex-direction: column;
 		gap: 0.55rem;
 		width: 100%;
+		flex: 1;
 		min-width: 0;
-		min-height: 220px;
 		padding: 14px 16px;
-		border: 1px solid var(--color-border);
-		border-radius: 10px;
-		background: var(--color-bg-secondary);
+		background: transparent;
 		color: var(--color-text-primary);
 		font: inherit;
 		text-align: left;
-		cursor: pointer;
-		transition: border-color 0.15s ease, background 0.15s ease;
+		user-select: text;
 	}
-	.card:hover:not(.active):not(:disabled) { border-color: var(--color-accent); }
-	.card.active { border-color: #3fb950; background: rgba(63, 185, 80, 0.06); }
-	.card.switching { opacity: 0.7; cursor: wait; }
-	.card:disabled { cursor: wait; opacity: 0.6; }
+	.card.switching { opacity: 0.7; }
+	.card.disabled { opacity: 0.8; }
 	.header {
 		display: flex;
 		align-items: center;
@@ -268,6 +273,32 @@
 	}
 	.active-badge { background: rgba(63,185,80,0.15); color: #3fb950; }
 	.switching-badge { background: rgba(88,166,255,0.15); color: var(--color-accent); }
+	.activate-btn {
+		padding: 0.22rem 0.55rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-primary);
+		font: inherit;
+		font-size: var(--sbx-card-note);
+		font-weight: 500;
+		white-space: nowrap;
+		cursor: pointer;
+		transition: border-color var(--t-fast) ease, color var(--t-fast) ease, background var(--t-fast) ease;
+	}
+	.activate-btn:hover:not(:disabled) {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+		background: var(--color-accent-tint);
+	}
+	.activate-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.activate-btn:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
+	}
 	.mono { font-family: var(--font-mono, ui-monospace, monospace); }
 	.delay-row {
 		display: flex;

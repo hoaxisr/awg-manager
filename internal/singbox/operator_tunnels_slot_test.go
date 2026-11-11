@@ -3,6 +3,7 @@ package singbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 )
 
 // Путь записи 10-tunnels.json покрытия не имел вовсе (AddTunnels/RemoveTunnel/
@@ -325,5 +327,58 @@ func TestRemoveTunnel_RemovesProxyOfThatTunnelOnly(t *testing.T) {
 	}
 	if !reflect.DeepEqual(proxies.removed, []int{9}) {
 		t.Fatalf("RemoveProxy indexes = %v, want [9] (listen_port 1089 → Proxy9)", proxies.removed)
+	}
+}
+
+func TestAddTunnelFromOutbound_SuccessReservedAndDuplicate(t *testing.T) {
+	op, _ := newOrchedOperator(t)
+	proxies := &fakeProxies{}
+	op.proxyMgr = proxies
+	ctx := context.Background()
+
+	// Test reserved tag avoidance ("direct" -> "direct-2") and NDMS slot allocation.
+	first, err := op.AddTunnelFromOutbound(ctx, vlink.ParsedOutbound{
+		Tag:      "direct",
+		Protocol: "vless",
+		Server:   "de1.example",
+		Port:     443,
+		Outbound: json.RawMessage(`{"type":"vless","tag":"sub-1-node1","server":"de1.example","server_port":443,"uuid":"11111111-2222-3333-4444-555555555555"}`),
+	})
+	if err != nil {
+		t.Fatalf("AddTunnelFromOutbound: %v", err)
+	}
+	if first.Tag != "direct-2" {
+		t.Fatalf("reserved tag not disambiguated: got %q, want direct-2", first.Tag)
+	}
+	if first.KernelInterface != "t2s0" || first.ProxyInterface != "Proxy0" {
+		t.Fatalf("unexpected interface assignment: %+v", first)
+	}
+	rawOb, err := op.GetTunnel(ctx, first.Tag)
+	if err != nil {
+		t.Fatalf("GetTunnel(%q): %v", first.Tag, err)
+	}
+	var parsedOb map[string]any
+	if err := json.Unmarshal(rawOb, &parsedOb); err != nil {
+		t.Fatalf("unmarshal saved outbound: %v", err)
+	}
+	if parsedOb["tag"] != first.Tag {
+		t.Fatalf("saved outbound tag=%v, want %q", parsedOb["tag"], first.Tag)
+	}
+
+	// Promoting the same endpoint+secret again must fail with ErrTunnelDuplicate
+	// carrying ExistingTag.
+	_, err = op.AddTunnelFromOutbound(ctx, vlink.ParsedOutbound{
+		Tag:      "OtherLabel",
+		Protocol: "vless",
+		Server:   "de1.example",
+		Port:     443,
+		Outbound: json.RawMessage(`{"type":"vless","tag":"sub-1-node1","server":"de1.example","server_port":443,"uuid":"11111111-2222-3333-4444-555555555555"}`),
+	})
+	if !errors.Is(err, ErrTunnelDuplicate) {
+		t.Fatalf("expected ErrTunnelDuplicate, got %v", err)
+	}
+	var dupErr *TunnelDuplicateError
+	if !errors.As(err, &dupErr) || dupErr.ExistingTag != first.Tag {
+		t.Fatalf("expected TunnelDuplicateError with ExistingTag=%q, got %+v (%v)", first.Tag, dupErr, err)
 	}
 }

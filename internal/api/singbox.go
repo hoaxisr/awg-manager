@@ -79,18 +79,38 @@ type SingboxTunnelConnectivity struct {
 
 // SingboxTunnelDTO mirrors frontend SingboxTunnel.
 type SingboxTunnelDTO struct {
-	Tag            string                    `json:"tag" example:"proxy-01"`
-	Protocol       string                    `json:"protocol" example:"vless"`
-	Server         string                    `json:"server" example:"proxy.example.com"`
-	Port           int                       `json:"port" example:"443"`
-	Security       string                    `json:"security" example:"reality"`
-	Transport      string                    `json:"transport" example:"tcp"`
-	ListenPort     int                       `json:"listenPort" example:"7891"`
-	ProxyInterface string                    `json:"proxyInterface" example:"br0"`
-	SNI            string                    `json:"sni,omitempty" example:"cdn.example.com"`
-	Fingerprint    string                    `json:"fingerprint,omitempty" example:"chrome"`
-	Connectivity   SingboxTunnelConnectivity `json:"connectivity"`
-	Running        bool                      `json:"running" example:"true"`
+	Tag             string                    `json:"tag" example:"proxy-01"`
+	Protocol        string                    `json:"protocol" example:"vless"`
+	Server          string                    `json:"server" example:"proxy.example.com"`
+	Port            int                       `json:"port" example:"443"`
+	Security        string                    `json:"security" example:"reality"`
+	Transport       string                    `json:"transport" example:"tcp"`
+	ListenPort      int                       `json:"listenPort" example:"7891"`
+	ProxyInterface  string                    `json:"proxyInterface" example:"br0"`
+	SNI             string                    `json:"sni,omitempty" example:"cdn.example.com"`
+	Fingerprint     string                    `json:"fingerprint,omitempty" example:"chrome"`
+	Username        string                    `json:"username,omitempty" example:"user"`
+	KernelInterface string                    `json:"kernelInterface,omitempty" example:"t2s0"`
+	Connectivity    SingboxTunnelConnectivity `json:"connectivity"`
+	Running         bool                      `json:"running" example:"true"`
+}
+
+func tunnelInfoToDTO(t singbox.TunnelInfo) SingboxTunnelDTO {
+	return SingboxTunnelDTO{
+		Tag:             t.Tag,
+		Protocol:        t.Protocol,
+		Server:          t.Server,
+		Port:            t.Port,
+		Security:        t.Security,
+		Transport:       t.Transport,
+		ListenPort:      t.ListenPort,
+		ProxyInterface:  t.ProxyInterface,
+		SNI:             t.SNI,
+		Fingerprint:     t.Fingerprint,
+		Username:        t.Username,
+		KernelInterface: t.KernelInterface,
+		Running:         t.Running,
+	}
 }
 
 // SingboxTunnelsResponse is the envelope for GET /singbox/tunnels.

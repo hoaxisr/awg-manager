@@ -9,11 +9,16 @@
 	import { MAX_SUBSCRIPTION_INFO_ITEMS } from '$lib/constants/subscription';
 	import { Button, Modal, Stat, StatStrip } from '$lib/components/ui';
 	import { runWithConcurrency } from '$lib/utils/runWithConcurrency';
-	import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
+	import { singboxDelayHistory, singboxTunnels, triggerDelayCheck } from '$lib/stores/singbox';
+	import {
+		subscriptionMembersTableSort,
+		type SubscriptionMemberSortKey,
+	} from '$lib/stores/tunnelTableSort';
 	import { notifications } from '$lib/stores/notifications';
 	import { translateKnownError, groupLinkImportErrors } from '$lib/utils/linkImportError';
 	import { showOutboundReferencedError } from '$lib/utils/outboundReferenced';
 	import SubscriptionMemberList from './SubscriptionMemberList.svelte';
+	import { extractMemberProtocols, filterAndSortMembers } from './memberSelectors';
 	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
 	import { formatHostPort } from '$lib/utils/endpoint';
@@ -21,11 +26,19 @@
 	interface Props {
 		subscription: Subscription;
 		onUpdated: () => void;
+		onActiveMemberChanged?: (memberTag: string) => void;
 		autoDelayCheckNonce?: number;
 		liveActiveMember?: string | null;
 		layout?: SingboxLayoutMode;
 	}
-	let { subscription, onUpdated, autoDelayCheckNonce = 0, liveActiveMember = null, layout = 'compact' }: Props = $props();
+	let {
+		subscription,
+		onUpdated,
+		onActiveMemberChanged,
+		autoDelayCheckNonce = 0,
+		liveActiveMember = null,
+		layout = 'compact',
+	}: Props = $props();
 
 	let refreshing = $state(false);
 	let switching = $state<string | null>(null);
@@ -48,6 +61,18 @@
 	let selected = $state<Set<string>>(new Set());
 	let excluding = $state(false);
 	let confirmExcludeSelected = $state(false);
+	let creatingTunnelTag = $state<string | null>(null);
+	let searchQuery = $state('');
+	let excludedProtocols = $state<Set<string>>(new Set());
+
+	let lastSubId = untrack(() => subscription.id);
+	$effect(() => {
+		if (subscription.id !== lastSubId) {
+			lastSubId = subscription.id;
+			searchQuery = '';
+			excludedProtocols = new Set();
+		}
+	});
 
 	const infoItems = $derived(subscription.infoItems ?? []);
 	const rejectedMembers = $derived(subscription.rejectedMembers ?? []);
@@ -175,11 +200,44 @@
 
 	const modeLabel = $derived(subscriptionModeLabel(subscription.mode));
 	const modeHint = $derived(subscriptionModeHint(subscription.mode));
+	const isAutoSelect = $derived(isAutoSelectMode(subscription.mode));
 
 	// For urltest mode, liveActiveMember reflects the auto-selected member as reported
 	// by the running Clash API (polled every 5s by the parent page). For selector mode
 	// this is always null, so we fall back to the persisted activeMember.
 	const effectiveActiveMember = $derived(liveActiveMember || subscription.activeMember);
+
+	const availableProtocols = $derived(extractMemberProtocols(memberList));
+	const visibleMembers = $derived(
+		filterAndSortMembers(memberList, {
+			searchQuery,
+			excludedProtocols,
+			sortBy: $subscriptionMembersTableSort.sortBy,
+			asc: $subscriptionMembersTableSort.sortAsc,
+			activeMember: effectiveActiveMember,
+			getDelayHistory: () => $singboxDelayHistory,
+		}),
+	);
+
+	function toggleProtocol(protocol: string): void {
+		const next = new Set(excludedProtocols);
+		if (next.has(protocol)) next.delete(protocol);
+		else next.add(protocol);
+		excludedProtocols = next;
+	}
+
+	function selectAllProtocols(): void {
+		excludedProtocols = new Set();
+	}
+
+	function clearAllProtocols(): void {
+		excludedProtocols = new Set(availableProtocols.map((item) => item.protocol));
+	}
+
+	function resetFilters(): void {
+		searchQuery = '';
+		excludedProtocols = new Set();
+	}
 
 	async function refresh(): Promise<void> {
 		refreshing = true;
@@ -249,7 +307,11 @@
 		lastError = '';
 		try {
 			await api.setSubscriptionActiveMember(subscription.id, memberTag);
-			onUpdated();
+			if (onActiveMemberChanged) {
+				onActiveMemberChanged(memberTag);
+			} else {
+				onUpdated();
+			}
 		} catch (e) {
 			lastError = e instanceof Error ? e.message : m.subscriptions_picker_switch_failed();
 		} finally {
@@ -257,9 +319,44 @@
 		}
 	}
 
+	async function createTunnel(member: SubscriptionMember): Promise<void> {
+		if (creatingTunnelTag !== null) return;
+		creatingTunnelTag = member.tag;
+		lastError = '';
+		try {
+			const created = await api.createTunnelFromSubscriptionMember(subscription.id, member.tag);
+			singboxTunnels.invalidate();
+			const msg = created.kernelInterface
+				? m.subscriptions_members_to_tunnel_created_iface({ tag: created.tag, iface: created.kernelInterface })
+				: m.subscriptions_members_to_tunnel_created({ tag: created.tag });
+			notifications.success(msg);
+		} catch (e) {
+			const err = e as {
+				status?: number;
+				body?: { code?: string; data?: { existingTag?: string } };
+				message?: string;
+			};
+			if (err?.status === 409 && err?.body?.code === 'TUNNEL_DUPLICATE') {
+				const existingTag = err.body.data?.existingTag;
+				notifications.warning(
+					existingTag
+						? m.subscriptions_members_to_tunnel_duplicate({ tag: existingTag })
+						: translateKnownError(err.message ?? m.subscriptions_members_to_tunnel_failed()),
+				);
+				return;
+			}
+			const msg = e instanceof Error ? translateKnownError(e.message) : m.subscriptions_members_to_tunnel_failed();
+			lastError = msg;
+			notifications.error(msg);
+		} finally {
+			creatingTunnelTag = null;
+		}
+	}
+
 	async function testAll(): Promise<void> {
 		if (batchTesting) return;
-		const tags = memberList.map((member) => member.tag);
+		const targets = visibleMembers;
+		const tags = targets.map((member) => member.tag);
 		if (tags.length === 0) return;
 		batchTesting = true;
 		batchProgress = { done: 0, total: tags.length };
@@ -306,7 +403,7 @@
 	}
 
 	function selectAll(): void {
-		selected = new Set(memberList.map((member) => member.tag));
+		selected = new Set(visibleMembers.map((member) => member.tag));
 	}
 
 	function excludeOne(tag: string): void {
@@ -383,7 +480,7 @@
 			<Button
 				variant="ghost"
 				size="sm"
-				disabled={excluding || memberList.length === 0}
+				disabled={excluding || visibleMembers.length === 0}
 				onclick={selectAll}
 			>
 				{m.subscriptions_preview_select_all()}
@@ -444,7 +541,7 @@
 			<Button
 				variant="ghost"
 				size="sm"
-				disabled={batchTesting || memberList.length === 0}
+				disabled={batchTesting || visibleMembers.length === 0}
 				loading={batchTesting}
 				iconBefore={testAllIcon}
 				onclick={testAll}
@@ -522,7 +619,8 @@
 		</div>
 		{/if}
 		<SubscriptionMemberList
-			members={memberList}
+			members={visibleMembers}
+			totalCount={memberList.length}
 			{effectiveActiveMember}
 			{switching}
 			{layout}
@@ -530,13 +628,29 @@
 			{removingTag}
 			minDelayMs={membersListStats.minDelayMs}
 			{isUrlSub}
+			{isAutoSelect}
 			{selectMode}
 			{selected}
 			{excluding}
+			{creatingTunnelTag}
+			{availableProtocols}
+			{excludedProtocols}
+			{searchQuery}
+			sortKey={$subscriptionMembersTableSort.sortBy}
+			sortAsc={$subscriptionMembersTableSort.sortAsc}
 			onpick={pickActive}
 			onremove={requestRemove}
 			ontoggle={toggleSel}
 			onexclude={excludeOne}
+			oncreatetunnel={createTunnel}
+			onSearchChange={(q) => (searchQuery = q)}
+			onToggleProtocol={toggleProtocol}
+			onSelectAllProtocols={selectAllProtocols}
+			onClearAllProtocols={clearAllProtocols}
+			onResetFilters={resetFilters}
+			onSortToggle={(key) => subscriptionMembersTableSort.toggleSort(key)}
+			onSortSelect={(key) => subscriptionMembersTableSort.setSortBy(key)}
+			onSortDirToggle={() => subscriptionMembersTableSort.toggleDir()}
 		/>
 	{/if}
 

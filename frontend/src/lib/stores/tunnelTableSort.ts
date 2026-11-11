@@ -2,6 +2,7 @@ import {
 	AWG_TUNNEL_SORT_DEFAULTS,
 	SINGBOX_TUNNEL_SORT_DEFAULTS,
 	SUBSCRIPTION_SORT_DEFAULTS,
+	SUBSCRIPTION_MEMBERS_SORT_DEFAULTS,
 } from '$lib/utils/tunnelTableSort';
 import { cycleTableSort } from '$lib/utils/tableSort';
 import { createSortStore, type SortState } from './sortStore';
@@ -9,6 +10,7 @@ import { createSortStore, type SortState } from './sortStore';
 export type AwgTunnelSortKey = 'name' | 'status' | 'endpoint' | 'traffic' | 'handshake';
 export type SingboxTunnelSortKey = 'delay' | 'name' | 'protocol' | 'server' | 'running' | 'traffic' | 'ping';
 export type SubscriptionSortKey = 'delay' | 'label' | 'mode' | 'active' | 'traffic' | 'updated' | 'ping';
+export type SubscriptionMemberSortKey = 'delay' | 'server' | 'protocol' | 'ping' | 'tag' | 'status';
 
 export type TunnelTableSortState<T extends string> = SortState<T>;
 
@@ -22,6 +24,17 @@ function createTunnelTableSortStore<T extends string>(
 		subscribe: store.subscribe,
 		toggleSort(key: T) {
 			store.mutate((state) => cycleTableSort(state, key));
+		},
+		setSortBy(key: T | null) {
+			store.mutate(() => ({
+				sortBy: key,
+				sortAsc: key ? defaults[key] : true,
+			}));
+		},
+		toggleDir() {
+			store.mutate((state) =>
+				state.sortBy ? { ...state, sortAsc: !state.sortAsc } : state,
+			);
 		},
 	};
 }
@@ -42,4 +55,10 @@ export const singboxSubscriptionTableSort = createTunnelTableSortStore<Subscript
 	'awgm:tunnels:subscriptions-table-sort',
 	['delay', 'label', 'mode', 'active', 'traffic', 'updated', 'ping'],
 	SUBSCRIPTION_SORT_DEFAULTS,
+);
+
+export const subscriptionMembersTableSort = createTunnelTableSortStore<SubscriptionMemberSortKey>(
+	'awgm:subscriptions:members-table-sort',
+	['delay', 'server', 'protocol', 'ping', 'tag', 'status'],
+	SUBSCRIPTION_MEMBERS_SORT_DEFAULTS,
 );

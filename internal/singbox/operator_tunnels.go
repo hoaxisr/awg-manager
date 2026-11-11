@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
@@ -213,10 +214,6 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 	o.migrationMu.Lock()
 	defer o.migrationMu.Unlock()
 
-	// Snapshot the flag once for the whole operation — a flip mid-AddTunnels
-	// would split the tunnel's NDMS state from its config.json.
-	ndmsProxyEnabled := o.isNDMSProxyEnabled()
-
 	if o.runtimeLogger != nil {
 		o.runtimeLogger.Info("single-add", "", "start add tunnels batch")
 	}
@@ -232,11 +229,60 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 		return nil, parseErrs, nil
 	}
 
+	added, parseErrs, err := o.addParsedOutboundsLocked(ctx, "single-add", batchResult.Outbounds, parseErrs)
+	if err == nil && o.runtimeLogger != nil {
+		o.runtimeLogger.Info("single-add", "", fmt.Sprintf("done added=%d parse_errors=%d", len(added), len(parseErrs)))
+	}
+	return added, parseErrs, err
+}
+
+// AddTunnelFromOutbound promotes a pre-built outbound (for example, a
+// subscription member) into a standalone sing-box tunnel with its own
+// listen_port and NDMS Proxy/t2s slot. Returns ErrTunnelDuplicate if an
+// equivalent outbound already exists in 10-tunnels.json.
+func (o *Operator) AddTunnelFromOutbound(ctx context.Context, parsed vlink.ParsedOutbound) (TunnelInfo, error) {
+	defer perftrace.LogDuration(o.runtimeLogger, "perf", "AddTunnelFromOutbound", "total", time.Now())
+	if len(parsed.Outbound) == 0 {
+		return TunnelInfo{}, errors.New("empty outbound")
+	}
+	o.migrationMu.Lock()
+	defer o.migrationMu.Unlock()
+
+	if o.runtimeLogger != nil {
+		o.runtimeLogger.Info("sub-to-tunnel", parsed.Tag, "start promote subscription member")
+	}
+	added, errs, err := o.addParsedOutboundsLocked(ctx, "sub-to-tunnel", []vlink.ParsedOutbound{parsed}, nil)
+	if err != nil {
+		return TunnelInfo{}, err
+	}
+	if len(added) == 0 {
+		if len(errs) > 0 && errs[0].Err != nil {
+			return TunnelInfo{}, errs[0].Err
+		}
+		return TunnelInfo{}, errors.New("tunnel was not added")
+	}
+	if o.bus != nil {
+		o.bus.PublishInvalidated(events.ResourceSingboxTunnels, "tunnel-added")
+	}
+	if o.runtimeLogger != nil {
+		o.runtimeLogger.Info("sub-to-tunnel", added[0].Tag, "done")
+	}
+	return added[0], nil
+}
+
+func (o *Operator) addParsedOutboundsLocked(ctx context.Context, logAction string, outbounds []vlink.ParsedOutbound, parseErrs []BatchError) ([]TunnelInfo, []BatchError, error) {
+	// Snapshot the flag once for the whole operation — a flip mid-operation
+	// would split the tunnel's NDMS state from its config.json.
+	ndmsProxyEnabled := o.isNDMSProxyEnabled()
+
 	cfg, err := o.loadOrInitConfig()
 	if err != nil {
 		return nil, parseErrs, err
 	}
 	tagOccupied := tunnelTagsInUse(cfg)
+	for reservedTag := range reservedOutboundTags {
+		tagOccupied[reservedTag] = true
+	}
 	// fingerprints существующих туннелей — для отбраковки дублей при двойном
 	// POST (nginx proxy_next_upstream, две вкладки UI, и т.п.). См.
 	// outboundFingerprint выше — сравнение по (protocol, server, port, secret).
@@ -257,14 +303,18 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 	// «фич нет»: гейт в этом случае пропускает всё, решение остаётся за
 	// самим sing-box.
 	features := o.singboxFeaturesCached()
-	for _, p := range batchResult.Outbounds {
+	for _, p := range outbounds {
 		if len(features) > 0 && !OutboundSupportedByFeatures(features, p.Protocol) {
 			required := OutboundTypeRequiresFeature(p.Protocol)
 			if required == "" {
 				required = "<unknown required tag>"
 			}
+			errTag := p.Label
+			if errTag == "" {
+				errTag = p.Tag
+			}
 			parseErrs = append(parseErrs, BatchError{
-				Input: p.Label,
+				Input: errTag,
 				Err:   fmt.Errorf("%s: %s", p.Protocol, MissingBuildTagMsg(required, p.Protocol)),
 			})
 			continue
@@ -276,7 +326,7 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 				if existingTag, dup := existingFps[fp]; dup {
 					parseErrs = append(parseErrs, BatchError{
 						Input: p.Tag,
-						Err:   fmt.Errorf("duplicate of existing tunnel %q", existingTag),
+						Err:   &TunnelDuplicateError{ExistingTag: existingTag},
 					})
 					continue
 				}
@@ -314,7 +364,7 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 
 	if err := o.ApplyConfig(ctx, cfg); err != nil {
 		if o.runtimeLogger != nil {
-			o.runtimeLogger.Error("single-add", "", "apply config failed: "+err.Error())
+			o.runtimeLogger.Error(logAction, "", "apply config failed: "+err.Error())
 		}
 		return nil, parseErrs, fmt.Errorf("apply: %w", err)
 	}
@@ -384,9 +434,6 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 	}
 	if o.bus != nil {
 		o.bus.Publish("singbox:tunnels-changed", nil)
-	}
-	if o.runtimeLogger != nil {
-		o.runtimeLogger.Info("single-add", "", fmt.Sprintf("done added=%d parse_errors=%d", len(added), len(parseErrs)))
 	}
 	return added, parseErrs, nil
 }

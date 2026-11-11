@@ -1,6 +1,7 @@
 import type {
 	CreateSubscriptionGroupInput,
 	DetectedSubscriptionProfile,
+	SingboxTunnel,
 	SubscriptionHeaderProfile,
 	CreateSubscriptionInput,
 	Subscription,
@@ -145,6 +146,13 @@ export class SubscriptionsClient extends SbRouterClient {
 		return this.request<Subscription>(
 			`/singbox/subscriptions/members/restore?id=${encodeURIComponent(id)}`,
 			{ method: 'POST', body: JSON.stringify({ memberTags }) },
+		);
+	}
+
+	async createTunnelFromSubscriptionMember(id: string, memberTag: string): Promise<SingboxTunnel> {
+		return this.request<SingboxTunnel>(
+			`/singbox/subscriptions/members/to-tunnel?id=${encodeURIComponent(id)}`,
+			{ method: 'POST', body: JSON.stringify({ memberTag }) },
 		);
 	}
 
