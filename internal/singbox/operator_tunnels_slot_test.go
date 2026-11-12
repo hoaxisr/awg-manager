@@ -139,9 +139,12 @@ func TestApplyConfig_WithoutOrchestratorFails(t *testing.T) {
 type fakeProxies struct {
 	removed   []int
 	removeErr error // ответ RemoveProxy (вызов записывается и при ошибке)
+	ensureErr error // ответ EnsureProxy
 }
 
-func (f *fakeProxies) EnsureProxy(context.Context, int, int, string, string) error { return nil }
+func (f *fakeProxies) EnsureProxy(context.Context, int, int, string, string) error {
+	return f.ensureErr
+}
 func (f *fakeProxies) RelabelProxy(context.Context, int, int, string, string) error {
 	return nil
 }
@@ -327,6 +330,24 @@ func TestRemoveTunnel_RemovesProxyOfThatTunnelOnly(t *testing.T) {
 	}
 	if !reflect.DeepEqual(proxies.removed, []int{9}) {
 		t.Fatalf("RemoveProxy indexes = %v, want [9] (listen_port 1089 → Proxy9)", proxies.removed)
+	}
+}
+
+// Обычный отказ NDMS (не чужой слот) оставляет туннель в конфиге без
+// прокси: вызов обязан вернуть ошибку, а не успех с несуществующим t2sN.
+func TestAddTunnelFromOutbound_ProxySetupFailureIsReported(t *testing.T) {
+	op, _ := newOrchedOperator(t)
+	op.proxyMgr = &fakeProxies{ensureErr: errors.New("rci timeout")}
+
+	_, err := op.AddTunnelFromOutbound(context.Background(), vlink.ParsedOutbound{
+		Tag:      "node",
+		Protocol: "vless",
+		Server:   "de1.example",
+		Port:     443,
+		Outbound: json.RawMessage(`{"type":"vless","server":"de1.example","server_port":443,"uuid":"11111111-2222-3333-4444-555555555555"}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "rci timeout") {
+		t.Fatalf("proxy setup failure: got %v, want an error naming the cause", err)
 	}
 }
 

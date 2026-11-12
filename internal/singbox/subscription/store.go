@@ -27,8 +27,6 @@ type Store struct {
 	onChange func()
 }
 
-// SetOnChange подключает уведомление об изменении. Вызывается под замком
-// стора — обязано быть неблокирующим (events.Bus.Publish таков).
 // NotFoundError reports a subscription id absent from the store.
 type NotFoundError struct{ ID string }
 
@@ -36,6 +34,8 @@ func (e *NotFoundError) Error() string {
 	return fmt.Sprintf("subscription %q not found", e.ID)
 }
 
+// SetOnChange подключает уведомление об изменении. Вызывается под замком
+// стора — обязано быть неблокирующим (events.Bus.Publish таков).
 func (s *Store) SetOnChange(fn func()) { s.onChange = fn }
 
 func NewStore(path string) (*Store, error) {

@@ -264,6 +264,11 @@ func (o *Operator) AddTunnelFromOutbound(ctx context.Context, parsed vlink.Parse
 	if o.bus != nil {
 		o.bus.PublishInvalidated(events.ResourceSingboxTunnels, "tunnel-added")
 	}
+	// Туннель уже в конфиге, но NDMS Proxy для него не создан: успехом это
+	// не называем, иначе интерфейс пообещал бы t2sN, которого нет.
+	if len(errs) > 0 && errs[0].Err != nil {
+		return added[0], fmt.Errorf("tunnel %q added, but: %w", added[0].Tag, errs[0].Err)
+	}
 	if o.runtimeLogger != nil {
 		o.runtimeLogger.Info("sub-to-tunnel", added[0].Tag, "done")
 	}

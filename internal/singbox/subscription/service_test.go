@@ -3035,6 +3035,15 @@ func TestAddManualMember_TagCollisionRejected(t *testing.T) {
 	}
 }
 
+// sharedOutboundsMutator отдаёт одни и те же карты при каждом вызове — как
+// OperatorAdapter.SubscriptionOutbounds, в отличие от fakeMutator.
+type sharedOutboundsMutator struct {
+	*fakeMutator
+	obs []map[string]any
+}
+
+func (m sharedOutboundsMutator) SubscriptionOutbounds() []map[string]any { return m.obs }
+
 func TestService_GetMemberOutbound(t *testing.T) {
 	svc, mut := newTestService(t)
 	sub, err := svc.Create(context.Background(), CreateInput{
@@ -3091,13 +3100,20 @@ func TestService_GetMemberOutbound(t *testing.T) {
 	}
 
 	// bind_interface в слоте — настройка подписки, в туннель не уходит.
-	mut.bodies[second.Tag] = []byte(`{"type":"trojan","server":"tr1.example","server_port":8443,"password":"p","bind_interface":"eth3"}`)
+	// Карта общая с мутатором, как у настоящего адаптера: у самой подписки
+	// привязка обязана уцелеть.
+	slotOb := map[string]any{"tag": second.Tag, "type": "trojan", "server": "tr1.example", "server_port": 8443, "password": "p", "bind_interface": "eth3"}
+	svc.mutator = sharedOutboundsMutator{fakeMutator: mut, obs: []map[string]any{slotOb}}
 	bound, err := svc.GetMemberOutbound(sub.ID, second.Tag)
+	svc.mutator = mut
 	if err != nil {
 		t.Fatalf("GetMemberOutbound(bound): %v", err)
 	}
 	if strings.Contains(string(bound.Outbound), "bind_interface") {
 		t.Fatalf("bind_interface leaked into tunnel outbound: %s", bound.Outbound)
+	}
+	if slotOb["bind_interface"] != "eth3" {
+		t.Fatalf("subscription slot outbound lost its bind_interface: %v", slotOb)
 	}
 
 	// detour на соседа по слоту — отказ, а не туннель с висячей ссылкой.

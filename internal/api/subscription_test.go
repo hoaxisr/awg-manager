@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1003,8 +1002,5 @@ func TestSubscriptionHandler_CreateTunnelFromMember(t *testing.T) {
 	))
 	if rr.Code != http.StatusPreconditionFailed || !strings.Contains(rr.Body.String(), "SINGBOX_NOT_INSTALLED") {
 		t.Fatalf("missing sing-box status=%d body=%s, want 412", rr.Code, rr.Body.String())
-	}
-	if errors.Is(creator.err, singbox.ErrTunnelDuplicate) {
-		t.Fatal("unreachable")
 	}
 }
