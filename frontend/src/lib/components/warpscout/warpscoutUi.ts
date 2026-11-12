@@ -1,14 +1,19 @@
 // Вспомогательные функции вкладки «WARP Сканер»: флаги, подписи
 // состояний автопилота, разбор ошибок API и форматирование времени.
 import type { BadgeVariant } from '$lib/components/ui';
-import { formatLocale, m } from '$lib/i18n';
+import { m } from '$lib/i18n';
 import type {
+	WarpCheckSample,
 	WarpConfig,
 	WarpFilters,
+	WarpHit,
 	WarpProfile,
+	WarpProfileMode,
+	WarpRouteRef,
 	WarpTargetMode,
 	WarpTunnelRef,
 } from '$lib/types/warpscout';
+import { formatDate, formatDuration, formatTime as formatClock } from '$lib/utils/format';
 
 export const QUICK_COLOS = ['LED', 'KJA', 'OVB', 'SVX'];
 export const SIGNATURE_PROFILES = ['quic_initial', 'dns', 'stun', 'dtls', 'sip', 'none'] as const;
@@ -143,43 +148,26 @@ export function parseGoTime(s: string | undefined | null): Date | null {
 	return d;
 }
 
+/** Время проверки: сегодня — только часы, иначе дата и время; нулевое время Go — прочерк. */
 export function formatTime(s: string | undefined | null): string {
 	const d = parseGoTime(s);
-	if (!d) return '—';
-	const loc = formatLocale();
-	const sameDay = new Date().toDateString() === d.toDateString();
-	return sameDay
-		? d.toLocaleTimeString(loc)
-		: d.toLocaleString(loc, {
-				day: '2-digit',
-				month: '2-digit',
-				hour: '2-digit',
-				minute: '2-digit',
-				second: '2-digit',
-			});
+	if (!d || !s) return '—';
+	return new Date().toDateString() === d.toDateString() ? formatClock(s) : formatDate(s);
 }
 
-export function formatDuration(ms: number): string {
+/** Длительность скана с секундами: общий formatDuration после минуты секунды отбрасывает. */
+export function formatElapsed(ms: number): string {
 	const total = Math.max(0, Math.round(ms / 1000));
 	const mins = Math.floor(total / 60);
 	const secs = total % 60;
 	return mins > 0 ? m.warpscout_dur_min_sec({ m: mins, s: secs }) : m.warpscout_dur_sec({ s: secs });
 }
 
-/** Компактное время непрерывной работы узла (например: `45 с`, `18 мин`, `4 ч 12 мин`, `3 д 5 ч`). */
+/** Сколько узел работает без подмены; нулевое время Go — прочерк. */
 export function formatUptime(sinceIso: string | undefined | null, nowMs = Date.now()): string {
 	const d = parseGoTime(sinceIso);
 	if (!d) return '—';
-	const sec = Math.max(0, Math.floor((nowMs - d.getTime()) / 1000));
-	if (sec < 60) return m.warpscout_dur_sec({ s: sec });
-	const min = Math.floor(sec / 60);
-	if (min < 60) return m.warpscout_dur_min({ m: min });
-	const hr = Math.floor(min / 60);
-	const remMin = min % 60;
-	if (hr < 24) return remMin > 0 ? m.warpscout_dur_hr_min({ h: hr, m: remMin }) : m.warpscout_dur_hr({ h: hr });
-	const days = Math.floor(hr / 24);
-	const remHr = hr % 24;
-	return remHr > 0 ? m.warpscout_dur_day_hr({ d: days, h: remHr }) : m.warpscout_dur_day({ d: days });
+	return formatDuration(Math.max(0, Math.floor((nowMs - d.getTime()) / 1000)));
 }
 
 /** Процент успешных проверок (например `99.4%` или `100%`). */
@@ -191,7 +179,7 @@ export function formatSlaPct(ok: number, total: number): string {
 	return `${Math.round(pct)}%`;
 }
 
-/** Сортированный список колокейшнов по числу попаданий (топ-N). */
+/** Сортированный список дата-центров по числу попаданий (топ-N). */
 export function topColos(
 	colos: Record<string, number> | undefined | null,
 	limit = 5,
@@ -267,4 +255,203 @@ export function targetOptionDescription(t: WarpTunnelRef): string {
 	if (!targetSelectable(t)) return targetDisabledReason(t);
 	const ep = t.endpoint || m.warpscout_target_no_endpoint();
 	return t.running ? ep : m.warpscout_target_desc_stopped({ endpoint: ep });
+}
+
+// ── Числовые поля ────────────────────────────────────────────────
+
+export interface NumLimit {
+	def: number;
+	min: number;
+	max: number;
+}
+
+/**
+ * Границы числовых полей — одни и для атрибутов min/max, и для санитайзера.
+ * Сверены с normalizeProfile/normalizeConfig (internal/warpscout/store.go):
+ * пауза <= 0 там превращается в 120, поэтому её минимум — 1.
+ */
+export const LIMITS = {
+	checkIntervalSec: { def: 60, min: 15, max: 86400 },
+	failThreshold: { def: 2, min: 1, max: 100 },
+	cooldownSec: { def: 120, min: 1, max: 86400 },
+	maxRttMs: { def: 0, min: 0, max: 10000 },
+	jc: { def: 4, min: 0, max: 128 },
+	jmin: { def: 40, min: 0, max: 1280 },
+	jmax: { def: 70, min: 0, max: 1280 },
+	maxHits: { def: 20, min: 1, max: 100 },
+} as const satisfies Record<string, NumLimit>;
+
+/** Целое в границах поля; пустое и нечисловое значение — значение по умолчанию. */
+export function sanitizeInt(v: unknown, lim: NumLimit): number {
+	if (v === null || v === undefined || v === '') return lim.def;
+	const n = Math.round(Number(v));
+	if (!Number.isFinite(n)) return lim.def;
+	return Math.min(lim.max, Math.max(lim.min, n));
+}
+
+/** Конфигурация в том виде, в каком её можно отправлять на сервер. */
+export function sanitizeConfig(cfg: WarpConfig): WarpConfig {
+	const out = cloneConfig(cfg);
+	out.scanInterface = (out.scanInterface ?? '').trim() || undefined;
+	for (const p of out.profiles) {
+		p.checkIntervalSec = sanitizeInt(p.checkIntervalSec, LIMITS.checkIntervalSec);
+		p.failThreshold = sanitizeInt(p.failThreshold, LIMITS.failThreshold);
+		p.cooldownSec = sanitizeInt(p.cooldownSec, LIMITS.cooldownSec);
+		p.filters.maxRttMs = sanitizeInt(p.filters.maxRttMs, LIMITS.maxRttMs);
+		p.filters.excludeColos ??= [];
+		p.filters.allowedCountries ??= [];
+	}
+	out.awg.jc = sanitizeInt(out.awg.jc, LIMITS.jc);
+	out.awg.jmin = sanitizeInt(out.awg.jmin, LIMITS.jmin);
+	out.awg.jmax = sanitizeInt(out.awg.jmax, LIMITS.jmax);
+	if (out.profileMode === 'single') {
+		out.activeProfileId = out.profiles.find((p) => p.enabled)?.id;
+	}
+	return out;
+}
+
+// ── Черновик конфигурации ────────────────────────────────────────
+
+/**
+ * Части конфигурации с независимым «Сохранить»: профили автопилота и
+ * параметры AWG. Маршрут сканера сохраняется сразу и черновика не имеет.
+ */
+export type ConfigSection = 'profiles' | 'awg';
+const SECTIONS: ConfigSection[] = ['profiles', 'awg'];
+
+// Форма для сравнения: сервер опускает пустой activeProfileId (omitempty),
+// а пустые списки фильтров может отдать как null.
+function sectionView(c: WarpConfig, s: ConfigSection): unknown {
+	if (s === 'awg') return c.awg;
+	return {
+		profileMode: c.profileMode,
+		activeProfileId: c.activeProfileId || undefined,
+		profiles: c.profiles.map((p) => ({
+			...p,
+			filters: {
+				...p.filters,
+				excludeColos: p.filters.excludeColos ?? [],
+				allowedCountries: p.filters.allowedCountries ?? [],
+			},
+		})),
+	};
+}
+
+export function sectionEqual(a: WarpConfig, b: WarpConfig, s: ConfigSection): boolean {
+	return JSON.stringify(sectionView(a, s)) === JSON.stringify(sectionView(b, s));
+}
+
+/** `base`, в котором одна часть взята из `from`. */
+export function withSection(base: WarpConfig, from: WarpConfig, s: ConfigSection): WarpConfig {
+	const src = cloneConfig(from);
+	if (s === 'awg') return { ...base, awg: src.awg };
+	return {
+		...base,
+		profileMode: src.profileMode,
+		activeProfileId: src.activeProfileId || undefined,
+		profiles: src.profiles,
+	};
+}
+
+/**
+ * Принять серверную конфигурацию в черновик. Часть без локальных правок (и
+ * любая из `force` — только что сохранённая или сброшенная) берётся с
+ * сервера, часть с правками остаётся как есть. Возвращает тот же объект,
+ * если менять нечего.
+ */
+export function syncDraft(
+	draft: WarpConfig,
+	prevServer: WarpConfig | null,
+	nextServer: WarpConfig,
+	force: ConfigSection[] = [],
+): WarpConfig {
+	if (!prevServer) return cloneConfig(nextServer);
+	let out = draft;
+	for (const s of SECTIONS) {
+		const take = force.includes(s) || sectionEqual(draft, prevServer, s);
+		if (take && !sectionEqual(out, nextServer, s)) out = withSection(out, nextServer, s);
+	}
+	return out;
+}
+
+/** Включить или выключить профиль; в режиме одного активного остальные гаснут. */
+export function setProfileEnabled(config: WarpConfig, id: string, on: boolean): void {
+	for (const p of config.profiles) {
+		if (p.id === id) p.enabled = on;
+		else if (config.profileMode === 'single') p.enabled = false;
+	}
+	if (config.profileMode === 'single') config.activeProfileId = on ? id : undefined;
+}
+
+/** Сменить режим; при переходе к одному активному остаётся прежний активный или первый включённый. */
+export function setProfileMode(config: WarpConfig, mode: WarpProfileMode): void {
+	config.profileMode = mode;
+	if (mode !== 'single') return;
+	const active =
+		config.profiles.find((p) => p.id === config.activeProfileId && p.enabled) ??
+		config.profiles.find((p) => p.enabled);
+	for (const p of config.profiles) p.enabled = p === active;
+	config.activeProfileId = active?.id;
+}
+
+// ── Лента проверок ───────────────────────────────────────────────
+
+export const SPARK_SLOTS = 32;
+
+/** Последние замеры, дополненные слева пустыми ячейками до ширины ленты. */
+export function buildSparkBars(
+	samples: WarpCheckSample[] | undefined,
+	slots = SPARK_SLOTS,
+): Array<WarpCheckSample | null> {
+	const tail = (samples ?? []).slice(-slots);
+	const pad = new Array<null>(Math.max(0, slots - tail.length)).fill(null);
+	return [...pad, ...tail];
+}
+
+/** Высота столбика в процентах: сбой — полный, без замера — средний. */
+export function sampleBarHeight(s: WarpCheckSample, maxMs: number): number {
+	if (!s.ok) return 100;
+	const ms = s.latencyMs ?? 0;
+	if (ms <= 0 || maxMs <= 0) return 55;
+	return Math.min(100, Math.max(30, Math.round((ms / maxMs) * 100)));
+}
+
+// ── Сканер ───────────────────────────────────────────────────────
+
+/**
+ * Результаты по возрастанию пинга, узлы без замера (pingMs = 0) — в конце.
+ * Серверный sortHits ставит их первыми, поэтому порядок здесь свой: первая
+ * строка получает метку TOP.
+ */
+export function sortHits(hits: WarpHit[] | null | undefined): WarpHit[] {
+	const key = (h: WarpHit) => (h.pingMs > 0 ? h.pingMs : Number.MAX_SAFE_INTEGER);
+	return [...(hits ?? [])].sort((a, b) => key(a) - key(b) || a.handshakeMs - b.handshakeMs);
+}
+
+function routeNamed(r: WarpRouteRef): string {
+	return r.label && r.label !== r.name ? `${r.label} (${r.name})` : r.name;
+}
+
+/** Полная подпись маршрута сканера; пустой интерфейс — основной WAN. */
+export function routeDisplayLabel(routes: WarpRouteRef[], defaultWan: string, ifname: string): string {
+	if (!ifname) {
+		const def = routes.find((r) => r.name === defaultWan);
+		if (def) return m.warpscout_route_auto_named({ name: def.label || def.name });
+		return defaultWan
+			? m.warpscout_route_auto_named({ name: defaultWan })
+			: m.warpscout_route_auto_default();
+	}
+	const found = routes.find((r) => r.name === ifname);
+	return found ? routeNamed(found) : ifname;
+}
+
+/** Короткая подпись маршрута для чипа в шапке. */
+export function routeChipText(routes: WarpRouteRef[], defaultWan: string, ifname: string): string {
+	if (!ifname) {
+		const def = routes.find((r) => r.name === defaultWan);
+		if (def) return `WAN · ${routeNamed(def)}`;
+		return defaultWan ? `WAN · ${defaultWan}` : m.warpscout_route_auto_default();
+	}
+	const found = routes.find((r) => r.name === ifname);
+	return found ? routeNamed(found) : ifname;
 }

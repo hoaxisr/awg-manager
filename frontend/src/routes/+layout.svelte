@@ -25,6 +25,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
 	import { connectSSE } from '$lib/api/events';
+	import { warpScanPush, warpWatchPush } from '$lib/stores/warpscout';
 	import { geoDownloadProgress } from '$lib/stores/geoDownload';
 	import { singboxInstallProgress } from '$lib/stores/singboxInstall';
 	import { serverOnline } from '$lib/stores/events';
@@ -257,6 +258,10 @@
 			onSingboxRouterRules: singboxRouter.applyRules,
 			onSingboxRouterRuleSets: singboxRouter.applyRuleSets,
 			onSingboxRouterOutbounds: singboxRouter.applyOutbounds,
+
+			// WARP-сканер: вкладка подхватывает события из стора.
+			onWarpScoutScan: (data) => warpScanPush.set(data),
+			onWarpScoutWatchdog: (data) => warpWatchPush.set(data),
 		});
 	}
 

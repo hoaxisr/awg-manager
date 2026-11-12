@@ -1,11 +1,11 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { m } from '$lib/i18n';
-	import { SegmentedControl } from '$lib/components/ui';
+	import { SegmentedControl, Toggle } from '$lib/components/ui';
 	import type { SegmentedOption } from '$lib/components/ui';
 	import type { WarpFilters, WarpProtocol } from '$lib/types/warpscout';
 	import ChipCodesEditor from './ChipCodesEditor.svelte';
-	import { QUICK_COLOS } from './warpscoutUi';
+	import { LIMITS, QUICK_COLOS } from './warpscoutUi';
 
 	interface Props {
 		filters: WarpFilters;
@@ -83,10 +83,10 @@
 			</div>
 			<input
 				id={`${idPrefix}-rtt`}
-				class="num"
+				class="field-input mono"
 				type="number"
-				min="0"
-				max="5000"
+				min={LIMITS.maxRttMs.min}
+				max={LIMITS.maxRttMs.max}
 				step="10"
 				placeholder="0"
 				title={m.warpscout_max_rtt_hint()}
@@ -97,10 +97,13 @@
 	</div>
 
 	<div class="filters-bar">
-		<label class="check">
-			<input type="checkbox" bind:checked={filters.requireTelegram} {disabled} />
-			<span>{m.warpscout_require_tg()}</span>
-		</label>
+		<Toggle
+			checked={filters.requireTelegram}
+			size="sm"
+			label={m.warpscout_require_tg()}
+			{disabled}
+			onchange={(v) => (filters.requireTelegram = v)}
+		/>
 		{#if actions}
 			<div class="bar-actions">
 				{@render actions()}
@@ -171,17 +174,8 @@
 		white-space: nowrap;
 		flex-shrink: 0;
 	}
-	.num {
-		width: 100%;
-		height: 32px;
-		box-sizing: border-box;
-		padding: 0.25rem 0.5rem;
+	.mono {
 		font-family: var(--font-mono);
-		font-size: 0.8125rem;
-		background: var(--color-bg-secondary);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		color: var(--color-text-primary);
 	}
 	.filters-bar {
 		display: flex;
@@ -196,18 +190,6 @@
 		gap: 0.55rem;
 		margin-left: auto;
 		flex-wrap: wrap;
-	}
-	.check {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.4rem;
-		font-size: 0.76rem;
-		color: var(--color-text-secondary);
-		cursor: pointer;
-		user-select: none;
-	}
-	.check:hover {
-		color: var(--color-text-primary);
 	}
 
 	@media (max-width: 820px) {

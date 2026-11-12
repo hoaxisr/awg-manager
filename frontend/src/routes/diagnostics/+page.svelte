@@ -6,8 +6,8 @@
 	import { api } from '$lib/api/client';
 	import type { TunnelListItem, SingboxTunnel, Subscription } from '$lib/types';
 	import type { DiagnosticsTargetSeed } from '$lib/stores/diagnostics';
-	import { PageContainer, PageHeader } from '$lib/components/layout';
-	import { Tabs } from '$lib/components/ui';
+	import { EmptyState, PageContainer, PageHeader } from '$lib/components/layout';
+	import { Button, Tabs } from '$lib/components/ui';
 	import { LogsTerminal } from '$lib/components/diagnostics';
 	import { settings, usageLevel } from '$lib/stores/settings';
 	import ConnectionsTab from './ConnectionsTab.svelte';
@@ -209,6 +209,13 @@
 	{:else if activeTab === 'warpscout'}
 		{#await import('$lib/components/warpscout/WarpScoutTab.svelte') then { default: WarpScoutTab }}
 			<WarpScoutTab />
+		{:catch}
+			<!-- После самообновления чанк с прежним хэшем отдаёт 404. -->
+			<EmptyState title={m.diag_tab_load_failed_title()} description={m.diag_tab_load_failed_desc()}>
+				{#snippet action()}
+					<Button variant="primary" onclick={() => location.reload()}>{m.diag_tab_reload_page()}</Button>
+				{/snippet}
+			</EmptyState>
 		{/await}
 	{:else if activeTab === 'awgConfig'}
 		<AwgConfigAnalyzerTab />

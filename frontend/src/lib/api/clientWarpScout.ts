@@ -10,8 +10,8 @@ import type {
 	WarpTunnelRef,
 } from '$lib/types/warpscout';
 
-// «WARP Сканер» (раздел «Инструменты»): учётная запись Cloudflare WARP,
-// ручной скан эндпоинтов, применение узла и профили автопилота.
+// «WARP Сканер» (вкладка страницы диагностики): учётная запись Cloudflare
+// WARP, ручной скан узлов, применение узла и профили автопилота.
 export class WarpScoutClient extends Awg3Client {
 	async warpscoutState(): Promise<WarpScoutState> {
 		return this.request<WarpScoutState>('/warpscout/state');
