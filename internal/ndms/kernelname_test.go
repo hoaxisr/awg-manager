@@ -12,8 +12,8 @@ func TestKernelName(t *testing.T) {
 		{"Wireguard13", "nwg13", true},
 		{"OpkgTun11", "opkgtun11", true},
 		{"Proxy0", "t2s0", true},
-		{"PPPoE0", "ppp0", true},
 		{"Bridge0", "br0", true},
+		{"PPPoE0", "", false}, // #1166: в поле PPPoE0 оказался ppp1
 		{"PPPoE1", "", false},
 		{"Bridge1", "", false},
 		{"Bridge10", "", false},
@@ -37,17 +37,16 @@ func TestKernelName(t *testing.T) {
 	}
 }
 
-// Расширение таблицы — только с новым стенд-фактом: тест держит ровно пять
-// классов, и новый префикс обязан прийти вместе с правкой этого списка.
-func TestKernelName_ExactlyFiveClasses(t *testing.T) {
+// Расширение таблицы — только с новым стенд-фактом: тест держит ровно четыре
+// класса, и новый префикс обязан прийти вместе с правкой этого списка.
+func TestKernelName_ExactlyFourClasses(t *testing.T) {
 	want := map[string]string{
 		"Wireguard": "nwg",
 		"OpkgTun":   "opkgtun",
 		"Proxy":     "t2s",
-		"PPPoE":     "ppp",
 		"Bridge":    "br",
 	}
-	zeroOnly := map[string]bool{"PPPoE": true, "Bridge": true} // стенд: только номер 0
+	zeroOnly := map[string]bool{"Bridge": true} // стенд: только номер 0
 	if len(kernelNamePrefixes) != len(want) {
 		t.Fatalf("классов %d, ждали %d", len(kernelNamePrefixes), len(want))
 	}

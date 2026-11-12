@@ -473,7 +473,7 @@ func TestSetNATMode_AbsentExitsSkipped(t *testing.T) {
 		`{"ip":{"static":{"interface":"Wireguard3","to-interface":"PPPoE0"}}}`,
 		`{"ip":{"nat":[{"interface":"Wireguard3","no":true}]}}`,
 	}
-	if strings.Join(f.Posts, "\n") != strings.Join(want, "\n") {
+	if strings.Join(f.Commands(), "\n") != strings.Join(want, "\n") {
 		t.Fatalf("posts:\n%s", strings.Join(f.Posts, "\n"))
 	}
 	if f.E != 0 || f.Phantoms != 0 {
@@ -680,7 +680,7 @@ func TestDelete_PresentInternetOnly_StaticThenNoInterface(t *testing.T) {
 		`{"ip":{"static":[{"interface":"Wireguard3","no":true,"to-interface":"PPPoE0"}]}}`,
 		`{"interface":{"Wireguard3":{"no":true}}}`,
 	}
-	if strings.Join(f.Posts, "\n") != strings.Join(want, "\n") || f.E != 0 || f.Phantoms != 0 {
+	if strings.Join(f.Commands(), "\n") != strings.Join(want, "\n") || f.E != 0 || f.Phantoms != 0 {
 		t.Fatalf("posts:\n%s\nE=%d phantoms=%d", strings.Join(f.Posts, "\n"), f.E, f.Phantoms)
 	}
 }

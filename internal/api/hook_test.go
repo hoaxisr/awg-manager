@@ -97,6 +97,11 @@ type fakeWANModel struct {
 	calls []fakeWANSetUp
 }
 
+// knownWANModel — модель, которая запись знает (рядовой хук известного WAN).
+type knownWANModel struct{ fakeWANModel }
+
+func (*knownWANModel) Known(string) bool { return true }
+
 type fakeWANSetUp struct {
 	Name string
 	Up   bool
@@ -108,6 +113,9 @@ func (f *fakeWANModel) SetUp(name string, up bool) bool {
 	f.calls = append(f.calls, fakeWANSetUp{Name: name, Up: up})
 	return true
 }
+
+// Known — модель эту запись не знает: худший случай для хука.
+func (f *fakeWANModel) Known(string) bool { return false }
 
 func (f *fakeWANModel) Calls() []fakeWANSetUp {
 	f.mu.Lock()

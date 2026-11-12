@@ -23,6 +23,8 @@ func (m *listingWANModel) SetUp(string, bool) bool {
 	return true
 }
 
+func (m *listingWANModel) Known(string) bool { return true }
+
 // I3 (F570): горячо подключённый модем — резолвер вслед за списком имени не
 // дал, хук несёт system_name. Имя обязано попасть в кэш ДО SetUp в том же
 // Handle: диспетчер кладёт его асинхронно, и первый WAN up терялся бы.

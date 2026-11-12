@@ -9,7 +9,7 @@
 //
 // Имя ядра (ResolveSystemName / SystemNames / ListWAN / ListAll) — тоже
 // память, RCI по требованию нет (F570). Источники: таблица ndms.KernelName
-// (Wireguard, OpkgTun, Proxy, PPPoE, Bridge), `system_name` из хуков
+// (Wireguard, OpkgTun, Proxy, Bridge), `system_name` из хуков
 // (OnSystemName) и ОДИН пакетный резолвер `show interface system-name`
 // сразу после каждого свежего списка — только для id из этого ответа, чьё
 // имя ещё не известно.
@@ -764,7 +764,7 @@ func (s *InterfaceStore) detailsAged(ctx context.Context, name string, maxAge ti
 // 5.02.A.11 it can be a label (`Bridge0` → `Home`, F473). Поэтому источники
 // идут по порядку (systemNameLocked):
 //   - ndms.KernelName — класс, у которого имя ядра задано номером записи
-//     (Wireguard, OpkgTun, Proxy, PPPoE, Bridge); только для записи из кэша;
+//     (Wireguard, OpkgTun, Proxy, Bridge); только для записи из кэша;
 //   - sysNames — имя из хука NDMS (`system_name`, OnSystemName) или от
 //     резолвера, который спрашивается один раз вслед за свежим списком
 //     (refreshList → resolveSystemNames);
@@ -782,11 +782,10 @@ func (s *InterfaceStore) ResolveSystemName(ctx context.Context, ndmsName string)
 
 // systemNameLocked — имя ядра из памяти, см. ResolveSystemName.
 //
-// Для класса из таблицы живость устройства (/sys/class/net) не проверяется:
-// прежний резолвер отвечал именем записи и при опущенном устройстве (ppp0
-// лежащего PPPoE), и вызывающие (правило MASQUERADE на WAN, привязка
-// sing-box) на этом стоят. Имя хука/резолвера — тоже без проверки: оно
-// получено от NDMS для этого id.
+// Живость устройства (/sys/class/net) не проверяется ни для класса из
+// таблицы, ни для имени хука/резолвера: имя получено от NDMS для этого id, и
+// вызывающие (правило MASQUERADE на WAN, привязка sing-box) ждут его и при
+// опущенном устройстве.
 func (s *InterfaceStore) systemNameLocked(id string) string {
 	iface, known := s.byID[id]
 	if name, ok := ndms.KernelName(id); ok {
@@ -1006,7 +1005,10 @@ func (s *InterfaceStore) ListWAN(ctx context.Context) ([]wan.Interface, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]wan.Interface, 0, len(all))
+	// Ключ модели WAN — имя ядра, поэтому две записи NDMS с одним именем
+	// сводятся здесь, а не затирают друг друга в порядке обхода map: побеждает
+	// поднятая, при равенстве — меньший id (как preferCandidate у ListAll).
+	seen := make(map[string]wan.Interface, len(all))
 	for _, iface := range all {
 		if iface.SecurityLevel != "public" {
 			continue
@@ -1015,17 +1017,34 @@ func (s *InterfaceStore) ListWAN(ctx context.Context) ([]wan.Interface, error) {
 		if kernelName == "" {
 			kernelName = iface.SystemName
 		}
-		if IsNonISPInterface(kernelName) {
+		// Имени ядра не знает никто (резолвер ещё не ответил): запись с
+		// пустым ключом в модели WAN была бы недостижима для хуков.
+		if kernelName == "" || IsNonISPInterface(kernelName) {
 			continue
 		}
-		out = append(out, wan.Interface{
+		candidate := wan.Interface{
 			Name:     kernelName,
 			ID:       iface.ID,
 			Label:    wanInterfaceLabel(iface.Type, kernelName, iface.Description),
 			Up:       iface.State == "up" && iface.IPv4 == "running",
 			Priority: iface.Priority,
-		})
+		}
+		if win, dup := seen[kernelName]; dup {
+			better := candidate.ID < win.ID
+			if candidate.Up != win.Up {
+				better = candidate.Up
+			}
+			if !better {
+				continue
+			}
+		}
+		seen[kernelName] = candidate
 	}
+	out := make([]wan.Interface, 0, len(seen))
+	for _, w := range seen {
+		out = append(out, w)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 

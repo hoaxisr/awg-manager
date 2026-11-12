@@ -178,7 +178,7 @@ func TestEnsurePolicyInterfaces_SkipsAbsent_OneList(t *testing.T) {
 		`{"ip":{"policy":{"HydraRoute":{"permit":{"global":true,"interface":"PPPoE0","order":0}}}}}`,
 		`{"ip":{"policy":{"HydraRoute":{"permit":{"global":true,"interface":"Wireguard1","order":1}}}}}`,
 	}
-	if !reflect.DeepEqual(f.Posts, want) {
+	if !reflect.DeepEqual(f.Commands(), want) {
 		t.Fatalf("posts:\n got %v\nwant %v", f.Posts, want)
 	}
 	if n := f.ListCalls(); n != 1 {

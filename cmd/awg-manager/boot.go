@@ -54,6 +54,20 @@ func populateWANModel(ctx context.Context, queries *ndmsquery.Queries, model *wa
 		appLog.Warn("populate-wan", "", "failed to get WAN interfaces: "+err.Error())
 		return
 	}
+	// Резолвер имён ядра вслед за списком мог не ответить (сбой RCI на
+	// загрузке) — ListWAN такую запись пропускает, а модель сама её потом не
+	// доберёт: стабильно поднятый WAN хуков не шлёт. Один повтор списка; что
+	// осталось без имени — в журнал, иначе канал молча выпадает из выбора.
+	if unnamed, uerr := queries.Interfaces.UnnamedIDs(ctx); uerr == nil && len(unnamed) > 0 {
+		if queries.Interfaces.Refresh(ctx) == nil {
+			if again, lerr := queries.Interfaces.ListWAN(ctx); lerr == nil {
+				interfaces = again
+			}
+		}
+		if unnamed, uerr = queries.Interfaces.UnnamedIDs(ctx); uerr == nil && len(unnamed) > 0 {
+			appLog.Warn("populate-wan", "", "kernel name unknown, not tracked as WAN: "+strings.Join(unnamed, " "))
+		}
+	}
 	model.Populate(interfaces)
 	ifaceList := make([]string, 0, len(interfaces))
 	for _, iface := range interfaces {
