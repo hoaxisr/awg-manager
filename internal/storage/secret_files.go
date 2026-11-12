@@ -9,3 +9,8 @@ const DeviceKeyFile = ".device-key"
 // RCITokenFile — токен доступа к RCI (KeeneticOS 5.2+), см. ndms/transport/token.go.
 // Привязан к выпустившему роутеру и даёт права admin: в бэкап не едет.
 const RCITokenFile = "rci-token"
+
+// WarpScoutKeyFile — локальный ключ шифрования учётной записи Cloudflare WARP
+// (warpscout.json). Привязан к установке роутера: в бэкап не выгружается и при
+// восстановлении бэкапа на том же устройстве не затирается.
+const WarpScoutKeyFile = ".warpscout-key"

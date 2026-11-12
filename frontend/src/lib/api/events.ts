@@ -9,6 +9,7 @@ import type {
 	SingboxRouterOutbound,
 	SingboxRouterTransitionData,
 } from '$lib/types';
+import type { WarpScanStatus, WarpWatchStatus } from '$lib/types/warpscout';
 
 export interface LogEntryEvent {
 	timestamp: string;
@@ -140,6 +141,10 @@ export interface SSEEventHandlers {
 
 	// Monitoring matrix snapshot (every scheduler tick).
 	onMonitoringMatrixUpdate?: (data: MonitoringSnapshot) => void;
+
+	// WARP-сканер: полный снимок скана и статус сторожа одного профиля.
+	onWarpScoutScan?: (data: WarpScanStatus) => void;
+	onWarpScoutWatchdog?: (data: WarpWatchStatus) => void;
 }
 
 export function parseConnectedEvent(data: string): { ok?: boolean; instanceId?: string } | undefined {
@@ -210,6 +215,10 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 
 	// Monitoring matrix snapshots
 	handle('monitoring:matrix-update', handlers.onMonitoringMatrixUpdate);
+
+	// WARP-сканер
+	handle('warpscout:scan', handlers.onWarpScoutScan);
+	handle('warpscout:watchdog', handlers.onWarpScoutWatchdog);
 
 	// Server sends "connected" event immediately on stream start
 	es.addEventListener('connected', ((e: MessageEvent) => {

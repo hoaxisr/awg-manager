@@ -47,6 +47,7 @@ const ALLOWED: Record<string, { lines: number; reason: string }> = {
 	'/src/lib/components/proxy/ShareWizard.svelte': { lines: 1, reason: 'имя абонента по умолчанию — данные на роутере' },
 	'/src/lib/utils/deviceProxyInstance.ts': { lines: 1, reason: 'имя прокси по умолчанию — данные на роутере' },
 	'/src/lib/components/sb-router/qosClasses.ts': { lines: 1, reason: 'имя класса по умолчанию — данные на роутере' },
+	'/src/lib/components/warpscout/warpscoutUi.ts': { lines: 2, reason: 'сравнение с ошибкой бэкенда и имя профиля по умолчанию на роутере' },
 	'/src/routes/tunnels/[id]/+page.svelte': { lines: 1, reason: 'подпись «Через …» сохраняется на бэкенде' },
 };
 

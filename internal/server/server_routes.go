@@ -764,6 +764,24 @@ func (s *Server) registerDiagnosticsRoutes(mux *http.ServeMux, h *routeHandlers)
 
 }
 
+// registerWarpScoutRoutes — «WARP Сканер» (раздел «Инструменты»).
+func (s *Server) registerWarpScoutRoutes(mux *http.ServeMux, h *routeHandlers) {
+	ws := s.buildWarpScout(h)
+	if ws == nil {
+		return
+	}
+	mux.HandleFunc("/api/warpscout/state", h.guarded(ws.State))
+	mux.HandleFunc("/api/warpscout/targets", h.guarded(ws.Targets))
+	mux.HandleFunc("/api/warpscout/account/register", h.guarded(ws.Register))
+	mux.HandleFunc("/api/warpscout/account/license", h.guarded(ws.License))
+	mux.HandleFunc("/api/warpscout/account/delete", h.guarded(ws.DeleteAccount))
+	mux.HandleFunc("/api/warpscout/scan/start", h.guarded(ws.ScanStart))
+	mux.HandleFunc("/api/warpscout/scan/stop", h.guarded(ws.ScanStop))
+	mux.HandleFunc("/api/warpscout/apply", h.guarded(ws.Apply))
+	mux.HandleFunc("/api/warpscout/config", h.guarded(ws.Config))
+	mux.HandleFunc("/api/warpscout/stats/reset", h.guarded(ws.ResetStats))
+}
+
 // wireCrossHandlers — event-bus and cross-handler wiring (no route registrations of its own except hook aliases).
 func (s *Server) wireCrossHandlers(mux *http.ServeMux, h *routeHandlers) {
 	// Wire event bus to CRUD handlers for SSE publishing
