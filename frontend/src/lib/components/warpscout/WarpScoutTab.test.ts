@@ -185,4 +185,23 @@ describe('WarpScoutTab', () => {
 		await fireEvent.submit(form);
 		await waitFor(() => expect(api.warpscoutSetAddress).toHaveBeenCalledWith('172.16.0.3'));
 	});
+
+	it('clamps scan limit input to 1..100 on typing and restores default on blur when empty', async () => {
+		const { container } = await mount(acctState());
+		const input = container.querySelector<HTMLInputElement>('.limit-input')!;
+		expect(input).not.toBeNull();
+		expect(input.value).toBe('20');
+
+		await fireEvent.input(input, { target: { value: '200' } });
+		expect(input.value).toBe('100');
+
+		await fireEvent.input(input, { target: { value: '1005' } });
+		expect(input.value).toBe('100');
+
+		await fireEvent.input(input, { target: { value: '' } });
+		expect(input.value).toBe('');
+
+		await fireEvent.blur(input);
+		expect(input.value).toBe('20');
+	});
 });
