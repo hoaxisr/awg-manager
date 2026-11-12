@@ -22323,6 +22323,166 @@ paths:
       summary: WAN status
       tags:
       - wan
+  /warpscout/account/delete:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Delete WARP account
+      tags:
+      - warpscout
+  /warpscout/account/license:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Apply WARP+ license
+      tags:
+      - warpscout
+  /warpscout/account/register:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Register Cloudflare WARP account
+      tags:
+      - warpscout
+  /warpscout/apply:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Apply WARP endpoint
+      tags:
+      - warpscout
+  /warpscout/config:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Save WARP autopilot config
+      tags:
+      - warpscout
+  /warpscout/scan/start:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Start WARP endpoint scan
+      tags:
+      - warpscout
+  /warpscout/scan/stop:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Stop WARP endpoint scan
+      tags:
+      - warpscout
+  /warpscout/state:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: WARP scanner state
+      tags:
+      - warpscout
+  /warpscout/stats/reset:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Reset WARP autopilot stats
+      tags:
+      - warpscout
+  /warpscout/targets:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: WARP autopilot targets
+      tags:
+      - warpscout
   /zapret/control:
     post:
       consumes:

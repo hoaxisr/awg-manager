@@ -321,6 +321,38 @@ func (c *WireguardCommands) SetPeerComment(ctx context.Context, iface query.Conf
 		func() { c.invalidateServer(ifaceName) })
 }
 
+// SetPeerEndpoint меняет endpoint СУЩЕСТВУЮЩЕГО пира — горячая подмена узла
+// туннеля (автопилот WARP) без пересоздания интерфейса и без потери
+// политик, привязанных к нему. Как и прочие операции по ключу, на ключе,
+// которого на интерфейсе нет, ни одного поста не делается: NDMS создал бы
+// такого пира (см. requirePeer). Описание пира переносится явно — частичная
+// правка пира без comment стирает его в NDMS.
+func (c *WireguardCommands) SetPeerEndpoint(ctx context.Context, iface query.Confirmed, pubKey, endpoint string) error {
+	ifaceName := iface.Name()
+	peer, err := c.freshPeerIn(ctx, iface, pubKey)
+	if err != nil {
+		if errors.Is(err, peersubnet.ErrPeerNotFound) {
+			return err
+		}
+		return fmt.Errorf("check peer on router: %w", err)
+	}
+	p := map[string]any{"key": pubKey, "endpoint": map[string]any{"address": endpoint}}
+	if peer.Description != "" {
+		p["comment"] = peer.Description
+	}
+	payload := map[string]any{
+		"interface": map[string]any{
+			ifaceName: map[string]any{
+				"wireguard": map[string]any{
+					"peer": []map[string]any{p},
+				},
+			},
+		},
+	}
+	return postMutationChecked(ctx, c.poster, c.save, payload, "set peer endpoint "+ifaceName,
+		func() { c.invalidateServer(ifaceName) })
+}
+
 // UpdatePeerAllowIPs removes old /32 and sets a new one. Снятие старого
 // терпит `no such net in peer` (11.A/11.8): /32 уже может не стоять — после
 // отказа отката или правки мимо панели, и смена адреса иначе застревала бы.

@@ -15,6 +15,7 @@ mkdir -p /opt/var/log
 # Set permissions
 chmod 755 /opt/bin/awg-manager
 chmod 755 /opt/sbin/awg
+chmod 755 /opt/sbin/awgm-warpscout 2>/dev/null || true
 chmod 755 /opt/etc/init.d/S99awg-manager
 for hook in iflayerchanged ifcreated ifdestroyed ifipchanged; do
     chmod 755 "/opt/etc/ndm/${hook}.d/50-awg-manager.sh" 2>/dev/null || true

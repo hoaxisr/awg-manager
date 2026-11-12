@@ -124,6 +124,13 @@ build_ipk_one() {
         exit 1
     fi
 
+    local WARPSCOUT_BIN="c-core/warpscout/out/awgm-warpscout-${AWG_ARCH}"
+    if [[ ! -f "$WARPSCOUT_BIN" ]]; then
+        echo "ERROR: Missing $WARPSCOUT_BIN"
+        echo "Run 'make -C c-core/warpscout cross' before building IPK."
+        exit 1
+    fi
+
     # Kernel modules are bundled per-model from prebuilt/kmod/.
     # At runtime, the daemon selects the correct .ko for the detected router model.
 
@@ -158,6 +165,8 @@ build_ipk_one() {
     cp build/bin/awg-manager "$IPK_ROOT/opt/bin/"
     cp "$AWG_CLI_BIN" "$IPK_ROOT/opt/sbin/awg"
     chmod +x "$IPK_ROOT/opt/sbin/awg"
+    cp "$WARPSCOUT_BIN" "$IPK_ROOT/opt/sbin/awgm-warpscout"
+    chmod 755 "$IPK_ROOT/opt/sbin/awgm-warpscout"
 
     # wdtt/freeturn в IPK не кладём: бинари приезжают только с зеркала по пину
     # install.go, с проверкой SHA256. Бандл давал молчаливое расхождение —

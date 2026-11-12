@@ -45,6 +45,7 @@ const (
 	SubConnectivity   = "connectivity"
 	SubTest           = "test"
 	SubSignature      = "signature"
+	SubWarpScout      = "warpscout"
 	SubDnsRoute       = "dns-route"
 	SubStaticRoute    = "static-route"
 	SubAccessPolicy   = "access-policy"
@@ -120,7 +121,7 @@ func BucketForGroup(group string) Bucket {
 var KnownSubgroups = map[string][]string{
 	GroupTunnel: {
 		SubLifecycle, SubOrchestrator, SubOps, SubKmod, SubState, SubFirewall,
-		SubPingcheck, SubConnectivity, SubTest, SubSignature,
+		SubPingcheck, SubConnectivity, SubTest, SubSignature, SubWarpScout,
 	},
 	GroupRouting: {
 		SubDnsRoute, SubStaticRoute, SubAccessPolicy, SubClientRoute,

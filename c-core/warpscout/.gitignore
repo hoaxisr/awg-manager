@@ -1,0 +1,6 @@
+tools/wgcheck/wgcheck.exe
+tools/wgcheck/wgcheck
+out/*.pdb
+out/*.lib
+out/*.exe
+out/warpscout_test*

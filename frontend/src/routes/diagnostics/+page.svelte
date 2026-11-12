@@ -17,7 +17,7 @@
 	import DnsInfoTab from './DnsInfoTab.svelte';
 	import { MonitoringTab } from '$lib/components/pingcheck';
 
-	type ActiveTab = 'logs' | 'monitoring' | 'connections' | 'checks' | 'about' | 'awgConfig' | 'dns' | 'system';
+	type ActiveTab = 'logs' | 'monitoring' | 'connections' | 'checks' | 'about' | 'warpscout' | 'awgConfig' | 'dns' | 'system';
 
 	function initialDiagnosticsTab(): ActiveTab {
 		const tab = $page.url.searchParams.get('tab');
@@ -26,6 +26,7 @@
 		if (tab === 'connections') return 'connections';
 		if (tab === 'checks') return 'checks';
 		if (tab === 'about') return 'about';
+		if (tab === 'warpscout') return 'warpscout';
 		if (tab === 'awgConfig') return 'awgConfig';
 		if (tab === 'dns') return 'dns';
 		if (tab === 'system') return 'system';
@@ -53,6 +54,7 @@
 		connections: m.diag_tab_connections(),
 		checks: m.diag_tab_checks(),
 		about: m.diag_tab_about(),
+		warpscout: m.diag_tab_warpscout(),
 		awgConfig: m.diag_tab_awg_config(),
 		dns: m.diag_tab_dns(),
 		system: m.diag_tab_system(),
@@ -65,6 +67,7 @@
 			{ id: 'connections', label: tabLabels.connections },
 			{ id: 'checks', label: tabLabels.checks },
 			{ id: 'about', label: tabLabels.about },
+			{ id: 'warpscout', label: tabLabels.warpscout },
 		];
 		if ($usageLevel === 'expert') {
 			base.push({ id: 'awgConfig', label: tabLabels.awgConfig });
@@ -203,6 +206,10 @@
 		<ChecksTab {tunnels} />
 	{:else if activeTab === 'about'}
 		<AboutDeviceTab />
+	{:else if activeTab === 'warpscout'}
+		{#await import('$lib/components/warpscout/WarpScoutTab.svelte') then { default: WarpScoutTab }}
+			<WarpScoutTab />
+		{/await}
 	{:else if activeTab === 'awgConfig'}
 		<AwgConfigAnalyzerTab />
 	{:else if activeTab === 'dns'}

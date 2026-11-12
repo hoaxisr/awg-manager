@@ -54,6 +54,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 	"github.com/hoaxisr/awg-manager/internal/updater"
+	"github.com/hoaxisr/awg-manager/internal/warpscout"
 )
 
 const (
@@ -140,6 +141,7 @@ type Server struct {
 	singboxConfigPreviewFn     func() (string, error)
 	obfuscatorRelayChanged     func()
 	dnsCheckService            *dnscheck.Service
+	warpScout                  *warpscout.Service
 	authMiddleware             *auth.Middleware
 	mcpKeys                    *storage.McpKeyStore
 	// mcpCalls is cancelled by Shutdown so in-flight MCP tool calls stop
@@ -586,6 +588,10 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
+	if s.warpScout != nil {
+		s.warpScout.Start()
+	}
+
 	// Фоновая проверка «не открыты ли мы наружу без пароля» — гвард
 	// конструируется в registerRoutes, поэтому запускается сразу после.
 	if s.exposureGuard != nil {
@@ -644,6 +650,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.exposureGuardStop != nil {
 		s.exposureGuardStop()
 		s.exposureGuardStop = nil
+	}
+
+	if s.warpScout != nil {
+		s.warpScout.Stop()
 	}
 
 	if s.mcpCallsCancel != nil {
@@ -708,6 +718,9 @@ func (s *Server) ScheduleRestart() {
 			s.appLog.Info("restart", executable, "restarting daemon")
 
 			// Run shutdown hooks (stop PingCheck, sessions, log buffer, etc.)
+			if s.warpScout != nil {
+				s.warpScout.Stop()
+			}
 			for _, fn := range s.shutdownHooksSnapshot() {
 				fn()
 			}
@@ -731,6 +744,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.registerServerRoutes(mux, h)
 	s.registerPolicyRoutes(mux, h)
 	s.registerDiagnosticsRoutes(mux, h)
+	s.registerWarpScoutRoutes(mux, h)
 	s.wireCrossHandlers(mux, h)
 	s.registerSingboxRoutes(mux, h)
 	s.registerProxyRtRoutes(mux, h)

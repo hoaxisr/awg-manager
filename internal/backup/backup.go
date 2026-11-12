@@ -392,6 +392,9 @@ func shouldSkip(rel string) bool {
 	if rel == storage.DeviceKeyFile || strings.HasPrefix(rel, storage.DeviceKeyFile+".") {
 		return true
 	}
+	if rel == storage.WarpScoutKeyFile || strings.HasPrefix(rel, storage.WarpScoutKeyFile+".") {
+		return true
+	}
 	// rci-token.tmp от прерванной атомарной записи отсеивает правило *.tmp ниже.
 	if rel == storage.RCITokenFile {
 		return true

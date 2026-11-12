@@ -42,6 +42,7 @@
     connectivity: () => 'Connectivity',
     test: m.diag_logs_sub_test,
     signature: m.diag_logs_sub_signature,
+    warpscout: m.diag_tab_warpscout,
     // routing
     'dns-route': m.diag_logs_sub_dns_route,
     'static-route': m.diag_logs_sub_static_route,
