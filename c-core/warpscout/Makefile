@@ -6,7 +6,7 @@ LDFLAGS ?= -static -s -Wl,--gc-sections
 
 SRC := src/main.c src/wgcrypto.c src/wg.c src/netpkt.c src/json.c vendor/monocypher.c
 HDR := src/wgcrypto.h src/wg.h src/netpkt.h src/json.h src/platform.h src/selftest_vectors.h vendor/monocypher.h
-TEST_SRC := tests/test_main.c src/wgcrypto.c src/wg.c src/netpkt.c vendor/monocypher.c
+TEST_SRC := tests/test_main.c src/wgcrypto.c src/wg.c src/netpkt.c src/json.c vendor/monocypher.c
 
 .PHONY: all host cross test clean vectors
 
@@ -32,7 +32,8 @@ out/awgm-warpscout-arm64: $(SRC) $(HDR)
 
 cross: out/awgm-warpscout-mipsle out/awgm-warpscout-mips out/awgm-warpscout-arm64
 
-out/warpscout_test: $(TEST_SRC) $(HDR)
+# тест включает src/main.c целиком (static-функции)
+out/warpscout_test: $(TEST_SRC) src/main.c $(HDR)
 	@mkdir -p out
 	$(CC) $(CFLAGS) -o $@ $(TEST_SRC)
 

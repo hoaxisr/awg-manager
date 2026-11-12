@@ -40,7 +40,7 @@ try {
 
     Write-Host "==> warpscout_test.exe"
     $tst = @("cc", "-target", "x86_64-windows-gnu") + $common + @("-o", "out/warpscout_test.exe",
-             "tests/test_main.c", "src/wgcrypto.c", "src/wg.c", "src/netpkt.c", "vendor/monocypher.c",
+             "tests/test_main.c", "src/wgcrypto.c", "src/wg.c", "src/netpkt.c", "src/json.c", "vendor/monocypher.c",
              "-lws2_32", "-lbcrypt")
     & $Zig @tst
     if ($LASTEXITCODE -ne 0) { throw "test build failed" }

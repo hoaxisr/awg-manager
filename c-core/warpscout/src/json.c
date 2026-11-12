@@ -62,6 +62,8 @@ static char *parse_string(jp *s) {
             unsigned u;
             if (s->end - s->p < 4 || hex4(s->p, &u) != 0) { s->err = "bad \\u escape"; free(o); return NULL; }
             s->p += 4;
+            /* строки DOM NUL-терминированы: U+0000 молча обрезал бы значение */
+            if (u == 0) { s->err = "\\u0000 not supported"; free(o); return NULL; }
             if (u >= 0xD800 && u <= 0xDBFF && s->end - s->p >= 6 && s->p[0] == '\\' && s->p[1] == 'u') {
                 unsigned lo;
                 if (hex4(s->p + 2, &lo) == 0 && lo >= 0xDC00 && lo <= 0xDFFF) {
@@ -155,7 +157,7 @@ static int parse_value(jp *s, jval *v) {
         char buf[64];
         size_t n = 0;
         while (s->p < s->end && n < sizeof(buf) - 1 &&
-               (strchr("+-.eE", *s->p) || (*s->p >= '0' && *s->p <= '9')))
+               ((*s->p && strchr("+-.eE", *s->p)) || (*s->p >= '0' && *s->p <= '9')))
             buf[n++] = *s->p++;
         buf[n] = 0;
         char *e;

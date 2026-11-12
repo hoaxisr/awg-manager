@@ -18,6 +18,7 @@
 #include <string.h>
 #include <signal.h>
 #include <ctype.h>
+#include <errno.h>
 
 #ifdef __linux__
 #include <net/if.h>
@@ -177,7 +178,10 @@ static int cfg_arr(const jval *o, const char *k, const jval **out) {
 }
 static int cfg_key32(const char *name, const char *b64, uint8_t out[32]) {
     uint8_t tmp[48];
-    if (b64_decode(b64, tmp, sizeof(tmp)) != 32) CFG_FAIL("%s: expected 32-byte base64 key", name);
+    if (b64_decode(b64, tmp, sizeof(tmp)) != 32) {
+        wipe(tmp, sizeof(tmp));
+        CFG_FAIL("%s: expected 32-byte base64 key", name);
+    }
     memcpy(out, tmp, 32);
     wipe(tmp, sizeof(tmp));
     return 0;
@@ -271,6 +275,7 @@ static int load_config(const jval *o) {
     if (cfg_arr(o, "endpoints", &a)) return -1;
     if (a && a->n > 0) {
         C.eps = (endpoint *)calloc((size_t)a->n, sizeof(endpoint));
+        if (!C.eps) CFG_FAIL("out of memory");
         for (int i = 0; i < a->n; i++) {
             if (a->items[i].t != J_STR || parse_endpoint(a->items[i].str, &C.eps[C.n_eps], 0) != 0)
                 CFG_FAIL("endpoints[%d]: expected \"ipv4:port\"", i);
@@ -280,6 +285,7 @@ static int load_config(const jval *o) {
     if (cfg_arr(o, "prefixes", &a)) return -1;
     if (a && a->n > 0) {
         C.pfx = (prefix4 *)calloc((size_t)a->n, sizeof(prefix4));
+        if (!C.pfx) CFG_FAIL("out of memory");
         for (int i = 0; i < a->n; i++) {
             if (a->items[i].t != J_STR || parse_prefix(a->items[i].str, &C.pfx[C.n_pfx]) != 0)
                 CFG_FAIL("prefixes[%d]: expected IPv4 CIDR (>= /8)", i);
@@ -288,11 +294,13 @@ static int load_config(const jval *o) {
     } else {
         size_t n = sizeof(DEFAULT_PREFIXES) / sizeof(DEFAULT_PREFIXES[0]);
         C.pfx = (prefix4 *)calloc(n, sizeof(prefix4));
+        if (!C.pfx) CFG_FAIL("out of memory");
         for (size_t i = 0; i < n; i++) parse_prefix(DEFAULT_PREFIXES[i], &C.pfx[C.n_pfx++]);
     }
     if (cfg_arr(o, "ports", &a)) return -1;
     if (a && a->n > 0) {
         C.ports = (uint16_t *)calloc((size_t)a->n, sizeof(uint16_t));
+        if (!C.ports) CFG_FAIL("out of memory");
         for (int i = 0; i < a->n; i++) {
             if (a->items[i].t != J_NUM || a->items[i].num < 1 || a->items[i].num > 65535)
                 CFG_FAIL("ports[%d]: expected 1..65535", i);
@@ -301,12 +309,14 @@ static int load_config(const jval *o) {
     } else {
         size_t n = sizeof(DEFAULT_PORTS) / sizeof(DEFAULT_PORTS[0]);
         C.ports = (uint16_t *)calloc(n, sizeof(uint16_t));
+        if (!C.ports) CFG_FAIL("out of memory");
         memcpy(C.ports, DEFAULT_PORTS, sizeof(DEFAULT_PORTS));
         C.n_ports = n;
     }
     if (cfg_arr(o, "exclude_endpoints", &a)) return -1;
     if (a && a->n > 0) {
         C.excl = (endpoint *)calloc((size_t)a->n, sizeof(endpoint));
+        if (!C.excl) CFG_FAIL("out of memory");
         for (int i = 0; i < a->n; i++) {
             if (a->items[i].t != J_STR || parse_endpoint(a->items[i].str, &C.excl[C.n_excl], 1) != 0)
                 CFG_FAIL("exclude_endpoints[%d]: expected \"ipv4[:port]\"", i);
@@ -322,11 +332,16 @@ static int load_config(const jval *o) {
     if (cfg_int(o, "max_hits", 10, 1, 1000000, &v)) return -1; C.max_hits = (int)v;
     {
         const jval *sv = json_get(o, "seed");
-        if (sv && sv->t == J_NUM) C.seed = (uint64_t)(sv->num < 0 ? -sv->num : sv->num);
+        if (sv && sv->t == J_NUM) {
+            /* отрицание условия отсекает и NaN */
+            if (!(sv->num >= 0 && sv->num < 9223372036854775808.0)) CFG_FAIL("seed: out of range");
+            C.seed = (uint64_t)sv->num;
+        }
         else if (sv && sv->t != J_NULL) CFG_FAIL("seed: expected number");
     }
     if (cfg_str(o, "ifname", "", &s)) return -1;
-    if (strlen(s) >= sizeof(C.ifname)) CFG_FAIL("ifname too long");
+    /* ядро молча обрезает имя до IFNAMSIZ-1 = 15, и привязка ушла бы на интерфейс-префикс */
+    if (strlen(s) > 15) CFG_FAIL("ifname too long");
     strcpy(C.ifname, s);
     if (cfg_int(o, "fwmark", 0, 0, 4294967295LL, &v)) return -1; C.fwmark = (uint32_t)v;
 
@@ -346,6 +361,7 @@ static int load_config(const jval *o) {
                 if (!*hs) continue;
                 size_t cap = strlen(hs) / 2 + 1;
                 C.ipkt[i] = (uint8_t *)malloc(cap);
+                if (!C.ipkt[i]) CFG_FAIL("out of memory");
                 int n = hex_decode(hs, C.ipkt[i], cap);
                 if (n < 0) CFG_FAIL("awg.i[%d]: invalid hex", i);
                 if (n > 1400) CFG_FAIL("awg.i[%d]: packet too large (%d bytes)", i, n);
@@ -403,23 +419,26 @@ static void index_to_ep(uint64_t idx, endpoint *ep) {
     ep->port = 0;
 }
 
-static void build_candidates(void) {
+/* returns 0 ok, -1 out of memory; при g_stop список остаётся неполным — run_scan сразу выйдет */
+static int build_candidates(void) {
     size_t cap = (size_t)C.max_candidates;
     g_cands = (endpoint *)calloc(cap ? cap : 1, sizeof(endpoint));
+    if (!g_cands) return -1;
     g_ncands = 0;
     if (C.n_eps > 0) {
         for (size_t i = 0; i < C.n_eps && g_ncands < cap; i++)
             if (!is_excluded(C.eps[i].ip, C.eps[i].port)) g_cands[g_ncands++] = C.eps[i];
-        return;
+        return 0;
     }
     uint64_t hosts = 0;
     for (size_t i = 0; i < C.n_pfx; i++) hosts += 1ULL << (32 - C.pfx[i].bits);
     uint64_t total = hosts * C.n_ports;
-    if (total == 0) return;
+    if (total == 0) return 0;
     if (total <= 262144) {
         endpoint *all = (endpoint *)malloc((size_t)total * sizeof(endpoint));
+        if (!all) return -1;
         size_t n = 0;
-        for (uint64_t i = 0; i < total; i++) {
+        for (uint64_t i = 0; i < total && !g_stop; i++) {
             endpoint ep;
             index_to_ep(i, &ep);
             if (!is_excluded(ep.ip, ep.port)) all[n++] = ep;
@@ -431,14 +450,18 @@ static void build_candidates(void) {
             g_cands[g_ncands++] = all[i];
         }
         free(all);
-        return;
+        return 0;
     }
     /* huge space: random sampling without replacement via a small hash set */
     size_t hsz = 1;
     while (hsz < cap * 2 + 16) hsz <<= 1;
     uint64_t *set = (uint64_t *)calloc(hsz, sizeof(uint64_t));
+    if (!set) return -1;
     size_t attempts = cap * 8 + 64;
-    while (g_ncands < cap && attempts-- > 0) {
+    /* used < hsz / 2: исключённые тоже занимают ячейки, а в заполненной таблице
+     * поиск свободной не завершается */
+    size_t used = 0;
+    while (g_ncands < cap && attempts-- > 0 && used < hsz / 2 && !g_stop) {
         uint64_t idx = prng_below(total);
         uint64_t key = idx + 1;
         size_t h = (size_t)((key * 0x9E3779B97F4A7C15ULL) >> 20) & (hsz - 1);
@@ -449,11 +472,13 @@ static void build_candidates(void) {
         }
         if (dup) continue;
         set[h] = key;
+        used++;
         endpoint ep;
         index_to_ep(idx, &ep);
         if (!is_excluded(ep.ip, ep.port)) g_cands[g_ncands++] = ep;
     }
     free(set);
+    return 0;
 }
 
 /* -------------------------------------------------------------- scanner */
@@ -551,7 +576,7 @@ static void tcp_send(cand *c, tcpc *t, uint32_t seq, uint8_t flags, uint16_t mss
 }
 
 static void tcp_start(cand *c, tcpc *t, uint32_t dst, uint16_t dport) {
-    uint32_t r;
+    uint32_t r = (uint32_t)prng_next(); /* остаётся, если os_random откажет */
     os_random(&r, sizeof(r));
     memset(t, 0, sizeof(*t));
     t->dst = dst;
@@ -666,6 +691,15 @@ static void on_echo_reply(cand *c, uint16_t seq) {
     if (C.probe_tg) tcp_start(c, &c->tg, C.tg_ip, 443);
 }
 
+/* Значение уходит в stdout внутри JSON-строки: берём только [A-Za-z0-9], иначе поле пропускаем. */
+static void trace_field(char *dst, size_t cap, const char *v, size_t l) {
+    if (l >= cap) return;
+    for (size_t i = 0; i < l; i++)
+        if (!isalnum((unsigned char)v[i])) return;
+    memcpy(dst, v, l);
+    dst[l] = 0;
+}
+
 static void parse_trace(cand *c) {
     const char *b = (const char *)c->rbuf;
     size_t n = c->contig;
@@ -683,13 +717,11 @@ static void parse_trace(cand *c) {
         size_t l = j - i;
         if (l && b[i + l - 1] == '\r') l--;
         const char *line = b + i;
-        if (l > 5 && !memcmp(line, "colo=", 5) && l - 5 < sizeof(c->colo)) {
-            memcpy(c->colo, line + 5, l - 5); c->colo[l - 5] = 0;
-        } else if (l > 4 && !memcmp(line, "loc=", 4) && l - 4 < sizeof(c->loc)) {
-            memcpy(c->loc, line + 4, l - 4); c->loc[l - 4] = 0;
-        } else if (l > 5 && !memcmp(line, "warp=", 5) && l - 5 < sizeof(c->warp)) {
-            memcpy(c->warp, line + 5, l - 5); c->warp[l - 5] = 0;
-            have_warp = 1;
+        if (l > 5 && !memcmp(line, "colo=", 5)) trace_field(c->colo, sizeof(c->colo), line + 5, l - 5);
+        else if (l > 4 && !memcmp(line, "loc=", 4)) trace_field(c->loc, sizeof(c->loc), line + 4, l - 4);
+        else if (l > 5 && !memcmp(line, "warp=", 5)) {
+            trace_field(c->warp, sizeof(c->warp), line + 5, l - 5);
+            have_warp = c->warp[0] != 0;
         }
         i = j + 1;
     }
@@ -732,7 +764,8 @@ static void trace_input(cand *c, const pkt_info *pi) {
         for (size_t k = 0; k < take; k++) c->rmark[(off + k) >> 3] |= (uint8_t)(1u << ((off + k) & 7));
         while (c->contig < RBUF_SIZE && (c->rmark[c->contig >> 3] & (1u << (c->contig & 7)))) c->contig++;
     }
-    if ((pi->flags & TCPF_FIN) && off + pi->dlen <= RBUF_SIZE) {
+    /* без сложения: на 32-бит off + dlen заворачивается */
+    if ((pi->flags & TCPF_FIN) && off <= RBUF_SIZE && pi->dlen <= RBUF_SIZE - off) {
         t->fin_seen = 1;
         t->fin_off = off + (uint32_t)pi->dlen;
     }
@@ -827,13 +860,18 @@ static int apply_sockopts(sock_t s) {
 #endif
 }
 
-/* returns 0 started, 1 skipped (socket error), -1 fatal */
+/* returns 0 started, 1 skipped (socket error), 2 out of descriptors (retry later), -1 fatal */
 static int start_candidate(cand *c, endpoint ep) {
     struct sockaddr_in sa;
     uint32_t idx;
     memset(c, 0, sizeof(*c));
+    c->ep = ep;
     c->fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (c->fd == WS_BAD_SOCK) { c->state = CS_FREE; return 1; }
+    if (c->fd == WS_BAD_SOCK) {
+        int e = ws_sockerr();
+        c->state = CS_FREE;
+        return (e == EMFILE || e == ENFILE) ? 2 : 1;
+    }
     if (apply_sockopts(c->fd) != 0) { ws_closesock(c->fd); c->fd = WS_BAD_SOCK; return -1; }
     ws_set_nonblock(c->fd);
     memset(&sa, 0, sizeof(sa));
@@ -845,8 +883,13 @@ static int start_candidate(cand *c, endpoint ep) {
         c->fd = WS_BAD_SOCK;
         return 1;
     }
-    do { os_random(&idx, sizeof(idx)); } while (idx == 0 || idx_in_use(idx));
-    c->ep = ep;
+    do {
+        if (os_random(&idx, sizeof(idx)) != 0) {
+            ws_closesock(c->fd);
+            c->fd = WS_BAD_SOCK;
+            return 1;
+        }
+    } while (idx == 0 || idx_in_use(idx));
     if (wg_create_initiation(&g_id, &c->hs, idx, NULL, c->init_pkt) != 0) {
         ws_closesock(c->fd);
         c->fd = WS_BAD_SOCK;
@@ -960,10 +1003,18 @@ static int run_scan(void) {
             for (int i = 0; i < g_nslots; i++)
                 if (g_slots[i].state == CS_FREE) { slot = i; break; }
             if (slot < 0) break;
-            int rc = start_candidate(&g_slots[slot], g_cands[next++]);
+            int rc = start_candidate(&g_slots[slot], g_cands[next]);
+            if (rc == 2) {
+                /* дескрипторы кончились: кандидата не берём, повторим, когда освободится слот;
+                 * если своих сокетов нет, ждать нечего */
+                if (g_active == 0) { emit_error("socket() failed: too many open files"); g_fatal = 1; }
+                break;
+            }
+            next++;
             started++;
             if (rc < 0) { g_fatal = 1; break; }
-            if (rc > 0) g_done++;
+            /* finish() сам снимает g_active и считает g_done, а при emit_rejects печатает reject */
+            if (rc > 0) { g_active++; finish(&g_slots[slot], "socket_error"); }
         }
         if (g_fatal) break;
         if (g_active == 0 && next >= g_ncands) break;
@@ -1074,12 +1125,19 @@ static char *read_stdin(size_t *len) {
             b = nb;
         }
         size_t r = fread(b + n, 1, cap - n, stdin);
-        if (r == 0) break;
         n += r;
+        if (r == 0 || g_stop) break;
     }
     b[n] = 0;
     *len = n;
     return b;
+}
+
+/* exit() зовётся и из emit, поэтому секреты затираются здесь, а не перед каждым return */
+static void wipe_secrets(void) {
+    wipe(C.priv, sizeof(C.priv));
+    wipe(C.psk, sizeof(C.psk));
+    wipe(&g_id, sizeof(g_id));
 }
 
 int main(int argc, char **argv) {
@@ -1098,18 +1156,38 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+#ifdef _WIN32
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
-#ifndef _WIN32
+#else
+    {   /* без SA_RESTART: блокирующие read/write обязаны вернуть EINTR, иначе сигнал
+         * ждёт конца ввода-вывода */
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = on_signal;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGINT, &sa, NULL);
+        sigaction(SIGTERM, &sa, NULL);
+        sigaction(SIGHUP, &sa, NULL);
+    }
     signal(SIGPIPE, SIG_IGN);
-    signal(SIGHUP, on_signal);
 #endif
+    atexit(wipe_secrets);
 
     if (ws_net_init() != 0) { emit_error("network init failed"); return 2; }
+    {   /* дальше результат os_random не проверяется; заодно /dev/urandom открыт до сокетов */
+        uint8_t b;
+        if (os_random(&b, sizeof(b)) != 0) { emit_error("system random source unavailable"); return 2; }
+    }
 
     size_t len = 0;
     char *text = read_stdin(&len);
     if (!text) { emit_error("failed to read config from stdin"); return 1; }
+    if (g_stop) {
+        wipe(text, len);
+        free(text);
+        return 0;
+    }
     jval root;
     char err[160];
     if (json_parse(text, len, &root, err, sizeof(err)) != 0) {
@@ -1135,6 +1213,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     wipe(C.priv, sizeof(C.priv));
+    wipe(C.psk, sizeof(C.psk));
 
     {   /* verify sockopts up-front so a bad ifname fails fast */
         sock_t s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -1146,7 +1225,7 @@ int main(int argc, char **argv) {
 
     if (C.seed) g_prng = C.seed;
     else os_random(&g_prng, sizeof(g_prng));
-    build_candidates();
+    if (build_candidates() != 0) { emit_error("out of memory"); return 2; }
     rc = run_scan();
     wipe(&g_id, sizeof(g_id));
     return rc;

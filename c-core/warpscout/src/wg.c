@@ -52,7 +52,7 @@ int wg_create_initiation(const wg_identity *id, wg_hs *hs, uint32_t local_idx,
     wg_kdf(hs->C, NULL, NULL, hs->C, hs->e_pub, 32);
     wg_hash2(hs->H, hs->H, 32, hs->e_pub, 32);
     /* es */
-    if (x25519_dh(dh, hs->e_priv, id->peer_pub) != 0) return -1;
+    if (x25519_dh(dh, hs->e_priv, id->peer_pub) != 0) { wipe(dh, 32); return -1; }
     wg_kdf(hs->C, k, NULL, hs->C, dh, 32);
     /* s */
     aead_seal(out + 40, k, 0, id->static_pub, 32, hs->H, 32);
@@ -72,6 +72,7 @@ int wg_create_initiation(const wg_identity *id, wg_hs *hs, uint32_t local_idx,
 
 int wg_consume_response(const wg_identity *id, wg_hs *hs, const uint8_t *msg, size_t len) {
     uint8_t C[32], H[32], dh[32], t[32], k[32];
+    int rc = -1;
     if (len != WG_RESP_LEN || msg[0] != WG_MSG_RESP) return -1;
     if (wg_ld32(msg + 8) != hs->local_idx) return -1;
     const uint8_t *er = msg + 12;
@@ -79,13 +80,13 @@ int wg_consume_response(const wg_identity *id, wg_hs *hs, const uint8_t *msg, si
     memcpy(H, hs->H, 32);
     wg_kdf(C, NULL, NULL, C, er, 32);
     wg_hash2(H, H, 32, er, 32);
-    if (x25519_dh(dh, hs->e_priv, er) != 0) return -1;      /* ee */
+    if (x25519_dh(dh, hs->e_priv, er) != 0) goto out;       /* ee */
     wg_kdf(C, NULL, NULL, C, dh, 32);
-    if (x25519_dh(dh, id->static_priv, er) != 0) return -1; /* se */
+    if (x25519_dh(dh, id->static_priv, er) != 0) goto out;  /* se */
     wg_kdf(C, NULL, NULL, C, dh, 32);
     wg_kdf(C, t, k, C, id->psk, 32);                        /* psk */
     wg_hash2(H, H, 32, t, 32);
-    if (aead_open(NULL, k, 0, msg + 44, 16, H, 32) != 0) return -1;
+    if (aead_open(NULL, k, 0, msg + 44, 16, H, 32) != 0) goto out;
     wg_hash2(H, H, 32, msg + 44, 16);
     wg_kdf(hs->send_key, hs->recv_key, NULL, C, NULL, 0);
     hs->remote_idx = wg_ld32(msg + 4);
@@ -94,8 +95,10 @@ int wg_consume_response(const wg_identity *id, wg_hs *hs, const uint8_t *msg, si
     memcpy(hs->C, C, 32);
     memcpy(hs->H, H, 32);
     wipe(hs->e_priv, 32);
+    rc = 0;
+out:
     wipe(C, 32); wipe(dh, 32); wipe(t, 32); wipe(k, 32);
-    return 0;
+    return rc;
 }
 
 size_t wg_encrypt_transport(wg_hs *hs, const uint8_t *ip, size_t len, uint8_t *out) {

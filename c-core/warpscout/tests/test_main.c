@@ -1,11 +1,9 @@
 /* Test-only WireGuard responder + round-trip test for awgm-warpscout.
  * Not linked into the production binary. */
-#include "../src/wgcrypto.h"
-#include "../src/wg.h"
-#include "../src/netpkt.h"
-
-#include <stdio.h>
-#include <string.h>
+/* main.c подключён целиком ради его static-функций; его main переименован */
+#define main ws_main
+#include "../src/main.c"
+#undef main
 
 typedef struct {
     uint8_t priv[32], pub[32];
@@ -119,6 +117,114 @@ static int roundtrip(const uint8_t *psk) {
     return 0;
 }
 
+static int json_rejects(const char *text, size_t len) {
+    jval v;
+    char err[128];
+    if (json_parse(text, len, &v, err, sizeof(err)) != 0) return 1;
+    json_free(&v);
+    return 0;
+}
+
+static int test_json(void) {
+    jval v;
+    char err[128];
+    if (!json_rejects("1\0002", 3)) return 1;          /* NUL внутри числа */
+    if (!json_rejects("\"a\\u0000b\"", 10)) return 2; /* \u0000 обрезал бы строку */
+    if (json_parse("[-1.5e2,\"\\u0041\"]", 17, &v, err, sizeof(err)) != 0) return 3;
+    int ok = v.n == 2 && v.items[0].num == -150.0 && strcmp(v.items[1].str, "A") == 0;
+    json_free(&v);
+    return ok ? 0 : 4;
+}
+
+static int cfg_rc(const char *extra) {
+    char text[512];
+    jval v;
+    char err[128];
+    int n = snprintf(text, sizeof(text), "{\"private_key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"%s}", extra);
+    if (json_parse(text, (size_t)n, &v, err, sizeof(err)) != 0) return -2;
+    int rc = load_config(&v);
+    json_free(&v);
+    return rc;
+}
+
+static int test_config(void) {
+    if (cfg_rc("") != 0) return 1;
+    if (cfg_rc(",\"seed\":1e30") != -1) return 2;
+    if (cfg_rc(",\"seed\":-1") != -1) return 3;
+    if (cfg_rc(",\"seed\":42") != 0 || C.seed != 42) return 4;
+    if (cfg_rc(",\"ifname\":\"abcdefghijklmnop\"") != -1) return 5; /* 16 > IFNAMSIZ-1 */
+    if (cfg_rc(",\"ifname\":\"abcdefghijklmno\"") != 0) return 6;
+    return 0;
+}
+
+static int test_trace_alphabet(void) {
+    static cand c;
+    static const char resp[] = "HTTP/1.1 200 OK\r\n\r\ncolo=FR\xc3\nloc=D\"E\nwarp=off\n";
+    memset(&c, 0, sizeof(c));
+    memcpy(c.rbuf, resp, sizeof(resp) - 1);
+    c.contig = sizeof(resp) - 1;
+    parse_trace(&c);
+    if (c.colo[0] || c.loc[0] || strcmp(c.warp, "off") != 0) return 1;
+    static const char good[] = "HTTP/1.1 200 OK\r\n\r\ncolo=FRA\nloc=DE\nwarp=plus\n";
+    memset(&c, 0, sizeof(c));
+    memcpy(c.rbuf, good, sizeof(good) - 1);
+    c.contig = sizeof(good) - 1;
+    parse_trace(&c);
+    if (strcmp(c.colo, "FRA") || strcmp(c.loc, "DE") || strcmp(c.warp, "plus") || !c.trace_ok) return 2;
+    return 0;
+}
+
+/* Ложный FIN: сегмент чуть раньше irs+1. На старом коде падает только при 32-битном size_t. */
+static int test_trace_fin(void) {
+    static cand c;
+    static const uint8_t data[16] = {0};
+    pkt_info pi;
+    memset(&c, 0, sizeof(c));
+    c.fd = WS_BAD_SOCK;
+    c.state = CS_PROBE;
+    c.trace.state = TCP_EST;
+    c.trace.irs = 1000;
+    memset(&pi, 0, sizeof(pi));
+    pi.flags = TCPF_FIN | TCPF_ACK;
+    pi.seq = c.trace.irs + 1 - 16;
+    pi.data = data;
+    pi.dlen = sizeof(data);
+    trace_input(&c, &pi);
+    if (c.trace.fin_seen || c.trace_done) return 1;
+    pi.seq = c.trace.irs + 1; /* настоящий FIN по-прежнему принимается */
+    pi.dlen = 1;
+    trace_input(&c, &pi);
+    if (!c.trace.fin_seen || c.trace.fin_off != 1) return 2;
+    return 0;
+}
+
+/* 7 из 8 адресов исключены: до правки хеш-таблица выборки заполнялась и поиск ячейки зависал. */
+static int test_sampling_excluded(void) {
+    static prefix4 pfx = {0x0A000000, 29};
+    static uint16_t ports[40000];
+    static endpoint excl[7];
+    memset(&C, 0, sizeof(C));
+    for (int i = 0; i < 40000; i++) ports[i] = (uint16_t)(i + 1);
+    for (int i = 0; i < 7; i++) excl[i].ip = 0x0A000000 + (uint32_t)i;
+    C.pfx = &pfx; C.n_pfx = 1;
+    C.ports = ports; C.n_ports = 40000;
+    C.excl = excl; C.n_excl = 7;
+    C.max_candidates = 1000;
+    g_prng = 1;
+#ifndef _WIN32
+    alarm(20);
+#endif
+    if (build_candidates() != 0) return 1;
+#ifndef _WIN32
+    alarm(0);
+#endif
+    if (g_ncands == 0 || g_ncands > 1000) return 2;
+    for (size_t i = 0; i < g_ncands; i++)
+        if (g_cands[i].ip != 0x0A000007) return 3;
+    free(g_cands);
+    return 0;
+}
+
 int main(void) {
     int fails = crypto_selftest(1);
     int rc = roundtrip(NULL);
@@ -131,6 +237,21 @@ int main(void) {
     fails += rc != 0;
     for (int i = 0; i < 50 && !fails; i++) fails += roundtrip(NULL) != 0;
     fprintf(stderr, "test %-38s %s\n", "50x randomized round-trips", fails ? "FAIL" : "ok");
+    rc = test_json();
+    fprintf(stderr, "test %-38s %s (%d)\n", "json: NUL in number, \\u0000", rc ? "FAIL" : "ok", rc);
+    fails += rc != 0;
+    rc = test_config();
+    fprintf(stderr, "test %-38s %s (%d)\n", "config: seed range, ifname length", rc ? "FAIL" : "ok", rc);
+    fails += rc != 0;
+    rc = test_trace_alphabet();
+    fprintf(stderr, "test %-38s %s (%d)\n", "trace: field alphabet", rc ? "FAIL" : "ok", rc);
+    fails += rc != 0;
+    rc = test_trace_fin();
+    fprintf(stderr, "test %-38s %s (%d)\n", "trace: FIN before window", rc ? "FAIL" : "ok", rc);
+    fails += rc != 0;
+    rc = test_sampling_excluded();
+    fprintf(stderr, "test %-38s %s (%d)\n", "candidates: sampling vs excludes", rc ? "FAIL" : "ok", rc);
+    fails += rc != 0;
     fprintf(stderr, "tests: %s\n", fails ? "FAILED" : "all passed");
     return fails ? 1 : 0;
 }
