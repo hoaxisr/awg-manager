@@ -26,7 +26,9 @@
 		scan: WarpScanStatus;
 		engineAvailable: boolean;
 		hasAccount: boolean;
+		accountAddressV4?: string;
 		targets: WarpTunnelRef[];
+		usedIpv4?: string[];
 		scanInterface?: string;
 		routeSummary?: string;
 		/** В автопилоте есть несохранённые правки — включать его из сканера нельзя. */
@@ -39,7 +41,9 @@
 		scan,
 		engineAvailable,
 		hasAccount,
+		accountAddressV4 = '',
 		targets,
+		usedIpv4 = [],
 		scanInterface = '',
 		routeSummary,
 		autopilotLocked,
@@ -241,6 +245,9 @@
 	<WarpCreateTunnelModal
 		hit={createHit}
 		{filters}
+		{accountAddressV4}
+		{targets}
+		{usedIpv4}
 		{autopilotLocked}
 		onclose={() => (createHit = null)}
 		ondone={applied}

@@ -106,6 +106,7 @@ func (s *Server) buildWarpScout(h *routeHandlers) *api.WarpScoutHandler {
 			}
 			return out
 		},
+		UsedIPv4: ops.UsedIPv4,
 	}
 	if s.bus != nil {
 		deps.Bus = s.bus

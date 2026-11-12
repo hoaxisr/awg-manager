@@ -1,24 +1,73 @@
 <script lang="ts">
-	import { KeyRound, RefreshCcw, Trash2, UserPlus } from 'lucide-svelte';
+	import { AlertTriangle, KeyRound, Network, RefreshCcw, Trash2, UserPlus } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { Button, ConfirmModal, Input } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
-	import type { WarpAccount } from '$lib/types/warpscout';
+	import type { WarpAccount, WarpTunnelRef } from '$lib/types/warpscout';
 	import WarpChipPopover from './WarpChipPopover.svelte';
-	import { formatTime, shortId, warpErrorMessage } from './warpscoutUi';
+	import {
+		findTunnelIpv4Conflict,
+		formatTime,
+		parseTunnelIpv4,
+		shortId,
+		suggestFreeTunnelIpv4,
+		warpErrorMessage,
+	} from './warpscoutUi';
 
 	interface Props {
 		account: WarpAccount | null;
+		targets?: WarpTunnelRef[];
+		usedIpv4?: string[];
 		onchanged: () => void | Promise<void>;
 	}
 
-	let { account, onchanged }: Props = $props();
+	let { account, targets = [], usedIpv4 = [], onchanged }: Props = $props();
 
 	let accountBusy = $state(false);
 	let license = $state('');
+	let acctIpv4 = $state('');
+	let syncedIpv4 = $state<string | undefined>(undefined);
 	let confirmReissue = $state(false);
 	let confirmDelete = $state(false);
+
+	$effect(() => {
+		const nextSrv = account ? account.addressV4 || '172.16.0.2' : '';
+		if (syncedIpv4 !== nextSrv) {
+			syncedIpv4 = nextSrv;
+			acctIpv4 = nextSrv;
+		}
+	});
+
+	const acctIpv4Parsed = $derived(parseTunnelIpv4(acctIpv4));
+	const acctIpv4Valid = $derived(acctIpv4Parsed !== null);
+	const acctIpv4Conflict = $derived(findTunnelIpv4Conflict(acctIpv4, targets, usedIpv4));
+	const acctIpv4Suggested = $derived(
+		acctIpv4Conflict.conflict ? suggestFreeTunnelIpv4(acctIpv4, targets, usedIpv4) : '',
+	);
+	const acctIpv4Changed = $derived.by(() => {
+		if (!acctIpv4Parsed) return false;
+		const cur = parseTunnelIpv4(account?.addressV4 || '172.16.0.2')?.normalized ?? '172.16.0.2';
+		return acctIpv4Parsed.normalized !== cur;
+	});
+
+	async function saveAccountAddress(e: SubmitEvent): Promise<void> {
+		e.preventDefault();
+		if (!acctIpv4Parsed) return;
+		accountBusy = true;
+		try {
+			const updated = await api.warpscoutSetAddress(acctIpv4Parsed.normalized);
+			const next = updated.addressV4 || acctIpv4Parsed.normalized;
+			syncedIpv4 = next;
+			acctIpv4 = next;
+			notifications.success(m.warpscout_ipv4_saved());
+			await onchanged();
+		} catch (err) {
+			notifications.error(warpErrorMessage(err));
+		} finally {
+			accountBusy = false;
+		}
+	}
 
 	async function register(): Promise<void> {
 		accountBusy = true;
@@ -78,7 +127,7 @@
 		</Button>
 	</div>
 {:else}
-	<WarpChipPopover title={m.warpscout_acct_pop_title()} width="21.5rem">
+	<WarpChipPopover title={m.warpscout_acct_pop_title()} width="22.5rem">
 		{#snippet chip()}
 			<span class="chip-dot"></span>
 			<span class="chip-strong">{account.warpPlus ? 'WARP+' : 'WARP Free'}</span>
@@ -99,10 +148,6 @@
 					<span class="v mono" title={account.id}>{shortId(account.id)}</span>
 				</div>
 				<div class="kv">
-					<span class="k">{m.warpscout_acct_ipv4()}</span>
-					<span class="v mono">{account.addressV4 || '—'}</span>
-				</div>
-				<div class="kv">
 					<span class="k">{m.warpscout_acct_created()}</span>
 					<span class="v">{formatTime(account.createdAt)}</span>
 				</div>
@@ -111,6 +156,61 @@
 					<span class="v">{m.warpscout_acct_encrypted()}</span>
 				</div>
 			</div>
+
+			<!-- IPv4 туннеля: можно сменить до создания туннеля или для сканера -->
+			<form class="lic-box" onsubmit={saveAccountAddress}>
+				<label class="lic-label" for="warp-acct-ipv4">
+					<Network size={12} />
+					<span>{m.warpscout_acct_ipv4()}</span>
+				</label>
+				<div class="lic-row">
+					<Input
+						id="warp-acct-ipv4"
+						type="text"
+						placeholder="172.16.0.2"
+						autocomplete="off"
+						fullWidth
+						bind:value={acctIpv4}
+					/>
+					<Button
+						size="sm"
+						variant="primary"
+						type="submit"
+						loading={accountBusy}
+						disabled={!acctIpv4Valid || !acctIpv4Changed}
+					>
+						{m.common_save()}
+					</Button>
+				</div>
+				{#if acctIpv4.trim() && !acctIpv4Valid}
+					<span class="ipv4-msg err">{m.warpscout_ipv4_invalid()}</span>
+				{:else if acctIpv4Conflict.conflict}
+					<div class="ipv4-msg warn">
+						<AlertTriangle size={12} />
+						<span>
+							{#if acctIpv4Conflict.tunnelName}
+								{m.warpscout_ipv4_conflict_named({
+									ip: acctIpv4Conflict.host,
+									name: acctIpv4Conflict.tunnelName,
+								})}
+							{:else}
+								{m.warpscout_ipv4_conflict_generic({ ip: acctIpv4Conflict.host })}
+							{/if}
+							{#if acctIpv4Suggested && acctIpv4Suggested !== acctIpv4.trim()}
+								<button
+									type="button"
+									class="ipv4-suggest-btn"
+									onclick={() => (acctIpv4 = acctIpv4Suggested)}
+								>
+									{m.warpscout_ipv4_use_free({ ip: acctIpv4Suggested })}
+								</button>
+							{/if}
+						</span>
+					</div>
+				{:else}
+					<span class="ipv4-hint">{m.warpscout_ipv4_hint()}</span>
+				{/if}
+			</form>
 
 			<!-- Форма: Enter в поле привязывает ключ. -->
 			<form class="lic-box" onsubmit={applyLicense}>
@@ -232,7 +332,7 @@
 	}
 	.kv-grid {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: repeat(3, minmax(0, 1fr));
 		gap: 0.4rem;
 	}
 	.kv {
@@ -275,6 +375,39 @@
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
+	}
+	.ipv4-hint {
+		font-size: 0.69rem;
+		color: var(--color-text-muted);
+		line-height: 1.3;
+	}
+	.ipv4-msg {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.3rem;
+		font-size: 0.7rem;
+		line-height: 1.35;
+	}
+	.ipv4-msg :global(svg) {
+		flex-shrink: 0;
+		margin-top: 0.1rem;
+	}
+	.ipv4-msg.err {
+		color: var(--color-error);
+	}
+	.ipv4-msg.warn {
+		color: var(--color-warning);
+	}
+	.ipv4-suggest-btn {
+		margin-left: 0.25rem;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		color: var(--color-accent);
+		font: inherit;
+		font-weight: 600;
+		text-decoration: underline;
+		cursor: pointer;
 	}
 	.mono {
 		font-family: var(--font-mono);

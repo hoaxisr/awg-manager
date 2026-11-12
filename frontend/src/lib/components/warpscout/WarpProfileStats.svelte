@@ -26,7 +26,6 @@
 
 	const hasStats = $derived(!!stats && (stats.checksTotal > 0 || stats.swapsOk > 0 || stats.swapsFail > 0));
 	const samples = $derived(stats?.samples ?? []);
-	const maxSampleMs = $derived(Math.max(80, ...samples.map((s) => s.latencyMs ?? 0)));
 	const coloDistribution = $derived(topColos(stats?.colos, 4));
 
 	function sampleTooltip(s: WarpCheckSample): string {
@@ -147,7 +146,7 @@
 							<span class="spark-col empty"><span class="spark-fill"></span></span>
 						{:else}
 							{@const barTone = !s.ok ? 'fail' : s.swapped ? 'swap' : latencyTone(s.latencyMs)}
-							{@const hPct = sampleBarHeight(s, maxSampleMs)}
+							{@const hPct = sampleBarHeight(s)}
 							<span class="spark-col {barTone}" title={sampleTooltip(s)}>
 								<span class="spark-fill" style={`height:${hPct}%`}></span>
 							</span>
@@ -269,11 +268,11 @@
 	}
 	.spark-strip {
 		display: grid;
-		grid-template-columns: repeat(32, minmax(0, 1fr));
-		gap: 2px;
-		height: 20px;
-		align-items: end;
-		padding: 2px 3px;
+		grid-template-columns: repeat(20, minmax(0, 1fr));
+		gap: 4px;
+		height: 42px;
+		align-items: stretch;
+		padding: 5px 6px;
 		border-radius: var(--radius-sm);
 		background: var(--color-bg-primary);
 		border: 1px solid var(--color-border);
@@ -283,15 +282,18 @@
 		display: flex;
 		align-items: flex-end;
 		min-width: 0;
+		border-radius: 3px;
+		background: color-mix(in srgb, var(--color-bg-tertiary) 65%, transparent);
+		overflow: hidden;
 	}
 	.spark-fill {
 		width: 100%;
-		border-radius: 1.5px;
+		border-radius: 3px;
 		transition: height 0.2s ease;
 	}
 	.spark-col.empty .spark-fill {
-		height: 22%;
-		background: color-mix(in srgb, var(--color-border) 55%, transparent);
+		height: 0;
+		background: transparent;
 	}
 	.spark-col.ok .spark-fill,
 	.spark-col.none .spark-fill {

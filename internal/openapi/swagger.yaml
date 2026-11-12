@@ -22399,6 +22399,23 @@ paths:
       summary: WAN status
       tags:
       - wan
+  /warpscout/account/address:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Set WARP account tunnel IPv4
+      tags:
+      - warpscout
   /warpscout/account/delete:
     post:
       produces:

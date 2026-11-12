@@ -2,15 +2,19 @@ import { describe, expect, it } from 'vitest';
 import type { WarpConfig, WarpHit, WarpProfile, WarpRouteRef } from '$lib/types/warpscout';
 import {
 	LIMITS,
+	SPARK_SLOTS,
 	buildSparkBars,
 	countryFlag,
 	defaultFilters,
+	findTunnelIpv4Conflict,
 	formatElapsed,
 	formatSlaPct,
 	formatUptime,
 	humanizeSwapReason,
+	isValidTunnelIpv4,
 	latencyTone,
 	parseGoTime,
+	parseTunnelIpv4,
 	routeChipText,
 	routeDisplayLabel,
 	sampleBarHeight,
@@ -20,6 +24,7 @@ import {
 	setProfileEnabled,
 	setProfileMode,
 	sortHits,
+	suggestFreeTunnelIpv4,
 	syncDraft,
 	targetSelectable,
 	topColos,
@@ -257,18 +262,42 @@ describe('warpscoutUi', () => {
 	});
 
 	it('buildSparkBars pads on the left and keeps the newest samples', () => {
+		expect(SPARK_SLOTS).toBe(20);
 		const samples = [1, 2, 3].map((n) => ({ at: `2026-11-12T10:00:0${n}Z`, ok: true, latencyMs: n }));
 		expect(buildSparkBars(samples, 5).map((s) => s?.latencyMs ?? null)).toEqual([null, null, 1, 2, 3]);
 		expect(buildSparkBars(samples, 2).map((s) => s?.latencyMs)).toEqual([2, 3]);
 		expect(buildSparkBars(undefined, 2)).toEqual([null, null]);
 	});
 
-	it('sampleBarHeight scales latency and marks failures as full bars', () => {
-		expect(sampleBarHeight({ at: '', ok: false }, 100)).toBe(100);
-		expect(sampleBarHeight({ at: '', ok: true }, 100)).toBe(55);
-		expect(sampleBarHeight({ at: '', ok: true, latencyMs: 50 }, 100)).toBe(50);
-		expect(sampleBarHeight({ at: '', ok: true, latencyMs: 5 }, 100)).toBe(30);
-		expect(sampleBarHeight({ at: '', ok: true, latencyMs: 500 }, 100)).toBe(100);
+	it('sampleBarHeight uses perceptual scaling and marks failures as full bars', () => {
+		expect(sampleBarHeight({ at: '', ok: false })).toBe(100);
+		expect(sampleBarHeight({ at: '', ok: true })).toBe(52);
+		expect(sampleBarHeight({ at: '', ok: true, latencyMs: 15 })).toBe(42);
+		expect(sampleBarHeight({ at: '', ok: true, latencyMs: 38 })).toBeGreaterThanOrEqual(44);
+		expect(sampleBarHeight({ at: '', ok: true, latencyMs: 300 })).toBe(82);
+		expect(sampleBarHeight({ at: '', ok: true, latencyMs: 3065 })).toBe(96);
+	});
+
+	it('validates tunnel IPv4, detects conflicts and suggests a free address', () => {
+		expect(parseTunnelIpv4(' 172.16.0.4/32 ')?.normalized).toBe('172.16.0.4');
+		expect(parseTunnelIpv4('10.66.66.2/24')?.normalized).toBe('10.66.66.2/24');
+		expect(isValidTunnelIpv4('127.0.0.1')).toBe(false);
+		expect(isValidTunnelIpv4('169.254.1.10')).toBe(false);
+		expect(isValidTunnelIpv4('2001:db8::1')).toBe(false);
+
+		const targets = [
+			{ mode: 'kernel' as const, id: 't1', name: 'WARP HEL', iface: 'nwg3', endpoint: '', addressV4: '172.16.0.2', isWarp: true, running: true, protected: false },
+		];
+		expect(findTunnelIpv4Conflict('172.16.0.2', targets, [])).toEqual({
+			conflict: true,
+			host: '172.16.0.2',
+			tunnelName: 'WARP HEL',
+		});
+		expect(findTunnelIpv4Conflict('172.16.0.3', targets, ['172.16.0.3'])).toEqual({
+			conflict: true,
+			host: '172.16.0.3',
+		});
+		expect(suggestFreeTunnelIpv4('172.16.0.2', targets, ['172.16.0.3'])).toBe('172.16.0.4');
 	});
 
 	it('sortHits orders by ping and puts unmeasured endpoints last', () => {

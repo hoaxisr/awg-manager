@@ -774,6 +774,7 @@ func (s *Server) registerWarpScoutRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/warpscout/targets", h.guarded(ws.Targets))
 	mux.HandleFunc("/api/warpscout/account/register", h.guarded(ws.Register))
 	mux.HandleFunc("/api/warpscout/account/license", h.guarded(ws.License))
+	mux.HandleFunc("/api/warpscout/account/address", h.guarded(ws.Address))
 	mux.HandleFunc("/api/warpscout/account/delete", h.guarded(ws.DeleteAccount))
 	mux.HandleFunc("/api/warpscout/scan/start", h.guarded(ws.ScanStart))
 	mux.HandleFunc("/api/warpscout/scan/stop", h.guarded(ws.ScanStop))

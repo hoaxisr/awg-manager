@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -80,6 +81,7 @@ func (o *WarpTunnelOps) managedRef(ctx context.Context, t *storage.AWGTunnel) (w
 	}
 	ref := warpscout.TunnelRef{
 		Mode: mode, ID: t.ID, Name: t.Name, Endpoint: t.Peer.Endpoint,
+		AddressV4:     bareIPv4(t.Interface.Address),
 		PeerPublicKey: t.Peer.PublicKey,
 		IsWarp:        strings.TrimSpace(t.Peer.PublicKey) == warpscout.WarpPeerPublicKey,
 	}
@@ -131,7 +133,8 @@ func (o *WarpTunnelOps) systemProtectReason(t *ndms.SystemWireguardTunnel) strin
 func (o *WarpTunnelOps) systemRef(t *ndms.SystemWireguardTunnel) warpscout.TunnelRef {
 	ref := warpscout.TunnelRef{
 		Mode: warpscout.TargetSystem, ID: t.ID, Name: t.Description, Iface: t.InterfaceName,
-		Running: t.Status == "up",
+		AddressV4: bareIPv4(t.Address),
+		Running:   t.Status == "up",
 	}
 	if ref.Name == "" {
 		ref.Name = t.ID
@@ -175,6 +178,63 @@ func (o *WarpTunnelOps) List(ctx context.Context) ([]warpscout.TunnelRef, error)
 		}
 	}
 	return out, nil
+}
+
+// bareIPv4 вытаскивает первый IPv4-хост (без /маски и без IPv6) из строки адресов интерфейса.
+func bareIPv4(raw string) string {
+	for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == ';'
+	}) {
+		host := strings.TrimSpace(strings.SplitN(part, "/", 2)[0])
+		if ip := net.ParseIP(host); ip != nil && ip.To4() != nil {
+			return ip.To4().String()
+		}
+	}
+	return ""
+}
+
+// UsedIPv4 возвращает отсортированный список IPv4-адресов, уже занятых на роутере
+// (все туннели AWGM, все системные WG-интерфейсы включая серверные, а также
+// активные сетевые интерфейсы ядра). Нужен UI для предупреждения о конфликте
+// ещё до создания WARP-туннеля.
+func (o *WarpTunnelOps) UsedIPv4(ctx context.Context) []string {
+	seen := map[string]bool{}
+	addRaw := func(raw string) {
+		if ip := bareIPv4(raw); ip != "" {
+			seen[ip] = true
+		}
+	}
+	if o.Store != nil {
+		if list, err := o.Store.List(); err == nil {
+			for i := range list {
+				addRaw(list[i].Interface.Address)
+			}
+		}
+	}
+	if o.System != nil {
+		if sys, err := o.System.List(ctx); err == nil {
+			for i := range sys {
+				addRaw(sys[i].Address)
+			}
+		}
+	}
+	if addrs, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range addrs {
+			ipNet, ok := a.(*net.IPNet)
+			if !ok || ipNet.IP == nil || ipNet.IP.IsLoopback() || ipNet.IP.IsUnspecified() {
+				continue
+			}
+			if ip4 := ipNet.IP.To4(); ip4 != nil {
+				seen[ip4.String()] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for ip := range seen {
+		out = append(out, ip)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Get — один туннель.
@@ -609,6 +669,32 @@ func (h *WarpScoutHandler) License(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	acct, err := h.svc.SetLicense(r.Context(), req.License)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	response.Success(w, acct)
+}
+
+type warpAddressRequest struct {
+	AddressV4 string `json:"addressV4"`
+}
+
+// Address — задать пользовательский локальный IPv4 туннеля до создания туннеля.
+//
+//	@Summary	Set WARP account tunnel IPv4
+//	@Tags		warpscout
+//	@Accept		json
+//	@Produce	json
+//	@Security	CookieAuth
+//	@Success	200	{object}	map[string]interface{}
+//	@Router		/warpscout/account/address [post]
+func (h *WarpScoutHandler) Address(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[warpAddressRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	acct, err := h.svc.SetAccountAddress(req.AddressV4)
 	if err != nil {
 		h.fail(w, err)
 		return

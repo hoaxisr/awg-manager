@@ -1389,3 +1389,82 @@ func TestSortHits_UnmeasuredPingLast(t *testing.T) {
 		t.Fatalf("порядок %v, want c b a", hits)
 	}
 }
+
+func TestNormalizeTunnelIPv4(t *testing.T) {
+	valid := []struct {
+		in   string
+		want string
+	}{
+		{"172.16.0.5", "172.16.0.5"},
+		{" 172.16.0.5/32 ", "172.16.0.5"},
+		{"10.66.66.2/24", "10.66.66.2/24"},
+	}
+	for _, tc := range valid {
+		got, err := NormalizeTunnelIPv4(tc.in)
+		if err != nil || got != tc.want {
+			t.Fatalf("NormalizeTunnelIPv4(%q) = (%q, %v), хотели (%q, nil)", tc.in, got, err, tc.want)
+		}
+	}
+	invalid := []string{"", "   ", "2606:4700::1", "127.0.0.1", "0.0.0.0", "169.254.1.1", "255.255.255.255", "224.0.0.1", "172.16.0.2/0", "172.16.0.999"}
+	for _, in := range invalid {
+		if got, err := NormalizeTunnelIPv4(in); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("NormalizeTunnelIPv4(%q) = (%q, %v), хотели ErrInvalidInput", in, got, err)
+		}
+	}
+}
+
+func TestSetAccountAddress_PreservedAcrossRotationAndCreateOverride(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "dev-rot",
+			"warp_enabled": true,
+			"config": {"client_id": "BAUG", "peers": [{"public_key": "` + WarpPeerPublicKey + `"}], "interface": {"addresses": {"v4": "172.16.0.2"}}}
+		}`))
+	}))
+	defer srv.Close()
+
+	origBase := cfAPIBase
+	cfAPIBase = srv.URL
+	t.Cleanup(func() { cfAPIBase = origBase })
+
+	s, _, tun, _ := newTestService(t)
+	s.d.HTTP = func(string) (*http.Client, error) { return srv.Client(), nil }
+
+	// 1. Пользователь задаёт кастомный IPv4 в учётке.
+	acct, err := s.SetAccountAddress("172.16.0.9/32")
+	if err != nil || acct.AddressV4 != "172.16.0.9" {
+		t.Fatalf("SetAccountAddress: acct=%+v err=%v", acct, err)
+	}
+	if _, err := s.SetAccountAddress("bad-ip"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ожидался ErrInvalidInput, получили %v", err)
+	}
+
+	// 2. При перевыпуске ключей кастомный IPv4 сохраняется (CF возвращает 172.16.0.2).
+	rotated, err := s.Register(context.Background())
+	if err != nil {
+		t.Fatalf("Register (rotate): %v", err)
+	}
+	if rotated.AddressV4 != "172.16.0.9" {
+		t.Fatalf("при ротации должен сохраниться кастомный IPv4 172.16.0.9, получили %q", rotated.AddressV4)
+	}
+
+	// 3. Apply(create) с явным addressV4 кладёт его в .conf, не ломая сохранённый в учётке.
+	_, err = s.Apply(context.Background(), ApplyRequest{
+		Action:    "create",
+		Endpoint:  "162.159.192.1:2408",
+		Mode:      TargetKernel,
+		Name:      "WARP Custom",
+		AddressV4: "172.16.0.11",
+		Protocol:  ProtocolAWG,
+	})
+	if err != nil {
+		t.Fatalf("Apply create: %v", err)
+	}
+	if len(tun.created) != 1 || !strings.Contains(tun.created[0], "Address = 172.16.0.11/32\n") {
+		t.Fatalf("в конфиге ожидался Address = 172.16.0.11/32, получили:\n%v", tun.created)
+	}
+	if got := s.d.Store.Account().AddressV4; got != "172.16.0.9" {
+		t.Fatalf("локальный addressV4 аккаунта не должен меняться разовым create override: %q", got)
+	}
+}

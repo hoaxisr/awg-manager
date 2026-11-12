@@ -1,9 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -243,5 +247,64 @@ func TestWarpOps_SwapManagedRefusals(t *testing.T) {
 	err = ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002")
 	if !errors.As(err, &editErr) || editErr.Code != "OPERATION_IN_PROGRESS" {
 		t.Fatalf("занятый туннель — конфликт штатной правки: %v", err)
+	}
+}
+
+func TestWarpOps_AddressAndUsedIPv4(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	tunStore := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	seedWarpTunnel(t, tunStore, "awg11", "kernel")
+
+	ops := &WarpTunnelOps{Store: tunStore}
+	ref, err := ops.Get(ctx, warpscout.TargetKernel, "awg11")
+	if err != nil || ref.AddressV4 != "172.16.0.2" {
+		t.Fatalf("ожидался addressV4=172.16.0.2 в TunnelRef, получили %+v (%v)", ref, err)
+	}
+
+	used := ops.UsedIPv4(ctx)
+	found := false
+	for _, ip := range used {
+		if ip == "172.16.0.2" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("UsedIPv4 должен включать 172.16.0.2 из awg11: %v", used)
+	}
+
+	wsStore, err := warpscout.NewStore(t.TempDir(), warpscout.NewLocalCipher(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wsStore.SetAccount(&warpscout.Account{
+		ID:            "acct1",
+		Token:         "tok",
+		PrivateKey:    "cHJpdg==",
+		PublicKey:     "pub",
+		PeerPublicKey: warpscout.WarpPeerPublicKey,
+		AddressV4:     "172.16.0.2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wsSvc := warpscout.New(warpscout.Deps{Store: wsStore, Tunnels: ops, UsedIPv4: ops.UsedIPv4})
+	t.Cleanup(wsSvc.Stop)
+	h := NewWarpScoutHandler(wsSvc, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/warpscout/account/address", bytes.NewBufferString(`{"addressV4":"172.16.0.7/32"}`))
+	h.Address(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /account/address status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var wrap struct {
+		Data warpscout.Account `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &wrap); err != nil {
+		t.Fatal(err)
+	}
+	if wrap.Data.AddressV4 != "172.16.0.7" {
+		t.Fatalf("ожидался addressV4=172.16.0.7 в ответе, получили %+v", wrap.Data)
 	}
 }

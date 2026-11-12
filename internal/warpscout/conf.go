@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"net/netip"
 	"regexp"
 	"strconv"
 	"strings"
@@ -104,12 +105,51 @@ func signatureHex(p AWGParams) ([5]string, error) {
 	return out, nil
 }
 
+// NormalizeTunnelIPv4 проверяет и нормализует пользовательский локальный IPv4
+// туннеля (вида `172.16.0.3` или `172.16.0.3/32`). Адреса без маски /32
+// сохраняют суффикс /N, а /32 нормализуются в голый хост для совместимости с AddressV4.
+func NormalizeTunnelIPv4(raw string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", fmt.Errorf("%w: укажите IPv4-адрес туннеля", ErrInvalidInput)
+	}
+	var addr netip.Addr
+	bits := 32
+	if strings.Contains(s, "/") {
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			return "", fmt.Errorf("%w: неверный IPv4-адрес туннеля", ErrInvalidInput)
+		}
+		addr = p.Addr()
+		bits = p.Bits()
+	} else {
+		a, err := netip.ParseAddr(s)
+		if err != nil {
+			return "", fmt.Errorf("%w: неверный IPv4-адрес туннеля", ErrInvalidInput)
+		}
+		addr = a
+	}
+	if !addr.Is4() || addr.Zone() != "" || bits < 1 || bits > 32 {
+		return "", fmt.Errorf("%w: допустим только IPv4-адрес", ErrInvalidInput)
+	}
+	if addr.IsUnspecified() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast() || addr == netip.MustParseAddr("255.255.255.255") {
+		return "", fmt.Errorf("%w: этот IPv4-адрес не может использоваться как адрес туннеля", ErrInvalidInput)
+	}
+	if bits == 32 {
+		return addr.String(), nil
+	}
+	return fmt.Sprintf("%s/%d", addr.String(), bits), nil
+}
+
 // BuildConf собирает .conf для туннеля WARP.
 func BuildConf(a *Account, awg AWGParams, protocol, endpoint string) string {
 	var b strings.Builder
 	b.WriteString("[Interface]\n")
 	fmt.Fprintf(&b, "PrivateKey = %s\n", a.PrivateKey)
-	addr := a.AddressV4
+	addr := strings.TrimSpace(a.AddressV4)
+	if addr == "" {
+		addr = "172.16.0.2"
+	}
 	if !strings.Contains(addr, "/") {
 		addr += "/32"
 	}
