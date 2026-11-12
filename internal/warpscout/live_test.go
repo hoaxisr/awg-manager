@@ -29,7 +29,7 @@ func TestLive_RegisterAndScan(t *testing.T) {
 
 	st, _ := NewStore(t.TempDir(), plainCipher{})
 	_ = st.SetAccount(acct)
-	s := New(Deps{Store: st, Runner: &BinaryRunner{}})
+	s := New(Deps{Store: st, Runner: &BinaryRunner{Path: os.Getenv("AWGM_WARPSCOUT_BIN")}})
 	defer s.Stop()
 	awg := s.awgForUse()
 	if awg.I1 == "" {

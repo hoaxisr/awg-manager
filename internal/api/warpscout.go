@@ -17,7 +17,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
-	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
@@ -43,8 +42,7 @@ type WarpTunnelOps struct {
 	System   systemtunnel.Service
 	Commands *ndmscommand.Commands
 	Queries  *ndmsquery.Queries
-	Orch     *orchestrator.Orchestrator
-	Tunnels  *TunnelsHandler // publishTunnelList после правок
+	Tunnels  *TunnelsHandler // штатная правка туннеля (EditTunnelWith)
 	// RotateKernelPort переоткрывает эфемерный UDP-порт kernel-туннеля
 	// (`awg set <iface> listen-port 0`), чтобы сбросить блокировку ТСПУ
 	// по паре (IP клиента, исходный UDP-порт). В тестах подменяется.
@@ -229,9 +227,7 @@ func (o *WarpTunnelOps) Create(ctx context.Context, mode warpscout.TargetMode, n
 		}
 		if err := o.Svc.Start(ctx, tw.ID); err != nil {
 			// Туннель заведён — отказ старта не отменяет импорт.
-			if o.Tunnels != nil {
-				o.Tunnels.log.Warn("warpscout", name, "Туннель создан, но не запущен: "+err.Error())
-			}
+			o.warn(name, "Туннель создан, но не запущен: "+err.Error())
 		}
 		if o.Tunnels != nil {
 			o.Tunnels.publishTunnelList(ctx)
@@ -246,16 +242,28 @@ func (o *WarpTunnelOps) Create(ctx context.Context, mode warpscout.TargetMode, n
 			return nil, err
 		}
 		if o.Commands.Interfaces != nil {
+			// Интерфейс уже создан — отказ настройки не отменяет импорт (как и
+			// отказ старта выше), но и молчать о нём нельзя.
 			if name != "" {
-				_ = o.Commands.Interfaces.SetDescription(ctx, res.Created, name)
+				if err := o.Commands.Interfaces.SetDescription(ctx, res.Created, name); err != nil {
+					o.warn(name, "Туннель создан, но описание не задано: "+err.Error())
+				}
 			}
-			_ = o.Commands.Interfaces.InterfaceUp(ctx, res.Created)
+			if err := o.Commands.Interfaces.InterfaceUp(ctx, res.Created); err != nil {
+				o.warn(name, "Туннель создан, но не включён: "+err.Error())
+			}
 		}
 		// Даём NDMS поднять интерфейс, чтобы ответ уже нёс его состояние.
 		time.Sleep(500 * time.Millisecond)
 		return o.Get(ctx, mode, res.Created.Name())
 	}
 	return nil, fmt.Errorf("неизвестный тип туннеля %q", mode)
+}
+
+func (o *WarpTunnelOps) warn(target, msg string) {
+	if o.Tunnels != nil {
+		o.Tunnels.log.Warn("warpscout", target, msg)
+	}
 }
 
 func sanitizeConfName(name string) string {
@@ -302,22 +310,22 @@ func (o *WarpTunnelOps) SwapEndpoint(ctx context.Context, mode warpscout.TargetM
 	return fmt.Errorf("неизвестный тип туннеля %q", mode)
 }
 
-// swapManaged — тот же путь, что у правки карточки (TunnelsHandler.Update):
-// svc.Update применяет diff к живому интерфейсу (kernel: awg setconf +
-// маршрут до нового адреса; nativewg: SyncPeer/SyncKmodSlot под замком
-// оркестратора), затем запись обновляется транзакцией стора.
+// swapManaged — штатная правка карточки (TunnelsHandler.EditTunnelWith) с
+// одним изменённым полем: она проверяет замок и endpoint, применяет diff к
+// живому интерфейсу под замком оркестратора, пишет запись транзакцией стора
+// и публикует список.
 //
 // Две тонкости живого переключения под ТСПУ:
 //  1. `awg setconf` не трогает `listen-port`, если поле опущено в .conf, и
 //     kernel-туннель продолжает слать рукопожатия со старого UDP-порта. Если
 //     ТСПУ заблокировал поток по `(src_ip, sport)`, все новые endpoint'ы будут
 //     молча терять пакеты, пока не сменится исходный порт (`listen-port 0`).
-//  2. У туннеля с протухшим рукопожатием (`StateStarting` / `StateBroken`)
-//     `svc.Update` пропускает runtime-синхронизацию (`shouldSyncRuntime`),
-//     поэтому после сохранения нового endpoint'а такой включённый туннель
-//     мягко перезапускается через `svc.Restart`.
+//  2. Kernel-туннель без линка (`StateStarting` / `StateBroken`) правка в
+//     живой интерфейс не синхронизирует (`shouldSyncRuntime`: только Running),
+//     поэтому такой включённый туннель перезапускается. NativeWG в этих
+//     состояниях синхронизируется самой правкой — перезапуск ему не нужен.
 func (o *WarpTunnelOps) swapManaged(ctx context.Context, id, endpoint string) error {
-	if o.Svc == nil || o.Store == nil {
+	if o.Svc == nil || o.Store == nil || o.Tunnels == nil {
 		return errors.New("сервис туннелей недоступен")
 	}
 	existing, err := o.Store.Get(id)
@@ -325,47 +333,37 @@ func (o *WarpTunnelOps) swapManaged(ctx context.Context, id, endpoint string) er
 		return fmt.Errorf("туннель %s не найден", id)
 	}
 	tw, _ := o.Svc.Get(ctx, id)
-	stalled := existing.Enabled && tw != nil &&
-		(tw.State == tunnel.StateStarting || tw.State == tunnel.StateBroken)
 
 	if existing.Peer.Endpoint != endpoint {
-		merged := *existing
-		merged.Peer.AllowedIPs = append([]string(nil), existing.Peer.AllowedIPs...)
-		merged.Peer.Endpoint = endpoint
-		if err := o.Svc.Update(ctx, existing, &merged); err != nil {
-			return err
-		}
-		if err := o.Store.Update(id, func(t *storage.AWGTunnel) error {
-			t.Peer.Endpoint = endpoint
-			if merged.ResolvedEndpointIP != "" {
-				t.ResolvedEndpointIP = merged.ResolvedEndpointIP
-			}
-			if merged.ActiveWAN != "" {
-				t.ActiveWAN = merged.ActiveWAN
-			}
-			return nil
+		if _, err := o.Tunnels.EditTunnelWith(ctx, id, func(cur storage.AWGTunnel) (storage.AWGTunnel, error) {
+			peer := cur.Peer
+			peer.Endpoint = endpoint
+			return storage.AWGTunnel{Peer: peer}, nil
 		}); err != nil {
 			return err
 		}
 	}
 
-	if stalled {
+	if existing.Backend == "nativewg" || tw == nil {
+		return nil
+	}
+	switch tw.State {
+	case tunnel.StateStarting, tunnel.StateBroken:
+		// Рестарт безусловно включает туннель: если его успели остановить
+		// руками, пока шла правка, — не поднимаем обратно.
+		if cur, err := o.Store.Get(id); err != nil || !cur.Enabled {
+			return nil
+		}
 		if err := o.Svc.Restart(ctx, id); err != nil {
 			return fmt.Errorf("перезапуск зависшего туннеля: %w", err)
 		}
-	} else if existing.Backend != "nativewg" && tw != nil && tw.State == tunnel.StateRunning {
+		o.Tunnels.publishTunnelList(ctx)
+	case tunnel.StateRunning:
 		iface := tw.InterfaceName
 		if iface == "" {
 			iface = tunnel.NewNames(id).IfaceName
 		}
 		o.rotateKernelPort(ctx, iface)
-	}
-
-	if o.Orch != nil {
-		o.Orch.RefreshTunnelState(id)
-	}
-	if o.Tunnels != nil {
-		o.Tunnels.publishTunnelList(ctx)
 	}
 	return nil
 }
@@ -508,6 +506,7 @@ func NewWarpScoutHandler(svc *warpscout.Service, appLog logging.AppLogger) *Warp
 }
 
 func (h *WarpScoutHandler) fail(w http.ResponseWriter, err error) {
+	var editErr *TunnelEditError
 	switch {
 	case errors.Is(err, warpscout.ErrNoAccount):
 		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "WARP_NO_ACCOUNT")
@@ -524,6 +523,9 @@ func (h *WarpScoutHandler) fail(w http.ResponseWriter, err error) {
 		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_INPUT")
 	case errors.Is(err, tunnel.ErrOperationInProgress):
 		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "OPERATION_IN_PROGRESS")
+	case errors.As(err, &editErr):
+		// Отказ штатной правки туннеля (подмена endpoint) — её статус и код.
+		response.ErrorWithStatus(w, editErr.Status, editErr.Message, editErr.Code)
 	default:
 		response.Error(w, err.Error(), "WARP_FAILED")
 	}
@@ -652,7 +654,7 @@ func (h *WarpScoutHandler) ScanStart(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
-	response.Success(w, h.svc.State().Scan)
+	response.Success(w, h.svc.ScanSnapshot())
 }
 
 // ScanStop — остановка ручного скана.

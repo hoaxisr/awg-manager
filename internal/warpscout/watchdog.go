@@ -4,13 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 )
 
-// backoffSteps — паузы после скана, не нашедшего ни одного узла
-// (глобальный шатдаун WARP у провайдера): роутер не должен сканировать
-// без остановки.
+// backoffSteps — растущие паузы после неудачной замены: скан не нашёл ни
+// одного узла (глобальный шатдаун WARP у провайдера), подмена не удалась или
+// контрольная проверка после неё не прошла. Роутер не должен сканировать и
+// переписывать endpoint без остановки; счётчик сбрасывает успешная проверка.
 var backoffSteps = []time.Duration{time.Minute, 2 * time.Minute, 5 * time.Minute, 15 * time.Minute}
 
 // Тайминги сторожа (переменные — для тестов).
@@ -21,26 +23,42 @@ var (
 	verifyRetryDelay = 1500 * time.Millisecond
 	swapScanDeadline = 120 * time.Second
 	swapScanMaxHits  = 3
+	// scanDeadline — дедлайн ручного скана, scanKillGrace — запас сверх
+	// дедлайна, после которого зависший процесс сканера снимается.
+	scanDeadline  = 180 * time.Second
+	scanKillGrace = 15 * time.Second
 )
+
+// watcher — запущенный сторож и профиль, с которым он запущен.
+type watcher struct {
+	cancel context.CancelFunc
+	p      Profile
+}
 
 func (s *Service) reconcileWatchers(cfg Config) {
 	now := s.d.Now()
-	s.mu.Lock()
-	for id, cancel := range s.watchers {
-		cancel()
-		delete(s.watchers, id)
-	}
 	active := map[string]bool{}
 	for _, p := range cfg.Profiles {
-		if !p.Enabled {
+		if p.Enabled && (cfg.ProfileMode != ProfileModeSingle || p.ID == cfg.ActiveProfileID) {
+			active[p.ID] = true
+		}
+	}
+	s.mu.Lock()
+	for _, p := range cfg.Profiles {
+		w, running := s.watchers[p.ID]
+		if running && active[p.ID] && reflect.DeepEqual(w.p, p) {
+			// Профиль не менялся — сторож остаётся со своим cooldown и backoff.
 			continue
 		}
-		if cfg.ProfileMode == ProfileModeSingle && p.ID != cfg.ActiveProfileID {
+		if running {
+			w.cancel()
+			delete(s.watchers, p.ID)
+		}
+		if !active[p.ID] {
 			continue
 		}
-		active[p.ID] = true
 		ctx, cancel := context.WithCancel(s.rootCtx)
-		s.watchers[p.ID] = cancel
+		s.watchers[p.ID] = &watcher{cancel: cancel, p: p}
 		if _, ok := s.watch[p.ID]; !ok {
 			s.watch[p.ID] = &WatchStatus{ProfileID: p.ID, State: WatchIdle}
 		}
@@ -70,6 +88,12 @@ func (s *Service) reconcileWatchers(cfg Config) {
 		known[p.ID] = true
 	}
 	removedStats := false
+	for id, w := range s.watchers {
+		if !known[id] {
+			w.cancel()
+			delete(s.watchers, id)
+		}
+	}
 	for id := range s.watch {
 		if !known[id] {
 			delete(s.watch, id)
@@ -83,7 +107,7 @@ func (s *Service) reconcileWatchers(cfg Config) {
 	}
 	s.mu.Unlock()
 	if removedStats {
-		s.flushStats(true)
+		s.flushStats()
 	}
 }
 
@@ -110,8 +134,15 @@ func (s *Service) runWatcher(ctx context.Context, p Profile) {
 	}
 }
 
-func (s *Service) setWatch(id string, mut func(ws *WatchStatus)) WatchStatus {
+// setWatch и record* сверяют ctx под s.mu: reconcileWatchers отменяет сторожа
+// под тем же замком, поэтому отменённый сторож уже не воскресит состояние
+// удалённого профиля.
+func (s *Service) setWatch(ctx context.Context, id string, mut func(ws *WatchStatus)) WatchStatus {
 	s.mu.Lock()
+	if ctx.Err() != nil {
+		s.mu.Unlock()
+		return WatchStatus{}
+	}
 	ws, ok := s.watch[id]
 	if !ok {
 		ws = &WatchStatus{ProfileID: id}
@@ -124,8 +155,12 @@ func (s *Service) setWatch(id string, mut func(ws *WatchStatus)) WatchStatus {
 	return out
 }
 
-func (s *Service) recordCheckSample(id string, now time.Time, ep string, tr *TraceResult, ok bool, reason string) {
+func (s *Service) recordCheckSample(ctx context.Context, id string, now time.Time, ep string, tr *TraceResult, ok bool, reason string) {
 	s.mu.Lock()
+	if ctx.Err() != nil {
+		s.mu.Unlock()
+		return
+	}
 	ps, exists := s.stats[id]
 	if !exists {
 		ps = &ProfileStats{ProfileID: id, StartedAt: now}
@@ -176,12 +211,18 @@ func (s *Service) recordCheckSample(id string, now time.Time, ep string, tr *Tra
 	if len(ps.Samples) > maxCheckSamples {
 		ps.Samples = ps.Samples[len(ps.Samples)-maxCheckSamples:]
 	}
+	// Счётчики проверок живут в памяти: на диск они уходят с подменой
+	// endpoint и при остановке, а не по таймеру (износ флеша).
+	s.statsDirty = true
 	s.mu.Unlock()
-	s.flushStats(false)
 }
 
-func (s *Service) recordSwapResult(id string, now time.Time, ok bool, swapped bool, newEp string, tr *TraceResult) {
+func (s *Service) recordSwapResult(ctx context.Context, id string, now time.Time, ok bool, swapped bool, newEp string, tr *TraceResult) {
 	s.mu.Lock()
+	if ctx.Err() != nil {
+		s.mu.Unlock()
+		return
+	}
 	ps, exists := s.stats[id]
 	if !exists {
 		ps = &ProfileStats{ProfileID: id, StartedAt: now}
@@ -205,9 +246,13 @@ func (s *Service) recordSwapResult(id string, now time.Time, ok bool, swapped bo
 		}
 		ps.Samples = append(ps.Samples, sm)
 	}
+	s.statsDirty = true
 	s.mu.Unlock()
-	s.flushStats(true)
+	if swapped {
+		s.flushStats()
+	}
 }
+
 func evaluate(tr TraceResult, err error, f Filters) (reason string, coloBad bool) {
 	if err != nil {
 		return "нет связи через туннель: " + err.Error(), false
@@ -241,7 +286,7 @@ func evaluate(tr TraceResult, err error, f Filters) (reason string, coloBad bool
 func (s *Service) checkOnce(ctx context.Context, p Profile, st *watcherState) {
 	now := s.d.Now()
 	if s.d.Store.Account() == nil {
-		s.setWatch(p.ID, func(ws *WatchStatus) {
+		s.setWatch(ctx, p.ID, func(ws *WatchStatus) {
 			ws.State, ws.Message, ws.LastCheck = WatchNoAccount, "зарегистрируйте учётную запись WARP", now
 		})
 		return
@@ -249,14 +294,14 @@ func (s *Service) checkOnce(ctx context.Context, p Profile, st *watcherState) {
 	if _, up := s.d.WAN(ctx); !up {
 		// Упал провайдер — менять узел бессмысленно.
 		st.fails = 0
-		s.setWatch(p.ID, func(ws *WatchStatus) {
+		s.setWatch(ctx, p.ID, func(ws *WatchStatus) {
 			ws.State, ws.Message, ws.LastCheck, ws.Fails = WatchWANDown, "нет подключения к провайдеру", now, 0
 		})
 		return
 	}
 	ref, err := s.d.Tunnels.Get(ctx, p.TargetMode, p.TargetID)
 	if err != nil || ref == nil {
-		s.setWatch(p.ID, func(ws *WatchStatus) {
+		s.setWatch(ctx, p.ID, func(ws *WatchStatus) {
 			ws.State, ws.LastCheck = WatchTargetMissing, now
 			ws.Message = "туннель не найден"
 			if err != nil {
@@ -270,12 +315,12 @@ func (s *Service) checkOnce(ctx context.Context, p Profile, st *watcherState) {
 		if errors.Is(err, ErrProtected) {
 			state = WatchProtected
 		}
-		s.setWatch(p.ID, func(ws *WatchStatus) { ws.State, ws.Message, ws.LastCheck = state, err.Error(), now })
+		s.setWatch(ctx, p.ID, func(ws *WatchStatus) { ws.State, ws.Message, ws.LastCheck = state, err.Error(), now })
 		return
 	}
 	if !ref.Running {
 		st.fails = 0
-		s.setWatch(p.ID, func(ws *WatchStatus) {
+		s.setWatch(ctx, p.ID, func(ws *WatchStatus) {
 			ws.State, ws.Message, ws.LastCheck, ws.Fails, ws.Endpoint = WatchTargetStopped, "туннель выключен — автопилот ждёт", now, 0, ref.Endpoint
 		})
 		return
@@ -302,17 +347,17 @@ func (s *Service) checkOnce(ctx context.Context, p Profile, st *watcherState) {
 	}
 	if reason == "" {
 		st.fails, st.backoffIx = 0, 0
-		s.recordCheckSample(p.ID, now, ref.Endpoint, trp, true, "")
-		s.setWatch(p.ID, func(ws *WatchStatus) {
+		s.recordCheckSample(ctx, p.ID, now, ref.Endpoint, trp, true, "")
+		s.setWatch(ctx, p.ID, func(ws *WatchStatus) {
 			ws.State, ws.Message, ws.LastCheck, ws.Trace, ws.Fails, ws.Endpoint = WatchOK, "", now, trp, 0, ref.Endpoint
 			ws.NextSwapAfter = st.nextSwap
 		})
 		return
 	}
 	st.fails++
-	s.recordCheckSample(p.ID, now, ref.Endpoint, trp, false, reason)
+	s.recordCheckSample(ctx, p.ID, now, ref.Endpoint, trp, false, reason)
 	trigger := coloBad || st.fails >= p.FailThreshold
-	s.setWatch(p.ID, func(ws *WatchStatus) {
+	s.setWatch(ctx, p.ID, func(ws *WatchStatus) {
 		ws.State, ws.Message, ws.LastCheck, ws.Fails, ws.Endpoint = WatchDegraded, reason, now, st.fails, ref.Endpoint
 		if trp != nil {
 			ws.Trace = trp
@@ -334,17 +379,17 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 		return
 	}
 	if _, ok := s.d.Runner.Available(); !ok {
-		s.setWatch(p.ID, func(ws *WatchStatus) { ws.State, ws.Message = WatchEngineMissing, ErrEngineMissing.Error() })
+		s.setWatch(ctx, p.ID, func(ws *WatchStatus) { ws.State, ws.Message = WatchEngineMissing, ErrEngineMissing.Error() })
 		return
 	}
 	if !s.engineMu.TryLock() {
-		s.setWatch(p.ID, func(ws *WatchStatus) {
+		s.setWatch(ctx, p.ID, func(ws *WatchStatus) {
 			ws.State, ws.Message = WatchEngineBusy, "сканер занят — повтор на следующей проверке"
 		})
 		return
 	}
 	defer s.engineMu.Unlock()
-	s.setWatch(p.ID, func(ws *WatchStatus) {
+	s.setWatch(ctx, p.ID, func(ws *WatchStatus) {
 		ws.State, ws.Message = WatchSwapping, "поиск нового узла: "+reason
 	})
 	s.logWarn("autopilot", p.Name, "Замена узла WARP: "+reason)
@@ -364,12 +409,12 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 	}
 	params, err := s.buildParams(ctx, acct, s.awgForUse(), p.Filters, swapScanMaxHits, 0, nil, exclude, scanOverride)
 	if err != nil {
-		s.finishSwap(p, ev, st, err, nil, false, false)
+		s.finishSwap(ctx, p, ev, st, err, nil, false, false)
 		return
 	}
 	params.DeadlineMs = int(swapScanDeadline / time.Millisecond)
 	var hits []Hit
-	scanCtx, cancel := context.WithTimeout(ctx, swapScanDeadline+15*time.Second)
+	scanCtx, cancel := context.WithTimeout(ctx, swapScanDeadline+scanKillGrace)
 	runErr := s.d.Runner.Run(scanCtx, params, func(e EngineEvent) {
 		if e.Type == "hit" {
 			hits = append(hits, e.Hit())
@@ -383,14 +428,18 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 		if runErr == nil {
 			runErr = errors.New("ни одного подходящего узла не найдено")
 		}
-		s.finishSwap(p, ev, st, runErr, nil, true, false)
+		s.finishSwap(ctx, p, ev, st, runErr, nil, true, false)
 		return
 	}
 	sortHits(hits)
 	best := hits[0]
 	ev.NewEndpoint, ev.Colo, ev.Loc, ev.PingMs = best.Endpoint, best.Colo, best.Loc, best.PingMs
+	if err := validEndpoint(best.Endpoint); err != nil {
+		s.finishSwap(ctx, p, ev, st, fmt.Errorf("сканер вернул узел %q: %w", best.Endpoint, err), nil, false, false)
+		return
+	}
 	if err := s.d.Tunnels.SwapEndpoint(ctx, p.TargetMode, p.TargetID, best.Endpoint); err != nil {
-		s.finishSwap(p, ev, st, fmt.Errorf("подмена endpoint: %w", err), nil, false, false)
+		s.finishSwap(ctx, p, ev, st, fmt.Errorf("подмена endpoint: %w", err), nil, false, false)
 		return
 	}
 	// Контрольный trace после подмены.
@@ -433,31 +482,35 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 			ev.Colo, ev.Loc = tr.Colo, tr.Loc
 		}
 	}
-	s.finishSwap(p, ev, st, verifyErr, verified, false, true)
+	s.finishSwap(ctx, p, ev, st, verifyErr, verified, false, true)
 }
 
-func (s *Service) finishSwap(p Profile, ev SwapEvent, st *watcherState, err error, tr *TraceResult, noHits, swapped bool) {
+func (s *Service) finishSwap(ctx context.Context, p Profile, ev SwapEvent, st *watcherState, err error, tr *TraceResult, noHits, swapped bool) {
+	if ctx.Err() != nil {
+		return
+	}
 	now := s.d.Now()
 	ev.OK = err == nil
 	if err != nil {
 		ev.Error = err.Error()
 	}
 	var state, msg string
-	switch {
-	case noHits:
+	if err != nil {
 		d := backoffSteps[min(st.backoffIx, len(backoffSteps)-1)]
 		st.backoffIx++
 		st.nextSwap = now.Add(d)
-		state, msg = WatchBackoff, fmt.Sprintf("%s — повтор через %s", ev.Error, d)
+		msg = fmt.Sprintf("%s — повтор через %s", ev.Error, d)
+	}
+	switch {
+	case noHits:
+		state = WatchBackoff
 		s.logWarn("autopilot", p.Name, "Скан не нашёл узлов: "+ev.Error)
 	case !swapped:
-		st.nextSwap = now.Add(time.Minute)
-		state, msg = WatchDegraded, ev.Error
+		state = WatchDegraded
 		s.logWarn("autopilot", p.Name, "Замена не удалась: "+ev.Error)
 	case err != nil:
 		st.fails = 0
-		st.nextSwap = time.Time{}
-		state, msg = WatchDegraded, ev.Error
+		state = WatchDegraded
 		s.logWarn("autopilot", p.Name, fmt.Sprintf("Узел заменён %s → %s, но проверка не прошла: %s", ev.OldEndpoint, ev.NewEndpoint, ev.Error))
 	default:
 		st.fails, st.backoffIx = 0, 0
@@ -466,9 +519,9 @@ func (s *Service) finishSwap(p Profile, ev SwapEvent, st *watcherState, err erro
 		s.logInfo("autopilot", p.Name, fmt.Sprintf("Узел заменён: %s → %s (%s %s, %d мс)", ev.OldEndpoint, ev.NewEndpoint, ev.Colo, ev.Loc, ev.PingMs))
 	}
 	_ = s.d.Store.AppendHistory(ev)
-	s.recordSwapResult(p.ID, now, ev.OK, swapped, ev.NewEndpoint, tr)
+	s.recordSwapResult(ctx, p.ID, now, ev.OK, swapped, ev.NewEndpoint, tr)
 	evCopy := ev
-	s.setWatch(p.ID, func(ws *WatchStatus) {
+	s.setWatch(ctx, p.ID, func(ws *WatchStatus) {
 		ws.State, ws.Message, ws.NextSwapAfter, ws.LastSwap = state, msg, st.nextSwap, &evCopy
 		if swapped {
 			ws.Endpoint, ws.Fails, ws.Trace = ev.NewEndpoint, st.fails, tr

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net"
 	"path/filepath"
 	"testing"
@@ -102,101 +103,65 @@ func TestWarpFallbackClients_DeviceProxy(t *testing.T) {
 	}
 }
 
-type warpStubTunnelSvc struct {
-	TunnelService
-	status   map[string]*service.TunnelWithStatus
-	updated  []string
-	restarts []string
-}
-
-func (s *warpStubTunnelSvc) Get(_ context.Context, id string) (*service.TunnelWithStatus, error) {
-	return s.status[id], nil
-}
-
-func (s *warpStubTunnelSvc) Update(_ context.Context, _, newStored *storage.AWGTunnel) error {
-	s.updated = append(s.updated, newStored.Peer.Endpoint)
-	return nil
-}
-
-func (s *warpStubTunnelSvc) Restart(_ context.Context, id string) error {
-	s.restarts = append(s.restarts, id)
-	return nil
-}
-
-func TestWarpOps_SwapManagedRotatesKernelPortAndRecoversStalled(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
-	if err := store.Create(&storage.AWGTunnel{
-		ID:      "awg11",
-		Name:    "WARP HEL",
-		Enabled: true,
-		Backend: "kernel",
+func seedWarpTunnel(t *testing.T, store *storage.AWGTunnelStore, id, backend string) {
+	t.Helper()
+	seedTunnel(t, store, &storage.AWGTunnel{
+		ID: id, Name: "WARP " + id, Enabled: true, Backend: backend,
+		ActiveWAN: "eth3", ResolvedEndpointIP: "162.159.192.70",
 		Interface: storage.AWGInterface{
 			PrivateKey: "gZwP6wviWSsSUhp4AbX0iLuzKKVVTwlB5asMAQ+BWBE=",
 			Address:    "172.16.0.2/32",
 			MTU:        1280,
+			DNS:        "1.1.1.1",
 		},
 		Peer: storage.AWGPeer{
-			PublicKey:  warpscout.WarpPeerPublicKey,
-			Endpoint:   "162.159.192.70:1014",
-			AllowedIPs: []string{"0.0.0.0/0"},
+			PublicKey:           warpscout.WarpPeerPublicKey,
+			Endpoint:            "162.159.192.70:1014",
+			AllowedIPs:          []string{"0.0.0.0/0"},
+			PersistentKeepalive: "25",
 		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Create(&storage.AWGTunnel{
-		ID:       "awg50",
-		Name:     "WARP Native",
-		Enabled:  true,
-		Backend:  "nativewg",
-		NWGIndex: 3,
-		Interface: storage.AWGInterface{
-			PrivateKey: "gZwP6wviWSsSUhp4AbX0iLuzKKVVTwlB5asMAQ+BWBE=",
-			Address:    "172.16.0.2/32",
-			MTU:        1280,
-		},
-		Peer: storage.AWGPeer{
-			PublicKey:  warpscout.WarpPeerPublicKey,
-			Endpoint:   "162.159.192.82:864",
-			AllowedIPs: []string{"0.0.0.0/0"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
+}
 
-	svc := &warpStubTunnelSvc{
-		status: map[string]*service.TunnelWithStatus{
-			"awg11": {ID: "awg11", InterfaceName: "opkgtun11", State: tunnel.StateRunning},
-			"awg50": {ID: "awg50", InterfaceName: "nwg3", State: tunnel.StateBroken},
-		},
-	}
-	var rotated []string
-	ops := &WarpTunnelOps{
-		Svc:   svc,
-		Store: store,
+// newWarpOpsHarness — WarpTunnelOps поверх настоящего TunnelsHandler: подмена
+// идёт штатной правкой туннеля, а не своей записью в стор.
+func newWarpOpsHarness(t *testing.T, states map[string]tunnel.State) (*WarpTunnelOps, *stubTunnelSvc, *storage.AWGTunnelStore, *[]string) {
+	t.Helper()
+	svc := &stubTunnelSvc{getFn: func(_ context.Context, id string) (*service.TunnelWithStatus, error) {
+		return &service.TunnelWithStatus{ID: id, InterfaceName: "if-" + id, State: states[id]}, nil
+	}}
+	h, store := newTunnelsUpdateHarness(t, svc)
+	rotated := &[]string{}
+	ops := &WarpTunnelOps{Svc: svc, Store: store, Tunnels: h,
 		RotateKernelPort: func(_ context.Context, iface string) error {
-			rotated = append(rotated, iface)
+			*rotated = append(*rotated, iface)
 			return nil
-		},
-	}
+		}}
+	return ops, svc, store, rotated
+}
 
-	// 1. Живой kernel-туннель: подмена endpoint + смена эфемерного UDP-порта.
+// Живой kernel-туннель: endpoint меняется, UDP-порт ротируется, рестарта нет.
+// Зависший kernel-туннель правка в интерфейс не синхронизирует — рестарт.
+// NativeWG в Broken синхронизируется самой правкой — рестарт лишний.
+func TestWarpOps_SwapManagedRestartsOnlyStalledKernel(t *testing.T) {
+	ctx := context.Background()
+	ops, svc, store, rotated := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg11": tunnel.StateRunning, "awg12": tunnel.StateStarting, "awg50": tunnel.StateBroken,
+	})
+	seedWarpTunnel(t, store, "awg11", "kernel")
+	seedWarpTunnel(t, store, "awg12", "kernel")
+	seedWarpTunnel(t, store, "awg50", "nativewg")
+
 	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002"); err != nil {
 		t.Fatalf("SwapEndpoint kernel: %v", err)
 	}
-	if len(rotated) != 1 || rotated[0] != "opkgtun11" {
-		t.Fatalf("ожидалась ротация UDP-порта opkgtun11, получили %v", rotated)
+	if len(*rotated) != 1 || (*rotated)[0] != "if-awg11" || svc.restartCalls != 0 {
+		t.Fatalf("живой kernel: ротация порта без рестарта, получили rotated=%v restarts=%d", *rotated, svc.restartCalls)
 	}
-	if len(svc.restarts) != 0 {
-		t.Fatalf("живой kernel-туннель не должен перезапускаться: %v", svc.restarts)
-	}
-	got11, err := store.Get("awg11")
-	if err != nil || got11.Peer.Endpoint != "162.159.192.198:1002" {
-		t.Fatalf("endpoint awg11 не сохранился: %+v (%v)", got11, err)
+	if got, _ := store.Get("awg11"); got.Peer.Endpoint != "162.159.192.198:1002" {
+		t.Fatalf("endpoint awg11 не сохранился: %+v", got.Peer)
 	}
 
-	// 2. Включённый NativeWG с протухшим рукопожатием (StateBroken): считается Running для автопилота и перезапускается.
 	ref50, err := ops.Get(ctx, warpscout.TargetNative, "awg50")
 	if err != nil || !ref50.Running {
 		t.Fatalf("включённый NativeWG в StateBroken должен считаться активной целью: %+v (%v)", ref50, err)
@@ -204,10 +169,79 @@ func TestWarpOps_SwapManagedRotatesKernelPortAndRecoversStalled(t *testing.T) {
 	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.193:891"); err != nil {
 		t.Fatalf("SwapEndpoint native: %v", err)
 	}
-	if len(svc.restarts) != 1 || svc.restarts[0] != "awg50" {
-		t.Fatalf("зависший NativeWG должен перезапускаться через Restart: %v", svc.restarts)
+	if svc.restartCalls != 0 || len(*rotated) != 1 {
+		t.Fatalf("NativeWG: ни рестарта, ни ротации kernel-порта, получили restarts=%d rotated=%v", svc.restartCalls, *rotated)
 	}
-	if len(rotated) != 1 {
-		t.Fatalf("для NativeWG не должна вызываться ротация kernel UDP-порта: %v", rotated)
+
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg12", "162.159.192.193:891"); err != nil {
+		t.Fatalf("SwapEndpoint stalled kernel: %v", err)
+	}
+	if svc.restartCalls != 1 || len(*rotated) != 1 {
+		t.Fatalf("зависший kernel: один рестарт без ротации, получили restarts=%d rotated=%v", svc.restartCalls, *rotated)
+	}
+}
+
+// Туннель остановили руками, пока шла правка: рестарт включил бы его обратно.
+func TestWarpOps_SwapManagedSkipsRestartOfDisabledTunnel(t *testing.T) {
+	ops, svc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{"awg12": tunnel.StateStarting})
+	seedWarpTunnel(t, store, "awg12", "kernel")
+	svc.updateFn = func(context.Context, *storage.AWGTunnel, *storage.AWGTunnel) error {
+		return store.Update("awg12", func(t *storage.AWGTunnel) error { t.Enabled = false; return nil })
+	}
+	if err := ops.SwapEndpoint(context.Background(), warpscout.TargetKernel, "awg12", "162.159.192.193:891"); err != nil {
+		t.Fatal(err)
+	}
+	if svc.restartCalls != 0 {
+		t.Fatalf("остановленный пользователем туннель перезапущен: restarts=%d", svc.restartCalls)
+	}
+}
+
+// Подмена пишет только endpoint: поля оркестратора и пользователя, легшие в
+// запись за время правки интерфейса, переживают её, а кэш резолва прежнего
+// endpoint'а не переносится на новый.
+func TestWarpOps_SwapManagedKeepsForeignFields(t *testing.T) {
+	ops, svc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{"awg11": tunnel.StateRunning})
+	seedWarpTunnel(t, store, "awg11", "kernel")
+	svc.updateFn = func(context.Context, *storage.AWGTunnel, *storage.AWGTunnel) error {
+		return store.Update("awg11", func(t *storage.AWGTunnel) error {
+			t.ActiveWAN, t.Name = "ppp0", "переименован"
+			return nil
+		})
+	}
+	if err := ops.SwapEndpoint(context.Background(), warpscout.TargetKernel, "awg11", "162.159.192.198:1002"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := store.Get("awg11")
+	if got.Peer.Endpoint != "162.159.192.198:1002" || got.ActiveWAN != "ppp0" || got.Name != "переименован" {
+		t.Fatalf("чужие поля затёрты подменой: endpoint=%q activeWAN=%q name=%q", got.Peer.Endpoint, got.ActiveWAN, got.Name)
+	}
+	if got.ResolvedEndpointIP == "162.159.192.70" {
+		t.Fatal("в записи остался адрес прежнего endpoint'а")
+	}
+}
+
+// Endpoint проходит проверку штатной правки; защищённый туннель отвергается.
+func TestWarpOps_SwapManagedRefusals(t *testing.T) {
+	ctx := context.Background()
+	ops, svc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{"awg11": tunnel.StateRunning})
+	seedWarpTunnel(t, store, "awg11", "kernel")
+	updates := 0
+	svc.updateFn = func(context.Context, *storage.AWGTunnel, *storage.AWGTunnel) error { updates++; return nil }
+
+	err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "1.1.1.1:2408\nJc = 1")
+	var editErr *TunnelEditError
+	if !errors.As(err, &editErr) || editErr.Code != "INVALID_ENDPOINT" || updates != 0 {
+		t.Fatalf("endpoint с переводом строки должен отвергаться до правки: err=%v updates=%d", err, updates)
+	}
+	if got, _ := store.Get("awg11"); got.Peer.Endpoint != "162.159.192.70:1014" {
+		t.Fatalf("отвергнутый endpoint попал в запись: %q", got.Peer.Endpoint)
+	}
+
+	svc.updateFn = func(context.Context, *storage.AWGTunnel, *storage.AWGTunnel) error {
+		return tunnel.ErrOperationInProgress
+	}
+	err = ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002")
+	if !errors.As(err, &editErr) || editErr.Code != "OPERATION_IN_PROGRESS" {
+		t.Fatalf("занятый туннель — конфликт штатной правки: %v", err)
 	}
 }

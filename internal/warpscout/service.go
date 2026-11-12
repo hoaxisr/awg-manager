@@ -6,8 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
+	"net"
 	"net/http"
+	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -174,14 +178,18 @@ type Service struct {
 	d Deps
 
 	engineMu sync.Mutex // один процесс сканера на роутер
+	// acctMu — одна операция над учётной записью за раз, включая её сетевую
+	// часть: параллельные регистрация и привязка лицензии иначе записали бы
+	// каждая свою копию, и локальный ключ разошёлся бы с ключом у Cloudflare.
+	acctMu sync.Mutex
 
 	mu         sync.Mutex
 	scan       ScanStatus
 	scanCancel context.CancelFunc
 	watch      map[string]*WatchStatus
 	stats      map[string]*ProfileStats
-	lastFlush  time.Time
-	watchers   map[string]context.CancelFunc
+	statsDirty bool // в stats есть изменения, не дошедшие до диска
+	watchers   map[string]*watcher
 	rootCtx    context.Context
 	rootCancel context.CancelFunc
 	wg         sync.WaitGroup
@@ -211,7 +219,7 @@ func New(d Deps) *Service {
 	}
 	return &Service{
 		d: d, scan: ScanStatus{Hits: []Hit{}},
-		watch: map[string]*WatchStatus{}, stats: statsMap, watchers: map[string]context.CancelFunc{},
+		watch: map[string]*WatchStatus{}, stats: statsMap, watchers: map[string]*watcher{},
 		rootCtx: ctx, rootCancel: cancel,
 	}
 }
@@ -230,7 +238,12 @@ func (s *Service) Stop() {
 	}
 	s.mu.Unlock()
 	s.wg.Wait()
-	s.flushStats(true)
+	s.mu.Lock()
+	dirty := s.statsDirty
+	s.mu.Unlock()
+	if dirty {
+		s.flushStats()
+	}
 }
 
 func (s *Service) logInfo(action, target, msg string) {
@@ -327,27 +340,28 @@ func (s *Service) ResetStats(profileID string) error {
 		}
 	}
 	s.mu.Unlock()
-	s.flushStats(true)
+	s.flushStats()
 	return nil
 }
 
-func (s *Service) flushStats(force bool) {
+// flushStats пишет статистику на диск. Зовётся по событию (подмена endpoint,
+// сброс, удаление профиля) и на остановке — не по таймеру.
+func (s *Service) flushStats() {
 	if s.d.Store == nil {
 		return
 	}
-	now := s.d.Now()
 	s.mu.Lock()
-	if !force && !s.lastFlush.IsZero() && now.Sub(s.lastFlush) < 10*time.Minute {
-		s.mu.Unlock()
-		return
-	}
-	s.lastFlush = now
 	snap := make(map[string]ProfileStats, len(s.stats))
 	for k, v := range s.stats {
 		snap[k] = cloneProfileStats(*v, false)
 	}
+	s.statsDirty = false
 	s.mu.Unlock()
-	_ = s.d.Store.SaveStats(snap)
+	if err := s.d.Store.SaveStats(snap); err != nil {
+		s.mu.Lock()
+		s.statsDirty = true
+		s.mu.Unlock()
+	}
 }
 
 // Targets — туннели для выбора цели.
@@ -424,6 +438,8 @@ func (s *Service) doAccountOp(ctx context.Context, fn func(*http.Client) error) 
 
 // Register регистрирует (или перевыпускает ключи) учётную запись WARP.
 func (s *Service) Register(ctx context.Context) (*Account, error) {
+	s.acctMu.Lock()
+	defer s.acctMu.Unlock()
 	old := s.d.Store.Account()
 	var acct *Account
 	var oldNotFound bool
@@ -468,12 +484,14 @@ func (s *Service) Register(ctx context.Context) (*Account, error) {
 			})
 		}(old)
 	}
-	s.logInfo("register", "warp", "Зарегистрирована учётная запись Cloudflare WARP "+acct.ID)
+	s.logInfo("register", "warp", "Зарегистрирована учётная запись Cloudflare WARP")
 	return s.d.Store.Account(), nil
 }
 
 // SetLicense привязывает ключ WARP+.
 func (s *Service) SetLicense(ctx context.Context, license string) (*Account, error) {
+	s.acctMu.Lock()
+	defer s.acctMu.Unlock()
 	acct := s.d.Store.Account()
 	if acct == nil {
 		return nil, ErrNoAccount
@@ -492,6 +510,8 @@ func (s *Service) SetLicense(ctx context.Context, license string) (*Account, err
 
 // DeleteAccountLocal забывает учётную запись (и снимает её у Cloudflare).
 func (s *Service) DeleteAccountLocal(ctx context.Context) error {
+	s.acctMu.Lock()
+	defer s.acctMu.Unlock()
 	acct := s.d.Store.Account()
 	if err := s.d.Store.SetAccount(nil); err != nil {
 		return err
@@ -522,7 +542,7 @@ func (s *Service) buildParams(ctx context.Context, acct *Account, awg AWGParams,
 		Concurrency:      48,
 		PPS:              200,
 		TimeoutMs:        1500,
-		DeadlineMs:       180000,
+		DeadlineMs:       int(scanDeadline / time.Millisecond),
 		MaxHits:          maxHits,
 		Ifname:           wan,
 		PingIP:           "1.1.1.1",
@@ -547,8 +567,8 @@ func (s *Service) buildParams(ctx context.Context, acct *Account, awg AWGParams,
 	} else if f.MaxCandidates > 0 {
 		p.MaxCandidates = f.MaxCandidates
 	}
-	if p.MaxCandidates > 20000 {
-		p.MaxCandidates = 20000
+	if p.MaxCandidates > maxScanCandidates {
+		p.MaxCandidates = maxScanCandidates
 	}
 	if p.MaxHits <= 0 {
 		p.MaxHits = 10
@@ -562,6 +582,10 @@ func (s *Service) buildParams(ctx context.Context, acct *Account, awg AWGParams,
 	}
 	return p, nil
 }
+
+// maxScanCandidates — потолок числа кандидатов скана; им же ограничен
+// явный список endpoint'ов ручного скана.
+const maxScanCandidates = 20000
 
 func nonNil(v []string) []string {
 	if v == nil {
@@ -584,6 +608,14 @@ func (s *Service) awgForUse() AWGParams {
 
 // StartScan запускает ручной скан в фоне.
 func (s *Service) StartScan(req ScanRequest) error {
+	if len(req.Endpoints) > maxScanCandidates {
+		return fmt.Errorf("%w: в списке endpoint больше %d адресов", ErrInvalidInput, maxScanCandidates)
+	}
+	for _, ep := range req.Endpoints {
+		if err := validEndpoint(ep); err != nil {
+			return err
+		}
+	}
 	acct := s.d.Store.Account()
 	if acct == nil {
 		return ErrNoAccount
@@ -609,12 +641,14 @@ func (s *Service) StartScan(req ScanRequest) error {
 		s.engineMu.Unlock()
 		return err
 	}
-	ctx, cancel := context.WithCancel(s.rootCtx)
+	// Зависший процесс сканера иначе держал бы engineMu, а автопилот сидел бы
+	// в engine_busy до ручного «Стоп».
+	ctx, cancel := context.WithTimeout(s.rootCtx, time.Duration(params.DeadlineMs)*time.Millisecond+scanKillGrace)
 	s.mu.Lock()
 	s.scan = ScanStatus{Running: true, Owner: "manual", StartedAt: s.d.Now(), Hits: []Hit{}}
 	s.scanCancel = cancel
 	s.mu.Unlock()
-	s.publish(TopicScan, s.scanSnapshot())
+	s.publish(TopicScan, s.ScanSnapshot())
 	s.logInfo("scan", "manual", fmt.Sprintf("Запуск скана WARP (протокол %s, исключить %v)", normalizeFilters(req.Filters).Protocol, params.ExcludeColos))
 
 	s.wg.Add(1)
@@ -641,9 +675,12 @@ func (s *Service) StartScan(req ScanRequest) error {
 			s.mu.Unlock()
 			if ev.Type == "hit" || time.Since(lastPub) > 700*time.Millisecond {
 				lastPub = time.Now()
-				s.publish(TopicScan, s.scanSnapshot())
+				s.publish(TopicScan, s.ScanSnapshot())
 			}
 		})
+		if runErr == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			runErr = errors.New("сканер не завершился за отведённое время и был остановлен")
+		}
 		s.mu.Lock()
 		s.scan.Running = false
 		s.scan.FinishedAt = s.d.Now()
@@ -661,7 +698,7 @@ func (s *Service) StartScan(req ScanRequest) error {
 		} else {
 			s.logInfo("scan", "manual", fmt.Sprintf("Скан WARP завершён: найдено %d узлов", hits))
 		}
-		s.publish(TopicScan, s.scanSnapshot())
+		s.publish(TopicScan, s.ScanSnapshot())
 	}()
 	return nil
 }
@@ -675,7 +712,8 @@ func (s *Service) StopScan() {
 	}
 }
 
-func (s *Service) scanSnapshot() ScanStatus {
+// ScanSnapshot — состояние ручного скана.
+func (s *Service) ScanSnapshot() ScanStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := s.scan
@@ -684,9 +722,17 @@ func (s *Service) scanSnapshot() ScanStatus {
 }
 
 func sortHits(h []Hit) {
+	// PingMs == 0 — замера нет: такой узел идёт последним, иначе автопилот
+	// взял бы его как лучший.
+	rank := func(ms int) int {
+		if ms <= 0 {
+			return math.MaxInt
+		}
+		return ms
+	}
 	sort.SliceStable(h, func(i, j int) bool {
-		if h[i].PingMs != h[j].PingMs {
-			return h[i].PingMs < h[j].PingMs
+		if pi, pj := rank(h[i].PingMs), rank(h[j].PingMs); pi != pj {
+			return pi < pj
 		}
 		return h[i].HandshakeMs < h[j].HandshakeMs
 	})
@@ -737,6 +783,13 @@ func (s *Service) SaveConfig(ctx context.Context, in Config) (Config, error) {
 	}
 	if cfg.ProfileMode == ProfileModeSingle && cfg.ActiveProfileID != "" && !seen[cfg.ActiveProfileID] {
 		cfg.ActiveProfileID = ""
+	}
+	for i, v := range []string{cfg.AWG.I1, cfg.AWG.I2, cfg.AWG.I3, cfg.AWG.I4, cfg.AWG.I5} {
+		// Значение ложится строкой в .conf: перевод строки дописал бы в него
+		// посторонние параметры.
+		if strings.ContainsAny(v, "\r\n\x00") {
+			return Config{}, fmt.Errorf("%w: I%d содержит перевод строки", ErrInvalidInput, i+1)
+		}
 	}
 	if prof := cfg.AWG.SignatureProfile; prof != "none" && prof != "" {
 		old := s.d.Store.Config().AWG
@@ -859,9 +912,13 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 			cfg.ActiveProfileID = p.ID
 		}
 		if _, err := s.SaveConfig(ctx, cfg); err != nil {
-			return res, fmt.Errorf("туннель готов, но автопилот не включён: %w", err)
+			// Туннель уже создан (endpoint уже подменён): ошибка в ответе
+			// привела бы к повтору и дубликату туннеля. Пустой profileId в
+			// ответе — признак, что автопилот не включён.
+			s.logWarn("apply", ref.Name, "Туннель готов, но автопилот не включён: "+err.Error())
+		} else {
+			res.ProfileID = p.ID
 		}
-		res.ProfileID = p.ID
 	}
 	return res, nil
 }
@@ -886,13 +943,28 @@ func (s *Service) noteManualSwap(mode TargetMode, targetID, endpoint string) {
 	}
 	s.mu.Unlock()
 	if changed {
-		s.flushStats(true)
+		s.flushStats()
 	}
 }
 
+// validEndpoint — строго ip:port (в скобках для IPv6), порт 1..65535. Узлы
+// WARP приходят от сканера адресами; имя хоста, зона и любые лишние символы
+// отвергаются — endpoint ложится строкой в .conf и в NDMS.
 func validEndpoint(ep string) error {
-	host, port, ok := strings.Cut(strings.TrimSpace(ep), ":")
-	if !ok || host == "" || port == "" || strings.Contains(port, ":") {
+	host, port, err := net.SplitHostPort(ep)
+	if err == nil {
+		var addr netip.Addr
+		if addr, err = netip.ParseAddr(host); err == nil && addr.Zone() != "" {
+			err = errors.New("zone")
+		}
+	}
+	if err == nil {
+		var n uint64
+		if n, err = strconv.ParseUint(port, 10, 16); err == nil && n == 0 {
+			err = errors.New("port")
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("%w: endpoint должен быть вида ip:port", ErrInvalidInput)
 	}
 	return nil

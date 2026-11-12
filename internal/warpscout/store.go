@@ -58,10 +58,18 @@ type Store struct {
 	path   string
 	cipher Cipher
 
+	// Frozen — «на диск сейчас писать нельзя»: каталог данных заменён (или
+	// заменяется) восстановлением из резервной копии, и запись из памяти
+	// затёрла бы восстановленный файл. nil — запись разрешена всегда.
+	Frozen func() bool
+
 	mu    sync.Mutex
 	state fileState
 	acct  *Account // расшифрованная копия
 }
+
+// ErrFrozen — запись отклонена: идёт восстановление из резервной копии.
+var ErrFrozen = errors.New("warpscout: восстановление из резервной копии — запись отложена до перезапуска")
 
 // NewStore открывает (или создаёт пустым) файл в dataDir.
 func NewStore(dataDir string, cipher Cipher) (*Store, error) {
@@ -123,6 +131,9 @@ func (s *Store) decryptAccount(d *accountDisk) (*Account, error) {
 }
 
 func (s *Store) saveLocked() error {
+	if s.Frozen != nil && s.Frozen() {
+		return ErrFrozen
+	}
 	data, err := json.MarshalIndent(s.state, "", "  ")
 	if err != nil {
 		return err
@@ -287,6 +298,13 @@ func DefaultFilters() Filters {
 	}
 }
 
+// maxFilterPorts — потолок списка портов фильтра: штатный набор WARP — 54.
+const maxFilterPorts = 256
+
+// maxProfileSec — потолок интервала проверки и cooldown (сутки); тот же, что
+// у полей формы. Без него значение из API переполняло time.Duration.
+const maxProfileSec = 86400
+
 func normalizeFilters(f Filters) Filters {
 	if f.Protocol != ProtocolWG {
 		f.Protocol = ProtocolAWG
@@ -305,6 +323,9 @@ func normalizeFilters(f Filters) Filters {
 			ports = append(ports, p)
 		}
 	}
+	if len(ports) > maxFilterPorts {
+		ports = ports[:maxFilterPorts]
+	}
 	f.Ports = ports
 	return f
 }
@@ -319,11 +340,17 @@ func normalizeProfile(p Profile) Profile {
 	if p.CheckIntervalSec < 15 {
 		p.CheckIntervalSec = 15
 	}
+	if p.CheckIntervalSec > maxProfileSec {
+		p.CheckIntervalSec = maxProfileSec
+	}
 	if p.FailThreshold <= 0 {
 		p.FailThreshold = 2
 	}
 	if p.CooldownSec <= 0 {
 		p.CooldownSec = 120
+	}
+	if p.CooldownSec > maxProfileSec {
+		p.CooldownSec = maxProfileSec
 	}
 	return p
 }

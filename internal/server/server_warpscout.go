@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
+	"github.com/hoaxisr/awg-manager/internal/backup"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/warpscout"
 )
@@ -23,6 +24,17 @@ func (s *Server) buildWarpScout(h *routeHandlers) *api.WarpScoutHandler {
 		log.Warn("init", "warpscout", "Хранилище недоступно: "+err.Error())
 		return nil
 	}
+	// Восстановление из резервной копии заменяет warpscout.json на диске и
+	// перезапускает демон; до перезапуска состояние из памяти писать нельзя —
+	// оно легло бы поверх восстановленного файла. Тот же маркер гейтит
+	// shutdown-хук прокси-рантайма (cmd/awg-manager/wiring_server.go).
+	// Маркер, уже стоявший при старте, — след прошлого процесса: этот читает
+	// восстановленный файл сам и писать вправе (бут снимет маркер позже).
+	dataDir := s.settings.DataDir()
+	bornAfterRestore := backup.HasPostRestoreMarker(dataDir)
+	store.Frozen = func() bool {
+		return backup.Restoring() || (!bornAfterRestore && backup.HasPostRestoreMarker(dataDir))
+	}
 	ops := &api.WarpTunnelOps{
 		Svc:      s.tunnelService,
 		Store:    s.tunnels,
@@ -30,7 +42,6 @@ func (s *Server) buildWarpScout(h *routeHandlers) *api.WarpScoutHandler {
 		System:   s.systemTunnelService,
 		Commands: s.ndmsCommands,
 		Queries:  s.ndmsQueries,
-		Orch:     s.orch,
 		Tunnels:  h.tunnelsHandler,
 	}
 	deps := warpscout.Deps{

@@ -15,9 +15,6 @@ import (
 	"time"
 )
 
-// EngineEnvVar — переопределение пути к C-модулю (разработка, тесты).
-const EngineEnvVar = "AWGM_WARPSCOUT_BIN"
-
 // EngineCandidates — где искать C-модуль на роутере.
 var EngineCandidates = []string{"/opt/sbin/awgm-warpscout", "/opt/bin/awgm-warpscout"}
 
@@ -112,7 +109,7 @@ type Runner interface {
 
 // BinaryRunner запускает C-модуль дочерним процессом.
 type BinaryRunner struct {
-	// Path — явный путь; пусто — EngineEnvVar, затем EngineCandidates.
+	// Path — явный путь (тесты); пусто — EngineCandidates.
 	Path string
 }
 
@@ -123,9 +120,6 @@ func (r *BinaryRunner) Available() (string, bool) {
 			return r.Path, true
 		}
 		return r.Path, false
-	}
-	if p := strings.TrimSpace(os.Getenv(EngineEnvVar)); p != "" {
-		return p, fileExecutable(p)
 	}
 	for _, p := range EngineCandidates {
 		if fileExecutable(p) {
@@ -145,6 +139,9 @@ func fileExecutable(p string) bool {
 	}
 	return st.Mode()&0o111 != 0
 }
+
+// maxEngineLine — потолок одной строки JSONL из stdout C-модуля.
+const maxEngineLine = 1 << 20
 
 // ErrEngineMissing — C-модуль не установлен.
 var ErrEngineMissing = errors.New("модуль сканера awgm-warpscout не найден")
@@ -183,7 +180,7 @@ func (r *BinaryRunner) Run(ctx context.Context, p ScanParams, onEvent func(Engin
 	}()
 	var fatal string
 	sc := bufio.NewScanner(stdout)
-	sc.Buffer(make([]byte, 0, 4096), 64<<10)
+	sc.Buffer(make([]byte, 0, 4096), maxEngineLine)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || line[0] != '{' {
@@ -198,6 +195,9 @@ func (r *BinaryRunner) Run(ctx context.Context, p ScanParams, onEvent func(Engin
 		}
 		onEvent(ev)
 	}
+	// Строка длиннее буфера обрывает разбор: без этой ошибки скан выглядел бы
+	// как успешный и пустой.
+	scanErr := sc.Err()
 	_, _ = io.Copy(io.Discard, stdout)
 	werr := cmd.Wait()
 	if ctx.Err() != nil {
@@ -212,6 +212,9 @@ func (r *BinaryRunner) Run(ctx context.Context, p ScanParams, onEvent func(Engin
 			return fmt.Errorf("%v: %s", werr, msg)
 		}
 		return werr
+	}
+	if scanErr != nil {
+		return fmt.Errorf("разбор вывода сканера: %w", scanErr)
 	}
 	return nil
 }

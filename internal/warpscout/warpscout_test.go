@@ -5,9 +5,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -50,12 +54,13 @@ func (r *fakeRunner) Run(ctx context.Context, p ScanParams, on func(EngineEvent)
 }
 
 type fakeTunnels struct {
-	mu      sync.Mutex
-	refs    map[string]*TunnelRef
-	swaps   []string
-	created []string
-	getErr  error
-	onSwap  func(r *TunnelRef)
+	mu       sync.Mutex
+	refs     map[string]*TunnelRef
+	swaps    []string
+	created  []string
+	getErr   error
+	onSwap   func(r *TunnelRef)
+	onCreate func(r *TunnelRef)
 }
 
 func key(m TargetMode, id string) string { return string(m) + "/" + id }
@@ -91,6 +96,9 @@ func (f *fakeTunnels) Create(_ context.Context, m TargetMode, name, conf string)
 	f.created = append(f.created, conf)
 	r := &TunnelRef{Mode: m, ID: id, Name: name, Iface: "nwg9", IsWarp: true, Running: true}
 	f.refs[key(m, id)] = r
+	if f.onCreate != nil {
+		f.onCreate(r)
+	}
 	c := *r
 	return &c, nil
 }
@@ -433,8 +441,8 @@ func TestWatchdog_PostSwapTunnelStoppedOrGetError(t *testing.T) {
 		if len(h) != 1 || h[0].OK || !strings.Contains(h[0].Error, "выключен") {
 			t.Fatalf("выключенный после подмены туннель не должен считаться успехом: %+v", h)
 		}
-		if st.nextSwap.After(time.Now()) {
-			t.Fatalf("при провале проверки не должен включаться cooldown: nextSwap=%v", st.nextSwap)
+		if d := time.Until(st.nextSwap); d < 50*time.Second {
+			t.Fatalf("после провала проверки ожидалась пауза ≥1 мин, получили %s", d)
 		}
 		s.mu.Lock()
 		ws := *s.watch[p.ID]
@@ -458,8 +466,8 @@ func TestWatchdog_PostSwapTunnelStoppedOrGetError(t *testing.T) {
 		if len(h) != 1 || h[0].OK || !strings.Contains(h[0].Error, "ndms unavailable") {
 			t.Fatalf("ошибка Get после подмены не должна маскироваться под успех: %+v", h)
 		}
-		if st.nextSwap.After(time.Now()) {
-			t.Fatalf("при ошибке Get после подмены не должен включаться cooldown: nextSwap=%v", st.nextSwap)
+		if d := time.Until(st.nextSwap); d < 50*time.Second {
+			t.Fatalf("после ошибки Get ожидалась пауза ≥1 мин, получили %s", d)
 		}
 		s.mu.Lock()
 		ws := *s.watch[p.ID]
@@ -510,7 +518,10 @@ func TestWatchdog_MaxRTTEnforced(t *testing.T) {
 	}
 }
 
-func TestWatchdog_MaxRTTPostSwapVerifyFails(t *testing.T) {
+// Сканер находит узлы, а контрольная проверка после подмены стабильно не
+// проходит: без паузы автопилот сканировал бы и переписывал endpoint на
+// каждом круге. Пауза растёт по backoffSteps и сбрасывается успешной проверкой.
+func TestWatchdog_PostSwapVerifyFailsBacksOff(t *testing.T) {
 	s, r, tun, pr := newTestService(t)
 	r.hits = []Hit{{Endpoint: "188.114.96.9:2408", PingMs: 35, Colo: "HEL", Loc: "FI"}}
 
@@ -520,10 +531,7 @@ func TestWatchdog_MaxRTTPostSwapVerifyFails(t *testing.T) {
 	st := &watcherState{}
 
 	// И до, и после подмены реальная задержка в туннеле 500 мс > 50 мс.
-	pr.queue = []TraceResult{
-		{Colo: "HEL", Loc: "FI", Warp: "on", LatencyMs: 500},
-		{Colo: "HEL", Loc: "FI", Warp: "on", LatencyMs: 500},
-	}
+	pr.def = TraceResult{Colo: "HEL", Loc: "FI", Warp: "on", LatencyMs: 500}
 	s.checkOnce(context.Background(), p, st)
 	if len(tun.swaps) != 1 {
 		t.Fatalf("ожидалась подмена, swaps=%v", tun.swaps)
@@ -532,8 +540,431 @@ func TestWatchdog_MaxRTTPostSwapVerifyFails(t *testing.T) {
 	if len(h) != 1 || h[0].OK || !strings.Contains(h[0].Error, "500") {
 		t.Fatalf("превышение RTT после подмены должно провалить проверку: %+v", h)
 	}
-	if st.nextSwap.After(time.Now()) {
-		t.Fatalf("после провала контрольного RTT не должен включаться cooldown: %v", st.nextSwap)
+	if d := time.Until(st.nextSwap); d < 50*time.Second || d > 70*time.Second {
+		t.Fatalf("после первого провала ожидалась пауза 1 мин, получили %s", d)
+	}
+
+	// Пока пауза не истекла — ни скана, ни подмены.
+	s.checkOnce(context.Background(), p, st)
+	if len(r.calls) != 1 || len(tun.swaps) != 1 {
+		t.Fatalf("скан во время паузы: calls=%d swaps=%v", len(r.calls), tun.swaps)
+	}
+
+	// Пауза истекла, проверка снова не проходит — следующая ступень.
+	st.nextSwap = time.Time{}
+	s.checkOnce(context.Background(), p, st)
+	if len(tun.swaps) != 2 {
+		t.Fatalf("после паузы ожидалась вторая подмена, swaps=%v", tun.swaps)
+	}
+	if d := time.Until(st.nextSwap); d < 110*time.Second {
+		t.Fatalf("пауза должна расти (2 мин), получили %s", d)
+	}
+
+	// Успешная проверка сбрасывает ступень.
+	pr.def = TraceResult{Colo: "HEL", Loc: "FI", Warp: "on", LatencyMs: 30}
+	s.checkOnce(context.Background(), p, st)
+	if st.backoffIx != 0 {
+		t.Fatalf("успешная проверка должна сбросить backoff, backoffIx=%d", st.backoffIx)
+	}
+}
+
+// Отказ самой подмены — та же растущая пауза.
+func TestWatchdog_SwapErrorBacksOff(t *testing.T) {
+	s, r, tun, pr := newTestService(t)
+	// Узел, который сканер вернул не адресом, до туннеля не доходит.
+	r.hits = []Hit{{Endpoint: "engage.example:2408\nJc = 1", PingMs: 35}}
+	pr.err = errors.New("timeout")
+	p := testProfile()
+	p.FailThreshold = 1
+	st := &watcherState{}
+	s.checkOnce(context.Background(), p, st)
+	first := time.Until(st.nextSwap)
+	st.nextSwap = time.Time{}
+	s.checkOnce(context.Background(), p, st)
+	if len(tun.swaps) != 0 {
+		t.Fatalf("некорректный endpoint дошёл до подмены: %v", tun.swaps)
+	}
+	if second := time.Until(st.nextSwap); first < 50*time.Second || second < 110*time.Second {
+		t.Fatalf("пауза после отказа подмены должна расти: %s, затем %s", first, second)
+	}
+}
+
+// Проверки без подмены не пишут warpscout.json: счётчики живут в памяти и
+// уходят на диск на остановке — и только если есть что писать.
+func TestStats_ChecksDoNotWriteFile(t *testing.T) {
+	s, _, _, _ := newTestService(t)
+	p := testProfile()
+	path := s.d.Store.path
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	st := &watcherState{}
+	for i := 0; i < 20; i++ {
+		s.checkOnce(context.Background(), p, st)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("проверки без подмены записали файл (err=%v)", err)
+	}
+	s.Stop()
+	if got := s.d.Store.Stats()[p.ID].ChecksTotal; got != 20 {
+		t.Fatalf("остановка должна сохранить накопленное: ChecksTotal=%d", got)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("остановка с несохранёнными изменениями не записала файл: %v", err)
+	}
+	// Повторная остановка без изменений файл не трогает.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	s.Stop()
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("остановка без изменений записала файл (err=%v)", err)
+	}
+}
+
+// Восстановление из резервной копии заменило файл: ни сторож, ни остановка
+// не имеют права лечь поверх него состоянием из памяти.
+func TestStore_FrozenRefusesWrites(t *testing.T) {
+	s, _, _, _ := newTestService(t)
+	p := testProfile()
+	s.checkOnce(context.Background(), p, &watcherState{})
+
+	restored := []byte(`{"schemaVersion":1,"config":{"profileMode":"multi","profiles":[]}}`)
+	if err := os.WriteFile(s.d.Store.path, restored, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.d.Store.Frozen = func() bool { return true }
+
+	if err := s.d.Store.SetConfig(DefaultConfig()); !errors.Is(err, ErrFrozen) {
+		t.Fatalf("запись при восстановлении должна отклоняться, err=%v", err)
+	}
+	_ = s.d.Store.AppendHistory(SwapEvent{ProfileID: p.ID})
+	_ = s.ResetStats("")
+	s.Stop()
+	got, err := os.ReadFile(s.d.Store.path)
+	if err != nil || string(got) != string(restored) {
+		t.Fatalf("восстановленный файл затёрт: %s (%v)", got, err)
+	}
+}
+
+// Регистрация и привязка лицензии не идут одновременно: иначе SetLicense
+// записал бы свою устаревшую копию учётки поверх перевыпущенного ключа, и
+// локальный ключ разошёлся бы с ключом у Cloudflare.
+func TestAccountOps_Serialized(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		lastKey string
+	)
+	putSeen := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodPatch:
+			var p map[string]string
+			_ = json.Unmarshal(body, &p)
+			mu.Lock()
+			lastKey = p["key"]
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"id":"a1","warp_enabled":true}`))
+		case http.MethodPut:
+			close(putSeen)
+			select {
+			case <-release:
+			case <-time.After(5 * time.Second):
+			}
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			_, _ = w.Write([]byte(`{"account_type":"limited","warp_plus":true,"quota":1}`))
+		}
+	}))
+	defer srv.Close()
+	origBase := cfAPIBase
+	cfAPIBase = srv.URL
+	t.Cleanup(func() { cfAPIBase = origBase })
+
+	s, _, _, _ := newTestService(t)
+	log := &captureLog{}
+	s.d.Log = log
+	s.d.HTTP = func(string) (*http.Client, error) { return srv.Client(), nil }
+
+	licDone := make(chan error, 1)
+	go func() {
+		_, err := s.SetLicense(context.Background(), "lic")
+		licDone <- err
+	}()
+	<-putSeen
+	regDone := make(chan error, 1)
+	go func() {
+		_, err := s.Register(context.Background())
+		regDone <- err
+	}()
+	// Привязка лицензии висит в сети. Без замка регистрация успевает пройти
+	// целиком; с замком она ждёт — отпускаем привязку по таймауту.
+	var regErr error
+	select {
+	case regErr = <-regDone:
+		close(release)
+	case <-time.After(200 * time.Millisecond):
+		close(release)
+		regErr = <-regDone
+	}
+	if err := <-licDone; err != nil || regErr != nil {
+		t.Fatalf("SetLicense: %v, Register: %v", err, regErr)
+	}
+	acct := s.d.Store.Account()
+	mu.Lock()
+	defer mu.Unlock()
+	if acct.PublicKey != lastKey {
+		t.Fatalf("локальный ключ %q разошёлся с ключом у Cloudflare %q", acct.PublicKey, lastKey)
+	}
+	if pub, err := PublicKeyOf(acct.PrivateKey); err != nil || pub != lastKey {
+		t.Fatalf("приватный ключ не соответствует ключу у Cloudflare: %q (%v)", pub, err)
+	}
+	if acct.License != "lic" {
+		t.Fatalf("лицензия потеряна: %+v", acct)
+	}
+	for _, m := range log.msgs {
+		if strings.Contains(m, acct.ID) {
+			t.Fatalf("идентификатор учётной записи попал в журнал: %q", m)
+		}
+	}
+}
+
+type captureLog struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (l *captureLog) Info(_, _, msg string) { l.add(msg) }
+func (l *captureLog) Warn(_, _, msg string) { l.add(msg) }
+func (l *captureLog) add(msg string) {
+	l.mu.Lock()
+	l.msgs = append(l.msgs, msg)
+	l.mu.Unlock()
+}
+
+func TestValidEndpoint(t *testing.T) {
+	for _, ep := range []string{"1.1.1.1:2408", "162.159.192.1:1", "[2606:4700:d0::a29f:c001]:65535"} {
+		if err := validEndpoint(ep); err != nil {
+			t.Fatalf("%q должен проходить: %v", ep, err)
+		}
+	}
+	for _, ep := range []string{
+		"", "1.1.1.1", "1.1.1.1:", ":2408", "1.1.1.1:0", "1.1.1.1:65536", "1.1.1.1:+5", "1.1.1.1:2408\nJc = 1",
+		"1.1.1.1\n:2408", " 1.1.1.1:2408", "engage.cloudflareclient.com:2408", "[fe80::1%eth0]:2408",
+		"[fe80::1%a\nb]:2408", "1.1.1.1:2408\x00", "2606:4700::1:2408",
+	} {
+		if err := validEndpoint(ep); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("%q должен отвергаться, err=%v", ep, err)
+		}
+	}
+}
+
+func TestInputValidation(t *testing.T) {
+	s, r, tun, _ := newTestService(t)
+	ctx := context.Background()
+
+	// I1..I5 ложатся строками в .conf — перевод строки отвергается.
+	for _, bad := range []string{"<b 0x01>\nPostUp = reboot", "<b 0x01>\r", "<b 0x01>\x00"} {
+		cfg := Config{ProfileMode: ProfileModeMulti, AWG: AWGParams{SignatureProfile: "dns", I1: "<b 0x01>", I3: bad}}
+		if _, err := s.SaveConfig(ctx, cfg); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("I3=%q должен отвергаться, err=%v", bad, err)
+		}
+	}
+
+	// Endpoint создаваемого туннеля и подмены.
+	for _, action := range []string{"create", "swap"} {
+		_, err := s.Apply(ctx, ApplyRequest{Action: action, Endpoint: "1.1.1.1:2408\nJc = 1", Mode: TargetNative, TargetID: "awg10"})
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("%s: endpoint с переводом строки должен отвергаться, err=%v", action, err)
+		}
+	}
+	if len(tun.created) != 0 || len(tun.swaps) != 0 {
+		t.Fatalf("некорректный endpoint дошёл до туннеля: created=%v swaps=%v", tun.created, tun.swaps)
+	}
+
+	// Список endpoint'ов ручного скана: строгий разбор и потолок длины.
+	if err := s.StartScan(ScanRequest{Endpoints: []string{"1.1.1.1:2408", "host:1"}}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("имя хоста в endpoints должно отвергаться, err=%v", err)
+	}
+	many := make([]string, maxScanCandidates+1)
+	for i := range many {
+		many[i] = "1.1.1.1:2408"
+	}
+	if err := s.StartScan(ScanRequest{Endpoints: many}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("слишком длинный список endpoints должен отвергаться, err=%v", err)
+	}
+	if len(r.calls) != 0 {
+		t.Fatal("скан запущен с некорректным входом")
+	}
+
+	// Интервалы: значение ~1e11 с переполняло time.Duration.
+	p := normalizeProfile(Profile{CheckIntervalSec: 100_000_000_000, CooldownSec: 100_000_000_000})
+	if p.CheckIntervalSec != 86400 || p.CooldownSec != 86400 {
+		t.Fatalf("потолок интервалов: check=%d cooldown=%d", p.CheckIntervalSec, p.CooldownSec)
+	}
+	ports := make([]int, 1000)
+	for i := range ports {
+		ports[i] = i + 1
+	}
+	if f := normalizeFilters(Filters{Ports: ports}); len(f.Ports) != maxFilterPorts {
+		t.Fatalf("потолок списка портов: %d", len(f.Ports))
+	}
+}
+
+// hangRunner — сканер, который не завершается сам.
+type hangRunner struct{}
+
+func (hangRunner) Available() (string, bool) { return "/fake", true }
+func (hangRunner) Run(ctx context.Context, _ ScanParams, _ func(EngineEvent)) error {
+	<-ctx.Done()
+	return nil
+}
+
+// Зависший процесс сканера снимается по дедлайну и освобождает движок.
+func TestManualScan_DeadlineFreesEngine(t *testing.T) {
+	s, _, _, _ := newTestService(t)
+	s.d.Runner = hangRunner{}
+	origD, origG := scanDeadline, scanKillGrace
+	scanDeadline, scanKillGrace = 20*time.Millisecond, 20*time.Millisecond
+	t.Cleanup(func() { scanDeadline, scanKillGrace = origD, origG })
+
+	if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for s.ScanSnapshot().Running && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	sc := s.ScanSnapshot()
+	if sc.Running || sc.Error == "" {
+		t.Fatalf("зависший скан должен завершиться ошибкой по дедлайну: %+v", sc)
+	}
+	if !s.engineMu.TryLock() {
+		t.Fatal("движок остался занят после дедлайна")
+	}
+	s.engineMu.Unlock()
+}
+
+// Строка stdout длиннее 64 КБ не обрывает разбор событий; строка длиннее
+// потолка — ошибка, а не молчаливо пустой скан.
+func TestBinaryRunner_LongLines(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("нужен sh")
+	}
+	dir := t.TempDir()
+	script := func(name string, n int) string {
+		p := filepath.Join(dir, name)
+		body := fmt.Sprintf("#!/bin/sh\ncat >/dev/null\nhead -c %d /dev/zero | tr '\\0' 'a'\necho\necho '{\"type\":\"hit\",\"endpoint\":\"1.1.1.1:2408\"}'\n", n)
+		if err := os.WriteFile(p, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	var hits int
+	count := func(e EngineEvent) {
+		if e.Type == "hit" {
+			hits++
+		}
+	}
+	r := &BinaryRunner{Path: script("long.sh", 100_000)}
+	if err := r.Run(context.Background(), ScanParams{}, count); err != nil || hits != 1 {
+		t.Fatalf("событие после длинной строки потеряно: hits=%d err=%v", hits, err)
+	}
+	hits = 0
+	r = &BinaryRunner{Path: script("huge.sh", maxEngineLine+1)}
+	if err := r.Run(context.Background(), ScanParams{}, count); err == nil {
+		t.Fatalf("строка длиннее потолка должна давать ошибку (hits=%d)", hits)
+	}
+}
+
+// Путь к бинарнику задаётся только полем: окружение в проде не читается.
+func TestBinaryRunner_IgnoresEnv(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "evil")
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWGM_WARPSCOUT_BIN", p)
+	if got, _ := (&BinaryRunner{}).Available(); got == p {
+		t.Fatal("путь к сканеру подменён переменной окружения")
+	}
+}
+
+// Отменённый сторож не воскрешает состояние удалённого профиля, а сохранение
+// конфигурации не перезапускает сторожей, чей профиль не менялся.
+func TestReconcileWatchers(t *testing.T) {
+	s, _, _, _ := newTestService(t)
+	ctx := context.Background()
+	mk := func(id, target string) Profile {
+		return Profile{ID: id, Name: id, Enabled: true, TargetMode: TargetNative, TargetID: target}
+	}
+	s.d.Tunnels.(*fakeTunnels).refs[key(TargetNative, "awg11")] = &TunnelRef{Mode: TargetNative, ID: "awg11", IsWarp: true, Running: true}
+	cfg := Config{ProfileMode: ProfileModeMulti, AWG: AWGParams{SignatureProfile: "none"},
+		Profiles: []Profile{mk("p1", "awg10"), mk("p2", "awg11")}}
+	if _, err := s.SaveConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	w1, w2 := s.watchers["p1"], s.watchers["p2"]
+	s.mu.Unlock()
+	if w1 == nil || w2 == nil {
+		t.Fatal("сторожа не запущены")
+	}
+
+	// p2 меняется, p1 — нет.
+	saved := s.d.Store.Config()
+	saved.Profiles[1].FailThreshold = 5
+	if _, err := s.SaveConfig(ctx, saved); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	n1, n2 := s.watchers["p1"], s.watchers["p2"]
+	s.mu.Unlock()
+	if n1 != w1 {
+		t.Fatal("сторож неизменённого профиля перезапущен — cooldown и backoff сброшены")
+	}
+	if n2 == w2 || n2 == nil || n2.p.FailThreshold != 5 {
+		t.Fatal("сторож изменённого профиля не перезапущен")
+	}
+
+	// p2 удалён: его отменённый сторож ещё доигрывает проверку.
+	wctx, cancel := context.WithCancel(ctx)
+	s.mu.Lock()
+	s.watchers["p2"].cancel = cancel
+	s.mu.Unlock()
+	saved.Profiles = saved.Profiles[:1]
+	if _, err := s.SaveConfig(ctx, saved); err != nil {
+		t.Fatal(err)
+	}
+	if wctx.Err() == nil {
+		t.Fatal("сторож удалённого профиля не отменён")
+	}
+	s.setWatch(wctx, "p2", func(ws *WatchStatus) { ws.State = WatchOK })
+	s.recordCheckSample(wctx, "p2", time.Now(), "1.1.1.1:2408", nil, true, "")
+	s.recordSwapResult(wctx, "p2", time.Now(), true, true, "1.1.1.1:2408", nil)
+	s.mu.Lock()
+	_, hasWatch := s.watch["p2"]
+	_, hasStats := s.stats["p2"]
+	s.mu.Unlock()
+	if hasWatch || hasStats {
+		t.Fatalf("отменённый сторож воскресил состояние удалённого профиля: watch=%v stats=%v", hasWatch, hasStats)
+	}
+}
+
+// Туннель создан, а автопилот включить не удалось: это успех — ошибка привела
+// бы к повтору и второму туннелю.
+func TestApply_AutopilotFailureIsNotAnError(t *testing.T) {
+	s, _, tun, _ := newTestService(t)
+	tun.onCreate = func(r *TunnelRef) { r.IsWarp = false } // SaveConfig откажет: не WARP
+	res, err := s.Apply(context.Background(), ApplyRequest{Action: "create", Endpoint: "188.114.96.9:2408",
+		Mode: TargetKernel, Name: "WARP-FI", EnableAutopilot: true})
+	if err != nil || res == nil || res.Tunnel == nil {
+		t.Fatalf("созданный туннель должен быть успехом: res=%+v err=%v", res, err)
+	}
+	if res.ProfileID != "" || len(s.d.Store.Config().Profiles) != 0 {
+		t.Fatalf("автопилот не включён — profileId должен быть пуст: %+v", res)
 	}
 }
 
@@ -946,5 +1377,15 @@ func TestLocalCipher_RoundTripAndWrongKey(t *testing.T) {
 	}
 	if stOther.Account() != nil || !stOther.AccountUnreadable() {
 		t.Fatalf("при чужом ключе ожидался AccountUnreadable=true, got account=%+v unreadable=%v", stOther.Account(), stOther.AccountUnreadable())
+	}
+}
+
+// Узел без замера пинга (0) не должен становиться «лучшим»: по первому
+// элементу автопилот выбирает, куда переключаться.
+func TestSortHits_UnmeasuredPingLast(t *testing.T) {
+	hits := []Hit{{Endpoint: "a", PingMs: 0, HandshakeMs: 5}, {Endpoint: "b", PingMs: 40}, {Endpoint: "c", PingMs: 12}}
+	sortHits(hits)
+	if hits[0].Endpoint != "c" || hits[1].Endpoint != "b" || hits[2].Endpoint != "a" {
+		t.Fatalf("порядок %v, want c b a", hits)
 	}
 }
