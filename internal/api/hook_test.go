@@ -97,6 +97,11 @@ type fakeWANModel struct {
 	calls []fakeWANSetUp
 }
 
+// knownWANModel — модель, которая запись знает (рядовой хук известного WAN).
+type knownWANModel struct{ fakeWANModel }
+
+func (*knownWANModel) Known(string) bool { return true }
+
 type fakeWANSetUp struct {
 	Name string
 	Up   bool

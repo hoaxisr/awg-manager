@@ -782,11 +782,10 @@ func (s *InterfaceStore) ResolveSystemName(ctx context.Context, ndmsName string)
 
 // systemNameLocked — имя ядра из памяти, см. ResolveSystemName.
 //
-// Для класса из таблицы живость устройства (/sys/class/net) не проверяется:
-// прежний резолвер отвечал именем записи и при опущенном устройстве (ppp0
-// лежащего PPPoE), и вызывающие (правило MASQUERADE на WAN, привязка
-// sing-box) на этом стоят. Имя хука/резолвера — тоже без проверки: оно
-// получено от NDMS для этого id.
+// Живость устройства (/sys/class/net) не проверяется ни для класса из
+// таблицы, ни для имени хука/резолвера: имя получено от NDMS для этого id, и
+// вызывающие (правило MASQUERADE на WAN, привязка sing-box) ждут его и при
+// опущенном устройстве.
 func (s *InterfaceStore) systemNameLocked(id string) string {
 	iface, known := s.byID[id]
 	if name, ok := ndms.KernelName(id); ok {

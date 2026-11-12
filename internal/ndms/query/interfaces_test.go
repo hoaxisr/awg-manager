@@ -1399,3 +1399,30 @@ func TestInterfaceStore_ListWAN_DedupesByKernelName(t *testing.T) {
 		}
 	}
 }
+
+// Запись, чьего имени ядра не знает никто (резолвер не ответил), в список
+// WAN не попадает: под пустым ключом модели она была бы недостижима для хуков.
+// При равных Up из дублей остаётся меньший id; результат отсортирован по имени.
+func TestInterfaceStore_ListWAN_SkipsNamelessAndOrders(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, `{
+		"PPPoE0": {"id":"PPPoE0","type":"PPPoE","state":"up","security-level":"public"},
+		"UsbQmi1": {"id":"UsbQmi1","type":"UsbQmi","state":"down","security-level":"public"},
+		"UsbQmi0": {"id":"UsbQmi0","type":"UsbQmi","state":"down","security-level":"public"},
+		"GigabitEthernet1": {"id":"GigabitEthernet1","type":"GigabitEthernet","state":"up","security-level":"public"}
+	}`)
+	// PPPoE0 резолверу не известен: в пакете его ответ пуст.
+	fg.SetPostSystemName("PPPoE0", `""`)
+	fg.SetPostSystemName("UsbQmi0", `"usb0"`)
+	fg.SetPostSystemName("UsbQmi1", `"usb0"`)
+	fg.SetPostSystemName("GigabitEthernet1", `"eth3"`)
+	s := NewInterfaceStore(fg, NopLogger())
+
+	got, err := s.ListWAN(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Name != "eth3" || got[1].Name != "usb0" || got[1].ID != "UsbQmi0" {
+		t.Fatalf("ListWAN = %+v, want eth3 и usb0(UsbQmi0), без PPPoE0", got)
+	}
+}

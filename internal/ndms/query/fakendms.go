@@ -222,14 +222,15 @@ func (f *FakeNDMS) ShowHidden() {
 	f.mu.Unlock()
 }
 
-// Commands — Posts без чтений (`{"show":…}`): вопрос резолвера об имени ядра
-// вслед за списком — не команда, и тесты «какие команды ушли» его не считают.
+// Commands — Posts без чтений (`{"show":…}`, в т.ч. пакетом `[{"show":…},…]`):
+// вопрос резолвера об имени ядра вслед за списком — не команда, и тесты
+// «какие команды ушли» его не считают.
 func (f *FakeNDMS) Commands() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []string
 	for _, p := range f.Posts {
-		if !strings.HasPrefix(p, `{"show":`) {
+		if !strings.HasPrefix(strings.TrimPrefix(p, "["), `{"show":`) {
 			out = append(out, p)
 		}
 	}

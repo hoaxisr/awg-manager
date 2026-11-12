@@ -31,17 +31,19 @@ func (l *recordingAppLogger) joined() string {
 func TestHookHandler_WANHookForUnknownName_IsLogged(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
+		model   HookWANModel
 		public  bool
 		wantLog bool
 	}{
-		{"public interface", true, true},
-		{"lan bridge", false, false},
+		{"public interface", &fakeWANModel{}, true, true},
+		{"lan bridge", &fakeWANModel{}, false, false},
+		{"known wan", &knownWANModel{}, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := &recordingAppLogger{}
 			h := newTestHookHandler(&spyDispatcher{})
 			h.wanLog = logging.NewScopedLogger(rec, logging.GroupSystem, logging.SubWan)
-			h.SetWANModel(&fakeWANModel{}) // Known → false
+			h.SetWANModel(tc.model)
 			h.SetWANPublicCheck(func(string) bool { return tc.public })
 
 			handleForm(t, h, "type=iflayerchanged&id=PPPoE0&system_name=ppp1&layer=ipv4&level=running")
