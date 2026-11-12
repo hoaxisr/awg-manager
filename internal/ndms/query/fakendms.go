@@ -222,6 +222,20 @@ func (f *FakeNDMS) ShowHidden() {
 	f.mu.Unlock()
 }
 
+// Commands — Posts без чтений (`{"show":…}`): вопрос резолвера об имени ядра
+// вслед за списком — не команда, и тесты «какие команды ушли» его не считают.
+func (f *FakeNDMS) Commands() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, p := range f.Posts {
+		if !strings.HasPrefix(p, `{"show":`) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // PostCount — len(Posts) под замком: POST прилетает и из горутины
 // координатора сохранения, голое чтение среза из теста — гонка данных.
 func (f *FakeNDMS) PostCount() int {

@@ -109,6 +109,9 @@ func (f *fakeWANModel) SetUp(name string, up bool) bool {
 	return true
 }
 
+// Known — модель эту запись не знает: худший случай для хука.
+func (f *fakeWANModel) Known(string) bool { return false }
+
 func (f *fakeWANModel) Calls() []fakeWANSetUp {
 	f.mu.Lock()
 	defer f.mu.Unlock()

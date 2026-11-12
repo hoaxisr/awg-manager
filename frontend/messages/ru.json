@@ -972,6 +972,7 @@
 	"tunnel_detail_proxy_outdated": "В ядре загружен awg_proxy {loaded}, а в этой сборке — {expected}. Модуль нельзя заменить, пока через него идут туннели: перезагрузите роутер, иначе параметры AWG 3.1 останутся недоступны.",
 	"tunnel_detail_section_obfuscator": "Обфускатор",
 	"tunnel_detail_isp_auto": "Автоматически",
+	"tunnel_detail_isp_down": "{label} ({name}) — нет подключения",
 	"tunnel_detail_isp_via_tunnel_group": "Через туннель",
 	"tunnel_detail_section_isp": "Подключение (ISP)",
 	"tunnel_detail_isp_hint": "Через какой WAN-интерфейс роутер будет подключаться к серверу VPN. По умолчанию используется основной интернет-канал.",

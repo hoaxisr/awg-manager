@@ -274,6 +274,11 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 	}
 	if s.ndmsQueries != nil && s.ndmsQueries.Interfaces != nil {
 		h.hookHandler.SetSystemNames(s.ndmsQueries.Interfaces)
+		ifaces := s.ndmsQueries.Interfaces
+		h.hookHandler.SetWANPublicCheck(func(ndmsID string) bool {
+			iface, err := ifaces.Get(context.Background(), ndmsID)
+			return err == nil && iface != nil && iface.SecurityLevel == "public"
+		})
 	}
 	if s.tunnelService != nil {
 		h.hookHandler.SetWANModel(s.tunnelService.WANModel())

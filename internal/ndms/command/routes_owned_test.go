@@ -246,7 +246,7 @@ func TestRemoveOwnHostRoute_ConfirmsEachInterface(t *testing.T) {
 	if err := cmds.Routes.RemoveOwnHostRoute(context.Background(), "203.0.113.5", probeComment); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Posts) != 1 || !strings.Contains(f.Posts[0], `"interface":"PPPoE0"`) {
+	if cmds := f.Commands(); len(cmds) != 1 || !strings.Contains(cmds[0], `"interface":"PPPoE0"`) {
 		t.Fatalf("posts=%v", f.Posts)
 	}
 	if f.E != 0 || f.Phantoms != 0 {

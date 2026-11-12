@@ -535,7 +535,14 @@
 			{:else if activeTab === 'routing'}
 				{@const ispOpts: DropdownOption[] = [
 					{ value: 'auto', label: m.tunnel_detail_isp_auto() },
-					...wanInterfaces.map((iface) => ({ value: iface.name, label: `${iface.label} (${iface.name})` })),
+					// Лежащий WAN помечаем: порт провайдера под PPPoE носит подпись
+					// провайдера, но IPv4 на нём нет никогда (#1166).
+					...wanInterfaces.map((iface) => ({
+						value: iface.name,
+						label: iface.state === 'up'
+							? `${iface.label} (${iface.name})`
+							: m.tunnel_detail_isp_down({ label: iface.label, name: iface.name }),
+					})),
 					...(showAllInterfaces
 						? allInterfaces
 							.filter((i) => !wanInterfaces.some((w) => w.name === i.name))

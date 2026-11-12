@@ -176,7 +176,7 @@ func TestConfirmingOpkgTun_SetAbsentIsError(t *testing.T) {
 	if err := a.nat.SetSegmentNAT(context.Background(), "Bridge1"); err == nil || !strings.Contains(err.Error(), "Bridge1") {
 		t.Errorf("SetSegmentNAT: %v", err)
 	}
-	if len(f.Posts) != 0 {
+	if len(f.Commands()) != 0 {
 		t.Fatalf("команды по отсутствующему: %v", f.Posts)
 	}
 	oracleClean(t, f)

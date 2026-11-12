@@ -954,6 +954,7 @@
 	"tunnel_detail_proxy_outdated": "awg_proxy {loaded} is loaded in the kernel, while this build has {expected}. The module cannot be replaced while tunnels are running through it: reboot the router, otherwise AWG 3.1 parameters will stay unavailable.",
 	"tunnel_detail_section_obfuscator": "Obfuscator",
 	"tunnel_detail_isp_auto": "Automatic",
+	"tunnel_detail_isp_down": "{label} ({name}) — no connection",
 	"tunnel_detail_isp_via_tunnel_group": "Via tunnel",
 	"tunnel_detail_section_isp": "Connection (ISP)",
 	"tunnel_detail_isp_hint": "Which WAN interface the router uses to connect to the VPN server. By default the primary internet connection is used.",

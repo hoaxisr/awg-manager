@@ -23,6 +23,7 @@ type HookDispatcher interface {
 // model. Kept local so api/hook.go doesn't depend on *wan.Model.
 type HookWANModel interface {
 	SetUp(kernelName string, up bool) (changed bool)
+	Known(kernelName string) bool
 }
 
 // HookSystemNames — карта имён ядра кэша интерфейсов (query.InterfaceStore).
@@ -47,7 +48,8 @@ type HookHandler struct {
 	proxyNudge    ProxyRuntimeNudge
 	endpointNudge func()
 	ipv4Running   func(ndmsID string)
-	uptime        func() float64 // nil — events.ReadUptime; см. SetUptimeReader
+	wanPublic     func(ndmsID string) bool // nil — проверка «потерянного» WAN выключена
+	uptime        func() float64           // nil — events.ReadUptime; см. SetUptimeReader
 	log           *logging.ScopedLogger
 	wanLog        *logging.ScopedLogger
 }
@@ -96,6 +98,13 @@ func (h *HookHandler) SetProxyRuntimeNudge(fn ProxyRuntimeNudge) {
 // незачем — лишний проход дёшев, адрес он меняет только на смену резолва.
 func (h *HookHandler) SetEndpointGuardNudge(fn func()) {
 	h.endpointNudge = fn
+}
+
+// SetWANPublicCheck подключает признак «интерфейс NDMS — публичный (WAN)»:
+// по нему хук на имя, которого нет в модели WAN, отличают от рядового хука
+// LAN-моста и пишут в журнал.
+func (h *HookHandler) SetWANPublicCheck(fn func(ndmsID string) bool) {
+	h.wanPublic = fn
 }
 
 // SetIPv4RunningHook — колбэк на iflayerchanged layer=ipv4 level=running для
@@ -300,6 +309,12 @@ func (h *HookHandler) handleWANLayerEvent(e events.Event) {
 	// Sync WAN model update — must happen before the orch decides
 	// whether any WAN is up. SetUp handles hot-plug via repopulateFn.
 	changed := h.wanModel.SetUp(kernelName, up)
+
+	// Публичный интерфейс, которого модель не знает и после перечитывания:
+	// его состояние теряется, а авто-выбор WAN идёт мимо него (#1166).
+	if h.wanLog != nil && h.wanPublic != nil && !h.wanModel.Known(kernelName) && h.wanPublic(e.ID) {
+		h.wanLog.Warn("wan-state", kernelName, fmt.Sprintf("hook for %s: interface is missing from the WAN model, state ignored", e.ID))
+	}
 
 	// Логируем только реальные переходы: NDMS повторяет hook-события с
 	// неизменным уровнем, и без этого фильтра каждый повтор писал бы строку.

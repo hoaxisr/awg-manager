@@ -1129,8 +1129,9 @@ func TestInterfaceStore_ListAll_ResolvesNamesInOneBatch(t *testing.T) {
 	}
 }
 
-// ListWAN берёт имена из памяти: PPPoE0 — из таблицы классов (резолвер не
-// спрашивается), GigabitEthernet1 — от резолвера вслед за списком (F570).
+// ListWAN берёт имена из памяти: PPPoE0 и GigabitEthernet1 — от резолвера
+// вслед за списком (F570), Bridge0 — из таблицы классов. Имя PPPoE0 не
+// угадывается по номеру: в поле это оказался ppp1 (#1166, F785).
 func TestInterfaceStore_ListWAN_NamesFromMemory(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, `{
@@ -1139,6 +1140,7 @@ func TestInterfaceStore_ListWAN_NamesFromMemory(t *testing.T) {
 		"Bridge0": {"id":"Bridge0","interface-name":"Home","type":"Bridge","state":"up","security-level":"private"}
 	}`)
 	fg.SetPostSystemName("GigabitEthernet1", `"eth3"`)
+	fg.SetPostSystemName("PPPoE0", `"ppp1"`)
 	s := NewInterfaceStore(fg, NopLogger())
 
 	for i := 0; i < 2; i++ {
@@ -1150,17 +1152,17 @@ func TestInterfaceStore_ListWAN_NamesFromMemory(t *testing.T) {
 		for _, w := range got {
 			names[w.Name] = true
 		}
-		if len(got) != 2 || !names["ppp0"] || !names["eth3"] {
-			t.Fatalf("вызов %d: ListWAN = %+v, want ppp0 и eth3", i, got)
+		if len(got) != 2 || !names["ppp1"] || !names["eth3"] {
+			t.Fatalf("вызов %d: ListWAN = %+v, want ppp1 и eth3", i, got)
 		}
 	}
-	if got := fg.PostSystemNameCalls("GigabitEthernet1"); got != 1 {
-		t.Errorf("GigabitEthernet1 спрошен %d раз, ждали 1 (вслед за списком)", got)
-	}
-	for _, id := range []string{"PPPoE0", "Bridge0"} {
-		if got := fg.PostSystemNameCalls(id); got != 0 {
-			t.Errorf("%s спрошен %d раз — имя класса из таблицы", id, got)
+	for _, id := range []string{"GigabitEthernet1", "PPPoE0"} {
+		if got := fg.PostSystemNameCalls(id); got != 1 {
+			t.Errorf("%s спрошен %d раз, ждали 1 (вслед за списком)", id, got)
 		}
+	}
+	if got := fg.PostSystemNameCalls("Bridge0"); got != 0 {
+		t.Errorf("Bridge0 спрошен %d раз — имя класса из таблицы", got)
 	}
 }
 
@@ -1372,5 +1374,28 @@ func TestInterfaceStore_UnnamedIDs(t *testing.T) {
 	}
 	if fmt.Sprint(got) != "[OpenVPN0]" {
 		t.Fatalf("UnnamedIDs = %v, want [OpenVPN0]", got)
+	}
+}
+
+// Две публичные записи NDMS с одним именем ядра: в модель WAN (ключ — имя
+// ядра) уходит одна и всегда та же — поднятая, а не случайная по обходу map.
+func TestInterfaceStore_ListWAN_DedupesByKernelName(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, `{
+		"UsbLte0": {"id":"UsbLte0","type":"UsbLte","state":"down","security-level":"public"},
+		"UsbQmi0": {"id":"UsbQmi0","type":"UsbQmi","state":"up","summary":{"layer":{"ipv4":"running"}},"security-level":"public"}
+	}`)
+	fg.SetPostSystemName("UsbLte0", `"usb0"`)
+	fg.SetPostSystemName("UsbQmi0", `"usb0"`)
+	s := NewInterfaceStore(fg, NopLogger())
+
+	for i := 0; i < 20; i++ {
+		got, err := s.ListWAN(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].ID != "UsbQmi0" || !got[0].Up {
+			t.Fatalf("вызов %d: ListWAN = %+v, want одну запись UsbQmi0 up", i, got)
+		}
 	}
 }
