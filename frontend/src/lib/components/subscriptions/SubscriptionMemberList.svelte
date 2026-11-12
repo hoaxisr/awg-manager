@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { tick } from 'svelte';
 	import { m } from '$lib/i18n';
 	import type { SubscriptionMember } from '$lib/types';
-	import { Ban, ListFilter, Plus, Search, Trash2, X } from 'lucide-svelte';
+	import { Ban, Plus, Search, Trash2, X } from 'lucide-svelte';
 	import SubscriptionMemberCard from './SubscriptionMemberCard.svelte';
 	import { isCardNestedInteraction } from '$lib/utils/cardClick';
 	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
-	import { Button, TableSortHeader } from '$lib/components/ui';
+	import { Button, IconButton, Input, TableSortHeader } from '$lib/components/ui';
+	import MemberProtocolFilter from './MemberProtocolFilter.svelte';
 	import TunnelTableSortControls from '$lib/components/tunnels/TunnelTableSortControls.svelte';
 	import type { SubscriptionMemberSortKey } from '$lib/stores/tunnelTableSort';
 	import type { ProtocolFilterOption } from './memberSelectors';
@@ -20,7 +20,6 @@
 		removingTag: string | null;
 		minDelayMs: number | null;
 		isUrlSub: boolean;
-		isAutoSelect?: boolean;
 		selectMode: boolean;
 		selected: Set<string>;
 		excluding: boolean;
@@ -54,7 +53,6 @@
 		removingTag,
 		minDelayMs,
 		isUrlSub,
-		isAutoSelect = false,
 		selectMode,
 		selected,
 		excluding,
@@ -81,12 +79,7 @@
 	}: Props = $props();
 
 	const sourceTotal = $derived(totalCount ?? members.length);
-	const activeProtoCount = $derived(
-		availableProtocols.reduce((acc, item) => (excludedProtocols.has(item.protocol) ? acc : acc + 1), 0),
-	);
-	const hasProtocolFilter = $derived(
-		availableProtocols.length > 0 && activeProtoCount < availableProtocols.length,
-	);
+	const hasProtocolFilter = $derived(availableProtocols.some((item) => excludedProtocols.has(item.protocol)));
 	const hasActiveFilter = $derived(searchQuery.trim().length > 0 || hasProtocolFilter);
 	const showControls = $derived(
 		Boolean(onSearchChange || (availableProtocols.length > 0 && onToggleProtocol)),
@@ -101,57 +94,6 @@
 		{ value: 'status', label: m.subscriptions_list_col_status() },
 	]);
 
-	let filterMenuOpen = $state(false);
-	let filterWrapEl = $state<HTMLDivElement | null>(null);
-	let filterBtnEl = $state<HTMLButtonElement | null>(null);
-	let popoverPos = $state({ top: 0, left: 0 });
-
-	function updatePopoverPos(): void {
-		if (!filterBtnEl) return;
-		const rect = filterBtnEl.getBoundingClientRect();
-		const maxLeft = Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 1024) - 240);
-		popoverPos = {
-			top: rect.bottom + 4,
-			left: Math.max(8, Math.min(rect.left, maxLeft)),
-		};
-	}
-
-	async function toggleFilterMenu(e: MouseEvent): Promise<void> {
-		e.stopPropagation();
-		if (filterMenuOpen) {
-			filterMenuOpen = false;
-			return;
-		}
-		updatePopoverPos();
-		filterMenuOpen = true;
-		await tick();
-		updatePopoverPos();
-	}
-
-	$effect(() => {
-		if (!filterMenuOpen) return;
-		const onPointerDown = (e: PointerEvent) => {
-			if (filterWrapEl && !filterWrapEl.contains(e.target as Node)) {
-				filterMenuOpen = false;
-			}
-		};
-		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') filterMenuOpen = false;
-		};
-		const onViewportChange = () => updatePopoverPos();
-
-		window.addEventListener('pointerdown', onPointerDown);
-		window.addEventListener('keydown', onKeyDown);
-		window.addEventListener('resize', onViewportChange);
-		window.addEventListener('scroll', onViewportChange, true);
-		return () => {
-			window.removeEventListener('pointerdown', onPointerDown);
-			window.removeEventListener('keydown', onKeyDown);
-			window.removeEventListener('resize', onViewportChange);
-			window.removeEventListener('scroll', onViewportChange, true);
-		};
-	});
-
 	function handleRowKeydown(e: KeyboardEvent, tag: string): void {
 		if (switching !== null || isCardNestedInteraction(e)) return;
 		if (e.key === 'Enter' || e.key === ' ') {
@@ -163,89 +105,49 @@
 
 {#snippet protocolFilterControl()}
 	{#if availableProtocols.length > 0 && onToggleProtocol}
-		<div class="proto-filter-wrap" bind:this={filterWrapEl}>
-			<button
-				bind:this={filterBtnEl}
-				type="button"
-				class="proto-filter-btn"
-				class:active={hasProtocolFilter || filterMenuOpen}
-				aria-expanded={filterMenuOpen}
-				aria-haspopup="dialog"
-				aria-label={m.subscriptions_preview_protocol_filter_aria()}
-				onclick={toggleFilterMenu}
-			>
-				<ListFilter size={13} aria-hidden="true" />
-				<span>{m.subscriptions_members_filter_btn()}</span>
-				{#if hasProtocolFilter}
-					<span class="proto-filter-badge mono">{activeProtoCount}/{availableProtocols.length}</span>
-				{/if}
-			</button>
-			{#if filterMenuOpen}
-				<div
-					class="proto-filter-popover"
-					role="dialog"
-					aria-label={m.subscriptions_preview_protocol_filter_aria()}
-					style="top: {popoverPos.top}px; left: {popoverPos.left}px;"
-				>
-					<div class="proto-popover-actions">
-						<button
-							type="button"
-							class="proto-bulk-btn"
-							onclick={() => onSelectAllProtocols?.()}
-						>
-							{m.subscriptions_members_filter_all()}
-						</button>
-						<button
-							type="button"
-							class="proto-bulk-btn"
-							onclick={() => onClearAllProtocols?.()}
-						>
-							{m.subscriptions_members_filter_none()}
-						</button>
-					</div>
-					<div class="proto-options">
-						{#each availableProtocols as item (item.protocol)}
-							<label class="proto-option">
-								<input
-									type="checkbox"
-									class="proto-check"
-									checked={!excludedProtocols.has(item.protocol)}
-									onchange={() => onToggleProtocol(item.protocol)}
-								/>
-								<span class="proto-name">{item.label}</span>
-								<span class="proto-count mono">{item.count}</span>
-							</label>
-						{/each}
-					</div>
-				</div>
-			{/if}
-		</div>
+		<MemberProtocolFilter
+			options={availableProtocols}
+			excluded={excludedProtocols}
+			onToggle={onToggleProtocol}
+			onSelectAll={onSelectAllProtocols}
+			onClearAll={onClearAllProtocols}
+		/>
+	{/if}
+{/snippet}
+
+{#snippet searchIcon()}<Search size={13} aria-hidden="true" />{/snippet}
+
+{#snippet searchClear()}
+	{#if searchQuery.length > 0}
+		<IconButton ariaLabel={m.subscriptions_members_search_clear()} onclick={() => onSearchChange?.('')}>
+			<X size={13} aria-hidden="true" />
+		</IconButton>
 	{/if}
 {/snippet}
 
 {#snippet searchInputControl()}
 	{#if onSearchChange}
 		<div class="member-search-box">
-			<Search size={13} class="member-search-icon" aria-hidden="true" />
-			<input
-				type="text"
-				class="member-search-input"
-				placeholder={m.tunnels_search_placeholder()}
-				aria-label={m.tunnels_search_placeholder()}
+			<Input
 				value={searchQuery}
-				oninput={(e) => onSearchChange((e.currentTarget as HTMLInputElement).value)}
+				placeholder={m.tunnels_search_placeholder()}
+				prefix={searchIcon}
+				suffix={searchClear}
+				fullWidth
+				oninput={onSearchChange}
 			/>
-			{#if searchQuery.length > 0}
-				<button
-					type="button"
-					class="member-search-clear"
-					aria-label={m.subscriptions_members_search_clear()}
-					onclick={() => onSearchChange('')}
-				>
-					<X size={13} aria-hidden="true" />
-				</button>
-			{/if}
 		</div>
+	{/if}
+{/snippet}
+
+{#snippet filterSummary()}
+	<span class="meta-shown mono">
+		{m.subscriptions_members_filter_shown({ shown: members.length, total: sourceTotal })}
+	</span>
+	{#if onResetFilters}
+		<Button variant="ghost" size="sm" onclick={onResetFilters}>
+			{m.subscriptions_members_filter_reset()}
+		</Button>
 	{/if}
 {/snippet}
 
@@ -324,7 +226,6 @@
 		active={member.tag === effectiveActiveMember}
 		switching={switching === member.tag}
 		disabled={switching !== null}
-		{isAutoSelect}
 		{selectMode}
 		{onpick}
 		layout="list"
@@ -367,14 +268,7 @@
 				{/if}
 				{#if hasActiveFilter}
 					<div class="meta-filter-summary">
-						<span class="meta-shown mono">
-							{m.subscriptions_members_filter_shown({ shown: members.length, total: sourceTotal })}
-						</span>
-						{#if onResetFilters}
-							<button type="button" class="meta-reset-btn" onclick={onResetFilters}>
-								{m.subscriptions_members_filter_reset()}
-							</button>
-						{/if}
+						{@render filterSummary()}
 					</div>
 				{/if}
 				{#if showControls}
@@ -431,14 +325,7 @@
 				{@render searchInputControl()}
 				{@render protocolFilterControl()}
 				{#if hasActiveFilter}
-					<span class="meta-shown mono">
-						{m.subscriptions_members_filter_shown({ shown: members.length, total: sourceTotal })}
-					</span>
-					{#if onResetFilters}
-						<button type="button" class="meta-reset-btn" onclick={onResetFilters}>
-							{m.subscriptions_members_filter_reset()}
-						</button>
-					{/if}
+					{@render filterSummary()}
 				{/if}
 			</div>
 			{#if onSortSelect && onSortDirToggle}
@@ -501,7 +388,6 @@
 							active={member.tag === effectiveActiveMember}
 							switching={switching === member.tag}
 							disabled={switching !== null}
-							{isAutoSelect}
 							{selectMode}
 							{onpick}
 						/>
@@ -516,25 +402,24 @@
 							active={member.tag === effectiveActiveMember}
 							switching={switching === member.tag}
 							disabled={switching !== null}
-							{isAutoSelect}
 							{selectMode}
 							{onpick}
 						/>
 						<div class="card-actions">
 							<div class="card-slot-left">
-								{#if member.tag !== effectiveActiveMember && switching !== member.tag && !isAutoSelect}
-									<button
-										type="button"
-										class="card-activate-btn"
+								{#if member.tag !== effectiveActiveMember && switching !== member.tag}
+									<Button
+										variant="secondary"
+										size="sm"
 										disabled={switching !== null}
-										aria-label={m.subscriptions_list_activate_aria({ name: member.label || member.tag })}
+										ariaLabel={m.subscriptions_list_activate_aria({ name: member.label || member.tag })}
 										onclick={(e) => {
 											e.stopPropagation();
 											onpick(member.tag);
 										}}
 									>
 										{m.subscriptions_list_activate_btn()}
-									</button>
+									</Button>
 								{/if}
 							</div>
 							<div class="card-slot-center">
@@ -590,7 +475,10 @@
 		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
 		gap: 0.3rem;
-		padding: 0.45rem 0.65rem;
+		/* Ряд одной высоты у активной карточки (без кнопки «Активировать») и остальных. */
+		min-height: 2.75rem;
+		box-sizing: border-box;
+		padding: 0.3rem 0.65rem;
 		border-top: 1px solid var(--color-border);
 		background: rgba(0, 0, 0, 0.08);
 	}
@@ -617,7 +505,6 @@
 		gap: 0.25rem;
 	}
 
-	.card-activate-btn,
 	.to-tunnel-btn,
 	.member-remove-btn,
 	.ex-btn {
@@ -637,18 +524,6 @@
 		flex-shrink: 0;
 		transition: background var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
 	}
-	.card-activate-btn {
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-tertiary);
-		color: var(--color-text-primary);
-		padding: 0.25rem 0.55rem;
-		font-size: var(--sbx-card-note);
-	}
-	.card-activate-btn:hover:not(:disabled) {
-		border-color: var(--color-accent);
-		color: var(--color-accent);
-		background: var(--color-accent-tint);
-	}
 	.to-tunnel-btn {
 		color: var(--color-text-muted);
 	}
@@ -665,14 +540,12 @@
 		color: var(--color-error);
 		background: var(--color-error-tint);
 	}
-	.card-activate-btn:disabled,
 	.to-tunnel-btn:disabled,
 	.member-remove-btn:disabled,
 	.ex-btn:disabled {
 		cursor: not-allowed;
 		opacity: 0.5;
 	}
-	.card-activate-btn:focus-visible,
 	.to-tunnel-btn:focus-visible,
 	.member-remove-btn:focus-visible {
 		outline: 2px solid var(--color-accent);
@@ -725,166 +598,11 @@
 		flex-shrink: 0;
 	}
 	.member-search-box {
-		position: relative;
-		display: inline-flex;
-		align-items: center;
 		width: 220px;
 		min-width: 170px;
 		max-width: 240px;
 		flex: 1 1 180px;
 	}
-	.member-search-box :global(.member-search-icon) {
-		position: absolute;
-		left: 0.5rem;
-		color: var(--color-text-muted);
-		pointer-events: none;
-	}
-	.member-search-input {
-		width: 100%;
-		height: 30px;
-		box-sizing: border-box;
-		padding: 0 1.65rem 0 1.65rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		background: var(--color-bg-secondary);
-		color: var(--color-text-primary);
-		font-family: inherit;
-		font-size: 0.82rem;
-	}
-	.member-search-input::placeholder {
-		color: var(--color-text-muted);
-	}
-	.member-search-input:focus {
-		outline: none;
-		border-color: var(--color-accent);
-	}
-	.member-search-clear {
-		position: absolute;
-		right: 0.25rem;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 22px;
-		height: 22px;
-		padding: 0;
-		border: none;
-		border-radius: var(--radius-sm);
-		background: transparent;
-		color: var(--color-text-muted);
-		cursor: pointer;
-	}
-	.member-search-clear:hover {
-		color: var(--color-text-primary);
-		background: var(--color-bg-tertiary);
-	}
-
-	.proto-filter-wrap {
-		position: relative;
-		display: inline-flex;
-	}
-	.proto-filter-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		height: 30px;
-		padding: 0 0.6rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		background: var(--color-bg-secondary);
-		color: var(--color-text-primary);
-		font: inherit;
-		font-size: 0.8rem;
-		font-weight: 500;
-		cursor: pointer;
-		white-space: nowrap;
-		transition: border-color var(--t-fast) ease, background var(--t-fast) ease, color var(--t-fast) ease;
-	}
-	.proto-filter-btn:hover {
-		border-color: var(--color-accent);
-	}
-	.proto-filter-btn.active {
-		border-color: var(--color-accent);
-		color: var(--color-accent);
-		background: var(--color-accent-tint);
-	}
-	.proto-filter-badge {
-		font-size: 0.72rem;
-		padding: 0.05rem 0.35rem;
-		border-radius: 999px;
-		background: var(--color-bg-tertiary);
-		color: var(--color-text-primary);
-	}
-	.proto-filter-popover {
-		position: fixed;
-		z-index: 60;
-		min-width: 220px;
-		max-width: 280px;
-		max-height: 280px;
-		overflow-y: auto;
-		padding: 0.45rem;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		background: var(--color-bg-secondary);
-		box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
-	}
-	.proto-popover-actions {
-		display: flex;
-		align-items: center;
-		gap: 0.35rem;
-		padding-bottom: 0.4rem;
-		margin-bottom: 0.35rem;
-		border-bottom: 1px solid var(--color-border);
-	}
-	.proto-bulk-btn {
-		flex: 1;
-		padding: 0.25rem 0.45rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		background: var(--color-bg-tertiary);
-		color: var(--color-text-primary);
-		font: inherit;
-		font-size: 0.75rem;
-		font-weight: 500;
-		cursor: pointer;
-	}
-	.proto-bulk-btn:hover {
-		border-color: var(--color-accent);
-		color: var(--color-accent);
-	}
-	.proto-options {
-		display: flex;
-		flex-direction: column;
-		gap: 0.15rem;
-	}
-	.proto-option {
-		display: flex;
-		align-items: center;
-		gap: 0.45rem;
-		padding: 0.3rem 0.35rem;
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		font-size: 0.82rem;
-		color: var(--color-text-primary);
-	}
-	.proto-option:hover {
-		background: var(--color-bg-tertiary);
-	}
-	.proto-check {
-		width: 15px;
-		height: 15px;
-		accent-color: var(--color-accent);
-		cursor: pointer;
-		margin: 0;
-	}
-	.proto-name {
-		flex: 1;
-		min-width: 0;
-	}
-	.proto-count {
-		font-size: 0.74rem;
-		color: var(--color-text-muted);
-	}
-
 	.meta-shown {
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
@@ -892,20 +610,6 @@
 		border-radius: var(--radius-sm);
 		background: var(--color-bg-tertiary);
 	}
-	.meta-reset-btn {
-		border: none;
-		background: transparent;
-		color: var(--color-accent);
-		font: inherit;
-		font-size: 0.76rem;
-		cursor: pointer;
-		padding: 0.1rem 0.25rem;
-		text-decoration: underline;
-	}
-	.meta-reset-btn:hover {
-		opacity: 0.85;
-	}
-
 	.filter-empty {
 		display: flex;
 		align-items: center;

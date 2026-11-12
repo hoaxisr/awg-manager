@@ -52,14 +52,9 @@ func NewSubscriptionHandler(svc *subscription.Service, presence SingboxPresenceP
 	if len(appLogger) > 0 {
 		lg = appLogger[0]
 	}
-	var tc SingboxTunnelCreator
-	if c, ok := presence.(SingboxTunnelCreator); ok {
-		tc = c
-	}
 	return &SubscriptionHandler{
-		svc:           svc,
-		presence:      presence,
-		tunnelCreator: tc,
+		svc:      svc,
+		presence: presence,
 		// Действия пользователя над подписками — в главный app-журнал
 		// (routing/subscription), а не в изолированный singbox-бакет.
 		log: logging.NewScopedLogger(lg, logging.GroupRouting, logging.SubSubscription),

@@ -6,6 +6,7 @@
 	import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
 	import { singboxDelayFromHistory } from '$lib/utils/singboxDelay';
 	import { formatHostPort } from '$lib/utils/endpoint';
+	import { Button } from '$lib/components/ui';
 	import { singboxProtocolLabel } from '$lib/utils/singboxProtocol';
 
 	interface Props {
@@ -13,7 +14,6 @@
 		active: boolean;
 		switching: boolean;
 		disabled: boolean;
-		isAutoSelect?: boolean;
 		selectMode?: boolean;
 		onpick: (tag: string) => void;
 		layout?: SingboxLayoutMode;
@@ -23,7 +23,6 @@
 		active,
 		switching,
 		disabled,
-		isAutoSelect = false,
 		selectMode = false,
 		onpick,
 		layout = 'compact',
@@ -112,19 +111,19 @@
 				<span class="state-badge active-badge">{m.subscriptions_member_active()}</span>
 			{:else if switching}
 				<span class="state-badge switching-badge">{m.subscriptions_member_switching()}</span>
-			{:else if !isAutoSelect && !selectMode}
-				<button
-					type="button"
-					class="activate-btn"
+			{:else if !selectMode}
+				<Button
+					variant="secondary"
+					size="sm"
 					{disabled}
-					aria-label={m.subscriptions_list_activate_aria({ name: heading })}
+					ariaLabel={m.subscriptions_list_activate_aria({ name: heading })}
 					onclick={(e) => {
 						e.stopPropagation();
 						onpick(member.tag);
 					}}
 				>
 					{m.subscriptions_list_activate_btn()}
-				</button>
+				</Button>
 			{/if}
 		</div>
 	</div>
@@ -273,32 +272,6 @@
 	}
 	.active-badge { background: rgba(63,185,80,0.15); color: #3fb950; }
 	.switching-badge { background: rgba(88,166,255,0.15); color: var(--color-accent); }
-	.activate-btn {
-		padding: 0.22rem 0.55rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		background: var(--color-bg-tertiary);
-		color: var(--color-text-primary);
-		font: inherit;
-		font-size: var(--sbx-card-note);
-		font-weight: 500;
-		white-space: nowrap;
-		cursor: pointer;
-		transition: border-color var(--t-fast) ease, color var(--t-fast) ease, background var(--t-fast) ease;
-	}
-	.activate-btn:hover:not(:disabled) {
-		border-color: var(--color-accent);
-		color: var(--color-accent);
-		background: var(--color-accent-tint);
-	}
-	.activate-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-	.activate-btn:focus-visible {
-		outline: 2px solid var(--color-accent);
-		outline-offset: 2px;
-	}
 	.mono { font-family: var(--font-mono, ui-monospace, monospace); }
 	.delay-row {
 		display: flex;

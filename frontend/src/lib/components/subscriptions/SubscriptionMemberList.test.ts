@@ -21,7 +21,6 @@ function baseProps(over: Partial<Props> = {}): Props {
 		removingTag: null,
 		minDelayMs: null,
 		isUrlSub: true,
-		isAutoSelect: false,
 		selectMode: false,
 		selected: new Set<string>(),
 		excluding: false,
@@ -68,7 +67,7 @@ describe('SubscriptionMemberList', () => {
 		expect(onpick).not.toHaveBeenCalled();
 		expect(ontoggle).not.toHaveBeenCalled();
 
-		const activateBtns = Array.from(container.querySelectorAll('.activate-btn'));
+		const activateBtns = Array.from(container.querySelectorAll('.c-state button'));
 		expect(activateBtns).toHaveLength(2);
 		await fireEvent.click(activateBtns[1]); // bravo
 		expect(onpick).toHaveBeenCalledTimes(1);
@@ -142,7 +141,7 @@ describe('SubscriptionMemberList', () => {
 		expect(container.querySelectorAll('div.card')).toHaveLength(2);
 		expect(container.querySelectorAll('button.card')).toHaveLength(0);
 
-		const activateBtns = Array.from(container.querySelectorAll('.card-activate-btn'));
+		const activateBtns = Array.from(container.querySelectorAll('.card-slot-left button'));
 		// Only inactive card gets Activate button
 		expect(activateBtns).toHaveLength(1);
 		await fireEvent.click(activateBtns[0]);
@@ -152,13 +151,6 @@ describe('SubscriptionMemberList', () => {
 		expect(toTunnelBtns).toHaveLength(2);
 		await fireEvent.click(toTunnelBtns[0]);
 		expect(oncreatetunnel).toHaveBeenCalledWith(members[0]);
-	});
-
-	it('auto-select mode hides manual Activate buttons', () => {
-		const { container } = render(SubscriptionMemberList, {
-			props: baseProps({ layout: 'list', isAutoSelect: true }),
-		});
-		expect(container.querySelectorAll('.activate-btn')).toHaveLength(0);
 	});
 
 	it('clicking table sort headers triggers onSortToggle with matching column key', async () => {
@@ -189,11 +181,11 @@ describe('SubscriptionMemberList', () => {
 			}),
 		});
 
-		const filterBtn = container.querySelector('.proto-filter-btn') as HTMLButtonElement;
+		const filterBtn = container.querySelector('.proto-filter > button') as HTMLButtonElement;
 		expect(filterBtn).toBeTruthy();
 		await fireEvent.click(filterBtn);
 
-		const bulkBtns = Array.from(container.querySelectorAll('.proto-bulk-btn'));
+		const bulkBtns = Array.from(container.querySelectorAll('.proto-actions button'));
 		expect(bulkBtns).toHaveLength(2);
 		await fireEvent.click(bulkBtns[0]);
 		await fireEvent.click(bulkBtns[1]);
@@ -219,7 +211,7 @@ describe('SubscriptionMemberList', () => {
 			}),
 		});
 
-		const searchInput = container.querySelector('.member-search-input') as HTMLInputElement;
+		const searchInput = container.querySelector('.member-search-box input') as HTMLInputElement;
 		expect(searchInput).toBeTruthy();
 		await fireEvent.input(searchInput, { target: { value: 'vless' } });
 		expect(onSearchChange).toHaveBeenCalledWith('vless');

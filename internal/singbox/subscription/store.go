@@ -29,6 +29,13 @@ type Store struct {
 
 // SetOnChange подключает уведомление об изменении. Вызывается под замком
 // стора — обязано быть неблокирующим (events.Bus.Publish таков).
+// NotFoundError reports a subscription id absent from the store.
+type NotFoundError struct{ ID string }
+
+func (e *NotFoundError) Error() string {
+	return fmt.Sprintf("subscription %q not found", e.ID)
+}
+
 func (s *Store) SetOnChange(fn func()) { s.onChange = fn }
 
 func NewStore(path string) (*Store, error) {
@@ -155,7 +162,7 @@ func (s *Store) mutate(id string, fn func(*Subscription) error) (*Subscription, 
 	defer s.mu.Unlock()
 	orig, ok := s.data[id]
 	if !ok {
-		return nil, fmt.Errorf("subscription %q not found", id)
+		return nil, &NotFoundError{ID: id}
 	}
 	next := orig.clone()
 	if err := fn(next); err != nil {
@@ -246,7 +253,7 @@ func (s *Store) Get(id string) (*Subscription, error) {
 	defer s.mu.RUnlock()
 	sub, ok := s.data[id]
 	if !ok {
-		return nil, fmt.Errorf("subscription %q not found", id)
+		return nil, &NotFoundError{ID: id}
 	}
 	cp := *sub
 	return &cp, nil
@@ -334,7 +341,7 @@ func (s *Store) Delete(id string) error {
 	defer s.mu.Unlock()
 	sub, ok := s.data[id]
 	if !ok {
-		return fmt.Errorf("subscription %q not found", id)
+		return &NotFoundError{ID: id}
 	}
 	delete(s.data, id)
 	if err := s.saveLocked(); err != nil {

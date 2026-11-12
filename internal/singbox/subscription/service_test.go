@@ -3036,7 +3036,7 @@ func TestAddManualMember_TagCollisionRejected(t *testing.T) {
 }
 
 func TestService_GetMemberOutbound(t *testing.T) {
-	svc, _ := newTestService(t)
+	svc, mut := newTestService(t)
 	sub, err := svc.Create(context.Background(), CreateInput{
 		Label: "my-sub",
 		Inline: strings.Join([]string{
@@ -3088,5 +3088,21 @@ func TestService_GetMemberOutbound(t *testing.T) {
 	}
 	if _, err := svc.GetMemberOutbound(sub.ID, " "); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("blank member tag: got %v, want ErrInvalidInput", err)
+	}
+
+	// bind_interface в слоте — настройка подписки, в туннель не уходит.
+	mut.bodies[second.Tag] = []byte(`{"type":"trojan","server":"tr1.example","server_port":8443,"password":"p","bind_interface":"eth3"}`)
+	bound, err := svc.GetMemberOutbound(sub.ID, second.Tag)
+	if err != nil {
+		t.Fatalf("GetMemberOutbound(bound): %v", err)
+	}
+	if strings.Contains(string(bound.Outbound), "bind_interface") {
+		t.Fatalf("bind_interface leaked into tunnel outbound: %s", bound.Outbound)
+	}
+
+	// detour на соседа по слоту — отказ, а не туннель с висячей ссылкой.
+	mut.bodies[second.Tag] = []byte(`{"type":"trojan","server":"tr1.example","server_port":8443,"password":"p","detour":"sub-x-other"}`)
+	if _, err := svc.GetMemberOutbound(sub.ID, second.Tag); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("detour member: got %v, want ErrInvalidInput", err)
 	}
 }

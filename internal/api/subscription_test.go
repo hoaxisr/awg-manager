@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -944,7 +945,30 @@ func TestSubscriptionHandler_CreateTunnelFromMember(t *testing.T) {
 	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "TUNNEL_DUPLICATE") || !strings.Contains(rr.Body.String(), "DE-Node") {
 		t.Fatalf("duplicate status=%d body=%s, want 409 TUNNEL_DUPLICATE", rr.Code, rr.Body.String())
 	}
+
+	// Протокол вне сборки бинаря -> 422 VALIDATION_FAILED.
+	creator.err = fmt.Errorf("naive: %w", &singbox.MissingBuildTagError{Tag: "with_naive_outbound", Protocol: "naive"})
+	rr = httptest.NewRecorder()
+	h.CreateTunnelFromMember(rr, httptest.NewRequest(
+		http.MethodPost,
+		"/api/singbox/subscriptions/members/to-tunnel?id="+sub.ID,
+		strings.NewReader(`{"memberTag":"`+memberTag+`"}`),
+	))
+	if rr.Code != http.StatusUnprocessableEntity || !strings.Contains(rr.Body.String(), "VALIDATION_FAILED") {
+		t.Fatalf("build tag status=%d body=%s, want 422 VALIDATION_FAILED", rr.Code, rr.Body.String())
+	}
 	creator.err = nil
+
+	// Неизвестная подписка -> 404 NOT_FOUND.
+	rr = httptest.NewRecorder()
+	h.CreateTunnelFromMember(rr, httptest.NewRequest(
+		http.MethodPost,
+		"/api/singbox/subscriptions/members/to-tunnel?id=missing-sub",
+		strings.NewReader(`{"memberTag":"`+memberTag+`"}`),
+	))
+	if rr.Code != http.StatusNotFound || !strings.Contains(rr.Body.String(), `"NOT_FOUND"`) {
+		t.Fatalf("missing subscription status=%d body=%s, want 404 NOT_FOUND", rr.Code, rr.Body.String())
+	}
 
 	// 3. Unknown member -> 404 MEMBER_NOT_FOUND.
 	rr = httptest.NewRecorder()

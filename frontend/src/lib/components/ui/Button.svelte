@@ -19,6 +19,7 @@
     iconAfter?: Snippet;
     onclick?: (e: MouseEvent) => void;
     title?: string;
+    ariaLabel?: string;
     children: Snippet;
   }
 
@@ -36,6 +37,7 @@
     iconAfter,
     onclick,
     title,
+    ariaLabel,
     children,
   }: Props = $props();
 
@@ -62,6 +64,7 @@
     {target}
     {rel}
     {title}
+    aria-label={ariaLabel}
     aria-disabled={isDisabled}
     aria-busy={loading}
     role="button"
@@ -97,6 +100,7 @@
     aria-busy={loading}
     {onclick}
     {title}
+    aria-label={ariaLabel}
   >
     {#if loading}
       <span class="spinner" aria-hidden="true"></span>

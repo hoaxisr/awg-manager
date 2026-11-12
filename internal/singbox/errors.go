@@ -31,6 +31,17 @@ func (e *TunnelDuplicateError) Unwrap() error {
 	return ErrTunnelDuplicate
 }
 
+// MissingBuildTagError reports an outbound whose protocol needs a build tag
+// the installed sing-box binary lacks.
+type MissingBuildTagError struct {
+	Tag      string
+	Protocol string
+}
+
+func (e *MissingBuildTagError) Error() string {
+	return MissingBuildTagMsg(e.Tag, e.Protocol)
+}
+
 // ErrInvalidTunnelTag is returned when a requested tunnel tag cannot be used.
 var ErrInvalidTunnelTag = errors.New("invalid tunnel tag")
 

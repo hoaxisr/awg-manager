@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -2393,6 +2394,17 @@ func (s *Service) GetMemberOutbound(id, memberTag string) (vlink.ParsedOutbound,
 	if obMap == nil {
 		return vlink.ParsedOutbound{}, fmt.Errorf("%w: outbound %q is missing in slot", ErrMemberNotFound, memberTag)
 	}
+
+	// detour указывает на тег из слота подписки: отдельный туннель с такой
+	// ссылкой сломал бы общий конфиг при удалении подписки.
+	if detour := stringOf(obMap["detour"]); detour != "" {
+		return vlink.ParsedOutbound{}, fmt.Errorf("%w: member %q dials through %q and cannot become a standalone tunnel", ErrInvalidInput, memberTag, detour)
+	}
+	// bind_interface в слоте — настройка подписки, а не сервера
+	// (materializeMemberOutbound); туннель её не наследует. Копия: карта из
+	// слота общая с мутатором.
+	obMap = maps.Clone(obMap)
+	delete(obMap, "bind_interface")
 
 	raw, err := json.Marshal(obMap)
 	if err != nil {

@@ -10,10 +10,7 @@
 	import { Button, Modal, Stat, StatStrip } from '$lib/components/ui';
 	import { runWithConcurrency } from '$lib/utils/runWithConcurrency';
 	import { singboxDelayHistory, singboxTunnels, triggerDelayCheck } from '$lib/stores/singbox';
-	import {
-		subscriptionMembersTableSort,
-		type SubscriptionMemberSortKey,
-	} from '$lib/stores/tunnelTableSort';
+	import { subscriptionMembersTableSort } from '$lib/stores/tunnelTableSort';
 	import { notifications } from '$lib/stores/notifications';
 	import { translateKnownError, groupLinkImportErrors } from '$lib/utils/linkImportError';
 	import { showOutboundReferencedError } from '$lib/utils/outboundReferenced';
@@ -200,7 +197,6 @@
 
 	const modeLabel = $derived(subscriptionModeLabel(subscription.mode));
 	const modeHint = $derived(subscriptionModeHint(subscription.mode));
-	const isAutoSelect = $derived(isAutoSelectMode(subscription.mode));
 
 	// For urltest mode, liveActiveMember reflects the auto-selected member as reported
 	// by the running Clash API (polled every 5s by the parent page). For selector mode
@@ -217,6 +213,12 @@
 			activeMember: effectiveActiveMember,
 			getDelayHistory: () => $singboxDelayHistory,
 		}),
+	);
+
+	// Выбор считается по видимому списку: скрытое фильтром не должно уйти в
+	// исключение вслепую.
+	const selectedVisible = $derived(
+		new Set(visibleMembers.filter((member) => selected.has(member.tag)).map((member) => member.tag)),
 	);
 
 	function toggleProtocol(protocol: string): void {
@@ -427,11 +429,11 @@
 	}
 
 	async function excludeSelected(): Promise<void> {
-		if (excluding || selected.size === 0) return;
+		if (excluding || selectedVisible.size === 0) return;
 		excluding = true;
 		lastError = '';
 		try {
-			await api.excludeSubscriptionMembers(subscription.id, [...selected]);
+			await api.excludeSubscriptionMembers(subscription.id, [...selectedVisible]);
 			selected = new Set();
 			selectMode = false;
 			confirmExcludeSelected = false;
@@ -475,7 +477,7 @@
 
 {#if selectMode}
 	<header class="head select-bar">
-		<div class="select-info">{m.subscriptions_members_selected_of({ selected: selected.size, total: memberList.length })}</div>
+		<div class="select-info">{m.subscriptions_members_selected_of({ selected: selectedVisible.size, total: memberList.length })}</div>
 		<div class="actions">
 			<Button
 				variant="ghost"
@@ -489,12 +491,12 @@
 				<Button
 					variant="danger"
 					size="sm"
-					disabled={excluding || selected.size === 0}
+					disabled={excluding || selectedVisible.size === 0}
 					loading={excluding}
 					iconBefore={banIcon}
 					onclick={excludeSelected}
 				>
-					{excluding ? m.subscriptions_members_excluding() : m.subscriptions_members_confirm_count({ count: selected.size })}
+					{excluding ? m.subscriptions_members_excluding() : m.subscriptions_members_confirm_count({ count: selectedVisible.size })}
 				</Button>
 				<Button variant="ghost" size="sm" disabled={excluding} onclick={() => (confirmExcludeSelected = false)}>
 					{m.common_back()}
@@ -503,11 +505,11 @@
 				<Button
 					variant="danger"
 					size="sm"
-					disabled={excluding || selected.size === 0}
+					disabled={excluding || selectedVisible.size === 0}
 					iconBefore={banIcon}
 					onclick={() => (confirmExcludeSelected = true)}
 				>
-					{m.subscriptions_members_exclude_selected({ count: selected.size })}
+					{m.subscriptions_members_exclude_selected({ count: selectedVisible.size })}
 				</Button>
 				<Button variant="ghost" size="sm" disabled={excluding} onclick={toggleSelectMode}>
 					{m.common_cancel()}
@@ -628,9 +630,8 @@
 			{removingTag}
 			minDelayMs={membersListStats.minDelayMs}
 			{isUrlSub}
-			{isAutoSelect}
 			{selectMode}
-			{selected}
+			selected={selectedVisible}
 			{excluding}
 			{creatingTunnelTag}
 			{availableProtocols}

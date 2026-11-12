@@ -315,7 +315,7 @@ func (o *Operator) addParsedOutboundsLocked(ctx context.Context, logAction strin
 			}
 			parseErrs = append(parseErrs, BatchError{
 				Input: errTag,
-				Err:   fmt.Errorf("%s: %s", p.Protocol, MissingBuildTagMsg(required, p.Protocol)),
+				Err:   fmt.Errorf("%s: %w", p.Protocol, &MissingBuildTagError{Tag: required, Protocol: p.Protocol}),
 			})
 			continue
 		}
