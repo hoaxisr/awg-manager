@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -2349,4 +2350,113 @@ func orphansUsedBySelector(sub *Subscription, outbounds []map[string]any, orphan
 		}
 	}
 	return used
+}
+
+// GetMemberOutbound extracts a standalone-ready copy of the member's
+// sing-box outbound JSON together with metadata needed to promote it into a
+// dedicated tunnel (10-tunnels.json). Only active subscription members present
+// in both store and the subscriptions config slot can be promoted.
+func (s *Service) GetMemberOutbound(id, memberTag string) (vlink.ParsedOutbound, error) {
+	memberTag = strings.TrimSpace(memberTag)
+	if memberTag == "" {
+		return vlink.ParsedOutbound{}, fmt.Errorf("%w: member tag is required", ErrInvalidInput)
+	}
+
+	mu := s.lockSub(id)
+	mu.Lock()
+	defer mu.Unlock()
+
+	sub, err := s.store.Get(id)
+	if err != nil {
+		return vlink.ParsedOutbound{}, err
+	}
+
+	var member MemberInfo
+	foundMember := false
+	for _, m := range sub.Members {
+		if m.Tag == memberTag {
+			member = m
+			foundMember = true
+			break
+		}
+	}
+	if !foundMember || !slices.Contains(sub.MemberTags, memberTag) {
+		return vlink.ParsedOutbound{}, ErrMemberNotFound
+	}
+
+	var obMap map[string]any
+	for _, ob := range s.mutator.SubscriptionOutbounds() {
+		if outboundTag(ob) == memberTag {
+			obMap = ob
+			break
+		}
+	}
+	if obMap == nil {
+		return vlink.ParsedOutbound{}, fmt.Errorf("%w: outbound %q is missing in slot", ErrMemberNotFound, memberTag)
+	}
+
+	// detour указывает на тег из слота подписки: отдельный туннель с такой
+	// ссылкой сломал бы общий конфиг при удалении подписки.
+	if detour := stringOf(obMap["detour"]); detour != "" {
+		return vlink.ParsedOutbound{}, fmt.Errorf("%w: member %q dials through %q and cannot become a standalone tunnel", ErrInvalidInput, memberTag, detour)
+	}
+	// bind_interface в слоте — настройка подписки, а не сервера
+	// (materializeMemberOutbound); туннель её не наследует. Копия: карта из
+	// слота общая с мутатором.
+	obMap = maps.Clone(obMap)
+	delete(obMap, "bind_interface")
+
+	raw, err := json.Marshal(obMap)
+	if err != nil {
+		return vlink.ParsedOutbound{}, fmt.Errorf("marshal outbound: %w", err)
+	}
+
+	proto := member.Protocol
+	if proto == "" {
+		proto = stringOf(obMap["type"])
+	}
+	server := member.Server
+	if server == "" {
+		server = stringOf(obMap["server"])
+	}
+	port := int(member.Port)
+	if port <= 0 {
+		switch p := obMap["server_port"].(type) {
+		case float64:
+			port = int(p)
+		case int:
+			port = p
+		}
+	}
+	var portU16 uint16
+	if port > 0 && port <= 65535 {
+		portU16 = uint16(port)
+	}
+
+	return vlink.ParsedOutbound{
+		Tag:      sanitizeMemberTunnelTag(member.Label, proto, server, port),
+		Protocol: proto,
+		Server:   server,
+		Port:     portU16,
+		Outbound: raw,
+		Label:    member.Label,
+	}, nil
+}
+
+func sanitizeMemberTunnelTag(label, proto, server string, port int) string {
+	clean := strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(label)
+	clean = strings.TrimSpace(clean)
+	if clean != "" {
+		return clean
+	}
+	if proto != "" && server != "" && port > 0 {
+		return fmt.Sprintf("%s-%s-%d", proto, server, port)
+	}
+	if server != "" {
+		return server
+	}
+	if proto != "" {
+		return proto
+	}
+	return "tunnel"
 }

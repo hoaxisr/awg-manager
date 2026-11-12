@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/installer"
 )
@@ -11,6 +12,35 @@ var ErrTunnelNotFound = errors.New("tunnel not found")
 
 // ErrTunnelTagConflict is returned when a requested tunnel tag is already used.
 var ErrTunnelTagConflict = errors.New("tunnel tag already exists")
+
+// ErrTunnelDuplicate is returned when adding a tunnel whose identity
+// (protocol, server, port, credentials) matches an already configured tunnel.
+var ErrTunnelDuplicate = errors.New("tunnel already exists")
+
+// TunnelDuplicateError reports that an outbound duplicates an existing tunnel
+// identified by ExistingTag. Unwraps to ErrTunnelDuplicate.
+type TunnelDuplicateError struct {
+	ExistingTag string
+}
+
+func (e *TunnelDuplicateError) Error() string {
+	return fmt.Sprintf("duplicate of existing tunnel %q", e.ExistingTag)
+}
+
+func (e *TunnelDuplicateError) Unwrap() error {
+	return ErrTunnelDuplicate
+}
+
+// MissingBuildTagError reports an outbound whose protocol needs a build tag
+// the installed sing-box binary lacks.
+type MissingBuildTagError struct {
+	Tag      string
+	Protocol string
+}
+
+func (e *MissingBuildTagError) Error() string {
+	return MissingBuildTagMsg(e.Tag, e.Protocol)
+}
 
 // ErrInvalidTunnelTag is returned when a requested tunnel tag cannot be used.
 var ErrInvalidTunnelTag = errors.New("invalid tunnel tag")

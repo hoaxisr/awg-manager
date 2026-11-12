@@ -35,7 +35,7 @@ type DelayHistoryMap = Map<string, number[]>;
 
 // Последний положительный замер задержки; пустая история и нулевые/отрицательные
 // значения (проба не удалась) считаются отсутствием данных.
-function latestPositiveDelay(history: number[]): number | null {
+export function latestPositiveDelay(history: number[]): number | null {
 	const latest = history.length > 0 ? history[history.length - 1] : null;
 	return latest && latest > 0 ? latest : null;
 }

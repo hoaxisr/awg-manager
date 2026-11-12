@@ -515,3 +515,14 @@ func validateSubscriptionHeaders(hh []SubscriptionHeader) error {
 	}
 	return nil
 }
+
+// CreateTunnelFromMemberRequest is the body for POST /api/singbox/subscriptions/members/to-tunnel?id=.
+type CreateTunnelFromMemberRequest struct {
+	MemberTag string `json:"memberTag" example:"sub-abc12345-aabbccdd"`
+}
+
+// CreateTunnelFromMemberResponse is the envelope for POST /api/singbox/subscriptions/members/to-tunnel.
+type CreateTunnelFromMemberResponse struct {
+	Success bool             `json:"success" example:"true"`
+	Data    SingboxTunnelDTO `json:"data"`
+}

@@ -1115,6 +1115,20 @@ definitions:
       urlTest:
         $ref: '#/definitions/api.SubscriptionURLTestDTO'
     type: object
+  api.CreateTunnelFromMemberRequest:
+    properties:
+      memberTag:
+        example: sub-abc12345-aabbccdd
+        type: string
+    type: object
+  api.CreateTunnelFromMemberResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxTunnelDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.DNSRouteSettingsDTO:
     properties:
       autoRefreshEnabled:
@@ -6149,6 +6163,9 @@ definitions:
       fingerprint:
         example: chrome
         type: string
+      kernelInterface:
+        example: t2s0
+        type: string
       listenPort:
         example: 7891
         type: integer
@@ -6178,6 +6195,9 @@ definitions:
         type: string
       transport:
         example: tcp
+        type: string
+      username:
+        example: user
         type: string
     type: object
   api.SingboxTunnelGetData:
@@ -19369,6 +19389,62 @@ paths:
       security:
       - CookieAuth: []
       summary: Restore previously excluded members
+      tags:
+      - subscriptions
+  /singbox/subscriptions/members/to-tunnel:
+    post:
+      consumes:
+      - application/json
+      description: Promotes a subscription member outbound into 10-tunnels.json with
+        the next free listen_port / t2sN NDMS Proxy slot, applies the config, and
+        notifies listeners.
+      parameters:
+      - description: Subscription ID
+        in: query
+        name: id
+        required: true
+        type: string
+      - description: Member tag to promote
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.CreateTunnelFromMemberRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.CreateTunnelFromMemberResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: A standalone tunnel for this endpoint/credentials already exists
+            (TUNNEL_DUPLICATE)
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "412":
+          description: sing-box binary is not installed (SINGBOX_NOT_INSTALLED)
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Protocol needs a build tag the installed sing-box lacks (VALIDATION_FAILED)
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Create a standalone sing-box tunnel from a subscription member
       tags:
       - subscriptions
   /singbox/subscriptions/orphans/delete:

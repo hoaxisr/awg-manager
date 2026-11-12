@@ -1,13 +1,16 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
+	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
 	tunnelservice "github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
@@ -20,10 +23,18 @@ type SingboxPresenceProbe interface {
 	IsPresent() bool
 }
 
+// SingboxTunnelCreator promotes a pre-built outbound (for example, a
+// subscription member) into a standalone sing-box tunnel with its own
+// listen_port and NDMS Proxy/t2s interface.
+type SingboxTunnelCreator interface {
+	AddTunnelFromOutbound(ctx context.Context, parsed vlink.ParsedOutbound) (singbox.TunnelInfo, error)
+}
+
 // SubscriptionHandler exposes /api/singbox/subscriptions/* endpoints.
 type SubscriptionHandler struct {
 	svc             *subscription.Service
 	presence        SingboxPresenceProbe
+	tunnelCreator   SingboxTunnelCreator
 	log             *logging.ScopedLogger
 	leftoverRefs    func(tags []string) []string
 	deviceProxyRefs tunnelservice.DeviceProxyRefChecker
@@ -49,6 +60,10 @@ func NewSubscriptionHandler(svc *subscription.Service, presence SingboxPresenceP
 		log: logging.NewScopedLogger(lg, logging.GroupRouting, logging.SubSubscription),
 	}
 }
+
+// SetTunnelCreator wires the operator used to promote a subscription member
+// into a standalone sing-box tunnel.
+func (h *SubscriptionHandler) SetTunnelCreator(tc SingboxTunnelCreator) { h.tunnelCreator = tc }
 
 // Service exposes the subscription service so other wiring (the MCP
 // adapter) works against the same instance the HTTP handlers use: a

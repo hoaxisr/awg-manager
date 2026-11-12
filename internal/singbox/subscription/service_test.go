@@ -3034,3 +3034,91 @@ func TestAddManualMember_TagCollisionRejected(t *testing.T) {
 		t.Fatalf("MemberTags=%v, want the two members before the collision", got.MemberTags)
 	}
 }
+
+// sharedOutboundsMutator отдаёт одни и те же карты при каждом вызове — как
+// OperatorAdapter.SubscriptionOutbounds, в отличие от fakeMutator.
+type sharedOutboundsMutator struct {
+	*fakeMutator
+	obs []map[string]any
+}
+
+func (m sharedOutboundsMutator) SubscriptionOutbounds() []map[string]any { return m.obs }
+
+func TestService_GetMemberOutbound(t *testing.T) {
+	svc, mut := newTestService(t)
+	sub, err := svc.Create(context.Background(), CreateInput{
+		Label: "my-sub",
+		Inline: strings.Join([]string{
+			"vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@de1.example:443?security=tls&sni=de.sni#Germany\t\n1",
+			"trojan://secretpass@tr1.example:8443?security=tls&sni=tr1.sni",
+		}, "\n"),
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(sub.Members) != 2 {
+		t.Fatalf("want 2 members, got %d", len(sub.Members))
+	}
+
+	first := sub.Members[0]
+	out, err := svc.GetMemberOutbound(sub.ID, first.Tag)
+	if err != nil {
+		t.Fatalf("GetMemberOutbound(first): %v", err)
+	}
+	if strings.ContainsAny(out.Tag, "\r\n\t") || out.Tag == "" {
+		t.Fatalf("unexpected sanitized tag: %q", out.Tag)
+	}
+	if out.Protocol != "vless" || out.Server != "de1.example" || out.Port != 443 {
+		t.Fatalf("unexpected metadata: %+v", out)
+	}
+	var ob map[string]any
+	if err := json.Unmarshal(out.Outbound, &ob); err != nil {
+		t.Fatalf("unmarshal outbound: %v", err)
+	}
+	if ob["uuid"] != "3a3b1c2e-9999-4321-aaaa-1234567890ab" {
+		t.Fatalf("unexpected uuid in outbound: %v", ob["uuid"])
+	}
+
+	second := sub.Members[1]
+	out2, err := svc.GetMemberOutbound(sub.ID, second.Tag)
+	if err != nil {
+		t.Fatalf("GetMemberOutbound(second): %v", err)
+	}
+	if out2.Tag == "" || out2.Protocol != "trojan" || out2.Port != 8443 {
+		t.Fatalf("unexpected second outbound: %+v", out2)
+	}
+
+	if _, err := svc.GetMemberOutbound(sub.ID, "nonexistent-tag"); !errors.Is(err, ErrMemberNotFound) {
+		t.Fatalf("missing member: got %v, want ErrMemberNotFound", err)
+	}
+	if _, err := svc.GetMemberOutbound("missing-sub", first.Tag); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("missing subscription: got %v", err)
+	}
+	if _, err := svc.GetMemberOutbound(sub.ID, " "); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("blank member tag: got %v, want ErrInvalidInput", err)
+	}
+
+	// bind_interface в слоте — настройка подписки, в туннель не уходит.
+	// Карта общая с мутатором, как у настоящего адаптера: у самой подписки
+	// привязка обязана уцелеть.
+	slotOb := map[string]any{"tag": second.Tag, "type": "trojan", "server": "tr1.example", "server_port": 8443, "password": "p", "bind_interface": "eth3"}
+	svc.mutator = sharedOutboundsMutator{fakeMutator: mut, obs: []map[string]any{slotOb}}
+	bound, err := svc.GetMemberOutbound(sub.ID, second.Tag)
+	svc.mutator = mut
+	if err != nil {
+		t.Fatalf("GetMemberOutbound(bound): %v", err)
+	}
+	if strings.Contains(string(bound.Outbound), "bind_interface") {
+		t.Fatalf("bind_interface leaked into tunnel outbound: %s", bound.Outbound)
+	}
+	if slotOb["bind_interface"] != "eth3" {
+		t.Fatalf("subscription slot outbound lost its bind_interface: %v", slotOb)
+	}
+
+	// detour на соседа по слоту — отказ, а не туннель с висячей ссылкой.
+	mut.bodies[second.Tag] = []byte(`{"type":"trojan","server":"tr1.example","server_port":8443,"password":"p","detour":"sub-x-other"}`)
+	if _, err := svc.GetMemberOutbound(sub.ID, second.Tag); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("detour member: got %v, want ErrInvalidInput", err)
+	}
+}

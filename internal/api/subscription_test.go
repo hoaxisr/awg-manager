@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,8 +11,10 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
@@ -830,5 +833,174 @@ func TestSubscriptionHandler_Delete_LooksForLeftoverRefs(t *testing.T) {
 	}
 	if !slices.Contains(asked, created.Data.SelectorTag) {
 		t.Fatalf("теги: %v", asked)
+	}
+}
+
+type recordingSubMutator struct {
+	noopMutator
+	mu  sync.Mutex
+	obs map[string][]byte
+}
+
+func (m *recordingSubMutator) AddOutbound(tag string, body []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.obs == nil {
+		m.obs = make(map[string][]byte)
+	}
+	m.obs[tag] = append([]byte(nil), body...)
+	return nil
+}
+
+func (m *recordingSubMutator) SubscriptionOutbounds() []map[string]any {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []map[string]any
+	for tag, raw := range m.obs {
+		var ob map[string]any
+		if json.Unmarshal(raw, &ob) == nil {
+			ob["tag"] = tag
+			out = append(out, ob)
+		}
+	}
+	return out
+}
+
+type fakeTunnelCreator struct {
+	got vlink.ParsedOutbound
+	res singbox.TunnelInfo
+	err error
+}
+
+func (f *fakeTunnelCreator) AddTunnelFromOutbound(_ context.Context, parsed vlink.ParsedOutbound) (singbox.TunnelInfo, error) {
+	f.got = parsed
+	if f.err != nil {
+		return singbox.TunnelInfo{}, f.err
+	}
+	return f.res, nil
+}
+
+func TestSubscriptionHandler_CreateTunnelFromMember(t *testing.T) {
+	store, err := subscription.NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mut := &recordingSubMutator{}
+	svc := subscription.NewService(store, mut)
+	sub, err := svc.Create(context.Background(), subscription.CreateInput{
+		Label:   "Demo",
+		Inline:  "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@de.example:443?security=tls&sni=de.example#DE-Node",
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	memberTag := sub.MemberTags[0]
+
+	creator := &fakeTunnelCreator{
+		res: singbox.TunnelInfo{
+			Tag:             "DE-Node",
+			Protocol:        "vless",
+			Server:          "de.example",
+			Port:            443,
+			ListenPort:      1084,
+			ProxyInterface:  "Proxy4",
+			KernelInterface: "t2s4",
+			Running:         true,
+		},
+	}
+	h := NewSubscriptionHandler(svc, &fakePresenceProbe{installed: true})
+	h.SetTunnelCreator(creator)
+
+	// 1. Success returns SingboxTunnelDTO with kernelInterface.
+	rr := httptest.NewRecorder()
+	h.CreateTunnelFromMember(rr, httptest.NewRequest(
+		http.MethodPost,
+		"/api/singbox/subscriptions/members/to-tunnel?id="+sub.ID,
+		strings.NewReader(`{"memberTag":"`+memberTag+`"}`),
+	))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("success status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if creator.got.Tag != "DE-Node" || creator.got.Server != "de.example" {
+		t.Fatalf("creator got unexpected outbound: %+v", creator.got)
+	}
+	var okResp CreateTunnelFromMemberResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &okResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !okResp.Success || okResp.Data.KernelInterface != "t2s4" || okResp.Data.Tag != "DE-Node" {
+		t.Fatalf("unexpected response payload: %+v", okResp)
+	}
+
+	// 2. Duplicate -> 409 TUNNEL_DUPLICATE with existingTag.
+	creator.err = &singbox.TunnelDuplicateError{ExistingTag: "DE-Node"}
+	rr = httptest.NewRecorder()
+	h.CreateTunnelFromMember(rr, httptest.NewRequest(
+		http.MethodPost,
+		"/api/singbox/subscriptions/members/to-tunnel?id="+sub.ID,
+		strings.NewReader(`{"memberTag":"`+memberTag+`"}`),
+	))
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "TUNNEL_DUPLICATE") || !strings.Contains(rr.Body.String(), "DE-Node") {
+		t.Fatalf("duplicate status=%d body=%s, want 409 TUNNEL_DUPLICATE", rr.Code, rr.Body.String())
+	}
+
+	// Протокол вне сборки бинаря -> 422 VALIDATION_FAILED.
+	creator.err = fmt.Errorf("naive: %w", &singbox.MissingBuildTagError{Tag: "with_naive_outbound", Protocol: "naive"})
+	rr = httptest.NewRecorder()
+	h.CreateTunnelFromMember(rr, httptest.NewRequest(
+		http.MethodPost,
+		"/api/singbox/subscriptions/members/to-tunnel?id="+sub.ID,
+		strings.NewReader(`{"memberTag":"`+memberTag+`"}`),
+	))
+	if rr.Code != http.StatusUnprocessableEntity || !strings.Contains(rr.Body.String(), "VALIDATION_FAILED") {
+		t.Fatalf("build tag status=%d body=%s, want 422 VALIDATION_FAILED", rr.Code, rr.Body.String())
+	}
+	creator.err = nil
+
+	// Неизвестная подписка -> 404 NOT_FOUND.
+	rr = httptest.NewRecorder()
+	h.CreateTunnelFromMember(rr, httptest.NewRequest(
+		http.MethodPost,
+		"/api/singbox/subscriptions/members/to-tunnel?id=missing-sub",
+		strings.NewReader(`{"memberTag":"`+memberTag+`"}`),
+	))
+	if rr.Code != http.StatusNotFound || !strings.Contains(rr.Body.String(), `"NOT_FOUND"`) {
+		t.Fatalf("missing subscription status=%d body=%s, want 404 NOT_FOUND", rr.Code, rr.Body.String())
+	}
+
+	// 3. Unknown member -> 404 MEMBER_NOT_FOUND.
+	rr = httptest.NewRecorder()
+	h.CreateTunnelFromMember(rr, httptest.NewRequest(
+		http.MethodPost,
+		"/api/singbox/subscriptions/members/to-tunnel?id="+sub.ID,
+		strings.NewReader(`{"memberTag":"missing-member"}`),
+	))
+	if rr.Code != http.StatusNotFound || !strings.Contains(rr.Body.String(), "MEMBER_NOT_FOUND") {
+		t.Fatalf("missing member status=%d body=%s, want 404 MEMBER_NOT_FOUND", rr.Code, rr.Body.String())
+	}
+
+	// 4. Empty memberTag -> 400.
+	rr = httptest.NewRecorder()
+	h.CreateTunnelFromMember(rr, httptest.NewRequest(
+		http.MethodPost,
+		"/api/singbox/subscriptions/members/to-tunnel?id="+sub.ID,
+		strings.NewReader(`{"memberTag":"  "}`),
+	))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("empty memberTag status=%d, want 400", rr.Code)
+	}
+
+	// 5. Missing sing-box binary -> 412 SINGBOX_NOT_INSTALLED.
+	hMissing := NewSubscriptionHandler(svc, &fakePresenceProbe{installed: false})
+	hMissing.SetTunnelCreator(creator)
+	rr = httptest.NewRecorder()
+	hMissing.CreateTunnelFromMember(rr, httptest.NewRequest(
+		http.MethodPost,
+		"/api/singbox/subscriptions/members/to-tunnel?id="+sub.ID,
+		strings.NewReader(`{"memberTag":"`+memberTag+`"}`),
+	))
+	if rr.Code != http.StatusPreconditionFailed || !strings.Contains(rr.Body.String(), "SINGBOX_NOT_INSTALLED") {
+		t.Fatalf("missing sing-box status=%d body=%s, want 412", rr.Code, rr.Body.String())
 	}
 }

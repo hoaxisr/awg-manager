@@ -367,6 +367,11 @@ const api_ConntrackConnectionDTO: v.GenericSchema = v.looseObject({
 	tunnelName: v.optional(v.nullable(v.string())),
 });
 
+const api_CreateTunnelFromMemberResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SingboxTunnelDTO))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_DNSRouteSettingsDTO: v.GenericSchema = v.looseObject({
 	autoRefreshEnabled: v.optional(v.nullable(v.boolean())),
 	refreshDailyTime: v.optional(v.nullable(v.string())),
@@ -563,12 +568,14 @@ const api_ExternalTunnelDTO: v.GenericSchema = v.looseObject({
 	interfaceName: v.optional(v.nullable(v.string())),
 	isAWG: v.optional(v.nullable(v.boolean())),
 	kernelDevice: v.optional(v.nullable(v.boolean())),
+	lastHandshake: v.optional(v.nullable(v.string())),
 	ndmsRecord: v.optional(v.nullable(v.boolean())),
 	publicKey: v.optional(v.nullable(v.string())),
 	removable: v.optional(v.nullable(v.boolean())),
 	rxBytes: v.optional(v.nullable(v.number())),
 	tunnelNumber: v.optional(v.nullable(v.number())),
 	txBytes: v.optional(v.nullable(v.number())),
+	up: v.optional(v.nullable(v.boolean())),
 });
 
 const api_ExternalTunnelsResponse: v.GenericSchema = v.looseObject({
@@ -2048,6 +2055,7 @@ const api_SingboxTunnelConnectivity: v.GenericSchema = v.looseObject({
 const api_SingboxTunnelDTO: v.GenericSchema = v.looseObject({
 	connectivity: v.optional(v.nullable(v.lazy(() => api_SingboxTunnelConnectivity))),
 	fingerprint: v.optional(v.nullable(v.string())),
+	kernelInterface: v.optional(v.nullable(v.string())),
 	listenPort: v.optional(v.nullable(v.number())),
 	port: v.optional(v.nullable(v.number())),
 	protocol: v.optional(v.nullable(v.string())),
@@ -2058,6 +2066,7 @@ const api_SingboxTunnelDTO: v.GenericSchema = v.looseObject({
 	sni: v.optional(v.nullable(v.string())),
 	tag: v.optional(v.nullable(v.string())),
 	transport: v.optional(v.nullable(v.string())),
+	username: v.optional(v.nullable(v.string())),
 });
 
 const api_SingboxTunnelGetData: v.GenericSchema = v.looseObject({
@@ -3791,6 +3800,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/subscriptions/members/exclude": v.lazy(() => api_SubscriptionResponse),
 	"POST /singbox/subscriptions/members/remove": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/subscriptions/members/restore": v.lazy(() => api_SubscriptionResponse),
+	"POST /singbox/subscriptions/members/to-tunnel": v.lazy(() => api_CreateTunnelFromMemberResponse),
 	"POST /singbox/subscriptions/orphans/delete": v.lazy(() => api_OkResponse),
 	"POST /singbox/subscriptions/preview": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/subscriptions/refresh": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({

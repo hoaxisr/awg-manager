@@ -69,6 +69,12 @@
 		}
 	}
 
+	function patchActiveMember(memberTag: string): void {
+		if (subscription) {
+			subscription = { ...subscription, activeMember: memberTag };
+		}
+	}
+
 	async function restoreExcluded(tags: string[]): Promise<void> {
 		if (excludedRestoring || tags.length === 0) return;
 		error = '';
@@ -346,6 +352,7 @@
 					{subscription}
 					{liveActiveMember}
 					onUpdated={loadStream}
+					onActiveMemberChanged={patchActiveMember}
 					autoDelayCheckNonce={membersAutoDelayCheckNonce}
 					layout={singboxEffectiveLayout}
 				/>
