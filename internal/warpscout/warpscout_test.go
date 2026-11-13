@@ -61,6 +61,7 @@ type fakeTunnels struct {
 	created     []string
 	createdOpts []CreateOptions
 	getErr      error
+	createErr   error
 	onSwap      func(r *TunnelRef)
 	onCreate    func(r *TunnelRef)
 }
@@ -94,6 +95,9 @@ func (f *fakeTunnels) Get(_ context.Context, m TargetMode, id string) (*TunnelRe
 func (f *fakeTunnels) Create(_ context.Context, m TargetMode, name, conf string, opts CreateOptions) (*TunnelRef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
 	id := "new" + string(rune('0'+len(f.created)))
 	f.created = append(f.created, conf)
 	f.createdOpts = append(f.createdOpts, opts)
@@ -154,6 +158,81 @@ func (p *fakeProber) Trace(context.Context, string) (TraceResult, error) {
 	return p.def, nil
 }
 
+// fakeWarpAPI — подмена API Cloudflare: каждая регистрация получает свой id,
+// удаления запоминаются. Создание туннеля теперь регистрирует учётную запись,
+// поэтому подмена нужна каждому тесту сервиса.
+type fakeWarpAPI struct {
+	srv        *httptest.Server
+	mu         sync.Mutex
+	registered int
+	deleted    []string
+	licensed   []string
+}
+
+func newFakeWarpAPI(t *testing.T) *fakeWarpAPI {
+	t.Helper()
+	a := &fakeWarpAPI{}
+	a.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		switch {
+		case r.Method == http.MethodPost:
+			a.registered++
+			fmt.Fprintf(w, `{"id":"dev-%d","token":"tok-%d","account":{"account_type":"free"},`+
+				`"config":{"client_id":"AQID","peers":[{"public_key":%q}],"interface":{"addresses":{"v4":"172.16.0.2"}}}}`,
+				a.registered, a.registered, WarpPeerPublicKey)
+		case r.Method == http.MethodDelete:
+			a.deleted = append(a.deleted, strings.TrimPrefix(r.URL.Path, "/reg/"))
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPut:
+			a.licensed = append(a.licensed, r.URL.Path)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			_, _ = w.Write([]byte(`{"account_type":"limited","warp_plus":true,"warp_enabled":true}`))
+		}
+	}))
+	t.Cleanup(a.srv.Close)
+	// Тест, уже поставивший свою подмену API, сохраняет её: иначе его
+	// сервер остался бы без запросов, а тест — зелёным вхолостую.
+	if cfAPIBase == apiBase {
+		cfAPIBase = a.srv.URL
+		t.Cleanup(func() { cfAPIBase = apiBase })
+	}
+	return a
+}
+
+// testAPIs — подмена API, выданная тесту в newTestService.
+var testAPIs sync.Map
+
+func apiOf(t *testing.T) *fakeWarpAPI {
+	t.Helper()
+	v, ok := testAPIs.Load(t)
+	if !ok {
+		t.Fatal("подмена API не создана")
+	}
+	return v.(*fakeWarpAPI)
+}
+
+// waitDeleted ждёт фонового снятия регистраций.
+func (a *fakeWarpAPI) waitDeleted(t *testing.T, want int) []string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, deleted := a.counts()
+		if len(deleted) >= want || time.Now().After(deadline) {
+			return deleted
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func (a *fakeWarpAPI) counts() (registered int, deleted []string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.registered, append([]string(nil), a.deleted...)
+}
+
 func newTestService(t *testing.T) (*Service, *fakeRunner, *fakeTunnels, *fakeProber) {
 	t.Helper()
 	colorecheckDelay, verifyAfterSwap, verifyRetryDelay = 0, 0, time.Millisecond
@@ -165,6 +244,9 @@ func newTestService(t *testing.T) (*Service, *fakeRunner, *fakeTunnels, *fakePro
 		PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2", ClientID: "AQID"}); err != nil {
 		t.Fatal(err)
 	}
+	api := newFakeWarpAPI(t)
+	testAPIs.Store(t, api)
+	t.Cleanup(func() { testAPIs.Delete(t) })
 	r := &fakeRunner{}
 	tun := &fakeTunnels{refs: map[string]*TunnelRef{
 		key(TargetNative, "awg10"): {Mode: TargetNative, ID: "awg10", Name: "WARP", Iface: "nwg1",
@@ -175,7 +257,8 @@ func newTestService(t *testing.T) (*Service, *fakeRunner, *fakeTunnels, *fakePro
 	}}
 	pr := &fakeProber{def: TraceResult{Colo: "HEL", Loc: "FI", Warp: "on"}}
 	s := New(Deps{Store: st, Runner: r, Tunnels: tun, Prober: pr,
-		WAN: func(context.Context) (string, bool) { return "eth3", true }})
+		HTTP: func(string) (*http.Client, error) { return api.srv.Client(), nil },
+		WAN:  func(context.Context) (string, bool) { return "eth3", true }})
 	t.Cleanup(s.Stop)
 	return s, r, tun, pr
 }
@@ -704,11 +787,13 @@ func TestAccountOps_Serialized(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+
+	// После newTestService: он ставит общую подмену API, а этому тесту
+	// нужна своя, с удержанием запроса.
+	s, _, _, _ := newTestService(t)
 	origBase := cfAPIBase
 	cfAPIBase = srv.URL
 	t.Cleanup(func() { cfAPIBase = origBase })
-
-	s, _, _, _ := newTestService(t)
 	log := &captureLog{}
 	s.d.Log = log
 	s.d.HTTP = func(string) (*http.Client, error) { return srv.Client(), nil }
@@ -1442,6 +1527,7 @@ func TestSetAccountAddress_PreservedAcrossRotationAndCreateOverride(t *testing.T
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id": "dev-rot",
+			"token": "tok-rot",
 			"warp_enabled": true,
 			"config": {"client_id": "BAUG", "peers": [{"public_key": "` + WarpPeerPublicKey + `"}], "interface": {"addresses": {"v4": "172.16.0.2"}}}
 		}`))
@@ -2054,5 +2140,123 @@ func TestWatchdog_CascadeSwapNeverRegisters(t *testing.T) {
 	}
 	if len(runner.calls) != 0 || len(tun.swaps) != 0 {
 		t.Fatalf("скан внешним ключом через внешний туннель: scans=%d swaps=%v", len(runner.calls), tun.swaps)
+	}
+}
+
+func confPrivateKey(conf string) string {
+	for _, line := range strings.Split(conf, "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok && strings.TrimSpace(k) == "PrivateKey" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// Каждый создаваемый туннель получает свою учётную запись WARP: общий ключ у
+// нескольких туннелей Cloudflare не обслуживает (#1192).
+func TestApplyCreate_AccountPerTunnel(t *testing.T) {
+	s, _, tun, _ := newTestService(t)
+	api := apiOf(t)
+	primary := s.d.Store.Account()
+	for i := 0; i < 2; i++ {
+		if _, err := s.Apply(context.Background(), ApplyRequest{
+			Action: "create", Endpoint: "162.159.193.9:2408", Mode: TargetNative, AddressV4: "172.16.0.9",
+		}); err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+	}
+	k0, k1 := confPrivateKey(tun.created[0]), confPrivateKey(tun.created[1])
+	if k0 == "" || k1 == "" || k0 == k1 || k0 == primary.PrivateKey || k1 == primary.PrivateKey {
+		t.Fatalf("у туннелей должны быть разные ключи, отличные от основной записи")
+	}
+	if !strings.Contains(tun.created[0], "Address = 172.16.0.9") {
+		t.Fatalf("адрес из запроса не попал в конфиг: %q", tun.created[0])
+	}
+	accts := s.d.Store.TunnelAccounts()
+	if len(accts) != 2 || accts[0].TunnelID != "new0" || accts[1].TunnelID != "new1" || accts[0].TunnelMode != TargetNative {
+		t.Fatalf("учётные записи туннелей: %+v", accts)
+	}
+	if a := s.d.Store.Account(); a == nil || a.PrivateKey != primary.PrivateKey {
+		t.Fatal("основная учётная запись изменена")
+	}
+	if reg, _ := api.counts(); reg != 2 {
+		t.Fatalf("регистраций: %d, ожидалось 2", reg)
+	}
+	// Записи переживают перезапуск.
+	st2, err := NewStore(filepath.Dir(s.d.Store.path), plainCipher{})
+	if err != nil || len(st2.TunnelAccounts()) != 2 || st2.TunnelAccounts()[1].PrivateKey != k1 {
+		t.Fatalf("записи туннелей после перечитывания: %v", err)
+	}
+}
+
+// Туннель не создался — регистрация, заведённая под него, снимается.
+func TestApplyCreate_FailureDropsRegistration(t *testing.T) {
+	s, _, tun, _ := newTestService(t)
+	api := apiOf(t)
+	tun.createErr = errors.New("роутер отказал")
+	if _, err := s.Apply(context.Background(), ApplyRequest{
+		Action: "create", Endpoint: "162.159.193.9:2408", Mode: TargetNative,
+	}); err == nil {
+		t.Fatal("ожидалась ошибка создания")
+	}
+	if deleted := api.waitDeleted(t, 1); len(deleted) != 1 || deleted[0] != "dev-1" {
+		t.Fatalf("регистрация не снята: %v", deleted)
+	}
+	if n := len(s.d.Store.TunnelAccounts()); n != 0 {
+		t.Fatalf("сохранено записей: %d", n)
+	}
+}
+
+// Учётная запись удалённого управляемого туннеля снимается при следующем
+// создании; запись системного туннеля не трогается, даже если его не видно.
+func TestApplyCreate_CollectsAccountsOfDeletedTunnels(t *testing.T) {
+	s, _, tun, _ := newTestService(t)
+	api := apiOf(t)
+	mk := func(mode TargetMode) {
+		t.Helper()
+		if _, err := s.Apply(context.Background(), ApplyRequest{
+			Action: "create", Endpoint: "162.159.193.9:2408", Mode: mode,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(TargetNative) // new0, dev-1
+	mk(TargetSystem) // new1, dev-2
+	tun.mu.Lock()
+	delete(tun.refs, key(TargetNative, "new0"))
+	delete(tun.refs, key(TargetSystem, "new1"))
+	tun.mu.Unlock()
+	mk(TargetNative) // new2, dev-3
+	if deleted := api.waitDeleted(t, 1); len(deleted) != 1 || deleted[0] != "dev-1" {
+		t.Fatalf("ожидалось снятие только dev-1, got %v", deleted)
+	}
+	var ids []string
+	for _, a := range s.d.Store.TunnelAccounts() {
+		ids = append(ids, string(a.TunnelMode)+":"+a.TunnelID)
+	}
+	if strings.Join(ids, ",") != "system:new1,native:new2" {
+		t.Fatalf("остались записи: %v", ids)
+	}
+}
+
+// Лицензия WARP+ основной записи переносится на учётную запись туннеля.
+func TestApplyCreate_CarriesLicense(t *testing.T) {
+	s, _, _, _ := newTestService(t)
+	api := apiOf(t)
+	acct := s.d.Store.Account()
+	acct.License = "lic-key"
+	if err := s.d.Store.SetAccount(acct); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Apply(context.Background(), ApplyRequest{
+		Action: "create", Endpoint: "162.159.193.9:2408", Mode: TargetNative,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	api.mu.Lock()
+	licensed := append([]string(nil), api.licensed...)
+	api.mu.Unlock()
+	if len(licensed) != 1 || licensed[0] != "/reg/dev-1/account" {
+		t.Fatalf("лицензия применена к: %v", licensed)
 	}
 }

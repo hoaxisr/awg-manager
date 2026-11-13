@@ -45,13 +45,23 @@ type accountDisk struct {
 	CreatedAt        time.Time `json:"createdAt"`
 }
 
+// tunnelAccountDisk — учётная запись, заведённая под один туннель.
+type tunnelAccountDisk struct {
+	accountDisk
+	TunnelMode TargetMode `json:"tunnelMode"`
+	TunnelID   string     `json:"tunnelId"`
+}
+
 type fileState struct {
-	SchemaVersion int                     `json:"schemaVersion"`
-	Account       *accountDisk            `json:"account,omitempty"`
-	InnerAccount  *accountDisk            `json:"innerAccount,omitempty"`
-	Config        Config                  `json:"config"`
-	History       []SwapEvent             `json:"history,omitempty"`
-	Stats         map[string]ProfileStats `json:"stats,omitempty"`
+	SchemaVersion int          `json:"schemaVersion"`
+	Account       *accountDisk `json:"account,omitempty"`
+	InnerAccount  *accountDisk `json:"innerAccount,omitempty"`
+	// TunnelAccounts — по записи на каждый созданный туннель: общий ключ
+	// у нескольких туннелей Cloudflare не обслуживает (#1192).
+	TunnelAccounts []tunnelAccountDisk     `json:"tunnelAccounts,omitempty"`
+	Config         Config                  `json:"config"`
+	History        []SwapEvent             `json:"history,omitempty"`
+	Stats          map[string]ProfileStats `json:"stats,omitempty"`
 }
 
 // Store — атомарное хранилище модуля.
@@ -68,6 +78,9 @@ type Store struct {
 	state     fileState
 	acct      *Account // расшифрованная копия основного аккаунта
 	innerAcct *Account // расшифрованная копия 2-го слота для WARP-in-WARP
+	// tunnelAccts — расшифрованные записи туннелей; нерасшифрованные
+	// остаются только на диске (как и основная после смены секрета).
+	tunnelAccts []TunnelAccount
 }
 
 // ErrFrozen — запись отклонена: идёт восстановление из резервной копии.
@@ -114,6 +127,12 @@ func (s *Store) load() error {
 			s.innerAcct = nil
 		} else {
 			s.innerAcct = inner
+		}
+	}
+	for i := range st.TunnelAccounts {
+		d := &st.TunnelAccounts[i]
+		if a, err := s.decryptAccount(&d.accountDisk); err == nil {
+			s.tunnelAccts = append(s.tunnelAccts, TunnelAccount{Account: *a, TunnelMode: d.TunnelMode, TunnelID: d.TunnelID})
 		}
 	}
 	return nil
@@ -238,6 +257,48 @@ func (s *Store) SetInnerAccount(a *Account) error {
 	s.state.InnerAccount = d
 	c := *a
 	s.innerAcct = &c
+	return s.saveLocked()
+}
+
+// TunnelAccounts — копии учётных записей, заведённых под туннели.
+func (s *Store) TunnelAccounts() []TunnelAccount {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]TunnelAccount(nil), s.tunnelAccts...)
+}
+
+// AddTunnelAccount шифрует и сохраняет учётную запись туннеля.
+func (s *Store) AddTunnelAccount(ta TunnelAccount) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, err := s.encryptAccount(&ta.Account)
+	if err != nil {
+		return err
+	}
+	s.state.TunnelAccounts = append(s.state.TunnelAccounts,
+		tunnelAccountDisk{accountDisk: *d, TunnelMode: ta.TunnelMode, TunnelID: ta.TunnelID})
+	s.tunnelAccts = append(s.tunnelAccts, ta)
+	return s.saveLocked()
+}
+
+// RemoveTunnelAccount забывает учётную запись туннеля по её публичному ключу.
+func (s *Store) RemoveTunnelAccount(publicKey string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	disk := s.state.TunnelAccounts[:0]
+	for _, d := range s.state.TunnelAccounts {
+		if d.PublicKey != publicKey {
+			disk = append(disk, d)
+		}
+	}
+	s.state.TunnelAccounts = disk
+	mem := s.tunnelAccts[:0]
+	for _, a := range s.tunnelAccts {
+		if a.PublicKey != publicKey {
+			mem = append(mem, a)
+		}
+	}
+	s.tunnelAccts = mem
 	return s.saveLocked()
 }
 
