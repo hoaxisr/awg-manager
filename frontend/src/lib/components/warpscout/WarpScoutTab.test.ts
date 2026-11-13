@@ -5,6 +5,19 @@ import type { WarpConfig, WarpProfile, WarpScoutState } from '$lib/types/warpsco
 import { warpScanPush } from '$lib/stores/warpscout';
 import { defaultFilters } from './warpscoutUi';
 
+// Панель Dropdown читает ResizeObserver при открытии; в jsdom его нет.
+vi.hoisted(() => {
+	Object.defineProperty(globalThis, 'ResizeObserver', {
+		writable: true,
+		configurable: true,
+		value: class {
+			observe() {}
+			unobserve() {}
+			disconnect() {}
+		},
+	});
+});
+
 const api = vi.hoisted(() => ({
 	warpscoutState: vi.fn(),
 	warpscoutTargets: vi.fn(),
