@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Регенерирует internal/singbox/installer/embedded.go из РЕЛИЗА ФОРКА
-# hoaxisr/amnezia-box (наш sing-box = base + AmneziaWG/AWG3 + mieru + xhttp).
+# hoaxisr/awgm-box (форк sing-box: base + AmneziaWG/AWG3 + mieru + xhttp).
 # Сборку owns форк (его CI release-entware.yml); awg-manager только ПОТРЕБЛЯЕТ.
 # Компиляции здесь нет — только скачивание ассетов, sha256/size, запись embedded.go.
 #
@@ -8,7 +8,7 @@
 #   ./scripts/regen-embedded.sh <release-tag>
 #   (release-tag = VERSION, напр. 1.14.0-alpha.48-awg3-xhttp-mieru)
 # Env:
-#   SINGBOX_FORK_REPO   (default hoaxisr/amnezia-box)
+#   SINGBOX_FORK_REPO   (default hoaxisr/awgm-box)
 #   SINGBOX_URL_BASE    базовый URL для embedded.go (default — GitHub-релиз форка).
 #                       Для прод-зеркала: http://repo.hoaxisr.ru/singbox/<tag>
 #   SINGBOX_FORK_DIR    чекаут форка на теге <release-tag> — для схемы (см. конец).
@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 VERSION="${1:?usage: regen-embedded.sh <release-tag>}"
-FORK_REPO="${SINGBOX_FORK_REPO:-hoaxisr/amnezia-box}"
+FORK_REPO="${SINGBOX_FORK_REPO:-hoaxisr/awgm-box}"
 URL_BASE="${SINGBOX_URL_BASE:-https://github.com/${FORK_REPO}/releases/download/${VERSION}}"
 EMBEDDED_GO="$PROJECT_ROOT/internal/singbox/installer/embedded.go"
 ARCHES=(mipsel-3.4 mips-3.4 aarch64-3.10)
