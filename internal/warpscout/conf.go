@@ -93,20 +93,37 @@ func EnsureSignature(p *AWGParams) (bool, error) {
 }
 
 // signatureHex — I1..I5 в hex сырых байтов для stdin сканера.
-// maxRawBytes > 0 обрезает слишком длинный пакет (для скана поверх MTU 1280).
-func signatureHex(p AWGParams, maxRawBytes int) ([5]string, error) {
+func signatureHex(p AWGParams) ([5]string, error) {
 	var out [5]string
 	for i, spec := range []string{p.I1, p.I2, p.I3, p.I4, p.I5} {
 		raw, err := CPSToRaw(spec)
 		if err != nil {
 			return out, fmt.Errorf("I%d: %w", i+1, err)
 		}
-		if maxRawBytes > 0 && len(raw) > maxRawBytes {
-			raw = raw[:maxRawBytes]
-		}
 		out[i] = hex.EncodeToString(raw)
 	}
 	return out, nil
+}
+
+// nestedSignatureMax — потолок пакета I1..I5 у каскада: он идёт внутри
+// внешнего туннеля с MTU 1280 (минус IP и UDP — 1252, берём с запасом).
+const nestedSignatureMax = 1200
+
+// fitSignature подгоняет I1..I5 под maxRaw байт. Пакет, который не
+// помещается, заменяется своим же усечённым началом в виде `<b 0x…>`:
+// усечь запись с тегами <r>/<t> иначе нельзя. Пакеты в пределах остаются
+// как есть, со своими случайными частями.
+func fitSignature(p AWGParams, maxRaw int) (AWGParams, error) {
+	for i, spec := range []*string{&p.I1, &p.I2, &p.I3, &p.I4, &p.I5} {
+		raw, err := CPSToRaw(*spec)
+		if err != nil {
+			return p, fmt.Errorf("%w: сигнатура I%d: %v", ErrInvalidInput, i+1, err)
+		}
+		if len(raw) > maxRaw {
+			*spec = "<b 0x" + hex.EncodeToString(raw[:maxRaw]) + ">"
+		}
+	}
+	return p, nil
 }
 
 // DefaultTunnelIPv4 — локальный адрес туннеля WARP, пока пользователь не задал свой.

@@ -1944,3 +1944,115 @@ func TestWatchdog_SwapDoesNotScanThroughWarpWithItsOwnKey(t *testing.T) {
 		t.Fatal("второй слот зарегистрирован без пользователя")
 	}
 }
+
+// Сканер и туннель каскада шлют одну и ту же сигнатуру: пакет, который не
+// помещается во внешний туннель, подгоняется в обоих местах одинаково.
+func TestFitSignature(t *testing.T) {
+	in := AWGParams{SignatureProfile: "custom", I1: "<r 1500>", I2: "<b 0xdead><r 4>"}
+	out, err := fitSignature(in, nestedSignatureMax)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := CPSToRaw(out.I1)
+	if err != nil || len(raw) != nestedSignatureMax {
+		t.Fatalf("I1 после подгонки: %d байт, err=%v", len(raw), err)
+	}
+	if again, _ := CPSToRaw(out.I1); string(again) != string(raw) {
+		t.Fatal("подогнанный пакет должен быть постоянным: сканер и туннель шлют одно и то же")
+	}
+	if out.I2 != in.I2 {
+		t.Fatalf("пакет в пределах изменён: %q", out.I2)
+	}
+}
+
+// I1..I5 под именованным пресетом уходят в .conf как есть — негодная запись
+// должна отвергаться, а не доезжать до импорта.
+func TestValidateOverrideAWG_NamedProfileChecksPackets(t *testing.T) {
+	if _, err := validateOverrideAWG(AWGParams{SignatureProfile: "dns", I1: "<zz 1>"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("негодный I1 под пресетом принят: %v", err)
+	}
+	if _, err := validateOverrideAWG(AWGParams{SignatureProfile: "dns", I1: "<b 0xdead>"}); err != nil {
+		t.Fatalf("годный I1 отвергнут: %v", err)
+	}
+}
+
+// Сохранение того же пресета без пакетов (интерфейс их не шлёт) оставляет
+// прежнюю сигнатуру, а не выдаёт новую.
+func TestSaveConfig_SamePresetKeepsSignature(t *testing.T) {
+	s, _, _, _ := newTestService(t)
+	cfg := s.d.Store.Config()
+	cfg.AWG.SignatureProfile = "dns"
+	cfg.AWG.I1, cfg.AWG.I2, cfg.AWG.I3, cfg.AWG.I4, cfg.AWG.I5 = "", "", "", "", ""
+	first, err := s.SaveConfig(context.Background(), cfg)
+	if err != nil || first.AWG.I1 == "" {
+		t.Fatalf("первое сохранение: I1=%q err=%v", first.AWG.I1, err)
+	}
+	again := first
+	again.AWG.I1, again.AWG.I2, again.AWG.I3, again.AWG.I4, again.AWG.I5 = "", "", "", "", ""
+	second, err := s.SaveConfig(context.Background(), again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.AWG.I1 != first.AWG.I1 {
+		t.Fatal("тот же пресет получил новую сигнатуру")
+	}
+}
+
+// Готовый второй слот не перезаписывается (на его ключе работают каскады),
+// а без основной учётной записи слот не регистрируется.
+func TestEnsureDistinctAccount_NeverOverwritesSlot(t *testing.T) {
+	s, _, _, _ := newTestService(t)
+	registered := 0
+	s.d.HTTP = func(string) (*http.Client, error) {
+		registered++
+		return nil, errors.New("сеть в тесте недоступна")
+	}
+	if err := s.d.Store.SetInnerAccount(&Account{ID: "in-1", Token: "t", PrivateKey: "aW5uZXI=", PublicKey: "pub-inner"}); err != nil {
+		t.Fatal(err)
+	}
+	// Основной ключ "pub" исключён вызывающим, второй совпал с внешним.
+	if _, err := s.ensureDistinctAccount(context.Background(), "nwg3", "pub", "pub-inner"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ожидался отказ, err=%v", err)
+	}
+	if in := s.d.Store.InnerAccount(); in == nil || in.PublicKey != "pub-inner" || registered != 0 {
+		t.Fatalf("слот изменён или была попытка регистрации: %+v registered=%d", in, registered)
+	}
+	if err := s.d.Store.SetAccount(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.d.Store.SetInnerAccount(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ensureDistinctAccount(context.Background(), "nwg3", "x"); !errors.Is(err, ErrNoAccount) || registered != 0 {
+		t.Fatalf("без основной записи: err=%v registered=%d", err, registered)
+	}
+}
+
+// Автоподмена каскада не регистрирует учётную запись сама: без готовой записи
+// с ключом, отличным от внешнего туннеля, подмена отказывает с объяснением.
+func TestWatchdog_CascadeSwapNeverRegisters(t *testing.T) {
+	s, runner, tun, prober := newTestService(t)
+	registered := 0
+	s.d.HTTP = func(string) (*http.Client, error) {
+		registered++
+		return nil, errors.New("сеть в тесте недоступна")
+	}
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg50")] = &TunnelRef{Mode: TargetNative, ID: "awg50", Name: "WARP HEL", Iface: "nwg3",
+		Endpoint: "162.159.192.255:880", IsWarp: true, Running: true, LocalPublicKey: "pub"}
+	tun.refs[key(TargetNative, "awg60")] = &TunnelRef{Mode: TargetNative, ID: "awg60", Name: "WARP-in-WARP FRA",
+		Iface: "nwg4", Endpoint: "162.159.193.1:2408", LocalPublicKey: "old-inner", IsWarp: true, Running: true,
+		ViaMode: TargetNative, ViaTunnelID: "awg50", ViaIface: "nwg3", ViaLabel: "WARP HEL",
+		ViaEndpoint: "162.159.192.255:880", ViaRunning: true}
+	tun.mu.Unlock()
+	prober.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+	p := Profile{ID: "p-in", Name: "WARP-in-WARP FRA", Enabled: true, TargetMode: TargetNative, TargetID: "awg60",
+		Filters: DefaultFilters(), FailThreshold: 1, CooldownSec: 10}
+	s.checkOnce(context.Background(), p, &watcherState{})
+	if registered != 0 || s.d.Store.InnerAccount() != nil {
+		t.Fatalf("автоподмена зарегистрировала учётную запись: registered=%d", registered)
+	}
+	if len(runner.calls) != 0 || len(tun.swaps) != 0 {
+		t.Fatalf("скан внешним ключом через внешний туннель: scans=%d swaps=%v", len(runner.calls), tun.swaps)
+	}
+}

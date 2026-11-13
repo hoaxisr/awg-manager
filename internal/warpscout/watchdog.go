@@ -426,19 +426,6 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 		exclude = append(exclude, ref.Endpoint)
 	}
 	swapAcct := acct
-	if ref.LocalPublicKey != "" {
-		if inner := s.d.Store.InnerAccount(); inner != nil && inner.PublicKey == ref.LocalPublicKey {
-			swapAcct = inner
-		} else if acct.PublicKey != ref.LocalPublicKey && ref.ViaIface != "" {
-			if ia, aerr := s.ensureDistinctAccount(ctx, ref.ViaIface); aerr == nil && ia != nil {
-				swapAcct = ia
-			}
-		}
-	} else if ref.ViaIface != "" {
-		if inner := s.d.Store.InnerAccount(); inner != nil {
-			swapAcct = inner
-		}
-	}
 	var scanOverride string
 	var outerRef *TunnelRef
 	if ref.ViaIface != "" {
@@ -459,6 +446,13 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 				Running:  ref.ViaRunning,
 			}
 		}
+		// Ключ скана обязан отличаться от ключа внешнего туннеля, иначе
+		// Cloudflare рвёт внешнюю сессию. Берём готовую запись: регистрировать
+		// слот без пользователя автоподмена не должна.
+		if swapAcct = s.existingAccountAvoiding(outerRef.LocalPublicKey); swapAcct == nil {
+			s.finishSwap(ctx, p, ev, st, errors.New("нет учётной записи WARP с ключом, отличным от внешнего туннеля, — запустите скан вручную"), nil, false, false)
+			return
+		}
 	} else {
 		// Нельзя сканировать изнутри самого заменяемого туннеля — упадём на WAN по умолчанию.
 		scanOverride = s.d.Store.Config().ScanInterface
@@ -468,11 +462,10 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 		}
 		outerRef = s.resolveRouteTunnel(ctx, s.resolveScanIface(ctx, scanOverride))
 		// Скан через WARP его же ключом рвёт внешнюю сессию у Cloudflare.
-		// StartScan берёт для этого второй слот; здесь пользователя нет, и
-		// регистрировать слот молча нельзя — берём готовый или уходим на WAN.
+		// Без готовой записи с другим ключом уходим на WAN.
 		if outerRef != nil && outerRef.IsWarp && outerRef.LocalPublicKey != "" && swapAcct.PublicKey == outerRef.LocalPublicKey {
-			if inner := s.d.Store.InnerAccount(); inner != nil && inner.PrivateKey != "" && inner.PublicKey != outerRef.LocalPublicKey {
-				swapAcct = inner
+			if other := s.existingAccountAvoiding(outerRef.LocalPublicKey); other != nil {
+				swapAcct = other
 			} else {
 				scanOverride, _ = s.d.WAN(ctx)
 				outerRef = nil

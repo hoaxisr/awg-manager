@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
@@ -489,5 +490,62 @@ func TestWarpOps_GetWithoutViaQueriesOnlyItself(t *testing.T) {
 		if id != "awg11" {
 			t.Fatalf("Get(awg11) опросил состояние чужих туннелей: %v", asked)
 		}
+	}
+}
+
+// List спрашивает состояние каждого туннеля один раз — и когда привязок нет,
+// и когда один туннель идёт через другой (раньше родителей опрашивали заново).
+func TestWarpOps_ListQueriesEachTunnelOnce(t *testing.T) {
+	ops, svc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg50": tunnel.StateRunning, "awg51": tunnel.StateRunning, "awg52": tunnel.StateRunning,
+	})
+	for _, id := range []string{"awg50", "awg51", "awg52"} {
+		seedWarpTunnel(t, store, id, "nativewg")
+	}
+	asked := map[string]int{}
+	inner := svc.getFn
+	svc.getFn = func(ctx context.Context, id string) (*service.TunnelWithStatus, error) {
+		asked[id]++
+		return inner(ctx, id)
+	}
+	check := func(stage string) []warpscout.TunnelRef {
+		t.Helper()
+		for k := range asked {
+			delete(asked, k)
+		}
+		refs, err := ops.List(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for id, n := range asked {
+			if n != 1 {
+				t.Fatalf("%s: состояние %s спрошено %d раз(а): %v", stage, id, n, asked)
+			}
+		}
+		return refs
+	}
+	check("без привязок")
+
+	// У засеянных туннелей индекс интерфейса одинаковый — разводим.
+	for i, id := range []string{"awg50", "awg51", "awg52"} {
+		if err := store.Update(id, func(tun *storage.AWGTunnel) error {
+			tun.NWGIndex = 3 + i
+			if id == "awg51" {
+				tun.ISPInterface = "Wireguard" + strconv.Itoa(3)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refs := check("с каскадом")
+	found := false
+	for _, r := range refs {
+		if r.ID == "awg51" {
+			found = r.ViaTunnelID == "awg50" && r.ViaRunning && r.ViaIface == "if-awg50"
+		}
+	}
+	if !found {
+		t.Fatalf("привязка awg51 → awg50 не разрешена: %+v", refs)
 	}
 }

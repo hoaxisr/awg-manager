@@ -199,7 +199,6 @@ type Service struct {
 	d Deps
 
 	engineMu sync.Mutex // один процесс сканера на роутер
-	innerMu  sync.Mutex // сериализация ленивой регистрации 2-го слота WARP-in-WARP
 	// acctMu — одна операция над учётной записью за раз, включая её сетевую
 	// часть: параллельные регистрация и привязка лицензии иначе записали бы
 	// каждая свою копию, и локальный ключ разошёлся бы с ключом у Cloudflare.
@@ -671,6 +670,18 @@ func (s *Service) pickNonCollidingIPv4(ctx context.Context, preferred string, av
 	return "172.16.0.3"
 }
 
+// existingAccountAvoiding — уже имеющаяся учётная запись, чей ключ отличается
+// от avoidKey; второй слот в приоритете. Сети не касается: автоподмена
+// работает без пользователя и регистрировать слот сама не должна.
+func (s *Service) existingAccountAvoiding(avoidKey string) *Account {
+	for _, a := range []*Account{s.d.Store.InnerAccount(), s.d.Store.Account()} {
+		if a != nil && a.PrivateKey != "" && a.PublicKey != avoidKey {
+			return a
+		}
+	}
+	return nil
+}
+
 // ensureDistinctAccount возвращает учётную запись WARP, чей PublicKey не
 // совпадает ни с одним из avoidPubKeys (иначе Cloudflare разрывает внешний
 // туннель при появлении пакета с тем же ключом). При необходимости лениво
@@ -687,13 +698,22 @@ func (s *Service) ensureDistinctAccount(ctx context.Context, routeIface string, 
 		return primary, nil
 	}
 
-	s.innerMu.Lock()
-	defer s.innerMu.Unlock()
+	// Тот же замок, что у Register и DeleteAccountLocal: иначе регистрация
+	// слота, завершившаяся после удаления учётной записи, оставила бы слот,
+	// который у Cloudflare уже никто не снимет.
+	s.acctMu.Lock()
+	defer s.acctMu.Unlock()
 
-	if inner := s.d.Store.InnerAccount(); inner != nil && inner.PrivateKey != "" && !avoid[inner.PublicKey] {
-		if primary == nil || inner.PublicKey != primary.PublicKey {
+	if s.d.Store.Account() == nil {
+		return nil, ErrNoAccount
+	}
+	if inner := s.d.Store.InnerAccount(); inner != nil && inner.PrivateKey != "" {
+		if !avoid[inner.PublicKey] {
 			return inner, nil
 		}
+		// Готовый слот не перезаписываем: на его ключе работают созданные
+		// каскады, а прежняя регистрация осталась бы висеть у Cloudflare.
+		return nil, fmt.Errorf("%w: обе учётные записи WARP совпадают с ключом внешнего туннеля", ErrInvalidInput)
 	}
 
 	var fresh *Account
@@ -816,12 +836,16 @@ func (s *Service) buildParams(ctx context.Context, acct *Account, awg AWGParams,
 		p.MaxHits = 10
 	}
 	if f.Protocol == ProtocolAWG {
-		maxSigBytes := 0
 		if outer != nil && outer.IsWarp {
-			// Пакеты рукопожатия I1..I5 должны уместиться внутри внешнего MTU 1280.
-			maxSigBytes = 1200
+			// Пакеты I1..I5 должны уместиться во внешний MTU 1280. Туннель
+			// каскада получает ту же подгонку (Apply), иначе сканер проверял
+			// бы не те пакеты, которые туннель потом пошлёт.
+			var err error
+			if awg, err = fitSignature(awg, nestedSignatureMax); err != nil {
+				return p, err
+			}
 		}
-		sig, err := signatureHex(awg, maxSigBytes)
+		sig, err := signatureHex(awg)
 		if err != nil {
 			return p, err
 		}
@@ -1070,9 +1094,16 @@ func (s *Service) SaveConfig(ctx context.Context, in Config) (Config, error) {
 		if old.SignatureProfile != prof {
 			// Сменили профиль сигнатуры — перегенерируем пакеты.
 			cfg.AWG.I1, cfg.AWG.I2, cfg.AWG.I3, cfg.AWG.I4, cfg.AWG.I5 = "", "", "", "", ""
+		} else if cfg.AWG.I1 == "" {
+			// Тот же пресет без пакетов (интерфейс их не шлёт): сигнатура
+			// остаётся прежней, а не выдаётся заново на каждое сохранение.
+			cfg.AWG.I1, cfg.AWG.I2, cfg.AWG.I3, cfg.AWG.I4, cfg.AWG.I5 = old.I1, old.I2, old.I3, old.I4, old.I5
 		}
 		if _, err := EnsureSignature(&cfg.AWG); err != nil {
 			return Config{}, fmt.Errorf("%w: сигнатура: %v", ErrInvalidInput, err)
+		}
+		if err := checkSignaturePackets(cfg.AWG); err != nil {
+			return Config{}, err
 		}
 	}
 	if err := s.d.Store.SetConfig(cfg); err != nil {
@@ -1144,8 +1175,21 @@ func validateOverrideAWG(in AWGParams) (AWGParams, error) {
 		if _, err := EnsureSignature(&in); err != nil {
 			return AWGParams{}, fmt.Errorf("%w: сигнатура: %v", ErrInvalidInput, err)
 		}
+		// Готовые I1..I5 EnsureSignature не трогает, а они уходят в .conf.
+		if err := checkSignaturePackets(in); err != nil {
+			return AWGParams{}, err
+		}
 	}
 	return in, nil
+}
+
+func checkSignaturePackets(p AWGParams) error {
+	for idx, spec := range []string{p.I1, p.I2, p.I3, p.I4, p.I5} {
+		if _, err := CPSToRaw(spec); err != nil {
+			return fmt.Errorf("%w: сигнатура I%d: %v", ErrInvalidInput, idx+1, err)
+		}
+	}
+	return nil
 }
 
 // Apply создаёт туннель из найденного узла или подменяет endpoint.
@@ -1224,6 +1268,9 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 			}
 			useAcct = innerAcct
 			mtu = NestedWarpMTU
+			if awg, err = fitSignature(awg, nestedSignatureMax); err != nil {
+				return nil, err
+			}
 			createOpts = CreateOptions{ViaMode: outer.Mode, ViaID: outer.ID}
 		}
 		name := strings.TrimSpace(req.Name)
@@ -1311,6 +1358,7 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 			if createOpts.ViaID != "" && hasOtherEnabled {
 				cfg.ProfileMode = ProfileModeMulti
 				cfg.ActiveProfileID = ""
+				s.logInfo("apply", ref.Name, "Автопилот переведён в режим нескольких профилей: каскаду нужен работающий автопилот внешнего туннеля")
 			} else {
 				cfg.ActiveProfileID = p.ID
 			}

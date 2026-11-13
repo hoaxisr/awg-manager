@@ -171,85 +171,112 @@ func (o *WarpTunnelOps) populateViaInfoSeeded(ctx context.Context, refs []warpsc
 	if len(refs) == 0 {
 		return
 	}
-	byKey := map[string]parentTunnelInfo{}
+	// Сначала — у кого вообще есть привязка: это читается из записей и кэша
+	// и роутер не трогает. Состояние туннелей-родителей нужно только тогда.
 	viaRaw := map[string]string{}
-
+	var managed []storage.AWGTunnel
 	if o.Store != nil {
 		if list, err := o.Store.List(); err == nil {
+			managed = list
 			for i := range list {
-				t := &list[i]
-				m, ok := modeOfBackend(t.Backend)
-				if !ok {
-					continue
-				}
-				var kIface string
-				var running bool
-				if o.Svc != nil {
-					if tw, err := o.Svc.Get(ctx, t.ID); err == nil && tw != nil {
-						kIface = tw.InterfaceName
-						running = tw.State == tunnel.StateRunning ||
-							(t.Enabled && (tw.State == tunnel.StateStarting || tw.State == tunnel.StateBroken))
+				if m, ok := modeOfBackend(list[i].Backend); ok {
+					if via := strings.TrimSpace(list[i].ISPInterface); via != "" {
+						viaRaw[string(m)+":"+list[i].ID] = via
 					}
-				}
-				if kIface == "" {
-					if m == warpscout.TargetNative && t.NWGIndex >= 0 {
-						kIface = fmt.Sprintf("nwg%d", t.NWGIndex)
-					} else if m == warpscout.TargetKernel {
-						kIface = tunnel.NewNames(t.ID).IfaceName
-					}
-				}
-				info := parentTunnelInfo{
-					mode: m, id: t.ID, name: t.Name,
-					kernelIface: kIface, endpoint: t.Peer.Endpoint, running: running,
-				}
-				byKey["tunnel:"+t.ID] = info
-				if m == warpscout.TargetNative && t.NWGIndex >= 0 {
-					byKey[fmt.Sprintf("Wireguard%d", t.NWGIndex)] = info
-				} else if m == warpscout.TargetKernel {
-					byKey[tunnel.NewNames(t.ID).NDMSName] = info
-				}
-				if kIface != "" {
-					byKey[kIface] = info
-				}
-				if via := strings.TrimSpace(t.ISPInterface); via != "" {
-					viaRaw[string(m)+":"+t.ID] = via
 				}
 			}
 		}
 	}
-
+	var sys []ndms.SystemWireguardTunnel
 	if o.System != nil {
-		if sys, err := o.System.List(ctx); err == nil {
-			for i := range sys {
-				s := &sys[i]
-				if _, exists := byKey[s.ID]; !exists && o.systemProtectReason(s) == "" {
-					name := s.Description
-					if name == "" {
-						name = s.ID
-					}
-					ep := ""
-					if s.Peer != nil {
-						ep = s.Peer.Endpoint
-					}
-					info := parentTunnelInfo{
-						mode: warpscout.TargetSystem, id: s.ID, name: name,
-						kernelIface: s.InterfaceName, endpoint: ep, running: s.Status == "up",
-					}
-					byKey[s.ID] = info
-					if s.InterfaceName != "" {
-						byKey[s.InterfaceName] = info
-					}
-				}
-				if s.Peer != nil && strings.TrimSpace(s.Peer.Via) != "" {
-					viaRaw[string(warpscout.TargetSystem)+":"+s.ID] = strings.TrimSpace(s.Peer.Via)
+		if list, err := o.System.List(ctx); err == nil {
+			sys = list
+			for i := range list {
+				if list[i].Peer != nil && strings.TrimSpace(list[i].Peer.Via) != "" {
+					viaRaw[string(warpscout.TargetSystem)+":"+list[i].ID] = strings.TrimSpace(list[i].Peer.Via)
 				}
 			}
 		}
 	}
-
 	for k, v := range seedVia {
 		if v := strings.TrimSpace(v); v != "" {
 			viaRaw[k] = v
+		}
+	}
+	bound := false
+	// Состояние, уже собранное вызывающим (List собирает его для каждого
+	// туннеля), повторно у роутера не спрашиваем.
+	known := map[string]*warpscout.TunnelRef{}
+	for i := range refs {
+		k := string(refs[i].Mode) + ":" + refs[i].ID
+		known[k] = &refs[i]
+		if viaRaw[k] != "" {
+			bound = true
+		}
+	}
+	if !bound {
+		return
+	}
+
+	byKey := map[string]parentTunnelInfo{}
+	for i := range managed {
+		t := &managed[i]
+		m, ok := modeOfBackend(t.Backend)
+		if !ok {
+			continue
+		}
+		var kIface string
+		var running bool
+		if r := known[string(m)+":"+t.ID]; r != nil {
+			kIface, running = r.Iface, r.Running
+		} else if o.Svc != nil {
+			if tw, err := o.Svc.Get(ctx, t.ID); err == nil && tw != nil {
+				kIface = tw.InterfaceName
+				running = tw.State == tunnel.StateRunning ||
+					(t.Enabled && (tw.State == tunnel.StateStarting || tw.State == tunnel.StateBroken))
+			}
+		}
+		if kIface == "" {
+			if m == warpscout.TargetNative && t.NWGIndex >= 0 {
+				kIface = fmt.Sprintf("nwg%d", t.NWGIndex)
+			} else if m == warpscout.TargetKernel {
+				kIface = tunnel.NewNames(t.ID).IfaceName
+			}
+		}
+		info := parentTunnelInfo{
+			mode: m, id: t.ID, name: t.Name,
+			kernelIface: kIface, endpoint: t.Peer.Endpoint, running: running,
+		}
+		byKey["tunnel:"+t.ID] = info
+		if m == warpscout.TargetNative && t.NWGIndex >= 0 {
+			byKey[fmt.Sprintf("Wireguard%d", t.NWGIndex)] = info
+		} else if m == warpscout.TargetKernel {
+			byKey[tunnel.NewNames(t.ID).NDMSName] = info
+		}
+		if kIface != "" {
+			byKey[kIface] = info
+		}
+	}
+	for i := range sys {
+		s := &sys[i]
+		if _, exists := byKey[s.ID]; exists || o.systemProtectReason(s) != "" {
+			continue
+		}
+		name := s.Description
+		if name == "" {
+			name = s.ID
+		}
+		ep := ""
+		if s.Peer != nil {
+			ep = s.Peer.Endpoint
+		}
+		info := parentTunnelInfo{
+			mode: warpscout.TargetSystem, id: s.ID, name: name,
+			kernelIface: s.InterfaceName, endpoint: ep, running: s.Status == "up",
+		}
+		byKey[s.ID] = info
+		if s.InterfaceName != "" {
+			byKey[s.InterfaceName] = info
 		}
 	}
 
