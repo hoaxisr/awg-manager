@@ -1,19 +1,13 @@
 <script lang="ts">
-	import { AlertTriangle, KeyRound, Network, RefreshCcw, Trash2, UserPlus } from 'lucide-svelte';
+	import { KeyRound, Network, RefreshCcw, Trash2, UserPlus } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { Button, ConfirmModal, Input } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import type { WarpAccount, WarpTunnelRef } from '$lib/types/warpscout';
 	import WarpChipPopover from './WarpChipPopover.svelte';
-	import {
-		findTunnelIpv4Conflict,
-		formatTime,
-		parseTunnelIpv4,
-		shortId,
-		suggestFreeTunnelIpv4,
-		warpErrorMessage,
-	} from './warpscoutUi';
+	import WarpIpv4Notice from './WarpIpv4Notice.svelte';
+	import { formatTime, parseTunnelIpv4, shortId, warpErrorMessage } from './warpscoutUi';
 
 	interface Props {
 		account: WarpAccount | null;
@@ -41,10 +35,6 @@
 
 	const acctIpv4Parsed = $derived(parseTunnelIpv4(acctIpv4));
 	const acctIpv4Valid = $derived(acctIpv4Parsed !== null);
-	const acctIpv4Conflict = $derived(findTunnelIpv4Conflict(acctIpv4, targets, usedIpv4));
-	const acctIpv4Suggested = $derived(
-		acctIpv4Conflict.conflict ? suggestFreeTunnelIpv4(acctIpv4, targets, usedIpv4) : '',
-	);
 	const acctIpv4Changed = $derived.by(() => {
 		if (!acctIpv4Parsed) return false;
 		const cur = parseTunnelIpv4(account?.addressV4 || '172.16.0.2')?.normalized ?? '172.16.0.2';
@@ -182,34 +172,13 @@
 						{m.common_save()}
 					</Button>
 				</div>
-				{#if acctIpv4.trim() && !acctIpv4Valid}
-					<span class="ipv4-msg err">{m.warpscout_ipv4_invalid()}</span>
-				{:else if acctIpv4Conflict.conflict}
-					<div class="ipv4-msg warn">
-						<AlertTriangle size={12} />
-						<span>
-							{#if acctIpv4Conflict.tunnelName}
-								{m.warpscout_ipv4_conflict_named({
-									ip: acctIpv4Conflict.host,
-									name: acctIpv4Conflict.tunnelName,
-								})}
-							{:else}
-								{m.warpscout_ipv4_conflict_generic({ ip: acctIpv4Conflict.host })}
-							{/if}
-							{#if acctIpv4Suggested && acctIpv4Suggested !== acctIpv4.trim()}
-								<button
-									type="button"
-									class="ipv4-suggest-btn"
-									onclick={() => (acctIpv4 = acctIpv4Suggested)}
-								>
-									{m.warpscout_ipv4_use_free({ ip: acctIpv4Suggested })}
-								</button>
-							{/if}
-						</span>
-					</div>
-				{:else}
-					<span class="ipv4-hint">{m.warpscout_ipv4_hint()}</span>
-				{/if}
+				<WarpIpv4Notice
+					value={acctIpv4}
+					{targets}
+					{usedIpv4}
+					hint={m.warpscout_ipv4_hint()}
+					onsuggest={(ip) => (acctIpv4 = ip)}
+				/>
 			</form>
 
 			<!-- Форма: Enter в поле привязывает ключ. -->
@@ -375,39 +344,6 @@
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
-	}
-	.ipv4-hint {
-		font-size: 0.69rem;
-		color: var(--color-text-muted);
-		line-height: 1.3;
-	}
-	.ipv4-msg {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.3rem;
-		font-size: 0.7rem;
-		line-height: 1.35;
-	}
-	.ipv4-msg :global(svg) {
-		flex-shrink: 0;
-		margin-top: 0.1rem;
-	}
-	.ipv4-msg.err {
-		color: var(--color-error);
-	}
-	.ipv4-msg.warn {
-		color: var(--color-warning);
-	}
-	.ipv4-suggest-btn {
-		margin-left: 0.25rem;
-		padding: 0;
-		border: 0;
-		background: transparent;
-		color: var(--color-accent);
-		font: inherit;
-		font-weight: 600;
-		text-decoration: underline;
-		cursor: pointer;
 	}
 	.mono {
 		font-family: var(--font-mono);

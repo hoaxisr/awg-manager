@@ -171,8 +171,10 @@ describe('WarpScoutTab', () => {
 		await fireEvent.click(chip(view.container, 0));
 
 		const suggestBtn = await waitFor(() => {
-			const b = view.container.querySelector<HTMLButtonElement>('.ipv4-suggest-btn');
-			expect(b).not.toBeNull();
+			const b = Array.from(view.container.querySelectorAll<HTMLButtonElement>('button')).find(
+				(x) => x.textContent?.includes('172.16.0.3'),
+			);
+			expect(b).toBeDefined();
 			return b!;
 		});
 		expect(suggestBtn.textContent).toContain('172.16.0.3');

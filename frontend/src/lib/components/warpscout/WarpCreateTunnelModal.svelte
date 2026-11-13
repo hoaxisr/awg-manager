@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { AlertTriangle } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { Button, Modal, SegmentedControl, Toggle } from '$lib/components/ui';
@@ -13,13 +12,8 @@
 		WarpTargetMode,
 		WarpTunnelRef,
 	} from '$lib/types/warpscout';
-	import {
-		countryFlag,
-		findTunnelIpv4Conflict,
-		parseTunnelIpv4,
-		suggestFreeTunnelIpv4,
-		warpErrorMessage,
-	} from './warpscoutUi';
+	import WarpIpv4Notice from './WarpIpv4Notice.svelte';
+	import { countryFlag, parseTunnelIpv4, warpErrorMessage } from './warpscoutUi';
 
 	interface Props {
 		/** Узел, из которого создаётся туннель. Модалка монтируется на время диалога. */
@@ -67,10 +61,6 @@
 
 	const parsedIp = $derived(parseTunnelIpv4(addressV4));
 	const addrValid = $derived(parsedIp !== null);
-	const addrConflict = $derived(findTunnelIpv4Conflict(addressV4, targets, usedIpv4));
-	const suggestedIp = $derived(
-		addrConflict.conflict ? suggestFreeTunnelIpv4(addressV4, targets, usedIpv4) : '',
-	);
 
 	async function submit(): Promise<void> {
 		if (!parsedIp) return;
@@ -123,32 +113,12 @@
 				bind:value={addressV4}
 				maxlength={20}
 			/>
-			{#if addressV4.trim() && !addrValid}
-				<span class="ipv4-msg err">{m.warpscout_ipv4_invalid()}</span>
-			{:else if addrConflict.conflict}
-				<div class="ipv4-msg warn">
-					<AlertTriangle size={12} />
-					<span>
-						{#if addrConflict.tunnelName}
-							{m.warpscout_ipv4_conflict_named({
-								ip: addrConflict.host,
-								name: addrConflict.tunnelName,
-							})}
-						{:else}
-							{m.warpscout_ipv4_conflict_generic({ ip: addrConflict.host })}
-						{/if}
-						{#if suggestedIp && suggestedIp !== addressV4.trim()}
-							<button
-								type="button"
-								class="ipv4-suggest-btn"
-								onclick={() => (addressV4 = suggestedIp)}
-							>
-								{m.warpscout_ipv4_use_free({ ip: suggestedIp })}
-							</button>
-						{/if}
-					</span>
-				</div>
-			{/if}
+			<WarpIpv4Notice
+				value={addressV4}
+				{targets}
+				{usedIpv4}
+				onsuggest={(ip) => (addressV4 = ip)}
+			/>
 		</label>
 		<div class="stack">
 			<span class="ws-label">{m.warpscout_field_tunnel_mode()}</span>
@@ -211,33 +181,5 @@
 	}
 	.mono {
 		font-family: var(--font-mono);
-	}
-	.ipv4-msg {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.3rem;
-		font-size: 0.7rem;
-		line-height: 1.35;
-	}
-	.ipv4-msg :global(svg) {
-		flex-shrink: 0;
-		margin-top: 0.1rem;
-	}
-	.ipv4-msg.err {
-		color: var(--color-error);
-	}
-	.ipv4-msg.warn {
-		color: var(--color-warning);
-	}
-	.ipv4-suggest-btn {
-		margin-left: 0.25rem;
-		padding: 0;
-		border: 0;
-		background: transparent;
-		color: var(--color-accent);
-		font: inherit;
-		font-weight: 600;
-		text-decoration: underline;
-		cursor: pointer;
 	}
 </style>

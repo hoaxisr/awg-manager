@@ -105,6 +105,9 @@ func signatureHex(p AWGParams) ([5]string, error) {
 	return out, nil
 }
 
+// DefaultTunnelIPv4 — локальный адрес туннеля WARP, пока пользователь не задал свой.
+const DefaultTunnelIPv4 = "172.16.0.2"
+
 // NormalizeTunnelIPv4 проверяет и нормализует пользовательский локальный IPv4
 // туннеля (вида `172.16.0.3` или `172.16.0.3/32`). Адреса без маски /32
 // сохраняют суффикс /N, а /32 нормализуются в голый хост для совместимости с AddressV4.
@@ -148,7 +151,7 @@ func BuildConf(a *Account, awg AWGParams, protocol, endpoint string) string {
 	fmt.Fprintf(&b, "PrivateKey = %s\n", a.PrivateKey)
 	addr := strings.TrimSpace(a.AddressV4)
 	if addr == "" {
-		addr = "172.16.0.2"
+		addr = DefaultTunnelIPv4
 	}
 	if !strings.Contains(addr, "/") {
 		addr += "/32"

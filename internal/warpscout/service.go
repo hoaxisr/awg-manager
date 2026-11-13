@@ -479,7 +479,7 @@ func (s *Service) Register(ctx context.Context) (*Account, error) {
 	if err != nil {
 		return nil, err
 	}
-	if old != nil && strings.TrimSpace(old.AddressV4) != "" && old.AddressV4 != "172.16.0.2" {
+	if old != nil && strings.TrimSpace(old.AddressV4) != "" && old.AddressV4 != DefaultTunnelIPv4 {
 		acct.AddressV4 = old.AddressV4
 	}
 	if err := s.d.Store.SetAccount(acct); err != nil {
@@ -565,7 +565,7 @@ func (s *Service) buildParams(ctx context.Context, acct *Account, awg AWGParams,
 	wan := s.resolveScanIface(ctx, ifnameOverride)
 	tunIP := strings.TrimSpace(strings.SplitN(acct.AddressV4, "/", 2)[0])
 	if tunIP == "" {
-		tunIP = "172.16.0.2"
+		tunIP = DefaultTunnelIPv4
 	}
 	p := ScanParams{
 		PrivateKey:       acct.PrivateKey,
