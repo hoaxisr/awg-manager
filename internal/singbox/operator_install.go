@@ -302,10 +302,11 @@ func writeSidecar(binary, version string) error {
 }
 
 // parseSingboxVersionOutput возвращает версию (третье поле строки
-// `sing-box version …`, регистр и дефис в имени не важны). Строка `Tags:`
-// больше не разбирается — теги известны из installer.RequiredTags.
+// `sing-box version …` или, у форка с awgm.40, `awgm-box version …`; регистр
+// и дефис в имени не важны). Строка `Tags:` больше не разбирается — теги
+// известны из installer.RequiredTags.
 func parseSingboxVersionOutput(out string) string {
-	versionRe := regexp.MustCompile(`(?i)\bsing-?box\b\s+version\b\s+([^\s]+)`)
+	versionRe := regexp.MustCompile(`(?i)\b(?:sing|awgm)-?box\b\s+version\b\s+([^\s]+)`)
 	for _, line := range strings.Split(out, "\n") {
 		if m := versionRe.FindStringSubmatch(strings.TrimSpace(line)); len(m) == 2 {
 			return strings.TrimSpace(m[1])
