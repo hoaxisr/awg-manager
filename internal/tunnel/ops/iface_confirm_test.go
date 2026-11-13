@@ -81,6 +81,41 @@ func TestDelete_Present_RemovesRecord(t *testing.T) {
 	clean(t, f)
 }
 
+// DNS интерфейса, выставленный на старте, снимается ДО `no interface`: иначе
+// NDMS пишет в журнал `C Dns::InterfaceSpecific: system failed … unable to
+// find OpkgTunN` на каждом удалении работающего туннеля (F793, стенд).
+func TestDelete_Present_ClearsInterfaceDNSBeforeRecord(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(opkgTun10())
+	o, _, _ := newOS5Oracle(t, f, &MockBackend{running: true})
+	o.appliedDNSMu.Lock()
+	o.appliedDNS["awg10"] = []string{"1.1.1.1", "1.0.0.1"}
+	o.appliedDNSMu.Unlock()
+
+	if err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "WARP"}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	dns, record := -1, -1
+	cleared := 0
+	for i, p := range f.Posts {
+		switch {
+		case strings.Contains(p, `"name-server"`) && strings.Contains(p, `"no":true`) && strings.Contains(p, `"interface":"OpkgTun10"`):
+			cleared++
+			dns = i
+		case record < 0 && strings.Contains(p, `"OpkgTun10":{"no":true}`):
+			record = i
+		}
+	}
+	if cleared != 2 {
+		t.Fatalf("снято DNS-серверов: %d, want 2; posts=%v", cleared, f.Posts)
+	}
+	if record < 0 || dns > record {
+		t.Fatalf("DNS снят после записи (dns=%d record=%d); posts=%v", dns, record, f.Posts)
+	}
+	if f.Has("OpkgTun10") {
+		t.Fatalf("запись не снята: %v", f.Posts)
+	}
+}
+
 // Список не прочитан — «не знаем»: ни host-route, ни NDMS, ни
 // kernel-устройство не трогаем (устройство снимается только перед сносом
 // записи, а сносить её без списка нельзя), ошибка наружу — оркестратор

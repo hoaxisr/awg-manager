@@ -620,7 +620,8 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 
 	// 1. Подтверждение записи — ДО любого сноса. Дальше снятие C3a
 	//    (removeOpkgTun): запись снимает всё своё: address, MTU,
-	//    security-level, ip global, default route, DNS name-servers.
+	//    security-level, ip global, default route. DNS name-servers
+	//    интерфейса снимаем сами, до `no interface` (шаг 3).
 	//
 	// У записи от KeeneticOS 4.x NDMS-имени нет: удалять в NDMS нечего, а пустая
 	// строка уехала бы в RCI идентификатором интерфейса. Пропускаем шаг, но не
@@ -677,6 +678,12 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 	var ndmsErr error
 	switch {
 	case ok:
+		// `ip name-server … on OpkgTunN`, выставленные на старте, NDMS с
+		// интерфейсом не уносит молча: при `no interface` пишет в журнал
+		// `C Dns::InterfaceSpecific: system failed [0xcffd0288], unable to
+		// find OpkgTunN` (стенд 5.02.B.3, 13.11.2026, F793). Снимаем их, пока
+		// интерфейс существует.
+		o.clearAppliedDNS(ctx, stored.ID, iface)
 		// ColdStart и Reconcile ставят `ip global auto` безусловно при каждом подъёме,
 		// default — iff DefaultRoute: снимаем по своему состоянию, без чтений.
 		ndmsErr = o.removeOpkgTun(ctx, "delete", stored.ID, names, iface, rec.State == "up", true,
