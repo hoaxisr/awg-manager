@@ -20,10 +20,10 @@ func TestGCEnvForTotalMemoryMB_TierTable(t *testing.T) {
 		{"low boundary 199", 199, []string{"GOGC=50", "GOMEMLIMIT=32MiB"}},
 		// Mid tier: 256MB and 512MB routers previously got NO tuning at all
 		// and the selective rebuild could be OOM-killed.
-		{"low boundary 200", 200, []string{"GOGC=50", "GOMEMLIMIT=96MiB"}},
-		{"256MB router (~248 reported)", 248, []string{"GOGC=50", "GOMEMLIMIT=96MiB"}},
-		{"512MB router (~500 reported)", 500, []string{"GOGC=50", "GOMEMLIMIT=96MiB"}},
-		{"mid boundary 699", 699, []string{"GOGC=50", "GOMEMLIMIT=96MiB"}},
+		{"low boundary 200", 200, []string{"GOGC=100", "GOMEMLIMIT=96MiB"}},
+		{"256MB router (~248 reported)", 248, []string{"GOGC=100", "GOMEMLIMIT=96MiB"}},
+		{"512MB router (~500 reported)", 500, []string{"GOGC=100", "GOMEMLIMIT=96MiB"}},
+		{"mid boundary 699", 699, []string{"GOGC=100", "GOMEMLIMIT=96MiB"}},
 		// High tier (#562): 1GB+ модели раньше жили вовсе без потолка —
 		// аллокационный шторм доезжал до 90%+ ОЗУ роутера. Мягкий
 		// GOMEMLIMIT без смены GOGC: идл ~30-60МБ, легитимные пики

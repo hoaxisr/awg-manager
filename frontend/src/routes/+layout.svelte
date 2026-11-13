@@ -217,7 +217,7 @@
 
 			// Generic resource invalidation hint (state-sync redesign)
 			onResourceInvalidated: (data) => {
-				invalidateResource(data.resource);
+				invalidateResource(data.resource, data.reason);
 				// A saved-through deviceproxy config clears the missing-target banner.
 				// Backend publishes deviceproxy.config (not the bare "deviceproxy" key)
 				// immediately after Reconcile disables the proxy on a missing target.

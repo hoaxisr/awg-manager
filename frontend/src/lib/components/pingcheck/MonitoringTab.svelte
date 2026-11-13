@@ -26,7 +26,13 @@
 	const statuses = $derived($pingCheckStatus.data ?? []);
 	const logsByTunnel = $derived(groupLogsByTunnel($pingCheckLogs));
 
+	// Номер последней загрузки: после действия на странице её перечитывание и
+	// загрузка по новому набору id идут внахлёст, и опоздавший ответ по старому
+	// набору не должен затереть свежий. Не $state намеренно: эффект не должен
+	// от него зависеть.
+	let loadSeq = 0;
 	async function loadConfigs(ids: string[]) {
+		const seq = ++loadSeq;
 		const next: Record<string, AWGTunnel['pingCheck']> = {};
 		await Promise.all(
 			ids.map(async (id) => {
@@ -38,7 +44,7 @@
 				}
 			}),
 		);
-		configs = next;
+		if (seq === loadSeq) configs = next;
 	}
 
 	onMount(async () => {
@@ -55,10 +61,15 @@
 
 	// Догружаем конфиги для всех туннелей из статуса (включая выключенные) —
 	// наличие cfg отличает «настроен, но выключен» от «никогда не настраивался».
-	$effect(() => {
-		const ids = statuses.map((s) => s.tunnelId);
-		if (ids.length) loadConfigs(ids);
-	});
+	// Ключ — строка id: статус перезапрашивается после КАЖДОЙ проверки, а
+	// $derived со строкой будит эффект только при смене набора туннелей. Иначе
+	// каждая проба тянула GET туннеля на каждый туннель. Свои правки конфига
+	// (сохранение, вкл/выкл) страница перечитывает сама — reloadConfigs.
+	const statusIds = $derived(statuses.map((s) => s.tunnelId).join(','));
+	function reloadConfigs() {
+		if (statusIds) loadConfigs(statusIds.split(','));
+	}
+	$effect(() => reloadConfigs());
 
 	function metaFor(id: string): TunnelListItem | undefined {
 		return tunnelMeta.find((t) => t.id === id);
@@ -132,6 +143,7 @@
 		editId = null;
 		pingCheckStatus.refetch();
 		loadPingLogs();
+		reloadConfigs();
 	}
 	async function checkNow() {
 		try {
@@ -168,6 +180,7 @@
 			notifications.success(m.pingcheck_watchdog_enabled({ name }));
 			pingCheckStatus.refetch();
 			loadPingLogs();
+			reloadConfigs();
 		} catch {
 			notifications.error(m.pingcheck_watchdog_enable_failed());
 		}
@@ -184,6 +197,7 @@
 			notifications.success(m.pingcheck_watchdog_disabled({ name }));
 			pingCheckStatus.refetch();
 			loadPingLogs();
+			reloadConfigs();
 		} catch {
 			notifications.error(m.pingcheck_watchdog_disable_failed());
 		}

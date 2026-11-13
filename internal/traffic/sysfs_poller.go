@@ -1,7 +1,6 @@
 package traffic
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -9,7 +8,6 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
-	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // Publisher receives SSE events. Implemented by *events.Bus in production.
@@ -31,14 +29,14 @@ type PollerLogger interface {
 }
 
 // SysfsPoller reads /sys/class/net/<iface>/statistics/{rx,tx}_bytes
-// for every running managed tunnel every interval, feeds rate points
+// for every managed tunnel whose iface is UP every interval, feeds rate points
 // into History, and publishes a "tunnel:traffic" SSE event on every
 // successful read.
 //
 // Alignment note (MIPS): no 64-bit atomic fields; ordering constraints
 // therefore do not apply.
 type SysfsPoller struct {
-	lister   TunnelLister
+	lister   IfaceLister
 	history  HistoryFeeder
 	pub      Publisher
 	log      PollerLogger
@@ -65,12 +63,12 @@ type ClientCounter interface {
 }
 
 // NewSysfsPoller wires the production poller. 10 s interval, standard sysfs root.
-func NewSysfsPoller(lister TunnelLister, history HistoryFeeder, pub Publisher, log PollerLogger, appLogger logging.AppLogger) *SysfsPoller {
+func NewSysfsPoller(lister IfaceLister, history HistoryFeeder, pub Publisher, log PollerLogger, appLogger logging.AppLogger) *SysfsPoller {
 	return newSysfsPoller(lister, history, pub, log, appLogger, DefaultSysfsRoot, 10*time.Second)
 }
 
 // newSysfsPoller is the test-facing constructor; exposes root and interval.
-func newSysfsPoller(lister TunnelLister, history HistoryFeeder, pub Publisher, log PollerLogger, appLogger logging.AppLogger, root string, interval time.Duration) *SysfsPoller {
+func newSysfsPoller(lister IfaceLister, history HistoryFeeder, pub Publisher, log PollerLogger, appLogger logging.AppLogger, root string, interval time.Duration) *SysfsPoller {
 	if log == nil {
 		log = nopPollerLogger{}
 	}
@@ -137,24 +135,19 @@ func (p *SysfsPoller) run() {
 		case <-p.stopCh:
 			return
 		case <-ticker.C:
-			// Тик стоит дорого: RunningTunnels перечисляет туннели с резолвом
-			// состояния, а оно читается мимо кэша (кэш 2 с при шаге 10 с —
-			// промах всегда), то есть по RCI-запросу на туннель. При закрытой
-			// панели публикация уходит в никуда, и единственный уцелевший
-			// потребитель — часовая история трафика. Её разрешение — точка в
-			// минуту, поэтому в простое держим шаг idleInterval: график
-			// остаётся верным, а обращений к роутеру вшестеро меньше.
+			// При закрытой панели публикация уходит в никуда, и единственный
+			// уцелевший потребитель — часовая история трафика. Её разрешение —
+			// точка в минуту, поэтому в простое держим шаг idleInterval:
+			// график остаётся верным, а тиков вшестеро меньше.
 			if p.nobodyWatching() && time.Since(lastRun) < p.idleInterval {
 				continue
 			}
-			// Отметка ДО тика: тик ограничен контекстом в interval и ждёт
-			// свои горутины, поэтому отметка после него растягивала шаг
-			// простоя на длительность тика — часовой график недобирал точки.
+			// Отметка ДО тика: отметка после него растягивала бы шаг простоя
+			// на длительность тика — часовой график недобирал бы точки.
 			//
-			// Сторожа на это НЕТ и дёшево не получается: тик не может стать
-			// длиннее interval (свой же контекст), поэтому в тесте разница
-			// между порядками не наблюдаема без подмены часов. Регресс обратно
-			// красным не станет — держать глазами.
+			// Сторожа на это НЕТ и дёшево не получается: тик короткий (чтение
+			// sysfs), поэтому в тесте разница между порядками не наблюдаема без
+			// подмены часов. Регресс обратно красным не станет — держать глазами.
 			lastRun = time.Now()
 			p.tick()
 		}
@@ -162,21 +155,20 @@ func (p *SysfsPoller) run() {
 }
 
 func (p *SysfsPoller) tick() {
-	ctx, cancel := context.WithTimeout(context.Background(), p.interval)
-	defer cancel()
-	if p.nobodyWatching() {
-		// Зрителей нет: состояние туннелей — из снимка списка до
-		// SnapshotBackground, общего с поллером метрик (R36).
-		ctx = query.WithSnapshotBackground(ctx)
-	}
-
-	items := p.lister.RunningTunnels(ctx)
+	items := p.lister.TrafficIfaces()
 	if len(items) == 0 {
 		return
 	}
 
 	for _, rt := range items {
 		if rt.IfaceName == "" {
+			continue
+		}
+		// «Работает» — по флагу UP рядом со счётчиками, а не по полному
+		// состоянию туннеля (RunningTunnels: снимок NDMS, `awg show` на
+		// туннель) — оно стоило 4–7% CPU демона ради одного этого бита.
+		// Остановленный kernel-туннель снимает устройство, nativewg — опускает.
+		if !ifaceUp(p.root, rt.IfaceName) {
 			continue
 		}
 		rx, tx, err := readSysfsCounters(p.root, rt.IfaceName)

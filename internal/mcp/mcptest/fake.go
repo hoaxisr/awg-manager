@@ -2294,7 +2294,7 @@ func (f *Fake) CreateSingboxSubscription(_ context.Context, in mcpsrv.SingboxSub
 		return mcpsrv.SingboxSubscription{}, fmt.Errorf("the subscription was not created and nothing was left behind")
 	}
 	f.seq++
-	id := fmt.Sprintf("%024x", 0xc0de0000+f.seq)
+	id := fmt.Sprintf("%024x", 0xc0de0000+int64(f.seq))
 	mode := cmp.Or(in.Mode, "selector")
 	sub := mcpsrv.SingboxSubscription{ID: id, Label: in.Label, SourceType: "url", Enabled: true, Mode: mode, GroupTag: "sub-" + id[len(id)-8:], MemberCount: 2, RefreshHours: in.RefreshHours}
 	if in.URL != "" {

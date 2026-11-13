@@ -59,7 +59,12 @@ registerStore('tunnels', basePolling);
 // Статус ping-check (failCount/restartCount, оранжевый индикатор) живёт в этом же
 // снимке, а публикуется под СВОИМ ключом. Без второй регистрации он оживал только
 // фоновым опросом, которого у стора больше нет.
-registerStore('pingcheck', basePolling);
+// Но `pingcheck` приходит на КАЖДУЮ проверку каждого туннеля (это нужно таблице
+// мониторинга, F364), а успешная проверка без отказов и лечения до неё статус и
+// счётчики карточки не меняет — бэкенд помечает её причиной 'routine-check'
+// (reasonRoutineCheck в internal/pingcheck/monitor.go). По ней полный снимок
+// GET /api/tunnels/all не перезапрашиваем.
+registerStore('pingcheck', basePolling, 'routine-check');
 
 // ─────────────────────────────────────────────
 // Operation guard (prevents double-fire of the same mutation)

@@ -160,7 +160,8 @@ func (s *ServiceImpl) SetEventBus(bus *events.Bus) {
 	s.startStateInvalidator(bus)
 }
 
-// RunningTunnels returns the list of currently running tunnels for the traffic collector.
+// RunningTunnels returns the list of currently running tunnels (connectivity,
+// monitoring); the sysfs traffic poller uses the cheaper TrafficIfaces.
 //
 // Per-tunnel GetState вызовы идут в горутинах: each ждёт NDMS RCI ~150ms,
 // последовательно = O(N×150ms). Параллельные сабмиты прилетают в
@@ -190,22 +191,9 @@ func (s *ServiceImpl) RunningTunnels(ctx context.Context) []traffic.RunningTunne
 			if si.State != tunnel.StateRunning {
 				return
 			}
-			var ifaceName, ndmsName string
-			switch t.Backend {
-			case "nativewg":
-				names := nwg.NewNWGNames(t.NWGIndex)
-				ifaceName = names.IfaceName
-				ndmsName = names.NDMSName
-			case "wdtt-raw":
-				ifaceName = strings.TrimSpace(t.RawKernelIface)
-				ndmsName = strings.TrimSpace(t.RawNdmsIface)
-				if ifaceName == "" {
-					return
-				}
-			default:
-				names := tunnel.NewNames(t.ID)
-				ifaceName = names.IfaceName
-				ndmsName = names.NDMSName
+			ifaceName, ndmsName, ok := trafficIfaceNames(&t)
+			if !ok {
+				return
 			}
 			slots[i] = slot{
 				idx: i,
@@ -231,6 +219,45 @@ func (s *ServiceImpl) RunningTunnels(ctx context.Context) []traffic.RunningTunne
 		}
 	}
 	return result
+}
+
+// TrafficIfaces — включённые туннели (и зеркала wdtt-raw) с kernel-именем
+// для sysfs-поллера трафика (traffic.IfaceLister). Без резолва состояния:
+// поллер сам проверяет флаг UP интерфейса, а полный rawState на каждый тик
+// (снимок NDMS, `awg show`) стоил 4–7% CPU демона в простое. Отбор и имена —
+// те же, что у RunningTunnels.
+func (s *ServiceImpl) TrafficIfaces() []traffic.RunningTunnel {
+	stored, err := s.store.List()
+	if err != nil {
+		return nil
+	}
+	out := make([]traffic.RunningTunnel, 0, len(stored))
+	for i := range stored {
+		t := &stored[i]
+		if t.Backend != "wdtt-raw" && !t.Enabled {
+			continue
+		}
+		if ifaceName, _, ok := trafficIfaceNames(t); ok {
+			out = append(out, traffic.RunningTunnel{ID: t.ID, IfaceName: ifaceName})
+		}
+	}
+	return out
+}
+
+// trafficIfaceNames — kernel- и NDMS-имя интерфейса туннеля для сборщиков
+// трафика; ok=false у зеркала wdtt-raw без kernel-имени.
+func trafficIfaceNames(t *storage.AWGTunnel) (ifaceName, ndmsName string, ok bool) {
+	switch t.Backend {
+	case "nativewg":
+		names := nwg.NewNWGNames(t.NWGIndex)
+		return names.IfaceName, names.NDMSName, true
+	case "wdtt-raw":
+		ifaceName = strings.TrimSpace(t.RawKernelIface)
+		return ifaceName, strings.TrimSpace(t.RawNdmsIface), ifaceName != ""
+	default:
+		names := tunnel.NewNames(t.ID)
+		return names.IfaceName, names.NDMSName, true
+	}
 }
 
 // lockTunnel acquires the per-tunnel mutex.

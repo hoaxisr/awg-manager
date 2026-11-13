@@ -2,11 +2,13 @@ package pingcheck
 
 import (
 	"context"
-	"net"
 	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -17,11 +19,21 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
 
+// sysClassNet — корень sysfs интерфейсов; переменная, чтобы тест подложил свой.
+var sysClassNet = "/sys/class/net"
+
 // ifaceUp — шов над проверкой флага UP интерфейса: `tunnelRunning` kernel-записи
 // в статусе мониторинга (у nativewg ту же роль играет Bound из NDMS).
+// Флаг читается из sysfs одного интерфейса: net.InterfaceByName делает
+// netlink-дамп всех интерфейсов роутера (~36) ради одного бита — ~20 мс CPU
+// на MIPS на каждый тик монитора. Нет интерфейса/ошибка → false, как раньше.
 var ifaceUp = func(name string) bool {
-	ifi, err := net.InterfaceByName(name)
-	return err == nil && ifi.Flags&net.FlagUp != 0
+	data, err := os.ReadFile(filepath.Join(sysClassNet, name, "flags"))
+	if err != nil {
+		return false
+	}
+	flags, err := strconv.ParseUint(strings.TrimSpace(string(data)), 0, 32)
+	return err == nil && flags&syscall.IFF_UP != 0
 }
 
 // deviceExists — шов над проверкой /sys/class/net/<имя>.

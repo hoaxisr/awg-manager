@@ -1,6 +1,7 @@
 package pingcheck
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -165,6 +166,38 @@ func TestIfaceUpDefault(t *testing.T) {
 	}
 	if ifaceUp("no-such-iface-855") {
 		t.Fatal("несуществующий интерфейс не может быть UP")
+	}
+}
+
+// Флаг UP берётся из sysfs одного интерфейса (бит IFF_UP в flags), а не из
+// netlink-дампа: подложенный корень отвечает за интерфейсы, которых у машины нет.
+func TestIfaceUpDefault_ReadsSysfsFlags(t *testing.T) {
+	dir := t.TempDir()
+	for name, flags := range map[string]string{
+		"opkgtun855": "0x1091\n", // UP|POINTOPOINT|NOARP — как у живого opkgtun
+		"opkgtun856": "0x1090\n", // ip link set down
+		"opkgtun857": "garbage\n",
+	} {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name, "flags"), []byte(flags), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := sysClassNet
+	sysClassNet = dir
+	t.Cleanup(func() { sysClassNet = old })
+
+	for name, want := range map[string]bool{
+		"opkgtun855": true,
+		"opkgtun856": false,
+		"opkgtun857": false,
+		"opkgtun858": false, // интерфейса нет
+	} {
+		if got := ifaceUp(name); got != want {
+			t.Errorf("ifaceUp(%q) = %v, want %v", name, got, want)
+		}
 	}
 }
 

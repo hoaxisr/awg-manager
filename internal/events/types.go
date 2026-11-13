@@ -142,7 +142,9 @@ type SingboxInstallProgressEvent struct {
 // re-reads via REST.
 type ResourceInvalidatedEvent struct {
 	Resource Resource `json:"resource"`
-	// Reason is optional and for backend logs / debug; the frontend
-	// does not key off it. Examples: "tunnel-toggled", "ndms-restart".
+	// Reason is optional and for backend logs / debug. The frontend keys
+	// off it in one place only: a store registered with a skip reason
+	// (pingcheck "routine-check" for the tunnels snapshot) ignores it.
+	// Examples: "tunnel-toggled", "ndms-restart".
 	Reason string `json:"reason,omitempty"`
 }
