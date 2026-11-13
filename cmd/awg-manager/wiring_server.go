@@ -439,6 +439,7 @@ func (a *app) setupRouter() {
 		},
 	})
 	a.routerSvc = routerSvc
+	routerSvc.WireCoverageIndexRemoteCache()
 	a.subSvc.SetBindInterfaceValidator(subscriptionBindValidator{adapter: bindableAdapter})
 	// Health-check бинаря ipset пишет вердикты в журнал (битый Entware-бинарь
 	// вида «libc.so: cannot open shared object file» иначе виден только как
@@ -446,7 +447,10 @@ func (a *app) setupRouter() {
 	bypassset.SetHealthLogger(logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubBypassSet))
 	// Содержимое bypass-набора выведено из .dat-файлов: их обновление/удаление
 	// обязано пересобирать набор (сам триггер — no-op вне tproxy и без тегов).
-	a.geoDataStore.SetOnChange(routerSvc.TriggerBypassSetPopulate)
+	a.geoDataStore.SetOnChange(func() {
+		routerSvc.TriggerBypassSetPopulate()
+		routerSvc.InvalidateCoverageIndex()
+	})
 	a.srv.SetBypassSetHandler(api.NewBypassSetHandler(routerSvc, a.loggingService))
 
 	a.singboxOp.SetOutboundReferenceRenamer(routerSvc)

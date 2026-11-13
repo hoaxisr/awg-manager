@@ -39,7 +39,18 @@ func (s *ServiceImpl) BulkSetRuleOutbound(ctx context.Context, indices []int, ou
 }
 
 func (s *ServiceImpl) MoveRule(ctx context.Context, from, to int) error {
-	return s.withConfig(ctx, "rules", func(c *RouterConfig) error { return c.MoveRule(from, to) })
+	return s.withConfig(ctx, "rules", func(c *RouterConfig) error {
+		n := len(c.Route.Rules)
+		if from < 0 || from >= n || to < 0 || to >= n {
+			return ErrRuleIndexOutOfRange
+		}
+		for i := min(from, to); i <= max(from, to); i++ {
+			if isSystemRule(c.Route.Rules[i]) {
+				return fmt.Errorf("%w: диапазон %d..%d содержит системное правило %d", ErrRuleProtected, from, to, i)
+			}
+		}
+		return c.MoveRule(from, to)
+	})
 }
 
 func (s *ServiceImpl) SetRouteFinal(ctx context.Context, tag string) error {

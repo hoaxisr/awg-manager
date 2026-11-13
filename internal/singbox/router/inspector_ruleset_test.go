@@ -203,8 +203,21 @@ func TestMatchRuleSet_FakeExec(t *testing.T) {
 			wantOK: true,
 		},
 		{
+			name:   "non-zero exit with no-match diagnostic → no match supported",
+			stderr: "no match",
+			err:    &fakeExitErr{},
+			wantOK: true,
+		},
+		{
 			name:    "non-zero exit with non-match diagnostic → real error",
 			stderr:  "FATAL boom",
+			err:     &fakeExitErr{},
+			wantOK:  true,
+			wantErr: true,
+		},
+		{
+			name:    "FATAL diagnostic mentioning match → real error",
+			stderr:  "FATAL failed to match rule-set while decoding",
 			err:     &fakeExitErr{},
 			wantOK:  true,
 			wantErr: true,

@@ -18,7 +18,7 @@ down_ref_plan.md
 coverage.txt
 coverage.out
 coverage.html
-coverage
+/coverage
 
 # IDE
 .idea/
@@ -101,4 +101,7 @@ awgmautolist/*.ipk
 awgmautolist/ipk/data.tar.gz
 awgmautolist/ipk/control.tar.gz
 awgmautolist/ipk/debian-binary
-awgmautolist/ipk/opt/bin/awgmautolist
+awgmautolist/ipk/opt/
+
+# Private local backlog; never publish to the public fork
+/BACKLOG.local.md

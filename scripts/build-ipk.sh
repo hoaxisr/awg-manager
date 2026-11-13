@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+export COPYFILE_DISABLE=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -173,7 +174,11 @@ build_ipk_one() {
     # старый бинарь считался установленным пином и падал на неизвестном флаге.
 
     local KMOD_VERSION
-    KMOD_VERSION=$(grep 'ExpectedKmodVersion' internal/sys/kmod/download.go | grep -oP '"[^"]+"' | tr -d '"')
+    KMOD_VERSION=$(sed -n 's/.*ExpectedKmodVersion[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' internal/sys/kmod/download.go | head -n 1)
+    if [[ -z "$KMOD_VERSION" ]]; then
+        echo "ERROR: ExpectedKmodVersion not found in internal/sys/kmod/download.go"
+        exit 1
+    fi
     local BUNDLED_DIR="$IPK_ROOT/opt/etc/awg-manager/modules/bundled"
     local KMOD_COUNT=0
 
@@ -241,16 +246,16 @@ EOF
     echo "2.0" > "$IPK_DIR/debian-binary"
 
     cd "$IPK_DIR/CONTROL"
-    tar --numeric-owner --owner=0 --group=0 -czf "$IPK_DIR/control.tar.gz" \
+    tar --format=ustar --numeric-owner --owner=0 --group=0 -czf "$IPK_DIR/control.tar.gz" \
         control postinst prerm
 
     cd "$IPK_DIR"
-    tar --numeric-owner --owner=0 --group=0 -czf "$IPK_DIR/data.tar.gz" \
+    tar --format=ustar --numeric-owner --owner=0 --group=0 -czf "$IPK_DIR/data.tar.gz" \
         ./opt
 
     cd "$IPK_DIR"
     rm -f "$PROJECT_ROOT/dist/awg-manager_${VERSION}_${PKG_ARCH}-kn.ipk"
-    tar --numeric-owner --owner=0 --group=0 -czf "$PROJECT_ROOT/dist/awg-manager_${VERSION}_${PKG_ARCH}-kn.ipk" \
+    tar --format=ustar --numeric-owner --owner=0 --group=0 -czf "$PROJECT_ROOT/dist/awg-manager_${VERSION}_${PKG_ARCH}-kn.ipk" \
         ./debian-binary ./data.tar.gz ./control.tar.gz
 
     rm -f "$IPK_DIR/debian-binary" "$IPK_DIR/control.tar.gz" "$IPK_DIR/data.tar.gz"

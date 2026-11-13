@@ -67,8 +67,8 @@ const ROUTING_SUBTAB_MIN_LEVEL: Record<RoutingSubTab, UsageLevel> = {
 	// уровень доверия, что у HR Neo.
 	zapret: 'expert',
 	geoData: 'expert',
-	// Autolist — сателлит, чьё auto-режим добавляет правила в маршрутизацию
-	// без ручного подтверждения каждого: уровень доверия HR Neo.
+	// Autolist — сателлит, чей auto-режим добавляет правила в маршрутизацию
+	// без ручного подтверждения каждого: уровень доверия HR Neo/Zapret.
 	autolist: 'expert',
 	singboxRouter: 'expert',
 };

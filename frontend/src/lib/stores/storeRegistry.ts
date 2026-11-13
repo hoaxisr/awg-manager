@@ -28,7 +28,7 @@ export type ResourceKey =
 	| 'routing.tunnels'             // ResourceRoutingTunnels
 	| 'routing.hydrarouteStatus'    // ResourceRoutingHydrarouteStatus
 	| 'routing.zapretStatus'        // ResourceRoutingZapretStatus
-	| 'routing.autolistStatus'     // ResourceRoutingAutolistStatus — сателлит awgmautolist
+	| 'routing.autolistStatus'      // публикатора НЕТ: сателлит — внешний процесс, стор живёт на опросе
 	| 'deviceproxy.config'           // ResourceDeviceProxyConfig   — also clears missing-target banner
 	| 'deviceproxy.outbounds'       // публикатора НЕТ: ключ живёт ради invalidateAll() при выходе из отказа
 	| 'deviceproxy.runtime'         // ResourceDeviceProxyRuntime

@@ -1,3 +1,2 @@
 #!/bin/sh
 [ -x /opt/etc/init.d/S99awgmautolist ] && /opt/etc/init.d/S99awgmautolist start || true
-exit 0

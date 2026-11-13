@@ -1,5 +1,11 @@
 import type {
 	AccessPolicy,
+	AutolistBatchFailure,
+	AutolistBatchResult,
+	AutolistConfig,
+	AutolistControlAction,
+	AutolistSatellitePath,
+	AutolistStatus,
 	ClientRoute,
 	DnsRoute,
 	PolicyDevice,
@@ -10,10 +16,7 @@ import type {
 	ZapretHostlistInfo,
 	ZapretControlAction,
 	ZapretStatus,
-	ZapretStrategies,
-	AutolistStatus,
-	AutolistConfig,
-	AutolistControlAction
+	ZapretStrategies
 } from '$lib/types';
 import { ServersClient } from './clientServers';
 
@@ -26,6 +29,23 @@ function emptyZapretStatus(): ZapretStatus {
 		strategyCount: 0,
 		hostlistCount: 0,
 		hasUserHostlist: false
+	};
+}
+
+/** Пустой статус: сателлит не отвечает — штатное состояние, а не ошибка. */
+function emptyAutolistStatus(): AutolistStatus {
+	return {
+		running: false,
+		installed: false,
+		enabled: false,
+		captureActive: false,
+		capturePaused: false,
+		activeChecks: 0,
+		queuedChecks: 0,
+		addsUsedHour: 0,
+		addsLimit: 0,
+		candidates: [],
+		history: []
 	};
 }
 
@@ -313,13 +333,13 @@ export class RoutingClient extends ServersClient {
 	// #region Autolist (сателлит автосписка неоткрывающихся сайтов)
 	// ─────────────────────────────────────────────
 
-	// awgmautolist ставится пакетом из фида (installAutolist): AWGM читает
-	// его loopback-статус и передаёт команды. Отсутствие процесса — не
-	// ошибка: рисуем карточку «не установлен»/«не запущен».
+	// awgmautolist ставится пакетом (installAutolist): AWGM читает его
+	// loopback-статус и проксирует operational-команды. Отсутствие процесса —
+	// не ошибка: рисуем карточку «не установлен»/«не запущен».
 
 	async getAutolistStatus(): Promise<AutolistStatus> {
 		const res = await this.request<{ autolistStatus: AutolistStatus | null }>('/autolist/status');
-		return res?.autolistStatus ?? { running: false, candidates: [], history: [] };
+		return res?.autolistStatus ?? emptyAutolistStatus();
 	}
 
 	/** Установка пакета awgmautolist через opkg; ждёт запуска сателлита. */
@@ -327,7 +347,7 @@ export class RoutingClient extends ServersClient {
 		const res = await this.request<{ autolistStatus: AutolistStatus | null }>('/autolist/install', {
 			method: 'POST'
 		});
-		return res?.autolistStatus ?? { running: false, candidates: [], history: [] };
+		return res?.autolistStatus ?? emptyAutolistStatus();
 	}
 
 	/** Сохраняемое включение/отключение через init script сателлита. */
@@ -336,73 +356,132 @@ export class RoutingClient extends ServersClient {
 			method: 'POST',
 			body: JSON.stringify({ action })
 		});
-		return res?.autolistStatus ?? { running: false, candidates: [], history: [] };
+		return res?.autolistStatus ?? emptyAutolistStatus();
 	}
 
-	async dismissAutolistCandidate(domain: string): Promise<void> {
-		await this.request('/autolist/dismiss', {
+	/** Спрятать кандидата — /autolist/dismiss с телом {id} или {ids}. */
+	async dismissAutolistCandidate(id: string): Promise<void> {
+		const response = await this.request<{ results?: Record<string, string | null> }>('/autolist/dismiss', {
 			method: 'POST',
-			body: JSON.stringify({ domain })
+			body: JSON.stringify({ id })
+		});
+		this.checkAutolistActionResult(response, id);
+	}
+
+	/** Спрятать кандидатов пакетно — /autolist/dismiss с телом {ids}. */
+	async dismissAutolistCandidates(ids: string[]): Promise<AutolistBatchResult> {
+		const response = await this.request<{ results?: Record<string, string | null> }>('/autolist/dismiss', {
+			method: 'POST',
+			body: JSON.stringify({ ids })
+		});
+		return this.splitAutolistBatchResponse(response, ids);
+	}
+
+	/** Вызов loopback-ручки сателлита через AWGM (без /probe и /exclude). */
+	private async autolistProxy<T>(path: AutolistSatellitePath, body?: Record<string, unknown>): Promise<T> {
+		return this.request<T>('/autolist/proxy', {
+			method: 'POST',
+			body: JSON.stringify(body === undefined ? { path } : { path, body })
 		});
 	}
 
-	/** Добавить выбранные домены отдельными правилами (awgmautolist /add). */
-	async addAutolistCandidates(domains: string[]): Promise<Record<string, string | null>> {
-		const res = await this.request<{ results: Record<string, string | null> }>('/autolist/proxy', {
-			method: 'POST',
-			body: JSON.stringify({ path: '/add', body: { domains } })
-		});
-		return res?.results ?? {};
-	}
-
-	/** Навсегда исключить домены из автосписка (awgmautolist /exclude). */
-	async excludeAutolistCandidates(domains: string[]): Promise<void> {
-		await this.request('/autolist/proxy', {
-			method: 'POST',
-			body: JSON.stringify({ path: '/exclude', body: { domains } })
-		});
-	}
-
-	/** Снять временное/постоянное скрытие и удалить его записи из истории. */
-	async restoreAutolistCandidate(domain: string): Promise<void> {
-		await this.request('/autolist/proxy', {
-			method: 'POST',
-			body: JSON.stringify({ path: '/restore', body: { domain } })
-		});
-	}
-
-	/** Немедленная USER-проба хоста (awgmautolist /probe). */
-	async probeAutolistHost(host: string): Promise<string> {
-		const res = await this.request<{ result: string }>('/autolist/proxy', {
-			method: 'POST',
-			body: JSON.stringify({ path: '/probe', body: { host } })
-		});
-		return res?.result ?? 'unknown';
-	}
-
-	/** Конфигурация сателлита (awgmautolist /config). */
+	/** Конфигурация сателлита — GET /config через прокси (чтение, тела нет). */
 	async getAutolistConfig(): Promise<AutolistConfig> {
-		const res = await this.request<AutolistConfig>('/autolist/proxy', {
-			method: 'POST',
-			body: JSON.stringify({ path: '/config' })
-		});
-		return res ?? { autoAdd: false };
+		const cfg = await this.autolistProxy<AutolistConfig>('/config');
+		if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg) || typeof cfg.autoAdd !== 'boolean') {
+			throw new Error('Invalid Autolist config response: expected an object with boolean autoAdd');
+		}
+		return cfg;
 	}
 
-	/** Применить конфигурацию сателлита (awgmautolist /config). */
+	/** Применить конфигурацию сателлита — POST /config через прокси. */
 	async setAutolistConfig(cfg: AutolistConfig): Promise<void> {
-		await this.request('/autolist/proxy', {
-			method: 'POST',
-			body: JSON.stringify({ path: '/config', body: cfg })
-		});
+		await this.autolistProxy('/config', cfg as unknown as Record<string, unknown>);
 	}
 
-	/** Убрать кандидата без скрытия (awgmautolist /forget). */
-	async forgetAutolistCandidate(domain: string): Promise<void> {
-		await this.request('/autolist/proxy', {
-			method: 'POST',
-			body: JSON.stringify({ path: '/forget', body: { domain } })
-		});
+	/** Единая проверка per-ID результата: HTTP 200 не скрывает writer error. */
+	private checkAutolistActionResult(response: { results?: Record<string, string | null> }, id: string): void {
+		if (!response?.results || !(id in response.results)) {
+			throw new Error('Invalid Autolist action response: missing candidate result');
+		}
+		const raw = response.results[id];
+		if (typeof raw === 'string' && raw !== '') throw new Error(raw);
+	}
+
+	private async runAutolistAction(path: AutolistSatellitePath, id: string): Promise<void> {
+		const response = await this.autolistProxy<{ results?: Record<string, string | null> }>(path, { id });
+		this.checkAutolistActionResult(response, id);
+	}
+
+	/**
+	 * Batch-вариант одиночного действия: тело {ids:[...]} сателлит отвечает
+	 * тем же конвертом {results: Record<id, string|null>}. HTTP 200 не значит
+	 * успех — per-ID строки ошибок превращаются в Rejects, пустые/null — в
+	 * успехи (см. AutolistBatchResult).
+	 */
+	private async runAutolistBatch(path: AutolistSatellitePath, ids: string[]): Promise<AutolistBatchResult> {
+		if (ids.length === 0) return { ok: [], failed: [] };
+		const response = await this.autolistProxy<{ results?: Record<string, string | null> }>(path, { ids });
+		return this.splitAutolistBatchResponse(response, ids);
+	}
+
+	/** Разбор конверта {results} в ok/failed с диагностикой отсутствующих id. */
+	private splitAutolistBatchResponse(response: { results?: Record<string, string | null> } | null | undefined, ids: string[]): AutolistBatchResult {
+		const results = response?.results;
+		if (!results || typeof results !== 'object' || Array.isArray(results)) {
+			throw new Error('Invalid Autolist action response: missing candidate results');
+		}
+		const ok: string[] = [];
+		const failed: AutolistBatchFailure[] = [];
+		for (const id of ids) {
+			if (!(id in results)) {
+				failed.push({ id, error: 'missing candidate result' });
+				continue;
+			}
+			const raw = results[id];
+			if (typeof raw === 'string' && raw !== '') failed.push({ id, error: raw });
+			else ok.push(id);
+		}
+		return { ok, failed };
+	}
+
+	/** Добавить кандидатов в туннель пакетно (batch add). */
+	async addAutolistCandidates(ids: string[]): Promise<AutolistBatchResult> {
+		return this.runAutolistBatch('/add', ids);
+	}
+
+	/** Убрать карточки кандидатов, не трогая правила (batch forget). */
+	async forgetAutolistCandidates(ids: string[]): Promise<AutolistBatchResult> {
+		return this.runAutolistBatch('/forget', ids);
+	}
+
+	/** Добавить кандидата в туннель (manual add). */
+	async addAutolistCandidate(id: string): Promise<void> {
+		await this.runAutolistAction('/add', id);
+	}
+
+	/** Убрать карточку кандидата, не трогая правила (forget). */
+	async forgetAutolistCandidate(id: string): Promise<void> {
+		await this.runAutolistAction('/forget', id);
+	}
+
+	/** Вернуть отклонённого кандидата в ожидание (restore). */
+	async restoreAutolistCandidate(id: string): Promise<void> {
+		await this.runAutolistAction('/restore', id);
+	}
+
+	/** Явно удалить добавленное правило (remove owned entry). */
+	async removeAutolistCandidate(id: string): Promise<void> {
+		await this.runAutolistAction('/remove', id);
+	}
+
+	/**
+	 * Очистить журнал решений сателлита — POST /history/clear с телом {}.
+	 * Затрагивает только историю: кандидаты, правила и бюджет добавлений
+	 * не трогаются. Тело {} обязательно, чтобы прокси отправил POST.
+	 */
+	async clearAutolistHistory(): Promise<void> {
+		await this.autolistProxy('/history/clear', {});
 	}
 
 	// #endregion

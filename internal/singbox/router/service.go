@@ -712,7 +712,11 @@ type ServiceImpl struct {
 	// sing-box binary, no /tmp writes during NewService) stay clean.
 	inspectCacheOnce sync.Once
 	inspectCache     *ruleSetCache
-	datRuleSetMu     sync.Mutex
+	// coverageIdx is the separate applied-config, always-current read path.
+	// Its constructor performs no I/O; the first indexed read activates it.
+	coverageIdxOnce sync.Once
+	coverageIdx     *coverageIndex
+	datRuleSetMu    sync.Mutex
 
 	// Optional keendns-preset → имена KeenDNS резолвит сам роутер, а его
 	// адреса идут мимо sing-box.
@@ -921,6 +925,7 @@ func (s *ServiceImpl) ruleSetMaterializer() ruleSetMaterializer {
 		configDir: configDir,
 		binary:    binary,
 		log:       logging.NewScopedLogger(s.deps.AppLog, logging.GroupRouting, logging.SubSingboxRouter),
+		onPublish: s.InvalidateCoverageIndex,
 	}
 }
 
@@ -1056,17 +1061,24 @@ func (s *ServiceImpl) persistSlotDirect(slot orchestrator.Slot, cfg *RouterConfi
 	if existing, err := os.ReadFile(activePath); err == nil && bytes.Equal(existing, data) {
 		return nil
 	}
-	return s.deps.Orch.Save(slot, data)
+	if err := s.deps.Orch.Save(slot, data); err != nil {
+		return err
+	}
+	s.InvalidateCoverageIndex()
+	return nil
 }
 
 // notifyRoutingSlotsChanged invokes the OnRoutingSlotsChanged hook (see
 // Deps). Must be called AFTER the slot toggle it reports and BEFORE the
 // reload that would otherwise prune the dependents' now-dangling refs.
 func (s *ServiceImpl) notifyRoutingSlotsChanged() {
+	s.InvalidateCoverageIndex()
 	if s.deps.OnRoutingSlotsChanged != nil {
 		s.deps.OnRoutingSlotsChanged()
 	}
 }
+
+var policyTunApplyVerify = (*ServiceImpl).verifyPolicyTunRouteAfterApply
 
 // orchestratorApplyNow flushes any debounced reload and applies config.d to
 // sing-box immediately. No-op when Orch is nil (tests).
@@ -1074,7 +1086,11 @@ func (s *ServiceImpl) orchestratorApplyNow() error {
 	if s.deps.Orch == nil {
 		return nil
 	}
-	return s.deps.Orch.ReloadNow()
+	if err := s.deps.Orch.ReloadNow(); err != nil {
+		return err
+	}
+	policyTunApplyVerify(s, context.Background())
+	return nil
 }
 
 func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) error {
@@ -1117,6 +1133,10 @@ func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) erro
 				return err
 			}
 			s.emitStagingEvent("discarded")
+			// materializeRuleSet has already replaced the live SRS. Config bytes
+			// are unchanged, but NDMS may have rebuilt the policy table: verify
+			// its default route now instead of waiting for the periodic healer.
+			policyTunApplyVerify(s, ctx)
 			return nil
 		}
 		if err := s.deps.Orch.SaveDraft(orchestrator.SlotRouter, data); err != nil {

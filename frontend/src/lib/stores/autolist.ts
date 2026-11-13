@@ -11,20 +11,28 @@ async function fetchAutolistStatus(): Promise<AutolistStatus> {
 }
 
 /**
- * Статус сателлита awgmautolist. Периодический опрос включён: сателлит —
- * внешний процесс, SSE-инвалидаций о нём бэкенд не публикует. Интервал
- * умеренный — таблица кандидатов меняется редко.
+ * Operational статус сателлита awgmautolist. SSE-инвалидаций о внешнем
+ * демоне бэкенд не публикует, поэтому опрос периодический. Интервал
+ * умеренный: карточки кандидатов меняются по мере проверок.
  */
 export const autolistStatus: PollingStore<AutolistStatus> = createPollingStore<AutolistStatus>(
 	fetchAutolistStatus,
 	{ staleTime: 30_000, pollInterval: 45_000 },
 );
 
-registerStore('routing.autolistStatus', autolistStatus);
+const REGISTRY = {
+	autolistStatus: 'routing.autolistStatus',
+} as const;
+
+// Ключа в union ResourceKey нет: публикатора SSE-ресурса для внешнего
+// сателлита на бэкенде нет, стор обновляется опросом и refetch после мутаций.
+// Регистрация в общем реестре всё равно нужна: invalidateAll() после
+// восстановления бэкенда перечитывает и его.
+registerStore(REGISTRY.autolistStatus as Parameters<typeof registerStore>[0], autolistStatus);
 
 /**
- * Подписка только у того уровня, которому видна вкладка (expert, как HR
- * Neo/Zapret): остальные статус не запрашивают вовсе. null — уровень ниже.
+ * Подписка только у того уровня, которому видна вкладка (expert, как Zapret):
+ * остальные статус не запрашивают вовсе. null — уровень ниже.
  */
 export const autolistStatusIfExpert: Readable<PollingState<AutolistStatus> | null> = derived<
 	typeof usageLevel,

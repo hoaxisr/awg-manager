@@ -33,6 +33,23 @@ describe('isSystemRule', () => {
     expect(isSystemRule({ action: 'sniff' })).toBe(true);
     expect(isSystemRule({ action: 'hijack-dns', protocol: 'dns' })).toBe(true);
     expect(isSystemRule({ ip_is_private: true, outbound: 'direct' })).toBe(true);
+    expect(isSystemRule({ ip_is_private: true, outbound: 'lan-custom' })).toBe(true);
+  });
+  it('does not treat a plain rule-set route rule as system', () => {
+    expect(isSystemRule({ rule_set: ['user-set'], action: 'route', outbound: 'user-proxy' })).toBe(false);
+    expect(isSystemRule({
+      rule_set: ['user-set'], action: 'route', outbound: 'user-proxy', source_ip_cidr: ['192.168.1.5/32'],
+    })).toBe(false);
+  });
+  it('protects only the exact Autolist owner', () => {
+    expect(isSystemRule({ rule_set: ['awgm-autolist'], action: 'route', outbound: 'awgm-autolist-target' })).toBe(true);
+    expect(isSystemRule({ rule_set: ['awgm-autolist'], outbound: 'awgm-autolist-target' })).toBe(true);
+    expect(isSystemRule({
+      rule_set: ['awgm-autolist'], action: 'route', outbound: 'awgm-autolist-target', source_ip_cidr: ['192.168.1.5/32'],
+    })).toBe(false);
+    expect(isSystemRule({
+      rule_set: ['awgm-autolist'], action: 'route', outbound: 'awgm-autolist-target', awgm_managed: 'other',
+    })).toBe(false);
   });
   it('does not treat a plain user route-options-less rule as system', () => {
     expect(isSystemRule({ domain_suffix: ['x.com'], outbound: 'proxy' })).toBe(false);
