@@ -328,7 +328,19 @@ const SECTIONS: ConfigSection[] = ['profiles', 'awg'];
 // Форма для сравнения: сервер опускает пустой activeProfileId (omitempty),
 // а пустые списки фильтров может отдать как null.
 function sectionView(c: WarpConfig, s: ConfigSection): unknown {
-	if (s === 'awg') return c.awg;
+	if (s === 'awg') {
+		// У именованного пресета I1..I5 выдаёт сервер, интерфейс их не правит
+		// и не шлёт: сравнивать их — значит видеть «не сохранено» после
+		// выбора пресета и возврата к прежнему.
+		if (c.awg.signatureProfile === 'custom') return c.awg;
+		const view = { ...c.awg };
+		delete view.i1;
+		delete view.i2;
+		delete view.i3;
+		delete view.i4;
+		delete view.i5;
+		return view;
+	}
 	return {
 		profileMode: c.profileMode,
 		activeProfileId: c.activeProfileId || undefined,

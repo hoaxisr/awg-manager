@@ -8236,6 +8236,7 @@
 	"warpscout_modal_via_hint": "Каскадный туннель с MTU 1220 и отдельным ключом WARP поверх {name}.",
 	"warpscout_modal_via_kernel_warn": "Kernel AWG не поддерживает «Подключаться через» — для WARP-in-WARP выберите Native WG или Системный.",
 	"warpscout_modal_native_wg_warn": "Native WG требует параметры AmneziaWG — выберите протокол AmneziaWG или тип «Системный».",
+	"warpscout_modal_via_lost": "Внешний туннель больше недоступен — выберите другой маршрут выхода.",
 	"warpscout_modal_obf_label": "Обфускация AWG",
 	"warpscout_modal_obf_global": "Глобальные настройки ({label})",
 "autolist_dismiss_ok": "Кандидат скрыт до возврата",

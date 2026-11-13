@@ -105,6 +105,7 @@
 
 	let name = $state(initialVia ? defaultCascadeName : defaultDirectName);
 	let nameEdited = $state(false);
+	let addressEdited = $state(false);
 	let addressV4 = $state(
 		untrack(() =>
 			initialVia
@@ -121,6 +122,10 @@
 	const selectedObf = $derived(
 		obfuscationSources.find((s) => `${s.mode}:${s.id}` === obfSourceKey),
 	);
+	// Внешний туннель выбран, но из списка исчез (удалён или стал защищённым,
+	// пока форма открыта): без него запрос ушёл бы как обычный прямой туннель
+	// под именем и адресом каскада.
+	const viaLost = $derived(viaKey !== '' && !viaRoute);
 	const isCascadeKernel = $derived(!!viaRoute && mode === 'kernel');
 	const isNativePlainWg = $derived(mode === 'native' && protocol === 'wg');
 
@@ -131,8 +136,12 @@
 		if (!nameEdited) {
 			name = isCascade ? defaultCascadeName : defaultDirectName;
 		}
-		if (isCascade) {
-			addressV4 = suggestFreeTunnelIpv4('172.16.0.3', targets, usedIpv4);
+		// Как и имя: введённый руками адрес не перезаписываем, а при возврате
+		// к прямому туннелю возвращаем адрес учётной записи.
+		if (!addressEdited) {
+			addressV4 = isCascade
+				? suggestFreeTunnelIpv4('172.16.0.3', targets, usedIpv4)
+				: accountAddressV4 || '172.16.0.2';
 		}
 	}
 
@@ -140,7 +149,7 @@
 	const addrValid = $derived(parsedIp !== null);
 
 	async function submit(): Promise<void> {
-		if (!parsedIp || isCascadeKernel || isNativePlainWg) return;
+		if (!parsedIp || viaLost || isCascadeKernel || isNativePlainWg) return;
 		const enableAutopilot = autopilot && !autopilotLocked;
 		applying = true;
 		try {
@@ -191,6 +200,9 @@
 				maxlength={64}
 			/>
 		</label>
+		{#if viaLost}
+			<p class="note warn">{m.warpscout_modal_via_lost()}</p>
+		{/if}
 		{#if warpRoutes.length > 0}
 			<div class="stack">
 				<Dropdown
@@ -212,13 +224,17 @@
 				type="text"
 				placeholder="172.16.0.2"
 				bind:value={addressV4}
+				oninput={() => (addressEdited = true)}
 				maxlength={20}
 			/>
 			<WarpIpv4Notice
 				value={addressV4}
 				{targets}
 				{usedIpv4}
-				onsuggest={(ip) => (addressV4 = ip)}
+				onsuggest={(ip) => {
+					addressV4 = ip;
+					addressEdited = true;
+				}}
 			/>
 		</label>
 		<div class="stack">
@@ -270,7 +286,7 @@
 		<Button
 			variant="primary"
 			loading={applying}
-			disabled={!addrValid || isCascadeKernel || isNativePlainWg}
+			disabled={!addrValid || viaLost || isCascadeKernel || isNativePlainWg}
 			onclick={submit}
 		>
 			{m.common_create()}
