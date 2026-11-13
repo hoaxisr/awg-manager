@@ -324,6 +324,9 @@ func (s *WGServerStore) Invalidate(name string) {
 	s.items.Invalidate(name)
 	s.rcTree.InvalidateAll()
 	s.ListStore.InvalidateAll()
+	if s.sysList != nil {
+		s.sysList.InvalidateAll()
+	}
 }
 
 // InvalidateAll drops every cached entry across all keyspaces. Kernel
@@ -776,16 +779,19 @@ func rciToSystemTunnel(iface rciWireguardDetail) ndms.SystemWireguardTunnel {
 		Mask:        iface.Mask,
 		Uptime:      iface.Uptime,
 	}
-	if iface.Wireguard != nil && len(iface.Wireguard.Peer) > 0 {
-		peer := iface.Wireguard.Peer[0]
-		t.Peer = &ndms.WireguardPeerInfo{
-			PublicKey:     peer.PublicKey,
-			Endpoint:      formatPeerEndpoint(peer),
-			Via:           peer.Via,
-			RxBytes:       peer.RxBytes,
-			TxBytes:       peer.TxBytes,
-			LastHandshake: FormatHandshakeSecondsAgo(peer.LastHandshake),
-			Online:        peer.Online,
+	if iface.Wireguard != nil {
+		t.PublicKey = iface.Wireguard.PublicKey
+		if len(iface.Wireguard.Peer) > 0 {
+			peer := iface.Wireguard.Peer[0]
+			t.Peer = &ndms.WireguardPeerInfo{
+				PublicKey:     peer.PublicKey,
+				Endpoint:      formatPeerEndpoint(peer),
+				Via:           peer.Via,
+				RxBytes:       peer.RxBytes,
+				TxBytes:       peer.TxBytes,
+				LastHandshake: FormatHandshakeSecondsAgo(peer.LastHandshake),
+				Online:        peer.Online,
+			}
 		}
 	}
 	return t

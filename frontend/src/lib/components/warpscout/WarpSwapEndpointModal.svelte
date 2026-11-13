@@ -60,6 +60,7 @@
 			await api.warpscoutApply({
 				action: 'swap',
 				endpoint: hit.endpoint,
+				colo: hit.colo || undefined,
 				mode: t.mode,
 				targetId: t.id,
 				protocol: filters.protocol,

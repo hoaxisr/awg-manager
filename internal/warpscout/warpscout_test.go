@@ -54,13 +54,15 @@ func (r *fakeRunner) Run(ctx context.Context, p ScanParams, on func(EngineEvent)
 }
 
 type fakeTunnels struct {
-	mu       sync.Mutex
-	refs     map[string]*TunnelRef
-	swaps    []string
-	created  []string
-	getErr   error
-	onSwap   func(r *TunnelRef)
-	onCreate func(r *TunnelRef)
+	mu          sync.Mutex
+	refs        map[string]*TunnelRef
+	swaps       []string
+	renames     []string
+	created     []string
+	createdOpts []CreateOptions
+	getErr      error
+	onSwap      func(r *TunnelRef)
+	onCreate    func(r *TunnelRef)
 }
 
 func key(m TargetMode, id string) string { return string(m) + "/" + id }
@@ -89,11 +91,12 @@ func (f *fakeTunnels) Get(_ context.Context, m TargetMode, id string) (*TunnelRe
 	return &c, nil
 }
 
-func (f *fakeTunnels) Create(_ context.Context, m TargetMode, name, conf string) (*TunnelRef, error) {
+func (f *fakeTunnels) Create(_ context.Context, m TargetMode, name, conf string, opts CreateOptions) (*TunnelRef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	id := "new" + string(rune('0'+len(f.created)))
 	f.created = append(f.created, conf)
+	f.createdOpts = append(f.createdOpts, opts)
 	r := &TunnelRef{Mode: m, ID: id, Name: name, Iface: "nwg9", IsWarp: true, Running: true}
 	f.refs[key(m, id)] = r
 	if f.onCreate != nil {
@@ -115,6 +118,18 @@ func (f *fakeTunnels) SwapEndpoint(_ context.Context, m TargetMode, id, ep strin
 	if f.onSwap != nil {
 		f.onSwap(r)
 	}
+	return nil
+}
+
+func (f *fakeTunnels) Rename(_ context.Context, m TargetMode, id, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.refs[key(m, id)]
+	if !ok {
+		return errors.New("нет")
+	}
+	r.Name = name
+	f.renames = append(f.renames, name)
 	return nil
 }
 
@@ -251,17 +266,26 @@ func TestWatchdog_DMEPolymorphTriggersSwap(t *testing.T) {
 	// Два подряд DME (проверка + подтверждение), затем HEL после подмены.
 	pr.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
 	p := testProfile()
+	cfg := s.d.Store.Config()
+	cfg.Profiles = []Profile{p}
+	cfg.ActiveProfileID = p.ID
+	if err := s.d.Store.SetConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
 	st := &watcherState{}
 	s.checkOnce(context.Background(), p, st)
 
 	if len(tun.swaps) != 1 || tun.swaps[0] != "188.114.96.9:2408" {
 		t.Fatalf("ожидалась подмена на самый быстрый узел, swaps=%v", tun.swaps)
 	}
+	if len(tun.renames) != 1 || tun.renames[0] != "WARP HEL" {
+		t.Fatalf("туннель должен переименоваться под новый colo HEL, renames=%v", tun.renames)
+	}
 	call := r.calls[0]
 	if len(call.ExcludeEndpoints) != 1 || call.ExcludeEndpoints[0] != "162.159.192.1:2408" {
 		t.Fatalf("скан должен исключать текущий endpoint: %v", call.ExcludeEndpoints)
 	}
-	if call.Ifname != "eth3" || call.MaxHits != swapScanMaxHits || call.Reserved != [3]int{1, 2, 3} {
+	if call.Ifname != "eth3" || call.MaxHits != swapScanMaxHits || call.Reserved != [3]int{0, 0, 0} {
 		t.Fatalf("параметры скана: ifname=%q maxHits=%d reserved=%v", call.Ifname, call.MaxHits, call.Reserved)
 	}
 	h := s.d.Store.History()
@@ -1466,5 +1490,374 @@ func TestSetAccountAddress_PreservedAcrossRotationAndCreateOverride(t *testing.T
 	}
 	if got := s.d.Store.Account().AddressV4; got != "172.16.0.9" {
 		t.Fatalf("локальный addressV4 аккаунта не должен меняться разовым create override: %q", got)
+	}
+}
+
+func TestDeriveWarpTunnelName(t *testing.T) {
+	cases := []struct {
+		cur  string
+		colo string
+		want string
+		ok   bool
+	}{
+		{"WARP", "hel", "WARP HEL", true},
+		{"WARP TLL", "HEL", "WARP HEL", true},
+		{"WARP-WAW", "HEL", "WARP-HEL", true},
+		{"WARP (TLL)", "FRA", "WARP (FRA)", true},
+		{"WARP TLL 2", "ARN", "WARP ARN 2", true},
+		{"Мой WARP TLL", "HEL", "Мой WARP HEL", true},
+		{"WARP HEL", "HEL", "WARP HEL", false},
+		{"WARP AWG", "HEL", "", false},
+		{"WARP VPN", "HEL", "", false},
+		{"WARP Native", "HEL", "", false},
+		{"Мой туннель", "HEL", "", false},
+		{"WARP TLL", "BAD1", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := DeriveWarpTunnelName(tc.cur, tc.colo)
+		if ok != tc.ok || (tc.ok && got != tc.want) {
+			t.Fatalf("DeriveWarpTunnelName(%q, %q) = (%q, %v), want (%q, %v)",
+				tc.cur, tc.colo, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestApply_SwapUpdatesTunnelCardName(t *testing.T) {
+	s, _, tun, _ := newTestService(t)
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg10")].Name = "WARP TLL"
+	tun.mu.Unlock()
+
+	cfg := s.d.Store.Config()
+	cfg.Profiles = []Profile{{
+		ID:         "p-custom",
+		Name:       "Профиль 1",
+		Enabled:    true,
+		TargetMode: TargetNative,
+		TargetID:   "awg10",
+		Filters:    DefaultFilters(),
+	}}
+	cfg.ActiveProfileID = "p-custom"
+	if err := s.d.Store.SetConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := s.Apply(context.Background(), ApplyRequest{
+		Action:   "swap",
+		Endpoint: "162.159.192.43:903",
+		Colo:     "HEL",
+		Mode:     TargetNative,
+		TargetID: "awg10",
+	})
+	if err != nil {
+		t.Fatalf("Apply swap: %v", err)
+	}
+	if res.Tunnel == nil || res.Tunnel.Name != "WARP HEL" {
+		t.Fatalf("ожидалось переименование карточки в WARP HEL, получили %+v", res.Tunnel)
+	}
+	if got := s.d.Store.Config().Profiles[0].Name; got != "Профиль 1" {
+		t.Fatalf("пользовательское имя профиля «Профиль 1» не должно меняться, получили %q", got)
+	}
+}
+
+func TestStore_InnerAccountRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	st, err := NewStore(dir, plainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &Account{
+		ID:            "inner-1",
+		Token:         "tok-in",
+		PrivateKey:    "priv-in",
+		PublicKey:     "pub-in",
+		PeerPublicKey: WarpPeerPublicKey,
+		AddressV4:     "172.16.0.3",
+	}
+	if err := st.SetInnerAccount(inner); err != nil {
+		t.Fatalf("SetInnerAccount: %v", err)
+	}
+	reloaded, err := NewStore(dir, plainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := reloaded.InnerAccount()
+	if got == nil || got.ID != "inner-1" || got.PrivateKey != "priv-in" || got.AddressV4 != "172.16.0.3" {
+		t.Fatalf("перезагруженный innerAccount не совпал: %+v", got)
+	}
+	if err := reloaded.SetInnerAccount(nil); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.InnerAccount() != nil {
+		t.Fatalf("после удаления InnerAccount должен быть nil")
+	}
+}
+
+func TestDeriveWarpTunnelName_WarpInWarp(t *testing.T) {
+	if got, ok := DeriveWarpTunnelName("WARP-in-WARP", "fra"); !ok || got != "WARP-in-WARP FRA" {
+		t.Fatalf("WARP-in-WARP -> %q, %v", got, ok)
+	}
+	if got, ok := DeriveWarpTunnelName("WARP-in-WARP HEL", "ams"); !ok || got != "WARP-in-WARP AMS" {
+		t.Fatalf("WARP-in-WARP HEL -> %q, %v", got, ok)
+	}
+}
+
+func TestSaveConfig_PreservesCustomSignature(t *testing.T) {
+	s, _, _, _ := newTestService(t)
+	cfg := s.d.Store.Config()
+	cfg.AWG = AWGParams{
+		SignatureProfile: SignatureCustom,
+		Jc:               5,
+		Jmin:             10,
+		Jmax:             80,
+		I1:               "<b 0xdeadbeef><r 8>",
+		I2:               "<t>",
+	}
+	saved, err := s.SaveConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("SaveConfig custom: %v", err)
+	}
+	if saved.AWG.SignatureProfile != SignatureCustom || saved.AWG.I1 != "<b 0xdeadbeef><r 8>" || saved.AWG.I2 != "<t>" {
+		t.Fatalf("I1/I2 должны сохраниться без перезаписи: %+v", saved.AWG)
+	}
+
+	cfg.AWG.I1 = "<b invalidhex>"
+	if _, err := s.SaveConfig(context.Background(), cfg); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ожидался ErrInvalidInput для битой CPS I1, получили %v", err)
+	}
+}
+
+func TestStartScan_ViaWarpTunnel_UsesInnerAccountAndConcurrency1(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id": "dev-inner",
+			"token": "tok-inner",
+			"warp_enabled": true,
+			"config": {"client_id": "AQID", "peers": [{"public_key": "` + WarpPeerPublicKey + `"}], "interface": {"addresses": {"v4": "172.16.0.2"}}}
+		}`))
+	}))
+	defer srv.Close()
+	origBase := cfAPIBase
+	cfAPIBase = srv.URL
+	t.Cleanup(func() { cfAPIBase = origBase })
+
+	s, runner, tun, _ := newTestService(t)
+	s.d.HTTP = func(string) (*http.Client, error) { return srv.Client(), nil }
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg10")] = &TunnelRef{
+		Mode:           TargetNative,
+		ID:             "awg10",
+		Name:           "WARP HEL",
+		Iface:          "nwg1",
+		Endpoint:       "162.159.192.255:880",
+		AddressV4:      "172.16.0.10",
+		LocalPublicKey: "pub", // совпадает с основным аккаунтом — должен создаться InnerAccount
+		PeerPublicKey:  WarpPeerPublicKey,
+		IsWarp:         true,
+		Running:        true,
+	}
+	tun.mu.Unlock()
+	runner.hits = []Hit{{Endpoint: "162.159.193.1:2408", PingMs: 45, Colo: "FRA", Loc: "DE", Warp: "on"}}
+
+	if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}, Ifname: "nwg1", MaxHits: 5}); err != nil {
+		t.Fatalf("StartScan: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if !s.ScanSnapshot().Running && s.ScanSnapshot().Done > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	st := s.State()
+	if st.Scan.Running || st.Scan.Error != "" {
+		t.Fatalf("ожидался успешный скан через WARP, got %+v", st.Scan)
+	}
+	if !st.HasInnerAccount {
+		t.Fatalf("ожидалось появление InnerAccount при скане через WARP")
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.calls) != 1 {
+		t.Fatalf("ожидался 1 запуск runner, получили %d", len(runner.calls))
+	}
+	call := runner.calls[0]
+	if call.Concurrency != 1 {
+		t.Fatalf("ожидалась Concurrency=1 внутри WARP, получили %d", call.Concurrency)
+	}
+	if call.PrivateKey == st.Account.ID || call.PrivateKey == "cHJpdg==" {
+		t.Fatalf("внутренний скан не должен использовать ключ внешнего туннеля")
+	}
+	if len(call.ExcludeEndpoints) == 0 || call.ExcludeEndpoints[0] != "162.159.192.255" {
+		t.Fatalf("в ExcludeEndpoints должен попасть IP внешнего WARP, получили %v", call.ExcludeEndpoints)
+	}
+	if call.TunnelIP == "172.16.0.10" {
+		t.Fatalf("TunnelIP не должен пересекаться с внешним туннелем")
+	}
+}
+
+func TestApplyCreate_WarpInWarp_MTU1220AndMultiAutopilot(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id": "dev-inner-2",
+			"token": "tok-inner-2",
+			"warp_enabled": true,
+			"config": {"client_id": "AQID", "peers": [{"public_key": "` + WarpPeerPublicKey + `"}], "interface": {"addresses": {"v4": "172.16.0.2"}}}
+		}`))
+	}))
+	defer srv.Close()
+	origBase := cfAPIBase
+	cfAPIBase = srv.URL
+	t.Cleanup(func() { cfAPIBase = origBase })
+
+	s, _, tun, _ := newTestService(t)
+	s.d.HTTP = func(string) (*http.Client, error) { return srv.Client(), nil }
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg50")] = &TunnelRef{
+		Mode:           TargetNative,
+		ID:             "awg50",
+		Name:           "WARP HEL",
+		Iface:          "nwg3",
+		Endpoint:       "162.159.192.255:880",
+		AddressV4:      "172.16.0.10",
+		LocalPublicKey: "pub",
+		PeerPublicKey:  WarpPeerPublicKey,
+		IsWarp:         true,
+		Running:        true,
+	}
+	tun.mu.Unlock()
+
+	cfg := s.d.Store.Config()
+	cfg.ProfileMode = ProfileModeSingle
+	cfg.Profiles = []Profile{{
+		ID: "p-outer", Name: "WARP HEL", Enabled: true, TargetMode: TargetNative, TargetID: "awg50", Filters: DefaultFilters(),
+	}}
+	cfg.ActiveProfileID = "p-outer"
+	if err := s.d.Store.SetConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// Kernel AWG должен быть запрещён для WARP-in-WARP
+	if _, err := s.Apply(context.Background(), ApplyRequest{
+		Action: "create", Endpoint: "162.159.193.1:2408", Mode: TargetKernel, ViaMode: TargetNative, ViaID: "awg50",
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("TargetKernel для WARP-in-WARP должен отвергаться ErrInvalidInput, got %v", err)
+	}
+	// Native WG с plain WireGuard тоже запрещён (Native WG требует параметры AWG)
+	if _, err := s.Apply(context.Background(), ApplyRequest{
+		Action: "create", Endpoint: "162.159.193.1:2408", Mode: TargetNative, Protocol: ProtocolWG, ViaMode: TargetNative, ViaID: "awg50",
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("TargetNative + ProtocolWG должен отвергаться ErrInvalidInput, got %v", err)
+	}
+
+	res, err := s.Apply(context.Background(), ApplyRequest{
+		Action:          "create",
+		Endpoint:        "162.159.193.1:2408",
+		Colo:            "FRA",
+		Mode:            TargetNative,
+		Name:            "WARP-in-WARP FRA",
+		Protocol:        ProtocolAWG,
+		ViaMode:         TargetNative,
+		ViaID:           "awg50",
+		EnableAutopilot: true,
+	})
+	if err != nil {
+		t.Fatalf("Apply WARP-in-WARP create: %v", err)
+	}
+	if res.Tunnel == nil || len(tun.created) != 1 {
+		t.Fatalf("ожидалось создание туннеля, got %+v", res)
+	}
+	conf := tun.created[0]
+	if !strings.Contains(conf, "MTU = 1220\n") {
+		t.Fatalf("для WARP-in-WARP ожидался MTU = 1220, конфиг:\n%s", conf)
+	}
+	if strings.Contains(conf, "PrivateKey = cHJpdg==\n") {
+		t.Fatalf("WARP-in-WARP не должен переиспользовать приватный ключ внешнего туннеля")
+	}
+	if tun.createdOpts[0].ViaMode != TargetNative || tun.createdOpts[0].ViaID != "awg50" {
+		t.Fatalf("ожидались CreateOptions{native, awg50}, got %+v", tun.createdOpts[0])
+	}
+	afterCfg := s.d.Store.Config()
+	if afterCfg.ProfileMode != ProfileModeMulti {
+		t.Fatalf("включение автопилота на WARP-in-WARP должно переключать в multi-режим, не выключая внешний профиль")
+	}
+	if len(afterCfg.Profiles) != 2 || !afterCfg.Profiles[0].Enabled || !afterCfg.Profiles[1].Enabled {
+		t.Fatalf("оба профиля автопилота должны остаться активными: %+v", afterCfg.Profiles)
+	}
+
+	// Системный + ProtocolWG для WARP-in-WARP разрешён и генерирует plain WG с MTU 1220
+	if _, err := s.Apply(context.Background(), ApplyRequest{
+		Action:   "create",
+		Endpoint: "162.159.193.2:2408",
+		Mode:     TargetSystem,
+		Protocol: ProtocolWG,
+		ViaMode:  TargetNative,
+		ViaID:    "awg50",
+	}); err != nil {
+		t.Fatalf("TargetSystem + ProtocolWG для WARP-in-WARP: %v", err)
+	}
+	sysConf := tun.created[1]
+	if !strings.Contains(sysConf, "MTU = 1220\n") || strings.Contains(sysConf, "Jc =") {
+		t.Fatalf("ожидался plain WG конфиг с MTU 1220 без Jc, got:\n%s", sysConf)
+	}
+}
+
+func TestWatchdog_WarpInWarp_WaitsForOuterAndScansViaOuter(t *testing.T) {
+	s, runner, tun, prober := newTestService(t)
+	if err := s.d.Store.SetInnerAccount(&Account{
+		ID: "in-1", Token: "t", PrivateKey: "aW5uZXItcHJpdi1rZXk=", PublicKey: "pub-inner",
+		PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.3",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg60")] = &TunnelRef{
+		Mode: TargetNative, ID: "awg60", Name: "WARP-in-WARP FRA", Iface: "nwg4",
+		Endpoint: "162.159.193.1:2408", AddressV4: "172.16.0.3",
+		LocalPublicKey: "pub-inner", PeerPublicKey: WarpPeerPublicKey,
+		IsWarp: true, Running: true,
+		ViaMode: TargetNative, ViaTunnelID: "awg50", ViaIface: "nwg3",
+		ViaLabel: "WARP HEL", ViaEndpoint: "162.159.192.255:880", ViaRunning: false,
+	}
+	tun.mu.Unlock()
+
+	p := Profile{
+		ID: "p-in", Name: "WARP-in-WARP FRA", Enabled: true,
+		TargetMode: TargetNative, TargetID: "awg60",
+		Filters: DefaultFilters(), FailThreshold: 1, CooldownSec: 10,
+	}
+	st := &watcherState{}
+	s.checkOnce(context.Background(), p, st)
+	s.mu.Lock()
+	wsDirect := *s.watch["p-in"]
+	s.mu.Unlock()
+	if wsDirect.State != WatchTargetStopped || !strings.Contains(wsDirect.Message, "внешний туннель") {
+		t.Fatalf("при выключенном внешнем WARP сторож должен ждать, got %+v", wsDirect)
+	}
+
+	// Включаем внешний туннель, эмулируем отказ внутреннего -> swap должен сканить через nwg3 и ключом InnerAccount.
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg60")].ViaRunning = true
+	tun.mu.Unlock()
+	prober.mu.Lock()
+	prober.queue = []TraceResult{
+		{Colo: "DME", Loc: "RU", Warp: "on"},
+		{Colo: "DME", Loc: "RU", Warp: "on"},
+		{Colo: "AMS", Loc: "NL", Warp: "on", LatencyMs: 42},
+	}
+	prober.mu.Unlock()
+	runner.hits = []Hit{{Endpoint: "162.159.193.9:1002", PingMs: 42, Colo: "AMS", Loc: "NL", Warp: "on"}}
+
+	s.checkOnce(context.Background(), p, st)
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.calls) != 1 {
+		t.Fatalf("ожидался 1 запуск сканера при подмене, получили %d", len(runner.calls))
+	}
+	if runner.calls[0].Ifname != "nwg3" || runner.calls[0].Concurrency != 1 {
+		t.Fatalf("ожидался скан через внешний интерфейс nwg3 (Concurrency=1), получили %+v", runner.calls[0])
+	}
+	if runner.calls[0].PrivateKey != "aW5uZXItcHJpdi1rZXk=" {
+		t.Fatalf("ожидался ключ InnerAccount, получили %q", runner.calls[0].PrivateKey)
 	}
 }

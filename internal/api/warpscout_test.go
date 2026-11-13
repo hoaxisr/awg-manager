@@ -308,3 +308,128 @@ func TestWarpOps_AddressAndUsedIPv4(t *testing.T) {
 		t.Fatalf("ожидался addressV4=172.16.0.7 в ответе, получили %+v", wrap.Data)
 	}
 }
+
+func TestWarpOps_Rename(t *testing.T) {
+	ctx := context.Background()
+	ops, svc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg11": tunnel.StateRunning,
+		"awg50": tunnel.StateRunning,
+		"awg99": tunnel.StateRunning,
+	})
+	seedWarpTunnel(t, store, "awg11", "kernel")
+	seedTunnel(t, store, &storage.AWGTunnel{
+		ID:      "awg50",
+		Name:    "WARP Locked",
+		Enabled: true,
+		Locked:  true,
+		Backend: "nativewg",
+		Peer:    storage.AWGPeer{PublicKey: warpscout.WarpPeerPublicKey, Endpoint: "162.159.192.82:864"},
+	})
+	seedTunnel(t, store, &storage.AWGTunnel{
+		ID:      "awg99",
+		Name:    "Custom",
+		Enabled: true,
+		Backend: "kernel",
+		Peer:    storage.AWGPeer{PublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", Endpoint: "1.2.3.4:51820"},
+	})
+	var updatedNames []string
+	svc.updateFn = func(_ context.Context, _, newStored *storage.AWGTunnel) error {
+		updatedNames = append(updatedNames, newStored.Name)
+		return nil
+	}
+
+	if err := ops.Rename(ctx, warpscout.TargetKernel, "awg11", "WARP FRA"); err != nil {
+		t.Fatalf("Rename kernel: %v", err)
+	}
+	if len(updatedNames) != 1 || updatedNames[0] != "WARP FRA" {
+		t.Fatalf("ожидался вызов Svc.Update с именем WARP FRA, получили %v", updatedNames)
+	}
+	if svc.restartCalls != 0 {
+		t.Fatalf("переименование не должно перезапускать туннель: restarts=%d", svc.restartCalls)
+	}
+	got11, err := store.Get("awg11")
+	if err != nil || got11.Name != "WARP FRA" {
+		t.Fatalf("имя awg11 не сохранилось в store: %+v (%v)", got11, err)
+	}
+	if err := ops.Rename(ctx, warpscout.TargetNative, "awg50", "WARP HEL"); !errors.Is(err, warpscout.ErrProtected) {
+		t.Fatalf("залоченный туннель не должен переименовываться, err=%v", err)
+	}
+	if err := ops.Rename(ctx, warpscout.TargetKernel, "awg99", "WARP HEL"); !errors.Is(err, warpscout.ErrNotWarp) {
+		t.Fatalf("не-WARP туннель не должен переименовываться, err=%v", err)
+	}
+}
+
+func TestWarpTunnelOps_ViaMetadataAndObfuscationSources(t *testing.T) {
+	ctx := context.Background()
+	ops, _, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg50": tunnel.StateRunning,
+		"awg60": tunnel.StateRunning,
+		"awg20": tunnel.StateRunning,
+	})
+	seedTunnel(t, store, &storage.AWGTunnel{
+		ID:       "awg50",
+		Name:     "WARP HEL",
+		Enabled:  true,
+		Backend:  "nativewg",
+		NWGIndex: 3,
+		Interface: storage.AWGInterface{
+			PrivateKey: "gZwP6wviWSsSUhp4AbX0iLuzKKVVTwlB5asMAQ+BWBE=",
+			Address:    "172.16.0.10/32",
+			AWGObfuscation: storage.AWGObfuscation{
+				Jc: 4, Jmin: 40, Jmax: 70, I1: "<b 0x0102>",
+			},
+		},
+		Peer: storage.AWGPeer{PublicKey: warpscout.WarpPeerPublicKey, Endpoint: "162.159.192.255:880"},
+	})
+	seedTunnel(t, store, &storage.AWGTunnel{
+		ID:           "awg60",
+		Name:         "WARP-in-WARP FRA",
+		Enabled:      true,
+		Backend:      "nativewg",
+		NWGIndex:     4,
+		ISPInterface: "Wireguard3",
+		Interface: storage.AWGInterface{
+			PrivateKey: "gZwP6wviWSsSUhp4AbX0iLuzKKVVTwlB5asMAQ+BWBF=",
+			Address:    "172.16.0.11/32",
+		},
+		Peer: storage.AWGPeer{PublicKey: warpscout.WarpPeerPublicKey, Endpoint: "162.159.193.1:2408"},
+	})
+	seedTunnel(t, store, &storage.AWGTunnel{
+		ID:      "awg20",
+		Name:    "NuxtAWG",
+		Enabled: true,
+		Backend: "kernel",
+		Interface: storage.AWGInterface{
+			PrivateKey: "gZwP6wviWSsSUhp4AbX0iLuzKKVVTwlB5asMAQ+BWBG=",
+			Address:    "10.0.0.2/32",
+			AWGObfuscation: storage.AWGObfuscation{
+				Jc: 5, Jmin: 10, Jmax: 50, S1: 99, S2: 88, H1: "100", I1: "<b 0xdead><r 4>",
+			},
+		},
+		Peer: storage.AWGPeer{PublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", Endpoint: "1.2.3.4:51820"},
+	})
+
+	list, err := ops.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var innerRef *warpscout.TunnelRef
+	for i := range list {
+		if list[i].ID == "awg60" {
+			innerRef = &list[i]
+		}
+	}
+	if innerRef == nil || innerRef.ViaTunnelID != "awg50" || innerRef.ViaIface != "if-awg50" || !innerRef.ViaRunning {
+		t.Fatalf("Via* не заполнились для WARP-in-WARP: %+v", innerRef)
+	}
+
+	sources := ops.ObfuscationSources(ctx)
+	if len(sources) != 2 {
+		t.Fatalf("ожидались 2 источника обфускации (NuxtAWG + WARP HEL), получили %+v", sources)
+	}
+	// Не-WARP рабочий туннель NuxtAWG должен идти первым
+	if sources[0].Name != "NuxtAWG" || sources[0].AWG.SignatureProfile != warpscout.SignatureCustom ||
+		sources[0].AWG.Jc != 5 || sources[0].AWG.I1 != "<b 0xdead><r 4>" {
+		t.Fatalf("неожиданный первый источник обфускации: %+v", sources[0])
+	}
+}

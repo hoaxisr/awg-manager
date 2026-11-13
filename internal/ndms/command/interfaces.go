@@ -263,6 +263,11 @@ func (c *InterfaceCommands) SetDescription(ctx context.Context, iface query.Conf
 	}
 	return postMutationChecked(ctx, c.poster, c.save, payload, "set description "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
+		func() {
+			if c.queries.WGServers != nil {
+				c.queries.WGServers.Invalidate(name)
+			}
+		},
 		c.queries.RunningConfig.InvalidateAll)
 }
 

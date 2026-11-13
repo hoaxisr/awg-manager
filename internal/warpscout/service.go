@@ -34,6 +34,12 @@ const (
 	TopicWatchdog = "warpscout:watchdog"
 )
 
+// CreateOptions — дополнительные параметры создания туннеля (каскад WARP-in-WARP).
+type CreateOptions struct {
+	ViaMode TargetMode
+	ViaID   string
+}
+
 // TunnelOps — операции над туннелями, которые автопилоту нужны от
 // остального приложения. Реализация живёт в internal/api.
 type TunnelOps interface {
@@ -42,9 +48,11 @@ type TunnelOps interface {
 	// Get — один туннель; ошибка, если его нет.
 	Get(ctx context.Context, mode TargetMode, id string) (*TunnelRef, error)
 	// Create создаёт туннель из .conf и возвращает его.
-	Create(ctx context.Context, mode TargetMode, name, conf string) (*TunnelRef, error)
+	Create(ctx context.Context, mode TargetMode, name, conf string, opts CreateOptions) (*TunnelRef, error)
 	// SwapEndpoint меняет endpoint пира на лету, не пересоздавая интерфейс.
 	SwapEndpoint(ctx context.Context, mode TargetMode, id, endpoint string) error
+	// Rename переименовывает туннель (карточку и описание интерфейса в NDMS).
+	Rename(ctx context.Context, mode TargetMode, id, name string) error
 }
 
 // WANResolver — имя ядра физического WAN по умолчанию; up=false — линк упал.
@@ -57,9 +65,12 @@ type Deps struct {
 	Tunnels TunnelOps
 	Prober  TraceProber
 	WAN     WANResolver
-	// Routes — доступные маршруты (WAN-интерфейсы и запущенные не-WARP туннели)
+	// Routes — доступные маршруты (WAN-интерфейсы, VPN-туннели и WARP)
 	// для выбора интерфейса сканера.
 	Routes func(ctx context.Context) []RouteRef
+	// ObfuscationSources — существующие на роутере AWG-туннели, из которых
+	// можно скопировать обфускацию для скана и создания туннелей.
+	ObfuscationSources func(ctx context.Context) []ObfuscationSource
 	// UsedIPv4 — IPv4-адреса, уже занятые существующими туннелями и интерфейсами роутера.
 	UsedIPv4 func(ctx context.Context) []string
 	HTTP     HTTPClientFactory
@@ -134,17 +145,19 @@ type EngineInfo struct {
 
 // State — полный снимок для UI.
 type State struct {
-	Engine            EngineInfo     `json:"engine"`
-	Account           *Account       `json:"account"`
-	AccountUnreadable bool           `json:"accountUnreadable"`
-	DefaultWAN        string         `json:"defaultWan,omitempty"`
-	Routes            []RouteRef     `json:"routes"`
-	UsedIPv4          []string       `json:"usedIpv4,omitempty"`
-	Config            Config         `json:"config"`
-	Scan              ScanStatus     `json:"scan"`
-	Watch             []WatchStatus  `json:"watch"`
-	Stats             []ProfileStats `json:"stats"`
-	History           []SwapEvent    `json:"history"`
+	Engine             EngineInfo          `json:"engine"`
+	Account            *Account            `json:"account"`
+	HasInnerAccount    bool                `json:"hasInnerAccount"`
+	AccountUnreadable  bool                `json:"accountUnreadable"`
+	DefaultWAN         string              `json:"defaultWan,omitempty"`
+	Routes             []RouteRef          `json:"routes"`
+	ObfuscationSources []ObfuscationSource `json:"obfuscationSources,omitempty"`
+	UsedIPv4           []string            `json:"usedIpv4,omitempty"`
+	Config             Config              `json:"config"`
+	Scan               ScanStatus          `json:"scan"`
+	Watch              []WatchStatus       `json:"watch"`
+	Stats              []ProfileStats      `json:"stats"`
+	History            []SwapEvent         `json:"history"`
 }
 
 // ApplyRequest — применить найденный эндпоинт.
@@ -152,11 +165,15 @@ type ApplyRequest struct {
 	// Action: "create" — новый туннель, "swap" — подменить endpoint.
 	Action          string     `json:"action"`
 	Endpoint        string     `json:"endpoint"`
+	Colo            string     `json:"colo,omitempty"`
 	Mode            TargetMode `json:"mode"`
 	TargetID        string     `json:"targetId,omitempty"`
 	Name            string     `json:"name,omitempty"`
 	AddressV4       string     `json:"addressV4,omitempty"`
 	Protocol        string     `json:"protocol,omitempty"`
+	ViaMode         TargetMode `json:"viaMode,omitempty"`
+	ViaID           string     `json:"viaId,omitempty"`
+	AWG             *AWGParams `json:"awg,omitempty"`
 	EnableAutopilot bool       `json:"enableAutopilot"`
 	Filters         *Filters   `json:"filters,omitempty"`
 }
@@ -182,6 +199,7 @@ type Service struct {
 	d Deps
 
 	engineMu sync.Mutex // один процесс сканера на роутер
+	innerMu  sync.Mutex // сериализация ленивой регистрации 2-го слота WARP-in-WARP
 	// acctMu — одна операция над учётной записью за раз, включая её сетевую
 	// часть: параллельные регистрация и привязка лицензии иначе записали бы
 	// каждая свою копию, и локальный ключ разошёлся бы с ключом у Cloudflare.
@@ -308,18 +326,26 @@ func (s *Service) State() State {
 			usedIPv4 = u
 		}
 	}
+	obfSources := []ObfuscationSource{}
+	if s.d.ObfuscationSources != nil {
+		if src := s.d.ObfuscationSources(s.rootCtx); len(src) > 0 {
+			obfSources = src
+		}
+	}
 	return State{
-		Engine:            s.Engine(),
-		Account:           s.d.Store.Account(),
-		AccountUnreadable: s.d.Store.AccountUnreadable(),
-		DefaultWAN:        defaultWAN,
-		Routes:            routes,
-		UsedIPv4:          usedIPv4,
-		Config:            cfg,
-		Scan:              scan,
-		Watch:             watch,
-		Stats:             stats,
-		History:           s.d.Store.History(),
+		Engine:             s.Engine(),
+		Account:            s.d.Store.Account(),
+		HasInnerAccount:    s.d.Store.InnerAccount() != nil,
+		AccountUnreadable:  s.d.Store.AccountUnreadable(),
+		DefaultWAN:         defaultWAN,
+		Routes:             routes,
+		ObfuscationSources: obfSources,
+		UsedIPv4:           usedIPv4,
+		Config:             cfg,
+		Scan:               scan,
+		Watch:              watch,
+		Stats:              stats,
+		History:            s.d.Store.History(),
 	}
 }
 
@@ -542,57 +568,229 @@ func (s *Service) SetAccountAddress(address string) (*Account, error) {
 	return s.d.Store.Account(), nil
 }
 
-// DeleteAccountLocal забывает учётную запись (и снимает её у Cloudflare).
+// DeleteAccountLocal забывает учётную запись (и снимает её у Cloudflare),
+// а также очищает дополнительный слот WARP-in-WARP.
 func (s *Service) DeleteAccountLocal(ctx context.Context) error {
 	s.acctMu.Lock()
 	defer s.acctMu.Unlock()
 	acct := s.d.Store.Account()
+	inner := s.d.Store.InnerAccount()
 	if err := s.d.Store.SetAccount(nil); err != nil {
 		return err
 	}
+	_ = s.d.Store.SetInnerAccount(nil)
 	if acct != nil {
 		_ = s.doAccountOp(ctx, func(hc *http.Client) error {
 			return DeleteAccount(ctx, hc, acct)
 		})
 	}
+	if inner != nil {
+		_ = s.doAccountOp(ctx, func(hc *http.Client) error {
+			return DeleteAccount(ctx, hc, inner)
+		})
+	}
 	return nil
+}
+
+func endpointHost(ep string) string {
+	ep = strings.TrimSpace(ep)
+	if ep == "" {
+		return ""
+	}
+	if host, _, ok := strings.Cut(ep, ":"); ok {
+		return strings.TrimSpace(host)
+	}
+	return ep
+}
+
+func bareIPHost(raw string) string {
+	s := strings.TrimSpace(strings.SplitN(raw, "/", 2)[0])
+	if ip, err := netip.ParseAddr(s); err == nil && ip.Is4() {
+		return ip.String()
+	}
+	return ""
+}
+
+func (s *Service) resolveRouteTunnel(ctx context.Context, iface string) *TunnelRef {
+	if iface == "" || s.d.Tunnels == nil {
+		return nil
+	}
+	list, err := s.d.Tunnels.List(ctx)
+	if err != nil {
+		return nil
+	}
+	for i := range list {
+		if list[i].Iface == iface && !list[i].Protected {
+			c := list[i]
+			return &c
+		}
+	}
+	return nil
+}
+
+func (s *Service) pickNonCollidingIPv4(ctx context.Context, preferred string, avoid ...string) string {
+	occupied := map[string]bool{}
+	for _, a := range avoid {
+		if h := bareIPHost(a); h != "" {
+			occupied[h] = true
+		}
+	}
+	if s.d.UsedIPv4 != nil {
+		for _, ip := range s.d.UsedIPv4(ctx) {
+			if h := bareIPHost(ip); h != "" {
+				occupied[h] = true
+			}
+		}
+	}
+	if s.d.Tunnels != nil {
+		if list, err := s.d.Tunnels.List(ctx); err == nil {
+			for _, t := range list {
+				if h := bareIPHost(t.AddressV4); h != "" {
+					occupied[h] = true
+				}
+			}
+		}
+	}
+	if h := bareIPHost(preferred); h != "" && !occupied[h] {
+		return preferred
+	}
+	for sub := 0; sub <= 1; sub++ {
+		for last := 2; last <= 254; last++ {
+			cand := "172.16." + strconv.Itoa(sub) + "." + strconv.Itoa(last)
+			if !occupied[cand] {
+				return cand
+			}
+		}
+	}
+	return "172.16.0.3"
+}
+
+// ensureDistinctAccount возвращает учётную запись WARP, чей PublicKey не
+// совпадает ни с одним из avoidPubKeys (иначе Cloudflare разрывает внешний
+// туннель при появлении пакета с тем же ключом). При необходимости лениво
+// регистрирует и шифрует второй слот InnerAccount.
+func (s *Service) ensureDistinctAccount(ctx context.Context, routeIface string, avoidPubKeys ...string) (*Account, error) {
+	avoid := map[string]bool{}
+	for _, k := range avoidPubKeys {
+		if k = strings.TrimSpace(k); k != "" {
+			avoid[k] = true
+		}
+	}
+	primary := s.d.Store.Account()
+	if len(avoid) > 0 && primary != nil && primary.PrivateKey != "" && primary.PublicKey != "" && !avoid[primary.PublicKey] {
+		return primary, nil
+	}
+
+	s.innerMu.Lock()
+	defer s.innerMu.Unlock()
+
+	if inner := s.d.Store.InnerAccount(); inner != nil && inner.PrivateKey != "" && !avoid[inner.PublicKey] {
+		if primary == nil || inner.PublicKey != primary.PublicKey {
+			return inner, nil
+		}
+	}
+
+	var fresh *Account
+	var firstErr error
+	if routeIface != "" && s.d.HTTP != nil {
+		if hc, err := s.d.HTTP(routeIface); err == nil && hc != nil {
+			reg, rerr := RegisterAccount(ctx, hc)
+			if rerr == nil {
+				fresh = reg
+			} else {
+				firstErr = rerr
+			}
+		} else if err != nil {
+			firstErr = err
+		}
+	}
+	if fresh == nil && (firstErr == nil || shouldRetryFallback(firstErr)) {
+		err := s.doAccountOp(ctx, func(hc *http.Client) error {
+			reg, rerr := RegisterAccount(ctx, hc)
+			if rerr != nil {
+				return rerr
+			}
+			fresh = reg
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	if fresh == nil {
+		return nil, firstErr
+	}
+	var avoidIPs []string
+	if primary != nil && primary.AddressV4 != "" {
+		avoidIPs = append(avoidIPs, primary.AddressV4)
+	}
+	fresh.AddressV4 = s.pickNonCollidingIPv4(ctx, "172.16.0.3", avoidIPs...)
+	if err := s.d.Store.SetInnerAccount(fresh); err != nil {
+		return nil, err
+	}
+	s.logInfo("register", "warp-in-warp", "Зарегистрирован дополнительный слот Cloudflare WARP")
+	return s.d.Store.InnerAccount(), nil
 }
 
 // ── Параметры скана ──────────────────────────────────────────────
 
-func (s *Service) buildParams(ctx context.Context, acct *Account, awg AWGParams, f Filters, maxHits, maxCandidates int, endpoints, exclude []string, ifnameOverride string) (ScanParams, error) {
+func (s *Service) buildParams(ctx context.Context, acct *Account, awg AWGParams, f Filters, maxHits, maxCandidates int, endpoints, exclude []string, ifnameOverride string, outer *TunnelRef) (ScanParams, error) {
 	f = normalizeFilters(f)
 	wan := s.resolveScanIface(ctx, ifnameOverride)
-	tunIP := strings.TrimSpace(strings.SplitN(acct.AddressV4, "/", 2)[0])
+	tunIP := bareIPHost(acct.AddressV4)
 	if tunIP == "" {
 		tunIP = DefaultTunnelIPv4
 	}
+	if outer != nil && outer.IsWarp {
+		if h := endpointHost(outer.Endpoint); h != "" {
+			exclude = append(append([]string(nil), exclude...), h)
+		}
+		if outerIP := bareIPHost(outer.AddressV4); outerIP != "" && tunIP == outerIP {
+			tunIP = s.pickNonCollidingIPv4(ctx, "172.16.0.3", outerIP)
+		}
+	}
 	p := ScanParams{
-		PrivateKey:       acct.PrivateKey,
-		PeerPublicKey:    acct.PeerPublicKey,
-		TunnelIP:         tunIP,
-		Reserved:         acct.Reserved(),
-		Endpoints:        nonNil(endpoints),
-		Prefixes:         DefaultPrefixes,
-		Ports:            DefaultPorts,
-		ExcludeEndpoints: nonNil(exclude),
-		MaxCandidates:    1500,
-		Concurrency:      48,
-		PPS:              200,
-		TimeoutMs:        1500,
-		DeadlineMs:       int(scanDeadline / time.Millisecond),
-		MaxHits:          maxHits,
-		Ifname:           wan,
-		PingIP:           "1.1.1.1",
-		ProbeTrace:       true,
-		TraceIP:          "104.16.132.229",
-		TraceHost:        "cp.cloudflare.com",
-		ProbeTG:          f.RequireTelegram,
-		ExcludeColos:     f.ExcludeColos,
-		AllowedCountries: f.AllowedCountries,
-		MaxRTTMs:         f.MaxRTTMs,
-		RequireTrace:     true,
-		RequireTG:        f.RequireTelegram,
+		PrivateKey: acct.PrivateKey,
+		// Реальные туннели (Keenetic NativeWG/System и Linux amneziawg) всегда шлют
+		// reserved = [0, 0, 0] в заголовке WireGuard. Подстановка clientId при скане
+		// позволяла обходить сигнатуры DPI только в сканере и давала ложноположительные узлы.
+		PeerPublicKey:        acct.PeerPublicKey,
+		TunnelIP:             tunIP,
+		Reserved:             [3]int{0, 0, 0},
+		Endpoints:            nonNil(endpoints),
+		Prefixes:             DefaultPrefixes,
+		Ports:                DefaultPorts,
+		ExcludeEndpoints:     nonNil(exclude),
+		MaxCandidates:        1500,
+		Concurrency:          48,
+		PPS:                  200,
+		TimeoutMs:            1500,
+		DeadlineMs:           int(scanDeadline / time.Millisecond),
+		MaxHits:              maxHits,
+		Ifname:               wan,
+		PingIP:               "1.1.1.1",
+		ProbeTrace:           true,
+		TraceIP:              "104.16.132.229",
+		TraceHost:            "cp.cloudflare.com",
+		ProbeTG:              f.RequireTelegram,
+		ExcludeColos:         f.ExcludeColos,
+		AllowedCountries:     f.AllowedCountries,
+		MaxRTTMs:             f.MaxRTTMs,
+		RequireTrace:         true,
+		RequireTG:            f.RequireTelegram,
+		DurabilityPings:      8,
+		DurabilityIntervalMs: 180,
+	}
+	if outer != nil && outer.IsWarp {
+		// Внутри внешнего WARP-туннеля нет ТСПУ и почти 100% Anycast-IP
+		// приземляются на один и тот же PoP Cloudflare. Высокая параллельность
+		// с одним PrivateKey вызывает перезапись сессии на стороне PoP;
+		// последовательный проход (Concurrency=1) даёт стабильные 100% хитов.
+		p.Concurrency = 1
+		p.PPS = 20
+		p.DurabilityPings = 2
+		p.DurabilityIntervalMs = 120
+		p.MaxCandidates = 120
 	}
 	if p.PeerPublicKey == "" {
 		p.PeerPublicKey = WarpPeerPublicKey
@@ -612,7 +810,12 @@ func (s *Service) buildParams(ctx context.Context, acct *Account, awg AWGParams,
 		p.MaxHits = 10
 	}
 	if f.Protocol == ProtocolAWG {
-		sig, err := signatureHex(awg)
+		maxSigBytes := 0
+		if outer != nil && outer.IsWarp {
+			// Пакеты рукопожатия I1..I5 должны уместиться внутри внешнего MTU 1280.
+			maxSigBytes = 1200
+		}
+		sig, err := signatureHex(awg, maxSigBytes)
 		if err != nil {
 			return p, err
 		}
@@ -674,7 +877,8 @@ func (s *Service) StartScan(req ScanRequest) error {
 	if maxHits <= 0 || maxHits > 100 {
 		maxHits = 20
 	}
-	params, err := s.buildParams(s.rootCtx, acct, s.awgForUse(), req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, req.Ifname)
+	awg := s.awgForUse()
+	params, err := s.buildParams(s.rootCtx, acct, awg, req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, req.Ifname, nil)
 	if err != nil {
 		s.engineMu.Unlock()
 		return err
@@ -694,28 +898,44 @@ func (s *Service) StartScan(req ScanRequest) error {
 		defer s.wg.Done()
 		defer s.engineMu.Unlock()
 		defer cancel()
+		var runErr error
+		scanIface := s.resolveScanIface(ctx, req.Ifname)
+		outer := s.resolveRouteTunnel(ctx, scanIface)
+		if outer != nil && outer.IsWarp {
+			if !outer.Running {
+				runErr = errors.New("внешний туннель WARP выключен — сначала запустите его")
+			} else {
+				var scanAcct *Account
+				scanAcct, runErr = s.ensureDistinctAccount(ctx, outer.Iface, outer.LocalPublicKey)
+				if runErr == nil {
+					params, runErr = s.buildParams(ctx, scanAcct, awg, req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, outer.Iface, outer)
+				}
+			}
+		}
 		lastPub := time.Time{}
-		runErr := s.d.Runner.Run(ctx, params, func(ev EngineEvent) {
-			s.mu.Lock()
-			switch ev.Type {
-			case "start":
-				s.scan.Total = ev.Total
-			case "progress":
-				s.scan.Done, s.scan.Total = ev.Done, ev.Total
-			case "hit":
-				s.scan.Hits = append(s.scan.Hits, ev.Hit())
-				sortHits(s.scan.Hits)
-			case "done":
-				s.scan.Done = ev.Scanned
-				s.scan.Aborted = ev.Aborted
-				s.scan.ElapsedMs = ev.ElapsedMs
-			}
-			s.mu.Unlock()
-			if ev.Type == "hit" || time.Since(lastPub) > 700*time.Millisecond {
-				lastPub = time.Now()
-				s.publish(TopicScan, s.ScanSnapshot())
-			}
-		})
+		if runErr == nil {
+			runErr = s.d.Runner.Run(ctx, params, func(ev EngineEvent) {
+				s.mu.Lock()
+				switch ev.Type {
+				case "start":
+					s.scan.Total = ev.Total
+				case "progress":
+					s.scan.Done, s.scan.Total = ev.Done, ev.Total
+				case "hit":
+					s.scan.Hits = append(s.scan.Hits, ev.Hit())
+					sortHits(s.scan.Hits)
+				case "done":
+					s.scan.Done = ev.Scanned
+					s.scan.Aborted = ev.Aborted
+					s.scan.ElapsedMs = ev.ElapsedMs
+				}
+				s.mu.Unlock()
+				if ev.Type == "hit" || time.Since(lastPub) > 700*time.Millisecond {
+					lastPub = time.Now()
+					s.publish(TopicScan, s.ScanSnapshot())
+				}
+			})
+		}
 		if runErr == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			runErr = errors.New("сканер не завершился за отведённое время и был остановлен")
 		}
@@ -829,17 +1049,25 @@ func (s *Service) SaveConfig(ctx context.Context, in Config) (Config, error) {
 			return Config{}, fmt.Errorf("%w: I%d содержит перевод строки", ErrInvalidInput, i+1)
 		}
 	}
-	if prof := cfg.AWG.SignatureProfile; prof != "none" && prof != "" {
+	switch prof := cfg.AWG.SignatureProfile; prof {
+	case "", "none":
+		cfg.AWG.SignatureProfile = "none"
+		cfg.AWG.I1, cfg.AWG.I2, cfg.AWG.I3, cfg.AWG.I4, cfg.AWG.I5 = "", "", "", "", ""
+	case SignatureCustom:
+		for idx, spec := range []string{cfg.AWG.I1, cfg.AWG.I2, cfg.AWG.I3, cfg.AWG.I4, cfg.AWG.I5} {
+			if _, err := CPSToRaw(spec); err != nil {
+				return Config{}, fmt.Errorf("%w: сигнатура I%d: %v", ErrInvalidInput, idx+1, err)
+			}
+		}
+	default:
 		old := s.d.Store.Config().AWG
 		if old.SignatureProfile != prof {
 			// Сменили профиль сигнатуры — перегенерируем пакеты.
 			cfg.AWG.I1, cfg.AWG.I2, cfg.AWG.I3, cfg.AWG.I4, cfg.AWG.I5 = "", "", "", "", ""
 		}
 		if _, err := EnsureSignature(&cfg.AWG); err != nil {
-			return Config{}, fmt.Errorf("сигнатура: %w", err)
+			return Config{}, fmt.Errorf("%w: сигнатура: %v", ErrInvalidInput, err)
 		}
-	} else {
-		cfg.AWG.I1, cfg.AWG.I2, cfg.AWG.I3, cfg.AWG.I4, cfg.AWG.I5 = "", "", "", "", ""
 	}
 	if err := s.d.Store.SetConfig(cfg); err != nil {
 		return Config{}, err
@@ -873,6 +1101,47 @@ func newID() string {
 
 // ── Применение ───────────────────────────────────────────────────
 
+func validateOverrideAWG(in AWGParams) (AWGParams, error) {
+	if in.Jc < 0 {
+		in.Jc = 0
+	}
+	if in.Jc > 128 {
+		in.Jc = 128
+	}
+	if in.Jmin < 0 {
+		in.Jmin = 0
+	}
+	if in.Jmax < in.Jmin {
+		in.Jmax = in.Jmin
+	}
+	if in.Jmax > 1280 {
+		in.Jmax = 1280
+	}
+	for idx, v := range []string{in.I1, in.I2, in.I3, in.I4, in.I5} {
+		if strings.ContainsAny(v, "\r\n\x00") {
+			return AWGParams{}, fmt.Errorf("%w: I%d содержит перевод строки", ErrInvalidInput, idx+1)
+		}
+	}
+	switch prof := strings.TrimSpace(in.SignatureProfile); prof {
+	case "", "none":
+		in.SignatureProfile = "none"
+		in.I1, in.I2, in.I3, in.I4, in.I5 = "", "", "", "", ""
+	case SignatureCustom:
+		in.SignatureProfile = SignatureCustom
+		for idx, spec := range []string{in.I1, in.I2, in.I3, in.I4, in.I5} {
+			if _, err := CPSToRaw(spec); err != nil {
+				return AWGParams{}, fmt.Errorf("%w: сигнатура I%d: %v", ErrInvalidInput, idx+1, err)
+			}
+		}
+	default:
+		in.SignatureProfile = prof
+		if _, err := EnsureSignature(&in); err != nil {
+			return AWGParams{}, fmt.Errorf("%w: сигнатура: %v", ErrInvalidInput, err)
+		}
+	}
+	return in, nil
+}
+
 // Apply создаёт туннель из найденного узла или подменяет endpoint.
 func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, error) {
 	if s.d.Tunnels == nil {
@@ -885,6 +1154,7 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		return nil, err
 	}
 	var ref *TunnelRef
+	var createOpts CreateOptions
 	switch req.Action {
 	case "create":
 		acct := s.d.Store.Account()
@@ -895,25 +1165,93 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		if protocol != ProtocolWG {
 			protocol = ProtocolAWG
 		}
+		if req.Mode == TargetNative && protocol == ProtocolWG {
+			return nil, fmt.Errorf("%w: тип Native WG требует протокол AmneziaWG — выберите протокол AmneziaWG или тип «Системный»", ErrInvalidInput)
+		}
+		awg := s.awgForUse()
+		if req.AWG != nil {
+			var err error
+			awg, err = validateOverrideAWG(*req.AWG)
+			if err != nil {
+				return nil, err
+			}
+		}
+		mtu := DefaultMTU
+		useAcct := acct
+		viaID := strings.TrimSpace(req.ViaID)
+		var outer *TunnelRef
+		if viaID != "" {
+			if req.Mode == TargetKernel {
+				return nil, fmt.Errorf("%w: для WARP-in-WARP выберите тип Native WG или Системный", ErrInvalidInput)
+			}
+			viaMode := req.ViaMode
+			if viaMode == "" {
+				if list, lerr := s.d.Tunnels.List(ctx); lerr == nil {
+					for _, t := range list {
+						if t.ID == viaID {
+							viaMode = t.Mode
+							break
+						}
+					}
+				}
+			}
+			if !viaMode.Valid() {
+				return nil, fmt.Errorf("%w: не указан тип внешнего туннеля", ErrInvalidInput)
+			}
+			var err error
+			outer, err = s.d.Tunnels.Get(ctx, viaMode, viaID)
+			if err != nil {
+				return nil, err
+			}
+			if err := checkTarget(outer); err != nil {
+				return nil, err
+			}
+			if outer.ViaIface != "" {
+				return nil, fmt.Errorf("%w: внешний туннель «%s» уже является каскадным WARP-in-WARP", ErrInvalidInput, outer.Name)
+			}
+			if epHost := endpointHost(req.Endpoint); epHost != "" && epHost == endpointHost(outer.Endpoint) {
+				return nil, fmt.Errorf("%w: endpoint %s совпадает с IP внешнего туннеля (%s)", ErrInvalidInput, req.Endpoint, outer.Endpoint)
+			}
+			innerAcct, err := s.ensureDistinctAccount(ctx, outer.Iface, outer.LocalPublicKey)
+			if err != nil {
+				return nil, fmt.Errorf("второй слот WARP-in-WARP: %w", err)
+			}
+			useAcct = innerAcct
+			mtu = NestedWarpMTU
+			createOpts = CreateOptions{ViaMode: outer.Mode, ViaID: outer.ID}
+		}
 		name := strings.TrimSpace(req.Name)
 		if name == "" {
-			name = "WARP"
+			if viaID != "" {
+				name = "WARP-in-WARP"
+			} else {
+				name = "WARP"
+			}
 		}
-		cfgAcct := *acct
+		cfgAcct := *useAcct
 		if rawAddr := strings.TrimSpace(req.AddressV4); rawAddr != "" {
 			norm, err := NormalizeTunnelIPv4(rawAddr)
 			if err != nil {
 				return nil, err
 			}
+			if outer != nil && bareIPHost(norm) != "" && bareIPHost(norm) == bareIPHost(outer.AddressV4) {
+				return nil, fmt.Errorf("%w: IPv4 внутреннего туннеля совпадает с внешним туннелем (%s)", ErrInvalidInput, outer.AddressV4)
+			}
 			cfgAcct.AddressV4 = norm
+		} else if outer != nil {
+			cfgAcct.AddressV4 = s.pickNonCollidingIPv4(ctx, cfgAcct.AddressV4, outer.AddressV4)
 		}
-		conf := BuildConf(&cfgAcct, s.awgForUse(), protocol, req.Endpoint)
-		created, err := s.d.Tunnels.Create(ctx, req.Mode, name, conf)
+		conf := BuildConfWithMTU(&cfgAcct, awg, protocol, req.Endpoint, mtu)
+		created, err := s.d.Tunnels.Create(ctx, req.Mode, name, conf, createOpts)
 		if err != nil {
 			return nil, err
 		}
 		ref = created
-		s.logInfo("apply", name, fmt.Sprintf("Создан туннель WARP (%s) с узлом %s", req.Mode, req.Endpoint))
+		if viaID != "" {
+			s.logInfo("apply", name, fmt.Sprintf("Создан WARP-in-WARP (%s) через %s с узлом %s", req.Mode, outer.Name, req.Endpoint))
+		} else {
+			s.logInfo("apply", name, fmt.Sprintf("Создан туннель WARP (%s) с узлом %s", req.Mode, req.Endpoint))
+		}
 	case "swap":
 		cur, err := s.d.Tunnels.Get(ctx, req.Mode, req.TargetID)
 		if err != nil {
@@ -925,11 +1263,16 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		if err := s.d.Tunnels.SwapEndpoint(ctx, req.Mode, req.TargetID, req.Endpoint); err != nil {
 			return nil, err
 		}
+		tunName := cur.Name
+		if req.Colo != "" {
+			tunName = s.syncTunnelColoName(ctx, req.Mode, req.TargetID, cur.Name, req.Colo)
+		}
 		s.noteManualSwap(req.Mode, req.TargetID, req.Endpoint)
-		s.logInfo("apply", cur.Name, fmt.Sprintf("Endpoint заменён вручную: %s → %s", cur.Endpoint, req.Endpoint))
+		s.logInfo("apply", tunName, fmt.Sprintf("Endpoint заменён вручную: %s → %s", cur.Endpoint, req.Endpoint))
 		ref, _ = s.d.Tunnels.Get(ctx, req.Mode, req.TargetID)
 		if ref == nil {
 			ref = cur
+			ref.Name = tunName
 		}
 	default:
 		return nil, fmt.Errorf("%w: action должен быть create или swap", ErrInvalidInput)
@@ -947,15 +1290,24 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		p := Profile{ID: newID(), Name: ref.Name, Enabled: true, TargetMode: req.Mode, TargetID: ref.ID, Filters: filters}
 		// Профиль на тот же туннель заменяем, а не дублируем.
 		kept := cfg.Profiles[:0]
+		hasOtherEnabled := false
 		for _, old := range cfg.Profiles {
 			if old.TargetMode == p.TargetMode && old.TargetID == p.TargetID {
 				continue
+			}
+			if old.Enabled {
+				hasOtherEnabled = true
 			}
 			kept = append(kept, old)
 		}
 		cfg.Profiles = append(kept, p)
 		if cfg.ProfileMode == ProfileModeSingle {
-			cfg.ActiveProfileID = p.ID
+			if createOpts.ViaID != "" && hasOtherEnabled {
+				cfg.ProfileMode = ProfileModeMulti
+				cfg.ActiveProfileID = ""
+			} else {
+				cfg.ActiveProfileID = p.ID
+			}
 		}
 		if _, err := s.SaveConfig(ctx, cfg); err != nil {
 			// Туннель уже создан (endpoint уже подменён): ошибка в ответе
@@ -967,6 +1319,30 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		}
 	}
 	return res, nil
+}
+
+func (s *Service) syncTunnelColoName(ctx context.Context, mode TargetMode, id, currentName, colo string) string {
+	newName, ok := DeriveWarpTunnelName(currentName, colo)
+	if !ok || s.d.Tunnels == nil {
+		return currentName
+	}
+	if err := s.d.Tunnels.Rename(ctx, mode, id, newName); err != nil {
+		s.logWarn("rename", currentName, fmt.Sprintf("Не удалось переименовать туннель под %s: %v", strings.ToUpper(strings.TrimSpace(colo)), err))
+		return currentName
+	}
+	if s.d.Store != nil {
+		s.d.Store.SyncProfileTargetName(mode, id, currentName, newName)
+	}
+	s.mu.Lock()
+	for _, w := range s.watchers {
+		if w.p.TargetMode == mode && w.p.TargetID == id && w.p.Name == currentName {
+			w.p.Name = newName
+		}
+	}
+	s.mu.Unlock()
+	s.logInfo("rename", newName, fmt.Sprintf("Название туннеля обновлено под колокейшн %s: %s → %s",
+		strings.ToUpper(strings.TrimSpace(colo)), currentName, newName))
+	return newName
 }
 
 func (s *Service) noteManualSwap(mode TargetMode, targetID, endpoint string) {

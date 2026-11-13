@@ -325,6 +325,17 @@ func (s *Service) checkOnce(ctx context.Context, p Profile, st *watcherState) {
 		})
 		return
 	}
+	if ref.ViaIface != "" && !ref.ViaRunning {
+		st.fails = 0
+		msg := "внешний туннель выключен — автопилот ждёт"
+		if ref.ViaLabel != "" {
+			msg = fmt.Sprintf("внешний туннель «%s» выключен — автопилот ждёт", ref.ViaLabel)
+		}
+		s.setWatch(ctx, p.ID, func(ws *WatchStatus) {
+			ws.State, ws.Message, ws.LastCheck, ws.Fails, ws.Endpoint = WatchTargetStopped, msg, now, 0, ref.Endpoint
+		})
+		return
+	}
 
 	tr, terr := s.d.Prober.Trace(ctx, ref.Iface)
 	reason, coloBad := evaluate(tr, terr, p.Filters)
@@ -347,6 +358,9 @@ func (s *Service) checkOnce(ctx context.Context, p Profile, st *watcherState) {
 	}
 	if reason == "" {
 		st.fails, st.backoffIx = 0, 0
+		if trp != nil && trp.Colo != "" {
+			s.syncTunnelColoName(ctx, p.TargetMode, p.TargetID, ref.Name, trp.Colo)
+		}
 		s.recordCheckSample(ctx, p.ID, now, ref.Endpoint, trp, true, "")
 		s.setWatch(ctx, p.ID, func(ws *WatchStatus) {
 			ws.State, ws.Message, ws.LastCheck, ws.Trace, ws.Fails, ws.Endpoint = WatchOK, "", now, trp, 0, ref.Endpoint
@@ -373,7 +387,20 @@ func (s *Service) checkOnce(ctx context.Context, p Profile, st *watcherState) {
 	s.swap(ctx, p, ref, reason, st)
 }
 
+func (s *Service) liveProfileName(id, fallback string) string {
+	if s.d.Store == nil {
+		return fallback
+	}
+	for _, cp := range s.d.Store.Config().Profiles {
+		if cp.ID == id && cp.Name != "" {
+			return cp.Name
+		}
+	}
+	return fallback
+}
+
 func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason string, st *watcherState) {
+	p.Name = s.liveProfileName(p.ID, p.Name)
 	acct := s.d.Store.Account()
 	if acct == nil {
 		return
@@ -401,13 +428,50 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 	if ref.Endpoint != "" {
 		exclude = append(exclude, ref.Endpoint)
 	}
-	// Нельзя сканировать изнутри самого заменяемого туннеля — упадём на WAN по умолчанию.
-	scanOverride := s.d.Store.Config().ScanInterface
-	if scanOverride != "" && ref.Iface != "" && scanOverride == ref.Iface {
-		wan, _ := s.d.WAN(ctx)
-		scanOverride = wan
+	swapAcct := acct
+	if ref.LocalPublicKey != "" {
+		if inner := s.d.Store.InnerAccount(); inner != nil && inner.PublicKey == ref.LocalPublicKey {
+			swapAcct = inner
+		} else if acct.PublicKey != ref.LocalPublicKey && ref.ViaIface != "" {
+			if ia, aerr := s.ensureDistinctAccount(ctx, ref.ViaIface); aerr == nil && ia != nil {
+				swapAcct = ia
+			}
+		}
+	} else if ref.ViaIface != "" {
+		if inner := s.d.Store.InnerAccount(); inner != nil {
+			swapAcct = inner
+		}
 	}
-	params, err := s.buildParams(ctx, acct, s.awgForUse(), p.Filters, swapScanMaxHits, 0, nil, exclude, scanOverride)
+	var scanOverride string
+	var outerRef *TunnelRef
+	if ref.ViaIface != "" {
+		// Каскадный WARP-in-WARP обязан сканировать только через свой внешний туннель.
+		scanOverride = ref.ViaIface
+		if h := endpointHost(ref.ViaEndpoint); h != "" {
+			exclude = append(exclude, h)
+		}
+		outerRef = s.resolveRouteTunnel(ctx, ref.ViaIface)
+		if outerRef == nil {
+			outerRef = &TunnelRef{
+				Mode:     ref.ViaMode,
+				ID:       ref.ViaTunnelID,
+				Name:     ref.ViaLabel,
+				Iface:    ref.ViaIface,
+				Endpoint: ref.ViaEndpoint,
+				IsWarp:   true,
+				Running:  ref.ViaRunning,
+			}
+		}
+	} else {
+		// Нельзя сканировать изнутри самого заменяемого туннеля — упадём на WAN по умолчанию.
+		scanOverride = s.d.Store.Config().ScanInterface
+		if scanOverride != "" && ref.Iface != "" && scanOverride == ref.Iface {
+			wan, _ := s.d.WAN(ctx)
+			scanOverride = wan
+		}
+		outerRef = s.resolveRouteTunnel(ctx, s.resolveScanIface(ctx, scanOverride))
+	}
+	params, err := s.buildParams(ctx, swapAcct, s.awgForUse(), p.Filters, swapScanMaxHits, 0, nil, exclude, scanOverride, outerRef)
 	if err != nil {
 		s.finishSwap(ctx, p, ev, st, err, nil, false, false)
 		return
@@ -442,6 +506,10 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 		s.finishSwap(ctx, p, ev, st, fmt.Errorf("подмена endpoint: %w", err), nil, false, false)
 		return
 	}
+	curName := ref.Name
+	if best.Colo != "" {
+		curName = s.syncTunnelColoName(ctx, p.TargetMode, p.TargetID, curName, best.Colo)
+	}
 	// Контрольный trace после подмены.
 	select {
 	case <-ctx.Done():
@@ -461,6 +529,9 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 	case !cur.Running:
 		verifyErr = errors.New("после подмены туннель выключен")
 	default:
+		if cur.Name != "" {
+			curName = cur.Name
+		}
 		tr, terr := s.d.Prober.Trace(ctx, cur.Iface)
 		if terr != nil && verifyRetryDelay > 0 {
 			// Первый SYN через свежепереключённый туннель запускает рукопожатие WG —
@@ -480,7 +551,14 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 			verifyErr = errors.New("после подмены: " + r)
 		} else {
 			ev.Colo, ev.Loc = tr.Colo, tr.Loc
+			if tr.Colo != "" {
+				curName = s.syncTunnelColoName(ctx, p.TargetMode, p.TargetID, curName, tr.Colo)
+			}
 		}
+	}
+	if p.Name == ref.Name && curName != ref.Name {
+		p.Name = curName
+		ev.ProfileName = curName
 	}
 	s.finishSwap(ctx, p, ev, st, verifyErr, verified, false, true)
 }

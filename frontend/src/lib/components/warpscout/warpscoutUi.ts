@@ -18,6 +18,12 @@ import { formatDate, formatDuration, formatTime as formatClock } from '$lib/util
 export const QUICK_COLOS = ['LED', 'KJA', 'OVB', 'SVX'];
 export const SIGNATURE_PROFILES = ['quic_initial', 'dns', 'stun', 'dtls', 'sip', 'none'] as const;
 
+export function signatureProfileLabel(prof: string | undefined): string {
+	if (!prof || prof === 'none') return m.warpscout_sig_none();
+	if (prof === 'custom') return m.warpscout_sig_custom();
+	return prof;
+}
+
 export function modeLabel(mode: WarpTargetMode): string {
 	switch (mode) {
 		case 'kernel':

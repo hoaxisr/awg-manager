@@ -22,6 +22,8 @@ var EngineCandidates = []string{"/opt/sbin/awgm-warpscout", "/opt/bin/awgm-warps
 var DefaultPrefixes = []string{
 	"162.159.192.0/24", "162.159.193.0/24", "162.159.195.0/24",
 	"188.114.96.0/24", "188.114.97.0/24", "188.114.98.0/24", "188.114.99.0/24",
+	"8.6.112.0/24", "8.34.70.0/24", "8.34.146.0/24", "8.35.211.0/24",
+	"8.39.125.0/24", "8.39.204.0/24", "8.39.214.0/24", "8.47.69.0/24",
 }
 
 // DefaultPorts — порты, на которых WARP принимает WireGuard.
@@ -68,10 +70,12 @@ type ScanParams struct {
 	ProbeTG          bool      `json:"probe_tg"`
 	ExcludeColos     []string  `json:"exclude_colos"`
 	AllowedCountries []string  `json:"allowed_countries"`
-	MaxRTTMs         int       `json:"max_rtt_ms"`
-	RequireTrace     bool      `json:"require_trace"`
-	RequireTG        bool      `json:"require_tg"`
-	EmitRejects      bool      `json:"emit_rejects"`
+	MaxRTTMs             int       `json:"max_rtt_ms"`
+	RequireTrace         bool      `json:"require_trace"`
+	RequireTG            bool      `json:"require_tg"`
+	EmitRejects          bool      `json:"emit_rejects"`
+	DurabilityPings      int       `json:"durability_pings,omitempty"`
+	DurabilityIntervalMs int       `json:"durability_interval_ms,omitempty"`
 }
 
 // EngineEvent — строка JSONL из stdout C-модуля.

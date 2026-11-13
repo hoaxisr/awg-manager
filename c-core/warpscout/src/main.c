@@ -130,13 +130,18 @@ typedef struct {
     char excl_colos[MAX_LIST][8]; int n_excl_colos;
     char allowed[MAX_LIST][8]; int n_allowed;
     int max_rtt_ms, require_trace, require_tg, emit_rejects;
+    int dur_pings, dur_interval_ms;
 } config;
 
 static config C;
 
 static const char *DEFAULT_PEER = "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=";
-static const char *DEFAULT_PREFIXES[] = {"162.159.192.0/24", "162.159.195.0/24", "188.114.96.0/24",
-                                         "188.114.97.0/24", "188.114.98.0/24", "188.114.99.0/24"};
+static const char *DEFAULT_PREFIXES[] = {
+    "162.159.192.0/24", "162.159.193.0/24", "162.159.195.0/24",
+    "188.114.96.0/24", "188.114.97.0/24", "188.114.98.0/24", "188.114.99.0/24",
+    "8.6.112.0/24", "8.34.70.0/24", "8.34.146.0/24", "8.35.211.0/24",
+    "8.39.125.0/24", "8.39.204.0/24", "8.39.214.0/24", "8.47.69.0/24",
+};
 static const uint16_t DEFAULT_PORTS[] = {
     2408, 500, 1701, 4500, 854, 859, 864, 878, 880, 890, 891, 894, 903, 908, 928, 934, 939, 942,
     943, 945, 946, 955, 968, 987, 988, 1002, 1010, 1014, 1018, 1070, 1074, 1180, 1387, 1843, 2371,
@@ -386,6 +391,8 @@ static int load_config(const jval *o) {
     if (cfg_bool(o, "require_trace", 1, &C.require_trace)) return -1;
     if (cfg_bool(o, "require_tg", 0, &C.require_tg)) return -1;
     if (cfg_bool(o, "emit_rejects", 0, &C.emit_rejects)) return -1;
+    if (cfg_int(o, "durability_pings", 8, 0, 16, &v)) return -1; C.dur_pings = (int)v;
+    if (cfg_int(o, "durability_interval_ms", 180, 40, 2000, &v)) return -1; C.dur_interval_ms = (int)v;
     /* a requirement implies the corresponding probe */
     if (C.require_tg) C.probe_tg = 1;
     if (!C.probe_trace) C.require_trace = 0;
@@ -483,7 +490,7 @@ static int build_candidates(void) {
 
 /* -------------------------------------------------------------- scanner */
 
-enum { CS_FREE = 0, CS_HS, CS_PING, CS_PROBE };
+enum { CS_FREE = 0, CS_HS, CS_PING, CS_PROBE, CS_DURABILITY };
 enum { TCP_IDLE = 0, TCP_SYN_SENT, TCP_EST, TCP_DONE };
 
 typedef struct {
@@ -514,6 +521,10 @@ typedef struct {
     uint8_t rbuf[RBUF_SIZE];
     uint8_t rmark[RBUF_SIZE / 8];
     uint32_t contig;
+    int dur_target, dur_sent, dur_got_cnt, dur_rtt_sum;
+    uint32_t dur_got_mask;
+    uint64_t dur_sent_at[16];
+    int dur_draining, dur_round;
 } cand;
 
 static wg_identity g_id;
@@ -521,7 +532,7 @@ static cand *g_slots;
 static int g_nslots, g_active;
 static size_t g_done, g_hits;
 static uint16_t g_port_ctr, g_icmp_ctr;
-static char g_req[512];
+static char g_req[1024];
 static size_t g_req_len;
 static int g_fatal;
 
@@ -661,12 +672,92 @@ static void finish(cand *c, const char *reason) {
     release(c);
 }
 
+static void send_dur_ping(cand *c) {
+    uint8_t payload[512];
+    uint8_t pkt[600];
+    if (c->dur_sent >= c->dur_target || c->dur_sent >= 16) return;
+    int idx = c->dur_sent++;
+    uint16_t seq = (uint16_t)(100 + c->dur_round * 32 + idx);
+    for (size_t i = 0; i < sizeof(payload); i++) payload[i] = (uint8_t)('a' + (i % 26));
+    c->dur_sent_at[idx] = now_ms();
+    size_t n = pkt_icmp_echo(pkt, C.tunnel_ip, C.ping_ip, ++c->ip_id, c->icmp_id, seq, payload, sizeof(payload));
+    send_inner(c, pkt, n);
+}
+
+static void start_durability_round(cand *c, int round, int count) {
+    uint64_t now = now_ms();
+    if (count > 16) count = 16;
+    c->state = CS_DURABILITY;
+    c->dur_round = round;
+    c->dur_target = count;
+    c->dur_sent = 0;
+    c->dur_got_cnt = 0;
+    c->dur_rtt_sum = 0;
+    c->dur_got_mask = 0;
+    c->dur_draining = 0;
+    send_dur_ping(c);
+    if (c->dur_sent >= c->dur_target) {
+        uint64_t drain = (uint64_t)(C.timeout_ms < 650 ? C.timeout_ms : 650);
+        c->dur_draining = 1;
+        c->deadline = now + drain;
+    } else {
+        c->next_retx = now + (uint64_t)C.dur_interval_ms;
+        c->deadline = now + (uint64_t)count * (uint64_t)C.dur_interval_ms + (uint64_t)C.timeout_ms;
+    }
+}
+
+static void pass_to_durability_or_finish(cand *c) {
+    const char *r = evaluate(c, 1);
+    if (r || C.dur_pings <= 0) {
+        finish(c, r);
+        return;
+    }
+    start_durability_round(c, 0, C.dur_pings);
+}
+
+static void on_dur_reply(cand *c, uint16_t seq) {
+    int base = 100 + c->dur_round * 32;
+    int idx = (int)seq - base;
+    if (idx < 0 || idx >= c->dur_sent || idx >= 16) return;
+    uint32_t bit = 1u << idx;
+    if (c->dur_got_mask & bit) return;
+    c->dur_got_mask |= bit;
+    c->dur_got_cnt++;
+    int rtt = (int)(now_ms() - c->dur_sent_at[idx]);
+    if (rtt < 0) rtt = 0;
+    c->dur_rtt_sum += rtt;
+    if (c->dur_got_cnt >= c->dur_target) {
+        c->ping_ms = c->dur_rtt_sum / c->dur_got_cnt;
+        finish(c, evaluate(c, 1));
+    }
+}
+
+static void finish_durability_round(cand *c) {
+    int tail_miss = 0;
+    for (int k = c->dur_target - 1; k >= 0; k--) {
+        if (c->dur_got_mask & (1u << k)) break;
+        tail_miss++;
+    }
+    int tail_lim = c->dur_target >= 6 ? 3 : (c->dur_target >= 3 ? 2 : 1);
+    int torn = (c->dur_got_cnt == 0) || (tail_miss >= tail_lim) || (c->dur_got_cnt * 2 < c->dur_target);
+    if (!torn) {
+        c->ping_ms = c->dur_rtt_sum / c->dur_got_cnt;
+        finish(c, evaluate(c, 1));
+        return;
+    }
+    if (c->dur_round == 0 && c->dur_got_cnt > 0 && c->dur_target >= 4) {
+        start_durability_round(c, 1, 4);
+        return;
+    }
+    finish(c, "torn_down");
+}
+
 static void check_probes(cand *c) {
     const char *r = evaluate(c, 0);
     if (r) { finish(c, r); return; }
     int trace_res = !C.probe_trace || c->trace_done;
     int tg_res = !C.probe_tg || c->tg_done;
-    if (trace_res && tg_res) finish(c, evaluate(c, 1));
+    if (trace_res && tg_res) pass_to_durability_or_finish(c);
 }
 
 static void on_established(cand *c) {
@@ -682,7 +773,7 @@ static void on_echo_reply(cand *c, uint16_t seq) {
     uint64_t now = now_ms();
     c->ping_ms = (int)(now - c->ping_sent[seq & 7]);
     c->ping_ok = 1;
-    if (!C.probe_trace && !C.probe_tg) { finish(c, evaluate(c, 1)); return; }
+    if (!C.probe_trace && !C.probe_tg) { pass_to_durability_or_finish(c); return; }
     const char *r = evaluate(c, 0);
     if (r) { finish(c, r); return; }
     c->state = CS_PROBE;
@@ -796,9 +887,13 @@ static void dispatch_inner(const uint8_t *p, size_t len) {
     if (pkt_parse(p, len, &pi) != 0) return;
     for (int i = 0; i < g_nslots; i++) {
         cand *c = &g_slots[i];
-        if (pi.proto == 1) {
-            if (c->state == CS_PING && pi.icmp_type == 0 && pi.icmp_id == c->icmp_id && pi.src == C.ping_ip) {
+        if (pi.proto == 1 && pi.icmp_type == 0 && pi.icmp_id == c->icmp_id && pi.src == C.ping_ip) {
+            if (c->state == CS_PING) {
                 on_echo_reply(c, pi.icmp_seq);
+                return;
+            }
+            if (c->state == CS_DURABILITY) {
+                on_dur_reply(c, pi.icmp_seq);
                 return;
             }
         } else if (pi.proto == 6 && c->state == CS_PROBE) {
@@ -948,7 +1043,7 @@ static void handle_timers(cand *c, uint64_t now) {
         if (now >= c->deadline) {
             if (C.probe_trace && !c->trace_done) { parse_trace(c); c->trace_done = 1; c->trace_ok = c->colo[0] != 0; }
             if (C.probe_tg && !c->tg_done) c->tg_done = 1;
-            finish(c, evaluate(c, 1));
+            pass_to_durability_or_finish(c);
             return;
         }
         if (C.probe_trace && now >= c->trace.next_retx) {
@@ -961,6 +1056,22 @@ static void handle_timers(cand *c, uint64_t now) {
         if (C.probe_tg && c->tg.state == TCP_SYN_SENT && now >= c->tg.next_retx) {
             tcp_send(c, &c->tg, c->tg.iss, TCPF_SYN, 1200, NULL, 0);
             c->tg.next_retx = now + (uint64_t)retx_interval();
+        }
+        break;
+    case CS_DURABILITY:
+        if (!c->dur_draining && now >= c->next_retx) {
+            if (c->dur_sent < c->dur_target) send_dur_ping(c);
+            if (c->dur_sent >= c->dur_target) {
+                uint64_t drain = (uint64_t)(C.timeout_ms < 650 ? C.timeout_ms : 650);
+                c->dur_draining = 1;
+                c->deadline = now + drain;
+            } else {
+                c->next_retx = now + (uint64_t)C.dur_interval_ms;
+            }
+        }
+        if (now >= c->deadline) {
+            finish_durability_round(c);
+            return;
         }
         break;
     default:
@@ -984,9 +1095,15 @@ static int run_scan(void) {
     for (int i = 0; i < g_nslots; i++) g_slots[i].fd = WS_BAD_SOCK;
     os_random(&g_port_ctr, sizeof(g_port_ctr));
     os_random(&g_icmp_ctr, sizeof(g_icmp_ctr));
-    g_req_len = (size_t)snprintf(g_req, sizeof(g_req),
-                                 "GET /cdn-cgi/trace HTTP/1.1\r\nHost: %s\r\nUser-Agent: awgm-warpscout\r\n"
-                                 "Connection: close\r\n\r\n", C.trace_host);
+    {
+        char pad[321];
+        memset(pad, 'a', sizeof(pad) - 1);
+        pad[sizeof(pad) - 1] = 0;
+        g_req_len = (size_t)snprintf(g_req, sizeof(g_req),
+                                     "GET /cdn-cgi/trace HTTP/1.1\r\nHost: %s\r\nUser-Agent: awgm-warpscout\r\n"
+                                     "X-Pad: %s\r\nConnection: close\r\n\r\n", C.trace_host, pad);
+        if (g_req_len >= sizeof(g_req)) g_req_len = sizeof(g_req) - 1;
+    }
 
     emit("{\"type\":\"start\",\"total\":%lu,\"version\":\"" WS_VERSION "\"}", (unsigned long)g_ncands);
 
@@ -1033,6 +1150,7 @@ static int run_scan(void) {
             uint64_t due = c->deadline;
             if (c->state == CS_HS && !c->hs_retx && c->next_retx < due) due = c->next_retx;
             if (c->state == CS_PING && c->next_retx < due) due = c->next_retx;
+            if (c->state == CS_DURABILITY && !c->dur_draining && c->next_retx < due) due = c->next_retx;
             int d = due > now ? (int)(due - now) : 0;
             if (d < timeout) timeout = d;
         }

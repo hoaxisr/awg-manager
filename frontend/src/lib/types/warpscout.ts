@@ -62,8 +62,20 @@ export interface WarpConfig {
 export interface WarpRouteRef {
 	name: string;
 	label: string;
-	kind: 'wan' | 'tunnel' | string;
+	kind: 'wan' | 'tunnel' | 'warp' | string;
 	up: boolean;
+	tunnelMode?: WarpTargetMode;
+	tunnelId?: string;
+}
+
+export interface WarpObfuscationSource {
+	id: string;
+	name: string;
+	iface?: string;
+	mode: WarpTargetMode;
+	running: boolean;
+	isWarp: boolean;
+	awg: WarpAWGParams;
 }
 
 export interface WarpHit {
@@ -177,9 +189,11 @@ export interface WarpEngineInfo {
 export interface WarpScoutState {
 	engine: WarpEngineInfo;
 	account: WarpAccount | null;
+	hasInnerAccount?: boolean;
 	accountUnreadable: boolean;
 	defaultWan?: string;
 	routes?: WarpRouteRef[] | null;
+	obfuscationSources?: WarpObfuscationSource[] | null;
 	usedIpv4?: string[] | null;
 	config: WarpConfig;
 	scan: WarpScanStatus;
@@ -199,6 +213,12 @@ export interface WarpTunnelRef {
 	running: boolean;
 	protected: boolean;
 	protectReason?: string;
+	viaMode?: WarpTargetMode;
+	viaTunnelId?: string;
+	viaIface?: string;
+	viaLabel?: string;
+	viaEndpoint?: string;
+	viaRunning?: boolean;
 }
 
 export interface WarpScanRequest {
@@ -211,11 +231,15 @@ export interface WarpScanRequest {
 export interface WarpApplyRequest {
 	action: 'create' | 'swap';
 	endpoint: string;
+	colo?: string;
 	mode: WarpTargetMode;
 	targetId?: string;
 	name?: string;
 	addressV4?: string;
 	protocol?: WarpProtocol;
+	viaMode?: WarpTargetMode;
+	viaId?: string;
+	awg?: WarpAWGParams;
 	enableAutopilot: boolean;
 	filters?: WarpFilters;
 }

@@ -353,6 +353,39 @@ func (c *WireguardCommands) SetPeerEndpoint(ctx context.Context, iface query.Con
 		func() { c.invalidateServer(ifaceName) })
 }
 
+// SetPeerConnectVia задаёт маршрут подключения пира системного WireGuard-туннеля
+// (например `connect via Wireguard3` для режима WARP-in-WARP). Сохраняет comment пира,
+// чтобы частичная правка в NDMS его не стёрла.
+func (c *WireguardCommands) SetPeerConnectVia(ctx context.Context, iface query.Confirmed, pubKey, viaInterface string) error {
+	peer, err := c.freshPeerIn(ctx, iface, pubKey)
+	if err != nil {
+		if errors.Is(err, peersubnet.ErrPeerNotFound) {
+			return err
+		}
+		return fmt.Errorf("check peer on router: %w", err)
+	}
+	ifaceName := iface.Name()
+	var connectVal any = true
+	if strings.TrimSpace(viaInterface) != "" {
+		connectVal = map[string]any{"via": strings.TrimSpace(viaInterface)}
+	}
+	p := map[string]any{"key": pubKey, "connect": connectVal}
+	if peer.Description != "" {
+		p["comment"] = peer.Description
+	}
+	payload := map[string]any{
+		"interface": map[string]any{
+			ifaceName: map[string]any{
+				"wireguard": map[string]any{
+					"peer": []map[string]any{p},
+				},
+			},
+		},
+	}
+	return postMutationChecked(ctx, c.poster, c.save, payload, "set peer connect via "+ifaceName,
+		func() { c.invalidateServer(ifaceName) })
+}
+
 // UpdatePeerAllowIPs removes old /32 and sets a new one. Снятие старого
 // терпит `no such net in peer` (11.A/11.8): /32 уже может не стоять — после
 // отказа отката или правки мимо панели, и смена адреса иначе застревала бы.

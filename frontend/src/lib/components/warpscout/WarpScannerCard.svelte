@@ -7,7 +7,16 @@
 	import RichText from '$lib/components/ui/RichText.svelte';
 	import type { SegmentedOption } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
-	import type { WarpFilters, WarpHit, WarpProtocol, WarpScanStatus, WarpTunnelRef } from '$lib/types/warpscout';
+	import type {
+		WarpAWGParams,
+		WarpFilters,
+		WarpHit,
+		WarpObfuscationSource,
+		WarpProtocol,
+		WarpRouteRef,
+		WarpScanStatus,
+		WarpTunnelRef,
+	} from '$lib/types/warpscout';
 	import WarpCreateTunnelModal from './WarpCreateTunnelModal.svelte';
 	import WarpFiltersEditor from './WarpFiltersEditor.svelte';
 	import WarpHitsTable from './WarpHitsTable.svelte';
@@ -29,6 +38,9 @@
 		accountAddressV4?: string;
 		targets: WarpTunnelRef[];
 		usedIpv4?: string[];
+		routes?: WarpRouteRef[];
+		obfuscationSources?: WarpObfuscationSource[];
+		globalAwg?: WarpAWGParams;
 		scanInterface?: string;
 		routeSummary?: string;
 		/** В автопилоте есть несохранённые правки — включать его из сканера нельзя. */
@@ -44,6 +56,9 @@
 		accountAddressV4 = '',
 		targets,
 		usedIpv4 = [],
+		routes = [],
+		obfuscationSources = [],
+		globalAwg,
 		scanInterface = '',
 		routeSummary,
 		autopilotLocked,
@@ -274,6 +289,10 @@
 		{accountAddressV4}
 		{targets}
 		{usedIpv4}
+		{routes}
+		scanIface={scanInterface}
+		{obfuscationSources}
+		{globalAwg}
 		{autopilotLocked}
 		onclose={() => (createHit = null)}
 		ondone={applied}

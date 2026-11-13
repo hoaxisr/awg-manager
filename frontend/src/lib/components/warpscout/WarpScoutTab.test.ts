@@ -206,4 +206,55 @@ describe('WarpScoutTab', () => {
 		await fireEvent.blur(input);
 		expect(input.value).toBe('20');
 	});
+
+	it('shows WARP routes in route picker and copies obfuscation from existing tunnel', async () => {
+		const initial = state(
+			{},
+			{
+				routes: [
+					{ name: 'nwg1', label: 'Office', kind: 'tunnel', up: true },
+					{
+						name: 'nwg3',
+						label: 'WARP HEL',
+						kind: 'warp',
+						up: true,
+						tunnelMode: 'native',
+						tunnelId: 'awg50',
+					},
+				],
+				obfuscationSources: [
+					{
+						id: 'awg20',
+						name: 'NuxtAWG',
+						iface: 'opkgtun20',
+						mode: 'kernel',
+						running: true,
+						isWarp: false,
+						awg: {
+							signatureProfile: 'custom',
+							jc: 6,
+							jmin: 15,
+							jmax: 65,
+							i1: '<b 0xdead><r 4>',
+						},
+					},
+				],
+			},
+		);
+		const { container } = await mount(initial);
+
+		// Route picker lists the WARP-in-WARP group option
+		await fireEvent.click(chip(container, 1));
+		expect(container.textContent).toContain('WARP HEL');
+		await fireEvent.keyDown(window, { key: 'Escape' });
+
+		// AWG popover copies parameters from an existing tunnel
+		await fireEvent.click(chip(container, 0));
+		const copySelect = container.querySelector<HTMLSelectElement>('[role="dialog"] select');
+		if (copySelect) {
+			await fireEvent.change(copySelect, { target: { value: 'kernel:awg20' } });
+			await tick();
+			expect(container.textContent).toContain('Jc 6');
+		}
+	});
 });

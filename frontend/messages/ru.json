@@ -8244,5 +8244,18 @@
 	"warpscout_confirm_reissue_sec": "Приватный ключ изменится, и все ранее созданные WARP-туннели перестанут работать: сами они не обновятся, их придётся создать заново.",
 	"warpscout_confirm_del_acct_title": "Удалить учётную запись WARP?",
 	"warpscout_confirm_del_acct_msg": "Ключи учётной записи будут удалены с роутера.",
-	"warpscout_confirm_del_acct_sec": "Сканирование и автопилот перестанут работать до новой регистрации. Уже созданные туннели не удаляются."
+	"warpscout_confirm_del_acct_sec": "Сканирование и автопилот перестанут работать до новой регистрации. Уже созданные туннели не удаляются.",
+	"warpscout_sig_custom": "из туннеля",
+	"warpscout_route_group_warp": "WARP (WARP-in-WARP)",
+	"warpscout_awg_copy_label": "Скопировать из рабочего туннеля",
+	"warpscout_awg_copy_placeholder": "Выберите туннель…",
+	"warpscout_awg_custom_hint": "Скопированы Jc/Jmin/Jmax и I1–I5 из рабочего туннеля. Выбор пресета выше заменит сигнатуру.",
+	"warpscout_modal_via_label": "Выход (маршрут)",
+	"warpscout_modal_via_direct": "Напрямую через WAN",
+	"warpscout_modal_via_warp": "WARP-in-WARP через {name} ({iface})",
+	"warpscout_modal_via_hint": "Каскадный туннель с MTU 1220 и отдельным ключом WARP поверх {name}.",
+	"warpscout_modal_via_kernel_warn": "Kernel AWG не поддерживает «Подключаться через» — для WARP-in-WARP выберите Native WG или Системный.",
+	"warpscout_modal_native_wg_warn": "Native WG требует параметры AmneziaWG — выберите протокол AmneziaWG или тип «Системный».",
+	"warpscout_modal_obf_label": "Обфускация AWG",
+	"warpscout_modal_obf_global": "Глобальные настройки ({label})"
 }
