@@ -37,6 +37,9 @@ const ruleSetDownloadTimeout = 30 * time.Second
 // detail of the inspector.
 type ruleSetCache struct {
 	cacheDir string
+	// onPublish is optional and used by the separate coverage index. The
+	// Inspector's behavior is unchanged; the signal happens after atomic rename.
+	onPublish func(context.Context)
 
 	mu      sync.Mutex
 	entries map[string]ruleSetCacheEntry
@@ -119,19 +122,48 @@ func newRuleSetHTTPClient() *http.Client {
 // не применён, — тогда напрямую, как до входа. Иной отказ прокси (407, обрыв
 // detour'а) — ошибка: молча уйти напрямую значило бы снова качать мимо detour.
 func ruleSetGet(rawURL, via string) (*http.Response, error) {
+	return ruleSetGetContext(context.Background(), rawURL, via)
+}
+
+func ruleSetGetContext(ctx context.Context, rawURL, via string) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
 	if via == "" {
-		return ruleSetHTTPClient.Get(rawURL)
+		return ruleSetHTTPClient.Do(request)
 	}
 	tr, err := httpclient.NewTransport(httpclient.TransportConfig{ProxyURL: via})
 	if err != nil {
 		return nil, err
 	}
 	tr.DisableKeepAlives = true // транспорт на один запрос: без простаивающих соединений
-	resp, err := (&http.Client{Timeout: ruleSetDownloadTimeout, Transport: tr}).Get(rawURL)
+	resp, err := (&http.Client{Timeout: ruleSetDownloadTimeout, Transport: tr}).Do(request)
 	if errors.Is(err, syscall.ECONNREFUSED) {
-		return ruleSetHTTPClient.Get(rawURL)
+		fallback, fallbackErr := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if fallbackErr != nil {
+			return nil, fallbackErr
+		}
+		return ruleSetHTTPClient.Do(fallback)
 	}
 	return resp, err
+}
+
+// freshCachedFile lets a newly started coverage generation reuse the common
+// on-disk cache before its in-memory entries have been reconstructed. It is
+// never called by warm indexed matching. The existing Inspector path is unchanged.
+func (c *ruleSetCache) freshCachedFile(url, format string) (string, bool) {
+	hash := sha256.Sum256([]byte(url))
+	ext := ".srs"
+	if format == "source" {
+		ext = ".json"
+	}
+	path := filepath.Join(c.cacheDir, hex.EncodeToString(hash[:8])+ext)
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || time.Since(info.ModTime()) >= ruleSetCacheTTL {
+		return "", false
+	}
+	return path, true
 }
 
 // getOrDownload returns the local file path for url, downloading and
@@ -140,6 +172,15 @@ func ruleSetGet(rawURL, via string) (*http.Response, error) {
 // the URL serves. via — прокси служебного входа (RuleSet.fetchVia), "" —
 // напрямую.
 func (c *ruleSetCache) getOrDownload(url, format string, emit InspectProgressFunc, tag, via string) (string, error) {
+	return c.getOrDownloadContext(context.Background(), url, format, emit, tag, via)
+}
+
+// getOrDownloadContext is the cancellation-aware variant used by coverage
+// generation. The existing Inspector keeps its historical background wrapper.
+func (c *ruleSetCache) getOrDownloadContext(ctx context.Context, url, format string, emit InspectProgressFunc, tag, via string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if emit != nil {
 		emit(InspectProgress{Phase: "rule_set_cache_check", Message: fmt.Sprintf("Проверяем cache rule_set %s", tag), RuleSetTag: tag})
 	}
@@ -180,7 +221,7 @@ func (c *ruleSetCache) getOrDownload(url, format string, emit InspectProgressFun
 	if emit != nil {
 		emit(InspectProgress{Phase: "rule_set_download_start", Message: fmt.Sprintf("Скачиваем rule_set %s…", tag), RuleSetTag: tag})
 	}
-	resp, err := ruleSetGet(url, via)
+	resp, err := ruleSetGetContext(ctx, url, via)
 	if err != nil {
 		if emit != nil {
 			emit(InspectProgress{Phase: "rule_set_download_error", Message: fmt.Sprintf("Ошибка скачивания rule_set %s", tag), RuleSetTag: tag})
@@ -231,6 +272,9 @@ func (c *ruleSetCache) getOrDownload(url, format string, emit InspectProgressFun
 		expiresAt: time.Now().Add(ruleSetCacheTTL),
 	}
 	c.mu.Unlock()
+	if c.onPublish != nil {
+		c.onPublish(ctx)
+	}
 	if emit != nil {
 		emit(InspectProgress{Phase: "rule_set_download_done", Message: fmt.Sprintf("rule_set %s скачан", tag), RuleSetTag: tag})
 	}
@@ -338,9 +382,10 @@ func matchRuleSet(input string, rs RuleSet, singboxBinary string, cache *ruleSet
 		if hasMarker {
 			return true, true, nil
 		}
-		// Non-zero exit with non-empty stderr that lacks the marker AND
-		// is not the "no match" structure → real error worth surfacing.
-		if stderrTrim != "" && !strings.Contains(strings.ToLower(stderrTrim), "match") {
+		// Preserve the supported non-match forms: silent non-zero exit and the
+		// explicit "no match" diagnostic. Any other execution diagnostic is an
+		// error even when its text happens to contain the word "match".
+		if stderrTrim != "" && !strings.EqualFold(stderrTrim, "no match") {
 			return false, true, fmt.Errorf("sing-box: %s", stderrTrim)
 		}
 		return false, true, nil

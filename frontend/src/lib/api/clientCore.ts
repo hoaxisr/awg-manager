@@ -21,7 +21,7 @@ export function readDiagnosticsSanitizedPreference(): boolean {
 
 export interface ApiResponse<T> {
 	success?: boolean;
-	error?: boolean;
+	error?: boolean | string;
 	data?: T;
 	message?: string;
 	code?: string;
@@ -164,8 +164,9 @@ export class CoreClient {
 		}
 
 		if (!response.ok || data.error) {
+			const rawError = typeof data.error === 'string' ? data.error : '';
 			const err: Error & { status?: number; body?: unknown } = new Error(
-				data.message || m.api_request_error({ status: response.status })
+				rawError || data.message || m.api_request_error({ status: response.status })
 			);
 			err.status = response.status;
 			err.body = data;

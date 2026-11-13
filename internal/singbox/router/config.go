@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -1151,10 +1152,21 @@ func isSystemPrivateRule(r Rule) bool {
 	return r.IPIsPrivate != nil && *r.IPIsPrivate
 }
 
-// isSystemRule reports whether r is one of the leading system rules that
-// EnsureSystemRules manages — bulk outbound changes must never touch them.
+// isAutolistOwnerRule accepts only the new satellite's unconditional owner.
+// A narrowed or foreign-managed reference to awgm-autolist remains user data.
+func isAutolistOwnerRule(r Rule) bool {
+	if len(r.RuleSet) != 1 || r.RuleSet[0] != "awgm-autolist" || !r.ActionIsRoute() || r.Outbound == "" {
+		return false
+	}
+	r.RuleSet, r.Action, r.Outbound = nil, "", ""
+	return reflect.DeepEqual(r, Rule{})
+}
+
+// isSystemRule reports rules whose ownership must not be taken by user edits.
+// The Autolist owner is protected wherever it occurs; the original four rules
+// additionally have their existing prefix semantics in systemPrefixLen.
 func isSystemRule(r Rule) bool {
-	return isSystemSniffRule(r) || isSystemHijackRule(r) || isSystemUDPTimeoutRule(r) || isSystemPrivateRule(r)
+	return isSystemSniffRule(r) || isSystemHijackRule(r) || isSystemUDPTimeoutRule(r) || isSystemPrivateRule(r) || isAutolistOwnerRule(r)
 }
 
 // IsSystemRule reports a rule EnsureSystemRules keeps on top (sniff,

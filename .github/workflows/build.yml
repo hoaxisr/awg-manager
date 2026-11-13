@@ -115,7 +115,7 @@ jobs:
             build-essential pkg-config
 
       # sing-box НЕ собирается здесь: наш sing-box (AWG3+mieru+xhttp) собирает CI
-      # форка hoaxisr/amnezia-box и публикует релизом. embedded.go (закоммичен,
+      # форка hoaxisr/awgm-box и публикует релизом. embedded.go (закоммичен,
       # regen-embedded.sh) несёт URL/SHA256/Size его ассетов; роутер скачивает
       # бинарь в рантайме. IPK sing-box не содержит.
 

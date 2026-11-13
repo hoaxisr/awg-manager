@@ -42,7 +42,7 @@ func runSingboxCheck(t *testing.T, bin string, config []byte) (string, bool) {
 // захватывающий slot-байты) → минимальный sing-box-конфиг из slot →
 // `sing-box check` против awg3-форк-бинаря → PASS.
 //
-// Бинарь — из env AWG3_SINGBOX_BIN (host-сборка hoaxisr/amnezia-box@awg-1.14
+// Бинарь — из env AWG3_SINGBOX_BIN (host-сборка hoaxisr/awgm-box@awg-1.14
 // с `-tags with_awg`). Не берём sing-box из PATH: там может оказаться upstream
 // без AWG → ложный pass/skip.
 func TestIntegration_RouteboxToSlotSingboxCheck(t *testing.T) {

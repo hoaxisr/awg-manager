@@ -1,20 +1,12 @@
 #!/bin/sh
-# init-скрипт Entware для awgmautolist (сателлит awg-manager).
-# Регистрируется как пакет awgmautolist: старт/стоп/статус по S99-конвенции.
+# Entware lifecycle for awgmautolist. Logging is owned by the daemon in tmpfs.
 
 ENABLED=yes
 PROG=/opt/bin/awgmautolist
 PIDFILE=/opt/var/run/awgmautolist.pid
-LOGFILE=/opt/var/log/awgmautolist.log
 
-# Конфиг флагов: одна строка shell-присваиваний, например:
-#   AWGM_AUTOLIST_ARGS="-verbose"
 [ -f /opt/etc/awgmautolist.conf ] && . /opt/etc/awgmautolist.conf
-# Отдельный файл пишет AWGM через expert-only /api/autolist/control.
-# Он не содержит API-ключ и не перетирает ручные аргументы из conf.
 [ -f /opt/etc/awgmautolist.enabled ] && . /opt/etc/awgmautolist.enabled
-# API-ключ пишет AWGM при установке и смене ключа (0600); читается последним,
-# поэтому AWGM_API_KEY из conf им перекрывается.
 [ -f /opt/etc/awgmautolist.key ] && . /opt/etc/awgmautolist.key
 
 ROUTER_URL="${AWGM_ROUTER_URL:-http://127.0.0.1:2222}"
@@ -23,15 +15,14 @@ LISTEN="${AWGM_LISTEN:-127.0.0.1:2226}"
 
 start() {
     [ "$ENABLED" = "yes" ] || { echo "awgmautolist disabled"; return 0; }
-    [ -x "$PROG" ] || { echo "$PROG не найден"; return 1; }
+    [ -x "$PROG" ] || { echo "$PROG not found"; return 1; }
     if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-        echo "уже запущен"
+        echo "already running"
         return 0
     fi
-    echo "запуск awgmautolist..."
     AWGM_API_KEY="$API_KEY"
     export AWGM_API_KEY
-    start-stop-daemon -S -b -m -p "$PIDFILE" -x "$PROG" -O "$LOGFILE" -- \
+    start-stop-daemon -S -b -m -p "$PIDFILE" -x "$PROG" -- \
         -router "$ROUTER_URL" $AWGM_AUTOLIST_ARGS -listen "$LISTEN"
 }
 
@@ -46,14 +37,13 @@ stop() {
         done
         kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null
         rm -f "$PIDFILE"
-        echo "остановлен"
     fi
 }
 
 case "$1" in
-    start)   start ;;
-    stop)    stop ;;
+    start) start ;;
+    stop) stop ;;
     restart) stop; start ;;
-    status)  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then echo "running"; else echo "stopped"; fi ;;
-    *)       echo "usage: $0 {start|stop|restart|status}" ;;
+    status) if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then echo running; else echo stopped; fi ;;
+    *) echo "usage: $0 {start|stop|restart|status}" ;;
 esac

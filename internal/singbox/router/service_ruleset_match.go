@@ -18,6 +18,7 @@ func (s *ServiceImpl) MatchRuleSets(ctx context.Context, input string, tags []st
 	}
 	s.inspectCacheOnce.Do(func() {
 		s.inspectCache = newRuleSetCache("")
+		s.inspectCache.onPublish = func(context.Context) { s.InvalidateCoverageIndex() }
 	})
 	return MatchRuleSets(input, tags, ruleSets, binary, s.inspectCache), nil
 }

@@ -116,7 +116,9 @@
     // awgmautolist: вкладка видна expert-уровню всегда, когда статус получен, —
     // и неустановленному сателлиту (там кнопка установки), и отключённому.
     // Ниже expert статус не опрашивается (autolistStatusIfExpert в сторе).
-    let autolistCandidateCount = $derived($autolistStatusIfExpert?.data?.candidates?.length ?? 0);
+    let autolistWaitingCount = $derived(
+        ($autolistStatusIfExpert?.data?.candidates ?? []).filter((c) => c.state === 'waiting').length,
+    );
     let autolistAvailable = $derived($autolistStatusIfExpert?.data != null);
 
     let pendingTab = $state<string | null>(null);
@@ -289,8 +291,8 @@
         ip: 'ipRoutes',
         hrneo: 'hrNeo',
         zapret: 'zapret',
-        geodata: 'geoData',
         autolist: 'autolist',
+        geodata: 'geoData',
         singbox: 'singboxRouter',
     };
 
@@ -360,7 +362,9 @@
                   }
                 : null,
             // awgmautolist — сателлит автосписка: вкладка expert-уровня.
-            autolistAvailable ? { id: 'autolist', label: m.routing_page_tab_autolist(), badge: autolistCandidateCount, separatorBefore: true } : null,
+            autolistAvailable
+                ? { id: 'autolist', label: m.routing_page_tab_autolist(), badge: autolistWaitingCount, separatorBefore: true }
+                : null,
             (hydrarouteInstalled || singboxInstalled)
                 ? { id: 'geodata', label: m.routing_page_tab_geodata(), badge: geoFileCount, separatorBefore: true }
                 : null,
@@ -433,8 +437,9 @@
 
         // Autolist — тот же гейт, что у Zapret: ждём expert-статус сателлита,
         // пока deep-link ?tab=autolist не откатили на первую вкладку.
-        const autolistPending = $autolistStatusIfExpert?.lastFetchedAt === 0 && $autolistStatusIfExpert.status !== 'error';
-        if (activeTab === 'autolist' && !tabsInclude(items, activeTab) && autolistPending) {
+        const expert = $autolistStatusIfExpert;
+        const autolistPending = expert !== null && expert.lastFetchedAt === 0 && expert.status !== 'error';
+        if (activeTab === 'autolist' && !tabsInclude(items, activeTab) && (($settings === null && !$settingsUnavailable) || autolistPending)) {
             return;
         }
 

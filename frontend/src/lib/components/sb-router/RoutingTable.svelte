@@ -179,7 +179,7 @@
             class="route-reorder-btn"
             title={m.sb_router_table_move_up_title({ n: row.idx })}
             aria-label={m.sb_router_table_move_up_aria({ n: row.idx })}
-            disabled={row.idx === 0}
+            disabled={row.idx === 0 || isSystemRule(rules[row.idx - 1])}
             onclick={() => onMove(row.idx, 'up')}
           >
             <ChevronUp size={15} />
@@ -189,7 +189,7 @@
             class="route-reorder-btn"
             title={m.sb_router_table_move_down_title({ n: row.idx })}
             aria-label={m.sb_router_table_move_down_aria({ n: row.idx })}
-            disabled={row.idx === rules.length - 1}
+            disabled={row.idx === rules.length - 1 || isSystemRule(rules[row.idx + 1])}
             onclick={() => onMove(row.idx, 'down')}
           >
             <ChevronDown size={15} />

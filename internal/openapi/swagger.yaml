@@ -324,25 +324,22 @@ definitions:
   api.AutolistControlRequest:
     properties:
       action:
-        example: disable
+        example: enable
         type: string
     type: object
   api.AutolistDismissRequest:
     properties:
-      domain:
-        example: blocked.example.com
+      id:
+        example: domain|example.com|tcp|443
         type: string
     type: object
   api.AutolistProxyRequest:
     properties:
       body:
         additionalProperties: {}
-        description: Body — произвольный JSON-тело вызова (опционально).
         type: object
       path:
-        description: 'Path — путь сателлита: /add, /probe, /exclude, /restore, /config,
-          /forget или /dismiss.'
-        example: /add
+        example: /config
         type: string
     type: object
   api.Awg3ImportRequest:
@@ -8132,38 +8129,58 @@ definitions:
     type: object
   autolistdetect.Candidate:
     properties:
-      domain:
+      correlationID:
         type: string
-      fails:
-        type: integer
-      host:
+      coverage:
+        $ref: '#/definitions/autolistdetect.CoverageEvidence'
+      direct:
+        $ref: '#/definitions/autolistdetect.CheckEvidence'
+      firstAt:
         type: string
-      ip:
+      id:
         type: string
       lastAt:
         type: string
-      probeError:
+      lastError:
         type: string
-      probedAt:
-        type: string
-      sources:
-        items:
-          type: string
-        type: array
-      stage:
+      reason:
         type: string
       state:
         type: string
-      tunnelError:
+      target:
+        $ref: '#/definitions/autolistdetect.Target'
+      targetInterface:
         type: string
-      tunnelProbedAt:
+      targetOutbound:
         type: string
-      tunnelVerdict:
+      tunnel:
+        $ref: '#/definitions/autolistdetect.CheckEvidence'
+      wan:
+        $ref: '#/definitions/autolistdetect.CheckEvidence'
+    type: object
+  autolistdetect.CheckEvidence:
+    properties:
+      bytes:
+        type: integer
+      checkedAt:
         type: string
+      detail:
+        type: string
+      durationMs:
+        type: integer
       verdict:
         type: string
-      why:
+    type: object
+  autolistdetect.CoverageEvidence:
+    properties:
+      covered:
+        type: boolean
+      detail:
         type: string
+      durationMs:
+        type: integer
+      excluded:
+        type: boolean
     type: object
   autolistdetect.HistoryEntry:
     properties:
@@ -8175,60 +8192,94 @@ definitions:
         type: string
       host:
         type: string
+      interface:
+        type: string
+      ip:
+        type: string
+      network:
+        type: string
+      outbound:
+        type: string
+      port:
+        type: integer
+      reason:
+        type: string
+      result:
+        type: string
       source:
         type: string
       why:
+        description: Why is a legacy field of the old satellite history.
         type: string
     type: object
   autolistdetect.Status:
     properties:
+      activeChecks:
+        description: ActiveChecks/QueuedChecks — in-flight and waiting probe counts.
+        type: integer
       addsLimit:
         type: integer
       addsUsedHour:
+        description: Rolling hourly addition budget for the UI exhaustion indicator.
         type: integer
-      auto:
-        description: Auto — режим автодобавления сателлита (последний /status).
-        type: boolean
       candidates:
-        description: Candidates — таблица кандидатов; пуста, когда сателлит не запущен.
         items:
           $ref: '#/definitions/autolistdetect.Candidate'
         type: array
+      captureActive:
+        type: boolean
+      capturePaused:
+        type: boolean
       enabled:
         type: boolean
       history:
-        description: History — сохранённые добавления и скрытия, новые записи первыми.
         items:
           $ref: '#/definitions/autolistdetect.HistoryEntry'
         type: array
       installed:
-        description: Installed/Enabled различают отсутствие пакета, намеренное отключение
-          и сбой.
+        description: |-
+          Installed/Enabled distinguish a missing package, a deliberate
+          disable and a failure.
         type: boolean
       lastError:
-        description: LastError — причина, по которой живой процесс не ответил.
+        description: LastError — why a process that should be alive did not answer.
         type: string
-      probesLimit:
+      lastWAN:
+        $ref: '#/definitions/autolistdetect.CheckEvidence'
+      protocols:
+        items:
+          type: string
+        type: array
+      queuedChecks:
         type: integer
-      probesUsedHour:
-        description: |-
-          Почасовые бюджеты для индикации исчерпания в UI. Нулевой Limit означает,
-          что соответствующий лимит отключён при сборке сателлита.
-        type: integer
+      resolveVia:
+        type: string
       running:
-        description: Running — pid-файл существует и процесс жив (kill -0).
+        description: Running — the satellite answered its status endpoint.
         type: boolean
-      statusUrl:
-        description: StatusURL — адрес статус-сервера сателлита, если найден.
-        type: string
       targetInterface:
-        description: TargetInterface — общий интерфейс tunnel-пробы и новых правил.
+        description: |-
+          TargetInterface is the shared interface of tunnel probes and new
+          rules; TargetOutbound is kept for UI compatibility with older
+          satellite configs. ResolveVia is the selected sing-box DNS tag.
         type: string
       targetOutbound:
-        description: TargetOutbound — legacy-поле старого конфига сателлита.
         type: string
       version:
         type: string
+    type: object
+  autolistdetect.Target:
+    properties:
+      domain:
+        type: string
+      host:
+        type: string
+      ip:
+        type: string
+      network:
+        type: string
+      port:
+        type: integer
     type: object
   backup.Snapshot:
     properties:
@@ -9962,10 +10013,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Сохраняет намерение enable/disable и запускает или останавливает
-        сателлит. Отключение переживает перезагрузку.
       parameters:
-      - description: enable или disable
+      - description: enable or disable
         in: body
         name: body
         required: true
@@ -9978,18 +10027,6 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/api.autolistStatusResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Autolist satellite control
@@ -9999,9 +10036,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Прячет кандидата сателлита awgmautolist на сутки.
       parameters:
-      - description: Домен кандидата
+      - description: candidate ID
         in: body
         name: body
         required: true
@@ -10014,24 +10050,13 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/api.OkResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "502":
-          description: Bad Gateway
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
-      summary: Autolist dismiss candidate
+      summary: Dismiss Autolist candidate
       tags:
       - autolist
   /autolist/install:
     post:
-      description: Ставит пакет awgmautolist через opkg (фид repo.hoaxisr.ru), кладёт
-        сателлиту API-ключ и ждёт, пока он ответит. При включённой авторизации требует
-        созданный API-ключ.
       produces:
       - application/json
       responses:
@@ -10039,28 +10064,17 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/api.autolistStatusResponse'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
-      summary: Autolist satellite install
+      summary: Install Autolist satellite
       tags:
       - autolist
   /autolist/proxy:
     post:
       consumes:
       - application/json
-      description: 'Проксирует команду к awgmautolist: add (добавить домены отдельными
-        правилами), config (прочитать/применить конфигурацию), forget (убрать кандидата).
-        Тело ответа — ответ сателлита.'
       parameters:
-      - description: Путь сателлита и тело
+      - description: satellite path and optional body
         in: body
         name: body
         required: true
@@ -10073,24 +10087,13 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/api.OkResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "502":
-          description: Bad Gateway
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
-      summary: Autolist satellite command
+      summary: Autolist operational command
       tags:
       - autolist
   /autolist/status:
     get:
-      description: 'Состояние сателлита awgmautolist: жив ли процесс, режим auto,
-        целевой outbound и таблица кандидатов. Сателлит ставится отдельно; отсутствие
-        процесса — не ошибка, а пустой статус.'
       produces:
       - application/json
       responses:
@@ -14284,6 +14287,10 @@ paths:
         in: query
         name: domain
         required: true
+        type: string
+      - description: 'Address family: all returns IPv4 and IPv6 (default IPv4 only)'
+        in: query
+        name: family
         type: string
       produces:
       - application/json
