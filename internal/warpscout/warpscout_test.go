@@ -1502,10 +1502,19 @@ func TestDeriveWarpTunnelName(t *testing.T) {
 	}{
 		{"WARP", "hel", "WARP HEL", true},
 		{"WARP TLL", "HEL", "WARP HEL", true},
-		{"WARP-WAW", "HEL", "WARP-HEL", true},
-		{"WARP (TLL)", "FRA", "WARP (FRA)", true},
 		{"WARP TLL 2", "ARN", "WARP ARN 2", true},
-		{"Мой WARP TLL", "HEL", "Мой WARP HEL", true},
+		{"WARP 2", "ARN", "WARP ARN 2", true},
+		// Имя, которое правил пользователь, не трогается: трёхбуквенное
+		// слово в нём — не код узла.
+		{"WARP-WAW", "HEL", "", false},
+		{"WARP (TLL)", "FRA", "", false},
+		{"Мой WARP TLL", "HEL", "", false},
+		{"WARP Mom", "FRA", "", false},
+		{"warp for kids", "FRA", "", false},
+		{"My WARP via ISP", "FRA", "", false},
+		{"WARP box 2", "FRA", "", false},
+		{"Дом WARP Bob", "FRA", "", false},
+		{"WARP TLL kids", "FRA", "", false},
 		{"WARP HEL", "HEL", "WARP HEL", false},
 		{"WARP AWG", "HEL", "", false},
 		{"WARP VPN", "HEL", "", false},
@@ -1859,5 +1868,79 @@ func TestWatchdog_WarpInWarp_WaitsForOuterAndScansViaOuter(t *testing.T) {
 	}
 	if runner.calls[0].PrivateKey != "aW5uZXItcHJpdi1rZXk=" {
 		t.Fatalf("ожидался ключ InnerAccount, получили %q", runner.calls[0].PrivateKey)
+	}
+}
+
+// exclude_endpoints сканер принимает только как ipv4[:port]; имя или IPv6
+// внешнего туннеля в этом списке отвергали бы весь скан.
+func TestEndpointIPv4(t *testing.T) {
+	for in, want := range map[string]string{
+		"162.159.192.1:2408":               "162.159.192.1",
+		"162.159.192.1":                    "162.159.192.1",
+		"engage.cloudflareclient.com:2408": "",
+		"[2606:4700:d0::a29f:c001]:2408":   "",
+		"":                                 "",
+	} {
+		if got := endpointIPv4(in); got != want {
+			t.Errorf("endpointIPv4(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// Сигнатура до 1500 байт принималась до появления каскада; сохранённые
+// I1..I5 такого размера не должны начать отвергаться.
+func TestCPSToRaw_Limit(t *testing.T) {
+	if _, err := CPSToRaw("<r 1500>"); err != nil {
+		t.Fatalf("1500 байт: %v", err)
+	}
+	if _, err := CPSToRaw("<r 1501>"); err == nil {
+		t.Fatal("1501 байт принят")
+	}
+}
+
+// Рядовая проверка живого туннеля имя не трогает: переименование — только
+// вместе с подменой узла, иначе узел, гуляющий между колокейшнами, давал бы
+// запись в конфигурацию роутера на каждой проверке.
+func TestWatchdog_HealthyCheckDoesNotRename(t *testing.T) {
+	s, r, tun, _ := newTestService(t)
+	p := testProfile()
+	cfg := s.d.Store.Config()
+	cfg.Profiles = []Profile{p}
+	cfg.ActiveProfileID = p.ID
+	if err := s.d.Store.SetConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	s.checkOnce(context.Background(), p, &watcherState{})
+	if len(tun.renames) != 0 || len(tun.swaps) != 0 || len(r.calls) != 0 {
+		t.Fatalf("здоровая проверка: renames=%v swaps=%v scans=%d", tun.renames, tun.swaps, len(r.calls))
+	}
+}
+
+// Автоподмена не сканирует через WARP-туннель его же ключом (Cloudflare
+// рвёт внешнюю сессию) и не регистрирует второй слот без пользователя:
+// без готового слота скан уходит на WAN.
+func TestWatchdog_SwapDoesNotScanThroughWarpWithItsOwnKey(t *testing.T) {
+	s, r, tun, pr := newTestService(t)
+	tun.refs[key(TargetNative, "awg11")] = &TunnelRef{Mode: TargetNative, ID: "awg11", Name: "WARP HEL",
+		Iface: "nwg5", Endpoint: "162.159.193.7:2408", IsWarp: true, Running: true, LocalPublicKey: "pub"}
+	r.hits = []Hit{{Endpoint: "188.114.96.9:2408", PingMs: 40, Colo: "HEL", Loc: "FI"}}
+	pr.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+	p := testProfile()
+	cfg := s.d.Store.Config()
+	cfg.Profiles = []Profile{p}
+	cfg.ActiveProfileID = p.ID
+	cfg.ScanInterface = "nwg5"
+	if err := s.d.Store.SetConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	s.checkOnce(context.Background(), p, &watcherState{})
+	if len(r.calls) != 1 {
+		t.Fatalf("ожидался один скан, calls=%d", len(r.calls))
+	}
+	if got := r.calls[0].Ifname; got != "eth3" {
+		t.Fatalf("скан ушёл через %q, ожидался WAN eth3", got)
+	}
+	if s.d.Store.InnerAccount() != nil {
+		t.Fatal("второй слот зарегистрирован без пользователя")
 	}
 }

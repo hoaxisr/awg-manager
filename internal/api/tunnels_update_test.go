@@ -291,6 +291,7 @@ type stubTunnelSvc struct {
 	stopFn   func(ctx context.Context, tunnelID string) error
 	stateFn  func(tunnelID string) tunnel.StateInfo
 	getFn    func(ctx context.Context, id string) (*service.TunnelWithStatus, error)
+	importFn func(ctx context.Context, content, name, backend string) (*service.TunnelWithStatus, error)
 
 	replaceCalls   int
 	replaceErr     error
@@ -356,7 +357,10 @@ func (s *stubTunnelSvc) SetDefaultRoute(_ context.Context, id string, v bool) er
 	s.setDefaultRouteCalls = append(s.setDefaultRouteCalls, toggleCall{id, v})
 	return s.setDefaultRouteErr
 }
-func (s *stubTunnelSvc) Import(context.Context, string, string, string, service.ImportLink) (*service.TunnelWithStatus, error) {
+func (s *stubTunnelSvc) Import(ctx context.Context, content, name, backend string, _ service.ImportLink) (*service.TunnelWithStatus, error) {
+	if s.importFn != nil {
+		return s.importFn(ctx, content, name, backend)
+	}
 	return nil, fmt.Errorf("stub")
 }
 func (s *stubTunnelSvc) ReplaceConfig(_ context.Context, _, _, newName string) error {

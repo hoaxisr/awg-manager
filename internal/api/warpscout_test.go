@@ -433,3 +433,36 @@ func TestWarpTunnelOps_ViaMetadataAndObfuscationSources(t *testing.T) {
 		t.Fatalf("неожиданный первый источник обфускации: %+v", sources[0])
 	}
 }
+
+// Каскадный туннель без привязки к внешнему — обычный WARP под чужим именем.
+// Сбой привязки отменяет создание: импортированный туннель удаляется и не
+// запускается.
+func TestWarpOps_CreateCascadeRollsBackWhenViaFails(t *testing.T) {
+	ctx := context.Background()
+	ops, svc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg50": tunnel.StateRunning, "awg60": tunnel.StateStopped,
+	})
+	seedWarpTunnel(t, store, "awg50", "nativewg")
+	svc.importFn = func(_ context.Context, _, name, backend string) (*service.TunnelWithStatus, error) {
+		seedWarpTunnel(t, store, "awg60", backend)
+		return &service.TunnelWithStatus{ID: "awg60", Name: name}, nil
+	}
+	var deleted []string
+	svc.deleteFn = func(_ context.Context, id string) error {
+		deleted = append(deleted, id)
+		return nil
+	}
+
+	// В обвязке нет команд NDMS, поэтому привязка `connect via` невозможна.
+	_, err := ops.Create(ctx, warpscout.TargetNative, "WARP-in-WARP HEL", "[Interface]\n",
+		warpscout.CreateOptions{ViaMode: warpscout.TargetNative, ViaID: "awg50"})
+	if err == nil {
+		t.Fatal("создание каскада без привязки к внешнему туннелю прошло")
+	}
+	if len(deleted) != 1 || deleted[0] != "awg60" {
+		t.Fatalf("импортированный туннель не откатан: deleted=%v", deleted)
+	}
+	if svc.startCalls != 0 {
+		t.Fatalf("непривязанный туннель запущен: startCalls=%d", svc.startCalls)
+	}
+}

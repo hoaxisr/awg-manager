@@ -258,9 +258,9 @@ func (s *Store) SetConfig(c Config) error {
 
 // SyncProfileTargetName обновляет имя профиля автопилота, если оно совпадало
 // со старым названием целевого туннеля (не перезапуская горутины сторожей).
-func (s *Store) SyncProfileTargetName(mode TargetMode, targetID, oldName, newName string) bool {
+func (s *Store) SyncProfileTargetName(mode TargetMode, targetID, oldName, newName string) (bool, error) {
 	if oldName == "" || newName == "" || oldName == newName {
-		return false
+		return false, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -272,10 +272,10 @@ func (s *Store) SyncProfileTargetName(mode TargetMode, targetID, oldName, newNam
 			changed = true
 		}
 	}
-	if changed {
-		_ = s.saveLocked()
+	if !changed {
+		return false, nil
 	}
-	return changed
+	return true, s.saveLocked()
 }
 
 // History — копия журнала автоподмен (новые первыми).

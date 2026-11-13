@@ -358,9 +358,6 @@ func (s *Service) checkOnce(ctx context.Context, p Profile, st *watcherState) {
 	}
 	if reason == "" {
 		st.fails, st.backoffIx = 0, 0
-		if trp != nil && trp.Colo != "" {
-			s.syncTunnelColoName(ctx, p.TargetMode, p.TargetID, ref.Name, trp.Colo)
-		}
 		s.recordCheckSample(ctx, p.ID, now, ref.Endpoint, trp, true, "")
 		s.setWatch(ctx, p.ID, func(ws *WatchStatus) {
 			ws.State, ws.Message, ws.LastCheck, ws.Trace, ws.Fails, ws.Endpoint = WatchOK, "", now, trp, 0, ref.Endpoint
@@ -425,7 +422,7 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 		TargetID: p.TargetID, Reason: reason, OldEndpoint: ref.Endpoint}
 
 	exclude := []string{}
-	if ref.Endpoint != "" {
+	if endpointIPv4(ref.Endpoint) != "" {
 		exclude = append(exclude, ref.Endpoint)
 	}
 	swapAcct := acct
@@ -447,7 +444,7 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 	if ref.ViaIface != "" {
 		// Каскадный WARP-in-WARP обязан сканировать только через свой внешний туннель.
 		scanOverride = ref.ViaIface
-		if h := endpointHost(ref.ViaEndpoint); h != "" {
+		if h := endpointIPv4(ref.ViaEndpoint); h != "" {
 			exclude = append(exclude, h)
 		}
 		outerRef = s.resolveRouteTunnel(ctx, ref.ViaIface)
@@ -470,6 +467,17 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 			scanOverride = wan
 		}
 		outerRef = s.resolveRouteTunnel(ctx, s.resolveScanIface(ctx, scanOverride))
+		// Скан через WARP его же ключом рвёт внешнюю сессию у Cloudflare.
+		// StartScan берёт для этого второй слот; здесь пользователя нет, и
+		// регистрировать слот молча нельзя — берём готовый или уходим на WAN.
+		if outerRef != nil && outerRef.IsWarp && outerRef.LocalPublicKey != "" && swapAcct.PublicKey == outerRef.LocalPublicKey {
+			if inner := s.d.Store.InnerAccount(); inner != nil && inner.PrivateKey != "" && inner.PublicKey != outerRef.LocalPublicKey {
+				swapAcct = inner
+			} else {
+				scanOverride, _ = s.d.WAN(ctx)
+				outerRef = nil
+			}
+		}
 	}
 	params, err := s.buildParams(ctx, swapAcct, s.awgForUse(), p.Filters, swapScanMaxHits, 0, nil, exclude, scanOverride, outerRef)
 	if err != nil {

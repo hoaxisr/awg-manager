@@ -603,6 +603,12 @@ func endpointHost(ep string) string {
 	return ep
 }
 
+// endpointIPv4 — адрес узла для exclude_endpoints сканера: тот принимает
+// только ipv4[:port] и на имени или IPv6 отвергает весь конфиг скана.
+func endpointIPv4(ep string) string {
+	return bareIPHost(endpointHost(ep))
+}
+
 func bareIPHost(raw string) string {
 	s := strings.TrimSpace(strings.SplitN(raw, "/", 2)[0])
 	if ip, err := netip.ParseAddr(s); err == nil && ip.Is4() {
@@ -742,7 +748,7 @@ func (s *Service) buildParams(ctx context.Context, acct *Account, awg AWGParams,
 		tunIP = DefaultTunnelIPv4
 	}
 	if outer != nil && outer.IsWarp {
-		if h := endpointHost(outer.Endpoint); h != "" {
+		if h := endpointIPv4(outer.Endpoint); h != "" {
 			exclude = append(append([]string(nil), exclude...), h)
 		}
 		if outerIP := bareIPHost(outer.AddressV4); outerIP != "" && tunIP == outerIP {
@@ -1331,7 +1337,9 @@ func (s *Service) syncTunnelColoName(ctx context.Context, mode TargetMode, id, c
 		return currentName
 	}
 	if s.d.Store != nil {
-		s.d.Store.SyncProfileTargetName(mode, id, currentName, newName)
+		if _, err := s.d.Store.SyncProfileTargetName(mode, id, currentName, newName); err != nil {
+			s.logWarn("rename", newName, "Имя профиля автопилота не сохранено: "+err.Error())
+		}
 	}
 	s.mu.Lock()
 	for _, w := range s.watchers {

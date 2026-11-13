@@ -51,8 +51,8 @@ func CPSToRaw(spec string) ([]byte, error) {
 			return nil, fmt.Errorf("CPS: неизвестный тег <%s>", tag)
 		}
 	}
-	if len(out) > 1400 {
-		return nil, fmt.Errorf("CPS: пакет %d байт больше 1400", len(out))
+	if len(out) > 1500 {
+		return nil, fmt.Errorf("CPS: пакет %d байт больше 1500", len(out))
 	}
 	return out, nil
 }
@@ -197,7 +197,10 @@ func BuildConfWithMTU(a *Account, awg AWGParams, protocol, endpoint string, mtu 
 }
 
 var (
-	warpColoNameRe   = regexp.MustCompile(`^(.*?\b(?i:warp)[\s\-_·/]+(?:\(|\[)?)([A-Za-z]{3})((?:\)|\])?(?:$|[\s\-_·/#0-9()].*))$`)
+	// Имя целиком в том виде, в каком его выдаёт панель: «WARP», «WARP HEL»,
+	// «WARP-in-WARP HEL», с необязательным номером в конце. Имя, к которому
+	// приложил руку пользователь, под шаблон не попадает и не трогается.
+	warpColoNameRe   = regexp.MustCompile(`^(WARP(?:-in-WARP)?)(?: ([A-Z]{3}))?( \d+)?$`)
 	nonColoWarpWords = map[string]bool{
 		"AWG": true, "VPN": true, "PRO": true, "MAX": true, "DNS": true,
 		"WAN": true, "LAN": true, "NAT": true, "RAW": true, "TCP": true,
@@ -219,30 +222,20 @@ func isValidColoCode(s string) bool {
 }
 
 // DeriveWarpTunnelName обновляет код колокейшна (HEL, TLL, FRA, …) в имени
-// WARP-туннеля при подмене endpoint'а, сохраняя разделители и суффиксы.
-// Пользовательские имена без явного WARP/колокейшна (например «Дом» или «WARP AWG»)
-// не изменяются.
+// WARP-туннеля при подмене endpoint'а. Меняется только имя, которое панель
+// выдала сама (см. warpColoNameRe): трёхбуквенное слово в пользовательском
+// имени («WARP Mom», «Дом WARP Bob», «WARP via ISP») кодом узла не считается.
 func DeriveWarpTunnelName(currentName, newColo string) (string, bool) {
 	colo := strings.ToUpper(strings.TrimSpace(newColo))
 	if !isValidColoCode(colo) || nonColoWarpWords[colo] {
 		return "", false
 	}
 	trimmed := strings.TrimSpace(currentName)
-	if trimmed == "" {
+	m := warpColoNameRe.FindStringSubmatch(trimmed)
+	if m == nil || nonColoWarpWords[m[2]] {
 		return "", false
 	}
-	var next string
-	if strings.EqualFold(trimmed, "WARP") || strings.EqualFold(trimmed, "WARP-in-WARP") {
-		next = trimmed + " " + colo
-	} else if m := warpColoNameRe.FindStringSubmatch(trimmed); len(m) == 4 {
-		existing := strings.ToUpper(m[2])
-		if nonColoWarpWords[existing] {
-			return "", false
-		}
-		next = m[1] + colo + m[3]
-	} else {
-		return "", false
-	}
+	next := m[1] + " " + colo + m[3]
 	if next == trimmed || len(next) > 64 {
 		return trimmed, false
 	}

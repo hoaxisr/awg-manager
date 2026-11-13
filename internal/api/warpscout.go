@@ -455,6 +455,37 @@ func extractPeerPublicKey(conf string) string {
 	return warpscout.WarpPeerPublicKey
 }
 
+// bindManagedVia привязывает только что импортированный NativeWG-туннель к
+// внешнему: запись (ISPInterface) и `connect via` у пира в NDMS.
+func (o *WarpTunnelOps) bindManagedVia(ctx context.Context, id, outerNDMS, outerLabel string) error {
+	if o.Store == nil || o.Commands == nil || o.Commands.Wireguard == nil || o.Queries == nil || o.Queries.Interfaces == nil {
+		return errors.New("NDMS недоступен")
+	}
+	if err := o.Store.Update(id, func(t *storage.AWGTunnel) error {
+		t.ISPInterface = outerNDMS
+		t.ISPInterfaceLabel = "Через " + outerLabel
+		return nil
+	}); err != nil {
+		return fmt.Errorf("сохранить маршрут внешнего туннеля: %w", err)
+	}
+	created, err := o.Store.Get(id)
+	if err != nil {
+		return err
+	}
+	if created.NWGIndex < 0 {
+		return errors.New("туннелю не назначен интерфейс Wireguard")
+	}
+	ndmsName := fmt.Sprintf("Wireguard%d", created.NWGIndex)
+	iface, _, present, err := o.Queries.Interfaces.Confirm(ctx, ndmsName)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return fmt.Errorf("интерфейс %s не найден на роутере", ndmsName)
+	}
+	return o.Commands.Wireguard.SetPeerConnectVia(ctx, iface, created.Peer.PublicKey, outerNDMS)
+}
+
 // Create — новый туннель из .conf (в т.ч. каскадный WARP-in-WARP при opts.ViaID != "").
 func (o *WarpTunnelOps) Create(ctx context.Context, mode warpscout.TargetMode, name, conf string, opts warpscout.CreateOptions) (*warpscout.TunnelRef, error) {
 	var outerNDMS, outerLabel string
@@ -481,23 +512,14 @@ func (o *WarpTunnelOps) Create(ctx context.Context, mode warpscout.TargetMode, n
 		if err != nil {
 			return nil, err
 		}
-		if outerNDMS != "" && o.Store != nil {
-			if err := o.Store.Update(tw.ID, func(t *storage.AWGTunnel) error {
-				t.ISPInterface = outerNDMS
-				t.ISPInterfaceLabel = "Через " + outerLabel
-				return nil
-			}); err != nil {
-				return nil, fmt.Errorf("сохранить маршрут внешнего туннеля: %w", err)
-			}
-			if o.Commands != nil && o.Commands.Wireguard != nil && o.Queries != nil && o.Queries.Interfaces != nil {
-				if createdTun, gerr := o.Store.Get(tw.ID); gerr == nil && createdTun != nil && createdTun.NWGIndex >= 0 {
-					ndmsName := fmt.Sprintf("Wireguard%d", createdTun.NWGIndex)
-					if iface, _, present, qerr := o.Queries.Interfaces.Confirm(ctx, ndmsName); qerr == nil && present {
-						if err := o.Commands.Wireguard.SetPeerConnectVia(ctx, iface, createdTun.Peer.PublicKey, outerNDMS); err != nil {
-							o.warn(name, "connect via внешнего туннеля: "+err.Error())
-						}
-					}
+		if outerNDMS != "" {
+			// Без привязки к внешнему туннелю это был бы обычный WARP под
+			// именем каскадного, поэтому сбой привязки отменяет создание.
+			if err := o.bindManagedVia(ctx, tw.ID, outerNDMS, outerLabel); err != nil {
+				if derr := o.Svc.Delete(ctx, tw.ID); derr != nil {
+					o.warn(name, "Туннель не привязан к внешнему и не удалён: "+derr.Error())
 				}
+				return nil, fmt.Errorf("настроить маршрут через %s: %w", outerNDMS, err)
 			}
 		}
 		if err := o.Svc.Start(ctx, tw.ID); err != nil {
@@ -524,6 +546,13 @@ func (o *WarpTunnelOps) Create(ctx context.Context, mode warpscout.TargetMode, n
 		if outerNDMS != "" {
 			peerKey := extractPeerPublicKey(conf)
 			if err := o.Commands.Wireguard.SetPeerConnectVia(ctx, res.Created, peerKey, outerNDMS); err != nil {
+				// Интерфейс уже создан импортом; оставленный, он копился бы
+				// на роутере с каждым повтором.
+				if o.Commands.Interfaces == nil {
+					o.warn(name, "Интерфейс "+res.Created.Name()+" не привязан к внешнему туннелю и не удалён")
+				} else if derr := o.Commands.Interfaces.DeleteOpkgTun(ctx, res.Created); derr != nil {
+					o.warn(name, "Интерфейс "+res.Created.Name()+" не привязан к внешнему туннелю и не удалён: "+derr.Error())
+				}
 				return nil, fmt.Errorf("настроить маршрут через %s: %w", outerNDMS, err)
 			}
 		}

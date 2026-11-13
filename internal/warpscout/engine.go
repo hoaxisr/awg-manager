@@ -44,32 +44,32 @@ type EngineAWG struct {
 
 // ScanParams — вход C-модуля (stdin). Схема зафиксирована в c-core/warpscout.
 type ScanParams struct {
-	PrivateKey       string    `json:"private_key"`
-	PeerPublicKey    string    `json:"peer_public_key"`
-	PresharedKey     string    `json:"preshared_key"`
-	TunnelIP         string    `json:"tunnel_ip"`
-	Reserved         [3]int    `json:"reserved"`
-	Endpoints        []string  `json:"endpoints"`
-	Prefixes         []string  `json:"prefixes"`
-	Ports            []int     `json:"ports"`
-	ExcludeEndpoints []string  `json:"exclude_endpoints"`
-	MaxCandidates    int       `json:"max_candidates"`
-	Concurrency      int       `json:"concurrency"`
-	PPS              int       `json:"pps"`
-	TimeoutMs        int       `json:"timeout_ms"`
-	DeadlineMs       int       `json:"deadline_ms"`
-	MaxHits          int       `json:"max_hits"`
-	Seed             int64     `json:"seed"`
-	Ifname           string    `json:"ifname"`
-	Fwmark           int       `json:"fwmark"`
-	AWG              EngineAWG `json:"awg"`
-	PingIP           string    `json:"ping_ip"`
-	ProbeTrace       bool      `json:"probe_trace"`
-	TraceIP          string    `json:"trace_ip"`
-	TraceHost        string    `json:"trace_host"`
-	ProbeTG          bool      `json:"probe_tg"`
-	ExcludeColos     []string  `json:"exclude_colos"`
-	AllowedCountries []string  `json:"allowed_countries"`
+	PrivateKey           string    `json:"private_key"`
+	PeerPublicKey        string    `json:"peer_public_key"`
+	PresharedKey         string    `json:"preshared_key"`
+	TunnelIP             string    `json:"tunnel_ip"`
+	Reserved             [3]int    `json:"reserved"`
+	Endpoints            []string  `json:"endpoints"`
+	Prefixes             []string  `json:"prefixes"`
+	Ports                []int     `json:"ports"`
+	ExcludeEndpoints     []string  `json:"exclude_endpoints"`
+	MaxCandidates        int       `json:"max_candidates"`
+	Concurrency          int       `json:"concurrency"`
+	PPS                  int       `json:"pps"`
+	TimeoutMs            int       `json:"timeout_ms"`
+	DeadlineMs           int       `json:"deadline_ms"`
+	MaxHits              int       `json:"max_hits"`
+	Seed                 int64     `json:"seed"`
+	Ifname               string    `json:"ifname"`
+	Fwmark               int       `json:"fwmark"`
+	AWG                  EngineAWG `json:"awg"`
+	PingIP               string    `json:"ping_ip"`
+	ProbeTrace           bool      `json:"probe_trace"`
+	TraceIP              string    `json:"trace_ip"`
+	TraceHost            string    `json:"trace_host"`
+	ProbeTG              bool      `json:"probe_tg"`
+	ExcludeColos         []string  `json:"exclude_colos"`
+	AllowedCountries     []string  `json:"allowed_countries"`
 	MaxRTTMs             int       `json:"max_rtt_ms"`
 	RequireTrace         bool      `json:"require_trace"`
 	RequireTG            bool      `json:"require_tg"`
