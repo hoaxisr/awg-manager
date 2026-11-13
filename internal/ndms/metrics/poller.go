@@ -1,7 +1,8 @@
 // Package metrics runs a single ticker that publishes per-interface
-// WireGuard peer metrics over SSE. It consumes query.PeerStore for
-// reads and invokes optional callbacks (server snapshot + history
-// feed) when changes are detected.
+// WireGuard peer metrics over SSE. Tunnels are read from the kernel via
+// `wg show <iface> dump`, servers (and tunnels when wg fails) via
+// query.PeerStore; it invokes optional callbacks (server snapshot +
+// history feed) when changes are detected.
 package metrics
 
 import (
@@ -31,9 +32,10 @@ func NopLogger() Logger { return nopLogger{} }
 
 // Poller is a ticker that fetches peer metrics for non-managed system
 // WG tunnels and server interfaces. Шаг ДВА: interval при открытой панели и
-// idleInterval, когда её не открыл никто (см. run). Peers come from
-// the .wireguard.peer field of the interface record in the list snapshot
-// (PeerStore, F546: one list per tick for all refs); it publishes
+// idleInterval, когда её не открыл никто (см. run). Пиры туннелей — из
+// ядра (`wg show <nwgN> dump`, см. fetchPeers); пиры серверов — из поля
+// .wireguard.peer записи в снимке списка (PeerStore, F546: one list per
+// tick for all refs); it publishes
 // tunnel:traffic (non-managed system tunnels) and triggers
 // server:updated snapshots (server interfaces).
 //
@@ -245,7 +247,8 @@ func (p *Poller) tick() {
 	idle := p.nobodyWatching()
 	if idle {
 		// Зрителей нет: снимок списка до SnapshotBackground — один список в
-		// минуту на всех фоновых поллеров, а не свой на каждый тик (R36).
+		// минуту, а не свой на каждый тик (R36). Список здесь читают состав
+		// интерфейсов (RunningInterfaces) и откат туннеля на PeerStore.
 		ctx = query.WithSnapshotBackground(ctx)
 	}
 
@@ -288,7 +291,7 @@ func (p *Poller) tick() {
 	results := make(chan result, len(pollRefs))
 	for _, ref := range pollRefs {
 		go func(r InterfaceRef) {
-			peers, err := p.peers.GetPeers(ctx, r.ID)
+			peers, err := p.fetchPeers(ctx, r)
 			results <- result{ref: r, peers: peers, err: err}
 		}(ref)
 	}
@@ -312,8 +315,9 @@ func (p *Poller) tick() {
 			continue
 		}
 		// Track empty-peer cooldown. PeerStore translates "not in the
-		// snapshot" into an empty slice (no peers configured), so len(peers)==0
-		// reliably means "nothing to measure here" — skip for a bit.
+		// snapshot" into an empty slice (no peers configured), wg dump без
+		// строк пиров — тоже, so len(peers)==0 reliably means "nothing to
+		// measure here" — skip for a bit.
 		if len(r.peers) == 0 {
 			p.emptyUntil[r.ref.ID] = now.Add(emptyCooldown)
 		} else {
@@ -348,6 +352,27 @@ func (p *Poller) tick() {
 	if serverChanged && snapshotPub != nil {
 		snapshotPub.PublishServerSnapshot(ctx)
 	}
+}
+
+// fetchPeers — пиры ref на этот тик. Туннель (не сервер) читается прямо из
+// ядра утилитой wg: полный `show interface` у NDMS стоит ~15 тиков CPU ndm
+// плюс разбор у нас, `wg show nwgN dump` — ~0,65 тика (стенд 5.02). Заодно
+// мимо кэша PeerStore: его TTL (8 с) длиннее шага (5 с), и каждый второй
+// тик отдавал те же счётчики — на графике ноль, затем двойная скорость.
+// Серверу нужен online от NDMS — он только через PeerStore. Не вышло с wg
+// (нет бинаря, интерфейс пропал между тиками, нет имени ядра) — откат на
+// PeerStore: хуже прежнего не становится.
+func (p *Poller) fetchPeers(ctx context.Context, r InterfaceRef) ([]ndms.Peer, error) {
+	if !r.IsServer {
+		if kernel, ok := ndms.KernelName(r.ID); ok {
+			if out, err := wgShowDump(ctx, kernel); err == nil {
+				if peers, err := parseWgDump(out, time.Now()); err == nil {
+					return peers, nil
+				}
+			}
+		}
+	}
+	return p.peers.GetPeers(ctx, r.ID)
 }
 
 // publishTunnel emits the tunnel:traffic SSE event and feeds traffic.History.

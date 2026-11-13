@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // DefaultSysfsRoot is the standard Linux sysfs network interface root.
@@ -27,6 +28,17 @@ func readSysfsCounters(root, iface string) (rx, tx int64, err error) {
 		return 0, 0, err
 	}
 	return rx, tx, nil
+}
+
+// ifaceUp — поднят ли интерфейс (бит IFF_UP в <root>/<iface>/flags).
+// Нет интерфейса или файл нечитаем — false.
+func ifaceUp(root, iface string) bool {
+	b, err := os.ReadFile(filepath.Join(root, iface, "flags"))
+	if err != nil {
+		return false
+	}
+	flags, err := strconv.ParseUint(strings.TrimSpace(string(b)), 0, 32)
+	return err == nil && flags&syscall.IFF_UP != 0
 }
 
 func readUint64File(path string) (int64, error) {

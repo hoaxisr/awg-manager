@@ -17,6 +17,13 @@ var runCmd = exec.Run
 // подменяют, прод зовёт tryResolveEndpoint.
 var resolveEndpoint = tryResolveEndpoint
 
+// reasonRoutineCheck — причина подсказки `pingcheck` для проверки, которая не
+// изменила ни статус, ни счётчики отказов и лечений. Стор туннелей главной
+// (frontend/src/lib/stores/tunnels.ts) по ней снимок НЕ перезапрашивает: иначе
+// каждая успешная проба каждого туннеля тянула полный GET /api/tunnels/all.
+// Таблица мониторинга получает и её — там меняются время и задержка (F364).
+const reasonRoutineCheck = "routine-check"
+
 // runMonitorLoop runs the simple health sensor loop for a kernel tunnel.
 func (s *Service) runMonitorLoop(m *tunnelMonitor) {
 	defer m.wg.Done()
@@ -101,6 +108,9 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 
 	if result.Success {
 		s.mu.Lock()
+		// До успеха не было ни отказов, ни лечения — снимок туннелей
+		// (статус и счётчики карточки) этот успех не меняет.
+		routine := m.failCount == 0 && m.restartCount == 0
 		m.failCount = 0
 		m.okCount++
 		okCount := m.okCount
@@ -133,7 +143,11 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 			// странице пришлось вернуть таймер опроса (F354); теперь он не
 			// нужен — обновление приходит ровно тогда, когда есть что
 			// показать (F364).
-			s.bus.PublishInvalidated(events.ResourcePingcheck, "check")
+			reason := "check"
+			if routine {
+				reason = reasonRoutineCheck
+			}
+			s.bus.PublishInvalidated(events.ResourcePingcheck, reason)
 		}
 
 		s.addLogEntry(LogEntry{

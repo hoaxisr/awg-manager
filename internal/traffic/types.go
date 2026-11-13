@@ -32,3 +32,12 @@ type RunningTunnel struct {
 type TunnelLister interface {
 	RunningTunnels(ctx context.Context) []RunningTunnel
 }
+
+// IfaceLister — источник SysfsPoller: ID и kernel-имя (IfaceName) каждого
+// туннеля, чьи счётчики стоит читать; остальные поля RunningTunnel пусты.
+// Не TunnelLister: тот резолвит полное состояние туннеля (NDMS, awg show) —
+// поллеру из него нужен только факт «работает», а его он читает сам, флагом
+// UP в sysfs рядом со счётчиками.
+type IfaceLister interface {
+	TrafficIfaces() []RunningTunnel
+}

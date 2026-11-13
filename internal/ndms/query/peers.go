@@ -10,8 +10,9 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
 )
 
-// peerTTL is short because the MetricsPoller refreshes on its own
-// interval (~10s). This TTL mostly serves fast-back-to-back reads.
+// peerTTL is short: the MetricsPoller (шаг 5 с) reads servers through this
+// store; туннели он читает из ядра утилитой wg и сюда приходит только откатом.
+// This TTL mostly serves fast-back-to-back reads.
 // От него зависит допуск дедупа серверов в поллере метрик
 // (metrics.handshakeJitter): его поднимать вместе с этим значением.
 const peerTTL = 8 * time.Second

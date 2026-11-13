@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"testing"
 	"time"
 
@@ -486,6 +488,69 @@ func TestSensorTick_PublishesInvalidationOnEveryCheck(t *testing.T) {
 		case <-deadline:
 			t.Fatalf("подсказок инвалидации пришло %d из 2: страница мониторинга замрёт", got)
 		}
+	}
+}
+
+// pingcheckReasons — причины подсказок `pingcheck`, уже лежащих в канале.
+func pingcheckReasons(ch <-chan events.Event) []string {
+	var out []string
+	for {
+		select {
+		case ev := <-ch:
+			if inv, ok := ev.Data.(events.ResourceInvalidatedEvent); ok && inv.Resource == events.ResourcePingcheck {
+				out = append(out, inv.Reason)
+			}
+		default:
+			return out
+		}
+	}
+}
+
+// Главная перезапрашивает снимок туннелей по `pingcheck` на всём, КРОМЕ
+// рутинной проверки. Рутина — только успех без отказов и лечения до него:
+// успех после отказа обнуляет счётчик, после лечения — снимает «recovering».
+func TestSensorTick_RoutineReasonOnlyForUnchangedSuccess(t *testing.T) {
+	orig := httpprobe.Client
+	t.Cleanup(func() { httpprobe.Client = orig })
+	s, m, config, _ := newKernelSensorService(t)
+	bus := events.NewBus()
+	s.bus = bus
+	_, ch, unsub := bus.Subscribe()
+	t.Cleanup(unsub)
+
+	tick := func(doer httpclient.HTTPDoer) []string {
+		httpprobe.Client = doer
+		s.sensorTick(m, config)
+		return pingcheckReasons(ch)
+	}
+	want := func(step string, got []string, reasons ...string) {
+		t.Helper()
+		if !reflect.DeepEqual(got, reasons) {
+			t.Fatalf("%s: причины %q, want %q", step, got, reasons)
+		}
+	}
+
+	want("успех", tick(okDoer{}), reasonRoutineCheck)
+	want("отказ", tick(alwaysFailDoer{}), "check")
+	want("успех после отказа", tick(okDoer{}), "check")
+	want("снова успех", tick(okDoer{}), reasonRoutineCheck)
+	tick(alwaysFailDoer{})
+	tick(alwaysFailDoer{})
+	want("лечение на пороге", tick(alwaysFailDoer{}), "check", "state-change")
+	want("успех после лечения", tick(okDoer{}), "check")
+}
+
+// Причину рутинной проверки фильтрует стор туннелей фронта — строкой, мимо
+// компилятора. Разъедутся — главная снова тянет снимок на каждой пробе.
+func TestReasonRoutineCheck_KnownToFrontend(t *testing.T) {
+	path := filepath.Join("..", "..", "frontend", "src", "lib", "stores", "tunnels.ts")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("читаем %s: %v", path, err)
+	}
+	m := regexp.MustCompile(`registerStore\('pingcheck',\s*basePolling,\s*'([^']+)'\)`).FindSubmatch(data)
+	if m == nil || string(m[1]) != reasonRoutineCheck {
+		t.Fatalf("%s: стор туннелей обязан пропускать причину %q, нашли %q", path, reasonRoutineCheck, m)
 	}
 }
 

@@ -1,16 +1,12 @@
 package traffic
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/hoaxisr/awg-manager/internal/ndms"
-	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 type fakeTunnelLister struct {
@@ -24,7 +20,7 @@ func (f *fakeTunnelLister) set(items ...RunningTunnel) {
 	f.mu.Unlock()
 }
 
-func (f *fakeTunnelLister) RunningTunnels(_ context.Context) []RunningTunnel {
+func (f *fakeTunnelLister) TrafficIfaces() []RunningTunnel {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]RunningTunnel, len(f.items))
@@ -60,6 +56,10 @@ func writeSysfsIface(t *testing.T, root, iface string, rx, tx string) {
 	t.Helper()
 	dir := filepath.Join(root, iface, "statistics")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// UP|POINTOPOINT|NOARP — как у живого туннеля.
+	if err := os.WriteFile(filepath.Join(root, iface, "flags"), []byte("0x1091\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "rx_bytes"), []byte(rx), 0o644); err != nil {
@@ -135,6 +135,36 @@ func TestSysfsPoller_MissingIfaceSkippedQuietly(t *testing.T) {
 	}
 }
 
+// Работающим поллер считает только поднятый интерфейс: остановленный
+// nativewg-туннель держит устройство с опущенным линком, и его неподвижные
+// счётчики не идут ни в историю, ни в событие — как раньше по состоянию.
+func TestSysfsPoller_DownIfaceSkipped(t *testing.T) {
+	root := t.TempDir()
+	writeSysfsIface(t, root, "nwg1", "1000", "100")
+	if err := os.WriteFile(filepath.Join(root, "nwg1", "flags"), []byte("0x1090\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeSysfsIface(t, root, "nwg0", "1000", "100")
+
+	lister := &fakeTunnelLister{}
+	lister.set(
+		RunningTunnel{ID: "awg1", IfaceName: "nwg1"},
+		RunningTunnel{ID: "awg0", IfaceName: "nwg0"},
+	)
+	hist := New()
+	t.Cleanup(hist.Stop)
+	pub := &spyPublisher{}
+
+	p := newSysfsPoller(lister, hist, pub, &fakeLog{}, nil, root, time.Second)
+	p.tick()
+
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	if len(pub.events) != 1 || pub.events[0]["id"] != "awg0" {
+		t.Fatalf("события %v, want только awg0", pub.events)
+	}
+}
+
 func TestSysfsPoller_NoRunningTunnelsIsNoop(t *testing.T) {
 	root := t.TempDir()
 	lister := &fakeTunnelLister{}
@@ -189,10 +219,8 @@ type fakeClients struct{ n atomic.Int64 }
 
 func (f *fakeClients) ClientCount() int { return int(f.n.Load()) }
 
-// Тик поллера дорогой: RunningTunnels резолвит состояние каждого туннеля мимо
-// кэша, то есть по RCI-запросу на туннель. При закрытой панели публикация уходит
-// в никуда, поэтому шаг разрежается — иначе это круглосуточная нагрузка на
-// роутер ради данных, которых никто не видит.
+// При закрытой панели публикация уходит в никуда, поэтому шаг разрежается —
+// иначе это круглосуточная работа ради данных, которых никто не видит.
 func TestSysfsPoller_IdleThrottles(t *testing.T) {
 	root := t.TempDir()
 	writeSysfsIface(t, root, "nwg0", "1000", "100")
@@ -240,45 +268,5 @@ func TestSysfsPoller_ClientRestoresRate(t *testing.T) {
 
 	if got := pub.len(); got < 3 {
 		t.Errorf("публикаций %d, ожидалось ≥3: с открытой панелью шаг обычный", got)
-	}
-}
-
-// snapshotLister — состояние туннелей, как у сервиса: из снимка списка «не
-// старше SnapshotRecent» с ctx тика.
-type snapshotLister struct{ ifs *query.InterfaceStore }
-
-func (l snapshotLister) RunningTunnels(ctx context.Context) []RunningTunnel {
-	_, _ = l.ifs.Snapshot(ctx, query.SnapshotRecent)
-	return nil
-}
-
-// R36: зрителей нет — тик берёт снимок до SnapshotBackground; со зрителем —
-// не старше SnapshotRecent. Память старше 2 с: без зрителя 0 списков, со
-// зрителем 1.
-func TestSysfsPoller_IdleTickAcceptsBackgroundSnapshot(t *testing.T) {
-	mk := func(clients int64) (*query.FakeNDMS, *SysfsPoller, int) {
-		f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun0", Type: "OpkgTun"})
-		ifs := query.NewInterfaceStore(f, query.NopLogger())
-		if _, err := ifs.List(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		hist := New()
-		t.Cleanup(hist.Stop)
-		p := newSysfsPoller(snapshotLister{ifs}, hist, &spyPublisher{}, &fakeLog{}, nil, t.TempDir(), time.Second)
-		c := &fakeClients{}
-		c.n.Store(clients)
-		p.SetClientCounter(c)
-		return f, p, f.ListCalls()
-	}
-	fi, pi, bi := mk(0)
-	fv, pv, bv := mk(1)
-	time.Sleep(query.SnapshotRecent + 100*time.Millisecond)
-	pi.tick()
-	pv.tick()
-	if n := fi.ListCalls() - bi; n != 0 {
-		t.Fatalf("без зрителя: списков %d, want 0", n)
-	}
-	if n := fv.ListCalls() - bv; n != 1 {
-		t.Fatalf("со зрителем: списков %d, want 1", n)
 	}
 }

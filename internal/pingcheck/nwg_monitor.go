@@ -197,6 +197,7 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 	// Detect NDMS-initiated interface restart:
 	// 1. Bound transition: interface was down, now back up with zeroed counters
 	// 2. Counter reset: was failing (prevFail > 0), now counters zeroed
+	prevRestartDetected := m.restartDetected
 	if m.initialized {
 		countersZeroed := failCount == 0 && successCount == 0
 		boundTransition := !m.prevBound && bound
@@ -345,8 +346,19 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 	// мониторинга показывает «2 из 3» и время проверки, и они обновлялись
 	// только по переходу — из-за чего странице пришлось вернуть таймер
 	// опроса (F354). Теперь он не нужен (F364).
-	if status != m.prevStatus || totalDelta > 0 {
-		m.bus.PublishInvalidated(events.ResourcePingcheck, "check")
+	//
+	// Смена restartDetected — отдельный повод: рестарт NDMS обнуляет
+	// счётчики (дельта нулевая) при прежнем статусе, и без него
+	// «восстановление» доходило до карточки только со следующей проверкой.
+	restartChanged := m.restartDetected != prevRestartDetected
+	if status != m.prevStatus || totalDelta > 0 || restartChanged {
+		// Карточка туннеля берёт статус, отказы и признак рестарта NDMS
+		// (nwgCardStatus); одни успехи без их смены — рутина.
+		reason := "check"
+		if status == m.prevStatus && failCount == m.prevFail && !restartChanged {
+			reason = reasonRoutineCheck
+		}
+		m.bus.PublishInvalidated(events.ResourcePingcheck, reason)
 	}
 
 	m.prevFail = failCount

@@ -176,3 +176,46 @@ func TestFetchRawStateByID_NativeWGUsesNativeReader(t *testing.T) {
 		t.Fatalf("kernel-матрица опрошена %d раз для nativewg", got)
 	}
 }
+
+// Поллер трафика берёт туннели из TrafficIfaces: тот же отбор и те же имена,
+// что у RunningTunnels при всех работающих, но без резолва состояния.
+func TestTrafficIfaces_MatchesRunningTunnelsWithoutState(t *testing.T) {
+	mgr := &countingState{}
+	s := newCacheTestService(t, mgr, 2*time.Second)
+	for _, tn := range []*storage.AWGTunnel{
+		{ID: "awg2", Name: "off"},
+		{ID: "nwg-a", Name: "nwg", Backend: "nativewg", NWGIndex: 3, Enabled: true},
+		{ID: "wdttraw-de", Name: "raw", Backend: "wdtt-raw", RawKernelIface: "opkgtun18"},
+		{ID: "wdttraw-x", Name: "raw-noiface", Backend: "wdtt-raw", Enabled: true},
+	} {
+		if err := s.store.Create(tn); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := map[string]string{}
+	for _, rt := range s.TrafficIfaces() {
+		got[rt.ID] = rt.IfaceName
+	}
+	if n := mgr.calls.Load(); n != 0 {
+		t.Fatalf("TrafficIfaces резолвил состояние %d раз, want 0", n)
+	}
+	want := map[string]string{}
+	for _, rt := range s.RunningTunnels(context.Background()) {
+		want[rt.ID] = rt.IfaceName
+	}
+	if len(want) != 2 || want["nwg-a"] != "nwg3" || want["t1"] == "" {
+		t.Fatalf("предпосылка: RunningTunnels = %v", want)
+	}
+	// Зеркало wdtt-raw RunningTunnels считает работающим по наличию
+	// устройства в sysfs (здесь его нет); живость решает поллер.
+	want["wdttraw-de"] = "opkgtun18"
+	if len(got) != len(want) {
+		t.Fatalf("TrafficIfaces = %v, want %v", got, want)
+	}
+	for id, iface := range want {
+		if got[id] != iface {
+			t.Fatalf("TrafficIfaces = %v, want %v", got, want)
+		}
+	}
+}

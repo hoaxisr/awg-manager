@@ -3,6 +3,8 @@ package metrics
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"testing"
@@ -538,5 +540,147 @@ func TestMetricsPoller_IdleTickAcceptsBackgroundSnapshot(t *testing.T) {
 	}
 	if n := viewer.f.ListCalls() - viewer.lists; n != 1 {
 		t.Fatalf("со зрителем: списков %d, want 1 (SnapshotRecent)", n)
+	}
+}
+
+// stubWg подменяет `wg show <kernel> dump` на время теста.
+func stubWg(t *testing.T, fn func(ctx context.Context, kernel string) (string, error)) {
+	t.Helper()
+	prev := wgShowDump
+	wgShowDump = fn
+	t.Cleanup(func() { wgShowDump = prev })
+}
+
+// wgDumpOut — вывод `wg show <if> dump`: строка интерфейса и по строке на пира
+// (рукопожатие unix, rx, tx).
+func wgDumpOut(peers ...[3]int64) string {
+	out := "PRIV\tPUB\t51820\toff\n"
+	for i, p := range peers {
+		out += fmt.Sprintf("peer%d\t(none)\t1.2.3.4:51820\t0.0.0.0/0\t%d\t%d\t%d\t25\n", i, p[0], p[1], p[2])
+	}
+	return out
+}
+
+// Туннель берёт счётчики и рукопожатие из ядра (wg), к NDMS не ходит; сервер
+// — только через PeerStore, wg у него не зовётся.
+func TestMetricsPoller_TunnelReadsKernelViaWg(t *testing.T) {
+	f := newNDMS()
+	// У NDMS другие числа: событие с ними значило бы, что путь — не wg.
+	f.SetDetail("Wireguard1", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":1,"txbytes":2,"last-handshake":5}]}}`))
+	peers, _ := newPeers(f, time.Millisecond)
+	shake := time.Now().Add(-30 * time.Second).Unix()
+	var mu sync.Mutex
+	var kernels []string
+	stubWg(t, func(_ context.Context, kernel string) (string, error) {
+		mu.Lock()
+		kernels = append(kernels, kernel)
+		mu.Unlock()
+		return wgDumpOut([3]int64{0, 100, 200}, [3]int64{shake, 50, 20}), nil
+	})
+	run := &fakeRunningProvider{refs: []InterfaceRef{{ID: "Wireguard1"}}}
+	pub := &fakeMetricsPublisher{}
+	history := &fakeHistory{}
+	p := NewWithInterval(peers, pub, run, &fakeSubs{count: 1}, NopLogger(), time.Second)
+	p.SetHistoryFeeder(history)
+
+	p.tick()
+
+	if n := f.ListCalls(); n != 0 || f.E != 0 || len(f.Posts) != 0 {
+		t.Fatalf("туннель ходил в NDMS: списков %d, E=%d, Posts=%v", n, f.E, f.Posts)
+	}
+	if len(kernels) != 1 || kernels[0] != "nwg1" {
+		t.Fatalf("wg звали для %v, want [nwg1]", kernels)
+	}
+	evs := pub.Events()
+	if len(evs) != 1 {
+		t.Fatalf("событий %d, want 1", len(evs))
+	}
+	pl := evs[0].Data.(map[string]any)
+	if pl["id"] != "Wireguard1" || pl["rxBytes"].(int64) != 150 || pl["txBytes"].(int64) != 220 {
+		t.Fatalf("payload %v, want id Wireguard1 rx 150 tx 220 (сумма по пирам из wg)", pl)
+	}
+	got, err := time.Parse(time.RFC3339, pl["lastHandshake"].(string))
+	if err != nil {
+		t.Fatalf("lastHandshake %q: %v", pl["lastHandshake"], err)
+	}
+	if d := got.Unix() - shake; d < -1 || d > 1 {
+		t.Errorf("lastHandshake %v, want ≈ %v (самое свежее рукопожатие из wg)", got, time.Unix(shake, 0).UTC())
+	}
+	if ents := history.Entries(); len(ents) != 1 || ents[0] != (fakeHistoryEntry{"Wireguard1", 150, 220}) {
+		t.Errorf("история %+v, want [{Wireguard1 150 220}]", ents)
+	}
+
+	// Сервер: wg не зовётся, пиры — из NDMS (нужен online).
+	kernels = nil
+	f.SetDetail("Wireguard10", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":1,"online":true}]}}`))
+	run.Set([]InterfaceRef{{ID: "Wireguard10", IsServer: true}})
+	snap := &fakeSnapshotPub{}
+	p.SetServerSnapshotPublisher(snap)
+	p.tick()
+	if len(kernels) != 0 {
+		t.Errorf("для сервера звали wg: %v", kernels)
+	}
+	if f.ListCalls() == 0 || snap.Calls() != 1 {
+		t.Errorf("сервер не прочитан через PeerStore: списков %d, подсказок %d", f.ListCalls(), snap.Calls())
+	}
+}
+
+// Два тика подряд с разными счётчиками в ядре — два события с разными
+// счётчиками. Через кэш PeerStore (TTL 8 с при шаге 5 с) второй тик отдавал
+// те же числа — на графике ноль, затем двойная скорость.
+func TestMetricsPoller_TunnelEachTickFreshCounters(t *testing.T) {
+	f := newNDMS()
+	peers, _ := newPeers(f, time.Hour)
+	var rx int64
+	stubWg(t, func(context.Context, string) (string, error) {
+		rx += 1000
+		return wgDumpOut([3]int64{0, rx, rx / 2}), nil
+	})
+	run := &fakeRunningProvider{refs: []InterfaceRef{{ID: "Wireguard0"}}}
+	pub := &fakeMetricsPublisher{}
+	p := NewWithInterval(peers, pub, run, &fakeSubs{count: 1}, NopLogger(), time.Second)
+
+	p.tick()
+	p.tick()
+
+	evs := pub.Events()
+	if len(evs) != 2 {
+		t.Fatalf("событий %d, want 2", len(evs))
+	}
+	a, b := evs[0].Data.(map[string]any), evs[1].Data.(map[string]any)
+	if a["rxBytes"].(int64) != 1000 || b["rxBytes"].(int64) != 2000 || b["txBytes"].(int64) != 1000 {
+		t.Errorf("счётчики по тикам: %v, %v; want rx 1000 → 2000, tx 500 → 1000", a, b)
+	}
+	if a["lastHandshake"] != "" {
+		t.Errorf("рукопожатия не было (0), а lastHandshake = %q", a["lastHandshake"])
+	}
+}
+
+// wg не отработал (нет бинаря, интерфейс пропал) — туннель на этом тике
+// читается прежним путём через PeerStore.
+func TestMetricsPoller_WgFailureFallsBackToPeerStore(t *testing.T) {
+	f := newNDMS()
+	f.SetDetail("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":7,"txbytes":9,"last-handshake":5}]}}`))
+	peers, _ := newPeers(f, time.Millisecond)
+	calls := 0
+	stubWg(t, func(context.Context, string) (string, error) {
+		calls++
+		return "", errors.New("Unable to access interface: No such device")
+	})
+	run := &fakeRunningProvider{refs: []InterfaceRef{{ID: "Wireguard0"}}}
+	pub := &fakeMetricsPublisher{}
+	p := NewWithInterval(peers, pub, run, &fakeSubs{count: 1}, NopLogger(), time.Second)
+
+	p.tick()
+
+	if calls != 1 {
+		t.Fatalf("wg звали %d раз, want 1", calls)
+	}
+	evs := pub.Events()
+	if len(evs) != 1 {
+		t.Fatalf("событий %d, want 1 (откат на PeerStore)", len(evs))
+	}
+	if pl := evs[0].Data.(map[string]any); pl["rxBytes"].(int64) != 7 || pl["txBytes"].(int64) != 9 {
+		t.Errorf("payload %v, want rx 7 tx 9 из NDMS", pl)
 	}
 }

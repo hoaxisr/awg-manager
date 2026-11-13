@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -81,33 +82,55 @@ func openProcLog(path string, truncate bool) (*os.File, error) {
 // для строки, доехавшей до диска двумя кусками через границу poll'ов.
 // pending также капается на maxPendingLine (I2) — pathological поток без
 // '\n' не должен расти неограниченно.
+//
+// Холостой виток крутится круглосуточно (два tail'а на каждый живой
+// sing-box), поэтому он без аллокаций: один Ticker на всю жизнь tail'а
+// вместо time.After на виток и fstat по fd, открытому при выборе позиции,
+// вместо os.Stat по пути. Удаление файла видно по st_nlink == 0 (fd держит
+// отвязанный inode), O_TRUNC нового спавна — по размеру того же inode.
 func tailFile(ctx context.Context, path string, fromEnd bool, onLine func(string)) {
 	var offset int64 = -1 // -1 = позиция ещё не выбрана
 	var pending []byte
+	var f *os.File
+	defer func() {
+		if f != nil {
+			_ = f.Close()
+		}
+	}()
+	tick := time.NewTicker(procLogTailPoll)
+	defer tick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(procLogTailPoll):
+		case <-tick.C:
 		}
-		fi, err := os.Stat(path)
-		if err != nil {
+		if f == nil {
+			var err error
+			if f, err = os.Open(path); err != nil {
+				continue // позиция ещё не выбрана — ждём появления файла
+			}
+		}
+		size, linked := fdSize(f)
+		if !linked {
 			if offset >= 0 {
 				return // уже запозиционированы — файл исчез, поколение окончено
 			}
-			continue // позиция ещё не выбрана — ждём появления файла
+			_ = f.Close() // исчез до выбора позиции — ждём появления заново
+			f = nil
+			continue
 		}
 		if offset < 0 {
 			if fromEnd {
-				offset = fi.Size()
+				offset = size
 			} else {
 				offset = 0
 			}
 		}
-		if fi.Size() < offset { // truncate под нами — чужая (новая) генерация
+		if size < offset { // truncate под нами — чужая (новая) генерация
 			return
 		}
-		if fi.Size() == offset {
+		if size == offset {
 			// Self-ротация: файл полностью потреблён и превысил потолок —
 			// усекаем САМИ и продолжаем то же поколение с offset 0 (писатель
 			// держит fd с O_APPEND — ядро продолжит запись с нуля). Байты,
@@ -122,12 +145,7 @@ func tailFile(ctx context.Context, path string, fromEnd bool, onLine func(string
 			}
 			continue
 		}
-		f, err := os.Open(path)
-		if err != nil {
-			continue
-		}
 		if _, err := f.Seek(offset, io.SeekStart); err != nil {
-			_ = f.Close()
 			continue
 		}
 		r := bufio.NewReader(f)
@@ -161,8 +179,17 @@ func tailFile(ctx context.Context, path string, fromEnd bool, onLine func(string
 			pending = pending[:0]
 			onLine(line)
 		}
-		_ = f.Close()
 	}
+}
+
+// fdSize — размер файла по открытому fd и не отвязан ли он от пути
+// (st_nlink > 0). Ошибка fstat трактуется как исчезнувший файл.
+func fdSize(f *os.File) (size int64, linked bool) {
+	var st syscall.Stat_t
+	if err := syscall.Fstat(int(f.Fd()), &st); err != nil {
+		return 0, false
+	}
+	return st.Size, st.Nlink > 0
 }
 
 // readLogTail возвращает последние maxBytes файла ("" при ошибке/отсутствии).

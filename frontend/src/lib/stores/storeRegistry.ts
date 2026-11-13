@@ -46,7 +46,7 @@ export type ResourceKey =
  * The SSE `resource:invalidated` handler iterates all registered stores and
  * calls `.invalidate()` on each.
  */
-const registry = new Map<string, PollingStore<unknown>[]>();
+const registry = new Map<string, { store: PollingStore<unknown>; skipReason?: string }[]>();
 
 /**
  * Register a polling store under a resource key. Call this once per store,
@@ -54,10 +54,15 @@ const registry = new Map<string, PollingStore<unknown>[]>();
  * will trigger an immediate refetch on all stores registered for that key.
  * Typed by `ResourceKey` so typos become compile errors rather than silent
  * invalidation misses.
+ *
+ * `skipReason` — причина подсказки, по которой этот стор НЕ перезапрашивается
+ * (остальные сторы под тем же ключом её получают). Нужна, когда ключ шире
+ * того, что стор показывает: `pingcheck` приходит на каждую проверку, а
+ * снимку туннелей важна только смена состояния.
  */
-export function registerStore<T>(resource: ResourceKey, store: PollingStore<T>): void {
+export function registerStore<T>(resource: ResourceKey, store: PollingStore<T>, skipReason?: string): void {
 	const stores = registry.get(resource) ?? [];
-	stores.push(store as PollingStore<unknown>);
+	stores.push({ store: store as PollingStore<unknown>, skipReason });
 	registry.set(resource, stores);
 }
 
@@ -70,8 +75,9 @@ export function registerStore<T>(resource: ResourceKey, store: PollingStore<T>):
  * payload that is unknown at compile time; the no-op-on-unknown-key behaviour
  * is intentional.
  */
-export function invalidateResource(resource: string): void {
-	for (const store of registry.get(resource) ?? []) {
+export function invalidateResource(resource: string, reason?: string): void {
+	for (const { store, skipReason } of registry.get(resource) ?? []) {
+		if (skipReason && reason === skipReason) continue;
 		store.invalidate();
 	}
 }
@@ -85,7 +91,7 @@ export function invalidateResource(resource: string): void {
 export function invalidateAll(): void {
 	const seen = new Set<PollingStore<unknown>>();
 	for (const stores of registry.values()) {
-		for (const store of stores) {
+		for (const { store } of stores) {
 			if (seen.has(store)) continue;
 			seen.add(store);
 			store.invalidate();

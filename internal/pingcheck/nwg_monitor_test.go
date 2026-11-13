@@ -3,6 +3,7 @@ package pingcheck
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -483,4 +484,36 @@ func TestNwgPublishLog_TimestampMatchesSnapshot(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("pingcheck:log не опубликован")
 	}
+}
+
+// NativeWG: рутина — одни успехи без смены статуса, отказов и признака
+// рестарта NDMS. Снятие признака рестарта первым успехом при статусе ещё
+// «fail» (minSuccess > 1) меняет карточку recovering → alive — не рутина.
+// Рестарт NDMS (счётчики обнулены, дельта нулевая, статус прежний) публикуется
+// сам: иначе «восстановление» доходило до карточки только со следующей проверкой.
+func TestNwgDelta_RoutineReasonOnlyForUnchangedSuccess(t *testing.T) {
+	buf := NewLogBuffer()
+	defer buf.Stop()
+	m := newTestNwgMonitor(buf)
+	m.bus = events.NewBus()
+	_, ch, unsub := m.bus.Subscribe()
+	t.Cleanup(unsub)
+
+	step := func(name string, fail, success int, status string, reasons ...string) {
+		t.Helper()
+		m.processDelta(fail, success, status, true)
+		if got := pingcheckReasons(ch); !reflect.DeepEqual(got, reasons) {
+			t.Fatalf("%s: причины %q, want %q", name, got, reasons)
+		}
+	}
+
+	step("первый опрос", 0, 5, "pass", "state-change")
+	step("успехи", 0, 7, "pass", reasonRoutineCheck)
+	step("отказ", 1, 7, "fail", "check")
+	step("ещё отказы", 3, 7, "fail", "check")
+	step("рестарт NDMS: счётчики обнулены", 0, 0, "fail", "check")
+	step("после рестарта проверок ещё нет", 0, 0, "fail")
+	step("первый успех после рестарта", 0, 1, "fail", "check")
+	step("второй успех, статус ещё fail", 0, 2, "fail", reasonRoutineCheck)
+	step("статус pass", 0, 3, "pass", "check")
 }

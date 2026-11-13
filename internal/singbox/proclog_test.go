@@ -217,6 +217,84 @@ func TestTailFile_TruncateEndsGeneration(t *testing.T) {
 	}
 }
 
+// Удаление файла под запозиционированным tail'ом — конец поколения, даже
+// если на том же пути за один poll уже лежит новый файл длиннее старого
+// offset'а: tail держит fd старого inode и видит st_nlink == 0, а не
+// читает чужой файл с середины.
+func TestTailFile_UnlinkEndsGeneration(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "err.log")
+	if err := os.WriteFile(p, []byte("gen1-line\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var got []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tailFile(ctx, p, false, func(line string) {
+			mu.Lock()
+			got = append(got, line)
+			mu.Unlock()
+		})
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		if n >= 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("gen2-line-grown-past-old-offset\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * procLogTailPoll):
+		t.Fatal("tail не завершился после удаления файла")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || got[0] != "gen1-line" {
+		t.Fatalf("got = %v, want [gen1-line]", got)
+	}
+}
+
+// Холостой виток tail'а без аллокаций: fstat по открытому fd, а не
+// os.Stat по пути (строка пути + FileInfo на каждый poll круглосуточно).
+func TestFdSize_NoAllocs(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "err.log")
+	if err := os.WriteFile(p, []byte("abc\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if size, linked := fdSize(f); size != 4 || !linked {
+		t.Fatalf("fdSize = %d, %v; want 4, true", size, linked)
+	}
+	if n := testing.AllocsPerRun(100, func() { fdSize(f) }); n != 0 {
+		t.Fatalf("fdSize аллоцирует %v раз на вызов, want 0", n)
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, linked := fdSize(f); linked {
+		t.Fatal("после удаления файл всё ещё linked")
+	}
+}
+
 // I2: pending-буфер капается на maxPendingLine — pathological поток без
 // '\n' не растёт неограниченно, а сбрасывается в onLine одной строкой.
 func TestTailFile_PendingCapFlushes(t *testing.T) {

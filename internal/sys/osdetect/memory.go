@@ -14,7 +14,7 @@ const LowMemoryThresholdMB = 200
 
 // MidMemoryThresholdMB is the upper bound of the mid-memory GC tier.
 // Keenetic devices with 256MB (~248 reported) and 512MB (~500 reported) RAM
-// fall into 200..700MB and get a tight soft GOMEMLIMIT + GOGC=50; 1GB
+// fall into 200..700MB and get a tight soft GOMEMLIMIT + GOGC=100; 1GB
 // models report ~950MB+ and land in the high tier (roomy GOMEMLIMIT only,
 // см. #562). 700 leaves a wide margin above real 512MB readings without
 // catching 1GB devices.
@@ -70,9 +70,8 @@ func GetGCEnv(disableMemorySaving bool) []string {
 // anon-rss 311MB on a 512MB device). GOMEMLIMIT=96MiB is a SOFT limit chosen
 // well above the daemon's ~30-60MB idle heap — normal operation never
 // GC-thrashes — while forcing aggressive collection during rebuild spikes
-// instead of unbounded growth. GOGC=50 keeps steady-state growth modest
-// between spikes. Explicit GOGC/GOMEMLIMIT environment variables always win:
-// applyGoMemoryLimits (cmd/awg-manager) skips any knob already present in
+// instead of unbounded growth. Explicit GOGC/GOMEMLIMIT environment variables
+// always win: applyGoMemoryLimits (cmd/awg-manager) skips any knob already present in
 // the environment.
 func gcEnvForTotalMemoryMB(mem int) []string {
 	if mem <= 0 {
@@ -91,7 +90,13 @@ func gcEnvForTotalMemoryMB(mem int) []string {
 	case mem < LowMemoryThresholdMB:
 		memLimit = "32MiB"
 	default:
-		memLimit = "96MiB"
+		// Средний ярус: GOGC=100, а не 50. Куча демона в покое — 2–3 МБ, и
+		// при GOGC=50 цикл сборки шёл на каждый мегабайт аллокаций: треть CPU
+		// демона на softfloat MIPS уходила в сборщик. Замер на KN-1810
+		// (3 туннеля, sing-box, окно 120 с, панель закрыта): 345 → 274 тика
+		// ценой +0.9 МБ анонимной памяти. От раздувания на пиках страхует
+		// GOMEMLIMIT, а не GOGC.
+		return []string{"GOGC=100", "GOMEMLIMIT=96MiB"}
 	}
 
 	return []string{
