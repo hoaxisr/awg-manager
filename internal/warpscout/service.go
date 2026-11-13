@@ -1215,6 +1215,9 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		if protocol != ProtocolWG {
 			protocol = ProtocolAWG
 		}
+		// NativeWG-бэкенд без параметров AmneziaWG импортирует туннель, но не
+		// запускает («конфиг не содержит параметров обфускации AWG» — стенд,
+		// 13.11.2026), поэтому такое сочетание отвергается до создания.
 		if req.Mode == TargetNative && protocol == ProtocolWG {
 			return nil, fmt.Errorf("%w: тип Native WG требует протокол AmneziaWG — выберите протокол AmneziaWG или тип «Системный»", ErrInvalidInput)
 		}
