@@ -221,6 +221,10 @@ func vlessUUIDFallback(userinfo string, q url.Values, authority string) (string,
 	return "", errors.New("vless: uuid not found in any source")
 }
 
+var visionOverEncryptionNetworks = map[string]bool{
+	"tcp": true, "xhttp": true, "ws": true, "httpupgrade": true, "grpc": true,
+}
+
 // checkVlessFlow отсекает комбинации, которые sing-box принимает конфигом, но
 // не может набрать:
 //
@@ -238,15 +242,17 @@ func vlessUUIDFallback(userinfo string, q url.Values, authority string) (string,
 //     набрал бы. Отвергаем всё равно: сервер этого не примет — Xray держит
 //     vision только на raw/tcp («XTLS only supports TLS and REALITY directly
 //     for now»), то есть собеседника у такой комбинации нет.
-//   - vision поверх VLESS Encryption TLS не нужен: Vision работает поверх
-//     шифрования (форк, protocol/vless/vision_encryption.go), но, как и
-//     всякий vision, только на голом tcp.
+//   - vision поверх VLESS Encryption не нужен ни TLS, ни голый tcp: Vision
+//     работает поверх шифрования (форк, protocol/vless/vision_encryption.go;
+//     Xray proxy/vless/outbound — CommonConn на любом транспорте, только без
+//     splice). Пропускаются транспорты, набранные против Xray 26.10.21
+//     (F789); http с Xray не проверить — у него такого транспорта нет.
 func checkVlessFlow(flow string, stream *StreamBuilder, encryption string) error {
 	if flow != "xtls-rprx-vision" {
 		return fmt.Errorf("vlink: vless: unsupported flow %q (sing-box knows only xtls-rprx-vision)", flow)
 	}
 	// nil — Xray JSON без streamSettings, то есть голый tcp.
-	if encryption != "" && (stream == nil || stream.Network == "tcp") {
+	if encryption != "" && (stream == nil || visionOverEncryptionNetworks[stream.Network]) {
 		return nil
 	}
 	if stream == nil || stream.TLS == nil {

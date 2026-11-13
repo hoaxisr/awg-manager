@@ -283,14 +283,22 @@ func TestParseVless_EncryptionPassedThrough(t *testing.T) {
 	if err := json.Unmarshal(back.Outbound, &exported); err != nil || exported["encryption"] != enc {
 		t.Fatalf("encryption lost on export: %s", link)
 	}
-	// Vision поверх шифрования работает на голом tcp и без TLS, поверх
-	// транспорта — нет, как и всякий vision.
-	got, err = ParseLink("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?type=tcp&flow=xtls-rprx-vision&encryption=" + enc + "#n")
-	if err != nil || !strings.Contains(string(got.Outbound), `"flow":"xtls-rprx-vision"`) {
-		t.Fatalf("vision over encryption must pass: %v %s", err, got.Outbound)
+	// Vision поверх шифрования работает без TLS и поверх транспорта (F789:
+	// набрано против Xray), с Reality и без; http не проверен — отказ.
+	reality := "&security=reality&pbk=nF_7gAfOiQdWTLdZwrKeV-PVsZgtqJF_7J53XWHleX0&sid=abcd1234&sni=h&fp=chrome"
+	for _, q := range []string{
+		"type=tcp", "type=tcp" + reality,
+		"type=xhttp&path=/x", "type=xhttp&path=/x" + reality,
+		"type=ws&path=/x", "type=httpupgrade&path=/x",
+		"type=grpc&serviceName=s", "type=grpc&serviceName=s" + reality,
+	} {
+		got, err = ParseLink("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?" + q + "&flow=xtls-rprx-vision&encryption=" + enc + "#n")
+		if err != nil || !strings.Contains(string(got.Outbound), `"flow":"xtls-rprx-vision"`) {
+			t.Fatalf("vision over encryption must pass on %s: %v", q, err)
+		}
 	}
-	if _, err = ParseLink("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?type=ws&flow=xtls-rprx-vision&encryption=" + enc + "#n"); err == nil {
-		t.Fatal("vision over ws must be rejected")
+	if _, err = ParseLink("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?type=http&security=tls&sni=h&flow=xtls-rprx-vision&encryption=" + enc + "#n"); err == nil {
+		t.Fatal("vision over http must be rejected")
 	}
 }
 
