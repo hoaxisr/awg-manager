@@ -77,6 +77,13 @@ type Account struct {
 	CreatedAt     time.Time `json:"createdAt"`
 }
 
+// TunnelAccount — учётная запись WARP, заведённая под один туннель.
+type TunnelAccount struct {
+	Account
+	TunnelMode TargetMode
+	TunnelID   string
+}
+
 // Reserved — 3 байта client_id для полей reserved заголовка WireGuard.
 func (a *Account) Reserved() [3]int {
 	var out [3]int

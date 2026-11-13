@@ -510,21 +510,87 @@ func (s *Service) Register(ctx context.Context) (*Account, error) {
 	if err := s.d.Store.SetAccount(acct); err != nil {
 		return nil, err
 	}
-	if old != nil && old.ID != "" && old.ID != acct.ID && !oldNotFound && s.rootCtx.Err() == nil {
-		// Старую регистрацию снимаем лучшим усилием под общим WaitGroup сервиса,
-		// чтобы Stop дожидался завершения фонового запроса.
-		s.wg.Add(1)
-		go func(prev *Account) {
-			defer s.wg.Done()
-			dctx, cancel := context.WithTimeout(s.rootCtx, 20*time.Second)
-			defer cancel()
-			_ = s.doAccountOp(dctx, func(hc *http.Client) error {
-				return DeleteAccount(dctx, hc, prev)
-			})
-		}(old)
+	if old != nil && old.ID != "" && old.ID != acct.ID && !oldNotFound {
+		s.dropRegistration(old)
 	}
 	s.logInfo("register", "warp", "Зарегистрирована учётная запись Cloudflare WARP")
 	return s.d.Store.Account(), nil
+}
+
+// dropRegistration снимает регистрацию у Cloudflare лучшим усилием, в фоне,
+// под общим WaitGroup сервиса, чтобы Stop дожидался запроса.
+func (s *Service) dropRegistration(prev *Account) {
+	if prev == nil || prev.ID == "" || s.rootCtx.Err() != nil {
+		return
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		dctx, cancel := context.WithTimeout(s.rootCtx, 20*time.Second)
+		defer cancel()
+		_ = s.doAccountOp(dctx, func(hc *http.Client) error {
+			return DeleteAccount(dctx, hc, prev)
+		})
+	}()
+}
+
+// registerTunnelAccount заводит учётную запись WARP под один создаваемый
+// туннель. Общий ключ у нескольких туннелей Cloudflare не обслуживает: при
+// трёх туннелях на ключе рукопожатие проходит, а данные не идут (#1192,
+// стенд 13.11.2026). Лицензия WARP+ основной записи переносится лучшим
+// усилием — у ключа лицензии есть предел устройств.
+func (s *Service) registerTunnelAccount(ctx context.Context, primary *Account) (*Account, error) {
+	s.acctMu.Lock()
+	defer s.acctMu.Unlock()
+	var fresh *Account
+	if err := s.doAccountOp(ctx, func(hc *http.Client) error {
+		reg, err := RegisterAccount(ctx, hc)
+		if err != nil {
+			return err
+		}
+		fresh = reg
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if primary != nil && primary.License != "" {
+		if err := s.doAccountOp(ctx, func(hc *http.Client) error {
+			return ApplyLicense(ctx, hc, fresh, primary.License)
+		}); err != nil {
+			s.logWarn("register", "warp", "Лицензия WARP+ к учётной записи туннеля не применена: "+err.Error())
+		}
+	}
+	return fresh, nil
+}
+
+// collectTunnelAccounts снимает учётные записи удалённых туннелей. Судит по
+// списку записей управляемых туннелей — он читается с диска целиком или не
+// читается вовсе. Системные туннели не трогает: их список приходит от
+// роутера и при сбое бывает неполным, а ошибиться здесь значит оставить
+// живой туннель без регистрации.
+func (s *Service) collectTunnelAccounts(ctx context.Context) {
+	accts := s.d.Store.TunnelAccounts()
+	if len(accts) == 0 {
+		return
+	}
+	list, err := s.d.Tunnels.List(ctx)
+	if err != nil {
+		return
+	}
+	alive := map[string]bool{}
+	for _, t := range list {
+		alive[string(t.Mode)+":"+t.ID] = true
+	}
+	for i := range accts {
+		ta := accts[i]
+		if ta.TunnelMode == TargetSystem || alive[string(ta.TunnelMode)+":"+ta.TunnelID] {
+			continue
+		}
+		if err := s.d.Store.RemoveTunnelAccount(ta.PublicKey); err != nil {
+			continue
+		}
+		s.dropRegistration(&ta.Account)
+	}
 }
 
 // SetLicense привязывает ключ WARP+.
@@ -1230,7 +1296,6 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 			}
 		}
 		mtu := DefaultMTU
-		useAcct := acct
 		viaID := strings.TrimSpace(req.ViaID)
 		var outer *TunnelRef
 		if viaID != "" {
@@ -1265,11 +1330,6 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 			if epHost := endpointHost(req.Endpoint); epHost != "" && epHost == endpointHost(outer.Endpoint) {
 				return nil, fmt.Errorf("%w: endpoint %s совпадает с IP внешнего туннеля (%s)", ErrInvalidInput, req.Endpoint, outer.Endpoint)
 			}
-			innerAcct, err := s.ensureDistinctAccount(ctx, outer.Iface, outer.LocalPublicKey)
-			if err != nil {
-				return nil, fmt.Errorf("второй слот WARP-in-WARP: %w", err)
-			}
-			useAcct = innerAcct
 			mtu = NestedWarpMTU
 			if awg, err = fitSignature(awg, nestedSignatureMax); err != nil {
 				return nil, err
@@ -1284,7 +1344,9 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 				name = "WARP"
 			}
 		}
-		cfgAcct := *useAcct
+		// Адрес по умолчанию — заданный пользователем у основной записи;
+		// проверяется до регистрации, чтобы негодный ввод её не тратил.
+		addrV4 := acct.AddressV4
 		if rawAddr := strings.TrimSpace(req.AddressV4); rawAddr != "" {
 			norm, err := NormalizeTunnelIPv4(rawAddr)
 			if err != nil {
@@ -1293,16 +1355,29 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 			if outer != nil && bareIPHost(norm) != "" && bareIPHost(norm) == bareIPHost(outer.AddressV4) {
 				return nil, fmt.Errorf("%w: IPv4 внутреннего туннеля совпадает с внешним туннелем (%s)", ErrInvalidInput, outer.AddressV4)
 			}
-			cfgAcct.AddressV4 = norm
+			addrV4 = norm
 		} else if outer != nil {
-			cfgAcct.AddressV4 = s.pickNonCollidingIPv4(ctx, cfgAcct.AddressV4, outer.AddressV4)
+			addrV4 = s.pickNonCollidingIPv4(ctx, addrV4, outer.AddressV4)
 		}
+		s.collectTunnelAccounts(ctx)
+		tunAcct, err := s.registerTunnelAccount(ctx, acct)
+		if err != nil {
+			return nil, fmt.Errorf("учётная запись WARP для туннеля: %w", err)
+		}
+		cfgAcct := *tunAcct
+		cfgAcct.AddressV4 = addrV4
 		conf := BuildConfWithMTU(&cfgAcct, awg, protocol, req.Endpoint, mtu)
 		created, err := s.d.Tunnels.Create(ctx, req.Mode, name, conf, createOpts)
 		if err != nil {
+			s.dropRegistration(tunAcct)
 			return nil, err
 		}
 		ref = created
+		if err := s.d.Store.AddTunnelAccount(TunnelAccount{Account: *tunAcct, TunnelMode: created.Mode, TunnelID: created.ID}); err != nil {
+			// Туннель работает; не сохранена лишь запись, по которой
+			// регистрацию сняли бы после его удаления.
+			s.logWarn("apply", name, "Учётная запись туннеля не сохранена: "+err.Error())
+		}
 		if viaID != "" {
 			s.logInfo("apply", name, fmt.Sprintf("Создан WARP-in-WARP (%s) через %s с узлом %s", req.Mode, outer.Name, req.Endpoint))
 		} else {
