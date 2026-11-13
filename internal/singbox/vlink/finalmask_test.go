@@ -110,8 +110,12 @@ func TestCheckSingboxFatal_FinalMaskAndEncryption(t *testing.T) {
 		t.Fatalf("vision over encryption on tcp must pass: %v", err)
 	}
 	ob = map[string]any{"encryption": enc, "flow": "xtls-rprx-vision", "transport": map[string]any{"type": "ws"}}
+	if err := checkSingboxFatal(ob, "vless"); err != nil {
+		t.Fatalf("vision over encryption on a transport must pass: %v", err)
+	}
+	ob = map[string]any{"flow": "xtls-rprx-vision", "transport": map[string]any{"type": "ws"}}
 	if err := checkSingboxFatal(ob, "vless"); err == nil {
-		t.Fatal("vision over a transport must be rejected even with encryption")
+		t.Fatal("vision over a transport must be rejected without encryption")
 	}
 	ob = map[string]any{
 		"encryption": "auto",
