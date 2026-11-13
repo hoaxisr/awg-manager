@@ -19,6 +19,10 @@
     autocomplete?: InputAutocomplete;
     name?: string;
     id?: string;
+    /** Нижняя граница для type="number" (проксируется в input). */
+    min?: string;
+    /** Верхняя граница для type="number" (проксируется в input). */
+    max?: string;
     prefix?: Snippet;
     suffix?: Snippet;
     fullWidth?: boolean;
@@ -39,6 +43,8 @@
     autocomplete,
     name,
     id,
+    min,
+    max,
     prefix,
     suffix,
     fullWidth = false,
@@ -79,6 +85,8 @@
       {readonly}
       {autocomplete}
       {name}
+      {min}
+      {max}
       {value}
       oninput={handleInput}
       onchange={handleChange}

@@ -38,6 +38,12 @@ describe('isRoutingSubTabVisible', () => {
 		expect(isRoutingSubTabVisible('advanced', 'zapret')).toBe(false);
 		expect(isRoutingSubTabVisible('expert', 'zapret')).toBe(true);
 	});
+
+	it('shows Autolist only on the expert level', () => {
+		expect(isRoutingSubTabVisible('basic', 'autolist')).toBe(false);
+		expect(isRoutingSubTabVisible('advanced', 'autolist')).toBe(false);
+		expect(isRoutingSubTabVisible('expert', 'autolist')).toBe(true);
+	});
 });
 
 describe('подписи уровней и разделов (i18n)', () => {

@@ -342,7 +342,9 @@
   function canMoveIndexToTarget(from: number, to: number): boolean {
     if (from === to) return false;
     if (from < 0 || from >= cards.length || to < 0 || to >= cards.length) return false;
-    if (cards[from]?.isSystem || cards[to]?.isSystem) return false;
+    for (let i = Math.min(from, to); i <= Math.max(from, to); i++) {
+      if (cards[i]?.isSystem) return false;
+    }
     const firstUser = firstUserRuleIndex();
     if (firstUser === -1) return false;
     return to >= firstUser;

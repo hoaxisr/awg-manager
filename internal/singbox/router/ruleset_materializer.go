@@ -41,6 +41,9 @@ type ruleSetMaterializer struct {
 	configDir string
 	binary    string
 	log       *logging.ScopedLogger
+	// onPublish is called only after a new managed inline JSON+SRS pair is
+	// live. It is an internal generation signal, never an SSE subscription.
+	onPublish func()
 }
 
 var inlineRuleSetCompileExec = func(binary string, args []string) (stdout, stderr string, err error) {
@@ -626,6 +629,9 @@ func (m ruleSetMaterializer) materializeRuleSet(slot orchestrator.Slot, rs RuleS
 	if err := os.Rename(tmpOutPath, srsPath); err != nil {
 		_ = os.Remove(tmpOutPath)
 		return RuleSet{}, fmt.Errorf("publish binary: %w", err)
+	}
+	if m.onPublish != nil {
+		m.onPublish()
 	}
 
 	if m.log != nil {

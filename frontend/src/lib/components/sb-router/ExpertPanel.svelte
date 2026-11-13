@@ -717,7 +717,8 @@
 
   async function handleMoveRule(idx: number, dir: 'up' | 'down') {
     const to = dir === 'up' ? idx - 1 : idx + 1;
-    if (to < 0 || to >= $storeRules.length) return;
+    if (idx < 0 || idx >= $storeRules.length || to < 0 || to >= $storeRules.length) return;
+    if (isSystemRule($storeRules[idx]) || isSystemRule($storeRules[to])) return;
     try {
       await api.singboxRouterMoveRule(idx, to);
       await singboxRouterStore.loadAll();

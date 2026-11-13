@@ -84,8 +84,13 @@ func (s *ServiceImpl) InsertRule(ctx context.Context, index int, r Rule, check R
 		if index < 0 || index > n {
 			return ErrRuleIndexOutOfRange
 		}
-		if index < n && isSystemRule(c.Route.Rules[index]) {
-			return fmt.Errorf("%w: на месте %d системное правило — вставьте ниже", ErrRuleProtected, index)
+		// AddRule ниже ставит r в конец, а MoveRule(n, index) переносит его
+		// через весь прежний суффикс. Как и Move/MoveUserRule, запрещаем
+		// пересекать любое системное правило до первой мутации конфига.
+		for i := index; i < n; i++ {
+			if isSystemRule(c.Route.Rules[i]) {
+				return fmt.Errorf("%w: диапазон %d..%d содержит системное правило %d", ErrRuleProtected, n, index, i)
+			}
 		}
 		if check != nil {
 			if index == n {
@@ -134,8 +139,8 @@ func (s *ServiceImpl) DeleteUserRule(ctx context.Context, index int, check RuleC
 }
 
 // MoveUserRule переносит правило пользователя from на место to. Как и
-// перетаскивание в веб-интерфейсе, место to не может занимать системное
-// правило. check сверяет переносимое правило from.
+// перетаскивание в веб-интерфейсе, пересекаемый интервал не может содержать
+// системное правило. check сверяет переносимое правило from.
 func (s *ServiceImpl) MoveUserRule(ctx context.Context, from, to int, check RuleCheck) error {
 	return s.withConfig(ctx, "rules", func(c *RouterConfig) error {
 		if err := userRuleAt(c, from, check); err != nil {
@@ -144,8 +149,10 @@ func (s *ServiceImpl) MoveUserRule(ctx context.Context, from, to int, check Rule
 		if to < 0 || to >= len(c.Route.Rules) {
 			return ErrRuleIndexOutOfRange
 		}
-		if isSystemRule(c.Route.Rules[to]) {
-			return fmt.Errorf("%w: на месте %d системное правило", ErrRuleProtected, to)
+		for i := min(from, to); i <= max(from, to); i++ {
+			if isSystemRule(c.Route.Rules[i]) {
+				return fmt.Errorf("%w: диапазон %d..%d содержит системное правило %d", ErrRuleProtected, from, to, i)
+			}
 		}
 		return c.MoveRule(from, to)
 	})

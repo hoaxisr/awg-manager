@@ -2860,21 +2860,35 @@ const api_zapretStatusResponse: v.GenericSchema = v.looseObject({
 });
 
 const autolistdetect_Candidate: v.GenericSchema = v.looseObject({
-	domain: v.optional(v.nullable(v.string())),
-	fails: v.optional(v.nullable(v.number())),
-	host: v.optional(v.nullable(v.string())),
-	ip: v.optional(v.nullable(v.string())),
+	correlationID: v.optional(v.nullable(v.string())),
+	coverage: v.optional(v.nullable(v.lazy(() => autolistdetect_CoverageEvidence))),
+	direct: v.optional(v.nullable(v.lazy(() => autolistdetect_CheckEvidence))),
+	firstAt: v.optional(v.nullable(v.string())),
+	id: v.optional(v.nullable(v.string())),
 	lastAt: v.optional(v.nullable(v.string())),
-	probeError: v.optional(v.nullable(v.string())),
-	probedAt: v.optional(v.nullable(v.string())),
-	sources: v.optional(v.nullable(v.array(v.string()))),
-	stage: v.optional(v.nullable(v.string())),
+	lastError: v.optional(v.nullable(v.string())),
+	reason: v.optional(v.nullable(v.string())),
 	state: v.optional(v.nullable(v.string())),
-	tunnelError: v.optional(v.nullable(v.string())),
-	tunnelProbedAt: v.optional(v.nullable(v.string())),
-	tunnelVerdict: v.optional(v.nullable(v.string())),
+	target: v.optional(v.nullable(v.lazy(() => autolistdetect_Target))),
+	targetInterface: v.optional(v.nullable(v.string())),
+	targetOutbound: v.optional(v.nullable(v.string())),
+	tunnel: v.optional(v.nullable(v.lazy(() => autolistdetect_CheckEvidence))),
+	wan: v.optional(v.nullable(v.lazy(() => autolistdetect_CheckEvidence))),
+});
+
+const autolistdetect_CheckEvidence: v.GenericSchema = v.looseObject({
+	bytes: v.optional(v.nullable(v.number())),
+	checkedAt: v.optional(v.nullable(v.string())),
+	detail: v.optional(v.nullable(v.string())),
+	durationMs: v.optional(v.nullable(v.number())),
 	verdict: v.optional(v.nullable(v.string())),
-	why: v.optional(v.nullable(v.string())),
+});
+
+const autolistdetect_CoverageEvidence: v.GenericSchema = v.looseObject({
+	covered: v.optional(v.nullable(v.boolean())),
+	detail: v.optional(v.nullable(v.string())),
+	durationMs: v.optional(v.nullable(v.number())),
+	excluded: v.optional(v.nullable(v.boolean())),
 });
 
 const autolistdetect_HistoryEntry: v.GenericSchema = v.looseObject({
@@ -2882,26 +2896,44 @@ const autolistdetect_HistoryEntry: v.GenericSchema = v.looseObject({
 	at: v.optional(v.nullable(v.string())),
 	domain: v.optional(v.nullable(v.string())),
 	host: v.optional(v.nullable(v.string())),
+	interface: v.optional(v.nullable(v.string())),
+	ip: v.optional(v.nullable(v.string())),
+	network: v.optional(v.nullable(v.string())),
+	outbound: v.optional(v.nullable(v.string())),
+	port: v.optional(v.nullable(v.number())),
+	reason: v.optional(v.nullable(v.string())),
+	result: v.optional(v.nullable(v.string())),
 	source: v.optional(v.nullable(v.string())),
 	why: v.optional(v.nullable(v.string())),
 });
 
 const autolistdetect_Status: v.GenericSchema = v.looseObject({
+	activeChecks: v.optional(v.nullable(v.number())),
 	addsLimit: v.optional(v.nullable(v.number())),
 	addsUsedHour: v.optional(v.nullable(v.number())),
-	auto: v.optional(v.nullable(v.boolean())),
 	candidates: v.optional(v.nullable(v.array(v.lazy(() => autolistdetect_Candidate)))),
+	captureActive: v.optional(v.nullable(v.boolean())),
+	capturePaused: v.optional(v.nullable(v.boolean())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	history: v.optional(v.nullable(v.array(v.lazy(() => autolistdetect_HistoryEntry)))),
 	installed: v.optional(v.nullable(v.boolean())),
 	lastError: v.optional(v.nullable(v.string())),
-	probesLimit: v.optional(v.nullable(v.number())),
-	probesUsedHour: v.optional(v.nullable(v.number())),
+	lastWAN: v.optional(v.nullable(v.lazy(() => autolistdetect_CheckEvidence))),
+	protocols: v.optional(v.nullable(v.array(v.string()))),
+	queuedChecks: v.optional(v.nullable(v.number())),
+	resolveVia: v.optional(v.nullable(v.string())),
 	running: v.optional(v.nullable(v.boolean())),
-	statusUrl: v.optional(v.nullable(v.string())),
 	targetInterface: v.optional(v.nullable(v.string())),
 	targetOutbound: v.optional(v.nullable(v.string())),
 	version: v.optional(v.nullable(v.string())),
+});
+
+const autolistdetect_Target: v.GenericSchema = v.looseObject({
+	domain: v.optional(v.nullable(v.string())),
+	host: v.optional(v.nullable(v.string())),
+	ip: v.optional(v.nullable(v.string())),
+	network: v.optional(v.nullable(v.string())),
+	port: v.optional(v.nullable(v.number())),
 });
 
 const backup_Snapshot: v.GenericSchema = v.looseObject({

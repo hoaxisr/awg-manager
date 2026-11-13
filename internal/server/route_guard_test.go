@@ -156,8 +156,8 @@ var expertPrefixes = []string{
 	"/api/system/proc/", "/api/system/services/",
 }
 
-// expertRoutes — ручки вне «Системы», закрытые expert: управление внешними
-// демонами Zapret/awgmautolist и запись их конфигов и списков.
+// expertRoutes — ручки вне «Системы», закрытые expert: управление Zapret
+// и запись его конфигов и списков.
 var expertRoutes = map[string]bool{
 	"/api/zapret/control":            true,
 	"/api/zapret/strategies/reorder": true,

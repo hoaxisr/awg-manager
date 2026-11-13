@@ -591,6 +591,46 @@ func (s *ServiceImpl) policyTunRouteInstalled(ctx context.Context, sr storage.Si
 	return false, true
 }
 
+// verifyPolicyTunRouteAfterApply проверяет v4-дефолт сразу после фактического
+// применения конфигурации. Это НЕ полный Reconcile: permit, ACL, WAN и прочие
+// пользовательские решения не затрагиваются. После записи читаем runtime ещё
+// раз, чтобы Active и issue не ждали следующий 30-секундный тик.
+func (s *ServiceImpl) verifyPolicyTunRouteAfterApply(ctx context.Context) {
+	if s.deps.Settings == nil || s.deps.Policies == nil || s.deps.DefaultRoute == nil {
+		return
+	}
+	settings, err := s.deps.Settings.Load()
+	if err != nil || settings == nil {
+		return
+	}
+	sr, _ := NormalizeSingboxRouterSettings(settings.SingboxRouter)
+	if !sr.Enabled || sr.RoutingMode != statePolicyTun {
+		return
+	}
+	st, ok := opkgTunOwned(settings, statePolicyTun)
+	if !ok || !st.Provisioned {
+		return
+	}
+	iface := tunIfaceName(st.Index)
+	ndmsName := tunNDMSName(st.Index)
+	installed, known := s.policyTunRouteInstalled(ctx, sr, iface, ndmsName)
+	if !known {
+		return
+	}
+	if installed {
+		s.policyTunRouteStrikes.Store(0)
+		return
+	}
+	// Новый apply получает собственную первую попытку даже после исчерпанной
+	// периодической серии {1,3,8}. Неизвестный runtime не выдаётся за здоровый.
+	s.policyTunRouteStrikes.Store(0)
+	s.reassertPolicyTunDefaultRoute(ctx, sr, iface, ndmsName)
+	installed, known = s.policyTunRouteInstalled(ctx, sr, iface, ndmsName)
+	if known && installed {
+		s.policyTunRouteStrikes.Store(0)
+	}
+}
+
 // reassertPolicyTunV6Route — близнец reassertPolicyTunDefaultRoute для `::/0`
 // (F385): та же лестница попыток, свой счётчик, чтобы v6 не съедал попытки v4.
 func (s *ServiceImpl) reassertPolicyTunV6Route(ctx context.Context, sr storage.SingboxRouterSettings, iface, ndmsName string) {

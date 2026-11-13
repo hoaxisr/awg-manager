@@ -60,6 +60,14 @@ func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.Validation
 		return s.deps.Orch.ApplyDraft(orchestrator.SlotRouter)
 	}()
 	if err == nil && res.Ok() {
+		// ApplyDraft только планирует reload. Дожидаемся его завершения, затем
+		// orchestratorApplyNow выполнит policy-tun runtime verification.
+		if applyErr := s.orchestratorApplyNow(); applyErr != nil {
+			return res, applyErr
+		}
+		// The applied active configuration changed. Invalidate synchronously;
+		// SSE delivery is not part of the coverage correctness protocol.
+		s.InvalidateCoverageIndex()
 		// A staged rule-set delete/rename is final now — reap the orphaned
 		// inline/dat artifacts (issue #448: files were never deleted).
 		s.GCRuleSetArtifacts()

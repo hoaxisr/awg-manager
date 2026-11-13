@@ -4,9 +4,16 @@ import { resolveRuleSetByTag } from '$lib/utils/singboxInlineRules';
 
 export function isSystemRule(rule: SingboxRouterRule): boolean {
   if (rule.action === 'sniff' || rule.action === 'hijack-dns') return true;
-  if (rule.ip_is_private && rule.outbound === 'direct') return true;
+  if (rule.ip_is_private) return true;
   // System UDP-timeout override (route-options scoped to udp).
   if (rule.action === 'route-options' && rule.network === 'udp') return true;
+  // Autolist owns only its exact unconditional owner. Narrowed or foreign
+  // managed references to the same set remain editable user rules.
+  if (
+    rule.rule_set?.length === 1 && rule.rule_set[0] === 'awgm-autolist' &&
+    (!rule.action || rule.action === 'route') && !!rule.outbound &&
+    !hasRuleLevelComplexFields(rule)
+  ) return true;
   return false;
 }
 

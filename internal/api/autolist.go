@@ -12,9 +12,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
-// AutolistHandler отдаёт UI состояние сателлита awgmautolist и
-// проксирует его команды (dismiss/add/config). Отсутствие сателлита —
-// штатное состояние, а не ошибка: его ставят кнопкой (Install).
+// AutolistHandler exposes the satellite lifecycle and its operational proxy.
 type AutolistHandler struct {
 	svc *autolistdetect.Service
 }
@@ -27,54 +25,43 @@ type autolistStatusResponse struct {
 	AutolistStatus *autolistdetect.Status `json:"autolistStatus"`
 }
 
-func notRunningStatus() *autolistdetect.Status {
-	return &autolistdetect.Status{Candidates: []autolistdetect.Candidate{}, History: []autolistdetect.HistoryEntry{}}
+func emptyAutolistStatus() *autolistdetect.Status {
+	return &autolistdetect.Status{Protocols: []string{}, Candidates: []autolistdetect.Candidate{}, History: []autolistdetect.HistoryEntry{}}
 }
 
-// Status возвращает состояние сателлита awgmautolist.
-//
-//	@Summary		Autolist satellite status
-//	@Description	Состояние сателлита awgmautolist: жив ли процесс, режим auto, целевой outbound и таблица кандидатов. Сателлит ставится отдельно; отсутствие процесса — не ошибка, а пустой статус.
-//	@Tags			autolist
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Success		200	{object}	autolistStatusResponse
-//	@Router			/autolist/status [get]
+// AutolistStatus returns process/capture state, candidates and history.
+// @Summary Autolist satellite status
+// @Tags autolist
+// @Produce json
+// @Security CookieAuth
+// @Success 200 {object} autolistStatusResponse
+// @Router /autolist/status [get]
 func (h *AutolistHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
 		return
 	}
 	if h.svc == nil {
-		response.Success(w, autolistStatusResponse{AutolistStatus: notRunningStatus()})
+		response.Success(w, autolistStatusResponse{AutolistStatus: emptyAutolistStatus()})
 		return
 	}
-	response.Success(w, autolistStatusResponse{AutolistStatus: ptrAutolistStatus(h.svc.GetStatus(r.Context()))})
+	status := h.svc.GetStatus(r.Context())
+	response.Success(w, autolistStatusResponse{AutolistStatus: &status})
 }
 
-func ptrAutolistStatus(s autolistdetect.Status) *autolistdetect.Status {
-	return &s
-}
-
-// AutolistControlRequest — сохраняемое включение/отключение сателлита.
 type AutolistControlRequest struct {
-	Action string `json:"action" example:"disable"`
+	Action string `json:"action" example:"enable"`
 }
 
-// Control включает или отключает сателлит через его init script.
-//
-//	@Summary		Autolist satellite control
-//	@Description	Сохраняет намерение enable/disable и запускает или останавливает сателлит. Отключение переживает перезагрузку.
-//	@Tags			autolist
-//	@Accept			json
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Param			body	body	AutolistControlRequest	true	"enable или disable"
-//	@Success		200	{object}	autolistStatusResponse
-//	@Failure		400	{object}	APIErrorEnvelope
-//	@Failure		404	{object}	APIErrorEnvelope
-//	@Failure		500	{object}	APIErrorEnvelope
-//	@Router			/autolist/control [post]
+// AutolistControl persists and applies enable/disable intent.
+// @Summary Autolist satellite control
+// @Tags autolist
+// @Accept json
+// @Produce json
+// @Security CookieAuth
+// @Param body body AutolistControlRequest true "enable or disable"
+// @Success 200 {object} autolistStatusResponse
+// @Router /autolist/control [post]
 func (h *AutolistHandler) Control(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -107,23 +94,24 @@ func (h *AutolistHandler) Control(w http.ResponseWriter, r *http.Request) {
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "AUTOLIST_CONTROL_FAILED")
 		return
 	}
-	response.Success(w, autolistStatusResponse{AutolistStatus: ptrAutolistStatus(h.svc.GetStatus(r.Context()))})
+	status := h.svc.GetStatus(r.Context())
+	response.Success(w, autolistStatusResponse{AutolistStatus: &status})
 }
 
-// Install ставит пакет сателлита из entware-фида роутера и ждёт его запуска.
-//
-//	@Summary		Autolist satellite install
-//	@Description	Ставит пакет awgmautolist через opkg (фид repo.hoaxisr.ru), кладёт сателлиту API-ключ и ждёт, пока он ответит. При включённой авторизации требует созданный API-ключ.
-//	@Tags			autolist
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Success		200	{object}	autolistStatusResponse
-//	@Failure		409	{object}	APIErrorEnvelope
-//	@Failure		500	{object}	APIErrorEnvelope
-//	@Router			/autolist/install [post]
+// AutolistInstall installs the satellite through opkg and confirms its status.
+// @Summary Install Autolist satellite
+// @Tags autolist
+// @Produce json
+// @Security CookieAuth
+// @Success 200 {object} autolistStatusResponse
+// @Router /autolist/install [post]
 func (h *AutolistHandler) Install(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
+		return
+	}
+	if h.svc == nil {
+		response.ErrorWithStatus(w, http.StatusInternalServerError, "autolist installer is unavailable", "AUTOLIST_INSTALL_FAILED")
 		return
 	}
 	if err := h.svc.Install(r.Context()); err != nil {
@@ -134,83 +122,67 @@ func (h *AutolistHandler) Install(w http.ResponseWriter, r *http.Request) {
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "AUTOLIST_INSTALL_FAILED")
 		return
 	}
-	response.Success(w, autolistStatusResponse{AutolistStatus: ptrAutolistStatus(h.svc.GetStatus(r.Context()))})
+	status := h.svc.GetStatus(r.Context())
+	response.Success(w, autolistStatusResponse{AutolistStatus: &status})
 }
 
-// AutolistDismissRequest — тело POST /autolist/dismiss.
+// AutolistDismissRequest identifies a candidate by its stable ID.
 type AutolistDismissRequest struct {
-	Domain string `json:"domain" example:"blocked.example.com"`
+	ID string `json:"id" example:"domain|example.com|tcp|443"`
 }
 
-// Dismiss прячет кандидата сателлита (тело {domain} пересылается сателлиту).
-//
-//	@Summary		Autolist dismiss candidate
-//	@Description	Прячет кандидата сателлита awgmautolist на сутки.
-//	@Tags			autolist
-//	@Accept			json
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Param			body	body	AutolistDismissRequest	true	"Домен кандидата"
-//	@Success		200	{object}	OkResponse
-//	@Failure		400	{object}	APIErrorEnvelope
-//	@Failure		502	{object}	APIErrorEnvelope
-//	@Router			/autolist/dismiss [post]
+// AutolistDismiss hides a candidate through the operational proxy.
+// @Summary Dismiss Autolist candidate
+// @Tags autolist
+// @Accept json
+// @Produce json
+// @Security CookieAuth
+// @Param body body AutolistDismissRequest true "candidate ID"
+// @Success 200 {object} OkResponse
+// @Router /autolist/dismiss [post]
 func (h *AutolistHandler) Dismiss(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
 		return
 	}
 	if h.svc == nil {
-		response.ErrorWithStatus(w, http.StatusConflict, "сателлит не найден", "AUTOLIST_NOT_RUNNING")
+		response.ErrorWithStatus(w, http.StatusConflict, "satellite is not running", "AUTOLIST_NOT_RUNNING")
 		return
 	}
 	r.URL.Path = "/api/autolist/dismiss"
 	autolistdetect.NewProxy(h.svc).ServeHTTP(w, r)
 }
 
-// AutolistProxyRequest — тело POST /autolist/proxy: какой путь сателлита
-// вызвать и с каким телом. Белый список путей проверяет Proxy.
+// AutolistProxyRequest selects an operational satellite endpoint.
 type AutolistProxyRequest struct {
-	// Path — путь сателлита: /add, /probe, /exclude, /restore, /config, /forget или /dismiss.
-	Path string `json:"path" example:"/add"`
-	// Body — произвольный JSON-тело вызова (опционально).
+	Path string         `json:"path" example:"/config"`
 	Body map[string]any `json:"body,omitempty"`
 }
 
-// readCloserOf — тело запроса из map (JSON) как ReadCloser.
-func readCloserOf(v map[string]any) io.ReadCloser {
-	if v == nil {
-		v = map[string]any{}
-	}
-	b, err := json.Marshal(v)
+func autolistBody(v map[string]any) io.ReadCloser {
+	data, err := json.Marshal(v)
 	if err != nil {
-		b = []byte("{}")
+		data = []byte("{}")
 	}
-	return io.NopCloser(bytes.NewReader(b))
+	return io.NopCloser(bytes.NewReader(data))
 }
 
-// Proxy выполняет команду на сателлите (add/config/forget) и возвращает его
-// ответ как есть. Список путей ограничен белым списком Proxy; команды,
-// меняющие состояние (add/config), фронт вызывает на expert-уровне.
-//
-//	@Summary		Autolist satellite command
-//	@Description	Проксирует команду к awgmautolist: add (добавить домены отдельными правилами), config (прочитать/применить конфигурацию), forget (убрать кандидата). Тело ответа — ответ сателлита.
-//	@Tags			autolist
-//	@Accept			json
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Param			body	body	AutolistProxyRequest	true	"Путь сателлита и тело"
-//	@Success		200	{object}	OkResponse
-//	@Failure		400	{object}	APIErrorEnvelope
-//	@Failure		502	{object}	APIErrorEnvelope
-//	@Router			/autolist/proxy [post]
+// AutolistProxy forwards only whitelisted status/config/candidate actions.
+// @Summary Autolist operational command
+// @Tags autolist
+// @Accept json
+// @Produce json
+// @Security CookieAuth
+// @Param body body AutolistProxyRequest true "satellite path and optional body"
+// @Success 200 {object} OkResponse
+// @Router /autolist/proxy [post]
 func (h *AutolistHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
 		return
 	}
 	if h.svc == nil {
-		response.ErrorWithStatus(w, http.StatusConflict, "сателлит не найден", "AUTOLIST_NOT_RUNNING")
+		response.ErrorWithStatus(w, http.StatusConflict, "satellite is not running", "AUTOLIST_NOT_RUNNING")
 		return
 	}
 	var req AutolistProxyRequest
@@ -222,11 +194,13 @@ func (h *AutolistHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 		response.BadRequest(w, "path required")
 		return
 	}
-	// Переписываем путь; тело восстанавливаем КОНВЕРТОМ {"path","body"} —
-	// его распаковывает autolistdetect.Proxy (он же решает POST/GET по
-	// наличию body: без body /config уходит сателлиту как GET-чтение).
 	r.URL.Path = "/api/autolist" + strings.TrimSuffix(req.Path, "/")
-	r.Body = readCloserOf(map[string]any{"path": req.Path, "body": req.Body})
-	r.Header.Set("Content-Type", "application/json")
+	if req.Body == nil {
+		r.Method = http.MethodGet
+		r.Body = http.NoBody
+	} else {
+		r.Body = autolistBody(req.Body)
+		r.Header.Set("Content-Type", "application/json")
+	}
 	autolistdetect.NewProxy(h.svc).ServeHTTP(w, r)
 }

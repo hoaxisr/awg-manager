@@ -491,18 +491,14 @@ func (s *Server) registerRoutingRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/zapret/hostlist/save", h.expertGuarded(zapretHandler.SaveHostlist))
 	}
 
-	// awgmautolist (внешний сателлит автосписка неоткрывающихся сайтов,
-	// см. awgmautolist/ в корне). Ставится пакетом через /install;
-	// отсутствие процесса — штатное состояние. Dismiss меняет состояние
-	// сателлита — на том же уровне доверия, что управление zapret.
+	// Autolist operational API. Rule writes and config changes are expert-only;
+	// the satellite itself listens on loopback and has no diagnostic endpoints.
 	if s.autolistService != nil {
 		autolistHandler := api.NewAutolistHandler(s.autolistService)
 		mux.HandleFunc("/api/autolist/status", h.guarded(autolistHandler.Status))
 		mux.HandleFunc("/api/autolist/control", h.expertGuarded(autolistHandler.Control))
 		mux.HandleFunc("/api/autolist/install", h.expertGuarded(autolistHandler.Install))
 		mux.HandleFunc("/api/autolist/dismiss", h.expertGuarded(autolistHandler.Dismiss))
-		// add/config — команды, меняющие правила роутера и режим сателлита:
-		// тот же уровень доверия, что expert-правки маршрутизации.
 		mux.HandleFunc("/api/autolist/proxy", h.expertGuarded(autolistHandler.Proxy))
 	}
 }
@@ -922,6 +918,8 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/rules/move", h.guarded(rh.MoveRule))
 		mux.HandleFunc("/api/singbox/router/rulesets/list", h.guarded(rh.ListRuleSets))
 		mux.HandleFunc("/api/singbox/router/rulesets/match", h.guarded(rh.MatchRuleSets))
+		mux.HandleFunc("/api/singbox/router/rulesets/indexed-snapshot", h.guarded(rh.CoverageIndexSnapshot))
+		mux.HandleFunc("/api/singbox/router/rulesets/indexed-match", h.guarded(rh.MatchRuleSetsIndexed))
 		mux.HandleFunc("/api/singbox/router/rulesets/add", h.guarded(rh.AddRuleSet))
 		mux.HandleFunc("/api/singbox/router/rulesets/update", h.guarded(rh.UpdateRuleSet))
 		mux.HandleFunc("/api/singbox/router/rulesets/bulk-detour", h.guarded(rh.BulkSetRuleSetDetour))

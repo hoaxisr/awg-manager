@@ -164,8 +164,8 @@ func (a *app) setupTunnels() {
 	a.zapretService = zapret.NewService(a.dataDir, a.loggingService)
 	a.zapretService.SetEventBus(a.eventBus)
 
-	// awgmautolist integration: пакет ставится из UI через opkg. Детект
-	// ленивый (pid-файл + loopback-статус на каждый запрос), сервис лёгкий.
+	// Autolist is an independent package; AWGM owns install/control, key
+	// rotation and the authenticated UI proxy to its loopback API.
 	a.autolistService = autolistdetect.NewService()
 	a.autolistService.SetInstaller(opkg.NewClient(), a.settingsStore)
 

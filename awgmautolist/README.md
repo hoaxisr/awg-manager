@@ -1,130 +1,80 @@
-# awgmautolist
+# awgmautolist 0.10.0-1
 
-Сателлит-демон для AWG Manager: находит сайты, которые не открываются
-напрямую, выполняет свежие direct/tunnel-проверки и ведёт таблицу кандидатов.
-Автодобавление доступно только после успешной полноценной пробы через выбранный
-kernel-интерфейс. Группы sing-box для этого не используются.
+Отдельный демон для Keenetic/Entware. AF_PACKET наблюдает реальные LAN-потоки,
+проверяет существующее покрытие и исключения, выполняет direct/WAN/tunnel-пробы
+и только затем предлагает или создаёт правила через AWGM Router API.
 
-Основная логика находится в отдельном процессе, интеграция с AWGM выполняется
-через HTTP API. Статус и управление слушают только loopback.
+## Наблюдение
 
-## Конвейер
+- По умолчанию: TCP/443 и DNS/53 для имён.
+- При включённом UDP: STUN/TURN на любых UDP-портах. Произвольный UDP-протокол
+  не становится кандидатом, потому что универсальной активной UDP-пробы нет.
+- TCP-поводы: SYN/TLS без ответа, RST и остановка ответа не более чем на 30 КиБ.
+  TCP candidate требует пассивно полученное DNS/SNI-имя; unnamed TCP не создаёт
+  IP-only карточку или правило. DNS hints изолируются по клиенту и IP, а apex/www
+  объединяются через registered zone. IP-only остаётся допустимым для UDP STUN/TURN.
+- Clash connections, журналы sing-box и conntrack не используются как evidence.
+  Read-only runtime API может использоваться для фактического selector/outbound.
 
-1. **Наблюдение** (`observer.go`, `packetruntime`):
-   - AF_PACKET на активных LAN bridge с kernel BPF только для TCP/443 и DNS/53;
-     HELLO/RST/ANSWERED/FIN/SYN обрабатываются без изменений firewall;
-   - NEW и счётчики потоков приходят из `/proc/net/nf_conntrack`; маршрут
-     direct/non-direct подтверждается отдельным снимком Clash;
-   - соединения sing-box: direct TCP/443 закрылся после ≥10 с с 8192..32768
-     байтами ответа; открытый tarpit старше 30 с и скоростью <256 Б/с даёт
-     probe-only подозрение;
-   - журнал sing-box: direct `dial tcp ... i/o timeout` на порту 443.
+Coverage использует отдельный AWGM always-current index активного applied slot
+(tproxy или fakeip-tun). Полная generation собирается из активных rule-set references
+и выбранных exclusions; warm hit/negative выполняются в памяти без JSON/SRS reads и
+без `sing-box rule-set match` subprocesses. Ошибка или неполнота generation fail-closed:
+candidate и write не создаются. Старый `/rulesets/match` не используется как fallback.
 
-   Приватные адреса, fakeip-пул 198.18/15, raw-IP без однозначного имени,
-   shared-хостинги и неоднозначные CDN-адреса не получают доменного правила.
-   Одно connection ID запускает одну принятую open-проверку; временная ошибка
-   подготовки или вытеснение до пробы допускает не более трёх попыток принятия.
-   Dismiss/exclude запрещают повтор. Новое соединение или новое
-   packet/stall/dial-событие получает новую проверку.
+DNS для IP-покрытия — один выбранный numeric-IP сервер sing-box, простые A/AAAA через
+UDP, DoH или DoT. Системный и AWGM resolver не вызываются. Name-only coverage/exclusion
+проверяется до DNS; затем observed IP может проверяться параллельно с A/AAAA.
 
-2. **Покрытие**: ручные исключения, существующие доменные и IP-правила,
-   rule-set/geosite. Явный direct или reject тоже является решением пользователя
-   и не переопределяется. Ошибка обязательной проверки действует fail-closed.
-   Если IP-проверка выключена, резолв и Inspector по IP полностью пропускаются.
+Повторные suspects для queued/active/уже решённого candidate отбрасываются на входе,
+до bounded queue. Переполнение по-прежнему видно в `queueDropped` и журнале.
 
-3. **Direct-проба** (`probe.go`): новый GET `https://<исходный-host>/` через
-   системный `curl` по прямому пути, с фиксацией наблюдаемого IP при сохранении
-   HTTP Host/TLS SNI. Connect timeout → blocked/no-connect, RST → blocked/reset,
-   тишина 5 с после 8..32 КиБ → blocked/freeze, полный ответ → reachable.
-   `unknown` сохраняет диагностику, но не разрешает добавление. Один
-   reader-owner и отдельный watchdog исключают конкурентные чтения. Redirects
-   выполняются вручную через последовательные curl-запросы: относительный
-   `Location` поддерживается, домен проверяется до следующего запроса, а лимит
-   переходов и общий таймаут не зависят от body cap. TCP connect завершается с
-   резервом до 5 секунд на обязательную WAN-проверку внутри общего deadline.
+## Правила
 
-4. **Tunnel-проба**: только после direct blocked. Выполняется тем же Prober и
-   с теми же HTTP/body/watchdog-правилами через `curl --interface <target>`.
-   Наблюдаемый direct IP не фиксируется: туннель выполняет собственный резолв.
-   Старый Clash `/delay` не используется, потому что HEAD не проверяет freeze.
+Демон владеет только inline rule-set `awgm-autolist` и одним безусловным
+owner-правилом. Домены записываются как registered zone (`www.example.co.uk` →
+`example.co.uk`), а активная проба сохраняет исходный SNI/IP. IP-only UDP цель получает
+`/32` или `/128` без port/network: один подтверждённый blocked порт покрывает весь IP.
+Для TCP такие CIDR fallback-правила не создаются.
 
-5. **Результат**:
-   - direct reachable — текущий цикл завершён;
-   - direct/tunnel unknown — правила не меняются;
-   - direct blocked + tunnel reachable — подтверждённый кандидат или,
-     при включённом autoAdd, автоматическое добавление;
-   - tunnel blocked — добавления нет.
+AutoAdd доступен только при включённой tunnel-пробе и verdict `reachable`.
+AutoOff отсутствует. Удаление записей выполняется пользователем. Firewall, NDMS
+и kernel routes демон напрямую не изменяет.
 
-   Вердикты не кэшируются и не заменяют новые проверки. Автоматического
-   суточного dismiss после reachable нет. AutoOff отсутствует: добавленные
-   домены остаются в туннеле до ручного удаления.
+## Файлы
 
-6. **Запись**: inline rule-set `awgm-autolist` и собственный
-   `direct` outbound `awgm-autolist-target` с `bind_interface=<target>`.
-   Owner-правило ведёт набор в этот outbound. Новые домены попадают только в
-   собственный безусловный `domain_suffix`-объект; остальные объекты и условия
-   пользовательских правил сохраняются. Одновременно может работать один
-   worker; лимит — 50 новых добавлений за скользящий час. Ручное действие или
-   изменение конфигурации делает незавершённое решение устаревшим и запрещает
-   его запись.
-
-Очередь ограничена 64 уникальными host; одинаковые одновременные сигналы
-объединяются. `StartsPerHour=0` и `HostSpacingSeconds=0` в текущей сборке
-отключают часовой лимит запусков и паузу ручных повторов; ненулевые значения
-при сборке включают соответствующие технические ограничения.
-
-При Stop активный curl отменяется, probe/packet-correlation workers и packet
-runtime завершаются до закрытия `done`; init `stop()` ждёт завершения процесса.
-
-## Записи на flash
-
-Проб и watcher-события не создают JSON-файлов. Конфигурация сохраняется через
-temp+rename только при явном сохранении. История пишется только для ручных
-dismiss/exclude/restore. Постоянных записей из AutoOff или verdict cache нет.
-
-## Сборка
-
-Готовые IPK для всех поддерживаемых архитектур Keenetic создаются одной
-командой из каталога `awgmautolist`:
-
-```sh
-./build-ipk.sh all
+```text
+Бинарник:       /opt/bin/awgmautolist
+Настройки:      /opt/etc/awgmautolist.json
+State/history:  /opt/etc/awgmautolist-state.json
+Init:           /opt/etc/init.d/S99awgmautolist
+Журнал:         /tmp/awgmautolist.log
 ```
 
-Для одной архитектуры: `./build-ipk.sh aarch64-3.10` (также поддерживаются
-`mipsel-3.4` и `mips-3.4`). Пакеты записываются в `../dist`. Версия по умолчанию
-получается из `internal/autolist/doc.go` с package revision `-1`; для другой
-версии используйте, например, `VERSION=0.1.0-2 ./build-ipk.sh all`.
+Журнал находится только в tmpfs, ограничен 5 МиБ и усекается без ротации.
 
-Для одиночного бинаря Keenetic aarch64:
+## Запуск
 
 ```sh
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
-  -ldflags="-s -w" -o build/awgmautolist-linux-arm64 ./cmd/awgmautolist
-```
-
-Бинарь статический. `curl` из Entware — обязательная зависимость: при его
-отсутствии сателлит завершает запуск с явной ошибкой, альтернативного HTTP
-транспорта нет. Файл настроек создаётся при первом сохранении из UI. Init-скрипт пакета и AWGM используют `/opt/etc/init.d/S99awgmautolist`.
-
-## Запуск на роутере
-
-```sh
-export AWGM_API_KEY="ключ-из-awg-manager"
+export AWGM_API_KEY="ключ AWGM"
 /opt/bin/awgmautolist \
   -router http://127.0.0.1:2222 \
   -config /opt/etc/awgmautolist.json \
   -listen 127.0.0.1:2226
 ```
 
-AutoAdd, tunnel-проба и целевой интерфейс настраиваются во вкладке Autolist.
-Для включения автоматики нужны одновременно tunnel-проба и явно выбранный
-интерфейс. Существующий legacy `targetOutbound` не используется как скрытый
-fallback и не меняет старые правила при чтении конфигурации.
+Loopback API содержит только operational status/config и действия кандидатов;
+диагностических endpoints и ручной `/probe` нет.
 
-## Права и благодарности
+## Сборка
 
-Дизайн, пороги и пользовательская логика — переработка autolist из
-[firc](https://github.com/hoaxisr/firc) (© hoaxisr, GPL-3.0-or-later).
-Код на Go написан с нуля; firc как отдельная программа не связан с этим
-модулем лицензионно. Таблица shared-суффиксов перенесена как данные.
+```sh
+go mod vendor
+./build-ipk.sh all
+```
+
+Создаются статические IPK для `aarch64-3.10`, `mipsel-3.4` и `mips-3.4`.
+Пакеты используют opkg-compatible ustar и проверяются на AppleDouble entries.
+
+Техническое задание и подробный план находятся в независимом каталоге
+`/Users/admin/src/awgm-mini/TECHNICAL_SPEC.md` и `IMPLEMENTATION_PLAN.md`.

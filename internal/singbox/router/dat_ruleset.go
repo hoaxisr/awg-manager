@@ -170,6 +170,7 @@ func (s *ServiceImpl) DatRuleSetFile(ctx context.Context, kind string, tags []st
 	if err := compileDatRuleSet(binary, dir, base, jsonPath, srsPath, metaPath, sourceJSON, meta); err != nil {
 		return "", err
 	}
+	s.InvalidateCoverageIndex()
 	return srsPath, nil
 }
 

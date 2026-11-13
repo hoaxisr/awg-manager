@@ -113,6 +113,7 @@ const (
 	stepRemoveDNSFinal        = "remove-dns-final"
 	stepDerivedDefaults       = "reconcile-derived-defaults"
 	stepStripLegacyTunStack   = "strip-legacy-tun-stack"
+	stepEnsureTunExternal     = "ensure-tun-external-config"
 )
 
 // reconcileStep — один шаг примирения config.d, гоняемого каждый бут.
@@ -953,6 +954,55 @@ func stripLegacyTunStack(configDir string, loggers ...*slog.Logger) {
 	}
 }
 
+// ensureTunExternalConfiguration переводит активный policy-tun слот на режим,
+// в котором адресами и маршрутами владеет NDMS. Вызывается ДО холодного старта
+// pinned binary: sing-tun иначе пытается сам добавить IPv6 default route ещё до
+// того, как router.Reconcile успеет выставить этот флаг, и падает при гонке с
+// NDMS. Неизвестная/чужая версия остаётся строгим no-op.
+func (o *Operator) ensureTunExternalConfiguration() error {
+	if o.proc == nil {
+		return nil
+	}
+	want, known := o.TunExternalConfig()
+	if !known || !want {
+		return nil
+	}
+	slotPath := filepath.Join(o.configPath, "20-router.json")
+	raw, err := os.ReadFile(slotPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("%s: %w", slotPath, err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return fmt.Errorf("%s: %w", slotPath, err)
+	}
+	changed := false
+	inbounds, _ := doc["inbounds"].([]any)
+	for _, item := range inbounds {
+		in, ok := item.(map[string]any)
+		if !ok || in["type"] != "tun" || in["tag"] != "tun-in" {
+			continue
+		}
+		if enabled, _ := in["external_configuration"].(bool); enabled {
+			continue
+		}
+		in["external_configuration"] = true
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	if err := writeJSONFile(slotPath, doc); err != nil {
+		return fmt.Errorf("%s: %w", slotPath, err)
+	}
+	logConfigPatchInfo(o.log, "singbox config reconcile: external configuration enabled before start",
+		"step", stepEnsureTunExternal, "path", slotPath)
+	return nil
+}
+
 // stripLegacyTunStackFromInbounds снимает legacy-стек у tun-инбаундов списка
 // и возвращает снятые значения (nil — менять нечего). Общий мутатор шага
 // пролога и миграции легаси-моноконфига: без него порядок этих двух шагов
@@ -1536,6 +1586,9 @@ func (o *Operator) preflightStatic() error {
 	// разъехаться по lost update — окно в миллисекунды и только пока в файле
 	// ещё лежит legacy-стек, которого владелец всё равно не пишет.
 	stripLegacyTunStack(o.configPath, o.log)
+	if err := o.ensureTunExternalConfiguration(); err != nil {
+		return err
+	}
 	if _, err := configmerge.MergeDir(o.configPath); err != nil {
 		return err
 	}
