@@ -209,6 +209,7 @@
 
 	const history = $derived((ws?.history ?? []).slice(0, 30));
 	const account = $derived(ws?.account ?? null);
+	const usedIpv4 = $derived(ws?.usedIpv4 ?? []);
 </script>
 
 <div class="warp-tab">
@@ -257,7 +258,7 @@
 		<!-- Шапка: слева учётная запись и обфускация AWG, справа — маршрут сканера -->
 		<div class="top-bar">
 			<div class="chips-left">
-				<WarpAccountChip {account} onchanged={refreshNow} />
+				<WarpAccountChip {account} {targets} {usedIpv4} onchanged={refreshNow} />
 				<WarpAwgPopover
 					bind:awg={draft.awg}
 					dirty={awgDirty}
@@ -279,7 +280,9 @@
 					scan={ws.scan}
 					engineAvailable={ws.engine.available}
 					hasAccount={!!account}
+					accountAddressV4={account?.addressV4 ?? ''}
 					{targets}
+					{usedIpv4}
 					scanInterface={scanIface}
 					{routeSummary}
 					autopilotLocked={profilesDirty}

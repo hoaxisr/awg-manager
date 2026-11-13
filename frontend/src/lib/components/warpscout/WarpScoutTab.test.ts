@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
 	warpscoutState: vi.fn(),
 	warpscoutTargets: vi.fn(),
 	warpscoutSaveConfig: vi.fn(),
+	warpscoutSetAddress: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({ api }));
 
@@ -59,6 +60,25 @@ async function mount(initial: WarpScoutState) {
 
 function chip(container: HTMLElement, index: number): HTMLButtonElement {
 	return container.querySelectorAll<HTMLButtonElement>('.status-chip')[index];
+}
+
+function acctState(): WarpScoutState {
+	return state(
+		{},
+		{
+			account: {
+				id: 'dev-1',
+				warpPlus: false,
+				accountType: 'free',
+				addressV4: '172.16.0.2',
+				addressV6: '',
+				publicKey: 'pub-1',
+				peerPublicKey: 'peer-1',
+				createdAt: '2026-11-12T10:00:00Z',
+			},
+			usedIpv4: ['172.16.0.2'],
+		},
+	);
 }
 
 describe('WarpScoutTab', () => {
@@ -123,5 +143,67 @@ describe('WarpScoutTab', () => {
 		const { container } = await mount(state());
 		await tick();
 		expect(container.querySelector('[role="progressbar"]')).toBeNull();
+	});
+
+	it('warns on IPv4 conflict in account popover, suggests free IP and saves it', async () => {
+		const initial = acctState();
+		api.warpscoutState.mockResolvedValue(initial);
+		api.warpscoutTargets.mockResolvedValue([
+			{
+				mode: 'kernel',
+				id: 't1',
+				name: 'WARP HEL',
+				iface: 'nwg3',
+				endpoint: '162.159.192.1:2408',
+				addressV4: '172.16.0.2',
+				isWarp: true,
+				running: true,
+				protected: false,
+			},
+		]);
+		api.warpscoutSetAddress.mockImplementation(async (addressV4: string) => ({
+			...initial.account!,
+			addressV4,
+		}));
+
+		const view = render(WarpScoutTab);
+		await waitFor(() => expect(view.container.querySelector('.top-bar')).not.toBeNull());
+		await fireEvent.click(chip(view.container, 0));
+
+		const suggestBtn = await waitFor(() => {
+			const b = Array.from(view.container.querySelectorAll<HTMLButtonElement>('button')).find(
+				(x) => x.textContent?.includes('172.16.0.3'),
+			);
+			expect(b).toBeDefined();
+			return b!;
+		});
+		expect(suggestBtn.textContent).toContain('172.16.0.3');
+		await fireEvent.click(suggestBtn);
+
+		const input = view.container.querySelector<HTMLInputElement>('#warp-acct-ipv4')!;
+		expect(input.value).toBe('172.16.0.3');
+
+		const form = input.closest('form')!;
+		await fireEvent.submit(form);
+		await waitFor(() => expect(api.warpscoutSetAddress).toHaveBeenCalledWith('172.16.0.3'));
+	});
+
+	it('clamps scan limit input to 1..100 on typing and restores default on blur when empty', async () => {
+		const { container } = await mount(acctState());
+		const input = container.querySelector<HTMLInputElement>('.limit-input')!;
+		expect(input).not.toBeNull();
+		expect(input.value).toBe('20');
+
+		await fireEvent.input(input, { target: { value: '200' } });
+		expect(input.value).toBe('100');
+
+		await fireEvent.input(input, { target: { value: '1005' } });
+		expect(input.value).toBe('100');
+
+		await fireEvent.input(input, { target: { value: '' } });
+		expect(input.value).toBe('');
+
+		await fireEvent.blur(input);
+		expect(input.value).toBe('20');
 	});
 });

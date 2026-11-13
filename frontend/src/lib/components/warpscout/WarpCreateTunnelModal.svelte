@@ -5,21 +5,42 @@
 	import { Button, Modal, SegmentedControl, Toggle } from '$lib/components/ui';
 	import type { SegmentedOption } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
-	import type { WarpFilters, WarpHit, WarpProtocol, WarpTargetMode } from '$lib/types/warpscout';
-	import { countryFlag, warpErrorMessage } from './warpscoutUi';
+	import type {
+		WarpFilters,
+		WarpHit,
+		WarpProtocol,
+		WarpTargetMode,
+		WarpTunnelRef,
+	} from '$lib/types/warpscout';
+	import WarpIpv4Notice from './WarpIpv4Notice.svelte';
+	import { countryFlag, parseTunnelIpv4, warpErrorMessage } from './warpscoutUi';
 
 	interface Props {
 		/** Узел, из которого создаётся туннель. Модалка монтируется на время диалога. */
 		hit: WarpHit;
 		/** Текущие фильтры сканера: протокол по умолчанию и фильтры профиля автопилота. */
 		filters: WarpFilters;
+		/** Адрес IPv4 по умолчанию из учётной записи WARP. */
+		accountAddressV4?: string;
+		/** Известные туннели и занятые IPv4-адреса роутера для проверки конфликтов. */
+		targets?: WarpTunnelRef[];
+		usedIpv4?: string[];
 		/** В автопилоте есть несохранённые правки — включать его отсюда нельзя. */
 		autopilotLocked: boolean;
 		onclose: () => void;
 		ondone: () => void | Promise<void>;
 	}
 
-	let { hit, filters, autopilotLocked, onclose, ondone }: Props = $props();
+	let {
+		hit,
+		filters,
+		accountAddressV4 = '',
+		targets = [],
+		usedIpv4 = [],
+		autopilotLocked,
+		onclose,
+		ondone,
+	}: Props = $props();
 
 	const modeOptions = $derived<SegmentedOption<WarpTargetMode>[]>([
 		{ value: 'kernel', label: 'Kernel AWG' },
@@ -32,12 +53,17 @@
 	]);
 
 	let name = $state(untrack(() => `WARP ${hit.colo || ''}`.trim()));
+	let addressV4 = $state(untrack(() => accountAddressV4 || '172.16.0.2'));
 	let mode = $state<WarpTargetMode>('kernel');
 	let protocol = $state<WarpProtocol>(untrack(() => filters.protocol));
 	let autopilot = $state(false);
 	let applying = $state(false);
 
+	const parsedIp = $derived(parseTunnelIpv4(addressV4));
+	const addrValid = $derived(parsedIp !== null);
+
 	async function submit(): Promise<void> {
+		if (!parsedIp) return;
 		const enableAutopilot = autopilot && !autopilotLocked;
 		applying = true;
 		try {
@@ -46,6 +72,7 @@
 				endpoint: hit.endpoint,
 				mode,
 				name: name.trim() || undefined,
+				addressV4: parsedIp.normalized,
 				protocol,
 				enableAutopilot,
 				filters: enableAutopilot ? { ...filters, protocol } : undefined,
@@ -76,6 +103,22 @@
 		<label class="stack">
 			<span class="ws-label">{m.warpscout_field_name()}</span>
 			<input class="field-input" type="text" bind:value={name} maxlength={64} />
+		</label>
+		<label class="stack">
+			<span class="ws-label">{m.warpscout_acct_ipv4()}</span>
+			<input
+				class="field-input mono"
+				type="text"
+				placeholder="172.16.0.2"
+				bind:value={addressV4}
+				maxlength={20}
+			/>
+			<WarpIpv4Notice
+				value={addressV4}
+				{targets}
+				{usedIpv4}
+				onsuggest={(ip) => (addressV4 = ip)}
+			/>
 		</label>
 		<div class="stack">
 			<span class="ws-label">{m.warpscout_field_tunnel_mode()}</span>
@@ -108,7 +151,7 @@
 		<Button variant="ghost" onclick={onclose} disabled={applying}>
 			{m.common_cancel()}
 		</Button>
-		<Button variant="primary" loading={applying} onclick={submit}>
+		<Button variant="primary" loading={applying} disabled={!addrValid} onclick={submit}>
 			{m.common_create()}
 		</Button>
 	{/snippet}

@@ -26,7 +26,9 @@
 		scan: WarpScanStatus;
 		engineAvailable: boolean;
 		hasAccount: boolean;
+		accountAddressV4?: string;
 		targets: WarpTunnelRef[];
+		usedIpv4?: string[];
 		scanInterface?: string;
 		routeSummary?: string;
 		/** В автопилоте есть несохранённые правки — включать его из сканера нельзя. */
@@ -39,7 +41,9 @@
 		scan,
 		engineAvailable,
 		hasAccount,
+		accountAddressV4 = '',
 		targets,
+		usedIpv4 = [],
 		scanInterface = '',
 		routeSummary,
 		autopilotLocked,
@@ -48,10 +52,31 @@
 	}: Props = $props();
 
 	let filters = $state<WarpFilters>(defaultFilters(0));
-	let maxHits = $state<number>(LIMITS.maxHits.def);
+	let maxHitsInput = $state(String(LIMITS.maxHits.def));
 	let starting = $state(false);
 	let stopping = $state(false);
 	let now = $state(Date.now());
+
+	function onMaxHitsInput(e: Event): void {
+		const el = e.currentTarget as HTMLInputElement;
+		const raw = el.value.trim();
+		if (raw === '') {
+			maxHitsInput = '';
+			return;
+		}
+		const n = Math.trunc(Number(raw));
+		if (!Number.isFinite(n)) {
+			el.value = maxHitsInput;
+			return;
+		}
+		const clamped = Math.min(LIMITS.maxHits.max, Math.max(LIMITS.maxHits.min, n));
+		maxHitsInput = String(clamped);
+		if (el.value !== maxHitsInput) el.value = maxHitsInput;
+	}
+
+	function onMaxHitsBlur(): void {
+		maxHitsInput = String(sanitizeInt(maxHitsInput, LIMITS.maxHits));
+	}
 
 	let createHit = $state<WarpHit | null>(null);
 	let swapHit = $state<WarpHit | null>(null);
@@ -85,11 +110,13 @@
 	const hits = $derived(sortHits(scan.hits));
 
 	async function startScan(): Promise<void> {
+		const clampedHits = sanitizeInt(maxHitsInput, LIMITS.maxHits);
+		maxHitsInput = String(clampedHits);
 		starting = true;
 		try {
 			await api.warpscoutScanStart({
 				filters: { ...filters, maxRttMs: sanitizeInt(filters.maxRttMs, LIMITS.maxRttMs) },
-				maxHits: sanitizeInt(maxHits, LIMITS.maxHits),
+				maxHits: clampedHits,
 				maxCandidates: 0,
 				ifname: scanInterface.trim() || undefined,
 			});
@@ -142,7 +169,10 @@
 					type="number"
 					min={LIMITS.maxHits.min}
 					max={LIMITS.maxHits.max}
-					bind:value={maxHits}
+					step="1"
+					value={maxHitsInput}
+					oninput={onMaxHitsInput}
+					onblur={onMaxHitsBlur}
 					disabled={running}
 				/>
 			</label>
@@ -241,6 +271,9 @@
 	<WarpCreateTunnelModal
 		hit={createHit}
 		{filters}
+		{accountAddressV4}
+		{targets}
+		{usedIpv4}
 		{autopilotLocked}
 		onclose={() => (createHit = null)}
 		ondone={applied}

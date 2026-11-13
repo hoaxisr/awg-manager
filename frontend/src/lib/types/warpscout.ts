@@ -180,6 +180,7 @@ export interface WarpScoutState {
 	accountUnreadable: boolean;
 	defaultWan?: string;
 	routes?: WarpRouteRef[] | null;
+	usedIpv4?: string[] | null;
 	config: WarpConfig;
 	scan: WarpScanStatus;
 	watch: WarpWatchStatus[] | null;
@@ -193,6 +194,7 @@ export interface WarpTunnelRef {
 	name: string;
 	iface: string;
 	endpoint: string;
+	addressV4?: string;
 	isWarp: boolean;
 	running: boolean;
 	protected: boolean;
@@ -212,6 +214,7 @@ export interface WarpApplyRequest {
 	mode: WarpTargetMode;
 	targetId?: string;
 	name?: string;
+	addressV4?: string;
 	protocol?: WarpProtocol;
 	enableAutopilot: boolean;
 	filters?: WarpFilters;

@@ -60,7 +60,9 @@ type Deps struct {
 	// Routes — доступные маршруты (WAN-интерфейсы и запущенные не-WARP туннели)
 	// для выбора интерфейса сканера.
 	Routes func(ctx context.Context) []RouteRef
-	HTTP   HTTPClientFactory
+	// UsedIPv4 — IPv4-адреса, уже занятые существующими туннелями и интерфейсами роутера.
+	UsedIPv4 func(ctx context.Context) []string
+	HTTP     HTTPClientFactory
 	// HTTPFallbacks — резервные HTTP-клиенты (прокси/туннель) на случай
 	// блокировки API регистрации Cloudflare на прямом WAN.
 	HTTPFallbacks func(ctx context.Context) []*http.Client
@@ -137,6 +139,7 @@ type State struct {
 	AccountUnreadable bool           `json:"accountUnreadable"`
 	DefaultWAN        string         `json:"defaultWan,omitempty"`
 	Routes            []RouteRef     `json:"routes"`
+	UsedIPv4          []string       `json:"usedIpv4,omitempty"`
 	Config            Config         `json:"config"`
 	Scan              ScanStatus     `json:"scan"`
 	Watch             []WatchStatus  `json:"watch"`
@@ -152,6 +155,7 @@ type ApplyRequest struct {
 	Mode            TargetMode `json:"mode"`
 	TargetID        string     `json:"targetId,omitempty"`
 	Name            string     `json:"name,omitempty"`
+	AddressV4       string     `json:"addressV4,omitempty"`
 	Protocol        string     `json:"protocol,omitempty"`
 	EnableAutopilot bool       `json:"enableAutopilot"`
 	Filters         *Filters   `json:"filters,omitempty"`
@@ -298,12 +302,19 @@ func (s *Service) State() State {
 			routes = r
 		}
 	}
+	usedIPv4 := []string{}
+	if s.d.UsedIPv4 != nil {
+		if u := s.d.UsedIPv4(s.rootCtx); len(u) > 0 {
+			usedIPv4 = u
+		}
+	}
 	return State{
 		Engine:            s.Engine(),
 		Account:           s.d.Store.Account(),
 		AccountUnreadable: s.d.Store.AccountUnreadable(),
 		DefaultWAN:        defaultWAN,
 		Routes:            routes,
+		UsedIPv4:          usedIPv4,
 		Config:            cfg,
 		Scan:              scan,
 		Watch:             watch,
@@ -468,6 +479,9 @@ func (s *Service) Register(ctx context.Context) (*Account, error) {
 	if err != nil {
 		return nil, err
 	}
+	if old != nil && strings.TrimSpace(old.AddressV4) != "" && old.AddressV4 != DefaultTunnelIPv4 {
+		acct.AddressV4 = old.AddressV4
+	}
 	if err := s.d.Store.SetAccount(acct); err != nil {
 		return nil, err
 	}
@@ -508,6 +522,26 @@ func (s *Service) SetLicense(ctx context.Context, license string) (*Account, err
 	return s.d.Store.Account(), nil
 }
 
+// SetAccountAddress задаёт локальный IPv4 туннеля для сканера и новых конфигов WARP.
+func (s *Service) SetAccountAddress(address string) (*Account, error) {
+	s.acctMu.Lock()
+	defer s.acctMu.Unlock()
+	acct := s.d.Store.Account()
+	if acct == nil {
+		return nil, ErrNoAccount
+	}
+	norm, err := NormalizeTunnelIPv4(address)
+	if err != nil {
+		return nil, err
+	}
+	acct.AddressV4 = norm
+	if err := s.d.Store.SetAccount(acct); err != nil {
+		return nil, err
+	}
+	s.logInfo("address", "warp", "Задан IPv4 туннеля WARP: "+norm)
+	return s.d.Store.Account(), nil
+}
+
 // DeleteAccountLocal забывает учётную запись (и снимает её у Cloudflare).
 func (s *Service) DeleteAccountLocal(ctx context.Context) error {
 	s.acctMu.Lock()
@@ -529,10 +563,14 @@ func (s *Service) DeleteAccountLocal(ctx context.Context) error {
 func (s *Service) buildParams(ctx context.Context, acct *Account, awg AWGParams, f Filters, maxHits, maxCandidates int, endpoints, exclude []string, ifnameOverride string) (ScanParams, error) {
 	f = normalizeFilters(f)
 	wan := s.resolveScanIface(ctx, ifnameOverride)
+	tunIP := strings.TrimSpace(strings.SplitN(acct.AddressV4, "/", 2)[0])
+	if tunIP == "" {
+		tunIP = DefaultTunnelIPv4
+	}
 	p := ScanParams{
 		PrivateKey:       acct.PrivateKey,
 		PeerPublicKey:    acct.PeerPublicKey,
-		TunnelIP:         strings.SplitN(acct.AddressV4, "/", 2)[0],
+		TunnelIP:         tunIP,
 		Reserved:         acct.Reserved(),
 		Endpoints:        nonNil(endpoints),
 		Prefixes:         DefaultPrefixes,
@@ -861,7 +899,15 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		if name == "" {
 			name = "WARP"
 		}
-		conf := BuildConf(acct, s.awgForUse(), protocol, req.Endpoint)
+		cfgAcct := *acct
+		if rawAddr := strings.TrimSpace(req.AddressV4); rawAddr != "" {
+			norm, err := NormalizeTunnelIPv4(rawAddr)
+			if err != nil {
+				return nil, err
+			}
+			cfgAcct.AddressV4 = norm
+		}
+		conf := BuildConf(&cfgAcct, s.awgForUse(), protocol, req.Endpoint)
 		created, err := s.d.Tunnels.Create(ctx, req.Mode, name, conf)
 		if err != nil {
 			return nil, err

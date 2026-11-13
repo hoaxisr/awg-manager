@@ -3863,6 +3863,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /tunnels/pingcheck/remove": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/replace": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/update": v.lazy(() => api_APIEnvelope),
+	"POST /warpscout/account/address": v.record(v.string(), v.unknown()),
 	"POST /warpscout/account/delete": v.record(v.string(), v.unknown()),
 	"POST /warpscout/account/license": v.record(v.string(), v.unknown()),
 	"POST /warpscout/account/register": v.record(v.string(), v.unknown()),

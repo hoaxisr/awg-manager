@@ -216,6 +216,7 @@ type TunnelRef struct {
 	Name          string     `json:"name"`
 	Iface         string     `json:"iface"`
 	Endpoint      string     `json:"endpoint"`
+	AddressV4     string     `json:"addressV4,omitempty"`
 	PeerPublicKey string     `json:"-"`
 	IsWarp        bool       `json:"isWarp"`
 	Running       bool       `json:"running"`

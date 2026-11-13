@@ -36,6 +36,13 @@ export class WarpScoutClient extends Awg3Client {
 		});
 	}
 
+	async warpscoutSetAddress(addressV4: string): Promise<WarpAccount> {
+		return this.request<WarpAccount>('/warpscout/account/address', {
+			method: 'POST',
+			body: JSON.stringify({ addressV4 }),
+		});
+	}
+
 	async warpscoutDeleteAccount(): Promise<{ ok: boolean }> {
 		return this.request<{ ok: boolean }>('/warpscout/account/delete', {
 			method: 'POST',

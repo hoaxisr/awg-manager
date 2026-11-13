@@ -396,7 +396,7 @@ export function setProfileMode(config: WarpConfig, mode: WarpProfileMode): void 
 
 // ── Лента проверок ───────────────────────────────────────────────
 
-export const SPARK_SLOTS = 32;
+export const SPARK_SLOTS = 20;
 
 /** Последние замеры, дополненные слева пустыми ячейками до ширины ленты. */
 export function buildSparkBars(
@@ -408,12 +408,126 @@ export function buildSparkBars(
 	return [...pad, ...tail];
 }
 
-/** Высота столбика в процентах: сбой — полный, без замера — средний. */
-export function sampleBarHeight(s: WarpCheckSample, maxMs: number): number {
+/**
+ * Перцептивная высота столбика серии проверок (42–100%).
+ * Сглаживает редкие многосекундные всплески, чтобы штатные 30–60 мс проверки
+ * оставались крупными и спокойными на глаз.
+ */
+export function sampleBarHeight(s: WarpCheckSample): number {
 	if (!s.ok) return 100;
 	const ms = s.latencyMs ?? 0;
-	if (ms <= 0 || maxMs <= 0) return 55;
-	return Math.min(100, Math.max(30, Math.round((ms / maxMs) * 100)));
+	if (ms <= 0) return 52;
+	if (ms <= 20) return 42;
+	if (ms <= 300) return 42 + Math.round(((ms - 20) / 280) * 40);
+	return 82 + Math.round(Math.min(1, (ms - 300) / 1200) * 14);
+}
+
+export interface ParsedTunnelIPv4 {
+	host: string;
+	octets: [number, number, number, number];
+	bits: number;
+	normalized: string;
+}
+
+/** Разбирает пользовательский IPv4 туннеля (`172.16.0.3` или `172.16.0.3/32`). */
+export function parseTunnelIpv4(raw: string | undefined | null): ParsedTunnelIPv4 | null {
+	const s = (raw ?? '').trim();
+	const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?:\/(\d{1,2}))?$/.exec(s);
+	if (!match) return null;
+	const parts = [match[1], match[2], match[3], match[4]];
+	const nums: number[] = [];
+	for (const p of parts) {
+		const n = Number(p);
+		if (!Number.isInteger(n) || n < 0 || n > 255 || String(n) !== p) return null;
+		nums.push(n);
+	}
+	const [o0, o1, o2, o3] = nums as [number, number, number, number];
+	if (o0 === 0 || o0 === 127 || o0 >= 224 || (o0 === 169 && o1 === 254)) return null;
+	const bits = match[5] !== undefined ? Number(match[5]) : 32;
+	if (
+		!Number.isInteger(bits) ||
+		bits < 1 ||
+		bits > 32 ||
+		(match[5] !== undefined && String(bits) !== match[5])
+	) {
+		return null;
+	}
+	const host = `${o0}.${o1}.${o2}.${o3}`;
+	return {
+		host,
+		octets: [o0, o1, o2, o3],
+		bits,
+		normalized: bits === 32 ? host : `${host}/${bits}`,
+	};
+}
+
+export function isValidTunnelIpv4(raw: string | undefined | null): boolean {
+	return parseTunnelIpv4(raw) !== null;
+}
+
+export function normalizeIpv4Host(raw: string | undefined | null): string | null {
+	return parseTunnelIpv4(raw)?.host ?? null;
+}
+
+export interface TunnelIpv4Conflict {
+	conflict: boolean;
+	host: string;
+	tunnelName?: string;
+}
+
+/** Проверяет пересечение IPv4 с существующими туннелями и интерфейсами роутера. */
+export function findTunnelIpv4Conflict(
+	raw: string | undefined | null,
+	targets: WarpTunnelRef[],
+	usedIpv4?: string[] | null,
+): TunnelIpv4Conflict {
+	const parsed = parseTunnelIpv4(raw);
+	if (!parsed) return { conflict: false, host: '' };
+	for (const t of targets) {
+		if (normalizeIpv4Host(t.addressV4) === parsed.host) {
+			return {
+				conflict: true,
+				host: parsed.host,
+				tunnelName: t.name || t.iface || t.id,
+			};
+		}
+	}
+	if ((usedIpv4 ?? []).some((ip) => normalizeIpv4Host(ip) === parsed.host)) {
+		return { conflict: true, host: parsed.host };
+	}
+	return { conflict: false, host: parsed.host };
+}
+
+/** Подбирает ближайший свободный IPv4 в той же /24-подсети (или 172.16.0.x / 172.16.1.x). */
+export function suggestFreeTunnelIpv4(
+	raw: string | undefined | null,
+	targets: WarpTunnelRef[],
+	usedIpv4?: string[] | null,
+): string {
+	const occupied = new Set<string>();
+	for (const t of targets) {
+		const h = normalizeIpv4Host(t.addressV4);
+		if (h) occupied.add(h);
+	}
+	for (const ip of usedIpv4 ?? []) {
+		const h = normalizeIpv4Host(ip);
+		if (h) occupied.add(h);
+	}
+	const parsed = parseTunnelIpv4(raw);
+	const [a, b, c] = parsed ? parsed.octets : [172, 16, 0, 2];
+	const bits = parsed?.bits ?? 32;
+	const suffix = bits === 32 ? '' : `/${bits}`;
+	for (let last = 2; last <= 254; last++) {
+		const candidate = `${a}.${b}.${c}.${last}`;
+		if (!occupied.has(candidate)) return candidate + suffix;
+	}
+	for (let sub = 1; sub <= 254; sub++) {
+		for (let last = 2; last <= 254; last++) {
+			const candidate = `172.16.${sub}.${last}`;
+			if (!occupied.has(candidate)) return candidate + suffix;
+		}
+	}
+	return parsed ? parsed.normalized : '172.16.0.2';
 }
 
 // ── Сканер ───────────────────────────────────────────────────────
