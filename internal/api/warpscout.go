@@ -375,7 +375,11 @@ func (o *WarpTunnelOps) Get(ctx context.Context, mode warpscout.TargetMode, id s
 			return nil, fmt.Errorf("туннель %s не типа %s", id, mode)
 		}
 		slice := []warpscout.TunnelRef{ref}
-		o.populateViaInfo(ctx, slice)
+		// Сторож зовёт Get на каждой проверке; populateViaInfo опрашивает
+		// состояние ВСЕХ туннелей, поэтому без привязки его не зовём.
+		if strings.TrimSpace(t.ISPInterface) != "" {
+			o.populateViaInfo(ctx, slice)
+		}
 		return &slice[0], nil
 	case warpscout.TargetSystem:
 		if o.System == nil {
@@ -394,8 +398,8 @@ func (o *WarpTunnelOps) Get(ctx context.Context, mode warpscout.TargetMode, id s
 			seedVia = map[string]string{
 				string(warpscout.TargetSystem) + ":" + t.ID: strings.TrimSpace(t.Peer.Via),
 			}
+			o.populateViaInfoSeeded(ctx, slice, seedVia)
 		}
-		o.populateViaInfoSeeded(ctx, slice, seedVia)
 		return &slice[0], nil
 	}
 	return nil, fmt.Errorf("неизвестный тип туннеля %q", mode)

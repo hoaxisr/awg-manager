@@ -466,3 +466,28 @@ func TestWarpOps_CreateCascadeRollsBackWhenViaFails(t *testing.T) {
 		t.Fatalf("непривязанный туннель запущен: startCalls=%d", svc.startCalls)
 	}
 }
+
+// Get одного туннеля без привязки не опрашивает состояние остальных: сторож
+// зовёт его на каждой проверке, и лишние запросы шли бы в NDMS каждый тик.
+func TestWarpOps_GetWithoutViaQueriesOnlyItself(t *testing.T) {
+	ops, svc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg11": tunnel.StateRunning, "awg12": tunnel.StateRunning, "awg13": tunnel.StateRunning,
+	})
+	for _, id := range []string{"awg11", "awg12", "awg13"} {
+		seedWarpTunnel(t, store, id, "kernel")
+	}
+	var asked []string
+	inner := svc.getFn
+	svc.getFn = func(ctx context.Context, id string) (*service.TunnelWithStatus, error) {
+		asked = append(asked, id)
+		return inner(ctx, id)
+	}
+	if _, err := ops.Get(context.Background(), warpscout.TargetKernel, "awg11"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range asked {
+		if id != "awg11" {
+			t.Fatalf("Get(awg11) опросил состояние чужих туннелей: %v", asked)
+		}
+	}
+}
