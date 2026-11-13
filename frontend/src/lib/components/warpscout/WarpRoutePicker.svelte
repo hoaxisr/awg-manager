@@ -26,6 +26,11 @@
 			items: routes.filter((r) => r.kind === 'tunnel'),
 			down: (name: string) => m.warpscout_route_stopped({ name }),
 		},
+		{
+			label: m.warpscout_route_group_warp(),
+			items: routes.filter((r) => r.kind === 'warp'),
+			down: (name: string) => m.warpscout_route_stopped({ name }),
+		},
 	]);
 </script>
 

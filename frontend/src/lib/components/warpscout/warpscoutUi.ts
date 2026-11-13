@@ -18,6 +18,12 @@ import { formatDate, formatDuration, formatTime as formatClock } from '$lib/util
 export const QUICK_COLOS = ['LED', 'KJA', 'OVB', 'SVX'];
 export const SIGNATURE_PROFILES = ['quic_initial', 'dns', 'stun', 'dtls', 'sip', 'none'] as const;
 
+export function signatureProfileLabel(prof: string | undefined): string {
+	if (!prof || prof === 'none') return m.warpscout_sig_none();
+	if (prof === 'custom') return m.warpscout_sig_custom();
+	return prof;
+}
+
 export function modeLabel(mode: WarpTargetMode): string {
 	switch (mode) {
 		case 'kernel':
@@ -322,7 +328,19 @@ const SECTIONS: ConfigSection[] = ['profiles', 'awg'];
 // Форма для сравнения: сервер опускает пустой activeProfileId (omitempty),
 // а пустые списки фильтров может отдать как null.
 function sectionView(c: WarpConfig, s: ConfigSection): unknown {
-	if (s === 'awg') return c.awg;
+	if (s === 'awg') {
+		// У именованного пресета I1..I5 выдаёт сервер, интерфейс их не правит
+		// и не шлёт: сравнивать их — значит видеть «не сохранено» после
+		// выбора пресета и возврата к прежнему.
+		if (c.awg.signatureProfile === 'custom') return c.awg;
+		const view = { ...c.awg };
+		delete view.i1;
+		delete view.i2;
+		delete view.i3;
+		delete view.i4;
+		delete view.i5;
+		return view;
+	}
 	return {
 		profileMode: c.profileMode,
 		activeProfileId: c.activeProfileId || undefined,

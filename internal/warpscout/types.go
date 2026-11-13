@@ -51,6 +51,13 @@ const (
 const (
 	ProtocolAWG = "awg" // мусорные пакеты Jc/Jmin/Jmax + сигнатура I1..I5
 	ProtocolWG  = "wg"  // стандартный WireGuard
+
+	// SignatureCustom — сигнатура I1..I5 скопирована из существующего туннеля
+	// (или задана вручную) и не перегенерируется встроенными пресетами.
+	SignatureCustom = "custom"
+
+	DefaultMTU    = 1280
+	NestedWarpMTU = 1220
 )
 
 // Account — учётная запись Cloudflare WARP в открытом виде (в памяти).
@@ -86,7 +93,7 @@ func (a *Account) Reserved() [3]int {
 // рукопожатие.
 type AWGParams struct {
 	// SignatureProfile — профиль генератора сигнатуры (quic_initial, dns,
-	// stun, dtls, sip) или "none".
+	// stun, dtls, sip), "custom" (взято из рабочего туннеля) или "none".
 	SignatureProfile string `json:"signatureProfile"`
 	Jc               int    `json:"jc"`
 	Jmin             int    `json:"jmin"`
@@ -96,6 +103,18 @@ type AWGParams struct {
 	I3               string `json:"i3,omitempty"`
 	I4               string `json:"i4,omitempty"`
 	I5               string `json:"i5,omitempty"`
+}
+
+// ObfuscationSource — существующий на роутере туннель с параметрами AmneziaWG,
+// из которого можно скопировать Jc/Jmin/Jmax и I1..I5 для скана или нового WARP.
+type ObfuscationSource struct {
+	ID      string     `json:"id"`
+	Name    string     `json:"name"`
+	Iface   string     `json:"iface,omitempty"`
+	Mode    TargetMode `json:"mode"`
+	Running bool       `json:"running"`
+	IsWarp  bool       `json:"isWarp"`
+	AWG     AWGParams  `json:"awg"`
 }
 
 // Filters — требования к узлу. Общие у ручного скана и профилей.
@@ -133,12 +152,14 @@ type Config struct {
 	AWG           AWGParams `json:"awg"`
 }
 
-// RouteRef — доступный интерфейс выхода (WAN или активный VPN-туннель) для сканера.
+// RouteRef — доступный интерфейс выхода (WAN, внешний VPN или WARP для WARP-in-WARP).
 type RouteRef struct {
-	Name  string `json:"name"`
-	Label string `json:"label"`
-	Kind  string `json:"kind"` // "wan" | "tunnel"
-	Up    bool   `json:"up"`
+	Name       string     `json:"name"`
+	Label      string     `json:"label"`
+	Kind       string     `json:"kind"` // "wan" | "tunnel" | "warp"
+	Up         bool       `json:"up"`
+	TunnelMode TargetMode `json:"tunnelMode,omitempty"`
+	TunnelID   string     `json:"tunnelId,omitempty"`
 }
 
 // Hit — найденный рабочий эндпоинт.
@@ -211,15 +232,22 @@ type ProfileStats struct {
 
 // TunnelRef — целевой туннель глазами автопилота.
 type TunnelRef struct {
-	Mode          TargetMode `json:"mode"`
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	Iface         string     `json:"iface"`
-	Endpoint      string     `json:"endpoint"`
-	AddressV4     string     `json:"addressV4,omitempty"`
-	PeerPublicKey string     `json:"-"`
-	IsWarp        bool       `json:"isWarp"`
-	Running       bool       `json:"running"`
-	Protected     bool       `json:"protected"`
-	ProtectReason string     `json:"protectReason,omitempty"`
+	Mode           TargetMode `json:"mode"`
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	Iface          string     `json:"iface"`
+	Endpoint       string     `json:"endpoint"`
+	AddressV4      string     `json:"addressV4,omitempty"`
+	LocalPublicKey string     `json:"-"`
+	PeerPublicKey  string     `json:"-"`
+	IsWarp         bool       `json:"isWarp"`
+	Running        bool       `json:"running"`
+	Protected      bool       `json:"protected"`
+	ProtectReason  string     `json:"protectReason,omitempty"`
+	ViaMode        TargetMode `json:"viaMode,omitempty"`
+	ViaTunnelID    string     `json:"viaTunnelId,omitempty"`
+	ViaIface       string     `json:"viaIface,omitempty"`
+	ViaLabel       string     `json:"viaLabel,omitempty"`
+	ViaEndpoint    string     `json:"viaEndpoint,omitempty"`
+	ViaRunning     bool       `json:"viaRunning,omitempty"`
 }

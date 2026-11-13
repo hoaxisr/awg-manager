@@ -105,6 +105,27 @@ func signatureHex(p AWGParams) ([5]string, error) {
 	return out, nil
 }
 
+// nestedSignatureMax — потолок пакета I1..I5 у каскада: он идёт внутри
+// внешнего туннеля с MTU 1280 (минус IP и UDP — 1252, берём с запасом).
+const nestedSignatureMax = 1200
+
+// fitSignature подгоняет I1..I5 под maxRaw байт. Пакет, который не
+// помещается, заменяется своим же усечённым началом в виде `<b 0x…>`:
+// усечь запись с тегами <r>/<t> иначе нельзя. Пакеты в пределах остаются
+// как есть, со своими случайными частями.
+func fitSignature(p AWGParams, maxRaw int) (AWGParams, error) {
+	for i, spec := range []*string{&p.I1, &p.I2, &p.I3, &p.I4, &p.I5} {
+		raw, err := CPSToRaw(*spec)
+		if err != nil {
+			return p, fmt.Errorf("%w: сигнатура I%d: %v", ErrInvalidInput, i+1, err)
+		}
+		if len(raw) > maxRaw {
+			*spec = "<b 0x" + hex.EncodeToString(raw[:maxRaw]) + ">"
+		}
+	}
+	return p, nil
+}
+
 // DefaultTunnelIPv4 — локальный адрес туннеля WARP, пока пользователь не задал свой.
 const DefaultTunnelIPv4 = "172.16.0.2"
 
@@ -144,8 +165,16 @@ func NormalizeTunnelIPv4(raw string) (string, error) {
 	return fmt.Sprintf("%s/%d", addr.String(), bits), nil
 }
 
-// BuildConf собирает .conf для туннеля WARP.
+// BuildConf собирает .conf для туннеля WARP со стандартным MTU 1280.
 func BuildConf(a *Account, awg AWGParams, protocol, endpoint string) string {
+	return BuildConfWithMTU(a, awg, protocol, endpoint, DefaultMTU)
+}
+
+// BuildConfWithMTU собирает .conf для туннеля WARP с заданным MTU (для WARP-in-WARP — 1220).
+func BuildConfWithMTU(a *Account, awg AWGParams, protocol, endpoint string, mtu int) string {
+	if mtu <= 0 {
+		mtu = DefaultMTU
+	}
 	var b strings.Builder
 	b.WriteString("[Interface]\n")
 	fmt.Fprintf(&b, "PrivateKey = %s\n", a.PrivateKey)
@@ -158,7 +187,7 @@ func BuildConf(a *Account, awg AWGParams, protocol, endpoint string) string {
 	}
 	fmt.Fprintf(&b, "Address = %s\n", addr)
 	b.WriteString("DNS = 1.1.1.1, 1.0.0.1\n")
-	b.WriteString("MTU = 1280\n")
+	fmt.Fprintf(&b, "MTU = %d\n", mtu)
 	if protocol != ProtocolWG {
 		if awg.Jc > 0 {
 			fmt.Fprintf(&b, "Jc = %d\nJmin = %d\nJmax = %d\n", awg.Jc, awg.Jmin, awg.Jmax)
@@ -182,4 +211,50 @@ func BuildConf(a *Account, awg AWGParams, protocol, endpoint string) string {
 	fmt.Fprintf(&b, "Endpoint = %s\n", endpoint)
 	b.WriteString("PersistentKeepalive = 25\n")
 	return b.String()
+}
+
+var (
+	// Имя целиком в том виде, в каком его выдаёт панель: «WARP», «WARP HEL»,
+	// «WARP-in-WARP HEL», с необязательным номером в конце. Имя, к которому
+	// приложил руку пользователь, под шаблон не попадает и не трогается.
+	warpColoNameRe   = regexp.MustCompile(`^(WARP(?:-in-WARP)?)(?: ([A-Z]{3}))?( \d+)?$`)
+	nonColoWarpWords = map[string]bool{
+		"AWG": true, "VPN": true, "PRO": true, "MAX": true, "DNS": true,
+		"WAN": true, "LAN": true, "NAT": true, "RAW": true, "TCP": true,
+		"UDP": true, "ONE": true, "APP": true, "CLI": true, "BOT": true,
+		"NET": true, "NEW": true, "OLD": true, "TOP": true,
+	}
+)
+
+func isValidColoCode(s string) bool {
+	if len(s) != 3 {
+		return false
+	}
+	for i := 0; i < 3; i++ {
+		if s[i] < 'A' || s[i] > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
+// DeriveWarpTunnelName обновляет код колокейшна (HEL, TLL, FRA, …) в имени
+// WARP-туннеля при подмене endpoint'а. Меняется только имя, которое панель
+// выдала сама (см. warpColoNameRe): трёхбуквенное слово в пользовательском
+// имени («WARP Mom», «Дом WARP Bob», «WARP via ISP») кодом узла не считается.
+func DeriveWarpTunnelName(currentName, newColo string) (string, bool) {
+	colo := strings.ToUpper(strings.TrimSpace(newColo))
+	if !isValidColoCode(colo) || nonColoWarpWords[colo] {
+		return "", false
+	}
+	trimmed := strings.TrimSpace(currentName)
+	m := warpColoNameRe.FindStringSubmatch(trimmed)
+	if m == nil || nonColoWarpWords[m[2]] {
+		return "", false
+	}
+	next := m[1] + " " + colo + m[3]
+	if next == trimmed || len(next) > 64 {
+		return trimmed, false
+	}
+	return next, true
 }

@@ -36,7 +36,7 @@ func TestLive_RegisterAndScan(t *testing.T) {
 		t.Fatal("сигнатура не сгенерирована")
 	}
 	f := DefaultFilters()
-	p, err := s.buildParams(ctx, acct, awg, f, 3, 300, nil, nil, "")
+	p, err := s.buildParams(ctx, acct, awg, f, 3, 300, nil, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

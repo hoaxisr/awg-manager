@@ -839,3 +839,74 @@ func TestWGServerStore_Get_EnrichmentErrorNotCached(t *testing.T) {
 		t.Fatalf("неполный элемент: %+v", srv)
 	}
 }
+
+func TestWGServerStore_InvalidateResetsSystemTunnelsList(t *testing.T) {
+	fg := newFakeGetter()
+	primeWGFakeGetter(fg)
+	ifaces := NewInterfaceStore(fg, NopLogger())
+	s := NewWGServerStore(fg, NopLogger(), ifaces)
+	ctx := context.Background()
+
+	list, err := s.ListSystemTunnels(ctx)
+	if err != nil {
+		t.Fatalf("ListSystemTunnels initial: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != "Wireguard1" || list[0].PublicKey != "SRVKEY1=" || list[0].Peer == nil || list[0].Peer.Via != "" {
+		t.Fatalf("unexpected initial list: %+v", list)
+	}
+
+	fg.SetJSON("/show/interface/", `{
+		"Wireguard0": {
+			"id": "Wireguard0",
+			"interface-name": "nwg0",
+			"type": "Wireguard",
+			"description": "Wireguard VPN Server",
+			"state": "up",
+			"connected": "yes",
+			"address": "10.0.0.1",
+			"mask": "255.255.255.0",
+			"mtu": 1420,
+			"wireguard": {"public-key": "SRVKEY0=", "listen-port": 51820, "peer": []}
+		},
+		"Wireguard1": {
+			"id": "Wireguard1",
+			"interface-name": "nwg1",
+			"type": "Wireguard",
+			"description": "WARP HEL",
+			"state": "up",
+			"link": "up",
+			"connected": "yes",
+			"address": "172.16.0.3",
+			"mask": "255.255.255.255",
+			"mtu": 1220,
+			"wireguard": {
+				"public-key": "SRVKEY1=",
+				"listen-port": 51821,
+				"peer": [
+					{
+						"public-key": "PEERB=",
+						"description": "bob",
+						"remote-endpoint-address": "8.35.211.154",
+						"remote-port": 945,
+						"via": "Wireguard3",
+						"rxbytes": 10,
+						"txbytes": 20,
+						"last-handshake": 3,
+						"online": true,
+						"enabled": true
+					}
+				]
+			}
+		}
+	}`)
+	ifaces.Invalidate("Wireguard1")
+	s.Invalidate("Wireguard1")
+
+	list, err = s.ListSystemTunnels(ctx)
+	if err != nil {
+		t.Fatalf("ListSystemTunnels after Invalidate: %v", err)
+	}
+	if len(list) != 1 || list[0].Description != "WARP HEL" || list[0].Peer == nil || list[0].Peer.Via != "Wireguard3" {
+		t.Fatalf("stale sysList after Invalidate: %+v", list)
+	}
+}

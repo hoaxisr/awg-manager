@@ -92,7 +92,23 @@ func (s *Server) buildWarpScout(h *routeHandlers) *api.WarpScoutHandler {
 			}
 			if list, err := ops.List(ctx); err == nil {
 				for _, t := range list {
-					if t.Protected || t.IsWarp || t.Iface == "" || seen[t.Iface] {
+					if t.Protected || t.Iface == "" || seen[t.Iface] {
+						continue
+					}
+					if t.IsWarp {
+						// Внешний WARP (верхнеуровневый) доступен как маршрут сканера для WARP-in-WARP.
+						if t.ViaIface != "" {
+							continue
+						}
+						seen[t.Iface] = true
+						out = append(out, warpscout.RouteRef{
+							Name:       t.Iface,
+							Label:      t.Name,
+							Kind:       "warp",
+							Up:         t.Running,
+							TunnelMode: t.Mode,
+							TunnelID:   t.ID,
+						})
 						continue
 					}
 					seen[t.Iface] = true
@@ -106,7 +122,8 @@ func (s *Server) buildWarpScout(h *routeHandlers) *api.WarpScoutHandler {
 			}
 			return out
 		},
-		UsedIPv4: ops.UsedIPv4,
+		ObfuscationSources: ops.ObfuscationSources,
+		UsedIPv4:           ops.UsedIPv4,
 	}
 	if s.bus != nil {
 		deps.Bus = s.bus

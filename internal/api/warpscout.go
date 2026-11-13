@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -79,11 +80,13 @@ func (o *WarpTunnelOps) managedRef(ctx context.Context, t *storage.AWGTunnel) (w
 	if !ok {
 		return warpscout.TunnelRef{}, false
 	}
+	pub, _ := warpscout.PublicKeyOf(t.Interface.PrivateKey)
 	ref := warpscout.TunnelRef{
 		Mode: mode, ID: t.ID, Name: t.Name, Endpoint: t.Peer.Endpoint,
-		AddressV4:     bareIPv4(t.Interface.Address),
-		PeerPublicKey: t.Peer.PublicKey,
-		IsWarp:        strings.TrimSpace(t.Peer.PublicKey) == warpscout.WarpPeerPublicKey,
+		AddressV4:      bareIPv4(t.Interface.Address),
+		LocalPublicKey: pub,
+		PeerPublicKey:  t.Peer.PublicKey,
+		IsWarp:         strings.TrimSpace(t.Peer.PublicKey) == warpscout.WarpPeerPublicKey,
 	}
 	if reason := managedProtectReason(t); reason != "" {
 		ref.Protected, ref.ProtectReason = true, reason
@@ -133,8 +136,9 @@ func (o *WarpTunnelOps) systemProtectReason(t *ndms.SystemWireguardTunnel) strin
 func (o *WarpTunnelOps) systemRef(t *ndms.SystemWireguardTunnel) warpscout.TunnelRef {
 	ref := warpscout.TunnelRef{
 		Mode: warpscout.TargetSystem, ID: t.ID, Name: t.Description, Iface: t.InterfaceName,
-		AddressV4: bareIPv4(t.Address),
-		Running:   t.Status == "up",
+		AddressV4:      bareIPv4(t.Address),
+		LocalPublicKey: strings.TrimSpace(t.PublicKey),
+		Running:        t.Status == "up",
 	}
 	if ref.Name == "" {
 		ref.Name = t.ID
@@ -148,6 +152,150 @@ func (o *WarpTunnelOps) systemRef(t *ndms.SystemWireguardTunnel) warpscout.Tunne
 		ref.Protected, ref.ProtectReason = true, reason
 	}
 	return ref
+}
+
+type parentTunnelInfo struct {
+	mode        warpscout.TargetMode
+	id          string
+	name        string
+	kernelIface string
+	endpoint    string
+	running     bool
+}
+
+func (o *WarpTunnelOps) populateViaInfo(ctx context.Context, refs []warpscout.TunnelRef) {
+	o.populateViaInfoSeeded(ctx, refs, nil)
+}
+
+func (o *WarpTunnelOps) populateViaInfoSeeded(ctx context.Context, refs []warpscout.TunnelRef, seedVia map[string]string) {
+	if len(refs) == 0 {
+		return
+	}
+	// Сначала — у кого вообще есть привязка: это читается из записей и кэша
+	// и роутер не трогает. Состояние туннелей-родителей нужно только тогда.
+	viaRaw := map[string]string{}
+	var managed []storage.AWGTunnel
+	if o.Store != nil {
+		if list, err := o.Store.List(); err == nil {
+			managed = list
+			for i := range list {
+				if m, ok := modeOfBackend(list[i].Backend); ok {
+					if via := strings.TrimSpace(list[i].ISPInterface); via != "" {
+						viaRaw[string(m)+":"+list[i].ID] = via
+					}
+				}
+			}
+		}
+	}
+	var sys []ndms.SystemWireguardTunnel
+	if o.System != nil {
+		if list, err := o.System.List(ctx); err == nil {
+			sys = list
+			for i := range list {
+				if list[i].Peer != nil && strings.TrimSpace(list[i].Peer.Via) != "" {
+					viaRaw[string(warpscout.TargetSystem)+":"+list[i].ID] = strings.TrimSpace(list[i].Peer.Via)
+				}
+			}
+		}
+	}
+	for k, v := range seedVia {
+		if v := strings.TrimSpace(v); v != "" {
+			viaRaw[k] = v
+		}
+	}
+	bound := false
+	// Состояние, уже собранное вызывающим (List собирает его для каждого
+	// туннеля), повторно у роутера не спрашиваем.
+	known := map[string]*warpscout.TunnelRef{}
+	for i := range refs {
+		k := string(refs[i].Mode) + ":" + refs[i].ID
+		known[k] = &refs[i]
+		if viaRaw[k] != "" {
+			bound = true
+		}
+	}
+	if !bound {
+		return
+	}
+
+	byKey := map[string]parentTunnelInfo{}
+	for i := range managed {
+		t := &managed[i]
+		m, ok := modeOfBackend(t.Backend)
+		if !ok {
+			continue
+		}
+		var kIface string
+		var running bool
+		if r := known[string(m)+":"+t.ID]; r != nil {
+			kIface, running = r.Iface, r.Running
+		} else if o.Svc != nil {
+			if tw, err := o.Svc.Get(ctx, t.ID); err == nil && tw != nil {
+				kIface = tw.InterfaceName
+				running = tw.State == tunnel.StateRunning ||
+					(t.Enabled && (tw.State == tunnel.StateStarting || tw.State == tunnel.StateBroken))
+			}
+		}
+		if kIface == "" {
+			if m == warpscout.TargetNative && t.NWGIndex >= 0 {
+				kIface = fmt.Sprintf("nwg%d", t.NWGIndex)
+			} else if m == warpscout.TargetKernel {
+				kIface = tunnel.NewNames(t.ID).IfaceName
+			}
+		}
+		info := parentTunnelInfo{
+			mode: m, id: t.ID, name: t.Name,
+			kernelIface: kIface, endpoint: t.Peer.Endpoint, running: running,
+		}
+		byKey["tunnel:"+t.ID] = info
+		if m == warpscout.TargetNative && t.NWGIndex >= 0 {
+			byKey[fmt.Sprintf("Wireguard%d", t.NWGIndex)] = info
+		} else if m == warpscout.TargetKernel {
+			byKey[tunnel.NewNames(t.ID).NDMSName] = info
+		}
+		if kIface != "" {
+			byKey[kIface] = info
+		}
+	}
+	for i := range sys {
+		s := &sys[i]
+		if _, exists := byKey[s.ID]; exists || o.systemProtectReason(s) != "" {
+			continue
+		}
+		name := s.Description
+		if name == "" {
+			name = s.ID
+		}
+		ep := ""
+		if s.Peer != nil {
+			ep = s.Peer.Endpoint
+		}
+		info := parentTunnelInfo{
+			mode: warpscout.TargetSystem, id: s.ID, name: name,
+			kernelIface: s.InterfaceName, endpoint: ep, running: s.Status == "up",
+		}
+		byKey[s.ID] = info
+		if s.InterfaceName != "" {
+			byKey[s.InterfaceName] = info
+		}
+	}
+
+	for i := range refs {
+		viaKey := viaRaw[string(refs[i].Mode)+":"+refs[i].ID]
+		if viaKey == "" {
+			continue
+		}
+		p, ok := byKey[viaKey]
+		if !ok || (p.mode == refs[i].Mode && p.id == refs[i].ID) {
+			continue
+		}
+		refs[i].ViaMode = p.mode
+		refs[i].ViaTunnelID = p.id
+		refs[i].ViaIface = p.kernelIface
+		refs[i].ViaLabel = p.name
+		refs[i].ViaEndpoint = p.endpoint
+		refs[i].ViaRunning = p.running
+	}
 }
 
 // List — managed-туннели и системные WG-клиенты. Серверы и служебные
@@ -177,6 +325,7 @@ func (o *WarpTunnelOps) List(ctx context.Context) ([]warpscout.TunnelRef, error)
 			}
 		}
 	}
+	o.populateViaInfo(ctx, out)
 	return out, nil
 }
 
@@ -252,7 +401,13 @@ func (o *WarpTunnelOps) Get(ctx context.Context, mode warpscout.TargetMode, id s
 		if !ok || ref.Mode != mode {
 			return nil, fmt.Errorf("туннель %s не типа %s", id, mode)
 		}
-		return &ref, nil
+		slice := []warpscout.TunnelRef{ref}
+		// Сторож зовёт Get на каждой проверке; populateViaInfo опрашивает
+		// состояние ВСЕХ туннелей, поэтому без привязки его не зовём.
+		if strings.TrimSpace(t.ISPInterface) != "" {
+			o.populateViaInfo(ctx, slice)
+		}
+		return &slice[0], nil
 	case warpscout.TargetSystem:
 		if o.System == nil {
 			return nil, errors.New("системные туннели недоступны")
@@ -264,14 +419,117 @@ func (o *WarpTunnelOps) Get(ctx context.Context, mode warpscout.TargetMode, id s
 		if err != nil || t == nil {
 			return nil, fmt.Errorf("системный туннель %s не найден", id)
 		}
-		ref := o.systemRef(t)
-		return &ref, nil
+		slice := []warpscout.TunnelRef{o.systemRef(t)}
+		var seedVia map[string]string
+		if t.Peer != nil && strings.TrimSpace(t.Peer.Via) != "" {
+			seedVia = map[string]string{
+				string(warpscout.TargetSystem) + ":" + t.ID: strings.TrimSpace(t.Peer.Via),
+			}
+			o.populateViaInfoSeeded(ctx, slice, seedVia)
+		}
+		return &slice[0], nil
 	}
 	return nil, fmt.Errorf("неизвестный тип туннеля %q", mode)
 }
 
-// Create — новый туннель из .conf.
-func (o *WarpTunnelOps) Create(ctx context.Context, mode warpscout.TargetMode, name, conf string) (*warpscout.TunnelRef, error) {
+func (o *WarpTunnelOps) resolveOuterNDMS(ctx context.Context, viaMode warpscout.TargetMode, viaID string) (ndmsName, label string, err error) {
+	ref, err := o.Get(ctx, viaMode, viaID)
+	if err != nil {
+		return "", "", err
+	}
+	if ref.Protected {
+		return "", "", fmt.Errorf("%w: %s", warpscout.ErrProtected, ref.ProtectReason)
+	}
+	if !ref.IsWarp {
+		return "", "", warpscout.ErrNotWarp
+	}
+	switch viaMode {
+	case warpscout.TargetSystem:
+		return viaID, ref.Name, nil
+	case warpscout.TargetNative:
+		if o.Store == nil {
+			return "", "", errors.New("хранилище туннелей недоступно")
+		}
+		st, err := o.Store.Get(viaID)
+		if err != nil {
+			return "", "", fmt.Errorf("внешний туннель %s не найден", viaID)
+		}
+		if st.NWGIndex < 0 {
+			return "", "", fmt.Errorf("у внешнего туннеля %s не назначен интерфейс Wireguard", st.Name)
+		}
+		return fmt.Sprintf("Wireguard%d", st.NWGIndex), st.Name, nil
+	case warpscout.TargetKernel:
+		return tunnel.NewNames(viaID).NDMSName, ref.Name, nil
+	default:
+		return "", "", fmt.Errorf("неизвестный тип внешнего туннеля %q", viaMode)
+	}
+}
+
+func extractPeerPublicKey(conf string) string {
+	inPeer := false
+	for _, line := range strings.Split(conf, "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" || strings.HasPrefix(s, "#") || strings.HasPrefix(s, ";") {
+			continue
+		}
+		if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+			inPeer = strings.EqualFold(strings.TrimSpace(s[1:len(s)-1]), "peer")
+			continue
+		}
+		if !inPeer {
+			continue
+		}
+		if k, v, ok := strings.Cut(s, "="); ok && strings.EqualFold(strings.TrimSpace(k), "PublicKey") {
+			return strings.TrimSpace(v)
+		}
+	}
+	return warpscout.WarpPeerPublicKey
+}
+
+// bindManagedVia привязывает только что импортированный NativeWG-туннель к
+// внешнему: запись (ISPInterface) и `connect via` у пира в NDMS.
+func (o *WarpTunnelOps) bindManagedVia(ctx context.Context, id, outerNDMS, outerLabel string) error {
+	if o.Store == nil || o.Commands == nil || o.Commands.Wireguard == nil || o.Queries == nil || o.Queries.Interfaces == nil {
+		return errors.New("NDMS недоступен")
+	}
+	if err := o.Store.Update(id, func(t *storage.AWGTunnel) error {
+		t.ISPInterface = outerNDMS
+		t.ISPInterfaceLabel = "Через " + outerLabel
+		return nil
+	}); err != nil {
+		return fmt.Errorf("сохранить маршрут внешнего туннеля: %w", err)
+	}
+	created, err := o.Store.Get(id)
+	if err != nil {
+		return err
+	}
+	if created.NWGIndex < 0 {
+		return errors.New("туннелю не назначен интерфейс Wireguard")
+	}
+	ndmsName := fmt.Sprintf("Wireguard%d", created.NWGIndex)
+	iface, _, present, err := o.Queries.Interfaces.Confirm(ctx, ndmsName)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return fmt.Errorf("интерфейс %s не найден на роутере", ndmsName)
+	}
+	return o.Commands.Wireguard.SetPeerConnectVia(ctx, iface, created.Peer.PublicKey, outerNDMS)
+}
+
+// Create — новый туннель из .conf (в т.ч. каскадный WARP-in-WARP при opts.ViaID != "").
+func (o *WarpTunnelOps) Create(ctx context.Context, mode warpscout.TargetMode, name, conf string, opts warpscout.CreateOptions) (*warpscout.TunnelRef, error) {
+	var outerNDMS, outerLabel string
+	if strings.TrimSpace(opts.ViaID) != "" {
+		if mode == warpscout.TargetKernel {
+			return nil, fmt.Errorf("%w: для WARP-in-WARP выберите тип Native WG или Системный", warpscout.ErrInvalidInput)
+		}
+		var err error
+		outerNDMS, outerLabel, err = o.resolveOuterNDMS(ctx, opts.ViaMode, strings.TrimSpace(opts.ViaID))
+		if err != nil {
+			return nil, err
+		}
+	}
 	switch mode {
 	case warpscout.TargetKernel, warpscout.TargetNative:
 		if o.Svc == nil {
@@ -284,6 +542,16 @@ func (o *WarpTunnelOps) Create(ctx context.Context, mode warpscout.TargetMode, n
 		tw, err := o.Svc.Import(ctx, conf, name, backend, service.ImportLink{})
 		if err != nil {
 			return nil, err
+		}
+		if outerNDMS != "" {
+			// Без привязки к внешнему туннелю это был бы обычный WARP под
+			// именем каскадного, поэтому сбой привязки отменяет создание.
+			if err := o.bindManagedVia(ctx, tw.ID, outerNDMS, outerLabel); err != nil {
+				if derr := o.Svc.Delete(ctx, tw.ID); derr != nil {
+					o.warn(name, "Туннель не привязан к внешнему и не удалён: "+derr.Error())
+				}
+				return nil, fmt.Errorf("настроить маршрут через %s: %w", outerNDMS, err)
+			}
 		}
 		if err := o.Svc.Start(ctx, tw.ID); err != nil {
 			// Туннель заведён — отказ старта не отменяет импорт.
@@ -301,14 +569,25 @@ func (o *WarpTunnelOps) Create(ctx context.Context, mode warpscout.TargetMode, n
 		if err != nil {
 			return nil, err
 		}
-		if o.Commands.Interfaces != nil {
-			// Интерфейс уже создан — отказ настройки не отменяет импорт (как и
-			// отказ старта выше), но и молчать о нём нельзя.
-			if name != "" {
-				if err := o.Commands.Interfaces.SetDescription(ctx, res.Created, name); err != nil {
-					o.warn(name, "Туннель создан, но описание не задано: "+err.Error())
-				}
+		if o.Commands.Interfaces != nil && name != "" {
+			if err := o.Commands.Interfaces.SetDescription(ctx, res.Created, name); err != nil {
+				o.warn(name, "Туннель создан, но описание не задано: "+err.Error())
 			}
+		}
+		if outerNDMS != "" {
+			peerKey := extractPeerPublicKey(conf)
+			if err := o.Commands.Wireguard.SetPeerConnectVia(ctx, res.Created, peerKey, outerNDMS); err != nil {
+				// Интерфейс уже создан импортом; оставленный, он копился бы
+				// на роутере с каждым повтором.
+				if o.Commands.Interfaces == nil {
+					o.warn(name, "Интерфейс "+res.Created.Name()+" не привязан к внешнему туннелю и не удалён")
+				} else if derr := o.Commands.Interfaces.DeleteOpkgTun(ctx, res.Created); derr != nil {
+					o.warn(name, "Интерфейс "+res.Created.Name()+" не привязан к внешнему туннелю и не удалён: "+derr.Error())
+				}
+				return nil, fmt.Errorf("настроить маршрут через %s: %w", outerNDMS, err)
+			}
+		}
+		if o.Commands.Interfaces != nil {
 			if err := o.Commands.Interfaces.InterfaceUp(ctx, res.Created); err != nil {
 				o.warn(name, "Туннель создан, но не включён: "+err.Error())
 			}
@@ -318,6 +597,146 @@ func (o *WarpTunnelOps) Create(ctx context.Context, mode warpscout.TargetMode, n
 		return o.Get(ctx, mode, res.Created.Name())
 	}
 	return nil, fmt.Errorf("неизвестный тип туннеля %q", mode)
+}
+
+// ObfuscationSources возвращает список существующих AWG-туннелей роутера,
+// из которых можно скопировать Jc/Jmin/Jmax и I1..I5 для скана или нового WARP.
+func (o *WarpTunnelOps) ObfuscationSources(ctx context.Context) []warpscout.ObfuscationSource {
+	var out []warpscout.ObfuscationSource
+	sanitizeAWG := func(jc, jmin, jmax int, i1, i2, i3, i4, i5 string) (warpscout.AWGParams, bool) {
+		p := warpscout.AWGParams{Jc: jc, Jmin: jmin, Jmax: jmax}
+		if p.Jc < 0 {
+			p.Jc = 0
+		}
+		if p.Jc > 128 {
+			p.Jc = 128
+		}
+		if p.Jmin < 0 {
+			p.Jmin = 0
+		}
+		if p.Jmax < p.Jmin {
+			p.Jmax = p.Jmin
+		}
+		if p.Jmax > 1280 {
+			p.Jmax = 1280
+		}
+		var hasSig bool
+		vals := []string{i1, i2, i3, i4, i5}
+		dst := []*string{&p.I1, &p.I2, &p.I3, &p.I4, &p.I5}
+		for idx, raw := range vals {
+			s := strings.TrimSpace(raw)
+			if s == "" {
+				continue
+			}
+			if _, err := warpscout.CPSToRaw(s); err == nil {
+				*dst[idx] = s
+				hasSig = true
+			}
+		}
+		if p.Jc == 0 && !hasSig {
+			return p, false
+		}
+		if hasSig {
+			p.SignatureProfile = warpscout.SignatureCustom
+		} else {
+			p.SignatureProfile = "none"
+		}
+		return p, true
+	}
+
+	if o.Store != nil {
+		if list, err := o.Store.List(); err == nil {
+			for i := range list {
+				t := &list[i]
+				if t.Obfuscator != nil || strings.TrimSpace(t.WdttClientID) != "" ||
+					strings.TrimSpace(t.FreeTurnClientID) != "" {
+					continue
+				}
+				awg, ok := sanitizeAWG(t.Interface.Jc, t.Interface.Jmin, t.Interface.Jmax,
+					t.Interface.I1, t.Interface.I2, t.Interface.I3, t.Interface.I4, t.Interface.I5)
+				if !ok {
+					continue
+				}
+				mode, mok := modeOfBackend(t.Backend)
+				if !mok {
+					continue
+				}
+				iface := ""
+				running := false
+				if o.Svc != nil {
+					if tw, err := o.Svc.Get(ctx, t.ID); err == nil && tw != nil {
+						iface = tw.InterfaceName
+						running = tw.State == tunnel.StateRunning
+					}
+				}
+				out = append(out, warpscout.ObfuscationSource{
+					ID:      t.ID,
+					Name:    t.Name,
+					Iface:   iface,
+					Mode:    mode,
+					Running: running,
+					IsWarp:  strings.TrimSpace(t.Peer.PublicKey) == warpscout.WarpPeerPublicKey,
+					AWG:     awg,
+				})
+			}
+		}
+	}
+
+	if o.System != nil {
+		if sys, err := o.System.List(ctx); err == nil {
+			for i := range sys {
+				s := &sys[i]
+				if o.systemProtectReason(s) != "" {
+					continue
+				}
+				raw, gerr := o.System.GetASCParams(ctx, s.ID)
+				if gerr != nil || len(raw) == 0 {
+					continue
+				}
+				var asc struct {
+					Jc   int    `json:"jc"`
+					Jmin int    `json:"jmin"`
+					Jmax int    `json:"jmax"`
+					I1   string `json:"i1"`
+					I2   string `json:"i2"`
+					I3   string `json:"i3"`
+					I4   string `json:"i4"`
+					I5   string `json:"i5"`
+				}
+				if json.Unmarshal(raw, &asc) != nil {
+					continue
+				}
+				awg, ok := sanitizeAWG(asc.Jc, asc.Jmin, asc.Jmax, asc.I1, asc.I2, asc.I3, asc.I4, asc.I5)
+				if !ok {
+					continue
+				}
+				name := s.Description
+				if name == "" {
+					name = s.ID
+				}
+				out = append(out, warpscout.ObfuscationSource{
+					ID:      s.ID,
+					Name:    name,
+					Iface:   s.InterfaceName,
+					Mode:    warpscout.TargetSystem,
+					Running: s.Status == "up",
+					IsWarp:  s.Peer != nil && strings.TrimSpace(s.Peer.PublicKey) == warpscout.WarpPeerPublicKey,
+					AWG:     awg,
+				})
+			}
+		}
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Running != out[j].Running {
+			return out[i].Running
+		}
+		if out[i].IsWarp != out[j].IsWarp {
+			return !out[i].IsWarp
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 func (o *WarpTunnelOps) warn(target, msg string) {
@@ -366,6 +785,60 @@ func (o *WarpTunnelOps) SwapEndpoint(ctx context.Context, mode warpscout.TargetM
 			return fmt.Errorf("интерфейс %s не найден в NDMS", id)
 		}
 		return o.Commands.Wireguard.SetPeerEndpoint(ctx, iface, ref.PeerPublicKey, endpoint)
+	}
+	return fmt.Errorf("неизвестный тип туннеля %q", mode)
+}
+
+// Rename переименовывает WARP-туннель (карточку и описание интерфейса в NDMS)
+// без пересоздания или рестарта живого соединения.
+func (o *WarpTunnelOps) Rename(ctx context.Context, mode warpscout.TargetMode, id, name string) error {
+	name = strings.TrimSpace(name)
+	if err := tunnel.ValidateName(name); err != nil {
+		return err
+	}
+	ref, err := o.Get(ctx, mode, id)
+	if err != nil {
+		return err
+	}
+	if ref.Protected {
+		return fmt.Errorf("%w: %s", warpscout.ErrProtected, ref.ProtectReason)
+	}
+	if !ref.IsWarp {
+		return warpscout.ErrNotWarp
+	}
+	if ref.Name == name {
+		return nil
+	}
+	switch mode {
+	case warpscout.TargetKernel, warpscout.TargetNative:
+		if o.Tunnels == nil {
+			return errors.New("сервис туннелей недоступен")
+		}
+		_, err := o.Tunnels.EditTunnelWith(ctx, id, func(cur storage.AWGTunnel) (storage.AWGTunnel, error) {
+			if cur.Name == name {
+				return storage.AWGTunnel{}, nil
+			}
+			return storage.AWGTunnel{Name: name}, nil
+		})
+		return err
+	case warpscout.TargetSystem:
+		if o.Commands == nil || o.Commands.Interfaces == nil || o.Queries == nil || o.Queries.Interfaces == nil {
+			return errors.New("NDMS недоступен")
+		}
+		iface, _, present, err := o.Queries.Interfaces.Confirm(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return fmt.Errorf("интерфейс %s не найден в NDMS", id)
+		}
+		if err := o.Commands.Interfaces.SetDescription(ctx, iface, name); err != nil {
+			return err
+		}
+		if o.Tunnels != nil {
+			o.Tunnels.publishTunnelList(ctx)
+		}
+		return nil
 	}
 	return fmt.Errorf("неизвестный тип туннеля %q", mode)
 }

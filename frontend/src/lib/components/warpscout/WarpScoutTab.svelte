@@ -261,6 +261,7 @@
 				<WarpAccountChip {account} {targets} {usedIpv4} onchanged={refreshNow} />
 				<WarpAwgPopover
 					bind:awg={draft.awg}
+					obfuscationSources={ws.obfuscationSources ?? []}
 					dirty={awgDirty}
 					{saving}
 					onsave={() => saveSection('awg', m.warpscout_awg_saved())}
@@ -283,6 +284,9 @@
 					accountAddressV4={account?.addressV4 ?? ''}
 					{targets}
 					{usedIpv4}
+					{routes}
+					obfuscationSources={ws.obfuscationSources ?? []}
+					globalAwg={ws.config.awg}
 					scanInterface={scanIface}
 					{routeSummary}
 					autopilotLocked={profilesDirty}

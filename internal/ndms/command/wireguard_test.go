@@ -342,3 +342,31 @@ func TestImportWireguardConfig_CreatedAbsent_Error(t *testing.T) {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
 }
+
+func TestSetPeerConnectVia_PreservesComment(t *testing.T) {
+	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/interface/", `{"Wireguard1":{"id":"Wireguard1","type":"Wireguard"}}`)
+	fg.SetRC("Wireguard1", `{"wireguard":{"peer":[{"key":"PEER1=","comment":"warp-inner"}]}}`)
+	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
+	poster := &fakePoster{}
+	sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
+	cmds := NewWireguardCommands(poster, sc, q)
+
+	if err := cmds.SetPeerConnectVia(context.Background(), confirmed(t, "Wireguard1"), "PEER1=", "Wireguard3"); err != nil {
+		t.Fatalf("SetPeerConnectVia: %v", err)
+	}
+	payloads := poster.Payloads()
+	if len(payloads) != 1 {
+		t.Fatalf("expected 1 post, got %d", len(payloads))
+	}
+	m0, ok := payloads[0].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected payload type %T", payloads[0])
+	}
+	iface := m0["interface"].(map[string]any)["Wireguard1"].(map[string]any)
+	peers := iface["wireguard"].(map[string]any)["peer"].([]map[string]any)
+	viaMap, ok := peers[0]["connect"].(map[string]any)
+	if !ok || viaMap["via"] != "Wireguard3" || peers[0]["comment"] != "warp-inner" {
+		t.Fatalf("unexpected payload: %+v", peers[0])
+	}
+}

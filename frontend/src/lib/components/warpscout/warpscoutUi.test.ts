@@ -194,6 +194,19 @@ describe('warpscoutUi', () => {
 		expect(sectionEqual(awgEdited, server, 'profiles')).toBe(true);
 	});
 
+	it('sectionEqual ignores server-generated I1..I5 of a named preset', () => {
+		const server = config({ profiles: [profile('a')] });
+		const saved = { ...server, awg: { ...server.awg, signatureProfile: 'dns', i1: '<b 0xdead>' } };
+		// Выбрали другой пресет и вернулись: черновик без пакетов, пресет прежний.
+		const draft = { ...server, awg: { ...server.awg, signatureProfile: 'dns' } };
+		expect(sectionEqual(draft, saved, 'awg')).toBe(true);
+		expect(sectionEqual({ ...draft, awg: { ...draft.awg, signatureProfile: 'stun' } }, saved, 'awg')).toBe(false);
+		// У «custom» пакеты задаёт пользователь — они сравниваются.
+		const custom = { ...server, awg: { ...server.awg, signatureProfile: 'custom', i1: '<b 0xdead>' } };
+		const customEdited = { ...server, awg: { ...server.awg, signatureProfile: 'custom', i1: '<b 0xbeef>' } };
+		expect(sectionEqual(customEdited, custom, 'awg')).toBe(false);
+	});
+
 	it('syncDraft takes untouched sections from the server and keeps edited ones', () => {
 		const prev = config({ profiles: [profile('a')] });
 		const next = config({ profiles: [profile('a'), profile('b')], awg: { ...prev.awg, jc: 9 } });

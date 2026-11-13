@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
@@ -306,5 +307,245 @@ func TestWarpOps_AddressAndUsedIPv4(t *testing.T) {
 	}
 	if wrap.Data.AddressV4 != "172.16.0.7" {
 		t.Fatalf("ожидался addressV4=172.16.0.7 в ответе, получили %+v", wrap.Data)
+	}
+}
+
+func TestWarpOps_Rename(t *testing.T) {
+	ctx := context.Background()
+	ops, svc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg11": tunnel.StateRunning,
+		"awg50": tunnel.StateRunning,
+		"awg99": tunnel.StateRunning,
+	})
+	seedWarpTunnel(t, store, "awg11", "kernel")
+	seedTunnel(t, store, &storage.AWGTunnel{
+		ID:      "awg50",
+		Name:    "WARP Locked",
+		Enabled: true,
+		Locked:  true,
+		Backend: "nativewg",
+		Peer:    storage.AWGPeer{PublicKey: warpscout.WarpPeerPublicKey, Endpoint: "162.159.192.82:864"},
+	})
+	seedTunnel(t, store, &storage.AWGTunnel{
+		ID:      "awg99",
+		Name:    "Custom",
+		Enabled: true,
+		Backend: "kernel",
+		Peer:    storage.AWGPeer{PublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", Endpoint: "1.2.3.4:51820"},
+	})
+	var updatedNames []string
+	svc.updateFn = func(_ context.Context, _, newStored *storage.AWGTunnel) error {
+		updatedNames = append(updatedNames, newStored.Name)
+		return nil
+	}
+
+	if err := ops.Rename(ctx, warpscout.TargetKernel, "awg11", "WARP FRA"); err != nil {
+		t.Fatalf("Rename kernel: %v", err)
+	}
+	if len(updatedNames) != 1 || updatedNames[0] != "WARP FRA" {
+		t.Fatalf("ожидался вызов Svc.Update с именем WARP FRA, получили %v", updatedNames)
+	}
+	if svc.restartCalls != 0 {
+		t.Fatalf("переименование не должно перезапускать туннель: restarts=%d", svc.restartCalls)
+	}
+	got11, err := store.Get("awg11")
+	if err != nil || got11.Name != "WARP FRA" {
+		t.Fatalf("имя awg11 не сохранилось в store: %+v (%v)", got11, err)
+	}
+	if err := ops.Rename(ctx, warpscout.TargetNative, "awg50", "WARP HEL"); !errors.Is(err, warpscout.ErrProtected) {
+		t.Fatalf("залоченный туннель не должен переименовываться, err=%v", err)
+	}
+	if err := ops.Rename(ctx, warpscout.TargetKernel, "awg99", "WARP HEL"); !errors.Is(err, warpscout.ErrNotWarp) {
+		t.Fatalf("не-WARP туннель не должен переименовываться, err=%v", err)
+	}
+}
+
+func TestWarpTunnelOps_ViaMetadataAndObfuscationSources(t *testing.T) {
+	ctx := context.Background()
+	ops, _, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg50": tunnel.StateRunning,
+		"awg60": tunnel.StateRunning,
+		"awg20": tunnel.StateRunning,
+	})
+	seedTunnel(t, store, &storage.AWGTunnel{
+		ID:       "awg50",
+		Name:     "WARP HEL",
+		Enabled:  true,
+		Backend:  "nativewg",
+		NWGIndex: 3,
+		Interface: storage.AWGInterface{
+			PrivateKey: "gZwP6wviWSsSUhp4AbX0iLuzKKVVTwlB5asMAQ+BWBE=",
+			Address:    "172.16.0.10/32",
+			AWGObfuscation: storage.AWGObfuscation{
+				Jc: 4, Jmin: 40, Jmax: 70, I1: "<b 0x0102>",
+			},
+		},
+		Peer: storage.AWGPeer{PublicKey: warpscout.WarpPeerPublicKey, Endpoint: "162.159.192.255:880"},
+	})
+	seedTunnel(t, store, &storage.AWGTunnel{
+		ID:           "awg60",
+		Name:         "WARP-in-WARP FRA",
+		Enabled:      true,
+		Backend:      "nativewg",
+		NWGIndex:     4,
+		ISPInterface: "Wireguard3",
+		Interface: storage.AWGInterface{
+			PrivateKey: "gZwP6wviWSsSUhp4AbX0iLuzKKVVTwlB5asMAQ+BWBF=",
+			Address:    "172.16.0.11/32",
+		},
+		Peer: storage.AWGPeer{PublicKey: warpscout.WarpPeerPublicKey, Endpoint: "162.159.193.1:2408"},
+	})
+	seedTunnel(t, store, &storage.AWGTunnel{
+		ID:      "awg20",
+		Name:    "NuxtAWG",
+		Enabled: true,
+		Backend: "kernel",
+		Interface: storage.AWGInterface{
+			PrivateKey: "gZwP6wviWSsSUhp4AbX0iLuzKKVVTwlB5asMAQ+BWBG=",
+			Address:    "10.0.0.2/32",
+			AWGObfuscation: storage.AWGObfuscation{
+				Jc: 5, Jmin: 10, Jmax: 50, S1: 99, S2: 88, H1: "100", I1: "<b 0xdead><r 4>",
+			},
+		},
+		Peer: storage.AWGPeer{PublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", Endpoint: "1.2.3.4:51820"},
+	})
+
+	list, err := ops.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var innerRef *warpscout.TunnelRef
+	for i := range list {
+		if list[i].ID == "awg60" {
+			innerRef = &list[i]
+		}
+	}
+	if innerRef == nil || innerRef.ViaTunnelID != "awg50" || innerRef.ViaIface != "if-awg50" || !innerRef.ViaRunning {
+		t.Fatalf("Via* не заполнились для WARP-in-WARP: %+v", innerRef)
+	}
+
+	sources := ops.ObfuscationSources(ctx)
+	if len(sources) != 2 {
+		t.Fatalf("ожидались 2 источника обфускации (NuxtAWG + WARP HEL), получили %+v", sources)
+	}
+	// Не-WARP рабочий туннель NuxtAWG должен идти первым
+	if sources[0].Name != "NuxtAWG" || sources[0].AWG.SignatureProfile != warpscout.SignatureCustom ||
+		sources[0].AWG.Jc != 5 || sources[0].AWG.I1 != "<b 0xdead><r 4>" {
+		t.Fatalf("неожиданный первый источник обфускации: %+v", sources[0])
+	}
+}
+
+// Каскадный туннель без привязки к внешнему — обычный WARP под чужим именем.
+// Сбой привязки отменяет создание: импортированный туннель удаляется и не
+// запускается.
+func TestWarpOps_CreateCascadeRollsBackWhenViaFails(t *testing.T) {
+	ctx := context.Background()
+	ops, svc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg50": tunnel.StateRunning, "awg60": tunnel.StateStopped,
+	})
+	seedWarpTunnel(t, store, "awg50", "nativewg")
+	svc.importFn = func(_ context.Context, _, name, backend string) (*service.TunnelWithStatus, error) {
+		seedWarpTunnel(t, store, "awg60", backend)
+		return &service.TunnelWithStatus{ID: "awg60", Name: name}, nil
+	}
+	var deleted []string
+	svc.deleteFn = func(_ context.Context, id string) error {
+		deleted = append(deleted, id)
+		return nil
+	}
+
+	// В обвязке нет команд NDMS, поэтому привязка `connect via` невозможна.
+	_, err := ops.Create(ctx, warpscout.TargetNative, "WARP-in-WARP HEL", "[Interface]\n",
+		warpscout.CreateOptions{ViaMode: warpscout.TargetNative, ViaID: "awg50"})
+	if err == nil {
+		t.Fatal("создание каскада без привязки к внешнему туннелю прошло")
+	}
+	if len(deleted) != 1 || deleted[0] != "awg60" {
+		t.Fatalf("импортированный туннель не откатан: deleted=%v", deleted)
+	}
+	if svc.startCalls != 0 {
+		t.Fatalf("непривязанный туннель запущен: startCalls=%d", svc.startCalls)
+	}
+}
+
+// Get одного туннеля без привязки не опрашивает состояние остальных: сторож
+// зовёт его на каждой проверке, и лишние запросы шли бы в NDMS каждый тик.
+func TestWarpOps_GetWithoutViaQueriesOnlyItself(t *testing.T) {
+	ops, svc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg11": tunnel.StateRunning, "awg12": tunnel.StateRunning, "awg13": tunnel.StateRunning,
+	})
+	for _, id := range []string{"awg11", "awg12", "awg13"} {
+		seedWarpTunnel(t, store, id, "kernel")
+	}
+	var asked []string
+	inner := svc.getFn
+	svc.getFn = func(ctx context.Context, id string) (*service.TunnelWithStatus, error) {
+		asked = append(asked, id)
+		return inner(ctx, id)
+	}
+	if _, err := ops.Get(context.Background(), warpscout.TargetKernel, "awg11"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range asked {
+		if id != "awg11" {
+			t.Fatalf("Get(awg11) опросил состояние чужих туннелей: %v", asked)
+		}
+	}
+}
+
+// List спрашивает состояние каждого туннеля один раз — и когда привязок нет,
+// и когда один туннель идёт через другой (раньше родителей опрашивали заново).
+func TestWarpOps_ListQueriesEachTunnelOnce(t *testing.T) {
+	ops, svc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg50": tunnel.StateRunning, "awg51": tunnel.StateRunning, "awg52": tunnel.StateRunning,
+	})
+	for _, id := range []string{"awg50", "awg51", "awg52"} {
+		seedWarpTunnel(t, store, id, "nativewg")
+	}
+	asked := map[string]int{}
+	inner := svc.getFn
+	svc.getFn = func(ctx context.Context, id string) (*service.TunnelWithStatus, error) {
+		asked[id]++
+		return inner(ctx, id)
+	}
+	check := func(stage string) []warpscout.TunnelRef {
+		t.Helper()
+		for k := range asked {
+			delete(asked, k)
+		}
+		refs, err := ops.List(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for id, n := range asked {
+			if n != 1 {
+				t.Fatalf("%s: состояние %s спрошено %d раз(а): %v", stage, id, n, asked)
+			}
+		}
+		return refs
+	}
+	check("без привязок")
+
+	// У засеянных туннелей индекс интерфейса одинаковый — разводим.
+	for i, id := range []string{"awg50", "awg51", "awg52"} {
+		if err := store.Update(id, func(tun *storage.AWGTunnel) error {
+			tun.NWGIndex = 3 + i
+			if id == "awg51" {
+				tun.ISPInterface = "Wireguard" + strconv.Itoa(3)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refs := check("с каскадом")
+	found := false
+	for _, r := range refs {
+		if r.ID == "awg51" {
+			found = r.ViaTunnelID == "awg50" && r.ViaRunning && r.ViaIface == "if-awg50"
+		}
+	}
+	if !found {
+		t.Fatalf("привязка awg51 → awg50 не разрешена: %+v", refs)
 	}
 }

@@ -22,6 +22,8 @@ var EngineCandidates = []string{"/opt/sbin/awgm-warpscout", "/opt/bin/awgm-warps
 var DefaultPrefixes = []string{
 	"162.159.192.0/24", "162.159.193.0/24", "162.159.195.0/24",
 	"188.114.96.0/24", "188.114.97.0/24", "188.114.98.0/24", "188.114.99.0/24",
+	"8.6.112.0/24", "8.34.70.0/24", "8.34.146.0/24", "8.35.211.0/24",
+	"8.39.125.0/24", "8.39.204.0/24", "8.39.214.0/24", "8.47.69.0/24",
 }
 
 // DefaultPorts — порты, на которых WARP принимает WireGuard.
@@ -42,36 +44,38 @@ type EngineAWG struct {
 
 // ScanParams — вход C-модуля (stdin). Схема зафиксирована в c-core/warpscout.
 type ScanParams struct {
-	PrivateKey       string    `json:"private_key"`
-	PeerPublicKey    string    `json:"peer_public_key"`
-	PresharedKey     string    `json:"preshared_key"`
-	TunnelIP         string    `json:"tunnel_ip"`
-	Reserved         [3]int    `json:"reserved"`
-	Endpoints        []string  `json:"endpoints"`
-	Prefixes         []string  `json:"prefixes"`
-	Ports            []int     `json:"ports"`
-	ExcludeEndpoints []string  `json:"exclude_endpoints"`
-	MaxCandidates    int       `json:"max_candidates"`
-	Concurrency      int       `json:"concurrency"`
-	PPS              int       `json:"pps"`
-	TimeoutMs        int       `json:"timeout_ms"`
-	DeadlineMs       int       `json:"deadline_ms"`
-	MaxHits          int       `json:"max_hits"`
-	Seed             int64     `json:"seed"`
-	Ifname           string    `json:"ifname"`
-	Fwmark           int       `json:"fwmark"`
-	AWG              EngineAWG `json:"awg"`
-	PingIP           string    `json:"ping_ip"`
-	ProbeTrace       bool      `json:"probe_trace"`
-	TraceIP          string    `json:"trace_ip"`
-	TraceHost        string    `json:"trace_host"`
-	ProbeTG          bool      `json:"probe_tg"`
-	ExcludeColos     []string  `json:"exclude_colos"`
-	AllowedCountries []string  `json:"allowed_countries"`
-	MaxRTTMs         int       `json:"max_rtt_ms"`
-	RequireTrace     bool      `json:"require_trace"`
-	RequireTG        bool      `json:"require_tg"`
-	EmitRejects      bool      `json:"emit_rejects"`
+	PrivateKey           string    `json:"private_key"`
+	PeerPublicKey        string    `json:"peer_public_key"`
+	PresharedKey         string    `json:"preshared_key"`
+	TunnelIP             string    `json:"tunnel_ip"`
+	Reserved             [3]int    `json:"reserved"`
+	Endpoints            []string  `json:"endpoints"`
+	Prefixes             []string  `json:"prefixes"`
+	Ports                []int     `json:"ports"`
+	ExcludeEndpoints     []string  `json:"exclude_endpoints"`
+	MaxCandidates        int       `json:"max_candidates"`
+	Concurrency          int       `json:"concurrency"`
+	PPS                  int       `json:"pps"`
+	TimeoutMs            int       `json:"timeout_ms"`
+	DeadlineMs           int       `json:"deadline_ms"`
+	MaxHits              int       `json:"max_hits"`
+	Seed                 int64     `json:"seed"`
+	Ifname               string    `json:"ifname"`
+	Fwmark               int       `json:"fwmark"`
+	AWG                  EngineAWG `json:"awg"`
+	PingIP               string    `json:"ping_ip"`
+	ProbeTrace           bool      `json:"probe_trace"`
+	TraceIP              string    `json:"trace_ip"`
+	TraceHost            string    `json:"trace_host"`
+	ProbeTG              bool      `json:"probe_tg"`
+	ExcludeColos         []string  `json:"exclude_colos"`
+	AllowedCountries     []string  `json:"allowed_countries"`
+	MaxRTTMs             int       `json:"max_rtt_ms"`
+	RequireTrace         bool      `json:"require_trace"`
+	RequireTG            bool      `json:"require_tg"`
+	EmitRejects          bool      `json:"emit_rejects"`
+	DurabilityPings      int       `json:"durability_pings,omitempty"`
+	DurabilityIntervalMs int       `json:"durability_interval_ms,omitempty"`
 }
 
 // EngineEvent — строка JSONL из stdout C-модуля.

@@ -211,10 +211,11 @@ type SystemWireguardTunnel struct {
 	Status        string             `json:"status"`
 	Connected     bool               `json:"connected"`
 	MTU           int                `json:"mtu"`
-	Address       string             `json:"address,omitempty"` // IPv4 e.g. "10.8.1.3"
-	Mask          string             `json:"mask,omitempty"`    // IPv4 mask
-	Uptime        int64              `json:"uptime,omitempty"`  // seconds since up
-	Peer          *WireguardPeerInfo `json:"peer,omitempty"`    // FIRST peer only
+	Address       string             `json:"address,omitempty"`   // IPv4 e.g. "10.8.1.3"
+	Mask          string             `json:"mask,omitempty"`      // IPv4 mask
+	PublicKey     string             `json:"publicKey,omitempty"` // local interface public key
+	Uptime        int64              `json:"uptime,omitempty"`    // seconds since up
+	Peer          *WireguardPeerInfo `json:"peer,omitempty"`      // FIRST peer only
 	// External — "phobos": интерфейс создан установщиком Phobos
 	// (description Phobos-…) и установка на месте; не наш, не перенимается.
 	External string `json:"external,omitempty"`

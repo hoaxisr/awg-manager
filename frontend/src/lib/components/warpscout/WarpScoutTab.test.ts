@@ -1,9 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import type { WarpConfig, WarpProfile, WarpScoutState } from '$lib/types/warpscout';
 import { warpScanPush } from '$lib/stores/warpscout';
 import { defaultFilters } from './warpscoutUi';
+
+// Панель Dropdown читает ResizeObserver при открытии; в jsdom его нет.
+vi.hoisted(() => {
+	Object.defineProperty(globalThis, 'ResizeObserver', {
+		writable: true,
+		configurable: true,
+		value: class {
+			observe() {}
+			unobserve() {}
+			disconnect() {}
+		},
+	});
+});
 
 const api = vi.hoisted(() => ({
 	warpscoutState: vi.fn(),
@@ -205,5 +218,55 @@ describe('WarpScoutTab', () => {
 
 		await fireEvent.blur(input);
 		expect(input.value).toBe('20');
+	});
+
+	it('shows WARP routes in route picker and copies obfuscation from existing tunnel', async () => {
+		const initial = state(
+			{},
+			{
+				routes: [
+					{ name: 'nwg1', label: 'Office', kind: 'tunnel', up: true },
+					{
+						name: 'nwg3',
+						label: 'WARP HEL',
+						kind: 'warp',
+						up: true,
+						tunnelMode: 'native',
+						tunnelId: 'awg50',
+					},
+				],
+				obfuscationSources: [
+					{
+						id: 'awg20',
+						name: 'NuxtAWG',
+						iface: 'opkgtun20',
+						mode: 'kernel',
+						running: true,
+						isWarp: false,
+						awg: {
+							signatureProfile: 'custom',
+							jc: 6,
+							jmin: 15,
+							jmax: 65,
+							i1: '<b 0xdead><r 4>',
+						},
+					},
+				],
+			},
+		);
+		const { container } = await mount(initial);
+
+		// Route picker lists the WARP-in-WARP group option
+		await fireEvent.click(chip(container, 1));
+		expect(container.textContent).toContain('WARP HEL');
+		await fireEvent.keyDown(window, { key: 'Escape' });
+
+		// AWG popover copies parameters from an existing tunnel
+		await fireEvent.click(chip(container, 0));
+		const copyOption = () => screen.getByRole('option', { name: /NuxtAWG/ });
+		await fireEvent.click(screen.getByLabelText(/Copy from existing tunnel|Скопировать из рабочего туннеля/));
+		await fireEvent.click(copyOption());
+		await tick();
+		expect(chip(container, 0).textContent).toContain('Jc 6');
 	});
 });

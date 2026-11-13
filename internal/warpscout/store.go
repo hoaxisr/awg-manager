@@ -48,6 +48,7 @@ type accountDisk struct {
 type fileState struct {
 	SchemaVersion int                     `json:"schemaVersion"`
 	Account       *accountDisk            `json:"account,omitempty"`
+	InnerAccount  *accountDisk            `json:"innerAccount,omitempty"`
 	Config        Config                  `json:"config"`
 	History       []SwapEvent             `json:"history,omitempty"`
 	Stats         map[string]ProfileStats `json:"stats,omitempty"`
@@ -63,9 +64,10 @@ type Store struct {
 	// затёрла бы восстановленный файл. nil — запись разрешена всегда.
 	Frozen func() bool
 
-	mu    sync.Mutex
-	state fileState
-	acct  *Account // расшифрованная копия
+	mu        sync.Mutex
+	state     fileState
+	acct      *Account // расшифрованная копия основного аккаунта
+	innerAcct *Account // расшифрованная копия 2-го слота для WARP-in-WARP
 }
 
 // ErrFrozen — запись отклонена: идёт восстановление из резервной копии.
@@ -104,6 +106,14 @@ func (s *Store) load() error {
 			s.acct = nil
 		} else {
 			s.acct = acct
+		}
+	}
+	if st.InnerAccount != nil {
+		inner, err := s.decryptAccount(st.InnerAccount)
+		if err != nil {
+			s.innerAcct = nil
+		} else {
+			s.innerAcct = inner
 		}
 	}
 	return nil
@@ -159,6 +169,29 @@ func (s *Store) AccountUnreadable() bool {
 	return s.state.Account != nil && s.acct == nil
 }
 
+func (s *Store) encryptAccount(a *Account) (*accountDisk, error) {
+	tok, err := s.cipher.Encrypt(a.Token)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt token: %w", err)
+	}
+	pk, err := s.cipher.Encrypt(a.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt private key: %w", err)
+	}
+	lic := ""
+	if a.License != "" {
+		if lic, err = s.cipher.Encrypt(a.License); err != nil {
+			return nil, fmt.Errorf("encrypt license: %w", err)
+		}
+	}
+	return &accountDisk{
+		ID: a.ID, TokenCipher: tok, PrivateKeyCipher: pk, LicenseCipher: lic,
+		PublicKey: a.PublicKey, PeerPublicKey: a.PeerPublicKey,
+		AddressV4: a.AddressV4, AddressV6: a.AddressV6, ClientID: a.ClientID,
+		AccountType: a.AccountType, WarpPlus: a.WarpPlus, CreatedAt: a.CreatedAt,
+	}, nil
+}
+
 // SetAccount шифрует и сохраняет учётную запись (nil — удалить).
 func (s *Store) SetAccount(a *Account) error {
 	s.mu.Lock()
@@ -168,28 +201,43 @@ func (s *Store) SetAccount(a *Account) error {
 		s.acct = nil
 		return s.saveLocked()
 	}
-	tok, err := s.cipher.Encrypt(a.Token)
+	d, err := s.encryptAccount(a)
 	if err != nil {
-		return fmt.Errorf("encrypt token: %w", err)
+		return err
 	}
-	pk, err := s.cipher.Encrypt(a.PrivateKey)
-	if err != nil {
-		return fmt.Errorf("encrypt private key: %w", err)
-	}
-	lic := ""
-	if a.License != "" {
-		if lic, err = s.cipher.Encrypt(a.License); err != nil {
-			return fmt.Errorf("encrypt license: %w", err)
-		}
-	}
-	s.state.Account = &accountDisk{
-		ID: a.ID, TokenCipher: tok, PrivateKeyCipher: pk, LicenseCipher: lic,
-		PublicKey: a.PublicKey, PeerPublicKey: a.PeerPublicKey,
-		AddressV4: a.AddressV4, AddressV6: a.AddressV6, ClientID: a.ClientID,
-		AccountType: a.AccountType, WarpPlus: a.WarpPlus, CreatedAt: a.CreatedAt,
-	}
+	s.state.Account = d
 	c := *a
 	s.acct = &c
+	return s.saveLocked()
+}
+
+// InnerAccount — копия второго слота WARP (для WARP-in-WARP) или nil.
+func (s *Store) InnerAccount() *Account {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.innerAcct == nil {
+		return nil
+	}
+	c := *s.innerAcct
+	return &c
+}
+
+// SetInnerAccount шифрует и сохраняет второй слот WARP для WARP-in-WARP (nil — удалить).
+func (s *Store) SetInnerAccount(a *Account) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a == nil {
+		s.state.InnerAccount = nil
+		s.innerAcct = nil
+		return s.saveLocked()
+	}
+	d, err := s.encryptAccount(a)
+	if err != nil {
+		return err
+	}
+	s.state.InnerAccount = d
+	c := *a
+	s.innerAcct = &c
 	return s.saveLocked()
 }
 
@@ -206,6 +254,28 @@ func (s *Store) SetConfig(c Config) error {
 	defer s.mu.Unlock()
 	s.state.Config = cloneConfig(normalizeConfig(c))
 	return s.saveLocked()
+}
+
+// SyncProfileTargetName обновляет имя профиля автопилота, если оно совпадало
+// со старым названием целевого туннеля (не перезапуская горутины сторожей).
+func (s *Store) SyncProfileTargetName(mode TargetMode, targetID, oldName, newName string) (bool, error) {
+	if oldName == "" || newName == "" || oldName == newName {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	for i := range s.state.Config.Profiles {
+		p := &s.state.Config.Profiles[i]
+		if p.TargetMode == mode && p.TargetID == targetID && p.Name == oldName {
+			p.Name = newName
+			changed = true
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+	return true, s.saveLocked()
 }
 
 // History — копия журнала автоподмен (новые первыми).
