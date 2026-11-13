@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import type { WarpConfig, WarpProfile, WarpScoutState } from '$lib/types/warpscout';
 import { warpScanPush } from '$lib/stores/warpscout';
@@ -250,11 +250,10 @@ describe('WarpScoutTab', () => {
 
 		// AWG popover copies parameters from an existing tunnel
 		await fireEvent.click(chip(container, 0));
-		const copySelect = container.querySelector<HTMLSelectElement>('[role="dialog"] select');
-		if (copySelect) {
-			await fireEvent.change(copySelect, { target: { value: 'kernel:awg20' } });
-			await tick();
-			expect(container.textContent).toContain('Jc 6');
-		}
+		const copyOption = () => screen.getByRole('option', { name: /NuxtAWG/ });
+		await fireEvent.click(screen.getByLabelText(/Copy from existing tunnel|Скопировать из рабочего туннеля/));
+		await fireEvent.click(copyOption());
+		await tick();
+		expect(chip(container, 0).textContent).toContain('Jc 6');
 	});
 });

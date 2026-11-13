@@ -38,22 +38,31 @@
 		})),
 	]);
 
+	// Список — действие «скопировать», а не выбор: после копирования он
+	// возвращается к заглушке, иначе тот же туннель нельзя выбрать повторно
+	// (Dropdown зовёт onchange только при смене значения).
+	let copySource = $state('');
+
 	function applyObfSource(key: string): void {
 		if (!key) return;
 		const src = obfuscationSources.find((s) => `${s.mode}:${s.id}` === key);
-		if (!src) return;
-		awg = { ...src.awg };
+		if (src) awg = { ...src.awg };
+		copySource = '';
 	}
 
 	function changeSignatureProfile(v: string): void {
-		awg.signatureProfile = v;
+		const next = { ...awg, signatureProfile: v };
 		if (v !== 'custom') {
-			awg.i1 = '';
-			awg.i2 = '';
-			awg.i3 = '';
-			awg.i4 = '';
-			awg.i5 = '';
+			// Ключи убираются, а не обнуляются: сервер пустые I1..I5 не
+			// присылает, и с пустыми строками черновик не сравнялся бы с
+			// сохранённой конфигурацией («не сохранено» без изменений).
+			delete next.i1;
+			delete next.i2;
+			delete next.i3;
+			delete next.i4;
+			delete next.i5;
 		}
+		awg = next;
 	}
 </script>
 
@@ -76,7 +85,7 @@
 			{#if obfuscationSources.length > 0}
 				<Dropdown
 					label={m.warpscout_awg_copy_label()}
-					value=""
+					bind:value={copySource}
 					options={copySourceOptions}
 					fullWidth
 					onchange={applyObfSource}
