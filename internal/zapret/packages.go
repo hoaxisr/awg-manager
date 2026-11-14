@@ -121,7 +121,10 @@ func parseZapretPackages(out string) map[string]string {
 			continue
 		}
 		name, version := m[1], m[2]
-		if !strings.Contains(strings.ToLower(name), zapretPackageKeyword) {
+		lower := strings.ToLower(name)
+		// nfqws2-keenetic — пакет из фида ground-zerro; слова «zapret» в имени
+		// нет, поэтому проверяем и «nfqws».
+		if !strings.Contains(lower, zapretPackageKeyword) && !strings.Contains(lower, "nfqws") {
 			continue
 		}
 		found[name] = version

@@ -7681,6 +7681,7 @@
 	"zapret_warning_circular_missing_key": "У circular не задан key=, поэтому выбранный вариант не сохраняется для следующих хостов.",
 	"zapret_warning_strategy_no_lua_desync": "В профиле нет --lua-desync. Фильтр срабатывает, но обход DPI не выполняется.",
 	"zapret_warning_strategies_empty": "Переменная {optVar} пуста, стратегии не заданы.",
+	"zapret_warning_strategies_unsupported": "Раскладка {flavor}: в конфиге нет единой переменной со стратегиями, поэтому стратегии доступны только для чтения. Службой и списками можно управлять.",
 	"zapret_warning_strategies_limit_reached": "Достигнут предел отображения. Показаны первые {limit} стратегий.",
 	"zapret_warning_unknown": "Zapret сообщил предупреждение, которое эта версия AWGM не распознаёт.",
 	"zapret_not_installed_description": "Zapret на роутере не найден. AWGM не устанавливает его: установите пакет вручную через opkg или установщик Zapret.",

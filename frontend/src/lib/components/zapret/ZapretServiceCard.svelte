@@ -14,7 +14,7 @@
 
 	let { status, busy = false, oncontrol, onopen }: Props = $props();
 	let title = $derived(
-		status.flavor === 'zapret' ? 'Zapret' : status.flavor === 'zapret2' ? 'Zapret2' : 'Zapret'
+		status.flavor === 'zapret' ? 'Zapret' : status.flavor === 'zapret2' ? 'Zapret2' : status.flavor === 'keenetic' ? 'nfqws2-keenetic' : 'Zapret'
 	);
 	let subtitle = $derived(
 		status.lastError || (status.base
