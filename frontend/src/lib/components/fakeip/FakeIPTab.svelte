@@ -15,7 +15,6 @@
 		DnsTab,
 		RuleSetsTab,
 		RoutesTab,
-		DevicesTab,
 		FakeIPPageShell,
 		deriveFakeIPEngineState,
 		type ShellChip,
@@ -36,7 +35,7 @@
 		if (!get(singboxRouter.initialized)) void singboxRouter.loadAll();
 	});
 
-	// FE-spec §3: fixed order + labels of the 9 FakeIP sub-pages. Real chip
+	// FE-spec §3: fixed order + labels of the 8 FakeIP sub-pages. Real chip
 	// counters (badge) are wired inside FakeIPPageShell from the live Status DTO
 	// + DNS sub-stores + Clash connections WS. `live` marks chips whose content
 	// depends on the running engine / Clash runtime (FE-spec §12.1): they show
@@ -49,7 +48,6 @@
 		{ id: 'rulesets', label: 'Rule sets', live: false },
 		{ id: 'dns', label: 'DNS', live: false },
 		{ id: 'routes', label: m.fakeip_chip_routes(), live: false },
-		{ id: 'devices', label: m.fakeip_chip_devices(), live: false },
 		{ id: 'connections', label: m.fakeip_chip_connections(), live: true },
 		{ id: 'logs', label: m.fakeip_chip_logs(), live: true }
 	]);
@@ -228,15 +226,6 @@
 				наборов sb-router.
 			-->
 			<RoutesTab />
-		{:else if activeTab === 'devices'}
-			<!--
-				«Устройства»-чип по мокапу page-devices: ОДНА карточка — таблица
-				NDMS-устройств (hotspot) + персональная привязка (route по
-				source_ip_cidr → outbound). Список информационный (NDMS) → виден при
-				любом состоянии движка; счётчик соединений — живой сигнал, деградирует
-				по engineState.
-			-->
-			<DevicesTab {engineState} />
 		{:else if activeTab === 'connections'}
 			<!--
 				«Соединения»-чип по мокапу page-connections = ВЕРБАТИМ текущий
