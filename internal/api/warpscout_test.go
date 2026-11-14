@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -157,7 +158,7 @@ func TestWarpOps_SwapManagedRestartsOnlyStalledKernel(t *testing.T) {
 	seedWarpTunnel(t, store, "awg12", "kernel")
 	seedWarpTunnel(t, store, "awg50", "nativewg")
 
-	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002"); err != nil {
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002", warpscout.SwapOptions{}); err != nil {
 		t.Fatalf("SwapEndpoint kernel: %v", err)
 	}
 	if len(*rotated) != 1 || (*rotated)[0] != "if-awg11" || svc.restartCalls != 0 {
@@ -171,14 +172,14 @@ func TestWarpOps_SwapManagedRestartsOnlyStalledKernel(t *testing.T) {
 	if err != nil || !ref50.Running {
 		t.Fatalf("включённый NativeWG в StateBroken должен считаться активной целью: %+v (%v)", ref50, err)
 	}
-	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.193:891"); err != nil {
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.193:891", warpscout.SwapOptions{}); err != nil {
 		t.Fatalf("SwapEndpoint native: %v", err)
 	}
 	if svc.restartCalls != 0 || len(*rotated) != 1 {
 		t.Fatalf("NativeWG: ни рестарта, ни ротации kernel-порта, получили restarts=%d rotated=%v", svc.restartCalls, *rotated)
 	}
 
-	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg12", "162.159.192.193:891"); err != nil {
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg12", "162.159.192.193:891", warpscout.SwapOptions{}); err != nil {
 		t.Fatalf("SwapEndpoint stalled kernel: %v", err)
 	}
 	if svc.restartCalls != 1 || len(*rotated) != 1 {
@@ -193,7 +194,7 @@ func TestWarpOps_SwapManagedSkipsRestartOfDisabledTunnel(t *testing.T) {
 	svc.updateFn = func(context.Context, *storage.AWGTunnel, *storage.AWGTunnel) error {
 		return store.Update("awg12", func(t *storage.AWGTunnel) error { t.Enabled = false; return nil })
 	}
-	if err := ops.SwapEndpoint(context.Background(), warpscout.TargetKernel, "awg12", "162.159.192.193:891"); err != nil {
+	if err := ops.SwapEndpoint(context.Background(), warpscout.TargetKernel, "awg12", "162.159.192.193:891", warpscout.SwapOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if svc.restartCalls != 0 {
@@ -213,7 +214,7 @@ func TestWarpOps_SwapManagedKeepsForeignFields(t *testing.T) {
 			return nil
 		})
 	}
-	if err := ops.SwapEndpoint(context.Background(), warpscout.TargetKernel, "awg11", "162.159.192.198:1002"); err != nil {
+	if err := ops.SwapEndpoint(context.Background(), warpscout.TargetKernel, "awg11", "162.159.192.198:1002", warpscout.SwapOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := store.Get("awg11")
@@ -233,7 +234,7 @@ func TestWarpOps_SwapManagedRefusals(t *testing.T) {
 	updates := 0
 	svc.updateFn = func(context.Context, *storage.AWGTunnel, *storage.AWGTunnel) error { updates++; return nil }
 
-	err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "1.1.1.1:2408\nJc = 1")
+	err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "1.1.1.1:2408\nJc = 1", warpscout.SwapOptions{})
 	var editErr *TunnelEditError
 	if !errors.As(err, &editErr) || editErr.Code != "INVALID_ENDPOINT" || updates != 0 {
 		t.Fatalf("endpoint с переводом строки должен отвергаться до правки: err=%v updates=%d", err, updates)
@@ -245,7 +246,7 @@ func TestWarpOps_SwapManagedRefusals(t *testing.T) {
 	svc.updateFn = func(context.Context, *storage.AWGTunnel, *storage.AWGTunnel) error {
 		return tunnel.ErrOperationInProgress
 	}
-	err = ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002")
+	err = ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002", warpscout.SwapOptions{})
 	if !errors.As(err, &editErr) || editErr.Code != "OPERATION_IN_PROGRESS" {
 		t.Fatalf("занятый туннель — конфликт штатной правки: %v", err)
 	}
@@ -547,5 +548,293 @@ func TestWarpOps_ListQueriesEachTunnelOnce(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("привязка awg51 → awg50 не разрешена: %+v", refs)
+	}
+}
+
+type apiJunkRunner struct {
+	gate chan struct{}
+	hits int
+}
+
+func (r *apiJunkRunner) Available() (string, bool) { return "/fake", true }
+
+func (r *apiJunkRunner) Run(_ context.Context, p warpscout.ScanParams, on func(warpscout.EngineEvent)) error {
+	if r.gate != nil {
+		<-r.gate
+	}
+	total := len(p.Endpoints)
+	on(warpscout.EngineEvent{Type: "start", Total: total})
+	for i := 0; i < r.hits && i < total; i++ {
+		on(warpscout.EngineEvent{
+			Type: "hit", Endpoint: "162.159.192.1:2408", PingMs: 25, Colo: "HEL", Loc: "FI", Warp: "on",
+		})
+	}
+	on(warpscout.EngineEvent{Type: "done", Scanned: total, Hits: r.hits})
+	return nil
+}
+
+type apiPlainCipher struct{}
+
+func (apiPlainCipher) Encrypt(s string) (string, error) { return "enc:" + s, nil }
+func (apiPlainCipher) Decrypt(s string) (string, error) {
+	return s[4:], nil
+}
+
+func TestWarpScoutHandler_FindJunkEndpoints(t *testing.T) {
+	store, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := store.SetAccount(&warpscout.Account{
+		ID:            "acc1",
+		PrivateKey:    "priv",
+		PeerPublicKey: warpscout.WarpPeerPublicKey,
+		AddressV4:     "172.16.0.2/32",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &apiJunkRunner{gate: make(chan struct{}), hits: 0}
+	svc := warpscout.New(warpscout.Deps{
+		Store:  store,
+		Runner: runner,
+		WAN:    func(context.Context) (string, bool) { return "eth3", true },
+	})
+	t.Cleanup(svc.Stop)
+	h := NewWarpScoutHandler(svc, nil)
+
+	// 1. Запуск find-junk -> 200 OK
+	req := httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/start",
+		bytes.NewBufferString(`{"i1Profile":"quic","maxAttempts":1,"perSubnet":1}`))
+	rec := httptest.NewRecorder()
+	h.FindJunkStart(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("FindJunkStart code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 2. Попытка применить во время выполнения -> 409 WARP_BUSY
+	recBusy := httptest.NewRecorder()
+	h.FindJunkApply(recBusy, httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/apply", nil))
+	if recBusy.Code != http.StatusConflict {
+		t.Fatalf("FindJunkApply while running code=%d body=%s", recBusy.Code, recBusy.Body.String())
+	}
+	var errEnv struct {
+		Error bool   `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(recBusy.Body.Bytes(), &errEnv); err != nil || !errEnv.Error || errEnv.Code != "WARP_BUSY" {
+		t.Fatalf("unexpected busy envelope: %s", recBusy.Body.String())
+	}
+
+	// Завершаем 0-хитовый прогон -> Apply должен вернуть 400 INVALID_INPUT
+	close(runner.gate)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && svc.State().FindJunk.Running {
+		time.Sleep(10 * time.Millisecond)
+	}
+	recZero := httptest.NewRecorder()
+	h.FindJunkApply(recZero, httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/apply", nil))
+	if recZero.Code != http.StatusBadRequest {
+		t.Fatalf("FindJunkApply after zero hits code=%d body=%s", recZero.Code, recZero.Body.String())
+	}
+	if err := json.Unmarshal(recZero.Body.Bytes(), &errEnv); err != nil || errEnv.Code != "INVALID_INPUT" {
+		t.Fatalf("unexpected invalid envelope: %s", recZero.Body.String())
+	}
+
+	// 3. Валидный прогон (15/15) -> FindJunkApply 200 OK с AWGParams
+	runner.gate = nil
+	runner.hits = 15
+	rec2 := httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/start",
+		bytes.NewBufferString(`{"i1Profile":"stun","maxAttempts":1,"perSubnet":1}`))
+	rec2Rec := httptest.NewRecorder()
+	h.FindJunkStart(rec2Rec, rec2)
+	if rec2Rec.Code != http.StatusOK {
+		t.Fatalf("second FindJunkStart code=%d body=%s", rec2Rec.Code, rec2Rec.Body.String())
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && svc.State().FindJunk.Running {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	recApply := httptest.NewRecorder()
+	h.FindJunkApply(recApply, httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/apply", nil))
+	if recApply.Code != http.StatusOK {
+		t.Fatalf("FindJunkApply valid code=%d body=%s", recApply.Code, recApply.Body.String())
+	}
+	var okEnv struct {
+		Success bool                `json:"success"`
+		Data    warpscout.AWGParams `json:"data"`
+	}
+	if err := json.Unmarshal(recApply.Body.Bytes(), &okEnv); err != nil || !okEnv.Success || okEnv.Data.SignatureProfile != "stun" {
+		t.Fatalf("unexpected FindJunkApply envelope: %s", recApply.Body.String())
+	}
+}
+
+func TestWarpScoutHandler_ClearHistory(t *testing.T) {
+	store, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := store.AppendHistory(warpscout.SwapEvent{
+		At:          time.Now().UTC(),
+		ProfileID:   "p1",
+		ProfileName: "WARP HEL",
+		OldEndpoint: "162.159.192.1:2408",
+		NewEndpoint: "162.159.192.2:2408",
+		OK:          true,
+	}); err != nil {
+		t.Fatalf("AppendHistory: %v", err)
+	}
+	svc := warpscout.New(warpscout.Deps{Store: store})
+	t.Cleanup(svc.Stop)
+	h := NewWarpScoutHandler(svc, nil)
+
+	recGet := httptest.NewRecorder()
+	h.ClearHistory(recGet, httptest.NewRequest(http.MethodGet, "/api/warpscout/history/clear", nil))
+	if recGet.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET ClearHistory code=%d, want 405", recGet.Code)
+	}
+
+	recPost := httptest.NewRecorder()
+	h.ClearHistory(recPost, httptest.NewRequest(http.MethodPost, "/api/warpscout/history/clear", nil))
+	if recPost.Code != http.StatusOK {
+		t.Fatalf("POST ClearHistory code=%d body=%s", recPost.Code, recPost.Body.String())
+	}
+	if got := svc.State().History; len(got) != 0 {
+		t.Fatalf("expected empty history after ClearHistory, got %d", len(got))
+	}
+}
+
+func TestWarpOps_SwapManaged_UpdatesObfuscationAndRestartsActiveTunnel(t *testing.T) {
+	ctx := context.Background()
+	ops, svc, store, rotated := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg11": tunnel.StateRunning,
+		"awg50": tunnel.StateRunning,
+		"awg12": tunnel.StateStopped,
+	})
+	initObf := storage.AWGObfuscation{
+		Jc: 4, Jmin: 40, Jmax: 70, H1: "1", H2: "2", H3: "3", H4: "4", I1: "<b 0x01>",
+	}
+	for _, tc := range []struct {
+		id, backend string
+		enabled     bool
+	}{
+		{"awg11", "kernel", true},
+		{"awg50", "nativewg", true},
+		{"awg12", "kernel", false},
+	} {
+		seedWarpTunnel(t, store, tc.id, tc.backend)
+		if err := store.Update(tc.id, func(tun *storage.AWGTunnel) error {
+			tun.Enabled = tc.enabled
+			tun.Interface.AWGObfuscation = initObf
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var updatedObfs []storage.AWGObfuscation
+	svc.updateFn = func(_ context.Context, _, newStored *storage.AWGTunnel) error {
+		updatedObfs = append(updatedObfs, newStored.Interface.AWGObfuscation)
+		return nil
+	}
+
+	nextOpts := warpscout.SwapOptions{
+		Protocol: warpscout.ProtocolAWG,
+		AWG: warpscout.AWGParams{
+			Jc: 8, Jmin: 20, Jmax: 90,
+			SignatureProfile: warpscout.SignatureCustom,
+			I1:               "<b 0xaa>",
+		},
+	}
+
+	// Kernel: смена обфускации сохраняется через EditTunnelWith и перезапускает активный туннель без отдельной ротации.
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002", nextOpts); err != nil {
+		t.Fatalf("SwapEndpoint kernel obf change: %v", err)
+	}
+	got11, _ := store.Get("awg11")
+	if got11.Interface.AWGObfuscation.Jc != 8 || got11.Interface.AWGObfuscation.I1 != "<b 0xaa>" ||
+		got11.Interface.AWGObfuscation.H1 != "1" || got11.Interface.AWGObfuscation.H4 != "4" {
+		t.Fatalf("обфускация awg11 не обновилась: %+v", got11.Interface.AWGObfuscation)
+	}
+	if len(updatedObfs) != 1 || updatedObfs[0].Jc != 8 {
+		t.Fatalf("Svc.Update не получил новую обфускацию: %+v", updatedObfs)
+	}
+	if svc.restartCalls != 1 || len(*rotated) != 0 {
+		t.Fatalf("при смене маскировки активный kernel должен перезапускаться без ротации: restarts=%d rotated=%v", svc.restartCalls, *rotated)
+	}
+
+	// Повторная подмена с той же обфускацией: рестарта нет, только ротация UDP-порта.
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.199:1002", nextOpts); err != nil {
+		t.Fatalf("SwapEndpoint kernel same obf: %v", err)
+	}
+	if svc.restartCalls != 1 || len(*rotated) != 1 || (*rotated)[0] != "if-awg11" {
+		t.Fatalf("повторная подмена kernel с той же обфускацией должна только ротировать порт: restarts=%d rotated=%v", svc.restartCalls, *rotated)
+	}
+
+	// NativeWG: смена обфускации тоже перезапускает активный туннель, повтор без изменений — без рестарта.
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.201:1002", nextOpts); err != nil {
+		t.Fatalf("SwapEndpoint native obf change: %v", err)
+	}
+	got50, _ := store.Get("awg50")
+	if got50.Interface.AWGObfuscation.Jc != 8 || got50.Interface.AWGObfuscation.I1 != "<b 0xaa>" {
+		t.Fatalf("обфускация awg50 не обновилась: %+v", got50.Interface.AWGObfuscation)
+	}
+	if svc.restartCalls != 2 {
+		t.Fatalf("при смене маскировки NativeWG должен перезапускаться: restarts=%d", svc.restartCalls)
+	}
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.202:1002", nextOpts); err != nil {
+		t.Fatalf("SwapEndpoint native same obf: %v", err)
+	}
+	if svc.restartCalls != 2 {
+		t.Fatalf("повторная подмена NativeWG с той же обфускацией не должна перезапускать: restarts=%d", svc.restartCalls)
+	}
+
+	// Выключенный туннель: обновляет стор, но не запускается автоматически.
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg12", "162.159.192.203:1002", nextOpts); err != nil {
+		t.Fatalf("SwapEndpoint stopped: %v", err)
+	}
+	got12, _ := store.Get("awg12")
+	if got12.Interface.AWGObfuscation.Jc != 8 || svc.restartCalls != 2 {
+		t.Fatalf("остановленный туннель должен обновить стор без Restart: obf=%+v restarts=%d", got12.Interface.AWGObfuscation, svc.restartCalls)
+	}
+}
+
+func TestWarpOps_SwapManaged_ProtocolWGClearsKernelAndRejectsNative(t *testing.T) {
+	ctx := context.Background()
+	ops, svc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg11": tunnel.StateRunning,
+		"awg50": tunnel.StateRunning,
+	})
+	initObf := storage.AWGObfuscation{Jc: 5, Jmin: 10, Jmax: 50, H1: "1", H2: "2", H3: "3", H4: "4", I1: "<b 0x11>"}
+	for _, tc := range []struct{ id, backend string }{
+		{"awg11", "kernel"},
+		{"awg50", "nativewg"},
+	} {
+		seedWarpTunnel(t, store, tc.id, tc.backend)
+		if err := store.Update(tc.id, func(tun *storage.AWGTunnel) error {
+			tun.Interface.AWGObfuscation = initObf
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002", warpscout.SwapOptions{Protocol: warpscout.ProtocolWG}); err != nil {
+		t.Fatalf("SwapEndpoint kernel wg: %v", err)
+	}
+	got11, _ := store.Get("awg11")
+	if got11.Interface.AWGObfuscation != (storage.AWGObfuscation{}) {
+		t.Fatalf("protocol=wg должен очищать обфускацию kernel-туннеля: %+v", got11.Interface.AWGObfuscation)
+	}
+	if svc.restartCalls != 1 {
+		t.Fatalf("сброс маскировки должен перезапускать активный kernel-туннель: restarts=%d", svc.restartCalls)
+	}
+
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.198:1002", warpscout.SwapOptions{Protocol: warpscout.ProtocolWG}); !errors.Is(err, warpscout.ErrInvalidInput) {
+		t.Fatalf("ожидалась ErrInvalidInput для NativeWG + wg, получили %v", err)
+	}
+	if svc.restartCalls != 1 {
+		t.Fatalf("отклонённый swap NativeWG + wg не должен перезапускать: restarts=%d", svc.restartCalls)
 	}
 }

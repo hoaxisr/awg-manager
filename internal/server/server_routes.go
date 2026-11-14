@@ -774,9 +774,13 @@ func (s *Server) registerWarpScoutRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/warpscout/account/delete", h.guarded(ws.DeleteAccount))
 	mux.HandleFunc("/api/warpscout/scan/start", h.guarded(ws.ScanStart))
 	mux.HandleFunc("/api/warpscout/scan/stop", h.guarded(ws.ScanStop))
+	mux.HandleFunc("/api/warpscout/find-junk/start", h.guarded(ws.FindJunkStart))
+	mux.HandleFunc("/api/warpscout/find-junk/stop", h.guarded(ws.FindJunkStop))
+	mux.HandleFunc("/api/warpscout/find-junk/apply", h.guarded(ws.FindJunkApply))
 	mux.HandleFunc("/api/warpscout/apply", h.guarded(ws.Apply))
 	mux.HandleFunc("/api/warpscout/config", h.guarded(ws.Config))
 	mux.HandleFunc("/api/warpscout/stats/reset", h.guarded(ws.ResetStats))
+	mux.HandleFunc("/api/warpscout/history/clear", h.guarded(ws.ClearHistory))
 }
 
 // wireCrossHandlers — event-bus and cross-handler wiring (no route registrations of its own except hook aliases).

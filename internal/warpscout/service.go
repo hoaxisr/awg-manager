@@ -40,6 +40,14 @@ type CreateOptions struct {
 	ViaID   string
 }
 
+// SwapOptions — параметры подмены узла: помимо нового endpoint передают
+// протокол ("awg" | "wg") и текущую обфускацию сканера. Если Protocol == "",
+// обфускация туннеля не изменяется.
+type SwapOptions struct {
+	Protocol string
+	AWG      AWGParams
+}
+
 // TunnelOps — операции над туннелями, которые автопилоту нужны от
 // остального приложения. Реализация живёт в internal/api.
 type TunnelOps interface {
@@ -49,8 +57,9 @@ type TunnelOps interface {
 	Get(ctx context.Context, mode TargetMode, id string) (*TunnelRef, error)
 	// Create создаёт туннель из .conf и возвращает его.
 	Create(ctx context.Context, mode TargetMode, name, conf string, opts CreateOptions) (*TunnelRef, error)
-	// SwapEndpoint меняет endpoint пира на лету, не пересоздавая интерфейс.
-	SwapEndpoint(ctx context.Context, mode TargetMode, id, endpoint string) error
+	// SwapEndpoint меняет endpoint пира и (если задан SwapOptions.Protocol)
+	// синхронизирует обфускацию туннеля, перезапуская интерфейс при смене маскировки.
+	SwapEndpoint(ctx context.Context, mode TargetMode, id, endpoint string, opts SwapOptions) error
 	// Rename переименовывает туннель (карточку и описание интерфейса в NDMS).
 	Rename(ctx context.Context, mode TargetMode, id, name string) error
 }
@@ -155,6 +164,7 @@ type State struct {
 	UsedIPv4           []string            `json:"usedIpv4,omitempty"`
 	Config             Config              `json:"config"`
 	Scan               ScanStatus          `json:"scan"`
+	FindJunk           FindJunkStatus      `json:"findJunk"`
 	Watch              []WatchStatus       `json:"watch"`
 	Stats              []ProfileStats      `json:"stats"`
 	History            []SwapEvent         `json:"history"`
@@ -202,18 +212,23 @@ type Service struct {
 	// acctMu — одна операция над учётной записью за раз, включая её сетевую
 	// часть: параллельные регистрация и привязка лицензии иначе записали бы
 	// каждая свою копию, и локальный ключ разошёлся бы с ключом у Cloudflare.
-	acctMu sync.Mutex
+	acctMu       sync.Mutex
+	findJunkOpMu sync.Mutex // сериализует StartFindJunk и ApplyFindJunk (всегда снаружи mu)
 
-	mu         sync.Mutex
-	scan       ScanStatus
-	scanCancel context.CancelFunc
-	watch      map[string]*WatchStatus
-	stats      map[string]*ProfileStats
-	statsDirty bool // в stats есть изменения, не дошедшие до диска
-	watchers   map[string]*watcher
-	rootCtx    context.Context
-	rootCancel context.CancelFunc
-	wg         sync.WaitGroup
+	mu                  sync.Mutex
+	scan                ScanStatus
+	scanCancel          context.CancelFunc
+	findJunk            FindJunkStatus
+	findJunkCancel      context.CancelFunc
+	findJunkSeq         uint64 // монотонный счётчик запусков подбора маскировки
+	testBeforeApplySave func() // барьер только для тестов конкурентности
+	watch               map[string]*WatchStatus
+	stats               map[string]*ProfileStats
+	statsDirty          bool // в stats есть изменения, не дошедшие до диска
+	watchers            map[string]*watcher
+	rootCtx             context.Context
+	rootCancel          context.CancelFunc
+	wg                  sync.WaitGroup
 }
 
 // New создаёт сервис. Сторожа поднимает Start.
@@ -240,7 +255,8 @@ func New(d Deps) *Service {
 	}
 	return &Service{
 		d: d, scan: ScanStatus{Hits: []Hit{}},
-		watch: map[string]*WatchStatus{}, stats: statsMap, watchers: map[string]*watcher{},
+		findJunk: FindJunkStatus{Attempts: []JunkAttempt{}},
+		watch:    map[string]*WatchStatus{}, stats: statsMap, watchers: map[string]*watcher{},
 		rootCtx: ctx, rootCancel: cancel,
 	}
 }
@@ -256,6 +272,9 @@ func (s *Service) Stop() {
 	s.mu.Lock()
 	if s.scanCancel != nil {
 		s.scanCancel()
+	}
+	if s.findJunkCancel != nil {
+		s.findJunkCancel()
 	}
 	s.mu.Unlock()
 	s.wg.Wait()
@@ -297,6 +316,7 @@ func (s *Service) State() State {
 	s.mu.Lock()
 	scan := s.scan
 	scan.Hits = append([]Hit{}, s.scan.Hits...)
+	findJunk := cloneFindJunkStatus(s.findJunk)
 	watch := make([]WatchStatus, 0, len(cfg.Profiles))
 	stats := make([]ProfileStats, 0, len(cfg.Profiles))
 	for _, p := range cfg.Profiles {
@@ -342,6 +362,7 @@ func (s *Service) State() State {
 		UsedIPv4:           usedIPv4,
 		Config:             cfg,
 		Scan:               scan,
+		FindJunk:           findJunk,
 		Watch:              watch,
 		Stats:              stats,
 		History:            s.d.Store.History(),
@@ -398,6 +419,18 @@ func (s *Service) flushStats() {
 		s.statsDirty = true
 		s.mu.Unlock()
 	}
+}
+
+// ClearHistory очищает журнал автоподмен.
+func (s *Service) ClearHistory() error {
+	if s.d.Store == nil {
+		return nil
+	}
+	if err := s.d.Store.ClearHistory(); err != nil {
+		return err
+	}
+	s.logInfo("history", "warp", "Журнал автоподмен очищен")
+	return nil
 }
 
 // Targets — туннели для выбора цели.
@@ -936,7 +969,7 @@ func nonNil(v []string) []string {
 func (s *Service) awgForUse() AWGParams {
 	cfg := s.d.Store.Config()
 	if changed, err := EnsureSignature(&cfg.AWG); err == nil && changed {
-		_ = s.d.Store.SetConfig(cfg)
+		_ = s.d.Store.SetAWG(cfg.AWG)
 	}
 	return cfg.AWG
 }
@@ -961,7 +994,7 @@ func (s *Service) StartScan(req ScanRequest) error {
 		return ErrEngineMissing
 	}
 	s.mu.Lock()
-	if s.scan.Running {
+	if s.scan.Running || s.findJunk.Running {
 		s.mu.Unlock()
 		return ErrScanRunning
 	}
@@ -1331,8 +1364,10 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 				return nil, fmt.Errorf("%w: endpoint %s совпадает с IP внешнего туннеля (%s)", ErrInvalidInput, req.Endpoint, outer.Endpoint)
 			}
 			mtu = NestedWarpMTU
-			if awg, err = fitSignature(awg, nestedSignatureMax); err != nil {
-				return nil, err
+			if protocol != ProtocolWG {
+				if awg, err = fitSignature(awg, nestedSignatureMax); err != nil {
+					return nil, err
+				}
 			}
 			createOpts = CreateOptions{ViaMode: outer.Mode, ViaID: outer.ID}
 		}
@@ -1384,6 +1419,24 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 			s.logInfo("apply", name, fmt.Sprintf("Создан туннель WARP (%s) с узлом %s", req.Mode, req.Endpoint))
 		}
 	case "swap":
+		protocol := req.Protocol
+		if protocol == "" && req.Filters != nil && req.Filters.Protocol != "" {
+			protocol = req.Filters.Protocol
+		}
+		if protocol != ProtocolWG {
+			protocol = ProtocolAWG
+		}
+		if req.Mode == TargetNative && protocol == ProtocolWG {
+			return nil, fmt.Errorf("%w: тип Native WG требует протокол AmneziaWG — выберите протокол AmneziaWG или тип «Системный»", ErrInvalidInput)
+		}
+		awg := s.awgForUse()
+		if req.AWG != nil {
+			var err error
+			awg, err = validateOverrideAWG(*req.AWG)
+			if err != nil {
+				return nil, err
+			}
+		}
 		cur, err := s.d.Tunnels.Get(ctx, req.Mode, req.TargetID)
 		if err != nil {
 			return nil, err
@@ -1391,7 +1444,11 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		if err := checkTarget(cur); err != nil {
 			return nil, err
 		}
-		if err := s.d.Tunnels.SwapEndpoint(ctx, req.Mode, req.TargetID, req.Endpoint); err != nil {
+		swapOpts, err := buildSwapOptions(protocol, awg, cur.ViaIface != "")
+		if err != nil {
+			return nil, err
+		}
+		if err := s.d.Tunnels.SwapEndpoint(ctx, req.Mode, req.TargetID, req.Endpoint, swapOpts); err != nil {
 			return nil, err
 		}
 		tunName := cur.Name
