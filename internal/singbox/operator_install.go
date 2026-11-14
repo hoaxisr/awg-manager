@@ -322,7 +322,7 @@ func (o *Operator) IsPresent() bool {
 }
 
 // Install downloads the managed sing-box binary, verifies SHA256, and
-// places it at /opt/etc/awg-manager/singbox/sing-box. Used by the UI
+// places it at /opt/etc/awg-manager/singbox/awgm-box. Used by the UI
 // "Install" action when sing-box is not yet present.
 func (o *Operator) Install(ctx context.Context) error {
 	if !o.installBusy.CompareAndSwap(false, true) {

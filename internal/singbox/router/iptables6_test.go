@@ -450,7 +450,7 @@ func TestNetfilter6HookScript_ValidShell(t *testing.T) {
 // перехват в мёртвый порт НЕ восстанавливает.
 func TestNetfilter6HookScript_AliveAndDeadBranches(t *testing.T) {
 	script := netfilter6HookScript()
-	alive := indexOf(t, script, "if pidof sing-box >/dev/null 2>&1; then")
+	alive := indexOf(t, script, "if pidof awgm-box >/dev/null 2>&1; then")
 	scrubBH := indexOf(t, script, "scrub_jumps mangle "+Blackhole6Chain)
 	restore := indexOf(t, script, "ip6tables-restore --noflush < \"/opt/etc/awg-manager/singbox/router-netfilter6-mangle.rules\"")
 	dead := indexOf(t, script, "\nelse\n")

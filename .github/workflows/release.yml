@@ -114,12 +114,12 @@ jobs:
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
         with:
           go-version: 1.26.4
-      - name: Host sing-box (pinned RequiredVersion)
+      - name: Host sing-box (upstream base of the pin)
         shell: bash
         run: |
           set -euo pipefail
-          ver="$(sed -n 's/^const RequiredVersion = "\(.*\)"/\1/p' internal/singbox/installer/embedded.go)"
-          ver="${ver%-awgm.*}"  # у SagerNet нет релизов форка; для rule-set decompile хватает апстрим-базы
+          # У SagerNet нет релизов форка; для rule-set decompile хватает апстрим-базы пина.
+          ver="$(sed -n 's/^const UpstreamVersion = "\(.*\)"/\1/p' internal/singbox/installer/embedded.go)"
           curl -fsSL -o /tmp/sb.tgz "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box-${ver}-linux-amd64.tar.gz"
           tar -xzf /tmp/sb.tgz -C /tmp
           echo "SB=$(find /tmp -type f -name sing-box -path "*${ver}-linux-amd64*" | head -1)" >> "$GITHUB_ENV"

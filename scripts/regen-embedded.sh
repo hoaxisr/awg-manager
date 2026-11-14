@@ -6,7 +6,7 @@
 #
 # Usage:
 #   ./scripts/regen-embedded.sh <release-tag>
-#   (release-tag = VERSION, напр. 1.14.0-alpha.48-awg3-xhttp-mieru)
+#   (release-tag = VERSION = счётчик сборок awgm-box, напр. 41)
 # Env:
 #   SINGBOX_FORK_REPO   (default hoaxisr/awgm-box)
 #   SINGBOX_URL_BASE    базовый URL для embedded.go (default — GitHub-релиз форка).
@@ -40,7 +40,7 @@ p.write_text(text)
 PY
 
 for arch in "${ARCHES[@]}"; do
-    asset="singbox-${VERSION}-${arch}"
+    asset="awgm-box-${VERSION}-${arch}"
     dest="$TMP/$asset"
 
     echo "  Downloading $asset from $FORK_REPO release $VERSION..."
@@ -78,10 +78,18 @@ done
 
 # RequiredTags: теги сборки читаются из mipsel-ассета под qemu-user.
 # Без qemu константа остаётся прежней — предупреждаем, правится руками.
-mipsel_bin="$TMP/singbox-${VERSION}-mipsel-3.4"
+mipsel_bin="$TMP/awgm-box-${VERSION}-mipsel-3.4"
 if command -v qemu-mipsel-static >/dev/null 2>&1; then
     chmod +x "$mipsel_bin"
-    tags="$(qemu-mipsel-static "$mipsel_bin" version 2>/dev/null | sed -n 's/^Tags: *//p' | head -1)"
+    version_out="$(qemu-mipsel-static "$mipsel_bin" version 2>/dev/null)"
+    tags="$(printf '%s\n' "$version_out" | sed -n 's/^Tags: *//p' | head -1)"
+    upstream="$(printf '%s\n' "$version_out" | sed -n 's/^based on sing-box *//p' | head -1)"
+    if [[ -n "$upstream" ]]; then
+        sed -i "s/^const UpstreamVersion = \".*\"/const UpstreamVersion = \"$upstream\"/" "$EMBEDDED_GO"
+        echo "  Updated UpstreamVersion: $upstream"
+    else
+        echo "WARNING: no 'based on sing-box' line — update UpstreamVersion in embedded.go by hand" >&2
+    fi
     if [[ -n "$tags" ]]; then
         TAGS="$tags" EMBEDDED_GO="$EMBEDDED_GO" python3 - <<'PY'
 import os, pathlib, re, sys
@@ -100,7 +108,7 @@ PY
         echo "WARNING: qemu-mipsel-static printed no Tags — update RequiredTags in embedded.go by hand" >&2
     fi
 else
-    echo "WARNING: qemu-mipsel-static not found — update RequiredTags in embedded.go by hand" >&2
+    echo "WARNING: qemu-mipsel-static not found — update RequiredTags and UpstreamVersion in embedded.go by hand" >&2
 fi
 
 gofmt -w "$EMBEDDED_GO"

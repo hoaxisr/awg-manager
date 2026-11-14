@@ -221,7 +221,7 @@ func TestOperator_HandleExit_ClassifiesOOMKill(t *testing.T) {
 	op.restartBackoff.NoteProcessStart(time.Now().Add(-time.Minute))
 	op.uptimeFn = func() (float64, error) { return 12400, nil }
 	op.dmesgFn = func(context.Context) (string, error) {
-		return "[12395.6] Out of memory: Killed process 4242 (sing-box) total-vm:190000kB\n", nil
+		return "[12395.6] Out of memory: Killed process 4242 (awgm-box) total-vm:190000kB\n", nil
 	}
 	op.handleExit(errors.New("signal: killed"), "", false)
 
@@ -248,7 +248,7 @@ func TestOperator_HandleExit_StaleOOMTraceIgnored(t *testing.T) {
 
 	t.Run("staleOnly", func(t *testing.T) {
 		// OOM трёхчасовой давности (1234.5с << 12310с floor).
-		op := newOp("[ 1234.567890] Out of memory: Killed process 111 (sing-box)\n")
+		op := newOp("[ 1234.567890] Out of memory: Killed process 111 (awgm-box)\n")
 		op.handleExit(errors.New("signal: killed"), "", false)
 		if got := op.LastError(); got != "signal: killed" {
 			t.Fatalf("LastError = %q, want generic (stale OOM must be ignored)", got)
@@ -256,8 +256,8 @@ func TestOperator_HandleExit_StaleOOMTraceIgnored(t *testing.T) {
 	})
 
 	t.Run("staleThenFresh", func(t *testing.T) {
-		op := newOp("[ 1234.567890] Out of memory: Killed process 111 (sing-box)\n" +
-			"[12395.100000] oom_reaper: reaped process 4242 (sing-box)\n")
+		op := newOp("[ 1234.567890] Out of memory: Killed process 111 (awgm-box)\n" +
+			"[12395.100000] oom_reaper: reaped process 4242 (awgm-box)\n")
 		op.handleExit(errors.New("signal: killed"), "", false)
 		if got := op.LastError(); got != oomKillLastError {
 			t.Fatalf("LastError = %q, want confirmed OOM reason", got)
@@ -274,7 +274,7 @@ func TestOperator_HandleExit_OOMUnconfirmedTimestamp(t *testing.T) {
 	t.Run("noProcessStartKnown", func(t *testing.T) {
 		op := &Operator{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 		op.dmesgFn = func(context.Context) (string, error) {
-			return "[12345.6] Out of memory: Killed process 4242 (sing-box)\n", nil
+			return "[12345.6] Out of memory: Killed process 4242 (awgm-box)\n", nil
 		}
 		op.handleExit(errors.New("signal: killed"), "", false)
 		if got := op.LastError(); got != wantUnconfirmed {
@@ -287,7 +287,7 @@ func TestOperator_HandleExit_OOMUnconfirmedTimestamp(t *testing.T) {
 		op.restartBackoff.NoteProcessStart(time.Now().Add(-time.Minute))
 		op.uptimeFn = func() (float64, error) { return 12400, nil }
 		op.dmesgFn = func(context.Context) (string, error) {
-			return "Out of memory: Killed process 4242 (sing-box)\n", nil
+			return "Out of memory: Killed process 4242 (awgm-box)\n", nil
 		}
 		op.handleExit(errors.New("signal: killed"), "", false)
 		if got := op.LastError(); got != wantUnconfirmed {
@@ -300,7 +300,7 @@ func TestOperator_HandleExit_OOMUnconfirmedTimestamp(t *testing.T) {
 		op.restartBackoff.NoteProcessStart(time.Now().Add(-time.Minute))
 		op.uptimeFn = func() (float64, error) { return 0, errors.New("no procfs") }
 		op.dmesgFn = func(context.Context) (string, error) {
-			return "[12345.6] Out of memory: Killed process 4242 (sing-box)\n", nil
+			return "[12345.6] Out of memory: Killed process 4242 (awgm-box)\n", nil
 		}
 		op.handleExit(errors.New("signal: killed"), "", false)
 		if got := op.LastError(); got != wantUnconfirmed {
@@ -340,7 +340,7 @@ func TestOperator_HandleExit_DeliberateStopNotCounted(t *testing.T) {
 	dmesgCalls := 0
 	op.dmesgFn = func(context.Context) (string, error) {
 		dmesgCalls++
-		return "Out of memory: Killed process 1 (sing-box)", nil
+		return "Out of memory: Killed process 1 (awgm-box)", nil
 	}
 	op.handleExit(errors.New("signal: killed"), "", true)
 

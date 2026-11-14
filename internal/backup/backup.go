@@ -356,6 +356,9 @@ func PruneRestoreLeftovers(dataDir string) int {
 // молча и который вешает роутер (#953: amneziawg KN-1811 на NC-4210).
 var hardwareBound = []string{
 	"modules",
+	"singbox/awgm-box",
+	"singbox/awgm-box.meta.json",
+	// Прежнее имя бинаря (до 2.20.3): старые архивы и недомигрированные роутеры.
 	"singbox/sing-box",
 	"singbox/sing-box.meta.json",
 }

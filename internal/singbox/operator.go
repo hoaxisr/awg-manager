@@ -405,6 +405,7 @@ func NewOperator(d OperatorDeps) *Operator {
 
 	configPath := filepath.Join(dir, "config.d")
 	pidPath := filepath.Join(dir, "sing-box.pid")
+	migrateLegacyBinary(binary, configPath, pidPath, log)
 
 	// До шагов примирения: stepOutboundCompat уже читает слот подписок по
 	// новому имени.

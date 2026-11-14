@@ -33,8 +33,9 @@ func TestParseSingboxVersionOutput(t *testing.T) {
 	cases := map[string]string{
 		"sing-box version 1.13.8\nEnvironment: go1.25.9 linux/arm64\nTags: with_gvisor,with_quic\n": "1.13.8",
 		"sing-box version 1.2.3\n": "1.2.3",
-		"awgm-box version 1.15.0-alpha.13-awgm.40\n\nEnvironment: go1.26.8 linux/mipsle\n": "1.15.0-alpha.13-awgm.40",
-		"SingBox Version 1.13.11\nTaGs: with_quic\n":                                       "1.13.11",
+		"awgm-box version 1.15.0-alpha.13-awgm.40\n\nEnvironment: go1.26.8 linux/mipsle\n":                "1.15.0-alpha.13-awgm.40",
+		"awgm-box version 41\nbased on sing-box 1.15.0-alpha.13\n\nEnvironment: go1.26.11 linux/mipsle\n": "41",
+		"SingBox Version 1.13.11\nTaGs: with_quic\n":                                                      "1.13.11",
 		"":                                    "",
 		"Environment: go1.25.9 linux/arm64\n": "",
 	}

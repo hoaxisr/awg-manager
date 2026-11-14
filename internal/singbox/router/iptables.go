@@ -193,7 +193,7 @@ var (
 	// netfilterPolicyTunDNSHookPath — хук перехвата DNS в policy-tun.
 	// Отдельный от 50-го: тот в этом режиме существует только под классы
 	// QoS, его детектор завязан на цепочку AWGM-REDIRECT (которой без QoS
-	// нет) и он гейтится на pidof sing-box, что несовместимо с fail-closed.
+	// нет) и он гейтится на pidof awgm-box, что несовместимо с fail-closed.
 	netfilterPolicyTunDNSHookPath = "/opt/etc/ndm/netfilter.d/52-awgm-policytun-dns.sh"
 )
 
@@ -1175,7 +1175,7 @@ func writeNetfilterHook(includeBlackhole bool) error {
 // умеет массивов, а склейка селекторов в строку с последующим разбиением по
 // словам развалилась бы на первом же значении с пробелом.
 //
-// Гейта `pidof sing-box` НЕТ сознательно (спека §7.3): нет движка — трафик
+// Гейта `pidof awgm-box` НЕТ сознательно (спека §7.3): нет движка — трафик
 // этой политики работать не должен, и DNS в том числе. Не «забытая проверка».
 func policyTunDNSHookScript(spec FakeIPIngressSpec) string {
 	var rules strings.Builder
@@ -1318,7 +1318,7 @@ scrub_tagged() {
     | sed "s/-A $c/-D $c/" \
     | while IFS= read -r line; do /opt/sbin/iptables -w -t "$1" $line 2>/dev/null; done
 }
-if pidof sing-box >/dev/null 2>&1; then
+if pidof awgm-box >/dev/null 2>&1; then
   # sing-box ALIVE — real interception governs. Drop any lingering fail-closed
   # blackhole first so a stale DROP never sits in front of the interception jump.
   scrub_jumps mangle %[11]s

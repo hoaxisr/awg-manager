@@ -26,9 +26,14 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/routerinfo"
 )
 
-// DefaultBinaryPath is where the managed sing-box binary is placed on disk.
-// Inside our own config directory so cleanup is trivial (rm -rf the dir).
-const DefaultBinaryPath = "/opt/etc/awg-manager/singbox/sing-box"
+// DefaultBinaryPath is where the managed awgm-box binary (our sing-box fork)
+// is placed on disk. Inside our own config directory so cleanup is trivial
+// (rm -rf the dir). Builds up to 2.20.2 named it sing-box: see
+// migrateLegacyBinary.
+const DefaultBinaryPath = "/opt/etc/awg-manager/singbox/awgm-box"
+
+// LegacyBinaryName is the file name the binary had before the rename.
+const LegacyBinaryName = "sing-box"
 
 // BinarySpec is one architecture's download metadata. Embedded in the
 // build via embedded.go so a compromised server cannot serve a tampered
