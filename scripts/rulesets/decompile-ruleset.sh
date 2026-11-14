@@ -33,6 +33,7 @@ find_singbox() {
 		return 0
 	fi
 	for candidate in \
+		/opt/etc/awg-manager/singbox/awgm-box \
 		/opt/etc/awg-manager/singbox/sing-box \
 		/opt/bin/sing-box \
 		/usr/bin/sing-box; do

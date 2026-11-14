@@ -335,9 +335,9 @@ var dmesgLineTimestamp = regexp.MustCompile(`^\s*(?:<\d+>\s*)?\[\s*(\d+(?:\.\d+)
 // dmesgTextIndicatesOOM scans kernel log lines for an OOM kill that
 // names sing-box. Matches the common kernel phrasings:
 //
-//	Out of memory: Killed process 1234 (sing-box) ...
+//	Out of memory: Killed process 1234 (awgm-box) ...
 //	oom-kill:constraint=CONSTRAINT_NONE,...,task=sing-box,...
-//	oom_reaper: reaped process 1234 (sing-box) ...
+//	oom_reaper: reaped process 1234 (awgm-box) ...
 //
 // When haveFloor, a line with a parseable `[секунды]` prefix counts only
 // if its stamp is ≥ minTS (принадлежит текущему запуску) — such a match
@@ -347,7 +347,7 @@ func dmesgTextIndicatesOOM(out string, minTS float64, haveFloor bool) (oom, tsCo
 	unconfirmed := false
 	for _, line := range strings.Split(out, "\n") {
 		l := strings.ToLower(line)
-		if !strings.Contains(l, "sing-box") {
+		if !strings.Contains(l, "awgm-box") {
 			continue
 		}
 		if !strings.Contains(l, "out of memory") &&

@@ -560,7 +560,7 @@ func TestWriteNetfilterHookContainsPidofGuard(t *testing.T) {
 	// The pidof guard now branches (alive → real interception, dead → fail-closed
 	// blackhole) instead of `|| exit 0`, so interception is only restored for a
 	// live engine while a dead engine still re-asserts the blackhole.
-	if !strings.Contains(body, "if pidof sing-box >/dev/null 2>&1; then") {
+	if !strings.Contains(body, "if pidof awgm-box >/dev/null 2>&1; then") {
 		t.Errorf("hook missing pidof branch guard:\n%s", body)
 	}
 	if !strings.Contains(body, "iptables-restore --noflush") {
@@ -689,7 +689,7 @@ func TestRefreshNetfilterHookIfPresent(t *testing.T) {
 	}
 	refreshNetfilterHookIfPresent()
 	data, _ := os.ReadFile(netfilterHookPath)
-	if !strings.Contains(string(data), "pidof sing-box") {
+	if !strings.Contains(string(data), "pidof awgm-box") {
 		t.Errorf("expected refreshed hook with pidof, got:\n%s", data)
 	}
 }
@@ -2046,8 +2046,8 @@ func TestPolicyTunDNSHookScriptShellValid(t *testing.T) {
 		}
 	}
 	// Гейта на живость движка быть НЕ должно: решение fail-closed (спека §7.3).
-	if strings.Contains(script, "pidof sing-box") {
-		t.Error("хук гейтится на pidof sing-box — это ломает fail-closed")
+	if strings.Contains(script, "pidof awgm-box") {
+		t.Error("хук гейтится на pidof awgm-box — это ломает fail-closed")
 	}
 }
 

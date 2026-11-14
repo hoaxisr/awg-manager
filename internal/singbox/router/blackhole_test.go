@@ -176,7 +176,7 @@ func TestNetfilterHookScript_BlackholeFailClosed(t *testing.T) {
 	if !strings.Contains(s, "-F "+BlackholeChain) || !strings.Contains(s, "-X "+BlackholeChain) {
 		t.Error("hook missing blackhole scrub in the alive-engine path")
 	}
-	if !strings.Contains(s, "if pidof sing-box") || !strings.Contains(s, "\nelse\n") {
+	if !strings.Contains(s, "if pidof awgm-box") || !strings.Contains(s, "\nelse\n") {
 		t.Error("hook missing pidof if/else (alive vs dead) structure")
 	}
 }

@@ -3,6 +3,10 @@ package installer
 
 const RequiredVersion = "1.15.0-alpha.13-awgm.40"
 
+// UpstreamVersion — релиз sing-box, на котором собран пин (вторая строка
+// `awgm-box version`). Нужен CI для апстримного бинаря той же базы.
+const UpstreamVersion = "1.15.0-alpha.13"
+
 // RequiredTags — теги сборки pinned-бинаря (строка `Tags:` из `sing-box version`),
 // сняты с mipsel-ассета. Гейт-значимые теги (with_naive_outbound) одинаковы
 // для всех трёх архитектур; служебные (with_low_memory, with_musl) могут

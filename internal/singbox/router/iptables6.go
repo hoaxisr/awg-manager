@@ -1011,7 +1011,7 @@ table_ok() {
   "$IP6T" -w -t "$1" -nL "$2" >/dev/null 2>&1 \
     && "$IP6T" -w -t "$1" -S PREROUTING 2>/dev/null | grep -qE -- "-[jg] $2(\$| )"
 }
-if pidof sing-box >/dev/null 2>&1; then
+if pidof awgm-box >/dev/null 2>&1; then
   # sing-box жив — блокировку снимаем, чтобы её DROP не стоял перед перехватом.
   scrub_jumps mangle %[15]s
   "$IP6T" -w -t mangle -F %[15]s 2>/dev/null
