@@ -83,6 +83,33 @@ func TestTerminatedProcessIsNotAnUnknownLiveOwner(t *testing.T) {
 	}
 }
 
+// nfqws2-keenetic держит свой nfqws2 в /opt/usr/bin: это не наш демон, а
+// zapret2 из /opt/zapret2 — наш (#1200).
+func TestForeignNfqws2IsNotOurDaemon(t *testing.T) {
+	prev := optRoot
+	t.Cleanup(func() { optRoot = prev })
+	optRoot = filepath.Join(t.TempDir(), "opt")
+	for exe, want := range map[string]bool{
+		filepath.Join(optRoot, "usr", "bin", "nfqws2"):                false,
+		filepath.Join(optRoot, "usr", "bin", "nfqws2") + " (deleted)": false,
+		filepath.Join(optRoot, "zapret2", "nfq2", "nfqws2"):           true,
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "comm"), []byte("nfqws2\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "status"), []byte("State:\tS (sleeping)\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(exe, filepath.Join(dir, "exe")); err != nil {
+			t.Fatal(err)
+		}
+		if _, found := nfqExeInDir(dir); found != want {
+			t.Errorf("%s: found=%v, want %v", exe, found, want)
+		}
+	}
+}
+
 func TestHostlistSaveRestartsOnlyRunningDaemons(t *testing.T) {
 	for _, running := range []bool{false, true} {
 		t.Run(strconv.FormatBool(running), func(t *testing.T) {

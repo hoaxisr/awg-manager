@@ -97,7 +97,20 @@ func nfqExeInDir(dir string) (string, bool) {
 	if !strings.Contains(strings.ToLower(exe), "zapret") && !pathWithin(optRoot, exe) {
 		return "", false
 	}
+	if foreignDaemon(exe) {
+		return "", false
+	}
 	return exe, true
+}
+
+// foreignDaemon узнаёт одноимённый демон чужого пакета под /opt.
+// nfqws2-keenetic ставит nfqws2 в /opt/usr/bin со своим конфигом и своей
+// веб-мордой; AWGM его не поддерживает и не трогает. Без этой проверки
+// процесс считался бы нашим без установки: конфликт «could not map PID(s)»
+// у остатков zapret в /opt и ложное «запущен» в статусе (#1200).
+func foreignDaemon(exe string) bool {
+	clean := filepath.Clean(strings.TrimSuffix(exe, " (deleted)"))
+	return clean == filepath.Join(optRoot, "usr", "bin", "nfqws2")
 }
 
 // isNFQWSName узнаёт демон zapret по имени процесса. Форки зовут его
