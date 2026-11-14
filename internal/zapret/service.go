@@ -202,8 +202,10 @@ func (s *Service) GetStatus() Status {
 		st.PackageVersion = pkgs[st.Package]
 	}
 
-	if blk, ok := readOptBlock(l.config, l.optVar); ok {
-		st.StrategyCount = len(splitProfiles(blk.value))
+	if l.optVar != "" {
+		if blk, ok := readOptBlock(l.config, l.optVar); ok {
+			st.StrategyCount = len(splitProfiles(blk.value))
+		}
 	}
 	for _, h := range listHostlists(l) {
 		if h.Exists {
