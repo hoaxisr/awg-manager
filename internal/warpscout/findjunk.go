@@ -270,6 +270,7 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 	}
 
 	ctx, cancel := context.WithCancel(s.rootCtx)
+	scanIface := s.resolveScanIface(ctx, req.Ifname)
 	s.mu.Lock()
 	s.findJunkSeq++
 	runID := s.findJunkSeq
@@ -297,7 +298,6 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 		var best *JunkAttempt
 		func() {
 			defer s.engineMu.Unlock()
-			scanIface := s.resolveScanIface(ctx, req.Ifname)
 			outer := s.resolveRouteTunnel(ctx, scanIface)
 			scanAcct := acct
 			if outer != nil && outer.IsWarp {
@@ -335,11 +335,12 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 				s.mu.Unlock()
 				s.publish(TopicFindJunk, snap)
 
-				params, pErr := s.buildParams(ctx, scanAcct, awg, Filters{Protocol: ProtocolAWG}, len(sample), len(sample), sample, nil, req.Ifname, outer)
+				params, pErr := s.buildParams(ctx, scanAcct, awg, Filters{Protocol: ProtocolAWG}, len(sample), len(sample), sample, nil, scanIface, outer)
 				if pErr != nil {
 					runErr = pErr
 					break
 				}
+				params.Ifname = scanIface
 				outerWarp := outer != nil && outer.IsWarp
 				params.TimeoutMs = 1500
 				params.DeadlineMs = findJunkDeadlineMs(len(sample), outerWarp)

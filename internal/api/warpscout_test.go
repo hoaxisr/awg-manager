@@ -10,14 +10,19 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 	"github.com/hoaxisr/awg-manager/internal/warpscout"
 )
 
@@ -837,4 +842,201 @@ func TestWarpOps_SwapManaged_ProtocolWGClearsKernelAndRejectsNative(t *testing.T
 	if svc.restartCalls != 1 {
 		t.Fatalf("отклонённый swap NativeWG + wg не должен перезапускать: restarts=%d", svc.restartCalls)
 	}
+}
+
+type recordedPost struct {
+	body        string
+	hasDeadline bool
+}
+
+type ctxCheckingPoster struct {
+	mu     sync.Mutex
+	posts  []recordedPost
+	onPost func(body string)
+}
+
+func (p *ctxCheckingPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	b, _ := json.Marshal(payload)
+	_, hasDeadline := ctx.Deadline()
+	rec := recordedPost{body: string(b), hasDeadline: hasDeadline}
+	p.mu.Lock()
+	p.posts = append(p.posts, rec)
+	cb := p.onPost
+	p.mu.Unlock()
+	if cb != nil {
+		cb(rec.body)
+	}
+	return json.RawMessage(`{}`), nil
+}
+
+func (p *ctxCheckingPoster) snapshot() []recordedPost {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]recordedPost(nil), p.posts...)
+}
+
+type stubSystemTunnelSvc struct {
+	queries *ndmsquery.Queries
+	cmds    *ndmscommand.Commands
+	tunnel  *ndms.SystemWireguardTunnel
+	curASC  json.RawMessage
+}
+
+func (s *stubSystemTunnelSvc) List(context.Context) ([]ndms.SystemWireguardTunnel, error) {
+	return nil, nil
+}
+
+func (s *stubSystemTunnelSvc) ListFresh(context.Context) ([]ndms.SystemWireguardTunnel, error) {
+	return nil, nil
+}
+
+func (s *stubSystemTunnelSvc) Get(ctx context.Context, _ string) (*ndms.SystemWireguardTunnel, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.tunnel, nil
+}
+
+func (s *stubSystemTunnelSvc) GetASCParams(ctx context.Context, _ string) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.curASC, nil
+}
+
+func (s *stubSystemTunnelSvc) SetASCParams(ctx context.Context, name string, params json.RawMessage) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	iface, _, ok, err := s.queries.Interfaces.Confirm(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("not confirmed")
+	}
+	return s.cmds.Wireguard.SetASCParams(ctx, iface, params)
+}
+
+func newSystemSwapTestHarness(t *testing.T) (*WarpTunnelOps, *ctxCheckingPoster) {
+	t.Helper()
+	fg := ndmsquery.NewFakeGetter()
+	fg.SetJSON("/show/interface/", `{"Wireguard5":{"id":"Wireguard5","interface-name":"nwg5","type":"Wireguard","description":"WARP Sys","state":"up","link":"up","wireguard":{"public-key":"PUB5=","peer":[]}}}`)
+	fg.SetRC("Wireguard5", `{"wireguard":{"asc":{"jc":4,"jmin":40,"jmax":70},"peer":[{"key":"`+warpscout.WarpPeerPublicKey+`"}]}}`)
+	fg.SetJSON("/show/running-config", `{"message":["!"]}`)
+	queries := ndmsquery.NewQueries(ndmsquery.Deps{Getter: fg, Logger: ndmsquery.NopLogger()})
+	poster := &ctxCheckingPoster{}
+	cmds := ndmscommand.NewCommands(ndmscommand.Deps{
+		Poster:  poster,
+		Queries: queries,
+		Save:    ndmscommand.NewSaveCoordinator(poster, nil, time.Hour, time.Hour, 0, nil),
+	})
+	var sysSvc systemtunnel.Service = &stubSystemTunnelSvc{
+		queries: queries,
+		cmds:    cmds,
+		curASC:  json.RawMessage(`{"jc":4,"jmin":40,"jmax":70}`),
+		tunnel: &ndms.SystemWireguardTunnel{
+			ID:            "Wireguard5",
+			Description:   "WARP Sys",
+			Status:        "up",
+			InterfaceName: "nwg5",
+			Address:       "172.16.0.2/32",
+			PublicKey:     "PUB5=",
+			Peer: &ndms.WireguardPeerInfo{
+				PublicKey: warpscout.WarpPeerPublicKey,
+				Endpoint:  "162.159.192.1:2408",
+			},
+		},
+	}
+	ops := &WarpTunnelOps{
+		System:   sysSvc,
+		Commands: cmds,
+		Queries:  queries,
+	}
+	return ops, poster
+}
+
+func TestWarpOps_SwapSystem_RecoversInterfaceUpWhenRequestCanceled(t *testing.T) {
+	nextOpts := warpscout.SwapOptions{
+		Protocol: warpscout.ProtocolAWG,
+		AWG: warpscout.AWGParams{
+			Jc: 8, Jmin: 20, Jmax: 90,
+			SignatureProfile: warpscout.SignatureCustom,
+			I1:               "<b 0xaa>",
+		},
+	}
+
+	t.Run("canceled_during_apply_still_restores_up", func(t *testing.T) {
+		ops, poster := newSystemSwapTestHarness(t)
+		reqCtx, reqCancel := context.WithCancel(context.Background())
+		defer reqCancel()
+		poster.onPost = func(body string) {
+			if strings.Contains(body, `"up":false`) {
+				reqCancel()
+			}
+		}
+
+		err := ops.SwapEndpoint(reqCtx, warpscout.TargetSystem, "Wireguard5", "162.159.192.99:2408", nextOpts)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+
+		posts := poster.snapshot()
+		var sawDown, sawUpDeadline bool
+		for _, p := range posts {
+			if strings.Contains(p.body, `"up":false`) {
+				sawDown = true
+			}
+			if strings.Contains(p.body, `"up":true`) {
+				if !p.hasDeadline {
+					t.Fatalf("expected InterfaceUp recovery call to carry bounded deadline: %+v", p)
+				}
+				sawUpDeadline = true
+			}
+		}
+		if !sawDown || !sawUpDeadline {
+			t.Fatalf("expected InterfaceDown and bounded InterfaceUp recovery posts, got %+v", posts)
+		}
+	})
+
+	t.Run("canceled_after_endpoint_still_completes_up", func(t *testing.T) {
+		ops, poster := newSystemSwapTestHarness(t)
+		reqCtx, reqCancel := context.WithCancel(context.Background())
+		defer reqCancel()
+		poster.onPost = func(body string) {
+			if strings.Contains(body, "162.159.192.99") {
+				reqCancel()
+			}
+		}
+
+		if err := ops.SwapEndpoint(reqCtx, warpscout.TargetSystem, "Wireguard5", "162.159.192.99:2408", nextOpts); err != nil {
+			t.Fatalf("expected SwapEndpoint to finish cleanly with detached InterfaceUp recovery, got %v", err)
+		}
+
+		posts := poster.snapshot()
+		var sawDown, sawASC, sawEP, sawUpDeadline bool
+		for _, p := range posts {
+			if strings.Contains(p.body, `"up":false`) {
+				sawDown = true
+			}
+			if strings.Contains(p.body, `"jc":8`) {
+				sawASC = true
+			}
+			if strings.Contains(p.body, "162.159.192.99") {
+				sawEP = true
+			}
+			if strings.Contains(p.body, `"up":true`) {
+				if !p.hasDeadline {
+					t.Fatalf("expected InterfaceUp recovery call to carry bounded deadline: %+v", p)
+				}
+				sawUpDeadline = true
+			}
+		}
+		if !sawDown || !sawASC || !sawEP || !sawUpDeadline {
+			t.Fatalf("missing expected sequence (down=%v asc=%v ep=%v up=%v): %+v", sawDown, sawASC, sawEP, sawUpDeadline, posts)
+		}
+	})
 }

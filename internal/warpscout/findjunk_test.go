@@ -744,3 +744,207 @@ func TestClearHistory_ClearsAndRollsBackOnSaveError(t *testing.T) {
 		t.Fatalf("expected persisted empty history, got %d entries", len(got))
 	}
 }
+
+func TestFindJunk_PinsScanInterfaceAcrossAllAttempts(t *testing.T) {
+	t.Run("default_wan_pinned_when_config_changes", func(t *testing.T) {
+		store, err := NewStore(t.TempDir(), plainCipher{})
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		if err := store.SetAccount(&Account{
+			ID:            "acc1",
+			PrivateKey:    "priv",
+			PeerPublicKey: WarpPeerPublicKey,
+			AddressV4:     "172.16.0.2/32",
+		}); err != nil {
+			t.Fatalf("SetAccount: %v", err)
+		}
+		var svc *Service
+		runner := &scriptedJunkRunner{
+			runFn: func(_ context.Context, idx int, p ScanParams, on func(EngineEvent)) error {
+				if idx == 0 {
+					cfg := svc.d.Store.Config()
+					cfg.ScanInterface = "nwg9"
+					_ = svc.d.Store.SetConfig(cfg)
+				}
+				emitHitsAndMaybeDone(on, len(p.Endpoints), 5, true, len(p.Endpoints), false)
+				return nil
+			},
+		}
+		svc = New(Deps{
+			Store:  store,
+			Runner: runner,
+			Tunnels: &fakeTunnels{refs: map[string]*TunnelRef{
+				"t9": {Mode: TargetKernel, ID: "t9", Iface: "nwg9", IsWarp: true, Running: true},
+			}},
+			WAN: func(context.Context) (string, bool) { return "eth3", true },
+			Now: time.Now,
+		})
+		t.Cleanup(svc.Stop)
+
+		if err := svc.StartFindJunk(FindJunkRequest{
+			I1Profile:    "quic",
+			MaxAttempts:  3,
+			ThresholdPct: 100,
+			PerSubnet:    1,
+		}); err != nil {
+			t.Fatalf("StartFindJunk: %v", err)
+		}
+		st := waitFindJunkDone(t, svc)
+		if st.Error != "" {
+			t.Fatalf("unexpected error: %s", st.Error)
+		}
+		runner.mu.Lock()
+		defer runner.mu.Unlock()
+		if len(runner.calls) != 3 {
+			t.Fatalf("expected 3 attempts, got %d", len(runner.calls))
+		}
+		for i, c := range runner.calls {
+			if c.Ifname != "eth3" {
+				t.Fatalf("attempt %d used Ifname=%q, want eth3", i+1, c.Ifname)
+			}
+		}
+	})
+
+	t.Run("outer_warp_pinned_when_config_changes", func(t *testing.T) {
+		store, err := NewStore(t.TempDir(), plainCipher{})
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		if err := store.SetAccount(&Account{
+			ID:            "acc1",
+			PrivateKey:    "outer-priv",
+			PublicKey:     "outer-pub",
+			PeerPublicKey: WarpPeerPublicKey,
+			AddressV4:     "172.16.0.2/32",
+		}); err != nil {
+			t.Fatalf("SetAccount: %v", err)
+		}
+		if err := store.SetInnerAccount(&Account{
+			ID:            "inner1",
+			PrivateKey:    "inner-priv",
+			PublicKey:     "inner-pub",
+			PeerPublicKey: WarpPeerPublicKey,
+			AddressV4:     "172.16.0.3/32",
+		}); err != nil {
+			t.Fatalf("SetInnerAccount: %v", err)
+		}
+		cfg := store.Config()
+		cfg.ScanInterface = "nwg3"
+		if err := store.SetConfig(cfg); err != nil {
+			t.Fatalf("SetConfig: %v", err)
+		}
+		var svc *Service
+		runner := &scriptedJunkRunner{
+			runFn: func(_ context.Context, idx int, p ScanParams, on func(EngineEvent)) error {
+				if idx == 0 {
+					nextCfg := svc.d.Store.Config()
+					nextCfg.ScanInterface = "eth3"
+					_ = svc.d.Store.SetConfig(nextCfg)
+				}
+				emitHitsAndMaybeDone(on, len(p.Endpoints), 5, true, len(p.Endpoints), false)
+				return nil
+			},
+		}
+		svc = New(Deps{
+			Store:  store,
+			Runner: runner,
+			Tunnels: &fakeTunnels{refs: map[string]*TunnelRef{
+				"nat3": {
+					Mode:           TargetNative,
+					ID:             "nat3",
+					Iface:          "nwg3",
+					IsWarp:         true,
+					Running:        true,
+					LocalPublicKey: "outer-pub",
+					Endpoint:       "162.159.192.10:2408",
+					AddressV4:      "172.16.0.2",
+				},
+			}},
+			WAN: func(context.Context) (string, bool) { return "eth3", true },
+			Now: time.Now,
+		})
+		t.Cleanup(svc.Stop)
+
+		if err := svc.StartFindJunk(FindJunkRequest{
+			I1Profile:    "quic",
+			MaxAttempts:  2,
+			ThresholdPct: 100,
+			PerSubnet:    1,
+		}); err != nil {
+			t.Fatalf("StartFindJunk: %v", err)
+		}
+		st := waitFindJunkDone(t, svc)
+		if st.Error != "" {
+			t.Fatalf("unexpected error: %s", st.Error)
+		}
+		runner.mu.Lock()
+		defer runner.mu.Unlock()
+		if len(runner.calls) != 2 {
+			t.Fatalf("expected 2 attempts, got %d", len(runner.calls))
+		}
+		for i, c := range runner.calls {
+			if c.Ifname != "nwg3" || c.Concurrency != 1 || c.PrivateKey != "inner-priv" {
+				t.Fatalf("attempt %d mutated route/params: Ifname=%q Concurrency=%d PrivateKey=%q", i+1, c.Ifname, c.Concurrency, c.PrivateKey)
+			}
+		}
+	})
+
+	t.Run("empty_wan_pinned_when_config_changes", func(t *testing.T) {
+		store, err := NewStore(t.TempDir(), plainCipher{})
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		if err := store.SetAccount(&Account{
+			ID:            "acc1",
+			PrivateKey:    "priv",
+			PeerPublicKey: WarpPeerPublicKey,
+			AddressV4:     "172.16.0.2/32",
+		}); err != nil {
+			t.Fatalf("SetAccount: %v", err)
+		}
+		var svc *Service
+		runner := &scriptedJunkRunner{
+			runFn: func(_ context.Context, idx int, p ScanParams, on func(EngineEvent)) error {
+				if idx == 0 {
+					cfg := svc.d.Store.Config()
+					cfg.ScanInterface = "nwg9"
+					_ = svc.d.Store.SetConfig(cfg)
+				}
+				emitHitsAndMaybeDone(on, len(p.Endpoints), 5, true, len(p.Endpoints), false)
+				return nil
+			},
+		}
+		svc = New(Deps{
+			Store:   store,
+			Runner:  runner,
+			Tunnels: &fakeTunnels{refs: map[string]*TunnelRef{}},
+			WAN:     func(context.Context) (string, bool) { return "", false },
+			Now:     time.Now,
+		})
+		t.Cleanup(svc.Stop)
+
+		if err := svc.StartFindJunk(FindJunkRequest{
+			I1Profile:    "quic",
+			MaxAttempts:  2,
+			ThresholdPct: 100,
+			PerSubnet:    1,
+		}); err != nil {
+			t.Fatalf("StartFindJunk: %v", err)
+		}
+		st := waitFindJunkDone(t, svc)
+		if st.Error != "" {
+			t.Fatalf("unexpected error: %s", st.Error)
+		}
+		runner.mu.Lock()
+		defer runner.mu.Unlock()
+		if len(runner.calls) != 2 {
+			t.Fatalf("expected 2 attempts, got %d", len(runner.calls))
+		}
+		for i, c := range runner.calls {
+			if c.Ifname != "" {
+				t.Fatalf("attempt %d used Ifname=%q, want empty", i+1, c.Ifname)
+			}
+		}
+	})
+}

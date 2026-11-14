@@ -1028,7 +1028,7 @@ func (s *Service) StartScan(req ScanRequest) error {
 		defer s.engineMu.Unlock()
 		defer cancel()
 		var runErr error
-		scanIface := s.resolveScanIface(ctx, req.Ifname)
+		scanIface := params.Ifname
 		outer := s.resolveRouteTunnel(ctx, scanIface)
 		if outer != nil && outer.IsWarp {
 			if !outer.Running {

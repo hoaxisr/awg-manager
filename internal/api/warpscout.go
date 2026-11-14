@@ -970,6 +970,8 @@ func ascParamsEqual(a, b ndms.ASCParamsExtended) bool {
 		splitASCField(a.I5) == splitASCField(b.I5)
 }
 
+const swapSystemRecoverTimeout = 20 * time.Second
+
 func (o *WarpTunnelOps) swapSystem(ctx context.Context, id string, ref *warpscout.TunnelRef, endpoint string, opts warpscout.SwapOptions) error {
 	if o.Commands == nil || o.Commands.Wireguard == nil || o.Queries == nil || o.Queries.Interfaces == nil {
 		return errors.New("NDMS недоступен")
@@ -1052,7 +1054,13 @@ func (o *WarpTunnelOps) swapSystem(ctx context.Context, id string, ref *warpscou
 	}
 
 	if bounced {
-		if upErr := o.Commands.Interfaces.InterfaceUp(ctx, iface); upErr != nil {
+		// Возврат интерфейса откатывает наш же InterfaceDown выше: отмену
+		// клиентского запроса он слушать не должен, иначе закрытая вкладка
+		// или таймаут HTTP оставят рабочий системный туннель выключенным.
+		upCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapSystemRecoverTimeout)
+		upErr := o.Commands.Interfaces.InterfaceUp(upCtx, iface)
+		cancel()
+		if upErr != nil {
 			if applyErr != nil {
 				return fmt.Errorf("%v (и возврат интерфейса %s: %w)", applyErr, id, upErr)
 			}
