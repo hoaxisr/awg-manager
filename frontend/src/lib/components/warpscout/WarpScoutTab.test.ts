@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import type { WarpConfig, WarpProfile, WarpScoutState } from '$lib/types/warpscout';
-import { warpScanPush } from '$lib/stores/warpscout';
+import type { WarpConfig, WarpFindJunkStatus, WarpProfile, WarpScoutState } from '$lib/types/warpscout';
+import { warpFindJunkPush, warpScanPush } from '$lib/stores/warpscout';
 import { defaultFilters } from './warpscoutUi';
 
 // Панель Dropdown читает ResizeObserver при открытии; в jsdom его нет.
@@ -23,6 +23,9 @@ const api = vi.hoisted(() => ({
 	warpscoutTargets: vi.fn(),
 	warpscoutSaveConfig: vi.fn(),
 	warpscoutSetAddress: vi.fn(),
+	warpscoutFindJunkStart: vi.fn(),
+	warpscoutFindJunkStop: vi.fn(),
+	warpscoutFindJunkApply: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({ api }));
 
@@ -98,6 +101,7 @@ describe('WarpScoutTab', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		warpScanPush.set(null);
+		warpFindJunkPush.set(null);
 	});
 	afterEach(cleanup);
 
@@ -268,5 +272,114 @@ describe('WarpScoutTab', () => {
 		await fireEvent.click(copyOption());
 		await tick();
 		expect(chip(container, 0).textContent).toContain('Jc 6');
+	});
+
+	it('streams find-junk SSE attempts, guards zero/incomplete results, and applies best without clobbering unsaved profile draft', async () => {
+		const initial = state();
+		const { container } = await mount(initial);
+
+		// Вносим несохранённую правку профиля автопилота до работы с find-junk.
+		const multi = [...container.querySelectorAll<HTMLButtonElement>('.auto-card button')].find(
+			(b) => b.getAttribute('aria-pressed') === 'false' || b.getAttribute('aria-checked') === 'false',
+		);
+		expect(multi).toBeDefined();
+		await fireEvent.click(multi!);
+		await waitFor(() => expect(container.querySelector('.save-bar')).not.toBeNull());
+
+		// Открываем поповер обфускации AWG (chip 0 при account=null).
+		await fireEvent.click(chip(container, 0));
+		const dialog = () => container.querySelector('[role="dialog"]')!;
+		expect(dialog()).not.toBeNull();
+
+		// 1) При нулевых/неполных результатах кнопка «Применить лучший» не появляется.
+		const zeroOrIncomplete: WarpFindJunkStatus = {
+			runId: 1,
+			running: false,
+			attempt: 2,
+			maxAttempts: 8,
+			thresholdPct: 95,
+			attempts: [
+				{
+					attempt: 1,
+					awg: { signatureProfile: 'dns', jc: 4, jmin: 20, jmax: 50 },
+					profile: 'dns',
+					working: 0,
+					scanned: 15,
+					total: 15,
+					pct: 0,
+					durationMs: 2100,
+				},
+				{
+					attempt: 2,
+					awg: { signatureProfile: 'stun', jc: 5, jmin: 25, jmax: 75 },
+					profile: 'stun',
+					working: 10,
+					scanned: 10,
+					total: 15,
+					pct: 67,
+					durationMs: 1800,
+					incomplete: true,
+				},
+			],
+		};
+		warpFindJunkPush.set(zeroOrIncomplete);
+		await tick();
+
+		expect(dialog().querySelectorAll('.junk-row').length).toBe(2);
+		expect(dialog().textContent).toMatch(/неполн\.|partial/);
+		expect(dialog().querySelector('.fj-foot button')).toBeNull();
+
+		// 2) Полноценный лучший результат появляется и применяется без потери правки профилей.
+		const bestAwg = {
+			signatureProfile: 'stun',
+			jc: 6,
+			jmin: 30,
+			jmax: 90,
+			i1: '<b 0xabcd>',
+		};
+		const validStatus: WarpFindJunkStatus = {
+			runId: 2,
+			running: false,
+			attempt: 1,
+			maxAttempts: 8,
+			thresholdPct: 95,
+			attempts: [
+				{
+					attempt: 1,
+					awg: bestAwg,
+					profile: 'stun',
+					working: 14,
+					scanned: 15,
+					total: 15,
+					pct: 93,
+					durationMs: 2200,
+				},
+			],
+			best: {
+				attempt: 1,
+				awg: bestAwg,
+				profile: 'stun',
+				working: 14,
+				scanned: 15,
+				total: 15,
+				pct: 93,
+				durationMs: 2200,
+			},
+		};
+		api.warpscoutFindJunkApply.mockResolvedValue(bestAwg);
+		api.warpscoutState.mockResolvedValue(state({ awg: bestAwg }, { findJunk: { ...validStatus, applied: true, appliedAttempt: 1 } }));
+
+		warpFindJunkPush.set(validStatus);
+		await tick();
+
+		const applyBtn = dialog().querySelector<HTMLButtonElement>('.fj-foot button');
+		expect(applyBtn).not.toBeNull();
+		await fireEvent.click(applyBtn!);
+
+		await waitFor(() => expect(api.warpscoutFindJunkApply).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(chip(container, 0).textContent).toContain('stun'));
+		expect(chip(container, 0).textContent).toContain('Jc 6');
+		// Черновик автопилота остался несохранённым.
+		expect(container.querySelector('.save-bar')).not.toBeNull();
 	});
 });

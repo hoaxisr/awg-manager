@@ -8279,5 +8279,19 @@
 	"autolist_history_clear_ok": "История очищена",
 	"autolist_history_clear_err": "Не удалось очистить историю",
 	"autolist_cfg_adds_per_hour": "Добавлений в час",
-	"autolist_cfg_adds_per_hour_hint": "Бюджет добавлений за скользящий час — и автоматических, и ручных. Окно движется: добавление старше часа снова освобождает бюджет. Допустимо 1–500."
+	"autolist_cfg_adds_per_hour_hint": "Бюджет добавлений за скользящий час — и автоматических, и ручных. Окно движется: добавление старше часа снова освобождает бюджет. Допустимо 1–500.",
+	"warpscout_findjunk_title": "Подбор маскировки",
+	"warpscout_findjunk_hint": "Случайный перебор Jc/Jmin/Jmax и выбранного профиля I1–I5 по 15 подсетям WARP.",
+	"warpscout_findjunk_profile_label": "Профиль для перебора",
+	"warpscout_findjunk_sig_random": "случайный (random)",
+	"warpscout_findjunk_attempts_label": "Попыток",
+	"warpscout_findjunk_threshold_label": "Порог, %",
+	"warpscout_findjunk_start_btn": "Подобрать",
+	"warpscout_findjunk_running": "Попытка {cur} / {max}",
+	"warpscout_findjunk_best_label": "Лучший: #{attempt} · {profile} · Jc {jc} ({jmin}–{jmax}) · {working}/{total} ({pct}%)",
+	"warpscout_findjunk_no_working": "Рабочих наборов не найдено — попробуйте другой профиль или маршрут.",
+	"warpscout_findjunk_incomplete": "неполн.",
+	"warpscout_findjunk_apply_btn": "Применить лучший",
+	"warpscout_findjunk_applied_badge": "Применено",
+	"warpscout_findjunk_applied_ok": "Подобранные параметры обфускации AWG сохранены"
 }

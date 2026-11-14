@@ -7879,5 +7879,19 @@
 	"autolist_history_clear_ok": "History cleared",
 	"autolist_history_clear_err": "Failed to clear history",
 	"autolist_cfg_adds_per_hour": "Additions per hour",
-	"autolist_cfg_adds_per_hour_hint": "Rolling-hour budget of automatic and manual additions. The window moves: an addition older than an hour frees the budget again. Allowed range: 1–500."
+	"autolist_cfg_adds_per_hour_hint": "Rolling-hour budget of automatic and manual additions. The window moves: an addition older than an hour frees the budget again. Allowed range: 1–500.",
+	"warpscout_findjunk_title": "Auto-search obfuscation",
+	"warpscout_findjunk_hint": "Probes random Jc/Jmin/Jmax and I1–I5 signatures across 15 WARP subnets.",
+	"warpscout_findjunk_profile_label": "Search signature profile",
+	"warpscout_findjunk_sig_random": "random preset",
+	"warpscout_findjunk_attempts_label": "Attempts",
+	"warpscout_findjunk_threshold_label": "Target, %",
+	"warpscout_findjunk_start_btn": "Find",
+	"warpscout_findjunk_running": "Attempt {cur} / {max}",
+	"warpscout_findjunk_best_label": "Best: #{attempt} · {profile} · Jc {jc} ({jmin}–{jmax}) · {working}/{total} ({pct}%)",
+	"warpscout_findjunk_no_working": "No working sets found — try another profile or scanner route.",
+	"warpscout_findjunk_incomplete": "partial",
+	"warpscout_findjunk_apply_btn": "Apply best",
+	"warpscout_findjunk_applied_badge": "Applied",
+	"warpscout_findjunk_applied_ok": "Matched AWG obfuscation settings saved"
 }

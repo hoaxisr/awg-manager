@@ -1233,6 +1233,65 @@ func (h *WarpScoutHandler) ScanStop(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, map[string]bool{"ok": true})
 }
 
+// FindJunkStart — запуск автоматического подбора маскировки AWG (Jc/Jmin/Jmax + I1..I5).
+//
+//	@Summary	Start AWG junk parameter search
+//	@Tags		warpscout
+//	@Accept		json
+//	@Produce	json
+//	@Security	CookieAuth
+//	@Success	200	{object}	map[string]interface{}
+//	@Router		/warpscout/find-junk/start [post]
+func (h *WarpScoutHandler) FindJunkStart(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[warpscout.FindJunkRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	if err := h.svc.StartFindJunk(req); err != nil {
+		h.fail(w, err)
+		return
+	}
+	response.Success(w, h.svc.State().FindJunk)
+}
+
+// FindJunkStop — остановка автоподбора маскировки (сохраняется лучший найденный набор).
+//
+//	@Summary	Stop AWG junk parameter search
+//	@Tags		warpscout
+//	@Produce	json
+//	@Security	CookieAuth
+//	@Success	200	{object}	map[string]interface{}
+//	@Router		/warpscout/find-junk/stop [post]
+func (h *WarpScoutHandler) FindJunkStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	h.svc.StopFindJunk()
+	response.Success(w, map[string]bool{"ok": true})
+}
+
+// FindJunkApply — применить лучший найденный набор маскировки к настройкам сканера.
+//
+//	@Summary	Apply best found AWG junk parameters
+//	@Tags		warpscout
+//	@Produce	json
+//	@Security	CookieAuth
+//	@Success	200	{object}	map[string]interface{}
+//	@Router		/warpscout/find-junk/apply [post]
+func (h *WarpScoutHandler) FindJunkApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	awg, err := h.svc.ApplyFindJunk()
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	response.Success(w, awg)
+}
+
 // Apply — создать туннель из узла или подменить endpoint.
 //
 //	@Summary	Apply WARP endpoint

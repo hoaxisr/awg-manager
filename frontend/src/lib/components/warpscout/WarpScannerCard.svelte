@@ -45,6 +45,7 @@
 		routeSummary?: string;
 		/** В автопилоте есть несохранённые правки — включать его из сканера нельзя. */
 		autopilotLocked: boolean;
+		findJunkRunning?: boolean;
 		onchanged: () => void | Promise<void>;
 		ontargetschanged: () => void | Promise<void>;
 	}
@@ -62,6 +63,7 @@
 		scanInterface = '',
 		routeSummary,
 		autopilotLocked,
+		findJunkRunning = false,
 		onchanged,
 		ontargetschanged,
 	}: Props = $props();
@@ -202,12 +204,14 @@
 					size="sm"
 					loading={starting}
 					onclick={startScan}
-					disabled={!engineAvailable || !hasAccount}
+					disabled={!engineAvailable || !hasAccount || findJunkRunning}
 					title={!engineAvailable
 						? m.warpscout_err_engine_missing()
 						: !hasAccount
 							? m.warpscout_scan_need_account_hint()
-							: undefined}
+							: findJunkRunning
+								? m.warpscout_err_busy()
+								: undefined}
 				>
 					{#snippet iconBefore()}<Play size={13} />{/snippet}
 					{m.warpscout_scan_btn()}

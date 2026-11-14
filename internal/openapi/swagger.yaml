@@ -22511,6 +22511,53 @@ paths:
       summary: Save WARP autopilot config
       tags:
       - warpscout
+  /warpscout/find-junk/apply:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Apply best found AWG junk parameters
+      tags:
+      - warpscout
+  /warpscout/find-junk/start:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Start AWG junk parameter search
+      tags:
+      - warpscout
+  /warpscout/find-junk/stop:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Stop AWG junk parameter search
+      tags:
+      - warpscout
   /warpscout/scan/start:
     post:
       consumes:

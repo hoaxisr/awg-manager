@@ -155,6 +155,7 @@ type State struct {
 	UsedIPv4           []string            `json:"usedIpv4,omitempty"`
 	Config             Config              `json:"config"`
 	Scan               ScanStatus          `json:"scan"`
+	FindJunk           FindJunkStatus      `json:"findJunk"`
 	Watch              []WatchStatus       `json:"watch"`
 	Stats              []ProfileStats      `json:"stats"`
 	History            []SwapEvent         `json:"history"`
@@ -202,18 +203,23 @@ type Service struct {
 	// acctMu — одна операция над учётной записью за раз, включая её сетевую
 	// часть: параллельные регистрация и привязка лицензии иначе записали бы
 	// каждая свою копию, и локальный ключ разошёлся бы с ключом у Cloudflare.
-	acctMu sync.Mutex
+	acctMu       sync.Mutex
+	findJunkOpMu sync.Mutex // сериализует StartFindJunk и ApplyFindJunk (всегда снаружи mu)
 
-	mu         sync.Mutex
-	scan       ScanStatus
-	scanCancel context.CancelFunc
-	watch      map[string]*WatchStatus
-	stats      map[string]*ProfileStats
-	statsDirty bool // в stats есть изменения, не дошедшие до диска
-	watchers   map[string]*watcher
-	rootCtx    context.Context
-	rootCancel context.CancelFunc
-	wg         sync.WaitGroup
+	mu                  sync.Mutex
+	scan                ScanStatus
+	scanCancel          context.CancelFunc
+	findJunk            FindJunkStatus
+	findJunkCancel      context.CancelFunc
+	findJunkSeq         uint64 // монотонный счётчик запусков подбора маскировки
+	testBeforeApplySave func() // барьер только для тестов конкурентности
+	watch               map[string]*WatchStatus
+	stats               map[string]*ProfileStats
+	statsDirty          bool // в stats есть изменения, не дошедшие до диска
+	watchers            map[string]*watcher
+	rootCtx             context.Context
+	rootCancel          context.CancelFunc
+	wg                  sync.WaitGroup
 }
 
 // New создаёт сервис. Сторожа поднимает Start.
@@ -240,7 +246,8 @@ func New(d Deps) *Service {
 	}
 	return &Service{
 		d: d, scan: ScanStatus{Hits: []Hit{}},
-		watch: map[string]*WatchStatus{}, stats: statsMap, watchers: map[string]*watcher{},
+		findJunk: FindJunkStatus{Attempts: []JunkAttempt{}},
+		watch:    map[string]*WatchStatus{}, stats: statsMap, watchers: map[string]*watcher{},
 		rootCtx: ctx, rootCancel: cancel,
 	}
 }
@@ -256,6 +263,9 @@ func (s *Service) Stop() {
 	s.mu.Lock()
 	if s.scanCancel != nil {
 		s.scanCancel()
+	}
+	if s.findJunkCancel != nil {
+		s.findJunkCancel()
 	}
 	s.mu.Unlock()
 	s.wg.Wait()
@@ -297,6 +307,7 @@ func (s *Service) State() State {
 	s.mu.Lock()
 	scan := s.scan
 	scan.Hits = append([]Hit{}, s.scan.Hits...)
+	findJunk := cloneFindJunkStatus(s.findJunk)
 	watch := make([]WatchStatus, 0, len(cfg.Profiles))
 	stats := make([]ProfileStats, 0, len(cfg.Profiles))
 	for _, p := range cfg.Profiles {
@@ -342,6 +353,7 @@ func (s *Service) State() State {
 		UsedIPv4:           usedIPv4,
 		Config:             cfg,
 		Scan:               scan,
+		FindJunk:           findJunk,
 		Watch:              watch,
 		Stats:              stats,
 		History:            s.d.Store.History(),
@@ -936,7 +948,7 @@ func nonNil(v []string) []string {
 func (s *Service) awgForUse() AWGParams {
 	cfg := s.d.Store.Config()
 	if changed, err := EnsureSignature(&cfg.AWG); err == nil && changed {
-		_ = s.d.Store.SetConfig(cfg)
+		_ = s.d.Store.SetAWG(cfg.AWG)
 	}
 	return cfg.AWG
 }
@@ -961,7 +973,7 @@ func (s *Service) StartScan(req ScanRequest) error {
 		return ErrEngineMissing
 	}
 	s.mu.Lock()
-	if s.scan.Running {
+	if s.scan.Running || s.findJunk.Running {
 		s.mu.Unlock()
 		return ErrScanRunning
 	}

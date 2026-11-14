@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -547,5 +548,124 @@ func TestWarpOps_ListQueriesEachTunnelOnce(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("привязка awg51 → awg50 не разрешена: %+v", refs)
+	}
+}
+
+type apiJunkRunner struct {
+	gate chan struct{}
+	hits int
+}
+
+func (r *apiJunkRunner) Available() (string, bool) { return "/fake", true }
+
+func (r *apiJunkRunner) Run(_ context.Context, p warpscout.ScanParams, on func(warpscout.EngineEvent)) error {
+	if r.gate != nil {
+		<-r.gate
+	}
+	total := len(p.Endpoints)
+	on(warpscout.EngineEvent{Type: "start", Total: total})
+	for i := 0; i < r.hits && i < total; i++ {
+		on(warpscout.EngineEvent{
+			Type: "hit", Endpoint: "162.159.192.1:2408", PingMs: 25, Colo: "HEL", Loc: "FI", Warp: "on",
+		})
+	}
+	on(warpscout.EngineEvent{Type: "done", Scanned: total, Hits: r.hits})
+	return nil
+}
+
+type apiPlainCipher struct{}
+
+func (apiPlainCipher) Encrypt(s string) (string, error) { return "enc:" + s, nil }
+func (apiPlainCipher) Decrypt(s string) (string, error) {
+	return s[4:], nil
+}
+
+func TestWarpScoutHandler_FindJunkEndpoints(t *testing.T) {
+	store, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := store.SetAccount(&warpscout.Account{
+		ID:            "acc1",
+		PrivateKey:    "priv",
+		PeerPublicKey: warpscout.WarpPeerPublicKey,
+		AddressV4:     "172.16.0.2/32",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &apiJunkRunner{gate: make(chan struct{}), hits: 0}
+	svc := warpscout.New(warpscout.Deps{
+		Store:  store,
+		Runner: runner,
+		WAN:    func(context.Context) (string, bool) { return "eth3", true },
+	})
+	t.Cleanup(svc.Stop)
+	h := NewWarpScoutHandler(svc, nil)
+
+	// 1. Запуск find-junk -> 200 OK
+	req := httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/start",
+		bytes.NewBufferString(`{"i1Profile":"quic","maxAttempts":1,"perSubnet":1}`))
+	rec := httptest.NewRecorder()
+	h.FindJunkStart(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("FindJunkStart code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 2. Попытка применить во время выполнения -> 409 WARP_BUSY
+	recBusy := httptest.NewRecorder()
+	h.FindJunkApply(recBusy, httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/apply", nil))
+	if recBusy.Code != http.StatusConflict {
+		t.Fatalf("FindJunkApply while running code=%d body=%s", recBusy.Code, recBusy.Body.String())
+	}
+	var errEnv struct {
+		Error bool   `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(recBusy.Body.Bytes(), &errEnv); err != nil || !errEnv.Error || errEnv.Code != "WARP_BUSY" {
+		t.Fatalf("unexpected busy envelope: %s", recBusy.Body.String())
+	}
+
+	// Завершаем 0-хитовый прогон -> Apply должен вернуть 400 INVALID_INPUT
+	close(runner.gate)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && svc.State().FindJunk.Running {
+		time.Sleep(10 * time.Millisecond)
+	}
+	recZero := httptest.NewRecorder()
+	h.FindJunkApply(recZero, httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/apply", nil))
+	if recZero.Code != http.StatusBadRequest {
+		t.Fatalf("FindJunkApply after zero hits code=%d body=%s", recZero.Code, recZero.Body.String())
+	}
+	if err := json.Unmarshal(recZero.Body.Bytes(), &errEnv); err != nil || errEnv.Code != "INVALID_INPUT" {
+		t.Fatalf("unexpected invalid envelope: %s", recZero.Body.String())
+	}
+
+	// 3. Валидный прогон (15/15) -> FindJunkApply 200 OK с AWGParams
+	runner.gate = nil
+	runner.hits = 15
+	rec2 := httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/start",
+		bytes.NewBufferString(`{"i1Profile":"stun","maxAttempts":1,"perSubnet":1}`))
+	rec2Rec := httptest.NewRecorder()
+	h.FindJunkStart(rec2Rec, rec2)
+	if rec2Rec.Code != http.StatusOK {
+		t.Fatalf("second FindJunkStart code=%d body=%s", rec2Rec.Code, rec2Rec.Body.String())
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && svc.State().FindJunk.Running {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	recApply := httptest.NewRecorder()
+	h.FindJunkApply(recApply, httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/apply", nil))
+	if recApply.Code != http.StatusOK {
+		t.Fatalf("FindJunkApply valid code=%d body=%s", recApply.Code, recApply.Body.String())
+	}
+	var okEnv struct {
+		Success bool                `json:"success"`
+		Data    warpscout.AWGParams `json:"data"`
+	}
+	if err := json.Unmarshal(recApply.Body.Bytes(), &okEnv); err != nil || !okEnv.Success || okEnv.Data.SignatureProfile != "stun" {
+		t.Fatalf("unexpected FindJunkApply envelope: %s", recApply.Body.String())
 	}
 }
