@@ -17,13 +17,6 @@ export { default as OutboundsTab } from './outbounds/OutboundsTab.svelte';
 export { default as DnsTab } from './dns/DnsTab.svelte';
 export { default as RuleSetsTab } from './rulesets/RuleSetsTab.svelte';
 export { default as RoutesTab } from './routes/RoutesTab.svelte';
-export { default as DevicesTab } from './devices/DevicesTab.svelte';
-export {
-	resolveDeviceTargeting,
-	findRuleIndexForDevice,
-	type DeviceMode,
-	type DeviceTargeting,
-} from './devices/deviceTargeting';
 export {
 	computeRuleSetUsageRefs,
 	type RuleSetUsageRef,

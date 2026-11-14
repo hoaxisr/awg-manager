@@ -13,7 +13,6 @@
     - Rule sets     — Status.ruleSetCount.
     - DNS           — длина fakeipConfig.dnsRules.
     - Маршруты      — Status.ruleCount.
-    - Устройства    — Status.deviceCount.
     - Соединения    — liveConnectionsSnapshot.connectionsTotal (Clash WS),
                       тот же источник, что у sb-router LiveConnectionsChip.
 
@@ -127,7 +126,6 @@
 			rulesets: st?.ruleSetCount,
 			dns: $dnsRules.length,
 			routes: st?.ruleCount,
-			devices: st?.deviceCount,
 			connections: formatCompactCount($connSnapshot.connectionsTotal),
 		};
 	});
