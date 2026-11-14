@@ -29,6 +29,44 @@ var (
 	}
 )
 
+// Keenetic-пакет nfqws2-keenetic (ground-zerro) не похож ни на zapret v1, ни
+// на zapret2: демон лежит в /opt/usr/bin, конфиг — в /opt/etc/nfqws2, init —
+// S51nfqws2. Каталога с «zapret» в имени нет, поэтому обычный поиск по /opt
+// его не находит. Пути считаются от optRoot, чтобы тесты могли подменить корень.
+func keeneticPaths() (base, config, binary, init string) {
+	base = filepath.Join(optRoot, "etc", "nfqws2")
+	return base,
+		filepath.Join(base, "nfqws2.conf"),
+		filepath.Join(optRoot, "usr", "bin", "nfqws2"),
+		filepath.Join(optRoot, "etc", "init.d", "S51nfqws2")
+}
+
+// keeneticLayout сообщает раскладку nfqws2-keenetic, если она установлена.
+// Единой переменной со стратегиями (NFQWS2_OPT) в её конфиге нет: опции
+// разложены по NFQWS_ARGS/NFQWS_BASE_ARGS/MODE_*, поэтому optVar пустой, а
+// правка стратегий из UI для этой раскладки недоступна (только чтение).
+func keeneticLayout() (layout, bool) {
+	base, config, binary, init := keeneticPaths()
+	info, err := os.Stat(config)
+	if err != nil || info.IsDir() {
+		return layout{}, false
+	}
+	if !isExecutable(binary) {
+		return layout{}, false
+	}
+	if !isExecutable(init) {
+		init = ""
+	}
+	return layout{
+		base:   base,
+		config: config,
+		binary: binary,
+		optVar: "",
+		ipset:  filepath.Join(base, "lists"),
+		init:   init,
+	}, true
+}
+
 // initDirs — каталоги init-скриптов. z2k кладёт свой S99zapret2 обычным
 // файлом (cp, не симлинк) в /opt/etc/init.d, KZM2 —
 // симлинк S90-zapret2 на штатный init.d/sysv/zapret2, «чистый» zapret2
@@ -60,6 +98,14 @@ func baseOfExe(exe string) string {
 	}
 	clean := strings.TrimSuffix(exe, " (deleted)")
 	clean = filepath.Clean(clean)
+	// nfqws2-keenetic: демон вынесен в /opt/usr/bin, а установка — каталог
+	// конфига /opt/etc/nfqws2. Без этого процесс попадал бы в unknown и
+	// resolver сообщал бы о конфликте.
+	if base, config, binary, _ := keeneticPaths(); binary != "" && clean == filepath.Clean(binary) {
+		if _, err := os.Stat(config); err == nil {
+			return base
+		}
+	}
 	// Отрезаем известные подкаталоги с демоном.
 	for _, rel := range binaryRelCandidates {
 		if filepath.Base(filepath.Dir(clean)) == filepath.Dir(rel) {
@@ -141,6 +187,21 @@ func discoverLayouts() []layout {
 		l.init = findInitScript(base)
 		out = append(out, l)
 	}
+	// Раскладка nfqws2-keenetic ищется отдельно: у неё нет каталога /opt/<...zapret...>
+	// и нет NFQWS2_OPT, поэтому обычный цикл её пропускает.
+	if keenetic, ok := keeneticLayout(); ok {
+		identity := canonicalBase(keenetic.base)
+		duplicate := false
+		for _, existing := range out {
+			if canonicalBase(existing.base) == identity {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			out = append(out, keenetic)
+		}
+	}
 	return out
 }
 
@@ -208,6 +269,11 @@ var modeOptVars = map[string]string{
 // zapret2 лежит в nfq2/ и использует NFQWS2_OPT, zapret v1 — в nfq/ и
 // NFQWS_OPT. Имя каталога может быть любым (встречается /opt/zapret22).
 func flavorFor(base, optVar string) string {
+	if base != "" {
+		if keeneticBase, _, _, _ := keeneticPaths(); keeneticBase != "" && canonicalBase(base) == canonicalBase(keeneticBase) {
+			return "keenetic"
+		}
+	}
 	if optVar == optVarV2 {
 		return "zapret2"
 	}

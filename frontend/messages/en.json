@@ -7326,6 +7326,7 @@
 	"zapret_warning_circular_missing_key": "circular has no key=, so its selection state is not shared between hosts.",
 	"zapret_warning_strategy_no_lua_desync": "This profile has no --lua-desync option. Its filter matches, but no DPI bypass runs.",
 	"zapret_warning_strategies_empty": "{optVar} is empty, so no strategies are configured.",
+	"zapret_warning_strategies_unsupported": "{flavor} layout: the config has no single strategy variable, so strategies are read-only. Service control still works; edit files on the host.",
 	"zapret_warning_strategies_limit_reached": "The display limit was reached. Showing the first {limit} strategies.",
 	"zapret_warning_unknown": "Zapret reported a warning that this version of AWGM does not recognize.",
 	"zapret_not_installed_description": "Zapret was not found on the router. AWGM does not install it; install it manually with opkg or a Zapret installer.",
