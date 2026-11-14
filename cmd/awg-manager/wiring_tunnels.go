@@ -167,7 +167,7 @@ func (a *app) setupTunnels() {
 	// Autolist is an independent package; AWGM owns install/control, key
 	// rotation and the authenticated UI proxy to its loopback API.
 	a.autolistService = autolistdetect.NewService()
-	a.autolistService.SetInstaller(opkg.NewClient(), a.settingsStore)
+	a.autolistService.SetInstaller(opkg.NewClient(), a.settingsStore, version)
 
 	// HydraRoute Neo integration (optional — detected at startup)
 	a.hydraService = hydraroute.NewService(a.catalog, a.loggingService)

@@ -173,6 +173,10 @@ type Status struct {
 	// disable and a failure.
 	Installed bool `json:"installed"`
 	Enabled   bool `json:"enabled"`
+	// PackageVersion is the installed opkg package version; UpdateAvailable
+	// means it is below the awg-manager version the satellite ships with.
+	PackageVersion  string `json:"packageVersion,omitempty"`
+	UpdateAvailable bool   `json:"updateAvailable,omitempty"`
 
 	CaptureActive bool     `json:"captureActive,omitempty"`
 	CapturePaused bool     `json:"capturePaused,omitempty"`
@@ -227,6 +231,8 @@ type satelliteSnapshot struct {
 type Service struct {
 	client    *http.Client
 	installer *Installer
+	// panelVersion is the awg-manager version the satellite must match.
+	panelVersion string
 
 	controlMu sync.Mutex
 	// Test seams: empty values fall back to the Entware conventions.
@@ -234,6 +240,7 @@ type Service struct {
 	statePath      string
 	pidPath        string
 	statusAddr     string
+	controlPath    string
 	confirmTimeout time.Duration
 
 	command func(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -288,8 +295,10 @@ func (s *Service) installed() bool {
 
 // desiredEnabled reads the user's intent. A missing file means the package
 // default: enabled. Anything other than an explicit "ENABLED=no" enables.
-func (s *Service) desiredEnabled() bool {
-	b, err := os.ReadFile(s.enabledStatePath())
+func (s *Service) desiredEnabled() bool { return enabledIntent(s.enabledStatePath()) }
+
+func enabledIntent(path string) bool {
+	b, err := os.ReadFile(path)
 	return err != nil || strings.TrimSpace(string(b)) != "ENABLED=no"
 }
 
@@ -474,13 +483,16 @@ func (s *Service) fetchSnapshot(ctx context.Context) (satelliteSnapshot, error) 
 // emptyStatus returns the normal status of an absent or stopped satellite:
 // lifecycle flags from the files, everything else empty, no error.
 func (s *Service) emptyStatus() Status {
+	pkgVersion, outdated := s.packageState()
 	return Status{
-		Installed:  s.installed(),
-		Enabled:    s.installed() && s.desiredEnabled(),
-		Protocols:  []string{},
-		LastWAN:    CheckEvidence{Verdict: verdictNotChecked},
-		Candidates: []Candidate{},
-		History:    []HistoryEntry{},
+		PackageVersion:  pkgVersion,
+		UpdateAvailable: outdated,
+		Installed:       s.installed(),
+		Enabled:         s.installed() && s.desiredEnabled(),
+		Protocols:       []string{},
+		LastWAN:         CheckEvidence{Verdict: verdictNotChecked},
+		Candidates:      []Candidate{},
+		History:         []HistoryEntry{},
 	}
 }
 

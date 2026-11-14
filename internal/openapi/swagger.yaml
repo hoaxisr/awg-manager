@@ -8246,6 +8246,11 @@ definitions:
         type: string
       lastWAN:
         $ref: '#/definitions/autolistdetect.CheckEvidence'
+      packageVersion:
+        description: |-
+          PackageVersion is the installed opkg package version; UpdateAvailable
+          means it is below the awg-manager version the satellite ships with.
+        type: string
       protocols:
         items:
           type: string
@@ -8265,6 +8270,8 @@ definitions:
         type: string
       targetOutbound:
         type: string
+      updateAvailable:
+        type: boolean
       version:
         type: string
     type: object

@@ -1,6 +1,6 @@
 Package: awgmautolist
 Version: 0.10.0-1
-Depends: awg-manager, curl
+Depends: awg-manager (>= 2.20.2), curl
 Section: net
 Architecture: aarch64-3.10
 Maintainer: awgm-community
