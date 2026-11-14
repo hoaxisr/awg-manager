@@ -108,4 +108,10 @@ export class WarpScoutClient extends Awg3Client {
 			body: JSON.stringify({ profileId }),
 		});
 	}
+
+	async warpscoutClearHistory(): Promise<{ ok: boolean }> {
+		return this.request<{ ok: boolean }>('/warpscout/history/clear', {
+			method: 'POST',
+		});
+	}
 }

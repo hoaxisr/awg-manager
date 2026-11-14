@@ -1361,3 +1361,23 @@ func (h *WarpScoutHandler) ResetStats(w http.ResponseWriter, r *http.Request) {
 	}
 	response.Success(w, map[string]bool{"ok": true})
 }
+
+// ClearHistory — очистить журнал автоподмен автопилота.
+//
+//	@Summary	Clear WARP autopilot swap history
+//	@Tags		warpscout
+//	@Produce	json
+//	@Security	CookieAuth
+//	@Success	200	{object}	map[string]interface{}
+//	@Router		/warpscout/history/clear [post]
+func (h *WarpScoutHandler) ClearHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if err := h.svc.ClearHistory(); err != nil {
+		h.fail(w, err)
+		return
+	}
+	response.Success(w, map[string]bool{"ok": true})
+}

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import type { WarpConfig, WarpFindJunkStatus, WarpProfile, WarpScoutState } from '$lib/types/warpscout';
+import type { WarpConfig, WarpFindJunkStatus, WarpProfile, WarpScoutState, WarpSwapEvent } from '$lib/types/warpscout';
 import { warpFindJunkPush, warpScanPush } from '$lib/stores/warpscout';
 import { defaultFilters } from './warpscoutUi';
 
@@ -26,6 +26,7 @@ const api = vi.hoisted(() => ({
 	warpscoutFindJunkStart: vi.fn(),
 	warpscoutFindJunkStop: vi.fn(),
 	warpscoutFindJunkApply: vi.fn(),
+	warpscoutClearHistory: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({ api }));
 
@@ -381,5 +382,38 @@ describe('WarpScoutTab', () => {
 		expect(chip(container, 0).textContent).toContain('Jc 6');
 		// Черновик автопилота остался несохранённым.
 		expect(container.querySelector('.save-bar')).not.toBeNull();
+	});
+
+	it('asks for confirmation before clearing auto-swap history and reloads state', async () => {
+		const item: WarpSwapEvent = {
+			at: '2026-11-14T10:00:00Z',
+			profileId: 'a',
+			profileName: 'WARP HEL',
+			targetMode: 'kernel',
+			targetId: 't-a',
+			reason: 'trace timeout',
+			oldEndpoint: '162.159.192.1:500',
+			newEndpoint: '162.159.192.2:2408',
+			colo: 'HEL',
+			loc: 'FI',
+			pingMs: 24,
+			ok: true,
+		};
+		const { container } = await mount(state({}, { history: [item] }));
+		expect(container.querySelectorAll('.swap-item')).toHaveLength(1);
+
+		const clearBtn = container.querySelector<HTMLButtonElement>('.timeline-head button');
+		expect(clearBtn).not.toBeNull();
+		await fireEvent.click(clearBtn!);
+		expect(api.warpscoutClearHistory).not.toHaveBeenCalled();
+
+		api.warpscoutClearHistory.mockResolvedValue({ ok: true });
+		api.warpscoutState.mockResolvedValue(state({}, { history: [] }));
+
+		const confirmBtn = await screen.findByRole('button', { name: /^(Очистить журнал|Clear history)$/i });
+		await fireEvent.click(confirmBtn);
+
+		await waitFor(() => expect(api.warpscoutClearHistory).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(container.querySelectorAll('.swap-item')).toHaveLength(0));
 	});
 });

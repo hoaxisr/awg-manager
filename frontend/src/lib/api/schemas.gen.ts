@@ -3906,6 +3906,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /warpscout/find-junk/apply": v.record(v.string(), v.unknown()),
 	"POST /warpscout/find-junk/start": v.record(v.string(), v.unknown()),
 	"POST /warpscout/find-junk/stop": v.record(v.string(), v.unknown()),
+	"POST /warpscout/history/clear": v.record(v.string(), v.unknown()),
 	"POST /warpscout/scan/start": v.record(v.string(), v.unknown()),
 	"POST /warpscout/scan/stop": v.record(v.string(), v.unknown()),
 	"POST /warpscout/stats/reset": v.record(v.string(), v.unknown()),

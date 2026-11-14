@@ -697,3 +697,50 @@ func TestFindJunk_ApplyRejectsWhileRunningAndBindsToRunID(t *testing.T) {
 		_ = waitFindJunkDone(t, svc)
 	})
 }
+
+func TestClearHistory_ClearsAndRollsBackOnSaveError(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir, plainCipher{})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	svc := New(Deps{Store: store, Runner: &junkTestRunner{hitsByCall: []int{15}}})
+	t.Cleanup(svc.Stop)
+
+	ev := SwapEvent{
+		At:          time.Now().UTC(),
+		ProfileID:   "p1",
+		ProfileName: "WARP HEL",
+		OldEndpoint: "162.159.192.1:2408",
+		NewEndpoint: "162.159.192.2:2408",
+		OK:          true,
+	}
+	if err := store.AppendHistory(ev); err != nil {
+		t.Fatalf("AppendHistory: %v", err)
+	}
+
+	// Сбой записи должен откатить память и сохранить запись.
+	store.setTestSaveHook(func() error { return errors.New("disk full") })
+	if err := svc.ClearHistory(); err == nil {
+		t.Fatal("expected ClearHistory error when store save fails")
+	}
+	store.setTestSaveHook(nil)
+	if got := store.History(); len(got) != 1 {
+		t.Fatalf("expected history rollback on error, got %d entries", len(got))
+	}
+
+	// Успешная очистка должна сохраниться на диск.
+	if err := svc.ClearHistory(); err != nil {
+		t.Fatalf("ClearHistory: %v", err)
+	}
+	if got := svc.State().History; len(got) != 0 {
+		t.Fatalf("expected empty history in State, got %d entries", len(got))
+	}
+	reloaded, err := NewStore(dir, plainCipher{})
+	if err != nil {
+		t.Fatalf("reload NewStore: %v", err)
+	}
+	if got := reloaded.History(); len(got) != 0 {
+		t.Fatalf("expected persisted empty history, got %d entries", len(got))
+	}
+}

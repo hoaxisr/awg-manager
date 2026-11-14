@@ -389,6 +389,22 @@ func (s *Store) AppendHistory(ev SwapEvent) error {
 	return s.saveLocked()
 }
 
+// ClearHistory транзакционно очищает журнал автоподмен, откатывая память при сбое записи.
+func (s *Store) ClearHistory() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.state.History) == 0 {
+		return nil
+	}
+	prev := s.state.History
+	s.state.History = nil
+	if err := s.saveLocked(); err != nil {
+		s.state.History = prev
+		return err
+	}
+	return nil
+}
+
 // Stats — копия сохранённой статистики профилей с диска.
 func (s *Store) Stats() map[string]ProfileStats {
 	s.mu.Lock()

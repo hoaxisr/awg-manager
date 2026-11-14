@@ -7893,5 +7893,11 @@
 	"warpscout_findjunk_incomplete": "partial",
 	"warpscout_findjunk_apply_btn": "Apply best",
 	"warpscout_findjunk_applied_badge": "Applied",
-	"warpscout_findjunk_applied_ok": "Matched AWG obfuscation settings saved"
+	"warpscout_findjunk_applied_ok": "Matched AWG obfuscation settings saved",
+	"warpscout_clear_history_btn": "Clear",
+	"warpscout_history_cleared_ok": "Auto-swap history cleared",
+	"warpscout_confirm_clear_history_title": "Clear auto-swap history?",
+	"warpscout_confirm_clear_history_msg": "All {count} recorded auto-swap entries will be deleted.",
+	"warpscout_confirm_clear_history_sec": "Autopilot profiles, statistics, and current tunnels will not be affected.",
+	"warpscout_clear_history_confirm": "Clear history"
 }

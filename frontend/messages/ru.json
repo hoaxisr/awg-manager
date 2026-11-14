@@ -8293,5 +8293,11 @@
 	"warpscout_findjunk_incomplete": "неполн.",
 	"warpscout_findjunk_apply_btn": "Применить лучший",
 	"warpscout_findjunk_applied_badge": "Применено",
-	"warpscout_findjunk_applied_ok": "Подобранные параметры обфускации AWG сохранены"
+	"warpscout_findjunk_applied_ok": "Подобранные параметры обфускации AWG сохранены",
+	"warpscout_clear_history_btn": "Очистить",
+	"warpscout_history_cleared_ok": "Журнал автоподмен очищен",
+	"warpscout_confirm_clear_history_title": "Очистить журнал автоподмен?",
+	"warpscout_confirm_clear_history_msg": "Будут удалены все записи о прошлых автоподменах ({count}).",
+	"warpscout_confirm_clear_history_sec": "Профили автопилота, статистика и текущие туннели не изменятся.",
+	"warpscout_clear_history_confirm": "Очистить журнал"
 }

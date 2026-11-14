@@ -169,7 +169,7 @@
 	title={m.warpscout_awg_pop_title()}
 	ariaLabel={m.warpscout_awg_pop_aria()}
 	chipTitle={m.warpscout_awg_chip_tip()}
-	width="24rem"
+	width="min(29rem, calc(100vw - 2rem))"
 >
 	{#snippet chip()}
 		<Shield size={13} class="chip-ic" />
@@ -385,49 +385,49 @@
 	.num-field {
 		display: flex;
 		flex-direction: column;
-		gap: 0.2rem;
-		font-size: 0.72rem;
+		gap: 0.25rem;
+		font-size: 0.78rem;
 		font-weight: 500;
 		color: var(--color-text-secondary);
 	}
 	.findjunk-box {
 		display: flex;
 		flex-direction: column;
-		gap: 0.45rem;
-		padding-top: 0.55rem;
+		gap: 0.6rem;
+		padding: 0.75rem 0 0.1rem;
 		border-top: 1px solid var(--color-border);
 	}
 	.fj-head {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 0.5rem;
+		gap: 0.6rem;
 	}
 	.fj-title {
-		font-size: 0.78rem;
+		font-size: 0.85rem;
 		font-weight: 600;
 		color: var(--color-text-primary);
 	}
 	.fj-controls {
 		display: grid;
-		grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.8fr) minmax(0, 0.8fr);
-		gap: 0.4rem;
+		grid-template-columns: minmax(0, 1.8fr) minmax(0, 0.75fr) minmax(0, 0.75fr);
+		gap: 0.5rem;
 		align-items: end;
 	}
 	.fj-prof {
 		min-width: 0;
 	}
 	.fj-status {
-		font-size: 0.72rem;
+		font-size: 0.78rem;
 		color: var(--color-info);
 	}
 	.junk-attempts {
 		display: flex;
 		flex-direction: column;
-		gap: 0.22rem;
-		max-height: 8.5rem;
+		gap: 0.3rem;
+		max-height: 12.5rem;
 		overflow-y: auto;
-		padding: 0.3rem;
+		padding: 0.45rem;
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--color-border);
 		background: var(--color-bg-primary);
@@ -435,10 +435,11 @@
 	.junk-row {
 		display: flex;
 		align-items: center;
-		gap: 0.35rem;
-		padding: 0.18rem 0.3rem;
+		gap: 0.45rem;
+		padding: 0.32rem 0.5rem;
 		border-radius: var(--radius-sm);
-		font-size: 0.7rem;
+		font-size: 0.8125rem;
+		line-height: 1.35;
 		color: var(--color-text-secondary);
 		flex-wrap: wrap;
 	}
@@ -452,26 +453,30 @@
 	.fj-score {
 		margin-left: auto;
 		font-weight: 600;
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
 	.fj-foot {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 0.45rem;
+		gap: 0.55rem;
+		padding-top: 0.15rem;
 		flex-wrap: wrap;
 	}
 	.fj-best {
-		font-size: 0.71rem;
+		font-size: 0.8125rem;
+		line-height: 1.35;
 		color: var(--color-text-primary);
 	}
 	.fj-empty {
 		margin: 0;
-		font-size: 0.72rem;
+		font-size: 0.78rem;
 		color: var(--color-text-muted);
 	}
 	.fj-err {
 		margin: 0;
-		font-size: 0.72rem;
+		font-size: 0.78rem;
 		color: var(--color-error);
 	}
 	.mono {

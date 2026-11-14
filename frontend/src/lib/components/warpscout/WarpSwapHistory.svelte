@@ -1,24 +1,33 @@
 <script lang="ts">
-	import { ArrowRight } from 'lucide-svelte';
+	import { ArrowRight, Trash2 } from 'lucide-svelte';
 	import { m } from '$lib/i18n';
-	import { Badge } from '$lib/components/ui';
+	import { Badge, Button } from '$lib/components/ui';
 	import type { WarpSwapEvent } from '$lib/types/warpscout';
 	import { countryFlag, formatTime, humanizeSwapReason } from './warpscoutUi';
 
 	interface Props {
 		history: WarpSwapEvent[];
+		onclear?: () => void;
 	}
 
-	let { history }: Props = $props();
+	let { history, onclear }: Props = $props();
 </script>
 
 <div class="timeline-section">
 	<div class="timeline-head">
-		<h4>{m.warpscout_recent_swaps()}</h4>
-		{#if history.length > 0}
-			<Badge variant="muted" size="xs">{history.length}</Badge>
-		{:else}
-			<span class="sub">{m.warpscout_no_swaps_yet()}</span>
+		<div class="timeline-title">
+			<h4>{m.warpscout_recent_swaps()}</h4>
+			{#if history.length > 0}
+				<Badge variant="muted" size="xs">{history.length}</Badge>
+			{:else}
+				<span class="sub">{m.warpscout_no_swaps_yet()}</span>
+			{/if}
+		</div>
+		{#if history.length > 0 && onclear}
+			<Button size="sm" variant="ghost" onclick={onclear}>
+				<Trash2 size={12} />
+				<span>{m.warpscout_clear_history_btn()}</span>
+			</Button>
 		{/if}
 	</div>
 
@@ -76,6 +85,12 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+	.timeline-title {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
 		flex-wrap: wrap;
 	}
 	.timeline-head h4 {

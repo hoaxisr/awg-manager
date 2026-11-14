@@ -211,6 +211,16 @@
 		}
 	}
 
+	async function clearSwapHistory(): Promise<void> {
+		try {
+			await api.warpscoutClearHistory();
+			notifications.success(m.warpscout_history_cleared_ok());
+			await refreshNow();
+		} catch (e) {
+			notifications.error(warpErrorMessage(e));
+		}
+	}
+
 	const routes = $derived<WarpRouteRef[]>(ws?.routes ?? []);
 	const defaultWan = $derived(ws?.defaultWan ?? '');
 	const scanIface = $derived((ws?.config.scanInterface ?? '').trim());
@@ -334,6 +344,7 @@
 					}}
 					onreset={() => resetSection('profiles')}
 					onresetstats={resetProfileStats}
+					onclearhistory={clearSwapHistory}
 				/>
 			</div>
 		</div>

@@ -412,6 +412,18 @@ func (s *Service) flushStats() {
 	}
 }
 
+// ClearHistory очищает журнал автоподмен.
+func (s *Service) ClearHistory() error {
+	if s.d.Store == nil {
+		return nil
+	}
+	if err := s.d.Store.ClearHistory(); err != nil {
+		return err
+	}
+	s.logInfo("history", "warp", "Журнал автоподмен очищен")
+	return nil
+}
+
 // Targets — туннели для выбора цели.
 func (s *Service) Targets(ctx context.Context) ([]TunnelRef, error) {
 	if s.d.Tunnels == nil {

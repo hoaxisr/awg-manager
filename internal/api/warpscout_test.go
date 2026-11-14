@@ -669,3 +669,38 @@ func TestWarpScoutHandler_FindJunkEndpoints(t *testing.T) {
 		t.Fatalf("unexpected FindJunkApply envelope: %s", recApply.Body.String())
 	}
 }
+
+func TestWarpScoutHandler_ClearHistory(t *testing.T) {
+	store, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := store.AppendHistory(warpscout.SwapEvent{
+		At:          time.Now().UTC(),
+		ProfileID:   "p1",
+		ProfileName: "WARP HEL",
+		OldEndpoint: "162.159.192.1:2408",
+		NewEndpoint: "162.159.192.2:2408",
+		OK:          true,
+	}); err != nil {
+		t.Fatalf("AppendHistory: %v", err)
+	}
+	svc := warpscout.New(warpscout.Deps{Store: store})
+	t.Cleanup(svc.Stop)
+	h := NewWarpScoutHandler(svc, nil)
+
+	recGet := httptest.NewRecorder()
+	h.ClearHistory(recGet, httptest.NewRequest(http.MethodGet, "/api/warpscout/history/clear", nil))
+	if recGet.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET ClearHistory code=%d, want 405", recGet.Code)
+	}
+
+	recPost := httptest.NewRecorder()
+	h.ClearHistory(recPost, httptest.NewRequest(http.MethodPost, "/api/warpscout/history/clear", nil))
+	if recPost.Code != http.StatusOK {
+		t.Fatalf("POST ClearHistory code=%d body=%s", recPost.Code, recPost.Body.String())
+	}
+	if got := svc.State().History; len(got) != 0 {
+		t.Fatalf("expected empty history after ClearHistory, got %d", len(got))
+	}
+}

@@ -22558,6 +22558,21 @@ paths:
       summary: Stop AWG junk parameter search
       tags:
       - warpscout
+  /warpscout/history/clear:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Clear WARP autopilot swap history
+      tags:
+      - warpscout
   /warpscout/scan/start:
     post:
       consumes:

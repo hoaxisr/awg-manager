@@ -26,6 +26,7 @@
 		onsave: () => void | Promise<void>;
 		onreset: () => void;
 		onresetstats?: (profileId: string) => void | Promise<void>;
+		onclearhistory?: () => void | Promise<void>;
 	}
 
 	let {
@@ -39,6 +40,7 @@
 		onsave,
 		onreset,
 		onresetstats,
+		onclearhistory,
 	}: Props = $props();
 
 	const modeOptions = $derived<SegmentedOption<WarpProfileMode>[]>([
@@ -49,6 +51,8 @@
 	let deleteId = $state<string | null>(null);
 	let resetStatsId = $state<string | null>(null);
 	let resettingStats = $state(false);
+	let confirmClearHistory = $state(false);
+	let clearingHistory = $state(false);
 
 	const watchById = $derived(new Map((watch ?? []).map((w) => [w.profileId, w])));
 	const statsById = $derived(new Map((stats ?? []).map((s) => [s.profileId, s])));
@@ -64,6 +68,20 @@
 		} finally {
 			resettingStats = false;
 			resetStatsId = null;
+		}
+	}
+
+	async function doClearHistory(): Promise<void> {
+		if (!onclearhistory) {
+			confirmClearHistory = false;
+			return;
+		}
+		clearingHistory = true;
+		try {
+			await onclearhistory();
+		} finally {
+			clearingHistory = false;
+			confirmClearHistory = false;
 		}
 	}
 
@@ -150,7 +168,10 @@
 		{/if}
 	</div>
 
-	<WarpSwapHistory {history} />
+	<WarpSwapHistory
+		{history}
+		onclear={onclearhistory ? () => (confirmClearHistory = true) : undefined}
+	/>
 </section>
 
 <ConfirmModal
@@ -175,6 +196,18 @@
 	busy={resettingStats}
 	onConfirm={confirmResetStats}
 	onClose={() => (resetStatsId = null)}
+/>
+
+<ConfirmModal
+	open={confirmClearHistory}
+	title={m.warpscout_confirm_clear_history_title()}
+	message={m.warpscout_confirm_clear_history_msg({ count: history.length })}
+	secondary={m.warpscout_confirm_clear_history_sec()}
+	confirmLabel={m.warpscout_clear_history_confirm()}
+	variant="danger"
+	busy={clearingHistory}
+	onConfirm={doClearHistory}
+	onClose={() => (confirmClearHistory = false)}
 />
 
 <style>
