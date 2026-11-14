@@ -5,10 +5,11 @@
 	import { Button, Dropdown, Modal, Toggle } from '$lib/components/ui';
 	import type { DropdownOption } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
-	import type { WarpFilters, WarpHit, WarpTunnelRef } from '$lib/types/warpscout';
+	import type { WarpAWGParams, WarpFilters, WarpHit, WarpTunnelRef } from '$lib/types/warpscout';
 	import {
 		countryFlag,
 		modeLabel,
+		signatureProfileLabel,
 		targetKey,
 		targetOptionDescription,
 		targetSelectable,
@@ -21,13 +22,15 @@
 		targets: WarpTunnelRef[];
 		/** Текущие фильтры сканера: протокол и фильтры профиля автопилота. */
 		filters: WarpFilters;
+		/** Текущие параметры обфускации сканера, применяемые при подмене. */
+		globalAwg?: WarpAWGParams;
 		/** В автопилоте есть несохранённые правки — включать его отсюда нельзя. */
 		autopilotLocked: boolean;
 		onclose: () => void;
 		ondone: () => void | Promise<void>;
 	}
 
-	let { hit, targets, filters, autopilotLocked, onclose, ondone }: Props = $props();
+	let { hit, targets, filters, globalAwg, autopilotLocked, onclose, ondone }: Props = $props();
 
 	const options = $derived.by((): DropdownOption[] =>
 		[...targets]
@@ -48,12 +51,14 @@
 			return first ? targetKey(first.mode, first.id) : '';
 		}),
 	);
+	const selectedTarget = $derived(targets.find((x) => targetKey(x.mode, x.id) === target));
+	const protoIncompatible = $derived(filters.protocol === 'wg' && selectedTarget?.mode === 'native');
 	let autopilot = $state(false);
 	let applying = $state(false);
 
 	async function submit(): Promise<void> {
-		const t = targets.find((x) => targetKey(x.mode, x.id) === target);
-		if (!t) return;
+		const t = selectedTarget;
+		if (!t || protoIncompatible) return;
 		const enableAutopilot = autopilot && !autopilotLocked;
 		applying = true;
 		try {
@@ -85,6 +90,18 @@
 			{#if hit.colo}· {hit.colo}{/if}
 			{#if hit.loc}{countryFlag(hit.loc)} {hit.loc}{/if}
 		</p>
+		{#if filters.protocol === 'wg'}
+			<p class="note">{m.warpscout_swap_obf_wg()}</p>
+		{:else if globalAwg}
+			<p class="note">
+				{m.warpscout_swap_obf_awg({
+					profile: signatureProfileLabel(globalAwg.signatureProfile),
+					jc: String(globalAwg.jc),
+					jmin: String(globalAwg.jmin),
+					jmax: String(globalAwg.jmax),
+				})}
+			</p>
+		{/if}
 		{#if targets.length === 0}
 			<p class="note warn">{m.warpscout_no_tunnels()}</p>
 		{:else}
@@ -97,6 +114,8 @@
 			/>
 			{#if !anyTarget}
 				<p class="note warn">{m.warpscout_no_warp_tunnels()}</p>
+			{:else if protoIncompatible}
+				<p class="note warn">{m.warpscout_swap_native_wg_incompatible()}</p>
 			{/if}
 		{/if}
 		<Toggle
@@ -112,7 +131,7 @@
 		<Button variant="ghost" onclick={onclose} disabled={applying}>
 			{m.common_cancel()}
 		</Button>
-		<Button variant="primary" loading={applying} disabled={!target || !anyTarget} onclick={submit}>
+		<Button variant="primary" loading={applying} disabled={!target || !anyTarget || protoIncompatible} onclick={submit}>
 			{m.warpscout_swap_btn()}
 		</Button>
 	{/snippet}

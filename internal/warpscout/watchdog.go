@@ -472,7 +472,8 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 			}
 		}
 	}
-	params, err := s.buildParams(ctx, swapAcct, s.awgForUse(), p.Filters, swapScanMaxHits, 0, nil, exclude, scanOverride, outerRef)
+	awg := s.awgForUse()
+	params, err := s.buildParams(ctx, swapAcct, awg, p.Filters, swapScanMaxHits, 0, nil, exclude, scanOverride, outerRef)
 	if err != nil {
 		s.finishSwap(ctx, p, ev, st, err, nil, false, false)
 		return
@@ -503,7 +504,12 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 		s.finishSwap(ctx, p, ev, st, fmt.Errorf("сканер вернул узел %q: %w", best.Endpoint, err), nil, false, false)
 		return
 	}
-	if err := s.d.Tunnels.SwapEndpoint(ctx, p.TargetMode, p.TargetID, best.Endpoint); err != nil {
+	swapOpts, err := buildSwapOptions(p.Filters.Protocol, awg, ref.ViaIface != "" || (outerRef != nil && outerRef.IsWarp))
+	if err != nil {
+		s.finishSwap(ctx, p, ev, st, fmt.Errorf("параметры обфускации: %w", err), nil, false, false)
+		return
+	}
+	if err := s.d.Tunnels.SwapEndpoint(ctx, p.TargetMode, p.TargetID, best.Endpoint, swapOpts); err != nil {
 		s.finishSwap(ctx, p, ev, st, fmt.Errorf("подмена endpoint: %w", err), nil, false, false)
 		return
 	}

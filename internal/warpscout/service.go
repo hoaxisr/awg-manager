@@ -40,6 +40,14 @@ type CreateOptions struct {
 	ViaID   string
 }
 
+// SwapOptions — параметры подмены узла: помимо нового endpoint передают
+// протокол ("awg" | "wg") и текущую обфускацию сканера. Если Protocol == "",
+// обфускация туннеля не изменяется.
+type SwapOptions struct {
+	Protocol string
+	AWG      AWGParams
+}
+
 // TunnelOps — операции над туннелями, которые автопилоту нужны от
 // остального приложения. Реализация живёт в internal/api.
 type TunnelOps interface {
@@ -49,8 +57,9 @@ type TunnelOps interface {
 	Get(ctx context.Context, mode TargetMode, id string) (*TunnelRef, error)
 	// Create создаёт туннель из .conf и возвращает его.
 	Create(ctx context.Context, mode TargetMode, name, conf string, opts CreateOptions) (*TunnelRef, error)
-	// SwapEndpoint меняет endpoint пира на лету, не пересоздавая интерфейс.
-	SwapEndpoint(ctx context.Context, mode TargetMode, id, endpoint string) error
+	// SwapEndpoint меняет endpoint пира и (если задан SwapOptions.Protocol)
+	// синхронизирует обфускацию туннеля, перезапуская интерфейс при смене маскировки.
+	SwapEndpoint(ctx context.Context, mode TargetMode, id, endpoint string, opts SwapOptions) error
 	// Rename переименовывает туннель (карточку и описание интерфейса в NDMS).
 	Rename(ctx context.Context, mode TargetMode, id, name string) error
 }
@@ -1355,8 +1364,10 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 				return nil, fmt.Errorf("%w: endpoint %s совпадает с IP внешнего туннеля (%s)", ErrInvalidInput, req.Endpoint, outer.Endpoint)
 			}
 			mtu = NestedWarpMTU
-			if awg, err = fitSignature(awg, nestedSignatureMax); err != nil {
-				return nil, err
+			if protocol != ProtocolWG {
+				if awg, err = fitSignature(awg, nestedSignatureMax); err != nil {
+					return nil, err
+				}
 			}
 			createOpts = CreateOptions{ViaMode: outer.Mode, ViaID: outer.ID}
 		}
@@ -1408,6 +1419,24 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 			s.logInfo("apply", name, fmt.Sprintf("Создан туннель WARP (%s) с узлом %s", req.Mode, req.Endpoint))
 		}
 	case "swap":
+		protocol := req.Protocol
+		if protocol == "" && req.Filters != nil && req.Filters.Protocol != "" {
+			protocol = req.Filters.Protocol
+		}
+		if protocol != ProtocolWG {
+			protocol = ProtocolAWG
+		}
+		if req.Mode == TargetNative && protocol == ProtocolWG {
+			return nil, fmt.Errorf("%w: тип Native WG требует протокол AmneziaWG — выберите протокол AmneziaWG или тип «Системный»", ErrInvalidInput)
+		}
+		awg := s.awgForUse()
+		if req.AWG != nil {
+			var err error
+			awg, err = validateOverrideAWG(*req.AWG)
+			if err != nil {
+				return nil, err
+			}
+		}
 		cur, err := s.d.Tunnels.Get(ctx, req.Mode, req.TargetID)
 		if err != nil {
 			return nil, err
@@ -1415,7 +1444,11 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		if err := checkTarget(cur); err != nil {
 			return nil, err
 		}
-		if err := s.d.Tunnels.SwapEndpoint(ctx, req.Mode, req.TargetID, req.Endpoint); err != nil {
+		swapOpts, err := buildSwapOptions(protocol, awg, cur.ViaIface != "")
+		if err != nil {
+			return nil, err
+		}
+		if err := s.d.Tunnels.SwapEndpoint(ctx, req.Mode, req.TargetID, req.Endpoint, swapOpts); err != nil {
 			return nil, err
 		}
 		tunName := cur.Name

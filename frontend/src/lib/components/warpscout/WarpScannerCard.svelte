@@ -308,6 +308,7 @@
 		hit={swapHit}
 		{targets}
 		{filters}
+		{globalAwg}
 		{autopilotLocked}
 		onclose={() => (swapHit = null)}
 		ondone={applied}

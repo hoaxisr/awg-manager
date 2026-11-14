@@ -27,6 +27,7 @@ const api = vi.hoisted(() => ({
 	warpscoutFindJunkStop: vi.fn(),
 	warpscoutFindJunkApply: vi.fn(),
 	warpscoutClearHistory: vi.fn(),
+	warpscoutApply: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({ api }));
 
@@ -415,5 +416,90 @@ describe('WarpScoutTab', () => {
 
 		await waitFor(() => expect(api.warpscoutClearHistory).toHaveBeenCalledTimes(1));
 		await waitFor(() => expect(container.querySelectorAll('.swap-item')).toHaveLength(0));
+	});
+
+	it('shows scanner obfuscation summary in swap modal and blocks native swap when protocol is wg', async () => {
+		const initial = acctState();
+		initial.config.awg = { signatureProfile: 'dtls', jc: 5, jmin: 24, jmax: 105 };
+		initial.scan = {
+			running: false,
+			owner: 'manual',
+			total: 1,
+			done: 1,
+			hits: [
+				{
+					endpoint: '162.159.192.1:2408',
+					handshakeMs: 25,
+					pingMs: 25,
+					colo: 'HEL',
+					loc: 'FI',
+					warp: 'on',
+					tgOk: true,
+				},
+			],
+		};
+		api.warpscoutState.mockResolvedValue(initial);
+		api.warpscoutTargets.mockResolvedValue([
+			{
+				mode: 'native',
+				id: 'nat1',
+				name: 'WARP Native',
+				iface: 'awg0',
+				endpoint: '162.159.192.2:2408',
+				addressV4: '172.16.0.2',
+				isWarp: true,
+				running: true,
+				protected: false,
+			},
+		]);
+
+		const view = render(WarpScoutTab);
+		await waitFor(() => expect(view.container.querySelector('.actions-cell')).not.toBeNull());
+
+		// Open swap modal in AWG mode: summary shows active Jc/Jmin/Jmax and Swap is enabled.
+		const swapRowBtn = view.container.querySelector<HTMLButtonElement>(
+			'.actions-cell button:last-of-type',
+		);
+		expect(swapRowBtn).not.toBeNull();
+		await fireEvent.click(swapRowBtn!);
+
+		const dialog = await waitFor(() => {
+			const el = document.body.querySelector('[role="dialog"]');
+			expect(el).not.toBeNull();
+			return el!;
+		});
+		expect(dialog.textContent).toContain('5');
+		expect(dialog.textContent).toContain('24');
+		expect(dialog.textContent).toContain('105');
+
+		const modalBtns = [...dialog.querySelectorAll<HTMLButtonElement>('footer button, .modal-footer button')];
+		const swapConfirmAwg = modalBtns.at(-1);
+		expect(swapConfirmAwg).toBeDefined();
+		expect(swapConfirmAwg!.disabled).toBe(false);
+
+		// Close modal, switch scanner protocol to WireGuard, and re-open swap modal.
+		const cancelBtn = modalBtns[0];
+		expect(cancelBtn).toBeDefined();
+		await fireEvent.click(cancelBtn);
+		await waitFor(() => expect(document.body.querySelector('[role="dialog"]')).toBeNull());
+
+		const wgBtn = [...view.container.querySelectorAll<HTMLButtonElement>('.proto-seg button')].find(
+			(b) => b.textContent?.trim() === 'WireGuard',
+		);
+		expect(wgBtn).toBeDefined();
+		await fireEvent.click(wgBtn!);
+
+		await fireEvent.click(swapRowBtn!);
+		const wgDialog = await waitFor(() => {
+			const el = document.body.querySelector('[role="dialog"]');
+			expect(el).not.toBeNull();
+			return el!;
+		});
+		const wgSwapConfirm = [
+			...wgDialog.querySelectorAll<HTMLButtonElement>('footer button, .modal-footer button'),
+		].at(-1);
+		expect(wgSwapConfirm).toBeDefined();
+		expect(wgSwapConfirm!.disabled).toBe(true);
+		expect(wgDialog.textContent).toContain('WireGuard');
 	});
 });

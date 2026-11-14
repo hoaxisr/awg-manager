@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
@@ -758,8 +760,9 @@ func sanitizeConfName(name string) string {
 	return b.String()
 }
 
-// SwapEndpoint — горячая подмена endpoint без пересоздания интерфейса.
-func (o *WarpTunnelOps) SwapEndpoint(ctx context.Context, mode warpscout.TargetMode, id, endpoint string) error {
+// SwapEndpoint — горячая подмена endpoint; при заданном opts.Protocol также
+// синхронизирует обфускацию туннеля и при её изменении перезапускает активный туннель.
+func (o *WarpTunnelOps) SwapEndpoint(ctx context.Context, mode warpscout.TargetMode, id, endpoint string, opts warpscout.SwapOptions) error {
 	ref, err := o.Get(ctx, mode, id)
 	if err != nil {
 		return err
@@ -772,19 +775,9 @@ func (o *WarpTunnelOps) SwapEndpoint(ctx context.Context, mode warpscout.TargetM
 	}
 	switch mode {
 	case warpscout.TargetKernel, warpscout.TargetNative:
-		return o.swapManaged(ctx, id, endpoint)
+		return o.swapManaged(ctx, id, endpoint, opts)
 	case warpscout.TargetSystem:
-		if o.Commands == nil || o.Commands.Wireguard == nil || o.Queries == nil || o.Queries.Interfaces == nil {
-			return errors.New("NDMS недоступен")
-		}
-		iface, _, present, err := o.Queries.Interfaces.Confirm(ctx, id)
-		if err != nil {
-			return err
-		}
-		if !present {
-			return fmt.Errorf("интерфейс %s не найден в NDMS", id)
-		}
-		return o.Commands.Wireguard.SetPeerEndpoint(ctx, iface, ref.PeerPublicKey, endpoint)
+		return o.swapSystem(ctx, id, ref, endpoint, opts)
 	}
 	return fmt.Errorf("неизвестный тип туннеля %q", mode)
 }
@@ -843,21 +836,44 @@ func (o *WarpTunnelOps) Rename(ctx context.Context, mode warpscout.TargetMode, i
 	return fmt.Errorf("неизвестный тип туннеля %q", mode)
 }
 
-// swapManaged — штатная правка карточки (TunnelsHandler.EditTunnelWith) с
-// одним изменённым полем: она проверяет замок и endpoint, применяет diff к
-// живому интерфейсу под замком оркестратора, пишет запись транзакцией стора
-// и публикует список.
+func desiredWarpObfuscation(base storage.AWGObfuscation, opts warpscout.SwapOptions) storage.AWGObfuscation {
+	if opts.Protocol == "" {
+		return base
+	}
+	if opts.Protocol == warpscout.ProtocolWG {
+		return storage.AWGObfuscation{}
+	}
+	return storage.AWGObfuscation{
+		Jc:   opts.AWG.Jc,
+		Jmin: opts.AWG.Jmin,
+		Jmax: opts.AWG.Jmax,
+		S1:   0, S2: 0, S3: 0, S4: 0,
+		H1: "1", H2: "2", H3: "3", H4: "4",
+		I1: strings.TrimSpace(opts.AWG.I1),
+		I2: strings.TrimSpace(opts.AWG.I2),
+		I3: strings.TrimSpace(opts.AWG.I3),
+		I4: strings.TrimSpace(opts.AWG.I4),
+		I5: strings.TrimSpace(opts.AWG.I5),
+	}
+}
+
+// swapManaged — штатная правка карточки (TunnelsHandler.EditTunnelWith):
+// она проверяет замок и параметры, применяет diff к живому интерфейсу под
+// замком оркестратора, пишет запись транзакцией стора и публикует список.
 //
-// Две тонкости живого переключения под ТСПУ:
+// Три тонкости живого переключения:
 //  1. `awg setconf` не трогает `listen-port`, если поле опущено в .conf, и
 //     kernel-туннель продолжает слать рукопожатия со старого UDP-порта. Если
-//     ТСПУ заблокировал поток по `(src_ip, sport)`, все новые endpoint'ы будут
-//     молча терять пакеты, пока не сменится исходный порт (`listen-port 0`).
+//     фильтр на маршруте заблокировал поток по `(src_ip, sport)`, все новые
+//     endpoint'ы будут терять пакеты, пока не сменится исходный порт (`listen-port 0`).
 //  2. Kernel-туннель без линка (`StateStarting` / `StateBroken`) правка в
 //     живой интерфейс не синхронизирует (`shouldSyncRuntime`: только Running),
-//     поэтому такой включённый туннель перезапускается. NativeWG в этих
-//     состояниях синхронизируется самой правкой — перезапуск ему не нужен.
-func (o *WarpTunnelOps) swapManaged(ctx context.Context, id, endpoint string) error {
+//     поэтому такой включённый туннель перезапускается. NativeWG при смене
+//     только endpoint синхронизируется самой правкой — перезапуск ему не нужен.
+//  3. При изменении параметров обфускации AWG (или переходе на штатный WG)
+//     активный туннель (`kernel` или `nativewg`) перезапускается через `svc.Restart`,
+//     чтобы новые параметры ASC / kmod и свежая сессия вступили в силу целиком.
+func (o *WarpTunnelOps) swapManaged(ctx context.Context, id, endpoint string, opts warpscout.SwapOptions) error {
 	if o.Svc == nil || o.Store == nil || o.Tunnels == nil {
 		return errors.New("сервис туннелей недоступен")
 	}
@@ -865,38 +881,189 @@ func (o *WarpTunnelOps) swapManaged(ctx context.Context, id, endpoint string) er
 	if err != nil {
 		return fmt.Errorf("туннель %s не найден", id)
 	}
+	if opts.Protocol == warpscout.ProtocolWG && existing.Backend == "nativewg" {
+		return fmt.Errorf("%w: тип Native WG требует протокол AmneziaWG — выберите протокол AmneziaWG или тип «Системный»", warpscout.ErrInvalidInput)
+	}
 	tw, _ := o.Svc.Get(ctx, id)
+	desiredObf := desiredWarpObfuscation(existing.Interface.AWGObfuscation, opts)
+	epChanged := existing.Peer.Endpoint != endpoint
+	obfChanged := existing.Interface.AWGObfuscation != desiredObf
 
-	if existing.Peer.Endpoint != endpoint {
+	if epChanged || obfChanged {
 		if _, err := o.Tunnels.EditTunnelWith(ctx, id, func(cur storage.AWGTunnel) (storage.AWGTunnel, error) {
 			peer := cur.Peer
 			peer.Endpoint = endpoint
+			curDesired := desiredWarpObfuscation(cur.Interface.AWGObfuscation, opts)
+			if cur.Interface.AWGObfuscation != curDesired {
+				iface := cur.Interface
+				iface.AWGObfuscation = curDesired
+				return storage.AWGTunnel{Interface: iface, Peer: peer}, nil
+			}
 			return storage.AWGTunnel{Peer: peer}, nil
 		}); err != nil {
 			return err
 		}
 	}
 
-	if existing.Backend == "nativewg" || tw == nil {
+	if tw == nil {
 		return nil
 	}
-	switch tw.State {
-	case tunnel.StateStarting, tunnel.StateBroken:
+	needRestart := (obfChanged && tw.State != tunnel.StateStopped) ||
+		(existing.Backend != "nativewg" && (tw.State == tunnel.StateStarting || tw.State == tunnel.StateBroken))
+	if needRestart {
 		// Рестарт безусловно включает туннель: если его успели остановить
 		// руками, пока шла правка, — не поднимаем обратно.
 		if cur, err := o.Store.Get(id); err != nil || !cur.Enabled {
 			return nil
 		}
 		if err := o.Svc.Restart(ctx, id); err != nil {
+			if obfChanged {
+				return fmt.Errorf("перезапуск туннеля для применения маскировки: %w", err)
+			}
 			return fmt.Errorf("перезапуск зависшего туннеля: %w", err)
 		}
 		o.Tunnels.publishTunnelList(ctx)
-	case tunnel.StateRunning:
+		return nil
+	}
+	if existing.Backend != "nativewg" && tw.State == tunnel.StateRunning {
 		iface := tw.InterfaceName
 		if iface == "" {
 			iface = tunnel.NewNames(id).IfaceName
 		}
 		o.rotateKernelPort(ctx, iface)
+	}
+	return nil
+}
+
+func splitASCField(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return ""
+	}
+	out, _ := signature.SplitOversizedTags(trimmed)
+	return out
+}
+
+func ascParamsHasObfuscation(a ndms.ASCParamsExtended) bool {
+	return a.Jc != 0 || a.Jmin != 0 || a.Jmax != 0 ||
+		a.S1 != 0 || a.S2 != 0 || a.S3 != 0 || a.S4 != 0 ||
+		(a.H1 != "" && a.H1 != "1" && a.H1 != "0") ||
+		(a.H2 != "" && a.H2 != "2" && a.H2 != "0") ||
+		(a.H3 != "" && a.H3 != "3" && a.H3 != "0") ||
+		(a.H4 != "" && a.H4 != "4" && a.H4 != "0") ||
+		strings.TrimSpace(a.I1) != "" || strings.TrimSpace(a.I2) != "" ||
+		strings.TrimSpace(a.I3) != "" || strings.TrimSpace(a.I4) != "" ||
+		strings.TrimSpace(a.I5) != ""
+}
+
+func ascParamsEqual(a, b ndms.ASCParamsExtended) bool {
+	return a.Jc == b.Jc && a.Jmin == b.Jmin && a.Jmax == b.Jmax &&
+		a.S1 == b.S1 && a.S2 == b.S2 && a.S3 == b.S3 && a.S4 == b.S4 &&
+		strings.TrimSpace(a.H1) == strings.TrimSpace(b.H1) &&
+		strings.TrimSpace(a.H2) == strings.TrimSpace(b.H2) &&
+		strings.TrimSpace(a.H3) == strings.TrimSpace(b.H3) &&
+		strings.TrimSpace(a.H4) == strings.TrimSpace(b.H4) &&
+		splitASCField(a.I1) == splitASCField(b.I1) &&
+		splitASCField(a.I2) == splitASCField(b.I2) &&
+		splitASCField(a.I3) == splitASCField(b.I3) &&
+		splitASCField(a.I4) == splitASCField(b.I4) &&
+		splitASCField(a.I5) == splitASCField(b.I5)
+}
+
+func (o *WarpTunnelOps) swapSystem(ctx context.Context, id string, ref *warpscout.TunnelRef, endpoint string, opts warpscout.SwapOptions) error {
+	if o.Commands == nil || o.Commands.Wireguard == nil || o.Queries == nil || o.Queries.Interfaces == nil {
+		return errors.New("NDMS недоступен")
+	}
+	iface, _, present, err := o.Queries.Interfaces.Confirm(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return fmt.Errorf("интерфейс %s не найден в NDMS", id)
+	}
+	if opts.Protocol == "" {
+		return o.Commands.Wireguard.SetPeerEndpoint(ctx, iface, ref.PeerPublicKey, endpoint)
+	}
+
+	var curASC ndms.ASCParamsExtended
+	haveCur := false
+	if o.System != nil {
+		if curRaw, err := o.System.GetASCParams(ctx, id); err == nil && len(curRaw) > 0 {
+			if json.Unmarshal(curRaw, &curASC) == nil {
+				haveCur = true
+			}
+		}
+	}
+
+	var ascChanged bool
+	var desiredRaw json.RawMessage
+	if opts.Protocol == warpscout.ProtocolWG {
+		ascChanged = !haveCur || ascParamsHasObfuscation(curASC)
+	} else {
+		desired := ndms.ASCParamsExtended{
+			ASCParams: ndms.ASCParams{
+				Jc:   opts.AWG.Jc,
+				Jmin: opts.AWG.Jmin,
+				Jmax: opts.AWG.Jmax,
+				S1:   0, S2: 0,
+				H1: "1", H2: "2", H3: "3", H4: "4",
+			},
+			S3: 0, S4: 0,
+			I1: strings.TrimSpace(opts.AWG.I1),
+			I2: strings.TrimSpace(opts.AWG.I2),
+			I3: strings.TrimSpace(opts.AWG.I3),
+			I4: strings.TrimSpace(opts.AWG.I4),
+			I5: strings.TrimSpace(opts.AWG.I5),
+		}
+		ascChanged = !haveCur || !ascParamsEqual(curASC, desired)
+		if ascChanged {
+			var buf bytes.Buffer
+			enc := json.NewEncoder(&buf)
+			enc.SetEscapeHTML(false)
+			if err := enc.Encode(desired); err != nil {
+				return fmt.Errorf("кодирование ASC параметров: %w", err)
+			}
+			desiredRaw = json.RawMessage(bytes.TrimSpace(buf.Bytes()))
+		}
+	}
+
+	if !ascChanged {
+		return o.Commands.Wireguard.SetPeerEndpoint(ctx, iface, ref.PeerPublicKey, endpoint)
+	}
+
+	bounced := false
+	if ref.Running && o.Commands.Interfaces != nil {
+		if err := o.Commands.Interfaces.InterfaceDown(ctx, iface); err != nil {
+			return fmt.Errorf("остановка интерфейса %s перед сменой маскировки: %w", id, err)
+		}
+		bounced = true
+	}
+
+	var applyErr error
+	if opts.Protocol == warpscout.ProtocolWG {
+		applyErr = o.Commands.Wireguard.ResetASCParams(ctx, iface)
+	} else if o.System != nil {
+		applyErr = o.System.SetASCParams(ctx, id, desiredRaw)
+	} else {
+		applyErr = o.Commands.Wireguard.SetASCParams(ctx, iface, desiredRaw)
+	}
+	if applyErr == nil {
+		applyErr = o.Commands.Wireguard.SetPeerEndpoint(ctx, iface, ref.PeerPublicKey, endpoint)
+	}
+
+	if bounced {
+		if upErr := o.Commands.Interfaces.InterfaceUp(ctx, iface); upErr != nil {
+			if applyErr != nil {
+				return fmt.Errorf("%v (и возврат интерфейса %s: %w)", applyErr, id, upErr)
+			}
+			return fmt.Errorf("запуск интерфейса %s после смены маскировки: %w", id, upErr)
+		}
+	}
+	if applyErr != nil {
+		return applyErr
+	}
+	if o.Tunnels != nil {
+		o.Tunnels.publishTunnelList(ctx)
 	}
 	return nil
 }

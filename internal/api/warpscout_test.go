@@ -158,7 +158,7 @@ func TestWarpOps_SwapManagedRestartsOnlyStalledKernel(t *testing.T) {
 	seedWarpTunnel(t, store, "awg12", "kernel")
 	seedWarpTunnel(t, store, "awg50", "nativewg")
 
-	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002"); err != nil {
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002", warpscout.SwapOptions{}); err != nil {
 		t.Fatalf("SwapEndpoint kernel: %v", err)
 	}
 	if len(*rotated) != 1 || (*rotated)[0] != "if-awg11" || svc.restartCalls != 0 {
@@ -172,14 +172,14 @@ func TestWarpOps_SwapManagedRestartsOnlyStalledKernel(t *testing.T) {
 	if err != nil || !ref50.Running {
 		t.Fatalf("включённый NativeWG в StateBroken должен считаться активной целью: %+v (%v)", ref50, err)
 	}
-	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.193:891"); err != nil {
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.193:891", warpscout.SwapOptions{}); err != nil {
 		t.Fatalf("SwapEndpoint native: %v", err)
 	}
 	if svc.restartCalls != 0 || len(*rotated) != 1 {
 		t.Fatalf("NativeWG: ни рестарта, ни ротации kernel-порта, получили restarts=%d rotated=%v", svc.restartCalls, *rotated)
 	}
 
-	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg12", "162.159.192.193:891"); err != nil {
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg12", "162.159.192.193:891", warpscout.SwapOptions{}); err != nil {
 		t.Fatalf("SwapEndpoint stalled kernel: %v", err)
 	}
 	if svc.restartCalls != 1 || len(*rotated) != 1 {
@@ -194,7 +194,7 @@ func TestWarpOps_SwapManagedSkipsRestartOfDisabledTunnel(t *testing.T) {
 	svc.updateFn = func(context.Context, *storage.AWGTunnel, *storage.AWGTunnel) error {
 		return store.Update("awg12", func(t *storage.AWGTunnel) error { t.Enabled = false; return nil })
 	}
-	if err := ops.SwapEndpoint(context.Background(), warpscout.TargetKernel, "awg12", "162.159.192.193:891"); err != nil {
+	if err := ops.SwapEndpoint(context.Background(), warpscout.TargetKernel, "awg12", "162.159.192.193:891", warpscout.SwapOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if svc.restartCalls != 0 {
@@ -214,7 +214,7 @@ func TestWarpOps_SwapManagedKeepsForeignFields(t *testing.T) {
 			return nil
 		})
 	}
-	if err := ops.SwapEndpoint(context.Background(), warpscout.TargetKernel, "awg11", "162.159.192.198:1002"); err != nil {
+	if err := ops.SwapEndpoint(context.Background(), warpscout.TargetKernel, "awg11", "162.159.192.198:1002", warpscout.SwapOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := store.Get("awg11")
@@ -234,7 +234,7 @@ func TestWarpOps_SwapManagedRefusals(t *testing.T) {
 	updates := 0
 	svc.updateFn = func(context.Context, *storage.AWGTunnel, *storage.AWGTunnel) error { updates++; return nil }
 
-	err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "1.1.1.1:2408\nJc = 1")
+	err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "1.1.1.1:2408\nJc = 1", warpscout.SwapOptions{})
 	var editErr *TunnelEditError
 	if !errors.As(err, &editErr) || editErr.Code != "INVALID_ENDPOINT" || updates != 0 {
 		t.Fatalf("endpoint с переводом строки должен отвергаться до правки: err=%v updates=%d", err, updates)
@@ -246,7 +246,7 @@ func TestWarpOps_SwapManagedRefusals(t *testing.T) {
 	svc.updateFn = func(context.Context, *storage.AWGTunnel, *storage.AWGTunnel) error {
 		return tunnel.ErrOperationInProgress
 	}
-	err = ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002")
+	err = ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002", warpscout.SwapOptions{})
 	if !errors.As(err, &editErr) || editErr.Code != "OPERATION_IN_PROGRESS" {
 		t.Fatalf("занятый туннель — конфликт штатной правки: %v", err)
 	}
@@ -702,5 +702,139 @@ func TestWarpScoutHandler_ClearHistory(t *testing.T) {
 	}
 	if got := svc.State().History; len(got) != 0 {
 		t.Fatalf("expected empty history after ClearHistory, got %d", len(got))
+	}
+}
+
+func TestWarpOps_SwapManaged_UpdatesObfuscationAndRestartsActiveTunnel(t *testing.T) {
+	ctx := context.Background()
+	ops, svc, store, rotated := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg11": tunnel.StateRunning,
+		"awg50": tunnel.StateRunning,
+		"awg12": tunnel.StateStopped,
+	})
+	initObf := storage.AWGObfuscation{
+		Jc: 4, Jmin: 40, Jmax: 70, H1: "1", H2: "2", H3: "3", H4: "4", I1: "<b 0x01>",
+	}
+	for _, tc := range []struct {
+		id, backend string
+		enabled     bool
+	}{
+		{"awg11", "kernel", true},
+		{"awg50", "nativewg", true},
+		{"awg12", "kernel", false},
+	} {
+		seedWarpTunnel(t, store, tc.id, tc.backend)
+		if err := store.Update(tc.id, func(tun *storage.AWGTunnel) error {
+			tun.Enabled = tc.enabled
+			tun.Interface.AWGObfuscation = initObf
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var updatedObfs []storage.AWGObfuscation
+	svc.updateFn = func(_ context.Context, _, newStored *storage.AWGTunnel) error {
+		updatedObfs = append(updatedObfs, newStored.Interface.AWGObfuscation)
+		return nil
+	}
+
+	nextOpts := warpscout.SwapOptions{
+		Protocol: warpscout.ProtocolAWG,
+		AWG: warpscout.AWGParams{
+			Jc: 8, Jmin: 20, Jmax: 90,
+			SignatureProfile: warpscout.SignatureCustom,
+			I1:               "<b 0xaa>",
+		},
+	}
+
+	// Kernel: смена обфускации сохраняется через EditTunnelWith и перезапускает активный туннель без отдельной ротации.
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002", nextOpts); err != nil {
+		t.Fatalf("SwapEndpoint kernel obf change: %v", err)
+	}
+	got11, _ := store.Get("awg11")
+	if got11.Interface.AWGObfuscation.Jc != 8 || got11.Interface.AWGObfuscation.I1 != "<b 0xaa>" ||
+		got11.Interface.AWGObfuscation.H1 != "1" || got11.Interface.AWGObfuscation.H4 != "4" {
+		t.Fatalf("обфускация awg11 не обновилась: %+v", got11.Interface.AWGObfuscation)
+	}
+	if len(updatedObfs) != 1 || updatedObfs[0].Jc != 8 {
+		t.Fatalf("Svc.Update не получил новую обфускацию: %+v", updatedObfs)
+	}
+	if svc.restartCalls != 1 || len(*rotated) != 0 {
+		t.Fatalf("при смене маскировки активный kernel должен перезапускаться без ротации: restarts=%d rotated=%v", svc.restartCalls, *rotated)
+	}
+
+	// Повторная подмена с той же обфускацией: рестарта нет, только ротация UDP-порта.
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.199:1002", nextOpts); err != nil {
+		t.Fatalf("SwapEndpoint kernel same obf: %v", err)
+	}
+	if svc.restartCalls != 1 || len(*rotated) != 1 || (*rotated)[0] != "if-awg11" {
+		t.Fatalf("повторная подмена kernel с той же обфускацией должна только ротировать порт: restarts=%d rotated=%v", svc.restartCalls, *rotated)
+	}
+
+	// NativeWG: смена обфускации тоже перезапускает активный туннель, повтор без изменений — без рестарта.
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.201:1002", nextOpts); err != nil {
+		t.Fatalf("SwapEndpoint native obf change: %v", err)
+	}
+	got50, _ := store.Get("awg50")
+	if got50.Interface.AWGObfuscation.Jc != 8 || got50.Interface.AWGObfuscation.I1 != "<b 0xaa>" {
+		t.Fatalf("обфускация awg50 не обновилась: %+v", got50.Interface.AWGObfuscation)
+	}
+	if svc.restartCalls != 2 {
+		t.Fatalf("при смене маскировки NativeWG должен перезапускаться: restarts=%d", svc.restartCalls)
+	}
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.202:1002", nextOpts); err != nil {
+		t.Fatalf("SwapEndpoint native same obf: %v", err)
+	}
+	if svc.restartCalls != 2 {
+		t.Fatalf("повторная подмена NativeWG с той же обфускацией не должна перезапускать: restarts=%d", svc.restartCalls)
+	}
+
+	// Выключенный туннель: обновляет стор, но не запускается автоматически.
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg12", "162.159.192.203:1002", nextOpts); err != nil {
+		t.Fatalf("SwapEndpoint stopped: %v", err)
+	}
+	got12, _ := store.Get("awg12")
+	if got12.Interface.AWGObfuscation.Jc != 8 || svc.restartCalls != 2 {
+		t.Fatalf("остановленный туннель должен обновить стор без Restart: obf=%+v restarts=%d", got12.Interface.AWGObfuscation, svc.restartCalls)
+	}
+}
+
+func TestWarpOps_SwapManaged_ProtocolWGClearsKernelAndRejectsNative(t *testing.T) {
+	ctx := context.Background()
+	ops, svc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg11": tunnel.StateRunning,
+		"awg50": tunnel.StateRunning,
+	})
+	initObf := storage.AWGObfuscation{Jc: 5, Jmin: 10, Jmax: 50, H1: "1", H2: "2", H3: "3", H4: "4", I1: "<b 0x11>"}
+	for _, tc := range []struct{ id, backend string }{
+		{"awg11", "kernel"},
+		{"awg50", "nativewg"},
+	} {
+		seedWarpTunnel(t, store, tc.id, tc.backend)
+		if err := store.Update(tc.id, func(tun *storage.AWGTunnel) error {
+			tun.Interface.AWGObfuscation = initObf
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.198:1002", warpscout.SwapOptions{Protocol: warpscout.ProtocolWG}); err != nil {
+		t.Fatalf("SwapEndpoint kernel wg: %v", err)
+	}
+	got11, _ := store.Get("awg11")
+	if got11.Interface.AWGObfuscation != (storage.AWGObfuscation{}) {
+		t.Fatalf("protocol=wg должен очищать обфускацию kernel-туннеля: %+v", got11.Interface.AWGObfuscation)
+	}
+	if svc.restartCalls != 1 {
+		t.Fatalf("сброс маскировки должен перезапускать активный kernel-туннель: restarts=%d", svc.restartCalls)
+	}
+
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.198:1002", warpscout.SwapOptions{Protocol: warpscout.ProtocolWG}); !errors.Is(err, warpscout.ErrInvalidInput) {
+		t.Fatalf("ожидалась ErrInvalidInput для NativeWG + wg, получили %v", err)
+	}
+	if svc.restartCalls != 1 {
+		t.Fatalf("отклонённый swap NativeWG + wg не должен перезапускать: restarts=%d", svc.restartCalls)
 	}
 }
