@@ -1,4 +1,4 @@
-# awgmautolist 0.10.0-1
+# awgmautolist
 
 Отдельный демон для Keenetic/Entware. AF_PACKET наблюдает реальные LAN-потоки,
 проверяет существующее покрытие и исключения, выполняет direct/WAN/tunnel-пробы

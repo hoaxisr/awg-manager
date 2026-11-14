@@ -1,4 +1,6 @@
-// Package buildinfo contains the single product and package version.
+// Package buildinfo contains the product and package version.
 package buildinfo
 
-const Version = "0.10.0-1"
+// Version is set by build-ipk.sh via ldflags to the package version, which
+// equals the awg-manager version.
+var Version = "dev"

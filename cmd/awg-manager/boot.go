@@ -122,6 +122,7 @@ func (a *app) startBootSequence() {
 	if err := iproute2.Check(context.Background()); err != nil {
 		a.bootLog.Error("startup", "", err.Error())
 	}
+	go a.upgradeAutolist()
 	const bootDetectionMax = 300 // 5 minutes
 	isBoot := (a.uptime > 0 && a.uptime < bootDetectionMax) || a.forceBoot
 	if isBoot {
@@ -361,6 +362,19 @@ func (a *app) startBootSequence() {
 		go a.proxyRuntimeNudge("daemon-restart", proxyrt.EventBoot)
 	}
 
+}
+
+// upgradeAutolist brings an installed satellite up to the panel version:
+// opkg upgrades only the panel package, the satellite is a separate one.
+func (a *app) upgradeAutolist() {
+	from, err := a.autolistService.AutoUpgrade(a.shutdownCtx)
+	switch {
+	case from == "":
+	case err != nil:
+		a.bootLog.Warn("autolist-upgrade", "", fmt.Sprintf("сателлит %s не обновлён до %s: %v", from, version, err))
+	default:
+		a.bootLog.Info("autolist-upgrade", "", fmt.Sprintf("сателлит обновлён: %s → %s", from, version))
+	}
 }
 
 // serve installs signal handlers and runs the HTTP server until shutdown.

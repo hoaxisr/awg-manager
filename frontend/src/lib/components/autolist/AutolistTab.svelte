@@ -138,15 +138,16 @@
 
 	// ── Lifecycle: install / enable / disable ────────────────────────────
 
-	async function installSatellite() {
+	// Установленный пакет тот же вызов обновляет на месте (opkg install).
+	async function installSatellite(upgrade = false) {
 		if (lifecycleBusy) return;
 		lifecycleBusy = true;
 		try {
 			await api.installAutolist();
-			notifications.success(m.autolist_install_ok());
+			notifications.success(upgrade ? m.autolist_update_ok() : m.autolist_install_ok());
 			autolistStatus.invalidate();
 		} catch (e) {
-			notifications.error(errorMessage(e, m.autolist_install_err()));
+			notifications.error(errorMessage(e, upgrade ? m.autolist_update_err() : m.autolist_install_err()));
 		} finally {
 			lifecycleBusy = false;
 		}
@@ -836,6 +837,16 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if status?.installed && status.updateAvailable}
+		<div class="card p-4 flex items-center gap-3 flex-wrap">
+			<CircleAlert size={18} class="text-warning" aria-hidden="true" />
+			<span class="text-sm flex-1">{m.autolist_update_available({ version: status.packageVersion ?? '' })}</span>
+			<Button variant="primary" size="sm" onclick={() => void installSatellite(true)} loading={lifecycleBusy}>
+				{m.autolist_update()}
+			</Button>
+		</div>
+	{/if}
 
 	{#if loading}
 		<div class="card p-6 text-sm opacity-60">…</div>

@@ -124,6 +124,22 @@ describe('AutolistTab — lifecycle', () => {
 		});
 	});
 
+	it('offers an update for an outdated package and hides it once updated', async () => {
+		const outdated: AutolistStatus = { ...runningStatus, packageVersion: '2.20.1', updateAvailable: true };
+		const statusSpy = vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(outdated);
+		const install = vi.spyOn(api, 'installAutolist').mockImplementation(async () => {
+			statusSpy.mockResolvedValue(runningStatus);
+			return runningStatus;
+		});
+
+		render(AutolistTab);
+		await screen.findByText(m.autolist_update_available({ version: '2.20.1' }));
+		await fireEvent.click(screen.getByRole('button', { name: m.autolist_update() }));
+
+		expect(install).toHaveBeenCalledOnce();
+		await vi.waitFor(() => expect(screen.queryByRole('button', { name: m.autolist_update() })).toBeNull());
+	});
+
 	it('offers enable for an installed-but-disabled satellite', async () => {
 		vi.spyOn(api, 'getAutolistStatus')
 			.mockResolvedValueOnce({ ...runningStatus, running: false, enabled: false })

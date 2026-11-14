@@ -2919,12 +2919,14 @@ const autolistdetect_Status: v.GenericSchema = v.looseObject({
 	installed: v.optional(v.nullable(v.boolean())),
 	lastError: v.optional(v.nullable(v.string())),
 	lastWAN: v.optional(v.nullable(v.lazy(() => autolistdetect_CheckEvidence))),
+	packageVersion: v.optional(v.nullable(v.string())),
 	protocols: v.optional(v.nullable(v.array(v.string()))),
 	queuedChecks: v.optional(v.nullable(v.number())),
 	resolveVia: v.optional(v.nullable(v.string())),
 	running: v.optional(v.nullable(v.boolean())),
 	targetInterface: v.optional(v.nullable(v.string())),
 	targetOutbound: v.optional(v.nullable(v.string())),
+	updateAvailable: v.optional(v.nullable(v.boolean())),
 	version: v.optional(v.nullable(v.string())),
 });
 

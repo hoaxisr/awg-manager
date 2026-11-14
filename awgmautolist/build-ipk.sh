@@ -6,7 +6,9 @@ export COPYFILE_DISABLE=1
 MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$MODULE_DIR/.." && pwd)"
 OUTDIR="${OUTDIR:-$PROJECT_ROOT/dist}"
-VERSION="$(sed -n 's/^[[:space:]]*const Version = "\([^"]*\)".*/\1/p' "$MODULE_DIR/internal/buildinfo/version.go" | head -n 1)"
+# Satellite ships with the panel version: opkg upgrades only to a higher
+# version, and the satellite/panel API pair is released together.
+VERSION="${VERSION:-$(cat "$PROJECT_ROOT/VERSION" 2>/dev/null)}"
 TARGET="${1:-all}"
 if [[ ! "$VERSION" =~ ^[A-Za-z0-9.+_:-]+$ ]]; then
     echo "ERROR: invalid or missing version" >&2
@@ -40,10 +42,10 @@ for PKG_ARCH in "${ARCHES[@]}"; do
     mkdir -p "$PKG_ROOT/CONTROL" "$PKG_ROOT/opt/bin" "$PKG_ROOT/opt/etc/init.d"
     if [[ "$GOARCH" == arm64 ]]; then
         GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -C "$MODULE_DIR" -mod=vendor -trimpath \
-            -ldflags="-s -w" -o "$PKG_ROOT/opt/bin/awgmautolist" ./cmd/awgmautolist
+            -ldflags="-s -w -X github.com/hoaxisr/awg-manager/awgmautolist/internal/buildinfo.Version=$VERSION" -o "$PKG_ROOT/opt/bin/awgmautolist" ./cmd/awgmautolist
     else
         GOOS=linux GOARCH="$GOARCH" GOMIPS=softfloat CGO_ENABLED=0 go build -C "$MODULE_DIR" -mod=vendor -trimpath \
-            -ldflags="-s -w" -o "$PKG_ROOT/opt/bin/awgmautolist" ./cmd/awgmautolist
+            -ldflags="-s -w -X github.com/hoaxisr/awg-manager/awgmautolist/internal/buildinfo.Version=$VERSION" -o "$PKG_ROOT/opt/bin/awgmautolist" ./cmd/awgmautolist
     fi
     cp "$MODULE_DIR/entware/S99awgmautolist" "$PKG_ROOT/opt/etc/init.d/S99awgmautolist"
     cp "$MODULE_DIR/ipk/CONTROL/postinst" "$MODULE_DIR/ipk/CONTROL/prerm" "$MODULE_DIR/ipk/CONTROL/postrm" "$PKG_ROOT/CONTROL/"

@@ -128,6 +128,10 @@ export interface AutolistStatus {
 	installed: boolean;
 	/** Пользовательское намерение запускать сателлит, в том числе после reboot. */
 	enabled: boolean;
+	/** Версия установленного opkg-пакета. */
+	packageVersion?: string;
+	/** Пакет старше панели: сателлит выпускается с её версией. */
+	updateAvailable?: boolean;
 	/** AF_PACKET принимает пакеты. */
 	captureActive: boolean;
 	/** Захват на паузе из-за недоступного WAN (периодический WAN-check включён). */
