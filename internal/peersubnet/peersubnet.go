@@ -50,6 +50,31 @@ func ValidateClientAllowedIPs(s string) (string, error) {
 	return strings.Join(out, ", "), nil
 }
 
+// ClientAddress — строка Address клиентского .conf. Клиенту с IPv6 в
+// AllowedIPs (пустое поле = DefaultClientAllowedIPs) и без своего IPv6-адреса
+// дописывается ULA /128, выведенный из его IPv4: без IPv6-адреса на
+// интерфейсе Android не заворачивает IPv6 в VPN, и тот уходит через оператора
+// мимо туннеля (#1209). Сервер такой адрес не знает и пакеты с него
+// отбрасывает — IPv6 у клиента глохнет, а не течёт.
+func ClientAddress(tunnelIP, allowedIPs string) string {
+	if allowedIPs == "" {
+		allowedIPs = DefaultClientAllowedIPs
+	}
+	if !strings.Contains(allowedIPs, ":") || strings.Contains(tunnelIP, ":") {
+		return tunnelIP
+	}
+	first, _, _ := strings.Cut(tunnelIP, ",")
+	host, _, _ := strings.Cut(strings.TrimSpace(first), "/")
+	v4 := net.ParseIP(host).To4()
+	if v4 == nil {
+		return tunnelIP
+	}
+	ula := make(net.IP, net.IPv6len)
+	ula[0] = 0xfd
+	copy(ula[12:], v4)
+	return tunnelIP + ", " + ula.String() + "/128"
+}
+
 // Occupied — занятая сеть с меткой для текста ошибки («LAN Home»,
 // «пир «office» сервера Wireguard0»).
 type Occupied struct {

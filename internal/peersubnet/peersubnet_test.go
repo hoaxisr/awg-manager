@@ -212,3 +212,17 @@ func strs(nets []*net.IPNet) []string {
 	}
 	return out
 }
+
+func TestClientAddress(t *testing.T) {
+	for _, c := range []struct{ ip, allowed, want string }{
+		{"10.10.0.3/32", "", "10.10.0.3/32, fd00::a0a:3/128"},
+		{"10.10.0.3/32", "0.0.0.0/0, ::/0", "10.10.0.3/32, fd00::a0a:3/128"},
+		{"10.10.0.3/32", "10.10.0.0/24", "10.10.0.3/32"},               // IPv6 в туннель не просили
+		{"10.10.0.3/32, fd12::3/128", "", "10.10.0.3/32, fd12::3/128"}, // свой IPv6 уже есть
+		{"мусор", "", "мусор"},
+	} {
+		if got := ClientAddress(c.ip, c.allowed); got != c.want {
+			t.Errorf("ClientAddress(%q, %q) = %q, want %q", c.ip, c.allowed, got, c.want)
+		}
+	}
+}

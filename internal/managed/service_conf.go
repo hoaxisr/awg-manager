@@ -73,7 +73,7 @@ func (s *Service) GenerateConf(ctx context.Context, id, pubkey, endpointHost str
 
 	b.WriteString("[Interface]\n")
 	b.WriteString(fmt.Sprintf("PrivateKey = %s\n", peer.PrivateKey))
-	b.WriteString(fmt.Sprintf("Address = %s\n", peer.TunnelIP))
+	b.WriteString(fmt.Sprintf("Address = %s\n", peersubnet.ClientAddress(peer.TunnelIP, peer.ClientAllowedIPs)))
 	if dns != "" {
 		b.WriteString(fmt.Sprintf("DNS = %s\n", dns))
 	} else {
