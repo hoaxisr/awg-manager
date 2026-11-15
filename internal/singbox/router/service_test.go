@@ -825,6 +825,8 @@ func TestReconcile_WANIPsChanged_Reinstalls(t *testing.T) {
 		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"198.51.100.1/32"}}, // different
 		netfilterStateKnown: true,
 	}
+	rec := &recordingAppLogger{}
+	svc.appLog = logging.NewScopedLogger(rec, logging.GroupRouting, logging.SubSingboxRouter)
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
 		Enabled:       true,
 		PolicyName:    "Policy0",
@@ -837,6 +839,12 @@ func TestReconcile_WANIPsChanged_Reinstalls(t *testing.T) {
 	}
 	if !slices.Equal(svc.appliedSpec.WANIPs, []string{"203.0.113.207/32"}) {
 		t.Errorf("applied WANIPs not updated: %v", svc.appliedSpec.WANIPs)
+	}
+	// #1215: переустановка по смене адреса оставляет строку в журнале.
+	if !slices.ContainsFunc(rec.entries, func(e string) bool {
+		return strings.Contains(e, "198.51.100.1/32 → 203.0.113.207/32")
+	}) {
+		t.Errorf("нет строки о смене WAN-адреса в журнале: %v", rec.entries)
 	}
 }
 

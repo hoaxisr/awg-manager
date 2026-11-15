@@ -2308,6 +2308,14 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		if len(sr.BypassGeoIPTags) > 0 {
 			s.ensureBypassSetExists(ctx)
 		}
+		// Смена адреса роутера на WAN (#1215): без строки переустановка
+		// невидима в журнале, а именно она снимает устаревшие исключения.
+		var prevWAN []string
+		wanChanged := false
+		if s.appliedSpec != nil {
+			prevWAN = s.appliedSpec.WANIPs
+			wanChanged = !slices.Equal(prevWAN, want.WANIPs)
+		}
 		s.mu.Lock()
 		if err := s.deps.IPTables.Install(ctx, want); err != nil {
 			// См. F20: часть таблиц могла закоммититься — снимок неизвестен.
@@ -2319,6 +2327,10 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		s.currentBypassGeoIPTags = sr.BypassGeoIPTags
 		s.netfilterStateKnown = true
 		s.mu.Unlock()
+		if wanChanged {
+			s.appLog.Info("reconcile", "", fmt.Sprintf("адреса роутера на WAN сменились (%s → %s) — правила перехвата переустановлены",
+				strings.Join(prevWAN, ","), strings.Join(want.WANIPs, ",")))
+		}
 
 		// Правила установлены — набор селектива больше никем не занят.
 		s.destroyLegacySelectiveSetOnce(ctx)
