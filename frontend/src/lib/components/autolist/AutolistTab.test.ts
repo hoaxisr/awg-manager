@@ -7,7 +7,26 @@ import { locale } from '$lib/i18n';
 import { api } from '$lib/api/client';
 import { autolistStatus } from '$lib/stores/autolist';
 import { notifications } from '$lib/stores/notifications';
-import type { AutolistCandidate, AutolistConfig, AutolistStatus } from '$lib/types';
+import type {
+	AWGTagInfo,
+	AutolistCandidate,
+	AutolistConfig,
+	AutolistStatus,
+	RouterInterface,
+	SingboxTunnel,
+} from '$lib/types';
+
+/** Мок ответа GET /singbox/subscriptions — только то, что читает компонент. */
+function subscription(overrides: Partial<{ label: string; proxyIndex: number; enabled: boolean }> = {}) {
+	return {
+		id: 'sub-1',
+		label: 'Provider',
+		url: 'https://example.com/sub',
+		proxyIndex: 0,
+		enabled: true,
+		...overrides,
+	};
+}
 
 function candidate(overrides: Partial<AutolistCandidate> = {}): AutolistCandidate {
 	return {
@@ -66,6 +85,14 @@ const emptyResources = () => {
 	vi.spyOn(api, 'singboxRouterListDNSServers').mockResolvedValue([]);
 	vi.spyOn(api, 'singboxRouterGetDNSGlobals').mockResolvedValue({ final: 'dns-final', strategy: 'prefer_ipv4' });
 	vi.spyOn(api, 'singboxRouterListRuleSets').mockResolvedValue([]);
+	emptyTunnelCatalog();
+};
+
+/** Каталог туннелей пуст: сами источники задаёт тест. */
+const emptyTunnelCatalog = () => {
+	vi.spyOn(api, 'getAWGTags').mockResolvedValue([]);
+	vi.spyOn(api, 'singboxListTunnels').mockResolvedValue([]);
+	vi.spyOn(api, 'listSubscriptions').mockResolvedValue([]);
 };
 
 /** Только DNS-ресурсы пусты: список интерфейсов задаёт сам тест. */
@@ -73,12 +100,14 @@ const emptyDnsResources = () => {
 	vi.spyOn(api, 'singboxRouterListDNSServers').mockResolvedValue([]);
 	vi.spyOn(api, 'singboxRouterGetDNSGlobals').mockResolvedValue({ final: 'dns-final', strategy: 'prefer_ipv4' });
 	vi.spyOn(api, 'singboxRouterListRuleSets').mockResolvedValue([]);
+	emptyTunnelCatalog();
 };
 
 /** Только каталог интерфейсов пуст: DNS-серверы задаёт сам тест. */
 const emptyInterfaceResources = () => {
 	vi.spyOn(api, 'getAllInterfaces').mockResolvedValue([]);
 	vi.spyOn(api, 'singboxRouterListRuleSets').mockResolvedValue([]);
+	emptyTunnelCatalog();
 };
 
 /** Tab buttons carry a badge count in their accessible name — match by prefix. */
@@ -824,5 +853,116 @@ describe('AutolistTab — new settings strings follow the locale (ru/en)', () =>
 		expect(screen.getByText('All journal records will be deleted permanently. Candidates, rules and the additions budget are not touched.')).toBeTruthy();
 		// Обе кнопки (блок + подтверждение) перевелись.
 		expect(screen.getAllByRole('button', { name: 'Clear history' }).length).toBe(2);
+	});
+});
+
+describe('AutolistTab — tunnel interface options from the tunnel catalog', () => {
+	/**
+	 * Открыть настройки и развернуть дропдаун «Интерфейс туннеля».
+	 * Данные каталога передаются параметром: allSettled читается однократно
+	 * за рендер (probeResourcesFetched), моки должны стоять ДО него.
+	 */
+	async function openTargetListbox(catalog: {
+		ifaces?: RouterInterface[];
+		awgTags?: AWGTagInfo[];
+		singboxTunnels?: SingboxTunnel[];
+		subscriptions?: Array<{ label: string; proxyIndex: number; enabled: boolean }>;
+		targetInterface?: string;
+	} = {}): Promise<HTMLElement> {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		vi.spyOn(api, 'getAutolistConfig').mockResolvedValue(
+			catalog.targetInterface === undefined ? fullConfig : { ...fullConfig, targetInterface: catalog.targetInterface },
+		);
+		vi.spyOn(api, 'getAWGTags').mockResolvedValue(catalog.awgTags ?? []);
+		vi.spyOn(api, 'singboxListTunnels').mockResolvedValue(catalog.singboxTunnels ?? []);
+		vi.spyOn(api, 'listSubscriptions').mockResolvedValue((catalog.subscriptions ?? []) as never);
+		vi.spyOn(api, 'getAllInterfaces').mockResolvedValue(catalog.ifaces ?? []);
+		vi.spyOn(api, 'singboxRouterListDNSServers').mockResolvedValue([]);
+		vi.spyOn(api, 'singboxRouterGetDNSGlobals').mockResolvedValue({ final: 'dns-final', strategy: 'prefer_ipv4' });
+		vi.spyOn(api, 'singboxRouterListRuleSets').mockResolvedValue([]);
+
+		render(AutolistTab);
+		await fireEvent.click(await screen.findByRole('button', { name: m.autolist_settings() }));
+		await screen.findByLabelText(m.autolist_cfg_wan_url());
+		// Первый trigger-listbox на странице настроек — дропдаун цели.
+		const trigger = document.querySelector('button[aria-haspopup="listbox"]') as HTMLElement;
+		await fireEvent.click(trigger);
+		const panel = document.querySelector('.dropdown-panel');
+		expect(panel).toBeTruthy();
+		return panel as HTMLElement;
+	}
+
+	function optionLabels(panel: HTMLElement): string[] {
+		return Array.from(panel.querySelectorAll('.option-label')).map((el) => el.textContent ?? '');
+	}
+
+	it('offers the managed AWG interface (opkgtun) even when all-interfaces lacks it', async () => {
+		const panel = await openTargetListbox({
+			awgTags: [{ tag: 'awg', label: 'Amnezia WG', kind: 'managed', iface: 'opkgtun0' }],
+			ifaces: [{ name: 'ppp0', label: 'Home ISP', up: true, securityLevel: 'public' }],
+		});
+
+		// opkgtun0 пришёл из каталога AWGM, а не из all-interfaces, и стоит раньше WAN.
+		const labels = optionLabels(panel);
+		expect(labels).toContain('Amnezia WG (opkgtun0)');
+		expect(labels.indexOf('Amnezia WG (opkgtun0)')).toBeLessThan(labels.indexOf('Home ISP (ppp0)'));
+		// Источник опции — в description: «AWG-туннель» против «прямое подключение».
+		const byLabel = (label: string) =>
+			Array.from(panel.querySelectorAll('.option')).find((el) => el.querySelector('.option-label')?.textContent === label);
+		expect(byLabel('Amnezia WG (opkgtun0)')?.querySelector('.option-desc')?.textContent).toBe(m.autolist_cfg_target_kind_awg());
+		expect(byLabel('Home ISP (ppp0)')?.querySelector('.option-desc')?.textContent).toBe(m.autolist_cfg_target_kind_wan());
+	});
+
+	it('lists running standalone sing-box tunnels and enabled subscriptions after AWG entries', async () => {
+		const panel = await openTargetListbox({
+			awgTags: [{ tag: 'awg', label: 'Amnezia WG', kind: 'managed', iface: 'opkgtun0' }],
+			singboxTunnels: [
+				{ tag: 'vless-de', running: true, kernelInterface: 'tun-vless', connectivity: { connected: false, latency: null } },
+				{ tag: 'ss-down', running: false, kernelInterface: 'tun-ss', connectivity: { connected: false, latency: null } },
+			] as never,
+			subscriptions: [
+				subscription({ label: 'Provider A', proxyIndex: 0, enabled: true }),
+				subscription({ label: 'Provider B', proxyIndex: 1, enabled: false }),
+			] as never,
+			ifaces: [],
+		});
+
+		const labels = optionLabels(panel);
+		// running=false standalone не попадает.
+		expect(labels).not.toContain('tun-ss');
+		// Выключенная подписка не попадает.
+		expect(labels).not.toContain('Provider B (t2s1)');
+		// Порядок: AWG, standalone (Label + iface), подписка; в хвосте —
+		// сохранённая цель nwg0 из fullConfig.
+		expect(labels).toEqual(['Amnezia WG (opkgtun0)', 'vless-de (tun-vless)', 'Provider A (t2s0)', 'nwg0']);
+	});
+
+	it('keeps the saved targetInterface in the list when no catalog source knows it', async () => {
+		const panel = await openTargetListbox({ targetInterface: 'nwg0' });
+
+		// «Хвост» текущего значения — страховка от потери сохранённой цели.
+		expect(optionLabels(panel)).toEqual(['nwg0']);
+	});
+
+	it('deduplicates by interface name: first source wins, duplicate label fills a gap', async () => {
+		const panel = await openTargetListbox({
+			awgTags: [{ tag: 'awg', label: '', kind: 'managed', iface: 'opkgtun0' }],
+			singboxTunnels: [
+				{ tag: 'awg-dup', running: true, kernelInterface: 'opkgtun0', connectivity: { connected: false, latency: null } },
+				{ tag: 'vless-de', running: true, kernelInterface: 'tun-vless', connectivity: { connected: false, latency: null } },
+			] as never,
+			ifaces: [
+				{ name: 'tun-vless', label: 'VLESS duplicate', up: true, securityLevel: 'public' },
+				{ name: 'ppp0', label: 'Home ISP', up: true, securityLevel: 'public' },
+			],
+		});
+
+		const labels = optionLabels(panel);
+		// Ровно по одной опции на имя интерфейса.
+		expect(labels.filter((l) => l.includes('opkgtun0'))).toHaveLength(1);
+		expect(labels.filter((l) => l.includes('tun-vless'))).toHaveLength(1);
+		// Первый источник (AWG) выигрывает; его пустой label заполнен тегом
+		// дубликата-standalone. WAN-дубликат tun-vless не создаёт второй опции.
+		expect(labels).toEqual(['awg-dup (opkgtun0)', 'vless-de (tun-vless)', 'Home ISP (ppp0)', 'nwg0']);
 	});
 });

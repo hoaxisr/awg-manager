@@ -15,6 +15,7 @@
 	} from './configPayload';
 	import { errorMessage } from '$lib/utils/errorMessage';
 	import type {
+		AWGTagInfo,
 		AutolistBatchFailure,
 		AutolistCandidate,
 		AutolistCandidateState,
@@ -26,6 +27,8 @@
 		SingboxRouterDNSServer,
 		SingboxRouterDNSGlobals,
 		SingboxRouterRuleSet,
+		SingboxTunnel,
+		Subscription,
 	} from '$lib/types';
 	import { Button, IconButton, Modal, Toggle, Dropdown, Input, ChipMultiSelect, Tabs, Stat, StatStrip } from '$lib/components/ui';
 	import { PageHeader } from '$lib/components/layout';
@@ -479,22 +482,33 @@
 	let dnsGlobals = $state<SingboxRouterDNSGlobals | null>(null);
 	let interfaces = $state<RouterInterface[]>([]);
 	let exclusionRuleSets = $state<SingboxRouterRuleSet[]>([]);
+	// Каталог туннелей (те же три источника, что у TunnelCatalog сателлита):
+	// managed AWG, standalone sing-box и подписки.
+	let awgTagInfos = $state<AWGTagInfo[]>([]);
+	let singboxTunnels = $state<SingboxTunnel[]>([]);
+	let subscriptions = $state<Subscription[]>([]);
 	let probeResourcesFetched = $state(false);
 	let probeResourcesLoading = $state(false);
 
 	async function fetchProbeResources() {
 		if (probeResourcesFetched || probeResourcesLoading) return;
 		probeResourcesLoading = true;
-		const [dns, globals, ifaces, ruleSets] = await Promise.allSettled([
+		const [dns, globals, ifaces, ruleSets, awgTags, sbTunnels, subs] = await Promise.allSettled([
 			api.singboxRouterListDNSServers(),
 			api.singboxRouterGetDNSGlobals(),
 			api.getAllInterfaces(),
 			api.singboxRouterListRuleSets(),
+			api.getAWGTags(),
+			api.singboxListTunnels(),
+			api.listSubscriptions(),
 		]);
 		if (dns.status === 'fulfilled') dnsServers = dns.value;
 		if (globals.status === 'fulfilled') dnsGlobals = globals.value;
 		if (ifaces.status === 'fulfilled') interfaces = ifaces.value;
 		if (ruleSets.status === 'fulfilled') exclusionRuleSets = ruleSets.value;
+		if (awgTags.status === 'fulfilled') awgTagInfos = awgTags.value;
+		if (sbTunnels.status === 'fulfilled') singboxTunnels = sbTunnels.value;
+		if (subs.status === 'fulfilled') subscriptions = subs.value;
 		probeResourcesFetched = true;
 		probeResourcesLoading = false;
 	}
@@ -506,17 +520,49 @@
 		if (running) void fetchProbeResources();
 	});
 
-	/** Туннельные интерфейсы из каталога AWGM-туннелей (awg/awg3 теги). */
+	/**
+	 * Список «Интерфейс туннеля»: каталог туннелей (те же три источника, что
+	 * у TunnelCatalog сателлита, awgm/catalog.go) плюс WAN из all-interfaces.
+	 * Managed AWG-туннели (opkgtun*) вырезаны из all-interfaces (isOwnTunnel),
+	 * поэтому приходят только из getAWGTags. Порядок: AWG, standalone
+	 * sing-box, подписки, WAN, затем «хвост» текущего targetInterface —
+	 * сохранённое значение видно, даже если источник временно недоступен.
+	 * Дедуп по kernel-имени интерфейса: первый источник выигрывает, у
+	 * дубликата забираем человеческое имя, если у первого его не было.
+	 */
 	let tunnelInterfaceOptions = $derived.by(() => {
-		const opts: { value: string; label: string }[] = [];
+		/** Накопитель по kernel-имени; label — человеческое имя или ''. */
+		const byValue = new Map<string, { value: string; label: string; description?: string }>();
+		const add = (value: string, human: string, description?: string) => {
+			const existing = byValue.get(value);
+			if (!existing) byValue.set(value, { value, label: human, description });
+			else if (!existing.label && human) existing.label = human;
+		};
+		const fmt = (value: string, human: string) => (human ? `${human} (${value})` : value);
+		// Managed AWG: enabled-поля нет, берём все с непустым iface.
+		for (const t of awgTagInfos) {
+			if (!t.iface) continue;
+			add(t.iface, t.label, m.autolist_cfg_target_kind_awg());
+		}
+		// Standalone sing-box: интерфейс существует, только пока процесс поднят.
+		for (const t of singboxTunnels) {
+			if (!t.running || !t.kernelInterface) continue;
+			add(t.kernelInterface, t.tag, m.autolist_cfg_target_kind_singbox());
+		}
+		// Подписки: синтетический интерфейс t2s<proxyIndex>.
+		for (const s of subscriptions) {
+			if (!s.enabled || s.proxyIndex < 0) continue;
+			add(`t2s${s.proxyIndex}`, s.label, m.autolist_cfg_target_kind_subscription());
+		}
+		// WAN/прочие из all-interfaces: LAN/bridge не предлагаем (private).
 		for (const iface of interfaces) {
 			if (!iface.up) continue;
-			// LAN/bridge не предлагаются как tunnel target (securityLevel private).
 			if (iface.securityLevel && iface.securityLevel !== 'public') continue;
-			opts.push({ value: iface.name, label: iface.label ? `${iface.label} (${iface.name})` : iface.name });
+			add(iface.name, iface.label, m.autolist_cfg_target_kind_wan());
 		}
+		const opts = [...byValue.values()].map((o) => ({ ...o, label: fmt(o.value, o.label) }));
 		const current = cfgDraft.targetInterface ?? '';
-		if (current && !opts.some((o) => o.value === current)) {
+		if (current && !byValue.has(current)) {
 			opts.push({ value: current, label: current });
 		}
 		return opts;
