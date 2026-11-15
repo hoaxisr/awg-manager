@@ -4,12 +4,34 @@
 ENABLED=yes
 PROG=/opt/bin/awgmautolist
 PIDFILE=/opt/var/run/awgmautolist.pid
+CONF_DIR="${AWGM_AUTOLIST_DIR:-/opt/etc/awgmautolist}"
 
+# Settings directory first; the pre-2.21 flat paths stay readable so an
+# upgraded box keeps working before its first satellite start migrates them.
+[ -f "$CONF_DIR/awgmautolist.conf" ] && . "$CONF_DIR/awgmautolist.conf"
 [ -f /opt/etc/awgmautolist.conf ] && . /opt/etc/awgmautolist.conf
-[ -f /opt/etc/awgmautolist.enabled ] && . /opt/etc/awgmautolist.enabled
+[ -f "$CONF_DIR/enabled" ] && . "$CONF_DIR/enabled"
+# Legacy intent file: only while the new one is absent — its move into the
+# directory is done by the panel's Go code, not here.
+[ -f "$CONF_DIR/enabled" ] || { [ -f /opt/etc/awgmautolist.enabled ] && . /opt/etc/awgmautolist.enabled; }
+[ -f "$CONF_DIR/key" ] && . "$CONF_DIR/key"
 [ -f /opt/etc/awgmautolist.key ] && . /opt/etc/awgmautolist.key
 
 ROUTER_URL="${AWGM_ROUTER_URL:-http://127.0.0.1:2222}"
+# The panel's settings.json wins over the built-in default when the env is
+# unset. Pure busybox sh + sed, no jq/python: take the "port" inside the
+# "server" block only — "port" also appears in other blocks (sing-box clash
+# api), so the substitution is bracketed by the block range. The panel always
+# writes indented JSON; the first match is server.port. Empty/0/out-of-range
+# falls back to the built-in default.
+if [ -z "$AWGM_ROUTER_URL" ] && [ -f /opt/etc/awg-manager/settings.json ]; then
+    SETTINGS_PORT=$(sed -n '/"server"[^{]*{/,/}/s/.*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' /opt/etc/awg-manager/settings.json | head -n 1)
+    case "$SETTINGS_PORT" in
+        ''|*[!0-9]*) SETTINGS_PORT="" ;;
+        *) [ "$SETTINGS_PORT" -ge 1 ] && [ "$SETTINGS_PORT" -le 65535 ] || SETTINGS_PORT="" ;;
+    esac
+    [ -n "$SETTINGS_PORT" ] && ROUTER_URL="http://127.0.0.1:$SETTINGS_PORT"
+fi
 API_KEY="${AWGM_API_KEY:-}"
 LISTEN="${AWGM_LISTEN:-127.0.0.1:2226}"
 
@@ -23,7 +45,7 @@ start() {
     AWGM_API_KEY="$API_KEY"
     export AWGM_API_KEY
     start-stop-daemon -S -b -m -p "$PIDFILE" -x "$PROG" -- \
-        -router "$ROUTER_URL" $AWGM_AUTOLIST_ARGS -listen "$LISTEN"
+        -router "$ROUTER_URL" -config "$CONF_DIR/config.json" $AWGM_AUTOLIST_ARGS -listen "$LISTEN"
 }
 
 stop() {

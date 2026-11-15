@@ -48,9 +48,14 @@ func testInstaller(t *testing.T) (*Installer, *fakePackageManager, string) {
 	dir := t.TempDir()
 	pkg := &fakePackageManager{}
 	installer := NewInstaller(pkg, fakeKeys{key: "secret", auth: true})
-	installer.keyPath = filepath.Join(dir, "awgmautolist.key")
-	installer.enabledPath = filepath.Join(dir, "awgmautolist.enabled")
+	installer.keyPath = filepath.Join(dir, "key")
+	installer.enabledPath = filepath.Join(dir, "enabled")
 	installer.initPath = filepath.Join(dir, "S99awgmautolist")
+	// The legacy flat-path fallback constants are redirected into the temp
+	// dir so tests never touch the real /opt/etc files.
+	oldKey := legacyKeyFile
+	legacyKeyFile = filepath.Join(dir, "awgmautolist.key")
+	t.Cleanup(func() { legacyKeyFile = oldKey })
 	installer.SetConfirm(func(context.Context, bool) error { return nil })
 	pkg.onInstall = func() {
 		if err := os.WriteFile(installer.initPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
@@ -269,5 +274,29 @@ func TestApiKeyChangedRestartsOnlyInstalled(t *testing.T) {
 	}
 	if err := installer.ApiKeyChanged(); err != nil || !called {
 		t.Fatalf("installed: called=%t err=%v", called, err)
+	}
+}
+
+// A key at the pre-directory path moves into the config directory on the
+// first key write; an existing new-path key is never overwritten by it.
+func TestWriteKeyMigratesLegacyKey(t *testing.T) {
+	installer, _, dir := testInstaller(t)
+	legacyKey := filepath.Join(dir, "awgmautolist.key")
+	if err := os.WriteFile(legacyKey, []byte("AWGM_API_KEY='old'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := installer.writeKey(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacyKey); !os.IsNotExist(err) {
+		t.Fatalf("legacy key must move into the directory: %v", err)
+	}
+	data, err := os.ReadFile(installer.keyPath)
+	if err != nil || string(data) != "AWGM_API_KEY='secret'\n" {
+		t.Fatalf("key=%q err=%v", data, err)
+	}
+	info, _ := os.Stat(installer.keyPath)
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("key mode=%o", info.Mode().Perm())
 	}
 }

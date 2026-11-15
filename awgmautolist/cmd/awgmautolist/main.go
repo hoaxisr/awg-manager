@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -9,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +24,7 @@ import (
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/engine"
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/httpapi"
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/logging"
+	"github.com/hoaxisr/awg-manager/awgmautolist/internal/migrate"
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/probe"
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/store"
 )
@@ -28,7 +32,7 @@ import (
 func main() {
 	routerURL := flag.String("router", "http://127.0.0.1:2222", "AWGM base URL")
 	apiKey := flag.String("apikey", os.Getenv("AWGM_API_KEY"), "AWGM Bearer API key (or AWGM_API_KEY)")
-	configPath := flag.String("config", "/opt/etc/awgmautolist.json", "configuration file")
+	configPath := flag.String("config", filepath.Join(configDir(), "config.json"), "configuration file")
 	listen := flag.String("listen", "127.0.0.1:2226", "loopback operational API address")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
@@ -59,6 +63,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Legacy flat-layout files (/opt/etc/awgmautolist*.json) move into the
+	// config directory BEFORE anything reads the new paths: on the very first
+	// start after an upgrade the migrated config must be the one that loads.
+	// A failed move is logged and retried on the next start.
+	if moved, err := migrate.FromFlatFiles(filepath.Dir(*configPath), migrate.LegacyFlat(), logger.Printf); err != nil {
+		logger.Printf("LEGACY migrate: %v", err)
+	} else if moved > 0 {
+		logger.Printf("LEGACY migrate: moved %d file(s)", moved)
+	}
 	cfgStore := config.NewStore(*configPath)
 	report, err := cfgStore.Load()
 	if err != nil {
@@ -67,7 +80,7 @@ func main() {
 	for _, warning := range report.Warnings {
 		logger.Printf("CONFIG migration: %s", warning)
 	}
-	statePath := strings.TrimSuffix(*configPath, ".json") + "-state.json"
+	statePath := statePathFor(*configPath)
 	stateStore := store.New(statePath)
 	if err := stateStore.Load(); err != nil {
 		fatalf("state: %v", err)
@@ -79,7 +92,7 @@ func main() {
 		}
 	}
 
-	client, err := awgm.NewClient(*routerURL, *apiKey)
+	client, err := awgm.NewClient(resolveRouterURL(*routerURL, logger), *apiKey)
 	if err != nil {
 		fatalf("AWGM client: %v", err)
 	}
@@ -141,6 +154,89 @@ func main() {
 }
 
 var lanDiscoveryRetry = time.Second
+
+// DefaultPanelSettingsPath — где панель держит свои настройки. Сателлит
+// читает оттуда только порт HTTP-сервера (server.port). Переменная, а не
+// константа: тесты подменяют путь.
+var DefaultPanelSettingsPath = "/opt/etc/awg-manager/settings.json"
+
+// DefaultPanelPort — последний фолбэк цепочки -router → AWGM_ROUTER_URL →
+// settings.json → этот порт. Совпадает с internal/server.DefaultPort панели.
+const DefaultPanelPort = 2222
+
+// defaultRouterFlagValue — значение флага -router по умолчанию; оно означает
+// «флаг не передан», и только тогда срабатывает цепочка env → settings.json.
+const defaultRouterFlagValue = "http://127.0.0.1:2222"
+
+// configDir — каталог с файлами сателлита: AWGM_AUTOLIST_DIR или
+// /opt/etc/awgmautolist. Флаг -config перекрывает его целиком.
+func configDir() string {
+	return migrate.DefaultDir()
+}
+
+// statePathFor — путь файла состояния рядом с конфигом. В каталоге раскладки
+// config.json живёт рядом с state.json и history.json; старая схема
+// "-state.json" оставлена для нестандартных -config вне каталога.
+func statePathFor(configPath string) string {
+	if filepath.Base(configPath) == "config.json" {
+		return filepath.Join(filepath.Dir(configPath), "state.json")
+	}
+	return strings.TrimSuffix(configPath, ".json") + "-state.json"
+}
+
+// resolveRouterURL — цепочка фолбэков адреса панели: явный -router, затем
+// AWGM_ROUTER_URL, затем server.port из settings.json панели, затем 2222.
+// Выбранный адрес логируется, чтобы смену порта панели было видно в журнале.
+func resolveRouterURL(routerFlag string, logger *log.Logger) string {
+	if v := strings.TrimSpace(routerFlag); v != "" && v != defaultRouterFlagValue {
+		return v
+	}
+	if v := strings.TrimSpace(os.Getenv("AWGM_ROUTER_URL")); v != "" {
+		logger.Printf("ROUTER url=%s (AWGM_ROUTER_URL)", v)
+		return v
+	}
+	port, err := parseServerPort(DefaultPanelSettingsPath)
+	if err != nil {
+		logger.Printf("ROUTER url=http://127.0.0.1:%d (settings %s: %v)", DefaultPanelPort, DefaultPanelSettingsPath, err)
+	} else {
+		logger.Printf("ROUTER url=http://127.0.0.1:%d (settings %s)", port, DefaultPanelSettingsPath)
+	}
+	if port > 0 {
+		return fmt.Sprintf("http://127.0.0.1:%d", port)
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", DefaultPanelPort)
+}
+
+// parseServerPort читает server.port из settings.json панели. Файл пишется
+// панелью стандартным encoding/json, поэтому здесь обычный разбор JSON:
+// порт 0 или отсутствующий — «панель портом не управляет».
+func parseServerPort(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	port, err := extractServerPort(data)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+	return port, nil
+}
+
+// extractServerPort — чистая часть parseServerPort для тестов.
+func extractServerPort(data []byte) (int, error) {
+	var doc struct {
+		Server struct {
+			Port int `json:"port"`
+		} `json:"server"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return 0, fmt.Errorf("settings.json: %w", err)
+	}
+	if doc.Server.Port <= 0 {
+		return 0, errors.New("server.port is not set")
+	}
+	return doc.Server.Port, nil
+}
 
 type lanDiscoveryClient interface {
 	LANBridges(context.Context) ([]string, error)
