@@ -131,7 +131,13 @@ func (c *Controller) run(ctx context.Context, sockets []packetSocket, table *Flo
 		case <-runCtx.Done():
 			return
 		case now := <-ticker.C:
-			for _, suspect := range table.Scan(now) {
+			// Lock only around the table scan; emit — and with it the
+			// engine enqueue under e.mu — must run outside the table
+			// lock (see FlowTable.scan).
+			table.mu.Lock()
+			suspects := table.scan(now)
+			table.mu.Unlock()
+			for _, suspect := range suspects {
 				if c.emit != nil {
 					c.emit(suspect)
 				}

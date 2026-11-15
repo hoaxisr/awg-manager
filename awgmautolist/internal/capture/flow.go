@@ -333,8 +333,12 @@ func (t *FlowTable) submit(fl *flow, reason string, now time.Time) *Suspect {
 	}
 }
 
-func (t *FlowTable) Scan(now time.Time) []Suspect {
-	t.mu.Lock()
+// scan returns the suspects due at now and prunes expired hints. It is
+// Scan without the table lock, so run() can call emit — and thereby the
+// engine enqueue — with its own state protected by the controller, not the
+// table. ReadLock-and-emit inside the lock would reintroduce the classic
+// lock inversion with the engine side (task 9).
+func (t *FlowTable) scan(now time.Time) []Suspect {
 	var suspects []Suspect
 	for key, fl := range t.flows {
 		if now.Sub(fl.last) > 2*time.Minute || (fl.finished && now.Sub(fl.last) > 5*time.Second) {
@@ -390,8 +394,14 @@ func (t *FlowTable) Scan(now time.Time) []Suspect {
 			delete(t.dns, key)
 		}
 	}
-	t.mu.Unlock()
 	return suspects
+}
+
+// Scan locks the table around scan.
+func (t *FlowTable) Scan(now time.Time) []Suspect {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.scan(now)
 }
 
 func newerSequence(current *uint32, initialized *bool, sequence uint32, payloadLen int) int {

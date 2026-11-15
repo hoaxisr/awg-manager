@@ -55,15 +55,15 @@ func (e *Engine) recoverCapture() {
 	e.mu.Unlock()
 	e.commitMu.Unlock()
 
-	// No engine locks are held while Start creates a fresh generation. The
-	// mutex serializes against the monitor pause/resume and the UDP-toggle
-	// stop; if one of those is in flight, this tick yields and retries.
+	// Никаких локов движка, пока Start создаёт свежее поколение. Сериализация
+	// с паузой/резюмом монитора и Stop при смене UDP — через captureOpMu:
+	// если операция монитора уже в полёте, этот тик отступает. Если пока мы
+	// ждали Start сменилось поколение (UDP-патч) или capture запаузен —
+	// устаревшее решение отбрасывается и тик повторится.
 	if !captureOpMu.TryLock() {
 		return
 	}
 	defer captureOpMu.Unlock()
-	// Re-check under the locks: while Start was being prepared, the decision
-	// may have gone stale (a newer generation or a pause in between).
 	e.commitMu.Lock()
 	e.mu.Lock()
 	stale := gen != e.captureGen || e.capturePaused || !e.running || e.capture != captureRef
@@ -73,8 +73,8 @@ func (e *Engine) recoverCapture() {
 		return
 	}
 
-	// If the previous generation is still closing, the next tick retries
-	// instead of treating that transient state as permanent.
+	// Если предыдущее поколение ещё закрывается, следующий тик повторит
+	// попытку, вместо того чтобы считать переходное состояние постоянным.
 	err := captureRef.Start(baseCtx)
 	e.mu.Lock()
 	e.captureRunning = err == nil

@@ -10,8 +10,10 @@ import (
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/probe"
 )
 
-// startMonitorLocked launches the periodic WAN check: the first check runs
-// immediately, then every monitorInterval. Disabled by default.
+// startMonitorLocked запускает периодическую проверку WAN: первая проверка
+// идёт сразу, далее раз в monitorInterval. После неудачи (до паузы)
+// взводится повтор через wanRetryInterval — серия «3 подряд» набирается
+// за секунды, а не за минуты. Выключен по умолчанию.
 func (e *Engine) startMonitorLocked() {
 	ctx, cancel := context.WithCancel(e.baseCtx)
 	e.monitorCancel = cancel
@@ -21,12 +23,31 @@ func (e *Engine) startMonitorLocked() {
 		e.logf("WAN monitor started")
 		ticker := time.NewTicker(monitorInterval)
 		defer ticker.Stop()
+		var retryC <-chan time.Time
+		var retryStop *time.Timer
+		defer func() {
+			if retryStop != nil {
+				retryStop.Stop()
+			}
+		}()
 		for {
 			e.monitorCheck(ctx)
+			// Повтор после неудачи: таймер на 1 с вместо ожидания
+			// полного тика. Успех сбрасывает серию и повтор.
+			if retryStop != nil {
+				retryStop.Stop()
+				retryStop = nil
+			}
+			retryC = nil
+			if ctx.Err() == nil && e.wanRetryDue() {
+				retryStop = time.NewTimer(wanRetryInterval)
+				retryC = retryStop.C
+			}
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+			case <-retryC:
 			}
 		}
 	}()
@@ -40,11 +61,11 @@ func (e *Engine) stopMonitorLocked() {
 }
 
 // monitorCheck выполняет одну периодическую проверку WAN и применяет переход:
-// неудачная проверка ставит capture на паузу, инвалидирует in-flight решения
-// и блокирует коммиты; первая удачная проверка возобновляет capture с чистым
-// состоянием потоков. Переходы логируются один раз при смене состояния, а не
-// каждые 30 секунд. Выключенный монитор (или остановленный движок) ничего
-// не применяет.
+// третья подряд неудачная проверка ставит capture на паузу, инвалидирует
+// in-flight решения и блокирует коммиты; первая удачная проверка возобновляет
+// capture с чистым состоянием потоков. Переходы логируются один раз при смене
+// состояния. Выключенный монитор (или остановленный движок) ничего не
+// применяет.
 //
 // Блокирующие capture.Pause()/Start() выполняются ТОЛЬКО после снятия
 // commitMu и mu (см. pauseCaptureLocked): под локами они дедлочат — Pause
@@ -64,8 +85,9 @@ func (e *Engine) monitorCheck(ctx context.Context) {
 	}
 
 	// Решение о переходе — под commitMu+mu, по образцу recoverCapture:
-	// под локами только флаги, дренаж очереди и инвалидация; ссылку на
-	// capture забираем для блокирующей операции вне локов.
+	// под локами только флаги, счётчик неудач, дренаж очереди и
+	// инвалидация; ссылку на capture забираем для блокирующей операции
+	// вне локов.
 	e.commitMu.Lock()
 	e.mu.Lock()
 	action := e.applyWANVerdictLocked(result)
@@ -89,10 +111,12 @@ type captureAction struct {
 	pause bool
 }
 
-// applyWANVerdictLocked обновляет lastWAN вердиктом этой проверки и
-// принимает решение о паузе/возобновлении capture: любая неудача паузит,
-// первая удачная после паузы возобновляет. Возвращает действие для
-// блокирующего исполнения вне локов (ref==nil — операция не требуется).
+// applyWANVerdictLocked обновляет lastWAN и серию неудач, принимает решение
+// о паузе/возобновлении и возвращает действие для блокирующего исполнения
+// вне локов (ref==nil — операция не требуется). Неудача — любой вердикт
+// кроме reachable: первые две подряд только логируются, третья ставит
+// capture на паузу; любая удачная проверка сбрасывает счётчик. Уже
+// запаузенный capture возобновляется первой же удачной проверкой.
 // Требует commitMu и mu; вызывается только из monitorCheck.
 func (e *Engine) applyWANVerdictLocked(result probe.Result) captureAction {
 	e.lastWAN = model.CheckEvidence{
@@ -102,6 +126,7 @@ func (e *Engine) applyWANVerdictLocked(result probe.Result) captureAction {
 		CheckedAt:  time.Now(),
 	}
 	if result.Verdict == model.VerdictReachable {
+		e.wanFailures = 0
 		e.setLastErrorLocked("")
 		if e.capturePaused {
 			return e.resumeCaptureLocked("WAN reachable again")
@@ -112,7 +137,23 @@ func (e *Engine) applyWANVerdictLocked(result probe.Result) captureAction {
 	if e.capturePaused {
 		return captureAction{} // уже на паузе — повторять Pause нечего
 	}
+	e.wanFailures++
+	e.logf("WAN check failed (%d/%d): %s", e.wanFailures, wanFailThreshold, result.Detail)
+	if e.wanFailures < wanFailThreshold {
+		return captureAction{} // серия продолжается, capture работает как обычно
+	}
+	e.wanFailures = 0
 	return e.pauseCaptureLocked(string(result.Verdict))
+}
+
+// wanRetryDue сообщает, что серия неудач (без паузы) ждёт повторного тика
+// через ~1 с. Читается без commitMu между проверками: гонка с одновременным
+// stop/pause безвредна — в худшем случае повтор пропускается до следующего
+// тика monitorInterval.
+func (e *Engine) wanRetryDue() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return !e.capturePaused && e.wanFailures > 0
 }
 
 // pauseCaptureLocked фиксирует решение о паузе под локами: лог решения,
@@ -157,20 +198,18 @@ func (e *Engine) resumeCaptureLocked(reason string) captureAction {
 //
 // Сериализация и защита от устаревших решений:
 //   - captureOpMu страхует от гонки «устаревший pause против свежего
-//     resume» (disable монитора, UDP-патч, recovery): операция выполняется
-//     только если между решением и захватом captureOpMu не сменилось
-//     поколение capture и пауза не снята. Иначе действие отбрасывается
-//     как устаревшее.
+//     resume» (disable монитора, UDP-патч, recovery): ожидание захвата
+//     безопасно (локи движка уже сняты, Pause ограничен таймаутом
+//     контроллера), после захвата решение перепроверяется — устаревшее
+//     отбрасывается. Блокирующее ожидание гарантирует, что решение
+//     паузы не потеряется навсегда.
 //   - Двойной Start безопасен и без этого: opMu контроллера сериализует
 //     его, а Start идемпотентен для работающего поколения.
 func (e *Engine) runCaptureAction(action captureAction) {
 	if action.ref == nil {
 		return
 	}
-	if !captureOpMu.TryLock() {
-		e.logf("capture action skipped: another capture operation is in flight")
-		return
-	}
+	captureOpMu.Lock()
 	defer captureOpMu.Unlock()
 	// Перепроверка под локами: решение могло устареть, пока конкурирующая
 	// горутина вела свою commitMu-секцию.
