@@ -161,7 +161,8 @@ func (b *KernelBackend) Stop(ctx context.Context, ifaceName string) error {
 // существующего устройства и создание — в одном Hold, так что запись OpkgTunN
 // не остаётся без устройства для наших читателей. Нужен Reconcile, когда
 // живое amneziawg оказалось под только что созданной записью (Start его не
-// тронул бы). Не-amneziawg с чужим держателем — HeldError (F500).
+// тронул бы), и ColdStart — сбросить параметры ядра, убранные из
+// конфигурации (#1210). Не-amneziawg с чужим держателем — HeldError (F500).
 func (b *KernelBackend) Recreate(ctx context.Context, ifaceName string) error {
 	if held := b.foreignHolder(ctx, ifaceName); held != nil {
 		return held

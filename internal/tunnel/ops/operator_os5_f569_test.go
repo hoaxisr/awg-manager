@@ -34,12 +34,13 @@ type deviceBackend struct {
 	// replaceErr — подмена сорвалась после del: устройства нет, tun не встал.
 	replaceErr error
 
-	StartCalls   []string
-	StopCalls    []string
-	ReplaceCalls []string
-	stopPosts    []int // len(f.Posts) на момент каждого Stop
-	startPosts   []int // len(f.Posts) на момент каждого Start
-	replacePosts []int // len(f.Posts) на момент каждого ReplaceWithTun
+	StartCalls    []string
+	RecreateCalls []string
+	StopCalls     []string
+	ReplaceCalls  []string
+	stopPosts     []int // len(f.Posts) на момент каждого Stop
+	startPosts    []int // len(f.Posts) на момент каждого Start
+	replacePosts  []int // len(f.Posts) на момент каждого ReplaceWithTun
 }
 
 func newDeviceBackend(t *testing.T, f *ndmsquery.FakeNDMS) *deviceBackend {
@@ -131,8 +132,20 @@ func (b *deviceBackend) ReplaceWithTun(_ context.Context, iface string) error {
 	return nil
 }
 
-func (b *deviceBackend) Recreate(ctx context.Context, iface string) error {
-	return b.Start(ctx, iface)
+// Recreate — как backend.KernelBackend: del + add и для живого amneziawg;
+// оракул видит снятие и появление (под up-записью — 0ba1).
+func (b *deviceBackend) Recreate(_ context.Context, iface string) error {
+	b.RecreateCalls = append(b.RecreateCalls, iface)
+	b.startPosts = append(b.startPosts, b.f.PostCount())
+	if b.exists(iface) {
+		b.f.SetNetdev(iface, false)
+	} else if err := os.Mkdir(filepath.Join(b.root, iface), 0o755); err != nil {
+		return err
+	}
+	b.f.SetNetdev(iface, true)
+	b.f.SetAmneziaWG(iface, true)
+	b.amneziawg = true
+	return nil
 }
 
 func (b *deviceBackend) StopIfPresent(ctx context.Context, iface string) error {
@@ -601,18 +614,22 @@ func TestRollback_ExistingRecord_ReplacedWithTun(t *testing.T) {
 
 // F61-1: старт по существующей up-записи, под которой tun NDMS (ребут):
 // down → подмена на amneziawg → InterfaceUp. Без down подмена под running —
-// 0ba1 (C3b). Под down-записью и при живом amneziawg — без down.
+// 0ba1 (C3b). Под down-записью — без down. Живое amneziawg Reconcile
+// оставляет (без down), ColdStart пересоздаёт (#1210): под up-записью — тот
+// же down → подмена → up. Мутации: ColdStart через Start при живом
+// amneziawg; пересоздание без down под up-записью → красный.
 func TestStart_ExistingUpRecordTun_DownSwapUp(t *testing.T) {
 	const postUp = `{"interface":{"OpkgTun10":{"up":true}}}`
 	for _, tc := range []struct {
 		name      string
 		state     string
 		amneziawg bool
-		wantDown  bool
+		wantDown  map[string]bool
 	}{
-		{"up+tun", "up", false, true},
-		{"down+tun", "down", false, false},
-		{"up+amneziawg", "up", true, false},
+		{"up+tun", "up", false, map[string]bool{"ColdStart": true, "Reconcile": true}},
+		{"down+tun", "down", false, nil},
+		{"up+amneziawg", "up", true, map[string]bool{"ColdStart": true}},
+		{"down+amneziawg", "down", true, nil},
 	} {
 		for _, site := range []string{"ColdStart", "Reconcile"} {
 			t.Run(site+"/"+tc.name, func(t *testing.T) {
@@ -631,8 +648,11 @@ func TestStart_ExistingUpRecordTun_DownSwapUp(t *testing.T) {
 					t.Fatalf("%s: %v", site, err)
 				}
 				clean(t, f)
+				if want := tc.amneziawg && site == "ColdStart"; (len(be.RecreateCalls) == 1) != want {
+					t.Fatalf("пересоздание живого amneziawg: %v, want %v", be.RecreateCalls, want)
+				}
 				down := slices.Index(f.Posts, postDown)
-				if !tc.wantDown {
+				if !tc.wantDown[site] {
 					if down >= 0 {
 						t.Fatalf("down без нужды: %v", f.Posts)
 					}
@@ -757,7 +777,8 @@ func TestDelete_DownFails_FailClosed(t *testing.T) {
 
 // Fix round 3: откат старта, дошедшего до InterfaceUp (упал файрвол), —
 // down отказал ×3 → ни подмены, ни сноса; ошибка старта остаётся главной.
-// Обе ветки: запись создана этой попыткой и существовала (amneziawg жив).
+// Обе ветки: запись создана этой попыткой и существовала (amneziawg жив;
+// запись down — под up отказ down остановил бы старт ещё до подмены).
 // Мутация «подменять несмотря на отказ down» → красный.
 func TestRollback_DownFails_FailClosed(t *testing.T) {
 	for _, justCreated := range []bool{true, false} {
@@ -767,7 +788,9 @@ func TestRollback_DownFails_FailClosed(t *testing.T) {
 				f = ndmsquery.NewFakeNDMS()
 				f.ExpectCreate("OpkgTun10")
 			} else {
-				f = ndmsquery.NewFakeNDMS(upTun10())
+				r := opkgTun10()
+				r.State = "down"
+				f = ndmsquery.NewFakeNDMS(r)
 			}
 			be := newDeviceBackend(t, f)
 			if !justCreated {

@@ -335,7 +335,15 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	if downed {
 		up = false
 	}
-	if err := o.backend.Start(ctx, names.IfaceName); err != nil {
+	// Живое amneziawg (рестарт, старт после Stop) пересоздаём: `awg setconf`
+	// шлёт в ядро только поля, что есть в .conf, а модуль меняет только
+	// пришедшее — параметры, убранные из конфигурации (I1–I5, S3/S4, AWG 3.x),
+	// иначе пережили бы перезапуск (#1210).
+	start := o.backend.Start
+	if running, _ := o.backend.IsRunning(ctx, names.IfaceName); running {
+		start = o.backend.Recreate
+	}
+	if err := start(ctx, names.IfaceName); err != nil {
 		o.rollbackStart(ctx, cfg, names, iface, justCreated, up, applied)
 		return tunnel.NewOpError("start", cfg.ID, "backend", err)
 	}
@@ -1113,7 +1121,8 @@ func (o *OperatorOS5Impl) rollbackStart(ctx context.Context, cfg tunnel.Config, 
 // (C3b, стенд Task 59: 3/10). Запись опускается до подмены (под down —
 // 0/20 для amneziawg → tun; направление tun → amneziawg — стенд Task 65).
 // true — запись опущена, вызывающий поднимает её InterfaceUp. Живое
-// amneziawg Start не трогает, устройства нет — сносить нечего: без down.
+// amneziawg ColdStart пересоздаёт (#1210) — тот же DELLINK, опускаем и под
+// ним; устройства нет — сносить нечего: без down.
 // Down не прошёл ни с одной попытки — ошибка: подменять под running нельзя
 // (fail-closed, R61-2).
 func (o *OperatorOS5Impl) downBeforeSwap(ctx context.Context, tunnelID string, names tunnel.Names, iface query.Confirmed, up bool) (bool, error) {
@@ -1121,9 +1130,6 @@ func (o *OperatorOS5Impl) downBeforeSwap(ctx context.Context, tunnelID string, n
 		return false, nil
 	}
 	if _, err := netdev.Absent(names.IfaceName); !errors.Is(err, netdev.ErrPresent) {
-		return false, nil
-	}
-	if running, _ := o.backend.IsRunning(ctx, names.IfaceName); running {
 		return false, nil
 	}
 	if err := o.interfaceDownBestEffort(ctx, tunnelID, iface); err != nil {
