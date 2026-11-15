@@ -109,6 +109,11 @@ func nfqExeInDir(dir string) (string, bool) {
 // процесс считался бы нашим без установки: конфликт «could not map PID(s)»
 // у остатков zapret в /opt и ложное «запущен» в статусе (#1200).
 func foreignDaemon(exe string) bool {
+	// Если рядом установлена раскладка nfqws2-keenetic, этот демон — наш:
+	// его конфиг лежит в /opt/etc/nfqws2, а не в чужом каталоге.
+	if _, ok := keeneticLayout(); ok {
+		return false
+	}
 	clean := filepath.Clean(strings.TrimSuffix(exe, " (deleted)"))
 	return clean == filepath.Join(optRoot, "usr", "bin", "nfqws2")
 }

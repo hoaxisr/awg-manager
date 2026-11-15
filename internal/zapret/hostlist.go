@@ -86,7 +86,17 @@ type hostlistSpec struct {
 	generated bool
 }
 
-func hostlistSpecs() []hostlistSpec {
+func hostlistSpecs(flavor string) []hostlistSpec {
+	// nfqws2-keenetic читает собственные имена списков: user.list,
+	// exclude.list, auto.list. Файлов zapret-hosts-*.txt он не видит,
+	// поэтому редактор должен писать именно эти файлы.
+	if flavor == flavorKeenetic {
+		return []hostlistSpec{
+			{id: HostlistUser, filename: "user.list", editable: true},
+			{id: HostlistExclude, filename: "exclude.list", editable: true},
+			{id: HostlistAuto, filename: "auto.list", generated: true},
+		}
+	}
 	return []hostlistSpec{
 		{id: HostlistUser, filename: "zapret-hosts-user.txt", editable: true},
 		{id: HostlistExclude, filename: "zapret-hosts-user-exclude.txt", editable: true},
@@ -232,7 +242,7 @@ func looksLikeIP(entry string) bool {
 
 // listHostlists собирает описания всех известных списков.
 func listHostlists(l layout) []HostlistInfo {
-	specs := hostlistSpecs()
+	specs := hostlistSpecs(flavorFor(l.base, l.optVar))
 	out := make([]HostlistInfo, 0, len(specs))
 	for _, sp := range specs {
 		path, gz := resolveHostlistFile(l.ipset, sp.filename)
@@ -266,7 +276,7 @@ func listHostlists(l layout) []HostlistInfo {
 // сжат, и предлагаем править несжатую пару: zapret сам создаст её при
 // следующей пересборке.
 func readHostlist(l layout, id HostlistID) (path, content string, err error) {
-	spec, ok := findSpec(id)
+	spec, ok := findSpec(id, flavorFor(l.base, l.optVar))
 	if !ok {
 		return "", "", fmt.Errorf("unknown hostlist %q", id)
 	}
@@ -296,7 +306,7 @@ func readHostlist(l layout, id HostlistID) (path, content string, err error) {
 
 // writeHostlist заменяет содержимое списка.
 func (s *Service) writeHostlist(l layout, id HostlistID, content, revision string) (string, error) {
-	spec, ok := findSpec(id)
+	spec, ok := findSpec(id, flavorFor(l.base, l.optVar))
 	if !ok {
 		return "", fmt.Errorf("unknown hostlist %q", id)
 	}
@@ -349,8 +359,8 @@ func invalidateHostlistCountCache(path string) {
 	hostlistCountCache.Unlock()
 }
 
-func findSpec(id HostlistID) (hostlistSpec, bool) {
-	for _, sp := range hostlistSpecs() {
+func findSpec(id HostlistID, flavor string) (hostlistSpec, bool) {
+	for _, sp := range hostlistSpecs(flavor) {
 		if sp.id == id {
 			return sp, true
 		}

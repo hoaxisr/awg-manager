@@ -40,6 +40,19 @@ func (s *Service) GetStrategies() (Strategies, error) {
 	if err != nil {
 		return Strategies{}, err
 	}
+	// nfqws2-keenetic: в конфиге нет единой переменной со стратегиями, поэтому
+	// показываем установку и состояние службы, но стратегии — только чтение.
+	if l.optVar == "" {
+		return Strategies{
+			Revision: Revision(l.config, ""),
+			Config:   l.config,
+			Items:    []Strategy{},
+			ParseWarnings: []Warning{{
+				Code:   "strategies_unsupported",
+				Detail: flavorFor(l.base, l.optVar),
+			}},
+		}, nil
+	}
 	raw, err := os.ReadFile(l.config)
 	if err != nil {
 		return Strategies{}, err
@@ -189,6 +202,9 @@ func (s *Service) saveStrategies(items []Strategy, revision string) error {
 	}
 	if err := checkWriteTarget(l, l.config); err != nil {
 		return err
+	}
+	if l.optVar == "" {
+		return fmt.Errorf("config %s has no strategy variable: strategies are read-only for the %s layout", l.config, flavorFor(l.base, l.optVar))
 	}
 	if err := checkRevision(l.config, revision); err != nil {
 		return err

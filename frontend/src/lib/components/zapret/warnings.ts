@@ -14,6 +14,8 @@ export function zapretWarningText(warning: ZapretWarning): string {
 			return m.zapret_warning_strategy_no_lua_desync();
 		case 'strategies_empty':
 			return m.zapret_warning_strategies_empty({ optVar: warning.detail ?? 'NFQWS2_OPT' });
+		case 'strategies_unsupported':
+			return m.zapret_warning_strategies_unsupported({ flavor: warning.detail ?? 'nfqws2-keenetic' });
 		case 'strategies_limit_reached':
 			return m.zapret_warning_strategies_limit_reached({ limit: warning.detail ?? '64' });
 		default:
