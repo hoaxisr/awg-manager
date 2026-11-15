@@ -286,6 +286,9 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.proxyRuntimeNudge != nil {
 		h.hookHandler.SetProxyRuntimeNudge(s.proxyRuntimeNudge)
 	}
+	if s.wanChangeNudge != nil {
+		h.hookHandler.SetWANChangeNudge(s.wanChangeNudge)
+	}
 	if s.nwgOp != nil {
 		h.hookHandler.SetEndpointGuardNudge(s.nwgOp.NudgeEndpointGuard)
 	}

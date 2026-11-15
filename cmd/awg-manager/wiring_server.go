@@ -489,6 +489,7 @@ func (a *app) setupRouter() {
 	}()
 	a.routerScheduler = router.NewScheduler(routerSvc, a.settingsStore)
 	a.routerScheduler.Start()
+	a.srv.SetWANChangeNudge(a.routerScheduler.Nudge)
 
 	// Late-bind sing-box / router / Clash deps into the monitoring scheduler.
 	// monitoringService is constructed early (line ~421) so the matrix can
