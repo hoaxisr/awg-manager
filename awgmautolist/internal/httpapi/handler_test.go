@@ -44,6 +44,10 @@ func (f *fakeEngine) Restore(id string) error {
 	f.actions = append(f.actions, "restore:"+id)
 	return nil
 }
+func (f *fakeEngine) Recheck(_ context.Context, id string) error {
+	f.actions = append(f.actions, "recheck:"+id)
+	return nil
+}
 func (f *fakeEngine) ClearHistory() error {
 	f.actions = append(f.actions, "history:clear")
 	return nil
@@ -86,14 +90,14 @@ func TestOperationalStatus(t *testing.T) {
 
 func TestCandidateActionsAndRawErrors(t *testing.T) {
 	handler, eng := testHandler(t)
-	for _, path := range []string{"/add", "/dismiss", "/forget", "/restore"} {
+	for _, path := range []string{"/add", "/dismiss", "/forget", "/restore", "/recheck"} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"id":"candidate"}`)))
 		if recorder.Code != 200 {
 			t.Fatalf("%s status=%d body=%s", path, recorder.Code, recorder.Body.String())
 		}
 	}
-	if len(eng.actions) != 4 {
+	if len(eng.actions) != 5 {
 		t.Fatalf("actions=%v", eng.actions)
 	}
 	recorder := httptest.NewRecorder()
@@ -129,5 +133,35 @@ func TestDiagnosticsAreAbsent(t *testing.T) {
 		if recorder.Code != http.StatusNotFound {
 			t.Fatalf("%s status=%d", path, recorder.Code)
 		}
+	}
+}
+
+// TestRecheckReturnsUpdatedCandidate verifies the /recheck contract: the
+// engine call happens per id, and the response carries the refreshed
+// candidate so the UI does not need a follow-up /status read.
+func TestRecheckReturnsUpdatedCandidate(t *testing.T) {
+	handler, _ := testHandler(t)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/recheck",
+		strings.NewReader(`{"id":"domain|example.com|tcp|443"}`)))
+	if recorder.Code != 200 {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Results map[string]json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := body.Results["domain|example.com|tcp|443"]
+	if !ok {
+		t.Fatalf("candidate result missing: %s", recorder.Body.String())
+	}
+	var cand model.Candidate
+	if err := json.Unmarshal(raw, &cand); err != nil {
+		t.Fatalf("recheck must return the updated candidate: %v body=%s", err, recorder.Body.String())
+	}
+	if cand.ID != "domain|example.com|tcp|443" {
+		t.Fatalf("candidate id=%q", cand.ID)
 	}
 }

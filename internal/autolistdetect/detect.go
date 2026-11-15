@@ -571,14 +571,18 @@ var allowedPaths = map[string]bool{
 	"/forget":        true,
 	"/restore":       true,
 	"/remove":        true,
+	"/recheck":       true,
 	"/history/clear": true,
 }
 
 // commandPaths need the long command timeout: they run coverage, resolve
-// outbounds and apply the router configuration on the satellite side.
+// outbounds, apply the router configuration or rerun the active checks on
+// the satellite side. /recheck waits for a full probe cycle (up to ~30s),
+// the 75s command timeout covers it with headroom.
 var commandPaths = map[string]bool{
-	"/add":    true,
-	"/remove": true,
+	"/add":     true,
+	"/remove":  true,
+	"/recheck": true,
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {

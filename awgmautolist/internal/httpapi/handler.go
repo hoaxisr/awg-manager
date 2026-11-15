@@ -22,6 +22,7 @@ type Engine interface {
 	Delete(context.Context, string) error
 	Forget(string) error
 	Restore(string) error
+	Recheck(context.Context, string) error
 	ClearHistory() error
 }
 
@@ -43,6 +44,19 @@ func New(eng Engine, cfg *config.Store, state *store.Store, version string) http
 	mux.HandleFunc("POST /forget", h.action(func(_ context.Context, id string) error { return eng.Forget(id) }))
 	mux.HandleFunc("POST /restore", h.action(func(_ context.Context, id string) error { return eng.Restore(id) }))
 	mux.HandleFunc("POST /remove", h.action(func(ctx context.Context, id string) error { return eng.Delete(ctx, id) }))
+	mux.HandleFunc("POST /recheck", h.actionValue(func(ctx context.Context, id string) (any, error) {
+		if err := eng.Recheck(ctx, id); err != nil {
+			return nil, err
+		}
+		// The refreshed card goes back to the caller; nil means the card was
+		// discarded during the rerun (both paths blocked) and the client
+		// refetches /status.
+		cand, ok := h.state.Snapshot(time.Now()).Candidates[id]
+		if !ok {
+			return nil, nil
+		}
+		return cand, nil
+	}))
 	mux.HandleFunc("POST /history/clear", h.clearHistory)
 	return LimitBody(mux)
 }
@@ -105,6 +119,15 @@ type actionRequest struct {
 // action returns per-ID raw results, including partial writer errors. A batch
 // never turns one target's failure into an empty or generic success object.
 func (h *Handler) action(run func(context.Context, string) error) http.HandlerFunc {
+	return h.actionValue(func(ctx context.Context, id string) (any, error) {
+		return nil, run(ctx, id)
+	})
+}
+
+// actionValue is action with a per-ID payload: nil error stores the value in
+// results[id] (nil stays nil), a non-nil error stores its text. Used where
+// the answer itself carries data, e.g. /recheck returns the updated card.
+func (h *Handler) actionValue(run func(context.Context, string) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req actionRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -126,10 +149,11 @@ func (h *Handler) action(run func(context.Context, string) error) http.HandlerFu
 				continue
 			}
 			seen[id] = true
-			if err := run(r.Context(), id); err != nil {
+			value, err := run(r.Context(), id)
+			if err != nil {
 				results[id] = err.Error()
 			} else {
-				results[id] = nil
+				results[id] = value
 			}
 		}
 		WriteJSON(w, http.StatusOK, map[string]any{"results": results})
