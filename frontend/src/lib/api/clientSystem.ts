@@ -500,10 +500,17 @@ export class SystemClient extends TunnelsClient {
 		return this.request(`/signature/capture?domain=${encodeURIComponent(domain)}`);
 	}
 
-	async generateSignature(protocol: string): Promise<SignatureGenerateResult> {
+	async generateSignature(
+		protocol: string,
+		opts?: {
+			domain?: string;
+			hostPreset?: 'default' | 'ru_whitelist' | 'cdn' | 'custom';
+			domains?: string[];
+		},
+	): Promise<SignatureGenerateResult> {
 		return this.request('/signature/generate', {
 			method: 'POST',
-			body: JSON.stringify({ protocol }),
+			body: JSON.stringify({ protocol, ...(opts ?? {}) }),
 		});
 	}
 

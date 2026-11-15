@@ -947,4 +947,238 @@ func TestFindJunk_PinsScanInterfaceAcrossAllAttempts(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("preserves_awg3_flags_on_auto_and_manual_apply", func(t *testing.T) {
+		store, err := NewStore(t.TempDir(), plainCipher{})
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		if err := store.SetAccount(&Account{
+			ID: "acc1", PrivateKey: "priv", PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2/32",
+		}); err != nil {
+			t.Fatalf("SetAccount: %v", err)
+		}
+		if err := store.SetAWG(AWGParams{
+			SignatureProfile: "quic_initial",
+			Jc:               4,
+			Jmin:             40,
+			Jmax:             70,
+			TimingJitter:     true,
+			ContentPadding:   "15-90",
+		}); err != nil {
+			t.Fatalf("SetAWG: %v", err)
+		}
+		runner := &scriptedJunkRunner{
+			runFn: func(_ context.Context, _ int, p ScanParams, on func(EngineEvent)) error {
+				emitHitsAndMaybeDone(on, len(p.Endpoints), 5, true, len(p.Endpoints), false)
+				return nil
+			},
+		}
+		svc := New(Deps{
+			Store:   store,
+			Runner:  runner,
+			Tunnels: &fakeTunnels{refs: map[string]*TunnelRef{}},
+			WAN:     func(context.Context) (string, bool) { return "eth3", true },
+			Now:     time.Now,
+		})
+		t.Cleanup(svc.Stop)
+
+		if err := svc.StartFindJunk(FindJunkRequest{
+			I1Profile: "quic_initial", MaxAttempts: 1, ThresholdPct: 100, PerSubnet: 1, AutoApply: true,
+		}); err != nil {
+			t.Fatalf("StartFindJunk: %v", err)
+		}
+		st := waitFindJunkDone(t, svc)
+		if !st.Applied {
+			t.Fatalf("expected auto-apply to succeed: %+v", st)
+		}
+		got := store.Config().AWG
+		if !got.TimingJitter || got.ContentPadding != "15-90" {
+			t.Fatalf("AutoApply lost AWG3 flags: %+v", got)
+		}
+
+		// Update ContentPadding then call manual ApplyFindJunk: must preserve updated value too.
+		got.ContentPadding = "20-80"
+		if err := store.SetAWG(got); err != nil {
+			t.Fatal(err)
+		}
+		applied, err := svc.ApplyFindJunk()
+		if err != nil {
+			t.Fatalf("ApplyFindJunk: %v", err)
+		}
+		if !applied.TimingJitter || applied.ContentPadding != "20-80" {
+			t.Fatalf("ApplyFindJunk returned %+v, want TimingJitter=true ContentPadding=20-80", applied)
+		}
+		saved := store.Config().AWG
+		if !saved.TimingJitter || saved.ContentPadding != "20-80" {
+			t.Fatalf("ApplyFindJunk saved %+v", saved)
+		}
+	})
+}
+
+func TestApplyFindJunkRequest_SelectsAttemptAndOverridesAWG3(t *testing.T) {
+	store, err := NewStore(t.TempDir(), plainCipher{})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := store.SetAWG(AWGParams{
+		Jc:               3,
+		Jmin:             10,
+		Jmax:             40,
+		TimingJitter:     true,
+		ContentPadding:   "15-60",
+		SignatureProfile: "quic_initial",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := New(Deps{Store: store, Now: time.Now})
+	t.Cleanup(svc.Stop)
+
+	a1 := JunkAttempt{
+		Attempt: 1,
+		AWG:     AWGParams{Jc: 5, Jmin: 20, Jmax: 60, SignatureProfile: "dtls", I1: "<dtls-tag>"},
+		Profile: "dtls", Working: 28, Scanned: 30, Total: 30,
+	}
+	a2 := JunkAttempt{
+		Attempt: 2,
+		AWG:     AWGParams{Jc: 4, Jmin: 44, Jmax: 141, SignatureProfile: "sip", I1: "<sip-tag>"},
+		Profile: "sip", Working: 25, Scanned: 30, Total: 30,
+	}
+	a3Zero := JunkAttempt{
+		Attempt: 3,
+		AWG:     AWGParams{Jc: 3, Jmin: 10, Jmax: 50, SignatureProfile: "dns", I1: "<dns-tag>"},
+		Profile: "dns", Working: 0, Scanned: 30, Total: 30,
+	}
+	svc.mu.Lock()
+	svc.findJunk = FindJunkStatus{
+		MaxAttempts: 3,
+		Attempts:    []JunkAttempt{a1, a2, a3Zero},
+		Best:        &a1,
+	}
+	svc.mu.Unlock()
+
+	// 1. Выбор не-лучшей, но рабочей попытки #2 сохраняет текущие AWG 3.0 флаги.
+	got, err := svc.ApplyFindJunkRequest(FindJunkApplyRequest{Attempt: 2})
+	if err != nil {
+		t.Fatalf("ApplyFindJunkRequest(attempt=2): %v", err)
+	}
+	if got.Jc != 4 || got.Jmin != 44 || got.Jmax != 141 || got.SignatureProfile != "sip" || got.I1 != "<sip-tag>" {
+		t.Fatalf("unexpected applied attempt #2 params: %+v", got)
+	}
+	if !got.TimingJitter || got.ContentPadding != "15-60" {
+		t.Fatalf("expected preserved AWG 3.0 params, got %+v", got)
+	}
+	st := svc.State().FindJunk
+	if !st.Applied || st.AppliedAttempt != 2 {
+		t.Fatalf("expected Applied=true AppliedAttempt=2, got %+v", st)
+	}
+
+	// 2. Явное переопределение TimingJitter и ContentPadding при выборе попытки #1.
+	f := false
+	pad := "10-120"
+	got, err = svc.ApplyFindJunkRequest(FindJunkApplyRequest{
+		Attempt:        1,
+		TimingJitter:   &f,
+		ContentPadding: &pad,
+	})
+	if err != nil {
+		t.Fatalf("ApplyFindJunkRequest(attempt=1 override): %v", err)
+	}
+	if got.Jc != 5 || got.SignatureProfile != "dtls" || got.TimingJitter || got.ContentPadding != "10-120" {
+		t.Fatalf("unexpected overridden params: %+v", got)
+	}
+	if st := svc.State().FindJunk; !st.Applied || st.AppliedAttempt != 1 {
+		t.Fatalf("expected Applied=true AppliedAttempt=1, got %+v", st)
+	}
+
+	// 3. Некорректные аргументы возвращают ErrInvalidInput.
+	badPad := "invalid"
+	for _, tc := range []struct {
+		name string
+		req  FindJunkApplyRequest
+	}{
+		{name: "negative_attempt", req: FindJunkApplyRequest{Attempt: -1}},
+		{name: "missing_attempt", req: FindJunkApplyRequest{Attempt: 99}},
+		{name: "zero_hits_attempt", req: FindJunkApplyRequest{Attempt: 3}},
+		{name: "invalid_content_padding", req: FindJunkApplyRequest{Attempt: 1, ContentPadding: &badPad}},
+	} {
+		if _, err := svc.ApplyFindJunkRequest(tc.req); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("%s: expected ErrInvalidInput, got %v", tc.name, err)
+		}
+	}
+}
+
+func TestStartFindJunk_DomainRotationAndAWG31Overrides(t *testing.T) {
+	store, err := NewStore(t.TempDir(), plainCipher{})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := store.SetAccount(&Account{
+		ID: "acc1", PrivateKey: "priv", PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2/32",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runner := &scriptedJunkRunner{
+		runFn: func(_ context.Context, _ int, p ScanParams, on func(EngineEvent)) error {
+			emitHitsAndMaybeDone(on, len(p.Endpoints), 8, true, len(p.Endpoints), false)
+			return nil
+		},
+	}
+	svc := New(Deps{
+		Store:   store,
+		Runner:  runner,
+		Tunnels: &fakeTunnels{refs: map[string]*TunnelRef{}},
+		WAN:     func(context.Context) (string, bool) { return "eth3", true },
+		Now:     time.Now,
+	})
+	t.Cleanup(svc.Stop)
+
+	if err := svc.StartFindJunk(FindJunkRequest{
+		I1Profile: "quic_initial", HostPreset: "custom", Domains: "", MaxAttempts: 1,
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("empty custom domains expected ErrInvalidInput, got %v", err)
+	}
+	if err := svc.StartFindJunk(FindJunkRequest{
+		I1Profile: "quic_initial", Domains: "bad_label", MaxAttempts: 1,
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid domain expected ErrInvalidInput, got %v", err)
+	}
+
+	if err := svc.StartFindJunk(FindJunkRequest{
+		I1Profile:    "quic_initial",
+		HostPreset:   "custom",
+		Domains:      "gosuslugi.ru, vk.com, yandex.ru",
+		MaxAttempts:  4,
+		ThresholdPct: 100,
+		PerSubnet:    1,
+	}); err != nil {
+		t.Fatalf("StartFindJunk custom list: %v", err)
+	}
+	st := waitFindJunkDone(t, svc)
+	if len(st.Attempts) != 4 {
+		t.Fatalf("expected 4 attempts, got %d (%+v)", len(st.Attempts), st)
+	}
+	wantDomains := []string{"gosuslugi.ru", "vk.com", "yandex.ru", "gosuslugi.ru"}
+	for i, want := range wantDomains {
+		if st.Attempts[i].Domain != want || st.Attempts[i].AWG.GeneratedDomain != want {
+			t.Fatalf("attempt %d domain = (%q, %q), want %q", i+1, st.Attempts[i].Domain, st.Attempts[i].AWG.GeneratedDomain, want)
+		}
+	}
+
+	rt, dc := true, true
+	applied, err := svc.ApplyFindJunkRequest(FindJunkApplyRequest{
+		Attempt:        2,
+		RandomTrailers: &rt,
+		DisableCookies: &dc,
+	})
+	if err != nil {
+		t.Fatalf("ApplyFindJunkRequest AWG31: %v", err)
+	}
+	if !applied.RandomTrailers || !applied.DisableCookies ||
+		applied.GeneratedDomain != "vk.com" ||
+		applied.SignatureHostPreset != "custom" ||
+		applied.SignatureDomain != "gosuslugi.ru, vk.com, yandex.ru" {
+		t.Fatalf("unexpected applied AWG31 + domain state: %+v", applied)
+	}
 }

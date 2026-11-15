@@ -347,6 +347,7 @@ export interface SignatureGenerateResult {
 	ok: boolean;
 	source: string;
 	protocol: string;
+	domain?: string;
 	byteSize: number;
 	packets: {
 		i1: string;

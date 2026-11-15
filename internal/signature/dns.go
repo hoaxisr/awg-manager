@@ -6,13 +6,25 @@ import (
 	"strings"
 )
 
-func init() { builders["dns"] = buildDNS }
+func init() {
+	builders["dns"] = buildDNS
+	hostBuilders["dns"] = buildDNSWithHost
+}
 
 var dnsQueryTypes = []int{1, 28, 65} // A, AAAA, HTTPS — §3.4
 
 // buildDNS — DNS-запрос (§3): TXID случаен на рантайме (<r 2>), остальное тело
 // (флаги, счётчики, QNAME/QTYPE/QCLASS, EDNS0 OPT) статично внутри генерации.
 func buildDNS(r *mrand.Rand) (GeneratedPackets, error) {
+	pk, _, err := buildDNSWithHost(r, "")
+	return pk, err
+}
+
+func buildDNSWithHost(r *mrand.Rand, customHost string) (GeneratedPackets, string, error) {
+	host := customHost
+	if host == "" {
+		host = pickHost(r)
+	}
 	w := &wire{}
 	w.u16(0x0100) // flags: standard query, RD=1
 	w.u16(1)      // QDCOUNT
@@ -20,7 +32,7 @@ func buildDNS(r *mrand.Rand) (GeneratedPackets, error) {
 	w.u16(0)      // NSCOUNT
 	w.u16(1)      // ARCOUNT
 
-	for _, label := range strings.Split(pickHost(r), ".") {
+	for _, label := range strings.Split(host, ".") {
 		w.u8(len(label))
 		w.str(label)
 	}
@@ -35,5 +47,5 @@ func buildDNS(r *mrand.Rand) (GeneratedPackets, error) {
 	w.u32(0)    // extended-RCODE + version + flags (DO=0)
 	w.u16(0)    // RDLEN = 0
 
-	return GeneratedPackets{I1: "<r 2>" + tokB(w.bytes())}, nil
+	return GeneratedPackets{I1: "<r 2>" + tokB(w.bytes())}, host, nil
 }

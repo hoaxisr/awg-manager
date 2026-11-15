@@ -36,6 +36,8 @@ const (
 // FindJunkRequest — параметры автоматического подбора маскировки AWG (Jc/Jmin/Jmax + I1..I5).
 type FindJunkRequest struct {
 	I1Profile    string `json:"i1Profile"`              // "random", "quic_initial", "dns", "sip", "stun", "dtls", "none"
+	HostPreset   string `json:"hostPreset,omitempty"`   // "", "default", "ru_whitelist", "cdn", "custom"
+	Domains      string `json:"domains,omitempty"`      // домен или список доменов через запятую/пробел
 	MaxAttempts  int    `json:"maxAttempts,omitempty"`  // по умолчанию 10 (1..30)
 	ThresholdPct int    `json:"thresholdPct,omitempty"` // целевой процент рабочих узлов, по умолчанию 95 (50..100)
 	PerSubnet    int    `json:"perSubnet,omitempty"`    // эндпоинтов на префикс, по умолчанию 2 (1..5)
@@ -43,11 +45,22 @@ type FindJunkRequest struct {
 	AutoApply    bool   `json:"autoApply,omitempty"`    // сразу сохранить лучший набор в настройки сканера
 }
 
+// FindJunkApplyRequest — применить выбранную (или лучшую) попытку find-junk
+// с опциональными флагами AWG 3.0/3.1 из черновика UI.
+type FindJunkApplyRequest struct {
+	Attempt        int     `json:"attempt,omitempty"`
+	TimingJitter   *bool   `json:"timingJitter,omitempty"`
+	ContentPadding *string `json:"contentPadding,omitempty"`
+	RandomTrailers *bool   `json:"randomTrailers,omitempty"`
+	DisableCookies *bool   `json:"disableCookies,omitempty"`
+}
+
 // JunkAttempt — результат одной попытки перебора параметров маскировки.
 type JunkAttempt struct {
 	Attempt    int       `json:"attempt"`
 	AWG        AWGParams `json:"awg"`
 	Profile    string    `json:"profile"`
+	Domain     string    `json:"domain,omitempty"`
 	Working    int       `json:"working"`
 	Scanned    int       `json:"scanned"`
 	Total      int       `json:"total"`
@@ -65,6 +78,8 @@ type FindJunkStatus struct {
 	StartedAt      time.Time     `json:"startedAt,omitempty"`
 	FinishedAt     time.Time     `json:"finishedAt,omitempty"`
 	I1Profile      string        `json:"i1Profile,omitempty"`
+	HostPreset     string        `json:"hostPreset,omitempty"`
+	Domains        string        `json:"domains,omitempty"`
 	Attempt        int           `json:"attempt"`
 	MaxAttempts    int           `json:"maxAttempts"`
 	ThresholdPct   int           `json:"thresholdPct"`
@@ -108,6 +123,23 @@ func normalizeFindJunkRequest(req FindJunkRequest) (FindJunkRequest, error) {
 		prof = canon
 	}
 	req.I1Profile = prof
+	if strings.TrimSpace(req.HostPreset) != "" {
+		hp := signature.CanonicalHostPreset(req.HostPreset)
+		if hp == "" {
+			return req, fmt.Errorf("%w: неизвестный пресет доменов %q", ErrInvalidInput, req.HostPreset)
+		}
+		req.HostPreset = hp
+	}
+	if domRaw := strings.TrimSpace(req.Domains); domRaw != "" {
+		list, err := signature.ParseDomainList(domRaw)
+		if err != nil {
+			return req, fmt.Errorf("%w: некорректный домен для подбора I1: %v", ErrInvalidInput, err)
+		}
+		req.Domains = strings.Join(list, ", ")
+		if req.HostPreset == "" || req.HostPreset == signature.HostPresetDefault {
+			req.HostPreset = signature.HostPresetCustom
+		}
+	}
 	if req.MaxAttempts <= 0 {
 		req.MaxAttempts = findJunkDefaultAttempts
 	} else if req.MaxAttempts > findJunkMaxAttempts {
@@ -141,35 +173,43 @@ func randBetween(r *mrand.Rand, lo, hi int) int {
 	return lo + r.Intn(hi-lo+1)
 }
 
-func generateJunkCandidate(r *mrand.Rand, i1Profile string) (AWGParams, string, error) {
+func generateJunkCandidate(
+	r *mrand.Rand,
+	i1Profile string,
+	domOpts signature.GenerateOptions,
+	hostPreset, domainsList string,
+) (AWGParams, string, string, error) {
 	jc := randBetween(r, junkCountMin, junkCountMax)
 	jmin := randBetween(r, junkSizeMin, junkSizeMax)
 	jmax := jmin + randBetween(r, junkSpanMin, junkSpanMax)
 
 	awg := AWGParams{
-		Jc:   jc,
-		Jmin: jmin,
-		Jmax: jmax,
+		SignatureHostPreset: normHostPreset(hostPreset),
+		SignatureDomain:     domainsList,
+		Jc:                  jc,
+		Jmin:                jmin,
+		Jmax:                jmax,
 	}
 	if i1Profile == "none" {
 		awg.SignatureProfile = "none"
-		return awg, "none", nil
+		return awg, "none", "", nil
 	}
 	prof := i1Profile
 	if prof == "random" {
 		prof = signature.Profiles[r.Intn(len(signature.Profiles))]
 	}
-	res, err := signature.Generate(prof)
+	res, err := signature.GenerateWithOptions(prof, domOpts)
 	if err != nil {
-		return awg, prof, err
+		return awg, prof, "", err
 	}
 	awg.SignatureProfile = res.Profile
+	awg.GeneratedDomain = res.Domain
 	awg.I1 = res.Packets.I1
 	awg.I2 = res.Packets.I2
 	awg.I3 = res.Packets.I3
 	awg.I4 = res.Packets.I4
 	awg.I5 = res.Packets.I5
-	return awg, res.Profile, nil
+	return awg, res.Profile, res.Domain, nil
 }
 
 // buildSampleEndpoints выбирает по perSubnet случайных адресов из каждого
@@ -256,6 +296,29 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 	if _, ok := s.d.Runner.Available(); !ok {
 		return ErrEngineMissing
 	}
+
+	cfgAWG := s.d.Store.Config().AWG
+	hostPreset := req.HostPreset
+	if hostPreset == "" {
+		hostPreset = signature.CanonicalHostPreset(cfgAWG.SignatureHostPreset)
+	}
+	var customDomains []string
+	var normalizedDomains string
+	if req.Domains != "" {
+		customDomains, _ = signature.ParseDomainList(req.Domains)
+		normalizedDomains = req.Domains
+	} else if hostPreset == signature.HostPresetCustom && strings.TrimSpace(cfgAWG.SignatureDomain) != "" {
+		list, lErr := signature.ParseDomainList(cfgAWG.SignatureDomain)
+		if lErr != nil {
+			return fmt.Errorf("%w: некорректный домен генерации I1: %v", ErrInvalidInput, lErr)
+		}
+		customDomains = list
+		normalizedDomains = strings.Join(list, ", ")
+	}
+	if req.I1Profile != "none" && hostPreset == signature.HostPresetCustom && len(customDomains) == 0 {
+		return fmt.Errorf("%w: укажите хотя бы один домен для перебора", ErrInvalidInput)
+	}
+
 	s.findJunkOpMu.Lock()
 	defer s.findJunkOpMu.Unlock()
 
@@ -279,6 +342,8 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 		Running:      true,
 		StartedAt:    s.d.Now(),
 		I1Profile:    req.I1Profile,
+		HostPreset:   normHostPreset(hostPreset),
+		Domains:      normalizedDomains,
 		MaxAttempts:  req.MaxAttempts,
 		ThresholdPct: req.ThresholdPct,
 		Attempts:     []JunkAttempt{},
@@ -309,6 +374,22 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 			}
 
 			r := newFindJunkRand()
+			var presetPool []string
+			if len(customDomains) == 0 && (hostPreset == signature.HostPresetRU || hostPreset == signature.HostPresetCDN) {
+				if p, ok := signature.PresetDomains(hostPreset); ok {
+					r.Shuffle(len(p), func(i, j int) { p[i], p[j] = p[j], p[i] })
+					presetPool = p
+				}
+			}
+			domainOptsForAttempt := func(attemptIdx int) signature.GenerateOptions {
+				if len(customDomains) > 0 {
+					return signature.GenerateOptions{Domain: customDomains[attemptIdx%len(customDomains)]}
+				}
+				if len(presetPool) > 0 {
+					return signature.GenerateOptions{Domain: presetPool[attemptIdx%len(presetPool)]}
+				}
+				return signature.GenerateOptions{}
+			}
 			var sample []string
 			if runErr == nil {
 				perSubnet := req.PerSubnet
@@ -324,7 +405,7 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 				if ctx.Err() != nil {
 					break
 				}
-				awg, usedProf, genErr := generateJunkCandidate(r, req.I1Profile)
+				awg, usedProf, usedDomain, genErr := generateJunkCandidate(r, req.I1Profile, domainOptsForAttempt(attemptNum-1), hostPreset, normalizedDomains)
 				if genErr != nil {
 					runErr = genErr
 					break
@@ -409,6 +490,7 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 					Attempt:    attemptNum,
 					AWG:        awg,
 					Profile:    usedProf,
+					Domain:     usedDomain,
 					Working:    working,
 					Scanned:    doneScanned,
 					Total:      total,
@@ -444,7 +526,8 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 		applied := false
 		appliedAttempt := 0
 		if runErr == nil && req.AutoApply && isUsableJunkAttempt(best) {
-			if err := s.d.Store.SetAWG(best.AWG); err != nil {
+			merged := mergePreservedAWG3(best.AWG, s.d.Store.Config().AWG)
+			if err := s.d.Store.SetAWG(merged); err != nil {
 				runErr = fmt.Errorf("не удалось сохранить подобранную маскировку: %w", err)
 			} else {
 				applied = true
@@ -494,6 +577,23 @@ func (s *Service) StopFindJunk() {
 
 // ApplyFindJunk сохраняет лучший найденный набор маскировки в Config.AWG.
 func (s *Service) ApplyFindJunk() (AWGParams, error) {
+	return s.ApplyFindJunkRequest(FindJunkApplyRequest{})
+}
+
+// ApplyFindJunkRequest сохраняет выбранную попытку (или лучшую при Attempt == 0) в Config.AWG.
+func (s *Service) ApplyFindJunkRequest(req FindJunkApplyRequest) (AWGParams, error) {
+	if req.Attempt < 0 {
+		return AWGParams{}, fmt.Errorf("%w: номер попытки не может быть отрицательным", ErrInvalidInput)
+	}
+	var cpNorm string
+	if req.ContentPadding != nil {
+		norm, err := NormalizeContentPadding(*req.ContentPadding)
+		if err != nil {
+			return AWGParams{}, err
+		}
+		cpNorm = norm
+	}
+
 	s.findJunkOpMu.Lock()
 	defer s.findJunkOpMu.Unlock()
 
@@ -503,36 +603,93 @@ func (s *Service) ApplyFindJunk() (AWGParams, error) {
 		return AWGParams{}, ErrScanRunning
 	}
 	runID := s.findJunk.RunID
-	var best *JunkAttempt
-	if s.findJunk.Best != nil {
-		cp := *s.findJunk.Best
-		best = &cp
+	var chosen *JunkAttempt
+	if req.Attempt == 0 {
+		if s.findJunk.Best != nil {
+			cp := *s.findJunk.Best
+			chosen = &cp
+		}
+	} else {
+		for i := range s.findJunk.Attempts {
+			if s.findJunk.Attempts[i].Attempt == req.Attempt {
+				cp := s.findJunk.Attempts[i]
+				chosen = &cp
+				break
+			}
+		}
+		if chosen == nil {
+			s.mu.Unlock()
+			return AWGParams{}, fmt.Errorf("%w: попытка #%d не найдена", ErrInvalidInput, req.Attempt)
+		}
 	}
 	hook := s.testBeforeApplySave
 	s.mu.Unlock()
 
-	if !isUsableJunkAttempt(best) {
+	if !isUsableJunkAttempt(chosen) {
+		if req.Attempt > 0 {
+			return AWGParams{}, fmt.Errorf("%w: попытка #%d не содержит рабочих параметров маскировки", ErrInvalidInput, req.Attempt)
+		}
 		return AWGParams{}, fmt.Errorf("%w: рабочие параметры маскировки не найдены", ErrInvalidInput)
 	}
 	if hook != nil {
 		hook()
 	}
-	if err := s.d.Store.SetAWG(best.AWG); err != nil {
+	merged := mergePreservedAWG3(chosen.AWG, s.d.Store.Config().AWG)
+	if req.TimingJitter != nil {
+		merged.TimingJitter = *req.TimingJitter
+	}
+	if req.ContentPadding != nil {
+		merged.ContentPadding = cpNorm
+	}
+	if req.RandomTrailers != nil {
+		merged.RandomTrailers = *req.RandomTrailers
+	}
+	if req.DisableCookies != nil {
+		merged.DisableCookies = *req.DisableCookies
+	}
+	if err := s.d.Store.SetAWG(merged); err != nil {
 		return AWGParams{}, err
 	}
 
 	var snap FindJunkStatus
 	published := false
 	s.mu.Lock()
-	if s.findJunk.RunID == runID && !s.findJunk.Running && s.findJunk.Best != nil && s.findJunk.Best.Attempt == best.Attempt {
-		s.findJunk.Applied = true
-		s.findJunk.AppliedAttempt = best.Attempt
-		snap = cloneFindJunkStatus(s.findJunk)
-		published = true
+	if s.findJunk.RunID == runID && !s.findJunk.Running {
+		attemptExists := s.findJunk.Best != nil && s.findJunk.Best.Attempt == chosen.Attempt
+		if !attemptExists {
+			for i := range s.findJunk.Attempts {
+				if s.findJunk.Attempts[i].Attempt == chosen.Attempt {
+					attemptExists = true
+					break
+				}
+			}
+		}
+		if attemptExists {
+			s.findJunk.Applied = true
+			s.findJunk.AppliedAttempt = chosen.Attempt
+			snap = cloneFindJunkStatus(s.findJunk)
+			published = true
+		}
 	}
 	s.mu.Unlock()
 	if published {
 		s.publish(TopicFindJunk, snap)
 	}
-	return best.AWG, nil
+	return merged, nil
+}
+
+// mergePreservedAWG3 переносит пользовательские флаги AWG 3.0/3.1 (timingJitter,
+// contentPadding, randomTrailers, disableCookies) поверх найденных find-junk параметров.
+func mergePreservedAWG3(cand, cur AWGParams) AWGParams {
+	cand.TimingJitter = cur.TimingJitter
+	cand.ContentPadding = cur.ContentPadding
+	cand.RandomTrailers = cur.RandomTrailers
+	cand.DisableCookies = cur.DisableCookies
+	if cand.SignatureHostPreset == "" && cand.GeneratedDomain == "" {
+		cand.SignatureHostPreset = cur.SignatureHostPreset
+		if cand.SignatureDomain == "" {
+			cand.SignatureDomain = cur.SignatureDomain
+		}
+	}
+	return cand
 }

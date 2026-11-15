@@ -94,22 +94,38 @@ func (a *Account) Reserved() [3]int {
 	return out
 }
 
-// AWGParams — обфускация AmneziaWG, совместимая с серверами WARP: только
-// мусорные пакеты и сигнатура I1..I5. S1..S4 и H1..H4 у WARP всегда
-// штатные (0 и 1..4) — сервер на обычном WireGuard иначе молча отвергает
+// AWGParams — обфускация AmneziaWG, совместимая с серверами WARP: мусорные
+// пакеты, сигнатура I1..I5 и расширения AWG 3.0/3.1. S1..S4 и H1..H4 у WARP
+// всегда штатные (0 и 1..4) — сервер на обычном WireGuard иначе отвергает
 // рукопожатие.
 type AWGParams struct {
 	// SignatureProfile — профиль генератора сигнатуры (quic_initial, dns,
 	// stun, dtls, sip), "custom" (взято из рабочего туннеля) или "none".
 	SignatureProfile string `json:"signatureProfile"`
-	Jc               int    `json:"jc"`
-	Jmin             int    `json:"jmin"`
-	Jmax             int    `json:"jmax"`
-	I1               string `json:"i1,omitempty"`
-	I2               string `json:"i2,omitempty"`
-	I3               string `json:"i3,omitempty"`
-	I4               string `json:"i4,omitempty"`
-	I5               string `json:"i5,omitempty"`
+	// SignatureHostPreset — пул доменов для генератора I1 ("", "default",
+	// "ru_whitelist", "cdn", "custom").
+	SignatureHostPreset string `json:"signatureHostPreset,omitempty"`
+	// SignatureDomain — пользовательский домен или список доменов через запятую.
+	SignatureDomain string `json:"signatureDomain,omitempty"`
+	// GeneratedDomain — фактический домен, зашитый в текущую сигнатуру I1.
+	GeneratedDomain string `json:"generatedDomain,omitempty"`
+	Jc              int    `json:"jc"`
+	Jmin            int    `json:"jmin"`
+	Jmax            int    `json:"jmax"`
+	I1              string `json:"i1,omitempty"`
+	I2              string `json:"i2,omitempty"`
+	I3              string `json:"i3,omitempty"`
+	I4              string `json:"i4,omitempty"`
+	I5              string `json:"i5,omitempty"`
+	// AWG 3.0 параметры (безопасны для WARP: не меняют S1..S4/H1..H4).
+	// TimingJitter включает рандомизированные таймеры рукопожатия/rekey
+	// (и PersistentKeepalive = 25-35 в kernel/.conf).
+	TimingJitter bool `json:"timingJitter,omitempty"`
+	// ContentPadding — ContentPaddingAddition (например "10-100" или "32").
+	ContentPadding string `json:"contentPadding,omitempty"`
+	// AWG 3.1 параметры (работают в kernel >= 3.1, ASC 3.x на 5.02.A.11+ и в .conf).
+	RandomTrailers bool `json:"randomTrailers,omitempty"`
+	DisableCookies bool `json:"disableCookies,omitempty"`
 }
 
 // ObfuscationSource — существующий на роутере туннель с параметрами AmneziaWG,

@@ -47,10 +47,29 @@ type WarpTunnelOps struct {
 	Commands *ndmscommand.Commands
 	Queries  *ndmsquery.Queries
 	Tunnels  *TunnelsHandler // штатная правка туннеля (EditTunnelWith)
+	// SupportsASC3 сообщает, поддерживает ли прошивка ASC 3.x (5.02.A.11+).
+	SupportsASC3 func() bool
+	// SupportsKernelAWG31 сообщает, поддерживает ли kernel-модуль флаги AWG 3.1.
+	SupportsKernelAWG31 func() bool
 	// RotateKernelPort переоткрывает эфемерный UDP-порт kernel-туннеля
 	// (`awg set <iface> listen-port 0`), чтобы сбросить блокировку ТСПУ
 	// по паре (IP клиента, исходный UDP-порт). В тестах подменяется.
 	RotateKernelPort func(ctx context.Context, iface string) error
+}
+
+func (o *WarpTunnelOps) supportsASC3() bool {
+	return o != nil && o.SupportsASC3 != nil && o.SupportsASC3()
+}
+
+func (o *WarpTunnelOps) supportsKernelAWG31() bool {
+	return o != nil && o.SupportsKernelAWG31 != nil && o.SupportsKernelAWG31()
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 var _ warpscout.TunnelOps = (*WarpTunnelOps)(nil)
@@ -605,8 +624,15 @@ func (o *WarpTunnelOps) Create(ctx context.Context, mode warpscout.TargetMode, n
 // из которых можно скопировать Jc/Jmin/Jmax и I1..I5 для скана или нового WARP.
 func (o *WarpTunnelOps) ObfuscationSources(ctx context.Context) []warpscout.ObfuscationSource {
 	var out []warpscout.ObfuscationSource
-	sanitizeAWG := func(jc, jmin, jmax int, i1, i2, i3, i4, i5 string) (warpscout.AWGParams, bool) {
-		p := warpscout.AWGParams{Jc: jc, Jmin: jmin, Jmax: jmax}
+	sanitizeAWG := func(jc, jmin, jmax int, i1, i2, i3, i4, i5, contentPadding string, timingJitter, randomTrailers, disableCookies bool) (warpscout.AWGParams, bool) {
+		p := warpscout.AWGParams{
+			Jc:             jc,
+			Jmin:           jmin,
+			Jmax:           jmax,
+			TimingJitter:   timingJitter,
+			RandomTrailers: randomTrailers,
+			DisableCookies: disableCookies,
+		}
 		if p.Jc < 0 {
 			p.Jc = 0
 		}
@@ -635,7 +661,10 @@ func (o *WarpTunnelOps) ObfuscationSources(ctx context.Context) []warpscout.Obfu
 				hasSig = true
 			}
 		}
-		if p.Jc == 0 && !hasSig {
+		if cp, err := warpscout.NormalizeContentPadding(contentPadding); err == nil {
+			p.ContentPadding = cp
+		}
+		if p.Jc == 0 && !hasSig && p.ContentPadding == "" && !p.TimingJitter && !p.RandomTrailers && !p.DisableCookies {
 			return p, false
 		}
 		if hasSig {
@@ -654,8 +683,14 @@ func (o *WarpTunnelOps) ObfuscationSources(ctx context.Context) []warpscout.Obfu
 					strings.TrimSpace(t.FreeTurnClientID) != "" {
 					continue
 				}
+				hasJitter := strings.TrimSpace(t.Interface.RekeyAfterTime) != "" ||
+					strings.TrimSpace(t.Interface.RekeyTimeout) != "" ||
+					strings.TrimSpace(t.Interface.RejectAfterTime) != "" ||
+					strings.TrimSpace(t.Interface.KeepaliveTimeout) != "" ||
+					strings.TrimSpace(t.Interface.MaxHandshakeAttempts) != ""
 				awg, ok := sanitizeAWG(t.Interface.Jc, t.Interface.Jmin, t.Interface.Jmax,
-					t.Interface.I1, t.Interface.I2, t.Interface.I3, t.Interface.I4, t.Interface.I5)
+					t.Interface.I1, t.Interface.I2, t.Interface.I3, t.Interface.I4, t.Interface.I5,
+					t.Interface.ContentPaddingAddition, hasJitter, t.Interface.RandomTrailers, t.Interface.DisableCookies)
 				if !ok {
 					continue
 				}
@@ -695,20 +730,17 @@ func (o *WarpTunnelOps) ObfuscationSources(ctx context.Context) []warpscout.Obfu
 				if gerr != nil || len(raw) == 0 {
 					continue
 				}
-				var asc struct {
-					Jc   int    `json:"jc"`
-					Jmin int    `json:"jmin"`
-					Jmax int    `json:"jmax"`
-					I1   string `json:"i1"`
-					I2   string `json:"i2"`
-					I3   string `json:"i3"`
-					I4   string `json:"i4"`
-					I5   string `json:"i5"`
-				}
+				var asc ndms.ASCParamsAWG3
 				if json.Unmarshal(raw, &asc) != nil {
 					continue
 				}
-				awg, ok := sanitizeAWG(asc.Jc, asc.Jmin, asc.Jmax, asc.I1, asc.I2, asc.I3, asc.I4, asc.I5)
+				hasJitter := asc.RekeyAfterTimeStart != 0 || asc.RekeyAfterTimeEnd != 0 ||
+					asc.RekeyTimeoutStart != 0 || asc.RekeyTimeoutEnd != 0 ||
+					asc.RejectAfterTimeStart != 0 || asc.RejectAfterTimeEnd != 0 ||
+					asc.KeepaliveTimeoutStart != 0 || asc.KeepaliveTimeoutEnd != 0 ||
+					asc.MaxHandshakeAttemptsStart != 0 || asc.MaxHandshakeAttemptsEnd != 0
+				awg, ok := sanitizeAWG(asc.Jc, asc.Jmin, asc.Jmax, asc.I1, asc.I2, asc.I3, asc.I4, asc.I5,
+					formatASCPadding(asc.ContentPaddingStart, asc.ContentPaddingEnd), hasJitter, asc.RandomTrailers != 0, asc.DisableCookies != 0)
 				if !ok {
 					continue
 				}
@@ -836,14 +868,14 @@ func (o *WarpTunnelOps) Rename(ctx context.Context, mode warpscout.TargetMode, i
 	return fmt.Errorf("неизвестный тип туннеля %q", mode)
 }
 
-func desiredWarpObfuscation(base storage.AWGObfuscation, opts warpscout.SwapOptions) storage.AWGObfuscation {
+func desiredWarpObfuscation(base storage.AWGObfuscation, opts warpscout.SwapOptions, allowAWG3, allowAWG31 bool) storage.AWGObfuscation {
 	if opts.Protocol == "" {
 		return base
 	}
 	if opts.Protocol == warpscout.ProtocolWG {
 		return storage.AWGObfuscation{}
 	}
-	return storage.AWGObfuscation{
+	out := storage.AWGObfuscation{
 		Jc:   opts.AWG.Jc,
 		Jmin: opts.AWG.Jmin,
 		Jmax: opts.AWG.Jmax,
@@ -855,6 +887,60 @@ func desiredWarpObfuscation(base storage.AWGObfuscation, opts warpscout.SwapOpti
 		I4: strings.TrimSpace(opts.AWG.I4),
 		I5: strings.TrimSpace(opts.AWG.I5),
 	}
+	if allowAWG3 {
+		if cp, err := warpscout.NormalizeContentPadding(opts.AWG.ContentPadding); err == nil && cp != "" {
+			out.ContentPaddingAddition = cp
+		}
+		if opts.AWG.TimingJitter {
+			out.RekeyAfterTime = warpscout.WarpRekeyAfterTime
+			out.RekeyTimeout = warpscout.WarpRekeyTimeout
+			out.RejectAfterTime = warpscout.WarpRejectAfterTime
+			out.KeepaliveTimeout = warpscout.WarpKeepaliveTimeout
+			out.MaxHandshakeAttempts = warpscout.WarpMaxHandshakeAttempts
+		}
+	}
+	if allowAWG31 {
+		out.RandomTrailers = opts.AWG.RandomTrailers
+		out.DisableCookies = opts.AWG.DisableCookies
+	}
+	return out
+}
+
+func formatASCPadding(start, end int) string {
+	if start <= 0 && end <= 0 {
+		return ""
+	}
+	if end < start {
+		end = start
+	}
+	if start == end {
+		return strconv.Itoa(start)
+	}
+	return fmt.Sprintf("%d-%d", start, end)
+}
+
+func parseU16Pair(spec string) (int, int) {
+	norm, err := warpscout.NormalizeContentPadding(spec)
+	if err != nil || norm == "" {
+		return 0, 0
+	}
+	loStr, hiStr, isRange := strings.Cut(norm, "-")
+	lo, _ := strconv.Atoi(loStr)
+	if !isRange {
+		return lo, lo
+	}
+	hi, _ := strconv.Atoi(hiStr)
+	return lo, hi
+}
+
+func encodeASCJSON(v any) (json.RawMessage, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, fmt.Errorf("кодирование ASC параметров: %w", err)
+	}
+	return json.RawMessage(bytes.TrimSpace(buf.Bytes())), nil
 }
 
 // swapManaged — штатная правка карточки (TunnelsHandler.EditTunnelWith):
@@ -885,15 +971,37 @@ func (o *WarpTunnelOps) swapManaged(ctx context.Context, id, endpoint string, op
 		return fmt.Errorf("%w: тип Native WG требует протокол AmneziaWG — выберите протокол AmneziaWG или тип «Системный»", warpscout.ErrInvalidInput)
 	}
 	tw, _ := o.Svc.Get(ctx, id)
-	desiredObf := desiredWarpObfuscation(existing.Interface.AWGObfuscation, opts)
+	desiredKAFor := func(curKA storage.Keepalive, backend string) storage.Keepalive {
+		if backend != "nativewg" && opts.Protocol != "" {
+			if opts.Protocol == warpscout.ProtocolWG {
+				return "25"
+			}
+			if opts.AWG.TimingJitter {
+				return storage.Keepalive(warpscout.WarpJitterKeepalive)
+			}
+			if curKA == storage.Keepalive(warpscout.WarpJitterKeepalive) {
+				return "25"
+			}
+		}
+		return curKA
+	}
+	allowAWG3 := existing.Backend != "nativewg" || o.supportsASC3()
+	allowAWG31 := (existing.Backend != "nativewg" && o.supportsKernelAWG31()) || (existing.Backend == "nativewg" && o.supportsASC3())
+	desiredObf := desiredWarpObfuscation(existing.Interface.AWGObfuscation, opts, allowAWG3, allowAWG31)
+	desiredKA := desiredKAFor(existing.Peer.PersistentKeepalive, existing.Backend)
 	epChanged := existing.Peer.Endpoint != endpoint
 	obfChanged := existing.Interface.AWGObfuscation != desiredObf
+	kaChanged := existing.Peer.PersistentKeepalive != desiredKA
+	cfgChanged := obfChanged || kaChanged
 
-	if epChanged || obfChanged {
+	if epChanged || cfgChanged {
 		if _, err := o.Tunnels.EditTunnelWith(ctx, id, func(cur storage.AWGTunnel) (storage.AWGTunnel, error) {
 			peer := cur.Peer
 			peer.Endpoint = endpoint
-			curDesired := desiredWarpObfuscation(cur.Interface.AWGObfuscation, opts)
+			peer.PersistentKeepalive = desiredKAFor(cur.Peer.PersistentKeepalive, cur.Backend)
+			curAllowAWG3 := cur.Backend != "nativewg" || o.supportsASC3()
+			curAllowAWG31 := (cur.Backend != "nativewg" && o.supportsKernelAWG31()) || (cur.Backend == "nativewg" && o.supportsASC3())
+			curDesired := desiredWarpObfuscation(cur.Interface.AWGObfuscation, opts, curAllowAWG3, curAllowAWG31)
 			if cur.Interface.AWGObfuscation != curDesired {
 				iface := cur.Interface
 				iface.AWGObfuscation = curDesired
@@ -908,7 +1016,7 @@ func (o *WarpTunnelOps) swapManaged(ctx context.Context, id, endpoint string, op
 	if tw == nil {
 		return nil
 	}
-	needRestart := (obfChanged && tw.State != tunnel.StateStopped) ||
+	needRestart := (cfgChanged && tw.State != tunnel.StateStopped) ||
 		(existing.Backend != "nativewg" && (tw.State == tunnel.StateStarting || tw.State == tunnel.StateBroken))
 	if needRestart {
 		// Рестарт безусловно включает туннель: если его успели остановить
@@ -917,7 +1025,7 @@ func (o *WarpTunnelOps) swapManaged(ctx context.Context, id, endpoint string, op
 			return nil
 		}
 		if err := o.Svc.Restart(ctx, id); err != nil {
-			if obfChanged {
+			if cfgChanged {
 				return fmt.Errorf("перезапуск туннеля для применения маскировки: %w", err)
 			}
 			return fmt.Errorf("перезапуск зависшего туннеля: %w", err)
@@ -970,6 +1078,30 @@ func ascParamsEqual(a, b ndms.ASCParamsExtended) bool {
 		splitASCField(a.I5) == splitASCField(b.I5)
 }
 
+func ascParamsAWG3HasObfuscation(a ndms.ASCParamsAWG3) bool {
+	return ascParamsHasObfuscation(a.ASCParamsExtended) ||
+		strings.TrimSpace(a.HeaderProtectionKey) != "" ||
+		a.ContentPaddingStart != 0 || a.ContentPaddingEnd != 0 ||
+		a.RekeyAfterTimeStart != 0 || a.RekeyAfterTimeEnd != 0 ||
+		a.RekeyTimeoutStart != 0 || a.RekeyTimeoutEnd != 0 ||
+		a.RejectAfterTimeStart != 0 || a.RejectAfterTimeEnd != 0 ||
+		a.KeepaliveTimeoutStart != 0 || a.KeepaliveTimeoutEnd != 0 ||
+		a.MaxHandshakeAttemptsStart != 0 || a.MaxHandshakeAttemptsEnd != 0 ||
+		a.RandomTrailers != 0 || a.DisableCookies != 0
+}
+
+func ascParamsAWG3Equal(a, b ndms.ASCParamsAWG3) bool {
+	return ascParamsEqual(a.ASCParamsExtended, b.ASCParamsExtended) &&
+		strings.TrimSpace(a.HeaderProtectionKey) == strings.TrimSpace(b.HeaderProtectionKey) &&
+		a.ContentPaddingStart == b.ContentPaddingStart && a.ContentPaddingEnd == b.ContentPaddingEnd &&
+		a.RekeyAfterTimeStart == b.RekeyAfterTimeStart && a.RekeyAfterTimeEnd == b.RekeyAfterTimeEnd &&
+		a.RekeyTimeoutStart == b.RekeyTimeoutStart && a.RekeyTimeoutEnd == b.RekeyTimeoutEnd &&
+		a.RejectAfterTimeStart == b.RejectAfterTimeStart && a.RejectAfterTimeEnd == b.RejectAfterTimeEnd &&
+		a.KeepaliveTimeoutStart == b.KeepaliveTimeoutStart && a.KeepaliveTimeoutEnd == b.KeepaliveTimeoutEnd &&
+		a.MaxHandshakeAttemptsStart == b.MaxHandshakeAttemptsStart && a.MaxHandshakeAttemptsEnd == b.MaxHandshakeAttemptsEnd &&
+		a.RandomTrailers == b.RandomTrailers && a.DisableCookies == b.DisableCookies
+}
+
 const swapSystemRecoverTimeout = 20 * time.Second
 
 func (o *WarpTunnelOps) swapSystem(ctx context.Context, id string, ref *warpscout.TunnelRef, endpoint string, opts warpscout.SwapOptions) error {
@@ -987,45 +1119,82 @@ func (o *WarpTunnelOps) swapSystem(ctx context.Context, id string, ref *warpscou
 		return o.Commands.Wireguard.SetPeerEndpoint(ctx, iface, ref.PeerPublicKey, endpoint)
 	}
 
-	var curASC ndms.ASCParamsExtended
-	haveCur := false
-	if o.System != nil {
-		if curRaw, err := o.System.GetASCParams(ctx, id); err == nil && len(curRaw) > 0 {
-			if json.Unmarshal(curRaw, &curASC) == nil {
-				haveCur = true
-			}
-		}
+	desiredExt := ndms.ASCParamsExtended{
+		ASCParams: ndms.ASCParams{
+			Jc:   opts.AWG.Jc,
+			Jmin: opts.AWG.Jmin,
+			Jmax: opts.AWG.Jmax,
+			S1:   0, S2: 0,
+			H1: "1", H2: "2", H3: "3", H4: "4",
+		},
+		S3: 0, S4: 0,
+		I1: strings.TrimSpace(opts.AWG.I1),
+		I2: strings.TrimSpace(opts.AWG.I2),
+		I3: strings.TrimSpace(opts.AWG.I3),
+		I4: strings.TrimSpace(opts.AWG.I4),
+		I5: strings.TrimSpace(opts.AWG.I5),
 	}
 
 	var ascChanged bool
 	var desiredRaw json.RawMessage
-	if opts.Protocol == warpscout.ProtocolWG {
-		ascChanged = !haveCur || ascParamsHasObfuscation(curASC)
-	} else {
-		desired := ndms.ASCParamsExtended{
-			ASCParams: ndms.ASCParams{
-				Jc:   opts.AWG.Jc,
-				Jmin: opts.AWG.Jmin,
-				Jmax: opts.AWG.Jmax,
-				S1:   0, S2: 0,
-				H1: "1", H2: "2", H3: "3", H4: "4",
-			},
-			S3: 0, S4: 0,
-			I1: strings.TrimSpace(opts.AWG.I1),
-			I2: strings.TrimSpace(opts.AWG.I2),
-			I3: strings.TrimSpace(opts.AWG.I3),
-			I4: strings.TrimSpace(opts.AWG.I4),
-			I5: strings.TrimSpace(opts.AWG.I5),
-		}
-		ascChanged = !haveCur || !ascParamsEqual(curASC, desired)
-		if ascChanged {
-			var buf bytes.Buffer
-			enc := json.NewEncoder(&buf)
-			enc.SetEscapeHTML(false)
-			if err := enc.Encode(desired); err != nil {
-				return fmt.Errorf("кодирование ASC параметров: %w", err)
+	if o.supportsASC3() {
+		var curAWG3 ndms.ASCParamsAWG3
+		haveCur := false
+		if o.System != nil {
+			if curRaw, err := o.System.GetASCParams(ctx, id); err == nil && len(curRaw) > 0 {
+				if json.Unmarshal(curRaw, &curAWG3) == nil {
+					haveCur = true
+				}
 			}
-			desiredRaw = json.RawMessage(bytes.TrimSpace(buf.Bytes()))
+		}
+		if opts.Protocol == warpscout.ProtocolWG {
+			ascChanged = !haveCur || ascParamsAWG3HasObfuscation(curAWG3)
+		} else {
+			cpStart, cpEnd := parseU16Pair(opts.AWG.ContentPadding)
+			desired := ndms.ASCParamsAWG3{
+				ASCParamsExtended:   desiredExt,
+				ContentPaddingStart: cpStart,
+				ContentPaddingEnd:   cpEnd,
+				RandomTrailers:      boolToInt(opts.AWG.RandomTrailers),
+				DisableCookies:      boolToInt(opts.AWG.DisableCookies),
+			}
+			if opts.AWG.TimingJitter {
+				desired.RekeyAfterTimeStart, desired.RekeyAfterTimeEnd = 100, 120
+				desired.RekeyTimeoutStart, desired.RekeyTimeoutEnd = 3, 7
+				desired.RejectAfterTimeStart, desired.RejectAfterTimeEnd = 150, 180
+				desired.KeepaliveTimeoutStart, desired.KeepaliveTimeoutEnd = 5, 15
+				desired.MaxHandshakeAttemptsStart, desired.MaxHandshakeAttemptsEnd = 15, 20
+			}
+			ascChanged = !haveCur || !ascParamsAWG3Equal(curAWG3, desired)
+			if ascChanged {
+				raw, err := encodeASCJSON(desired)
+				if err != nil {
+					return err
+				}
+				desiredRaw = raw
+			}
+		}
+	} else {
+		var curASC ndms.ASCParamsExtended
+		haveCur := false
+		if o.System != nil {
+			if curRaw, err := o.System.GetASCParams(ctx, id); err == nil && len(curRaw) > 0 {
+				if json.Unmarshal(curRaw, &curASC) == nil {
+					haveCur = true
+				}
+			}
+		}
+		if opts.Protocol == warpscout.ProtocolWG {
+			ascChanged = !haveCur || ascParamsHasObfuscation(curASC)
+		} else {
+			ascChanged = !haveCur || !ascParamsEqual(curASC, desiredExt)
+			if ascChanged {
+				raw, err := encodeASCJSON(desiredExt)
+				if err != nil {
+					return err
+				}
+				desiredRaw = raw
+			}
 		}
 	}
 
@@ -1446,10 +1615,11 @@ func (h *WarpScoutHandler) FindJunkStop(w http.ResponseWriter, r *http.Request) 
 	response.Success(w, map[string]bool{"ok": true})
 }
 
-// FindJunkApply — применить лучший найденный набор маскировки к настройкам сканера.
+// FindJunkApply — применить выбранную (или лучшую) попытку подбора маскировки к настройкам сканера.
 //
-//	@Summary	Apply best found AWG junk parameters
+//	@Summary	Apply selected or best found AWG junk parameters
 //	@Tags		warpscout
+//	@Accept		json
 //	@Produce	json
 //	@Security	CookieAuth
 //	@Success	200	{object}	map[string]interface{}
@@ -1459,7 +1629,18 @@ func (h *WarpScoutHandler) FindJunkApply(w http.ResponseWriter, r *http.Request)
 		response.MethodNotAllowed(w)
 		return
 	}
-	awg, err := h.svc.ApplyFindJunk()
+	var req warpscout.FindJunkApplyRequest
+	if r.Body != nil {
+		if err := readJSONBody(w, r, &req); err != nil && !errors.Is(err, errEmptyBody) {
+			if errors.Is(err, errInvalidJSON) {
+				response.ErrorWithStatus(w, http.StatusBadRequest, "invalid JSON", "INVALID_JSON")
+			} else {
+				response.ErrorWithStatus(w, http.StatusBadRequest, "invalid body", "INVALID_BODY")
+			}
+			return
+		}
+	}
+	awg, err := h.svc.ApplyFindJunkRequest(req)
 	if err != nil {
 		h.fail(w, err)
 		return
@@ -1555,4 +1736,26 @@ func (h *WarpScoutHandler) ClearHistory(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
+}
+
+// Export — сформировать .conf для найденного эндпоинта без создания туннеля.
+//
+//	@Summary	Export WARP endpoint .conf
+//	@Tags		warpscout
+//	@Accept		json
+//	@Produce	json
+//	@Security	CookieAuth
+//	@Success	200	{object}	map[string]interface{}
+//	@Router		/warpscout/export [post]
+func (h *WarpScoutHandler) Export(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[warpscout.ExportRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	res, err := h.svc.ExportConf(r.Context(), req)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	response.Success(w, res)
 }

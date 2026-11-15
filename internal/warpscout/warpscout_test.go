@@ -2382,3 +2382,336 @@ func TestWatchdog_Swap_PropagatesScannerAWG(t *testing.T) {
 		t.Fatalf("автопилот не передал обфускацию сканера в SwapEndpoint: %+v", tun.swapOpts)
 	}
 }
+
+func TestNormalizeContentPadding(t *testing.T) {
+	valid := map[string]string{
+		"":           "",
+		"   ":        "",
+		"0":          "0",
+		"32":         "32",
+		"10-100":     "10-100",
+		" 10 - 100 ": "10-100",
+		"0-65535":    "0-65535",
+		"50-50":      "50-50",
+	}
+	for in, want := range valid {
+		got, err := NormalizeContentPadding(in)
+		if err != nil {
+			t.Fatalf("NormalizeContentPadding(%q): %v", in, err)
+		}
+		if got != want {
+			t.Fatalf("NormalizeContentPadding(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, bad := range []string{"100-10", "65536", "10-65536", "-5", "abc", "1-2-3"} {
+		if _, err := NormalizeContentPadding(bad); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("NormalizeContentPadding(%q) = %v, want ErrInvalidInput", bad, err)
+		}
+	}
+}
+
+func TestBuildConfWithOptions_AWG3AndSafeWARP(t *testing.T) {
+	acct := &Account{
+		PrivateKey:    "privkey",
+		PeerPublicKey: WarpPeerPublicKey,
+		AddressV4:     "172.16.0.2/32",
+	}
+	awg := AWGParams{
+		Jc:             5,
+		Jmin:           20,
+		Jmax:           80,
+		I1:             "<b 0x0102>",
+		TimingJitter:   true,
+		ContentPadding: "10-100",
+	}
+
+	full := BuildConfWithOptions(acct, awg, ProtocolAWG, "162.159.192.1:2408", ConfOptions{
+		MTU:            DefaultMTU,
+		IncludeAWG3:    true,
+		RangeKeepalive: true,
+	})
+	for _, want := range []string{
+		"ContentPaddingAddition = 10-100",
+		"RekeyAfterTime = 100-120",
+		"RekeyTimeout = 3-7",
+		"RejectAfterTime = 150-180",
+		"KeepaliveTimeout = 5-15",
+		"MaxHandshakeAttempts = 15-20",
+		"PersistentKeepalive = 25-35",
+		"S1 = 0", "S2 = 0", "H1 = 1", "H4 = 4",
+	} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("kernel/export conf missing %q:\n%s", want, full)
+		}
+	}
+	for _, forbidden := range []string{"HeaderProtectionKey", "RandomTrailers", "DisableCookies"} {
+		if strings.Contains(full, forbidden) {
+			t.Fatalf("WARP conf must never contain %q:\n%s", forbidden, full)
+		}
+	}
+
+	ndms3 := BuildConfWithOptions(acct, awg, ProtocolAWG, "162.159.192.1:2408", ConfOptions{
+		MTU:            DefaultMTU,
+		IncludeAWG3:    true,
+		RangeKeepalive: false,
+	})
+	if !strings.Contains(ndms3, "ContentPaddingAddition = 10-100") || !strings.Contains(ndms3, "PersistentKeepalive = 25\n") {
+		t.Fatalf("NDMS ASC3 conf must keep scalar keepalive=25 and include AWG3:\n%s", ndms3)
+	}
+
+	ndms2 := BuildConfWithOptions(acct, awg, ProtocolAWG, "162.159.192.1:2408", ConfOptions{
+		MTU:            DefaultMTU,
+		IncludeAWG3:    false,
+		RangeKeepalive: false,
+	})
+	for _, omitted := range []string{"ContentPaddingAddition", "RekeyAfterTime", "25-35"} {
+		if strings.Contains(ndms2, omitted) {
+			t.Fatalf("ASC2 conf must omit %q:\n%s", omitted, ndms2)
+		}
+	}
+
+	wgConf := BuildConfWithOptions(acct, awg, ProtocolWG, "162.159.192.1:2408", ConfOptions{
+		MTU:            DefaultMTU,
+		IncludeAWG3:    true,
+		RangeKeepalive: true,
+	})
+	if strings.Contains(wgConf, "Jc =") || strings.Contains(wgConf, "ContentPaddingAddition") || !strings.Contains(wgConf, "PersistentKeepalive = 25\n") {
+		t.Fatalf("ProtocolWG conf must strip all AWG params:\n%s", wgConf)
+	}
+}
+
+func TestServiceApplyCreate_AWG3FirmwareGating(t *testing.T) {
+	s, _, tun, _ := newTestService(t)
+	if err := s.d.Store.SetAccount(&Account{
+		ID: "acc", PrivateKey: "priv", PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2/32",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.d.Store.SetAWG(AWGParams{
+		SignatureProfile: "quic_initial",
+		Jc:               4,
+		Jmin:             40,
+		Jmax:             70,
+		TimingJitter:     true,
+		ContentPadding:   "10-100",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	asc3 := false
+	s.d.SupportsASC3 = func() bool { return asc3 }
+
+	if _, err := s.Apply(context.Background(), ApplyRequest{
+		Action: "create", Mode: TargetKernel, Endpoint: "162.159.192.1:2408", Protocol: ProtocolAWG,
+	}); err != nil {
+		t.Fatalf("create kernel: %v", err)
+	}
+	if _, err := s.Apply(context.Background(), ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.192.2:2408", Protocol: ProtocolAWG,
+	}); err != nil {
+		t.Fatalf("create native asc2: %v", err)
+	}
+	asc3 = true
+	if _, err := s.Apply(context.Background(), ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.192.3:2408", Protocol: ProtocolAWG,
+	}); err != nil {
+		t.Fatalf("create native asc3: %v", err)
+	}
+
+	if len(tun.created) != 3 {
+		t.Fatalf("expected 3 created confs, got %d", len(tun.created))
+	}
+	if !strings.Contains(tun.created[0], "ContentPaddingAddition = 10-100") || !strings.Contains(tun.created[0], "PersistentKeepalive = 25-35") {
+		t.Fatalf("kernel create should have AWG3 + 25-35:\n%s", tun.created[0])
+	}
+	if strings.Contains(tun.created[1], "ContentPaddingAddition") || !strings.Contains(tun.created[1], "PersistentKeepalive = 25\n") {
+		t.Fatalf("native on <5.02 must omit AWG3 and keep 25:\n%s", tun.created[1])
+	}
+	if !strings.Contains(tun.created[2], "ContentPaddingAddition = 10-100") || !strings.Contains(tun.created[2], "PersistentKeepalive = 25\n") {
+		t.Fatalf("native on >=5.02 must include AWG3 padding and keep scalar 25:\n%s", tun.created[2])
+	}
+}
+
+func TestServiceSaveConfig_ContentPaddingValidation(t *testing.T) {
+	s, _, _, _ := newTestService(t)
+	cfg := s.d.Store.Config()
+	cfg.AWG.ContentPadding = "100-10"
+	if _, err := s.SaveConfig(context.Background(), cfg); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for invalid padding, got %v", err)
+	}
+	cfg.AWG.ContentPadding = " 10 - 100 "
+	cfg.AWG.TimingJitter = true
+	saved, err := s.SaveConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("SaveConfig valid: %v", err)
+	}
+	if saved.AWG.ContentPadding != "10-100" || !saved.AWG.TimingJitter {
+		t.Fatalf("unexpected saved AWG: %+v", saved.AWG)
+	}
+}
+
+func TestServiceExportConf(t *testing.T) {
+	emptyStore, err := NewStore(t.TempDir(), plainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptySvc := New(Deps{Store: emptyStore})
+	t.Cleanup(emptySvc.Stop)
+	if _, err := emptySvc.ExportConf(context.Background(), ExportRequest{Endpoint: "162.159.192.1:2408"}); !errors.Is(err, ErrNoAccount) {
+		t.Fatalf("expected ErrNoAccount without account, got %v", err)
+	}
+
+	s, _, tun, _ := newTestService(t)
+	if err := s.d.Store.SetAccount(&Account{
+		ID: "acc", PrivateKey: "priv", PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2/32",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.d.Store.SetAWG(AWGParams{
+		SignatureProfile: "quic_initial", Jc: 4, Jmin: 40, Jmax: 70, TimingJitter: true, ContentPadding: "10-100",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.ExportConf(context.Background(), ExportRequest{
+		Endpoint: "162.159.192.10:2408",
+		Colo:     "HEL",
+		Protocol: ProtocolAWG,
+	})
+	if err != nil {
+		t.Fatalf("ExportConf awg: %v", err)
+	}
+	if res.Filename != "warp-hel-awg.conf" {
+		t.Fatalf("unexpected filename: %q", res.Filename)
+	}
+	if !strings.Contains(res.Content, "ContentPaddingAddition = 10-100") || !strings.Contains(res.Content, "PersistentKeepalive = 25-35") {
+		t.Fatalf("exported conf missing AWG3 fields:\n%s", res.Content)
+	}
+	if len(tun.created) != 0 {
+		t.Fatalf("ExportConf must not create tunnels, created=%d", len(tun.created))
+	}
+	wgRes, err := s.ExportConf(context.Background(), ExportRequest{
+		Endpoint: "162.159.192.10:2408",
+		Protocol: ProtocolWG,
+	})
+	if err != nil {
+		t.Fatalf("ExportConf wg: %v", err)
+	}
+	if wgRes.Filename != "warp-wg.conf" || strings.Contains(wgRes.Content, "ContentPaddingAddition") {
+		t.Fatalf("unexpected WG export: %+v", wgRes)
+	}
+}
+
+func TestBuildConfWithOptions_AWG31FlagsAndKernelGating(t *testing.T) {
+	acct := &Account{
+		PrivateKey:    "privkey",
+		PeerPublicKey: WarpPeerPublicKey,
+		AddressV4:     "172.16.0.2/32",
+	}
+	awg := AWGParams{
+		Jc: 5, Jmin: 20, Jmax: 80, I1: "<b 0x0102>",
+		TimingJitter:   true,
+		ContentPadding: "10-100",
+		RandomTrailers: true,
+		DisableCookies: true,
+	}
+
+	onConf := BuildConfWithOptions(acct, awg, ProtocolAWG, "162.159.192.1:2408", ConfOptions{
+		MTU:            DefaultMTU,
+		IncludeAWG3:    true,
+		IncludeAWG31:   true,
+		RangeKeepalive: true,
+	})
+	if !strings.Contains(onConf, "RandomTrailers = on\n") || !strings.Contains(onConf, "DisableCookies = on\n") {
+		t.Fatalf("expected AWG 3.1 `= on` flags in conf:\n%s", onConf)
+	}
+	if strings.Contains(onConf, "= true") {
+		t.Fatalf("awg-tools parse_bool rejects `= true`, must use `= on`:\n%s", onConf)
+	}
+
+	offConf := BuildConfWithOptions(acct, awg, ProtocolAWG, "162.159.192.1:2408", ConfOptions{
+		MTU:            DefaultMTU,
+		IncludeAWG3:    true,
+		IncludeAWG31:   false,
+		RangeKeepalive: true,
+	})
+	if strings.Contains(offConf, "RandomTrailers") || strings.Contains(offConf, "DisableCookies") {
+		t.Fatalf("expected AWG 3.1 flags omitted when IncludeAWG31=false:\n%s", offConf)
+	}
+
+	wgConf := BuildConfWithOptions(acct, awg, ProtocolWG, "162.159.192.1:2408", ConfOptions{
+		MTU:            DefaultMTU,
+		IncludeAWG3:    true,
+		IncludeAWG31:   true,
+		RangeKeepalive: true,
+	})
+	if strings.Contains(wgConf, "RandomTrailers") || strings.Contains(wgConf, "DisableCookies") {
+		t.Fatalf("ProtocolWG must omit AWG 3.1 flags:\n%s", wgConf)
+	}
+
+	s, _, tun, _ := newTestService(t)
+	if err := s.d.Store.SetAccount(&Account{
+		ID: "acc", PrivateKey: "priv", PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2/32",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.d.Store.SetAWG(awg); err != nil {
+		t.Fatal(err)
+	}
+	kmod31 := false
+	s.d.SupportsKernelAWG31 = func() bool { return kmod31 }
+	if s.State().SupportsKernelAWG31 {
+		t.Fatal("expected SupportsKernelAWG31=false")
+	}
+	if _, err := s.Apply(context.Background(), ApplyRequest{
+		Action: "create", Mode: TargetKernel, Endpoint: "162.159.192.1:2408", Protocol: ProtocolAWG,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	kmod31 = true
+	if !s.State().SupportsKernelAWG31 {
+		t.Fatal("expected SupportsKernelAWG31=true")
+	}
+	if _, err := s.Apply(context.Background(), ApplyRequest{
+		Action: "create", Mode: TargetKernel, Endpoint: "162.159.192.2:2408", Protocol: ProtocolAWG,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(tun.created[0], "RandomTrailers") || strings.Contains(tun.created[0], "DisableCookies") {
+		t.Fatalf("kernel <3.1 leaked AWG 3.1 flags:\n%s", tun.created[0])
+	}
+	if !strings.Contains(tun.created[1], "RandomTrailers = on\n") || !strings.Contains(tun.created[1], "DisableCookies = on\n") {
+		t.Fatalf("kernel >=3.1 missing AWG 3.1 flags:\n%s", tun.created[1])
+	}
+}
+
+func TestServiceSaveConfig_SignatureDomainAndPresetRegenerates(t *testing.T) {
+	s, _, _, _ := newTestService(t)
+	cfg := s.d.Store.Config()
+	cfg.AWG.SignatureProfile = "dns"
+	cfg.AWG.SignatureHostPreset = "custom"
+	cfg.AWG.SignatureDomain = "bad_single_label"
+	if _, err := s.SaveConfig(context.Background(), cfg); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for invalid domain, got %v", err)
+	}
+
+	cfg.AWG.SignatureDomain = "https://Gosuslugi.RU/test"
+	saved, err := s.SaveConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("SaveConfig valid domain: %v", err)
+	}
+	if saved.AWG.SignatureDomain != "gosuslugi.ru" || saved.AWG.GeneratedDomain != "gosuslugi.ru" || saved.AWG.I1 == "" {
+		t.Fatalf("unexpected saved signature fields: %+v", saved.AWG)
+	}
+
+	firstI1 := saved.AWG.I1
+	cfg2 := saved
+	cfg2.AWG.SignatureHostPreset = "ru_whitelist"
+	cfg2.AWG.SignatureDomain = ""
+	saved2, err := s.SaveConfig(context.Background(), cfg2)
+	if err != nil {
+		t.Fatalf("SaveConfig ru_whitelist: %v", err)
+	}
+	if saved2.AWG.SignatureHostPreset != "ru_whitelist" || saved2.AWG.GeneratedDomain == "" || saved2.AWG.I1 == "" || saved2.AWG.I1 == firstI1 {
+		t.Fatalf("expected regenerated I1 for ru_whitelist: %+v", saved2.AWG)
+	}
+}

@@ -1,5 +1,13 @@
 <script lang="ts">
-	import { protocols, MAX_SIGNATURE_CHARS, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
+	import {
+		protocols,
+		MAX_SIGNATURE_CHARS,
+		signatureHostPresetOptions,
+		resolveSignatureGenerateOptions,
+		type ProtocolKey,
+		type SignatureHostPreset,
+		type SignaturePackets,
+	} from '$lib/utils/protocols';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import type { ASCParams, ASCParamsExtended } from '$lib/types';
@@ -83,6 +91,8 @@
 	let selectedProtocol = $state<ProtocolKey>('quic_initial');
 	let generateMode = $state<GenerateMode>('protocol');
 	let domainInput = $state('');
+	let hostPreset = $state<SignatureHostPreset>('default');
+	let customDomainInput = $state('');
 	let capturing = $state(false);
 	let generating = $state(false);
 	/** Предупреждение/текст ошибки от бэкенда; общий текст сбоя выводится из `captureFailed`. */
@@ -122,11 +132,22 @@
 
 	async function handleGenerate() {
 		if (!showExtended) return;
+		const resolved = resolveSignatureGenerateOptions(hostPreset, customDomainInput);
+		if (!resolved.ok) {
+			notifications.error(resolved.error);
+			return;
+		}
 		generating = true;
 		try {
-			const res = await api.generateSignature(selectedProtocol);
+			const res = resolved.opts
+				? await api.generateSignature(selectedProtocol, resolved.opts)
+				: await api.generateSignature(selectedProtocol);
 			applySignaturePackets(res.packets);
-			notifications.success(m.asc_signature_generated({ name: protocols[selectedProtocol].name }));
+			notifications.success(
+				res.domain
+					? m.asc_signature_generated_domain({ name: protocols[selectedProtocol].name, domain: res.domain })
+					: m.asc_signature_generated({ name: protocols[selectedProtocol].name }),
+			);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.asc_generate_failed());
 		} finally {
@@ -308,6 +329,24 @@
 					>
 						{generating ? m.asc_generating() : m.common_generate()}
 					</Button>
+				</div>
+				<div class="host-preset-block">
+					<Dropdown
+						label={m.protocols_host_preset_label()}
+						bind:value={hostPreset}
+						options={signatureHostPresetOptions()}
+						fullWidth
+					/>
+					{#if hostPreset === 'custom'}
+						<input
+							type="text"
+							class="field-input"
+							bind:value={customDomainInput}
+							placeholder={m.protocols_custom_domain_placeholder()}
+							disabled={generating}
+						/>
+						<p class="group-desc">{m.protocols_custom_domain_hint()}</p>
+					{/if}
 				</div>
 			{/if}
 
@@ -541,6 +580,13 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
+		margin-bottom: 12px;
+	}
+
+	.host-preset-block {
+		display: flex;
+		flex-direction: column;
+		gap: 0.45rem;
 		margin-bottom: 12px;
 	}
 

@@ -3,11 +3,13 @@
 import type { BadgeVariant } from '$lib/components/ui';
 import { m } from '$lib/i18n';
 import type {
+	WarpAWGParams,
 	WarpCheckSample,
 	WarpConfig,
 	WarpFilters,
 	WarpFindJunkStatus,
 	WarpHit,
+	WarpJunkAttempt,
 	WarpProfile,
 	WarpProfileMode,
 	WarpRouteRef,
@@ -20,13 +22,134 @@ export const QUICK_COLOS = ['LED', 'KJA', 'OVB', 'SVX'];
 export const SIGNATURE_PROFILES = ['quic_initial', 'dns', 'stun', 'dtls', 'sip', 'none'] as const;
 export const FIND_JUNK_PROFILES = ['random', 'quic_initial', 'dns', 'stun', 'dtls', 'sip', 'none'] as const;
 
-export function hasUsableFindJunkBest(status: WarpFindJunkStatus | null | undefined): boolean {
-	const b = status?.best;
-	return Boolean(b && !b.incomplete && b.total > 0 && b.working > 0);
+export function isUsableJunkAttempt(att: WarpJunkAttempt | null | undefined): boolean {
+	return Boolean(att && !att.incomplete && att.total > 0 && att.working > 0);
 }
 
-export function canApplyFindJunk(status: WarpFindJunkStatus | null | undefined): boolean {
-	return Boolean(status && !status.running && hasUsableFindJunkBest(status));
+export function resolveSelectedJunkAttempt(
+	fj: WarpFindJunkStatus | null | undefined,
+	selectedAttempt?: number | null,
+): WarpJunkAttempt | null {
+	if (!fj) return null;
+	if (selectedAttempt != null && selectedAttempt > 0) {
+		const picked = (fj.attempts ?? []).find((a) => a.attempt === selectedAttempt);
+		if (isUsableJunkAttempt(picked)) return picked!;
+	}
+	if (fj.applied && fj.appliedAttempt && fj.appliedAttempt > 0) {
+		const appliedAtt = (fj.attempts ?? []).find((a) => a.attempt === fj.appliedAttempt);
+		if (isUsableJunkAttempt(appliedAtt)) return appliedAtt!;
+	}
+	if (isUsableJunkAttempt(fj.best)) return fj.best!;
+	return (fj.attempts ?? []).find((a) => isUsableJunkAttempt(a)) ?? null;
+}
+
+export function isAttemptAlreadyApplied(
+	fj: WarpFindJunkStatus | null | undefined,
+	att: WarpJunkAttempt | null | undefined,
+): boolean {
+	if (!fj?.applied || !att) return false;
+	const appliedId = fj.appliedAttempt || fj.best?.attempt || 0;
+	return appliedId === att.attempt;
+}
+
+export function hasUsableFindJunkBest(status: WarpFindJunkStatus | null | undefined): boolean {
+	return isUsableJunkAttempt(status?.best);
+}
+
+export function canApplyFindJunk(
+	status: WarpFindJunkStatus | null | undefined,
+	selectedAttempt?: number | null,
+): boolean {
+	if (!status || status.running) return false;
+	const target = resolveSelectedJunkAttempt(status, selectedAttempt);
+	if (!target) return false;
+	return !isAttemptAlreadyApplied(status, target);
+}
+
+export function findJunkSummaryText(
+	fj: WarpFindJunkStatus | null | undefined,
+	selectedAttempt?: number | null,
+): string {
+	if (!fj) return '';
+	const target = resolveSelectedJunkAttempt(fj, selectedAttempt);
+	if (target) {
+		const isBest = fj.best?.attempt === target.attempt;
+		const prefix = isBest
+			? m.warpscout_findjunk_best_short({ attempt: target.attempt })
+			: m.warpscout_findjunk_selected_label({ attempt: target.attempt });
+		const domainSuffix = target.domain ? ` · ${target.domain}` : '';
+		return `${prefix}: Jc ${target.awg.jc} · ${target.awg.jmin}–${target.awg.jmax} · ${target.profile}${domainSuffix} (${target.working}/${target.total})`;
+	}
+	if (!fj.running && (fj.attempts?.length ?? 0) > 0) {
+		return m.warpscout_findjunk_no_working();
+	}
+	return '';
+}
+
+/** Проверка ContentPaddingAddition: пусто или целое 0..65535 / диапазон min-max. */
+export function isValidContentPadding(raw: string | null | undefined): boolean {
+	const s = (raw ?? '').trim();
+	if (!s) return true;
+	const parts = s.split('-');
+	if (parts.length > 2) return false;
+	const u16 = (v: string): number => {
+		const t = v.trim();
+		if (!/^\d{1,5}$/.test(t)) return -1;
+		const n = Number(t);
+		return n <= 65535 ? n : -1;
+	};
+	const lo = u16(parts[0]);
+	if (lo < 0) return false;
+	if (parts.length === 1) return true;
+	const hi = u16(parts[1]);
+	return hi >= lo;
+}
+
+/** Версия расширений AWG, активных в параметрах. */
+export function awgVersionBadge(awg: WarpAWGParams | null | undefined): '' | '3.0' | '3.1' {
+	if (!awg) return '';
+	if (awg.randomTrailers || awg.disableCookies) return '3.1';
+	if (awg.timingJitter || (awg.contentPadding ?? '').trim()) return '3.0';
+	return '';
+}
+
+/** Краткая метка расширений AWG 3.0 / 3.1 для чипа маскировки. */
+export function awg3SummaryTag(awg: WarpAWGParams | null | undefined): string {
+	if (!awg) return '';
+	const parts: string[] = [];
+	if (awg.timingJitter) parts.push(m.warpscout_awg3_tag_timers());
+	const cp = (awg.contentPadding ?? '').trim();
+	if (cp) parts.push(`pad ${cp}`);
+	if (awg.disableCookies) parts.push(m.warpscout_awg31_tag_no_cookies());
+	if (awg.randomTrailers) parts.push(m.warpscout_awg31_tag_trailers());
+	const ver = awgVersionBadge(awg);
+	return parts.length > 0 && ver ? `${ver} (${parts.join(', ')})` : '';
+}
+
+const DOMAIN_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+
+/** Проверяет одно доменное имя для подстановки в SNI/QNAME (I1). */
+export function isValidDomainItem(raw: string): boolean {
+	const d = raw.trim().replace(/\.$/, '').toLowerCase();
+	if (d.length < 3 || d.length > 253) return false;
+	if (d.includes('://') || d.includes('/') || d.includes(':')) return false;
+	if (/^\d+\.\d+\.\d+\.\d+$/.test(d)) return false;
+	const labels = d.split('.');
+	if (labels.length < 2) return false;
+	for (const lbl of labels) {
+		if (!DOMAIN_LABEL_RE.test(lbl)) return false;
+	}
+	const tld = labels[labels.length - 1];
+	return tld.length >= 2 && /[a-z]/i.test(tld);
+}
+
+/** Проверяет непустой список доменов через запятую/точку с запятой/пробел. */
+export function isValidDomainListInput(raw: string | null | undefined): boolean {
+	const tokens = (raw ?? '')
+		.split(/[\s,;]+/)
+		.map((s) => s.trim())
+		.filter(Boolean);
+	return tokens.length > 0 && tokens.length <= 64 && tokens.every(isValidDomainItem);
 }
 
 export function signatureProfileLabel(prof: string | undefined): string {
@@ -323,6 +446,31 @@ export function sanitizeConfig(cfg: WarpConfig): WarpConfig {
 	out.awg.jc = sanitizeInt(out.awg.jc, LIMITS.jc);
 	out.awg.jmin = sanitizeInt(out.awg.jmin, LIMITS.jmin);
 	out.awg.jmax = sanitizeInt(out.awg.jmax, LIMITS.jmax);
+	const cp = (out.awg.contentPadding ?? '').trim();
+	if (cp) out.awg.contentPadding = cp;
+	else delete out.awg.contentPadding;
+	if (out.awg.timingJitter) out.awg.timingJitter = true;
+	else delete out.awg.timingJitter;
+	if (out.awg.randomTrailers) out.awg.randomTrailers = true;
+	else delete out.awg.randomTrailers;
+	if (out.awg.disableCookies) out.awg.disableCookies = true;
+	else delete out.awg.disableCookies;
+	delete out.awg.generatedDomain;
+	if (
+		out.awg.signatureProfile === 'custom' ||
+		out.awg.signatureProfile === 'none' ||
+		!out.awg.signatureHostPreset ||
+		out.awg.signatureHostPreset === 'default'
+	) {
+		delete out.awg.signatureHostPreset;
+		delete out.awg.signatureDomain;
+	} else if (out.awg.signatureHostPreset === 'custom') {
+		const dom = (out.awg.signatureDomain ?? '').trim();
+		if (dom) out.awg.signatureDomain = dom;
+		else delete out.awg.signatureDomain;
+	} else {
+		delete out.awg.signatureDomain;
+	}
 	if (out.profileMode === 'single') {
 		out.activeProfileId = out.profiles.find((p) => p.enabled)?.id;
 	}
@@ -342,16 +490,45 @@ const SECTIONS: ConfigSection[] = ['profiles', 'awg'];
 // а пустые списки фильтров может отдать как null.
 function sectionView(c: WarpConfig, s: ConfigSection): unknown {
 	if (s === 'awg') {
+		const view = { ...c.awg };
+		delete view.generatedDomain;
+		const cp = (view.contentPadding ?? '').trim();
+		if (cp) view.contentPadding = cp;
+		else delete view.contentPadding;
+		if (view.timingJitter) view.timingJitter = true;
+		else delete view.timingJitter;
+		if (view.randomTrailers) view.randomTrailers = true;
+		else delete view.randomTrailers;
+		if (view.disableCookies) view.disableCookies = true;
+		else delete view.disableCookies;
+
+		if (view.signatureProfile === 'custom') {
+			delete view.signatureHostPreset;
+			delete view.signatureDomain;
+			return view;
+		}
 		// У именованного пресета I1..I5 выдаёт сервер, интерфейс их не правит
 		// и не шлёт: сравнивать их — значит видеть «не сохранено» после
 		// выбора пресета и возврата к прежнему.
-		if (c.awg.signatureProfile === 'custom') return c.awg;
-		const view = { ...c.awg };
 		delete view.i1;
 		delete view.i2;
 		delete view.i3;
 		delete view.i4;
 		delete view.i5;
+		if (
+			view.signatureProfile === 'none' ||
+			!view.signatureHostPreset ||
+			view.signatureHostPreset === 'default'
+		) {
+			delete view.signatureHostPreset;
+			delete view.signatureDomain;
+		} else if (view.signatureHostPreset === 'custom') {
+			const dom = (view.signatureDomain ?? '').trim();
+			if (dom) view.signatureDomain = dom;
+			else delete view.signatureDomain;
+		} else {
+			delete view.signatureDomain;
+		}
 		return view;
 	}
 	return {

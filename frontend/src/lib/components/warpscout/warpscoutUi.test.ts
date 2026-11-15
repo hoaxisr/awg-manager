@@ -3,20 +3,28 @@ import type { WarpConfig, WarpHit, WarpProfile, WarpRouteRef } from '$lib/types/
 import {
 	LIMITS,
 	SPARK_SLOTS,
+	awg3SummaryTag,
+	awgVersionBadge,
 	buildSparkBars,
 	canApplyFindJunk,
 	countryFlag,
 	defaultFilters,
+	findJunkSummaryText,
 	findTunnelIpv4Conflict,
 	formatElapsed,
 	formatSlaPct,
 	formatUptime,
 	hasUsableFindJunkBest,
 	humanizeSwapReason,
+	isAttemptAlreadyApplied,
+	isUsableJunkAttempt,
+	isValidContentPadding,
+	isValidDomainListInput,
 	isValidTunnelIpv4,
 	latencyTone,
 	parseGoTime,
 	parseTunnelIpv4,
+	resolveSelectedJunkAttempt,
 	routeChipText,
 	routeDisplayLabel,
 	sampleBarHeight,
@@ -397,5 +405,180 @@ describe('warpscoutUi', () => {
 				best: baseAttempt,
 			}),
 		).toBe(true);
+	});
+
+	it('resolves selected vs applied find-junk attempts and detects already-applied state', () => {
+		const a1 = {
+			attempt: 1,
+			awg: { signatureProfile: 'quic_initial', jc: 5, jmin: 30, jmax: 80, i1: '<b 0x11>' },
+			profile: 'quic_initial',
+			working: 14,
+			scanned: 15,
+			total: 15,
+			pct: 93,
+			durationMs: 2500,
+		};
+		const a2 = {
+			attempt: 2,
+			awg: { signatureProfile: 'stun', jc: 4, jmin: 20, jmax: 60, i1: '<b 0x22>' },
+			profile: 'stun',
+			working: 13,
+			scanned: 15,
+			total: 15,
+			pct: 87,
+			durationMs: 2200,
+		};
+		const a3Zero = {
+			attempt: 3,
+			awg: { signatureProfile: 'dns', jc: 4, jmin: 10, jmax: 40 },
+			profile: 'dns',
+			working: 0,
+			scanned: 15,
+			total: 15,
+			pct: 0,
+			durationMs: 1000,
+		};
+
+		expect(isUsableJunkAttempt(a1)).toBe(true);
+		expect(isUsableJunkAttempt(a3Zero)).toBe(false);
+		expect(isUsableJunkAttempt({ ...a2, incomplete: true })).toBe(false);
+
+		const fjAppliedBest = {
+			running: false,
+			attempt: 3,
+			maxAttempts: 3,
+			thresholdPct: 95,
+			attempts: [a1, a2, a3Zero],
+			best: a1,
+			applied: true,
+			appliedAttempt: 1,
+		};
+
+		expect(resolveSelectedJunkAttempt(fjAppliedBest, null)?.attempt).toBe(1);
+		expect(isAttemptAlreadyApplied(fjAppliedBest, a1)).toBe(true);
+		expect(canApplyFindJunk(fjAppliedBest, 1)).toBe(false);
+		expect(findJunkSummaryText(fjAppliedBest, 1)).toContain('Лучший (#1): Jc 5');
+
+		expect(resolveSelectedJunkAttempt(fjAppliedBest, 2)?.attempt).toBe(2);
+		expect(isAttemptAlreadyApplied(fjAppliedBest, a2)).toBe(false);
+		expect(canApplyFindJunk(fjAppliedBest, 2)).toBe(true);
+		expect(findJunkSummaryText(fjAppliedBest, 2)).toContain('Выбран #2: Jc 4');
+
+		expect(resolveSelectedJunkAttempt(fjAppliedBest, 3)?.attempt).toBe(1);
+	});
+
+	it('isValidContentPadding, awgVersionBadge, awg3SummaryTag validate AWG 3.0/3.1 values', () => {
+		expect(isValidContentPadding('')).toBe(true);
+		expect(isValidContentPadding(undefined)).toBe(true);
+		expect(isValidContentPadding('32')).toBe(true);
+		expect(isValidContentPadding('10-100')).toBe(true);
+		expect(isValidContentPadding('0-65535')).toBe(true);
+		expect(isValidContentPadding(' 10 - 100 ')).toBe(true);
+
+		expect(isValidContentPadding('100-10')).toBe(false);
+		expect(isValidContentPadding('65536')).toBe(false);
+		expect(isValidContentPadding('abc')).toBe(false);
+		expect(isValidContentPadding('10-20-30')).toBe(false);
+
+		expect(awgVersionBadge({ signatureProfile: 'quic_initial', jc: 4, jmin: 40, jmax: 70 })).toBe('');
+		expect(awgVersionBadge({ signatureProfile: 'quic_initial', jc: 4, jmin: 40, jmax: 70, timingJitter: true })).toBe(
+			'3.0',
+		);
+		expect(awgVersionBadge({ signatureProfile: 'quic_initial', jc: 4, jmin: 40, jmax: 70, disableCookies: true })).toBe(
+			'3.1',
+		);
+		expect(awg3SummaryTag({ signatureProfile: 'quic_initial', jc: 4, jmin: 40, jmax: 70 })).toBe('');
+		expect(awg3SummaryTag({ signatureProfile: 'quic_initial', jc: 4, jmin: 40, jmax: 70, timingJitter: true })).toBe(
+			'3.0 (таймеры)',
+		);
+		expect(
+			awg3SummaryTag({
+				signatureProfile: 'quic_initial',
+				jc: 4,
+				jmin: 40,
+				jmax: 70,
+				timingJitter: true,
+				contentPadding: '10-100',
+			}),
+		).toBe('3.0 (таймеры, pad 10-100)');
+		expect(
+			awg3SummaryTag({
+				signatureProfile: 'quic_initial',
+				jc: 4,
+				jmin: 40,
+				jmax: 70,
+				timingJitter: true,
+				disableCookies: true,
+				randomTrailers: true,
+			}),
+		).toBe('3.1 (таймеры, без куки, хвост)');
+	});
+
+	it('isValidDomainListInput, sectionEqual and sanitizeConfig normalize AWG3/domain fields', () => {
+		expect(isValidDomainListInput('')).toBe(false);
+		expect(isValidDomainListInput('   ')).toBe(false);
+		expect(isValidDomainListInput('gosuslugi.ru')).toBe(true);
+		expect(isValidDomainListInput('vk.com, ya.ru; mail.ru gosuslugi.ru')).toBe(true);
+		expect(isValidDomainListInput('https://vk.com')).toBe(false);
+		expect(isValidDomainListInput('192.168.1.1')).toBe(false);
+		expect(isValidDomainListInput('localhost')).toBe(false);
+		expect(isValidDomainListInput('vk.com, bad')).toBe(false);
+
+		const a = config({
+			awg: {
+				signatureProfile: 'quic_initial',
+				signatureHostPreset: 'default',
+				generatedDomain: 'vk.com',
+				jc: 4,
+				jmin: 40,
+				jmax: 70,
+				timingJitter: false,
+				contentPadding: '   ',
+			},
+		});
+		const b = config({
+			awg: { signatureProfile: 'quic_initial', jc: 4, jmin: 40, jmax: 70 },
+		});
+		expect(sectionEqual(a, b, 'awg')).toBe(true);
+		const sanitized = sanitizeConfig(
+			config({
+				awg: {
+					signatureProfile: 'dns',
+					signatureHostPreset: 'custom',
+					signatureDomain: ' ya.ru ',
+					generatedDomain: 'ya.ru',
+					jc: 4,
+					jmin: 40,
+					jmax: 70,
+					timingJitter: true,
+					contentPadding: ' 10-100 ',
+				},
+			}),
+		);
+		expect(sanitized.awg.generatedDomain).toBeUndefined();
+		expect(sanitized.awg.contentPadding).toBe('10-100');
+		expect(sanitized.awg.signatureDomain).toBe('ya.ru');
+
+		expect(
+			findJunkSummaryText({
+				running: false,
+				attempt: 1,
+				maxAttempts: 3,
+				thresholdPct: 80,
+				attempts: [
+					{
+						attempt: 1,
+						awg: { signatureProfile: 'quic_initial', jc: 5, jmin: 40, jmax: 70 },
+						profile: 'quic_initial',
+						domain: 'gosuslugi.ru',
+						working: 28,
+						scanned: 30,
+						total: 30,
+						pct: 93,
+						durationMs: 1200,
+					},
+				],
+			}),
+		).toBe('Выбран #1: Jc 5 · 40–70 · quic_initial · gosuslugi.ru (28/30)');
 	});
 });

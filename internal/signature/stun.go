@@ -8,7 +8,10 @@ import (
 	"strconv"
 )
 
-func init() { builders["stun"] = buildSTUN }
+func init() {
+	builders["stun"] = buildSTUN
+	hostBuilders["stun"] = buildSTUNWithHost
+}
 
 // Провайдер-профили STUN/TURN (порт-спека §2.1), в порядке r.Intn(5).
 var stunProviders = []stunProvider{
@@ -90,8 +93,18 @@ type stunProvider struct {
 // FAMILY — тип 0x0017 с семейством в первом байте (RFC 6156 §4.1.1, а не
 // нераспределённый 0x8027 с семейством во втором байте).
 func buildSTUN(r *mrand.Rand) (GeneratedPackets, error) {
+	pk, _, err := buildSTUNWithHost(r, "")
+	return pk, err
+}
+
+func buildSTUNWithHost(r *mrand.Rand, customHost string) (GeneratedPackets, string, error) {
 	p := stunProviders[r.Intn(len(stunProviders))]
 	host := p.servers[r.Intn(len(p.servers))]
+	realm := p.realm
+	if customHost != "" {
+		host = customHost
+		realm = customHost
+	}
 
 	allocate := p.supportsAllocate && r.Float64() < p.autoAllocateProb
 	msgType := uint16(0x0001)
@@ -101,7 +114,7 @@ func buildSTUN(r *mrand.Rand) (GeneratedPackets, error) {
 
 	var attrs []byte
 	if allocate {
-		attrs = append(attrs, stunAttr(0x0014, []byte(p.realm))...) // REALM
+		attrs = append(attrs, stunAttr(0x0014, []byte(realm))...) // REALM
 		lifetime := p.lifetimeMin + r.Intn(p.lifetimeMax-p.lifetimeMin)
 		attrs = append(attrs, stunAttr(0x000D, u32Bytes(uint32(lifetime)))...) // LIFETIME
 		attrs = append(attrs, stunAttr(0x0019, []byte{0x11, 0, 0, 0})...)      // REQUESTED-TRANSPORT
@@ -126,7 +139,7 @@ func buildSTUN(r *mrand.Rand) (GeneratedPackets, error) {
 
 	attrs = append(attrs, stunAttr(0x0006, []byte(stunUsername(r, p, host, allocate)))...) // USERNAME
 
-	return GeneratedPackets{I1: tokB(buildSTUNMessage(r, msgType, attrs))}, nil
+	return GeneratedPackets{I1: tokB(buildSTUNMessage(r, msgType, attrs))}, host, nil
 }
 
 // stunUsername — форматы USERNAME (§2.6).

@@ -7,6 +7,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import type { WarpAWGParams, WarpFilters, WarpHit, WarpTunnelRef } from '$lib/types/warpscout';
 	import {
+		awg3SummaryTag,
 		countryFlag,
 		modeLabel,
 		signatureProfileLabel,
@@ -93,13 +94,14 @@
 		{#if filters.protocol === 'wg'}
 			<p class="note">{m.warpscout_swap_obf_wg()}</p>
 		{:else if globalAwg}
+			{@const awg3Tag = awg3SummaryTag(globalAwg)}
 			<p class="note">
 				{m.warpscout_swap_obf_awg({
 					profile: signatureProfileLabel(globalAwg.signatureProfile),
 					jc: String(globalAwg.jc),
 					jmin: String(globalAwg.jmin),
 					jmax: String(globalAwg.jmax),
-				})}
+				})}{#if globalAwg.generatedDomain} · <span class="mono">{globalAwg.generatedDomain}</span>{/if}{#if awg3Tag} · {awg3Tag}{/if}
 			</p>
 		{/if}
 		{#if targets.length === 0}

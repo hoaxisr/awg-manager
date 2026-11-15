@@ -778,6 +778,7 @@ func (s *Server) registerWarpScoutRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/warpscout/find-junk/stop", h.guarded(ws.FindJunkStop))
 	mux.HandleFunc("/api/warpscout/find-junk/apply", h.guarded(ws.FindJunkApply))
 	mux.HandleFunc("/api/warpscout/apply", h.guarded(ws.Apply))
+	mux.HandleFunc("/api/warpscout/export", h.guarded(ws.Export))
 	mux.HandleFunc("/api/warpscout/config", h.guarded(ws.Config))
 	mux.HandleFunc("/api/warpscout/stats/reset", h.guarded(ws.ResetStats))
 	mux.HandleFunc("/api/warpscout/history/clear", h.guarded(ws.ClearHistory))

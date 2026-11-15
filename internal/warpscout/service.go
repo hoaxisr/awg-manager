@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/signature"
 )
 
 // Logger — журнал приложения (logging.ScopedLogger).
@@ -88,6 +90,12 @@ type Deps struct {
 	HTTPFallbacks func(ctx context.Context) []*http.Client
 	Bus           Publisher
 	Log           Logger
+	// SupportsASC3 сообщает, поддерживает ли прошивка NDMS поля AWG 3.0
+	// (ContentPadding/таймеры) на системных/Native интерфейсах.
+	SupportsASC3 func() bool
+	// SupportsKernelAWG31 сообщает, поддерживает ли kernel-модуль amneziawg
+	// флаги AWG 3.1 (RandomTrailers / DisableCookies, версия >= 3.1).
+	SupportsKernelAWG31 func() bool
 	// Now/Sleep — для тестов.
 	Now func() time.Time
 }
@@ -154,20 +162,22 @@ type EngineInfo struct {
 
 // State — полный снимок для UI.
 type State struct {
-	Engine             EngineInfo          `json:"engine"`
-	Account            *Account            `json:"account"`
-	HasInnerAccount    bool                `json:"hasInnerAccount"`
-	AccountUnreadable  bool                `json:"accountUnreadable"`
-	DefaultWAN         string              `json:"defaultWan,omitempty"`
-	Routes             []RouteRef          `json:"routes"`
-	ObfuscationSources []ObfuscationSource `json:"obfuscationSources,omitempty"`
-	UsedIPv4           []string            `json:"usedIpv4,omitempty"`
-	Config             Config              `json:"config"`
-	Scan               ScanStatus          `json:"scan"`
-	FindJunk           FindJunkStatus      `json:"findJunk"`
-	Watch              []WatchStatus       `json:"watch"`
-	Stats              []ProfileStats      `json:"stats"`
-	History            []SwapEvent         `json:"history"`
+	Engine              EngineInfo          `json:"engine"`
+	Account             *Account            `json:"account"`
+	HasInnerAccount     bool                `json:"hasInnerAccount"`
+	AccountUnreadable   bool                `json:"accountUnreadable"`
+	DefaultWAN          string              `json:"defaultWan,omitempty"`
+	Routes              []RouteRef          `json:"routes"`
+	ObfuscationSources  []ObfuscationSource `json:"obfuscationSources,omitempty"`
+	UsedIPv4            []string            `json:"usedIpv4,omitempty"`
+	Config              Config              `json:"config"`
+	Scan                ScanStatus          `json:"scan"`
+	FindJunk            FindJunkStatus      `json:"findJunk"`
+	Watch               []WatchStatus       `json:"watch"`
+	Stats               []ProfileStats      `json:"stats"`
+	History             []SwapEvent         `json:"history"`
+	SupportsASC3        bool                `json:"supportsAsc3"`
+	SupportsKernelAWG31 bool                `json:"supportsKernelAwg31"`
 }
 
 // ApplyRequest — применить найденный эндпоинт.
@@ -192,6 +202,21 @@ type ApplyRequest struct {
 type ApplyResult struct {
 	Tunnel    *TunnelRef `json:"tunnel"`
 	ProfileID string     `json:"profileId,omitempty"`
+}
+
+// ExportRequest — собрать .conf для найденного эндпоинта без создания туннеля.
+type ExportRequest struct {
+	Endpoint string     `json:"endpoint"`
+	Colo     string     `json:"colo,omitempty"`
+	Protocol string     `json:"protocol,omitempty"`
+	MTU      int        `json:"mtu,omitempty"`
+	AWG      *AWGParams `json:"awg,omitempty"`
+}
+
+// ExportResult — сгенерированный конфиг .conf и рекомендуемое имя файла.
+type ExportResult struct {
+	Filename string `json:"filename"`
+	Content  string `json:"content"`
 }
 
 // Ошибки уровня API.
@@ -352,21 +377,65 @@ func (s *Service) State() State {
 		}
 	}
 	return State{
-		Engine:             s.Engine(),
-		Account:            s.d.Store.Account(),
-		HasInnerAccount:    s.d.Store.InnerAccount() != nil,
-		AccountUnreadable:  s.d.Store.AccountUnreadable(),
-		DefaultWAN:         defaultWAN,
-		Routes:             routes,
-		ObfuscationSources: obfSources,
-		UsedIPv4:           usedIPv4,
-		Config:             cfg,
-		Scan:               scan,
-		FindJunk:           findJunk,
-		Watch:              watch,
-		Stats:              stats,
-		History:            s.d.Store.History(),
+		Engine:              s.Engine(),
+		Account:             s.d.Store.Account(),
+		HasInnerAccount:     s.d.Store.InnerAccount() != nil,
+		AccountUnreadable:   s.d.Store.AccountUnreadable(),
+		DefaultWAN:          defaultWAN,
+		Routes:              routes,
+		ObfuscationSources:  obfSources,
+		UsedIPv4:            usedIPv4,
+		Config:              cfg,
+		Scan:                scan,
+		FindJunk:            findJunk,
+		Watch:               watch,
+		Stats:               stats,
+		History:             s.d.Store.History(),
+		SupportsASC3:        s.supportsASC3(),
+		SupportsKernelAWG31: s.supportsKernelAWG31(),
 	}
+}
+
+func (s *Service) supportsASC3() bool {
+	return s != nil && s.d.SupportsASC3 != nil && s.d.SupportsASC3()
+}
+
+func (s *Service) supportsKernelAWG31() bool {
+	return s != nil && s.d.SupportsKernelAWG31 != nil && s.d.SupportsKernelAWG31()
+}
+
+func normHostPreset(p string) string {
+	c := signature.CanonicalHostPreset(p)
+	if c == signature.HostPresetDefault {
+		return ""
+	}
+	return c
+}
+
+func validateAndNormalizeAWGSignature(awg *AWGParams) error {
+	if strings.TrimSpace(awg.SignatureHostPreset) != "" {
+		c := signature.CanonicalHostPreset(awg.SignatureHostPreset)
+		if c == "" {
+			return fmt.Errorf("%w: неизвестный пресет доменов %q", ErrInvalidInput, awg.SignatureHostPreset)
+		}
+		awg.SignatureHostPreset = normHostPreset(c)
+	} else {
+		awg.SignatureHostPreset = ""
+	}
+	domTrim := strings.TrimSpace(awg.SignatureDomain)
+	if domTrim != "" {
+		list, err := signature.ParseDomainList(domTrim)
+		if err != nil {
+			return fmt.Errorf("%w: некорректный домен генерации I1: %v", ErrInvalidInput, err)
+		}
+		awg.SignatureDomain = strings.Join(list, ", ")
+	} else {
+		awg.SignatureDomain = ""
+		if awg.SignatureHostPreset == signature.HostPresetCustom {
+			awg.SignatureHostPreset = ""
+		}
+	}
+	return nil
 }
 
 // ResetStats обнуляет статистику профиля (или всех профилей, если profileID пуст).
@@ -1129,6 +1198,11 @@ func sortHits(h []Hit) {
 
 // SaveConfig валидирует и сохраняет конфигурацию, перезапуская сторожей.
 func (s *Service) SaveConfig(ctx context.Context, in Config) (Config, error) {
+	if cp, err := NormalizeContentPadding(in.AWG.ContentPadding); err != nil {
+		return Config{}, err
+	} else {
+		in.AWG.ContentPadding = cp
+	}
 	cfg := normalizeConfig(cloneConfig(in))
 	seen := map[string]bool{}
 	targets := map[string]string{}
@@ -1182,21 +1256,33 @@ func (s *Service) SaveConfig(ctx context.Context, in Config) (Config, error) {
 	case "", "none":
 		cfg.AWG.SignatureProfile = "none"
 		cfg.AWG.I1, cfg.AWG.I2, cfg.AWG.I3, cfg.AWG.I4, cfg.AWG.I5 = "", "", "", "", ""
+		cfg.AWG.GeneratedDomain = ""
+		if err := validateAndNormalizeAWGSignature(&cfg.AWG); err != nil {
+			return Config{}, err
+		}
 	case SignatureCustom:
+		cfg.AWG.GeneratedDomain = ""
 		for idx, spec := range []string{cfg.AWG.I1, cfg.AWG.I2, cfg.AWG.I3, cfg.AWG.I4, cfg.AWG.I5} {
 			if _, err := CPSToRaw(spec); err != nil {
 				return Config{}, fmt.Errorf("%w: сигнатура I%d: %v", ErrInvalidInput, idx+1, err)
 			}
 		}
 	default:
+		if err := validateAndNormalizeAWGSignature(&cfg.AWG); err != nil {
+			return Config{}, err
+		}
 		old := s.d.Store.Config().AWG
-		if old.SignatureProfile != prof {
-			// Сменили профиль сигнатуры — перегенерируем пакеты.
+		if old.SignatureProfile != prof ||
+			normHostPreset(old.SignatureHostPreset) != normHostPreset(cfg.AWG.SignatureHostPreset) ||
+			strings.TrimSpace(old.SignatureDomain) != strings.TrimSpace(cfg.AWG.SignatureDomain) {
+			// Сменили профиль или пул/домен сигнатуры — перегенерируем пакеты.
 			cfg.AWG.I1, cfg.AWG.I2, cfg.AWG.I3, cfg.AWG.I4, cfg.AWG.I5 = "", "", "", "", ""
+			cfg.AWG.GeneratedDomain = ""
 		} else if cfg.AWG.I1 == "" {
 			// Тот же пресет без пакетов (интерфейс их не шлёт): сигнатура
 			// остаётся прежней, а не выдаётся заново на каждое сохранение.
 			cfg.AWG.I1, cfg.AWG.I2, cfg.AWG.I3, cfg.AWG.I4, cfg.AWG.I5 = old.I1, old.I2, old.I3, old.I4, old.I5
+			cfg.AWG.GeneratedDomain = old.GeneratedDomain
 		}
 		if _, err := EnsureSignature(&cfg.AWG); err != nil {
 			return Config{}, fmt.Errorf("%w: сигнатура: %v", ErrInvalidInput, err)
@@ -1262,8 +1348,13 @@ func validateOverrideAWG(in AWGParams) (AWGParams, error) {
 	case "", "none":
 		in.SignatureProfile = "none"
 		in.I1, in.I2, in.I3, in.I4, in.I5 = "", "", "", "", ""
+		in.GeneratedDomain = ""
+		if err := validateAndNormalizeAWGSignature(&in); err != nil {
+			return AWGParams{}, err
+		}
 	case SignatureCustom:
 		in.SignatureProfile = SignatureCustom
+		in.GeneratedDomain = ""
 		for idx, spec := range []string{in.I1, in.I2, in.I3, in.I4, in.I5} {
 			if _, err := CPSToRaw(spec); err != nil {
 				return AWGParams{}, fmt.Errorf("%w: сигнатура I%d: %v", ErrInvalidInput, idx+1, err)
@@ -1271,6 +1362,9 @@ func validateOverrideAWG(in AWGParams) (AWGParams, error) {
 		}
 	default:
 		in.SignatureProfile = prof
+		if err := validateAndNormalizeAWGSignature(&in); err != nil {
+			return AWGParams{}, err
+		}
 		if _, err := EnsureSignature(&in); err != nil {
 			return AWGParams{}, fmt.Errorf("%w: сигнатура: %v", ErrInvalidInput, err)
 		}
@@ -1279,6 +1373,11 @@ func validateOverrideAWG(in AWGParams) (AWGParams, error) {
 			return AWGParams{}, err
 		}
 	}
+	cp, err := NormalizeContentPadding(in.ContentPadding)
+	if err != nil {
+		return AWGParams{}, err
+	}
+	in.ContentPadding = cp
 	return in, nil
 }
 
@@ -1401,7 +1500,14 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		}
 		cfgAcct := *tunAcct
 		cfgAcct.AddressV4 = addrV4
-		conf := BuildConfWithMTU(&cfgAcct, awg, protocol, req.Endpoint, mtu)
+		includeAWG3 := req.Mode == TargetKernel || s.supportsASC3()
+		includeAWG31 := (req.Mode == TargetKernel && s.supportsKernelAWG31()) || (req.Mode != TargetKernel && s.supportsASC3())
+		conf := BuildConfWithOptions(&cfgAcct, awg, protocol, req.Endpoint, ConfOptions{
+			MTU:            mtu,
+			IncludeAWG3:    includeAWG3,
+			IncludeAWG31:   includeAWG31,
+			RangeKeepalive: req.Mode == TargetKernel,
+		})
 		created, err := s.d.Tunnels.Create(ctx, req.Mode, name, conf, createOpts)
 		if err != nil {
 			s.dropRegistration(tunAcct)
@@ -1581,4 +1687,53 @@ func validEndpoint(ep string) error {
 		return fmt.Errorf("%w: endpoint должен быть вида ip:port", ErrInvalidInput)
 	}
 	return nil
+}
+
+// ExportConf собирает .conf для найденного эндпоинта без создания туннеля и изменения состояния.
+func (s *Service) ExportConf(_ context.Context, req ExportRequest) (*ExportResult, error) {
+	if err := validEndpoint(req.Endpoint); err != nil {
+		return nil, err
+	}
+	acct := s.d.Store.Account()
+	if acct == nil {
+		return nil, ErrNoAccount
+	}
+	protocol := strings.ToLower(strings.TrimSpace(req.Protocol))
+	switch protocol {
+	case "":
+		protocol = ProtocolAWG
+	case ProtocolAWG, ProtocolWG:
+	default:
+		return nil, fmt.Errorf("%w: неизвестный протокол %q", ErrInvalidInput, req.Protocol)
+	}
+	mtu := req.MTU
+	if mtu == 0 {
+		mtu = DefaultMTU
+	}
+	if mtu < 576 || mtu > 1500 {
+		return nil, fmt.Errorf("%w: MTU должен быть в диапазоне 576–1500", ErrInvalidInput)
+	}
+	awg := s.awgForUse()
+	if req.AWG != nil && protocol != ProtocolWG {
+		ovr, err := validateOverrideAWG(*req.AWG)
+		if err != nil {
+			return nil, err
+		}
+		awg = ovr
+	}
+	cfgAcct := *acct
+	content := BuildConfWithOptions(&cfgAcct, awg, protocol, strings.TrimSpace(req.Endpoint), ConfOptions{
+		MTU:            mtu,
+		IncludeAWG3:    true,
+		IncludeAWG31:   true,
+		RangeKeepalive: true,
+	})
+	filename := "warp-" + protocol + ".conf"
+	if colo := strings.ToUpper(strings.TrimSpace(req.Colo)); isValidColoCode(colo) {
+		filename = fmt.Sprintf("warp-%s-%s.conf", strings.ToLower(colo), protocol)
+	}
+	return &ExportResult{
+		Filename: filename,
+		Content:  content,
+	}, nil
 }

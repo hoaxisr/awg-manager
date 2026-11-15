@@ -5,7 +5,10 @@ import (
 	mrand "math/rand"
 )
 
-func init() { builders["dtls"] = buildDTLS }
+func init() {
+	builders["dtls"] = buildDTLS
+	hostBuilders["dtls"] = buildDTLSWithHost
+}
 
 // dtlsCipherSuites — §4.3, порядок дословный.
 var dtlsCipherSuites = []uint16{0xC02B, 0xC02F, 0xCCA9, 0xC02C, 0x009C, 0x009D}
@@ -24,6 +27,15 @@ const (
 // unix time) + <r 28>, session_id = <r 32>. Длины полей не меняются, поэтому
 // подстановка не ломает разбор. Cookie пустой, эпоха и порядковые номера нулевые.
 func buildDTLS(r *mrand.Rand) (GeneratedPackets, error) {
+	pk, _, err := buildDTLSWithHost(r, "")
+	return pk, err
+}
+
+func buildDTLSWithHost(r *mrand.Rand, customHost string) (GeneratedPackets, string, error) {
+	host := customHost
+	if host == "" {
+		host = pickHost(r)
+	}
 	body := &wire{}
 	body.u16(0xFEFD) // client_version = DTLS 1.2
 	body.raw(make([]byte, 32))
@@ -37,7 +49,7 @@ func buildDTLS(r *mrand.Rand) (GeneratedPackets, error) {
 	body.u8(1) // compression methods length
 	body.u8(0) // null compression
 
-	exts := dtlsExtensions(pickHost(r))
+	exts := dtlsExtensions(host)
 	body.u16(len(exts))
 	body.raw(exts)
 
@@ -59,7 +71,7 @@ func buildDTLS(r *mrand.Rand) (GeneratedPackets, error) {
 	// b[2:dtlsRandomEnd] — random, b[dtlsRandomEnd] — длина session_id,
 	// b[dtlsRandomEnd+1:dtlsSessionIDEnd] — session_id.
 	i1 := tokB(head.bytes()) + "<t><r 28>" + tokB(b[dtlsRandomEnd:dtlsRandomEnd+1]) + "<r 32>" + tokB(b[dtlsSessionIDEnd:])
-	return GeneratedPackets{I1: i1}, nil
+	return GeneratedPackets{I1: i1}, host, nil
 }
 
 // dtlsExtensions — §4.4, порядок дословный. GREASE в DTLS нет.
