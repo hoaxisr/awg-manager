@@ -36,25 +36,45 @@ func (e *Engine) superviseCapture() {
 
 func (e *Engine) recoverCapture() {
 	e.commitMu.Lock()
-	defer e.commitMu.Unlock()
 	e.mu.Lock()
 	if !e.running || e.capturePaused || e.capture == nil {
 		e.mu.Unlock()
+		e.commitMu.Unlock()
 		return
 	}
 	captureRef := e.capture
+	gen := e.captureGen
 	baseCtx := e.baseCtx
 	if captureRef.Status().Running {
 		e.captureRunning = true
 		e.mu.Unlock()
+		e.commitMu.Unlock()
 		return
 	}
 	e.captureRunning = false
 	e.mu.Unlock()
+	e.commitMu.Unlock()
 
-	// No commit/pause mutex is held by the controller while Start creates a
-	// fresh generation. If the previous generation is still closing, the next
-	// tick retries instead of treating that transient state as permanent.
+	// No engine locks are held while Start creates a fresh generation. The
+	// mutex serializes against the monitor pause/resume and the UDP-toggle
+	// stop; if one of those is in flight, this tick yields and retries.
+	if !captureOpMu.TryLock() {
+		return
+	}
+	defer captureOpMu.Unlock()
+	// Re-check under the locks: while Start was being prepared, the decision
+	// may have gone stale (a newer generation or a pause in between).
+	e.commitMu.Lock()
+	e.mu.Lock()
+	stale := gen != e.captureGen || e.capturePaused || !e.running || e.capture != captureRef
+	e.mu.Unlock()
+	e.commitMu.Unlock()
+	if stale {
+		return
+	}
+
+	// If the previous generation is still closing, the next tick retries
+	// instead of treating that transient state as permanent.
 	err := captureRef.Start(baseCtx)
 	e.mu.Lock()
 	e.captureRunning = err == nil

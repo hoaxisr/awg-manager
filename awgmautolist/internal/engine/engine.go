@@ -28,6 +28,14 @@ const (
 	workerCount   = 2
 )
 
+// captureOpMu сериализует блокирующие capture-операции (Pause/Start из
+// монитора, recovery, Stop при смене UDP-режима) между собой: без него
+// запоздалый Pause одной горутины может убить свежее поколение, только что
+// запущенное Start другой. Контроллер capture сериализует их собственным
+// opMu, но движку нужна перепроверка решения после снятия своих локов, поэтому
+// конкурирующая операция здесь приводит к отказу (TryLock), а не к ожиданию.
+var captureOpMu sync.Mutex
+
 // monitorInterval is the periodic WAN check period. It is a variable so
 // tests can shorten it; production always uses thirty seconds.
 var monitorInterval = 30 * time.Second
@@ -73,6 +81,7 @@ type Engine struct {
 	active          map[string]*attempt
 	queued          map[string]struct{}
 	capture         Capture
+	captureGen      uint64 // поколение capture: растёт при пересоздании, гасит устаревшие pause/resume
 	captureRunning  bool
 	capturePaused   bool
 	lastWAN         model.CheckEvidence
@@ -194,13 +203,26 @@ func (e *Engine) PatchConfig(data []byte) (config.Config, error) {
 		return config.Config{}, err
 	}
 	e.commitMu.Lock()
-	defer e.commitMu.Unlock()
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.invalidateLocked("configuration changed")
 	if old.UDPEnabled != cfg.UDPEnabled {
+		// Stop заменяемого поколения — блокирующий (ждёт закрытия
+		// сокетов) и потому выполняется вне локов, ниже; под локами он
+		// дедлочит так же, как Pause. captureGen растёт, чтобы
+		// запоздалый pause/resume монитора не тронул новое поколение.
 		if e.capture != nil {
-			_ = e.capture.Stop()
+			staleStop := e.capture
+			e.captureGen++
+			e.mu.Unlock()
+			e.commitMu.Unlock()
+			if captureOpMu.TryLock() {
+				start := time.Now()
+				_ = staleStop.Stop()
+				e.logf("replaced capture stopped in %dms", time.Since(start).Milliseconds())
+				captureOpMu.Unlock()
+			}
+			e.commitMu.Lock()
+			e.mu.Lock()
 		}
 		e.startCaptureLocked(cfg.UDPEnabled)
 	}
@@ -212,11 +234,14 @@ func (e *Engine) PatchConfig(data []byte) (config.Config, error) {
 			e.resumeCaptureLocked("WAN monitor disabled")
 		}
 	}
+	e.mu.Unlock()
+	e.commitMu.Unlock()
 	e.logf("configuration applied")
 	return cfg, nil
 }
 
 func (e *Engine) startCaptureLocked(udpAll bool) {
+	e.captureGen++
 	e.capture = e.deps.CaptureFactory(udpAll, e.enqueue)
 	e.captureRunning = false
 	if e.capturePaused {
@@ -246,6 +271,15 @@ func (e *Engine) enqueue(suspect capture.Suspect) {
 	}
 	key := target.CandidateKey()
 	e.mu.Lock()
+	if e.capturePaused {
+		// Поколение capture ставится на паузу: подозреваемый собран
+		// неработающим WAN и не должен создавать кандидатов. Замкнутый
+		// цикл Pause→emit→enqueue блокируется здесь, а не в очереди:
+		// после дренажа под локами и до завершения Pause вне локов
+		// просачивание подозреваемого снова дедлочило бы связку.
+		e.mu.Unlock()
+		return
+	}
 	if _, busy := e.active[key]; busy {
 		e.mu.Unlock()
 		return
