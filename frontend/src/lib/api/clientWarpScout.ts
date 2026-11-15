@@ -5,6 +5,9 @@ import type {
 	WarpApplyResult,
 	WarpAWGParams,
 	WarpConfig,
+	WarpExportRequest,
+	WarpExportResult,
+	WarpFindJunkApplyRequest,
 	WarpFindJunkRequest,
 	WarpFindJunkStatus,
 	WarpScanRequest,
@@ -81,10 +84,10 @@ export class WarpScoutClient extends Awg3Client {
 		});
 	}
 
-	async warpscoutFindJunkApply(): Promise<WarpAWGParams> {
+	async warpscoutFindJunkApply(req: WarpFindJunkApplyRequest = {}): Promise<WarpAWGParams> {
 		return this.request<WarpAWGParams>('/warpscout/find-junk/apply', {
 			method: 'POST',
-			body: JSON.stringify({}),
+			body: JSON.stringify(req),
 		});
 	}
 
@@ -112,6 +115,13 @@ export class WarpScoutClient extends Awg3Client {
 	async warpscoutClearHistory(): Promise<{ ok: boolean }> {
 		return this.request<{ ok: boolean }>('/warpscout/history/clear', {
 			method: 'POST',
+		});
+	}
+
+	async warpscoutExport(req: WarpExportRequest): Promise<WarpExportResult> {
+		return this.request<WarpExportResult>('/warpscout/export', {
+			method: 'POST',
+			body: JSON.stringify(req),
 		});
 	}
 }

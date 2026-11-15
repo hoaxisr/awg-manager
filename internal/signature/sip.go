@@ -10,7 +10,10 @@ import (
 	"strings"
 )
 
-func init() { builders["sip"] = buildSIP }
+func init() {
+	builders["sip"] = buildSIP
+	hostBuilders["sip"] = buildSIPWithHost
+}
 
 // Таблицы §5.3 — дословно, только те, что нужны REGISTER.
 var sipUserAgents = []string{
@@ -53,7 +56,15 @@ var sipUserPrefixes = []string{
 // один диалог. Рантайм-случаен только branch: <rc 18> вместо hex-хвоста
 // z9hG4bK. Digest-строки в payloadGen нет (§5.5) — она собрана по RFC 2617.
 func buildSIP(r *mrand.Rand) (GeneratedPackets, error) {
-	host := pickHost(r)
+	pk, _, err := buildSIPWithHost(r, "")
+	return pk, err
+}
+
+func buildSIPWithHost(r *mrand.Rand, customHost string) (GeneratedPackets, string, error) {
+	host := customHost
+	if host == "" {
+		host = pickHost(r)
+	}
 	localIP := randomPrivateIPv4(r)
 	localPort := strconv.Itoa(sipLocalPorts[r.Intn(len(sipLocalPorts))])
 	fromUser := sipUserPart(r)
@@ -107,7 +118,7 @@ func buildSIP(r *mrand.Rand) (GeneratedPackets, error) {
 	return GeneratedPackets{
 		I1: packet(cseq, ""),
 		I2: packet(cseq+1, sipAuthorization(r, fromUser, host)),
-	}, nil
+	}, host, nil
 }
 
 // sipAuthorization — Digest qop=auth по RFC 2617. Пароль случаен и никуда не

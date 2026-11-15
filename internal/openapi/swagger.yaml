@@ -4292,6 +4292,9 @@ definitions:
       byteSize:
         example: 344
         type: integer
+      domain:
+        example: gosuslugi.ru
+        type: string
       ok:
         example: true
         type: boolean
@@ -4306,6 +4309,16 @@ definitions:
     type: object
   api.SignatureGenerateRequest:
     properties:
+      domain:
+        example: gosuslugi.ru
+        type: string
+      domains:
+        items:
+          type: string
+        type: array
+      hostPreset:
+        example: ru_whitelist
+        type: string
       protocol:
         example: quic_initial
         type: string
@@ -22511,8 +22524,10 @@ paths:
       summary: Save WARP autopilot config
       tags:
       - warpscout
-  /warpscout/find-junk/apply:
+  /warpscout/export:
     post:
+      consumes:
+      - application/json
       produces:
       - application/json
       responses:
@@ -22523,7 +22538,24 @@ paths:
             type: object
       security:
       - CookieAuth: []
-      summary: Apply best found AWG junk parameters
+      summary: Export WARP endpoint .conf
+      tags:
+      - warpscout
+  /warpscout/find-junk/apply:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Apply selected or best found AWG junk parameters
       tags:
       - warpscout
   /warpscout/find-junk/start:

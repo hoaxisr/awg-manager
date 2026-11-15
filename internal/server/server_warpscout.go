@@ -3,12 +3,40 @@ package server
 import (
 	"context"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/backup"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/warpscout"
 )
+
+func kmodVersionAtLeast(ver string, wantMaj, wantMin int) bool {
+	s := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ver)), "v"))
+	if s == "" {
+		return false
+	}
+	parts := strings.Split(s, ".")
+	if len(parts) < 2 {
+		return false
+	}
+	maj, err1 := strconv.Atoi(parts[0])
+	// Вторую компоненту добирает префикс цифр на случай суффиксов вида "1-rc1".
+	minPart := parts[1]
+	if i := strings.IndexFunc(minPart, func(r rune) bool { return r < '0' || r > '9' }); i >= 0 {
+		minPart = minPart[:i]
+	}
+	if minPart == "" {
+		return false
+	}
+	min, err2 := strconv.Atoi(minPart)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return maj > wantMaj || (maj == wantMaj && min >= wantMin)
+}
 
 // buildWarpScout собирает сервис «WARP Сканер» и его хендлер. Сторожей не
 // запускает (это делает Start): registerRoutes зовут и тесты гардов, где
@@ -35,14 +63,26 @@ func (s *Server) buildWarpScout(h *routeHandlers) *api.WarpScoutHandler {
 	store.Frozen = func() bool {
 		return backup.Restoring() || (!bornAfterRestore && backup.HasPostRestoreMarker(dataDir))
 	}
+	supportsKernelAWG31 := func() bool {
+		if s.kmodLoader == nil {
+			return false
+		}
+		ver := s.kmodLoader.LoadedVersion()
+		if ver == "" {
+			ver = s.kmodLoader.OnDiskVersion()
+		}
+		return kmodVersionAtLeast(ver, 3, 1)
+	}
 	ops := &api.WarpTunnelOps{
-		Svc:      s.tunnelService,
-		Store:    s.tunnels,
-		Settings: s.settings,
-		System:   s.systemTunnelService,
-		Commands: s.ndmsCommands,
-		Queries:  s.ndmsQueries,
-		Tunnels:  h.tunnelsHandler,
+		Svc:                 s.tunnelService,
+		Store:               s.tunnels,
+		Settings:            s.settings,
+		System:              s.systemTunnelService,
+		Commands:            s.ndmsCommands,
+		Queries:             s.ndmsQueries,
+		Tunnels:             h.tunnelsHandler,
+		SupportsASC3:        ndmsinfo.SupportsWireguardASC3,
+		SupportsKernelAWG31: supportsKernelAWG31,
 	}
 	deps := warpscout.Deps{
 		Store:   store,
@@ -122,8 +162,10 @@ func (s *Server) buildWarpScout(h *routeHandlers) *api.WarpScoutHandler {
 			}
 			return out
 		},
-		ObfuscationSources: ops.ObfuscationSources,
-		UsedIPv4:           ops.UsedIPv4,
+		ObfuscationSources:  ops.ObfuscationSources,
+		UsedIPv4:            ops.UsedIPv4,
+		SupportsASC3:        ndmsinfo.SupportsWireguardASC3,
+		SupportsKernelAWG31: supportsKernelAWG31,
 	}
 	if s.bus != nil {
 		deps.Bus = s.bus

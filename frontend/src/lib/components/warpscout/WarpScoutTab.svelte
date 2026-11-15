@@ -14,6 +14,8 @@
 	import WarpScannerCard from './WarpScannerCard.svelte';
 	import WarpAutopilotCard from './WarpAutopilotCard.svelte';
 	import {
+		isValidContentPadding,
+		isValidDomainListInput,
 		routeDisplayLabel,
 		sanitizeConfig,
 		sectionEqual,
@@ -111,11 +113,17 @@
 			}),
 			warpFindJunkPush.subscribe((fj) => {
 				if (!live || !fj || !ws) return;
-				const wasApplied = ws.findJunk?.applied ?? false;
+				const prevAttempt = ws.findJunk?.applied
+					? ws.findJunk.appliedAttempt || ws.findJunk.best?.attempt || 0
+					: 0;
+				const nextAttempt = fj.applied ? fj.appliedAttempt || fj.best?.attempt || 0 : 0;
 				ws.findJunk = fj;
-				if (!wasApplied && fj.applied && fj.best?.awg) {
-					ws.config = { ...ws.config, awg: { ...fj.best.awg } };
-					draft = withSection(draft, ws.config, 'awg');
+				if (nextAttempt > 0 && nextAttempt !== prevAttempt) {
+					const pickedAwg = (fj.attempts ?? []).find((a) => a.attempt === nextAttempt)?.awg ?? fj.best?.awg;
+					if (pickedAwg) {
+						ws.config = { ...ws.config, awg: { ...pickedAwg } };
+						draft = withSection(draft, ws.config, 'awg');
+					}
 				}
 			}),
 			// Событие сторожа — статус одного профиля; статистика и журнал
@@ -172,6 +180,21 @@
 	// часть: несохранённые правки соседней части на сервер не уходят.
 	async function saveSection(section: ConfigSection, okMessage: string): Promise<boolean> {
 		if (!ws) return false;
+		if (section === 'awg') {
+			if (!isValidContentPadding(draft.awg.contentPadding)) {
+				notifications.error(m.warpscout_awg3_padding_invalid());
+				return false;
+			}
+			if (
+				draft.awg.signatureProfile !== 'custom' &&
+				draft.awg.signatureProfile !== 'none' &&
+				draft.awg.signatureHostPreset === 'custom' &&
+				!isValidDomainListInput(draft.awg.signatureDomain)
+			) {
+				notifications.error(m.warpscout_awg_domain_invalid());
+				return false;
+			}
+		}
 		const payload = withSection(ws.config, sanitizeConfig(draft), section);
 		if (section === 'profiles') {
 			const missing = payload.profiles.find((p) => !p.targetId);
@@ -288,6 +311,8 @@
 					hasAccount={!!account}
 					scanRunning={ws.scan.running}
 					scanInterface={scanIface}
+					supportsAsc3={ws.supportsAsc3 ?? false}
+					supportsKernelAwg31={ws.supportsKernelAwg31 ?? false}
 					onsave={() => saveSection('awg', m.warpscout_awg_saved())}
 					onreset={() => resetSection('awg')}
 					onfindjunkchanged={refreshNow}

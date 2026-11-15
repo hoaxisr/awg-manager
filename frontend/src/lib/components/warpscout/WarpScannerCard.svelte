@@ -157,8 +157,36 @@
 		}
 	}
 
+	let exportingEp = $state('');
+
 	async function applied(): Promise<void> {
 		await Promise.all([onchanged(), ontargetschanged()]);
+	}
+
+	async function exportConf(h: WarpHit): Promise<void> {
+		if (exportingEp) return;
+		exportingEp = h.endpoint;
+		try {
+			const res = await api.warpscoutExport({
+				endpoint: h.endpoint,
+				colo: h.colo || undefined,
+				protocol: filters.protocol,
+			});
+			const blob = new Blob([res.content], { type: 'text/plain;charset=utf-8' });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = res.filename || 'warp.conf';
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
+			URL.revokeObjectURL(url);
+			notifications.success(m.warpscout_exported_conf_ok({ filename: res.filename || 'warp.conf' }));
+		} catch (e) {
+			notifications.error(warpErrorMessage(e));
+		} finally {
+			exportingEp = '';
+		}
 	}
 </script>
 
@@ -265,7 +293,7 @@
 				{#snippet icon()}<Radar />{/snippet}
 			</EmptyState>
 		{:else if hits.length > 0}
-			<WarpHitsTable {hits} oncreate={(h) => (createHit = h)} onswap={(h) => (swapHit = h)} />
+			<WarpHitsTable {hits} oncreate={(h) => (createHit = h)} onswap={(h) => (swapHit = h)} onexport={exportConf} />
 		{:else if !running && scan.total > 0 && !scan.error}
 			<EmptyState
 				title={m.warpscout_empty_no_hits_title()}

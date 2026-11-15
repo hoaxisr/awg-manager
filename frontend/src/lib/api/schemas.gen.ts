@@ -1518,6 +1518,7 @@ const api_SignatureCaptureResponse: v.GenericSchema = v.looseObject({
 
 const api_SignatureGenerateData: v.GenericSchema = v.looseObject({
 	byteSize: v.optional(v.nullable(v.number())),
+	domain: v.optional(v.nullable(v.string())),
 	ok: v.optional(v.nullable(v.boolean())),
 	packets: v.optional(v.nullable(v.lazy(() => api_SignaturePacketsDTO))),
 	protocol: v.optional(v.nullable(v.string())),
@@ -3903,6 +3904,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /warpscout/account/register": v.record(v.string(), v.unknown()),
 	"POST /warpscout/apply": v.record(v.string(), v.unknown()),
 	"POST /warpscout/config": v.record(v.string(), v.unknown()),
+	"POST /warpscout/export": v.record(v.string(), v.unknown()),
 	"POST /warpscout/find-junk/apply": v.record(v.string(), v.unknown()),
 	"POST /warpscout/find-junk/start": v.record(v.string(), v.unknown()),
 	"POST /warpscout/find-junk/stop": v.record(v.string(), v.unknown()),

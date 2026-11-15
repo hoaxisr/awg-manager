@@ -60,3 +60,61 @@ export interface SignaturePackets {
 export function calcTotalChars(packets: SignaturePackets): number {
 	return (packets.i1 + packets.i2 + packets.i3 + packets.i4 + packets.i5).length;
 }
+
+export type SignatureHostPreset = 'default' | 'ru_whitelist' | 'cdn' | 'custom';
+
+export interface SignatureGenerateOpts {
+	domain?: string;
+	hostPreset?: SignatureHostPreset;
+	domains?: string[];
+}
+
+export function resolveSignatureGenerateOptions(
+	preset: SignatureHostPreset,
+	customRaw: string,
+): { ok: true; opts?: SignatureGenerateOpts } | { ok: false; error: string } {
+	if (preset === 'default') return { ok: true };
+	if (preset === 'custom') {
+		const items = customRaw
+			.split(/[\s,;]+/)
+			.map((s) => s.trim())
+			.filter(Boolean);
+		if (items.length === 0) {
+			return { ok: false, error: m.protocols_custom_domain_invalid() };
+		}
+		return {
+			ok: true,
+			opts: items.length === 1 ? { hostPreset: 'custom', domain: items[0] } : { hostPreset: 'custom', domains: items },
+		};
+	}
+	return { ok: true, opts: { hostPreset: preset } };
+}
+
+export function signatureHostPresetOptions(): {
+	value: SignatureHostPreset;
+	label: string;
+	description: string;
+}[] {
+	return [
+		{
+			value: 'default',
+			label: m.protocols_host_preset_default(),
+			description: m.protocols_host_preset_default_desc(),
+		},
+		{
+			value: 'ru_whitelist',
+			label: m.protocols_host_preset_ru_whitelist(),
+			description: m.protocols_host_preset_ru_whitelist_desc(),
+		},
+		{
+			value: 'cdn',
+			label: m.protocols_host_preset_cdn(),
+			description: m.protocols_host_preset_cdn_desc(),
+		},
+		{
+			value: 'custom',
+			label: m.protocols_host_preset_custom(),
+			description: m.protocols_host_preset_custom_desc(),
+		},
+	];
+}

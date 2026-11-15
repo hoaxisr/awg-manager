@@ -91,17 +91,21 @@ const maxGenerateBodyBytes = 4 << 10
 
 // SignatureGenerateRequest is the POST /signature/generate body.
 type SignatureGenerateRequest struct {
-	Protocol string `json:"protocol" example:"quic_initial"`
+	Protocol   string   `json:"protocol" example:"quic_initial"`
+	Domain     string   `json:"domain,omitempty" example:"gosuslugi.ru"`
+	HostPreset string   `json:"hostPreset,omitempty" example:"ru_whitelist"`
+	Domains    []string `json:"domains,omitempty"`
 }
 
 // SignatureGenerateData is the data field of SignatureGenerateResponse. It
 // mirrors SignatureCaptureData with source="generated" plus the canonical
 // protocol key (quic_initial, stun, dns, dtls, sip; anything else is rejected
-// with UNKNOWN_PROTOCOL) and the summed I1–I5 byte size.
+// with UNKNOWN_PROTOCOL), optional chosen domain, and the summed I1–I5 byte size.
 type SignatureGenerateData struct {
 	OK       bool                `json:"ok" example:"true"`
 	Source   string              `json:"source" example:"generated"`
 	Protocol string              `json:"protocol" example:"quic_initial"`
+	Domain   string              `json:"domain,omitempty" example:"gosuslugi.ru"`
 	ByteSize int                 `json:"byteSize" example:"344"`
 	Packets  SignaturePacketsDTO `json:"packets"`
 }
@@ -144,11 +148,19 @@ func (h *SignatureHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := signature.Generate(req.Protocol)
+	res, err := signature.GenerateWithOptions(req.Protocol, signature.GenerateOptions{
+		Domain:     req.Domain,
+		HostPreset: req.HostPreset,
+		Domains:    req.Domains,
+	})
 	if err != nil {
 		switch {
 		case errors.Is(err, signature.ErrUnknownProtocol):
 			response.Error(w, "Неизвестный протокол", "UNKNOWN_PROTOCOL")
+		case errors.Is(err, signature.ErrInvalidDomain):
+			response.Error(w, "Некорректный домен для генерации сигнатуры", "INVALID_DOMAIN")
+		case errors.Is(err, signature.ErrInvalidDomainPreset):
+			response.Error(w, "Неизвестный пресет доменов", "INVALID_HOST_PRESET")
 		case errors.Is(err, signature.ErrPacketsTooLarge):
 			response.ErrorWithStatus(w, http.StatusUnprocessableEntity,
 				"Не удалось уложить пакеты в лимит размера", "PACKETS_TOO_LARGE")
@@ -162,6 +174,7 @@ func (h *SignatureHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		OK:       true,
 		Source:   "generated",
 		Protocol: res.Profile,
+		Domain:   res.Domain,
 		ByteSize: res.ByteSize,
 		Packets: SignaturePacketsDTO{
 			I1: res.Packets.I1,

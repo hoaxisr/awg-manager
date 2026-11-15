@@ -31,3 +31,28 @@ func TestWarpScout_NoWritesAfterRestore(t *testing.T) {
 		t.Fatalf("после восстановления запись должна отклоняться, err=%v", err)
 	}
 }
+
+func TestKmodVersionAtLeast(t *testing.T) {
+	cases := []struct {
+		ver  string
+		want bool
+	}{
+		{"3.1.20260906", true},
+		{"v3.1.0", true},
+		{"3.2", true},
+		{"4.0.0", true},
+		{"3.1-rc1", true},
+		{"3.0.20260812", false},
+		{"3.0", false},
+		{"2.0.1", false},
+		{"1.0.0", false},
+		{"", false},
+		{"invalid", false},
+		{"3.x", false},
+	}
+	for _, tc := range cases {
+		if got := kmodVersionAtLeast(tc.ver, 3, 1); got != tc.want {
+			t.Errorf("kmodVersionAtLeast(%q, 3, 1) = %v, want %v", tc.ver, got, tc.want)
+		}
+	}
+}

@@ -11,17 +11,29 @@ import (
 const quicInitialSize = 1200 // RFC 9000 §14.1 минимум для Initial
 const quicAEADTagLen = 16
 
-func init() { builders["quic_initial"] = buildQUICProfile }
+func init() {
+	builders["quic_initial"] = buildQUICProfile
+	hostBuilders["quic_initial"] = buildQUICProfileWithHost
+}
 
 // buildQUICProfile — статический валидный Initial: любой DPI выводит ключи
 // Initial из DCID и расшифровывает пакет, поэтому внутри должен лежать
 // настоящий ClientHello, а не <r>-мусор. Цена — байты одинаковы в каждом
 // рукопожатии.
 func buildQUICProfile(r *mrand.Rand) (GeneratedPackets, error) {
+	pk, _, err := buildQUICProfileWithHost(r, "")
+	return pk, err
+}
+
+func buildQUICProfileWithHost(r *mrand.Rand, customHost string) (GeneratedPackets, string, error) {
 	dcid, scid, pn := randBytes(8), randBytes(8), randBytes(4)
-	ch, err := buildClientHello(r, pickHost(r), scid)
+	host := customHost
+	if host == "" {
+		host = pickHost(r)
+	}
+	ch, err := buildClientHello(r, host, scid)
 	if err != nil {
-		return GeneratedPackets{}, err
+		return GeneratedPackets{}, "", err
 	}
 	frame := &wire{}
 	frame.u8(0x06) // CRYPTO
@@ -31,12 +43,12 @@ func buildQUICProfile(r *mrand.Rand) (GeneratedPackets, error) {
 	payload := padInitial(frame.bytes(), len(dcid), len(scid), len(pn))
 	pkt, err := protectInitial(dcid, scid, pn, payload)
 	if err != nil {
-		return GeneratedPackets{}, err
+		return GeneratedPackets{}, "", err
 	}
 	if len(pkt) != quicInitialSize {
-		return GeneratedPackets{}, fmt.Errorf("quic initial: %d bytes, want %d", len(pkt), quicInitialSize)
+		return GeneratedPackets{}, "", fmt.Errorf("quic initial: %d bytes, want %d", len(pkt), quicInitialSize)
 	}
-	return GeneratedPackets{I1: tokB(pkt)}, nil
+	return GeneratedPackets{I1: tokB(pkt)}, host, nil
 }
 
 // padInitial добивает payload нулями (PADDING-фреймы) до пакета в

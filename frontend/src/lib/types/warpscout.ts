@@ -17,8 +17,13 @@ export interface WarpAccount {
 	createdAt: string;
 }
 
+export type WarpSignatureHostPreset = 'default' | 'ru_whitelist' | 'cdn' | 'custom';
+
 export interface WarpAWGParams {
 	signatureProfile: string;
+	signatureHostPreset?: WarpSignatureHostPreset;
+	signatureDomain?: string;
+	generatedDomain?: string;
 	jc: number;
 	jmin: number;
 	jmax: number;
@@ -27,6 +32,10 @@ export interface WarpAWGParams {
 	i3?: string;
 	i4?: string;
 	i5?: string;
+	timingJitter?: boolean;
+	contentPadding?: string;
+	randomTrailers?: boolean;
+	disableCookies?: boolean;
 }
 
 export interface WarpFilters {
@@ -201,10 +210,14 @@ export interface WarpScoutState {
 	watch: WarpWatchStatus[] | null;
 	stats?: WarpProfileStats[] | null;
 	history: WarpSwapEvent[] | null;
+	supportsAsc3?: boolean;
+	supportsKernelAwg31?: boolean;
 }
 
 export interface WarpFindJunkRequest {
 	i1Profile: string;
+	hostPreset?: WarpSignatureHostPreset;
+	domains?: string;
 	maxAttempts?: number;
 	thresholdPct?: number;
 	perSubnet?: number;
@@ -212,10 +225,19 @@ export interface WarpFindJunkRequest {
 	autoApply?: boolean;
 }
 
+export interface WarpFindJunkApplyRequest {
+	attempt?: number;
+	timingJitter?: boolean;
+	contentPadding?: string;
+	randomTrailers?: boolean;
+	disableCookies?: boolean;
+}
+
 export interface WarpJunkAttempt {
 	attempt: number;
 	awg: WarpAWGParams;
 	profile: string;
+	domain?: string;
 	working: number;
 	scanned: number;
 	total: number;
@@ -232,6 +254,8 @@ export interface WarpFindJunkStatus {
 	startedAt?: string;
 	finishedAt?: string;
 	i1Profile?: string;
+	hostPreset?: WarpSignatureHostPreset;
+	domains?: string;
 	attempt: number;
 	maxAttempts: number;
 	thresholdPct: number;
@@ -288,4 +312,17 @@ export interface WarpApplyRequest {
 export interface WarpApplyResult {
 	tunnel: WarpTunnelRef | null;
 	profileId?: string;
+}
+
+export interface WarpExportRequest {
+	endpoint: string;
+	colo?: string;
+	protocol?: WarpProtocol;
+	mtu?: number;
+	awg?: WarpAWGParams;
+}
+
+export interface WarpExportResult {
+	filename: string;
+	content: string;
 }

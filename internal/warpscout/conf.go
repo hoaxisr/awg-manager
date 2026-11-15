@@ -74,6 +74,19 @@ func randomBytes(tag string, n int) []byte {
 	return b
 }
 
+// SignatureOptionsFromAWG собирает настройки выбора домена для генератора I1..I5.
+func SignatureOptionsFromAWG(p AWGParams) signature.GenerateOptions {
+	preset := signature.CanonicalHostPreset(p.SignatureHostPreset)
+	dom := strings.TrimSpace(p.SignatureDomain)
+	if preset == signature.HostPresetCustom && dom == "" {
+		preset = signature.HostPresetDefault
+	}
+	if dom != "" {
+		return signature.GenerateOptions{Domain: dom, HostPreset: preset}
+	}
+	return signature.GenerateOptions{HostPreset: preset}
+}
+
 // EnsureSignature заполняет I1..I5 генератором, если профиль задан, а
 // пакеты пусты. Возвращает true, если параметры изменились.
 func EnsureSignature(p *AWGParams) (bool, error) {
@@ -84,11 +97,12 @@ func EnsureSignature(p *AWGParams) (bool, error) {
 	if p.I1 != "" {
 		return false, nil
 	}
-	res, err := signature.Generate(prof)
+	res, err := signature.GenerateWithOptions(prof, SignatureOptionsFromAWG(*p))
 	if err != nil {
 		return false, err
 	}
 	p.I1, p.I2, p.I3, p.I4, p.I5 = res.Packets.I1, res.Packets.I2, res.Packets.I3, res.Packets.I4, res.Packets.I5
+	p.GeneratedDomain = res.Domain
 	return true, nil
 }
 
@@ -178,13 +192,86 @@ func NormalizeTunnelIPv4(raw string) (string, error) {
 	return fmt.Sprintf("%s/%d", addr.String(), bits), nil
 }
 
+// Безопасные AWG 3.0 параметры маскировки для Cloudflare WARP
+// (не меняют S1..S4/H1..H4 и не включают HeaderProtectionKey/RandomTrailers).
+const (
+	DefaultContentPadding    = "10-100"
+	WarpRekeyAfterTime       = "100-120"
+	WarpRekeyTimeout         = "3-7"
+	WarpRejectAfterTime      = "150-180"
+	WarpKeepaliveTimeout     = "5-15"
+	WarpMaxHandshakeAttempts = "15-20"
+	WarpJitterKeepalive      = "25-35"
+)
+
+// NormalizeContentPadding проверяет и нормализует ContentPaddingAddition
+// (число 0..65535 или диапазон min-max). Пустая строка означает «отключено».
+func NormalizeContentPadding(raw string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", nil
+	}
+	loStr, hiStr, isRange := strings.Cut(s, "-")
+	loStr = strings.TrimSpace(loStr)
+	hiStr = strings.TrimSpace(hiStr)
+	parseU16 := func(v string) (int, bool) {
+		if v == "" || len(v) > 5 {
+			return 0, false
+		}
+		for _, r := range v {
+			if r < '0' || r > '9' {
+				return 0, false
+			}
+		}
+		n, err := strconv.Atoi(v)
+		return n, err == nil && n <= 65535
+	}
+	if !isRange {
+		n, ok := parseU16(loStr)
+		if !ok {
+			return "", fmt.Errorf("%w: ContentPadding должен быть числом 0-65535 или диапазоном min-max", ErrInvalidInput)
+		}
+		return strconv.Itoa(n), nil
+	}
+	lo, ok1 := parseU16(loStr)
+	hi, ok2 := parseU16(hiStr)
+	if !ok1 || !ok2 || lo > hi {
+		return "", fmt.Errorf("%w: ContentPadding должен быть числом 0-65535 или диапазоном min-max", ErrInvalidInput)
+	}
+	return fmt.Sprintf("%d-%d", lo, hi), nil
+}
+
+// ConfOptions управляет сборкой .conf для разных целей (kernel, NDMS, экспорт).
+type ConfOptions struct {
+	MTU            int
+	IncludeAWG3    bool
+	IncludeAWG31   bool
+	RangeKeepalive bool
+}
+
 // BuildConf собирает .conf для туннеля WARP со стандартным MTU 1280.
 func BuildConf(a *Account, awg AWGParams, protocol, endpoint string) string {
-	return BuildConfWithMTU(a, awg, protocol, endpoint, DefaultMTU)
+	return BuildConfWithOptions(a, awg, protocol, endpoint, ConfOptions{
+		MTU:            DefaultMTU,
+		IncludeAWG3:    true,
+		IncludeAWG31:   true,
+		RangeKeepalive: true,
+	})
 }
 
 // BuildConfWithMTU собирает .conf для туннеля WARP с заданным MTU (для WARP-in-WARP — 1220).
 func BuildConfWithMTU(a *Account, awg AWGParams, protocol, endpoint string, mtu int) string {
+	return BuildConfWithOptions(a, awg, protocol, endpoint, ConfOptions{
+		MTU:            mtu,
+		IncludeAWG3:    true,
+		IncludeAWG31:   true,
+		RangeKeepalive: true,
+	})
+}
+
+// BuildConfWithOptions собирает .conf для туннеля WARP с учётом возможностей целевого режима.
+func BuildConfWithOptions(a *Account, awg AWGParams, protocol, endpoint string, opts ConfOptions) string {
+	mtu := opts.MTU
 	if mtu <= 0 {
 		mtu = DefaultMTU
 	}
@@ -213,6 +300,23 @@ func BuildConfWithMTU(a *Account, awg AWGParams, protocol, endpoint string, mtu 
 				fmt.Fprintf(&b, "I%d = %s\n", i+1, v)
 			}
 		}
+		if opts.IncludeAWG3 {
+			if cp, err := NormalizeContentPadding(awg.ContentPadding); err == nil && cp != "" {
+				fmt.Fprintf(&b, "ContentPaddingAddition = %s\n", cp)
+			}
+			if awg.TimingJitter {
+				fmt.Fprintf(&b, "RekeyAfterTime = %s\nRekeyTimeout = %s\nRejectAfterTime = %s\nKeepaliveTimeout = %s\nMaxHandshakeAttempts = %s\n",
+					WarpRekeyAfterTime, WarpRekeyTimeout, WarpRejectAfterTime, WarpKeepaliveTimeout, WarpMaxHandshakeAttempts)
+			}
+		}
+		if opts.IncludeAWG31 {
+			if awg.RandomTrailers {
+				b.WriteString("RandomTrailers = on\n")
+			}
+			if awg.DisableCookies {
+				b.WriteString("DisableCookies = on\n")
+			}
+		}
 	}
 	b.WriteString("\n[Peer]\n")
 	peer := a.PeerPublicKey
@@ -222,7 +326,11 @@ func BuildConfWithMTU(a *Account, awg AWGParams, protocol, endpoint string, mtu 
 	fmt.Fprintf(&b, "PublicKey = %s\n", peer)
 	b.WriteString("AllowedIPs = 0.0.0.0/0\n")
 	fmt.Fprintf(&b, "Endpoint = %s\n", endpoint)
-	b.WriteString("PersistentKeepalive = 25\n")
+	if protocol != ProtocolWG && opts.IncludeAWG3 && opts.RangeKeepalive && awg.TimingJitter {
+		fmt.Fprintf(&b, "PersistentKeepalive = %s\n", WarpJitterKeepalive)
+	} else {
+		b.WriteString("PersistentKeepalive = 25\n")
+	}
 	return b.String()
 }
 

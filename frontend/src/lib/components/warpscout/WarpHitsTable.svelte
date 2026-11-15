@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Copy, Plus, Repeat } from 'lucide-svelte';
+	import { Copy, Download, Plus, Repeat } from 'lucide-svelte';
 	import { m } from '$lib/i18n';
 	import { Button, IconButton } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
@@ -12,9 +12,10 @@
 		hits: WarpHit[];
 		oncreate: (h: WarpHit) => void;
 		onswap: (h: WarpHit) => void;
+		onexport?: (h: WarpHit) => void;
 	}
 
-	let { hits, oncreate, onswap }: Props = $props();
+	let { hits, oncreate, onswap, onexport }: Props = $props();
 
 	async function copyEndpoint(ep: string): Promise<void> {
 		const ok = await copyToClipboard(ep);
@@ -76,6 +77,17 @@
 					</td>
 					<td class="actions-cell">
 						<div class="actions">
+							{#if onexport}
+								<Button
+									size="sm"
+									variant="ghost"
+									title={m.warpscout_export_conf_tip()}
+									onclick={() => onexport(h)}
+								>
+									{#snippet iconBefore()}<Download size={12} />{/snippet}
+									{m.warpscout_export_conf_btn()}
+								</Button>
+							{/if}
 							<Button
 								size="sm"
 								variant="outline-primary"

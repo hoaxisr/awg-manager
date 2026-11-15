@@ -3,7 +3,16 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, Dropdown, type DropdownOption } from '$lib/components/ui';
-	import { protocols, calcTotalChars, MAX_SIGNATURE_CHARS, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
+	import {
+		protocols,
+		calcTotalChars,
+		MAX_SIGNATURE_CHARS,
+		signatureHostPresetOptions,
+		resolveSignatureGenerateOptions,
+		type ProtocolKey,
+		type SignatureHostPreset,
+		type SignaturePackets,
+	} from '$lib/utils/protocols';
 
 	const FIELDS = ['i1', 'i2', 'i3', 'i4', 'i5'] as const;
 
@@ -18,6 +27,8 @@
 	let { profile, packets, onchange }: Props = $props();
 
 	let generating = $state(false);
+	let hostPreset = $state<SignatureHostPreset>('default');
+	let customDomainInput = $state('');
 	// Выбор в выпадашке — «чем генерировать», он локальный. Наружу профиль
 	// уходит только вместе с байтами: из «Сгенерировать» (профиль описывает
 	// пакеты) или пустым при правке руками (байты больше не из профиля).
@@ -40,15 +51,26 @@
 
 	async function handleGenerate() {
 		const target: ProtocolKey = selected === '' ? 'quic_initial' : selected;
+		const resolved = resolveSignatureGenerateOptions(hostPreset, customDomainInput);
+		if (!resolved.ok) {
+			notifications.error(resolved.error);
+			return;
+		}
 		generating = true;
 		try {
-			const res = await api.generateSignature(target);
+			const res = resolved.opts
+				? await api.generateSignature(target, resolved.opts)
+				: await api.generateSignature(target);
 			selected = target;
 			onchange({
 				profile: target,
 				packets: { i1: res.packets.i1, i2: res.packets.i2, i3: res.packets.i3, i4: res.packets.i4, i5: res.packets.i5 },
 			});
-			notifications.success(m.servers_sig_generated({ name: protocols[target].name }));
+			notifications.success(
+				res.domain
+					? m.servers_sig_generated_domain({ name: protocols[target].name, domain: res.domain })
+					: m.servers_sig_generated({ name: protocols[target].name }),
+			);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.servers_sig_generate_failed());
 		} finally {
@@ -71,6 +93,21 @@
 			{m.common_generate()}
 		</Button>
 	</div>
+	<Dropdown
+		value={hostPreset}
+		options={signatureHostPresetOptions()}
+		fullWidth
+		onchange={(v) => (hostPreset = v)}
+	/>
+	{#if hostPreset === 'custom'}
+		<input
+			type="text"
+			class="sig-input"
+			bind:value={customDomainInput}
+			placeholder={m.protocols_custom_domain_placeholder()}
+			disabled={generating}
+		/>
+	{/if}
 
 	<div class="signature-fields">
 		{#each FIELDS as field (field)}

@@ -1040,3 +1040,344 @@ func TestWarpOps_SwapSystem_RecoversInterfaceUpWhenRequestCanceled(t *testing.T)
 		}
 	})
 }
+
+func TestWarpOps_SwapManaged_AWG3FirmwareGating(t *testing.T) {
+	ctx := context.Background()
+	ops, _, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg11": tunnel.StateRunning,
+		"awg50": tunnel.StateRunning,
+	})
+	seedWarpTunnel(t, store, "awg11", "kernel")
+	seedWarpTunnel(t, store, "awg50", "nativewg")
+	if err := store.Update("awg50", func(tun *storage.AWGTunnel) error {
+		tun.NWGIndex = 3
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	asc3 := false
+	ops.SupportsASC3 = func() bool { return asc3 }
+
+	awg3Opts := warpscout.SwapOptions{
+		Protocol: warpscout.ProtocolAWG,
+		AWG: warpscout.AWGParams{
+			Jc: 5, Jmin: 20, Jmax: 80,
+			SignatureProfile: warpscout.SignatureCustom,
+			I1:               "<b 0x01>",
+			TimingJitter:     true,
+			ContentPadding:   "10-100",
+		},
+	}
+
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.80:2408", awg3Opts); err != nil {
+		t.Fatalf("kernel swap awg3: %v", err)
+	}
+	kTun, _ := store.Get("awg11")
+	if kTun.Interface.ContentPaddingAddition != "10-100" ||
+		kTun.Interface.RekeyAfterTime != warpscout.WarpRekeyAfterTime ||
+		kTun.Peer.PersistentKeepalive != warpscout.WarpJitterKeepalive {
+		t.Fatalf("kernel tunnel did not receive AWG3 + ranged keepalive: iface=%+v peer=%+v", kTun.Interface.AWGObfuscation, kTun.Peer.PersistentKeepalive)
+	}
+
+	// Turning AWG3 off on kernel must reset keepalive 25-35 -> 25 and clear padding/timers.
+	plainOpts := awg3Opts
+	plainOpts.AWG.TimingJitter = false
+	plainOpts.AWG.ContentPadding = ""
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.81:2408", plainOpts); err != nil {
+		t.Fatalf("kernel swap plain: %v", err)
+	}
+	kTun, _ = store.Get("awg11")
+	if kTun.Interface.ContentPaddingAddition != "" || kTun.Interface.RekeyAfterTime != "" || kTun.Peer.PersistentKeepalive != "25" {
+		t.Fatalf("kernel tunnel did not reset AWG3/keepalive: iface=%+v peer=%+v", kTun.Interface.AWGObfuscation, kTun.Peer.PersistentKeepalive)
+	}
+
+	// NativeWG on <5.02 (asc3=false) must omit AWG3 fields and keep scalar keepalive=25.
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.82:2408", awg3Opts); err != nil {
+		t.Fatalf("native swap asc2: %v", err)
+	}
+	nTun, _ := store.Get("awg50")
+	if nTun.Interface.ContentPaddingAddition != "" || nTun.Interface.RekeyAfterTime != "" || nTun.Peer.PersistentKeepalive != "25" {
+		t.Fatalf("native on <5.02 leaked AWG3 fields: iface=%+v peer=%+v", nTun.Interface.AWGObfuscation, nTun.Peer.PersistentKeepalive)
+	}
+
+	// NativeWG on >=5.02 (asc3=true) receives padding + timers while still keeping keepalive=25.
+	asc3 = true
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.83:2408", awg3Opts); err != nil {
+		t.Fatalf("native swap asc3: %v", err)
+	}
+	nTun, _ = store.Get("awg50")
+	if nTun.Interface.ContentPaddingAddition != "10-100" || nTun.Interface.RekeyAfterTime != warpscout.WarpRekeyAfterTime || nTun.Peer.PersistentKeepalive != "25" {
+		t.Fatalf("native on >=5.02 did not apply AWG3 cleanly: iface=%+v peer=%+v", nTun.Interface.AWGObfuscation, nTun.Peer.PersistentKeepalive)
+	}
+
+	// AWG 3.1 gating: kernel gets RandomTrailers/DisableCookies ONLY when SupportsKernelAWG31() == true;
+	// native gets them ONLY when SupportsASC3() == true.
+	kmod31 := false
+	ops.SupportsKernelAWG31 = func() bool { return kmod31 }
+	asc3 = false
+	awg31Opts := awg3Opts
+	awg31Opts.AWG.RandomTrailers = true
+	awg31Opts.AWG.DisableCookies = true
+
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.84:2408", awg31Opts); err != nil {
+		t.Fatalf("kernel <3.1 swap: %v", err)
+	}
+	kTun, _ = store.Get("awg11")
+	if kTun.Interface.RandomTrailers || kTun.Interface.DisableCookies {
+		t.Fatalf("kernel <3.1 must strip AWG 3.1 flags: %+v", kTun.Interface.AWGObfuscation)
+	}
+
+	kmod31 = true
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetKernel, "awg11", "162.159.192.85:2408", awg31Opts); err != nil {
+		t.Fatalf("kernel >=3.1 swap: %v", err)
+	}
+	kTun, _ = store.Get("awg11")
+	if !kTun.Interface.RandomTrailers || !kTun.Interface.DisableCookies {
+		t.Fatalf("kernel >=3.1 must apply AWG 3.1 flags: %+v", kTun.Interface.AWGObfuscation)
+	}
+
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetNative, "awg50", "162.159.192.86:2408", awg31Opts); err != nil {
+		t.Fatalf("native asc2 awg31 swap: %v", err)
+	}
+	nTun, _ = store.Get("awg50")
+	if nTun.Interface.RandomTrailers || nTun.Interface.DisableCookies {
+		t.Fatalf("native on <5.02 must strip AWG 3.1 flags: %+v", nTun.Interface.AWGObfuscation)
+	}
+}
+
+func TestWarpOps_SwapSystem_AWG3Gating(t *testing.T) {
+	opts := warpscout.SwapOptions{
+		Protocol: warpscout.ProtocolAWG,
+		AWG: warpscout.AWGParams{
+			Jc: 6, Jmin: 20, Jmax: 80,
+			TimingJitter:   true,
+			ContentPadding: "10-100",
+		},
+	}
+
+	t.Run("asc2_omits_awg3_keys", func(t *testing.T) {
+		ops, poster := newSystemSwapTestHarness(t)
+		ops.SupportsASC3 = func() bool { return false }
+		if err := ops.SwapEndpoint(context.Background(), warpscout.TargetSystem, "Wireguard5", "162.159.192.95:2408", opts); err != nil {
+			t.Fatalf("SwapEndpoint asc2: %v", err)
+		}
+		for _, p := range poster.snapshot() {
+			if strings.Contains(p.body, "content-padding-addition-start") || strings.Contains(p.body, "rekey-after-time-start") {
+				t.Fatalf("ASC2 swap must not send AWG3 keys: %s", p.body)
+			}
+		}
+	})
+
+	t.Run("asc3_sends_full_awg3_payload", func(t *testing.T) {
+		ops, poster := newSystemSwapTestHarness(t)
+		ops.SupportsASC3 = func() bool { return true }
+		awg31Opts := opts
+		awg31Opts.AWG.RandomTrailers = true
+		awg31Opts.AWG.DisableCookies = true
+		if err := ops.SwapEndpoint(context.Background(), warpscout.TargetSystem, "Wireguard5", "162.159.192.96:2408", awg31Opts); err != nil {
+			t.Fatalf("SwapEndpoint asc3: %v", err)
+		}
+		var sawAWG3 bool
+		for _, p := range poster.snapshot() {
+			if strings.Contains(p.body, `"content-padding-addition-start":10`) &&
+				strings.Contains(p.body, `"content-padding-addition-end":100`) &&
+				strings.Contains(p.body, `"rekey-after-time-start":100`) &&
+				strings.Contains(p.body, `"rekey-after-time-end":120`) &&
+				strings.Contains(p.body, `"random-trailers":1`) &&
+				strings.Contains(p.body, `"disable-cookies":1`) {
+				sawAWG3 = true
+			}
+		}
+		if !sawAWG3 {
+			t.Fatalf("expected ASCParamsAWG3 with 3.1 flags in payload, posts=%+v", poster.snapshot())
+		}
+	})
+}
+
+type stubSystemListSvc struct {
+	*stubSystemTunnelSvc
+}
+
+func (s *stubSystemListSvc) List(context.Context) ([]ndms.SystemWireguardTunnel, error) {
+	if s.tunnel == nil {
+		return nil, nil
+	}
+	return []ndms.SystemWireguardTunnel{*s.tunnel}, nil
+}
+
+func TestWarpTunnelOps_ObfuscationSources_AWG3AndExportHandler(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	if err := store.Create(&storage.AWGTunnel{
+		ID:      "awg30",
+		Name:    "WARP3",
+		Enabled: true,
+		Backend: "kernel",
+		Interface: storage.AWGInterface{
+			PrivateKey: "gZwP6wviWSsSUhp4AbX0iLuzKKVVTwlB5asMAQ+BWBE=",
+			Address:    "172.16.0.2/32",
+			AWGObfuscation: storage.AWGObfuscation{
+				Jc: 5, Jmin: 20, Jmax: 80,
+				ContentPaddingAddition: "10-100",
+				RekeyAfterTime:         warpscout.WarpRekeyAfterTime,
+				RandomTrailers:         true,
+				DisableCookies:         true,
+			},
+		},
+		Peer: storage.AWGPeer{PublicKey: warpscout.WarpPeerPublicKey, Endpoint: "162.159.192.1:2408"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sysStub := &stubSystemListSvc{
+		stubSystemTunnelSvc: &stubSystemTunnelSvc{
+			curASC: json.RawMessage(`{"jc":0,"jmin":0,"jmax":0,"content-padding-addition-start":16,"content-padding-addition-end":64,"rekey-after-time-start":100,"rekey-after-time-end":120,"random-trailers":1,"disable-cookies":1}`),
+			tunnel: &ndms.SystemWireguardTunnel{
+				ID:            "Wireguard5",
+				Description:   "Sys3",
+				Status:        "up",
+				InterfaceName: "nwg5",
+				Peer:          &ndms.WireguardPeerInfo{PublicKey: warpscout.WarpPeerPublicKey},
+			},
+		},
+	}
+	ops := &WarpTunnelOps{Store: store, System: sysStub}
+	sources := ops.ObfuscationSources(ctx)
+	if len(sources) != 2 {
+		t.Fatalf("expected 2 sources, got %+v", sources)
+	}
+	byID := map[string]warpscout.AWGParams{}
+	for _, s := range sources {
+		byID[s.ID] = s.AWG
+	}
+	if m := byID["awg30"]; !m.TimingJitter || m.ContentPadding != "10-100" || !m.RandomTrailers || !m.DisableCookies {
+		t.Fatalf("managed source awg30 missing AWG3/3.1 fields: %+v", m)
+	}
+	if sys := byID["Wireguard5"]; !sys.TimingJitter || sys.ContentPadding != "16-64" || !sys.RandomTrailers || !sys.DisableCookies {
+		t.Fatalf("system source Wireguard5 missing AWG3/3.1 fields: %+v", sys)
+	}
+
+	wsStore, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wsStore.SetAccount(&warpscout.Account{
+		ID: "acc", PrivateKey: "priv", PeerPublicKey: warpscout.WarpPeerPublicKey, AddressV4: "172.16.0.2/32",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsStore.SetAWG(warpscout.AWGParams{
+		SignatureProfile: "quic_initial", Jc: 4, Jmin: 40, Jmax: 70, TimingJitter: true, ContentPadding: "10-100",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := warpscout.New(warpscout.Deps{Store: wsStore})
+	t.Cleanup(svc.Stop)
+	h := NewWarpScoutHandler(svc, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/warpscout/export", strings.NewReader(`{"endpoint":"162.159.192.10:2408","colo":"HEL","protocol":"awg"}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.Export(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Export HTTP status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Success bool                   `json:"success"`
+		Data    warpscout.ExportResult `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil || !env.Success {
+		t.Fatalf("unexpected Export body: %s", rec.Body.String())
+	}
+	if env.Data.Filename != "warp-hel-awg.conf" || !strings.Contains(env.Data.Content, "ContentPaddingAddition = 10-100") {
+		t.Fatalf("unexpected Export result: %+v", env.Data)
+	}
+}
+
+func TestWarpScoutHandler_FindJunkApply_BodyAndBackcompat(t *testing.T) {
+	store, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := store.SetAccount(&warpscout.Account{
+		ID:            "acc1",
+		PrivateKey:    "priv",
+		PeerPublicKey: warpscout.WarpPeerPublicKey,
+		AddressV4:     "172.16.0.2/32",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := warpscout.New(warpscout.Deps{
+		Store:  store,
+		Runner: &apiJunkRunner{hits: 14},
+		WAN:    func(context.Context) (string, bool) { return "eth3", true },
+	})
+	t.Cleanup(svc.Stop)
+	h := NewWarpScoutHandler(svc, nil)
+
+	recStart := httptest.NewRecorder()
+	h.FindJunkStart(recStart, httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/start",
+		bytes.NewBufferString(`{"i1Profile":"stun","maxAttempts":2,"thresholdPct":100,"perSubnet":1}`)))
+	if recStart.Code != http.StatusOK {
+		t.Fatalf("FindJunkStart code=%d body=%s", recStart.Code, recStart.Body.String())
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && svc.State().FindJunk.Running {
+		time.Sleep(10 * time.Millisecond)
+	}
+	fj := svc.State().FindJunk
+	if fj.Best == nil || len(fj.Attempts) < 2 {
+		t.Fatalf("expected >=2 usable attempts and best, got %+v", fj)
+	}
+
+	// 1. Обратная совместимость: пустое тело применяет Best.
+	recEmpty := httptest.NewRecorder()
+	h.FindJunkApply(recEmpty, httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/apply", nil))
+	if recEmpty.Code != http.StatusOK {
+		t.Fatalf("empty FindJunkApply code=%d body=%s", recEmpty.Code, recEmpty.Body.String())
+	}
+	var env struct {
+		Success bool                `json:"success"`
+		Data    warpscout.AWGParams `json:"data"`
+	}
+	if err := json.Unmarshal(recEmpty.Body.Bytes(), &env); err != nil || !env.Success {
+		t.Fatalf("unexpected empty FindJunkApply body: %s", recEmpty.Body.String())
+	}
+	if env.Data.Jc != fj.Best.AWG.Jc || env.Data.Jmin != fj.Best.AWG.Jmin || env.Data.Jmax != fj.Best.AWG.Jmax {
+		t.Fatalf("expected Best %+v, got %+v", fj.Best, env.Data)
+	}
+	if got := svc.State().FindJunk.AppliedAttempt; got != fj.Best.Attempt {
+		t.Fatalf("expected AppliedAttempt=%d, got %d", fj.Best.Attempt, got)
+	}
+
+	// 2. Выбор конкретной попытки (#2) и передача флагов AWG 3.0 в JSON.
+	recSel := httptest.NewRecorder()
+	h.FindJunkApply(recSel, httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/apply",
+		bytes.NewBufferString(`{"attempt":2,"timingJitter":true,"contentPadding":"12-80"}`)))
+	if recSel.Code != http.StatusOK {
+		t.Fatalf("selected FindJunkApply code=%d body=%s", recSel.Code, recSel.Body.String())
+	}
+	if err := json.Unmarshal(recSel.Body.Bytes(), &env); err != nil || !env.Success {
+		t.Fatalf("unexpected selected FindJunkApply body: %s", recSel.Body.String())
+	}
+	a2 := fj.Attempts[1]
+	if env.Data.Jc != a2.AWG.Jc || env.Data.Jmin != a2.AWG.Jmin || env.Data.Jmax != a2.AWG.Jmax {
+		t.Fatalf("expected attempt #2 params %+v, got %+v", a2, env.Data)
+	}
+	if !env.Data.TimingJitter || env.Data.ContentPadding != "12-80" {
+		t.Fatalf("expected timingJitter=true contentPadding=12-80, got %+v", env.Data)
+	}
+	if got := svc.State().FindJunk.AppliedAttempt; got != 2 {
+		t.Fatalf("expected AppliedAttempt=2, got %d", got)
+	}
+
+	// 3. Битый JSON -> 400 Bad Request.
+	recBad := httptest.NewRecorder()
+	h.FindJunkApply(recBad, httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/apply",
+		bytes.NewBufferString(`{"attempt":`)))
+	if recBad.Code != http.StatusBadRequest {
+		t.Fatalf("malformed JSON code=%d body=%s", recBad.Code, recBad.Body.String())
+	}
+}

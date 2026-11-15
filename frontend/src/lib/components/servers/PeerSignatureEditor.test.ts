@@ -9,7 +9,7 @@ class ResizeObserverStub {
 }
 vi.stubGlobal('ResizeObserver', ResizeObserverStub);
 
-const generateSignature = vi.fn(async (protocol: string) => ({
+const generateSignature = vi.fn(async (protocol: string, _opts?: unknown) => ({
 	ok: true,
 	source: 'generated',
 	protocol,
@@ -17,7 +17,12 @@ const generateSignature = vi.fn(async (protocol: string) => ({
 	packets: { i1: '<b 0x0102>', i2: '', i3: '', i4: '', i5: '' },
 }));
 
-vi.mock('$lib/api/client', () => ({ api: { generateSignature: (p: string) => generateSignature(p) } }));
+vi.mock('$lib/api/client', () => ({
+	api: {
+		generateSignature: (p: string, opts?: unknown) =>
+			opts !== undefined ? generateSignature(p, opts) : generateSignature(p),
+	},
+}));
 vi.mock('$lib/stores/notifications', () => ({ notifications: { success: vi.fn(), error: vi.fn() } }));
 
 describe('PeerSignatureEditor', () => {
@@ -106,5 +111,26 @@ describe('PeerSignatureEditor', () => {
 			profile: 'sip',
 			packets: { i1: '<b 0x0102>', i2: '', i3: '', i4: '', i5: '' },
 		});
+	});
+
+	it('passes custom domain option when custom host preset is selected', async () => {
+		const onchange = vi.fn();
+		const { getByText, getByPlaceholderText } = render(PeerSignatureEditor, {
+			profile: 'dns',
+			packets: { i1: 'a', i2: '', i3: '', i4: '', i5: '' },
+			onchange,
+		});
+
+		await fireEvent.click(getByText('Стандартный'));
+		await fireEvent.click(screen.getByRole('option', { name: /Свой домен/ }));
+		await fireEvent.input(getByPlaceholderText(/yandex\.ru/i), { target: { value: 'vk.com' } });
+		await fireEvent.click(getByText('Сгенерировать'));
+
+		await waitFor(() =>
+			expect(generateSignature).toHaveBeenLastCalledWith('dns', {
+				hostPreset: 'custom',
+				domain: 'vk.com',
+			}),
+		);
 	});
 });

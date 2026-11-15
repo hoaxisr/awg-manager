@@ -28,6 +28,7 @@ const api = vi.hoisted(() => ({
 	warpscoutFindJunkApply: vi.fn(),
 	warpscoutClearHistory: vi.fn(),
 	warpscoutApply: vi.fn(),
+	warpscoutExport: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({ api }));
 
@@ -501,5 +502,140 @@ describe('WarpScoutTab', () => {
 		expect(wgSwapConfirm).toBeDefined();
 		expect(wgSwapConfirm!.disabled).toBe(true);
 		expect(wgDialog.textContent).toContain('WireGuard');
+	});
+
+	it('lets user select another usable find-junk attempt row and pass its attempt number on apply', async () => {
+		const a1 = {
+			attempt: 1,
+			awg: { signatureProfile: 'stun', jc: 5, jmin: 20, jmax: 70, i1: '<b 0x11>' },
+			profile: 'stun',
+			working: 14,
+			scanned: 15,
+			total: 15,
+			pct: 93,
+			durationMs: 2000,
+		};
+		const a2 = {
+			attempt: 2,
+			awg: { signatureProfile: 'dns', jc: 6, jmin: 30, jmax: 90, i1: '<b 0x22>' },
+			profile: 'dns',
+			domain: 'gosuslugi.ru',
+			working: 13,
+			scanned: 15,
+			total: 15,
+			pct: 87,
+			durationMs: 2100,
+		};
+		const fj: WarpFindJunkStatus = {
+			runId: 10,
+			running: false,
+			attempt: 2,
+			maxAttempts: 4,
+			thresholdPct: 95,
+			attempts: [a1, a2],
+			best: a1,
+			applied: true,
+			appliedAttempt: 1,
+		};
+		const initial = state({ awg: a1.awg }, { findJunk: fj });
+		const { container } = await mount(initial);
+
+		await fireEvent.click(chip(container, 0));
+		const dialog = container.querySelector('[role="dialog"]')!;
+		const rows = dialog.querySelectorAll<HTMLButtonElement>('.junk-row');
+		expect(rows).toHaveLength(2);
+		expect(rows[1].disabled).toBe(false);
+		expect(dialog.querySelector('.fj-foot button')).toBeNull();
+
+		await fireEvent.click(rows[1]);
+		const applySelBtn = await waitFor(() => {
+			const btn = dialog.querySelector<HTMLButtonElement>('.fj-foot button');
+			expect(btn).not.toBeNull();
+			return btn!;
+		});
+		expect(applySelBtn.disabled).toBe(false);
+
+		api.warpscoutFindJunkApply.mockResolvedValueOnce(a2.awg);
+		api.warpscoutState.mockResolvedValueOnce(state({ awg: a2.awg }, { findJunk: { ...fj, appliedAttempt: 2 } }));
+		await fireEvent.click(applySelBtn);
+
+		await waitFor(() => expect(api.warpscoutFindJunkApply).toHaveBeenCalledTimes(1));
+		expect(api.warpscoutFindJunkApply).toHaveBeenCalledWith(
+			expect.objectContaining({
+				attempt: 2,
+			}),
+		);
+	});
+
+	it('displays AWG 3.1 badge when DisableCookies toggle is enabled', async () => {
+		const { container } = await mount(state({}, { supportsAsc3: true, supportsKernelAwg31: true }));
+		await fireEvent.click(chip(container, 0));
+		const dialog = container.querySelector('[role="dialog"]')!;
+
+		const cookiesCheckbox = dialog.querySelector<HTMLInputElement>(
+			'input[type="checkbox"]:checked, .awg3-box input[type="checkbox"]',
+		);
+		expect(cookiesCheckbox).not.toBeNull();
+		const checkboxes = [...dialog.querySelectorAll<HTMLInputElement>('.awg3-box input[type="checkbox"]')];
+		// Checkboxes: [0]=timingJitter, [1]=contentPadding, [2]=disableCookies, [3]=randomTrailers
+		expect(checkboxes.length).toBeGreaterThanOrEqual(4);
+		await fireEvent.click(checkboxes[2]);
+		await tick();
+
+		expect(chip(container, 0).textContent).toContain('3.1');
+	});
+
+	it('exports .conf file from hit row action button', async () => {
+		const initial = acctState();
+		initial.scan = {
+			running: false,
+			owner: 'manual',
+			total: 1,
+			done: 1,
+			hits: [
+				{
+					endpoint: '162.159.192.10:2408',
+					handshakeMs: 22,
+					pingMs: 24,
+					colo: 'HEL',
+					loc: 'FI',
+					warp: 'on',
+					tgOk: true,
+				},
+			],
+		};
+		api.warpscoutExport.mockResolvedValueOnce({
+			filename: 'warp-hel-awg.conf',
+			content: '[Interface]\nPrivateKey = x\n',
+		});
+		const origCreateUrl = URL.createObjectURL;
+		const origRevokeUrl = URL.revokeObjectURL;
+		const createUrlSpy = vi.fn(() => 'blob:mock');
+		const revokeUrlSpy = vi.fn();
+		URL.createObjectURL = createUrlSpy;
+		URL.revokeObjectURL = revokeUrlSpy;
+		const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+		try {
+			const view = await mount(initial);
+			await waitFor(() => expect(view.container.querySelector('.actions-cell')).not.toBeNull());
+			const exportBtn = view.container.querySelector<HTMLButtonElement>('.actions-cell button:first-of-type');
+			expect(exportBtn).not.toBeNull();
+			await fireEvent.click(exportBtn!);
+
+			await waitFor(() =>
+				expect(api.warpscoutExport).toHaveBeenCalledWith({
+					endpoint: '162.159.192.10:2408',
+					colo: 'HEL',
+					protocol: 'awg',
+				}),
+			);
+			expect(createUrlSpy).toHaveBeenCalled();
+			expect(revokeUrlSpy).toHaveBeenCalledWith('blob:mock');
+		} finally {
+			clickSpy.mockRestore();
+			URL.createObjectURL = origCreateUrl;
+			URL.revokeObjectURL = origRevokeUrl;
+		}
 	});
 });

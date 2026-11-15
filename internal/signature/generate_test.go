@@ -1,6 +1,8 @@
 package signature
 
 import (
+	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -165,5 +167,93 @@ func TestCheckTags(t *testing.T) {
 		if err := CheckTags(p); err != nil {
 			t.Errorf("%+v: должно проходить, got %v", p, err)
 		}
+	}
+}
+
+func TestValidateDomain_AndParseDomainList(t *testing.T) {
+	got, err := ValidateDomain("https://Gosuslugi.RU/lk/profile")
+	if err != nil || got != "gosuslugi.ru" {
+		t.Fatalf("ValidateDomain = (%q, %v), want (gosuslugi.ru, nil)", got, err)
+	}
+	got, err = ValidateDomain("vk.com:443.")
+	if err != nil || got != "vk.com" {
+		t.Fatalf("ValidateDomain port/dot = (%q, %v)", got, err)
+	}
+	list, err := ParseDomainList("gosuslugi.ru, vk.com\nyandex.ru; vk.com")
+	if err != nil {
+		t.Fatalf("ParseDomainList error: %v", err)
+	}
+	if len(list) != 3 || list[0] != "gosuslugi.ru" || list[1] != "vk.com" || list[2] != "yandex.ru" {
+		t.Fatalf("ParseDomainList = %v", list)
+	}
+	for _, bad := range []string{"localhost", "1.2.3.4", "-bad.ru", "bad-.ru", "bad host.ru", "a.1", "a"} {
+		if _, err := ValidateDomain(bad); !errors.Is(err, ErrInvalidDomain) {
+			t.Errorf("ValidateDomain(%q) err = %v, want ErrInvalidDomain", bad, err)
+		}
+	}
+}
+
+func TestGenerateWithOptions_CustomDomainAllProfiles(t *testing.T) {
+	for _, p := range Profiles {
+		res, err := GenerateWithOptions(p, GenerateOptions{Domain: "gosuslugi.ru"})
+		if err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		if res.Domain != "gosuslugi.ru" {
+			t.Fatalf("%s: Domain = %q, want gosuslugi.ru", p, res.Domain)
+		}
+		if err := CheckSize(res.Packets); err != nil {
+			t.Fatalf("%s: CheckSize: %v", p, err)
+		}
+		assertAllowedTokens(t, res.Packets.I1)
+		if res.Packets.I2 != "" {
+			assertAllowedTokens(t, res.Packets.I2)
+		}
+		if p != "quic_initial" {
+			// Для открытых протоколов (DNS, DTLS, SIP, STUN) метки домена обязаны
+			// присутствовать прямо в байтах пакета I1.
+			var raw bytes.Buffer
+			for _, m := range hexArgRe.FindAllStringSubmatch(res.Packets.I1, -1) {
+				b, _ := hex.DecodeString(m[1])
+				raw.Write(b)
+			}
+			if !bytes.Contains(raw.Bytes(), []byte("gosuslugi")) {
+				t.Fatalf("%s: I1 bytes do not contain custom domain label: %q", p, res.Packets.I1)
+			}
+		} else if res.ByteSize != 1200 {
+			t.Fatalf("quic_initial: ByteSize = %d, want 1200", res.ByteSize)
+		}
+	}
+}
+
+func TestGenerateWithOptions_Presets(t *testing.T) {
+	ruSet := map[string]bool{}
+	for _, d := range ruWhitelistPool {
+		ruSet[d] = true
+	}
+	for i := 0; i < 10; i++ {
+		res, err := GenerateWithOptions("quic_initial", GenerateOptions{HostPreset: HostPresetRU})
+		if err != nil {
+			t.Fatalf("ru_whitelist err: %v", err)
+		}
+		if !ruSet[res.Domain] {
+			t.Fatalf("unexpected domain %q not in ruWhitelistPool", res.Domain)
+		}
+	}
+
+	cdnSet := map[string]bool{}
+	for _, d := range cdnHostPool {
+		cdnSet[d] = true
+	}
+	res, err := GenerateWithOptions("dtls", GenerateOptions{HostPreset: HostPresetCDN})
+	if err != nil || !cdnSet[res.Domain] {
+		t.Fatalf("cdn preset: res=%+v err=%v", res, err)
+	}
+
+	if _, err := GenerateWithOptions("dns", GenerateOptions{HostPreset: "unknown_pool"}); !errors.Is(err, ErrInvalidDomainPreset) {
+		t.Fatalf("unknown preset err = %v, want ErrInvalidDomainPreset", err)
+	}
+	if _, err := GenerateWithOptions("dns", GenerateOptions{HostPreset: HostPresetCustom}); !errors.Is(err, ErrInvalidDomain) {
+		t.Fatalf("empty custom preset err = %v, want ErrInvalidDomain", err)
 	}
 }

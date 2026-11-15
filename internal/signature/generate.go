@@ -46,15 +46,27 @@ var ErrInvalidPacketTag = errors.New("invalid signature packet tag")
 
 type GeneratedPackets struct{ I1, I2, I3, I4, I5 string }
 
-// Result — что отдаёт Generate: канонический профиль, пакеты, суммарный размер.
+// Result — что отдаёт Generate: канонический профиль, пакеты, суммарный размер
+// и домен (SNI/QNAME/realm), зашитый в сигнатуру.
 type Result struct {
 	Profile  string
+	Domain   string
 	Packets  GeneratedPackets
 	ByteSize int
 }
 
-// builders заполняется профилями в своих файлах (init()).
+// GenerateOptions позволяет переопределить выбор домена при генерации I1–I5:
+// конкретный домен (или список), пул доменов пресета (ru_whitelist, cdn) или
+// явный срез доменов.
+type GenerateOptions struct {
+	Domain     string
+	HostPreset string
+	Domains    []string
+}
+
+// builders и hostBuilders заполняются профилями в своих файлах (init()).
 var builders = map[string]func(r *mrand.Rand) (GeneratedPackets, error){}
+var hostBuilders = map[string]func(r *mrand.Rand, customHost string) (GeneratedPackets, string, error){}
 
 // CanonicalProtocol возвращает ключ профиля или "" для неизвестного.
 func CanonicalProtocol(p string) string {
@@ -69,26 +81,84 @@ func CanonicalProtocol(p string) string {
 
 // Generate собирает сигнатуру профиля. Случайность — при каждом вызове, без seed.
 func Generate(profile string) (Result, error) {
-	return generate(profile, newCryptoSeededRand())
+	return generateWithOptions(profile, newCryptoSeededRand(), GenerateOptions{})
+}
+
+// GenerateWithOptions собирает сигнатуру профиля с заданным доменом или пулом доменов.
+func GenerateWithOptions(profile string, opts GenerateOptions) (Result, error) {
+	return generateWithOptions(profile, newCryptoSeededRand(), opts)
 }
 
 func generate(profile string, r *mrand.Rand) (Result, error) {
+	return generateWithOptions(profile, r, GenerateOptions{})
+}
+
+func resolveCustomHost(r *mrand.Rand, opts GenerateOptions) (string, error) {
+	preset := CanonicalHostPreset(opts.HostPreset)
+	if opts.HostPreset != "" && preset == "" {
+		return "", fmt.Errorf("%w: %s", ErrInvalidDomainPreset, opts.HostPreset)
+	}
+	if strings.TrimSpace(opts.Domain) != "" {
+		list, err := ParseDomainList(opts.Domain)
+		if err != nil {
+			return "", err
+		}
+		if len(list) == 1 {
+			return list[0], nil
+		}
+		if len(list) > 1 {
+			return list[r.Intn(len(list))], nil
+		}
+	}
+	if len(opts.Domains) > 0 {
+		valid := make([]string, 0, len(opts.Domains))
+		for _, raw := range opts.Domains {
+			d, err := ValidateDomain(raw)
+			if err != nil {
+				return "", err
+			}
+			valid = append(valid, d)
+		}
+		return valid[r.Intn(len(valid))], nil
+	}
+	switch preset {
+	case HostPresetRU:
+		return ruWhitelistPool[r.Intn(len(ruWhitelistPool))], nil
+	case HostPresetCDN:
+		return cdnHostPool[r.Intn(len(cdnHostPool))], nil
+	case HostPresetCustom:
+		return "", fmt.Errorf("%w: empty custom domain", ErrInvalidDomain)
+	default:
+		return "", nil
+	}
+}
+
+func generateWithOptions(profile string, r *mrand.Rand, opts GenerateOptions) (Result, error) {
 	key := CanonicalProtocol(profile)
 	if key == "" {
 		return Result{}, ErrUnknownProtocol
 	}
-	build, ok := builders[key]
-	if !ok {
+	customHost, err := resolveCustomHost(r, opts)
+	if err != nil {
+		return Result{}, err
+	}
+	var packets GeneratedPackets
+	var usedHost string
+	if hBuild, ok := hostBuilders[key]; ok {
+		packets, usedHost, err = hBuild(r, customHost)
+	} else if build, ok := builders[key]; ok {
+		packets, err = build(r)
+		usedHost = customHost
+	} else {
 		return Result{}, fmt.Errorf("profile %s not implemented", key)
 	}
-	packets, err := build(r)
 	if err != nil {
 		return Result{}, err
 	}
 	if err := CheckSize(packets); err != nil {
 		return Result{}, err
 	}
-	return Result{Profile: key, Packets: packets, ByteSize: TotalByteSize(packets)}, nil
+	return Result{Profile: key, Domain: usedHost, Packets: packets, ByteSize: TotalByteSize(packets)}, nil
 }
 
 // newCryptoSeededRand — math/rand с seed из crypto/rand: выбор хостов, длин и

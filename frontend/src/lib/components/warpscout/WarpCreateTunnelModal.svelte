@@ -17,6 +17,7 @@
 	} from '$lib/types/warpscout';
 	import WarpIpv4Notice from './WarpIpv4Notice.svelte';
 	import {
+		awg3SummaryTag,
 		countryFlag,
 		parseTunnelIpv4,
 		signatureProfileLabel,
@@ -94,13 +95,16 @@
 		{
 			value: '',
 			label: m.warpscout_modal_obf_global({
-				label: `${signatureProfileLabel(globalAwg?.signatureProfile)} · Jc ${globalAwg?.jc ?? 0}`,
+				label: `${signatureProfileLabel(globalAwg?.signatureProfile)} · Jc ${globalAwg?.jc ?? 0}${globalAwg?.generatedDomain ? ` · ${globalAwg.generatedDomain}` : ''}${awg3SummaryTag(globalAwg) ? ` · ${awg3SummaryTag(globalAwg)}` : ''}`,
 			}),
 		},
-		...obfuscationSources.map((s) => ({
-			value: `${s.mode}:${s.id}`,
-			label: `${s.name}${s.iface ? ` (${s.iface})` : ''} · Jc ${s.awg.jc}`,
-		})),
+		...obfuscationSources.map((s) => {
+			const tag = awg3SummaryTag(s.awg);
+			return {
+				value: `${s.mode}:${s.id}`,
+				label: `${s.name}${s.iface ? ` (${s.iface})` : ''} · Jc ${s.awg.jc}${tag ? ` · ${tag}` : ''}`,
+			};
+		}),
 	]);
 
 	let name = $state(initialVia ? defaultCascadeName : defaultDirectName);
