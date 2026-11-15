@@ -844,7 +844,7 @@ func (h *ServersHandler) generateServerPeerConf(ctx context.Context, server *ndm
 	var b strings.Builder
 	b.WriteString("[Interface]\n")
 	b.WriteString(fmt.Sprintf("PrivateKey = %s\n", sec.PrivateKey))
-	b.WriteString(fmt.Sprintf("Address = %s\n", tunnelIP))
+	b.WriteString(fmt.Sprintf("Address = %s\n", peersubnet.ClientAddress(tunnelIP, sec.ClientAllowedIPs)))
 	// Резолвер: свой у пира → LAN-адрес роутера. Зашитого `1.1.1.1, 8.8.8.8`
 	// здесь больше нет (#933): абонент ходил через туннель, а имена резолвил у
 	// Cloudflare с Google — мимо роутера и мимо всех его правил. Роутер не

@@ -134,11 +134,13 @@ func TestGenerateConf_ClientAllowedIPs(t *testing.T) {
 			{PublicKey: "PUB2", PrivateKey: "PRIV2", TunnelIP: "10.0.0.3/32", Enabled: true, ClientAllowedIPs: "10.0.0.0/24, 192.168.1.0/24"},
 		}})
 	conf, err := svc.GenerateConf(context.Background(), "Wireguard1", "PUB", "")
-	if err != nil || !strings.Contains(conf, "\nAllowedIPs = 0.0.0.0/0, ::/0\n") {
+	if err != nil || !strings.Contains(conf, "\nAllowedIPs = 0.0.0.0/0, ::/0\n") ||
+		!strings.Contains(conf, "\nAddress = 10.0.0.2/32, fd00::a00:2/128\n") { // #1209
 		t.Fatalf("default: %v\n%s", err, conf)
 	}
 	conf, err = svc.GenerateConf(context.Background(), "Wireguard1", "PUB2", "")
-	if err != nil || !strings.Contains(conf, "\nAllowedIPs = 10.0.0.0/24, 192.168.1.0/24\n") || strings.Contains(conf, "0.0.0.0/0") {
+	if err != nil || !strings.Contains(conf, "\nAllowedIPs = 10.0.0.0/24, 192.168.1.0/24\n") || strings.Contains(conf, "0.0.0.0/0") ||
+		!strings.Contains(conf, "\nAddress = 10.0.0.3/32\n") {
 		t.Fatalf("custom: %v\n%s", err, conf)
 	}
 }
