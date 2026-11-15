@@ -479,3 +479,21 @@ func TestHandle_ScriptUptime_LogsHookAge(t *testing.T) {
 		})
 	}
 }
+
+// #1215: переход WAN в любую сторону будит reconcile маршрутизации.
+func TestHookHandler_Handle_WANTransition_NudgesWANChange(t *testing.T) {
+	for _, level := range []string{"running", "disabled"} {
+		h := newTestHookHandler(&spyDispatcher{})
+		h.SetWANModel(&fakeWANModel{})
+		n := 0
+		h.SetWANChangeNudge(func() { n++ })
+
+		handleForm(t, h, "type=iflayerchanged&id=PPPoE0&system_name=ppp0&layer=ipv4&level="+level)
+		// Туннель — не WAN: его ipv4-слой не повод.
+		handleForm(t, h, "type=iflayerchanged&id=Wireguard3&system_name=nwg3&layer=ipv4&level="+level)
+
+		if n != 1 {
+			t.Errorf("level=%s: WAN-change nudge вызван %d раз, want 1", level, n)
+		}
+	}
+}

@@ -168,6 +168,7 @@ type Server struct {
 	bootStatusFn func() bool // returns true if boot still in progress
 
 	proxyRuntimeNudge api.ProxyRuntimeNudge
+	wanChangeNudge    func()
 	ipv4RunningHook   func(string)
 
 	// proxyRuntime — менеджер прокси-рантайма за узким срезом: тумблер
@@ -543,6 +544,12 @@ func (s *Server) SetBootStatusFunc(fn func() bool) {
 // (seed retry plus worker wake-up).
 func (s *Server) SetProxyRuntimeNudge(fn api.ProxyRuntimeNudge) {
 	s.proxyRuntimeNudge = fn
+}
+
+// SetWANChangeNudge wires the non-blocking callback fired on a real WAN
+// up/down transition (#1215: внеочередной reconcile маршрутизации).
+func (s *Server) SetWANChangeNudge(fn func()) {
+	s.wanChangeNudge = fn
 }
 
 // SetIPv4RunningHook wires the callback for iflayerchanged layer=ipv4

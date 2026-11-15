@@ -47,6 +47,7 @@ type HookHandler struct {
 	systemNames   HookSystemNames
 	proxyNudge    ProxyRuntimeNudge
 	endpointNudge func()
+	wanNudge      func() // nil — выключено; см. SetWANChangeNudge
 	ipv4Running   func(ndmsID string)
 	wanPublic     func(ndmsID string) bool // nil — проверка «потерянного» WAN выключена
 	uptime        func() float64           // nil — events.ReadUptime; см. SetUptimeReader
@@ -98,6 +99,12 @@ func (h *HookHandler) SetProxyRuntimeNudge(fn ProxyRuntimeNudge) {
 // незачем — лишний проход дёшев, адрес он меняет только на смену резолва.
 func (h *HookHandler) SetEndpointGuardNudge(fn func()) {
 	h.endpointNudge = fn
+}
+
+// SetWANChangeNudge подключает коллбэк на реальный переход WAN up/down
+// (#1215). Обязан быть неблокирующим: зовётся в ответе на хук.
+func (h *HookHandler) SetWANChangeNudge(fn func()) {
+	h.wanNudge = fn
 }
 
 // SetWANPublicCheck подключает признак «интерфейс NDMS — публичный (WAN)»:
@@ -324,6 +331,10 @@ func (h *HookHandler) handleWANLayerEvent(e events.Event) {
 		} else {
 			h.wanLog.Warn("wan-state", kernelName, "WAN interface down")
 		}
+	}
+
+	if changed && h.wanNudge != nil {
+		h.wanNudge()
 	}
 
 	// Прокси-рантайм не зависит от оркестратора — будим до его гарда, иначе в
