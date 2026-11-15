@@ -154,6 +154,36 @@ func (s *Service) ApiKeyChanged() error {
 	return s.installer.ApiKeyChanged()
 }
 
+// RestartAfterPanelPortChange restarts an installed, running satellite so it
+// picks up the panel's new HTTP port (the init script resolves the port from
+// settings.json when AWGM_ROUTER_URL is unset). Called after the new listen
+// address is confirmed and persisted; errors are reported, not fatal — the
+// satellite still works on the default address until the next restart.
+func (s *Service) RestartAfterPanelPortChange() error {
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	if !s.installed() {
+		return nil
+	}
+	// A stopped satellite stays stopped: the user's enable/disable intent is
+	// in the enabled file, and the next start picks up the new port anyway.
+	if !s.desiredEnabled() {
+		return nil
+	}
+	execCtx, cancel := context.WithTimeout(context.Background(), initExecTimeout)
+	defer cancel()
+	if err := s.runInit(execCtx, "restart"); err != nil {
+		return err
+	}
+	// confirmState bounds its own wait (confirmTimeout); the HTTP client
+	// adds its own per-request timeout, so no caller deadline is needed.
+	confirm := s.confirm
+	if confirm == nil {
+		confirm = s.confirmState
+	}
+	return confirm(context.Background(), true)
+}
+
 func (i *Installer) writeKey() error {
 	if i.keys == nil {
 		return errors.New("API key source is not configured")

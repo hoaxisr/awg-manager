@@ -300,3 +300,60 @@ func TestWriteKeyMigratesLegacyKey(t *testing.T) {
 		t.Fatalf("key mode=%o", info.Mode().Perm())
 	}
 }
+
+// The port-change restart touches only an installed and enabled satellite;
+// a disabled or absent one is left alone.
+func TestRestartAfterPanelPortChange(t *testing.T) {
+	setup := func(t *testing.T) (*Service, *[]string) {
+		t.Helper()
+		s, _ := testService(t)
+		if err := os.WriteFile(s.initPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var actions []string
+		s.command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+			actions = append(actions, args[0])
+			return nil, nil
+		}
+		return s, &actions
+	}
+
+	t.Run("installed and enabled restarts", func(t *testing.T) {
+		s, actions := setup(t)
+		if err := s.SetEnabled(context.Background(), true); err != nil {
+			t.Fatal(err)
+		}
+		*actions = nil
+		if err := s.RestartAfterPanelPortChange(); err != nil {
+			t.Fatal(err)
+		}
+		if want := "restart"; len(*actions) != 1 || (*actions)[0] != want {
+			t.Fatalf("actions = %v, want [%s]", *actions, want)
+		}
+	})
+	t.Run("disabled satellite is not touched", func(t *testing.T) {
+		s, actions := setup(t)
+		if err := s.SetEnabled(context.Background(), false); err != nil {
+			t.Fatal(err)
+		}
+		*actions = nil
+		if err := s.RestartAfterPanelPortChange(); err != nil {
+			t.Fatal(err)
+		}
+		if len(*actions) != 0 {
+			t.Fatalf("disabled satellite was restarted: %v", *actions)
+		}
+	})
+	t.Run("init failure is reported", func(t *testing.T) {
+		s, _ := setup(t)
+		if err := s.SetEnabled(context.Background(), true); err != nil {
+			t.Fatal(err)
+		}
+		s.command = func(context.Context, string, ...string) ([]byte, error) {
+			return []byte("PROG not found\n"), errors.New("exit status 1")
+		}
+		if err := s.RestartAfterPanelPortChange(); err == nil || !strings.Contains(err.Error(), "PROG not found") {
+			t.Fatalf("err = %v, want raw init output", err)
+		}
+	})
+}

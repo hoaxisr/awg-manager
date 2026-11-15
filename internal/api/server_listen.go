@@ -83,6 +83,9 @@ type ServerListenHandler struct {
 	ctrl     ServerListenController
 	settings *storage.SettingsStore
 	log      *logging.ScopedLogger
+	// onListenChanged — порт подтверждён и сохранён: сателлиты с фиксированным
+	// -router должны перезапуститься на новом адресе.
+	onListenChanged func() error
 }
 
 // NewServerListenHandler constructs the handler.
@@ -92,6 +95,25 @@ func NewServerListenHandler(ctrl ServerListenController, settings *storage.Setti
 		settings: settings,
 		log:      logging.NewScopedLogger(appLogger, logging.GroupSystem, logging.SubServerListen),
 	}
+}
+
+// SetOnListenChanged — порт HTTP-сервера подтверждён и сохранён: сателлиты с
+// фиксированным -router ходят по старому адресу, пока их не перезапустить.
+func (h *ServerListenHandler) SetOnListenChanged(fn func() error) {
+	h.onListenChanged = fn
+}
+
+// notifyListenChanged зовёт хук в горутине: перезапуск сателлита не должен
+// держать ответ подтверждения.
+func (h *ServerListenHandler) notifyListenChanged() {
+	if h.onListenChanged == nil {
+		return
+	}
+	go func() {
+		if err := h.onListenChanged(); err != nil {
+			h.log.Warn("confirm", "", "satellite restart after port change failed: "+err.Error())
+		}
+	}()
 }
 
 // State returns the current listen configuration and bound addresses.
@@ -209,6 +231,7 @@ func (h *ServerListenHandler) Confirm(w http.ResponseWriter, r *http.Request) {
 	}
 	h.log.Info("confirm", "", "новый HTTP-адрес подтверждён и сохранён")
 	response.Success(w, map[string]bool{"ok": true})
+	h.notifyListenChanged() // сателлиты с фиксированным -router перезапускаются на новом порту
 }
 
 func emptyIfNil(in []string) []string {
