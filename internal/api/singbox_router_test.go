@@ -46,6 +46,9 @@ type mockRouterSvc struct {
 	// be asserted without a real ServiceImpl.
 	bulkOutboundErr error
 	bulkDetourErr   error
+	// teardownErr, when set, is returned by TeardownAutolistObjects so the
+	// handler error-mapping (409 conflict) can be asserted.
+	teardownErr error
 	// dnsRuleErr, when set, is returned by AddDNSRule/UpdateDNSRule so the
 	// DNS-preset error mapping (reserved tag vs managed rule) can be asserted.
 	dnsRuleErr error
@@ -113,6 +116,9 @@ func (m *mockRouterSvc) UpdateRule(ctx context.Context, index int, rule router.R
 	return nil
 }
 func (m *mockRouterSvc) DeleteRule(ctx context.Context, index int) error { return nil }
+func (m *mockRouterSvc) TeardownAutolistObjects(ctx context.Context) error {
+	return m.teardownErr
+}
 func (m *mockRouterSvc) BulkSetRuleOutbound(ctx context.Context, indices []int, outbound string) error {
 	return m.bulkOutboundErr
 }
@@ -954,6 +960,41 @@ func TestInspectPost_InvalidPortAndProtocol_Returns400(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		b, _ := io.ReadAll(rr.Body)
 		t.Fatalf("want 400, got %d body=%s", rr.Code, string(b))
+	}
+}
+
+func TestAutolistTeardown_RunningSatellite_Returns409(t *testing.T) {
+	svc := &mockRouterSvc{}
+	h := newMockRouterHandler(svc)
+	h.SetAutolistRunningProbe(func(*http.Request) bool { return true })
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/autolist/teardown", nil)
+	rr := httptest.NewRecorder()
+	h.TeardownAutolistObjects(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAutolistTeardown_StoppedSatellite_Deletes(t *testing.T) {
+	svc := &mockRouterSvc{}
+	h := newMockRouterHandler(svc)
+	h.SetAutolistRunningProbe(func(*http.Request) bool { return false })
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/autolist/teardown", nil)
+	rr := httptest.NewRecorder()
+	h.TeardownAutolistObjects(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAutolistTeardown_ConflictError_MapsTo409(t *testing.T) {
+	svc := &mockRouterSvc{teardownErr: fmt.Errorf("%w: outbound awgm-autolist-target referenced", router.ErrOutboundReferenced)}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/autolist/teardown", nil)
+	rr := httptest.NewRecorder()
+	h.TeardownAutolistObjects(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 (CONFLICT code envelope), got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

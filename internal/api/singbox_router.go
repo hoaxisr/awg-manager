@@ -22,6 +22,9 @@ type SingboxRouterHandler struct {
 	log             *logging.ScopedLogger
 	deviceProxyRefs tunnelservice.DeviceProxyRefChecker
 	routerRefs      tunnelservice.RouterRefChecker
+	// autolistRunning — «сателлит Autolist сейчас работает» (опционально):
+	// teardown объектов при работающем сателлите отвечают 409.
+	autolistRunning func(r *http.Request) bool
 }
 
 // Service exposes the router service so other wiring (the MCP adapter)

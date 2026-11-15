@@ -502,6 +502,13 @@ func (a *app) setupRouter() {
 
 	singboxRouterHandler := api.NewSingboxRouterHandler(routerSvc, a.loggingService)
 	singboxRouterHandler.SetOutboundRefCheckers(a.deviceProxySvc, routerSvc)
+	if a.autolistService != nil {
+		// Teardown объектов Autolist запрещён, пока сателлит отвечает: он
+		// воссоздаёт объекты следующей записью (проверка — HTTP /status).
+		singboxRouterHandler.SetAutolistRunningProbe(func(r *http.Request) bool {
+			return a.autolistService.GetStatus(r.Context()).Running
+		})
+	}
 	a.srv.SetSingboxRouterHandler(singboxRouterHandler)
 	// Атрибуция tproxy-потоков на странице соединений: connmark == PolicyMark
 	// активной sb-router-политики. Кэшируется внутри connections.Service (60s).

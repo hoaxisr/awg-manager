@@ -983,6 +983,8 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/staging", h.guarded(rh.GetStaging))
 		mux.HandleFunc("/api/singbox/router/staging/apply", h.guarded(rh.PostStagingApply))
 		mux.HandleFunc("/api/singbox/router/staging/discard", h.guarded(rh.PostStagingDiscard))
+		// Снос объектов Autolist — явно, кнопкой панели; guarded, как соседи.
+		mux.HandleFunc("/api/singbox/router/autolist/teardown", h.guarded(rh.TeardownAutolistObjects))
 	}
 
 	if s.bypassSetHandler != nil {

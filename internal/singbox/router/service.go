@@ -64,6 +64,10 @@ type Service interface {
 	AddRule(ctx context.Context, rule Rule) error
 	UpdateRule(ctx context.Context, index int, rule Rule) error
 	DeleteRule(ctx context.Context, index int) error
+	// TeardownAutolistObjects удаляет все объекты Autolist одним draft→apply:
+	// owner-правило, rule-set awgm-autolist, outbound awgm-autolist-target.
+	// Идемпотентен; отказ, пока outbound держит чужое правило или группу.
+	TeardownAutolistObjects(ctx context.Context) error
 	// BulkSetRuleOutbound sets Outbound on every rule at the given indices in
 	// a single config write. See ServiceImpl.BulkSetRuleOutbound for the
 	// validation contract.

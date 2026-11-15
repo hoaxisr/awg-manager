@@ -85,6 +85,7 @@ const emptyResources = () => {
 	vi.spyOn(api, 'singboxRouterListDNSServers').mockResolvedValue([]);
 	vi.spyOn(api, 'singboxRouterGetDNSGlobals').mockResolvedValue({ final: 'dns-final', strategy: 'prefer_ipv4' });
 	vi.spyOn(api, 'singboxRouterListRuleSets').mockResolvedValue([]);
+	vi.spyOn(api, 'teardownAutolistObjects').mockResolvedValue();
 	emptyTunnelCatalog();
 };
 
@@ -745,8 +746,67 @@ describe('AutolistTab — settings', () => {
 	});
 });
 
-describe('AutolistTab — clear history', () => {
-	it('shows a danger block in settings and clears history after a red confirmation', async () => {
+describe('AutolistTab — teardown objects', () => {
+	const stoppedStatus: AutolistStatus = { ...runningStatus, running: false, captureActive: false };
+
+	it('offers the danger teardown button in the stopped card and removes objects after confirmation', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(stoppedStatus);
+		emptyResources();
+		const teardown = vi.spyOn(api, 'teardownAutolistObjects').mockResolvedValue();
+
+		render(AutolistTab);
+		const button = await screen.findByRole('button', { name: m.autolist_teardown_button() });
+		expect(button.className).toContain('variant-outline-danger');
+
+		await fireEvent.click(button);
+		expect(teardown).not.toHaveBeenCalled();
+
+		const confirmTitle = await screen.findByText(m.autolist_teardown_title());
+		const confirmModal = confirmTitle.closest('.modal-backdrop') as HTMLElement;
+		expect(confirmModal).toBeTruthy();
+		const confirmButton = within(confirmModal).getByRole('button', { name: m.autolist_teardown_confirm() });
+		expect(confirmButton.className).toContain('variant-danger');
+
+		await fireEvent.click(confirmButton);
+		await vi.waitFor(() => expect(teardown).toHaveBeenCalledTimes(1));
+		expect(notifications.success).toHaveBeenCalledWith(m.autolist_teardown_success());
+		await vi.waitFor(() => expect(screen.queryByText(m.autolist_teardown_title())).toBeNull());
+	});
+
+	it('cancel does nothing', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(stoppedStatus);
+		emptyResources();
+		const teardown = vi.spyOn(api, 'teardownAutolistObjects').mockResolvedValue();
+
+		render(AutolistTab);
+		await fireEvent.click(await screen.findByRole('button', { name: m.autolist_teardown_button() }));
+		const confirmTitle = await screen.findByText(m.autolist_teardown_title());
+		const confirmModal = confirmTitle.closest('.modal-backdrop') as HTMLElement;
+		await fireEvent.click(within(confirmModal).getByRole('button', { name: m.common_cancel() }));
+
+		expect(screen.queryByText(m.autolist_teardown_title())).toBeNull();
+		expect(teardown).not.toHaveBeenCalled();
+	});
+
+	it('reports a failed teardown through the error notification', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(stoppedStatus);
+		emptyResources();
+		vi.spyOn(api, 'teardownAutolistObjects').mockRejectedValue(
+			Object.assign(new Error('outbound referenced'), { status: 409 }),
+		);
+
+		render(AutolistTab);
+		await fireEvent.click(await screen.findByRole('button', { name: m.autolist_teardown_button() }));
+		const confirmTitle = await screen.findByText(m.autolist_teardown_title());
+		const confirmModal = confirmTitle.closest('.modal-backdrop') as HTMLElement;
+		await fireEvent.click(within(confirmModal).getByRole('button', { name: m.autolist_teardown_confirm() }));
+
+		await vi.waitFor(() => expect(notifications.error).toHaveBeenCalledWith(m.autolist_teardown_err_running()));
+		expect(notifications.success).not.toHaveBeenCalled();
+	});
+});
+
+describe('AutolistTab — clear history', () => {	it('shows a danger block in settings and clears history after a red confirmation', async () => {
 		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
 		vi.spyOn(api, 'getAutolistConfig').mockResolvedValue(fullConfig);
 		emptyResources();

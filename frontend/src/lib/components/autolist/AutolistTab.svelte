@@ -470,6 +470,30 @@
 	let historyClearConfirmOpen = $state(false);
 	let historyClearBusy = $state(false);
 
+	// ── Teardown объектов Autolist (danger, явная кнопка) ────────────────
+	let teardownConfirmOpen = $state(false);
+	let teardownBusy = $state(false);
+
+	/** Полный снос owner-правила, rule-set и outbound Autolist. */
+	async function teardownAutolistObjects() {
+		if (teardownBusy) return;
+		teardownBusy = true;
+		try {
+			await api.teardownAutolistObjects();
+			notifications.success(m.autolist_teardown_success());
+			teardownConfirmOpen = false;
+		} catch (e) {
+			// 409 от бэкенда («сателлит работает») переводим в понятный текст;
+			// request() кладёт HTTP-статус в поле status ошибки.
+			const status = e instanceof Error ? (e as Error & { status?: number }).status : undefined;
+			notifications.error(
+				status === 409 ? m.autolist_teardown_err_running() : errorMessage(e, m.autolist_teardown_err()),
+			);
+		} finally {
+			teardownBusy = false;
+		}
+	}
+
 	// Локальная копия конфига для модалки настроек; сохранение и включение
 	// autoAdd запрещены, пока чтение не succeed (никакого stale default draft).
 	let cfgDraft = $state<AutolistConfig>(defaultAutolistConfig());
@@ -918,10 +942,18 @@
 					{status?.enabled === false ? m.autolist_disabled_hint() : m.autolist_not_running_hint()}
 				</p>
 				<div>
-					<Button variant="primary" size="sm" onclick={() => void setSatelliteEnabled(true)} loading={lifecycleBusy}>
-						{#snippet iconBefore()}<Power size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
-						{status?.enabled === false ? m.autolist_enable() : m.common_start()}
-					</Button>
+					<div class="flex items-center gap-2 flex-wrap">
+						<Button variant="primary" size="sm" onclick={() => void setSatelliteEnabled(true)} loading={lifecycleBusy}>
+							{#snippet iconBefore()}<Power size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
+							{status?.enabled === false ? m.autolist_enable() : m.common_start()}
+						</Button>
+						<!-- Объекты Autolist остаются в конфиге и после остановки: снос —
+						     только явной кнопкой, поэтому она нужна и в stopped-карточке. -->
+						<Button variant="outline-danger" size="sm" onclick={() => (teardownConfirmOpen = true)} disabled={teardownBusy}>
+							{#snippet iconBefore()}<Trash2 size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
+							{m.autolist_teardown_button()}
+						</Button>
+					</div>
 				</div>
 			{/if}
 		</div>
@@ -1341,6 +1373,20 @@
 		<Button variant="ghost" size="md" onclick={() => (historyClearConfirmOpen = false)}>{m.common_cancel()}</Button>
 		<Button variant="danger" size="md" onclick={() => void clearHistory()} disabled={historyClearBusy} loading={historyClearBusy}>
 			{m.autolist_history_clear_confirm_yes()}
+		</Button>
+	{/snippet}
+</Modal>
+
+<!-- Подтверждение полного сноса объектов Autolist -->
+<Modal open={teardownConfirmOpen} onclose={() => (teardownConfirmOpen = false)} title={m.autolist_teardown_title()} size="sm">
+	<div class="autolist-warning flex items-start gap-2.5 rounded-lg bg-error/10 border border-error/30">
+		<Trash2 size={18} class="text-error shrink-0 mt-0.5" aria-hidden="true" />
+		<p class="text-sm">{m.autolist_teardown_description()}</p>
+	</div>
+	{#snippet actions()}
+		<Button variant="ghost" size="md" onclick={() => (teardownConfirmOpen = false)}>{m.common_cancel()}</Button>
+		<Button variant="danger" size="md" onclick={() => void teardownAutolistObjects()} disabled={teardownBusy} loading={teardownBusy}>
+			{m.autolist_teardown_confirm()}
 		</Button>
 	{/snippet}
 </Modal>

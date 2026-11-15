@@ -59,6 +59,15 @@ export class SingboxClient extends RoutingClient {
 		return this.request('/singbox/install', { method: 'POST' });
 	}
 
+	/**
+	 * Полный снос объектов Autolist в слоте router (owner-правило, rule-set
+	 * awgm-autolist, outbound awgm-autolist-target) одним draft→apply. Бэкенд
+	 * отвечает 409, пока работает сателлит или outbound держит чужое правило.
+	 */
+	async teardownAutolistObjects(): Promise<void> {
+		await this.request('/singbox/router/autolist/teardown', { method: 'POST', body: JSON.stringify({}) });
+	}
+
 	async singboxUpdate(): Promise<SingboxStatus> {
 		return this.request('/singbox/update', { method: 'POST' });
 	}
