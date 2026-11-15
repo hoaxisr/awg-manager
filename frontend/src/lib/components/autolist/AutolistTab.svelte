@@ -14,6 +14,7 @@
 		mergeAutolistExclusions,
 	} from './configPayload';
 	import { errorMessage } from '$lib/utils/errorMessage';
+	import RecheckModal from './RecheckModal.svelte';
 	import type {
 		AWGTagInfo,
 		AutolistBatchFailure,
@@ -34,6 +35,7 @@
 	import { PageHeader } from '$lib/components/layout';
 	import {
 		RotateCw,
+		RefreshCw,
 		EyeOff,
 		Eye,
 		CircleCheck,
@@ -172,15 +174,47 @@
 
 	// ── Candidate actions ────────────────────────────────────────────────
 
-	async function candidateAction(id: string, run: () => Promise<void>, ok: () => string, err: () => string) {
-		if (busyIds.has(id) || actionBusy) return;
+	/**
+	 * Кандидат, открытый в модалке повторной проверки. Хранится ОБЪЕКТОМ, а
+	 * не id: карточка может обновиться поллингом, а модалка фиксирует
+	 * кандидата на момент открытия и не должна перезапускать прогон.
+	 */
+	let recheckCandidate = $state<AutolistCandidate | null>(null);
+
+	function openRecheck(c: AutolistCandidate) {
+		if (busyIds.has(c.id) || actionBusy) return;
+		recheckCandidate = c;
+	}
+
+	function closeRecheck() {
+		// RecheckModal сам пишет в стор при успехе — инвалидация по закрытию
+		// безопасна в любом случае: карточка подтянет свежие evidence.
+		recheckCandidate = null;
+		autolistStatus.invalidate();
+	}
+
+	/**
+	 * Действие из футера модалки recheck: тот же обработчик, что на карточке
+	 * (addCandidate/dismissCandidate/…), без двойной обёртки candidateAction —
+	 * иначе внутренний вызов видит чужой busy и молча отказывает. После
+	 * успеха модалка закрывается, при ошибке остаётся открытой.
+	 */
+	async function recheckModalAction(action: (c: AutolistCandidate) => Promise<boolean>) {
+		if (!recheckCandidate) return;
+		if (await action(recheckCandidate)) closeRecheck();
+	}
+
+	async function candidateAction(id: string, run: () => Promise<void>, ok: () => string, err: () => string): Promise<boolean> {
+		if (busyIds.has(id) || actionBusy) return false;
 		setBusy(id, true);
 		try {
 			await run();
 			notifications.success(ok());
 			autolistStatus.invalidate();
+			return true;
 		} catch (e) {
 			notifications.error(errorMessage(e, err()));
+			return false;
 		} finally {
 			setBusy(id, false);
 		}
@@ -796,6 +830,18 @@
 						<CircleX size={14} strokeWidth={2} aria-hidden="true" />
 					</IconButton>
 				{/if}
+				<!-- Повторная проверка доступна в любом состоянии карточки:
+				     и у кандидата, и у добавленной записи — карточка одна. -->
+				<IconButton
+					size="sm"
+					variant="default"
+					ariaLabel={m.autolist_recheck_again()}
+					title={m.autolist_recheck_again()}
+					disabled={busy}
+					onclick={() => openRecheck(c)}
+				>
+					<RefreshCw size={14} strokeWidth={2} aria-hidden="true" />
+				</IconButton>
 			</div>
 		</div>
 
@@ -1390,6 +1436,45 @@
 		</Button>
 	{/snippet}
 </Modal>
+
+<!-- Повторная проверка кандидата: действия карточки продублированы в футере. -->
+{#snippet recheckActions()}
+	{#if recheckCandidate}
+		{#if canAdd(recheckCandidate)}
+			<Button variant="secondary" size="md" onclick={() => void recheckModalAction(addCandidate)}>
+				{#snippet iconBefore()}
+					<ShieldPlus size={14} strokeWidth={2} aria-hidden="true" />
+				{/snippet}
+				{m.autolist_action_add()}
+			</Button>
+		{/if}
+		{#if canRemove(recheckCandidate)}
+			<Button variant="secondary" size="md" onclick={() => void recheckModalAction(removeCandidate)}>
+				{#snippet iconBefore()}
+					<Trash2 size={14} strokeWidth={2} aria-hidden="true" />
+				{/snippet}
+				{m.autolist_action_remove()}
+			</Button>
+		{/if}
+		{#if recheckCandidate.state !== 'added'}
+			<Button variant="ghost" size="md" onclick={() => void recheckModalAction(dismissCandidate)}>
+				{#snippet iconBefore()}
+					<EyeOff size={14} strokeWidth={2} aria-hidden="true" />
+				{/snippet}
+				{m.autolist_action_dismiss()}
+			</Button>
+		{/if}
+		{#if recheckCandidate.state !== 'added'}
+			<Button variant="ghost" size="md" onclick={() => void recheckModalAction(forgetCandidate)}>
+				{#snippet iconBefore()}
+					<CircleX size={14} strokeWidth={2} aria-hidden="true" />
+				{/snippet}
+				{m.autolist_action_forget()}
+			</Button>
+		{/if}
+	{/if}
+{/snippet}
+<RecheckModal open={recheckCandidate !== null} candidate={recheckCandidate} onclose={closeRecheck} actions={recheckActions} />
 
 <style>
 	/* В этой новой вкладке p-3 не попадает в Tailwind CSS; не полагаемся на

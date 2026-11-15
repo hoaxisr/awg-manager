@@ -86,6 +86,8 @@ const emptyResources = () => {
 	vi.spyOn(api, 'singboxRouterGetDNSGlobals').mockResolvedValue({ final: 'dns-final', strategy: 'prefer_ipv4' });
 	vi.spyOn(api, 'singboxRouterListRuleSets').mockResolvedValue([]);
 	vi.spyOn(api, 'teardownAutolistObjects').mockResolvedValue();
+	// Recheck-модалка зовёт API только при открытии; null = «карточка исчезла».
+	vi.spyOn(api, 'recheckAutolistCandidate').mockResolvedValue(null);
 	emptyTunnelCatalog();
 };
 
@@ -413,6 +415,131 @@ describe('AutolistTab — candidate actions', () => {
 		await screen.findByText('curl: (28) Connection timed out');
 		expect(details!.textContent).toContain(m.autolist_details_correlation());
 		expect(details!.textContent).toContain('c0007');
+	});
+});
+
+describe('AutolistTab — recheck modal', () => {
+	const recheckStatus = (cands: AutolistCandidate[]): AutolistStatus => ({ ...runningStatus, candidates: cands });
+
+	it('renders the check-again button on candidate cards', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+
+		render(AutolistTab);
+		await screen.findByText('example.com');
+
+		const button = screen.getByRole('button', { name: m.autolist_recheck_again() });
+		expect(button.querySelector('svg.lucide-refresh-cw')).toBeTruthy();
+	});
+
+	it('opens the modal on click, runs the recheck and shows the refreshed evidence', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(recheckStatus([candidate()]));
+		const recheck = vi.spyOn(api, 'recheckAutolistCandidate').mockResolvedValue(
+			candidate({ direct: { verdict: 'blocked', durationMs: 12_345, detail: 'timed out again' } }),
+		);
+
+		render(AutolistTab);
+		await screen.findByText('example.com');
+		await fireEvent.click(screen.getByRole('button', { name: m.autolist_recheck_again() }));
+
+		// Клик по кнопке запускает прогон по id открытой карточки.
+		await vi.waitFor(() => expect(recheck).toHaveBeenCalledWith('domain|example.com|tcp|443'));
+		// Свежая длительность direct-проба из ответа сателлита.
+		await vi.waitFor(() => expect(screen.getByText(m.autolist_duration_s({ value: '12.3' }))).toBeTruthy());
+		expect(screen.getByText(m.autolist_recheck_title())).toBeTruthy();
+	});
+
+	it('does not open the recheck modal while the card action is busy', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(recheckStatus([candidate()]));
+		let releaseAdd!: () => void;
+		const gate = new Promise<void>((resolve) => (releaseAdd = resolve));
+		vi.spyOn(api, 'addAutolistCandidate').mockReturnValue(gate);
+		const recheck = vi.spyOn(api, 'recheckAutolistCandidate').mockResolvedValue(candidate());
+
+		render(AutolistTab);
+		await screen.findByText('example.com');
+		await fireEvent.click(screen.getByRole('button', { name: m.autolist_action_add() }));
+
+		// Карточка busy: recheck не открывается.
+		await fireEvent.click(screen.getByRole('button', { name: m.autolist_recheck_again() }));
+		expect(recheck).not.toHaveBeenCalled();
+
+		releaseAdd();
+		await vi.waitFor(() => expect(recheck).not.toHaveBeenCalled());
+	});
+
+	it('closes the modal after a successful recheck-modal action and refreshes the status', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(recheckStatus([candidate()]));
+		const recheck = vi.spyOn(api, 'recheckAutolistCandidate').mockResolvedValue(candidate());
+		const add = vi.spyOn(api, 'addAutolistCandidate').mockResolvedValue();
+
+		render(AutolistTab);
+		await screen.findByText('example.com');
+		await fireEvent.click(screen.getByRole('button', { name: m.autolist_recheck_again() }));
+		await vi.waitFor(() => expect(recheck).toHaveBeenCalledTimes(1));
+
+		// Кнопка «В туннель» из футера модалки.
+		const modal = screen.getByText(m.autolist_recheck_title()).closest('.modal-backdrop') as HTMLElement;
+		expect(modal).toBeTruthy();
+		const addInModal = within(modal).getByRole('button', { name: m.autolist_action_add() });
+		expect(addInModal).toBeTruthy();
+
+		await fireEvent.click(addInModal);
+		await vi.waitFor(() => expect(add).toHaveBeenCalledWith('domain|example.com|tcp|443'));
+		// Успех закрывает модалку и обновляет стор.
+		await vi.waitFor(() => expect(screen.queryByText(m.autolist_recheck_title())).toBeNull());
+	});
+
+	it('keeps the modal open after a failed recheck-modal action', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(recheckStatus([candidate()]));
+		vi.spyOn(api, 'recheckAutolistCandidate').mockResolvedValue(candidate());
+		vi.spyOn(api, 'addAutolistCandidate').mockRejectedValue(new Error('ruleset is locked'));
+
+		render(AutolistTab);
+		await screen.findByText('example.com');
+		await fireEvent.click(screen.getByRole('button', { name: m.autolist_recheck_again() }));
+		await vi.waitFor(() => expect(screen.getByText(m.autolist_recheck_title())).toBeTruthy());
+
+		const modal = screen.getByText(m.autolist_recheck_title()).closest('.modal-backdrop') as HTMLElement;
+		await fireEvent.click(within(modal).getByRole('button', { name: m.autolist_action_add() }));
+
+		await vi.waitFor(() => expect(notifications.error).toHaveBeenCalledWith('ruleset is locked'));
+		expect(screen.getByText(m.autolist_recheck_title())).toBeTruthy();
+	});
+
+	it('dismisses a candidate from the modal footer and closes', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(recheckStatus([candidate()]));
+		vi.spyOn(api, 'recheckAutolistCandidate').mockResolvedValue(candidate());
+		const dismiss = vi.spyOn(api, 'dismissAutolistCandidate').mockResolvedValue();
+
+		render(AutolistTab);
+		await screen.findByText('example.com');
+		await fireEvent.click(screen.getByRole('button', { name: m.autolist_recheck_again() }));
+		await vi.waitFor(() => expect(screen.getByText(m.autolist_recheck_title())).toBeTruthy());
+
+		const modal = screen.getByText(m.autolist_recheck_title()).closest('.modal-backdrop') as HTMLElement;
+		await fireEvent.click(within(modal).getByRole('button', { name: m.autolist_action_dismiss() }));
+
+		await vi.waitFor(() => expect(dismiss).toHaveBeenCalledWith('domain|example.com|tcp|443'));
+		await vi.waitFor(() => expect(screen.queryByText(m.autolist_recheck_title())).toBeNull());
+	});
+
+	it('shows remove instead of add for an added candidate in the modal footer', async () => {
+		const added = candidate({ id: 'domain|added.example|tcp|443', target: { domain: 'added.example', network: 'tcp', port: 443 }, state: 'added' });
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(recheckStatus([added]));
+		const recheck = vi.spyOn(api, 'recheckAutolistCandidate').mockResolvedValue(added);
+		const remove = vi.spyOn(api, 'removeAutolistCandidate').mockResolvedValue();
+
+		render(AutolistTab);
+		await fireEvent.click(await screen.findByRole('button', { name: new RegExp(regexEscape(m.autolist_view_added())) }));
+		await screen.findByText('added.example');
+		await fireEvent.click(screen.getByRole('button', { name: m.autolist_recheck_again() }));
+		await vi.waitFor(() => expect(recheck).toHaveBeenCalledWith('domain|added.example|tcp|443'));
+
+		const modal = screen.getByText(m.autolist_recheck_title()).closest('.modal-backdrop') as HTMLElement;
+		expect(within(modal).queryByRole('button', { name: m.autolist_action_add() })).toBeNull();
+		expect(within(modal).getByRole('button', { name: m.autolist_action_remove() })).toBeTruthy();
+		await fireEvent.click(within(modal).getByRole('button', { name: m.autolist_action_remove() }));
+		await vi.waitFor(() => expect(remove).toHaveBeenCalledWith('domain|added.example|tcp|443'));
 	});
 });
 
