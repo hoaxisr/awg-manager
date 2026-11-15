@@ -189,7 +189,11 @@ function updateTraffic(data: TunnelTrafficEvent): string | null {
 // ─────────────────────────────────────────────
 type CreateResult = AWGTunnel & { warnings?: string[] };
 
-async function updateTunnel(id: string, tunnel: Partial<AWGTunnel>): Promise<AWGTunnel> {
+// needsRestart — правка убрала параметр из .conf работающего kernel-туннеля:
+// ядро держит прежнее значение до перезапуска (#1210).
+type UpdateResult = AWGTunnel & { needsRestart?: boolean };
+
+async function updateTunnel(id: string, tunnel: Partial<AWGTunnel>): Promise<UpdateResult> {
 	const updated = await api.updateTunnel(id, tunnel);
 	basePolling.invalidate();
 	return updated;
