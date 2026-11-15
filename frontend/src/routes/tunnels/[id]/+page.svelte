@@ -298,8 +298,9 @@
 
 		saving = true;
 		try {
-			await tunnels.update(tunnelId, buildUpdatePayload());
+			const saved = await tunnels.update(tunnelId, buildUpdatePayload());
 			notifications.success(m.tunnel_detail_saved());
+			if (saved.needsRestart) notifications.warning(m.tunnel_detail_saved_needs_restart());
 			goto('/');
 		} catch (e) {
 			notifications.error(m.tunnels_error_with_message({ message: (e as Error).message }));

@@ -933,6 +933,7 @@
 	"tunnel_detail_need_key": "Key is required",
 	"tunnel_detail_obf_server_error": "Obfuscator server: {error}",
 	"tunnel_detail_saved": "Tunnel saved",
+	"tunnel_detail_saved_needs_restart": "Some obfuscation parameters were removed. They stay in effect until the tunnel is restarted.",
 	"tunnel_detail_saved_restarted": "Tunnel saved and restarted",
 	"tunnel_detail_saved_started": "Tunnel saved and started",
 	"tunnel_detail_title_fallback": "Tunnel",

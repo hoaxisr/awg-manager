@@ -266,6 +266,9 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if len(edited.Warnings) > 0 {
 		resp["warnings"] = edited.Warnings
 	}
+	if edited.NeedsRestart {
+		resp["needsRestart"] = true
+	}
 	response.Success(w, resp)
 }
 
@@ -286,10 +289,13 @@ func editRefused(message, code string) error {
 
 // EditedTunnel — итог EditTunnel. Raw задан у зеркальной записи wdtt-raw:
 // её ответ строится из записи, а не из состояния туннеля. Warnings —
-// конфликты адресов после правки.
+// конфликты адресов после правки. NeedsRestart — правка убрала параметр
+// из .conf работающего kernel-туннеля: ядро держит прежнее значение до
+// перезапуска (#1210).
 type EditedTunnel struct {
-	Raw      *storage.AWGTunnel
-	Warnings []string
+	Raw          *storage.AWGTunnel
+	Warnings     []string
+	NeedsRestart bool
 }
 
 // EditTunnel применяет правку req к туннелю id — всё, что делает POST
@@ -549,6 +555,7 @@ func (h *TunnelsHandler) EditTunnelWith(ctx context.Context, id string, build fu
 	// Handle primary connection / ISP interface route changes for running tunnels.
 	// Routing is only applied during Start, so restart the tunnel to pick up changes.
 	routeChanged := merged.ISPInterface != oldISPInterface
+	restarted := false
 	if routeChanged {
 		stateInfo := h.svc.GetState(ctx, id)
 		if stateInfo.State == tunnel.StateRunning {
@@ -557,6 +564,7 @@ func (h *TunnelsHandler) EditTunnelWith(ctx context.Context, id string, build fu
 			}); err != nil {
 				h.log.Warn("update", merged.Name, "Restart for routing changes failed: "+err.Error())
 			} else {
+				restarted = true
 				h.log.Info("update", merged.Name, "Tunnel restarted to apply routing changes")
 			}
 		}
@@ -565,7 +573,14 @@ func (h *TunnelsHandler) EditTunnelWith(ctx context.Context, id string, build fu
 	h.log.Info("update", merged.Name, "Tunnel updated")
 	h.publishTunnelList(ctx)
 
-	return EditedTunnel{Warnings: h.svc.CheckAddressConflicts(ctx, id)}, nil
+	// Работающий kernel-туннель получил правку через `awg setconf`, а тот не
+	// сбрасывает параметры, убранные из .conf. Перезапуск выше пересоздал
+	// устройство — тогда расхождения нет.
+	needsRestart := existing.Backend != "nativewg" && !restarted &&
+		config.InterfaceKeysDropped(existing, &merged) &&
+		h.svc.GetState(ctx, id).State == tunnel.StateRunning
+
+	return EditedTunnel{Warnings: h.svc.CheckAddressConflicts(ctx, id), NeedsRestart: needsRestart}, nil
 }
 
 // tunnelLockedMessage — текст 403 у всех шести защищённых операций (#818).

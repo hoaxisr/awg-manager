@@ -465,3 +465,30 @@ func validEndpointPort(p string) bool {
 	n, err := strconv.Atoi(p)
 	return err == nil && n >= 1 && n <= 65535
 }
+
+// InterfaceKeysDropped сообщает, исчез ли из секции [Interface] хоть один
+// ключ, который был в .conf до правки. `awg setconf` шлёт в ядро только
+// присутствующие поля, а модуль меняет только пришедшее — убранный параметр
+// действует на живом устройстве до его пересоздания, то есть до перезапуска
+// туннеля (#1210).
+func InterfaceKeysDropped(before, after *storage.AWGTunnel) bool {
+	kept := interfaceKeys(after)
+	for k := range interfaceKeys(before) {
+		if !kept[k] {
+			return true
+		}
+	}
+	return false
+}
+
+// interfaceKeys — ключи секции [Interface] того .conf, что уходит в setconf.
+func interfaceKeys(t *storage.AWGTunnel) map[string]bool {
+	section, _, _ := strings.Cut(Generate(t), "\n[Peer]")
+	keys := map[string]bool{}
+	for _, line := range strings.Split(section, "\n") {
+		if k, _, ok := strings.Cut(line, " = "); ok {
+			keys[k] = true
+		}
+	}
+	return keys
+}

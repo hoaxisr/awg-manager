@@ -951,6 +951,7 @@
 	"tunnel_detail_need_key": "Нужен ключ",
 	"tunnel_detail_obf_server_error": "Сервер обфускатора: {error}",
 	"tunnel_detail_saved": "Туннель сохранён",
+	"tunnel_detail_saved_needs_restart": "Часть параметров обфускации удалена. Они перестанут действовать после перезапуска туннеля.",
 	"tunnel_detail_saved_restarted": "Туннель сохранён и перезапущен",
 	"tunnel_detail_saved_started": "Туннель сохранён и запущен",
 	"tunnel_detail_title_fallback": "Туннель",
