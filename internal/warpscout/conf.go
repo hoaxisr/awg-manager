@@ -126,6 +126,19 @@ func fitSignature(p AWGParams, maxRaw int) (AWGParams, error) {
 	return p, nil
 }
 
+func buildSwapOptions(protocol string, awg AWGParams, nested bool) (SwapOptions, error) {
+	if protocol != ProtocolWG {
+		protocol = ProtocolAWG
+	}
+	if protocol == ProtocolAWG && nested {
+		var err error
+		if awg, err = fitSignature(awg, nestedSignatureMax); err != nil {
+			return SwapOptions{}, err
+		}
+	}
+	return SwapOptions{Protocol: protocol, AWG: awg}, nil
+}
+
 // DefaultTunnelIPv4 — локальный адрес туннеля WARP, пока пользователь не задал свой.
 const DefaultTunnelIPv4 = "172.16.0.2"
 

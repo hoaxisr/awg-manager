@@ -4,12 +4,14 @@ import {
 	LIMITS,
 	SPARK_SLOTS,
 	buildSparkBars,
+	canApplyFindJunk,
 	countryFlag,
 	defaultFilters,
 	findTunnelIpv4Conflict,
 	formatElapsed,
 	formatSlaPct,
 	formatUptime,
+	hasUsableFindJunkBest,
 	humanizeSwapReason,
 	isValidTunnelIpv4,
 	latencyTone,
@@ -340,5 +342,60 @@ describe('warpscoutUi', () => {
 		expect(routeDisplayLabel(routes, 'ppp0', 'ppp0')).toBe('Provider (ppp0)');
 		expect(routeDisplayLabel(routes, 'ppp0', '')).toContain('Provider');
 		expect(routeDisplayLabel(routes, '', '')).not.toBe('');
+	});
+
+	it('hasUsableFindJunkBest and canApplyFindJunk reject running, 0/N and incomplete bests', () => {
+		const baseAttempt = {
+			attempt: 1,
+			awg: { signatureProfile: 'quic_initial', jc: 5, jmin: 30, jmax: 80, i1: '<b 0x11>' },
+			profile: 'quic_initial',
+			working: 12,
+			scanned: 15,
+			total: 15,
+			pct: 80,
+			durationMs: 2500,
+		};
+		expect(hasUsableFindJunkBest(null)).toBe(false);
+		expect(canApplyFindJunk(null)).toBe(false);
+		expect(
+			hasUsableFindJunkBest({
+				running: false,
+				attempt: 1,
+				maxAttempts: 5,
+				thresholdPct: 95,
+				attempts: [{ ...baseAttempt, working: 0, pct: 0 }],
+				best: { ...baseAttempt, working: 0, pct: 0 },
+			}),
+		).toBe(false);
+		expect(
+			hasUsableFindJunkBest({
+				running: false,
+				attempt: 1,
+				maxAttempts: 5,
+				thresholdPct: 95,
+				attempts: [{ ...baseAttempt, incomplete: true }],
+				best: { ...baseAttempt, incomplete: true },
+			}),
+		).toBe(false);
+		expect(
+			canApplyFindJunk({
+				running: true,
+				attempt: 1,
+				maxAttempts: 5,
+				thresholdPct: 95,
+				attempts: [baseAttempt],
+				best: baseAttempt,
+			}),
+		).toBe(false);
+		expect(
+			canApplyFindJunk({
+				running: false,
+				attempt: 1,
+				maxAttempts: 5,
+				thresholdPct: 95,
+				attempts: [baseAttempt],
+				best: baseAttempt,
+			}),
+		).toBe(true);
 	});
 });

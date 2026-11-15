@@ -57,6 +57,7 @@ type fakeTunnels struct {
 	mu          sync.Mutex
 	refs        map[string]*TunnelRef
 	swaps       []string
+	swapOpts    []SwapOptions
 	renames     []string
 	created     []string
 	createdOpts []CreateOptions
@@ -110,7 +111,7 @@ func (f *fakeTunnels) Create(_ context.Context, m TargetMode, name, conf string,
 	return &c, nil
 }
 
-func (f *fakeTunnels) SwapEndpoint(_ context.Context, m TargetMode, id, ep string) error {
+func (f *fakeTunnels) SwapEndpoint(_ context.Context, m TargetMode, id, ep string, opts SwapOptions) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	r, ok := f.refs[key(m, id)]
@@ -119,6 +120,7 @@ func (f *fakeTunnels) SwapEndpoint(_ context.Context, m TargetMode, id, ep strin
 	}
 	r.Endpoint = ep
 	f.swaps = append(f.swaps, ep)
+	f.swapOpts = append(f.swapOpts, opts)
 	if f.onSwap != nil {
 		f.onSwap(r)
 	}
@@ -2258,5 +2260,125 @@ func TestApplyCreate_CarriesLicense(t *testing.T) {
 	api.mu.Unlock()
 	if len(licensed) != 1 || licensed[0] != "/reg/dev-1/account" {
 		t.Fatalf("лицензия применена к: %v", licensed)
+	}
+}
+
+func TestApply_Swap_PropagatesScannerAWGAndRejectsNativeWGWithPlainWG(t *testing.T) {
+	s, _, tun, _ := newTestService(t)
+	ctx := context.Background()
+	cfg := s.d.Store.Config()
+	cfg.AWG = AWGParams{
+		Jc:               7,
+		Jmin:             33,
+		Jmax:             99,
+		SignatureProfile: SignatureCustom,
+		I1:               "<b 0xdeadbeef>",
+	}
+	if err := s.d.Store.SetAWG(cfg.AWG); err != nil {
+		t.Fatal(err)
+	}
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg50")] = &TunnelRef{
+		Mode: TargetNative, ID: "awg50", Name: "WARP HEL", Iface: "nwg3",
+		Endpoint: "162.159.192.1:2408", PeerPublicKey: WarpPeerPublicKey,
+		IsWarp: true, Running: true,
+	}
+	tun.refs[key(TargetNative, "awg60")] = &TunnelRef{
+		Mode: TargetNative, ID: "awg60", Name: "WARP-in-WARP FRA", Iface: "nwg4",
+		Endpoint: "162.159.193.1:2408", PeerPublicKey: WarpPeerPublicKey,
+		IsWarp: true, Running: true, ViaIface: "nwg3",
+	}
+	tun.mu.Unlock()
+
+	if _, err := s.Apply(ctx, ApplyRequest{
+		Action:   "swap",
+		Endpoint: "162.159.192.198:1002",
+		Mode:     TargetNative,
+		TargetID: "awg50",
+		Protocol: ProtocolAWG,
+	}); err != nil {
+		t.Fatalf("Apply swap awg50: %v", err)
+	}
+	if len(tun.swapOpts) != 1 || tun.swapOpts[0].Protocol != ProtocolAWG ||
+		tun.swapOpts[0].AWG.Jc != 7 || tun.swapOpts[0].AWG.Jmin != 33 ||
+		tun.swapOpts[0].AWG.Jmax != 99 || tun.swapOpts[0].AWG.I1 != "<b 0xdeadbeef>" {
+		t.Fatalf("SwapOptions от сканера не дошли до SwapEndpoint: %+v", tun.swapOpts)
+	}
+
+	// Каскадный WARP-in-WARP обязан усекать сигнатуру > 1200 байт и при swap.
+	bigAWG := AWGParams{Jc: 5, Jmin: 24, Jmax: 80, SignatureProfile: SignatureCustom, I1: "<r 1300>"}
+	if _, err := s.Apply(ctx, ApplyRequest{
+		Action:   "swap",
+		Endpoint: "162.159.193.9:1002",
+		Mode:     TargetNative,
+		TargetID: "awg60",
+		Protocol: ProtocolAWG,
+		AWG:      &bigAWG,
+	}); err != nil {
+		t.Fatalf("Apply swap awg60: %v", err)
+	}
+	if len(tun.swapOpts) != 2 {
+		t.Fatalf("ожидалось 2 swap, получили %d", len(tun.swapOpts))
+	}
+	raw, err := CPSToRaw(tun.swapOpts[1].AWG.I1)
+	if err != nil || len(raw) > nestedSignatureMax {
+		t.Fatalf("сигнатура I1 для каскадного swap не усечена до <= %d байт: len=%d err=%v", nestedSignatureMax, len(raw), err)
+	}
+
+	// NativeWG + plain WG должен отвергаться до вызова SwapEndpoint.
+	if _, err := s.Apply(ctx, ApplyRequest{
+		Action:   "swap",
+		Endpoint: "162.159.192.200:2408",
+		Mode:     TargetNative,
+		TargetID: "awg50",
+		Protocol: ProtocolWG,
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ожидалась ErrInvalidInput для NativeWG + WG, получили %v", err)
+	}
+	if len(tun.swapOpts) != 2 {
+		t.Fatalf("отклонённый swap не должен вызывать TunnelOps.SwapEndpoint")
+	}
+}
+
+func TestWatchdog_Swap_PropagatesScannerAWG(t *testing.T) {
+	s, runner, tun, prober := newTestService(t)
+	awg := AWGParams{
+		Jc:               6,
+		Jmin:             45,
+		Jmax:             88,
+		SignatureProfile: SignatureCustom,
+		I1:               "<b 0xcafe>",
+	}
+	if err := s.d.Store.SetAWG(awg); err != nil {
+		t.Fatal(err)
+	}
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg50")] = &TunnelRef{
+		Mode: TargetNative, ID: "awg50", Name: "WARP HEL", Iface: "nwg3",
+		Endpoint: "162.159.192.1:2408", PeerPublicKey: WarpPeerPublicKey,
+		IsWarp: true, Running: true,
+	}
+	tun.mu.Unlock()
+	prober.mu.Lock()
+	prober.queue = []TraceResult{
+		{Colo: "DME", Loc: "RU", Warp: "on"},
+		{Colo: "DME", Loc: "RU", Warp: "on"},
+		{Colo: "AMS", Loc: "NL", Warp: "on", LatencyMs: 28},
+	}
+	prober.mu.Unlock()
+	runner.hits = []Hit{{Endpoint: "162.159.192.99:1002", PingMs: 28, Colo: "AMS", Loc: "NL", Warp: "on"}}
+
+	f := DefaultFilters()
+	f.ExcludeColos = []string{"DME"}
+	p := Profile{
+		ID: "p-main", Name: "WARP HEL", Enabled: true,
+		TargetMode: TargetNative, TargetID: "awg50",
+		Filters: f, FailThreshold: 1, CooldownSec: 10,
+	}
+	s.checkOnce(context.Background(), p, &watcherState{})
+	if len(tun.swapOpts) != 1 || tun.swapOpts[0].Protocol != ProtocolAWG ||
+		tun.swapOpts[0].AWG.Jc != 6 || tun.swapOpts[0].AWG.Jmin != 45 ||
+		tun.swapOpts[0].AWG.Jmax != 88 || tun.swapOpts[0].AWG.I1 != "<b 0xcafe>" {
+		t.Fatalf("автопилот не передал обфускацию сканера в SwapEndpoint: %+v", tun.swapOpts)
 	}
 }

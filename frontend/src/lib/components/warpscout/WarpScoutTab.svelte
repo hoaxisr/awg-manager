@@ -6,7 +6,7 @@
 	import { Button, Card } from '$lib/components/ui';
 	import RichText from '$lib/components/ui/RichText.svelte';
 	import { notifications } from '$lib/stores/notifications';
-	import { warpScanPush, warpWatchPush } from '$lib/stores/warpscout';
+	import { warpFindJunkPush, warpScanPush, warpWatchPush } from '$lib/stores/warpscout';
 	import type { WarpConfig, WarpRouteRef, WarpScoutState, WarpTunnelRef } from '$lib/types/warpscout';
 	import WarpAccountChip from './WarpAccountChip.svelte';
 	import WarpAwgPopover from './WarpAwgPopover.svelte';
@@ -109,6 +109,15 @@
 			warpScanPush.subscribe((scan) => {
 				if (live && scan && ws) ws.scan = scan;
 			}),
+			warpFindJunkPush.subscribe((fj) => {
+				if (!live || !fj || !ws) return;
+				const wasApplied = ws.findJunk?.applied ?? false;
+				ws.findJunk = fj;
+				if (!wasApplied && fj.applied && fj.best?.awg) {
+					ws.config = { ...ws.config, awg: { ...fj.best.awg } };
+					draft = withSection(draft, ws.config, 'awg');
+				}
+			}),
 			// Событие сторожа — статус одного профиля; статистика и журнал
 			// подмен в него не входят, поэтому перечитываем состояние.
 			warpWatchPush.subscribe(() => {
@@ -202,6 +211,16 @@
 		}
 	}
 
+	async function clearSwapHistory(): Promise<void> {
+		try {
+			await api.warpscoutClearHistory();
+			notifications.success(m.warpscout_history_cleared_ok());
+			await refreshNow();
+		} catch (e) {
+			notifications.error(warpErrorMessage(e));
+		}
+	}
+
 	const routes = $derived<WarpRouteRef[]>(ws?.routes ?? []);
 	const defaultWan = $derived(ws?.defaultWan ?? '');
 	const scanIface = $derived((ws?.config.scanInterface ?? '').trim());
@@ -264,8 +283,23 @@
 					obfuscationSources={ws.obfuscationSources ?? []}
 					dirty={awgDirty}
 					{saving}
+					findJunk={ws.findJunk ?? null}
+					engineAvailable={ws.engine.available}
+					hasAccount={!!account}
+					scanRunning={ws.scan.running}
+					scanInterface={scanIface}
 					onsave={() => saveSection('awg', m.warpscout_awg_saved())}
 					onreset={() => resetSection('awg')}
+					onfindjunkchanged={refreshNow}
+					onfindjunkapplied={async (awg) => {
+						loadSeq++;
+						if (ws) {
+							ws.config = { ...ws.config, awg: { ...awg } };
+							draft = withSection(draft, ws.config, 'awg');
+						}
+						notifications.success(m.warpscout_findjunk_applied_ok());
+						await refreshNow();
+					}}
 				/>
 			</div>
 
@@ -290,6 +324,7 @@
 					scanInterface={scanIface}
 					{routeSummary}
 					autopilotLocked={profilesDirty}
+					findJunkRunning={ws.findJunk?.running ?? false}
 					onchanged={refreshNow}
 					ontargetschanged={loadTargets}
 				/>
@@ -309,6 +344,7 @@
 					}}
 					onreset={() => resetSection('profiles')}
 					onresetstats={resetProfileStats}
+					onclearhistory={clearSwapHistory}
 				/>
 			</div>
 		</div>

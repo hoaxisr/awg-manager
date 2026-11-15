@@ -3,7 +3,10 @@ import type {
 	WarpAccount,
 	WarpApplyRequest,
 	WarpApplyResult,
+	WarpAWGParams,
 	WarpConfig,
+	WarpFindJunkRequest,
+	WarpFindJunkStatus,
 	WarpScanRequest,
 	WarpScanStatus,
 	WarpScoutState,
@@ -64,6 +67,27 @@ export class WarpScoutClient extends Awg3Client {
 		});
 	}
 
+	async warpscoutFindJunkStart(req: WarpFindJunkRequest): Promise<WarpFindJunkStatus> {
+		return this.request<WarpFindJunkStatus>('/warpscout/find-junk/start', {
+			method: 'POST',
+			body: JSON.stringify(req),
+		});
+	}
+
+	async warpscoutFindJunkStop(): Promise<{ ok: boolean }> {
+		return this.request<{ ok: boolean }>('/warpscout/find-junk/stop', {
+			method: 'POST',
+			body: JSON.stringify({}),
+		});
+	}
+
+	async warpscoutFindJunkApply(): Promise<WarpAWGParams> {
+		return this.request<WarpAWGParams>('/warpscout/find-junk/apply', {
+			method: 'POST',
+			body: JSON.stringify({}),
+		});
+	}
+
 	async warpscoutApply(req: WarpApplyRequest): Promise<WarpApplyResult> {
 		return this.request<WarpApplyResult>('/warpscout/apply', {
 			method: 'POST',
@@ -82,6 +106,12 @@ export class WarpScoutClient extends Awg3Client {
 		return this.request<{ ok: boolean }>('/warpscout/stats/reset', {
 			method: 'POST',
 			body: JSON.stringify({ profileId }),
+		});
+	}
+
+	async warpscoutClearHistory(): Promise<{ ok: boolean }> {
+		return this.request<{ ok: boolean }>('/warpscout/history/clear', {
+			method: 'POST',
 		});
 	}
 }

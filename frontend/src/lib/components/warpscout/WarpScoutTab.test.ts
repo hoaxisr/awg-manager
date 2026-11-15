@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import type { WarpConfig, WarpProfile, WarpScoutState } from '$lib/types/warpscout';
-import { warpScanPush } from '$lib/stores/warpscout';
+import type { WarpConfig, WarpFindJunkStatus, WarpProfile, WarpScoutState, WarpSwapEvent } from '$lib/types/warpscout';
+import { warpFindJunkPush, warpScanPush } from '$lib/stores/warpscout';
 import { defaultFilters } from './warpscoutUi';
 
 // Панель Dropdown читает ResizeObserver при открытии; в jsdom его нет.
@@ -23,6 +23,11 @@ const api = vi.hoisted(() => ({
 	warpscoutTargets: vi.fn(),
 	warpscoutSaveConfig: vi.fn(),
 	warpscoutSetAddress: vi.fn(),
+	warpscoutFindJunkStart: vi.fn(),
+	warpscoutFindJunkStop: vi.fn(),
+	warpscoutFindJunkApply: vi.fn(),
+	warpscoutClearHistory: vi.fn(),
+	warpscoutApply: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({ api }));
 
@@ -98,6 +103,7 @@ describe('WarpScoutTab', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		warpScanPush.set(null);
+		warpFindJunkPush.set(null);
 	});
 	afterEach(cleanup);
 
@@ -268,5 +274,232 @@ describe('WarpScoutTab', () => {
 		await fireEvent.click(copyOption());
 		await tick();
 		expect(chip(container, 0).textContent).toContain('Jc 6');
+	});
+
+	it('streams find-junk SSE attempts, guards zero/incomplete results, and applies best without clobbering unsaved profile draft', async () => {
+		const initial = state();
+		const { container } = await mount(initial);
+
+		// Вносим несохранённую правку профиля автопилота до работы с find-junk.
+		const multi = [...container.querySelectorAll<HTMLButtonElement>('.auto-card button')].find(
+			(b) => b.getAttribute('aria-pressed') === 'false' || b.getAttribute('aria-checked') === 'false',
+		);
+		expect(multi).toBeDefined();
+		await fireEvent.click(multi!);
+		await waitFor(() => expect(container.querySelector('.save-bar')).not.toBeNull());
+
+		// Открываем поповер обфускации AWG (chip 0 при account=null).
+		await fireEvent.click(chip(container, 0));
+		const dialog = () => container.querySelector('[role="dialog"]')!;
+		expect(dialog()).not.toBeNull();
+
+		// 1) При нулевых/неполных результатах кнопка «Применить лучший» не появляется.
+		const zeroOrIncomplete: WarpFindJunkStatus = {
+			runId: 1,
+			running: false,
+			attempt: 2,
+			maxAttempts: 8,
+			thresholdPct: 95,
+			attempts: [
+				{
+					attempt: 1,
+					awg: { signatureProfile: 'dns', jc: 4, jmin: 20, jmax: 50 },
+					profile: 'dns',
+					working: 0,
+					scanned: 15,
+					total: 15,
+					pct: 0,
+					durationMs: 2100,
+				},
+				{
+					attempt: 2,
+					awg: { signatureProfile: 'stun', jc: 5, jmin: 25, jmax: 75 },
+					profile: 'stun',
+					working: 10,
+					scanned: 10,
+					total: 15,
+					pct: 67,
+					durationMs: 1800,
+					incomplete: true,
+				},
+			],
+		};
+		warpFindJunkPush.set(zeroOrIncomplete);
+		await tick();
+
+		expect(dialog().querySelectorAll('.junk-row').length).toBe(2);
+		expect(dialog().textContent).toMatch(/неполн\.|partial/);
+		expect(dialog().querySelector('.fj-foot button')).toBeNull();
+
+		// 2) Полноценный лучший результат появляется и применяется без потери правки профилей.
+		const bestAwg = {
+			signatureProfile: 'stun',
+			jc: 6,
+			jmin: 30,
+			jmax: 90,
+			i1: '<b 0xabcd>',
+		};
+		const validStatus: WarpFindJunkStatus = {
+			runId: 2,
+			running: false,
+			attempt: 1,
+			maxAttempts: 8,
+			thresholdPct: 95,
+			attempts: [
+				{
+					attempt: 1,
+					awg: bestAwg,
+					profile: 'stun',
+					working: 14,
+					scanned: 15,
+					total: 15,
+					pct: 93,
+					durationMs: 2200,
+				},
+			],
+			best: {
+				attempt: 1,
+				awg: bestAwg,
+				profile: 'stun',
+				working: 14,
+				scanned: 15,
+				total: 15,
+				pct: 93,
+				durationMs: 2200,
+			},
+		};
+		api.warpscoutFindJunkApply.mockResolvedValue(bestAwg);
+		api.warpscoutState.mockResolvedValue(state({ awg: bestAwg }, { findJunk: { ...validStatus, applied: true, appliedAttempt: 1 } }));
+
+		warpFindJunkPush.set(validStatus);
+		await tick();
+
+		const applyBtn = dialog().querySelector<HTMLButtonElement>('.fj-foot button');
+		expect(applyBtn).not.toBeNull();
+		await fireEvent.click(applyBtn!);
+
+		await waitFor(() => expect(api.warpscoutFindJunkApply).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(chip(container, 0).textContent).toContain('stun'));
+		expect(chip(container, 0).textContent).toContain('Jc 6');
+		// Черновик автопилота остался несохранённым.
+		expect(container.querySelector('.save-bar')).not.toBeNull();
+	});
+
+	it('asks for confirmation before clearing auto-swap history and reloads state', async () => {
+		const item: WarpSwapEvent = {
+			at: '2026-11-14T10:00:00Z',
+			profileId: 'a',
+			profileName: 'WARP HEL',
+			targetMode: 'kernel',
+			targetId: 't-a',
+			reason: 'trace timeout',
+			oldEndpoint: '162.159.192.1:500',
+			newEndpoint: '162.159.192.2:2408',
+			colo: 'HEL',
+			loc: 'FI',
+			pingMs: 24,
+			ok: true,
+		};
+		const { container } = await mount(state({}, { history: [item] }));
+		expect(container.querySelectorAll('.swap-item')).toHaveLength(1);
+
+		const clearBtn = container.querySelector<HTMLButtonElement>('.timeline-head button');
+		expect(clearBtn).not.toBeNull();
+		await fireEvent.click(clearBtn!);
+		expect(api.warpscoutClearHistory).not.toHaveBeenCalled();
+
+		api.warpscoutClearHistory.mockResolvedValue({ ok: true });
+		api.warpscoutState.mockResolvedValue(state({}, { history: [] }));
+
+		const confirmBtn = await screen.findByRole('button', { name: /^(Очистить журнал|Clear history)$/i });
+		await fireEvent.click(confirmBtn);
+
+		await waitFor(() => expect(api.warpscoutClearHistory).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(container.querySelectorAll('.swap-item')).toHaveLength(0));
+	});
+
+	it('shows scanner obfuscation summary in swap modal and blocks native swap when protocol is wg', async () => {
+		const initial = acctState();
+		initial.config.awg = { signatureProfile: 'dtls', jc: 5, jmin: 24, jmax: 105 };
+		initial.scan = {
+			running: false,
+			owner: 'manual',
+			total: 1,
+			done: 1,
+			hits: [
+				{
+					endpoint: '162.159.192.1:2408',
+					handshakeMs: 25,
+					pingMs: 25,
+					colo: 'HEL',
+					loc: 'FI',
+					warp: 'on',
+					tgOk: true,
+				},
+			],
+		};
+		api.warpscoutState.mockResolvedValue(initial);
+		api.warpscoutTargets.mockResolvedValue([
+			{
+				mode: 'native',
+				id: 'nat1',
+				name: 'WARP Native',
+				iface: 'awg0',
+				endpoint: '162.159.192.2:2408',
+				addressV4: '172.16.0.2',
+				isWarp: true,
+				running: true,
+				protected: false,
+			},
+		]);
+
+		const view = render(WarpScoutTab);
+		await waitFor(() => expect(view.container.querySelector('.actions-cell')).not.toBeNull());
+
+		// Open swap modal in AWG mode: summary shows active Jc/Jmin/Jmax and Swap is enabled.
+		const swapRowBtn = view.container.querySelector<HTMLButtonElement>(
+			'.actions-cell button:last-of-type',
+		);
+		expect(swapRowBtn).not.toBeNull();
+		await fireEvent.click(swapRowBtn!);
+
+		const dialog = await waitFor(() => {
+			const el = document.body.querySelector('[role="dialog"]');
+			expect(el).not.toBeNull();
+			return el!;
+		});
+		expect(dialog.textContent).toContain('5');
+		expect(dialog.textContent).toContain('24');
+		expect(dialog.textContent).toContain('105');
+
+		const modalBtns = [...dialog.querySelectorAll<HTMLButtonElement>('footer button, .modal-footer button')];
+		const swapConfirmAwg = modalBtns.at(-1);
+		expect(swapConfirmAwg).toBeDefined();
+		expect(swapConfirmAwg!.disabled).toBe(false);
+
+		// Close modal, switch scanner protocol to WireGuard, and re-open swap modal.
+		const cancelBtn = modalBtns[0];
+		expect(cancelBtn).toBeDefined();
+		await fireEvent.click(cancelBtn);
+		await waitFor(() => expect(document.body.querySelector('[role="dialog"]')).toBeNull());
+
+		const wgBtn = [...view.container.querySelectorAll<HTMLButtonElement>('.proto-seg button')].find(
+			(b) => b.textContent?.trim() === 'WireGuard',
+		);
+		expect(wgBtn).toBeDefined();
+		await fireEvent.click(wgBtn!);
+
+		await fireEvent.click(swapRowBtn!);
+		const wgDialog = await waitFor(() => {
+			const el = document.body.querySelector('[role="dialog"]');
+			expect(el).not.toBeNull();
+			return el!;
+		});
+		const wgSwapConfirm = [
+			...wgDialog.querySelectorAll<HTMLButtonElement>('footer button, .modal-footer button'),
+		].at(-1);
+		expect(wgSwapConfirm).toBeDefined();
+		expect(wgSwapConfirm!.disabled).toBe(true);
+		expect(wgDialog.textContent).toContain('WireGuard');
 	});
 });

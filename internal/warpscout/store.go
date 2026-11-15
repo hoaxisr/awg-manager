@@ -80,7 +80,8 @@ type Store struct {
 	innerAcct *Account // расшифрованная копия 2-го слота для WARP-in-WARP
 	// tunnelAccts — расшифрованные записи туннелей; нерасшифрованные
 	// остаются только на диске (как и основная после смены секрета).
-	tunnelAccts []TunnelAccount
+	tunnelAccts  []TunnelAccount
+	testSaveHook func() error
 }
 
 // ErrFrozen — запись отклонена: идёт восстановление из резервной копии.
@@ -159,9 +160,20 @@ func (s *Store) decryptAccount(d *accountDisk) (*Account, error) {
 	}, nil
 }
 
+func (s *Store) setTestSaveHook(fn func() error) {
+	s.mu.Lock()
+	s.testSaveHook = fn
+	s.mu.Unlock()
+}
+
 func (s *Store) saveLocked() error {
 	if s.Frozen != nil && s.Frozen() {
 		return ErrFrozen
+	}
+	if s.testSaveHook != nil {
+		if err := s.testSaveHook(); err != nil {
+			return err
+		}
 	}
 	data, err := json.MarshalIndent(s.state, "", "  ")
 	if err != nil {
@@ -309,12 +321,32 @@ func (s *Store) Config() Config {
 	return cloneConfig(s.state.Config)
 }
 
-// SetConfig сохраняет уже провалидированную конфигурацию.
+// SetConfig транзакционно сохраняет уже провалидированную конфигурацию,
+// откатывая состояние в памяти при ошибке записи на диск.
 func (s *Store) SetConfig(c Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	prev := cloneConfig(s.state.Config)
 	s.state.Config = cloneConfig(normalizeConfig(c))
-	return s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.state.Config = prev
+		return err
+	}
+	return nil
+}
+
+// SetAWG транзакционно обновляет только параметры обфускации Config.AWG,
+// не затрагивая параллельно изменённые профили, режим или маршрут сканера.
+func (s *Store) SetAWG(awg AWGParams) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prev := s.state.Config.AWG
+	s.state.Config.AWG = normalizeAWGParams(awg)
+	if err := s.saveLocked(); err != nil {
+		s.state.Config.AWG = prev
+		return err
+	}
+	return nil
 }
 
 // SyncProfileTargetName обновляет имя профиля автопилота, если оно совпадало
@@ -355,6 +387,22 @@ func (s *Store) AppendHistory(ev SwapEvent) error {
 		s.state.History = s.state.History[:maxHistory]
 	}
 	return s.saveLocked()
+}
+
+// ClearHistory транзакционно очищает журнал автоподмен, откатывая память при сбое записи.
+func (s *Store) ClearHistory() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.state.History) == 0 {
+		return nil
+	}
+	prev := s.state.History
+	s.state.History = nil
+	if err := s.saveLocked(); err != nil {
+		s.state.History = prev
+		return err
+	}
+	return nil
 }
 
 // Stats — копия сохранённой статистики профилей с диска.
@@ -486,6 +534,28 @@ func normalizeProfile(p Profile) Profile {
 	return p
 }
 
+func normalizeAWGParams(a AWGParams) AWGParams {
+	if a.Jc < 0 {
+		a.Jc = 0
+	}
+	if a.Jc > 128 {
+		a.Jc = 128
+	}
+	if a.Jmin < 0 {
+		a.Jmin = 0
+	}
+	if a.Jmax < a.Jmin {
+		a.Jmax = a.Jmin
+	}
+	if a.Jmax > 1280 {
+		a.Jmax = 1280
+	}
+	if a.SignatureProfile == "" {
+		a.SignatureProfile = "none"
+	}
+	return a
+}
+
 func normalizeConfig(c Config) Config {
 	if c.ProfileMode != ProfileModeMulti {
 		c.ProfileMode = ProfileModeSingle
@@ -497,24 +567,7 @@ func normalizeConfig(c Config) Config {
 	for i := range c.Profiles {
 		c.Profiles[i] = normalizeProfile(c.Profiles[i])
 	}
-	if c.AWG.Jc < 0 {
-		c.AWG.Jc = 0
-	}
-	if c.AWG.Jc > 128 {
-		c.AWG.Jc = 128
-	}
-	if c.AWG.Jmin < 0 {
-		c.AWG.Jmin = 0
-	}
-	if c.AWG.Jmax < c.AWG.Jmin {
-		c.AWG.Jmax = c.AWG.Jmin
-	}
-	if c.AWG.Jmax > 1280 {
-		c.AWG.Jmax = 1280
-	}
-	if c.AWG.SignatureProfile == "" {
-		c.AWG.SignatureProfile = "none"
-	}
+	c.AWG = normalizeAWGParams(c.AWG)
 	// Режим single: включённым может остаться только активный профиль.
 	if c.ProfileMode == ProfileModeSingle {
 		active := c.ActiveProfileID

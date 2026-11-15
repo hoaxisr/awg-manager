@@ -197,9 +197,50 @@ export interface WarpScoutState {
 	usedIpv4?: string[] | null;
 	config: WarpConfig;
 	scan: WarpScanStatus;
+	findJunk?: WarpFindJunkStatus;
 	watch: WarpWatchStatus[] | null;
 	stats?: WarpProfileStats[] | null;
 	history: WarpSwapEvent[] | null;
+}
+
+export interface WarpFindJunkRequest {
+	i1Profile: string;
+	maxAttempts?: number;
+	thresholdPct?: number;
+	perSubnet?: number;
+	ifname?: string;
+	autoApply?: boolean;
+}
+
+export interface WarpJunkAttempt {
+	attempt: number;
+	awg: WarpAWGParams;
+	profile: string;
+	working: number;
+	scanned: number;
+	total: number;
+	pct: number;
+	avgPingMs?: number;
+	durationMs: number;
+	incomplete?: boolean;
+	goodEnough?: boolean;
+}
+
+export interface WarpFindJunkStatus {
+	runId?: number;
+	running: boolean;
+	startedAt?: string;
+	finishedAt?: string;
+	i1Profile?: string;
+	attempt: number;
+	maxAttempts: number;
+	thresholdPct: number;
+	attempts: WarpJunkAttempt[];
+	best?: WarpJunkAttempt;
+	applied?: boolean;
+	appliedAttempt?: number;
+	aborted?: boolean;
+	error?: string;
 }
 
 export interface WarpTunnelRef {

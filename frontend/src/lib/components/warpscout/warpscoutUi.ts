@@ -6,6 +6,7 @@ import type {
 	WarpCheckSample,
 	WarpConfig,
 	WarpFilters,
+	WarpFindJunkStatus,
 	WarpHit,
 	WarpProfile,
 	WarpProfileMode,
@@ -17,6 +18,16 @@ import { formatDate, formatDuration, formatTime as formatClock } from '$lib/util
 
 export const QUICK_COLOS = ['LED', 'KJA', 'OVB', 'SVX'];
 export const SIGNATURE_PROFILES = ['quic_initial', 'dns', 'stun', 'dtls', 'sip', 'none'] as const;
+export const FIND_JUNK_PROFILES = ['random', 'quic_initial', 'dns', 'stun', 'dtls', 'sip', 'none'] as const;
+
+export function hasUsableFindJunkBest(status: WarpFindJunkStatus | null | undefined): boolean {
+	const b = status?.best;
+	return Boolean(b && !b.incomplete && b.total > 0 && b.working > 0);
+}
+
+export function canApplyFindJunk(status: WarpFindJunkStatus | null | undefined): boolean {
+	return Boolean(status && !status.running && hasUsableFindJunkBest(status));
+}
 
 export function signatureProfileLabel(prof: string | undefined): string {
 	if (!prof || prof === 'none') return m.warpscout_sig_none();
@@ -285,6 +296,8 @@ export const LIMITS = {
 	jmin: { def: 40, min: 0, max: 1280 },
 	jmax: { def: 70, min: 0, max: 1280 },
 	maxHits: { def: 20, min: 1, max: 100 },
+	findJunkAttempts: { def: 8, min: 1, max: 30 },
+	findJunkThreshold: { def: 95, min: 50, max: 100 },
 } as const satisfies Record<string, NumLimit>;
 
 /** Целое в границах поля; пустое и нечисловое значение — значение по умолчанию. */
