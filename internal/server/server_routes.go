@@ -498,6 +498,10 @@ func (s *Server) registerRoutingRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// the satellite itself listens on loopback and has no diagnostic endpoints.
 	if s.autolistService != nil {
 		autolistHandler := api.NewAutolistHandler(s.autolistService)
+		// Флаг снимка удалённых объектов — знание панели (router-сервис читает
+		// свой файл данных), сателлит о нём не знает.
+		autolistHandler.SetLogger(h.appLog)
+		autolistHandler.SetHasRemovedBackupProbe(s.autolistRemovedBackupProbe)
 		mux.HandleFunc("/api/autolist/status", h.guarded(autolistHandler.Status))
 		mux.HandleFunc("/api/autolist/control", h.expertGuarded(autolistHandler.Control))
 		mux.HandleFunc("/api/autolist/install", h.expertGuarded(autolistHandler.Install))

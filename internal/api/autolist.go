@@ -2,23 +2,62 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/autolistdetect"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
 // AutolistHandler exposes the satellite lifecycle and its operational proxy.
 type AutolistHandler struct {
 	svc *autolistdetect.Service
+	// log — nil-safe: тесты строят хендлер без логгера.
+	log *logging.ScopedLogger
+	// hasRemovedBackup — «у панели есть снимок объектов Autolist,
+	// удалённых кнопкой сноса» (routerSvc.AutolistBackupInfo). Опционально:
+	// nil — поле статуса остаётся false. Ошибка чтения снимка не валит
+	// статус: трактуется как «снимка нет», факт уходит в журнал.
+	hasRemovedBackup func(ctx context.Context) (bool, time.Time, error)
 }
 
 func NewAutolistHandler(svc *autolistdetect.Service) *AutolistHandler {
 	return &AutolistHandler{svc: svc}
+}
+
+// SetHasRemovedBackupProbe подключает проверку файла снимка удалённых
+// объектов (wiring: routerSvc.AutolistBackupInfo). Панель ставит флаг сама —
+// сателлит о снимке панели не знает.
+func (h *AutolistHandler) SetHasRemovedBackupProbe(fn func(ctx context.Context) (bool, time.Time, error)) {
+	h.hasRemovedBackup = fn
+}
+
+// SetLogger подключает журнал для диагностики отказов проверки снимка.
+func (h *AutolistHandler) SetLogger(appLogger logging.AppLogger) {
+	h.log = logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubSingboxRouter)
+}
+
+// withRemovedBackup помечает статус флагом снимка; любая ошибка чтения —
+// false без падения статуса (best-effort, как сам снимок).
+func (h *AutolistHandler) withRemovedBackup(ctx context.Context, st *autolistdetect.Status) *autolistdetect.Status {
+	if h.hasRemovedBackup == nil || st == nil {
+		return st
+	}
+	exists, _, err := h.hasRemovedBackup(ctx)
+	if err != nil {
+		if h.log != nil {
+			h.log.Warn("autolist-backup", "", "проверка снимка удалённых объектов не удалась: "+err.Error())
+		}
+		return st
+	}
+	st.HasRemovedBackup = exists
+	return st
 }
 
 type autolistStatusResponse struct {
@@ -42,11 +81,11 @@ func (h *AutolistHandler) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.svc == nil {
-		response.Success(w, autolistStatusResponse{AutolistStatus: emptyAutolistStatus()})
+		response.Success(w, autolistStatusResponse{AutolistStatus: h.withRemovedBackup(r.Context(), emptyAutolistStatus())})
 		return
 	}
 	status := h.svc.GetStatus(r.Context())
-	response.Success(w, autolistStatusResponse{AutolistStatus: &status})
+	response.Success(w, autolistStatusResponse{AutolistStatus: h.withRemovedBackup(r.Context(), &status)})
 }
 
 type AutolistControlRequest struct {
