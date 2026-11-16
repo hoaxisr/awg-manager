@@ -63,9 +63,29 @@ export class SingboxClient extends RoutingClient {
 	 * Полный снос объектов Autolist в слоте router (owner-правило, rule-set
 	 * awgm-autolist, outbound awgm-autolist-target) одним draft→apply. Бэкенд
 	 * отвечает 409, пока работает сателлит или outbound держит чужое правило.
+	 * Перед удалением бэкенд пишет снимок объектов: backupSaved=false значит,
+	 * что снимок не сохранился (восстановить будет не из чего).
 	 */
-	async teardownAutolistObjects(): Promise<void> {
-		await this.request('/singbox/router/autolist/teardown', { method: 'POST', body: JSON.stringify({}) });
+	async teardownAutolistObjects(): Promise<{ backupSaved: boolean }> {
+		return this.request('/singbox/router/autolist/teardown', { method: 'POST', body: JSON.stringify({}) });
+	}
+
+	/** Сведения о снимке удалённых объектов Autolist (снят последним сносом). */
+	async getAutolistBackup(): Promise<{ exists: boolean; capturedAt?: string }> {
+		return this.request('/singbox/router/autolist/backup');
+	}
+
+	/**
+	 * Восстановить объекты Autolist из снимка (draft→apply). 409 — работает
+	 * сателлит или объекты уже существуют; 404 — снимка нет.
+	 */
+	async restoreAutolistObjects(): Promise<void> {
+		await this.request('/singbox/router/autolist/restore', { method: 'POST', body: JSON.stringify({}) });
+	}
+
+	/** Отказаться от снимка («начать заново»): объекты не восстанавливаются. */
+	async discardAutolistBackup(): Promise<void> {
+		await this.request('/singbox/router/autolist/backup', { method: 'DELETE' });
 	}
 
 	async singboxUpdate(): Promise<SingboxStatus> {

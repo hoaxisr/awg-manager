@@ -154,6 +154,8 @@ export interface AutolistStatus {
 	candidates: AutolistCandidate[];
 	history: AutolistHistoryEntry[];
 	lastError?: string;
+	/** У панели есть снимок объектов, удалённых кнопкой сноса: предложить восстановить или начать заново. */
+	hasRemovedBackup?: boolean;
 }
 
 /**

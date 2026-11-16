@@ -985,6 +985,19 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/staging/discard", h.guarded(rh.PostStagingDiscard))
 		// Снос объектов Autolist — явно, кнопкой панели; guarded, как соседи.
 		mux.HandleFunc("/api/singbox/router/autolist/teardown", h.guarded(rh.TeardownAutolistObjects))
+		// Снимок удалённых объектов: сведения (GET), восстановление (POST) и
+		// отказ от него («начать заново», DELETE).
+		mux.HandleFunc("/api/singbox/router/autolist/backup", h.guarded(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				rh.GetAutolistBackup(w, r)
+			case http.MethodDelete:
+				rh.DeleteAutolistBackup(w, r)
+			default:
+				response.MethodNotAllowed(w)
+			}
+		}))
+		mux.HandleFunc("/api/singbox/router/autolist/restore", h.guarded(rh.RestoreAutolistObjects))
 	}
 
 	if s.bypassSetHandler != nil {

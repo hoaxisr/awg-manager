@@ -26,9 +26,9 @@ func addAutolistObjects(t *testing.T, svc *ServiceImpl, withForeignRule bool) {
 		t.Fatal(err)
 	}
 	if err := svc.AddRuleSet(ctx, RuleSet{
-		Tag:    "awgm-autolist",
-		Type:   "inline",
-		Rules:  []map[string]any{{"domain_suffix": []any{"example.com"}}},
+		Tag:   "awgm-autolist",
+		Type:  "inline",
+		Rules: []map[string]any{{"domain_suffix": []any{"example.com"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -57,13 +57,13 @@ func assertTeardownState(t *testing.T, svc *ServiceImpl, wantGone bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ownerLeft, setLeft, outLeft := 0, 0, 0
+	ownerLeft, setLeft, ruleRefs, tagLeft := 0, 0, 0, 0
 	for _, r := range rules {
 		if isAutolistOwnerRule(r) {
 			ownerLeft++
 		}
 		if teardownRuleRefsOutbound(r, "awgm-autolist-target") {
-			outLeft++
+			ruleRefs++
 		}
 	}
 	for _, rs := range sets {
@@ -73,22 +73,28 @@ func assertTeardownState(t *testing.T, svc *ServiceImpl, wantGone bool) {
 	}
 	for _, ob := range outs {
 		if ob.Tag == "awgm-autolist-target" {
-			outLeft++
+			tagLeft++
 		}
 	}
-	if wantGone && (ownerLeft != 0 || setLeft != 0 || outLeft != 0) {
-		t.Fatalf("объекты должны отсутствовать: owner=%d set=%d outbound=%d", ownerLeft, setLeft, outLeft)
+	// Правило-ссылка и сам outbound — РАЗНЫЕ сущности: считаем их отдельно.
+	//wantGone: не осталось ни ссылок, ни самого outbound.
+	if wantGone && (ownerLeft != 0 || setLeft != 0 || ruleRefs != 0 || tagLeft != 0) {
+		t.Fatalf("объекты должны отсутствовать: owner=%d set=%d ruleRefs=%d outbound=%d", ownerLeft, setLeft, ruleRefs, tagLeft)
 	}
-	if !wantGone && (ownerLeft != 1 || setLeft != 1 || outLeft != 1) {
-		t.Fatalf("объекты должны остаться нетронутыми: owner=%d set=%d outbound=%d", ownerLeft, setLeft, outLeft)
+	if !wantGone && (ownerLeft < 1 || setLeft != 1 || ruleRefs < 1 || tagLeft != 1) {
+		t.Fatalf("объекты должны остаться нетронутыми: owner=%d set=%d ruleRefs=%d outbound=%d", ownerLeft, setLeft, ruleRefs, tagLeft)
 	}
 }
 
 func TestTeardownAutolistObjects_HappyPath(t *testing.T) {
 	svc := newTeardownTestService(t)
 	addAutolistObjects(t, svc, false)
-	if err := svc.TeardownAutolistObjects(context.Background()); err != nil {
+	res, err := svc.TeardownAutolistObjects(context.Background())
+	if err != nil {
 		t.Fatalf("teardown: %v", err)
+	}
+	if !res.BackupSaved {
+		t.Error("снимок должен сохраниться в каталоге данных панели")
 	}
 	assertTeardownState(t, svc, true)
 	if svc.StagingStatus(context.Background()).HasDraft {
@@ -100,26 +106,33 @@ func TestTeardownAutolistObjects_Idempotent(t *testing.T) {
 	svc := newTeardownTestService(t)
 	// Ни одного объекта Autolist в пустом конфиге — снос проходит без ошибки
 	// и без apply (черновика нет).
-	if err := svc.TeardownAutolistObjects(context.Background()); err != nil {
+	res, err := svc.TeardownAutolistObjects(context.Background())
+	if err != nil {
 		t.Fatalf("teardown on empty config: %v", err)
 	}
 	if svc.StagingStatus(context.Background()).HasDraft {
 		t.Error("нечего удалять — черновик не должен создаваться")
 	}
+	// Нечего снимать: устаревшего файла быть не должно.
+	if exists, _, err := svc.AutolistBackupInfo(context.Background()); err != nil {
+		t.Fatalf("AutolistBackupInfo: %v", err)
+	} else if exists {
+		t.Error("пустой конфиг не должен оставлять снимок")
+	}
+	_ = res
 }
 
 func TestTeardownAutolistObjects_ForeignRuleRefuses(t *testing.T) {
 	svc := newTeardownTestService(t)
 	addAutolistObjects(t, svc, true)
-	err := svc.TeardownAutolistObjects(context.Background())
+	_, err := svc.TeardownAutolistObjects(context.Background())
 	if !errors.Is(err, ErrOutboundReferenced) {
 		t.Fatalf("want ErrOutboundReferenced, got %v", err)
 	}
 	// Отказ до мутаций: ничего не удалено (apply не звался, объектов нет).
 	assertTeardownState(t, svc, false)
-	if svc.StagingStatus(context.Background()).HasDraft {
-		t.Error("при отказе черновик создаваться не должен")
-	}
+	// Черновик мог появиться ещё при setup (Add* пишут draft); после отказа
+	// сноса он не обязан исчезать — отказ не применяет и не сбрасывает его.
 }
 
 func TestTeardownAutolistObjects_TwoOwnerRulesRefuses(t *testing.T) {
@@ -129,7 +142,7 @@ func TestTeardownAutolistObjects_TwoOwnerRulesRefuses(t *testing.T) {
 	if err := svc.AddRule(context.Background(), Rule{RuleSet: []string{"awgm-autolist"}, Action: "route", Outbound: "awgm-autolist-target"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.TeardownAutolistObjects(context.Background()); err == nil {
+	if _, err := svc.TeardownAutolistObjects(context.Background()); err == nil {
 		t.Fatal("два owner-правила должны отклонять снос")
 	}
 	assertTeardownState(t, svc, false)

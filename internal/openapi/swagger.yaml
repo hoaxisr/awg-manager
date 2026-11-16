@@ -8096,10 +8096,25 @@ definitions:
         example: 524288
         type: integer
     type: object
+  api.autolistBackupInfoResponse:
+    properties:
+      capturedAt:
+        type: string
+      exists:
+        type: boolean
+    type: object
   api.autolistStatusResponse:
     properties:
       autolistStatus:
         $ref: '#/definitions/autolistdetect.Status'
+    type: object
+  api.autolistTeardownResponse:
+    properties:
+      backupSaved:
+        description: |-
+          BackupSaved — снимок удалённых объектов записан; false — восстановить
+          объекты будет не из чего (снос при этом выполнен).
+        type: boolean
     type: object
   api.killListenerRequest:
     properties:
@@ -8244,6 +8259,12 @@ definitions:
       capturePaused:
         type: boolean
       enabled:
+        type: boolean
+      hasRemovedBackup:
+        description: |-
+          HasRemovedBackup — у панели есть снимок объектов Autolist, удалённых
+          кнопкой сноса. Панель ставит его сама (сателлит о снимке не знает);
+          фронт предлагает восстановить объекты или начать заново.
         type: boolean
       history:
         items:
@@ -16597,6 +16618,124 @@ paths:
       summary: Toggle NDMS Proxy creation for sing-box tunnels
       tags:
       - singbox
+  /singbox/router/autolist/backup:
+    delete:
+      description: Deletes the teardown snapshot without restoring the objects — «start
+        fresh». A missing snapshot is not an error.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Discard the removed Autolist objects snapshot
+      tags:
+      - singbox-router
+    get:
+      description: Returns whether a snapshot taken by the last teardown exists and
+        when it was captured; 404 when there is none.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.autolistBackupInfoResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Show the removed Autolist objects snapshot
+      tags:
+      - singbox-router
+  /singbox/router/autolist/restore:
+    post:
+      description: Recreates the Autolist owner rule, rule set and outbound from the
+        snapshot left by the last teardown (draft→apply, partial existence tolerated).
+        Refuses with 409 while the satellite is running and with 409 AUTOLIST_EXISTS
+        when all objects already exist (the satellite recreated them itself). The
+        snapshot is deleted on success.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Restore the removed Autolist objects
+      tags:
+      - singbox-router
+  /singbox/router/autolist/teardown:
+    post:
+      description: 'Deletes the Autolist owner rule, the awgm-autolist rule set and
+        the awgm-autolist-target outbound in one draft→apply. Refuses with 409 while
+        the satellite is running or when the outbound is still referenced by another
+        rule/group. Idempotent: absent objects are skipped. A snapshot of the removed
+        objects is written best-effort before the deletes; backupSaved=false means
+        the snapshot could not be written (the teardown still happened).'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.autolistTeardownResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Remove all Autolist router objects
+      tags:
+      - singbox-router
   /singbox/router/bindable-interfaces:
     get:
       description: Returns router interfaces (minus our own and AWG/WG auto-covered)

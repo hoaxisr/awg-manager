@@ -48,7 +48,15 @@ type mockRouterSvc struct {
 	bulkDetourErr   error
 	// teardownErr, when set, is returned by TeardownAutolistObjects so the
 	// handler error-mapping (409 conflict) can be asserted.
-	teardownErr error
+	teardownErr         error
+	teardownBackupSaved bool
+	teardownCalls       int
+	// restoreErr, when set, is returned by RestoreAutolistObjects so the
+	// restore handler error-mapping (404/409) can be asserted.
+	restoreErr error
+	// backup* feed AutolistBackupInfo for the GET handler.
+	backupExists     bool
+	backupCapturedAt time.Time
 	// dnsRuleErr, when set, is returned by AddDNSRule/UpdateDNSRule so the
 	// DNS-preset error mapping (reserved tag vs managed rule) can be asserted.
 	dnsRuleErr error
@@ -116,9 +124,15 @@ func (m *mockRouterSvc) UpdateRule(ctx context.Context, index int, rule router.R
 	return nil
 }
 func (m *mockRouterSvc) DeleteRule(ctx context.Context, index int) error { return nil }
-func (m *mockRouterSvc) TeardownAutolistObjects(ctx context.Context) error {
-	return m.teardownErr
+func (m *mockRouterSvc) TeardownAutolistObjects(ctx context.Context) (router.AutolistTeardownResult, error) {
+	m.teardownCalls++
+	return router.AutolistTeardownResult{BackupSaved: m.teardownBackupSaved}, m.teardownErr
 }
+func (m *mockRouterSvc) RestoreAutolistObjects(ctx context.Context) error { return m.restoreErr }
+func (m *mockRouterSvc) AutolistBackupInfo(ctx context.Context) (bool, time.Time, error) {
+	return m.backupExists, m.backupCapturedAt, nil
+}
+func (m *mockRouterSvc) DeleteAutolistBackup(ctx context.Context) error { return nil }
 func (m *mockRouterSvc) BulkSetRuleOutbound(ctx context.Context, indices []int, outbound string) error {
 	return m.bulkOutboundErr
 }
@@ -995,6 +1009,112 @@ func TestAutolistTeardown_ConflictError_MapsTo409(t *testing.T) {
 	h.TeardownAutolistObjects(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want 400 (CONFLICT code envelope), got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAutolistTeardown_RespondsBackupSaved(t *testing.T) {
+	svc := &mockRouterSvc{teardownBackupSaved: false}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/autolist/teardown", nil)
+	rr := httptest.NewRecorder()
+	h.TeardownAutolistObjects(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Data struct {
+			BackupSaved bool `json:"backupSaved"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal: %v (body: %s)", err, rr.Body.String())
+	}
+	if env.Data.BackupSaved {
+		t.Error("backupSaved=false должен доехать до фронта без изменений")
+	}
+}
+
+func TestAutolistRestore_BackupNotFound_MapsTo404(t *testing.T) {
+	svc := &mockRouterSvc{restoreErr: router.ErrAutolistBackupNotFound}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/autolist/restore", nil)
+	rr := httptest.NewRecorder()
+	h.RestoreAutolistObjects(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAutolistRestore_ObjectsExist_MapsTo409(t *testing.T) {
+	svc := &mockRouterSvc{restoreErr: router.ErrAutolistBackupExists}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/autolist/restore", nil)
+	rr := httptest.NewRecorder()
+	h.RestoreAutolistObjects(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAutolistRestore_RunningSatellite_Returns409(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{})
+	h.SetAutolistRunningProbe(func(*http.Request) bool { return true })
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/autolist/restore", nil)
+	rr := httptest.NewRecorder()
+	h.RestoreAutolistObjects(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAutolistRestore_Success_Returns200(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{})
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/autolist/restore", nil)
+	rr := httptest.NewRecorder()
+	h.RestoreAutolistObjects(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAutolistBackupGET_ReturnsInfo(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{backupExists: true, backupCapturedAt: time.Now()})
+	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/autolist/backup", nil)
+	rr := httptest.NewRecorder()
+	h.GetAutolistBackup(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Data struct {
+			Exists bool `json:"exists"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal: %v (body: %s)", err, rr.Body.String())
+	}
+	if !env.Data.Exists {
+		t.Error("exists=true должен доехать до фронта")
+	}
+}
+
+func TestAutolistBackupGET_Absent_Returns404(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{})
+	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/autolist/backup", nil)
+	rr := httptest.NewRecorder()
+	h.GetAutolistBackup(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAutolistBackupDELETE_Returns200(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{})
+	req := httptest.NewRequest(http.MethodDelete, "/api/singbox/router/autolist/backup", nil)
+	rr := httptest.NewRecorder()
+	h.DeleteAutolistBackup(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

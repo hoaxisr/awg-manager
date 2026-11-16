@@ -204,6 +204,11 @@ type Status struct {
 
 	// LastError — why a process that should be alive did not answer.
 	LastError string `json:"lastError,omitempty"`
+
+	// HasRemovedBackup — у панели есть снимок объектов Autolist, удалённых
+	// кнопкой сноса. Панель ставит его сама (сателлит о снимке не знает);
+	// фронт предлагает восстановить объекты или начать заново.
+	HasRemovedBackup bool `json:"hasRemovedBackup,omitempty"`
 }
 
 // satelliteSnapshot is the operational status document the satellite serves
