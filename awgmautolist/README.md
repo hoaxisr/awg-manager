@@ -45,11 +45,22 @@ AutoOff отсутствует. Удаление записей выполняе
 
 ```text
 Бинарник:       /opt/bin/awgmautolist
-Настройки:      /opt/etc/awgmautolist.json
-State/history:  /opt/etc/awgmautolist-state.json
+Каталог:        /opt/etc/awgmautolist/ (переопределяется AWGM_AUTOLIST_DIR)
+Настройки:      /opt/etc/awgmautolist/config.json
+State:          /opt/etc/awgmautolist/state.json
+Legacy-импорт:  /opt/etc/awgmautolist/history.json (старый -history.json
+                переносится при старте; legacy-импорт старого журнала
+                срабатывает, когда state.json пуст)
+Intent/ключ:    /opt/etc/awgmautolist/enabled, /opt/etc/awgmautolist/key
+                (панель переносит старые /opt/etc/awgmautolist.{enabled,key})
 Init:           /opt/etc/init.d/S99awgmautolist
 Журнал:         /tmp/awgmautolist.log
 ```
+
+До версии 2.21 файлы лежали в /opt/etc плоско (`awgmautolist.json`,
+`awgmautolist-state.json`, `awgmautolist-history.json`). При первом старте
+демон переносит их в каталог; старые `enabled`/`key` читаются как запасной
+вариант до первого переноса панелью.
 
 Журнал находится только в tmpfs, ограничен 5 МиБ и усекается без ротации.
 
@@ -59,9 +70,13 @@ Init:           /opt/etc/init.d/S99awgmautolist
 export AWGM_API_KEY="ключ AWGM"
 /opt/bin/awgmautolist \
   -router http://127.0.0.1:2222 \
-  -config /opt/etc/awgmautolist.json \
+  -config /opt/etc/awgmautolist/config.json \
   -listen 127.0.0.1:2226
 ```
+
+Адрес панели `-router` необязателен: цепочка фолбэков — явный флаг, затем
+`AWGM_ROUTER_URL`, затем `server.port` из `/opt/etc/awg-manager/settings.json`,
+затем `http://127.0.0.1:2222`. Выбор пишется в журнал.
 
 Loopback API содержит только operational status/config и действия кандидатов;
 диагностических endpoints и ручной `/probe` нет.

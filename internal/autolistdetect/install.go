@@ -16,7 +16,10 @@ import (
 
 const (
 	PackageName = "awgmautolist"
-	KeyFile     = "/opt/etc/awgmautolist.key"
+	// KeyFile — the API-key file inside the satellite's config directory.
+	// The pre-directory path (legacyKeyFile in detect.go) is migrated here
+	// on the first write and still removed by uninstall cleanup.
+	KeyFile = "/opt/etc/awgmautolist/key"
 	// controlFile is opkg's record of the installed package.
 	controlFile = "/opt/lib/opkg/info/awgmautolist.control"
 
@@ -56,7 +59,7 @@ type Installer struct {
 }
 
 func NewInstaller(pkg packageManager, keys keySource) *Installer {
-	i := &Installer{pkg: pkg, keys: keys, keyPath: KeyFile, enabledPath: "/opt/etc/awgmautolist.enabled", initPath: "/opt/etc/init.d/S99awgmautolist"}
+	i := &Installer{pkg: pkg, keys: keys, keyPath: KeyFile, enabledPath: enabledFile, initPath: "/opt/etc/init.d/S99awgmautolist"}
 	i.runInit = i.runInitCommand
 	return i
 }
@@ -151,9 +154,52 @@ func (s *Service) ApiKeyChanged() error {
 	return s.installer.ApiKeyChanged()
 }
 
+// RestartAfterPanelPortChange restarts an installed, running satellite so it
+// picks up the panel's new HTTP port (the init script resolves the port from
+// settings.json when AWGM_ROUTER_URL is unset). Called after the new listen
+// address is confirmed and persisted; errors are reported, not fatal — the
+// satellite still works on the default address until the next restart.
+func (s *Service) RestartAfterPanelPortChange() error {
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	if !s.installed() {
+		return nil
+	}
+	// A stopped satellite stays stopped: the user's enable/disable intent is
+	// in the enabled file, and the next start picks up the new port anyway.
+	if !s.desiredEnabled() {
+		return nil
+	}
+	execCtx, cancel := context.WithTimeout(context.Background(), initExecTimeout)
+	defer cancel()
+	if err := s.runInit(execCtx, "restart"); err != nil {
+		return err
+	}
+	// confirmState bounds its own wait (confirmTimeout); the HTTP client
+	// adds its own per-request timeout, so no caller deadline is needed.
+	confirm := s.confirm
+	if confirm == nil {
+		confirm = s.confirmState
+	}
+	return confirm(context.Background(), true)
+}
+
 func (i *Installer) writeKey() error {
 	if i.keys == nil {
 		return errors.New("API key source is not configured")
+	}
+	if err := os.MkdirAll(filepath.Dir(i.keyPath), 0o755); err != nil {
+		return err
+	}
+	// A key at the pre-directory path moves into the directory once, so the
+	// init script's legacy fallback stops mattering after the first write.
+	// Best effort: a failure keeps the old file, which the script still reads.
+	if i.keyPath != legacyKeyFile {
+		if _, err := os.Stat(i.keyPath); errors.Is(err, os.ErrNotExist) {
+			if _, lerr := os.Stat(legacyKeyFile); lerr == nil {
+				_ = os.Rename(legacyKeyFile, i.keyPath)
+			}
+		}
 	}
 	key := strings.ReplaceAll(i.keys.GetApiKey(), "'", `'\''`)
 	tmp, err := os.CreateTemp(filepath.Dir(i.keyPath), ".awgmautolist-key-*.tmp")

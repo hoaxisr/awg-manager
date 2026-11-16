@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,8 +50,14 @@ const (
 
 	// initScript is the Entware lifecycle script; enabledFile holds the
 	// user's enable/disable intent as a shell assignment the script sources.
-	initScript  = "/opt/etc/init.d/S99awgmautolist"
-	enabledFile = "/opt/etc/awgmautolist.enabled"
+	// Before the satellite's config directory existed the file lived at
+	// legacyEnabledFile; it is read as a fallback and migrated on write.
+	initScript = "/opt/etc/init.d/S99awgmautolist"
+
+	// satDir is the satellite's config directory; enabledFile is the panel
+	// -owned intent file inside it.
+	satDir      = "/opt/etc/awgmautolist"
+	enabledFile = satDir + "/enabled"
 
 	// httpTimeout — the status endpoint is local, nothing waits longer.
 	httpTimeout = 5 * time.Second
@@ -84,6 +91,15 @@ const (
 // verdictNotChecked is the evidence verdict when no check has run yet.
 // Error never proves a block (TECHNICAL_SPEC section 2).
 const verdictNotChecked = "not-checked"
+
+// legacyEnabledFile is the pre-directory intent path, still honored until
+// the first write moves it; legacyKeyFile — the pre-directory API-key path,
+// still removed by the uninstall cleanup. Vars, not consts: tests repoint
+// them into a temp dir.
+var (
+	legacyEnabledFile = "/opt/etc/awgmautolist.enabled"
+	legacyKeyFile     = "/opt/etc/awgmautolist.key"
+)
 
 // Target identifies an observed destination. Domain is the registered zone
 // used by candidates and rules; Host is the exact SNI/hostname the probes
@@ -300,18 +316,39 @@ func (s *Service) installed() bool {
 
 // desiredEnabled reads the user's intent. A missing file means the package
 // default: enabled. Anything other than an explicit "ENABLED=no" enables.
+// The legacy flat-path file is honored while it is the only one (the init
+// script applies the same fallback); the first write consolidates it.
 func (s *Service) desiredEnabled() bool { return enabledIntent(s.enabledStatePath()) }
 
 func enabledIntent(path string) bool {
 	b, err := os.ReadFile(path)
-	return err != nil || strings.TrimSpace(string(b)) != "ENABLED=no"
+	if err != nil {
+		// No new file: an old flat-path file may still hold the intent.
+		legacy, legacyErr := os.ReadFile(legacyEnabledFile)
+		if legacyErr == nil && strings.TrimSpace(string(legacy)) == "ENABLED=no" {
+			return false
+		}
+		return true
+	}
+	return strings.TrimSpace(string(b)) != "ENABLED=no"
 }
 
 // writeEnabledState persists the intent atomically: temp file with tight
 // permissions, then rename. The satellite's conf with its API key and
-// arguments is never touched.
+// arguments is never touched. A legacy flat-path intent file is moved to the
+// new path first so exactly one file holds the intent afterwards.
 func (s *Service) writeEnabledState(state string) error {
 	path := s.enabledStatePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if path != legacyEnabledFile {
+		if err := migrateLegacyEnabledFile(filepath.Dir(path)); err != nil {
+			// The old file stays where it was; the new write below still
+			// wins because the init script prefers the new path.
+			_ = err
+		}
+	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, []byte(state), 0600); err != nil {
 		return err
@@ -325,6 +362,23 @@ func (s *Service) writeEnabledState(state string) error {
 		return err
 	}
 	return nil
+}
+
+// migrateLegacyEnabledFile moves the legacy flat-path intent file into dir
+// when it is the only copy. Best effort: any failure keeps the old file, and
+// the init script's fallback keeps it working.
+func migrateLegacyEnabledFile(dir string) error {
+	if _, err := os.Stat(legacyEnabledFile); err != nil {
+		return err // absent (or unreadable): nothing to migrate
+	}
+	dst := filepath.Join(dir, filepath.Base(enabledFile))
+	if _, err := os.Stat(dst); err == nil {
+		return nil // the new file already exists; the legacy one is stale
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.Rename(legacyEnabledFile, dst)
 }
 
 // runCommand is the bounded default command runner: context kills the init

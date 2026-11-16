@@ -141,6 +141,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.settingsHandler.SetEventBus(s.bus)
 	if s.autolistService != nil {
 		h.settingsHandler.SetOnApiKeyChanged(s.autolistService.ApiKeyChanged)
+		h.settingsHandler.SetOnListenChanged(s.autolistService.RestartAfterPanelPortChange)
 	}
 	if s.ndmsQueries != nil {
 		s.exposureGuard = api.NewExposureGuard(s.settings, s.ndmsQueries.StaticNAT, s.ndmsQueries.HTTPProxy, s.ndmsQueries.Interfaces, h.appLog)
