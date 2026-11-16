@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/awgm"
+	"github.com/hoaxisr/awg-manager/awgmautolist/internal/capture"
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/config"
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/model"
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/probe"
@@ -373,6 +374,117 @@ func (e *Engine) Restore(id string) error {
 	})
 }
 
+// Recheck reruns the active checks of one stored candidate: checking,
+// waiting and rejected cards go through the full decision pipeline, added
+// entries rerun the probes only and keep their state — only the evidence
+// fields are refreshed. The call is synchronous: the checks may take up to
+// ~30s (probe timeouts), the operational API and the panel proxy allow that.
+// The request context does not govern the checks: once accepted, a recheck
+// always writes its outcome, so the store is never left with a card stuck in
+// checking because the UI closed.
+func (e *Engine) Recheck(ctx context.Context, id string) error {
+	if !e.Running() {
+		return ErrStopped
+	}
+	e.commitMu.Lock()
+	cand, exists := e.deps.State.Snapshot(time.Now()).Candidates[id]
+	if !exists {
+		e.commitMu.Unlock()
+		return ErrNotFound
+	}
+	// The previous attempt for this candidate is authoritative no longer: a
+	// late decision must not overwrite the fresh rerun that starts below.
+	e.cancelCandidateAttempt(id)
+	e.commitMu.Unlock()
+	e.waitCandidateAttemptStopped(id, 2*time.Second)
+
+	probeCtx := context.WithoutCancel(e.baseCtx)
+	if cand.State == model.CandidateAdded {
+		return e.recheckAdded(probeCtx, id, cand)
+	}
+
+	// A fresh attempt under the current generation, bypassing the admission
+	// drop of a decided candidate: the state is reset to checking first, so
+	// beginAttempt sees a checking card and the publishDecision gate passes.
+	cand.State = model.CandidateChecking
+	cand.Coverage = model.CoverageEvidence{}
+	cand.Direct = model.CheckEvidence{Verdict: model.VerdictNotChecked}
+	cand.WAN = model.CheckEvidence{Verdict: model.VerdictNotChecked}
+	cand.Tunnel = model.CheckEvidence{Verdict: model.VerdictNotChecked}
+	e.commitMu.Lock()
+	perr := e.deps.State.Update(false, func(s *store.State) {
+		s.Candidates[id] = cand
+	})
+	e.commitMu.Unlock()
+	if perr != nil {
+		e.setLastError(fmt.Sprintf("recheck %s state write: %v", id, perr))
+	}
+
+	suspect := capture.Suspect{
+		Target:    cand.Target,
+		Reason:    cand.Reason,
+		ClientIP:  cand.ClientIP,
+		ClientMAC: cand.ClientMAC,
+		FirstAt:   cand.FirstAt,
+		LastAt:    time.Now(),
+	}
+	e.process(suspect)
+
+	// process publishes only when the card is still checking; a user action
+	// that raced the rerun keeps its state either way.
+	if _, ok := e.deps.State.Snapshot(time.Now()).Candidates[id]; !ok {
+		return fmt.Errorf("recheck discarded candidate %s: both paths blocked", id)
+	}
+	return nil
+}
+
+// recheckAdded reruns direct, WAN and tunnel probes for a routed entry
+// without touching its state: coverage does not gate an added rule, and the
+// card must stay added whatever the fresh verdicts say.
+func (e *Engine) recheckAdded(ctx context.Context, id string, cand model.Candidate) error {
+	cfg := e.deps.Config.Config()
+	directPath, err := e.deps.Routes.Resolve(ctx)
+	if err != nil {
+		e.setLastError(fmt.Sprintf("recheck %s direct path: %v", id, err))
+		return err
+	}
+	results := e.deps.Probes.DirectAndWAN(ctx, cand.Target, cfg.WANCheckURL, probe.Path{Interface: directPath.Interface})
+	tunnel := model.CheckEvidence{Verdict: model.VerdictNotChecked}
+	if cfg.TunnelProbe {
+		iface := cand.TargetInterface
+		if iface == "" {
+			resolved, err := e.resolveTunnel(ctx, cfg)
+			if err != nil {
+				tunnel = model.CheckEvidence{Verdict: model.VerdictError, Detail: err.Error(), CheckedAt: time.Now()}
+			} else {
+				iface = resolved.Interface
+			}
+		}
+		if tunnel.Verdict == model.VerdictNotChecked {
+			tunnel = probeEvidence(e.deps.Probes.Check(ctx, cand.Target, probe.Path{Interface: iface}))
+		}
+	}
+	updated := cand
+	updated.Direct = probeEvidence(results.Direct)
+	updated.WAN = probeEvidence(results.WAN)
+	updated.Tunnel = tunnel
+	updated.LastAt = time.Now()
+	e.commitMu.Lock()
+	defer e.commitMu.Unlock()
+	if _, ok := e.deps.State.Snapshot(time.Now()).Candidates[id]; !ok {
+		return nil // forgotten or deleted while the rerun ran
+	}
+	if perr := e.deps.State.Update(true, func(s *store.State) {
+		if existing, ok := s.Candidates[id]; ok && existing.State == model.CandidateAdded {
+			s.Candidates[id] = updated
+		}
+	}); perr != nil {
+		e.setLastError(fmt.Sprintf("recheck %s state write: %v", id, perr))
+		return perr
+	}
+	return nil
+}
+
 // userAction runs one user decision under commitMu. In-flight attempts for
 // the candidate are cancelled after the decision is stored, so a late result
 // can neither overwrite the user decision nor resurrect a removed card. The
@@ -447,6 +559,24 @@ func (e *Engine) cancelCandidateAttempt(id string) {
 		att.cancel()
 	}
 	e.mu.Unlock()
+}
+
+// waitCandidateAttemptStopped waits until the candidate's attempt leaves the
+// active table (or the timeout expires). After cancelCandidateAttempt the
+// worker goroutine still has to unwind from its probe before beginAttempt
+// accepts a replacement attempt; without this wait a recheck would be
+// dropped as a duplicate signal.
+func (e *Engine) waitCandidateAttemptStopped(id string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		e.mu.Lock()
+		_, busy := e.active[id]
+		e.mu.Unlock()
+		if !busy {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // spendAddition records one actual addition in the rolling budget.

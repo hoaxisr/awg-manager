@@ -131,7 +131,13 @@ func (c *Controller) run(ctx context.Context, sockets []packetSocket, table *Flo
 		case <-runCtx.Done():
 			return
 		case now := <-ticker.C:
-			for _, suspect := range table.Scan(now) {
+			// Lock only around the table scan; emit — and with it the
+			// engine enqueue under e.mu — must run outside the table
+			// lock (see FlowTable.scan).
+			table.mu.Lock()
+			suspects := table.scan(now)
+			table.mu.Unlock()
+			for _, suspect := range suspects {
 				if c.emit != nil {
 					c.emit(suspect)
 				}
@@ -171,7 +177,16 @@ func (c *Controller) readLoop(ctx context.Context, cancel context.CancelFunc, so
 	}
 }
 
+// pauseDoneTimeout ограничивает ожидание закрытия поколения сокетов в
+// Pause. Read может зависнуть в socket.Read навсегда (так ведёт себя
+// зависший readLoop) — тогда закрытие сокета не помогает, и без таймаута
+// Pause блокировался бы вечно, удерживая opMu и блокируя за собой Start.
+const pauseDoneTimeout = 3 * time.Second
+
 // Pause closes the current socket generation and clears all passive state.
+// Если readLoop не завершился за pauseDoneTimeout (например, завис в
+// socket.Read, который не разблокируется Close), пауза продолжает работу
+// по таймауту вместо вечного ожидания: поколение помечается остановленным.
 func (c *Controller) Pause() error {
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
@@ -185,7 +200,19 @@ func (c *Controller) Pause() error {
 	if cancel != nil {
 		cancel()
 	}
-	<-done
+	select {
+	case <-done:
+	case <-time.After(pauseDoneTimeout):
+		// ReadLoop не отреагировал на cancel и Close; выходим, чтобы не
+		// держать opMu вечно. Флаги ниже всё равно переводят контроллер в
+		// остановленное состояние.
+		c.mu.Lock()
+		c.done = nil
+		c.cancel = nil
+		c.running = false
+		c.mu.Unlock()
+		return fmt.Errorf("capture pause timed out after %s: read loop is stuck", pauseDoneTimeout)
+	}
 	c.mu.Lock()
 	c.done = nil
 	c.cancel = nil

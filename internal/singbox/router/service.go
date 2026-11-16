@@ -64,6 +64,19 @@ type Service interface {
 	AddRule(ctx context.Context, rule Rule) error
 	UpdateRule(ctx context.Context, index int, rule Rule) error
 	DeleteRule(ctx context.Context, index int) error
+	// TeardownAutolistObjects удаляет все объекты Autolist одним draft→apply:
+	// owner-правило, rule-set awgm-autolist, outbound awgm-autolist-target.
+	// Идемпотентен; отказ, пока outbound держит чужое правило или группу.
+	// Перед удалением пишет снимок объектов в каталог данных панели; результат
+	// несёт backupSaved (best-effort запись).
+	TeardownAutolistObjects(ctx context.Context) (AutolistTeardownResult, error)
+	// RestoreAutolistObjects пересоздаёт объекты Autolist из снимка,
+	// оставленного сносом (draft→apply); при успехе снимок удаляется.
+	RestoreAutolistObjects(ctx context.Context) error
+	// AutolistBackupInfo — есть ли снимок и когда снят (для статуса фронта).
+	AutolistBackupInfo(ctx context.Context) (exists bool, capturedAt time.Time, err error)
+	// DeleteAutolistBackup убирает снимок — «начать заново» без восстановления.
+	DeleteAutolistBackup(ctx context.Context) error
 	// BulkSetRuleOutbound sets Outbound on every rule at the given indices in
 	// a single config write. See ServiceImpl.BulkSetRuleOutbound for the
 	// validation contract.

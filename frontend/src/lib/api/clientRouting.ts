@@ -2,6 +2,7 @@ import type {
 	AccessPolicy,
 	AutolistBatchFailure,
 	AutolistBatchResult,
+	AutolistCandidate,
 	AutolistConfig,
 	AutolistControlAction,
 	AutolistSatellitePath,
@@ -40,6 +41,7 @@ function emptyAutolistStatus(): AutolistStatus {
 		enabled: false,
 		captureActive: false,
 		capturePaused: false,
+		hasRemovedBackup: false,
 		activeChecks: 0,
 		queuedChecks: 0,
 		addsUsedHour: 0,
@@ -400,7 +402,7 @@ export class RoutingClient extends ServersClient {
 	}
 
 	/** Единая проверка per-ID результата: HTTP 200 не скрывает writer error. */
-	private checkAutolistActionResult(response: { results?: Record<string, string | null> }, id: string): void {
+	private checkAutolistActionResult(response: { results?: Record<string, unknown> }, id: string): void {
 		if (!response?.results || !(id in response.results)) {
 			throw new Error('Invalid Autolist action response: missing candidate result');
 		}
@@ -473,6 +475,23 @@ export class RoutingClient extends ServersClient {
 	/** Явно удалить добавленное правило (remove owned entry). */
 	async removeAutolistCandidate(id: string): Promise<void> {
 		await this.runAutolistAction('/remove', id);
+	}
+
+	/**
+	 * Повторная проверка кандидата — POST /recheck через прокси. Сателлит
+	 * синхронно перегоняет проверки (до ~30 с) и возвращает обновлённую
+	 * карточку; null в results значит «карточка исчезла» — клиент дочитывает
+	 * /status. Ошибка пер-ID приходит строкой в results[id].
+	 */
+	async recheckAutolistCandidate(id: string): Promise<AutolistCandidate | null> {
+		const response = await this.autolistProxy<{ results?: Record<string, AutolistCandidate | string | null> }>(
+			'/recheck',
+			{ id }
+		);
+		this.checkAutolistActionResult(response, id);
+		const raw = response.results?.[id];
+		if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+		return raw;
 	}
 
 	/**

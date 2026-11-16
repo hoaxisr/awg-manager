@@ -101,3 +101,38 @@ func TestServerListenConfirm_BadTokenRejected(t *testing.T) {
 		t.Errorf("settings must be untouched, port = %d", settings.Server.Port)
 	}
 }
+
+// Успешный confirm будит хук смены адреса (перезапуск сателлитов с
+// фиксированным -router); отклонённый токен — нет.
+func TestServerListenConfirm_NotifiesListenHook(t *testing.T) {
+	h, _, _ := newListenHandler(t)
+	calls := make(chan struct{}, 2)
+	h.SetOnListenChanged(func() error { calls <- struct{}{}; return nil })
+
+	w := httptest.NewRecorder()
+	h.Change(w, httptest.NewRequest(http.MethodPost, "/api/server/listen/change",
+		strings.NewReader(`{"port":8080}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("change code = %d: %s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	h.Confirm(w, httptest.NewRequest(http.MethodPost, "/api/server/listen/confirm",
+		strings.NewReader(`{"token":"tok-1"}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("confirm code = %d: %s", w.Code, w.Body.String())
+	}
+	// Хук зовётся в горутине (notifyListenChanged) — даём ей возможность
+	// выполниться, прежде чем объявлять провал.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		select {
+		case <-calls:
+			return
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("confirm не вызвал хук смены адреса")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

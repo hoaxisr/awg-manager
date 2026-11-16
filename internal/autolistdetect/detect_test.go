@@ -18,9 +18,15 @@ func testService(t *testing.T) (*Service, string) {
 	dir := t.TempDir()
 	s := NewService()
 	s.initPath = filepath.Join(dir, "S99awgmautolist")
-	s.statePath = filepath.Join(dir, "awgmautolist.enabled")
+	s.statePath = filepath.Join(dir, "enabled")
 	s.pidPath = filepath.Join(dir, "awgmautolist.pid")
 	s.confirm = func(context.Context, bool) error { return nil }
+	// The legacy flat-path fallback constants are redirected into the temp
+	// dir so tests never read the real /opt/etc files.
+	oldEnabled, oldKey := legacyEnabledFile, legacyKeyFile
+	legacyEnabledFile = filepath.Join(dir, "awgmautolist.enabled")
+	legacyKeyFile = filepath.Join(dir, "awgmautolist.key")
+	t.Cleanup(func() { legacyEnabledFile, legacyKeyFile = oldEnabled, oldKey })
 	return s, dir
 }
 
@@ -385,10 +391,52 @@ func TestStatusEndpointIsLoopbackConstant(t *testing.T) {
 	if s.initScriptPath() != "/opt/etc/init.d/S99awgmautolist" {
 		t.Fatalf("init path = %q", s.initScriptPath())
 	}
-	if s.enabledStatePath() != "/opt/etc/awgmautolist.enabled" {
+	if s.enabledStatePath() != "/opt/etc/awgmautolist/enabled" {
 		t.Fatalf("enabled path = %q", s.enabledStatePath())
 	}
 	if s.pidFilePath() != "/opt/var/run/awgmautolist.pid" {
 		t.Fatalf("pid path = %q", s.pidFilePath())
+	}
+}
+
+// The intent is read from the legacy flat-path file while it is the only
+// copy, and the first write consolidates it into the satellite directory.
+func TestEnabledIntentLegacyFallbackAndMigration(t *testing.T) {
+	s, dir := testService(t)
+	if err := os.WriteFile(s.initPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	newPath := filepath.Join(dir, "enabled")
+	legacyPath := legacyEnabledFile
+
+	// Legacy ENABLED=no is honored while the new file does not exist.
+	if err := os.WriteFile(legacyPath, []byte("ENABLED=no\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if st := s.GetStatus(context.Background()); st.Enabled {
+		t.Fatal("legacy ENABLED=no must disable the intent flag")
+	}
+
+	// SetEnabled writes the new file and moves (not copies) the legacy one.
+	if err := s.SetEnabled(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(newPath)
+	if err != nil || string(b) != "ENABLED=yes\n" {
+		t.Fatalf("new intent file = %q, %v", b, err)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy intent file must move into the directory: %v", err)
+	}
+
+	// An existing new file wins over a stale legacy copy (never overwritten).
+	if err := os.WriteFile(legacyPath, []byte("ENABLED=no\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetEnabled(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(newPath); err != nil || string(b) != "ENABLED=no\n" {
+		t.Fatalf("new intent file = %q, %v", b, err)
 	}
 }

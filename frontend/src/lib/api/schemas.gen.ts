@@ -2840,8 +2840,17 @@ const api_WireguardServerPeerDTO: v.GenericSchema = v.looseObject({
 	txBytes: v.optional(v.nullable(v.number())),
 });
 
+const api_autolistBackupInfoResponse: v.GenericSchema = v.looseObject({
+	capturedAt: v.optional(v.nullable(v.string())),
+	exists: v.optional(v.nullable(v.boolean())),
+});
+
 const api_autolistStatusResponse: v.GenericSchema = v.looseObject({
 	autolistStatus: v.optional(v.nullable(v.lazy(() => autolistdetect_Status))),
+});
+
+const api_autolistTeardownResponse: v.GenericSchema = v.looseObject({
+	backupSaved: v.optional(v.nullable(v.boolean())),
 });
 
 const api_zapretHostlistResponse: v.GenericSchema = v.looseObject({
@@ -2916,6 +2925,7 @@ const autolistdetect_Status: v.GenericSchema = v.looseObject({
 	captureActive: v.optional(v.nullable(v.boolean())),
 	capturePaused: v.optional(v.nullable(v.boolean())),
 	enabled: v.optional(v.nullable(v.boolean())),
+	hasRemovedBackup: v.optional(v.nullable(v.boolean())),
 	history: v.optional(v.nullable(v.array(v.lazy(() => autolistdetect_HistoryEntry)))),
 	installed: v.optional(v.nullable(v.boolean())),
 	lastError: v.optional(v.nullable(v.string())),
@@ -3448,6 +3458,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /proxyrt/seed/listen-moves": v.lazy(() => api_OkResponse),
 	"DELETE /servers/{name}/peers/{pubkey}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /servers/mark": v.lazy(() => api_ServersAllResponse),
+	"DELETE /singbox/router/autolist/backup": v.lazy(() => api_OkResponse),
 	"DELETE /singbox/subscriptions/delete": v.lazy(() => api_APIEnvelope),
 	"DELETE /singbox/subscriptions/happ-keys": v.lazy(() => api_APIEnvelope),
 	"DELETE /singbox/tunnels": v.lazy(() => api_SingboxTunnelsResponse),
@@ -3555,6 +3566,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /singbox/inbounds": v.intersect([v.lazy(() => api_OkResponse), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_SingboxInboundsResponse))),
 })]),
+	"GET /singbox/router/autolist/backup": v.lazy(() => api_autolistBackupInfoResponse),
 	"GET /singbox/router/bindable-interfaces": v.lazy(() => api_SingboxRouterWANInterfacesListResponse),
 	"GET /singbox/router/bypass-set/status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_BypassSetStatusData))),
@@ -3779,6 +3791,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/fakeip/config/rulesets/update": v.lazy(() => api_OkResponse),
 	"POST /singbox/install": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/ndms-proxy": v.lazy(() => api_APIEnvelope),
+	"POST /singbox/router/autolist/restore": v.lazy(() => api_OkResponse),
+	"POST /singbox/router/autolist/teardown": v.lazy(() => api_autolistTeardownResponse),
 	"POST /singbox/router/bypass-set/install-conntrack": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_BypassSetStatusData))),
 })]),

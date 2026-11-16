@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/awgm"
+	"github.com/hoaxisr/awg-manager/awgmautolist/internal/capture"
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/config"
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/model"
 )
@@ -42,6 +43,208 @@ func TestMonitorWANUsesResolvedDirectPath(t *testing.T) {
 		_, ok := seen.Load("fresh-wan|eth4")
 		return ok
 	})
+}
+
+// wanSeriesHarness поднимает движок с мониторными интервалами, пригодными
+// для тестов серии неудач: тики и повторы по 5 мс. Монитор включается через
+// PatchConfig ПОСЛЕ настройки фейков: иначе первая проверка монитора
+// стартует ещё в newHarness и успевает увидеть вердикт до setWAN.
+func wanSeriesHarness(t *testing.T, configure func(*config.Config)) *testHarness {
+	t.Helper()
+	oldInterval := monitorInterval
+	oldRetry := wanRetryInterval
+	monitorInterval = 5 * time.Millisecond
+	wanRetryInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		monitorInterval = oldInterval
+		wanRetryInterval = oldRetry
+	})
+	h := newHarness(t, configure)
+	if _, err := h.engine.PatchConfig([]byte(`{"wanMonitorEnabled":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// TestWANFailureSeriesRequiresThreeConsecutiveFailures proves the new
+// failure series: one and two consecutive failures keep the capture
+// running, the third pauses it.
+func TestWANFailureSeriesRequiresThreeConsecutiveFailures(t *testing.T) {
+	h := wanSeriesHarness(t, nil)
+	h.probes.setWAN(model.VerdictError)
+	h.waitFor(func() bool { return h.engine.Status().CapturePaused })
+}
+
+// TestWANFailureSeriesRetryComesFast proves the series retries ~1s after a
+// failure instead of waiting the full monitor period. The ticker stays at
+// the real 30s: a pause can then only happen through the retry timer.
+func TestWANFailureSeriesRetryComesFast(t *testing.T) {
+	oldInterval := monitorInterval
+	oldRetry := wanRetryInterval
+	monitorInterval = 30 * time.Second
+	wanRetryInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		monitorInterval = oldInterval
+		wanRetryInterval = oldRetry
+	})
+	h := newHarness(t, nil)
+	h.probes.setWAN(model.VerdictError)
+	if _, err := h.engine.PatchConfig([]byte(`{"wanMonitorEnabled":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	h.waitFor(func() bool { return h.engine.Status().CapturePaused })
+}
+
+// TestWANFailureSeriesResetsOnSuccess proves that a successful check inside
+// a series resets the counter: after two failures and one success the next
+// single failure must not pause the capture.
+//
+// Тест детерминирован по построению: ретраи выключены (wanRetryInterval
+// больше тика монитора), и окно проверки занимает меньше одного тика
+// монитора, поэтому за время наблюдения не может набраться серия из трёх
+// неудач — проверка «паузы нет» не гоняется с самой серией.
+func TestWANFailureSeriesResetsOnSuccess(t *testing.T) {
+	oldInterval := monitorInterval
+	oldRetry := wanRetryInterval
+	// Тик 50 мс; ретраи выключены (интервал больше тика не взводится —
+	// см. startMonitorLocked: retry берётся только если он короче тика).
+	// Окно наблюдения 120 мс < 2 тиков: максимум одна новая неудача до
+	// следующего тика.
+	monitorInterval = 50 * time.Millisecond
+	wanRetryInterval = 500 * time.Millisecond
+	t.Cleanup(func() {
+		monitorInterval = oldInterval
+		wanRetryInterval = oldRetry
+	})
+	h := newHarness(t, nil)
+	h.probes.setWAN(model.VerdictError)
+	if _, err := h.engine.PatchConfig([]byte(`{"wanMonitorEnabled":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	h.waitFor(func() bool { return h.engine.wanFailureCount() >= 2 })
+	h.probes.setWAN(model.VerdictReachable)
+	h.waitFor(func() bool { return h.engine.wanFailureCount() == 0 })
+	// Сброс должен оставить capture живым: счётчик обнулён, пауза не
+	// ставилась ни в первой серии, ни при сбросе.
+	if _, paused := h.engine.wanSnapshot(); paused {
+		t.Fatal("reset paused the capture")
+	}
+	startsBefore := h.captureStarts()
+	h.probes.setWAN(model.VerdictError)
+	// Первая неудача новой серии: паузы быть не должно. За окно 120 мс
+	// (2 тика по 50 мс + запас) серия может дорасти максимум до 2 —
+	// pauseCaptureLocked недостижим, опрос флага безопасен от гонки.
+	deadline := time.Now().Add(120 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if count, paused := h.engine.wanSnapshot(); paused {
+			t.Fatalf("single failure after a reset paused the capture (count=%d)", count)
+		}
+		if h.captureStarts() > startsBefore {
+			t.Fatal("capture was restarted after a single failure")
+		}
+		if count, _ := h.engine.wanSnapshot(); count >= 2 {
+			return // the new series is growing: the reset really happened
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("failure series did not restart after a successful check")
+}
+
+// TestWANPausedResumesOnFirstSuccess preserves the resume semantics inside
+// the new flow: the first reachable check while paused resumes the capture.
+func TestWANPausedResumesOnFirstSuccess(t *testing.T) {
+	h := wanSeriesHarness(t, nil)
+	h.probes.setWAN(model.VerdictError)
+	h.waitFor(func() bool { return h.engine.Status().CapturePaused })
+	h.probes.setWAN(model.VerdictReachable)
+	h.waitFor(func() bool { return !h.engine.Status().CapturePaused })
+	if !h.engine.Status().CaptureRunning {
+		t.Fatal("capture is not running after resume")
+	}
+}
+
+// TestMonitorCheckDoesNotHoldEngineLocksDuringCapturePause is the deadlock
+// regression (task 9). The old engine called capture.Pause() under
+// commitMu+mu while the capture readLoop sat in emit→enqueue on e.mu. The
+// fake here reproduces that chain: its Pause() re-enters the engine
+// (Status + enqueue, both take e.mu) before returning. Under the old
+// locking the re-entry blocks forever; the fixed engine must complete the
+// pause and answer the re-entrant calls.
+func TestMonitorCheckDoesNotHoldEngineLocksDuringCapturePause(t *testing.T) {
+	oldInterval := monitorInterval
+	monitorInterval = 5 * time.Millisecond
+	t.Cleanup(func() { monitorInterval = oldInterval })
+	h := newHarness(t, func(cfg *config.Config) { cfg.WANMonitorEnabled = true })
+
+	release := make(chan struct{})
+	pauseStarted := make(chan struct{})
+	inner := h.capture
+	eng := h.engine
+	wrapper := &reentrantPauseCapture{inner: inner, eng: eng, release: release, pauseStarted: pauseStarted}
+	eng.commitMu.Lock()
+	eng.mu.Lock()
+	eng.capture = wrapper
+	eng.captureGen++
+	eng.mu.Unlock()
+	eng.commitMu.Unlock()
+
+	h.probes.setWAN(model.VerdictError)
+	select {
+	case <-pauseStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("engine never called capture.Pause")
+	}
+	// Пока Pause «висит», движок обязан отвечать на вызовы, берущие e.mu:
+	// в старом коде monitorCheck держал его до конца Pause.
+	statusDone := make(chan engineStatus, 1)
+	go func() { statusDone <- eng.Status() }()
+	select {
+	case <-statusDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("engine locks are held during capture.Pause (status blocked)")
+	}
+	close(release)
+	h.waitFor(func() bool { return h.engine.Status().CapturePaused })
+}
+
+type engineStatus = Status
+
+// reentrantPauseCapture wraps the fake capture: Pause marks the pause,
+// signals the test, blocks on release and then re-enters the engine
+// (Status + enqueue) exactly like the old emit→enqueue chain under Pause.
+type reentrantPauseCapture struct {
+	inner        *fakeCapture
+	eng          *Engine
+	release      chan struct{}
+	pauseStarted chan struct{}
+	reentered    bool
+}
+
+func (r *reentrantPauseCapture) Start(ctx context.Context) error { return r.inner.Start(ctx) }
+func (r *reentrantPauseCapture) Stop() error                     { return r.inner.Stop() }
+func (r *reentrantPauseCapture) Status() capture.CaptureStatus   { return r.inner.Status() }
+
+func (r *reentrantPauseCapture) Pause() error {
+	r.inner.mu.Lock()
+	r.inner.paused = true
+	r.inner.running = false
+	r.inner.mu.Unlock()
+	select {
+	case <-r.pauseStarted:
+	default:
+		close(r.pauseStarted)
+	}
+	<-r.release
+	// Реентер в движок, как делал readLoop в emit→enqueue во время Pause.
+	r.eng.Status()
+	r.eng.enqueue(capture.Suspect{
+		Target:    model.Target{Domain: "reenter.example", Network: model.NetworkTCP, Port: 443},
+		Reason:    "tcp-rst",
+		ClientIP:  "192.168.1.50",
+		ClientMAC: "aa:bb:cc:dd:ee:ff",
+		FirstAt:   time.Now(), LastAt: time.Now(),
+	})
+	return nil
 }
 
 func TestPauseInvalidationRemovesCheckingCard(t *testing.T) {

@@ -1,4 +1,9 @@
 #!/bin/sh
 # Preserve settings, candidates, history and router rules. Only the API key is
-# package-owned and removed on an actual removal, never on upgrade.
-[ "$1" = "upgrade" ] || rm -f /opt/etc/awgmautolist.key
+# package-owned and removed on an actual removal, never on upgrade. Both
+# layouts are cleaned: the config-directory key and the pre-2.21 flat path.
+[ "$1" = "upgrade" ] || {
+    rm -f /opt/etc/awgmautolist/key
+    rmdir /opt/etc/awgmautolist 2>/dev/null
+    rm -f /opt/etc/awgmautolist.key
+}

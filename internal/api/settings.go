@@ -195,10 +195,14 @@ type SettingsHandler struct {
 	clashPorts               clashPortInspector
 	onObfuscatorRelayChanged func()
 	onApiKeyChanged          func() error
-	downloadSvc              *downloader.Service
-	log                      *logging.ScopedLogger
-	bus                      *events.Bus
-	exposure                 exposureChecker
+	// onListenChanged — порт HTTP-сервера сменился и подтверждён: сателлит
+	// autolist ходит в панель по фиксированному -router, поэтому его надо
+	// перезапустить на новом адресе.
+	onListenChanged func() error
+	downloadSvc     *downloader.Service
+	log             *logging.ScopedLogger
+	bus             *events.Bus
+	exposure        exposureChecker
 }
 
 // exposureChecker re-runs the "are we exposed without a password" check
@@ -285,6 +289,26 @@ func (h *SettingsHandler) SetOnObfuscatorRelayChanged(fn func()) {
 // ходящие в API по Bearer, должны получить новый.
 func (h *SettingsHandler) SetOnApiKeyChanged(fn func() error) {
 	h.onApiKeyChanged = fn
+}
+
+// SetOnListenChanged — порт HTTP-сервера сменился и подтверждён (PATCH
+// настроек или /server/listen/confirm): сателлиты с фиксированным -router
+// ходят по старому адресу, пока их не перезапустить.
+func (h *SettingsHandler) SetOnListenChanged(fn func() error) {
+	h.onListenChanged = fn
+}
+
+// notifyListenChanged зовёт хук в горутине: перезапуск сателлита не должен
+// держать ответ на сохранение настроек.
+func (h *SettingsHandler) notifyListenChanged() {
+	if h.onListenChanged == nil {
+		return
+	}
+	go func() {
+		if err := h.onListenChanged(); err != nil {
+			h.log.Warn("listen", "", "satellite restart after port change failed: "+err.Error())
+		}
+	}()
 }
 
 // notifyApiKeyChanged зовёт хук в горутине: перезапуск сателлита не должен
@@ -703,6 +727,9 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.bus.PublishInvalidated(events.ResourceSettings, "updated")
 	if out.ApiKey != oldSettings.ApiKey {
 		h.notifyApiKeyChanged()
+	}
+	if out.Server.Port != oldSettings.Server.Port {
+		h.notifyListenChanged()
 	}
 
 	// Порт мог смениться — перепроверяем экспозицию. В горутине с

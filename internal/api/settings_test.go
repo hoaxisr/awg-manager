@@ -688,3 +688,32 @@ func TestSettingsHandler_ApiKeyChangeNotifiesHook(t *testing.T) {
 	}
 	expect("patch без ключа", false)
 }
+
+// Смена server.port в PATCH настроек будит хук перезапуска сателлитов;
+// сохранение без смены порта — нет.
+func TestSettingsHandler_PortChangeNotifiesListenHook(t *testing.T) {
+	h, _ := newSettingsHandlerForTest(t)
+	calls := make(chan struct{}, 4)
+	h.SetOnListenChanged(func() error { calls <- struct{}{}; return nil })
+	expect := func(what string, want bool) {
+		t.Helper()
+		select {
+		case <-calls:
+			if !want {
+				t.Fatalf("%s: лишний вызов хука", what)
+			}
+		case <-time.After(300 * time.Millisecond):
+			if want {
+				t.Fatalf("%s: хук не вызван", what)
+			}
+		}
+	}
+	if rr := perform(h.Update, http.MethodPost, "/settings", `{"server":{"port":8080}}`); rr.Code != 200 {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	expect("patch port", true)
+	if rr := perform(h.Update, http.MethodPost, "/settings", `{"server":{"port":8080}}`); rr.Code != 200 {
+		t.Fatalf("code=%d", rr.Code)
+	}
+	expect("patch тот же порт", false)
+}

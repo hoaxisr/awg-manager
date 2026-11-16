@@ -48,9 +48,14 @@ func testInstaller(t *testing.T) (*Installer, *fakePackageManager, string) {
 	dir := t.TempDir()
 	pkg := &fakePackageManager{}
 	installer := NewInstaller(pkg, fakeKeys{key: "secret", auth: true})
-	installer.keyPath = filepath.Join(dir, "awgmautolist.key")
-	installer.enabledPath = filepath.Join(dir, "awgmautolist.enabled")
+	installer.keyPath = filepath.Join(dir, "key")
+	installer.enabledPath = filepath.Join(dir, "enabled")
 	installer.initPath = filepath.Join(dir, "S99awgmautolist")
+	// The legacy flat-path fallback constants are redirected into the temp
+	// dir so tests never touch the real /opt/etc files.
+	oldKey := legacyKeyFile
+	legacyKeyFile = filepath.Join(dir, "awgmautolist.key")
+	t.Cleanup(func() { legacyKeyFile = oldKey })
 	installer.SetConfirm(func(context.Context, bool) error { return nil })
 	pkg.onInstall = func() {
 		if err := os.WriteFile(installer.initPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
@@ -270,4 +275,85 @@ func TestApiKeyChangedRestartsOnlyInstalled(t *testing.T) {
 	if err := installer.ApiKeyChanged(); err != nil || !called {
 		t.Fatalf("installed: called=%t err=%v", called, err)
 	}
+}
+
+// A key at the pre-directory path moves into the config directory on the
+// first key write; an existing new-path key is never overwritten by it.
+func TestWriteKeyMigratesLegacyKey(t *testing.T) {
+	installer, _, dir := testInstaller(t)
+	legacyKey := filepath.Join(dir, "awgmautolist.key")
+	if err := os.WriteFile(legacyKey, []byte("AWGM_API_KEY='old'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := installer.writeKey(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacyKey); !os.IsNotExist(err) {
+		t.Fatalf("legacy key must move into the directory: %v", err)
+	}
+	data, err := os.ReadFile(installer.keyPath)
+	if err != nil || string(data) != "AWGM_API_KEY='secret'\n" {
+		t.Fatalf("key=%q err=%v", data, err)
+	}
+	info, _ := os.Stat(installer.keyPath)
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("key mode=%o", info.Mode().Perm())
+	}
+}
+
+// The port-change restart touches only an installed and enabled satellite;
+// a disabled or absent one is left alone.
+func TestRestartAfterPanelPortChange(t *testing.T) {
+	setup := func(t *testing.T) (*Service, *[]string) {
+		t.Helper()
+		s, _ := testService(t)
+		if err := os.WriteFile(s.initPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var actions []string
+		s.command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+			actions = append(actions, args[0])
+			return nil, nil
+		}
+		return s, &actions
+	}
+
+	t.Run("installed and enabled restarts", func(t *testing.T) {
+		s, actions := setup(t)
+		if err := s.SetEnabled(context.Background(), true); err != nil {
+			t.Fatal(err)
+		}
+		*actions = nil
+		if err := s.RestartAfterPanelPortChange(); err != nil {
+			t.Fatal(err)
+		}
+		if want := "restart"; len(*actions) != 1 || (*actions)[0] != want {
+			t.Fatalf("actions = %v, want [%s]", *actions, want)
+		}
+	})
+	t.Run("disabled satellite is not touched", func(t *testing.T) {
+		s, actions := setup(t)
+		if err := s.SetEnabled(context.Background(), false); err != nil {
+			t.Fatal(err)
+		}
+		*actions = nil
+		if err := s.RestartAfterPanelPortChange(); err != nil {
+			t.Fatal(err)
+		}
+		if len(*actions) != 0 {
+			t.Fatalf("disabled satellite was restarted: %v", *actions)
+		}
+	})
+	t.Run("init failure is reported", func(t *testing.T) {
+		s, _ := setup(t)
+		if err := s.SetEnabled(context.Background(), true); err != nil {
+			t.Fatal(err)
+		}
+		s.command = func(context.Context, string, ...string) ([]byte, error) {
+			return []byte("PROG not found\n"), errors.New("exit status 1")
+		}
+		if err := s.RestartAfterPanelPortChange(); err == nil || !strings.Contains(err.Error(), "PROG not found") {
+			t.Fatalf("err = %v, want raw init output", err)
+		}
+	})
 }

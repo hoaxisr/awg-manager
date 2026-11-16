@@ -14,7 +14,9 @@
 		mergeAutolistExclusions,
 	} from './configPayload';
 	import { errorMessage } from '$lib/utils/errorMessage';
+	import RecheckModal from './RecheckModal.svelte';
 	import type {
+		AWGTagInfo,
 		AutolistBatchFailure,
 		AutolistCandidate,
 		AutolistCandidateState,
@@ -26,11 +28,14 @@
 		SingboxRouterDNSServer,
 		SingboxRouterDNSGlobals,
 		SingboxRouterRuleSet,
+		SingboxTunnel,
+		Subscription,
 	} from '$lib/types';
 	import { Button, IconButton, Modal, Toggle, Dropdown, Input, ChipMultiSelect, Tabs, Stat, StatStrip } from '$lib/components/ui';
 	import { PageHeader } from '$lib/components/layout';
 	import {
 		RotateCw,
+		RefreshCw,
 		EyeOff,
 		Eye,
 		CircleCheck,
@@ -42,6 +47,7 @@
 		ShieldPlus,
 		Trash2,
 		Power,
+		ArchiveRestore,
 	} from 'lucide-svelte';
 
 	let status = $derived($autolistStatus.data);
@@ -169,15 +175,47 @@
 
 	// ── Candidate actions ────────────────────────────────────────────────
 
-	async function candidateAction(id: string, run: () => Promise<void>, ok: () => string, err: () => string) {
-		if (busyIds.has(id) || actionBusy) return;
+	/**
+	 * Кандидат, открытый в модалке повторной проверки. Хранится ОБЪЕКТОМ, а
+	 * не id: карточка может обновиться поллингом, а модалка фиксирует
+	 * кандидата на момент открытия и не должна перезапускать прогон.
+	 */
+	let recheckCandidate = $state<AutolistCandidate | null>(null);
+
+	function openRecheck(c: AutolistCandidate) {
+		if (busyIds.has(c.id) || actionBusy) return;
+		recheckCandidate = c;
+	}
+
+	function closeRecheck() {
+		// RecheckModal сам пишет в стор при успехе — инвалидация по закрытию
+		// безопасна в любом случае: карточка подтянет свежие evidence.
+		recheckCandidate = null;
+		autolistStatus.invalidate();
+	}
+
+	/**
+	 * Действие из футера модалки recheck: тот же обработчик, что на карточке
+	 * (addCandidate/dismissCandidate/…), без двойной обёртки candidateAction —
+	 * иначе внутренний вызов видит чужой busy и молча отказывает. После
+	 * успеха модалка закрывается, при ошибке остаётся открытой.
+	 */
+	async function recheckModalAction(action: (c: AutolistCandidate) => Promise<boolean>) {
+		if (!recheckCandidate) return;
+		if (await action(recheckCandidate)) closeRecheck();
+	}
+
+	async function candidateAction(id: string, run: () => Promise<void>, ok: () => string, err: () => string): Promise<boolean> {
+		if (busyIds.has(id) || actionBusy) return false;
 		setBusy(id, true);
 		try {
 			await run();
 			notifications.success(ok());
 			autolistStatus.invalidate();
+			return true;
 		} catch (e) {
 			notifications.error(errorMessage(e, err()));
+			return false;
 		} finally {
 			setBusy(id, false);
 		}
@@ -467,6 +505,97 @@
 	let historyClearConfirmOpen = $state(false);
 	let historyClearBusy = $state(false);
 
+	// ── Teardown объектов Autolist (danger, явная кнопка) ────────────────
+	let teardownConfirmOpen = $state(false);
+	let teardownBusy = $state(false);
+
+	/** Полный снос owner-правила, rule-set и outbound Autolist. */
+	async function teardownAutolistObjects() {
+		if (teardownBusy) return;
+		teardownBusy = true;
+		try {
+			const res = await api.teardownAutolistObjects();
+			if (res?.backupSaved === false) {
+				// Снос выполнен, но снимка нет: восстановить будет не из чего.
+				notifications.warning(m.autolist_backup_toast_nosnapshot());
+			} else {
+				notifications.success(m.autolist_teardown_success());
+			}
+			teardownConfirmOpen = false;
+		} catch (e) {
+			// 409 от бэкенда («сателлит работает») переводим в понятный текст;
+			// request() кладёт HTTP-статус в поле status ошибки.
+			const status = e instanceof Error ? (e as Error & { status?: number }).status : undefined;
+			notifications.error(
+				status === 409 ? m.autolist_teardown_err_running() : errorMessage(e, m.autolist_teardown_err()),
+			);
+		} finally {
+			teardownBusy = false;
+		}
+	}
+
+	// ── Снимок удалённых объектов: восстановить или начать заново ─────────
+	let backupConfirmOpen = $state(false);
+	let backupRestoreBusy = $state(false);
+	let backupDiscardBusy = $state(false);
+
+	/** Дата снимка для текста модалки; недоступная дата — без неё. */
+	let backupCapturedAt = $state<string | undefined>(undefined);
+	let backupDateText = $derived(formatAutolistTime(backupCapturedAt));
+
+	async function openBackupDialog() {
+		// Дата подтягивается на момент открытия; ошибка чтения не блокирует —
+		// в тексте модалки останется «—».
+		try {
+			const info = await api.getAutolistBackup();
+			backupCapturedAt = info.exists ? info.capturedAt : undefined;
+		} catch {
+			backupCapturedAt = undefined;
+		}
+		backupConfirmOpen = true;
+	}
+
+	/** Восстановить объекты из снимка (draft→apply на бэкенде). */
+	async function restoreAutolistBackup() {
+		if (backupRestoreBusy || backupDiscardBusy) return;
+		backupRestoreBusy = true;
+		try {
+			await api.restoreAutolistObjects();
+			notifications.success(m.autolist_backup_success());
+			backupConfirmOpen = false;
+			backupCapturedAt = undefined;
+			autolistStatus.invalidate();
+		} catch (e) {
+			const status = e instanceof Error ? (e as Error & { status?: number }).status : undefined;
+			notifications.error(
+				status === 409
+					? running
+						? m.autolist_backup_err_running()
+						: m.autolist_backup_err_exists()
+					: errorMessage(e, m.autolist_backup_err()),
+			);
+		} finally {
+			backupRestoreBusy = false;
+		}
+	}
+
+	/** Начать заново: снимок удаляется, объекты не восстанавливаются. */
+	async function discardAutolistBackup() {
+		if (backupRestoreBusy || backupDiscardBusy) return;
+		backupDiscardBusy = true;
+		try {
+			await api.discardAutolistBackup();
+			notifications.success(m.autolist_backup_discarded());
+			backupConfirmOpen = false;
+			backupCapturedAt = undefined;
+			autolistStatus.invalidate();
+		} catch (e) {
+			notifications.error(errorMessage(e, m.autolist_backup_err()));
+		} finally {
+			backupDiscardBusy = false;
+		}
+	}
+
 	// Локальная копия конфига для модалки настроек; сохранение и включение
 	// autoAdd запрещены, пока чтение не succeed (никакого stale default draft).
 	let cfgDraft = $state<AutolistConfig>(defaultAutolistConfig());
@@ -479,22 +608,33 @@
 	let dnsGlobals = $state<SingboxRouterDNSGlobals | null>(null);
 	let interfaces = $state<RouterInterface[]>([]);
 	let exclusionRuleSets = $state<SingboxRouterRuleSet[]>([]);
+	// Каталог туннелей (те же три источника, что у TunnelCatalog сателлита):
+	// managed AWG, standalone sing-box и подписки.
+	let awgTagInfos = $state<AWGTagInfo[]>([]);
+	let singboxTunnels = $state<SingboxTunnel[]>([]);
+	let subscriptions = $state<Subscription[]>([]);
 	let probeResourcesFetched = $state(false);
 	let probeResourcesLoading = $state(false);
 
 	async function fetchProbeResources() {
 		if (probeResourcesFetched || probeResourcesLoading) return;
 		probeResourcesLoading = true;
-		const [dns, globals, ifaces, ruleSets] = await Promise.allSettled([
+		const [dns, globals, ifaces, ruleSets, awgTags, sbTunnels, subs] = await Promise.allSettled([
 			api.singboxRouterListDNSServers(),
 			api.singboxRouterGetDNSGlobals(),
 			api.getAllInterfaces(),
 			api.singboxRouterListRuleSets(),
+			api.getAWGTags(),
+			api.singboxListTunnels(),
+			api.listSubscriptions(),
 		]);
 		if (dns.status === 'fulfilled') dnsServers = dns.value;
 		if (globals.status === 'fulfilled') dnsGlobals = globals.value;
 		if (ifaces.status === 'fulfilled') interfaces = ifaces.value;
 		if (ruleSets.status === 'fulfilled') exclusionRuleSets = ruleSets.value;
+		if (awgTags.status === 'fulfilled') awgTagInfos = awgTags.value;
+		if (sbTunnels.status === 'fulfilled') singboxTunnels = sbTunnels.value;
+		if (subs.status === 'fulfilled') subscriptions = subs.value;
 		probeResourcesFetched = true;
 		probeResourcesLoading = false;
 	}
@@ -506,17 +646,49 @@
 		if (running) void fetchProbeResources();
 	});
 
-	/** Туннельные интерфейсы из каталога AWGM-туннелей (awg/awg3 теги). */
+	/**
+	 * Список «Интерфейс туннеля»: каталог туннелей (те же три источника, что
+	 * у TunnelCatalog сателлита, awgm/catalog.go) плюс WAN из all-interfaces.
+	 * Managed AWG-туннели (opkgtun*) вырезаны из all-interfaces (isOwnTunnel),
+	 * поэтому приходят только из getAWGTags. Порядок: AWG, standalone
+	 * sing-box, подписки, WAN, затем «хвост» текущего targetInterface —
+	 * сохранённое значение видно, даже если источник временно недоступен.
+	 * Дедуп по kernel-имени интерфейса: первый источник выигрывает, у
+	 * дубликата забираем человеческое имя, если у первого его не было.
+	 */
 	let tunnelInterfaceOptions = $derived.by(() => {
-		const opts: { value: string; label: string }[] = [];
+		/** Накопитель по kernel-имени; label — человеческое имя или ''. */
+		const byValue = new Map<string, { value: string; label: string; description?: string }>();
+		const add = (value: string, human: string, description?: string) => {
+			const existing = byValue.get(value);
+			if (!existing) byValue.set(value, { value, label: human, description });
+			else if (!existing.label && human) existing.label = human;
+		};
+		const fmt = (value: string, human: string) => (human ? `${human} (${value})` : value);
+		// Managed AWG: enabled-поля нет, берём все с непустым iface.
+		for (const t of awgTagInfos) {
+			if (!t.iface) continue;
+			add(t.iface, t.label, m.autolist_cfg_target_kind_awg());
+		}
+		// Standalone sing-box: интерфейс существует, только пока процесс поднят.
+		for (const t of singboxTunnels) {
+			if (!t.running || !t.kernelInterface) continue;
+			add(t.kernelInterface, t.tag, m.autolist_cfg_target_kind_singbox());
+		}
+		// Подписки: синтетический интерфейс t2s<proxyIndex>.
+		for (const s of subscriptions) {
+			if (!s.enabled || s.proxyIndex < 0) continue;
+			add(`t2s${s.proxyIndex}`, s.label, m.autolist_cfg_target_kind_subscription());
+		}
+		// WAN/прочие из all-interfaces: LAN/bridge не предлагаем (private).
 		for (const iface of interfaces) {
 			if (!iface.up) continue;
-			// LAN/bridge не предлагаются как tunnel target (securityLevel private).
 			if (iface.securityLevel && iface.securityLevel !== 'public') continue;
-			opts.push({ value: iface.name, label: iface.label ? `${iface.label} (${iface.name})` : iface.name });
+			add(iface.name, iface.label, m.autolist_cfg_target_kind_wan());
 		}
+		const opts = [...byValue.values()].map((o) => ({ ...o, label: fmt(o.value, o.label) }));
 		const current = cfgDraft.targetInterface ?? '';
-		if (current && !opts.some((o) => o.value === current)) {
+		if (current && !byValue.has(current)) {
 			opts.push({ value: current, label: current });
 		}
 		return opts;
@@ -726,6 +898,18 @@
 						<CircleX size={14} strokeWidth={2} aria-hidden="true" />
 					</IconButton>
 				{/if}
+				<!-- Повторная проверка доступна в любом состоянии карточки:
+				     и у кандидата, и у добавленной записи — карточка одна. -->
+				<IconButton
+					size="sm"
+					variant="default"
+					ariaLabel={m.autolist_recheck_again()}
+					title={m.autolist_recheck_again()}
+					disabled={busy}
+					onclick={() => openRecheck(c)}
+				>
+					<RefreshCw size={14} strokeWidth={2} aria-hidden="true" />
+				</IconButton>
 			</div>
 		</div>
 
@@ -872,10 +1056,25 @@
 					{status?.enabled === false ? m.autolist_disabled_hint() : m.autolist_not_running_hint()}
 				</p>
 				<div>
-					<Button variant="primary" size="sm" onclick={() => void setSatelliteEnabled(true)} loading={lifecycleBusy}>
-						{#snippet iconBefore()}<Power size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
-						{status?.enabled === false ? m.autolist_enable() : m.common_start()}
-					</Button>
+					<div class="flex items-center gap-2 flex-wrap">
+						<Button variant="primary" size="sm" onclick={() => void setSatelliteEnabled(true)} loading={lifecycleBusy}>
+							{#snippet iconBefore()}<Power size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
+							{status?.enabled === false ? m.autolist_enable() : m.common_start()}
+						</Button>
+						<!-- Объекты Autolist остаются в конфиге и после остановки: снос —
+						     только явной кнопкой, поэтому она нужна и в stopped-карточке. -->
+						<Button variant="outline-danger" size="sm" onclick={() => (teardownConfirmOpen = true)} disabled={teardownBusy}>
+							{#snippet iconBefore()}<Trash2 size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
+							{m.autolist_teardown_button()}
+						</Button>
+						<!-- Есть снимок последнего сноса: вернуть объекты или начать заново. -->
+						{#if status?.hasRemovedBackup}
+							<Button variant="outline-primary" size="sm" onclick={() => void openBackupDialog()}>
+								{#snippet iconBefore()}<ArchiveRestore size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
+								{m.autolist_backup_button()}
+							</Button>
+						{/if}
+					</div>
 				</div>
 			{/if}
 		</div>
@@ -1298,6 +1497,89 @@
 		</Button>
 	{/snippet}
 </Modal>
+
+<!-- Подтверждение полного сноса объектов Autolist -->
+<Modal open={teardownConfirmOpen} onclose={() => (teardownConfirmOpen = false)} title={m.autolist_teardown_title()} size="sm">
+	<div class="autolist-warning flex items-start gap-2.5 rounded-lg bg-error/10 border border-error/30">
+		<Trash2 size={18} class="text-error shrink-0 mt-0.5" aria-hidden="true" />
+		<p class="text-sm">{m.autolist_teardown_description()}</p>
+	</div>
+	{#snippet actions()}
+		<Button variant="ghost" size="md" onclick={() => (teardownConfirmOpen = false)}>{m.common_cancel()}</Button>
+		<Button variant="danger" size="md" onclick={() => void teardownAutolistObjects()} disabled={teardownBusy} loading={teardownBusy}>
+			{m.autolist_teardown_confirm()}
+		</Button>
+	{/snippet}
+</Modal>
+
+<!-- Снимок удалённых объектов: восстановить или начать заново -->
+<Modal open={backupConfirmOpen} onclose={() => (backupConfirmOpen = false)} title={m.autolist_backup_title()} size="sm">
+	<div class="flex flex-col gap-3">
+		<div class="autolist-warning flex items-start gap-2.5 rounded-lg bg-warning/10 border border-warning/30">
+			<ArchiveRestore size={18} class="text-warning shrink-0 mt-0.5" aria-hidden="true" />
+			<p class="text-sm">{m.autolist_backup_description({ date: backupDateText })}</p>
+		</div>
+	</div>
+	{#snippet actions()}
+		<Button
+			variant="ghost"
+			size="md"
+			onclick={() => void discardAutolistBackup()}
+			disabled={backupRestoreBusy || backupDiscardBusy}
+			loading={backupDiscardBusy}
+		>
+			{m.autolist_backup_discard()}
+		</Button>
+		<Button
+			variant="primary"
+			size="md"
+			onclick={() => void restoreAutolistBackup()}
+			disabled={backupRestoreBusy || backupDiscardBusy}
+			loading={backupRestoreBusy}
+		>
+			{backupRestoreBusy ? m.autolist_backup_busy() : m.autolist_backup_restore()}
+		</Button>
+	{/snippet}
+</Modal>
+
+<!-- Повторная проверка кандидата: действия карточки продублированы в футере. -->
+{#snippet recheckActions()}
+	{#if recheckCandidate}
+		{#if canAdd(recheckCandidate)}
+			<Button variant="secondary" size="md" onclick={() => void recheckModalAction(addCandidate)}>
+				{#snippet iconBefore()}
+					<ShieldPlus size={14} strokeWidth={2} aria-hidden="true" />
+				{/snippet}
+				{m.autolist_action_add()}
+			</Button>
+		{/if}
+		{#if canRemove(recheckCandidate)}
+			<Button variant="secondary" size="md" onclick={() => void recheckModalAction(removeCandidate)}>
+				{#snippet iconBefore()}
+					<Trash2 size={14} strokeWidth={2} aria-hidden="true" />
+				{/snippet}
+				{m.autolist_action_remove()}
+			</Button>
+		{/if}
+		{#if recheckCandidate.state !== 'added'}
+			<Button variant="ghost" size="md" onclick={() => void recheckModalAction(dismissCandidate)}>
+				{#snippet iconBefore()}
+					<EyeOff size={14} strokeWidth={2} aria-hidden="true" />
+				{/snippet}
+				{m.autolist_action_dismiss()}
+			</Button>
+		{/if}
+		{#if recheckCandidate.state !== 'added'}
+			<Button variant="ghost" size="md" onclick={() => void recheckModalAction(forgetCandidate)}>
+				{#snippet iconBefore()}
+					<CircleX size={14} strokeWidth={2} aria-hidden="true" />
+				{/snippet}
+				{m.autolist_action_forget()}
+			</Button>
+		{/if}
+	{/if}
+{/snippet}
+<RecheckModal open={recheckCandidate !== null} candidate={recheckCandidate} onclose={closeRecheck} actions={recheckActions} />
 
 <style>
 	/* В этой новой вкладке p-3 не попадает в Tailwind CSS; не полагаемся на

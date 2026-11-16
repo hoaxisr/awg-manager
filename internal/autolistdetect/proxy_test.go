@@ -20,7 +20,7 @@ func proxyTestService(t *testing.T, sat *httptest.Server) *Service {
 // The whitelist is exactly the satellite's operational surface: no /probe,
 // no /exclude, no diagnostics (TECHNICAL_SPEC sections 1 and 8).
 func TestAllowedPathsExcludeProbeAndDiagnostics(t *testing.T) {
-	for _, path := range []string{"/status", "/config", "/add", "/dismiss", "/forget", "/restore", "/remove", "/history/clear"} {
+	for _, path := range []string{"/status", "/config", "/add", "/dismiss", "/forget", "/restore", "/remove", "/recheck", "/history/clear"} {
 		if !allowedPaths[path] {
 			t.Fatalf("%s must be allowed", path)
 		}
@@ -29,6 +29,14 @@ func TestAllowedPathsExcludeProbeAndDiagnostics(t *testing.T) {
 		if allowedPaths[path] {
 			t.Fatalf("%s must not be allowed", path)
 		}
+	}
+}
+
+// /recheck waits for a full probe rerun (up to ~30s of probe timeouts), so it
+// needs the long command timeout, not the status one.
+func TestRecheckUsesCommandTimeout(t *testing.T) {
+	if !commandPaths["/recheck"] {
+		t.Fatal("/recheck must use the long command timeout")
 	}
 }
 

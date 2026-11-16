@@ -40,10 +40,10 @@ export interface AutolistBatchResult {
 
 /**
  * Пути сателлита, которые проксирует AWGM: чтение/запись конфига, действия
- * кандидатов (одиночные и batch {ids}) и очистка журнала /history/clear.
- * /probe и /exclude в 0.9.3 не существуют.
+ * кандидатов (одиночные и batch {ids}), повторная проверка /recheck и очистка
+ * журнала /history/clear. /probe и /exclude в 0.9.3 не существуют.
  */
-export type AutolistSatellitePath = '/config' | '/add' | '/forget' | '/restore' | '/remove' | '/dismiss' | '/history/clear';
+export type AutolistSatellitePath = '/config' | '/add' | '/forget' | '/restore' | '/remove' | '/dismiss' | '/recheck' | '/history/clear';
 
 /**
  * CheckEvidence — доказательства одной проверки: вердикт, объём ответа,
@@ -154,6 +154,8 @@ export interface AutolistStatus {
 	candidates: AutolistCandidate[];
 	history: AutolistHistoryEntry[];
 	lastError?: string;
+	/** У панели есть снимок объектов, удалённых кнопкой сноса: предложить восстановить или начать заново. */
+	hasRemovedBackup?: boolean;
 }
 
 /**
