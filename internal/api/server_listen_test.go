@@ -121,9 +121,18 @@ func TestServerListenConfirm_NotifiesListenHook(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("confirm code = %d: %s", w.Code, w.Body.String())
 	}
-	select {
-	case <-calls:
-	default:
-		t.Fatal("confirm не вызвал хук смены адреса")
+	// Хук зовётся в горутине (notifyListenChanged) — даём ей возможность
+	// выполниться, прежде чем объявлять провал.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		select {
+		case <-calls:
+			return
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("confirm не вызвал хук смены адреса")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
