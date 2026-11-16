@@ -2711,7 +2711,15 @@ func TestServiceSaveConfig_SignatureDomainAndPresetRegenerates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveConfig ru_whitelist: %v", err)
 	}
-	if saved2.AWG.SignatureHostPreset != "ru_whitelist" || saved2.AWG.GeneratedDomain == "" || saved2.AWG.I1 == "" || saved2.AWG.I1 == firstI1 {
-		t.Fatalf("expected regenerated I1 for ru_whitelist: %+v", saved2.AWG)
+	if saved2.AWG.SignatureHostPreset != "ru_whitelist" || saved2.AWG.GeneratedDomain == "" || saved2.AWG.I1 == "" {
+		t.Fatalf("expected regenerated signature for ru_whitelist: %+v", saved2.AWG)
+	}
+	// Пул ru_whitelist содержит и домен первой генерации (gosuslugi.ru —
+	// P≈5%), а QTYPE у dns-профиля случаен (1/3): CPS-строка I1 может
+	// совпасть с первой — это валидная регенерация, а не пропуск. Детерминирован
+	// только факт смены профиля: домен переехал из custom в пул.
+	if saved2.AWG.GeneratedDomain != saved.AWG.GeneratedDomain &&
+		saved2.AWG.I1 == firstI1 {
+		t.Fatalf("I1 not regenerated after preset change: %+v", saved2.AWG)
 	}
 }
