@@ -203,6 +203,9 @@
 		auto: m.zapret_hostlist_label_auto(),
 		main: m.zapret_hostlist_label_main()
 	});
+	let strategiesUnsupported = $derived(
+		strategies?.parseWarnings?.find((w) => w.code === 'strategies_unsupported'),
+	);
 	let restartLabel = $derived(status?.running ? m.zapret_apply_restart_aria() : m.zapret_apply_start_aria());
 	let restartTitle = $derived(status?.running ? m.zapret_apply_restart_title() : m.zapret_apply_start_title());
 </script>
@@ -238,6 +241,10 @@
 					<p class="err">{uiText(stratError)}</p>
 				{:else if stratLoading && !strategies}
 					<p class="loading">{m.zapret_loading_strategies()}</p>
+				{:else if strategiesUnsupported}
+					<!-- Раскладка без единой переменной стратегий (nfqws2-keenetic): список
+					     пуст по построению, «переменная пуста» тут было бы неправдой (#1224). -->
+					<p class="warn"><TriangleAlert size={14} /><span>{zapretWarningText(strategiesUnsupported)}</span></p>
 				{:else if (strategies?.items.length ?? 0) === 0}
 					<div class="empty-state-rich">
 						<p>{m.zapret_no_strategies({ optVar: strategies?.optVar ?? 'NFQWS2_OPT', config: strategies?.config ?? '' })}</p>

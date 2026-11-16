@@ -7740,6 +7740,8 @@
 	"zapret_toggle_unavailable_title": "Zapret недоступен",
 	"settings_integrations_zapret_running_aria": "Zapret работает",
 	"settings_integrations_zapret_stopped_aria": "Zapret остановлен",
+	"settings_integrations_zapret_card_on_tunnels": "Показывать на странице туннелей",
+	"settings_integrations_zapret_card_on_tunnels_hint": "Настройка этого браузера.",
 	"zapret_hostlist_entries_count": [
 		{
 			"declarations": [

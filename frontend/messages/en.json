@@ -7354,6 +7354,8 @@
 	"zapret_toggle_unavailable_title": "Zapret is unavailable",
 	"settings_integrations_zapret_running_aria": "Zapret is running",
 	"settings_integrations_zapret_stopped_aria": "Zapret is stopped",
+	"settings_integrations_zapret_card_on_tunnels": "Show on the tunnels page",
+	"settings_integrations_zapret_card_on_tunnels_hint": "Applies to this browser only.",
 	"zapret_hostlist_entries_count": [
 		{
 			"declarations": [

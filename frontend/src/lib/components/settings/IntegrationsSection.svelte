@@ -10,7 +10,11 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { singboxStatus } from '$lib/stores/singbox';
 	import { hydrarouteStatus } from '$lib/stores/hydraroute';
-	import { zapretStatusIfExpert } from '$lib/stores/zapret';
+	import {
+		zapretStatusIfExpert,
+		zapretTunnelsCardHidden,
+		setZapretTunnelsCardHidden,
+	} from '$lib/stores/zapret';
 	import { proxyInstallStatus, type ProxySubsystem } from '$lib/stores/proxyInstall';
 	import { singboxErrorText } from '$lib/utils/singboxError';
 	import IntegrationsCard from './IntegrationsCard.svelte';
@@ -188,6 +192,8 @@
 	{showSingbox}
 	{showHydra}
 	zapretStatus={zapretStatusValue}
+	zapretCardOnTunnels={!$zapretTunnelsCardHidden}
+	onzapretCardOnTunnels={(show) => setZapretTunnelsCardHidden(!show)}
 	{bootstrapDNS}
 	{bootstrapSaving}
 	{onsaveBootstrapDNS}

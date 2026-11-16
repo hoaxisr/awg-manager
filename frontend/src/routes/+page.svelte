@@ -32,7 +32,7 @@
 	} from '$lib/components/ui';
 	import { singboxDelayHistory, singboxStatus, singboxTraffic, singboxTunnels } from '$lib/stores/singbox';
 	import { awg3Tunnels } from '$lib/stores/awg3';
-	import { zapretStatusIfExpert } from '$lib/stores/zapret';
+	import { zapretStatusIfExpert, zapretTunnelsCardHidden } from '$lib/stores/zapret';
 	import { runZapretControl, ZapretServiceCard } from '$lib/components/zapret';
 	import { Awg3TunnelsSection, Awg3ImportModal } from '$lib/components/awg3';
 	import { getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
@@ -1793,7 +1793,7 @@
 		     в «Маршрутизации» одна: она нужна рядом с туннелями, потому что
 		     отвечает на тот же вопрос — «чем сейчас обрабатывается мой
 		     трафик». Подробная настройка стратегий живёт на /routing?tab=zapret. -->
-		{#if $zapretStatusIfExpert?.data?.installed}
+		{#if $zapretStatusIfExpert?.data?.installed && !$zapretTunnelsCardHidden}
 			<ZapretServiceCard
 				status={$zapretStatusIfExpert.data}
 				busy={zapretBusy}
