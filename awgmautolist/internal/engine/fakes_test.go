@@ -214,7 +214,9 @@ func (f *fakeProbes) Check(ctx context.Context, target model.Target, _ probe.Pat
 
 func (f *fakeProbes) DirectAndWAN(ctx context.Context, target model.Target, _ string, _ probe.Path) probe.DirectAndWANResult {
 	f.directGate.wait(ctx, target.CandidateKey())
+	f.mu.Lock()
 	parallel := f.wan
+	f.mu.Unlock()
 	if parallel == "" {
 		parallel = model.VerdictReachable
 	}
