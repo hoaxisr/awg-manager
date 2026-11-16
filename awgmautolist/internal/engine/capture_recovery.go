@@ -36,25 +36,45 @@ func (e *Engine) superviseCapture() {
 
 func (e *Engine) recoverCapture() {
 	e.commitMu.Lock()
-	defer e.commitMu.Unlock()
 	e.mu.Lock()
 	if !e.running || e.capturePaused || e.capture == nil {
 		e.mu.Unlock()
+		e.commitMu.Unlock()
 		return
 	}
 	captureRef := e.capture
+	gen := e.captureGen
 	baseCtx := e.baseCtx
 	if captureRef.Status().Running {
 		e.captureRunning = true
 		e.mu.Unlock()
+		e.commitMu.Unlock()
 		return
 	}
 	e.captureRunning = false
 	e.mu.Unlock()
+	e.commitMu.Unlock()
 
-	// No commit/pause mutex is held by the controller while Start creates a
-	// fresh generation. If the previous generation is still closing, the next
-	// tick retries instead of treating that transient state as permanent.
+	// Никаких локов движка, пока Start создаёт свежее поколение. Сериализация
+	// с паузой/резюмом монитора и Stop при смене UDP — через captureOpMu:
+	// если операция монитора уже в полёте, этот тик отступает. Если пока мы
+	// ждали Start сменилось поколение (UDP-патч) или capture запаузен —
+	// устаревшее решение отбрасывается и тик повторится.
+	if !captureOpMu.TryLock() {
+		return
+	}
+	defer captureOpMu.Unlock()
+	e.commitMu.Lock()
+	e.mu.Lock()
+	stale := gen != e.captureGen || e.capturePaused || !e.running || e.capture != captureRef
+	e.mu.Unlock()
+	e.commitMu.Unlock()
+	if stale {
+		return
+	}
+
+	// Если предыдущее поколение ещё закрывается, следующий тик повторит
+	// попытку, вместо того чтобы считать переходное состояние постоянным.
 	err := captureRef.Start(baseCtx)
 	e.mu.Lock()
 	e.captureRunning = err == nil

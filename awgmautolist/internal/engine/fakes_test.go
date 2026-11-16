@@ -450,3 +450,19 @@ func (h *testHarness) waitFor(fn func() bool) {
 }
 
 func (h *testHarness) captureStarts() int { return h.capture.captureStarts() }
+
+// wanFailureCount returns the engine's current consecutive WAN failure
+// counter (test-only introspection under mu).
+func (e *Engine) wanFailureCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.wanFailures
+}
+
+// wanSnapshot returns the failure counter and the pause flag atomically
+// (test-only introspection under mu).
+func (e *Engine) wanSnapshot() (failures int, paused bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.wanFailures, e.capturePaused
+}

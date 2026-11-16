@@ -174,21 +174,31 @@ func TestAutoAddGates(t *testing.T) {
 }
 
 // TestPauseResumeCleanGeneration walks the WAN monitor transitions of
-// section 6: non-reachable WAN pauses the capture and invalidates decisions,
-// reachable WAN resumes with clean state; transitions log once.
+// section 6 (with the three-strikes series): three consecutive failed
+// checks pause the capture and invalidate decisions, the first reachable
+// check resumes with clean state.
 func TestPauseResumeCleanGeneration(t *testing.T) {
 	oldInterval := monitorInterval
+	oldRetry := wanRetryInterval
 	monitorInterval = 5 * time.Millisecond
-	t.Cleanup(func() { monitorInterval = oldInterval })
-	h := newHarness(t, func(cfg *configConfig) { cfg.WANMonitorEnabled = true })
+	wanRetryInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		monitorInterval = oldInterval
+		wanRetryInterval = oldRetry
+	})
+	h := newHarness(t, nil)
+	h.probes.setWAN(model.VerdictError)
+	if _, err := h.engine.PatchConfig([]byte(`{"wanMonitorEnabled":true}`)); err != nil {
+		t.Fatal(err)
+	}
 
 	target := h.tcpTarget("example.com")
 	key := target.CandidateKey()
 	h.probes.setDirect(key, model.VerdictBlocked)
 	h.probes.setTunnel(key, model.VerdictReachable)
 
-	// Outage: monitor pauses capture, queued and running work is dropped.
-	h.probes.setWAN(model.VerdictError)
+	// Outage: after three failed checks the monitor pauses the capture;
+	// queued and running work is dropped.
 	startsBefore := h.captureStarts()
 	h.waitFor(func() bool { return h.engine.Status().CapturePaused })
 	h.capture.suspect(target, "tcp-rst")
@@ -216,13 +226,18 @@ func TestPauseResumeCleanGeneration(t *testing.T) {
 
 func TestPauseDrainsAdmissionIndex(t *testing.T) {
 	oldInterval := monitorInterval
+	oldRetry := wanRetryInterval
 	monitorInterval = 5 * time.Millisecond
-	t.Cleanup(func() { monitorInterval = oldInterval })
-	h := newHarness(t, func(cfg *configConfig) {
-		cfg.WANMonitorEnabled = true
-		cfg.TunnelProbe = false
+	wanRetryInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		monitorInterval = oldInterval
+		wanRetryInterval = oldRetry
 	})
+	h := newHarness(t, nil)
 	h.probes.setWAN(model.VerdictReachable)
+	if _, err := h.engine.PatchConfig([]byte(`{"wanMonitorEnabled":true,"tunnelProbe":false}`)); err != nil {
+		t.Fatal(err)
+	}
 	blockers := []model.Target{h.ipTarget("203.0.113.120", 3478), h.ipTarget("203.0.113.121", 3478)}
 	for _, target := range blockers {
 		key := target.CandidateKey()
@@ -655,10 +670,18 @@ func TestWANMonitorDisabledLeavesCaptureRunning(t *testing.T) {
 // TestLastWANAndStatus checks the operational status fields.
 func TestLastWANAndStatus(t *testing.T) {
 	oldInterval := monitorInterval
+	oldRetry := wanRetryInterval
 	monitorInterval = 5 * time.Millisecond
-	t.Cleanup(func() { monitorInterval = oldInterval })
-	h := newHarness(t, func(cfg *configConfig) { cfg.WANMonitorEnabled = true })
+	wanRetryInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		monitorInterval = oldInterval
+		wanRetryInterval = oldRetry
+	})
+	h := newHarness(t, nil)
 	h.probes.setWAN(model.VerdictError)
+	if _, err := h.engine.PatchConfig([]byte(`{"wanMonitorEnabled":true}`)); err != nil {
+		t.Fatal(err)
+	}
 	h.waitFor(func() bool { return h.engine.Status().CapturePaused })
 	status := h.engine.Status()
 	if status.LastWAN.Verdict != model.VerdictError {
