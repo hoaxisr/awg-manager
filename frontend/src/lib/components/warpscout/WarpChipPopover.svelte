@@ -100,6 +100,7 @@
 		height: 30px;
 		min-width: 0;
 		max-width: 100%;
+		overflow: hidden;
 		padding: 0 0.6rem;
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--color-border);
@@ -167,8 +168,11 @@
 		position: absolute;
 		top: calc(100% + 6px);
 		left: 0;
-		z-index: 40;
+		z-index: var(--z-page-overlay);
 		width: min(var(--pop-width), calc(100vw - 2rem));
+		max-height: max(18rem, min(46rem, calc(100dvh - 13.5rem)));
+		overflow-y: auto;
+		overscroll-behavior: contain;
 		background: var(--color-bg-secondary);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius);
@@ -177,6 +181,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.65rem;
+	}
+	.popover > :global(*) {
+		flex-shrink: 0;
 	}
 	.popover.align-right {
 		left: auto;
@@ -211,17 +218,24 @@
 		justify-content: flex-end;
 	}
 
-	@media (max-width: 720px) {
-		.status-chip :global(.hide-sm) {
-			display: none;
-		}
+	@media (max-width: 768px) {
 		.popover,
 		.popover.align-right {
 			position: fixed;
-			left: 0.75rem;
-			right: 0.75rem;
-			top: 5.5rem;
-			width: auto;
+			left: 50%;
+			right: auto;
+			transform: translateX(-50%);
+			top: 4.25rem;
+			z-index: var(--z-drawer);
+			width: min(var(--pop-width), calc(100vw - 1.5rem));
+			max-height: calc(100dvh - 5.25rem);
+			box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+		}
+	}
+
+	@media (max-width: 720px) {
+		.status-chip :global(.hide-sm) {
+			display: none;
 		}
 	}
 </style>
