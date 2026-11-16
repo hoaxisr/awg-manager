@@ -755,6 +755,26 @@ func TestBuildRestoreInput_DNSInterceptUDP(t *testing.T) {
 	}
 }
 
+// #1215: пакет с lo не должен дойти до catch-all при ЛЮБОМ наборе WAN-адресов
+// (в т.ч. пустом/устаревшем), а перехват :53 обязан остаться раньше него.
+func TestBuildRestoreInput_LoopbackReturnsBeforeCatchAll(t *testing.T) {
+	for mark, spec := range map[string]RestoreInputSpec{
+		"policy": {PolicyMark: "0xffffaaa"},
+		"all":    {MatchAll: true},
+	} {
+		mangle := buildMangleRestoreInput(spec)
+		dns := strings.Index(mangle, "-A AWGM-TPROXY -p udp --dport 53 -j TPROXY")
+		lo := strings.Index(mangle, "-A AWGM-TPROXY -i lo -j RETURN\n")
+		catchAll := strings.Index(mangle, "-A AWGM-TPROXY -p udp -j TPROXY")
+		if dns < 0 || lo < 0 || catchAll < 0 {
+			t.Fatalf("mark %s: dns=%d lo=%d catchAll=%d, все три правила обязательны:\n%s", mark, dns, lo, catchAll, mangle)
+		}
+		if !(dns < lo && lo < catchAll) {
+			t.Errorf("mark %s: порядок dns(%d) < lo(%d) < catch-all(%d) нарушен", mark, dns, lo, catchAll)
+		}
+	}
+}
+
 func TestBuildRestoreInput_TCPCatchAllHandlesDNS(t *testing.T) {
 	input := buildRestoreInput(RestoreInputSpec{PolicyMark: "0xffffaaa"})
 
