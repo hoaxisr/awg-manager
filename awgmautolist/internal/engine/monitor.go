@@ -13,7 +13,9 @@ import (
 // startMonitorLocked запускает периодическую проверку WAN: первая проверка
 // идёт сразу, далее раз в monitorInterval. После неудачи (до паузы)
 // взводится повтор через wanRetryInterval — серия «3 подряд» набирается
-// за секунды, а не за минуты. Выключен по умолчанию.
+// за секунды, а не за минуты. Повтор короче тика берётся только если он
+// действительно меньше monitorInterval (интервал >= тика означает «ретраи
+// выключены» — тик сам догонит серию). Выключен по умолчанию.
 func (e *Engine) startMonitorLocked() {
 	ctx, cancel := context.WithCancel(e.baseCtx)
 	e.monitorCancel = cancel
@@ -39,7 +41,7 @@ func (e *Engine) startMonitorLocked() {
 				retryStop = nil
 			}
 			retryC = nil
-			if ctx.Err() == nil && e.wanRetryDue() {
+			if ctx.Err() == nil && e.wanRetryDue() && wanRetryInterval < monitorInterval {
 				retryStop = time.NewTimer(wanRetryInterval)
 				retryC = retryStop.C
 			}
