@@ -108,6 +108,7 @@ type Server struct {
 	hydraService               *hydraroute.Service
 	zapretService              *zapret.Service
 	autolistService            *autolistdetect.Service
+	autolistRemovedBackupProbe func(ctx context.Context) (bool, time.Time, error)
 	orch                       *orchestrator.Orchestrator
 	bus                        *events.Bus
 	exposureGuard              *api.ExposureGuard
@@ -197,43 +198,50 @@ type Server struct {
 // via the existing post-construction Set*Handler() / SetSingboxOperator()
 // setters — see SetSingboxRouterHandler etc. below in this file.
 type Deps struct {
-	TunnelService        api.TunnelService
-	ExternalService      api.ExternalTunnelService
-	TestingService       *testing.Service
-	Keenetic             *auth.KeeneticClient
-	Sessions             *auth.SessionStore
-	Settings             *storage.SettingsStore
-	Tunnels              *storage.AWGTunnelStore
-	PingCheckService     api.PingCheckService
-	ProxyRecords         api.ProxyRecordLister
-	LoggingService       *logging.Service
-	KmodLoader           *kmod.Loader
-	UpdaterService       *updater.Service
-	NdmsQueries          *ndmsquery.Queries
-	NdmsCommands         *ndmscommand.Commands
-	TrafficHistory       *traffic.History
-	DnsRouteService      api.DNSRouteService
-	StaticRouteService   api.StaticRouteService
-	SystemTunnelService  systemtunnel.Service
-	ManagedService       managed.ManagedServerService
-	ManagedServiceImpl   *managed.Service
-	NwgOp                *nwg.OperatorNativeWG
-	TerminalManager      terminal.Manager
-	AccessPolicySvc      accesspolicy.Service
-	ClientRouteSvc       clientroute.Service
-	Catalog              routing.Catalog
-	Orch                 *orchestrator.Orchestrator
-	Bus                  *events.Bus
-	HydraService         *hydraroute.Service
-	ZapretService        *zapret.Service
-	AutolistService      *autolistdetect.Service
-	SingboxHandler       *api.SingboxHandler
-	SingboxOrch          *singboxorch.Orchestrator
-	ClashProxy           *api.ClashProxy
-	SingboxConnsHandler  *api.SingboxConnectionsHandler
-	MonitoringService    *monitoring.Service
-	SingboxSubMembers    func() []diagnostics.SingboxSubMember
-	SingboxConfigPreview func() (string, error)
+	TunnelService       api.TunnelService
+	ExternalService     api.ExternalTunnelService
+	TestingService      *testing.Service
+	Keenetic            *auth.KeeneticClient
+	Sessions            *auth.SessionStore
+	Settings            *storage.SettingsStore
+	Tunnels             *storage.AWGTunnelStore
+	PingCheckService    api.PingCheckService
+	ProxyRecords        api.ProxyRecordLister
+	LoggingService      *logging.Service
+	KmodLoader          *kmod.Loader
+	UpdaterService      *updater.Service
+	NdmsQueries         *ndmsquery.Queries
+	NdmsCommands        *ndmscommand.Commands
+	TrafficHistory      *traffic.History
+	DnsRouteService     api.DNSRouteService
+	StaticRouteService  api.StaticRouteService
+	SystemTunnelService systemtunnel.Service
+	ManagedService      managed.ManagedServerService
+	ManagedServiceImpl  *managed.Service
+	NwgOp               *nwg.OperatorNativeWG
+	TerminalManager     terminal.Manager
+	AccessPolicySvc     accesspolicy.Service
+	ClientRouteSvc      clientroute.Service
+	Catalog             routing.Catalog
+	Orch                *orchestrator.Orchestrator
+	Bus                 *events.Bus
+	HydraService        *hydraroute.Service
+	ZapretService       *zapret.Service
+	AutolistService     *autolistdetect.Service
+	// AutolistRemovedBackupProbe — «у панели есть снимок объектов Autolist,
+	// удалённых кнопкой сноса» (routerSvc.AutolistBackupInfo в
+	// cmd/awg-manager). Панель ставит флаг в /autolist/status сама: сателлит
+	// о снимке не знает. Optional — nil означает false. a.routerSvc заводит
+	// setupRouter — позже setupServer, поэтому здесь замыкание, читающее поле
+	// в момент вызова (как ForeignIfaces.boundBy).
+	AutolistRemovedBackupProbe func(ctx context.Context) (bool, time.Time, error)
+	SingboxHandler             *api.SingboxHandler
+	SingboxOrch                *singboxorch.Orchestrator
+	ClashProxy                 *api.ClashProxy
+	SingboxConnsHandler        *api.SingboxConnectionsHandler
+	MonitoringService          *monitoring.Service
+	SingboxSubMembers          func() []diagnostics.SingboxSubMember
+	SingboxConfigPreview       func() (string, error)
 
 	// OrphanIfaces — интерфейсы OpkgTun без записи владельца, для списка
 	// внешних туннелей и ручки их удаления. Nil выключает и то, и другое.
@@ -277,53 +285,54 @@ func New(cfg Config, deps Deps) *Server {
 	appLog.Info("startup", "", "Server instance: "+id)
 
 	return &Server{
-		config:                 cfg,
-		appLog:                 appLog,
-		tunnelService:          deps.TunnelService,
-		externalService:        deps.ExternalService,
-		testingService:         deps.TestingService,
-		keenetic:               deps.Keenetic,
-		sessions:               deps.Sessions,
-		settings:               deps.Settings,
-		tunnels:                deps.Tunnels,
-		pingCheckService:       deps.PingCheckService,
-		proxyRecords:           deps.ProxyRecords,
-		loggingService:         deps.LoggingService,
-		kmodLoader:             deps.KmodLoader,
-		updaterService:         deps.UpdaterService,
-		ndmsQueries:            deps.NdmsQueries,
-		ndmsCommands:           deps.NdmsCommands,
-		trafficHistory:         deps.TrafficHistory,
-		dnsRouteService:        deps.DnsRouteService,
-		staticRouteService:     deps.StaticRouteService,
-		systemTunnelService:    deps.SystemTunnelService,
-		managedService:         deps.ManagedService,
-		managedServiceImpl:     deps.ManagedServiceImpl,
-		nwgOp:                  deps.NwgOp,
-		terminalManager:        deps.TerminalManager,
-		accessPolicyService:    deps.AccessPolicySvc,
-		clientRouteService:     deps.ClientRouteSvc,
-		catalog:                deps.Catalog,
-		hydraService:           deps.HydraService,
-		zapretService:          deps.ZapretService,
-		autolistService:        deps.AutolistService,
-		orch:                   deps.Orch,
-		bus:                    deps.Bus,
-		singboxHandler:         deps.SingboxHandler,
-		singboxOrch:            deps.SingboxOrch,
-		singboxConnsHandler:    deps.SingboxConnsHandler,
-		clashProxy:             deps.ClashProxy,
-		monitoringService:      deps.MonitoringService,
-		singboxSubMembersFn:    deps.SingboxSubMembers,
-		orphanIfacesFn:         deps.OrphanIfaces,
-		orphanExclusiveFn:      deps.OrphanIfacesExclusive,
-		orphanNDMS:             deps.OrphanNDMS,
-		foreignIfaces:          deps.ForeignIfaces,
-		singboxConfigPreviewFn: deps.SingboxConfigPreview,
-		obfuscatorRelayChanged: deps.ObfuscatorRelayChanged,
-		authMiddleware:         auth.NewMiddleware(deps.Sessions, deps.Settings, &authLoggerAdapter{log: appLog}),
-		mcpKeys:                deps.McpKeys,
-		instanceID:             id,
+		config:                     cfg,
+		appLog:                     appLog,
+		tunnelService:              deps.TunnelService,
+		externalService:            deps.ExternalService,
+		testingService:             deps.TestingService,
+		keenetic:                   deps.Keenetic,
+		sessions:                   deps.Sessions,
+		settings:                   deps.Settings,
+		tunnels:                    deps.Tunnels,
+		pingCheckService:           deps.PingCheckService,
+		proxyRecords:               deps.ProxyRecords,
+		loggingService:             deps.LoggingService,
+		kmodLoader:                 deps.KmodLoader,
+		updaterService:             deps.UpdaterService,
+		ndmsQueries:                deps.NdmsQueries,
+		ndmsCommands:               deps.NdmsCommands,
+		trafficHistory:             deps.TrafficHistory,
+		dnsRouteService:            deps.DnsRouteService,
+		staticRouteService:         deps.StaticRouteService,
+		systemTunnelService:        deps.SystemTunnelService,
+		managedService:             deps.ManagedService,
+		managedServiceImpl:         deps.ManagedServiceImpl,
+		nwgOp:                      deps.NwgOp,
+		terminalManager:            deps.TerminalManager,
+		accessPolicyService:        deps.AccessPolicySvc,
+		clientRouteService:         deps.ClientRouteSvc,
+		catalog:                    deps.Catalog,
+		hydraService:               deps.HydraService,
+		zapretService:              deps.ZapretService,
+		autolistService:            deps.AutolistService,
+		autolistRemovedBackupProbe: deps.AutolistRemovedBackupProbe,
+		orch:                       deps.Orch,
+		bus:                        deps.Bus,
+		singboxHandler:             deps.SingboxHandler,
+		singboxOrch:                deps.SingboxOrch,
+		singboxConnsHandler:        deps.SingboxConnsHandler,
+		clashProxy:                 deps.ClashProxy,
+		monitoringService:          deps.MonitoringService,
+		singboxSubMembersFn:        deps.SingboxSubMembers,
+		orphanIfacesFn:             deps.OrphanIfaces,
+		orphanExclusiveFn:          deps.OrphanIfacesExclusive,
+		orphanNDMS:                 deps.OrphanNDMS,
+		foreignIfaces:              deps.ForeignIfaces,
+		singboxConfigPreviewFn:     deps.SingboxConfigPreview,
+		obfuscatorRelayChanged:     deps.ObfuscatorRelayChanged,
+		authMiddleware:             auth.NewMiddleware(deps.Sessions, deps.Settings, &authLoggerAdapter{log: appLog}),
+		mcpKeys:                    deps.McpKeys,
+		instanceID:                 id,
 	}
 }
 

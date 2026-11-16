@@ -47,6 +47,7 @@
 		ShieldPlus,
 		Trash2,
 		Power,
+		ArchiveRestore,
 	} from 'lucide-svelte';
 
 	let status = $derived($autolistStatus.data);
@@ -513,8 +514,13 @@
 		if (teardownBusy) return;
 		teardownBusy = true;
 		try {
-			await api.teardownAutolistObjects();
-			notifications.success(m.autolist_teardown_success());
+			const res = await api.teardownAutolistObjects();
+			if (res?.backupSaved === false) {
+				// Снос выполнен, но снимка нет: восстановить будет не из чего.
+				notifications.warning(m.autolist_backup_toast_nosnapshot());
+			} else {
+				notifications.success(m.autolist_teardown_success());
+			}
 			teardownConfirmOpen = false;
 		} catch (e) {
 			// 409 от бэкенда («сателлит работает») переводим в понятный текст;
@@ -525,6 +531,68 @@
 			);
 		} finally {
 			teardownBusy = false;
+		}
+	}
+
+	// ── Снимок удалённых объектов: восстановить или начать заново ─────────
+	let backupConfirmOpen = $state(false);
+	let backupRestoreBusy = $state(false);
+	let backupDiscardBusy = $state(false);
+
+	/** Дата снимка для текста модалки; недоступная дата — без неё. */
+	let backupCapturedAt = $state<string | undefined>(undefined);
+	let backupDateText = $derived(formatAutolistTime(backupCapturedAt));
+
+	async function openBackupDialog() {
+		// Дата подтягивается на момент открытия; ошибка чтения не блокирует —
+		// в тексте модалки останется «—».
+		try {
+			const info = await api.getAutolistBackup();
+			backupCapturedAt = info.exists ? info.capturedAt : undefined;
+		} catch {
+			backupCapturedAt = undefined;
+		}
+		backupConfirmOpen = true;
+	}
+
+	/** Восстановить объекты из снимка (draft→apply на бэкенде). */
+	async function restoreAutolistBackup() {
+		if (backupRestoreBusy || backupDiscardBusy) return;
+		backupRestoreBusy = true;
+		try {
+			await api.restoreAutolistObjects();
+			notifications.success(m.autolist_backup_success());
+			backupConfirmOpen = false;
+			backupCapturedAt = undefined;
+			autolistStatus.invalidate();
+		} catch (e) {
+			const status = e instanceof Error ? (e as Error & { status?: number }).status : undefined;
+			notifications.error(
+				status === 409
+					? running
+						? m.autolist_backup_err_running()
+						: m.autolist_backup_err_exists()
+					: errorMessage(e, m.autolist_backup_err()),
+			);
+		} finally {
+			backupRestoreBusy = false;
+		}
+	}
+
+	/** Начать заново: снимок удаляется, объекты не восстанавливаются. */
+	async function discardAutolistBackup() {
+		if (backupRestoreBusy || backupDiscardBusy) return;
+		backupDiscardBusy = true;
+		try {
+			await api.discardAutolistBackup();
+			notifications.success(m.autolist_backup_discarded());
+			backupConfirmOpen = false;
+			backupCapturedAt = undefined;
+			autolistStatus.invalidate();
+		} catch (e) {
+			notifications.error(errorMessage(e, m.autolist_backup_err()));
+		} finally {
+			backupDiscardBusy = false;
 		}
 	}
 
@@ -999,6 +1067,13 @@
 							{#snippet iconBefore()}<Trash2 size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
 							{m.autolist_teardown_button()}
 						</Button>
+						<!-- Есть снимок последнего сноса: вернуть объекты или начать заново. -->
+						{#if status?.hasRemovedBackup}
+							<Button variant="outline-primary" size="sm" onclick={() => void openBackupDialog()}>
+								{#snippet iconBefore()}<ArchiveRestore size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
+								{m.autolist_backup_button()}
+							</Button>
+						{/if}
 					</div>
 				</div>
 			{/if}
@@ -1433,6 +1508,36 @@
 		<Button variant="ghost" size="md" onclick={() => (teardownConfirmOpen = false)}>{m.common_cancel()}</Button>
 		<Button variant="danger" size="md" onclick={() => void teardownAutolistObjects()} disabled={teardownBusy} loading={teardownBusy}>
 			{m.autolist_teardown_confirm()}
+		</Button>
+	{/snippet}
+</Modal>
+
+<!-- Снимок удалённых объектов: восстановить или начать заново -->
+<Modal open={backupConfirmOpen} onclose={() => (backupConfirmOpen = false)} title={m.autolist_backup_title()} size="sm">
+	<div class="flex flex-col gap-3">
+		<div class="autolist-warning flex items-start gap-2.5 rounded-lg bg-warning/10 border border-warning/30">
+			<ArchiveRestore size={18} class="text-warning shrink-0 mt-0.5" aria-hidden="true" />
+			<p class="text-sm">{m.autolist_backup_description({ date: backupDateText })}</p>
+		</div>
+	</div>
+	{#snippet actions()}
+		<Button
+			variant="ghost"
+			size="md"
+			onclick={() => void discardAutolistBackup()}
+			disabled={backupRestoreBusy || backupDiscardBusy}
+			loading={backupDiscardBusy}
+		>
+			{m.autolist_backup_discard()}
+		</Button>
+		<Button
+			variant="primary"
+			size="md"
+			onclick={() => void restoreAutolistBackup()}
+			disabled={backupRestoreBusy || backupDiscardBusy}
+			loading={backupRestoreBusy}
+		>
+			{backupRestoreBusy ? m.autolist_backup_busy() : m.autolist_backup_restore()}
 		</Button>
 	{/snippet}
 </Modal>

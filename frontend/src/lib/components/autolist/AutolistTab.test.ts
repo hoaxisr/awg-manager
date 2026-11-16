@@ -85,7 +85,7 @@ const emptyResources = () => {
 	vi.spyOn(api, 'singboxRouterListDNSServers').mockResolvedValue([]);
 	vi.spyOn(api, 'singboxRouterGetDNSGlobals').mockResolvedValue({ final: 'dns-final', strategy: 'prefer_ipv4' });
 	vi.spyOn(api, 'singboxRouterListRuleSets').mockResolvedValue([]);
-	vi.spyOn(api, 'teardownAutolistObjects').mockResolvedValue();
+	vi.spyOn(api, 'teardownAutolistObjects').mockResolvedValue({ backupSaved: true });
 	// Recheck-модалка зовёт API только при открытии; null = «карточка исчезла».
 	vi.spyOn(api, 'recheckAutolistCandidate').mockResolvedValue(null);
 	emptyTunnelCatalog();
@@ -879,7 +879,7 @@ describe('AutolistTab — teardown objects', () => {
 	it('offers the danger teardown button in the stopped card and removes objects after confirmation', async () => {
 		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(stoppedStatus);
 		emptyResources();
-		const teardown = vi.spyOn(api, 'teardownAutolistObjects').mockResolvedValue();
+		const teardown = vi.spyOn(api, 'teardownAutolistObjects').mockResolvedValue({ backupSaved: true });
 
 		render(AutolistTab);
 		const button = await screen.findByRole('button', { name: m.autolist_teardown_button() });
@@ -903,7 +903,7 @@ describe('AutolistTab — teardown objects', () => {
 	it('cancel does nothing', async () => {
 		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(stoppedStatus);
 		emptyResources();
-		const teardown = vi.spyOn(api, 'teardownAutolistObjects').mockResolvedValue();
+		const teardown = vi.spyOn(api, 'teardownAutolistObjects').mockResolvedValue({ backupSaved: true });
 
 		render(AutolistTab);
 		await fireEvent.click(await screen.findByRole('button', { name: m.autolist_teardown_button() }));
@@ -930,6 +930,93 @@ describe('AutolistTab — teardown objects', () => {
 
 		await vi.waitFor(() => expect(notifications.error).toHaveBeenCalledWith(m.autolist_teardown_err_running()));
 		expect(notifications.success).not.toHaveBeenCalled();
+	});
+
+	it('warns when the teardown happened but the snapshot could not be saved', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(stoppedStatus);
+		emptyResources();
+		vi.spyOn(api, 'teardownAutolistObjects').mockResolvedValue({ backupSaved: false });
+
+		render(AutolistTab);
+		await fireEvent.click(await screen.findByRole('button', { name: m.autolist_teardown_button() }));
+		const confirmTitle = await screen.findByText(m.autolist_teardown_title());
+		const confirmModal = confirmTitle.closest('.modal-backdrop') as HTMLElement;
+		await fireEvent.click(within(confirmModal).getByRole('button', { name: m.autolist_teardown_confirm() }));
+
+		await vi.waitFor(() => expect(notifications.warning).toHaveBeenCalledWith(m.autolist_backup_toast_nosnapshot()));
+		expect(notifications.success).not.toHaveBeenCalled();
+	});
+});
+
+describe('AutolistTab — removed-objects snapshot', () => {
+	const stoppedStatus: AutolistStatus = { ...runningStatus, running: false, captureActive: false };
+	const stoppedWithBackup: AutolistStatus = { ...stoppedStatus, hasRemovedBackup: true };
+
+	it('hides the restore button without a snapshot', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(stoppedStatus);
+		emptyResources();
+
+		render(AutolistTab);
+		await screen.findByRole('button', { name: m.autolist_teardown_button() });
+		expect(screen.queryByRole('button', { name: m.autolist_backup_button() })).toBeNull();
+	});
+
+	it('offers restore/discard in the dialog when a snapshot exists and restores through the API', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(stoppedWithBackup);
+		emptyResources();
+		vi.spyOn(api, 'getAutolistBackup').mockResolvedValue({ exists: true, capturedAt: new Date('2026-11-16T10:00:00Z').toISOString() });
+		const restore = vi.spyOn(api, 'restoreAutolistObjects').mockResolvedValue();
+		const discard = vi.spyOn(api, 'discardAutolistBackup').mockResolvedValue();
+
+		render(AutolistTab);
+		const button = await screen.findByRole('button', { name: m.autolist_backup_button() });
+		await fireEvent.click(button);
+		expect(restore).not.toHaveBeenCalled();
+		expect(discard).not.toHaveBeenCalled();
+
+		const title = await screen.findByText(m.autolist_backup_title());
+		const modal = title.closest('.modal-backdrop') as HTMLElement;
+		expect(within(modal).getByRole('button', { name: m.autolist_backup_restore() })).toBeTruthy();
+		expect(within(modal).getByRole('button', { name: m.autolist_backup_discard() })).toBeTruthy();
+
+		await fireEvent.click(within(modal).getByRole('button', { name: m.autolist_backup_restore() }));
+		await vi.waitFor(() => expect(restore).toHaveBeenCalledTimes(1));
+		expect(discard).not.toHaveBeenCalled();
+		expect(notifications.success).toHaveBeenCalledWith(m.autolist_backup_success());
+		await vi.waitFor(() => expect(screen.queryByText(m.autolist_backup_title())).toBeNull());
+	});
+
+	it('discards the snapshot through the API on «start fresh»', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(stoppedWithBackup);
+		emptyResources();
+		vi.spyOn(api, 'getAutolistBackup').mockResolvedValue({ exists: true });
+		const restore = vi.spyOn(api, 'restoreAutolistObjects').mockResolvedValue();
+		const discard = vi.spyOn(api, 'discardAutolistBackup').mockResolvedValue();
+
+		render(AutolistTab);
+		await fireEvent.click(await screen.findByRole('button', { name: m.autolist_backup_button() }));
+		const title = await screen.findByText(m.autolist_backup_title());
+		const modal = title.closest('.modal-backdrop') as HTMLElement;
+		await fireEvent.click(within(modal).getByRole('button', { name: m.autolist_backup_discard() }));
+
+		await vi.waitFor(() => expect(discard).toHaveBeenCalledTimes(1));
+		expect(restore).not.toHaveBeenCalled();
+		expect(notifications.success).toHaveBeenCalledWith(m.autolist_backup_discarded());
+	});
+
+	it('translates the 409 «objects already exist» refusal of restore', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(stoppedWithBackup);
+		emptyResources();
+		vi.spyOn(api, 'getAutolistBackup').mockResolvedValue({ exists: true });
+		vi.spyOn(api, 'restoreAutolistObjects').mockRejectedValue(Object.assign(new Error('already exist'), { status: 409 }));
+
+		render(AutolistTab);
+		await fireEvent.click(await screen.findByRole('button', { name: m.autolist_backup_button() }));
+		const title = await screen.findByText(m.autolist_backup_title());
+		const modal = title.closest('.modal-backdrop') as HTMLElement;
+		await fireEvent.click(within(modal).getByRole('button', { name: m.autolist_backup_restore() }));
+
+		await vi.waitFor(() => expect(notifications.error).toHaveBeenCalledWith(m.autolist_backup_err_exists()));
 	});
 });
 

@@ -46,6 +46,7 @@ describe('Autolist client', () => {
 			enabled: false,
 			captureActive: false,
 			capturePaused: false,
+			hasRemovedBackup: false,
 			activeChecks: 0,
 			queuedChecks: 0,
 			addsUsedHour: 0,

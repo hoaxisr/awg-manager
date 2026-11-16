@@ -109,6 +109,15 @@ func (a *app) setupServer() {
 			HydraService:        a.hydraService,
 			ZapretService:       a.zapretService,
 			AutolistService:     a.autolistService,
+			// Снимок удалённых объектов Autolist знает router-сервис (его файл
+			// данных); a.routerSvc заводит setupRouter — позже setupServer, но
+			// раньше setupListen, поэтому читаем поле в момент вызова.
+			AutolistRemovedBackupProbe: func(ctx context.Context) (bool, time.Time, error) {
+				if a.routerSvc == nil {
+					return false, time.Time{}, nil
+				}
+				return a.routerSvc.AutolistBackupInfo(ctx)
+			},
 			SingboxHandler:      a.singboxHandler,
 			SingboxOrch:         a.sbOrch,
 			ClashProxy:          a.clashProxy,

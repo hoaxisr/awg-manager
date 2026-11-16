@@ -8,6 +8,14 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
+// AutolistTeardownResult — итог сноса объектов Autolist: сам снос прошёл
+// (ошибки — вторым возвращаемым), а BackupSaved говорит, сохранился ли
+// снимок удалённых объектов перед удалением. false — фронт предупреждает:
+// восстановить объекты будет не из чего.
+type AutolistTeardownResult struct {
+	BackupSaved bool `json:"backupSaved"`
+}
+
 // Теги объектов Autolist: owner-правило ссылается на inline rule-set и
 // направляет трафик в direct-outbound сателлита (литералы совпадают с
 // awgmautolist/internal/awgm/writer.go: ruleSetTag, targetOutboundTag).
@@ -37,10 +45,16 @@ func teardownRuleRefsOutbound(r Rule, tag string) bool {
 // чужую маршрутизацию. Все удаления едут одним draft→apply в конце; когда
 // удалять нечего, apply не зовётся. Автоматики при выключении сателлита нет —
 // это явная кнопка панели.
-func (s *ServiceImpl) TeardownAutolistObjects(ctx context.Context) error {
+//
+// Перед первым Delete снимок удалённых объектов пишется в каталог данных
+// панели (CaptureAutolistSnapshot); восстановление — RestoreAutolistObjects.
+// Снимок best-effort: неудача записи НЕ отменяет снос, но в ответе обработчика
+// она видна как backupSaved=false (фронт предупреждает), а факт уходит в журнал.
+func (s *ServiceImpl) TeardownAutolistObjects(ctx context.Context) (AutolistTeardownResult, error) {
+	result := AutolistTeardownResult{BackupSaved: true}
 	rules, err := s.ListRules(ctx)
 	if err != nil {
-		return err
+		return result, err
 	}
 	owner := -1
 	owners := 0
@@ -51,22 +65,31 @@ func (s *ServiceImpl) TeardownAutolistObjects(ctx context.Context) error {
 			continue
 		}
 		if teardownRuleRefsOutbound(r, autolistTargetOutbound) {
-			return fmt.Errorf("%w: outbound %q используется правилом route.rules[%d]", ErrOutboundReferenced, autolistTargetOutbound, i)
+			return result, fmt.Errorf("%w: outbound %q используется правилом route.rules[%d]", ErrOutboundReferenced, autolistTargetOutbound, i)
 		}
 	}
 	if owners > 1 {
-		return fmt.Errorf("найдено %d безусловных owner-правил %s — неоднозначно, снос отклонён", owners, autolistRuleSetTag)
+		return result, fmt.Errorf("найдено %d безусловных owner-правил %s — неоднозначно, снос отклонён", owners, autolistRuleSetTag)
 	}
 	outbounds, err := s.ListCompositeOutbounds(ctx)
 	if err != nil {
-		return err
+		return result, err
 	}
 	for _, ob := range outbounds {
 		for _, member := range ob.Outbounds {
 			if member == autolistTargetOutbound {
-				return fmt.Errorf("%w: outbound %q входит в группу %q", ErrOutboundReferenced, autolistTargetOutbound, ob.Tag)
+				return result, fmt.Errorf("%w: outbound %q входит в группу %q", ErrOutboundReferenced, autolistTargetOutbound, ob.Tag)
 			}
 		}
+	}
+
+	// Снимок ДО первого Delete и после всех проверок-отказов: удаляемое
+	// состояние зафиксировано, отказов сноса уже не будет. Best-effort:
+	// сорванный снимок не отменяет снос, но делает его видимым как
+	// backupSaved=false и в журнале.
+	if err := s.CaptureAutolistSnapshot(ctx); err != nil {
+		result.BackupSaved = false
+		s.appLog.Warn("autolist-teardown", "", "снимок удалённых объектов не сохранён: "+err.Error())
 	}
 
 	// Порядок writer'а сателлита (writer.go removeRuleSetEntry): сперва
@@ -75,13 +98,13 @@ func (s *ServiceImpl) TeardownAutolistObjects(ctx context.Context) error {
 	deleted := false
 	if owner >= 0 {
 		if err := s.DeleteRule(ctx, owner); err != nil {
-			return err
+			return result, err
 		}
 		deleted = true
 	}
 	sets, err := s.ListRuleSets(ctx)
 	if err != nil {
-		return err
+		return result, err
 	}
 	for _, rs := range sets {
 		if rs.Tag != autolistRuleSetTag {
@@ -91,7 +114,7 @@ func (s *ServiceImpl) TeardownAutolistObjects(ctx context.Context) error {
 		// но force гарантирует, что и неожиданная ссылка не оставит набор
 		// висеть (осиротевшие правила набор-референсы чистятся на месте).
 		if err := s.DeleteRuleSet(ctx, autolistRuleSetTag, true); err != nil {
-			return err
+			return result, err
 		}
 		deleted = true
 		break
@@ -101,7 +124,7 @@ func (s *ServiceImpl) TeardownAutolistObjects(ctx context.Context) error {
 			continue
 		}
 		if err := s.DeleteCompositeOutbound(ctx, autolistTargetOutbound, true); err != nil {
-			return err
+			return result, err
 		}
 		deleted = true
 		break
@@ -111,13 +134,16 @@ func (s *ServiceImpl) TeardownAutolistObjects(ctx context.Context) error {
 		// Черновика могло не оказаться: persistConfig сбрасывает фантомный
 		// черновик при байт-равенстве материализованного конфига активному.
 		if err != nil && !errors.Is(err, orchestrator.ErrNoDraft) {
-			return err
+			return result, err
 		}
 		if err == nil && !res.Ok() {
-			return fmt.Errorf("teardown отклонён валидацией применяемого конфига: %s", res.Error())
+			return result, fmt.Errorf("teardown отклонён валидацией применяемого конфига: %s", res.Error())
 		}
 	}
-	return s.verifyAutolistGone(ctx)
+	if err := s.verifyAutolistGone(ctx); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 // verifyAutolistGone перечитывает конфиг и доказывает отсутствие всех трёх
