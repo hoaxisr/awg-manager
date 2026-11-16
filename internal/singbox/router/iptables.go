@@ -771,6 +771,13 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 	fmt.Fprintf(&b, "-A %s -p udp --dport 53 -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
 		ChainName, TPROXYPort, Fwmark)
 
+	// Петля через lo (#1215): пакет движка на собственный адрес роутера идёт
+	// через lo и снова проходит PREROUTING. Исключение WAN-адреса ниже — снимок;
+	// пока адрес сменился, а сверка не прошла, каждый виток перехватывался
+	// заново и открывал новый сокет — до исчерпания дескрипторов. По интерфейсу
+	// правило от адреса не зависит. После :53 — перехват DNS не меняется.
+	fmt.Fprintf(&b, "-A %s -i lo -j RETURN\n", ChainName)
+
 	// set_chain_rules: bypass set. SKeen uses one ipset rule; we render
 	// the same destinations as discrete CIDR rules (semantically equal).
 	emitBypassReturns(&b, ChainName, spec.WANIPs)
