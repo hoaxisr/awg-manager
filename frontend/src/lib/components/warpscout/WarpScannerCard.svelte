@@ -458,4 +458,11 @@
 		}
 	}
 
+	@media (max-width: 480px) {
+		.toolbar-left,
+		.proto-seg {
+			width: 100%;
+		}
+	}
+
 </style>

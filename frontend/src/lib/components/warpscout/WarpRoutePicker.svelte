@@ -42,7 +42,7 @@
 >
 	{#snippet chip()}
 		<Route size={13} class="chip-ic" />
-		<span class="chip-dim">{m.warpscout_route_chip_label()}</span>
+		<span class="chip-dim hide-sm">{m.warpscout_route_chip_label()}</span>
 		<span class="mono chip-strong">{routeChipText(routes, defaultWan, selected)}</span>
 	{/snippet}
 
