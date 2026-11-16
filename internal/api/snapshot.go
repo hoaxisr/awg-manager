@@ -11,9 +11,10 @@ import "context"
 // callers wire whichever handlers are available and call Build.
 // Missing handlers produce empty slices in the relevant keys.
 type TunnelsSnapshotBuilder struct {
-	tunnels   *TunnelsHandler
-	external  *ExternalTunnelsHandler
-	systemTun *SystemTunnelsHandler
+	tunnels       *TunnelsHandler
+	external      *ExternalTunnelsHandler
+	systemTun     *SystemTunnelsHandler
+	warpAutopilot WarpAutopilotProvider
 }
 
 // NewTunnelsSnapshotBuilder creates a new builder with no handlers
@@ -30,6 +31,11 @@ func (b *TunnelsSnapshotBuilder) SetExternalHandler(h *ExternalTunnelsHandler) {
 
 // SetSystemTunnelsHandler sets the system tunnels handler reference.
 func (b *TunnelsSnapshotBuilder) SetSystemTunnelsHandler(h *SystemTunnelsHandler) { b.systemTun = h }
+
+// SetWarpAutopilotProvider подключает источник статусов автопилота WARP.
+func (b *TunnelsSnapshotBuilder) SetWarpAutopilotProvider(p WarpAutopilotProvider) {
+	b.warpAutopilot = p
+}
 
 // Build composes the snapshot payload for the polling store. Returns
 // nil when no TunnelsHandler is wired, or when its listItems call
@@ -49,6 +55,7 @@ func (b *TunnelsSnapshotBuilder) Build(ctx context.Context) map[string]interface
 	}
 	if b.systemTun != nil {
 		system, _ := b.systemTun.listSystemTunnels(ctx)
+		overlaySystemWarpAutopilot(system, b.warpAutopilot)
 		payload["system"] = system
 	}
 	return payload

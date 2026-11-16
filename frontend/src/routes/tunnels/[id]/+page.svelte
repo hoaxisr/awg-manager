@@ -405,6 +405,7 @@
 			tunnelName={tunnel.name ?? ''}
 			tunnelState={tunnel.state ?? 'stopped'}
 			enabled={tunnel.enabled}
+			warpAutopilot={tunnel.warpAutopilot}
 			{saving}
 			{actionStatus}
 			onReplace={() => replaceModalOpen = true}

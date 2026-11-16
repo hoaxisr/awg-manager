@@ -1,6 +1,16 @@
 package api
 
-import "github.com/hoaxisr/awg-manager/internal/tunnelid"
+import (
+	"github.com/hoaxisr/awg-manager/internal/tunnelid"
+)
+
+// WarpAutopilotDTO mirrors ndms.WarpAutopilotInfo для OpenAPI-схем ответов туннелей.
+type WarpAutopilotDTO struct {
+	ProfileID   string `json:"profileId" example:"wp_1"`
+	ProfileName string `json:"profileName,omitempty" example:"WARP HEL"`
+	State       string `json:"state" example:"ok"`
+	Message     string `json:"message,omitempty" example:"соединение в норме"`
+}
 
 // TunnelPingCheckStatus is the ping-check status embedded in TunnelListItem.
 type TunnelPingCheckStatus struct {
@@ -40,6 +50,7 @@ type TunnelListItemDTO struct {
 	Locked                    bool                  `json:"locked,omitempty" example:"false"`
 	StatusDetails             string                `json:"statusDetails,omitempty" example:"обфускатор не запущен"`
 	Obfuscator                *ObfuscatorItemDTO    `json:"obfuscator,omitempty"`
+	WarpAutopilot             *WarpAutopilotDTO     `json:"warpAutopilot,omitempty"`
 }
 
 // ObfuscatorItemDTO mirrors the obfuscator field in TunnelListItem: что
@@ -126,6 +137,7 @@ type AWGTunnelDTO struct {
 	Peer          AWGPeerDTO          `json:"peer"`
 	StateInfo     *TunnelStateInfoDTO `json:"stateInfo,omitempty"`
 	Obfuscator    *ObfuscatorDTO      `json:"obfuscator,omitempty"`
+	WarpAutopilot *WarpAutopilotDTO   `json:"warpAutopilot,omitempty"`
 }
 
 // ObfuscatorDTO mirrors storage.Obfuscator — параметры релея wg-obfuscator,

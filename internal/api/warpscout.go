@@ -74,6 +74,30 @@ func boolToInt(b bool) int {
 
 var _ warpscout.TunnelOps = (*WarpTunnelOps)(nil)
 
+// NewWarpAutopilotProvider строит легковесный провайдер карты активных
+// профилей автопилота WARP для обогащения списков туннелей.
+func NewWarpAutopilotProvider(ws *warpscout.Service) WarpAutopilotProvider {
+	if ws == nil {
+		return nil
+	}
+	return func() map[string]ndms.WarpAutopilotInfo {
+		raw := ws.WatchedTunnels()
+		if len(raw) == 0 {
+			return nil
+		}
+		out := make(map[string]ndms.WarpAutopilotInfo, len(raw))
+		for k, v := range raw {
+			out[k] = ndms.WarpAutopilotInfo{
+				ProfileID:   v.ProfileID,
+				ProfileName: v.ProfileName,
+				State:       v.State,
+				Message:     v.Message,
+			}
+		}
+		return out
+	}
+}
+
 func modeOfBackend(backend string) (warpscout.TargetMode, bool) {
 	switch backend {
 	case "nativewg":

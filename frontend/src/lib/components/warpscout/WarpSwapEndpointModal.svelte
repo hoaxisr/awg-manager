@@ -25,13 +25,14 @@
 		filters: WarpFilters;
 		/** Текущие параметры обфускации сканера, применяемые при подмене. */
 		globalAwg?: WarpAWGParams;
+		autoRename?: boolean;
 		/** В автопилоте есть несохранённые правки — включать его отсюда нельзя. */
 		autopilotLocked: boolean;
 		onclose: () => void;
 		ondone: () => void | Promise<void>;
 	}
 
-	let { hit, targets, filters, globalAwg, autopilotLocked, onclose, ondone }: Props = $props();
+	let { hit, targets, filters, globalAwg, autoRename = true, autopilotLocked, onclose, ondone }: Props = $props();
 
 	const options = $derived.by((): DropdownOption[] =>
 		[...targets]
@@ -119,6 +120,9 @@
 			{:else if protoIncompatible}
 				<p class="note warn">{m.warpscout_swap_native_wg_incompatible()}</p>
 			{/if}
+		{/if}
+		{#if !autoRename && selectedTarget}
+			<p class="note">{m.warpscout_swap_autorename_off({ name: selectedTarget.name })}</p>
 		{/if}
 		<Toggle
 			checked={autopilot && !autopilotLocked}

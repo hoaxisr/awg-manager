@@ -828,6 +828,12 @@ func (s *Server) wireCrossHandlers(mux *http.ServeMux, h *routeHandlers) {
 	tsb.SetTunnelsHandler(h.tunnelsHandler)
 	tsb.SetExternalHandler(h.externalHandler)
 	tsb.SetSystemTunnelsHandler(h.systemTunnelHandler)
+	if s.warpScout != nil {
+		wp := api.NewWarpAutopilotProvider(s.warpScout)
+		h.tunnelsHandler.SetWarpAutopilotProvider(wp)
+		h.systemTunnelHandler.SetWarpAutopilotProvider(wp)
+		tsb.SetWarpAutopilotProvider(wp)
+	}
 
 	// Injects the composite {tunnels, external, system} builder used by
 	// GetAll so /api/tunnels/all returns the exact shape the polling

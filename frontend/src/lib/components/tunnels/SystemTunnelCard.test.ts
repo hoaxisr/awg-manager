@@ -48,3 +48,24 @@ describe('SystemTunnelCard проверка связности', () => {
 		expect(check).toHaveBeenCalledTimes(1);
 	});
 });
+
+describe('SystemTunnelCard: метка автопилота WARP', () => {
+	it('показывает бейдж автопилота во всех видах карточки', () => {
+		for (const view of ['cards', 'compact', 'list'] as const) {
+			const { unmount } = render(SystemTunnelCard, {
+				props: {
+					tunnel: {
+						...base,
+						warpAutopilot: { profileId: 'p2', profileName: 'SysWARP', state: 'degraded', message: 'timeout' },
+					},
+					view,
+					ontest: vi.fn(),
+				},
+			});
+			const link = screen.getByRole('link', { name: 'автопилот' });
+			expect(link.getAttribute('href')).toBe('/diagnostics?tab=warpscout');
+			expect(link.getAttribute('title')).toBe('Автопилот WARP (профиль «SysWARP»): timeout');
+			unmount();
+		}
+	});
+});

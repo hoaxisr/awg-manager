@@ -45,6 +45,7 @@
 		routeSummary?: string;
 		/** В автопилоте есть несохранённые правки — включать его из сканера нельзя. */
 		autopilotLocked: boolean;
+		autoRename?: boolean;
 		findJunkRunning?: boolean;
 		onchanged: () => void | Promise<void>;
 		ontargetschanged: () => void | Promise<void>;
@@ -63,6 +64,7 @@
 		scanInterface = '',
 		routeSummary,
 		autopilotLocked,
+		autoRename = true,
 		findJunkRunning = false,
 		onchanged,
 		ontargetschanged,
@@ -337,6 +339,7 @@
 		{targets}
 		{filters}
 		{globalAwg}
+		{autoRename}
 		{autopilotLocked}
 		onclose={() => (swapHit = null)}
 		ondone={applied}

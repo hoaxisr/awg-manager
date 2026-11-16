@@ -17,6 +17,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
+	"github.com/hoaxisr/awg-manager/internal/warpscout"
 )
 
 // ── Response DTOs ────────────────────────────────────────────────
@@ -42,7 +43,8 @@ type SystemTunnelDTO struct {
 	Peer          *SystemTunnelPeerDTO `json:"peer,omitempty"`
 	// External — "phobos": интерфейс создан установщиком Phobos
 	// (description Phobos-…) и установка на месте; не наш, не перенимается.
-	External string `json:"external,omitempty" example:"phobos"`
+	External      string            `json:"external,omitempty" example:"phobos"`
+	WarpAutopilot *WarpAutopilotDTO `json:"warpAutopilot,omitempty"`
 }
 
 // SystemTunnelsResponse is the envelope for GET /system-tunnels.
@@ -53,13 +55,41 @@ type SystemTunnelsResponse struct {
 
 // SystemTunnelsHandler handles system WireGuard tunnel operations.
 type SystemTunnelsHandler struct {
-	svc      systemtunnel.Service
-	settings *storage.SettingsStore
-	awgStore *storage.AWGTunnelStore
-	appLog   *logging.ScopedLogger
+	svc           systemtunnel.Service
+	settings      *storage.SettingsStore
+	awgStore      *storage.AWGTunnelStore
+	appLog        *logging.ScopedLogger
+	warpAutopilot WarpAutopilotProvider
 	// connTracker: авто-чеки фронта повторяются при каждой навигации —
 	// в журнал идут переходы, повторы одного исхода только на debug.
 	connTracker *logging.TransitionTracker
+}
+
+// SetWarpAutopilotProvider подключает источник статусов автопилота WARP.
+func (h *SystemTunnelsHandler) SetWarpAutopilotProvider(p WarpAutopilotProvider) {
+	h.warpAutopilot = p
+}
+
+func lookupSystemWarpAutopilot(watched map[string]ndms.WarpAutopilotInfo, id string) *ndms.WarpAutopilotInfo {
+	if len(watched) == 0 || id == "" {
+		return nil
+	}
+	info, ok := watched[string(warpscout.TargetSystem)+":"+id]
+	if !ok {
+		return nil
+	}
+	cp := info
+	return &cp
+}
+
+func overlaySystemWarpAutopilot(items []ndms.SystemWireguardTunnel, provider WarpAutopilotProvider) {
+	var watched map[string]ndms.WarpAutopilotInfo
+	if provider != nil {
+		watched = provider()
+	}
+	for i := range items {
+		items[i].WarpAutopilot = lookupSystemWarpAutopilot(watched, items[i].ID)
+	}
 }
 
 // NewSystemTunnelsHandler creates a new system tunnels handler.
@@ -173,6 +203,7 @@ func (h *SystemTunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	overlaySystemWarpAutopilot(tunnels, h.warpAutopilot)
 	response.Success(w, tunnels)
 }
 
@@ -191,6 +222,9 @@ func (h *SystemTunnelsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		response.Error(w, err.Error(), "GET_FAILED")
 		return
+	}
+	if tunnel != nil && h.warpAutopilot != nil {
+		tunnel.WarpAutopilot = lookupSystemWarpAutopilot(h.warpAutopilot(), tunnel.ID)
 	}
 	response.Success(w, tunnel)
 }

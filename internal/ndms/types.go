@@ -219,6 +219,18 @@ type SystemWireguardTunnel struct {
 	// External — "phobos": интерфейс создан установщиком Phobos
 	// (description Phobos-…) и установка на месте; не наш, не перенимается.
 	External string `json:"external,omitempty"`
+	// WarpAutopilot заполняется на слое API, когда туннель находится под
+	// активным контролем профиля автопилота WARP.
+	WarpAutopilot *WarpAutopilotInfo `json:"warpAutopilot,omitempty"`
+}
+
+// WarpAutopilotInfo — краткая сводка активного профиля автопилота WARP
+// для пометки туннеля в списках и карточках интерфейса.
+type WarpAutopilotInfo struct {
+	ProfileID   string `json:"profileId"`
+	ProfileName string `json:"profileName,omitempty"`
+	State       string `json:"state"`
+	Message     string `json:"message,omitempty"`
 }
 
 // WireguardPeerInfo is the minimal tunnel-peer view (first peer only, for system-tunnel UI).

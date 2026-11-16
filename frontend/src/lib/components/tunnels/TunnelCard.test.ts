@@ -127,3 +127,24 @@ describe('TunnelCard: включён, но не запустился', () => {
 		expect(screen.queryByLabelText(label)).toBeNull();
 	});
 });
+
+describe('TunnelCard: метка автопилота WARP', () => {
+	it('показывает бейдж автопилота со ссылкой на диагностики и тултипом', () => {
+		render(TunnelCard, {
+			props: {
+				tunnel: {
+					...base,
+					warpAutopilot: { profileId: 'p1', profileName: 'WARP HEL', state: 'ok' },
+				},
+			},
+		});
+		const link = screen.getByRole('link', { name: 'автопилот' });
+		expect(link.getAttribute('href')).toBe('/diagnostics?tab=warpscout');
+		expect(link.getAttribute('title')).toBe('Автопилот WARP (профиль «WARP HEL»): связь в норме');
+	});
+
+	it('без warpAutopilot бейдж не рендерится', () => {
+		render(TunnelCard, { props: { tunnel: base } });
+		expect(screen.queryByText('автопилот')).toBeNull();
+	});
+});

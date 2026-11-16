@@ -87,9 +87,10 @@ type Deps struct {
 	HTTP     HTTPClientFactory
 	// HTTPFallbacks — резервные HTTP-клиенты (прокси/туннель) на случай
 	// блокировки API регистрации Cloudflare на прямом WAN.
-	HTTPFallbacks func(ctx context.Context) []*http.Client
-	Bus           Publisher
-	Log           Logger
+	HTTPFallbacks  func(ctx context.Context) []*http.Client
+	Bus            Publisher
+	OnWatchChanged func()
+	Log            Logger
 	// SupportsASC3 сообщает, поддерживает ли прошивка NDMS поля AWG 3.0
 	// (ContentPadding/таймеры) на системных/Native интерфейсах.
 	SupportsASC3 func() bool
@@ -1296,7 +1297,52 @@ func (s *Service) SaveConfig(ctx context.Context, in Config) (Config, error) {
 	}
 	saved := s.d.Store.Config()
 	s.reconcileWatchers(saved)
+	if s.d.OnWatchChanged != nil {
+		s.d.OnWatchChanged()
+	}
 	return saved, nil
+}
+
+// WatchedTunnels возвращает карту активных профилей автопилота,
+// индексированную по ключу "<targetMode>:<targetId>".
+func (s *Service) WatchedTunnels() map[string]TunnelWatchInfo {
+	if s == nil || s.d.Store == nil {
+		return nil
+	}
+	cfg := s.d.Store.Config()
+	if len(cfg.Profiles) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]TunnelWatchInfo)
+	for _, p := range cfg.Profiles {
+		if !p.Enabled || p.TargetID == "" {
+			continue
+		}
+		if cfg.ProfileMode == ProfileModeSingle && p.ID != cfg.ActiveProfileID {
+			continue
+		}
+		state := WatchIdle
+		msg := ""
+		if ws := s.watch[p.ID]; ws != nil {
+			if ws.State != "" {
+				state = ws.State
+			}
+			msg = ws.Message
+		}
+		key := string(p.TargetMode) + ":" + p.TargetID
+		out[key] = TunnelWatchInfo{
+			ProfileID:   p.ID,
+			ProfileName: p.Name,
+			State:       state,
+			Message:     msg,
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func checkTarget(ref *TunnelRef) error {
@@ -1617,6 +1663,9 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 }
 
 func (s *Service) syncTunnelColoName(ctx context.Context, mode TargetMode, id, currentName, colo string) string {
+	if s.d.Store != nil && !s.d.Store.Config().TunnelAutoRename() {
+		return currentName
+	}
 	newName, ok := DeriveWarpTunnelName(currentName, colo)
 	if !ok || s.d.Tunnels == nil {
 		return currentName

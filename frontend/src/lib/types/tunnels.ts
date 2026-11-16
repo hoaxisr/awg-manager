@@ -161,6 +161,13 @@ export interface ImportConfRequest {
 	obfuscator?: Omit<TunnelObfuscator, 'localPort' | 'flavor'> & { flavor?: ObfuscatorFlavor };
 }
 
+export interface WarpAutopilotInfo {
+	profileId: string;
+	profileName?: string;
+	state: string;
+	message?: string;
+}
+
 export interface AWGTunnel {
 	id: string;
 	name: string;
@@ -181,6 +188,7 @@ export interface AWGTunnel {
 	freeTurnClientId?: string;
 	wdttClientId?: string;
 	obfuscator?: TunnelObfuscator;
+	warpAutopilot?: WarpAutopilotInfo;
 }
 
 export interface TunnelListItem {
@@ -221,6 +229,7 @@ export interface TunnelListItem {
 	locked?: boolean;
 	statusDetails?: string;
 	obfuscator?: { flavor: ObfuscatorFlavor; target: string; localPort: number; relay?: 'kernel' | 'process' };
+	warpAutopilot?: WarpAutopilotInfo;
 }
 
 export interface DeleteResult {
@@ -291,6 +300,7 @@ export interface SystemTunnel {
 		lastHandshake: string;
 		online: boolean;
 	};
+	warpAutopilot?: WarpAutopilotInfo;
 }
 
 export interface ASCParamsBase {

@@ -9,6 +9,7 @@
 	import { TrafficChart, TrafficSparkline, Badge, PingButton, TunnelListActions } from '$lib/components/ui';
 	import type { StatusDotVariant } from '$lib/components/ui/StatusDot.svelte';
 	import TunnelTitleRow from '$lib/components/tunnels/TunnelTitleRow.svelte';
+	import WarpAutopilotBadge from './WarpAutopilotBadge.svelte';
 	import { getTrafficRates, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
 
 	interface Props {
@@ -165,6 +166,7 @@
 								title={m.system_tunnels_card_phobos_title()}
 							>{m.system_tunnels_card_external_phobos()}</Badge>
 						{/if}
+						<WarpAutopilotBadge autopilot={tunnel.warpAutopilot} />
 						<span class="iface-chip-dense" title={tunnel.interfaceName}>{tunnel.interfaceName}</span>
 					</div>
 				</div>
@@ -213,6 +215,7 @@
 								title={m.system_tunnels_card_phobos_title()}
 							>{m.system_tunnels_card_external_phobos()}</span>
 						{/if}
+						<WarpAutopilotBadge autopilot={tunnel.warpAutopilot} />
 					</div>
 					{#if compactStatusHint}
 						<span class="status-hint-left">{compactStatusHint}</span>

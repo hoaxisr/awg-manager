@@ -166,6 +166,11 @@ func (s *Server) buildWarpScout(h *routeHandlers) *api.WarpScoutHandler {
 		UsedIPv4:            ops.UsedIPv4,
 		SupportsASC3:        ndmsinfo.SupportsWireguardASC3,
 		SupportsKernelAWG31: supportsKernelAWG31,
+		OnWatchChanged: func() {
+			if h.tunnelsHandler != nil {
+				h.tunnelsHandler.PublishTunnelList(context.Background())
+			}
+		},
 	}
 	if s.bus != nil {
 		deps.Bus = s.bus

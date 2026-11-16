@@ -1042,6 +1042,16 @@
 	"tunnels_unsupported_model_tail": "не имеет скомпилированного модуля ядра в настоящий момент.",
 	"tunnels_unsupported_contact": "Написать в @awgmanager",
 	"tunnels_unsupported_manual": "Установить вручную",
+	"tunnels_warp_autopilot_badge": "автопилот",
+	"tunnels_warp_autopilot_head": "Автопилот WARP",
+	"tunnels_warp_autopilot_named": "Автопилот WARP (профиль «{name}»)",
+	"tunnels_warp_state_ok": "связь в норме",
+	"tunnels_warp_state_idle": "активен",
+	"tunnels_warp_state_swapping": "подмена узла",
+	"tunnels_warp_state_degraded": "деградация связи",
+	"tunnels_warp_state_backoff": "пауза после неудачного скана",
+	"tunnels_warp_state_engine_busy": "ожидает сканер",
+	"tunnels_warp_state_engine_missing": "нет движка сканера",
 	"tunnel_refs_group_member": "Входит в группу маршрутов «{name}»",
 	"tunnel_refs_group_default": "Выбран по умолчанию в группе «{name}»",
 	"tunnel_refs_dns_server": "Используется DNS-сервером «{name}»",
@@ -8376,5 +8386,8 @@
 	"warpscout_findjunk_best_short": "Лучший (#{attempt})",
 	"warpscout_awg3_tag_timers": "таймеры",
 	"warpscout_awg31_tag_no_cookies": "без куки",
-	"warpscout_awg31_tag_trailers": "хвост"
+	"warpscout_awg31_tag_trailers": "хвост",
+	"warpscout_autorename_toggle": "Переименовывать туннель под локацию (HEL, FRA…) при смене endpoint",
+	"warpscout_autorename_tip": "Автоматически подставлять код узла Cloudflare (HEL, FRA, …) в имя туннеля и профиля при смене endpoint и проверках",
+	"warpscout_swap_autorename_off": "Автопереименование отключено — имя «{name}» сохранится."
 }

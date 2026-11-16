@@ -162,6 +162,8 @@ definitions:
         - wg
         example: awg
         type: string
+      warpAutopilot:
+        $ref: '#/definitions/api.WarpAutopilotDTO'
     type: object
   api.AccessPoliciesListResponse:
     properties:
@@ -7165,6 +7167,8 @@ definitions:
       status:
         example: up
         type: string
+      warpAutopilot:
+        $ref: '#/definitions/api.WarpAutopilotDTO'
     type: object
   api.SystemTunnelPeerDTO:
     properties:
@@ -7410,6 +7414,8 @@ definitions:
         - wg
         example: awg
         type: string
+      warpAutopilot:
+        $ref: '#/definitions/api.WarpAutopilotDTO'
       wdttClientId:
         example: default
         type: string
@@ -7940,6 +7946,21 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.WarpAutopilotDTO:
+    properties:
+      message:
+        example: соединение в норме
+        type: string
+      profileId:
+        example: wp_1
+        type: string
+      profileName:
+        example: WARP HEL
+        type: string
+      state:
+        example: ok
+        type: string
     type: object
   api.WireguardServerDTO:
     properties:
