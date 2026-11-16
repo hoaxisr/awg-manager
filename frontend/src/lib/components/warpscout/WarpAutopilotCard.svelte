@@ -304,4 +304,13 @@
 			margin-left: 0;
 		}
 	}
+
+	@media (max-width: 480px) {
+		.mode-seg {
+			width: 100%;
+		}
+		.head-controls {
+			justify-content: flex-end;
+		}
+	}
 </style>

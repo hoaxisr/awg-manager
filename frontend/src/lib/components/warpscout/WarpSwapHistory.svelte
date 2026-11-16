@@ -170,7 +170,10 @@
 	.swap-eps {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.3rem;
+		flex-wrap: wrap;
+		gap: 0.25rem 0.3rem;
+		min-width: 0;
+		max-width: 100%;
 		color: var(--color-text-primary);
 	}
 	.swap-meta {

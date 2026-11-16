@@ -701,6 +701,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		flex-wrap: wrap;
 		gap: 0.6rem;
 	}
 	.fj-title {
@@ -847,5 +848,14 @@
 	}
 	.mono {
 		font-family: var(--font-mono);
+	}
+
+	@media (max-width: 480px) {
+		.fj-controls {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+		.fj-prof {
+			grid-column: 1 / -1;
+		}
 	}
 </style>
