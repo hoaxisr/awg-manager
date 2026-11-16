@@ -2,6 +2,8 @@
 	import { Check, Download, RefreshCw, Save, SaveAll, X } from 'lucide-svelte';
 	import { Button, BackLink, type ButtonVariant } from '$lib/components/ui';
 	import { m } from '$lib/i18n';
+	import type { WarpAutopilotInfo } from '$lib/types';
+	import WarpAutopilotBadge from './WarpAutopilotBadge.svelte';
 	import { isEnabledButDown } from './tunnelPageSelectors';
 
 	type ActionStatus = 'loading' | 'success' | 'error';
@@ -10,6 +12,7 @@
 		tunnelName: string;
 		tunnelState: string;
 		enabled?: boolean;
+		warpAutopilot?: WarpAutopilotInfo | null;
 		saving: boolean;
 		actionStatus: ActionStatus | null;
 		onReplace?: () => void;
@@ -22,6 +25,7 @@
 		tunnelName,
 		tunnelState,
 		enabled,
+		warpAutopilot,
 		saving,
 		actionStatus,
 		onReplace,
@@ -53,6 +57,7 @@
 				 : tunnelState === 'broken' ? m.tunnels_state_broken()
 				 : m.tunnels_state_stopped()}
 			</span>
+			<WarpAutopilotBadge autopilot={warpAutopilot} size="sm" />
 		</div>
 	</div>
 

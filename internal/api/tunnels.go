@@ -5,6 +5,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -76,6 +77,8 @@ type TunnelsHandler struct {
 	// (амендмент F2).
 	proxyRecords ProxyRecordLister
 
+	warpAutopilot WarpAutopilotProvider
+
 	// buildTunnelsSnapshot (optional) assembles the composite
 	// {tunnels, external, system} payload used by GetAll and by
 	// mutation handlers that return fresh state. Injected by server.go
@@ -134,3 +137,12 @@ func (h *TunnelsHandler) SetProxyRecords(records ProxyRecordLister) {
 
 // SetPingCheckSnapshot sets the function that publishes a pingcheck snapshot.
 func (h *TunnelsHandler) SetPingCheckSnapshot(fn func()) { h.pingCheckSnapshot = fn }
+
+// WarpAutopilotProvider возвращает карту активных профилей автопилота WARP,
+// индексированную по "<mode>:<targetId>".
+type WarpAutopilotProvider func() map[string]ndms.WarpAutopilotInfo
+
+// SetWarpAutopilotProvider подключает источник статусов автопилота WARP.
+func (h *TunnelsHandler) SetWarpAutopilotProvider(p WarpAutopilotProvider) {
+	h.warpAutopilot = p
+}

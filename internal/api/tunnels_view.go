@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -235,8 +236,25 @@ type tunnelItem struct {
 	Locked bool `json:"locked,omitempty"`
 	// StatusDetails — человекочитаемая причина состояния (StateInfo.Details),
 	// напр. «обфускатор не запущен».
-	StatusDetails string          `json:"statusDetails,omitempty"`
-	Obfuscator    *obfuscatorItem `json:"obfuscator,omitempty"`
+	StatusDetails string                  `json:"statusDetails,omitempty"`
+	Obfuscator    *obfuscatorItem         `json:"obfuscator,omitempty"`
+	WarpAutopilot *ndms.WarpAutopilotInfo `json:"warpAutopilot,omitempty"`
+}
+
+func lookupManagedWarpAutopilot(watched map[string]ndms.WarpAutopilotInfo, backend, id string) *ndms.WarpAutopilotInfo {
+	if len(watched) == 0 || id == "" {
+		return nil
+	}
+	mode, ok := modeOfBackend(backend)
+	if !ok {
+		return nil
+	}
+	info, exists := watched[string(mode)+":"+id]
+	if !exists {
+		return nil
+	}
+	cp := info
+	return &cp
 }
 
 // obfuscatorItem — что показывает список о релее; Key наружу не отдаём.
@@ -276,6 +294,11 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 				runningAddresses[stored.Interface.Address] = t.ID
 			}
 		}
+	}
+
+	var watched map[string]ndms.WarpAutopilotInfo
+	if h.warpAutopilot != nil {
+		watched = h.warpAutopilot()
 	}
 
 	items := make([]tunnelItem, 0, len(tunnels))
@@ -410,6 +433,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			WdttClientID:              wdttClientID,
 			FreeTurnClientID:          freeTurnClientID,
 			Obfuscator:                obfItem(stored, t.StateInfo.RelayBackend),
+			WarpAutopilot:             lookupManagedWarpAutopilot(watched, backend, t.ID),
 		}
 		if item.Obfuscator != nil {
 			// Только у обфусцированных: причины оттуда пишет nwg/obfuscated.go

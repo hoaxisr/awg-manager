@@ -2715,3 +2715,87 @@ func TestServiceSaveConfig_SignatureDomainAndPresetRegenerates(t *testing.T) {
 		t.Fatalf("expected regenerated I1 for ru_whitelist: %+v", saved2.AWG)
 	}
 }
+
+func TestAutoRenameDisabled_SkipsWatchdogAndManualRename(t *testing.T) {
+	if !DefaultConfig().TunnelAutoRename() {
+		t.Fatal("DefaultConfig().TunnelAutoRename() must default to true")
+	}
+	if !normalizeConfig(Config{}).TunnelAutoRename() {
+		t.Fatal("normalizeConfig(Config{}).TunnelAutoRename() must default to true")
+	}
+
+	s, r, tun, pr := newTestService(t)
+	r.hits = []Hit{{Endpoint: "188.114.96.9:2408", PingMs: 40, Colo: "HEL", Loc: "FI"}}
+	pr.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+
+	autoRename := false
+	p := testProfile()
+	cfg := s.d.Store.Config()
+	cfg.AutoRename = &autoRename
+	cfg.Profiles = []Profile{p}
+	cfg.ActiveProfileID = p.ID
+	saved, err := s.SaveConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	if saved.TunnelAutoRename() {
+		t.Fatal("expected saved.TunnelAutoRename() == false")
+	}
+
+	st := &watcherState{}
+	s.checkOnce(context.Background(), p, st)
+	if len(tun.swaps) != 1 {
+		t.Fatalf("expected watchdog swap even with AutoRename=false, swaps=%v", tun.swaps)
+	}
+	if len(tun.renames) != 0 {
+		t.Fatalf("expected no tunnel rename when AutoRename=false, renames=%v", tun.renames)
+	}
+	if gotRef, _ := tun.Get(context.Background(), TargetNative, "awg10"); gotRef == nil || gotRef.Name != "WARP" {
+		t.Fatalf("expected tunnel name preserved as WARP, got %+v", gotRef)
+	}
+	if gotCfg := s.d.Store.Config(); len(gotCfg.Profiles) != 1 || gotCfg.Profiles[0].Name != "WARP" {
+		t.Fatalf("expected profile name preserved as WARP, got %+v", gotCfg.Profiles)
+	}
+
+	if _, err := s.Apply(context.Background(), ApplyRequest{
+		Action: "swap", Endpoint: "188.114.97.5:4500", Colo: "FRA", Mode: TargetNative, TargetID: "awg10",
+	}); err != nil {
+		t.Fatalf("Apply swap: %v", err)
+	}
+	if len(tun.renames) != 0 {
+		t.Fatalf("expected manual swap not to rename when AutoRename=false, renames=%v", tun.renames)
+	}
+}
+
+func TestWatchedTunnels_RespectsModeAndEnabled(t *testing.T) {
+	s, _, _, _ := newTestService(t)
+	cfg := Config{
+		ProfileMode:     ProfileModeSingle,
+		ActiveProfileID: "p1",
+		Profiles: []Profile{
+			{ID: "p1", Name: "WARP One", Enabled: true, TargetMode: TargetKernel, TargetID: "awg1"},
+			{ID: "p2", Name: "WARP Two", Enabled: false, TargetMode: TargetSystem, TargetID: "Wireguard0"},
+		},
+	}
+	if err := s.d.Store.SetConfig(normalizeConfig(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	s.setWatch(ctx, "p1", func(ws *WatchStatus) { ws.State = WatchOK })
+
+	got := s.WatchedTunnels()
+	if len(got) != 1 || got["kernel:awg1"].ProfileName != "WARP One" || got["kernel:awg1"].State != WatchOK {
+		t.Fatalf("single mode WatchedTunnels = %+v, want only kernel:awg1", got)
+	}
+
+	cfg.ProfileMode = ProfileModeMulti
+	cfg.Profiles[1].Enabled = true
+	if err := s.d.Store.SetConfig(normalizeConfig(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	s.setWatch(ctx, "p2", func(ws *WatchStatus) { ws.State = WatchDegraded; ws.Message = "timeout" })
+	got2 := s.WatchedTunnels()
+	if len(got2) != 2 || got2["system:Wireguard0"].State != WatchDegraded || got2["system:Wireguard0"].Message != "timeout" {
+		t.Fatalf("multi mode WatchedTunnels = %+v, want both active profiles", got2)
+	}
+}

@@ -1022,6 +1022,16 @@
 	"tunnels_unsupported_model_tail": "has no compiled kernel module at the moment.",
 	"tunnels_unsupported_contact": "Write to @awgmanager",
 	"tunnels_unsupported_manual": "Install manually",
+	"tunnels_warp_autopilot_badge": "autopilot",
+	"tunnels_warp_autopilot_head": "WARP Autopilot",
+	"tunnels_warp_autopilot_named": "WARP Autopilot (profile \"{name}\")",
+	"tunnels_warp_state_ok": "link healthy",
+	"tunnels_warp_state_idle": "active",
+	"tunnels_warp_state_swapping": "swapping endpoint",
+	"tunnels_warp_state_degraded": "link degraded",
+	"tunnels_warp_state_backoff": "paused after failed scan",
+	"tunnels_warp_state_engine_busy": "waiting for scanner",
+	"tunnels_warp_state_engine_missing": "scanner engine missing",
 	"tunnel_refs_group_member": "Member of route group \"{name}\"",
 	"tunnel_refs_group_default": "Selected by default in group \"{name}\"",
 	"tunnel_refs_dns_server": "Used by DNS server \"{name}\"",
@@ -7947,5 +7957,8 @@
 	"warpscout_findjunk_best_short": "Best (#{attempt})",
 	"warpscout_awg3_tag_timers": "timers",
 	"warpscout_awg31_tag_no_cookies": "no cookies",
-	"warpscout_awg31_tag_trailers": "trailers"
+	"warpscout_awg31_tag_trailers": "trailers",
+	"warpscout_autorename_toggle": "Rename tunnel after location (HEL, FRA…) on endpoint change",
+	"warpscout_autorename_tip": "Automatically reflect the Cloudflare colo code (HEL, FRA, …) in tunnel and profile names during endpoint swaps and checks",
+	"warpscout_swap_autorename_off": "Auto-rename is disabled — name \"{name}\" will be preserved."
 }

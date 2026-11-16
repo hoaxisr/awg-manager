@@ -41,6 +41,7 @@
 	// своё «Сохранить»; часть без локальных правок следует за сервером.
 	let draft = $state<WarpConfig>({
 		profileMode: 'single',
+		autoRename: true,
 		profiles: [],
 		awg: { signatureProfile: 'quic_initial', jc: 4, jmin: 40, jmax: 70 },
 	});
@@ -348,6 +349,7 @@
 					globalAwg={ws.config.awg}
 					scanInterface={scanIface}
 					{routeSummary}
+					autoRename={ws.config.autoRename !== false}
 					autopilotLocked={profilesDirty}
 					findJunkRunning={ws.findJunk?.running ?? false}
 					onchanged={refreshNow}
@@ -362,6 +364,7 @@
 					watch={ws.watch ?? []}
 					stats={ws.stats ?? []}
 					{history}
+					savedProfilesCount={ws.config.profiles.length}
 					dirty={profilesDirty}
 					{saving}
 					onsave={async () => {

@@ -455,8 +455,10 @@ func cloneProfileStats(in ProfileStats, withSamples bool) ProfileStats {
 
 // DefaultConfig — стартовая конфигурация.
 func DefaultConfig() Config {
+	autoRename := true
 	return Config{
 		ProfileMode: ProfileModeSingle,
+		AutoRename:  &autoRename,
 		Profiles:    []Profile{},
 		AWG: AWGParams{
 			SignatureProfile: "quic_initial",
@@ -561,6 +563,8 @@ func normalizeConfig(c Config) Config {
 		c.ProfileMode = ProfileModeSingle
 	}
 	c.ScanInterface = sanitizeIfaceName(c.ScanInterface)
+	autoRename := c.TunnelAutoRename()
+	c.AutoRename = &autoRename
 	if c.Profiles == nil {
 		c.Profiles = []Profile{}
 	}
@@ -597,6 +601,10 @@ func normalizeConfig(c Config) Config {
 
 func cloneConfig(c Config) Config {
 	out := c
+	if c.AutoRename != nil {
+		b := *c.AutoRename
+		out.AutoRename = &b
+	}
 	out.Profiles = make([]Profile, len(c.Profiles))
 	for i, p := range c.Profiles {
 		cp := p

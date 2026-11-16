@@ -21,6 +21,7 @@
 		watch: WarpWatchStatus[];
 		stats?: WarpProfileStats[];
 		history: WarpSwapEvent[];
+		savedProfilesCount?: number;
 		dirty: boolean;
 		saving: boolean;
 		onsave: () => void | Promise<void>;
@@ -35,6 +36,7 @@
 		watch,
 		stats = [],
 		history,
+		savedProfilesCount = 0,
 		dirty,
 		saving,
 		onsave,
@@ -121,9 +123,20 @@
 		</div>
 	</div>
 
+	<div class="auto-prefs">
+		<label class="auto-pref-check" title={m.warpscout_autorename_tip()}>
+			<input
+				type="checkbox"
+				checked={config.autoRename !== false}
+				onchange={(e) => (config.autoRename = (e.currentTarget as HTMLInputElement).checked)}
+			/>
+			<span>{m.warpscout_autorename_toggle()}</span>
+		</label>
+	</div>
+
 	<!-- Список профилей с акцентом на живую телеметрию -->
 	<div class="profiles-body">
-		{#if config.profiles.length === 0 && !dirty}
+		{#if config.profiles.length === 0 && savedProfilesCount === 0}
 			<div class="empty-bar">
 				<p class="note">{m.warpscout_empty_profiles()}</p>
 				<Button size="sm" variant="primary" onclick={addProfile}>
@@ -250,6 +263,31 @@
 		flex-wrap: wrap;
 	}
 	.mode-seg {
+		flex-shrink: 0;
+	}
+	.auto-prefs {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.4rem 0.85rem;
+		padding: 0.45rem 0.85rem;
+		border-bottom: 1px solid var(--color-border);
+		background: color-mix(in srgb, var(--color-bg-primary) 55%, transparent);
+		flex-wrap: wrap;
+	}
+	.auto-pref-check {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		font-size: 0.78rem;
+		line-height: 1.35;
+		color: var(--color-text-secondary);
+		cursor: pointer;
+		user-select: none;
+	}
+	.auto-pref-check input[type='checkbox'] {
+		accent-color: var(--color-accent);
+		margin: 0;
 		flex-shrink: 0;
 	}
 	.profiles-body {

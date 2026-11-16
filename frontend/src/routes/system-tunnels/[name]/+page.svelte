@@ -5,6 +5,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import type { SystemTunnel, ASCParams } from '$lib/types';
 	import { PageContainer } from '$lib/components/layout';
+	import { WarpAutopilotBadge } from '$lib/components/tunnels';
 	import { ASCEditor } from '$lib/components/asc';
 	import { ArrowLeft } from 'lucide-svelte';
 	import { Button } from '$lib/components/ui';
@@ -78,6 +79,7 @@
 			</Button>
 			<h1 class="page-title">{tunnel?.description || name}</h1>
 			<span class="badge-system">{m.system_tunnels_card_system_badge()}</span>
+			<WarpAutopilotBadge autopilot={tunnel?.warpAutopilot} size="sm" />
 		</div>
 		<Button
 			variant="primary"

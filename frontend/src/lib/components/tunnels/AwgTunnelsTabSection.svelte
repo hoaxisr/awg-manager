@@ -21,6 +21,7 @@
 	import { tunnels } from '$lib/stores/tunnels';
 	import TunnelListActions from '$lib/components/ui/TunnelListActions.svelte';
 	import DefaultRouteBadge from '$lib/components/tunnels/DefaultRouteBadge.svelte';
+	import WarpAutopilotBadge from '$lib/components/tunnels/WarpAutopilotBadge.svelte';
 	import TunnelPingButton from '$lib/components/tunnels/TunnelPingButton.svelte';
 	import { secondsSince } from '$lib/utils/format';
 	import { awgManagedStatusDot } from '$lib/utils/statusDot';
@@ -315,6 +316,7 @@
 							>
 								{#snippet badges()}
 									<DefaultRouteBadge defaultRoute={tunnel.defaultRoute} />
+									<WarpAutopilotBadge autopilot={tunnel.warpAutopilot} />
 									{#if tunnel.backend}
 										<span class="awg-inline-badge">{tunnel.backend}</span>
 									{/if}

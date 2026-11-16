@@ -170,9 +170,27 @@ type Config struct {
 	ActiveProfileID string      `json:"activeProfileId,omitempty"`
 	// ScanInterface — явный интерфейс выхода для сканера и автопилота
 	// (например "eth3", "ppp0" или "nwg1"); пусто — основной WAN по умолчанию.
-	ScanInterface string    `json:"scanInterface,omitempty"`
-	Profiles      []Profile `json:"profiles"`
-	AWG           AWGParams `json:"awg"`
+	ScanInterface string `json:"scanInterface,omitempty"`
+	// AutoRename разрешает обновлять код колокейшна (HEL, FRA, …) в названии
+	// туннеля и профиля при проверках и смене endpoint'а. nil трактуется как
+	// true для обратной совместимости со старыми файлами настроек.
+	AutoRename *bool     `json:"autoRename,omitempty"`
+	Profiles   []Profile `json:"profiles"`
+	AWG        AWGParams `json:"awg"`
+}
+
+// TunnelAutoRename сообщает, включено ли переименование туннелей под локацию.
+func (c Config) TunnelAutoRename() bool {
+	return c.AutoRename == nil || *c.AutoRename
+}
+
+// TunnelWatchInfo — краткая сводка активного профиля автопилота для пометки
+// привязанного туннеля в общих списках интерфейса.
+type TunnelWatchInfo struct {
+	ProfileID   string `json:"profileId"`
+	ProfileName string `json:"profileName,omitempty"`
+	State       string `json:"state"`
+	Message     string `json:"message,omitempty"`
 }
 
 // RouteRef — доступный интерфейс выхода (WAN, внешний VPN или WARP для WARP-in-WARP).

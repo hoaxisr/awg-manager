@@ -148,10 +148,15 @@ func (s *Service) setWatch(ctx context.Context, id string, mut func(ws *WatchSta
 		ws = &WatchStatus{ProfileID: id}
 		s.watch[id] = ws
 	}
+	prevState := ws.State
 	mut(ws)
 	out := *ws
+	stateChanged := prevState != ws.State
 	s.mu.Unlock()
 	s.publish(TopicWatchdog, out)
+	if stateChanged && s.d.OnWatchChanged != nil {
+		s.d.OnWatchChanged()
+	}
 	return out
 }
 

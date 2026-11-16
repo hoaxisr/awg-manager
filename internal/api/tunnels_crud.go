@@ -195,6 +195,12 @@ func (h *TunnelsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "NOT_FOUND")
 		return
 	}
+	if h.warpAutopilot != nil {
+		backend, _ := resp["backend"].(string)
+		if wa := lookupManagedWarpAutopilot(h.warpAutopilot(), backend, id); wa != nil {
+			resp["warpAutopilot"] = wa
+		}
+	}
 	response.Success(w, resp)
 }
 

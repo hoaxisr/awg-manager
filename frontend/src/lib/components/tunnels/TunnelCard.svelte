@@ -6,6 +6,7 @@
 	import { Toggle, TrafficSparkline, TrafficChart, VersionBadge, StatusDot, Badge } from '$lib/components/ui';
 	import DefaultRouteBadge from './DefaultRouteBadge.svelte';
 	import ProxyOwnedBadge from './ProxyOwnedBadge.svelte';
+	import WarpAutopilotBadge from './WarpAutopilotBadge.svelte';
 	import { TunnelListActions } from '$lib/components/ui';
 	import TunnelPingButton from '$lib/components/tunnels/TunnelPingButton.svelte';
 	import TunnelTitleRow from '$lib/components/tunnels/TunnelTitleRow.svelte';
@@ -311,6 +312,7 @@
 						<VersionBadge kind="backend" value={tunnel.backend} />
 					{/if}
 					<ProxyOwnedBadge {tunnel} />
+					<WarpAutopilotBadge autopilot={tunnel.warpAutopilot} />
 					{#if tunnel.obfuscator}
 						<Badge variant="info" size="sm">{tunnel.obfuscator.flavor === 'phobos' ? 'Phobos' : 'ClusterM'}</Badge>
 						{#if tunnel.obfuscator.relay === 'kernel'}
@@ -385,6 +387,7 @@
 							<VersionBadge kind="awg" value={tunnel.awgVersion} />
 						{/if}
 						<ProxyOwnedBadge {tunnel} />
+						<WarpAutopilotBadge autopilot={tunnel.warpAutopilot} />
 						{#if tunnel.obfuscator}
 							<Badge variant="info" size="sm">{tunnel.obfuscator.flavor === 'phobos' ? 'Phobos' : 'ClusterM'}</Badge>
 							{#if tunnel.obfuscator.relay === 'kernel'}

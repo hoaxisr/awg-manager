@@ -65,6 +65,7 @@ const api_AWGTunnelDTO: v.GenericSchema = v.looseObject({
 	state: v.optional(v.nullable(v.string())),
 	stateInfo: v.optional(v.nullable(v.lazy(() => api_TunnelStateInfoDTO))),
 	type: v.optional(v.nullable(v.string())),
+	warpAutopilot: v.optional(v.nullable(v.lazy(() => api_WarpAutopilotDTO))),
 });
 
 const api_AccessPoliciesListResponse: v.GenericSchema = v.looseObject({
@@ -2521,6 +2522,7 @@ const api_SystemTunnelDTO: v.GenericSchema = v.looseObject({
 	mtu: v.optional(v.nullable(v.number())),
 	peer: v.optional(v.nullable(v.lazy(() => api_SystemTunnelPeerDTO))),
 	status: v.optional(v.nullable(v.string())),
+	warpAutopilot: v.optional(v.nullable(v.lazy(() => api_WarpAutopilotDTO))),
 });
 
 const api_SystemTunnelPeerDTO: v.GenericSchema = v.looseObject({
@@ -2625,6 +2627,7 @@ const api_TunnelListItemDTO: v.GenericSchema = v.looseObject({
 	statusDetails: v.optional(v.nullable(v.string())),
 	txBytes: v.optional(v.nullable(v.number())),
 	type: v.optional(v.nullable(v.string())),
+	warpAutopilot: v.optional(v.nullable(v.lazy(() => api_WarpAutopilotDTO))),
 	wdttClientId: v.optional(v.nullable(v.string())),
 });
 
@@ -2791,6 +2794,13 @@ const api_WANStatusEnvelope: v.GenericSchema = v.looseObject({
 	anyWANUp: v.optional(v.nullable(v.boolean())),
 }))),
 	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_WarpAutopilotDTO: v.GenericSchema = v.looseObject({
+	message: v.optional(v.nullable(v.string())),
+	profileId: v.optional(v.nullable(v.string())),
+	profileName: v.optional(v.nullable(v.string())),
+	state: v.optional(v.nullable(v.string())),
 });
 
 const api_WireguardServerDTO: v.GenericSchema = v.looseObject({

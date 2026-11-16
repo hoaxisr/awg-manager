@@ -638,4 +638,26 @@ describe('WarpScoutTab', () => {
 			URL.revokeObjectURL = origRevokeUrl;
 		}
 	});
+
+	it('disables autoRename via toggle and persists it through SaveConfig', async () => {
+		const initial = state();
+		api.warpscoutSaveConfig.mockResolvedValue({
+			...initial.config,
+			autoRename: false,
+		});
+		const { container } = await mount(initial);
+		const checkbox = container.querySelector<HTMLInputElement>('.auto-pref-check input[type="checkbox"]');
+		expect(checkbox).not.toBeNull();
+		expect(checkbox!.checked).toBe(true);
+
+		await fireEvent.click(checkbox!);
+		await tick();
+		expect(checkbox!.checked).toBe(false);
+
+		const saveBtn = await screen.findByRole('button', { name: 'Сохранить' });
+		await fireEvent.click(saveBtn);
+
+		await waitFor(() => expect(api.warpscoutSaveConfig).toHaveBeenCalledTimes(1));
+		expect(api.warpscoutSaveConfig.mock.calls[0][0].autoRename).toBe(false);
+	});
 });

@@ -64,6 +64,7 @@ export interface WarpConfig {
 	profileMode: WarpProfileMode;
 	activeProfileId?: string;
 	scanInterface?: string;
+	autoRename?: boolean;
 	profiles: WarpProfile[];
 	awg: WarpAWGParams;
 }

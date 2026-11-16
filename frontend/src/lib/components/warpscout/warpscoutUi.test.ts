@@ -40,6 +40,7 @@ import {
 	topColos,
 	warpErrorMessage,
 	watchStateView,
+	withSection,
 } from './warpscoutUi';
 
 function profile(id: string, over: Partial<WarpProfile> = {}): WarpProfile {
@@ -580,5 +581,15 @@ describe('warpscoutUi', () => {
 				],
 			}),
 		).toBe('Выбран #1: Jc 5 · 40–70 · quic_initial · gosuslugi.ru (28/30)');
+	});
+
+	it('autoRename defaults to true and tracks profiles dirty state', () => {
+		const def = config();
+		expect(sanitizeConfig(def).autoRename).toBe(true);
+		const off = config({ autoRename: false });
+		expect(sanitizeConfig(off).autoRename).toBe(false);
+		expect(sectionEqual(def, config({ autoRename: true }), 'profiles')).toBe(true);
+		expect(sectionEqual(def, off, 'profiles')).toBe(false);
+		expect(withSection(def, off, 'profiles').autoRename).toBe(false);
 	});
 });

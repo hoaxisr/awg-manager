@@ -474,6 +474,7 @@ export function sanitizeConfig(cfg: WarpConfig): WarpConfig {
 	if (out.profileMode === 'single') {
 		out.activeProfileId = out.profiles.find((p) => p.enabled)?.id;
 	}
+	out.autoRename = out.autoRename !== false;
 	return out;
 }
 
@@ -532,6 +533,7 @@ function sectionView(c: WarpConfig, s: ConfigSection): unknown {
 		return view;
 	}
 	return {
+		autoRename: c.autoRename !== false,
 		profileMode: c.profileMode,
 		activeProfileId: c.activeProfileId || undefined,
 		profiles: c.profiles.map((p) => ({
@@ -555,6 +557,7 @@ export function withSection(base: WarpConfig, from: WarpConfig, s: ConfigSection
 	if (s === 'awg') return { ...base, awg: src.awg };
 	return {
 		...base,
+		autoRename: src.autoRename !== false,
 		profileMode: src.profileMode,
 		activeProfileId: src.activeProfileId || undefined,
 		profiles: src.profiles,

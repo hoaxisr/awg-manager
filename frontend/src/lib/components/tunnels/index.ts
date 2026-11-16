@@ -6,6 +6,7 @@ export { default as ObfuscatorParams } from './ObfuscatorParams.svelte';
 export { default as AWGAdvancedParams } from './AWGAdvancedParams.svelte';
 export { default as ConnectivitySettingsModal } from './ConnectivitySettingsModal.svelte';
 export { default as DefaultRouteBadge } from './DefaultRouteBadge.svelte';
+export { default as WarpAutopilotBadge } from './WarpAutopilotBadge.svelte';
 export { default as TunnelCard } from './TunnelCard.svelte';
 export { default as TunnelCardSkeleton } from './TunnelCardSkeleton.svelte';
 export { default as TunnelDelaySparkBars } from './TunnelDelaySparkBars.svelte';
