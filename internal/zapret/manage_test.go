@@ -341,12 +341,12 @@ func TestBaseOfExe(t *testing.T) {
 }
 
 func TestIsNFQWSName(t *testing.T) {
-	for _, n := range []string{"nfqws2", "nfqws", "dvtws2", "tpws"} {
+	for _, n := range []string{"nfqws2", "nfqws", "dvtws", "dvtws2", "tpws"} {
 		if !isNFQWSName(n) {
 			t.Errorf("%q должен распознаваться как демон zapret", n)
 		}
 	}
-	for _, n := range []string{"sing-box", "sshd", "sh", "curl"} {
+	for _, n := range []string{"sing-box", "sshd", "sh", "curl", "nfqws-keenetic-", "nfqws-ui", "tpws-helper"} {
 		if isNFQWSName(n) {
 			t.Errorf("%q не должен распознаваться как демон zapret", n)
 		}

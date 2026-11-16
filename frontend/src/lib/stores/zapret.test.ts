@@ -16,7 +16,8 @@ vi.mock('$lib/stores/notifications', () => ({
 import { invalidateResource } from './storeRegistry';
 import { invalidateAllRouting } from './routing';
 import { settings } from './settings';
-import { zapretStatus, zapretStatusIfExpert } from './zapret';
+import { get } from 'svelte/store';
+import { setZapretTunnelsCardHidden, zapretStatus, zapretStatusIfExpert, zapretTunnelsCardHidden } from './zapret';
 import type { Settings } from '$lib/types';
 import { runZapretControl } from '$lib/components/zapret/control';
 
@@ -106,5 +107,16 @@ describe('Zapret status for shared pages', () => {
 		expect(mocks.getStatus).toHaveBeenCalledTimes(1);
 		unsubscribe();
 		settings.set(null);
+	});
+});
+
+describe('zapretTunnelsCardHidden', () => {
+	it('persists the choice in localStorage and clears it when shown again', () => {
+		setZapretTunnelsCardHidden(true);
+		expect(get(zapretTunnelsCardHidden)).toBe(true);
+		expect(localStorage.getItem('awg.zapret.tunnels-card-hidden')).toBe('1');
+		setZapretTunnelsCardHidden(false);
+		expect(get(zapretTunnelsCardHidden)).toBe(false);
+		expect(localStorage.getItem('awg.zapret.tunnels-card-hidden')).toBeNull();
 	});
 });

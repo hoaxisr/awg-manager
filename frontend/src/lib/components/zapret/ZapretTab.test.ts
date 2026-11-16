@@ -158,3 +158,14 @@ it('shows a retryable error when an editable hostlist cannot be read', async () 
 	await fireEvent.click(refreshButtons.at(-1)!);
 	await waitFor(() => expect(view.getByRole('textbox')).toHaveValue('recovered.example'));
 });
+
+// #1224: у nfqws2-keenetic список пуст по построению — вместо «переменная пуста»
+// должно стоять предупреждение о режиме «только чтение».
+it('shows the read-only notice instead of "variable is empty" for a layout without a strategy variable', async () => {
+	mocks.getStrategies.mockResolvedValue({ items: [], revision: 'r', optVar: '', config: '/opt/etc/nfqws2/nfqws2.conf', raw: '',
+		parseWarnings: [{ code: 'strategies_unsupported', detail: 'keenetic' }] });
+	mocks.getHostlist.mockResolvedValue(content('user', 'example.com'));
+	const view = render(ZapretTab);
+	await waitFor(() => expect(view.getByText(/Раскладка keenetic/)).toBeInTheDocument());
+	expect(view.queryByText(/пуста/)).not.toBeInTheDocument();
+});

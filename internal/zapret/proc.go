@@ -53,7 +53,7 @@ func nfqProcesses() []nfqProc {
 }
 
 // nfqExe возвращает путь к исполняемому файлу, если процесс — демон
-// zapret. comm обрезан ядром до 15 байт, поэтому сверяем по префиксу.
+// zapret по comm (имена демонов короче ядерного предела в 15 байт).
 func nfqExe(pid int) (string, bool) {
 	dir := filepath.Join("/proc", strconv.Itoa(pid))
 	return nfqExeInDir(dir)
@@ -119,13 +119,16 @@ func foreignDaemon(exe string) bool {
 }
 
 // isNFQWSName узнаёт демон zapret по имени процесса. Форки зовут его
-// по-разному: zapret2 — nfqws2, zapret — nfqws, BSD-вариант — dvtws,
+// по-разному: zapret2 — nfqws2, zapret — nfqws, BSD-вариант — dvtws(2),
 // прокси-режим v1 — tpws.
+//
+// Сверка точная, не по префиксу: веб-морда nfqws-keenetic-ui (comm
+// «nfqws-keenetic-») под /opt принималась за демон без установки и
+// переводила весь статус в конфликт «could not map PID(s)».
 func isNFQWSName(comm string) bool {
-	for _, p := range []string{"nfqws", "dvtws", "tpws"} {
-		if strings.HasPrefix(comm, p) {
-			return true
-		}
+	switch comm {
+	case "nfqws", "nfqws2", "dvtws", "dvtws2", "tpws":
+		return true
 	}
 	return false
 }
