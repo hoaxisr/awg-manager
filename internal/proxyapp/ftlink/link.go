@@ -15,7 +15,7 @@ import (
 // Two link flavors exist in the wild and this type/DecodeLink accept both:
 //
 //   - The upstream free-turn-proxy format (see docs/uri.md in
-//     samosvalishe/free-turn-proxy): base64url, no padding
+//     hackdiaz-dev/free-turn-proxy): base64url, no padding
 //     (Go base64.RawURLEncoding), fields v/provider/peer/transport/mode/
 //     bond/obf/key/timing/n/spc/cid/listen/dns/dnss/mcap/name/vk. The call
 //     link (vk, upstream 4.0+) is optional — without it the receiving
