@@ -953,8 +953,13 @@ func TestManualScan_DeadlineFreesEngine(t *testing.T) {
 	if sc.Running || sc.Error == "" {
 		t.Fatalf("зависший скан должен завершиться ошибкой по дедлайну: %+v", sc)
 	}
-	if !s.engineMu.TryLock() {
-		t.Fatal("движок остался занят после дедлайна")
+	// Running сбрасывается раньше, чем горутина скана отпускает engineMu
+	// (defer на выходе), поэтому мьютекс ждём, а не проверяем один раз.
+	for !s.engineMu.TryLock() {
+		if time.Now().After(deadline) {
+			t.Fatal("движок остался занят после дедлайна")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	s.engineMu.Unlock()
 }
