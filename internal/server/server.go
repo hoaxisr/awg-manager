@@ -119,6 +119,7 @@ type Server struct {
 	exposureGuardStop          context.CancelFunc
 	singboxHandler             *api.SingboxHandler
 	fircHandler                *api.FircHandler
+	uplinkHandler              *api.UplinkHandler
 	telemtHandler              *api.TelemtHandler
 	vlessServerService         *vlessserver.Service
 	tgWebProxyService          *tgwebproxy.Service

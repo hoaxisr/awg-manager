@@ -41,10 +41,11 @@ var ErrNoChange = errors.New("no change")
 
 // AWGTunnelStore provides directory-based storage for AmneziaWG tunnel metadata.
 type AWGTunnelStore struct {
-	dir      string
-	lockName string
-	lockDir  string
-	timeout  time.Duration
+	dir         string
+	lockName    string
+	lockDir     string
+	timeout     time.Duration
+	uplinkGuard func(old, next *AWGTunnel) error
 }
 
 // NewAWGTunnelStore creates a new AWG tunnel store.
@@ -269,6 +270,21 @@ func (s *AWGTunnelStore) saveLocked(tunnel *AWGTunnel) error {
 // Затирать запись целиком (*t = снимок) запрещено — это ровно тот дефект,
 // ради которого транзакция и заведена.
 func (s *AWGTunnelStore) Update(id string, mut func(*AWGTunnel) error) error {
+	return s.update(id, mut, false)
+}
+
+// SetUplinkGuard is wired before boot. The callback must not call this store or
+// acquire the uplink controller: it executes under the store's file lock.
+func (s *AWGTunnelStore) SetUplinkGuard(guard func(old, next *AWGTunnel) error) {
+	s.uplinkGuard = guard
+}
+
+// UpdateForUplink is reserved for the controller's serialized binding writer.
+func (s *AWGTunnelStore) UpdateForUplink(id string, mut func(*AWGTunnel) error) error {
+	return s.update(id, mut, true)
+}
+
+func (s *AWGTunnelStore) update(id string, mut func(*AWGTunnel) error, bypass bool) error {
 	if _, err := s.tunnelPath(id); err != nil {
 		return err
 	}
@@ -283,12 +299,27 @@ func (s *AWGTunnelStore) Update(id string, mut func(*AWGTunnel) error) error {
 	if err != nil {
 		return err
 	}
+	var before AWGTunnel
+	if s.uplinkGuard != nil && !bypass {
+		raw, e := json.Marshal(tunnel)
+		if e != nil {
+			return e
+		}
+		if e = json.Unmarshal(raw, &before); e != nil {
+			return e
+		}
+	}
 	prevName := tunnel.Name
 	if err := mut(tunnel); err != nil {
 		if errors.Is(err, ErrNoChange) {
 			return nil
 		}
 		return err
+	}
+	if s.uplinkGuard != nil && !bypass {
+		if err := s.uplinkGuard(&before, tunnel); err != nil {
+			return err
+		}
 	}
 	// Единая точка всех переименований (handler, замена .conf, wdttlink):
 	// прежнее имя нужно гейту старта OpkgTun (F535).
@@ -337,6 +368,15 @@ func (s *AWGTunnelStore) Delete(id string) error {
 		return fmt.Errorf("acquire lock: %w", err)
 	}
 	defer lk.Unlock()
+	if s.uplinkGuard != nil {
+		old, err := s.Get(id)
+		if err != nil {
+			return err
+		}
+		if err = s.uplinkGuard(old, nil); err != nil {
+			return err
+		}
+	}
 
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {

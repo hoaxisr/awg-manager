@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ARCH="${1:-mipsel-3.4}"
-VERSION="${2:-0.8.0-awgm.1}"
+VERSION="${2:-0.8.0-awgm.3}"
 FIRC_SOURCE_ROOT="${FIRC_SOURCE_ROOT:-}"
 FIRC_DEPS_ROOT="${FIRC_DEPS_ROOT:-}"
 
@@ -66,6 +66,7 @@ rsync -a --exclude '/.build' --exclude '/src/backend-c/build' --exclude 'out*' -
   "$FIRC_SOURCE_ROOT/" "$WORK_DIR/src/"
 
 find "$WORK_DIR/src" -type f \( -name '*.sh' -o -name 'S99firc' -o -name '100-firc' -o -name 'firc.conf' -o -name 'groups.yaml' -o -name 'Makefile' -o -name '*.c' -o -name '*.h' \) -exec sed -i 's/\r$//' {} +
+python3 "$SCRIPT_DIR/firc-loopback-inbound.py" "$WORK_DIR/src"
 for lib in zlib brotli zstd; do
   if [ -d "$WORK_DIR/src/src/tunvless/third_party/$lib" ]; then
     touch "$WORK_DIR/src/src/tunvless/third_party/$lib/.steer-$lib"

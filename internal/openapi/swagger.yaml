@@ -7872,6 +7872,79 @@ definitions:
       urlTest:
         $ref: '#/definitions/api.SubscriptionURLTestDTO'
     type: object
+  api.UplinkDeleteRequest:
+    properties:
+      id:
+        type: string
+      revision:
+        type: integer
+    type: object
+  api.UplinkEntriesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/uplink.Entry'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.UplinkPolicyResponse:
+    properties:
+      data:
+        $ref: '#/definitions/uplink.Policy'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.UplinkSnapshotDTO:
+    properties:
+      automaticFailback:
+        type: boolean
+      capabilities:
+        additionalProperties:
+          $ref: '#/definitions/uplink.Capabilities'
+        type: object
+      entries:
+        items:
+          $ref: '#/definitions/uplink.Entry'
+        type: array
+      providers:
+        items:
+          $ref: '#/definitions/uplink.Provider'
+        type: array
+      targetError:
+        type: string
+      targets:
+        items:
+          $ref: '#/definitions/uplink.TargetInfo'
+        type: array
+    type: object
+  api.UplinkSnapshotResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.UplinkSnapshotDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.UplinkSwitchRequest:
+    properties:
+      id:
+        type: string
+      provider:
+        type: string
+      revision:
+        type: integer
+    type: object
+  api.UplinkWANDNSResponse:
+    properties:
+      data:
+        $ref: '#/definitions/uplink.WANDNSConfig'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.UserConfigApplyResponse:
     properties:
       ok:
@@ -9206,6 +9279,149 @@ definitions:
         type: boolean
       version:
         type: string
+    type: object
+  uplink.Capabilities:
+    properties:
+      automaticFailback:
+        type: boolean
+      controlledFailback:
+        type: boolean
+      independentEngine:
+        type: boolean
+      independentProbe:
+        type: boolean
+      limitation:
+        type: string
+      providerDNS:
+        type: boolean
+      restartScope:
+        type: string
+    type: object
+  uplink.Entry:
+    properties:
+      capabilities:
+        $ref: '#/definitions/uplink.Capabilities'
+      policy:
+        $ref: '#/definitions/uplink.Policy'
+      state:
+        $ref: '#/definitions/uplink.State'
+    type: object
+  uplink.Policy:
+    properties:
+      enabled:
+        type: boolean
+      failback:
+        type: string
+      failureThreshold:
+        type: integer
+      holdDownSeconds:
+        type: integer
+      id:
+        type: string
+      intervalSeconds:
+        type: integer
+      mode:
+        type: string
+      providers:
+        description: stable NDMS IDs, in priority order
+        items:
+          type: string
+        type: array
+      recoveryIntervalSeconds:
+        type: integer
+      recoveryThreshold:
+        type: integer
+      revision:
+        type: integer
+      target:
+        $ref: '#/definitions/uplink.Target'
+      timeoutSeconds:
+        type: integer
+    type: object
+  uplink.Provider:
+    properties:
+      device:
+        type: string
+      id:
+        type: string
+      label:
+        type: string
+      up:
+        type: boolean
+    type: object
+  uplink.State:
+    properties:
+      candidate:
+        type: string
+      device:
+        type: string
+      failures:
+        type: integer
+      generation:
+        type: integer
+      lastError:
+        type: string
+      lastSuccess:
+        type: string
+      lastSwitch:
+        type: string
+      nextCheck:
+        type: string
+      nextRecoveryCheck:
+        type: string
+      operationId:
+        type: string
+      phase:
+        type: string
+      policyRevision:
+        type: integer
+      provider:
+        type: string
+      recoverySuccesses:
+        type: integer
+    type: object
+  uplink.Target:
+    properties:
+      engine:
+        type: string
+      kind:
+        type: string
+      ref:
+        type: string
+    type: object
+  uplink.TargetInfo:
+    properties:
+      label:
+        type: string
+      setupRequired:
+        type: boolean
+      target:
+        $ref: '#/definitions/uplink.Target'
+      unavailableReason:
+        type: string
+    type: object
+  uplink.WANDNSConfig:
+    properties:
+      overrides:
+        additionalProperties:
+          items:
+            type: string
+          type: array
+        type: object
+      revision:
+        type: integer
+    type: object
+  uplink.WANDNSUpdate:
+    properties:
+      provider:
+        type: string
+      revision:
+        type: integer
+      servers:
+        description: empty restores automatic selection
+        items:
+          type: string
+        type: array
     type: object
   vlessserver.Client:
     properties:
@@ -23272,6 +23488,207 @@ paths:
       summary: Update tunnel
       tags:
       - tunnels
+  /uplink/dns:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.UplinkWANDNSResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get Multi-WAN provider DNS overrides
+      tags:
+      - uplink
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: WAN provider DNS override
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/uplink.WANDNSUpdate'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.UplinkWANDNSResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Update Multi-WAN provider DNS override
+      tags:
+      - uplink
+  /uplink/policies:
+    delete:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy ID and revision
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.UplinkDeleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Delete a Multi-WAN uplink policy
+      tags:
+      - uplink
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.UplinkSnapshotResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List Multi-WAN uplink policies and targets
+      tags:
+      - uplink
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Multi-WAN policy
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/uplink.Policy'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.UplinkPolicyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Save a Multi-WAN uplink policy
+      tags:
+      - uplink
+  /uplink/switch:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Target provider switch
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.UplinkSwitchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.UplinkEntriesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Manually switch Multi-WAN policy provider
+      tags:
+      - uplink
   /wan/status:
     get:
       produces:

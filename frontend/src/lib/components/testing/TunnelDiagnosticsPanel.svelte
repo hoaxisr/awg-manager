@@ -181,7 +181,7 @@
 				connectivityResult = await api.checkConnectivity(targetId);
 			} else if (kind === 'system') {
 				connectivityResult = await api.checkSystemTunnelConnectivity(targetId);
-			} else if (kind === 'subscription') {
+			} else if (kind === 'subscription' || (kind === 'firc' && iface)) {
 				connectivityResult = await api.singboxCheckConnectivity(targetId, iface);
 			} else {
 				connectivityResult = await api.singboxCheckConnectivity(targetId);
@@ -216,7 +216,7 @@
 				ipResult = await api.checkIP(targetId, serviceURL || undefined);
 			} else if (kind === 'system') {
 				ipResult = await api.checkSystemTunnelIP(targetId, serviceURL || undefined);
-			} else if (kind === 'subscription') {
+			} else if (kind === 'subscription' || (kind === 'firc' && iface)) {
 				ipResult = await api.singboxCheckIP(targetId, serviceURL || undefined, iface);
 			} else {
 				ipResult = await api.singboxCheckIP(targetId, serviceURL || undefined);

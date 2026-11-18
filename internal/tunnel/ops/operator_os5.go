@@ -239,6 +239,8 @@ type ipRunFunc func(ctx context.Context, name string, args ...string) (*exec.Res
 // OperatorOS5Impl is the Operator implementation for Keenetic OS 5.0+.
 // Uses NDMS for interface management, kernel backend for tunnel interfaces.
 type OperatorOS5Impl struct {
+	uplinkBeforeUp  func(context.Context, string) error
+	uplinkOwns      func(string) bool
 	*clientRouteOps // provides the 5 client-route Operator methods
 
 	queries  *query.Queries
@@ -419,15 +421,26 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	}
 	o.logInfo("start", cfg.ID, fmt.Sprintf("Kernel interface configured (mtu=%d)", mtu))
 
+	if err := o.quiesceUplink(ctx, cfg.ID, names.IfaceName); err != nil {
+		return err
+	}
 	if err := o.wg.SetConf(ctx, names.IfaceName, cfg.ConfPath); err != nil {
 		o.rollbackStart(ctx, cfg, names, iface, justCreated, up, applied)
 		return tunnel.NewOpError("start", cfg.ID, "wg", err)
+	}
+	if err := o.restoreUplink(ctx, cfg.ID); err != nil {
+		o.rollbackStart(ctx, cfg, names, iface, justCreated, up, applied)
+		return err
 	}
 
 	o.logInfo("start", cfg.ID, "WireGuard config applied")
 
 	// === Phase 5: Assign addresses + bring up ===
 	o.applyKernelAddresses(ctx, "start", cfg, names.IfaceName)
+	if err := o.restoreUplink(ctx, cfg.ID); err != nil {
+		o.rollbackStart(ctx, cfg, names, iface, justCreated, up, applied)
+		return err
+	}
 
 	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", names.IfaceName); err != nil {
 		o.rollbackStart(ctx, cfg, names, iface, justCreated, up, applied)
@@ -454,9 +467,13 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 		// Use pre-resolved IP when available — avoids DNS re-resolution which
 		// can fail right after start (awg show empty, Go DNS may not work on router).
 		routeEndpoint := endpointWithResolvedIP(cfg.Endpoint, cfg.EndpointIP)
-		if _, err := o.SetupEndpointRoute(ctx, cfg.ID, routeEndpoint, cfg.KernelDevice, cfg.ISPInterface); err != nil {
-			o.logWarn("start", cfg.ID, "Endpoint route failed (non-fatal): "+err.Error())
-			o.appLog.Warn("start", cfg.ID, "Не удалось создать endpoint route: "+err.Error())
+		if o.uplinkOwns == nil || !o.uplinkOwns(cfg.ID) {
+			if _, err := o.SetupEndpointRoute(ctx, cfg.ID, routeEndpoint, cfg.KernelDevice, cfg.ISPInterface); err != nil {
+				o.logWarn("start", cfg.ID, "Endpoint route failed (non-fatal): "+err.Error())
+				o.appLog.Warn("start", cfg.ID, "Не удалось создать endpoint route: "+err.Error())
+			} else {
+				endpointRouteOK = true
+			}
 		} else {
 			endpointRouteOK = true
 		}
@@ -793,8 +810,14 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	// === Phase 3: Apply WireGuard configuration ===
 	// syncconf keeps the established session when the file is unchanged;
 	// on a fresh device it is equivalent to setconf.
+	if err := o.quiesceUplink(ctx, cfg.ID, names.IfaceName); err != nil {
+		return err
+	}
 	if err := o.wg.SyncConf(ctx, names.IfaceName, cfg.ConfPath); err != nil {
 		return tunnel.NewOpError("reconcile", cfg.ID, "wg", err)
+	}
+	if err := o.restoreUplink(ctx, cfg.ID); err != nil {
+		return err
 	}
 	o.logInfo("reconcile", cfg.ID, "WireGuard config applied")
 
@@ -835,6 +858,9 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 
 	o.applyKernelAddresses(ctx, "reconcile", cfg, names.IfaceName)
 
+	if err := o.restoreUplink(ctx, cfg.ID); err != nil {
+		return err
+	}
 	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", names.IfaceName); err != nil {
 		return tunnel.NewOpError("reconcile", cfg.ID, "link", fmt.Errorf("ip link up: %w", exec.FormatError(result, err)))
 	}
@@ -857,9 +883,13 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	endpointRouteOK := false
 	if cfg.Endpoint != "" {
 		routeEndpoint := endpointWithResolvedIP(cfg.Endpoint, cfg.EndpointIP)
-		if _, err := o.SetupEndpointRoute(ctx, cfg.ID, routeEndpoint, cfg.KernelDevice, cfg.ISPInterface); err != nil {
-			o.logWarn("reconcile", cfg.ID, "Endpoint route failed (non-fatal): "+err.Error())
-			o.appLog.Warn("reconcile", cfg.ID, "Не удалось создать endpoint route: "+err.Error())
+		if o.uplinkOwns == nil || !o.uplinkOwns(cfg.ID) {
+			if _, err := o.SetupEndpointRoute(ctx, cfg.ID, routeEndpoint, cfg.KernelDevice, cfg.ISPInterface); err != nil {
+				o.logWarn("reconcile", cfg.ID, "Endpoint route failed (non-fatal): "+err.Error())
+				o.appLog.Warn("reconcile", cfg.ID, "Не удалось создать endpoint route: "+err.Error())
+			} else {
+				endpointRouteOK = true
+			}
 		} else {
 			endpointRouteOK = true
 		}
@@ -944,6 +974,9 @@ func (o *OperatorOS5Impl) Suspend(ctx context.Context, tunnelID string) error {
 // Resume sets link up after Suspend. NDMS restores routing automatically.
 func (o *OperatorOS5Impl) Resume(ctx context.Context, tunnelID string) error {
 	names := tunnel.NewNames(tunnelID)
+	if err := o.restoreUplink(ctx, tunnelID); err != nil {
+		return err
+	}
 	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", names.IfaceName); err != nil {
 		return fmt.Errorf("resume: ip link set up: %w", exec.FormatError(result, err))
 	}
@@ -955,9 +988,21 @@ func (o *OperatorOS5Impl) Resume(ctx context.Context, tunnelID string) error {
 // ApplyConfig applies a new WireGuard config to a running tunnel.
 func (o *OperatorOS5Impl) ApplyConfig(ctx context.Context, tunnelID, configPath string) error {
 	names := tunnel.NewNames(tunnelID)
+	owned := o.uplinkOwns != nil && o.uplinkOwns(tunnelID)
+	if err := o.quiesceUplink(ctx, tunnelID, names.IfaceName); err != nil {
+		return err
+	}
 
 	if err := o.wg.SetConf(ctx, names.IfaceName, configPath); err != nil {
 		return tunnel.NewOpError("apply_config", tunnelID, "wg", err)
+	}
+	if err := o.restoreUplink(ctx, tunnelID); err != nil {
+		return err
+	}
+	if owned {
+		if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", names.IfaceName); err != nil {
+			return fmt.Errorf("apply_config: ip link set up: %w", exec.FormatError(result, err))
+		}
 	}
 
 	o.logInfo("apply_config", tunnelID, "Config applied")

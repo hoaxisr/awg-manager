@@ -63,6 +63,8 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 	"github.com/hoaxisr/awg-manager/internal/updater"
+	"github.com/hoaxisr/awg-manager/internal/uplink"
+	"github.com/hoaxisr/awg-manager/internal/uplink/wireguard"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 	"github.com/hoaxisr/awg-manager/internal/zapret"
 )
@@ -83,6 +85,9 @@ type routerExternalEngineLifecycle interface {
 }
 
 type app struct {
+	uplinkController   atomic.Pointer[uplink.Controller]
+	kernelUplink       atomic.Pointer[wireguard.Kernel]
+	kernelUplinkFailed atomic.Bool
 	// flags
 	dataDir     string
 	forceBoot   bool

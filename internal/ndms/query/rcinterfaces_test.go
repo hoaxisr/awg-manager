@@ -313,3 +313,38 @@ func TestRCInterfaces_MissedCreateListRefetchesOnce(t *testing.T) {
 		t.Fatalf("чтений дерева %d, want 1", n)
 	}
 }
+
+func TestRCInterfaces_FetchWithinAndInvalidateAll(t *testing.T) {
+	ctx := context.Background()
+	f, q := rcFixture(t)
+
+	tree1, err := q.WGServers.InterfaceRCTreeRecent(ctx, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tree1["Wireguard1"]; !ok {
+		t.Fatalf("missing Wireguard1 in tree1")
+	}
+	raw, ok, err := q.WGServers.InterfaceRCRawRecent(ctx, "Wireguard1", 2*time.Second)
+	if err != nil || !ok || len(raw) == 0 {
+		t.Fatalf("InterfaceRCRawRecent = (len=%d, ok=%v, err=%v)", len(raw), ok, err)
+	}
+	if got := f.RCListCalls(); got != 1 {
+		t.Fatalf("within maxAge: RCListCalls = %d, want 1", got)
+	}
+
+	q.WGServers.InvalidateAll()
+	if _, err := q.WGServers.InterfaceRCTreeRecent(ctx, 2*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.RCListCalls(); got != 2 {
+		t.Fatalf("after InvalidateAll: RCListCalls = %d, want 2", got)
+	}
+
+	if _, err := q.WGServers.InterfaceRCTreeRecent(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.RCListCalls(); got != 3 {
+		t.Fatalf("maxAge=0: RCListCalls = %d, want 3", got)
+	}
+}

@@ -1,6 +1,10 @@
 package subscription
 
-import "time"
+import (
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/uplink"
+)
 
 // MemberInfo is parsed metadata for one selector member, persisted alongside
 // the subscription so the UI can display useful info per card without
@@ -103,6 +107,9 @@ type Subscription struct {
 	URLTest          *URLTestConfig         `json:"urlTest,omitempty"` // populated when Mode == ModeURLTest
 	// BindInterface — kernel iface for dialing all member outbounds (modem/WAN/Wi‑Fi).
 	BindInterface string `json:"bindInterface,omitempty"`
+	// UplinkBinding is a strict AWGM-managed egress snapshot. Every refresh
+	// materializes new members with the same WAN and bound endpoint DNS.
+	UplinkBinding *uplink.Binding `json:"uplinkBinding,omitempty"`
 	// MLKEMOff вырезает X25519MLKEM768 у всех Reality-членов. Форк, как
 	// Xray, шлёт её по умолчанию (сервер Xray 26.9.8+ без неё не пускает), но
 	// ClientHello ~1,7 КБ на части сетей глушат (#944); против этого есть и
@@ -182,6 +189,8 @@ type CreateInput struct {
 
 // UpdatePatch is partial update; nil pointers mean "leave as-is".
 type UpdatePatch struct {
+	UplinkBinding **uplink.Binding // nil leaves unchanged; pointer to nil clears
+	ExpectedBind  *string          // compare under the per-subscription mutation lock
 	Label         *string
 	URL           *string
 	Headers       *[]Header

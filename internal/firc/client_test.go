@@ -19,21 +19,22 @@ import (
 )
 
 type mockFircServer struct {
-	mu              sync.Mutex
-	tunnels         []Tunnel
-	groups          []Group
-	failTunnels     bool
-	failTunnelsOnce bool
-	failGetTunnels  bool
-	failGroups      bool
-	failGroupsOnce  bool
-	failGetGroups   bool
-	failHealth      bool
-	putTunnelsCount int
-	putGroupsCount  int
-	getGroupsCount  int
-	onPutTunnels    func()
-	onGetGroups     func()
+	mu               sync.Mutex
+	tunnels          []Tunnel
+	groups           []Group
+	failTunnels      bool
+	failTunnelsOnce  bool
+	failGetTunnels   bool
+	failGroups       bool
+	failGroupsOnce   bool
+	failGetGroups    bool
+	failHealth       bool
+	uplinkDNSVersion int
+	putTunnelsCount  int
+	putGroupsCount   int
+	getGroupsCount   int
+	onPutTunnels     func()
+	onGetGroups      func()
 }
 
 func newMockFircHandler() (*mockFircServer, http.Handler) {
@@ -43,12 +44,13 @@ func newMockFircHandler() (*mockFircServer, http.Handler) {
 	mux.HandleFunc("/api/v1/system/netfilter", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		fail := m.failHealth
+		dnsVersion := m.uplinkDNSVersion
 		m.mu.Unlock()
 		if fail {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(NetfilterHealth{Ok: true})
+		_ = json.NewEncoder(w).Encode(NetfilterHealth{Ok: true, UplinkDNSVersion: dnsVersion})
 	})
 
 	mux.HandleFunc("/api/v1/tunnels", func(w http.ResponseWriter, r *http.Request) {

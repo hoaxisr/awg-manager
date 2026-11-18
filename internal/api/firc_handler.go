@@ -21,6 +21,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/uplink"
 )
 
 // OtherEngineIntegrationHooks supplies read/purge/reload callbacks for the sibling
@@ -1085,6 +1086,10 @@ func (h *FircHandler) handleSwitchEngine(w http.ResponseWriter, r *http.Request)
 		SingboxStandby:         req.SingboxStandby,
 		AuthorizeDisabledStart: strings.EqualFold(target, "firc"),
 	}); err != nil {
+		if errors.Is(err, uplink.ErrConflict) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "UPLINK_POLICY_CONFLICT")
+			return
+		}
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "SWITCH_ENGINE_FAILED")
 		return
 	}

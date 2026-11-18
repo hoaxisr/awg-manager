@@ -433,6 +433,11 @@ func (o *Operator) MigrateFromSingbox(ctx context.Context, singboxConfigDir stri
 // MigrateFromSingboxWithOptions transactionally migrates sing-box config fragments from singboxConfigDir
 // according to opts (supporting merge/replace modes, selective tunnel/group IDs, and FakeIP pool/DNS settings).
 func (o *Operator) MigrateFromSingboxWithOptions(ctx context.Context, singboxConfigDir string, opts *MigrationOptions) (*MigrationResult, error) {
+	release, err := o.guardUplinkMigration(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	o.mutationMu.Lock()
 	defer o.mutationMu.Unlock()
 
@@ -560,6 +565,11 @@ func (o *Operator) MigrateFromSingboxWithOptions(ctx context.Context, singboxCon
 			if vErr := verifyMigratedTunnelsResolved(res.Tunnels); vErr != nil {
 				return nil, rollbackAll(fmt.Errorf("verify migrated firc node references: %w", vErr), "verify_node_refs", false, false)
 			}
+			prepared, err := o.materializeManagedUplinks(ctx, res.Tunnels)
+			if err != nil {
+				return nil, rollbackAll(fmt.Errorf("managed uplink migration preflight: %w", err), "uplink_preflight", false, false)
+			}
+			res.Tunnels = prepared
 		}
 		if err := o.advanceMigrationJournal(journal, "writing_files", 0, o.TunnelsPath()); err != nil {
 			return nil, rollbackAll(err, "journal_tunnels_yaml", false, false)

@@ -134,6 +134,69 @@ describe('validateApiResponse', () => {
 			ApiValidationError,
 		);
 	});
+
+	it('валидирует схемы всех /uplink/* эндпоинтов и отвергает неверную форму data', () => {
+		const policy = {
+			id: 'uplink-1',
+			revision: 3,
+			target: { engine: 'firc', ref: 'pool-1', kind: 'subscription' },
+			providers: ['GigabitEthernet1', 'WifiMaster0/WifiStation0'],
+			enabled: true,
+			mode: 'fallback',
+			failback: 'controlled',
+			recoveryThreshold: 3,
+			recoveryIntervalSeconds: 30,
+			intervalSeconds: 10,
+			timeoutSeconds: 4,
+			failureThreshold: 3,
+			holdDownSeconds: 60,
+		};
+		const entry = {
+			policy,
+			state: { policyRevision: 3, generation: 2, phase: 'healthy', provider: 'GigabitEthernet1', failures: 0 },
+			capabilities: {
+				providerDNS: true,
+				independentProbe: false,
+				automaticFailback: false,
+				controlledFailback: true,
+				restartScope: 'target',
+			},
+		};
+		const snapshotBody = {
+			success: true,
+			data: {
+				targets: [{ target: { engine: 'firc', ref: 'pool-1' }, label: 'Pool · FIRC', setupRequired: true }],
+				entries: [entry],
+				providers: [{ id: 'GigabitEthernet1', device: 'eth3', label: 'Broadband', up: true }],
+				automaticFailback: false,
+				capabilities: { firc: entry.capabilities },
+			},
+		};
+		expect(findResponseSchema('GET', '/uplink/policies')).toBeDefined();
+		expect(findResponseSchema('PUT', '/uplink/policies')).toBeDefined();
+		expect(findResponseSchema('DELETE', '/uplink/policies')).toBeDefined();
+		expect(findResponseSchema('POST', '/uplink/switch')).toBeDefined();
+		expect(findResponseSchema('GET', '/uplink/dns')).toBeDefined();
+		expect(findResponseSchema('PUT', '/uplink/dns')).toBeDefined();
+
+		expect(() => validateApiResponse('GET', '/uplink/policies', snapshotBody)).not.toThrow();
+		expect(() => validateApiResponse('PUT', '/uplink/policies', { success: true, data: policy })).not.toThrow();
+		expect(() => validateApiResponse('DELETE', '/uplink/policies', { success: true })).not.toThrow();
+		expect(() => validateApiResponse('POST', '/uplink/switch', { success: true, data: [entry] })).not.toThrow();
+		expect(() =>
+			validateApiResponse('GET', '/uplink/dns', { success: true, data: { revision: 7, overrides: { GigabitEthernet1: ['1.1.1.1'] } } }),
+		).not.toThrow();
+		expect(() =>
+			validateApiResponse('PUT', '/uplink/dns', { success: true, data: { revision: 8, overrides: {} } }),
+		).not.toThrow();
+
+		expect(() =>
+			validateApiResponse('GET', '/uplink/policies', { success: true, data: { entries: 'not-array' } }),
+		).toThrow(ApiValidationError);
+		expect(() =>
+			validateApiResponse('POST', '/uplink/switch', { success: true, data: { not: 'array' } }),
+		).toThrow(ApiValidationError);
+	});
 });
 
 describe('schemas.gen.ts инварианты', () => {

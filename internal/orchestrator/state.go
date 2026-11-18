@@ -80,9 +80,10 @@ func (t *tunnelState) ifaceName() string {
 
 // State is the orchestrator's complete view of the system.
 type State struct {
-	tunnels     map[string]*tunnelState // tunnelID → state
-	anyWANUpFn  func() bool             // delegates to wanModel.AnyUp()
-	supportsASC bool
+	managedUplinkOwns func(string) bool
+	tunnels           map[string]*tunnelState // tunnelID → state
+	anyWANUpFn        func() bool             // delegates to wanModel.AnyUp()
+	supportsASC       bool
 	// bootPending — загрузка прошла с неподнятым WAN, и EventBoot не
 	// выстрелил. Первый WAN-up отдаёт decideBoot вместо decideWANUp: бут
 	// не состоялся, и это его момент. Без этого на такой загрузке молча

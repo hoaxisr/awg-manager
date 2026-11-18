@@ -9,6 +9,11 @@ import (
 
 // Start delegates to orchestrator.
 func (s *ServiceImpl) Start(ctx context.Context, tunnelID string) error {
+	release, guardErr := s.beginUplinkMutation(ctx, tunnelID, "lifecycle")
+	if guardErr != nil {
+		return guardErr
+	}
+	defer release()
 	if s.orch == nil {
 		return fmt.Errorf("orchestrator not initialized")
 	}
@@ -24,6 +29,11 @@ func (s *ServiceImpl) Start(ctx context.Context, tunnelID string) error {
 
 // Stop delegates to orchestrator.
 func (s *ServiceImpl) Stop(ctx context.Context, tunnelID string) error {
+	release, guardErr := s.beginUplinkMutation(ctx, tunnelID, "lifecycle")
+	if guardErr != nil {
+		return guardErr
+	}
+	defer release()
 	if s.orch == nil {
 		return fmt.Errorf("orchestrator not initialized")
 	}
@@ -39,6 +49,11 @@ func (s *ServiceImpl) Stop(ctx context.Context, tunnelID string) error {
 
 // Restart delegates to orchestrator.
 func (s *ServiceImpl) Restart(ctx context.Context, tunnelID string) error {
+	release, guardErr := s.beginUplinkMutation(ctx, tunnelID, "lifecycle")
+	if guardErr != nil {
+		return guardErr
+	}
+	defer release()
 	if s.orch == nil {
 		return fmt.Errorf("orchestrator not initialized")
 	}
@@ -57,6 +72,11 @@ func (s *ServiceImpl) Restart(ctx context.Context, tunnelID string) error {
 // router rule — the deletion would otherwise leave dangling references
 // that FATAL sing-box on next reload.
 func (s *ServiceImpl) Delete(ctx context.Context, tunnelID string) error {
+	release, guardErr := s.beginUplinkMutation(ctx, tunnelID, "delete")
+	if guardErr != nil {
+		return guardErr
+	}
+	defer release()
 	if err := checkTunnelReferences(tunnelID, s.deviceProxyRefs, s.routerRefs); err != nil {
 		return err
 	}

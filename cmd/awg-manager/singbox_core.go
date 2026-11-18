@@ -297,6 +297,8 @@ func (a *app) setupSingboxRuntime() {
 		a.bootLog.Error("subscription-adapter", "load-from-disk", err.Error())
 	}
 	a.subSvc = subscription.NewService(a.subStore, a.subAdapter)
+	// Install strict materialization before any subscription scheduler starts.
+	a.subAdapter.SetUplinkBindingsFn(a.subSvc.UplinkBindings)
 	a.subSvc.SetAppLogger(a.loggingService)
 	// Gate subscription ProxyN creation on the global toggle (same flag the
 	// Operator uses for tunnels) so disabling it stops subscriptions from

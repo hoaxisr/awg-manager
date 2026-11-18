@@ -44,6 +44,7 @@
 	import FircTunnelsTabSection from '$lib/components/firc/FircTunnelsTabSection.svelte';
 	import FircTunnelEditModal from '$lib/components/firc/FircTunnelEditModal.svelte';
 	import AwgTunnelsTabSection from '$lib/components/tunnels/AwgTunnelsTabSection.svelte';
+	import UplinkTab from '$lib/components/uplink/UplinkTab.svelte';
 	import { fircStatus, fircTunnels, fircTunnelsState, reloadFircAll } from '$lib/stores/firc';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { fircMigrationAppliedNonce } from '$lib/stores/fircMigrationModal';
@@ -123,7 +124,7 @@
 		type SubscriptionSortKey,
 	} from '$lib/stores/tunnelTableSort';
 
-	type TunnelTab = 'awg' | 'singbox' | 'subscriptions' | 'awg3' | 'firc';
+	type TunnelTab = 'awg' | 'singbox' | 'subscriptions' | 'awg3' | 'firc' | 'uplink';
 	type AwgTunnelViewMode = 'cards' | 'compact' | 'list';
 	type TunnelSurfaceLayout = SingboxLayoutMode | 'cards';
 
@@ -604,6 +605,7 @@
 	}
 
 	let activeTab = $state<TunnelTab>('awg');
+	let uplinkCount = $state(0);
 	let awgViewMode = $state<AwgTunnelViewMode>('compact');
 	let awgViewModeReady = false;
 	let isAwgMobile = $state(readTunnelMobileLayout());
@@ -798,6 +800,12 @@
 							separatorBefore: true,
 						}
 					: null,
+				{
+					id: 'uplink',
+					label: m.tunnels_tab_uplink(),
+					badge: uplinkCount,
+					separatorBefore: true,
+				},
 			] as ({
 				id: string;
 				label: string;
@@ -840,6 +848,9 @@
 		if (showSingboxTunnelTabs) {
 			void reloadFircAll();
 		}
+		void api.uplinkSnapshot().then((s) => {
+			uplinkCount = s.entries?.length ?? 0;
+		}).catch(() => {});
 
 		// Backward compatible migration:
 		// if per-tab keys are missing, fall back to the old shared sing-box layout key.
@@ -1611,6 +1622,10 @@
 		(!dashboardOn && activeTab === 'firc') ||
 			(dashboardTypeSections && dashboardFircCount > 0),
 	);
+	let showUplinkBlock = $derived(
+		(!dashboardOn && activeTab === 'uplink') ||
+			(dashboardTypeSections && uplinkCount > 0),
+	);
 
 	// Единый класс сетки для сплошного и тегового карточных видов — классы
 	// плотности не могут разъехаться между двумя разметками.
@@ -2017,6 +2032,15 @@
 				effectiveRenderModeOverride={dashboardOn ? effectiveSingboxTunnelsRenderMode : undefined}
 				searchQueryOverride={dashboardOn ? dashboardSearchQuery : undefined}
 			/>
+		{/if}
+		{#if dashboardTypeSections && uplinkCount > 0}
+			<TunnelSectionHeader
+				title={m.tunnels_tab_uplink()}
+				count={uplinkCount}
+			/>
+		{/if}
+		{#if showUplinkBlock}
+			<UplinkTab onCountChange={(n) => (uplinkCount = n)} />
 		{/if}
 	{/if}
 </PageContainer>

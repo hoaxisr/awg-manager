@@ -18,6 +18,8 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/appver"
+	"github.com/hoaxisr/awg-manager/internal/uplink"
+	"github.com/hoaxisr/awg-manager/internal/uplink/wireguard"
 )
 
 func (a *app) routerLifecycle() routerExternalEngineLifecycle {
@@ -364,6 +366,21 @@ func (a *app) buildProductionEngineSwitchHooks() firc.EngineSwitchHooks {
 	onSwitched := func(_ bool) {}
 
 	return firc.EngineSwitchHooks{
+		AcquireTransition: func(ctx context.Context) (firc.EngineTransitionGuard, error) {
+			controller := a.uplinkController.Load()
+			if controller == nil {
+				// Before setupUplink, or after a store initialization error, read
+				// durable policy rather than silently discarding its protection.
+				store, err := uplink.OpenStore(filepath.Join(a.dataDir, "uplink-policies.json"))
+				if err != nil {
+					return nil, fmt.Errorf("read uplink policies before engine switch: %w", err)
+				}
+				// Only capabilities are used before initialization. Native
+				// WireGuard is independent of the proxy routing engine.
+				controller = uplink.New(store, nil, map[string]uplink.Adapter{"wireguard": &wireguard.Managed{}, "system-wireguard": &wireguard.Managed{}, "kernel-amneziawg": &wireguard.Kernel{}})
+			}
+			return controller.AcquireEngineTransition(ctx)
+		},
 		GetCurrentEngine:     getCurrent,
 		ValidateMutation:     validateMutation,
 		CaptureState:         captureState,

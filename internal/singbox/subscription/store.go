@@ -14,6 +14,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/uplink"
 )
 
 // Store persists subscriptions to disk as JSON, atomic-writes on every mutation.
@@ -164,6 +165,7 @@ func cloneSlice[T any](in []T) []T {
 // копирования достаточно. Используется copy-on-write мутацией Store.mutate.
 func (s *Subscription) clone() *Subscription {
 	cp := *s
+	cp.UplinkBinding = cloneUplinkBinding(s.UplinkBinding)
 	cp.Headers = cloneSlice(s.Headers)
 	cp.MemberTags = cloneSlice(s.MemberTags)
 	cp.Members = cloneSlice(s.Members)
@@ -289,6 +291,7 @@ func (s *Store) Get(id string) (*Subscription, error) {
 		return nil, &NotFoundError{ID: id}
 	}
 	cp := *sub
+	cp.UplinkBinding = cloneUplinkBinding(sub.UplinkBinding)
 	return &cp, nil
 }
 
@@ -301,7 +304,9 @@ func (s *Store) List() []Subscription {
 	defer s.mu.RUnlock()
 	out := make([]Subscription, 0, len(s.data))
 	for _, sub := range s.data {
-		out = append(out, *sub)
+		cp := *sub
+		cp.UplinkBinding = cloneUplinkBinding(sub.UplinkBinding)
+		out = append(out, cp)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		li, lj := strings.ToLower(out[i].Label), strings.ToLower(out[j].Label)
@@ -315,6 +320,12 @@ func (s *Store) List() []Subscription {
 
 func (s *Store) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	sub, err := s.mutate(id, func(sub *Subscription) error {
+		if patch.ExpectedBind != nil && sub.BindInterface != *patch.ExpectedBind {
+			return uplink.ErrConflict
+		}
+		if patch.UplinkBinding != nil {
+			sub.UplinkBinding = cloneUplinkBinding(*patch.UplinkBinding)
+		}
 		if patch.Label != nil {
 			sub.Label = *patch.Label
 		}
@@ -366,6 +377,7 @@ func (s *Store) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		return nil, err
 	}
 	cp := *sub
+	cp.UplinkBinding = cloneUplinkBinding(sub.UplinkBinding)
 	return &cp, nil
 }
 

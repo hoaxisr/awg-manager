@@ -95,6 +95,7 @@ type NativeWGExecutor interface {
 // Orchestrator centralizes ALL tunnel lifecycle decisions.
 // One brain: receives events, decides actions, executes them.
 type Orchestrator struct {
+	managedKernelWAN func(context.Context, string) (string, error)
 	// Decision state (protected by mu)
 	mu    sync.Mutex
 	state State

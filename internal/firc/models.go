@@ -357,6 +357,7 @@ type Tunnel struct {
 	Description string          `json:"description,omitempty" yaml:"description,omitempty"`
 	Enable      bool            `json:"enable" yaml:"enable"`
 	Uplink      TunnelUplink    `json:"uplink" yaml:"uplink"`
+	EndpointDNS []string        `json:"endpointDns,omitempty" yaml:"endpointDns,omitempty"`
 	Sources     []TunnelSource  `json:"sources" yaml:"sources"`
 	Filter      string          `json:"filter,omitempty" yaml:"filter,omitempty"`
 	Order       []string        `json:"order,omitempty" yaml:"order,omitempty"`
@@ -369,7 +370,22 @@ type Tunnel struct {
 	Advanced    TunnelAdvanced  `json:"advanced" yaml:"advanced"`
 }
 
+func (t Tunnel) MarshalJSON() ([]byte, error) {
+	type plain Tunnel
+	if t.EndpointDNS == nil {
+		return json.Marshal(plain(t))
+	}
+	return json.Marshal(struct {
+		plain
+		EndpointDNS []string `json:"endpointDns"`
+	}{plain(t), t.EndpointDNS})
+}
+
 func (t Tunnel) MarshalYAML() (interface{}, error) {
+	var endpointDNS *[]string
+	if t.EndpointDNS != nil {
+		endpointDNS = &t.EndpointDNS
+	}
 	var intervalStr, silenceStr string
 	if t.Interval > 0 {
 		intervalStr = formatYAMLSeconds(t.Interval)
@@ -383,6 +399,7 @@ func (t Tunnel) MarshalYAML() (interface{}, error) {
 		Description string          `yaml:"description,omitempty"`
 		Enable      bool            `yaml:"enable"`
 		Uplink      TunnelUplink    `yaml:"uplink"`
+		EndpointDNS *[]string       `yaml:"endpointDns,omitempty"`
 		Sources     []TunnelSource  `yaml:"sources"`
 		Filter      string          `yaml:"filter,omitempty"`
 		Order       []string        `yaml:"order,omitempty"`
@@ -399,6 +416,7 @@ func (t Tunnel) MarshalYAML() (interface{}, error) {
 		Description: t.Description,
 		Enable:      t.Enable,
 		Uplink:      t.Uplink,
+		EndpointDNS: endpointDNS,
 		Sources:     t.Sources,
 		Filter:      t.Filter,
 		Order:       t.Order,
@@ -419,6 +437,7 @@ func (t *Tunnel) UnmarshalYAML(value *yaml.Node) error {
 		Description string          `yaml:"description"`
 		Enable      bool            `yaml:"enable"`
 		Uplink      TunnelUplink    `yaml:"uplink"`
+		EndpointDNS []string        `yaml:"endpointDns"`
 		Sources     []TunnelSource  `yaml:"sources"`
 		Filter      string          `yaml:"filter"`
 		Order       []string        `yaml:"order"`
@@ -446,6 +465,7 @@ func (t *Tunnel) UnmarshalYAML(value *yaml.Node) error {
 	t.Description = raw.Description
 	t.Enable = raw.Enable
 	t.Uplink = raw.Uplink
+	t.EndpointDNS = raw.EndpointDNS
 	t.Sources = raw.Sources
 	t.Filter = raw.Filter
 	t.Order = raw.Order
@@ -709,6 +729,7 @@ type Group struct {
 
 // NetfilterHealth represents GET /api/v1/system/netfilter.
 type NetfilterHealth struct {
+	UplinkDNSVersion  int    `json:"uplinkDnsVersion,omitempty"`
 	Ok                bool   `json:"ok"`
 	FirstWritePending bool   `json:"firstWritePending,omitempty"`
 	Error             string `json:"error,omitempty"`

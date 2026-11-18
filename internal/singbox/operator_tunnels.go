@@ -554,6 +554,28 @@ var reservedOutboundTags = map[string]struct{}{
 // RenameTunnel changes a single sing-box tunnel tag and rewrites every
 // singbox-router reference that points at that outbound.
 func (o *Operator) RenameTunnel(ctx context.Context, oldTag, newTag string) error {
+	o.targetRenameMu.Lock()
+	coordinator := o.targetRenameCoordinator
+	o.targetRenameMu.Unlock()
+	if coordinator != nil {
+		return coordinator(ctx, strings.TrimSpace(oldTag), strings.TrimSpace(newTag), func() error { return o.renameTunnel(ctx, oldTag, newTag) })
+	}
+	return o.renameTunnel(ctx, oldTag, newTag)
+}
+
+func (o *Operator) SetTargetRenameCoordinator(fn func(context.Context, string, string, func() error) error) {
+	o.targetRenameMu.Lock()
+	o.targetRenameCoordinator = fn
+	o.targetRenameMu.Unlock()
+}
+
+func (o *Operator) SetManagedUplinkConfig(fn func(context.Context, map[string]any) (map[string]any, error)) {
+	o.targetRenameMu.Lock()
+	o.managedUplinkConfig = fn
+	o.targetRenameMu.Unlock()
+}
+
+func (o *Operator) renameTunnel(ctx context.Context, oldTag, newTag string) error {
 	defer perftrace.LogDuration(o.runtimeLogger, "perf", "RenameTunnel", "total", time.Now())
 	oldTag = strings.TrimSpace(oldTag)
 	newTag = strings.TrimSpace(newTag)
@@ -743,6 +765,16 @@ func (o *Operator) checkTunnelFeatures(cfg *Config) error {
 // Оркестратор обязателен: в проде SetOrch вызывается до старта HTTP, тесты
 // поднимают его сами (см. newOrchedOperator).
 func (o *Operator) writeTunnelsSlot(cfg *Config, validate bool) error {
+	o.targetRenameMu.Lock()
+	materialize := o.managedUplinkConfig
+	o.targetRenameMu.Unlock()
+	if materialize != nil {
+		prepared, err := materialize(context.Background(), cfg.raw)
+		if err != nil {
+			return err
+		}
+		cfg.raw = prepared
+	}
 	if o.orch == nil {
 		return fmt.Errorf("apply tunnels config: orchestrator not wired")
 	}

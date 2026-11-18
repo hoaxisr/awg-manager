@@ -178,7 +178,7 @@ func (o *Orchestrator) executeColdStartKernel(ctx context.Context, action Action
 	}
 
 	// Resolve WAN
-	resolvedWAN, err := o.resolveWAN(ctx, stored.ISPInterface)
+	resolvedWAN, err := o.resolveKernelWAN(ctx, stored.ID, stored.ISPInterface)
 	if err != nil {
 		return fmt.Errorf("resolve WAN: %w", err)
 	}
@@ -258,7 +258,7 @@ func (o *Orchestrator) executeReconcileKernel(ctx context.Context, action Action
 	}
 
 	// Resolve WAN
-	resolvedWAN, err := o.resolveWAN(ctx, stored.ISPInterface)
+	resolvedWAN, err := o.resolveKernelWAN(ctx, stored.ID, stored.ISPInterface)
 	if err != nil {
 		return fmt.Errorf("resolve WAN: %w", err)
 	}
@@ -342,7 +342,7 @@ func (o *Orchestrator) refreshEndpointRouteAfterResume(ctx context.Context, tunn
 	if err != nil || stored.Peer.Endpoint == "" {
 		return
 	}
-	resolvedWAN, err := o.resolveWAN(ctx, stored.ISPInterface)
+	resolvedWAN, err := o.resolveKernelWAN(ctx, stored.ID, stored.ISPInterface)
 	if err != nil {
 		o.appLog.Warn("resume", tunnelID, "маршрут до endpoint не обновлён, WAN не разрешён: "+err.Error())
 		return

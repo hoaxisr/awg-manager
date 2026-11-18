@@ -872,6 +872,7 @@ func (a *app) setupShutdown() {
 
 	// Start the monitoring scheduler now that shutdownCtx exists.
 	a.monitoringService.Start(a.shutdownCtx)
+	a.setupUplink()
 	// Прокси-рантайм. Точка встраивания выбрана здесь, а не сразу за
 	// присвоением a.routerSvc: ingress-адаптер сервера действительно требует
 	// готового router-сервиса, но замыкания проводки держат ДОЛГОЖИВУЩИЙ

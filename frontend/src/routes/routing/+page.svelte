@@ -48,8 +48,13 @@
     let unsubRouting: (() => void) | null = null;
 
     onMount(() => {
-        // Legacy URL: standalone «Прокси для устройств» → Expert Inbounds в Sing-box Router.
+        // Legacy URL: Multi-WAN moved to Туннели (/?tab=uplink).
         const sp = new URLSearchParams($page.url.search);
+        if (sp.get('tab') === 'uplink') {
+            void goto('/?tab=uplink', { replaceState: true });
+            return;
+        }
+        // Legacy URL: standalone «Прокси для устройств» → Expert Inbounds в Sing-box Router.
         if (sp.get('tab') === 'deviceproxy') {
             sp.set('tab', 'singbox');
             sp.set('mode', 'expert');
@@ -66,6 +71,11 @@
         // settings. Without this the dormant mode's chip rendered as active
         // until the user first visited a sing-box tab (which runs loadAll).
         void singboxRouterStore.reloadSettings();
+    });
+    $effect(() => {
+        if (browser && $page.url.searchParams.get('tab') === 'uplink') {
+            void goto('/?tab=uplink', { replaceState: true });
+        }
     });
     onDestroy(() => {
         unsubRouting?.();

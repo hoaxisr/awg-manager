@@ -63,6 +63,7 @@ type Options struct {
 // EngineSwitchHooks defines the callbacks used by SwitchEngine to coordinate
 // transactional engine switching across settings stores and sing-box/firc services.
 type EngineSwitchHooks struct {
+	AcquireTransition    func(ctx context.Context) (EngineTransitionGuard, error)
 	GetCurrentEngine     func(ctx context.Context) (string, error)
 	ValidateMutation     func(ctx context.Context, prevEngine, targetEngine string) error
 	CaptureState         func(ctx context.Context) (restore func(ctx context.Context) error, err error)
@@ -72,6 +73,14 @@ type EngineSwitchHooks struct {
 	ActivateTarget       func(ctx context.Context, targetEngine string) error
 	CommitSettings       func(ctx context.Context, targetEngine string) error
 	OnSwitched           func(fircSelected bool)
+}
+
+// EngineTransitionGuard is acquired before mutationMu: the uplink controller
+// takes the same lock order when it activates FIRC. Implementations must release
+// on every return path.
+type EngineTransitionGuard interface {
+	CheckTarget(string) error
+	Release()
 }
 
 // EngineSwitchOptions parameterizes non-default engine transition behavior.
@@ -113,6 +122,9 @@ func SwitchPreviousEngineFromContext(ctx context.Context) (string, bool) {
 
 func mergeEngineSwitchHooks(base, override EngineSwitchHooks) EngineSwitchHooks {
 	out := base
+	if override.AcquireTransition != nil {
+		out.AcquireTransition = override.AcquireTransition
+	}
 	if override.GetCurrentEngine != nil {
 		out.GetCurrentEngine = override.GetCurrentEngine
 	}
@@ -218,6 +230,7 @@ type Operator struct {
 	clearFaultHooks      RecoveryClearFaultHooks
 	srTxFaultHooks       ServerRoutingTxFaultHooks
 	defaultHooks         EngineSwitchHooks
+	managedUplinkConfig  func(context.Context, []Tunnel) ([]Tunnel, error)
 	xhttpStatusFn        func() bool
 	openfluxStatusFn     func() (bool, string)
 	singboxBinary        string
@@ -447,6 +460,12 @@ func (o *Operator) DefaultEngineHooks() EngineSwitchHooks {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.defaultHooks
+}
+
+func (o *Operator) SetManagedUplinkConfig(fn func(context.Context, []Tunnel) ([]Tunnel, error)) {
+	o.mu.Lock()
+	o.managedUplinkConfig = fn
+	o.mu.Unlock()
 }
 
 // HasProductionEngineHooks reports whether all required production engine-switch hooks
@@ -1525,6 +1544,31 @@ func (o *Operator) SyncTunnels(ctx context.Context, tunnels []Tunnel, ensureInbo
 	if ensureInbound1099 {
 		synced = EnsureInboundPort1099(synced, o.inboundPort)
 	}
+	prepared, err := o.materializeManagedUplinks(ctx, synced)
+	if err != nil {
+		return nil, err
+	}
+	return o.syncTunnelsPrepared(ctx, prepared, ensureInbound1099)
+}
+
+func (o *Operator) materializeManagedUplinks(ctx context.Context, tunnels []Tunnel) ([]Tunnel, error) {
+	o.mu.Lock()
+	materialize := o.managedUplinkConfig
+	o.mu.Unlock()
+	if materialize != nil {
+		prepared, err := materialize(ctx, tunnels)
+		if err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return prepared, nil
+	}
+	return tunnels, nil
+}
+
+func (o *Operator) syncTunnelsPrepared(ctx context.Context, synced []Tunnel, ensureInbound1099 bool) (*PutTunnelsResponse, error) {
 	resp, err := o.Client().PutTunnels(ctx, synced)
 	if err != nil && ensureInbound1099 && strings.Contains(err.Error(), "is busy") {
 		stripped := stripInboundPort(synced, o.inboundPort)
@@ -1598,7 +1642,12 @@ func (o *Operator) normalizeTunnelsForSave(tunnels []Tunnel, ensureInbound1099 b
 func (o *Operator) ApplyTunnels(ctx context.Context, tunnels []Tunnel, ensureInbound1099 bool) (*PutTunnelsResponse, error) {
 	o.mutationMu.Lock()
 	defer o.mutationMu.Unlock()
+	return o.applyTunnelsLocked(ctx, tunnels, ensureInbound1099)
+}
 
+// applyTunnelsLocked allows an atomic read-modify-apply of a single uplink.
+// Caller holds mutationMu, including while capturing the fresh live snapshot.
+func (o *Operator) applyTunnelsLocked(ctx context.Context, tunnels []Tunnel, ensureInbound1099 bool) (*PutTunnelsResponse, error) {
 	if err := o.checkMutationAllowed(); err != nil {
 		return nil, err
 	}
@@ -1619,6 +1668,31 @@ func (o *Operator) ApplyTunnels(ctx context.Context, tunnels []Tunnel, ensureInb
 	} else {
 		prevTunnels, _ = o.LoadTunnelsFile()
 	}
+	// Older editors do not round-trip newly introduced DNS metadata. Omission
+	// preserves an existing explicit binding; [] explicitly clears it. Auto is
+	// an intentional exit from strict uplink ownership.
+	for i := range tunnels {
+		if tunnels[i].EndpointDNS != nil {
+			continue
+		}
+		for _, old := range prevTunnels {
+			if old.ID != tunnels[i].ID || len(old.EndpointDNS) == 0 {
+				continue
+			}
+			if tunnels[i].Uplink.Kind == "iface" || tunnels[i].Uplink.Kind == "tunnel" {
+				tunnels[i].EndpointDNS = append([]string(nil), old.EndpointDNS...)
+			} else {
+				tunnels[i].EndpointDNS = []string{}
+			}
+			break
+		}
+	}
+
+	prepared, err := o.materializeManagedUplinks(ctx, tunnels)
+	if err != nil {
+		return nil, err
+	}
+	tunnels = prepared
 
 	snap, err := captureFileSnapshot(o.TunnelsPath(), 0600)
 	if err != nil {
@@ -1628,9 +1702,9 @@ func (o *Operator) ApplyTunnels(ctx context.Context, tunnels []Tunnel, ensureInb
 		return nil, fmt.Errorf("save tunnels.yaml: %w", err)
 	}
 	if running {
-		putResp, syncErr := o.SyncTunnels(ctx, tunnels, ensureInbound1099)
+		putResp, syncErr := o.syncTunnelsPrepared(ctx, tunnels, ensureInbound1099)
 		if syncErr != nil {
-			_, rtErr := o.SyncTunnels(ctx, prevTunnels, false)
+			_, rtErr := o.syncTunnelsPrepared(ctx, prevTunnels, false)
 			fileErr := restoreFileSnapshot(snap)
 			if fileErr != nil || rtErr != nil {
 				reason := fmt.Sprintf("ApplyTunnels rollback failed (file=%v, runtime=%v)", fileErr, rtErr)
@@ -2058,6 +2132,23 @@ func (o *Operator) SwitchEngine(ctx context.Context, targetEngine string, overri
 // SwitchEngineWithOptions executes a transactional routing engine switch with explicit
 // stop-vs-standby options and full state capture/rollback support.
 func (o *Operator) SwitchEngineWithOptions(ctx context.Context, targetEngine string, opts EngineSwitchOptions, overrideHooks ...EngineSwitchHooks) error {
+	hooks := o.DefaultEngineHooks()
+	for _, ov := range overrideHooks {
+		hooks = mergeEngineSwitchHooks(hooks, ov)
+	}
+	var guard EngineTransitionGuard
+	if hooks.AcquireTransition != nil {
+		var err error
+		guard, err = hooks.AcquireTransition(ctx)
+		if err != nil {
+			return err
+		}
+		if guard == nil {
+			return errors.New("engine transition guard unavailable")
+		}
+		defer guard.Release()
+	}
+
 	o.mutationMu.Lock()
 	defer o.mutationMu.Unlock()
 
@@ -2065,14 +2156,14 @@ func (o *Operator) SwitchEngineWithOptions(ctx context.Context, targetEngine str
 		return err
 	}
 
-	hooks := o.DefaultEngineHooks()
-	for _, ov := range overrideHooks {
-		hooks = mergeEngineSwitchHooks(hooks, ov)
-	}
-
 	normTarget, err := normalizeTargetEngineName(targetEngine)
 	if err != nil {
 		return err
+	}
+	if guard != nil {
+		if err := guard.CheckTarget(normTarget); err != nil {
+			return err
+		}
 	}
 
 	if hooks.GetCurrentEngine == nil {

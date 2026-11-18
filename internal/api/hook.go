@@ -40,19 +40,20 @@ type ProxyRuntimeNudge func(reason string)
 
 // HookHandler handles NDM hook events.
 type HookHandler struct {
-	svc           TunnelService
-	orch          *orchestrator.Orchestrator
-	dispatcher    HookDispatcher // may be nil until SetDispatcher is called
-	wanModel      HookWANModel   // may be nil until SetWANModel is called
-	systemNames   HookSystemNames
-	proxyNudge    ProxyRuntimeNudge
-	endpointNudge func()
-	wanNudge      func() // nil — выключено; см. SetWANChangeNudge
-	ipv4Running   func(ndmsID string)
-	wanPublic     func(ndmsID string) bool // nil — проверка «потерянного» WAN выключена
-	uptime        func() float64           // nil — events.ReadUptime; см. SetUptimeReader
-	log           *logging.ScopedLogger
-	wanLog        *logging.ScopedLogger
+	svc            TunnelService
+	orch           *orchestrator.Orchestrator
+	dispatcher     HookDispatcher // may be nil until SetDispatcher is called
+	wanModel       HookWANModel   // may be nil until SetWANModel is called
+	systemNames    HookSystemNames
+	proxyNudge     ProxyRuntimeNudge
+	endpointNudge  func()
+	wanNudge       func() // nil — выключено; см. SetWANChangeNudge
+	wanUplinkNudge func(ndmsID, kernelName string)
+	ipv4Running    func(ndmsID string)
+	wanPublic      func(ndmsID string) bool // nil — проверка «потерянного» WAN выключена
+	uptime         func() float64           // nil — events.ReadUptime; см. SetUptimeReader
+	log            *logging.ScopedLogger
+	wanLog         *logging.ScopedLogger
 }
 
 // NewHookHandler creates a new hook event handler.
@@ -105,6 +106,11 @@ func (h *HookHandler) SetEndpointGuardNudge(fn func()) {
 // (#1215). Обязан быть неблокирующим: зовётся в ответе на хук.
 func (h *HookHandler) SetWANChangeNudge(fn func()) {
 	h.wanNudge = fn
+}
+
+// SetUplinkWANChangeNudge installs a non-blocking egress reconciliation notification.
+func (h *HookHandler) SetUplinkWANChangeNudge(fn func(ndmsID, kernelName string)) {
+	h.wanUplinkNudge = fn
 }
 
 // SetWANPublicCheck подключает признак «интерфейс NDMS — публичный (WAN)»:
@@ -285,6 +291,10 @@ func (h *HookHandler) Handle(event events.Event) {
 				h.log.Warn("hook", e.ID, "orchestrator HandleEvent failed: "+err.Error())
 			}
 		}(event)
+	}
+
+	if h.wanUplinkNudge != nil && (event.Type == events.EventIfIPChanged || event.Type == events.EventIfCreated || event.Type == events.EventIfDestroyed || (event.Type == events.EventIfLayerChanged && event.Layer == "ipv4")) {
+		h.wanUplinkNudge(event.ID, event.SystemName)
 	}
 
 	h.log.Info("hook", event.ID, fmt.Sprintf("ndms: type=%s layer=%s level=%s own=%v", event.Type, event.Layer, event.Level, event.Own))

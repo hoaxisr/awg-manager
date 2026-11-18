@@ -325,7 +325,10 @@ type Operator struct {
 	// with the new mode.
 	migrationMu sync.Mutex
 
-	outboundRefs outboundReferenceRenamer
+	outboundRefs            outboundReferenceRenamer
+	targetRenameCoordinator func(context.Context, string, string, func() error) error
+	targetRenameMu          sync.Mutex
+	managedUplinkConfig     func(context.Context, map[string]any) (map[string]any, error)
 }
 
 type outboundReferenceRenamer interface {

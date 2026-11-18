@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
@@ -22,12 +23,63 @@ const rcInterfaceTTL = 5 * time.Minute
 type rcInterfaceStore struct {
 	*cache.ListStore[map[string]json.RawMessage]
 	getter Getter
+
+	recentMu   sync.Mutex
+	recentAt   time.Time
+	recentTree map[string]json.RawMessage
+	recentSF   *cache.SingleFlight[struct{}, map[string]json.RawMessage]
 }
 
 func newRCInterfaceStore(g Getter, log Logger, ttl time.Duration) *rcInterfaceStore {
-	s := &rcInterfaceStore{getter: g}
+	s := &rcInterfaceStore{
+		getter:   g,
+		recentSF: cache.NewSingleFlight[struct{}, map[string]json.RawMessage](),
+	}
 	s.ListStore = cache.NewListStore(ttl, log, "rc interfaces", s.fetch)
 	return s
+}
+
+func (s *rcInterfaceStore) InvalidateAll() {
+	s.recentMu.Lock()
+	s.recentAt = time.Time{}
+	s.recentTree = nil
+	s.recentMu.Unlock()
+	s.ListStore.InvalidateAll()
+}
+
+// FetchWithin returns the /show/rc/interface/ tree if fetched within maxAge,
+// otherwise performs a singleflight-coalesced fresh RCI read without stale-on-error
+// fallback.
+func (s *rcInterfaceStore) FetchWithin(ctx context.Context, maxAge time.Duration) (map[string]json.RawMessage, error) {
+	if maxAge > 0 {
+		s.recentMu.Lock()
+		if s.recentTree != nil && time.Since(s.recentAt) < maxAge {
+			tree := s.recentTree
+			s.recentMu.Unlock()
+			return tree, nil
+		}
+		s.recentMu.Unlock()
+	}
+	return s.recentSF.Do(struct{}{}, func() (map[string]json.RawMessage, error) {
+		if maxAge > 0 {
+			s.recentMu.Lock()
+			if s.recentTree != nil && time.Since(s.recentAt) < maxAge {
+				tree := s.recentTree
+				s.recentMu.Unlock()
+				return tree, nil
+			}
+			s.recentMu.Unlock()
+		}
+		tree, err := s.Fetch(ctx)
+		if err != nil {
+			return nil, err
+		}
+		s.recentMu.Lock()
+		s.recentAt = time.Now()
+		s.recentTree = tree
+		s.recentMu.Unlock()
+		return tree, nil
+	})
 }
 
 func (s *rcInterfaceStore) fetch(ctx context.Context) (map[string]json.RawMessage, error) {

@@ -385,9 +385,24 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.ipv4RunningHook != nil {
 		h.hookHandler.SetIPv4RunningHook(s.ipv4RunningHook)
 	}
+	if s.uplinkHandler != nil && s.uplinkHandler.Controller != nil {
+		h.hookHandler.SetUplinkWANChangeNudge(func(ndmsID, kernel string) {
+			for _, provider := range s.uplinkHandler.Controller.Providers() {
+				if (ndmsID != "" && provider.ID == ndmsID) || (kernel != "" && provider.Device == kernel) {
+					s.uplinkHandler.Controller.NotifyWANChange()
+					return
+				}
+			}
+		})
+	}
 
 	// WAN status (protected) — event ingress is the NDMS hook spool.
 	mux.HandleFunc("/api/wan/status", h.guarded(h.wanHandler.GetStatus))
+	if s.uplinkHandler != nil {
+		mux.HandleFunc("/api/uplink/policies", h.guarded(s.uplinkHandler.Policies))
+		mux.HandleFunc("/api/uplink/dns", h.guarded(s.uplinkHandler.DNS))
+		mux.HandleFunc("/api/uplink/switch", h.guarded(s.uplinkHandler.Switch))
+	}
 
 }
 
