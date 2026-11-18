@@ -1,0 +1,117 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import '@testing-library/jest-dom/vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+const { status, install, uninstall, migrate } = vi.hoisted(() => ({
+	status: vi.fn(),
+	install: vi.fn(),
+	uninstall: vi.fn(),
+	migrate: vi.fn(),
+}));
+vi.mock('$lib/api/client', () => ({
+	api: {
+		fircGetInstallStatus: status,
+		fircInstall: install,
+		fircUninstall: uninstall,
+		fircMigrateRuntime: migrate,
+	},
+}));
+import FircIntegrationSection from './FircIntegrationSection.svelte';
+import type { FircInstallStatus } from '$lib/types/firc';
+
+const base: FircInstallStatus = {
+	state: 'not_installed', available: true, activeEngine: false, busy: false,
+	fircdPresent: false, tunvlessPresent: false, initScriptPresent: false, ndmHookPresent: false, configPresent: false,
+};
+beforeEach(() => {
+	vi.resetAllMocks();
+	status.mockResolvedValue(base);
+	install.mockResolvedValue({ ok: true });
+	uninstall.mockResolvedValue({ ok: true });
+	migrate.mockResolvedValue({ ok: true });
+});
+afterEach(cleanup);
+
+describe('FIRC runtime settings', () => {
+	it('does not offer an unconfigured release', async () => {
+		status.mockResolvedValue({ ...base, state: 'unavailable', available: false });
+		render(FircIntegrationSection);
+		const button = await screen.findByRole('button', { name: /Установить FIRC|Install FIRC/ });
+		await waitFor(() => expect(button).toBeDisabled());
+		expect(install).not.toHaveBeenCalled();
+	});
+	it('shows installed rather than available version and blocks active removal', async () => {
+		status.mockResolvedValue({ ...base, state: 'running', activeEngine: true, installedVersion: '0.7.0-1', availableVersion: '0.8.0-1', fircdPresent: true, tunvlessPresent: true });
+		render(FircIntegrationSection);
+		expect(await screen.findByText('0.7.0-1')).toBeInTheDocument();
+		expect(screen.queryByText('0.8.0-1')).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /Удалить FIRC|Remove FIRC/ })).toBeDisabled();
+	});
+	it('treats accepted install as in progress, not completed', async () => {
+		status.mockResolvedValueOnce(base).mockResolvedValue({ ...base, state: 'installing', busy: true, busyAction: 'install', progress: 0.1 });
+		render(FircIntegrationSection);
+		const button = await screen.findByRole('button', { name: /Установить FIRC|Install FIRC/ });
+		await waitFor(() => expect(button).toBeEnabled());
+		await fireEvent.click(button);
+		await waitFor(() => expect(install).toHaveBeenCalledTimes(1));
+		expect(await screen.findByRole('progressbar')).toBeInTheDocument();
+		expect(button).toBeDisabled();
+	});
+	it('offers repair when state is recovery_required', async () => {
+		status
+			.mockResolvedValueOnce({ ...base, state: 'recovery_required', fircdPresent: true, error: 'interrupted opkg transaction' })
+			.mockResolvedValue({ ...base, state: 'installing', busy: true, busyAction: 'install', progress: 0.5 });
+		render(FircIntegrationSection);
+		const repairBtn = await screen.findByRole('button', { name: /Восстановить FIRC|Repair FIRC/ });
+		expect(screen.getByRole('alert')).toHaveTextContent('interrupted opkg transaction');
+		await waitFor(() => expect(repairBtn).toBeEnabled());
+		await fireEvent.click(repairBtn);
+		await waitFor(() => expect(install).toHaveBeenCalledTimes(1));
+	});
+	it('blocks removal when dependentServices are active', async () => {
+		status.mockResolvedValue({
+			...base,
+			state: 'installed',
+			installedVersion: '0.7.0-1',
+			fircdPresent: true,
+			tunvlessPresent: true,
+			dependentServices: ['keendns-cloud', 'server-routing:awg'],
+		});
+		render(FircIntegrationSection);
+		const removeBtn = await screen.findByRole('button', { name: /Удалить FIRC|Remove FIRC/ });
+		expect(removeBtn).toBeDisabled();
+		expect(screen.getByText(/keendns-cloud, server-routing:awg/)).toBeInTheDocument();
+	});
+	it('confirms removal with config preservation notice and invokes fircUninstall(false)', async () => {
+		status
+			.mockResolvedValueOnce({ ...base, state: 'installed', installedVersion: '0.7.0-1', fircdPresent: true, tunvlessPresent: true })
+			.mockResolvedValue({ ...base, state: 'uninstalling', busy: true, busyAction: 'uninstall' });
+		render(FircIntegrationSection);
+		const removeBtn = await screen.findByRole('button', { name: /Удалить FIRC|Remove FIRC/ });
+		await waitFor(() => expect(removeBtn).toBeEnabled());
+		await fireEvent.click(removeBtn);
+		expect(await screen.findByText(/Настройки сохранятся|Configuration is preserved/)).toBeInTheDocument();
+		const buttons = screen.getAllByRole('button', { name: /Удалить FIRC|Remove FIRC/ });
+		await fireEvent.click(buttons[buttons.length - 1]);
+		await waitFor(() => expect(uninstall).toHaveBeenCalledWith(false));
+	});
+	it('offers ownership migration for legacy bundled installations even when running, while blocking direct removal', async () => {
+		status
+			.mockResolvedValueOnce({
+				...base,
+				state: 'running',
+				activeEngine: true,
+				legacyBundledOwnership: true,
+				fircdPresent: true,
+				tunvlessPresent: true,
+			})
+			.mockResolvedValue({ ...base, state: 'installing', busy: true, busyAction: 'migrate_legacy', progress: 0.25 });
+		render(FircIntegrationSection);
+		const migrateBtn = await screen.findByRole('button', { name: /Перенести в пакет FIRC|Migrate FIRC package/ });
+		const removeBtn = screen.getByRole('button', { name: /Удалить FIRC|Remove FIRC/ });
+		await waitFor(() => expect(migrateBtn).toBeEnabled());
+		expect(removeBtn).toBeDisabled();
+		await fireEvent.click(migrateBtn);
+		await waitFor(() => expect(migrate).toHaveBeenCalledTimes(1));
+		expect(install).not.toHaveBeenCalled();
+	});
+});
