@@ -1284,3 +1284,87 @@ func TestIPFailureKeepsStderr(t *testing.T) {
 		})
 	}
 }
+
+// F806/#1233: цепочка «через туннель» — маршрут до endpoint в интерфейс
+// родителя. Заказанный явно туннельный oif — не петля.
+func TestSetupEndpointRoute_ChainThroughParentTunnel(t *testing.T) {
+	o, _, _ := newOS5Lifecycle(t)
+	s := &scriptedIPRun{routeGet: "203.0.113.7 dev opkgtun10 src 10.8.1.9 uid 0"}
+	o.ipRun = s.run
+	if _, err := o.SetupEndpointRoute(context.Background(), "awg11", "203.0.113.7:51820", "opkgtun10", "tunnel:awg10"); err != nil {
+		t.Fatal(err)
+	}
+	if !hasCall(s.Calls, "/opt/sbin/ip route replace 203.0.113.7/32 dev opkgtun10") {
+		t.Fatalf("маршрут не через родителя:\n%s", strings.Join(s.Calls, "\n"))
+	}
+}
+
+// Свой же интерфейс — петля, даже если его заказали явно.
+func TestSetupEndpointRoute_ChainRefusesOwnDevice(t *testing.T) {
+	o, _, _ := newOS5Lifecycle(t)
+	s := &scriptedIPRun{routeGet: "203.0.113.7 dev opkgtun11 src 10.8.2.2 uid 0"}
+	o.ipRun = s.run
+	_, err := o.SetupEndpointRoute(context.Background(), "awg11", "203.0.113.7:51820", "opkgtun11", "tunnel:awg11")
+	if err == nil || !strings.Contains(err.Error(), "routing loop") {
+		t.Fatalf("петля не распознана: err=%v", err)
+	}
+}
+
+// Host-route общий на адрес (F130): если тот же сервер у другого туннеля,
+// маршрут ребёнка через родителя завернул бы в туннель и чужой трафик до
+// сервера — у родителя с тем же endpoint это петля.
+func TestSetupEndpointRoute_ChainRefusesSharedEndpoint(t *testing.T) {
+	o, _, _ := newOS5Lifecycle(t)
+	s := &scriptedIPRun{routeGet: "203.0.113.7 via 192.0.2.1 dev eth3 src 192.0.2.10 uid 0"}
+	o.ipRun = s.run
+	if _, err := o.SetupEndpointRoute(context.Background(), "awg10", "203.0.113.7:51820", "eth3", "eth3"); err != nil {
+		t.Fatal(err)
+	}
+	s.routeGet = "203.0.113.7 dev opkgtun10 src 10.8.1.9 uid 0"
+	_, err := o.SetupEndpointRoute(context.Background(), "awg11", "203.0.113.7:51820", "opkgtun10", "tunnel:awg10")
+	if err == nil {
+		t.Fatal("общий endpoint принят для маршрута через туннель")
+	}
+	if hasCall(s.Calls, "/opt/sbin/ip route replace 203.0.113.7/32 dev opkgtun10") {
+		t.Fatalf("маршрут соседа перебит:\n%s", strings.Join(s.Calls, "\n"))
+	}
+}
+
+// Под маршрутом цепочки — unreachable: лёг родитель, ядро снесло маршрут
+// через него, и сервер ребёнка недоступен, а не уходит напрямую в WAN.
+// Ставится и тогда, когда родителя ещё нет (route get отказывает).
+func TestSetupEndpointRoute_ChainInstallsUnreachableFallback(t *testing.T) {
+	o, _, _ := newOS5Lifecycle(t)
+	rec := &ipRunRecorder{}
+	o.ipRun = func(ctx context.Context, name string, args ...string) (*exec.Result, error) {
+		rec.run(ctx, name, args...)
+		if len(args) >= 2 && args[0] == "route" && args[1] == "get" {
+			return &exec.Result{ExitCode: 1, Stderr: "Cannot find device \"opkgtun10\""}, errors.New("exit status 1")
+		}
+		return &exec.Result{}, nil
+	}
+	if _, err := o.SetupEndpointRoute(context.Background(), "awg11", "203.0.113.7:51820", "opkgtun10", "tunnel:awg10"); err == nil {
+		t.Fatal("родителя нет, а маршрут через него «поставлен»")
+	}
+	if !hasCall(rec.Calls, "/opt/sbin/ip route replace unreachable 203.0.113.7/32 metric 4095") {
+		t.Fatalf("страховки нет:\n%s", strings.Join(rec.Calls, "\n"))
+	}
+	if err := o.CleanupEndpointRoute(context.Background(), "awg11"); err != nil {
+		t.Fatal(err)
+	}
+	if !hasCall(rec.Calls, "/opt/sbin/ip route del unreachable 203.0.113.7/32 metric 4095") {
+		t.Fatalf("страховка не снята на остановке:\n%s", strings.Join(rec.Calls, "\n"))
+	}
+}
+
+// Сырое opkgtunN (выбор из «всех интерфейсов», не tunnel:) мимо проверок
+// цепочки — петля, как и до F806.
+func TestSetupEndpointRoute_RawTunnelOifStillRefused(t *testing.T) {
+	o, _, _ := newOS5Lifecycle(t)
+	s := &scriptedIPRun{routeGet: "203.0.113.7 dev opkgtun10 src 10.8.1.9 uid 0"}
+	o.ipRun = s.run
+	_, err := o.SetupEndpointRoute(context.Background(), "awg11", "203.0.113.7:51820", "opkgtun10", "opkgtun10")
+	if err == nil || !strings.Contains(err.Error(), "routing loop") {
+		t.Fatalf("сырой туннельный oif принят: err=%v", err)
+	}
+}

@@ -550,7 +550,11 @@
 							.filter((i) => !wanInterfaces.some((w) => w.name === i.name))
 							.map((iface) => ({ value: iface.name, label: `${iface.label} (${iface.name})` }))
 						: []),
-					...otherTunnels.map((t) => ({ value: `tunnel:${t.id}`, label: t.name, group: m.tunnel_detail_isp_via_tunnel_group() })),
+					// На OS4 маршрутом до endpoint никто не управляет — выбор
+					// «через туннель» ничего бы не сделал (F806).
+					...(systemInfo?.isOS5
+						? otherTunnels.map((t) => ({ value: `tunnel:${t.id}`, label: t.name, group: m.tunnel_detail_isp_via_tunnel_group() }))
+						: []),
 				]}
 				<div class="tab-form">
 					<section class="card tunnel-section">

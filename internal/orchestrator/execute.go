@@ -187,6 +187,11 @@ func (o *Orchestrator) executeColdStartKernel(ctx context.Context, action Action
 		return fmt.Errorf("WAN %s is down", resolvedWAN)
 	}
 
+	routeDev, routeISP, err := RouteDevice(o.store, stored.ISPInterface, resolvedWAN)
+	if err != nil {
+		return fmt.Errorf("resolve WAN: %w", err)
+	}
+
 	// Write config file
 	if err := config.WriteFile(stored); err != nil {
 		return fmt.Errorf("write config: %w", err)
@@ -194,8 +199,8 @@ func (o *Orchestrator) executeColdStartKernel(ctx context.Context, action Action
 
 	// Build config
 	cfg := StoredToConfig(stored)
-	cfg.ISPInterface = resolvedWAN
-	cfg.KernelDevice = o.resolveKernelDevice(resolvedWAN)
+	cfg.ISPInterface = routeISP
+	cfg.KernelDevice = routeDev
 	cfg.DefaultRoute = stored.DefaultRoute
 	cfg.Endpoint = stored.Peer.Endpoint
 
@@ -258,10 +263,15 @@ func (o *Orchestrator) executeReconcileKernel(ctx context.Context, action Action
 		return fmt.Errorf("resolve WAN: %w", err)
 	}
 
+	routeDev, routeISP, err := RouteDevice(o.store, stored.ISPInterface, resolvedWAN)
+	if err != nil {
+		return fmt.Errorf("resolve WAN: %w", err)
+	}
+
 	// Build config
 	cfg := StoredToConfig(stored)
-	cfg.ISPInterface = resolvedWAN
-	cfg.KernelDevice = o.resolveKernelDevice(resolvedWAN)
+	cfg.ISPInterface = routeISP
+	cfg.KernelDevice = routeDev
 	cfg.DefaultRoute = stored.DefaultRoute
 	cfg.Endpoint = stored.Peer.Endpoint
 	if stored.ResolvedEndpointIP != "" {
@@ -337,8 +347,12 @@ func (o *Orchestrator) refreshEndpointRouteAfterResume(ctx context.Context, tunn
 		o.appLog.Warn("resume", tunnelID, "маршрут до endpoint не обновлён, WAN не разрешён: "+err.Error())
 		return
 	}
-	ip, err := o.kernelOp.SetupEndpointRoute(ctx, tunnelID, stored.Peer.Endpoint,
-		o.resolveKernelDevice(resolvedWAN), resolvedWAN)
+	routeDev, routeISP, err := RouteDevice(o.store, stored.ISPInterface, resolvedWAN)
+	if err != nil {
+		o.appLog.Warn("resume", tunnelID, "маршрут до endpoint не обновлён: "+err.Error())
+		return
+	}
+	ip, err := o.kernelOp.SetupEndpointRoute(ctx, tunnelID, stored.Peer.Endpoint, routeDev, routeISP)
 	if err != nil {
 		o.appLog.Warn("resume", tunnelID, "маршрут до endpoint не обновлён: "+err.Error())
 		return

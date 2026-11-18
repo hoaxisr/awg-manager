@@ -407,8 +407,10 @@ func TestActiveWAN_ResolveWAN_ChainedTunnel_FallbackNoActiveWAN(t *testing.T) {
 	}
 }
 
-// TestActiveWAN_ResolveWAN_ChainedTunnel_ParentNotRunning verifies error
-// when parent tunnel is not running and has no ActiveWAN.
+// TestActiveWAN_ResolveWAN_ChainedTunnel_ParentNotRunning: лежащий родитель
+// без ActiveWAN — WAN неизвестен, но это не отказ. Маршрут ребёнка идёт в
+// интерфейс родителя и встанет с его подъёмом; отказ ронял старт ребёнка,
+// поднятого раньше родителя (F806).
 func TestActiveWAN_ResolveWAN_ChainedTunnel_ParentNotRunning(t *testing.T) {
 	svc, store, _, stateMgr := testService(t)
 	ctx := context.Background()
@@ -416,9 +418,9 @@ func TestActiveWAN_ResolveWAN_ChainedTunnel_ParentNotRunning(t *testing.T) {
 	saveTunnel(t, store, "awg10") // no ActiveWAN
 	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped})
 
-	_, err := svc.resolveWAN(ctx, "tunnel:awg10")
-	if err == nil {
-		t.Fatal("resolveWAN() should return error when parent not running")
+	wan, err := svc.resolveWAN(ctx, "tunnel:awg10")
+	if err != nil || wan != "" {
+		t.Fatalf("resolveWAN() = %q, %v; want \"\", nil", wan, err)
 	}
 }
 

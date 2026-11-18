@@ -1001,8 +1001,40 @@ func (o *Orchestrator) executeActions(ctx context.Context, actions []Action) err
 			continue
 		}
 		o.updateState(action)
+		switch action.Type {
+		case ActionColdStartKernel, ActionReconcileKernel, ActionResumeKernel,
+			ActionStartNativeWG, ActionReconcileNativeWG:
+			o.refreshChainedChildren(ctx, action.Tunnel)
+		}
 	}
 	return firstErr
+}
+
+// refreshChainedChildren переустанавливает маршруты до endpoint у работающих
+// kernel-туннелей, подключённых через parentID. Их маршрут `dev <iface
+// родителя>` ядро сносит вместе с линком родителя (остаётся страховочный
+// unreachable); без переустановки ребёнок лежал бы до своего следующего
+// старта (F806). Берутся только Running из кэша оркестратора: неработающему
+// ребёнку маршрут и запись в карте маршрутов оператора не нужны.
+//
+// ponytail: лок ребёнка не берём — взятие внутри группы родителя при цикле
+// A↔B дало бы взаимную блокировку (цикл отвергает API, но запись старше
+// проверки). Цена: Stop ребёнка, совпавший с подъёмом родителя, может
+// оставить его host-route через родителя до следующего старта — `replace` на
+// старте его перепишет.
+func (o *Orchestrator) refreshChainedChildren(ctx context.Context, parentID string) {
+	want := tunnel.ISPInterfaceTunnelPrefix + parentID
+	var children []string
+	o.mu.Lock()
+	for _, t := range o.state.tunnels {
+		if t.ISPInterface == want && t.Running && t.Backend != "nativewg" {
+			children = append(children, t.ID)
+		}
+	}
+	o.mu.Unlock()
+	for _, id := range children {
+		o.refreshEndpointRouteAfterResume(ctx, id)
+	}
 }
 
 // groupContiguousByTunnel splits a flat action list into contiguous runs
