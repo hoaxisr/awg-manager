@@ -3268,6 +3268,133 @@ const subscription_RefreshResult: v.GenericSchema = v.looseObject({
 	payload: v.optional(v.nullable(v.lazy(() => wdttlink_ImportPayload))),
 });
 
+const telemt_Config: v.GenericSchema = v.looseObject({
+	enabled: v.optional(v.nullable(v.boolean())),
+	listenIp: v.optional(v.nullable(v.string())),
+	mode: v.optional(v.nullable(v.string())),
+	port: v.optional(v.nullable(v.number())),
+	secret: v.optional(v.nullable(v.string())),
+	tlsDomain: v.optional(v.nullable(v.string())),
+	upstreamDevice: v.optional(v.nullable(v.string())),
+	webCarrier: v.optional(v.nullable(v.string())),
+	webDecoy: v.optional(v.nullable(v.string())),
+	webHost: v.optional(v.nullable(v.string())),
+});
+
+const telemt_Status: v.GenericSchema = v.looseObject({
+	arch: v.optional(v.nullable(v.string())),
+	archSupported: v.optional(v.nullable(v.boolean())),
+	binary: v.optional(v.nullable(v.string())),
+	config: v.optional(v.nullable(v.lazy(() => telemt_Config))),
+	error: v.optional(v.nullable(v.string())),
+	installed: v.optional(v.nullable(v.boolean())),
+	latestVersion: v.optional(v.nullable(v.string())),
+	link: v.optional(v.nullable(v.string())),
+	pid: v.optional(v.nullable(v.number())),
+	running: v.optional(v.nullable(v.boolean())),
+	source: v.optional(v.nullable(v.string())),
+	updateAvailable: v.optional(v.nullable(v.boolean())),
+	version: v.optional(v.nullable(v.string())),
+});
+
+const vlessserver_Client: v.GenericSchema = v.looseObject({
+	created_at: v.optional(v.nullable(v.string())),
+	enabled: v.optional(v.nullable(v.boolean())),
+	fp_client_id: v.optional(v.nullable(v.string())),
+	fp_secret_hex: v.optional(v.nullable(v.string())),
+	id: v.optional(v.nullable(v.string())),
+	remark: v.optional(v.nullable(v.string())),
+});
+
+const vlessserver_Config: v.GenericSchema = v.looseObject({
+	allow_lan: v.optional(v.nullable(v.boolean())),
+	clients: v.optional(v.nullable(v.array(v.lazy(() => vlessserver_Client)))),
+	connection_way: v.optional(v.nullable(v.string())),
+	dispatcher_port: v.optional(v.nullable(v.number())),
+	domain_strategy: v.optional(v.nullable(v.string())),
+	enabled: v.optional(v.nullable(v.boolean())),
+	endpoints: v.optional(v.nullable(v.array(v.lazy(() => vlessserver_EndpointConfig)))),
+	listen_address: v.optional(v.nullable(v.string())),
+	listen_port: v.optional(v.nullable(v.number())),
+	mode: v.optional(v.nullable(v.string())),
+	origin_host: v.optional(v.nullable(v.string())),
+	origin_port: v.optional(v.nullable(v.number())),
+	origin_scheme: v.optional(v.nullable(v.string())),
+	origin_type: v.optional(v.nullable(v.string())),
+	outbound_interface: v.optional(v.nullable(v.string())),
+	outbound_mode: v.optional(v.nullable(v.string())),
+	outbound_socks_port: v.optional(v.nullable(v.number())),
+	path: v.optional(v.nullable(v.string())),
+	public_domain: v.optional(v.nullable(v.string())),
+	public_port: v.optional(v.nullable(v.number())),
+	transport: v.optional(v.nullable(v.string())),
+	uplink_method: v.optional(v.nullable(v.string())),
+	xhttp_tuning: v.optional(v.nullable(v.lazy(() => vlessserver_XHTTPTuning))),
+	xmux_max_connections: v.optional(v.nullable(v.number())),
+});
+
+const vlessserver_EndpointConfig: v.GenericSchema = v.looseObject({
+	connection_way: v.optional(v.nullable(v.string())),
+	enabled: v.optional(v.nullable(v.boolean())),
+	id: v.optional(v.nullable(v.string())),
+	mode: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	origin_host: v.optional(v.nullable(v.string())),
+	origin_port: v.optional(v.nullable(v.number())),
+	origin_scheme: v.optional(v.nullable(v.string())),
+	origin_type: v.optional(v.nullable(v.string())),
+	path: v.optional(v.nullable(v.string())),
+	public_domain: v.optional(v.nullable(v.string())),
+	public_port: v.optional(v.nullable(v.number())),
+	transport: v.optional(v.nullable(v.string())),
+	uplink_method: v.optional(v.nullable(v.string())),
+	xhttp_tuning: v.optional(v.nullable(v.lazy(() => vlessserver_XHTTPTuning))),
+});
+
+const vlessserver_Status: v.GenericSchema = v.looseObject({
+	active_generation: v.optional(v.nullable(v.string())),
+	backend: v.optional(v.nullable(v.string())),
+	binary_path: v.optional(v.nullable(v.string())),
+	clients: v.optional(v.nullable(v.array(v.lazy(() => vlessserver_Client)))),
+	clients_count: v.optional(v.nullable(v.number())),
+	configured: v.optional(v.nullable(v.boolean())),
+	domain: v.optional(v.nullable(v.string())),
+	installed: v.optional(v.nullable(v.boolean())),
+	listen_address: v.optional(v.nullable(v.string())),
+	migration_status: v.optional(v.nullable(v.string())),
+	pid: v.optional(v.nullable(v.number())),
+	port: v.optional(v.nullable(v.number())),
+	recovery_fingerprint: v.optional(v.nullable(v.string())),
+	recovery_reason: v.optional(v.nullable(v.string())),
+	recovery_required: v.optional(v.nullable(v.boolean())),
+	running: v.optional(v.nullable(v.boolean())),
+	unavailable_reason: v.optional(v.nullable(v.string())),
+	version: v.optional(v.nullable(v.string())),
+});
+
+const vlessserver_XHTTPTuning: v.GenericSchema = v.looseObject({
+	enable_xmux: v.optional(v.nullable(v.boolean())),
+	fp_chunk_bytes: v.optional(v.nullable(v.number())),
+	fp_max_ways: v.optional(v.nullable(v.number())),
+	max_buffered_posts: v.optional(v.nullable(v.number())),
+	min_posts_interval_ms: v.optional(v.nullable(v.string())),
+	preset: v.optional(v.nullable(v.string())),
+	sc_max_each_post_bytes: v.optional(v.nullable(v.number())),
+	seq_key: v.optional(v.nullable(v.string())),
+	seq_placement: v.optional(v.nullable(v.string())),
+	session_key: v.optional(v.nullable(v.string())),
+	session_placement: v.optional(v.nullable(v.string())),
+	stream_path_suffix: v.optional(v.nullable(v.string())),
+	stream_up_server_secs: v.optional(v.nullable(v.string())),
+	uplink_method: v.optional(v.nullable(v.string())),
+	x_padding_bytes: v.optional(v.nullable(v.string())),
+	x_padding_header: v.optional(v.nullable(v.string())),
+	x_padding_key: v.optional(v.nullable(v.string())),
+	x_padding_method: v.optional(v.nullable(v.string())),
+	x_padding_obfs_mode: v.optional(v.nullable(v.boolean())),
+	x_padding_placement: v.optional(v.nullable(v.string())),
+});
+
 const wdttlink_DecodeResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => wdttlink_LinkDecodeResult))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -3553,6 +3680,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /servers/{name}/peers/presets": v.lazy(() => api_PeerPresetsResponse),
 	"GET /servers/all": v.lazy(() => api_ServersAllResponse),
 	"GET /servers/marked": v.lazy(() => api_APIEnvelope),
+	"GET /servers/vless": v.lazy(() => vlessserver_Config),
+	"GET /servers/vless/status": v.lazy(() => vlessserver_Status),
 	"GET /servers/wan-ip": v.lazy(() => api_WANIPResponse),
 	"GET /settings/get": v.lazy(() => api_SettingsResponse),
 	"GET /signature/capture": v.lazy(() => api_SignatureCaptureResponse),
@@ -3646,6 +3775,12 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /system/update/changelog": v.lazy(() => api_ChangelogResponse),
 	"GET /system/update/check": v.lazy(() => api_UpdateCheckResponse),
 	"GET /system/wan-interfaces": v.lazy(() => api_WANInterfacesResponse),
+	"GET /telemt/config": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Config))),
+})]),
+	"GET /telemt/status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
 	"GET /terminal/status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_TerminalStatusResponse))),
 })]),
@@ -3764,6 +3899,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /servers/enabled": v.lazy(() => api_ServersAllResponse),
 	"POST /servers/mark": v.lazy(() => api_ServersAllResponse),
 	"POST /servers/restart": v.lazy(() => api_APIEnvelope),
+	"POST /servers/vless/action": v.lazy(() => vlessserver_Status),
 	"POST /settings/obfuscator-relay": v.lazy(() => api_SettingsResponse),
 	"POST /settings/regenerate-api-key": v.lazy(() => api_SettingsResponse),
 	"POST /settings/update": v.lazy(() => api_SettingsResponse),
@@ -3910,6 +4046,27 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /system/services/save": v.lazy(() => api_SystemServiceSavedResponse),
 	"POST /system/services/toggle-enable": v.lazy(() => api_SystemServiceToggleEnableResponse),
 	"POST /system/update/apply": v.lazy(() => api_UpdateApplyResponse),
+	"POST /telemt/config": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/install": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/restart": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/start": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/stop": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/uninstall": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/update": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
 	"POST /terminal/install": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_TerminalInstallData))),
 })]),
@@ -3946,6 +4103,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"PUT /proxy/config": v.lazy(() => api_ProxyConfigResponse),
 	"PUT /proxy/instance": v.lazy(() => api_ProxyInstanceResponse),
 	"PUT /servers/{name}/peers/{pubkey}": v.lazy(() => api_ServersAllResponse),
+	"PUT /servers/vless": v.lazy(() => vlessserver_Config),
 	"PUT /singbox/config/user": v.lazy(() => api_OkResponse),
 	"PUT /singbox/fakeip/config/dns/globals": v.lazy(() => api_OkResponse),
 	"PUT /singbox/router/dns/globals": v.lazy(() => api_OkResponse),
