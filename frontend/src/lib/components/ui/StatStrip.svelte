@@ -1,15 +1,34 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	interface Props {
-		children: Snippet;
+	export interface StatStripEntry {
+		value: string | number;
+		label: string;
+		sub?: string;
 	}
 
-	let { children }: Props = $props();
+	interface Props {
+		children?: Snippet;
+		stats?: StatStripEntry[];
+	}
+
+	let { children, stats }: Props = $props();
 </script>
 
 <div class="strip">
-	{@render children()}
+	{#if children}
+		{@render children()}
+	{:else if stats}
+		{#each stats as s}
+			<div class="stat-cell">
+				<div class="stat-val">{s.value}</div>
+				<div class="stat-lbl">{s.label}</div>
+				{#if s.sub}
+					<div class="stat-sub">{s.sub}</div>
+				{/if}
+			</div>
+		{/each}
+	{/if}
 </div>
 
 <style>

@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { Modal, Button, Dropdown } from '$lib/components/ui';
+    import { Modal, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
     import ServiceIcon from './ServiceIcon.svelte';
     import { presetCatalog, presetCatalogLoaded, loadPresetCatalog } from '$lib/stores/presets';
     import { buildRoutingTunnelDropdownOptions } from '$lib/utils/routingTunnelOptions';
@@ -41,6 +41,8 @@
         ruleSetUsage?: Map<string, number>;
         footer?: FooterMode;
         tunnels?: RoutingTunnel[];
+        tunnelOptions?: DropdownOption[];
+        hideDownloadRouteNote?: boolean;
         /** When false, only one preset can be selected (HR Neo). */
         multiple?: boolean;
         /** Pre-select when opening (e.g. sing-box router wizard). */
@@ -66,6 +68,8 @@
         ruleSetUsage = undefined,
         footer = 'none',
         tunnels = [],
+        tunnelOptions = undefined,
+        hideDownloadRouteNote = false,
         multiple = true,
         initialSelectedIds = [],
         warnLargeDnsLists = true,
@@ -93,12 +97,11 @@
     };
     const CATEGORY_ORDER = ['social', 'media', 'ai', 'developer', 'cloud', 'gaming', 'block'];
 
-    let noTunnels = $derived(tunnels.filter((t) => t.available).length === 0);
-    let showTunnelFooter = $derived(footer === 'tunnel');
-
     const tunnelOpts = $derived(
-        buildRoutingTunnelDropdownOptions(tunnels, { requireSelectable: true }),
+        tunnelOptions ?? buildRoutingTunnelDropdownOptions(tunnels, { requireSelectable: true }),
     );
+    let noTunnels = $derived(tunnelOpts.length === 0);
+    let showTunnelFooter = $derived(footer === 'tunnel');
     let existingLower = $derived(existingNames.map((n) => n.toLowerCase()));
 
     const catalogPresets = $derived.by(() => {
@@ -179,7 +182,7 @@
     $effect(() => {
         if (open && !wasOpen) {
             selected = normalizeCatalogSelection(new Set(initialSelectedIds), sortedPresets);
-            defaultTunnelId = tunnels.find((t) => t.available)?.id ?? '';
+            defaultTunnelId = tunnelOptions?.[0]?.value ?? tunnels.find((t) => t.available)?.id ?? '';
             query = '';
             categoryFilter = 'all';
         }

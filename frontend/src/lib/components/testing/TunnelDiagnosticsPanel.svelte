@@ -15,7 +15,7 @@
 	import { PageContainer } from '$lib/components/layout';
 	import TunnelTestIcon from '$lib/components/tunnels/TunnelTestIcon.svelte';
 
-	type DiagnosticsKind = 'awg' | 'system' | 'singbox' | 'subscription';
+	type DiagnosticsKind = 'awg' | 'system' | 'singbox' | 'subscription' | 'firc';
 	type DiagnosticsSubject = 'tunnel' | 'subscription';
 	type DiagnosticsMode = 'page' | 'modal';
 
@@ -146,6 +146,7 @@
 		if (kind === 'awg') return 'AWG';
 		if (kind === 'system') return 'AWG';
 		if (kind === 'singbox') return 'Sing-box';
+		if (kind === 'firc') return 'FIRC';
 		return 'subscription';
 	});
 

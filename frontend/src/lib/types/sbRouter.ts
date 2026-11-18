@@ -11,7 +11,9 @@
 export type TunStack = '' | 'system';
 
 export interface SingboxRouterSettings {
+	routingEngine?: 'sing-box' | 'firc';
 	enabled: boolean;
+	sstpIngress?: boolean;
 	policyName: string;
 	deviceMode?: 'policy' | 'all';
 	/**

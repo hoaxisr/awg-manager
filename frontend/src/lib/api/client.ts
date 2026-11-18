@@ -1,7 +1,7 @@
 // Фасад API-клиента. Доменные методы разнесены по слоям client*.ts
 // (цепочка наследования от CoreClient); публичная поверхность не менялась:
 // `api` и сопутствующие экспорты доступны по прежнему пути $lib/api/client.
-import { WarpScoutClient } from './clientWarpScout';
+import { FircClient } from './clientFirc';
 import type { AwgAnalyzeData } from '$lib/types';
 
 export { ApiGatewayError } from './clientCore';
@@ -19,7 +19,7 @@ export type {
 	SystemProcessItem,
 } from '$lib/types';
 
-class ApiClient extends WarpScoutClient {
+class ApiClient extends FircClient {
 	// Анализ .conf на бэкенде: версия, поля без ключей, ошибки совместимости.
 	// tunnelId подставляет ключи из хранилища, если их нет в тексте (#865).
 	async analyzeAwgConf(conf: string, tunnelId?: string): Promise<AwgAnalyzeData> {

@@ -246,3 +246,241 @@ export interface ManagedServerDriftResponse {
 }
 
 // #endregion
+
+// ─────────────────────────────────────────────
+// #region Xray Server & Telegram Web Proxy
+// ─────────────────────────────────────────────
+
+export interface XrayClient {
+	id: string;
+	remark: string;
+	enabled: boolean;
+	created_at: string;
+	fp_client_id?: string;
+}
+
+export interface XrayEndpointConfig {
+	id: string;
+	name: string;
+	enabled: boolean;
+	connection_way?: 'direct' | 'external_https' | string;
+	origin_type?: 'public_address' | 'cloud_address' | string;
+	public_domain: string;
+	public_port?: number;
+	origin_host?: string;
+	origin_scheme?: 'http' | 'https' | string;
+	origin_port?: number;
+	path?: string;
+	transport?: string;
+	mode?: string;
+	uplink_method?: string;
+	xhttp_tuning?: XHTTPTuning;
+}
+
+export interface XrayConfig {
+	enabled: boolean;
+	listen_address?: string;
+	listen_port: number;
+	dispatcher_port: number;
+	public_domain: string;
+	public_port: number;
+	connection_way?: 'direct' | 'external_https' | string;
+	origin_type?: 'public_address' | 'cloud_address' | string;
+	origin_host?: string;
+	origin_scheme?: 'http' | 'https' | string;
+	origin_port?: number;
+	path: string;
+	transport?: string;
+	mode: string;
+	uplink_method: string;
+	xmux_max_connections: number;
+	outbound_mode?: 'direct' | 'router' | 'interface' | 'outbound' | 'socks' | string;
+	outbound_interface?: string;
+	outbound_socks_port: number;
+	allow_lan?: boolean;
+	domain_strategy?: string;
+	xhttp_tuning?: XHTTPTuning;
+	endpoints?: XrayEndpointConfig[];
+	clients: XrayClient[];
+}
+
+export interface XrayShareLinks {
+	vless_url: string;
+	finiteproto_url?: string;
+	happ_json: string;
+	singbox_json: string;
+	mihomo_yaml: string;
+	remark: string;
+	uuid: string;
+}
+
+export type TgNetworkPreset = 'cdn_keendns' | 'cdn_static' | 'cdn_file_https' | 'keendns' | 'static_ip';
+
+export interface WebProxyEndpoint {
+	id: string;
+	hostname: string;
+	listen_port: number;
+	admin_port: number;
+	description?: string;
+	preset?: TgNetworkPreset | string;
+	carrier_mode?: string;
+	is_cdn: boolean;
+	enabled: boolean;
+}
+
+export interface WebProxyLink {
+	id: string;
+	hostname: string;
+	description?: string;
+	preset?: TgNetworkPreset | string;
+	carrier_mode?: string;
+	tg_url: string;
+	tme_url: string;
+	bridge_url: string;
+	is_cdn: boolean;
+}
+
+export interface TelegramUser {
+	id: string;
+	remark: string;
+	secret?: string;
+	secret_masked?: string;
+	enabled: boolean;
+	created_at?: string;
+}
+
+export interface TgUserRevealData {
+	id: string;
+	remark: string;
+	enabled: boolean;
+	secret: string;
+	tg_url: string;
+	tme_url: string;
+	bridge_url: string;
+	mtproxy_secret: string;
+	mtproxy_url: string;
+	mtproxy_tme_url: string;
+	web_proxies?: WebProxyLink[];
+}
+
+export interface TgWebProxyConfig {
+	schema_version?: number;
+	enabled: boolean;
+	scenario?: string;
+	network_preset?: TgNetworkPreset | string;
+	listen_port: number;
+	admin_port: number;
+	public_hostname: string;
+	direct_host?: string;
+	direct_port?: number;
+	secret: string;
+	legacy_secret?: string;
+	legacy_expires_at?: string;
+	backend: string;
+	carrier_mode: string;
+	upstream_device?: string;
+	tls_domain?: string;
+	endpoints?: WebProxyEndpoint[];
+	users?: TelegramUser[];
+}
+
+export interface TgWebProxyStatus {
+	installed: boolean;
+	installed_telemt?: boolean;
+	installed_tproxy?: boolean;
+	running: boolean;
+	pid: number;
+	port: number;
+	direct_online?: boolean;
+	raw_online?: boolean;
+	webproxy_online?: boolean;
+	backend_online: boolean;
+	backend_addr: string;
+	upstream_status?: 'ok' | 'degraded' | 'interface_down';
+	network_preset?: TgNetworkPreset | string;
+	carrier_mode: string;
+	public_host: string;
+	direct_host?: string;
+	direct_port?: number;
+	tls_domain?: string;
+	secret_masked?: string;
+	legacy_secret_masked?: string;
+	legacy_active?: boolean;
+	legacy_expires_at?: string;
+	legacy_expired_pending_reconcile?: boolean;
+	bridge_url: string;
+	tg_url: string;
+	tme_url: string;
+	mtproxy_secret?: string;
+	mtproxy_url?: string;
+	mtproxy_tme_url?: string;
+	web_proxies?: WebProxyLink[];
+	users?: TelegramUser[];
+}
+
+export interface TgWebProxyRevealData {
+	user_id?: string;
+	user_remark?: string;
+	secret: string;
+	legacy_secret?: string;
+	direct_host: string;
+	direct_port: number;
+	tls_domain: string;
+	tg_url: string;
+	tme_url: string;
+	bridge_url: string;
+	mtproxy_secret: string;
+	mtproxy_url: string;
+	mtproxy_tme_url: string;
+	web_proxies?: WebProxyLink[];
+	users?: TgUserRevealData[];
+}
+
+export interface CDNRouteRule {
+	id: string;
+	domain: string;
+	description: string;
+	route_xray: boolean;
+	route_telegram: boolean;
+	enabled: boolean;
+}
+
+export interface CDNDispatcherConfig {
+	enabled: boolean;
+	listen_addr: string;
+	xray_target: string;
+	tg_target: string;
+	routes: CDNRouteRule[];
+	default_action?: '404' | 'reject';
+	public_hostname?: string;
+	xray_public_host?: string;
+	tg_public_host?: string;
+	xray_path_prefix?: string;
+}
+
+export type XHTTPPreset = 'live_low_latency' | 'cdn_get' | 'balanced' | 'custom';
+
+export interface XHTTPTuning {
+	preset: XHTTPPreset | string;
+	uplink_method: string;
+	min_posts_interval_ms: string;
+	max_buffered_posts: number;
+	sc_max_each_post_bytes?: number;
+	stream_up_server_secs: string;
+	stream_path_suffix: string;
+	enable_xmux: boolean;
+	x_padding_bytes: string;
+	x_padding_header: string;
+	x_padding_placement: string;
+	x_padding_key?: string;
+	x_padding_method?: string;
+	x_padding_obfs_mode?: boolean;
+	session_placement?: string;
+	session_key?: string;
+	seq_placement?: string;
+	seq_key?: string;
+	fp_chunk_bytes?: number;
+	fp_max_ways?: number;
+}
+
+// #endregion
