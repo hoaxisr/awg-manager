@@ -149,7 +149,8 @@ jobs:
           set -euo pipefail
           go test -count=1 -race \
             ./internal/xhttpserver/... \
-            ./internal/fpclient/...
+            ./internal/fpclient/... \
+            ./internal/vlessserver/...
 
   autolist:
     name: Autolist satellite checks
