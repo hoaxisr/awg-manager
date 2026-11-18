@@ -72,14 +72,84 @@ jobs:
           go vet ./...
           (cd awgmproto && go vet ./...)
 
+      - name: Ensure C toolchain for mandatory sidecar tests
+        run: |
+          set -euo pipefail
+          if ! command -v gcc >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends build-essential
+          fi
+
       - name: go test
         # Один прогон под -race: падение теста он ловит так же, а гонку —
-        # сверх того. awgmproto — вложенный модуль со своим go.mod, в ./...
-        # из корня не попадает.
+        # сверх того. AWGM_REQUIRE_C_TESTS=1 запрещает пропуск тестов
+        # реальных C-демонов (awgm-xhttpd / awgm-fpc).
+        # awgmproto — вложенный модуль со своим go.mod, в ./... из корня не попадает.
+        env:
+          AWGM_REQUIRE_C_TESTS: "1"
         run: |
           set -euo pipefail
           go test ./... -count=1 -race
           (cd awgmproto && go test ./... -count=1 -race)
+
+  c-runtime:
+    name: C runtime checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install C toolchain
+        run: |
+          set -euo pipefail
+          if ! command -v gcc >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends build-essential
+          fi
+          gcc --version
+          make --version
+
+      - name: Setup go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-version: 1.26.4
+
+      - name: Build and test C sidecars with -Werror and sanitizers
+        run: |
+          set -euo pipefail
+          CFLAGS="-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -std=gnu11 -pthread" \
+          LDFLAGS="-fsanitize=address,undefined -pthread" \
+          make -B -C c-core/xhttpd test
+          make -C c-core/xhttpd clean
+          CFLAGS="-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Werror -std=gnu11 -pthread" \
+          LDFLAGS="-fsanitize=address,undefined -pthread" \
+          make -B -C c-core/fpc test
+          make -C c-core/fpc clean
+          CFLAGS="-O1 -g -fno-omit-frame-pointer -fsanitize=thread -Wall -Wextra -Werror -std=gnu11 -pthread" \
+          LDFLAGS="-fsanitize=thread -pthread" \
+          make -B -C c-core/xhttpd test
+          make -C c-core/xhttpd clean
+          CFLAGS="-O1 -g -fno-omit-frame-pointer -fsanitize=thread -Wall -Wextra -Werror -std=gnu11 -pthread" \
+          LDFLAGS="-fsanitize=thread -pthread" \
+          make -B -C c-core/fpc test
+          make -C c-core/fpc clean
+          CFLAGS="-O2 -Wall -Wextra -Werror -std=gnu11 -pthread" \
+          LDFLAGS="-pthread" \
+          make -B -C c-core/xhttpd all
+          CFLAGS="-O2 -Wall -Wextra -Werror -std=gnu11 -pthread" \
+          LDFLAGS="-pthread" \
+          make -B -C c-core/fpc all
+
+      - name: Run mandatory C-backed Go runtime tests
+        env:
+          AWGM_REQUIRE_C_TESTS: "1"
+        run: |
+          set -euo pipefail
+          go test -count=1 -race \
+            ./internal/xhttpserver/... \
+            ./internal/fpclient/...
 
   autolist:
     name: Autolist satellite checks

@@ -46,10 +46,15 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Cross-build Entware C sidecars
+        shell: bash
+        run: bash ./scripts/build-c-sidecars.sh "${{ matrix.arch }}"
+
       - name: Setup go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
         with:
           go-version: 1.26.4
+
 
       - name: Install frontend deps + build
         working-directory: frontend
