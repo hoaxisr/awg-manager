@@ -17,7 +17,7 @@ var baseTransport = &http.Transport{
 	DisableKeepAlives:   false,
 }
 
-// sharedTransport — baseTransport с токеном X-NDMA-TKN (5.2+).
+// sharedTransport — rciTransport (HTTP или SCGI, scgi.go) с токеном X-NDMA-TKN (5.2+).
 var sharedTransport http.RoundTripper = tokens
 
 // SharedTransport отдаёт транспорт RCI для тех, кто строит свой http.Client

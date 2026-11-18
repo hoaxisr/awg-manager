@@ -50,7 +50,7 @@ type tokenTransport struct {
 	lastRegen time.Time // последняя попытка выпуска
 }
 
-var tokens = &tokenTransport{base: baseTransport, ndmc: runNdmc}
+var tokens = &tokenTransport{base: rciTransport, ndmc: runNdmc}
 
 // SetTokenFile задаёт файл токена (в каталоге данных — его делят демон и
 // --cleanup) и признак прошивки с токенами (ndmsinfo.SupportsRCIToken —
