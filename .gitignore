@@ -105,3 +105,8 @@ awgmautolist/ipk/opt/
 
 # Private local backlog; never publish to the public fork
 /BACKLOG.local.md
+
+# Compiled C sidecars; source and target build scripts remain tracked.
+/c-core/xhttpd/awgm-xhttpd
+/c-core/xhttpd/xhttpd_audit_test
+/c-core/fpc/awgm-fpc

@@ -280,3 +280,11 @@ func (s *ClientRouteStore) DeleteFile() error {
 	s.data = defaultClientRouteData()
 	return nil
 }
+
+// Reload discards the cached client-routes state and re-reads client-routes.json from disk.
+func (s *ClientRouteStore) Reload() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loadUnlocked()
+	return nil
+}

@@ -28,9 +28,35 @@ func TestParseHTTPProxies_LiveShape(t *testing.T) {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
 	got := entries[0]
-	want := HTTPProxyEntry{Name: "awgm", UpstreamPort: "2222", Public: true, Auth: true}
-	if got != want {
-		t.Errorf("entry = %#v, want %#v", got, want)
+	if got.Name != "awgm" || got.UpstreamProto != "http" || got.UpstreamHost != "192.168.0.1" || got.UpstreamPort != "2222" || !got.DomainNDNS || !got.SSLRedirect || !got.Public || !got.Auth {
+		t.Errorf("unexpected entry: %#v", got)
+	}
+	if got.RawJSON == "" {
+		t.Errorf("expected RawJSON to be populated")
+	}
+}
+
+func TestParseHTTPRuntimeProxies(t *testing.T) {
+	raw := []byte(`{
+		"tg": {
+			"fqdn": "tg.example.keenetic.pro",
+			"proto": "http",
+			"upstream": "127.0.0.1:9009",
+			"host": "127.0.0.1",
+			"allow": "public",
+			"ndns": true
+		}
+	}`)
+	rt, err := parseHTTPRuntimeProxies(raw)
+	if err != nil {
+		t.Fatalf("parseHTTPRuntimeProxies: %v", err)
+	}
+	item, ok := rt["tg"]
+	if !ok {
+		t.Fatalf("expected 'tg' runtime entry")
+	}
+	if item.FQDN != "tg.example.keenetic.pro" || item.Upstream != "127.0.0.1:9009" || !item.NDNS || item.Allow != "public" {
+		t.Errorf("unexpected runtime item: %#v", item)
 	}
 }
 

@@ -723,7 +723,7 @@ func proxyPostSeed(mirror *exitreg.StoreMirror, ipt netres.IPT, cmds opkgTunDele
 
 // killPID — переменная ради теста: убийство чужого процесса в тесте
 // недопустимо, перехватывается подменой.
-var killPID = syscall.Kill
+var killPID = childproc.Signal
 
 // killOldGeneration — B3 (блокер): pid-файл на флешке (<dataDir>/run)
 // переживает ребут, и PID мог достаться постороннему процессу. Убиваем

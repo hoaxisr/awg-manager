@@ -81,6 +81,15 @@ func TestNarrowMutators_FailedWriteKeepsCache(t *testing.T) {
 			},
 		},
 		{
+			name: "SetSingboxStoppedByEngine",
+			act:  func(s *SettingsStore) error { return s.SetSingboxStoppedByEngine(true) },
+			assertOld: func(t *testing.T, st *Settings) {
+				if st.SingboxStoppedByEngine {
+					t.Error("SingboxStoppedByEngine мутировал в кэше")
+				}
+			},
+		},
+		{
 			name: "SetAuthEnabled",
 			act: func(s *SettingsStore) error {
 				_, err := s.SetAuthEnabled(true)

@@ -9,7 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/awgmproto"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 )
 
@@ -132,8 +131,7 @@ func (t *TunHandoff) attach(ctx context.Context) error {
 	if err == nil {
 		return nil
 	}
-	var pe *awgmproto.Error
-	if errors.As(err, &pe) && pe.Code == awgmproto.CodeBusy {
+	if isProtoBusy(err) {
 		// «Уже прикреплён» — ретраить вслепую нельзя, сверяемся по state.
 		return t.confirmAttached(ctx, err)
 	}

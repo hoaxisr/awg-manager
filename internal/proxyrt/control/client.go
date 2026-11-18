@@ -16,8 +16,6 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/awgmproto"
-
-	"golang.org/x/sys/unix"
 )
 
 // eventQueue — глубина очереди push. Push для менеджера — будильник, решение
@@ -40,7 +38,7 @@ var ErrProtocolVersion = errors.New("несовместимая мажорная
 // Client — одно соединение к управляющему сокету процесса.
 type Client struct {
 	uc    *net.UnixConn
-	fc    *awgmproto.FrameConn
+	fc    *frameConn
 	hello awgmproto.Event
 
 	events chan awgmproto.Event
@@ -71,7 +69,7 @@ func Dial(ctx context.Context, path string) (*Client, error) {
 	}
 	c := &Client{
 		uc:      uc,
-		fc:      awgmproto.NewFrameConn(uc),
+		fc:      newFrameConn(uc),
 		events:  make(chan awgmproto.Event, eventQueue),
 		done:    make(chan struct{}),
 		waiters: make(map[uint64]chan awgmproto.Response),
@@ -203,7 +201,7 @@ func (c *Client) do(ctx context.Context, req awgmproto.Request, fd int) (awgmpro
 		return awgmproto.Response{}, ErrClosed
 	case resp := <-ch:
 		if !resp.OK {
-			return resp, &awgmproto.Error{Code: resp.Code, Msg: resp.Error}
+			return resp, newProtoError(resp.Code, resp.Error)
 		}
 		return resp, nil
 	}
@@ -216,10 +214,7 @@ func (c *Client) send(req awgmproto.Request, fd int) error {
 	if err != nil {
 		return err
 	}
-	var oob []byte
-	if fd >= 0 {
-		oob = unix.UnixRights(fd)
-	}
+	oob := encodeRightsOOB(fd)
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 	_, _, err = c.uc.WriteMsgUnix(line, oob, nil)
@@ -275,10 +270,4 @@ func (c *Client) fail(err error) {
 		c.err = err
 	}
 	c.mu.Unlock()
-}
-
-func closeFD(fd int) {
-	if fd >= 0 {
-		_ = unix.Close(fd)
-	}
 }

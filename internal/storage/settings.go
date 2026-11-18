@@ -558,6 +558,28 @@ func (s *SettingsStore) SetSingboxManuallyStopped(v bool) error {
 	})
 }
 
+// SetSingboxStoppedByEngine atomically persists whether sing-box is currently
+// held stopped by another routing engine (distinct from SingboxManuallyStopped).
+func (s *SettingsStore) SetSingboxStoppedByEngine(v bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.SingboxStoppedByEngine = v
+		return nil
+	})
+}
+
+// IsSingboxStoppedByEngine reports whether sing-box is currently held stopped by
+// external routing-engine ownership.
+func (s *SettingsStore) IsSingboxStoppedByEngine() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settings != nil && s.settings.SingboxStoppedByEngine
+}
+
 // SetAuthEnabled atomically turns authentication on/off under the store
 // lock. Used by the exposure guard, which flips the flag outside the
 // settings HTTP handler and must not clobber concurrent writes to other
