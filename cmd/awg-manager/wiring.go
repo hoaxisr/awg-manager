@@ -10,11 +10,13 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/autolistdetect"
 	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
+	"github.com/hoaxisr/awg-manager/internal/cdndispatcher"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
@@ -35,8 +37,10 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/manager"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/server"
+	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
+	"github.com/hoaxisr/awg-manager/internal/singbox/dnsrewrite"
 	"github.com/hoaxisr/awg-manager/internal/singbox/installer"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
@@ -44,8 +48,10 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/staticroute"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
+	"github.com/hoaxisr/awg-manager/internal/telemt"
 	"github.com/hoaxisr/awg-manager/internal/terminal"
 	"github.com/hoaxisr/awg-manager/internal/testing"
+	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
@@ -57,6 +63,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 	"github.com/hoaxisr/awg-manager/internal/updater"
+	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 	"github.com/hoaxisr/awg-manager/internal/zapret"
 )
 
@@ -70,6 +77,11 @@ import (
 // *_adapters.go): they exist to keep internal/ packages decoupled from each
 // other, so they belong to the composition root, not to either package they
 // bridge.
+type routerExternalEngineLifecycle interface {
+	ParkForExternalEngine(ctx context.Context) error
+	ResumeFromExternalEngine(ctx context.Context) error
+}
+
 type app struct {
 	// flags
 	dataDir     string
@@ -171,7 +183,15 @@ type app struct {
 	sysfsTrafficPoller  *traffic.SysfsPoller
 	updaterService      *updater.Service
 	managedService      *managed.Service
+	vlessServerService  *vlessserver.Service
+	tgWebProxyService   *tgwebproxy.Service
+	telemtService       *telemt.Service
+	telemtHandler       *api.TelemtHandler
+	cdnDispatcher       *cdndispatcher.Dispatcher
+	ingressCoordinator  *serveringress.Coordinator
+	ingressWatcher      *serveringress.ConfigWatcher
 	terminalManager     *terminal.ManagerImpl
+	clientRouteStore    *storage.ClientRouteStore
 	clientRouteService  *clientroute.ServiceImpl
 	accessPolicySvc     *accesspolicy.ServiceImpl
 
@@ -187,12 +207,19 @@ type app struct {
 	subSvc              *subscription.Service
 	subGroupStore       *subscription.GroupStore
 	awgoutboundsSvc     *awgoutbounds.ServiceImpl
+	dnsRewriteSvc       *dnsrewrite.Service
 	deviceProxySvc      *deviceproxy.Service
 	routerSvc           *router.ServiceImpl
+	routerCoord         routerExternalEngineLifecycle
 	routerScheduler     *router.Scheduler
 	awg3Store           *awg3endpoint.Store
 	awg3Svc             *awg3endpoint.Service
 	downloadSvc         *downloader.Service
+
+	// firc (C core)
+	fircOp        *firc.Operator
+	fircHandler   *api.FircHandler
+	fircInstaller *firc.OnDemandInstaller
 
 	// прокси-рантайм
 	//

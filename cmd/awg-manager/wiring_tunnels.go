@@ -311,9 +311,9 @@ func (a *app) setupServices() {
 	}
 
 	// Client route service (per-device VPN routing)
-	clientRouteStore := storage.NewClientRouteStore(a.dataDir)
+	a.clientRouteStore = storage.NewClientRouteStore(a.dataDir)
 	a.clientRouteService = clientroute.New(
-		clientRouteStore,
+		a.clientRouteStore,
 		a.operator,
 		a.catalog,
 		a.loggingService,

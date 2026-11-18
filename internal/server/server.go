@@ -24,6 +24,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/autolistdetect"
+	"github.com/hoaxisr/awg-manager/internal/cdndispatcher"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
@@ -34,6 +35,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/routing"
+	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
@@ -50,10 +52,12 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/terminal"
 	"github.com/hoaxisr/awg-manager/internal/testing"
+	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 	"github.com/hoaxisr/awg-manager/internal/updater"
+	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 	"github.com/hoaxisr/awg-manager/internal/warpscout"
 )
 
@@ -114,6 +118,12 @@ type Server struct {
 	exposureGuard              *api.ExposureGuard
 	exposureGuardStop          context.CancelFunc
 	singboxHandler             *api.SingboxHandler
+	fircHandler                *api.FircHandler
+	telemtHandler              *api.TelemtHandler
+	vlessServerService         *vlessserver.Service
+	tgWebProxyService          *tgwebproxy.Service
+	cdnDispatcher              *cdndispatcher.Dispatcher
+	serverIngressCoordinator   *serveringress.Coordinator
 	singboxConnsHandler        *api.SingboxConnectionsHandler
 	singboxRouterHandler       *api.SingboxRouterHandler
 	connectionsMarkProvider    func(context.Context) (string, bool)
@@ -236,6 +246,12 @@ type Deps struct {
 	// в момент вызова (как ForeignIfaces.boundBy).
 	AutolistRemovedBackupProbe func(ctx context.Context) (bool, time.Time, error)
 	SingboxHandler             *api.SingboxHandler
+	FircHandler                *api.FircHandler
+	TelemtHandler              *api.TelemtHandler
+	VlessServerService         *vlessserver.Service
+	TgWebProxyService          *tgwebproxy.Service
+	CDNDispatcher              *cdndispatcher.Dispatcher
+	ServerIngressCoordinator   *serveringress.Coordinator
 	SingboxOrch                *singboxorch.Orchestrator
 	ClashProxy                 *api.ClashProxy
 	SingboxConnsHandler        *api.SingboxConnectionsHandler
@@ -319,6 +335,12 @@ func New(cfg Config, deps Deps) *Server {
 		orch:                       deps.Orch,
 		bus:                        deps.Bus,
 		singboxHandler:             deps.SingboxHandler,
+		fircHandler:                deps.FircHandler,
+		telemtHandler:              deps.TelemtHandler,
+		vlessServerService:         deps.VlessServerService,
+		tgWebProxyService:          deps.TgWebProxyService,
+		cdnDispatcher:              deps.CDNDispatcher,
+		serverIngressCoordinator:   deps.ServerIngressCoordinator,
 		singboxOrch:                deps.SingboxOrch,
 		singboxConnsHandler:        deps.SingboxConnsHandler,
 		clashProxy:                 deps.ClashProxy,
