@@ -3365,7 +3365,7 @@ function createInitialMockFreeturn() {
 				config: {
 					enabled: true,
 					listen: '127.0.0.1:9005',
-					peer: 'vinvanvlad.com:56000',
+					peer: 'ft.example.test:56000',
 					provider: 'vk',
 					links: 'https://vk.ru/call/join/hFa2abc,https://vk.ru/call/join/x91kdef',
 					streams: 8,
@@ -3561,7 +3561,7 @@ function createInitialMockWdtt() {
 				config: {
 					enabled: true,
 					listen: '127.0.0.1:9000',
-					peer: 'wdtt.vinvanvlad.com:56000',
+					peer: 'wdtt.example.test:56000',
 					password: 'demo-password',
 					vkHashes: 'a1b2c3d4e5f6,7788990011aa',
 					workers: 24,
@@ -4439,7 +4439,7 @@ function mockSystemServers() {
 			natMode: wg0.natMode,
 			policy: wg0.policy,
 			endpoint: wg0.endpoint ?? '',
-			keenDnsDomain: 'demo.keenetic.pro',
+			keenDnsDomain: 'example.keenetic.pro',
 			peers: builtinPeers,
 		},
 		{
