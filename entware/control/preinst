@@ -1,0 +1,156 @@
+#!/bin/sh
+set -e
+
+OWNER_LIST=/opt/lib/opkg/info/awg-manager.list
+SETTINGS_JSON=/opt/etc/awg-manager/settings.json
+PRESERVE_DIR=/opt/var/cache/awg-manager/firc-legacy-cfg-preserve
+
+stage_firc_tree() {
+    (
+        list_parent=$(dirname "$PRESERVE_DIR")
+        if [ -L "$list_parent" ] || { [ -e "$list_parent" ] && [ ! -d "$list_parent" ]; }; then
+            echo "ERROR: invalid FIRC list parent $list_parent" >&2
+            exit 1
+        fi
+        if ! mkdir -p "$list_parent"; then
+            echo "ERROR: failed to create FIRC list parent $list_parent" >&2
+            exit 1
+        fi
+        list_file=$(mktemp "$list_parent/.firc-list.XXXXXX" 2>/dev/null || true)
+        if [ -z "$list_file" ] || [ ! -f "$list_file" ] || [ -L "$list_file" ]; then
+            rm -f "$list_file" 2>/dev/null || true
+            echo "ERROR: failed to create temporary FIRC enumeration list in $list_parent" >&2
+            exit 1
+        fi
+        trap 'rm -f "$list_file" 2>/dev/null || true' EXIT INT TERM HUP
+        if ! chmod 600 "$list_file"; then
+            echo "ERROR: failed to secure temporary FIRC enumeration list $list_file" >&2
+            exit 1
+        fi
+        if ! (cd /opt/etc/firc && find . > "$list_file"); then
+            echo "ERROR: failed to enumerate /opt/etc/firc before upgrade" >&2
+            exit 1
+        fi
+        if [ ! -s "$list_file" ]; then
+            echo "ERROR: FIRC enumeration list $list_file is unexpectedly empty" >&2
+            exit 1
+        fi
+
+        mkdir -p "$PRESERVE_DIR"
+        chmod 700 "$PRESERVE_DIR"
+
+        stage_err=0
+        while IFS= read -r rel || [ -n "$rel" ]; do
+            rel="${rel#./}"
+            if [ -z "$rel" ] || [ "$rel" = "." ] || [ "$rel" = "SHA256SUMS" ]; then
+                continue
+            fi
+            case "$(basename "$rel")" in
+                .stage.*|.restore.*|.firc-list.*) continue ;;
+            esac
+            src="/opt/etc/firc/$rel"
+            dst="$PRESERVE_DIR/$rel"
+            if [ -d "$src" ] && [ ! -L "$src" ]; then
+                if [ -L "$dst" ] || { [ -e "$dst" ] && [ ! -d "$dst" ]; }; then
+                    echo "ERROR: conflicting non-directory in FIRC preserve dir: $dst" >&2
+                    stage_err=1
+                    continue
+                fi
+                mkdir -p "$dst" || { stage_err=1; continue; }
+                continue
+            fi
+            # Never overwrite an already-preserved recovery copy from a prior failed restore.
+            if [ -e "$dst" ] || [ -L "$dst" ]; then
+                continue
+            fi
+            dst_parent=$(dirname "$dst")
+            mkdir -p "$dst_parent" || { stage_err=1; continue; }
+            tmp_dir=$(mktemp -d "$dst_parent/.stage.XXXXXX" 2>/dev/null || true)
+            if [ -z "$tmp_dir" ] || [ ! -d "$tmp_dir" ] || [ -L "$tmp_dir" ]; then
+                echo "ERROR: failed to create staging directory in $dst_parent" >&2
+                stage_err=1
+                continue
+            fi
+            tmp_dst="$tmp_dir/staged"
+            if ! cp -a "$src" "$tmp_dst"; then
+                rm -rf "$tmp_dir"
+                echo "ERROR: failed to stage FIRC config $src" >&2
+                stage_err=1
+                continue
+            fi
+            if [ -L "$src" ]; then
+                if [ ! -L "$tmp_dst" ] || [ "$(readlink "$tmp_dst" 2>/dev/null)" != "$(readlink "$src" 2>/dev/null)" ]; then
+                    rm -rf "$tmp_dir"
+                    echo "ERROR: failed to verify staged FIRC symlink $src" >&2
+                    stage_err=1
+                    continue
+                fi
+            elif [ -f "$src" ]; then
+                if [ ! -f "$tmp_dst" ] || [ -L "$tmp_dst" ] || ! cmp -s "$src" "$tmp_dst"; then
+                    rm -rf "$tmp_dir"
+                    echo "ERROR: failed to verify staged FIRC config $src" >&2
+                    stage_err=1
+                    continue
+                fi
+            else
+                rm -rf "$tmp_dir"
+                echo "ERROR: unsupported file type at $src" >&2
+                stage_err=1
+                continue
+            fi
+            if ! mv -n "$tmp_dst" "$dst"; then
+                rm -rf "$tmp_dir"
+                if [ -e "$dst" ] || [ -L "$dst" ]; then
+                    continue
+                fi
+                echo "ERROR: failed to publish staged FIRC config $dst" >&2
+                stage_err=1
+                continue
+            fi
+            if [ -e "$tmp_dst" ] || [ -L "$tmp_dst" ]; then
+                rm -rf "$tmp_dir"
+                if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
+                    echo "ERROR: staged FIRC config $dst was not published" >&2
+                    stage_err=1
+                fi
+                continue
+            fi
+            rm -rf "$tmp_dir"
+        done < "$list_file"
+        rm -f "$list_file" 2>/dev/null || true
+        exit "$stage_err"
+    )
+}
+
+if [ -L "$PRESERVE_DIR" ] || { [ -e "$PRESERVE_DIR" ] && [ ! -d "$PRESERVE_DIR" ]; }; then
+    echo "ERROR: invalid existing FIRC config preservation path $PRESERVE_DIR" >&2
+    exit 1
+fi
+
+if [ -f "$OWNER_LIST" ] && grep -Eq '^/opt/(sbin|bin)/(fircd|tunvless)$|^/opt/etc/init\.d/S99firc$|^/opt/etc/firc(/|$)|^/opt/etc/ndm/(netfilter|iflayerchanged)\.d/100-firc$' "$OWNER_LIST"; then
+    FIRC_ACTIVE=0
+    if [ -f "$SETTINGS_JSON" ] && grep -Eq '"routingEngine"[[:space:]]*:[[:space:]]*"firc"' "$SETTINGS_JSON" 2>/dev/null; then
+        FIRC_ACTIVE=1
+    fi
+    if pidof fircd >/dev/null 2>&1 || pidof tunvless >/dev/null 2>&1; then
+        FIRC_ACTIVE=1
+    fi
+
+    if [ "$FIRC_ACTIVE" = "1" ]; then
+        if [ -x /opt/etc/init.d/S99awg-manager ]; then
+            /opt/etc/init.d/S99awg-manager start >/dev/null 2>&1 || true
+        fi
+        echo "This installation bundles active FIRC inside awg-manager." >&2
+        echo "Upgrade blocked before unlinking live FIRC binaries: migrate FIRC runtime ownership to awg-firc-runtime (or switch/stop FIRC) first." >&2
+        exit 1
+    fi
+
+    # FIRC is inactive and stopped: preserve user /opt/etc/firc/* configs before
+    # opkg's remove_obsolesced_files unbundles legacy FIRC files; postinst restores them.
+    # Never rm -rf $PRESERVE_DIR so any unrecovered files from a prior failed restore survive.
+    if [ -d /opt/etc/firc ] && [ ! -L /opt/etc/firc ]; then
+        stage_firc_tree
+    fi
+fi
+
+exit 0
