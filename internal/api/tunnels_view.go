@@ -8,6 +8,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -341,7 +342,14 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			}
 
 			// For running tunnels, resolve actual WAN from in-memory tracking
-			if t.State == tunnel.StateRunning {
+			if t.State == tunnel.StateRunning && tunnel.IsTunnelRoute(stored.ISPInterface) {
+				// Цепочка: ActiveWAN — WAN родителя, а трафик идёт в его
+				// интерфейс. Показываем родителя, не его WAN (F806).
+				if dev, _, err := orchestrator.RouteDevice(h.store, stored.ISPInterface, ""); err == nil {
+					resolvedISPInterface = dev
+					resolvedISPInterfaceLabel = ispInterfaceLabel
+				}
+			} else if t.State == tunnel.StateRunning {
 				if resolved := h.svc.GetResolvedISP(t.ID); resolved != "" {
 					resolvedISPInterface = resolved
 					resolvedISPInterfaceLabel = h.svc.WANModel().GetLabel(resolved)

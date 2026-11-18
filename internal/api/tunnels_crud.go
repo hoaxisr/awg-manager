@@ -19,6 +19,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
@@ -293,6 +294,56 @@ func editRefused(message, code string) error {
 	return &TunnelEditError{Status: http.StatusBadRequest, Code: code, Message: message}
 }
 
+// validateTunnelChain проверяет «подключение через туннель» kernel-туннеля
+// (F806). На OS4 маршрутами до endpoint оператор не управляет — выбор молча
+// ничего бы не сделал. Цикл A→B→A не поднимет ни одного из двух: endpoint
+// каждого уходит в туннель другого. Звено nativewg хранит родителя NDMS-именем
+// (`connect via`), а не `tunnel:<id>`, — его сопоставляем с туннелями стора.
+// Предел шагов отсекает цикл, записанный до этой проверки и не проходящий
+// через id.
+func validateTunnelChain(store *storage.AWGTunnelStore, id, isp string) error {
+	if !tunnel.IsTunnelRoute(isp) {
+		return nil
+	}
+	if !osdetect.Is5() {
+		return editRefused("подключение через туннель на KeeneticOS 4.x не поддерживается", "TUNNEL_CHAIN_UNSUPPORTED")
+	}
+	list, err := store.List()
+	if err != nil {
+		return editRefused(err.Error(), "UPDATE_FAILED")
+	}
+	byID := make(map[string]*storage.AWGTunnel, len(list))
+	byNDMS := make(map[string]string, len(list))
+	for i := range list {
+		t := &list[i]
+		byID[t.ID] = t
+		if t.Backend == "nativewg" {
+			byNDMS[nwg.NewNWGNames(t.NWGIndex).NDMSName] = t.ID
+		} else {
+			byNDMS[tunnel.NewNames(t.ID).NDMSName] = t.ID
+		}
+	}
+	cur := isp
+	for hops := 0; hops <= 16; hops++ {
+		parentID, ok := byNDMS[cur]
+		if tunnel.IsTunnelRoute(cur) {
+			parentID, ok = tunnel.TunnelRouteID(cur), true
+		}
+		if !ok {
+			return nil
+		}
+		if parentID == id {
+			return editRefused("цепочка туннелей замыкается на себя", "TUNNEL_CHAIN_CYCLE")
+		}
+		parent := byID[parentID]
+		if parent == nil {
+			return editRefused("туннель "+parentID+" не найден", "TUNNEL_CHAIN_PARENT_NOT_FOUND")
+		}
+		cur = parent.ISPInterface
+	}
+	return editRefused("цепочка туннелей замыкается на себя", "TUNNEL_CHAIN_CYCLE")
+}
+
 // EditedTunnel — итог EditTunnel. Raw задан у зеркальной записи wdtt-raw:
 // её ответ строится из записи, а не из состояния туннеля. Warnings —
 // конфликты адресов после правки. NeedsRestart — правка убрала параметр
@@ -415,6 +466,12 @@ func (h *TunnelsHandler) EditTunnelWith(ctx context.Context, id string, build fu
 		h.log.Info("update", updated.Name, "WDTT raw metadata updated")
 		h.publishTunnelList(ctx)
 		return EditedTunnel{Raw: &updated}, nil
+	}
+
+	if existing.Backend != "nativewg" && req.ISPInterface != existing.ISPInterface {
+		if err := validateTunnelChain(h.store, id, req.ISPInterface); err != nil {
+			return EditedTunnel{}, err
+		}
 	}
 
 	// Detect changes before applying the patch.

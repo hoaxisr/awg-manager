@@ -102,12 +102,55 @@ func (o *OperatorOS5Impl) SetupEndpointRoute(ctx context.Context, tunnelID, endp
 		return "", nil
 	}
 
+	// Цепочка «через туннель» (F806): маршрут в интерфейс родителя плюс
+	// страховочный unreachable под ним. Пока родитель жив, побеждает маршрут
+	// через него; лёг — ядро сносит его вместе с линком, и остаётся
+	// unreachable: ребёнок не подключается, а не уходит молча напрямую в WAN.
+	// Страховка ставится ДО разрешения маршрута — родителя может ещё не быть
+	// (старт раньше него), маршрут через него довезёт refreshChainedChildren.
+	chain := tunnel.IsTunnelRoute(ispName)
+	if chain {
+		if kernelDevice == tunnel.NewNames(tunnelID).IfaceName {
+			return "", fmt.Errorf("routing loop detected: endpoint resolves to own device %s", kernelDevice)
+		}
+		// Host-route общий на адрес (F130). Через туннель его ставить нельзя,
+		// если тот же сервер у другого туннеля: его трафик до сервера ушёл бы в
+		// туннель, а у родителя с тем же endpoint это петля.
+		o.endpointRoutesMu.Lock()
+		shared := false
+		for id, ip := range o.endpointRoutes {
+			if id != tunnelID && ip == endpointIP {
+				shared = true
+				break
+			}
+		}
+		if !shared {
+			o.endpointRoutes[tunnelID] = endpointIP
+		}
+		o.endpointRoutesMu.Unlock()
+		if shared || (o.routeHeldByOther != nil && o.routeHeldByOther(tunnelID, endpointIP)) {
+			o.appLog.Warn("start", tunnelID, "Endpoint "+endpointIP+" совпадает с сервером другого туннеля — маршрут через туннель не поставлен")
+			return "", fmt.Errorf("endpoint %s shared with another tunnel: route through tunnel would loop", endpointIP)
+		}
+		if err := o.chainFallbackRoute(ctx, "replace", endpointIP); err != nil {
+			o.appLog.Warn("start", tunnelID, "Страховка маршрута через туннель до "+endpointIP+": "+err.Error())
+			return "", fmt.Errorf("add unreachable fallback for %s: %w", endpointIP, err)
+		}
+	}
+
 	// Resolve route target from kernel routing table.
 	// oif constraint ensures we route via the intended WAN device.
-	gateway, device, err := o.resolveKernelRouteTarget(ctx, endpointIP, kernelDevice)
+	gateway, device, err := o.resolveKernelRouteTarget(ctx, endpointIP, kernelDevice, chain)
 	if err != nil {
 		o.logWarn("setup_route", tunnelID, "Failed to resolve kernel route: "+err.Error())
+		if chain {
+			o.appLog.Warn("start", tunnelID, "Туннель "+kernelDevice+" не поднят — сервер "+endpointIP+" недоступен до его подъёма")
+		}
 		return "", fmt.Errorf("resolve kernel route for %s: %w", endpointIP, err)
+	}
+
+	if device == tunnel.NewNames(tunnelID).IfaceName {
+		return "", fmt.Errorf("routing loop detected: endpoint resolves to own device %s", device)
 	}
 
 	// Build route target: prefer gateway IP, fallback to device (PPPoE/point-to-point).
@@ -195,6 +238,12 @@ func (o *OperatorOS5Impl) removeHostRouteIfUnused(ctx context.Context, action, t
 	if stillInUse {
 		o.logInfo(action, tunnelID, "IP "+endpointIP+" still in use by another tunnel")
 		return
+	}
+
+	// Страховку цепочки снимаем первой: `ip route del` без метрики иначе мог
+	// бы снять её вместо основного маршрута. Не было — не ошибка.
+	if err := o.chainFallbackRoute(ctx, "del", endpointIP); err != nil && !noSuchRoute(err) {
+		o.logWarn(action, tunnelID, "ip route del unreachable "+endpointIP+": "+err.Error())
 	}
 
 	// NDMS кэширует маршруты ядра, но их снятие не отслеживает — снимаем в обоих.
@@ -327,6 +376,23 @@ func noSuchRoute(err error) bool {
 	return strings.Contains(msg, "No such process") || strings.Contains(msg, "No such file or directory")
 }
 
+// chainFallbackMetric — метрика страховочного unreachable под маршрутом
+// цепочки: хуже любого рабочего маршрута, поэтому выигрывает только когда
+// маршрута через родителя нет.
+const chainFallbackMetric = "4095"
+
+// chainFallbackRoute ставит (verb "replace") или снимает ("del") страховочный
+// unreachable до endpoint цепочки (F806).
+func (o *OperatorOS5Impl) chainFallbackRoute(ctx context.Context, verb, endpointIP string) error {
+	prefix, family := "/32", []string{}
+	if isIPv6(endpointIP) {
+		prefix, family = "/128", []string{"-6"}
+	}
+	args := append(family, "route", verb, "unreachable", endpointIP+prefix, "metric", chainFallbackMetric)
+	result, err := o.ipRun(ctx, "/opt/sbin/ip", args...)
+	return exec.FormatError(result, err)
+}
+
 func (o *OperatorOS5Impl) delKernelHostRoute(ctx context.Context, endpointIP string) error {
 	prefix := "/32"
 	family := []string{}
@@ -366,7 +432,7 @@ func (o *OperatorOS5Impl) deviceAddr(ctx context.Context, device string, v6 bool
 // When oifDevice is non-empty, constrains the lookup to that specific interface
 // (ip route get <dstIP> oif <device>), ensuring the route uses the intended WAN.
 // Returns either a gateway IP (DHCP WANs) or a device name (PPPoE).
-func (o *OperatorOS5Impl) resolveKernelRouteTarget(ctx context.Context, dstIP, oifDevice string) (gateway, device string, err error) {
+func (o *OperatorOS5Impl) resolveKernelRouteTarget(ctx context.Context, dstIP, oifDevice string, chain bool) (gateway, device string, err error) {
 	args := []string{}
 	if isIPv6(dstIP) {
 		args = append(args, "-6")
@@ -406,7 +472,10 @@ func (o *OperatorOS5Impl) resolveKernelRouteTarget(ctx context.Context, dstIP, o
 	// Safety net: if the resolved device is one of our tunnel interfaces,
 	// we'd create a routing loop (endpoint traffic going through the tunnel itself).
 	// This can happen if the tunnel is first in Keenetic access policy and oif is empty.
-	if strings.HasPrefix(device, "opkgtun") || strings.HasPrefix(device, "awgm") {
+	// Исключение — цепочка «через туннель» (F806), заказанная признаком chain,
+	// а не одним совпадением с oif: сырое opkgtunN из «всех интерфейсов» мимо
+	// проверок цепочки остаётся петлёй. Свой интерфейс отсекает SetupEndpointRoute.
+	if (strings.HasPrefix(device, "opkgtun") || strings.HasPrefix(device, "awgm")) && !(chain && device == oifDevice) {
 		return "", "", fmt.Errorf("routing loop detected: endpoint resolves to tunnel device %s", device)
 	}
 	return gateway, device, nil

@@ -608,7 +608,10 @@ func (s *ServiceImpl) applyDiffKernel(ctx context.Context, oldStored, newStored 
 		if resolveErr != nil {
 			s.logWarn("update", tunnelID, "Failed to resolve WAN: "+resolveErr.Error())
 			errs = append(errs, fmt.Errorf("resolve WAN: %w", resolveErr))
-		} else if ip, err := s.legacyOperator.SetupEndpointRoute(ctx, tunnelID, newStored.Peer.Endpoint, s.resolveKernelDevice(resolvedWAN), resolvedWAN); err != nil {
+		} else if routeDev, routeISP, devErr := orchestrator.RouteDevice(s.store, newStored.ISPInterface, resolvedWAN); devErr != nil {
+			s.logWarn("update", tunnelID, "Failed to resolve WAN: "+devErr.Error())
+			errs = append(errs, fmt.Errorf("resolve WAN: %w", devErr))
+		} else if ip, err := s.legacyOperator.SetupEndpointRoute(ctx, tunnelID, newStored.Peer.Endpoint, routeDev, routeISP); err != nil {
 			s.logWarn("update", tunnelID, "Failed to setup endpoint route: "+err.Error())
 			errs = append(errs, fmt.Errorf("setup endpoint route: %w", err))
 		} else {
@@ -1537,12 +1540,13 @@ func (s *ServiceImpl) resolveWAN(ctx context.Context, ispInterface string) (stri
 			return parentStored.ActiveWAN, nil
 		}
 		// Fallback: ActiveWAN empty (first start or upgrade from old version)
+		// Родитель не поднят или сам в цепочке — WAN неизвестен, и это не
+		// отказ: маршрут ребёнка идёт в интерфейс родителя (RouteDevice), а
+		// не в WAN, и встанет с подъёмом родителя (refreshChainedChildren).
+		// Отказ здесь ронял старт ребёнка, поднятого раньше родителя (F806).
 		parentState := s.state.GetState(ctx, parentID)
-		if parentState.State != tunnel.StateRunning {
-			return "", fmt.Errorf("parent tunnel %s not running (state: %s)", parentID, parentState.State)
-		}
-		if tunnel.IsTunnelRoute(parentStored.ISPInterface) {
-			return "", fmt.Errorf("parent tunnel %s: nested chain, ActiveWAN not tracked", parentID)
+		if parentState.State != tunnel.StateRunning || tunnel.IsTunnelRoute(parentStored.ISPInterface) {
+			return "", nil
 		}
 		s.logInfo("resolve-wan", parentID, "ActiveWAN empty, resolving from stored config")
 		return s.resolveWAN(ctx, parentStored.ISPInterface)
@@ -1550,18 +1554,6 @@ func (s *ServiceImpl) resolveWAN(ctx context.Context, ispInterface string) (stri
 
 	// Explicit WAN — after migration this is already a kernel name
 	return ispInterface, nil
-}
-
-// resolveKernelDevice extracts the kernel device name from a resolved WAN.
-// resolveWAN already returns kernel names, so this just handles tunnel chaining.
-func (s *ServiceImpl) resolveKernelDevice(resolvedWAN string) string {
-	if resolvedWAN == "" {
-		return ""
-	}
-	if tunnel.IsTunnelRoute(resolvedWAN) {
-		return tunnel.NewNames(tunnel.TunnelRouteID(resolvedWAN)).IfaceName
-	}
-	return resolvedWAN // already a kernel name
 }
 
 // logInfo logs an info message via the UI-visible scoped logger.
