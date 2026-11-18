@@ -173,6 +173,10 @@ type Operator struct {
 	// subProxies enumerator only.
 	subProxySync func(context.Context) error
 
+	// postInstallSync, when wired, runs after Install places the managed binary
+	// and initializes base/default config.d files (e.g. re-syncing 15-awg / 17-dns-rewrites).
+	postInstallSync func(context.Context) error
+
 	// processLogger forwards sing-box stdout/stderr lines into the app
 	// log under singbox/process so users can see daemon output at
 	// /diagnostics?tab=logs without ssh'ing in. nil-safe (ScopedLogger
@@ -231,9 +235,20 @@ type Operator struct {
 	// short-circuits the action instead of leaving an unpersisted intent.
 	persistManualStop func(bool) error
 
+	// stoppedByEngine mirrors Settings.SingboxStoppedByEngine: true when
+	// another routing engine (e.g. FIRC via switch_and_stop) holds sing-box
+	// stopped across watchdog ticks and restarts, distinct from user manual stop.
+	stoppedByEngine        atomic.Bool
+	persistStoppedByEngine func(bool) error
+
 	// ndmsProxyEnabledFn is the late-bound closure from OperatorDeps.IsNDMSProxyEnabled.
 	// nil means "treat as enabled" for back-compat (pre-dates this field).
 	ndmsProxyEnabledFn func() bool
+
+	// proxiesParked is true while an external routing engine (FIRC) owns traffic
+	// routing so managed ProxyN/t2sN interfaces remain parked (`up: false`) without
+	// deleting their NDMS configs or letting watchdog SyncProxies bring them back up.
+	proxiesParked atomic.Bool
 
 	// needsOrphanCleanup сигналит тику сторожа пометить наши ProxyN к сносу
 	// (orphanCleanupIfFlagged). Снимается после прочитанного списка, отказ
@@ -339,6 +354,11 @@ type OperatorDeps struct {
 	// to persist the new intent to settings.json. Optional — when nil,
 	// the in-memory flag still works but does not survive an awgm restart.
 	SetManuallyStopped func(bool) error
+	// InitialStoppedByEngine seeds whether another routing engine holds sing-box
+	// stopped on boot, distinct from user manual stop.
+	InitialStoppedByEngine bool
+	// SetStoppedByEngine persists engine-ownership stop policy to settings.json.
+	SetStoppedByEngine func(bool) error
 	// IsNDMSProxyEnabled returns the current value of the global toggle
 	// (Settings.CreateNDMSProxyForSingbox). Late-binding closure avoids
 	// circular construction between SettingsStore and Operator. When nil,
@@ -419,26 +439,31 @@ func NewOperator(d OperatorDeps) *Operator {
 	}
 
 	op := &Operator{
-		log:                  log,
-		bootstrapDNS:         d.BootstrapDNS,
-		clashPort:            d.ClashPort,
-		singboxLogLevel:      d.SingboxLogLevel,
-		cacheFileLocation:    d.CacheFileLocation,
-		dir:                  dir,
-		binary:               binary,
-		configPath:           configPath,
-		pidPath:              pidPath,
-		bindingSlotsMigrated: bindingSlotsMigrated,
-		proc:                 NewProcess(binary, configPath, pidPath),
-		validator:            NewValidator(binary),
-		proxyMgr:             NewProxyManager(d.Queries, d.Commands),
-		clash:                NewClashClient(ClashAddr(desiredClashPort)),
-		processLogger:        logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBProcess),
-		runtimeLogger:        logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBRuntime),
-		persistManualStop:    d.SetManuallyStopped,
-		bus:                  d.Bus,
+		log:                    log,
+		bootstrapDNS:           d.BootstrapDNS,
+		clashPort:              d.ClashPort,
+		singboxLogLevel:        d.SingboxLogLevel,
+		cacheFileLocation:      d.CacheFileLocation,
+		dir:                    dir,
+		binary:                 binary,
+		configPath:             configPath,
+		pidPath:                pidPath,
+		bindingSlotsMigrated:   bindingSlotsMigrated,
+		proc:                   NewProcess(binary, configPath, pidPath),
+		validator:              NewValidator(binary),
+		proxyMgr:               NewProxyManager(d.Queries, d.Commands),
+		clash:                  NewClashClient(ClashAddr(desiredClashPort)),
+		processLogger:          logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBProcess),
+		runtimeLogger:          logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBRuntime),
+		persistManualStop:      d.SetManuallyStopped,
+		persistStoppedByEngine: d.SetStoppedByEngine,
+		bus:                    d.Bus,
+	}
+	if d.Dir != "" && filepath.Clean(dir) != filepath.Clean(defaultDir) {
+		op.proc.logDir = filepath.Join(dir, "run")
 	}
 	op.manuallyStopped.Store(d.InitialManuallyStopped)
+	op.stoppedByEngine.Store(d.InitialStoppedByEngine)
 	op.ndmsProxyEnabledFn = d.IsNDMSProxyEnabled
 	op.loadDeferredProxies()
 	if pm, ok := op.proxyMgr.(*ProxyManager); ok {
@@ -458,8 +483,12 @@ func NewOperator(d OperatorDeps) *Operator {
 	op.proc.ReloadNeedsRestart = func() bool {
 		return op.orch != nil && op.orch.CurrentHasTun() && !op.TunHotReload()
 	}
-	// Строку готовности «sing-box started» (F637) печатает только INFO и ниже.
+	// Строку готовности «sing-box started» (F637) печатает только INFO и ниже
+	// при условии, что 00-base.json не отключает и не уводит log.output в файл.
 	op.proc.StartedLineExpected = func() bool {
+		if op.baseConfigSuppressesStderrStartLine() {
+			return false
+		}
 		switch op.desiredSingboxLogLevel() {
 		case "trace", "debug", "info":
 			return true
@@ -522,6 +551,11 @@ func (o *Operator) SetSubscriptionProxySet(s SubscriptionProxySet) { o.subProxie
 // for subscriptions created while the toggle was off. nil-safe.
 func (o *Operator) SetSubscriptionProxySync(fn func(context.Context) error) { o.subProxySync = fn }
 
+// SetPostInstallSync wires a callback invoked after Install completes so
+// auxiliary slots (e.g. 15-awg.json, 17-dns-rewrites.json) and the
+// orchestrator state can be synchronized immediately without a restart. nil-safe.
+func (o *Operator) SetPostInstallSync(fn func(context.Context) error) { o.postInstallSync = fn }
+
 // SetOutboundReferenceRenamer wires the singbox-router reference updater.
 // Optional: when nil, RenameTunnel only updates 10-tunnels.json.
 func (o *Operator) SetOutboundReferenceRenamer(r outboundReferenceRenamer) {
@@ -568,6 +602,10 @@ func (o *Operator) isNDMSProxyEnabled() bool {
 		return true
 	}
 	return o.ndmsProxyEnabledFn()
+}
+
+func (o *Operator) isNDMSProxySyncAllowed() bool {
+	return o.isNDMSProxyEnabled() && !o.proxiesParked.Load()
 }
 
 // Clash exposes the Clash client (for API proxying + telemetry).

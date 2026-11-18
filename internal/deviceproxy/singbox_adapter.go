@@ -20,8 +20,9 @@ import (
 // оркестратора (device-proxy, встроенный в 10-tunnels.json) снят — без
 // оркестратора адаптер отказывает явно.
 type SingboxAdapter struct {
-	op   *singbox.Operator
-	orch *orchestrator.Orchestrator
+	op          *singbox.Operator
+	orch        *orchestrator.Orchestrator
+	shouldWrite func() bool
 }
 
 func NewSingboxAdapter(op *singbox.Operator) *SingboxAdapter {
@@ -35,8 +36,21 @@ func (a *SingboxAdapter) SetOrch(orch *orchestrator.Orchestrator) {
 	a.orch = orch
 }
 
+// SetShouldWrite registers a predicate checked before writing any sing-box
+// config fragment (e.g. skipping config.d creation when sing-box is purged).
+func (a *SingboxAdapter) SetShouldWrite(fn func() bool) {
+	a.shouldWrite = fn
+}
+
+func (a *SingboxAdapter) canWriteConfig() bool {
+	return a.shouldWrite == nil || a.shouldWrite()
+}
+
 // ApplyDeviceProxy persists the device-proxy slot via the orchestrator.
 func (a *SingboxAdapter) ApplyDeviceProxy(ctx context.Context, spec ExternalSpec) error {
+	if !a.canWriteConfig() {
+		return nil
+	}
 	if a.orch != nil {
 		sbSpec := toSingboxSpec(spec)
 		data, err := singbox.BuildDeviceProxyConfig(sbSpec)
@@ -69,6 +83,9 @@ func (a *SingboxAdapter) ApplyDeviceProxy(ctx context.Context, spec ExternalSpec
 // IS allowed to schedule a reload (toggling enabled is by definition
 // a config-content change, not a no-op selector-default tweak).
 func (a *SingboxAdapter) ApplyDeviceProxyNoReload(ctx context.Context, spec ExternalSpec) error {
+	if !a.canWriteConfig() {
+		return nil
+	}
 	if a.orch == nil {
 		// Прежде здесь был легаси-путь через Operator.ApplyConfigNoReload. Он
 		// был недостижим в проде (SetOrch зовётся до старта HTTP) и при этом
@@ -91,6 +108,9 @@ func (a *SingboxAdapter) ApplyDeviceProxyNoReload(ctx context.Context, spec Exte
 // ApplyDeviceProxyInstances persists multiple device-proxy instances via
 // the orchestrator.
 func (a *SingboxAdapter) ApplyDeviceProxyInstances(ctx context.Context, specs []ExternalInstanceSpec) error {
+	if !a.canWriteConfig() {
+		return nil
+	}
 	if a.orch != nil {
 		sbSpecs := make([]singbox.DeviceProxyInstanceSpec, 0, len(specs))
 		for _, spec := range specs {

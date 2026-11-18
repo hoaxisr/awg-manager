@@ -59,6 +59,8 @@ type ndmsProxies interface {
 	AdoptBareProxy(ctx context.Context, name string, port int, description string) (MarkedOutcome, error)
 	ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, subProxyIdx map[int]bool) ([]string, error)
 	SyncProxies(ctx context.Context, tunnels []TunnelInfo) error
+	ParkProxy(ctx context.Context, name, desc, alt string) (MarkedOutcome, error)
+	ResumeProxy(ctx context.Context, name, desc string) (MarkedOutcome, error)
 }
 
 var _ ndmsProxies = (*ProxyManager)(nil)
@@ -342,6 +344,57 @@ func (pm *ProxyManager) AdoptBareProxy(ctx context.Context, name string, port in
 		return MarkedForeign, nil
 	}
 	if err := pm.commands.Proxies.ConfigureProxy(ctx, c, description, "127.0.0.1", port, true); err != nil {
+		return 0, err
+	}
+	return MarkedAdopted, nil
+}
+
+// ParkProxy administratively brings down an owned ProxyN (`up: false`) while keeping
+// its NDMS configuration and policy bindings preserved for return. Foreign proxies
+// (description mismatch) are never modified.
+func (pm *ProxyManager) ParkProxy(ctx context.Context, name, desc, alt string) (MarkedOutcome, error) {
+	if pm == nil || pm.queries == nil || pm.commands == nil {
+		return MarkedAbsent, nil
+	}
+	c, iface, ok, err := pm.queries.Interfaces.Confirm(ctx, name)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w", errProxyListUnread, err)
+	}
+	if !ok {
+		return MarkedAbsent, nil
+	}
+	if iface == nil || (iface.Description != desc && (alt == "" || iface.Description != alt)) {
+		return MarkedForeign, nil
+	}
+	if iface.State == "down" {
+		return MarkedAdopted, nil
+	}
+	if err := pm.commands.Proxies.ProxyDown(ctx, c); err != nil {
+		return 0, err
+	}
+	return MarkedAdopted, nil
+}
+
+// ResumeProxy administratively brings up a previously parked owned ProxyN (`up: true`).
+// Foreign proxies (description mismatch) are never modified.
+func (pm *ProxyManager) ResumeProxy(ctx context.Context, name, desc string) (MarkedOutcome, error) {
+	if pm == nil || pm.queries == nil || pm.commands == nil {
+		return MarkedAbsent, nil
+	}
+	c, iface, ok, err := pm.queries.Interfaces.Confirm(ctx, name)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w", errProxyListUnread, err)
+	}
+	if !ok {
+		return MarkedAbsent, nil
+	}
+	if iface == nil || iface.Description != desc {
+		return MarkedForeign, nil
+	}
+	if iface.State == "up" {
+		return MarkedAdopted, nil
+	}
+	if err := pm.commands.Proxies.ProxyUp(ctx, c); err != nil {
 		return 0, err
 	}
 	return MarkedAdopted, nil

@@ -360,6 +360,12 @@ func (o *Operator) Install(ctx context.Context) error {
 		return fmt.Errorf("activate sing-box: %w", err)
 	}
 	o.recordPinnedVersion()
+	o.EnsureConfigDirInitialized()
+	if o.postInstallSync != nil {
+		if err := o.postInstallSync(ctx); err != nil {
+			o.log.Warn("install: post-install sync failed", "err", err)
+		}
+	}
 	// Uninstall снял ProxyN подписок, а сами подписки пережили его в
 	// settings.json: возвращаем их прокси (F723). Движок уже на месте, поэтому
 	// отказ NDMS установку не валит — подписка поднимет прокси при следующей

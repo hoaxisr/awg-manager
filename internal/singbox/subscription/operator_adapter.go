@@ -183,10 +183,34 @@ func NewOperatorAdapter(orch *orchestrator.Orchestrator, pm ProxyRegistrar, clas
 // consistent with what is on disk. Missing file is treated as an empty
 // slot (not an error).
 func (a *OperatorAdapter) LoadFromDisk(configDir string) error {
+	return a.loadFromDisk(configDir, false)
+}
+
+// ReloadFromDisk resets the in-memory subscription slot state and reloads
+// 13-subscriptions.json from configDir (yielding an empty slot if missing).
+func (a *OperatorAdapter) ReloadFromDisk(configDir string) error {
+	return a.loadFromDisk(configDir, true)
+}
+
+// Reset clears the in-memory subscription slot state without touching disk.
+func (a *OperatorAdapter) Reset() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cfg = newEmptySlot()
+	a.pending = nil
+	a.loadErr = nil
+	a.lastDropped = nil
+	a.preFlushDropped = nil
+}
+
+func (a *OperatorAdapter) loadFromDisk(configDir string, resetMissing bool) error {
 	path := fmt.Sprintf("%s/13-subscriptions.json", configDir)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if resetMissing {
+				a.Reset()
+			}
 			return nil
 		}
 		// Файл есть, но прочитать его не вышло. Что в нём — неизвестно,
@@ -197,6 +221,9 @@ func (a *OperatorAdapter) LoadFromDisk(configDir string) error {
 		return fmt.Errorf("subscription adapter: load %s: %w", path, err)
 	}
 	if len(b) == 0 {
+		if resetMissing {
+			a.Reset()
+		}
 		return nil
 	}
 	a.mu.Lock()
@@ -221,6 +248,12 @@ func (a *OperatorAdapter) LoadFromDisk(configDir string) error {
 		cfg.Route = map[string]any{"rules": []any{}}
 	}
 	a.cfg = cfg
+	a.pending = nil
+	a.loadErr = nil
+	if resetMissing {
+		a.lastDropped = nil
+		a.preFlushDropped = nil
+	}
 	return nil
 }
 

@@ -5,8 +5,11 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -36,6 +39,7 @@ type transitionHarness struct {
 func newTransitionHarness(t *testing.T) *transitionHarness {
 	t.Helper()
 	svc, dir := newOrchedTestService(t)
+	svc.reapNetfilterSettleDelay = 0
 
 	// Seed a router config so loadRouterConfig returns a usable egress for both
 	// tproxy (inbound ensure) and fakeip (proxy outbound + final).
@@ -499,6 +503,168 @@ func TestSwitch_RollbackFakeIPToPolicyTun(t *testing.T) {
 	}
 	if !strings.Contains(term.Step.Message, "after fakeip-tun teardown") {
 		t.Fatalf("terminal message = %q want explicit post-teardown reason", term.Step.Message)
+	}
+}
+
+func TestSwitch_PolicyTunToTProxy_SynchronouslyReapsOpkgTun(t *testing.T) {
+	h := newTransitionHarness(t)
+	h.seedState(t, stateOff, false)
+	if err := h.store.Update(func(cur *storage.Settings) error {
+		cur.SingboxRouter.PolicyName = "Policy0"
+		return nil
+	}); err != nil {
+		t.Fatalf("set PolicyName: %v", err)
+	}
+	stubOrphanNetdev(t, true)
+
+	rec := h.svc.deps.OpkgTun.(*recOpkgTun)
+	rec.records = map[string]string{"OpkgTun0": policyTunDescription}
+
+	ctx := context.Background()
+	if err := h.svc.SwitchRoutingMode(ctx, statePolicyTun); err != nil {
+		t.Fatalf("off->policy-tun: %v", err)
+	}
+	all, err := h.store.Load()
+	if err != nil {
+		t.Fatalf("Load after policy-tun: %v", err)
+	}
+	if all.OpkgTun == nil {
+		t.Fatal("expected OpkgTun persist record after policy-tun enable")
+	}
+
+	jumpsWiped := false
+	installsAfterReap := 0
+	var readySeen atomic.Bool
+	installBeforeReady := false
+	origOut := h.svc.deps.IPTables.runIPTablesOut
+	origRestore := h.svc.deps.IPTables.restoreNoflush
+	h.svc.deps.IPTables.runIPTablesOut = func(c context.Context, args ...string) (string, error) {
+		if jumpsWiped && len(args) >= 3 && args[0] == "-t" && args[2] == "-S" {
+			return "", nil
+		}
+		if rec.log.has("Delete:OpkgTun0") {
+			// Simulate NDMS ifdestroyed wiping PREROUTING jumps when OpkgTun0 is deleted.
+			jumpsWiped = true
+			return "", nil
+		}
+		return origOut(c, args...)
+	}
+	h.svc.deps.IPTables.restoreNoflush = func(c context.Context, input string) error {
+		if rec.log.has("Delete:OpkgTun0") {
+			jumpsWiped = false
+			installsAfterReap++
+			if !readySeen.Load() {
+				installBeforeReady = true
+			}
+		}
+		return origRestore(c, input)
+	}
+
+	// Watch events synchronously via a dedicated bus subscription to assert order against ready.
+	_, evCh, unsub := h.bus.Subscribe()
+	evDone := make(chan struct{})
+	go func() {
+		defer close(evDone)
+		for ev := range evCh {
+			if te, ok := ev.Data.(TransitionEvent); ok && te.Done && te.FinalState == stateTProxy {
+				readySeen.Store(true)
+			}
+		}
+	}()
+
+	if err := h.svc.SwitchRoutingMode(ctx, stateTProxy); err != nil {
+		unsub()
+		<-evDone
+		t.Fatalf("policy-tun->tproxy: %v", err)
+	}
+	unsub()
+	<-evDone
+
+	if !rec.log.has("Delete:OpkgTun0") {
+		t.Fatalf("expected synchronous Delete:OpkgTun0 in call log, got: %v", rec.log.calls)
+	}
+	allAfter, err := h.store.Load()
+	if err != nil {
+		t.Fatalf("Load after tproxy: %v", err)
+	}
+	if allAfter.OpkgTun != nil {
+		t.Fatalf("expected OpkgTun persist cleared after policy-tun->tproxy, got: %+v", allAfter.OpkgTun)
+	}
+	if installsAfterReap == 0 || !installBeforeReady {
+		t.Fatalf("expected IPTables.Install to restore wiped jumps before ready event (installs=%d, beforeReady=%v)", installsAfterReap, installBeforeReady)
+	}
+}
+
+func TestSwitch_PolicyTunToTProxy_DefersPolicyWANUntilAfterOpkgTunReapAndSettle(t *testing.T) {
+	h := newTransitionHarness(t)
+	h.seedState(t, stateOff, false)
+	if err := h.store.Update(func(cur *storage.Settings) error {
+		cur.SingboxRouter.DeviceMode = "policy"
+		cur.SingboxRouter.PolicyName = "Policy2"
+		cur.SingboxRouter.WANAutoDetect = true
+		return nil
+	}); err != nil {
+		t.Fatalf("set policy settings: %v", err)
+	}
+	stubOrphanNetdev(t, true)
+
+	pol := &statefulPolicyDouble{
+		fakeAccessPolicyProvider: &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+		policyName:               "Policy2",
+		permits:                  []string{"PPPoE0", "Wireguard0"},
+	}
+	h.svc.deps.Policies = pol
+	h.svc.deps.WANInterfaces = fakeWAN{list: policyWANs}
+	h.svc.deps.RunningConfig = pol
+	h.svc.reapNetfilterSettleDelay = 25 * time.Millisecond
+
+	rec := h.svc.deps.OpkgTun.(*recOpkgTun)
+	rec.records = map[string]string{"OpkgTun0": policyTunDescription}
+
+	ctx := context.Background()
+	if err := h.svc.SwitchRoutingMode(ctx, statePolicyTun); err != nil {
+		t.Fatalf("off->policy-tun: %v", err)
+	}
+	if slices.Contains(pol.permits, "PPPoE0") {
+		t.Fatalf("expected PPPoE0 denied in policy-tun, got permits=%v", pol.permits)
+	}
+
+	var wanPermittedBeforeDelete atomic.Bool
+	origRestore := h.svc.deps.IPTables.restoreNoflush
+	origOut := h.svc.deps.IPTables.runIPTablesOut
+	h.svc.deps.IPTables.runIPTablesOut = func(c context.Context, args ...string) (string, error) {
+		if slices.Contains(pol.permits, "PPPoE0") && !rec.log.has("Delete:OpkgTun0") {
+			wanPermittedBeforeDelete.Store(true)
+		}
+		return origOut(c, args...)
+	}
+	h.svc.deps.IPTables.restoreNoflush = func(c context.Context, input string) error {
+		if slices.Contains(pol.permits, "PPPoE0") && !rec.log.has("Delete:OpkgTun0") {
+			wanPermittedBeforeDelete.Store(true)
+		}
+		return origRestore(c, input)
+	}
+
+	tSwitchStart := time.Now()
+	if err := h.svc.SwitchRoutingMode(ctx, stateTProxy); err != nil {
+		t.Fatalf("policy-tun->tproxy: %v", err)
+	}
+	elapsed := time.Since(tSwitchStart)
+
+	if wanPermittedBeforeDelete.Load() {
+		t.Fatal("WAN permit PPPoE0 must stay deferred until OpkgTun0 is reaped")
+	}
+	if !rec.log.has("Delete:OpkgTun0") {
+		t.Fatalf("expected Delete:OpkgTun0 during switch, got %v", rec.log.calls)
+	}
+	if elapsed < 20*time.Millisecond {
+		t.Fatalf("expected reapNetfilterSettleDelay (>=20ms) after OpkgTun0 delete, elapsed=%v", elapsed)
+	}
+	if !slices.Contains(pol.permits, "PPPoE0") {
+		t.Fatalf("expected PPPoE0 restored after switch settles, permits=%v", pol.permits)
+	}
+	if !slices.Contains(pol.permits, "Wireguard0") {
+		t.Fatalf("expected non-WAN Wireguard0 preserved, permits=%v", pol.permits)
 	}
 }
 

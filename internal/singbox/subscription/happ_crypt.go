@@ -257,6 +257,16 @@ func (s *Service) DecryptHappLink(rawLink string) (string, error) {
 	return s.happKeys.decrypt(rawLink)
 }
 
+// DecryptHappLinkFromFile loads RSA private keys from keysPath (e.g. happ_keys.json)
+// and decrypts a happ://crypt, crypt2, crypt3, or crypt4 link.
+func DecryptHappLinkFromFile(keysPath, rawLink string) (string, error) {
+	hk := newHappKeys(keysPath)
+	if err := hk.load(); err != nil {
+		return "", err
+	}
+	return hk.decrypt(rawLink)
+}
+
 func b64DecodeUrlSafe(s string) ([]byte, error) {
 	s = strings.ReplaceAll(s, "-", "+")
 	s = strings.ReplaceAll(s, "_", "/")

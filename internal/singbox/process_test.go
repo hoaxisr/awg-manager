@@ -935,3 +935,68 @@ func TestProcess_ReloadDoesNotRestartAfterStopDuringWait(t *testing.T) {
 		t.Fatal("движок работает после Stop")
 	}
 }
+
+// Reload must not resurrect sing-box when called concurrently with Stop on an
+// already-started generation or after Stop completed deliberately.
+func TestProcess_ReloadDoesNotRestartAfterConcurrentOrCompletedStop(t *testing.T) {
+	dir := t.TempDir()
+	p := NewProcess("/bin/sh", "/dev/null", filepath.Join(dir, "sing-box.pid"))
+	t.Cleanup(p.Close)
+	p.logDir = dir
+	p.matchBinaryFn = func(int) bool { return true }
+	p.signalFn = func(pid int, sig syscall.Signal) error {
+		if sig == syscall.SIGHUP {
+			return nil
+		}
+		return syscall.Kill(pid, sig)
+	}
+	var spawns atomic.Int32
+	p.startCmd = func(bin string, args ...string) (*exec.Cmd, error) {
+		spawns.Add(1)
+		return exec.Command("/bin/sh", "-c", `trap "sleep 0.25; exit 0" TERM; echo "INFO[0000] sing-box started (0.01s)" >&2; while :; do sleep 1; done`), nil
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	p.startMu.Lock()
+	gen := p.curGen
+	p.startMu.Unlock()
+	if gen == nil {
+		t.Fatal("expected current generation after Start")
+	}
+	select {
+	case <-gen.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for gen.started")
+	}
+
+	stopDone := make(chan error, 1)
+	reloadDone := make(chan error, 1)
+	go func() { stopDone <- p.Stop() }()
+	time.Sleep(50 * time.Millisecond) // Stop holds startMu while child handles SIGTERM
+	go func() { reloadDone <- p.Reload() }()
+
+	if err := <-stopDone; err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if err := <-reloadDone; err != nil {
+		t.Fatalf("concurrent Reload: %v", err)
+	}
+	if got := spawns.Load(); got != 1 {
+		t.Fatalf("concurrent Reload respawned process: spawns=%d", got)
+	}
+	if running, _ := p.IsRunning(); running {
+		t.Fatal("process still running after concurrent Stop+Reload")
+	}
+
+	if err := p.Reload(); err != nil {
+		t.Fatalf("post-Stop Reload: %v", err)
+	}
+	if got := spawns.Load(); got != 1 {
+		t.Fatalf("post-Stop Reload respawned process: spawns=%d", got)
+	}
+	if running, _ := p.IsRunning(); running {
+		t.Fatal("process running after post-Stop Reload")
+	}
+}

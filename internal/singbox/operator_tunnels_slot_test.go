@@ -168,6 +168,12 @@ func (f *fakeProxies) ListNativeProxies(context.Context, map[string]bool, map[in
 	return nil, nil
 }
 func (f *fakeProxies) SyncProxies(context.Context, []TunnelInfo) error { return nil }
+func (f *fakeProxies) ParkProxy(context.Context, string, string, string) (MarkedOutcome, error) {
+	return MarkedAdopted, nil
+}
+func (f *fakeProxies) ResumeProxy(context.Context, string, string) (MarkedOutcome, error) {
+	return MarkedAdopted, nil
+}
 
 // Удаление ПОСЛЕДНЕГО туннеля: слот остаётся на месте пустым, а не удаляется.
 // Прежде RemoveTunnel на этой ветке сам звал proc.Stop и os.Remove(слот),

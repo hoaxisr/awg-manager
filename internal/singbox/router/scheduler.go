@@ -109,6 +109,9 @@ func (s *Scheduler) tickPolicySync(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	if isFircRoutingEngine(settings.SingboxRouter) {
+		return
+	}
 	if !settings.SingboxRouter.Enabled {
 		// Движок выключен — Reconcile не гоняем, но reap fakeip-сирот обязан
 		// работать и здесь: runtime-сирота (провал delete при disable)

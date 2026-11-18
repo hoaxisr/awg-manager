@@ -8,9 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -2458,23 +2460,78 @@ func containsArgv(list [][]string, want []string) bool {
 	return false
 }
 
-// Install без предварительного скраба стакует дубль джампа на каждый Enable
-// (restore --noflush + -I PREROUTING 1). Дамп фейка изображает уже
-// установленный движок — оба джампа обязаны быть сняты ДО restore.
-func TestInstall_ScrubsExistingJumpsBeforeRestore(t *testing.T) {
+// Install не должен срывать активные прыжки ДО сохранения файлов на флеш и
+// ДО применения новых правил: сперва persist, затем iptables-restore --noflush
+// (атомарно ставит новые правила и цепочки), и только потом снос заранее
+// снятых старых дублей/прыжков. Так окно WAN-утечки при переустановке правил
+// нулевое, а число прыжков остаётся строго 1.
+func TestInstall_RestoreBeforeScrubbingStaleJumps(t *testing.T) {
 	fe := newFakeExec()
 	it := newFakeIPTables(fe)
+	var persistOrder []string
+	origRestore := it.restoreNoflush
+	it.persistRules = func(_, _, _ string) error {
+		persistOrder = append(persistOrder, "persistRules")
+		return nil
+	}
+	it.persistHook = func(bool) error {
+		persistOrder = append(persistOrder, "persistHook")
+		return nil
+	}
+	it.restoreNoflush = func(ctx context.Context, input string) error {
+		persistOrder = append(persistOrder, "restore")
+		return origRestore(ctx, input)
+	}
+	origRun := it.runIPTables
+	it.runIPTables = func(ctx context.Context, args ...string) error {
+		if slices.Contains(args, "-D") {
+			persistOrder = append(persistOrder, "delete")
+		}
+		return origRun(ctx, args...)
+	}
+
 	if err := it.Install(context.Background(), RestoreInputSpec{PolicyMark: "0xffffaaa"}); err != nil {
 		t.Fatal(err)
+	}
+	if len(iptablesCallsBeforeFirstRestore(fe.calls)) != 0 {
+		t.Fatalf("не должно быть -D PREROUTING до restore (открывает fail-open окно): %v", iptablesCallsBeforeFirstRestore(fe.calls))
+	}
+	var afterRestore [][]string
+	seenRestore := false
+	for _, c := range fe.calls {
+		if c.kind == "restore" {
+			seenRestore = true
+			continue
+		}
+		if seenRestore && c.kind == "iptables" {
+			afterRestore = append(afterRestore, c.args)
+		}
 	}
 	want := [][]string{
 		{"-t", "mangle", "-D", "PREROUTING", "-m", "conntrack", "!", "--ctstate", "INVALID", "-j", "AWGM-TPROXY"},
 		{"-t", "nat", "-D", "PREROUTING", "-m", "conntrack", "!", "--ctstate", "INVALID", "-j", "AWGM-REDIRECT"},
 	}
-	got := iptablesCallsBeforeFirstRestore(fe.calls)
 	for _, w := range want {
-		if !containsArgv(got, w) {
-			t.Errorf("до restore нет скраба %v; было: %v", w, got)
+		if !containsArgv(afterRestore, w) {
+			t.Errorf("после restore нет скраба старого прыжка %v; было: %v", w, afterRestore)
+		}
+	}
+	wantPrefix := []string{"persistRules", "persistHook", "restore"}
+	if len(persistOrder) < 3 || !slices.Equal(persistOrder[:3], wantPrefix) {
+		t.Errorf("порядок этапов Install = %v, ожидался префикс %v перед delete", persistOrder, wantPrefix)
+	}
+}
+
+func TestInstall_RestoreErrorPreservesExistingJumps(t *testing.T) {
+	fe := newFakeExec()
+	fe.err = errors.New("restore boom")
+	it := newFakeIPTables(fe)
+	if err := it.Install(context.Background(), RestoreInputSpec{PolicyMark: "0xffffaaa"}); err == nil {
+		t.Fatal("ожидалась ошибка restoreNoflush")
+	}
+	for _, c := range fe.calls {
+		if c.kind == "iptables" && slices.Contains(c.args, "-D") {
+			t.Fatalf("при падении restore старые правила не должны удаляться: %v", c.args)
 		}
 	}
 }
@@ -2570,4 +2627,186 @@ func TestSelfLoopDrop_ScrubbedOnUninstallAndInHook(t *testing.T) {
 	if n := strings.Count(netfilterHookScript(true), "scrub_tagged mangle "+SelfLoopTag+" INPUT"); n != 2 {
 		t.Errorf("хук чистит self-loop DROP перед restore mangle %d раз, ждём 2 (fast-heal и полный)", n)
 	}
+}
+
+func TestNetfilterHookScript_ConcurrentIfDestroyedSingleJump(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires POSIX /bin/sh")
+	}
+	if !strings.Contains(netfilterHookScript(true), "/tmp/awgm-tproxy-nfhook.lock") {
+		t.Fatal("netfilterHookScript must reference /tmp/awgm-tproxy-nfhook.lock")
+	}
+	if !strings.Contains(netfilterHookScript(true), "dedup_jumps") {
+		t.Fatal("netfilterHookScript must contain dedup_jumps")
+	}
+
+	runScenario := func(t *testing.T, name string, seedDuplicates bool) {
+		t.Helper()
+		tmp := t.TempDir()
+		bin := filepath.Join(tmp, "bin")
+		state := filepath.Join(tmp, "state")
+		if err := os.MkdirAll(bin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(state, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		origLock := netfilterHookLockDir
+		origR, origM, origN, origB, origCt, origBy := netfilterRulesPath, netfilterMangleRulesPath,
+			netfilterNatRulesPath, netfilterBlackholePath, netfilterCtCleanPath, bypassSavePath
+		netfilterHookLockDir = filepath.Join(tmp, "hook.lock")
+		netfilterRulesPath = filepath.Join(tmp, "combined.rules")
+		netfilterMangleRulesPath = filepath.Join(tmp, "mangle.rules")
+		netfilterNatRulesPath = filepath.Join(tmp, "nat.rules")
+		netfilterBlackholePath = filepath.Join(tmp, "blackhole.rules")
+		netfilterCtCleanPath = filepath.Join(tmp, "ctclean.sh")
+		bypassSavePath = filepath.Join(tmp, "bypass.ipset.missing")
+		t.Cleanup(func() {
+			netfilterHookLockDir = origLock
+			netfilterRulesPath = origR
+			netfilterMangleRulesPath = origM
+			netfilterNatRulesPath = origN
+			netfilterBlackholePath = origB
+			netfilterCtCleanPath = origCt
+			bypassSavePath = origBy
+		})
+
+		mangleRule := "-m conntrack ! --ctstate INVALID -j " + ChainName
+		natRule := "-m conntrack ! --ctstate INVALID -j " + RedirectChain
+		mangleRules := fmt.Sprintf("*mangle\n:%s - [0:0]\n-I PREROUTING 1 %s\nCOMMIT\n", ChainName, mangleRule)
+		natRules := fmt.Sprintf("*nat\n:%s - [0:0]\n-I PREROUTING 1 %s\nCOMMIT\n", RedirectChain, natRule)
+		if err := os.WriteFile(netfilterMangleRulesPath, []byte(mangleRules), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(netfilterNatRulesPath, []byte(natRules), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(netfilterRulesPath, []byte(mangleRules+natRules), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(netfilterCtCleanPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Chains already exist (NDMS wiped PREROUTING jumps, or duplicates exist).
+		_ = os.WriteFile(filepath.Join(state, "mangle."+ChainName), []byte("1\n"), 0o644)
+		_ = os.WriteFile(filepath.Join(state, "nat."+RedirectChain), []byte("1\n"), 0o644)
+		if seedDuplicates {
+			_ = os.WriteFile(filepath.Join(state, "mangle.PREROUTING"),
+				[]byte("-A PREROUTING "+mangleRule+"\n-A PREROUTING "+mangleRule+"\n"), 0o644)
+			_ = os.WriteFile(filepath.Join(state, "nat.PREROUTING"),
+				[]byte("-A PREROUTING "+natRule+"\n-A PREROUTING "+natRule+"\n"), 0o644)
+		}
+
+		fakeIPTables := "#!/bin/sh\nSTATE=" + strconv.Quote(state) + "\n" + `table=""
+op=""
+chain=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -w) shift ;;
+    -t) table="$2"; shift 2 ;;
+    -S) op="S"; chain="$2"; shift 2; break ;;
+    -nL) op="nL"; chain="$2"; shift 2; break ;;
+    -D) op="D"; chain="$2"; shift 2; break ;;
+    -F|-X) op="ok"; shift 2; break ;;
+    *) shift ;;
+  esac
+done
+case "$op" in
+  S)
+    echo "-P $chain ACCEPT"
+    [ -f "$STATE/$table.$chain" ] && cat "$STATE/$table.$chain"
+    exit 0
+    ;;
+  nL)
+    [ -f "$STATE/$table.$chain" ] && exit 0
+    exit 1
+    ;;
+  D)
+    target="-A $chain $*"
+    f="$STATE/$table.$chain"
+    [ -f "$f" ] || exit 1
+    tmp="$f.tmp.$$"
+    awk -v t="$target" 'BEGIN{d=0} {if (!d && $0 == t) {d=1; next} print}' "$f" > "$tmp"
+    if cmp -s "$f" "$tmp"; then
+      rm -f "$tmp"
+      exit 1
+    fi
+    mv "$tmp" "$f"
+    exit 0
+    ;;
+esac
+exit 0
+`
+		fakeRestore := "#!/bin/sh\nSTATE=" + strconv.Quote(state) + "\n" + `OVERLAP_LOG="$STATE/overlap.log"
+ACTIVE_DIR="$STATE/restore.active"
+if ! mkdir "$ACTIVE_DIR" 2>/dev/null; then
+  echo "OVERLAP $$" >> "$OVERLAP_LOG"
+fi
+sleep 0.02
+cur=""
+while IFS= read -r line; do
+  case "$line" in
+    \**) cur="${line#\* }" ; cur="${line#\*}" ;;
+    :*) ch="${line#:}" ; ch="${ch%% *}" ; : > "$STATE/$cur.$ch" ;;
+    "-I PREROUTING 1 "*)
+      rule="-A PREROUTING ${line#-I PREROUTING 1 }"
+      f="$STATE/$cur.PREROUTING"
+      tmp="$f.tmp.$$"
+      { printf '%s\n' "$rule"; [ -f "$f" ] && cat "$f"; } > "$tmp"
+      mv "$tmp" "$f"
+      ;;
+  esac
+done
+rmdir "$ACTIVE_DIR" 2>/dev/null || true
+exit 0
+`
+		_ = os.WriteFile(filepath.Join(bin, "iptables"), []byte(fakeIPTables), 0o755)
+		_ = os.WriteFile(filepath.Join(bin, "iptables-restore"), []byte(fakeRestore), 0o755)
+		_ = os.WriteFile(filepath.Join(bin, "ip"), []byte("#!/bin/sh\nexit 0\n"), 0o755)
+		_ = os.WriteFile(filepath.Join(bin, "ipset"), []byte("#!/bin/sh\nexit 0\n"), 0o755)
+		_ = os.WriteFile(filepath.Join(bin, "pidof"), []byte("#!/bin/sh\nexit 0\n"), 0o755)
+		_ = os.WriteFile(filepath.Join(bin, "logger"), []byte("#!/bin/sh\nexit 0\n"), 0o755)
+
+		script := strings.ReplaceAll(netfilterHookScript(true), "/opt/sbin/", bin+"/")
+		const workers = 10
+		var wg sync.WaitGroup
+		errs := make(chan error, workers)
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				tbl := "mangle"
+				if idx%2 == 1 {
+					tbl = "nat"
+				}
+				cmd := exec.Command("sh", "-c", script)
+				cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "type=iptables", "table="+tbl)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					errs <- fmt.Errorf("worker %d (%s): %v: %s", idx, tbl, err, out)
+				}
+			}(i)
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Fatalf("%s: %v", name, err)
+		}
+
+		if overlap, err := os.ReadFile(filepath.Join(state, "overlap.log")); err == nil && len(strings.TrimSpace(string(overlap))) > 0 {
+			t.Fatalf("%s: detected unserialized iptables-restore overlap:\n%s", name, string(overlap))
+		}
+		mangleDump, _ := os.ReadFile(filepath.Join(state, "mangle.PREROUTING"))
+		natDump, _ := os.ReadFile(filepath.Join(state, "nat.PREROUTING"))
+		if got := strings.Count(string(mangleDump), "-j "+ChainName); got != 1 {
+			t.Fatalf("%s: mangle PREROUTING jump count = %d, want 1\ndump:\n%s", name, got, mangleDump)
+		}
+		if got := strings.Count(string(natDump), "-j "+RedirectChain); got != 1 {
+			t.Fatalf("%s: nat PREROUTING jump count = %d, want 1\ndump:\n%s", name, got, natDump)
+		}
+	}
+
+	t.Run("wiped_concurrent", func(t *testing.T) { runScenario(t, "wiped_concurrent", false) })
+	t.Run("preseeded_duplicates_concurrent", func(t *testing.T) { runScenario(t, "preseeded_duplicates_concurrent", true) })
 }

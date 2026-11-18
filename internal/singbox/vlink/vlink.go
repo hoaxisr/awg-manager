@@ -105,8 +105,10 @@ func ParseLinkMany(input string) ([]ParsedOutbound, error) {
 	}
 	lower := strings.ToLower(input)
 	switch {
-	case strings.HasPrefix(lower, "vless://"):
+	case strings.HasPrefix(lower, "vless://") || strings.HasPrefix(lower, "fp://") || strings.HasPrefix(lower, "finiteproto://"):
 		return singleOutbound(parseVless(input))
+	case strings.HasPrefix(lower, "anytls://"):
+		return singleOutbound(parseAnyTLS(input))
 	case strings.HasPrefix(lower, "trojan://"):
 		return singleOutbound(parseTrojan(input))
 	case strings.HasPrefix(lower, "ss://"):
@@ -196,7 +198,7 @@ func ParseBatch(lines []string) BatchResult {
 
 // shareSchemeAnywhere — в строке есть схема ссылки, которую разбирает
 // ParseLinkMany (включая отброшенную vmess), в любом месте строки.
-var shareSchemeAnywhere = regexp.MustCompile(`(?i)(?:^|[^a-z0-9+.\-])(?:vless|trojan|ss|hysteria2|hy2|naive\+[a-z0-9]+|vpn|mieru|mierus|socks5?|tt|vmess)://`)
+var shareSchemeAnywhere = regexp.MustCompile(`(?i)(?:^|[^a-z0-9+.\-])(?:vless|finiteproto|fp|trojan|ss|hysteria2|hy2|anytls|naive\+[a-z0-9]+|vpn|mieru|mierus|socks5?|tt|vmess)://`)
 
 func detectScheme(line string) string {
 	if i := strings.Index(line, "://"); i > 0 {

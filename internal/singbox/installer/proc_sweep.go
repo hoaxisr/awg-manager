@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 // readProcCmdline parses /proc/<pid>/cmdline as null-byte separated argv.
@@ -67,6 +66,6 @@ func sweepOrphanProcesses(procDir string, expectArgv []string, trackedPid int, k
 // when there's no managed process).
 func SweepOrphans(expectArgv []string, trackedPid int) error {
 	return sweepOrphanProcesses("/proc", expectArgv, trackedPid, func(pid int) error {
-		return syscall.Kill(pid, syscall.SIGKILL)
+		return killPID(pid)
 	})
 }

@@ -295,3 +295,49 @@ func TestListTags_ManagedStoreFailurePropagates(t *testing.T) {
 		t.Error("отказ managed-стора проглочен")
 	}
 }
+
+func TestWriteFile_RespectsShouldWriteAndResetsLastBytes(t *testing.T) {
+	shouldWrite := true
+	cfgDir := t.TempDir()
+	netRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(netRoot, "t2s0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sb := &fakeSingbox{dir: cfgDir}
+	s := &ServiceImpl{
+		deps: Deps{
+			AWGTunnels:    &fakeAWGStore{tunnels: []AWGTunnelInfo{{ID: "a", Name: "A", BackendIface: "t2s0"}}},
+			SystemTunnels: &fakeSystemStore{},
+			Singbox:       sb,
+			ShouldWrite:   func() bool { return shouldWrite },
+		},
+		sysClassNet: netRoot,
+	}
+
+	if err := s.SyncAWGOutbounds(context.Background()); err != nil {
+		t.Fatalf("first sync: %v", err)
+	}
+	slotPath := filepath.Join(cfgDir, "15-awg.json")
+	if _, err := os.Stat(slotPath); err != nil {
+		t.Fatalf("expected 15-awg.json written: %v", err)
+	}
+
+	// Simulate sing-box purge: delete slot file and set ShouldWrite=false.
+	_ = os.Remove(slotPath)
+	shouldWrite = false
+	if err := s.SyncAWGOutbounds(context.Background()); err != nil {
+		t.Fatalf("sync while ShouldWrite=false: %v", err)
+	}
+	if _, err := os.Stat(slotPath); !os.IsNotExist(err) {
+		t.Fatalf("15-awg.json must NOT be recreated when ShouldWrite=false (err=%v)", err)
+	}
+
+	// Simulate sing-box reinstall: ShouldWrite=true must rewrite even identical payload (lastBytes reset).
+	shouldWrite = true
+	if err := s.SyncAWGOutbounds(context.Background()); err != nil {
+		t.Fatalf("sync after reinstall: %v", err)
+	}
+	if _, err := os.Stat(slotPath); err != nil {
+		t.Fatalf("expected 15-awg.json recreated after ShouldWrite=true: %v", err)
+	}
+}

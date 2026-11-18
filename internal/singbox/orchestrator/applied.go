@@ -4,8 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // appliedStatePath is the tmpfs location where the orchestrator records
@@ -20,8 +23,48 @@ var appliedStatePath = "/var/run/awg-manager/singbox-applied.json"
 // config to sing-box (start / SIGHUP / tun-restart), or clears (zero
 // value) after stopping the daemon.
 type appliedState struct {
-	Hash   string
-	HasTun bool
+	Hash      string
+	HasTun    bool
+	PID       int    `json:"pid,omitempty"`
+	ProcToken string `json:"procToken,omitempty"`
+}
+
+// clearAppliedState removes the persisted applied-state breadcrumb so a stopped
+// process generation cannot later be falsely adopted across restart/park cycles.
+func clearAppliedState(path string) error {
+	if path == "" {
+		return nil
+	}
+	err := os.Remove(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+// readProcStartToken returns an OS-level process generation token ("<pid>:<starttime>")
+// from /proc/<pid>/stat on Linux so PID reuse or external respawns cannot match
+// a stale singbox-applied.json breadcrumb. Returns "" when /proc is unavailable
+// or in mock/test environments without real PIDs.
+func readProcStartToken(pid int) string {
+	if pid <= 0 {
+		return ""
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return ""
+	}
+	line := string(data)
+	idx := strings.LastIndexByte(line, ')')
+	if idx < 0 || idx+1 >= len(line) {
+		return ""
+	}
+	fields := strings.Fields(line[idx+1:])
+	// After ") ", field index 0 in fields is proc field 3 (state); field 22 (starttime) is index 19.
+	if len(fields) <= 19 || fields[19] == "" {
+		return ""
+	}
+	return fmt.Sprintf("%d:%s", pid, fields[19])
 }
 
 // loadAppliedState reads the persisted applied-state from path. ok is

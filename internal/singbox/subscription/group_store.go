@@ -112,6 +112,12 @@ func NewGroupStore(path string) (*GroupStore, error) {
 }
 
 func (s *GroupStore) load() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadLocked()
+}
+
+func (s *GroupStore) loadLocked() error {
 	b, err := os.ReadFile(s.path)
 	if err != nil {
 		return err
@@ -123,11 +129,32 @@ func (s *GroupStore) load() error {
 	if err := json.Unmarshal(b, &list); err != nil {
 		return fmt.Errorf("subscription group store: parse %s: %w", s.path, err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, item := range list {
 		s.data[item.ID] = item
 	}
+	return nil
+}
+
+// Reload resets in-memory aggregate groups and re-reads subscription-groups.json from disk.
+// A missing file yields an empty store without error.
+func (s *GroupStore) Reload() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data = make(map[string]*AggregateGroup)
+	if err := s.loadLocked(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// Clear removes subscription-groups.json from disk and clears all in-memory aggregate groups.
+func (s *GroupStore) Clear() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove subscription group store: %w", err)
+	}
+	s.data = make(map[string]*AggregateGroup)
 	return nil
 }
 

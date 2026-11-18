@@ -47,6 +47,12 @@ func NewStore(path string) (*Store, error) {
 }
 
 func (s *Store) load() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadLocked()
+}
+
+func (s *Store) loadLocked() error {
 	b, err := os.ReadFile(s.path)
 	if err != nil {
 		return err
@@ -58,8 +64,6 @@ func (s *Store) load() error {
 	if err := json.Unmarshal(b, &list); err != nil {
 		return fmt.Errorf("subscription store: parse %s: %w", s.path, err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	needsSave := false
 	for _, item := range list {
 		if sanitizeLegacySubscriptionLastError(item) {
@@ -69,6 +73,35 @@ func (s *Store) load() error {
 	}
 	if needsSave {
 		_ = s.saveLocked()
+	}
+	return nil
+}
+
+// Reload resets in-memory subscriptions and re-reads subscriptions.json from disk.
+// A missing file yields an empty store without error.
+func (s *Store) Reload() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data = make(map[string]*Subscription)
+	if err := s.loadLocked(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if s.onChange != nil {
+		s.onChange()
+	}
+	return nil
+}
+
+// Clear removes subscriptions.json from disk and clears all in-memory subscriptions.
+func (s *Store) Clear() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove subscriptions store: %w", err)
+	}
+	s.data = make(map[string]*Subscription)
+	if s.onChange != nil {
+		s.onChange()
 	}
 	return nil
 }

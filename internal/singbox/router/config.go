@@ -270,7 +270,7 @@ func collapseNestedRules(r Rule) Rule {
 	case 1:
 		only := kept[0]
 		only.Action, only.Outbound = r.Action, r.Outbound
-		only.UDPTimeout, only.AwgmManaged = r.UDPTimeout, r.AwgmManaged
+		only.UDPTimeout, only.Timeout, only.AwgmManaged = r.UDPTimeout, r.Timeout, r.AwgmManaged
 		return only
 	}
 	return r
@@ -463,6 +463,12 @@ func (c *RouterConfig) MoveRule(from, to int) error {
 	return nil
 }
 
+// DefaultSniffTimeout bounds protocol payload sniffing on the system sniff
+// rule. sing-box defaults to 300ms when omitted, which expires prematurely when
+// a LAN client pauses before TLS ClientHello or router CPU load delays reads,
+// causing domain rules below sniff to miss and fall through to route.final.
+const DefaultSniffTimeout = "3s"
+
 func (c *RouterConfig) EnsureSystemRules(snifferEnabled bool) {
 	if c.Route.Final == "" {
 		c.Route.Final = "direct"
@@ -521,7 +527,13 @@ func (c *RouterConfig) EnsureSystemRules(snifferEnabled bool) {
 	// Predictable order inside the prepend block is [sniff, hijack-dns].
 	prepend := make([]Rule, 0, 2)
 	if snifferEnabled && !hasSniff {
-		prepend = append(prepend, Rule{Action: "sniff"})
+		prepend = append(prepend, Rule{Action: "sniff", Timeout: DefaultSniffTimeout})
+	} else if snifferEnabled {
+		for i := range c.Route.Rules {
+			if isSystemSniffRule(c.Route.Rules[i]) && c.Route.Rules[i].Timeout == "" {
+				c.Route.Rules[i].Timeout = DefaultSniffTimeout
+			}
+		}
 	}
 	if !hasHijack {
 		// Logical-or rule catches BOTH sniffed DNS (`protocol:dns`)

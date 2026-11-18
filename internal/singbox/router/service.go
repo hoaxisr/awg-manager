@@ -30,6 +30,8 @@ type Service interface {
 	// SwitchRoutingMode orchestrates a routing-mode transition (off↔tproxy↔
 	// fakeip-tun) with directional fail-closed rollback and progress events.
 	SwitchRoutingMode(ctx context.Context, target string) error
+	ParkForExternalEngine(ctx context.Context) error
+	ResumeFromExternalEngine(ctx context.Context) error
 	GetStatus(ctx context.Context) (Status, error)
 	GetSettings(ctx context.Context) (storage.SingboxRouterSettings, error)
 	UpdateSettings(ctx context.Context, s storage.SingboxRouterSettings) error
@@ -428,7 +430,11 @@ type Deps struct {
 	// nil, the real IsXtDscpAvailable probe runs. Tests set this to avoid
 	// exec'ing iptables.
 	XtDscpProbe func(context.Context) bool
-	GeoData     GeoTagExpander
+	// ListeningProbe is an optional override for checking whether sing-box
+	// tproxy/redirect inbound sockets are bound. When nil, the default procfs
+	// probe runs. Tests outside package router set this to avoid real procfs reads.
+	ListeningProbe func() bool
+	GeoData        GeoTagExpander
 	// GeoTagCounts даёт суммарные размеры geoip-тегов для бюджет-валидации
 	// BypassGeoIPTags и список .dat для наполнения набора обхода. Optional —
 	// nil в тестах; при nil бюджет не проверяется, а наполнение отдаёт ошибку.
@@ -537,6 +543,14 @@ type ServiceImpl struct {
 	// transitionReadinessProgress emits readiness heartbeats during
 	// waitForSingbox while SwitchRoutingMode is in flight (nil otherwise).
 	transitionReadinessProgress func(message string)
+	// deferPolicyWANForTransition is held under transitionMu during
+	// policy-tun -> (tproxy|fakeip-tun) switches so WAN stays denied in NDMS
+	// PolicyName until target interception is active AND held OpkgTun0 has
+	// finished its no-interface NDMS netfilter reload.
+	deferPolicyWANForTransition bool
+	// reapNetfilterSettleDelay waits for asynchronous NDMS netfilter reloads
+	// triggered by `no interface OpkgTun*` before re-permitting WAN in PolicyName.
+	reapNetfilterSettleDelay time.Duration
 
 	// ─── Применённое состояние netfilter ────────────────────────────────────
 	// appliedSpec, appliedBlackhole, netfilterStateKnown и
@@ -779,9 +793,10 @@ func NewService(d Deps) *ServiceImpl {
 	// creates it on first Enable.
 	refreshNetfilterHookIfPresent()
 	return &ServiceImpl{
-		deps:      d,
-		appLog:    appLog,
-		bypassLog: logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubBypassSet),
+		deps:                     d,
+		appLog:                   appLog,
+		bypassLog:                logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubBypassSet),
+		reapNetfilterSettleDelay: 3 * time.Second,
 	}
 }
 

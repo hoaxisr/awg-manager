@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -279,6 +280,7 @@ type fakeProc struct {
 	stops    int
 	reloads  int
 	startErr error
+	onStart  func()
 	order    []string // sequence of "start"/"stop"/"reload" calls
 }
 
@@ -298,6 +300,12 @@ func (p *fakeProc) IsRunning() (bool, int) {
 	return false, 0
 }
 func (p *fakeProc) Start() error {
+	p.mu.Lock()
+	onStart := p.onStart
+	p.mu.Unlock()
+	if onStart != nil {
+		onStart()
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.starts++
@@ -1431,5 +1439,196 @@ func TestMutate_UnchangedBytesDoNotRewriteFile(t *testing.T) {
 	}
 	if got := inodeOf(t, path); got == before {
 		t.Error("изменённые байты не записаны")
+	}
+}
+
+func TestReload_InflightColdStartAbortsOnConcurrentCancelAndStop(t *testing.T) {
+	fp := &fakeProc{}
+	o := newFakeOrch(t, t.TempDir(), fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SaveSilent(SlotRouter, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabledSilent(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+
+	var stopped atomic.Bool
+	checked := make(chan struct{})
+	proceed := make(chan struct{})
+	// Do not wrap close(checked) in sync.Once: Reload must consult shouldRun at most once.
+	o.SetShouldRun(func() bool {
+		allowed := !stopped.Load()
+		close(checked)
+		<-proceed
+		return allowed
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- o.Reload()
+	}()
+
+	select {
+	case <-checked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for shouldRun check")
+	}
+
+	stopped.Store(true)
+	o.CancelPendingReload()
+	if err := fp.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	close(proceed)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Reload returned unexpected error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Reload completion")
+	}
+
+	if running, _ := fp.IsRunning(); running {
+		t.Fatalf("in-flight Reload resurrected process after CancelPendingReload+Stop (calls=%v)", fp.calls())
+	}
+}
+
+func TestReload_SuppressAndStopSerializesWithInflightProcStart(t *testing.T) {
+	enteredStart := make(chan struct{})
+	allowStart := make(chan struct{})
+	var startOnce sync.Once
+	fp := &fakeProc{
+		onStart: func() {
+			startOnce.Do(func() { close(enteredStart) })
+			<-allowStart
+		},
+	}
+	o := newFakeOrch(t, t.TempDir(), fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SaveSilent(SlotRouter, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabledSilent(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+
+	var suppressed atomic.Bool
+	o.SetShouldRun(func() bool {
+		return !suppressed.Load()
+	})
+
+	reloadDone := make(chan error, 1)
+	go func() {
+		reloadDone <- o.Reload()
+	}()
+
+	select {
+	case <-enteredStart:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for in-flight Start()")
+	}
+
+	suppressed.Store(true)
+	stopDone := make(chan error, 1)
+	go func() {
+		stopDone <- o.SuppressAndStop(fp.Stop)
+	}()
+
+	// SuppressAndStop must wait for the in-flight proc.Start() before stopping.
+	select {
+	case err := <-stopDone:
+		t.Fatalf("SuppressAndStop returned prematurely (%v) while Start() was still in flight", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(allowStart)
+
+	select {
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatalf("SuppressAndStop returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for SuppressAndStop")
+	}
+	select {
+	case err := <-reloadDone:
+		if err != nil {
+			t.Fatalf("Reload returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Reload")
+	}
+
+	if running, _ := fp.IsRunning(); running {
+		t.Fatalf("process remained running after SuppressAndStop (calls=%v)", fp.calls())
+	}
+	if err := o.Reload(); err != nil {
+		t.Fatalf("subsequent Reload error: %v", err)
+	}
+	if running, _ := fp.IsRunning(); running {
+		t.Fatalf("process started on subsequent suppressed Reload (calls=%v)", fp.calls())
+	}
+}
+
+func TestReload_TunRestartAbortsOnConcurrentCancelAndStop(t *testing.T) {
+	fp := &fakeProc{running: true}
+	o := newFakeOrch(t, t.TempDir(), fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SaveSilent(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabledSilent(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+
+	var stopped atomic.Bool
+	checked := make(chan struct{})
+	proceed := make(chan struct{})
+	o.SetShouldRun(func() bool {
+		allowed := !stopped.Load()
+		close(checked)
+		<-proceed
+		return allowed
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- o.Reload()
+	}()
+
+	select {
+	case <-checked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for tun-restart shouldRun check")
+	}
+
+	stopped.Store(true)
+	o.CancelPendingReload()
+	close(proceed)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Reload returned unexpected error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Reload completion")
+	}
+
+	if running, _ := fp.IsRunning(); running {
+		t.Fatalf("in-flight tun restart resurrected process after CancelPendingReload (calls=%v)", fp.calls())
 	}
 }

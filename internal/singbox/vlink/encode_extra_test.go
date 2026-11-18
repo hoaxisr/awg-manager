@@ -83,7 +83,7 @@ func TestEncode_LabelRoundTrip(t *testing.T) {
 // emitting a malformed share-link.
 func TestEncodeOutbound_ErrorBranches(t *testing.T) {
 	cases := map[string]string{
-		"unsupported type":    `{"type":"vmess","server":"h","server_port":443,"uuid":"u"}`,
+		"unsupported type":    `{"type":"tuic","server":"h","server_port":443,"uuid":"u"}`,
 		"ss missing password": `{"type":"shadowsocks","server":"h","server_port":8388,"method":"aes-256-gcm"}`,
 		"ss missing method":   `{"type":"shadowsocks","server":"h","server_port":8388,"password":"p"}`,
 		"vless missing uuid":  `{"type":"vless","server":"h","server_port":443}`,

@@ -63,6 +63,9 @@ func (s *ServiceImpl) SyncKeenDNSPreset(ctx context.Context) {
 		s.appLog.Warn("keendns-preset", "", err.Error())
 		return
 	}
+	if isFircRoutingEngine(settings.SingboxRouter) {
+		return
+	}
 	sr, err := NormalizeSingboxRouterSettings(settings.SingboxRouter)
 	if err != nil {
 		s.appLog.Warn("keendns-preset", "", err.Error())
@@ -79,6 +82,14 @@ func (s *ServiceImpl) SyncKeenDNSPreset(ctx context.Context) {
 // NDMS не зависит: провайдер нужен только ради адресов обхода и FQDN вне
 // известных зон. Сбой NDMS оставляет последний удачный обход как есть.
 func (s *ServiceImpl) syncKeenDNSPreset(ctx context.Context, sr storage.SingboxRouterSettings) {
+	if isFircRoutingEngine(sr) {
+		return
+	}
+	if s.deps.Settings != nil {
+		if settings, err := s.deps.Settings.Get(); err == nil && isFircRoutingEngine(settings.SingboxRouter) {
+			return
+		}
+	}
 	infoProv, sync := s.keenDNSPreset()
 	if sync == nil {
 		return

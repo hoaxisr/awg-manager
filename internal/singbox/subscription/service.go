@@ -1047,6 +1047,67 @@ func (s *Service) OwnedOutboundTags(sub *Subscription) []string {
 	return append(tags, slotOrphans(sub, s.mutator.DeclaredOutboundTags(), sub.MemberTags, sub.OrphanTags)...)
 }
 
+// ResetMemoryAndClearFiles clears subscriptions and aggregate groups both
+// on disk and in memory without committing or reloading sing-box (used when
+// sing-box itself has been stopped and uninstalled).
+func (s *Service) ResetMemoryAndClearFiles() error {
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+	s.groupMu.Lock()
+	defer s.groupMu.Unlock()
+	return s.withTx(func() error {
+		if r, ok := s.mutator.(interface{ Reset() }); ok {
+			r.Reset()
+		}
+		var errs []error
+		if s.store != nil {
+			if err := s.store.Clear(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if s.groups != nil {
+			if err := s.groups.Clear(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	})
+}
+
+// ReloadFromDisk reloads subscriptions, aggregate groups, happ keys, and the
+// 13-subscriptions.json adapter slot from disk after a snapshot or saved-config
+// restore.
+func (s *Service) ReloadFromDisk(configDir string) error {
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+	s.groupMu.Lock()
+	defer s.groupMu.Unlock()
+	return s.withTx(func() error {
+		var errs []error
+		if s.store != nil {
+			if err := s.store.Reload(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if s.groups != nil {
+			if err := s.groups.Reload(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if err := s.LoadHappKeys(); err != nil {
+			errs = append(errs, err)
+		}
+		if configDir != "" {
+			if rl, ok := s.mutator.(interface{ ReloadFromDisk(string) error }); ok {
+				if err := rl.ReloadFromDisk(configDir); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		}
+		return errors.Join(errs...)
+	})
+}
+
 // Delete tears down a subscription unconditionally: the NDMS ProxyN, mixed
 // inbound, selector outbound, route rule, and per-member outbounds are all
 // removed. ConfigMutator errors are non-blocking — sing-box config may have
@@ -2459,4 +2520,9 @@ func sanitizeMemberTunnelTag(label, proto, server string, port int) string {
 		return proto
 	}
 	return "tunnel"
+}
+
+// ParseSubscriptionBody parses a subscription body into sing-box outbounds.
+func ParseSubscriptionBody(body []byte, ct string) vlink.BatchResult {
+	return parseSubscriptionBody(body, ct)
 }

@@ -1481,6 +1481,28 @@ func (o *Operator) ApplyCacheFileLocation(location string) error {
 	return err
 }
 
+// EnsureConfigDirInitialized idempotently creates config.d/, 00-base.json, and
+// 99-defaults.json if missing and reconciles the orchestrator slot map against disk.
+func (o *Operator) EnsureConfigDirInitialized() {
+	if o == nil || strings.TrimSpace(o.configPath) == "" {
+		return
+	}
+	ensureBaseConfig(
+		o.configPath,
+		o.desiredSingboxLogLevel(),
+		o.desiredBootstrapDNS(),
+		o.desiredClashPort(),
+		o.desiredCacheLocation(),
+		o.log,
+	)
+	reconcileDerivedDefaults(o.configPath, o.log)
+	if o.orch != nil {
+		if err := o.orch.Bootstrap(); err != nil && o.log != nil {
+			o.log.Warn("singbox config init: orchestrator bootstrap failed", "err", err)
+		}
+	}
+}
+
 // mutateBase — общий транспорт правки 00-base.json: прочитать, дать мутатору
 // решить, менять ли (false — выходим без записи), записать через
 // оркестратор — там валидация merged-конфига и коалесцированный reload.
@@ -1668,4 +1690,40 @@ func (o *Operator) checkOutboundFeatures() error {
 		return fmt.Errorf("unsupported outbound type in config.d:\n  %s", strings.Join(unsupported, "\n  "))
 	}
 	return nil
+}
+
+// baseConfigSuppressesStderrStartLine reports whether 00-base.json suppresses
+// or redirects logs away from Process's stderr log file so sing-box will not
+// emit "sing-box started" onto sing-box.err.log.
+func (o *Operator) baseConfigSuppressesStderrStartLine() bool {
+	if o == nil || o.configPath == "" {
+		return false
+	}
+	base, ok := readSlotJSON("started-line-check", filepath.Join(o.configPath, "00-base.json"), nil)
+	if !ok {
+		return false
+	}
+	logCfg, _ := base["log"].(map[string]any)
+	if logCfg == nil {
+		return false
+	}
+	if disabled, _ := logCfg["disabled"].(bool); disabled {
+		return true
+	}
+	if lvl, _ := logCfg["level"].(string); lvl != "" {
+		switch strings.ToLower(strings.TrimSpace(lvl)) {
+		case "trace", "debug", "info":
+		default:
+			return true
+		}
+	}
+	if rawOut, _ := logCfg["output"].(string); rawOut != "" {
+		out := strings.TrimSpace(rawOut)
+		if out != "" && out != "stderr" && out != "/dev/stderr" {
+			if o.proc == nil || filepath.Clean(out) != filepath.Clean(o.proc.errLogPath()) {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -383,7 +383,7 @@ func (o *Operator) addParsedOutboundsLocked(ctx context.Context, logAction strin
 	// чужое или вечно упирались в сироту. Следующая попытка выберет индекс по
 	// свежему списку; оставленное уходит в метку отложенного сноса (F577).
 	var unslotted []string
-	if ndmsProxyEnabled {
+	if ndmsProxyEnabled && !o.AreProxiesParked() {
 		for _, t := range all {
 			for _, newTag := range addedTags {
 				if t.Tag != newTag {
@@ -615,7 +615,7 @@ func (o *Operator) RenameTunnel(ctx context.Context, oldTag, newTag string) erro
 	// откатывать нечего. Цена: без RCI в режиме NDMS Proxy туннель не
 	// переименовать (осознанная потеря).
 	proxyIdx := -1
-	if o.isNDMSProxyEnabled() && renamed.ProxyInterface != "" {
+	if o.isNDMSProxySyncAllowed() && renamed.ProxyInterface != "" {
 		if idx, err := parseProxyIdx(renamed.ProxyInterface); err == nil && idx >= 0 {
 			proxyIdx = idx
 		}
