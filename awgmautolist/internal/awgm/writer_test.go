@@ -369,6 +369,112 @@ func bindableSetup(f *fakeAWGM) {
 	f.bindable = []map[string]any{{"name": "br0"}, {"name": "eth3"}}
 }
 
+func TestWriterRefreshTargetOutboundBindable(t *testing.T) {
+	f := newFakeAWGMWriter(t)
+	bindableSetup(f)
+	w := NewWriter(f.client)
+
+	// Add binds the own outbound to br0.
+	if _, err := w.Add(context.Background(), domainTarget("one.example"), "br0"); err != nil {
+		t.Fatal(err)
+	}
+	writesBefore := len(f.writesSnapshot())
+	applied := f.appliedCount()
+
+	// Refresh to eth3: the own outbound's bind_interface is updated and the
+	// draft applied — without adding a destination.
+	res, err := w.RefreshTargetOutbound(context.Background(), "eth3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Persisted || res.Outbound != targetOutboundTag {
+		t.Fatalf("refresh=%+v", res)
+	}
+	updated := false
+	for _, ob := range f.outbounds {
+		if ob["tag"] == targetOutboundTag && ob["bind_interface"] == "eth3" {
+			updated = true
+		}
+	}
+	if !updated {
+		t.Fatalf("outbound not re-pointed: %+v", f.outbounds)
+	}
+	if f.appliedCount() != applied+1 {
+		t.Fatalf("applies=%d, want %d", f.appliedCount(), applied+1)
+	}
+	if len(f.writesSnapshot()) <= writesBefore {
+		t.Fatalf("refresh wrote nothing: %v", f.writesSnapshot())
+	}
+
+	// Refresh to the same interface: consistent state is a no-op.
+	res, err = w.RefreshTargetOutbound(context.Background(), "eth3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Persisted {
+		t.Fatalf("no-op refresh=%+v", res)
+	}
+	if f.appliedCount() != applied+1 {
+		t.Fatalf("no-op applied extra draft: %d", f.appliedCount())
+	}
+}
+
+func TestWriterRefreshTargetOutboundManagedTunnel(t *testing.T) {
+	f := newFakeAWGMWriter(t)
+	f.awgTags = []map[string]any{{"tag": "awg-tun", "iface": "nwg9"}}
+	w := NewWriter(f.client)
+
+	// Add maps the owner rule onto the tunnel's outbound.
+	if _, err := w.Add(context.Background(), domainTarget("one.example"), "nwg9"); err != nil {
+		t.Fatal(err)
+	}
+	applied := f.appliedCount()
+
+	// Refresh to another tunnel: the owner rule is rewritten (the mapping
+	// changed), no outbound object is written (catalog mapping owns it).
+	f.awgTags = append(f.awgTags, map[string]any{"tag": "awg-tun2", "iface": "nwg10"})
+	res, err := w.RefreshTargetOutbound(context.Background(), "nwg10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Persisted || res.Outbound != "awg-tun2" {
+		t.Fatalf("refresh=%+v", res)
+	}
+	if len(f.rules) != 1 || f.rules[0]["outbound"] != "awg-tun2" {
+		t.Fatalf("owner=%+v", f.rules)
+	}
+	if f.appliedCount() != applied+1 {
+		t.Fatalf("applies=%d, want %d", f.appliedCount(), applied+1)
+	}
+}
+
+func TestWriterRefreshWithoutOwnerRuleNoOp(t *testing.T) {
+	f := newFakeAWGMWriter(t)
+	bindableSetup(f)
+	w := NewWriter(f.client)
+
+	// No owner rule: nothing to re-point, no writes at all.
+	res, err := w.RefreshTargetOutbound(context.Background(), "br0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Persisted || res.Outbound != "" {
+		t.Fatalf("refresh without owner=%+v", res)
+	}
+	if writes := f.writesSnapshot(); len(writes) != 0 {
+		t.Fatalf("wrote without owner rule: %v", writes)
+	}
+}
+
+func TestWriterRefreshInvalidInterface(t *testing.T) {
+	f := newFakeAWGMWriter(t)
+	bindableSetup(f)
+	w := NewWriter(f.client)
+	if _, err := w.RefreshTargetOutbound(context.Background(), "br 0"); err == nil {
+		t.Fatal("expected interface validation error")
+	}
+}
+
 func TestWriterAddDomainIPv4AndIPv6(t *testing.T) {
 	f := newFakeAWGMWriter(t)
 	bindableSetup(f)

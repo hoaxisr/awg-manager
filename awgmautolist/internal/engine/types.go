@@ -30,6 +30,11 @@ type WriteResult = awgm.WriteResult
 type Writer interface {
 	Add(context.Context, model.Target, string) (WriteResult, error)
 	Remove(context.Context, model.Target, string) (WriteResult, error)
+	// RefreshTargetOutbound re-points the owner rule and own outbound at the
+	// outbound mapped from targetInterface without adding a destination.
+	// Called after a targetInterface config change so existing entries
+	// follow the new tunnel immediately.
+	RefreshTargetOutbound(context.Context, string) (WriteResult, error)
 }
 
 // The concrete AWGM writer must satisfy the interface without an adapter.

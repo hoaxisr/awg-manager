@@ -26,6 +26,44 @@ func (w partialWriter) Add(context.Context, model.Target, string) (WriteResult, 
 func (w partialWriter) Remove(context.Context, model.Target, string) (WriteResult, error) {
 	return w.result, w.err
 }
+func (w partialWriter) RefreshTargetOutbound(context.Context, string) (WriteResult, error) {
+	return w.result, w.err
+}
+
+func TestPatchConfigTargetInterfaceChangeRefreshesOutbound(t *testing.T) {
+	h := newHarness(t, nil)
+	if _, err := h.engine.PatchConfig([]byte(`{"targetInterface":"nwg0"}`)); err != nil {
+		t.Fatal(err)
+	}
+	h.engine.deps.Writer.(*fakeWriter).mu.Lock()
+	refreshes := append([]string(nil), h.engine.deps.Writer.(*fakeWriter).refreshes...)
+	h.engine.deps.Writer.(*fakeWriter).mu.Unlock()
+	if len(refreshes) != 1 || refreshes[0] != "nwg0" {
+		t.Fatalf("refreshes=%v, want [nwg0]", refreshes)
+	}
+
+	// Same value: no second refresh.
+	if _, err := h.engine.PatchConfig([]byte(`{"targetInterface":"nwg0"}`)); err != nil {
+		t.Fatal(err)
+	}
+	h.engine.deps.Writer.(*fakeWriter).mu.Lock()
+	refreshes = h.engine.deps.Writer.(*fakeWriter).refreshes
+	h.engine.deps.Writer.(*fakeWriter).mu.Unlock()
+	if len(refreshes) != 1 {
+		t.Fatalf("refreshes=%v, want no extra refresh", refreshes)
+	}
+
+	// Writer failure does not fail the patch and is reported via lastError.
+	h.engine.deps.Writer.(*fakeWriter).mu.Lock()
+	h.engine.deps.Writer.(*fakeWriter).err = errors.New("apply failed")
+	h.engine.deps.Writer.(*fakeWriter).mu.Unlock()
+	if _, err := h.engine.PatchConfig([]byte(`{"targetInterface":"nwg1"}`)); err != nil {
+		t.Fatalf("patch must not fail on writer error: %v", err)
+	}
+	if le := h.engine.Status().LastError; !strings.Contains(le, "apply failed") {
+		t.Fatalf("lastError=%q, want apply failure", le)
+	}
+}
 
 func TestMonitorWANUsesResolvedDirectPath(t *testing.T) {
 	h := newHarness(t, nil)
