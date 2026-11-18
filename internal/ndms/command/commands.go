@@ -15,6 +15,7 @@ type Commands struct {
 	Policies     *PolicyCommands
 	Routes       *RouteCommands
 	NAT          *NATCommands
+	HTTPProxy    *HTTPProxyCommands
 	DNSRoutes    *DNSRouteCommands
 	ObjectGroups *ObjectGroupCommands
 	PingCheck    *PingCheckCommands
@@ -39,6 +40,7 @@ func NewCommands(d Deps) *Commands {
 		Policies:     NewPolicyCommands(d.Poster, d.Save, d.Queries),
 		Routes:       NewRouteCommands(d.Poster, d.Save, d.Queries),
 		NAT:          NewNATCommands(d.Poster, d.Save, d.Queries),
+		HTTPProxy:    NewHTTPProxyCommands(d.Poster, d.Save, d.Queries),
 		DNSRoutes:    NewDNSRouteCommands(d.Poster, d.Save, d.Queries, d.IsOS5),
 		ObjectGroups: NewObjectGroupCommands(d.Poster, d.Save, d.Queries),
 		PingCheck:    NewPingCheckCommands(d.Poster, d.Save, d.Queries),

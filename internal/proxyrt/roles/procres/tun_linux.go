@@ -7,10 +7,15 @@ import (
 	"fmt"
 	"os"
 
-	"golang.org/x/sys/unix"
-
+	"github.com/hoaxisr/awg-manager/awgmproto"
 	"github.com/hoaxisr/awg-manager/internal/netdev"
+	"golang.org/x/sys/unix"
 )
+
+func isProtoBusy(err error) bool {
+	var pe *awgmproto.Error
+	return errors.As(err, &pe) && pe.Code == awgmproto.CodeBusy
+}
 
 // openTunDev — шов над open("/dev/net/tun"): тест проверяет, что при
 // отсутствующем устройстве до TUNSETIFF дело не доходит.
