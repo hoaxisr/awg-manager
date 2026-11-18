@@ -150,7 +150,8 @@ jobs:
           go test -count=1 -race \
             ./internal/xhttpserver/... \
             ./internal/fpclient/... \
-            ./internal/vlessserver/...
+            ./internal/vlessserver/... \
+            ./internal/firc/...
 
   autolist:
     name: Autolist satellite checks
