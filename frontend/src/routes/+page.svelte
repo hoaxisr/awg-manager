@@ -36,12 +36,17 @@
 	import { runZapretControl, ZapretServiceCard } from '$lib/components/zapret';
 	import { Awg3TunnelsSection, Awg3ImportModal } from '$lib/components/awg3';
 	import { getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
-	import { usageLevel, settings } from '$lib/stores/settings';
+	import { usageLevel, settings, reloadSettings } from '$lib/stores/settings';
 	import { isSectionVisible, isTunnelDashboardAvailable } from '$lib/types/usageLevel';
-	import { subscriptionsStore } from '$lib/stores/subscriptions';
+	import { subscriptionsStore, subscriptionGroupsStore } from '$lib/stores/subscriptions';
 	import SubscriptionsTabSection from '$lib/components/subscriptions/SubscriptionsTabSection.svelte';
 	import SingboxTunnelsTabSection from '$lib/components/singbox/SingboxTunnelsTabSection.svelte';
+	import FircTunnelsTabSection from '$lib/components/firc/FircTunnelsTabSection.svelte';
+	import FircTunnelEditModal from '$lib/components/firc/FircTunnelEditModal.svelte';
 	import AwgTunnelsTabSection from '$lib/components/tunnels/AwgTunnelsTabSection.svelte';
+	import { fircStatus, fircTunnels, fircTunnelsState, reloadFircAll } from '$lib/stores/firc';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { fircMigrationAppliedNonce } from '$lib/stores/fircMigrationModal';
 	import DashboardFlatSection from '$lib/components/tunnels/DashboardFlatSection.svelte';
 	import TunnelPageModals from '$lib/components/tunnels/TunnelPageModals.svelte';
 	import type { DashboardFlatContext } from '$lib/components/tunnels/dashboardFlatContext';
@@ -118,7 +123,7 @@
 		type SubscriptionSortKey,
 	} from '$lib/stores/tunnelTableSort';
 
-	type TunnelTab = 'awg' | 'singbox' | 'subscriptions' | 'awg3';
+	type TunnelTab = 'awg' | 'singbox' | 'subscriptions' | 'awg3' | 'firc';
 	type AwgTunnelViewMode = 'cards' | 'compact' | 'list';
 	type TunnelSurfaceLayout = SingboxLayoutMode | 'cards';
 
@@ -139,8 +144,23 @@
 	// the last unsubscribe stops polling. `$tunnels` yields a
 	// PollingState<TunnelsSnapshot> — unwrap below.
 	let unsubTunnels: (() => void) | undefined;
-	onMount(() => { unsubTunnels = tunnels.subscribe(() => {}); });
-	onDestroy(() => unsubTunnels?.());
+	let fircPollTimer: ReturnType<typeof setInterval> | null = null;
+	onMount(() => {
+		unsubTunnels = tunnels.subscribe(() => {});
+		fircPollTimer = setInterval(async () => {
+			if (!isSectionVisible($usageLevel, 'singboxTunnels')) return;
+			try {
+				const st = await api.fircGetTunnelsState();
+				if (st) fircTunnelsState.set(st);
+			} catch {
+				// ignore poll error
+			}
+		}, 3000);
+	});
+	onDestroy(() => {
+		unsubTunnels?.();
+		if (fircPollTimer) clearInterval(fircPollTimer);
+	});
 
 	let trafficTick = $state(0);
 	let unsubTraffic: (() => void) | undefined;
@@ -713,8 +733,39 @@
 		return value === 'cards' || value === 'compact' || value === 'list';
 	}
 
-	// AWG | Sing-box ▾ (Туннели / Подписки / WG endpoints) | FreeTurn · WDTT
+	// AWG | Sing-box ▾ (Туннели / Подписки / WG endpoints) | FIRC
 	const showSingboxTunnelTabs = $derived(isSectionVisible($usageLevel, 'singboxTunnels'));
+	const sbRouterSettings = singboxRouter.settings;
+	const fircOwnsRouting = $derived(
+		$fircStatus !== null ? Boolean($fircStatus.selected) : $sbRouterSettings?.routingEngine === 'firc',
+	);
+	let fircSingleTunnels = $derived(
+		$fircTunnels.filter((t) => !(t.sources ?? []).some((s) => s.kind === 'subscription')),
+	);
+	let fircSubTunnels = $derived(
+		$fircTunnels.filter((t) => (t.sources ?? []).some((s) => s.kind === 'subscription')),
+	);
+	const dashboardShowFirc = $derived(
+		showSingboxTunnelTabs &&
+			$fircTunnels.length > 0 &&
+			(fircOwnsRouting || Boolean($fircStatus?.running)),
+	);
+	function filterFircForDashboard(list: import('$lib/types/firc').FircTunnel[]) {
+		const q = dashboardSearchQuery.trim().toLowerCase();
+		if (!q) return list;
+		return list.filter((t) =>
+			[
+				t.device,
+				t.description ?? '',
+				t.id,
+				...(t.order ?? []),
+				...(t.sources ?? []).map((s) => `${s.name ?? ''} ${s.url ?? ''} ${s.link ?? ''}`),
+			].some((v) => v.toLowerCase().includes(q)),
+		);
+	}
+	let dashboardFircProxies = $derived(dashboardShowFirc ? filterFircForDashboard(fircSingleTunnels) : []);
+	let dashboardFircSubscriptions = $derived(dashboardShowFirc ? filterFircForDashboard(fircSubTunnels) : []);
+	let dashboardFircCount = $derived(dashboardFircProxies.length + dashboardFircSubscriptions.length);
 	const singboxMenuChildren = $derived(
 		[
 			showSingboxTunnelTabs
@@ -737,6 +788,14 @@
 							label: 'Sing-box',
 							separatorBefore: true,
 							children: singboxMenuChildren,
+						}
+					: null,
+				showSingboxTunnelTabs
+					? {
+							id: 'firc',
+							label: m.tunnels_tab_firc(),
+							badge: $fircTunnels.length,
+							separatorBefore: true,
 						}
 					: null,
 			] as ({
@@ -778,6 +837,9 @@
 			awgViewMode = stored;
 		}
 		awgViewModeReady = true;
+		if (showSingboxTunnelTabs) {
+			void reloadFircAll();
+		}
 
 		// Backward compatible migration:
 		// if per-tab keys are missing, fall back to the old shared sing-box layout key.
@@ -1311,14 +1373,17 @@
 	// sections are visible at this usage level AND sing-box is installed (or
 	// its status is still probing). Hidden/unavailable sections must not leak
 	// into the merged flat list, section headers or counts.
+	let dashboardSingboxActiveGate = $derived(
+		dashboardSingboxVisible && !(dashboardShowFirc && fircOwnsRouting),
+	);
 	let dashboardSingboxTunnels = $derived(
-		dashboardSingboxVisible ? sortedFilteredSingboxTunnels : [],
+		dashboardSingboxActiveGate ? sortedFilteredSingboxTunnels : [],
 	);
 	let dashboardSubscriptionsActive = $derived(
-		dashboardSingboxVisible ? sortedFilteredSubscriptionsActiveCards : [],
+		dashboardSingboxActiveGate ? sortedFilteredSubscriptionsActiveCards : [],
 	);
 	let dashboardSubscriptionsStopped = $derived(
-		dashboardSingboxVisible ? sortedFilteredSubscriptionsListRows : [],
+		dashboardSingboxActiveGate ? sortedFilteredSubscriptionsListRows : [],
 	);
 	let dashboardSubscriptionsCount = $derived(
 		dashboardSubscriptionsActive.length + dashboardSubscriptionsStopped.length,
@@ -1349,7 +1414,9 @@
 			system: sortedFilteredSystemList,
 			external: sortedFilteredExternalList,
 			awg3: dashboardAwg3Tunnels,
+			fircProxies: dashboardFircProxies,
 			singbox: dashboardSingboxTunnels,
+			fircSubscriptions: dashboardFircSubscriptions,
 			subscriptionsActive: dashboardSubscriptionsActive,
 			subscriptionsStopped: dashboardSubscriptionsStopped,
 		});
@@ -1476,7 +1543,8 @@
 				: awgFilteredRowsCount +
 					dashboardSingboxTunnels.length +
 					dashboardSubscriptionsCount +
-					dashboardAwg3Tunnels.length,
+					dashboardAwg3Tunnels.length +
+					dashboardFircCount,
 	);
 	let dashboardFilterEmpty = $derived(
 		dashboardOn &&
@@ -1491,6 +1559,7 @@
 			dashboardAwg3Tunnels.length === 0 &&
 			dashboardSingboxTunnels.length === 0 &&
 			dashboardSubscriptionsCount === 0 &&
+			(!dashboardShowFirc || $fircTunnels.length === 0) &&
 			dashboardSearchQuery.trim() === '',
 	);
 	// Named gates for the three per-kind template blocks. They legitimately
@@ -1517,9 +1586,30 @@
 	// AWG3 — секция с собственным тулбаром/импортом. В сплошном/теговом дашборде
 	// карточки AWG3 приходят через плоский поток (buildFlatDashboardItems); в
 	// секциях «по типу» рендерится эта секция с подавленным тулбаром, как sing-box.
+	let lastMigrationNonce = 0;
+	$effect(() => {
+		const nonce = $fircMigrationAppliedNonce;
+		if (nonce > lastMigrationNonce) {
+			lastMigrationNonce = nonce;
+			void Promise.allSettled([
+				reloadFircAll(),
+				reloadSettings(),
+				singboxStatus.refetch(),
+				singboxTunnels.refetch(),
+				subscriptionsStore.refetch(),
+				subscriptionGroupsStore.refetch(),
+				tunnels.refetch(),
+			]);
+		}
+	});
+
 	let showAwg3Block = $derived(
 		(!dashboardOn && activeTab === 'awg3') ||
 			(dashboardTypeSections && dashboardAwg3Tunnels.length > 0),
+	);
+	let showFircBlock = $derived(
+		(!dashboardOn && activeTab === 'firc') ||
+			(dashboardTypeSections && dashboardFircCount > 0),
 	);
 
 	// Единый класс сетки для сплошного и тегового карточных видов — классы
@@ -1543,7 +1633,9 @@
 		'awg-system': 'system',
 		'awg-external': 'external',
 		awg3: 'AWG3',
+		'firc-proxy': 'FIRC',
 		singbox: 'sing-box',
+		'firc-subscription': m.tunnels_kind_firc_subscription(),
 		'sub-active': m.tunnels_kind_subscription(),
 		'sub-stopped': m.tunnels_kind_subscription(),
 	});
@@ -1552,15 +1644,22 @@
 	// Sing-box и подписки учитываются только когда их данные допущены в дашборд.
 	let dashboardSummaryStats = $derived.by(() => {
 		if (!dashboardOn) return [];
-		const sb = dashboardSingboxVisible ? singboxTunnelListStats : null;
-		const subs = dashboardSingboxVisible ? singboxSubscriptionsTrafficStats : null;
+		const sb = dashboardSingboxActiveGate ? singboxTunnelListStats : null;
+		const subs = dashboardSingboxActiveGate ? singboxSubscriptionsTrafficStats : null;
+		const fircTotal = dashboardShowFirc ? $fircTunnels.length : 0;
+		const fircActive = dashboardShowFirc
+			? $fircTunnels.filter(
+					(t) => t.enable && $fircTunnelsState.find((s) => s.id === t.id)?.status === 'up',
+				).length
+			: 0;
 		// AWG3 — sing-box endpoint'ы без running/traffic-метрик, поэтому в дробь
 		// «активно/всего» они не входят вовсе: попадая только в знаменатель, они
 		// вечно читались как неактивные. Их количество — отдельной подписью.
 		const awg3Count = dashboardAwg3Tunnels.length;
-		const totalAll = awgSummaryTotal + (sb?.count ?? 0) + (subs?.count ?? 0);
-		const totalActive = awgSummaryActive + (sb?.running ?? 0) + (subs?.activeCount ?? 0);
+		const totalAll = awgSummaryTotal + (sb?.count ?? 0) + (subs?.count ?? 0) + fircTotal;
+		const totalActive = awgSummaryActive + (sb?.running ?? 0) + (subs?.activeCount ?? 0) + fircActive;
 		const kinds = [`AWG ${awgSummaryActive}/${awgSummaryTotal}`];
+		if (fircTotal > 0) kinds.push(m.firc_summary_chip({ active: fircActive, total: fircTotal }));
 		if (sb) kinds.push(`Sing-box ${sb.running}/${sb.count}`);
 		if (subs) kinds.push(m.tunnels_summary_subscriptions({ active: subs.activeCount, total: subs.count }));
 		if (awg3Count > 0) kinds.push(`AWG3 ${awg3Count}`);
@@ -1901,6 +2000,24 @@
 				bind:layoutMode={awg3TunnelsLayoutMode}
 			/>
 		{/if}
+		{#if dashboardTypeSections && dashboardFircCount > 0}
+			<TunnelSectionHeader
+				title={m.tunnels_section_firc()}
+				count={dashboardFircCount}
+				countLabel={m.tunnels_unit_tunnels({ count: dashboardFircCount })}
+			/>
+		{/if}
+		{#if showFircBlock}
+			<FircTunnelsTabSection
+				dashboardMode={dashboardOn}
+				showTrustTunnels={false}
+				onOpenSingboxDetail={openSingboxDetail}
+				embedEditModal={false}
+				effectiveLayoutOverride={dashboardOn ? effectiveSingboxTunnelsEffectiveLayout : undefined}
+				effectiveRenderModeOverride={dashboardOn ? effectiveSingboxTunnelsRenderMode : undefined}
+				searchQueryOverride={dashboardOn ? dashboardSearchQuery : undefined}
+			/>
+		{/if}
 	{/if}
 </PageContainer>
 
@@ -1920,6 +2037,7 @@
 {/if}
 
 <TunnelPageModals ctx={pageModalsCtx} />
+<FircTunnelEditModal />
 
 {#if awg3Visible}
 	<!-- Импорт AWG3: из меню «Создать», empty-state и вкладки WG endpoints. -->

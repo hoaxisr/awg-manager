@@ -1,5 +1,9 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
+	import { settings } from '$lib/stores/settings';
+	import { fircStatus } from '$lib/stores/firc';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { openFircMigrationModal } from '$lib/stores/fircMigrationModal';
 	// Вкладка «Sing-box туннели» страницы туннелей — выделено из
 	// routes/+page.svelte (класс 2): разметка дословно, состояние — пропсами.
 	import { StatStrip, Stat, LayoutViewToggle, Button, Badge, TableSortHeader } from '$lib/components/ui';
@@ -57,6 +61,11 @@
 		openWizard,
 		openAwg3Import,
 	}: Props = $props();
+
+	const sbRouterSettings = singboxRouter.settings;
+	const fircOwnsRouting = $derived(
+		$fircStatus !== null ? $fircStatus.selected : $sbRouterSettings?.routingEngine === 'firc',
+	);
 </script>
 
 {#snippet createIcon()}
@@ -165,6 +174,14 @@
 			</div>
 		</div>
 	{:else if singboxTunnelsList.length > 0 || (dashboardOn && dashboardSingboxTunnels.length > 0)}
+		{#if fircOwnsRouting && !dashboardOn}
+			<div class="sbx-saved-banner">
+				<span class="sbx-saved-banner-text">{m.singbox_saved_banner()}</span>
+				<Button variant="secondary" size="sm" onclick={() => openFircMigrationModal('reverse')}>
+					{m.singbox_saved_migrate_btn()}
+				</Button>
+			</div>
+		{/if}
 		{#if !dashboardOn && $showSummary}
 			<div class="awg-summary-row">
 				<StatStrip>
@@ -436,4 +453,22 @@
 			grid-column: 1 / -1;
 		}
 }
+
+	.sbx-saved-banner {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 10px 14px;
+		margin-bottom: 12px;
+		border-radius: 10px;
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-secondary);
+		font-size: 13px;
+		color: var(--color-text-secondary);
+	}
+
+	.sbx-saved-banner-text {
+		min-width: 0;
+	}
 </style>

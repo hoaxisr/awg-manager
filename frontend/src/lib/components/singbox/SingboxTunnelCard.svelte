@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
+	import { settings } from '$lib/stores/settings';
+	import { fircStatus } from '$lib/stores/firc';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import type { SingboxTunnel } from '$lib/types';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api/client';
@@ -54,9 +57,24 @@
 	let showServer = $state(false);
 	let checking = $state(false);
 
+	const sbRouterSettings = singboxRouter.settings;
+	const fircOwnsRouting = $derived(
+		$fircStatus !== null ? $fircStatus.selected : $sbRouterSettings?.routingEngine === 'firc',
+	);
+	const activelyRouting = $derived(tunnel.running === true && !fircOwnsRouting);
+	const runBadgeText = $derived(
+		!fircOwnsRouting
+			? tunnel.running === true
+				? m.singbox_running_pill()
+				: m.singbox_stopped_pill()
+			: tunnel.running === true
+				? m.singbox_standby_pill()
+				: m.singbox_saved_pill(),
+	);
+
 	const history = $derived($singboxDelayHistory.get(tunnel.tag) ?? []);
 	const delayPresentation = $derived(
-		singboxDelayFromHistory(history, { running: tunnel.running !== false }),
+		singboxDelayFromHistory(history, { running: activelyRouting }),
 	);
 	const latest = $derived(delayPresentation.latest);
 	const positiveHistory = $derived(history.filter((v) => v > 0));
@@ -80,7 +98,7 @@
 
 	const cardState = $derived(delayPresentation.state);
 	const latText = $derived(delayPresentation.label);
-	const statusDot = $derived(singboxDelayStatusDot(cardState, tunnel.running !== false));
+	const statusDot = $derived(singboxDelayStatusDot(cardState, activelyRouting));
 
 	const protocolLabel = $derived.by(() => {
 		// Widen locally: the generated/static type is currently an exhaustive union,
@@ -226,10 +244,13 @@
 					<span class="badge b-tls">TLS</span>
 				{/if}
 				<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
+				{#if fircOwnsRouting}
+					<span class="run-pill run-saved">{runBadgeText}</span>
+				{/if}
 			</div>
 		</td>
 		<td class="list-cell list-cell-run tunnel-list-cell tunnel-list-cell--run">
-			<span class="run-pill" class:run-on={tunnel.running === true}>{tunnel.running === true ? 'running' : 'stopped'}</span>
+			<span class="run-pill" class:run-on={activelyRouting} class:run-saved={fircOwnsRouting}>{runBadgeText}</span>
 		</td>
 		<td class="tunnel-list-cell tunnel-list-cell--traffic list-cell list-cell-traffic">
 			<TunnelListTrafficCell
@@ -291,6 +312,9 @@
 					<span class="badge b-tls">TLS</span>
 				{/if}
 				<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
+				{#if fircOwnsRouting}
+					<span class="run-pill run-saved">{runBadgeText}</span>
+				{/if}
 			</div>
 		</div>
 		<div class="dense-toolbar">
@@ -429,6 +453,9 @@
 			<span class="badge b-tls">TLS</span>
 		{/if}
 		<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
+		{#if fircOwnsRouting}
+			<span class="run-pill run-saved">{runBadgeText}</span>
+		{/if}
 	</div>
 	</div>
 
@@ -1123,6 +1150,11 @@
 	.run-pill.run-on {
 		background: rgba(16, 185, 129, 0.2);
 		color: #10b981;
+	}
+	.run-pill.run-saved {
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-secondary);
+		border: 1px solid var(--color-border);
 	}
 	.traffic-mini {
 		font-size: var(--sbx-card-note);

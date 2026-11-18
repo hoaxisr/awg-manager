@@ -48,6 +48,7 @@
 	import { donateModalOpen, openDonateModal, closeDonateModal } from '$lib/stores/donateModal';
 	import { outboundReferenced } from '$lib/stores/outboundReferenced';
 	import TunnelReferencedModal from '$lib/components/tunnels/TunnelReferencedModal.svelte';
+	import FircMigrationWizardModal from '$lib/components/firc/FircMigrationWizardModal.svelte';
 	import { TriangleAlert } from 'lucide-svelte';
 	import DevelopFeedbackFab from '$lib/components/layout/DevelopFeedbackFab.svelte';
 	import {
@@ -525,6 +526,10 @@
 		entityLabel={$outboundReferenced?.entityLabel}
 		onclose={() => outboundReferenced.close()}
 	/>
+
+	{#if $isAuthenticated}
+		<FircMigrationWizardModal />
+	{/if}
 
 	{#if $isAuthenticated && isDevelopChannel}
 		<DevelopFeedbackFab />

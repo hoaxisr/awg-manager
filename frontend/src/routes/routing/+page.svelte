@@ -37,6 +37,9 @@
     import ModeSwitchHost from '$lib/components/routing/ModeSwitchHost.svelte';
     import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
     import GeoDataTab from './GeoDataTab.svelte';
+    import FircRouterPanel from './FircRouterPanel.svelte';
+    import { reloadFircAll } from '$lib/stores/firc';
+    import { fircHasDraft, clearFircGroupsDraft } from '$lib/stores/fircDraft';
     import { isRoutingSubTabVisible, type RoutingSubTab, type UsageLevel } from '$lib/types/usageLevel';
     import { usageLevel, settings, settingsUnavailable } from '$lib/stores/settings';
 
@@ -68,7 +71,7 @@
         unsubRouting?.();
     });
 
-    const ROUTING_TABS = ['hrneo', 'geodata', 'dns', 'ip', 'policy', 'clientvpn', 'singbox', 'fakeip', 'zapret', 'autolist'] as const;
+    const ROUTING_TABS = ['hrneo', 'geodata', 'dns', 'ip', 'policy', 'clientvpn', 'firc', 'singbox', 'fakeip', 'zapret', 'autolist'] as const;
     type RoutingTab = (typeof ROUTING_TABS)[number];
 
     // «Любимая» вкладка — открывается первой вместо NDMS. Per-browser
@@ -126,13 +129,14 @@
     function requestTab(id: string): void {
         if (modeSwitchBusy(get(modeSwitch))) return;
         const hasDraft = get(singboxRouterStore.staging)?.hasDraft ?? false;
-        if (activeTab === 'singbox' && id !== 'singbox' && hasDraft) {
+        if ((activeTab === 'singbox' && id !== 'singbox' && hasDraft) || (activeTab === 'firc' && id !== 'firc' && get(fircHasDraft))) {
             pendingTab = id;
             return;
         }
         activeTab = id as typeof activeTab;
     }
     function confirmLeave(): void {
+        if (activeTab === 'firc') clearFircGroupsDraft();
         if (pendingTab) activeTab = pendingTab as typeof activeTab;
         pendingTab = null;
     }
@@ -230,6 +234,7 @@
             // posts resource:invalidated hints, but a local kick keeps the
             // UI responsive even if SSE happens to be lagging).
             invalidateAllRouting();
+            void reloadFircAll().catch(() => undefined);
             if (res.missing.length === 0) {
                 notifications.success(m.routing_page_refreshed());
             } else {
@@ -341,6 +346,13 @@
             { id: 'ip', label: m.routing_page_tab_ip(), badge: ipActiveCount },
             { id: 'clientvpn', label: m.routing_page_tab_clientvpn(), badge: clientActiveCount },
             { id: 'policy', label: m.routing_page_tab_policy(), badge: policyCount },
+            {
+                id: 'firc',
+                label: 'FIRC',
+                badge: $fircHasDraft ? '•' : undefined,
+                badgeTone: $fircHasDraft ? 'warning' : undefined,
+                separatorBefore: true,
+            },
             // Sing-box modes as one dropdown chip (same pattern as tunnels page).
             singboxMenuChildren.length > 0
                 ? {
@@ -549,6 +561,8 @@
         />
     {:else if activeTab === 'geodata'}
         <GeoDataTab />
+    {:else if activeTab === 'firc'}
+        <FircRouterPanel />
     {:else if activeTab === 'singbox'}
         <SingboxRouterRedesignPage />
     {:else if activeTab === 'fakeip'}
