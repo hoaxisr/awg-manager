@@ -18,10 +18,12 @@ import (
 // ── Request DTOs ─────────────────────────────────────────────────
 
 type SingboxRouterHandler struct {
-	svc             router.Service
-	log             *logging.ScopedLogger
-	deviceProxyRefs tunnelservice.DeviceProxyRefChecker
-	routerRefs      tunnelservice.RouterRefChecker
+	svc               router.Service
+	log               *logging.ScopedLogger
+	deviceProxyRefs   tunnelservice.DeviceProxyRefChecker
+	routerRefs        tunnelservice.RouterRefChecker
+	switchEngine      func(ctx context.Context, targetEngine string) error
+	onSettingsUpdated func(ctx context.Context, prev, next storage.SingboxRouterSettings)
 	// autolistRunning — «сателлит Autolist сейчас работает» (опционально):
 	// teardown объектов при работающем сателлите отвечают 409.
 	autolistRunning func(r *http.Request) bool
@@ -37,6 +39,16 @@ func NewSingboxRouterHandler(svc router.Service, appLogger logging.AppLogger) *S
 		svc: svc,
 		log: logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubSingboxRouter),
 	}
+}
+
+// SetEngineSwitcher wires the unified transactional routing-engine switch coordinator.
+func (h *SingboxRouterHandler) SetEngineSwitcher(fn func(ctx context.Context, targetEngine string) error) {
+	h.switchEngine = fn
+}
+
+// SetOnSettingsUpdated registers a hook invoked after SingboxRouterSettings are persisted.
+func (h *SingboxRouterHandler) SetOnSettingsUpdated(fn func(ctx context.Context, prev, next storage.SingboxRouterSettings)) {
+	h.onSettingsUpdated = fn
 }
 
 // SetOutboundRefCheckers wires device-proxy and router reference guards for
@@ -188,18 +200,14 @@ func (h *SingboxRouterHandler) PutSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	sr := body.SingboxRouterSettings
-	if body.FakeIPPool6 == nil || body.InterceptFamily == nil || body.FakeIPTunAddr4 == nil {
-		// Absent = не менять: подставляем текущее значение (нормализация
-		// возвращает pool6 дословно, включая "").
-		cur, err := h.svc.GetSettings(r.Context())
-		if err != nil {
-			h.handleErr(w, "request", err)
-			return
-		}
-		sr.FakeIPPool6 = cur.FakeIPPool6
-		sr.InterceptFamily = cur.InterceptFamily
-		sr.FakeIPTunAddr4 = cur.FakeIPTunAddr4
+	cur, err := h.svc.GetSettings(r.Context())
+	if err != nil {
+		h.handleErr(w, "request", err)
+		return
 	}
+	sr.FakeIPPool6 = cur.FakeIPPool6
+	sr.InterceptFamily = cur.InterceptFamily
+	sr.FakeIPTunAddr4 = cur.FakeIPTunAddr4
 	if body.FakeIPPool6 != nil {
 		sr.FakeIPPool6 = *body.FakeIPPool6
 	}
@@ -209,9 +217,18 @@ func (h *SingboxRouterHandler) PutSettings(w http.ResponseWriter, r *http.Reques
 	if body.FakeIPTunAddr4 != nil {
 		sr.FakeIPTunAddr4 = *body.FakeIPTunAddr4
 	}
+	if h.switchEngine != nil && sr.RoutingEngine != "" && sr.RoutingEngine != cur.RoutingEngine {
+		if err := h.switchEngine(r.Context(), sr.RoutingEngine); err != nil {
+			h.handleErr(w, "engine-switch", err)
+			return
+		}
+	}
 	if err := h.svc.UpdateSettings(r.Context(), sr); err != nil {
 		h.handleErr(w, "request", err)
 		return
+	}
+	if h.onSettingsUpdated != nil {
+		h.onSettingsUpdated(r.Context(), cur, sr)
 	}
 	h.log.Info("settings", "", "Sing-box router settings updated")
 	response.Success(w, map[string]bool{"ok": true})

@@ -8137,6 +8137,11 @@ definitions:
           объекты будет не из чего (снос при этом выполнен).
         type: boolean
     type: object
+  api.fircUninstallRequest:
+    properties:
+      purgeConfigs:
+        type: boolean
+    type: object
   api.killListenerRequest:
     properties:
       host:
@@ -11608,6 +11613,106 @@ paths:
       summary: Adopt external tunnel
       tags:
       - tunnels
+  /firc/install:
+    post:
+      description: Accepts an asynchronous operation. Poll install-status for completion.
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Install the verified FIRC runtime package
+      tags:
+      - firc
+  /firc/install-status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get FIRC runtime installation status
+      tags:
+      - firc
+  /firc/migrate-runtime:
+    post:
+      description: Transactionally migrates FIRC ownership from legacy bundled awg-manager
+        to awg-firc-runtime, preserving configs and active service state.
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Migrate legacy bundled FIRC runtime ownership to awg-firc-runtime
+      tags:
+      - firc
+  /firc/uninstall:
+    post:
+      consumes:
+      - application/json
+      description: Accepts an asynchronous operation. Configuration purge is not supported.
+      parameters:
+      - description: Removal options; purgeConfigs must be false
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.fircUninstallRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Remove the FIRC runtime while preserving configuration
+      tags:
+      - firc
   /health:
     get:
       description: Cheap check for frontend pollers; no NDMS or I/O.
