@@ -19,8 +19,14 @@
 		ManagedServerBackupToolbar,
 		ManagedServerDriftBanner,
 		ServersPageSkeleton,
+		XrayServerCard,
+		TelegramWebProxyCard,
+		CDNDispatcherCard,
 		type RailItem,
 	} from '$lib/components/servers';
+	import { EXTERNAL_ACCESS_LABELS } from '$lib/components/servers/external-access/connectionLabels';
+	import type { XrayStatus, TgWebProxyStatus } from '$lib/types';
+	import { getFircEnabledServers, setFircServerRoutingEnabled } from '$lib/utils/fircServerRouting';
 	import { dedupBy } from '$lib/utils/dedupBy';
 	import { createIngressMutationLock } from '$lib/utils/ingressMutation';
 	import { countActiveManagedPeers, countActiveSystemPeers } from '$lib/utils/serverPeerActivity';
@@ -35,12 +41,43 @@
 	}
 
 	let unsub: (() => void) | undefined;
+	let pollTimer: ReturnType<typeof setInterval> | undefined;
+
+	let xrayStatus = $state<XrayStatus | null>(null);
+	let tgStatus = $state<TgWebProxyStatus | null>(null);
+
+	async function loadXrayStatus() {
+		try {
+			xrayStatus = await api.getXrayServerStatus();
+		} catch {
+			xrayStatus = null;
+		}
+	}
+
+	async function loadTgStatus() {
+		try {
+			tgStatus = await api.getTgWebProxyStatus();
+		} catch {
+			tgStatus = null;
+		}
+	}
+
 	onMount(() => {
 		unsub = servers.subscribe(() => {});
 		loadIngressRefs();
 		loadLANSegmentOptions();
+		loadXrayStatus();
+		loadTgStatus();
+		pollTimer = setInterval(() => {
+			loadXrayStatus();
+			loadTgStatus();
+			loadIngressRefs();
+		}, 6000);
 	});
-	onDestroy(() => unsub?.());
+	onDestroy(() => {
+		unsub?.();
+		if (pollTimer) clearInterval(pollTimer);
+	});
 
 	let snap = $derived($servers);
 	let serverList = $derived(snap.data?.servers ?? []);
@@ -52,7 +89,9 @@
 	let createManagedOpen = $state(false);
 
 	let ingressRefs = $state<string[]>([]);
+	let fircEnabledServers = $state<string[]>([]);
 	let lanSegmentOptions = $state<{ value: string; label: string }[]>([]);
+	let activeEngine = $state<'sing-box' | 'firc'>('sing-box');
 
 	async function loadLANSegmentOptions() {
 		try {
@@ -63,8 +102,13 @@
 
 	async function loadIngressRefs() {
 		try {
-			const s = await api.singboxRouterGetSettings();
+			const [s, fircIds] = await Promise.all([
+				api.singboxRouterGetSettings(),
+				getFircEnabledServers(),
+			]);
 			ingressRefs = s.ingressInterfaces ?? [];
+			fircEnabledServers = fircIds ?? [];
+			activeEngine = s.routingEngine === 'firc' ? 'firc' : 'sing-box';
 		} catch (e) {
 			ingressRefs = [];
 			notifications.error(e instanceof Error ? e.message : m.servers_page_egress_load_failed());
@@ -80,7 +124,11 @@
 			else set.delete(ref);
 			const next = [...set];
 			await api.singboxRouterPutSettings({ ...s, ingressInterfaces: next });
+			await setFircServerRoutingEnabled('awg_server', enabled);
 			ingressRefs = next;
+			fircEnabledServers = enabled
+				? [...new Set([...fircEnabledServers, 'awg_server'])]
+				: fircEnabledServers.filter((id) => id !== 'awg_server');
 		});
 	}
 
@@ -93,7 +141,11 @@
 			else set.delete(ref);
 			const next = [...set];
 			await api.singboxRouterPutSettings({ ...s, ingressInterfaces: next });
+			await setFircServerRoutingEnabled('keenetic_wg', enabled);
 			ingressRefs = next;
+			fircEnabledServers = enabled
+				? [...new Set([...fircEnabledServers, 'keenetic_wg'])]
+				: fircEnabledServers.filter((id) => id !== 'keenetic_wg');
 		});
 	}
 
@@ -166,6 +218,38 @@
 				kind: 'system',
 			});
 		}
+
+		const xrayClients = xrayStatus?.clients ?? [];
+		const activeClients = xrayClients.filter(c => c.enabled).length;
+		items.push({
+			id: '__xray_server__',
+			name: EXTERNAL_ACCESS_LABELS.vlessTitle,
+			iface: 'Внешний доступ',
+			listenPort: '',
+			status: xrayStatus?.running ? 'running' : 'stopped',
+			peerCount: xrayClients.length,
+			peerActive: activeClients,
+			kind: 'xray',
+		});
+
+		items.push({
+			id: '__tg_webproxy__',
+			name: EXTERNAL_ACCESS_LABELS.telegramTitle,
+			iface: 'Прокси и мост',
+			listenPort: '',
+			status: tgStatus?.running ? 'running' : 'stopped',
+			kind: 'tgwebproxy',
+		});
+
+		items.push({
+			id: '__dispatcher__',
+			name: EXTERNAL_ACCESS_LABELS.dispatcherRailTitle,
+			iface: 'Маршруты доменов',
+			listenPort: '',
+			status: 'running',
+			kind: 'dispatcher',
+		});
+
 		return dedupBy(items, (i) => i.id, { warnTag: 'server rail' });
 	});
 
@@ -305,19 +389,41 @@
 						stats={activeManagedStats}
 						{routerIP}
 						onOpenASC={() => openManagedASC(activeManaged!.interfaceName)}
-						ingressEnabled={ingressRefs.includes(`managed:${activeManaged.interfaceName}`)}
+						ingressEnabled={ingressRefs.includes(`managed:${activeManaged.interfaceName}`) || (activeEngine === 'firc' && fircEnabledServers.includes('awg_server'))}
 						onToggleIngress={handleToggleManagedIngress}
 						{lanSegmentOptions}
+						{activeEngine}
 					/>
 				{:else if activeItem?.kind === 'system' && activeServer}
 				<ServerCard
 					server={activeServer}
 					isMarked={isMarkedSystemServer(activeServer)}
 					onUnmark={unmarkServer}
-					ingressEnabled={ingressRefs.includes(`iface:${activeServer.interfaceName}`)}
+					ingressEnabled={ingressRefs.includes(`iface:${activeServer.interfaceName}`) || (activeEngine === 'firc' && fircEnabledServers.includes('keenetic_wg'))}
 					onToggleIngress={handleToggleSystemIngress}
+					{activeEngine}
 					{routerIP}
 				/>
+				{:else if activeItem?.kind === 'xray'}
+					<XrayServerCard
+						initialStatus={xrayStatus}
+						onOpenDispatcher={() => setActiveId('__dispatcher__')}
+						onRefreshParent={() => {
+							void loadXrayStatus();
+							void loadTgStatus();
+						}}
+					/>
+				{:else if activeItem?.kind === 'tgwebproxy'}
+					<TelegramWebProxyCard
+						initialStatus={tgStatus}
+						onOpenDispatcher={() => setActiveId('__dispatcher__')}
+						onRefreshParent={() => {
+							void loadXrayStatus();
+							void loadTgStatus();
+						}}
+					/>
+				{:else if activeItem?.kind === 'dispatcher'}
+					<CDNDispatcherCard />
 				{/if}
 			</main>
 		</div>

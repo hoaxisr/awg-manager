@@ -77,6 +77,7 @@ const ALLOWED: Record<string, { lines: number; reason: string }> = {
 	'/src/lib/components/testing/TunnelDiagnosticsModal.svelte': { lines: 1, reason: 'Диагностика туннелей' },
 	'/src/lib/stores/firc.ts': { lines: 1, reason: 'FIRC store подписи' },
 	'/src/routes/routing/FircRouterPanel.svelte': { lines: 50, reason: 'FIRC роутер панель' },
+	'/src/routes/servers/+page.svelte': { lines: 3, reason: 'Серверы страница' },
 };
 
 /** \u0410-escape — та же кириллица, просто записанная кодами. */

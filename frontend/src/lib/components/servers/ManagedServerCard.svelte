@@ -36,9 +36,10 @@
 		ingressEnabled?: boolean;
 		onToggleIngress?: (interfaceName: string, enabled: boolean) => Promise<void>;
 		lanSegmentOptions?: { value: string; label: string }[];
+		activeEngine?: 'sing-box' | 'firc';
 	}
 
-	let { server, stats, routerIP = '', onDeleted = () => {}, onUpdated = () => {}, onOpenASC, ingressEnabled = false, onToggleIngress = async () => {}, lanSegmentOptions = [] }: Props = $props();
+	let { server, stats, routerIP = '', onDeleted = () => {}, onUpdated = () => {}, onOpenASC, ingressEnabled = false, onToggleIngress = async () => {}, lanSegmentOptions = [], activeEngine = 'sing-box' }: Props = $props();
 
 	let serverId = $derived(server.interfaceName);
 
