@@ -670,6 +670,10 @@ func (m *Managed) PrepareForStart(ctx context.Context, ref string) error {
 	return a.activate(ctx, uplink.Target{Engine: "wireguard", Ref: ref}, r.Device, r.Device, true)
 }
 func (m *Managed) ReleaseUplink(ctx context.Context, t uplink.Target) error {
+	return m.releaseUplink(ctx, t, false)
+}
+
+func (m *Managed) releaseUplink(ctx context.Context, t uplink.Target, orphanOnly bool) error {
 	if !m.OwnsTarget(t.Ref) {
 		return nil
 	}
@@ -681,11 +685,23 @@ func (m *Managed) ReleaseUplink(ctx context.Context, t uplink.Target) error {
 			return nil
 		}
 		v, err := m.target(ctx, t)
+		orphan := false
 		if err != nil {
-			return err
-		}
-		if err = m.compatible(v, c); err != nil {
-			return err
+			var checkErr error
+			orphan, checkErr = m.confirmOrphan(ctx, t, c)
+			if checkErr != nil {
+				return fmt.Errorf("verify missing WireGuard target: %w", checkErr)
+			}
+			if !orphan {
+				return err
+			}
+		} else {
+			if orphanOnly {
+				return uplink.ErrConflict
+			}
+			if err = m.compatible(v, c); err != nil {
+				return err
+			}
 		}
 		a, err := m.kernel()
 		if err != nil {
@@ -695,16 +711,18 @@ func (m *Managed) ReleaseUplink(ctx context.Context, t uplink.Target) error {
 		if err != nil {
 			return err
 		}
-		r, err := readBinding(c.BindingFile)
-		if err != nil {
-			return err
-		}
-		p, err := m.provider(r.Device)
-		if err != nil {
-			return err
-		}
-		if err = m.deps.ApplyBinding(ctx, t.Ref, p.ID, r.Device); err != nil {
-			return err
+		if !orphan {
+			r, err := readBinding(c.BindingFile)
+			if err != nil {
+				return err
+			}
+			p, err := m.provider(r.Device)
+			if err != nil {
+				return err
+			}
+			if err = m.deps.ApplyBinding(ctx, t.Ref, p.ID, r.Device); err != nil {
+				return err
+			}
 		}
 		for _, family := range []string{"-4", "-6"} {
 			for _, retiredFamily := range s.RetiringRules {
@@ -751,6 +769,17 @@ func (m *Managed) ReleaseUplink(ctx context.Context, t uplink.Target) error {
 			return err
 		}
 		m.publishProtection()
-		return os.Remove(c.BindingFile)
+		err = os.Remove(c.BindingFile)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
 	})
+}
+
+func (m *Managed) confirmOrphan(ctx context.Context, t uplink.Target, c Config) (bool, error) {
+	if t.Engine != "wireguard" || t.Kind != "" || m.deps.ConfirmAbsent == nil {
+		return false, nil
+	}
+	return m.deps.ConfirmAbsent(ctx, t.Ref, c.Interface)
 }

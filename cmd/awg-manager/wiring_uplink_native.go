@@ -129,7 +129,7 @@ func (a *app) setupNativeUplink(policies *uplink.Store) (*wireguard.Managed, err
 		}
 		return wireguard.ManagedTarget{Ref: t.ID, Label: t.Name, Interface: nwg.NewNWGNames(t.NWGIndex).IfaceName, Peer: t.Peer.PublicKey, Endpoint: t.Peer.Endpoint, TunnelDNS: tunnel.ParseDNSList(t.Interface.DNS), Enabled: t.Enabled}, nil
 	}
-	deps := wireguard.ManagedDeps{Directory: a.dataDir, Lookup: lookup, Providers: func() []uplink.Provider {
+	deps := wireguard.ManagedDeps{Directory: a.dataDir, Lookup: lookup, ConfirmAbsent: a.storedUplinkAbsent, Providers: func() []uplink.Provider {
 		if a.wanModel == nil {
 			return nil
 		}

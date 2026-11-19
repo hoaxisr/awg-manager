@@ -620,8 +620,34 @@ func (k *Kernel) ReleaseUplink(ctx context.Context, t uplink.Target) error {
 	if !k.OwnsTarget(t.Ref) {
 		return nil
 	}
-	return k.locked(ctx, t, func(target uplink.Target, v ManagedTarget) error {
-		c := k.m.profiles[v.Ref]
+	target, err := kernelTarget(t)
+	if err != nil {
+		return err
+	}
+	return k.lock(ctx, t.Ref, func() error {
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		c, owned := k.m.profiles[t.Ref]
+		if !owned {
+			return nil
+		}
+		v, err := k.m.target(ctx, target)
+		if err != nil {
+			orphan, checkErr := k.m.confirmOrphan(ctx, target, c)
+			if checkErr != nil {
+				return checkErr
+			}
+			if !orphan {
+				return err
+			}
+			if err = k.repairBinding(ctx, c); err != nil {
+				return err
+			}
+			return k.m.releaseUplink(ctx, target, true)
+		}
+		if v.LocalPublicKey == "" {
+			return uplink.ErrUnsupported
+		}
 		if err := k.m.compatible(v, c); err != nil {
 			return err
 		}

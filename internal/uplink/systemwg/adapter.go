@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"path/filepath"
 	"strconv"
@@ -52,6 +53,24 @@ func New(d Deps) (*Adapter, error) {
 	m, err := wireguard.NewManaged(wireguard.ManagedDeps{
 		Directory: filepath.Join(d.Directory, "uplink-system-wireguard"),
 		Providers: d.Providers,
+		ConfirmAbsent: func(ctx context.Context, id, device string) (bool, error) {
+			if _, found, err := q.WGServers.InterfaceRCRawRecent(ctx, id, 0); err != nil || found {
+				return false, err
+			}
+			if _, found, err := q.WGServers.InterfaceRuntimeLive(ctx, id); err != nil || found {
+				return false, err
+			}
+			interfaces, err := net.Interfaces()
+			if err != nil {
+				return false, err
+			}
+			for _, iface := range interfaces {
+				if iface.Name == device {
+					return false, nil
+				}
+			}
+			return true, nil
+		},
 		Lookup: func(ctx context.Context, id string) (wireguard.ManagedTarget, error) {
 			_, t, e := a.lookup(ctx, id)
 			return t, e

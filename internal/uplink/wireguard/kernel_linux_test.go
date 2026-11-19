@@ -81,6 +81,26 @@ func TestKernelStartupRespectsProviderChainAndConcurrentOwnershipReads(t *testin
 	}
 }
 
+func TestKernelReleaseDeletedTarget(t *testing.T) {
+	f := newKernelFixture(t)
+	ctx := context.Background()
+	target := uplink.Target{Engine: "kernel-amneziawg", Ref: f.target.Ref}
+	if err := f.k.Activate(ctx, target, "wan1", "wan2"); err != nil {
+		t.Fatal(err)
+	}
+	f.k.m.deps.Lookup = func(context.Context, string) (ManagedTarget, error) {
+		return ManagedTarget{}, uplink.ErrNotFound
+	}
+	f.k.m.deps.ConfirmAbsent = func(context.Context, string, string) (bool, error) { return true, nil }
+	writes, restores := f.markWrites, f.restoreCalls
+	if err := f.k.ReleaseUplink(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	if f.k.OwnsTarget(target.Ref) || len(f.rules["-4"]) != 0 || len(f.rules["-6"]) != 0 || f.markWrites != writes || f.restoreCalls != restores {
+		t.Fatal("orphan cleanup left owned rules or tried to modify the deleted interface")
+	}
+}
+
 func newKernelFixture(t *testing.T) *kernelFixture {
 	c := configFixture(t)
 	f := &kernelFixture{t: t, target: ManagedTarget{Ref: c.Ref, Label: "AWG", Interface: c.Interface, Peer: c.Peer, Endpoint: c.Endpoint.String(), TunnelDNS: c.TunnelDNS, LocalPublicKey: c.Peer, Enabled: true}, rules: map[string]map[uint32]int{"-4": {}, "-6": {}}, term: map[string]bool{}, paths: map[string]Path{}, providers: []uplink.Provider{{ID: "isp1", Device: "wan1", Up: true}, {ID: "isp2", Device: "wan2", Up: true}}}

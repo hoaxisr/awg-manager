@@ -80,7 +80,7 @@ func (a *app) setupKernelUplink(policies *uplink.Store) uplink.Adapter {
 		return wireguard.ManagedTarget{Ref: t.ID, Label: t.Name, Interface: tunnel.NewNames(t.ID).IfaceName, Peer: t.Peer.PublicKey, Endpoint: t.Peer.Endpoint, TunnelDNS: tunnel.ParseDNSList(t.Interface.DNS), AllowedIPs: append([]string(nil), t.Peer.AllowedIPs...), LocalPublicKey: base64.StdEncoding.EncodeToString(key.PublicKey().Bytes()), Enabled: t.Enabled}, nil
 	}
 	k, err := wireguard.NewKernel(wireguard.KernelDeps{ManagedDeps: wireguard.ManagedDeps{
-		Directory: a.dataDir, Lookup: lookup,
+		Directory: a.dataDir, Lookup: lookup, ConfirmAbsent: a.storedUplinkAbsent,
 		List: func(ctx context.Context) ([]wireguard.ManagedTarget, error) {
 			if a.awgStore == nil {
 				return nil, nil

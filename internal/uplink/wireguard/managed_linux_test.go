@@ -57,6 +57,41 @@ func TestManagedReleaseAuditsOwnedResourcesWithoutOldKernelMark(t *testing.T) {
 	}
 }
 
+func TestManagedReleaseRequiresConfirmedAbsence(t *testing.T) {
+	for _, confirmed := range []bool{false, true} {
+		t.Run(fmt.Sprint(confirmed), func(t *testing.T) {
+			c := configFixture(t)
+			m := &Managed{
+				profiles: map[string]Config{c.Ref: c},
+				registry: filepath.Join(t.TempDir(), "profiles.json"),
+				deps: ManagedDeps{
+					Directory: filepath.Dir(c.BindingFile),
+					Lookup: func(context.Context, string) (ManagedTarget, error) {
+						return ManagedTarget{}, uplink.ErrUnsupported
+					},
+					ConfirmAbsent: func(context.Context, string, string) (bool, error) { return confirmed, nil },
+					WithLock:      func(_ context.Context, _ string, fn func() error) error { return fn() },
+					Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+						if !confirmed || strings.Contains(strings.Join(args, " "), " del ") {
+							t.Fatalf("unexpected routing operation: %v", args)
+						}
+						return []byte("[]"), nil
+					},
+				},
+			}
+			m.publishProtection()
+			err := m.ReleaseUplink(context.Background(), uplink.Target{Engine: "wireguard", Ref: c.Ref})
+			if confirmed {
+				if err != nil || m.OwnsTarget(c.Ref) {
+					t.Fatalf("orphan retained: %v", err)
+				}
+			} else if !errors.Is(err, uplink.ErrUnsupported) || !m.OwnsTarget(c.Ref) {
+				t.Fatalf("ambiguous target released: %v", err)
+			}
+		})
+	}
+}
+
 func TestManagedNativePeerMarkDoesNotRequireDeviceMark(t *testing.T) {
 	c := configFixture(t)
 	shared := false
