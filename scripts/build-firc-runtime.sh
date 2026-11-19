@@ -3,13 +3,13 @@
 # from FIRC_SOURCE_ROOT using the cached Entware SDK and package via cmd/firc-runtime-package.
 set -euo pipefail
 
-ARCH="${1:-mipsel-3.4}"
-VERSION="${2:-0.8.0-awgm.3}"
-FIRC_SOURCE_ROOT="${FIRC_SOURCE_ROOT:-}"
-FIRC_DEPS_ROOT="${FIRC_DEPS_ROOT:-}"
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+ARCH="${1:-mipsel-3.4}"
+VERSION="${2:-$(bash "$SCRIPT_DIR/firc-runtime-version.sh")}"
+FIRC_SOURCE_ROOT="${FIRC_SOURCE_ROOT:-$REPO_ROOT/c-core/firc}"
+FIRC_DEPS_ROOT="${FIRC_DEPS_ROOT:-}"
 
 if [ -z "$FIRC_SOURCE_ROOT" ] || [ ! -d "$FIRC_SOURCE_ROOT/src/tunvless" ] || [ ! -d "$FIRC_SOURCE_ROOT/src/backend-c" ]; then
   echo "FIRC_SOURCE_ROOT must point to the custom FIRC source tree (with src/tunvless and src/backend-c)" >&2

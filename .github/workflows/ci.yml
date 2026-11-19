@@ -153,6 +153,18 @@ jobs:
             ./internal/vlessserver/... \
             ./internal/firc/...
 
+      - name: Check vendored c-core/firc runtime integrity
+        run: |
+          set -euo pipefail
+          python3 scripts/test-firc-loopback-inbound.py c-core/firc
+          grep -q '\.awgm-disabled' c-core/firc/files/entware_kn/etc/init.d/S99firc
+          bash scripts/firc-runtime-version.sh
+          go_files="$(find c-core/firc -name '*.go' -type f)"
+          if [ -n "$go_files" ]; then
+            echo "::error::c-core/firc must not contain Go files: $go_files"
+            exit 1
+          fi
+
   autolist:
     name: Autolist satellite checks
     runs-on: ubuntu-latest

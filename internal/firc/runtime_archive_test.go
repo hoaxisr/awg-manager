@@ -166,3 +166,53 @@ func TestInstalledRuntimeVerifiedAgainstArtifact(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildRuntimeIPKUsesVendoredCCoreFirc(t *testing.T) {
+	t.Setenv("FIRC_SOURCE_ROOT", "")
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	wantLicense, err := os.ReadFile(filepath.Join(repoRoot, "c-core", "firc", "LICENSE"))
+	if err != nil {
+		t.Fatalf("read vendored c-core/firc/LICENSE: %v", err)
+	}
+
+	root := t.TempDir()
+	daemon := filepath.Join(root, "fircd")
+	tunnel := filepath.Join(root, "tunvless")
+	for _, p := range []string{daemon, tunnel} {
+		if err := os.WriteFile(p, makeMinimalELF(elf.ELFCLASS32, elf.ELFDATA2LSB, elf.EM_MIPS, "fixture"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const ver = "0.8.0-awgm.4"
+	pkg := filepath.Join(root, "awg-firc-runtime.ipk")
+	if err := BuildRuntimeIPK(repoRoot, daemon, tunnel, "mipsel-3.4", ver, pkg); err != nil {
+		t.Fatalf("BuildRuntimeIPK with vendored c-core/firc: %v", err)
+	}
+	entries, err := runtimePackageContents(pkg, "mipsel-3.4", ver)
+	if err != nil {
+		t.Fatalf("runtimePackageContents: %v", err)
+	}
+
+	s99, ok := entries["opt/etc/init.d/S99firc"]
+	if !ok || !strings.Contains(string(s99.data), ".awgm-disabled") {
+		t.Fatalf("expected S99firc with .awgm-disabled from vendored c-core/firc")
+	}
+	for _, req := range []string{
+		"opt/etc/ndm/netfilter.d/100-firc",
+		"opt/etc/ndm/iflayerchanged.d/100-firc",
+		"opt/share/awg-firc-runtime/defaults/firc.conf",
+		"opt/share/awg-firc-runtime/defaults/groups.yaml",
+	} {
+		if _, ok := entries[req]; !ok {
+			t.Fatalf("missing packaged asset %s", req)
+		}
+	}
+	lic, ok := entries["opt/share/licenses/awg-firc-runtime/LICENSE"]
+	if !ok || string(lic.data) != string(wantLicense) {
+		t.Fatalf("packaged LICENSE does not match c-core/firc/LICENSE")
+	}
+}

@@ -75,12 +75,21 @@ jobs:
           echo "Resolved ${IPK_VERSION} (previous: ${PREV:-none})"
           echo "ipk_version=${IPK_VERSION}" >> "$GITHUB_OUTPUT"
 
+  firc-runtime:
+    name: FIRC runtime
+    uses: ./.github/workflows/firc-runtime.yml
+    permissions:
+      contents: write
+    with:
+      publish_release: true
+
   build:
     name: Build (${{ matrix.arch }})
     runs-on: ubuntu-latest
     needs:
       - frontend
       - version
+      - firc-runtime
     timeout-minutes: 120
     strategy:
       fail-fast: true
@@ -99,6 +108,15 @@ jobs:
         with:
           name: frontend-build
           path: frontend/build
+
+      - name: Download FIRC runtime manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: firc-releases-manifest
+          path: internal/firc
+
+      - name: Verify embedded FIRC runtime manifest
+        run: python3 scripts/merge-firc-releases.py --verify internal/firc/firc_releases.json --expected-repo "${{ github.repository }}"
 
       - name: Install dependencies
         run: |
@@ -342,7 +360,7 @@ jobs:
 
           gh release delete latest --yes --cleanup-tag || true
 
-          PREV_TAG=$(gh release list --limit 10 --json tagName --jq '[.[] | select(.tagName != "latest")] | .[0].tagName' 2>/dev/null)
+          PREV_TAG=$(gh release list --limit 30 --json tagName --jq '[.[] | select(.tagName != "latest" and (.tagName | startswith("firc-runtime-") | not))] | .[0].tagName' 2>/dev/null)
 
           EXTRA_FLAGS=()
           if [ -n "${PREV_TAG}" ]; then

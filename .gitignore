@@ -110,3 +110,11 @@ awgmautolist/ipk/opt/
 /c-core/xhttpd/awgm-xhttpd
 /c-core/xhttpd/xhttpd_audit_test
 /c-core/fpc/awgm-fpc
+
+# FIRC on-demand runtime C sources live in c-core/firc/; keep tunvless build scripts
+# tracked despite the top-level build/ rule while ignoring fetched/compiled outputs.
+!/c-core/firc/src/tunvless/build/
+!/c-core/firc/src/tunvless/build/**
+/c-core/firc/src/tunvless/third_party/
+/c-core/firc/src/tunvless/out*/
+/c-core/firc/src/backend-c/build/

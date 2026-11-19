@@ -1,0 +1,462 @@
+name: "FIRC Runtime"
+
+on:
+  workflow_call:
+    inputs:
+      publish_release:
+        description: "Publish awg-firc-runtime IPKs as an immutable GitHub prerelease"
+        type: boolean
+        default: true
+      force_rebuild:
+        description: "Rebuild even if a release for this runtime hash already exists"
+        type: boolean
+        default: false
+    outputs:
+      runtime_version:
+        description: "Deterministic runtime package version"
+        value: ${{ jobs.prepare.outputs.runtime_version }}
+      release_tag:
+        description: "GitHub release tag holding awg-firc-runtime assets"
+        value: ${{ jobs.prepare.outputs.release_tag }}
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish awg-firc-runtime IPKs as an immutable GitHub prerelease"
+        type: boolean
+        default: true
+      force_rebuild:
+        description: "Rebuild even if a release for this runtime hash already exists"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: Resolve FIRC runtime version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      runtime_version: ${{ steps.meta.outputs.runtime_version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      already_published: ${{ steps.meta.outputs.already_published }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Compute runtime version and check cached release
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RUNTIME_VERSION="$(bash scripts/firc-runtime-version.sh)"
+          RELEASE_TAG="firc-runtime-${RUNTIME_VERSION}"
+          echo "runtime_version=${RUNTIME_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+
+          ALREADY="false"
+          if [[ "${FORCE_REBUILD}" != "true" ]] && gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            TMP_CHK="$(mktemp -d)"
+            if gh release download "${RELEASE_TAG}" --repo "${{ github.repository }}" --pattern "firc_releases.json" --dir "$TMP_CHK" \
+              && python3 scripts/merge-firc-releases.py --verify "$TMP_CHK/firc_releases.json" \
+                   --expected-version "${RUNTIME_VERSION}" \
+                   --expected-repo "${{ github.repository }}"; then
+              ASSETS="$(gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" --json assets --jq '.assets[].name')"
+              MISSING=0
+              for arch in mipsel-3.4 mips-3.4 aarch64-3.10; do
+                if ! printf '%s\n' "$ASSETS" | grep -Fxq "awg-firc-runtime_${RUNTIME_VERSION}_${arch}.ipk"; then
+                  MISSING=1
+                fi
+              done
+              if [[ "$MISSING" -eq 0 ]]; then
+                mkdir -p dist
+                cp "$TMP_CHK/firc_releases.json" dist/firc_releases.json
+                ALREADY="true"
+                echo "Reusing verified release ${RELEASE_TAG}"
+              fi
+            fi
+            rm -rf "$TMP_CHK"
+          fi
+
+          echo "already_published=${ALREADY}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload cached manifest artifact
+        if: steps.meta.outputs.already_published == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: firc-releases-manifest
+          path: dist/firc_releases.json
+          if-no-files-found: error
+
+  build-arch:
+    name: Build FIRC runtime (${{ matrix.arch }})
+    needs:
+      - prepare
+    if: needs.prepare.outputs.already_published != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ENTWARE_SDK_RELEASE: v2026.10.19
+      RUNTIME_VERSION: ${{ needs.prepare.outputs.runtime_version }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+    strategy:
+      fail-fast: true
+      matrix:
+        arch:
+          - mipsel-3.4
+          - mips-3.4
+          - aarch64-3.10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install host tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zstd binutils
+
+      - name: Verify c-core/firc runtime guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/test-firc-loopback-inbound.py c-core/firc
+          grep -q '\.awgm-disabled' c-core/firc/files/entware_kn/etc/init.d/S99firc
+          go_files="$(find c-core/firc -name '*.go' -type f)"
+          if [[ -n "$go_files" ]]; then
+            echo "::error::c-core/firc must not contain Go files: $go_files" >&2
+            exit 1
+          fi
+
+      - name: Prepare Entware package feed
+        id: entware_feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC_COPY="${RUNNER_TEMP}/firc-src-${{ matrix.arch }}"
+          FEED_DIR="${RUNNER_TEMP}/firc-feed-${{ matrix.arch }}"
+          ARTIFACTS_DIR="${RUNNER_TEMP}/firc-artifacts-${{ matrix.arch }}"
+          rm -rf "$SRC_COPY" "$FEED_DIR" "$ARTIFACTS_DIR"
+          mkdir -p "$SRC_COPY" "$FEED_DIR/firc" "$ARTIFACTS_DIR"
+
+          cp -a c-core/firc/. "$SRC_COPY/"
+          make -C "$SRC_COPY/src/tunvless" fetch
+
+          cp "$SRC_COPY/tools/ci/entware-package/Makefile" "$FEED_DIR/firc/Makefile"
+          {
+            printf 'FIRC_VERSION:=%s\n' "$RUNTIME_VERSION"
+            printf 'FIRC_RELEASE:=1\n'
+            printf 'FIRC_TARGET:=%s_kn\n' "${{ matrix.arch }}"
+          } > "$FEED_DIR/firc/version.mk"
+
+          tar -C "$SRC_COPY" -czf "$FEED_DIR/firc/firc-source.tar.gz" \
+            --exclude='*/.git' \
+            --transform "s,^,firc-${RUNTIME_VERSION}/," \
+            LICENSE files src/backend-c src/tunvless
+
+          echo "feed_dir=$FEED_DIR" >> "$GITHUB_OUTPUT"
+          echo "artifacts_dir=$ARTIFACTS_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Locate pinned Entware SDK
+        id: sdk
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="$(awk -v p="entware-sdk-${{ matrix.arch }}_" 'index($2, p) == 1 { print $2 }' c-core/firc/tools/ci/entware-sdk/SHA256SUMS)"
+          if [[ -z "$asset" ]]; then
+            echo "::error::No pinned SDK for ${{ matrix.arch }} in c-core/firc/tools/ci/entware-sdk/SHA256SUMS" >&2
+            exit 1
+          fi
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+          echo "path=${RUNNER_TEMP}/$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Entware SDK from cache
+        id: sdk_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ steps.sdk.outputs.path }}
+          key: ${{ env.ENTWARE_SDK_RELEASE }}-${{ steps.sdk.outputs.asset }}
+
+      - name: Download Entware SDK
+        if: steps.sdk_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: >-
+          curl -fsSL --retry 3 -o "${{ steps.sdk.outputs.path }}"
+          "https://github.com/ownik/entware-sdk/releases/download/${ENTWARE_SDK_RELEASE}/${{ steps.sdk.outputs.asset }}"
+
+      - name: Verify Entware SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F "  ${{ steps.sdk.outputs.asset }}" c-core/firc/tools/ci/entware-sdk/SHA256SUMS \
+            | sed "s|  |  ${RUNNER_TEMP}/|" | sha256sum --check
+
+      - name: Save Entware SDK to cache
+        if: steps.sdk_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ steps.sdk.outputs.path }}
+          key: ${{ env.ENTWARE_SDK_RELEASE }}-${{ steps.sdk.outputs.asset }}
+
+      - name: Restore Entware sources from cache
+        id: dl_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: |
+            ${{ runner.temp }}/entware-dl
+            !${{ runner.temp }}/entware-dl/firc-*
+          key: firc-entware-dl-v2-${{ hashFiles('c-core/firc/tools/ci/entware-sdk/feeds.conf') }}
+
+      - name: Build with Entware SDK
+        id: entware_sdk
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/entware-dl"
+          rm -f "$RUNNER_TEMP"/entware-dl/firc-*
+          sudo chown -R 1000:1000 "${{ steps.entware_feed.outputs.artifacts_dir }}" "${{ steps.entware_feed.outputs.feed_dir }}" "$RUNNER_TEMP/entware-dl"
+          trap 'sudo chown -R --reference="$RUNNER_TEMP" "${{ steps.entware_feed.outputs.artifacts_dir }}" "${{ steps.entware_feed.outputs.feed_dir }}" "$RUNNER_TEMP/entware-dl"' EXIT
+          docker run --rm \
+            -v "$PWD/c-core/firc/tools/ci/entware-sdk/build.sh:/bin/entrypoint:ro" \
+            -v "$RUNNER_TEMP/entware-dl:/builder/dl" \
+            -v "${{ steps.sdk.outputs.path }}:/sdk/sdk.tar.zst:ro" \
+            -v "$PWD/c-core/firc/tools/ci/entware-sdk/feeds.conf:/sdk/feeds.conf:ro" \
+            -v "${{ steps.entware_feed.outputs.artifacts_dir }}:/artifacts" \
+            -v "${{ steps.entware_feed.outputs.feed_dir }}:/feed" \
+            -w /builder \
+            ghcr.io/openwrt/buildbot/buildworker-v3.11.3:latest \
+            /bin/entrypoint
+
+      - name: Save Entware sources to cache
+        if: steps.dl_cache.outputs.cache-hit != 'true' && steps.entware_sdk.outcome == 'success'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: |
+            ${{ runner.temp }}/entware-dl
+            !${{ runner.temp }}/entware-dl/firc-*
+          key: firc-entware-dl-v2-${{ hashFiles('c-core/firc/tools/ci/entware-sdk/feeds.conf') }}
+
+      - name: Report Entware SDK build failure
+        if: steps.entware_sdk.outcome == 'failure'
+        shell: bash
+        run: |
+          log_root="${{ steps.entware_feed.outputs.artifacts_dir }}/logs"
+          if [[ -d "$log_root" ]]; then
+            while IFS= read -r -d '' log; do
+              matches="$(grep -E 'make\[[0-9]+\]: \*\*\*|(^|: )(fatal )?error:|undefined reference|No rule to make target|collect2: error|ld returned [0-9]+ exit status' "$log" || true)"
+              if [[ -n "$matches" ]]; then
+                echo "==> $log <=="
+                printf '%s\n' "$matches" | tail -n 80
+                tail -n 20 "$log"
+              fi
+            done < <(find "$log_root" -type f -print0 | sort -z)
+          else
+            echo "Entware SDK build failed without log output"
+          fi
+          exit 1
+
+      - name: Fail on warnings in firc source build
+        if: steps.entware_sdk.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t logs < <(find "${{ steps.entware_feed.outputs.artifacts_dir }}/logs" -type f -path '*/firc/*' | sort)
+          if [[ "${#logs[@]}" -eq 0 ]]; then
+            echo "::error::No Entware build log found for firc" >&2
+            exit 1
+          fi
+          grep -h -E 'warning:' "${logs[@]}" | grep -v -E '^make(\[[0-9]+\])?: ' | sort -u > "${RUNNER_TEMP}/firc-warnings-${{ matrix.arch }}.txt" || true
+          if [[ -s "${RUNNER_TEMP}/firc-warnings-${{ matrix.arch }}.txt" ]]; then
+            cat "${RUNNER_TEMP}/firc-warnings-${{ matrix.arch }}.txt" >&2
+            exit 1
+          fi
+
+      - name: Extract and verify built FIRC ELF binaries
+        id: extract_bins
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t packages < <(find "${{ steps.entware_feed.outputs.artifacts_dir }}" -type f -name 'firc_*.ipk' | sort)
+          if [[ "${#packages[@]}" -ne 1 ]]; then
+            echo "Expected exactly one built firc IPK, found ${#packages[@]}" >&2
+            printf '%s\n' "${packages[@]}" >&2
+            exit 1
+          fi
+
+          ipk_member() {
+            if ar t "$1" >/dev/null 2>&1; then
+              ar p "$1" "$2"
+            else
+              member="$(tar -tf "$1" | awk -v m="$2" '$0 == m || $0 == "./" m { print; exit }')"
+              [[ -n "$member" ]] || { echo "Missing $2 in $1" >&2; return 1; }
+              tar -xOf "$1" "$member"
+            fi
+          }
+
+          STAGE_BINS="${RUNNER_TEMP}/firc-bins-${{ matrix.arch }}"
+          rm -rf "$STAGE_BINS"
+          mkdir -p "$STAGE_BINS"
+          data_archive="$STAGE_BINS/data.tar.gz"
+          ipk_member "${packages[0]}" data.tar.gz > "$data_archive"
+
+          for bin_name in fircd tunvless; do
+            member="$(tar -tzf "$data_archive" | awk '$0 == "opt/bin/'"$bin_name"'" || $0 == "./opt/bin/'"$bin_name"'" { print; exit }')"
+            [[ -n "$member" ]] || { echo "Missing opt/bin/$bin_name in ${packages[0]}" >&2; exit 1; }
+            out_bin="$STAGE_BINS/$bin_name"
+            tar -xzOf "$data_archive" "$member" > "$out_bin"
+            chmod 755 "$out_bin"
+
+            if strings "$out_bin" | grep -q '/hom[e]/'; then
+              echo "$bin_name embeds a build path under /home/" >&2
+              exit 1
+            fi
+
+            case "${{ matrix.arch }}" in
+              aarch64-*)
+                readelf -h "$out_bin" | grep -Eq 'Machine:.*AArch64'
+                readelf -h "$out_bin" | grep -Eq 'Data:.*little endian'
+                readelf -l "$out_bin" | grep -F '/opt/lib/ld-linux-aarch64.so.1'
+                ;;
+              mipsel-*)
+                readelf -h "$out_bin" | grep -Eq 'Machine:.*MIPS'
+                readelf -h "$out_bin" | grep -Eq 'Data:.*little endian'
+                readelf -l "$out_bin" | grep -F '/opt/lib/ld.so.1'
+                ;;
+              mips-*)
+                readelf -h "$out_bin" | grep -Eq 'Machine:.*MIPS'
+                readelf -h "$out_bin" | grep -Eq 'Data:.*big endian'
+                readelf -l "$out_bin" | grep -F '/opt/lib/ld.so.1'
+                ;;
+              *)
+                echo "Unsupported arch ${{ matrix.arch }}" >&2
+                exit 1
+                ;;
+            esac
+
+            if [[ "$bin_name" = fircd ]]; then
+              strings "$out_bin" | grep -q " firc-flavour=entware_kn target=${{ matrix.arch }}_kn revision=1$" \
+                || { echo "fircd identity string mismatch" >&2; exit 1; }
+            fi
+          done
+
+          echo "fircd=$STAGE_BINS/fircd" >> "$GITHUB_OUTPUT"
+          echo "tunvless=$STAGE_BINS/tunvless" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-version: 1.26.4
+
+      - name: Package verified awg-firc-runtime IPK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          IPK_NAME="awg-firc-runtime_${RUNTIME_VERSION}_${{ matrix.arch }}.ipk"
+          REL_URL="https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/${IPK_NAME}"
+
+          FIRC_SOURCE_ROOT="$PWD/c-core/firc" go run -mod=vendor ./cmd/firc-runtime-package \
+            -source "$PWD" \
+            -fircd "${{ steps.extract_bins.outputs.fircd }}" \
+            -tunvless "${{ steps.extract_bins.outputs.tunvless }}" \
+            -arch "${{ matrix.arch }}" \
+            -version "$RUNTIME_VERSION" \
+            -url "$REL_URL" \
+            -out "dist/${IPK_NAME}" \
+            > "dist/firc_release_${{ matrix.arch }}.json"
+
+          cat "dist/firc_release_${{ matrix.arch }}.json"
+          ls -lh "dist/${IPK_NAME}"
+
+      - name: Upload per-arch runtime artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: firc-runtime-${{ matrix.arch }}
+          path: |
+            dist/awg-firc-runtime_${{ needs.prepare.outputs.runtime_version }}_${{ matrix.arch }}.ipk
+            dist/firc_release_${{ matrix.arch }}.json
+          if-no-files-found: error
+
+  publish-runtime:
+    name: Merge manifest and publish FIRC runtime release
+    needs:
+      - prepare
+      - build-arch
+    if: >-
+      always() &&
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.already_published != 'true' &&
+      needs.build-arch.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RUNTIME_VERSION: ${{ needs.prepare.outputs.runtime_version }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Download runtime build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: firc-runtime-*
+          path: dist
+          merge-multiple: true
+
+      - name: Merge and verify firc_releases.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/merge-firc-releases.py \
+            --merge dist/firc_releases.json \
+            dist/firc_release_*.json \
+            --expected-version "${RUNTIME_VERSION}" \
+            --expected-repo "${{ github.repository }}"
+          (
+            cd dist
+            sha256sum awg-firc-runtime_${RUNTIME_VERSION}_*.ipk firc_releases.json > SHA256SUMS
+          )
+          cat dist/firc_releases.json
+
+      - name: Publish immutable FIRC runtime prerelease
+        if: inputs.publish_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists; keeping immutable assets and syncing published manifest"
+            gh release download "${RELEASE_TAG}" --repo "${{ github.repository }}" --pattern "firc_releases.json" --dir dist --clobber
+            python3 scripts/merge-firc-releases.py --verify dist/firc_releases.json \
+              --expected-version "${RUNTIME_VERSION}" \
+              --expected-repo "${{ github.repository }}"
+            exit 0
+          fi
+          gh release create "${RELEASE_TAG}" \
+            "./dist/awg-firc-runtime_${RUNTIME_VERSION}_aarch64-3.10.ipk" \
+            "./dist/awg-firc-runtime_${RUNTIME_VERSION}_mips-3.4.ipk" \
+            "./dist/awg-firc-runtime_${RUNTIME_VERSION}_mipsel-3.4.ipk" \
+            ./dist/firc_releases.json \
+            ./dist/SHA256SUMS \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "FIRC Runtime ${RUNTIME_VERSION}" \
+            --notes "Automated awg-firc-runtime build (${RUNTIME_VERSION}) from ${GITHUB_SHA:0:12}." \
+            --prerelease
+
+      - name: Upload merged manifest artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: firc-releases-manifest
+          path: dist/firc_releases.json
+          if-no-files-found: error

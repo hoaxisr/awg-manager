@@ -27,10 +27,18 @@ jobs:
           version="${tag#v}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+  firc-runtime:
+    name: FIRC runtime
+    uses: ./.github/workflows/firc-runtime.yml
+    permissions:
+      contents: write
+    with:
+      publish_release: true
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [version]
+    needs: [version, firc-runtime]
     timeout-minutes: 30
     strategy:
       matrix:
@@ -71,6 +79,15 @@ jobs:
           git diff --exit-code src/lib/generated/brandIcons.ts \
             || { echo "::error::brandIcons.ts is stale — run 'node scripts/generate-brand-icons.mjs' and commit"; exit 1; }
           npm run build
+
+      - name: Download FIRC runtime manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: firc-releases-manifest
+          path: internal/firc
+
+      - name: Verify embedded FIRC runtime manifest
+        run: python3 scripts/merge-firc-releases.py --verify internal/firc/firc_releases.json --expected-repo "${{ github.repository }}"
 
       - name: Build .ipk
         env:
