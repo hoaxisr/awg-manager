@@ -18,6 +18,10 @@ import type {
 	XrayStatus,
 	XrayShareLinks,
 	XrayMigrationStatus,
+	XrayRealityState,
+	XrayRealityUpdate,
+	XrayRealityDestCheck,
+	XrayRealityQuickSetupResponse,
 	TgWebProxyConfig,
 	TgWebProxyStatus,
 	TgWebProxyRevealData,
@@ -509,6 +513,44 @@ export class ServersClient extends SystemClient {
 		return this.request<{ success: boolean; decision?: unknown }>('/servers/vless/migration/resolve', {
 			method: 'POST',
 			body: JSON.stringify({ action }),
+		});
+	}
+
+	// Direct VLESS + REALITY entry (white-IP routers)
+	async getXrayReality(refreshNetwork = false): Promise<XrayRealityState> {
+		return this.request<XrayRealityState>(`/servers/vless/reality${refreshNetwork ? '?refresh=1' : ''}`);
+	}
+
+	async updateXrayReality(update: XrayRealityUpdate): Promise<XrayRealityState> {
+		return this.requestWithCSRF<XrayRealityState>('/servers/vless/reality', {
+			method: 'POST',
+			body: JSON.stringify(update),
+		});
+	}
+
+	async checkXrayRealityDest(dest: string, serverName?: string): Promise<XrayRealityDestCheck> {
+		return this.requestWithCSRF<XrayRealityDestCheck>('/servers/vless/reality/check-dest', {
+			method: 'POST',
+			body: JSON.stringify({ dest, server_name: serverName }),
+		});
+	}
+
+	async xrayRealityQuickSetup(
+		clientRemark: string,
+		reality: XrayRealityUpdate,
+		options?: {
+			preserve_existing_clients?: boolean;
+			outbound_mode?: string;
+			outbound_interface?: string;
+		}
+	): Promise<XrayRealityQuickSetupResponse> {
+		return this.requestWithCSRF<XrayRealityQuickSetupResponse>('/servers/vless/reality/quick-setup', {
+			method: 'POST',
+			body: JSON.stringify({
+				client_remark: clientRemark,
+				reality,
+				...(options ?? {}),
+			}),
 		});
 	}
 

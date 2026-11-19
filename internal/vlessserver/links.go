@@ -1,6 +1,7 @@
 package vlessserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,9 @@ func (s *Service) GenerateLinksForDomain(clientID string, domainOverride string)
 }
 
 func (s *Service) GenerateLinksForEndpoint(clientID string, endpointID string, domainOverride string) (*ShareLinks, error) {
+	if strings.EqualFold(strings.TrimSpace(endpointID), RealityEndpointID) {
+		return s.GenerateRealityLinks(context.Background(), clientID)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

@@ -30,6 +30,9 @@
 	import ApplyProgress from '../wizard/ApplyProgress.svelte';
 	import ConnectionResult from '../wizard/ConnectionResult.svelte';
 	import ConnectionChecks from '../wizard/ConnectionChecks.svelte';
+	import RealityFields from '../reality/RealityFields.svelte';
+	import RealityLinkResult from '../reality/RealityLinkResult.svelte';
+	import type { XrayRealityState, XrayRealityTransport } from '$lib/types/xray';
 	import {
 		Shield,
 		Send,
@@ -43,6 +46,8 @@
 		HelpCircle,
 		Info,
 		Sparkles,
+		RefreshCw,
+		Zap,
 	} from 'lucide-svelte';
 
 	interface Props {
@@ -102,9 +107,26 @@
 	let applyPhase = $state<'review' | 'applying' | 'done'>('review');
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 
+	// Direct VLESS + REALITY entry (white-IP preset)
+	type WizardRealityMode = 'off' | 'also' | 'only';
+	let realityState = $state<XrayRealityState | null>(null);
+	let realityMode = $state<WizardRealityMode>('off');
+	let realityInitiallyEnabled = $state(false);
+	let realityPort = $state(2053);
+	let realityTransport = $state<XrayRealityTransport>('tcp');
+	let realityDest = $state('www.microsoft.com:443');
+	let realityServerName = $state('');
+	let realityPublicHost = $state('');
+	let realityResultLink = $state('');
+	let realityResultError = $state<string | null>(null);
+	let realityNetChecking = $state(false);
+
 	let wantXray = $derived(
 		draft.selectedKind === 'xray' || draft.selectedKind === 'both'
 	);
+	let isRealityOnly = $derived(draft.selectedKind === 'xray' && realityMode === 'only');
+	let usesReality = $derived(wantXray && realityMode !== 'off');
+	let realityWhiteIP = $derived(Boolean(realityState?.network?.white_ip));
 	let wantTg = $derived(
 		draft.selectedKind === 'tgwebproxy' || draft.selectedKind === 'both'
 	);
@@ -276,17 +298,59 @@
 		planRecord = null;
 		jobStatus = null;
 		creds = null;
+		realityResultLink = '';
+		realityResultError = null;
+		realityNetChecking = false;
 
 		loading = true;
 		try {
-			const input = await resolveCurrentInput();
+			const [input, rSt] = await Promise.all([
+				resolveCurrentInput(),
+				api.getXrayReality(true).catch(() => null),
+			]);
 			draft = createInitialWizardDraft(input, preferredKind);
 			if (draft.existingClientCount === 0 && !draft.isEditMode) {
 				draft.clientRemark = 'Мой телефон';
 			}
+			realityState = rSt;
+			const rEnabled = Boolean(rSt?.settings?.enabled);
+			realityInitiallyEnabled = rEnabled;
+			if (rSt) {
+				const s = rSt.settings;
+				realityPort = s.public_key ? s.port : rSt.suggested_port || s.port || 2053;
+				realityTransport = (s.transport as XrayRealityTransport) || 'tcp';
+				realityDest = s.dest || 'www.microsoft.com:443';
+				realityServerName = (s.server_names && s.server_names[0]) || '';
+				realityPublicHost = s.public_host || '';
+			} else {
+				realityPort = 2053;
+				realityTransport = 'tcp';
+				realityDest = 'www.microsoft.com:443';
+				realityServerName = '';
+				realityPublicHost = '';
+			}
+			const hasCdnDomain = Boolean((input.xrayConfig?.public_domain || '').trim());
+			if (draft.selectedKind === 'xray' && rEnabled && !hasCdnDomain) {
+				realityMode = 'only';
+			} else if ((draft.selectedKind === 'xray' || draft.selectedKind === 'both') && rEnabled) {
+				realityMode = 'also';
+			} else {
+				realityMode = 'off';
+			}
 			await loadCapabilities(draft.selectedKind);
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function checkRealityNetwork() {
+		realityNetChecking = true;
+		try {
+			realityState = await api.getXrayReality(true);
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Не удалось проверить WAN');
+		} finally {
+			realityNetChecking = false;
 		}
 	}
 
@@ -324,6 +388,11 @@
 	function selectServiceKind(kind: WizardKind) {
 		draft.selectedKind = kind;
 		draft.disableOtherService = false;
+		if (kind === 'tgwebproxy') {
+			realityMode = 'off';
+		} else if (kind === 'both' && realityMode === 'only') {
+			realityMode = 'also';
+		}
 		void loadCapabilities(kind);
 	}
 
@@ -428,10 +497,21 @@
 		return buildPlanRequestFromDraft(draft);
 	}
 
+	let realityStep2Valid = $derived(
+		!usesReality ||
+			(Number.isInteger(Number(realityPort)) &&
+				Number(realityPort) >= 1024 &&
+				Number(realityPort) <= 65535 &&
+				Boolean(realityDest.trim()))
+	);
+
 	let canProceedStep = $derived.by(() => {
 		if (stepIndex === 0) return true;
 		if (stepIndex === 1) return true;
 		if (stepIndex === 2) {
+			if (isRealityOnly) {
+				return realityStep2Valid;
+			}
 			if (draft.keendnsMode === 'create') {
 				if (!keendnsAvailable || !keendnsValidation.valid || Boolean(keendnsLabelConflict)) {
 					return false;
@@ -458,7 +538,7 @@
 					effectivePhoneDomain;
 				if (!dHost || !effectiveTlsDomain) return false;
 			}
-			return true;
+			return realityStep2Valid;
 		}
 		if (stepIndex === 3) {
 			return egressValidation.valid;
@@ -466,6 +546,9 @@
 		if (stepIndex === 4) {
 			if (wantXray && draft.existingClientCount === 0 && !draft.clientRemark.trim()) {
 				return false;
+			}
+			if (isRealityOnly) {
+				return applyPhase === 'review';
 			}
 			return applyPhase === 'review' && Boolean(preflight?.can_proceed && planRecord);
 		}
@@ -504,12 +587,14 @@
 				}
 				return;
 			}
-			await prepareStep5Plan();
+			if (!isRealityOnly) {
+				await prepareStep5Plan();
+			}
 			applyPhase = 'review';
 			stepIndex = 4;
 			return;
 		}
-		if (stepIndex === 4 && applyPhase === 'review' && planRecord) {
+		if (stepIndex === 4 && applyPhase === 'review' && (isRealityOnly || planRecord)) {
 			await startApply();
 		}
 	}
@@ -520,7 +605,60 @@
 		}
 	}
 
+	function realityHostPart(d: string): string {
+		const v = (d || '').trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+		const idx = v.lastIndexOf(':');
+		return idx > 0 ? v.slice(0, idx) : v;
+	}
+
+	function buildRealityPayload() {
+		const sn = realityServerName.trim();
+		const destTrim = realityDest.trim();
+		return {
+			enabled: true,
+			port: Number(realityPort),
+			transport: realityTransport,
+			dest: destTrim,
+			server_names: sn ? [sn] : [realityHostPart(destTrim)],
+			public_host: realityPublicHost.trim(),
+		};
+	}
+
+	function resolveRealityEgress(): { outbound_mode: string; outbound_interface?: string } {
+		const u = (draft.upstreamDevice || '').trim();
+		if (!u || u === 'direct') return { outbound_mode: 'direct' };
+		if (u === 'firc:router' || u === 'router') return { outbound_mode: 'router' };
+		return { outbound_mode: 'interface', outbound_interface: u };
+	}
+
 	async function startApply() {
+		if (isRealityOnly) {
+			loading = true;
+			realityResultLink = '';
+			realityResultError = null;
+			try {
+				const egress = resolveRealityEgress();
+				const res = await api.xrayRealityQuickSetup(
+					draft.clientRemark.trim() || 'Мой телефон',
+					buildRealityPayload(),
+					{
+						preserve_existing_clients: draft.existingClientCount > 0,
+						...egress,
+					}
+				);
+				realityState = res.state;
+				realityResultLink = res.links?.vless_url || '';
+				realityResultError = res.links_error || null;
+				applyPhase = 'done';
+				onapplied?.();
+				onsettled?.();
+			} catch (e) {
+				notifications.error(e instanceof Error ? e.message : 'Не удалось настроить Reality');
+			} finally {
+				loading = false;
+			}
+			return;
+		}
 		if (!planRecord) return;
 		loading = true;
 		try {
@@ -591,8 +729,34 @@
 	async function handleReveal() {
 		if (!jobStatus) return;
 		revealLoading = true;
+		realityResultLink = '';
+		realityResultError = null;
 		try {
 			creds = await api.revealWizardCredentials(draft.selectedKind, jobStatus.id);
+			if (usesReality) {
+				try {
+					realityState = await api.updateXrayReality(buildRealityPayload());
+					let targetUuid = creds?.uuid || '';
+					if (!targetUuid) {
+						const xCfg = await api.getXrayServerConfig().catch(() => null);
+						targetUuid = xCfg?.clients?.find((c) => c.enabled)?.id || xCfg?.clients?.[0]?.id || '';
+					}
+					if (targetUuid) {
+						const l = await api.getXrayClientLinks(targetUuid, undefined, 'reality');
+						realityResultLink = l.vless_url || '';
+					} else {
+						realityResultError = 'Устройство для ссылки не найдено — выберите его в карточке VLESS';
+					}
+				} catch (re) {
+					realityResultError = re instanceof Error ? re.message : 'Не удалось применить Reality';
+				}
+			} else if (wantXray && realityInitiallyEnabled) {
+				try {
+					realityState = await api.updateXrayReality({ enabled: false });
+				} catch {
+					// non-fatal
+				}
+			}
 		} catch (e) {
 			notifications.error(
 				e instanceof Error ? e.message : 'Не удалось получить ключи подключения'
@@ -813,8 +977,9 @@
 						<button
 							type="button"
 							class="choice-card"
-							class:selected={draft.connectionWay === 'direct'}
+							class:selected={!isRealityOnly && draft.connectionWay === 'direct'}
 							onclick={() => {
+								if (realityMode === 'only') realityMode = 'off';
 								draft.connectionWay = 'direct';
 							}}
 						>
@@ -827,8 +992,9 @@
 						<button
 							type="button"
 							class="choice-card"
-							class:selected={draft.connectionWay === 'external_https'}
+							class:selected={!isRealityOnly && draft.connectionWay === 'external_https'}
 							onclick={() => {
+								if (realityMode === 'only') realityMode = 'off';
 								draft.connectionWay = 'external_https';
 								draft.publicPort = 443;
 							}}
@@ -838,9 +1004,61 @@
 								Если вы уже настроили промежуточный сервис для подключения (например, собственный домен с пересылкой трафика на роутер).
 							</div>
 						</button>
+
+						{#if draft.selectedKind === 'xray'}
+							<button
+								type="button"
+								class="choice-card choice-card-full"
+								class:selected={isRealityOnly}
+								onclick={() => (realityMode = 'only')}
+							>
+								<div class="choice-top">
+									<span class="choice-title">Напрямую · Reality TLS (белый IP)</span>
+									{#if realityWhiteIP}
+										<span class="current-pill">Рекомендуется</span>
+									{/if}
+								</div>
+								<div class="choice-text">
+									Прямое подключение по VLESS + REALITY без CDN и без домена (порт {realityPort}). Максимальная скорость, но не проходит «белые списки» по IP.
+								</div>
+							</button>
+						{/if}
 					</div>
 				</div>
 
+				{#if isRealityOnly}
+					<div class="origin-box">
+						<div class="question-header-row">
+							<span class="field-label">2. Проверка белого IP для Reality</span>
+							<Button
+								variant="secondary"
+								size="sm"
+								onclick={() => void checkRealityNetwork()}
+								disabled={realityNetChecking}
+							>
+								<RefreshCw size={13} class="mr-1" />
+								{realityNetChecking ? 'Проверка...' : 'Проверить'}
+							</Button>
+						</div>
+						<div class="reality-wan-box" class:ok={realityWhiteIP} class:warn={!realityWhiteIP}>
+							{#if !realityState?.network}
+								<AlertTriangle size={15} class="icon-warning-soft" />
+								<span>Внешний IP роутера ещё не проверялся — нажмите «Проверить».</span>
+							{:else if realityWhiteIP}
+								<CheckCircle2 size={15} class="icon-success-soft" />
+								<span>
+									Белый IP подтверждён: <strong class="mono">{realityState.network.external_ip || realityState.network.wan_address}</strong>
+									{realityState.network.keendns_domain ? ` · ссылки построятся на KeenDNS ${realityState.network.keendns_domain}` : ''}
+								</span>
+							{:else}
+								<AlertTriangle size={15} class="icon-warning-soft" />
+								<span>
+									Белый IP не обнаружен: {realityState.network.reason || 'адрес недоступен извне'}. Для работы без белого IP выберите вариант с KeenDNS или внешним доменом.
+								</span>
+							{/if}
+						</div>
+					</div>
+				{:else}
 				<div class="field-block" style="margin-top: 4px;">
 					<div class="question-header-row">
 						<span class="field-label">2. Какой адрес есть у самого роутера?</span>
@@ -925,6 +1143,33 @@
 						</div>
 					{/if}
 				</div>
+
+				{#if wantXray}
+					<label class="reality-opt-box" class:selected={realityMode === 'also'}>
+						<input
+							type="checkbox"
+							checked={realityMode === 'also'}
+							onchange={(e) => {
+								realityMode = e.currentTarget.checked ? 'also' : 'off';
+							}}
+						/>
+						<div class="reality-opt-body">
+							<div class="reality-opt-head">
+								<Zap size={14} class="icon-accent-soft" />
+								<span class="choice-title">Также включить параллельный вход Reality TLS (белый IP)</span>
+								{#if realityState?.network}
+									<span class="tech-sub-badge" class:badge-ok={realityWhiteIP} class:badge-warn={!realityWhiteIP}>
+										{realityWhiteIP ? 'Белый IP обнаружен' : 'Требуется белый IP'}
+									</span>
+								{/if}
+							</div>
+							<div class="choice-text">
+								Устройства получат второй быстрый маршрут напрямую на порт {realityPort} (для сетей без «белых списков» по IP), а CDN останется в резерве.
+							</div>
+						</div>
+					</label>
+				{/if}
+				{/if}
 			{/if}
 		</div>
 
@@ -933,6 +1178,22 @@
 		<div class="step-section">
 			<h3 class="step-heading">Адрес подключения</h3>
 
+			{#if isRealityOnly}
+				<p class="step-desc">
+					Настройте прямой вход VLESS + REALITY на публичном (белом) IP роутера.
+				</p>
+				<div class="origin-box">
+					<RealityFields
+						rs={realityState}
+						bind:port={realityPort}
+						bind:transport={realityTransport}
+						bind:dest={realityDest}
+						bind:serverName={realityServerName}
+						bind:publicHost={realityPublicHost}
+						onrefreshed={(fresh) => (realityState = fresh)}
+					/>
+				</div>
+			{:else}
 			{#if draft.connectionWay === 'direct'}
 				<!-- Схема: Напрямую к адресу роутера -->
 				<p class="step-desc">
@@ -1350,6 +1611,22 @@
 					{/if}
 				</div>
 			{/if}
+
+			{#if usesReality}
+				<div class="origin-box">
+					<div class="origin-title">Параллельный прямой вход Reality TLS (белый IP)</div>
+					<RealityFields
+						rs={realityState}
+						bind:port={realityPort}
+						bind:transport={realityTransport}
+						bind:dest={realityDest}
+						bind:serverName={realityServerName}
+						bind:publicHost={realityPublicHost}
+						onrefreshed={(fresh) => (realityState = fresh)}
+					/>
+				</div>
+			{/if}
+			{/if}
 		</div>
 
 	{:else if stepIndex === 3}
@@ -1579,7 +1856,7 @@
 					Проверьте сводку настроек перед сохранением. Все изменения применяются атомарно с автоматическим откатом при ошибке.
 				</p>
 
-				{#if draft.keendnsMode === 'create' && keendnsAvailable}
+				{#if !isRealityOnly && draft.keendnsMode === 'create' && keendnsAvailable}
 					<div class="keendns-publish-alert">
 						<Globe size={18} class="icon-info-soft" />
 						<div class="publish-alert-body">
@@ -1595,6 +1872,36 @@
 
 				<!-- Human-readable summary -->
 				<div class="human-summary-card">
+					{#if isRealityOnly}
+						<div class="summary-row-item">
+							<span class="sum-label">Подключаемые сервисы:</span>
+							<span class="sum-val">Интернет через роутер (VLESS + REALITY)</span>
+						</div>
+						<div class="summary-row-item">
+							<span class="sum-label">Способ входа:</span>
+							<span class="sum-val mono">
+								Прямой вход Reality TLS · {realityTransport === 'xhttp' ? 'XHTTP (stream-one)' : 'TCP (raw)'} · порт {realityPort}
+							</span>
+						</div>
+						<div class="summary-row-item">
+							<span class="sum-label">Адрес для телефона:</span>
+							<span class="sum-val mono">
+								{realityPublicHost.trim() || realityState?.network?.public_host || 'Определится автоматически'}
+							</span>
+						</div>
+						<div class="summary-row-item">
+							<span class="sum-label">Сайт-маскировка:</span>
+							<span class="sum-val mono">{realityServerName.trim() || realityDest.trim()}</span>
+						</div>
+						<div class="summary-row-item">
+							<span class="sum-label">Интернет для VLESS:</span>
+							<span class="sum-val">{formatEgressSummaryText(draft.upstreamDevice)}</span>
+						</div>
+						<div class="summary-row-item">
+							<span class="sum-label">Сеть и фаервол:</span>
+							<span class="sum-val">Будет запущен встроенный обработчик Reality и открыт порт {realityPort}/tcp в WAN-фаерволе</span>
+						</div>
+					{:else}
 					<div class="summary-row-item">
 						<span class="sum-label">Подключаемые сервисы:</span>
 						<span class="sum-val">
@@ -1641,6 +1948,19 @@
 							<span class="sum-label">Интернет для VLESS:</span>
 							<span class="sum-val">{formatEgressSummaryText(draft.upstreamDevice)}</span>
 						</div>
+						{#if usesReality}
+							<div class="summary-row-item">
+								<span class="sum-label">Прямой вход Reality:</span>
+								<span class="sum-val mono">
+									Включить параллельно · {realityTransport === 'xhttp' ? 'XHTTP' : 'TCP (raw)'} · порт {realityPort} · {realityDest}
+								</span>
+							</div>
+						{:else if realityInitiallyEnabled}
+							<div class="summary-row-item">
+								<span class="sum-label">Прямой вход Reality:</span>
+								<span class="sum-val">Будет выключен</span>
+							</div>
+						{/if}
 					{/if}
 
 					{#if wantTg}
@@ -1658,6 +1978,7 @@
 								: 'Без перезапуска'}
 						</span>
 					</div>
+					{/if}
 				</div>
 
 				<!-- First device name input ONLY when VLESS has 0 existing clients -->
@@ -1765,6 +2086,7 @@
 						</div>
 					{/if}
 
+				{#if !isRealityOnly}
 					<div class="status-pill-card info">
 						<Info size={16} />
 						<div>
@@ -1774,17 +2096,27 @@
 							</div>
 						</div>
 					</div>
+				{/if}
 				</div>
 
-				<ConnectionResult
-					kind={draft.selectedKind}
-					{creds}
-					loading={revealLoading}
-					onreveal={handleReveal}
-				/>
-				<div style="margin-top: 14px;">
-					<ConnectionChecks kind={draft.selectedKind} autoRun={true} />
-				</div>
+				{#if !isRealityOnly}
+					<ConnectionResult
+						kind={draft.selectedKind}
+						{creds}
+						loading={revealLoading}
+						onreveal={handleReveal}
+					/>
+				{/if}
+				{#if usesReality}
+					<div style={!isRealityOnly ? 'margin-top: 14px;' : ''}>
+						<RealityLinkResult link={realityResultLink} error={realityResultError} />
+					</div>
+				{/if}
+				{#if !isRealityOnly}
+					<div style="margin-top: 14px;">
+						<ConnectionChecks kind={draft.selectedKind} autoRun={true} />
+					</div>
+				{/if}
 			{/if}
 		</div>
 	{/if}
@@ -2455,6 +2787,79 @@
 	}
 	.step-section :global(.mr-1) {
 		margin-right: 4px;
+	}
+	.choice-card-full {
+		grid-column: 1 / -1;
+	}
+	.reality-opt-box {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		padding: 11px 13px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-primary);
+		cursor: pointer;
+		transition: border-color 0.15s, background 0.15s;
+	}
+	.reality-opt-box:hover {
+		border-color: var(--color-accent);
+	}
+	.reality-opt-box.selected {
+		border-color: var(--color-accent);
+		background: var(--color-accent-tint);
+	}
+	.reality-opt-box input[type='checkbox'] {
+		margin-top: 2px;
+		width: 16px;
+		height: 16px;
+		accent-color: var(--color-accent);
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+	.reality-opt-body {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-width: 0;
+		flex: 1;
+	}
+	.reality-opt-head {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+	.badge-ok {
+		background: var(--color-success-tint);
+		color: var(--color-success);
+		border: 1px solid var(--color-success-border);
+		font-weight: 500;
+	}
+	.badge-warn {
+		background: var(--color-warning-tint);
+		color: var(--color-warning);
+		border: 1px solid var(--color-warning-border);
+		font-weight: 500;
+	}
+	.reality-wan-box {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 12px;
+		line-height: 1.45;
+		padding: 8px 10px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-border);
+		color: var(--color-text-primary);
+	}
+	.reality-wan-box.ok {
+		border-color: var(--color-success-border);
+		background: var(--color-success-tint);
+	}
+	.reality-wan-box.warn {
+		border-color: var(--color-warning-border);
+		background: var(--color-warning-tint);
 	}
 
 	@media (max-width: 480px) {

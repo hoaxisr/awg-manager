@@ -93,6 +93,7 @@ func (a *app) setupServer() {
 	// Inbound VLESS/XHTTP/FiniteProto always runs on the mandatory C daemon (awgm-xhttpd),
 	// independent of whether FIRC or Sing-box is selected as the outbound routing engine.
 	a.vlessServerService = vlessserver.New(a.dataDir, onReload)
+	a.vlessServerService.SetRealityNetworkInfoProvider(a.realityNetworkInfo)
 	if a.fircOp != nil {
 		a.vlessServerService.SetFircRoutingOverride(a.fircOp.LoadExtConfig().ServerRouting.IsServerEnabled("vless_xhttp_server"))
 	}

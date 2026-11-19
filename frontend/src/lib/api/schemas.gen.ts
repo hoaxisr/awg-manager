@@ -2798,6 +2798,13 @@ const api_UserConfigCheckResponse: v.GenericSchema = v.looseObject({
 	warnings: v.optional(v.nullable(v.array(v.lazy(() => api_RouterValidationErrorDTO)))),
 });
 
+const api_VlessRealityQuickSetupResponse: v.GenericSchema = v.looseObject({
+	client: v.optional(v.nullable(v.lazy(() => vlessserver_Client))),
+	links: v.optional(v.nullable(v.lazy(() => vlessserver_ShareLinks))),
+	links_error: v.optional(v.nullable(v.string())),
+	state: v.optional(v.nullable(v.lazy(() => vlessserver_RealityState))),
+});
+
 const api_WANIPData: v.GenericSchema = v.looseObject({
 	ip: v.optional(v.nullable(v.string())),
 });
@@ -3275,6 +3282,25 @@ const procmon_SystemSnapshot: v.GenericSchema = v.looseObject({
 	uptimeSeconds: v.optional(v.nullable(v.number())),
 });
 
+const realityserver_DestCheck: v.GenericSchema = v.looseObject({
+	dest: v.optional(v.nullable(v.string())),
+	error: v.optional(v.nullable(v.string())),
+	h2: v.optional(v.nullable(v.boolean())),
+	latency_ms: v.optional(v.nullable(v.number())),
+	ok: v.optional(v.nullable(v.boolean())),
+	server_name: v.optional(v.nullable(v.string())),
+	tls13: v.optional(v.nullable(v.boolean())),
+	x25519: v.optional(v.nullable(v.boolean())),
+});
+
+const realityserver_Status: v.GenericSchema = v.looseObject({
+	active_conns: v.optional(v.nullable(v.number())),
+	listen_addr: v.optional(v.nullable(v.string())),
+	running: v.optional(v.nullable(v.boolean())),
+	started_at: v.optional(v.nullable(v.string())),
+	transport: v.optional(v.nullable(v.string())),
+});
+
 const services_Item: v.GenericSchema = v.looseObject({
 	enabled: v.optional(v.nullable(v.boolean())),
 	logPath: v.optional(v.nullable(v.string())),
@@ -3452,6 +3478,54 @@ const vlessserver_EndpointConfig: v.GenericSchema = v.looseObject({
 	transport: v.optional(v.nullable(v.string())),
 	uplink_method: v.optional(v.nullable(v.string())),
 	xhttp_tuning: v.optional(v.nullable(v.lazy(() => vlessserver_XHTTPTuning))),
+});
+
+const vlessserver_RealityNetworkInfo: v.GenericSchema = v.looseObject({
+	checked_at: v.optional(v.nullable(v.string())),
+	external_ip: v.optional(v.nullable(v.string())),
+	keendns_domain: v.optional(v.nullable(v.string())),
+	public_host: v.optional(v.nullable(v.string())),
+	reason: v.optional(v.nullable(v.string())),
+	wan_address: v.optional(v.nullable(v.string())),
+	white_ip: v.optional(v.nullable(v.boolean())),
+});
+
+const vlessserver_RealitySettings: v.GenericSchema = v.looseObject({
+	dest: v.optional(v.nullable(v.string())),
+	enabled: v.optional(v.nullable(v.boolean())),
+	fingerprint: v.optional(v.nullable(v.string())),
+	port: v.optional(v.nullable(v.number())),
+	private_key: v.optional(v.nullable(v.string())),
+	public_host: v.optional(v.nullable(v.string())),
+	public_key: v.optional(v.nullable(v.string())),
+	server_names: v.optional(v.nullable(v.array(v.string()))),
+	short_ids: v.optional(v.nullable(v.array(v.string()))),
+	transport: v.optional(v.nullable(v.string())),
+	updated_at: v.optional(v.nullable(v.string())),
+	xhttp_path: v.optional(v.nullable(v.string())),
+});
+
+const vlessserver_RealityState: v.GenericSchema = v.looseObject({
+	clients_count: v.optional(v.nullable(v.number())),
+	dest_presets: v.optional(v.nullable(v.array(v.string()))),
+	last_error: v.optional(v.nullable(v.string())),
+	network: v.optional(v.nullable(v.lazy(() => vlessserver_RealityNetworkInfo))),
+	port_candidates: v.optional(v.nullable(v.array(v.number()))),
+	runtime: v.optional(v.nullable(v.lazy(() => realityserver_Status))),
+	server_enabled: v.optional(v.nullable(v.boolean())),
+	settings: v.optional(v.nullable(v.lazy(() => vlessserver_RealitySettings))),
+	suggested_port: v.optional(v.nullable(v.number())),
+	wan_port_open: v.optional(v.nullable(v.boolean())),
+});
+
+const vlessserver_ShareLinks: v.GenericSchema = v.looseObject({
+	finiteproto_url: v.optional(v.nullable(v.string())),
+	happ_json: v.optional(v.nullable(v.string())),
+	mihomo_yaml: v.optional(v.nullable(v.string())),
+	remark: v.optional(v.nullable(v.string())),
+	singbox_json: v.optional(v.nullable(v.string())),
+	uuid: v.optional(v.nullable(v.string())),
+	vless_url: v.optional(v.nullable(v.string())),
 });
 
 const vlessserver_Status: v.GenericSchema = v.looseObject({
@@ -3786,6 +3860,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /servers/all": v.lazy(() => api_ServersAllResponse),
 	"GET /servers/marked": v.lazy(() => api_APIEnvelope),
 	"GET /servers/vless": v.lazy(() => vlessserver_Config),
+	"GET /servers/vless/reality": v.lazy(() => vlessserver_RealityState),
 	"GET /servers/vless/status": v.lazy(() => vlessserver_Status),
 	"GET /servers/wan-ip": v.lazy(() => api_WANIPResponse),
 	"GET /settings/get": v.lazy(() => api_SettingsResponse),
@@ -4010,6 +4085,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /servers/mark": v.lazy(() => api_ServersAllResponse),
 	"POST /servers/restart": v.lazy(() => api_APIEnvelope),
 	"POST /servers/vless/action": v.lazy(() => vlessserver_Status),
+	"POST /servers/vless/reality": v.lazy(() => vlessserver_RealityState),
+	"POST /servers/vless/reality/check-dest": v.lazy(() => realityserver_DestCheck),
+	"POST /servers/vless/reality/quick-setup": v.lazy(() => api_VlessRealityQuickSetupResponse),
 	"POST /settings/obfuscator-relay": v.lazy(() => api_SettingsResponse),
 	"POST /settings/regenerate-api-key": v.lazy(() => api_SettingsResponse),
 	"POST /settings/update": v.lazy(() => api_SettingsResponse),

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/realityserver"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 )
@@ -34,12 +35,23 @@ type Service struct {
 	configRev           uint64
 	saveSettingsHook    func(path string, data []byte) error
 	testRuntimeHook     func(cfg xhttpserver.Config) error
+
+	reality            RealitySettings
+	realityLastErr     string
+	realitySrv         *realityserver.Server
+	realityNetInfo     RealityNetworkInfoFunc
+	realityNetCache    *RealityNetworkInfo
+	realityNetCachedAt time.Time
+	realityFirewall    func(port int, open bool)
+	realityFWPort      int
+	realityFWSynced    bool
 }
 
 func New(dataDir string, onReload func()) *Service {
 	s := &Service{
-		dataDir:  dataDir,
-		onReload: onReload,
+		dataDir:         dataDir,
+		onReload:        onReload,
+		realityFirewall: realityserver.SyncWANFirewall,
 	}
 
 	secStore, err := NewDiskSecretStore(filepath.Join(dataDir, "xray", "secrets"))
@@ -49,6 +61,7 @@ func New(dataDir string, onReload func()) *Service {
 
 	s.cleanLegacySlotFilesLocked()
 	s.loadConfig()
+	s.loadRealitySettings()
 	_ = s.RecoverPendingTransactions()
 	return s
 }
@@ -125,7 +138,7 @@ func (s *Service) SetFircRoutingOverride(enabled bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fircRoutingOverride = enabled
-	if s.config.Enabled && s.daemon != nil && s.daemon.IsRunning() {
+	if s.config.Enabled && ((s.daemon != nil && s.daemon.IsRunning()) || (s.realitySrv != nil && s.realitySrv.IsRunning())) {
 		_ = s.syncDaemonLocked()
 	}
 }
@@ -257,12 +270,14 @@ func (s *Service) syncDaemonLocked() error {
 			_ = s.daemon.Stop()
 			s.daemon = nil
 		}
+		s.syncRealityLocked()
 		return nil
 	}
 	if err := validateConfigTransports(s.config); err != nil {
 		s.lastRuntimeErr = err.Error()
 		return err
 	}
+	defer s.syncRealityLocked()
 	xCfg := buildXHTTPServerConfig(s.config)
 	if s.fircRoutingOverride {
 		xCfg.Egress.Mode = "router"
@@ -650,6 +665,7 @@ func (s *Service) UpdateConfig(cfg Config) error {
 		err = s.syncDaemonLocked()
 	} else {
 		err = s.stopLocked()
+		s.syncRealityLocked()
 	}
 	s.notifyReload()
 	return err
@@ -660,23 +676,27 @@ func (s *Service) GetStatus() Status {
 	defer s.mu.Unlock()
 
 	binInfo, _ := xhttpserver.InspectBinary("")
-	running := s.daemon != nil && s.daemon.IsRunning()
+	daemonRunning := s.daemon != nil && s.daemon.IsRunning()
+	realityRunning := s.realitySrv != nil && s.realitySrv.IsRunning()
+	running := daemonRunning || realityRunning
 	pid := 0
-	if running {
+	if daemonRunning {
 		pid = s.daemon.CDaemonPID()
 	}
 	version := ""
 	if binInfo.Version != "" {
 		version = "awgm-xhttpd " + binInfo.Version
 	}
-	if running {
+	if daemonRunning {
 		if dVer := s.daemon.CDaemonVersion(); dVer != "" {
 			version = "awgm-xhttpd " + dVer
 		}
 	}
 	unavailableReason := ""
 	if !binInfo.Available {
-		unavailableReason = binInfo.Error
+		if !realityRunning {
+			unavailableReason = binInfo.Error
+		}
 	} else if s.config.Enabled && !running && s.lastRuntimeErr != "" {
 		unavailableReason = s.lastRuntimeErr
 	}
@@ -978,7 +998,9 @@ func (s *Service) Stop() error {
 	_ = s.saveConfig()
 	s.configRev++
 	s.notifyReload()
-	return s.stopLocked()
+	err := s.stopLocked()
+	s.syncRealityLocked()
+	return err
 }
 
 func (s *Service) Shutdown(ctx context.Context) error {
@@ -998,7 +1020,7 @@ func (s *Service) ShutdownRuntime(ctx context.Context) error {
 func (s *Service) IsRunning() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.daemon != nil && s.daemon.IsRunning()
+	return (s.daemon != nil && s.daemon.IsRunning()) || (s.realitySrv != nil && s.realitySrv.IsRunning())
 }
 
 func (s *Service) Restart() error {
@@ -1022,6 +1044,7 @@ func (s *Service) stopLocked() error {
 		_ = s.daemon.Stop()
 		s.daemon = nil
 	}
+	s.stopRealityRuntimeLocked()
 	s.disableOrchestratorIngressSlotLocked()
 	s.cleanLegacySlotFilesLocked()
 	return nil

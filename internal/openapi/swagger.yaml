@@ -7972,6 +7972,37 @@ definitions:
       enabled:
         type: boolean
     type: object
+  api.VlessRealityCheckDestRequest:
+    properties:
+      dest:
+        type: string
+      server_name:
+        type: string
+    type: object
+  api.VlessRealityQuickSetupRequest:
+    properties:
+      client_remark:
+        type: string
+      outbound_interface:
+        type: string
+      outbound_mode:
+        type: string
+      preserve_existing_clients:
+        type: boolean
+      reality:
+        $ref: '#/definitions/vlessserver.RealityUpdate'
+    type: object
+  api.VlessRealityQuickSetupResponse:
+    properties:
+      client:
+        $ref: '#/definitions/vlessserver.Client'
+      links:
+        $ref: '#/definitions/vlessserver.ShareLinks'
+      links_error:
+        type: string
+      state:
+        $ref: '#/definitions/vlessserver.RealityState'
+    type: object
   api.WANIPData:
     properties:
       ip:
@@ -9042,6 +9073,38 @@ definitions:
       uptimeSeconds:
         type: integer
     type: object
+  realityserver.DestCheck:
+    properties:
+      dest:
+        type: string
+      error:
+        type: string
+      h2:
+        type: boolean
+      latency_ms:
+        type: integer
+      ok:
+        type: boolean
+      server_name:
+        type: string
+      tls13:
+        type: boolean
+      x25519:
+        type: boolean
+    type: object
+  realityserver.Status:
+    properties:
+      active_conns:
+        type: integer
+      listen_addr:
+        type: string
+      running:
+        type: boolean
+      started_at:
+        type: string
+      transport:
+        type: string
+    type: object
   services.Item:
     properties:
       enabled:
@@ -9548,6 +9611,124 @@ definitions:
         type: string
       xhttp_tuning:
         $ref: '#/definitions/vlessserver.XHTTPTuning'
+    type: object
+  vlessserver.RealityNetworkInfo:
+    properties:
+      checked_at:
+        type: string
+      external_ip:
+        type: string
+      keendns_domain:
+        type: string
+      public_host:
+        type: string
+      reason:
+        type: string
+      wan_address:
+        type: string
+      white_ip:
+        type: boolean
+    type: object
+  vlessserver.RealitySettings:
+    properties:
+      dest:
+        type: string
+      enabled:
+        type: boolean
+      fingerprint:
+        type: string
+      port:
+        type: integer
+      private_key:
+        type: string
+      public_host:
+        type: string
+      public_key:
+        type: string
+      server_names:
+        items:
+          type: string
+        type: array
+      short_ids:
+        items:
+          type: string
+        type: array
+      transport:
+        type: string
+      updated_at:
+        type: string
+      xhttp_path:
+        type: string
+    type: object
+  vlessserver.RealityState:
+    properties:
+      clients_count:
+        type: integer
+      dest_presets:
+        items:
+          type: string
+        type: array
+      last_error:
+        type: string
+      network:
+        $ref: '#/definitions/vlessserver.RealityNetworkInfo'
+      port_candidates:
+        items:
+          type: integer
+        type: array
+      runtime:
+        $ref: '#/definitions/realityserver.Status'
+      server_enabled:
+        type: boolean
+      settings:
+        $ref: '#/definitions/vlessserver.RealitySettings'
+      suggested_port:
+        type: integer
+      wan_port_open:
+        type: boolean
+    type: object
+  vlessserver.RealityUpdate:
+    properties:
+      dest:
+        type: string
+      enabled:
+        type: boolean
+      fingerprint:
+        type: string
+      port:
+        type: integer
+      public_host:
+        type: string
+      regenerate_keys:
+        type: boolean
+      reset:
+        description: |-
+          Reset removes the REALITY route entirely (stops it, closes the port and
+          forgets keys). Other fields are ignored.
+        type: boolean
+      server_names:
+        items:
+          type: string
+        type: array
+      transport:
+        type: string
+    type: object
+  vlessserver.ShareLinks:
+    properties:
+      finiteproto_url:
+        type: string
+      happ_json:
+        type: string
+      mihomo_yaml:
+        type: string
+      remark:
+        type: string
+      singbox_json:
+        type: string
+      uuid:
+        type: string
+      vless_url:
+        type: string
     type: object
   vlessserver.Status:
     properties:
@@ -15699,6 +15880,109 @@ paths:
           schema:
             $ref: '#/definitions/vlessserver.Status'
       summary: Control VLESS XHTTP/FiniteProto server daemon (awgm-xhttpd)
+      tags:
+      - servers
+  /servers/vless/reality:
+    get:
+      parameters:
+      - description: Set to 1 to force live WAN IP detection
+        in: query
+        name: refresh
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vlessserver.RealityState'
+      summary: Get VLESS + REALITY state, runtime status and WAN detection
+      tags:
+      - servers
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: REALITY settings update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/vlessserver.RealityUpdate'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vlessserver.RealityState'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update or reset direct VLESS + REALITY configuration
+      tags:
+      - servers
+  /servers/vless/reality/check-dest:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Target host:port and optional SNI
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.VlessRealityCheckDestRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/realityserver.DestCheck'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Probe a REALITY TLS 1.3 camouflage destination from the router
+      tags:
+      - servers
+  /servers/vless/reality/quick-setup:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: REALITY quick setup request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.VlessRealityQuickSetupRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.VlessRealityQuickSetupResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Configure VLESS + REALITY direct preset in one call (wizard)
       tags:
       - servers
   /servers/vless/status:

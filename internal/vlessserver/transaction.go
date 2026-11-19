@@ -334,7 +334,7 @@ func (s *Service) commitPreparedLocked(txID string) error {
 	s.configRev++
 	manifest.Committed = true
 	manifest.State = TxStateCommitted
-	manifest.CandidateRunning = (s.daemon != nil && s.daemon.IsRunning())
+	manifest.CandidateRunning = (s.daemon != nil && s.daemon.IsRunning()) || (s.realitySrv != nil && s.realitySrv.IsRunning())
 	if err := writeManifest(txPath, &manifest); err != nil {
 		return fmt.Errorf("write committed manifest: %w", err)
 	}
@@ -482,9 +482,12 @@ func (s *Service) rollbackLocked(txID string, manifest *SnapshotManifest) error 
 		if err := s.syncDaemonLocked(); err != nil {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("restart awgm-xhttpd daemon during rollback: %w", err))
 		}
-	} else if s.daemon != nil {
-		_ = s.daemon.Stop()
-		s.daemon = nil
+	} else {
+		if s.daemon != nil {
+			_ = s.daemon.Stop()
+			s.daemon = nil
+		}
+		s.syncRealityLocked()
 	}
 
 	if len(rollbackErrs) > 0 {

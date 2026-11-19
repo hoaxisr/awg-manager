@@ -42,6 +42,14 @@
 	let copyAllLoading = $state(false);
 	let activeTab = $state<'vless' | 'finiteproto' | 'happ' | 'singbox' | 'mihomo'>('vless');
 	let isPrimaryFinite = $derived(Boolean(links?.vless_url?.includes('mode=finiteproto')));
+	let isReality = $derived(Boolean(links?.vless_url?.includes('security=reality')));
+
+	function modeLabel(mode?: string): string {
+		if (mode === 'finiteproto') return 'FiniteProto v2';
+		if (mode === 'reality-tcp') return 'Reality · TCP';
+		if (mode === 'reality-xhttp') return 'Reality · XHTTP';
+		return 'XHTTP';
+	}
 	let qrDataUrl = $state('');
 	let qrGenerating = $state(false);
 	let qrZoomOpen = $state(false);
@@ -139,6 +147,21 @@
 			}
 
 			availableDomains = domainList;
+
+			// 3. Direct REALITY entry (white-IP preset), offered alongside CDN/KeenDNS routes.
+			const reality = await api.getXrayReality().catch(() => null);
+			if (reality?.settings?.enabled && reality.settings.public_key) {
+				const host = reality.settings.public_host || reality.network?.public_host || 'белый IP';
+				availableDomains = [
+					...availableDomains,
+					{
+						id: 'reality',
+						domain: `${host}:${reality.settings.port}`,
+						description: 'Reality (прямой, белый IP)',
+						mode: reality.settings.transport === 'xhttp' ? 'reality-xhttp' : 'reality-tcp'
+					}
+				];
+			}
 
 			if (availableDomains.length > 0) {
 				const byInitial = initialEndpointId
@@ -378,7 +401,7 @@
 								>
 									<span class="route-pill-title">{opt.description || 'Маршрут VLESS'}</span>
 									<span class="route-pill-sub font-mono">
-										{opt.domain} · {opt.mode === 'finiteproto' ? 'FiniteProto v2' : 'XHTTP'}
+										{opt.domain} · {modeLabel(opt.mode)}
 									</span>
 								</button>
 							{/each}
@@ -389,7 +412,7 @@
 						<span class="picker-label">Конфигурация VLESS:</span>
 						<div class="readonly-pill font-mono">
 							{availableDomains[0].description ? `${availableDomains[0].description} (${availableDomains[0].domain})` : availableDomains[0].domain}
-							· {availableDomains[0].mode === 'finiteproto' || isPrimaryFinite ? 'FiniteProto v2' : 'XHTTP'}
+							· {isPrimaryFinite ? 'FiniteProto v2' : modeLabel(availableDomains[0].mode)}
 						</div>
 					</div>
 				{/if}
@@ -401,7 +424,7 @@
 						class:active={activeTab === 'vless'}
 						onclick={() => { activeTab = 'vless'; if (links) generateQR(links.vless_url); }}
 					>
-						{isPrimaryFinite ? 'VLESS URL (FiniteProto v2)' : 'VLESS URL (XHTTP)'}
+						{isPrimaryFinite ? 'VLESS URL (FiniteProto v2)' : isReality ? 'VLESS URL (Reality)' : 'VLESS URL (XHTTP)'}
 					</button>
 					{#if links.finiteproto_url && !isPrimaryFinite}
 						<button
@@ -419,16 +442,18 @@
 						class:active={activeTab === 'happ'}
 						onclick={() => { activeTab = 'happ'; if (links) generateQR(links.happ_json); }}
 					>
-						Happ JSON
+						{isReality ? 'JSON (Xray / Happ)' : 'JSON (Клиент XHTTP)'}
 					</button>
-					<button
-						type="button"
-						class="tab"
-						class:active={activeTab === 'singbox'}
-						onclick={() => { activeTab = 'singbox'; }}
-					>
-						Sing-box
-					</button>
+					{#if links.singbox_json}
+						<button
+							type="button"
+							class="tab"
+							class:active={activeTab === 'singbox'}
+							onclick={() => { activeTab = 'singbox'; }}
+						>
+							Sing-box
+						</button>
+					{/if}
 					<button
 						type="button"
 						class="tab"

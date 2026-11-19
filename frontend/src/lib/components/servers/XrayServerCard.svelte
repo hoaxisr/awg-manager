@@ -18,7 +18,9 @@
 		XHTTPTuning,
 		XHTTPPreset,
 	} from '$lib/types';
+	import type { XrayRealityState, XrayRealityTransport } from '$lib/types/xray';
 	import type { EgressOption, KeenDNSDiscovery, VerificationReport } from '$lib/types/serverWizard';
+	import RealityFields from './reality/RealityFields.svelte';
 	import XrayShareModal from './XrayShareModal.svelte';
 	import XrayAutoTunnelModal from './XrayAutoTunnelModal.svelte';
 	import ExternalAccessWizard from './external-access/ExternalAccessWizard.svelte';
@@ -52,6 +54,7 @@
 		MoreHorizontal,
 		ExternalLink,
 		Globe,
+		KeyRound,
 	} from 'lucide-svelte';
 
 	interface Props {
@@ -102,6 +105,25 @@
 	});
 	let showEndpointAdvancedTuning = $state(false);
 	let endpointSaving = $state(false);
+	let endpointScheme = $state<'cdn' | 'keendns_public' | 'keendns_cloud' | 'reality'>('keendns_public');
+
+	// Direct VLESS + REALITY route (white-IP preset integrated into routes list)
+	let realityState = $state<XrayRealityState | null>(null);
+	let realityToggling = $state(false);
+	let realityRegenerating = $state(false);
+	let realityFormPort = $state(2053);
+	let realityFormTransport = $state<XrayRealityTransport>('tcp');
+	let realityFormDest = $state('www.microsoft.com:443');
+	let realityFormServerName = $state('');
+	let realityFormPublicHost = $state('');
+
+	let hasRealityRoute = $derived(
+		Boolean(realityState?.settings?.public_key || realityState?.settings?.enabled)
+	);
+	let totalRoutesCount = $derived(endpoints.length + (hasRealityRoute ? 1 : 0));
+	let realityPublicHost = $derived(
+		realityState?.settings?.public_host || realityState?.network?.public_host || ''
+	);
 
 	// Add client modal
 	let addClientOpen = $state(false);
@@ -162,7 +184,8 @@
 			config?.enabled ||
 				status?.running ||
 				(config?.public_domain && config.public_domain.trim() !== '') ||
-				clients.length > 0
+				clients.length > 0 ||
+				hasRealityRoute
 		)
 	);
 
@@ -174,7 +197,7 @@
 				hasLegacySocksEgress ||
 				currentEgressUnavailable ||
 				(lastCheckReport && lastCheckReport.overall_status === 'blocked') ||
-				(config !== null && status?.running && !(config.public_domain || '').trim())
+				(config !== null && status?.running && !(config.public_domain || '').trim() && !realityState?.settings?.enabled)
 		)
 	);
 
@@ -298,17 +321,19 @@
 	async function loadData() {
 		loading = true;
 		try {
-			const [s, c, m, t, caps] = await Promise.all([
+			const [s, c, m, t, caps, rState] = await Promise.all([
 				api.getXrayServerStatus(),
 				api.getXrayServerConfig(),
 				api.getXrayMigrationStatus().catch(() => null),
 				api.getXrayTuning().catch(() => null),
 				api.getWizardCapabilities('xray').catch(() => null),
+				api.getXrayReality(false).catch(() => null),
 			]);
 			status = s;
 			config = c;
 			migrationStatus = m;
 			if (t) tuning = t;
+			if (rState) realityState = rState;
 			egressOptions = caps?.egress_options ? [...caps.egress_options] : [];
 			if (caps?.keendns) keendnsDiscovery = caps.keendns;
 			syncEgressFromConfig(c);
@@ -372,6 +397,7 @@
 		try {
 			const nextAction = status?.running ? 'stop' : 'start';
 			status = await api.xrayServerAction(nextAction);
+			realityState = await api.getXrayReality(false).catch(() => realityState);
 			notifications.success(status?.running ? 'Сервер VLESS запущен' : 'Сервер VLESS остановлен');
 			if (config && status) config.enabled = status.running;
 			onRefreshParent?.();
@@ -386,6 +412,7 @@
 		actionLoading = true;
 		try {
 			status = await api.xrayServerAction('restart');
+			realityState = await api.getXrayReality(false).catch(() => realityState);
 			notifications.success('Сервер VLESS перезапущен');
 			onRefreshParent?.();
 		} catch (e) {
@@ -517,8 +544,91 @@
 		return { label: 'KeenDNS · Белый IP', cls: 'badge-success' };
 	}
 
-	function openAddEndpointModal(defaultScheme: 'cdn' | 'keendns_public' | 'keendns_cloud' = 'keendns_public') {
+	function realityDestHost(d?: string): string {
+		const v = (d || '').trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+		const idx = v.lastIndexOf(':');
+		return idx > 0 ? v.slice(0, idx) : v;
+	}
+
+	function syncRealityFormFromState() {
+		const s = realityState?.settings;
+		realityFormPort = s?.public_key ? s.port : realityState?.suggested_port || s?.port || 2053;
+		realityFormTransport = (s?.transport as XrayRealityTransport) || 'tcp';
+		realityFormDest = s?.dest || 'www.microsoft.com:443';
+		realityFormServerName = (s?.server_names && s.server_names[0]) || '';
+		realityFormPublicHost = s?.public_host || '';
+	}
+
+	function openEditRealityRouteModal() {
+		editingEndpointId = 'reality';
+		endpointScheme = 'reality';
+		showEndpointAdvancedTuning = false;
+		syncRealityFormFromState();
+		endpointModalOpen = true;
+		if (!realityState) {
+			void api.getXrayReality(true).then((r) => {
+				realityState = r;
+				syncRealityFormFromState();
+			}).catch(() => {});
+		}
+	}
+
+	async function handleToggleRealityRoute(nextEnabled: boolean) {
+		if (!realityState) return;
+		if (!nextEnabled && endpoints.filter((e) => e.enabled).length === 0) {
+			notifications.error('Должна оставаться включённой хотя бы одна конфигурация VLESS');
+			return;
+		}
+		realityToggling = true;
+		try {
+			realityState = await api.updateXrayReality({ enabled: nextEnabled });
+			notifications.success(
+				nextEnabled ? 'Маршрут «Reality TLS» включён' : 'Маршрут «Reality TLS» выключен'
+			);
+			onRefreshParent?.();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Ошибка переключения маршрута Reality');
+			realityState = await api.getXrayReality(false).catch(() => realityState);
+		} finally {
+			realityToggling = false;
+		}
+	}
+
+	async function handleDeleteRealityRoute() {
+		if (endpoints.length === 0) {
+			notifications.error('Нельзя удалить единственную конфигурацию VLESS');
+			return;
+		}
+		if (!confirm('Удалить маршрут «Reality TLS (Белый IP)»? Ключи будут сброшены, порт закрыт.')) return;
+		try {
+			realityState = await api.updateXrayReality({ reset: true });
+			notifications.success('Маршрут «Reality TLS» удалён');
+			onRefreshParent?.();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Ошибка удаления маршрута Reality');
+		}
+	}
+
+	async function handleRegenerateRealityKeys() {
+		if (!confirm('Сгенерировать новые ключи Reality? Все выданные Reality-ссылки перестанут работать, их нужно будет раздать заново.')) {
+			return;
+		}
+		realityRegenerating = true;
+		try {
+			realityState = await api.updateXrayReality({ regenerate_keys: true });
+			notifications.success('Ключи Reality обновлены — раздайте ссылки заново');
+			onRefreshParent?.();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Не удалось обновить ключи Reality');
+		} finally {
+			realityRegenerating = false;
+		}
+	}
+
+	function openAddEndpointModal(defaultScheme: 'cdn' | 'keendns_public' | 'keendns_cloud' | 'reality' = 'keendns_public') {
 		editingEndpointId = null;
+		endpointScheme = defaultScheme;
+		syncRealityFormFromState();
 		const keendnsPub = keendnsDiscovery?.publications?.find(
 			(p) => p.compatible && !p.fqdn.toLowerCase().startsWith('tg.')
 		)?.fqdn || (keendnsDiscovery?.domain ? `vless.${keendnsDiscovery.domain}` : '');
@@ -543,6 +653,12 @@
 		};
 		showEndpointAdvancedTuning = editEndpoint.xhttp_tuning?.preset === 'custom';
 		endpointModalOpen = true;
+		if (defaultScheme === 'reality' || !realityState) {
+			void api.getXrayReality(false).then((r) => {
+				realityState = r;
+				if (!editingEndpointId) syncRealityFormFromState();
+			}).catch(() => {});
+		}
 	}
 
 	function openEditEndpointModal(ep: XrayEndpointConfig) {
@@ -565,11 +681,23 @@
 		}
 		cloned.xhttp_tuning = epTuning;
 		editEndpoint = cloned;
+		endpointScheme = getEndpointScheme(cloned);
 		showEndpointAdvancedTuning = editEndpoint.xhttp_tuning?.preset === 'custom';
 		endpointModalOpen = true;
 	}
 
-	function selectEndpointScheme(scheme: 'cdn' | 'keendns_public' | 'keendns_cloud') {
+	function selectEndpointScheme(scheme: 'cdn' | 'keendns_public' | 'keendns_cloud' | 'reality') {
+		endpointScheme = scheme;
+		if (scheme === 'reality') {
+			syncRealityFormFromState();
+			if (!realityState) {
+				void api.getXrayReality(true).then((r) => {
+					realityState = r;
+					syncRealityFormFromState();
+				}).catch(() => {});
+			}
+			return;
+		}
 		const keendnsPub = keendnsDiscovery?.publications?.find(
 			(p) => p.compatible && !p.fqdn.toLowerCase().startsWith('tg.')
 		)?.fqdn || '';
@@ -658,6 +786,41 @@
 	}
 
 	async function saveEndpoint() {
+		if (endpointScheme === 'reality') {
+			const portNum = Number(realityFormPort);
+			if (!Number.isInteger(portNum) || portNum < 1024 || portNum > 65535) {
+				notifications.error('Укажите TCP-порт в диапазоне 1024–65535');
+				return;
+			}
+			const destTrim = realityFormDest.trim();
+			if (!destTrim) {
+				notifications.error('Укажите сайт-маскировку (dest)');
+				return;
+			}
+			endpointSaving = true;
+			try {
+				const sn = realityFormServerName.trim();
+				realityState = await api.updateXrayReality({
+					enabled: true,
+					port: portNum,
+					transport: realityFormTransport,
+					dest: destTrim,
+					server_names: sn ? [sn] : [realityDestHost(destTrim)],
+					public_host: realityFormPublicHost.trim(),
+				});
+				notifications.success(
+					editingEndpointId === 'reality' ? 'Маршрут Reality сохранён' : 'Маршрут Reality добавлен'
+				);
+				endpointModalOpen = false;
+				await loadData();
+				onRefreshParent?.();
+			} catch (e) {
+				notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения маршрута Reality');
+			} finally {
+				endpointSaving = false;
+			}
+			return;
+		}
 		if (!config) return;
 		const dom = (editEndpoint.public_domain || '').trim();
 		if (!dom) {
@@ -703,7 +866,7 @@
 	async function handleToggleEndpoint(ep: XrayEndpointConfig) {
 		if (!config) return;
 		const nextEnabled = !ep.enabled;
-		if (!nextEnabled && endpoints.filter((e) => e.enabled).length <= 1) {
+		if (!nextEnabled && endpoints.filter((e) => e.enabled).length <= 1 && !realityState?.settings?.enabled) {
 			notifications.error('Должна оставаться включённой хотя бы одна конфигурация VLESS');
 			return;
 		}
@@ -727,7 +890,7 @@
 
 	async function handleDeleteEndpoint(ep: XrayEndpointConfig) {
 		if (!config) return;
-		if (endpoints.length <= 1) {
+		if (endpoints.length <= 1 && !hasRealityRoute) {
 			notifications.error('Нельзя удалить единственную конфигурацию VLESS');
 			return;
 		}
@@ -1130,7 +1293,7 @@
 				<div class="section-title">
 					<Globe size={14} class="summary-icon" />
 					<span>Конфигурации подключения (Маршруты VLESS)</span>
-					<span class="counter">({endpoints.length})</span>
+					<span class="counter">({totalRoutesCount})</span>
 				</div>
 				<Button variant="secondary" size="sm" onclick={() => openAddEndpointModal()}>
 					<Plus size={14} class="mr-1" />
@@ -1138,9 +1301,9 @@
 				</Button>
 			</div>
 
-			{#if endpoints.length === 0}
+			{#if endpoints.length === 0 && !hasRealityRoute}
 				<div class="empty-clients">
-					<span>Настройте один или несколько параллельных маршрутов подключения (например, через CDN и напрямую через KeenDNS).</span>
+					<span>Настройте один или несколько параллельных маршрутов подключения (например, через CDN, KeenDNS или прямой Reality TLS по белому IP).</span>
 					<Button variant="primary" size="sm" onclick={() => openAddEndpointModal()}>
 						<Plus size={14} class="mr-1" />
 						Добавить конфигурацию
@@ -1185,7 +1348,7 @@
 									<Settings size={14} class="mr-1" />
 									Настроить
 								</Button>
-								{#if endpoints.length > 1}
+								{#if endpoints.length > 1 || hasRealityRoute}
 									<button
 										type="button"
 										class="icon-btn danger-btn"
@@ -1198,6 +1361,67 @@
 							</div>
 						</div>
 					{/each}
+
+					{#if hasRealityRoute && realityState}
+						{@const rSet = realityState.settings}
+						{@const rEnabled = Boolean(rSet.enabled)}
+						{@const rWhiteIP = realityState.network?.white_ip}
+						{@const rSni = (rSet.server_names && rSet.server_names[0]) || realityDestHost(rSet.dest)}
+						<div class="client-item" class:client-disabled={!rEnabled}>
+							<div class="endpoint-info">
+								<Toggle
+									checked={rEnabled}
+									disabled={realityToggling}
+									onchange={() => void handleToggleRealityRoute(!rEnabled)}
+								/>
+								<div class="endpoint-meta">
+									<div class="endpoint-top-line">
+										<span class="client-name" class:muted={!rEnabled}>Напрямую · Reality TLS</span>
+										<span class="badge {rWhiteIP === false ? 'badge-warning' : 'badge-success'}">
+											Reality TLS · Белый IP
+										</span>
+										{#if rEnabled && !config?.enabled}
+											<span class="badge badge-warning">Сервер VLESS выключен</span>
+										{:else if rEnabled && realityState.last_error && !realityState.runtime.running}
+											<span class="badge badge-warning">Ошибка запуска</span>
+										{:else if rEnabled && realityState.runtime.running && !realityState.wan_port_open}
+											<span class="badge badge-warning">Порт {rSet.port} не открыт в WAN</span>
+										{/if}
+										<span class="tuning-badge font-mono">
+											VLESS + REALITY · {rSet.transport === 'xhttp' ? 'XHTTP (stream-one)' : 'TCP (raw)'}
+											{#if realityState.runtime.running}
+												· {realityState.runtime.active_conns} подкл.
+											{/if}
+										</span>
+									</div>
+									<div class="endpoint-sub-line font-mono">
+										<span>{realityPublicHost || 'адрес не определён'}:{rSet.port}</span>
+										<span class="endpoint-origin-arrow">&rarr; маскировка под {rSni}</span>
+									</div>
+									{#if rEnabled && realityState.last_error}
+										<div class="inline-warn-msg">{realityState.last_error}</div>
+									{/if}
+								</div>
+							</div>
+
+							<div class="client-actions">
+								<Button variant="secondary" size="sm" onclick={openEditRealityRouteModal}>
+									<Settings size={14} class="mr-1" />
+									Настроить
+								</Button>
+								{#if endpoints.length > 0}
+									<button
+										type="button"
+										class="icon-btn danger-btn"
+										title="Удалить маршрут Reality"
+										onclick={() => void handleDeleteRealityRoute()}
+									>
+										<Trash2 size={14} />
+									</button>
+								{/if}
+							</div>
+						</div>
+					{/if}
 				</div>
 			{/if}
 		</section>
@@ -1563,21 +1787,25 @@
 <!-- Modal: Add / Edit VLESS Endpoint Configuration -->
 <Modal
 	bind:open={endpointModalOpen}
-	title={editingEndpointId ? `Настройка конфигурации: ${editEndpoint.name || editEndpoint.public_domain}` : 'Новая конфигурация VLESS'}
+	title={editingEndpointId === 'reality'
+		? 'Настройка конфигурации: Reality TLS (Белый IP)'
+		: editingEndpointId
+			? `Настройка конфигурации: ${editEndpoint.name || editEndpoint.public_domain}`
+			: 'Новая конфигурация VLESS'}
 	onclose={() => (endpointModalOpen = false)}
 	size="lg"
 >
 	<div class="settings-modal-wrap">
 		<p class="field-hint">
-			Все включённые конфигурации работают на роутере одновременно и используют общий список устройств. Вы можете создать отдельный маршрут через CDN и прямой маршрут через KeenDNS (по белому или серому IP).
+			Все включённые конфигурации работают на роутере одновременно и используют общий список устройств. Вы можете создать отдельный маршрут через CDN, через KeenDNS (по белому или серому IP) или прямой Reality TLS на свободном порту.
 		</p>
 
 		<!-- Scheme Selector -->
-		<div class="preset-tabs">
+		<div class="preset-tabs preset-tabs-4">
 			<button
 				type="button"
 				class="preset-tab"
-				class:active={getEndpointScheme(editEndpoint) === 'cdn'}
+				class:active={endpointScheme === 'cdn'}
 				onclick={() => selectEndpointScheme('cdn')}
 			>
 				<div class="preset-name">Через CDN</div>
@@ -1586,7 +1814,7 @@
 			<button
 				type="button"
 				class="preset-tab"
-				class:active={getEndpointScheme(editEndpoint) === 'keendns_public'}
+				class:active={endpointScheme === 'keendns_public'}
 				onclick={() => selectEndpointScheme('keendns_public')}
 			>
 				<div class="preset-name">KeenDNS · Белый IP</div>
@@ -1595,14 +1823,124 @@
 			<button
 				type="button"
 				class="preset-tab"
-				class:active={getEndpointScheme(editEndpoint) === 'keendns_cloud'}
+				class:active={endpointScheme === 'keendns_cloud'}
 				onclick={() => selectEndpointScheme('keendns_cloud')}
 			>
 				<div class="preset-name">KeenDNS · Серый IP / Облако</div>
 				<div class="preset-desc">Через облако KeenDNS, когда у провайдера серый IP (CGNAT) без проброса портов</div>
 			</button>
+			<button
+				type="button"
+				class="preset-tab"
+				class:active={endpointScheme === 'reality'}
+				onclick={() => selectEndpointScheme('reality')}
+			>
+				<div class="preset-top-row">
+					<span class="preset-name">Reality TLS · Белый IP</span>
+					{#if realityState?.network}
+						<span class="badge {realityState.network.white_ip ? 'badge-success' : 'badge-warning'}">
+							{realityState.network.white_ip ? 'Белый IP' : 'Нужен белый IP'}
+						</span>
+					{/if}
+				</div>
+				<div class="preset-desc">Прямой VLESS + REALITY без CDN и домена (порт {realityFormPort || 2053}, TCP или XHTTP)</div>
+			</button>
 		</div>
 
+		{#if editingEndpointId && editingEndpointId !== 'reality' && endpointScheme === 'reality'}
+			<div class="alert-banner info">
+				<AlertTriangle size={16} class="banner-icon banner-icon-info" />
+				<div class="banner-content">
+					<div class="banner-desc">
+						Маршрут Reality работает параллельно на отдельном TCP-порту — он будет добавлен или обновлён, не удаляя существующий маршрут «{editEndpoint.name || editEndpoint.public_domain}».
+					</div>
+				</div>
+			</div>
+		{/if}
+
+		{#if endpointScheme === 'reality'}
+			<div class="settings-form">
+				<RealityFields
+					rs={realityState}
+					bind:port={realityFormPort}
+					bind:transport={realityFormTransport}
+					bind:dest={realityFormDest}
+					bind:serverName={realityFormServerName}
+					bind:publicHost={realityFormPublicHost}
+					showTransport={false}
+					surface="modal"
+					onrefreshed={(fresh) => (realityState = fresh)}
+				/>
+
+				<div class="tuning-section">
+					<div class="tuning-header">
+						<div class="tuning-title-group">
+							<div class="tuning-title">
+								<Zap size={15} class="banner-icon-warn" />
+								<span>Протокол транспорта Reality</span>
+							</div>
+							<span class="tuning-badge font-mono">
+								{realityFormTransport === 'xhttp' ? 'XHTTP (stream-one)' : 'TCP (raw)'} · порт {realityFormPort}
+							</span>
+						</div>
+					</div>
+
+					<div class="preset-tabs preset-tabs-2">
+						<button
+							type="button"
+							class="preset-tab"
+							class:active={realityFormTransport === 'tcp'}
+							onclick={() => (realityFormTransport = 'tcp')}
+						>
+							<div class="preset-name">TCP (raw) · Максимальная скорость</div>
+							<div class="preset-desc">Рекомендуется: минимальная задержка и нагрузка на CPU роутера. Поддерживается Happ, sing-box, Mihomo и v2rayNG.</div>
+						</button>
+						<button
+							type="button"
+							class="preset-tab"
+							class:active={realityFormTransport === 'xhttp'}
+							onclick={() => (realityFormTransport = 'xhttp')}
+						>
+							<div class="preset-name">XHTTP (stream-one) · HTTP/2</div>
+							<div class="preset-desc">HTTP/2-поток внутри Reality TLS. Выглядит как обычный браузерный трафик.</div>
+						</button>
+					</div>
+
+					{#if realityState?.settings?.public_key}
+						<div class="reality-keys-box">
+							<div class="reality-key-row">
+								<KeyRound size={14} class="summary-icon" />
+								<span class="field-label">Public key (pbk):</span>
+								<code class="checklist-code font-mono">{realityState.settings.public_key}</code>
+								<button
+									type="button"
+									class="mini-copy-btn"
+									onclick={() => copy(realityState?.settings?.public_key || '', 'Публичный ключ Reality')}
+								>
+									<Copy size={12} />
+									<span>Копировать</span>
+								</button>
+								<Button
+									variant="secondary"
+									size="sm"
+									onclick={() => void handleRegenerateRealityKeys()}
+									disabled={realityRegenerating}
+								>
+									<RotateCw size={13} class="mr-1" />
+									{realityRegenerating ? 'Обновление...' : 'Сменить ключи'}
+								</Button>
+							</div>
+							{#if realityState.settings.short_ids && realityState.settings.short_ids.length > 0}
+								<div class="reality-key-row">
+									<span class="field-label">Short ID (sid):</span>
+									<code class="checklist-code font-mono">{realityState.settings.short_ids[0]}</code>
+								</div>
+							{/if}
+						</div>
+					{/if}
+				</div>
+			</div>
+		{:else}
 		<div class="settings-form">
 			<div class="form-row">
 				<label class="form-field">
@@ -1960,12 +2298,13 @@
 				</div>
 			{/if}
 		</div>
+		{/if}
 	</div>
 
 	{#snippet actions()}
 		<Button variant="secondary" onclick={() => (endpointModalOpen = false)}>Отмена</Button>
 		<Button variant="primary" onclick={saveEndpoint} disabled={endpointSaving}>
-			{endpointSaving ? 'Сохранение...' : 'Сохранить конфигурацию'}
+			{endpointSaving ? 'Сохранение...' : endpointScheme === 'reality' ? 'Сохранить Reality' : 'Сохранить конфигурацию'}
 		</Button>
 	{/snippet}
 </Modal>
@@ -2806,6 +3145,62 @@
 		font-size: 12px;
 		font-weight: 600;
 		color: var(--color-text-primary);
+	}
+
+	.preset-top-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+
+	.reality-keys-box {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding-top: 8px;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.reality-key-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+		font-size: 12px;
+	}
+
+	.checklist-code {
+		padding: 2px 6px;
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		color: var(--color-text-primary);
+		font-size: 11px;
+		word-break: break-all;
+	}
+
+	.mini-copy-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 3px 8px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-secondary);
+		color: var(--color-text-primary);
+		font-size: 11px;
+		cursor: pointer;
+	}
+	.mini-copy-btn:hover {
+		border-color: var(--color-accent);
+	}
+
+	.inline-warn-msg {
+		margin-top: 4px;
+		font-size: 11.5px;
+		color: var(--color-warning);
 	}
 
 	.preset-desc {
