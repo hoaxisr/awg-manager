@@ -53,6 +53,57 @@ func (w *Writer) Add(ctx context.Context, target model.Target, targetInterface s
 	return w.write(ctx, target, targetInterface, false)
 }
 
+// RefreshTargetOutbound re-points the route objects at the outbound mapped
+// from targetInterface without adding a destination: it updates the own
+// direct outbound's bind_interface (bindable interface) or rewrites the
+// owner rule onto the tunnel's outbound (managed tunnel), then applies the
+// draft. Called after a targetInterface change so existing entries follow
+// the new tunnel immediately instead of waiting for the next add.
+// Idempotent: an already-consistent configuration is a no-op (Persisted=false).
+func (w *Writer) RefreshTargetOutbound(ctx context.Context, targetInterface string) (WriteResult, error) {
+	if w == nil || w.client == nil {
+		return WriteResult{}, errors.New("awgm writer has no client")
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return WriteResult{}, err
+	}
+	if err := validateInterface(targetInterface); err != nil {
+		return WriteResult{}, err
+	}
+	// Preflight: the owner rule must currently be absent or exactly one
+	// unconditional rule_set=[awgm-autolist] rule. With no owner rule there
+	// is nothing to re-point — entries cannot exist either.
+	ownerOutbound, err := w.preflightOwnerRule(ctx)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if ownerOutbound == "" {
+		return WriteResult{}, nil
+	}
+	outbound, mutated, err := w.ensureTargetOutbound(ctx, targetInterface)
+	if err != nil {
+		return WriteResult{}, fmt.Errorf("target outbound: %w", err)
+	}
+	if !mutated {
+		// The outbound is already mapped; ensureOwnerRule would rewrite the
+		// rule onto `outbound` only when it differs. Apply only when the
+		// rule actually changed: a no-op must not leave a dangling draft.
+		ownerMutated, err := w.ensureOwnerRule(ctx, outbound)
+		if err != nil {
+			return WriteResult{Outbound: outbound}, err
+		}
+		if !ownerMutated {
+			return WriteResult{Outbound: outbound}, nil
+		}
+	}
+	if err := w.applyStaging(ctx); err != nil {
+		return WriteResult{Outbound: outbound, Persisted: true}, fmt.Errorf("route objects written (as draft), but staging apply failed: %w", err)
+	}
+	return WriteResult{Outbound: outbound, Persisted: true}, nil
+}
+
 // Remove undoes exactly what Add wrote for target: the destination entry in
 // the owned unconditional rule-set object. Foreign, conditional and narrowed
 // objects are preserved, and the owner rule is touched only when the

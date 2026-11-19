@@ -306,6 +306,7 @@ type fakeWriter struct {
 	stubbornRemove bool
 	adds           []string
 	removes        []string
+	refreshes      []string
 }
 
 func (f *fakeWriter) Add(_ context.Context, target model.Target, iface string) (WriteResult, error) {
@@ -321,6 +322,18 @@ func (f *fakeWriter) Add(_ context.Context, target model.Target, iface string) (
 	}
 	f.existing[key] = true
 	return WriteResult{Outbound: iface, Persisted: true, NewEntry: true}, nil
+}
+
+// RefreshTargetOutbound records the requested interface; the fake never
+// fails unless f.err is set, mirroring Add.
+func (f *fakeWriter) RefreshTargetOutbound(_ context.Context, iface string) (WriteResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return WriteResult{}, f.err
+	}
+	f.refreshes = append(f.refreshes, iface)
+	return WriteResult{Outbound: iface, Persisted: true}, nil
 }
 
 func (f *fakeWriter) Remove(_ context.Context, target model.Target, iface string) (WriteResult, error) {

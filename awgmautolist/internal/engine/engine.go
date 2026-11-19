@@ -205,7 +205,10 @@ func (e *Engine) Stop() {
 // mode change rebuilds the capture and monitor changes start or stop the
 // periodic WAN check. Disabling the monitor while paused resumes the capture,
 // because a disabled monitor never pauses anything. The configuration store
-// itself already forces autoAdd off when tunnelProbe is off.
+// itself already forces autoAdd off when tunnelProbe is off. A
+// targetInterface change re-points the route objects at the new outbound
+// immediately, so existing entries follow the new tunnel without waiting
+// for the next add.
 func (e *Engine) PatchConfig(data []byte) (config.Config, error) {
 	old := e.deps.Config.Config()
 	cfg, err := e.deps.Config.Patch(data)
@@ -238,6 +241,19 @@ func (e *Engine) PatchConfig(data []byte) (config.Config, error) {
 	}
 	e.mu.Unlock()
 	e.commitMu.Unlock()
+
+	// Смена targetInterface: пере-направить owner-правило и outbound на
+	// новый туннель сразу, не дожидаясь первого добавления. I/O — вне
+	// локов движка (writer сериализуется собственным mu). Ошибка не
+	// откатывает сохранённый конфиг: следующий Add/retry повторит
+	// обновление, текущее состояние описано в lastError.
+	if old.TargetInterface != cfg.TargetInterface && e.deps.Writer != nil {
+		if _, err := e.deps.Writer.RefreshTargetOutbound(e.baseCtx, cfg.TargetInterface); err != nil {
+			e.setLastError(fmt.Sprintf("target interface %q: %v", cfg.TargetInterface, err))
+		} else {
+			e.logf("target interface %q: route objects re-pointed", cfg.TargetInterface)
+		}
+	}
 
 	// Блокирующая остановка заменённого поколения — вне локов движка.
 	// Ожидание captureOpMu безопасно (локи движка сняты, Stop у живого
