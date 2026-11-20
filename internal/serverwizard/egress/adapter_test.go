@@ -473,3 +473,102 @@ func TestAdapter_SystemProxyDownInterfaceMarkedUnavailable(t *testing.T) {
 		t.Fatalf("expected Resolve(system:Proxy1) -> t2s1, got (%+v, %v)", res, err)
 	}
 }
+
+func TestAdapter_FircTunnelsListAndResolve(t *testing.T) {
+	cat := &mockKernelCatalog{
+		entries: []routing.TunnelEntry{
+			{
+				ID:        "system:tunvless0",
+				Name:      "Shadowed Catalog Entry",
+				Iface:     "tunvless0",
+				Type:      "system",
+				Status:    "up",
+				Available: true,
+			},
+			{
+				ID:        "awgm0",
+				Name:      "WARP Tunnel",
+				Iface:     "nwg0",
+				Type:      "managed",
+				Status:    "running",
+				Available: true,
+			},
+		},
+		kernelNames: map[string]string{
+			"firc:tunvless0":   "wrong_kernel_iface",
+			"system:tunvless0": "tunvless0",
+		},
+	}
+
+	adapter := NewAdapter(cat)
+	adapter.SetFircTunnels(func(context.Context) []routing.TunnelEntry {
+		return []routing.TunnelEntry{
+			{
+				ID:        "firc:tunvless0",
+				Name:      "Vless DE",
+				Iface:     "tunvless0",
+				Type:      "firc",
+				Status:    "up",
+				Available: true,
+			},
+			{
+				ID:        "firc:tunvless1",
+				Name:      "Backup NL",
+				Iface:     "tunvless1",
+				Type:      "firc",
+				Status:    "off",
+				Available: false,
+			},
+		}
+	})
+
+	ctx := context.Background()
+	opts := adapter.ListOptionsForServer(ctx, "both")
+
+	var fircUp, fircOff, managed, shadowed *EgressOption
+	for i := range opts {
+		switch opts[i].ID {
+		case "firc:tunvless0":
+			fircUp = &opts[i]
+		case "firc:tunvless1":
+			fircOff = &opts[i]
+		case "awgm0":
+			managed = &opts[i]
+		case "system:tunvless0":
+			shadowed = &opts[i]
+		}
+	}
+
+	if shadowed != nil {
+		t.Fatalf("expected FIRC tunnel to take precedence over duplicate catalog iface, but got shadowed option %+v", *shadowed)
+	}
+	if managed == nil || !managed.Available {
+		t.Fatalf("expected catalog tunnel awgm0 alongside FIRC tunnels, got %+v", opts)
+	}
+	if fircUp == nil || !fircUp.Available || fircUp.State != EgressStateAvailable || fircUp.Owner != "firc" || fircUp.Iface != "tunvless0" || fircUp.Name != "Vless DE" {
+		t.Fatalf("unexpected available FIRC option: %+v", fircUp)
+	}
+	if fircOff == nil || fircOff.Available || fircOff.State != EgressStateDegraded || fircOff.Owner != "firc" || fircOff.Iface != "tunvless1" {
+		t.Fatalf("unexpected degraded FIRC option: %+v", fircOff)
+	}
+
+	resByID, err := adapter.Resolve(ctx, ResolveRequest{ServerKind: "both", EgressID: "firc:tunvless0"})
+	if err != nil || resByID.Mode != "interface" || resByID.Interface != "tunvless0" {
+		t.Fatalf("expected Resolve(firc:tunvless0) -> tunvless0, got (%+v, %v)", resByID, err)
+	}
+	resByIface, err := adapter.Resolve(ctx, ResolveRequest{ServerKind: "tgwebproxy", EgressID: "tunvless0"})
+	if err != nil || resByIface.Mode != "interface" || resByIface.Interface != "tunvless0" {
+		t.Fatalf("expected Resolve(tunvless0) -> tunvless0, got (%+v, %v)", resByIface, err)
+	}
+	if _, err := adapter.Resolve(ctx, ResolveRequest{ServerKind: "both", EgressID: "firc:tunvless1"}); err == nil {
+		t.Fatalf("expected Resolve(firc:tunvless1) to fail for unavailable tunnel")
+	}
+
+	nilCatAdapter := NewAdapter(nil)
+	nilCatAdapter.SetFircTunnels(func(context.Context) []routing.TunnelEntry {
+		return []routing.TunnelEntry{{ID: "firc:tunvless0", Name: "Vless DE", Iface: "tunvless0", Type: "firc", Status: "up", Available: true}}
+	})
+	if res, err := nilCatAdapter.Resolve(ctx, ResolveRequest{ServerKind: "xray", EgressID: "firc:tunvless0"}); err != nil || res.Interface != "tunvless0" {
+		t.Fatalf("expected FIRC resolve without catalog -> tunvless0, got (%+v, %v)", res, err)
+	}
+}

@@ -67,6 +67,9 @@ func (a *Adapter) hasKernelResolver() bool {
 
 func (a *Adapter) resolveKernelIface(ctx context.Context, t routing.TunnelEntry) (string, error) {
 	raw := strings.TrimSpace(t.Iface)
+	if strings.EqualFold(strings.TrimSpace(t.Type), "firc") {
+		return raw, nil
+	}
 	if kr, ok := a.catalog.(KernelIfaceResolver); ok && t.ID != "" {
 		kname, err := kr.GetKernelIfaceName(ctx, t.ID)
 		kname = strings.TrimSpace(kname)
@@ -98,6 +101,7 @@ type Adapter struct {
 	ifaceLinkUp       func(iface string) (up bool, checked bool)
 	fircMu            sync.RWMutex
 	fircStateProvider func(ctx context.Context) (available bool, degradedMsg string)
+	fircTunnels       func(ctx context.Context) []routing.TunnelEntry
 }
 
 func NewAdapter(catalog TunnelCatalog) *Adapter {
@@ -114,6 +118,41 @@ func (a *Adapter) SetFircStateProvider(fn func(ctx context.Context) (available b
 	a.fircMu.Lock()
 	defer a.fircMu.Unlock()
 	a.fircStateProvider = fn
+}
+
+// SetFircTunnels configures an optional provider of FIRC egress tunnels.
+func (a *Adapter) SetFircTunnels(fn func(ctx context.Context) []routing.TunnelEntry) {
+	a.fircMu.Lock()
+	defer a.fircMu.Unlock()
+	a.fircTunnels = fn
+}
+
+func (a *Adapter) tunnelEntries(ctx context.Context) []routing.TunnelEntry {
+	a.fircMu.RLock()
+	fircProvider := a.fircTunnels
+	a.fircMu.RUnlock()
+
+	var fircEntries []routing.TunnelEntry
+	if fircProvider != nil {
+		fircEntries = fircProvider(ctx)
+	}
+
+	var catalogEntries []routing.TunnelEntry
+	if a.catalog != nil {
+		catalogEntries = a.catalog.ListAll(ctx)
+	}
+
+	if len(fircEntries) == 0 {
+		return catalogEntries
+	}
+	if len(catalogEntries) == 0 {
+		return fircEntries
+	}
+
+	merged := make([]routing.TunnelEntry, 0, len(fircEntries)+len(catalogEntries))
+	merged = append(merged, fircEntries...)
+	merged = append(merged, catalogEntries...)
+	return merged
 }
 
 // SetIfaceLinkUpProbe overrides kernel link state probing (used by tests).
@@ -294,9 +333,8 @@ func (a *Adapter) ListOptionsForServerWithCurrent(ctx context.Context, serverKin
 	}
 	seenIfaces := make(map[string]bool)
 
-	// 3. Tunnels from Catalog
-	if a.catalog != nil {
-		tunnels := a.catalog.ListAll(ctx)
+	// 3. Tunnels from FIRC and Catalog
+	if tunnels := a.tunnelEntries(ctx); len(tunnels) != 0 {
 		for _, t := range tunnels {
 			rawIface := strings.TrimSpace(t.Iface)
 			kernelIface, kerr := a.resolveKernelIface(ctx, t)
@@ -516,8 +554,7 @@ func (a *Adapter) Resolve(ctx context.Context, req ResolveRequest) (ResolvedEgre
 		return ResolvedEgress{}, fmt.Errorf("%s (%s): выберите прямой выход (WAN), конкретный туннель или правила маршрутизации (FIRC)", LegacyEgressLabel(), egressID)
 	}
 
-	if a.catalog != nil {
-		tunnels := a.catalog.ListAll(ctx)
+	if tunnels := a.tunnelEntries(ctx); len(tunnels) != 0 {
 		for _, t := range tunnels {
 			rawIface := strings.TrimSpace(t.Iface)
 			kernelIface, kerr := a.resolveKernelIface(ctx, t)

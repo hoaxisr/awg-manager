@@ -17,6 +17,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/mcp/localdeps"
 	"github.com/hoaxisr/awg-manager/internal/openapi"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/serverwizard"
 	"github.com/hoaxisr/awg-manager/internal/serverwizard/egress"
@@ -255,6 +256,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 			if s.serverIngressCoordinator != nil {
 				s.serverIngressCoordinator.SetFircRouting(fircOp)
 			}
+			egressAdp.SetFircTunnels(s.listFircEgressTunnels)
 			egressAdp.SetFircStateProvider(func(ctx context.Context) (bool, string) {
 				if fircOp.IsRecoveryRequired() {
 					return false, "Маршрутизация FIRC требует восстановления: " + fircOp.RecoveryReason()
@@ -1677,4 +1679,85 @@ func (l *lazyHandler) handler() http.Handler {
 		l.h = l.build()
 	}
 	return l.h
+}
+
+func (s *Server) listFircEgressTunnels(ctx context.Context) []routing.TunnelEntry {
+	if s == nil || s.fircHandler == nil || s.fircHandler.Operator() == nil || s.settings == nil {
+		return nil
+	}
+	st, err := s.settings.Get()
+	if err != nil || st == nil {
+		return nil
+	}
+	if strings.TrimSpace(st.SingboxRouter.RoutingEngine) != "firc" {
+		return nil
+	}
+	client := s.fircHandler.Operator().Client()
+	if client == nil {
+		return nil
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	tunnels, err := client.GetTunnels(probeCtx)
+	if err != nil || len(tunnels) == 0 {
+		return nil
+	}
+
+	states, statesErr := client.GetTunnelsState(probeCtx)
+	stateByID := make(map[string]string, len(states))
+	stateByDevice := make(map[string]string, len(states))
+	if statesErr == nil {
+		for _, state := range states {
+			status := strings.ToLower(strings.TrimSpace(state.Status))
+			if status == "" {
+				continue
+			}
+			if id := strings.TrimSpace(state.ID); id != "" {
+				stateByID[id] = status
+			}
+			if dev := strings.TrimSpace(state.Device); dev != "" {
+				stateByDevice[dev] = status
+			}
+		}
+	}
+
+	entries := make([]routing.TunnelEntry, 0, len(tunnels))
+	for _, tunnel := range tunnels {
+		device := strings.TrimSpace(tunnel.Device)
+		if device == "" {
+			continue
+		}
+		name := strings.TrimSpace(tunnel.Description)
+		if name == "" {
+			name = device
+		}
+		status := ""
+		if id := strings.TrimSpace(tunnel.ID); id != "" {
+			status = stateByID[id]
+		}
+		if status == "" {
+			status = stateByDevice[device]
+		}
+		if !tunnel.Enable {
+			if status == "" || status == "up" {
+				status = "off"
+			}
+		} else if status == "" {
+			status = "unknown"
+		}
+		entries = append(entries, routing.TunnelEntry{
+			ID:        "firc:" + device,
+			Name:      name,
+			Iface:     device,
+			Type:      "firc",
+			Status:    status,
+			Available: tunnel.Enable && status == "up",
+		})
+	}
+	return entries
 }
