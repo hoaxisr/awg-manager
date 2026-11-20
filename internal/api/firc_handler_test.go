@@ -744,6 +744,83 @@ func TestFircHandler_InstallUninstallHTTPLifecycle(t *testing.T) {
 	}
 }
 
+func TestFircHandler_ExternalFircPackageStatusAndGuards(t *testing.T) {
+	root := t.TempDir()
+	for rel, content := range map[string]string{
+		"opt/bin/fircd":                         "fircd",
+		"opt/bin/tunvless":                      "tunvless",
+		"opt/etc/init.d/S99firc":                "#!/bin/sh\nexit 0\n",
+		"opt/etc/ndm/netfilter.d/100-firc":      "#!/bin/sh\nexit 0\n",
+		"opt/etc/ndm/iflayerchanged.d/100-firc": "#!/bin/sh\nexit 0\n",
+		"opt/etc/firc/firc.conf":                "configVersion: 0.7.0\n",
+		"opt/lib/opkg/info/firc.list":           "/opt/bin/fircd\n/opt/bin/tunvless\n/opt/etc/init.d/S99firc\n",
+		"opt/lib/opkg/status":                   "Package: firc\nVersion: 0.8.2-1\nStatus: install user installed\n\n",
+	} {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	op := firc.NewOperator(firc.Options{
+		ConfigDir:      filepath.Join(root, "opt", "etc", "firc"),
+		FircdBinary:    filepath.Join(root, "opt", "sbin", "fircd"),
+		AltFircdBinary: filepath.Join(root, "opt", "bin", "fircd"),
+		TunvlessBin:    filepath.Join(root, "opt", "sbin", "tunvless"),
+		AltTunvlessBin: filepath.Join(root, "opt", "bin", "tunvless"),
+		InitScript:     filepath.Join(root, "opt", "etc", "init.d", "S99firc"),
+	})
+	h := NewFircHandler(op)
+	store := storage.NewSettingsStore(t.TempDir())
+	h.SetSettingsStore(store)
+
+	inst := firc.NewOnDemandInstaller("mipsel-3.4", firc.FircBinarySpec{Version: "0.8.0-awgm.4"})
+	inst.SetPackageLayout(firc.DefaultPackageLayout(root))
+	inst.SetPackageManager(firc.OpkgRuntimeManager{
+		StatusPath: filepath.Join(root, "opt", "lib", "opkg", "status"),
+	})
+	h.SetInstaller(inst)
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/firc/install-status", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on install-status, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data firc.InstallStatus `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode install-status: %v (%s)", err, rec.Body.String())
+	}
+	if env.Data.ExternalPackage != "firc" || env.Data.InstalledVersion != "0.8.2-1" ||
+		env.Data.State != firc.InstallStateInstalled || !env.Data.FircdPresent || !env.Data.TunvlessPresent {
+		t.Fatalf("unexpected external install-status: %+v", env.Data)
+	}
+
+	for _, ep := range []struct {
+		path string
+		body string
+	}{
+		{"/api/firc/install", ""},
+		{"/api/firc/uninstall", `{"purgeConfigs":false}`},
+		{"/api/firc/migrate-runtime", ""},
+	} {
+		req = httptest.NewRequest(http.MethodPost, ep.path, strings.NewReader(ep.body))
+		rec = httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "EXTERNAL_PACKAGE_OWNED") {
+			t.Fatalf("expected 409 EXTERNAL_PACKAGE_OWNED on %s, got %d (%s)", ep.path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestFircHandler_UnselectedAndStoppedNeverStartsDaemonOrMutatesNetfilter(t *testing.T) {
 	tmpDir := t.TempDir()
 	fircDir := filepath.Join(tmpDir, "firc")

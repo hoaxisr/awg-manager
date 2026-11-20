@@ -502,6 +502,7 @@ export interface FircInstallStatus {
 	unavailableReason?: string;
 	activeEngine: boolean;
 	legacyBundledOwnership?: boolean;
+	externalPackage?: string;
 	dependentServices?: string[];
 	ndmHookPresent: boolean;
 	fircdPresent: boolean;

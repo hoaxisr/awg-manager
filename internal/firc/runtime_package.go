@@ -28,7 +28,9 @@ type RuntimePackageManager interface {
 
 // OpkgRuntimeManager never forces ownership conflicts and uses opkg's own lock.
 // No command, package name or installation URL is accepted from the browser.
-type OpkgRuntimeManager struct{}
+type OpkgRuntimeManager struct {
+	StatusPath string
+}
 
 func (OpkgRuntimeManager) CheckEnvironment() error {
 	info, err := os.Stat("/opt/bin/opkg")
@@ -120,11 +122,15 @@ func parseOpkgStatusTuple(statusRaw, version string) (string, error) {
 	return "", fmt.Errorf("runtime package requires recovery: %s", statusRaw)
 }
 
-func (OpkgRuntimeManager) Version(ctx context.Context, name string) (string, error) {
+func (m OpkgRuntimeManager) Version(ctx context.Context, name string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile("/opt/lib/opkg/status")
+	statusPath := strings.TrimSpace(m.StatusPath)
+	if statusPath == "" {
+		statusPath = "/opt/lib/opkg/status"
+	}
+	data, err := os.ReadFile(statusPath)
 	if os.IsNotExist(err) {
 		return "", nil
 	}

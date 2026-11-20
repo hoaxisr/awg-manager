@@ -8043,6 +8043,7 @@
 	"firc_runtime_config_preserved": "Configuration is preserved for reinstallation. Other servers and tunnels are not removed.",
 	"firc_runtime_migrate": "Migrate FIRC package",
 	"firc_runtime_legacy_notice": "FIRC is currently owned by a legacy bundled awg-manager package. Migrate ownership to manage or upgrade FIRC independently.",
+	"firc_runtime_external_notice": "Using external Entware package \"{pkg}\". Package installation, upgrades, and removal are managed via opkg; routing and configuration work normally.",
 	"firc_wizard_runtime_missing_title": "FIRC runtime package (fircd / tunvless) is not installed",
 	"firc_wizard_runtime_missing_desc": "Switching routing to FIRC is unavailable until the fircd and tunvless binaries (awg-firc-runtime) are installed on the router.",
 	"firc_wizard_runtime_missing_keep_hint": "Install FIRC under Settings → FIRC (or via opkg install awg-firc-runtime), or select \"Import configuration into FIRC only\" without switching.",

@@ -114,4 +114,26 @@ describe('FIRC runtime settings', () => {
 		await waitFor(() => expect(migrate).toHaveBeenCalledTimes(1));
 		expect(install).not.toHaveBeenCalled();
 	});
+	it('shows external package notice and disables package mutations when managed via opkg', async () => {
+		status.mockResolvedValue({
+			...base,
+			state: 'installed',
+			available: false,
+			installedVersion: '0.8.2-1',
+			externalPackage: 'firc',
+			fircdPresent: true,
+			tunvlessPresent: true,
+			initScriptPresent: true,
+			ndmHookPresent: true,
+			configPresent: true,
+			dependentServices: ['server-routing:awg'],
+		});
+		render(FircIntegrationSection);
+		expect(await screen.findByText('0.8.2-1')).toBeInTheDocument();
+		expect(screen.getByText(/внешний пакет Entware «firc»|external Entware package "firc"/)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /Установить FIRC|Install FIRC/ })).toBeDisabled();
+		expect(screen.getByRole('button', { name: /Удалить FIRC|Remove FIRC/ })).toBeDisabled();
+		expect(screen.queryByText(/ещё не опубликован|has not been published/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/server-routing:awg/)).not.toBeInTheDocument();
+	});
 });

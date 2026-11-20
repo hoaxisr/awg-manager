@@ -58,6 +58,7 @@ type InstallStatus struct {
 	Error                  string       `json:"error,omitempty"`
 	ActiveEngine           bool         `json:"activeEngine"`
 	LegacyBundledOwnership bool         `json:"legacyBundledOwnership,omitempty"`
+	ExternalPackage        string       `json:"externalPackage,omitempty"`
 	DependentServices      []string     `json:"dependentServices,omitempty"`
 }
 
@@ -89,16 +90,17 @@ type OnDemandInstaller struct {
 
 func (odi *OnDemandInstaller) SetRuntimeLocker(lock func() func()) { odi.lockRuntime = lock }
 
-// Refuse direct mutation of files owned by a third-party IPK (such as upstream firc or tunvless).
-// Legacy bundled awg-manager ownership is handled exclusively via transactional migration.
-func (odi *OnDemandInstaller) checkExternalPackageOwnership() error {
-	infoDir := filepath.Join(odi.layout.RootDir, "/opt/lib/opkg/info")
+// ExternalRuntimePackage reports the Entware opkg package name (such as "firc" or
+// "tunvless") that owns FIRC runtime binaries or hooks outside awg-manager and
+// awg-firc-runtime, or "" when none is registered.
+func (odi *OnDemandInstaller) ExternalRuntimePackage() (string, error) {
+	infoDir := odi.rootPath("/opt/lib/opkg/info")
 	entries, err := os.ReadDir(infoDir)
 	if os.IsNotExist(err) {
-		return nil
+		return "", nil
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 	protected := map[string]bool{
 		"/opt/sbin/fircd": true, "/opt/bin/fircd": true,
@@ -114,13 +116,26 @@ func (odi *OnDemandInstaller) checkExternalPackageOwnership() error {
 		list := filepath.Join(infoDir, entry.Name())
 		data, err := os.ReadFile(list)
 		if err != nil {
-			return fmt.Errorf("read package ownership: %w", err)
+			return "", fmt.Errorf("read package ownership: %w", err)
 		}
-		for _, line := range strings.Split(string(data), "\n") {
+		for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
 			if protected[strings.TrimSpace(line)] {
-				return fmt.Errorf("firc runtime belongs to external package %s; refusing to overwrite", filepath.Base(list))
+				return strings.TrimSuffix(entry.Name(), ".list"), nil
 			}
 		}
+	}
+	return "", nil
+}
+
+// Refuse direct mutation of files owned by a third-party IPK (such as upstream firc or tunvless).
+// Legacy bundled awg-manager ownership is handled exclusively via transactional migration.
+func (odi *OnDemandInstaller) checkExternalPackageOwnership() error {
+	pkg, err := odi.ExternalRuntimePackage()
+	if err != nil {
+		return err
+	}
+	if pkg != "" {
+		return fmt.Errorf("firc runtime belongs to external package %s.list; refusing to overwrite", pkg)
 	}
 	return nil
 }
@@ -254,13 +269,13 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 
 	// Probe files
 	_, errFircd := os.Stat(odi.layout.FircdBin)
-	if errFircd != nil && !filepath.IsAbs(odi.layout.FircdBin) {
-		// check /opt/bin fallback
-		_, errFircd = os.Stat(filepath.Join(odi.layout.RootDir, "opt/bin/fircd"))
+	if errFircd != nil {
+		// Standalone Entware firc installs binaries into /opt/bin instead of /opt/sbin.
+		_, errFircd = os.Stat(odi.rootPath("/opt/bin/fircd"))
 	}
 	_, errTun := os.Stat(odi.layout.TunvlessBin)
-	if errTun != nil && !filepath.IsAbs(odi.layout.TunvlessBin) {
-		_, errTun = os.Stat(filepath.Join(odi.layout.RootDir, "opt/bin/tunvless"))
+	if errTun != nil {
+		_, errTun = os.Stat(odi.rootPath("/opt/bin/tunvless"))
 	}
 	_, errInit := os.Stat(odi.layout.InitScript)
 	_, errNetfilter := os.Stat(odi.layout.NDMNetfilterHook)
@@ -296,14 +311,20 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 		isRunning = op.IsRunning(ctx)
 	}
 
+	extPkg, extPkgErr := odi.ExternalRuntimePackage()
 	installedVer := ""
 	var packageErr error
 	if odi.packages != nil {
 		installedVer, packageErr = odi.packages.Version(ctx, RuntimePackageName)
+		if packageErr == nil && installedVer == "" && extPkg != "" {
+			installedVer, packageErr = odi.packages.Version(ctx, extPkg)
+		}
 	}
 	legacyOwned, legacyErr := odi.HasLegacyBundledOwnership()
 	journal, journalErr := odi.readOperation()
-	if packageErr != nil {
+	if extPkgErr != nil {
+		lastErr = extPkgErr.Error()
+	} else if packageErr != nil {
 		lastErr = packageErr.Error()
 	} else if legacyErr != nil {
 		lastErr = legacyErr.Error()
@@ -330,9 +351,9 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 		state = InstallStateInstalling
 	case busy && busyAction == "uninstall":
 		state = InstallStateUninstalling
-	case journalErr != nil || journal.Pending || packageErr != nil || dependencyErr != nil || legacyErr != nil:
+	case journalErr != nil || journal.Pending || extPkgErr != nil || packageErr != nil || dependencyErr != nil || legacyErr != nil:
 		state = InstallStateRecoveryNeeded
-	case !fircdPresent && !tunvlessPresent && !initPresent && installedVer == "" && !legacyOwned:
+	case !fircdPresent && !tunvlessPresent && !initPresent && installedVer == "" && !legacyOwned && extPkg == "":
 		if !available {
 			state = InstallStateUnavailable
 		} else {
@@ -366,13 +387,18 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 		Error:                  lastErr,
 		ActiveEngine:           active,
 		LegacyBundledOwnership: legacyOwned,
+		ExternalPackage:        extPkg,
 		DependentServices:      dependentServices,
 	}
 
 	required := effectiveSpec.PackageSize*4 + diskReserveBytes
 	status.RequiredDiskBytes = required
 	if odi.freeDisk != nil {
-		if free, ok := odi.freeDisk(filepath.Dir(odi.layout.FircdBin)); ok {
+		diskProbeDir := filepath.Dir(odi.layout.FircdBin)
+		if _, err := os.Stat(diskProbeDir); err != nil {
+			diskProbeDir = filepath.Dir(odi.rootPath("/opt/bin/fircd"))
+		}
+		if free, ok := odi.freeDisk(diskProbeDir); ok {
 			status.FreeDiskBytes = free
 		}
 	}
