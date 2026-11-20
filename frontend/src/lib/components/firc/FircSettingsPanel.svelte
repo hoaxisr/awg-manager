@@ -1383,7 +1383,9 @@
                   title={m.firc_fallback_test_iface_title({ name: id })}
                 >
                   <span>{formatProbeLatency(mProbe)}</span>
-                  <RefreshCw size={9} class={isChecking ? 'spin' : ''} />
+                  {#if isChecking}
+                    <RefreshCw size={9} class="spin" />
+                  {/if}
                 </button>
               </span>
             {/each}
