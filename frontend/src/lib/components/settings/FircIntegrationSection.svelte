@@ -12,6 +12,7 @@
 	let loading = $state(true);
 	let submitting = $state(false);
 	let confirmRemoval = $state(false);
+	let confirmExternalMigration = $state(false);
 	let alive = false;
 	let refreshing = false;
 	let revision = 0;
@@ -20,14 +21,18 @@
 	const legacyOwned = $derived(Boolean(status?.legacyBundledOwnership));
 	const externalPackage = $derived(status?.externalPackage?.trim() || '');
 	const externalOwned = $derived(Boolean(externalPackage));
+	const externalMigratable = $derived(externalOwned && Boolean(status?.externalMigratable));
 	const blocked = $derived(Boolean(status?.activeEngine || status?.state === 'running' || status?.dependentServices?.length));
 	const installDisabled = $derived(
 		loading ||
 			busy ||
-			externalOwned ||
 			!status?.available ||
 			Boolean(error) ||
-			(legacyOwned ? Boolean(status?.dependentServices?.length) : blocked),
+			(externalOwned
+				? !externalMigratable || Boolean(status?.dependentServices?.length)
+				: legacyOwned
+					? Boolean(status?.dependentServices?.length)
+					: blocked),
 	);
 	const removeDisabled = $derived(busy || externalOwned || blocked || legacyOwned || Boolean(error));
 	const stateLabel = $derived.by(() => {
@@ -63,13 +68,15 @@
 		const timer = setInterval(refresh, 2000);
 		return () => { alive = false; clearInterval(timer); };
 	});
-	async function act(action: 'install' | 'uninstall' | 'migrate') {
+	async function act(action: 'install' | 'uninstall' | 'migrate' | 'migrate-external') {
 		if (busy) return;
 		confirmRemoval = false;
+		confirmExternalMigration = false;
 		submitting = true;
 		error = '';
 		try {
 			if (action === 'migrate') await api.fircMigrateRuntime();
+			else if (action === 'migrate-external') await api.fircMigrateRuntime({ replaceExternalPackage: true });
 			else if (action === 'install') await api.fircInstall();
 			else await api.fircUninstall(false);
 			revision++;
@@ -87,15 +94,15 @@
 <div class="settings-block">
 	<div class="card">
 		<SettingsSectionLabel label="FIRC" icon={Shield} tone="purple" header />
-		<div class="setting-row">
-			<div class="flex items-center gap-2">
+		<div class="setting-row flex-wrap gap-3">
+			<div class="flex flex-wrap items-center gap-2">
 				<StatusDot variant={status?.state === 'running' ? 'success' : status?.state === 'recovery_required' ? 'error' : 'muted'} />
 				<span>{stateLabel}</span>
 				{#if status?.installedVersion}<span class="text-secondary">{status.installedVersion}</span>{/if}
 			</div>
-			<div class="flex gap-2">
-				<Button size="sm" onclick={() => act(legacyOwned ? 'migrate' : 'install')} disabled={installDisabled}>
-					{legacyOwned ? m.firc_runtime_migrate() : status?.state === 'recovery_required' ? m.firc_runtime_repair() : m.firc_runtime_install()}
+			<div class="flex flex-wrap gap-2">
+				<Button size="sm" onclick={() => (externalMigratable ? (confirmExternalMigration = true) : act(legacyOwned ? 'migrate' : 'install'))} disabled={installDisabled}>
+					{externalMigratable ? m.firc_runtime_migrate_external() : legacyOwned ? m.firc_runtime_migrate() : status?.state === 'recovery_required' ? m.firc_runtime_repair() : m.firc_runtime_install()}
 				</Button>
 				{#if installed}
 					<Button size="sm" variant="outline-danger" onclick={() => (confirmRemoval = true)} disabled={removeDisabled}>{m.firc_runtime_remove()}</Button>
@@ -114,7 +121,7 @@
 		{#if !status?.available && status && !externalOwned}
 			<div class="setting-row text-secondary">{m.firc_runtime_release_pending()}</div>
 		{/if}
-		{#if blocked && !legacyOwned && !externalOwned}
+		{#if (blocked && !legacyOwned && !externalOwned) || ((legacyOwned || externalMigratable) && Boolean(status?.dependentServices?.length))}
 			<div class="setting-row text-secondary">{m.firc_runtime_dependency_warning()} {status?.dependentServices?.join(', ')}</div>
 		{/if}
 		{#if error || status?.error}
@@ -126,4 +133,7 @@
 
 {#if confirmRemoval}
 	<ConfirmModal open title={m.firc_runtime_remove()} message={m.firc_runtime_remove_confirm()} secondary={m.firc_runtime_config_preserved()} confirmLabel={m.firc_runtime_remove()} cancelLabel={m.common_cancel()} variant="danger" onConfirm={() => act('uninstall')} onClose={() => (confirmRemoval = false)} />
+{/if}
+{#if confirmExternalMigration}
+	<ConfirmModal open title={m.firc_runtime_migrate_external()} message={m.firc_runtime_migrate_external_confirm({ pkg: externalPackage })} secondary={m.firc_runtime_migrate_external_secondary()} confirmLabel={m.firc_runtime_migrate_external()} cancelLabel={m.common_cancel()} variant="primary" onConfirm={() => act('migrate-external')} onClose={() => (confirmExternalMigration = false)} />
 {/if}

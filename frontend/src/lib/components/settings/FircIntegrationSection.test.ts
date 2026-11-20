@@ -136,4 +136,49 @@ describe('FIRC runtime settings', () => {
 		expect(screen.queryByText(/ещё не опубликован|has not been published/)).not.toBeInTheDocument();
 		expect(screen.queryByText(/server-routing:awg/)).not.toBeInTheDocument();
 	});
+	it('offers confirmed migration from eligible external Entware firc package even when running', async () => {
+		status
+			.mockResolvedValueOnce({
+				...base,
+				state: 'running',
+				activeEngine: true,
+				installedVersion: '0.8.2-1',
+				externalPackage: 'firc',
+				externalMigratable: true,
+				fircdPresent: true,
+				tunvlessPresent: true,
+				initScriptPresent: true,
+				ndmHookPresent: true,
+				configPresent: true,
+			})
+			.mockResolvedValue({ ...base, state: 'installing', busy: true, busyAction: 'migrate_external', progress: 0.4 });
+		render(FircIntegrationSection);
+		const switchBtn = await screen.findByRole('button', { name: /Перейти на FIRC от AWGM|Switch to AWGM FIRC/ });
+		await waitFor(() => expect(switchBtn).toBeEnabled());
+		expect(screen.getByRole('button', { name: /Удалить FIRC|Remove FIRC/ })).toBeDisabled();
+
+		await fireEvent.click(switchBtn);
+		expect(await screen.findByText(/\/opt\/etc\/firc.*\/opt\/var\/lib\/firc/)).toBeInTheDocument();
+		const confirmButtons = screen.getAllByRole('button', { name: /Перейти на FIRC от AWGM|Switch to AWGM FIRC/ });
+		await fireEvent.click(confirmButtons[confirmButtons.length - 1]);
+		await waitFor(() => expect(migrate).toHaveBeenCalledWith({ replaceExternalPackage: true }));
+		expect(install).not.toHaveBeenCalled();
+	});
+	it('blocks external migration button when dependent services are active', async () => {
+		status.mockResolvedValue({
+			...base,
+			state: 'running',
+			activeEngine: true,
+			installedVersion: '0.8.2-1',
+			externalPackage: 'firc',
+			externalMigratable: true,
+			fircdPresent: true,
+			tunvlessPresent: true,
+			dependentServices: ['vless_xhttp_server'],
+		});
+		render(FircIntegrationSection);
+		const switchBtn = await screen.findByRole('button', { name: /Перейти на FIRC от AWGM|Switch to AWGM FIRC/ });
+		expect(switchBtn).toBeDisabled();
+		expect(screen.getByText(/vless_xhttp_server/)).toBeInTheDocument();
+	});
 });

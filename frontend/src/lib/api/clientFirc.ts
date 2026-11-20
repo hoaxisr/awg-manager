@@ -139,10 +139,10 @@ export class FircClient extends TelemtClient {
 		});
 	}
 
-	async fircMigrateRuntime(): Promise<{ ok: boolean }> {
+	async fircMigrateRuntime(opts?: { replaceExternalPackage?: boolean }): Promise<{ ok: boolean }> {
 		return this.request<{ ok: boolean }>('/firc/migrate-runtime', {
 			method: 'POST',
-			body: JSON.stringify({}),
+			body: JSON.stringify(opts?.replaceExternalPackage ? { replaceExternalPackage: true } : {}),
 		});
 	}
 

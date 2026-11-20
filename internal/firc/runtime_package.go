@@ -26,6 +26,16 @@ type RuntimePackageManager interface {
 	Version(context.Context, string) (string, error)
 }
 
+// ExternalPackageRemover removes an allowlisted external Entware FIRC package
+// (upstream "firc" or "tunvless") during explicit user-confirmed migration to awg-firc-runtime.
+type ExternalPackageRemover interface {
+	RemoveExternal(ctx context.Context, name string) error
+}
+
+func isAllowedExternalFircPackage(name string) bool {
+	return name == "firc" || name == "tunvless"
+}
+
 // OpkgRuntimeManager never forces ownership conflicts and uses opkg's own lock.
 // No command, package name or installation URL is accepted from the browser.
 type OpkgRuntimeManager struct {
@@ -102,6 +112,32 @@ func (OpkgRuntimeManager) Remove(ctx context.Context, name string) error {
 	}
 	return nil
 }
+
+// RemoveExternal uninstalls an allowlisted external FIRC package using plain `opkg remove`
+// (never --force-*), after checking its opkg info list is present.
+func (m OpkgRuntimeManager) RemoveExternal(ctx context.Context, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !isAllowedExternalFircPackage(name) {
+		return fmt.Errorf("refusing to remove unsupported external FIRC package %q", name)
+	}
+	infoDir := "/opt/lib/opkg/info"
+	if sp := strings.TrimSpace(m.StatusPath); sp != "" {
+		infoDir = filepath.Join(filepath.Dir(sp), "info")
+	}
+	listPath := filepath.Join(infoDir, name+".list")
+	if st, err := os.Stat(listPath); err != nil {
+		return fmt.Errorf("external package list unavailable (%s): %w", listPath, err)
+	} else if st.IsDir() {
+		return fmt.Errorf("invalid external package list path: %s", listPath)
+	}
+	out, err := exec.CommandContext(ctx, "/opt/bin/opkg", "remove", name).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("opkg external package remove (%s): %w: %.2048s", name, err, out)
+	}
+	return nil
+}
 func parseOpkgStatusTuple(statusRaw, version string) (string, error) {
 	tokens := strings.Fields(statusRaw)
 	if len(tokens) != 3 {
@@ -158,9 +194,10 @@ func (i *OnDemandInstaller) operationPath() string {
 }
 
 type runtimeOperation struct {
-	Action  string `json:"action"`
-	Pending bool   `json:"pending"`
-	Error   string `json:"error,omitempty"`
+	Action          string `json:"action"`
+	Pending         bool   `json:"pending"`
+	ExternalPackage string `json:"externalPackage,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 func (i *OnDemandInstaller) readOperation() (runtimeOperation, error) {
@@ -287,6 +324,9 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	priorOperation, journalErr := i.readOperation()
 	if journalErr != nil {
 		return fmt.Errorf("cannot read runtime recovery journal: %w", journalErr)
+	}
+	if priorOperation.Pending && (priorOperation.Action == "migrate_legacy" || priorOperation.Action == "migrate_external") {
+		return fmt.Errorf("cannot start %q while %q migration requires recovery", action, priorOperation.Action)
 	}
 	if err := i.saveOperation(runtimeOperation{Action: action, Pending: true}); err != nil {
 		return err
