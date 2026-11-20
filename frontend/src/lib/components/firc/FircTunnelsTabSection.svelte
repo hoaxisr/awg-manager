@@ -729,6 +729,14 @@
 		.toolbar-actions > :global(.btn) {
 			width: 100%;
 			min-height: 32px;
+			min-width: 0;
+			max-width: 100%;
+		}
+	}
+
+	@media (max-width: 560px) {
+		.toolbar-actions {
+			grid-template-columns: 1fr;
 		}
 	}
 </style>

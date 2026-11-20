@@ -201,6 +201,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .cell:has(.help-btn) .strip-label {
+    padding-right: 1.5rem;
+  }
   .value {
     min-width: 0;
     font-size: 20px;
@@ -339,6 +342,9 @@
       justify-content: space-between;
       gap: 0.25rem 0.75rem;
     }
+    .cell-shell:first-child .cell:has(.help-btn) {
+      padding-right: 2.35rem;
+    }
     .cell-shell:first-child .strip-label {
       font-size: 10px;
     }
@@ -369,6 +375,19 @@
     .cell-shell:not(:first-child):nth-child(4n + 1) {
       border-right: 0;
     }
+    /* 4-ячеечная и 7-ячеечная полосы (3 или 6 KPI после первой во всю ширину) — 3 колонки без пустого слота. */
+    .strip:has(> .cell-shell:nth-child(4):last-child),
+    .strip:has(> .cell-shell:nth-child(7):last-child) {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .strip:has(> .cell-shell:nth-child(4):last-child) .cell-shell:not(:first-child):nth-child(4n + 1),
+    .strip:has(> .cell-shell:nth-child(7):last-child) .cell-shell:not(:first-child):nth-child(4n + 1) {
+      border-right: 1px solid var(--border);
+    }
+    .strip:has(> .cell-shell:nth-child(4):last-child) .cell-shell:not(:first-child):nth-child(3n + 1),
+    .strip:has(> .cell-shell:nth-child(7):last-child) .cell-shell:not(:first-child):nth-child(3n + 1) {
+      border-right: 0;
+    }
   }
   @media (max-width: 768px) {
     .strip {
@@ -382,6 +401,10 @@
       border-right: 1px solid var(--border);
     }
     .cell-shell:not(:first-child):nth-child(odd) {
+      border-right: 0;
+    }
+    .cell-shell:not(:first-child):last-child:nth-child(even) {
+      grid-column: 1 / -1;
       border-right: 0;
     }
     .cell-shell:not(:first-child) .cell {
@@ -404,6 +427,12 @@
   @media (hover: none), (pointer: coarse) {
     .help-btn {
       display: none;
+    }
+    .cell:has(.help-btn) .strip-label {
+      padding-right: 0;
+    }
+    .cell-shell:first-child .cell:has(.help-btn) {
+      padding-right: 16px;
     }
   }
 </style>

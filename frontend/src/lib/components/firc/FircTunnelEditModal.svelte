@@ -1055,8 +1055,8 @@
 										<label class="lbl" for={`inb-n-${idx}`}>Привязка к узлу</label>
 										<select id={`inb-n-${idx}`} class="inp compact-inp" bind:value={inb.node}>
 											<option value={FIRC_TUNNEL_NODE_POOL}>Весь пул отказоустойчивости (*)</option>
-											{#if inb.node === ''}
-												<option value="">Авто (весь пул)</option>
+											{#if inb.node === '' || inb.node === 'default'}
+												<option value={inb.node}>Авто (весь пул)</option>
 											{/if}
 											{#each nodes as n (n.key)}
 												<option value={n.key}>{n.name}</option>
@@ -1356,6 +1356,7 @@
 	}
 	.nodes-table-wrap {
 		max-height: 320px;
+		overflow-x: auto;
 		overflow-y: auto;
 		border: 1px solid var(--border);
 		border-radius: 8px;
@@ -1541,6 +1542,10 @@
 		width: 100%;
 		box-sizing: border-box;
 	}
+	select.inp {
+		padding-right: 1.75rem;
+		text-overflow: ellipsis;
+	}
 	.compact-select {
 		width: auto;
 	}
@@ -1557,6 +1562,21 @@
 		border-radius: 8px;
 		background: var(--bg-tertiary);
 	}
+	.inbound-row > .field {
+		min-width: 0;
+	}
+	@media (max-width: 600px) {
+		.inbound-row {
+			grid-template-columns: 1fr 96px auto;
+		}
+		.inbound-row > .field:nth-child(3) {
+			grid-column: 1 / -1;
+		}
+		.inbound-row > .inbound-del {
+			grid-row: 1;
+			grid-column: 3;
+		}
+	}
 	.sub-empty {
 		padding: 20px;
 		text-align: center;
@@ -1569,6 +1589,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		flex-wrap: wrap;
 		width: 100%;
 		gap: 12px;
 	}
