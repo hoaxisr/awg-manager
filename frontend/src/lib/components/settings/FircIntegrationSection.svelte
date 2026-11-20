@@ -94,13 +94,13 @@
 <div class="settings-block">
 	<div class="card">
 		<SettingsSectionLabel label="FIRC" icon={Shield} tone="purple" header />
-		<div class="setting-row flex-wrap gap-3">
-			<div class="flex flex-wrap items-center gap-2">
+		<div class="setting-row firc-header-row">
+			<div class="firc-status-line">
 				<StatusDot variant={status?.state === 'running' ? 'success' : status?.state === 'recovery_required' ? 'error' : 'muted'} />
-				<span>{stateLabel}</span>
-				{#if status?.installedVersion}<span class="text-secondary">{status.installedVersion}</span>{/if}
+				<span class="firc-state-label">{stateLabel}</span>
+				{#if status?.installedVersion}<span class="firc-version">{status.installedVersion}</span>{/if}
 			</div>
-			<div class="flex flex-wrap gap-2">
+			<div class="firc-actions-row">
 				<Button size="sm" onclick={() => (externalMigratable ? (confirmExternalMigration = true) : act(legacyOwned ? 'migrate' : 'install'))} disabled={installDisabled}>
 					{externalMigratable ? m.firc_runtime_migrate_external() : legacyOwned ? m.firc_runtime_migrate() : status?.state === 'recovery_required' ? m.firc_runtime_repair() : m.firc_runtime_install()}
 				</Button>
@@ -110,7 +110,7 @@
 			</div>
 		</div>
 		{#if status?.busy}
-			<div class="setting-row"><progress max="1" value={status.progress ?? 0} aria-label={stateLabel}></progress></div>
+			<div class="setting-row"><progress class="firc-progress" max="1" value={status.progress ?? 0} aria-label={stateLabel}></progress></div>
 		{/if}
 		{#if externalOwned}
 			<div class="setting-row text-secondary">{m.firc_runtime_external_notice({ pkg: externalPackage })}</div>
@@ -137,3 +137,45 @@
 {#if confirmExternalMigration}
 	<ConfirmModal open title={m.firc_runtime_migrate_external()} message={m.firc_runtime_migrate_external_confirm({ pkg: externalPackage })} secondary={m.firc_runtime_migrate_external_secondary()} confirmLabel={m.firc_runtime_migrate_external()} cancelLabel={m.common_cancel()} variant="primary" onConfirm={() => act('migrate-external')} onClose={() => (confirmExternalMigration = false)} />
 {/if}
+
+<style>
+	.firc-header-row {
+		flex-direction: column;
+		align-items: stretch;
+		justify-content: flex-start;
+		gap: 0.625rem;
+	}
+
+	.firc-header-row > .firc-status-line {
+		flex: 0 0 auto;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.375rem 0.5rem;
+		min-width: 0;
+	}
+
+	.firc-state-label {
+		font-weight: 500;
+		color: var(--color-text-primary);
+	}
+
+	.firc-version {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		color: var(--color-text-secondary);
+		overflow-wrap: anywhere;
+		min-width: 0;
+	}
+
+	.firc-actions-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.firc-progress {
+		width: 100%;
+	}
+</style>
