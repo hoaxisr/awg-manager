@@ -99,7 +99,7 @@ func (s *ServiceImpl) parkForExternalEngineLocked(ctx context.Context, settings 
 	// Ensure all router-owned orchestrator slots are parked even in partial or cross-mode states.
 	slotsParked := false
 	if s.deps.Orch != nil {
-		for _, slot := range []orchestrator.Slot{orchestrator.SlotKeenDNSCloud, orchestrator.SlotRouter, orchestrator.SlotFakeIP} {
+		for _, slot := range []orchestrator.Slot{orchestrator.SlotGlobal, orchestrator.SlotKeenDNSCloud, orchestrator.SlotRouter, orchestrator.SlotFakeIP} {
 			if s.slotEnabled(slot) {
 				if err := s.deps.Orch.SetEnabled(slot, false); err != nil {
 					s.appLog.Warn("park-external", string(slot), "disable slot: "+err.Error())
@@ -166,7 +166,7 @@ func (s *ServiceImpl) hasActiveRouterResourcesLocked(ctx context.Context, settin
 		return true
 	}
 	if s.deps.Orch != nil {
-		if s.slotEnabled(orchestrator.SlotKeenDNSCloud) || s.slotEnabled(orchestrator.SlotRouter) || s.slotEnabled(orchestrator.SlotFakeIP) || s.slotEnabled(orchestrator.SlotQoSRoutes) {
+		if s.slotEnabled(orchestrator.SlotGlobal) || s.slotEnabled(orchestrator.SlotKeenDNSCloud) || s.slotEnabled(orchestrator.SlotRouter) || s.slotEnabled(orchestrator.SlotFakeIP) || s.slotEnabled(orchestrator.SlotQoSRoutes) {
 			return true
 		}
 	}

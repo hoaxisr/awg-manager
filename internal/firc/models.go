@@ -1089,6 +1089,7 @@ type ServerRoutingTxFaultHooks struct {
 
 // ExtConfig stores AWGM extensions for FIRC (Fallback Proxy Groups, KeenDNS Cloud, Inbound VPN Servers).
 type ExtConfig struct {
+	GlobalTarget     string              `json:"globalTarget,omitempty"`
 	ProxyGroups      []ProxyGroup        `json:"proxyGroups"`
 	KeenDNSCloud     KeenDNSCloudConfig  `json:"keenDnsCloud"`
 	ServerRouting    ServerRoutingConfig `json:"serverRouting"`

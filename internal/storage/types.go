@@ -218,6 +218,7 @@ type DownloadSettings struct {
 }
 
 type SingboxRouterSettings struct {
+	GlobalOutbound       string `json:"globalOutbound,omitempty"`
 	KeenDNSCloudOutbound string `json:"keenDNSCloudOutbound,omitempty"`
 	Enabled              bool   `json:"enabled"`
 	PolicyName           string `json:"policyName"`

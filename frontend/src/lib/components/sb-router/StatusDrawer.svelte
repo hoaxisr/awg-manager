@@ -551,6 +551,15 @@
       />
 
       <section class="sec">
+        <label class="sec-cap" for="sb-global">Global</label>
+        <select id="sb-global" class="inp" value={cfg.globalOutbound ?? ''} onchange={(e) => void applyPatch({globalOutbound:e.currentTarget.value})}>
+          <option value="">{m.sb_router_status_keendns_cloud_off()}</option>
+          {#each $storeOptions as group (group.id)}
+            {#each group.items.filter((item) => group.id !== 'special' || item.value === 'direct') as item (item.value)}
+              <option value={item.value}>{item.label}</option>
+            {/each}
+          {/each}
+        </select>
         <label class="sec-cap" for="sb-keendns-cloud">{m.sb_router_status_keendns_cloud()}</label>
         <select
           id="sb-keendns-cloud"

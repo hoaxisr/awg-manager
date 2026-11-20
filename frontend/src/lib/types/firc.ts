@@ -723,6 +723,7 @@ export interface FircServerRoutingConfig {
 }
 
 export interface FircExtConfig {
+	globalTarget?: string;
 	proxyGroups: FircProxyGroup[];
 	keenDnsCloud: FircKeenDNSCloudConfig;
 	serverRouting: FircServerRoutingConfig;

@@ -147,6 +147,7 @@
     }
     return {
       proxyGroups: raw.proxyGroups ?? [],
+      globalTarget: raw.globalTarget ?? '',
       keenDnsCloud: {
         enabled: Boolean(raw.keenDnsCloud?.enabled),
         proxyGroupId: raw.keenDnsCloud?.proxyGroupId ?? '',
@@ -631,6 +632,19 @@
     <div class="loading-box">Загрузка параметров FIRC…</div>
   {:else}
     <div class="sections-grid">
+      <section class="sec">
+        <label class="sec-cap" for="firc-global">{m.firc_global_routing_mode()}</label>
+        <select id="firc-global" class="inp" bind:value={extConfig.globalTarget}>
+          <option value="">{m.firc_global_mode_rules()}</option>
+          {#each extConfig.proxyGroups as pg (pg.id)}
+            <option value={'pg:' + pg.id}>Global · {pg.name}</option>
+          {/each}
+          {#each interfaces.filter(isSelectableTunnelOrWan) as opt (opt.id)}
+            <option value={'iface:' + opt.id}>Global · {formatIfaceLabel(opt)}</option>
+          {/each}
+        </select>
+      </section>
+
       <!-- KeenDNS / Облако Keenetic через туннель / Fallback -->
       <section class="sec">
         <div class="sec-cap">Облачные сервисы Keenetic / KeenDNS</div>

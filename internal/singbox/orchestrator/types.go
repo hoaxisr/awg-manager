@@ -18,6 +18,7 @@ type Slot string
 const (
 	SlotBase          Slot = "base"           // 00-base.json — always on
 	SlotKeenDNSCloud  Slot = "keendns-cloud"  // 09-keendns-cloud.json
+	SlotGlobal        Slot = "global"         // 19z-global.json
 	SlotTunnels       Slot = "tunnels"        // 10-tunnels.json
 	SlotAwg           Slot = "awg"            // 15-awg.json
 	SlotAwg3          Slot = "awg3"           // 16-awg3.json
@@ -88,6 +89,7 @@ func KnownSlots() []SlotMeta {
 		// DSCP policy) win over user rules.
 		{Slot: SlotQoSRoutes, Filename: "18-qos-routes.json"},
 		{Slot: SlotServerIngress, Filename: "19-server-ingress.json"},
+		{Slot: SlotGlobal, Filename: "19z-global.json"},
 		{Slot: SlotRouter, Filename: "20-router.json"},
 		{Slot: SlotFakeIP, Filename: "21-fakeip.json"},
 		{Slot: SlotDownloadProxy, Filename: "35-download-proxy.json"},

@@ -691,8 +691,17 @@ func syncGroupsWithExt(groups []Group, ext ExtConfig) ([]Group, bool) {
 	wantKeenDNS := ext.KeenDNSCloud.Enabled && len(kdIfaces) > 0
 
 	var filtered []Group
+	global, wantGlobal := globalGroup(ext)
+	foundGlobal := false
 	foundKeenDNS := false
 	for _, g := range groups {
+		if g.ID == globalGroupID {
+			foundGlobal = true
+			if !wantGlobal || !g.Enable || !slices.Equal(g.Interface, global.Interface) || !keenDNSRulesEqual(g.Rules, global.Rules) {
+				changed = true
+			}
+			continue
+		}
 		if g.ID == KeenDNSGroupID {
 			if !wantKeenDNS {
 				changed = true
@@ -751,6 +760,16 @@ func syncGroupsWithExt(groups []Group, ext ExtConfig) ([]Group, bool) {
 		changed = true
 	}
 
+	if wantGlobal {
+		index := 0
+		if len(filtered) > 0 && filtered[0].ID == KeenDNSGroupID {
+			index = 1
+		}
+		filtered = slices.Insert(filtered, index, global)
+		if !foundGlobal || index >= len(groups) || groups[index].ID != globalGroupID {
+			changed = true
+		}
+	}
 	return filtered, changed
 }
 
@@ -2741,7 +2760,7 @@ func (op *Operator) reconcileOutputRouting(ctx context.Context, ext ExtConfig, g
 
 	if needXHTTP {
 		for _, g := range groups {
-			if !g.Enable || g.ID == "" || g.ID == KeenDNSGroupID {
+			if !g.Enable || g.ID == "" || g.ID == KeenDNSGroupID || g.ID == globalGroupID {
 				continue
 			}
 			chain := "FIRC_" + g.ID

@@ -335,6 +335,7 @@
 			if (extRes) {
 				extConfig = {
 					proxyGroups: extRes.proxyGroups ?? [],
+					globalTarget: extRes.globalTarget,
 					keenDnsCloud: extRes.keenDnsCloud ?? { enabled: false, interfaces: [] },
 					serverRouting: extRes.serverRouting ?? {
 						enabledServers: [],

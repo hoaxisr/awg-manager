@@ -8170,5 +8170,7 @@
 	"firc_group_check_mode_none": "Global WAN check (off)",
 	"firc_group_check_url_label": "Probe URL (optional)",
 	"firc_group_check_url_placeholder": "https://... (empty — global probe URL)",
-	"firc_group_check_url_hint": "Each interface in the chain is probed independently; if the service fails on the primary path, the group switches to backup and fails back after recovery is confirmed."
+	"firc_group_check_url_hint": "Each interface in the chain is probed independently; if the service fails on the primary path, the group switches to backup and fails back after recovery is confirmed.",
+	"firc_global_routing_mode": "FIRC routing mode",
+	"firc_global_mode_rules": "Rules"
 }

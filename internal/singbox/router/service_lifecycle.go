@@ -1981,6 +1981,9 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	if isFircRoutingEngine(sr) {
 		return s.parkForExternalEngineLocked(ctx, settings, false)
 	}
+	if err := s.reconcileGlobal(sr, settings.SingboxManuallyStopped); err != nil {
+		return err
+	}
 	if !sr.Enabled || settings.SingboxManuallyStopped {
 		if err := s.reconcileCloudOutput(ctx, sr, settings.SingboxManuallyStopped); err != nil {
 			s.appLog.Warn("keendns-cloud", "", err.Error())
