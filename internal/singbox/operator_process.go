@@ -750,6 +750,22 @@ func (o *Operator) QuiesceStop(_ context.Context) error {
 // so a partial state where the disk and the daemon disagree is impossible.
 // The persisted intent survives awgm restarts so the watchdog never
 // resurrects a daemon the user shut down.
+func (o *Operator) runBeforeStopHook(ctx context.Context) {
+	if o.beforeStop != nil {
+		if err := o.beforeStop(ctx); err != nil {
+			o.log.Warn("before-stop hook failed", "err", err)
+		}
+	}
+}
+
+func (o *Operator) runAfterStartHook(ctx context.Context) {
+	if o.afterStart != nil {
+		if err := o.afterStart(ctx); err != nil {
+			o.log.Warn("after-start hook failed", "err", err)
+		}
+	}
+}
+
 func (o *Operator) Control(ctx context.Context, action string) error {
 	if o.runtimeLogger != nil {
 		o.runtimeLogger.Info("control", "", "requested action="+action)
@@ -776,6 +792,7 @@ func (o *Operator) Control(ctx context.Context, action string) error {
 			if o.runtimeLogger != nil {
 				o.runtimeLogger.Info("control", "", "start skipped: already running")
 			}
+			o.runAfterStartHook(ctx)
 			return nil
 		}
 		if _, err := o.startAndWait(ctx); err != nil {
@@ -784,6 +801,7 @@ func (o *Operator) Control(ctx context.Context, action string) error {
 			}
 			return err
 		}
+		o.runAfterStartHook(ctx)
 		if o.runtimeLogger != nil {
 			o.runtimeLogger.Info("control", "", "start done")
 		}
@@ -795,6 +813,7 @@ func (o *Operator) Control(ctx context.Context, action string) error {
 		// Ручной Stop закрывает эпизод: следующая серия падений после
 		// следующего запуска считается с чистого листа.
 		o.restartBackoff.Reset()
+		o.runBeforeStopHook(ctx)
 		stopIfRunning := func() error {
 			// СВЕЖАЯ проверка ПОСЛЕ выставления намерения: снапшот running сверху
 			// мог устареть, пока in-flight авто-рестарт заканчивал запуск (гонка
@@ -836,6 +855,7 @@ func (o *Operator) Control(ctx context.Context, action string) error {
 		// авто-перезапуска: сбрасываем backoff и действуем немедленно.
 		o.restartBackoff.Reset()
 		if running {
+			o.runBeforeStopHook(ctx)
 			if err := o.proc.Stop(); err != nil {
 				if o.runtimeLogger != nil {
 					o.runtimeLogger.Error("control", "", "restart stop phase failed: "+err.Error())
@@ -849,6 +869,7 @@ func (o *Operator) Control(ctx context.Context, action string) error {
 			}
 			return err
 		}
+		o.runAfterStartHook(ctx)
 		if o.runtimeLogger != nil {
 			o.runtimeLogger.Info("control", "", "restart done")
 		}

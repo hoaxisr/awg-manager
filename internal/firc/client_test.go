@@ -1626,6 +1626,37 @@ groups:
 	}
 }
 
+func TestTunnelUplinkDefaultsToAutoWhenOmitted(t *testing.T) {
+	tmpDir := t.TempDir()
+	op := NewOperator(Options{ConfigDir: tmpDir})
+
+	tunnelsYAML := `tunnels:
+- id: "tunnel-omitted"
+  device: "tunvless0"
+  enable: true
+  sources: []
+  advanced: {}
+`
+	if err := os.WriteFile(op.TunnelsPath(), []byte(tunnelsYAML), 0o600); err != nil {
+		t.Fatalf("write tunnels.yaml: %v", err)
+	}
+	tuns, err := op.LoadTunnelsFile()
+	if err != nil {
+		t.Fatalf("LoadTunnelsFile: %v", err)
+	}
+	if len(tuns) != 1 || tuns[0].Uplink.Kind != "auto" || tuns[0].Uplink.Ref != "" {
+		t.Fatalf("expected omitted YAML uplink to default to auto, got %+v", tuns)
+	}
+
+	rawJSON, err := json.Marshal(Tunnel{ID: "zero-uplink", Device: "tunvless1", Enable: true})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if !strings.Contains(string(rawJSON), `"uplink":{"kind":"auto"}`) {
+		t.Fatalf("expected zero TunnelUplink to serialize as auto in JSON, got %s", rawJSON)
+	}
+}
+
 func TestFirc060ModelsAutolistAndCanonicalPersistence(t *testing.T) {
 	var (
 		recheckCalled    int32

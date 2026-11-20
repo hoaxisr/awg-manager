@@ -2178,6 +2178,7 @@ const api_SubscriptionDTO: v.GenericSchema = v.looseObject({
 });
 
 const api_SubscriptionGroupDTO: v.GenericSchema = v.looseObject({
+	directFirst: v.optional(v.nullable(v.boolean())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	filterExclude: v.optional(v.nullable(v.string())),
 	filterInclude: v.optional(v.nullable(v.string())),

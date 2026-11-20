@@ -17,11 +17,15 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/cloudagent"
 )
 
 const (
 	// KeenDNSGroupID is the reserved 8-hex FIRC group ID managed for KeenDNS / Keenetic Cloud routing.
 	KeenDNSGroupID = "c100d001"
+
+	fircCloudAgentResetCooldown = 30 * time.Second
 
 	// XHTTPServerFircMark is the socket mark set by xhttpserver when outbound_mode == "router"
 	// so router-originated VLESS XHTTP server traffic is matched by FIRC groups in mangle OUTPUT.
@@ -29,22 +33,24 @@ const (
 
 	// FIRC owns bits 0x40ff0000 (0x40000000 handled + 0x00ff0000 group/tunnel uplink mark).
 	// Foreign marks (e.g. XHTTP 0xf1ec, NDMS policies) live outside 0x40ff0000 and must be preserved.
-	fircNewFlowMatch    = "-m conntrack --ctstate NEW --ctdir ORIGINAL -m mark --mark 0x0/0x40ff0000"
-	fircRestoreMarkRule = "-m conntrack --ctdir ORIGINAL -m mark --mark 0x0/0x40ff0000 -m connmark --mark 0x40000000/0x40000000 -j CONNMARK --restore-mark --nfmask 0x40ff0000 --ctmask 0x40ff0000"
-	fircSaveMarkRule    = "-m mark --mark 0x40000000/0x40000000 -j CONNMARK --save-mark --nfmask 0x40ff0000 --ctmask 0x40ff0000"
+	fircNewFlowMatch      = "-m conntrack --ctstate NEW --ctdir ORIGINAL -m mark --mark 0x0/0x40ff0000"
+	fircOrigUnmarkedMatch = "-m conntrack --ctdir ORIGINAL -m mark --mark 0x0/0x40ff0000"
+	fircUnmarkedUDPMatch  = "-p udp " + fircOrigUnmarkedMatch
+	fircRestoreMarkRule   = "-m conntrack --ctdir ORIGINAL -m mark --mark 0x0/0x40ff0000 -m connmark --mark 0x40000000/0x40000000 -j CONNMARK --restore-mark --nfmask 0x40ff0000 --ctmask 0x40ff0000"
+	fircSaveMarkRule      = "-m mark --mark 0x40000000/0x40000000 -j CONNMARK --save-mark --nfmask 0x40ff0000 --ctmask 0x40ff0000"
 )
 
 var keenDNSCloudDomains = []string{
 	"keenetic.com",
 	"keenetic.io",
-	"keenetic.net",
+	"cloud.keenetic.net",
 	"keenetic.ru",
 	"keenetic.pro",
 	"keenetic.link",
 	"keenetic.name",
 	"keenetic.cloud",
 	"netcraze.io",
-	"netcraze.net",
+	"cloud.netcraze.net",
 	"netcraze.pro",
 	"netcraze.ru",
 	"netcraze.com",
@@ -580,6 +586,10 @@ func buildKeenDNSGroup(ifaces []string) Group {
 		})
 		idx++
 	}
+	var check *GroupCheck
+	if len(ifaces) >= 2 {
+		check = &GroupCheck{Mode: "keendns"}
+	}
 	return Group{
 		ID:        KeenDNSGroupID,
 		Name:      "KeenDNS / Облако Keenetic",
@@ -593,6 +603,7 @@ func buildKeenDNSGroup(ifaces []string) Group {
 		Resolve: GroupResolve{
 			Tunnel: true,
 		},
+		Check: check,
 		Rules: rules,
 	}
 }
@@ -689,7 +700,7 @@ func syncGroupsWithExt(groups []Group, ext ExtConfig) ([]Group, bool) {
 			}
 			foundKeenDNS = true
 			kdGroup := buildKeenDNSGroup(kdIfaces)
-			if !equalStringSlices([]string(g.Interface), kdIfaces) || !g.Enable || len(g.Rules) != len(kdGroup.Rules) {
+			if !equalStringSlices([]string(g.Interface), kdIfaces) || !g.Enable || !keenDNSRulesEqual(g.Rules, kdGroup.Rules) || !groupCheckEqual(g.Check, kdGroup.Check) {
 				changed = true
 			}
 			filtered = append([]Group{kdGroup}, filtered...)
@@ -753,6 +764,35 @@ func equalStringSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func keenDNSRulesEqual(a, b []Rule) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Type != b[i].Type || a[i].Rule != b[i].Rule || a[i].Enable != b[i].Enable {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeGroupCheck(c *GroupCheck) GroupCheck {
+	if c == nil {
+		return GroupCheck{Mode: "none"}
+	}
+	out := *c
+	out.Mode = strings.TrimSpace(out.Mode)
+	if out.Mode == "" {
+		out.Mode = "none"
+	}
+	out.URL = strings.TrimSpace(out.URL)
+	return out
+}
+
+func groupCheckEqual(a, b *GroupCheck) bool {
+	return normalizeGroupCheck(a) == normalizeGroupCheck(b)
 }
 
 // ApplyExtConfig saves the new ExtConfig, synchronizes FIRC groups (KeenDNS Cloud + server subnets),
@@ -997,6 +1037,7 @@ func (op *Operator) runExtWatchdogTick(loopCtx context.Context) {
 	}
 
 	groups, err := op.Client().GetGroups(ctx, false)
+	groupsLive := err == nil
 	if err != nil {
 		groups, _ = op.LoadGroupsFile()
 	}
@@ -1004,6 +1045,75 @@ func (op *Operator) runExtWatchdogTick(loopCtx context.Context) {
 		return
 	}
 	_ = op.reconcileExtNetfilterLockedWithCfgGen(ctx, ext, groups, nfGen, cfgGen, true, false)
+	if !wantKeenDNS || groupsLive {
+		op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, wantKeenDNS, groups)
+	}
+}
+
+func (op *Operator) resetKeeneticCloudAgent(ctx context.Context) (int, error) {
+	if op.resetCloudAgentFn != nil {
+		return op.resetCloudAgentFn(ctx)
+	}
+	if !hasCustomExtIptablesRunner() && !hasCustomExtIpsetRunner() && runtime.GOOS == "linux" && op.isSystemConfigDir() {
+		return cloudagent.Reset(ctx)
+	}
+	return 0, nil
+}
+
+// maybeResetCloudAgentOnKeenDNSSwitch detects when fircd switches the active
+// interface for group c100d001 and resets coalagent so cloud connections drop
+// stale NAT/UDP state immediately, using a deferred 30s cooldown.
+func (op *Operator) maybeResetCloudAgentOnKeenDNSSwitch(ctx context.Context, wantKeenDNS bool, groups []Group) {
+	if op == nil {
+		return
+	}
+	if !wantKeenDNS {
+		op.cloudStateMu.Lock()
+		op.keenDNSSyncedActiveIface = ""
+		op.cloudStateMu.Unlock()
+		return
+	}
+	active := ""
+	for _, g := range groups {
+		if g.ID == KeenDNSGroupID {
+			active = strings.TrimSpace(g.Active)
+			break
+		}
+	}
+	if active == "" {
+		return
+	}
+
+	op.cloudStateMu.Lock()
+	if op.keenDNSSyncedActiveIface == "" {
+		op.keenDNSSyncedActiveIface = active
+		op.cloudStateMu.Unlock()
+		return
+	}
+	if op.keenDNSSyncedActiveIface == active {
+		op.cloudStateMu.Unlock()
+		return
+	}
+	now := cloudNow()
+	if !op.keenDNSLastAgentResetAt.IsZero() && now.Sub(op.keenDNSLastAgentResetAt) < fircCloudAgentResetCooldown {
+		op.cloudStateMu.Unlock()
+		return
+	}
+	prev := op.keenDNSSyncedActiveIface
+	op.keenDNSSyncedActiveIface = active
+	op.keenDNSLastAgentResetAt = now
+	op.cloudStateMu.Unlock()
+
+	n, err := op.resetKeeneticCloudAgent(ctx)
+	if err != nil {
+		if op.log != nil {
+			op.log.Warn("firc keendns cloud agent reset failed", "from", prev, "to", active, "error", err)
+		}
+		return
+	}
+	if op.log != nil {
+		op.log.Info("firc keendns active interface switched; signaled coalagent", "from", prev, "to", active, "signaled", n)
+	}
 }
 
 const (
@@ -1205,6 +1315,27 @@ func cleanupExtNetfilterRules(ctx context.Context) {
 	InvalidateOutputRoutingCache()
 }
 
+// cleanupOrphanFircIpsets destroys leftover FIRC_* ipsets after fircd stops
+// (e.g. FIRC_<group>S4/S6 that stayed kernel-referenced during shutdown).
+func cleanupOrphanFircIpsets(ctx context.Context) {
+	if !isCloudIpsetDestroyEnabled() {
+		return
+	}
+	pkgCloudIpsetMu.Lock()
+	defer pkgCloudIpsetMu.Unlock()
+	out, err := runExtIpset(ctx, "", "list", "-n")
+	if err != nil {
+		return
+	}
+	for _, rawLine := range strings.Split(string(out), "\n") {
+		name := strings.TrimSpace(rawLine)
+		if !strings.HasPrefix(name, "FIRC_") {
+			continue
+		}
+		_, _ = runExtIpset(ctx, "", "destroy", name)
+	}
+}
+
 func cutoverGuardBypassRules() [][]string {
 	return [][]string{
 		{"-i", "br+", "-o", "br+", "-j", "RETURN"},
@@ -1253,6 +1384,7 @@ func isTransientChainFlushError(err error) bool {
 	return strings.Contains(msg, "no chain/target/match") ||
 		strings.Contains(msg, "couldn't load target") ||
 		strings.Contains(msg, "no such file or directory") ||
+		strings.Contains(msg, "missing after reconcile") ||
 		strings.Contains(msg, "does not exist") ||
 		strings.Contains(msg, "doesn't exist") ||
 		strings.Contains(msg, "resource temporarily unavailable")
@@ -1591,25 +1723,56 @@ func (op *Operator) reconcileExtNetfilterLockedWithGen(ctx context.Context, ext 
 }
 
 func (op *Operator) reconcileExtNetfilterLockedWithCfgGen(ctx context.Context, ext ExtConfig, groups []Group, expectedGen, expectedCfgGen uint64, enforceCfgGen, strict bool) error {
+	var lastRetErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			// Invalidate mirror chain signatures outside netfilterMu/mirrorNetfilterMu
+			// so a retry rebuilds everything cleanly after an NDM firewall flush.
+			InvalidateOutputRoutingCache()
+			delay := 150 * time.Millisecond
+			if hasCustomExtIptablesRunner() {
+				delay = 20 * time.Millisecond
+			}
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				if strict {
+					return errors.Join(lastRetErr, ctx.Err())
+				}
+				return nil
+			case <-timer.C:
+			}
+		}
+		retErr, transientErr := op.reconcileExtNetfilterOnceLockedWithCfgGen(ctx, ext, groups, expectedGen, expectedCfgGen, enforceCfgGen, strict)
+		lastRetErr = retErr
+		if transientErr == nil || !isTransientChainFlushError(transientErr) {
+			return retErr
+		}
+	}
+	return lastRetErr
+}
+
+func (op *Operator) reconcileExtNetfilterOnceLockedWithCfgGen(ctx context.Context, ext ExtConfig, groups []Group, expectedGen, expectedCfgGen uint64, enforceCfgGen, strict bool) (error, error) {
 	if !op.shouldManageKernelNetfilter() {
-		return nil
+		return nil, nil
 	}
 	op.netfilterMu.Lock()
 	defer op.netfilterMu.Unlock()
 	mirrorNetfilterMu.Lock()
 	defer mirrorNetfilterMu.Unlock()
 	if op.ManuallyDisabled() {
-		return nil
+		return nil, nil
 	}
 
 	if expectedGen != 0 && extNetfilterGen.Load() != expectedGen {
-		return nil
+		return nil, nil
 	}
 	if enforceCfgGen && op.currentExtConfigGen() != expectedCfgGen {
-		return nil
+		return nil, nil
 	}
 	var errs []error
-	if err := reconcileTunvlessQUICReject(ctx); err != nil && strict {
+	if err := reconcileTunvlessQUICReject(ctx); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -1619,23 +1782,27 @@ func (op *Operator) reconcileExtNetfilterLockedWithCfgGen(ctx context.Context, e
 	}
 
 	// 1. Reconcile DNS redirection in nat FEXT_DNS and TCPMSS clamping in mangle FEXT_MSS for inbound VPN server interfaces.
-	if err := reconcileServerDNSRedirect(ctx, ifaces); err != nil && strict {
+	if err := reconcileServerDNSRedirect(ctx, ifaces); err != nil {
 		errs = append(errs, err)
 	}
-	if err := reconcileServerMSSClamp(ctx, ifaces); err != nil && strict {
+	if err := reconcileServerMSSClamp(ctx, ifaces); err != nil {
 		errs = append(errs, err)
 	}
 
 	// 2. Ensure interface-based matching in FIRC_<id>D for groups with restricted device allowlists.
-	if err := reconcileServerDeviceChains(ctx, ifaces, groups); err != nil && strict {
+	if err := reconcileServerDeviceChains(ctx, ifaces, groups); err != nil {
 		errs = append(errs, err)
 	}
 
 	// 3. Reconcile router OUTPUT routing in mangle FEXT_OUT & nat FEXT_NOUT for KeenDNS Cloud and VLESS XHTTP server.
-	if err := op.reconcileOutputRouting(ctx, ext, groups); err != nil && strict {
+	if err := op.reconcileOutputRouting(ctx, ext, groups); err != nil {
 		errs = append(errs, err)
 	}
-	return errors.Join(errs...)
+	allErr := errors.Join(errs...)
+	if strict {
+		return allErr, allErr
+	}
+	return nil, allErr
 }
 
 func (op *Operator) activeServerInterfaces(sr ServerRoutingConfig) []string {
@@ -2528,13 +2695,19 @@ func (op *Operator) reconcileOutputRouting(ctx context.Context, ext ExtConfig, g
 				cloudReady := cloudIpsetExists(ctx)
 				var extraRules []string
 				if cloudReady {
-					extraRules = append(extraRules, fmt.Sprintf("-m set --match-set %s dst %s -j MARK --set-xmark %s", FextCloudIpsetName, fircNewFlowMatch, kdMark))
+					extraRules = append(extraRules,
+						fmt.Sprintf("-m set --match-set %s dst %s -j MARK --set-xmark %s", FextCloudIpsetName, fircNewFlowMatch, kdMark),
+						fmt.Sprintf("-p udp -m set --match-set %s dst %s -j MARK --set-xmark %s", FextCloudIpsetName, fircOrigUnmarkedMatch, kdMark),
+					)
 				}
-				grpSig := fmt.Sprintf("%s;ct=new-orig;cloud=%v;%s", kdMark, cloudReady, raw)
+				grpSig := fmt.Sprintf("%s;ct=new-orig+udp;cloud=%v;%s", kdMark, cloudReady, raw)
 				cloudRuleMissing := false
 				if cloudReady && lastGroupChainSigs[KeenDNSGroupID] == grpSig {
-					if exists, cErr := checkIptablesRuleExists(ctx, "mangle", fextChain, strings.Fields(extraRules[0])...); cErr != nil || !exists {
-						cloudRuleMissing = true
+					for _, er := range extraRules {
+						if exists, cErr := checkIptablesRuleExists(ctx, "mangle", fextChain, strings.Fields(er)...); cErr != nil || !exists {
+							cloudRuleMissing = true
+							break
+						}
 					}
 				}
 				var mErr error
@@ -2623,7 +2796,10 @@ func (op *Operator) reconcileOutputRouting(ctx context.Context, ext ExtConfig, g
 		desiredOutRules = append(desiredOutRules, fircRestoreMarkRule)
 	}
 	if kdMirrorReady {
-		desiredOutRules = append(desiredOutRules, fircNewFlowMatch+" -j FEXT_"+KeenDNSGroupID)
+		desiredOutRules = append(desiredOutRules,
+			fircNewFlowMatch+" -j FEXT_"+KeenDNSGroupID,
+			fircUnmarkedUDPMatch+" -j FEXT_"+KeenDNSGroupID,
+		)
 	}
 	if needXHTTP {
 		for _, spec := range activeSpecs {

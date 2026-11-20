@@ -41,6 +41,7 @@ typedef struct firc_sub_fetch_opts {
     uint32_t mark;
     const char *const *headers;
     long timeout_s;
+    long timeout_ms;
     long low_speed_bytes, low_speed_s;
     int max_redirects;
     firc_sub_fetch_url_fn url_ok;
@@ -106,5 +107,6 @@ void firc_sub_url_redact(const char *url, char *buf, size_t cap);
 
 typedef int (*firc_sub_setsockopt_fn)(int fd, int level, int name, const void *val, socklen_t len);
 void firc_sub_fetch_set_setsockopt_for_test(firc_sub_setsockopt_fn fn); /* test seam; NULL restores setsockopt */
+firc_sub_setsockopt_fn firc_sub_fetch_get_setsockopt(void);
 
 #endif /* FIRC_SUB_FETCH_H */

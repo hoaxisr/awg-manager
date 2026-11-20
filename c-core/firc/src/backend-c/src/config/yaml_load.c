@@ -12,6 +12,7 @@
 #include "firc/regdomain.h"
 #include "firc/resolver_addr.h"
 #include "firc/settings.h"
+#include "firc/sub_fetch.h"
 #include "firc/yamlio.h"
 #include "yaml_scalar.h"
 
@@ -739,6 +740,89 @@ static firc_err_t load_ifaces(yaml_document_t *doc, node_t *n, firc_group_t *g)
     return firc_group_set_ifaces(g, names, count);
 }
 
+static firc_err_t load_check_u32(yaml_document_t *doc, node_t *cn, const char *key,
+                                 uint32_t min_v, uint32_t max_v, uint32_t *out,
+                                 const char *group_name)
+{
+    firc_err_t err = FIRC_OK;
+    uint64_t v = 0;
+    getter_res_t r = get_uint64(map_get(doc, cn, key), UINT32_MAX, &v, &err);
+    if (r == GET_ERR) {
+        FIRC_ERROR("config: group \"%s\": check.%s: %s",
+                   group_name != NULL ? group_name : "", key, firc_err_str(err));
+        return err;
+    }
+    if (r == GET_OK && v != 0) {
+        if (v < min_v || v > max_v) {
+            FIRC_ERROR("config: group \"%s\": check.%s must be %u..%u",
+                       group_name != NULL ? group_name : "", key,
+                       (unsigned)min_v, (unsigned)max_v);
+            return FIRC_ERR_INVAL;
+        }
+        *out = (uint32_t)v;
+    }
+    return FIRC_OK;
+}
+
+static firc_err_t load_group_check(yaml_document_t *doc, node_t *n, firc_group_check_t *c,
+                                   const char *group_name)
+{
+    node_t *cn = map_get(doc, n, "check");
+    if (cn == NULL || node_is_null(cn)) {
+        return FIRC_OK;
+    }
+    if (cn->type != YAML_MAPPING_NODE) {
+        FIRC_ERROR("config: group \"%s\": check must be a mapping",
+                   group_name != NULL ? group_name : "");
+        return FIRC_ERR_INVAL;
+    }
+    firc_err_t err = FIRC_OK;
+    char *mode_s = NULL;
+    if (get_string(map_get(doc, cn, "mode"), &mode_s, &err) == GET_ERR) {
+        return err;
+    }
+    if (mode_s != NULL && mode_s[0] != '\0') {
+        if (!firc_group_check_mode_parse(mode_s, &c->mode)) {
+            FIRC_ERROR("config: group \"%s\": check.mode \"%s\" is not none, url or keendns",
+                       group_name != NULL ? group_name : "", mode_s);
+            free(mode_s);
+            return FIRC_ERR_INVAL;
+        }
+    }
+    free(mode_s);
+    if (get_string(map_get(doc, cn, "url"), &c->url, &err) == GET_ERR) {
+        return err;
+    }
+    if (c->url != NULL && c->url[0] == '\0') {
+        free(c->url);
+        c->url = NULL;
+    }
+    if (c->url != NULL && !firc_sub_url_is_supported(c->url)) {
+        FIRC_ERROR("config: group \"%s\": check.url must be http:// or https://",
+                   group_name != NULL ? group_name : "");
+        return FIRC_ERR_INVAL;
+    }
+    struct {
+        const char *key;
+        uint32_t min_v;
+        uint32_t max_v;
+        uint32_t *dst;
+    } nums[] = {
+        {"intervalSec", FIRC_GROUP_CHECK_INTERVAL_MIN, FIRC_GROUP_CHECK_INTERVAL_MAX, &c->interval_sec},
+        {"timeoutMs", FIRC_GROUP_CHECK_TIMEOUT_MIN, FIRC_GROUP_CHECK_TIMEOUT_MAX, &c->timeout_ms},
+        {"failThreshold", FIRC_GROUP_CHECK_THRESHOLD_MIN, FIRC_GROUP_CHECK_THRESHOLD_MAX, &c->fail_threshold},
+        {"recoverThreshold", FIRC_GROUP_CHECK_THRESHOLD_MIN, FIRC_GROUP_CHECK_THRESHOLD_MAX, &c->recover_threshold},
+    };
+    for (size_t i = 0; i < sizeof(nums) / sizeof(nums[0]); i++) {
+        err = load_check_u32(doc, cn, nums[i].key, nums[i].min_v, nums[i].max_v,
+                             nums[i].dst, group_name);
+        if (err != FIRC_OK) {
+            return err;
+        }
+    }
+    return FIRC_OK;
+}
+
 static firc_err_t load_group(yaml_document_t *doc, node_t *n, firc_group_t *g)
 {
     firc_err_t err = FIRC_OK;
@@ -762,6 +846,11 @@ static firc_err_t load_group(yaml_document_t *doc, node_t *n, firc_group_t *g)
     }
 
     err = load_resolve(doc, n, &g->resolve, g->name);
+    if (err != FIRC_OK) {
+        return err;
+    }
+
+    err = load_group_check(doc, n, &g->check, g->name);
     if (err != FIRC_OK) {
         return err;
     }

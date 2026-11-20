@@ -1784,6 +1784,9 @@ static void group_move_into(firc_app_t *app, firc_group_t *into, firc_group_t *f
     into->devices = from->devices;
     free(into->resolve.server);
     into->resolve = from->resolve;
+    firc_group_check_clear(&into->check);
+    into->check = from->check;
+    memset(&from->check, 0, sizeof(from->check));
     into->block = from->block;
     if (into->list != NULL) { /* hand_over_list: after it, into's list is either carried into from's (blank) or finished with */
         hand_over_list(app, into, from);
@@ -4694,6 +4697,14 @@ firc_err_t firc_app_set_dnsstats(firc_app_t *app, firc_app_dnsstats_fn fn, void 
 
 bool firc_app_iface_view(const firc_app_t *app, const char *name, firc_if_view_t *out) {
     return app != NULL && app->ifaces.view != NULL && app->ifaces.view(app->ifaces.ud, name, out);
+}
+
+bool firc_app_group_iface_view(const firc_app_t *app, firc_id_t id, const char *name, firc_if_view_t *out) {
+    if (app != NULL && app->ifaces.group_view != NULL &&
+        app->ifaces.group_view(app->ifaces.ud, id, name, out)) {
+        return true;
+    }
+    return firc_app_iface_view(app, name, out);
 }
 
 firc_err_t firc_app_move_up(firc_app_t *app, firc_id_t id) {

@@ -234,6 +234,15 @@ export interface FircDeviceSelector {
 
 export type FircBlockAnswer = 'null' | 'nxdomain' | 'refused';
 
+export interface FircGroupCheck {
+	mode: 'none' | 'url' | 'keendns';
+	url?: string;
+	intervalSec?: number;
+	timeoutMs?: number;
+	failThreshold?: number;
+	recoverThreshold?: number;
+}
+
 export interface FircGroup {
 	id: string;
 	name: string;
@@ -244,6 +253,7 @@ export interface FircGroup {
 	list?: FircGroupList | null;
 	rules: FircRule[];
 	resolve?: FircGroupResolve;
+	check?: FircGroupCheck;
 	resolver?: FircGroupResolver;
 	block?: FircBlockAnswer;
 }

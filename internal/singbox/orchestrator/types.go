@@ -17,6 +17,7 @@ type Slot string
 
 const (
 	SlotBase          Slot = "base"           // 00-base.json — always on
+	SlotKeenDNSCloud  Slot = "keendns-cloud"  // 09-keendns-cloud.json
 	SlotTunnels       Slot = "tunnels"        // 10-tunnels.json
 	SlotAwg           Slot = "awg"            // 15-awg.json
 	SlotAwg3          Slot = "awg3"           // 16-awg3.json
@@ -69,6 +70,8 @@ type SlotState struct {
 func KnownSlots() []SlotMeta {
 	return []SlotMeta{
 		{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true},
+		// The dedicated router OUTPUT inbound must route before broad user or QoS rules.
+		{Slot: SlotKeenDNSCloud, Filename: "09-keendns-cloud.json"},
 		{Slot: SlotTunnels, Filename: "10-tunnels.json", AlwaysOn: true},
 		// 12/13 merge BEFORE 20/21 on purpose (F701): their route rules bind
 		// an inbound to its own outbound, and the user rules of 20/21 are

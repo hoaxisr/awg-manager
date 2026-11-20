@@ -28,8 +28,8 @@ import (
 const (
 	netnsEnvWorker        = "FIRC_NETNS_WORKER"
 	cutoverNetnsEnvWorker = "FIRC_CUTOVER_NETNS_WORKER"
-	netnsCloudIP1         = "198.51.100.10"
-	netnsCloudIP2         = "198.51.100.20"
+	netnsCloudIP1         = "192.0.2.10"
+	netnsCloudIP2         = "192.0.2.20"
 	netnsStaticCIDRIP     = "185.162.93.10"
 	netnsStaticCIDR       = "185.162.93.0/24"
 	netnsControlWANIP     = "203.0.113.10"
@@ -953,7 +953,7 @@ func TestEngineSwitchCutoverZeroWANLeakNetns(t *testing.T) {
 	pkts100 := extractDstPacketCount(string(wanMangleOut), netnsCloudIP1)
 	pktsFake := extractDstPacketCount(string(wanMangleOut), cutoverFakeIP)
 	if pkts100 != 0 || pktsFake != 0 {
-		t.Fatalf("WAN mangle PREROUTING observed leaked packets (198.51.100.10=%d, 198.18.0.10=%d):\n%s", pkts100, pktsFake, string(wanMangleOut))
+		t.Fatalf("WAN mangle PREROUTING observed leaked packets (192.0.2.10=%d, 198.18.0.10=%d):\n%s", pkts100, pktsFake, string(wanMangleOut))
 	}
 }
 

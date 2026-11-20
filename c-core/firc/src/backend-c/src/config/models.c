@@ -190,6 +190,102 @@ bool firc_devsel_spec_narrows(const firc_devsel_spec_t *was, const firc_devsel_s
     return false;
 }
 
+const char *firc_group_check_mode_name(firc_group_check_mode_t mode)
+{
+    switch (mode) {
+    case FIRC_GROUP_CHECK_NONE:
+        return "none";
+    case FIRC_GROUP_CHECK_URL:
+        return "url";
+    case FIRC_GROUP_CHECK_KEENDNS:
+        return "keendns";
+    default:
+        return "none";
+    }
+}
+
+bool firc_group_check_mode_parse(const char *s, firc_group_check_mode_t *out)
+{
+    if (s == NULL || out == NULL) {
+        return false;
+    }
+    if (strcmp(s, "none") == 0) {
+        *out = FIRC_GROUP_CHECK_NONE;
+        return true;
+    }
+    if (strcmp(s, "url") == 0) {
+        *out = FIRC_GROUP_CHECK_URL;
+        return true;
+    }
+    if (strcmp(s, "keendns") == 0) {
+        *out = FIRC_GROUP_CHECK_KEENDNS;
+        return true;
+    }
+    return false;
+}
+
+void firc_group_check_clear(firc_group_check_t *c)
+{
+    if (c == NULL) {
+        return;
+    }
+    free(c->url);
+    memset(c, 0, sizeof(*c));
+}
+
+firc_err_t firc_group_check_copy(firc_group_check_t *dst, const firc_group_check_t *src)
+{
+    if (dst == NULL || dst == src) {
+        return FIRC_OK;
+    }
+    if (src == NULL) {
+        firc_group_check_clear(dst);
+        return FIRC_OK;
+    }
+    char *url_copy = NULL;
+    if (src->url != NULL && src->url[0] != '\0') {
+        firc_err_t err = firc_strset(&url_copy, src->url);
+        if (err != FIRC_OK) {
+            return err;
+        }
+    }
+    free(dst->url);
+    *dst = *src;
+    dst->url = url_copy;
+    return FIRC_OK;
+}
+
+bool firc_group_check_equal(const firc_group_check_t *a, const firc_group_check_t *b)
+{
+    if (a == b) {
+        return true;
+    }
+    if (a == NULL || b == NULL) {
+        return false;
+    }
+    const char *ua = a->url != NULL ? a->url : "";
+    const char *ub = b->url != NULL ? b->url : "";
+    return a->mode == b->mode &&
+           strcmp(ua, ub) == 0 &&
+           a->interval_sec == b->interval_sec &&
+           a->timeout_ms == b->timeout_ms &&
+           a->fail_threshold == b->fail_threshold &&
+           a->recover_threshold == b->recover_threshold;
+}
+
+bool firc_group_check_is_default(const firc_group_check_t *c)
+{
+    if (c == NULL) {
+        return true;
+    }
+    return c->mode == FIRC_GROUP_CHECK_NONE &&
+           (c->url == NULL || c->url[0] == '\0') &&
+           c->interval_sec == 0 &&
+           c->timeout_ms == 0 &&
+           c->fail_threshold == 0 &&
+           c->recover_threshold == 0;
+}
+
 void firc_group_free(firc_group_t *g)
 {
     if (g == NULL) {
@@ -201,6 +297,7 @@ void firc_group_free(firc_group_t *g)
     free(g->rules);
     firc_devsel_spec_clear(&g->devices);
     free(g->resolve.server);
+    firc_group_check_clear(&g->check);
     firc_group_list_free(g->list);
     free(g->name);
     free(g->iface);

@@ -35,6 +35,7 @@ func ReleaseNetfilterForRemoval(ctx context.Context, d Deps) {
 		bypassLog: logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubBypassSet),
 	}
 	s.deps.IPTables.Uninstall(ctx)
+	s.deps.IPTables.UninstallCloudOutput(ctx)
 	removalTeardownBypassSet(s, ctx)
 	// sweepV6 сам держит порядок «правила, потом набор».
 	s.sweepV6(ctx)

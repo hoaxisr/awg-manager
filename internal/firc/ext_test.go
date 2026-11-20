@@ -556,6 +556,17 @@ func (s *fakeIpsetState) runner(_ context.Context, stdin string, args ...string)
 
 	switch cmd {
 	case "list":
+		if len(args) < 2 || args[1] == "-n" {
+			names := make([]string, 0, len(s.sets))
+			for name := range s.sets {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			if len(names) == 0 {
+				return []byte(""), nil
+			}
+			return []byte(strings.Join(names, "\n") + "\n"), nil
+		}
 		setName := args[1]
 		if _, ok := s.sets[setName]; !ok {
 			return []byte("ipset v7.15: The set with the given name does not exist"), errors.New("exit status 1")
@@ -777,10 +788,13 @@ func TestKeenDNSCloudSync_CreationUpdateAndStrictValidation(t *testing.T) {
 			t.Fatalf("FEXT_CLOUD missing expected entry %q (got %v)", want, gotSet)
 		}
 	}
-	for _, forbidden := range []string{"2001:db8::1", "198.18.0.10", "198.18.1.5", "127.0.0.1", "192.168.1.1", "100.64.1.2", "10.0.0.5", "8.8.4.4", "0.0.0.0/0", "::1"} {
+	for _, forbidden := range []string{"2001:db8::1", "198.18.0.10", "198.18.1.5", "198.51.100.11", "127.0.0.1", "192.168.1.1", "100.64.1.2", "10.0.0.5", "8.8.4.4", "0.0.0.0/0", "::1"} {
 		if slices.Contains(gotSet, forbidden) {
 			t.Fatalf("FEXT_CLOUD must reject forbidden entry %q (got %v)", forbidden, gotSet)
 		}
+	}
+	if _, ok := ValidateCloudIPv4Entry("198.51.100.11"); ok {
+		t.Fatal("ValidateCloudIPv4Entry must reject 198.51.100.0/24 local KeenDNS portal range")
 	}
 
 	// Verify no lo:53 -> fircd:3553 DNS redirect loop was created.
@@ -957,7 +971,9 @@ func TestKeenDNSAndXHTTPMatrix_ConnmarkSaveRestoreDisableAndReenable(t *testing.
 	saveMarkRule := fircSaveMarkRule
 	restoreMarkRule := fircRestoreMarkRule
 	kdJumpRule := fircNewFlowMatch + " -j FEXT_" + KeenDNSGroupID
+	kdUDPJumpRule := fircUnmarkedUDPMatch + " -j FEXT_" + KeenDNSGroupID
 	cloudIpsetRule := "-m set --match-set " + FextCloudIpsetName + " dst " + fircNewFlowMatch + " -j MARK --set-xmark 0x40010000/0x40ff0000"
+	cloudUDPSetRule := "-p udp -m set --match-set " + FextCloudIpsetName + " dst " + fircOrigUnmarkedMatch + " -j MARK --set-xmark 0x40010000/0x40ff0000"
 	staticCIDRRule := "-d 185.162.93.0/24 " + fircNewFlowMatch + " -j MARK --set-xmark 0x40010000/0x40ff0000"
 
 	// A. KeenDNS ON, XHTTP OFF -> CONNMARK --restore-mark and --save-mark with exact mask 0x40ff0000 MUST be present.
@@ -974,10 +990,13 @@ func TestKeenDNSAndXHTTPMatrix_ConnmarkSaveRestoreDisableAndReenable(t *testing.
 	if !slices.Contains(kdChain, cloudIpsetRule) {
 		t.Fatalf("FEXT_c100d001 missing FEXT_CLOUD match rule: %v", kdChain)
 	}
+	if !slices.Contains(kdChain, cloudUDPSetRule) {
+		t.Fatalf("FEXT_c100d001 missing FEXT_CLOUD unmarked UDP rule: %v", kdChain)
+	}
 	if !slices.Contains(kdChain, staticCIDRRule) {
 		t.Fatalf("FEXT_c100d001 missing static CIDR NEW match rule: %v", kdChain)
 	}
-	wantKDOnlyOut := []string{restoreMarkRule, kdJumpRule, saveMarkRule}
+	wantKDOnlyOut := []string{restoreMarkRule, kdJumpRule, kdUDPJumpRule, saveMarkRule}
 	if !equalStringSlices(outRules, wantKDOnlyOut) {
 		t.Fatalf("KD=on/XHTTP=off FEXT_OUT mismatch:\ngot:  %v\nwant: %v", outRules, wantKDOnlyOut)
 	}
@@ -2013,5 +2032,241 @@ func TestPoolRejectAndFextChainTeardown_OwnershipVsManualStop(t *testing.T) {
 	iptSt.mu.Unlock()
 	if stillExists || stillJumped {
 		t.Fatalf("cleanupPoolRejectBarrierForRoot left FIRC_POOLREJECT: exists=%v jumped=%v", stillExists, stillJumped)
+	}
+}
+
+func TestSyncGroupsWithExt_KeenDNSCheckMode(t *testing.T) {
+	single := buildKeenDNSGroup([]string{"tunvless0"})
+	if single.Check != nil {
+		t.Fatalf("single-iface KeenDNS group should omit Check, got %+v", single.Check)
+	}
+
+	multi := buildKeenDNSGroup([]string{"eth3", "tunvless0"})
+	if multi.Check == nil || multi.Check.Mode != "keendns" {
+		t.Fatalf("multi-iface KeenDNS group must set mode=keendns, got %+v", multi.Check)
+	}
+
+	// Simulate upgrading an existing router group that lacks Check on 2 interfaces.
+	oldGroup := buildKeenDNSGroup([]string{"eth3", "tunvless0"})
+	oldGroup.Check = nil
+	updated, changed := syncGroupsWithExt([]Group{oldGroup}, ExtConfig{
+		KeenDNSCloud: KeenDNSCloudConfig{
+			Enabled:    true,
+			Interfaces: []string{"eth3", "tunvless0"},
+		},
+	})
+	if !changed {
+		t.Fatal("expected syncGroupsWithExt to mark changed when upgrading multi-iface KeenDNS group to check.mode=keendns")
+	}
+	if len(updated) != 1 || updated[0].Check == nil || updated[0].Check.Mode != "keendns" {
+		t.Fatalf("unexpected upgraded KeenDNS group: %+v", updated)
+	}
+
+	// Second sync with identical Check should report changed=false.
+	_, changedAgain := syncGroupsWithExt(updated, ExtConfig{
+		KeenDNSCloud: KeenDNSCloudConfig{
+			Enabled:    true,
+			Interfaces: []string{"eth3", "tunvless0"},
+		},
+	})
+	if changedAgain {
+		t.Fatal("expected idempotent syncGroupsWithExt to report changed=false when keendns check already present")
+	}
+
+	// Verify my.keenetic.net and my.netcraze.net are excluded from c100d001 namespace rules
+	// and legacy keenetic.net / netcraze.net rules migrate cleanly.
+	var hasLegacyNet, hasCloudNet bool
+	for _, r := range multi.Rules {
+		if r.Type == "namespace" && (r.Rule == "keenetic.net" || r.Rule == "netcraze.net") {
+			hasLegacyNet = true
+		}
+		if r.Type == "namespace" && (r.Rule == "cloud.keenetic.net" || r.Rule == "cloud.netcraze.net") {
+			hasCloudNet = true
+		}
+	}
+	if hasLegacyNet || !hasCloudNet {
+		t.Fatalf("c100d001 rules must use cloud.keenetic.net/cloud.netcraze.net instead of broad *.net: legacy=%v cloud=%v", hasLegacyNet, hasCloudNet)
+	}
+	legacyGroup := buildKeenDNSGroup([]string{"eth3", "tunvless0"})
+	for i := range legacyGroup.Rules {
+		if legacyGroup.Rules[i].Rule == "cloud.keenetic.net" {
+			legacyGroup.Rules[i].Rule = "keenetic.net"
+		}
+		if legacyGroup.Rules[i].Rule == "cloud.netcraze.net" {
+			legacyGroup.Rules[i].Rule = "netcraze.net"
+		}
+	}
+	migrated, migratedChanged := syncGroupsWithExt([]Group{legacyGroup}, ExtConfig{
+		KeenDNSCloud: KeenDNSCloudConfig{
+			Enabled:    true,
+			Interfaces: []string{"eth3", "tunvless0"},
+		},
+	})
+	if !migratedChanged || !keenDNSRulesEqual(migrated[0].Rules, multi.Rules) {
+		t.Fatalf("expected syncGroupsWithExt to migrate legacy keenetic.net/netcraze.net rules, changed=%v", migratedChanged)
+	}
+}
+
+func TestReconcileExtNetfilterStrictRetriesTransientFlush(t *testing.T) {
+	resetKeenCloudTestHooks(t)
+	InvalidateOutputRoutingCache()
+
+	iptSt := newFakeIptablesState()
+	ipsetSt := newFakeIpsetState(iptSt)
+	iptSt.mu.Lock()
+	iptSt.mangleChain["FIRC_c100d001"] = []string{"-d 198.18.0.0/24 -j MARK --set-xmark 0x40010000/0x40ff0000"}
+	iptSt.mu.Unlock()
+	ipsetSt.mu.Lock()
+	ipsetSt.sets[FextCloudIpsetName] = map[string]bool{"192.0.2.10/32": true}
+	ipsetSt.mu.Unlock()
+
+	var flushedOnce atomic.Bool
+	SetExtIptablesRunner(func(ctx context.Context, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		// Simulate NDM flushing mangle right after FEXT_OUT rules are written and before verifyChainExactOrder.
+		if strings.Contains(cmd, "-t mangle -A OUTPUT -j FEXT_OUT") && flushedOnce.CompareAndSwap(false, true) {
+			iptSt.mu.Lock()
+			delete(iptSt.mangleChain, "FEXT_OUT")
+			iptSt.mu.Unlock()
+			return []byte("iptables v1.4.21: Couldn't load target `FEXT_OUT':No such file or directory"), errors.New("exit status 2")
+		}
+		return iptSt.runner(ctx, args...)
+	})
+	SetExtIpsetRunner(ipsetSt.runner)
+
+	op := NewOperator(Options{ConfigDir: t.TempDir()})
+	var groupsMu sync.Mutex
+	groups := []Group{{ID: KeenDNSGroupID, Name: "KeenDNS", Interface: []string{"eth3", "tunvless1"}, Enable: true}}
+	srv := startMockRunningFircServer(t, op, &groupsMu, &groups, iptSt)
+	defer srv.Close()
+
+	extCfg := ExtConfig{KeenDNSCloud: KeenDNSCloudConfig{Enabled: true, Interfaces: []string{"eth3", "tunvless1"}}}
+	if err := op.ReconcileExtNetfilterStrict(context.Background(), extCfg, groups); err != nil {
+		t.Fatalf("ReconcileExtNetfilterStrict failed after transient NDM flush: %v", err)
+	}
+	if !flushedOnce.Load() {
+		t.Fatal("expected transient FEXT_OUT flush error to be injected")
+	}
+	iptSt.mu.Lock()
+	defer iptSt.mu.Unlock()
+	if _, ok := iptSt.mangleChain["FEXT_OUT"]; !ok || !slices.Contains(iptSt.mangleChain["OUTPUT"], "-j FEXT_OUT") {
+		t.Fatalf("expected FEXT_OUT and OUTPUT jump restored after retry: out=%v all=%v", iptSt.mangleChain["OUTPUT"], iptSt.mangleChain)
+	}
+}
+
+func TestStopSweepsOrphanFircIpsetsAndReleasesFextFirst(t *testing.T) {
+	resetKeenCloudTestHooks(t)
+	InvalidateOutputRoutingCache()
+
+	iptSt := newFakeIptablesState()
+	ipsetSt := newFakeIpsetState(iptSt)
+	iptSt.mu.Lock()
+	iptSt.mangleChain["OUTPUT"] = []string{"-j FEXT_OUT"}
+	iptSt.mangleChain["FEXT_OUT"] = []string{"-j FEXT_c100d001"}
+	iptSt.mangleChain["FEXT_c100d001"] = []string{"-m set --match-set FIRC_c100d001S4 dst -j MARK --set-xmark 0x40010000/0x40ff0000"}
+	iptSt.mu.Unlock()
+	ipsetSt.mu.Lock()
+	ipsetSt.sets["FIRC_c100d001S4"] = map[string]bool{"95.213.212.50": true}
+	ipsetSt.sets["FIRC_orphanS6"] = map[string]bool{"192.0.2.1": true}
+	ipsetSt.sets["FOREIGN_SET"] = map[string]bool{"198.51.100.99": true}
+	ipsetSt.mu.Unlock()
+
+	SetExtIptablesRunner(iptSt.runner)
+	SetExtIpsetRunner(ipsetSt.runner)
+
+	op := NewOperator(Options{ConfigDir: t.TempDir()})
+	var stopDestroyErr error
+	op.SetLifecycleHooks(
+		func(_ context.Context) error { return nil },
+		func(ctx context.Context) error {
+			// When fircd shuts down, FEXT_c100d001 must already be gone so destroying FIRC_c100d001S4 does not fail EBUSY.
+			_, stopDestroyErr = runExtIpset(ctx, "", "destroy", "FIRC_c100d001S4")
+			return nil
+		},
+	)
+
+	if err := op.Stop(context.Background()); err != nil {
+		t.Fatalf("Operator.Stop failed: %v", err)
+	}
+	if stopDestroyErr != nil {
+		t.Fatalf("fircd stopHook failed destroying FIRC_c100d001S4 (FEXT reference still held): %v", stopDestroyErr)
+	}
+	if ipsetSt.hasSet("FIRC_c100d001S4") {
+		t.Fatal("expected FIRC_c100d001S4 destroyed")
+	}
+	if ipsetSt.hasSet("FIRC_orphanS6") {
+		t.Fatal("expected orphan FIRC_orphanS6 swept after stop")
+	}
+	if !ipsetSt.hasSet("FOREIGN_SET") {
+		t.Fatal("FOREIGN_SET must not be modified by FIRC stop cleanup")
+	}
+}
+
+func TestKeenDNSCloudAgentResetOnSwitch(t *testing.T) {
+	resetKeenCloudTestHooks(t)
+	now := time.Unix(1700000000, 0)
+	setExtCloudNow(func() time.Time { return now })
+	defer setExtCloudNow(nil)
+
+	op := NewOperator(Options{ConfigDir: t.TempDir()})
+	var resets int
+	op.resetCloudAgentFn = func(context.Context) (int, error) {
+		resets++
+		return 1, nil
+	}
+
+	ctx := context.Background()
+	makeGroups := func(active string) []Group {
+		return []Group{{ID: KeenDNSGroupID, Enable: true, Active: active}}
+	}
+
+	// 1. First observation records baseline without resetting coalagent.
+	op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, true, makeGroups("eth3"))
+	if resets != 0 {
+		t.Fatalf("first observation triggered reset (%d)", resets)
+	}
+
+	// 2. Empty Active (or transient group miss) preserves previous baseline without reset.
+	op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, true, makeGroups(""))
+	op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, true, makeGroups("eth3"))
+	if resets != 0 {
+		t.Fatalf("empty active caused spurious reset: %d", resets)
+	}
+
+	// 3. Failover eth3 -> tunvless1 triggers 1 reset.
+	op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, true, makeGroups("tunvless1"))
+	if resets != 1 {
+		t.Fatalf("failover expected 1 reset, got %d", resets)
+	}
+
+	// 4. Failback inside 30s cooldown is deferred and fires once cooldown expires.
+	now = now.Add(10 * time.Second)
+	op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, true, makeGroups("eth3"))
+	if resets != 1 {
+		t.Fatalf("switch inside 30s cooldown triggered early reset: %d", resets)
+	}
+	now = now.Add(21 * time.Second)
+	op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, true, makeGroups("eth3"))
+	if resets != 2 {
+		t.Fatalf("deferred switch after cooldown expected 2 resets, got %d", resets)
+	}
+
+	// 5. Round-trip eth3 -> tunvless1 -> eth3 completely within cooldown triggers zero extra resets.
+	now = now.Add(5 * time.Second)
+	op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, true, makeGroups("tunvless1"))
+	now = now.Add(5 * time.Second)
+	op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, true, makeGroups("eth3"))
+	now = now.Add(25 * time.Second)
+	op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, true, makeGroups("eth3"))
+	if resets != 2 {
+		t.Fatalf("round-trip inside cooldown triggered unexpected reset: %d", resets)
+	}
+
+	// 6. Disabling wantKeenDNS clears baseline so re-enable first sample does not reset.
+	op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, false, nil)
+	now = now.Add(40 * time.Second)
+	op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, true, makeGroups("tunvless1"))
+	if resets != 2 {
+		t.Fatalf("re-enable baseline sample triggered reset: %d", resets)
 	}
 }

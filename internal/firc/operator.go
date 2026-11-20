@@ -186,65 +186,68 @@ type MigrationJournalCommitFaultHooks struct {
 // Leaf locks (extConfigMu, cloudStateMu, cloudCancelMu, mu, extIpsetMu, extIptablesMu, extCloudDNSMu,
 // extCloudClockMu) must never acquire any lock listed above.
 type Operator struct {
-	mu                   sync.Mutex
-	mutationMu           sync.Mutex
-	lifecycleMu          sync.Mutex
-	netfilterMu          sync.Mutex
-	extConfigMu          sync.RWMutex
-	extConfigGen         atomic.Uint64
-	extConfigSaved       atomic.Bool
-	extLoopStarted       bool
-	extLoopCtx           context.Context
-	extLoopCancel        context.CancelFunc
-	extLoopDone          chan struct{}
-	keenCloudProvider    KeenCloudRelayProvider
-	cloudSyncMu          sync.Mutex
-	cloudCommitMu        sync.Mutex
-	cloudCancelMu        sync.Mutex
-	cloudEpoch           uint64
-	cloudActiveID        uint64
-	cloudActiveCancel    context.CancelFunc
-	cloudStateMu         sync.RWMutex
-	cloudSetReady        bool
-	cloudLastAttemptAt   time.Time
-	cloudLastSyncAt      time.Time
-	cloudLastSyncErr     string
-	cloudLastEntries     []string
-	cloudSourceCache     map[string]*cloudSourceEntry
-	cloudNegBackoff      map[string]cloudNegBackoffEntry
-	log                  *slog.Logger
-	configDir            string
-	socketPath           string
-	fircdBinary          string
-	tunvlessBin          string
-	initScript           string
-	dnsProxyAddr         string
-	dnsProxyPort         int
-	inboundPort          uint16
-	startTimeout         time.Duration
-	client               *Client
-	cmd                  *exec.Cmd
-	startHook            func(ctx context.Context) error
-	stopHook             func(ctx context.Context) error
-	dirSyncHook          func(dir string) error
-	clearFaultHooks      RecoveryClearFaultHooks
-	srTxFaultHooks       ServerRoutingTxFaultHooks
-	defaultHooks         EngineSwitchHooks
-	managedUplinkConfig  func(context.Context, []Tunnel) ([]Tunnel, error)
-	xhttpStatusFn        func() bool
-	openfluxStatusFn     func() (bool, string)
-	singboxBinary        string
-	singboxCheckFn       func(ctx context.Context, stagedConfigDir string) error
-	singboxStageCopyHook func(relPath string) error
-	varLibDir            string
-	migrationStepHook    func(operation, stage string, stepIndex int, targetPath string) error
-	journalCommitHooks   MigrationJournalCommitFaultHooks
-	groupsSaveFaultHook  func(groups []Group) error
-	netfilterStrictHook  func(ctx context.Context, ext ExtConfig, groups []Group) error
-	forceKernelNetfilter atomic.Bool
-	recoveryRequired     bool
-	recoveryReason       string
-	recoveryMarker       *RecoveryMarker
+	mu                       sync.Mutex
+	mutationMu               sync.Mutex
+	lifecycleMu              sync.Mutex
+	netfilterMu              sync.Mutex
+	extConfigMu              sync.RWMutex
+	extConfigGen             atomic.Uint64
+	extConfigSaved           atomic.Bool
+	extLoopStarted           bool
+	extLoopCtx               context.Context
+	extLoopCancel            context.CancelFunc
+	extLoopDone              chan struct{}
+	keenCloudProvider        KeenCloudRelayProvider
+	cloudSyncMu              sync.Mutex
+	cloudCommitMu            sync.Mutex
+	cloudCancelMu            sync.Mutex
+	cloudEpoch               uint64
+	cloudActiveID            uint64
+	cloudActiveCancel        context.CancelFunc
+	cloudStateMu             sync.RWMutex
+	cloudSetReady            bool
+	cloudLastAttemptAt       time.Time
+	cloudLastSyncAt          time.Time
+	cloudLastSyncErr         string
+	cloudLastEntries         []string
+	cloudSourceCache         map[string]*cloudSourceEntry
+	cloudNegBackoff          map[string]cloudNegBackoffEntry
+	keenDNSSyncedActiveIface string
+	keenDNSLastAgentResetAt  time.Time
+	resetCloudAgentFn        func(context.Context) (int, error)
+	log                      *slog.Logger
+	configDir                string
+	socketPath               string
+	fircdBinary              string
+	tunvlessBin              string
+	initScript               string
+	dnsProxyAddr             string
+	dnsProxyPort             int
+	inboundPort              uint16
+	startTimeout             time.Duration
+	client                   *Client
+	cmd                      *exec.Cmd
+	startHook                func(ctx context.Context) error
+	stopHook                 func(ctx context.Context) error
+	dirSyncHook              func(dir string) error
+	clearFaultHooks          RecoveryClearFaultHooks
+	srTxFaultHooks           ServerRoutingTxFaultHooks
+	defaultHooks             EngineSwitchHooks
+	managedUplinkConfig      func(context.Context, []Tunnel) ([]Tunnel, error)
+	xhttpStatusFn            func() bool
+	openfluxStatusFn         func() (bool, string)
+	singboxBinary            string
+	singboxCheckFn           func(ctx context.Context, stagedConfigDir string) error
+	singboxStageCopyHook     func(relPath string) error
+	varLibDir                string
+	migrationStepHook        func(operation, stage string, stepIndex int, targetPath string) error
+	journalCommitHooks       MigrationJournalCommitFaultHooks
+	groupsSaveFaultHook      func(groups []Group) error
+	netfilterStrictHook      func(ctx context.Context, ext ExtConfig, groups []Group) error
+	forceKernelNetfilter     atomic.Bool
+	recoveryRequired         bool
+	recoveryReason           string
+	recoveryMarker           *RecoveryMarker
 }
 
 // NewOperator creates a new firc Operator with sensible defaults for Keenetic Entware.
@@ -1398,40 +1401,49 @@ func (o *Operator) stopRuntime(ctx context.Context) error {
 	o.cancelExtWatchdog()
 	o.abortKeenDNSCloudSync()
 	InvalidateOutputRoutingCache()
-	o.mu.Lock()
-	stopHook := o.stopHook
-	o.mu.Unlock()
-	if stopHook != nil {
-		if err := stopHook(ctx); err != nil {
-			return err
-		}
+	runCleanup := func() {
 		if o.isSystemConfigDir() {
 			cleanupExtNetfilter(ctx, "")
 		} else if o.shouldManageKernelNetfilter() || hasCustomExtIpsetRunner() {
 			cleanupExtNetfilterRules(ctx)
 		}
+	}
+	o.mu.Lock()
+	stopHook := o.stopHook
+	initScript := o.initScript
+	o.mu.Unlock()
+	// Remove FEXT_* chains before stopping fircd so daemon ipset cleanup does not hit EBUSY
+	// on FIRC_*S4/S6 sets referenced by FEXT_*, then sweep again after the daemon stops.
+	runCleanup()
+	if stopHook != nil {
+		if err := stopHook(ctx); err != nil {
+			runCleanup()
+			return err
+		}
+		runCleanup()
+		cleanupOrphanFircIpsets(ctx)
 		return nil
 	}
 
+	var initErr error
 	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	if _, err := os.Stat(o.initScript); err == nil {
-		cmd := exec.CommandContext(ctx, o.initScript, "stop")
+	if _, err := os.Stat(initScript); err == nil {
+		cmd := exec.CommandContext(ctx, initScript, "stop")
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("run %s stop: %w", o.initScript, err)
+			initErr = fmt.Errorf("run %s stop: %w", initScript, err)
 		}
 	}
-	if o.cmd != nil && o.cmd.Process != nil {
+	if initErr == nil && o.cmd != nil && o.cmd.Process != nil {
 		_ = o.cmd.Process.Signal(syscall.SIGTERM)
 		_, _ = o.cmd.Process.Wait()
 		o.cmd = nil
 	}
-	if o.isSystemConfigDir() {
-		cleanupExtNetfilter(ctx, "")
-	} else if o.shouldManageKernelNetfilter() || hasCustomExtIpsetRunner() {
-		cleanupExtNetfilterRules(ctx)
+	o.mu.Unlock()
+	runCleanup()
+	if initErr != nil {
+		return initErr
 	}
+	cleanupOrphanFircIpsets(ctx)
 	return nil
 }
 

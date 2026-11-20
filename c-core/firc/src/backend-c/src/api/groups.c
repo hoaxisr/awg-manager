@@ -308,6 +308,96 @@ static firc_err_t resolve_from_req(const cJSON *req, const firc_group_t *existin
     return firc_strset(&out->server, s->valuestring);
 }
 
+static firc_err_t check_u32_from_req(const cJSON *c, const char *key, const char *field,
+                                     uint32_t min_v, uint32_t max_v, uint32_t *out,
+                                     const char **err_msg, const char **err_field,
+                                     char *msgbuf, size_t msgbuf_len) {
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(c, key);
+    if (item == NULL || cJSON_IsNull(item)) { return FIRC_OK; }
+    if (!cJSON_IsNumber(item) || item->valuedouble < 0.0 ||
+        item->valuedouble > (double)UINT32_MAX ||
+        (double)(uint32_t)item->valuedouble != item->valuedouble) {
+        snprintf(msgbuf, msgbuf_len, "%s must be an integer", field);
+        *err_msg = msgbuf;
+        *err_field = field;
+        return FIRC_ERR_INVAL;
+    }
+    uint32_t v = (uint32_t)item->valuedouble;
+    if (v != 0 && (v < min_v || v > max_v)) {
+        snprintf(msgbuf, msgbuf_len, "%s must be between %u and %u",
+                 field, (unsigned)min_v, (unsigned)max_v);
+        *err_msg = msgbuf;
+        *err_field = field;
+        return FIRC_ERR_INVAL;
+    }
+    *out = v;
+    return FIRC_OK;
+}
+
+/* absent keeps the group's own (new group: none); null is the default; an object replaces it */
+static firc_err_t check_from_req(const cJSON *req, const firc_group_t *existing, firc_group_check_t *out,
+                                 const char **err_msg, const char **err_field,
+                                 char *msgbuf, size_t msgbuf_len) {
+    const cJSON *c = cJSON_GetObjectItemCaseSensitive(req, "check");
+    if (c == NULL) {
+        return existing != NULL ? firc_group_check_copy(out, &existing->check) : FIRC_OK;
+    }
+    firc_group_check_clear(out);
+    if (cJSON_IsNull(c)) { return FIRC_OK; }
+    if (!cJSON_IsObject(c)) {
+        *err_msg = "check must be an object";
+        *err_field = "check";
+        return FIRC_ERR_INVAL;
+    }
+    const cJSON *m = cJSON_GetObjectItemCaseSensitive(c, "mode");
+    if (m != NULL && !cJSON_IsNull(m)) {
+        if (!cJSON_IsString(m) || !firc_group_check_mode_parse(m->valuestring, &out->mode)) {
+            *err_msg = "check.mode must be none, url or keendns";
+            *err_field = "check.mode";
+            return FIRC_ERR_INVAL;
+        }
+    }
+    const cJSON *u = cJSON_GetObjectItemCaseSensitive(c, "url");
+    if (u != NULL && !cJSON_IsNull(u)) {
+        if (!cJSON_IsString(u)) {
+            *err_msg = "check.url must be a string";
+            *err_field = "check.url";
+            return FIRC_ERR_INVAL;
+        }
+        if (u->valuestring[0] != '\0') {
+            if (!firc_sub_url_is_supported(u->valuestring)) {
+                *err_msg = "check.url must be http:// or https:// with a host";
+                *err_field = "check.url";
+                return FIRC_ERR_INVAL;
+            }
+            firc_err_t err = firc_strset(&out->url, u->valuestring);
+            if (err != FIRC_OK) { return err; }
+        }
+    }
+    struct {
+        const char *key;
+        const char *field;
+        uint32_t min_v;
+        uint32_t max_v;
+        uint32_t *dst;
+    } nums[] = {
+        {"intervalSec", "check.intervalSec", FIRC_GROUP_CHECK_INTERVAL_MIN, FIRC_GROUP_CHECK_INTERVAL_MAX,
+         &out->interval_sec},
+        {"timeoutMs", "check.timeoutMs", FIRC_GROUP_CHECK_TIMEOUT_MIN, FIRC_GROUP_CHECK_TIMEOUT_MAX,
+         &out->timeout_ms},
+        {"failThreshold", "check.failThreshold", FIRC_GROUP_CHECK_THRESHOLD_MIN, FIRC_GROUP_CHECK_THRESHOLD_MAX,
+         &out->fail_threshold},
+        {"recoverThreshold", "check.recoverThreshold", FIRC_GROUP_CHECK_THRESHOLD_MIN, FIRC_GROUP_CHECK_THRESHOLD_MAX,
+         &out->recover_threshold},
+    };
+    for (size_t i = 0; i < sizeof(nums) / sizeof(nums[0]); i++) {
+        firc_err_t err = check_u32_from_req(c, nums[i].key, nums[i].field, nums[i].min_v, nums[i].max_v,
+                                            nums[i].dst, err_msg, err_field, msgbuf, msgbuf_len);
+        if (err != FIRC_OK) { return err; }
+    }
+    return FIRC_OK;
+}
+
 static firc_err_t block_from_req(const cJSON *req, const firc_group_t *existing, firc_group_t *group,
                                  const char **err_msg, const char **err_field) {
     if (!firc_group_is_block(group)) { return FIRC_OK; }
@@ -441,6 +531,9 @@ static firc_err_t group_from_req(const cJSON *req, const firc_group_t *existing,
     }
 
     err = resolve_from_req(req, existing, pool, &group->resolve, err_msg, err_field, msgbuf, msgbuf_len);
+    if (err == FIRC_OK) {
+        err = check_from_req(req, existing, &group->check, err_msg, err_field, msgbuf, msgbuf_len);
+    }
     if (err == FIRC_OK) { err = block_from_req(req, existing, group, err_msg, err_field); }
     if (err != FIRC_OK) {
         firc_group_free(group);
@@ -600,7 +693,7 @@ static bool add_iface_states(firc_app_t *app, const firc_group_t *g, cJSON *obj)
     for (size_t i = 0; i < firc_group_n_ifaces(g); i++) {
         const char *name = firc_group_iface_at(g, i);
         firc_if_view_t v;
-        if (!firc_app_iface_view(app, name, &v)) { memset(&v, 0, sizeof(v)); }
+        if (!firc_app_group_iface_view(app, g->id, name, &v)) { memset(&v, 0, sizeof(v)); }
         cJSON *e = cJSON_CreateObject();
         if (e == NULL || !cJSON_AddItemToArray(ifs, e)) {
             cJSON_Delete(e);
@@ -657,6 +750,17 @@ cJSON *firc_groups_group_json(firc_app_t *app, const firc_group_t *g, bool with_
     }
     cJSON_AddBoolToObject(resolve, "tunnel", g->resolve.tunnel);
     cJSON_AddStringToObject(resolve, "server", g->resolve.server != NULL ? g->resolve.server : "");
+    cJSON *check = cJSON_AddObjectToObject(obj, "check");
+    if (check == NULL ||
+        cJSON_AddStringToObject(check, "mode", firc_group_check_mode_name(g->check.mode)) == NULL ||
+        cJSON_AddStringToObject(check, "url", g->check.url != NULL ? g->check.url : "") == NULL ||
+        cJSON_AddNumberToObject(check, "intervalSec", (double)g->check.interval_sec) == NULL ||
+        cJSON_AddNumberToObject(check, "timeoutMs", (double)g->check.timeout_ms) == NULL ||
+        cJSON_AddNumberToObject(check, "failThreshold", (double)g->check.fail_threshold) == NULL ||
+        cJSON_AddNumberToObject(check, "recoverThreshold", (double)g->check.recover_threshold) == NULL) {
+        cJSON_Delete(obj);
+        return NULL;
+    }
     if (app != NULL) {
         firc_app_resolver_info_t info;
         firc_app_group_resolver(app, g, &info);

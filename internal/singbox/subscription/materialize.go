@@ -117,6 +117,9 @@ func BuildAggregateGroupOutbound(g AggregateGroup, memberTags []string) json.Raw
 	case ModeURLTest:
 		return BuildURLTest(g.Tag, memberTags, g.EffectiveURLTest())
 	case ModeFallback:
+		if g.DirectFirst && len(memberTags) > 0 {
+			memberTags = append([]string{"direct"}, memberTags...)
+		}
 		return BuildFallback(g.Tag, memberTags, g.EffectiveURLTest())
 	default:
 		return BuildSelector(g.Tag, memberTags, "")

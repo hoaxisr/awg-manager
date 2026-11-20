@@ -53,6 +53,9 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 }
 
 func (s *ServiceImpl) disableFakeIPTunLocked(ctx context.Context, settings *storage.Settings, persistDisabled bool) error {
+	if err := s.detachCloudOutputLocked(ctx, true); err != nil {
+		s.appLog.Warn("keendns-cloud", "disable-fakeip", err.Error())
+	}
 	st, _ := opkgTunOwned(settings, stateFakeIPTun)
 
 	// Nothing provisioned (or persist already cleared) → idempotent: just persist

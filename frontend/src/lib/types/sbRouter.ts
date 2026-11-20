@@ -11,6 +11,7 @@
 export type TunStack = '' | 'system';
 
 export interface SingboxRouterSettings {
+	keenDNSCloudOutbound?: string;
 	routingEngine?: 'sing-box' | 'firc';
 	enabled: boolean;
 	sstpIngress?: boolean;

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -338,8 +339,12 @@ type StagingEventBus interface {
 }
 
 type Deps struct {
-	AppLog   logging.AppLogger
-	Settings *storage.SettingsStore
+	KeenDNSRelayEndpoints func(context.Context) ([]netip.AddrPort, error)
+	KeenDNSCloudSnapshot  func(context.Context) (KeenDNSCloudSnapshot, error)
+	CloudOutboundActive   func(ctx context.Context, tag string) (string, error)
+	ResetCloudAgent       func(ctx context.Context) error
+	AppLog                logging.AppLogger
+	Settings              *storage.SettingsStore
 	// PresetCatalog is the unified preset catalog. Required for ListPresets and ApplyPreset.
 	PresetCatalog *presets.Catalog
 	Singbox       SingboxController
@@ -764,6 +769,20 @@ type ServiceImpl struct {
 	keenDNSBypassCIDRs []string
 	// keenDNSBypassCIDRs6 — IPv6-часть того же обхода, для правил v6-слоя.
 	keenDNSBypassCIDRs6 []string
+
+	// Dynamic IPv4 cloud ipset sync cache (AWGM-SB-CLOUD).
+	cloudStateMu            sync.Mutex
+	cloudSetReady           bool
+	cloudLastAttemptAt      time.Time
+	cloudLastSyncAt         time.Time
+	cloudLastSyncErr        string
+	cloudLastRelayKey       string
+	cloudLastEntries        []string
+	cloudSourceCache        map[string]*cloudOutputSourceEntry
+	cloudNegBackoff         map[string]cloudOutputNegBackoff
+	cloudSyncedOutboundTag  string
+	cloudSyncedActiveMember string
+	cloudLastAgentResetAt   time.Time
 }
 
 func NewService(d Deps) *ServiceImpl {

@@ -2,6 +2,7 @@
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import { api } from '$lib/api/client';
+	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import { reloadFircAll, fircSyncNonce } from '$lib/stores/firc';
 	import { fircMigrationAppliedNonce } from '$lib/stores/fircMigrationModal';
@@ -49,6 +50,7 @@
 		type FircCatalog,
 		type FircDeviceSelector,
 		type FircGroup,
+		type FircGroupCheck,
 		type FircGroupLive,
 		type FircHost,
 		type FircInterfaceOption,
@@ -102,6 +104,22 @@
 		},
 	});
 	let proxyGroupsModalOpen = $state(false);
+	let proxyGroupRefresh = 0;
+
+	async function refreshProxyGroups() {
+		const request = ++proxyGroupRefresh;
+		try {
+			const saved = await api.fircGetExt();
+			if (request !== proxyGroupRefresh) return false;
+			extConfig = saved;
+			return true;
+		} catch (error) {
+			if (request === proxyGroupRefresh) {
+				notifications.error(error instanceof Error ? error.message : String(error));
+			}
+			return false;
+		}
+	}
 	let pgDraft = $state<FircProxyGroup[]>([]);
 	let pgSaving = $state(false);
 
@@ -187,6 +205,18 @@
 			resolve: g.resolve
 				? { tunnel: g.resolve.tunnel ?? true, server: g.resolve.server ?? '' }
 				: { tunnel: true, server: '' },
+			...(g.check
+				? {
+						check: {
+							mode: g.check.mode || 'none',
+							url: g.check.url ?? '',
+							...(g.check.intervalSec ? { intervalSec: g.check.intervalSec } : {}),
+							...(g.check.timeoutMs ? { timeoutMs: g.check.timeoutMs } : {}),
+							...(g.check.failThreshold ? { failThreshold: g.check.failThreshold } : {}),
+							...(g.check.recoverThreshold ? { recoverThreshold: g.check.recoverThreshold } : {}),
+						} as FircGroupCheck,
+					}
+				: {}),
 			...(g.resolver ? { resolver: g.resolver } : {}),
 			...(g.block ? { block: g.block } : {}),
 		};
@@ -211,6 +241,17 @@
 				})),
 				list: g.list ? { url: g.list.url, interval: g.list.interval ?? 86400 } : null,
 				resolve: g.resolve ?? { tunnel: true, server: '' },
+				check:
+					g.check && g.check.mode !== 'none'
+						? {
+								mode: g.check.mode,
+								url: g.check.url ?? '',
+								intervalSec: g.check.intervalSec ?? 0,
+								timeoutMs: g.check.timeoutMs ?? 0,
+								failThreshold: g.check.failThreshold ?? 0,
+								recoverThreshold: g.check.recoverThreshold ?? 0,
+							}
+						: null,
 				block: g.interface === 'block' ? (g.block ?? 'null') : undefined,
 			})),
 		);
@@ -458,6 +499,20 @@
 		group.interface = denormalizeIfaceList(next);
 	}
 
+	function ensureDefaultGroupCheck(group: FircGroup) {
+		const list = normalizeIfaceList(group.interface);
+		if (list.length >= 2 && !isSpecialIface(list[0])) {
+			if (!group.check || group.check.mode === 'none') {
+				group.check = {
+					mode: group.id === 'c100d001' ? 'keendns' : 'url',
+					url: group.check?.url ?? '',
+				};
+			}
+		} else if (list.length < 2 && group.check && group.check.mode !== 'none') {
+			group.check = { ...group.check, mode: 'none' };
+		}
+	}
+
 	function toggleBackupIface(group: FircGroup, id: string, e: MouseEvent) {
 		e.stopPropagation();
 		if (isSpecialIface(id)) return;
@@ -467,13 +522,16 @@
 			if (cur.length <= 1) return;
 			const next = cur.filter((x) => x !== id);
 			group.interface = denormalizeIfaceList(next);
+			ensureDefaultGroupCheck(group);
 		} else {
 			if (cur.length === 0 || isSpecialIface(cur[0])) {
 				group.interface = id;
+				ensureDefaultGroupCheck(group);
 				return;
 			}
 			if (cur.length >= MAX_GROUP_IFACES) return;
 			group.interface = denormalizeIfaceList([...cur, id]);
+			ensureDefaultGroupCheck(group);
 		}
 	}
 
@@ -534,6 +592,7 @@
 	function applyProxyGroupToGroup(group: FircGroup, pg: FircProxyGroup) {
 		if (!pg.interfaces || pg.interfaces.length === 0) return;
 		group.interface = denormalizeIfaceList(pg.interfaces);
+		ensureDefaultGroupCheck(group);
 		openPickerGroupId = null;
 	}
 
@@ -543,8 +602,9 @@
 		return id;
 	}
 
-	function openProxyGroupsModal() {
+	async function openProxyGroupsModal() {
 		openPickerGroupId = null;
+		if (!(await refreshProxyGroups())) return;
 		pgDraft = extConfig.proxyGroups.map((pg) => ({
 			id: pg.id || randomHexId(),
 			name: pg.name,
@@ -626,6 +686,7 @@
 			};
 			const saved = await api.fircSaveExt(nextExt);
 			extConfig = saved;
+			proxyGroupRefresh++;
 			proxyGroupsModalOpen = false;
 			await loadAll();
 			notifications.success('Прокси-группы Fallback сохранены');
@@ -1181,6 +1242,8 @@
 	let gmInterface = $state('');
 	let gmDnsMode = $state<'auto' | 'own' | 'off'>('auto');
 	let gmDnsServer = $state('');
+	let gmCheckMode = $state<'none' | 'url' | 'keendns'>('none');
+	let gmCheckUrl = $state('');
 	let gmListEnabled = $state(false);
 	let gmListUrl = $state('');
 	let gmListInterval = $state(86400);
@@ -1197,6 +1260,8 @@
 		gmInterface = availableInterfaces[0]?.value ?? 'block';
 		gmDnsMode = 'auto';
 		gmDnsServer = '';
+		gmCheckMode = 'none';
+		gmCheckUrl = '';
 		gmListEnabled = false;
 		gmListUrl = '';
 		gmListInterval = 86400;
@@ -1216,6 +1281,9 @@
 		const res = g.resolve ?? { tunnel: true, server: '' };
 		gmDnsMode = !res.tunnel ? 'off' : res.server ? 'own' : 'auto';
 		gmDnsServer = res.server ?? '';
+		const ifaceCount = normalizeIfaceList(g.interface).length;
+		gmCheckMode = g.check?.mode ?? (ifaceCount >= 2 ? (g.id === 'c100d001' ? 'keendns' : 'url') : 'none');
+		gmCheckUrl = g.check?.url ?? '';
 		gmListEnabled = Boolean(g.list?.url);
 		gmListUrl = g.list?.url ?? '';
 		gmListInterval = g.list?.interval ?? 86400;
@@ -1304,11 +1372,22 @@
 				const rest = curList.filter((x) => x !== gmInterface && !isSpecialIface(x));
 				nextIface = denormalizeIfaceList([gmInterface, ...rest].slice(0, MAX_GROUP_IFACES));
 			}
+			const hasChain = normalizeIfaceList(nextIface).length >= 2 && !isSpecialIface(primaryIface(nextIface));
+			const nextCheck: FircGroupCheck | undefined = hasChain
+				? {
+						...(cur.check ?? {}),
+						mode: gmCheckMode,
+						url: gmCheckMode === 'url' ? gmCheckUrl.trim() : '',
+					}
+				: cur.check
+					? { ...cur.check, mode: 'none', url: '' }
+					: undefined;
 			groups[groupModalIndex] = {
 				...cur,
 				name: gmName.trim() || cur.name || 'group',
 				interface: nextIface,
 				resolve,
+				...(nextCheck ? { check: nextCheck } : {}),
 				list: listObj,
 			};
 		} else {
@@ -2028,6 +2107,7 @@
 										onclick={(e) => {
 											e.stopPropagation();
 											openPickerGroupId = isPickerOpen ? null : group.id;
+											if (!isPickerOpen) void refreshProxyGroups();
 										}}
 										title={activeBackup
 											? `Активен резервный интерфейс ${activeBackup} (основной ${ifaceList[0]} недоступен)`
@@ -2656,6 +2736,34 @@
 				</div>
 			{/if}
 		</div>
+
+		{#if groupModalMode === 'edit' && groupModalIndex !== null && normalizeIfaceList(groups[groupModalIndex]?.interface ?? '').length >= 2 && !isSpecialIface(gmInterface)}
+			<div class="sec-box">
+				<div class="field">
+					<label class="lbl" for="firc-gm-check-mode">{m.firc_group_check_label()}</label>
+					<select id="firc-gm-check-mode" class="inp" bind:value={gmCheckMode}>
+						<option value="url">{m.firc_group_check_mode_url()}</option>
+						<option value="keendns">KeenDNS Cloud relay TCP</option>
+						<option value="none">{m.firc_group_check_mode_none()}</option>
+					</select>
+				</div>
+				{#if gmCheckMode === 'url'}
+					<div class="field mt-2">
+						<label class="lbl" for="firc-gm-check-url">{m.firc_group_check_url_label()}</label>
+						<input
+							id="firc-gm-check-url"
+							type="text"
+							class="inp font-mono"
+							placeholder={m.firc_group_check_url_placeholder()}
+							bind:value={gmCheckUrl}
+						/>
+						<p class="hint">
+							{m.firc_group_check_url_hint()}
+						</p>
+					</div>
+				{/if}
+			</div>
+		{/if}
 
 		<div class="sec-box">
 			<div class="field-row">

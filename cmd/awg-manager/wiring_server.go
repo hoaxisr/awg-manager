@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -530,6 +532,48 @@ func (a *app) setupRouter() {
 	bindableAdapter := &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces, nativeProxies: a.singboxOp.ListNativeProxies,
 		foreign: a.settingsStore.GetForeignInterfaces, sysNet: "/sys/class/net"}
 	routerSvc := router.NewService(router.Deps{
+		KeenDNSRelayEndpoints: func(ctx context.Context) ([]netip.AddrPort, error) {
+			if a.ndmsQueries.KeenDNS == nil {
+				return nil, nil
+			}
+			info, err := a.ndmsQueries.KeenDNS.Get(ctx)
+			if err != nil || info == nil || !info.Enabled {
+				return nil, err
+			}
+			var endpoints []netip.AddrPort
+			for _, relay := range info.RelayEndpoints {
+				if relay.Addr().Is4() {
+					endpoints = append(endpoints, relay)
+				}
+			}
+			return endpoints, nil
+		},
+		KeenDNSCloudSnapshot: func(ctx context.Context) (router.KeenDNSCloudSnapshot, error) {
+			if a.ndmsQueries.KeenDNS == nil {
+				return router.KeenDNSCloudSnapshot{}, nil
+			}
+			info, err := a.ndmsQueries.KeenDNS.Get(ctx)
+			if err != nil || info == nil || !info.Enabled {
+				return router.KeenDNSCloudSnapshot{}, err
+			}
+			snap := router.KeenDNSCloudSnapshot{
+				Enabled:      true,
+				RelayIPs:     slices.Clone(info.RelayIPs),
+				RelayDomains: slices.Clone(info.RelayDomains),
+			}
+			for _, relay := range info.RelayEndpoints {
+				if relay.Addr().Is4() {
+					snap.RelayEndpoints = append(snap.RelayEndpoints, relay)
+				}
+			}
+			return snap, nil
+		},
+		CloudOutboundActive: func(_ context.Context, tag string) (string, error) {
+			if a.singboxOp == nil || a.singboxOp.Clash() == nil {
+				return "", nil
+			}
+			return a.singboxOp.Clash().SelectorActive(tag)
+		},
 		AppLog:                 a.loggingService,
 		Settings:               a.settingsStore,
 		Singbox:                a.singboxOp,
@@ -597,6 +641,8 @@ func (a *app) setupRouter() {
 	a.srv.SetBypassSetHandler(api.NewBypassSetHandler(routerSvc, a.loggingService))
 
 	a.singboxOp.SetOutboundReferenceRenamer(routerSvc)
+	a.singboxOp.SetBeforeStop(routerSvc.DetachCloudOutput)
+	a.singboxOp.SetAfterStart(routerSvc.ReconcileCloudOutput)
 	a.tunnelService.SetAWGSyncer(a.awgoutboundsSvc)
 	a.tunnelService.SetDeviceProxyRefChecker(a.deviceProxySvc)
 	a.tunnelService.SetRouterRefChecker(routerSvc)

@@ -931,6 +931,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// Слот 20 снова активен — зависимые продюсеры (device-proxy) должны
 	// перегенерировать свои слоты (вернуть ссылки на композиты) ДО reload.
 	s.notifyRoutingSlotsChanged()
+	s.stageCloudOutputSlotBeforeEnable(ctx, sr)
 	if err := s.orchestratorApplyNow(); err != nil {
 		return fmt.Errorf("orchestrator reload after enable: %w", err)
 	}
@@ -1883,6 +1884,9 @@ func (s *ServiceImpl) disable(ctx context.Context) error {
 }
 
 func (s *ServiceImpl) disableTProxyLocked(ctx context.Context, persistDisabled bool) error {
+	if err := s.detachCloudOutputLocked(ctx, true); err != nil {
+		s.appLog.Warn("keendns-cloud", "disable-tproxy", err.Error())
+	}
 	if s.deps.IPTables != nil {
 		s.deps.IPTables.Uninstall(ctx)
 		// v6-слой сносится вместе с v4 и так же безусловно, включая набор
@@ -1977,6 +1981,11 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	if isFircRoutingEngine(sr) {
 		return s.parkForExternalEngineLocked(ctx, settings, false)
 	}
+	if !sr.Enabled || settings.SingboxManuallyStopped {
+		if err := s.reconcileCloudOutput(ctx, sr, settings.SingboxManuallyStopped); err != nil {
+			s.appLog.Warn("keendns-cloud", "", err.Error())
+		}
+	}
 
 	// Однократная зачистка наследия выпиленного селектива (файлы config.d +
 	// managed-правила в применённом конфиге). Под transitionMu: пишет тот же
@@ -1996,75 +2005,53 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	// Уборка ingress-ссылок на исчезнувшие устройства — до диспатча по режиму:
 	// список общий на fakeip и policy-tun, и мусор в нём одинаково вреден обоим.
 	s.healIngressRefs(sr)
+	var reconcileErr error
+	var ranModeReconcile bool
 	// fakeip-tun installs NO iptables, so the tproxy switch below (keyed on
 	// живом состоянии перехвата) would always read "not installed" and route
 	// every tick to Enable. Dispatch by mode FIRST — ветка tproxy ниже
 	// рассчитана только на этот режим.
-	if sr.RoutingMode == "fakeip-tun" {
-		return s.reconcileFakeIPTun(ctx, sr)
-	}
-	// policy-tun — по той же причине: основных iptables нет, installed всегда
-	// false, и switch ниже гнал бы Enable каждый тик.
-	if sr.RoutingMode == statePolicyTun {
-		return s.reconcilePolicyTun(ctx, sr)
-	}
-	// Один снимок вместо IsInstalled + HasAnyInstalled. Те делали по паре
-	// `iptables -nL`, но `HasAnyInstalled` был `A == nil || B == nil`, а `||`
-	// короткозамыкается — на любом из трёх состояний выходило РОВНО три
-	// `-nL`, не четыре. Теперь два `-S`, по одному на таблицу.
-	//
-	// Ниже по ветке reconcileInstalled снимает состояние ещё раз (свой
-	// probeAll): передать снимок туда мешает не техника, а цена — у него
-	// шестьдесят тестовых вызовов.
-	//
-	// Итог на горячем пути, посчитан прогоном обоих вариантов:
-	// было 3 `-nL` + 3 `-S`, стало 5 `-S` — на ОДИН fork+exec меньше.
-	// Главное здесь не экономия, а семантика отказа ниже.
-	//
-	// Отказ снятия — это «не знаю», а НЕ «сломано». Прежние IsInstalled и
-	// HasAnyInstalled на ошибке возвращали false, и при включённом роутере это
-	// уводило в enableLocked: транзиентный отказ iptables во время перезаписи
-	// таблиц движком ndm вызывал ненужную переустановку. Пропускаем тик —
-	// следующий через 30 с увидит настоящее состояние.
-	live, err := s.deps.IPTables.probeAll(ctx)
-	if err != nil {
-		// Молчать здесь нельзя. Пропуск тика правилен для транзиентного отказа,
-		// но СТОЙКИЙ (снесённый бинарь, не загруженный модуль, намертво занятый
-		// xtables-lock) превращает Reconcile в вечный no-op: не чинится ни
-		// перехват, ни запаркованный слот, ни Disable. Ошибку наверх не
-		// отдаём — Reconcile ещё и хвост SetEnabled, и она уехала бы
-		// пользователю как провал сохранения настроек.
-		s.appLog.Warn("router-reconcile", "", "состояние перехвата не снято: "+err.Error())
-		return nil
-	}
-	installedComplete, installedAny := live.installed, live.anyChain
-	// Запаркованный слот 20 при живых цепочках — тоже дрейф (issue #523):
-	// rollback провального Enable паркует слот, а netfilter.d-hook
-	// восстанавливает перехват из rules-файла. reconcileInstalled видел
-	// installed=true, считал engineDown и вечно ждал watchdog, которому
-	// нечего чинить — процесс жив, просто в конфиге нет tproxy-in. Лечится
-	// полным Enable: перепромоут слота + переустановка iptables.
-	//
-	// Гейт на живой процесс: при мёртвом sing-box Enable потратил бы до 60с
-	// на waitForSingbox и отложил бы fail-closed blackhole — вместо этого
-	// идём в reconcileInstalled (DROP сразу), watchdog оживляет процесс, и
-	// следующий тик при живом движке перепромоутит слот.
-	engineUp := true
-	if s.deps.Singbox != nil {
-		engineUp, _ = s.deps.Singbox.IsRunning()
-	}
-	routerSlotParked := s.deps.Orch != nil && !s.routerSlotEnabled()
 	switch {
-	case sr.Enabled && (!installedComplete || (routerSlotParked && engineUp)):
-		// Drift-heal, NOT user-initiated: must honour a prior master-Stop, so
-		// do not clear the sticky intent (clearManualStop=false).
-		return s.enableLocked(ctx, false)
-	case !sr.Enabled && installedAny:
-		return s.disable(ctx)
-	case sr.Enabled && installedComplete:
-		return s.reconcileInstalled(ctx, sr)
+	case sr.RoutingMode == "fakeip-tun":
+		reconcileErr = s.reconcileFakeIPTun(ctx, sr)
+		ranModeReconcile = true
+	case sr.RoutingMode == statePolicyTun:
+		// policy-tun — по той же причине: основных iptables нет, installed всегда
+		// false, и switch ниже гнал бы Enable каждый тик.
+		reconcileErr = s.reconcilePolicyTun(ctx, sr)
+		ranModeReconcile = true
+	default:
+		live, err := s.deps.IPTables.probeAll(ctx)
+		if err != nil {
+			s.appLog.Warn("router-reconcile", "", "состояние перехвата не снято: "+err.Error())
+			return nil
+		}
+		installedComplete, installedAny := live.installed, live.anyChain
+		engineUp := true
+		if s.deps.Singbox != nil {
+			engineUp, _ = s.deps.Singbox.IsRunning()
+		}
+		routerSlotParked := s.deps.Orch != nil && !s.routerSlotEnabled()
+		switch {
+		case sr.Enabled && (!installedComplete || (routerSlotParked && engineUp)):
+			// Drift-heal, NOT user-initiated: must honour a prior master-Stop, so
+			// do not clear the sticky intent (clearManualStop=false).
+			reconcileErr = s.enableLocked(ctx, false)
+			ranModeReconcile = true
+		case !sr.Enabled && installedAny:
+			reconcileErr = s.disable(ctx)
+			ranModeReconcile = true
+		case sr.Enabled && installedComplete:
+			reconcileErr = s.reconcileInstalled(ctx, sr)
+			ranModeReconcile = true
+		}
 	}
-	return nil
+	if ranModeReconcile && sr.Enabled && !settings.SingboxManuallyStopped {
+		if err := s.reconcileCloudOutput(ctx, sr, false); err != nil {
+			s.appLog.Warn("keendns-cloud", "", err.Error())
+		}
+	}
+	return reconcileErr
 }
 
 // routerSlotEnabled reports whether 20-router.json currently lives in

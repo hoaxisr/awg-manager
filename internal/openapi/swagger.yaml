@@ -1040,6 +1040,8 @@ definitions:
     type: object
   api.CreateSubscriptionGroupRequest:
     properties:
+      directFirst:
+        type: boolean
       enabled:
         example: true
         type: boolean
@@ -6474,6 +6476,8 @@ definitions:
     type: object
   api.SubscriptionGroupDTO:
     properties:
+      directFirst:
+        type: boolean
       enabled:
         example: true
         type: boolean
@@ -7817,6 +7821,8 @@ definitions:
     type: object
   api.UpdateSubscriptionGroupRequest:
     properties:
+      directFirst:
+        type: boolean
       enabled:
         type: boolean
       filterExclude:

@@ -53,6 +53,34 @@ typedef struct firc_group_resolve {
 
 typedef enum { FIRC_BLOCK_NULL = 0, FIRC_BLOCK_NXDOMAIN, FIRC_BLOCK_REFUSED } firc_block_answer_t;
 
+typedef enum firc_group_check_mode {
+    FIRC_GROUP_CHECK_NONE = 0,
+    FIRC_GROUP_CHECK_URL,
+    FIRC_GROUP_CHECK_KEENDNS,
+} firc_group_check_mode_t;
+
+enum {
+    FIRC_GROUP_CHECK_INTERVAL_MIN = 1,
+    FIRC_GROUP_CHECK_INTERVAL_MAX = 3600,
+    FIRC_GROUP_CHECK_TIMEOUT_MIN = 100,
+    FIRC_GROUP_CHECK_TIMEOUT_MAX = 60000,
+    FIRC_GROUP_CHECK_THRESHOLD_MIN = 1,
+    FIRC_GROUP_CHECK_THRESHOLD_MAX = 20,
+    FIRC_GROUP_CHECK_DEFAULT_INTERVAL_SEC = 10,
+    FIRC_GROUP_CHECK_DEFAULT_TIMEOUT_MS = 3000,
+    FIRC_GROUP_CHECK_DEFAULT_FAIL_THRESHOLD = 2,
+    FIRC_GROUP_CHECK_DEFAULT_RECOVER_THRESHOLD = 3,
+};
+
+typedef struct firc_group_check {
+    firc_group_check_mode_t mode;
+    char *url;
+    uint32_t interval_sec;
+    uint32_t timeout_ms;
+    uint32_t fail_threshold;
+    uint32_t recover_threshold;
+} firc_group_check_t;
+
 typedef struct firc_group {
     firc_id_t id;
     char *name;
@@ -64,9 +92,17 @@ typedef struct firc_group {
     size_t n_rules;
     firc_devsel_spec_t devices;
     firc_group_resolve_t resolve;
+    firc_group_check_t check;
     firc_block_answer_t block;
     firc_group_list_t *list; /* NULL: a manual group */
 } firc_group_t;
+
+const char *firc_group_check_mode_name(firc_group_check_mode_t mode);
+bool firc_group_check_mode_parse(const char *s, firc_group_check_mode_t *out);
+void firc_group_check_clear(firc_group_check_t *c);
+firc_err_t firc_group_check_copy(firc_group_check_t *dst, const firc_group_check_t *src);
+bool firc_group_check_equal(const firc_group_check_t *a, const firc_group_check_t *b);
+bool firc_group_check_is_default(const firc_group_check_t *c);
 
 /* Entries in the group's interface list: 1 + the ones after `iface`. */
 static inline size_t firc_group_n_ifaces(const firc_group_t *g) { return 1u + g->n_iface_rest; }

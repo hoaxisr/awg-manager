@@ -1,3 +1,4 @@
+#include <arpa/inet.h>
 #include <cjson/cJSON.h>
 #include <errno.h>
 #include <signal.h>
@@ -273,9 +274,55 @@ static firc_err_t iw_queue(void *ud, const char *name, uint32_t mark, uint32_t g
     return d->ifcheck != NULL ? firc_ifcheck_queue(d->ifcheck, name, mark, gen) : FIRC_ERR_STATE;
 }
 
+static firc_err_t iw_queue_group(void *ud, const firc_ifcheck_group_job_t *job) {
+    struct daemon *d = ud;
+    return d->ifcheck != NULL ? firc_ifcheck_queue_group(d->ifcheck, job) : FIRC_ERR_STATE;
+}
+
+static bool iw_resolve_for(void *ud, const firc_group_t *g, const char *iface, bool tunnel,
+                           char *server, size_t cap, uint16_t *port, bool *mark_dns) {
+    struct daemon *d = ud;
+    if (d == NULL || server == NULL || cap == 0 || port == NULL || mark_dns == NULL) { return false; }
+    *mark_dns = false;
+    *port = 0;
+    server[0] = '\0';
+    if (tunnel) {
+        if (g != NULL && g->resolve.server != NULL && g->resolve.server[0] != '\0') {
+            firc_resolver_list_t list;
+            if (firc_resolver_list_parse(g->resolve.server, &list, NULL, 0) == FIRC_RESOLVER_LIST_OK && list.n > 0) {
+                const firc_resolver_addr_t *a = &list.servers[0];
+                if (inet_ntop(a->ip.len == 4 ? AF_INET : AF_INET6, a->ip.b, server, (socklen_t)cap) != NULL) {
+                    *port = a->port != 0 ? a->port : FIRC_RESOLVER_DEFAULT_PORT;
+                    *mark_dns = g->resolve.tunnel && !firc_resolver_ip_is_sink(&a->ip);
+                    return true;
+                }
+            }
+        }
+        snprintf(server, cap, "1.1.1.1");
+        *port = 53;
+        *mark_dns = true;
+        return true;
+    }
+    if (d->resolvers != NULL && iface != NULL && iface[0] != '\0') {
+        firc_resolver_addr_t out[FIRC_RESOLVE_MAX_SERVERS];
+        size_t n = firc_kn_resolvers_for(d->resolvers, iface, out, FIRC_RESOLVE_MAX_SERVERS);
+        if (n > 0 && inet_ntop(out[0].ip.len == 4 ? AF_INET : AF_INET6, out[0].ip.b, server, (socklen_t)cap) != NULL) {
+            *port = out[0].port != 0 ? out[0].port : FIRC_RESOLVER_DEFAULT_PORT;
+            *mark_dns = !firc_resolver_ip_is_sink(&out[0].ip);
+            return true;
+        }
+    }
+    return false;
+}
+
 static void iw_results(void *ud, const firc_ifcheck_result_t *r, size_t n) {
     struct daemon *d = ud;
     if (d->ifwatch != NULL) { firc_ifwatch_results(d->ifwatch, r, n); }
+}
+
+static void iw_group_results(void *ud, const firc_ifcheck_group_result_t *r) {
+    struct daemon *d = ud;
+    if (d->ifwatch != NULL) { firc_ifwatch_group_results(d->ifwatch, r); }
 }
 
 static firc_ifchoice_t iw_pick(void *ud, const firc_group_t *g) {
@@ -284,6 +331,10 @@ static firc_ifchoice_t iw_pick(void *ud, const firc_group_t *g) {
 
 static bool iw_view(void *ud, const char *name, firc_if_view_t *out) {
     return firc_ifwatch_view(((struct daemon *)ud)->ifwatch, name, out);
+}
+
+static bool iw_group_view(void *ud, firc_id_t id, const char *name, firc_if_view_t *out) {
+    return firc_ifwatch_group_view(((struct daemon *)ud)->ifwatch, id, name, out);
 }
 
 static firc_err_t iw_move_up(void *ud, firc_id_t id) {
@@ -1673,6 +1724,7 @@ int main(int argc, char **argv)
     }
 
     d.ifcheck = firc_ifcheck_new(d.loop, iw_results, &d);
+    if (d.ifcheck != NULL) { firc_ifcheck_set_group_done(d.ifcheck, iw_group_results, &d); }
     firc_ifwatch_deps_t iw = {.loop = d.loop,
                               .rtnl = d.rtnl,
                               .start_table = cfg.app.netfilter.start_mark_table_index,
@@ -1684,7 +1736,9 @@ int main(int argc, char **argv)
                               .tunnel_down = iw_tunnel_down,
                               .tunnel_starting = iw_tunnel_starting,
                               .queue = iw_queue,
-                              .ud = &d};
+                              .ud = &d,
+                              .queue_group = iw_queue_group,
+                              .resolve_for = iw_resolve_for};
     d.ifwatch = d.ifcheck != NULL ? firc_ifwatch_new(&iw) : NULL;
     if (d.ifwatch == NULL) {
         FIRC_ERROR("interface lists: no memory for their checks; every group stays on its first interface");
@@ -1693,7 +1747,13 @@ int main(int argc, char **argv)
     } else {
         iw_settings(&d, firc_app_running_settings(d.app));
         firc_app_ifaces_t hooks = {
-            .pick = iw_pick, .view = iw_view, .move_up = iw_move_up, .settings = iw_settings, .ud = &d};
+            .pick = iw_pick,
+            .view = iw_view,
+            .group_view = iw_group_view,
+            .move_up = iw_move_up,
+            .settings = iw_settings,
+            .ud = &d,
+        };
         firc_app_set_ifaces(d.app, &hooks);
     }
 

@@ -183,3 +183,18 @@ func TestKeenDNS_AccessGate(t *testing.T) {
 		t.Error("у отсутствующего KeenDNS прямого доступа быть не может")
 	}
 }
+
+// Keep both ports for a relay which serves more than one cloud transport.
+func TestKeenDNSRelayEndpointsPreservePorts(t *testing.T) {
+	info := parseKeenDNS([]byte(`{"booked":"test","domain":"keenetic.pro","ttp":{"tunnel":[
+		{"target-remote":"87.228.71.67:443"},
+		{"target-remote":"87.228.71.67:8090"},
+		{"target-remote":"[::ffff:87.228.71.67]:8090"},
+		{"target-remote":"87.228.71.67:0"}
+	]}}`))
+	if info == nil || len(info.RelayEndpoints) != 2 ||
+		info.RelayEndpoints[0].Port() != 443 || info.RelayEndpoints[1].Port() != 8090 ||
+		len(info.RelayIPs) != 1 {
+		t.Fatalf("unexpected relay projection: %+v", info)
+	}
+}

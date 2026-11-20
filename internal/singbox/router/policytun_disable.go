@@ -73,6 +73,9 @@ func (s *ServiceImpl) disablePolicyTunLocked(ctx context.Context, settings *stor
 	// Enable — там сноса нет ни в одном режиме, — а первый тик
 	// reconcilePolicyTunQoS с want == nil при netfilterStateKnown=false: он
 	// зовёт teardownBypassSet. Записано в docs/TRACKER.md.
+	if err := s.detachCloudOutputLocked(ctx, true); err != nil {
+		s.appLog.Warn("keendns-cloud", "disable-policytun", err.Error())
+	}
 	if st == nil || !st.Provisioned {
 		if (!persistDisabled || s.routerSlotEnabled() || settings.SingboxRouter.Enabled) && !s.deferPolicyWANForTransition {
 			s.restorePolicyWANOnDisable(ctx, settings.SingboxRouter)

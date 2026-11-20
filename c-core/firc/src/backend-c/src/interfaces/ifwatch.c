@@ -17,6 +17,8 @@ typedef struct watched_if {
     int64_t since_unix;
     bool tunnel;
     bool seen;
+    bool needs_global;
+    bool needs_route;
     bool in_flight;
     bool routed;
     uint32_t gen;
@@ -30,6 +32,15 @@ typedef struct watched_if {
     firc_logrep_t route_failed;
 } watched_if_t;
 
+typedef struct watched_group_cand {
+    firc_if_track_t track;
+    int64_t since_unix;
+    uint32_t fail_streak;
+    uint32_t pass_streak;
+    bool last_link_ok;
+    bool init_link;
+} watched_group_cand_t;
+
 typedef struct watched_group {
     firc_id_t id;
     char name[64];
@@ -38,6 +49,17 @@ typedef struct watched_group {
     size_t active;
     bool blocked;
     bool seen;
+    firc_group_check_mode_t check_mode;
+    char check_url[513];
+    int64_t interval_ms;
+    uint32_t timeout_ms;
+    uint32_t fail_threshold;
+    uint32_t recover_threshold;
+    uint32_t probe_gen;
+    bool check_in_flight;
+    int64_t check_due_ms;
+    int64_t check_sent_ms;
+    watched_group_cand_t cand[FIRC_GROUP_IFACES_MAX];
     firc_logrep_t all_dead;
     firc_logrep_t move_failed;
 } watched_group_t;
@@ -162,8 +184,9 @@ static bool ensure_route(firc_ifwatch_t *w, watched_if_t *wi) {
     return wi->routed;
 }
 
-static watched_group_t *group_rec(firc_ifwatch_t *w, const firc_group_t *g) {
+static watched_group_t *group_rec(firc_ifwatch_t *w, const firc_group_t *g, int64_t now) {
     watched_group_t *wg = find_group(w, g->id);
+    bool is_new = (wg == NULL);
     if (wg == NULL) {
         if (w->n_groups == FIRC_MARK_MAX_GROUPS) { return NULL; }
         wg = &w->groups[w->n_groups++];
@@ -172,17 +195,56 @@ static watched_group_t *group_rec(firc_ifwatch_t *w, const firc_group_t *g) {
     }
     snprintf(wg->name, sizeof(wg->name), "%s", g->name != NULL ? g->name : "");
     size_t k = firc_group_n_ifaces(g);
-    bool same = wg->n == k;
-    for (size_t e = 0; same && e < k; e++) { same = strcmp(wg->names[e], firc_group_iface_at(g, e)) == 0; }
-    if (same) { return wg; }
-    char keep[16] = "";
-    if (wg->n > 0) { snprintf(keep, sizeof(keep), "%s", wg->names[wg->active]); }
-    wg->n = k;
-    wg->active = 0;
-    wg->blocked = false;
-    for (size_t e = 0; e < k; e++) {
-        snprintf(wg->names[e], sizeof(wg->names[e]), "%s", firc_group_iface_at(g, e));
-        if (keep[0] != '\0' && strcmp(wg->names[e], keep) == 0) { wg->active = e; }
+    bool same_ifaces = !is_new && wg->n == k;
+    for (size_t e = 0; same_ifaces && e < k; e++) {
+        same_ifaces = strcmp(wg->names[e], firc_group_iface_at(g, e)) == 0;
+    }
+    const char *url = g->check.url != NULL ? g->check.url : "";
+    uint32_t intv_s = g->check.interval_sec > 0 ? g->check.interval_sec : FIRC_GROUP_CHECK_DEFAULT_INTERVAL_SEC;
+    int64_t intv_ms = (int64_t)intv_s * 1000;
+    uint32_t timeout_ms = g->check.timeout_ms > 0 ? g->check.timeout_ms : FIRC_GROUP_CHECK_DEFAULT_TIMEOUT_MS;
+    uint32_t fail_thr = g->check.fail_threshold > 0 ? g->check.fail_threshold : FIRC_GROUP_CHECK_DEFAULT_FAIL_THRESHOLD;
+    uint32_t rec_thr = g->check.recover_threshold > 0 ? g->check.recover_threshold
+                                                      : FIRC_GROUP_CHECK_DEFAULT_RECOVER_THRESHOLD;
+    bool same_check = !is_new && wg->check_mode == g->check.mode && strcmp(wg->check_url, url) == 0 &&
+                      wg->timeout_ms == timeout_ms && wg->fail_threshold == fail_thr &&
+                      wg->recover_threshold == rec_thr;
+
+    if (!same_ifaces) {
+        char keep[16] = "";
+        if (wg->n > 0) { snprintf(keep, sizeof(keep), "%s", wg->names[wg->active]); }
+        wg->n = k;
+        wg->active = 0;
+        wg->blocked = false;
+        for (size_t e = 0; e < k; e++) {
+            snprintf(wg->names[e], sizeof(wg->names[e]), "%s", firc_group_iface_at(g, e));
+            if (keep[0] != '\0' && strcmp(wg->names[e], keep) == 0) { wg->active = e; }
+        }
+    }
+    if (!same_ifaces || !same_check) {
+        wg->check_mode = g->check.mode;
+        snprintf(wg->check_url, sizeof(wg->check_url), "%s", url);
+        wg->interval_ms = intv_ms;
+        wg->timeout_ms = timeout_ms;
+        wg->fail_threshold = fail_thr;
+        wg->recover_threshold = rec_thr;
+        if (++wg->probe_gen == 0) { wg->probe_gen = 1; }
+        wg->check_in_flight = false;
+        wg->check_due_ms = now;
+        int64_t unix_now = (int64_t)time(NULL);
+        for (size_t e = 0; e < k; e++) {
+            firc_if_track_init(&wg->cand[e].track, now);
+            wg->cand[e].since_unix = unix_now;
+            wg->cand[e].fail_streak = 0;
+            wg->cand[e].pass_streak = 0;
+            wg->cand[e].last_link_ok = false;
+            wg->cand[e].init_link = false;
+        }
+    } else if (wg->interval_ms != intv_ms) {
+        wg->interval_ms = intv_ms;
+        if (!wg->check_in_flight && wg->check_due_ms > now + wg->interval_ms) {
+            wg->check_due_ms = now + wg->interval_ms;
+        }
     }
     return wg;
 }
@@ -191,19 +253,37 @@ static void tracks_of(firc_ifwatch_t *w, const watched_group_t *wg, int64_t now,
     for (size_t i = 0; i < wg->n; i++) {
         watched_if_t *wi = find_if(w, wg->names[i]);
         if (wi == NULL) { wi = add_if(w, wg->names[i], now); }
-        if (wi != NULL) { wi->seen = true; }
+        if (wi != NULL) {
+            wi->seen = true;
+            if (wg->check_mode == FIRC_GROUP_CHECK_NONE) {
+                wi->needs_global = true;
+                if (!wi->tunnel) { wi->needs_route = true; }
+            }
+        }
         e[i] = wi != NULL ? &wi->track : &k_unknown;
     }
 }
 
+static void group_tracks_of(firc_ifwatch_t *w, const watched_group_t *wg, int64_t now, const firc_if_track_t **e) {
+    if (wg->check_mode == FIRC_GROUP_CHECK_NONE) {
+        tracks_of(w, wg, now, e);
+        return;
+    }
+    for (size_t i = 0; i < wg->n; i++) { e[i] = &wg->cand[i].track; }
+}
+
 static void reconcile(firc_ifwatch_t *w, int64_t now) {
-    for (size_t i = 0; i < w->n_ifs; i++) { w->ifs[i].seen = false; }
+    for (size_t i = 0; i < w->n_ifs; i++) {
+        w->ifs[i].seen = false;
+        w->ifs[i].needs_global = false;
+        w->ifs[i].needs_route = false;
+    }
     for (size_t i = 0; i < w->n_groups; i++) { w->groups[i].seen = false; }
     size_t n = w->d.n_groups != NULL ? w->d.n_groups(w->d.ud) : 0;
     for (size_t i = 0; i < n; i++) {
         const firc_group_t *g = w->d.group_at(w->d.ud, i);
         if (g == NULL || !g->enable || firc_group_n_ifaces(g) < 2) { continue; }
-        watched_group_t *wg = group_rec(w, g);
+        watched_group_t *wg = group_rec(w, g, now);
         if (wg == NULL) { continue; }
         wg->seen = true;
         for (size_t e = 0; e < wg->n; e++) {
@@ -229,6 +309,22 @@ static void reconcile(firc_ifwatch_t *w, int64_t now) {
     for (size_t i = 0; i < w->n_groups; i++) {
         const firc_if_track_t *e[FIRC_GROUP_IFACES_MAX];
         tracks_of(w, &w->groups[i], now, e);
+        for (size_t j = 0; j < w->groups[i].n; j++) {
+            watched_if_t *wi = find_if(w, w->groups[i].names[j]);
+            if (wi == NULL) { continue; }
+            if (w->groups[i].check_mode == FIRC_GROUP_CHECK_NONE) {
+                wi->needs_global = true;
+                if (!wi->tunnel) { wi->needs_route = true; }
+            } else {
+                wi->needs_route = true;
+            }
+        }
+    }
+    for (size_t i = 0; i < w->n_ifs; i++) {
+        if (w->ifs[i].routed && !w->ifs[i].needs_route && w->d.rtnl != NULL) {
+            (void)firc_checkroute_remove(w->d.rtnl, &w->ifs[i].route);
+            w->ifs[i].routed = false;
+        }
     }
 }
 
@@ -265,17 +361,50 @@ static firc_err_t apply(firc_ifwatch_t *w, watched_group_t *wg, firc_ifchoice_t 
         return done;
     }
     if (end_all_dead(wg)) { return FIRC_OK; }
-    const watched_if_t *wi = find_if(w, wg->names[from]);
-    if (c.active > from || (c.active != from && wi != NULL && wi->track.state == FIRC_IF_DEAD)) {
+    const watched_if_t *wi = wg->check_mode == FIRC_GROUP_CHECK_NONE ? find_if(w, wg->names[from]) : NULL;
+    const firc_if_track_t *ft =
+        wg->check_mode != FIRC_GROUP_CHECK_NONE ? &wg->cand[from].track : (wi != NULL ? &wi->track : NULL);
+    if (c.active > from || (c.active != from && ft != NULL && ft->state == FIRC_IF_DEAD)) {
         FIRC_WARN("group %s moved from %s to %s: %s", wg->name, wg->names[from], wg->names[c.active],
-                  wi != NULL ? wi->track.error : "");
+                  ft != NULL ? ft->error : "");
     } else if (c.active < from) {
         FIRC_INFO("group %s moved back from %s to %s", wg->name, wg->names[from], wg->names[c.active]);
     }
     return FIRC_OK;
 }
 
+static firc_ifchoice_t choose_group_checked(const watched_group_t *wg, const firc_if_track_t *const *e) {
+    size_t cur = wg->active < wg->n ? wg->active : 0;
+    firc_ifchoice_t c = {cur, false};
+    if (wg->n == 0) { return c; }
+    size_t first_alive = wg->n, first_unknown = wg->n;
+    for (size_t i = 0; i < wg->n; i++) {
+        if (e[i]->state == FIRC_IF_ALIVE && first_alive == wg->n) { first_alive = i; }
+        if (e[i]->state == FIRC_IF_UNKNOWN && first_unknown == wg->n) { first_unknown = i; }
+    }
+    if (first_alive == wg->n && first_unknown == wg->n) {
+        c.all_dead = true;
+        return c;
+    }
+    if (e[cur]->state == FIRC_IF_DEAD) {
+        c.active = first_alive < wg->n ? first_alive : first_unknown;
+        return c;
+    }
+    if (wg->blocked) {
+        if (first_alive < wg->n) { c.active = first_alive; }
+        return c;
+    }
+    for (size_t i = 0; i < cur; i++) {
+        if (e[i]->state == FIRC_IF_ALIVE) {
+            c.active = i;
+            break;
+        }
+    }
+    return c;
+}
+
 static firc_ifchoice_t choose(const watched_group_t *wg, const firc_if_track_t *const *e, int64_t now) {
+    if (wg->check_mode != FIRC_GROUP_CHECK_NONE) { return choose_group_checked(wg, e); }
     firc_ifchoice_t c = firc_ifchoose(e, wg->n, wg->active, now);
     if (!wg->blocked || c.all_dead) { return c; }
     for (size_t i = 0; i < wg->n; i++) {
@@ -288,7 +417,7 @@ static void choose_all(firc_ifwatch_t *w, int64_t now) {
     for (size_t i = 0; i < w->n_groups; i++) {
         watched_group_t *wg = &w->groups[i];
         const firc_if_track_t *e[FIRC_GROUP_IFACES_MAX];
-        tracks_of(w, wg, now, e);
+        group_tracks_of(w, wg, now, e);
         firc_ifchoice_t c = choose(wg, e, now);
         if (c.active != wg->active || c.all_dead != wg->blocked) {
             (void)apply(w, wg, c);
@@ -338,12 +467,135 @@ void firc_ifwatch_configure(firc_ifwatch_t *w, const firc_app_config_t *a) {
     }
 }
 
+static bool is_cand_link_ok(firc_ifwatch_t *w, const char *name, const watched_if_t *wi, int64_t now,
+                            const char **why) {
+    if (w->d.link_up != NULL && !w->d.link_up(w->d.ud, name)) {
+        if (why != NULL) { *why = "the link is down or gone"; }
+        return false;
+    }
+    if (wi != NULL && wi->tunnel && !tunnel_still_starting(w, wi, now) &&
+        w->d.tunnel_down != NULL && w->d.tunnel_down(w->d.ud, name)) {
+        if (why != NULL) { *why = "the tunnel carries no traffic"; }
+        return false;
+    }
+    return true;
+}
+
+static void cand_mark_dead(watched_group_t *wg, size_t idx, const char *why, int64_t now) {
+    watched_group_cand_t *c = &wg->cand[idx];
+    c->pass_streak = 0;
+    c->fail_streak = wg->fail_threshold;
+    c->track.suspect = false;
+    c->track.clean_since_ms = -1;
+    snprintf(c->track.error, sizeof(c->track.error), "%s", why != NULL ? why : "the link is down or gone");
+    if (c->track.state != FIRC_IF_DEAD) {
+        c->track.state = FIRC_IF_DEAD;
+        c->track.since_ms = now;
+        c->since_unix = (int64_t)time(NULL);
+    }
+}
+
+static const firc_group_t *find_group_spec(const firc_ifwatch_t *w, firc_id_t id) {
+    size_t n = w->d.n_groups != NULL ? w->d.n_groups(w->d.ud) : 0;
+    for (size_t i = 0; i < n; i++) {
+        const firc_group_t *g = w->d.group_at != NULL ? w->d.group_at(w->d.ud, i) : NULL;
+        if (g != NULL && firc_id_equal(g->id, id)) { return g; }
+    }
+    return NULL;
+}
+
+static void sync_group_cand_links(firc_ifwatch_t *w, watched_group_t *wg, int64_t now) {
+    for (size_t e = 0; e < wg->n; e++) {
+        watched_if_t *wi = find_if(w, wg->names[e]);
+        const char *why = NULL;
+        bool ok = is_cand_link_ok(w, wg->names[e], wi, now, &why);
+        watched_group_cand_t *c = &wg->cand[e];
+        if (!c->init_link) {
+            c->init_link = true;
+            c->last_link_ok = ok;
+        } else if (ok && !c->last_link_ok) {
+            c->last_link_ok = true;
+            if (wi != NULL && wi->routed && w->d.rtnl != NULL) {
+                (void)firc_checkroute_refresh(w->d.rtnl, &wi->route);
+            }
+            if (!wg->check_in_flight && wg->check_due_ms > now) { wg->check_due_ms = now; }
+        } else {
+            c->last_link_ok = ok;
+        }
+        if (!ok) { cand_mark_dead(wg, e, why, now); }
+    }
+}
+
+static void tick_group_checks(firc_ifwatch_t *w, int64_t now) {
+    for (size_t i = 0; i < w->n_groups; i++) {
+        watched_group_t *wg = &w->groups[i];
+        if (wg->check_mode == FIRC_GROUP_CHECK_NONE) { continue; }
+        sync_group_cand_links(w, wg, now);
+        if (wg->check_in_flight && now - wg->check_sent_ms >= FIRC_IFWATCH_LOST_MS) { wg->check_in_flight = false; }
+        if (wg->check_in_flight || now < wg->check_due_ms) { continue; }
+        if (w->d.queue_group == NULL) {
+            wg->check_due_ms = now + wg->interval_ms;
+            continue;
+        }
+        firc_ifcheck_group_job_t job;
+        memset(&job, 0, sizeof(job));
+        job.group_id = wg->id;
+        job.gen = wg->probe_gen;
+        job.mode = wg->check_mode;
+        snprintf(job.url, sizeof(job.url), "%s", wg->check_url);
+        job.timeout_ms = wg->timeout_ms;
+        job.n_cands = wg->n;
+        const firc_group_t *g = find_group_spec(w, wg->id);
+        for (size_t e = 0; e < wg->n; e++) {
+            firc_ifcheck_group_cand_t *jc = &job.cands[e];
+            snprintf(jc->iface, sizeof(jc->iface), "%s", wg->names[e]);
+            watched_if_t *wi = find_if(w, wg->names[e]);
+            const char *why = NULL;
+            if (!is_cand_link_ok(w, wg->names[e], wi, now, &why)) {
+                jc->skip = true;
+                snprintf(jc->skip_error, sizeof(jc->skip_error), "%s", why ? why : "the link is down or gone");
+                continue;
+            }
+            if (wi == NULL || !ensure_route(w, wi) || (w->d.rtnl != NULL && wi->route.mark == 0)) {
+                jc->skip = true;
+                snprintf(jc->skip_error, sizeof(jc->skip_error), "no check route for interface");
+                continue;
+            }
+            jc->mark = wi->route.mark;
+            if (w->d.resolve_for != NULL) {
+                char dsrv[64] = "";
+                uint16_t dport = 0;
+                bool mark_dns = false;
+                if (w->d.resolve_for(w->d.ud, g, wi->name, wi->tunnel, dsrv, sizeof(dsrv), &dport, &mark_dns)) {
+                    snprintf(jc->dns_server, sizeof(jc->dns_server), "%s", dsrv);
+                    jc->dns_port = dport;
+                    jc->dns_mark = mark_dns ? jc->mark : 0;
+                }
+            }
+        }
+        if (w->d.queue_group(w->d.ud, &job) != FIRC_OK) {
+            wg->check_due_ms = now + FIRC_IFWATCH_TICK_MS;
+            continue;
+        }
+        wg->check_in_flight = true;
+        wg->check_sent_ms = now;
+    }
+}
+
 void firc_ifwatch_tick(firc_ifwatch_t *w) {
     int64_t now = now_ms(w);
     reconcile(w, now);
     for (size_t i = 0; i < w->n_ifs; i++) {
         watched_if_t *wi = &w->ifs[i];
-        if (tunnel_known(w, wi) != wi->tunnel) {
+        bool is_tun = tunnel_known(w, wi);
+        if (!wi->needs_global) {
+            if (is_tun != wi->tunnel) {
+                wi->tunnel = is_tun;
+                wi->in_flight = false;
+            }
+            continue;
+        }
+        if (is_tun != wi->tunnel) {
             firc_if_track_init(&wi->track, now);
             classify(w, wi, now);
             if (wi->tunnel) { continue; }
@@ -364,6 +616,7 @@ void firc_ifwatch_tick(firc_ifwatch_t *w) {
         wi->in_flight = true;
         wi->due_ms = now;
     }
+    tick_group_checks(w, now);
     choose_all(w, now);
 }
 
@@ -399,6 +652,73 @@ void firc_ifwatch_results(firc_ifwatch_t *w, const firc_ifcheck_result_t *r, siz
     choose_all(w, now);
 }
 
+void firc_ifwatch_group_results(firc_ifwatch_t *w, const firc_ifcheck_group_result_t *r) {
+    if (w == NULL || r == NULL) { return; }
+    watched_group_t *wg = find_group(w, r->group_id);
+    if (wg == NULL || wg->check_mode == FIRC_GROUP_CHECK_NONE || r->gen != wg->probe_gen ||
+        r->n_cands != wg->n) {
+        return;
+    }
+    int64_t now = now_ms(w);
+    wg->check_in_flight = false;
+    bool need_confirm = false;
+    for (size_t e = 0; e < wg->n; e++) {
+        const firc_ifcheck_group_cand_result_t *cr = &r->cands[e];
+        watched_group_cand_t *c = &wg->cand[e];
+        const watched_if_t *wi = find_if(w, wg->names[e]);
+        const char *down_why = NULL;
+        if (!is_cand_link_ok(w, wg->names[e], wi, now, &down_why)) {
+            cand_mark_dead(wg, e, down_why, now);
+            continue;
+        }
+        firc_if_state_t prev = c->track.state;
+        if (cr->passed) {
+            c->fail_streak = 0;
+            c->pass_streak++;
+            c->track.suspect = false;
+            c->track.error[0] = '\0';
+            if (c->track.clean_since_ms < 0) { c->track.clean_since_ms = now; }
+            if (prev == FIRC_IF_UNKNOWN) {
+                c->track.state = FIRC_IF_ALIVE;
+                c->track.since_ms = now;
+                c->since_unix = (int64_t)time(NULL);
+            } else if (prev == FIRC_IF_DEAD) {
+                if (c->pass_streak >= wg->recover_threshold) {
+                    c->track.state = FIRC_IF_ALIVE;
+                    c->track.since_ms = now;
+                    c->since_unix = (int64_t)time(NULL);
+                    FIRC_INFO("group %s: %s recovered after %u passes", wg->name, wg->names[e],
+                              (unsigned)c->pass_streak);
+                } else {
+                    need_confirm = true;
+                }
+            }
+        } else if (!cr->guarded) {
+            c->pass_streak = 0;
+            c->fail_streak++;
+            c->track.clean_since_ms = -1;
+            snprintf(c->track.error, sizeof(c->track.error), "%s", cr->error);
+            if (prev != FIRC_IF_DEAD) {
+                if (c->fail_streak >= wg->fail_threshold) {
+                    c->track.suspect = false;
+                    c->track.state = FIRC_IF_DEAD;
+                    c->track.since_ms = now;
+                    c->since_unix = (int64_t)time(NULL);
+                    FIRC_WARN("group %s: %s probe failed (%u/%u): %s", wg->name, wg->names[e],
+                              (unsigned)c->fail_streak, (unsigned)wg->fail_threshold, c->track.error);
+                } else {
+                    c->track.suspect = true;
+                    need_confirm = true;
+                }
+            }
+        }
+    }
+    int64_t delay = wg->interval_ms;
+    if (need_confirm && FIRC_IFCHOOSE_CONFIRM_MS < delay) { delay = FIRC_IFCHOOSE_CONFIRM_MS; }
+    wg->check_due_ms = now + delay;
+    choose_all(w, now);
+}
+
 static void pull(const firc_ifwatch_t *w, watched_if_t *wi, int64_t now, bool *done, int64_t *done_ms) {
     bool may_pull = !*done || now - *done_ms >= w->interval_ms;
     if (!wi->in_flight && !wi->track.suspect && may_pull && wi->due_ms > now) {
@@ -418,13 +738,36 @@ void firc_ifwatch_link(firc_ifwatch_t *w, const char *name, bool up) {
     if (wi == NULL) { return; }
     int64_t now = now_ms(w);
     if (up) {
-        if (wi->tunnel) { return; }
         if (wi->routed && w->d.rtnl != NULL) { (void)firc_checkroute_refresh(w->d.rtnl, &wi->route); }
+        for (size_t i = 0; i < w->n_groups; i++) {
+            watched_group_t *wg = &w->groups[i];
+            if (wg->check_mode == FIRC_GROUP_CHECK_NONE) { continue; }
+            for (size_t e = 0; e < wg->n; e++) {
+                if (strcmp(wg->names[e], name) == 0) {
+                    wg->cand[e].last_link_ok = true;
+                    wg->cand[e].init_link = true;
+                    if (!wg->check_in_flight && wg->check_due_ms > now) { wg->check_due_ms = now; }
+                }
+            }
+        }
+        if (wi->tunnel) { return; }
         pull(w, wi, now, &wi->pulled, &wi->pulled_ms);
         return;
     }
     if (tunnel_still_starting(w, wi, now)) { return; }
-    say_state(wi, firc_if_track_link(&wi->track, false, now), true);
+    firc_if_step_t st = firc_if_track_link(&wi->track, false, now);
+    if (wi->needs_global) { say_state(wi, st, true); }
+    for (size_t i = 0; i < w->n_groups; i++) {
+        watched_group_t *wg = &w->groups[i];
+        if (wg->check_mode == FIRC_GROUP_CHECK_NONE) { continue; }
+        for (size_t e = 0; e < wg->n; e++) {
+            if (strcmp(wg->names[e], name) == 0) {
+                wg->cand[e].last_link_ok = false;
+                wg->cand[e].init_link = true;
+                cand_mark_dead(wg, e, "the link is down or gone", now);
+            }
+        }
+    }
     choose_all(w, now);
 }
 
@@ -442,10 +785,11 @@ firc_ifchoice_t firc_ifwatch_pick(firc_ifwatch_t *w, const firc_group_t *g) {
     firc_ifchoice_t c = {0, false};
     if (w == NULL || g == NULL || firc_group_n_ifaces(g) < 2) { return c; }
     int64_t now = now_ms(w);
-    watched_group_t *wg = group_rec(w, g);
+    watched_group_t *wg = group_rec(w, g, now);
     if (wg == NULL) { return c; }
     const firc_if_track_t *e[FIRC_GROUP_IFACES_MAX];
     tracks_of(w, wg, now, e);
+    group_tracks_of(w, wg, now, e);
     c = choose(wg, e, now);
     wg->active = c.active;
     wg->blocked = c.all_dead;
@@ -466,12 +810,28 @@ bool firc_ifwatch_view(firc_ifwatch_t *w, const char *name, firc_if_view_t *out)
     return true;
 }
 
+bool firc_ifwatch_group_view(firc_ifwatch_t *w, firc_id_t id, const char *name, firc_if_view_t *out) {
+    if (w == NULL || name == NULL || out == NULL) { return false; }
+    const watched_group_t *wg = find_group(w, id);
+    if (wg != NULL && wg->check_mode != FIRC_GROUP_CHECK_NONE) {
+        for (size_t e = 0; e < wg->n; e++) {
+            if (strcmp(wg->names[e], name) == 0) {
+                out->state = wg->cand[e].track.state;
+                out->since_unix = wg->cand[e].since_unix;
+                snprintf(out->error, sizeof(out->error), "%s", wg->cand[e].track.error);
+                return true;
+            }
+        }
+    }
+    return firc_ifwatch_view(w, name, out);
+}
+
 firc_err_t firc_ifwatch_move_up(firc_ifwatch_t *w, firc_id_t id) {
     watched_group_t *wg = find_group(w, id);
     if (wg == NULL) { return FIRC_ERR_NOENT; }
     if (wg->active == 0 && !wg->blocked) { return FIRC_OK; }
     const firc_if_track_t *e[FIRC_GROUP_IFACES_MAX];
-    tracks_of(w, wg, now_ms(w), e);
+    group_tracks_of(w, wg, now_ms(w), e);
     if (!firc_ifchoose_first_alive(e, wg->n)) { return FIRC_ERR_STATE; }
     return apply(w, wg, (firc_ifchoice_t){0, false});
 }

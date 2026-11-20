@@ -33,6 +33,9 @@ typedef struct firc_ifwatch_deps {
     firc_err_t (*queue)(void *ud, const char *name, uint32_t mark, uint32_t gen);
     void *ud;
     int64_t (*now_ms)(void);
+    firc_err_t (*queue_group)(void *ud, const firc_ifcheck_group_job_t *job);
+    bool (*resolve_for)(void *ud, const firc_group_t *g, const char *iface, bool tunnel, char *server, size_t cap,
+                        uint16_t *port, bool *mark_dns);
 } firc_ifwatch_deps_t;
 
 typedef struct firc_ifwatch firc_ifwatch_t;
@@ -55,6 +58,9 @@ void firc_ifwatch_tick(firc_ifwatch_t *w);
 /* A round of check results; guarded failures conclude nothing. */
 void firc_ifwatch_results(firc_ifwatch_t *w, const firc_ifcheck_result_t *r, size_t n);
 
+/* Results of a per-group service check round; guarded failures conclude nothing. */
+void firc_ifwatch_group_results(firc_ifwatch_t *w, const firc_ifcheck_group_result_t *r);
+
 /* A link event; down is dead at once, up brings a regular check forward, at most once per interval. */
 void firc_ifwatch_link(firc_ifwatch_t *w, const char *name, bool up);
 
@@ -70,6 +76,9 @@ firc_ifchoice_t firc_ifwatch_pick(firc_ifwatch_t *w, const firc_group_t *g);
 
 /* False when name is in no list of two or more. */
 bool firc_ifwatch_view(firc_ifwatch_t *w, const char *name, firc_if_view_t *out);
+
+/* Group-scoped health view for interface name; falls back to global firc_ifwatch_view when check mode is none. */
+bool firc_ifwatch_group_view(firc_ifwatch_t *w, firc_id_t id, const char *name, firc_if_view_t *out);
 
 /* The button: NOENT unknown group, STATE first entry not alive, AGAIN the group is not routed (the entry is kept
  * for its next enable), or the move's own error. */

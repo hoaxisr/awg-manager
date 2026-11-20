@@ -132,7 +132,7 @@ func TestKeenDNSCloud_NegativeBackoff_NormalCadence_And_NormalTTLExpiry(t *testi
 	op.SetKeenCloudProvider(func(context.Context) (KeenCloudRelaySnapshot, error) {
 		return KeenCloudRelaySnapshot{
 			Enabled:      true,
-			RelayIPs:     []string{"198.51.100.10"},
+			RelayIPs:     []string{"192.0.2.10"},
 			RelayDomains: []string{"relay1.keenetic.io"},
 		}, nil
 	})
@@ -145,7 +145,7 @@ func TestKeenDNSCloud_NegativeBackoff_NormalCadence_And_NormalTTLExpiry(t *testi
 	if lastErr, _ := op.keenDNSCloudStatus(); lastErr != "" {
 		t.Fatalf("expected empty lastErr after initial sync, got %q", lastErr)
 	}
-	for _, wantIP := range []string{"198.51.100.10/32", "203.0.113.10/32", "203.0.113.20/32"} {
+	for _, wantIP := range []string{"192.0.2.10/32", "203.0.113.10/32", "203.0.113.20/32"} {
 		if !hasIpsetMember(ipsetSt, wantIP) {
 			t.Fatalf("expected %s in FEXT_CLOUD after initial sync (members=%v)", wantIP, snapshotIpsetMembers(ipsetSt))
 		}
@@ -242,7 +242,7 @@ func TestKeenDNSCloud_NegativeBackoff_NormalCadence_And_NormalTTLExpiry(t *testi
 	if hasIpsetMember(ipsetSt, "203.0.113.20/32") {
 		t.Fatalf("expected stale optional IP 203.0.113.20/32 evicted after 30m normal TTL")
 	}
-	if !hasIpsetMember(ipsetSt, "203.0.113.10/32") || !hasIpsetMember(ipsetSt, "198.51.100.10/32") {
+	if !hasIpsetMember(ipsetSt, "203.0.113.10/32") || !hasIpsetMember(ipsetSt, "192.0.2.10/32") {
 		t.Fatalf("expected healthy relay and RCI IPs preserved after b0 expiry")
 	}
 	_ = keenCloudNegBackoffSteps
@@ -276,7 +276,7 @@ func TestKeenDNSCloud_BoundedLKG_PerSourceIsolation_And_2hEviction(t *testing.T)
 	var snapMu sync.Mutex
 	rciSnapshot := KeenCloudRelaySnapshot{
 		Enabled:      true,
-		RelayIPs:     []string{"198.51.100.10"},
+		RelayIPs:     []string{"192.0.2.10"},
 		RelayDomains: []string{"relay1.keenetic.io", "relay-retired.keenetic.io"},
 	}
 	relay1TransientFail := false
@@ -330,7 +330,7 @@ func TestKeenDNSCloud_BoundedLKG_PerSourceIsolation_And_2hEviction(t *testing.T)
 	if err := op.SyncKeenDNSCloud(ctx, true); err != nil {
 		t.Fatalf("initial SyncKeenDNSCloud: %v", err)
 	}
-	for _, ip := range []string{"198.51.100.10/32", "203.0.113.10/32", "203.0.113.20/32", "203.0.113.30/32"} {
+	for _, ip := range []string{"192.0.2.10/32", "203.0.113.10/32", "203.0.113.20/32", "203.0.113.30/32"} {
 		if !hasIpsetMember(ipsetSt, ip) {
 			t.Fatalf("expected %s in FEXT_CLOUD initially (members=%v)", ip, snapshotIpsetMembers(ipsetSt))
 		}
@@ -341,7 +341,7 @@ func TestKeenDNSCloud_BoundedLKG_PerSourceIsolation_And_2hEviction(t *testing.T)
 	snapMu.Lock()
 	rciSnapshot = KeenCloudRelaySnapshot{
 		Enabled:      true,
-		RelayIPs:     []string{"198.51.100.11"},
+		RelayIPs:     []string{"192.0.2.11"},
 		RelayDomains: []string{"relay1.keenetic.io"},
 	}
 	relay1TransientFail = true
@@ -350,29 +350,29 @@ func TestKeenDNSCloud_BoundedLKG_PerSourceIsolation_And_2hEviction(t *testing.T)
 	if err := op.SyncKeenDNSCloud(ctx, true); err == nil {
 		t.Fatalf("expected partial transient error from failing relay1 lookup")
 	}
-	// During overlap < 30m: new RCI IP 198.51.100.11 is present while retired 198.51.100.10 and relay-retired remain within normal 30m grace TTL.
-	if !hasIpsetMember(ipsetSt, "198.51.100.11/32") || !hasIpsetMember(ipsetSt, "198.51.100.10/32") {
-		t.Fatalf("expected both new 198.51.100.11 and grace 198.51.100.10 in FEXT_CLOUD at +10m (members=%v)", snapshotIpsetMembers(ipsetSt))
+	// During overlap < 30m: new RCI IP 192.0.2.11 is present while retired 192.0.2.10 and relay-retired remain within normal 30m grace TTL.
+	if !hasIpsetMember(ipsetSt, "192.0.2.11/32") || !hasIpsetMember(ipsetSt, "192.0.2.10/32") {
+		t.Fatalf("expected both new 192.0.2.11 and grace 192.0.2.10 in FEXT_CLOUD at +10m (members=%v)", snapshotIpsetMembers(ipsetSt))
 	}
 	if !hasIpsetMember(ipsetSt, "203.0.113.10/32") || !hasIpsetMember(ipsetSt, "203.0.113.30/32") {
 		t.Fatalf("expected relay1 and relay-retired retained at +10m")
 	}
 
 	// At t0+31m: (> 30m normal TTL, < 2h LKG cap):
-	// Healthy RCI retired IP (198.51.100.10) & retired source relay-retired (203.0.113.30) MUST expire
+	// Healthy RCI retired IP (192.0.2.10) & retired source relay-retired (203.0.113.30) MUST expire
 	// (per-source isolation: relay1 failure must NOT freeze healthy sources!), while failing relay1 retains bounded LKG < 2h.
 	setNow(t0.Add(31 * time.Minute))
 	if err := op.SyncKeenDNSCloud(ctx, true); err == nil {
 		t.Fatalf("expected partial error while relay1 still fails")
 	}
-	if hasIpsetMember(ipsetSt, "198.51.100.10/32") {
-		t.Fatalf("expected retired RCI IP 198.51.100.10/32 evicted past 30m TTL despite relay1 transient failure")
+	if hasIpsetMember(ipsetSt, "192.0.2.10/32") {
+		t.Fatalf("expected retired RCI IP 192.0.2.10/32 evicted past 30m TTL despite relay1 transient failure")
 	}
 	if hasIpsetMember(ipsetSt, "203.0.113.30/32") {
 		t.Fatalf("expected retired source 203.0.113.30/32 evicted past 30m TTL despite relay1 transient failure")
 	}
-	if !hasIpsetMember(ipsetSt, "198.51.100.11/32") || !hasIpsetMember(ipsetSt, "203.0.113.10/32") {
-		t.Fatalf("expected active RCI IP 198.51.100.11/32 and failing relay1 LKG 203.0.113.10/32 retained before 2h cap")
+	if !hasIpsetMember(ipsetSt, "192.0.2.11/32") || !hasIpsetMember(ipsetSt, "203.0.113.10/32") {
+		t.Fatalf("expected active RCI IP 192.0.2.11/32 and failing relay1 LKG 203.0.113.10/32 retained before 2h cap")
 	}
 
 	// At t0+2h1m: (> keenCloudMaxLKGTTL): failing relay1 LKG MUST evict while healthy sources remain.
@@ -383,7 +383,7 @@ func TestKeenDNSCloud_BoundedLKG_PerSourceIsolation_And_2hEviction(t *testing.T)
 	if hasIpsetMember(ipsetSt, "203.0.113.10/32") {
 		t.Fatalf("expected transiently failing relay1 LKG evicted past 2h cap")
 	}
-	if !hasIpsetMember(ipsetSt, "198.51.100.11/32") || !hasIpsetMember(ipsetSt, "203.0.113.20/32") {
+	if !hasIpsetMember(ipsetSt, "192.0.2.11/32") || !hasIpsetMember(ipsetSt, "203.0.113.20/32") {
 		t.Fatalf("expected healthy RCI & base IPs preserved past 2h")
 	}
 	ipsetSt.mu.Lock()
@@ -412,7 +412,7 @@ func TestKeenDNSCloud_ConcurrentDisableDuringDNS_AbortsCommit(t *testing.T) {
 	op.SetKeenCloudProvider(func(context.Context) (KeenCloudRelaySnapshot, error) {
 		return KeenCloudRelaySnapshot{
 			Enabled:      true,
-			RelayIPs:     []string{"198.51.100.10"},
+			RelayIPs:     []string{"192.0.2.10"},
 			RelayDomains: []string{"relay1.keenetic.io"},
 		}, nil
 	})
@@ -670,7 +670,7 @@ func TestKeenDNSCloudSync_RCIOutageExpiresEachSourceIndependently(t *testing.T) 
 		}
 		return KeenCloudRelaySnapshot{
 			Enabled:      true,
-			RelayIPs:     []string{"198.51.100.10"},
+			RelayIPs:     []string{"192.0.2.10"},
 			RelayDomains: []string{"relay1.keenetic.io"},
 		}, nil
 	})
@@ -680,7 +680,7 @@ func TestKeenDNSCloudSync_RCIOutageExpiresEachSourceIndependently(t *testing.T) 
 		t.Fatalf("t0 sync: %v", err)
 	}
 
-	// t0+1h: RCI ("rci" = 198.51.100.10) & base b0 refresh to t0+3h, while relay1 fails transiently (LKG stays t0+2h).
+	// t0+1h: RCI ("rci" = 192.0.2.10) & base b0 refresh to t0+3h, while relay1 fails transiently (LKG stays t0+2h).
 	setNow(t0.Add(1 * time.Hour))
 	stateMu.Lock()
 	failRelay1 = true
@@ -701,8 +701,8 @@ func TestKeenDNSCloudSync_RCIOutageExpiresEachSourceIndependently(t *testing.T) 
 	if hasIpsetMember(ipsetSt, "203.0.113.31/32") {
 		t.Fatalf("expired relay1 LKG (203.0.113.31/32) remained during RCI outage")
 	}
-	if !hasIpsetMember(ipsetSt, "198.51.100.10/32") || !hasIpsetMember(ipsetSt, "203.0.113.20/32") {
-		t.Fatalf("expected valid rci (198.51.100.10/32) and b0 (203.0.113.20/32) preserved at t0+2h1m")
+	if !hasIpsetMember(ipsetSt, "192.0.2.10/32") || !hasIpsetMember(ipsetSt, "203.0.113.20/32") {
+		t.Fatalf("expected valid rci (192.0.2.10/32) and b0 (203.0.113.20/32) preserved at t0+2h1m")
 	}
 
 	// t0+3h2m: RCI still fails -> "rci" (>2h since t0+1h) must also evict while base b0 continues refreshing!
@@ -710,8 +710,8 @@ func TestKeenDNSCloudSync_RCIOutageExpiresEachSourceIndependently(t *testing.T) 
 	if err := op.SyncKeenDNSCloud(ctx, true); err == nil {
 		t.Fatalf("expected error during RCI outage at t0+3h2m")
 	}
-	if hasIpsetMember(ipsetSt, "198.51.100.10/32") {
-		t.Fatalf("expired rci LKG (198.51.100.10/32) remained past 2h cap")
+	if hasIpsetMember(ipsetSt, "192.0.2.10/32") {
+		t.Fatalf("expired rci LKG (192.0.2.10/32) remained past 2h cap")
 	}
 	if !hasIpsetMember(ipsetSt, "203.0.113.20/32") {
 		t.Fatalf("healthy base b0 (203.0.113.20/32) dropped during RCI outage")

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,9 @@ type KeenDNSInfo struct {
 	Access       string   `json:"access"`
 	RelayIPs     []string `json:"relay_ips,omitempty"`
 	RelayDomains []string `json:"relay_domains,omitempty"`
+	// RelayEndpoints retains the observed remote port for cloud TCP routing.
+	// Keep it internal so existing KeenDNS API responses retain their shape.
+	RelayEndpoints []netip.AddrPort `json:"-"`
 }
 
 // KeenDNSStatus provides detailed uncached KeenDNS status for External Access discovery and transactions.
@@ -236,11 +240,20 @@ func parseKeenDNS(raw []byte) *KeenDNSInfo {
 
 	var relayIPs []string
 	var relayDomains []string
+	var relayEndpoints []netip.AddrPort
 	seenIP := make(map[string]struct{})
 	seenDomain := make(map[string]struct{})
+	seenEndpoint := make(map[netip.AddrPort]bool)
 
 	for _, t := range v.TTP.Tunnel {
 		if remote := strings.TrimSpace(t.TargetRemote); remote != "" {
+			if endpoint, err := netip.ParseAddrPort(remote); err == nil && endpoint.Port() != 0 && endpoint.Addr().Zone() == "" {
+				endpoint = netip.AddrPortFrom(endpoint.Addr().Unmap(), endpoint.Port())
+				if !seenEndpoint[endpoint] {
+					seenEndpoint[endpoint] = true
+					relayEndpoints = append(relayEndpoints, endpoint)
+				}
+			}
 			host := remote
 			if h, _, err := net.SplitHostPort(remote); err == nil {
 				host = h
@@ -269,12 +282,13 @@ func parseKeenDNS(raw []byte) *KeenDNSInfo {
 	}
 
 	return &KeenDNSInfo{
-		Domain:       booked + "." + domain,
-		Enabled:      true,
-		Address:      strings.TrimSpace(v.Address),
-		Address6:     strings.TrimSpace(v.Address6),
-		Access:       strings.TrimSpace(v.Access),
-		RelayIPs:     relayIPs,
-		RelayDomains: relayDomains,
+		Domain:         booked + "." + domain,
+		Enabled:        true,
+		Address:        strings.TrimSpace(v.Address),
+		Address6:       strings.TrimSpace(v.Address6),
+		Access:         strings.TrimSpace(v.Access),
+		RelayIPs:       relayIPs,
+		RelayDomains:   relayDomains,
+		RelayEndpoints: relayEndpoints,
 	}
 }

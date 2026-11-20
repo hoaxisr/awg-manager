@@ -550,6 +550,26 @@
         onPatch={(patch) => applyPatch(patch)}
       />
 
+      <section class="sec">
+        <label class="sec-cap" for="sb-keendns-cloud">{m.sb_router_status_keendns_cloud()}</label>
+        <select
+          id="sb-keendns-cloud"
+          class="inp"
+          value={cfg.keenDNSCloudOutbound ?? ''}
+          onchange={(e) => void applyPatch({ keenDNSCloudOutbound: e.currentTarget.value })}
+        >
+          <option value="">{m.sb_router_status_keendns_cloud_off()}</option>
+          {#if cfg.keenDNSCloudOutbound && !$storeOptions.some((g) => g.items.some((i) => i.value === cfg.keenDNSCloudOutbound))}
+            <option value={cfg.keenDNSCloudOutbound}>{cfg.keenDNSCloudOutbound}</option>
+          {/if}
+          {#each $storeOptions.filter((g) => g.id !== 'special') as group (group.id)}
+            {#each group.items as item (item.value)}
+              <option value={item.value}>{item.label}</option>
+            {/each}
+          {/each}
+        </select>
+      </section>
+
       <!-- Исключения: порт-пресеты + IP-пресеты (keendns) + ручные порты/подсети -->
       <section class="sec">
         <div class="sec-cap">{m.sb_router_status_sec_bypass()}</div>

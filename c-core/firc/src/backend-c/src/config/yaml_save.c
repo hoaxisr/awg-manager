@@ -230,6 +230,38 @@ static void emit_resolve(emitter_ctx_t *ctx, const firc_group_resolve_t *r)
     map_end(ctx);
 }
 
+/* only when not the default, so a file without the key reads back unchanged */
+static void emit_group_check(emitter_ctx_t *ctx, const firc_group_check_t *c)
+{
+    if (firc_group_check_is_default(c)) {
+        return;
+    }
+    emit_plain(ctx, "check");
+    map_start(ctx);
+    emit_plain(ctx, "mode");
+    emit_string(ctx, firc_group_check_mode_name(c->mode));
+    if (c->url != NULL && c->url[0] != '\0') {
+        emit_plain(ctx, "url");
+        emit_string(ctx, c->url);
+    }
+    struct {
+        const char *key;
+        uint32_t val;
+    } nums[] = {
+        {"intervalSec", c->interval_sec},
+        {"timeoutMs", c->timeout_ms},
+        {"failThreshold", c->fail_threshold},
+        {"recoverThreshold", c->recover_threshold},
+    };
+    for (size_t i = 0; i < sizeof(nums) / sizeof(nums[0]); i++) {
+        if (nums[i].val != 0) {
+            emit_plain(ctx, nums[i].key);
+            emit_u64(ctx, nums[i].val);
+        }
+    }
+    map_end(ctx);
+}
+
 /* a list's own rules are never written; only what a person changed about one */
 static void emit_sub_override(emitter_ctx_t *ctx, const firc_sub_override_t *o)
 {
@@ -298,6 +330,7 @@ static void emit_group(emitter_ctx_t *ctx, const firc_group_t *g)
     emit_bool(ctx, g->enable);
     emit_devices(ctx, &g->devices);
     emit_resolve(ctx, &g->resolve);
+    emit_group_check(ctx, &g->check);
     if (firc_group_is_block(g) && g->block != FIRC_BLOCK_NULL) {
         emit_plain(ctx, "block");
         emit_string(ctx, firc_block_answer_name(g->block));

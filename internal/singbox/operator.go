@@ -177,6 +177,14 @@ type Operator struct {
 	// and initializes base/default config.d files (e.g. re-syncing 15-awg / 17-dns-rewrites).
 	postInstallSync func(context.Context) error
 
+	// beforeStop, when wired, runs right before Control("stop") stops the daemon
+	// (e.g. detaching KeenDNS Cloud OUTPUT redirect before closing the listener).
+	beforeStop func(context.Context) error
+
+	// afterStart, when wired, runs after Control("start") or Control("restart")
+	// ensures sing-box is running (e.g. re-attaching KeenDNS Cloud interception).
+	afterStart func(context.Context) error
+
 	// processLogger forwards sing-box stdout/stderr lines into the app
 	// log under singbox/process so users can see daemon output at
 	// /diagnostics?tab=logs without ssh'ing in. nil-safe (ScopedLogger
@@ -558,6 +566,12 @@ func (o *Operator) SetSubscriptionProxySync(fn func(context.Context) error) { o.
 // auxiliary slots (e.g. 15-awg.json, 17-dns-rewrites.json) and the
 // orchestrator state can be synchronized immediately without a restart. nil-safe.
 func (o *Operator) SetPostInstallSync(fn func(context.Context) error) { o.postInstallSync = fn }
+
+// SetBeforeStop wires a hook invoked synchronously before Control("stop") or Control("restart") stops sing-box. nil-safe.
+func (o *Operator) SetBeforeStop(fn func(context.Context) error) { o.beforeStop = fn }
+
+// SetAfterStart wires a hook invoked synchronously after Control("start") or Control("restart") brings sing-box up. nil-safe.
+func (o *Operator) SetAfterStart(fn func(context.Context) error) { o.afterStart = fn }
 
 // SetOutboundReferenceRenamer wires the singbox-router reference updater.
 // Optional: when nil, RenameTunnel only updates 10-tunnels.json.

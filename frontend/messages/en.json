@@ -1,4 +1,5 @@
 {
+	"subscriptions_group_direct_first": "Check the direct connection first",
 	"$schema": "https://inlang.com/schema/inlang-message-format",
 	"common_cancel": "Cancel",
 	"common_delete": "Delete",
@@ -4871,6 +4872,8 @@
 	"sb_router_status_udp_nat_max": "UDP session limit",
 	"sb_router_status_udp_nat_max_hint": "How many UDP sessions the engine keeps at once; when full, the oldest is evicted. Reduce it on a router with little memory if sing-box memory usage grows under UDP load.",
 	"sb_router_status_sec_bypass": "Exclusions",
+	"sb_router_status_keendns_cloud": "Route KeenDNS Cloud through sing-box",
+	"sb_router_status_keendns_cloud_off": "Off",
 	"sb_router_status_extra_ports": "Extra ports",
 	"sb_router_status_ports_hint_pre": "These ports bypass sing-box (straight to the WAN). Useful for L2TP/NTP/SMB without breaking LAN services. Single ports are supported (",
 	"sb_router_status_ports_hint_mid": ") and ranges (",
@@ -8161,5 +8164,11 @@
 	"uplink_limitation_kernel_awg": "Kernel AmneziaWG tunnel (IPv4 endpoint); manual or controlled return; disabling restores original routing mode",
 	"uplink_limitation_singbox_sub": "Controlled return restarts the engine and verifies traffic; failure restores the previous WAN",
 	"uplink_limitation_independent_probe": "Independent candidate probe is unavailable for this engine",
-	"uplink_limitation_no_adapter": "No uplink adapter is registered for the selected engine"
+	"uplink_limitation_no_adapter": "No uplink adapter is registered for the selected engine",
+	"firc_group_check_label": "Service availability check (Failover)",
+	"firc_group_check_mode_url": "By service URL (per-group)",
+	"firc_group_check_mode_none": "Global WAN check (off)",
+	"firc_group_check_url_label": "Probe URL (optional)",
+	"firc_group_check_url_placeholder": "https://... (empty — global probe URL)",
+	"firc_group_check_url_hint": "Each interface in the chain is probed independently; if the service fails on the primary path, the group switches to backup and fails back after recovery is confirmed."
 }

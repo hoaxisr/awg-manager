@@ -63,7 +63,7 @@ var keenDNSCloudBaseDomains = []string{
 }
 
 // disallowedCloudIPv4Prefixes rejects bogon, loopback, RFC1918, CGNAT, link-local,
-// FakeIP (198.18.0.0/15), and multicast/reserved ranges from entering FEXT_CLOUD.
+// FakeIP (198.18.0.0/15), KeenDNS local portal (198.51.100.0/24), and multicast/reserved ranges from entering FEXT_CLOUD.
 var disallowedCloudIPv4Prefixes = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("10.0.0.0/8"),
@@ -75,6 +75,7 @@ var disallowedCloudIPv4Prefixes = []netip.Prefix{
 	netip.MustParsePrefix("192.88.99.0/24"),
 	netip.MustParsePrefix("192.168.0.0/16"),
 	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
 	netip.MustParsePrefix("224.0.0.0/3"),
 }
 
@@ -336,6 +337,7 @@ func (o *Operator) clearKeenDNSCloudSyncState() {
 	o.cloudLastEntries = nil
 	o.cloudSourceCache = nil
 	o.cloudNegBackoff = nil
+	o.keenDNSSyncedActiveIface = ""
 	o.cloudStateMu.Unlock()
 }
 

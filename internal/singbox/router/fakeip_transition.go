@@ -302,6 +302,8 @@ func (s *ServiceImpl) SwitchRoutingMode(ctx context.Context, target string) erro
 		s.ensurePolicyWANAfterTransition(ctx, target)
 	}
 
+	s.reconcileCloudOutputFromStoreLocked(ctx, target)
+
 	s.emitTransition(id, source, target,
 		TransitionStep{Step: "provision", Status: "done"}, false, "", "")
 	s.emitTransition(id, source, target,
@@ -359,6 +361,7 @@ func (s *ServiceImpl) rollbackSwitch(ctx context.Context, id, source, target str
 			return s.failClosed(ctx, id, source, target, enableErr,
 				fmt.Errorf("rollback re-enable %s: %w", source, rerr))
 		}
+		s.reconcileCloudOutputFromStoreLocked(ctx, "rollback-"+source)
 		final := source
 		s.emitTransition(id, source, target,
 			TransitionStep{Step: "rollback", Status: "done", Message: "restored " + final},

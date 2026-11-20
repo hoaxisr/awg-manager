@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -64,6 +65,13 @@ func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.Validation
 		// orchestratorApplyNow выполнит policy-tun runtime verification.
 		if applyErr := s.orchestratorApplyNow(); applyErr != nil {
 			return res, applyErr
+		}
+		if s.deps.Settings != nil {
+			if st, serr := s.deps.Settings.Load(); serr == nil && strings.TrimSpace(st.SingboxRouter.KeenDNSCloudOutbound) != "" {
+				if cerr := s.reconcileCloudOutput(ctx, st.SingboxRouter, st.SingboxManuallyStopped); cerr != nil {
+					s.appLog.Warn("keendns-cloud", "", "reconcile KeenDNS Cloud after staging apply: "+cerr.Error())
+				}
+			}
 		}
 		// The applied active configuration changed. Invalidate synchronously;
 		// SSE delivery is not part of the coverage correctness protocol.

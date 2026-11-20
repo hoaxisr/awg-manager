@@ -360,7 +360,8 @@ type Route struct {
 	// AutoDetectInterface in EnsureRouteWAN: setting one clears the
 	// other so the emitted config never carries both. NEVER stores
 	// NDMS interface ID — kernel name is the stable identifier.
-	DefaultInterface string `json:"default_interface,omitempty"`
+	DefaultInterface string          `json:"default_interface,omitempty"`
+	DefaultMark      json.RawMessage `json:"default_mark,omitempty"`
 	// DefaultDomainResolver names the DNS server used to resolve outbound
 	// hostnames that no rule pins elsewhere (fakeip-tun: a "real" resolver
 	// so proxy server hostnames don't get fakeip addresses).

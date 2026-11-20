@@ -218,8 +218,9 @@ type DownloadSettings struct {
 }
 
 type SingboxRouterSettings struct {
-	Enabled    bool   `json:"enabled"`
-	PolicyName string `json:"policyName"`
+	KeenDNSCloudOutbound string `json:"keenDNSCloudOutbound,omitempty"`
+	Enabled              bool   `json:"enabled"`
+	PolicyName           string `json:"policyName"`
 	// DeviceMode controls which LAN devices are routed through sing-box.
 	// "policy" (default) keeps the historical NDMS access-policy mark
 	// filter. "all" installs unmarked PREROUTING jumps so every LAN

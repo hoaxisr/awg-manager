@@ -14,6 +14,48 @@ func writeSlot(t *testing.T, dir, filename, content string) {
 	}
 }
 
+func TestValidateCloudDefaultMarkPrecedence(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotTunnels, Filename: "10-tunnels.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	o.enabled[SlotTunnels] = true
+	o.enabled[SlotRouter] = true
+	writeSlot(t, dir, "20-router.json", `{"inbounds":[{"tag":"`+KeenDNSCloudInboundTag+`"}],"route":{"default_mark":666}}`)
+	for _, test := range []struct {
+		config string
+		ok     bool
+	}{
+		{`{}`, true},
+		{`{"route":{"default_mark":"0x29a"}}`, true},
+		{`{"route":{"default_mark":0}}`, false},
+		{`{"route":{"default_mark":667}}`, false},
+	} {
+		writeSlot(t, dir, "10-tunnels.json", test.config)
+		if result := o.Validate(); result.Ok() != test.ok {
+			t.Errorf("with %s: expected Ok=%t, got %+v", test.config, test.ok, result.Errors)
+		}
+	}
+
+	writeSlot(t, dir, "20-router.json", `{"inbounds":[{"tag":"`+KeenDNSCloudUDPInboundTag+`"}],"route":{"default_mark":666}}`)
+	for _, test := range []struct {
+		config string
+		ok     bool
+	}{
+		{`{}`, true},
+		{`{"route":{"default_mark":"0x29a"}}`, true},
+		{`{"route":{"default_mark":0}}`, false},
+		{`{"route":{"default_mark":667}}`, false},
+	} {
+		writeSlot(t, dir, "10-tunnels.json", test.config)
+		if result := o.Validate(); result.Ok() != test.ok {
+			t.Errorf("UDP inbound with %s: expected Ok=%t, got %+v", test.config, test.ok, result.Errors)
+		}
+	}
+}
+
 func TestValidateOk(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotTunnels, Filename: "10-tunnels.json"})

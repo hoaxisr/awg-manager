@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -47,11 +48,57 @@ func ProbeBinding(ctx context.Context, binding Binding) error {
 	return probeHTTP(ctx, binding.DialContext, []string{"https://cp.cloudflare.com/generate_204", "https://www.gstatic.com/generate_204"}, nil)
 }
 
+// ProbePathHTTPS checks one service through the supplied path. The caller
+// supplies a strictly bound dialer or a dialer for a dedicated proxy. The
+// check does not follow redirects or substitute another destination.
+func ProbePathHTTPS(ctx context.Context, dial func(context.Context, string, string) (net.Conn, error), target string, expectedStatus int) error {
+	u, err := url.Parse(target)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return errors.New("probe requires an HTTPS URL without credentials or fragment")
+	}
+	if dial == nil || expectedStatus < 200 || expectedStatus >= 600 {
+		return errors.New("probe requires a path dialer and expected HTTP status")
+	}
+	client := newProbeClient(dial, nil)
+	defer client.CloseIdleConnections()
+	err = probeStatus(ctx, client, u.String(), expectedStatus)
+	if err != nil {
+		var requestErr *url.Error
+		if errors.As(err, &requestErr) {
+			return requestErr.Err
+		}
+		return err
+	}
+	return nil
+}
+
+func newProbeClient(dial func(context.Context, string, string) (net.Conn, error), tlsConfig *tls.Config) *http.Client {
+	transport := &http.Transport{
+		DialContext: dial, DisableKeepAlives: true, TLSHandshakeTimeout: 3 * time.Second,
+		ResponseHeaderTimeout: 3 * time.Second, MaxResponseHeaderBytes: 8192, TLSClientConfig: tlsConfig,
+	}
+	return &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
+func probeStatus(ctx context.Context, client *http.Client, target string, expectedStatus int) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != expectedStatus {
+		return fmt.Errorf("probe status %d, expected %d", resp.StatusCode, expectedStatus)
+	}
+	return nil
+}
+
 func probeHTTP(ctx context.Context, dial func(context.Context, string, string) (net.Conn, error), targets []string, tlsConfig *tls.Config) error {
-	t := &http.Transport{DialContext: dial, DisableKeepAlives: true, TLSHandshakeTimeout: 3 * time.Second, ResponseHeaderTimeout: 3 * time.Second, MaxResponseHeaderBytes: 8192}
-	t.TLSClientConfig = tlsConfig
-	defer t.CloseIdleConnections()
-	client := &http.Client{Transport: t, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := newProbeClient(dial, tlsConfig)
+	defer client.CloseIdleConnections()
 	var failures []error
 	for _, target := range targets {
 		// Give the second independent target a chance before the shared deadline.
@@ -60,17 +107,7 @@ func probeHTTP(ctx context.Context, dial func(context.Context, string, string) (
 			timeout = time.Until(deadline) / 2
 		}
 		attempt, cancel := context.WithTimeout(ctx, timeout)
-		req, err := http.NewRequestWithContext(attempt, http.MethodGet, target, nil)
-		if err == nil {
-			var resp *http.Response
-			resp, err = client.Do(req)
-			if err == nil {
-				resp.Body.Close()
-				if resp.StatusCode != http.StatusNoContent {
-					err = fmt.Errorf("probe status %d", resp.StatusCode)
-				}
-			}
-		}
+		err := probeStatus(attempt, client, target, http.StatusNoContent)
 		cancel()
 		if err == nil {
 			return nil

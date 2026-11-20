@@ -1,4 +1,5 @@
 {
+	"subscriptions_group_direct_first": "Проверять прямое подключение первым",
 	"$schema": "https://inlang.com/schema/inlang-message-format",
 	"common_cancel": "Отмена",
 	"common_delete": "Удалить",
@@ -5183,6 +5184,8 @@
 	"sb_router_status_udp_nat_max": "Потолок UDP-сессий",
 	"sb_router_status_udp_nat_max_hint": "Сколько UDP-сессий движок держит одновременно; при переполнении вытесняется самая старая. Уменьшите на роутере с малой памятью, если sing-box растёт под UDP-нагрузкой.",
 	"sb_router_status_sec_bypass": "Исключения",
+	"sb_router_status_keendns_cloud": "Маршрутизировать облако KeenDNS через sing-box",
+	"sb_router_status_keendns_cloud_off": "Выключено",
 	"sb_router_status_extra_ports": "Доп. порты",
 	"sb_router_status_ports_hint_pre": "Эти порты пойдут мимо sing-box (прямо в WAN). Полезно для L2TP/NTP/SMB не ломая LAN-сервисы. Поддерживаются одиночные порты (",
 	"sb_router_status_ports_hint_mid": ") и диапазоны (",
@@ -8561,5 +8564,11 @@
 	"uplink_limitation_kernel_awg": "Туннель ядра AmneziaWG (IPv4-адрес сервера); ручной или контролируемый возврат; отключение возвращает исходную маршрутизацию",
 	"uplink_limitation_singbox_sub": "Контролируемый возврат перезапускает движок и проверяет трафик; при ошибке восстанавливается предыдущий WAN",
 	"uplink_limitation_independent_probe": "Фоновая проверка резервного канала без переключения недоступна для этого движка",
-	"uplink_limitation_no_adapter": "Адаптер резервирования WAN не зарегистрирован для выбранного движка"
+	"uplink_limitation_no_adapter": "Адаптер резервирования WAN не зарегистрирован для выбранного движка",
+	"firc_group_check_label": "Проверка доступности сервиса (Failover)",
+	"firc_group_check_mode_url": "По URL сервиса (per-group)",
+	"firc_group_check_mode_none": "Общая WAN-проверка (выкл.)",
+	"firc_group_check_url_label": "URL для проверки (опционально)",
+	"firc_group_check_url_placeholder": "https://... (пусто — глобальный URL проверки)",
+	"firc_group_check_url_hint": "Каждый интерфейс цепочки проверяется независимо; при недоступности сервиса на основном пути группа переключится на резерв и вернётся после подтверждения восстановления."
 }

@@ -28,6 +28,7 @@ type SubscriptionGroupDTO struct {
 	Mode               string                       `json:"mode" example:"urltest"`
 	URLTest            *SubscriptionURLTestDTO      `json:"urlTest,omitempty"`
 	UseSubscriptionIDs []string                     `json:"useSubscriptionIds"`
+	DirectFirst        bool                         `json:"directFirst,omitempty"`
 	FilterInclude      string                       `json:"filterInclude,omitempty" example:"(?i)(DE|NL)"`
 	FilterExclude      string                       `json:"filterExclude,omitempty" example:"(?i)(RU|Russia)"`
 	Enabled            bool                         `json:"enabled" example:"true"`
@@ -55,6 +56,7 @@ type CreateSubscriptionGroupRequest struct {
 	Mode               string                  `json:"mode,omitempty" example:"urltest"` // "urltest" (default) | "selector" | "fallback"
 	URLTest            *SubscriptionURLTestDTO `json:"urlTest,omitempty"`
 	UseSubscriptionIDs []string                `json:"useSubscriptionIds"`
+	DirectFirst        bool                    `json:"directFirst,omitempty"`
 	FilterInclude      string                  `json:"filterInclude,omitempty"`
 	FilterExclude      string                  `json:"filterExclude,omitempty"`
 	Enabled            bool                    `json:"enabled" example:"true"`
@@ -67,6 +69,7 @@ type UpdateSubscriptionGroupRequest struct {
 	Mode               *string                 `json:"mode,omitempty" example:"selector"`
 	URLTest            *SubscriptionURLTestDTO `json:"urlTest,omitempty"`
 	UseSubscriptionIDs *[]string               `json:"useSubscriptionIds,omitempty"`
+	DirectFirst        *bool                   `json:"directFirst,omitempty"`
 	FilterInclude      *string                 `json:"filterInclude,omitempty"`
 	FilterExclude      *string                 `json:"filterExclude,omitempty"`
 	Enabled            *bool                   `json:"enabled,omitempty"`
@@ -131,6 +134,7 @@ func (h *SubscriptionHandler) toSubscriptionGroupDTO(g subscription.AggregateGro
 		Mode:               string(g.EffectiveMode()),
 		URLTest:            urltest,
 		UseSubscriptionIDs: useIDs,
+		DirectFirst:        g.DirectFirst,
 		FilterInclude:      g.FilterInclude,
 		FilterExclude:      g.FilterExclude,
 		Enabled:            g.Enabled,
@@ -226,6 +230,7 @@ func (h *SubscriptionHandler) CreateGroup(w http.ResponseWriter, r *http.Request
 		Mode:               mode,
 		URLTest:            urlTestDTOToConfig(req.URLTest),
 		UseSubscriptionIDs: req.UseSubscriptionIDs,
+		DirectFirst:        req.DirectFirst,
 		FilterInclude:      req.FilterInclude,
 		FilterExclude:      req.FilterExclude,
 		Enabled:            req.Enabled,
@@ -270,6 +275,7 @@ func (h *SubscriptionHandler) UpdateGroup(w http.ResponseWriter, r *http.Request
 	patch := subscription.GroupUpdatePatch{
 		Label:              req.Label,
 		UseSubscriptionIDs: req.UseSubscriptionIDs,
+		DirectFirst:        req.DirectFirst,
 		FilterInclude:      req.FilterInclude,
 		FilterExclude:      req.FilterExclude,
 		Enabled:            req.Enabled,

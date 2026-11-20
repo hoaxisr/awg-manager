@@ -20,6 +20,8 @@ static firc_sub_setsockopt_fn g_setsockopt = setsockopt;
 
 void firc_sub_fetch_set_setsockopt_for_test(firc_sub_setsockopt_fn fn) { g_setsockopt = fn != NULL ? fn : setsockopt; }
 
+firc_sub_setsockopt_fn firc_sub_fetch_get_setsockopt(void) { return g_setsockopt; }
+
 typedef struct sock_cfg {
     uint32_t mark;
     bool mark_refused;
@@ -267,7 +269,9 @@ firc_err_t firc_sub_fetch_to(const char *url, const firc_sub_fetch_opts_t *o, fi
     if (url == NULL || !url_allowed(o, url)) { return FIRC_ERR_INVAL; }
 
     int max_redirects = o->max_redirects > 0 ? o->max_redirects : FIRC_SUB_FETCH_MAX_REDIRECTS;
-    long timeout_s = o->timeout_s > 0 ? o->timeout_s : (long)FIRC_SUB_FETCH_TIMEOUT_SECONDS;
+    long budget_ms = o->timeout_ms > 0
+                         ? o->timeout_ms
+                         : (o->timeout_s > 0 ? o->timeout_s : (long)FIRC_SUB_FETCH_TIMEOUT_SECONDS) * 1000L;
     bool headers_ok = true;
     struct curl_slist *headers = build_headers(o->headers, false, &headers_ok);
     bool stripped_ok = true;
@@ -296,7 +300,6 @@ firc_err_t firc_sub_fetch_to(const char *url, const firc_sub_fetch_opts_t *o, fi
 
     struct timespec start;
     clock_gettime(CLOCK_MONOTONIC, &start);
-    long budget_ms = timeout_s * 1000;
     firc_err_t result = FIRC_ERR_SYS;
     int redirects = 0;
     for (;;) {

@@ -76,6 +76,18 @@ type TunnelUplink struct {
 	Ref  string `json:"ref,omitempty" yaml:"ref,omitempty"`
 }
 
+func (u TunnelUplink) MarshalJSON() ([]byte, error) {
+	type plain TunnelUplink
+	p := plain(u)
+	p.Kind = strings.TrimSpace(p.Kind)
+	p.Ref = strings.TrimSpace(p.Ref)
+	if p.Kind == "" {
+		p.Kind = "auto"
+		p.Ref = ""
+	}
+	return json.Marshal(p)
+}
+
 func (u TunnelUplink) MarshalYAML() (interface{}, error) {
 	kind := strings.TrimSpace(u.Kind)
 	ref := strings.TrimSpace(u.Ref)
@@ -113,6 +125,10 @@ func (u *TunnelUplink) UnmarshalYAML(value *yaml.Node) error {
 	var ru rawUplink
 	if err := value.Decode(&ru); err != nil {
 		return err
+	}
+	if strings.TrimSpace(ru.Kind) == "" {
+		ru.Kind = "auto"
+		ru.Ref = ""
 	}
 	*u = TunnelUplink(ru)
 	return nil
@@ -465,6 +481,10 @@ func (t *Tunnel) UnmarshalYAML(value *yaml.Node) error {
 	t.Description = raw.Description
 	t.Enable = raw.Enable
 	t.Uplink = raw.Uplink
+	if strings.TrimSpace(t.Uplink.Kind) == "" {
+		t.Uplink.Kind = "auto"
+		t.Uplink.Ref = ""
+	}
 	t.EndpointDNS = raw.EndpointDNS
 	t.Sources = raw.Sources
 	t.Filter = raw.Filter
@@ -610,6 +630,16 @@ type GroupResolve struct {
 	Server string `json:"server,omitempty" yaml:"server,omitempty"`
 }
 
+// GroupCheck configures per-group service availability probing for multi-interface groups.
+type GroupCheck struct {
+	Mode             string `json:"mode,omitempty" yaml:"mode,omitempty"`
+	URL              string `json:"url,omitempty" yaml:"url,omitempty"`
+	IntervalSec      uint32 `json:"intervalSec,omitempty" yaml:"intervalSec,omitempty"`
+	TimeoutMs        uint32 `json:"timeoutMs,omitempty" yaml:"timeoutMs,omitempty"`
+	FailThreshold    uint32 `json:"failThreshold,omitempty" yaml:"failThreshold,omitempty"`
+	RecoverThreshold uint32 `json:"recoverThreshold,omitempty" yaml:"recoverThreshold,omitempty"`
+}
+
 // GroupList configures an external rule list (.srs, sing-box JSON, Clash YAML, domain list) for a Group.
 type GroupList struct {
 	URL        string          `json:"url" yaml:"url"`
@@ -723,6 +753,7 @@ type Group struct {
 	Interfaces []GroupIfaceState `json:"interfaces,omitempty" yaml:"-"`
 	Devices    GroupDevices      `json:"devices" yaml:"devices"`
 	Resolve    GroupResolve      `json:"resolve" yaml:"resolve"`
+	Check      *GroupCheck       `json:"check,omitempty" yaml:"check,omitempty"`
 	List       *GroupList        `json:"list,omitempty" yaml:"list,omitempty"`
 	Rules      []Rule            `json:"rules,omitempty" yaml:"rules,omitempty"`
 }

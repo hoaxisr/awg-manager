@@ -202,6 +202,19 @@ func TestBuildFallback(t *testing.T) {
 	}
 }
 
+func TestAggregateFallbackDirectFirst(t *testing.T) {
+	group := AggregateGroup{Tag: "agg-test", Mode: ModeFallback, DirectFirst: true}
+	var got struct {
+		Outbounds []string `json:"outbounds"`
+	}
+	if err := json.Unmarshal(BuildAggregateGroupOutbound(group, []string{"node-a", "node-b"}), &got); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got.Outbounds, ",") != "direct,node-a,node-b" {
+		t.Fatalf("unexpected fallback order: %v", got.Outbounds)
+	}
+}
+
 // F731: повтор члена sing-box 1.15 отвергает и не стартует — сборщики групп
 // подписок сворачивают повторы при любом режиме, порядок сохраняется.
 func TestBuildGroupOutbound_CollapsesDuplicateMembers(t *testing.T) {

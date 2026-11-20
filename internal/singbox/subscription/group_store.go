@@ -36,6 +36,7 @@ type AggregateGroup struct {
 	// UseSubscriptionIDs — ID подписок-источников в пользовательском порядке
 	// (определяет порядок членов в группе).
 	UseSubscriptionIDs []string `json:"useSubscriptionIds"`
+	DirectFirst        bool     `json:"directFirst,omitempty"`
 	FilterInclude      string   `json:"filterInclude,omitempty"`
 	FilterExclude      string   `json:"filterExclude,omitempty"`
 	Enabled            bool     `json:"enabled"`
@@ -79,6 +80,7 @@ type GroupCreateInput struct {
 	Mode               SubscriptionMode // "" = ModeURLTest
 	URLTest            *URLTestConfig
 	UseSubscriptionIDs []string
+	DirectFirst        bool
 	FilterInclude      string
 	FilterExclude      string
 	Enabled            bool
@@ -90,6 +92,7 @@ type GroupUpdatePatch struct {
 	Mode               *SubscriptionMode
 	URLTest            *URLTestConfig
 	UseSubscriptionIDs *[]string
+	DirectFirst        *bool
 	FilterInclude      *string
 	FilterExclude      *string
 	Enabled            *bool
@@ -247,6 +250,7 @@ func (s *GroupStore) Create(in GroupCreateInput) (*AggregateGroup, error) {
 		Mode:               mode,
 		URLTest:            urlTest,
 		UseSubscriptionIDs: useIDs,
+		DirectFirst:        in.DirectFirst,
 		FilterInclude:      in.FilterInclude,
 		FilterExclude:      in.FilterExclude,
 		Enabled:            in.Enabled,
@@ -327,6 +331,9 @@ func applyGroupPatch(g *AggregateGroup, patch GroupUpdatePatch) {
 	if patch.URLTest != nil {
 		cp := *patch.URLTest
 		g.URLTest = &cp
+	}
+	if patch.DirectFirst != nil {
+		g.DirectFirst = *patch.DirectFirst
 	}
 	if patch.UseSubscriptionIDs != nil {
 		ids := append([]string{}, (*patch.UseSubscriptionIDs)...)

@@ -977,6 +977,7 @@ type IPTables struct {
 	persistBlackhole        persistFn
 	cleanupBlackhole        func()
 	runCtClean              func(ctx context.Context)
+	realKernel              bool
 
 	// v6 — системная сторона v6-слоя (iptables6.go). Одним интерфейсом, а не
 	// россыпью полей: см. v6Backend.
@@ -985,6 +986,7 @@ type IPTables struct {
 
 func NewIPTables() *IPTables {
 	return &IPTables{
+		realKernel:     true,
 		restoreNoflush: sysiptables.RestoreNoflush,
 		runIPTables:    sysiptables.Run,
 		runIPTablesOut: sysiptables.RunOutput,
@@ -1781,6 +1783,8 @@ func EnsureRouterNetfilterModules(ctx context.Context) []error {
 		"xt_conntrack",
 		"xt_pkttype",
 		"xt_dscp",
+		"xt_set",
+		"xt_multiport",
 	} {
 		err := ensureKernelModuleFn(ctx, name)
 		if err == nil || errors.Is(err, ErrNetfilterComponentMissing) {
@@ -1848,14 +1852,17 @@ func (it *IPTables) probeAll(ctx context.Context) (iptState, error) {
 	}
 	mChain, mJump := scanChain(mangleDump, ChainName)
 	bChain, bJump := scanChain(mangleDump, BlackholeChain)
+	cloudMangleChain, _ := scanChain(mangleDump, cloudOutputMangleChain)
+	cloudPreChain, _ := scanChain(mangleDump, cloudOutputPreChain)
 	natDump, err := it.runIPTablesOut(ctx, "-t", "nat", "-S")
 	if err != nil {
 		return iptState{}, err
 	}
 	nChain, nJump := scanChain(natDump, RedirectChain)
+	cloudChain, _ := scanChain(natDump, cloudOutputChain)
 	return iptState{
 		installed: mChain && nChain,
-		anyChain:  mChain || nChain,
+		anyChain:  mChain || nChain || cloudChain || cloudMangleChain || cloudPreChain,
 		jumps:     mChain && nChain && mJump && nJump,
 		blackhole: bChain && bJump,
 	}, nil
