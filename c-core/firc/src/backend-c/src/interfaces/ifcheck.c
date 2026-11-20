@@ -520,14 +520,15 @@ static bool parse_domain_target(const char *s, firc_ifcheck_target_t *t) {
     }
     size_t len = strlen(buf);
     while (len > 0 && buf[len - 1] == '.') { buf[--len] = '\0'; }
-    if (len == 0) { return false; }
+    if (len == 0 || len >= sizeof(t->host)) { return false; }
     for (size_t i = 0; i < len; i++) { buf[i] = (char)tolower((unsigned char)buf[i]); }
     struct in_addr probe4;
     if (inet_pton(AF_INET, buf, &probe4) == 1) {
         if (!is_public_ipv4_str(buf)) { return false; }
         t->is_ip = true;
     }
-    snprintf(t->host, sizeof(t->host), "%s", buf);
+    memcpy(t->host, buf, len);
+    t->host[len] = '\0';
     t->port = port;
     return true;
 }
