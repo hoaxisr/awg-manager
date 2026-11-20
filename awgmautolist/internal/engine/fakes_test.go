@@ -288,6 +288,12 @@ type fakeRoutes struct {
 	resolves int
 }
 
+func (f *fakeRoutes) setErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
+}
+
 func (f *fakeRoutes) Resolve(context.Context) (awgm.DirectPath, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
