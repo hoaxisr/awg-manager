@@ -84,3 +84,45 @@ func TestHealInvalidRuntimeConfig_NoRestartWhenNotInstalled(t *testing.T) {
 		svc.restartTimer.Stop()
 	}
 }
+
+func TestNeoControlCommandPrefersNeo(t *testing.T) {
+	dir := t.TempDir()
+	oldNeo, oldInit := neoCommand, hrneoInit
+	t.Cleanup(func() { neoCommand, hrneoInit = oldNeo, oldInit })
+	neoCommand = filepath.Join(dir, "neo")
+	hrneoInit = filepath.Join(dir, "S99hrneo")
+	if err := os.WriteFile(neoCommand, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hrneoInit, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := neoControlCommand(); got != neoCommand {
+		t.Fatalf("expected %s, got %s", neoCommand, got)
+	}
+}
+
+func TestNeoControlCommandFallsBackToInit(t *testing.T) {
+	dir := t.TempDir()
+	oldNeo, oldInit := neoCommand, hrneoInit
+	t.Cleanup(func() { neoCommand, hrneoInit = oldNeo, oldInit })
+	neoCommand = filepath.Join(dir, "missing-neo")
+	hrneoInit = filepath.Join(dir, "S99hrneo")
+	if err := os.WriteFile(hrneoInit, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := neoControlCommand(); got != hrneoInit {
+		t.Fatalf("expected fallback %s, got %s", hrneoInit, got)
+	}
+}
+
+func TestNeoControlCommandKeepsNeoWhenNothingExists(t *testing.T) {
+	dir := t.TempDir()
+	oldNeo, oldInit := neoCommand, hrneoInit
+	t.Cleanup(func() { neoCommand, hrneoInit = oldNeo, oldInit })
+	neoCommand = filepath.Join(dir, "missing-neo")
+	hrneoInit = filepath.Join(dir, "missing-init")
+	if got := neoControlCommand(); got != neoCommand {
+		t.Fatalf("expected %s, got %s", neoCommand, got)
+	}
+}

@@ -160,7 +160,7 @@ func (s *Service) Control(action string) error {
 
 	switch action {
 	case "start", "stop", "restart":
-		result, err := exec.Run(context.Background(), neoCommand, action)
+		result, err := exec.Run(context.Background(), neoControlCommand(), action)
 		if err != nil {
 			formatted := fmt.Errorf("neo %s: %w", action, exec.FormatError(result, err))
 			s.lastError = formatted.Error()
@@ -202,7 +202,7 @@ func (s *Service) scheduleRestart(reason string) {
 		s.restartTimer = nil
 		s.mu.Unlock()
 
-		result, err := exec.Run(context.Background(), neoCommand, "restart")
+		result, err := exec.Run(context.Background(), neoControlCommand(), "restart")
 		if err != nil {
 			s.appLog.Warn("restart", "neo", exec.FormatError(result, err).Error())
 			s.appLog.Warn("restart", "", fmt.Sprintf("neo restart failed: %v", exec.FormatError(result, err)))
