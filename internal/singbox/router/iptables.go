@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
@@ -976,6 +977,7 @@ type IPTables struct {
 	persistBlackhole        persistFn
 	cleanupBlackhole        func()
 	runCtClean              func(ctx context.Context)
+	realKernel              bool
 
 	// v6 — системная сторона v6-слоя (iptables6.go). Одним интерфейсом, а не
 	// россыпью полей: см. v6Backend.
@@ -984,6 +986,7 @@ type IPTables struct {
 
 func NewIPTables() *IPTables {
 	return &IPTables{
+		realKernel:     true,
 		restoreNoflush: sysiptables.RestoreNoflush,
 		runIPTables:    sysiptables.Run,
 		runIPTablesOut: sysiptables.RunOutput,
@@ -1017,6 +1020,76 @@ func NewIPTables() *IPTables {
 		},
 
 		v6: systemV6{},
+	}
+}
+
+type noopV6Backend struct{}
+
+func (noopV6Backend) Restore(context.Context, string) error { return nil }
+func (noopV6Backend) Run(context.Context, ...string) error  { return nil }
+func (noopV6Backend) RunOutput(context.Context, ...string) (string, error) {
+	return "", nil
+}
+func (noopV6Backend) PersistRules(string, string, string) error { return nil }
+func (noopV6Backend) PersistHook() error                        { return nil }
+func (noopV6Backend) RemoveFiles()                              {}
+func (noopV6Backend) CleanFlows(context.Context)                {}
+func (noopV6Backend) PersistBlackhole(string) error             { return nil }
+func (noopV6Backend) RemoveBlackholeFile()                      {}
+
+// NewNoopIPTables constructs an in-memory IPTables test double that records
+// install/uninstall transitions without executing host iptables/ip binaries or
+// writing host hook/rules files.
+func NewNoopIPTables() *IPTables {
+	var installed atomic.Bool
+	return &IPTables{
+		restoreNoflush: func(_ context.Context, input string) error {
+			if strings.Contains(input, ":"+ChainName+" ") {
+				installed.Store(true)
+			}
+			return nil
+		},
+		runIPTables: func(_ context.Context, args ...string) error {
+			for i := 0; i+1 < len(args); i++ {
+				if args[i] == "-X" && (args[i+1] == ChainName || args[i+1] == RedirectChain) {
+					installed.Store(false)
+					break
+				}
+			}
+			return nil
+		},
+		runIPTablesOut: func(_ context.Context, args ...string) (string, error) {
+			if !installed.Load() {
+				return "", nil
+			}
+			for i := 0; i+1 < len(args); i++ {
+				if args[i] == "-t" && args[i+1] == "mangle" {
+					return "-N " + ChainName + "\n-A PREROUTING -j " + ChainName + "\n", nil
+				}
+				if args[i] == "-t" && args[i+1] == "nat" {
+					return "-N " + RedirectChain + "\n-A PREROUTING -j " + RedirectChain + "\n", nil
+				}
+			}
+			return "", nil
+		},
+		runIP: func(_ context.Context, args ...string) error {
+			for _, a := range args {
+				if a == "del" {
+					return errors.New("ENOENT")
+				}
+			}
+			return nil
+		},
+		runIPOut:                func(context.Context, ...string) (string, error) { return "", nil },
+		persistRules:            func(_, _, _ string) error { return nil },
+		persistHook:             func(bool) error { return nil },
+		cleanupHook:             func() {},
+		persistPolicyTunDNSHook: func(string) error { return nil },
+		cleanupPolicyTunDNSHook: func() {},
+		persistBlackhole:        func(string) error { return nil },
+		cleanupBlackhole:        func() {},
+		runCtClean:              func(context.Context) {},
+		v6:                      noopV6Backend{},
 	}
 }
 
@@ -1065,18 +1138,32 @@ func (it *IPTables) drainFwmarkRules(ctx context.Context) {
 	}
 }
 
+var (
+	nfHookProcMu         sync.Mutex
+	netfilterHookLockDir = "/tmp/awgm-tproxy-nfhook.lock"
+)
+
+func acquireNetfilterHookLock() func() {
+	nfHookProcMu.Lock()
+	lockPath := netfilterHookLockDir
+	if lockPath == "" {
+		return func() { nfHookProcMu.Unlock() }
+	}
+	unlockFile := lockNetfilterHookFile(lockPath)
+	return func() {
+		unlockFile()
+		nfHookProcMu.Unlock()
+	}
+}
+
 func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
-	// Scrub any existing PREROUTING jumps to AWGM-TPROXY before inserting
-	// the new one. iptables-restore --noflush + -I PREROUTING 1 would
-	// otherwise stack a duplicate jump on every restart / mark-change /
-	// re-Enable: the stale rule from the previous policy/mark survives
-	// because mangle isn't flushed, and the new rule lands in front of it.
-	// Idempotent: a no-op when no prior jumps exist.
-	it.removeSourceHooks(ctx)
+	defer acquireNetfilterHookLock()()
 
 	mangle := buildMangleRestoreInput(spec)
 	nat := buildNatRestoreInput(spec)
 	input := mangle + nat
+	// Persist rules/hooks BEFORE mutating kernel netfilter so slow flash fsyncs
+	// never sit inside a window where live interception has been torn down.
 	if it.persistRules != nil {
 		if err := it.persistRules(input, mangle, nat); err != nil {
 			return fmt.Errorf("write netfilter rules: %w", err)
@@ -1093,9 +1180,18 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 	if (spec.DSCPOnly || spec.V4Off) && it.cleanupBlackhole != nil {
 		it.cleanupBlackhole()
 	}
+	// Snapshot prior PREROUTING jumps & comment-tagged rules BEFORE restore, then
+	// install the new rules atomically FIRST, and delete only the snapshotted old
+	// entries afterwards. Pre-scrubbing jumps before restore opens a fail-open
+	// leak window where PolicyName (with WAN permitted) sends LAN traffic to WAN
+	// during removeSourceHooks -> iptables-restore. Deleting exact pre-restore
+	// counts (c_old) after restore adds c_new copies leaves exact c_new rules,
+	// and preserves existing rules untouched if restoreNoflush fails.
+	staleDeletes := it.collectSourceHookDeletes(ctx)
 	if err := it.restoreNoflush(ctx, input); err != nil {
 		return fmt.Errorf("iptables-restore: %w", err)
 	}
+	it.applyRuleDeletes(ctx, staleDeletes)
 	// Drain ALL existing fwmark rules pointing at our table before
 	// adding a fresh one. Without this, every Install (Reconcile,
 	// daemon restart, mark-change, re-Enable) leaves a duplicate
@@ -1287,6 +1383,36 @@ func netfilterHookScript(includeBlackhole bool) string {
 	return fmt.Sprintf(`#!/bin/sh
 [ "$type" = "ip6tables" ] && exit 0
 case "$table" in mangle|nat) ;; *) exit 0 ;; esac
+LOCKFILE=%[19]q
+LOCKDIR_FB=""
+cleanup_nfhook_lock() {
+  [ -n "$LOCKDIR_FB" ] && rmdir "$LOCKDIR_FB" 2>/dev/null || true
+  LOCKDIR_FB=""
+}
+if [ -n "$LOCKFILE" ]; then
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>>"$LOCKFILE" 2>/dev/null || true
+    _lock_tries=0
+    while [ "$_lock_tries" -lt 500 ]; do
+      if flock -nx 9 2>/dev/null; then
+        break
+      fi
+      _lock_tries=$((_lock_tries + 1))
+      sleep 0.02 2>/dev/null || sleep 1
+    done
+  else
+    _lock_tries=0
+    while [ "$_lock_tries" -lt 500 ]; do
+      if mkdir "${LOCKFILE}.d" 2>/dev/null; then
+        LOCKDIR_FB="${LOCKFILE}.d"
+        trap 'cleanup_nfhook_lock' EXIT INT TERM
+        break
+      fi
+      _lock_tries=$((_lock_tries + 1))
+      sleep 0.02 2>/dev/null || sleep 1
+    done
+  fi
+fi
 # Best-effort kernel module preload (both paths need these). Absent .ko or
 # built-in modules are silently skipped — iptables-restore surfaces the verdict.
 KREL="$(uname -r)"
@@ -1324,6 +1450,16 @@ scrub_tagged() {
     | grep -E -- "--comment \"?$2" \
     | sed "s/-A $c/-D $c/" \
     | while IFS= read -r line; do /opt/sbin/iptables -w -t "$1" $line 2>/dev/null; done
+}
+# dedup_jumps <table> <chain>: collapse any duplicate PREROUTING jumps into <chain>.
+dedup_jumps() {
+  while :; do
+    _cnt=$(/opt/sbin/iptables -w -t "$1" -S PREROUTING 2>/dev/null | grep -cE -- "-[jg] $2(\$| )")
+    [ "${_cnt:-0}" -gt 1 ] || break
+    _line=$(/opt/sbin/iptables -w -t "$1" -S PREROUTING 2>/dev/null | grep -E -- "-[jg] $2(\$| )" | tail -n 1 | sed 's/-A PREROUTING/-D PREROUTING/')
+    [ -n "$_line" ] || break
+    /opt/sbin/iptables -w -t "$1" $_line 2>/dev/null || break
+  done
 }
 if pidof awgm-box >/dev/null 2>&1; then
   # sing-box ALIVE — real interception governs. Drop any lingering fail-closed
@@ -1383,10 +1519,12 @@ if pidof awgm-box >/dev/null 2>&1; then
     # a direct WAN NAT in conntrack and bypass tproxy for life — evict them.
     [ "$mangle_ok" -eq 0 ] && [ -x %[14]q ] && %[14]q
   fi
+  dedup_jumps mangle %[2]s
+  dedup_jumps nat %[6]s
 else
 %[10]sfi
 exit 0
-`, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain, DNSRescueTag, DNSNoPolicyTag, IngressTag, deadBranch, BlackholeChain, netfilterMangleRulesPath, netfilterNatRulesPath, netfilterCtCleanPath, bypassSavePath, bypassSetName, bypassset.SetMaxElem, SelfLoopTag)
+`, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain, DNSRescueTag, DNSNoPolicyTag, IngressTag, deadBranch, BlackholeChain, netfilterMangleRulesPath, netfilterNatRulesPath, netfilterCtCleanPath, bypassSavePath, bypassSetName, bypassset.SetMaxElem, SelfLoopTag, netfilterHookLockDir)
 }
 
 // ctCleanScript renders the poisoned-flow eviction script (issue #627). While
@@ -1512,6 +1650,7 @@ func refreshNetfilterHookIfPresent() {
 // teardown whose "nothing to remove" is indistinguishable from failure
 // without parsing iptables stderr; callers get no error.
 func (it *IPTables) Uninstall(ctx context.Context) {
+	defer acquireNetfilterHookLock()()
 	if it.cleanupHook != nil {
 		it.cleanupHook()
 	}
@@ -1531,46 +1670,52 @@ func (it *IPTables) Uninstall(ctx context.Context) {
 	_ = it.runIP(ctx, "route", "flush", "table", fmt.Sprintf("%d", RoutingTable))
 }
 
+type iptRuleDelete struct {
+	table string
+	args  []string
+}
+
 func (it *IPTables) removeSourceHooks(ctx context.Context) {
-	it.removeSourceHooksFromTable(ctx, "mangle", ChainName)
-	it.removeSourceHooksFromTable(ctx, "nat", RedirectChain)
+	it.applyRuleDeletes(ctx, it.collectSourceHookDeletes(ctx))
+}
+
+func (it *IPTables) collectSourceHookDeletes(ctx context.Context) []iptRuleDelete {
+	var dels []iptRuleDelete
+	dels = append(dels, it.collectSourceHookDeletesFromTable(ctx, "mangle", ChainName)...)
+	dels = append(dels, it.collectSourceHookDeletesFromTable(ctx, "nat", RedirectChain)...)
 	// DNS-RESCUE: direct PREROUTING REDIRECT rules in nat, tagged with
-	// `-m comment --comment AWGM-DNS-RESCUE`. Scrub before re-install
+	// `-m comment --comment AWGM-DNS-RESCUE`. Scrub stale entries
 	// so we don't accumulate duplicates and so port changes (e.g. NDMS
 	// reassigned ndnproxy:41100→41200) propagate cleanly.
-	it.removeCommentTaggedRulesFromTable(ctx, "nat", "PREROUTING", DNSRescueTag)
+	dels = append(dels, collectCommentTaggedRuleDeletes(ctx, it.runIPTablesOut, "nat", "PREROUTING", DNSRescueTag)...)
 	// Legacy: DNS-NOPOLICY MARK rules in mangle from 2.10.x and
 	// earlier. Always scrub on Install for upgrade migration — the
 	// rules are dead code now, but if left in place they'd accumulate
 	// across upgrades.
-	it.removeCommentTaggedRulesFromTable(ctx, "mangle", "PREROUTING", DNSNoPolicyTag)
+	dels = append(dels, collectCommentTaggedRuleDeletes(ctx, it.runIPTablesOut, "mangle", "PREROUTING", DNSNoPolicyTag)...)
 	// Ingress-scope: direct MARK/CONNMARK rules in mangle PREROUTING,
-	// tagged AWGM-INGRESS. Scrub before re-install so the list stays
-	// idempotent and removed interfaces don't leave dangling marks.
-	it.removeCommentTaggedRulesFromTable(ctx, "mangle", "PREROUTING", IngressTag)
-	// Self-loop DROP: direct mangle INPUT rules, same scrub-before-restore.
-	it.removeCommentTaggedRulesFromTable(ctx, "mangle", "INPUT", SelfLoopTag)
+	// tagged AWGM-INGRESS. Scrub so the list stays idempotent and removed
+	// interfaces don't leave dangling marks.
+	dels = append(dels, collectCommentTaggedRuleDeletes(ctx, it.runIPTablesOut, "mangle", "PREROUTING", IngressTag)...)
+	// Self-loop DROP: direct mangle INPUT rules.
+	dels = append(dels, collectCommentTaggedRuleDeletes(ctx, it.runIPTablesOut, "mangle", "INPUT", SelfLoopTag)...)
+	return dels
 }
 
-// removeCommentTaggedRulesFromTable scrubs every rule in `chain` whose
-// iptables-save output contains the given comment tag. Used for
-// DNS-NOPOLICY where rules are direct PREROUTING entries (not jumps
-// to a custom chain). The grep+sed pattern is the same approach as
-// XKeen's removal logic — robust to rule ordering and matcher changes
-// as long as the `-m comment --comment <tag>` survives serialisation.
-func (it *IPTables) removeCommentTaggedRulesFromTable(ctx context.Context, table, chain, tag string) {
-	// Разбор идёт через ШОВ роли (runIPTablesOut), а не прямым sysexec: иначе
-	// снос невидим тесту, и его выпил остаётся зелёным. "-w" добавляет сам
-	// sysiptables.RunOutput.
-	removeCommentTaggedRules(ctx, it.runIPTablesOut, it.runIPTables, table, chain, tag)
+func (it *IPTables) applyRuleDeletes(ctx context.Context, dels []iptRuleDelete) {
+	for _, d := range dels {
+		_ = it.runIPTables(ctx, d.args...)
+	}
 }
 
-// removeCommentTaggedRules — общий для iptables и ip6tables снос по тегу.
-func removeCommentTaggedRules(ctx context.Context, runOut runOutFn, run runFn, table, chain, tag string) {
+// collectCommentTaggedRuleDeletes collects `-D <chain> ...` commands for
+// every rule in `chain` whose `-S` dump contains the given comment tag.
+func collectCommentTaggedRuleDeletes(ctx context.Context, runOut runOutFn, table, chain, tag string) []iptRuleDelete {
 	out, err := runOut(ctx, "-t", table, "-S", chain)
 	if err != nil {
-		return
+		return nil
 	}
+	var dels []iptRuleDelete
 	for _, line := range strings.Split(out, "\n") {
 		if !strings.Contains(line, `--comment "`+tag+`"`) && !strings.Contains(line, `--comment `+tag) {
 			continue
@@ -1580,19 +1725,28 @@ func removeCommentTaggedRules(ctx context.Context, runOut runOutFn, run runFn, t
 		}
 		delLine := "-D " + strings.TrimPrefix(line, "-A ")
 		args := append([]string{"-t", table}, strings.Fields(delLine)...)
-		_ = run(ctx, args...)
+		dels = append(dels, iptRuleDelete{table: table, args: args})
+	}
+	return dels
+}
+
+// removeCommentTaggedRules — общий для iptables и ip6tables снос по тегу.
+func removeCommentTaggedRules(ctx context.Context, runOut runOutFn, run runFn, table, chain, tag string) {
+	for _, d := range collectCommentTaggedRuleDeletes(ctx, runOut, table, chain, tag) {
+		_ = run(ctx, d.args...)
 	}
 }
 
-func (it *IPTables) removeSourceHooksFromTable(ctx context.Context, table, chain string) {
+func (it *IPTables) collectSourceHookDeletesFromTable(ctx context.Context, table, chain string) []iptRuleDelete {
 	out, err := it.runIPTablesOut(ctx, "-t", table, "-S", "PREROUTING")
 	if err != nil {
-		return
+		return nil
 	}
 	// Install рендерит `-j` (:519, :521); `-g` принимается на случай ручных
 	// правок и старых версий — пином не покрыт.
 	jumpJ := "-j " + chain
 	gotoG := "-g " + chain
+	var dels []iptRuleDelete
 	for _, line := range strings.Split(out, "\n") {
 		if !strings.Contains(line, jumpJ) && !strings.Contains(line, gotoG) {
 			continue
@@ -1603,8 +1757,13 @@ func (it *IPTables) removeSourceHooksFromTable(ctx context.Context, table, chain
 		}
 		deleteLine := strings.Replace(line, "-A PREROUTING", "-D PREROUTING", 1)
 		args := append([]string{"-t", table}, strings.Fields(deleteLine)...)
-		_ = it.runIPTables(ctx, args...)
+		dels = append(dels, iptRuleDelete{table: table, args: args})
 	}
+	return dels
+}
+
+func (it *IPTables) removeSourceHooksFromTable(ctx context.Context, table, chain string) {
+	it.applyRuleDeletes(ctx, it.collectSourceHookDeletesFromTable(ctx, table, chain))
 }
 
 // EnsureRouterNetfilterModules best-effort preloads the remaining xt_*
@@ -1624,6 +1783,8 @@ func EnsureRouterNetfilterModules(ctx context.Context) []error {
 		"xt_conntrack",
 		"xt_pkttype",
 		"xt_dscp",
+		"xt_set",
+		"xt_multiport",
 	} {
 		err := ensureKernelModuleFn(ctx, name)
 		if err == nil || errors.Is(err, ErrNetfilterComponentMissing) {
@@ -1691,14 +1852,17 @@ func (it *IPTables) probeAll(ctx context.Context) (iptState, error) {
 	}
 	mChain, mJump := scanChain(mangleDump, ChainName)
 	bChain, bJump := scanChain(mangleDump, BlackholeChain)
+	cloudMangleChain, _ := scanChain(mangleDump, cloudOutputMangleChain)
+	cloudPreChain, _ := scanChain(mangleDump, cloudOutputPreChain)
 	natDump, err := it.runIPTablesOut(ctx, "-t", "nat", "-S")
 	if err != nil {
 		return iptState{}, err
 	}
 	nChain, nJump := scanChain(natDump, RedirectChain)
+	cloudChain, _ := scanChain(natDump, cloudOutputChain)
 	return iptState{
 		installed: mChain && nChain,
-		anyChain:  mChain || nChain,
+		anyChain:  mChain || nChain || cloudChain || cloudMangleChain || cloudPreChain,
 		jumps:     mChain && nChain && mJump && nJump,
 		blackhole: bChain && bJump,
 	}, nil

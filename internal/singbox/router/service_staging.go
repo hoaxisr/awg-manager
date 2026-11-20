@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -64,6 +65,13 @@ func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.Validation
 		// orchestratorApplyNow выполнит policy-tun runtime verification.
 		if applyErr := s.orchestratorApplyNow(); applyErr != nil {
 			return res, applyErr
+		}
+		if s.deps.Settings != nil {
+			if st, serr := s.deps.Settings.Load(); serr == nil && strings.TrimSpace(st.SingboxRouter.KeenDNSCloudOutbound) != "" {
+				if cerr := s.reconcileCloudOutput(ctx, st.SingboxRouter, st.SingboxManuallyStopped); cerr != nil {
+					s.appLog.Warn("keendns-cloud", "", "reconcile KeenDNS Cloud after staging apply: "+cerr.Error())
+				}
+			}
 		}
 		// The applied active configuration changed. Invalidate synchronously;
 		// SSE delivery is not part of the coverage correctness protocol.
@@ -168,31 +176,50 @@ func (s *ServiceImpl) syncDraftRouterSettings() error {
 	return s.deps.Orch.SaveDraft(orchestrator.SlotRouter, out)
 }
 
-// syncDraftSniffRule приводит системное правило sniff (`{"action":"sniff"}`
+// isSystemSniffDraftMap reports a raw JSON route rule matching the system sniff
+// rule (`{"action":"sniff"}` with optional `"timeout"` and no matchers).
+func isSystemSniffDraftMap(m map[string]any) bool {
+	if m["action"] != "sniff" {
+		return false
+	}
+	for k := range m {
+		if k != "action" && k != "timeout" {
+			return false
+		}
+	}
+	return true
+}
+
+// syncDraftSniffRule приводит системное правило sniff (`{"action":"sniff", ...}`
 // без условий, см. isSystemSniffRule) в route.rules черновика к want: снимает
-// все такие правила или ставит одно первым, как EnsureSystemRules.
+// все такие правила или ставит одно первым (с DefaultSniffTimeout), как EnsureSystemRules.
 func syncDraftSniffRule(route map[string]any, want bool) bool {
 	rules, _ := route["rules"].([]any)
 	kept := make([]any, 0, len(rules))
 	has := false
+	changed := false
 	for _, v := range rules {
-		if m, ok := v.(map[string]any); ok && len(m) == 1 && m["action"] == "sniff" {
+		if m, ok := v.(map[string]any); ok && isSystemSniffDraftMap(m) {
 			has = true
 			if !want {
 				continue
+			}
+			if t, _ := m["timeout"].(string); t == "" {
+				m["timeout"] = DefaultSniffTimeout
+				changed = true
 			}
 		}
 		kept = append(kept, v)
 	}
 	switch {
 	case want && !has:
-		route["rules"] = append([]any{map[string]any{"action": "sniff"}}, kept...)
+		route["rules"] = append([]any{map[string]any{"action": "sniff", "timeout": DefaultSniffTimeout}}, kept...)
 		return true
 	case !want && has:
 		route["rules"] = kept
 		return true
 	}
-	return false
+	return changed
 }
 
 // syncDraftTunExternal переносит флаг external_configuration tun-in из

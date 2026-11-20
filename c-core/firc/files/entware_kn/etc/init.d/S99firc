@@ -1,0 +1,446 @@
+#!/bin/sh
+
+ENABLED=yes
+PROCS=fircd
+ARGS="--output-floor error"
+PREARGS=""
+DESC="firc"
+PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+UPTIME_MAX_BORDER=300
+# The daemon's run dir and socket; CI checks these match paths.h and the netfilter.d hook.
+RUNDIR=/tmp/firc
+SOCK="$RUNDIR/firc.sock"
+# Kept outside the run dir: `fircd --purge` removes the run dir and must find only the daemon's files.
+INITDIR=/tmp/firc-init
+# /tmp is world-writable and root acts on these files: replace anything here that is not our own directory.
+ensure_initdir() {
+  if [ -e "$INITDIR" ] || [ -L "$INITDIR" ]; then
+    if [ -L "$INITDIR" ] || [ ! -d "$INITDIR" ] || [ ! -O "$INITDIR" ]; then
+      rm -rf "$INITDIR" 2>/dev/null
+    fi
+  fi
+  [ -d "$INITDIR" ] || mkdir -m 0700 "$INITDIR" 2>/dev/null
+  [ -d "$INITDIR" ] && [ ! -L "$INITDIR" ] && [ -O "$INITDIR" ] || return 1
+  chmod 0700 "$INITDIR" 2>/dev/null
+  return 0
+}
+LOOPPID="$INITDIR/startup_loop.pid"
+# Left by `stop`: a start already under way must not spawn the boot loop behind it.
+STOPPED="$INITDIR/.stopped"
+# Explicit manager disable survives reboot and is only removed by user enable.
+DISABLED=/opt/etc/firc/.awgm-disabled
+# /opt may mount late, so the boot window also counts from this script's first run.
+FIRSTRUN="$INITDIR/.first-run"
+# Seconds from launch to answering on the socket; a younger daemon without one is still starting.
+START_BUDGET=60
+
+ACTION=$1
+
+ansi_red="\033[1;31m";
+ansi_white="\033[1;37m";
+ansi_green="\033[1;32m";
+ansi_yellow="\033[1;33m";
+ansi_blue="\033[1;34m";
+ansi_bell="\007";
+ansi_blink="\033[5m";
+ansi_std="\033[m";
+ansi_rev="\033[7m";
+ansi_ul="\033[4m";
+
+version() {
+  fircd --version 2>/dev/null | cut -d" " -f1
+}
+
+# Uptime, not wall clock: NTP steps the clock after boot.
+now_s() {
+    cut -d. -f1 /proc/uptime
+}
+get_uptime() {
+    now_s
+}
+
+in_boot_window() {
+  U=`get_uptime`
+  [ "$U" -le "$UPTIME_MAX_BORDER" ] && return 0
+  if [ ! -f "$FIRSTRUN" ]; then
+    ensure_initdir && echo "$U" > "$FIRSTRUN" 2>/dev/null
+  fi
+  FIRST=
+  read FIRST 2>/dev/null < "$FIRSTRUN"
+  [ -n "$FIRST" ] || return 1
+  [ "`expr $U - $FIRST`" -le "$UPTIME_MAX_BORDER" ]
+}
+
+# Ready means the socket accepts a connect; a pid or a stale socket file does not count.
+SOCAT_CT=",connect-timeout=2"
+SOCAT_PROBE=`socat -u /dev/null UNIX-CONNECT:/nonexistent/firc.sock$SOCAT_CT 2>&1`
+SOCAT_RC=$?
+if [ "$SOCAT_RC" -gt 1 ] || ! command -v socat > /dev/null 2>&1 || echo "$SOCAT_PROBE" | grep -q 'unknown option'; then
+  SOCAT_CT=none
+  if [ ! -f "$INITDIR/.socat-warned" ]; then
+    logger "$DESC: socat is not usable (missing, broken or too old); readiness is judged by the socket file and a pid only, and a wedged daemon is not restarted."
+    ensure_initdir && touch "$INITDIR/.socat-warned" 2>/dev/null
+  fi
+fi
+ready() {
+  [ -S "$SOCK" ] || return 1
+  if [ "$SOCAT_CT" = none ]; then
+    [ -n "`pidof $PROC`" ]
+    return
+  fi
+  socat -u /dev/null UNIX-CONNECT:"$SOCK"$SOCAT_CT > /dev/null 2>&1
+}
+
+# Clock ticks since boot (/proc/<pid>/stat field 22); tells a live pid from a reused one.
+starttime_of() {
+  { sed -e 's/.*) //' "/proc/$1/stat"; } 2>/dev/null | cut -d' ' -f20
+}
+
+daemon_age() {
+  DP=`pidof $PROC | tr ' ' '\n' | sort -n | head -1`
+  [ -n "$DP" ] || return 1
+  ST=`starttime_of "$DP"`
+  [ -n "$ST" ] || return 1
+  expr `now_s` - $ST / 100
+}
+
+# The daemon reads SIGTERM on its event loop, so a stuck one needs KILL.
+kill_daemon() {
+  kill `pidof $PROC` 2>/dev/null
+  COUNTER=0
+  while [ -n "`pidof $PROC`" -a "$COUNTER" -lt "$1" ]; do
+    sleep 1
+    COUNTER=`expr $COUNTER + 1`
+  done
+  if [ -n "`pidof $PROC`" ]; then
+    logger "$DESC did not stop in $1 s; killing it."
+    kill -9 `pidof $PROC` 2>/dev/null
+    sleep 1
+  fi
+  [ -z "`pidof $PROC`" ]
+}
+
+# 0: nothing in the way; 1: still inside its start budget; 2: would not die.
+clear_wedged() {
+  [ -n "`pidof $PROC`" ] || return 0
+  AGE=`daemon_age`
+  if [ -n "$AGE" ] && [ "$AGE" -lt "$START_BUDGET" ]; then
+    return 1
+  fi
+  logger "$DESC has a pid but does not answer; killing it."
+  kill_daemon 5 || return 2
+  return 0
+}
+
+wait_ready() {
+  wait_up "$1"
+  R=$?
+  touch "$CHECKED" 2>/dev/null
+  return $R
+}
+
+# The launch is a backgrounded subshell, so a missing pid counts only after the first second.
+wait_up() {
+  DEADLINE=`expr $(now_s) + $1`
+  ready && return 0
+  while [ "`now_s`" -lt "$DEADLINE" ]; do
+    sleep 1
+    ready && return 0
+    [ -n "`pidof $PROC`" ] || return 1
+  done
+  return 1
+}
+
+TUNNELS=/opt/etc/firc/tunnels.yaml
+TUN_DEV=/dev/net/tun
+load_tun() {
+  [ -f "$TUNNELS" ] || return 0
+  [ -c "$TUN_DEV" ] && return 0
+  modprobe tun 2>/dev/null || insmod tun 2>/dev/null
+  [ -c "$TUN_DEV" ] || logger "$DESC: $TUN_DEV is missing and the tun module did not load; tunnels cannot start."
+}
+
+LASTOUT="$INITDIR/fircd.last"
+CHECKED="$INITDIR/.start-checked"
+start_lines() {
+  END=`expr $(now_s) + $START_BUDGET + 5`
+  while [ ! -e "$CHECKED" ] && [ "`now_s`" -lt "$END" ]; do
+    l=
+    if IFS= read -t 1 -r l || [ -n "$l" ]; then
+      printf '%s\n' "$l" > "$1"
+      logger -t $PROC "$l"
+    elif [ -z "`pidof $PROC`" ]; then
+      break
+    fi
+  done
+  exec logger -t $PROC
+}
+
+# Detached from the caller's descriptors, or `$(S99firc start)` would wait for the daemon to exit.
+launch() {
+  [ -e "$DISABLED" ] && return 8
+  load_tun
+  KEEP=/dev/null
+  ensure_initdir && rm -f "$LASTOUT" "$CHECKED" && KEEP="$LASTOUT"
+  # reset HUP: the boot loop ignores it, and an ignored disposition survives exec
+  ( trap - HUP; exec > /dev/null 2>&1 < /dev/null; $PREARGS $PROC $ARGS 2>&1 | start_lines "$KEEP" ) &
+}
+
+say_last() {
+  sleep 1
+  L=
+  [ -f "$LASTOUT" ] && read -r L < "$LASTOUT"
+  case "$L" in [0-9][0-9][0-9][0-9]-*Z\ *) L=${L#* } ;; esac
+  [ -n "$L" ] && echo "$DESC: the daemon's last line: $L" >&2
+}
+
+# The pid file holds pid and start time; a reused pid is stale and nothing is killed on its say-so.
+loop_pid() {
+  [ -f "$LOOPPID" ] || return 1
+  LP=
+  LST=
+  read LP LST 2>/dev/null < "$LOOPPID"
+  [ -n "$LP" ] && [ -n "$LST" ] || return 1
+  [ "`starttime_of "$LP"`" = "$LST" ] || return 1
+  echo "$LP"
+}
+
+# One loop per boot, claimed by an atomic hard link.
+claim_loop() {
+  [ -e "$STOPPED" ] && return 1
+  TMP="$LOOPPID.$SELF"
+  echo "$SELF `starttime_of $SELF`" > "$TMP" || { rm -f "$TMP"; return 1; }
+  if ! ln "$TMP" "$LOOPPID" 2>/dev/null; then
+    if loop_pid > /dev/null; then
+      rm -f "$TMP"
+      return 1
+    fi
+    rm -f "$LOOPPID"
+    ln "$TMP" "$LOOPPID" 2>/dev/null || { rm -f "$TMP"; return 1; }
+  fi
+  rm -f "$TMP"
+  [ "`loop_pid`" = "$SELF" ]
+}
+
+# Watches the daemon through the boot window and relaunches it with doubling backoff, up to a minute.
+startup_loop() {
+  trap '' HUP
+  read SELF _ < /proc/self/stat
+  claim_loop || return 0
+  STEP=5
+  BACKOFF=$STEP
+  ATTEMPT=0
+  while :; do
+    if [ -e "$DISABLED" ]; then
+      [ "`loop_pid`" = "$SELF" ] && rm -f "$LOOPPID"
+      return 0
+    fi
+    if ! in_boot_window; then
+      [ "`loop_pid`" = "$SELF" ] || return 0
+      break
+    fi
+    [ "`loop_pid`" = "$SELF" ] || return 0
+    if ready; then
+      BACKOFF=$STEP
+      sleep $STEP
+      continue
+    fi
+    sleep 1
+    if ready; then
+      continue
+    fi
+    if ! clear_wedged; then
+      sleep $STEP
+      continue
+    fi
+
+    ATTEMPT=`expr $ATTEMPT + 1`
+    logger "Starting $DESC (attempt #$ATTEMPT)."
+    launch
+    if wait_ready $START_BUDGET; then
+      logger "Started $DESC `version` (attempt #$ATTEMPT)."
+    else
+      logger "Failed to start $DESC (attempt #$ATTEMPT); next in $BACKOFF s."
+      SLEPT=0
+      while [ "$SLEPT" -lt "$BACKOFF" ] && in_boot_window; do
+        sleep $STEP
+        SLEPT=`expr $SLEPT + $STEP`
+      done
+      BACKOFF=`expr $BACKOFF \* 2`
+      [ "$BACKOFF" -gt 60 ] && BACKOFF=60
+    fi
+  done
+  # The pid file names this loop until the end, so a stop can still find it and kill it.
+  if ready || { sleep 2; ready; }; then
+    [ "`loop_pid`" = "$SELF" ] && rm -f "$LOOPPID"
+    return 0
+  fi
+  # A daemon inside its start budget gets the rest of it before it is judged.
+  DEADLINE=`expr $(now_s) + $START_BUDGET`
+  while ! ready && ! clear_wedged && [ "`now_s`" -lt "$DEADLINE" ]; do
+    sleep $STEP
+    [ "`loop_pid`" = "$SELF" ] || return 0
+  done
+  [ "`loop_pid`" = "$SELF" ] || return 0
+  ready && { [ "`loop_pid`" = "$SELF" ] && rm -f "$LOOPPID"; return 0; }
+  # Through clear_wedged, never kill_daemon: a daemon a later `start` launched must be spared.
+  if [ ! -e "$STOPPED" ] && ! ready; then
+    logger "Failed to start $DESC; giving up until the next start."
+    clear_wedged
+    case $? in
+      1) logger "$DESC was left starting and is not watched any more; run `basename $0` check." ;;
+      2) logger "$DESC does not answer and would not die; it still holds the instance lock." ;;
+    esac
+  fi
+  [ "`loop_pid`" = "$SELF" ] && rm -f "$LOOPPID"
+  ready && return 0
+  return 255
+}
+
+spawn_loop() {
+  # First: a planted pid file would otherwise stop the directory from ever being repaired.
+  ensure_initdir || {
+    logger "$DESC: cannot use $INITDIR; the daemon is not watched for the rest of the boot window."
+    return 1
+  }
+  loop_pid > /dev/null && return 0
+  [ -e "$STOPPED" ] && return 0
+  ( exec > /dev/null 2>&1 < /dev/null; startup_loop ) &
+}
+
+start() {
+  [ -e "$DISABLED" ] && { echo "$DESC disabled by user"; return 8; }
+  [ "$ENABLED" != "yes" ] && return 8
+  echo -e -n "$ansi_white Starting $DESC... $ansi_std"
+  rm -f "$STOPPED"
+
+  if ready; then
+    echo -e "            $ansi_yellow already running. $ansi_std"
+    in_boot_window && spawn_loop
+    return 0
+  fi
+  if ! clear_wedged; then
+    echo -e "            $ansi_yellow still starting. $ansi_std"
+    in_boot_window && spawn_loop
+    return 0
+  fi
+
+  launch
+  wait_ready $START_BUDGET
+  READY_NOW=
+  ready && READY_NOW=1
+
+  if in_boot_window; then
+    # The loop owns retries at boot; killing here would only race its relaunch.
+    spawn_loop
+  elif [ -z "$READY_NOW" ]; then
+    kill_daemon 5
+  fi
+
+  if [ -z "$READY_NOW" ]; then
+    echo -e "            $ansi_red failed. $ansi_std"
+    logger "Failed to start $DESC."
+    say_last
+    return 255
+  else
+    echo -e "            $ansi_green done. $ansi_std"
+    logger "Started $DESC `version`."
+    return 0
+  fi
+}
+
+mark_stopped() {
+  ensure_initdir && touch "$STOPPED" 2>/dev/null && return 0
+  logger "$DESC: cannot write $STOPPED; a start already under way may bring the daemon back."
+}
+
+stop() {
+  echo -e -n "$ansi_white Shutting down $DESC... $ansi_std"
+  mark_stopped
+  # Kill the boot loop first, or it brings the daemon back; trust its pid only if the dir is ours.
+  LOOP_KILLED=
+  if ensure_initdir; then
+    LP=`loop_pid` && {
+      kill "$LP" 2>/dev/null
+      LOOP_KILLED=1
+      COUNTER=0
+      while [ "`loop_pid`" = "$LP" ] && [ "$COUNTER" -lt 5 ]; do
+        sleep 1
+        COUNTER=`expr $COUNTER + 1`
+      done
+      [ "`loop_pid`" = "$LP" ] && kill -9 "$LP" 2>/dev/null
+    }
+    rm -f "$LOOPPID"
+  else
+    logger "$DESC: $INITDIR is not usable; the boot loop is not looked for."
+  fi
+  kill_daemon 60
+  if [ -n "$LOOP_KILLED" ]; then
+    # A loop killed right after launching leaves a daemon the sweep above missed.
+    sleep 1
+    [ -n "`pidof $PROC`" ] && kill_daemon 5
+  fi
+
+  if [ -n "`pidof $PROC`" ]; then
+    echo -e "            $ansi_red failed. $ansi_std"
+    logger "Failed to stop $DESC."
+    return 255
+  else
+    echo -e "            $ansi_green done. $ansi_std"
+    return 0
+  fi
+}
+
+check() {
+  echo -e -n "$ansi_white Checking $DESC... $ansi_std"
+  if ready; then
+    echo -e "            $ansi_green alive. $ansi_std";
+    return 0
+  elif [ -n "`pidof $PROC`" ]; then
+    echo -e "            $ansi_red has a pid but does not answer. $ansi_std";
+    return 1
+  else
+    echo -e "            $ansi_red dead. $ansi_std";
+    return 1
+  fi
+}
+
+reconfigure() {
+  SIGNAL=SIGHUP
+  echo -e "$ansi_white Sending $SIGNAL to $DESC... $ansi_std"
+  kill -$SIGNAL `pidof $PROC` 2>/dev/null
+}
+
+for PROC in $PROCS; do
+  case $ACTION in
+    start)
+      start
+      ;;
+    stop)
+      if [ -n "`pidof $PROC`" ] || [ -f "$LOOPPID" ]; then
+        stop
+      else
+        mark_stopped
+        echo -e "$ansi_white $DESC is not running. $ansi_std"
+      fi
+      ;;
+    restart)
+      if [ -n "`pidof $PROC`" ] || [ -f "$LOOPPID" ]; then
+        stop || exit 255
+      fi
+      start
+      ;;
+    check|status)
+      check
+      ;;
+    reconfigure)
+      reconfigure
+      ;;
+    enable|disable)
+      ;;
+    *)
+      echo -e "$ansi_white Usage: $0 (start|stop|restart|check|status|reconfigure)$ansi_std"
+      exit 1
+      ;;
+  esac
+done

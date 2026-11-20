@@ -5,6 +5,7 @@ import (
 	"net"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -32,9 +33,10 @@ type singboxCoreDeps struct {
 	// dir — каталог управляемого sing-box; пусто = singboxDataDir (applyDataDir), в проде — дефолт оператора
 	// (каталог рядом с бинарём).
 	dir string
-	// initialManuallyStopped — снимок Settings.SingboxManuallyStopped,
-	// прочитанный вызывающим (демон держит его в a.settings).
+	// initialManuallyStopped / initialStoppedByEngine — снимки флагов
+	// из Settings, прочитанные вызывающим (демон держит их в a.settings).
 	initialManuallyStopped bool
+	initialStoppedByEngine bool
 }
 
 type singboxCore struct {
@@ -77,6 +79,8 @@ func buildSingboxCore(d singboxCoreDeps) singboxCore {
 		// service toggling SingboxRouter) cannot silently overwrite it.
 		InitialManuallyStopped: d.initialManuallyStopped,
 		SetManuallyStopped:     d.settings.SetSingboxManuallyStopped,
+		InitialStoppedByEngine: d.initialStoppedByEngine,
+		SetStoppedByEngine:     d.settings.SetSingboxStoppedByEngine,
 		IsNDMSProxyEnabled:     d.settings.IsSingboxNDMSProxyEnabled,
 		Bus:                    d.bus,
 	})
@@ -138,7 +142,7 @@ func buildSingboxCore(d singboxCoreDeps) singboxCore {
 	// тоже не стартуем — гард сторожа по той же причине (F722).
 	orch.SetShouldRun(func() bool {
 		installed, _ := op.IsInstalled()
-		return installed && !op.IsManuallyStopped()
+		return installed && !op.IsAutoStartSuppressed()
 	})
 	// AWG3 imported endpoints — store owns awg3.json, service projects it into
 	// the 16-awg3.json slot. Constructed here so the SlotAwg3 HasContent closure
@@ -201,6 +205,7 @@ func (a *app) setupSingboxRuntime() {
 		dataDir:                a.dataDir,
 		dir:                    a.singboxDir,
 		initialManuallyStopped: a.settings.SingboxManuallyStopped,
+		initialStoppedByEngine: a.settings.SingboxStoppedByEngine,
 	})
 	a.singboxOp = core.op
 	a.sbOrch = core.orch
@@ -249,7 +254,8 @@ func (a *app) setupSingboxRuntime() {
 	// reflected after deviceProxySvc is constructed below.
 	if curSettings, err := a.settingsStore.Load(); err == nil && curSettings != nil {
 		mode := curSettings.SingboxRouter.RoutingMode
-		_ = a.sbOrch.SetEnabled(router.RouterSlotForMode(mode), curSettings.SingboxRouter.Enabled)
+		fircActive := strings.EqualFold(strings.TrimSpace(curSettings.SingboxRouter.RoutingEngine), "firc")
+		_ = a.sbOrch.SetEnabled(router.RouterSlotForMode(mode), curSettings.SingboxRouter.Enabled && !fircActive)
 		_ = a.sbOrch.SetEnabled(router.OtherRouterSlot(mode), false)
 		// Повторное примирение base здесь больше не нужно: разметка слотов
 		// меняет владельца dns.strategy, но дефолт лежит в 99-defaults.json —
@@ -291,11 +297,15 @@ func (a *app) setupSingboxRuntime() {
 		a.bootLog.Error("subscription-adapter", "load-from-disk", err.Error())
 	}
 	a.subSvc = subscription.NewService(a.subStore, a.subAdapter)
+	// Install strict materialization before any subscription scheduler starts.
+	a.subAdapter.SetUplinkBindingsFn(a.subSvc.UplinkBindings)
 	a.subSvc.SetAppLogger(a.loggingService)
 	// Gate subscription ProxyN creation on the global toggle (same flag the
 	// Operator uses for tunnels) so disabling it stops subscriptions from
 	// creating NDMS Proxy interfaces too.
-	a.subSvc.SetNDMSProxyEnabled(a.settingsStore.IsSingboxNDMSProxyEnabled)
+	a.subSvc.SetNDMSProxyEnabled(func() bool {
+		return a.settingsStore.IsSingboxNDMSProxyEnabled() && (a.singboxOp == nil || !a.singboxOp.AreProxiesParked())
+	})
 	if err := a.subSvc.LoadHappKeys(); err != nil {
 		a.bootLog.Warn("subscription-happ-keys", "load-from-disk", err.Error())
 	}

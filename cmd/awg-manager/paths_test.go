@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
@@ -153,5 +154,19 @@ func TestApplyDataDir_RunsBeforeCleanupAndService(t *testing.T) {
 		} else if i < apply {
 			t.Errorf("%s стоит ДО applyDataDir — каталог данных ещё не роздан", later)
 		}
+	}
+}
+
+func TestResolveFircConfigDir_ProductionUsesDefaultConfigDirAndSocket(t *testing.T) {
+	if got := resolveFircConfigDir(defaultDataDir); got != firc.DefaultConfigDir {
+		t.Fatalf("resolveFircConfigDir(%q) = %q, want %q", defaultDataDir, got, firc.DefaultConfigDir)
+	}
+	op := firc.NewOperator(firc.Options{ConfigDir: resolveFircConfigDir(defaultDataDir)})
+	if gotSock := op.Client().SocketPath(); gotSock != firc.DefaultSocketPath {
+		t.Fatalf("SocketPath = %q, want %q (must match S99firc RUNDIR)", gotSock, firc.DefaultSocketPath)
+	}
+	custom := filepath.Join(t.TempDir(), "data")
+	if got := resolveFircConfigDir(custom); got != filepath.Join(custom, "firc") {
+		t.Fatalf("resolveFircConfigDir(%q) = %q", custom, got)
 	}
 }

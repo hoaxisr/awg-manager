@@ -12,6 +12,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/uplink/sbconfig"
 )
 
 // SlotSubscriptionsMeta is the SlotMeta registered on startup.
@@ -34,6 +35,7 @@ const subscriptionPortMax = 11999
 // slotConfig is the in-memory shape persisted to 13-subscriptions.json.
 // It intentionally omits log/dns/experimental (those are in 00-base.json).
 type slotConfig struct {
+	DNS       map[string]any `json:"dns,omitempty"`
 	Inbounds  []any          `json:"inbounds"`
 	Outbounds []any          `json:"outbounds"`
 	Route     map[string]any `json:"route"`
@@ -70,9 +72,10 @@ type ClashSelector interface {
 // The adapter is safe for concurrent use — a single mutex guards all
 // state reads and writes.
 type OperatorAdapter struct {
-	orch  *orchestrator.Orchestrator
-	pm    ProxyRegistrar
-	clash ClashSelector
+	uplinkBindingsFn func() []sbconfig.Spec
+	orch             *orchestrator.Orchestrator
+	pm               ProxyRegistrar
+	clash            ClashSelector
 
 	// singboxFeaturesFn, when non-nil, is called once per flush() Pass 1 to
 	// fetch the current installed sing-box build tags (from
@@ -116,11 +119,18 @@ func (a *OperatorAdapter) SetSingboxFeaturesFn(fn func() []string) {
 // because mutations replace slice elements / the rules slice wholesale and
 // never edit inner outbound maps in place.
 type slotSnapshot struct {
+	dns             map[string]any
 	inbounds        []any
 	outbounds       []any
 	rules           []any
 	lastDropped     []DropReason
 	preFlushDropped []DropReason
+}
+
+func cloneAnySlice(in []any) []any {
+	out := make([]any, len(in))
+	copy(out, in)
+	return out
 }
 
 // beginIfNeededLocked snapshots the committed state on the first mutation of a
@@ -130,9 +140,10 @@ func (a *OperatorAdapter) beginIfNeededLocked() {
 		return
 	}
 	a.pending = &slotSnapshot{
-		inbounds:        append([]any(nil), a.cfg.Inbounds...),
-		outbounds:       append([]any(nil), a.cfg.Outbounds...),
-		rules:           append([]any(nil), a.routeRules()...),
+		dns:             a.cfg.DNS,
+		inbounds:        cloneAnySlice(a.cfg.Inbounds),
+		outbounds:       cloneAnySlice(a.cfg.Outbounds),
+		rules:           cloneAnySlice(a.routeRules()),
 		lastDropped:     append([]DropReason(nil), a.lastDropped...),
 		preFlushDropped: append([]DropReason(nil), a.preFlushDropped...),
 	}
@@ -140,6 +151,7 @@ func (a *OperatorAdapter) beginIfNeededLocked() {
 
 // restoreLocked reverts a.cfg to a snapshot. Caller MUST hold a.mu.
 func (a *OperatorAdapter) restoreLocked(s *slotSnapshot) {
+	a.cfg.DNS = s.dns
 	a.cfg.Inbounds = s.inbounds
 	a.cfg.Outbounds = s.outbounds
 	a.setRouteRules(s.rules)
@@ -183,10 +195,34 @@ func NewOperatorAdapter(orch *orchestrator.Orchestrator, pm ProxyRegistrar, clas
 // consistent with what is on disk. Missing file is treated as an empty
 // slot (not an error).
 func (a *OperatorAdapter) LoadFromDisk(configDir string) error {
+	return a.loadFromDisk(configDir, false)
+}
+
+// ReloadFromDisk resets the in-memory subscription slot state and reloads
+// 13-subscriptions.json from configDir (yielding an empty slot if missing).
+func (a *OperatorAdapter) ReloadFromDisk(configDir string) error {
+	return a.loadFromDisk(configDir, true)
+}
+
+// Reset clears the in-memory subscription slot state without touching disk.
+func (a *OperatorAdapter) Reset() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cfg = newEmptySlot()
+	a.pending = nil
+	a.loadErr = nil
+	a.lastDropped = nil
+	a.preFlushDropped = nil
+}
+
+func (a *OperatorAdapter) loadFromDisk(configDir string, resetMissing bool) error {
 	path := fmt.Sprintf("%s/13-subscriptions.json", configDir)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if resetMissing {
+				a.Reset()
+			}
 			return nil
 		}
 		// Файл есть, но прочитать его не вышло. Что в нём — неизвестно,
@@ -197,6 +233,9 @@ func (a *OperatorAdapter) LoadFromDisk(configDir string) error {
 		return fmt.Errorf("subscription adapter: load %s: %w", path, err)
 	}
 	if len(b) == 0 {
+		if resetMissing {
+			a.Reset()
+		}
 		return nil
 	}
 	a.mu.Lock()
@@ -221,6 +260,12 @@ func (a *OperatorAdapter) LoadFromDisk(configDir string) error {
 		cfg.Route = map[string]any{"rules": []any{}}
 	}
 	a.cfg = cfg
+	a.pending = nil
+	a.loadErr = nil
+	if resetMissing {
+		a.lastDropped = nil
+		a.preFlushDropped = nil
+	}
 	return nil
 }
 
@@ -696,6 +741,42 @@ func dropLoopExhaustedErr(dropped []DropReason) error {
 func (a *OperatorAdapter) flush() error {
 	if a.loadErr != nil {
 		return fmt.Errorf("%w: слот подписок не прочитан при старте (%v) — запись запрещена, иначе она стёрла бы подписки, которых нет в памяти", ErrValidation, a.loadErr)
+	}
+	if a.uplinkBindingsFn != nil {
+		specs := a.uplinkBindingsFn()
+		managed := len(specs) > 0
+		if servers, ok := a.cfg.DNS["servers"].([]any); ok {
+			for _, v := range servers {
+				if server, ok := v.(map[string]any); ok {
+					tag, _ := server["tag"].(string)
+					if strings.HasPrefix(tag, sbconfig.DNSPrefix) {
+						managed = true
+						break
+					}
+				}
+			}
+		}
+		if managed {
+			present := map[string]bool{}
+			for _, v := range a.cfg.Outbounds {
+				if ob, ok := v.(map[string]any); ok {
+					t, _ := ob["tag"].(string)
+					present[t] = true
+				}
+			}
+			active := make([]sbconfig.Spec, 0, len(specs))
+			for _, spec := range specs {
+				if present[spec.Tag] {
+					active = append(active, spec)
+				}
+			}
+			doc, err := sbconfig.Apply(map[string]any{"outbounds": a.cfg.Outbounds, "dns": a.cfg.DNS}, active)
+			if err != nil {
+				return fmt.Errorf("strict subscription uplink: %w", err)
+			}
+			a.cfg.Outbounds, _ = doc["outbounds"].([]any)
+			a.cfg.DNS, _ = doc["dns"].(map[string]any)
+		}
 	}
 	dropped := append([]DropReason(nil), a.preFlushDropped...)
 	a.preFlushDropped = nil

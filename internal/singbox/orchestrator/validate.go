@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -135,6 +136,13 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 	// after the scan.
 	var routeFinalSlots []Slot
 	var dnsFinalSlots []Slot
+	var cloudMark json.RawMessage
+	var cloudSlot Slot
+	type slotMark struct {
+		slot Slot
+		mark uint32
+	}
+	var marks []slotMark
 
 	var pending []validationSectionRefs
 
@@ -175,6 +183,9 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 			})
 			continue
 		}
+		if len(c.Route.DefaultMark) != 0 {
+			marks = append(marks, slotMark{slot: os.slot, mark: ParseRoutingMark(c.Route.DefaultMark)})
+		}
 		for _, ob := range c.Outbounds {
 			if ob.Tag == "" {
 				continue
@@ -209,6 +220,9 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 			}
 		}
 		for _, ib := range c.Inbounds {
+			if ib.Tag == KeenDNSCloudInboundTag || ib.Tag == KeenDNSCloudUDPInboundTag {
+				cloudSlot, cloudMark = os.slot, c.Route.DefaultMark
+			}
 			if ib.Type == "tun" {
 				hasTun = true
 			}
@@ -444,6 +458,24 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 		}
 	}
 
+	if cloudSlot != "" {
+		mark := ParseRoutingMark(cloudMark)
+		if mark == 0 {
+			errs = append(errs, ValidationError{
+				Slot: cloudSlot, Kind: "cloud-mark-conflict", InRule: "route.default_mark",
+				Message: "KeenDNS Cloud requires a nonzero default mark to avoid redirect loops",
+			})
+		}
+		for _, entry := range marks {
+			if entry.slot != cloudSlot && entry.mark != mark {
+				errs = append(errs, ValidationError{
+					Slot: entry.slot, Kind: "cloud-mark-conflict", InRule: "route.default_mark",
+					Message: fmt.Sprintf("default mark conflicts with [%s]", cloudSlot),
+				})
+			}
+		}
+	}
+
 	// Defense in depth: flag when more than one enabled slot sets a scalar
 	// `final`. sing-box merges these first-file-wins, so a second setter is
 	// silently shadowed. After #445 phase 1 the base slot no longer sets
@@ -567,6 +599,30 @@ func (o *Orchestrator) Validate() ValidationResult {
 	return o.validateLocked()
 }
 
+// KeenDNSCloudInboundTag and KeenDNSCloudUDPInboundTag identify the managed router OUTPUT listeners.
+const (
+	KeenDNSCloudInboundTag    = "awgm-keenetic-cloud-in"
+	KeenDNSCloudUDPInboundTag = "awgm-keenetic-cloud-udp-in"
+)
+
+// ParseRoutingMark reads the number and string forms supported by sing-box.
+// It returns zero for an absent or invalid mark.
+func ParseRoutingMark(raw json.RawMessage) uint32 {
+	var mark uint32
+	if json.Unmarshal(raw, &mark) == nil {
+		return mark
+	}
+	var encoded string
+	if json.Unmarshal(raw, &encoded) != nil {
+		return 0
+	}
+	value, err := strconv.ParseUint(encoded, 0, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(value)
+}
+
 type slotConfig struct {
 	Inbounds  []inboundJSON  `json:"inbounds,omitempty"`
 	Outbounds []outboundJSON `json:"outbounds,omitempty"`
@@ -597,6 +653,7 @@ type routeJSON struct {
 	Rules                 []ruleJSON          `json:"rules,omitempty"`
 	RuleSet               []ruleSetJSON       `json:"rule_set,omitempty"`
 	DefaultDomainResolver *domainResolverJSON `json:"default_domain_resolver,omitempty"`
+	DefaultMark           json.RawMessage     `json:"default_mark,omitempty"`
 }
 
 type domainResolverJSON struct {

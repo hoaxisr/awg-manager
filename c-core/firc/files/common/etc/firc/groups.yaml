@@ -1,0 +1,25 @@
+# Groups and their rules. A group may also carry a `list:` URL it fetches rules from.
+# The WebUI rewrites this file on every save, and comments here do not survive it.
+configVersion: 0.7.0
+groups:
+  - id: d663876a
+    name: Example
+    interface: nwg0
+    enable: false
+    rules:
+      - id: 6f34ee91
+        type: wildcard
+        rule: '*wildcard.example.com'
+        enable: true
+      - id: 00ae5f7c
+        type: regex
+        rule: '^.*.regex.example.com$'
+        enable: true
+      - id: 6120dc8a
+        type: domain
+        rule: 'domain.example.com'
+        enable: true
+      - id: b9751782
+        type: namespace
+        rule: 'namespace.example.com'
+        enable: true

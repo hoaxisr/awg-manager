@@ -16,6 +16,7 @@
 		DownloadSettings,
 		DnsRouteSettings,
 		IntegrationsSection,
+		FircIntegrationSection,
 		ThemeSchemeCard,
 		SettingsFooter,
 		UsageLevelCard,
@@ -469,6 +470,9 @@ $effect(() => {
 					{clashPortError}
 					onsaveClashPort={saveClashPort}
 				/>
+
+				<FircIntegrationSection />
+
 				</div>
 			</aside>
 

@@ -17,9 +17,105 @@ chmod 755 /opt/bin/awg-manager
 chmod 755 /opt/sbin/awg
 chmod 755 /opt/sbin/awgm-warpscout 2>/dev/null || true
 chmod 755 /opt/etc/init.d/S99awg-manager
+# Clean up legacy init scripts (processes are now owned directly by awg-manager daemon)
+for script in S95tproxy-server S99telemt S96telemt-raw; do
+    target="/opt/etc/init.d/$script"
+    if [ -f "$target" ]; then
+        "$target" stop 2>/dev/null || true
+        rm -f "$target"
+    fi
+    rm -f "/tmp/.awgm_${script}_enabled" 2>/dev/null || true
+done
 for hook in iflayerchanged ifcreated ifdestroyed ifipchanged; do
     chmod 755 "/opt/etc/ndm/${hook}.d/50-awg-manager.sh" 2>/dev/null || true
 done
+
+# Companion migration and symlinks
+chmod 755 /opt/etc/awg-manager/susanin/bin/susanin-agent 2>/dev/null || true
+chmod 755 /opt/etc/awg-manager/telemt/telemt 2>/dev/null || true
+
+# Migrate legacy directories to symlinks if they are standalone directories
+if [ -d /opt/etc/telemt ] && [ ! -L /opt/etc/telemt ]; then
+    mkdir -p /opt/etc/awg-manager/telemt
+    cp -a /opt/etc/telemt/* /opt/etc/awg-manager/telemt/ 2>/dev/null || true
+    rm -rf /opt/etc/telemt
+fi
+if [ -d /opt/susanin ] && [ ! -L /opt/susanin ]; then
+    mkdir -p /opt/etc/awg-manager/susanin
+    cp -a /opt/susanin/* /opt/etc/awg-manager/susanin/ 2>/dev/null || true
+    rm -rf /opt/susanin
+fi
+
+if [ -f /opt/etc/awg-manager/susanin/bin/susanin-agent ]; then
+    chmod 755 /opt/etc/awg-manager/susanin/bin/susanin-agent
+    rm -f /opt/bin/susanin-agent
+    ln -sf /opt/etc/awg-manager/susanin/bin/susanin-agent /opt/bin/susanin-agent
+    [ ! -e /opt/susanin ] && ln -sf /opt/etc/awg-manager/susanin /opt/susanin
+fi
+if [ -f /opt/etc/awg-manager/telemt/telemt ]; then
+    chmod 755 /opt/etc/awg-manager/telemt/telemt
+    rm -f /opt/bin/telemt
+    ln -sf /opt/etc/awg-manager/telemt/telemt /opt/bin/telemt
+    [ ! -e /opt/etc/telemt ] && ln -sf /opt/etc/awg-manager/telemt /opt/etc/telemt
+fi
+
+# Persistent DNAT hook for tproxy-server (8085)
+mkdir -p /opt/etc/ndm/netfilter.d
+cat << 'EOF' > /opt/etc/ndm/netfilter.d/64-awgm-tproxy-dnat.sh
+#!/bin/sh
+# AWG Manager: DNAT for tproxy-server (8085) to loopback
+[ "$type" = "ip6tables" ] && exit 0
+sysctl -w net.ipv4.conf.all.route_localnet=1 >/dev/null 2>&1
+sysctl -w net.ipv4.conf.default.route_localnet=1 >/dev/null 2>&1
+for iface in /proc/sys/net/ipv4/conf/*; do
+    [ -f "$iface/route_localnet" ] && echo 1 > "$iface/route_localnet" 2>/dev/null
+done
+
+IPTABLES=/opt/sbin/iptables
+[ -x "$IPTABLES" ] || IPTABLES=iptables
+run() { "$IPTABLES" -w "$@" 2>/dev/null || "$IPTABLES" "$@" 2>/dev/null; }
+
+if [ "$table" = "filter" ] || [ -z "$table" ]; then
+    run -C INPUT -p tcp --dport 8085 -j ACCEPT 2>/dev/null || run -I INPUT 1 -p tcp --dport 8085 -j ACCEPT
+fi
+
+if [ "$table" = "nat" ] || [ -z "$table" ]; then
+    run -t nat -C PREROUTING -p tcp --dport 8085 -j DNAT --to-destination 127.0.0.1:8085 2>/dev/null || \
+    run -t nat -I PREROUTING 1 -p tcp --dport 8085 -j DNAT --to-destination 127.0.0.1:8085
+
+    run -t nat -C OUTPUT -p tcp -o lo -d 127.0.0.1 --dport 8085 -j ACCEPT 2>/dev/null || \
+    run -t nat -I OUTPUT 1 -p tcp -o lo -d 127.0.0.1 --dport 8085 -j ACCEPT
+
+    run -t nat -C OUTPUT -p tcp --dport 8085 -j DNAT --to-destination 127.0.0.1:8085 2>/dev/null || \
+    run -t nat -A OUTPUT -p tcp --dport 8085 -j DNAT --to-destination 127.0.0.1:8085
+fi
+exit 0
+EOF
+chmod 755 /opt/etc/ndm/netfilter.d/64-awgm-tproxy-dnat.sh
+/opt/etc/ndm/netfilter.d/64-awgm-tproxy-dnat.sh 2>/dev/null || true
+
+# Ensure Keenetic HTTP proxy preserves Host header for tproxy-server (8085) and cdndispatcher (9009)
+NDM_CMD=""
+if command -v ndmc >/dev/null 2>&1; then
+    NDM_CMD="ndmc -c"
+elif [ -x /bin/ndmc ]; then
+    NDM_CMD="/bin/ndmc -c"
+elif command -v ndmq >/dev/null 2>&1; then
+    NDM_CMD="ndmq -x -p"
+fi
+
+if [ -n "$NDM_CMD" ]; then
+    for p in tg xy; do
+        $NDM_CMD "ip http proxy $p preserve-host" >/dev/null 2>&1 || true
+    done
+    if command -v curl >/dev/null 2>&1; then
+        proxies=$(curl -s http://127.0.0.1:79/rci/show/ip/http/proxy 2>/dev/null | grep -B 3 -E '127\.0\.0\.1:(9009|8085)' | grep -E '^\s*"[a-zA-Z0-9_-]+":' | tr -d ' ":')
+        for p in $proxies; do
+            [ -n "$p" ] && $NDM_CMD "ip http proxy $p preserve-host" >/dev/null 2>&1 || true
+        done
+    fi
+    $NDM_CMD "system configuration save" >/dev/null 2>&1 || true
+fi
 
 # Clean up legacy files
 rm -f /opt/etc/ndm/ifstatechanged.d/50-awg-manager.sh
@@ -32,7 +128,193 @@ rm -rf /opt/share/www/awg-manager
 rm -rf /opt/var/lock/awg-manager /opt/var/run/awg-manager
 rm -f /opt/tmp/awg-manager-upgrade.log /opt/tmp/awg-manager-stderr.log
 
-# Start awg-manager
+# BEGIN_FIRC_LEGACY_CFG_RESTORE
+# Restore user /opt/etc/firc/* configuration preserved by preinst when upgrading
+# from a legacy bundled awg-manager installation where FIRC was inactive.
+# - Missing targets are staged in a unique temporary directory inside the target
+#   parent directory ($parent_dir/.restore.XXXXXX/staged), verified for type and
+#   exact content/link target, and published via atomic no-clobber rename (`mv -n`).
+# - Existing targets are never overwritten; if an existing or concurrently created
+#   target differs from the preserved backup (e.g. a left-behind partial file
+#   without provenance proof), neither the target nor $PRESERVE_DIR is deleted and
+#   postinst exits non-zero.
+PRESERVE_DIR=/opt/var/cache/awg-manager/firc-legacy-cfg-preserve
+verify_firc_entry_match() {
+    v_src="$1"
+    v_dst="$2"
+    if [ -L "$v_src" ]; then
+        [ -L "$v_dst" ] || return 1
+        src_link=$(readlink "$v_src" 2>/dev/null) || return 1
+        dst_link=$(readlink "$v_dst" 2>/dev/null) || return 1
+        [ "$src_link" = "$dst_link" ]
+        return $?
+    elif [ -f "$v_src" ] && [ ! -L "$v_src" ]; then
+        [ -f "$v_dst" ] && [ ! -L "$v_dst" ] && cmp -s "$v_src" "$v_dst"
+        return $?
+    fi
+    return 1
+}
+
+restore_firc_tree() {
+    (
+        list_parent=$(dirname "$PRESERVE_DIR")
+        if [ -L "$list_parent" ] || { [ -e "$list_parent" ] && [ ! -d "$list_parent" ]; }; then
+            echo "ERROR: invalid FIRC list parent $list_parent" >&2
+            exit 1
+        fi
+        if ! mkdir -p "$list_parent"; then
+            echo "ERROR: failed to create FIRC list parent $list_parent" >&2
+            exit 1
+        fi
+        list_file=$(mktemp "$list_parent/.firc-list.XXXXXX" 2>/dev/null || true)
+        if [ -z "$list_file" ] || [ ! -f "$list_file" ] || [ -L "$list_file" ]; then
+            rm -f "$list_file" 2>/dev/null || true
+            echo "ERROR: failed to create temporary FIRC enumeration list in $list_parent" >&2
+            exit 1
+        fi
+        trap 'rm -f "$list_file" 2>/dev/null || true' EXIT INT TERM HUP
+        if ! chmod 600 "$list_file"; then
+            echo "ERROR: failed to secure temporary FIRC enumeration list $list_file" >&2
+            exit 1
+        fi
+        if ! (cd "$PRESERVE_DIR" && find . > "$list_file"); then
+            echo "ERROR: failed to enumerate preserved FIRC config tree $PRESERVE_DIR" >&2
+            exit 1
+        fi
+        if [ ! -s "$list_file" ]; then
+            echo "ERROR: preserved FIRC enumeration list $list_file is unexpectedly empty" >&2
+            exit 1
+        fi
+
+        tree_err=0
+        while IFS= read -r rel || [ -n "$rel" ]; do
+            rel="${rel#./}"
+            if [ -z "$rel" ] || [ "$rel" = "." ]; then
+                continue
+            fi
+            case "$(basename "$rel")" in
+                .stage.*|.restore.*|.firc-list.*) continue ;;
+            esac
+            src="$PRESERVE_DIR/$rel"
+            dst="/opt/etc/firc/$rel"
+            if [ -d "$src" ] && [ ! -L "$src" ]; then
+                if [ -L "$dst" ] || { [ -e "$dst" ] && [ ! -d "$dst" ]; }; then
+                    echo "ERROR: FIRC config target directory $dst is not a directory" >&2
+                    tree_err=1
+                    continue
+                fi
+                if [ ! -d "$dst" ]; then
+                    if ! mkdir -p "$dst"; then
+                        echo "ERROR: failed to create directory $dst" >&2
+                        tree_err=1
+                        continue
+                    fi
+                fi
+                continue
+            fi
+            parent_dir=$(dirname "$dst")
+            if [ -L "$parent_dir" ] || { [ -e "$parent_dir" ] && [ ! -d "$parent_dir" ]; }; then
+                echo "ERROR: FIRC config parent $parent_dir is not a directory" >&2
+                tree_err=1
+                continue
+            fi
+            if [ ! -d "$parent_dir" ]; then
+                if ! mkdir -p "$parent_dir"; then
+                    echo "ERROR: failed to create parent directory $parent_dir" >&2
+                    tree_err=1
+                    continue
+                fi
+            fi
+
+            if [ -e "$dst" ] || [ -L "$dst" ]; then
+                if ! verify_firc_entry_match "$src" "$dst"; then
+                    echo "ERROR: existing FIRC config $dst differs from preserved backup $src; keeping destination and backup intact" >&2
+                    tree_err=1
+                fi
+                continue
+            fi
+
+            tmp_dir=$(mktemp -d "$parent_dir/.restore.XXXXXX" 2>/dev/null || true)
+            if [ -z "$tmp_dir" ] || [ ! -d "$tmp_dir" ] || [ -L "$tmp_dir" ]; then
+                echo "ERROR: failed to create staging directory in $parent_dir" >&2
+                tree_err=1
+                continue
+            fi
+            tmp_dst="$tmp_dir/staged"
+            if ! cp -a "$src" "$tmp_dst"; then
+                rm -rf "$tmp_dir"
+                echo "ERROR: failed to restore FIRC config $dst from $src" >&2
+                tree_err=1
+                continue
+            fi
+            if ! verify_firc_entry_match "$src" "$tmp_dst"; then
+                rm -rf "$tmp_dir"
+                echo "ERROR: staged FIRC config verification failed for $dst" >&2
+                tree_err=1
+                continue
+            fi
+            if ! mv -n "$tmp_dst" "$dst"; then
+                rm -rf "$tmp_dir"
+                if [ -e "$dst" ] || [ -L "$dst" ]; then
+                    if ! verify_firc_entry_match "$src" "$dst"; then
+                        echo "ERROR: concurrent FIRC config $dst differs from preserved backup $src; keeping destination and backup intact" >&2
+                        tree_err=1
+                    fi
+                    continue
+                fi
+                echo "ERROR: failed to rename staged FIRC config into $dst" >&2
+                tree_err=1
+                continue
+            fi
+            if [ -e "$tmp_dst" ] || [ -L "$tmp_dst" ]; then
+                rm -rf "$tmp_dir"
+                if [ -e "$dst" ] || [ -L "$dst" ]; then
+                    if ! verify_firc_entry_match "$src" "$dst"; then
+                        echo "ERROR: concurrent FIRC config $dst differs from preserved backup $src; keeping destination and backup intact" >&2
+                        tree_err=1
+                    fi
+                else
+                    echo "ERROR: staged FIRC config $dst was not published" >&2
+                    tree_err=1
+                fi
+                continue
+            fi
+            rm -rf "$tmp_dir"
+            if ! verify_firc_entry_match "$src" "$dst"; then
+                echo "ERROR: restored FIRC config verification failed for $dst" >&2
+                tree_err=1
+                continue
+            fi
+        done < "$list_file"
+        rm -f "$list_file" 2>/dev/null || true
+        exit "$tree_err"
+    )
+}
+
+if [ -e "$PRESERVE_DIR" ] || [ -L "$PRESERVE_DIR" ]; then
+    if [ -L "$PRESERVE_DIR" ] || [ ! -d "$PRESERVE_DIR" ]; then
+        echo "ERROR: invalid FIRC config preservation path $PRESERVE_DIR" >&2
+        exit 1
+    fi
+    RESTORE_ERR=0
+    if [ -L /opt/etc/firc ] || { [ -e /opt/etc/firc ] && [ ! -d /opt/etc/firc ]; }; then
+        echo "ERROR: /opt/etc/firc is not a directory" >&2
+        RESTORE_ERR=1
+    elif ! mkdir -p /opt/etc/firc || ! chmod 700 /opt/etc/firc; then
+        echo "ERROR: failed to prepare /opt/etc/firc" >&2
+        RESTORE_ERR=1
+    else
+        restore_firc_tree || RESTORE_ERR=1
+    fi
+    if [ "$RESTORE_ERR" -ne 0 ]; then
+        echo "ERROR: FIRC config restoration failed; keeping $PRESERVE_DIR intact for recovery." >&2
+        exit 1
+    fi
+    rm -rf "$PRESERVE_DIR"
+fi
+# END_FIRC_LEGACY_CFG_RESTORE
+
+# Runtime package owns FIRC; updating the manager never reinstalls/replaces it.
 START_OK=1
 /opt/etc/init.d/S99awg-manager start || START_OK=0
 

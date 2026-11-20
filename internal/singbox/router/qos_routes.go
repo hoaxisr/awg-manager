@@ -106,7 +106,7 @@ func buildQoSRouteRules(classes []qosClass, sr storage.SingboxRouterSettings) []
 	}
 	out := make([]Rule, 0, len(classes)+2)
 	if sr.SnifferEnabled {
-		out = append(out, Rule{Inbound: allInbounds, Action: "sniff"})
+		out = append(out, Rule{Inbound: allInbounds, Action: "sniff", Timeout: DefaultSniffTimeout})
 	}
 	out = append(out, Rule{
 		Inbound:    udpInbounds,

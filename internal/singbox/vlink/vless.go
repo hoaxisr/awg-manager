@@ -10,11 +10,55 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/fpclient"
 )
 
 var uuidRegex = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 
 func parseVless(input string) (*ParsedOutbound, error) {
+	if spec, isFP, err := fpclient.ParseVLESSFiniteProto(input); isFP {
+		if err != nil {
+			return nil, err
+		}
+		socksPort, err := fpclient.EnsureEndpoint(*spec)
+		if err != nil {
+			return nil, fmt.Errorf("vless finiteproto: %w", err)
+		}
+		u, _ := url.Parse(input)
+		label := ""
+		if u != nil {
+			label = u.Fragment
+		}
+		tag := label
+		if tag == "" {
+			tag = fmt.Sprintf("fp-%s-%d", spec.Server, spec.ServerPort)
+		}
+		out := map[string]any{
+			"type":        "socks",
+			"server":      "127.0.0.1",
+			"server_port": uint16(socksPort),
+			"version":     "5",
+			"tag":         tag,
+		}
+		if u != nil {
+			if b := strings.TrimSpace(u.Query().Get("bind_interface")); b != "" {
+				out["bind_interface"] = b
+			}
+		}
+		raw, err := json.Marshal(out)
+		if err != nil {
+			return nil, err
+		}
+		return &ParsedOutbound{
+			Tag:      tag,
+			Protocol: "socks",
+			Server:   "127.0.0.1",
+			Port:     uint16(socksPort),
+			Outbound: raw,
+			Label:    label,
+		}, nil
+	}
 	u, err := url.Parse(input)
 	if err != nil {
 		return nil, fmt.Errorf("vless: parse: %w", err)

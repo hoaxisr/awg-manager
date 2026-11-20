@@ -13,6 +13,7 @@ import { writable, get, type Readable } from 'svelte/store';
 import { api } from '$lib/api/client';
 import { createPollingStore, type PollingStore } from './polling';
 import { registerStore } from './storeRegistry';
+import { singboxStatus } from './singbox';
 import type { SingboxProxiesListResponse, SingboxProxyGroup } from '$lib/types';
 
 const HISTORY_LEN = 20;
@@ -51,6 +52,14 @@ function ingestSnapshot(snapshot: SingboxProxiesListResponse): SingboxProxyGroup
 }
 
 async function fetchProxies(): Promise<SingboxProxyGroup[]> {
+	let st = singboxStatus.peek().data;
+	if (!st) {
+		await singboxStatus.refetch().catch(() => {});
+		st = singboxStatus.peek().data;
+	}
+	if (!st?.installed || !st?.running) {
+		return [];
+	}
 	const resp = await api.singboxRouterListProxies();
 	return ingestSnapshot(resp);
 }

@@ -1,7 +1,37 @@
+# github.com/9seconds/mtg/v2 v2.2.8 => github.com/AYastrebov/mtg/v2 v2.0.0-20261017111415-962efeccda0c
+## explicit; go 1.25.0
+github.com/9seconds/mtg/v2/antireplay
+github.com/9seconds/mtg/v2/essentials
+github.com/9seconds/mtg/v2/events
+github.com/9seconds/mtg/v2/ipblocklist
+github.com/9seconds/mtg/v2/ipblocklist/files
+github.com/9seconds/mtg/v2/logger
+github.com/9seconds/mtg/v2/mtglib
+github.com/9seconds/mtg/v2/mtglib/internal/dc
+github.com/9seconds/mtg/v2/mtglib/internal/doppel
+github.com/9seconds/mtg/v2/mtglib/internal/relay
+github.com/9seconds/mtg/v2/mtglib/internal/tls
+github.com/9seconds/mtg/v2/mtglib/internal/tls/fake
+github.com/9seconds/mtg/v2/mtglib/obfuscation
 # github.com/BurntSushi/toml v1.6.0
 ## explicit; go 1.18
 github.com/BurntSushi/toml
 github.com/BurntSushi/toml/internal
+# github.com/OneOfOne/xxhash v1.2.8
+## explicit; go 1.11
+github.com/OneOfOne/xxhash
+# github.com/andybalholm/brotli v1.0.6
+## explicit; go 1.12
+github.com/andybalholm/brotli
+# github.com/cloudflare/circl v1.6.3
+## explicit; go 1.22.0
+github.com/cloudflare/circl/internal/sha3
+github.com/cloudflare/circl/sign
+github.com/cloudflare/circl/sign/internal/dilithium
+github.com/cloudflare/circl/sign/internal/dilithium/params
+github.com/cloudflare/circl/sign/mldsa/mldsa65
+github.com/cloudflare/circl/sign/mldsa/mldsa65/internal
+github.com/cloudflare/circl/simd/keccakf1600
 # github.com/coder/websocket v1.8.14
 ## explicit; go 1.23
 github.com/coder/websocket
@@ -19,8 +49,25 @@ github.com/google/jsonschema-go/jsonschema
 # github.com/hoaxisr/awg-manager/awgmproto v0.1.2
 ## explicit; go 1.25.0
 github.com/hoaxisr/awg-manager/awgmproto
-# github.com/kr/text v0.2.0
+# github.com/juju/ratelimit v1.0.2
 ## explicit
+github.com/juju/ratelimit
+# github.com/klauspost/compress v1.18.3
+## explicit; go 1.23
+github.com/klauspost/compress
+github.com/klauspost/compress/fse
+github.com/klauspost/compress/huff0
+github.com/klauspost/compress/internal/cpuinfo
+github.com/klauspost/compress/internal/le
+github.com/klauspost/compress/internal/snapref
+github.com/klauspost/compress/zstd
+github.com/klauspost/compress/zstd/internal/xxhash
+# github.com/mattn/go-colorable v0.1.14
+## explicit; go 1.18
+github.com/mattn/go-colorable
+# github.com/mattn/go-isatty v0.0.20
+## explicit; go 1.15
+github.com/mattn/go-isatty
 # github.com/modelcontextprotocol/go-sdk v1.7.0
 ## explicit; go 1.25.0
 github.com/modelcontextprotocol/go-sdk/auth
@@ -33,6 +80,32 @@ github.com/modelcontextprotocol/go-sdk/internal/xcontext
 github.com/modelcontextprotocol/go-sdk/jsonrpc
 github.com/modelcontextprotocol/go-sdk/mcp
 github.com/modelcontextprotocol/go-sdk/oauthex
+# github.com/panjf2000/ants/v2 v2.12.0
+## explicit; go 1.19
+github.com/panjf2000/ants/v2
+github.com/panjf2000/ants/v2/pkg/sync
+# github.com/pires/go-proxyproto v0.11.0
+## explicit; go 1.24
+github.com/pires/go-proxyproto
+# github.com/refraction-networking/utls v1.8.2
+## explicit; go 1.24
+github.com/refraction-networking/utls
+github.com/refraction-networking/utls/dicttls
+github.com/refraction-networking/utls/internal/boring
+github.com/refraction-networking/utls/internal/byteorder
+github.com/refraction-networking/utls/internal/fips140tls
+github.com/refraction-networking/utls/internal/helper
+github.com/refraction-networking/utls/internal/hkdf
+github.com/refraction-networking/utls/internal/hpke
+github.com/refraction-networking/utls/internal/quicvarint
+github.com/refraction-networking/utls/internal/quicvarint/protocol
+github.com/refraction-networking/utls/internal/tls12
+github.com/refraction-networking/utls/internal/tls13
+# github.com/rs/zerolog v1.35.0
+## explicit; go 1.23
+github.com/rs/zerolog
+github.com/rs/zerolog/internal/cbor
+github.com/rs/zerolog/internal/json
 # github.com/segmentio/asm v1.1.3
 ## explicit; go 1.17
 github.com/segmentio/asm/ascii
@@ -49,6 +122,20 @@ github.com/segmentio/asm/keyset
 github.com/segmentio/encoding/ascii
 github.com/segmentio/encoding/iso8601
 github.com/segmentio/encoding/json
+# github.com/tylertreat/BoomFilters v0.0.0-20251117164519-53813c36cc1b
+## explicit
+github.com/tylertreat/BoomFilters
+# github.com/xtls/reality v0.0.0-20260322125925-9234c772ba8f
+## explicit; go 1.24.0
+github.com/xtls/reality
+github.com/xtls/reality/fips140tls
+github.com/xtls/reality/hpke
+github.com/xtls/reality/tls12
+github.com/xtls/reality/tls13
+# github.com/yl2chen/cidranger v1.0.2
+## explicit; go 1.13
+github.com/yl2chen/cidranger
+github.com/yl2chen/cidranger/net
 # github.com/yosida95/uritemplate/v3 v3.0.2
 ## explicit; go 1.14
 github.com/yosida95/uritemplate/v3
@@ -60,14 +147,31 @@ go.uber.org/goleak/internal/stack
 ## explicit; go 1.25.0
 golang.org/x/crypto/argon2
 golang.org/x/crypto/blake2b
+golang.org/x/crypto/chacha20
+golang.org/x/crypto/chacha20poly1305
+golang.org/x/crypto/cryptobyte
+golang.org/x/crypto/cryptobyte/asn1
+golang.org/x/crypto/curve25519
+golang.org/x/crypto/hkdf
+golang.org/x/crypto/internal/alias
+golang.org/x/crypto/internal/poly1305
+golang.org/x/crypto/sha3
 # golang.org/x/net v0.55.0
 ## explicit; go 1.25.0
 golang.org/x/net/bpf
+golang.org/x/net/http/httpguts
+golang.org/x/net/http2
+golang.org/x/net/http2/hpack
 golang.org/x/net/icmp
+golang.org/x/net/idna
+golang.org/x/net/internal/httpcommon
+golang.org/x/net/internal/httpsfv
 golang.org/x/net/internal/iana
 golang.org/x/net/internal/socket
+golang.org/x/net/internal/socks
 golang.org/x/net/ipv4
 golang.org/x/net/ipv6
+golang.org/x/net/proxy
 # golang.org/x/oauth2 v0.35.0
 ## explicit; go 1.24.0
 golang.org/x/oauth2
@@ -80,6 +184,12 @@ golang.org/x/sync/errgroup
 golang.org/x/sys/cpu
 golang.org/x/sys/unix
 golang.org/x/sys/windows
+# golang.org/x/text v0.37.0
+## explicit; go 1.25.0
+golang.org/x/text/secure/bidirule
+golang.org/x/text/transform
+golang.org/x/text/unicode/bidi
+golang.org/x/text/unicode/norm
 # golang.org/x/time v0.15.0
 ## explicit; go 1.25.0
 golang.org/x/time/rate
@@ -118,3 +228,4 @@ google.golang.org/protobuf/types/known/timestamppb
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
+# github.com/9seconds/mtg/v2 => github.com/AYastrebov/mtg/v2 v2.0.0-20261017111415-962efeccda0c

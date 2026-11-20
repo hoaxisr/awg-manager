@@ -28,6 +28,10 @@ func EncodeOutbound(raw json.RawMessage, label string) (string, error) {
 	switch typ {
 	case "vless":
 		return encodeVless(ob, label)
+	case "vmess":
+		return encodeVMess(ob, label)
+	case "anytls":
+		return encodeAnyTLS(ob, label)
 	case "trojan":
 		return encodeTrojan(ob, label)
 	case "shadowsocks":
@@ -575,4 +579,72 @@ func stringSliceFromAny(v any) []string {
 	default:
 		return nil
 	}
+}
+
+func encodeVMess(ob map[string]any, label string) (string, error) {
+	uuid, _ := ob["uuid"].(string)
+	if uuid == "" {
+		return "", errors.New("vlink: vmess: missing uuid")
+	}
+	host, _ := ob["server"].(string)
+	if host == "" {
+		return "", errors.New("vlink: vmess: missing server")
+	}
+	port := intFromAny(ob["server_port"])
+	if port <= 0 || port > 65535 {
+		return "", errors.New("vlink: vmess: invalid server_port")
+	}
+	var user *url.Userinfo
+	sec, _ := ob["security"].(string)
+	if sec != "" && sec != "auto" && sec != "aes-128-gcm" {
+		user = url.UserPassword(sec, uuid)
+	} else {
+		user = url.User(uuid)
+	}
+	u := &url.URL{
+		Scheme: "vmess",
+		Host:   netJoinHostPort(host, port),
+		User:   user,
+	}
+	q, err := streamQueryFromOutbound(ob)
+	if err != nil {
+		return "", err
+	}
+	u.RawQuery = q.Encode()
+	if label != "" {
+		u.Fragment = label
+	}
+	return u.String(), nil
+}
+
+func encodeAnyTLS(ob map[string]any, label string) (string, error) {
+	password, _ := ob["password"].(string)
+	if password == "" {
+		return "", errors.New("vlink: anytls: missing password")
+	}
+	host, _ := ob["server"].(string)
+	if host == "" {
+		return "", errors.New("vlink: anytls: missing server")
+	}
+	port := intFromAny(ob["server_port"])
+	if port <= 0 || port > 65535 {
+		return "", errors.New("vlink: anytls: invalid server_port")
+	}
+	u := &url.URL{
+		Scheme: "anytls",
+		Host:   netJoinHostPort(host, port),
+		User:   url.User(password),
+	}
+	q, err := streamQueryFromOutbound(ob)
+	if err != nil {
+		return "", err
+	}
+	if sec := q.Get("security"); sec == "" {
+		q.Set("security", "tls")
+	}
+	u.RawQuery = q.Encode()
+	if label != "" {
+		u.Fragment = label
+	}
+	return u.String(), nil
 }

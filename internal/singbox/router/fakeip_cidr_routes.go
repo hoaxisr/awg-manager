@@ -38,7 +38,7 @@ func loopSafeProxyRule(r Rule) bool {
 		len(r.SourceMACAddress) == 0 &&
 		len(r.Port) == 0 && r.Protocol == "" && r.IPIsPrivate == nil &&
 		len(r.Inbound) == 0 && len(r.AuthUser) == 0 && r.Network == "" && r.UDPTimeout == "" &&
-		r.AwgmManaged == ""
+		r.Timeout == "" && r.AwgmManaged == ""
 }
 
 // cgnat is RFC 6598 shared address space (100.64.0.0/10) — never a valid proxy

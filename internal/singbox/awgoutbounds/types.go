@@ -56,6 +56,9 @@ type Deps struct {
 	// is skipped. When nil (tests), falls back to direct write +
 	// Singbox.Reload.
 	Orch *orchestrator.Orchestrator
+	// ShouldWrite optionally gates 15-awg.json writes (e.g. skip when sing-box
+	// is purged so deleted config.d dirs are not recreated by bus events).
+	ShouldWrite func() bool
 }
 
 // SingboxController is the narrow contract Service needs from

@@ -2,9 +2,11 @@ package singbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -645,5 +648,184 @@ func TestOperator_ConfirmReadyByClash(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if op.LastError() == "" {
 		t.Fatal("при ожидаемой строке готовность решает stderr, а не Clash")
+	}
+}
+
+func TestOperator_StartedLineExpected_BaseLogOutputAndDisabled(t *testing.T) {
+	op := NewOperator(OperatorDeps{
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Dir: t.TempDir(),
+	})
+	t.Cleanup(op.Process().Close)
+	basePath := filepath.Join(op.configPath, "00-base.json")
+
+	writeBase := func(t *testing.T, body any) {
+		t.Helper()
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(basePath, raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Default info log without output redirection -> expected true.
+	writeBase(t, map[string]any{"log": map[string]any{"level": "info", "timestamp": true}})
+	if !op.proc.StartedLineExpected() {
+		t.Fatal("expected StartedLineExpected=true when log.output is empty and level=info")
+	}
+
+	// log.output redirected to another file -> sing-box won't write to sing-box.err.log.
+	otherOut := filepath.Join(t.TempDir(), "custom.log")
+	writeBase(t, map[string]any{"log": map[string]any{"level": "info", "output": otherOut}})
+	if op.proc.StartedLineExpected() {
+		t.Fatal("expected StartedLineExpected=false when log.output redirects away from stderr")
+	}
+
+	// log.disabled=true -> no started line will ever be emitted.
+	writeBase(t, map[string]any{"log": map[string]any{"disabled": true, "level": "info"}})
+	if op.proc.StartedLineExpected() {
+		t.Fatal("expected StartedLineExpected=false when log.disabled=true")
+	}
+
+	// Explicit stderr redirection keeps expected=true.
+	writeBase(t, map[string]any{"log": map[string]any{"level": "info", "output": "stderr"}})
+	if !op.proc.StartedLineExpected() {
+		t.Fatal("expected StartedLineExpected=true when log.output is stderr")
+	}
+
+	// Explicit sing-box.err.log output keeps expected=true.
+	writeBase(t, map[string]any{"log": map[string]any{"level": "info", "output": op.proc.errLogPath()}})
+	if !op.proc.StartedLineExpected() {
+		t.Fatal("expected StartedLineExpected=true when log.output matches errLogPath")
+	}
+}
+
+func TestOperator_WaitClashReady_FailsFastOnProcessExit(t *testing.T) {
+	dir := t.TempDir()
+	op := &Operator{
+		proc: &Process{
+			configPath: dir,
+			pidPath:    filepath.Join(dir, "missing.pid"),
+			logDir:     dir,
+		},
+		clash: NewClashClient("127.0.0.1:1"),
+	}
+	op.setLastError("FATAL[0007] lookup repo.hoaxisr.ru: REFUSED")
+
+	start := time.Now()
+	err := op.waitClashReady(context.Background(), 10*time.Second, true)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected waitClashReady error when process is not running")
+	}
+	if !strings.Contains(err.Error(), "exited before Clash API became ready") || !strings.Contains(err.Error(), "FATAL[0007]") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if elapsed >= 2*time.Second {
+		t.Fatalf("expected fast failure on dead process (<2s), took %s", elapsed)
+	}
+}
+
+func TestHelperSingboxStartAndWaitRetry(t *testing.T) {
+	dir := os.Getenv("AWGM_TEST_RETRY_DIR")
+	if dir == "" {
+		return
+	}
+	counterPath := filepath.Join(dir, "attempt")
+	rawCount, _ := os.ReadFile(counterPath)
+	attempt, _ := strconv.Atoi(strings.TrimSpace(string(rawCount)))
+	attempt++
+	_ = os.WriteFile(counterPath, []byte(strconv.Itoa(attempt)), 0o644)
+
+	if attempt == 1 {
+		time.Sleep(startupGracePeriod + 300*time.Millisecond)
+		_, _ = io.WriteString(os.Stderr, "FATAL[0001] lookup repo.hoaxisr.ru: REFUSED\n")
+		os.Exit(1)
+	}
+
+	var cfg struct {
+		Experimental struct {
+			ClashAPI struct {
+				ExternalController string `json:"external_controller"`
+			} `json:"clash_api"`
+		} `json:"experimental"`
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "00-base.json")); err == nil {
+		_ = json.Unmarshal(b, &cfg)
+	}
+	addr := strings.TrimSpace(cfg.Experimental.ClashAPI.ExternalController)
+	if addr == "" {
+		os.Exit(2)
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		os.Exit(3)
+	}
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"version":"1.14.0","proxies":{}}`))
+		}),
+	}
+	go func() { _ = srv.Serve(ln) }()
+	_, _ = io.WriteString(os.Stderr, "INFO[0000] sing-box started\n")
+	time.Sleep(10 * time.Second)
+	os.Exit(0)
+}
+
+func TestOperator_StartAndWait_RetriesOnce(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "config.d")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clashPort := ln.Addr().(*net.TCPAddr).Port
+	clashAddr := ln.Addr().String()
+	_ = ln.Close()
+
+	if err := os.WriteFile(filepath.Join(cfgDir, "00-base.json"),
+		[]byte(`{"experimental":{"clash_api":{"external_controller":"`+clashAddr+`"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWGM_TEST_RETRY_DIR", cfgDir)
+
+	stubBin := filepath.Join(dir, "awgm-box")
+	if err := os.WriteFile(stubBin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	op := NewOperator(OperatorDeps{
+		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Dir:       dir,
+		Binary:    stubBin,
+		ClashPort: func() int { return clashPort },
+	})
+	op.clash = NewClashClient(clashAddr)
+	op.proc.matchBinaryFn = func(int) bool { return true }
+
+	var attempts atomic.Int32
+	op.proc.startCmd = func(bin string, args ...string) (*exec.Cmd, error) {
+		attempts.Add(1)
+		return exec.Command(os.Args[0], "-test.run=^TestHelperSingboxStartAndWaitRetry$"), nil
+	}
+	t.Cleanup(func() {
+		_ = op.proc.Stop()
+		op.proc.Close()
+	})
+
+	if err := op.StartAndWait(context.Background()); err != nil {
+		t.Fatalf("expected StartAndWait retry to succeed cleanly, got: %v", err)
+	}
+	if attempts.Load() != 2 {
+		t.Fatalf("expected exactly 2 spawn attempts (crash + retry), got %d", attempts.Load())
+	}
+	if op.LastError() != "" {
+		t.Fatalf("expected LastError cleared after successful retry, got %q", op.LastError())
 	}
 }

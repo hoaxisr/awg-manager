@@ -39,6 +39,7 @@
 		onUnmark?: (id: string) => void;
 		ingressEnabled?: boolean;
 		onToggleIngress?: (interfaceName: string, enabled: boolean) => Promise<void>;
+		activeEngine?: 'sing-box' | 'firc';
 		/** LAN-адрес роутера — для тумблера «DNS роутера» в модалках пира. */
 		routerIP?: string;
 	}
@@ -49,6 +50,7 @@
 		onUnmark,
 		ingressEnabled = false,
 		onToggleIngress = async () => {},
+		activeEngine = 'sing-box',
 		routerIP = '',
 	}: Props = $props();
 

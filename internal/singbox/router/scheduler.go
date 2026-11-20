@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -19,11 +20,13 @@ const (
 )
 
 type Scheduler struct {
-	svc      *ServiceImpl
-	settings *storage.SettingsStore
-	stop     chan struct{}
-	done     chan struct{}
-	nudge    chan struct{}
+	svc             *ServiceImpl
+	settings        *storage.SettingsStore
+	stop            chan struct{}
+	done            chan struct{}
+	nudge           chan struct{}
+	wg              sync.WaitGroup
+	cloudWatchEvery time.Duration
 
 	// Поля, а не константы, — ради теста цикла без ServiceImpl и без ожидания
 	// боевых интервалов.
@@ -33,14 +36,15 @@ type Scheduler struct {
 
 func NewScheduler(svc *ServiceImpl, settings *storage.SettingsStore) *Scheduler {
 	s := &Scheduler{
-		svc:          svc,
-		settings:     settings,
-		stop:         make(chan struct{}),
-		done:         make(chan struct{}),
-		nudge:        make(chan struct{}, 1),
-		initialDelay: schedulerInitialDelay,
-		every:        schedulerTick,
-		nudgeWait:    schedulerNudgeDelay,
+		svc:             svc,
+		settings:        settings,
+		stop:            make(chan struct{}),
+		done:            make(chan struct{}),
+		nudge:           make(chan struct{}, 1),
+		cloudWatchEvery: cloudOutboundWatchEvery,
+		initialDelay:    schedulerInitialDelay,
+		every:           schedulerTick,
+		nudgeWait:       schedulerNudgeDelay,
 	}
 	s.tick = s.tickPolicySync
 	return s
@@ -56,14 +60,38 @@ func (s *Scheduler) Nudge() {
 	}
 }
 
-func (s *Scheduler) Start() { go s.run() }
+func (s *Scheduler) Start() {
+	s.wg.Add(1)
+	go s.run()
+	if s.svc != nil && s.cloudWatchEvery > 0 {
+		s.wg.Add(1)
+		go s.runCloudOutboundWatch()
+	}
+}
 
 func (s *Scheduler) Stop() {
 	close(s.stop)
-	<-s.done
+	s.wg.Wait()
+}
+
+func (s *Scheduler) runCloudOutboundWatch() {
+	defer s.wg.Done()
+	ticker := time.NewTicker(s.cloudWatchEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+			s.svc.CheckCloudOutboundSwitch(ctx)
+			cancel()
+		case <-s.stop:
+			return
+		}
+	}
 }
 
 func (s *Scheduler) run() {
+	defer s.wg.Done()
 	defer close(s.done)
 
 	select {
@@ -107,6 +135,9 @@ func (s *Scheduler) tickPolicySync(ctx context.Context) {
 	// параллельное чтение его map-полей, которых мы не касаемся.
 	settings, err := s.settings.Get()
 	if err != nil {
+		return
+	}
+	if isFircRoutingEngine(settings.SingboxRouter) {
 		return
 	}
 	if !settings.SingboxRouter.Enabled {

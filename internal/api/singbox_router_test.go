@@ -83,6 +83,8 @@ func (m *mockRouterSvc) SwitchRoutingMode(ctx context.Context, target string) er
 	m.switchMu.Unlock()
 	return m.switchErr
 }
+func (m *mockRouterSvc) ParkForExternalEngine(ctx context.Context) error    { return nil }
+func (m *mockRouterSvc) ResumeFromExternalEngine(ctx context.Context) error { return nil }
 
 func (m *mockRouterSvc) switchedTarget() string {
 	m.switchMu.Lock()

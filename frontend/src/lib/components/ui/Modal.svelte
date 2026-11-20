@@ -22,6 +22,9 @@
         open: boolean;
         title: string;
         size?: 'sm' | 'md' | 'lg' | 'xl' | 'wide';
+        width?: string;
+        allowMaximize?: boolean;
+        resizable?: boolean;
         /** When `fill`, body does not scroll — children manage their own scroll regions. */
         bodyLayout?: 'default' | 'fill';
         onclose: () => void;

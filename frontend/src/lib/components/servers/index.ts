@@ -22,5 +22,12 @@ export { default as ServerAccessPolicyDropdown } from './ServerAccessPolicyDropd
 export { default as ServerEndpointSetting } from './ServerEndpointSetting.svelte';
 export { default as ServerSettingsPanel } from './ServerSettingsPanel.svelte';
 export { default as ServersPageSkeleton } from './ServersPageSkeleton.svelte';
+export { default as XrayServerCard } from './XrayServerCard.svelte';
+export { default as XrayShareModal } from './XrayShareModal.svelte';
+export { default as XrayAutoTunnelModal } from './XrayAutoTunnelModal.svelte';
+export { default as TelegramWebProxyCard } from './TelegramWebProxyCard.svelte';
+export { default as CDNDispatcherCard } from './CDNDispatcherCard.svelte';
+export { default as ExternalAccessSummary } from './external-access/ExternalAccessSummary.svelte';
+export { default as ExternalAccessWizard } from './external-access/ExternalAccessWizard.svelte';
 export { default as PeerSignatureEditor } from './PeerSignatureEditor.svelte';
 export { default as PeerNetworksFields } from './PeerNetworksFields.svelte';

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +31,8 @@ type Service interface {
 	// SwitchRoutingMode orchestrates a routing-mode transition (off↔tproxy↔
 	// fakeip-tun) with directional fail-closed rollback and progress events.
 	SwitchRoutingMode(ctx context.Context, target string) error
+	ParkForExternalEngine(ctx context.Context) error
+	ResumeFromExternalEngine(ctx context.Context) error
 	GetStatus(ctx context.Context) (Status, error)
 	GetSettings(ctx context.Context) (storage.SingboxRouterSettings, error)
 	UpdateSettings(ctx context.Context, s storage.SingboxRouterSettings) error
@@ -336,8 +339,12 @@ type StagingEventBus interface {
 }
 
 type Deps struct {
-	AppLog   logging.AppLogger
-	Settings *storage.SettingsStore
+	KeenDNSRelayEndpoints func(context.Context) ([]netip.AddrPort, error)
+	KeenDNSCloudSnapshot  func(context.Context) (KeenDNSCloudSnapshot, error)
+	CloudOutboundActive   func(ctx context.Context, tag string) (string, error)
+	ResetCloudAgent       func(ctx context.Context) error
+	AppLog                logging.AppLogger
+	Settings              *storage.SettingsStore
 	// PresetCatalog is the unified preset catalog. Required for ListPresets and ApplyPreset.
 	PresetCatalog *presets.Catalog
 	Singbox       SingboxController
@@ -428,7 +435,11 @@ type Deps struct {
 	// nil, the real IsXtDscpAvailable probe runs. Tests set this to avoid
 	// exec'ing iptables.
 	XtDscpProbe func(context.Context) bool
-	GeoData     GeoTagExpander
+	// ListeningProbe is an optional override for checking whether sing-box
+	// tproxy/redirect inbound sockets are bound. When nil, the default procfs
+	// probe runs. Tests outside package router set this to avoid real procfs reads.
+	ListeningProbe func() bool
+	GeoData        GeoTagExpander
 	// GeoTagCounts даёт суммарные размеры geoip-тегов для бюджет-валидации
 	// BypassGeoIPTags и список .dat для наполнения набора обхода. Optional —
 	// nil в тестах; при nil бюджет не проверяется, а наполнение отдаёт ошибку.
@@ -537,6 +548,14 @@ type ServiceImpl struct {
 	// transitionReadinessProgress emits readiness heartbeats during
 	// waitForSingbox while SwitchRoutingMode is in flight (nil otherwise).
 	transitionReadinessProgress func(message string)
+	// deferPolicyWANForTransition is held under transitionMu during
+	// policy-tun -> (tproxy|fakeip-tun) switches so WAN stays denied in NDMS
+	// PolicyName until target interception is active AND held OpkgTun0 has
+	// finished its no-interface NDMS netfilter reload.
+	deferPolicyWANForTransition bool
+	// reapNetfilterSettleDelay waits for asynchronous NDMS netfilter reloads
+	// triggered by `no interface OpkgTun*` before re-permitting WAN in PolicyName.
+	reapNetfilterSettleDelay time.Duration
 
 	// ─── Применённое состояние netfilter ────────────────────────────────────
 	// appliedSpec, appliedBlackhole, netfilterStateKnown и
@@ -750,6 +769,20 @@ type ServiceImpl struct {
 	keenDNSBypassCIDRs []string
 	// keenDNSBypassCIDRs6 — IPv6-часть того же обхода, для правил v6-слоя.
 	keenDNSBypassCIDRs6 []string
+
+	// Dynamic IPv4 cloud ipset sync cache (AWGM-SB-CLOUD).
+	cloudStateMu            sync.Mutex
+	cloudSetReady           bool
+	cloudLastAttemptAt      time.Time
+	cloudLastSyncAt         time.Time
+	cloudLastSyncErr        string
+	cloudLastRelayKey       string
+	cloudLastEntries        []string
+	cloudSourceCache        map[string]*cloudOutputSourceEntry
+	cloudNegBackoff         map[string]cloudOutputNegBackoff
+	cloudSyncedOutboundTag  string
+	cloudSyncedActiveMember string
+	cloudLastAgentResetAt   time.Time
 }
 
 func NewService(d Deps) *ServiceImpl {
@@ -779,9 +812,10 @@ func NewService(d Deps) *ServiceImpl {
 	// creates it on first Enable.
 	refreshNetfilterHookIfPresent()
 	return &ServiceImpl{
-		deps:      d,
-		appLog:    appLog,
-		bypassLog: logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubBypassSet),
+		deps:                     d,
+		appLog:                   appLog,
+		bypassLog:                logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubBypassSet),
+		reapNetfilterSettleDelay: 3 * time.Second,
 	}
 }
 

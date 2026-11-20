@@ -171,3 +171,24 @@ func (s *Store) Len() int {
 	}
 	return len(s.records)
 }
+
+// Reload invalidates the in-memory cache and re-reads awg3.json from disk.
+func (s *Store) Reload() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loaded = false
+	s.records = nil
+	return s.load()
+}
+
+// Clear removes awg3.json from disk and clears in-memory records.
+func (s *Store) Clear() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove awg3 store: %w", err)
+	}
+	s.records = nil
+	s.loaded = true
+	return nil
+}

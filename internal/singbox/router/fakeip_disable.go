@@ -49,16 +49,25 @@ var fakeIPLinkDelete = func(ctx context.Context, gate *netdev.SwapGate, iface st
 // наполовину снятый fakeip хуже полной попытки, поэтому шаги сноса только
 // пишут предупреждение, обязательна лишь запись состояния.
 func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Settings) error {
+	return s.disableFakeIPTunLocked(ctx, settings, true)
+}
+
+func (s *ServiceImpl) disableFakeIPTunLocked(ctx context.Context, settings *storage.Settings, persistDisabled bool) error {
+	if err := s.detachCloudOutputLocked(ctx, true); err != nil {
+		s.appLog.Warn("keendns-cloud", "disable-fakeip", err.Error())
+	}
 	st, _ := opkgTunOwned(settings, stateFakeIPTun)
 
 	// Nothing provisioned (or persist already cleared) → idempotent: just persist
 	// the disabled flag and emit. No NDMS teardown to do.
 	if st == nil || !st.Provisioned {
-		if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
-			cur.SingboxRouter.Enabled = false
-			return nil
-		}); err != nil {
-			return err
+		if persistDisabled {
+			if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
+				cur.SingboxRouter.Enabled = false
+				return nil
+			}); err != nil {
+				return err
+			}
 		}
 		s.emitStatus(ctx)
 		return nil
@@ -189,12 +198,14 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		}
 	}
 
-	// (4) Persist disabled — MANDATORY. This is the durable on/off truth.
-	if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
-		cur.SingboxRouter.Enabled = false
-		return nil
-	}); err != nil {
-		return err
+	// (4) Persist disabled — MANDATORY on normal disable, skipped when parking for external engine.
+	if persistDisabled {
+		if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
+			cur.SingboxRouter.Enabled = false
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
 
 	s.emitStatus(ctx)

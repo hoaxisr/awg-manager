@@ -4,9 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/backup"
+	"github.com/hoaxisr/awg-manager/internal/fpclient"
 	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
@@ -84,7 +86,10 @@ func main() {
 	a.setupServices()
 	a.setupOrchestrator()
 	a.setupEventWiring()
+	fpclient.SetStorePath(filepath.Join(a.dataDir, "fp-clients.json"))
+	fpclient.RestorePersistedEndpoints()
 	a.setupSingbox()
+	a.setupFirc()
 	a.setupServer()
 	a.setupDeviceProxy()
 	a.setupRouter()

@@ -15,3 +15,7 @@ export * from './types/wdtt';
 export * from './types/awg3';
 export * from './types/zapret';
 export * from './types/autolist';
+export * from './types/xray';
+export * from './types/telemt';
+export * from './types/firc';
+export * from './types/serverWizard';

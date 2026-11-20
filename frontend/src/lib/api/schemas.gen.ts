@@ -2178,6 +2178,7 @@ const api_SubscriptionDTO: v.GenericSchema = v.looseObject({
 });
 
 const api_SubscriptionGroupDTO: v.GenericSchema = v.looseObject({
+	directFirst: v.optional(v.nullable(v.boolean())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	filterExclude: v.optional(v.nullable(v.string())),
 	filterInclude: v.optional(v.nullable(v.string())),
@@ -2758,6 +2759,35 @@ const api_UpdateSnapshotsData: v.GenericSchema = v.looseObject({
 	ttlDays: v.optional(v.nullable(v.number())),
 });
 
+const api_UplinkEntriesResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.array(v.lazy(() => uplink_Entry)))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_UplinkPolicyResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => uplink_Policy))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_UplinkSnapshotDTO: v.GenericSchema = v.looseObject({
+	automaticFailback: v.optional(v.nullable(v.boolean())),
+	capabilities: v.optional(v.nullable(v.record(v.string(), v.lazy(() => uplink_Capabilities)))),
+	entries: v.optional(v.nullable(v.array(v.lazy(() => uplink_Entry)))),
+	providers: v.optional(v.nullable(v.array(v.lazy(() => uplink_Provider)))),
+	targetError: v.optional(v.nullable(v.string())),
+	targets: v.optional(v.nullable(v.array(v.lazy(() => uplink_TargetInfo)))),
+});
+
+const api_UplinkSnapshotResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_UplinkSnapshotDTO))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_UplinkWANDNSResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => uplink_WANDNSConfig))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_UserConfigApplyResponse: v.GenericSchema = v.looseObject({
 	ok: v.optional(v.nullable(v.boolean())),
 	warnings: v.optional(v.nullable(v.array(v.lazy(() => api_RouterValidationErrorDTO)))),
@@ -2767,6 +2797,13 @@ const api_UserConfigCheckResponse: v.GenericSchema = v.looseObject({
 	errors: v.optional(v.nullable(v.array(v.lazy(() => api_RouterValidationErrorDTO)))),
 	ok: v.optional(v.nullable(v.boolean())),
 	warnings: v.optional(v.nullable(v.array(v.lazy(() => api_RouterValidationErrorDTO)))),
+});
+
+const api_VlessRealityQuickSetupResponse: v.GenericSchema = v.looseObject({
+	client: v.optional(v.nullable(v.lazy(() => vlessserver_Client))),
+	links: v.optional(v.nullable(v.lazy(() => vlessserver_ShareLinks))),
+	links_error: v.optional(v.nullable(v.string())),
+	state: v.optional(v.nullable(v.lazy(() => vlessserver_RealityState))),
 });
 
 const api_WANIPData: v.GenericSchema = v.looseObject({
@@ -3246,6 +3283,25 @@ const procmon_SystemSnapshot: v.GenericSchema = v.looseObject({
 	uptimeSeconds: v.optional(v.nullable(v.number())),
 });
 
+const realityserver_DestCheck: v.GenericSchema = v.looseObject({
+	dest: v.optional(v.nullable(v.string())),
+	error: v.optional(v.nullable(v.string())),
+	h2: v.optional(v.nullable(v.boolean())),
+	latency_ms: v.optional(v.nullable(v.number())),
+	ok: v.optional(v.nullable(v.boolean())),
+	server_name: v.optional(v.nullable(v.string())),
+	tls13: v.optional(v.nullable(v.boolean())),
+	x25519: v.optional(v.nullable(v.boolean())),
+});
+
+const realityserver_Status: v.GenericSchema = v.looseObject({
+	active_conns: v.optional(v.nullable(v.number())),
+	listen_addr: v.optional(v.nullable(v.string())),
+	running: v.optional(v.nullable(v.boolean())),
+	started_at: v.optional(v.nullable(v.string())),
+	transport: v.optional(v.nullable(v.string())),
+});
+
 const services_Item: v.GenericSchema = v.looseObject({
 	enabled: v.optional(v.nullable(v.boolean())),
 	logPath: v.optional(v.nullable(v.string())),
@@ -3266,6 +3322,255 @@ const subscription_RefreshResult: v.GenericSchema = v.looseObject({
 	key: v.optional(v.nullable(v.string())),
 	message: v.optional(v.nullable(v.string())),
 	payload: v.optional(v.nullable(v.lazy(() => wdttlink_ImportPayload))),
+});
+
+const telemt_Config: v.GenericSchema = v.looseObject({
+	enabled: v.optional(v.nullable(v.boolean())),
+	listenIp: v.optional(v.nullable(v.string())),
+	mode: v.optional(v.nullable(v.string())),
+	port: v.optional(v.nullable(v.number())),
+	secret: v.optional(v.nullable(v.string())),
+	tlsDomain: v.optional(v.nullable(v.string())),
+	upstreamDevice: v.optional(v.nullable(v.string())),
+	webCarrier: v.optional(v.nullable(v.string())),
+	webDecoy: v.optional(v.nullable(v.string())),
+	webHost: v.optional(v.nullable(v.string())),
+});
+
+const telemt_Status: v.GenericSchema = v.looseObject({
+	arch: v.optional(v.nullable(v.string())),
+	archSupported: v.optional(v.nullable(v.boolean())),
+	binary: v.optional(v.nullable(v.string())),
+	config: v.optional(v.nullable(v.lazy(() => telemt_Config))),
+	error: v.optional(v.nullable(v.string())),
+	installed: v.optional(v.nullable(v.boolean())),
+	latestVersion: v.optional(v.nullable(v.string())),
+	link: v.optional(v.nullable(v.string())),
+	pid: v.optional(v.nullable(v.number())),
+	running: v.optional(v.nullable(v.boolean())),
+	source: v.optional(v.nullable(v.string())),
+	updateAvailable: v.optional(v.nullable(v.boolean())),
+	version: v.optional(v.nullable(v.string())),
+});
+
+const uplink_Capabilities: v.GenericSchema = v.looseObject({
+	automaticFailback: v.optional(v.nullable(v.boolean())),
+	controlledFailback: v.optional(v.nullable(v.boolean())),
+	independentEngine: v.optional(v.nullable(v.boolean())),
+	independentProbe: v.optional(v.nullable(v.boolean())),
+	limitation: v.optional(v.nullable(v.string())),
+	providerDNS: v.optional(v.nullable(v.boolean())),
+	restartScope: v.optional(v.nullable(v.string())),
+});
+
+const uplink_Entry: v.GenericSchema = v.looseObject({
+	capabilities: v.optional(v.nullable(v.lazy(() => uplink_Capabilities))),
+	policy: v.optional(v.nullable(v.lazy(() => uplink_Policy))),
+	state: v.optional(v.nullable(v.lazy(() => uplink_State))),
+});
+
+const uplink_Policy: v.GenericSchema = v.looseObject({
+	enabled: v.optional(v.nullable(v.boolean())),
+	failback: v.optional(v.nullable(v.string())),
+	failureThreshold: v.optional(v.nullable(v.number())),
+	holdDownSeconds: v.optional(v.nullable(v.number())),
+	id: v.optional(v.nullable(v.string())),
+	intervalSeconds: v.optional(v.nullable(v.number())),
+	mode: v.optional(v.nullable(v.string())),
+	providers: v.optional(v.nullable(v.array(v.string()))),
+	recoveryIntervalSeconds: v.optional(v.nullable(v.number())),
+	recoveryThreshold: v.optional(v.nullable(v.number())),
+	revision: v.optional(v.nullable(v.number())),
+	target: v.optional(v.nullable(v.lazy(() => uplink_Target))),
+	timeoutSeconds: v.optional(v.nullable(v.number())),
+});
+
+const uplink_Provider: v.GenericSchema = v.looseObject({
+	device: v.optional(v.nullable(v.string())),
+	id: v.optional(v.nullable(v.string())),
+	label: v.optional(v.nullable(v.string())),
+	up: v.optional(v.nullable(v.boolean())),
+});
+
+const uplink_State: v.GenericSchema = v.looseObject({
+	candidate: v.optional(v.nullable(v.string())),
+	device: v.optional(v.nullable(v.string())),
+	failures: v.optional(v.nullable(v.number())),
+	generation: v.optional(v.nullable(v.number())),
+	lastError: v.optional(v.nullable(v.string())),
+	lastSuccess: v.optional(v.nullable(v.string())),
+	lastSwitch: v.optional(v.nullable(v.string())),
+	nextCheck: v.optional(v.nullable(v.string())),
+	nextRecoveryCheck: v.optional(v.nullable(v.string())),
+	operationId: v.optional(v.nullable(v.string())),
+	phase: v.optional(v.nullable(v.string())),
+	policyRevision: v.optional(v.nullable(v.number())),
+	provider: v.optional(v.nullable(v.string())),
+	recoverySuccesses: v.optional(v.nullable(v.number())),
+});
+
+const uplink_Target: v.GenericSchema = v.looseObject({
+	engine: v.optional(v.nullable(v.string())),
+	kind: v.optional(v.nullable(v.string())),
+	ref: v.optional(v.nullable(v.string())),
+});
+
+const uplink_TargetInfo: v.GenericSchema = v.looseObject({
+	label: v.optional(v.nullable(v.string())),
+	setupRequired: v.optional(v.nullable(v.boolean())),
+	target: v.optional(v.nullable(v.lazy(() => uplink_Target))),
+	unavailableReason: v.optional(v.nullable(v.string())),
+});
+
+const uplink_WANDNSConfig: v.GenericSchema = v.looseObject({
+	overrides: v.optional(v.nullable(v.record(v.string(), v.array(v.string())))),
+	revision: v.optional(v.nullable(v.number())),
+});
+
+const vlessserver_Client: v.GenericSchema = v.looseObject({
+	created_at: v.optional(v.nullable(v.string())),
+	enabled: v.optional(v.nullable(v.boolean())),
+	fp_client_id: v.optional(v.nullable(v.string())),
+	fp_secret_hex: v.optional(v.nullable(v.string())),
+	id: v.optional(v.nullable(v.string())),
+	remark: v.optional(v.nullable(v.string())),
+});
+
+const vlessserver_Config: v.GenericSchema = v.looseObject({
+	allow_lan: v.optional(v.nullable(v.boolean())),
+	clients: v.optional(v.nullable(v.array(v.lazy(() => vlessserver_Client)))),
+	connection_way: v.optional(v.nullable(v.string())),
+	dispatcher_port: v.optional(v.nullable(v.number())),
+	domain_strategy: v.optional(v.nullable(v.string())),
+	enabled: v.optional(v.nullable(v.boolean())),
+	endpoints: v.optional(v.nullable(v.array(v.lazy(() => vlessserver_EndpointConfig)))),
+	listen_address: v.optional(v.nullable(v.string())),
+	listen_port: v.optional(v.nullable(v.number())),
+	mode: v.optional(v.nullable(v.string())),
+	origin_host: v.optional(v.nullable(v.string())),
+	origin_port: v.optional(v.nullable(v.number())),
+	origin_scheme: v.optional(v.nullable(v.string())),
+	origin_type: v.optional(v.nullable(v.string())),
+	outbound_interface: v.optional(v.nullable(v.string())),
+	outbound_mode: v.optional(v.nullable(v.string())),
+	outbound_socks_port: v.optional(v.nullable(v.number())),
+	path: v.optional(v.nullable(v.string())),
+	public_domain: v.optional(v.nullable(v.string())),
+	public_port: v.optional(v.nullable(v.number())),
+	transport: v.optional(v.nullable(v.string())),
+	uplink_method: v.optional(v.nullable(v.string())),
+	xhttp_tuning: v.optional(v.nullable(v.lazy(() => vlessserver_XHTTPTuning))),
+	xmux_max_connections: v.optional(v.nullable(v.number())),
+});
+
+const vlessserver_EndpointConfig: v.GenericSchema = v.looseObject({
+	connection_way: v.optional(v.nullable(v.string())),
+	enabled: v.optional(v.nullable(v.boolean())),
+	id: v.optional(v.nullable(v.string())),
+	mode: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	origin_host: v.optional(v.nullable(v.string())),
+	origin_port: v.optional(v.nullable(v.number())),
+	origin_scheme: v.optional(v.nullable(v.string())),
+	origin_type: v.optional(v.nullable(v.string())),
+	path: v.optional(v.nullable(v.string())),
+	public_domain: v.optional(v.nullable(v.string())),
+	public_port: v.optional(v.nullable(v.number())),
+	transport: v.optional(v.nullable(v.string())),
+	uplink_method: v.optional(v.nullable(v.string())),
+	xhttp_tuning: v.optional(v.nullable(v.lazy(() => vlessserver_XHTTPTuning))),
+});
+
+const vlessserver_RealityNetworkInfo: v.GenericSchema = v.looseObject({
+	checked_at: v.optional(v.nullable(v.string())),
+	external_ip: v.optional(v.nullable(v.string())),
+	keendns_domain: v.optional(v.nullable(v.string())),
+	public_host: v.optional(v.nullable(v.string())),
+	reason: v.optional(v.nullable(v.string())),
+	wan_address: v.optional(v.nullable(v.string())),
+	white_ip: v.optional(v.nullable(v.boolean())),
+});
+
+const vlessserver_RealitySettings: v.GenericSchema = v.looseObject({
+	dest: v.optional(v.nullable(v.string())),
+	enabled: v.optional(v.nullable(v.boolean())),
+	fingerprint: v.optional(v.nullable(v.string())),
+	port: v.optional(v.nullable(v.number())),
+	private_key: v.optional(v.nullable(v.string())),
+	public_host: v.optional(v.nullable(v.string())),
+	public_key: v.optional(v.nullable(v.string())),
+	server_names: v.optional(v.nullable(v.array(v.string()))),
+	short_ids: v.optional(v.nullable(v.array(v.string()))),
+	transport: v.optional(v.nullable(v.string())),
+	updated_at: v.optional(v.nullable(v.string())),
+	xhttp_path: v.optional(v.nullable(v.string())),
+});
+
+const vlessserver_RealityState: v.GenericSchema = v.looseObject({
+	clients_count: v.optional(v.nullable(v.number())),
+	dest_presets: v.optional(v.nullable(v.array(v.string()))),
+	last_error: v.optional(v.nullable(v.string())),
+	network: v.optional(v.nullable(v.lazy(() => vlessserver_RealityNetworkInfo))),
+	port_candidates: v.optional(v.nullable(v.array(v.number()))),
+	runtime: v.optional(v.nullable(v.lazy(() => realityserver_Status))),
+	server_enabled: v.optional(v.nullable(v.boolean())),
+	settings: v.optional(v.nullable(v.lazy(() => vlessserver_RealitySettings))),
+	suggested_port: v.optional(v.nullable(v.number())),
+	wan_port_open: v.optional(v.nullable(v.boolean())),
+});
+
+const vlessserver_ShareLinks: v.GenericSchema = v.looseObject({
+	finiteproto_url: v.optional(v.nullable(v.string())),
+	happ_json: v.optional(v.nullable(v.string())),
+	mihomo_yaml: v.optional(v.nullable(v.string())),
+	remark: v.optional(v.nullable(v.string())),
+	singbox_json: v.optional(v.nullable(v.string())),
+	uuid: v.optional(v.nullable(v.string())),
+	vless_url: v.optional(v.nullable(v.string())),
+});
+
+const vlessserver_Status: v.GenericSchema = v.looseObject({
+	active_generation: v.optional(v.nullable(v.string())),
+	backend: v.optional(v.nullable(v.string())),
+	binary_path: v.optional(v.nullable(v.string())),
+	clients: v.optional(v.nullable(v.array(v.lazy(() => vlessserver_Client)))),
+	clients_count: v.optional(v.nullable(v.number())),
+	configured: v.optional(v.nullable(v.boolean())),
+	domain: v.optional(v.nullable(v.string())),
+	installed: v.optional(v.nullable(v.boolean())),
+	listen_address: v.optional(v.nullable(v.string())),
+	migration_status: v.optional(v.nullable(v.string())),
+	pid: v.optional(v.nullable(v.number())),
+	port: v.optional(v.nullable(v.number())),
+	recovery_fingerprint: v.optional(v.nullable(v.string())),
+	recovery_reason: v.optional(v.nullable(v.string())),
+	recovery_required: v.optional(v.nullable(v.boolean())),
+	running: v.optional(v.nullable(v.boolean())),
+	unavailable_reason: v.optional(v.nullable(v.string())),
+	version: v.optional(v.nullable(v.string())),
+});
+
+const vlessserver_XHTTPTuning: v.GenericSchema = v.looseObject({
+	enable_xmux: v.optional(v.nullable(v.boolean())),
+	fp_chunk_bytes: v.optional(v.nullable(v.number())),
+	fp_max_ways: v.optional(v.nullable(v.number())),
+	max_buffered_posts: v.optional(v.nullable(v.number())),
+	min_posts_interval_ms: v.optional(v.nullable(v.string())),
+	preset: v.optional(v.nullable(v.string())),
+	sc_max_each_post_bytes: v.optional(v.nullable(v.number())),
+	seq_key: v.optional(v.nullable(v.string())),
+	seq_placement: v.optional(v.nullable(v.string())),
+	session_key: v.optional(v.nullable(v.string())),
+	session_placement: v.optional(v.nullable(v.string())),
+	stream_path_suffix: v.optional(v.nullable(v.string())),
+	stream_up_server_secs: v.optional(v.nullable(v.string())),
+	uplink_method: v.optional(v.nullable(v.string())),
+	x_padding_bytes: v.optional(v.nullable(v.string())),
+	x_padding_header: v.optional(v.nullable(v.string())),
+	x_padding_key: v.optional(v.nullable(v.string())),
+	x_padding_method: v.optional(v.nullable(v.string())),
+	x_padding_obfs_mode: v.optional(v.nullable(v.boolean())),
+	x_padding_placement: v.optional(v.nullable(v.string())),
 });
 
 const wdttlink_DecodeResponse: v.GenericSchema = v.looseObject({
@@ -3472,6 +3777,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /singbox/subscriptions/delete": v.lazy(() => api_APIEnvelope),
 	"DELETE /singbox/subscriptions/happ-keys": v.lazy(() => api_APIEnvelope),
 	"DELETE /singbox/tunnels": v.lazy(() => api_SingboxTunnelsResponse),
+	"DELETE /uplink/policies": v.lazy(() => api_APIEnvelope),
 	"GET /access-policies": v.lazy(() => api_AccessPoliciesListResponse),
 	"GET /access-policies/devices": v.lazy(() => api_PolicyDevicesListResponse),
 	"GET /access-policies/interfaces": v.lazy(() => api_PolicyInterfacesListResponse),
@@ -3489,6 +3795,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /dns-routes/list": v.lazy(() => api_DnsRoutesListResponse),
 	"GET /download/outbounds": v.lazy(() => api_DownloadOutboundsResponse),
 	"GET /external-tunnels": v.lazy(() => api_ExternalTunnelsResponse),
+	"GET /firc/install-status": v.lazy(() => api_APIEnvelope),
 	"GET /health": v.lazy(() => api_HealthResponse),
 	"GET /hydraroute/config": v.lazy(() => api_HydraRouteConfigResponse),
 	"GET /hydraroute/geo-expand": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
@@ -3553,6 +3860,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /servers/{name}/peers/presets": v.lazy(() => api_PeerPresetsResponse),
 	"GET /servers/all": v.lazy(() => api_ServersAllResponse),
 	"GET /servers/marked": v.lazy(() => api_APIEnvelope),
+	"GET /servers/vless": v.lazy(() => vlessserver_Config),
+	"GET /servers/vless/reality": v.lazy(() => vlessserver_RealityState),
+	"GET /servers/vless/status": v.lazy(() => vlessserver_Status),
 	"GET /servers/wan-ip": v.lazy(() => api_WANIPResponse),
 	"GET /settings/get": v.lazy(() => api_SettingsResponse),
 	"GET /signature/capture": v.lazy(() => api_SignatureCaptureResponse),
@@ -3646,6 +3956,12 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /system/update/changelog": v.lazy(() => api_ChangelogResponse),
 	"GET /system/update/check": v.lazy(() => api_UpdateCheckResponse),
 	"GET /system/wan-interfaces": v.lazy(() => api_WANInterfacesResponse),
+	"GET /telemt/config": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Config))),
+})]),
+	"GET /telemt/status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
 	"GET /terminal/status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_TerminalStatusResponse))),
 })]),
@@ -3659,6 +3975,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /tunnels/list": v.lazy(() => api_TunnelListResponse),
 	"GET /tunnels/pingcheck": v.lazy(() => api_NativePingCheckStatusResponse),
 	"GET /tunnels/traffic": v.lazy(() => api_TunnelTrafficResponse),
+	"GET /uplink/dns": v.lazy(() => api_UplinkWANDNSResponse),
+	"GET /uplink/policies": v.lazy(() => api_UplinkSnapshotResponse),
 	"GET /wan/status": v.lazy(() => api_WANStatusEnvelope),
 	"GET /warpscout/state": v.record(v.string(), v.unknown()),
 	"GET /warpscout/targets": v.record(v.string(), v.unknown()),
@@ -3710,6 +4028,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /dns-routes/set-enabled": v.lazy(() => api_APIEnvelope),
 	"POST /dns-routes/update": v.lazy(() => api_DnsRouteResponse),
 	"POST /external-tunnels/adopt": v.lazy(() => api_APIEnvelope),
+	"POST /firc/install": v.lazy(() => api_APIEnvelope),
+	"POST /firc/migrate-runtime": v.lazy(() => api_APIEnvelope),
+	"POST /firc/uninstall": v.lazy(() => api_APIEnvelope),
 	"POST /hydraroute/geo-files/add": v.lazy(() => api_GeoFileResponse),
 	"POST /hydraroute/geo-files/rescan": v.lazy(() => api_GeoFilesRescannedResponse),
 	"POST /hydraroute/geo-files/take-control": v.lazy(() => api_GeoFileResponse),
@@ -3764,6 +4085,10 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /servers/enabled": v.lazy(() => api_ServersAllResponse),
 	"POST /servers/mark": v.lazy(() => api_ServersAllResponse),
 	"POST /servers/restart": v.lazy(() => api_APIEnvelope),
+	"POST /servers/vless/action": v.lazy(() => vlessserver_Status),
+	"POST /servers/vless/reality": v.lazy(() => vlessserver_RealityState),
+	"POST /servers/vless/reality/check-dest": v.lazy(() => realityserver_DestCheck),
+	"POST /servers/vless/reality/quick-setup": v.lazy(() => api_VlessRealityQuickSetupResponse),
 	"POST /settings/obfuscator-relay": v.lazy(() => api_SettingsResponse),
 	"POST /settings/regenerate-api-key": v.lazy(() => api_SettingsResponse),
 	"POST /settings/update": v.lazy(() => api_SettingsResponse),
@@ -3910,6 +4235,27 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /system/services/save": v.lazy(() => api_SystemServiceSavedResponse),
 	"POST /system/services/toggle-enable": v.lazy(() => api_SystemServiceToggleEnableResponse),
 	"POST /system/update/apply": v.lazy(() => api_UpdateApplyResponse),
+	"POST /telemt/config": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/install": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/restart": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/start": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/stop": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/uninstall": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
+	"POST /telemt/update": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => telemt_Status))),
+})]),
 	"POST /terminal/install": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_TerminalInstallData))),
 })]),
@@ -3922,6 +4268,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /tunnels/pingcheck/remove": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/replace": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/update": v.lazy(() => api_APIEnvelope),
+	"POST /uplink/switch": v.lazy(() => api_UplinkEntriesResponse),
 	"POST /warpscout/account/address": v.record(v.string(), v.unknown()),
 	"POST /warpscout/account/delete": v.record(v.string(), v.unknown()),
 	"POST /warpscout/account/license": v.record(v.string(), v.unknown()),
@@ -3946,6 +4293,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"PUT /proxy/config": v.lazy(() => api_ProxyConfigResponse),
 	"PUT /proxy/instance": v.lazy(() => api_ProxyInstanceResponse),
 	"PUT /servers/{name}/peers/{pubkey}": v.lazy(() => api_ServersAllResponse),
+	"PUT /servers/vless": v.lazy(() => vlessserver_Config),
 	"PUT /singbox/config/user": v.lazy(() => api_OkResponse),
 	"PUT /singbox/fakeip/config/dns/globals": v.lazy(() => api_OkResponse),
 	"PUT /singbox/router/dns/globals": v.lazy(() => api_OkResponse),
@@ -3953,4 +4301,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"PUT /singbox/subscriptions/groups/update": v.lazy(() => api_SubscriptionGroupResponse),
 	"PUT /singbox/subscriptions/update": v.lazy(() => api_SubscriptionResponse),
 	"PUT /singbox/tunnels": v.lazy(() => api_SingboxTunnelsResponse),
+	"PUT /uplink/dns": v.lazy(() => api_UplinkWANDNSResponse),
+	"PUT /uplink/policies": v.lazy(() => api_UplinkPolicyResponse),
 };

@@ -69,6 +69,11 @@ type Settings struct {
 	// reconciles only when this is false. Cleared by Control("start")
 	// and Control("restart"); set by Control("stop").
 	SingboxManuallyStopped bool `json:"singboxManuallyStopped,omitempty"`
+	// SingboxStoppedByEngine tracks automatic sing-box shutdown caused by
+	// routing engine ownership (e.g. switching to FIRC with switch_and_stop).
+	// Kept distinct from SingboxManuallyStopped so returning to sing-box
+	// resumes sing-box unless the user explicitly stopped it themselves.
+	SingboxStoppedByEngine bool `json:"singboxStoppedByEngine,omitempty"`
 	// CreateNDMSProxyForSingbox controls whether NDMS ProxyN/t2sN
 	// interfaces are created per sing-box tunnel. When false, sing-box
 	// works only through its internal router engine (deviceproxy / TUN /
@@ -213,8 +218,10 @@ type DownloadSettings struct {
 }
 
 type SingboxRouterSettings struct {
-	Enabled    bool   `json:"enabled"`
-	PolicyName string `json:"policyName"`
+	GlobalOutbound       string `json:"globalOutbound,omitempty"`
+	KeenDNSCloudOutbound string `json:"keenDNSCloudOutbound,omitempty"`
+	Enabled              bool   `json:"enabled"`
+	PolicyName           string `json:"policyName"`
 	// DeviceMode controls which LAN devices are routed through sing-box.
 	// "policy" (default) keeps the historical NDMS access-policy mark
 	// filter. "all" installs unmarked PREROUTING jumps so every LAN
@@ -342,6 +349,11 @@ type SingboxRouterSettings struct {
 	// (не задано) — путь из 00-base.json как есть, рукописный сохраняется,
 	// негодный заменяется флешем.
 	CacheFileLocation string `json:"cacheFileLocation,omitempty"`
+	// SSTPIngress — заворачивать входящий трафик клиентов SSTP VPN-сервера Keenetic
+	// (интерфейсы sstp+) в маршрутизацию sing-box / FIRC.
+	SSTPIngress bool `json:"sstpIngress,omitempty"`
+	// RoutingEngine: "sing-box" (default) or "firc".
+	RoutingEngine string `json:"routingEngine,omitempty"`
 }
 
 // Значения SingboxRouterSettings.CacheFileLocation.

@@ -7,7 +7,7 @@
     status: 'running' | 'stopped' | 'unknown';
     peerActive?: number;
     peerCount?: number;
-    kind: 'managed' | 'system';
+    kind: 'managed' | 'system' | 'xray' | 'tgwebproxy' | 'dispatcher';
   }
 </script>
 

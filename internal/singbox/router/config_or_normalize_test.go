@@ -115,7 +115,7 @@ func TestNormalizeAddressOrRule_AllMatchersRouted(t *testing.T) {
 	// Поля, которым МЕСТО на внешнем правиле логической формы.
 	outerOnly := map[string]bool{
 		"Type": true, "Mode": true, "Rules": true,
-		"Action": true, "Outbound": true, "UDPTimeout": true, "AwgmManaged": true,
+		"Action": true, "Outbound": true, "UDPTimeout": true, "Timeout": true, "AwgmManaged": true,
 	}
 
 	base := Rule{RuleSet: []string{"geosite-x"}, IPCIDR: []string{"1.2.3.0/24"},
@@ -137,7 +137,7 @@ func TestNormalizeAddressOrRule_AllMatchersRouted(t *testing.T) {
 		}
 		outer := got
 		outer.Type, outer.Mode, outer.Rules = "", "", nil
-		outer.Action, outer.Outbound, outer.UDPTimeout, outer.AwgmManaged = "", "", "", ""
+		outer.Action, outer.Outbound, outer.UDPTimeout, outer.Timeout, outer.AwgmManaged = "", "", "", "", ""
 		if ov := reflect.ValueOf(outer); !ov.IsZero() {
 			ot := ov.Type()
 			for j := 0; j < ot.NumField(); j++ {

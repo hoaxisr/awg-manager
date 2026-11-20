@@ -32,9 +32,12 @@ func (s *ServiceImpl) RenameExternalOutboundTag(ctx context.Context, oldTag, new
 	if oldTag == "" || newTag == "" || oldTag == newTag {
 		return nil
 	}
-	// Settings-side references: QoS classes route to outbound tags too and
-	// must follow the rename (config-side rewrites below don't see them).
+	// Settings-side references: QoS classes and KeenDNS Cloud redirect target
+	// outbound tags too and must follow the rename.
 	if err := s.renameQoSClassOutbound(oldTag, newTag); err != nil {
+		return err
+	}
+	if err := s.renameKeenDNSCloudOutbound(oldTag, newTag); err != nil {
 		return err
 	}
 	if s.deps.Orch == nil {
@@ -105,6 +108,11 @@ func (s *ServiceImpl) RenameExternalOutboundTag(ctx context.Context, oldTag, new
 		if err := storage.AtomicWrite(fakeipPending, data); err != nil {
 			return err
 		}
+		changed = true
+	}
+	if ok, err := s.rewriteCloudOutputSlotOutbound(oldTag, newTag); err != nil {
+		return err
+	} else if ok {
 		changed = true
 	}
 	if changed {
@@ -193,10 +201,21 @@ func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o
 		return err
 	}
 	// A rename rewrites config references (renameOutboundReferences inside
-	// UpdateCompositeOutbound); mirror it for the settings-side QoS classes.
+	// UpdateCompositeOutbound); mirror it for settings-side references.
 	if newTag := strings.TrimSpace(o.Tag); newTag != "" && newTag != tag {
 		if err := s.renameQoSClassOutbound(tag, newTag); err != nil {
 			s.appLog.Warn("qos-classes", tag, "rename outbound in QoS classes: "+err.Error())
+		}
+		if err := s.renameKeenDNSCloudOutbound(tag, newTag); err != nil {
+			s.appLog.Warn("keendns-cloud", tag, "rename outbound in KeenDNS Cloud settings: "+err.Error())
+		}
+		if s.deps.Orch != nil && s.slotEnabled(orchestrator.SlotKeenDNSCloud) && len(s.keendnsCloudReferencing(newTag)) > 0 {
+			s.transitionMu.Lock()
+			detachErr := s.detachCloudOutputLocked(ctx, true)
+			s.transitionMu.Unlock()
+			if detachErr != nil {
+				s.appLog.Warn("keendns-cloud", tag, "detach KeenDNS Cloud slot after outbound rename: "+detachErr.Error())
+			}
 		}
 	}
 	return nil
@@ -253,10 +272,11 @@ func keepsBind(c *RouterConfig, tag string, o Outbound) bool {
 }
 
 func (s *ServiceImpl) DeleteCompositeOutbound(ctx context.Context, tag string, force bool) error {
-	// QoS classes reference outbounds from settings, invisible to the config's
-	// own reference scan — guard them the same way route rules are guarded.
+	// Settings-side references (QoS classes, KeenDNS Cloud redirect) are
+	// invisible to the config's own reference scan — guard them the same way.
 	if !force {
-		if refs := s.qosClassesReferencing(tag); len(refs) > 0 {
+		refs := append(s.qosClassesReferencing(tag), s.keendnsCloudReferencing(tag)...)
+		if len(refs) > 0 {
 			return fmt.Errorf("%w: %q referenced by %s", ErrOutboundReferenced, tag, strings.Join(refs, ", "))
 		}
 	}
@@ -268,6 +288,9 @@ func (s *ServiceImpl) DeleteCompositeOutbound(ctx context.Context, tag string, f
 		// shows them off instead of silently losing user configuration.
 		if err := s.disableQoSClassesForOutbound(tag); err != nil {
 			s.appLog.Warn("qos-classes", tag, "disable QoS classes after outbound delete: "+err.Error())
+		}
+		if err := s.clearKeenDNSCloudOutbound(ctx, tag); err != nil {
+			s.appLog.Warn("keendns-cloud", tag, "clear KeenDNS Cloud outbound after outbound delete: "+err.Error())
 		}
 	}
 	return nil
@@ -306,5 +329,6 @@ func (s *ServiceImpl) OutboundReferenceLocations(tag string) []string {
 			out = append(out, "[fakeip] "+loc)
 		}
 	}
+	out = append(out, s.keendnsCloudReferencing(tag)...)
 	return out
 }

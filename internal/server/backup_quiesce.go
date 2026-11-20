@@ -18,6 +18,19 @@ const backupQuiesceTimeout = 2 * time.Minute
 func (s *Server) QuiesceForBackup(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, backupQuiesceTimeout)
 	defer cancel()
+	pausedUplink := false
+	completed := false
+	if s.uplinkHandler != nil && s.uplinkHandler.Controller != nil {
+		if err := s.uplinkHandler.Controller.Pause(ctx); err != nil {
+			return err
+		}
+		pausedUplink = true
+	}
+	defer func() {
+		if pausedUplink && !completed {
+			s.uplinkHandler.Controller.Resume()
+		}
+	}()
 
 	runDir := filepath.Join(s.settings.DataDir(), "run")
 
@@ -55,12 +68,21 @@ func (s *Server) QuiesceForBackup(parent context.Context) error {
 	// registry stop and our walk.
 	backup.KillOrphanProxyProcesses(runDir)
 
+	completed = true
 	return nil
 }
 
 // ResumeAfterBackup brings child services back after a successful export quiesce.
 // Restore path relies on daemon restart instead (ScheduleRestart).
 func (s *Server) ResumeAfterBackup(parent context.Context) {
+	if s.uplinkHandler != nil && s.uplinkHandler.Controller != nil {
+		s.uplinkHandler.Controller.BeginBackupResume()
+	}
+	defer func() {
+		if s.uplinkHandler != nil && s.uplinkHandler.Controller != nil {
+			s.uplinkHandler.Controller.Resume()
+		}
+	}()
 	ctx, cancel := context.WithTimeout(parent, backupQuiesceTimeout)
 	defer cancel()
 

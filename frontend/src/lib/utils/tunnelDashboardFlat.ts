@@ -7,6 +7,7 @@ import type {
 	SystemTunnel,
 	TunnelListItem,
 } from '$lib/types';
+import { stripFircEmojis, type FircTunnel } from '$lib/types/firc';
 import { compareString } from '$lib/utils/tunnelTableSort';
 
 export type SubscriptionActiveCard = {
@@ -19,7 +20,9 @@ export type TunnelDashboardFlatItem =
 	| { kind: 'awg-system'; key: string; name: string; tunnel: SystemTunnel }
 	| { kind: 'awg-external'; key: string; name: string; tunnel: ExternalTunnel }
 	| { kind: 'awg3'; key: string; name: string; tunnel: Awg3Tunnel; index: number }
+	| { kind: 'firc-proxy'; key: string; name: string; tunnel: FircTunnel; index: number }
 	| { kind: 'singbox'; key: string; name: string; tunnel: SingboxTunnel; index: number }
+	| { kind: 'firc-subscription'; key: string; name: string; tunnel: FircTunnel; index: number }
 	| { kind: 'sub-active'; key: string; name: string; card: SubscriptionActiveCard; index: number }
 	| { kind: 'sub-stopped'; key: string; name: string; subscription: Subscription };
 
@@ -29,9 +32,11 @@ const FLAT_DASHBOARD_KIND_ORDER: Record<TunnelDashboardFlatItem['kind'], number>
 	'awg-system': 1,
 	'awg-external': 2,
 	awg3: 3,
-	singbox: 4,
-	'sub-active': 5,
-	'sub-stopped': 6,
+	'firc-proxy': 4,
+	singbox: 5,
+	'firc-subscription': 6,
+	'sub-active': 7,
+	'sub-stopped': 8,
 };
 
 function compareFlatDashboardItems(a: TunnelDashboardFlatItem, b: TunnelDashboardFlatItem): number {
@@ -45,7 +50,9 @@ export function buildFlatDashboardItems(input: {
 	system: SystemTunnel[];
 	external: ExternalTunnel[];
 	awg3: Awg3Tunnel[];
+	fircProxies?: FircTunnel[];
 	singbox: SingboxTunnel[];
+	fircSubscriptions?: FircTunnel[];
 	subscriptionsActive: SubscriptionActiveCard[];
 	subscriptionsStopped: Subscription[];
 }): TunnelDashboardFlatItem[] {
@@ -89,11 +96,31 @@ export function buildFlatDashboardItems(input: {
 		});
 	});
 
+	(input.fircProxies ?? []).forEach((tunnel, index) => {
+		items.push({
+			kind: 'firc-proxy',
+			key: `firc-proxy:${tunnel.id}`,
+			name: stripFircEmojis(tunnel.description || tunnel.id) || tunnel.device || tunnel.id,
+			tunnel,
+			index,
+		});
+	});
+
 	input.singbox.forEach((tunnel, index) => {
 		items.push({
 			kind: 'singbox',
 			key: `singbox:${tunnel.tag}`,
 			name: tunnel.tag,
+			tunnel,
+			index,
+		});
+	});
+
+	(input.fircSubscriptions ?? []).forEach((tunnel, index) => {
+		items.push({
+			kind: 'firc-subscription',
+			key: `firc-subscription:${tunnel.id}`,
+			name: stripFircEmojis(tunnel.description || tunnel.id) || tunnel.device || tunnel.id,
 			tunnel,
 			index,
 		});

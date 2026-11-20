@@ -26,6 +26,7 @@
 	let label = $state('');
 	let tag = $state('');
 	let mode = $state<SubscriptionMode>('urltest');
+	let directFirst = $state(false);
 	let utUrl = $state(DEFAULT_SUBSCRIPTION_URLTEST.url);
 	let utIntervalSec = $state(DEFAULT_SUBSCRIPTION_URLTEST.intervalSec);
 	let utToleranceMs = $state(DEFAULT_SUBSCRIPTION_URLTEST.toleranceMs);
@@ -42,6 +43,7 @@
 		label = group?.label ?? '';
 		tag = '';
 		mode = group?.mode ?? 'urltest';
+		directFirst = group?.directFirst ?? false;
 		utUrl = group?.urlTest?.url ?? DEFAULT_SUBSCRIPTION_URLTEST.url;
 		utIntervalSec = group?.urlTest?.intervalSec ?? DEFAULT_SUBSCRIPTION_URLTEST.intervalSec;
 		utToleranceMs = group?.urlTest?.toleranceMs ?? DEFAULT_SUBSCRIPTION_URLTEST.toleranceMs;
@@ -89,6 +91,7 @@
 						? { url: utUrl, intervalSec: utIntervalSec, toleranceMs: utToleranceMs }
 						: undefined,
 				useSubscriptionIds: selectedIds,
+				directFirst: mode === 'fallback' && directFirst,
 				filterInclude: filterInclude.trim(),
 				filterExclude: filterExclude.trim(),
 				enabled,
@@ -192,6 +195,12 @@
 					<div class="mode-desc">{m.subscriptions_form_mode_fallback_desc()}</div>
 				</button>
 			</div>
+			{#if mode === 'fallback'}
+				<label class="row">
+					<input type="checkbox" bind:checked={directFirst} />
+					<span class="lbl">{m.subscriptions_group_direct_first()}</span>
+				</label>
+			{/if}
 			{#if isAutoSelectMode(mode)}
 				<div class="urltest-block">
 					<label class="row">

@@ -175,6 +175,7 @@ export interface SubscriptionGroup {
 	mode: SubscriptionMode;
 	urlTest?: SubscriptionURLTest;
 	useSubscriptionIds: string[];
+ directFirst?: boolean;
 	filterInclude?: string;
 	filterExclude?: string;
 	enabled: boolean;
@@ -195,6 +196,7 @@ export interface CreateSubscriptionGroupInput {
 	mode?: SubscriptionMode; // default 'urltest'
 	urlTest?: SubscriptionURLTest;
 	useSubscriptionIds: string[];
+ directFirst?: boolean;
 	filterInclude?: string;
 	filterExclude?: string;
 	enabled: boolean;
@@ -205,6 +207,7 @@ export interface UpdateSubscriptionGroupInput {
 	mode?: SubscriptionMode;
 	urlTest?: SubscriptionURLTest;
 	useSubscriptionIds?: string[];
+ directFirst?: boolean;
 	filterInclude?: string;
 	filterExclude?: string;
 	enabled?: boolean;

@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 )
 
 // Process manages the sing-box process lifecycle (single-process model).
@@ -128,7 +130,7 @@ func (p *Process) signal(pid int, sig syscall.Signal) error {
 	if p.signalFn != nil {
 		return p.signalFn(pid, sig)
 	}
-	return syscall.Kill(pid, sig)
+	return childproc.Signal(pid, sig)
 }
 
 // signalGen delivers sig to a spawned generation's child through its
@@ -286,7 +288,7 @@ func (p *Process) startLocked() (spawned bool, err error) {
 	}
 	cmd.Stdout = outF
 	cmd.Stderr = errF
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	childproc.SetProcessGroup(cmd)
 
 	p.setLastStderr("")
 
@@ -466,6 +468,10 @@ func (p *Process) effectiveLogDir() string {
 		return p.logDir
 	}
 	return procLogDir
+}
+
+func (p *Process) errLogPath() string {
+	return filepath.Join(p.effectiveLogDir(), procErrLogName)
 }
 
 // startTails запускает tail-горутины логов текущего поколения, кладёт
@@ -702,7 +708,7 @@ var reloadReadyWait = maxSingboxBootWait
 // avoid a reentrant-lock deadlock.
 func (p *Process) Reload() error {
 	for {
-		g, died := p.waitStarted()
+		g, wasAlive, died := p.waitStarted()
 		p.startMu.Lock()
 		if p.curGen != g {
 			// Пока ждали без лока, появилось новое поколение (параллельный
@@ -710,12 +716,10 @@ func (p *Process) Reload() error {
 			p.startMu.Unlock()
 			continue
 		}
-		if died {
-			// Процесс умер, пока мы ждали: пользовательский Stop или краш.
-			// Поднимать его здесь — значит отменить более поздний Stop.
-			// Цена: после краша движок поднимает сторож на своём тике (с
-			// учётом backoff), а не этот Reload сразу; конфиг на диске уже
-			// новый — его и возьмёт.
+		if died || (g != nil && (g.deliberate.Load() || (wasAlive && !g.alive()))) {
+			// Процесс умер или был намеренно остановлен, пока мы ждали
+			// (или до/во время удержания startMu в Stop()): поднимать
+			// его здесь — значит отменить более поздний Stop.
 			p.startMu.Unlock()
 			return nil
 		}
@@ -767,12 +771,13 @@ func (p *Process) Reload() error {
 // (AttachIfRunning) curGen не заводит — он давно работает.
 // Возвращает поколение, которое ждали (Reload сверит его с curGen под
 // локом), и died — умерло ли оно за время ожидания.
-func (p *Process) waitStarted() (g *processGen, died bool) {
+func (p *Process) waitStarted() (g *processGen, wasAlive, died bool) {
 	p.startMu.Lock()
 	g = p.curGen
+	wasAlive = g != nil && g.alive()
 	p.startMu.Unlock()
 	if g == nil || !g.expectStarted {
-		return g, false
+		return g, wasAlive, false
 	}
 	// Уже умершее ДО вызова поколение (curGen после Stop/краша не
 	// обнуляется) и уже готовое — без ожидания и без died: проверки
@@ -780,21 +785,21 @@ func (p *Process) waitStarted() (g *processGen, died bool) {
 	// исход случайно. died — ровно «умерло, пока ждали».
 	select {
 	case <-g.reaped:
-		return g, false
+		return g, wasAlive, false
 	default:
 	}
 	select {
 	case <-g.started:
-		return g, false
+		return g, wasAlive, false
 	default:
 	}
 	select {
 	case <-g.started:
 	case <-g.reaped:
-		return g, true
+		return g, wasAlive, true
 	case <-time.After(reloadReadyWait):
 	}
-	return g, false
+	return g, wasAlive, false
 }
 
 // IsRunning checks if the PID in file is alive.
@@ -883,7 +888,5 @@ func isAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	// syscall.Kill with signal 0 probes existence without sending a signal.
-	err := syscall.Kill(pid, 0)
-	return err == nil
+	return childproc.IsAlive(pid)
 }

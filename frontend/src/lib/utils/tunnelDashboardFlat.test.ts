@@ -8,7 +8,9 @@ describe('buildFlatDashboardItems', () => {
 			system: [{ id: 'sys-1', interfaceName: 'wg-sys', description: 'Mike system' } as never],
 			external: [{ interfaceName: 'ext-alpha' } as never],
 			awg3: [{ id: 'awg3-x', tag: 'Charlie AWG3', host: 'h:1' } as never],
+			fircProxies: [{ id: 'firc-p1', device: 'tunvless0', description: 'Delta FIRC' } as never],
 			singbox: [{ tag: 'Bravo SB' } as never],
+			fircSubscriptions: [{ id: 'firc-s1', device: 'tunvless1', description: 'Echo FIRC Sub' } as never],
 			subscriptionsActive: [
 				{
 					subscription: { id: 'sub-a', label: 'Alpha sub' },
@@ -23,7 +25,9 @@ describe('buildFlatDashboardItems', () => {
 			'awg-system',
 			'awg-external',
 			'awg3',
+			'firc-proxy',
 			'singbox',
+			'firc-subscription',
 			'sub-active',
 			'sub-stopped',
 		]);
@@ -32,7 +36,9 @@ describe('buildFlatDashboardItems', () => {
 			'Mike system',
 			'ext-alpha',
 			'Charlie AWG3',
+			'Delta FIRC',
 			'Bravo SB',
+			'Echo FIRC Sub',
 			'Alpha sub',
 			'Stopped sub',
 		]);

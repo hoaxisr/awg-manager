@@ -1,0 +1,464 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/auth"
+	"github.com/hoaxisr/awg-manager/internal/serveringress"
+	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
+)
+
+func setupTestTgWebProxyHandler(t *testing.T) (*TgWebProxyHandler, *tgwebproxy.Service, *auth.SessionStore, string, string) {
+	t.Helper()
+	tempDir := t.TempDir()
+	sessionStore := auth.NewSessionStore(nil)
+	sessionToken, err := sessionStore.Create("root")
+	if err != nil {
+		t.Fatalf("create session failed: %v", err)
+	}
+
+	svc := tgwebproxy.New(tempDir, nil)
+	handler := NewTgWebProxyHandler(svc, sessionStore)
+	t.Cleanup(func() {
+		sessionStore.Stop()
+		_ = svc.Close()
+	})
+	return handler, svc, sessionStore, sessionToken, tempDir
+}
+
+func getValidCSRFToken(t *testing.T, handler *TgWebProxyHandler, sessionToken string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	req.Host = "192.168.10.1:2222"
+	req.Header.Set("Origin", "http://192.168.10.1:2222")
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+
+	w := httptest.NewRecorder()
+	handler.GetCSRFToken(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("failed to get CSRF token, code %d: %s", w.Code, w.Body.String())
+	}
+
+	var res struct {
+		Success bool `json:"success"`
+		Data    struct {
+			CSRFToken string `json:"csrf_token"`
+		} `json:"data"`
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("unmarshal csrf token response: %v", err)
+	}
+	token := res.CSRFToken
+	if token == "" {
+		token = res.Data.CSRFToken
+	}
+	if token == "" {
+		t.Fatalf("empty csrf token returned: %s", w.Body.String())
+	}
+	return token
+}
+
+func TestTgWebProxy_CSRF_GetToken(t *testing.T) {
+	handler, _, sessionStore, sessionToken, _ := setupTestTgWebProxyHandler(t)
+
+	// 1. POST method to /csrf should be rejected with 405 Method Not Allowed
+	reqPost := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	wPost := httptest.NewRecorder()
+	handler.GetCSRFToken(wPost, reqPost)
+	if wPost.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 Method Not Allowed for POST /csrf, got %d", wPost.Code)
+	}
+
+	// 2. GET without session cookie should be rejected with 401 Unauthorized
+	reqNoCookie := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	reqNoCookie.Host = "192.168.10.1:2222"
+	reqNoCookie.Header.Set("Origin", "http://192.168.10.1:2222")
+	wNoCookie := httptest.NewRecorder()
+	handler.GetCSRFToken(wNoCookie, reqNoCookie)
+	if wNoCookie.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 Unauthorized without session cookie, got %d", wNoCookie.Code)
+	}
+
+	// 3. GET with invalid/expired session cookie should be rejected with 401
+	reqBadCookie := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	reqBadCookie.Host = "192.168.10.1:2222"
+	reqBadCookie.Header.Set("Origin", "http://192.168.10.1:2222")
+	reqBadCookie.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: "expired_or_invalid_session"})
+	wBadCookie := httptest.NewRecorder()
+	handler.GetCSRFToken(wBadCookie, reqBadCookie)
+	if wBadCookie.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 Unauthorized for bad session, got %d", wBadCookie.Code)
+	}
+
+	// 4. GET with foreign Origin should be rejected with 403 Forbidden
+	reqBadOrigin := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	reqBadOrigin.Host = "192.168.10.1:2222"
+	reqBadOrigin.Header.Set("Origin", "http://evil-attacker.com")
+	reqBadOrigin.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+	wBadOrigin := httptest.NewRecorder()
+	handler.GetCSRFToken(wBadOrigin, reqBadOrigin)
+	if wBadOrigin.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden for foreign Origin, got %d", wBadOrigin.Code)
+	}
+
+	// 5. GET with valid session returns 200, cache headers, and token
+	reqValid := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	reqValid.Host = "192.168.10.1:2222"
+	reqValid.Header.Set("Origin", "http://192.168.10.1:2222")
+	reqValid.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+	wValid := httptest.NewRecorder()
+	handler.GetCSRFToken(wValid, reqValid)
+
+	if wValid.Code != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", wValid.Code)
+	}
+	if cc := wValid.Header().Get("Cache-Control"); cc != "no-store, private" {
+		t.Errorf("expected Cache-Control 'no-store, private', got %q", cc)
+	}
+	if pr := wValid.Header().Get("Pragma"); pr != "no-cache" {
+		t.Errorf("expected Pragma 'no-cache', got %q", pr)
+	}
+
+	var res struct {
+		Success bool `json:"success"`
+		Data    struct {
+			CSRFToken string `json:"csrf_token"`
+		} `json:"data"`
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(wValid.Body.Bytes(), &res); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	token := res.CSRFToken
+	if token == "" {
+		token = res.Data.CSRFToken
+	}
+	if len(token) != 64 {
+		t.Errorf("expected 64-char hex CSRF token, got %q", token)
+	}
+
+	_ = sessionStore
+}
+
+func TestTgWebProxy_CSRF_StrictRejectionOfStaticToken(t *testing.T) {
+	handler, _, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+
+	// Sending legacy static token "awgm-tgwebproxy" MUST BE STRICTLY REJECTED WITH 403
+	reqBody, _ := json.Marshal(map[string]interface{}{"public_hostname": "test.com"})
+	req := httptest.NewRequest(http.MethodPut, "http://192.168.10.1:2222/api/servers/tgwebproxy", bytes.NewReader(reqBody))
+	req.Host = "192.168.10.1:2222"
+	req.Header.Set("Origin", "http://192.168.10.1:2222")
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+	req.Header.Set("X-CSRF-Token", "awgm-tgwebproxy")
+
+	w := httptest.NewRecorder()
+	handler.UpdateConfig(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden for static 'awgm-tgwebproxy' token, got %d", w.Code)
+	}
+}
+
+func TestTgWebProxy_CSRF_CrossSessionRejection(t *testing.T) {
+	handler, _, sessionStore, sessionTokenA, _ := setupTestTgWebProxyHandler(t)
+
+	sessionTokenB, err := sessionStore.Create("admin2")
+	if err != nil {
+		t.Fatalf("create second session: %v", err)
+	}
+
+	tokenA := getValidCSRFToken(t, handler, sessionTokenA)
+
+	// Sending token derived for session A together with session B cookie MUST BE REJECTED
+	reqBody, _ := json.Marshal(map[string]interface{}{"public_hostname": "test.com"})
+	req := httptest.NewRequest(http.MethodPut, "http://192.168.10.1:2222/api/servers/tgwebproxy", bytes.NewReader(reqBody))
+	req.Host = "192.168.10.1:2222"
+	req.Header.Set("Origin", "http://192.168.10.1:2222")
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionTokenB})
+	req.Header.Set("X-CSRF-Token", tokenA)
+
+	w := httptest.NewRecorder()
+	handler.UpdateConfig(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden when using token from another session, got %d", w.Code)
+	}
+}
+
+func TestTgWebProxy_CSRF_MissingOriginAndReferer(t *testing.T) {
+	handler, _, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	token := getValidCSRFToken(t, handler, sessionToken)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{"public_hostname": "test.com"})
+	req := httptest.NewRequest(http.MethodPut, "http://192.168.10.1:2222/api/servers/tgwebproxy", bytes.NewReader(reqBody))
+	req.Host = "192.168.10.1:2222"
+	// Neither Origin nor Referer provided
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+	req.Header.Set("X-CSRF-Token", token)
+
+	w := httptest.NewRecorder()
+	handler.UpdateConfig(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden when neither Origin nor Referer is provided, got %d", w.Code)
+	}
+}
+
+func TestTgWebProxy_MethodEnforcement(t *testing.T) {
+	handler, _, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	token := getValidCSRFToken(t, handler, sessionToken)
+
+	// 1. UpdateConfig requires PUT (rejects POST and GET)
+	reqPost := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy", nil)
+	reqPost.Host = "192.168.10.1:2222"
+	reqPost.Header.Set("Origin", "http://192.168.10.1:2222")
+	reqPost.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+	reqPost.Header.Set("X-CSRF-Token", token)
+	wPost := httptest.NewRecorder()
+	handler.UpdateConfig(wPost, reqPost)
+	if wPost.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 Method Not Allowed for POST to UpdateConfig, got %d", wPost.Code)
+	}
+
+	// 2. RevealSecret requires POST (rejects GET)
+	reqRevealGet := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/reveal", nil)
+	reqRevealGet.Host = "192.168.10.1:2222"
+	reqRevealGet.Header.Set("Origin", "http://192.168.10.1:2222")
+	reqRevealGet.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+	reqRevealGet.Header.Set("X-CSRF-Token", token)
+	wRevealGet := httptest.NewRecorder()
+	handler.RevealSecret(wRevealGet, reqRevealGet)
+	if wRevealGet.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 Method Not Allowed for GET to RevealSecret, got %d", wRevealGet.Code)
+	}
+
+	// 3. Action requires POST (rejects GET)
+	reqActionGet := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/action", nil)
+	reqActionGet.Host = "192.168.10.1:2222"
+	reqActionGet.Header.Set("Origin", "http://192.168.10.1:2222")
+	reqActionGet.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+	reqActionGet.Header.Set("X-CSRF-Token", token)
+	wActionGet := httptest.NewRecorder()
+	handler.Action(wActionGet, reqActionGet)
+	if wActionGet.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 Method Not Allowed for GET to Action, got %d", wActionGet.Code)
+	}
+
+	// 4. GetStatus requires GET (rejects POST)
+	reqStatusPost := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/status", nil)
+	wStatusPost := httptest.NewRecorder()
+	handler.GetStatus(wStatusPost, reqStatusPost)
+	if wStatusPost.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 Method Not Allowed for POST to GetStatus, got %d", wStatusPost.Code)
+	}
+}
+
+func TestTgWebProxy_RateLimit_SessionKeyed(t *testing.T) {
+	handler, _, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	token := getValidCSRFToken(t, handler, sessionToken)
+
+	req := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/reveal", nil)
+	req.Host = "192.168.10.1:2222"
+	req.Header.Set("Origin", "http://192.168.10.1:2222")
+	req.Header.Set("X-CSRF-Token", token)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+
+	// First reveal request
+	w1 := httptest.NewRecorder()
+	handler.RevealSecret(w1, req)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on first reveal, got %d: %s", w1.Code, w1.Body.String())
+	}
+
+	// Second immediate reveal request with the same session should be rate-limited (HTTP 429)
+	w2 := httptest.NewRecorder()
+	handler.RevealSecret(w2, req)
+
+	if w2.Code != http.StatusTooManyRequests {
+		t.Errorf("expected 429 Too Many Requests on immediate second reveal, got %d", w2.Code)
+	}
+
+	// Advance time past rate limit (5 seconds)
+	handler.revealMu.Lock()
+	handler.revealLimits["sess:"+sessionToken] = time.Now().Add(-6 * time.Second)
+	handler.revealMu.Unlock()
+
+	w3 := httptest.NewRecorder()
+	handler.RevealSecret(w3, req)
+	if w3.Code == http.StatusTooManyRequests {
+		t.Errorf("expected rate limit to expire after delay, got 429")
+	}
+}
+
+func TestTgWebProxy_CSRF_NilSessionStore_FailClosed(t *testing.T) {
+	tempDir := t.TempDir()
+	svc := tgwebproxy.New(tempDir, nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	// Handler constructed with nil sessionStore
+	handler := NewTgWebProxyHandler(svc, nil)
+
+	// 1. GetCSRFToken should fail-closed with 503 Service Unavailable
+	req := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	req.Host = "192.168.10.1:2222"
+	req.Header.Set("Origin", "http://192.168.10.1:2222")
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: "some_session"})
+
+	w := httptest.NewRecorder()
+	handler.GetCSRFToken(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 Service Unavailable when sessionStore is nil, got %d", w.Code)
+	}
+
+	// 2. checkCSRF should fail-closed and reject mutating endpoint
+	mutReq := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/reveal", nil)
+	mutReq.Host = "192.168.10.1:2222"
+	mutReq.Header.Set("Origin", "http://192.168.10.1:2222")
+	mutReq.Header.Set("X-CSRF-Token", "some_token")
+	mutReq.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: "some_session"})
+
+	wMut := httptest.NewRecorder()
+	handler.RevealSecret(wMut, mutReq)
+	if wMut.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden on mutating action when sessionStore is nil, got %d", wMut.Code)
+	}
+}
+
+func TestTgWebProxy_GetCSRF_MissingOriginAndReferer(t *testing.T) {
+	handler, _, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+
+	// Request with valid session cookie but neither Origin nor Referer
+	req := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	req.Host = "192.168.10.1:2222"
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+
+	w := httptest.NewRecorder()
+	handler.GetCSRFToken(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden when Origin and Referer are both missing on /csrf, got %d", w.Code)
+	}
+}
+
+func TestTgWebProxy_GetCSRF_MismatchedPort(t *testing.T) {
+	handler, _, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+
+	// Origin specifies port 8080 while Host is 2222
+	req := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	req.Host = "192.168.10.1:2222"
+	req.Header.Set("Origin", "http://192.168.10.1:8080")
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+
+	w := httptest.NewRecorder()
+	handler.GetCSRFToken(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden when Origin port does not match Host port, got %d", w.Code)
+	}
+}
+
+func TestTgWebProxy_CheckCSRF_MutatingMissingOriginAndReferer(t *testing.T) {
+	handler, _, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	token := getValidCSRFToken(t, handler, sessionToken)
+
+	// Valid token and session, but missing Origin and Referer
+	req := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/reveal", nil)
+	req.Host = "192.168.10.1:2222"
+	req.Header.Set("X-CSRF-Token", token)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+
+	w := httptest.NewRecorder()
+	handler.RevealSecret(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden on mutating endpoint when Origin and Referer are missing, got %d", w.Code)
+	}
+}
+
+func freeTCPPortForTest(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen ephemeral port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	return port
+}
+
+func TestTgWebProxy_RapidStopStartWithConfigWatcherDoesNotRevert(t *testing.T) {
+	handler, svc, _, sessionToken, tempDir := setupTestTgWebProxyHandler(t)
+	coord := serveringress.New(tempDir, nil, nil, svc)
+	handler.SetCoordinator(coord)
+
+	directPort := freeTCPPortForTest(t)
+	listenPort := freeTCPPortForTest(t)
+	epListenPort := freeTCPPortForTest(t)
+	epAdminPort := freeTCPPortForTest(t)
+	rawPort := freeTCPPortForTest(t)
+
+	initialCfg := svc.GetInternalConfig()
+	initialCfg.Enabled = true
+	initialCfg.Scenario = tgwebproxy.ScenarioDirectFakeTLS
+	initialCfg.DirectHost = "127.0.0.1"
+	initialCfg.DirectPort = directPort
+	initialCfg.ListenPort = listenPort
+	initialCfg.AdminPort = epAdminPort
+	initialCfg.Backend = (&net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: rawPort}).String()
+	initialCfg.Endpoints = []tgwebproxy.WebProxyEndpoint{{
+		ID:          "ep-1",
+		Hostname:    "tg.example.com",
+		ListenPort:  epListenPort,
+		AdminPort:   epAdminPort,
+		IsCDN:       true,
+		CarrierMode: tgwebproxy.DefaultCarrierMode,
+	}}
+	if err := coord.ApplyTelegramConfig(context.Background(), initialCfg); err != nil {
+		t.Fatalf("initial ApplyTelegramConfig: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	watcher := coord.StartConfigWatcher(ctx)
+	t.Cleanup(func() {
+		cancel()
+		watcher.Stop()
+		_ = coord.SetTelegramEnabled(context.Background(), false)
+	})
+
+	token := getValidCSRFToken(t, handler, sessionToken)
+	doAction := func(act string) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]string{"action": act})
+		req := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/action", bytes.NewReader(body))
+		req.Host = "192.168.10.1:2222"
+		req.Header.Set("Origin", "http://192.168.10.1:2222")
+		req.Header.Set("X-CSRF-Token", token)
+		req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+		w := httptest.NewRecorder()
+		handler.Action(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("action %q failed (%d): %s", act, w.Code, w.Body.String())
+		}
+	}
+
+	delays := []time.Duration{0, 20 * time.Millisecond, 50 * time.Millisecond, 100 * time.Millisecond}
+	for _, d := range delays {
+		doAction("stop")
+		if d > 0 {
+			time.Sleep(d)
+		}
+		doAction("start")
+		// Wait past the watcher poll + debounce window after each stop->start cycle.
+		time.Sleep(350 * time.Millisecond)
+		if cfg := svc.GetInternalConfig(); !cfg.Enabled {
+			t.Fatalf("ConfigWatcher reverted enabled=false after rapid stop->start (delay=%v)", d)
+		}
+		if st := svc.GetStatus(); !st.Running || !st.DirectOnline {
+			t.Fatalf("expected running and direct_online after rapid stop->start (delay=%v), got %+v", d, st)
+		}
+	}
+}

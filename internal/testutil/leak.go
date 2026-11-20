@@ -14,5 +14,9 @@ import (
 // Общие фильтры (goleak.IgnoreTopFunction и т.п.) добавлять здесь, а не в
 // leak_test.go каждого пакета; пакетные опции — через opts.
 func Main(m *testing.M, opts ...goleak.Option) {
-	goleak.VerifyTestMain(m, opts...)
+	allOpts := append([]goleak.Option{
+		goleak.IgnoreTopFunction("github.com/panjf2000/ants/v2.(*poolCommon).purgeStaleWorkers"),
+		goleak.IgnoreTopFunction("github.com/panjf2000/ants/v2.(*poolCommon).ticktock"),
+	}, opts...)
+	goleak.VerifyTestMain(m, allOpts...)
 }

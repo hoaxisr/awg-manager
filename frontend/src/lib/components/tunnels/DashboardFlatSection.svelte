@@ -18,6 +18,7 @@
 	import TunnelSectionHeader from '$lib/components/tunnels/TunnelSectionHeader.svelte';
 	import { SingboxInstallBanner, SingboxTunnelCard } from '$lib/components/singbox';
 	import { Awg3TunnelCard } from '$lib/components/awg3';
+	import FircResourceCard from '$lib/components/firc/FircResourceCard.svelte';
 	import SubscriptionActiveCard from '$lib/components/subscriptions/SubscriptionActiveCard.svelte';
 	import SubscriptionCard from '$lib/components/subscriptions/SubscriptionCard.svelte';
 	import { EmptyState } from '$lib/components/layout';
@@ -102,6 +103,24 @@
 			renderMode={ctx.effectiveSingboxSubscriptionsRenderMode}
 			ondelete={ctx.requestSubscriptionDelete}
 			ondetail={(tag) => ctx.openSingboxDetail(tag)}
+		/>
+	{:else if item.kind === 'firc-proxy'}
+		<FircResourceCard
+			kind="proxy"
+			tunnel={item.tunnel}
+			layout={ctx.effectiveSingboxTunnelsRenderMode === 'list-card' ? 'list' : ctx.effectiveSingboxTunnelsEffectiveLayout}
+			renderMode={ctx.effectiveSingboxTunnelsRenderMode}
+			autoDelayCheckNonce={suppressAutoCheck ? 0 : ctx.singboxAutoDelayCheckNonce}
+			autoDelayCheckDelayMs={item.index * 180}
+		/>
+	{:else if item.kind === 'firc-subscription'}
+		<FircResourceCard
+			kind="subscription"
+			tunnel={item.tunnel}
+			layout={ctx.effectiveSingboxSubscriptionsRenderMode === 'list-card' ? 'list' : ctx.effectiveSingboxSubscriptionsEffectiveLayout}
+			renderMode={ctx.effectiveSingboxSubscriptionsRenderMode}
+			autoDelayCheckNonce={suppressAutoCheck ? 0 : ctx.singboxAutoDelayCheckNonce}
+			autoDelayCheckDelayMs={item.index * 180}
 		/>
 	{/if}
 {/snippet}

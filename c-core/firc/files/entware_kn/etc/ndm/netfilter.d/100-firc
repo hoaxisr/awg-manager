@@ -1,0 +1,56 @@
+#!/bin/sh
+SOCKET_PATH="/tmp/firc/firc.sock"
+[ -S "$SOCKET_PATH" ] || exit 0
+
+case "$0" in
+*/iflayerchanged.d/*)
+  case "$system_name" in ''|*[!A-Za-z0-9_.:-]*) exit 0 ;; esac
+  case "$layer$level" in *[!A-Za-z0-9_-]*) exit 0 ;; esac
+  ENDPOINT=/api/v1/system/hooks/iflayer
+  BODY="{\"iface\":\"$system_name\",\"layer\":\"$layer\",\"level\":\"$level\"}"
+  ;;
+*)
+  ENDPOINT=/api/v1/system/hooks/netfilterd
+  BODY="{\"type\":\"$type\",\"table\":\"$table\"}"
+  ;;
+esac
+LENGTH=$(printf "%s" "$BODY" | wc -c)
+
+# connect-timeout keeps a full accept queue from blocking the firmware; support is probed once per boot.
+INITDIR="/tmp/firc-init"
+PROBE="$INITDIR/.socat-ct"
+CT=",connect-timeout=2"
+WRAP=""
+# /tmp is world-writable and the probe goes on a root command line: replace anything not ours.
+if [ -e "$INITDIR" ] || [ -L "$INITDIR" ]; then
+  if [ -L "$INITDIR" ] || [ ! -d "$INITDIR" ] || [ ! -O "$INITDIR" ]; then
+    rm -rf "$INITDIR" 2>/dev/null
+  fi
+fi
+[ -d "$INITDIR" ] || mkdir -m 0700 "$INITDIR" 2>/dev/null
+if [ -d "$INITDIR" ] && [ ! -L "$INITDIR" ] && [ -O "$INITDIR" ]; then
+  chmod 0700 "$INITDIR" 2>/dev/null   # an older version may have left it wider
+else
+  PROBE=""
+fi
+if [ -n "$PROBE" ] && read CTV 2>/dev/null < "$PROBE"; then
+  CT="$CTV"
+elif socat -u /dev/null UNIX-CONNECT:/nonexistent/firc.sock$CT 2>&1 | grep -q 'unknown option'; then
+  CT=""
+fi
+if [ -n "$PROBE" ] && [ ! -f "$PROBE" ]; then
+  # write and rename, so a reader never sees a half-written file
+  { echo "$CT" > "$PROBE.$$" && mv "$PROBE.$$" "$PROBE"; } 2>/dev/null || rm -f "$PROBE.$$" 2>/dev/null
+fi
+[ -z "$CT" ] && command -v timeout >/dev/null 2>&1 && WRAP="timeout 3"
+# Drop the cache only on "unknown option": a refused connection also exits 1 while the daemon starts.
+ERR=`$WRAP socat - "UNIX-CONNECT:$SOCKET_PATH$CT" 2>&1 >/dev/null <<EOF
+POST $ENDPOINT HTTP/1.1
+Host:
+Content-Type: application/json
+Content-Length: $LENGTH
+
+$BODY
+EOF
+` || case "$ERR" in *"unknown option"*) [ -n "$PROBE" ] && rm -f "$PROBE" ;; esac
+exit 0

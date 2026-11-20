@@ -30,6 +30,10 @@ import (
 //     индекс переживают выключение: к имени привязан permit в политике;
 //  6. persist Enabled=false — обязателен, это durable-истина выключения.
 func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Settings) error {
+	return s.disablePolicyTunLocked(ctx, settings, true)
+}
+
+func (s *ServiceImpl) disablePolicyTunLocked(ctx context.Context, settings *storage.Settings, persistDisabled bool) error {
 	st, _ := opkgTunOwned(settings, statePolicyTun)
 	// Счётчик жалоб на маршрут — свойство ПОДНЯТОГО режима: в выключенном
 	// дефолта на tun нет и быть не должно. Сброс первым делом и на всех ветках
@@ -69,7 +73,13 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// Enable — там сноса нет ни в одном режиме, — а первый тик
 	// reconcilePolicyTunQoS с want == nil при netfilterStateKnown=false: он
 	// зовёт teardownBypassSet. Записано в docs/TRACKER.md.
+	if err := s.detachCloudOutputLocked(ctx, true); err != nil {
+		s.appLog.Warn("keendns-cloud", "disable-policytun", err.Error())
+	}
 	if st == nil || !st.Provisioned {
+		if (!persistDisabled || s.routerSlotEnabled() || settings.SingboxRouter.Enabled) && !s.deferPolicyWANForTransition {
+			s.restorePolicyWANOnDisable(ctx, settings.SingboxRouter)
+		}
 		if s.deps.Orch != nil && s.routerSlotEnabled() {
 			if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
 				s.appLog.Warn("policy-tun-disable", "", "disable slot: "+err.Error())
@@ -77,11 +87,13 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 				s.notifyRoutingSlotsChanged()
 			}
 		}
-		if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
-			cur.SingboxRouter.Enabled = false
-			return nil
-		}); err != nil {
-			return err
+		if persistDisabled {
+			if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
+				cur.SingboxRouter.Enabled = false
+				return nil
+			}); err != nil {
+				return err
+			}
 		}
 		s.emitStatus(ctx)
 		return nil
@@ -259,14 +271,30 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 		}
 	}
 
-	// (6) Persist disabled — ОБЯЗАТЕЛЕН.
-	if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
-		cur.SingboxRouter.Enabled = false
-		return nil
-	}); err != nil {
-		return err
+	if !s.deferPolicyWANForTransition {
+		s.restorePolicyWANOnDisable(ctx, settings.SingboxRouter)
+	}
+
+	// (6) Persist disabled — ОБЯЗАТЕЛЕН при штатном выключении; при парковке под внешний движок пропускается.
+	if persistDisabled {
+		if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
+			cur.SingboxRouter.Enabled = false
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
 
 	s.emitStatus(ctx)
 	return nil
+}
+
+// restorePolicyWANOnDisable restores WAN permit access on PolicyName when policy-tun
+// disables or parks OpkgTun DOWN so unmatched/post-disable policy traffic does not
+// get blackholed when OpkgTun is no longer routing.
+func (s *ServiceImpl) restorePolicyWANOnDisable(ctx context.Context, sr storage.SingboxRouterSettings) {
+	if sr.PolicyName == "" || (sr.DeviceMode != "" && sr.DeviceMode != "policy") {
+		return
+	}
+	s.ensurePolicyWAN(ctx, sr, s.runningConfigLines(ctx, "policy-tun-disable"))
 }

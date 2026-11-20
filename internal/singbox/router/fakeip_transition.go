@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync/atomic"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -123,6 +124,11 @@ func (s *ServiceImpl) SwitchRoutingMode(ctx context.Context, target string) erro
 	if !validTransitionTarget(target) {
 		return fmt.Errorf("invalid routing mode %q (want off|tproxy|fakeip-tun|policy-tun)", target)
 	}
+	if target != stateOff && s.deps.Settings != nil {
+		if settings, err := s.deps.Settings.Get(); err == nil && isFircRoutingEngine(settings.SingboxRouter) {
+			return ErrExternalRoutingEngineActive
+		}
+	}
 	// Гейт до всякого teardown: на прошивке без OpkgTun отказ обязан застать
 	// текущий режим нетронутым, иначе пользователь остаётся без маршрутизации
 	// и зависит от отката (issue #768).
@@ -134,6 +140,15 @@ func (s *ServiceImpl) SwitchRoutingMode(ctx context.Context, target string) erro
 
 	s.transitionMu.Lock()
 	defer s.transitionMu.Unlock()
+
+	if target != stateOff && s.deps.Settings != nil {
+		if settings, err := s.deps.Settings.Get(); err == nil && isFircRoutingEngine(settings.SingboxRouter) {
+			s.emitTransition(nextTransitionID(), stateOff, target,
+				TransitionStep{Step: "error", Status: "error", Message: ErrExternalRoutingEngineActive.Error()},
+				true, stateOff, ErrExternalRoutingEngineActive.Error())
+			return ErrExternalRoutingEngineActive
+		}
+	}
 
 	// Переход пишет слоты по нескольку раз (teardown, провижининг, примирение
 	// базы на выходе из Disable/Enable) и длится дольше окна debounce, поэтому
@@ -163,6 +178,15 @@ func (s *ServiceImpl) SwitchRoutingMode(ctx context.Context, target string) erro
 			TransitionStep{Step: "ready", Status: "done", Message: "already in target state"},
 			true, target, "")
 		return nil
+	}
+
+	if source == statePolicyTun && (target == stateTProxy || target == stateFakeIPTun) {
+		// Keep WAN denied in PolicyName across policy-tun teardown, target
+		// bring-up, AND synchronous OpkgTun0 reap (+ NDMS reload settle) so
+		// neither sing-box restart nor `no interface OpkgTun0` firewall rebuilds
+		// can leak LAN policy traffic directly to WAN.
+		s.deferPolicyWANForTransition = true
+		defer func() { s.deferPolicyWANForTransition = false }()
 	}
 
 	s.emitTransition(id, source, target,
@@ -232,6 +256,54 @@ func (s *ServiceImpl) SwitchRoutingMode(ctx context.Context, target string) erro
 		return s.rollbackSwitch(ctx, id, source, target, enableErr)
 	}
 
+	if source == statePolicyTun && (target == stateTProxy || target == stateFakeIPTun) {
+		hadHeldPolicyTun := false
+		if s.deps.Settings != nil {
+			if cur, gerr := s.deps.Settings.Get(); gerr == nil && cur.OpkgTun != nil && cur.OpkgTun.Mode == storage.OpkgTunModePolicyTun {
+				hadHeldPolicyTun = true
+			}
+		}
+		// Synchronously reap held policy-tun OpkgTun AFTER target enable succeeds so
+		// failed switches preserve rollback hold while successful switches do not leave
+		// a delayed 30s ifdestroyed teardown racing with live TPROXY/FakeIP netfilter.
+		if rErr := s.ReapOrphanedFakeIPTun(ctx); rErr != nil {
+			s.appLog.Warn("switch", target, "sync reap policy-tun opkgtun: "+rErr.Error())
+		}
+		reapedPolicyTun := false
+		if hadHeldPolicyTun && s.deps.Settings != nil {
+			if curAfter, gerr := s.deps.Settings.Get(); gerr == nil && curAfter.OpkgTun == nil {
+				reapedPolicyTun = true
+			}
+		}
+		if reapedPolicyTun && s.reapNetfilterSettleDelay > 0 {
+			timer := time.NewTimer(s.reapNetfilterSettleDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+			case <-timer.C:
+			}
+		}
+		if target == stateTProxy && s.deps.IPTables != nil {
+			s.mu.Lock()
+			var specCopy *RestoreInputSpec
+			if s.appliedSpec != nil {
+				v := *s.appliedSpec
+				specCopy = &v
+			}
+			s.mu.Unlock()
+			if specCopy != nil {
+				if live, pErr := s.deps.IPTables.probeAll(ctx); pErr == nil && (!live.installed || !live.jumps) {
+					if iErr := s.deps.IPTables.Install(ctx, *specCopy); iErr != nil {
+						s.appLog.Warn("switch", target, "re-verify tproxy netfilter after policy-tun reap: "+iErr.Error())
+					}
+				}
+			}
+		}
+		s.ensurePolicyWANAfterTransition(ctx, target)
+	}
+
+	s.reconcileCloudOutputFromStoreLocked(ctx, target)
+
 	s.emitTransition(id, source, target,
 		TransitionStep{Step: "provision", Status: "done"}, false, "", "")
 	s.emitTransition(id, source, target,
@@ -281,14 +353,15 @@ func (s *ServiceImpl) rollbackSwitch(ctx context.Context, id, source, target str
 		(source == statePolicyTun && target == stateTProxy)
 	if restorable {
 		if perr := s.persistMode(source, true); perr != nil {
-			return s.failClosed(id, source, target, enableErr,
+			return s.failClosed(ctx, id, source, target, enableErr,
 				fmt.Errorf("rollback persist %s: %w", source, perr))
 		}
 		if rerr := s.enable(ctx); rerr != nil {
 			// Restoring the source also failed → fail closed to OFF.
-			return s.failClosed(id, source, target, enableErr,
+			return s.failClosed(ctx, id, source, target, enableErr,
 				fmt.Errorf("rollback re-enable %s: %w", source, rerr))
 		}
+		s.reconcileCloudOutputFromStoreLocked(ctx, "rollback-"+source)
 		final := source
 		s.emitTransition(id, source, target,
 			TransitionStep{Step: "rollback", Status: "done", Message: "restored " + final},
@@ -304,8 +377,11 @@ func (s *ServiceImpl) rollbackSwitch(ctx context.Context, id, source, target str
 	if source == stateFakeIPTun || (source == statePolicyTun && target == stateFakeIPTun) {
 		msg := fmt.Sprintf("switch to %s failed after %s teardown; left disabled", target, source)
 		if perr := s.persistMode(target, false); perr != nil {
-			return s.failClosed(id, source, target, enableErr,
+			return s.failClosed(ctx, id, source, target, enableErr,
 				fmt.Errorf("rollback persist disabled: %w", perr))
+		}
+		if s.deferPolicyWANForTransition {
+			s.ensurePolicyWANAfterTransition(ctx, stateOff)
 		}
 		s.emitTransition(id, source, target,
 			TransitionStep{Step: "rollback", Status: "done", Message: msg},
@@ -316,7 +392,7 @@ func (s *ServiceImpl) rollbackSwitch(ctx context.Context, id, source, target str
 
 	// source=off (→ любая цель): nothing to restore — leave disabled.
 	if perr := s.persistMode(target, false); perr != nil {
-		return s.failClosed(id, source, target, enableErr,
+		return s.failClosed(ctx, id, source, target, enableErr,
 			fmt.Errorf("rollback persist disabled: %w", perr))
 	}
 	s.emitTransition(id, source, target,
@@ -326,10 +402,34 @@ func (s *ServiceImpl) rollbackSwitch(ctx context.Context, id, source, target str
 	return fmt.Errorf("switch %s→%s failed (finalState=%s): %w", source, target, stateOff, enableErr)
 }
 
+func (s *ServiceImpl) ensurePolicyWANAfterTransition(ctx context.Context, mode string) {
+	if s.deps.Settings == nil {
+		return
+	}
+	settings, err := s.deps.Settings.Get()
+	if err != nil {
+		return
+	}
+	sr, err := NormalizeSingboxRouterSettings(settings.SingboxRouter)
+	if err != nil {
+		return
+	}
+	if mode == stateTProxy {
+		if (sr.DeviceMode == "" || sr.DeviceMode == "policy") && sr.PolicyName != "" {
+			s.ensurePolicyWAN(ctx, sr, s.runningConfigLines(ctx, "tproxy"))
+		}
+		return
+	}
+	s.restorePolicyWANOnDisable(ctx, settings.SingboxRouter)
+}
+
 // failClosed is the last-resort resting state when even the rollback failed:
 // persist Enabled=false (best-effort) and surface BOTH errors. finalState=off.
-func (s *ServiceImpl) failClosed(id, source, target string, primary, rollbackErr error) error {
+func (s *ServiceImpl) failClosed(ctx context.Context, id, source, target string, primary, rollbackErr error) error {
 	_ = s.persistMode(target, false) // best-effort; we are already fail-closing
+	if s.deferPolicyWANForTransition {
+		s.ensurePolicyWANAfterTransition(ctx, stateOff)
+	}
 
 	s.emitTransition(id, source, target,
 		TransitionStep{Step: "error", Status: "error", Message: rollbackErr.Error()},

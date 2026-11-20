@@ -509,3 +509,107 @@ func parseProxyIdx(name string) (int, error) {
 	}
 	return idx, nil
 }
+
+// SetProxiesParked marks whether an external routing engine (FIRC) owns routing
+// so Reconcile/AddTunnels/RenameTunnel do not re-enable Sing-box NDMS proxies.
+func (o *Operator) SetProxiesParked(parked bool) {
+	o.proxiesParked.Store(parked)
+}
+
+// AreProxiesParked reports whether NDMS Proxy sync is paused for external routing.
+func (o *Operator) AreProxiesParked() bool {
+	return o.proxiesParked.Load()
+}
+
+func (o *Operator) proxyMgrReady() bool {
+	if o.proxyMgr == nil {
+		return false
+	}
+	if pm, ok := o.proxyMgr.(*ProxyManager); ok {
+		return pm != nil && pm.queries != nil && pm.commands != nil
+	}
+	return true
+}
+
+// ParkOwnedNDMSProxies sets owned ProxyN interfaces (Proxy0/t2s0, subscription proxies)
+// administratively down (`up: false`) while preserving their NDMS config and Keenetic
+// policies for return. Foreign KeenOS proxies (description mismatch) are untouched.
+func (o *Operator) ParkOwnedNDMSProxies(ctx context.Context) error {
+	o.proxiesParked.Store(true)
+	if !o.proxyMgrReady() {
+		return nil
+	}
+	marks, err := o.ownedProxyMarks(ctx)
+	if err != nil {
+		return fmt.Errorf("list owned proxies for park: %w", err)
+	}
+	var errs []error
+	for _, m := range marks {
+		if _, pErr := o.proxyMgr.ParkProxy(ctx, m.Name, m.Desc, m.Alt); pErr != nil {
+			errs = append(errs, fmt.Errorf("park %s: %w", m.Name, pErr))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// ResumeOwnedNDMSProxies restores owned ProxyN interfaces (`up: true`) when
+// returning routing control to sing-box (only if CreateNDMSProxyForSingbox is enabled).
+func (o *Operator) ResumeOwnedNDMSProxies(ctx context.Context) error {
+	o.proxiesParked.Store(false)
+	if !o.isNDMSProxyEnabled() || !o.proxyMgrReady() {
+		return nil
+	}
+	marks, err := o.ownedProxyMarks(ctx)
+	if err != nil {
+		return fmt.Errorf("list owned proxies for resume: %w", err)
+	}
+	var errs []error
+	for _, m := range marks {
+		if _, rErr := o.proxyMgr.ResumeProxy(ctx, m.Name, m.Desc); rErr != nil {
+			errs = append(errs, fmt.Errorf("resume %s: %w", m.Name, rErr))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// ReconcileRestoredProxies resumes any parked owned ProxyN interfaces AND
+// recreates missing ProxyN interfaces for tunnels and subscriptions (e.g. after
+// restoring configuration from a snapshot or re-migrating following a previous
+// full Sing-box uninstall).
+func (o *Operator) ReconcileRestoredProxies(ctx context.Context) error {
+	if err := o.ResumeOwnedNDMSProxies(ctx); err != nil {
+		return err
+	}
+	if !o.isNDMSProxyEnabled() || !o.proxyMgrReady() {
+		return nil
+	}
+	var errs []error
+	func() {
+		o.migrationMu.Lock()
+		defer o.migrationMu.Unlock()
+		cfg, err := o.loadConfig()
+		if err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("load tunnels for proxy sync: %w", err))
+			return
+		}
+		if cfg != nil {
+			var proxyTunnels []TunnelInfo
+			for _, t := range cfg.Tunnels() {
+				if t.ProxyInterface != "" {
+					proxyTunnels = append(proxyTunnels, t)
+				}
+			}
+			if len(proxyTunnels) > 0 {
+				if serr := o.proxyMgr.SyncProxies(ctx, proxyTunnels); serr != nil {
+					errs = append(errs, fmt.Errorf("sync restored tunnel proxies: %w", serr))
+				}
+			}
+		}
+	}()
+	if o.subProxySync != nil {
+		if serr := o.subProxySync(ctx); serr != nil {
+			errs = append(errs, fmt.Errorf("sync restored subscription proxies: %w", serr))
+		}
+	}
+	return errors.Join(errs...)
+}

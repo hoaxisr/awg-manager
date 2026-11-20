@@ -210,6 +210,7 @@ func (s *ServiceImpl) updateSettings(ctx context.Context, sr storage.SingboxRout
 				normalized.RoutingMode = stateTProxy // legacy-дефолт, как в currentState
 			}
 			normalized.Enabled = cur.SingboxRouter.Enabled
+			normalized.RoutingEngine = cur.SingboxRouter.RoutingEngine
 
 			cur.SingboxRouter = normalized
 			return nil
@@ -228,11 +229,17 @@ func (s *ServiceImpl) updateSettings(ctx context.Context, sr storage.SingboxRout
 		if err != nil {
 			return nil, err
 		}
+		if isFircRoutingEngine(saved.SingboxRouter) {
+			return saved, nil
+		}
 		reapplyErr = s.reapplyRouterSettings(ctx, saved.SingboxRouter)
 		return saved, nil
 	}()
 	if err != nil {
 		return err
+	}
+	if isFircRoutingEngine(settings.SingboxRouter) {
+		return nil
 	}
 	// Оverlay-поля fakeip (real-server, стек, UDP-таймаут) живут внутри
 	// 21-fakeip.json — Reconcile их не перегенерирует (drift-heal чинит

@@ -36,6 +36,7 @@ type AggregateGroup struct {
 	// UseSubscriptionIDs — ID подписок-источников в пользовательском порядке
 	// (определяет порядок членов в группе).
 	UseSubscriptionIDs []string `json:"useSubscriptionIds"`
+	DirectFirst        bool     `json:"directFirst,omitempty"`
 	FilterInclude      string   `json:"filterInclude,omitempty"`
 	FilterExclude      string   `json:"filterExclude,omitempty"`
 	Enabled            bool     `json:"enabled"`
@@ -79,6 +80,7 @@ type GroupCreateInput struct {
 	Mode               SubscriptionMode // "" = ModeURLTest
 	URLTest            *URLTestConfig
 	UseSubscriptionIDs []string
+	DirectFirst        bool
 	FilterInclude      string
 	FilterExclude      string
 	Enabled            bool
@@ -90,6 +92,7 @@ type GroupUpdatePatch struct {
 	Mode               *SubscriptionMode
 	URLTest            *URLTestConfig
 	UseSubscriptionIDs *[]string
+	DirectFirst        *bool
 	FilterInclude      *string
 	FilterExclude      *string
 	Enabled            *bool
@@ -112,6 +115,12 @@ func NewGroupStore(path string) (*GroupStore, error) {
 }
 
 func (s *GroupStore) load() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadLocked()
+}
+
+func (s *GroupStore) loadLocked() error {
 	b, err := os.ReadFile(s.path)
 	if err != nil {
 		return err
@@ -123,11 +132,32 @@ func (s *GroupStore) load() error {
 	if err := json.Unmarshal(b, &list); err != nil {
 		return fmt.Errorf("subscription group store: parse %s: %w", s.path, err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, item := range list {
 		s.data[item.ID] = item
 	}
+	return nil
+}
+
+// Reload resets in-memory aggregate groups and re-reads subscription-groups.json from disk.
+// A missing file yields an empty store without error.
+func (s *GroupStore) Reload() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data = make(map[string]*AggregateGroup)
+	if err := s.loadLocked(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// Clear removes subscription-groups.json from disk and clears all in-memory aggregate groups.
+func (s *GroupStore) Clear() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove subscription group store: %w", err)
+	}
+	s.data = make(map[string]*AggregateGroup)
 	return nil
 }
 
@@ -220,6 +250,7 @@ func (s *GroupStore) Create(in GroupCreateInput) (*AggregateGroup, error) {
 		Mode:               mode,
 		URLTest:            urlTest,
 		UseSubscriptionIDs: useIDs,
+		DirectFirst:        in.DirectFirst,
 		FilterInclude:      in.FilterInclude,
 		FilterExclude:      in.FilterExclude,
 		Enabled:            in.Enabled,
@@ -300,6 +331,9 @@ func applyGroupPatch(g *AggregateGroup, patch GroupUpdatePatch) {
 	if patch.URLTest != nil {
 		cp := *patch.URLTest
 		g.URLTest = &cp
+	}
+	if patch.DirectFirst != nil {
+		g.DirectFirst = *patch.DirectFirst
 	}
 	if patch.UseSubscriptionIDs != nil {
 		ids := append([]string{}, (*patch.UseSubscriptionIDs)...)

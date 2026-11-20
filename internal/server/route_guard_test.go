@@ -260,6 +260,7 @@ func newGuardServer(t *testing.T) (*Server, *auth.SessionStore) {
 		awgOutboundsHandler:        &api.AWGOutboundsHandler{},
 		subscriptionHandler:        &api.SubscriptionHandler{},
 		dnsRewritesHandler:         &api.DNSRewritesHandler{},
+		uplinkHandler:              &api.UplinkHandler{},
 		awg3Handler:                &api.Awg3Handler{},
 		clashProxy:                 &api.ClashProxy{},
 		// Ниже — зависимости, за nil-гейтами которых прячутся целые секции

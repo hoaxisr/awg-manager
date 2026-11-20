@@ -43,6 +43,19 @@ func Accepted(w http.ResponseWriter, data interface{}) {
 	enc.Encode(resp)
 }
 
+// Created writes a 201 Created success response with optional data.
+func Created(w http.ResponseWriter, data interface{}) {
+	resp := APIResponse{Success: true}
+	if data != nil {
+		resp.Data = data
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.Encode(resp)
+}
+
 // Error writes an error response with message and code.
 // Format: {error: true, message: "...", code: "..."}
 func Error(w http.ResponseWriter, message, code string) {

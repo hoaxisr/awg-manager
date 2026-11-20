@@ -2,9 +2,46 @@ package subscription
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestBuildGroupOutboundPreservesInputAcrossWANRebuilds(t *testing.T) {
+	for _, mode := range []SubscriptionMode{ModeSelector, ModeURLTest, ModeFallback} {
+		t.Run(string(mode), func(t *testing.T) {
+			members := []string{"node-a", "node-b", "node-c", "node-d"}
+			original := append([]string(nil), members...)
+			sub := Subscription{SelectorTag: "group", Mode: mode, ActiveMember: "node-b"}
+			for attempt := 0; attempt < 2; attempt++ {
+				raw := BuildGroupOutbound(sub, members, sub.ActiveMember)
+				if !reflect.DeepEqual(members, original) {
+					t.Fatalf("group rebuild modified saved member list: %v", members)
+				}
+				var doc struct {
+					Default   string   `json:"default"`
+					Outbounds []string `json:"outbounds"`
+				}
+				if err := json.Unmarshal(raw, &doc); err != nil {
+					t.Fatal(err)
+				}
+				seen := map[string]bool{}
+				for _, tag := range doc.Outbounds {
+					if seen[tag] {
+						t.Fatal("duplicate member after repeated WAN rebuild")
+					}
+					seen[tag] = true
+				}
+				if len(seen) != len(original) {
+					t.Fatalf("lost member: %v", doc.Outbounds)
+				}
+				if mode == ModeSelector && doc.Default != "node-b" {
+					t.Fatalf("lost selected default=%q: %v", doc.Default, doc)
+				}
+			}
+		})
+	}
+}
 
 func TestBuildSelector(t *testing.T) {
 	memberTags := []string{"sub-abc-1111", "sub-abc-2222", "sub-abc-3333"}
@@ -162,6 +199,19 @@ func TestBuildFallback(t *testing.T) {
 	}
 	if ob["idle_timeout"] != "7200s" {
 		t.Errorf("expected safe idle_timeout=7200s, got %v", ob["idle_timeout"])
+	}
+}
+
+func TestAggregateFallbackDirectFirst(t *testing.T) {
+	group := AggregateGroup{Tag: "agg-test", Mode: ModeFallback, DirectFirst: true}
+	var got struct {
+		Outbounds []string `json:"outbounds"`
+	}
+	if err := json.Unmarshal(BuildAggregateGroupOutbound(group, []string{"node-a", "node-b"}), &got); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got.Outbounds, ",") != "direct,node-a,node-b" {
+		t.Fatalf("unexpected fallback order: %v", got.Outbounds)
 	}
 }
 

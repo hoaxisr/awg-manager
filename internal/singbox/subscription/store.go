@@ -14,6 +14,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/uplink"
 )
 
 // Store persists subscriptions to disk as JSON, atomic-writes on every mutation.
@@ -47,6 +48,12 @@ func NewStore(path string) (*Store, error) {
 }
 
 func (s *Store) load() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadLocked()
+}
+
+func (s *Store) loadLocked() error {
 	b, err := os.ReadFile(s.path)
 	if err != nil {
 		return err
@@ -58,8 +65,6 @@ func (s *Store) load() error {
 	if err := json.Unmarshal(b, &list); err != nil {
 		return fmt.Errorf("subscription store: parse %s: %w", s.path, err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	needsSave := false
 	for _, item := range list {
 		if sanitizeLegacySubscriptionLastError(item) {
@@ -69,6 +74,35 @@ func (s *Store) load() error {
 	}
 	if needsSave {
 		_ = s.saveLocked()
+	}
+	return nil
+}
+
+// Reload resets in-memory subscriptions and re-reads subscriptions.json from disk.
+// A missing file yields an empty store without error.
+func (s *Store) Reload() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data = make(map[string]*Subscription)
+	if err := s.loadLocked(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if s.onChange != nil {
+		s.onChange()
+	}
+	return nil
+}
+
+// Clear removes subscriptions.json from disk and clears all in-memory subscriptions.
+func (s *Store) Clear() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove subscriptions store: %w", err)
+	}
+	s.data = make(map[string]*Subscription)
+	if s.onChange != nil {
+		s.onChange()
 	}
 	return nil
 }
@@ -131,6 +165,7 @@ func cloneSlice[T any](in []T) []T {
 // копирования достаточно. Используется copy-on-write мутацией Store.mutate.
 func (s *Subscription) clone() *Subscription {
 	cp := *s
+	cp.UplinkBinding = cloneUplinkBinding(s.UplinkBinding)
 	cp.Headers = cloneSlice(s.Headers)
 	cp.MemberTags = cloneSlice(s.MemberTags)
 	cp.Members = cloneSlice(s.Members)
@@ -256,6 +291,7 @@ func (s *Store) Get(id string) (*Subscription, error) {
 		return nil, &NotFoundError{ID: id}
 	}
 	cp := *sub
+	cp.UplinkBinding = cloneUplinkBinding(sub.UplinkBinding)
 	return &cp, nil
 }
 
@@ -268,7 +304,9 @@ func (s *Store) List() []Subscription {
 	defer s.mu.RUnlock()
 	out := make([]Subscription, 0, len(s.data))
 	for _, sub := range s.data {
-		out = append(out, *sub)
+		cp := *sub
+		cp.UplinkBinding = cloneUplinkBinding(sub.UplinkBinding)
+		out = append(out, cp)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		li, lj := strings.ToLower(out[i].Label), strings.ToLower(out[j].Label)
@@ -282,6 +320,12 @@ func (s *Store) List() []Subscription {
 
 func (s *Store) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	sub, err := s.mutate(id, func(sub *Subscription) error {
+		if patch.ExpectedBind != nil && sub.BindInterface != *patch.ExpectedBind {
+			return uplink.ErrConflict
+		}
+		if patch.UplinkBinding != nil {
+			sub.UplinkBinding = cloneUplinkBinding(*patch.UplinkBinding)
+		}
 		if patch.Label != nil {
 			sub.Label = *patch.Label
 		}
@@ -333,6 +377,7 @@ func (s *Store) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		return nil, err
 	}
 	cp := *sub
+	cp.UplinkBinding = cloneUplinkBinding(sub.UplinkBinding)
 	return &cp, nil
 }
 

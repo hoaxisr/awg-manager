@@ -19,6 +19,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
+	"github.com/hoaxisr/awg-manager/internal/uplink"
 )
 
 // ConfigMutator is the narrow contract for committing subscription state to
@@ -610,7 +611,14 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 			s.logWarn("subscription-refresh", id,
 				"rewrote web-view URL to raw URL")
 		}
-		fetched, fetchedCT, fetchErr := FetchWithContext(ctx, fetchURL, sub.Headers, s.fetchOpts)
+		var fetched []byte
+		var fetchedCT string
+		var fetchErr error
+		if sub.UplinkBinding != nil {
+			fetched, fetchedCT, fetchErr = FetchWithBinding(ctx, fetchURL, sub.Headers, s.fetchOpts, *sub.UplinkBinding)
+		} else {
+			fetched, fetchedCT, fetchErr = FetchWithContext(ctx, fetchURL, sub.Headers, s.fetchOpts)
+		}
 		if fetchErr != nil {
 			masked := fmt.Errorf("%s", MaskURL(fetchErr.Error(), sub.URL))
 			s.store.UpdateState(id, RefreshResult{When: time.Now(), Err: masked})
@@ -1047,6 +1055,67 @@ func (s *Service) OwnedOutboundTags(sub *Subscription) []string {
 	return append(tags, slotOrphans(sub, s.mutator.DeclaredOutboundTags(), sub.MemberTags, sub.OrphanTags)...)
 }
 
+// ResetMemoryAndClearFiles clears subscriptions and aggregate groups both
+// on disk and in memory without committing or reloading sing-box (used when
+// sing-box itself has been stopped and uninstalled).
+func (s *Service) ResetMemoryAndClearFiles() error {
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+	s.groupMu.Lock()
+	defer s.groupMu.Unlock()
+	return s.withTx(func() error {
+		if r, ok := s.mutator.(interface{ Reset() }); ok {
+			r.Reset()
+		}
+		var errs []error
+		if s.store != nil {
+			if err := s.store.Clear(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if s.groups != nil {
+			if err := s.groups.Clear(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	})
+}
+
+// ReloadFromDisk reloads subscriptions, aggregate groups, happ keys, and the
+// 13-subscriptions.json adapter slot from disk after a snapshot or saved-config
+// restore.
+func (s *Service) ReloadFromDisk(configDir string) error {
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+	s.groupMu.Lock()
+	defer s.groupMu.Unlock()
+	return s.withTx(func() error {
+		var errs []error
+		if s.store != nil {
+			if err := s.store.Reload(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if s.groups != nil {
+			if err := s.groups.Reload(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if err := s.LoadHappKeys(); err != nil {
+			errs = append(errs, err)
+		}
+		if configDir != "" {
+			if rl, ok := s.mutator.(interface{ ReloadFromDisk(string) error }); ok {
+				if err := rl.ReloadFromDisk(configDir); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		}
+		return errors.Join(errs...)
+	})
+}
+
 // Delete tears down a subscription unconditionally: the NDMS ProxyN, mixed
 // inbound, selector outbound, route rule, and per-member outbounds are all
 // removed. ConfigMutator errors are non-blocking — sing-box config may have
@@ -1172,6 +1241,9 @@ func (s *Service) ListActiveMemberTags() []string {
 func (s *Service) List() []Subscription                 { return s.store.List() }
 func (s *Service) Get(id string) (*Subscription, error) { return s.store.Get(id) }
 func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
+	return s.update(context.Background(), id, patch)
+}
+func (s *Service) update(ctx context.Context, id string, patch UpdatePatch) (*Subscription, error) {
 	mu := s.lockSub(id)
 	mu.Lock()
 	defer mu.Unlock()
@@ -1179,6 +1251,25 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	if err != nil {
 		return nil, err
 	}
+	if patch.ExpectedBind != nil && current.BindInterface != *patch.ExpectedBind {
+		return nil, uplink.ErrConflict
+	}
+	if patch.UplinkBinding != nil && *patch.UplinkBinding != nil {
+		if err := (*patch.UplinkBinding).Validate(); err != nil {
+			return nil, err
+		}
+		if patch.BindInterface == nil || *patch.BindInterface != (*patch.UplinkBinding).Device {
+			return nil, fmt.Errorf("strict uplink binding must match subscription device")
+		}
+	}
+	// An explicit manual bind change relinquishes strict ownership. If a
+	// fallback policy is still enabled, its controller observes the changed
+	// device and reports conflict instead of undoing the user's choice.
+	if current.UplinkBinding != nil && patch.UplinkBinding == nil && patch.BindInterface != nil && strings.TrimSpace(*patch.BindInterface) != current.BindInterface {
+		var clear *uplink.Binding
+		patch.UplinkBinding = &clear
+	}
+	releaseUplink := current.UplinkBinding != nil && patch.UplinkBinding != nil && *patch.UplinkBinding == nil
 	// Source-type guard: URL-backed and inline subscriptions stay on
 	// their original source for life. Reject patches that would clear
 	// a URL (would make a URL-backed sub source-less) or that would
@@ -1230,7 +1321,7 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		patch.BindInterface = &newBind
 		bindChanged = newBind != current.BindInterface
 		if bindChanged && newBind != "" {
-			if err := validateBindInterfaceOptional(context.Background(), s.bindValidator, newBind); err != nil {
+			if err := validateBindInterfaceOptional(ctx, s.bindValidator, newBind); err != nil {
 				return nil, fmt.Errorf("subscription: %w", err)
 			}
 		}
@@ -1240,6 +1331,9 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	mlkemRestore := mlkemChanged && !*patch.MLKEMOff
 
 	modeChanged := patch.Mode != nil || patch.URLTest != nil
+	if patch.UplinkBinding != nil {
+		bindChanged = true
+	}
 	enabledChanged := patch.Enabled != nil && *patch.Enabled != current.Enabled
 
 	// Снимок прежних настроек для отката, если применение упадёт (#709).
@@ -1247,6 +1341,7 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	// подписки его не было, откат вернёт Mode, а осиротевший urltest-конфиг
 	// останется — в режиме selector он не читается.
 	rollbackPatch := UpdatePatch{
+		UplinkBinding: &current.UplinkBinding,
 		FilterInclude: &current.FilterInclude,
 		FilterExclude: &current.FilterExclude,
 		BindInterface: &current.BindInterface,
@@ -1312,7 +1407,7 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 			}
 		}
 		if !refreshed {
-			if err := s.rematerializeMembersBind(context.Background(), sub, modeChanged, mlkemRestore); err != nil {
+			if err := s.rematerializeMembersBind(ctx, sub, modeChanged || sub.UplinkBinding != nil || releaseUplink, mlkemRestore, releaseUplink); err != nil {
 				return rollback(err, "rematerialize")
 			}
 		}
@@ -1369,9 +1464,9 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	return sub, nil
 }
 
-func (s *Service) rematerializeMembersBind(ctx context.Context, sub *Subscription, rebuildGroup, clearMLKEM bool) error {
+func (s *Service) rematerializeMembersBind(ctx context.Context, sub *Subscription, rebuildGroup, clearMLKEM, releaseUplink bool) error {
 	return s.withTx(func() error {
-		if err := s.stageMemberRematerialize(sub, rebuildGroup, clearMLKEM); err != nil {
+		if err := s.stageMemberRematerialize(sub, rebuildGroup, clearMLKEM, releaseUplink); err != nil {
 			// Откат настроек в Update трогает только store: батч с частично
 			// обновлёнными телами иначе закоммитил бы следующий Reload.
 			s.mutator.Rollback()
@@ -1384,7 +1479,7 @@ func (s *Service) rematerializeMembersBind(ctx context.Context, sub *Subscriptio
 // stageMemberRematerialize переписывает тела из уже сохранённых. Кроме состава
 // обходит и сирот, оставленных в слоте ссылкой другого слота (F761): без
 // fetch их тела обновить больше некому, а у inline refresh не приходит вовсе.
-func (s *Service) stageMemberRematerialize(sub *Subscription, rebuildGroup, clearMLKEM bool) error {
+func (s *Service) stageMemberRematerialize(sub *Subscription, rebuildGroup, clearMLKEM, releaseUplink bool) error {
 	tagSet := make(map[string]bool, len(sub.MemberTags))
 	for _, tag := range sub.MemberTags {
 		tagSet[tag] = true
@@ -1396,6 +1491,9 @@ func (s *Service) stageMemberRematerialize(sub *Subscription, rebuildGroup, clea
 		tag, _ := ob["tag"].(string)
 		if !tagSet[tag] {
 			continue
+		}
+		if releaseUplink {
+			ob = releaseUplinkDialFields(ob)
 		}
 		raw, err := json.Marshal(ob)
 		if err != nil {
@@ -1409,7 +1507,7 @@ func (s *Service) stageMemberRematerialize(sub *Subscription, rebuildGroup, clea
 			return err
 		}
 	}
-	if rebuildGroup {
+	if rebuildGroup || sub.UplinkBinding != nil || releaseUplink {
 		return s.stageGroupRebuild(sub)
 	}
 	return nil
@@ -2459,4 +2557,9 @@ func sanitizeMemberTunnelTag(label, proto, server string, port int) string {
 		return proto
 	}
 	return "tunnel"
+}
+
+// ParseSubscriptionBody parses a subscription body into sing-box outbounds.
+func ParseSubscriptionBody(body []byte, ct string) vlink.BatchResult {
+	return parseSubscriptionBody(body, ct)
 }

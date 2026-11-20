@@ -30,6 +30,9 @@ const (
 	udpStateBound  = "07"
 )
 
+// procFSRoot is overridden in unit tests to inject synthetic /proc trees.
+var procFSRoot = "/proc"
+
 // localPortInState reports whether procData (contents of /proc/net/tcp or
 // /proc/net/udp) has a socket whose LOCAL-address port == port and whose
 // state == state. It parses the fixed columns instead of substring-matching:
@@ -46,6 +49,63 @@ func localPortInState(procData string, port int, state string) bool {
 			continue
 		}
 		if f[1][colon+1:] == want && f[3] == state {
+			return true
+		}
+	}
+	return false
+}
+
+func pidOwnsSocketInode(pid int, inode string) bool {
+	if pid <= 0 || inode == "" || inode == "0" {
+		return false
+	}
+	fdDir := filepath.Join(procFSRoot, strconv.Itoa(pid), "fd")
+	entries, err := os.ReadDir(fdDir)
+	if err != nil {
+		return false
+	}
+	want := "socket:[" + inode + "]"
+	for _, e := range entries {
+		target, err := os.Readlink(filepath.Join(fdDir, e.Name()))
+		if err == nil && target == want {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	cloudOutputListenProbe    = defaultCloudOutputListenProbe
+	cloudOutputUDPListenProbe = defaultCloudOutputUDPListenProbe
+)
+
+func defaultCloudOutputListenProbe(_ context.Context, pid int, port int) bool {
+	return defaultCloudOutputSocketProbe(pid, "tcp", tcpStateListen, port)
+}
+
+func defaultCloudOutputUDPListenProbe(_ context.Context, pid int, port int) bool {
+	return defaultCloudOutputSocketProbe(pid, "udp", udpStateBound, port)
+}
+
+func defaultCloudOutputSocketProbe(pid int, proto, wantState string, port int) bool {
+	data, err := os.ReadFile(filepath.Join(procFSRoot, "net", proto))
+	if err != nil {
+		return false
+	}
+	if pid <= 0 {
+		return localPortInState(string(data), port, wantState)
+	}
+	wantPort := fmt.Sprintf("%04X", port)
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) <= 9 {
+			continue
+		}
+		colon := strings.LastIndexByte(f[1], ':')
+		if colon < 0 || f[1][colon+1:] != wantPort || f[3] != wantState {
+			continue
+		}
+		if pidOwnsSocketInode(pid, f[9]) {
 			return true
 		}
 	}

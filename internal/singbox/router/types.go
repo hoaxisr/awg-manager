@@ -77,6 +77,11 @@ type Status struct {
 	// приостановлен анти-crash-loop backoff'ом; пусто, когда не подавлен.
 	// Ручной «Перезапустить» не подавляется и сбрасывает паузу.
 	RestartSuppressedUntil string `json:"restartSuppressedUntil,omitempty"`
+	// RoutingEngine reflects settings.SingboxRouter.RoutingEngine ("sing-box" or "firc").
+	RoutingEngine string `json:"routingEngine,omitempty"`
+	// ParkedByExternalEngine is true while routing is delegated to an external
+	// engine (e.g. firc) and sing-box routing is intentionally parked.
+	ParkedByExternalEngine bool `json:"parkedByExternalEngine,omitempty"`
 }
 
 type Issue struct {
@@ -146,6 +151,11 @@ type Rule struct {
 	// inbound value keeps games/VoIP sessions alive. A route rule action carries
 	// no outbound, so this and Action are the only fields it sets.
 	UDPTimeout string `json:"udp_timeout,omitempty"`
+	// Timeout caps how long an `action:"sniff"` rule waits for client payload
+	// (e.g. "3s"). Omitting it uses sing-box's 300ms default, which can expire
+	// before TLS ClientHello arrives under CPU load or delayed handshakes and
+	// fall through to route.final.
+	Timeout string `json:"timeout,omitempty"`
 	// AwgmManaged marks auto-generated route rules owned by AWG Manager.
 	// The only value still seen in the wild is the legacy "selective-ip" of
 	// the removed selective-TPROXY feature: such rules are stripped from the
@@ -350,7 +360,8 @@ type Route struct {
 	// AutoDetectInterface in EnsureRouteWAN: setting one clears the
 	// other so the emitted config never carries both. NEVER stores
 	// NDMS interface ID — kernel name is the stable identifier.
-	DefaultInterface string `json:"default_interface,omitempty"`
+	DefaultInterface string          `json:"default_interface,omitempty"`
+	DefaultMark      json.RawMessage `json:"default_mark,omitempty"`
 	// DefaultDomainResolver names the DNS server used to resolve outbound
 	// hostnames that no rule pins elsewhere (fakeip-tun: a "real" resolver
 	// so proxy server hostnames don't get fakeip addresses).

@@ -15,7 +15,7 @@
 	import { PageContainer } from '$lib/components/layout';
 	import TunnelTestIcon from '$lib/components/tunnels/TunnelTestIcon.svelte';
 
-	type DiagnosticsKind = 'awg' | 'system' | 'singbox' | 'subscription';
+	type DiagnosticsKind = 'awg' | 'system' | 'singbox' | 'subscription' | 'firc';
 	type DiagnosticsSubject = 'tunnel' | 'subscription';
 	type DiagnosticsMode = 'page' | 'modal';
 
@@ -146,6 +146,7 @@
 		if (kind === 'awg') return 'AWG';
 		if (kind === 'system') return 'AWG';
 		if (kind === 'singbox') return 'Sing-box';
+		if (kind === 'firc') return 'FIRC';
 		return 'subscription';
 	});
 
@@ -180,7 +181,7 @@
 				connectivityResult = await api.checkConnectivity(targetId);
 			} else if (kind === 'system') {
 				connectivityResult = await api.checkSystemTunnelConnectivity(targetId);
-			} else if (kind === 'subscription') {
+			} else if (kind === 'subscription' || (kind === 'firc' && iface)) {
 				connectivityResult = await api.singboxCheckConnectivity(targetId, iface);
 			} else {
 				connectivityResult = await api.singboxCheckConnectivity(targetId);
@@ -215,7 +216,7 @@
 				ipResult = await api.checkIP(targetId, serviceURL || undefined);
 			} else if (kind === 'system') {
 				ipResult = await api.checkSystemTunnelIP(targetId, serviceURL || undefined);
-			} else if (kind === 'subscription') {
+			} else if (kind === 'subscription' || (kind === 'firc' && iface)) {
 				ipResult = await api.singboxCheckIP(targetId, serviceURL || undefined, iface);
 			} else {
 				ipResult = await api.singboxCheckIP(targetId, serviceURL || undefined);

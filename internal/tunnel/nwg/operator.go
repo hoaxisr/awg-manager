@@ -119,7 +119,8 @@ type OperatorNativeWG struct {
 	// переводит peer.via в ppp0) и обновляется по своим правилам. Карта живёт
 	// в памяти: после рестарта демона WAN неизвестен, и прежняя запись
 	// снимается вслепую — заодно уходит мусор прошлой жизни.
-	obfRoutedWAN map[string]string
+	obfRoutedWAN      map[string]string
+	uplinkBeforeStart func(context.Context, string) error
 }
 
 // NewOperator creates a new NativeWG operator.
@@ -422,6 +423,11 @@ func ascCoversConfig(iface *storage.AWGInterface, supportsASC, ascKnowsAWG3 bool
 // On older firmware: awg_proxy.ko creates a local UDP proxy, peer endpoint is
 // set to 127.0.0.1:proxy_port, and the proxy forwards obfuscated traffic.
 func (o *OperatorNativeWG) Start(ctx context.Context, stored *storage.AWGTunnel) error {
+	if o.uplinkBeforeStart != nil {
+		if err := o.uplinkBeforeStart(ctx, stored.ID); err != nil {
+			return fmt.Errorf("prepare managed uplink: %w", err)
+		}
+	}
 	// Ни одной команды и ни одного слота до подтверждения: снятый WireguardN
 	// любая команда создала бы заново, а по непрочитанному списку старт мог
 	// бы уйти поверх живого туннеля вслепую (F546, решение 3).

@@ -12,6 +12,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
+	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -136,16 +137,24 @@ func (a *systemTunnelStoreAdapter) List(ctx context.Context) ([]awgoutbounds.Sys
 // awgoutboundsSingboxAdapter exposes singbox.Operator as the
 // awgoutbounds.SingboxController contract.
 type awgoutboundsSingboxAdapter struct {
-	op *singbox.Operator
+	op   *singbox.Operator
+	orch *singboxorch.Orchestrator
 }
 
-func newAwgoutboundsSingboxAdapter(op *singbox.Operator) *awgoutboundsSingboxAdapter {
-	return &awgoutboundsSingboxAdapter{op: op}
+func newAwgoutboundsSingboxAdapter(op *singbox.Operator, orch ...*singboxorch.Orchestrator) *awgoutboundsSingboxAdapter {
+	var o *singboxorch.Orchestrator
+	if len(orch) > 0 {
+		o = orch[0]
+	}
+	return &awgoutboundsSingboxAdapter{op: op, orch: o}
 }
 
 func (a *awgoutboundsSingboxAdapter) ConfigDir() string { return a.op.ConfigDir() }
 func (a *awgoutboundsSingboxAdapter) Reload() error {
-	return a.op.Process().Reload()
+	if a.orch != nil {
+		return a.orch.Reload()
+	}
+	return a.op.Reload()
 }
 
 // awg3TagLister exposes AWG3 endpoint tags for merging into outbound

@@ -1068,7 +1068,7 @@ func (h *SingboxHandler) SpeedTestStream(w http.ResponseWriter, r *http.Request)
 	// — t2sN/ProxyN composites do not exist otherwise. Reject directly
 	// rather than letting iperf3 silently hang against a torn-down iface.
 	iface := ifaceOverride
-	if iface != "" && h.settings != nil && !h.settings.IsSingboxNDMSProxyEnabled() {
+	if iface != "" && !strings.HasPrefix(iface, "tunvless") && h.settings != nil && !h.settings.IsSingboxNDMSProxyEnabled() {
 		response.ErrorWithStatus(w, http.StatusPreconditionFailed,
 			"NDMS Proxy disabled — iface override unavailable (composite interface no longer exists)",
 			"PROXY_DISABLED")

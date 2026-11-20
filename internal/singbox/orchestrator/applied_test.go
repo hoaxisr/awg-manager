@@ -213,3 +213,105 @@ func TestReload_DaemonRestartAdoptsRunningSingbox(t *testing.T) {
 		t.Errorf("daemon-restart reload must be a no-op (skip gate); process calls = %v", got)
 	}
 }
+
+type variablePIDProc struct {
+	fakeProc
+	pid int
+}
+
+func (p *variablePIDProc) IsRunning() (bool, int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.running {
+		return true, p.pid
+	}
+	return false, 0
+}
+
+func TestReload_SuppressAndStopInvalidatesGeneration(t *testing.T) {
+	fp := &fakeProc{}
+	dir := t.TempDir()
+	appliedPath := filepath.Join(t.TempDir(), "singbox-applied.json")
+	o := NewWithAppliedPath(dir, fp, appliedPath)
+	t.Cleanup(o.Close)
+
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Save(SlotRouter, []byte(`{"route":{"rules":[]}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Reload(); err != nil {
+		t.Fatalf("initial reload: %v", err)
+	}
+	if fp.startsN() != 1 || fp.reloadsN() != 0 {
+		t.Fatalf("unexpected initial calls: starts=%d reloads=%d", fp.startsN(), fp.reloadsN())
+	}
+
+	if err := o.SetEnabledSilent(SlotRouter, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SuppressAndStop(fp.Stop); err != nil {
+		t.Fatalf("SuppressAndStop: %v", err)
+	}
+	if err := fp.Start(); err != nil {
+		t.Fatalf("external start after suppress: %v", err)
+	}
+	if err := o.SetEnabledSilent(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Reload(); err != nil {
+		t.Fatalf("reload after external restart: %v", err)
+	}
+	if fp.reloadsN() < 1 {
+		t.Fatalf("expected Reload() to reload new process generation after SuppressAndStop, got reloads=%d (calls=%v)",
+			fp.reloadsN(), fp.calls())
+	}
+}
+
+func TestReload_PIDChangeRefusesStaleAppliedHash(t *testing.T) {
+	fp := &variablePIDProc{fakeProc: fakeProc{running: true}, pid: 1001}
+	dir := t.TempDir()
+	appliedPath := filepath.Join(t.TempDir(), "singbox-applied.json")
+
+	o1 := NewWithAppliedPath(dir, fp, appliedPath)
+	t.Cleanup(o1.Close)
+	_ = o1.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o1.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o1.Save(SlotRouter, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o1.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := o1.Reload(); err != nil {
+		t.Fatalf("o1 reload: %v", err)
+	}
+	if fp.reloadsN() != 1 {
+		t.Fatalf("expected 1 reload, got %d", fp.reloadsN())
+	}
+
+	// Simulate external sing-box respawn under a new PID before awg-manager restarted.
+	fp.mu.Lock()
+	fp.pid = 2002
+	fp.mu.Unlock()
+
+	o2 := NewWithAppliedPath(dir, fp, appliedPath)
+	t.Cleanup(o2.Close)
+	_ = o2.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o2.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o2.Reload(); err != nil {
+		t.Fatalf("o2 reload: %v", err)
+	}
+	if fp.reloadsN() != 2 {
+		t.Fatalf("expected PID change (1001 -> 2002) to force reload instead of adopting stale hash; reloads=%d", fp.reloadsN())
+	}
+}

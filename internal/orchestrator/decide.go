@@ -315,6 +315,13 @@ func decideWANUp(event Event, state *State) []Action {
 		if !t.Enabled {
 			continue
 		}
+		if t.Backend == "kernel" && state.managedUplinkOwns != nil && state.managedUplinkOwns(t.ID) {
+			if !t.Running {
+				actions = append(actions, Action{Type: ActionColdStartKernel, Tunnel: t.ID})
+				actions = appendPostStartActions(actions, t)
+			}
+			continue
+		}
 		if !canStartOnWAN(t, event.WANIface) {
 			continue
 		}
@@ -373,6 +380,9 @@ func decideWANDown(event Event, state *State) []Action {
 	var nwgSuspended []string
 
 	for _, t := range state.tunnels {
+		if t.Backend == "kernel" && state.managedUplinkOwns != nil && state.managedUplinkOwns(t.ID) {
+			continue
+		}
 		if !t.Enabled || !t.Running {
 			continue
 		}

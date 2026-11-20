@@ -1040,6 +1040,8 @@ definitions:
     type: object
   api.CreateSubscriptionGroupRequest:
     properties:
+      directFirst:
+        type: boolean
       enabled:
         example: true
         type: boolean
@@ -6474,6 +6476,8 @@ definitions:
     type: object
   api.SubscriptionGroupDTO:
     properties:
+      directFirst:
+        type: boolean
       enabled:
         example: true
         type: boolean
@@ -7817,6 +7821,8 @@ definitions:
     type: object
   api.UpdateSubscriptionGroupRequest:
     properties:
+      directFirst:
+        type: boolean
       enabled:
         type: boolean
       filterExclude:
@@ -7872,6 +7878,79 @@ definitions:
       urlTest:
         $ref: '#/definitions/api.SubscriptionURLTestDTO'
     type: object
+  api.UplinkDeleteRequest:
+    properties:
+      id:
+        type: string
+      revision:
+        type: integer
+    type: object
+  api.UplinkEntriesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/uplink.Entry'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.UplinkPolicyResponse:
+    properties:
+      data:
+        $ref: '#/definitions/uplink.Policy'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.UplinkSnapshotDTO:
+    properties:
+      automaticFailback:
+        type: boolean
+      capabilities:
+        additionalProperties:
+          $ref: '#/definitions/uplink.Capabilities'
+        type: object
+      entries:
+        items:
+          $ref: '#/definitions/uplink.Entry'
+        type: array
+      providers:
+        items:
+          $ref: '#/definitions/uplink.Provider'
+        type: array
+      targetError:
+        type: string
+      targets:
+        items:
+          $ref: '#/definitions/uplink.TargetInfo'
+        type: array
+    type: object
+  api.UplinkSnapshotResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.UplinkSnapshotDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.UplinkSwitchRequest:
+    properties:
+      id:
+        type: string
+      provider:
+        type: string
+      revision:
+        type: integer
+    type: object
+  api.UplinkWANDNSResponse:
+    properties:
+      data:
+        $ref: '#/definitions/uplink.WANDNSConfig'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.UserConfigApplyResponse:
     properties:
       ok:
@@ -7898,6 +7977,37 @@ definitions:
     properties:
       enabled:
         type: boolean
+    type: object
+  api.VlessRealityCheckDestRequest:
+    properties:
+      dest:
+        type: string
+      server_name:
+        type: string
+    type: object
+  api.VlessRealityQuickSetupRequest:
+    properties:
+      client_remark:
+        type: string
+      outbound_interface:
+        type: string
+      outbound_mode:
+        type: string
+      preserve_existing_clients:
+        type: boolean
+      reality:
+        $ref: '#/definitions/vlessserver.RealityUpdate'
+    type: object
+  api.VlessRealityQuickSetupResponse:
+    properties:
+      client:
+        $ref: '#/definitions/vlessserver.Client'
+      links:
+        $ref: '#/definitions/vlessserver.ShareLinks'
+      links_error:
+        type: string
+      state:
+        $ref: '#/definitions/vlessserver.RealityState'
     type: object
   api.WANIPData:
     properties:
@@ -8137,6 +8247,11 @@ definitions:
           объекты будет не из чего (снос при этом выполнен).
         type: boolean
     type: object
+  api.fircUninstallRequest:
+    properties:
+      purgeConfigs:
+        type: boolean
+    type: object
   api.killListenerRequest:
     properties:
       host:
@@ -8150,6 +8265,11 @@ definitions:
     properties:
       enabled:
         type: boolean
+    type: object
+  api.vlessActionRequest:
+    properties:
+      action:
+        type: string
     type: object
   api.zapretHostlistResponse:
     properties:
@@ -8959,6 +9079,38 @@ definitions:
       uptimeSeconds:
         type: integer
     type: object
+  realityserver.DestCheck:
+    properties:
+      dest:
+        type: string
+      error:
+        type: string
+      h2:
+        type: boolean
+      latency_ms:
+        type: integer
+      ok:
+        type: boolean
+      server_name:
+        type: string
+      tls13:
+        type: boolean
+      x25519:
+        type: boolean
+    type: object
+  realityserver.Status:
+    properties:
+      active_conns:
+        type: integer
+      listen_addr:
+        type: string
+      running:
+        type: boolean
+      started_at:
+        type: string
+      transport:
+        type: string
+    type: object
   services.Item:
     properties:
       enabled:
@@ -9140,6 +9292,553 @@ definitions:
         type: string
       payload:
         $ref: '#/definitions/wdttlink.ImportPayload'
+    type: object
+  telemt.Config:
+    properties:
+      enabled:
+        type: boolean
+      listenIp:
+        type: string
+      mode:
+        description: '"direct" (Fake-TLS) or "web" (Native Web Proxy)'
+        type: string
+      port:
+        type: integer
+      secret:
+        type: string
+      tlsDomain:
+        type: string
+      upstreamDevice:
+        type: string
+      webCarrier:
+        description: '"https-lanes", "websocket", "https"'
+        type: string
+      webDecoy:
+        description: e.g. "http://127.0.0.1:80"
+        type: string
+      webHost:
+        description: e.g. "proxy.example.com"
+        type: string
+    type: object
+  telemt.Status:
+    properties:
+      arch:
+        type: string
+      archSupported:
+        type: boolean
+      binary:
+        type: string
+      config:
+        $ref: '#/definitions/telemt.Config'
+      error:
+        type: string
+      installed:
+        type: boolean
+      latestVersion:
+        type: string
+      link:
+        type: string
+      pid:
+        type: integer
+      running:
+        type: boolean
+      source:
+        type: string
+      updateAvailable:
+        type: boolean
+      version:
+        type: string
+    type: object
+  uplink.Capabilities:
+    properties:
+      automaticFailback:
+        type: boolean
+      controlledFailback:
+        type: boolean
+      independentEngine:
+        type: boolean
+      independentProbe:
+        type: boolean
+      limitation:
+        type: string
+      providerDNS:
+        type: boolean
+      restartScope:
+        type: string
+    type: object
+  uplink.Entry:
+    properties:
+      capabilities:
+        $ref: '#/definitions/uplink.Capabilities'
+      policy:
+        $ref: '#/definitions/uplink.Policy'
+      state:
+        $ref: '#/definitions/uplink.State'
+    type: object
+  uplink.Policy:
+    properties:
+      enabled:
+        type: boolean
+      failback:
+        type: string
+      failureThreshold:
+        type: integer
+      holdDownSeconds:
+        type: integer
+      id:
+        type: string
+      intervalSeconds:
+        type: integer
+      mode:
+        type: string
+      providers:
+        description: stable NDMS IDs, in priority order
+        items:
+          type: string
+        type: array
+      recoveryIntervalSeconds:
+        type: integer
+      recoveryThreshold:
+        type: integer
+      revision:
+        type: integer
+      target:
+        $ref: '#/definitions/uplink.Target'
+      timeoutSeconds:
+        type: integer
+    type: object
+  uplink.Provider:
+    properties:
+      device:
+        type: string
+      id:
+        type: string
+      label:
+        type: string
+      up:
+        type: boolean
+    type: object
+  uplink.State:
+    properties:
+      candidate:
+        type: string
+      device:
+        type: string
+      failures:
+        type: integer
+      generation:
+        type: integer
+      lastError:
+        type: string
+      lastSuccess:
+        type: string
+      lastSwitch:
+        type: string
+      nextCheck:
+        type: string
+      nextRecoveryCheck:
+        type: string
+      operationId:
+        type: string
+      phase:
+        type: string
+      policyRevision:
+        type: integer
+      provider:
+        type: string
+      recoverySuccesses:
+        type: integer
+    type: object
+  uplink.Target:
+    properties:
+      engine:
+        type: string
+      kind:
+        type: string
+      ref:
+        type: string
+    type: object
+  uplink.TargetInfo:
+    properties:
+      label:
+        type: string
+      setupRequired:
+        type: boolean
+      target:
+        $ref: '#/definitions/uplink.Target'
+      unavailableReason:
+        type: string
+    type: object
+  uplink.WANDNSConfig:
+    properties:
+      overrides:
+        additionalProperties:
+          items:
+            type: string
+          type: array
+        type: object
+      revision:
+        type: integer
+    type: object
+  uplink.WANDNSUpdate:
+    properties:
+      provider:
+        type: string
+      revision:
+        type: integer
+      servers:
+        description: empty restores automatic selection
+        items:
+          type: string
+        type: array
+    type: object
+  vlessserver.Client:
+    properties:
+      created_at:
+        type: string
+      enabled:
+        type: boolean
+      fp_client_id:
+        type: string
+      fp_secret_hex:
+        type: string
+      id:
+        type: string
+      remark:
+        type: string
+    type: object
+  vlessserver.Config:
+    properties:
+      allow_lan:
+        description: Allow clients to reach RFC1918 LAN devices & router web UI
+        type: boolean
+      clients:
+        items:
+          $ref: '#/definitions/vlessserver.Client'
+        type: array
+      connection_way:
+        description: '"direct" or "external_https"'
+        type: string
+      dispatcher_port:
+        description: 'Default: 9009'
+        type: integer
+      domain_strategy:
+        description: 'DNS resolution strategy (default: "ipv4_only")'
+        type: string
+      enabled:
+        type: boolean
+      endpoints:
+        items:
+          $ref: '#/definitions/vlessserver.EndpointConfig'
+        type: array
+      listen_address:
+        description: 'Default: "127.0.0.1"'
+        type: string
+      listen_port:
+        description: 'Default: 9008'
+        type: integer
+      mode:
+        description: Transport mode (packet-up or finiteproto)
+        type: string
+      origin_host:
+        description: Router/origin address reached by external HTTPS service
+        type: string
+      origin_port:
+        description: Router/origin port reached by external HTTPS service
+        type: integer
+      origin_scheme:
+        description: '"http" or "https"'
+        type: string
+      origin_type:
+        description: '"public_address" or "cloud_address"'
+        type: string
+      outbound_interface:
+        description: network device name (e.g. "nwg1")
+        type: string
+      outbound_mode:
+        description: '"direct", "socks", "interface", "router"'
+        type: string
+      outbound_socks_port:
+        description: Forwarding port (e.g. 1099 for local SOCKS5 policy routing, 0
+          for direct)
+        type: integer
+      path:
+        description: Path (e.g. /cdn-bridge/)
+        type: string
+      public_domain:
+        description: Domain configured for public ingress
+        type: string
+      public_port:
+        description: Ingress public port (usually 443)
+        type: integer
+      transport:
+        description: '"xhttp" (default) or "finiteproto"'
+        type: string
+      uplink_method:
+        description: HTTP uplink method (GET / POST)
+        type: string
+      xhttp_tuning:
+        $ref: '#/definitions/vlessserver.XHTTPTuning'
+      xmux_max_connections:
+        description: 'Default: 2'
+        type: integer
+    type: object
+  vlessserver.EndpointConfig:
+    properties:
+      connection_way:
+        description: '"direct" or "external_https"'
+        type: string
+      enabled:
+        type: boolean
+      id:
+        type: string
+      mode:
+        type: string
+      name:
+        type: string
+      origin_host:
+        type: string
+      origin_port:
+        type: integer
+      origin_scheme:
+        type: string
+      origin_type:
+        description: '"public_address" or "cloud_address"'
+        type: string
+      path:
+        type: string
+      public_domain:
+        type: string
+      public_port:
+        type: integer
+      transport:
+        type: string
+      uplink_method:
+        type: string
+      xhttp_tuning:
+        $ref: '#/definitions/vlessserver.XHTTPTuning'
+    type: object
+  vlessserver.RealityNetworkInfo:
+    properties:
+      checked_at:
+        type: string
+      external_ip:
+        type: string
+      keendns_domain:
+        type: string
+      public_host:
+        type: string
+      reason:
+        type: string
+      wan_address:
+        type: string
+      white_ip:
+        type: boolean
+    type: object
+  vlessserver.RealitySettings:
+    properties:
+      dest:
+        type: string
+      enabled:
+        type: boolean
+      fingerprint:
+        type: string
+      port:
+        type: integer
+      private_key:
+        type: string
+      public_host:
+        type: string
+      public_key:
+        type: string
+      server_names:
+        items:
+          type: string
+        type: array
+      short_ids:
+        items:
+          type: string
+        type: array
+      transport:
+        type: string
+      updated_at:
+        type: string
+      xhttp_path:
+        type: string
+    type: object
+  vlessserver.RealityState:
+    properties:
+      clients_count:
+        type: integer
+      dest_presets:
+        items:
+          type: string
+        type: array
+      last_error:
+        type: string
+      network:
+        $ref: '#/definitions/vlessserver.RealityNetworkInfo'
+      port_candidates:
+        items:
+          type: integer
+        type: array
+      runtime:
+        $ref: '#/definitions/realityserver.Status'
+      server_enabled:
+        type: boolean
+      settings:
+        $ref: '#/definitions/vlessserver.RealitySettings'
+      suggested_port:
+        type: integer
+      wan_port_open:
+        type: boolean
+    type: object
+  vlessserver.RealityUpdate:
+    properties:
+      dest:
+        type: string
+      enabled:
+        type: boolean
+      fingerprint:
+        type: string
+      port:
+        type: integer
+      public_host:
+        type: string
+      regenerate_keys:
+        type: boolean
+      reset:
+        description: |-
+          Reset removes the REALITY route entirely (stops it, closes the port and
+          forgets keys). Other fields are ignored.
+        type: boolean
+      server_names:
+        items:
+          type: string
+        type: array
+      transport:
+        type: string
+    type: object
+  vlessserver.ShareLinks:
+    properties:
+      finiteproto_url:
+        type: string
+      happ_json:
+        type: string
+      mihomo_yaml:
+        type: string
+      remark:
+        type: string
+      singbox_json:
+        type: string
+      uuid:
+        type: string
+      vless_url:
+        type: string
+    type: object
+  vlessserver.Status:
+    properties:
+      active_generation:
+        type: string
+      backend:
+        type: string
+      binary_path:
+        type: string
+      clients:
+        items:
+          $ref: '#/definitions/vlessserver.Client'
+        type: array
+      clients_count:
+        type: integer
+      configured:
+        type: boolean
+      domain:
+        type: string
+      installed:
+        type: boolean
+      listen_address:
+        type: string
+      migration_status:
+        type: string
+      pid:
+        type: integer
+      port:
+        type: integer
+      recovery_fingerprint:
+        type: string
+      recovery_reason:
+        type: string
+      recovery_required:
+        type: boolean
+      running:
+        type: boolean
+      unavailable_reason:
+        type: string
+      version:
+        type: string
+    type: object
+  vlessserver.XHTTPTuning:
+    properties:
+      enable_xmux:
+        description: false for low latency
+        type: boolean
+      fp_chunk_bytes:
+        description: FiniteProto v2 chunk_bytes (16384..262144; default 131072)
+        type: integer
+      fp_max_ways:
+        description: FiniteProto v2 max_ways (1..8; default 1)
+        type: integer
+      max_buffered_posts:
+        description: 1..1000, default 30
+        type: integer
+      min_posts_interval_ms:
+        description: '"5-10"'
+        type: string
+      preset:
+        description: '"live_low_latency" | "balanced" | "cdn_get" | "custom"'
+        type: string
+      sc_max_each_post_bytes:
+        description: max bytes per post (e.g. 1000000)
+        type: integer
+      seq_key:
+        description: '"page"'
+        type: string
+      seq_placement:
+        description: '"query"'
+        type: string
+      session_key:
+        description: '"sid"'
+        type: string
+      session_placement:
+        description: '"query"'
+        type: string
+      stream_path_suffix:
+        description: '"stream.ts"'
+        type: string
+      stream_up_server_secs:
+        description: '"20-80"'
+        type: string
+      uplink_method:
+        description: '"GET" | "POST" | "DELETE"'
+        type: string
+      x_padding_bytes:
+        description: '"100-1000"'
+        type: string
+      x_padding_header:
+        description: '"Referer"'
+        type: string
+      x_padding_key:
+        description: '"_dc" or "x_padding"'
+        type: string
+      x_padding_method:
+        description: '"tokenish" or "repeat-x"'
+        type: string
+      x_padding_obfs_mode:
+        description: true when padding is obfuscated in header query
+        type: boolean
+      x_padding_placement:
+        description: '"queryInHeader"'
+        type: string
     type: object
   wdttlink.DecodeResponse:
     properties:
@@ -11317,6 +12016,106 @@ paths:
       summary: Adopt external tunnel
       tags:
       - tunnels
+  /firc/install:
+    post:
+      description: Accepts an asynchronous operation. Poll install-status for completion.
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Install the verified FIRC runtime package
+      tags:
+      - firc
+  /firc/install-status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get FIRC runtime installation status
+      tags:
+      - firc
+  /firc/migrate-runtime:
+    post:
+      description: Transactionally migrates FIRC ownership from legacy bundled awg-manager
+        to awg-firc-runtime, preserving configs and active service state.
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Migrate legacy bundled FIRC runtime ownership to awg-firc-runtime
+      tags:
+      - firc
+  /firc/uninstall:
+    post:
+      consumes:
+      - application/json
+      description: Accepts an asynchronous operation. Configuration purge is not supported.
+      parameters:
+      - description: Removal options; purgeConfigs must be false
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.fircUninstallRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Remove the FIRC runtime while preserving configuration
+      tags:
+      - firc
   /health:
     get:
       description: Cheap check for frontend pollers; no NDMS or I/O.
@@ -15034,6 +15833,174 @@ paths:
       security:
       - CookieAuth: []
       summary: Restart or start WireGuard server
+      tags:
+      - servers
+  /servers/vless:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vlessserver.Config'
+      summary: Get VLESS XHTTP/FiniteProto server configuration
+      tags:
+      - servers
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: VLESS server configuration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/vlessserver.Config'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vlessserver.Config'
+      summary: Update VLESS XHTTP/FiniteProto server configuration
+      tags:
+      - servers
+  /servers/vless/action:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Lifecycle action
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.vlessActionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vlessserver.Status'
+      summary: Control VLESS XHTTP/FiniteProto server daemon (awgm-xhttpd)
+      tags:
+      - servers
+  /servers/vless/reality:
+    get:
+      parameters:
+      - description: Set to 1 to force live WAN IP detection
+        in: query
+        name: refresh
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vlessserver.RealityState'
+      summary: Get VLESS + REALITY state, runtime status and WAN detection
+      tags:
+      - servers
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: REALITY settings update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/vlessserver.RealityUpdate'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vlessserver.RealityState'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update or reset direct VLESS + REALITY configuration
+      tags:
+      - servers
+  /servers/vless/reality/check-dest:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Target host:port and optional SNI
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.VlessRealityCheckDestRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/realityserver.DestCheck'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Probe a REALITY TLS 1.3 camouflage destination from the router
+      tags:
+      - servers
+  /servers/vless/reality/quick-setup:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: REALITY quick setup request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.VlessRealityQuickSetupRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.VlessRealityQuickSetupResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Configure VLESS + REALITY direct preset in one call (wizard)
+      tags:
+      - servers
+  /servers/vless/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/vlessserver.Status'
+      summary: Get VLESS XHTTP/FiniteProto server runtime status (awgm-xhttpd)
       tags:
       - servers
   /servers/wan-ip:
@@ -21865,6 +22832,253 @@ paths:
       summary: WAN interfaces
       tags:
       - system
+  /telemt/config:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Config'
+              type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get telemt configuration
+      tags:
+      - telemt
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: telemt configuration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/telemt.Config'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Save telemt configuration
+      tags:
+      - telemt
+  /telemt/install:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Install telemt binary
+      tags:
+      - telemt
+  /telemt/restart:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Restart telemt service
+      tags:
+      - telemt
+  /telemt/start:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Start telemt service
+      tags:
+      - telemt
+  /telemt/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get telemt service status
+      tags:
+      - telemt
+  /telemt/stop:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Stop telemt service
+      tags:
+      - telemt
+  /telemt/uninstall:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Uninstall telemt service
+      tags:
+      - telemt
+  /telemt/update:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/telemt.Status'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Update telemt binary
+      tags:
+      - telemt
   /terminal/install:
     post:
       produces:
@@ -22564,6 +23778,207 @@ paths:
       summary: Update tunnel
       tags:
       - tunnels
+  /uplink/dns:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.UplinkWANDNSResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get Multi-WAN provider DNS overrides
+      tags:
+      - uplink
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: WAN provider DNS override
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/uplink.WANDNSUpdate'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.UplinkWANDNSResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Update Multi-WAN provider DNS override
+      tags:
+      - uplink
+  /uplink/policies:
+    delete:
+      consumes:
+      - application/json
+      parameters:
+      - description: Policy ID and revision
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.UplinkDeleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Delete a Multi-WAN uplink policy
+      tags:
+      - uplink
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.UplinkSnapshotResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List Multi-WAN uplink policies and targets
+      tags:
+      - uplink
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Multi-WAN policy
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/uplink.Policy'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.UplinkPolicyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Save a Multi-WAN uplink policy
+      tags:
+      - uplink
+  /uplink/switch:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Target provider switch
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.UplinkSwitchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.UplinkEntriesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Manually switch Multi-WAN policy provider
+      tags:
+      - uplink
   /wan/status:
     get:
       produces:

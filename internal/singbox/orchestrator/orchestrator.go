@@ -98,6 +98,20 @@ type Orchestrator struct {
 	// don't resurrect the daemon. SIGHUP (already running) and stop
 	// transitions remain unaffected.
 	shouldRun func() bool
+
+	// procGateMu serializes process Start/Reload calls in Reload (after
+	// shouldRun returns) against deliberate stops via SuppressAndStop.
+	// Lock ordering invariant: heavyop.Default -> procGateMu -> o.mu.
+	// shouldRun MUST NEVER be called while holding procGateMu or o.mu.
+	procGateMu sync.Mutex
+
+	// stopGen counts CancelPendingReload / SuppressAndStop / Close events.
+	// genInvalidated is set when SuppressAndStop or a stop transition invalidates
+	// the running process generation so a subsequently restarted process (even
+	// reusing the same mock/OS PID) is never falsely adopted via stale on-disk hash.
+	// Guarded by o.mu.
+	stopGen        uint64
+	genInvalidated bool
 }
 
 // SetLogger registers a sink for orchestrator-level log lines.

@@ -3,7 +3,7 @@
 	import { Modal } from '$lib/components/ui';
 	import TunnelDiagnosticsPanel from './TunnelDiagnosticsPanel.svelte';
 
-	type DiagnosticsKind = 'awg' | 'system' | 'singbox' | 'subscription';
+	type DiagnosticsKind = 'awg' | 'system' | 'singbox' | 'subscription' | 'firc';
 	type DiagnosticsSubject = 'tunnel' | 'subscription';
 
 	interface Props {
@@ -11,7 +11,8 @@
 		kind: DiagnosticsKind;
 		targetId: string;
 		displayName: string;
-		subject: DiagnosticsSubject;
+		subject?: DiagnosticsSubject;
+		subjectLabel?: string;
 		iface?: string;
 		loading?: boolean;
 		unavailableReason?: string;
@@ -24,6 +25,7 @@
 		targetId,
 		displayName,
 		subject,
+		subjectLabel,
 		iface,
 		loading = false,
 		unavailableReason,
@@ -34,6 +36,7 @@
 		if (kind === 'awg') return 'AWG';
 		if (kind === 'system') return 'AWG';
 		if (kind === 'singbox') return 'Sing-box';
+		if (kind === 'firc') return 'FIRC';
 		return 'Subscription';
 	});
 	let modalTitle = $derived(m.tunnel_test_title({ prefix: diagnosticsTitlePrefix, name: displayName }));
@@ -51,7 +54,7 @@
 		{displayName}
 		backHref=""
 		backLabel=""
-		{subject}
+		subject={subject ?? (subjectLabel === 'подписку' ? 'subscription' : 'tunnel')}
 		{iface}
 		{loading}
 		{unavailableReason}

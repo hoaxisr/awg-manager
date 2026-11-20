@@ -110,8 +110,17 @@ func hasSystemSniff(t *testing.T, path string) bool {
 		t.Fatal(err)
 	}
 	for _, r := range doc.Route.Rules {
-		if r["action"] == "sniff" && len(r) == 1 {
-			return true
+		if r["action"] == "sniff" {
+			onlySysKeys := true
+			for k := range r {
+				if k != "action" && k != "timeout" {
+					onlySysKeys = false
+					break
+				}
+			}
+			if onlySysKeys {
+				return true
+			}
 		}
 	}
 	return false

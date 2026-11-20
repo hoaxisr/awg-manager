@@ -1,0 +1,291 @@
+package firc
+
+import (
+	"context"
+	"crypto/sha256"
+	"debug/elf"
+	"encoding/hex"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+type mockFircDownloader struct {
+	blobs map[string][]byte
+	errOn string
+}
+
+func (m *mockFircDownloader) DownloadFile(_ context.Context, r DownloadFileRequest) (DownloadFileResult, error) {
+	if m.errOn != "" {
+		return DownloadFileResult{}, errors.New("network failure")
+	}
+	b, ok := m.blobs[r.URL]
+	if !ok {
+		return DownloadFileResult{}, errors.New("not found")
+	}
+	if int64(len(b)) > r.MaxFileBytes {
+		return DownloadFileResult{}, errors.New("download limit")
+	}
+	if err := os.WriteFile(r.DestPath, b, r.Mode); err != nil {
+		return DownloadFileResult{}, err
+	}
+	return DownloadFileResult{Path: r.DestPath, Size: int64(len(b))}, nil
+}
+func sha256HexBytes(b []byte) string { sum := sha256.Sum256(b); return hex.EncodeToString(sum[:]) }
+
+type mockRuntimePackages struct {
+	mu                      sync.Mutex
+	root, version           string
+	installs, removes       int
+	failInstall, failRemove bool
+	failNextInstall         bool
+	entered, release        chan struct{}
+}
+
+func (m *mockRuntimePackages) Version(context.Context, string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.version, nil
+}
+func (m *mockRuntimePackages) Install(ctx context.Context, p string) error {
+	m.mu.Lock()
+	m.installs++
+	fail := m.failInstall
+	if m.failNextInstall {
+		fail = true
+		m.failNextInstall = false
+	}
+	m.mu.Unlock()
+	if m.entered != nil {
+		close(m.entered)
+		select {
+		case <-m.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if fail {
+		return errors.New("opkg install failed")
+	}
+	entries, err := runtimePackageContents(p, "aarch64-3.10", "0.7.0-1")
+	if err != nil {
+		return err
+	}
+	preserved := map[string][]byte{}
+	for _, rel := range []string{"opt/etc/firc/firc.conf", "opt/etc/firc/groups.yaml"} {
+		if b, err := os.ReadFile(filepath.Join(m.root, rel)); err == nil {
+			preserved[rel] = b
+		}
+	}
+	// Simulate opkg replacing existing package-owned files.
+	_ = os.Remove(filepath.Join(m.root, "opt/etc/ndm/iflayerchanged.d/100-firc"))
+	if err := stageRuntimePayload(entries, m.root); err != nil {
+		return err
+	}
+	for rel, b := range preserved {
+		if err := os.WriteFile(filepath.Join(m.root, rel), b, 0600); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	m.version = "0.7.0-1"
+	m.mu.Unlock()
+	return nil
+}
+func (m *mockRuntimePackages) Remove(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removes++
+	if m.failRemove {
+		return errors.New("opkg remove failed")
+	}
+	if name != RuntimePackageName {
+		return errors.New("wrong package")
+	}
+	for rel := range runtimePayload {
+		if rel == "opt/etc/firc/firc.conf" || rel == "opt/etc/firc/groups.yaml" {
+			continue
+		}
+		if err := os.Remove(filepath.Join(m.root, rel)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	m.version = ""
+	return nil
+}
+
+func runtimeFixture(t *testing.T) (*OnDemandInstaller, *mockRuntimePackages, []byte) {
+	t.Helper()
+	source := t.TempDir()
+	root := t.TempDir()
+	t.Setenv("FIRC_SOURCE_ROOT", source)
+	files := map[string]string{
+		"LICENSE":                             "GPL-3.0-or-later test fixture\n",
+		"files/entware_kn/etc/init.d/S99firc": "#!/bin/sh\n[ -e /opt/etc/firc/.awgm-disabled ] && exit 8\nexit 0\n",
+		"files/entware_kn/etc/ndm/netfilter.d/100-firc": "#!/bin/sh\nexit 0\n",
+		"files/common/etc/firc/firc.conf":               "configVersion: 0.7.0\n",
+		"files/common/etc/firc/groups.yaml":             "groups: []\n",
+	}
+	for rel, s := range files {
+		p := filepath.Join(source, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(s), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fircd := filepath.Join(source, "fircd")
+	tun := filepath.Join(source, "tunvless")
+	for p, tag := range map[string]string{fircd: "fircd", tun: "tunvless"} {
+		if err := os.WriteFile(p, makeMinimalELF(elf.ELFCLASS64, elf.ELFDATA2LSB, elf.EM_AARCH64, tag), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ipk := filepath.Join(source, "runtime.ipk")
+	if err := BuildRuntimeIPK(source, fircd, tun, "aarch64-3.10", "0.7.0-1", ipk); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(ipk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := FircBinarySpec{Version: "0.7.0-1", PackageURL: "https://example.invalid/runtime.ipk", PackageSHA256: sha256HexBytes(b), PackageSize: int64(len(b))}
+	inst := NewOnDemandInstaller("aarch64-3.10", spec)
+	inst.SetPackageLayout(DefaultPackageLayout(root))
+	pm := &mockRuntimePackages{root: root}
+	inst.SetPackageManager(pm)
+	inst.SetDownloader(&mockFircDownloader{blobs: map[string][]byte{spec.PackageURL: b}})
+	inst.SetFreeDiskFn(func(string) (int64, bool) { return 256 << 20, true })
+	return inst, pm, b
+}
+
+func TestOnDemandInstaller_PackagedLifecycle(t *testing.T) {
+	i, pm, _ := runtimeFixture(t)
+	ctx := context.Background()
+	if err := i.Install(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st := i.GetInstallStatus(ctx, nil, false); st.State != InstallStateInstalled || st.InstalledVersion != "0.7.0-1" {
+		t.Fatalf("status: %+v", st)
+	}
+	config := []byte("user configuration\n")
+	if err := os.WriteFile(i.layout.ConfigFile, config, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := i.Uninstall(ctx, nil, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(i.layout.ConfigFile); string(b) != string(config) {
+		t.Fatal("config lost")
+	}
+	if err := i.Install(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(i.layout.ConfigFile); string(b) != string(config) {
+		t.Fatal("reinstall overwrote config")
+	}
+	if pm.installs != 2 || pm.removes != 1 {
+		t.Fatal("wrong package operations")
+	}
+}
+
+func TestOnDemandInstaller_VerificationPrecedesOpkg(t *testing.T) {
+	i, pm, _ := runtimeFixture(t)
+	i.spec.PackageSHA256 = strings.Repeat("0", 64)
+	if err := i.Install(context.Background()); !errors.Is(err, ErrSHA256Mismatch) {
+		t.Fatalf("checksum: %v", err)
+	}
+	if pm.installs != 0 {
+		t.Fatal("unverified artifact installed")
+	}
+	i.spec.PackageURL = "http://example.invalid/runtime.ipk"
+	if err := i.Install(context.Background()); !errors.Is(err, ErrReleaseUnavailable) {
+		t.Fatalf("URL: %v", err)
+	}
+}
+
+func TestOnDemandInstaller_InterruptedOperationRequiresRecovery(t *testing.T) {
+	i, pm, _ := runtimeFixture(t)
+	pm.failInstall = true
+	if err := i.Install(context.Background()); err == nil {
+		t.Fatal("expected package failure")
+	}
+	fresh := NewOnDemandInstaller(i.arch, i.spec)
+	fresh.SetPackageLayout(i.layout)
+	fresh.SetPackageManager(pm)
+	if st := fresh.GetInstallStatus(context.Background(), nil, false); st.State != InstallStateRecoveryNeeded {
+		t.Fatalf("lost recovery journal: %+v", st)
+	}
+	pm.failInstall = false
+	if err := i.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if st := i.GetInstallStatus(context.Background(), nil, false); st.State != InstallStateInstalled {
+		t.Fatalf("repair failed: %+v", st)
+	}
+}
+
+func TestOnDemandInstaller_AsyncReservation(t *testing.T) {
+	i, pm, _ := runtimeFixture(t)
+	pm.entered = make(chan struct{})
+	pm.release = make(chan struct{})
+	if err := i.StartInstall(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-pm.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("job did not start")
+	}
+	if err := i.StartInstall(); !errors.Is(err, ErrInstallBusy) {
+		close(pm.release)
+		t.Fatalf("second job accepted: %v", err)
+	}
+	close(pm.release)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if !i.GetInstallStatus(context.Background(), nil, false).Busy {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("job remained busy")
+}
+
+func TestOnDemandInstaller_ActiveAndDependenciesRefuseMutation(t *testing.T) {
+	i, pm, _ := runtimeFixture(t)
+	i.SetEngineActiveChecker(func() bool { return true })
+	if err := i.Install(context.Background()); !errors.Is(err, ErrFircActive) {
+		t.Fatalf("active install: %v", err)
+	}
+	i.SetEngineActiveChecker(func() bool { return false })
+	i.SetTunvlessRunningChecker(func(context.Context) bool { return true })
+	if err := i.Uninstall(context.Background(), nil, false, false); !errors.Is(err, ErrTunvlessRunning) {
+		t.Fatalf("running tunnel: %v", err)
+	}
+	if pm.installs != 0 || pm.removes != 0 {
+		t.Fatal("package mutation occurred")
+	}
+}
+
+func TestRuntimeUpgradeFailureRestoresPreviousPackage(t *testing.T) {
+	i, pm, _ := runtimeFixture(t)
+	if err := i.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pm.failNextInstall = true
+	if err := i.Install(context.Background()); err == nil {
+		t.Fatal("expected upgrade failure")
+	}
+	if st := i.GetInstallStatus(context.Background(), nil, false); st.State != InstallStateInstalled || st.InstalledVersion != "0.7.0-1" {
+		t.Fatalf("previous runtime not restored: %+v", st)
+	}
+	if pm.installs != 3 {
+		t.Fatalf("expected initial install, failed upgrade and rollback; got %d", pm.installs)
+	}
+}

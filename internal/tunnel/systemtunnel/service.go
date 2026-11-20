@@ -35,10 +35,17 @@ type ServerMarker interface {
 
 // ServiceImpl implements Service using the new NDMS CQRS layer.
 type ServiceImpl struct {
-	queries  *query.Queries
-	commands *command.Commands
-	servers  ServerMarker
-	appLog   *logging.ScopedLogger
+	queries     *query.Queries
+	commands    *command.Commands
+	servers     ServerMarker
+	appLog      *logging.ScopedLogger
+	uplinkGuard func(context.Context, string) (func(), error)
+}
+
+// SetUplinkGuard is wired before request serving; lock order is controller
+// before any NDMS mutation. It protects locally initiated ASC edits.
+func (s *ServiceImpl) SetUplinkGuard(fn func(context.Context, string) (func(), error)) {
+	s.uplinkGuard = fn
 }
 
 // New creates a new system tunnel service. servers может быть nil — тогда
@@ -76,6 +83,13 @@ func (s *ServiceImpl) GetASCParams(ctx context.Context, name string) (json.RawMe
 }
 
 func (s *ServiceImpl) SetASCParams(ctx context.Context, name string, params json.RawMessage) error {
+	if s.uplinkGuard != nil {
+		release, err := s.uplinkGuard(ctx, name)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	// `interface X wireguard asc …` по отсутствующему X создаёт X (F546):
 	// подтверждаем свежим списком до любых чтений по имени.
 	iface, _, ok, err := s.queries.Interfaces.Confirm(ctx, name)

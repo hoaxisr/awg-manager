@@ -85,6 +85,7 @@ type ServiceImpl struct {
 
 	deviceProxyRefs DeviceProxyRefChecker
 	routerRefs      RouterRefChecker
+	uplinkMutation  func(context.Context, string, string) (func(), error)
 }
 
 type AWGSyncer interface {
@@ -377,6 +378,15 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 	if tunnelID == "" || tunnelID != oldStored.ID {
 		return fmt.Errorf("tunnel id mismatch")
 	}
+	operation := "metadata"
+	if !storage.SameUplinkTransport(oldStored, newStored) {
+		operation = "transport"
+	}
+	release, err := s.beginUplinkMutation(ctx, tunnelID, operation)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
@@ -875,6 +885,11 @@ func kmodShapingChanged(old, neu *storage.AWGTunnel) bool {
 
 // SetEnabled changes the enabled/autostart state of a tunnel.
 func (s *ServiceImpl) SetEnabled(ctx context.Context, tunnelID string, enabled bool) error {
+	release, guardErr := s.beginUplinkMutation(ctx, tunnelID, "lifecycle")
+	if guardErr != nil {
+		return guardErr
+	}
+	defer release()
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
 
@@ -902,6 +917,11 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, tunnelID string, enabled b
 // SetDefaultRoute changes the default route setting.
 // If tunnel is running, immediately applies route changes.
 func (s *ServiceImpl) SetDefaultRoute(ctx context.Context, tunnelID string, enabled bool) error {
+	release, guardErr := s.beginUplinkMutation(ctx, tunnelID, "metadata")
+	if guardErr != nil {
+		return guardErr
+	}
+	defer release()
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
 
@@ -1230,6 +1250,11 @@ func (s *ServiceImpl) importNativeWGLocked(ctx context.Context, parsed *storage.
 // ReplaceConfig replaces a tunnel's Interface and Peer from a parsed .conf,
 // preserving identity, routing, monitoring, and all other metadata.
 func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string) error {
+	release, guardErr := s.beginUplinkMutation(ctx, tunnelID, "transport")
+	if guardErr != nil {
+		return guardErr
+	}
+	defer release()
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
 	ctx = query.WithActionList(ctx) // один список на замену: RequireIface, Stop, Start (F557)

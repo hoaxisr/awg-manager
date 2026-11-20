@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,9 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/mcp/localdeps"
 	"github.com/hoaxisr/awg-manager/internal/openapi"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/serveringress"
+	"github.com/hoaxisr/awg-manager/internal/serverwizard"
+	"github.com/hoaxisr/awg-manager/internal/serverwizard/egress"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	sysports "github.com/hoaxisr/awg-manager/internal/sys/ports"
 	tunnelservice "github.com/hoaxisr/awg-manager/internal/tunnel/service"
@@ -48,39 +52,43 @@ func (s singboxOperatorWithDelay) CheckDelay(ctx context.Context, tag string) (i
 // нужные единственной секции). Порядок вызова секций в registerRoutes
 // сохраняет исходный порядок регистрации.
 type routeHandlers struct {
-	appLog               *logging.Service
-	authHandler          *api.AuthHandler
-	tunnelsHandler       *api.TunnelsHandler
-	awgAnalyzeHandler    *api.AwgAnalyzeHandler
-	controlHandler       *api.ControlHandler
-	testingHandler       *api.TestingHandler
-	systemHandler        *api.SystemHandler
-	settingsHandler      *api.SettingsHandler
-	importHandler        *api.ImportHandler
-	wanHandler           *api.WANHandler
-	pingCheckHandler     *api.PingCheckHandler
-	proxyListenerHandler *api.ProxyListenerHandler
-	loggingHandler       *api.LoggingHandler
-	externalHandler      *api.ExternalTunnelsHandler
-	updateHandler        *api.UpdateHandler
-	dnsRouteHandler      *api.DNSRouteHandler
-	diagRunner           *diagnostics.Runner
-	diagHandler          *api.DiagnosticsHandler
-	orphanIfaceHandler   *api.OrphanIfaceHandler
-	foreignIfaceHandler  *api.ForeignIfaceHandler
-	connectionsService   *connections.Service
-	connectionsHandler   *api.ConnectionsHandler
-	signatureHandler     *api.SignatureHandler
-	terminalHandler      *api.TerminalHandler
-	eventsHandler        *api.EventsHandler
-	hookHandler          *api.HookHandler
-	staticRouteHandler   *api.StaticRouteHandler
-	systemTunnelHandler  *api.SystemTunnelsHandler
-	serverHandler        *api.ServersHandler
-	managedHandler       *api.ManagedServerHandler
-	accessPolicyHandler  *api.AccessPolicyHandler
-	crHandler            *api.ClientRouteHandler
-	systemToolsHandler   *api.SystemToolsHandler
+	appLog                   *logging.Service
+	authHandler              *api.AuthHandler
+	tunnelsHandler           *api.TunnelsHandler
+	awgAnalyzeHandler        *api.AwgAnalyzeHandler
+	controlHandler           *api.ControlHandler
+	testingHandler           *api.TestingHandler
+	systemHandler            *api.SystemHandler
+	settingsHandler          *api.SettingsHandler
+	importHandler            *api.ImportHandler
+	wanHandler               *api.WANHandler
+	pingCheckHandler         *api.PingCheckHandler
+	proxyListenerHandler     *api.ProxyListenerHandler
+	loggingHandler           *api.LoggingHandler
+	externalHandler          *api.ExternalTunnelsHandler
+	updateHandler            *api.UpdateHandler
+	dnsRouteHandler          *api.DNSRouteHandler
+	diagRunner               *diagnostics.Runner
+	diagHandler              *api.DiagnosticsHandler
+	orphanIfaceHandler       *api.OrphanIfaceHandler
+	foreignIfaceHandler      *api.ForeignIfaceHandler
+	connectionsService       *connections.Service
+	connectionsHandler       *api.ConnectionsHandler
+	signatureHandler         *api.SignatureHandler
+	terminalHandler          *api.TerminalHandler
+	eventsHandler            *api.EventsHandler
+	hookHandler              *api.HookHandler
+	staticRouteHandler       *api.StaticRouteHandler
+	systemTunnelHandler      *api.SystemTunnelsHandler
+	serverHandler            *api.ServersHandler
+	managedHandler           *api.ManagedServerHandler
+	accessPolicyHandler      *api.AccessPolicyHandler
+	crHandler                *api.ClientRouteHandler
+	systemToolsHandler       *api.SystemToolsHandler
+	vlessServerHandler       *api.VlessServerHandler
+	tgWebProxyHandler        *api.TgWebProxyHandler
+	ingressDispatcherHandler *api.IngressDispatcherHandler
+	serverWizardHandler      *api.ServerWizardHandler
 
 	// guarded оборачивает handler в auth-middleware (RequireAuthFunc).
 	guarded func(http.HandlerFunc) http.HandlerFunc
@@ -230,6 +238,87 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 
 	h.proxyListenerHandler = api.NewProxyListenerHandler(s.proxyRecords)
 
+	if s.vlessServerService != nil {
+		h.vlessServerHandler = api.NewVlessServerHandler(s.vlessServerService, s.serverIngressCoordinator)
+	}
+	if s.tgWebProxyService != nil {
+		h.tgWebProxyHandler = api.NewTgWebProxyHandler(s.tgWebProxyService, s.sessions)
+		h.tgWebProxyHandler.SetCoordinator(s.serverIngressCoordinator)
+	}
+	if s.serverIngressCoordinator != nil || s.cdnDispatcher != nil {
+		h.ingressDispatcherHandler = api.NewIngressDispatcherHandler(s.serverIngressCoordinator, s.cdnDispatcher, s.vlessServerService)
+	}
+	if s.vlessServerService != nil || s.tgWebProxyService != nil {
+		egressAdp := egress.NewAdapter(s.catalog)
+		if s.fircHandler != nil && s.fircHandler.Operator() != nil {
+			fircOp := s.fircHandler.Operator()
+			if s.serverIngressCoordinator != nil {
+				s.serverIngressCoordinator.SetFircRouting(fircOp)
+			}
+			egressAdp.SetFircStateProvider(func(ctx context.Context) (bool, string) {
+				if fircOp.IsRecoveryRequired() {
+					return false, "Маршрутизация FIRC требует восстановления: " + fircOp.RecoveryReason()
+				}
+				if s.settings == nil {
+					return false, "Хранилище настроек недоступно для проверки движка маршрутизации"
+				}
+				st, err := s.settings.Get()
+				if err != nil || st == nil {
+					return false, "Не удалось прочитать настройки маршрутизации"
+				}
+				eng := strings.TrimSpace(st.SingboxRouter.RoutingEngine)
+				if eng == "" {
+					eng = "sing-box"
+				}
+				if eng != "firc" {
+					return false, "Правила FIRC неактивны (выбран движок " + eng + ")"
+				}
+				if !fircOp.IsRunning(ctx) {
+					return false, "Служба маршрутизации fircd не запущена"
+				}
+				return true, ""
+			})
+		}
+		preflight := serverwizard.NewPreflightEngine(s.vlessServerService, s.cdnDispatcher, s.tgWebProxyService, s.serverIngressCoordinator, egressAdp)
+		fingerprint := serverwizard.NewFingerprintEngine(s.vlessServerService, s.cdnDispatcher, s.tgWebProxyService, s.serverIngressCoordinator, egressAdp)
+		planStore := serverwizard.NewPlanStore()
+		jobRunner := serverwizard.NewJobRunner()
+		wizardSvc := serverwizard.NewWizardService(
+			s.serverIngressCoordinator,
+			s.vlessServerService,
+			s.tgWebProxyService,
+			s.cdnDispatcher,
+			preflight,
+			fingerprint,
+			planStore,
+			jobRunner,
+			egressAdp,
+		)
+		if s.ndmsQueries != nil && s.ndmsQueries.KeenDNS != nil && s.ndmsQueries.HTTPProxy != nil && s.ndmsCommands != nil && s.ndmsCommands.HTTPProxy != nil {
+			kdOp := serveringress.NewNDMSKeenDNSOperator(
+				s.ndmsQueries.KeenDNS,
+				s.ndmsQueries.HTTPProxy,
+				s.ndmsCommands.HTTPProxy,
+			)
+			kdOp.SetAdminPortProvider(func() int {
+				if s.settings != nil {
+					if st, err := s.settings.Get(); err == nil && st != nil && st.Server.Port > 0 {
+						return st.Server.Port
+					}
+				}
+				return 2222
+			})
+			kdOp.SetWANInfoProvider(func(ctx context.Context) (string, bool) {
+				return serveringress.ResolveWANInfo(ctx, s.ndmsQueries)
+			})
+			if s.serverIngressCoordinator != nil {
+				s.serverIngressCoordinator.SetKeenDNS(kdOp)
+			}
+			wizardSvc.SetKeenDNS(kdOp)
+		}
+		h.serverWizardHandler = api.NewServerWizardHandler(wizardSvc, s.sessions)
+	}
+
 	// Auth middleware helper
 	h.guarded = s.authMiddleware.RequireAuthFunc
 
@@ -296,9 +385,24 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.ipv4RunningHook != nil {
 		h.hookHandler.SetIPv4RunningHook(s.ipv4RunningHook)
 	}
+	if s.uplinkHandler != nil && s.uplinkHandler.Controller != nil {
+		h.hookHandler.SetUplinkWANChangeNudge(func(ndmsID, kernel string) {
+			for _, provider := range s.uplinkHandler.Controller.Providers() {
+				if (ndmsID != "" && provider.ID == ndmsID) || (kernel != "" && provider.Device == kernel) {
+					s.uplinkHandler.Controller.NotifyWANChange()
+					return
+				}
+			}
+		})
+	}
 
 	// WAN status (protected) — event ingress is the NDMS hook spool.
 	mux.HandleFunc("/api/wan/status", h.guarded(h.wanHandler.GetStatus))
+	if s.uplinkHandler != nil {
+		mux.HandleFunc("/api/uplink/policies", h.guarded(s.uplinkHandler.Policies))
+		mux.HandleFunc("/api/uplink/dns", h.guarded(s.uplinkHandler.DNS))
+		mux.HandleFunc("/api/uplink/switch", h.guarded(s.uplinkHandler.Switch))
+	}
 
 }
 
@@ -681,6 +785,98 @@ func (s *Server) registerServerRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/terminal/stop", h.guarded(h.terminalHandler.Stop))
 	mux.HandleFunc("/api/terminal/ws", h.guarded(h.terminalHandler.WebSocket))
 
+	// VLESS XHTTP / FiniteProto Server (C backend: awgm-xhttpd)
+	// Primary routes: /api/servers/vless/*
+	// Compatibility aliases: /api/servers/xray/* (narrow adapter for legacy API callers; profiles & /api/xray/* removed)
+	if h.vlessServerHandler != nil {
+		vlessRootHandler := h.guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPut || r.Method == http.MethodPost {
+				h.vlessServerHandler.UpdateConfig(w, r)
+			} else {
+				h.vlessServerHandler.GetConfig(w, r)
+			}
+		})
+		vlessClientsHandler := h.guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				h.vlessServerHandler.AddClient(w, r)
+			} else {
+				h.vlessServerHandler.GetConfig(w, r)
+			}
+		})
+
+		mux.HandleFunc("/api/servers/vless", vlessRootHandler)
+		mux.HandleFunc("/api/servers/vless/status", h.guarded(h.vlessServerHandler.GetStatus))
+		mux.HandleFunc("/api/servers/vless/action", h.guarded(h.vlessServerHandler.Action))
+		mux.HandleFunc("/api/servers/vless/clients", vlessClientsHandler)
+		mux.HandleFunc("/api/servers/vless/clients/", h.guarded(h.vlessServerHandler.RouteClientSubpath))
+		mux.HandleFunc("/api/servers/vless/reality", h.guarded(h.vlessServerHandler.RealityRoute))
+		mux.HandleFunc("/api/servers/vless/reality/", h.guarded(h.vlessServerHandler.RealityRoute))
+		mux.HandleFunc("/api/servers/vless/migration", h.guarded(h.vlessServerHandler.GetMigrationStatus))
+		mux.HandleFunc("/api/servers/vless/migration/resolve", h.guarded(h.vlessServerHandler.ResolveConflict))
+		mux.HandleFunc("/api/servers/vless/recovery/resolve", h.guarded(h.vlessServerHandler.ResolveRecovery))
+		mux.HandleFunc("/api/servers/vless/", h.guarded(http.NotFound))
+
+		mux.HandleFunc("/api/servers/xray", vlessRootHandler)
+		mux.HandleFunc("/api/servers/xray/status", h.guarded(h.vlessServerHandler.GetStatus))
+		mux.HandleFunc("/api/servers/xray/action", h.guarded(h.vlessServerHandler.Action))
+		mux.HandleFunc("/api/servers/xray/clients", vlessClientsHandler)
+		mux.HandleFunc("/api/servers/xray/clients/", h.guarded(h.vlessServerHandler.RouteClientSubpath))
+		mux.HandleFunc("/api/servers/xray/reality", h.guarded(h.vlessServerHandler.RealityRoute))
+		mux.HandleFunc("/api/servers/xray/reality/", h.guarded(h.vlessServerHandler.RealityRoute))
+		mux.HandleFunc("/api/servers/xray/migration", h.guarded(h.vlessServerHandler.GetMigrationStatus))
+		mux.HandleFunc("/api/servers/xray/migration/resolve", h.guarded(h.vlessServerHandler.ResolveConflict))
+		mux.HandleFunc("/api/servers/xray/recovery/resolve", h.guarded(h.vlessServerHandler.ResolveRecovery))
+		mux.HandleFunc("/api/servers/xray/", h.guarded(http.NotFound))
+	}
+
+	// Telegram WEB Proxy
+	if h.tgWebProxyHandler != nil {
+		mux.HandleFunc("/api/servers/tgwebproxy", h.guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPut {
+				h.tgWebProxyHandler.UpdateConfig(w, r)
+			} else if r.Method == http.MethodGet {
+				h.tgWebProxyHandler.GetConfig(w, r)
+			} else {
+				response.MethodNotAllowed(w)
+			}
+		}))
+		mux.HandleFunc("/api/servers/tgwebproxy/csrf", h.guarded(h.tgWebProxyHandler.GetCSRFToken))
+		mux.HandleFunc("/api/servers/tgwebproxy/status", h.guarded(h.tgWebProxyHandler.GetStatus))
+		mux.HandleFunc("/api/servers/tgwebproxy/reveal", h.guarded(h.tgWebProxyHandler.RevealSecret))
+		mux.HandleFunc("/api/servers/tgwebproxy/action", h.guarded(h.tgWebProxyHandler.Action))
+	}
+
+	// Ingress Dispatcher and XHTTP Tuning
+	if h.ingressDispatcherHandler != nil {
+		mux.HandleFunc("/api/servers/ingress/dispatcher", h.guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPut || r.Method == http.MethodPost {
+				h.ingressDispatcherHandler.UpdateDispatcherConfig(w, r)
+			} else if r.Method == http.MethodGet {
+				h.ingressDispatcherHandler.GetDispatcherConfig(w, r)
+			} else {
+				response.MethodNotAllowed(w)
+			}
+		}))
+		tuningHandler := h.guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPut || r.Method == http.MethodPost {
+				h.ingressDispatcherHandler.UpdateVlessTuning(w, r)
+			} else if r.Method == http.MethodGet {
+				h.ingressDispatcherHandler.GetVlessTuning(w, r)
+			} else {
+				response.MethodNotAllowed(w)
+			}
+		})
+		mux.HandleFunc("/api/servers/vless/tuning", tuningHandler)
+		mux.HandleFunc("/api/servers/xray/tuning", tuningHandler)
+	}
+
+	// Server First-Run Setup Wizards
+	if h.serverWizardHandler != nil {
+		mux.HandleFunc("/api/servers/tgwebproxy/wizard/", h.guarded(h.serverWizardHandler.Route("tgwebproxy")))
+		mux.HandleFunc("/api/servers/vless/wizard/", h.guarded(h.serverWizardHandler.Route("xray")))
+		mux.HandleFunc("/api/servers/xray/wizard/", h.guarded(h.serverWizardHandler.Route("xray")))
+		mux.HandleFunc("/api/servers/both/wizard/", h.guarded(h.serverWizardHandler.Route("both")))
+	}
 }
 
 // registerPolicyRoutes — access policies, client routes, routing polling aliases.
@@ -909,6 +1105,12 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 	}
 	if s.singboxInboundsHandler != nil {
 		mux.HandleFunc("/api/singbox/inbounds", h.guarded(s.singboxInboundsHandler.List))
+	}
+	if s.fircHandler != nil {
+		s.fircHandler.RegisterRoutes(mux, h.guarded)
+	}
+	if s.telemtHandler != nil {
+		s.telemtHandler.RegisterRoutes(mux, h.guarded)
 	}
 	if s.clashProxy != nil {
 		mux.HandleFunc("/api/singbox/clash/", h.guarded(s.clashProxy.ServeHTTP))

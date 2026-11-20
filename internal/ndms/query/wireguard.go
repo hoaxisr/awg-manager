@@ -368,7 +368,11 @@ func (s *WGServerStore) InvalidateRuntime() {
 // полный список (stale-on-error) — иначе живой сервер пропадал бы из
 // /servers и из опроса метрик.
 func (s *WGServerStore) wireguardInterfaces(ctx context.Context) (map[string]json.RawMessage, error) {
-	snap, err := s.interfaces.Snapshot(ctx, SnapshotRecent)
+	return s.wireguardInterfacesMaxAge(ctx, SnapshotRecent)
+}
+
+func (s *WGServerStore) wireguardInterfacesMaxAge(ctx context.Context, maxAge time.Duration) (map[string]json.RawMessage, error) {
+	snap, err := s.interfaces.Snapshot(ctx, maxAge)
 	if err != nil {
 		return nil, fmt.Errorf("list interfaces: %w", err)
 	}
@@ -382,6 +386,47 @@ func (s *WGServerStore) wireguardInterfaces(ctx context.Context) (map[string]jso
 		}
 	}
 	return out, nil
+}
+
+// WireguardRuntimesLive returns raw runtime entries for all Wireguard interfaces
+// from a live SwapGate-guarded interface list snapshot (F546).
+func (s *WGServerStore) WireguardRuntimesLive(ctx context.Context) (map[string]json.RawMessage, error) {
+	return s.wireguardInterfacesMaxAge(ctx, SnapshotLive)
+}
+
+// WireguardRuntimesMaxAge returns raw runtime entries for all Wireguard
+// interfaces from a SwapGate-guarded interface list snapshot at most maxAge old (F546).
+func (s *WGServerStore) WireguardRuntimesMaxAge(ctx context.Context, maxAge time.Duration) (map[string]json.RawMessage, error) {
+	return s.wireguardInterfacesMaxAge(ctx, maxAge)
+}
+
+// InterfaceRuntimeLive returns the raw runtime entry for a single interface id
+// from a live SwapGate-guarded interface list snapshot (F546: never queries by name).
+func (s *WGServerStore) InterfaceRuntimeLive(ctx context.Context, id string) (json.RawMessage, bool, error) {
+	snap, err := s.interfaces.Snapshot(ctx, SnapshotLive)
+	if err != nil {
+		return nil, false, err
+	}
+	raw, ok := snap.Raw(id)
+	return raw, ok, nil
+}
+
+// InterfaceRCTreeRecent returns the /show/rc/interface/ running-config tree no
+// older than maxAge (0 forces a fresh read), singleflight-coalesced without
+// querying by interface name (F546).
+func (s *WGServerStore) InterfaceRCTreeRecent(ctx context.Context, maxAge time.Duration) (map[string]json.RawMessage, error) {
+	return s.rcTree.FetchWithin(ctx, maxAge)
+}
+
+// InterfaceRCRawRecent returns the raw running-config block for id from a
+// singleflight-coalesced /show/rc/interface/ tree read no older than maxAge (F546).
+func (s *WGServerStore) InterfaceRCRawRecent(ctx context.Context, id string, maxAge time.Duration) (json.RawMessage, bool, error) {
+	tree, err := s.rcTree.FetchWithin(ctx, maxAge)
+	if err != nil {
+		return nil, false, err
+	}
+	raw, ok := tree[id]
+	return raw, ok, nil
 }
 
 func (s *WGServerStore) fetchAll(ctx context.Context) ([]ndms.WireguardServer, error) {

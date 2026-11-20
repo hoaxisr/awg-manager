@@ -39,16 +39,20 @@ export GOFLAGS="${GOFLAGS:+$GOFLAGS }-mod=${GO_MOD}"
 echo "Building awg-manager $VERSION for $ARCH ($($GO_CMD version))..."
 
 case "$ARCH" in
-    mipsle|mipsel)
-        GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0 \
-            $GO_CMD build -ldflags="-s -w -X main.version=${VERSION} -X main.buildArch=${ENTWARE_ARCH}" \
-            -tags embed_frontend \
-            -o build/bin/awg-manager ./cmd/awg-manager
-        ;;
-    mips)
-        GOOS=linux GOARCH=mips GOMIPS=softfloat CGO_ENABLED=0 \
-            $GO_CMD build -ldflags="-s -w -X main.version=${VERSION} -X main.buildArch=${ENTWARE_ARCH}" \
-            -tags embed_frontend \
+    mipsle|mipsel|mips)
+        if [[ "$ARCH" == mips ]]; then
+            GO_TARGET=mips
+            SDK_ARCH=mips-3.4
+        else
+            GO_TARGET=mipsle
+            SDK_ARCH=mipsel-3.4
+        fi
+        CC="$(bash "$SCRIPT_DIR/entware-mips-cc.sh" "$SDK_ARCH")"
+        export STAGING_DIR="$(dirname "$(dirname "$(dirname "$CC")")")"
+        GOOS=linux GOARCH="$GO_TARGET" GOMIPS=softfloat CGO_ENABLED=1 CC="$CC" \
+            CGO_LDFLAGS="-ldl -Wl,--dynamic-linker=/opt/lib/ld.so.1 -Wl,-rpath,/opt/lib" \
+            $GO_CMD build -buildvcs=false -ldflags="-s -w -linkmode=external -X main.version=${VERSION} -X main.buildArch=${ENTWARE_ARCH}" \
+            -tags embed_frontend,netgo,osusergo \
             -o build/bin/awg-manager ./cmd/awg-manager
         ;;
     arm64|aarch64)

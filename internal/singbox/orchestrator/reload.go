@@ -15,17 +15,98 @@ import (
 // starts (stand-found on aarch64 off→tproxy switches).
 func (o *Orchestrator) ReloadNow() error {
 	o.mu.Lock()
+	// Явное применение накрывает и то, что подавил hold, — иначе release
+	// выстрелил бы вторым, уже ненужным reload'ом.
+	o.cancelPendingReloadLocked()
+	o.mu.Unlock()
+	return o.Reload()
+}
+
+// CancelPendingReload cancels any pending debounced reload without running Reload
+// and advances the stop generation so any in-flight cold-start aborts before spawning.
+func (o *Orchestrator) CancelPendingReload() {
+	o.mu.Lock()
+	o.stopGen++
+	o.cancelPendingReloadLocked()
+	o.mu.Unlock()
+}
+
+// SuppressAndStop serializes deliberate stop / engine suppression with any
+// in-flight Reload process transition:
+//  1. Waits for any post-shouldRun proc.Start()/proc.Reload() currently inside
+//     procGateMu to complete.
+//  2. Advances stopGen and clears any pending debounced reload under o.mu so
+//     any in-flight Reload still before procGateMu (e.g. evaluating shouldRun
+//     or validating slots) aborts before spawning.
+//  3. Runs stopFn (or o.proc.Stop() if nil) while holding procGateMu so any
+//     process spawned right before step 2 is stopped before returning.
+func (o *Orchestrator) SuppressAndStop(stopFn func() error) error {
+	o.procGateMu.Lock()
+	defer o.procGateMu.Unlock()
+
+	o.mu.Lock()
+	o.stopGen++
+	o.cancelPendingReloadLocked()
+	o.prevHasTun = false
+	o.genInvalidated = true
+	proc := o.proc
+	o.mu.Unlock()
+	_ = clearAppliedState(o.appliedPath)
+
+	var err error
+	if stopFn != nil {
+		err = stopFn()
+	} else if proc != nil {
+		err = proc.Stop()
+	}
+	// Clear again after stopFn completes so no stale applied hash survives on disk
+	// if the stopped process generation is later started outside Reload().
+	_ = clearAppliedState(o.appliedPath)
+	return err
+}
+
+// cancelPendingReloadLocked clears any armed debounce timer and pendingReload flag.
+// Caller MUST hold o.mu.
+func (o *Orchestrator) cancelPendingReloadLocked() {
 	if o.reloadTimer != nil {
 		if o.reloadTimer.Stop() {
 			o.timerWG.Done()
 		}
 		o.reloadTimer = nil
 	}
-	// Явное применение накрывает и то, что подавил hold, — иначе release
-	// выстрелил бы вторым, уже ненужным reload'ом.
 	o.pendingReload = false
-	o.mu.Unlock()
-	return o.Reload()
+}
+
+func (o *Orchestrator) isReloadStopAborted(reloadStopGen uint64) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.stopGen != reloadStopGen
+}
+
+// startUnderGate serializes proc.Start() against SuppressAndStop and
+// CancelPendingReload. Caller must evaluate shouldRun outside procGateMu.
+func (o *Orchestrator) startUnderGate(proc ProcessController, reloadStopGen uint64, abortMsg string) (aborted bool, err error) {
+	o.procGateMu.Lock()
+	defer o.procGateMu.Unlock()
+	if o.isReloadStopAborted(reloadStopGen) {
+		o.log("info", abortMsg)
+		return true, nil
+	}
+	return false, proc.Start()
+}
+
+// reloadUnderGate serializes proc.Reload() against SuppressAndStop so a concurrent
+// stop cannot race an adopted process into falling back to a cold-start.
+func (o *Orchestrator) reloadUnderGate(proc ProcessController, reloadStopGen uint64) (aborted bool, err error) {
+	o.procGateMu.Lock()
+	defer o.procGateMu.Unlock()
+	if o.isReloadStopAborted(reloadStopGen) {
+		if runningNow, _ := proc.IsRunning(); !runningNow {
+			o.log("info", "orchestrator: reload skipped (process stopped concurrently)")
+			return true, nil
+		}
+	}
+	return false, proc.Reload()
 }
 
 // scheduleReload arms (or re-arms) the debounce timer. Caller MUST
@@ -95,6 +176,7 @@ func (o *Orchestrator) Reload() error {
 		return nil // collapse re-entrancy
 	}
 	o.reloading = true
+	reloadStopGen := o.stopGen
 	// Defense-in-depth: strip dangling selector/urltest members and defaults
 	// (a tag whose outbound was deleted from another slot) BEFORE validating.
 	// sing-box check does not catch these — like composite cycles, a missing
@@ -130,6 +212,7 @@ func (o *Orchestrator) Reload() error {
 	prevHasTun := o.prevHasTun
 	newHasTun := res.HasTun
 	tunHotReloadFn := o.tunHotReload
+	genInvalidated := o.genInvalidated
 	o.mu.Unlock()
 	// Вне o.mu: предикат может спавнить пробу версии бинаря.
 	tunHotReload := tunHotReloadFn != nil && tunHotReloadFn()
@@ -138,14 +221,25 @@ func (o *Orchestrator) Reload() error {
 	}
 
 	// Skip gate: if the config we are about to apply hashes identical to
-	// what we last successfully applied AND sing-box is already running
-	// in the shape we need, there is nothing to do — a SIGHUP would be a
-	// no-op and a tun-restart would be actively harmful. This is what
+	// what we last successfully applied AND the same sing-box process generation
+	// is already running in the shape we need, there is nothing to do — a SIGHUP
+	// would be a no-op and a tun-restart would be actively harmful. This is what
 	// lets a daemon restart (in-memory prevHasTun resets to false) ADOPT
-	// an already-running sing-box instead of needlessly tearing it down.
+	// an already-running sing-box instead of needlessly tearing it down, while
+	// refusing to adopt across SuppressAndStop or process respawn/PID change.
 	if proc != nil {
-		if st, ok := loadAppliedState(o.appliedPath); ok && st.Hash == newHash {
-			if running, pid := proc.IsRunning(); running && needRunning {
+		runningNow, pid := proc.IsRunning()
+		st, hasApplied := loadAppliedState(o.appliedPath)
+		if !runningNow && hasApplied && st.Hash != "" {
+			// Process is down: persisted hash belongs to an earlier dead generation.
+			_ = clearAppliedState(o.appliedPath)
+			hasApplied = false
+		}
+		if !genInvalidated && hasApplied && st.Hash != "" && st.Hash == newHash && runningNow && needRunning {
+			pidMatches := st.PID <= 0 || pid <= 0 || st.PID == pid
+			curToken := readProcStartToken(pid)
+			tokenMatches := st.ProcToken == "" || (curToken != "" && st.ProcToken == curToken)
+			if pidMatches && tokenMatches {
 				o.mu.Lock()
 				o.prevHasTun = st.HasTun
 				o.reloading = false
@@ -162,6 +256,7 @@ func (o *Orchestrator) Reload() error {
 	// mistaken for a successful apply just because err stayed nil.
 	var newApplied appliedState
 	saveApplied := false
+	appliedSucceeded := false
 	if proc == nil {
 		// Test mode or pre-wiring — nothing to do, no real process to
 		// describe, applied state left untouched.
@@ -179,12 +274,25 @@ func (o *Orchestrator) Reload() error {
 				break
 			}
 			o.log("info", "orchestrator: starting sing-box (active slots present)")
-			err = proc.Start()
+			var aborted bool
+			aborted, err = o.startUnderGate(proc, reloadStopGen, "orchestrator: cold-start aborted (concurrent stop or cancel)")
+			if aborted {
+				saveApplied = true
+				break
+			}
 			if err == nil {
-				newApplied = appliedState{Hash: newHash, HasTun: newHasTun}
+				_, livePID := proc.IsRunning()
+				newApplied = appliedState{
+					Hash:      newHash,
+					HasTun:    newHasTun,
+					PID:       livePID,
+					ProcToken: readProcStartToken(livePID),
+				}
+				appliedSucceeded = true
 			}
 			saveApplied = err == nil
 		case needRunning && running:
+			var aborted bool
 			if newHasTun != prevHasTun && !tunHotReload {
 				// Не пиннутый бинарь не умеет добавить/убрать tun-инбаунд по
 				// SIGHUP — the tun device never gets carrier and readiness
@@ -193,7 +301,16 @@ func (o *Orchestrator) Reload() error {
 				if e := proc.Stop(); e != nil {
 					o.log("warn", "orchestrator: stop before tun-restart: "+e.Error())
 				}
-				err = proc.Start()
+				if shouldRun != nil && !shouldRun() {
+					o.log("info", "orchestrator: tun-restart suppressed (manual/engine stop or sing-box not installed)")
+					saveApplied = true
+					break
+				}
+				aborted, err = o.startUnderGate(proc, reloadStopGen, "orchestrator: tun-restart aborted (concurrent stop or cancel)")
+				if aborted {
+					saveApplied = true
+					break
+				}
 			} else {
 				// При живом tun на не пиннутом бинаре proc.Reload делает
 				// Stop+Start (см. process.go), поэтому строка обязана называть
@@ -204,10 +321,21 @@ func (o *Orchestrator) Reload() error {
 				} else {
 					o.log("info", "orchestrator: SIGHUP sing-box (config changed)")
 				}
-				err = proc.Reload()
+				aborted, err = o.reloadUnderGate(proc, reloadStopGen)
+				if aborted {
+					saveApplied = true
+					break
+				}
 			}
 			if err == nil {
-				newApplied = appliedState{Hash: newHash, HasTun: newHasTun}
+				_, livePID := proc.IsRunning()
+				newApplied = appliedState{
+					Hash:      newHash,
+					HasTun:    newHasTun,
+					PID:       livePID,
+					ProcToken: readProcStartToken(livePID),
+				}
+				appliedSucceeded = true
 			}
 			saveApplied = err == nil
 		case !needRunning && running:
@@ -229,11 +357,15 @@ func (o *Orchestrator) Reload() error {
 
 	o.mu.Lock()
 	o.reloading = false
-	// Record the tun presence of the config we just applied so the next
-	// Reload compares against reality. Updated for every apply branch
-	// (start / SIGHUP / restart / stop): after a stop newHasTun is false
-	// anyway, after a fresh start prevHasTun == newHasTun.
-	o.prevHasTun = newHasTun
+	if appliedSucceeded {
+		o.genInvalidated = false
+		o.prevHasTun = newHasTun
+	} else if saveApplied && newApplied.Hash == "" {
+		o.genInvalidated = true
+		o.prevHasTun = false
+	} else {
+		o.prevHasTun = newHasTun
+	}
 	o.mu.Unlock()
 	return err
 }
@@ -497,12 +629,7 @@ func (o *Orchestrator) userSlotHasMeaningfulContentLocked() bool {
 func (o *Orchestrator) Close() {
 	o.mu.Lock()
 	o.closed = true
-	if o.reloadTimer != nil {
-		if o.reloadTimer.Stop() {
-			o.timerWG.Done()
-		}
-		o.reloadTimer = nil
-	}
+	o.cancelPendingReloadLocked()
 	o.mu.Unlock()
 	o.timerWG.Wait()
 }

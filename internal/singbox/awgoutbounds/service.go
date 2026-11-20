@@ -150,6 +150,10 @@ func (s *ServiceImpl) ListTags(ctx context.Context) ([]TagInfo, error) {
 // invalidations would otherwise cause during a single NWG ping-check restart
 // cycle: the tunnel catalog is unchanged, so the file content is too.
 func (s *ServiceImpl) writeFile(ctx context.Context) (bool, error) {
+	if s.deps.ShouldWrite != nil && !s.deps.ShouldWrite() {
+		s.lastBytes = nil
+		return false, nil
+	}
 	entries, err := s.enumerate(ctx)
 	if err != nil {
 		s.logWarn("enumerate", "", err.Error())

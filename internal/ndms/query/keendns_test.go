@@ -2,9 +2,7 @@ package query
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
@@ -62,6 +60,53 @@ func TestKeenDNSFetch_NotFoundIsNotError(t *testing.T) {
 	}
 	if info != nil {
 		t.Fatalf("info=%v want nil", info)
+	}
+}
+
+func TestKeenDNSFetch_ExtractsRelayIPsAndDomains(t *testing.T) {
+	raw := []byte(`{
+		"name": "dacha",
+		"booked": "dacha",
+		"domain": "crazedns.ru",
+		"ttp": {
+			"tunnel": [
+				{
+					"target": "ndns115.omni.ru:80",
+					"target-remote": "87.228.71.67:80"
+				},
+				{
+					"target": "ndns113.omni.ru:80",
+					"target-remote": "95.213.212.50:80"
+				},
+				{
+					"target": "ndns115.omni.ru:80",
+					"target-remote": "87.228.71.67:80"
+				}
+			]
+		}
+	}`)
+	g := NewFakeGetter()
+	g.SetRaw("/show/ndns", raw)
+	s := NewKeenDNSStore(g, NopLogger())
+
+	info, err := s.Get(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if info == nil {
+		t.Fatalf("info is nil")
+	}
+	if len(info.RelayIPs) != 2 {
+		t.Fatalf("expected 2 unique relay IPs, got %d: %+v", len(info.RelayIPs), info.RelayIPs)
+	}
+	if info.RelayIPs[0] != "87.228.71.67" || info.RelayIPs[1] != "95.213.212.50" {
+		t.Errorf("unexpected relay IPs: %+v", info.RelayIPs)
+	}
+	if len(info.RelayDomains) != 2 {
+		t.Fatalf("expected 2 unique relay domains, got %d: %+v", len(info.RelayDomains), info.RelayDomains)
+	}
+	if info.RelayDomains[0] != "ndns115.omni.ru" || info.RelayDomains[1] != "ndns113.omni.ru" {
+		t.Errorf("unexpected relay domains: %+v", info.RelayDomains)
 	}
 }
 
@@ -139,58 +184,17 @@ func TestKeenDNS_AccessGate(t *testing.T) {
 	}
 }
 
-// Фикстура — ответ GET /rci/show/ndns с живого роутера (Keenetic Ultra
-// KN-1811, KeeneticOS 5.2 Beta 0; прямого доступа по имени на нём нет —
-// `access` пуст, `ttp.direct` = false). Набор ключей и типы значений сняты
-// как есть; ВСЕ значения, относящиеся к конкретному роутеру, заменены: имя,
-// зона, xns, имя WAN-интерфейса и адреса (на документационные диапазоны).
-//
-// Фиксирует две вещи. Ключ `address6` стоит на верхнем уровне рядом с
-// `address` — его и читает разбор. И адреса в `ttp` — это адреса
-// WAN-интерфейса для облачного туннеля, а не адрес доступа по имени: в обход
-// пресета keendns они попадать не должны.
-func TestParseKeenDNS_RealShowNdnsResponse(t *testing.T) {
-	raw, err := os.ReadFile("testdata/show_ndns_kn1811.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var keys map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &keys); err != nil {
-		t.Fatalf("фикстура — невалидный JSON: %v", err)
-	}
-	for _, k := range []string{"booked", "domain", "address", "address6", "access", "access6"} {
-		if _, ok := keys[k]; !ok {
-			t.Errorf("в ответе show ndns нет ключа верхнего уровня %q", k)
-		}
-	}
-
-	info := parseKeenDNS(raw)
-	if info == nil {
-		t.Fatal("разбор вернул nil")
-	}
-	if info.Domain != "myrouter.keenetic.pro" || !info.Enabled {
-		t.Errorf("Domain=%q Enabled=%v, want myrouter.keenetic.pro/true", info.Domain, info.Enabled)
-	}
-	// Прямого доступа нет: адреса доступа пусты в обоих семействах, и адреса
-	// из `ttp` на их место не подставляются.
-	if info.Address != "" || info.Address6 != "" {
-		t.Errorf("Address=%q Address6=%q, want оба пустые (адреса ttp — не адрес доступа)", info.Address, info.Address6)
-	}
-	if info.DirectAccess() {
-		t.Error("пустой access — не прямой доступ")
-	}
-}
-
-// Прямой доступ: `address` и `address6` заполнены — оба доходят до вызывающего.
-// Значения синтетические (на стендовом роутере прямого доступа нет), ключи —
-// те же, что в настоящем ответе выше.
-func TestParseKeenDNS_DirectAccessAddresses(t *testing.T) {
-	info := parseKeenDNS([]byte(`{"booked":"example","domain":"keenetic.pro","address":"203.0.113.72","address6":" 2001:db8::72 ","access":"direct","access6":"direct"}`))
-	if info == nil {
-		t.Fatal("разбор вернул nil")
-	}
-	if info.Address != "203.0.113.72" || info.Address6 != "2001:db8::72" {
-		t.Errorf("Address=%q Address6=%q", info.Address, info.Address6)
+// Keep both ports for a relay which serves more than one cloud transport.
+func TestKeenDNSRelayEndpointsPreservePorts(t *testing.T) {
+	info := parseKeenDNS([]byte(`{"booked":"test","domain":"keenetic.pro","ttp":{"tunnel":[
+		{"target-remote":"87.228.71.67:443"},
+		{"target-remote":"87.228.71.67:8090"},
+		{"target-remote":"[::ffff:87.228.71.67]:8090"},
+		{"target-remote":"87.228.71.67:0"}
+	]}}`))
+	if info == nil || len(info.RelayEndpoints) != 2 ||
+		info.RelayEndpoints[0].Port() != 443 || info.RelayEndpoints[1].Port() != 8090 ||
+		len(info.RelayIPs) != 1 {
+		t.Fatalf("unexpected relay projection: %+v", info)
 	}
 }

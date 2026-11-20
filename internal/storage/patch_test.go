@@ -384,6 +384,9 @@ var nonPatchableSettings = map[string]struct{}{
 	// затирал пресеты обхода, пулы FakeIP и QoS, а routingMode/enabled уходили
 	// в персист мимо SwitchRoutingMode.
 	"singboxRouter": {},
+	// singboxStoppedByEngine — внутреннее состояние владения движком
+	// маршрутизации; пишется ТОЛЬКО координатором через SetSingboxStoppedByEngine.
+	"singboxStoppedByEngine": {},
 }
 
 // TestSettingsPatch_ExcludesServerSecrets pins the intentional exclusion: a
