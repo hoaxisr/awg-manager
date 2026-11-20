@@ -70,7 +70,7 @@ jobs:
               ASSETS="$(gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" --json assets --jq '.assets[].name')"
               MISSING=0
               for arch in mipsel-3.4 mips-3.4 aarch64-3.10; do
-                if ! printf '%s\n' "$ASSETS" | grep -Fxq "awg-firc-runtime_${RUNTIME_VERSION}_${arch}.ipk"; then
+                if ! grep -Fxq "awg-firc-runtime_${RUNTIME_VERSION}_${arch}.ipk" <<< "$ASSETS"; then
                   MISSING=1
                 fi
               done
@@ -295,7 +295,9 @@ jobs:
             if ar t "$1" >/dev/null 2>&1; then
               ar p "$1" "$2"
             else
-              member="$(tar -tf "$1" | awk -v m="$2" '$0 == m || $0 == "./" m { print; exit }')"
+              local listing member
+              listing="$(tar -tf "$1")"
+              member="$(awk -v m="$2" '$0 == m || $0 == "./" m { print; exit }' <<< "$listing")"
               [[ -n "$member" ]] || { echo "Missing $2 in $1" >&2; return 1; }
               tar -xOf "$1" "$member"
             fi
@@ -307,33 +309,41 @@ jobs:
           data_archive="$STAGE_BINS/data.tar.gz"
           ipk_member "${packages[0]}" data.tar.gz > "$data_archive"
 
+          data_listing="$(tar -tzf "$data_archive")"
           for bin_name in fircd tunvless; do
-            member="$(tar -tzf "$data_archive" | awk '$0 == "opt/bin/'"$bin_name"'" || $0 == "./opt/bin/'"$bin_name"'" { print; exit }')"
+            member="$(awk -v b="opt/bin/$bin_name" '$0 == b || $0 == "./" b { print; exit }' <<< "$data_listing")"
             [[ -n "$member" ]] || { echo "Missing opt/bin/$bin_name in ${packages[0]}" >&2; exit 1; }
             out_bin="$STAGE_BINS/$bin_name"
             tar -xzOf "$data_archive" "$member" > "$out_bin"
             chmod 755 "$out_bin"
 
-            if strings "$out_bin" | grep -q '/hom[e]/'; then
+            strings_file="$STAGE_BINS/$bin_name.strings"
+            ehdr_file="$STAGE_BINS/$bin_name.ehdr"
+            phdr_file="$STAGE_BINS/$bin_name.phdr"
+            strings "$out_bin" > "$strings_file"
+            readelf -h "$out_bin" > "$ehdr_file"
+            readelf -l "$out_bin" > "$phdr_file"
+
+            if grep -q '/hom[e]/' "$strings_file"; then
               echo "$bin_name embeds a build path under /home/" >&2
               exit 1
             fi
 
             case "${{ matrix.arch }}" in
               aarch64-*)
-                readelf -h "$out_bin" | grep -Eq 'Machine:.*AArch64'
-                readelf -h "$out_bin" | grep -Eq 'Data:.*little endian'
-                readelf -l "$out_bin" | grep -F '/opt/lib/ld-linux-aarch64.so.1'
+                grep -Eq 'Machine:.*AArch64' "$ehdr_file"
+                grep -Eq 'Data:.*little endian' "$ehdr_file"
+                grep -Fq '/opt/lib/ld-linux-aarch64.so.1' "$phdr_file"
                 ;;
               mipsel-*)
-                readelf -h "$out_bin" | grep -Eq 'Machine:.*MIPS'
-                readelf -h "$out_bin" | grep -Eq 'Data:.*little endian'
-                readelf -l "$out_bin" | grep -F '/opt/lib/ld.so.1'
+                grep -Eq 'Machine:.*MIPS' "$ehdr_file"
+                grep -Eq 'Data:.*little endian' "$ehdr_file"
+                grep -Fq '/opt/lib/ld.so.1' "$phdr_file"
                 ;;
               mips-*)
-                readelf -h "$out_bin" | grep -Eq 'Machine:.*MIPS'
-                readelf -h "$out_bin" | grep -Eq 'Data:.*big endian'
-                readelf -l "$out_bin" | grep -F '/opt/lib/ld.so.1'
+                grep -Eq 'Machine:.*MIPS' "$ehdr_file"
+                grep -Eq 'Data:.*big endian' "$ehdr_file"
+                grep -Fq '/opt/lib/ld.so.1' "$phdr_file"
                 ;;
               *)
                 echo "Unsupported arch ${{ matrix.arch }}" >&2
@@ -342,7 +352,7 @@ jobs:
             esac
 
             if [[ "$bin_name" = fircd ]]; then
-              strings "$out_bin" | grep -q " firc-flavour=entware_kn target=${{ matrix.arch }}_kn revision=1$" \
+              grep -q " firc-flavour=entware_kn target=${{ matrix.arch }}_kn revision=1$" "$strings_file" \
                 || { echo "fircd identity string mismatch" >&2; exit 1; }
             fi
           done
