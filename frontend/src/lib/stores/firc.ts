@@ -3,6 +3,7 @@ import { api } from '$lib/api/client';
 import {
 	stripFircEmojis,
 	type FircGroup,
+	type FircInterfaceProbeResult,
 	type FircMigrationSummary,
 	type FircStatus,
 	type FircTunnel,
@@ -20,6 +21,7 @@ export const fircSyncNonce = writable<number>(0);
 export const fircEditTunnelId = writable<string | null>(null);
 export const fircEditTunnelSubTab = writable<'nodes' | 'sources' | 'failover' | 'inbounds'>('nodes');
 export const fircProbeResults = writable<Record<string, Record<string, FircTunnelProbeRow>>>({});
+export const fircInterfaceProbeResults = writable<Record<string, FircInterfaceProbeResult>>({});
 
 export function openFircTunnelEditor(
 	tunnelId: string,

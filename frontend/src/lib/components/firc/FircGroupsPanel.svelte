@@ -4,7 +4,12 @@
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
-	import { reloadFircAll, fircSyncNonce } from '$lib/stores/firc';
+	import {
+		reloadFircAll,
+		fircSyncNonce,
+		fircInterfaceProbeResults,
+		fircProbeResults,
+	} from '$lib/stores/firc';
 	import { fircMigrationAppliedNonce } from '$lib/stores/fircMigrationModal';
 	import { Button, Badge, Toggle, Modal, StatusDot, type DropdownOption } from '$lib/components/ui';
 	import ServiceTile from '$lib/components/sb-router/ServiceTile.svelte';
@@ -37,12 +42,22 @@
 		RotateCcw,
 		Check,
 		Copy,
+		Zap,
 	} from 'lucide-svelte';
 	import {
 		saveFircGroupsDraft,
 		loadFircGroupsDraft,
 		clearFircGroupsDraft,
 	} from '$lib/stores/fircDraft';
+	import {
+		friendlyIfaceLabel,
+		getEffectiveInterfaceProbe,
+		resolveInterfaceHealth,
+		resolveGroupActiveInterface,
+		resolveProxyGroupRuntime,
+		probeLatencyTone,
+		formatProbeLatency,
+	} from '$lib/utils/fircFallback';
 	import {
 		FIRC_RULE_TYPES,
 		extractFircGroupDomainLines,
@@ -54,6 +69,7 @@
 		type FircGroupLive,
 		type FircHost,
 		type FircInterfaceOption,
+		type FircInterfaceProbeResult,
 		type FircListPreviewRes,
 		type FircListRule,
 		type FircPolicy,
@@ -126,6 +142,9 @@
 	let loading = $state(true);
 	let saving = $state(false);
 	let syncingGroup = $state<Record<string, boolean>>({});
+	let probingIfaces = $state<Record<string, boolean>>({});
+	let probingGroups = $state<Record<string, boolean>>({});
+	let destroyed = false;
 	let searchQuery = $state('');
 	let expandedGroups = $state<Record<string, boolean>>({});
 	let rulePageMap = $state<Record<string, number>>({});
@@ -346,6 +365,16 @@
 					},
 				};
 			}
+
+			const nowSec = Math.floor(Date.now() / 1000);
+			const existingProbes = get(fircInterfaceProbeResults);
+			const staleIfaces = allFallbackInterfaceIds().filter((id) => {
+				const prev = existingProbes[id];
+				return !prev?.checkedAt || nowSec - prev.checkedAt > 60;
+			});
+			if (staleIfaces.length > 0) {
+				void probeFallbackInterfaces(staleIfaces, { silent: true });
+			}
 		} catch (e) {
 			notifications.error(`Ошибка загрузки групп FIRC: ${(e as Error).message}`);
 		} finally {
@@ -448,6 +477,7 @@
 	});
 
 	onDestroy(() => {
+		destroyed = true;
 		if (pollTimer) clearInterval(pollTimer);
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('click', handleWindowClick);
@@ -601,6 +631,141 @@
 		const opt = interfaces.find((x) => x.id === id);
 		if (opt?.role === 'wan' || id === 'eth3') return `Direct (${id})`;
 		return id;
+	}
+
+	function getIfaceProbe(id: string): FircInterfaceProbeResult | null {
+		return getEffectiveInterfaceProbe(
+			id,
+			$fircInterfaceProbeResults,
+			$fircProbeResults,
+			tunnelsState,
+		);
+	}
+
+	function resolveGroupActive(group: FircGroup) {
+		const list = normalizeIfaceList(group.interface);
+		const probesMap: Record<string, FircInterfaceProbeResult> = {};
+		for (const id of list) {
+			const p = getIfaceProbe(id);
+			if (p) probesMap[id] = p;
+		}
+		return resolveGroupActiveInterface(
+			group,
+			liveMap[group.id],
+			liveMap,
+			tunnelsState,
+			interfaces,
+			probesMap,
+		);
+	}
+
+	function resolveIfaceState(group: FircGroup | undefined, id: string) {
+		return resolveInterfaceHealth(
+			id,
+			group ? liveMap[group.id] : undefined,
+			liveMap,
+			tunnelsState,
+			interfaces,
+			getIfaceProbe(id),
+		);
+	}
+
+	function allFallbackInterfaceIds(): string[] {
+		const out = new Set<string>();
+		for (const pg of extConfig.proxyGroups) {
+			for (const id of pg.interfaces ?? []) {
+				if (id && !isSpecialIface(id)) out.add(id);
+			}
+		}
+		for (const g of groups) {
+			const list = normalizeIfaceList(g.interface);
+			if (list.length > 1) {
+				for (const id of list) {
+					if (id && !isSpecialIface(id)) out.add(id);
+				}
+			}
+		}
+		return Array.from(out);
+	}
+
+	async function probeFallbackInterfaces(
+		ids: string[],
+		opts?: { groupKey?: string; url?: string; silent?: boolean },
+	): Promise<void> {
+		const uniqueIds = Array.from(
+			new Set(ids.map((x) => x.trim()).filter((x) => x.length > 0 && !isSpecialIface(x))),
+		);
+		if (uniqueIds.length === 0) return;
+		const gKey = opts?.groupKey;
+		if (gKey && probingGroups[gKey]) return;
+
+		const nextProbing = { ...probingIfaces };
+		for (const id of uniqueIds) nextProbing[id] = true;
+		probingIfaces = nextProbing;
+		if (gKey) {
+			probingGroups = { ...probingGroups, [gKey]: true };
+		}
+
+		try {
+			const allResults: Record<string, FircInterfaceProbeResult> = {};
+			for (let i = 0; i < uniqueIds.length; i += 16) {
+				const chunk = uniqueIds.slice(i, i + 16);
+				const res = await api.fircProbeInterfaces(chunk, opts?.url);
+				if (destroyed) return;
+				const ts = res?.checkedAt ?? Math.floor(Date.now() / 1000);
+				for (const [k, r] of Object.entries(res?.results ?? {})) {
+					allResults[k] = { ...r, checkedAt: ts };
+				}
+			}
+			fircInterfaceProbeResults.update((prev) => ({
+				...prev,
+				...allResults,
+			}));
+
+			if (!opts?.silent) {
+				if (uniqueIds.length === 1) {
+					const onlyId = uniqueIds[0];
+					const r = allResults[onlyId];
+					const lbl = friendlyIfaceLabel(onlyId, interfaces, tunnelsState);
+					if (r?.ok) {
+						notifications.success(
+							m.firc_fallback_toast_latency({ name: lbl, ms: Math.round(r.latencyMs) }),
+						);
+					} else {
+						notifications.warning(
+							m.firc_fallback_toast_timeout({
+								name: lbl,
+								error: r?.error ? ` (${r.error})` : '',
+							}),
+						);
+					}
+				} else {
+					const okCount = uniqueIds.filter((id) => allResults[id]?.ok).length;
+					notifications.success(
+						m.firc_fallback_probe_updated({ ok: okCount, total: uniqueIds.length }),
+					);
+				}
+			}
+		} catch (e) {
+			if (!opts?.silent && !destroyed) {
+				notifications.error(
+					m.firc_fallback_probe_error({
+						error: e instanceof Error ? e.message : String(e),
+					}),
+				);
+			}
+		} finally {
+			if (!destroyed) {
+				const cleared = { ...probingIfaces };
+				for (const id of uniqueIds) delete cleared[id];
+				probingIfaces = cleared;
+				if (gKey) {
+					const nextG = { ...probingGroups };
+					delete nextG[gKey];
+					probingGroups = nextG;
+				}
+			}
+		}
 	}
 
 	async function openProxyGroupsModal() {
@@ -1902,17 +2067,132 @@
 	</p>
 
 	{#if extConfig.proxyGroups.length > 0}
-		<div class="pg-strip">
-			<span class="pg-strip-label">Прокси-группы Fallback:</span>
-			{#each extConfig.proxyGroups as pg (pg.id)}
-				<button type="button" class="pg-strip-chip" onclick={openProxyGroupsModal}>
-					<strong>{pg.name}</strong>
-					<span class="pg-strip-chain">{pg.interfaces.map(shortIfaceTag).join(' → ')}</span>
-				</button>
-			{/each}
-			<button type="button" class="pg-strip-add" onclick={openProxyGroupsModal}>
-				+ Изменить
-			</button>
+		{@const allPgIfaces = Array.from(new Set(extConfig.proxyGroups.flatMap((p) => p.interfaces ?? [])))}
+		<div class="pg-panel">
+			<div class="pg-panel-head">
+				<div class="pg-panel-title">
+					<Shield size={14} />
+					<span>{m.firc_fallback_panel_title()}</span>
+					<span class="pg-panel-sub">{m.firc_fallback_panel_subtitle()}</span>
+				</div>
+				<div class="pg-panel-actions">
+					{#if allPgIfaces.length > 0}
+						<button
+							type="button"
+							class="pg-action-btn"
+							disabled={Boolean(probingGroups['__all_pg__'])}
+							onclick={() => probeFallbackInterfaces(allPgIfaces, { groupKey: '__all_pg__' })}
+							title={m.firc_fallback_test_all_title()}
+						>
+							<Zap size={12} class={probingGroups['__all_pg__'] ? 'spin' : ''} />
+							<span>{probingGroups['__all_pg__'] ? m.firc_fallback_testing() : m.firc_fallback_test_all()}</span>
+						</button>
+					{/if}
+					<button type="button" class="pg-action-btn ghost" onclick={openProxyGroupsModal}>
+						<Settings size={12} />
+						<span>{m.firc_fallback_edit()}</span>
+					</button>
+				</div>
+			</div>
+
+			<div class="pg-cards-grid">
+				{#each extConfig.proxyGroups as pg (pg.id)}
+					{@const rt = resolveProxyGroupRuntime(
+						pg,
+						groups,
+						liveMap,
+						tunnelsState,
+						interfaces,
+						$fircInterfaceProbeResults,
+						$fircProbeResults,
+					)}
+					{@const isPgTesting = Boolean(probingGroups[`pg:${pg.id}`])}
+					<div class="pg-runtime-card" class:is-backup={rt.isOnBackup} class:all-dead={rt.allDead}>
+						<div class="pg-rt-head">
+							<div class="pg-rt-ident">
+								<Shield size={13} class="pg-rt-ico" />
+								<strong class="pg-rt-name" title={pg.name}>{pg.name}</strong>
+								<span class="pg-type-badge">FALLBACK</span>
+								{#if rt.activeIface}
+									<span
+										class="pg-active-summary"
+										class:backup={rt.isOnBackup}
+										title={rt.isOnBackup
+											? m.firc_fallback_active_backup_title({ iface: rt.activeIface })
+											: m.firc_fallback_active_primary_title({ iface: rt.activeIface })}
+									>
+										<span class="pg-sum-dot"></span>
+										{rt.isOnBackup ? m.firc_fallback_backup_prefix() : m.firc_fallback_active_prefix()}:
+										{friendlyIfaceLabel(rt.activeIface, interfaces, tunnelsState)}
+									</span>
+								{:else if rt.allDead}
+									<span class="pg-active-summary dead">
+										<span class="pg-sum-dot"></span>
+										{m.firc_fallback_none_available()}
+									</span>
+								{/if}
+							</div>
+							<div class="pg-rt-btns">
+								<button
+									type="button"
+									class="pg-action-btn"
+									disabled={isPgTesting || pg.interfaces.length === 0}
+									onclick={() =>
+										probeFallbackInterfaces(pg.interfaces, { groupKey: `pg:${pg.id}` })}
+									title={m.firc_fallback_test_group_title({ name: pg.name })}
+								>
+									<Zap size={11} class={isPgTesting ? 'spin' : ''} />
+									<span>{isPgTesting ? '...' : m.firc_fallback_test()}</span>
+								</button>
+								<button
+									type="button"
+									class="pg-action-btn icon-only"
+									onclick={openProxyGroupsModal}
+									title={m.firc_fallback_configure_chain()}
+								>
+									<Settings size={12} />
+								</button>
+							</div>
+						</div>
+
+						<div class="pg-members-row">
+							{#each rt.members as mem (mem.id)}
+								{@const tone = probeLatencyTone(mem.probe)}
+								{@const checking = Boolean(probingIfaces[mem.id])}
+								<div
+									class="pg-member-chip"
+									class:is-active={mem.isActive}
+									class:is-dead={mem.state === 'dead'}
+									title={`${mem.id}${mem.isActive ? ` · ${m.firc_fallback_active_marker()}` : ''}${mem.error ? ` · ${mem.error}` : ''}`}
+								>
+									<span class="pg-mem-rank">#{mem.rank}</span>
+									<span
+										class="pg-mem-dot"
+										class:active={mem.isActive}
+										class:alive={!mem.isActive && mem.state === 'alive'}
+										class:dead={mem.state === 'dead'}
+										class:unknown={!mem.isActive && mem.state === 'unknown'}
+									></span>
+									<span class="pg-mem-label">{mem.label}</span>
+									{#if mem.isActive}
+										<span class="pg-mem-act-tag">{m.firc_fallback_active_tag()}</span>
+									{/if}
+									<button
+										type="button"
+										class="pg-delay-btn {tone}"
+										disabled={checking}
+										onclick={() => probeFallbackInterfaces([mem.id])}
+										title={m.firc_fallback_test_iface_title({ name: `${mem.label} (${mem.id})` })}
+									>
+										<span class="pg-delay-val">{formatProbeLatency(mem.probe)}</span>
+										<RefreshCw size={10} class={checking ? 'spin' : ''} />
+									</button>
+								</div>
+							{/each}
+						</div>
+					</div>
+				{/each}
+			</div>
 		</div>
 	{/if}
 
@@ -1944,8 +2224,12 @@
 				{@const listPage = listPages[group.id]}
 				{@const hasCustomDevices = (group.devices?.allow?.length ?? 0) > 0 || (group.devices?.deny?.length ?? 0) > 0}
 				{@const toneCls = outboundToneClass(ifaceVal)}
-				{@const liveInfo = liveMap[group.id]}
-				{@const activeBackup = liveInfo?.active && ifaceList.length > 1 && liveInfo.active !== ifaceList[0] ? liveInfo.active : null}
+				{@const activeRes = resolveGroupActive(group)}
+				{@const activeIface = activeRes.active}
+				{@const activeBackup = activeRes.isBackup ? activeIface : null}
+				{@const isFallbackGroup = ifaceList.length > 1 && !isSpecialIface(ifaceList[0])}
+				{@const matchedPg = matchingProxyGroup(group)}
+				{@const primaryProbe = !isBlock && !isBlackhole && (activeIface || ifaceVal) ? getIfaceProbe(activeIface || ifaceVal) : null}
 				{@const isPickerOpen = openPickerGroupId === group.id}
 				{@const pickerGroups = getPickerGroups(group)}
 				{@const canAddMoreIfaces = ifaceList.length > 0 && !isSpecialIface(ifaceList[0]) && ifaceList.length < MAX_GROUP_IFACES}
@@ -1963,7 +2247,84 @@
 								<strong>{group.name}</strong>
 								<Badge variant={group.enable ? 'muted' : 'warning'} size="xs">{group.enable ? 'Включено' : 'Выключено'}</Badge>
 							</div>
-							<div class="compact-group-output"><ArrowRight size={14} /><span>{formatIfaceButtonText(group)}</span></div>
+							{#if isFallbackGroup}
+								{@const isGridTesting = Boolean(probingGroups[`grp:${group.id}`])}
+								<div class="compact-fallback-box">
+									<div class="compact-fallback-head">
+										<ArrowRight size={13} />
+										<span class="compact-fallback-title">
+											{matchedPg ? matchedPg.name : 'Fallback'}
+										</span>
+										{#if activeIface}
+											<span class="pg-active-summary compact" class:backup={Boolean(activeBackup)}>
+												<span class="pg-sum-dot"></span>
+												{activeBackup ? m.firc_fallback_backup_prefix() : m.firc_fallback_active_prefix()}:
+												{friendlyIfaceLabel(activeIface, interfaces, tunnelsState)}
+											</span>
+										{:else if activeRes.allDead}
+											<span class="pg-active-summary compact dead">
+												<span class="pg-sum-dot"></span>
+												{m.firc_fallback_unavailable()}
+											</span>
+										{/if}
+										<button
+											type="button"
+											class="pg-action-btn mini"
+											disabled={isGridTesting}
+											onclick={() =>
+												probeFallbackInterfaces(ifaceList, { groupKey: `grp:${group.id}` })}
+											title={m.firc_fallback_test_chain_title()}
+										>
+											<Zap size={11} class={isGridTesting ? 'spin' : ''} />
+										</button>
+									</div>
+									<div class="compact-fallback-members">
+										{#each ifaceList as id, iIdx (id)}
+											{@const health = resolveIfaceState(group, id)}
+											{@const mProbe = getIfaceProbe(id)}
+											{@const mTone = probeLatencyTone(mProbe)}
+											{@const isAct = activeIface === id}
+											{@const isChecking = Boolean(probingIfaces[id])}
+											<div
+												class="pg-member-chip mini"
+												class:is-active={isAct}
+												class:is-dead={health.state === 'dead'}
+												title={`${id}${isAct ? ` · ${m.firc_fallback_active_marker()}` : ''}${health.error ? ` · ${health.error}` : ''}`}
+											>
+												<span class="pg-mem-rank">#{iIdx + 1}</span>
+												<span
+													class="pg-mem-dot"
+													class:active={isAct}
+													class:alive={!isAct && health.state === 'alive'}
+													class:dead={health.state === 'dead'}
+													class:unknown={!isAct && health.state === 'unknown'}
+												></span>
+												<span class="pg-mem-label">{friendlyIfaceLabel(id, interfaces, tunnelsState)}</span>
+												<button
+													type="button"
+													class="pg-delay-btn {mTone}"
+													disabled={isChecking}
+													onclick={() => probeFallbackInterfaces([id])}
+													title={m.firc_fallback_test_iface_title({ name: friendlyIfaceLabel(id, interfaces, tunnelsState) })}
+												>
+													<span class="pg-delay-val">{formatProbeLatency(mProbe)}</span>
+													<RefreshCw size={9} class={isChecking ? 'spin' : ''} />
+												</button>
+											</div>
+										{/each}
+									</div>
+								</div>
+							{:else}
+								<div class="compact-group-output">
+									<ArrowRight size={14} />
+									<span>{formatIfaceButtonText(group)}</span>
+									{#if !isBlock && !isBlackhole && primaryProbe}
+										<span class="pill-delay-tag {probeLatencyTone(primaryProbe)}">
+											{formatProbeLatency(primaryProbe)}
+										</span>
+									{/if}
+								</div>
+							{/if}
 							<span class="compact-group-meta">{group.rules.length} своих правил{group.list?.url ? ` · ${group.list.rulesTotal || group.list.rules || 0} из списка` : ''}</span>
 							{#if hasCustomDevices}<span class="compact-group-meta">{devicesBadgeText(group)}</span>{/if}
 							<div class="compact-group-actions">
@@ -2095,6 +2456,67 @@
 									</button>
 								</div>
 							{/if}
+
+							{#if isFallbackGroup}
+								{@const isStripTesting = Boolean(probingGroups[`grp:${group.id}`])}
+								<div class="inline-fallback-strip">
+									{#each ifaceList as id, iIdx (id)}
+										{@const health = resolveIfaceState(group, id)}
+										{@const mProbe = getIfaceProbe(id)}
+										{@const mTone = probeLatencyTone(mProbe)}
+										{@const isAct = activeIface === id}
+										{@const isChecking = Boolean(probingIfaces[id])}
+										{#if iIdx > 0}
+											<span class="fallback-sep">→</span>
+										{/if}
+										<div
+											class="pg-member-chip mini"
+											class:is-active={isAct}
+											class:is-dead={health.state === 'dead'}
+											title={`${id}${isAct ? ` · ${m.firc_fallback_active_marker()}` : ''}${health.error ? ` · ${health.error}` : ''}`}
+										>
+											<span class="pg-mem-rank">#{iIdx + 1}</span>
+											<span
+												class="pg-mem-dot"
+												class:active={isAct}
+												class:alive={!isAct && health.state === 'alive'}
+												class:dead={health.state === 'dead'}
+												class:unknown={!isAct && health.state === 'unknown'}
+											></span>
+											<span class="pg-mem-label">{friendlyIfaceLabel(id, interfaces, tunnelsState)}</span>
+											{#if isAct}
+												<span class="pg-mem-act-tag">{m.firc_fallback_active_tag()}</span>
+											{/if}
+											<button
+												type="button"
+												class="pg-delay-btn {mTone}"
+												disabled={isChecking}
+												onclick={(e) => {
+													e.stopPropagation();
+													void probeFallbackInterfaces([id]);
+												}}
+												title={m.firc_fallback_test_iface_title({ name: `${friendlyIfaceLabel(id, interfaces, tunnelsState)} (${id})` })}
+											>
+												<span class="pg-delay-val">{formatProbeLatency(mProbe)}</span>
+												<RefreshCw size={9} class={isChecking ? 'spin' : ''} />
+											</button>
+										</div>
+									{/each}
+									<button
+										type="button"
+										class="pg-action-btn mini"
+										disabled={isStripTesting}
+										onclick={(e) => {
+											e.stopPropagation();
+											void probeFallbackInterfaces(ifaceList, { groupKey: `grp:${group.id}` });
+										}}
+										title={m.firc_fallback_test_chain_title()}
+									>
+										<Zap size={10} class={isStripTesting ? 'spin' : ''} />
+										<span>{isStripTesting ? '...' : m.firc_fallback_test()}</span>
+									</button>
+								</div>
+							{/if}
 						</div>
 
 						<div class="trail">
@@ -2105,6 +2527,7 @@
 										type="button"
 										class="tone-select-pill iface-picker-btn {toneCls}"
 										class:on-backup={Boolean(activeBackup)}
+										class:all-dead={isFallbackGroup && activeRes.allDead}
 										onclick={(e) => {
 											e.stopPropagation();
 											openPickerGroupId = isPickerOpen ? null : group.id;
@@ -2112,14 +2535,16 @@
 										}}
 										title={activeBackup
 											? `Активен резервный интерфейс ${activeBackup} (основной ${ifaceList[0]} недоступен)`
-											: ifaceList.length > 1
-												? `Цепочка Fallback: ${ifaceList.join(' → ')}`
-												: resolverBadgeText(group)}
+											: isFallbackGroup && activeIface
+												? m.firc_fallback_active_chain_title({ iface: activeIface, chain: ifaceList.join(' → ') })
+												: ifaceList.length > 1
+													? `Цепочка Fallback: ${ifaceList.join(' → ')}`
+													: resolverBadgeText(group)}
 									>
 										{#if isBlock || isBlackhole}
 											<Ban size={13} />
 										{:else}
-											{@const dotState = ifaceDotState(group, activeBackup || ifaceVal)}
+											{@const dotState = activeRes.allDead && isFallbackGroup ? 'dead' : ifaceDotState(group, activeIface || ifaceVal)}
 											{#if dotState}
 												<span class="iface-dot {dotState}"></span>
 											{:else if toneCls === 'tone-awg'}
@@ -2130,7 +2555,19 @@
 										{/if}
 										<span class="iface-btn-label">{formatIfaceButtonText(group)}</span>
 										{#if activeBackup}
-											<span class="backup-badge">резерв: {activeBackup}</span>
+											<span class="backup-badge">
+												{m.firc_fallback_backup_lower({ name: `${friendlyIfaceLabel(activeBackup, interfaces, tunnelsState)}${primaryProbe ? ` · ${formatProbeLatency(primaryProbe)}` : ''}` })}
+											</span>
+										{:else if isFallbackGroup && activeIface}
+											<span class="active-iface-badge">
+												{m.firc_fallback_active_lower({ name: `${friendlyIfaceLabel(activeIface, interfaces, tunnelsState)}${primaryProbe ? ` · ${formatProbeLatency(primaryProbe)}` : ''}` })}
+											</span>
+										{:else if isFallbackGroup && activeRes.allDead}
+											<span class="dead-badge">{m.firc_fallback_no_active()}</span>
+										{:else if !isBlock && !isBlackhole && primaryProbe}
+											<span class="pill-delay-tag {probeLatencyTone(primaryProbe)}">
+												{formatProbeLatency(primaryProbe)}
+											</span>
 										{/if}
 										<ChevronDown size={12} class="iface-chev" />
 									</button>
@@ -2156,18 +2593,26 @@
 													</div>
 												{:else}
 													{#each extConfig.proxyGroups as pg (pg.id)}
-														{@const isPgActive = matchingProxyGroup(group)?.id === pg.id}
+														{@const isPgActive = matchedPg?.id === pg.id}
+														{@const pgRt = resolveProxyGroupRuntime(pg, groups, liveMap, tunnelsState, interfaces, $fircInterfaceProbeResults, $fircProbeResults)}
+														{@const pgActProbe = pgRt.activeIface ? getIfaceProbe(pgRt.activeIface) : null}
 														<div class="iface-pop-row" class:is-primary={isPgActive}>
 															<button
 																type="button"
 																class="iface-row-main"
 																onclick={() => applyProxyGroupToGroup(group, pg)}
+																title={pgRt.activeIface ? m.firc_fallback_active_primary_title({ iface: `${friendlyIfaceLabel(pgRt.activeIface, interfaces, tunnelsState)} (${pgRt.activeIface})` }) : m.firc_fallback_all_dead_title()}
 															>
-																<Shield size={12} />
+																<span class="iface-dot {pgRt.activeIface ? 'alive' : pgRt.allDead ? 'dead' : 'unknown'}"></span>
 																<span class="iface-row-text">
 																	<strong>{pg.name}</strong> — {pg.interfaces.map(shortIfaceTag).join(' → ')}
 																</span>
 															</button>
+															{#if pgRt.activeIface}
+																<span class="pop-pg-runtime">
+																	{friendlyIfaceLabel(pgRt.activeIface, interfaces, tunnelsState)}{pgActProbe ? ` · ${formatProbeLatency(pgActProbe)}` : ''}
+																</span>
+															{/if}
 														</div>
 													{/each}
 												{/if}
@@ -2179,6 +2624,9 @@
 													{#each pickerGroups.tunnels as item (item.id)}
 														{@const rank = ifaceList.indexOf(item.id)}
 														{@const dState = ifaceDotState(group, item.id)}
+														{@const isActMember = isFallbackGroup && activeIface === item.id}
+														{@const rowProbe = getIfaceProbe(item.id)}
+														{@const rowChecking = Boolean(probingIfaces[item.id])}
 														<div
 															class="iface-pop-row"
 															class:is-primary={rank === 0}
@@ -2209,10 +2657,27 @@
 																{#if dState}
 																	<span
 																		class="iface-dot {dState}"
+																		class:active-pulse={isActMember}
 																		title={ifaceDotTooltip(group, item.id)}
 																	></span>
 																{/if}
 																<span class="iface-row-text">{item.label}</span>
+																{#if isActMember}
+																	<span class="pop-active-tag">{m.firc_fallback_active_tag()}</span>
+																{/if}
+															</button>
+															<button
+																type="button"
+																class="pg-delay-btn compact {probeLatencyTone(rowProbe)}"
+																disabled={rowChecking}
+																onclick={(e) => {
+																	e.stopPropagation();
+																	void probeFallbackInterfaces([item.id]);
+																}}
+																title={m.firc_fallback_test_iface_title({ name: item.label })}
+															>
+																<span class="pg-delay-val">{formatProbeLatency(rowProbe)}</span>
+																<RefreshCw size={9} class={rowChecking ? 'spin' : ''} />
 															</button>
 														</div>
 													{/each}
@@ -2225,6 +2690,9 @@
 													{#each pickerGroups.wans as item (item.id)}
 														{@const rank = ifaceList.indexOf(item.id)}
 														{@const dState = ifaceDotState(group, item.id)}
+														{@const isActMember = isFallbackGroup && activeIface === item.id}
+														{@const rowProbe = getIfaceProbe(item.id)}
+														{@const rowChecking = Boolean(probingIfaces[item.id])}
 														<div
 															class="iface-pop-row"
 															class:is-primary={rank === 0}
@@ -2255,10 +2723,27 @@
 																{#if dState}
 																	<span
 																		class="iface-dot {dState}"
+																		class:active-pulse={isActMember}
 																		title={ifaceDotTooltip(group, item.id)}
 																	></span>
 																{/if}
 																<span class="iface-row-text">Direct: {item.label}</span>
+																{#if isActMember}
+																	<span class="pop-active-tag">{m.firc_fallback_active_tag()}</span>
+																{/if}
+															</button>
+															<button
+																type="button"
+																class="pg-delay-btn compact {probeLatencyTone(rowProbe)}"
+																disabled={rowChecking}
+																onclick={(e) => {
+																	e.stopPropagation();
+																	void probeFallbackInterfaces([item.id]);
+																}}
+																title={m.firc_fallback_test_iface_title({ name: item.label })}
+															>
+																<span class="pg-delay-val">{formatProbeLatency(rowProbe)}</span>
+																<RefreshCw size={9} class={rowChecking ? 'spin' : ''} />
 															</button>
 														</div>
 													{/each}
@@ -2318,6 +2803,9 @@
 														{#each pickerGroups.others as item (item.id)}
 															{@const rank = ifaceList.indexOf(item.id)}
 															{@const dState = ifaceDotState(group, item.id)}
+															{@const isActMember = isFallbackGroup && activeIface === item.id}
+															{@const rowProbe = getIfaceProbe(item.id)}
+															{@const rowChecking = Boolean(probingIfaces[item.id])}
 															<div
 																class="iface-pop-row"
 																class:is-primary={rank === 0}
@@ -2339,9 +2827,25 @@
 																	onclick={() => setPrimaryIface(group, item.id)}
 																>
 																	{#if dState}
-																		<span class="iface-dot {dState}"></span>
+																		<span class="iface-dot {dState}" class:active-pulse={isActMember}></span>
 																	{/if}
 																	<span class="iface-row-text">{item.label}</span>
+																	{#if isActMember}
+																		<span class="pop-active-tag">{m.firc_fallback_active_tag()}</span>
+																	{/if}
+																</button>
+																<button
+																	type="button"
+																	class="pg-delay-btn compact {probeLatencyTone(rowProbe)}"
+																	disabled={rowChecking}
+																	onclick={(e) => {
+																		e.stopPropagation();
+																		void probeFallbackInterfaces([item.id]);
+																	}}
+																	title={m.firc_fallback_test_iface_title({ name: item.label })}
+																>
+																	<span class="pg-delay-val">{formatProbeLatency(rowProbe)}</span>
+																	<RefreshCw size={9} class={rowChecking ? 'spin' : ''} />
 																</button>
 															</div>
 														{/each}
@@ -2351,7 +2855,26 @@
 
 											<div class="iface-pop-footer">
 												{#if ifaceList.length > 1}
-													Fallback-цепочка: <strong>{ifaceList.join(' → ')}</strong>
+													{@const isPopTesting = Boolean(probingGroups[`grp:${group.id}`])}
+													<div class="iface-pop-footer-row">
+														<span>
+															{#if activeIface}
+																{m.firc_fallback_active_prefix()}: {friendlyIfaceLabel(activeIface, interfaces, tunnelsState)} ·{' '}
+															{/if}Fallback: <strong>{ifaceList.join(' → ')}</strong>
+														</span>
+														<button
+															type="button"
+															class="pg-action-btn mini"
+															disabled={isPopTesting}
+															onclick={(e) => {
+																e.stopPropagation();
+																void probeFallbackInterfaces(ifaceList, { groupKey: `grp:${group.id}` });
+															}}
+														>
+															<Zap size={10} class={isPopTesting ? 'spin' : ''} />
+															<span>{m.firc_fallback_test()}</span>
+														</button>
+													</div>
 												{:else}
 													Нажмите на кружок слева, чтобы добавить резервные интерфейсы (Fallback #2–4)
 												{/if}
@@ -3076,6 +3599,16 @@
 		</p>
 
 		{#each pgDraft as pg, pgIdx (pg.id)}
+			{@const draftRt = resolveProxyGroupRuntime(
+				pg,
+				groups,
+				liveMap,
+				tunnelsState,
+				interfaces,
+				$fircInterfaceProbeResults,
+				$fircProbeResults,
+			)}
+			{@const isModalTesting = Boolean(probingGroups[`modal:${pg.id}`])}
 			<div class="sec-box pg-editor-card">
 				<div class="pg-card-head">
 					<input
@@ -3084,6 +3617,17 @@
 						placeholder="Название прокси-группы (например, Основной + Direct)"
 						bind:value={pg.name}
 					/>
+					<button
+						type="button"
+						class="pg-action-btn"
+						disabled={pg.interfaces.length === 0 || isModalTesting}
+						title={m.firc_fallback_test_group_title({ name: pg.name })}
+						onclick={() =>
+							probeFallbackInterfaces(pg.interfaces, { groupKey: `modal:${pg.id}` })}
+					>
+						<Zap size={12} class={isModalTesting ? 'spin' : ''} />
+						<span>{isModalTesting ? '...' : m.firc_fallback_test()}</span>
+					</button>
 					<button
 						type="button"
 						class="route-action-btn danger"
@@ -3101,9 +3645,35 @@
 					{:else}
 						<div class="pg-chain-items">
 							{#each pg.interfaces as ifaceId, iIdx (ifaceId)}
-								<div class="pg-chain-pill">
+								{@const mem = draftRt.members.find((m) => m.id === ifaceId)}
+								{@const mProbe = mem?.probe ?? getIfaceProbe(ifaceId)}
+								{@const mTone = probeLatencyTone(mProbe)}
+								{@const isAct = draftRt.activeIface === ifaceId}
+								{@const checking = Boolean(probingIfaces[ifaceId])}
+								<div class="pg-chain-pill" class:is-active={isAct}>
 									<span class="pg-rank-num">#{iIdx + 1}</span>
-									<span class="font-mono">{shortIfaceTag(ifaceId)}</span>
+									<span
+										class="pg-mem-dot"
+										class:active={isAct}
+										class:alive={!isAct && mem?.state === 'alive'}
+										class:dead={mem?.state === 'dead'}
+										class:unknown={!isAct && (!mem || mem.state === 'unknown')}
+									></span>
+									<span>{friendlyIfaceLabel(ifaceId, interfaces, tunnelsState)}</span>
+									<span class="pg-pill-id font-mono">({ifaceId})</span>
+									{#if isAct}
+										<span class="pg-mem-act-tag">{m.firc_fallback_active_tag()}</span>
+									{/if}
+									<button
+										type="button"
+										class="pg-delay-btn {mTone}"
+										disabled={checking}
+										title={m.firc_fallback_test_iface_title({ name: ifaceId })}
+										onclick={() => probeFallbackInterfaces([ifaceId])}
+									>
+										<span class="pg-delay-val">{formatProbeLatency(mProbe)}</span>
+										<RefreshCw size={9} class={checking ? 'spin' : ''} />
+									</button>
 									<button
 										type="button"
 										disabled={iIdx === 0}
@@ -3139,6 +3709,9 @@
 						{#each interfaces.filter((x) => (x.role === 'tunnel' && !isInternalServerIface(x) && !x.id.startsWith('t2s')) || x.role === 'wan') as opt (opt.id)}
 							{@const idxInPg = pg.interfaces.indexOf(opt.id)}
 							{@const isWan = opt.role === 'wan'}
+							{@const cHealth = resolveIfaceState(undefined, opt.id)}
+							{@const cProbe = getIfaceProbe(opt.id)}
+							{@const cTone = probeLatencyTone(cProbe)}
 							<button
 								type="button"
 								class="pg-cand-btn"
@@ -3146,10 +3719,14 @@
 								class:wan-cand={isWan}
 								onclick={() => toggleIfaceInDraftProxyGroup(pgIdx, opt.id)}
 							>
+								<span class="iface-dot {cHealth.state}"></span>
 								{#if idxInPg >= 0}
 									<span class="pg-cand-rank">#{idxInPg + 1}</span>
 								{/if}
 								<span>{isWan ? `Direct (${formatIfaceOption(opt)})` : formatIfaceOption(opt)}</span>
+								{#if cProbe}
+									<span class="pill-delay-tag {cTone}">{formatProbeLatency(cProbe)}</span>
+								{/if}
 							</button>
 						{/each}
 					</div>
@@ -3308,7 +3885,7 @@
 	.compact-group-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
 	.compact-group-heading strong { overflow-wrap: anywhere; flex: 1; min-width: 100px; }
 	.compact-priority, .compact-group-meta { font-size: .75rem; color: var(--text-muted); }
-	.compact-group-output { display: flex; align-items: center; gap: .4rem; overflow-wrap: anywhere; font-size: .85rem; }
+	.compact-group-output { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; overflow-wrap: anywhere; font-size: .85rem; }
 	.compact-group-output span { min-width: 0; }
 	.compact-group-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: auto; }
 	.cards-stack {
@@ -3629,6 +4206,10 @@
 		border-color: var(--color-warning-border) !important;
 	}
 
+	.tone-select-pill.all-dead {
+		border-color: var(--color-error-border) !important;
+	}
+
 	.iface-btn-label {
 		max-width: 175px;
 		overflow: hidden;
@@ -3636,14 +4217,59 @@
 		white-space: nowrap;
 	}
 
-	.backup-badge {
+	.backup-badge,
+	.active-iface-badge,
+	.dead-badge {
 		font-size: 10px;
-		padding: 1px 5px;
+		padding: 1px 6px;
 		border-radius: 4px;
+		white-space: nowrap;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.backup-badge {
 		background: var(--color-warning-tint);
 		color: var(--color-warning);
 		border: 1px solid var(--color-warning-border);
+	}
+
+	.active-iface-badge {
+		background: var(--color-success-tint);
+		color: var(--color-success);
+		border: 1px solid var(--color-success-border);
+	}
+
+	.dead-badge {
+		background: var(--color-error-tint);
+		color: var(--color-error);
+		border: 1px solid var(--color-error-border);
+	}
+
+	.pill-delay-tag {
+		font-family: var(--font-mono);
+		font-size: 10.5px;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		padding: 1px 5px;
+		border-radius: 4px;
+		background: color-mix(in srgb, var(--bg-tertiary) 80%, transparent);
 		white-space: nowrap;
+	}
+
+	.pill-delay-tag.good {
+		color: var(--latency-color-ok);
+	}
+
+	.pill-delay-tag.medium {
+		color: var(--latency-color-slow);
+	}
+
+	.pill-delay-tag.bad {
+		color: var(--latency-color-fail);
+	}
+
+	.pill-delay-tag.none {
+		color: var(--text-muted);
 	}
 
 	.iface-picker-btn :global(.iface-chev) {
@@ -3664,6 +4290,12 @@
 		box-shadow: 0 0 4px var(--color-success-border);
 	}
 
+	.iface-dot.active-pulse {
+		background: var(--color-success);
+		box-shadow: 0 0 6px var(--color-success-border);
+		animation: firc-active-pulse 1.5s ease-in-out infinite;
+	}
+
 	.iface-dot.dead {
 		background: var(--color-error);
 		box-shadow: 0 0 4px var(--color-error-border);
@@ -3672,6 +4304,46 @@
 	.iface-dot.unknown {
 		background: var(--text-muted);
 		opacity: 0.55;
+	}
+
+	.pop-active-tag {
+		font-size: 9.5px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		padding: 1px 5px;
+		border-radius: 4px;
+		background: var(--color-success-tint);
+		color: var(--color-success);
+		border: 1px solid var(--color-success-border);
+		flex-shrink: 0;
+	}
+
+	.pop-pg-runtime {
+		font-family: var(--font-mono);
+		font-size: 10px;
+		color: var(--color-success);
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.iface-pop-footer-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+	}
+
+	@keyframes firc-active-pulse {
+		0%,
+		100% {
+			opacity: 1;
+			transform: scale(1);
+		}
+		50% {
+			opacity: 0.45;
+			transform: scale(0.85);
+		}
 	}
 
 	.iface-popover {
@@ -4567,6 +5239,21 @@
 			border-top: 1px dashed var(--border);
 			padding-top: 8px;
 		}
+		.outbound-select-wrap,
+		.iface-picker-root {
+			max-width: 100%;
+			min-width: 0;
+		}
+		.tone-select-pill {
+			max-width: 100%;
+			height: auto;
+			min-height: 27px;
+			flex-wrap: wrap;
+			padding: 3px 8px;
+		}
+		.iface-btn-label {
+			max-width: 150px;
+		}
 		.right-slot {
 			flex-wrap: wrap;
 		}
@@ -4579,49 +5266,395 @@
 		}
 	}
 
-	.pg-strip {
+	.pg-panel {
 		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
+		flex-direction: column;
 		gap: 8px;
-		padding: 8px 12px;
+		padding: 10px 12px;
 		background: var(--bg-secondary);
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 	}
 
-	.pg-strip-label {
-		font-size: 12px;
-		font-weight: 600;
-		color: var(--text-secondary);
+	.pg-panel-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
 	}
 
-	.pg-strip-chip {
-		display: inline-flex;
+	.pg-panel-title {
+		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 6px;
-		padding: 3px 10px;
-		border-radius: 999px;
-		font-size: 12px;
-		background: color-mix(in srgb, var(--color-accent) 10%, var(--bg-tertiary));
-		border: 1px solid color-mix(in srgb, var(--color-accent) 30%, var(--border));
+		font-size: 12.5px;
+		font-weight: 700;
 		color: var(--text-primary);
+	}
+
+	.pg-panel-sub {
+		font-size: 11px;
+		font-weight: 400;
+		color: var(--text-muted);
+	}
+
+	.pg-panel-actions {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+
+	.pg-action-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		height: 24px;
+		padding: 0 8px;
+		border-radius: 5px;
+		border: 1px solid var(--border);
+		background: var(--bg-tertiary);
+		color: var(--text-primary);
+		font-family: inherit;
+		font-size: 11px;
+		font-weight: 600;
 		cursor: pointer;
+		transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
 	}
 
-	.pg-strip-chain {
-		font-size: 11px;
-		color: var(--text-secondary);
+	.pg-action-btn:hover:not(:disabled) {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
 	}
 
-	.pg-strip-add {
-		padding: 3px 8px;
-		border-radius: var(--radius-sm);
-		font-size: 11px;
-		border: 1px dashed var(--border);
+	.pg-action-btn:disabled {
+		opacity: 0.55;
+		cursor: wait;
+	}
+
+	.pg-action-btn.ghost {
 		background: transparent;
 		color: var(--text-secondary);
+	}
+
+	.pg-action-btn.icon-only {
+		padding: 0 6px;
+	}
+
+	.pg-action-btn.mini {
+		height: 21px;
+		padding: 0 6px;
+		font-size: 10.5px;
+	}
+
+	.pg-cards-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+		gap: 8px;
+	}
+
+	.pg-runtime-card {
+		display: flex;
+		flex-direction: column;
+		gap: 7px;
+		padding: 8px 10px;
+		background: var(--bg-primary);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		min-width: 0;
+	}
+
+	.pg-runtime-card.is-backup {
+		border-color: var(--color-warning-border);
+	}
+
+	.pg-runtime-card.all-dead {
+		border-color: var(--color-error-border);
+	}
+
+	.pg-rt-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+
+	.pg-rt-ident {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+		flex: 1 1 200px;
+	}
+
+	.pg-rt-ident :global(.pg-rt-ico) {
+		color: var(--color-accent);
+		flex-shrink: 0;
+	}
+
+	.pg-rt-name {
+		font-size: 12.5px;
+		font-weight: 700;
+		color: var(--text-primary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 220px;
+	}
+
+	.pg-type-badge {
+		font-size: 9.5px;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		padding: 1px 5px;
+		border-radius: 4px;
+		background: var(--color-accent-tint);
+		color: var(--color-accent);
+		border: 1px solid var(--color-accent-border);
+	}
+
+	.pg-active-summary {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		font-size: 11px;
+		font-weight: 600;
+		padding: 1px 7px;
+		border-radius: 999px;
+		background: var(--color-success-tint);
+		color: var(--color-success);
+		border: 1px solid var(--color-success-border);
+		white-space: nowrap;
+	}
+
+	.pg-active-summary.compact {
+		font-size: 10.5px;
+		padding: 1px 6px;
+	}
+
+	.pg-active-summary.backup {
+		background: var(--color-warning-tint);
+		color: var(--color-warning);
+		border-color: var(--color-warning-border);
+	}
+
+	.pg-active-summary.dead {
+		background: var(--color-error-tint);
+		color: var(--color-error);
+		border-color: var(--color-error-border);
+	}
+
+	.pg-sum-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: currentColor;
+		flex-shrink: 0;
+	}
+
+	.pg-rt-btns {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		flex-shrink: 0;
+	}
+
+	.pg-members-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 5px;
+	}
+
+	.pg-member-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		padding: 2px 7px;
+		min-height: 24px;
+		border-radius: 5px;
+		font-size: 11.5px;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border);
+		color: var(--text-primary);
+		max-width: 100%;
+		min-width: 0;
+		box-sizing: border-box;
+	}
+
+	.pg-member-chip.mini {
+		min-height: 21px;
+		padding: 1px 6px;
+		font-size: 11px;
+		gap: 4px;
+	}
+
+	.pg-member-chip.is-active {
+		background: color-mix(in srgb, var(--color-success) 10%, var(--bg-secondary));
+		border-color: var(--color-success-border);
+		font-weight: 600;
+	}
+
+	.pg-member-chip.is-dead {
+		opacity: 0.72;
+		border-color: var(--color-error-border);
+	}
+
+	.pg-mem-rank {
+		font-family: var(--font-mono);
+		font-size: 10px;
+		font-weight: 700;
+		color: var(--text-muted);
+	}
+
+	.pg-mem-dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.pg-mem-dot.active {
+		background: var(--color-success);
+		box-shadow: 0 0 6px var(--color-success-border);
+		animation: firc-active-pulse 1.5s ease-in-out infinite;
+	}
+
+	.pg-mem-dot.alive {
+		background: var(--color-success);
+		opacity: 0.55;
+	}
+
+	.pg-mem-dot.dead {
+		background: var(--color-error);
+	}
+
+	.pg-mem-dot.unknown {
+		background: var(--text-muted);
+		opacity: 0.55;
+	}
+
+	.pg-mem-label {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 165px;
+	}
+
+	.pg-mem-act-tag {
+		font-size: 9.5px;
+		font-weight: 700;
+		padding: 0 4px;
+		border-radius: 3px;
+		background: var(--color-success-tint);
+		color: var(--color-success);
+		border: 1px solid var(--color-success-border);
+	}
+
+	.pg-delay-btn {
+		appearance: none;
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		padding: 1px 5px;
+		border-radius: 4px;
+		border: 1px solid transparent;
+		background: transparent;
+		font-family: var(--font-mono);
+		font-size: 10.5px;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		line-height: 1.2;
 		cursor: pointer;
+		flex-shrink: 0;
+		transition: background var(--t-fast), border-color var(--t-fast);
+	}
+
+	.pg-delay-btn.compact {
+		font-size: 10px;
+		padding: 1px 4px;
+	}
+
+	.pg-delay-btn:hover:not(:disabled) {
+		background: var(--bg-tertiary);
+		border-color: var(--border);
+	}
+
+	.pg-delay-btn.good {
+		color: var(--latency-color-ok);
+	}
+
+	.pg-delay-btn.medium {
+		color: var(--latency-color-slow);
+	}
+
+	.pg-delay-btn.bad {
+		color: var(--latency-color-fail);
+	}
+
+	.pg-delay-btn.none {
+		color: var(--text-muted);
+	}
+
+	.pg-delay-val {
+		white-space: nowrap;
+	}
+
+	.inline-fallback-strip {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px;
+		margin-top: 2px;
+		max-width: 100%;
+		min-width: 0;
+	}
+
+	.fallback-sep {
+		font-size: 10.5px;
+		color: var(--text-muted);
+	}
+
+	.compact-fallback-box {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		min-width: 0;
+	}
+
+	.compact-fallback-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 5px;
+		font-size: 12px;
+	}
+
+	.compact-fallback-title {
+		font-weight: 600;
+		color: var(--text-primary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.compact-fallback-members {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 5px;
+	}
+
+	.pg-chain-pill.is-active {
+		border-color: var(--color-success-border);
+		background: color-mix(in srgb, var(--color-success) 10%, var(--bg-tertiary));
+	}
+
+	.pg-pill-id {
+		font-size: 10.5px;
+		color: var(--text-muted);
 	}
 
 	.pg-cap-row {

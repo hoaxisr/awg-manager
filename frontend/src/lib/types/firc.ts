@@ -700,6 +700,21 @@ export interface FircProxyGroup {
 	interfaces: string[];
 }
 
+export interface FircInterfaceProbeResult {
+	interface: string;
+	ok: boolean;
+	latencyMs: number;
+	httpCode?: number;
+	error?: string;
+	checkedAt?: number;
+}
+
+export interface FircInterfacesProbeRes {
+	url: string;
+	checkedAt: number;
+	results: Record<string, FircInterfaceProbeResult>;
+}
+
 export interface FircKeenDNSCloudConfig {
 	enabled: boolean;
 	proxyGroupId?: string;

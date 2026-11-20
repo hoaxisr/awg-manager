@@ -13,6 +13,7 @@ import {
 	type FircGroupsStateRes,
 	type FircHost,
 	type FircInterfaceOption,
+	type FircInterfacesProbeRes,
 	type FircListPreviewRes,
 	type FircListRulesPage,
 	type FircMigrationOptions,
@@ -285,6 +286,21 @@ export class FircClient extends TelemtClient {
 		const next = this.fircProbeQueue.then(run, run);
 		this.fircProbeQueue = next.catch(() => {});
 		return next;
+	}
+
+	async fircProbeInterfaces(
+		interfaces: string[],
+		url?: string,
+	): Promise<FircInterfacesProbeRes> {
+		const trimmed = interfaces.map((s) => s.trim()).filter((s) => s.length > 0);
+		const body: { interfaces: string[]; url?: string } = { interfaces: trimmed };
+		if (url && url.trim()) {
+			body.url = url.trim();
+		}
+		return this.request<FircInterfacesProbeRes>('/firc/interfaces/probe', {
+			method: 'POST',
+			body: JSON.stringify(body),
+		});
 	}
 
 	// ── Groups & Rules (v1 native daemon) ──
