@@ -1,10 +1,17 @@
 package api
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"debug/elf"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -799,7 +806,7 @@ func TestFircHandler_ExternalFircPackageStatusAndGuards(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("decode install-status: %v (%s)", err, rec.Body.String())
 	}
-	if env.Data.ExternalPackage != "firc" || env.Data.InstalledVersion != "0.8.2-1" ||
+	if env.Data.ExternalPackage != "firc" || !env.Data.ExternalMigratable || env.Data.InstalledVersion != "0.8.2-1" ||
 		env.Data.State != firc.InstallStateInstalled || !env.Data.FircdPresent || !env.Data.TunvlessPresent {
 		t.Fatalf("unexpected external install-status: %+v", env.Data)
 	}
@@ -811,13 +818,310 @@ func TestFircHandler_ExternalFircPackageStatusAndGuards(t *testing.T) {
 		{"/api/firc/install", ""},
 		{"/api/firc/uninstall", `{"purgeConfigs":false}`},
 		{"/api/firc/migrate-runtime", ""},
+		{"/api/firc/migrate-runtime", `{}`},
 	} {
 		req = httptest.NewRequest(http.MethodPost, ep.path, strings.NewReader(ep.body))
 		rec = httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "EXTERNAL_PACKAGE_OWNED") {
-			t.Fatalf("expected 409 EXTERNAL_PACKAGE_OWNED on %s, got %d (%s)", ep.path, rec.Code, rec.Body.String())
+			t.Fatalf("expected 409 EXTERNAL_PACKAGE_OWNED on %s (%s), got %d (%s)", ep.path, ep.body, rec.Code, rec.Body.String())
 		}
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/firc/migrate-runtime", strings.NewReader(`{"unknown":true}`))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 BAD_REQUEST on unknown field, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+type apiMockDownloader struct {
+	url  string
+	body []byte
+}
+
+func (d apiMockDownloader) DownloadFile(_ context.Context, r firc.DownloadFileRequest) (firc.DownloadFileResult, error) {
+	if r.URL != d.url {
+		return firc.DownloadFileResult{}, errors.New("unexpected url")
+	}
+	if err := os.WriteFile(r.DestPath, d.body, r.Mode); err != nil {
+		return firc.DownloadFileResult{}, err
+	}
+	return firc.DownloadFileResult{Path: r.DestPath, Size: int64(len(d.body))}, nil
+}
+
+type apiMockPkgMgr struct {
+	mu         sync.Mutex
+	root       string
+	extPkg     string
+	extVer     string
+	runtimeVer string
+	targetVer  string
+}
+
+func (m *apiMockPkgMgr) Version(_ context.Context, name string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	switch name {
+	case firc.RuntimePackageName:
+		return m.runtimeVer, nil
+	case m.extPkg:
+		return m.extVer, nil
+	default:
+		return "", nil
+	}
+}
+
+func (m *apiMockPkgMgr) RemoveExternal(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if name != m.extPkg {
+		return errors.New("unexpected package")
+	}
+	_ = os.Remove(filepath.Join(m.root, "opt", "lib", "opkg", "info", name+".list"))
+	_ = os.Remove(filepath.Join(m.root, "opt", "bin", "fircd"))
+	_ = os.Remove(filepath.Join(m.root, "opt", "bin", "tunvless"))
+	_ = os.Remove(filepath.Join(m.root, "opt", "etc", "init.d", "S99firc"))
+	m.extVer = ""
+	return nil
+}
+
+func (m *apiMockPkgMgr) Install(_ context.Context, ipkPath string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	raw, err := os.ReadFile(ipkPath)
+	if err != nil {
+		return err
+	}
+	outerGz, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	defer outerGz.Close()
+	outerTar := tar.NewReader(outerGz)
+	var dataTarGz []byte
+	for {
+		hdr, err := outerTar.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if strings.TrimPrefix(hdr.Name, "./") == "data.tar.gz" {
+			dataTarGz, err = io.ReadAll(outerTar)
+			if err != nil {
+				return err
+			}
+			break
+		}
+	}
+	innerGz, err := gzip.NewReader(bytes.NewReader(dataTarGz))
+	if err != nil {
+		return err
+	}
+	defer innerGz.Close()
+	innerTar := tar.NewReader(innerGz)
+	for {
+		hdr, err := innerTar.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		rel := strings.TrimSuffix(strings.TrimPrefix(hdr.Name, "./"), "/")
+		if rel == "" || rel == "." || hdr.Typeflag == tar.TypeDir {
+			continue
+		}
+		if rel == "opt/etc/firc/firc.conf" || rel == "opt/etc/firc/groups.yaml" {
+			if _, statErr := os.Lstat(filepath.Join(m.root, filepath.FromSlash(rel))); statErr == nil {
+				continue
+			}
+		}
+		dst := filepath.Join(m.root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			return err
+		}
+		_ = os.Remove(dst)
+		if hdr.Typeflag == tar.TypeSymlink {
+			if err := os.Symlink(hdr.Linkname, dst); err != nil {
+				return err
+			}
+			continue
+		}
+		data, err := io.ReadAll(innerTar)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, data, os.FileMode(hdr.Mode)&0777); err != nil {
+			return err
+		}
+	}
+	for _, name := range []string{"firc.conf", "groups.yaml"} {
+		dstCfg := filepath.Join(m.root, "opt", "etc", "firc", name)
+		if _, err := os.Lstat(dstCfg); os.IsNotExist(err) {
+			defPath := filepath.Join(m.root, "opt", "share", "awg-firc-runtime", "defaults", name)
+			if defData, readErr := os.ReadFile(defPath); readErr == nil {
+				if mkErr := os.MkdirAll(filepath.Dir(dstCfg), 0700); mkErr != nil {
+					return mkErr
+				}
+				if wErr := os.WriteFile(dstCfg, defData, 0600); wErr != nil {
+					return wErr
+				}
+			}
+		}
+	}
+	m.runtimeVer = m.targetVer
+	return nil
+}
+
+func (m *apiMockPkgMgr) Remove(_ context.Context, _ string) error { return nil }
+
+func apiMinimalMIPS32ELF(tag string) []byte {
+	buf := make([]byte, 52+len(tag))
+	copy(buf[0:4], []byte{0x7f, 'E', 'L', 'F'})
+	buf[4] = byte(elf.ELFCLASS32)
+	buf[5] = byte(elf.ELFDATA2LSB)
+	buf[6] = byte(elf.EV_CURRENT)
+	binary.LittleEndian.PutUint16(buf[16:18], uint16(elf.ET_EXEC))
+	binary.LittleEndian.PutUint16(buf[18:20], uint16(elf.EM_MIPS))
+	binary.LittleEndian.PutUint32(buf[20:24], uint32(elf.EV_CURRENT))
+	binary.LittleEndian.PutUint16(buf[40:42], 52)
+	copy(buf[52:], []byte(tag))
+	return buf
+}
+
+func TestFircHandler_ExternalPackageMigrationValidation(t *testing.T) {
+	source := t.TempDir()
+	t.Setenv("FIRC_SOURCE_ROOT", source)
+	for rel, content := range map[string]string{
+		"LICENSE":                             "GPL-3.0-or-later\n",
+		"files/entware_kn/etc/init.d/S99firc": "#!/bin/sh\n[ -e /opt/etc/firc/.awgm-disabled ] && exit 8\nexit 0\n",
+		"files/entware_kn/etc/ndm/netfilter.d/100-firc": "#!/bin/sh\nexit 0\n",
+		"files/common/etc/firc/firc.conf":               "configVersion: 0.7.0\n",
+		"files/common/etc/firc/groups.yaml":             "groups: []\n",
+	} {
+		p := filepath.Join(source, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fircdBin := filepath.Join(source, "fircd")
+	tunBin := filepath.Join(source, "tunvless")
+	if err := os.WriteFile(fircdBin, apiMinimalMIPS32ELF("fircd"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tunBin, apiMinimalMIPS32ELF("tunvless"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	ipkPath := filepath.Join(source, "runtime.ipk")
+	if err := firc.BuildRuntimeIPK(source, fircdBin, tunBin, "mipsel-3.4", "0.8.0-awgm.4", ipkPath); err != nil {
+		t.Fatal(err)
+	}
+	ipkBytes, err := os.ReadFile(ipkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(ipkBytes)
+	ipkSHA := hex.EncodeToString(sum[:])
+
+	seed := func(t *testing.T, extPkg string) (string, *apiMockPkgMgr, *firc.OnDemandInstaller, *FircHandler) {
+		t.Helper()
+		root := t.TempDir()
+		for rel, content := range map[string]string{
+			"opt/bin/fircd":                         "fircd",
+			"opt/bin/tunvless":                      "tunvless",
+			"opt/etc/init.d/S99firc":                "#!/bin/sh\nexit 0\n",
+			"opt/etc/ndm/netfilter.d/100-firc":      "#!/bin/sh\nexit 0\n",
+			"opt/etc/ndm/iflayerchanged.d/100-firc": "#!/bin/sh\nexit 0\n",
+			"opt/etc/firc/firc.conf":                "configVersion: 0.7.0\ncustomSetting: keep\n",
+			"opt/var/lib/firc/hwid":                 "keep-hwid\n",
+			"opt/lib/opkg/info/" + extPkg + ".list": "/opt/bin/fircd\n",
+		} {
+			p := filepath.Join(root, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(content), 0755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		pm := &apiMockPkgMgr{root: root, extPkg: extPkg, extVer: "0.8.2-1", targetVer: "0.8.0-awgm.4"}
+		inst := firc.NewOnDemandInstaller("mipsel-3.4", firc.FircBinarySpec{
+			Version:       "0.8.0-awgm.4",
+			PackageURL:    "https://example.invalid/runtime.ipk",
+			PackageSHA256: ipkSHA,
+			PackageSize:   int64(len(ipkBytes)),
+		})
+		inst.SetPackageLayout(firc.DefaultPackageLayout(root))
+		inst.SetPackageManager(pm)
+		inst.SetDownloader(apiMockDownloader{url: "https://example.invalid/runtime.ipk", body: ipkBytes})
+		inst.SetFreeDiskFn(func(string) (int64, bool) { return 256 << 20, true })
+		h := NewFircHandler(nil)
+		h.SetInstaller(inst)
+		return root, pm, inst, h
+	}
+
+	// Non-allowlisted external package must reject replaceExternalPackage=true with 409 EXTERNAL_PACKAGE_UNSUPPORTED.
+	_, _, _, hUnsupported := seed(t, "custom-firc")
+	muxU := http.NewServeMux()
+	hUnsupported.RegisterRoutes(muxU, func(next http.HandlerFunc) http.HandlerFunc { return next })
+	reqU := httptest.NewRequest(http.MethodPost, "/api/firc/migrate-runtime", strings.NewReader(`{"replaceExternalPackage":true}`))
+	recU := httptest.NewRecorder()
+	muxU.ServeHTTP(recU, reqU)
+	if recU.Code != http.StatusConflict || !strings.Contains(recU.Body.String(), "EXTERNAL_PACKAGE_UNSUPPORTED") {
+		t.Fatalf("expected 409 EXTERNAL_PACKAGE_UNSUPPORTED, got %d (%s)", recU.Code, recU.Body.String())
+	}
+
+	// Active dependent services must reject replaceExternalPackage=true with 409 FIRC_DEPENDENCIES.
+	_, _, instDeps, hDeps := seed(t, "firc")
+	instDeps.SetDependencyChecker(func(context.Context) ([]string, error) {
+		return []string{"vless_xhttp_server"}, nil
+	})
+	muxD := http.NewServeMux()
+	hDeps.RegisterRoutes(muxD, func(next http.HandlerFunc) http.HandlerFunc { return next })
+	reqD := httptest.NewRequest(http.MethodPost, "/api/firc/migrate-runtime", strings.NewReader(`{"replaceExternalPackage":true}`))
+	recD := httptest.NewRecorder()
+	muxD.ServeHTTP(recD, reqD)
+	if recD.Code != http.StatusConflict || !strings.Contains(recD.Body.String(), "FIRC_DEPENDENCIES") {
+		t.Fatalf("expected 409 FIRC_DEPENDENCIES, got %d (%s)", recD.Code, recD.Body.String())
+	}
+
+	// Eligible allowlisted package "firc" accepts replaceExternalPackage=true -> 202 and completes migration.
+	rootOk, _, _, hOk := seed(t, "firc")
+	muxOk := http.NewServeMux()
+	hOk.RegisterRoutes(muxOk, func(next http.HandlerFunc) http.HandlerFunc { return next })
+	reqOk := httptest.NewRequest(http.MethodPost, "/api/firc/migrate-runtime", strings.NewReader(`{"replaceExternalPackage":true}`))
+	recOk := httptest.NewRecorder()
+	muxOk.ServeHTTP(recOk, reqOk)
+	if recOk.Code != http.StatusAccepted || !strings.Contains(recOk.Body.String(), "external_migration_started") {
+		t.Fatalf("expected 202 external_migration_started, got %d (%s)", recOk.Code, recOk.Body.String())
+	}
+	var finalSt firc.InstallStatus
+	completed := false
+	for range 100 {
+		recSt := httptest.NewRecorder()
+		muxOk.ServeHTTP(recSt, httptest.NewRequest(http.MethodGet, "/api/firc/install-status", nil))
+		var env struct {
+			Data firc.InstallStatus `json:"data"`
+		}
+		if json.Unmarshal(recSt.Body.Bytes(), &env) == nil && !env.Data.Busy {
+			finalSt = env.Data
+			completed = true
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	if !completed || finalSt.ExternalPackage != "" || finalSt.ExternalMigratable || finalSt.InstalledVersion != "0.8.0-awgm.4" || finalSt.State != firc.InstallStateInstalled {
+		t.Fatalf("unexpected post-migration install-status (completed=%v): %+v", completed, finalSt)
+	}
+	if gotConf, err := os.ReadFile(filepath.Join(rootOk, "opt", "etc", "firc", "firc.conf")); err != nil || string(gotConf) != "configVersion: 0.7.0\ncustomSetting: keep\n" {
+		t.Fatalf("firc.conf not preserved across API migration: got=%q err=%v", string(gotConf), err)
 	}
 }
 

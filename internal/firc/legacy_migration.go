@@ -236,6 +236,32 @@ func verifyBackedFileMatch(path, label, wantSHA256 string, wantSize int64) error
 	return nil
 }
 
+func verifyBackedEntries(filesDir, group string, entries []legacyBackedEntry) error {
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.RelPath) == "" {
+			return fmt.Errorf("%s entry has empty relPath", group)
+		}
+		if entry.IsSymlink {
+			if strings.TrimSpace(entry.LinkTarget) == "" {
+				return fmt.Errorf("%s symlink %s has empty linkTarget", group, entry.RelPath)
+			}
+			continue
+		}
+		if strings.TrimSpace(entry.BackupName) == "" {
+			return fmt.Errorf("%s entry %s has empty backupName", group, entry.RelPath)
+		}
+		if err := verifyBackedFileMatch(
+			filepath.Join(filesDir, entry.BackupName),
+			entry.RelPath+" ("+entry.BackupName+")",
+			entry.SHA256,
+			entry.Size,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // verifyLegacyBackup validates the full integrity of an on-disk legacy migration
 // backup directory (manifest.json, awg-manager.list, awg-manager.conffiles, and
 // every referenced blob's size and SHA-256) before any destructive step or recovery.
@@ -283,35 +309,10 @@ func (i *OnDemandInstaller) verifyLegacyBackup(backupDir string) (legacyBackupMa
 		}
 	}
 	filesDir := filepath.Join(backupDir, "blobs")
-	verifyEntries := func(group string, entries []legacyBackedEntry) error {
-		for _, entry := range entries {
-			if strings.TrimSpace(entry.RelPath) == "" {
-				return fmt.Errorf("%s entry has empty relPath", group)
-			}
-			if entry.IsSymlink {
-				if strings.TrimSpace(entry.LinkTarget) == "" {
-					return fmt.Errorf("%s symlink %s has empty linkTarget", group, entry.RelPath)
-				}
-				continue
-			}
-			if strings.TrimSpace(entry.BackupName) == "" {
-				return fmt.Errorf("%s entry %s has empty backupName", group, entry.RelPath)
-			}
-			if err := verifyBackedFileMatch(
-				filepath.Join(filesDir, entry.BackupName),
-				entry.RelPath+" ("+entry.BackupName+")",
-				entry.SHA256,
-				entry.Size,
-			); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := verifyEntries("runtime", m.RuntimeEntries); err != nil {
+	if err := verifyBackedEntries(filesDir, "runtime", m.RuntimeEntries); err != nil {
 		return m, err
 	}
-	if err := verifyEntries("userConfig", m.UserConfigFiles); err != nil {
+	if err := verifyBackedEntries(filesDir, "userConfig", m.UserConfigFiles); err != nil {
 		return m, err
 	}
 	return m, nil
@@ -401,10 +402,14 @@ func (i *OnDemandInstaller) recoverPendingLocked(ctx context.Context, op *Operat
 	backupDir := i.legacyBackupDir()
 	if !priorOp.Pending {
 		_ = os.RemoveAll(backupDir)
+		_ = os.RemoveAll(i.externalBackupDir())
 		return nil
 	}
 
 	switch priorOp.Action {
+	case "migrate_external":
+		return i.recoverExternalMigrationLocked(ctx, op, false)
+
 	case "migrate_legacy":
 		manifest, err := i.verifyLegacyBackup(backupDir)
 		if err != nil {
@@ -810,58 +815,8 @@ func (i *OnDemandInstaller) captureLegacyBackup(backupDir string, wasRunning boo
 	}
 
 	seq := 0
-	saveOne := func(rel string) (legacyBackedEntry, bool, error) {
-		full := i.rootPath(rel)
-		st, err := os.Lstat(full)
-		if os.IsNotExist(err) {
-			return legacyBackedEntry{}, false, nil
-		}
-		if err != nil {
-			return legacyBackedEntry{}, false, err
-		}
-		if st.IsDir() {
-			return legacyBackedEntry{}, false, nil
-		}
-		entry := legacyBackedEntry{
-			RelPath: filepath.ToSlash(strings.TrimPrefix(rel, "/")),
-			Mode:    st.Mode().Perm(),
-		}
-		if st.Mode()&os.ModeSymlink != 0 {
-			target, err := os.Readlink(full)
-			if err != nil {
-				return legacyBackedEntry{}, false, err
-			}
-			entry.IsSymlink = true
-			entry.LinkTarget = filepath.ToSlash(target)
-			return entry, true, nil
-		}
-		if !st.Mode().IsRegular() {
-			return legacyBackedEntry{}, false, fmt.Errorf("unsupported file type at %s", full)
-		}
-		seq++
-		blobName := fmt.Sprintf("blob-%04d", seq)
-		data, err := os.ReadFile(full)
-		if err != nil {
-			return legacyBackedEntry{}, false, err
-		}
-		sum, size, err := writeAndSyncBackupFile(
-			filepath.Join(filesDir, blobName),
-			"blobs/"+blobName,
-			data,
-			0600,
-			hooks.FileSync,
-		)
-		if err != nil {
-			return legacyBackedEntry{}, false, err
-		}
-		entry.BackupName = blobName
-		entry.SHA256 = sum
-		entry.Size = size
-		return entry, true, nil
-	}
-
 	for _, rel := range legacyRemovableRuntimeFiles {
-		entry, ok, err := saveOne(rel)
+		entry, ok, err := i.snapshotBackedEntry(filesDir, rel, &seq, hooks.FileSync)
 		if err != nil {
 			return m, err
 		}
@@ -870,36 +825,13 @@ func (i *OnDemandInstaller) captureLegacyBackup(backupDir string, wasRunning boo
 		}
 	}
 
-	fircEtc := i.rootPath("/opt/etc/firc")
-	if st, err := os.Stat(fircEtc); err == nil && st.IsDir() {
-		err = filepath.Walk(fircEtc, func(p string, info os.FileInfo, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if info.IsDir() {
-				return nil
-			}
-			relFromEtc, err := filepath.Rel(fircEtc, p)
-			if err != nil {
-				return err
-			}
-			relSlash := filepath.ToSlash(relFromEtc)
-			if relSlash == "SHA256SUMS" {
-				return nil
-			}
-			entry, ok, err := saveOne("opt/etc/firc/" + relSlash)
-			if err != nil {
-				return err
-			}
-			if ok {
-				m.UserConfigFiles = append(m.UserConfigFiles, entry)
-			}
-			return nil
-		})
-		if err != nil {
-			return m, err
-		}
+	userEntries, err := i.walkAndBackupDir("/opt/etc/firc", "opt/etc/firc/", filesDir, func(relSlash string) bool {
+		return relSlash == "SHA256SUMS"
+	}, hooks.FileSync, &seq)
+	if err != nil {
+		return m, err
 	}
+	m.UserConfigFiles = userEntries
 
 	if err := syncBackupDir(filesDir, hooks.DirSync); err != nil {
 		return m, err

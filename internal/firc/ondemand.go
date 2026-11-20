@@ -59,6 +59,7 @@ type InstallStatus struct {
 	ActiveEngine           bool         `json:"activeEngine"`
 	LegacyBundledOwnership bool         `json:"legacyBundledOwnership,omitempty"`
 	ExternalPackage        string       `json:"externalPackage,omitempty"`
+	ExternalMigratable     bool         `json:"externalMigratable,omitempty"`
 	DependentServices      []string     `json:"dependentServices,omitempty"`
 }
 
@@ -347,7 +348,7 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 
 	var state InstallState
 	switch {
-	case busy && (busyAction == "install" || busyAction == "migrate_legacy"):
+	case busy && (busyAction == "install" || busyAction == "migrate_legacy" || busyAction == "migrate_external"):
 		state = InstallStateInstalling
 	case busy && busyAction == "uninstall":
 		state = InstallStateUninstalling
@@ -388,6 +389,7 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 		ActiveEngine:           active,
 		LegacyBundledOwnership: legacyOwned,
 		ExternalPackage:        extPkg,
+		ExternalMigratable:     extPkg != "" && isAllowedExternalFircPackage(extPkg),
 		DependentServices:      dependentServices,
 	}
 
@@ -404,6 +406,16 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 	}
 
 	return status
+}
+
+// PendingOperationAction reports the pending operation action recorded in
+// firc-runtime-operation.json if recovery is pending, or "".
+func (odi *OnDemandInstaller) PendingOperationAction() string {
+	op, err := odi.readOperation()
+	if err != nil || !op.Pending {
+		return ""
+	}
+	return op.Action
 }
 
 // Install runs a verified package operation synchronously (also used by tests).

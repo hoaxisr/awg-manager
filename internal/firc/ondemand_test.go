@@ -42,7 +42,9 @@ type mockRuntimePackages struct {
 	root, version           string
 	versions                map[string]string
 	installs, removes       int
+	extRemoves              int
 	failInstall, failRemove bool
+	failExtRemove           bool
 	failNextInstall         bool
 	entered, release        chan struct{}
 }
@@ -100,6 +102,9 @@ func (m *mockRuntimePackages) Install(ctx context.Context, p string) error {
 	}
 	m.mu.Lock()
 	m.version = "0.7.0-1"
+	if m.versions != nil {
+		m.versions[RuntimePackageName] = "0.7.0-1"
+	}
 	m.mu.Unlock()
 	return nil
 }
@@ -122,6 +127,48 @@ func (m *mockRuntimePackages) Remove(_ context.Context, name string) error {
 		}
 	}
 	m.version = ""
+	if m.versions != nil {
+		m.versions[RuntimePackageName] = ""
+	}
+	return nil
+}
+
+func (m *mockRuntimePackages) RemoveExternal(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.extRemoves++
+	if m.failExtRemove {
+		return errors.New("opkg remove external failed")
+	}
+	if !isAllowedExternalFircPackage(name) {
+		return errors.New("unsupported external package")
+	}
+	listPath := filepath.Join(m.root, "opt", "lib", "opkg", "info", name+".list")
+	if _, err := os.Stat(listPath); err != nil {
+		return err
+	}
+	if err := os.Remove(listPath); err != nil {
+		return err
+	}
+	// Remove runtime binaries/hooks and simulate upstream firc prerm wiping /opt/var/lib/firc state.
+	for _, rel := range []string{
+		"opt/bin/fircd",
+		"opt/bin/tunvless",
+		"opt/sbin/fircd",
+		"opt/sbin/tunvless",
+		"opt/etc/init.d/S99firc",
+		"opt/etc/ndm/netfilter.d/100-firc",
+		"opt/etc/ndm/iflayerchanged.d/100-firc",
+		"opt/var/lib/firc/hwid",
+		"opt/var/lib/firc/rci-token",
+		"opt/var/lib/firc/opkgtun",
+	} {
+		_ = os.Remove(filepath.Join(m.root, filepath.FromSlash(rel)))
+	}
+	_ = os.RemoveAll(filepath.Join(m.root, "opt", "var", "lib", "firc", "tunnels"))
+	if m.versions != nil {
+		m.versions[name] = ""
+	}
 	return nil
 }
 

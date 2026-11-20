@@ -503,6 +503,7 @@ export interface FircInstallStatus {
 	activeEngine: boolean;
 	legacyBundledOwnership?: boolean;
 	externalPackage?: string;
+	externalMigratable?: boolean;
 	dependentServices?: string[];
 	ndmHookPresent: boolean;
 	fircdPresent: boolean;

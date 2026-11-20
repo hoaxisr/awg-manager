@@ -351,6 +351,28 @@ type fircUninstallRequest struct {
 	PurgeConfigs bool `json:"purgeConfigs"`
 }
 
+type fircMigrateRuntimeRequest struct {
+	ReplaceExternalPackage bool `json:"replaceExternalPackage,omitempty"`
+}
+
+func decodeOptionalJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if r.Body == nil || r.Body == http.NoBody {
+		return true
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil && !errors.Is(err, io.EOF) {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "invalid request body", "BAD_REQUEST")
+		return false
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "unexpected trailing request data", "BAD_REQUEST")
+		return false
+	}
+	return true
+}
+
 // @Summary Install the verified FIRC runtime package
 // @Description Accepts an asynchronous operation. Poll install-status for completion.
 // @Tags firc
@@ -387,6 +409,15 @@ func (h *FircHandler) handleInstall(w http.ResponseWriter, r *http.Request) {
 		response.ErrorWithStatus(w, http.StatusConflict, firc.ErrInstallBusy.Error(), "INSTALL_BUSY")
 		return
 	}
+	if st.State == firc.InstallStateRecoveryNeeded && h.installer.PendingOperationAction() == "migrate_external" {
+		h.installMu.Unlock()
+		if err := h.installer.StartExternalMigration(h.op); err != nil {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_BUSY")
+			return
+		}
+		response.Accepted(w, map[string]string{"status": "external_migration_started"})
+		return
+	}
 	if h.isSelected() {
 		h.installMu.Unlock()
 		response.ErrorWithStatus(w, http.StatusConflict, firc.ErrInstallActiveCore.Error(), "FIRC_ACTIVE")
@@ -402,12 +433,15 @@ func (h *FircHandler) handleInstall(w http.ResponseWriter, r *http.Request) {
 	response.Accepted(w, map[string]string{"status": "install_started"})
 }
 
-// @Summary Migrate legacy bundled FIRC runtime ownership to awg-firc-runtime
-// @Description Transactionally migrates FIRC ownership from legacy bundled awg-manager to awg-firc-runtime, preserving configs and active service state.
+// @Summary Migrate FIRC runtime ownership to awg-firc-runtime
+// @Description Transactionally migrates FIRC ownership from legacy bundled awg-manager or (when replaceExternalPackage=true) an allowlisted external Entware FIRC package to awg-firc-runtime, preserving configs and runtime state.
 // @Tags firc
+// @Accept json
 // @Produce json
 // @Security CookieAuth
+// @Param request body fircMigrateRuntimeRequest false "Migration options; set replaceExternalPackage=true to replace an external Entware FIRC package"
 // @Success 202 {object} APIEnvelope
+// @Failure 400 {object} APIErrorEnvelope
 // @Failure 409 {object} APIErrorEnvelope
 // @Failure 503 {object} APIErrorEnvelope
 // @Router /firc/migrate-runtime [post]
@@ -417,13 +451,53 @@ func (h *FircHandler) handleMigrateRuntime(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	h.installMu.Lock()
-	st := h.installer.GetInstallStatus(r.Context(), h.op, h.isSelected())
-	if st.ExternalPackage != "" {
-		h.installMu.Unlock()
-		response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("firc runtime belongs to external package %s.list; refusing to overwrite", st.ExternalPackage), "EXTERNAL_PACKAGE_OWNED")
+	var req fircMigrateRuntimeRequest
+	if !decodeOptionalJSON(w, r, &req) {
 		return
 	}
+
+	h.installMu.Lock()
+	st := h.installer.GetInstallStatus(r.Context(), h.op, h.isSelected())
+	pendingAction := h.installer.PendingOperationAction()
+	if st.ExternalPackage != "" {
+		if !req.ReplaceExternalPackage {
+			h.installMu.Unlock()
+			response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("firc runtime belongs to external package %s.list; refusing to overwrite", st.ExternalPackage), "EXTERNAL_PACKAGE_OWNED")
+			return
+		}
+		if !st.ExternalMigratable {
+			h.installMu.Unlock()
+			response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("external package %s.list cannot be replaced automatically; remove it manually via opkg before installing awg-firc-runtime", st.ExternalPackage), "EXTERNAL_PACKAGE_UNSUPPORTED")
+			return
+		}
+		if !st.Available {
+			h.installMu.Unlock()
+			reason := st.UnavailableReason
+			if reason == "" {
+				reason = firc.ErrReleaseUnavailable.Error()
+			}
+			response.ErrorWithStatus(w, http.StatusServiceUnavailable, reason, "RELEASE_UNAVAILABLE")
+			return
+		}
+		if st.Busy {
+			h.installMu.Unlock()
+			response.ErrorWithStatus(w, http.StatusConflict, firc.ErrInstallBusy.Error(), "INSTALL_BUSY")
+			return
+		}
+		if len(st.DependentServices) > 0 {
+			h.installMu.Unlock()
+			response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("cannot migrate: services depend on FIRC: %s", strings.Join(st.DependentServices, ", ")), "FIRC_DEPENDENCIES")
+			return
+		}
+		h.installMu.Unlock()
+		if err := h.installer.StartExternalMigration(h.op); err != nil {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_BUSY")
+			return
+		}
+		response.Accepted(w, map[string]string{"status": "external_migration_started"})
+		return
+	}
+
 	if !st.Available {
 		h.installMu.Unlock()
 		reason := st.UnavailableReason
@@ -436,6 +510,15 @@ func (h *FircHandler) handleMigrateRuntime(w http.ResponseWriter, r *http.Reques
 	if st.Busy {
 		h.installMu.Unlock()
 		response.ErrorWithStatus(w, http.StatusConflict, firc.ErrInstallBusy.Error(), "INSTALL_BUSY")
+		return
+	}
+	if st.State == firc.InstallStateRecoveryNeeded && pendingAction == "migrate_external" {
+		h.installMu.Unlock()
+		if err := h.installer.StartExternalMigration(h.op); err != nil {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_BUSY")
+			return
+		}
+		response.Accepted(w, map[string]string{"status": "external_migration_started"})
 		return
 	}
 	if !st.LegacyBundledOwnership && st.State != firc.InstallStateRecoveryNeeded {
@@ -472,18 +555,8 @@ func (h *FircHandler) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req fircUninstallRequest
-	if r.Body != nil && r.Body != http.NoBody {
-		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-			response.ErrorWithStatus(w, http.StatusBadRequest, "invalid request body", "BAD_REQUEST")
-			return
-		}
-		var trailing any
-		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-			response.ErrorWithStatus(w, http.StatusBadRequest, "unexpected trailing request data", "BAD_REQUEST")
-			return
-		}
+	if !decodeOptionalJSON(w, r, &req) {
+		return
 	}
 	if req.PurgeConfigs {
 		response.ErrorWithStatus(w, http.StatusBadRequest, "Runtime removal preserves configuration; full data purge is not supported", "PURGE_UNSUPPORTED")
