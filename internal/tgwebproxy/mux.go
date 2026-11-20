@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -616,7 +617,8 @@ func (m *Mux) StartWithSecrets(listenPort int, eps []WebProxyEndpoint, secrets [
 
 	if oldSrv != nil {
 		_ = oldSrv.Close()
-	} else if oldLn != nil {
+	}
+	if oldLn != nil {
 		_ = oldLn.Close()
 	}
 
@@ -635,8 +637,11 @@ func (m *Mux) Stop() error {
 	var err error
 	if m.server != nil {
 		err = m.server.Close()
-	} else if m.listener != nil {
-		err = m.listener.Close()
+	}
+	if m.listener != nil {
+		if lerr := m.listener.Close(); lerr != nil && !errors.Is(lerr, net.ErrClosed) && err == nil {
+			err = lerr
+		}
 	}
 
 	m.running = false
