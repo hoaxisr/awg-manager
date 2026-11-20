@@ -398,20 +398,29 @@ func (e *Engine) Recheck(ctx context.Context, id string) error {
 	e.commitMu.Unlock()
 	e.waitCandidateAttemptStopped(id, 2*time.Second)
 
+	// Re-read under commitMu: a user action may have changed or removed the
+	// card while the previous attempt was unwinding.
+	e.commitMu.Lock()
+	cand, exists = e.deps.State.Snapshot(time.Now()).Candidates[id]
+	if !exists {
+		e.commitMu.Unlock()
+		return ErrNotFound
+	}
 	probeCtx := context.WithoutCancel(e.baseCtx)
 	if cand.State == model.CandidateAdded {
+		e.commitMu.Unlock()
 		return e.recheckAdded(probeCtx, id, cand)
 	}
 
 	// A fresh attempt under the current generation, bypassing the admission
 	// drop of a decided candidate: the state is reset to checking first, so
 	// beginAttempt sees a checking card and the publishDecision gate passes.
+	previousState := cand.State
 	cand.State = model.CandidateChecking
 	cand.Coverage = model.CoverageEvidence{}
 	cand.Direct = model.CheckEvidence{Verdict: model.VerdictNotChecked}
 	cand.WAN = model.CheckEvidence{Verdict: model.VerdictNotChecked}
 	cand.Tunnel = model.CheckEvidence{Verdict: model.VerdictNotChecked}
-	e.commitMu.Lock()
 	perr := e.deps.State.Update(false, func(s *store.State) {
 		s.Candidates[id] = cand
 	})
@@ -428,13 +437,27 @@ func (e *Engine) Recheck(ctx context.Context, id string) error {
 		FirstAt:   cand.FirstAt,
 		LastAt:    time.Now(),
 	}
-	e.process(suspect)
+	e.process(suspect, previousState)
 
-	// process publishes only when the card is still checking; a user action
-	// that raced the rerun keeps its state either way.
-	if _, ok := e.deps.State.Snapshot(time.Now()).Candidates[id]; !ok {
+	// process finalizes the card unless a user action raced the rerun.
+	e.commitMu.Lock()
+	current, exists := e.deps.State.Snapshot(time.Now()).Candidates[id]
+	if !exists {
+		e.commitMu.Unlock()
 		return fmt.Errorf("recheck discarded candidate %s: both paths blocked", id)
 	}
+	if current.State == model.CandidateChecking {
+		current.State = previousState
+		if current.State == model.CandidateChecking {
+			current.State = model.CandidateWaiting
+		}
+		current.LastError = "recheck could not start: another check is still active"
+		current.LastAt = time.Now()
+		_ = e.deps.State.Update(true, func(s *store.State) {
+			s.Candidates[id] = current
+		})
+	}
+	e.commitMu.Unlock()
 	return nil
 }
 

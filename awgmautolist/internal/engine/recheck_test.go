@@ -4,6 +4,8 @@ package engine
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,6 +70,170 @@ func TestRecheckRefreshesDecidedCandidate(t *testing.T) {
 	}
 	if updated.Tunnel.Verdict != model.VerdictReachable {
 		t.Fatalf("tunnel verdict=%s, want reachable", updated.Tunnel.Verdict)
+	}
+}
+
+// TestRecheckFinalizesCardOnEarlyExit verifies that a manual recheck never
+// leaves an existing card in checking. Every early outcome keeps the previous
+// decision state and records the evidence or error that stopped the check.
+func TestRecheckFinalizesCardOnEarlyExit(t *testing.T) {
+	tests := []struct {
+		name         string
+		initial      model.CandidateState
+		setup        func(*testHarness, string)
+		wantState    model.CandidateState
+		wantDirect   model.Verdict
+		wantWAN      model.Verdict
+		wantCovered  bool
+		wantExcluded bool
+		wantError    string
+	}{
+		{
+			name: "coverage error", initial: model.CandidateRejected,
+			setup:     func(h *testHarness, _ string) { h.coverage.setErr(errors.New("coverage unavailable")) },
+			wantState: model.CandidateRejected, wantDirect: model.VerdictNotChecked, wantWAN: model.VerdictNotChecked,
+			wantError: "coverage",
+		},
+		{
+			name: "covered", initial: model.CandidateRejected,
+			setup:     func(h *testHarness, _ string) { h.coverage.setCovered(true) },
+			wantState: model.CandidateRejected, wantDirect: model.VerdictNotChecked, wantWAN: model.VerdictNotChecked,
+			wantCovered: true,
+		},
+		{
+			name: "excluded", initial: model.CandidateRejected,
+			setup:     func(h *testHarness, _ string) { h.coverage.setExcluded(true) },
+			wantState: model.CandidateRejected, wantDirect: model.VerdictNotChecked, wantWAN: model.VerdictNotChecked,
+			wantExcluded: true,
+		},
+		{
+			name: "direct path error", initial: model.CandidateRejected,
+			setup:     func(h *testHarness, _ string) { h.routes.setErr(errors.New("route unavailable")) },
+			wantState: model.CandidateRejected, wantDirect: model.VerdictNotChecked, wantWAN: model.VerdictNotChecked,
+			wantError: "direct path",
+		},
+		{
+			name: "direct reachable", initial: model.CandidateRejected,
+			setup: func(h *testHarness, key string) {
+				h.probes.setDirect(key, model.VerdictReachable)
+				h.probes.setWAN(model.VerdictReachable)
+			},
+			wantState: model.CandidateRejected, wantDirect: model.VerdictReachable, wantWAN: model.VerdictReachable,
+		},
+		{
+			name: "direct error", initial: model.CandidateRejected,
+			setup: func(h *testHarness, key string) {
+				h.probes.setDirect(key, model.VerdictError)
+				h.probes.setWAN(model.VerdictReachable)
+			},
+			wantState: model.CandidateRejected, wantDirect: model.VerdictError, wantWAN: model.VerdictReachable,
+			wantError: "direct",
+		},
+		{
+			name: "WAN error", initial: model.CandidateRejected,
+			setup: func(h *testHarness, key string) {
+				h.probes.setDirect(key, model.VerdictBlocked)
+				h.probes.setWAN(model.VerdictError)
+			},
+			wantState: model.CandidateRejected, wantDirect: model.VerdictBlocked, wantWAN: model.VerdictError,
+			wantError: "WAN",
+		},
+		{
+			name: "WAN blocked", initial: model.CandidateRejected,
+			setup: func(h *testHarness, key string) {
+				h.probes.setDirect(key, model.VerdictBlocked)
+				h.probes.setWAN(model.VerdictBlocked)
+			},
+			wantState: model.CandidateRejected, wantDirect: model.VerdictBlocked, wantWAN: model.VerdictBlocked,
+			wantError: "WAN",
+		},
+		{
+			name: "capture paused", initial: model.CandidateRejected,
+			setup: func(h *testHarness, _ string) {
+				h.engine.mu.Lock()
+				h.engine.capturePaused = true
+				h.engine.mu.Unlock()
+			},
+			wantState: model.CandidateRejected, wantDirect: model.VerdictNotChecked, wantWAN: model.VerdictNotChecked,
+			wantError: "paused",
+		},
+		{
+			name: "already checking", initial: model.CandidateChecking,
+			setup: func(h *testHarness, key string) {
+				h.probes.setDirect(key, model.VerdictReachable)
+				h.probes.setWAN(model.VerdictReachable)
+			},
+			wantState: model.CandidateWaiting, wantDirect: model.VerdictReachable, wantWAN: model.VerdictReachable,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			_, key := rejectedFixture(t, h)
+			if tc.initial != model.CandidateRejected {
+				if err := h.state.Update(true, func(s *storeState) {
+					candidate := s.Candidates[key]
+					candidate.State = tc.initial
+					s.Candidates[key] = candidate
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tc.setup(h, key)
+
+			if err := h.engine.Recheck(context.Background(), key); err != nil {
+				t.Fatalf("recheck: %v", err)
+			}
+			updated, ok := h.candidate(key)
+			if !ok {
+				t.Fatal("candidate disappeared after recheck")
+			}
+			if updated.State != tc.wantState {
+				t.Fatalf("state=%s, want %s", updated.State, tc.wantState)
+			}
+			if updated.Direct.Verdict != tc.wantDirect || updated.WAN.Verdict != tc.wantWAN {
+				t.Fatalf("verdicts direct=%s wan=%s, want direct=%s wan=%s",
+					updated.Direct.Verdict, updated.WAN.Verdict, tc.wantDirect, tc.wantWAN)
+			}
+			if updated.Coverage.Covered != tc.wantCovered || updated.Coverage.Excluded != tc.wantExcluded {
+				t.Fatalf("coverage=%+v", updated.Coverage)
+			}
+			if tc.wantError == "" {
+				if updated.LastError != "" {
+					t.Fatalf("lastError=%q", updated.LastError)
+				}
+			} else if !strings.Contains(updated.LastError, tc.wantError) {
+				t.Fatalf("lastError=%q, want %q", updated.LastError, tc.wantError)
+			}
+		})
+	}
+}
+
+// TestRecheckDoesNotResurrectRemovedCandidate proves that a card removed
+// while the recheck is waiting for the previous attempt is not recreated.
+func TestRecheckDoesNotResurrectRemovedCandidate(t *testing.T) {
+	h := newHarness(t, nil)
+	_, key := rejectedFixture(t, h)
+	ctx, cancel := context.WithCancel(context.Background())
+	h.engine.mu.Lock()
+	h.engine.active[key] = &attempt{id: "old", ctx: ctx, cancel: cancel}
+	h.engine.mu.Unlock()
+
+	done := make(chan error, 1)
+	go func() { done <- h.engine.Recheck(context.Background(), key) }()
+	h.waitFor(func() bool { return ctx.Err() != nil })
+	if err := h.engine.Forget(key); err != nil {
+		t.Fatal(err)
+	}
+	h.engine.mu.Lock()
+	delete(h.engine.active, key)
+	h.engine.mu.Unlock()
+	if err := <-done; err != ErrNotFound {
+		t.Fatalf("recheck err=%v, want ErrNotFound", err)
+	}
+	if _, ok := h.candidate(key); ok {
+		t.Fatal("recheck resurrected a removed candidate")
 	}
 }
 

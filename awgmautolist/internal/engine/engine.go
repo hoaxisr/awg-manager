@@ -341,7 +341,7 @@ func (e *Engine) worker() {
 		case <-e.stopCh:
 			return
 		case suspect := <-e.queue:
-			e.process(suspect)
+			e.process(suspect, "")
 		}
 	}
 }
@@ -349,19 +349,28 @@ func (e *Engine) worker() {
 // beginAttempt registers one in-flight decision. Duplicate signals for an
 // active candidate and targets with an already decided candidate are
 // dropped: IP-only targets dedup across ports by CandidateKey, while the
-// observed endpoint stays inside the attempt.
-func (e *Engine) beginAttempt(key string) (*attempt, bool) {
+// observed endpoint stays inside the attempt. A manual recheck additionally
+// requires the checking card prepared by Recheck, so it cannot recreate a
+// candidate removed by a concurrent user action.
+func (e *Engine) beginAttempt(key string, manual bool) (*attempt, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	delete(e.queued, key)
-	if _, busy := e.active[key]; busy {
-		e.logf("duplicate suspect dropped: %s", key)
-		return nil, false
-	}
-	if existing, ok := e.deps.State.Snapshot(time.Now()).Candidates[key]; ok &&
-		existing.State != model.CandidateChecking {
+	existing, exists := e.deps.State.Snapshot(time.Now()).Candidates[key]
+	if manual {
+		if !exists || existing.State != model.CandidateChecking {
+			return nil, false
+		}
+	} else if exists && existing.State != model.CandidateChecking {
 		e.logf("suspect skipped, candidate %s: %s", existing.State, key)
 		return nil, false
+	}
+	if previous, busy := e.active[key]; busy {
+		if !manual {
+			e.logf("duplicate suspect dropped: %s", key)
+			return nil, false
+		}
+		previous.cancel()
 	}
 	ctx, cancel := context.WithCancel(e.baseCtx)
 	att := &attempt{
@@ -413,16 +422,66 @@ func (e *Engine) invalidateLocked(reason string) {
 // process runs the decision pipeline for one suspect:
 // coverage and exclusions first, then the direct path, then the parallel
 // direct and WAN checks, then the optional tunnel check, and finally the
-// candidate publication or the gated automatic write.
-func (e *Engine) process(suspect capture.Suspect) {
+// candidate publication or the gated automatic write. recheckState is set
+// only for a manual recheck; its early exits then finalize the existing card.
+func (e *Engine) process(suspect capture.Suspect, recheckState model.CandidateState) {
 	target := suspect.Target
 	key := target.CandidateKey()
-	att, ok := e.beginAttempt(key)
+	att, ok := e.beginAttempt(key, recheckState != "")
 	if !ok {
 		return
 	}
 	defer e.endAttempt(key, att)
+
+	cand := model.Candidate{
+		ID:            key,
+		Target:        target,
+		Reason:        suspect.Reason,
+		ClientIP:      suspect.ClientIP,
+		ClientMAC:     suspect.ClientMAC,
+		FirstAt:       suspect.FirstAt,
+		LastAt:        suspect.LastAt,
+		Direct:        model.CheckEvidence{Verdict: model.VerdictNotChecked},
+		WAN:           model.CheckEvidence{Verdict: model.VerdictNotChecked},
+		Tunnel:        model.CheckEvidence{Verdict: model.VerdictNotChecked},
+		CorrelationID: att.id,
+	}
+	defer func() {
+		if recheckState == "" || !att.valid(e) {
+			return
+		}
+		e.commitMu.Lock()
+		defer e.commitMu.Unlock()
+		current, ok := e.deps.State.Snapshot(time.Now()).Candidates[key]
+		if !ok || current.State != model.CandidateChecking {
+			return
+		}
+		state := recheckState
+		if state == model.CandidateChecking {
+			state = model.CandidateWaiting
+		}
+		perr := e.deps.State.Update(true, func(s *store.State) {
+			current, ok := s.Candidates[key]
+			if !ok || current.State != model.CandidateChecking {
+				return
+			}
+			current.State = state
+			current.Coverage = cand.Coverage
+			current.Direct = cand.Direct
+			current.WAN = cand.WAN
+			current.Tunnel = cand.Tunnel
+			current.LastError = cand.LastError
+			current.LastAt = time.Now()
+			current.CorrelationID = cand.CorrelationID
+			s.Candidates[key] = current
+		})
+		if perr != nil {
+			e.setLastError(fmt.Sprintf("recheck %s state write: %v", key, perr))
+		}
+	}()
+
 	if e.paused() {
+		cand.LastError = "capture is paused because WAN is unavailable"
 		return // paused capture must not create deferred work
 	}
 	cfg := e.deps.Config.Config()
@@ -435,17 +494,18 @@ func (e *Engine) process(suspect capture.Suspect) {
 	if !att.valid(e) {
 		return
 	}
-	cov := outcome.Evidence
-	if cov.DurationMS == 0 {
-		cov.DurationMS = time.Since(coverageAt).Milliseconds()
+	cand.Coverage = outcome.Evidence
+	if cand.Coverage.DurationMS == 0 {
+		cand.Coverage.DurationMS = time.Since(coverageAt).Milliseconds()
 	}
 	if err != nil {
+		cand.LastError = fmt.Sprintf("coverage: %v", err)
 		e.setLastError(fmt.Sprintf("%s coverage: %v", att.id, err))
 		e.logf("%s coverage error, no candidate: %v", att.id, err)
 		return
 	}
-	if cov.Covered || cov.Excluded {
-		e.logf("%s target covered=%v excluded=%v, no candidate", att.id, cov.Covered, cov.Excluded)
+	if cand.Coverage.Covered || cand.Coverage.Excluded {
+		e.logf("%s target covered=%v excluded=%v, no candidate", att.id, cand.Coverage.Covered, cand.Coverage.Excluded)
 		return
 	}
 
@@ -454,6 +514,7 @@ func (e *Engine) process(suspect capture.Suspect) {
 		return
 	}
 	if err != nil {
+		cand.LastError = fmt.Sprintf("direct path: %v", err)
 		e.setLastError(fmt.Sprintf("%s direct path: %v", att.id, err))
 		e.logf("%s direct path error, no candidate: %v", att.id, err)
 		return
@@ -465,26 +526,21 @@ func (e *Engine) process(suspect capture.Suspect) {
 	if !att.valid(e) {
 		return
 	}
+	cand.Direct = probeEvidence(results.Direct)
+	cand.WAN = probeEvidence(results.WAN)
 	e.logf("%s direct=%s wan=%s outbound=%s interface=%s",
 		att.id, results.Direct.Verdict, results.WAN.Verdict, directPath.Outbound, directPath.Interface)
 	if results.Direct.Verdict != model.VerdictBlocked || results.WAN.Verdict != model.VerdictReachable {
 		// reachable needs no candidate; error and WAN failure prove nothing.
+		switch {
+		case results.Direct.Verdict == model.VerdictError:
+			cand.LastError = "direct check failed"
+		case results.WAN.Verdict == model.VerdictError:
+			cand.LastError = "WAN check failed"
+		case results.WAN.Verdict == model.VerdictBlocked:
+			cand.LastError = "WAN check is blocked"
+		}
 		return
-	}
-
-	cand := model.Candidate{
-		ID:            key,
-		Target:        target,
-		Reason:        suspect.Reason,
-		ClientIP:      suspect.ClientIP,
-		ClientMAC:     suspect.ClientMAC,
-		FirstAt:       suspect.FirstAt,
-		LastAt:        suspect.LastAt,
-		Coverage:      cov,
-		Direct:        probeEvidence(results.Direct),
-		WAN:           probeEvidence(results.WAN),
-		Tunnel:        model.CheckEvidence{Verdict: model.VerdictNotChecked},
-		CorrelationID: att.id,
 	}
 
 	if !cfg.TunnelProbe {
