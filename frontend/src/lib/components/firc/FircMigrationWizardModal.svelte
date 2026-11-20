@@ -2595,9 +2595,15 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 8px;
     font-size: 12.5px;
     color: var(--text-primary);
+  }
+
+  .eng-head strong {
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .eng-badges {

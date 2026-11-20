@@ -128,6 +128,32 @@ func TestNormalizeFircNodeRef_RepairsPercentEncodedStaleKeys(t *testing.T) {
 		t.Fatalf("expected subscription without Order to attach node %q, got %+v", TunnelNodePool, withInbound[0].Inbounds)
 	}
 
+	// Empty tunnel (no Sources, no Order) also resolves auto-created :1099 inbound node to '*' (not "default").
+	emptyTunnel := []Tunnel{{
+		ID:     "empty",
+		Device: "tunvless2",
+		Enable: true,
+	}}
+	emptyWithInbound := EnsureInboundPort1099(emptyTunnel, 1099)
+	if len(emptyWithInbound[0].Inbounds) != 1 || emptyWithInbound[0].Inbounds[0].Node != TunnelNodePool {
+		t.Fatalf("expected empty tunnel to attach node %q, got %+v", TunnelNodePool, emptyWithInbound[0].Inbounds)
+	}
+
+	// Legacy "default" inbound selector normalizes cleanly to '*'.
+	if got := NormalizeFircNodeRef("default", Tunnel{}); got != TunnelNodePool {
+		t.Fatalf("expected legacy 'default' to normalize to %q, got %q", TunnelNodePool, got)
+	}
+	legacyTun := Tunnel{
+		ID:       "legacy",
+		Device:   "tunvless3",
+		Enable:   true,
+		Inbounds: []TunnelInbound{{Port: 1099, Listen: "br0", Node: "default"}},
+	}
+	NormalizeTunnelNodeRefs(&legacyTun)
+	if legacyTun.Inbounds[0].Node != TunnelNodePool {
+		t.Fatalf("NormalizeTunnelNodeRefs did not normalize legacy 'default': got %q", legacyTun.Inbounds[0].Node)
+	}
+
 	// Re-migration merge must repair stale percent-encoded inbound node from previous run.
 	prevTunnels := []Tunnel{{
 		ID:       tun.ID,

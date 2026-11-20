@@ -144,6 +144,7 @@
     display: inline-flex;
     justify-content: center;
     align-items: center;
+    gap: 0.375rem;
     line-height: 1;
   }
 
@@ -199,6 +200,13 @@
   }
   .variant-primary:hover:not(:disabled):not(.is-disabled) {
     background: var(--color-accent-hover);
+  }
+  .variant-primary:disabled:not([aria-busy='true']),
+  .variant-primary.is-disabled:not([aria-busy='true']) {
+    opacity: 0.85;
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-secondary);
+    border-color: var(--color-border);
   }
 
   .variant-secondary {
@@ -280,6 +288,10 @@
   :global(.btn .icon > svg) {
     width: 14px;
     height: 14px;
+    flex-shrink: 0;
+  }
+
+  :global(.btn .btn-label > svg) {
     flex-shrink: 0;
   }
 </style>

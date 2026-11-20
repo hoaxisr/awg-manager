@@ -160,7 +160,7 @@
 	<header class="header">
 		<div class="header-left">
 			<div class="icon-wrap">
-				<Network size={22} class="text-primary" />
+				<Network size={22} />
 			</div>
 			<div>
 				<div class="title-row">
@@ -179,7 +179,7 @@
 				Обновить
 			</Button>
 			<Button variant="primary" size="sm" onclick={openAddModal} disabled={loading}>
-				<Plus size={14} class="mr-1" />
+				<Plus size={14} />
 				Добавить узел
 			</Button>
 		</div>
@@ -192,7 +192,7 @@
 		</div>
 	{:else if config}
 		<!-- Info Hint -->
-		<div class="info-box mb-4">
+		<div class="info-box">
 			<p class="text-sm">
 				<strong>Как работает маршрутизация на :9009:</strong> Входящий трафик от клиентов приходит на порт 9009.
 				Шлюз разделяет его по путям: запросы к <strong>VLESS (XHTTP)</strong> идут по пути <code>{config.xray_path_prefix || '/cdn-bridge'}/*</code>,
@@ -211,7 +211,7 @@
 				<div class="empty-routes">
 					<p>Нет зарегистрированных доменов.</p>
 					<Button variant="secondary" size="sm" onclick={openAddModal}>
-						<Plus size={14} class="mr-1" />
+						<Plus size={14} />
 						Добавить первый узел
 					</Button>
 				</div>
@@ -317,7 +317,7 @@
 		<!-- Footer actions -->
 		<footer class="footer">
 			<Button variant="primary" onclick={saveAllConfig} disabled={saving}>
-				<Save size={16} class="mr-1" />
+				<Save size={16} />
 				{saving ? 'Сохранение...' : 'Сохранить изменения'}
 			</Button>
 		</footer>
@@ -388,17 +388,19 @@
 
 <style>
 	.card-root {
-		background: var(--bg-surface, #ffffff);
-		border: 1px solid var(--border-color, #e5e7eb);
-		border-radius: 0.75rem;
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
 		padding: 1.5rem;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+		color: var(--color-text-primary);
+		box-shadow: var(--shadow);
 	}
 
 	.header {
 		display: flex;
 		justify-content: space-between;
 		align-items: flex-start;
+		flex-wrap: wrap;
 		gap: 1rem;
 		margin-bottom: 1.5rem;
 	}
@@ -407,37 +409,78 @@
 		display: flex;
 		gap: 0.75rem;
 		align-items: flex-start;
+		min-width: 0;
+		flex: 1 1 260px;
+	}
+
+	.header-left > div {
+		min-width: 0;
 	}
 
 	.icon-wrap {
+		flex-shrink: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		padding: 0.625rem;
-		background: rgba(14, 165, 233, 0.1);
-		border-radius: 0.5rem;
-		color: #0284c7;
+		background: var(--color-accent-tint);
+		border: 1px solid var(--color-accent-border);
+		border-radius: var(--radius-sm);
+		color: var(--color-accent);
 	}
 
 	.title-row {
 		display: flex;
 		align-items: center;
+		flex-wrap: wrap;
 		gap: 0.5rem;
 	}
 
 	.title {
 		font-size: 1.25rem;
 		font-weight: 600;
-		color: var(--text-primary, #111827);
+		color: var(--color-text-primary);
 		margin: 0;
 	}
 
 	.subtitle {
 		font-size: 0.875rem;
-		color: var(--text-muted, #6b7280);
+		color: var(--color-text-secondary);
 		margin: 0.25rem 0 0 0;
 	}
 
 	.header-actions {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 0.5rem;
+		flex-shrink: 0;
+	}
+
+	.info-box {
+		padding: 0.75rem 1rem;
+		margin-bottom: 1rem;
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-tertiary);
+		border: 1px solid var(--color-border);
+		color: var(--color-text-secondary);
+		line-height: 1.45;
+	}
+
+	.info-box p {
+		margin: 0;
+	}
+
+	.info-box strong {
+		color: var(--color-text-primary);
+	}
+
+	.info-box code {
+		padding: 0.1rem 0.35rem;
+		border-radius: 4px;
+		background: var(--color-bg-primary);
+		color: var(--color-text-primary);
+		font-family: var(--font-mono);
+		font-size: 0.8em;
 	}
 
 	.badge {
@@ -445,21 +488,25 @@
 		padding: 0.2rem 0.5rem;
 		border-radius: 9999px;
 		font-weight: 500;
+		white-space: nowrap;
 	}
 
 	.badge-success {
-		background: #dcfce7;
-		color: #166534;
+		background: var(--color-success-tint);
+		color: var(--color-success);
+		border: 1px solid var(--color-success-border);
 	}
 
 	.badge-route-xray {
-		background: #e0e7ff;
-		color: #3730a3;
+		background: var(--color-accent-tint);
+		color: var(--color-accent);
+		border: 1px solid var(--color-accent-border);
 	}
 
 	.badge-route-tg {
-		background: #e0f2fe;
-		color: #0369a1;
+		background: var(--color-info-tint);
+		color: var(--color-info);
+		border: 1px solid var(--color-info-border);
 	}
 
 	.section {
@@ -467,7 +514,7 @@
 	}
 
 	.border-top {
-		border-top: 1px solid var(--border-color, #e5e7eb);
+		border-top: 1px solid var(--color-border);
 		padding-top: 1.25rem;
 	}
 
@@ -475,25 +522,28 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
 		margin-bottom: 0.75rem;
 	}
 
 	.section-title {
 		font-size: 0.95rem;
 		font-weight: 600;
-		color: var(--text-primary, #111827);
+		color: var(--color-text-primary);
 		margin: 0;
 	}
 
 	.count-badge {
 		font-size: 0.75rem;
-		color: var(--text-muted, #6b7280);
+		color: var(--color-text-muted);
 	}
 
 	.cdn-table-wrap {
 		overflow-x: auto;
-		border: 1px solid var(--border-color, #e5e7eb);
-		border-radius: 0.5rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-primary);
 	}
 
 	.routes-table {
@@ -503,27 +553,30 @@
 	}
 
 	.routes-table th {
-		background: var(--bg-muted, #f9fafb);
+		background: var(--color-bg-tertiary);
 		padding: 0.625rem 0.75rem;
 		text-align: left;
 		font-weight: 500;
-		color: var(--text-muted, #6b7280);
-		border-bottom: 1px solid var(--border-color, #e5e7eb);
+		color: var(--color-text-secondary);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.routes-table td {
 		padding: 0.625rem 0.75rem;
-		border-bottom: 1px solid var(--border-color, #e5e7eb);
+		color: var(--color-text-primary);
+		border-bottom: 1px solid var(--color-border);
 		vertical-align: middle;
 	}
 
 	.row-disabled {
 		opacity: 0.55;
-		background: var(--bg-muted, #f9fafb);
+		background: var(--color-bg-tertiary);
 	}
 
 	.text-center { text-align: center; }
 	.text-right { text-align: right; }
+	.text-muted { color: var(--color-text-muted); }
+	.text-danger { color: var(--color-error); }
 
 	.toggle-status-btn {
 		background: none;
@@ -531,6 +584,14 @@
 		cursor: pointer;
 		padding: 0.25rem;
 		display: inline-flex;
+	}
+
+	.toggle-status-btn :global(.text-success) {
+		color: var(--color-success);
+	}
+
+	.toggle-status-btn :global(.text-muted) {
+		color: var(--color-text-muted);
 	}
 
 	.row-actions {
@@ -545,29 +606,38 @@
 		cursor: pointer;
 		padding: 0.3rem;
 		border-radius: 0.25rem;
-		color: var(--text-muted, #6b7280);
+		color: var(--color-text-muted);
 	}
 
 	.cdn-btn-icon:hover {
-		background: rgba(0, 0, 0, 0.05);
-		color: var(--text-primary, #111827);
+		background: var(--color-bg-hover);
+		color: var(--color-text-primary);
+	}
+
+	.cdn-btn-icon.text-danger {
+		color: var(--color-error);
 	}
 
 	.cdn-btn-icon.text-danger:hover {
-		background: #fee2e2;
-		color: #b91c1c;
+		background: var(--color-error-tint);
+		color: var(--color-error);
 	}
 
 	.empty-routes {
 		padding: 2rem;
 		text-align: center;
-		border: 1px dashed var(--border-color, #e5e7eb);
-		border-radius: 0.5rem;
-		color: var(--text-muted, #6b7280);
+		border: 1px dashed var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-primary);
+		color: var(--color-text-secondary);
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 0.75rem;
+	}
+
+	.empty-routes p {
+		margin: 0;
 	}
 
 	.settings-grid {
@@ -586,19 +656,28 @@
 	.setting-label {
 		font-size: 0.875rem;
 		font-weight: 500;
+		color: var(--color-text-primary);
 	}
 
 	.select-input {
+		width: 100%;
 		max-width: 400px;
 		padding: 0.45rem 0.625rem;
-		border: 1px solid var(--border-color, #e5e7eb);
-		border-radius: 0.375rem;
-		background: var(--bg-surface, #ffffff);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-primary);
+		color: var(--color-text-primary);
+		box-sizing: border-box;
+	}
+
+	.select-input:focus {
+		outline: none;
+		border-color: var(--color-accent);
 	}
 
 	.hint {
 		font-size: 0.75rem;
-		color: var(--text-muted, #6b7280);
+		color: var(--color-text-muted);
 	}
 
 	.footer {
@@ -623,13 +702,23 @@
 	.form-label {
 		font-size: 0.875rem;
 		font-weight: 500;
+		color: var(--color-text-primary);
 	}
 
 	.cdn-input {
+		width: 100%;
+		box-sizing: border-box;
 		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--border-color, #e5e7eb);
-		border-radius: 0.375rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-primary);
+		color: var(--color-text-primary);
 		font-size: 0.875rem;
+	}
+
+	.cdn-input:focus {
+		outline: none;
+		border-color: var(--color-accent);
 	}
 
 	.checkbox-label {
@@ -637,12 +726,13 @@
 		align-items: center;
 		gap: 0.5rem;
 		font-size: 0.875rem;
+		color: var(--color-text-primary);
 		cursor: pointer;
 	}
 
 	.form-error {
 		font-size: 0.75rem;
-		color: #ef4444;
+		color: var(--color-error);
 	}
 
 	.loading-state {
@@ -651,6 +741,12 @@
 		justify-content: center;
 		gap: 0.75rem;
 		padding: 3rem 0;
-		color: var(--text-muted, #6b7280);
+		color: var(--color-text-muted);
+	}
+
+	@media (max-width: 640px) {
+		.card-root {
+			padding: 1rem;
+		}
 	}
 </style>

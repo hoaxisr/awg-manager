@@ -656,5 +656,8 @@
     .buffer-meta {
       margin-left: 0;
     }
+    .row-chips > .divider {
+      display: none;
+    }
   }
 </style>

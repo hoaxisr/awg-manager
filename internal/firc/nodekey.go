@@ -239,11 +239,14 @@ func splitDupKeySuffix(rest string) (stem, suffix string, ok bool) {
 }
 
 // NormalizeFircNodeRef converts an arbitrary node selector (canonical key, stale URL-encoded
-// fragment key, `*`, or `default`) into C `fircd`'s canonical key representation.
+// fragment key, `*`, or legacy `default`) into C `fircd`'s canonical key representation.
 func NormalizeFircNodeRef(ref string, t Tunnel) string {
 	r := strings.TrimSpace(ref)
-	if r == "" || r == TunnelNodePool || r == "default" {
+	if r == "" || r == TunnelNodePool {
 		return r
+	}
+	if r == "default" {
+		return TunnelNodePool
 	}
 	bySource, allKeys := canonicalLinkKeysBySource(t)
 	if allKeys[r] {
@@ -436,5 +439,5 @@ func defaultTunnelNodeKey(t Tunnel) string {
 		}
 		return srcID + ":"
 	}
-	return "default"
+	return TunnelNodePool
 }

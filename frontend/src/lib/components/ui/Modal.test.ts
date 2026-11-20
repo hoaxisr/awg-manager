@@ -69,3 +69,23 @@ describe('Modal: Esc', () => {
 		expect(closeLower).toHaveBeenCalledTimes(1);
 	});
 });
+
+describe('Modal: width prop', () => {
+	it('applies viewport-clamped inline max-width when width is provided', async () => {
+		render(Modal, { props: { open: true, title: 'Широкая', width: '780px', onclose: vi.fn() } });
+		await tick();
+
+		const card = document.body.querySelector<HTMLElement>('.modal-card');
+		expect(card).not.toBeNull();
+		expect(card?.style.maxWidth).toBe('min(780px, calc(100vw - 2rem))');
+	});
+
+	it('leaves inline max-width unset when width is omitted', async () => {
+		render(Modal, { props: { open: true, title: 'Обычная', onclose: vi.fn() } });
+		await tick();
+
+		const card = document.body.querySelector<HTMLElement>('.modal-card');
+		expect(card).not.toBeNull();
+		expect(card?.style.maxWidth).toBe('');
+	});
+});

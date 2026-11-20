@@ -59,6 +59,7 @@
         open = $bindable(false),
         title,
         size = 'md',
+        width,
         bodyLayout = 'default',
         onclose,
         children,
@@ -182,6 +183,7 @@
     >
         <div
             class="modal-card {sizeClasses[size]}"
+            style:max-width={width ? `min(${width}, calc(100vw - 2rem))` : undefined}
             role="document"
         >
             <header class="modal-header">
