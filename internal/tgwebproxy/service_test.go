@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1588,15 +1589,38 @@ func TestPresets_FourPresetsAndPerEndpointConfigGen(t *testing.T) {
 	}
 }
 
+var (
+	allocPortMu   sync.Mutex
+	allocPortSeen = map[int]bool{}
+)
+
 func allocFreeLocalPort(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen free port: %v", err)
+	var held []net.Listener
+	defer func() {
+		for _, ln := range held {
+			_ = ln.Close()
+		}
+	}()
+	for range 64 {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen free port: %v", err)
+		}
+		port := ln.Addr().(*net.TCPAddr).Port
+		allocPortMu.Lock()
+		dup := allocPortSeen[port]
+		if !dup {
+			allocPortSeen[port] = true
+		}
+		allocPortMu.Unlock()
+		held = append(held, ln)
+		if !dup {
+			return port
+		}
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-	return port
+	t.Fatalf("could not allocate distinct free local port")
+	return 0
 }
 
 func TestMux_HotRebindListenPortAndBusyPortPreservesOldListener(t *testing.T) {
@@ -1604,7 +1628,6 @@ func TestMux_HotRebindListenPortAndBusyPortPreservesOldListener(t *testing.T) {
 	defer mux.Stop()
 
 	portA := allocFreeLocalPort(t)
-	portB := allocFreeLocalPort(t)
 	secret := "11112222333344445555666677778888"
 	eps := []WebProxyEndpoint{{ID: "ep1", Hostname: "tg.example.com", ListenPort: 18084, Enabled: true}}
 
@@ -1620,6 +1643,14 @@ func TestMux_HotRebindListenPortAndBusyPortPreservesOldListener(t *testing.T) {
 		_ = c.Close()
 	}
 
+	mux.mu.Lock()
+	oldLn := mux.listener
+	mux.mu.Unlock()
+	if oldLn == nil {
+		t.Fatalf("expected non-nil listener on portA %d", portA)
+	}
+
+	portB := allocFreeLocalPort(t)
 	// Rebind to portB while running
 	if err := mux.StartWithSecrets(portB, eps, []string{secret}); err != nil {
 		t.Fatalf("StartWithSecrets portB: %v", err)
@@ -1632,9 +1663,17 @@ func TestMux_HotRebindListenPortAndBusyPortPreservesOldListener(t *testing.T) {
 	} else {
 		_ = c.Close()
 	}
-	if c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", portA), 200*time.Millisecond); err == nil {
-		_ = c.Close()
-		t.Fatalf("expected old portA %d to be closed after rebind to portB", portA)
+	mux.mu.Lock()
+	newLn := mux.listener
+	mux.mu.Unlock()
+	if newLn == nil || newLn == oldLn {
+		t.Fatalf("expected mux to replace listener on rebind from portA %d to portB %d", portA, portB)
+	}
+	if conn, err := oldLn.Accept(); err == nil {
+		_ = conn.Close()
+		t.Fatalf("expected old listener on portA %d to be closed after rebind to portB %d", portA, portB)
+	} else if !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("expected net.ErrClosed from old listener on portA %d, got: %v", portA, err)
 	}
 
 	// Occupy portC and verify failed rebind preserves working listener on portB
