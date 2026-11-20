@@ -368,6 +368,11 @@ func (h *FircHandler) handleInstall(w http.ResponseWriter, r *http.Request) {
 
 	h.installMu.Lock()
 	st := h.installer.GetInstallStatus(r.Context(), h.op, h.isSelected())
+	if st.ExternalPackage != "" {
+		h.installMu.Unlock()
+		response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("firc runtime belongs to external package %s.list; refusing to overwrite", st.ExternalPackage), "EXTERNAL_PACKAGE_OWNED")
+		return
+	}
 	if !st.Available {
 		h.installMu.Unlock()
 		reason := st.UnavailableReason
@@ -414,6 +419,11 @@ func (h *FircHandler) handleMigrateRuntime(w http.ResponseWriter, r *http.Reques
 
 	h.installMu.Lock()
 	st := h.installer.GetInstallStatus(r.Context(), h.op, h.isSelected())
+	if st.ExternalPackage != "" {
+		h.installMu.Unlock()
+		response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("firc runtime belongs to external package %s.list; refusing to overwrite", st.ExternalPackage), "EXTERNAL_PACKAGE_OWNED")
+		return
+	}
 	if !st.Available {
 		h.installMu.Unlock()
 		reason := st.UnavailableReason
@@ -485,6 +495,11 @@ func (h *FircHandler) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	if st.Busy {
 		h.installMu.Unlock()
 		response.ErrorWithStatus(w, http.StatusConflict, firc.ErrInstallBusy.Error(), "INSTALL_BUSY")
+		return
+	}
+	if st.ExternalPackage != "" {
+		h.installMu.Unlock()
+		response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("firc runtime belongs to external package %s.list; refusing to remove", st.ExternalPackage), "EXTERNAL_PACKAGE_OWNED")
 		return
 	}
 

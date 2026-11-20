@@ -40,16 +40,23 @@ func sha256HexBytes(b []byte) string { sum := sha256.Sum256(b); return hex.Encod
 type mockRuntimePackages struct {
 	mu                      sync.Mutex
 	root, version           string
+	versions                map[string]string
 	installs, removes       int
 	failInstall, failRemove bool
 	failNextInstall         bool
 	entered, release        chan struct{}
 }
 
-func (m *mockRuntimePackages) Version(context.Context, string) (string, error) {
+func (m *mockRuntimePackages) Version(_ context.Context, name string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.version, nil
+	if m.versions != nil {
+		return m.versions[name], nil
+	}
+	if name == RuntimePackageName {
+		return m.version, nil
+	}
+	return "", nil
 }
 func (m *mockRuntimePackages) Install(ctx context.Context, p string) error {
 	m.mu.Lock()
@@ -287,5 +294,123 @@ func TestRuntimeUpgradeFailureRestoresPreviousPackage(t *testing.T) {
 	}
 	if pm.installs != 3 {
 		t.Fatalf("expected initial install, failed upgrade and rollback; got %d", pm.installs)
+	}
+}
+
+func seedExternalFircTree(t *testing.T, root string) {
+	t.Helper()
+	files := map[string]string{
+		"opt/bin/fircd":                         "elf-fircd",
+		"opt/bin/tunvless":                      "elf-tunvless",
+		"opt/etc/init.d/S99firc":                "#!/bin/sh\nexit 0\n",
+		"opt/etc/ndm/netfilter.d/100-firc":      "#!/bin/sh\nexit 0\n",
+		"opt/etc/ndm/iflayerchanged.d/100-firc": "#!/bin/sh\nexit 0\n",
+		"opt/etc/firc/firc.conf":                "configVersion: 0.7.0\n",
+		"opt/etc/firc/groups.yaml":              "groups: []\n",
+		"opt/lib/opkg/info/firc.list": "/opt/bin/fircd\n" +
+			"/opt/bin/tunvless\n" +
+			"/opt/etc/init.d/S99firc\n" +
+			"/opt/etc/ndm/netfilter.d/100-firc\n" +
+			"/opt/etc/ndm/iflayerchanged.d/100-firc\n",
+	}
+	for rel, content := range files {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		mode := os.FileMode(0644)
+		if strings.Contains(rel, "/bin/") || strings.Contains(rel, "/init.d/") || strings.Contains(rel, "/ndm/") {
+			mode = 0755
+		}
+		if err := os.WriteFile(p, []byte(content), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestOnDemandInstaller_ExternalFircPackageDetectedAndProtected(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	seedExternalFircTree(t, root)
+
+	spec := FircBinarySpec{
+		Version:       "0.8.0-awgm.4",
+		PackageURL:    "https://example.invalid/awg-firc-runtime.ipk",
+		PackageSHA256: strings.Repeat("b", 64),
+		PackageSize:   1024,
+	}
+	inst := NewOnDemandInstaller("mipsel-3.4", spec)
+	inst.SetPackageLayout(DefaultPackageLayout(root))
+	pm := &mockRuntimePackages{
+		root:     root,
+		versions: map[string]string{"firc": "0.8.2-1"},
+	}
+	inst.SetPackageManager(pm)
+	inst.SetFreeDiskFn(func(string) (int64, bool) { return 128 << 20, true })
+
+	st := inst.GetInstallStatus(ctx, nil, false)
+	if st.State != InstallStateInstalled {
+		t.Fatalf("expected state=%q for external firc package, got %+v", InstallStateInstalled, st)
+	}
+	if st.ExternalPackage != "firc" || st.InstalledVersion != "0.8.2-1" {
+		t.Fatalf("expected externalPackage=firc version=0.8.2-1, got %+v", st)
+	}
+	if !st.FircdPresent || !st.TunvlessPresent || !st.InitScriptPresent || !st.NDMHookPresent || !st.ConfigPresent {
+		t.Fatalf("expected all runtime presence flags true, got %+v", st)
+	}
+	if st.FreeDiskBytes != 128<<20 {
+		t.Fatalf("expected freeDisk fallback to probe /opt/bin, got %d", st.FreeDiskBytes)
+	}
+
+	inst.SetFircRunningChecker(func(context.Context) bool { return true })
+	runningSt := inst.GetInstallStatus(ctx, nil, true)
+	if runningSt.State != InstallStateRunning || runningSt.ExternalPackage != "firc" {
+		t.Fatalf("expected running external package status, got %+v", runningSt)
+	}
+
+	inst.SetFircRunningChecker(func(context.Context) bool { return false })
+	if err := inst.Install(ctx); err == nil || !strings.Contains(err.Error(), "external package firc.list") {
+		t.Fatalf("expected Install refusal for external package firc, got %v", err)
+	}
+	if err := inst.Uninstall(ctx, nil, false, false); err == nil || !strings.Contains(err.Error(), "external package firc.list") {
+		t.Fatalf("expected Uninstall refusal for external package firc, got %v", err)
+	}
+	if pm.installs != 0 || pm.removes != 0 {
+		t.Fatalf("unexpected opkg mutations for external package: installs=%d removes=%d", pm.installs, pm.removes)
+	}
+}
+
+func TestOpkgRuntimeManager_ReadsExternalFircVersion(t *testing.T) {
+	statusPath := filepath.Join(t.TempDir(), "status")
+	statusBody := strings.Join([]string{
+		"Package: busybox",
+		"Version: 1.36.1-1",
+		"Status: install ok installed",
+		"",
+		"Package: firc",
+		"Version: 0.8.2-1",
+		"Depends: libc, libssp",
+		"Status: install user installed",
+		"Architecture: mipsel-3.4",
+		"",
+	}, "\n")
+	if err := os.WriteFile(statusPath, []byte(statusBody), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pm := OpkgRuntimeManager{StatusPath: statusPath}
+	ver, err := pm.Version(context.Background(), "firc")
+	if err != nil {
+		t.Fatalf("Version(firc): %v", err)
+	}
+	if ver != "0.8.2-1" {
+		t.Fatalf("Version(firc) = %q, want %q", ver, "0.8.2-1")
+	}
+	awgVer, err := pm.Version(context.Background(), RuntimePackageName)
+	if err != nil {
+		t.Fatalf("Version(%s): %v", RuntimePackageName, err)
+	}
+	if awgVer != "" {
+		t.Fatalf("expected empty version for absent %s, got %q", RuntimePackageName, awgVer)
 	}
 }

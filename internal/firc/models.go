@@ -19,8 +19,14 @@ const (
 	// DefaultFircdBinary is the default path to the fircd daemon binary.
 	DefaultFircdBinary = "/opt/sbin/fircd"
 
+	// AltFircdBinary is the fallback path used by standalone Entware firc packages.
+	AltFircdBinary = "/opt/bin/fircd"
+
 	// DefaultTunvlessBinary is the default path to the tunvless binary.
 	DefaultTunvlessBinary = "/opt/sbin/tunvless"
+
+	// AltTunvlessBinary is the fallback path used by standalone Entware firc packages.
+	AltTunvlessBinary = "/opt/bin/tunvless"
 
 	// DefaultDNSProxyAddr is the local DNS proxy address used by fircd.
 	DefaultDNSProxyAddr = "127.0.0.1"

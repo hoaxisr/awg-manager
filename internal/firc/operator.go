@@ -48,16 +48,18 @@ type BreakGlassOptions struct {
 
 // Options configures the firc Operator.
 type Options struct {
-	Logger       *slog.Logger
-	ConfigDir    string
-	SocketPath   string
-	FircdBinary  string
-	TunvlessBin  string
-	InitScript   string
-	DNSProxyAddr string
-	DNSProxyPort int
-	InboundPort  uint16
-	StartTimeout time.Duration
+	Logger         *slog.Logger
+	ConfigDir      string
+	SocketPath     string
+	FircdBinary    string
+	AltFircdBinary string
+	TunvlessBin    string
+	AltTunvlessBin string
+	InitScript     string
+	DNSProxyAddr   string
+	DNSProxyPort   int
+	InboundPort    uint16
+	StartTimeout   time.Duration
 }
 
 // EngineSwitchHooks defines the callbacks used by SwitchEngine to coordinate
@@ -219,7 +221,9 @@ type Operator struct {
 	configDir                string
 	socketPath               string
 	fircdBinary              string
+	altFircdBinary           string
 	tunvlessBin              string
+	altTunvlessBin           string
 	initScript               string
 	dnsProxyAddr             string
 	dnsProxyPort             int
@@ -269,9 +273,15 @@ func NewOperator(opts Options) *Operator {
 	}
 	if opts.FircdBinary == "" {
 		opts.FircdBinary = DefaultFircdBinary
+		if opts.AltFircdBinary == "" {
+			opts.AltFircdBinary = AltFircdBinary
+		}
 	}
 	if opts.TunvlessBin == "" {
 		opts.TunvlessBin = DefaultTunvlessBinary
+		if opts.AltTunvlessBin == "" {
+			opts.AltTunvlessBin = AltTunvlessBinary
+		}
 	}
 	if opts.InitScript == "" {
 		opts.InitScript = "/opt/etc/init.d/S99firc"
@@ -289,19 +299,21 @@ func NewOperator(opts Options) *Operator {
 		opts.StartTimeout = 10 * time.Second
 	}
 	op := &Operator{
-		log:           log,
-		configDir:     opts.ConfigDir,
-		socketPath:    opts.SocketPath,
-		fircdBinary:   opts.FircdBinary,
-		tunvlessBin:   opts.TunvlessBin,
-		initScript:    opts.InitScript,
-		dnsProxyAddr:  opts.DNSProxyAddr,
-		dnsProxyPort:  opts.DNSProxyPort,
-		inboundPort:   opts.InboundPort,
-		startTimeout:  opts.StartTimeout,
-		client:        NewClient(opts.SocketPath),
-		singboxBinary: "/opt/bin/sing-box",
-		cloudEpoch:    1,
+		log:            log,
+		configDir:      opts.ConfigDir,
+		socketPath:     opts.SocketPath,
+		fircdBinary:    opts.FircdBinary,
+		altFircdBinary: opts.AltFircdBinary,
+		tunvlessBin:    opts.TunvlessBin,
+		altTunvlessBin: opts.AltTunvlessBin,
+		initScript:     opts.InitScript,
+		dnsProxyAddr:   opts.DNSProxyAddr,
+		dnsProxyPort:   opts.DNSProxyPort,
+		inboundPort:    opts.InboundPort,
+		startTimeout:   opts.StartTimeout,
+		client:         NewClient(opts.SocketPath),
+		singboxBinary:  "/opt/bin/sing-box",
+		cloudEpoch:     1,
 	}
 	op.extConfigGen.Store(1)
 	if _, err := os.Stat(op.extConfigPath()); err == nil {
@@ -1169,16 +1181,40 @@ app:
 	return atomicWriteYAMLFile(confPath, []byte(content), 0644)
 }
 
+func resolveExecutableFallback(primary, alt string) string {
+	if primary != "" {
+		if _, err := os.Stat(primary); err == nil {
+			return primary
+		}
+	}
+	if alt != "" {
+		if _, err := os.Stat(alt); err == nil {
+			return alt
+		}
+	}
+	return primary
+}
+
+func (o *Operator) resolvedFircdBinary() string {
+	return resolveExecutableFallback(o.fircdBinary, o.altFircdBinary)
+}
+
+func (o *Operator) resolvedTunvlessBinary() string {
+	return resolveExecutableFallback(o.tunvlessBin, o.altTunvlessBin)
+}
+
 // ValidateBinaries checks that both fircd and tunvless binaries exist, are regular
 // non-empty executable files, and verifies SHA-256 checksums when a SHA256SUMS manifest
 // is present in configDir.
 func (o *Operator) ValidateBinaries() error {
+	fircdPath := o.resolvedFircdBinary()
+	tunvlessPath := o.resolvedTunvlessBinary()
 	for _, bin := range []struct {
 		name string
 		path string
 	}{
-		{"fircd", o.fircdBinary},
-		{"tunvless", o.tunvlessBin},
+		{"fircd", fircdPath},
+		{"tunvless", tunvlessPath},
 	} {
 		info, err := os.Stat(bin.path)
 		if err != nil {
@@ -1193,7 +1229,7 @@ func (o *Operator) ValidateBinaries() error {
 	}
 	manifestPath := filepath.Join(o.configDir, "SHA256SUMS")
 	if _, err := os.Stat(manifestPath); err == nil {
-		if err := VerifyChecksumManifest(manifestPath, filepath.Dir(o.fircdBinary)); err != nil {
+		if err := VerifyChecksumManifest(manifestPath, filepath.Dir(fircdPath)); err != nil {
 			return err
 		}
 	}
@@ -1223,7 +1259,7 @@ func (o *Operator) validateProductionPreflight() (string, error) {
 	if err := o.ValidateBinaries(); err != nil {
 		return "preflight_validate_binaries", err
 	}
-	for _, binPath := range []string{o.fircdBinary, o.tunvlessBin} {
+	for _, binPath := range []string{o.resolvedFircdBinary(), o.resolvedTunvlessBinary()} {
 		ef, err := elf.Open(binPath)
 		if err != nil {
 			return "preflight_validate_elf", fmt.Errorf("invalid ELF binary %s: %w", binPath, err)
@@ -1265,8 +1301,8 @@ func (o *Operator) GetOfflineStatus(selected bool) Status {
 }
 
 func (o *Operator) getStatus(ctx context.Context, selected, allowLive bool) Status {
-	_, errFircd := os.Stat(o.fircdBinary)
-	_, errTun := os.Stat(o.tunvlessBin)
+	_, errFircd := os.Stat(o.resolvedFircdBinary())
+	_, errTun := os.Stat(o.resolvedTunvlessBinary())
 	running := allowLive && o.IsRunning(ctx)
 	recReq, recReason := o.RecoveryInfo()
 
@@ -1358,7 +1394,7 @@ func (o *Operator) startRuntime(ctx context.Context) error {
 		return fmt.Errorf("stat init script %s: %w", o.initScript, err)
 	} else {
 		_ = os.MkdirAll(filepath.Dir(o.socketPath), 0755)
-		cmd := exec.Command(o.fircdBinary, "--config", o.ConfigPath())
+		cmd := exec.Command(o.resolvedFircdBinary(), "--config", o.ConfigPath())
 		cmd.Env = append(os.Environ(), "STEER_TUN_SPARES=0")
 		if err := cmd.Start(); err != nil {
 			o.mu.Unlock()

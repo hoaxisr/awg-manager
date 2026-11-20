@@ -18,15 +18,18 @@
 	const busy = $derived(submitting || status?.busy === true);
 	const installed = $derived(Boolean(status?.fircdPresent || status?.tunvlessPresent || status?.installedVersion));
 	const legacyOwned = $derived(Boolean(status?.legacyBundledOwnership));
+	const externalPackage = $derived(status?.externalPackage?.trim() || '');
+	const externalOwned = $derived(Boolean(externalPackage));
 	const blocked = $derived(Boolean(status?.activeEngine || status?.state === 'running' || status?.dependentServices?.length));
 	const installDisabled = $derived(
 		loading ||
 			busy ||
+			externalOwned ||
 			!status?.available ||
 			Boolean(error) ||
 			(legacyOwned ? Boolean(status?.dependentServices?.length) : blocked),
 	);
-	const removeDisabled = $derived(busy || blocked || legacyOwned || Boolean(error));
+	const removeDisabled = $derived(busy || externalOwned || blocked || legacyOwned || Boolean(error));
 	const stateLabel = $derived.by(() => {
 		switch (status?.state) {
 			case 'not_installed': return m.firc_runtime_absent();
@@ -102,13 +105,16 @@
 		{#if status?.busy}
 			<div class="setting-row"><progress max="1" value={status.progress ?? 0} aria-label={stateLabel}></progress></div>
 		{/if}
+		{#if externalOwned}
+			<div class="setting-row text-secondary">{m.firc_runtime_external_notice({ pkg: externalPackage })}</div>
+		{/if}
 		{#if legacyOwned}
 			<div class="setting-row text-secondary">{m.firc_runtime_legacy_notice()}</div>
 		{/if}
-		{#if !status?.available && status}
+		{#if !status?.available && status && !externalOwned}
 			<div class="setting-row text-secondary">{m.firc_runtime_release_pending()}</div>
 		{/if}
-		{#if blocked && !legacyOwned}
+		{#if blocked && !legacyOwned && !externalOwned}
 			<div class="setting-row text-secondary">{m.firc_runtime_dependency_warning()} {status?.dependentServices?.join(', ')}</div>
 		{/if}
 		{#if error || status?.error}
