@@ -242,6 +242,8 @@ type Operator struct {
 	managedUplinkConfig      func(context.Context, []Tunnel) ([]Tunnel, error)
 	xhttpStatusFn            func() bool
 	openfluxStatusFn         func() (bool, string)
+	wgServersProvider        func(ctx context.Context) []DynamicWGServer
+	lastWGServers            []DynamicWGServer
 	singboxBinary            string
 	singboxCheckFn           func(ctx context.Context, stagedConfigDir string) error
 	singboxStageCopyHook     func(relPath string) error
@@ -1952,7 +1954,7 @@ func (o *Operator) applyGroupsLocked(ctx context.Context, groups []Group) ([]Gro
 
 func (o *Operator) applyGroupsWithPrevLocked(ctx context.Context, groups []Group, prevGroups []Group, running bool) ([]Group, error) {
 	ext := o.LoadExtConfig()
-	groups, _ = syncGroupsWithExt(groups, ext)
+	groups, _ = o.syncGroupsWithExt(ctx, groups, ext)
 
 	snap, err := captureFileSnapshot(o.GroupsPath(), 0644)
 	if err != nil {
@@ -2042,7 +2044,7 @@ func (o *Operator) StageGroupsOffline(groups []Group) ([]Group, error) {
 		return nil, err
 	}
 	ext := o.LoadExtConfig()
-	groups, _ = syncGroupsWithExt(groups, ext)
+	groups, _ = o.syncGroupsWithExt(context.Background(), groups, ext)
 	if groups == nil {
 		groups = []Group{}
 	}

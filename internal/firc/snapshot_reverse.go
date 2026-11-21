@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -2377,7 +2376,7 @@ func (o *Operator) applySnapshotFilesTransactionalWithBackups(
 			return 0, rollbackAll(fmt.Errorf("load restored groups.yaml: %w", gErr))
 		}
 		ext := o.LoadExtConfig()
-		groups, _ = syncGroupsWithExt(groups, ext)
+		groups, _ = o.syncGroupsWithExt(ctx, groups, ext)
 		if _, syncTErr := o.SyncTunnels(ctx, tunnels, true); syncTErr != nil {
 			return 0, rollbackAll(fmt.Errorf("sync restored tunnels with fircd: %w", syncTErr))
 		}
@@ -2485,7 +2484,7 @@ func (o *Operator) RestoreSystemSnapshotWithRollback(ctx context.Context, id str
 			}
 			if grps, gErr := o.LoadGroupsFile(); gErr == nil {
 				ext := o.LoadExtConfig()
-				grps, _ = syncGroupsWithExt(grps, ext)
+				grps, _ = o.syncGroupsWithExt(rbCtx, grps, ext)
 				updated, _ := o.SyncGroupsRuntimeOnly(rbCtx, grps)
 				_ = o.ReconcileExtNetfilterStrict(rbCtx, ext, updated)
 			}
@@ -2538,7 +2537,8 @@ func (o *Operator) PreviewReverseToSingboxOffline(ctx context.Context, singboxCo
 
 func (o *Operator) previewReverseToSingbox(ctx context.Context, singboxConfigDir string, opts *ReverseMigrationOptions, allowLive bool) (*ReverseMigrationResult, error) {
 	tunnels, groups := o.loadCurrentFircTunnelsAndGroups(ctx, allowLive)
-	res, tunnelsJSON, subsJSON, routerJSON, clientRoutesJSON, err := buildReverseSingboxPayloads(tunnels, groups, singboxConfigDir, opts, false)
+	wgServers, _ := o.cachedWGServers()
+	res, tunnelsJSON, subsJSON, routerJSON, clientRoutesJSON, err := buildReverseSingboxPayloadsWithWG(tunnels, groups, singboxConfigDir, opts, false, wgServers)
 	if err != nil || res == nil {
 		return res, err
 	}
@@ -2579,7 +2579,8 @@ func (o *Operator) ReverseMigrateToSingbox(ctx context.Context, singboxConfigDir
 	resolvedEng := o.resolveSnapshotActiveEngine(singboxConfigDir, activeEngine)
 	allowLive := !o.HasProductionEngineHooks() || strings.EqualFold(resolvedEng, "firc")
 	tunnels, groups := o.loadCurrentFircTunnelsAndGroups(ctx, allowLive)
-	res, tunnelsJSON, subsJSON, routerJSON, clientRoutesJSON, err := buildReverseSingboxPayloads(tunnels, groups, singboxConfigDir, opts, true)
+	wgServers, _ := o.cachedWGServers()
+	res, tunnelsJSON, subsJSON, routerJSON, clientRoutesJSON, err := buildReverseSingboxPayloadsWithWG(tunnels, groups, singboxConfigDir, opts, true, wgServers)
 	if err != nil {
 		return nil, err
 	}
@@ -2777,6 +2778,17 @@ func buildReverseSingboxPayloads(
 	singboxConfigDir string,
 	opts *ReverseMigrationOptions,
 	strictValidation bool,
+) (*ReverseMigrationResult, []byte, []byte, []byte, []byte, error) {
+	return buildReverseSingboxPayloadsWithWG(tunnels, groups, singboxConfigDir, opts, strictValidation, nil)
+}
+
+func buildReverseSingboxPayloadsWithWG(
+	tunnels []Tunnel,
+	groups []Group,
+	singboxConfigDir string,
+	opts *ReverseMigrationOptions,
+	strictValidation bool,
+	wgServers []DynamicWGServer,
 ) (*ReverseMigrationResult, []byte, []byte, []byte, []byte, error) {
 	res := &ReverseMigrationResult{
 		Tunnels: []ReverseMigratedTunnelItem{},
@@ -3029,7 +3041,7 @@ func buildReverseSingboxPayloads(
 		var clientIPs []string
 		for _, ip := range grp.Devices.Allow {
 			ip = strings.TrimSpace(ip)
-			if ip != "" && !slices.Contains(allManagedServerSubnets, ip) {
+			if ip != "" && !isKnownManagedServerSubnet(ip, wgServers) {
 				clientIPs = append(clientIPs, ip)
 			}
 		}

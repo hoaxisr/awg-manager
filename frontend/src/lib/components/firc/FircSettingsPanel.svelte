@@ -37,12 +37,9 @@
   import { notifications } from '$lib/stores/notifications';
 
   const fallbackCatalog: FircInboundServerItem[] = [
-    { id: 'awg_server', name: 'Сервер AmneziaWG (Wireguard2)', category: 'awgm', running: false, detail: 'nwg2 · 10.10.0.0/24' },
     { id: 'wdtt_server', name: 'Сервер WDTT', category: 'awgm', running: false, detail: 'opkgtun17/19 · 10.66.0.0/16' },
-    { id: 'freeturn_server', name: 'Сервер FreeTurn', category: 'awgm', running: false, detail: 'nwg2 · 10.10.0.2/32' },
     { id: 'vless_xhttp_server', name: 'Сервер VLESS XHTTP', category: 'awgm', running: false, detail: 'router · XHTTP' },
     { id: 'openflux_server', name: 'Сервер OpenFlux', category: 'awgm', running: false, detail: 'opkgtun · 10.77.0.0/16' },
-    { id: 'keenetic_wg', name: 'Keenetic WireGuard (Wireguard0)', category: 'system', running: false, detail: 'nwg0 · 172.16.6.0/24' },
     { id: 'keenetic_sstp', name: 'Keenetic SSTP', category: 'system', running: false, detail: 'sstp+ · 172.16.7.0/24' },
     { id: 'keenetic_l2tp', name: 'Keenetic L2TP/IPsec', category: 'system', running: false, detail: 'l2tp+ · 172.16.2.0/24' },
     { id: 'keenetic_ikev2', name: 'Keenetic IKEv2/IPsec', category: 'system', running: false, detail: 'xfrms2 · 172.20.8.0/24' },
@@ -200,15 +197,23 @@
   }
 
   function getServerById(id: string): FircInboundServerItem {
-    return (
-      availableServers.find((s) => s.id === id) ?? {
-        id,
-        name: id,
-        category: 'system',
-        running: false,
-        detail: '',
-      }
-    );
+    const found = availableServers.find((s) => s.id === id);
+    if (found) return found;
+    if (id.startsWith('managed:')) {
+      const ndmsName = id.slice('managed:'.length);
+      return { id, name: `Сервер AmneziaWG (${ndmsName})`, category: 'awgm', running: false, detail: '' };
+    }
+    if (id.startsWith('wg:')) {
+      const ndmsName = id.slice('wg:'.length);
+      return { id, name: `Keenetic WireGuard (${ndmsName})`, category: 'system', running: false, detail: '' };
+    }
+    return {
+      id,
+      name: id,
+      category: 'system',
+      running: false,
+      detail: '',
+    };
   }
 
   async function loadAll(silent = false) {
@@ -230,7 +235,7 @@
         pendingRestart = cfg.pendingRestart ?? [];
       }
       if (extRes) {
-        if (Array.isArray(extRes.availableServers) && extRes.availableServers.length > 0) {
+        if (Array.isArray(extRes.availableServers)) {
           availableServers = extRes.availableServers;
         }
         keenDnsSyncError = extRes.keenDnsCloud?.enabled ? (extRes.keenDnsCloud?.lastSyncError ?? '') : '';

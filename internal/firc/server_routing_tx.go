@@ -226,7 +226,7 @@ func (op *Operator) reconcileExtStrict(ctx context.Context, ext ExtConfig) error
 		}
 	}
 
-	updated, changed := syncGroupsWithExt(groups, ext)
+	updated, changed := op.syncGroupsWithExt(ctx, groups, ext)
 	if changed {
 		if err := op.SaveGroupsFile(updated); err != nil {
 			return fmt.Errorf("apply firc groups: save groups.yaml: %w", err)
