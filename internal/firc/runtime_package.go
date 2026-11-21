@@ -245,6 +245,9 @@ func (i *OnDemandInstaller) finish(err error) {
 	}
 }
 func (i *OnDemandInstaller) StartInstall() error { return i.startAsync("install", nil, false, false) }
+func (i *OnDemandInstaller) StartInstallWithOperator(op *Operator) error {
+	return i.startAsync("install", op, false, false)
+}
 func (i *OnDemandInstaller) StartUninstall(op *Operator, selected, purge bool) error {
 	return i.startAsync("uninstall", op, selected, purge)
 }
@@ -260,6 +263,105 @@ func (i *OnDemandInstaller) startAsync(action string, op *Operator, selected, pu
 	return nil
 }
 
+func (i *OnDemandInstaller) runtimeFilePaths() []string {
+	return []string{
+		i.layout.FircdBin,
+		i.layout.TunvlessBin,
+		i.rootPath("/opt/bin/fircd"),
+		i.rootPath("/opt/bin/tunvless"),
+		i.layout.InitScript,
+		i.layout.NDMNetfilterHook,
+		i.layout.NDMIfLayerHook,
+	}
+}
+
+func lstatExists(p string) bool {
+	_, err := os.Lstat(p)
+	return err == nil
+}
+
+func (i *OnDemandInstaller) hasCompleteUnmanagedRuntime() bool {
+	fircdOK := presentRegular(i.layout.FircdBin) || presentRegular(i.rootPath("/opt/bin/fircd"))
+	tunvlessOK := presentRegular(i.layout.TunvlessBin) || presentRegular(i.rootPath("/opt/bin/tunvless"))
+	return fircdOK &&
+		tunvlessOK &&
+		presentRegular(i.layout.InitScript) &&
+		presentRegular(i.layout.NDMNetfilterHook) &&
+		lstatExists(i.layout.NDMIfLayerHook)
+}
+
+func (i *OnDemandInstaller) cleanupOrphanedRuntimeFiles() error {
+	paths := append(i.runtimeFilePaths(), i.layout.ChecksumManifest)
+	for _, p := range paths {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove orphaned FIRC runtime file %s: %w", p, err)
+		}
+	}
+	return nil
+}
+
+func (i *OnDemandInstaller) isRuntimeMissingOrBroken(ctx context.Context, op *Operator) bool {
+	if priorOp, jErr := i.readOperation(); jErr != nil || priorOp.Pending {
+		return true
+	}
+	if op != nil && op.IsRecoveryRequired() {
+		return true
+	}
+	if i.packages != nil {
+		if ver, err := i.packages.Version(ctx, RuntimePackageName); err != nil || ver == "" {
+			return true
+		}
+	}
+	if _, err := os.Stat(i.layout.FircdBin); err != nil {
+		if _, altErr := os.Stat(i.rootPath("/opt/bin/fircd")); altErr != nil {
+			return true
+		}
+	}
+	if _, err := os.Stat(i.layout.TunvlessBin); err != nil {
+		if _, altErr := os.Stat(i.rootPath("/opt/bin/tunvless")); altErr != nil {
+			return true
+		}
+	}
+	if _, err := os.Stat(i.layout.InitScript); err != nil {
+		return true
+	}
+	if _, err := os.Stat(i.layout.NDMNetfilterHook); err != nil {
+		return true
+	}
+	if _, err := os.Lstat(i.layout.NDMIfLayerHook); err != nil {
+		return true
+	}
+	if _, err := os.Stat(i.layout.ConfigFile); err != nil {
+		return true
+	}
+	return false
+}
+
+func (i *OnDemandInstaller) verifyPreviousRuntimeBackup(cache, previousVersion string) (string, error) {
+	var receipt FircBinarySpec
+	b, err := os.ReadFile(filepath.Join(cache, "installed.json"))
+	if err != nil {
+		return "", fmt.Errorf("verified backup of installed runtime required before upgrade: %w", err)
+	}
+	if err := json.Unmarshal(b, &receipt); err != nil {
+		return "", err
+	}
+	if !receipt.IsAvailable() {
+		return "", errors.New("invalid installed runtime backup receipt")
+	}
+	previousIPK := filepath.Join(cache, "runtime-"+receipt.PackageSHA256+".ipk")
+	if receipt.Version != previousVersion {
+		return "", errors.New("installed runtime backup version mismatch")
+	}
+	if err := VerifyFileSHA256(previousIPK, receipt.PackageSHA256); err != nil {
+		return "", err
+	}
+	if err := VerifyRuntimeIPK(previousIPK, i.arch, previousVersion); err != nil {
+		return "", err
+	}
+	return previousIPK, nil
+}
+
 func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string, op *Operator, selected, purge bool) (result error) {
 	if i.lockRuntime != nil {
 		unlock := i.lockRuntime()
@@ -271,9 +373,6 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	if i.engineActiveFn != nil {
 		selected = i.engineActiveFn()
 	}
-	if selected {
-		return ErrFircActive
-	}
 	running := op != nil && op.IsRunning(ctx)
 	if i.fircRunningFn != nil {
 		running = i.fircRunningFn(ctx)
@@ -284,7 +383,11 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	if i.tunvlessRunningFn != nil && i.tunvlessRunningFn(ctx) {
 		return ErrTunvlessRunning
 	}
-	if i.checkDependenciesFn != nil {
+	missingOrBroken := action == "install" && i.isRuntimeMissingOrBroken(ctx, op)
+	if selected && !missingOrBroken {
+		return ErrFircActive
+	}
+	if !missingOrBroken && i.checkDependenciesFn != nil {
 		deps, err := i.checkDependenciesFn(ctx)
 		if err != nil {
 			return fmt.Errorf("dependency check: %w", err)
@@ -343,8 +446,11 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	}()
 	if action == "uninstall" {
 		mutated = true
-		if err := i.packages.Remove(ctx, RuntimePackageName); err != nil {
-			return err
+		pkgVer, verErr := i.packages.Version(ctx, RuntimePackageName)
+		if verErr != nil || pkgVer != "" {
+			if err := i.packages.Remove(ctx, RuntimePackageName); err != nil {
+				return err
+			}
 		}
 		cleanupExtNetfilter(ctx, i.layout.RootDir)
 		cleanupPoolRejectBarrierForRoot(ctx, i.layout.RootDir)
@@ -355,13 +461,10 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 		if version != "" {
 			return errors.New("runtime remains installed after removal")
 		}
-		binFircd := "/opt/bin/fircd"
-		binTunvless := "/opt/bin/tunvless"
-		if i.layout.RootDir != "" && i.layout.RootDir != "/" {
-			binFircd = filepath.Join(i.layout.RootDir, "opt/bin/fircd")
-			binTunvless = filepath.Join(i.layout.RootDir, "opt/bin/tunvless")
+		if err := i.cleanupOrphanedRuntimeFiles(); err != nil {
+			return err
 		}
-		for _, p := range []string{i.layout.FircdBin, i.layout.TunvlessBin, binFircd, binTunvless, i.layout.InitScript, i.layout.NDMNetfilterHook, i.layout.NDMIfLayerHook} {
+		for _, p := range i.runtimeFilePaths() {
 			if _, err := os.Lstat(p); !os.IsNotExist(err) {
 				return fmt.Errorf("runtime file remains or cannot be checked: %s", p)
 			}
@@ -383,34 +486,29 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	if err := os.MkdirAll(cache, 0700); err != nil {
 		return err
 	}
-	previousVersion, err := i.packages.Version(ctx, RuntimePackageName)
-	if err != nil {
-		return err
+	previousVersion, verErr := i.packages.Version(ctx, RuntimePackageName)
+	opkgStatusBroken := false
+	if verErr != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		opkgStatusBroken = true
+		previousVersion = ""
 	}
+	hadPreviousPackage := previousVersion != ""
+	runtimeBroken := priorOperation.Pending || opkgStatusBroken || missingOrBroken
 	previousIPK := ""
 	if previousVersion != "" {
-		var receipt FircBinarySpec
-		b, err := os.ReadFile(filepath.Join(cache, "installed.json"))
-		if err != nil {
-			return fmt.Errorf("verified backup of installed runtime required before upgrade: %w", err)
+		var backupErr error
+		previousIPK, backupErr = i.verifyPreviousRuntimeBackup(cache, previousVersion)
+		if backupErr != nil {
+			if !runtimeBroken {
+				return backupErr
+			}
+			previousVersion = ""
+			previousIPK = ""
 		}
-		if err := json.Unmarshal(b, &receipt); err != nil {
-			return err
-		}
-		if !receipt.IsAvailable() {
-			return errors.New("invalid installed runtime backup receipt")
-		}
-		previousIPK = filepath.Join(cache, "runtime-"+receipt.PackageSHA256+".ipk")
-		if receipt.Version != previousVersion {
-			return errors.New("installed runtime backup version mismatch")
-		}
-		if err := VerifyFileSHA256(previousIPK, receipt.PackageSHA256); err != nil {
-			return err
-		}
-		if err := VerifyRuntimeIPK(previousIPK, i.arch, previousVersion); err != nil {
-			return err
-		}
-	} else if !priorOperation.Pending && (presentRegular(i.layout.FircdBin) || presentRegular(i.layout.TunvlessBin) || presentRegular(i.layout.InitScript)) {
+	} else if !priorOperation.Pending && !opkgStatusBroken && i.hasCompleteUnmanagedRuntime() {
 		return errors.New("unmanaged FIRC runtime found; explicit ownership migration required")
 	}
 	stage, err := os.MkdirTemp(cache, "stage-")
@@ -449,6 +547,11 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 		return err
 	}
 	mutated = true
+	if !hadPreviousPackage {
+		if err := i.cleanupOrphanedRuntimeFiles(); err != nil {
+			return err
+		}
+	}
 	defer func() {
 		if result == nil || previousVersion == "" {
 			return

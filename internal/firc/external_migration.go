@@ -325,10 +325,8 @@ func (i *OnDemandInstaller) restoreExternalBackupState(backupDir string, m exter
 
 func (i *OnDemandInstaller) activateRuntimeFromExternalBackup(
 	ctx context.Context,
-	op *Operator,
 	backupDir, cache, ipk string,
 	m externalBackupManifest,
-	restartIfRunning bool,
 ) error {
 	version, err := i.packages.Version(ctx, RuntimePackageName)
 	if err != nil || version != m.TargetSpec.Version || verifyInstalledRuntime(ipk, i.arch, m.TargetSpec.Version, i.layout) != nil {
@@ -359,15 +357,6 @@ func (i *OnDemandInstaller) activateRuntimeFromExternalBackup(
 		return err
 	}
 	i.setProgress(0.85)
-
-	if restartIfRunning && m.WasRunning && !m.WasDisabled && op != nil {
-		if err := op.startRuntime(ctx); err != nil {
-			return fmt.Errorf("restart FIRC after external migration: %w", err)
-		}
-		if !i.isCurrentlyRunning(ctx, op) {
-			return errors.New("FIRC did not become ready after external migration")
-		}
-	}
 	return nil
 }
 
@@ -515,11 +504,15 @@ func (i *OnDemandInstaller) migrateExternalLocked(ctx context.Context, op *Opera
 	completed := false
 	defer func() {
 		if completed {
-			if saveErr := i.saveOperationWithHook(runtimeOperation{
+			j := runtimeOperation{
 				Action:          "migrate_external",
 				Pending:         false,
 				ExternalPackage: extPkg,
-			}); saveErr != nil {
+			}
+			if result != nil {
+				j.Error = result.Error()
+			}
+			if saveErr := i.saveOperationWithHook(j); saveErr != nil {
 				result = errors.Join(result, fmt.Errorf("persist external migration journal: %w", saveErr))
 				return
 			}
@@ -591,10 +584,25 @@ func (i *OnDemandInstaller) migrateExternalLocked(ctx context.Context, op *Opera
 	i.setProgress(0.6)
 
 	cachedIPK := filepath.Join(cache, "runtime-"+manifest.TargetSpec.PackageSHA256+".ipk")
-	if err := i.activateRuntimeFromExternalBackup(ctx, op, backupDir, cache, cachedIPK, manifest, true); err != nil {
+	if err := i.activateRuntimeFromExternalBackup(ctx, backupDir, cache, cachedIPK, manifest); err != nil {
 		return err
 	}
+	// Package installation, config/var restoration, and installed.json receipt are complete.
+	// Never keep the migration journal stuck Pending=true if post-migration daemon start fails.
 	completed = true
+	return i.restartExternalMigratedRuntime(ctx, op, manifest)
+}
+
+func (i *OnDemandInstaller) restartExternalMigratedRuntime(ctx context.Context, op *Operator, m externalBackupManifest) error {
+	if !m.WasRunning || m.WasDisabled || op == nil {
+		return nil
+	}
+	if err := op.startRuntime(ctx); err != nil {
+		return fmt.Errorf("restart FIRC after external migration: %w", err)
+	}
+	if !i.isCurrentlyRunning(ctx, op) {
+		return errors.New("FIRC did not become ready after external migration")
+	}
 	return nil
 }
 
@@ -651,16 +659,25 @@ func (i *OnDemandInstaller) recoverExternalMigrationLocked(ctx context.Context, 
 		}
 	}
 
-	if err := i.activateRuntimeFromExternalBackup(ctx, op, backupDir, cache, cachedIPK, manifest, restartIfRunning); err != nil {
+	if err := i.activateRuntimeFromExternalBackup(ctx, backupDir, cache, cachedIPK, manifest); err != nil {
 		return err
+	}
+	var restartErr error
+	errMsg := ""
+	if restartIfRunning {
+		restartErr = i.restartExternalMigratedRuntime(ctx, op, manifest)
+		if restartErr != nil {
+			errMsg = restartErr.Error()
+		}
 	}
 	if err := i.saveOperationWithHook(runtimeOperation{
 		Action:          "migrate_external",
 		Pending:         false,
 		ExternalPackage: manifest.ExternalPackage,
+		Error:           errMsg,
 	}); err != nil {
-		return fmt.Errorf("persist startup external migration recovery journal: %w", err)
+		return errors.Join(restartErr, fmt.Errorf("persist startup external migration recovery journal: %w", err))
 	}
 	_ = os.RemoveAll(backupDir)
-	return nil
+	return restartErr
 }

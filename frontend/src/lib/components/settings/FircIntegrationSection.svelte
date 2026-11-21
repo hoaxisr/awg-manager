@@ -8,7 +8,8 @@
 	import type { FircInstallStatus } from '$lib/types/firc';
 
 	let status = $state<FircInstallStatus | null>(null);
-	let error = $state('');
+	let fetchError = $state('');
+	let actionError = $state('');
 	let loading = $state(true);
 	let submitting = $state(false);
 	let confirmRemoval = $state(false);
@@ -17,24 +18,38 @@
 	let refreshing = false;
 	let revision = 0;
 	const busy = $derived(submitting || status?.busy === true);
-	const installed = $derived(Boolean(status?.fircdPresent || status?.tunvlessPresent || status?.installedVersion));
+	const installed = $derived(
+		Boolean(
+			status?.fircdPresent ||
+				status?.tunvlessPresent ||
+				status?.initScriptPresent ||
+				status?.ndmHookPresent ||
+				status?.installedVersion,
+		),
+	);
 	const legacyOwned = $derived(Boolean(status?.legacyBundledOwnership));
 	const externalPackage = $derived(status?.externalPackage?.trim() || '');
 	const externalOwned = $derived(Boolean(externalPackage));
 	const externalMigratable = $derived(externalOwned && Boolean(status?.externalMigratable));
 	const blocked = $derived(Boolean(status?.activeEngine || status?.state === 'running' || status?.dependentServices?.length));
+	const repairUnblocked = $derived(
+		!externalOwned &&
+			!legacyOwned &&
+			status?.state !== 'running' &&
+			(status?.state === 'not_installed' || status?.state === 'recovery_required'),
+	);
 	const installDisabled = $derived(
 		loading ||
 			busy ||
 			!status?.available ||
-			Boolean(error) ||
+			Boolean(fetchError) ||
 			(externalOwned
 				? !externalMigratable || Boolean(status?.dependentServices?.length)
 				: legacyOwned
 					? Boolean(status?.dependentServices?.length)
-					: blocked),
+					: !repairUnblocked && blocked),
 	);
-	const removeDisabled = $derived(busy || externalOwned || blocked || legacyOwned || Boolean(error));
+	const removeDisabled = $derived(busy || externalOwned || blocked || legacyOwned || Boolean(fetchError));
 	const stateLabel = $derived.by(() => {
 		switch (status?.state) {
 			case 'not_installed': return m.firc_runtime_absent();
@@ -54,9 +69,15 @@
 		const currentRevision = revision;
 		try {
 			const next = await api.fircGetInstallStatus();
-			if (alive && currentRevision === revision) { status = next; error = ''; }
+			if (alive && currentRevision === revision) {
+				status = next;
+				fetchError = '';
+				if (next.busy || next.state === 'running') {
+					actionError = '';
+				}
+			}
 		} catch (e) {
-			if (alive) error = e instanceof Error ? e.message : String(e);
+			if (alive) fetchError = e instanceof Error ? e.message : String(e);
 		} finally {
 			refreshing = false;
 			if (alive) loading = false;
@@ -73,7 +94,7 @@
 		confirmRemoval = false;
 		confirmExternalMigration = false;
 		submitting = true;
-		error = '';
+		actionError = '';
 		try {
 			if (action === 'migrate') await api.fircMigrateRuntime();
 			else if (action === 'migrate-external') await api.fircMigrateRuntime({ replaceExternalPackage: true });
@@ -84,7 +105,7 @@
 			// 202 is only acceptance, not completion. Polling shows the actual result.
 			await refresh();
 		} catch (e) {
-			if (alive) error = e instanceof Error ? e.message : String(e);
+			if (alive) actionError = e instanceof Error ? e.message : String(e);
 		} finally {
 			if (alive) submitting = false;
 		}
@@ -121,11 +142,11 @@
 		{#if !status?.available && status && !externalOwned}
 			<div class="setting-row text-secondary">{m.firc_runtime_release_pending()}</div>
 		{/if}
-		{#if (blocked && !legacyOwned && !externalOwned) || ((legacyOwned || externalMigratable) && Boolean(status?.dependentServices?.length))}
+		{#if (!externalOwned && !legacyOwned && ((blocked && !repairUnblocked) || Boolean(status?.dependentServices?.length))) || ((legacyOwned || externalMigratable) && Boolean(status?.dependentServices?.length))}
 			<div class="setting-row text-secondary">{m.firc_runtime_dependency_warning()} {status?.dependentServices?.join(', ')}</div>
 		{/if}
-		{#if error || status?.error}
-			<div class="setting-row text-danger" role="alert">{error || status?.error}</div>
+		{#if fetchError || actionError || status?.error}
+			<div class="setting-row text-danger" role="alert">{fetchError || actionError || status?.error}</div>
 		{/if}
 		<div class="setting-row text-secondary">{m.firc_runtime_activation_note()}</div>
 	</div>
