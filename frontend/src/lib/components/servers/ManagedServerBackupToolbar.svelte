@@ -112,11 +112,11 @@
 </script>
 
 {#snippet exportIcon()}
-	<Download size={14} strokeWidth={2} aria-hidden="true" />
+	<Upload size={14} strokeWidth={2} aria-hidden="true" />
 {/snippet}
 
 {#snippet importIcon()}
-	<Upload size={14} strokeWidth={2} aria-hidden="true" />
+	<Download size={14} strokeWidth={2} aria-hidden="true" />
 {/snippet}
 
 <div class="backup-toolbar" class:importOnly={!showExport}>
