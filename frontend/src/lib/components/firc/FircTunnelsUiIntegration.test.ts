@@ -902,8 +902,8 @@ describe('FIRC tunnels UI integration', () => {
 		// Switch to Подписки и ссылки tab -> Filter section appears
 		await fireEvent.click(screen.getByRole('button', { name: /Подписки и ссылки/i }));
 		expect(await screen.findByText('Фильтр серверов')).toBeInTheDocument();
-		const includeInp = screen.getByLabelText('Включать только (regex)') as HTMLInputElement;
-		const excludeInp = screen.getByLabelText('Исключать (regex)') as HTMLInputElement;
+		const includeInp = screen.getByLabelText('Включать только (regex)');
+		const excludeInp = screen.getByLabelText('Исключать (regex)');
 
 		// Lookaround triggers Go RE2 hint warning and skips preview API call
 		await fireEvent.input(includeInp, { target: { value: '^(?!RU).*$' } });

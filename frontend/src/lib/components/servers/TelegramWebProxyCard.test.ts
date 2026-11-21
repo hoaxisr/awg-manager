@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import '@testing-library/jest-dom/vitest';
 import { render, fireEvent, waitFor, screen } from '@testing-library/svelte';
 import TelegramWebProxyCard from './TelegramWebProxyCard.svelte';
 import { api } from '$lib/api/client';
@@ -158,8 +159,8 @@ describe('TelegramWebProxyCard', () => {
 		await fireEvent.click(screen.getByRole('button', { name: m.server_reset_button() }));
 		await screen.findByText(m.server_reset_tg_modal_title());
 
-		const kdCheckbox = screen.getByLabelText(new RegExp(m.server_reset_tg_keendns_label())) as HTMLInputElement;
-		expect(kdCheckbox.checked).toBe(false);
+		const kdCheckbox = screen.getByLabelText(new RegExp(m.server_reset_tg_keendns_label()));
+		expect(kdCheckbox).not.toBeChecked();
 
 		await fireEvent.click(screen.getByRole('button', { name: m.server_reset_confirm_button() }));
 		await waitFor(() => {
@@ -175,9 +176,9 @@ describe('TelegramWebProxyCard', () => {
 		await fireEvent.click(screen.getByRole('button', { name: m.server_reset_button() }));
 		await screen.findByText(m.server_reset_tg_modal_title());
 
-		const kdCheckbox2 = screen.getByLabelText(new RegExp(m.server_reset_tg_keendns_label())) as HTMLInputElement;
+		const kdCheckbox2 = screen.getByLabelText(new RegExp(m.server_reset_tg_keendns_label()));
 		await fireEvent.click(kdCheckbox2);
-		expect(kdCheckbox2.checked).toBe(true);
+		expect(kdCheckbox2).toBeChecked();
 
 		await fireEvent.click(screen.getByRole('button', { name: m.server_reset_confirm_button() }));
 		await waitFor(() => {

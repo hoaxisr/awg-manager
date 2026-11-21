@@ -1026,16 +1026,16 @@ func migrateSingboxSubscriptions(singboxConfigDir string, tagToIface map[string]
 				}
 
 				tun := Tunnel{
-					ID:          tunID,
-					Device:      device,
-					Description: truncateUTF8(label, 63),
+					ID:            tunID,
+					Device:        device,
+					Description:   truncateUTF8(label, 63),
 					Enable:        sub.Enabled,
 					Uplink:        uplink,
 					Sources:       sources,
 					Filter:        strings.TrimSpace(sub.FilterInclude),
 					FilterExclude: strings.TrimSpace(sub.FilterExclude),
 					Order:         order,
-					Exclude:     exclude,
+					Exclude:       exclude,
 					Advanced: TunnelAdvanced{
 						KernelTCP: true,
 					},
