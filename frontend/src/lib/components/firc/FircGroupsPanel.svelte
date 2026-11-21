@@ -972,7 +972,7 @@
 		const list: { value: string; label: string; role: string }[] = [];
 		const seen = new Set<string>();
 		for (const opt of interfaces) {
-			if (!opt.id || seen.has(opt.id) || opt.id.startsWith('t2s')) continue;
+			if (!opt.id || opt.id === 'blackhole' || opt.id === 'block' || seen.has(opt.id) || opt.id.startsWith('t2s')) continue;
 			if (isInternalServerIface(opt) && gmInterface !== opt.id) continue;
 			seen.add(opt.id);
 			const prefix = opt.role === 'wan' ? 'Direct: ' : '';
@@ -3952,7 +3952,7 @@
 	}
 
 	.card.select-mode {
-		grid-template-columns: 22px 26px 20px minmax(0, 1fr) auto;
+		grid-template-columns: 22px 24px 18px minmax(200px, 1fr) auto;
 	}
 
 	.order {

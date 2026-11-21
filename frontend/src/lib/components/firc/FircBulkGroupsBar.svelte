@@ -36,6 +36,22 @@
 	}: Props = $props();
 
 	let actionsDisabled = $derived(selectedCount === 0);
+	let uniqueProxyGroups = $derived.by(() => {
+		const seen = new Set<string>();
+		return proxyGroups.filter((pg) => {
+			if (!pg.id || seen.has(pg.id)) return false;
+			seen.add(pg.id);
+			return true;
+		});
+	});
+	let uniqueInterfaces = $derived.by(() => {
+		const seen = new Set<string>();
+		return interfaces.filter((opt) => {
+			if (!opt.value || seen.has(opt.value)) return false;
+			seen.add(opt.value);
+			return true;
+		});
+	});
 
 	function handleIfaceChange(e: Event & { currentTarget: HTMLSelectElement }) {
 		const raw = e.currentTarget.value;
@@ -83,15 +99,15 @@
 			onchange={handleIfaceChange}
 		>
 			<option value="" disabled>{m.firc_bulk_groups_change_iface()}</option>
-			{#if proxyGroups.length > 0}
+			{#if uniqueProxyGroups.length > 0}
 				<optgroup label={m.firc_bulk_groups_proxy_groups_opt()}>
-					{#each proxyGroups as pg (pg.id)}
+					{#each uniqueProxyGroups as pg (pg.id)}
 						<option value={`pg:${pg.id}`}>{pg.name}</option>
 					{/each}
 				</optgroup>
 			{/if}
 			<optgroup label={m.firc_bulk_groups_interfaces_opt()}>
-				{#each interfaces as opt (opt.value)}
+				{#each uniqueInterfaces as opt (opt.value)}
 					<option value={`iface:${opt.value}`}>{opt.label}</option>
 				{/each}
 			</optgroup>

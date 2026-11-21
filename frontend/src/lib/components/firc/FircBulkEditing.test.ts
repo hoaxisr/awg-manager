@@ -196,4 +196,39 @@ describe('FircBulkGroupsBar', () => {
 		expect(onDelete).toHaveBeenCalledTimes(1);
 		expect(onDone).toHaveBeenCalledTimes(1);
 	});
+
+	it('deduplicates duplicate interface and proxy group keys without throwing each_key_duplicate', () => {
+		render(FircBulkGroupsBar, {
+			props: {
+				selectedCount: 1,
+				visibleCount: 2,
+				interfaces: [
+					{ value: 'blackhole', label: 'blackhole' },
+					{ value: 'block', label: 'block' },
+					{ value: 'tunvless4', label: 'VOX' },
+					{ value: 'blackhole', label: 'Блокировать (Blackhole)' },
+					{ value: 'block', label: 'Блокировать по DNS' },
+				],
+				proxyGroups: [
+					{ id: 'pg1', name: 'Failover', interfaces: ['tunvless4'] },
+					{ id: 'pg1', name: 'Failover Dup', interfaces: ['tunvless4'] },
+				],
+				onSelectAllVisible: vi.fn(),
+				onDeselectAll: vi.fn(),
+				onDone: vi.fn(),
+				onSetInterface: vi.fn(),
+				onOpenDevices: vi.fn(),
+				onEnable: vi.fn(),
+				onDisable: vi.fn(),
+				onCopyDomains: vi.fn(),
+				onDelete: vi.fn(),
+			},
+		});
+
+		const options = screen.getAllByRole('option');
+		const values = options.map((opt) => (opt as HTMLOptionElement).value);
+		expect(values.filter((v) => v === 'iface:blackhole')).toHaveLength(1);
+		expect(values.filter((v) => v === 'iface:block')).toHaveLength(1);
+		expect(values.filter((v) => v === 'pg:pg1')).toHaveLength(1);
+	});
 });
