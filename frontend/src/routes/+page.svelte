@@ -120,7 +120,11 @@
 	import { applyManualOrder, mergeManualOrder, reorder } from '$lib/utils/tunnelDashboardOrder';
 	import { filterItemsByTag, groupFlatItemsByTag } from '$lib/utils/tunnelDashboardTags';
 	import { createReorderDrag } from '$lib/components/sb-router/reorderDrag.svelte';
-	import { buildFlatDashboardItems, type TunnelDashboardFlatItem } from '$lib/utils/tunnelDashboardFlat';
+	import {
+		buildFlatDashboardItems,
+		shouldShowDashboardSingboxBanner,
+		type TunnelDashboardFlatItem,
+	} from '$lib/utils/tunnelDashboardFlat';
 	import {
 		awgTunnelTableSort,
 		singboxSubscriptionTableSort,
@@ -768,6 +772,28 @@
 	const showSingboxCreate = $derived(
 		showSingboxSections && !(fircOwnsRouting && (dashboardShowFirc || !singboxInstalled)),
 	);
+	let fircProbeSettled = $state(false);
+	let fircInitialLoadTriggered = false;
+	$effect(() => {
+		if (showSingboxTunnelTabs && !fircInitialLoadTriggered) {
+			fircInitialLoadTriggered = true;
+			void reloadFircAll()
+				.catch(() => {})
+				.finally(() => {
+					fircProbeSettled = true;
+				});
+		}
+	});
+	const showDashboardSingboxBanner = $derived(
+		shouldShowDashboardSingboxBanner({
+			showSingboxSections,
+			fircSelected: fircOwnsRouting,
+			fircRunning: Boolean($fircStatus?.running),
+			fircPending: $fircStatus === null && $sbRouterSettings === null && !fircProbeSettled,
+			singboxInstalled,
+			singboxRunning: Boolean($singboxStatus.data?.running),
+		}),
+	);
 	function filterFircForDashboard(list: import('$lib/types/firc').FircTunnel[]) {
 		const q = dashboardSearchQuery.trim().toLowerCase();
 		if (!q) return list;
@@ -861,9 +887,6 @@
 			awgViewMode = stored;
 		}
 		awgViewModeReady = true;
-		if (showSingboxTunnelTabs) {
-			void reloadFircAll();
-		}
 		void api.uplinkSnapshot().then((s) => {
 			uplinkCount = s.entries?.length ?? 0;
 		}).catch(() => {});
@@ -1798,7 +1821,7 @@
 		get effectiveSingboxSubscriptionsEffectiveLayout() { return effectiveSingboxSubscriptionsEffectiveLayout; },
 		get effectiveSingboxSubscriptionsRenderMode() { return effectiveSingboxSubscriptionsRenderMode; },
 		get showSingboxListOption() { return showSingboxListOption; },
-		get showSingboxSections() { return showSingboxSections; },
+		get showSingboxBanner() { return showDashboardSingboxBanner; },
 		get showSingboxCreate() { return showSingboxCreate; },
 		get showFircCreate() { return showFircCreate; },
 		get fircCreateFirst() { return fircOwnsRouting; },

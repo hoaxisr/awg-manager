@@ -29,7 +29,7 @@ export interface DashboardFlatContext {
 	readonly effectiveSingboxSubscriptionsEffectiveLayout: SingboxLayoutMode;
 	readonly effectiveSingboxSubscriptionsRenderMode: TunnelRenderMode;
 	readonly showSingboxListOption: boolean;
-	readonly showSingboxSections: boolean;
+	readonly showSingboxBanner: boolean;
 	readonly showSingboxCreate: boolean;
 	readonly showFircCreate: boolean;
 	readonly fircCreateFirst: boolean;

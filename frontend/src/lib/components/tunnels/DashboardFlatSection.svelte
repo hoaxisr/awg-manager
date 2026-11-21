@@ -165,7 +165,7 @@
 	{/if}
 {/snippet}
 
-{#if ctx.showSingboxSections}
+{#if ctx.showSingboxBanner}
 	<SingboxInstallBanner />
 {/if}
 <div class="dashboard-sticky">
