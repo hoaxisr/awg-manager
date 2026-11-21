@@ -25,7 +25,7 @@
 		shareRows,
 		toggleProxyInstance,
 	} from '$lib/components/proxy';
-	import type { ExitProtocol, ProxyInstanceRow } from '$lib/components/proxy';
+	import type { ExitProtocol, ProxyInstanceRow, ProxyProtocol } from '$lib/components/proxy';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
 	import { errText } from '$lib/utils/errorMessage';
 	import type { ProxySeedView } from '$lib/api/proxyInstances';
@@ -33,6 +33,10 @@
 		AccessPolicy,
 		FreeTurnConfig,
 		FreeTurnStatus,
+		OpenFluxClientConfig,
+		OpenFluxClientStatus,
+		OpenFluxConfig,
+		OpenFluxStatus,
 		TunnelListItem,
 		WdttConfig,
 		WdttStatus,
@@ -45,15 +49,26 @@
 	 * Читаем один раз при инициализации — дальше выбором владеет страница.
 	 */
 	const deepLink = rowKeyFromInstanceKey($page.url.searchParams.get('instance') ?? '');
+	const initialTab = $page.url.searchParams.get('tab');
 
-	let activeTab = $state<TabId>(deepLink?.role === 'server' ? 'share' : 'exit');
+	let activeTab = $state<TabId>(
+		initialTab === 'share' || initialTab === 'openflux'
+			? 'share'
+			: deepLink?.role === 'server'
+				? 'share'
+				: 'exit',
+	);
 	let loading = $state(true);
 	let loadError = $state('');
 
 	let wdttConfig = $state<WdttConfig | null>(null);
 	let ftConfig = $state<FreeTurnConfig | null>(null);
+	let openfluxConfig = $state<OpenFluxConfig | null>(null);
+	let openfluxClientConfig = $state<OpenFluxClientConfig | null>(null);
 	let wdttStatus = $state<WdttStatus | null>(null);
 	let ftStatus = $state<FreeTurnStatus | null>(null);
+	let openfluxStatus = $state<OpenFluxStatus | null>(null);
+	let openfluxClientStatus = $state<OpenFluxClientStatus | null>(null);
 	let policies = $state<AccessPolicy[]>([]);
 	/**
 	 * Посев прокси-подсистемы. Признака два: `seeded` — она поднялась,
@@ -64,7 +79,13 @@
 	let seed = $state<ProxySeedView | null>(null);
 	let tunnels = $state<TunnelListItem[]>([]);
 	let selectedExitKey = $state<string | null>(deepLink?.role === 'client' ? deepLink.key : null);
-	let selectedShareKey = $state<string | null>(deepLink?.role === 'server' ? deepLink.key : null);
+	let selectedShareKey = $state<string | null>(
+		deepLink?.role === 'server'
+			? deepLink.key
+			: initialTab === 'openflux'
+				? 'openflux:server:default'
+				: null,
+	);
 	/** Мастер «Выхода», открытый явно: кнопкой списка (новый) или «Мастер». */
 	let exitWizard = $state<'new' | 'instance' | null>(null);
 	/** Мастер «Раздачи», открытый явно: кнопкой списка (новый) или «Мастер». */
@@ -72,10 +93,19 @@
 	let deleteTarget = $state<ProxyInstanceRow | null>(null);
 	let deleting = $state(false);
 	let busyKeys = $state<string[]>([]);
-	let installing = $state<'wdtt' | 'freeturn' | null>(null);
+	let installing = $state<'wdtt' | 'freeturn' | 'openflux' | null>(null);
 
 	// Строки собираются из статуса (жизнь процесса) и конфига (автоподключение, режим).
-	const sources = $derived({ wdttStatus, wdttConfig, ftStatus, ftConfig });
+	const sources = $derived({
+		wdttStatus,
+		wdttConfig,
+		ftStatus,
+		ftConfig,
+		openfluxStatus,
+		openfluxConfig,
+		openfluxClientStatus,
+		openfluxClientConfig,
+	});
 	const exits = $derived(exitRows(sources));
 	const shares = $derived(shareRows(sources));
 
@@ -99,21 +129,35 @@
 		{ id: 'share', label: m.proxy_page_tab_share() },
 	]);
 
-	const binaries = $derived(binaryStripItems(wdttStatus, ftStatus, installing, install));
+	const binaries = $derived(
+		binaryStripItems(wdttStatus, ftStatus, openfluxStatus, installing, install),
+	);
 	const seedWarning = $derived(seedGateWarning(seed));
 	const listenMoveNotice = $derived(seedListenMoveNotice(seed));
 
 	// ─── Загрузка и поллинг.
 
 	async function loadStatuses() {
-		const [w, f, s] = await Promise.all([
+		const [w, f, s, ofs] = await Promise.all([
 			api.getWdttStatus(),
 			api.getFreeTurnStatus(),
 			api.getProxySeed(),
+			typeof api.openfluxStatus === 'function'
+				? api.openfluxStatus().catch(() => null)
+				: Promise.resolve(null),
 		]);
 		wdttStatus = w;
 		ftStatus = f;
 		seed = s;
+		openfluxStatus = ofs;
+		openfluxConfig = ofs?.config ?? null;
+		if (ofs?.client && (ofs.client.running || ofs.client.config)) {
+			openfluxClientStatus = ofs.client;
+			openfluxClientConfig = ofs.client.config ?? null;
+		} else {
+			openfluxClientStatus = null;
+			openfluxClientConfig = null;
+		}
 	}
 
 	// Конфиги страницы — это состояние сервера: их правит только загрузка и
@@ -124,6 +168,8 @@
 		normalizeShareConfigs(w, f);
 		wdttConfig = w;
 		ftConfig = f;
+		openfluxConfig = openfluxStatus?.config ?? null;
+		openfluxClientConfig = openfluxStatus?.client?.config ?? null;
 	}
 
 	// Каталог для секции «Куда идёт трафик»: политики (обратное членство) и
@@ -139,7 +185,8 @@
 	}
 
 	async function reloadAll() {
-		await Promise.all([loadConfigs(), loadStatuses(), loadCatalog()]);
+		await loadStatuses();
+		await Promise.all([loadConfigs(), loadCatalog()]);
 	}
 
 	const statusPoll = createSelfReschedulingPoll(async () => {
@@ -152,7 +199,8 @@
 
 	onMount(async () => {
 		try {
-			await Promise.all([loadConfigs(), loadStatuses(), loadCatalog()]);
+			await loadStatuses();
+			await Promise.all([loadConfigs(), loadCatalog()]);
 		} catch (e) {
 			loadError = errText(e);
 		} finally {
@@ -183,11 +231,12 @@
 		}
 	}
 
-	async function install(kind: 'wdtt' | 'freeturn') {
+	async function install(kind: 'wdtt' | 'freeturn' | 'openflux') {
 		installing = kind;
 		try {
 			if (kind === 'wdtt') await api.installWdttClient();
-			else await api.installFreeTurn();
+			else if (kind === 'freeturn') await api.installFreeTurn();
+			else if (kind === 'openflux') await api.openfluxInstall();
 			await loadStatuses();
 		} catch (e) {
 			notifications.error(errText(e));
@@ -199,8 +248,19 @@
 	async function toggleInstance(row: ProxyInstanceRow, on: boolean) {
 		withBusy(row.key, true);
 		try {
-			await toggleProxyInstance(row, on);
-			await Promise.all([loadConfigs(), loadStatuses()]);
+			if (row.protocol === 'openflux') {
+				if (row.role === 'client') {
+					if (on) await api.openfluxClientStart();
+					else await api.openfluxClientStop();
+				} else {
+					if (on) await api.openfluxStart();
+					else await api.openfluxStop();
+				}
+				await loadStatuses();
+			} else {
+				await toggleProxyInstance(row, on);
+				await Promise.all([loadConfigs(), loadStatuses()]);
+			}
 		} catch (e) {
 			notifications.error(errText(e));
 		} finally {
@@ -209,7 +269,7 @@
 	}
 
 	/** Мастер раздачи довёл сервер до запуска — уводим в его деталь, к абонентам. */
-	async function shareWizardDone(protocol: ExitProtocol, id: string) {
+	async function shareWizardDone(protocol: ProxyProtocol, id: string) {
 		shareWizard = null;
 		await reloadAll();
 		selectedShareKey = rowKey(protocol, 'server', id);
@@ -226,8 +286,21 @@
 
 	async function renameInstance(row: ProxyInstanceRow, name: string) {
 		try {
-			await renameProxyInstance(row, name);
-			await Promise.all([loadConfigs(), loadStatuses()]);
+			if (row.protocol === 'openflux') {
+				if (row.role === 'client') {
+					const cfg = openfluxClientConfig ?? openfluxStatus?.client?.config;
+					if (cfg) {
+						await api.openfluxSaveClientConfig({ ...cfg, name });
+						await loadStatuses();
+					}
+				} else if (openfluxConfig) {
+					await api.openfluxSaveConfig({ ...openfluxConfig, name });
+					await loadStatuses();
+				}
+			} else {
+				await renameProxyInstance(row, name);
+				await Promise.all([loadConfigs(), loadStatuses()]);
+			}
 		} catch (e) {
 			notifications.error(errText(e));
 		}
@@ -238,10 +311,36 @@
 		if (!row) return;
 		deleting = true;
 		try {
-			const res = await deleteProxyInstance(row);
-			reportDeletedTunnels(res.deletedTunnels, res.tunnelErrors);
-			deleteTarget = null;
-			await Promise.all([loadConfigs(), loadStatuses()]);
+			if (row.protocol === 'openflux') {
+				if (row.role === 'client') {
+					await api.openfluxClientDelete();
+					openfluxClientConfig = null;
+					openfluxClientStatus = null;
+					if (openfluxStatus) {
+						openfluxStatus = {
+							...openfluxStatus,
+							client: undefined,
+						};
+					}
+					if (selectedExitKey === row.key) selectedExitKey = null;
+					deleteTarget = null;
+					await reloadAll();
+					notifications.success('OpenFlux-клиент удален');
+				} else {
+					await api.openfluxStop();
+					if (openfluxConfig) {
+						await api.openfluxSaveConfig({ ...openfluxConfig, enabled: false });
+					}
+					deleteTarget = null;
+					await loadStatuses();
+					notifications.success('OpenFlux остановлен и отключен');
+				}
+			} else {
+				const res = await deleteProxyInstance(row);
+				reportDeletedTunnels(res.deletedTunnels, res.tunnelErrors);
+				deleteTarget = null;
+				await Promise.all([loadConfigs(), loadStatuses()]);
+			}
 		} catch (e) {
 			// Отказ мог прийти ПОСЛЕ уборки связей: о снятых туннелях говорим
 			// и здесь, иначе карточка исчезнет без объяснения (PF23).
@@ -327,6 +426,10 @@
 					{ftConfig}
 					{wdttStatus}
 					{ftStatus}
+					{openfluxStatus}
+					{openfluxConfig}
+					{openfluxClientStatus}
+					{openfluxClientConfig}
 					{policies}
 					{tunnels}
 					{busyKeys}
@@ -338,6 +441,7 @@
 					onreload={reloadAll}
 					onexitdone={exitWizardDone}
 					onsharedone={shareWizardDone}
+					ondelete={(r) => (deleteTarget = r)}
 				/>
 			</main>
 		</div>

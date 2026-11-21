@@ -18,4 +18,5 @@ export * from './types/autolist';
 export * from './types/xray';
 export * from './types/telemt';
 export * from './types/firc';
+export * from './types/openflux';
 export * from './types/serverWizard';

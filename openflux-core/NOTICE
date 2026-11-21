@@ -1,0 +1,47 @@
+Third-Party Licenses
+====================
+
+This project includes or depends on the following third-party software.
+The original copyright notices and licenses are preserved below.
+
+------------------------------------------------------------------------------
+wireguard-go
+https://git.zx2c4.com/wireguard-go/
+Copyright (C) 2017-2025 WireGuard LLC. All Rights Reserved.
+Licensed under the MIT License.
+
+------------------------------------------------------------------------------
+gopacket
+https://github.com/gopacket/gopacket
+Copyright (c) 2012 Google, Inc.
+Licensed under the BSD 3-Clause License.
+
+------------------------------------------------------------------------------
+gVisor
+https://gvisor.dev/
+Copyright 2018 The gVisor Authors.
+Licensed under the Apache License, Version 2.0.
+
+------------------------------------------------------------------------------
+gorilla/websocket
+https://github.com/gorilla/websocket
+Copyright (c) 2013 The Gorilla WebSocket Authors.
+Licensed under the BSD 2-Clause License.
+
+------------------------------------------------------------------------------
+pion/webrtc
+https://github.com/pion/webrtc
+Copyright (c) 2018 The Pion Authors.
+Licensed under the MIT License.
+
+------------------------------------------------------------------------------
+golang.org/x/sys
+https://pkg.go.dev/golang.org/x/sys
+Copyright 2009 The Go Authors.
+Licensed under the BSD 3-Clause License.
+
+------------------------------------------------------------------------------
+pierrec/lz4
+https://github.com/pierrec/lz4
+Copyright (c) 2015, Pierre Curto.
+Licensed under the BSD 2-Clause License.

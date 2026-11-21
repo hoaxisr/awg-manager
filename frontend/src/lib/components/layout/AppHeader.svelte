@@ -46,7 +46,10 @@
 			label: m.nav_proxy,
 			// /freeturn и /wdtt — редиректы на /proxy; матчер снят с «ТУННЕЛЕЙ».
 			matches: (p) =>
-				p.startsWith('/proxy') || p.startsWith('/freeturn') || p.startsWith('/wdtt'),
+				p.startsWith('/proxy') ||
+				p.startsWith('/freeturn') ||
+				p.startsWith('/wdtt') ||
+				p.startsWith('/openflux'),
 		},
 		{
 			section: 'diagnostics',

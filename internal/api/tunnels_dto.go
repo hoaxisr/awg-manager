@@ -47,6 +47,7 @@ type TunnelListItemDTO struct {
 	PingCheck                 TunnelPingCheckStatus `json:"pingCheck"`
 	WdttClientID              string                `json:"wdttClientId,omitempty" example:"default"`
 	FreeTurnClientID          string                `json:"freeTurnClientId,omitempty" example:"default"`
+	OpenFluxClientID          string                `json:"openfluxClientId,omitempty" example:"default"`
 	Locked                    bool                  `json:"locked,omitempty" example:"false"`
 	StatusDetails             string                `json:"statusDetails,omitempty" example:"обфускатор не запущен"`
 	Obfuscator                *ObfuscatorItemDTO    `json:"obfuscator,omitempty"`

@@ -20,6 +20,11 @@
 		ftClientId?: string;
 		/** Ссылка FreeTurn принесла WireGuard-конфиг. */
 		ftHasWg?: boolean;
+		openfluxName?: string;
+		openfluxTransports?: string[];
+		openfluxBusy?: boolean;
+		onapplyopenflux?: () => void;
+		oncreateopenflux?: () => void;
 		oninput: (v: string) => void;
 		/** Ввод завершён (blur/Enter): мастер показывает отложенную ошибку разбора. */
 		oncommit: () => void;
@@ -40,6 +45,11 @@
 		profileIdx = '0',
 		ftClientId = '',
 		ftHasWg = false,
+		openfluxName = '',
+		openfluxTransports = [],
+		openfluxBusy = false,
+		onapplyopenflux,
+		oncreateopenflux,
 		oninput,
 		oncommit,
 		onfile,
@@ -57,7 +67,7 @@
 	value={link}
 	{oninput}
 	onchange={() => oncommit()}
-	placeholder="wdtt:// · qwdtt:// · freeturn:// · https://… · JSON"
+	placeholder="wdtt:// · qwdtt:// · freeturn:// · openflux:// · https://… · JSON"
 	hint={m.proxy_exit_source_link_hint()}
 	disabled={manual}
 	fullWidth
@@ -108,6 +118,7 @@
 				options={[
 					{ value: 'wdtt', label: 'WDTT' },
 					{ value: 'freeturn', label: 'FreeTurn' },
+					{ value: 'openflux', label: 'OpenFlux' },
 				]}
 				onchange={(v) => onprotocol(v as ExitProtocol)}
 				fullWidth
@@ -125,6 +136,18 @@
 				/>
 			{/if}
 		</div>
+		{#if protocol === 'openflux'}
+			<p class="detect-note" style="margin-top: 0.75rem;">
+				Клиент OpenFlux настраивается через панель конфигурации (транспорты, ключи, режим OpkgTun / SOCKS5).
+			</p>
+			{#if oncreateopenflux}
+				<div style="margin-top: 0.75rem;">
+					<Button variant="primary" size="sm" loading={openfluxBusy} onclick={oncreateopenflux}>
+						Создать и перейти к настройке
+					</Button>
+				</div>
+			{/if}
+		{/if}
 	</div>
 {:else if detected === 'unknown'}
 	<div class="detect-box bad">
@@ -146,6 +169,26 @@
 			onchange={onprofile}
 			fullWidth
 		/>
+	</div>
+{:else if detected === 'openflux'}
+	<div class="detect-box">
+		<div class="detect-badge-row">
+			<Badge size="sm" variant="info">OpenFlux</Badge>
+			{#if openfluxName}
+				<Badge size="sm" variant="default">{openfluxName}</Badge>
+			{/if}
+			{#if openfluxTransports.length > 0}
+				<Badge size="sm" variant="success">{openfluxTransports.join(' / ')}</Badge>
+			{/if}
+		</div>
+		<p class="detect-note">
+			Ссылка OpenFlux V1 содержит ключ шифрования и параметры транспортов. Нажмите кнопку ниже, чтобы применить ссылку и настроить клиент OpenFlux.
+		</p>
+		{#if onapplyopenflux}
+			<Button variant="primary" size="sm" loading={openfluxBusy} onclick={onapplyopenflux}>
+				Применить и запустить OpenFlux-клиент
+			</Button>
+		{/if}
 	</div>
 {:else if detected === 'freeturn'}
 	<div class="detect-box">
@@ -196,6 +239,14 @@
 		border: 1px solid var(--color-border);
 		background: var(--color-bg-tertiary);
 		border-radius: var(--radius);
+	}
+
+	.detect-badge-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+		margin-bottom: 0.5rem;
 	}
 
 	.detect-box.bad {

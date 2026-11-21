@@ -37,6 +37,7 @@
 		AccessPolicy,
 		FreeTurnClientConfig,
 		FreeTurnLinkPayload,
+		OpenFluxClientConfig,
 		WdttClientConfig,
 		WdttImportPayload,
 		WdttSubscriptionPreview,
@@ -88,12 +89,15 @@
 
 	let wdttPayload = $state<WdttImportPayload | null>(null);
 	let ftPayload = $state<FreeTurnLinkPayload | null>(null);
+	let openfluxPayload = $state<OpenFluxClientConfig | null>(null);
 	let subscription = $state<WdttSubscriptionPreview | null>(null);
 	let profileIdx = $state('0');
 
 	// Протокол и режим — состояние мастера: их задаёт разбор ссылки, ручной
 	// выбор или инстанс, ради которого мастер открыли.
-	let protocol = $state<ExitProtocol>(untrack(() => row?.protocol ?? 'wdtt'));
+	let protocol = $state<ExitProtocol>(
+		untrack(() => (row?.protocol === 'freeturn' ? 'freeturn' : 'wdtt')),
+	);
 	let mode = $state<ExitMode>(untrack(() => row?.mode ?? 'wg'));
 
 	// Стартовое значение: дальше поля живут своей жизнью и обновляются разбором
@@ -129,13 +133,15 @@
 	const detected = $derived<ExitSourceKind>(
 		scheme === 'unknown' && link.trim()
 			? 'unknown'
-			: subscription
-				? 'subscription'
-				: ftPayload
-					? 'freeturn'
-					: wdttPayload
-						? 'wdtt'
-						: 'none',
+			: openfluxPayload
+				? 'openflux'
+				: subscription
+					? 'subscription'
+					: ftPayload
+						? 'freeturn'
+						: wdttPayload
+							? 'wdtt'
+							: 'none',
 	);
 	const profileOptions = $derived(
 		(subscription?.profiles ?? []).map((p, i) => ({
@@ -163,6 +169,7 @@
 		if (!text || kind === 'unknown') {
 			wdttPayload = null;
 			ftPayload = null;
+			openfluxPayload = null;
 			subscription = null;
 			pendingLinkError = '';
 			return;
@@ -170,10 +177,20 @@
 		const seq = ++decodeSeq;
 		pendingLinkError = '';
 		try {
+			if (kind === 'openflux') {
+				const res = await api.openfluxParseLink(text);
+				if (seq !== decodeSeq) return;
+				wdttPayload = null;
+				ftPayload = null;
+				subscription = null;
+				openfluxPayload = res.config;
+				return;
+			}
 			if (kind === 'freeturn') {
 				const payload = await api.decodeFreeTurnLink(text);
 				if (seq !== decodeSeq) return;
 				wdttPayload = null;
+				openfluxPayload = null;
 				subscription = null;
 				ftPayload = payload;
 				protocol = 'freeturn';
@@ -184,6 +201,7 @@
 			const res = await api.decodeWdttLink(text);
 			if (seq !== decodeSeq) return;
 			ftPayload = null;
+			openfluxPayload = null;
 			protocol = 'wdtt';
 			if (res.subscription?.profiles.length) {
 				subscription = res.subscription;
@@ -197,6 +215,54 @@
 			}
 		} catch (e) {
 			pendingLinkError = errText(e);
+		}
+	}
+
+	async function applyOpenfluxLink() {
+		if (!openfluxPayload) return;
+		busy = true;
+		try {
+			await api.openfluxSaveClientConfig({
+				...openfluxPayload,
+				enabled: true,
+				lowMemory: openfluxPayload.lowMemory ?? true,
+			});
+			try {
+				await api.openfluxClientStart();
+				notifications.success('Клиент OpenFlux настроен и запущен');
+			} catch {
+				notifications.warning('Настройки OpenFlux сохранены. Для запуска установите бинарный файл OpenFlux.');
+			}
+			await ondone('openflux', 'default');
+		} catch (e) {
+			notifications.error(errText(e));
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function createOpenfluxManual() {
+		busy = true;
+		try {
+			await api.openfluxSaveClientConfig({
+				name: 'OpenFlux Выход',
+				inboundMode: 'tun',
+				tunAddr: '10.10.10.2/24',
+				tunMtu: 1280,
+				exposeToPolicies: true,
+				enabled: false,
+				lowMemory: true,
+				transportMode: 'session',
+				transports: ['mailru', 'yandex', 'vyandex'],
+				autoReconnect: true,
+				debug: 0,
+			});
+			notifications.success('Клиент OpenFlux создан');
+			await ondone('openflux', 'default');
+		} catch (e) {
+			notifications.error(errText(e));
+		} finally {
+			busy = false;
 		}
 	}
 
@@ -237,6 +303,7 @@
 		link = '';
 		wdttPayload = null;
 		ftPayload = null;
+		openfluxPayload = null;
 		subscription = null;
 		fields = emptyFields(protocol);
 	}
@@ -320,6 +387,11 @@
 				{profileIdx}
 				ftClientId={ftPayload?.cid ?? ''}
 				ftHasWg={hasWg}
+				openfluxName={openfluxPayload?.name ?? ''}
+				openfluxTransports={openfluxPayload?.transports ?? []}
+				openfluxBusy={busy}
+				onapplyopenflux={applyOpenfluxLink}
+				oncreateopenflux={createOpenfluxManual}
 				oninput={onLinkInput}
 				oncommit={() => {
 					clearTimeout(debounce);

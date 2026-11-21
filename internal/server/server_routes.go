@@ -119,12 +119,18 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.tunnelsHandler.SetTrafficHistory(s.trafficHistory)
 	h.tunnelsHandler.SetOrchestrator(s.orch)
 	h.tunnelsHandler.SetProxyRecords(s.proxyRecords)
+	if s.openfluxService != nil {
+		h.tunnelsHandler.SetOpenFluxProvider(s.openfluxService)
+	}
 	h.awgAnalyzeHandler = api.NewAwgAnalyzeHandler(s.tunnels, s.kmodLoader)
 	h.controlHandler = api.NewControlHandler(s.tunnelService, s.tunnels, h.appLog)
 	h.controlHandler.SetPingCheckService(s.pingCheckService)
 	h.controlHandler.SetOrchestrator(s.orch)
 	h.controlHandler.SetTunnelsHandler(h.tunnelsHandler)
 	h.controlHandler.SetEventBus(s.bus)
+	if s.openfluxService != nil {
+		h.controlHandler.SetOpenFluxController(s.openfluxService)
+	}
 	h.testingHandler = api.NewTestingHandler(s.testingService)
 	h.systemHandler = api.NewSystemHandler(s.config.Version)
 	h.systemHandler.SetSettingsStore(s.settings)
@@ -1137,6 +1143,9 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 	}
 	if s.telemtHandler != nil {
 		s.telemtHandler.RegisterRoutes(mux, h.guarded)
+	}
+	if s.openfluxHandler != nil {
+		s.openfluxHandler.RegisterRoutes(mux, h.guarded)
 	}
 	if s.clashProxy != nil {
 		mux.HandleFunc("/api/singbox/clash/", h.guarded(s.clashProxy.ServeHTTP))

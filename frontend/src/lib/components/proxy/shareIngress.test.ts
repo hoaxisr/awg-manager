@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type { WdttProcessStatus, WdttServerConfig } from '$lib/types';
-import { ingressOn, nextIngressInterfaces, wdttIngressRefs } from './shareIngress';
+import type { OpenFluxConfig, WdttProcessStatus, WdttServerConfig } from '$lib/types';
+import { ingressOn, nextIngressInterfaces, openfluxIngressRefs, wdttIngressRefs } from './shareIngress';
 
 const cfg = {
 	listen: '0.0.0.0:56002',
@@ -80,5 +80,13 @@ describe('nextIngressInterfaces', () => {
 		expect(
 			nextIngressInterfaces(['iface:opkgtun17', 'iface:opkgtun18', 'iface:nwg3'], refs, false),
 		).toEqual(['iface:nwg3']);
+	});
+});
+
+describe('openfluxIngressRefs', () => {
+	it('возвращает iface:<tunIface> только когда tunIface задан', () => {
+		expect(openfluxIngressRefs(null)).toEqual([]);
+		expect(openfluxIngressRefs({} as OpenFluxConfig)).toEqual([]);
+		expect(openfluxIngressRefs({ tunIface: 'opkgtun5' } as OpenFluxConfig)).toEqual(['iface:opkgtun5']);
 	});
 });

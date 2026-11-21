@@ -765,6 +765,30 @@ func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if stored, err := h.store.Get(id); err == nil && stored != nil {
+		if stored.OpenFluxClientID != "" || id == "openflux-client" {
+			if h.openfluxProvider != nil {
+				_ = h.openfluxProvider.DeleteClient(r.Context())
+			}
+			tunnelName := stored.Name
+			if err := h.store.Delete(id); err != nil {
+				response.Error(w, err.Error(), "DELETE_FAILED")
+				return
+			}
+			if h.traffic != nil {
+				h.traffic.Clear(id)
+			}
+			h.log.Info("delete", tunnelName, "OpenFlux raw registry entry and client removed")
+			h.publishTunnelList(r.Context())
+			response.Success(w, map[string]interface{}{
+				"success":  true,
+				"tunnelId": id,
+				"verified": true,
+			})
+			return
+		}
+	}
+
 	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Backend == backendWdttRaw {
 		// Зеркальная запись — не самостоятельная сущность, а проекция
 		// прокси-инстанса: пока инстанс жив, удалять её отдельно нельзя.

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { binaryStripItems } from './binaries';
-import type { FreeTurnStatus, WdttStatus } from '$lib/types';
+import type { FreeTurnStatus, OpenFluxStatus, WdttStatus } from '$lib/types';
 
 /**
  * Форма ответа подсистемы БЕЗ инстансов — ровно та, что приходит с роутера,
@@ -43,7 +43,7 @@ describe('binaryStripItems: наличие бинарей — признак п�
 		// первого клиентского инстанса. Удалив последнего клиента, он получал
 		// «wdtt не установлен» при живых /opt/bin/wdtt-*, а «Установить»
 		// отрабатывала успешно и молча — признак от неё не зависел.
-		const items = binaryStripItems(wdttNoInstances(true), ftNoInstances(true), null, () => {});
+		const items = binaryStripItems(wdttNoInstances(true), ftNoInstances(true), null, null, () => {});
 		expect(items.map((i) => [i.name, i.binaryPresent])).toEqual([
 			['wdtt', true],
 			['freeturn', true],
@@ -51,12 +51,12 @@ describe('binaryStripItems: наличие бинарей — признак п�
 	});
 
 	it('инстансов нет и бинарей нет — продукт не установлен', () => {
-		const items = binaryStripItems(wdttNoInstances(false), ftNoInstances(false), null, () => {});
+		const items = binaryStripItems(wdttNoInstances(false), ftNoInstances(false), null, null, () => {});
 		expect(items.map((i) => i.binaryPresent)).toEqual([false, false]);
 	});
 
 	it('статуса ещё нет — не установлен, полоса зовёт поставить', () => {
-		const items = binaryStripItems(null, null, null, () => {});
+		const items = binaryStripItems(null, null, null, null, () => {});
 		expect(items.map((i) => i.binaryPresent)).toEqual([false, false]);
 	});
 
@@ -72,7 +72,46 @@ describe('binaryStripItems: наличие бинарей — признак п�
 				status: { running: false, binary: '/opt/bin/wdtt-client', binaryPresent: true },
 			},
 		];
-		const items = binaryStripItems(wdtt, ftNoInstances(false), null, () => {});
+		const items = binaryStripItems(wdtt, ftNoInstances(false), null, null, () => {});
 		expect(items[0].binaryPresent).toBe(false);
+	});
+
+	it('openflux: добавляется только при archSupported=true и верно считает обновление', () => {
+		const baseOf: OpenFluxStatus = {
+			installed: false,
+			running: false,
+			archSupported: false,
+			binary: '/opt/bin/openflux',
+			arch: 'mips',
+		};
+		expect(binaryStripItems(null, null, baseOf, null, () => {})).toHaveLength(2);
+
+		const supportedMissing: OpenFluxStatus = {
+			...baseOf,
+			archSupported: true,
+			arch: 'aarch64',
+			latestVersion: '0.17.1-awgm.1',
+		};
+		const missingItems = binaryStripItems(null, null, supportedMissing, null, () => {});
+		expect(missingItems.map((i) => [i.name, i.binaryPresent, i.updateAvailable])).toEqual([
+			['wdtt', false, false],
+			['freeturn', false, false],
+			['openflux', false, false],
+		]);
+
+		const withUpdate: OpenFluxStatus = {
+			...supportedMissing,
+			installed: true,
+			version: '0.16.0',
+		};
+		const updateItems = binaryStripItems(null, null, withUpdate, 'openflux', () => {});
+		expect(updateItems[2]).toMatchObject({
+			name: 'openflux',
+			binaryPresent: true,
+			installing: true,
+			updateAvailable: true,
+			installedVersion: '0.16.0',
+			installVersion: '0.17.1-awgm.1',
+		});
 	});
 });

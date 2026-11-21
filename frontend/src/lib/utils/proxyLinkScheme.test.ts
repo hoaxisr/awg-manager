@@ -11,6 +11,11 @@ describe('detectProxyLinkScheme', () => {
 		expect(detectProxyLinkScheme('freeturn://eyJ2IjoxfQ')).toBe('freeturn');
 	});
 
+	it('отправляет openflux:// в разбор OpenFlux', () => {
+		expect(detectProxyLinkScheme('openflux://v1/eNpLzk0BAA')).toBe('openflux');
+		expect(detectProxyLinkScheme('OPENFLUX://v1/eNpLzk0BAA')).toBe('openflux');
+	});
+
 	it('считает http и https подпиской', () => {
 		expect(detectProxyLinkScheme('https://sub.example.com/x')).toBe('subscription');
 		expect(detectProxyLinkScheme('http://sub.example.com/x')).toBe('subscription');

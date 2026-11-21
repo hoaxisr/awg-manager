@@ -1,0 +1,181 @@
+<!--
+  OpenFlux script-transport setup-page template.
+
+  A script transport that needs the operator to do something in a real
+  browser context before it can connect - log in, solve a captcha, paste a
+  token - asks the core to show one of these instead of a plain params
+  form. This file is the companion to ../template.js: that one is the
+  contract for Transport.{info,open,write,close,onEvent}; this one is the
+  contract for the page itself.
+
+  STATUS: wired end to end, core and both apps. The flow:
+
+    1. The script calls raise("needsSetup", { html: "<this file's content
+       with its own values filled in>", reason: "<short title>" }), or
+       {url: "http://127.0.0.1:<port>/"} for a page the script serves ITSELF
+       over httpserver.listen() (own routes, fetch() with a real origin), or
+       {url: "https://..."} for a real site. The core CHECKS the payload and
+       throws a TypeError into the script for anything else (see
+       transport/script/setuppage.go): only https, inline html, or the
+       loopback port of a server this script started.
+    2. The core marks a page that is the script's own (html, or its loopback
+       server) as "own" and forwards it to the app: IPC on a client
+       (ipc.CookiesRequestPayload, with Own), the Session control channel on
+       an exit (inline html only; an exit's loopback address means nothing on
+       the client and is dropped).
+    3. The app's browser (BuiltInBrowser.openHtml / openOwn on desktop, WebPage
+       on Android) shows it and defines window.openfluxSubmit: before the
+       page's own scripts for inline html, once the page has loaded for a
+       page from the script's own server (then the "openflux-ready" event
+       fires). The function belongs to the page's own address: another origin
+       cannot use it. The dialog's title is the script's `reason`; a setup page
+       has no "Готово" of the app's own - submitting is this page's job.
+    4. The data is delivered to the script the same way a solved captcha's
+       cookies always have been: ApplyCookies writes it into the jar and fires
+       onEvent("cookiesApplied") - the script reads it back via cookieJar.get()
+       (see ../template.js).
+
+  payload may be flat ({key: value, ...}) or scoped ({client: {...}, node:
+  {...}}); only the client half is delivered today. Values arrive as strings
+  (numbers and booleans become their text; null, objects and arrays are
+  dropped; at least one value is required).
+
+  A SETTINGS page of your own (Transport.settings(values), see template.js) is
+  the same kind of page, shown from the "Настройки" button; most scripts just
+  declare info().params and get a generated one.
+
+  Try it without an app: scripttest serves a raised page on 127.0.0.1 with
+  window.openfluxSubmit in it (-open shows it, -submit answers it).
+
+  window.openfluxSubmit is injected by the app; it is undefined when this
+  file is opened in an ordinary browser (e.g. while designing the page),
+  so every call here is guarded.
+-->
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenFlux — настройка транспорта</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #171a21;
+    --text: #e8eaed;
+    --muted: #9aa0a6;
+    --accent: #4c9aff;
+    --ok: #3ddc84;
+    --border: #262a33;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f5f7;
+      --card: #ffffff;
+      --text: #1b1f24;
+      --muted: #5f6368;
+      --accent: #2f6fe4;
+      --ok: #1c8a4b;
+      --border: #e3e5e8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 16px;
+  }
+  .card {
+    width: 100%;
+    max-width: 360px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 24px;
+    text-align: center;
+  }
+  .logo {
+    width: 56px;
+    height: 56px;
+    margin: 0 auto 16px;
+    display: block;
+  }
+  h1 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 12px 0 18px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--ok) 16%, transparent);
+    color: var(--ok);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .status::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ok);
+  }
+  p.hint {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0 0 20px;
+  }
+  button {
+    width: 100%;
+    padding: 11px 16px;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:active { opacity: 0.85; }
+  code {
+    font-size: 12px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <svg class="logo" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="24" cy="24" r="22" stroke="var(--accent)" stroke-width="3"/>
+      <path d="M24 13 L33 18.5 V29.5 L24 35 L15 29.5 V18.5 Z" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>
+      <circle cx="24" cy="24" r="4.5" fill="var(--accent)"/>
+    </svg>
+    <h1>OpenFlux</h1>
+    <div class="status">Сервер работает нормально</div>
+    <p class="hint">Тестовая страница транспорта. Отсюда данные уходят обратно скрипту.</p>
+    <button id="done">Готово</button>
+    <p><code id="echo"></code></p>
+  </div>
+  <script>
+    document.getElementById("done").addEventListener("click", function () {
+      var payload = { ok: true, ts: Date.now() };
+      if (window.openfluxSubmit) {
+        window.openfluxSubmit(payload);
+      } else {
+        // Opened outside the app (plain browser, while designing the page).
+        document.getElementById("echo").textContent =
+          "window.openfluxSubmit не найден — открыто вне приложения; было бы отправлено: " + JSON.stringify(payload);
+      }
+    });
+  </script>
+</body>
+</html>

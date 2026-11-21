@@ -6,7 +6,7 @@ import type {
 	WdttInstanceStatus,
 	WdttProcessStatus,
 } from '$lib/types';
-import { exitRows, rowKeyFromInstanceKey } from './rows';
+import { exitRows, rowKeyFromInstanceKey, shareRows } from './rows';
 
 function instance(id: string, running: boolean, lastError?: string): WdttInstanceStatus {
 	const status: WdttProcessStatus = { running, lastError, binary: 'wdtt', binaryPresent: true };
@@ -100,5 +100,64 @@ describe('rowKeyFromInstanceKey: ключ бэкенда → ключ строк
 
 	it('двоеточие в id ключ не рвёт', () => {
 		expect(rowKeyFromInstanceKey('wdtt-client:a:b')?.key).toBe('wdtt:client:a:b');
+	});
+
+	it('клиент и сервер openflux', () => {
+		expect(rowKeyFromInstanceKey('openflux-client:default')).toEqual({
+			key: 'openflux:client:default',
+			role: 'client',
+		});
+		expect(rowKeyFromInstanceKey('openflux-server:default')).toEqual({
+			key: 'openflux:server:default',
+			role: 'server',
+		});
+	});
+});
+
+describe('exitRows и shareRows: OpenFlux', () => {
+	it('добавляет строки клиента и сервера OpenFlux при наличии статуса', () => {
+		const src = {
+			...sources([], []),
+			openfluxStatus: {
+				installed: true,
+				running: true,
+				pid: 4242,
+				archSupported: true,
+				binary: '/opt/bin/openflux',
+				arch: 'aarch64',
+				config: {
+					enabled: true,
+					mode: 'l4',
+					transportMode: 'session',
+					transports: ['mailru', 'avito'],
+					openFirewall: true,
+					debug: 0,
+					name: 'Дом OpenFlux',
+				},
+			},
+			openfluxClientStatus: {
+				installed: true,
+				running: false,
+				socks5Port: 1085,
+				config: {
+					enabled: false,
+					name: 'Выход OpenFlux',
+					inboundMode: 'tun',
+					tunAddr: '10.10.10.2/24',
+					transportMode: 'session',
+					transports: ['boards'],
+					autoReconnect: true,
+					debug: 0,
+				},
+			},
+		};
+		const exits = exitRows(src);
+		expect(exits.map((r) => [r.key, r.state, r.binaryPresent])).toEqual([
+			['openflux:client:default', 'stopped', true],
+		]);
+		const shares = shareRows(src);
+		expect(shares.map((r) => [r.key, r.state, r.pid, r.name])).toEqual([
+			['openflux:server:default', 'running', 4242, 'Дом OpenFlux'],
+		]);
 	});
 });

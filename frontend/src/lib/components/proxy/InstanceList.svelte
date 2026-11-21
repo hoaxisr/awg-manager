@@ -94,6 +94,7 @@
 	// способом. У сервера режима нет: обе половины работают всегда, а выбор
 	// WG/Raw относится к выдаваемой ссылке (`row.mode` там пуст).
 	function protocolBadge(row: ProxyInstanceRow): string {
+		if (row.protocol === 'openflux') return 'OpenFlux';
 		if (row.protocol === 'freeturn') return 'FreeTurn';
 		if (!row.mode) return 'WDTT';
 		return row.mode === 'raw' ? 'WDTT · Raw' : 'WDTT · WG';
@@ -114,7 +115,7 @@
 							<StatusDot variant={dotVariant(row)} size="sm" pulse={row.state === 'running'} />
 							{#if renamingKey !== row.key}
 								<span class="row-name">{row.name}</span>
-								<Badge size="xs" variant={row.protocol === 'wdtt' ? 'accent' : 'purple'}>
+								<Badge size="xs" variant={row.protocol === 'wdtt' ? 'accent' : row.protocol === 'openflux' ? 'info' : 'purple'}>
 									{protocolBadge(row)}
 								</Badge>
 							{/if}

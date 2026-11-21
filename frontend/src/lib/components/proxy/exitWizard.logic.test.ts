@@ -33,6 +33,9 @@ describe('exitStep1Ready', () => {
 		expect(exitStep1Ready({ manual: true, protocol: 'freeturn', peer: '', password: '' })).toBe(
 			true,
 		);
+		expect(exitStep1Ready({ manual: true, protocol: 'openflux', peer: '', password: '' })).toBe(
+			false,
+		);
 	});
 });
 

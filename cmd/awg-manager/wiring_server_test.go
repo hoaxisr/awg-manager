@@ -117,3 +117,38 @@ func TestWiring_AssertProductionWiring_RequiresFircEngineCoordinator(t *testing.
 		t.Fatal("expected error when fircHandler has nil installer")
 	}
 }
+
+func TestWiring_ExtractOpenfluxConflictIface(t *testing.T) {
+	tests := []struct {
+		errStr   string
+		expected string
+	}{
+		{
+			errStr:   `router reported error: "OpkgTun14": network 10.10.10.0/24 conflicts with interface "OpkgTun11"`,
+			expected: "OpkgTun11",
+		},
+		{
+			errStr:   `interface up OpkgTun12: router reported error: "OpkgTun12": network 10.10.10.0/24 conflicts with interface 'opkgtun15'`,
+			expected: "OpkgTun15",
+		},
+		{
+			errStr:   `conflicts with interface OpkgTun7`,
+			expected: "OpkgTun7",
+		},
+		{
+			errStr:   `router reported error: cannot allocate IP`,
+			expected: "",
+		},
+		{
+			errStr:   "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		got := extractOpenfluxConflictIface(tt.errStr)
+		if got != tt.expected {
+			t.Errorf("extractOpenfluxConflictIface(%q) = %q, want %q", tt.errStr, got, tt.expected)
+		}
+	}
+}

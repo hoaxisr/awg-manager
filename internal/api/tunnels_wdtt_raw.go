@@ -67,6 +67,16 @@ func (h *TunnelsHandler) buildWdttRawResponse(stored *storage.AWGTunnel) map[str
 // карточки (PingCheck и прочее) пропали бы молча, а удаление выглядело бы
 // успешным (амендмент F2).
 func (h *TunnelsHandler) mirrorOwnerKey(stored *storage.AWGTunnel) (string, error) {
+	if stored.OpenFluxClientID != "" || stored.ID == "openflux-client" {
+		if h.openfluxProvider != nil {
+			st := h.openfluxProvider.GetClientStatus()
+			if st.Running || (st.Config != nil && st.Config.Enabled) {
+				return "openflux-client:default", nil
+			}
+			return "", nil
+		}
+		return "openflux-client:default", nil
+	}
 	clientID := strings.TrimSpace(stored.WdttClientID)
 	if clientID == "" {
 		return "", nil

@@ -40,6 +40,13 @@ type ControlHandler struct {
 	tunnelsHandler *TunnelsHandler
 	bus            *events.Bus
 	log            *logging.ScopedLogger
+	openfluxCtrl   OpenFluxClientController
+}
+
+// OpenFluxClientController controls the OpenFlux client lifecycle.
+type OpenFluxClientController interface {
+	StartClient(ctx context.Context) error
+	StopClient(ctx context.Context) error
 }
 
 // ProxyInstanceEnabler — тумблер намерения одного инстанса прокси-рантайма.
@@ -81,6 +88,50 @@ func (h *ControlHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 // has no kernel lifecycle (store приходит конструктором).
 func (h *ControlHandler) SetProxyControl(en ProxyInstanceEnabler) { h.proxyEnabler = en }
 
+// SetOpenFluxController wires the OpenFlux client lifecycle controller for AmneziaWG tunnel cards.
+func (h *ControlHandler) SetOpenFluxController(c OpenFluxClientController) { h.openfluxCtrl = c }
+
+func (h *ControlHandler) controlOpenFlux(w http.ResponseWriter, r *http.Request, id string, start bool) bool {
+	if h.openfluxCtrl == nil {
+		return false
+	}
+	stored, err := h.store.Get(id)
+	if err != nil || stored == nil || (stored.OpenFluxClientID == "" && id != "openflux-client") {
+		return false
+	}
+	var opErr error
+	if start {
+		opErr = h.openfluxCtrl.StartClient(r.Context())
+	} else {
+		opErr = h.openfluxCtrl.StopClient(r.Context())
+	}
+	if opErr != nil {
+		code := "START_FAILED"
+		if !start {
+			code = "STOP_FAILED"
+		}
+		response.Error(w, opErr.Error(), code)
+		return true
+	}
+	_ = h.store.Update(id, func(t *storage.AWGTunnel) error {
+		t.Enabled = start
+		return nil
+	})
+	if h.tunnelsHandler != nil {
+		h.tunnelsHandler.publishTunnelList(r.Context())
+	}
+	h.publishRoutingTunnels(r.Context())
+	status := "stopped"
+	if start {
+		status = "running"
+	}
+	response.Success(w, map[string]interface{}{
+		"id":     id,
+		"status": status,
+	})
+	return true
+}
+
 // controlWdttRaw — старт/стоп зеркальной записи wdtt-raw. Это НЕ kernel-туннель:
 // его поднимает и опускает воркер прокси-рантайма по намерению записи, поэтому
 // кнопка карточки переключает намерение инстанса, а не зовёт оркестратор (его
@@ -91,6 +142,9 @@ func (h *ControlHandler) controlWdttRaw(w http.ResponseWriter, r *http.Request, 
 	}
 	stored, err := h.store.Get(id)
 	if err != nil || stored == nil || stored.Backend != backendWdttRaw {
+		return false
+	}
+	if stored.OpenFluxClientID != "" || id == "openflux-client" {
 		return false
 	}
 	clientID := strings.TrimSpace(stored.WdttClientID)
@@ -160,6 +214,9 @@ func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
 		return
 	}
+	if h.controlOpenFlux(w, r, id, true) {
+		return
+	}
 	if h.controlWdttRaw(w, r, id, true) {
 		return
 	}
@@ -223,6 +280,9 @@ func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 	}
 	if stored, _ := h.store.Get(id); stored != nil && stored.Locked {
 		response.ErrorWithStatus(w, http.StatusForbidden, tunnelLockedMessage, "TUNNEL_LOCKED")
+		return
+	}
+	if h.controlOpenFlux(w, r, id, false) {
 		return
 	}
 	if h.controlWdttRaw(w, r, id, false) {

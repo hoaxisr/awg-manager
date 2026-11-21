@@ -219,6 +219,8 @@ export interface TunnelListItem {
 	wdttClientId?: string;
 	/** То же для FreeTurn-клиента: пара к wdttClientId. */
 	freeTurnClientId?: string;
+	/** То же для OpenFlux-клиента: пара к freeTurnClientId / wdttClientId. */
+	openfluxClientId?: string;
 	pingCheck: {
 		status: 'alive' | 'recovering' | 'disabled';
 		restartCount: number;

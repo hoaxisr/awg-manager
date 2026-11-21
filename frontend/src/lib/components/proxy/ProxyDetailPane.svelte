@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
+	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { listenPortNumber } from '$lib/utils/listenPortUtils';
 	import { proxyInOpsMode } from '$lib/utils/proxyOpsMode';
@@ -8,12 +9,18 @@
 		AccessPolicy,
 		FreeTurnConfig,
 		FreeTurnStatus,
+		OpenFluxClientConfig,
+		OpenFluxClientStatus,
+		OpenFluxConfig,
+		OpenFluxStatus,
 		TunnelListItem,
 		WdttConfig,
 		WdttStatus,
 	} from '$lib/types';
 	import ExitDetail from './ExitDetail.svelte';
 	import ExitWizard from './ExitWizard.svelte';
+	import OpenFluxClientDetail from './OpenFluxClientDetail.svelte';
+	import OpenFluxDetail from './OpenFluxDetail.svelte';
 	import ShareDetail from './ShareDetail.svelte';
 	import ShareWizard from './ShareWizard.svelte';
 	import { exitInstance, saveExitInstance } from './exitConfig';
@@ -22,7 +29,7 @@
 	import type { ExitConfig } from './exitConfig';
 	import type { ExitProtocol } from './exitWizard';
 	import type { ShareConfig } from './shareConfig';
-	import type { ProxyInstanceRow } from './rows';
+	import type { ProxyInstanceRow, ProxyProtocol } from './rows';
 
 	interface Props {
 		activeTab: 'exit' | 'share';
@@ -35,6 +42,10 @@
 		ftConfig: FreeTurnConfig | null;
 		wdttStatus: WdttStatus | null;
 		ftStatus: FreeTurnStatus | null;
+		openfluxStatus?: OpenFluxStatus | null;
+		openfluxConfig?: OpenFluxConfig | null;
+		openfluxClientStatus?: OpenFluxClientStatus | null;
+		openfluxClientConfig?: OpenFluxClientConfig | null;
 		policies: AccessPolicy[];
 		tunnels: TunnelListItem[];
 		busyKeys: string[];
@@ -48,7 +59,8 @@
 		onconfigs: () => Promise<void>;
 		onreload: () => Promise<void>;
 		onexitdone: (protocol: ExitProtocol, id: string) => void;
-		onsharedone: (protocol: ExitProtocol, id: string) => void;
+		onsharedone: (protocol: ProxyProtocol, id: string) => void;
+		ondelete?: (row: ProxyInstanceRow) => void;
 	}
 
 	let {
@@ -61,6 +73,10 @@
 		ftConfig,
 		wdttStatus,
 		ftStatus,
+		openfluxStatus = null,
+		openfluxConfig = null,
+		openfluxClientStatus = null,
+		openfluxClientConfig = null,
 		policies,
 		tunnels,
 		busyKeys,
@@ -72,6 +88,7 @@
 		onreload,
 		onexitdone,
 		onsharedone,
+		ondelete,
 	}: Props = $props();
 
 	let savingExit = $state(false);
@@ -241,6 +258,30 @@
 			ondone={onsharedone}
 		/>
 	{/key}
+{:else if activeTab === 'exit' && exitRow?.protocol === 'openflux'}
+	{#key exitRow.key}
+		<OpenFluxClientDetail
+			row={exitRow}
+			status={openfluxClientStatus ?? openfluxStatus?.client ?? null}
+			config={openfluxClientConfig ?? openfluxClientStatus?.config ?? openfluxStatus?.client?.config ?? null}
+			routerClock={wdttStatus?.routerClock ?? ftStatus?.routerClock}
+			{policies}
+			busy={busyKeys.includes(exitRow.key)}
+			onstart={() => exitRow && ontoggle(exitRow, true)}
+			onstop={() => exitRow && ontoggle(exitRow, false)}
+			ondelete={() => exitRow && ondelete?.(exitRow)}
+			onsave={async (cfg) => {
+				const res = await api.openfluxSaveClientConfig(cfg);
+				await onstatuses();
+				await onconfigs();
+				return res?.client?.config ?? cfg;
+			}}
+			onreload={async () => {
+				await onstatuses();
+				await onconfigs();
+			}}
+		/>
+	{/key}
 {:else if activeTab === 'exit' && exitRow}
 	<!-- Локальное состояние детали не переживает смену инстанса (W-13). -->
 	{#key exitRow.key}
@@ -259,6 +300,29 @@
 			onwizard={exitNeverRan ? () => (exitWizard = 'instance') : undefined}
 			onsave={saveExit}
 			{onreload}
+		/>
+	{/key}
+{:else if activeTab === 'share' && shareRow?.protocol === 'openflux'}
+	{#key shareRow.key}
+		<OpenFluxDetail
+			row={shareRow}
+			status={openfluxStatus}
+			config={openfluxConfig ?? openfluxStatus?.config ?? null}
+			routerClock={wdttStatus?.routerClock ?? ftStatus?.routerClock}
+			{policies}
+			{tunnels}
+			busy={busyKeys.includes(shareRow.key)}
+			onstart={() => shareRow && ontoggle(shareRow, true)}
+			onstop={() => shareRow && ontoggle(shareRow, false)}
+			onsave={async (cfg) => {
+				await api.openfluxSaveConfig(cfg);
+				await onstatuses();
+				await onconfigs();
+			}}
+			onreload={async () => {
+				await onstatuses();
+				await onconfigs();
+			}}
 		/>
 	{/key}
 {:else if activeTab === 'share' && shareRow}

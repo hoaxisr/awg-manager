@@ -6,7 +6,7 @@
 // идентификаторы sing-box, на страницу они не попадают (правило имён ia §1.0 —
 // человеку показываются NDMS-имена).
 
-import type { WdttProcessStatus, WdttServerConfig } from '$lib/types';
+import type { OpenFluxConfig, WdttProcessStatus, WdttServerConfig } from '$lib/types';
 
 /** Легаси-умолчания бэкенда: пустые имена = сервер вне NDMS (`internal/wdtt/types.go`). */
 const LEGACY_WG_IFACE = 'wdtt0';
@@ -57,4 +57,9 @@ export function nextIngressInterfaces(
 		else set.delete(ref);
 	}
 	return [...set];
+}
+
+export function openfluxIngressRefs(cfg?: OpenFluxConfig | null): string[] {
+	const tun = cfg?.tunIface?.trim();
+	return tun ? [`iface:${tun}`] : [];
 }

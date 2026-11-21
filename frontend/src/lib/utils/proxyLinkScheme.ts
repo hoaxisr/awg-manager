@@ -3,13 +3,14 @@
  * три. Схема ссылки однозначно задаёт ручку, и выбирает её фронт: wdtt.DecodeLink
  * чужие схемы не знает и на freeturn:// отвечает невнятным отказом.
  */
-export type ProxyLinkScheme = 'wdtt' | 'freeturn' | 'subscription' | 'unknown';
+export type ProxyLinkScheme = 'wdtt' | 'freeturn' | 'openflux' | 'subscription' | 'unknown';
 
 const SCHEMES: Record<string, ProxyLinkScheme> = {
 	// qwdtt:// — та же ссылка «для приложения на телефоне», разбирает её та же ручка.
 	wdtt: 'wdtt',
 	qwdtt: 'wdtt',
 	freeturn: 'freeturn',
+	openflux: 'openflux',
 	http: 'subscription',
 	https: 'subscription'
 };

@@ -32,6 +32,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/openflux"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/routing"
@@ -121,6 +122,8 @@ type Server struct {
 	fircHandler                *api.FircHandler
 	uplinkHandler              *api.UplinkHandler
 	telemtHandler              *api.TelemtHandler
+	openfluxHandler            *api.OpenFluxHandler
+	openfluxService            *openflux.Service
 	vlessServerService         *vlessserver.Service
 	tgWebProxyService          *tgwebproxy.Service
 	cdnDispatcher              *cdndispatcher.Dispatcher
@@ -249,6 +252,8 @@ type Deps struct {
 	SingboxHandler             *api.SingboxHandler
 	FircHandler                *api.FircHandler
 	TelemtHandler              *api.TelemtHandler
+	OpenFluxHandler            *api.OpenFluxHandler
+	OpenFluxService            *openflux.Service
 	VlessServerService         *vlessserver.Service
 	TgWebProxyService          *tgwebproxy.Service
 	CDNDispatcher              *cdndispatcher.Dispatcher
@@ -338,6 +343,8 @@ func New(cfg Config, deps Deps) *Server {
 		singboxHandler:             deps.SingboxHandler,
 		fircHandler:                deps.FircHandler,
 		telemtHandler:              deps.TelemtHandler,
+		openfluxHandler:            deps.OpenFluxHandler,
+		openfluxService:            deps.OpenFluxService,
 		vlessServerService:         deps.VlessServerService,
 		tgWebProxyService:          deps.TgWebProxyService,
 		cdnDispatcher:              deps.CDNDispatcher,

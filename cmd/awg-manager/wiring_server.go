@@ -112,6 +112,8 @@ func (a *app) setupServer() {
 	_ = a.telemtService.StartIfEnabled(context.Background())
 	a.telemtHandler = api.NewTelemtHandler(a.telemtService)
 
+	a.setupOpenFlux()
+
 	// Cross-Component Ingress Coordinator and Crash Recovery
 	a.ingressCoordinator = serveringress.New(a.dataDir, a.vlessServerService, a.cdnDispatcher, a.tgWebProxyService)
 	a.ingressCoordinator.SetTelemt(a.telemtService)
@@ -250,6 +252,8 @@ func (a *app) setupServer() {
 			SingboxHandler:           a.singboxHandler,
 			FircHandler:              a.fircHandler,
 			TelemtHandler:            a.telemtHandler,
+			OpenFluxHandler:          a.openfluxHandler,
+			OpenFluxService:          a.openfluxService,
 			VlessServerService:       a.vlessServerService,
 			TgWebProxyService:        a.tgWebProxyService,
 			CDNDispatcher:            a.cdnDispatcher,

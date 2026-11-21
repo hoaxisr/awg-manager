@@ -233,6 +233,7 @@ type tunnelItem struct {
 	// список помечает туннели, принадлежащие прокси-выходу, и без второго
 	// поля метки не было бы ровно у половины из них.
 	FreeTurnClientID string `json:"freeTurnClientId,omitempty"`
+	OpenFluxClientID string `json:"openfluxClientId,omitempty"`
 	// Locked — при true туннель защищён от изменений (#818).
 	Locked bool `json:"locked,omitempty"`
 	// StatusDetails — человекочитаемая причина состояния (StateInfo.Details),
@@ -308,7 +309,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 		stored, _ := h.store.Get(t.ID)
 
 		awgVersion := "wg"
-		var endpoint, address, wdttClientID, freeTurnClientID string
+		var endpoint, address, wdttClientID, freeTurnClientID, openfluxClientID string
 		var ispInterface, ispInterfaceLabel string
 		var resolvedISPInterface, resolvedISPInterfaceLabel string
 		var mtu int
@@ -332,6 +333,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			ispInterfaceLabel = stored.ISPInterfaceLabel
 			wdttClientID = strings.TrimSpace(stored.WdttClientID)
 			freeTurnClientID = strings.TrimSpace(stored.FreeTurnClientID)
+			openfluxClientID = strings.TrimSpace(stored.OpenFluxClientID)
 
 			// NativeWG stores NDMS IDs (e.g. "ISP"), but frontend uses kernel names (e.g. "eth3").
 			// Convert back so the dropdown can match the stored value.
@@ -440,6 +442,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			PingCheck:                 pcInfo,
 			WdttClientID:              wdttClientID,
 			FreeTurnClientID:          freeTurnClientID,
+			OpenFluxClientID:          openfluxClientID,
 			Obfuscator:                obfItem(stored, t.StateInfo.RelayBackend),
 			WarpAutopilot:             lookupManagedWarpAutopilot(watched, backend, t.ID),
 		}

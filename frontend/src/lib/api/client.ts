@@ -1,7 +1,7 @@
 // Фасад API-клиента. Доменные методы разнесены по слоям client*.ts
 // (цепочка наследования от CoreClient); публичная поверхность не менялась:
 // `api` и сопутствующие экспорты доступны по прежнему пути $lib/api/client.
-import { FircClient } from './clientFirc';
+import { OpenFluxClient } from './clientOpenflux';
 import type { AwgAnalyzeData } from '$lib/types';
 import type { UplinkEntry, UplinkPolicy, UplinkSnapshot, WANDNSConfig } from '$lib/types/uplink';
 
@@ -20,7 +20,7 @@ export type {
 	SystemProcessItem,
 } from '$lib/types';
 
-class ApiClient extends FircClient {
+class ApiClient extends OpenFluxClient {
 	async uplinkDNS(): Promise<WANDNSConfig> { return this.request('/uplink/dns'); }
 	async uplinkSaveDNS(provider: string, revision: number, servers: string[]): Promise<WANDNSConfig> {
 		return this.request('/uplink/dns', { method: 'PUT', body: JSON.stringify({ provider, revision, servers }) });

@@ -28,6 +28,7 @@ import (
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
+	"github.com/hoaxisr/awg-manager/internal/openflux"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
@@ -192,6 +193,8 @@ type app struct {
 	tgWebProxyService   *tgwebproxy.Service
 	telemtService       *telemt.Service
 	telemtHandler       *api.TelemtHandler
+	openfluxService     *openflux.Service
+	openfluxHandler     *api.OpenFluxHandler
 	cdnDispatcher       *cdndispatcher.Dispatcher
 	ingressCoordinator  *serveringress.Coordinator
 	ingressWatcher      *serveringress.ConfigWatcher

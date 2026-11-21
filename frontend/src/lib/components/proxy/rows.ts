@@ -8,13 +8,17 @@ import type {
   FreeTurnProcessStatus,
   FreeTurnServerConfig,
   FreeTurnStatus,
+  OpenFluxClientConfig,
+  OpenFluxClientStatus,
+  OpenFluxConfig,
+  OpenFluxStatus,
   WdttConfig,
   WdttProcessStatus,
   WdttServerConfig,
   WdttStatus,
 } from "$lib/types";
 
-export type ProxyProtocol = "wdtt" | "freeturn";
+export type ProxyProtocol = "wdtt" | "freeturn" | "openflux";
 
 export type ProxyRole = "client" | "server";
 
@@ -126,6 +130,8 @@ const INSTANCE_KINDS: Record<string, { protocol: ProxyProtocol; role: ProxyRole 
 	'wdtt-server': { protocol: 'wdtt', role: 'server' },
 	'freeturn-client': { protocol: 'freeturn', role: 'client' },
 	'freeturn-server': { protocol: 'freeturn', role: 'server' },
+	'openflux-client': { protocol: 'openflux', role: 'client' },
+	'openflux-server': { protocol: 'openflux', role: 'server' },
 };
 
 /**
@@ -203,11 +209,87 @@ export interface ProxySources {
   wdttConfig: WdttConfig | null;
   ftStatus: FreeTurnStatus | null;
   ftConfig: FreeTurnConfig | null;
+  openfluxStatus?: OpenFluxStatus | null;
+  openfluxConfig?: OpenFluxConfig | null;
+  openfluxClientStatus?: OpenFluxClientStatus | null;
+  openfluxClientConfig?: OpenFluxClientConfig | null;
+}
+
+function openfluxClientRow(
+  c: OpenFluxClientConfig | undefined,
+  st: OpenFluxClientStatus | null | undefined,
+  serverStatus: OpenFluxStatus | null | undefined,
+): ProxyInstanceRow {
+  const running = st?.running === true;
+  const enabled = c?.enabled === true;
+  const installed = st?.installed ?? serverStatus?.installed ?? false;
+  const transportDetail = c?.transports?.length ? c.transports.join(' · ') : (c?.transportMode || 'session');
+  const firstDetail =
+    c?.inboundMode === 'socks5'
+      ? (portOf(c?.socks5Listen) || ':1085')
+      : (st?.ndmsIface || c?.ndmsIface || c?.tunAddr || 'OpkgTun');
+  return {
+    key: rowKey('openflux', 'client', 'default'),
+    id: 'default',
+    protocol: 'openflux',
+    role: 'client',
+    name: c?.name?.trim() || 'OpenFlux Выход',
+    state: running ? 'running' : enabled ? 'error' : 'stopped',
+    autostart: enabled,
+    pid: st?.pid,
+    startedAt: undefined,
+    orphanedPid: false,
+    binaryPresent: installed,
+    flow: [
+      { label: m.proxy_flow_this_router(), detail: firstDetail },
+      { label: 'OpenFlux', detail: transportDetail },
+      { label: m.proxy_flow_internet(), detail: m.proxy_flow_via_exit() },
+    ],
+  };
+}
+
+function openfluxServerRow(
+  c: OpenFluxConfig | undefined,
+  st: OpenFluxStatus | null | undefined,
+): ProxyInstanceRow {
+  const running = st?.running === true;
+  const enabled = c?.enabled === true;
+  const installed = st?.installed ?? false;
+  const modeLabel = c?.mode === 'l3' ? 'L3 TUN' : 'L4 Proxy';
+  const transportDetail = c?.transports?.length ? c.transports.join(' · ') : (c?.transportMode || 'session');
+  const natDetail =
+    c?.mode === 'l3'
+      ? c.natMode === 'none'
+        ? m.proxy_flow_nat_none()
+        : c.natMode === 'internet-only'
+          ? m.proxy_flow_nat_internet()
+          : m.proxy_flow_nat_full()
+      : c?.upstreamProxy?.trim()
+        ? 'Upstream proxy'
+        : m.proxy_flow_nat_full();
+  return {
+    key: rowKey('openflux', 'server', 'default'),
+    id: 'default',
+    protocol: 'openflux',
+    role: 'server',
+    name: c?.name?.trim() || 'OpenFlux',
+    state: running ? 'running' : enabled ? 'error' : 'stopped',
+    autostart: enabled,
+    pid: st?.pid,
+    startedAt: undefined,
+    orphanedPid: false,
+    binaryPresent: installed,
+    flow: [
+      { label: m.proxy_flow_subscribers(), detail: transportDetail },
+      { label: m.proxy_flow_this_router(), detail: modeLabel },
+      { label: m.proxy_flow_internet(), detail: natDetail },
+    ],
+  };
 }
 
 /** Вкладка «Выход»: клиенты обоих протоколов. */
 export function exitRows(src: ProxySources): ProxyInstanceRow[] {
-  return [
+  const rows: ProxyInstanceRow[] = [
     ...(src.wdttStatus?.clients ?? []).map((i) => {
       const inst = src.wdttConfig?.clients.find((x) => x.id === i.id);
       const c = inst?.config;
@@ -234,11 +316,21 @@ export function exitRows(src: ProxySources): ProxyInstanceRow[] {
       );
     }),
   ];
+  if (src.openfluxClientStatus || src.openfluxClientConfig) {
+    rows.push(
+      openfluxClientRow(
+        src.openfluxClientConfig ?? src.openfluxClientStatus?.config,
+        src.openfluxClientStatus,
+        src.openfluxStatus,
+      ),
+    );
+  }
+  return rows;
 }
 
 /** Вкладка «Раздача»: серверы обоих протоколов. */
 export function shareRows(src: ProxySources): ProxyInstanceRow[] {
-  return [
+  const rows: ProxyInstanceRow[] = [
     ...(src.wdttStatus?.servers ?? []).map((i) => {
       const inst = src.wdttConfig?.servers.find((x) => x.id === i.id);
       const c = inst?.config;
@@ -267,4 +359,8 @@ export function shareRows(src: ProxySources): ProxyInstanceRow[] {
       );
     }),
   ];
+  if (src.openfluxStatus || src.openfluxConfig) {
+    rows.push(openfluxServerRow(src.openfluxConfig ?? src.openfluxStatus?.config, src.openfluxStatus));
+  }
+  return rows;
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/openflux"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -77,6 +78,8 @@ type TunnelsHandler struct {
 	// (амендмент F2).
 	proxyRecords ProxyRecordLister
 
+	openfluxProvider OpenFluxClientStatusProvider
+
 	warpAutopilot WarpAutopilotProvider
 
 	// buildTunnelsSnapshot (optional) assembles the composite
@@ -133,6 +136,17 @@ func (h *TunnelsHandler) SetOrchestrator(orch *orchestrator.Orchestrator) {
 // wdtt-raw сверяется с ним на владельца (амендмент F2).
 func (h *TunnelsHandler) SetProxyRecords(records ProxyRecordLister) {
 	h.proxyRecords = records
+}
+
+// OpenFluxClientStatusProvider queries the live OpenFlux client status and handles deletion.
+type OpenFluxClientStatusProvider interface {
+	GetClientStatus() openflux.ClientStatus
+	DeleteClient(ctx context.Context) error
+}
+
+// SetOpenFluxProvider wires the live OpenFlux client status provider.
+func (h *TunnelsHandler) SetOpenFluxProvider(p OpenFluxClientStatusProvider) {
+	h.openfluxProvider = p
 }
 
 // SetPingCheckSnapshot sets the function that publishes a pingcheck snapshot.

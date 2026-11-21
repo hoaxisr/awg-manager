@@ -4,6 +4,8 @@ export { default as CaptchaSection } from './CaptchaSection.svelte';
 export { default as ConfPasteBox } from './ConfPasteBox.svelte';
 export { default as DetailSection } from './DetailSection.svelte';
 export { default as ExitDetail } from './ExitDetail.svelte';
+export { default as OpenFluxDetail } from './OpenFluxDetail.svelte';
+export { default as OpenFluxClientDetail } from './OpenFluxClientDetail.svelte';
 export { default as ExitWizard } from './ExitWizard.svelte';
 export { default as ExitParamsSection } from './ExitParamsSection.svelte';
 export { default as InstanceBadges } from './InstanceBadges.svelte';
@@ -45,7 +47,7 @@ export {
 	wdttServerPorts,
 } from './shareConfig';
 export type { ShareConfig, ShareInstance, SharePort } from './shareConfig';
-export { ingressOn, nextIngressInterfaces, wdttIngressRefs } from './shareIngress';
+export { ingressOn, nextIngressInterfaces, openfluxIngressRefs, wdttIngressRefs } from './shareIngress';
 export {
 	rawPortHint,
 	shareConfigSetupComplete,

@@ -893,6 +893,7 @@ func TestTunnelUpdate_FieldInventoryComplete(t *testing.T) {
 		"ResolvedEndpointIP": true,
 		"WdttClientID":       true,
 		"FreeTurnClientID":   true,
+		"OpenFluxClientID":   true,
 		"RawKernelIface":     true,
 		"RawNdmsIface":       true,
 		"Locked":             true,

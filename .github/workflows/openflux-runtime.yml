@@ -1,0 +1,165 @@
+name: OpenFlux Runtime
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'feat/*'
+      - 'feature/*'
+    paths:
+      - 'openflux-core/**'
+      - 'scripts/build-openflux.sh'
+      - 'scripts/openflux-runtime-version.sh'
+      - '.github/workflows/openflux-runtime.yml'
+  pull_request:
+    paths:
+      - 'openflux-core/**'
+      - 'scripts/build-openflux.sh'
+      - 'scripts/openflux-runtime-version.sh'
+      - '.github/workflows/openflux-runtime.yml'
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Create or update GitHub prerelease openflux-v<version>'
+        type: boolean
+        required: false
+        default: false
+      exact_version:
+        description: 'Use RUNTIME_VERSION without .r<hash> suffix (matches internal/openflux/pins.go)'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build OpenFlux binaries & manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      runtime_version: ${{ steps.meta.outputs.runtime_version }}
+      base_version: ${{ steps.meta.outputs.base_version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Setup Go
+        uses: actions/setup-go@4d34df0c2316ff8122ab7b7210e23c0436b0f50a
+        with:
+          go-version-file: openflux-core/go.mod
+          cache-dependency-path: openflux-core/go.sum
+
+      - name: Verify Go formatting and run unit tests
+        working-directory: openflux-core
+        shell: bash
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l .)"
+          if [[ -n "$unformatted" ]]; then
+            echo "::error::Unformatted Go files in openflux-core: $unformatted" >&2
+            exit 1
+          fi
+          go vet ./...
+          go test ./transport/webdav ./transport/registry ./share/... ./tunnel/...
+
+      - name: Compute OpenFlux runtime version
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_VER="$(bash scripts/openflux-runtime-version.sh --base)"
+          if [[ "${{ inputs.exact_version != false }}" == "true" ]]; then
+            VER="$BASE_VER"
+          else
+            VER="$(bash scripts/openflux-runtime-version.sh)"
+          fi
+          echo "base_version=$BASE_VER" >> "$GITHUB_OUTPUT"
+          echo "runtime_version=$VER" >> "$GITHUB_OUTPUT"
+          echo "release_tag=openflux-v${BASE_VER}" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-compile router & server binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build-openflux.sh "${{ steps.meta.outputs.runtime_version }}"
+          file dist/openflux/openflux-linux-*
+          ./dist/openflux/openflux-linux-x86_64 --version
+          ./dist/openflux/openflux-linux-x86_64 --features
+
+      - name: Generate openflux_releases.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="${{ steps.meta.outputs.runtime_version }}"
+          TAG="${{ steps.meta.outputs.release_tag }}"
+          REPO="${{ github.repository }}"
+          python3 - <<PY
+          import json, pathlib
+
+          out_dir = pathlib.Path("dist/openflux")
+          sums = {}
+          for line in (out_dir / "SHA256SUMS.txt").read_text().splitlines():
+              parts = line.strip().split()
+              if len(parts) == 2:
+                  sums[parts[1]] = parts[0]
+
+          arches = ["aarch64-3.10", "mipsel-3.4", "mips-3.4", "arm", "x86_64"]
+          manifest = {
+              "version": "${VER}",
+              "release_tag": "${TAG}",
+              "binaries": {},
+          }
+          for arch in arches:
+              fname = f"openflux-linux-{arch}"
+              manifest["binaries"][arch] = {
+                  "filename": fname,
+                  "sha256": sums[fname],
+                  "size": (out_dir / fname).stat().st_size,
+                  "url": f"https://github.com/{REPO}/releases/download/{TAG}/{fname}",
+              }
+          (out_dir / "openflux_releases.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print((out_dir / "openflux_releases.json").read_text())
+          PY
+
+      - name: Upload OpenFlux runtime artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openflux-runtime-${{ steps.meta.outputs.runtime_version }}
+          path: dist/openflux/
+          if-no-files-found: error
+
+      - name: Publish GitHub prerelease
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release == true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.release_tag }}"
+          VER="${{ steps.meta.outputs.runtime_version }}"
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              dist/openflux/openflux-linux-* \
+              dist/openflux/SHA256SUMS.txt \
+              dist/openflux/openflux_releases.json \
+              --repo "${{ github.repository }}" \
+              --target "${{ github.sha }}" \
+              --title "OpenFlux Core ${VER}" \
+              --notes "Automated OpenFlux core build (${VER}) from ${GITHUB_SHA:0:12}." \
+              --prerelease
+          else
+            gh release upload "$TAG" \
+              dist/openflux/openflux-linux-* \
+              dist/openflux/SHA256SUMS.txt \
+              dist/openflux/openflux_releases.json \
+              --repo "${{ github.repository }}" --clobber
+          fi

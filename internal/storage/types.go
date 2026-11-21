@@ -621,6 +621,7 @@ type AWGTunnel struct {
 	Backend            string                   `json:"backend,omitempty"`            // "nativewg" | "kernel" | "wdtt-raw" | "" (legacy=kernel)
 	FreeTurnClientID   string                   `json:"freeTurnClientId,omitempty"`   // set when AWG tunnel is auto-created from freeturn:// import
 	WdttClientID       string                   `json:"wdttClientId,omitempty"`       // set when AWG tunnel is auto-created from wdtt/qwdtt import
+	OpenFluxClientID   string                   `json:"openfluxClientId,omitempty"`   // set when AWG tunnel is mirror of OpenFlux client OpkgTun interface
 	RawKernelIface     string                   `json:"rawKernelIface,omitempty"`     // wdtt-raw: kernel TUN (e.g. wdttraw0 / opkgtun17)
 	RawNdmsIface       string                   `json:"rawNdmsIface,omitempty"`       // wdtt-raw: NDMS OpkgTun name (e.g. OpkgTun17)
 	NWGIndex           int                      `json:"nwgIndex"`                     // Wireguard{N} index, nativewg only (0 is valid!)
