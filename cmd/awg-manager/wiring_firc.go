@@ -709,18 +709,35 @@ func (a *app) wireFircKeenDNSCloudProvider() {
 	}
 	kd := a.ndmsQueries.KeenDNS
 	a.fircOp.SetKeenCloudProvider(func(ctx context.Context) (firc.KeenCloudRelaySnapshot, error) {
-		info, err := kd.Get(ctx)
-		if err != nil {
-			return firc.KeenCloudRelaySnapshot{}, err
+		info, ndnsErr := kd.Get(ctx)
+		cloudIPs, _ := kd.GetCloudTargets(ctx)
+		if ndnsErr != nil && len(cloudIPs) == 0 {
+			return firc.KeenCloudRelaySnapshot{}, ndnsErr
 		}
-		if info == nil {
-			return firc.KeenCloudRelaySnapshot{}, nil
+		seen := make(map[string]struct{})
+		var mergedIPs []string
+		addIP := func(ip string) {
+			if ip == "" {
+				return
+			}
+			if _, ok := seen[ip]; !ok {
+				seen[ip] = struct{}{}
+				mergedIPs = append(mergedIPs, ip)
+			}
 		}
-		return firc.KeenCloudRelaySnapshot{
-			Enabled:      info.Enabled,
-			RelayIPs:     append([]string(nil), info.RelayIPs...),
-			RelayDomains: append([]string(nil), info.RelayDomains...),
-		}, nil
+		snap := firc.KeenCloudRelaySnapshot{}
+		if info != nil {
+			snap.Enabled = info.Enabled
+			snap.RelayDomains = append([]string(nil), info.RelayDomains...)
+			for _, ip := range info.RelayIPs {
+				addIP(ip)
+			}
+		}
+		for _, ip := range cloudIPs {
+			addIP(ip)
+		}
+		snap.RelayIPs = mergedIPs
+		return snap, nil
 	})
 }
 

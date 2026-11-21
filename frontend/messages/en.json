@@ -8051,6 +8051,8 @@
 	"firc_wizard_runtime_missing_desc": "Switching routing to FIRC is unavailable until the fircd and tunvless binaries (awg-firc-runtime) are installed on the router.",
 	"firc_wizard_runtime_missing_keep_hint": "Install FIRC under Settings → FIRC (or via opkg install awg-firc-runtime), or select \"Import configuration into FIRC only\" without switching.",
 	"firc_keendns_sync_error": "Cloud address list sync error (last working rules preserved): {error}",
+	"firc_keendns_cloud_check_label": "Check cloud reachability (HTTPS + CoAP UDP)",
+	"firc_keendns_cloud_check_hint": "Off by default — uses standard interface liveness. When enabled for Fallback groups (2+ interfaces), FIRC probes Netcraze/Keenetic cloud over HTTPS :8082 and CoAP UDP :5683 to bypass tunnels that block RU or UDP. If all other tunnels go down, the group fails open to any remaining live interface instead of blocking traffic.",
 	"warpscout_autorename_toggle": "Rename tunnel after location (HEL, FRA…) on endpoint change",
 	"warpscout_autorename_tip": "Automatically reflect the Cloudflare colo code (HEL, FRA, …) in tunnel and profile names during endpoint swaps and checks",
 	"warpscout_swap_autorename_off": "Auto-rename is disabled — name \"{name}\" will be preserved.",

@@ -50,6 +50,13 @@ typedef struct firc_ifcheck_target {
     bool is_ip;
 } firc_ifcheck_target_t;
 
+typedef struct firc_ifcheck_keendns_cloud_cfg {
+    char https_url[256];
+    char https_pin_ip[64];
+    char coap_ip[64];
+    uint16_t coap_port;
+} firc_ifcheck_keendns_cloud_cfg_t;
+
 typedef struct firc_ifcheck_group_cand {
     char iface[16];
     uint32_t mark;
@@ -112,6 +119,10 @@ firc_err_t firc_ifcheck_resolve_marked(const char *server, uint16_t port, uint32
 bool firc_ifcheck_tcp_probe(const char *addr, uint16_t port, uint32_t mark, uint32_t timeout_ms, _Atomic bool *stop,
                             long *status, char *error, size_t cap);
 
+/* CoAP Empty Confirmable UDP ping probe to addr:port with optional SO_MARK; *status is -1 if SO_MARK was refused. */
+bool firc_ifcheck_coap_udp_probe(const char *addr, uint16_t port, uint32_t mark, uint32_t timeout_ms,
+                                 _Atomic bool *stop, long *status, char *error, size_t cap);
+
 /* Extracts active KeenDNS relay endpoints (target-remote IPs then target domains) from /rci/show/ndns JSON. */
 size_t firc_ifcheck_parse_keendns_targets(const char *json, firc_ifcheck_target_t *out, size_t cap);
 
@@ -120,6 +131,9 @@ void firc_ifcheck_keendns_targets(firc_ifcheck_target_t *out, size_t cap, size_t
 
 /* Tests only: replaces KeenDNS target lookup. NULL restores RCI + fallback. */
 void firc_ifcheck_set_keendns_fn_for_test(firc_ifcheck_keendns_fn fn, void *ud);
+
+/* Tests only: overrides KeenDNS cloud check endpoints. NULL restores live discovery/defaults. */
+void firc_ifcheck_set_keendns_cloud_cfg_for_test(const firc_ifcheck_keendns_cloud_cfg_t *cfg);
 
 /* One per-group service round: probes all candidates in parallel and guards failure unless at least one passes. */
 void firc_ifcheck_group_round(const firc_ifcheck_settings_t *s, const firc_ifcheck_group_job_t *job, _Atomic bool *stop,

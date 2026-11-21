@@ -342,10 +342,25 @@ void firc_ifcheck_set_wan_fn_for_test(firc_ifcheck_wan_fn fn, void *ud) {
 
 static firc_ifcheck_keendns_fn g_keendns_fn;
 static void *g_keendns_ud;
+static pthread_mutex_t g_cloud_cfg_mu = PTHREAD_MUTEX_INITIALIZER;
+static bool g_keendns_cloud_cfg_set;
+static firc_ifcheck_keendns_cloud_cfg_t g_keendns_cloud_cfg;
 
 void firc_ifcheck_set_keendns_fn_for_test(firc_ifcheck_keendns_fn fn, void *ud) {
     g_keendns_fn = fn;
     g_keendns_ud = ud;
+}
+
+void firc_ifcheck_set_keendns_cloud_cfg_for_test(const firc_ifcheck_keendns_cloud_cfg_t *cfg) {
+    pthread_mutex_lock(&g_cloud_cfg_mu);
+    if (cfg != NULL) {
+        g_keendns_cloud_cfg = *cfg;
+        g_keendns_cloud_cfg_set = true;
+    } else {
+        memset(&g_keendns_cloud_cfg, 0, sizeof(g_keendns_cloud_cfg));
+        g_keendns_cloud_cfg_set = false;
+    }
+    pthread_mutex_unlock(&g_cloud_cfg_mu);
 }
 
 bool firc_ifcheck_tcp_probe(const char *addr, uint16_t port, uint32_t mark, uint32_t timeout_ms, _Atomic bool *stop,
@@ -431,6 +446,112 @@ bool firc_ifcheck_tcp_probe(const char *addr, uint16_t port, uint32_t mark, uint
             }
             snprintf(error, cap, "TCP connect failed: %s", strerror(soerr));
             return false;
+        }
+    }
+}
+
+bool firc_ifcheck_coap_udp_probe(const char *addr, uint16_t port, uint32_t mark, uint32_t timeout_ms,
+                                 _Atomic bool *stop, long *status, char *error, size_t cap) {
+    *status = 0;
+    if (addr == NULL || addr[0] == '\0' || port == 0) {
+        snprintf(error, cap, "not a CoAP UDP probe target");
+        return false;
+    }
+    struct sockaddr_storage ss;
+    socklen_t sl = 0;
+    if (!to_sockaddr(addr, port, &ss, &sl)) {
+        snprintf(error, cap, "not an IP address");
+        return false;
+    }
+    int fd = socket(ss.ss_family, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        int e = errno;
+        snprintf(error, cap, "UDP socket failed: %s", strerror(e));
+        return false;
+    }
+    if (mark != 0 && firc_sub_fetch_get_setsockopt()(fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0) {
+        *status = -1;
+        close(fd);
+        snprintf(error, cap, "the socket refused the check's mark");
+        return false;
+    }
+    if (connect(fd, (struct sockaddr *)&ss, sl) != 0) {
+        int e = errno;
+        close(fd);
+        snprintf(error, cap, "CoAP UDP connect failed: %s", strerror(e));
+        return false;
+    }
+    uint8_t mid[2] = {0};
+    if (firc_random_bytes(mid, sizeof(mid)) != FIRC_OK) {
+        close(fd);
+        snprintf(error, cap, "CoAP message ID generation failed");
+        return false;
+    }
+    /* RFC 7252 §4.2 Empty Confirmable Ping: ver=1, type=CON(0), TKL=0, code=0.00, 16-bit Message ID */
+    const uint8_t ping[4] = {0x40u, 0x00u, mid[0], mid[1]};
+    if (send(fd, ping, sizeof(ping), 0) != (ssize_t)sizeof(ping)) {
+        int e = errno;
+        close(fd);
+        snprintf(error, cap, "CoAP UDP send failed: %s", strerror(e));
+        return false;
+    }
+
+    uint32_t eff_ms = timeout_ms > 0 ? timeout_ms : FIRC_GROUP_CHECK_DEFAULT_TIMEOUT_MS;
+    int64_t start_ms = mono_now_ms();
+    int64_t deadline = start_ms + (int64_t)eff_ms;
+    int64_t retry_at = start_ms + (int64_t)(eff_ms / 2u);
+    bool retried = (eff_ms < 400u);
+
+    for (;;) {
+        if (stop != NULL && atomic_load(stop)) {
+            close(fd);
+            snprintf(error, cap, "stopped");
+            return false;
+        }
+        int64_t now = mono_now_ms();
+        if (now >= deadline) {
+            close(fd);
+            snprintf(error, cap, "CoAP UDP probe timed out");
+            return false;
+        }
+        if (!retried && now >= retry_at) {
+            retried = true;
+            if (send(fd, ping, sizeof(ping), 0) < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                int e = errno;
+                close(fd);
+                snprintf(error, cap, "CoAP UDP retry failed: %s", strerror(e));
+                return false;
+            }
+        }
+        int64_t rem = deadline - now;
+        if (!retried && retry_at > now && retry_at - now < rem) { rem = retry_at - now; }
+        int step = rem > 100 ? 100 : (int)rem;
+        if (step < 1) { step = 1; }
+        struct pollfd pfd = {.fd = fd, .events = POLLIN};
+        int pr = poll(&pfd, 1, step);
+        if (pr < 0) {
+            if (errno == EINTR) { continue; }
+            int e = errno;
+            close(fd);
+            snprintf(error, cap, "CoAP UDP poll failed: %s", strerror(e));
+            return false;
+        }
+        if (pr > 0) {
+            uint8_t buf[64];
+            ssize_t got = recv(fd, buf, sizeof(buf), MSG_DONTWAIT);
+            if (got < 0) {
+                int e = errno;
+                if (e == EINTR || e == EAGAIN || e == EWOULDBLOCK) { continue; }
+                close(fd);
+                snprintf(error, cap, "CoAP UDP recv failed: %s", strerror(e));
+                return false;
+            }
+            if (got >= 4 && ((buf[0] >> 6) & 0x03u) == 1u && buf[2] == mid[0] && buf[3] == mid[1]) {
+                close(fd);
+                *status = 200;
+                if (cap > 0) { error[0] = '\0'; }
+                return true;
+            }
         }
     }
 }
@@ -597,11 +718,80 @@ typedef struct group_cand_task {
     const firc_ifcheck_settings_t *s;
     const firc_ifcheck_group_job_t *job;
     const firc_ifcheck_group_cand_t *cand;
-    const firc_ifcheck_target_t *targets;
-    size_t n_targets;
+    const firc_ifcheck_keendns_cloud_cfg_t *cloud_cfg;
     _Atomic bool *stop;
     firc_ifcheck_group_cand_result_t *res;
 } group_cand_task_t;
+
+static bool extract_gum_endpoint_from_line(const char *line, char *ip_out, size_t ip_cap, uint16_t *port_out) {
+    if (line == NULL) { return false; }
+    for (const char *p = line; *p != '\0'; p++) {
+        if ((p == line || !isalnum((unsigned char)p[-1])) &&
+            tolower((unsigned char)p[0]) == 'g' &&
+            tolower((unsigned char)p[1]) == 'u' &&
+            tolower((unsigned char)p[2]) == 'm' &&
+            !isalpha((unsigned char)p[3]) && p[3] != '_') {
+            const char *q = p + 3;
+            while (*q != '\0') {
+                if (isdigit((unsigned char)*q)) {
+                    char tok[64];
+                    size_t n = 0;
+                    while (q[n] != '\0' && n + 1 < sizeof(tok) &&
+                           (isdigit((unsigned char)q[n]) || q[n] == '.' || q[n] == ':')) {
+                        tok[n] = q[n];
+                        n++;
+                    }
+                    tok[n] = '\0';
+                    firc_ifcheck_target_t ep;
+                    if (parse_relay_endpoint(tok, &ep)) {
+                        size_t elen = strlen(ep.host);
+                        if (elen < ip_cap) {
+                            memcpy(ip_out, ep.host, elen + 1);
+                            *port_out = ep.port;
+                            return true;
+                        }
+                    }
+                }
+                q++;
+            }
+        }
+    }
+    return false;
+}
+
+static void discover_keendns_cloud_cfg(const firc_ifcheck_settings_t *s, firc_ifcheck_keendns_cloud_cfg_t *out,
+                                       _Atomic bool *stop) {
+    memset(out, 0, sizeof(*out));
+    pthread_mutex_lock(&g_cloud_cfg_mu);
+    if (g_keendns_cloud_cfg_set) {
+        *out = g_keendns_cloud_cfg;
+        pthread_mutex_unlock(&g_cloud_cfg_mu);
+        return;
+    }
+    pthread_mutex_unlock(&g_cloud_cfg_mu);
+
+    snprintf(out->https_url, sizeof(out->https_url), "%s", "https://ea.master.netcraze.cloud:8082/");
+    snprintf(out->coap_ip, sizeof(out->coap_ip), "%s", "82.202.218.153");
+    out->coap_port = 5683;
+
+    FILE *fp = fopen("/var/coalagent.diag", "r");
+    if (fp != NULL) {
+        char line[512];
+        while (fgets(line, (int)sizeof(line), fp) != NULL) {
+            if (extract_gum_endpoint_from_line(line, out->coap_ip, sizeof(out->coap_ip), &out->coap_port)) {
+                break;
+            }
+        }
+        fclose(fp);
+    }
+
+    if (s != NULL && s->upstream[0] != '\0' && s->upstream_port != 0) {
+        if (firc_ifcheck_resolve_marked(s->upstream, s->upstream_port, 0, out->https_url, 1500u, out->https_pin_ip,
+                                       sizeof(out->https_pin_ip), stop) != FIRC_OK) {
+            out->https_pin_ip[0] = '\0';
+        }
+    }
+}
 
 static void resolve_cand_dns(const firc_ifcheck_settings_t *s, const firc_ifcheck_group_cand_t *cand,
                              const char **dns_srv, uint16_t *dns_port, uint32_t *dns_mark) {
@@ -650,53 +840,61 @@ static void run_group_cand_url(const group_cand_task_t *t, uint32_t timeout_ms, 
 static void run_group_cand_keendns(const group_cand_task_t *t, uint32_t timeout_ms, const char *dns_srv,
                                    uint16_t dns_port, uint32_t dns_mark) {
     firc_ifcheck_group_cand_result_t *r = t->res;
-    size_t tries = t->n_targets < 3 ? t->n_targets : 3;
-    if (tries == 0) {
-        snprintf(r->error, sizeof(r->error), "no KeenDNS relay targets available");
+    const firc_ifcheck_keendns_cloud_cfg_t *cfg = t->cloud_cfg;
+    if (cfg == NULL || cfg->https_url[0] == '\0') {
+        snprintf(r->error, sizeof(r->error), "no KeenDNS cloud target configured");
         return;
     }
-    int64_t deadline = mono_now_ms() + (int64_t)timeout_ms;
-    for (size_t i = 0; i < tries; i++) {
-        if (t->stop != NULL && atomic_load(t->stop)) {
-            snprintf(r->error, sizeof(r->error), "stopped");
+    uint32_t eff_timeout = timeout_ms > 0 ? timeout_ms : FIRC_GROUP_CHECK_DEFAULT_TIMEOUT_MS;
+    int64_t deadline = mono_now_ms() + (int64_t)eff_timeout;
+
+    char ip[64] = "";
+    if (cfg->https_pin_ip[0] != '\0') {
+        snprintf(ip, sizeof(ip), "%s", cfg->https_pin_ip);
+    } else {
+        uint32_t dns_ms = eff_timeout / 3u;
+        if (dns_ms < 500u) { dns_ms = eff_timeout < 500u ? eff_timeout : 500u; }
+        firc_err_t derr = firc_ifcheck_resolve_marked(dns_srv, dns_port, dns_mark, cfg->https_url, dns_ms, ip,
+                                                      sizeof(ip), t->stop);
+        if (derr == FIRC_ERR_SYS) {
+            r->status = -1;
+            snprintf(r->error, sizeof(r->error), "the socket refused the DNS mark");
             return;
         }
-        int64_t rem = deadline - mono_now_ms();
-        if (rem <= 0) {
-            if (r->error[0] == '\0') { snprintf(r->error, sizeof(r->error), "TCP connect timed out"); }
+        if (derr != FIRC_OK && t->s != NULL && t->s->upstream[0] != '\0' && t->s->upstream_port != 0) {
+            derr = firc_ifcheck_resolve_marked(t->s->upstream, t->s->upstream_port, 0, cfg->https_url, dns_ms, ip,
+                                               sizeof(ip), t->stop);
+        }
+        if (derr != FIRC_OK) {
+            snprintf(r->error, sizeof(r->error), "DNS lookup failed: %s", firc_err_str(derr));
             return;
         }
-        uint32_t step_ms = rem > (int64_t)UINT32_MAX ? UINT32_MAX : (uint32_t)rem;
-        if (tries > 1 && i == 0 && step_ms > timeout_ms / 2u) {
-            uint32_t half = timeout_ms / 2u;
-            step_ms = half >= 500u ? half : (step_ms < 500u ? step_ms : 500u);
-        }
-        const firc_ifcheck_target_t *tgt = &t->targets[i];
-        char ip[sizeof(tgt->host)] = "";
-        if (tgt->is_ip) {
-            snprintf(ip, sizeof(ip), "%s", tgt->host);
-        } else {
-            firc_err_t derr = firc_ifcheck_resolve_marked(dns_srv, dns_port, dns_mark, tgt->host, step_ms, ip,
-                                                          sizeof(ip), t->stop);
-            if (derr == FIRC_ERR_SYS) {
-                r->status = -1;
-                snprintf(r->error, sizeof(r->error), "the socket refused the DNS mark");
-                return;
-            }
-            if (derr != FIRC_OK) {
-                snprintf(r->error, sizeof(r->error), "DNS lookup failed: %s", firc_err_str(derr));
-                continue;
-            }
-        }
-        int64_t rem_tcp = deadline - mono_now_ms();
-        uint32_t tcp_ms = rem_tcp > 0 ? (rem_tcp > (int64_t)step_ms ? step_ms : (uint32_t)rem_tcp) : 1u;
-        if (firc_ifcheck_tcp_probe(ip, tgt->port, t->cand->mark, tcp_ms, t->stop, &r->status, r->error,
-                                   sizeof(r->error))) {
-            r->passed = true;
-            return;
-        }
-        if (r->status == -1) { return; }
     }
+
+    int64_t rem1 = deadline - mono_now_ms();
+    if (rem1 <= 0) {
+        snprintf(r->error, sizeof(r->error), "KeenDNS HTTPS check timed out");
+        return;
+    }
+    uint32_t https_ms = eff_timeout >= 2000u ? (eff_timeout * 2u) / 3u : eff_timeout;
+    if (rem1 < (int64_t)https_ms) { https_ms = (uint32_t)rem1; }
+
+    /* Stage 1: Real TLS/HTTP exchange to catch synthetic SYN-ACK (tunvless) and RU-blocking proxies. */
+    if (!firc_ifcheck_once_ex(cfg->https_url, ip[0] != '\0' ? ip : NULL, t->cand->mark, https_ms, true, t->stop,
+                              &r->status, r->error, sizeof(r->error))) {
+        return;
+    }
+
+    /* Stage 2: CoAP Confirmable UDP Ping to catch TCP-only transports (e.g. legacy FiniteProto) or broken UDP. */
+    if (cfg->coap_ip[0] == '\0' || cfg->coap_port == 0) {
+        r->status = 0;
+        snprintf(r->error, sizeof(r->error), "no CoAP UDP probe target configured");
+        return;
+    }
+    int64_t rem2 = deadline - mono_now_ms();
+    uint32_t udp_ms = rem2 >= 500 ? (rem2 > (int64_t)UINT32_MAX ? UINT32_MAX : (uint32_t)rem2) : 500u;
+    r->passed = firc_ifcheck_coap_udp_probe(cfg->coap_ip, cfg->coap_port, t->cand->mark, udp_ms, t->stop, &r->status,
+                                            r->error, sizeof(r->error));
 }
 
 static void *run_group_cand(void *ud) {
@@ -729,10 +927,10 @@ void firc_ifcheck_group_round(const firc_ifcheck_settings_t *s, const firc_ifche
     for (size_t i = 0; i < n; i++) { snprintf(out->cands[i].iface, sizeof(out->cands[i].iface), "%s", job->cands[i].iface); }
     if (n == 0 || job->mode == FIRC_GROUP_CHECK_NONE) { return; }
 
-    firc_ifcheck_target_t targets[FIRC_IFCHECK_KEENDNS_MAX_TARGETS];
-    size_t n_targets = 0;
+    firc_ifcheck_keendns_cloud_cfg_t cloud_cfg;
+    memset(&cloud_cfg, 0, sizeof(cloud_cfg));
     if (job->mode == FIRC_GROUP_CHECK_KEENDNS) {
-        firc_ifcheck_keendns_targets(targets, FIRC_IFCHECK_KEENDNS_MAX_TARGETS, &n_targets, stop);
+        discover_keendns_cloud_cfg(s, &cloud_cfg, stop);
     }
 
     group_cand_task_t tasks[FIRC_GROUP_IFACES_MAX];
@@ -753,8 +951,7 @@ void firc_ifcheck_group_round(const firc_ifcheck_settings_t *s, const firc_ifche
             .s = s,
             .job = job,
             .cand = &job->cands[i],
-            .targets = targets,
-            .n_targets = n_targets,
+            .cloud_cfg = &cloud_cfg,
             .stop = stop,
             .res = &out->cands[i],
         };

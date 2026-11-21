@@ -717,6 +717,7 @@ export interface FircInterfacesProbeRes {
 
 export interface FircKeenDNSCloudConfig {
 	enabled: boolean;
+	cloudHealthCheck?: boolean;
 	proxyGroupId?: string;
 	interfaces?: string[];
 	lastSyncError?: string;

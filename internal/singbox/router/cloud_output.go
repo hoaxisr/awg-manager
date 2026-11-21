@@ -115,6 +115,7 @@ var cloudOutputStaticSubnets = []string{
 	"167.233.7.0/24",
 	"82.202.218.0/24",
 	"82.202.0.0/16",
+	"31.135.14.0/24",
 }
 
 // disallowedCloudIPv4Prefixes rejects bogon, loopback, RFC1918, CGNAT, link-local,

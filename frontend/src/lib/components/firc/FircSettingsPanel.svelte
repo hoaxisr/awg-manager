@@ -52,7 +52,7 @@
 
   const defaultExt: FircExtConfig = {
     proxyGroups: [],
-    keenDnsCloud: { enabled: false, proxyGroupId: '', interfaces: [] },
+    keenDnsCloud: { enabled: false, cloudHealthCheck: false, proxyGroupId: '', interfaces: [] },
     serverRouting: {
       enabledServers: [],
       awgServer: false,
@@ -168,6 +168,7 @@
       globalTarget: raw.globalTarget ?? '',
       keenDnsCloud: {
         enabled: Boolean(raw.keenDnsCloud?.enabled),
+        cloudHealthCheck: Boolean(raw.keenDnsCloud?.cloudHealthCheck),
         proxyGroupId: raw.keenDnsCloud?.proxyGroupId ?? '',
         interfaces: raw.keenDnsCloud?.interfaces ?? [],
       },
@@ -789,6 +790,19 @@
               </optgroup>
             {/if}
           </select>
+        </div>
+        <div class="field-row">
+          <div class="field-row-text">
+            <span class="lbl">{m.firc_keendns_cloud_check_label()}</span>
+            <span class="hint">{m.firc_keendns_cloud_check_hint()}</span>
+          </div>
+          <Toggle
+            checked={Boolean(extConfig.keenDnsCloud.cloudHealthCheck)}
+            disabled={!extConfig.keenDnsCloud.enabled}
+            onchange={(v) => {
+              extConfig.keenDnsCloud.cloudHealthCheck = v;
+            }}
+          />
         </div>
         <div style="display: flex; justify-content: flex-start;">
           <Button variant="secondary" size="sm" onclick={openPgModal}>

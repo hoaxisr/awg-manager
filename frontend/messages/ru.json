@@ -8451,6 +8451,8 @@
 	"firc_wizard_runtime_missing_desc": "Переключение маршрутизации на FIRC недоступно, пока на роутере не установлены бинарные файлы fircd и tunvless (пакет awg-firc-runtime).",
 	"firc_wizard_runtime_missing_keep_hint": "Установите FIRC в разделе «Настройки → FIRC» (или через opkg install awg-firc-runtime), либо выберите «Только импортировать конфигурацию в FIRC» без переключения.",
 	"firc_keendns_sync_error": "Ошибка синхронизации облачного списка адресов (сохранён последний рабочий набор): {error}",
+	"firc_keendns_cloud_check_label": "Проверять доступность облака (HTTPS + CoAP UDP)",
+	"firc_keendns_cloud_check_hint": "По умолчанию выключено — используется обычная проверка канала. При включении для Fallback-групп (2+ интерфейса) FIRC проверяет HTTPS :8082 и CoAP UDP :5683 до облака Netcraze/Keenetic и обходит туннели, блокирующие РФ или UDP. При падении остальных туннелей группа не блокируется и вернётся на оставшийся живой интерфейс.",
 	"warpscout_autorename_toggle": "Переименовывать туннель под локацию (HEL, FRA…) при смене endpoint",
 	"warpscout_autorename_tip": "Автоматически подставлять код узла Cloudflare (HEL, FRA, …) в имя туннеля и профиля при смене endpoint и проверках",
 	"warpscout_swap_autorename_off": "Автопереименование отключено — имя «{name}» сохранится.",

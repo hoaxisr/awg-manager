@@ -1006,11 +1006,12 @@ type ProxyGroup struct {
 // KeenDNSCloudConfig controls routing Keenetic Cloud / KeenDNS traffic through FIRC.
 // LastSyncError and LastSyncAt are transient runtime status fields stripped before persistence.
 type KeenDNSCloudConfig struct {
-	Enabled       bool     `json:"enabled"`
-	ProxyGroupID  string   `json:"proxyGroupId,omitempty"`
-	Interfaces    []string `json:"interfaces,omitempty"`
-	LastSyncError string   `json:"lastSyncError,omitempty"`
-	LastSyncAt    int64    `json:"lastSyncAt,omitempty"`
+	Enabled          bool     `json:"enabled"`
+	CloudHealthCheck bool     `json:"cloudHealthCheck,omitempty"`
+	ProxyGroupID     string   `json:"proxyGroupId,omitempty"`
+	Interfaces       []string `json:"interfaces,omitempty"`
+	LastSyncError    string   `json:"lastSyncError,omitempty"`
+	LastSyncAt       int64    `json:"lastSyncAt,omitempty"`
 }
 
 // InboundServerItem describes a selectable AWGM or Keenetic system VPN server and its live status.

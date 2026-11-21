@@ -373,7 +373,11 @@ static firc_err_t apply(firc_ifwatch_t *w, watched_group_t *wg, firc_ifchoice_t 
     return FIRC_OK;
 }
 
-static firc_ifchoice_t choose_group_checked(const watched_group_t *wg, const firc_if_track_t *const *e) {
+static bool is_cand_link_ok(firc_ifwatch_t *w, const char *name, const watched_if_t *wi, int64_t now,
+                            const char **why);
+
+static firc_ifchoice_t choose_group_checked(firc_ifwatch_t *w, const watched_group_t *wg,
+                                            const firc_if_track_t *const *e, int64_t now) {
     size_t cur = wg->active < wg->n ? wg->active : 0;
     firc_ifchoice_t c = {cur, false};
     if (wg->n == 0) { return c; }
@@ -383,6 +387,21 @@ static firc_ifchoice_t choose_group_checked(const watched_group_t *wg, const fir
         if (e[i]->state == FIRC_IF_UNKNOWN && first_unknown == wg->n) { first_unknown = i; }
     }
     if (first_alive == wg->n && first_unknown == wg->n) {
+        if (wg->check_mode == FIRC_GROUP_CHECK_KEENDNS && w != NULL) {
+            /* Fail-open for KeenDNS Cloud: never blackhole traffic if any candidate link/tunnel is healthy. */
+            if (is_cand_link_ok(w, wg->names[cur], find_if(w, wg->names[cur]), now, NULL)) {
+                c.active = cur;
+                c.all_dead = false;
+                return c;
+            }
+            for (size_t i = 0; i < wg->n; i++) {
+                if (is_cand_link_ok(w, wg->names[i], find_if(w, wg->names[i]), now, NULL)) {
+                    c.active = i;
+                    c.all_dead = false;
+                    return c;
+                }
+            }
+        }
         c.all_dead = true;
         return c;
     }
@@ -403,8 +422,9 @@ static firc_ifchoice_t choose_group_checked(const watched_group_t *wg, const fir
     return c;
 }
 
-static firc_ifchoice_t choose(const watched_group_t *wg, const firc_if_track_t *const *e, int64_t now) {
-    if (wg->check_mode != FIRC_GROUP_CHECK_NONE) { return choose_group_checked(wg, e); }
+static firc_ifchoice_t choose(firc_ifwatch_t *w, const watched_group_t *wg, const firc_if_track_t *const *e,
+                              int64_t now) {
+    if (wg->check_mode != FIRC_GROUP_CHECK_NONE) { return choose_group_checked(w, wg, e, now); }
     firc_ifchoice_t c = firc_ifchoose(e, wg->n, wg->active, now);
     if (!wg->blocked || c.all_dead) { return c; }
     for (size_t i = 0; i < wg->n; i++) {
@@ -418,7 +438,7 @@ static void choose_all(firc_ifwatch_t *w, int64_t now) {
         watched_group_t *wg = &w->groups[i];
         const firc_if_track_t *e[FIRC_GROUP_IFACES_MAX];
         group_tracks_of(w, wg, now, e);
-        firc_ifchoice_t c = choose(wg, e, now);
+        firc_ifchoice_t c = choose(w, wg, e, now);
         if (c.active != wg->active || c.all_dead != wg->blocked) {
             (void)apply(w, wg, c);
         } else if (c.all_dead && firc_logrep_due(&wg->all_dead, FIRC_IFCHOOSE_ALL_DEAD_ERROR_MS)) {
@@ -739,6 +759,7 @@ void firc_ifwatch_link(firc_ifwatch_t *w, const char *name, bool up) {
     int64_t now = now_ms(w);
     if (up) {
         if (wi->routed && w->d.rtnl != NULL) { (void)firc_checkroute_refresh(w->d.rtnl, &wi->route); }
+        bool unblock_keendns = false;
         for (size_t i = 0; i < w->n_groups; i++) {
             watched_group_t *wg = &w->groups[i];
             if (wg->check_mode == FIRC_GROUP_CHECK_NONE) { continue; }
@@ -747,9 +768,11 @@ void firc_ifwatch_link(firc_ifwatch_t *w, const char *name, bool up) {
                     wg->cand[e].last_link_ok = true;
                     wg->cand[e].init_link = true;
                     if (!wg->check_in_flight && wg->check_due_ms > now) { wg->check_due_ms = now; }
+                    if (wg->check_mode == FIRC_GROUP_CHECK_KEENDNS && wg->blocked) { unblock_keendns = true; }
                 }
             }
         }
+        if (unblock_keendns) { choose_all(w, now); }
         if (wi->tunnel) { return; }
         pull(w, wi, now, &wi->pulled, &wi->pulled_ms);
         return;
@@ -790,7 +813,7 @@ firc_ifchoice_t firc_ifwatch_pick(firc_ifwatch_t *w, const firc_group_t *g) {
     const firc_if_track_t *e[FIRC_GROUP_IFACES_MAX];
     tracks_of(w, wg, now, e);
     group_tracks_of(w, wg, now, e);
-    c = choose(wg, e, now);
+    c = choose(w, wg, e, now);
     wg->active = c.active;
     wg->blocked = c.all_dead;
     if (!c.all_dead) {
