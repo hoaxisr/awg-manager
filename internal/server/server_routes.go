@@ -244,6 +244,9 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	}
 	if s.tgWebProxyService != nil {
 		h.tgWebProxyHandler = api.NewTgWebProxyHandler(s.tgWebProxyService, s.sessions)
+		if s.settings != nil {
+			h.tgWebProxyHandler.SetAuthChecker(s.settings)
+		}
 		h.tgWebProxyHandler.SetCoordinator(s.serverIngressCoordinator)
 	}
 	if s.serverIngressCoordinator != nil || s.cdnDispatcher != nil {
@@ -319,6 +322,9 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 			wizardSvc.SetKeenDNS(kdOp)
 		}
 		h.serverWizardHandler = api.NewServerWizardHandler(wizardSvc, s.sessions)
+		if s.settings != nil {
+			h.serverWizardHandler.SetAuthChecker(s.settings)
+		}
 	}
 
 	// Auth middleware helper

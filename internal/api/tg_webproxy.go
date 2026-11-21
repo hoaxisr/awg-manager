@@ -25,6 +25,7 @@ type TgWebProxyHandler struct {
 	svc          *tgwebproxy.Service
 	coord        *serveringress.Coordinator
 	sessions     *auth.SessionStore
+	authChecker  auth.AuthChecker
 	revealMu     sync.Mutex
 	revealLimits map[string]time.Time
 }
@@ -35,6 +36,15 @@ func NewTgWebProxyHandler(svc *tgwebproxy.Service, sessions *auth.SessionStore) 
 		sessions:     sessions,
 		revealLimits: make(map[string]time.Time),
 	}
+}
+
+// SetAuthChecker attaches the auth checker used to detect when authentication is disabled.
+func (h *TgWebProxyHandler) SetAuthChecker(checker auth.AuthChecker) {
+	h.authChecker = checker
+}
+
+func (h *TgWebProxyHandler) authDisabled() bool {
+	return h.authChecker != nil && !h.authChecker.IsAuthEnabled()
 }
 
 // SetCoordinator attaches the shared ingress coordinator so API mutations
@@ -90,20 +100,26 @@ func (h *TgWebProxyHandler) GetCSRFToken(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	cookie, err := r.Cookie(auth.SessionCookie)
-	if err != nil || cookie.Value == "" {
-		WriteError(w, http.StatusUnauthorized, "session required")
-		return
-	}
+	var csrfSubject string
+	if h.authDisabled() {
+		csrfSubject = authDisabledCSRFSubject
+	} else {
+		cookie, err := r.Cookie(auth.SessionCookie)
+		if err != nil || cookie.Value == "" {
+			WriteError(w, http.StatusUnauthorized, "session required")
+			return
+		}
 
-	if h.sessions == nil {
-		WriteError(w, http.StatusServiceUnavailable, "session store not available")
-		return
-	}
-	sess := h.sessions.Get(cookie.Value)
-	if sess == nil {
-		WriteError(w, http.StatusUnauthorized, "session expired or invalid")
-		return
+		if h.sessions == nil {
+			WriteError(w, http.StatusServiceUnavailable, "session store not available")
+			return
+		}
+		sess := h.sessions.Get(cookie.Value)
+		if sess == nil {
+			WriteError(w, http.StatusUnauthorized, "session expired or invalid")
+			return
+		}
+		csrfSubject = cookie.Value
 	}
 
 	if h.svc == nil {
@@ -117,7 +133,7 @@ func (h *TgWebProxyHandler) GetCSRFToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	token := hmacSHA256Bytes(cookie.Value+":tgwebproxy-csrf-v1", csrfSecret)
+	token := hmacSHA256Bytes(csrfSubject+":tgwebproxy-csrf-v1", csrfSecret)
 	WriteJSON(w, http.StatusOK, map[string]string{
 		"csrf_token": token,
 	})
@@ -150,17 +166,23 @@ func (h *TgWebProxyHandler) checkCSRF(r *http.Request) bool {
 		return false
 	}
 
-	cookie, err := r.Cookie(auth.SessionCookie)
-	if err != nil || cookie.Value == "" {
-		return false
-	}
+	var csrfSubject string
+	if h.authDisabled() {
+		csrfSubject = authDisabledCSRFSubject
+	} else {
+		cookie, err := r.Cookie(auth.SessionCookie)
+		if err != nil || cookie.Value == "" {
+			return false
+		}
 
-	if h.sessions == nil {
-		return false
-	}
-	sess := h.sessions.Get(cookie.Value)
-	if sess == nil {
-		return false
+		if h.sessions == nil {
+			return false
+		}
+		sess := h.sessions.Get(cookie.Value)
+		if sess == nil {
+			return false
+		}
+		csrfSubject = cookie.Value
 	}
 
 	if h.svc == nil {
@@ -172,7 +194,7 @@ func (h *TgWebProxyHandler) checkCSRF(r *http.Request) bool {
 		return false
 	}
 
-	expected := hmacSHA256Bytes(cookie.Value+":tgwebproxy-csrf-v1", csrfSecret)
+	expected := hmacSHA256Bytes(csrfSubject+":tgwebproxy-csrf-v1", csrfSecret)
 	return subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
 }
 
@@ -262,7 +284,7 @@ func (h *TgWebProxyHandler) RevealSecret(w http.ResponseWriter, r *http.Request)
 
 	// Rate limit: 1 request per 5 seconds per authenticated session (or remote IP) when user_id is not specified
 	var clientKey string
-	if cookie, err := r.Cookie(auth.SessionCookie); err == nil && cookie.Value != "" {
+	if cookie, err := r.Cookie(auth.SessionCookie); !h.authDisabled() && err == nil && cookie.Value != "" {
 		clientKey = "sess:" + cookie.Value
 	} else {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
