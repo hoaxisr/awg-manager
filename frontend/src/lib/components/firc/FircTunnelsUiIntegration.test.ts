@@ -14,6 +14,8 @@ const {
 	fircPreviewFromSingbox,
 	fircListSnapshots,
 	fircMigrateFromSingbox,
+	fircProbeTunnel,
+	fircProbeInterfaces,
 } = vi.hoisted(() => {
 	if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
 		Object.defineProperty(window, 'matchMedia', {
@@ -47,6 +49,8 @@ const {
 		fircPreviewFromSingbox: vi.fn(),
 		fircListSnapshots: vi.fn(),
 		fircMigrateFromSingbox: vi.fn(),
+		fircProbeTunnel: vi.fn(),
+		fircProbeInterfaces: vi.fn(),
 	};
 });
 
@@ -65,7 +69,8 @@ vi.mock('$lib/api/client', () => ({
 		singboxGetStatus: vi.fn().mockResolvedValue({ installed: true, running: false }),
 		getSingboxDelay: vi.fn().mockResolvedValue({ delay: 0 }),
 		getTraffic: vi.fn().mockResolvedValue({ points: [], stats: {} }),
-		fircProbeTunnel: vi.fn().mockResolvedValue([]),
+		fircProbeTunnel,
+		fircProbeInterfaces,
 		fircSaveTunnels: vi.fn().mockResolvedValue({ tunnels: [] }),
 		fircPreviewTunnel: vi.fn().mockResolvedValue({ nodes: [], errors: [] }),
 		fircRestartTunnel: vi.fn().mockResolvedValue({ ok: true }),
@@ -83,7 +88,14 @@ import FircTunnelsTabSection from './FircTunnelsTabSection.svelte';
 import SingboxTunnelCard from '$lib/components/singbox/SingboxTunnelCard.svelte';
 import SingboxTunnelsTabSection from '$lib/components/singbox/SingboxTunnelsTabSection.svelte';
 import { settings } from '$lib/stores/settings';
-import { fircStatus, fircTunnels, fircTunnelsState, fircGroups } from '$lib/stores/firc';
+import {
+	fircStatus,
+	fircTunnels,
+	fircTunnelsState,
+	fircGroups,
+	fircProbeResults,
+	fircInterfaceProbeResults,
+} from '$lib/stores/firc';
 import { singboxStatus, singboxTunnels, singboxDelayHistory } from '$lib/stores/singbox';
 import { singboxRouter } from '$lib/stores/singboxRouter';
 import {
@@ -111,6 +123,10 @@ beforeEach(() => {
 	fircTunnels.set([]);
 	fircTunnelsState.set([]);
 	fircGroups.set([]);
+	fircProbeResults.set({});
+	fircInterfaceProbeResults.set({});
+	fircProbeTunnel.mockResolvedValue([]);
+	fircProbeInterfaces.mockResolvedValue({ url: '', checkedAt: 0, results: {} });
 	const runningStatus = {
 		fircdInstalled: true,
 		tunvlessInstalled: true,
@@ -360,5 +376,149 @@ describe('FIRC tunnels UI integration', () => {
 		const editBtns = screen.getAllByText('Изменить');
 		await fireEvent.click(editBtns[0]);
 		expect(await screen.findByText(/Настройки туннеля FIN \(Финляндия\) \(Premium\) \(tunvless2\)/)).toBeInTheDocument();
+	});
+
+	it('probes running tunnels in parallel via fircProbeInterfaces and updates latency & StatStrip', async () => {
+		const manyNodes = Array.from({ length: 47 }, (_, idx) => ({
+			key: `sub:${idx}`,
+			name: `Node ${idx + 1}`,
+			state: idx === 0 ? 'active' : 'reserve',
+		}));
+		fircGetTunnels.mockResolvedValue([
+			{
+				id: 'vox',
+				device: 'tunvless4',
+				description: 'VOX',
+				enable: true,
+				active: 1,
+				by: 'connection',
+				sources: [{ id: 's-vox', kind: 'subscription', name: 'VOX', url: 'https://example.invalid/sub' }],
+				inbounds: [],
+			},
+			{
+				id: 'fp',
+				device: 'tunvless5',
+				description: 'Dom FiniteProto',
+				enable: true,
+				active: 1,
+				by: 'connection',
+				sources: [{ id: 's-fp', kind: 'link', name: 'FP', link: 'vless://u@1.2.3.4:443?type=finiteproto#FP' }],
+				inbounds: [],
+			},
+			{
+				id: 'stopped_tun',
+				device: 'tunvless6',
+				description: 'Stopped Tunnel',
+				enable: true,
+				active: 1,
+				by: 'connection',
+				sources: [{ id: 's-stop', kind: 'link', name: 'Stop', link: 'vless://u@1.2.3.5:443#Stop' }],
+				inbounds: [],
+			},
+		]);
+		fircGetTunnelsState.mockResolvedValue([
+			{
+				id: 'vox',
+				device: 'tunvless4',
+				status: 'up',
+				active: ['Node 1'],
+				nodes: manyNodes,
+				inbounds: [],
+				groups: [],
+				rxBps: 0,
+				txBps: 0,
+				since: 0,
+				backoffS: 0,
+				lastExit: 0,
+				uplinkOk: true,
+				tcpPort: 41004,
+				tcpSkipped: [],
+				tcpOff: '',
+				subscriptions: [],
+			},
+			{
+				id: 'fp',
+				device: 'tunvless5',
+				status: 'up',
+				active: ['FP'],
+				nodes: [{ key: 's-fp:FP', name: 'FP', state: 'active' }],
+				inbounds: [],
+				groups: [],
+				rxBps: 0,
+				txBps: 0,
+				since: 0,
+				backoffS: 0,
+				lastExit: 0,
+				uplinkOk: true,
+				tcpPort: 41005,
+				tcpSkipped: [],
+				tcpOff: '',
+				subscriptions: [],
+			},
+			{
+				id: 'stopped_tun',
+				device: 'tunvless6',
+				status: 'no_node',
+				active: [],
+				nodes: [{ key: 's-stop:Stop', name: 'Stop', state: 'down' }],
+				inbounds: [],
+				groups: [],
+				rxBps: 0,
+				txBps: 0,
+				since: 0,
+				backoffS: 0,
+				lastExit: 0,
+				uplinkOk: true,
+				tcpPort: 41006,
+				tcpSkipped: [],
+				tcpOff: '',
+				subscriptions: [],
+			},
+		]);
+
+		fircProbeInterfaces.mockImplementation(async (ifaces: string[]) => {
+			const dev = ifaces[0];
+			if (dev === 'tunvless4') {
+				return {
+					url: 'http://www.gstatic.com/generate_204',
+					checkedAt: 1700000001,
+					results: { tunvless4: { interface: 'tunvless4', ok: true, latencyMs: 140 } },
+				};
+			}
+			if (dev === 'tunvless5') {
+				return {
+					url: 'http://www.gstatic.com/generate_204',
+					checkedAt: 1700000002,
+					results: { tunvless5: { interface: 'tunvless5', ok: true, latencyMs: 220 } },
+				};
+			}
+			return { url: '', checkedAt: 0, results: {} };
+		});
+
+		fircProbeTunnel.mockResolvedValue([
+			{ key: 's-stop:Stop', ok: true, why: '', handshakeMs: 95, firstByteMs: 185 },
+		]);
+
+		render(FircTunnelsTabSection, { props: { dashboardMode: false, showTrustTunnels: false } });
+
+		await waitFor(() => {
+			expect(fircProbeInterfaces).toHaveBeenCalledWith(['tunvless4']);
+			expect(fircProbeInterfaces).toHaveBeenCalledWith(['tunvless5']);
+		});
+		expect(fircProbeInterfaces).not.toHaveBeenCalledWith(['tunvless6']);
+		expect(fircProbeTunnel).not.toHaveBeenCalled();
+
+		expect(await screen.findByText('140ms')).toBeInTheDocument();
+		expect(await screen.findByText('220ms')).toBeInTheDocument();
+		expect(await screen.findByText('180 ms')).toBeInTheDocument();
+
+		const pingBtns = screen.getAllByTitle(m.ui_ping_refresh_delay());
+		await fireEvent.click(pingBtns[pingBtns.length - 1]);
+
+		await waitFor(() => {
+			expect(fircProbeTunnel).toHaveBeenCalledWith(
+				expect.objectContaining({ id: 'stopped_tun' }),
+			);
+		});
 	});
 });

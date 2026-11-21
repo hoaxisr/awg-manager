@@ -52,6 +52,8 @@
 	import {
 		friendlyIfaceLabel,
 		getEffectiveInterfaceProbe,
+		isInternalServerFircInterface,
+		isSelectableFircFallbackInterface,
 		resolveInterfaceHealth,
 		resolveGroupActiveInterface,
 		resolveProxyGroupRuntime,
@@ -901,15 +903,7 @@
 	}
 
 	function isInternalServerIface(opt: FircInterfaceOption): boolean {
-		const rawName = (opt.name || opt.ndmsName || '').trim();
-		const lower = rawName.toLowerCase();
-		if (opt.id === 'opkgtun17' || opt.id === 'opkgtun19' || lower.includes('awgm wdtt')) {
-			return true;
-		}
-		if (lower.includes('vpn server') || rawName === 'AWGM') {
-			return true;
-		}
-		return false;
+		return isInternalServerFircInterface(opt);
 	}
 
 	function tunnelSortPriority(id: string): number {
@@ -3678,7 +3672,7 @@
 				<div class="pg-candidates">
 					<div class="sec-cap">Добавить в группу (нажмите для включения / исключения):</div>
 					<div class="pg-cand-grid">
-						{#each interfaces.filter((x) => (x.role === 'tunnel' && !isInternalServerIface(x) && !x.id.startsWith('t2s')) || x.role === 'wan') as opt (opt.id)}
+						{#each interfaces.filter(isSelectableFircFallbackInterface) as opt (opt.id)}
 							{@const idxInPg = pg.interfaces.indexOf(opt.id)}
 							{@const isWan = opt.role === 'wan'}
 							{@const cHealth = resolveIfaceState(undefined, opt.id)}

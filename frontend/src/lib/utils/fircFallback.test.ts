@@ -12,6 +12,8 @@ import {
 	formatProbeLatency,
 	friendlyIfaceLabel,
 	getEffectiveInterfaceProbe,
+	isInternalServerFircInterface,
+	isSelectableFircFallbackInterface,
 	probeLatencyTone,
 	resolveGroupActiveInterface,
 	resolveProxyGroupRuntime,
@@ -190,5 +192,127 @@ describe('fircFallback', () => {
 		expect(formatProbeLatency(null)).toBe('—');
 		expect(formatProbeLatency({ interface: 'a', ok: false, latencyMs: 0, error: 'timeout' })).toBe('таймаут');
 		expect(formatProbeLatency({ interface: 'a', ok: true, latencyMs: 118.4 })).toBe('118 мс');
+	});
+
+	it('includes wdtt client tunnels while hiding only internal server interfaces', () => {
+		expect(
+			isInternalServerFircInterface({
+				id: 'opkgtun18',
+				name: 'AWGM WDTT Raw Client: Дом',
+				ndmsName: 'OpkgTun18',
+			}),
+		).toBe(false);
+		expect(
+			isInternalServerFircInterface({
+				id: 'opkgtun17',
+				name: 'AWGM WDTT Raw Client',
+			}),
+		).toBe(false);
+		expect(
+			isInternalServerFircInterface({
+				id: 'opkgtun19',
+				name: 'AWGM WDTT client',
+			}),
+		).toBe(false);
+		expect(
+			isInternalServerFircInterface({
+				id: 'opkgtun17',
+				name: 'Дача WDTT',
+			}),
+		).toBe(false);
+		expect(
+			isInternalServerFircInterface({
+				id: 'wdttraw0',
+				name: 'WDTT DE',
+			}),
+		).toBe(false);
+
+		expect(
+			isInternalServerFircInterface({
+				id: 'opkgtun17',
+				name: 'AWGM WDTT',
+			}),
+		).toBe(true);
+		expect(
+			isInternalServerFircInterface({
+				id: 'opkgtun19',
+				ndmsName: 'AWGM WDTT Raw',
+			}),
+		).toBe(true);
+		expect(
+			isInternalServerFircInterface({
+				id: 'opkgtun20',
+				name: 'AWGM WDTT Server',
+			}),
+		).toBe(true);
+		expect(
+			isInternalServerFircInterface({
+				id: 'nwg2',
+				name: 'AWGM',
+			}),
+		).toBe(true);
+		expect(
+			isInternalServerFircInterface({
+				id: 'nwg0',
+				name: 'WireGuard VPN Server',
+			}),
+		).toBe(true);
+
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 'opkgtun18',
+				name: 'AWGM WDTT Raw Client: Дом',
+				role: 'tunnel',
+			}),
+		).toBe(true);
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 'opkgtun19',
+				name: 'AWGM WDTT Raw Client: Дом',
+				role: 'tunnel',
+			}),
+		).toBe(true);
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 'wdttraw0',
+				name: 'wdttraw0',
+				role: 'tunnel',
+			}),
+		).toBe(true);
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 't2s0',
+				name: 'Sing-box',
+				role: 'tunnel',
+			}),
+		).toBe(false);
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 'eth3',
+				name: 'Broadband',
+				role: 'wan',
+			}),
+		).toBe(true);
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 'opkgtun17',
+				name: 'AWGM WDTT',
+				role: 'tunnel',
+			}),
+		).toBe(false);
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 'opkgtun10',
+				name: 'Дача FT',
+				role: 'tunnel',
+			}),
+		).toBe(true);
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 'tunvless2',
+				name: 'LAT',
+				role: 'tunnel',
+			}),
+		).toBe(true);
 	});
 });

@@ -44,6 +44,34 @@ export function isSpecialFircIface(id: string): boolean {
 	return id === 'blackhole' || id === 'block';
 }
 
+export function isInternalServerFircInterface(
+	opt: Pick<FircInterfaceOption, 'id' | 'name' | 'ndmsName'>,
+): boolean {
+	const rawName = (opt.name || opt.ndmsName || '').trim();
+	const lower = rawName.toLowerCase();
+	// Preserve WDTT client tunnels ("AWGM WDTT Raw Client: ...", "AWGM WDTT client").
+	if (lower.startsWith('awgm wdtt raw client') || lower.startsWith('awgm wdtt client')) {
+		return false;
+	}
+	// Hide WDTT / AWG / VPN server ingress interfaces only.
+	if (
+		lower === 'awgm wdtt' ||
+		lower === 'awgm wdtt raw' ||
+		lower.includes('wdtt server') ||
+		lower.includes('vpn server') ||
+		rawName === 'AWGM'
+	) {
+		return true;
+	}
+	return false;
+}
+
+export function isSelectableFircFallbackInterface(opt: FircInterfaceOption): boolean {
+	if (!opt.id || opt.id.startsWith('t2s')) return false;
+	if (opt.role === 'wan') return true;
+	return opt.role === 'tunnel' && !isInternalServerFircInterface(opt);
+}
+
 export function friendlyIfaceLabel(
 	id: string,
 	interfaces: FircInterfaceOption[] = [],

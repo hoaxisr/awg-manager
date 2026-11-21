@@ -26,6 +26,7 @@
     formatProbeLatency,
     friendlyIfaceLabel,
     getEffectiveInterfaceProbe,
+    isSelectableFircFallbackInterface,
     isSpecialFircIface,
     probeLatencyTone,
     resolveGroupActiveInterface,
@@ -277,12 +278,7 @@
   }
 
   function isSelectableTunnelOrWan(opt: FircInterfaceOption): boolean {
-    if (!opt.id || opt.id.startsWith('t2s')) return false;
-    const lower = (opt.name || opt.ndmsName || '').toLowerCase();
-    if (opt.id === 'opkgtun17' || opt.id === 'opkgtun19' || lower.includes('awgm wdtt') || lower.includes('vpn server') || (opt.name || opt.ndmsName) === 'AWGM') {
-      return false;
-    }
-    return opt.role === 'tunnel' || opt.role === 'wan';
+    return isSelectableFircFallbackInterface(opt);
   }
 
   function openPgModal() {

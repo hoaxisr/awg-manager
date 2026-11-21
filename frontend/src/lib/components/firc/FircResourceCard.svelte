@@ -16,6 +16,7 @@
 		fircTunnelsState,
 		fircGroups,
 		fircProbeResults,
+		fircInterfaceProbeResults,
 		openFircTunnelEditor,
 		reloadFircAll,
 	} from '$lib/stores/firc';
@@ -218,7 +219,17 @@
 		return vals;
 	});
 
-	const history = $derived([...probeHistory, ...localHistory].slice(-14));
+	const ifaceProbe = $derived(
+		tunnel.device ? ($fircInterfaceProbeResults[tunnel.device] ?? null) : null,
+	);
+
+	const history = $derived.by(() => {
+		if (localHistory.length > 0) return localHistory.slice(-14);
+		if (ifaceProbe) {
+			return [ifaceProbe.ok && ifaceProbe.latencyMs > 0 ? Math.round(ifaceProbe.latencyMs) : 0];
+		}
+		return probeHistory.slice(-14);
+	});
 	const delayPresentation = $derived(singboxDelayFromHistory(history, { running }));
 	const cardState = $derived(
 		!enabled
@@ -322,22 +333,40 @@
 		if (checking) return;
 		checking = true;
 		try {
-			const rows = await api.fircProbeTunnel({ id: tunnel.id, tunnel });
-			const nextMap: Record<string, FircTunnelProbeRow> = {
-				...($fircProbeResults[tunnel.id] ?? {}),
-			};
 			let best: number | null = null;
 			let firstErr = '';
-			for (const r of rows ?? []) {
-				nextMap[r.key] = r;
-				if (r.ok) {
-					const ms = r.firstByteMs ?? r.handshakeMs ?? null;
-					if (ms !== null && (best === null || ms < best)) best = ms;
-				} else if (!firstErr && r.why) {
-					firstErr = r.why;
+
+			if (running && tunnel.device) {
+				const res = await api.fircProbeInterfaces([tunnel.device]);
+				const row = res?.results?.[tunnel.device];
+				if (row) {
+					fircInterfaceProbeResults.update((all) => ({
+						...all,
+						[tunnel.device]: { ...row, checkedAt: res.checkedAt },
+					}));
+					if (row.ok && typeof row.latencyMs === 'number' && row.latencyMs > 0) {
+						best = Math.round(row.latencyMs);
+					} else if (row.error) {
+						firstErr = row.error;
+					}
 				}
+			} else {
+				const rows = await api.fircProbeTunnel({ id: tunnel.id, tunnel });
+				const nextMap: Record<string, FircTunnelProbeRow> = {
+					...($fircProbeResults[tunnel.id] ?? {}),
+				};
+				for (const r of rows ?? []) {
+					nextMap[r.key] = r;
+					if (r.ok) {
+						const ms = r.firstByteMs ?? r.handshakeMs ?? null;
+						if (ms !== null && (best === null || ms < best)) best = ms;
+					} else if (!firstErr && r.why) {
+						firstErr = r.why;
+					}
+				}
+				fircProbeResults.update((all) => ({ ...all, [tunnel.id]: nextMap }));
 			}
-			fircProbeResults.update((all) => ({ ...all, [tunnel.id]: nextMap }));
+
 			localHistory = [...localHistory, best ?? 0].slice(-14);
 			if (!silent) {
 				if (best !== null) {
