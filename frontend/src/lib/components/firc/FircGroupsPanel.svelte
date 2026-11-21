@@ -11,8 +11,18 @@
 		fircProbeResults,
 	} from '$lib/stores/firc';
 	import { fircMigrationAppliedNonce } from '$lib/stores/fircMigrationModal';
-	import { Button, Badge, Toggle, Modal, StatusDot, type DropdownOption } from '$lib/components/ui';
+	import { Button, Badge, Toggle, Modal, ConfirmModal, StatusDot, type DropdownOption } from '$lib/components/ui';
 	import FircGroupDevicesModal from './FircGroupDevicesModal.svelte';
+	import FircBulkGroupsBar from './FircBulkGroupsBar.svelte';
+	import FircBulkRulesBar from './FircBulkRulesBar.svelte';
+	import FircBulkRulesEditorModal from './FircBulkRulesEditorModal.svelte';
+	import {
+		applyBulkGroupAction,
+		applyBulkRuleAction,
+		detectFircRuleType,
+		type BulkGroupAction,
+		type BulkRuleAction,
+	} from '$lib/utils/fircBulkRules';
 	import ServiceTile from '$lib/components/sb-router/ServiceTile.svelte';
 	import { ServiceCatalogModal } from '$lib/components/dnsroutes';
 	import { presetCatalog, loadPresetCatalog } from '$lib/stores/presets';
@@ -43,6 +53,8 @@
 		RotateCcw,
 		Copy,
 		Zap,
+		Edit3,
+		FilePen,
 	} from 'lucide-svelte';
 	import {
 		saveFircGroupsDraft,
@@ -76,6 +88,7 @@
 		type FircListRule,
 		type FircPolicy,
 		type FircRule,
+		type FircRuleType,
 		type FircSystemResolver,
 		type FircTunnelState,
 		type FircExtConfig,
@@ -1596,16 +1609,147 @@
 		};
 	});
 
+	let devicesModalBulk = $state(false);
+
 	function openDevicesModal(index: number) {
 		if (!groups[index]) return;
+		devicesModalBulk = false;
 		devicesModalIndex = index;
 		devicesModalOpen = true;
 	}
 
+	function openBulkDevicesModal() {
+		if (selectedGroupIds.size === 0) return;
+		devicesModalBulk = true;
+		devicesModalIndex = null;
+		devicesModalOpen = true;
+	}
+
 	function applyDevicesModal(selector: FircDeviceSelector) {
+		if (devicesModalBulk) {
+			runBulkGroupAction({ kind: 'setDevices', devices: selector });
+			devicesModalBulk = false;
+			devicesModalOpen = false;
+			return;
+		}
 		if (devicesModalIndex === null || !groups[devicesModalIndex]) return;
 		groups[devicesModalIndex].devices = selector;
 		devicesModalOpen = false;
+	}
+
+	// ── Bulk Selection & Batch Editing ──
+	let groupSelectMode = $state(false);
+	let selectedGroupIds = $state<Set<string>>(new Set());
+	let confirmBulkDeleteGroupsOpen = $state(false);
+	let selectedRuleIdsByGroup = $state<Record<string, Set<string>>>({});
+	let bulkRulesEditorOpen = $state(false);
+	let bulkRulesEditorGroupIndex = $state<number | null>(null);
+	let bulkRulesEditorGroup = $derived(
+		bulkRulesEditorGroupIndex !== null ? (groups[bulkRulesEditorGroupIndex] ?? null) : null,
+	);
+
+	function toggleGroupSelectMode() {
+		groupSelectMode = !groupSelectMode;
+		if (!groupSelectMode) {
+			selectedGroupIds = new Set();
+			confirmBulkDeleteGroupsOpen = false;
+		}
+	}
+
+	function toggleGroupSelected(id: string) {
+		const next = new Set(selectedGroupIds);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
+		selectedGroupIds = next;
+	}
+
+	function selectAllVisibleGroups() {
+		selectedGroupIds = new Set(filteredGroups.map((entry) => entry.group.id));
+	}
+
+	function clearSelectedGroups() {
+		selectedGroupIds = new Set();
+	}
+
+	function runBulkGroupAction(action: BulkGroupAction) {
+		const res = applyBulkGroupAction(groups, selectedGroupIds, action);
+		if (res.affected === 0) return;
+		groups = res.groups;
+		if (action.kind === 'delete') {
+			const remainingIds = new Set(res.groups.map((g) => g.id));
+			selectedGroupIds = new Set(Array.from(selectedGroupIds).filter((id) => remainingIds.has(id)));
+			confirmBulkDeleteGroupsOpen = false;
+			notifications.success(m.firc_bulk_groups_deleted_toast({ count: res.affected }));
+		} else {
+			notifications.success(m.firc_bulk_groups_updated_toast({ count: res.affected }));
+		}
+	}
+
+	function getSelectedRuleSet(groupId: string): Set<string> {
+		return selectedRuleIdsByGroup[groupId] ?? new Set<string>();
+	}
+
+	function toggleRuleSelected(groupId: string, ruleId: string) {
+		const current = getSelectedRuleSet(groupId);
+		const next = new Set(current);
+		if (next.has(ruleId)) next.delete(ruleId);
+		else next.add(ruleId);
+		selectedRuleIdsByGroup = { ...selectedRuleIdsByGroup, [groupId]: next };
+	}
+
+	function selectAllRulesInGroup(group: FircGroup) {
+		selectedRuleIdsByGroup = {
+			...selectedRuleIdsByGroup,
+			[group.id]: new Set(group.rules.map((r) => r.id)),
+		};
+	}
+
+	function clearSelectedRulesInGroup(groupId: string) {
+		selectedRuleIdsByGroup = {
+			...selectedRuleIdsByGroup,
+			[groupId]: new Set(),
+		};
+	}
+
+	function runBulkRuleAction(groupIndex: number, action: BulkRuleAction) {
+		const src = groups[groupIndex];
+		if (!src) return;
+		const sel = getSelectedRuleSet(src.id);
+		const targetGroup =
+			action.kind === 'move' ? groups.find((g) => g.id === action.targetGroupId) : undefined;
+		const res = applyBulkRuleAction(groups, groupIndex, sel, action);
+		if (res.affected === 0) return;
+		groups = res.groups;
+		if (action.kind === 'move') {
+			clearSelectedRulesInGroup(src.id);
+			expandedGroups = { ...expandedGroups, [action.targetGroupId]: true };
+			notifications.success(
+				m.firc_bulk_rules_moved_toast({
+					target: targetGroup?.name ?? '',
+					count: res.affected,
+				}),
+			);
+		} else if (action.kind === 'delete') {
+			clearSelectedRulesInGroup(src.id);
+			notifications.success(m.firc_bulk_rules_deleted_toast({ count: res.affected }));
+		}
+	}
+
+	function openBulkRulesEditor(index: number) {
+		if (!groups[index]) return;
+		bulkRulesEditorGroupIndex = index;
+		bulkRulesEditorOpen = true;
+	}
+
+	function applyBulkRulesEditor(nextRules: FircRule[]) {
+		const idx = bulkRulesEditorGroupIndex;
+		if (idx === null || !groups[idx]) return;
+		const groupId = groups[idx].id;
+		groups = groups.map((g, i) => (i === idx ? { ...g, rules: nextRules } : g));
+		expandedGroups = { ...expandedGroups, [groupId]: true };
+		clearSelectedRulesInGroup(groupId);
+		bulkRulesEditorOpen = false;
+		notifications.success(m.firc_bulk_rules_editor_applied_toast({ count: nextRules.length }));
 	}
 
 	// ── Modal 3: Bulk Import Rules Modal ──
@@ -1617,14 +1761,6 @@
 		importRulesGroupIndex = index;
 		importRulesText = '';
 		importRulesModalOpen = true;
-	}
-
-	function detectRuleType(line: string): string {
-		if (/^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(line)) return 'subnet';
-		if (line.includes(':') && /^[0-9a-fA-F:/]+$/.test(line)) return 'subnet6';
-		if (line.includes('*')) return 'wildcard';
-		if (line.startsWith('^') || line.endsWith('$') || line.includes('\\')) return 'regex';
-		return 'namespace';
 	}
 
 	function submitImportRules() {
@@ -1639,7 +1775,7 @@
 		}
 		const newRules: FircRule[] = lines.map((line) => ({
 			id: randomHexId(),
-			type: detectRuleType(line),
+			type: detectFircRuleType(line),
 			rule: line,
 			enable: true,
 		}));
@@ -1966,12 +2102,38 @@
 				{#snippet iconBefore()}<LayoutGrid size={14} />{/snippet}
 				Каталог сервисов
 			</Button>
+			<Button
+				variant={groupSelectMode ? 'primary' : 'ghost'}
+				size="sm"
+				onclick={toggleGroupSelectMode}
+			>
+				{#snippet iconBefore()}<Edit3 size={14} />{/snippet}
+				{groupSelectMode ? m.firc_bulk_select_groups_done() : m.firc_bulk_select_groups_btn()}
+			</Button>
 			<Button variant="secondary" size="sm" onclick={openCreateGroupModal}>
 				{#snippet iconBefore()}<Plus size={14} />{/snippet}
 				Добавить группу
 			</Button>
 		</div>
 	</div>
+
+	{#if groupSelectMode}
+		<FircBulkGroupsBar
+			selectedCount={selectedGroupIds.size}
+			visibleCount={filteredGroups.length}
+			interfaces={availableInterfaces}
+			proxyGroups={extConfig.proxyGroups}
+			onSelectAllVisible={selectAllVisibleGroups}
+			onDeselectAll={clearSelectedGroups}
+			onDone={toggleGroupSelectMode}
+			onSetInterface={(iface) => runBulkGroupAction({ kind: 'setInterface', iface })}
+			onOpenDevices={openBulkDevicesModal}
+			onEnable={() => runBulkGroupAction({ kind: 'enable', enable: true })}
+			onDisable={() => runBulkGroupAction({ kind: 'enable', enable: false })}
+			onCopyDomains={() => copySelectedGroupDomains(Array.from(selectedGroupIds))}
+			onDelete={() => (confirmBulkDeleteGroupsOpen = true)}
+		/>
+	{/if}
 
 	<p class="priority-hint">
 		Порядок групп определяет приоритет маршрутизации сверху вниз. Для каждого домена или IP применяется первая совпавшая группа.
@@ -2144,15 +2306,26 @@
 				{@const isPickerOpen = openPickerGroupId === group.id}
 				{@const pickerGroups = getPickerGroups(group)}
 				{@const canAddMoreIfaces = ifaceList.length > 0 && !isSpecialIface(ifaceList[0]) && ifaceList.length < MAX_GROUP_IFACES}
+				{@const selectedRuleSet = getSelectedRuleSet(group.id)}
 
 				<div
 					class="card-wrap {groupAccentClass(group)}"
 					class:disabled-card={!group.enable}
 					class:picker-open-card={isPickerOpen}
+					class:bulk-selected-card={groupSelectMode && selectedGroupIds.has(group.id)}
 				>
 					{#if groupView === 'grid'}
 						<div class="compact-group-card">
 							<div class="compact-group-heading">
+								{#if groupSelectMode}
+									<input
+										type="checkbox"
+										class="bulk-check"
+										checked={selectedGroupIds.has(group.id)}
+										aria-label={m.firc_bulk_groups_select_aria({ name: group.name })}
+										onchange={() => toggleGroupSelected(group.id)}
+									/>
+								{/if}
 								<span class="compact-priority" title="Приоритет правила">{orderStr}</span>
 								<StatusDot variant={groupStatusDotVariant(group)} size="sm" />
 								<strong>{group.name}</strong>
@@ -2252,7 +2425,16 @@
 						</div>
 					{:else}
 					<!-- Main Card Row -->
-					<div class="card">
+					<div class="card" class:select-mode={groupSelectMode}>
+						{#if groupSelectMode}
+							<input
+								type="checkbox"
+								class="bulk-check"
+								checked={selectedGroupIds.has(group.id)}
+								aria-label={m.firc_bulk_groups_select_aria({ name: group.name })}
+								onchange={() => toggleGroupSelected(group.id)}
+							/>
+						{/if}
 						<div class="order" title="Приоритет группы #{orderStr}">
 							{orderStr}
 						</div>
@@ -2873,12 +3055,50 @@
 											Сортировать А–Я
 										</button>
 									{/if}
+									{#if group.rules.length > 0}
+										<button
+											type="button"
+											class="link-btn"
+											onclick={() =>
+												selectedRuleSet.size === group.rules.length
+													? clearSelectedRulesInGroup(group.id)
+													: selectAllRulesInGroup(group)}
+										>
+											{selectedRuleSet.size === group.rules.length
+												? m.firc_bulk_deselect_all()
+												: m.firc_bulk_select_all({ count: group.rules.length })}
+										</button>
+									{/if}
 								</div>
-								<Button variant="secondary" size="sm" onclick={() => addRuleToGroup(index)}>
-									{#snippet iconBefore()}<Plus size={13} />{/snippet}
-									Добавить правило
-								</Button>
+								<div class="rules-sec-actions">
+									<Button variant="ghost" size="sm" onclick={() => openBulkRulesEditor(index)}>
+										{#snippet iconBefore()}<FilePen size={13} />{/snippet}
+										{m.firc_bulk_rules_edit_list_btn()}
+									</Button>
+									<Button variant="secondary" size="sm" onclick={() => addRuleToGroup(index)}>
+										{#snippet iconBefore()}<Plus size={13} />{/snippet}
+										Добавить правило
+									</Button>
+								</div>
 							</div>
+
+							{#if selectedRuleSet.size > 0}
+								<FircBulkRulesBar
+									selectedCount={selectedRuleSet.size}
+									totalCount={group.rules.length}
+									otherGroups={groups
+										.filter((og) => og.id !== group.id)
+										.map((og) => ({ id: og.id, name: og.name }))}
+									onSelectAll={() => selectAllRulesInGroup(group)}
+									onDeselectAll={() => clearSelectedRulesInGroup(group.id)}
+									onEnable={() => runBulkRuleAction(index, { kind: 'enable', enable: true })}
+									onDisable={() => runBulkRuleAction(index, { kind: 'enable', enable: false })}
+									onChangeType={(type) => runBulkRuleAction(index, { kind: 'setType', type })}
+									onMoveToGroup={(targetGroupId) =>
+										runBulkRuleAction(index, { kind: 'move', targetGroupId })}
+									onDelete={() => runBulkRuleAction(index, { kind: 'delete' })}
+								/>
+							{/if}
 
 							{#if group.rules.length === 0}
 								<div class="rules-empty">
@@ -2888,7 +3108,20 @@
 								<div class="rules-table">
 									{#each pagedRules as rule, rIdx (rule.id)}
 										{@const absIdx = (currentPage - 1) * PAGE_SIZE + rIdx}
-										<div class="rule-row" class:rule-disabled={!rule.enable}>
+										<div
+											class="rule-row"
+											class:rule-disabled={!rule.enable}
+											class:rule-selected={selectedRuleSet.has(rule.id)}
+										>
+											<input
+												type="checkbox"
+												class="bulk-check"
+												checked={selectedRuleSet.has(rule.id)}
+												aria-label={m.firc_bulk_rules_select_aria({
+													rule: rule.rule || String(absIdx + 1),
+												})}
+												onchange={() => toggleRuleSelected(group.id, rule.id)}
+											/>
 											<span class="rule-idx font-mono">#{absIdx + 1}</span>
 											<select class="inp rule-type-sel" bind:value={rule.type}>
 												{#each FIRC_RULE_TYPES as rt}
@@ -3255,11 +3488,16 @@
 <!-- Modal 2: Devices & Policies Filter -->
 <FircGroupDevicesModal
 	open={devicesModalOpen}
-	groupName={devicesModalGroup?.name}
-	initialDevices={devicesModalInitial}
+	groupName={devicesModalBulk
+		? m.firc_bulk_groups_devices_title({ count: selectedGroupIds.size })
+		: devicesModalGroup?.name}
+	initialDevices={devicesModalBulk ? { allow: [], deny: [] } : devicesModalInitial}
 	{hosts}
 	{policies}
-	onclose={() => (devicesModalOpen = false)}
+	onclose={() => {
+		devicesModalBulk = false;
+		devicesModalOpen = false;
+	}}
 	onapply={applyDevicesModal}
 />
 
@@ -3504,6 +3742,26 @@
 	{/snippet}
 </Modal>
 
+<FircBulkRulesEditorModal
+	open={bulkRulesEditorOpen}
+	groupName={bulkRulesEditorGroup?.name}
+	rules={bulkRulesEditorGroup?.rules ?? []}
+	makeId={randomHexId}
+	onclose={() => (bulkRulesEditorOpen = false)}
+	onapply={applyBulkRulesEditor}
+/>
+
+<ConfirmModal
+	open={confirmBulkDeleteGroupsOpen}
+	title={m.firc_bulk_groups_delete_title()}
+	message={m.firc_bulk_groups_delete_msg({ count: selectedGroupIds.size })}
+	confirmLabel={m.firc_bulk_delete()}
+	cancelLabel={m.common_cancel()}
+	variant="danger"
+	onConfirm={() => runBulkGroupAction({ kind: 'delete' })}
+	onClose={() => (confirmBulkDeleteGroupsOpen = false)}
+/>
+
 <style>
 	.firc-groups-panel {
 		display: flex;
@@ -3659,6 +3917,19 @@
 		opacity: 0.68;
 	}
 
+	.card-wrap.bulk-selected-card {
+		border-color: var(--color-accent-border);
+		box-shadow: 0 0 0 1px var(--color-accent-border);
+	}
+
+	.bulk-check {
+		width: 15px;
+		height: 15px;
+		accent-color: var(--color-accent);
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
 	.card {
 		display: grid;
 		grid-template-columns: 24px 18px minmax(200px, 1fr) auto;
@@ -3678,6 +3949,10 @@
 
 	:global(html[data-layout-compact='true']) .right-slot {
 		gap: 2px;
+	}
+
+	.card.select-mode {
+		grid-template-columns: 22px 26px 20px minmax(0, 1fr) auto;
 	}
 
 	.order {
@@ -4437,6 +4712,18 @@
 		opacity: 0.55;
 	}
 
+	.rule-row.rule-selected {
+		background: color-mix(in srgb, var(--color-accent-tint) 45%, var(--bg-secondary));
+		border-color: var(--color-accent-border);
+	}
+
+	.rules-sec-actions {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+
 	.rule-idx {
 		font-size: 11px;
 		color: var(--text-muted);
@@ -4715,6 +5002,9 @@
 	@media (max-width: 768px) {
 		.card {
 			grid-template-columns: 28px minmax(0, 1fr);
+		}
+		.card.select-mode {
+			grid-template-columns: 22px 28px minmax(0, 1fr);
 		}
 		.reorder-slot {
 			display: none;
