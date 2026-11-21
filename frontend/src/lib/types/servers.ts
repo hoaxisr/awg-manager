@@ -483,4 +483,17 @@ export interface XHTTPTuning {
 	fp_max_ways?: number;
 }
 
+export interface ServerResetOptions {
+	delete_keendns?: boolean;
+}
+
+export interface ServerResetResult {
+	server: string;
+	reset: boolean;
+	dispatcher_reset: boolean;
+	keendns_deleted?: string[];
+	keendns_skipped?: string[];
+	warnings?: string[];
+}
+
 // #endregion

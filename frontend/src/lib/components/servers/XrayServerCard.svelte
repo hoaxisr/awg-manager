@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import {
 		lastServerVerification,
 		recordServerVerification,
 		pickFresherVerificationReport,
+		clearServerVerification,
 	} from '$lib/stores/serverVerification';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { Button, Modal, Toggle } from '$lib/components/ui';
@@ -135,6 +137,9 @@
 	let settingsTab = $state<'general' | 'transport' | 'diagnostics'>('general');
 	let editConfig = $state<Partial<XrayConfig>>({});
 	let saveConfigLoading = $state(false);
+	let resetConfirmOpen = $state(false);
+	let resetDeleteKeenDNS = $state(false);
+	let resetLoading = $state(false);
 
 	// Egress modal & routing state
 	let egressModalOpen = $state(false);
@@ -270,8 +275,11 @@
 
 	$effect(() => {
 		const shared = $lastServerVerification.xray;
-		if (shared) {
-			lastCheckReport = pickFresherVerificationReport(shared, lastCheckReport);
+		if (!shared) return;
+		const cur = untrack(() => lastCheckReport);
+		const next = pickFresherVerificationReport(shared, cur);
+		if (next && next !== cur) {
+			lastCheckReport = next;
 			lastCheckError = '';
 		}
 	});
@@ -321,7 +329,7 @@
 	async function loadData() {
 		loading = true;
 		try {
-			const [s, c, m, t, caps, rState] = await Promise.all([
+			const [s, c, mig, t, caps, rState] = await Promise.all([
 				api.getXrayServerStatus(),
 				api.getXrayServerConfig(),
 				api.getXrayMigrationStatus().catch(() => null),
@@ -331,7 +339,7 @@
 			]);
 			status = s;
 			config = c;
-			migrationStatus = m;
+			migrationStatus = mig;
 			if (t) tuning = t;
 			if (rState) realityState = rState;
 			egressOptions = caps?.egress_options ? [...caps.egress_options] : [];
@@ -961,6 +969,35 @@
 			notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения настроек');
 		} finally {
 			saveConfigLoading = false;
+		}
+	}
+
+	function openResetConfirm() {
+		resetDeleteKeenDNS = false;
+		resetConfirmOpen = true;
+	}
+
+	async function executeFactoryReset() {
+		resetLoading = true;
+		try {
+			const res = await api.resetVlessServer({ delete_keendns: resetDeleteKeenDNS });
+			lastCheckReport = null;
+			lastCheckError = '';
+			clearServerVerification('xray');
+			realityState = null;
+			migrationStatus = null;
+			resetConfirmOpen = false;
+			settingsOpen = false;
+			await loadData();
+			onRefreshParent?.();
+			notifications.success(m.server_reset_vless_success());
+			if (res.warnings?.length) {
+				notifications.warning(res.warnings.join('; '));
+			}
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.common_error());
+		} finally {
+			resetLoading = false;
 		}
 	}
 
@@ -1768,6 +1805,17 @@
 						<input type="number" bind:value={editConfig.dispatcher_port} class="text-input font-mono" />
 					</label>
 				</div>
+
+				<div class="reset-zone">
+					<div class="reset-zone-info">
+						<div class="reset-zone-title">{m.server_reset_zone_title()}</div>
+						<p class="reset-zone-desc">{m.server_reset_vless_zone_desc()}</p>
+					</div>
+					<Button variant="danger" size="sm" onclick={openResetConfirm}>
+						<Trash2 size={14} class="mr-1" />
+						{m.server_reset_button()}
+					</Button>
+				</div>
 			</div>
 		{:else if settingsTab === 'diagnostics'}
 			<ConnectionChecks kind="xray" currentFingerprint={cardFingerprint} autoRun={true} />
@@ -2305,6 +2353,36 @@
 		<Button variant="secondary" onclick={() => (endpointModalOpen = false)}>Отмена</Button>
 		<Button variant="primary" onclick={saveEndpoint} disabled={endpointSaving}>
 			{endpointSaving ? 'Сохранение...' : endpointScheme === 'reality' ? 'Сохранить Reality' : 'Сохранить конфигурацию'}
+		</Button>
+	{/snippet}
+</Modal>
+
+<!-- Modal: Confirm VLESS Factory Reset -->
+<Modal
+	bind:open={resetConfirmOpen}
+	title={m.server_reset_vless_modal_title()}
+	onclose={() => { if (!resetLoading) resetConfirmOpen = false; }}
+	size="sm"
+>
+	<div class="confirm-content">
+		<AlertTriangle size={32} class="confirm-icon text-danger mb-3" />
+		<p class="confirm-p">{m.server_reset_vless_modal_body()}</p>
+		<label class="reset-keendns-check">
+			<input type="checkbox" bind:checked={resetDeleteKeenDNS} class="checkbox-input" />
+			<div class="reset-keendns-text">
+				<span class="reset-keendns-label">{m.server_reset_vless_keendns_label()}</span>
+				<span class="reset-keendns-hint">{m.server_reset_vless_keendns_hint()}</span>
+			</div>
+		</label>
+	</div>
+
+	{#snippet actions()}
+		<Button variant="secondary" onclick={() => (resetConfirmOpen = false)} disabled={resetLoading}>
+			{m.common_cancel()}
+		</Button>
+		<Button variant="danger" onclick={executeFactoryReset} disabled={resetLoading}>
+			<Trash2 size={14} class="mr-1" />
+			{resetLoading ? m.server_reset_progress() : m.server_reset_confirm_button()}
 		</Button>
 	{/snippet}
 </Modal>
@@ -3313,6 +3391,98 @@
 		height: 16px;
 		accent-color: var(--color-accent);
 		cursor: pointer;
+	}
+
+	.reset-zone {
+		margin-top: 10px;
+		padding: 12px 14px;
+		border: 1px solid color-mix(in srgb, var(--color-error) 35%, var(--color-border));
+		border-radius: var(--radius-sm);
+		background: color-mix(in srgb, var(--color-error) 6%, var(--color-bg-secondary));
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		flex-wrap: wrap;
+	}
+
+	.reset-zone-info {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		flex: 1 1 260px;
+	}
+
+	.reset-zone-title {
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--color-error);
+	}
+
+	.reset-zone-desc {
+		margin: 0;
+		font-size: 12px;
+		color: var(--color-text-secondary);
+		line-height: 1.4;
+	}
+
+	.confirm-content {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		padding: 0.5rem 0;
+		gap: 10px;
+	}
+
+	.confirm-p {
+		font-size: 13px;
+		color: var(--color-text-primary);
+		margin: 0;
+		line-height: 1.45;
+	}
+
+	.reset-keendns-check {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		width: 100%;
+		text-align: left;
+		padding: 10px 12px;
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+	}
+
+	.reset-keendns-text {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.reset-keendns-label {
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--color-text-primary);
+	}
+
+	.reset-keendns-hint {
+		font-size: 11.5px;
+		color: var(--color-text-muted);
+		line-height: 1.35;
+	}
+
+	.text-danger {
+		color: var(--color-error);
+	}
+
+	.mr-1 {
+		margin-right: 4px;
+	}
+
+	.mb-3 {
+		margin-bottom: 12px;
 	}
 
 	.spin {

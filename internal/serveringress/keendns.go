@@ -831,9 +831,89 @@ func (op *NDMSKeenDNSOperator) RollbackPublication(ctx context.Context, rec Keen
 	if rec.PreConfigFingerprint != "" && actualFP != rec.PreConfigFingerprint {
 		return fmt.Errorf("%w: concurrent external edit detected on existing KeenDNS publication %s", ErrRecoveryConflict, rec.Label)
 	}
-	if rec.PreviousRaw != "" && current.RawJSON != rec.PreviousRaw {
+	if current.RawJSON != rec.PreviousRaw && rec.PreviousRaw != "" {
 		return fmt.Errorf("%w: concurrent external edit detected on existing KeenDNS publication %s", ErrRecoveryConflict, rec.Label)
 	}
 
 	return nil
+}
+
+// DeleteIngressPublications safely deletes ONLY the listed KeenDNS 4th-level publications
+// that belong to AWGM ingress (matching DomainNDNS, Public, !Auth, http://127.0.0.1:<allowedPort>),
+// leaving foreign/router-protected rules untouched, and persists NDMS startup-config if any entry was deleted.
+func (op *NDMSKeenDNSOperator) DeleteIngressPublications(ctx context.Context, labels []string, allowedPorts []int) (deleted []string, skipped []string, warnings []string) {
+	if op == nil || op.proxyReader == nil || op.proxyWriter == nil {
+		return nil, nil, []string{"KeenDNS operator is not configured"}
+	}
+	if len(labels) == 0 {
+		return nil, nil, nil
+	}
+
+	op.mu.Lock()
+	defer op.mu.Unlock()
+
+	if len(allowedPorts) == 0 {
+		allowedPorts = []int{9009}
+	}
+	forbidden := make(map[int]bool)
+	for _, fp := range op.forbiddenPorts() {
+		forbidden[fp] = true
+	}
+
+	snap, err := op.proxyReader.FetchConfigUncached(ctx)
+	if err != nil {
+		return nil, nil, []string{fmt.Sprintf("не удалось прочитать публикации KeenDNS перед удалением: %v", err)}
+	}
+	if snap == nil {
+		return nil, nil, nil
+	}
+
+	seen := make(map[string]bool, len(labels))
+	for _, raw := range labels {
+		label := strings.ToLower(strings.TrimSpace(raw))
+		if label == "" || seen[label] {
+			continue
+		}
+		seen[label] = true
+
+		entry := findEntryByLabel(snap, label)
+		if entry == nil {
+			continue
+		}
+
+		compatible := false
+		lastReason := ""
+		for _, port := range allowedPorts {
+			if port <= 0 || forbidden[port] {
+				continue
+			}
+			ok, reason := isEntryCompatibleWithIngress(*entry, port)
+			if ok {
+				compatible = true
+				break
+			}
+			lastReason = reason
+		}
+		if !compatible {
+			if lastReason == "" {
+				lastReason = "не принадлежит входящим маршрутам AWGM"
+			}
+			skipped = append(skipped, fmt.Sprintf("%s (%s)", entry.Name, lastReason))
+			continue
+		}
+
+		if err := op.proxyWriter.DeletePublication(ctx, entry.Name); err != nil {
+			warnings = append(warnings, fmt.Sprintf("не удалось удалить публикацию KeenDNS %s: %v", entry.Name, err))
+			continue
+		}
+		deleted = append(deleted, entry.Name)
+	}
+
+	if len(deleted) > 0 {
+		if err := op.proxyWriter.SaveConfig(ctx); err != nil {
+			warnings = append(warnings, fmt.Sprintf("публикации KeenDNS удалены, но не удалось сохранить конфигурацию роутера: %v", err))
+		}
+	}
+
+	return deleted, skipped, warnings
 }

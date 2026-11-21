@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1533,4 +1534,31 @@ exit 0
 	}
 
 	_ = exec.Command("/bin/sh", hookPath).Run()
+}
+
+// CleanupSystemHooks removes the Keenetic nginx unbuffer netfilter hook and bind mount
+// when CDN Dispatcher is fully shut down and reset on a production Keenetic device.
+func (d *Dispatcher) CleanupSystemHooks() {
+	d.mu.Lock()
+	dataDir := d.dataDir
+	d.mu.Unlock()
+
+	if runtime.GOOS != "linux" {
+		return
+	}
+	if dataDir != "/opt/etc/awg-manager" && dataDir != "" {
+		return
+	}
+
+	const nginxCompOff = "/etc/nginx/comp_off.conf"
+	const optCompOff = "/opt/etc/awg-manager/comp_off.conf"
+	const hookPath = "/opt/etc/ndm/netfilter.d/65-awgm-nginx-unbuffer.sh"
+
+	_ = os.Remove(hookPath)
+	_, optErr := os.Stat(optCompOff)
+	if optErr == nil {
+		_ = exec.Command("umount", nginxCompOff).Run()
+		_ = os.Remove(optCompOff)
+		_ = exec.Command("nginx", "-s", "reload").Run()
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -407,4 +408,42 @@ func (h *TgWebProxyHandler) Action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, http.StatusOK, h.svc.GetStatus())
+}
+
+// FactoryReset handles POST /api/servers/tgwebproxy/reset.
+func (h *TgWebProxyHandler) FactoryReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.svc == nil {
+		WriteError(w, http.StatusServiceUnavailable, "tgwebproxy service not available")
+		return
+	}
+	if !h.checkCSRF(r) {
+		WriteError(w, http.StatusForbidden, "CSRF_INVALID: missing or invalid csrf token")
+		return
+	}
+
+	var opts serveringress.ResetOptions
+	if r.Body != nil {
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&opts); err != nil && !errors.Is(err, io.EOF) {
+			WriteError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			return
+		}
+	}
+
+	var res serveringress.ResetResult
+	var err error
+	if h.coord != nil {
+		res, err = h.coord.ResetTelegram(r.Context(), opts)
+	} else {
+		err = h.svc.FactoryReset(r.Context())
+		res = serveringress.ResetResult{Server: "tgwebproxy", Reset: err == nil}
+	}
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, res)
 }

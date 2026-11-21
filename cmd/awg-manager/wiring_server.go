@@ -114,6 +114,7 @@ func (a *app) setupServer() {
 
 	// Cross-Component Ingress Coordinator and Crash Recovery
 	a.ingressCoordinator = serveringress.New(a.dataDir, a.vlessServerService, a.cdnDispatcher, a.tgWebProxyService)
+	a.ingressCoordinator.SetTelemt(a.telemtService)
 	if a.fircOp != nil {
 		a.ingressCoordinator.SetFircRouting(a.fircOp)
 	}

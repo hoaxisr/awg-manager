@@ -130,6 +130,9 @@ func (cw *ConfigWatcher) snapshotPaths(paths ...string) {
 			if data, rerr := os.ReadFile(p); rerr == nil && len(data) > 0 {
 				cw.lastHash[p] = sha256.Sum256(data)
 			}
+		} else if os.IsNotExist(err) {
+			delete(cw.lastModTime, p)
+			delete(cw.lastHash, p)
 		}
 	}
 }

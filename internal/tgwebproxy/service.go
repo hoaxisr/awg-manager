@@ -1288,6 +1288,111 @@ func (s *Service) Stop() error {
 	return nil
 }
 
+// FactoryReset stops all Telegram proxy workers and mux, wipes tproxy state and
+// telemt configs/runtime files (preserving the installed telemt binary), and
+// re-initializes fresh factory default settings and keys.
+func (s *Service) FactoryReset(ctx context.Context) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.legacyTimer != nil {
+		s.legacyTimer.Stop()
+		s.legacyTimer = nil
+	}
+	if s.mux != nil {
+		_ = s.mux.Stop()
+	}
+	if s.workers != nil {
+		stopCfg := s.config
+		stopCfg.Enabled = false
+		_ = s.workers.ApplyWorkers(stopCfg)
+	}
+
+	if s.dataDir != "" {
+		_ = os.RemoveAll(s.tproxyDir())
+		if err := os.MkdirAll(s.tproxyDir(), 0700); err != nil {
+			return fmt.Errorf("recreate tproxy dir: %w", err)
+		}
+	}
+
+	if s.telemtDir != "" {
+		for _, name := range []string{"config.toml", "raw.toml", "settings.json", "telemt.pid"} {
+			_ = os.Remove(filepath.Join(s.telemtDir, name))
+		}
+		for _, pat := range []string{"config.toml.*", "raw.toml.*", "settings.json.*"} {
+			if matches, err := filepath.Glob(filepath.Join(s.telemtDir, pat)); err == nil {
+				for _, m := range matches {
+					_ = os.Remove(m)
+				}
+			}
+		}
+	}
+
+	if s.dataDir == "/opt/etc/awg-manager" {
+		for _, pat := range []string{
+			"/opt/var/run/telemt*.pid*",
+			"/opt/var/run/telemt*.limit.json",
+			"/opt/var/run/tproxy-*.pid*",
+		} {
+			if matches, err := filepath.Glob(pat); err == nil {
+				for _, m := range matches {
+					_ = os.Remove(m)
+				}
+			}
+		}
+		_ = os.Remove("/tmp/cache/beobachten.txt")
+	}
+
+	if s.dataDir != "" {
+		if err := s.ensureTokenKey(); err != nil {
+			return fmt.Errorf("regenerate token key: %w", err)
+		}
+		if err := s.ensureCSRFKey(); err != nil {
+			return fmt.Errorf("regenerate csrf key: %w", err)
+		}
+	}
+
+	defSecret, err := randomHexSecret(s.randReader)
+	if err != nil {
+		return fmt.Errorf("generate default secret: %w", err)
+	}
+
+	defCfg := Config{
+		SchemaVersion:  CurrentSchemaVersion,
+		Enabled:        false,
+		Scenario:       ScenarioDual,
+		ListenPort:     DefaultListenPort,
+		AdminPort:      DefaultAdminPort,
+		PublicHostname: DefaultPublicHostname,
+		DirectHost:     DefaultDirectHost,
+		DirectPort:     DefaultDirectPort,
+		Secret:         defSecret,
+		Backend:        DefaultBackend,
+		CarrierMode:    DefaultCarrierMode,
+		UpstreamDevice: DefaultUpstreamDevice,
+		TlsDomain:      DefaultTlsDomain,
+	}
+
+	s.config = defCfg
+	s.recoveryRequired = false
+	s.lastStartupError = ""
+
+	s.upstreamMu.Lock()
+	s.cachedUpstreamStatus = "ok"
+	s.lastUpstreamCheck = time.Time{}
+	s.upstreamMu.Unlock()
+
+	if s.dataDir != "" {
+		if err := s.saveSettingsFileLocked(defCfg); err != nil {
+			return fmt.Errorf("save default settings: %w", err)
+		}
+	}
+
+	s.notifyReload()
+	return nil
+}
+
 func (s *Service) Restart() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

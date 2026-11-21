@@ -2,6 +2,7 @@ package tgwebproxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1974,5 +1975,93 @@ func TestConstrainTproxyLimitsForRAMMB_AndDirectKeenDNSNonCDN(t *testing.T) {
 	}
 	if eps := prep.GetEndpoints(); len(eps) != 1 || eps[0].IsCDN {
 		t.Fatalf("expected endpoint IsCDN=false for direct KeenDNS websocket, got %+v", eps)
+	}
+}
+
+func TestService_FactoryReset_PreservesTelemtBinaryAndWipesState(t *testing.T) {
+	svc, tmpDir, runner := setupTestService(t)
+
+	telemtBinPath := filepath.Join(tmpDir, "telemt", "telemt")
+	if err := os.MkdirAll(filepath.Dir(telemtBinPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(telemtBinPath, []byte("fake-telemt-binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"config.toml", "raw.toml", "settings.json", "telemt.pid"} {
+		if err := os.WriteFile(filepath.Join(tmpDir, "telemt", f), []byte("old-content"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, "tproxy", "transactions", "tx-1"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{
+		filepath.Join("tproxy", "config.json"),
+		filepath.Join("tproxy", "profiles.json"),
+		filepath.Join("tproxy", "token.key"),
+		filepath.Join("tproxy", "csrf.key"),
+		filepath.Join("tproxy", "transactions", "tx-1", "manifest.json"),
+	} {
+		if err := os.WriteFile(filepath.Join(tmpDir, f), []byte("old-state"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc.mu.Lock()
+	svc.config.Enabled = true
+	svc.config.PublicHostname = "tg.example.com"
+	svc.config.DirectHost = "tg.example.com"
+	svc.config.Secret = "000102030405060708090a0b0c0d0e0f"
+	svc.config.Endpoints = []WebProxyEndpoint{{ID: "ep-1", Hostname: "tg.example.com", Enabled: true}}
+	svc.config.Users = []TelegramUser{{ID: "u-1", Remark: "Alice", Secret: "ff0102030405060708090a0b0c0d0e0f", Enabled: true}}
+	svc.recoveryRequired = true
+	svc.lastStartupError = "old error"
+	svc.mu.Unlock()
+
+	if err := svc.FactoryReset(context.Background()); err != nil {
+		t.Fatalf("FactoryReset failed: %v", err)
+	}
+
+	// Binary MUST be preserved intact
+	binData, err := os.ReadFile(telemtBinPath)
+	if err != nil || string(binData) != "fake-telemt-binary" {
+		t.Fatalf("expected telemt binary preserved intact, got err=%v data=%q", err, string(binData))
+	}
+
+	// Telemt configs & tproxy runtime/tx files must be deleted
+	for _, gone := range []string{
+		filepath.Join("telemt", "config.toml"),
+		filepath.Join("telemt", "raw.toml"),
+		filepath.Join("telemt", "settings.json"),
+		filepath.Join("tproxy", "config.json"),
+		filepath.Join("tproxy", "profiles.json"),
+		filepath.Join("tproxy", "transactions"),
+	} {
+		if _, err := os.Stat(filepath.Join(tmpDir, gone)); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be deleted during FactoryReset", gone)
+		}
+	}
+
+	// Clean defaults, fresh keys & cleared recovery state
+	cfg := svc.GetInternalConfig()
+	if cfg.Enabled || cfg.PublicHostname != "" || cfg.DirectHost != "" || len(cfg.Endpoints) != 0 || len(cfg.Users) != 0 {
+		t.Fatalf("expected reset config defaults, got %+v", cfg)
+	}
+	if len(cfg.Secret) != 32 || cfg.Secret == "000102030405060708090a0b0c0d0e0f" {
+		t.Fatalf("expected newly rotated 32-char default secret, got %q", cfg.Secret)
+	}
+	if st := svc.GetStatus(); st.RecoveryRequired {
+		t.Fatal("expected RecoveryRequired to be cleared after FactoryReset")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "tproxy", "token.key")); err != nil {
+		t.Fatalf("expected fresh token.key: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "tproxy", "csrf.key")); err != nil {
+		t.Fatalf("expected fresh csrf.key: %v", err)
+	}
+	if len(runner.commands) == 0 {
+		t.Fatal("expected workers stop commands during FactoryReset")
 	}
 }
