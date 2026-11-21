@@ -85,6 +85,7 @@ vi.mock('$lib/stores/notifications', () => ({
 }));
 
 import FircTunnelsTabSection from './FircTunnelsTabSection.svelte';
+import FircTunnelEditModal from './FircTunnelEditModal.svelte';
 import SingboxTunnelCard from '$lib/components/singbox/SingboxTunnelCard.svelte';
 import SingboxTunnelsTabSection from '$lib/components/singbox/SingboxTunnelsTabSection.svelte';
 import { settings } from '$lib/stores/settings';
@@ -93,6 +94,8 @@ import {
 	fircTunnels,
 	fircTunnelsState,
 	fircGroups,
+	fircEditTunnelId,
+	fircEditTunnelSubTab,
 	fircProbeResults,
 	fircInterfaceProbeResults,
 } from '$lib/stores/firc';
@@ -123,6 +126,8 @@ beforeEach(() => {
 	fircTunnels.set([]);
 	fircTunnelsState.set([]);
 	fircGroups.set([]);
+	fircEditTunnelId.set(null);
+	fircEditTunnelSubTab.set('nodes');
 	fircProbeResults.set({});
 	fircInterfaceProbeResults.set({});
 	fircProbeTunnel.mockResolvedValue([]);
@@ -519,6 +524,121 @@ describe('FIRC tunnels UI integration', () => {
 			expect(fircProbeTunnel).toHaveBeenCalledWith(
 				expect.objectContaining({ id: 'stopped_tun' }),
 			);
+		});
+	});
+
+	it('shows edit modal probe progress, single-node probe, and sorts by total latency', async () => {
+		fircTunnels.set([
+			{
+				id: 'tun-edit',
+				device: 'tunvless4',
+				description: 'Sub Pool',
+				enable: true,
+				uplink: { kind: 'auto' },
+				sources: [{ id: 'src1', kind: 'url', url: 'https://sub.example/list' }],
+				active: 1,
+				by: 'connection',
+				interval: 30,
+				silence: 20,
+				filter: '',
+				order: ['src1:Alpha', 'src1:Beta'],
+				exclude: [],
+				advanced: {},
+			} as never,
+		]);
+		fircTunnelsState.set([
+			{
+				id: 'tun-edit',
+				device: 'tunvless4',
+				status: 'up',
+				active: ['Alpha'],
+				nodes: [
+					{ key: 'src1:Alpha', name: 'Alpha', source: 'sub', state: 'active', since: 0 },
+					{ key: 'src1:Beta', name: 'Beta', source: 'sub', state: 'reserve', since: 0 },
+				],
+				inbounds: [],
+				groups: [],
+				rxBps: 0,
+				txBps: 0,
+				since: 0,
+				backoffS: 0,
+				lastExit: 0,
+				uplinkOk: true,
+				tcpPort: 41004,
+				tcpSkipped: [],
+				tcpOff: '',
+				subscriptions: [],
+			},
+		]);
+
+		let releaseProbe!: (rows: Array<Record<string, unknown>>) => void;
+		const deferredProbe = new Promise<Array<Record<string, unknown>>>((resolve) => {
+			releaseProbe = resolve;
+		});
+
+		fircProbeTunnel.mockImplementation(
+			async (
+				payload: { id?: string; keys?: string[] },
+				opts?: { onProgress?: (rows: Array<Record<string, unknown>>, total: number) => void },
+			) => {
+				if (payload.keys && payload.keys.length > 0) {
+					return [
+						{ key: 'src1:Alpha', ok: true, why: '', handshakeMs: 12, firstByteMs: 18 },
+					];
+				}
+				opts?.onProgress?.(
+					[{ key: 'src1:Alpha', ok: true, why: '', handshakeMs: 200, firstByteMs: 10 }],
+					2,
+				);
+				return deferredProbe;
+			},
+		);
+
+		fircEditTunnelId.set('tun-edit');
+		fircEditTunnelSubTab.set('nodes');
+		render(FircTunnelEditModal);
+
+		const probeAllBtn = await screen.findByRole('button', { name: /Проверить задержку/ });
+		await fireEvent.click(probeAllBtn);
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /Проверить задержку \(1\/2\)/ })).toBeInTheDocument();
+			expect(screen.getByText('210 мс')).toBeInTheDocument();
+		});
+
+		releaseProbe([
+			{ key: 'src1:Alpha', ok: true, why: '', handshakeMs: 200, firstByteMs: 10 },
+			{ key: 'src1:Beta', ok: true, why: '', handshakeMs: 20, firstByteMs: 40 },
+		]);
+
+		expect(await screen.findByText('60 мс')).toBeInTheDocument();
+		expect(screen.getByText('подкл. 20 · ответ 40')).toBeInTheDocument();
+		expect(screen.getByText('подкл. 200 · ответ 10')).toBeInTheDocument();
+
+		await fireEvent.click(screen.getByRole('button', { name: /Сортировать по пингу/ }));
+
+		await waitFor(() => {
+			const rows = Array.from(document.querySelectorAll('.nodes-table tbody tr'));
+			expect(rows.length).toBe(2);
+			expect(rows[0].textContent).toContain('Beta');
+			expect(rows[1].textContent).toContain('Alpha');
+		});
+
+		const singleBtn = screen.getByRole('button', { name: 'Проверить узел Alpha' });
+		await fireEvent.click(singleBtn);
+
+		await waitFor(() => {
+			expect(fircProbeTunnel).toHaveBeenCalledWith(
+				expect.objectContaining({
+					tunnel: expect.objectContaining({
+						id: 'tun-edit',
+						order: ['src1:Beta', 'src1:Alpha'],
+					}),
+					keys: ['src1:Alpha'],
+				}),
+			);
+			expect(screen.getByText('30 мс')).toBeInTheDocument();
+			expect(screen.getByText('подкл. 12 · ответ 18')).toBeInTheDocument();
 		});
 	});
 });

@@ -158,6 +158,11 @@ export interface FircTunnelProbeRow {
 	firstByteMs: number | null;
 }
 
+export interface FircTunnelProbeProgress {
+	total: number;
+	nodes: FircTunnelProbeRow[];
+}
+
 export type FircRuleType = 'namespace' | 'wildcard' | 'domain' | 'regex' | 'subnet' | 'subnet6';
 
 export const FIRC_RULE_TYPES: { value: FircRuleType; label: string }[] = [

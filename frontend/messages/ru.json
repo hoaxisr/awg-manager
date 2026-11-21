@@ -8604,5 +8604,10 @@
 	"firc_fallback_all_dead_title": "Все интерфейсы недоступны",
 	"firc_fallback_active_primary_title": "Активен основной интерфейс {iface}",
 	"firc_fallback_active_backup_title": "Работает резервный интерфейс {iface}",
-	"firc_fallback_active_chain_title": "Активен основной интерфейс {iface} (цепочка Fallback: {chain})"
+	"firc_fallback_active_chain_title": "Активен основной интерфейс {iface} (цепочка Fallback: {chain})",
+	"firc_probe_total_title": "Полное время до первого ответа: подключение к узлу + ответ через узел",
+	"firc_probe_breakdown": "подкл. {connect} · ответ {reply}",
+	"firc_probe_single_title": "Проверить этот узел",
+	"firc_probe_single_aria": "Проверить узел {name}",
+	"firc_probe_node_error": "Ошибка проверки узла ({device})"
 }

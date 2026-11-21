@@ -254,13 +254,20 @@ firc_err_t firc_ifcheck_resolve_marked(const char *server, uint16_t port, uint32
     (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     uint32_t eff_ms = timeout_ms > 0 ? timeout_ms : 1000u;
     int64_t deadline = mono_now_ms() + (int64_t)eff_ms;
+    int64_t retry_step_ms = eff_ms >= 2000u ? 1000 : (eff_ms / 2u >= 250u ? (int64_t)(eff_ms / 2u) : 250);
     firc_err_t err = FIRC_ERR_IO;
     if (connect(fd, (struct sockaddr *)&ss, sl) == 0 && send(fd, q, at, 0) == (ssize_t)at) {
+        int64_t next_retry = mono_now_ms() + retry_step_ms;
         uint8_t a[1500];
         for (int tries = 0; tries < 32; tries++) {
             ssize_t got = recv(fd, a, sizeof(a), 0);
             if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
-                if (mono_now_ms() < deadline && (stop == NULL || !atomic_load(stop))) {
+                int64_t cur_ms = mono_now_ms();
+                if (cur_ms < deadline && (stop == NULL || !atomic_load(stop))) {
+                    if (errno != EINTR && cur_ms >= next_retry) {
+                        (void)send(fd, q, at, 0);
+                        next_retry = cur_ms + retry_step_ms;
+                    }
                     tries--;
                     continue;
                 }

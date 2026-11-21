@@ -14,6 +14,7 @@
 #include "groups_internal.h"
 
 #define PROBE_TIMEOUT_S 3
+#define PROBE_JOBS 8
 
 struct tun_probe_call {
     firc_tunnels_ctx_t *ctx;
@@ -1465,6 +1466,23 @@ static void call_free(tun_probe_call_t *c)
     free(c);
 }
 
+static bool add_probe_row(cJSON *a, const char *key, const firc_tunprobe_row_t *r)
+{
+    cJSON *x = cJSON_CreateObject();
+    bool ok = x != NULL && cJSON_AddStringToObject(x, "key", key) != NULL &&
+              cJSON_AddBoolToObject(x, "ok", r->have && r->ok) != NULL &&
+              (r->have && r->ok ? cJSON_AddNumberToObject(x, "handshakeMs", r->handshake_ms)
+                                : cJSON_AddNullToObject(x, "handshakeMs")) != NULL &&
+              (r->have && r->ok ? cJSON_AddNumberToObject(x, "firstByteMs", r->first_byte_ms)
+                                : cJSON_AddNullToObject(x, "firstByteMs")) != NULL &&
+              cJSON_AddStringToObject(x, "why", !r->have ? "no answer" : r->why) != NULL &&
+              cJSON_AddItemToArray(a, x);
+    if (!ok) {
+        cJSON_Delete(x);
+    }
+    return ok;
+}
+
 static void probe_done(const firc_tunprobe_row_t *rows, size_t n, void *ud)
 {
     tun_probe_call_t *c = ud;
@@ -1477,18 +1495,7 @@ static void probe_done(const firc_tunprobe_row_t *rows, size_t n, void *ud)
         if (c->saved != NULL && r->have && r->ok && c->ctx->run != NULL) {
             firc_tunrun_node_answered(c->ctx->run, c->saved, c->keys[i]);
         }
-        cJSON *x = cJSON_CreateObject();
-        ok = x != NULL && cJSON_AddStringToObject(x, "key", c->keys[i]) != NULL &&
-             cJSON_AddBoolToObject(x, "ok", r->have && r->ok) != NULL &&
-             (r->have && r->ok ? cJSON_AddNumberToObject(x, "handshakeMs", r->handshake_ms)
-                               : cJSON_AddNullToObject(x, "handshakeMs")) != NULL &&
-             (r->have && r->ok ? cJSON_AddNumberToObject(x, "firstByteMs", r->first_byte_ms)
-                               : cJSON_AddNullToObject(x, "firstByteMs")) != NULL &&
-             cJSON_AddStringToObject(x, "why", !r->have ? "no answer" : r->why) != NULL &&
-             cJSON_AddItemToArray(a, x);
-        if (!ok) {
-            cJSON_Delete(x);
-        }
+        ok = add_probe_row(a, c->keys[i], r);
     }
     if (ok) {
         ok = put_item(o, "nodes", a);
@@ -1548,8 +1555,66 @@ static bool probe_target(firc_tunnels_ctx_t *ctx, const cJSON *body, firc_http_r
     return true;
 }
 
+static bool key_chosen(const cJSON *keys, const char *key)
+{
+    if (keys == NULL) {
+        return true;
+    }
+    const cJSON *k = NULL;
+    cJSON_ArrayForEach(k, keys)
+    {
+        if (cJSON_IsString(k) && strcmp(k->valuestring, key) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool collect_probe_links(tun_probe_call_t *c, firc_tun_nodes_t *nodes, const firc_tunnel_t *t, uint32_t mark,
+                                const firc_tun_body_t *b, size_t nb, const cJSON *keys)
+{
+    const char **capped = calloc(nodes->n + 1, sizeof *capped);
+    if (capped == NULL) {
+        return false;
+    }
+    size_t nc = 0;
+    for (size_t i = 0; i < nodes->n; i++) {
+        if ((nodes->v[i].link != NULL || nodes->v[i].over_cap) && key_chosen(keys, nodes->v[i].key)) {
+            c->links[c->n] = nodes->v[i].link;
+            nodes->v[i].link = NULL;
+            snprintf(c->keys[c->n], sizeof c->keys[c->n], "%s", nodes->v[i].key);
+            if (c->links[c->n] == NULL) {
+                capped[nc++] = c->keys[c->n];
+            }
+            c->n++;
+        }
+    }
+    char **got = calloc(nc + 1, sizeof *got);
+    bool ok = got != NULL && (nc == 0 || firc_tun_nodes_links_of(t, mark, b, nb, capped, nc, got) == FIRC_OK);
+    size_t m = 0;
+    size_t k = 0;
+    for (size_t i = 0; i < c->n; i++) {
+        if (c->links[i] == NULL) {
+            c->links[i] = ok ? got[k] : NULL;
+            k++;
+        }
+        if (c->links[i] != NULL) {
+            c->links[m] = c->links[i];
+            if (m != i) {
+                c->links[i] = NULL;
+                memcpy(c->keys[m], c->keys[i], sizeof c->keys[m]);
+            }
+            m++;
+        }
+    }
+    c->n = m;
+    free(got);
+    free(capped);
+    return ok;
+}
+
 static void start_probe(firc_tunnels_ctx_t *ctx, firc_http_res_t *res, const firc_tunnel_t *t, uint32_t mark,
-                        bool saved)
+                        bool saved, const cJSON *keys)
 {
     size_t nb = 0;
     const firc_tun_body_t *b = bodies_of(ctx, &nb);
@@ -1576,13 +1641,11 @@ static void start_probe(firc_tunnels_ctx_t *ctx, firc_http_res_t *res, const fir
         firc_http_res_write_error(res, 500, "out of memory");
         return;
     }
-    for (size_t i = 0; i < nodes.n; i++) {
-        if (nodes.v[i].link != NULL) {
-            c->links[c->n] = nodes.v[i].link;
-            nodes.v[i].link = NULL;
-            snprintf(c->keys[c->n], sizeof c->keys[c->n], "%s", nodes.v[i].key);
-            c->n++;
-        }
+    if (!collect_probe_links(c, &nodes, &all, mark, b, nb, keys)) {
+        call_free(c);
+        firc_tun_nodes_free(&nodes);
+        firc_http_res_write_error(res, 500, "out of memory");
+        return;
     }
     if (c->n == 0) {
         call_free(c);
@@ -1602,7 +1665,8 @@ static void start_probe(firc_tunnels_ctx_t *ctx, firc_http_res_t *res, const fir
                               .ca = t->ca,
                               .fingerprint = t->fingerprint,
                               .timeout_s = PROBE_TIMEOUT_S,
-                              .kill_after_ms = firc_tunprobe_deadline_ms(c->n)};
+                              .jobs = PROBE_JOBS,
+                              .kill_after_ms = firc_tunprobe_deadline_ms(c->n, PROBE_JOBS)};
     c->ctx = ctx;
     err = firc_tunprobe_start(firc_http_res_loop(res), &o, c->links, c->n, probe_done, c, &c->probe);
     firc_tun_nodes_free(&nodes);
@@ -1639,20 +1703,56 @@ static void handle_probe(firc_http_req_t *req, firc_http_res_t *res, void *ud)
         return;
     }
     cJSON *body = parse_body_json(req);
+    const cJSON *keys = cJSON_GetObjectItemCaseSensitive(body, "keys");
+    bool keys_ok = keys == NULL || cJSON_IsArray(keys);
+    for (const cJSON *k = keys_ok && keys != NULL ? keys->child : NULL; k != NULL; k = k->next) {
+        keys_ok = keys_ok && cJSON_IsString(k);
+    }
+    if (!keys_ok) {
+        cJSON_Delete(body);
+        firc_http_res_write_error(res, 400, "keys must be an array of strings");
+        return;
+    }
     firc_tunnels_t set = {0};
     const firc_tunnel_t *t = NULL;
     bool ok = probe_target(ctx, body, res, &set, &t);
+    if (ok) {
+        uint32_t mark = 0;
+        if (!usable_mark(ctx, t, &mark)) {
+            firc_http_res_write_error(res, 409, "save first");
+        } else {
+            start_probe(ctx, res, t, mark, set.n == 0, keys);
+        }
+    }
     cJSON_Delete(body);
+    firc_tunnels_free(&set);
+}
+
+static void handle_probe_rows(firc_http_req_t *req, firc_http_res_t *res, void *ud)
+{
+    (void)req;
+    firc_tunnels_ctx_t *ctx = ud;
+    tun_probe_call_t *c = ctx->probe;
+    const firc_tunprobe_row_t *rows = c != NULL ? firc_tunprobe_rows(c->probe) : NULL;
+    cJSON *o = cJSON_CreateObject();
+    cJSON *a = cJSON_CreateArray();
+    bool ok = o != NULL && a != NULL && cJSON_AddNumberToObject(o, "total", c != NULL ? (double)c->n : 0) != NULL;
+    for (size_t i = 0; ok && rows != NULL && i < c->n; i++) {
+        if (rows[i].have) {
+            ok = add_probe_row(a, c->keys[i], &rows[i]);
+        }
+    }
+    if (ok) {
+        ok = put_item(o, "nodes", a);
+        a = NULL;
+    }
+    cJSON_Delete(a);
     if (!ok) {
+        cJSON_Delete(o);
+        firc_http_res_write_error(res, 500, "out of memory");
         return;
     }
-    uint32_t mark = 0;
-    if (!usable_mark(ctx, t, &mark)) {
-        firc_http_res_write_error(res, 409, "save first");
-    } else {
-        start_probe(ctx, res, t, mark, set.n == 0);
-    }
-    firc_tunnels_free(&set);
+    firc_http_res_write_json(res, 200, o);
 }
 
 static void handle_headers(firc_http_req_t *req, firc_http_res_t *res, void *ud)
@@ -1692,6 +1792,7 @@ void firc_tunnels_register_routes(firc_httpd_t *h, firc_tunnels_ctx_t *ctx)
     must_route(h, "GET", "/api/v1/tunnels/headers", handle_headers, ctx);
     must_route(h, "POST", "/api/v1/tunnels/preview", handle_preview, ctx);
     must_route(h, "POST", "/api/v1/tunnels/probe", handle_probe, ctx);
+    must_route(h, "GET", "/api/v1/tunnels/probe", handle_probe_rows, ctx);
     must_route(h, "POST", "/api/v1/tunnels/{id}/refresh", handle_refresh, ctx);
     must_route(h, "POST", "/api/v1/tunnels/{id}/restart", handle_restart, ctx);
 }

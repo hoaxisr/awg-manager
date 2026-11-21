@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
+	import { m } from '$lib/i18n';
 	import {
 		stripFircEmojis,
 		FIRC_TUNNEL_NODE_POOL,
@@ -21,6 +22,7 @@
 	import { Button, Badge, Toggle, StatusDot, Modal } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import {
+		Activity,
 		Plus,
 		Trash2,
 		RefreshCw,
@@ -85,10 +87,23 @@
 		{ value: 'firefox', label: 'Firefox' },
 	];
 
+	function totalProbeLatencyMs(p?: FircTunnelProbeRow | null): number | null {
+		if (!p || !p.ok) return null;
+		if (p.firstByteMs != null) {
+			return (p.handshakeMs ?? 0) + p.firstByteMs;
+		}
+		if (p.handshakeMs != null) {
+			return p.handshakeMs;
+		}
+		return null;
+	}
+
 	let draft = $state<FircTunnel | null>(null);
 	let baselineJson = $state('');
 	let saving = $state(false);
 	let busyAction = $state<'' | 'probe' | 'refresh' | 'restart'>('');
+	let probeProgress = $state<{ done: number; total: number } | null>(null);
+	let probingNodeKey = $state<string | null>(null);
 	let nodeQuery = $state('');
 	let preview = $state<FircTunnelPreview | null>(null);
 
@@ -340,20 +355,68 @@
 	}
 
 	async function handleProbe() {
-		if (!draft || busyAction) return;
+		if (!draft || busyAction || probingNodeKey) return;
+		const targetId = draft.id;
+		const targetDev = draft.device;
 		busyAction = 'probe';
+		probeProgress = null;
 		try {
-			const rows = await api.fircProbeTunnel({ id: draft.id, tunnel: draft });
-			const nextMap: Record<string, FircTunnelProbeRow> = { ...tunProbes };
-			for (const row of rows ?? []) {
-				nextMap[row.key] = row;
-			}
-			fircProbeResults.update((all) => ({ ...all, [draft!.id]: nextMap }));
-			notifications.success(`Проверка задержки узлов ${draft.device} завершена`);
+			const payload = isDirty ? { tunnel: draft } : { id: targetId };
+			const rows = await api.fircProbeTunnel(payload, {
+				onProgress: (partialRows, total) => {
+					if (!draft || draft.id !== targetId) return;
+					probeProgress = { done: partialRows.length, total };
+					if (partialRows.length > 0) {
+						fircProbeResults.update((all) => {
+							const nextMap: Record<string, FircTunnelProbeRow> = { ...(all[targetId] ?? {}) };
+							for (const r of partialRows) {
+								nextMap[r.key] = r;
+							}
+							return { ...all, [targetId]: nextMap };
+						});
+					}
+				},
+			});
+			fircProbeResults.update((all) => {
+				const nextMap: Record<string, FircTunnelProbeRow> = { ...(all[targetId] ?? {}) };
+				for (const row of rows ?? []) {
+					nextMap[row.key] = row;
+				}
+				return { ...all, [targetId]: nextMap };
+			});
+			notifications.success(`Проверка задержки узлов ${targetDev} завершена`);
 		} catch (e: unknown) {
 			notifications.error((e instanceof Error ? e.message : undefined) ?? 'Ошибка проверки узлов');
 		} finally {
 			busyAction = '';
+			probeProgress = null;
+		}
+	}
+
+	async function handleProbeNode(nodeKey: string) {
+		if (!draft || busyAction || probingNodeKey) return;
+		const targetId = draft.id;
+		const targetDev = draft.device;
+		probingNodeKey = nodeKey;
+		try {
+			const payload = isDirty
+				? { tunnel: draft, keys: [nodeKey] }
+				: { id: targetId, keys: [nodeKey] };
+			const rows = await api.fircProbeTunnel(payload);
+			fircProbeResults.update((all) => {
+				const nextMap: Record<string, FircTunnelProbeRow> = { ...(all[targetId] ?? {}) };
+				for (const row of rows ?? []) {
+					nextMap[row.key] = row;
+				}
+				return { ...all, [targetId]: nextMap };
+			});
+		} catch (e: unknown) {
+			notifications.error(
+				(e instanceof Error ? e.message : undefined) ??
+					m.firc_probe_node_error({ device: targetDev }),
+			);
+		} finally {
+			probingNodeKey = null;
 		}
 	}
 
@@ -393,9 +456,9 @@
 	function sortNodesByLatency() {
 		if (!draft) return;
 		const score = (n: DisplayNode): number => {
-			const p = tunProbes[n.key];
-			if (p && p.ok && (p.firstByteMs || p.handshakeMs)) {
-				return p.firstByteMs ?? p.handshakeMs ?? 999999;
+			const total = totalProbeLatencyMs(tunProbes[n.key]);
+			if (total !== null) {
+				return total;
 			}
 			if (n.state === 'active') return 1;
 			if (n.state === 'reserve') return 50000;
@@ -656,9 +719,10 @@
 								variant="secondary"
 								size="sm"
 								loading={busyAction === 'probe'}
+								disabled={Boolean(busyAction || probingNodeKey)}
 								onclick={handleProbe}
 							>
-								Проверить задержку
+								Проверить задержку{#if probeProgress}{' '}({probeProgress.done}/{probeProgress.total}){/if}
 							</Button>
 							<Button variant="secondary" size="sm" onclick={sortNodesByLatency}>
 								Сортировать по пингу
@@ -744,17 +808,49 @@
 													{/if}
 												</td>
 												<td class="mono-cell">
-													{#if pr}
-														{#if !pr.ok}
-															<span class="probe-err" title={pr.why}>Таймаут</span>
-														{:else}
-															<span class="probe-ok">
-																{pr.firstByteMs ?? pr.handshakeMs ?? 0} мс
-															</span>
+													<div class="probe-cell">
+														<div class="probe-vals">
+															{#if pr}
+																{@const totalMs = totalProbeLatencyMs(pr)}
+																{#if !pr.ok}
+																	<span class="probe-err" title={pr.why}>Таймаут</span>
+																{:else if totalMs !== null}
+																	<span
+																		class="probe-ok"
+																		title={m.firc_probe_total_title()}
+																	>
+																		{totalMs} мс
+																	</span>
+																	{#if pr.handshakeMs != null && pr.firstByteMs != null}
+																		<span class="probe-breakdown">
+																			{m.firc_probe_breakdown({
+																				connect: String(pr.handshakeMs),
+																				reply: String(pr.firstByteMs),
+																			})}
+																		</span>
+																	{/if}
+																{/if}
+															{:else}
+																<span class="muted-dash">—</span>
+															{/if}
+														</div>
+														{#if !node.skipReason}
+															<button
+																type="button"
+																class="mini-icon-btn probe-node-btn"
+																title={m.firc_probe_single_title()}
+																aria-label={m.firc_probe_single_aria({ name: node.name })}
+																disabled={Boolean(busyAction || probingNodeKey)}
+																onclick={() => handleProbeNode(node.key)}
+															>
+																{#if probingNodeKey === node.key}
+																	<span class="spin"><RefreshCw size={12} /></span>
+																{:else}
+																	<Activity size={12} />
+																{/if}
+															</button>
 														{/if}
-													{:else}
-														<span class="muted-dash">—</span>
-													{/if}
+													</div>
 												</td>
 												<td style="text-align: right;">
 													<Toggle
@@ -1605,5 +1701,43 @@
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
+	}
+	.probe-cell {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 6px;
+		min-width: 96px;
+	}
+	.probe-vals {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		line-height: 1.25;
+	}
+	.probe-breakdown {
+		font-size: 10px;
+		color: var(--text-muted);
+		white-space: nowrap;
+	}
+	.probe-node-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 3px;
+		border-radius: 4px;
+		flex-shrink: 0;
+	}
+	.probe-node-btn:hover:not(:disabled) {
+		background: var(--bg-tertiary);
+	}
+	.spin {
+		display: inline-flex;
+		animation: firc-probe-spin 1s linear infinite;
+	}
+	@keyframes firc-probe-spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 </style>

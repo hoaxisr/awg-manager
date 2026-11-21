@@ -585,6 +585,12 @@ type ProbeResponse struct {
 	Nodes []ProbeNodeResult `json:"nodes"`
 }
 
+// ProbeProgressResponse is returned by GET /api/v1/tunnels/probe.
+type ProbeProgressResponse struct {
+	Total int               `json:"total"`
+	Nodes []ProbeNodeResult `json:"nodes"`
+}
+
 // PreviewNode represents a node returned by POST /api/v1/tunnels/preview.
 type PreviewNode struct {
 	Key        string `json:"key"`

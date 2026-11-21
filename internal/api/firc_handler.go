@@ -249,6 +249,7 @@ func (h *FircHandler) RegisterRoutes(mux *http.ServeMux, guarded func(http.Handl
 	mux.HandleFunc("GET /api/firc/tunnels", guarded(h.handleGetTunnels))
 	mux.HandleFunc("PUT /api/firc/tunnels", guarded(h.handlePutTunnels))
 	mux.HandleFunc("GET /api/firc/tunnels/state", guarded(h.handleGetTunnelsState))
+	mux.HandleFunc("GET /api/firc/tunnels/probe", guarded(h.handleGetTunnelProbeProgress))
 	mux.HandleFunc("POST /api/firc/tunnels/probe", guarded(h.handleProbeTunnel))
 	mux.HandleFunc("POST /api/firc/interfaces/probe", guarded(h.handleProbeInterfaces))
 	mux.HandleFunc("POST /api/firc/tunnels/preview", guarded(h.handlePreviewTunnel))
@@ -775,14 +776,42 @@ func (h *FircHandler) handleProbeTunnel(w http.ResponseWriter, r *http.Request) 
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "firc operator not initialized", "UNAVAILABLE")
 		return
 	}
-	var tun firc.Tunnel
-	if err := json.NewDecoder(r.Body).Decode(&tun); err != nil {
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
 		response.ErrorWithStatus(w, http.StatusBadRequest, "invalid request body", "BAD_REQUEST")
 		return
 	}
-	if err := firc.NormalizeTunnelSources(&tun, h.happKeysPath()); err != nil {
-		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "NORMALIZE_FAILED")
+	var wrapped struct {
+		ID     string       `json:"id,omitempty"`
+		Tunnel *firc.Tunnel `json:"tunnel,omitempty"`
+		Keys   []string     `json:"keys,omitempty"`
+	}
+	if err := json.Unmarshal(rawBody, &wrapped); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "invalid request body", "BAD_REQUEST")
 		return
+	}
+	probeID := wrapped.ID
+	var draft *firc.Tunnel
+	if wrapped.Tunnel != nil {
+		if err := firc.NormalizeTunnelSources(wrapped.Tunnel, h.happKeysPath()); err != nil {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "NORMALIZE_FAILED")
+			return
+		}
+		draft = wrapped.Tunnel
+	} else {
+		var tun firc.Tunnel
+		if err := json.Unmarshal(rawBody, &tun); err != nil {
+			response.ErrorWithStatus(w, http.StatusBadRequest, "invalid request body", "BAD_REQUEST")
+			return
+		}
+		if err := firc.NormalizeTunnelSources(&tun, h.happKeysPath()); err != nil {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "NORMALIZE_FAILED")
+			return
+		}
+		if probeID == "" {
+			probeID = tun.ID
+		}
+		draft = &tun
 	}
 	if h.isExplicitlyUnselected() {
 		h.rejectNotSelected(w)
@@ -792,10 +821,33 @@ func (h *FircHandler) handleProbeTunnel(w http.ResponseWriter, r *http.Request) 
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "fircd is not running", "NOT_RUNNING")
 		return
 	}
-	res, err := h.op.Client().ProbeTunnel(r.Context(), tun.ID, &tun)
+	res, err := h.op.Client().ProbeTunnelKeys(r.Context(), probeID, draft, wrapped.Keys)
 	if err != nil {
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "PROBE_FAILED")
 		return
+	}
+	response.Success(w, res)
+}
+
+func (h *FircHandler) handleGetTunnelProbeProgress(w http.ResponseWriter, r *http.Request) {
+	if h.op == nil {
+		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "firc operator not initialized", "UNAVAILABLE")
+		return
+	}
+	if h.isExplicitlyUnselected() || !h.op.IsRunning(r.Context()) {
+		response.Success(w, &firc.ProbeProgressResponse{
+			Total: 0,
+			Nodes: []firc.ProbeNodeResult{},
+		})
+		return
+	}
+	res, err := h.op.Client().GetTunnelProbeProgress(r.Context())
+	if err != nil {
+		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "PROBE_PROGRESS_FAILED")
+		return
+	}
+	if res.Nodes == nil {
+		res.Nodes = []firc.ProbeNodeResult{}
 	}
 	response.Success(w, res)
 }
@@ -1630,6 +1682,7 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 			var wrapped struct {
 				ID     string       `json:"id,omitempty"`
 				Tunnel *firc.Tunnel `json:"tunnel,omitempty"`
+				Keys   []string     `json:"keys,omitempty"`
 			}
 			if json.Unmarshal(rawBody, &wrapped) == nil && wrapped.Tunnel != nil {
 				if err := firc.NormalizeTunnelSources(wrapped.Tunnel, h.happKeysPath()); err != nil {
@@ -1794,6 +1847,8 @@ func (h *FircHandler) serveOfflineV1Read(w http.ResponseWriter, r *http.Request,
 		payload = map[string]any{"tunnels": tunnels}
 	case cleanSubPath == "/tunnels/state":
 		payload = map[string]any{"tunnels": []firc.TunnelState{}}
+	case cleanSubPath == "/tunnels/probe":
+		payload = map[string]any{"total": 0, "nodes": []firc.ProbeNodeResult{}}
 	case cleanSubPath == "/groups":
 		groups, err := h.op.LoadGroupsFile()
 		if err != nil {

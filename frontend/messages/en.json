@@ -8204,5 +8204,10 @@
 	"firc_fallback_all_dead_title": "All interfaces unreachable",
 	"firc_fallback_active_primary_title": "Primary interface {iface} is active",
 	"firc_fallback_active_backup_title": "Backup interface {iface} is active",
-	"firc_fallback_active_chain_title": "Primary interface {iface} is active (Fallback chain: {chain})"
+	"firc_fallback_active_chain_title": "Primary interface {iface} is active (Fallback chain: {chain})",
+	"firc_probe_total_title": "Total time to first reply: connect to node + reply through node",
+	"firc_probe_breakdown": "connect {connect} · reply {reply}",
+	"firc_probe_single_title": "Check this node",
+	"firc_probe_single_aria": "Check node {name}",
+	"firc_probe_node_error": "Failed to probe node ({device})"
 }

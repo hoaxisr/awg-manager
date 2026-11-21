@@ -32,6 +32,7 @@ import {
 	type FircTunnel,
 	type FircTunnelSource,
 	type FircTunnelPreview,
+	type FircTunnelProbeProgress,
 	type FircTunnelProbeRow,
 	type FircTunnelState,
 	type FircExtConfig,
@@ -263,25 +264,67 @@ export class FircClient extends TelemtClient {
 
 	private fircProbeQueue: Promise<unknown> = Promise.resolve();
 
-	async fircProbeTunnel(payload: { id?: string; tunnel?: FircTunnel }): Promise<FircTunnelProbeRow[]> {
+	async fircGetTunnelProbeProgress(): Promise<FircTunnelProbeProgress> {
+		const res = await this.requestV1<{ total?: number; nodes?: FircTunnelProbeRow[] }>(
+			'/tunnels/probe',
+		);
+		return {
+			total: res?.total ?? 0,
+			nodes: res?.nodes ?? [],
+		};
+	}
+
+	async fircProbeTunnel(
+		payload: { id?: string; tunnel?: FircTunnel; keys?: string[] },
+		options?: {
+			onProgress?: (rows: FircTunnelProbeRow[], total: number) => void;
+			pollIntervalMs?: number;
+		},
+	): Promise<FircTunnelProbeRow[]> {
 		const run = async (): Promise<FircTunnelProbeRow[]> => {
-			for (let attempt = 0; attempt < 4; attempt++) {
-				try {
-					const res = await this.requestV1<{ nodes?: FircTunnelProbeRow[] }>('/tunnels/probe', {
-						method: 'POST',
-						body: JSON.stringify(payload),
-					});
-					return res?.nodes ?? [];
-				} catch (err) {
-					const msg = err instanceof Error ? err.message.toLowerCase() : '';
-					if (msg.includes('already running') && attempt < 3) {
-						await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
-						continue;
+			let running = true;
+			let pollTimer: ReturnType<typeof setTimeout> | null = null;
+			const pollEveryMs = options?.pollIntervalMs ?? 800;
+
+			if (options?.onProgress) {
+				const schedulePoll = () => {
+					if (!running) return;
+					pollTimer = setTimeout(async () => {
+						if (!running) return;
+						const got = await this.fircGetTunnelProbeProgress().catch(() => null);
+						if (running && got && got.total > 0) {
+							options.onProgress?.(got.nodes ?? [], got.total);
+						}
+						if (running) schedulePoll();
+					}, pollEveryMs);
+				};
+				schedulePoll();
+			}
+
+			try {
+				for (let attempt = 0; attempt < 4; attempt++) {
+					try {
+						const res = await this.requestV1<{ nodes?: FircTunnelProbeRow[] }>('/tunnels/probe', {
+							method: 'POST',
+							body: JSON.stringify(payload),
+						});
+						return res?.nodes ?? [];
+					} catch (err) {
+						const msg = err instanceof Error ? err.message.toLowerCase() : '';
+						if (msg.includes('already running') && attempt < 3) {
+							await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+							continue;
+						}
+						throw err;
 					}
-					throw err;
+				}
+				return [];
+			} finally {
+				running = false;
+				if (pollTimer !== null) {
+					clearTimeout(pollTimer);
 				}
 			}
-			return [];
 		};
 		const next = this.fircProbeQueue.then(run, run);
 		this.fircProbeQueue = next.catch(() => {});
