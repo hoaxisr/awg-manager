@@ -361,4 +361,182 @@ describe('FIRC tunnels UI integration', () => {
 		await fireEvent.click(editBtns[0]);
 		expect(await screen.findByText(/Настройки туннеля FIN \(Финляндия\) \(Premium\) \(tunvless2\)/)).toBeInTheDocument();
 	});
+
+	it('explains unselected FIRC engine without falsely showing an active node from saved order', async () => {
+		const offStatus = {
+			fircdInstalled: true,
+			tunvlessInstalled: true,
+			running: false,
+			selected: false,
+			socketPath: '/opt/var/run/fircd.sock',
+			dnsProxyEndpoint: '127.0.0.1:3553',
+			inboundPort: 1099,
+			tunnelsCount: 1,
+			groupsCount: 0,
+		};
+		fircStatus.set(offStatus);
+		fircGetStatus.mockResolvedValue(offStatus);
+		fircGetTunnels.mockResolvedValue([
+			{
+				id: 'tunnel1',
+				device: 'tunvless0',
+				description: '',
+				enable: true,
+				active: 1,
+				by: 'connection',
+				order: ['sub1:YouTube без рекламы'],
+				sources: [
+					{
+						id: 'sub1',
+						kind: 'subscription',
+						name: '999',
+						url: 'https://example.com/sub',
+						interval: 21600,
+					},
+				],
+				inbounds: [],
+			},
+		]);
+		fircGetTunnelsState.mockResolvedValue([]);
+
+		render(FircTunnelsTabSection, { props: { dashboardMode: false, showTrustTunnels: false } });
+
+		const diag = await screen.findByTestId('firc-card-diagnostic');
+		expect(diag).toHaveTextContent(m.firc_reason_engine_not_selected());
+		expect(screen.queryByText(/· активен/i)).not.toBeInTheDocument();
+	});
+
+	it('surfaces subscription placeholder error on card, in edit modal banner, and in Sources tab', async () => {
+		fircGetTunnels.mockResolvedValue([
+			{
+				id: 'tunnel1',
+				device: 'tunvless0',
+				description: 'Sub 999',
+				enable: true,
+				active: 1,
+				by: 'connection',
+				sources: [
+					{
+						id: 'sub1',
+						kind: 'subscription',
+						name: '999',
+						url: 'https://example.com/sub',
+						interval: 21600,
+					},
+				],
+				inbounds: [],
+			},
+		]);
+		fircGetTunnelsState.mockResolvedValue([
+			{
+				id: 'tunnel1',
+				device: 'tunvless0',
+				status: 'waiting',
+				active: [],
+				nodes: [],
+				inbounds: [],
+				groups: [],
+				rxBps: 0,
+				txBps: 0,
+				since: 0,
+				backoffS: 0,
+				lastExit: 0,
+				uplinkOk: true,
+				tcpPort: 0,
+				tcpSkipped: [],
+				tcpOff: '',
+				subscriptions: [
+					{
+						name: '999',
+						nodes: 0,
+						fetching: false,
+						lastOk: 0,
+						lastTry: 1700000000,
+						error: 'the server answered: Device limit reached',
+					},
+				],
+			},
+		]);
+
+		render(FircTunnelsTabSection, { props: { dashboardMode: false, showTrustTunnels: false } });
+
+		const expectedMsg = m.firc_sub_err_placeholder({ said: 'Device limit reached' });
+		const cardDiag = await screen.findByTestId('firc-card-diagnostic');
+		expect(cardDiag).toHaveTextContent(expectedMsg);
+
+		await fireEvent.click(screen.getByText('Изменить'));
+		expect(await screen.findByTestId('firc-modal-diagnostic')).toHaveTextContent(expectedMsg);
+
+		await fireEvent.click(screen.getByRole('button', { name: /Подписки и ссылки/ }));
+		expect(await screen.findByTestId('firc-source-error')).toHaveTextContent(expectedMsg);
+	});
+
+	it('surfaces skipped node reason in card and Nodes tab and defaults new inbound listen interface to br0', async () => {
+		fircGetTunnels.mockResolvedValue([
+			{
+				id: 'tunnel1',
+				device: 'tunvless0',
+				description: 'Sub TLS',
+				enable: true,
+				active: 1,
+				by: 'connection',
+				sources: [
+					{
+						id: 'sub1',
+						kind: 'subscription',
+						name: '999',
+						url: 'https://example.com/sub',
+						interval: 21600,
+					},
+				],
+				inbounds: [],
+			},
+		]);
+		fircGetTunnelsState.mockResolvedValue([
+			{
+				id: 'tunnel1',
+				device: 'tunvless0',
+				status: 'waiting',
+				active: [],
+				nodes: [
+					{
+						key: 'sub1:Node1',
+						name: 'Node1',
+						source: '999',
+						state: 'skipped',
+						since: 0,
+						skipReason: 'allowInsecure: needs --insecure',
+					},
+				],
+				inbounds: [],
+				groups: [],
+				rxBps: 0,
+				txBps: 0,
+				since: 0,
+				backoffS: 0,
+				lastExit: 0,
+				uplinkOk: true,
+				tcpPort: 0,
+				tcpSkipped: [],
+				tcpOff: '',
+				subscriptions: [{ name: '999', nodes: 1, fetching: false, lastOk: 100, lastTry: 100, error: '' }],
+			},
+		]);
+
+		render(FircTunnelsTabSection, { props: { dashboardMode: false, showTrustTunnels: false } });
+
+		const cardDiag = await screen.findByTestId('firc-card-diagnostic');
+		expect(cardDiag).toHaveTextContent(
+			m.firc_reason_all_nodes_skipped({ count: 1, reason: m.firc_skip_allow_insecure() }),
+		);
+
+		await fireEvent.click(screen.getByText('Изменить'));
+		expect(await screen.findByText(m.firc_node_state_skipped())).toBeInTheDocument();
+		expect(screen.getByText(m.firc_skip_allow_insecure())).toBeInTheDocument();
+
+		await fireEvent.click(screen.getByRole('button', { name: /Входящие порты/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Добавить порт/ }));
+		const listenInput = await screen.findByLabelText('Адрес');
+		expect(listenInput).toHaveValue('br0');
+	});
 });

@@ -12,6 +12,7 @@
 		type FircTunnelProbeRow,
 	} from '$lib/types/firc';
 	import {
+		fircStatus,
 		fircTunnels,
 		fircTunnelsState,
 		fircGroups,
@@ -19,6 +20,7 @@
 		openFircTunnelEditor,
 		reloadFircAll,
 	} from '$lib/stores/firc';
+	import { getFircTunnelDiagnostic } from '$lib/utils/fircDiagnostics';
 	import type { SingboxLayoutMode, TunnelRenderMode } from '$lib/constants/singboxLayout';
 	import { singboxDelayFromHistory } from '$lib/utils/singboxDelay';
 	import { formatBitRate, formatBytes } from '$lib/utils/format';
@@ -73,6 +75,9 @@
 	const enabled = $derived(tunnel.enable !== false);
 	const live = $derived($fircTunnelsState.find((s) => s.id === tunnel.id));
 	const running = $derived(Boolean(enabled && live?.status === 'up'));
+	const diagnostic = $derived(
+		getFircTunnelDiagnostic({ tunnel, live, status: $fircStatus }),
+	);
 	const hasSubscriptionSource = $derived(
 		Boolean(tunnel.sources?.some((s) => s.kind === 'subscription')),
 	);
@@ -176,7 +181,8 @@
 		});
 	});
 
-	const activeNodeName = $derived.by(() => {
+	const liveActiveNodeName = $derived.by(() => {
+		if (!running) return '';
 		if (live?.active && live.active.length > 0) {
 			const first = stripFircEmojis(live.active[0]);
 			return live.active.length > 1 ? `${first} (+${live.active.length - 1})` : first;
@@ -186,8 +192,10 @@
 			const first = stripFircEmojis(act[0].name || act[0].key);
 			return act.length > 1 ? `${first} (+${act.length - 1})` : first;
 		}
-		return allNodes[0]?.name ?? '';
+		return '';
 	});
+
+	const preferredNodeName = $derived(liveActiveNodeName || allNodes[0]?.name || '');
 
 	const activeNodeKey = $derived.by(() => {
 		const act = (live?.nodes ?? []).find((n) => n.state === 'active');
@@ -223,14 +231,18 @@
 	const cardState = $derived(
 		!enabled
 			? 'unknown'
-			: history.length > 0
-				? delayPresentation.state
-				: running
-					? 'ok'
-					: 'slow',
+			: diagnostic.tone === 'error'
+				? 'fail'
+				: history.length > 0
+					? delayPresentation.state
+					: running
+						? 'ok'
+						: 'slow',
 	);
 	const latText = $derived(delayPresentation.label);
-	const statusVariant = $derived(running ? 'success' : enabled ? 'warning' : 'muted');
+	const statusVariant = $derived(
+		running ? 'success' : !enabled ? 'muted' : diagnostic.tone === 'error' ? 'error' : 'warning',
+	);
 
 	const inboundStatuses = $derived.by(() => {
 		const liveInbs = live?.inbounds ?? [];
@@ -257,13 +269,9 @@
 			? inboundStatuses.map((s) => `:${s.port} (${s.label})`).join(', ')
 			: '',
 	);
-	const stateLabel = $derived.by(() => {
-		if (!enabled) return 'stopped';
-		if (live?.status === 'up') return 'running';
-		return live?.status ?? 'waiting';
-	});
+	const stateLabel = $derived(diagnostic.stateLabel);
 
-	const endpointText = $derived(activeNodeName || tunnel.device);
+	const endpointText = $derived(preferredNodeName || tunnel.device);
 	const hiddenEndpointText = '••••••••';
 
 	let rxRates = $state<number[]>([]);
@@ -343,8 +351,9 @@
 				if (best !== null) {
 					notifications.success(`${title}: ${best} мс`);
 				} else {
+					const detail = firstErr || ((rows ?? []).length === 0 ? diagnostic.reason : '');
 					notifications.warning(
-						`${title}: узел не ответил${firstErr ? ` (${firstErr})` : ''}`,
+						`${title}: узел не ответил${detail ? ` (${detail})` : ''}`,
 					);
 				}
 			}
@@ -540,6 +549,17 @@
 						<span class="meta-dot" aria-hidden="true">·</span><span>{listenPortsText}</span>
 					{/if}
 				</TunnelMetaText>
+				{#if diagnostic.reason}
+					<div
+						class="firc-diag-inline"
+						class:is-error={diagnostic.tone === 'error'}
+						class:is-warning={diagnostic.tone === 'warning'}
+						title={diagnostic.reason}
+						data-testid="firc-card-diagnostic"
+					>
+						{diagnostic.reason}
+					</div>
+				{/if}
 			</div>
 		</td>
 		{#if kind === 'proxy'}
@@ -561,8 +581,8 @@
 			<td class="tunnel-list-cell list-cell" colspan="2" title={endpointText}>
 				<div class="lc lc-endpoint">
 					<div class="lc-endpoint-stack">
-						<span class="lc-endpoint-name" title={activeNodeName}>
-							{activeNodeName || '—'}
+						<span class="lc-endpoint-name" title={preferredNodeName}>
+							{liveActiveNodeName || preferredNodeName || '—'}
 						</span>
 						<span class="mono">{allNodes.length} серверов</span>
 					</div>
@@ -662,6 +682,19 @@
 				</div>
 			</div>
 		</div>
+
+		{#if diagnostic.reason}
+			<div
+				class="firc-diag-banner firc-diag-banner--dense"
+				class:is-error={diagnostic.tone === 'error'}
+				class:is-warning={diagnostic.tone === 'warning'}
+				class:is-info={diagnostic.tone === 'info'}
+				role="status"
+				data-testid="firc-card-diagnostic"
+			>
+				{diagnostic.reason}
+			</div>
+		{/if}
 
 		{#if renderMode !== 'list-card'}
 			<div class="details">
@@ -813,14 +846,27 @@
 			<div class="sub-meta">
 				<div>
 					<span>{allNodes.length} серверов</span>
-					{#if activeNodeName}
-						<span>· активен <span class="mono">{activeNodeName}</span></span>
+					{#if liveActiveNodeName}
+						<span>· активен <span class="mono">{liveActiveNodeName}</span></span>
 					{/if}
 				</div>
 				<div>
 					<span>источников: {tunnel.sources.length}</span>
 					<span>· авторезерв</span>
 				</div>
+			</div>
+		{/if}
+
+		{#if diagnostic.reason}
+			<div
+				class="firc-diag-banner"
+				class:is-error={diagnostic.tone === 'error'}
+				class:is-warning={diagnostic.tone === 'warning'}
+				class:is-info={diagnostic.tone === 'info'}
+				role="status"
+				data-testid="firc-card-diagnostic"
+			>
+				{diagnostic.reason}
 			</div>
 		{/if}
 
@@ -971,7 +1017,7 @@
 	displayName={title}
 	subjectLabel={kind === 'subscription' ? 'подписку' : 'туннель'}
 	iface={tunnel.device}
-	unavailableReason={!running ? 'Туннель не запущен' : undefined}
+	unavailableReason={!running ? diagnostic.reason || 'Туннель не запущен' : undefined}
 	onclose={() => (diagnosticsOpen = false)}
 />
 
@@ -1085,6 +1131,51 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.25rem;
+	}
+
+	.firc-diag-banner {
+		padding: 6px 8px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-secondary);
+		font-size: var(--sbx-card-meta);
+		line-height: 1.35;
+		overflow-wrap: anywhere;
+	}
+	.firc-diag-banner--dense {
+		padding: 4px 6px;
+		font-size: 10px;
+	}
+	.firc-diag-banner.is-error {
+		background: var(--color-error-tint);
+		border-color: var(--color-error-border);
+		color: var(--color-error);
+	}
+	.firc-diag-banner.is-warning {
+		background: var(--color-warning-tint);
+		border-color: var(--color-warning-border);
+		color: var(--color-warning);
+	}
+	.firc-diag-banner.is-info {
+		background: var(--color-info-tint);
+		border-color: var(--color-info-border);
+		color: var(--color-info);
+	}
+	.firc-diag-inline {
+		font-size: var(--sbx-card-note);
+		line-height: 1.3;
+		color: var(--color-text-secondary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 340px;
+	}
+	.firc-diag-inline.is-error {
+		color: var(--color-error);
+	}
+	.firc-diag-inline.is-warning {
+		color: var(--color-warning);
 	}
 
 	.divider {
