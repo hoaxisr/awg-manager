@@ -194,7 +194,7 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	r.exit.SetDesired(ndmsres.PolicyExitDesired{
 		Name: c.NdmsIface, SecurityLevel: "public",
 		IPGlobal: true, PermitAllACL: true,
-		DefaultCandidacy: true, // клиентский выход; стенд-гейт §13 — предусловие волны
+		DefaultCandidacy: c.WantDefaultRoute(),
 	})
 	r.tun.SetDesired(c.RawIface)
 	refs := make([]ndmsres.PolicyRef, 0, len(c.Policies))

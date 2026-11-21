@@ -44,14 +44,16 @@ func DeclaredExits(list []InstanceConfig) []ExitDecl {
 		if !ok {
 			continue
 		}
+		dr := e.DefaultRoute
 		out = append(out, ExitDecl{
-			ID:          wdttclient.RawTunnelID(ic.ID),
-			InstanceID:  ic.ID,
-			Name:        e.Name,
-			NDMSName:    e.NDMSName,
-			KernelIface: e.KernelIface,
-			Peer:        e.Peer,
-			Enabled:     ic.Enabled,
+			ID:           wdttclient.RawTunnelID(ic.ID),
+			InstanceID:   ic.ID,
+			Name:         e.Name,
+			NDMSName:     e.NDMSName,
+			KernelIface:  e.KernelIface,
+			Peer:         e.Peer,
+			Enabled:      ic.Enabled,
+			DefaultRoute: &dr,
 		})
 	}
 	return out

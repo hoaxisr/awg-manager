@@ -31,6 +31,8 @@ export interface WdttClientConfig {
 	rawClientMTU?: number;
 	autoReconnect?: boolean;
 	autoReconnectInterval?: string;
+	/** Raw client: объявлять интерфейс кандидатом default route в NDMS. undefined = true */
+	defaultRoute?: boolean;
 }
 
 export interface WdttClientInstance {

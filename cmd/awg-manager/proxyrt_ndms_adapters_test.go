@@ -42,12 +42,18 @@ func (f fakePolicyList) List(context.Context) ([]ndms.Policy, error) { return f.
 // SetDefaultRoute на RemoveDefaultRoute компилируется (сигнатуры совпадают),
 // поэтому сверяется и метод, и аргумент.
 type fakeDefaultRoute struct {
-	names []string
-	err   error
+	names   []string
+	removed []string
+	err     error
 }
 
 func (f *fakeDefaultRoute) SetDefaultRoute(_ context.Context, iface query.Confirmed) error {
 	f.names = append(f.names, iface.Name())
+	return f.err
+}
+
+func (f *fakeDefaultRoute) RemoveDefaultRoute(_ context.Context, iface query.Confirmed) error {
+	f.removed = append(f.removed, iface.Name())
 	return f.err
 }
 
@@ -241,6 +247,31 @@ func TestEnsureDefaultRouteCandidacyArgs(t *testing.T) {
 	fr = &fakeDefaultRoute{err: errRouter}
 	if err := (proxyNDMSCommands{confirmingOpkgTun: opkg, routes: fr}).EnsureDefaultRouteCandidacy(context.Background(), "OpkgTun18"); !errors.Is(err, errRouter) {
 		t.Fatalf("ошибка записи кандидатуры обязана дойти: %v", err)
+	}
+}
+
+func TestRemoveDefaultRouteCandidacyArgs(t *testing.T) {
+	opkg := newConfirmAdapters(t, query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun18", Type: "OpkgTun"})).opkg
+	fr := &fakeDefaultRoute{}
+	if err := (proxyNDMSCommands{confirmingOpkgTun: opkg, routes: fr}).RemoveDefaultRouteCandidacy(context.Background(), "OpkgTun18"); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if !reflect.DeepEqual(fr.removed, []string{"OpkgTun18"}) || len(fr.names) != 0 {
+		t.Fatalf("RemoveDefaultRoute позван с removed=%v names=%v", fr.removed, fr.names)
+	}
+
+	fr = &fakeDefaultRoute{err: errRouter}
+	if err := (proxyNDMSCommands{confirmingOpkgTun: opkg, routes: fr}).RemoveDefaultRouteCandidacy(context.Background(), "OpkgTun18"); !errors.Is(err, errRouter) {
+		t.Fatalf("ошибка снятия кандидатуры обязана дойти: %v", err)
+	}
+
+	absentOpkg := newConfirmAdapters(t, query.NewFakeNDMS()).opkg
+	frAbsent := &fakeDefaultRoute{}
+	if err := (proxyNDMSCommands{confirmingOpkgTun: absentOpkg, routes: frAbsent}).RemoveDefaultRouteCandidacy(context.Background(), "OpkgTun18"); err != nil {
+		t.Fatalf("снятие у отсутствующего интерфейса обязано вернуть nil: %v", err)
+	}
+	if len(frAbsent.removed) != 0 {
+		t.Fatalf("RemoveDefaultRoute не должен вызываться для отсутствующего интерфейса: %v", frAbsent.removed)
 	}
 }
 

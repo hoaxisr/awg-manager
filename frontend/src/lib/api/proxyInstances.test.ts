@@ -331,6 +331,20 @@ describe('toWdttConfig: секреты и поля записи', () => {
 		expect(cfg.autoReconnect).toBe(true);
 		expect(cfg.autoReconnectInterval).toBe('30m');
 	});
+
+	it('defaultRoute читается из конфига инстанса или остаётся undefined по умолчанию', () => {
+		expect(toWdttClientConfig(wdttClientView).defaultRoute).toBeUndefined();
+		const viewOff: ProxyInstanceView = {
+			...wdttClientView,
+			config: { ...wdttClientView.config, defaultRoute: false }
+		};
+		expect(toWdttClientConfig(viewOff).defaultRoute).toBe(false);
+		const viewOn: ProxyInstanceView = {
+			...wdttClientView,
+			config: { ...wdttClientView.config, defaultRoute: true }
+		};
+		expect(toWdttClientConfig(viewOn).defaultRoute).toBe(true);
+	});
 });
 
 describe('toFreeTurnStatus и toFreeTurnConfig: вторая подсистема', () => {
@@ -538,6 +552,12 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 		});
 		expect(patched.autoReconnect).toBe(true);
 		expect(patched.autoReconnectInterval).toBe('1h');
+	});
+
+	it('defaultRoute не едет при undefined и явно передаётся при false/true', () => {
+		expect('defaultRoute' in toWdttClientPatch(client)).toBe(false);
+		expect(toWdttClientPatch({ ...client, defaultRoute: false }).defaultRoute).toBe(false);
+		expect(toWdttClientPatch({ ...client, defaultRoute: true }).defaultRoute).toBe(true);
 	});
 
 	const server: WdttServerConfig = {

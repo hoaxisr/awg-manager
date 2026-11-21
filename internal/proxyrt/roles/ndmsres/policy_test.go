@@ -52,6 +52,23 @@ func TestPolicyExitWithoutCandidacySkipsRoute(t *testing.T) {
 	}
 }
 
+func TestPolicyExitRemovesCandidacyWhenDisabled(t *testing.T) {
+	rt := newFakeRouter()
+	rt.ifaces["OpkgTun18"] = &IfaceFacts{SecurityLevel: "public", AdminUp: true}
+	rt.global["OpkgTun18"] = true
+	rt.acl["OpkgTun18"] = true
+	rt.defrt["OpkgTun18"] = true
+
+	res := NewPolicyExit("policy_exit", rt, rt)
+	res.SetDesired(PolicyExitDesired{Name: "OpkgTun18", SecurityLevel: "public",
+		IPGlobal: true, PermitAllACL: true, DefaultCandidacy: false})
+
+	drive(t, res)
+	if rt.defrt["OpkgTun18"] {
+		t.Fatal("кандидатура default route обязана быть снята при DefaultCandidacy=false")
+	}
+}
+
 func policies(ps ...ndms.Policy) *fakePolicies { return &fakePolicies{list: ps} }
 
 type fakePolicies struct {

@@ -66,6 +66,10 @@ func (c *countCmds) EnsureDefaultRouteCandidacy(context.Context, string) error {
 	c.n++
 	return nil
 }
+func (c *countCmds) RemoveDefaultRouteCandidacy(context.Context, string) error {
+	c.n++
+	return nil
+}
 
 // memQuery — карта фактов; тест наполняет её ПОСЛЕ New, ресурсы долгоживущие
 // и читают ту же карту (пересоздавать ресурсы нельзя — в них живут защёлки).
