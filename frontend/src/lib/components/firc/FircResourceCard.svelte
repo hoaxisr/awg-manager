@@ -147,6 +147,7 @@
 
 	const allNodes = $derived.by(() => {
 		const liveNodes = live?.nodes ?? [];
+		const hiddenKeys = new Set((live?.filteredNodes ?? []).map((n) => n.key));
 		const byKey = new Map<string, { key: string; name: string; state: string }>();
 		for (const ln of liveNodes) {
 			byKey.set(ln.key, {
@@ -156,6 +157,7 @@
 			});
 		}
 		for (const key of tunnel.order ?? []) {
+			if (hiddenKeys.has(key)) continue;
 			if (!byKey.has(key)) {
 				const rawName = key.includes(':') ? key.slice(key.indexOf(':') + 1) : key;
 				let decoded = rawName;

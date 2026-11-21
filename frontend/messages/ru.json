@@ -8721,5 +8721,18 @@
 	"servers_dispatcher_status_running": "Активен · порт {port}",
 	"servers_dispatcher_status_stopped": "Остановлен · порт {port} закрыт",
 	"servers_dispatcher_running_hint": "Порт {port} сейчас слушается локально на роутере для активных сервисов (VLESS / Прокси Telegram). Доступ снаружи появляется только при настроенном KeenDNS или пробросе порта; чтобы закрыть порт, выключите оба сервиса.",
-	"servers_dispatcher_stopped_hint": "Сейчас порт {port} не слушается и закрыт. Диспетчер запускается автоматически только при включении VLESS (XHTTP) или Прокси Telegram и снова закрывает порт после их отключения."
+	"servers_dispatcher_stopped_hint": "Сейчас порт {port} не слушается и закрыт. Диспетчер запускается автоматически только при включении VLESS (XHTTP) или Прокси Telegram и снова закрывает порт после их отключения.",
+	"firc_filter_warn_lookaround": "Go RE2 не поддерживает lookahead/lookbehind — используйте поле «Исключать»",
+	"firc_filter_warn_invalid": "Похоже на некорректное выражение (окончательно проверит сервер)",
+	"firc_filter_preview_error": "Ошибка предпросмотра фильтра",
+	"firc_filter_all_nodes_hidden": "Все узлы подписки скрыты фильтром серверов. Измените фильтр во вкладке «Подписки и ссылки».",
+	"firc_filter_hidden_toggle": "Скрыто фильтром ({count})",
+	"firc_filter_hidden_hint": "Эти серверы скрыты regex-фильтром подписки и не участвуют в пуле туннеля. Чтобы вернуть сервер, измените фильтр во вкладке «Подписки и ссылки».",
+	"firc_filter_section_title": "Фильтр серверов",
+	"firc_filter_include_label": "Включать только (regex)",
+	"firc_filter_exclude_label": "Исключать (regex)",
+	"firc_filter_exclude_example": "(?i)(🇷🇺|Россия|RU|BRIDGE|LTE)",
+	"firc_filter_hint_before": "Матчится по имени сервера из подписок (прямые ссылки не фильтруются). Синтаксис Go RE2: lookahead (",
+	"firc_filter_hint_mid": ") не поддерживается — вместо него используйте поле «Исключать». Пример: ",
+	"firc_filter_hint_after": ". Проверка выражения выполняется на сервере; скрытые серверы видны во вкладке «Узлы» в блоке «Скрыто фильтром»."
 }

@@ -2886,6 +2886,12 @@ func buildReverseSingboxPayloads(
 					"url":     subURL,
 					"enabled": tun.Enable,
 				}
+				if inc := strings.TrimSpace(tun.Filter); inc != "" {
+					entry["filterInclude"] = inc
+				}
+				if exc := strings.TrimSpace(tun.FilterExclude); exc != "" {
+					entry["filterExclude"] = exc
+				}
 				if idx, ok := seenSubURLs[subURL]; ok {
 					subsList[idx] = entry
 				} else {

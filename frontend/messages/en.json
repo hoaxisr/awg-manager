@@ -8321,5 +8321,18 @@
 	"servers_dispatcher_status_running": "Listening · port {port}",
 	"servers_dispatcher_status_stopped": "Stopped · port {port} closed",
 	"servers_dispatcher_running_hint": "Port {port} is currently listening locally on the router for active services (VLESS / Telegram Proxy). External WAN access only exists if KeenDNS or port forwarding is configured; disable both services to close the port.",
-	"servers_dispatcher_stopped_hint": "Port {port} is currently closed and not listening. The dispatcher starts automatically only when VLESS (XHTTP) or Telegram Proxy is enabled, and closes the port again once both are disabled."
+	"servers_dispatcher_stopped_hint": "Port {port} is currently closed and not listening. The dispatcher starts automatically only when VLESS (XHTTP) or Telegram Proxy is enabled, and closes the port again once both are disabled.",
+	"firc_filter_warn_lookaround": "Go RE2 does not support lookahead/lookbehind — use the “Exclude” field instead",
+	"firc_filter_warn_invalid": "Expression looks invalid (will be validated by the server)",
+	"firc_filter_preview_error": "Filter preview error",
+	"firc_filter_all_nodes_hidden": "All subscription nodes are hidden by the server filter. Adjust the filter in the “Subscriptions and links” tab.",
+	"firc_filter_hidden_toggle": "Hidden by filter ({count})",
+	"firc_filter_hidden_hint": "These servers are hidden by the subscription regex filter and excluded from the tunnel pool. To restore a server, edit the filter in the “Subscriptions and links” tab.",
+	"firc_filter_section_title": "Server filter",
+	"firc_filter_include_label": "Include only (regex)",
+	"firc_filter_exclude_label": "Exclude (regex)",
+	"firc_filter_exclude_example": "(?i)(🇷🇺|Russia|RU|BRIDGE|LTE)",
+	"firc_filter_hint_before": "Matches subscription server names (direct links are not filtered). Go RE2 syntax: lookahead (",
+	"firc_filter_hint_mid": ") is not supported — use the “Exclude” field instead. Example: ",
+	"firc_filter_hint_after": ". Validation runs on the server; hidden servers appear in the “Nodes” tab under “Hidden by filter”."
 }

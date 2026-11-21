@@ -795,6 +795,7 @@ type storedSubscriptionEntry struct {
 		Value string `json:"value"`
 	} `json:"headers"`
 	FilterInclude string   `json:"filterInclude"`
+	FilterExclude string   `json:"filterExclude"`
 	SelectorTag   string   `json:"selectorTag"`
 	MemberTags    []string `json:"memberTags"`
 	ActiveMember  string   `json:"activeMember"`
@@ -1028,11 +1029,12 @@ func migrateSingboxSubscriptions(singboxConfigDir string, tagToIface map[string]
 					ID:          tunID,
 					Device:      device,
 					Description: truncateUTF8(label, 63),
-					Enable:      sub.Enabled,
-					Uplink:      uplink,
-					Sources:     sources,
-					Filter:      strings.TrimSpace(sub.FilterInclude),
-					Order:       order,
+					Enable:        sub.Enabled,
+					Uplink:        uplink,
+					Sources:       sources,
+					Filter:        strings.TrimSpace(sub.FilterInclude),
+					FilterExclude: strings.TrimSpace(sub.FilterExclude),
+					Order:         order,
 					Exclude:     exclude,
 					Advanced: TunnelAdvanced{
 						KernelTCP: true,

@@ -176,6 +176,8 @@ export class FircClient extends TelemtClient {
 			const res = await this.requestV1<{ tunnels?: FircTunnel[] }>('/tunnels');
 			return (res?.tunnels ?? []).map((t) => ({
 				...t,
+				filter: t.filter ?? '',
+				filterExclude: t.filterExclude ?? '',
 				description: stripFircEmojis(t.description),
 				sources: (t.sources ?? []).map((s) => ({
 					...s,
@@ -185,7 +187,11 @@ export class FircClient extends TelemtClient {
 		} catch {
 			const res = await this.request<{ tunnels?: FircTunnel[] } | FircTunnel[]>('/firc/tunnels');
 			const list = Array.isArray(res) ? res : (res?.tunnels ?? []);
-			return list;
+			return list.map((t) => ({
+				...t,
+				filter: t.filter ?? '',
+				filterExclude: t.filterExclude ?? '',
+			}));
 		}
 	}
 
@@ -207,6 +213,11 @@ export class FircClient extends TelemtClient {
 			...st,
 			active: (st.active ?? []).map(stripFircEmojis),
 			nodes: (st.nodes ?? []).map((n) => ({
+				...n,
+				name: stripFircEmojis(n.name),
+				source: stripFircEmojis(n.source),
+			})),
+			filteredNodes: (st.filteredNodes ?? []).map((n) => ({
 				...n,
 				name: stripFircEmojis(n.name),
 				source: stripFircEmojis(n.source),
@@ -243,6 +254,11 @@ export class FircClient extends TelemtClient {
 			matched: res?.matched ?? 0,
 			subscriptions: res?.subscriptions ?? [],
 			nodes: (res?.nodes ?? []).map((n) => ({
+				...n,
+				name: stripFircEmojis(n.name),
+				source: stripFircEmojis(n.source),
+			})),
+			filteredNodes: (res?.filteredNodes ?? []).map((n) => ({
 				...n,
 				name: stripFircEmojis(n.name),
 				source: stripFircEmojis(n.source),

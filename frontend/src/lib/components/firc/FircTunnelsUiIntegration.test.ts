@@ -16,6 +16,8 @@ const {
 	fircMigrateFromSingbox,
 	fircProbeTunnel,
 	fircProbeInterfaces,
+	fircSaveTunnels,
+	fircPreviewTunnel,
 } = vi.hoisted(() => {
 	if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
 		Object.defineProperty(window, 'matchMedia', {
@@ -51,6 +53,8 @@ const {
 		fircMigrateFromSingbox: vi.fn(),
 		fircProbeTunnel: vi.fn(),
 		fircProbeInterfaces: vi.fn(),
+		fircSaveTunnels: vi.fn(),
+		fircPreviewTunnel: vi.fn(),
 	};
 });
 
@@ -71,8 +75,8 @@ vi.mock('$lib/api/client', () => ({
 		getTraffic: vi.fn().mockResolvedValue({ points: [], stats: {} }),
 		fircProbeTunnel,
 		fircProbeInterfaces,
-		fircSaveTunnels: vi.fn().mockResolvedValue({ tunnels: [] }),
-		fircPreviewTunnel: vi.fn().mockResolvedValue({ nodes: [], errors: [] }),
+		fircSaveTunnels,
+		fircPreviewTunnel,
 		fircRestartTunnel: vi.fn().mockResolvedValue({ ok: true }),
 		fircRefreshTunnel: vi.fn().mockResolvedValue({ ok: true }),
 		listSubscriptionHeaderProfiles: vi.fn().mockResolvedValue([]),
@@ -132,6 +136,14 @@ beforeEach(() => {
 	fircInterfaceProbeResults.set({});
 	fircProbeTunnel.mockResolvedValue([]);
 	fircProbeInterfaces.mockResolvedValue({ url: '', checkedAt: 0, results: {} });
+	fircSaveTunnels.mockResolvedValue({ tunnels: [] });
+	fircPreviewTunnel.mockResolvedValue({
+		nodes: [],
+		filteredNodes: [],
+		matched: 0,
+		total: 0,
+		subscriptions: [],
+	});
 	const runningStatus = {
 		fircdInstalled: true,
 		tunvlessInstalled: true,
@@ -818,5 +830,107 @@ describe('FIRC tunnels UI integration', () => {
 		await fireEvent.click(screen.getByRole('button', { name: /Добавить порт/ }));
 		const listenInput = await screen.findByLabelText('Адрес');
 		expect(listenInput).toHaveValue('br0');
+	});
+
+	it('renders server regex filter inputs, lookaround warning, hidden nodes list, and saves trimmed filters', async () => {
+		const subTunnel = {
+			id: 'vox',
+			device: 'tunvless0',
+			description: 'VOX',
+			enable: true,
+			active: 1,
+			by: 'connection',
+			interval: 60,
+			silence: 20,
+			filter: '(?i)(DE|NL)',
+			filterExclude: '',
+			order: ['s1:DE-1', 's1:RU-1'],
+			exclude: [],
+			sources: [{ id: 's1', kind: 'subscription', name: 'VOX', url: 'https://example.com/sub', interval: 21600 }],
+			uplink: { kind: 'auto', ref: '' },
+			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
+			inbounds: [],
+		};
+		fircGetTunnels.mockResolvedValue([subTunnel]);
+		fircGetTunnelsState.mockResolvedValue([
+			{
+				id: 'vox',
+				device: 'tunvless0',
+				status: 'up',
+				active: ['DE-1'],
+				nodes: [{ key: 's1:DE-1', name: 'DE-1', source: 'VOX', state: 'active', since: 0 }],
+				filteredNodes: [{ key: 's1:RU-1', name: 'RU-1', source: 'VOX' }],
+				inbounds: [],
+				groups: [],
+				rxBps: 0,
+				txBps: 0,
+				since: 0,
+				backoffS: 0,
+				lastExit: 0,
+				uplinkOk: true,
+				tcpPort: 41000,
+				tcpSkipped: [],
+				tcpOff: '',
+				subscriptions: [{ name: 'VOX', nodes: 2, fetching: false, lastOk: 0, lastTry: 0, error: '' }],
+			},
+		]);
+		fircPreviewTunnel.mockResolvedValue({
+			total: 2,
+			matched: 1,
+			nodes: [{ key: 's1:DE-1', name: 'DE-1', source: 'VOX', isNew: false, missing: false, excluded: false, overCap: false }],
+			filteredNodes: [
+				{ key: 's1:RU-1', name: 'RU-1', source: 'VOX' },
+				{ key: 's1:NL-LTE', name: 'NL-LTE', source: 'VOX' },
+			],
+			subscriptions: [{ name: 'VOX', cached: true }],
+		});
+		fircSaveTunnels.mockResolvedValue({ tunnels: [{ ...subTunnel, filter: '(?i)DE', filterExclude: '(?i)(RU|LTE)' }] });
+
+		render(FircTunnelsTabSection, { props: { dashboardMode: false, showTrustTunnels: false } });
+		expect(await screen.findByText('VOX')).toBeInTheDocument();
+
+		await fireEvent.click(screen.getByText('Изменить'));
+		expect(await screen.findByText(/Настройки туннеля VOX \(tunvless0\)/)).toBeInTheDocument();
+
+		// Nodes tab shows collapsible «Скрыто фильтром (1)»
+		const hiddenToggle = await screen.findByRole('button', { name: /Скрыто фильтром \(1\)/i });
+		expect(hiddenToggle).toHaveAttribute('aria-expanded', 'false');
+		await fireEvent.click(hiddenToggle);
+		expect(hiddenToggle).toHaveAttribute('aria-expanded', 'true');
+		expect(screen.getByText('RU-1')).toBeInTheDocument();
+
+		// Switch to Подписки и ссылки tab -> Filter section appears
+		await fireEvent.click(screen.getByRole('button', { name: /Подписки и ссылки/i }));
+		expect(await screen.findByText('Фильтр серверов')).toBeInTheDocument();
+		const includeInp = screen.getByLabelText('Включать только (regex)') as HTMLInputElement;
+		const excludeInp = screen.getByLabelText('Исключать (regex)') as HTMLInputElement;
+
+		// Lookaround triggers Go RE2 hint warning and skips preview API call
+		await fireEvent.input(includeInp, { target: { value: '^(?!RU).*$' } });
+		expect(await screen.findByText(/Go RE2 не поддерживает lookahead\/lookbehind/i)).toBeInTheDocument();
+		await new Promise((r) => setTimeout(r, 380));
+		expect(fircPreviewTunnel).not.toHaveBeenCalled();
+
+		// Valid filter pair triggers debounced preview and updates hidden count
+		await fireEvent.input(includeInp, { target: { value: '  (?i)DE  ' } });
+		await fireEvent.input(excludeInp, { target: { value: '  (?i)(RU|LTE)  ' } });
+		await waitFor(
+			() => {
+				expect(fircPreviewTunnel).toHaveBeenCalledTimes(1);
+			},
+			{ timeout: 1500 },
+		);
+
+		await fireEvent.click(screen.getByRole('button', { name: /^Узлы \(/i }));
+		expect(await screen.findByRole('button', { name: /Скрыто фильтром \(2\)/i })).toBeInTheDocument();
+		expect(screen.getByText('NL-LTE')).toBeInTheDocument();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+		await waitFor(() => {
+			expect(fircSaveTunnels).toHaveBeenCalled();
+		});
+		const savedArg = fircSaveTunnels.mock.calls[0][0];
+		expect(savedArg[0].filter).toBe('(?i)DE');
+		expect(savedArg[0].filterExclude).toBe('(?i)(RU|LTE)');
 	});
 });
