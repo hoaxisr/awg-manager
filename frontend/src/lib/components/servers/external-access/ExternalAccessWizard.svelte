@@ -899,7 +899,7 @@
 					>
 						<div class="choice-top">
 							<span class="choice-title">Подключение через домен</span>
-							<span class="tech-sub-badge">Веб-мост / Web CDN</span>
+							<span class="tech-sub-badge">Веб-мост / HTTPS</span>
 						</div>
 						<div class="choice-text">
 							Работает через доменное имя или веб-мост без открытия прямого порта на роутере.
@@ -972,7 +972,7 @@
 				{/if}
 
 				<div class="field-block">
-					<span class="field-label">1. Как телефон подключается к роутеру?</span>
+					<span class="field-label">1. Через что устройства подключаются к роутеру?</span>
 					<div class="cards-grid">
 						<button
 							type="button"
@@ -983,9 +983,9 @@
 								draft.connectionWay = 'direct';
 							}}
 						>
-							<div class="choice-title">Напрямую к адресу роутера</div>
+							<div class="choice-title">Через домен роутера (HTTPS)</div>
 							<div class="choice-text">
-								Телефон подключается напрямую к адресу KeenDNS, своему DDNS или белому IP вашего роутера.
+								Подключение идёт по HTTPS к домену KeenDNS или вашему DDNS. Работает при любом IP — и при белом, и при сером (через облако KeenDNS).
 							</div>
 						</button>
 
@@ -999,9 +999,9 @@
 								draft.publicPort = 443;
 							}}
 						>
-							<div class="choice-title">Через внешний сервис с вашим доменом</div>
+							<div class="choice-title">Через свой внешний домен (HTTPS)</div>
 							<div class="choice-text">
-								Если вы уже настроили промежуточный сервис для подключения (например, собственный домен с пересылкой трафика на роутер).
+								Подключение идёт по HTTPS на ваш собственный домен с пересылкой трафика на роутер через внешний прокси-сервис.
 							</div>
 						</button>
 
@@ -1019,7 +1019,7 @@
 									{/if}
 								</div>
 								<div class="choice-text">
-									Прямое подключение по VLESS + REALITY без CDN и без домена (порт {realityPort}). Максимальная скорость, но не проходит «белые списки» по IP.
+									Прямое подключение по VLESS + REALITY к роутеру на порт {realityPort} — без домена и без SSL-сертификата. Максимальная скорость и минимальная задержка.
 								</div>
 							</button>
 						{/if}
@@ -1061,7 +1061,7 @@
 				{:else}
 				<div class="field-block" style="margin-top: 4px;">
 					<div class="question-header-row">
-						<span class="field-label">2. Какой адрес есть у самого роутера?</span>
+						<span class="field-label">2. Какой IP-адрес провайдер выдаёт роутеру?</span>
 						<Button
 							variant="secondary"
 							size="sm"
@@ -1081,10 +1081,10 @@
 							onclick={() => (draft.originType = 'public_address')}
 						>
 							<div class="choice-title">
-								Публичный адрес роутера (белый IP, прямой KeenDNS или свой DDNS)
+								Белый (публичный) IP
 							</div>
 							<div class="choice-text">
-								У роутера есть прямой белый IP-адрес от провайдера, доступный из интернета.
+								Роутер доступен из интернета напрямую — подойдёт его белый IP, прямой KeenDNS или собственный DDNS.
 							</div>
 						</button>
 
@@ -1095,10 +1095,10 @@
 							onclick={() => (draft.originType = 'cloud_address')}
 						>
 							<div class="choice-title">
-								Облачный адрес KeenDNS (роутер за серым IP / CGNAT)
+								Серый IP / CGNAT (через облако KeenDNS)
 							</div>
 							<div class="choice-text">
-								Провайдер выдаёт серый IP, и доступ к роутеру идёт через облако KeenDNS по HTTPS.
+								Провайдер скрывает роутер за серым адресом (NAT), поэтому входящие подключения идут по HTTPS через облако KeenDNS.
 							</div>
 						</button>
 					</div>
@@ -1164,7 +1164,7 @@
 								{/if}
 							</div>
 							<div class="choice-text">
-								Устройства получат второй быстрый маршрут напрямую на порт {realityPort} (для сетей без «белых списков» по IP), а CDN останется в резерве.
+								{draft.connectionWay === 'external_https' ? `Устройства получат второй быстрый маршрут напрямую на порт ${realityPort}, а подключение через ваш внешний домен останется в резерве.` : `Устройства получат второй быстрый маршрут напрямую на порт ${realityPort}, а подключение по HTTPS через адрес роутера останется в резерве.`}
 							</div>
 						</div>
 					</label>
