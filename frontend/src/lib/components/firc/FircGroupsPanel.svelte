@@ -7,6 +7,7 @@
 	import { reloadFircAll, fircSyncNonce } from '$lib/stores/firc';
 	import { fircMigrationAppliedNonce } from '$lib/stores/fircMigrationModal';
 	import { Button, Badge, Toggle, Modal, StatusDot, type DropdownOption } from '$lib/components/ui';
+	import FircGroupDevicesModal from './FircGroupDevicesModal.svelte';
 	import ServiceTile from '$lib/components/sb-router/ServiceTile.svelte';
 	import { ServiceCatalogModal } from '$lib/components/dnsroutes';
 	import { presetCatalog, loadPresetCatalog } from '$lib/stores/presets';
@@ -35,7 +36,6 @@
 		X,
 		LayoutGrid,
 		RotateCcw,
-		Check,
 		Copy,
 	} from 'lucide-svelte';
 	import {
@@ -1410,124 +1410,27 @@
 	// ── Modal 2: Devices Filter Modal ──
 	let devicesModalOpen = $state(false);
 	let devicesModalIndex = $state<number | null>(null);
-	let dmMode = $state<'all' | 'allow'>('all');
-	let dmEntries = $state<Set<string>>(new Set());
-	let dmInitialOrder = $state<Set<string>>(new Set());
-	let dmSearchQuery = $state('');
-	let dmManualInput = $state('');
 
-	function hostEntryKey(h: FircHost): string {
-		return h.mac ? `mac:${h.mac.toLowerCase()}` : h.ip;
-	}
-
-	function formatHostMeta(h: FircHost): string {
-		const validIp = h.ip && h.ip !== '0.0.0.0' ? h.ip : '';
-		const macStr = h.mac ? h.mac.toUpperCase() : '';
-		if (validIp && macStr) return `${validIp} · ${macStr}`;
-		return validIp || macStr || h.ip || '';
-	}
-
-	function formatEntryChipLabel(entry: string): string {
-		if (entry.startsWith('policy:')) {
-			const pName = entry.slice('policy:'.length);
-			const pol = policies.find((p) => p.name === pName);
-			return pol?.description ? `${pol.description} (${pName})` : entry;
-		}
-		if (entry.startsWith('mac:')) {
-			const mac = entry.slice('mac:'.length).toLowerCase();
-			const h = hosts.find((x) => x.mac?.toLowerCase() === mac);
-			if (h?.name) return `${h.name} (${mac})`;
-		}
-		const byIp = hosts.find((x) => x.ip === entry && x.ip !== '0.0.0.0');
-		if (byIp?.name) return `${byIp.name} (${entry})`;
-		return entry;
-	}
-
-	let sortedPolicies = $derived.by(() => {
-		return [...policies].sort((a, b) => {
-			const aSel = dmInitialOrder.has(`policy:${a.name}`) ? 1 : 0;
-			const bSel = dmInitialOrder.has(`policy:${b.name}`) ? 1 : 0;
-			if (aSel !== bSel) return bSel - aSel;
-			return (a.description || a.name).localeCompare(b.description || b.name);
-		});
-	});
-
-	let filteredSortedHosts = $derived.by(() => {
-		const q = dmSearchQuery.trim().toLowerCase();
-		const base = q
-			? hosts.filter(
-					(h) =>
-						(h.name && h.name.toLowerCase().includes(q)) ||
-						(h.ip && h.ip.toLowerCase().includes(q)) ||
-						(h.mac && h.mac.toLowerCase().includes(q)),
-				)
-			: [...hosts];
-		return base.sort((a, b) => {
-			const aSel = dmInitialOrder.has(hostEntryKey(a)) ? 1 : 0;
-			const bSel = dmInitialOrder.has(hostEntryKey(b)) ? 1 : 0;
-			if (aSel !== bSel) return bSel - aSel;
-			return (a.name || a.ip || a.mac || '').localeCompare(b.name || b.ip || b.mac || '');
-		});
-	});
-
-	let selectedPoliciesCount = $derived(
-		policies.filter((p) => dmEntries.has(`policy:${p.name}`)).length,
+	let devicesModalGroup = $derived(
+		devicesModalIndex !== null ? (groups[devicesModalIndex] ?? null) : null,
 	);
-	let selectedHostsCount = $derived(
-		hosts.filter((h) => dmEntries.has(hostEntryKey(h))).length,
-	);
+	let devicesModalInitial = $derived.by<FircDeviceSelector | undefined>(() => {
+		const g = devicesModalGroup;
+		if (!g) return undefined;
+		return {
+			allow: (g.devices?.allow ?? []).filter((x) => !MANAGED_SERVER_SUBNETS.has(x)),
+			deny: [...(g.devices?.deny ?? [])],
+		};
+	});
 
 	function openDevicesModal(index: number) {
-		const g = groups[index];
-		if (!g) return;
+		if (!groups[index]) return;
 		devicesModalIndex = index;
-		const allow = (g.devices?.allow ?? []).filter((x) => !MANAGED_SERVER_SUBNETS.has(x));
-		const deny = g.devices?.deny ?? [];
-		if (allow.length > 0) {
-			dmMode = 'allow';
-			dmEntries = new Set(allow);
-			dmInitialOrder = new Set(allow);
-		} else {
-			dmMode = 'all';
-			dmEntries = new Set(deny);
-			dmInitialOrder = new Set(deny);
-		}
-		dmSearchQuery = '';
-		dmManualInput = '';
 		devicesModalOpen = true;
 	}
 
-	function clearAllDeviceEntries() {
-		dmEntries = new Set();
-	}
-
-	function toggleDeviceEntry(entry: string) {
-		const next = new Set(dmEntries);
-		if (next.has(entry)) next.delete(entry);
-		else next.add(entry);
-		dmEntries = next;
-	}
-
-	function addManualDeviceEntry() {
-		const v = dmManualInput.trim();
-		if (!v) return;
-		const next = new Set(dmEntries);
-		next.add(v);
-		dmEntries = next;
-		dmManualInput = '';
-	}
-
-	function saveDevicesModal() {
+	function applyDevicesModal(selector: FircDeviceSelector) {
 		if (devicesModalIndex === null || !groups[devicesModalIndex]) return;
-		const arr = Array.from(dmEntries);
-		if (dmMode === 'allow' && arr.length === 0) {
-			notifications.warning(
-				'Выберите хотя бы одно устройство или политику для режима «Только для отмеченных»',
-			);
-			return;
-		}
-		const selector: FircDeviceSelector =
-			dmMode === 'allow' ? { allow: arr, deny: [] } : { allow: [], deny: arr };
 		groups[devicesModalIndex].devices = selector;
 		devicesModalOpen = false;
 	}
@@ -2863,175 +2766,15 @@
 </Modal>
 
 <!-- Modal 2: Devices & Policies Filter -->
-<Modal
+<FircGroupDevicesModal
 	open={devicesModalOpen}
+	groupName={devicesModalGroup?.name}
+	initialDevices={devicesModalInitial}
+	{hosts}
+	{policies}
 	onclose={() => (devicesModalOpen = false)}
-	title={devicesModalIndex !== null && groups[devicesModalIndex]
-		? `Устройства и политики · ${groups[devicesModalIndex].name}`
-		: 'Устройства и политики группы'}
-	size="xl"
-	resizable={true}
-	allowMaximize={true}
->
-	<div class="modal-form dm-modal-form">
-		<div class="dm-top-bar">
-			<div class="field dm-mode-field">
-				<label class="lbl" for="firc-dm-mode">Режим охвата устройств</label>
-				<select
-					id="firc-dm-mode"
-					class="inp"
-					bind:value={dmMode}
-				>
-					<option value="all">Для всех устройств (отмеченные ниже исключаются)</option>
-					<option value="allow">Только для отмеченных ниже устройств и политик</option>
-				</select>
-			</div>
-
-			<div
-				class="dm-summary-box"
-				class:has-items={dmEntries.size > 0}
-				class:needs-items={dmMode === 'allow' && dmEntries.size === 0}
-			>
-				<span class="dm-summary-text">
-					{#if dmEntries.size === 0}
-						{dmMode === 'allow'
-							? 'Выберите хотя бы одно устройство или политику ниже, чтобы применить этот режим'
-							: 'Ничего не отмечено (группа действует на все устройства)'}
-					{:else if dmMode === 'allow'}
-						Выбрано объектов: <strong>{dmEntries.size}</strong>
-					{:else}
-						Исключено объектов: <strong>{dmEntries.size}</strong>
-					{/if}
-				</span>
-				{#if dmEntries.size > 0}
-					<button type="button" class="dm-clear-btn" onclick={clearAllDeviceEntries}>
-						Снять все отметки
-					</button>
-				{/if}
-			</div>
-		</div>
-
-		<div class="dm-columns" class:single-col={policies.length === 0 || hosts.length === 0}>
-			{#if policies.length > 0}
-				<div class="sec-box dm-col-box">
-					<div class="dm-sec-head">
-						<span class="sec-cap">Политики доступа Keenetic</span>
-						<span class="dm-sec-count" class:active={selectedPoliciesCount > 0}>
-							{selectedPoliciesCount} из {policies.length}
-						</span>
-					</div>
-					<div class="devices-list">
-						{#each sortedPolicies as pol (pol.name)}
-							{@const key = `policy:${pol.name}`}
-							{@const isChecked = dmEntries.has(key)}
-							<label
-								class="device-item"
-								class:selected={isChecked && dmMode === 'allow'}
-								class:excluded={isChecked && dmMode === 'all'}
-							>
-								<input
-									type="checkbox"
-									checked={isChecked}
-									onchange={() => toggleDeviceEntry(key)}
-								/>
-								<span class="device-name">{pol.description || pol.name}</span>
-								{#if isChecked}
-									<span class="dm-state-pill" class:excl={dmMode === 'all'}>
-										<Check size={11} />
-										{dmMode === 'allow' ? 'Выбрано' : 'Исключено'}
-									</span>
-								{/if}
-								<Badge variant="muted" size="sm" mono>{pol.name}</Badge>
-							</label>
-						{/each}
-					</div>
-				</div>
-			{/if}
-
-			{#if hosts.length > 0}
-				<div class="sec-box dm-col-box">
-					<div class="dm-sec-head">
-						<span class="sec-cap">Устройства в локальной сети</span>
-						<span class="dm-sec-count" class:active={selectedHostsCount > 0}>
-							{selectedHostsCount} из {hosts.length}
-						</span>
-					</div>
-					<div class="dm-search-wrap">
-						<Search size={13} class="dm-search-icon" />
-						<input
-							type="search"
-							class="inp dm-search-inp"
-							placeholder="Поиск по имени, IP или MAC..."
-							bind:value={dmSearchQuery}
-						/>
-					</div>
-					<div class="devices-list">
-						{#if filteredSortedHosts.length === 0}
-							<div class="dm-empty-search">Ничего не найдено по запросу «{dmSearchQuery}»</div>
-						{:else}
-							{#each filteredSortedHosts as h (h.mac || h.ip)}
-								{@const key = hostEntryKey(h)}
-								{@const isChecked = dmEntries.has(key)}
-								<label
-									class="device-item"
-									class:selected={isChecked && dmMode === 'allow'}
-									class:excluded={isChecked && dmMode === 'all'}
-								>
-									<input
-										type="checkbox"
-										checked={isChecked}
-										onchange={() => toggleDeviceEntry(key)}
-									/>
-									<div class="device-main-info">
-										<span class="device-name">{h.name || h.ip || h.mac}</span>
-										<span class="device-meta font-mono">{formatHostMeta(h)}</span>
-									</div>
-									{#if isChecked}
-										<span class="dm-state-pill" class:excl={dmMode === 'all'}>
-											<Check size={11} />
-											{dmMode === 'allow' ? 'Выбрано' : 'Исключено'}
-										</span>
-									{/if}
-								</label>
-							{/each}
-						{/if}
-					</div>
-				</div>
-			{/if}
-		</div>
-
-		<div class="sec-box">
-			<div class="sec-cap">Добавить IP / CIDR / MAC вручную</div>
-			<div class="manual-row">
-				<input
-					type="text"
-					class="inp font-mono"
-					placeholder="192.168.1.50 или mac:aa:bb:cc:dd:ee:ff"
-					bind:value={dmManualInput}
-					onkeydown={(e) => e.key === 'Enter' && addManualDeviceEntry()}
-				/>
-				<Button variant="secondary" size="sm" onclick={addManualDeviceEntry}>Добавить</Button>
-			</div>
-			{#if dmEntries.size > 0}
-				<div class="chips-wrap mt-2">
-					{#each Array.from(dmEntries) as entry (entry)}
-						<span class="entry-chip" class:excl-chip={dmMode === 'all'}>
-							<span class="entry-chip-label">{formatEntryChipLabel(entry)}</span>
-							<button type="button" title="Убрать" onclick={() => toggleDeviceEntry(entry)}>✕</button>
-						</span>
-					{/each}
-				</div>
-			{/if}
-		</div>
-	</div>
-
-	{#snippet actions()}
-		<div class="modal-footer-btns">
-			<Button variant="ghost" size="sm" onclick={() => (devicesModalOpen = false)}>Отмена</Button>
-			<Button variant="primary" size="sm" onclick={saveDevicesModal}>Применить</Button>
-		</div>
-	{/snippet}
-</Modal>
+	onapply={applyDevicesModal}
+/>
 
 <!-- Modal 3: Bulk Import Rules -->
 <Modal
@@ -4254,279 +3997,6 @@
 		flex-shrink: 0;
 	}
 
-	.dm-modal-form {
-		gap: 14px;
-	}
-
-	.dm-top-bar {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: 12px;
-	}
-
-	.dm-mode-field {
-		flex: 1 1 320px;
-	}
-
-	.dm-summary-box {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 10px;
-		padding: 8px 12px;
-		border-radius: var(--radius-sm);
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		font-size: 12px;
-		color: var(--text-secondary);
-		min-height: 36px;
-	}
-
-	.dm-summary-box.has-items {
-		background: color-mix(in srgb, var(--color-accent) 10%, var(--bg-primary));
-		border-color: color-mix(in srgb, var(--color-accent) 40%, var(--border));
-		color: var(--text-primary);
-	}
-
-	.dm-summary-box.needs-items {
-		background: color-mix(in srgb, var(--color-warning) 10%, var(--bg-primary));
-		border-color: color-mix(in srgb, var(--color-warning) 45%, var(--border));
-		color: var(--color-warning);
-	}
-
-	.dm-clear-btn {
-		border: 0;
-		background: transparent;
-		color: var(--color-accent);
-		font-size: 11.5px;
-		font-weight: 600;
-		cursor: pointer;
-		padding: 2px 4px;
-		white-space: nowrap;
-	}
-
-	.dm-clear-btn:hover {
-		text-decoration: underline;
-	}
-
-	.dm-columns {
-		display: grid;
-		grid-template-columns: minmax(250px, 0.9fr) minmax(300px, 1.3fr);
-		gap: 12px;
-		align-items: stretch;
-	}
-
-	.dm-columns.single-col {
-		grid-template-columns: 1fr;
-	}
-
-	.dm-col-box {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		min-width: 0;
-	}
-
-	.dm-sec-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px;
-	}
-
-	.dm-sec-count {
-		font-size: 11px;
-		font-weight: 600;
-		padding: 1px 7px;
-		border-radius: 999px;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
-		color: var(--text-muted);
-		white-space: nowrap;
-		flex-shrink: 0;
-	}
-
-	.dm-sec-count.active {
-		background: color-mix(in srgb, var(--color-accent) 16%, var(--bg-secondary));
-		border-color: color-mix(in srgb, var(--color-accent) 45%, var(--border));
-		color: var(--color-accent);
-	}
-
-	.dm-search-wrap {
-		position: relative;
-		display: flex;
-		align-items: center;
-	}
-
-	:global(.dm-search-icon) {
-		position: absolute;
-		left: 9px;
-		color: var(--text-muted);
-		pointer-events: none;
-	}
-
-	.dm-search-inp {
-		width: 100%;
-		padding-left: 30px !important;
-		height: 30px;
-		font-size: 12px;
-	}
-
-	.dm-empty-search {
-		padding: 18px 10px;
-		text-align: center;
-		font-size: 12px;
-		color: var(--text-muted);
-	}
-
-	.devices-list {
-		max-height: 330px;
-		overflow-y: auto;
-		display: flex;
-		flex-direction: column;
-		gap: 5px;
-		padding-right: 2px;
-	}
-
-	.device-item {
-		display: flex;
-		align-items: center;
-		gap: 9px;
-		font-size: 12.5px;
-		padding: 7px 10px;
-		border-radius: 6px;
-		border: 1px solid transparent;
-		background: var(--bg-secondary);
-		cursor: pointer;
-		transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
-	}
-
-	.device-item:hover {
-		background: var(--bg-tertiary);
-		border-color: var(--border);
-	}
-
-	.device-item input[type='checkbox'] {
-		width: 15px;
-		height: 15px;
-		accent-color: var(--color-accent);
-		flex-shrink: 0;
-		cursor: pointer;
-	}
-
-	.device-item.selected {
-		background: color-mix(in srgb, var(--color-accent) 15%, var(--bg-secondary));
-		border-color: color-mix(in srgb, var(--color-accent) 55%, var(--border));
-		box-shadow: inset 3px 0 0 var(--color-accent);
-	}
-
-	.device-item.selected .device-name {
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.device-item.excluded {
-		background: color-mix(in srgb, var(--color-warning) 15%, var(--bg-secondary));
-		border-color: color-mix(in srgb, var(--color-warning) 55%, var(--border));
-		box-shadow: inset 3px 0 0 var(--color-warning);
-	}
-
-	.device-item.excluded input[type='checkbox'] {
-		accent-color: var(--color-warning);
-	}
-
-	.device-item.excluded .device-name {
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.device-main-info {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
-	}
-
-	.device-name {
-		flex: 1;
-		color: var(--text-primary);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.device-meta {
-		font-size: 11px;
-		color: var(--text-muted);
-	}
-
-	.dm-state-pill {
-		display: inline-flex;
-		align-items: center;
-		gap: 3px;
-		padding: 2px 7px;
-		border-radius: 999px;
-		font-size: 10.5px;
-		font-weight: 600;
-		background: color-mix(in srgb, var(--color-accent) 22%, transparent);
-		color: var(--color-accent);
-		flex-shrink: 0;
-	}
-
-	.dm-state-pill.excl {
-		background: color-mix(in srgb, var(--color-warning) 22%, transparent);
-		color: var(--color-warning);
-	}
-
-	.manual-row {
-		display: flex;
-		gap: 8px;
-	}
-
-	.manual-row .inp {
-		flex: 1;
-	}
-
-	.chips-wrap {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 6px;
-	}
-
-	.entry-chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 3px 9px;
-		border-radius: 6px;
-		background: color-mix(in srgb, var(--color-accent) 14%, var(--bg-secondary));
-		border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--border));
-		color: var(--text-primary);
-		font-size: 12px;
-		font-weight: 500;
-	}
-
-	.entry-chip.excl-chip {
-		background: color-mix(in srgb, var(--color-warning) 14%, var(--bg-secondary));
-		border-color: color-mix(in srgb, var(--color-warning) 45%, var(--border));
-	}
-
-	.entry-chip button {
-		border: 0;
-		background: transparent;
-		color: var(--text-muted);
-		cursor: pointer;
-		padding: 0 2px;
-		font-size: 11px;
-	}
-
-	.entry-chip button:hover {
-		color: var(--color-danger);
-	}
-
 	.modal-footer-btns {
 		display: flex;
 		justify-content: flex-end;
@@ -4573,8 +4043,7 @@
 		.rule-row {
 			flex-wrap: wrap;
 		}
-		.form-grid-2,
-		.dm-columns {
+		.form-grid-2 {
 			grid-template-columns: 1fr;
 		}
 	}

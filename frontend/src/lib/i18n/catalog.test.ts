@@ -51,7 +51,7 @@ const ALLOWED: Record<string, { lines: number; reason: string }> = {
 	'/src/routes/tunnels/[id]/+page.svelte': { lines: 1, reason: 'подпись «Через …» сохраняется на бэкенде' },
 	'/src/lib/api/clientFirc.ts': { lines: 3, reason: 'FIRC API ошибки' },
 	'/src/lib/api/clientServers.ts': { lines: 1, reason: 'текст сертификата' },
-	'/src/lib/components/firc/FircGroupsPanel.svelte': { lines: 239, reason: 'FIRC UI групп' },
+	'/src/lib/components/firc/FircGroupsPanel.svelte': { lines: 214, reason: 'FIRC UI групп' },
 	'/src/lib/components/firc/FircJournalPanel.svelte': { lines: 42, reason: 'FIRC UI журнала' },
 	'/src/lib/components/firc/FircMigrationWizardModal.svelte': { lines: 248, reason: 'FIRC UI мастера миграции' },
 	'/src/lib/components/firc/FircMonitorPanel.svelte': { lines: 87, reason: 'FIRC UI монитора' },
