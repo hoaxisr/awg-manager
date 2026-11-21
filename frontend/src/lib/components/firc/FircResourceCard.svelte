@@ -345,11 +345,13 @@
 		try {
 			let best: number | null = null;
 			let firstErr = '';
+			let probedCount = 0;
 
 			if (running && tunnel.device) {
 				const res = await api.fircProbeInterfaces([tunnel.device]);
 				const row = res?.results?.[tunnel.device];
 				if (row) {
+					probedCount = 1;
 					fircInterfaceProbeResults.update((all) => ({
 						...all,
 						[tunnel.device]: { ...row, checkedAt: res.checkedAt },
@@ -362,6 +364,7 @@
 				}
 			} else {
 				const rows = await api.fircProbeTunnel({ id: tunnel.id, tunnel });
+				probedCount = (rows ?? []).length;
 				const nextMap: Record<string, FircTunnelProbeRow> = {
 					...($fircProbeResults[tunnel.id] ?? {}),
 				};
@@ -382,7 +385,7 @@
 				if (best !== null) {
 					notifications.success(`${title}: ${best} мс`);
 				} else {
-					const detail = firstErr || ((rows ?? []).length === 0 ? diagnostic.reason : '');
+					const detail = firstErr || (probedCount === 0 ? diagnostic.reason : '');
 					notifications.warning(
 						`${title}: узел не ответил${detail ? ` (${detail})` : ''}`,
 					);
