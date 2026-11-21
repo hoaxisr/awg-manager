@@ -1,8 +1,13 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { m } from '$lib/i18n';
+	import { notifications } from '$lib/stores/notifications';
 	import { Button, Modal } from '$lib/components/ui';
-	import { parseRulesFromText, serializeRulesToText } from '$lib/utils/fircBulkRules';
+	import {
+		collapseRulesTextToRootDomains,
+		parseRulesFromText,
+		serializeRulesToText,
+	} from '$lib/utils/fircBulkRules';
 	import type { FircRule } from '$lib/types/firc';
 
 	interface Props {
@@ -17,18 +22,43 @@
 	let { open, groupName = '', rules, makeId, onclose, onapply }: Props = $props();
 
 	let text = $state('');
+	let beforeCollapseText = $state<string | null>(null);
 	let wasOpen = false;
 
 	$effect(() => {
 		if (open && !wasOpen) {
 			untrack(() => {
 				text = serializeRulesToText(rules);
+				beforeCollapseText = null;
 			});
 		}
 		wasOpen = open;
 	});
 
 	let previewStats = $derived(parseRulesFromText(text, rules, () => 'preview'));
+	let collapsePreview = $derived(collapseRulesTextToRootDomains(text));
+	let canCollapse = $derived(
+		collapsePreview.collapsedCount > 0 || collapsePreview.deduplicatedCount > 0,
+	);
+
+	function handleCollapseToRoots() {
+		const res = collapseRulesTextToRootDomains(text);
+		if (res.collapsedCount === 0 && res.deduplicatedCount === 0) return;
+		beforeCollapseText = text;
+		text = res.text;
+		notifications.info(
+			m.firc_bulk_collapse_done_toast({
+				collapsed: res.collapsedCount,
+				dupes: res.deduplicatedCount,
+			}),
+		);
+	}
+
+	function handleUndoCollapse() {
+		if (beforeCollapseText === null) return;
+		text = beforeCollapseText;
+		beforeCollapseText = null;
+	}
 
 	function handleApply() {
 		const parsed = parseRulesFromText(text, rules, makeId);
@@ -56,13 +86,32 @@
 			bind:value={text}
 		></textarea>
 
-		<div class="br-stats-pill" data-testid="firc-bulk-rules-editor-stats">
-			{m.firc_bulk_rules_editor_stats({
-				total: previewStats.rules.length,
-				added: previewStats.added,
-				removed: previewStats.removed,
-				disabled: previewStats.disabled,
-			})}
+		<div class="br-toolbar">
+			<div class="br-stats-pill" data-testid="firc-bulk-rules-editor-stats">
+				{m.firc_bulk_rules_editor_stats({
+					total: previewStats.rules.length,
+					added: previewStats.added,
+					removed: previewStats.removed,
+					disabled: previewStats.disabled,
+				})}
+			</div>
+
+			<div class="br-toolbar-actions">
+				{#if beforeCollapseText !== null}
+					<Button variant="ghost" size="sm" onclick={handleUndoCollapse}>
+						{m.firc_bulk_collapse_undo_btn()}
+					</Button>
+				{/if}
+				<Button
+					variant="secondary"
+					size="sm"
+					disabled={!canCollapse}
+					title={m.firc_bulk_collapse_root_title()}
+					onclick={handleCollapseToRoots}
+				>
+					{m.firc_bulk_collapse_root_btn()}
+				</Button>
+			</div>
 		</div>
 	</div>
 
@@ -109,8 +158,22 @@
 		border-color: var(--color-accent);
 	}
 
+	.br-toolbar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+	}
+
+	.br-toolbar-actions {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+
 	.br-stats-pill {
-		align-self: flex-start;
 		font-family: var(--font-mono);
 		font-size: 11.5px;
 		padding: 4px 10px;

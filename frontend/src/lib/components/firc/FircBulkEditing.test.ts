@@ -59,6 +59,45 @@ describe('FircBulkRulesEditorModal', () => {
 			},
 		]);
 	});
+
+	it('collapses subdomains to root domains with undo before applying', async () => {
+		const initialRules: FircRule[] = [
+			{ id: 'r1', type: 'namespace', rule: 'cdn.example.com', enable: true },
+			{ id: 'r2', type: 'namespace', rule: 'api.example.com', enable: true },
+			{ id: 'r3', type: 'wildcard', rule: '*.assets.vendor.co.uk', enable: true },
+		];
+		const onapply = vi.fn<(nextRules: FircRule[]) => void>();
+
+		render(FircBulkRulesEditorModal, {
+			props: {
+				open: true,
+				groupName: 'Work',
+				rules: initialRules,
+				makeId: () => 'new-1',
+				onclose: vi.fn(),
+				onapply,
+			},
+		});
+
+		const textarea = screen.getByRole('textbox', { name: m.firc_bulk_rules_edit_list_btn() });
+		const collapseBtn = screen.getByRole('button', { name: m.firc_bulk_collapse_root_btn() });
+		expect(collapseBtn).toBeEnabled();
+
+		await fireEvent.click(collapseBtn);
+		expect(textarea).toHaveValue('example.com\n*.vendor.co.uk');
+
+		const undoBtn = screen.getByRole('button', { name: m.firc_bulk_collapse_undo_btn() });
+		await fireEvent.click(undoBtn);
+		expect(textarea).toHaveValue('cdn.example.com\napi.example.com\n*.assets.vendor.co.uk');
+
+		await fireEvent.click(collapseBtn);
+		await fireEvent.click(screen.getByRole('button', { name: m.common_apply() }));
+		expect(onapply).toHaveBeenCalledTimes(1);
+		expect(onapply.mock.calls[0][0]).toEqual([
+			{ id: 'new-1', type: 'namespace', rule: 'example.com', enable: true },
+			{ id: 'new-1', type: 'wildcard', rule: '*.vendor.co.uk', enable: true },
+		]);
+	});
 });
 
 describe('FircBulkRulesBar', () => {

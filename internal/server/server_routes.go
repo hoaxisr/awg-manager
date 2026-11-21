@@ -13,6 +13,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/connections"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
+	"github.com/hoaxisr/awg-manager/internal/ipinspect"
 	"github.com/hoaxisr/awg-manager/internal/mcp"
 	"github.com/hoaxisr/awg-manager/internal/mcp/localdeps"
 	"github.com/hoaxisr/awg-manager/internal/openapi"
@@ -951,6 +952,10 @@ func (s *Server) registerDiagnosticsRoutes(mux *http.ServeMux, h *routeHandlers)
 		dnsProxyInfoHandler := api.NewDnsProxyInfoHandler(s.ndmsQueries.DNSProxyStatus, s.accessPolicyService)
 		mux.HandleFunc("/api/diagnostics/dns-proxy", h.guarded(dnsProxyInfoHandler.Get))
 	}
+
+	// On-demand IP inspector (PTR + Team Cymru DNS ASN/BGP prefix)
+	ipInspectHandler := api.NewIPInspectHandler(ipinspect.NewService())
+	mux.HandleFunc("/api/diagnostics/ip-inspect", h.guarded(ipInspectHandler.Get))
 
 	// Connections viewer (protected)
 	mux.HandleFunc("/api/connections", h.guarded(func(w http.ResponseWriter, r *http.Request) {
