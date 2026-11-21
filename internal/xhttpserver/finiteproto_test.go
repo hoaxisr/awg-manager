@@ -562,3 +562,161 @@ func TestFiniteProto_TrailingSlashProxyNormalizedPathAuth_LiveCDaemon(t *testing
 		t.Fatalf("expected HTTP 200 OK when reverse proxy appends trailing slash, got %d", resp.StatusCode)
 	}
 }
+
+func TestFiniteProto_UDPOverTCP_LiveCDaemon(t *testing.T) {
+	pc, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp echo: %v", err)
+	}
+	defer pc.Close()
+	echoAddr := pc.LocalAddr().(*net.UDPAddr)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, addr, rerr := pc.ReadFrom(buf)
+			if rerr != nil {
+				return
+			}
+			_, _ = pc.WriteTo(buf[:n], addr)
+		}
+	}()
+
+	uuidStr := "41b7ef34-6b19-48f3-8d95-82cf4474e109"
+	fpClientID, _, fpSecret, err := xhttpserver.GenerateFPCredentials()
+	if err != nil {
+		t.Fatalf("GenerateFPCredentials: %v", err)
+	}
+
+	srv := newCServer(t, xhttpserver.Config{
+		ListenAddr: "127.0.0.1:0",
+		PathPrefix: "/cdn-bridge",
+		Clients:    []string{uuidStr},
+		FiniteCredentials: map[string][]byte{
+			fpClientID: fpSecret,
+		},
+		Egress: xhttpserver.EgressConfig{
+			Mode:                     "direct",
+			AllowPrivateDestinations: true,
+		},
+	})
+	if err := srv.Start(); err != nil {
+		t.Fatalf("srv.Start: %v", err)
+	}
+	defer srv.Stop()
+
+	baseURL := "http://" + srv.Addr()
+	hc := &http.Client{Timeout: 5 * time.Second}
+
+	doFPRaw := func(f *xhttptest.FPRequestEnvelope) (int, *xhttptest.FPResponseEnvelope) {
+		t.Helper()
+		raw, err := xhttptest.EncodeFPRequest(f)
+		if err != nil {
+			t.Fatalf("EncodeFPRequest: %v", err)
+		}
+		path := "/cdn-bridge/udp-test"
+		req, err := http.NewRequest(http.MethodPost, baseURL+path, bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		authVal, err := xhttptest.SignFPRequest(fpClientID, fpSecret, http.MethodPost, path, raw, time.Now())
+		if err != nil {
+			t.Fatalf("SignFPRequest: %v", err)
+		}
+		req.Header.Set(xhttptest.FPHeaderProtoVersion, xhttptest.FPProtoVersion)
+		req.Header.Set(xhttptest.FPHeaderAuth, authVal)
+
+		resp, err := hc.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		defer resp.Body.Close()
+		respRaw, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("ReadAll: %v", err)
+		}
+		rf, err := xhttptest.DecodeFPResponse(respRaw, xhttptest.FPMaxRespPayload)
+		if err != nil {
+			t.Fatalf("DecodeFPResponse (status=%d): %v", resp.StatusCode, err)
+		}
+		return resp.StatusCode, rf
+	}
+
+	// QUIC UDP 443 must be refused with HTTP 403.
+	codeQuic, _ := doFPRaw(&xhttptest.FPRequestEnvelope{
+		Op:        xhttptest.FPOpOpen,
+		SessionID: xhttptest.FPSessionID{0x55, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+		Payload:   []byte("udp://8.8.8.8:443"),
+	})
+	if codeQuic != http.StatusForbidden {
+		t.Fatalf("expected 403 for udp://8.8.8.8:443 QUIC, got %d", codeQuic)
+	}
+
+	openID := xhttptest.FPSessionID{0x44, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+	targetAddr := fmt.Sprintf("udp://127.0.0.1:%d", echoAddr.Port)
+	codeOpen, openResp := doFPRaw(&xhttptest.FPRequestEnvelope{
+		Op:        xhttptest.FPOpOpen,
+		SessionID: openID,
+		Payload:   []byte(targetAddr),
+	})
+	if codeOpen != http.StatusOK || openResp.Status != xhttptest.FPStatusOK || openResp.SessionID.IsZero() {
+		t.Fatalf("open udp failed: code=%d status=%d sid=%s", codeOpen, openResp.Status, openResp.SessionID)
+	}
+	sid := openResp.SessionID
+
+	// Send 1 split frame across two UP calls + 1 coalesced pair of frames.
+	part1 := []byte{0x00, 0x05, 'A', 'L'}
+	part2 := []byte{'P', 'H', 'A', 0x00, 0x04, 'B', 'E', 'T', 'A', 0x00, 0x05, 'G', 'A', 'M', 'M', 'A'}
+	codeUp1, up1 := doFPRaw(&xhttptest.FPRequestEnvelope{
+		Op:           xhttptest.FPOpUp,
+		SessionID:    sid,
+		UpOffset:     0,
+		MaxDownBytes: 4096,
+		Payload:      part1,
+	})
+	if codeUp1 != http.StatusOK || up1.Status != xhttptest.FPStatusOK {
+		t.Fatalf("up1 failed: code=%d status=%d", codeUp1, up1.Status)
+	}
+	codeUp2, up2 := doFPRaw(&xhttptest.FPRequestEnvelope{
+		Op:           xhttptest.FPOpUp,
+		SessionID:    sid,
+		UpOffset:     uint64(len(part1)),
+		MaxDownBytes: 4096,
+		Payload:      part2,
+	})
+	if codeUp2 != http.StatusOK || up2.Status != xhttptest.FPStatusOK {
+		t.Fatalf("up2 failed: code=%d status=%d", codeUp2, up2.Status)
+	}
+
+	wantWire := append(append([]byte{}, part1...), part2...)
+	var collected []byte
+	var downOffset uint64
+	for i := 0; i < 30 && len(collected) < len(wantWire); i++ {
+		codeDown, downResp := doFPRaw(&xhttptest.FPRequestEnvelope{
+			Op:             xhttptest.FPOpDown,
+			SessionID:      sid,
+			AckDownOffset:  downOffset,
+			WantDownOffset: downOffset,
+			MaxDownBytes:   4096,
+		})
+		if codeDown != http.StatusOK || downResp.Status != xhttptest.FPStatusOK {
+			t.Fatalf("down failed: code=%d status=%d", codeDown, downResp.Status)
+		}
+		if len(downResp.Payload) > 0 {
+			collected = append(collected, downResp.Payload...)
+			downOffset = downResp.DownOffsetEnd
+		} else {
+			time.Sleep(15 * time.Millisecond)
+		}
+	}
+	if !bytes.Equal(collected, wantWire) {
+		t.Fatalf("UDP echo mismatch: got %x, want %x", collected, wantWire)
+	}
+
+	codeClose, closeResp := doFPRaw(&xhttptest.FPRequestEnvelope{
+		Op:        xhttptest.FPOpClose,
+		SessionID: sid,
+	})
+	if codeClose != http.StatusOK || closeResp.Status != xhttptest.FPStatusOK {
+		t.Fatalf("close failed: code=%d status=%d", codeClose, closeResp.Status)
+	}
+}

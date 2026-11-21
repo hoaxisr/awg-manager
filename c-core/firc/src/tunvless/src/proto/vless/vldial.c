@@ -159,7 +159,7 @@ static int vl_flow_open(const void *ctx, void *sess, const struct flow_key *k, i
         /* For UDP, Vision is set up only for a node with flow: there UDP goes as a Mux command with
          * XUDP frames over the Vision stream (vl_send). Without flow the UDP request declares none,
          * and there are no Vision frames in either direction. */
-        if (!udp || node->flow[0]) vision_init(&s->vis, s->uuid);
+        if ((!udp || node->flow[0]) && strcmp(node->mode, "finiteproto") != 0) vision_init(&s->vis, s->uuid);
     }
     return 0;
 }
@@ -566,7 +566,6 @@ static int vl_send(const void *ctx, void *sess, const struct flow_key *k, int ud
     const int is_anytls = !strcmp(node->proto_str, "anytls");
 
     unsigned char xb[TUNNEL_BUF];
-    if (udp && !strcmp(node->mode, "finiteproto")) return SEND_FATAL;
 
     if (is_tt || is_naive) {
         if (udp) {
@@ -673,7 +672,7 @@ static int vl_send(const void *ctx, void *sess, const struct flow_key *k, int ud
         /* UDP to a node with flow: XUDP frames instead of length-prefixed datagrams (see XUDP above).
          * The data framed by dgram_frame is repacked into xb; from there the path is shared with
          * TCP: Vision, then the write. */
-        const int xudp = udp && node->flow[0];
+        const int xudp = udp && node->flow[0] && strcmp(node->mode, "finiteproto") != 0;
         if (xudp) {
             size_t xn = xudp_frames(k, !s->header_sent, data, n, xb, sizeof xb);
             if (!xn) return SEND_FATAL;
@@ -951,8 +950,6 @@ static int vl_deliver(const void *ctx, void *sess, int udp, const unsigned char 
     const int is_mieru = !strcmp(node->proto_str, "mieru");
     const int is_anytls = !strcmp(node->proto_str, "anytls");
 
-    if (udp && !strcmp(node->mode, "finiteproto")) return SEND_FATAL;
-
     if (!s->established) {
         if (is_tt || is_naive || is_trojan || is_ss || is_vmess || is_anytls) {
             /* No protocol-level response header on the stream. */
@@ -989,7 +986,7 @@ static int vl_deliver(const void *ctx, void *sess, int udp, const unsigned char 
     /* Here the paths split: TCP is a stream in Vision frames, UDP without flow is datagrams with
      * a two-byte length and no Vision (the UDP request did not declare it). UDP to a node with
      * flow: Vision frames carrying XUDP frames. */
-    if (node->flow[0]) {
+    if (node->flow[0] && strcmp(node->mode, "finiteproto") != 0) {
         unsigned char gb[VISION_BUF];
         while (left) {
             const int filt = vision_filtering(&s->vis) && !s->vis.recv_direct;
