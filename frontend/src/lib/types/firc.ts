@@ -82,7 +82,8 @@ export type FircTunnelStatus =
 	| 'backoff'
 	| 'bad_config'
 	| 'waiting'
-	| 'uplink_down';
+	| 'uplink_down'
+	| 'router';
 
 export const FIRC_TUNNEL_NODE_POOL = '*';
 
@@ -116,6 +117,7 @@ export interface FircTunnelState {
 	id: string;
 	device: string;
 	status: FircTunnelStatus;
+	why?: string;
 	since: number;
 	backoffS: number;
 	lastExit: number;

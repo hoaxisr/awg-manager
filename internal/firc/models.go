@@ -554,7 +554,8 @@ type InboundState struct {
 type TunnelState struct {
 	ID            string         `json:"id"`
 	Device        string         `json:"device"`
-	Status        string         `json:"status"` // "starting" | "up" | "no_node" | "backoff" | "bad_config" | "waiting" | "uplink_down" | "off"
+	Status        string         `json:"status"` // "starting" | "up" | "no_node" | "backoff" | "bad_config" | "waiting" | "uplink_down" | "router" | "off"
+	Why           string         `json:"why,omitempty"`
 	Active        []string       `json:"active"`
 	Nodes         []NodeState    `json:"nodes"`
 	Since         int64          `json:"since"`

@@ -45,7 +45,13 @@
 	import FircTunnelEditModal from '$lib/components/firc/FircTunnelEditModal.svelte';
 	import AwgTunnelsTabSection from '$lib/components/tunnels/AwgTunnelsTabSection.svelte';
 	import UplinkTab from '$lib/components/uplink/UplinkTab.svelte';
-	import { fircStatus, fircTunnels, fircTunnelsState, reloadFircAll } from '$lib/stores/firc';
+	import {
+		createAndOpenFircTunnel,
+		fircStatus,
+		fircTunnels,
+		fircTunnelsState,
+		reloadFircAll,
+	} from '$lib/stores/firc';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { fircMigrationAppliedNonce } from '$lib/stores/fircMigrationModal';
 	import DashboardFlatSection from '$lib/components/tunnels/DashboardFlatSection.svelte';
@@ -114,7 +120,11 @@
 	import { applyManualOrder, mergeManualOrder, reorder } from '$lib/utils/tunnelDashboardOrder';
 	import { filterItemsByTag, groupFlatItemsByTag } from '$lib/utils/tunnelDashboardTags';
 	import { createReorderDrag } from '$lib/components/sb-router/reorderDrag.svelte';
-	import { buildFlatDashboardItems, type TunnelDashboardFlatItem } from '$lib/utils/tunnelDashboardFlat';
+	import {
+		buildFlatDashboardItems,
+		shouldShowDashboardSingboxBanner,
+		type TunnelDashboardFlatItem,
+	} from '$lib/utils/tunnelDashboardFlat';
 	import {
 		awgTunnelTableSort,
 		singboxSubscriptionTableSort,
@@ -470,6 +480,10 @@
 		awg3ImportOpen = true;
 	}
 
+	function createFircTunnel(kind: 'link' | 'subscription'): void {
+		void createAndOpenFircTunnel(kind);
+	}
+
 	let pendingSubscriptionDelete = $state<string | null>(null);
 	let deletingSubscription = $state(false);
 
@@ -752,6 +766,34 @@
 			$fircTunnels.length > 0 &&
 			(fircOwnsRouting || Boolean($fircStatus?.running)),
 	);
+	const showFircCreate = $derived(
+		showSingboxTunnelTabs && (fircOwnsRouting || Boolean($fircStatus?.running)),
+	);
+	const showSingboxCreate = $derived(
+		showSingboxSections && !(fircOwnsRouting && (dashboardShowFirc || !singboxInstalled)),
+	);
+	let fircProbeSettled = $state(false);
+	let fircInitialLoadTriggered = false;
+	$effect(() => {
+		if (showSingboxTunnelTabs && !fircInitialLoadTriggered) {
+			fircInitialLoadTriggered = true;
+			void reloadFircAll()
+				.catch(() => {})
+				.finally(() => {
+					fircProbeSettled = true;
+				});
+		}
+	});
+	const showDashboardSingboxBanner = $derived(
+		shouldShowDashboardSingboxBanner({
+			showSingboxSections,
+			fircSelected: fircOwnsRouting,
+			fircRunning: Boolean($fircStatus?.running),
+			fircPending: $fircStatus === null && $sbRouterSettings === null && !fircProbeSettled,
+			singboxInstalled,
+			singboxRunning: Boolean($singboxStatus.data?.running),
+		}),
+	);
 	function filterFircForDashboard(list: import('$lib/types/firc').FircTunnel[]) {
 		const q = dashboardSearchQuery.trim().toLowerCase();
 		if (!q) return list;
@@ -845,9 +887,6 @@
 			awgViewMode = stored;
 		}
 		awgViewModeReady = true;
-		if (showSingboxTunnelTabs) {
-			void reloadFircAll();
-		}
 		void api.uplinkSnapshot().then((s) => {
 			uplinkCount = s.entries?.length ?? 0;
 		}).catch(() => {});
@@ -1782,7 +1821,10 @@
 		get effectiveSingboxSubscriptionsEffectiveLayout() { return effectiveSingboxSubscriptionsEffectiveLayout; },
 		get effectiveSingboxSubscriptionsRenderMode() { return effectiveSingboxSubscriptionsRenderMode; },
 		get showSingboxListOption() { return showSingboxListOption; },
-		get showSingboxSections() { return showSingboxSections; },
+		get showSingboxBanner() { return showDashboardSingboxBanner; },
+		get showSingboxCreate() { return showSingboxCreate; },
+		get showFircCreate() { return showFircCreate; },
+		get fircCreateFirst() { return fircOwnsRouting; },
 		get awg3Visible() { return awg3Visible; },
 		get exporting() { return exporting; },
 		get awgAutoConnectivityNonce() { return awgAutoConnectivityNonce; },
@@ -1798,7 +1840,7 @@
 		set dashboardTagFilter(v) { dashboardTagFilter = v; },
 		get flatGridEl() { return flatGridEl; },
 		set flatGridEl(v) { flatGridEl = v; },
-		handleAdoptClick, handleExternalDelete, handleForeignUnmark, handleExportAll, handleGripKeydown, handleGripPointerDown, handleToggleOnOff, markAsServer, openAwg3Import, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestDelete, handleLockClick, requestSubscriptionDelete,
+		createFircTunnel, handleAdoptClick, handleExternalDelete, handleForeignUnmark, handleExportAll, handleGripKeydown, handleGripPointerDown, handleToggleOnOff, markAsServer, openAwg3Import, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestDelete, handleLockClick, requestSubscriptionDelete,
 	};
 
 	// Live-контекст модалок страницы (см. tunnelPageModalsContext.ts).

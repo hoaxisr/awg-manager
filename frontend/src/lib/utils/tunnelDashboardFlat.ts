@@ -149,3 +149,29 @@ export function buildFlatDashboardItems(input: {
 
 	return items.sort(compareFlatDashboardItems);
 }
+
+export interface DashboardSingboxBannerInput {
+	showSingboxSections: boolean;
+	fircSelected: boolean;
+	fircRunning: boolean;
+	fircPending: boolean;
+	singboxInstalled: boolean;
+	singboxRunning: boolean;
+}
+
+/**
+ * Decides whether the shared Tunnels dashboard should render SingboxInstallBanner.
+ *
+ * When FIRC owns routing (or is running), prompting to install or update an
+ * uninstalled or stopped sing-box engine on the unified dashboard is misleading;
+ * only show sing-box notices there if sing-box is installed AND actively running
+ * (hybrid setup). Dedicated Sing-box tabs still show their own install banner.
+ */
+export function shouldShowDashboardSingboxBanner(input: DashboardSingboxBannerInput): boolean {
+	if (!input.showSingboxSections) return false;
+	if (input.fircPending) return false;
+	if (input.fircSelected || input.fircRunning) {
+		return input.singboxInstalled && input.singboxRunning;
+	}
+	return true;
+}

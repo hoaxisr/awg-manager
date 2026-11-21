@@ -1393,6 +1393,13 @@ func (c *Coordinator) GetDispatcherConfig() cdndispatcher.Config {
 	return c.dispatcher.GetConfig()
 }
 
+// IsDispatcherRunning reports whether the CDN ingress dispatcher listener is currently active.
+func (c *Coordinator) IsDispatcherRunning() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dispatcher != nil && c.dispatcher.IsRunning()
+}
+
 // HydrateDispatcherRoutes checks if dispatcher routes are configured; if empty,
 // hydrates initial rules from Xray and Telegram domain settings (SSOT migration).
 func (c *Coordinator) HydrateDispatcherRoutes(ctx context.Context) error {

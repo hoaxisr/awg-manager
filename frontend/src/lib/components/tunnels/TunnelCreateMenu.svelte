@@ -9,7 +9,11 @@
 		onSingboxGroup?: () => void;
 		onSingboxSubscription?: () => void;
 		onAwg3?: () => void;
+		onFircTunnel?: () => void;
+		onFircSubscription?: () => void;
 		showSingbox?: boolean;
+		showFirc?: boolean;
+		fircFirst?: boolean;
 		triggerIcon: Snippet;
 		triggerLabel?: string;
 	}
@@ -20,11 +24,112 @@
 		onSingboxGroup,
 		onSingboxSubscription,
 		onAwg3,
+		onFircTunnel,
+		onFircSubscription,
 		showSingbox = true,
+		showFirc = false,
+		fircFirst = false,
 		triggerIcon,
 		triggerLabel,
 	}: Props = $props();
+
+	const hasSingboxItems = $derived(
+		showSingbox && Boolean(onSingboxSingle || onSingboxGroup || onSingboxSubscription || onAwg3),
+	);
+	const hasFircItems = $derived(showFirc && Boolean(onFircTunnel || onFircSubscription));
 </script>
+
+{#snippet fircItems(close: () => void)}
+	<div class="tunnel-create-menu-sep" role="separator"></div>
+	{#if onFircTunnel}
+		<button
+			type="button"
+			class="tunnel-create-menu-item"
+			role="menuitem"
+			onclick={() => {
+				close();
+				onFircTunnel();
+			}}
+		>
+			<span class="tunnel-create-menu-item-title">{m.tunnels_create_firc_title()}</span>
+			<span class="tunnel-create-menu-item-desc">{m.tunnels_create_firc_desc()}</span>
+		</button>
+	{/if}
+	{#if onFircSubscription}
+		<button
+			type="button"
+			class="tunnel-create-menu-item"
+			role="menuitem"
+			onclick={() => {
+				close();
+				onFircSubscription();
+			}}
+		>
+			<span class="tunnel-create-menu-item-title">{m.tunnels_create_firc_sub_title()}</span>
+			<span class="tunnel-create-menu-item-desc">{m.tunnels_create_firc_sub_desc()}</span>
+		</button>
+	{/if}
+{/snippet}
+
+{#snippet singboxItems(close: () => void)}
+	<div class="tunnel-create-menu-sep" role="separator"></div>
+	{#if onSingboxSingle}
+		<button
+			type="button"
+			class="tunnel-create-menu-item"
+			role="menuitem"
+			onclick={() => {
+				close();
+				onSingboxSingle();
+			}}
+		>
+			<span class="tunnel-create-menu-item-title">{m.tunnels_create_single_title()}</span>
+			<span class="tunnel-create-menu-item-desc">{m.tunnels_create_single_desc()}</span>
+		</button>
+	{/if}
+	{#if onSingboxGroup}
+		<button
+			type="button"
+			class="tunnel-create-menu-item"
+			role="menuitem"
+			onclick={() => {
+				close();
+				onSingboxGroup();
+			}}
+		>
+			<span class="tunnel-create-menu-item-title">{m.tunnels_create_group_title()}</span>
+			<span class="tunnel-create-menu-item-desc">{m.tunnels_create_group_desc()}</span>
+		</button>
+	{/if}
+	{#if onSingboxSubscription}
+		<button
+			type="button"
+			class="tunnel-create-menu-item"
+			role="menuitem"
+			onclick={() => {
+				close();
+				onSingboxSubscription();
+			}}
+		>
+			<span class="tunnel-create-menu-item-title">{m.tunnels_create_sub_title()}</span>
+			<span class="tunnel-create-menu-item-desc">{m.tunnels_create_sub_desc()}</span>
+		</button>
+	{/if}
+	{#if onAwg3}
+		<button
+			type="button"
+			class="tunnel-create-menu-item"
+			role="menuitem"
+			onclick={() => {
+				close();
+				onAwg3();
+			}}
+		>
+			<span class="tunnel-create-menu-item-title">AWG3 endpoint</span>
+			<span class="tunnel-create-menu-item-desc">{m.tunnels_create_awg3_desc()}</span>
+		</button>
+	{/if}
+{/snippet}
 
 <DropdownMenu
 	label={triggerLabel ?? m.common_create()}
@@ -49,63 +154,19 @@
 			<span class="tunnel-create-menu-item-desc">{m.tunnels_create_awg_desc()}</span>
 		</button>
 
-		{#if showSingbox}
-			<div class="tunnel-create-menu-sep" role="separator"></div>
-			{#if onSingboxSingle}
-				<button
-					type="button"
-					class="tunnel-create-menu-item"
-					role="menuitem"
-					onclick={() => {
-						close();
-						onSingboxSingle();
-					}}
-				>
-					<span class="tunnel-create-menu-item-title">{m.tunnels_create_single_title()}</span>
-					<span class="tunnel-create-menu-item-desc">{m.tunnels_create_single_desc()}</span>
-				</button>
+		{#if fircFirst}
+			{#if hasFircItems}
+				{@render fircItems(close)}
 			{/if}
-			{#if onSingboxGroup}
-				<button
-					type="button"
-					class="tunnel-create-menu-item"
-					role="menuitem"
-					onclick={() => {
-						close();
-						onSingboxGroup();
-					}}
-				>
-					<span class="tunnel-create-menu-item-title">{m.tunnels_create_group_title()}</span>
-					<span class="tunnel-create-menu-item-desc">{m.tunnels_create_group_desc()}</span>
-				</button>
+			{#if hasSingboxItems}
+				{@render singboxItems(close)}
 			{/if}
-			{#if onSingboxSubscription}
-				<button
-					type="button"
-					class="tunnel-create-menu-item"
-					role="menuitem"
-					onclick={() => {
-						close();
-						onSingboxSubscription();
-					}}
-				>
-					<span class="tunnel-create-menu-item-title">{m.tunnels_create_sub_title()}</span>
-					<span class="tunnel-create-menu-item-desc">{m.tunnels_create_sub_desc()}</span>
-				</button>
+		{:else}
+			{#if hasSingboxItems}
+				{@render singboxItems(close)}
 			{/if}
-			{#if onAwg3}
-				<button
-					type="button"
-					class="tunnel-create-menu-item"
-					role="menuitem"
-					onclick={() => {
-						close();
-						onAwg3();
-					}}
-				>
-					<span class="tunnel-create-menu-item-title">AWG3 endpoint</span>
-					<span class="tunnel-create-menu-item-desc">{m.tunnels_create_awg3_desc()}</span>
-				</button>
+			{#if hasFircItems}
+				{@render fircItems(close)}
 			{/if}
 		{/if}
 	{/snippet}

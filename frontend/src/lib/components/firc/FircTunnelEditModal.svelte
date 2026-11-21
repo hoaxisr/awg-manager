@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
+	import { api } from '$lib/api/client';
 	import {
 		stripFircEmojis,
 		FIRC_TUNNEL_NODE_POOL,
@@ -12,6 +12,7 @@
 		type FircTunnelSubUsage,
 	} from '$lib/types/firc';
 	import {
+		fircStatus,
 		fircTunnels,
 		fircTunnelsState,
 		fircEditTunnelId,
@@ -19,6 +20,11 @@
 		fircProbeResults,
 		reloadFircAll,
 	} from '$lib/stores/firc';
+	import {
+		formatFircSkipReason,
+		formatFircSubError,
+		getFircTunnelDiagnostic,
+	} from '$lib/utils/fircDiagnostics';
 	import { Button, Badge, Toggle, StatusDot, Modal } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import {
@@ -260,6 +266,11 @@
 	const liveState = $derived(
 		draft ? $fircTunnelsState.find((s) => s.id === draft!.id) : undefined,
 	);
+	const modalDiagnostic = $derived(
+		draft
+			? getFircTunnelDiagnostic({ tunnel: draft, live: liveState, status: $fircStatus })
+			: null,
+	);
 	const tunProbes = $derived(draft ? ($fircProbeResults[draft.id] ?? {}) : {});
 
 	const nodes = $derived.by((): DisplayNode[] => {
@@ -286,7 +297,13 @@
 					key: pn.key,
 					name: stripFircEmojis(pn.name || pn.key),
 					source: stripFircEmojis(pn.source || ''),
-					state: pn.excluded ? 'excluded' : pn.missing ? 'missing' : 'reserve',
+					state: pn.excluded
+						? 'excluded'
+						: pn.skipReason
+							? 'skipped'
+							: pn.missing
+								? 'missing'
+								: 'reserve',
 					skipReason: pn.skipReason,
 				});
 			}
@@ -601,7 +618,7 @@
 		while (usedPorts.has(port)) port++;
 		const inb: FircTunnelInbound = {
 			port,
-			listen: '0.0.0.0',
+			listen: 'br0',
 			node: FIRC_TUNNEL_NODE_POOL,
 			user: '',
 			password: '',
@@ -630,7 +647,9 @@
 							? 'muted'
 							: liveState?.status === 'up'
 								? 'success'
-								: 'warning'}
+								: modalDiagnostic?.tone === 'error'
+									? 'error'
+									: 'warning'}
 						size="md"
 					/>
 					<Badge variant="accent" size="sm" mono>{draft.device}</Badge>
@@ -662,6 +681,19 @@
 					</Button>
 				</div>
 			</div>
+
+			{#if modalDiagnostic?.reason}
+				<div
+					class="modal-diag-banner"
+					class:is-error={modalDiagnostic.tone === 'error'}
+					class:is-warning={modalDiagnostic.tone === 'warning'}
+					class:is-info={modalDiagnostic.tone === 'info'}
+					role="alert"
+					data-testid="firc-modal-diagnostic"
+				>
+					{modalDiagnostic.reason}
+				</div>
+			{/if}
 
 			<div class="tunnel-subtabs">
 				<button
@@ -803,6 +835,17 @@
 														<Badge variant="error" size="xs" title={node.skipReason}>
 															Недоступен
 														</Badge>
+													{:else if node.state === 'skipped'}
+														<div class="node-status-stack">
+															<Badge variant="warning" size="xs" title={node.skipReason}>
+																{m.firc_node_state_skipped()}
+															</Badge>
+															{#if node.skipReason}
+																<span class="node-skip-reason" title={node.skipReason}>
+																	{formatFircSkipReason(node.skipReason)}
+																</span>
+															{/if}
+														</div>
 													{:else}
 														<Badge variant="muted" size="xs">Ожидание</Badge>
 													{/if}
@@ -908,6 +951,13 @@
 					{:else}
 						<div class="sources-list">
 							{#each draft.sources as src (src.id)}
+								{@const subLive =
+									src.kind === 'subscription'
+										? (liveState?.subscriptions?.find((s) => s.name === src.name) ??
+											(liveState?.subscriptions?.length === 1
+												? liveState.subscriptions[0]
+												: undefined))
+										: undefined}
 								<div class="source-row">
 									<div class="source-main">
 										<div class="source-title-line">
@@ -929,8 +979,13 @@
 												</Badge>
 											{/if}
 											{#if src.kind === 'subscription'}
-												{@const subLive = liveState?.subscriptions?.find((s) => s.name === src.name) ?? (liveState?.subscriptions?.length === 1 ? liveState.subscriptions[0] : undefined)}
 												{@const usageText = formatSubUsage(subLive?.usage ?? undefined)}
+												{#if subLive?.fetching}
+													<Badge variant="info" size="xs">{m.firc_sub_fetching_badge()}</Badge>
+												{/if}
+												{#if subLive && subLive.nodes > 0}
+													<Badge variant="default" size="xs" mono>{m.firc_sub_nodes_badge({ count: subLive.nodes })}</Badge>
+												{/if}
 												{#if usageText}
 													<Badge variant="default" size="xs" mono title="Использование трафика и срок подписки (Subscription-Userinfo)">
 														{usageText}
@@ -945,6 +1000,16 @@
 												bind:value={src.url}
 												placeholder="https://... или happ://crypt..."
 											/>
+											{#if subLive?.error}
+												<div
+													class="source-error-note"
+													role="alert"
+													title={subLive.error}
+													data-testid="firc-source-error"
+												>
+													{formatFircSubError(subLive.error)}
+												</div>
+											{/if}
 										{:else}
 											<input
 												class="inp mono compact-inp"
@@ -1133,6 +1198,7 @@
 											id={`inb-l-${idx}`}
 											class="inp mono compact-inp"
 											type="text"
+											placeholder={m.firc_inbound_listen_placeholder()}
 											bind:value={inb.listen}
 										/>
 									</div>
@@ -1739,5 +1805,52 @@
 		to {
 			transform: rotate(360deg);
 		}
+	}
+	.modal-diag-banner {
+		padding: 8px 12px;
+		border-radius: 8px;
+		border: 1px solid var(--border);
+		background: var(--bg-tertiary);
+		color: var(--text-secondary);
+		font-size: 12px;
+		line-height: 1.4;
+		overflow-wrap: anywhere;
+	}
+	.modal-diag-banner.is-error {
+		background: var(--color-error-tint, rgba(247, 118, 142, 0.14));
+		border-color: var(--color-error-border, rgba(247, 118, 142, 0.4));
+		color: var(--color-error, #f7768e);
+	}
+	.modal-diag-banner.is-warning {
+		background: var(--color-warning-tint, rgba(224, 175, 104, 0.14));
+		border-color: var(--color-warning-border, rgba(224, 175, 104, 0.4));
+		color: var(--color-warning, #e0af68);
+	}
+	.modal-diag-banner.is-info {
+		background: var(--color-info-tint, rgba(125, 207, 255, 0.14));
+		border-color: var(--color-info-border, rgba(125, 207, 255, 0.4));
+		color: var(--color-info, #7dcfff);
+	}
+	.node-status-stack {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 3px;
+	}
+	.node-skip-reason {
+		font-size: 11px;
+		line-height: 1.3;
+		color: var(--color-warning, #e0af68);
+		overflow-wrap: anywhere;
+	}
+	.source-error-note {
+		padding: 6px 8px;
+		border-radius: 6px;
+		border: 1px solid var(--color-error-border, rgba(247, 118, 142, 0.4));
+		background: var(--color-error-tint, rgba(247, 118, 142, 0.14));
+		color: var(--color-error, #f7768e);
+		font-size: 11.5px;
+		line-height: 1.35;
+		overflow-wrap: anywhere;
 	}
 </style>

@@ -30,11 +30,15 @@
 		showViewToggle?: boolean;
 		showListOption?: boolean;
 		showSingboxCreate?: boolean;
+		showFircCreate?: boolean;
+		fircCreateFirst?: boolean;
 		onCreateAwg: () => void;
 		onCreateSingboxSingle?: () => void;
 		onCreateSingboxGroup?: () => void;
 		onCreateSingboxSubscription?: () => void;
 		onCreateAwg3?: () => void;
+		onCreateFircTunnel?: () => void;
+		onCreateFircSubscription?: () => void;
 		createIcon: Snippet;
 		/** Дополнительные действия (экспорт, статус) перед меню создания. */
 		actions?: Snippet;
@@ -58,11 +62,15 @@
 		showViewToggle = true,
 		showListOption = true,
 		showSingboxCreate = true,
+		showFircCreate = false,
+		fircCreateFirst = false,
 		onCreateAwg,
 		onCreateSingboxSingle,
 		onCreateSingboxGroup,
 		onCreateSingboxSubscription,
 		onCreateAwg3,
+		onCreateFircTunnel,
+		onCreateFircSubscription,
 		createIcon,
 		actions,
 	}: Props = $props();
@@ -161,7 +169,11 @@
 				onSingboxGroup={onCreateSingboxGroup}
 				onSingboxSubscription={onCreateSingboxSubscription}
 				onAwg3={onCreateAwg3}
+				onFircTunnel={onCreateFircTunnel}
+				onFircSubscription={onCreateFircSubscription}
 				showSingbox={showSingboxCreate}
+				showFirc={showFircCreate}
+				fircFirst={fircCreateFirst}
 				triggerIcon={createIcon}
 			/>
 		</div>
