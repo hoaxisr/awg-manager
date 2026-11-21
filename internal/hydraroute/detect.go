@@ -8,10 +8,26 @@ import (
 )
 
 var (
-	hrneoBinary = "/opt/bin/hrneo"     //nolint:gochecknoglobals
-	neoCommand  = "/opt/bin/neo"       //nolint:gochecknoglobals
-	pidFile     = "/var/run/hrneo.pid" //nolint:gochecknoglobals
+	hrneoBinary = "/opt/bin/hrneo"           //nolint:gochecknoglobals
+	neoCommand  = "/opt/bin/neo"             //nolint:gochecknoglobals
+	hrneoInit   = "/opt/etc/init.d/S99hrneo" //nolint:gochecknoglobals
+	pidFile     = "/var/run/hrneo.pid"       //nolint:gochecknoglobals
 )
+
+// neoControlCommand returns the command used to start/stop/restart the daemon.
+// The normal path is /opt/bin/neo, a postinst symlink to S99hrneo. When that
+// symlink is missing (manual install, cleanup, interrupted upgrade) the init
+// script accepts the same arguments, so fall back to it instead of failing
+// with ENOENT while the status still says installed/running.
+func neoControlCommand() string {
+	if _, err := os.Stat(neoCommand); err == nil {
+		return neoCommand
+	}
+	if _, err := os.Stat(hrneoInit); err == nil {
+		return hrneoInit
+	}
+	return neoCommand
+}
 
 // Detect checks if HydraRoute Neo is installed and running.
 func Detect() Status {
