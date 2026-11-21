@@ -30,6 +30,9 @@ export interface DashboardFlatContext {
 	readonly effectiveSingboxSubscriptionsRenderMode: TunnelRenderMode;
 	readonly showSingboxListOption: boolean;
 	readonly showSingboxSections: boolean;
+	readonly showSingboxCreate: boolean;
+	readonly showFircCreate: boolean;
+	readonly fircCreateFirst: boolean;
 	/** sing-box установлен — без него операции с AWG3 отклоняет бэкенд. */
 	readonly awg3Visible: boolean;
 	readonly exporting: boolean;
@@ -45,6 +48,7 @@ export interface DashboardFlatContext {
 	dashboardTagFilter: string | null;
 	flatGridEl: HTMLElement | null;
 	// --- обработчики ---
+	createFircTunnel(kind: 'link' | 'subscription'): void;
 	handleAdoptClick(interfaceName: string): void;
 	handleExternalDelete(interfaceName: string): void;
 	handleForeignUnmark(interfaceName: string): void;

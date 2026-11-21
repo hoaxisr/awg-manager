@@ -45,7 +45,13 @@
 	import FircTunnelEditModal from '$lib/components/firc/FircTunnelEditModal.svelte';
 	import AwgTunnelsTabSection from '$lib/components/tunnels/AwgTunnelsTabSection.svelte';
 	import UplinkTab from '$lib/components/uplink/UplinkTab.svelte';
-	import { fircStatus, fircTunnels, fircTunnelsState, reloadFircAll } from '$lib/stores/firc';
+	import {
+		createAndOpenFircTunnel,
+		fircStatus,
+		fircTunnels,
+		fircTunnelsState,
+		reloadFircAll,
+	} from '$lib/stores/firc';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { fircMigrationAppliedNonce } from '$lib/stores/fircMigrationModal';
 	import DashboardFlatSection from '$lib/components/tunnels/DashboardFlatSection.svelte';
@@ -470,6 +476,10 @@
 		awg3ImportOpen = true;
 	}
 
+	function createFircTunnel(kind: 'link' | 'subscription'): void {
+		void createAndOpenFircTunnel(kind);
+	}
+
 	let pendingSubscriptionDelete = $state<string | null>(null);
 	let deletingSubscription = $state(false);
 
@@ -751,6 +761,12 @@
 		showSingboxTunnelTabs &&
 			$fircTunnels.length > 0 &&
 			(fircOwnsRouting || Boolean($fircStatus?.running)),
+	);
+	const showFircCreate = $derived(
+		showSingboxTunnelTabs && (fircOwnsRouting || Boolean($fircStatus?.running)),
+	);
+	const showSingboxCreate = $derived(
+		showSingboxSections && !(fircOwnsRouting && (dashboardShowFirc || !singboxInstalled)),
 	);
 	function filterFircForDashboard(list: import('$lib/types/firc').FircTunnel[]) {
 		const q = dashboardSearchQuery.trim().toLowerCase();
@@ -1783,6 +1799,9 @@
 		get effectiveSingboxSubscriptionsRenderMode() { return effectiveSingboxSubscriptionsRenderMode; },
 		get showSingboxListOption() { return showSingboxListOption; },
 		get showSingboxSections() { return showSingboxSections; },
+		get showSingboxCreate() { return showSingboxCreate; },
+		get showFircCreate() { return showFircCreate; },
+		get fircCreateFirst() { return fircOwnsRouting; },
 		get awg3Visible() { return awg3Visible; },
 		get exporting() { return exporting; },
 		get awgAutoConnectivityNonce() { return awgAutoConnectivityNonce; },
@@ -1798,7 +1817,7 @@
 		set dashboardTagFilter(v) { dashboardTagFilter = v; },
 		get flatGridEl() { return flatGridEl; },
 		set flatGridEl(v) { flatGridEl = v; },
-		handleAdoptClick, handleExternalDelete, handleForeignUnmark, handleExportAll, handleGripKeydown, handleGripPointerDown, handleToggleOnOff, markAsServer, openAwg3Import, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestDelete, handleLockClick, requestSubscriptionDelete,
+		createFircTunnel, handleAdoptClick, handleExternalDelete, handleForeignUnmark, handleExportAll, handleGripKeydown, handleGripPointerDown, handleToggleOnOff, markAsServer, openAwg3Import, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestDelete, handleLockClick, requestSubscriptionDelete,
 	};
 
 	// Live-контекст модалок страницы (см. tunnelPageModalsContext.ts).
