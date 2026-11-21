@@ -8668,5 +8668,9 @@
 	"firc_devices_chip_remove": "Убрать",
 	"firc_devices_warn_select_one": "Включите хотя бы одно устройство или политику для режима «Только выбранные»",
 	"firc_global_routing_mode": "Режим маршрутизации FIRC",
-	"firc_global_mode_rules": "Правила"
+	"firc_global_mode_rules": "Правила",
+	"servers_dispatcher_status_running": "Активен · порт {port}",
+	"servers_dispatcher_status_stopped": "Остановлен · порт {port} закрыт",
+	"servers_dispatcher_running_hint": "Порт {port} сейчас слушается локально на роутере для активных сервисов (VLESS / Прокси Telegram). Доступ снаружи появляется только при настроенном KeenDNS или пробросе порта; чтобы закрыть порт, выключите оба сервиса.",
+	"servers_dispatcher_stopped_hint": "Сейчас порт {port} не слушается и закрыт. Диспетчер запускается автоматически только при включении VLESS (XHTTP) или Прокси Telegram и снова закрывает порт после их отключения."
 }

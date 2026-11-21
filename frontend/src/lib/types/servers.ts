@@ -447,6 +447,7 @@ export interface CDNRouteRule {
 
 export interface CDNDispatcherConfig {
 	enabled: boolean;
+	running?: boolean;
 	listen_addr: string;
 	xray_target: string;
 	tg_target: string;

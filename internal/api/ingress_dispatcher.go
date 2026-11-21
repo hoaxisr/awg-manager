@@ -28,6 +28,21 @@ func NewIngressDispatcherHandler(coord *serveringress.Coordinator, disp *cdndisp
 	}
 }
 
+type dispatcherConfigResponse struct {
+	cdndispatcher.Config
+	Running bool `json:"running"`
+}
+
+func (h *IngressDispatcherHandler) dispatcherRunning() bool {
+	if h.disp != nil {
+		return h.disp.IsRunning()
+	}
+	if h.coord != nil {
+		return h.coord.IsDispatcherRunning()
+	}
+	return false
+}
+
 // GetDispatcherConfig handles GET /api/servers/ingress/dispatcher.
 func (h *IngressDispatcherHandler) GetDispatcherConfig(w http.ResponseWriter, r *http.Request) {
 	if h.coord == nil {
@@ -35,7 +50,10 @@ func (h *IngressDispatcherHandler) GetDispatcherConfig(w http.ResponseWriter, r 
 		return
 	}
 	cfg := h.coord.GetDispatcherConfig()
-	WriteJSON(w, http.StatusOK, cfg)
+	WriteJSON(w, http.StatusOK, dispatcherConfigResponse{
+		Config:  cfg,
+		Running: h.dispatcherRunning(),
+	})
 }
 
 // UpdateDispatcherConfig handles PUT /api/servers/ingress/dispatcher.
@@ -54,7 +72,10 @@ func (h *IngressDispatcherHandler) UpdateDispatcherConfig(w http.ResponseWriter,
 		WriteError(w, http.StatusInternalServerError, "failed to apply dispatcher config: "+err.Error())
 		return
 	}
-	WriteJSON(w, http.StatusOK, h.coord.GetDispatcherConfig())
+	WriteJSON(w, http.StatusOK, dispatcherConfigResponse{
+		Config:  h.coord.GetDispatcherConfig(),
+		Running: h.dispatcherRunning(),
+	})
 }
 
 // GetVlessTuning handles GET /api/servers/vless/tuning (and compatibility alias /api/servers/xray/tuning).

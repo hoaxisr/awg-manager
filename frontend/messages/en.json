@@ -8268,5 +8268,9 @@
 	"firc_devices_chip_remove": "Remove",
 	"firc_devices_warn_select_one": "Enable at least one device or policy for “Selected only” mode",
 	"firc_global_routing_mode": "FIRC routing mode",
-	"firc_global_mode_rules": "Rules"
+	"firc_global_mode_rules": "Rules",
+	"servers_dispatcher_status_running": "Listening · port {port}",
+	"servers_dispatcher_status_stopped": "Stopped · port {port} closed",
+	"servers_dispatcher_running_hint": "Port {port} is currently listening locally on the router for active services (VLESS / Telegram Proxy). External WAN access only exists if KeenDNS or port forwarding is configured; disable both services to close the port.",
+	"servers_dispatcher_stopped_hint": "Port {port} is currently closed and not listening. The dispatcher starts automatically only when VLESS (XHTTP) or Telegram Proxy is enabled, and closes the port again once both are disabled."
 }
