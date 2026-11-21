@@ -172,8 +172,11 @@ static cJSON *tunnel_json(const firc_tunnel_t *t)
         ok = put_item(o, "sources", src);
         src = NULL;
     }
-    ok = ok && cJSON_AddStringToObject(o, "filter", t->filter != NULL ? t->filter : "") != NULL &&
-         put_item(o, "order", strings_json(t->order, t->n_order)) &&
+    ok = ok && cJSON_AddStringToObject(o, "filter", t->filter != NULL ? t->filter : "") != NULL;
+    if (ok && t->filter_exclude != NULL && t->filter_exclude[0] != '\0') {
+        ok = cJSON_AddStringToObject(o, "filterExclude", t->filter_exclude) != NULL;
+    }
+    ok = ok && put_item(o, "order", strings_json(t->order, t->n_order)) &&
          put_item(o, "exclude", strings_json(t->exclude, t->n_exclude)) &&
          put_item(o, "inbounds", inbounds_json(t)) && cJSON_AddNumberToObject(o, "active", t->active) != NULL &&
          cJSON_AddStringToObject(o, "by", t->by) != NULL &&
@@ -480,9 +483,10 @@ typedef struct {
 
 static const jkey_t TUNNEL_KEYS[] = {
     {"id", T_STR},     {"device", T_STR},  {"enable", T_BOOL},  {"uplink", T_OBJ},
-    {"sources", T_ARR}, {"filter", T_STR},  {"order", T_ARR},    {"exclude", T_ARR},
-    {"active", T_NUM}, {"by", T_STR},      {"interval", T_NUM}, {"silence", T_NUM},
-    {"advanced", T_OBJ}, {"description", T_STR}, {"inbounds", T_ARR}, {"routerPolicies", T_BOOL},
+    {"sources", T_ARR}, {"filter", T_STR},  {"filterExclude", T_STR}, {"order", T_ARR},
+    {"exclude", T_ARR}, {"active", T_NUM},  {"by", T_STR},      {"interval", T_NUM},
+    {"silence", T_NUM}, {"advanced", T_OBJ}, {"description", T_STR}, {"inbounds", T_ARR},
+    {"routerPolicies", T_BOOL},
 };
 static const jkey_t INBOUND_KEYS[] = {
     {"port", T_NUM}, {"listen", T_STR}, {"node", T_STR}, {"user", T_STR}, {"password", T_STR}};
@@ -1120,6 +1124,25 @@ static bool put_router(cJSON *o, firc_tunnels_ctx_t *ctx, const firc_tunnel_t *t
     return put_item(o, "router", x);
 }
 
+static cJSON *filtered_nodes_json(const firc_tun_nodes_t *rows)
+{
+    cJSON *a = cJSON_CreateArray();
+    for (size_t i = 0; a != NULL && rows != NULL && i < rows->n_filtered; i++) {
+        const firc_tun_filtered_t *f = &rows->filtered[i];
+        cJSON *x = cJSON_CreateObject();
+        bool ok = x != NULL && cJSON_AddStringToObject(x, "key", f->key) != NULL &&
+                  cJSON_AddStringToObject(x, "name", f->name) != NULL &&
+                  cJSON_AddStringToObject(x, "source", f->source) != NULL &&
+                  cJSON_AddItemToArray(a, x);
+        if (!ok) {
+            cJSON_Delete(x);
+            cJSON_Delete(a);
+            return NULL;
+        }
+    }
+    return a;
+}
+
 static cJSON *tunnel_state_json(firc_tunnels_ctx_t *ctx, const firc_tunnel_t *t, const firc_tun_state_t *st)
 {
     cJSON *o = cJSON_CreateObject();
@@ -1168,6 +1191,9 @@ static cJSON *tunnel_state_json(firc_tunnels_ctx_t *ctx, const firc_tunnel_t *t,
     if (ok) {
         ok = put_item(o, "nodes", nodes);
         nodes = NULL;
+    }
+    if (ok && rows != NULL && rows->n_filtered > 0) {
+        ok = put_item(o, "filteredNodes", filtered_nodes_json(rows));
     }
     ok = ok && cJSON_AddNumberToObject(o, "since", (double)wall_s_of(st->since_ms)) != NULL &&
          cJSON_AddNumberToObject(o, "backoffS", st->backoff_s) != NULL &&
@@ -1400,6 +1426,9 @@ static cJSON *preview_json(const firc_tunnel_t *t, const firc_tun_nodes_t *nodes
     if (ok) {
         ok = put_item(o, "nodes", rows);
         rows = NULL;
+    }
+    if (ok && nodes->n_filtered > 0) {
+        ok = put_item(o, "filteredNodes", filtered_nodes_json(nodes));
     }
     ok = ok && cJSON_AddNumberToObject(o, "matched", (double)nodes->matched) != NULL &&
          cJSON_AddNumberToObject(o, "total", (double)nodes->total) != NULL;

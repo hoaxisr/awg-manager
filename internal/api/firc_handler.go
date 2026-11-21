@@ -20,6 +20,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/uplink"
 )
@@ -729,6 +730,11 @@ func (h *FircHandler) handlePutTunnels(w http.ResponseWriter, r *http.Request) {
 			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "RECOVERY_REQUIRED")
 			return
 		}
+		var filterErr *subscription.FilterError
+		if errors.As(err, &filterErr) {
+			response.ErrorWithStatus(w, http.StatusBadRequest, filterErr.Error(), "INVALID_FILTER")
+			return
+		}
 		var valErr *firc.TunnelValidationError
 		if errors.As(err, &valErr) {
 			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "NORMALIZE_FAILED")
@@ -779,6 +785,10 @@ func (h *FircHandler) handleProbeTunnel(w http.ResponseWriter, r *http.Request) 
 		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "NORMALIZE_FAILED")
 		return
 	}
+	if err := firc.ValidateTunnelFilters(&tun); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_FILTER")
+		return
+	}
 	if h.isExplicitlyUnselected() {
 		h.rejectNotSelected(w)
 		return
@@ -807,6 +817,10 @@ func (h *FircHandler) handlePreviewTunnel(w http.ResponseWriter, r *http.Request
 	}
 	if err := firc.NormalizeTunnelSources(&tun, h.happKeysPath()); err != nil {
 		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "NORMALIZE_FAILED")
+		return
+	}
+	if err := firc.ValidateTunnelFilters(&tun); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_FILTER")
 		return
 	}
 	if h.isExplicitlyUnselected() || !h.op.IsRunning(r.Context()) {
@@ -1378,9 +1392,14 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, firc.ErrRecoveryRequired) {
 				status = http.StatusConflict
 			}
+			errMsg := err.Error()
+			var filterErr *subscription.FilterError
+			if errors.As(err, &filterErr) {
+				errMsg = filterErr.Error()
+			}
 			w.WriteHeader(status)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error":            err.Error(),
+				"error":            errMsg,
 				"recoveryRequired": h.op.IsRecoveryRequired(),
 			})
 			return
@@ -1450,20 +1469,43 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 					_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 					return
 				}
-				if normBytes, err := json.Marshal(wrapped); err == nil {
-					rawBody = normBytes
-				}
-			} else {
-				var tun firc.Tunnel
-				if json.Unmarshal(rawBody, &tun) == nil && len(tun.Sources) > 0 {
-					if err := firc.NormalizeTunnelSources(&tun, h.happKeysPath()); err != nil {
+				if cleanSubPath == "/tunnels/preview" {
+					if err := firc.ValidateTunnelFilters(wrapped.Tunnel); err != nil {
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusBadRequest)
 						_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 						return
 					}
-					if normBytes, err := json.Marshal(tun); err == nil {
-						rawBody = normBytes
+				}
+				if normBytes, err := json.Marshal(wrapped); err == nil {
+					rawBody = normBytes
+				}
+			} else {
+				var tun firc.Tunnel
+				if json.Unmarshal(rawBody, &tun) == nil {
+					changed := false
+					if len(tun.Sources) > 0 {
+						if err := firc.NormalizeTunnelSources(&tun, h.happKeysPath()); err != nil {
+							w.Header().Set("Content-Type", "application/json")
+							w.WriteHeader(http.StatusBadRequest)
+							_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+							return
+						}
+						changed = true
+					}
+					if cleanSubPath == "/tunnels/preview" {
+						if err := firc.ValidateTunnelFilters(&tun); err != nil {
+							w.Header().Set("Content-Type", "application/json")
+							w.WriteHeader(http.StatusBadRequest)
+							_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+							return
+						}
+						changed = true
+					}
+					if changed {
+						if normBytes, err := json.Marshal(tun); err == nil {
+							rawBody = normBytes
+						}
 					}
 				}
 			}

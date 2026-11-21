@@ -54,6 +54,7 @@ export async function createAndOpenFircTunnel(kind: 'link' | 'subscription'): Pr
 		interval: 60,
 		silence: 20,
 		filter: '',
+		filterExclude: '',
 		order: [],
 		exclude: [],
 		sources: [],

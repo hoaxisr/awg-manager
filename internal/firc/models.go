@@ -380,9 +380,10 @@ type Tunnel struct {
 	Enable      bool            `json:"enable" yaml:"enable"`
 	Uplink      TunnelUplink    `json:"uplink" yaml:"uplink"`
 	EndpointDNS []string        `json:"endpointDns,omitempty" yaml:"endpointDns,omitempty"`
-	Sources     []TunnelSource  `json:"sources" yaml:"sources"`
-	Filter      string          `json:"filter,omitempty" yaml:"filter,omitempty"`
-	Order       []string        `json:"order,omitempty" yaml:"order,omitempty"`
+	Sources       []TunnelSource `json:"sources" yaml:"sources"`
+	Filter        string         `json:"filter,omitempty" yaml:"filter,omitempty"`
+	FilterExclude string         `json:"filterExclude,omitempty" yaml:"filterExclude,omitempty"`
+	Order         []string       `json:"order,omitempty" yaml:"order,omitempty"`
 	Exclude     []string        `json:"exclude,omitempty" yaml:"exclude,omitempty"`
 	Inbounds    []TunnelInbound `json:"inbounds,omitempty" yaml:"inbounds,omitempty"`
 	Active      int             `json:"active,omitempty" yaml:"active,omitempty"`
@@ -422,9 +423,10 @@ func (t Tunnel) MarshalYAML() (interface{}, error) {
 		Enable      bool            `yaml:"enable"`
 		Uplink      TunnelUplink    `yaml:"uplink"`
 		EndpointDNS *[]string       `yaml:"endpointDns,omitempty"`
-		Sources     []TunnelSource  `yaml:"sources"`
-		Filter      string          `yaml:"filter,omitempty"`
-		Order       []string        `yaml:"order,omitempty"`
+		Sources       []TunnelSource  `yaml:"sources"`
+		Filter        string          `yaml:"filter,omitempty"`
+		FilterExclude string          `yaml:"filterExclude,omitempty"`
+		Order         []string        `yaml:"order,omitempty"`
 		Exclude     []string        `yaml:"exclude,omitempty"`
 		Inbounds    []TunnelInbound `yaml:"inbounds,omitempty"`
 		Active      int             `yaml:"active,omitempty"`
@@ -439,9 +441,10 @@ func (t Tunnel) MarshalYAML() (interface{}, error) {
 		Enable:      t.Enable,
 		Uplink:      t.Uplink,
 		EndpointDNS: endpointDNS,
-		Sources:     t.Sources,
-		Filter:      t.Filter,
-		Order:       t.Order,
+		Sources:       t.Sources,
+		Filter:        t.Filter,
+		FilterExclude: t.FilterExclude,
+		Order:         t.Order,
 		Exclude:     t.Exclude,
 		Inbounds:    t.Inbounds,
 		Active:      t.Active,
@@ -460,9 +463,10 @@ func (t *Tunnel) UnmarshalYAML(value *yaml.Node) error {
 		Enable      bool            `yaml:"enable"`
 		Uplink      TunnelUplink    `yaml:"uplink"`
 		EndpointDNS []string        `yaml:"endpointDns"`
-		Sources     []TunnelSource  `yaml:"sources"`
-		Filter      string          `yaml:"filter"`
-		Order       []string        `yaml:"order"`
+		Sources       []TunnelSource  `yaml:"sources"`
+		Filter        string          `yaml:"filter"`
+		FilterExclude string          `yaml:"filterExclude"`
+		Order         []string        `yaml:"order"`
 		Exclude     []string        `yaml:"exclude"`
 		Inbounds    []TunnelInbound `yaml:"inbounds"`
 		Active      int             `yaml:"active"`
@@ -494,6 +498,7 @@ func (t *Tunnel) UnmarshalYAML(value *yaml.Node) error {
 	t.EndpointDNS = raw.EndpointDNS
 	t.Sources = raw.Sources
 	t.Filter = raw.Filter
+	t.FilterExclude = raw.FilterExclude
 	t.Order = raw.Order
 	t.Exclude = raw.Exclude
 	t.Inbounds = raw.Inbounds
@@ -551,12 +556,20 @@ type InboundState struct {
 }
 
 // TunnelState represents the live runtime telemetry of a firc tunnel from GET /api/v1/tunnels/state.
+// FilteredNode describes a subscription node hidden by the tunnel's include/exclude regex filter.
+type FilteredNode struct {
+	Key    string `json:"key"`
+	Name   string `json:"name"`
+	Source string `json:"source,omitempty"`
+}
+
 type TunnelState struct {
 	ID            string         `json:"id"`
 	Device        string         `json:"device"`
 	Status        string         `json:"status"` // "starting" | "up" | "no_node" | "backoff" | "bad_config" | "waiting" | "uplink_down" | "off"
 	Active        []string       `json:"active"`
 	Nodes         []NodeState    `json:"nodes"`
+	FilteredNodes []FilteredNode `json:"filteredNodes,omitempty"`
 	Since         int64          `json:"since"`
 	BackoffS      int            `json:"backoffS"`
 	LastExit      int            `json:"lastExit"`
@@ -605,10 +618,11 @@ type PreviewSub struct {
 
 // PreviewResponse is returned by POST /api/v1/tunnels/preview.
 type PreviewResponse struct {
-	Nodes         []PreviewNode `json:"nodes"`
-	Matched       int           `json:"matched"`
-	Total         int           `json:"total"`
-	Subscriptions []PreviewSub  `json:"subscriptions"`
+	Nodes         []PreviewNode  `json:"nodes"`
+	FilteredNodes []FilteredNode `json:"filteredNodes,omitempty"`
+	Matched       int            `json:"matched"`
+	Total         int            `json:"total"`
+	Subscriptions []PreviewSub   `json:"subscriptions"`
 }
 
 // Rule represents a routing rule inside a firc Group.

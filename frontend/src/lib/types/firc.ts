@@ -59,6 +59,7 @@ export interface FircTunnel {
 	interval: number;
 	silence: number;
 	filter: string;
+	filterExclude?: string;
 	order: string[];
 	exclude: string[];
 	sources: FircTunnelSource[];
@@ -112,6 +113,12 @@ export interface FircTunnelSubState {
 	usage?: FircTunnelSubUsage | null;
 }
 
+export interface FircTunnelFilteredNode {
+	key: string;
+	name: string;
+	source: string;
+}
+
 export interface FircTunnelState {
 	id: string;
 	device: string;
@@ -126,6 +133,7 @@ export interface FircTunnelState {
 	active: string[];
 	groups: string[];
 	nodes: FircTunnelNodeState[];
+	filteredNodes?: FircTunnelFilteredNode[];
 	subscriptions: FircTunnelSubState[];
 	rxBps: number;
 	txBps: number;
@@ -147,6 +155,7 @@ export interface FircTunnelPreview {
 	total: number;
 	matched: number;
 	nodes: FircTunnelPreviewRow[];
+	filteredNodes?: FircTunnelFilteredNode[];
 	subscriptions: { name: string; cached: boolean }[];
 }
 
