@@ -49,6 +49,7 @@ const (
 
 const (
 	attrFatalError   = "fatal_error"
+	attrStartupStall = "startup_stall"
 	attrReconnectDue = "reconnect_due"
 	argCause         = "cause"
 
@@ -57,6 +58,17 @@ const (
 	causeInterval       = "interval"
 	causeConfigChanged  = "config_changed"
 	causeBinaryUpdated  = "binary_updated"
+
+	// rawConfStartupTimeout — максимальное время ожидания адреса (RAWCONF) от
+	// raw-клиента wdtt. Если за это время процесс не выдал адрес, он завис
+	// на старте (например, при потере ответа капчи без выхода процесса).
+	rawConfStartupTimeout = 2 * time.Minute
+
+	// zeroActiveStatsThreshold — число подряд идущих строк «[СТАТИСТИКА]
+	// Активных: 0» (~90 с при периоде 3 с в wdtt-client), означающее
+	// «зомби-сессию» без живых воркеров.
+	zeroActiveStatsThreshold = 30
+	sigZeroActiveWorkers     = "zero active workers"
 )
 
 // ProcessLink — срез control.Link, нужный ресурсу process.
@@ -132,16 +144,20 @@ type Proc struct {
 
 	autoReconnect     bool
 	reconnectInterval time.Duration
+	expectAddress     bool
+	rawConfTimeout    time.Duration
 	lastUptimeS       int64
+	lastAddress       string
 	lastObservedAt    time.Time
 	logStartOffset    int64
 
 	fatalMu  sync.Mutex
 	fatalErr string
 
-	lwMu          sync.Mutex
-	logWatch      logWatcher
-	logScanOffset int64
+	lwMu             sync.Mutex
+	logWatch         logWatcher
+	logScanOffset    int64
+	zeroActiveStreak int
 }
 
 func NewProc(cfg ProcConfig) *Proc {
@@ -176,15 +192,44 @@ func (p *Proc) clearFatalError() {
 // scanLog дочитывает журнал; true — найден новый сбой (флаг был пуст).
 func (p *Proc) scanLog() bool {
 	p.lwMu.Lock()
-	defer p.lwMu.Unlock()
 	if p.c.LogPath == "" {
+		p.lwMu.Unlock()
 		return false
 	}
 	if p.logScanOffset < p.logStartOffset && p.logStartOffset >= 0 {
 		p.logScanOffset = p.logStartOffset
 	}
-	sig := scanLogForFatal(p.c.LogPath, &p.logScanOffset)
-	return sig != "" && p.setFatalError(sig)
+	chunk := readNewLogChunk(p.c.LogPath, &p.logScanOffset)
+	if chunk == "" {
+		p.lwMu.Unlock()
+		return false
+	}
+	if sig := detectFatalSessionError(chunk); sig != "" {
+		p.zeroActiveStreak = 0
+		p.lwMu.Unlock()
+		return p.setFatalError(sig)
+	}
+	triggered := false
+	for _, line := range strings.Split(chunk, "\n") {
+		if !strings.Contains(line, "[СТАТИСТИКА]") {
+			continue
+		}
+		if isZeroActiveStatsLine(line) {
+			p.zeroActiveStreak++
+			if p.zeroActiveStreak >= zeroActiveStatsThreshold {
+				p.zeroActiveStreak = 0
+				triggered = true
+				break
+			}
+		} else {
+			p.zeroActiveStreak = 0
+		}
+	}
+	p.lwMu.Unlock()
+	if triggered {
+		return p.setFatalError(sigZeroActiveWorkers)
+	}
+	return false
 }
 
 // skipLogBacklog переносит чтение журнала на его текущий конец: строки,
@@ -195,6 +240,7 @@ func (p *Proc) skipLogBacklog() {
 	}
 	p.lwMu.Lock()
 	defer p.lwMu.Unlock()
+	p.zeroActiveStreak = 0
 	if fi, err := os.Stat(p.c.LogPath); err == nil {
 		p.logScanOffset = fi.Size()
 	}
@@ -228,6 +274,18 @@ func (p *Proc) SetAutoReconnect(enabled bool, interval time.Duration) {
 		p.clearFatalError()
 	} else if p.enabled && p.c.LogPath != "" && p.lastUptimeS > 0 {
 		p.ensureLogWatcher()
+	}
+}
+
+// SetExpectAddress включает контроль зависания старта для ролей, которым
+// сервер выдаёт IP-адрес в течение запуска (wdtt-client в режиме raw). При
+// timeout <= 0 используется rawConfStartupTimeout.
+func (p *Proc) SetExpectAddress(expect bool, timeout time.Duration) {
+	p.expectAddress = expect
+	if timeout > 0 {
+		p.rawConfTimeout = timeout
+	} else {
+		p.rawConfTimeout = rawConfStartupTimeout
 	}
 }
 
@@ -265,6 +323,11 @@ func (p *Proc) ID() proxyrt.ResourceID { return p.c.ID }
 //  7. "all retransmissions failed":
 //     Транспортный уровень (QUIC/KCP) исчерпал лимит повторных передач пакетов.
 //     Сессионное соединение признано мёртвым, дальнейшая передача не возобновляется.
+//
+//  8. "[ГРУППА #1] Ошибка кредов:":
+//     В wdtt-client провал авторизации/CAPTCHA в группе #1 навсегда вешает эстафету
+//     для групп #2–#4, оставляя процесс живым с нулём воркеров. Ограничено группой #1,
+//     чтобы отказ запасных хешей (#2+) не сносил уже поднятый туннель группы #1.
 var fatalSessionSignatures = []string{
 	"error 401: Unauthorized",
 	"[VK Auth] Multiple auth errors detected",
@@ -280,6 +343,15 @@ var fatalSessionSignatures = []string{
 	"сессия закрыта",
 	"таймаут сессии",
 	"all retransmissions failed",
+	"[ГРУППА #1] Ошибка кредов:",
+}
+
+func isZeroActiveStatsLine(line string) bool {
+	if !strings.Contains(line, "[СТАТИСТИКА]") {
+		return false
+	}
+	trimmed := strings.TrimSpace(line)
+	return strings.Contains(trimmed, "Активных: 0 ") || strings.HasSuffix(trimmed, "Активных: 0")
 }
 
 func detectFatalSessionError(logTail string) string {
@@ -311,6 +383,7 @@ func (p *Proc) Observe(ctx context.Context) (proxyrt.Observation, error) {
 		now := p.c.Now()
 		p.spawnedAt, p.unreachSince = nil, nil
 		p.lastUptimeS = st.UptimeS
+		p.lastAddress = st.Address
 		p.lastObservedAt = now
 		if p.logStartOffset < 0 {
 			if p.c.LogPath != "" {
@@ -337,10 +410,20 @@ func (p *Proc) Observe(ctx context.Context) (proxyrt.Observation, error) {
 			if sig := p.getFatalError(); sig != "" {
 				obs.Attrs[attrFatalError] = sig
 			}
+			if obs.Attrs[attrFatalError] == "" && p.expectAddress && st.Address == "" {
+				timeout := p.rawConfTimeout
+				if timeout <= 0 {
+					timeout = rawConfStartupTimeout
+				}
+				if uptime := time.Duration(st.UptimeS) * time.Second; uptime >= timeout {
+					obs.Attrs[attrStartupStall] = fmt.Sprintf("нет RAWCONF %s", uptime)
+				}
+			}
 		}
+		stalled := obs.Attrs[attrFatalError] != "" || obs.Attrs[attrStartupStall] != "" || (p.expectAddress && st.Address == "")
 		if !p.autoReconnect {
 			p.ResetStartBackoff()
-		} else if obs.Attrs[attrFatalError] == "" && time.Duration(st.UptimeS)*time.Second >= stableGrace {
+		} else if !stalled && time.Duration(st.UptimeS)*time.Second >= stableGrace {
 			p.ResetStartBackoff()
 		}
 		return obs, nil
@@ -367,6 +450,8 @@ func (p *Proc) Observe(ctx context.Context) (proxyrt.Observation, error) {
 		}
 		p.spawnedAt, p.unreachSince = nil, nil
 		p.lastUptimeS = 0
+		p.lastAddress = ""
+		p.lastObservedAt = time.Time{}
 		return proxyrt.Observation{Known: true, Exists: false,
 			Detail: fmt.Sprintf("процесс не запущен (%v)", err)}, nil
 	}
@@ -485,6 +570,14 @@ func (p *Proc) Plan(obs proxyrt.Observation) []proxyrt.Step {
 			Reason:   "сбой сессии в журнале: " + sig,
 		}}
 	}
+	if stall := obs.Attrs[attrStartupStall]; stall != "" {
+		return []proxyrt.Step{{
+			Resource: p.c.ID,
+			Op:       "restart",
+			Args:     map[string]string{argCause: causeSessionFailure, "stall": stall},
+			Reason:   "зависание старта без адреса: " + stall,
+		}}
+	}
 	if obs.Attrs[attrReconnectDue] == causeInterval {
 		return []proxyrt.Step{{
 			Resource: p.c.ID,
@@ -562,6 +655,7 @@ func (p *Proc) stop(ctx context.Context) error {
 		pid, _ = p.c.Runner.AlivePID()
 	}
 	p.spawnedAt, p.unreachSince, p.lastUptimeS = nil, nil, 0
+	p.lastAddress, p.lastObservedAt = "", time.Time{}
 	if p.c.LogPath != "" {
 		_ = os.Remove(p.c.LogPath + ".prev")
 	}
@@ -589,6 +683,7 @@ func (p *Proc) spawn(ctx context.Context, now time.Time) error {
 	p.logStartOffset = 0
 	p.lwMu.Lock()
 	p.logScanOffset = 0
+	p.zeroActiveStreak = 0
 	p.lwMu.Unlock()
 	if p.c.LogPath != "" {
 		_ = os.Remove(p.c.LogPath + ".prev")
@@ -621,6 +716,9 @@ func (p *Proc) spawn(ctx context.Context, now time.Time) error {
 	t := now
 	p.spawnedAt = &t
 	p.unreachSince = nil
+	p.lastUptimeS = 0
+	p.lastAddress = ""
+	p.lastObservedAt = time.Time{}
 	if p.autoReconnect && p.c.LogPath != "" {
 		p.ensureLogWatcher()
 	}
@@ -690,14 +788,33 @@ func (p *Proc) RecheckAfter() time.Duration {
 	if until := p.retryAt(); now.Before(until) {
 		return until.Sub(now)
 	}
+	var minRecheck time.Duration
+	consider := func(d time.Duration) {
+		if d > 0 && (minRecheck == 0 || d < minRecheck) {
+			minRecheck = d
+		}
+	}
 	if p.autoReconnect && p.reconnectInterval > 0 && p.lastUptimeS > 0 {
 		currentUptime := time.Duration(p.lastUptimeS)*time.Second + now.Sub(p.lastObservedAt)
 		if currentUptime < p.reconnectInterval {
-			return p.reconnectInterval - currentUptime
+			consider(p.reconnectInterval - currentUptime)
+		} else {
+			consider(backoffBase)
 		}
-		return backoffBase
 	}
-	return 0
+	if p.autoReconnect && p.expectAddress && p.lastAddress == "" && !p.lastObservedAt.IsZero() {
+		timeout := p.rawConfTimeout
+		if timeout <= 0 {
+			timeout = rawConfStartupTimeout
+		}
+		currentUptime := time.Duration(p.lastUptimeS)*time.Second + now.Sub(p.lastObservedAt)
+		if currentUptime < timeout {
+			consider(timeout - currentUptime)
+		} else {
+			consider(backoffBase)
+		}
+	}
+	return minRecheck
 }
 
 func (p *Proc) ensureLogWatcher() {
@@ -726,6 +843,7 @@ func (p *Proc) stopLogWatcher() {
 	p.lwMu.Lock()
 	watch := p.logWatch
 	p.logWatch = nil
+	p.zeroActiveStreak = 0
 	p.lwMu.Unlock()
 	if watch != nil {
 		watch.stop()

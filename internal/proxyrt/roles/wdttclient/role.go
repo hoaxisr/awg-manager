@@ -149,6 +149,7 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	r.proc.SetDesired(enabled, roles.WdttClientArgs(c), c.Validate())
 	interval := roles.ParseReconnectInterval(c.AutoReconnectInterval)
 	r.proc.SetAutoReconnect(c.AutoReconnect, interval)
+	r.proc.SetExpectAddress(enabled && c.Mode == "raw", 0)
 	r.listen.SetDesired(c.Listen)
 	// Желаемое связанных туннелей — РОВНО намерение владельца инстанса, и
 	// одинаково в обоих режимах: связь ставится, пока клиент в режиме wg, а

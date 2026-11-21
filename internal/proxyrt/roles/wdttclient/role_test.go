@@ -646,3 +646,60 @@ func TestResetStartBackoffReachesProcess(t *testing.T) {
 		t.Fatalf("сброс роли не дошёл до процесса: %v", err)
 	}
 }
+
+func TestRawModeRestartsStalledZombieWithoutRawConf(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	raw := rawCfg()
+	raw.AutoReconnect = true
+	raw.AutoReconnectInterval = "on_failure"
+
+	link := &fakeLink{st: awgmproto.State{
+		PID:        4821,
+		ConfigHash: awgmproto.ConfigHash(roles.WdttClientArgs(raw)),
+		UptimeS:    300,
+		Address:    "",
+	}}
+	role, err := New(Deps{
+		Instance: "default", Binary: "/opt/bin/wt-client",
+		Link: link, Runner: &fakeRunner{pid: 4821, alive: true}, Gate: nilGate{},
+		Cmds: &countCmds{}, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
+		Policies: nilPolicies{}, Permit: nilPermit{},
+		Hooks: nilHooks{}, Registry: &memRegistry{m: map[string]linkres.ExitInfo{}},
+		Sync: nilSync{}, Occ: nilOcc{}, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rawProc := procOf(t, role.Resources(proxyrt.IntentEnabled, raw, proxyrt.NewObservations()))
+	obsRaw, err := rawProc.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stepsRaw := rawProc.Plan(obsRaw)
+	if len(stepsRaw) != 1 || stepsRaw[0].Op != "restart" || stepsRaw[0].Args["cause"] != "session_failure" {
+		t.Fatalf("raw без RAWCONF при UptimeS=300: Plan=%+v, ожидали [restart cause=session_failure]", stepsRaw)
+	}
+
+	wg := raw
+	wg.Mode = "wg"
+	wg.NdmsIface, wg.RawIface = "", ""
+	link.st.ConfigHash = awgmproto.ConfigHash(roles.WdttClientArgs(wg))
+	wgProc := procOf(t, role.Resources(proxyrt.IntentEnabled, wg, proxyrt.NewObservations()))
+	obsWG, err := wgProc.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stepsWG := wgProc.Plan(obsWG); len(stepsWG) != 0 {
+		t.Fatalf("wg без Address не должен рестартоваться как raw: Plan=%+v", stepsWG)
+	}
+}
+
+type fakeRunner struct {
+	pid   int
+	alive bool
+}
+
+func (f *fakeRunner) Start(context.Context, []string) (int, error) { return f.pid, nil }
+func (f *fakeRunner) Stop(context.Context, int) error              { f.alive = false; return nil }
+func (f *fakeRunner) AlivePID() (int, bool)                        { return f.pid, f.alive }
