@@ -45,7 +45,7 @@ func TestRawExitDeclaredOnlyByRawClient(t *testing.T) {
 		{"raw-клиент", WdttClientConfig{Mode: "raw", Name: "Германия",
 			Peer: "1.2.3.4:56000", NdmsIface: "OpkgTun18", RawIface: "opkgtun18"},
 			RawExit{NDMSName: "OpkgTun18", KernelIface: "opkgtun18",
-				Name: "Германия", Peer: "1.2.3.4:56000"}, true},
+				Name: "Германия", Peer: "1.2.3.4:56000", DefaultRoute: true}, true},
 		{"wg-клиент", WdttClientConfig{Mode: "wg", Name: "Голландия",
 			Peer: "1.1.1.1:1", NdmsIface: "OpkgTun19"}, RawExit{}, false},
 		{"сервер", WdttServerConfig{NdmsIface: "OpkgTun20", RawNdmsIface: "OpkgTun21"}, RawExit{}, false},
@@ -340,5 +340,41 @@ func TestParseReconnectInterval(t *testing.T) {
 	}
 	if got := ParseReconnectInterval("garbage"); got != 0 {
 		t.Errorf("garbage: got %v, want 0", got)
+	}
+}
+
+func TestWdttClientDefaultRouteOptOut(t *testing.T) {
+	tr, fa := true, false
+
+	if !(WdttClientConfig{}).WantDefaultRoute() {
+		t.Fatal("nil DefaultRoute обязан трактоваться как true")
+	}
+	if !(WdttClientConfig{DefaultRoute: &tr}).WantDefaultRoute() {
+		t.Fatal("&true DefaultRoute обязан возвращать true")
+	}
+	if (WdttClientConfig{DefaultRoute: &fa}).WantDefaultRoute() {
+		t.Fatal("&false DefaultRoute обязан возвращать false")
+	}
+
+	raw, err := json.Marshal(WdttClientConfig{DefaultRoute: &fa})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	v, ok := m["defaultRoute"]
+	if !ok || v != false {
+		t.Fatalf("явный false обязан сериализоваться как \"defaultRoute\":false, got ok=%v val=%v (%s)", ok, v, raw)
+	}
+
+	rawExitDefault, ok := WdttClientConfig{Mode: "raw", NdmsIface: "OpkgTun18", RawIface: "opkgtun18"}.RawExit()
+	if !ok || !rawExitDefault.DefaultRoute {
+		t.Fatalf("RawExit при nil DefaultRoute: ok=%v DefaultRoute=%v, want true", ok, rawExitDefault.DefaultRoute)
+	}
+	rawExitOff, ok := WdttClientConfig{Mode: "raw", NdmsIface: "OpkgTun18", RawIface: "opkgtun18", DefaultRoute: &fa}.RawExit()
+	if !ok || rawExitOff.DefaultRoute {
+		t.Fatalf("RawExit при &false DefaultRoute: ok=%v DefaultRoute=%v, want false", ok, rawExitOff.DefaultRoute)
 	}
 }

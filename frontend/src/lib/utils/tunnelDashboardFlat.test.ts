@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildFlatDashboardItems } from './tunnelDashboardFlat';
+import { buildFlatDashboardItems, shouldShowDashboardSingboxBanner } from './tunnelDashboardFlat';
 
 describe('buildFlatDashboardItems', () => {
 	it('keeps category order and sorts alphabetically within each group', () => {
@@ -89,5 +89,66 @@ describe('buildFlatDashboardItems', () => {
 		expect(stopped[0].kind).toBe('sub-stopped');
 		expect(active[0].key).toBe('sub:sub-1');
 		expect(stopped[0].key).toBe('sub:sub-1');
+	});
+});
+
+describe('shouldShowDashboardSingboxBanner', () => {
+	const base = {
+		showSingboxSections: true,
+		fircSelected: false,
+		fircRunning: false,
+		fircPending: false,
+		singboxInstalled: false,
+		singboxRunning: false,
+	};
+
+	it('hides banner when sing-box sections are hidden in basic mode', () => {
+		expect(shouldShowDashboardSingboxBanner({ ...base, showSingboxSections: false })).toBe(false);
+	});
+
+	it('hides banner while FIRC engine status probe is still pending', () => {
+		expect(shouldShowDashboardSingboxBanner({ ...base, fircPending: true })).toBe(false);
+	});
+
+	it('hides banner when FIRC is selected and sing-box is uninstalled', () => {
+		expect(shouldShowDashboardSingboxBanner({ ...base, fircSelected: true })).toBe(false);
+	});
+
+	it('hides banner when FIRC is selected and sing-box is installed but stopped/parked', () => {
+		expect(
+			shouldShowDashboardSingboxBanner({
+				...base,
+				fircSelected: true,
+				singboxInstalled: true,
+				singboxRunning: false,
+			}),
+		).toBe(false);
+	});
+
+	it('hides banner when FIRC is running even if fircSelected flag is false', () => {
+		expect(shouldShowDashboardSingboxBanner({ ...base, fircRunning: true })).toBe(false);
+	});
+
+	it('shows banner in hybrid mode when FIRC is active and sing-box is also running', () => {
+		expect(
+			shouldShowDashboardSingboxBanner({
+				...base,
+				fircSelected: true,
+				fircRunning: true,
+				singboxInstalled: true,
+				singboxRunning: true,
+			}),
+		).toBe(true);
+	});
+
+	it('shows banner when FIRC is neither selected nor running (standard sing-box users)', () => {
+		expect(shouldShowDashboardSingboxBanner(base)).toBe(true);
+		expect(
+			shouldShowDashboardSingboxBanner({
+				...base,
+				singboxInstalled: true,
+				singboxRunning: false,
+			}),
+		).toBe(true);
 	});
 });

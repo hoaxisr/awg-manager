@@ -130,6 +130,10 @@ func (n *NDMS) EnsureDefaultRouteCandidacy(_ context.Context, name string) error
 	return n.flag(name, func(e *ExitFlags) { e.DefaultRoute = true })
 }
 
+func (n *NDMS) RemoveDefaultRouteCandidacy(_ context.Context, name string) error {
+	return n.flag(name, func(e *ExitFlags) { e.DefaultRoute = false })
+}
+
 func (n *NDMS) Iface(_ context.Context, name string) (ndmsres.IfaceFacts, bool, error) {
 	f, ok := n.Snapshot(name)
 	return f, ok, nil

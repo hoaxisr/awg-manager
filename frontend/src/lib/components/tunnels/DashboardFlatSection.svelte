@@ -165,7 +165,7 @@
 	{/if}
 {/snippet}
 
-{#if ctx.showSingboxSections}
+{#if ctx.showSingboxBanner}
 	<SingboxInstallBanner />
 {/if}
 <div class="dashboard-sticky">
@@ -188,12 +188,16 @@
 				showGroupControl={!ctx.dashboardFlatLayout}
 				activeTagFilter={ctx.dashboardTagFilter}
 				onClearTagFilter={() => (ctx.dashboardTagFilter = null)}
-				showSingboxCreate={ctx.showSingboxSections}
+				showSingboxCreate={ctx.showSingboxCreate}
+				showFircCreate={ctx.showFircCreate}
+				fircCreateFirst={ctx.fircCreateFirst}
 				onCreateAwg={() => goto('/tunnels/new')}
 				onCreateSingboxSingle={() => ctx.openWizard('single')}
 				onCreateSingboxGroup={() => ctx.openWizard('inline')}
 				onCreateSingboxSubscription={() => ctx.openWizard('url')}
 				onCreateAwg3={ctx.awg3Visible ? ctx.openAwg3Import : undefined}
+				onCreateFircTunnel={() => ctx.createFircTunnel('link')}
+				onCreateFircSubscription={() => ctx.createFircTunnel('subscription')}
 				{createIcon}
 			>
 				{#snippet actions()}

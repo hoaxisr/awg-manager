@@ -25,7 +25,7 @@
 		type RailItem,
 	} from '$lib/components/servers';
 	import { EXTERNAL_ACCESS_LABELS } from '$lib/components/servers/external-access/connectionLabels';
-	import type { XrayStatus, TgWebProxyStatus } from '$lib/types';
+	import type { XrayStatus, TgWebProxyStatus, CDNDispatcherConfig } from '$lib/types';
 	import { getFircEnabledServers, setFircServerRoutingEnabled } from '$lib/utils/fircServerRouting';
 	import { dedupBy } from '$lib/utils/dedupBy';
 	import { createIngressMutationLock } from '$lib/utils/ingressMutation';
@@ -45,6 +45,7 @@
 
 	let xrayStatus = $state<XrayStatus | null>(null);
 	let tgStatus = $state<TgWebProxyStatus | null>(null);
+	let dispatcherConfig = $state<CDNDispatcherConfig | null>(null);
 
 	async function loadXrayStatus() {
 		try {
@@ -62,15 +63,25 @@
 		}
 	}
 
+	async function loadDispatcherStatus() {
+		try {
+			dispatcherConfig = await api.getDispatcherConfig();
+		} catch {
+			dispatcherConfig = null;
+		}
+	}
+
 	onMount(() => {
 		unsub = servers.subscribe(() => {});
 		loadIngressRefs();
 		loadLANSegmentOptions();
 		loadXrayStatus();
 		loadTgStatus();
+		loadDispatcherStatus();
 		pollTimer = setInterval(() => {
 			loadXrayStatus();
 			loadTgStatus();
+			loadDispatcherStatus();
 			loadIngressRefs();
 		}, 6000);
 	});
@@ -246,7 +257,7 @@
 			name: EXTERNAL_ACCESS_LABELS.dispatcherRailTitle,
 			iface: 'Маршруты доменов',
 			listenPort: '',
-			status: 'running',
+			status: dispatcherConfig?.running ? 'running' : 'stopped',
 			kind: 'dispatcher',
 		});
 
@@ -411,6 +422,7 @@
 						onRefreshParent={() => {
 							void loadXrayStatus();
 							void loadTgStatus();
+							void loadDispatcherStatus();
 						}}
 					/>
 				{:else if activeItem?.kind === 'tgwebproxy'}
@@ -420,10 +432,19 @@
 						onRefreshParent={() => {
 							void loadXrayStatus();
 							void loadTgStatus();
+							void loadDispatcherStatus();
 						}}
 					/>
 				{:else if activeItem?.kind === 'dispatcher'}
-					<CDNDispatcherCard />
+					<CDNDispatcherCard
+						onStatusChange={(running) => {
+							if (dispatcherConfig) {
+								dispatcherConfig = { ...dispatcherConfig, running };
+							} else {
+								void loadDispatcherStatus();
+							}
+						}}
+					/>
 				{/if}
 			</main>
 		</div>

@@ -32,9 +32,10 @@ struct firc_tunprobe {
     void *ud;
 };
 
-int64_t firc_tunprobe_deadline_ms(size_t n)
+int64_t firc_tunprobe_deadline_ms(size_t n, int jobs)
 {
-    return ((int64_t)n * 6 + 5) * 1000;
+    size_t j = jobs > 1 ? (size_t)jobs : 1;
+    return ((int64_t)((n + j - 1) / j) * 6 + 5) * 1000;
 }
 
 static void close_in(firc_tunprobe_t *p)
@@ -223,14 +224,20 @@ static int spawn_child(const firc_tunprobe_opts_t *o, pid_t *pid, int *in_fd, in
 {
     char timeout[16];
     char mark[16];
+    char jobs[16];
     snprintf(timeout, sizeof timeout, "%d", o->timeout_s);
     snprintf(mark, sizeof mark, "0x%x", (unsigned)o->mark);
-    const char *argv[16];
+    snprintf(jobs, sizeof jobs, "%d", o->jobs);
+    const char *argv[18];
     size_t a = 0;
     argv[a++] = o->binary;
     argv[a++] = "--probe";
     argv[a++] = "-t";
     argv[a++] = timeout;
+    if (o->jobs > 1) {
+        argv[a++] = "-j";
+        argv[a++] = jobs;
+    }
     if (o->mark != 0) {
         argv[a++] = "-m";
         argv[a++] = mark;
@@ -357,6 +364,11 @@ firc_err_t firc_tunprobe_start(firc_loop_t *loop, const firc_tunprobe_opts_t *o,
     }
     *out = p;
     return FIRC_OK;
+}
+
+const firc_tunprobe_row_t *firc_tunprobe_rows(const firc_tunprobe_t *p)
+{
+    return p != NULL ? p->rows : NULL;
 }
 
 void firc_tunprobe_cancel(firc_tunprobe_t *p)

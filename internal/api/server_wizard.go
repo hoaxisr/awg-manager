@@ -15,10 +15,16 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/serverwizard"
 )
 
+const (
+	authDisabledCSRFSubject = "__auth_disabled__"
+	authDisabledSessionID   = "auth-disabled"
+)
+
 type ServerWizardHandler struct {
-	svc        *serverwizard.WizardService
-	sessions   *auth.SessionStore
-	csrfSecret []byte
+	svc         *serverwizard.WizardService
+	sessions    *auth.SessionStore
+	authChecker auth.AuthChecker
+	csrfSecret  []byte
 }
 
 func NewServerWizardHandler(svc *serverwizard.WizardService, sessions *auth.SessionStore) *ServerWizardHandler {
@@ -29,6 +35,15 @@ func NewServerWizardHandler(svc *serverwizard.WizardService, sessions *auth.Sess
 		sessions:   sessions,
 		csrfSecret: secret,
 	}
+}
+
+// SetAuthChecker attaches the auth checker used to detect when authentication is disabled.
+func (h *ServerWizardHandler) SetAuthChecker(checker auth.AuthChecker) {
+	h.authChecker = checker
+}
+
+func (h *ServerWizardHandler) authDisabled() bool {
+	return h.authChecker != nil && !h.authChecker.IsAuthEnabled()
 }
 
 func writeWizardJSON(w http.ResponseWriter, status int, data any) {
@@ -145,6 +160,14 @@ func (h *ServerWizardHandler) checkCSRF(r *http.Request) (string, bool) {
 		return "", false
 	}
 
+	if h.authDisabled() {
+		expected := hmacSHA256Bytes(authDisabledCSRFSubject+":serverwizard-csrf-v1", h.csrfSecret)
+		if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+			return "", false
+		}
+		return authDisabledSessionID, true
+	}
+
 	cookie, err := r.Cookie(auth.SessionCookie)
 	if err != nil || cookie.Value == "" {
 		return "", false
@@ -167,6 +190,9 @@ func (h *ServerWizardHandler) checkCSRF(r *http.Request) (string, bool) {
 }
 
 func (h *ServerWizardHandler) getSessionID(r *http.Request) string {
+	if h.authDisabled() {
+		return authDisabledSessionID
+	}
 	cookie, err := r.Cookie(auth.SessionCookie)
 	if err != nil || cookie.Value == "" {
 		return ""
@@ -194,6 +220,12 @@ func (h *ServerWizardHandler) GetCSRFToken(w http.ResponseWriter, r *http.Reques
 			WriteError(w, http.StatusForbidden, "invalid referer")
 			return
 		}
+	}
+
+	if h.authDisabled() {
+		token := hmacSHA256Bytes(authDisabledCSRFSubject+":serverwizard-csrf-v1", h.csrfSecret)
+		writeWizardJSON(w, http.StatusOK, map[string]string{"token": token})
+		return
 	}
 
 	cookie, err := r.Cookie(auth.SessionCookie)

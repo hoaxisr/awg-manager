@@ -26,6 +26,8 @@ type Commands interface {
 	// route политики (запись `ip route default interface X`). Семантика
 	// «кандидатура, не захват» — допущение §13 спеки, стендовый гейт волны.
 	EnsureDefaultRouteCandidacy(ctx context.Context, name string) error
+	// RemoveDefaultRouteCandidacy снимает кандидатуру default route (`no ip route default interface X`).
+	RemoveDefaultRouteCandidacy(ctx context.Context, name string) error
 }
 
 // IfaceFacts — наблюдаемое состояние NDMS-интерфейса. Прод-адаптер (план 5)

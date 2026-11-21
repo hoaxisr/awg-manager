@@ -603,7 +603,9 @@ static struct xmm *mgr_get(int found, int slot, const void *key, const struct xm
 }
 
 int tr_xmux_shares(const struct tr_node *n) {
-    return n->type && !strcmp(n->type, "xhttp") && !(n->encryption && n->encryption[0]);
+    return n->type && !strcmp(n->type, "xhttp") &&
+           !(n->mode && !strcmp(n->mode, "finiteproto")) &&
+           !(n->encryption && n->encryption[0]);
 }
 
 int tr_xmux_attach(struct transport *t, const struct tr_node *n, const void *key, const void *dl_key,

@@ -13,8 +13,25 @@
     FircMigrationSummary,
     FircTunnel,
     FircGroup,
+    FircInterfaceProbeResult,
   } from '$lib/types/firc';
-  import { reloadFircAll } from '$lib/stores/firc';
+  import { Zap, RefreshCw } from 'lucide-svelte';
+  import {
+    reloadFircAll,
+    fircInterfaceProbeResults,
+    fircProbeResults,
+    fircTunnelsState,
+  } from '$lib/stores/firc';
+  import {
+    formatProbeLatency,
+    friendlyIfaceLabel,
+    getEffectiveInterfaceProbe,
+    isSelectableFircFallbackInterface,
+    isSpecialFircIface,
+    probeLatencyTone,
+    resolveGroupActiveInterface,
+    resolveInterfaceHealth,
+  } from '$lib/utils/fircFallback';
   import { openFircMigrationModal } from '$lib/stores/fircMigrationModal';
   import { StatusDot, Badge, Toggle, Button, Modal } from '$lib/components/ui';
   import { notifications } from '$lib/stores/notifications';
@@ -36,7 +53,7 @@
 
   const defaultExt: FircExtConfig = {
     proxyGroups: [],
-    keenDnsCloud: { enabled: false, proxyGroupId: '', interfaces: [] },
+    keenDnsCloud: { enabled: false, cloudHealthCheck: false, proxyGroupId: '', interfaces: [] },
     serverRouting: {
       enabledServers: [],
       awgServer: false,
@@ -57,6 +74,8 @@
   let interfaces = $state<FircInterfaceOption[]>([]);
   let pgModalOpen = $state(false);
   let pgDraft = $state<FircProxyGroup[]>([]);
+  let pgProbing = $state<Record<string, boolean>>({});
+  let destroyed = false;
   let migratePreviewOpen = $state(false);
   let migratePreview = $state<FircMigrationSummary | null>(null);
   let migrateLoadingPreview = $state(false);
@@ -150,6 +169,7 @@
       globalTarget: raw.globalTarget ?? '',
       keenDnsCloud: {
         enabled: Boolean(raw.keenDnsCloud?.enabled),
+        cloudHealthCheck: Boolean(raw.keenDnsCloud?.cloudHealthCheck),
         proxyGroupId: raw.keenDnsCloud?.proxyGroupId ?? '',
         interfaces: raw.keenDnsCloud?.interfaces ?? [],
       },
@@ -258,12 +278,7 @@
   }
 
   function isSelectableTunnelOrWan(opt: FircInterfaceOption): boolean {
-    if (!opt.id || opt.id.startsWith('t2s')) return false;
-    const lower = (opt.name || opt.ndmsName || '').toLowerCase();
-    if (opt.id === 'opkgtun17' || opt.id === 'opkgtun19' || lower.includes('awgm wdtt') || lower.includes('vpn server') || (opt.name || opt.ndmsName) === 'AWGM') {
-      return false;
-    }
-    return opt.role === 'tunnel' || opt.role === 'wan';
+    return isSelectableFircFallbackInterface(opt);
   }
 
   function openPgModal() {
@@ -328,12 +343,84 @@
     pgModalOpen = false;
   }
 
+  async function probePgInterfaces(key: string, ids: string[]) {
+    const uniqueIds = Array.from(
+      new Set(ids.map((s) => s.trim()).filter((s) => s.length > 0 && !isSpecialFircIface(s))),
+    );
+    if (uniqueIds.length === 0 || pgProbing[key]) return;
+    const nextBusy = { ...pgProbing, [key]: true };
+    for (const id of uniqueIds) nextBusy[`iface:${id}`] = true;
+    pgProbing = nextBusy;
+    try {
+      const allResults: Record<string, FircInterfaceProbeResult> = {};
+      for (let i = 0; i < uniqueIds.length; i += 16) {
+        const chunk = uniqueIds.slice(i, i + 16);
+        const res = await api.fircProbeInterfaces(chunk);
+        if (destroyed) return;
+        const ts = res?.checkedAt ?? Math.floor(Date.now() / 1000);
+        for (const [k, r] of Object.entries(res?.results ?? {})) {
+          allResults[k] = { ...r, checkedAt: ts };
+        }
+      }
+      fircInterfaceProbeResults.update((prev) => ({
+        ...prev,
+        ...allResults,
+      }));
+      if (uniqueIds.length === 1) {
+        const onlyId = uniqueIds[0];
+        const r = allResults[onlyId];
+        const lbl = friendlyIfaceLabel(onlyId, interfaces, $fircTunnelsState);
+        if (r?.ok) {
+          notifications.success(
+            m.firc_fallback_toast_latency({ name: lbl, ms: Math.round(r.latencyMs) }),
+          );
+        } else {
+          notifications.warning(
+            m.firc_fallback_toast_timeout({
+              name: lbl,
+              error: r?.error ? ` (${r.error})` : '',
+            }),
+          );
+        }
+      } else {
+        const okCount = uniqueIds.filter((id) => allResults[id]?.ok).length;
+        notifications.success(
+          m.firc_fallback_probe_updated({ ok: okCount, total: uniqueIds.length }),
+        );
+      }
+    } catch (e) {
+      if (!destroyed) {
+        notifications.error(
+          m.firc_fallback_probe_error({
+            error: e instanceof Error ? e.message : String(e),
+          }),
+        );
+      }
+    } finally {
+      if (!destroyed) {
+        const cleared = { ...pgProbing };
+        delete cleared[key];
+        for (const id of uniqueIds) delete cleared[`iface:${id}`];
+        pgProbing = cleared;
+      }
+    }
+  }
+
   onMount(() => {
     loadAll();
+    if ($fircTunnelsState.length === 0) {
+      void api
+        .fircGetTunnelsState()
+        .then((st) => {
+          if (!destroyed && st) fircTunnelsState.set(st);
+        })
+        .catch(() => {});
+    }
     pollTimer = setInterval(() => loadAll(true), 4000);
   });
 
   onDestroy(() => {
+    destroyed = true;
     if (pollTimer) clearInterval(pollTimer);
   });
 
@@ -699,6 +786,19 @@
               </optgroup>
             {/if}
           </select>
+        </div>
+        <div class="field-row">
+          <div class="field-row-text">
+            <span class="lbl">{m.firc_keendns_cloud_check_label()}</span>
+            <span class="hint">{m.firc_keendns_cloud_check_hint()}</span>
+          </div>
+          <Toggle
+            checked={Boolean(extConfig.keenDnsCloud.cloudHealthCheck)}
+            disabled={!extConfig.keenDnsCloud.enabled}
+            onchange={(v) => {
+              extConfig.keenDnsCloud.cloudHealthCheck = v;
+            }}
+          />
         </div>
         <div style="display: flex; justify-content: flex-start;">
           <Button variant="secondary" size="sm" onclick={openPgModal}>
@@ -1204,6 +1304,28 @@
       После нажатия «Применить» не забудьте нажать «Сохранить параметры».
     </p>
     {#each pgDraft as pg, pgIdx (pg.id)}
+      {@const probesSnapshot = Object.fromEntries(
+        pg.interfaces
+          .map((id) => [
+            id,
+            getEffectiveInterfaceProbe(
+              id,
+              $fircInterfaceProbeResults,
+              $fircProbeResults,
+              $fircTunnelsState,
+            ),
+          ])
+          .filter((entry): entry is [string, FircInterfaceProbeResult] => entry[1] !== null),
+      )}
+      {@const activeRes = resolveGroupActiveInterface(
+        { interface: pg.interfaces },
+        undefined,
+        {},
+        $fircTunnelsState,
+        interfaces,
+        probesSnapshot,
+      )}
+      {@const isTestingPg = Boolean(pgProbing[`pg:${pg.id}`])}
       <div class="pg-box">
         <div class="pg-box-head">
           <input
@@ -1212,29 +1334,111 @@
             placeholder="Название прокси-группы"
             bind:value={pg.name}
           />
+          <button
+            type="button"
+            class="pg-test-btn"
+            disabled={pg.interfaces.length === 0 || isTestingPg}
+            onclick={() => void probePgInterfaces(`pg:${pg.id}`, pg.interfaces)}
+            title={m.firc_fallback_test_group_title({ name: pg.name })}
+          >
+            <Zap size={12} class={isTestingPg ? 'spin' : ''} />
+            <span>{isTestingPg ? '...' : m.firc_fallback_test()}</span>
+          </button>
           <Button variant="danger" size="sm" onclick={() => removePgDraft(pgIdx)}>Удалить</Button>
         </div>
-        <div class="hint">
-          Выбрано ({pg.interfaces.length}/4):
-          <strong>
-            {pg.interfaces.length > 0
-              ? pg.interfaces.map((id) => (id === 'eth3' ? 'Direct (eth3)' : id)).join(' → ')
-              : 'ничего не выбрано'}
-          </strong>
+        <div class="pg-selected-summary">
+          <span class="hint">
+            Выбрано ({pg.interfaces.length}/4):
+          </span>
+          {#if pg.interfaces.length === 0}
+            <strong class="hint">{'ничего не выбрано'}</strong>
+          {:else}
+            {#each pg.interfaces as id, idx (id)}
+              {@const mProbe = getEffectiveInterfaceProbe(
+                id,
+                $fircInterfaceProbeResults,
+                $fircProbeResults,
+                $fircTunnelsState,
+              )}
+              {@const mHealth = resolveInterfaceHealth(
+                id,
+                undefined,
+                {},
+                $fircTunnelsState,
+                interfaces,
+                mProbe,
+              )}
+              {@const isAct = activeRes.active === id}
+              {@const isChecking = Boolean(pgProbing[`iface:${id}`])}
+              {#if idx > 0}
+                <span class="pg-arrow">→</span>
+              {/if}
+              <span class="pg-sum-pill" class:is-active={isAct}>
+                <span
+                  class="pg-dot"
+                  class:active={isAct}
+                  class:alive={!isAct && mHealth.state === 'alive'}
+                  class:dead={mHealth.state === 'dead'}
+                  class:unknown={!isAct && mHealth.state === 'unknown'}
+                ></span>
+                <span>{friendlyIfaceLabel(id, interfaces, $fircTunnelsState)}</span>
+                {#if isAct}
+                  <span class="pg-act-badge">{m.firc_fallback_active_tag()}</span>
+                {/if}
+                <button
+                  type="button"
+                  class="pg-delay-btn {probeLatencyTone(mProbe)}"
+                  disabled={isChecking}
+                  onclick={() => void probePgInterfaces(`iface:${id}`, [id])}
+                  title={m.firc_fallback_test_iface_title({ name: id })}
+                >
+                  <span>{formatProbeLatency(mProbe)}</span>
+                  {#if isChecking}
+                    <RefreshCw size={9} class="spin" />
+                  {/if}
+                </button>
+              </span>
+            {/each}
+          {/if}
         </div>
         <div class="pg-cand-wrap">
           {#each interfaces.filter(isSelectableTunnelOrWan) as opt (opt.id)}
             {@const rank = pg.interfaces.indexOf(opt.id)}
+            {@const cProbe = getEffectiveInterfaceProbe(
+              opt.id,
+              $fircInterfaceProbeResults,
+              $fircProbeResults,
+              $fircTunnelsState,
+            )}
+            {@const cHealth = resolveInterfaceHealth(
+              opt.id,
+              undefined,
+              {},
+              $fircTunnelsState,
+              interfaces,
+              cProbe,
+            )}
             <button
               type="button"
               class="pg-cand-chip"
               class:active={rank >= 0}
               onclick={() => togglePgDraftIface(pgIdx, opt.id)}
             >
+              <span
+                class="pg-dot"
+                class:alive={cHealth.state === 'alive'}
+                class:dead={cHealth.state === 'dead'}
+                class:unknown={cHealth.state === 'unknown'}
+              ></span>
               {#if rank >= 0}
                 <span class="pg-rank">#{rank + 1}</span>
               {/if}
               <span>{formatIfaceLabel(opt)}</span>
+              {#if cProbe}
+                <span class="pg-cand-delay {probeLatencyTone(cProbe)}">
+                  {formatProbeLatency(cProbe)}
+                </span>
+              {/if}
             </button>
           {/each}
         </div>
@@ -1591,6 +1795,156 @@
     border-radius: 4px;
     background: color-mix(in srgb, var(--color-accent) 22%, transparent);
     color: var(--color-accent);
+  }
+
+  .pg-test-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 28px;
+    padding: 0 9px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .pg-test-btn:hover:not(:disabled) {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+  }
+
+  .pg-test-btn:disabled {
+    opacity: 0.55;
+    cursor: wait;
+  }
+
+  .pg-selected-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .pg-arrow {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .pg-sum-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-size: 11.5px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+  }
+
+  .pg-sum-pill.is-active {
+    background: color-mix(in srgb, var(--color-success) 10%, var(--bg-tertiary));
+    border-color: var(--color-success-border);
+    font-weight: 600;
+  }
+
+  .pg-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .pg-dot.active {
+    background: var(--color-success);
+    box-shadow: 0 0 6px var(--color-success-border);
+  }
+
+  .pg-dot.alive {
+    background: var(--color-success);
+    opacity: 0.65;
+  }
+
+  .pg-dot.dead {
+    background: var(--color-error);
+  }
+
+  .pg-dot.unknown {
+    background: var(--text-muted);
+    opacity: 0.55;
+  }
+
+  .pg-act-badge {
+    font-size: 9.5px;
+    font-weight: 700;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: var(--color-success-tint);
+    color: var(--color-success);
+    border: 1px solid var(--color-success-border);
+  }
+
+  .pg-delay-btn {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 4px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    background: transparent;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+  }
+
+  .pg-delay-btn:hover:not(:disabled) {
+    background: var(--bg-secondary);
+    border-color: var(--border);
+  }
+
+  .pg-cand-delay {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pg-delay-btn.good,
+  .pg-cand-delay.good {
+    color: var(--latency-color-ok);
+  }
+
+  .pg-delay-btn.medium,
+  .pg-cand-delay.medium {
+    color: var(--latency-color-slow);
+  }
+
+  .pg-delay-btn.bad,
+  .pg-cand-delay.bad {
+    color: var(--latency-color-fail);
+  }
+
+  .pg-delay-btn.none,
+  .pg-cand-delay.none {
+    color: var(--text-muted);
+  }
+
+  :global(.spin) {
+    animation: firc-settings-spin 1s linear infinite;
+  }
+
+  @keyframes firc-settings-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .srv-picker-wrap {

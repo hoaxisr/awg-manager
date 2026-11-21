@@ -244,6 +244,9 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	}
 	if s.tgWebProxyService != nil {
 		h.tgWebProxyHandler = api.NewTgWebProxyHandler(s.tgWebProxyService, s.sessions)
+		if s.settings != nil {
+			h.tgWebProxyHandler.SetAuthChecker(s.settings)
+		}
 		h.tgWebProxyHandler.SetCoordinator(s.serverIngressCoordinator)
 	}
 	if s.serverIngressCoordinator != nil || s.cdnDispatcher != nil {
@@ -319,6 +322,9 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 			wizardSvc.SetKeenDNS(kdOp)
 		}
 		h.serverWizardHandler = api.NewServerWizardHandler(wizardSvc, s.sessions)
+		if s.settings != nil {
+			h.serverWizardHandler.SetAuthChecker(s.settings)
+		}
 	}
 
 	// Auth middleware helper
@@ -816,6 +822,7 @@ func (s *Server) registerServerRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/servers/vless/migration", h.guarded(h.vlessServerHandler.GetMigrationStatus))
 		mux.HandleFunc("/api/servers/vless/migration/resolve", h.guarded(h.vlessServerHandler.ResolveConflict))
 		mux.HandleFunc("/api/servers/vless/recovery/resolve", h.guarded(h.vlessServerHandler.ResolveRecovery))
+		mux.HandleFunc("/api/servers/vless/reset", h.guarded(h.vlessServerHandler.FactoryReset))
 		mux.HandleFunc("/api/servers/vless/", h.guarded(http.NotFound))
 
 		mux.HandleFunc("/api/servers/xray", vlessRootHandler)
@@ -828,6 +835,7 @@ func (s *Server) registerServerRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/servers/xray/migration", h.guarded(h.vlessServerHandler.GetMigrationStatus))
 		mux.HandleFunc("/api/servers/xray/migration/resolve", h.guarded(h.vlessServerHandler.ResolveConflict))
 		mux.HandleFunc("/api/servers/xray/recovery/resolve", h.guarded(h.vlessServerHandler.ResolveRecovery))
+		mux.HandleFunc("/api/servers/xray/reset", h.guarded(h.vlessServerHandler.FactoryReset))
 		mux.HandleFunc("/api/servers/xray/", h.guarded(http.NotFound))
 	}
 
@@ -846,6 +854,7 @@ func (s *Server) registerServerRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/servers/tgwebproxy/status", h.guarded(h.tgWebProxyHandler.GetStatus))
 		mux.HandleFunc("/api/servers/tgwebproxy/reveal", h.guarded(h.tgWebProxyHandler.RevealSecret))
 		mux.HandleFunc("/api/servers/tgwebproxy/action", h.guarded(h.tgWebProxyHandler.Action))
+		mux.HandleFunc("/api/servers/tgwebproxy/reset", h.guarded(h.tgWebProxyHandler.FactoryReset))
 	}
 
 	// Ingress Dispatcher and XHTTP Tuning

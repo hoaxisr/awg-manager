@@ -1,9 +1,11 @@
+#define PCRE2_CODE_UNIT_WIDTH 8
+
 #include "firc/tunnels.h"
 #include "vless.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
-#include <regex.h>
+#include <pcre2.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -192,6 +194,7 @@ void firc_tunnels_free(firc_tunnels_t *t)
         }
         free(x->src);
         free(x->filter);
+        free(x->filter_exclude);
         for (size_t j = 0; j < x->n_order; j++) {
             free(x->order[j]);
         }
@@ -476,22 +479,26 @@ static firc_err_t parse_sources(ctx_t *c, node_t *seq, size_t ti, firc_tunnel_t 
     return FIRC_OK;
 }
 
-static firc_err_t parse_filter(ctx_t *c, node_t *v, size_t ti, firc_tunnel_t *t)
+static firc_err_t parse_filter_regex(ctx_t *c, node_t *v, size_t ti, const char *field, char **dst)
 {
-    static const char *const why = "a POSIX extended regular expression under 1024 bytes";
+    static const char *const why = "a regular expression under 1024 bytes";
     if (!is_scalar(v) || strlen(text(v)) >= 1024) {
-        return fail(c, why, "tunnels[%zu].filter", ti);
+        return fail(c, why, "tunnels[%zu].%s", ti, field);
     }
     if (text(v)[0] == '\0') {
         return FIRC_OK;
     }
-    regex_t re;
-    if (regcomp(&re, text(v), REG_EXTENDED | REG_ICASE | REG_NOSUB) != 0) {
-        return fail(c, why, "tunnels[%zu].filter", ti);
+    int errcode = 0;
+    PCRE2_SIZE erroff = 0;
+    pcre2_code *re = pcre2_compile((PCRE2_SPTR)text(v), PCRE2_ZERO_TERMINATED,
+                                   PCRE2_CASELESS | PCRE2_UTF | PCRE2_UCP,
+                                   &errcode, &erroff, NULL);
+    if (re == NULL) {
+        return fail(c, why, "tunnels[%zu].%s", ti, field);
     }
-    regfree(&re);
-    t->filter = strdup(text(v));
-    return t->filter == NULL ? FIRC_ERR_NOMEM : FIRC_OK;
+    pcre2_code_free(re);
+    *dst = strdup(text(v));
+    return *dst == NULL ? FIRC_ERR_NOMEM : FIRC_OK;
 }
 
 static bool node_key_ok(const char *s)
@@ -773,7 +780,9 @@ static firc_err_t parse_tunnel(ctx_t *c, node_t *m, size_t ti, firc_tunnel_t *t)
         } else if (strcmp(key, "inbounds") == 0) {
             r = parse_inbounds(c, v, ti, t);
         } else if (strcmp(key, "filter") == 0) {
-            r = parse_filter(c, v, ti, t);
+            r = parse_filter_regex(c, v, ti, "filter", &t->filter);
+        } else if (strcmp(key, "filterExclude") == 0) {
+            r = parse_filter_regex(c, v, ti, "filterExclude", &t->filter_exclude);
         } else if (strcmp(key, "order") == 0) {
             r = parse_keys(c, v, ti, "order", &t->order, &t->n_order);
         } else if (strcmp(key, "exclude") == 0) {
@@ -1239,6 +1248,9 @@ static void emit_tunnel(em_t *e, const firc_tunnel_t *t)
     seq_end(e);
     if (t->filter != NULL) {
         kv(e, "filter", t->filter, true);
+    }
+    if (t->filter_exclude != NULL) {
+        kv(e, "filterExclude", t->filter_exclude, true);
     }
     emit_keys(e, "order", t->order, t->n_order);
     emit_keys(e, "exclude", t->exclude, t->n_exclude);

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -520,6 +521,39 @@ func (h *VlessServerHandler) ResolveRecovery(w http.ResponseWriter, r *http.Requ
 	}
 	h.svc.ClearRecoveryRequired()
 	WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+// FactoryReset handles POST /api/servers/vless/reset (and /api/servers/xray/reset).
+func (h *VlessServerHandler) FactoryReset(w http.ResponseWriter, r *http.Request) {
+	if h.svc == nil {
+		WriteError(w, http.StatusServiceUnavailable, "vless server service unavailable")
+		return
+	}
+	if r.Method != http.MethodPost {
+		WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var opts serveringress.ResetOptions
+	if r.Body != nil {
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&opts); err != nil && !errors.Is(err, io.EOF) {
+			WriteError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			return
+		}
+	}
+
+	var res serveringress.ResetResult
+	var err error
+	if h.coord != nil {
+		res, err = h.coord.ResetVless(r.Context(), opts)
+	} else {
+		err = h.svc.FactoryReset(r.Context())
+		res = serveringress.ResetResult{Server: "vless", Reset: err == nil}
+	}
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, res)
 }
 
 // RouteClientSubpath dispatches /api/servers/{vless,xray}/clients/{id}[/{sub}].

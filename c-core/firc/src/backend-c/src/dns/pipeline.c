@@ -369,12 +369,24 @@ static firc_dns_verdict_t answer_fakes(firc_dns_pipeline_t *p, firc_dns_msg_t *m
     return waits ? FIRC_DNS_HOLD : FIRC_DNS_REWRITTEN;
 }
 
+static bool all_sinks(const reals_t *r)
+{
+    for (size_t i = 0; i < r->n; i++) {
+        if (!firc_resolver_ip_is_sink(&r->v[i])) { return false; }
+    }
+    return r->n > 0;
+}
+
 static firc_dns_verdict_t rewrite(firc_dns_pipeline_t *p, firc_dns_msg_t *msg, int64_t now,
                                   const firc_group_snapshot_t *owner, const char *qname,
                                   const chain_t *chain, bool *pool_changed, firc_event_t *ev)
 {
     reals_t r;
     chain_reals(msg, chain, p->clamp_secs, &r);
+    if (all_sinks(&r)) {
+        journal_put(p, ev, FIRC_DNS_PASSED);
+        return FIRC_DNS_PASS;
+    }
     if (msg->questions[0].qtype == FIRC_DNS_TYPE_A && !r.had4 && p->cross_fn != NULL &&
         p->cross_fn(p->cross_ud, owner->id)) {
         return FIRC_DNS_ASK_AAAA;

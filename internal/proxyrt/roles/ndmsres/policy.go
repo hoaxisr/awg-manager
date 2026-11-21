@@ -94,6 +94,9 @@ func (r *PolicyExit) Plan(obs proxyrt.Observation) []proxyrt.Step {
 	if r.d.DefaultCandidacy && obs.Attrs["default_route"] != "true" {
 		add("default-candidacy", "нет кандидатуры default route")
 	}
+	if !r.d.DefaultCandidacy && obs.Attrs["default_route"] == "true" {
+		add("remove-default-candidacy", "кандидатура default route отключена")
+	}
 	return steps
 }
 
@@ -107,6 +110,8 @@ func (r *PolicyExit) Apply(ctx context.Context, s proxyrt.Step) error {
 		return r.cmds.SetPermitAllACL(ctx, r.d.Name)
 	case "default-candidacy":
 		return r.cmds.EnsureDefaultRouteCandidacy(ctx, r.d.Name)
+	case "remove-default-candidacy":
+		return r.cmds.RemoveDefaultRouteCandidacy(ctx, r.d.Name)
 	default:
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}

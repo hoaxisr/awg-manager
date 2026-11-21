@@ -374,22 +374,23 @@ func (a *TunnelAdvanced) UnmarshalYAML(value *yaml.Node) error {
 
 // Tunnel represents a firc proxy tunnel entry in tunnels.yaml / /api/v1/tunnels.
 type Tunnel struct {
-	ID          string          `json:"id" yaml:"id"`
-	Device      string          `json:"device" yaml:"device"`
-	Description string          `json:"description,omitempty" yaml:"description,omitempty"`
-	Enable      bool            `json:"enable" yaml:"enable"`
-	Uplink      TunnelUplink    `json:"uplink" yaml:"uplink"`
-	EndpointDNS []string        `json:"endpointDns,omitempty" yaml:"endpointDns,omitempty"`
-	Sources     []TunnelSource  `json:"sources" yaml:"sources"`
-	Filter      string          `json:"filter,omitempty" yaml:"filter,omitempty"`
-	Order       []string        `json:"order,omitempty" yaml:"order,omitempty"`
-	Exclude     []string        `json:"exclude,omitempty" yaml:"exclude,omitempty"`
-	Inbounds    []TunnelInbound `json:"inbounds,omitempty" yaml:"inbounds,omitempty"`
-	Active      int             `json:"active,omitempty" yaml:"active,omitempty"`
-	By          string          `json:"by,omitempty" yaml:"by,omitempty"` // "order" | "latency" | "first_byte"
-	Interval    int             `json:"interval,omitempty" yaml:"interval,omitempty"`
-	Silence     int             `json:"silence,omitempty" yaml:"silence,omitempty"`
-	Advanced    TunnelAdvanced  `json:"advanced" yaml:"advanced"`
+	ID            string          `json:"id" yaml:"id"`
+	Device        string          `json:"device" yaml:"device"`
+	Description   string          `json:"description,omitempty" yaml:"description,omitempty"`
+	Enable        bool            `json:"enable" yaml:"enable"`
+	Uplink        TunnelUplink    `json:"uplink" yaml:"uplink"`
+	EndpointDNS   []string        `json:"endpointDns,omitempty" yaml:"endpointDns,omitempty"`
+	Sources       []TunnelSource  `json:"sources" yaml:"sources"`
+	Filter        string          `json:"filter,omitempty" yaml:"filter,omitempty"`
+	FilterExclude string          `json:"filterExclude,omitempty" yaml:"filterExclude,omitempty"`
+	Order         []string        `json:"order,omitempty" yaml:"order,omitempty"`
+	Exclude       []string        `json:"exclude,omitempty" yaml:"exclude,omitempty"`
+	Inbounds      []TunnelInbound `json:"inbounds,omitempty" yaml:"inbounds,omitempty"`
+	Active        int             `json:"active,omitempty" yaml:"active,omitempty"`
+	By            string          `json:"by,omitempty" yaml:"by,omitempty"` // "order" | "latency" | "first_byte"
+	Interval      int             `json:"interval,omitempty" yaml:"interval,omitempty"`
+	Silence       int             `json:"silence,omitempty" yaml:"silence,omitempty"`
+	Advanced      TunnelAdvanced  `json:"advanced" yaml:"advanced"`
 }
 
 func (t Tunnel) MarshalJSON() ([]byte, error) {
@@ -416,60 +417,63 @@ func (t Tunnel) MarshalYAML() (interface{}, error) {
 		silenceStr = formatYAMLSeconds(t.Silence)
 	}
 	return struct {
-		ID          string          `yaml:"id"`
-		Device      string          `yaml:"device"`
-		Description string          `yaml:"description,omitempty"`
-		Enable      bool            `yaml:"enable"`
-		Uplink      TunnelUplink    `yaml:"uplink"`
-		EndpointDNS *[]string       `yaml:"endpointDns,omitempty"`
-		Sources     []TunnelSource  `yaml:"sources"`
-		Filter      string          `yaml:"filter,omitempty"`
-		Order       []string        `yaml:"order,omitempty"`
-		Exclude     []string        `yaml:"exclude,omitempty"`
-		Inbounds    []TunnelInbound `yaml:"inbounds,omitempty"`
-		Active      int             `yaml:"active,omitempty"`
-		By          string          `yaml:"by,omitempty"`
-		Interval    string          `yaml:"interval,omitempty"`
-		Silence     string          `yaml:"silence,omitempty"`
-		Advanced    TunnelAdvanced  `yaml:"advanced"`
+		ID            string          `yaml:"id"`
+		Device        string          `yaml:"device"`
+		Description   string          `yaml:"description,omitempty"`
+		Enable        bool            `yaml:"enable"`
+		Uplink        TunnelUplink    `yaml:"uplink"`
+		EndpointDNS   *[]string       `yaml:"endpointDns,omitempty"`
+		Sources       []TunnelSource  `yaml:"sources"`
+		Filter        string          `yaml:"filter,omitempty"`
+		FilterExclude string          `yaml:"filterExclude,omitempty"`
+		Order         []string        `yaml:"order,omitempty"`
+		Exclude       []string        `yaml:"exclude,omitempty"`
+		Inbounds      []TunnelInbound `yaml:"inbounds,omitempty"`
+		Active        int             `yaml:"active,omitempty"`
+		By            string          `yaml:"by,omitempty"`
+		Interval      string          `yaml:"interval,omitempty"`
+		Silence       string          `yaml:"silence,omitempty"`
+		Advanced      TunnelAdvanced  `yaml:"advanced"`
 	}{
-		ID:          t.ID,
-		Device:      t.Device,
-		Description: t.Description,
-		Enable:      t.Enable,
-		Uplink:      t.Uplink,
-		EndpointDNS: endpointDNS,
-		Sources:     t.Sources,
-		Filter:      t.Filter,
-		Order:       t.Order,
-		Exclude:     t.Exclude,
-		Inbounds:    t.Inbounds,
-		Active:      t.Active,
-		By:          t.By,
-		Interval:    intervalStr,
-		Silence:     silenceStr,
-		Advanced:    t.Advanced,
+		ID:            t.ID,
+		Device:        t.Device,
+		Description:   t.Description,
+		Enable:        t.Enable,
+		Uplink:        t.Uplink,
+		EndpointDNS:   endpointDNS,
+		Sources:       t.Sources,
+		Filter:        t.Filter,
+		FilterExclude: t.FilterExclude,
+		Order:         t.Order,
+		Exclude:       t.Exclude,
+		Inbounds:      t.Inbounds,
+		Active:        t.Active,
+		By:            t.By,
+		Interval:      intervalStr,
+		Silence:       silenceStr,
+		Advanced:      t.Advanced,
 	}, nil
 }
 
 func (t *Tunnel) UnmarshalYAML(value *yaml.Node) error {
 	var raw struct {
-		ID          string          `yaml:"id"`
-		Device      string          `yaml:"device"`
-		Description string          `yaml:"description"`
-		Enable      bool            `yaml:"enable"`
-		Uplink      TunnelUplink    `yaml:"uplink"`
-		EndpointDNS []string        `yaml:"endpointDns"`
-		Sources     []TunnelSource  `yaml:"sources"`
-		Filter      string          `yaml:"filter"`
-		Order       []string        `yaml:"order"`
-		Exclude     []string        `yaml:"exclude"`
-		Inbounds    []TunnelInbound `yaml:"inbounds"`
-		Active      int             `yaml:"active"`
-		By          string          `yaml:"by"`
-		Interval    yaml.Node       `yaml:"interval"`
-		Silence     yaml.Node       `yaml:"silence"`
-		Advanced    TunnelAdvanced  `yaml:"advanced"`
+		ID            string          `yaml:"id"`
+		Device        string          `yaml:"device"`
+		Description   string          `yaml:"description"`
+		Enable        bool            `yaml:"enable"`
+		Uplink        TunnelUplink    `yaml:"uplink"`
+		EndpointDNS   []string        `yaml:"endpointDns"`
+		Sources       []TunnelSource  `yaml:"sources"`
+		Filter        string          `yaml:"filter"`
+		FilterExclude string          `yaml:"filterExclude"`
+		Order         []string        `yaml:"order"`
+		Exclude       []string        `yaml:"exclude"`
+		Inbounds      []TunnelInbound `yaml:"inbounds"`
+		Active        int             `yaml:"active"`
+		By            string          `yaml:"by"`
+		Interval      yaml.Node       `yaml:"interval"`
+		Silence       yaml.Node       `yaml:"silence"`
+		Advanced      TunnelAdvanced  `yaml:"advanced"`
 	}
 	if err := value.Decode(&raw); err != nil {
 		return err
@@ -494,6 +498,7 @@ func (t *Tunnel) UnmarshalYAML(value *yaml.Node) error {
 	t.EndpointDNS = raw.EndpointDNS
 	t.Sources = raw.Sources
 	t.Filter = raw.Filter
+	t.FilterExclude = raw.FilterExclude
 	t.Order = raw.Order
 	t.Exclude = raw.Exclude
 	t.Inbounds = raw.Inbounds
@@ -551,12 +556,21 @@ type InboundState struct {
 }
 
 // TunnelState represents the live runtime telemetry of a firc tunnel from GET /api/v1/tunnels/state.
+// FilteredNode describes a subscription node hidden by the tunnel's include/exclude regex filter.
+type FilteredNode struct {
+	Key    string `json:"key"`
+	Name   string `json:"name"`
+	Source string `json:"source,omitempty"`
+}
+
 type TunnelState struct {
 	ID            string         `json:"id"`
 	Device        string         `json:"device"`
-	Status        string         `json:"status"` // "starting" | "up" | "no_node" | "backoff" | "bad_config" | "waiting" | "uplink_down" | "off"
+	Status        string         `json:"status"` // "starting" | "up" | "no_node" | "backoff" | "bad_config" | "waiting" | "uplink_down" | "router" | "off"
+	Why           string         `json:"why,omitempty"`
 	Active        []string       `json:"active"`
 	Nodes         []NodeState    `json:"nodes"`
+	FilteredNodes []FilteredNode `json:"filteredNodes,omitempty"`
 	Since         int64          `json:"since"`
 	BackoffS      int            `json:"backoffS"`
 	LastExit      int            `json:"lastExit"`
@@ -585,6 +599,12 @@ type ProbeResponse struct {
 	Nodes []ProbeNodeResult `json:"nodes"`
 }
 
+// ProbeProgressResponse is returned by GET /api/v1/tunnels/probe.
+type ProbeProgressResponse struct {
+	Total int               `json:"total"`
+	Nodes []ProbeNodeResult `json:"nodes"`
+}
+
 // PreviewNode represents a node returned by POST /api/v1/tunnels/preview.
 type PreviewNode struct {
 	Key        string `json:"key"`
@@ -605,10 +625,11 @@ type PreviewSub struct {
 
 // PreviewResponse is returned by POST /api/v1/tunnels/preview.
 type PreviewResponse struct {
-	Nodes         []PreviewNode `json:"nodes"`
-	Matched       int           `json:"matched"`
-	Total         int           `json:"total"`
-	Subscriptions []PreviewSub  `json:"subscriptions"`
+	Nodes         []PreviewNode  `json:"nodes"`
+	FilteredNodes []FilteredNode `json:"filteredNodes,omitempty"`
+	Matched       int            `json:"matched"`
+	Total         int            `json:"total"`
+	Subscriptions []PreviewSub   `json:"subscriptions"`
 }
 
 // Rule represents a routing rule inside a firc Group.
@@ -1006,11 +1027,12 @@ type ProxyGroup struct {
 // KeenDNSCloudConfig controls routing Keenetic Cloud / KeenDNS traffic through FIRC.
 // LastSyncError and LastSyncAt are transient runtime status fields stripped before persistence.
 type KeenDNSCloudConfig struct {
-	Enabled       bool     `json:"enabled"`
-	ProxyGroupID  string   `json:"proxyGroupId,omitempty"`
-	Interfaces    []string `json:"interfaces,omitempty"`
-	LastSyncError string   `json:"lastSyncError,omitempty"`
-	LastSyncAt    int64    `json:"lastSyncAt,omitempty"`
+	Enabled          bool     `json:"enabled"`
+	CloudHealthCheck bool     `json:"cloudHealthCheck,omitempty"`
+	ProxyGroupID     string   `json:"proxyGroupId,omitempty"`
+	Interfaces       []string `json:"interfaces,omitempty"`
+	LastSyncError    string   `json:"lastSyncError,omitempty"`
+	LastSyncAt       int64    `json:"lastSyncAt,omitempty"`
 }
 
 // InboundServerItem describes a selectable AWGM or Keenetic system VPN server and its live status.

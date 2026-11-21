@@ -15,6 +15,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/linkres"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/ndmsres"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/roletest"
 )
 
 // --- минимальные фейки зависимостей роли ---
@@ -73,6 +74,10 @@ func (c *countCmds) InterfaceDown(context.Context, string) error              { 
 func (c *countCmds) SetPermitAllACL(context.Context, string) error            { c.n++; return nil }
 func (c *countCmds) RemovePermitAllACL(context.Context, string) error         { c.n++; return nil }
 func (c *countCmds) EnsureDefaultRouteCandidacy(context.Context, string) error {
+	c.n++
+	return nil
+}
+func (c *countCmds) RemoveDefaultRouteCandidacy(context.Context, string) error {
 	c.n++
 	return nil
 }
@@ -644,5 +649,121 @@ func TestResetStartBackoffReachesProcess(t *testing.T) {
 	// Часы не двигаются: если сброс не дошёл, старт останется отложенным.
 	if err := proc.Apply(context.Background(), steps[0]); err != nil {
 		t.Fatalf("сброс роли не дошёл до процесса: %v", err)
+	}
+}
+
+func TestRawModeRestartsStalledZombieWithoutRawConf(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	raw := rawCfg()
+	raw.AutoReconnect = true
+	raw.AutoReconnectInterval = "on_failure"
+
+	link := &fakeLink{st: awgmproto.State{
+		PID:        4821,
+		ConfigHash: awgmproto.ConfigHash(roles.WdttClientArgs(raw)),
+		UptimeS:    300,
+		Address:    "",
+	}}
+	role, err := New(Deps{
+		Instance: "default", Binary: "/opt/bin/wt-client",
+		Link: link, Runner: &fakeRunner{pid: 4821, alive: true}, Gate: nilGate{},
+		Cmds: &countCmds{}, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
+		Policies: nilPolicies{}, Permit: nilPermit{},
+		Hooks: nilHooks{}, Registry: &memRegistry{m: map[string]linkres.ExitInfo{}},
+		Sync: nilSync{}, Occ: nilOcc{}, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rawProc := procOf(t, role.Resources(proxyrt.IntentEnabled, raw, proxyrt.NewObservations()))
+	obsRaw, err := rawProc.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stepsRaw := rawProc.Plan(obsRaw)
+	if len(stepsRaw) != 1 || stepsRaw[0].Op != "restart" || stepsRaw[0].Args["cause"] != "session_failure" {
+		t.Fatalf("raw без RAWCONF при UptimeS=300: Plan=%+v, ожидали [restart cause=session_failure]", stepsRaw)
+	}
+
+	wg := raw
+	wg.Mode = "wg"
+	wg.NdmsIface, wg.RawIface = "", ""
+	link.st.ConfigHash = awgmproto.ConfigHash(roles.WdttClientArgs(wg))
+	wgProc := procOf(t, role.Resources(proxyrt.IntentEnabled, wg, proxyrt.NewObservations()))
+	obsWG, err := wgProc.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stepsWG := wgProc.Plan(obsWG); len(stepsWG) != 0 {
+		t.Fatalf("wg без Address не должен рестартоваться как raw: Plan=%+v", stepsWG)
+	}
+}
+
+type fakeRunner struct {
+	pid   int
+	alive bool
+	stops int
+}
+
+func (f *fakeRunner) Start(context.Context, []string) (int, error) { return f.pid, nil }
+func (f *fakeRunner) Stop(context.Context, int) error              { f.stops++; f.alive = false; return nil }
+func (f *fakeRunner) AlivePID() (int, bool)                        { return f.pid, f.alive }
+
+func TestRawDefaultRouteCandidacyToggle(t *testing.T) {
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	nowFn := func() time.Time { return now }
+	cfg := rawCfg()
+	cfg.Name = "Дача"
+	cfg.Policies = nil
+
+	st := awgmproto.State{
+		Role: "client", Instance: "default", PID: 4821,
+		ConfigHash: awgmproto.ConfigHash(roles.WdttClientArgs(cfg)),
+		Address:    "10.77.3.9", MTU: 1342,
+		Tun: &awgmproto.TunState{Iface: "opkgtun18", Attached: true},
+	}
+	link := &fakeLink{
+		st:   st,
+		snap: &control.Snapshot{State: st, At: now},
+	}
+	runner := &fakeRunner{pid: 4821, alive: true}
+	ndmsModel := roletest.NewNDMS()
+
+	role, err := New(Deps{
+		Instance: "default", Binary: "/opt/bin/wt-client",
+		Link: link, Runner: runner, Gate: nilGate{},
+		Cmds: ndmsModel, Query: ndmsModel,
+		Policies: nilPolicies{}, Permit: nilPermit{},
+		Hooks: nilHooks{}, Registry: &memRegistry{m: map[string]linkres.ExitInfo{}},
+		Sync: nilSync{}, Occ: nilOcc{}, Now: nowFn,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	roletest.Converge(t, role, cfg, proxyrt.IntentEnabled)
+	if !ndmsModel.ExitOf("OpkgTun18").DefaultRoute {
+		t.Fatal("при nil DefaultRoute raw-выход обязан стать кандидатом default route")
+	}
+
+	fa := false
+	cfg.DefaultRoute = &fa
+	roletest.Converge(t, role, cfg, proxyrt.IntentEnabled)
+	if ndmsModel.ExitOf("OpkgTun18").DefaultRoute {
+		t.Fatal("при DefaultRoute=false кандидатура default route обязана быть снята")
+	}
+	if runner.stops != 0 {
+		t.Fatalf("смена DefaultRoute не должна перезапускать процесс (stops=%d)", runner.stops)
+	}
+
+	tr := true
+	cfg.DefaultRoute = &tr
+	roletest.Converge(t, role, cfg, proxyrt.IntentEnabled)
+	if !ndmsModel.ExitOf("OpkgTun18").DefaultRoute {
+		t.Fatal("при DefaultRoute=true кандидатура default route обязана вернуться")
+	}
+	if runner.stops != 0 {
+		t.Fatalf("возврат DefaultRoute=true не должен перезапускать процесс (stops=%d)", runner.stops)
 	}
 }

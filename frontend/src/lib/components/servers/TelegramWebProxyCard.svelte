@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import {
 		lastServerVerification,
 		recordServerVerification,
 		pickFresherVerificationReport,
+		clearServerVerification,
 	} from '$lib/stores/serverVerification';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { Button, Modal, Toggle } from '$lib/components/ui';
@@ -178,6 +180,9 @@
 	let settingsTab = $state<'general' | 'security' | 'diagnostics'>('general');
 	let editConfig = $state<Partial<TgWebProxyConfig>>({});
 	let saveConfigLoading = $state(false);
+	let resetConfirmOpen = $state(false);
+	let resetDeleteKeenDNS = $state(false);
+	let resetLoading = $state(false);
 	let egressOptions = $state<{ value: string; label: string; available: boolean }[]>([
 		{ value: 'direct', label: EXTERNAL_ACCESS_LABELS.egressDirect, available: true },
 	]);
@@ -386,8 +391,11 @@
 
 	$effect(() => {
 		const shared = $lastServerVerification.tgwebproxy;
-		if (shared) {
-			lastCheckReport = pickFresherVerificationReport(shared, lastCheckReport);
+		if (!shared) return;
+		const cur = untrack(() => lastCheckReport);
+		const next = pickFresherVerificationReport(shared, cur);
+		if (next && next !== cur) {
+			lastCheckReport = next;
 			lastCheckError = '';
 		}
 	});
@@ -799,6 +807,36 @@
 			notifications.error(e instanceof Error ? e.message : 'Ошибка очистки кэша');
 		} finally {
 			clearCacheLoading = false;
+		}
+	}
+
+	function openResetConfirm() {
+		resetDeleteKeenDNS = false;
+		resetConfirmOpen = true;
+	}
+
+	async function executeFactoryReset() {
+		resetLoading = true;
+		try {
+			const res = await api.resetTgWebProxy({ delete_keendns: resetDeleteKeenDNS });
+			lastCheckReport = null;
+			lastCheckError = '';
+			clearServerVerification('tgwebproxy');
+			revealData = null;
+			revealQrDataUrl = '';
+			revealOpen = false;
+			resetConfirmOpen = false;
+			settingsOpen = false;
+			await loadData();
+			onRefreshParent?.();
+			notifications.success(m.server_reset_tg_success());
+			if (res.warnings?.length) {
+				notifications.warning(res.warnings.join('; '));
+			}
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.common_error());
+		} finally {
+			resetLoading = false;
 		}
 	}
 
@@ -1631,6 +1669,17 @@
 						{/each}
 					{/if}
 				</div>
+
+				<div class="reset-zone">
+					<div class="reset-zone-info">
+						<div class="reset-zone-title">{m.server_reset_zone_title()}</div>
+						<p class="reset-zone-desc">{m.server_reset_tg_zone_desc()}</p>
+					</div>
+					<Button variant="danger" size="sm" onclick={openResetConfirm}>
+						<Trash2 size={14} class="mr-1" />
+						{m.server_reset_button()}
+					</Button>
+				</div>
 			</div>
 		{:else if settingsTab === 'security'}
 			<div class="security-pane">
@@ -1727,6 +1776,36 @@
 				{saveConfigLoading ? 'Сохранение...' : 'Сохранить параметры'}
 			</Button>
 		{/if}
+	{/snippet}
+</Modal>
+
+<!-- Modal: Confirm Telegram Factory Reset -->
+<Modal
+	bind:open={resetConfirmOpen}
+	title={m.server_reset_tg_modal_title()}
+	onclose={() => { if (!resetLoading) resetConfirmOpen = false; }}
+	size="sm"
+>
+	<div class="confirm-content">
+		<AlertTriangle size={32} class="confirm-icon text-danger mb-3" />
+		<p class="confirm-p">{m.server_reset_tg_modal_body()}</p>
+		<label class="reset-keendns-check">
+			<input type="checkbox" bind:checked={resetDeleteKeenDNS} class="checkbox-input" />
+			<div class="reset-keendns-text">
+				<span class="reset-keendns-label">{m.server_reset_tg_keendns_label()}</span>
+				<span class="reset-keendns-hint">{m.server_reset_tg_keendns_hint()}</span>
+			</div>
+		</label>
+	</div>
+
+	{#snippet actions()}
+		<Button variant="secondary" onclick={() => (resetConfirmOpen = false)} disabled={resetLoading}>
+			{m.common_cancel()}
+		</Button>
+		<Button variant="danger" onclick={executeFactoryReset} disabled={resetLoading}>
+			<Trash2 size={14} class="mr-1" />
+			{resetLoading ? m.server_reset_progress() : m.server_reset_confirm_button()}
+		</Button>
 	{/snippet}
 </Modal>
 
@@ -2951,5 +3030,69 @@
 
 	.reveal-user-select {
 		max-width: 260px;
+	}
+
+	.reset-zone {
+		margin-top: 10px;
+		padding: 12px 14px;
+		border: 1px solid color-mix(in srgb, var(--color-error) 35%, var(--color-border));
+		border-radius: var(--radius-sm);
+		background: color-mix(in srgb, var(--color-error) 6%, var(--color-bg-secondary));
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		flex-wrap: wrap;
+	}
+
+	.reset-zone-info {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		flex: 1 1 260px;
+	}
+
+	.reset-zone-title {
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--color-error);
+	}
+
+	.reset-zone-desc {
+		margin: 0;
+		font-size: 12px;
+		color: var(--color-text-secondary);
+		line-height: 1.4;
+	}
+
+	.reset-keendns-check {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		width: 100%;
+		text-align: left;
+		padding: 10px 12px;
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+	}
+
+	.reset-keendns-text {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.reset-keendns-label {
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--color-text-primary);
+	}
+
+	.reset-keendns-hint {
+		font-size: 11.5px;
+		color: var(--color-text-muted);
+		line-height: 1.35;
 	}
 </style>

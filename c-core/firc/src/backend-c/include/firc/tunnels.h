@@ -58,6 +58,7 @@ typedef struct {
     firc_tun_src_t *src;
     size_t n_src;
     char *filter;
+    char *filter_exclude;
     char **order;
     size_t n_order;
     char **exclude;

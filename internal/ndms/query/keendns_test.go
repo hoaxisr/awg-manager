@@ -198,3 +198,67 @@ func TestKeenDNSRelayEndpointsPreservePorts(t *testing.T) {
 		t.Fatalf("unexpected relay projection: %+v", info)
 	}
 }
+
+func TestKeenDNSStore_GetCloudTargets(t *testing.T) {
+	t.Run("hyphenated target-list comma string", func(t *testing.T) {
+		g := NewFakeGetter()
+		g.SetRaw("/show/cloud", []byte(`{
+			"transport": "udp",
+			"target-host": "31.135.14.238:4044",
+			"target-list": "31.135.14.238, 178.250.154.58, 95.213.212.50, 31.135.14.238"
+		}`))
+		s := NewKeenDNSStore(g, NopLogger())
+		ips, err := s.GetCloudTargets(context.Background())
+		if err != nil {
+			t.Fatalf("GetCloudTargets err: %v", err)
+		}
+		want := []string{"31.135.14.238", "178.250.154.58", "95.213.212.50"}
+		if len(ips) != len(want) {
+			t.Fatalf("got %v, want %v", ips, want)
+		}
+		for i := range want {
+			if ips[i] != want[i] {
+				t.Fatalf("ips[%d]=%q, want %q (all=%v)", i, ips[i], want[i], ips)
+			}
+		}
+	})
+
+	t.Run("underscored target_list array", func(t *testing.T) {
+		g := NewFakeGetter()
+		g.SetRaw("/show/cloud", []byte(`{
+			"target_host": "31.135.14.238",
+			"target_list": ["185.162.93.96:4044", "5.35.2.42"]
+		}`))
+		s := NewKeenDNSStore(g, NopLogger())
+		ips, err := s.GetCloudTargets(context.Background())
+		if err != nil {
+			t.Fatalf("GetCloudTargets err: %v", err)
+		}
+		want := []string{"31.135.14.238", "185.162.93.96", "5.35.2.42"}
+		if len(ips) != len(want) {
+			t.Fatalf("got %v, want %v", ips, want)
+		}
+		for i := range want {
+			if ips[i] != want[i] {
+				t.Fatalf("ips[%d]=%q, want %q", i, ips[i], want[i])
+			}
+		}
+	})
+
+	t.Run("404 backoff", func(t *testing.T) {
+		g := NewFakeGetter()
+		g.SetError("/show/cloud", &transport.HTTPError{Method: "GET", Path: "/show/cloud", Status: http.StatusNotFound})
+		s := NewKeenDNSStore(g, NopLogger())
+		ips, err := s.GetCloudTargets(context.Background())
+		if err != nil || ips != nil {
+			t.Fatalf("expected nil,nil on 404, got %v, %v", ips, err)
+		}
+		_, err = s.GetCloudTargets(context.Background())
+		if err != nil {
+			t.Fatalf("second call err: %v", err)
+		}
+		if n := g.Calls("/show/cloud"); n != 1 {
+			t.Fatalf("/show/cloud called %d times, want 1 during backoff", n)
+		}
+	})
+}

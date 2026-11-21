@@ -175,6 +175,14 @@ func (f *fakeRouter) EnsureDefaultRouteCandidacy(_ context.Context, name string)
 	return nil
 }
 
+func (f *fakeRouter) RemoveDefaultRouteCandidacy(_ context.Context, name string) error {
+	if err := f.cmd("remove-default-candidacy"); err != nil {
+		return err
+	}
+	delete(f.defrt, name)
+	return nil
+}
+
 // drive прогоняет observe→plan→apply до пустого плана (максимум 5 проходов) —
 // маленький аналог цикла движка для одного ресурса.
 func drive(t *testing.T, r proxyrt.Resource) int {

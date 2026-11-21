@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, Modal } from '$lib/components/ui';
@@ -17,9 +18,22 @@
 		ExternalLink,
 	} from 'lucide-svelte';
 
+	interface Props {
+		onStatusChange?: (running: boolean) => void;
+	}
+
+	let { onStatusChange }: Props = $props();
+
 	let config = $state<CDNDispatcherConfig | null>(null);
 	let loading = $state(true);
 	let saving = $state(false);
+
+	let listenPort = $derived.by(() => {
+		const raw = config?.listen_addr?.trim() || ':9009';
+		const idx = raw.lastIndexOf(':');
+		return idx >= 0 ? raw.slice(idx + 1) || '9009' : raw;
+	});
+	let isRunning = $derived(Boolean(config?.running));
 
 	// Modal states
 	let editModalOpen = $state(false);
@@ -42,6 +56,7 @@
 		loading = true;
 		try {
 			config = await api.getDispatcherConfig();
+			onStatusChange?.(Boolean(config.running));
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Не удалось загрузить настройки Диспетчера');
 		} finally {
@@ -138,6 +153,7 @@
 		try {
 			const updated = await api.updateDispatcherConfig(config);
 			config = updated;
+			onStatusChange?.(Boolean(updated.running));
 			notifications.success('Настройки Диспетчера сохранены');
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения Диспетчера');
@@ -164,8 +180,19 @@
 			</div>
 			<div>
 				<div class="title-row">
-					<h2 class="title">Входящие подключения (:9009)</h2>
-					<span class="badge badge-success">Порт 9009</span>
+					<h2 class="title">Входящие подключения (:{listenPort})</h2>
+					{#if config}
+						<span
+							class="badge"
+							class:badge-success={isRunning}
+							class:badge-muted={!isRunning}
+							data-testid="dispatcher-status-badge"
+						>
+							{isRunning
+								? m.servers_dispatcher_status_running({ port: listenPort })
+								: m.servers_dispatcher_status_stopped({ port: listenPort })}
+						</span>
+					{/if}
 				</div>
 				<p class="subtitle">
 					Маршрутизация входящего трафика на порту :9009 между VLESS (XHTTP) и Прокси Telegram
@@ -197,6 +224,19 @@
 				<strong>Как работает маршрутизация на :9009:</strong> Входящий трафик от клиентов приходит на порт 9009.
 				Шлюз разделяет его по путям: запросы к <strong>VLESS (XHTTP)</strong> идут по пути <code>{config.xray_path_prefix || '/cdn-bridge'}/*</code>,
 				а запросы к <strong>Прокси Telegram</strong> — по путям <code>/</code> и <code>/api/*</code>.
+			</p>
+		</div>
+
+		<div
+			class="status-note"
+			class:status-note-running={isRunning}
+			class:status-note-stopped={!isRunning}
+			data-testid="dispatcher-status-note"
+		>
+			<p class="text-sm">
+				{isRunning
+					? m.servers_dispatcher_running_hint({ port: listenPort })
+					: m.servers_dispatcher_stopped_hint({ port: listenPort })}
 			</p>
 		</div>
 
@@ -495,6 +535,36 @@
 		background: var(--color-success-tint);
 		color: var(--color-success);
 		border: 1px solid var(--color-success-border);
+	}
+
+	.badge-muted {
+		background: var(--color-muted-tint);
+		color: var(--color-text-secondary);
+		border: 1px solid var(--color-muted-border);
+	}
+
+	.status-note {
+		padding: 0.7rem 1rem;
+		margin-bottom: 1rem;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-border);
+		line-height: 1.45;
+	}
+
+	.status-note p {
+		margin: 0;
+	}
+
+	.status-note-stopped {
+		background: var(--color-muted-tint);
+		border-color: var(--color-muted-border);
+		color: var(--color-text-secondary);
+	}
+
+	.status-note-running {
+		background: var(--color-success-tint);
+		border-color: var(--color-success-border);
+		color: var(--color-text-primary);
 	}
 
 	.badge-route-xray {

@@ -447,6 +447,7 @@ export interface CDNRouteRule {
 
 export interface CDNDispatcherConfig {
 	enabled: boolean;
+	running?: boolean;
 	listen_addr: string;
 	xray_target: string;
 	tg_target: string;
@@ -481,6 +482,19 @@ export interface XHTTPTuning {
 	seq_key?: string;
 	fp_chunk_bytes?: number;
 	fp_max_ways?: number;
+}
+
+export interface ServerResetOptions {
+	delete_keendns?: boolean;
+}
+
+export interface ServerResetResult {
+	server: string;
+	reset: boolean;
+	dispatcher_reset: boolean;
+	keendns_deleted?: string[];
+	keendns_skipped?: string[];
+	warnings?: string[];
 }
 
 // #endregion

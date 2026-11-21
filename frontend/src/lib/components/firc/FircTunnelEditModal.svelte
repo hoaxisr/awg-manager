@@ -1,9 +1,13 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
+	import { softCompileGoRegex } from '$lib/utils/subscriptionGroupPreview';
 	import {
 		stripFircEmojis,
 		FIRC_TUNNEL_NODE_POOL,
 		type FircTunnel,
+		type FircTunnelFilteredNode,
 		type FircTunnelSource,
 		type FircTunnelInbound,
 		type FircTunnelPreview,
@@ -11,6 +15,7 @@
 		type FircTunnelSubUsage,
 	} from '$lib/types/firc';
 	import {
+		fircStatus,
 		fircTunnels,
 		fircTunnelsState,
 		fircEditTunnelId,
@@ -18,9 +23,15 @@
 		fircProbeResults,
 		reloadFircAll,
 	} from '$lib/stores/firc';
+	import {
+		formatFircSkipReason,
+		formatFircSubError,
+		getFircTunnelDiagnostic,
+	} from '$lib/utils/fircDiagnostics';
 	import { Button, Badge, Toggle, StatusDot, Modal } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import {
+		Activity,
 		Plus,
 		Trash2,
 		RefreshCw,
@@ -85,12 +96,27 @@
 		{ value: 'firefox', label: 'Firefox' },
 	];
 
+	function totalProbeLatencyMs(p?: FircTunnelProbeRow | null): number | null {
+		if (!p || !p.ok) return null;
+		if (p.firstByteMs != null) {
+			return (p.handshakeMs ?? 0) + p.firstByteMs;
+		}
+		if (p.handshakeMs != null) {
+			return p.handshakeMs;
+		}
+		return null;
+	}
+
 	let draft = $state<FircTunnel | null>(null);
 	let baselineJson = $state('');
 	let saving = $state(false);
 	let busyAction = $state<'' | 'probe' | 'refresh' | 'restart'>('');
+	let probeProgress = $state<{ done: number; total: number } | null>(null);
+	let probingNodeKey = $state<string | null>(null);
 	let nodeQuery = $state('');
 	let preview = $state<FircTunnelPreview | null>(null);
+	let previewError = $state('');
+	let filteredOpen = $state(false);
 
 	// Source modal state
 	let sourceModalOpen = $state(false);
@@ -221,7 +247,21 @@
 	}
 
 	function cloneTunnel(t: FircTunnel): FircTunnel {
-		return JSON.parse(JSON.stringify(t));
+		const copy = JSON.parse(JSON.stringify(t)) as FircTunnel;
+		copy.filter = copy.filter ?? '';
+		copy.filterExclude = copy.filterExclude ?? '';
+		return copy;
+	}
+
+	function softRegexWarning(pattern: string): string {
+		const res = softCompileGoRegex(pattern.trim());
+		if (res.lookaround) {
+			return m.firc_filter_warn_lookaround();
+		}
+		if (res.invalid) {
+			return m.firc_filter_warn_invalid();
+		}
+		return '';
 	}
 
 	$effect(() => {
@@ -230,6 +270,8 @@
 			draft = null;
 			baselineJson = '';
 			preview = null;
+			previewError = '';
+			filteredOpen = false;
 			nodeQuery = '';
 			return;
 		}
@@ -238,6 +280,9 @@
 			const c = cloneTunnel(found);
 			draft = c;
 			baselineJson = JSON.stringify(c);
+			preview = null;
+			previewError = '';
+			filteredOpen = false;
 		}
 	});
 
@@ -245,39 +290,126 @@
 	const liveState = $derived(
 		draft ? $fircTunnelsState.find((s) => s.id === draft!.id) : undefined,
 	);
+	const modalDiagnostic = $derived(
+		draft
+			? getFircTunnelDiagnostic({ tunnel: draft, live: liveState, status: $fircStatus })
+			: null,
+	);
 	const tunProbes = $derived(draft ? ($fircProbeResults[draft.id] ?? {}) : {});
+	const includeWarning = $derived(softRegexWarning(draft?.filter ?? ''));
+	const excludeWarning = $derived(softRegexWarning(draft?.filterExclude ?? ''));
+	const hasSubscriptionSource = $derived(
+		(draft?.sources ?? []).some((s) => s.kind === 'subscription'),
+	);
+
+	$effect(() => {
+		const tun = draft;
+		if (!tun || !hasSubscriptionSource) return;
+		if (includeWarning || excludeWarning) {
+			previewError = '';
+			return;
+		}
+		const saved = $fircTunnels.find((t) => t.id === tun.id);
+		const curInc = tun.filter ?? '';
+		const curExc = tun.filterExclude ?? '';
+		const savedInc = saved?.filter ?? '';
+		const savedExc = saved?.filterExclude ?? '';
+		const hasPreview = untrack(() => preview !== null);
+		if (!hasPreview && curInc === savedInc && curExc === savedExc) {
+			return;
+		}
+		const payload = cloneTunnel(tun);
+		const ctrl = new AbortController();
+		const timer = setTimeout(async () => {
+			try {
+				const res = await api.fircPreviewTunnel(payload, ctrl.signal);
+				if (ctrl.signal.aborted) return;
+				preview = res;
+				previewError = '';
+			} catch (e: unknown) {
+				if (e instanceof DOMException && e.name === 'AbortError') return;
+				previewError =
+					e instanceof Error ? e.message : m.firc_filter_preview_error();
+			}
+		}, 300);
+		return () => {
+			clearTimeout(timer);
+			ctrl.abort();
+		};
+	});
+
+	const filteredNodes = $derived.by((): FircTunnelFilteredNode[] => {
+		const raw =
+			preview !== null ? (preview.filteredNodes ?? []) : (liveState?.filteredNodes ?? []);
+		return raw.map((n) => ({
+			...n,
+			name: stripFircEmojis(n.name || n.key),
+			source: stripFircEmojis(n.source || ''),
+		}));
+	});
 
 	const nodes = $derived.by((): DisplayNode[] => {
 		if (!draft) return [];
 		const tun = draft;
 		const live = liveState?.nodes ?? [];
 		const prev = preview?.nodes ?? [];
+		const hiddenKeys = new Set(filteredNodes.map((n) => n.key));
 		const byKey = new Map<string, DisplayNode>();
 
-		for (const ln of live) {
-			byKey.set(ln.key, {
-				key: ln.key,
-				name: stripFircEmojis(ln.name || ln.key),
-				source: stripFircEmojis(ln.source || ''),
-				state: ln.state,
-				skipReason: ln.skipReason,
-				v6: ln.v6,
-			});
-		}
-
-		for (const pn of prev) {
-			if (!byKey.has(pn.key)) {
+		if (preview !== null) {
+			const liveByKey = new Map(live.map((ln) => [ln.key, ln]));
+			for (const pn of prev) {
+				const ln = liveByKey.get(pn.key);
 				byKey.set(pn.key, {
 					key: pn.key,
 					name: stripFircEmojis(pn.name || pn.key),
 					source: stripFircEmojis(pn.source || ''),
-					state: pn.excluded ? 'excluded' : pn.missing ? 'missing' : 'reserve',
-					skipReason: pn.skipReason,
+					state: ln
+						? ln.state
+						: pn.excluded
+							? 'excluded'
+							: pn.skipReason
+								? 'skipped'
+								: pn.missing
+									? 'missing'
+									: 'reserve',
+					skipReason: pn.skipReason ?? ln?.skipReason,
+					v6: ln?.v6,
 				});
+			}
+		} else {
+			for (const ln of live) {
+				byKey.set(ln.key, {
+					key: ln.key,
+					name: stripFircEmojis(ln.name || ln.key),
+					source: stripFircEmojis(ln.source || ''),
+					state: ln.state,
+					skipReason: ln.skipReason,
+					v6: ln.v6,
+				});
+			}
+
+			for (const pn of prev) {
+				if (!byKey.has(pn.key)) {
+					byKey.set(pn.key, {
+						key: pn.key,
+						name: stripFircEmojis(pn.name || pn.key),
+						source: stripFircEmojis(pn.source || ''),
+						state: pn.excluded
+							? 'excluded'
+							: pn.skipReason
+								? 'skipped'
+								: pn.missing
+									? 'missing'
+									: 'reserve',
+						skipReason: pn.skipReason,
+					});
+				}
 			}
 		}
 
 		for (const key of tun.order ?? []) {
+			if (hiddenKeys.has(key)) continue;
 			if (!byKey.has(key)) {
 				const rawName = key.includes(':') ? key.slice(key.indexOf(':') + 1) : key;
 				let decoded = rawName;
@@ -317,6 +449,8 @@
 		try {
 			const updated = cloneTunnel(draft);
 			updated.description = stripFircEmojis(updated.description ?? '');
+			updated.filter = (updated.filter ?? '').trim();
+			updated.filterExclude = (updated.filterExclude ?? '').trim();
 			const nextList = $fircTunnels.map((t) => (t.id === updated.id ? updated : t));
 			if (!nextList.some((t) => t.id === updated.id)) {
 				nextList.push(updated);
@@ -340,20 +474,68 @@
 	}
 
 	async function handleProbe() {
-		if (!draft || busyAction) return;
+		if (!draft || busyAction || probingNodeKey) return;
+		const targetId = draft.id;
+		const targetDev = draft.device;
 		busyAction = 'probe';
+		probeProgress = null;
 		try {
-			const rows = await api.fircProbeTunnel({ id: draft.id, tunnel: draft });
-			const nextMap: Record<string, FircTunnelProbeRow> = { ...tunProbes };
-			for (const row of rows ?? []) {
-				nextMap[row.key] = row;
-			}
-			fircProbeResults.update((all) => ({ ...all, [draft!.id]: nextMap }));
-			notifications.success(`Проверка задержки узлов ${draft.device} завершена`);
+			const payload = isDirty ? { tunnel: draft } : { id: targetId };
+			const rows = await api.fircProbeTunnel(payload, {
+				onProgress: (partialRows, total) => {
+					if (!draft || draft.id !== targetId) return;
+					probeProgress = { done: partialRows.length, total };
+					if (partialRows.length > 0) {
+						fircProbeResults.update((all) => {
+							const nextMap: Record<string, FircTunnelProbeRow> = { ...(all[targetId] ?? {}) };
+							for (const r of partialRows) {
+								nextMap[r.key] = r;
+							}
+							return { ...all, [targetId]: nextMap };
+						});
+					}
+				},
+			});
+			fircProbeResults.update((all) => {
+				const nextMap: Record<string, FircTunnelProbeRow> = { ...(all[targetId] ?? {}) };
+				for (const row of rows ?? []) {
+					nextMap[row.key] = row;
+				}
+				return { ...all, [targetId]: nextMap };
+			});
+			notifications.success(`Проверка задержки узлов ${targetDev} завершена`);
 		} catch (e: unknown) {
 			notifications.error((e instanceof Error ? e.message : undefined) ?? 'Ошибка проверки узлов');
 		} finally {
 			busyAction = '';
+			probeProgress = null;
+		}
+	}
+
+	async function handleProbeNode(nodeKey: string) {
+		if (!draft || busyAction || probingNodeKey) return;
+		const targetId = draft.id;
+		const targetDev = draft.device;
+		probingNodeKey = nodeKey;
+		try {
+			const payload = isDirty
+				? { tunnel: draft, keys: [nodeKey] }
+				: { id: targetId, keys: [nodeKey] };
+			const rows = await api.fircProbeTunnel(payload);
+			fircProbeResults.update((all) => {
+				const nextMap: Record<string, FircTunnelProbeRow> = { ...(all[targetId] ?? {}) };
+				for (const row of rows ?? []) {
+					nextMap[row.key] = row;
+				}
+				return { ...all, [targetId]: nextMap };
+			});
+		} catch (e: unknown) {
+			notifications.error(
+				(e instanceof Error ? e.message : undefined) ??
+					m.firc_probe_node_error({ device: targetDev }),
+			);
+		} finally {
+			probingNodeKey = null;
 		}
 	}
 
@@ -393,9 +575,9 @@
 	function sortNodesByLatency() {
 		if (!draft) return;
 		const score = (n: DisplayNode): number => {
-			const p = tunProbes[n.key];
-			if (p && p.ok && (p.firstByteMs || p.handshakeMs)) {
-				return p.firstByteMs ?? p.handshakeMs ?? 999999;
+			const total = totalProbeLatencyMs(tunProbes[n.key]);
+			if (total !== null) {
+				return total;
 			}
 			if (n.state === 'active') return 1;
 			if (n.state === 'reserve') return 50000;
@@ -538,7 +720,7 @@
 		while (usedPorts.has(port)) port++;
 		const inb: FircTunnelInbound = {
 			port,
-			listen: '0.0.0.0',
+			listen: 'br0',
 			node: FIRC_TUNNEL_NODE_POOL,
 			user: '',
 			password: '',
@@ -567,7 +749,9 @@
 							? 'muted'
 							: liveState?.status === 'up'
 								? 'success'
-								: 'warning'}
+								: modalDiagnostic?.tone === 'error'
+									? 'error'
+									: 'warning'}
 						size="md"
 					/>
 					<Badge variant="accent" size="sm" mono>{draft.device}</Badge>
@@ -599,6 +783,19 @@
 					</Button>
 				</div>
 			</div>
+
+			{#if modalDiagnostic?.reason}
+				<div
+					class="modal-diag-banner"
+					class:is-error={modalDiagnostic.tone === 'error'}
+					class:is-warning={modalDiagnostic.tone === 'warning'}
+					class:is-info={modalDiagnostic.tone === 'info'}
+					role="alert"
+					data-testid="firc-modal-diagnostic"
+				>
+					{modalDiagnostic.reason}
+				</div>
+			{/if}
 
 			<div class="tunnel-subtabs">
 				<button
@@ -656,9 +853,10 @@
 								variant="secondary"
 								size="sm"
 								loading={busyAction === 'probe'}
+								disabled={Boolean(busyAction || probingNodeKey)}
 								onclick={handleProbe}
 							>
-								Проверить задержку
+								Проверить задержку{#if probeProgress}{' '}({probeProgress.done}/{probeProgress.total}){/if}
 							</Button>
 							<Button variant="secondary" size="sm" onclick={sortNodesByLatency}>
 								Сортировать по пингу
@@ -675,9 +873,17 @@
 						</div>
 					</div>
 
+					{#if previewError}
+						<div class="preview-err">{previewError}</div>
+					{/if}
+
 					{#if nodes.length === 0}
 						<div class="sub-empty">
-							Нет узлов. Перейдите во вкладку «Подписки и ссылки», чтобы добавить подписку или ссылку vless://.
+							{#if filteredNodes.length > 0}
+								{m.firc_filter_all_nodes_hidden()}
+							{:else}
+								Нет узлов. Перейдите во вкладку «Подписки и ссылки», чтобы добавить подписку или ссылку vless://.
+							{/if}
 						</div>
 					{:else}
 						<div class="nodes-table-wrap">
@@ -739,22 +945,65 @@
 														<Badge variant="error" size="xs" title={node.skipReason}>
 															Недоступен
 														</Badge>
+													{:else if node.state === 'skipped'}
+														<div class="node-status-stack">
+															<Badge variant="warning" size="xs" title={node.skipReason}>
+																{m.firc_node_state_skipped()}
+															</Badge>
+															{#if node.skipReason}
+																<span class="node-skip-reason" title={node.skipReason}>
+																	{formatFircSkipReason(node.skipReason)}
+																</span>
+															{/if}
+														</div>
 													{:else}
 														<Badge variant="muted" size="xs">Ожидание</Badge>
 													{/if}
 												</td>
 												<td class="mono-cell">
-													{#if pr}
-														{#if !pr.ok}
-															<span class="probe-err" title={pr.why}>Таймаут</span>
-														{:else}
-															<span class="probe-ok">
-																{pr.firstByteMs ?? pr.handshakeMs ?? 0} мс
-															</span>
+													<div class="probe-cell">
+														<div class="probe-vals">
+															{#if pr}
+																{@const totalMs = totalProbeLatencyMs(pr)}
+																{#if !pr.ok}
+																	<span class="probe-err" title={pr.why}>Таймаут</span>
+																{:else if totalMs !== null}
+																	<span
+																		class="probe-ok"
+																		title={m.firc_probe_total_title()}
+																	>
+																		{totalMs} мс
+																	</span>
+																	{#if pr.handshakeMs != null && pr.firstByteMs != null}
+																		<span class="probe-breakdown">
+																			{m.firc_probe_breakdown({
+																				connect: String(pr.handshakeMs),
+																				reply: String(pr.firstByteMs),
+																			})}
+																		</span>
+																	{/if}
+																{/if}
+															{:else}
+																<span class="muted-dash">—</span>
+															{/if}
+														</div>
+														{#if !node.skipReason}
+															<button
+																type="button"
+																class="mini-icon-btn probe-node-btn"
+																title={m.firc_probe_single_title()}
+																aria-label={m.firc_probe_single_aria({ name: node.name })}
+																disabled={Boolean(busyAction || probingNodeKey)}
+																onclick={() => handleProbeNode(node.key)}
+															>
+																{#if probingNodeKey === node.key}
+																	<span class="spin"><RefreshCw size={12} /></span>
+																{:else}
+																	<Activity size={12} />
+																{/if}
+															</button>
 														{/if}
-													{:else}
-														<span class="muted-dash">—</span>
-													{/if}
+													</div>
 												</td>
 												<td style="text-align: right;">
 													<Toggle
@@ -770,6 +1019,35 @@
 								</tbody>
 							</table>
 						</div>
+					{/if}
+
+					{#if filteredNodes.length > 0}
+						<section class="filtered-section">
+							<button
+								type="button"
+								class="filtered-toggle"
+								aria-expanded={filteredOpen}
+								onclick={() => (filteredOpen = !filteredOpen)}
+							>
+								<span class="lbl">{m.firc_filter_hidden_toggle({ count: filteredNodes.length })}</span>
+								<span class="filtered-chevron" class:open={filteredOpen} aria-hidden="true">▸</span>
+							</button>
+							{#if filteredOpen}
+								<div class="hint">
+									{m.firc_filter_hidden_hint()}
+								</div>
+								<div class="filtered-grid">
+									{#each filteredNodes as fn (fn.key)}
+										<div class="filtered-card">
+											<div class="filtered-title">{fn.name || fn.key}</div>
+											{#if fn.source}
+												<div class="filtered-meta mono">{fn.source}</div>
+											{/if}
+										</div>
+									{/each}
+								</div>
+							{/if}
+						</section>
 					{/if}
 				</div>
 			{/if}
@@ -812,6 +1090,13 @@
 					{:else}
 						<div class="sources-list">
 							{#each draft.sources as src (src.id)}
+								{@const subLive =
+									src.kind === 'subscription'
+										? (liveState?.subscriptions?.find((s) => s.name === src.name) ??
+											(liveState?.subscriptions?.length === 1
+												? liveState.subscriptions[0]
+												: undefined))
+										: undefined}
 								<div class="source-row">
 									<div class="source-main">
 										<div class="source-title-line">
@@ -833,8 +1118,13 @@
 												</Badge>
 											{/if}
 											{#if src.kind === 'subscription'}
-												{@const subLive = liveState?.subscriptions?.find((s) => s.name === src.name) ?? (liveState?.subscriptions?.length === 1 ? liveState.subscriptions[0] : undefined)}
 												{@const usageText = formatSubUsage(subLive?.usage ?? undefined)}
+												{#if subLive?.fetching}
+													<Badge variant="info" size="xs">{m.firc_sub_fetching_badge()}</Badge>
+												{/if}
+												{#if subLive && subLive.nodes > 0}
+													<Badge variant="default" size="xs" mono>{m.firc_sub_nodes_badge({ count: subLive.nodes })}</Badge>
+												{/if}
 												{#if usageText}
 													<Badge variant="default" size="xs" mono title="Использование трафика и срок подписки (Subscription-Userinfo)">
 														{usageText}
@@ -849,6 +1139,16 @@
 												bind:value={src.url}
 												placeholder="https://... или happ://crypt..."
 											/>
+											{#if subLive?.error}
+												<div
+													class="source-error-note"
+													role="alert"
+													title={subLive.error}
+													data-testid="firc-source-error"
+												>
+													{formatFircSubError(subLive.error)}
+												</div>
+											{/if}
 										{:else}
 											<input
 												class="inp mono compact-inp"
@@ -879,6 +1179,45 @@
 							{/each}
 						</div>
 					{/if}
+
+					<div class="filter-section">
+						<div class="filter-section-title">{m.firc_filter_section_title()}</div>
+						<div class="field-grid-2">
+							<div class="field">
+								<label class="lbl" for="firc-filter-include">{m.firc_filter_include_label()}</label>
+								<input
+									id="firc-filter-include"
+									class="inp mono"
+									type="text"
+									bind:value={draft.filter}
+									placeholder="(?i)(DE|NL|🇩🇪)"
+									autocomplete="off"
+									spellcheck="false"
+								/>
+								{#if includeWarning}
+									<span class="filter-warn">{includeWarning}</span>
+								{/if}
+							</div>
+							<div class="field">
+								<label class="lbl" for="firc-filter-exclude">{m.firc_filter_exclude_label()}</label>
+								<input
+									id="firc-filter-exclude"
+									class="inp mono"
+									type="text"
+									bind:value={draft.filterExclude}
+									placeholder={m.firc_filter_exclude_example()}
+									autocomplete="off"
+									spellcheck="false"
+								/>
+								{#if excludeWarning}
+									<span class="filter-warn">{excludeWarning}</span>
+								{/if}
+							</div>
+						</div>
+						<div class="filter-hint">
+							{m.firc_filter_hint_before()}<code class="mono">(?!...)</code>{m.firc_filter_hint_mid()}<code class="mono">{m.firc_filter_exclude_example()}</code>{m.firc_filter_hint_after()}
+						</div>
+					</div>
 				</div>
 			{/if}
 
@@ -1037,6 +1376,7 @@
 											id={`inb-l-${idx}`}
 											class="inp mono compact-inp"
 											type="text"
+											placeholder={m.firc_inbound_listen_placeholder()}
 											bind:value={inb.listen}
 										/>
 									</div>
@@ -1605,5 +1945,181 @@
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
+	}
+	.probe-cell {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 6px;
+		min-width: 96px;
+	}
+	.probe-vals {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		line-height: 1.25;
+	}
+	.probe-breakdown {
+		font-size: 10px;
+		color: var(--text-muted);
+		white-space: nowrap;
+	}
+	.probe-node-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 3px;
+		border-radius: 4px;
+		flex-shrink: 0;
+	}
+	.probe-node-btn:hover:not(:disabled) {
+		background: var(--bg-tertiary);
+	}
+	.spin {
+		display: inline-flex;
+		animation: firc-probe-spin 1s linear infinite;
+	}
+	@keyframes firc-probe-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	.modal-diag-banner {
+		padding: 8px 12px;
+		border-radius: 8px;
+		border: 1px solid var(--border);
+		background: var(--bg-tertiary);
+		color: var(--text-secondary);
+		font-size: 12px;
+		line-height: 1.4;
+		overflow-wrap: anywhere;
+	}
+	.modal-diag-banner.is-error {
+		background: var(--color-error-tint, rgba(247, 118, 142, 0.14));
+		border-color: var(--color-error-border, rgba(247, 118, 142, 0.4));
+		color: var(--color-error, #f7768e);
+	}
+	.modal-diag-banner.is-warning {
+		background: var(--color-warning-tint, rgba(224, 175, 104, 0.14));
+		border-color: var(--color-warning-border, rgba(224, 175, 104, 0.4));
+		color: var(--color-warning, #e0af68);
+	}
+	.modal-diag-banner.is-info {
+		background: var(--color-info-tint, rgba(125, 207, 255, 0.14));
+		border-color: var(--color-info-border, rgba(125, 207, 255, 0.4));
+		color: var(--color-info, #7dcfff);
+	}
+	.node-status-stack {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 3px;
+	}
+	.node-skip-reason {
+		font-size: 11px;
+		line-height: 1.3;
+		color: var(--color-warning, #e0af68);
+		overflow-wrap: anywhere;
+	}
+	.source-error-note {
+		padding: 6px 8px;
+		border-radius: 6px;
+		border: 1px solid var(--color-error-border, rgba(247, 118, 142, 0.4));
+		background: var(--color-error-tint, rgba(247, 118, 142, 0.14));
+		color: var(--color-error, #f7768e);
+		font-size: 11.5px;
+		line-height: 1.35;
+		overflow-wrap: anywhere;
+	}
+	.filter-section {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 12px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--bg-tertiary);
+	}
+	.filter-section-title {
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--text-muted);
+	}
+	.filter-warn {
+		font-size: 11px;
+		color: var(--color-warning, #e0af68);
+	}
+	.filter-hint {
+		font-size: 11px;
+		color: var(--text-muted);
+		line-height: 1.45;
+	}
+	.preview-err {
+		padding: 8px 10px;
+		border-radius: 6px;
+		border: 1px solid color-mix(in srgb, var(--color-error, #f7768e) 45%, var(--border));
+		background: color-mix(in srgb, var(--color-error, #f7768e) 10%, var(--bg-tertiary));
+		color: var(--color-error, #f7768e);
+		font-size: 11.5px;
+	}
+	.filtered-section {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 10px 12px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--bg-tertiary);
+	}
+	.filtered-toggle {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		width: 100%;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		cursor: pointer;
+		text-align: left;
+	}
+	.filtered-chevron {
+		font-size: 12px;
+		color: var(--text-muted);
+		transition: transform 0.15s ease;
+	}
+	.filtered-chevron.open {
+		transform: rotate(90deg);
+	}
+	.filtered-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+		gap: 6px;
+		max-height: 180px;
+		overflow-y: auto;
+	}
+	.filtered-card {
+		padding: 6px 8px;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		background: var(--bg-primary);
+		opacity: 0.8;
+		min-width: 0;
+	}
+	.filtered-title {
+		font-size: 11.5px;
+		font-weight: 500;
+		color: var(--text-primary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.filtered-meta {
+		font-size: 10.5px;
+		color: var(--text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 </style>

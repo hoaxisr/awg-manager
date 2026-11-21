@@ -94,6 +94,8 @@ typedef struct fp_session {
     char            orig_host[256];
     uint16_t        port;
     bool            vless_framed; /* true if opened with a VLESS stream header */
+    bool            is_udp;
+    struct sockaddr_in udp_dest;
     fp_egress_snap_t egress_cfg;
 
     pthread_mutex_t up_mu;
@@ -122,6 +124,9 @@ typedef struct fp_session {
     size_t          unacked_cap;
     bool            target_eof;
     bool            target_reset;
+    uint8_t        *udp_up_buf;
+    size_t          udp_up_len;
+    size_t          udp_up_cap;
 } fp_session_t;
 
 /*
@@ -717,18 +722,36 @@ static void fp_reader_finish_locked(fp_session_t *sess) {
     pthread_cond_broadcast(&sess->cond);
 }
 
+static bool sock_err_is_retryable(bool *out_is_eintr);
+
 static void *fp_target_reader_thread(void *arg) {
     fp_session_t *sess = (fp_session_t *)arg;
+
+    pthread_mutex_lock(&sess->mu);
+    bool is_udp = sess->is_udp;
+    pthread_mutex_unlock(&sess->mu);
+
+    uint8_t *udp_rx = NULL;
+    if (is_udp) {
+        udp_rx = (uint8_t *)malloc(2 + 65535);
+        if (!udp_rx) {
+            pthread_mutex_lock(&sess->mu);
+            sess->target_reset = true;
+            fp_reader_finish_locked(sess);
+            pthread_mutex_unlock(&sess->mu);
+            return NULL;
+        }
+    }
 
     while (1) {
         pthread_mutex_lock(&sess->mu);
         while (!sess->closed && sess->target_fd >= 0) {
-            size_t used_sess = sess->unacked_len + sess->pending_up_bytes;
+            size_t used_sess = sess->unacked_len + sess->pending_up_bytes + sess->udp_up_cap;
             size_t free_in_cap = (sess->unacked_cap > sess->unacked_len) ? (sess->unacked_cap - sess->unacked_len) : 0;
             size_t max_glob = __atomic_load_n(&g_fp_max_global_buf, __ATOMIC_ACQUIRE);
             bool sess_full = (used_sess >= FP_MAX_SESS_BUF);
             /* Allow reading into already-reserved free capacity even when global budget is full */
-            bool glob_full_and_no_local_cap = (free_in_cap == 0 && fp_engine_get_global_buf_bytes() >= max_glob);
+            bool glob_full_and_no_local_cap = (!is_udp && free_in_cap == 0 && fp_engine_get_global_buf_bytes() >= max_glob);
             if (!sess_full && !glob_full_and_no_local_cap) {
                 break;
             }
@@ -759,6 +782,35 @@ static void *fp_target_reader_thread(void *arg) {
         }
         if (pr == 0) {
             continue;
+        }
+
+        if (is_udp) {
+            ssize_t n = recv(fd, (char *)(udp_rx + 2), 65535, MSG_DONTWAIT);
+            if (n > 0) {
+                udp_rx[0] = (uint8_t)(((size_t)n >> 8) & 0xFF);
+                udp_rx[1] = (uint8_t)((size_t)n & 0xFF);
+                pthread_mutex_lock(&sess->mu);
+                if (!sess->closed && sess->target_fd >= 0) {
+                    if (fp_session_append_down_locked(sess, udp_rx, (size_t)n + 2) == 0) {
+                        sess->last_active_ms = now_ms();
+                        pthread_cond_broadcast(&sess->cond);
+                    }
+                }
+                pthread_mutex_unlock(&sess->mu);
+                continue;
+            }
+            if (n == 0) {
+                continue;
+            }
+            bool retryable = false;
+            if (sock_err_is_retryable(&retryable) || retryable ||
+                errno == ECONNREFUSED || errno == EHOSTUNREACH || errno == ENETUNREACH || errno == EMSGSIZE) {
+                continue;
+            }
+            pthread_mutex_lock(&sess->mu);
+            sess->target_reset = true;
+            pthread_mutex_unlock(&sess->mu);
+            break;
         }
 
         pthread_mutex_lock(&sess->mu);
@@ -815,6 +867,8 @@ static void *fp_target_reader_thread(void *arg) {
         break;
     }
 
+    if (udp_rx) free(udp_rx);
+
     void (*exit_hook)(void) = __atomic_load_n(&g_fp_reader_exit_hook, __ATOMIC_ACQUIRE);
     if (exit_hook) {
         exit_hook();
@@ -850,7 +904,9 @@ static void close_fp_session_locked(fp_session_t *sess) {
     sess->active = false;
     sess->dialing = false;
     if (sess->target_fd >= 0) {
-        shutdown(sess->target_fd, SHUT_RDWR);
+        if (!sess->is_udp) {
+            shutdown(sess->target_fd, SHUT_RDWR);
+        }
         if (sess->ref_count == 0 && !sess->reader_running) {
             close(sess->target_fd);
             sess->target_fd = -1;
@@ -873,6 +929,13 @@ static void close_fp_session_locked(fp_session_t *sess) {
     }
     sess->unacked_len = 0;
     sess->unacked_cap = 0;
+    if (sess->udp_up_buf) {
+        fp_global_buf_release(sess->udp_up_cap);
+        free(sess->udp_up_buf);
+        sess->udp_up_buf = NULL;
+    }
+    sess->udp_up_len = 0;
+    sess->udp_up_cap = 0;
     pthread_cond_broadcast(&sess->cond);
 }
 
@@ -1153,6 +1216,162 @@ static int write_cancellable(fp_session_t *sess, uint64_t open_gen, int fd, cons
     return 0;
 }
 
+static int fp_udp_sendto_once(int tfd, const struct sockaddr_in *dest, const uint8_t *pkt, size_t dlen) {
+    if (dlen == 0) return 0;
+    for (int retries = 0; retries < 3; retries++) {
+        ssize_t n = sendto(tfd, (const char *)pkt,
+#ifdef _WIN32
+                           (int)dlen,
+#else
+                           dlen,
+#endif
+                           0, (const struct sockaddr *)dest, sizeof(*dest));
+        if (n >= 0) return 0;
+        bool is_eintr = false;
+        if (sock_err_is_retryable(&is_eintr) && is_eintr) continue;
+        if (errno == EBADF || errno == ENOTSOCK || errno == EACCES) return -1;
+        /* Transient EAGAIN/ENOBUFS/EMSGSIZE/unreachable on UDP: drop gracefully like standard UDP */
+        return 0;
+    }
+    return 0;
+}
+
+/*
+ * Feed length-prefixed ([u16_be len][payload]) UDP datagrams into an active UDP session and
+ * transmit every complete datagram without holding sess->mu during sendto().
+ * Returns 0 on success, -2 on recoverable buffer/allocation limit, -1 on fatal session/socket error.
+ */
+static int fp_udp_feed_and_send(fp_session_t *sess, uint64_t expected_gen, int tfd, const uint8_t *data, size_t len) {
+    if (len == 0) return 0;
+    if (tfd < 0 || !data) return -1;
+
+    pthread_mutex_lock(&sess->mu);
+    if (sess->closed || sess->generation != expected_gen ||
+        sess->cred_gen != __atomic_load_n(&g_fp_cred_gen, __ATOMIC_ACQUIRE)) {
+        pthread_mutex_unlock(&sess->mu);
+        return -1;
+    }
+    struct sockaddr_in dest = sess->udp_dest;
+    size_t already_len = sess->udp_up_len;
+    pthread_mutex_unlock(&sess->mu);
+
+    size_t pos = 0;
+    if (already_len == 0) {
+        while (pos + 2 <= len) {
+            uint16_t dlen = ((uint16_t)data[pos] << 8) | data[pos + 1];
+            if (pos + 2 + (size_t)dlen > len) break;
+            if (dlen > 0) {
+                pthread_mutex_lock(&sess->mu);
+                bool ok = !sess->closed && sess->generation == expected_gen &&
+                          sess->cred_gen == __atomic_load_n(&g_fp_cred_gen, __ATOMIC_ACQUIRE);
+                pthread_mutex_unlock(&sess->mu);
+                if (!ok) return -1;
+                if (fp_udp_sendto_once(tfd, &dest, data + pos + 2, dlen) < 0) return -1;
+            }
+            pos += 2 + (size_t)dlen;
+        }
+        if (pos == len) return 0;
+    }
+
+    const uint8_t *rem = data + pos;
+    size_t rem_len = len - pos;
+
+    pthread_mutex_lock(&sess->mu);
+    if (sess->closed || sess->generation != expected_gen ||
+        sess->cred_gen != __atomic_load_n(&g_fp_cred_gen, __ATOMIC_ACQUIRE)) {
+        pthread_mutex_unlock(&sess->mu);
+        return -1;
+    }
+    if (rem_len > SIZE_MAX - sess->udp_up_len) {
+        pthread_mutex_unlock(&sess->mu);
+        return -1;
+    }
+    size_t needed = sess->udp_up_len + rem_len;
+    if (needed > sess->udp_up_cap) {
+        if (needed > FP_MAX_SESS_BUF ||
+            sess->unacked_len + sess->pending_up_bytes > FP_MAX_SESS_BUF - needed) {
+            pthread_mutex_unlock(&sess->mu);
+            return -2;
+        }
+        size_t new_cap = sess->udp_up_cap ? sess->udp_up_cap * 2 : 4096;
+        while (new_cap < needed) {
+            if (new_cap >= FP_MAX_SESS_BUF / 2) {
+                new_cap = needed;
+                break;
+            }
+            new_cap *= 2;
+        }
+        size_t sess_room = FP_MAX_SESS_BUF - (sess->unacked_len + sess->pending_up_bytes);
+        if (new_cap > sess_room) new_cap = sess_room;
+        if (new_cap < needed) {
+            pthread_mutex_unlock(&sess->mu);
+            return -2;
+        }
+        size_t delta = new_cap - sess->udp_up_cap;
+        if (!fp_global_buf_try_reserve(delta)) {
+            pthread_mutex_unlock(&sess->mu);
+            return -2;
+        }
+        uint8_t *nb = (uint8_t *)fp_realloc(sess->udp_up_buf, new_cap);
+        if (!nb) {
+            fp_global_buf_release(delta);
+            pthread_mutex_unlock(&sess->mu);
+            return -2;
+        }
+        sess->udp_up_buf = nb;
+        sess->udp_up_cap = new_cap;
+    }
+    memcpy(sess->udp_up_buf + sess->udp_up_len, rem, rem_len);
+    sess->udp_up_len += rem_len;
+
+    while (!sess->closed && sess->generation == expected_gen &&
+           sess->cred_gen == __atomic_load_n(&g_fp_cred_gen, __ATOMIC_ACQUIRE) &&
+           sess->udp_up_len >= 2) {
+        uint16_t dlen = ((uint16_t)sess->udp_up_buf[0] << 8) | sess->udp_up_buf[1];
+        size_t frame_len = 2 + (size_t)dlen;
+        if (sess->udp_up_len < frame_len) break;
+
+        uint8_t small_pkt[2048];
+        uint8_t *heap_pkt = NULL;
+        uint8_t *pkt_copy = small_pkt;
+        if (dlen > sizeof(small_pkt)) {
+            heap_pkt = (uint8_t *)malloc(dlen);
+            if (!heap_pkt) {
+                pthread_mutex_unlock(&sess->mu);
+                return -2;
+            }
+            pkt_copy = heap_pkt;
+        }
+        if (dlen > 0) {
+            memcpy(pkt_copy, sess->udp_up_buf + 2, dlen);
+        }
+        size_t left = sess->udp_up_len - frame_len;
+        if (left > 0) {
+            memmove(sess->udp_up_buf, sess->udp_up_buf + frame_len, left);
+        }
+        sess->udp_up_len = left;
+        pthread_mutex_unlock(&sess->mu);
+
+        int send_rc = (dlen > 0) ? fp_udp_sendto_once(tfd, &dest, pkt_copy, dlen) : 0;
+        if (heap_pkt) free(heap_pkt);
+        if (send_rc < 0) return -1;
+
+        pthread_mutex_lock(&sess->mu);
+    }
+
+    if (sess->udp_up_len == 0 && sess->udp_up_buf) {
+        fp_global_buf_release(sess->udp_up_cap);
+        free(sess->udp_up_buf);
+        sess->udp_up_buf = NULL;
+        sess->udp_up_cap = 0;
+    }
+
+    bool still_valid = !sess->closed && sess->generation == expected_gen &&
+                       sess->cred_gen == __atomic_load_n(&g_fp_cred_gen, __ATOMIC_ACQUIRE);
+    pthread_mutex_unlock(&sess->mu);
+    return still_valid ? 0 : -1;
+}
+
 static int handle_fp_open(int client_fd, const http_req_t *http_req, const xhttpd_config_t *cfg,
                           const char *client_id, const uint8_t auth_secret[32], const fp_req_env_t *req) {
     fp_resp_env_t resp;
@@ -1167,27 +1386,43 @@ static int handle_fp_open(int client_fd, const http_req_t *http_req, const xhttp
     char host[256] = {0};
     uint16_t port = 0;
     bool vless_framed = false;
+    bool is_udp = false;
+    struct sockaddr_in udp_dest;
+    memset(&udp_dest, 0, sizeof(udp_dest));
     const uint8_t *initial_up = NULL;
     size_t initial_up_len = 0;
 
-    /* Support both VLESS header inside FPOpOpen and plain "host:port" string */
+    /* Support both VLESS header inside FPOpOpen and plain "host:port" / "udp://host:port" string */
     vless_req_t vreq;
     if (req->payload[0] == 0x00 && req->payload_len >= 22 &&
         parse_vless_header(req->payload, req->payload_len, cfg, &vreq) == 0) {
-        if (vreq.command != VLESS_CMD_TCP || !vreq.host[0] || vreq.port == 0) {
+        if ((vreq.command != VLESS_CMD_TCP && vreq.command != VLESS_CMD_UDP) || !vreq.host[0] || vreq.port == 0) {
             resp.status = FP_STATUS_BAD_REQUEST;
             return send_fp_response(client_fd, 400, "Bad Request", &resp, http_req->keep_alive);
         }
         snprintf(host, sizeof(host), "%s", vreq.host);
         port = vreq.port;
         vless_framed = true;
+        is_udp = (vreq.command == VLESS_CMD_UDP);
         if (req->payload_len > vreq.header_len) {
             initial_up = req->payload + vreq.header_len;
             initial_up_len = req->payload_len - vreq.header_len;
         }
+    } else if (req->payload_len > 6 && strncasecmp((const char *)req->payload, "udp://", 6) == 0) {
+        is_udp = true;
+        if (parse_host_port_str(req->payload + 6, req->payload_len - 6, host, sizeof(host), &port) != 0) {
+            resp.status = FP_STATUS_BAD_REQUEST;
+            return send_fp_response(client_fd, 400, "Bad Request", &resp, http_req->keep_alive);
+        }
     } else if (parse_host_port_str(req->payload, req->payload_len, host, sizeof(host), &port) != 0) {
         resp.status = FP_STATUS_BAD_REQUEST;
         return send_fp_response(client_fd, 400, "Bad Request", &resp, http_req->keep_alive);
+    }
+
+    if (is_udp && port == 443) {
+        /* Reject QUIC (UDP 443) so clients fall back to TCP 443 */
+        resp.status = FP_STATUS_FORBIDDEN;
+        return send_fp_response(client_fd, 403, "Forbidden", &resp, http_req->keep_alive);
     }
 
     if (!(cfg->egress_mode == EGRESS_MODE_ROUTER && port == 53 && cfg->dns_proxy_host[0])) {
@@ -1260,7 +1495,7 @@ static int handle_fp_open(int client_fd, const http_req_t *http_req, const xhttp
         return send_fp_response(client_fd, 503, "Service Unavailable", &resp, http_req->keep_alive);
     }
 
-    bool defer_dial = (initial_up_len == 0) && should_defer_dial_for_sniff(host, port, cfg->egress_mode);
+    bool defer_dial = !is_udp && (initial_up_len == 0) && should_defer_dial_for_sniff(host, port, cfg->egress_mode);
 
     fp_session_t *sess = &g_fp_sessions[free_slot];
     pthread_mutex_lock(&sess->mu);
@@ -1286,6 +1521,11 @@ static int handle_fp_open(int client_fd, const http_req_t *http_req, const xhttp
     snprintf(sess->orig_host, sizeof(sess->orig_host), "%s", host);
     sess->port = port;
     sess->vless_framed = vless_framed;
+    sess->is_udp = is_udp;
+    sess->udp_dest = udp_dest;
+    sess->udp_up_buf = NULL;
+    sess->udp_up_len = 0;
+    sess->udp_up_cap = 0;
     fp_snapshot_egress(&sess->egress_cfg, cfg);
     sess->last_active_ms = now_ms();
     sess->next_up_offset = 0;
@@ -1345,7 +1585,9 @@ static int handle_fp_open(int client_fd, const http_req_t *http_req, const xhttp
     pthread_mutex_unlock(&g_fp_table_mu);
 
     if (!defer_dial) {
-        int tfd = dial_target_tcp(host, port, initial_up, initial_up_len, cfg, 8000);
+        int tfd = is_udp
+            ? dial_target_udp(host, port, cfg, &udp_dest)
+            : dial_target_tcp(host, port, initial_up, initial_up_len, cfg, 8000);
         if (tfd < 0) {
             pthread_mutex_lock(&g_fp_table_mu);
             pthread_mutex_lock(&sess->mu);
@@ -1391,14 +1633,21 @@ static int handle_fp_open(int client_fd, const http_req_t *http_req, const xhttp
 
         /* Register pending socket in session for cancellation/shutdown if revoked during write */
         sess->target_fd = tfd;
+        if (is_udp) {
+            sess->udp_dest = udp_dest;
+        }
         pthread_mutex_unlock(&sess->mu);
         pthread_mutex_unlock(&g_fp_table_mu);
 
         /* Cancellable bounded initial write outside mutexes */
         int write_rc = 0;
         if (initial_up_len > 0) {
-            int write_timeout_ms = __atomic_load_n(&g_fp_initial_write_timeout_ms, __ATOMIC_ACQUIRE);
-            write_rc = write_cancellable(sess, open_gen, tfd, initial_up, initial_up_len, write_timeout_ms);
+            if (is_udp) {
+                write_rc = fp_udp_feed_and_send(sess, open_gen, tfd, initial_up, initial_up_len);
+            } else {
+                int write_timeout_ms = __atomic_load_n(&g_fp_initial_write_timeout_ms, __ATOMIC_ACQUIRE);
+                write_rc = write_cancellable(sess, open_gen, tfd, initial_up, initial_up_len, write_timeout_ms);
+            }
         }
 
         void (*post_hook)(void) = __atomic_load_n(&g_fp_test_post_dial_hook, __ATOMIC_ACQUIRE);
@@ -1728,26 +1977,55 @@ static int handle_fp_up(int client_fd, const http_req_t *http_req, const char *c
             memcpy(eresp.sid, req->sid, 16);
             return send_fp_response(client_fd, 410, "Gone", &eresp, http_req->keep_alive);
         }
+        bool is_udp = sess->is_udp;
         int tfd = sess->target_fd;
         pthread_mutex_unlock(&sess->mu);
 
-        int up_write_to = __atomic_load_n(&g_fp_initial_write_timeout_ms, __ATOMIC_ACQUIRE);
-        if (up_write_to <= 0) up_write_to = 15000;
-        if (tfd < 0 || write_cancellable(sess, expected_gen, tfd, to_write, to_write_len, up_write_to) < 0) {
+        if (is_udp) {
+            int urc = (tfd < 0) ? -1 : fp_udp_feed_and_send(sess, expected_gen, tfd, to_write, to_write_len);
             free(to_write);
-            pthread_mutex_lock(&sess->mu);
-            sess->target_reset = true;
-            fp_resp_env_t resp;
-            uint8_t *alloc_p = NULL;
-            build_down_slice_locked(sess, req->want_down_offset, req->max_down_bytes, &resp, &alloc_p);
-            pthread_mutex_unlock(&sess->mu);
-            pthread_mutex_unlock(&sess->up_mu);
-            release_fp_session(sess);
-            int rc = send_fp_response(client_fd, 200, "OK", &resp, http_req->keep_alive);
-            if (alloc_p) free(alloc_p);
-            return rc;
+            if (urc == -2) {
+                pthread_mutex_lock(&sess->mu);
+                uint64_t acked = sess->next_up_offset;
+                pthread_mutex_unlock(&sess->mu);
+                pthread_mutex_unlock(&sess->up_mu);
+                release_fp_session(sess);
+                fp_resp_env_t rresp = { .status = FP_STATUS_RESOURCE_LIMIT, .acked_up_offset = acked };
+                memcpy(rresp.sid, req->sid, 16);
+                return send_fp_response(client_fd, 503, "Service Unavailable", &rresp, http_req->keep_alive);
+            }
+            if (urc < 0) {
+                pthread_mutex_lock(&sess->mu);
+                sess->target_reset = true;
+                fp_resp_env_t resp;
+                uint8_t *alloc_p = NULL;
+                build_down_slice_locked(sess, req->want_down_offset, req->max_down_bytes, &resp, &alloc_p);
+                pthread_mutex_unlock(&sess->mu);
+                pthread_mutex_unlock(&sess->up_mu);
+                release_fp_session(sess);
+                int rc = send_fp_response(client_fd, 200, "OK", &resp, http_req->keep_alive);
+                if (alloc_p) free(alloc_p);
+                return rc;
+            }
+        } else {
+            int up_write_to = __atomic_load_n(&g_fp_initial_write_timeout_ms, __ATOMIC_ACQUIRE);
+            if (up_write_to <= 0) up_write_to = 15000;
+            if (tfd < 0 || write_cancellable(sess, expected_gen, tfd, to_write, to_write_len, up_write_to) < 0) {
+                free(to_write);
+                pthread_mutex_lock(&sess->mu);
+                sess->target_reset = true;
+                fp_resp_env_t resp;
+                uint8_t *alloc_p = NULL;
+                build_down_slice_locked(sess, req->want_down_offset, req->max_down_bytes, &resp, &alloc_p);
+                pthread_mutex_unlock(&sess->mu);
+                pthread_mutex_unlock(&sess->up_mu);
+                release_fp_session(sess);
+                int rc = send_fp_response(client_fd, 200, "OK", &resp, http_req->keep_alive);
+                if (alloc_p) free(alloc_p);
+                return rc;
+            }
+            free(to_write);
         }
-        free(to_write);
         pthread_mutex_lock(&sess->mu);
         sess->next_up_offset += to_write_len;
         pthread_mutex_unlock(&sess->mu);
@@ -1764,7 +2042,7 @@ static int handle_fp_up(int client_fd, const http_req_t *http_req, const char *c
     }
     if (sess->client_eof_rcvd && !sess->client_half_closed && sess->next_up_offset == sess->client_eof_offset) {
         sess->client_half_closed = true;
-        if (sess->target_fd >= 0) {
+        if (sess->target_fd >= 0 && !sess->is_udp) {
             shutdown(sess->target_fd, SHUT_WR);
         }
     }

@@ -2,6 +2,7 @@ package tgwebproxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1623,17 +1624,43 @@ func allocFreeLocalPort(t *testing.T) int {
 	return 0
 }
 
+func isAddrInUseErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "address already in use") ||
+		strings.Contains(msg, "only one usage of each socket address")
+}
+
+func bindFreeLocalPort(t *testing.T, label string, fn func(port int) error) int {
+	t.Helper()
+	var lastErr error
+	for range 16 {
+		port := allocFreeLocalPort(t)
+		err := fn(port)
+		if err == nil {
+			return port
+		}
+		if !isAddrInUseErr(err) {
+			t.Fatalf("%s (port %d): %v", label, port, err)
+		}
+		lastErr = err
+	}
+	t.Fatalf("%s: failed to bind free local port after retries: %v", label, lastErr)
+	return 0
+}
+
 func TestMux_HotRebindListenPortAndBusyPortPreservesOldListener(t *testing.T) {
 	mux := NewMux()
 	defer mux.Stop()
 
-	portA := allocFreeLocalPort(t)
 	secret := "11112222333344445555666677778888"
 	eps := []WebProxyEndpoint{{ID: "ep1", Hostname: "tg.example.com", ListenPort: 18084, Enabled: true}}
 
-	if err := mux.StartWithSecrets(portA, eps, []string{secret}); err != nil {
-		t.Fatalf("StartWithSecrets portA: %v", err)
-	}
+	portA := bindFreeLocalPort(t, "StartWithSecrets portA", func(p int) error {
+		return mux.StartWithSecrets(p, eps, []string{secret})
+	})
 	if mux.ListenPort() != portA {
 		t.Fatalf("expected ListenPort=%d, got %d", portA, mux.ListenPort())
 	}
@@ -1650,11 +1677,10 @@ func TestMux_HotRebindListenPortAndBusyPortPreservesOldListener(t *testing.T) {
 		t.Fatalf("expected non-nil listener on portA %d", portA)
 	}
 
-	portB := allocFreeLocalPort(t)
 	// Rebind to portB while running
-	if err := mux.StartWithSecrets(portB, eps, []string{secret}); err != nil {
-		t.Fatalf("StartWithSecrets portB: %v", err)
-	}
+	portB := bindFreeLocalPort(t, "StartWithSecrets portB", func(p int) error {
+		return mux.StartWithSecrets(p, eps, []string{secret})
+	})
 	if mux.ListenPort() != portB {
 		t.Fatalf("expected ListenPort=%d after rebind, got %d", portB, mux.ListenPort())
 	}
@@ -1703,14 +1729,13 @@ func TestService_ApplyConfigMuxBindFailureRollsBackTransaction(t *testing.T) {
 	svc.mux = NewMux()
 	defer svc.mux.Stop()
 
-	portA := allocFreeLocalPort(t)
-	if err := svc.ApplyManagedIngress(ManagedIngressConfig{
-		Enabled:        true,
-		ListenPort:     portA,
-		PublicHostname: "good.example.com",
-	}); err != nil {
-		t.Fatalf("initial ApplyManagedIngress on portA: %v", err)
-	}
+	portA := bindFreeLocalPort(t, "initial ApplyManagedIngress", func(p int) error {
+		return svc.ApplyManagedIngress(ManagedIngressConfig{
+			Enabled:        true,
+			ListenPort:     p,
+			PublicHostname: "good.example.com",
+		})
+	})
 	if svc.mux.ListenPort() != portA {
 		t.Fatalf("expected mux on portA %d, got %d", portA, svc.mux.ListenPort())
 	}
@@ -1786,7 +1811,13 @@ func TestService_ExternalBackendEndpointNoWorkerContentionAndHostOnlyMux(t *test
 	go extSrv.Serve(extLn)
 	defer extSrv.Close()
 
-	muxPort := allocFreeLocalPort(t)
+	muxPort := bindFreeLocalPort(t, "ApplyManagedIngress", func(p int) error {
+		return svc.ApplyManagedIngress(ManagedIngressConfig{
+			Enabled:        true,
+			ListenPort:     p,
+			PublicHostname: "primary.example.com",
+		})
+	})
 	secret := "0123456789abcdef0123456789abcdef"
 
 	cfg := Config{
@@ -1821,13 +1852,6 @@ func TestService_ExternalBackendEndpointNoWorkerContentionAndHostOnlyMux(t *test
 	}
 
 	// 2. Enable service and apply configuration & run runtime reconciliation
-	if err := svc.ApplyManagedIngress(ManagedIngressConfig{
-		Enabled:        true,
-		ListenPort:     muxPort,
-		PublicHostname: "primary.example.com",
-	}); err != nil {
-		t.Fatalf("ApplyManagedIngress: %v", err)
-	}
 	if err := svc.UpdateConfig(cfg); err != nil {
 		t.Fatalf("UpdateConfig with ExternalBackend endpoint: %v", err)
 	}
@@ -1974,5 +1998,93 @@ func TestConstrainTproxyLimitsForRAMMB_AndDirectKeenDNSNonCDN(t *testing.T) {
 	}
 	if eps := prep.GetEndpoints(); len(eps) != 1 || eps[0].IsCDN {
 		t.Fatalf("expected endpoint IsCDN=false for direct KeenDNS websocket, got %+v", eps)
+	}
+}
+
+func TestService_FactoryReset_PreservesTelemtBinaryAndWipesState(t *testing.T) {
+	svc, tmpDir, runner := setupTestService(t)
+
+	telemtBinPath := filepath.Join(tmpDir, "telemt", "telemt")
+	if err := os.MkdirAll(filepath.Dir(telemtBinPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(telemtBinPath, []byte("fake-telemt-binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"config.toml", "raw.toml", "settings.json", "telemt.pid"} {
+		if err := os.WriteFile(filepath.Join(tmpDir, "telemt", f), []byte("old-content"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, "tproxy", "transactions", "tx-1"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{
+		filepath.Join("tproxy", "config.json"),
+		filepath.Join("tproxy", "profiles.json"),
+		filepath.Join("tproxy", "token.key"),
+		filepath.Join("tproxy", "csrf.key"),
+		filepath.Join("tproxy", "transactions", "tx-1", "manifest.json"),
+	} {
+		if err := os.WriteFile(filepath.Join(tmpDir, f), []byte("old-state"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc.mu.Lock()
+	svc.config.Enabled = true
+	svc.config.PublicHostname = "tg.example.com"
+	svc.config.DirectHost = "tg.example.com"
+	svc.config.Secret = "000102030405060708090a0b0c0d0e0f"
+	svc.config.Endpoints = []WebProxyEndpoint{{ID: "ep-1", Hostname: "tg.example.com", Enabled: true}}
+	svc.config.Users = []TelegramUser{{ID: "u-1", Remark: "Alice", Secret: "ff0102030405060708090a0b0c0d0e0f", Enabled: true}}
+	svc.recoveryRequired = true
+	svc.lastStartupError = "old error"
+	svc.mu.Unlock()
+
+	if err := svc.FactoryReset(context.Background()); err != nil {
+		t.Fatalf("FactoryReset failed: %v", err)
+	}
+
+	// Binary MUST be preserved intact
+	binData, err := os.ReadFile(telemtBinPath)
+	if err != nil || string(binData) != "fake-telemt-binary" {
+		t.Fatalf("expected telemt binary preserved intact, got err=%v data=%q", err, string(binData))
+	}
+
+	// Telemt configs & tproxy runtime/tx files must be deleted
+	for _, gone := range []string{
+		filepath.Join("telemt", "config.toml"),
+		filepath.Join("telemt", "raw.toml"),
+		filepath.Join("telemt", "settings.json"),
+		filepath.Join("tproxy", "config.json"),
+		filepath.Join("tproxy", "profiles.json"),
+		filepath.Join("tproxy", "transactions"),
+	} {
+		if _, err := os.Stat(filepath.Join(tmpDir, gone)); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be deleted during FactoryReset", gone)
+		}
+	}
+
+	// Clean defaults, fresh keys & cleared recovery state
+	cfg := svc.GetInternalConfig()
+	if cfg.Enabled || cfg.PublicHostname != "" || cfg.DirectHost != "" || len(cfg.Endpoints) != 0 || len(cfg.Users) != 0 {
+		t.Fatalf("expected reset config defaults, got %+v", cfg)
+	}
+	if len(cfg.Secret) != 32 || cfg.Secret == "000102030405060708090a0b0c0d0e0f" {
+		t.Fatalf("expected newly rotated 32-char default secret, got %q", cfg.Secret)
+	}
+	if st := svc.GetStatus(); st.RecoveryRequired {
+		t.Fatal("expected RecoveryRequired to be cleared after FactoryReset")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "tproxy", "token.key")); err != nil {
+		t.Fatalf("expected fresh token.key: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "tproxy", "csrf.key")); err != nil {
+		t.Fatalf("expected fresh csrf.key: %v", err)
+	}
+	if len(runner.commands) == 0 {
+		t.Fatal("expected workers stop commands during FactoryReset")
 	}
 }

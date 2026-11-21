@@ -31,8 +31,16 @@ typedef struct {
 } firc_tun_node_t;
 
 typedef struct {
+    char key[192];
+    char name[101];
+    char source[64];
+} firc_tun_filtered_t;
+
+typedef struct {
     firc_tun_node_t *v;
     size_t n;
+    firc_tun_filtered_t *filtered;
+    size_t n_filtered;
     size_t matched, total;
     size_t seen, sinks;
     char sink_name[FIRC_TUN_SAID_MAX + 1];

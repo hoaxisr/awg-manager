@@ -66,6 +66,17 @@ type WdttClientConfig struct {
 
 	AutoReconnect         bool   `json:"autoReconnect,omitempty"`
 	AutoReconnectInterval string `json:"autoReconnectInterval,omitempty"`
+
+	// DefaultRoute — объявлять ли raw-интерфейс кандидатом в default route NDMS
+	// (`ip route default OpkgTunN`). nil = true (совместимость со старыми записями,
+	// где ключа нет); явный false снимает кандидатуру.
+	DefaultRoute *bool `json:"defaultRoute,omitempty"`
+}
+
+// WantDefaultRoute возвращает true, если raw-выход должен объявляться
+// кандидатом default route в NDMS (nil трактуется как true).
+func (c WdttClientConfig) WantDefaultRoute() bool {
+	return c.DefaultRoute == nil || *c.DefaultRoute
 }
 
 func (c WdttClientConfig) Validate() error {
@@ -129,10 +140,11 @@ func (c WdttClientConfig) NDMSNames() []string { return []string{c.NdmsIface} }
 // ничего сверх. Только примитивы: roles не узнаёт ни про exitreg, ни про
 // wdttclient — идентификатор выхода строит потребитель.
 type RawExit struct {
-	NDMSName    string // пин: OpkgTunN (номер из общего пула)
-	KernelIface string // пин: opkgtunN
-	Name        string // человеческое имя инстанса — в имя зеркальной записи
-	Peer        string // адрес сервера — в эндпоинт карточки
+	NDMSName     string // пин: OpkgTunN (номер из общего пула)
+	KernelIface  string // пин: opkgtunN
+	Name         string // человеческое имя инстанса — в имя зеркальной записи
+	Peer         string // адрес сервера — в эндпоинт карточки
+	DefaultRoute bool   // объявлять интерфейс кандидатом default route в NDMS
 }
 
 // RawExiter — конфиг роли, объявляющий свой выход.
@@ -170,10 +182,11 @@ func (c WdttClientConfig) RawExit() (RawExit, bool) {
 		return RawExit{}, false
 	}
 	return RawExit{
-		NDMSName:    c.NdmsIface,
-		KernelIface: c.RawIface,
-		Name:        c.Name,
-		Peer:        strings.TrimSpace(c.Peer),
+		NDMSName:     c.NdmsIface,
+		KernelIface:  c.RawIface,
+		Name:         c.Name,
+		Peer:         strings.TrimSpace(c.Peer),
+		DefaultRoute: c.WantDefaultRoute(),
 	}, true
 }
 

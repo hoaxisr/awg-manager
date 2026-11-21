@@ -98,3 +98,24 @@ func TestMirrorNameParity(t *testing.T) {
 		t.Fatalf("усечение по рунам: got %d рун", len(r))
 	}
 }
+
+func TestDeclaredExitsCarriesDefaultRoute(t *testing.T) {
+	fa := false
+	cfgOn := rawCfg("Дом", "OpkgTun17", "opkgtun17")
+	cfgOff := rawCfg("Дача", "OpkgTun18", "opkgtun18")
+	cfgOff.DefaultRoute = &fa
+
+	got := DeclaredExits([]InstanceConfig{
+		{ID: "on", Cfg: cfgOn, Enabled: true},
+		{ID: "off", Cfg: cfgOff, Enabled: true},
+	})
+	if len(got) != 2 {
+		t.Fatalf("ожидали 2 выхода, получили %d", len(got))
+	}
+	if got[0].DefaultRoute == nil || !*got[0].DefaultRoute {
+		t.Fatalf("DefaultRoute при nil в конфиге должен объявляться как true, got %+v", got[0].DefaultRoute)
+	}
+	if got[1].DefaultRoute == nil || *got[1].DefaultRoute {
+		t.Fatalf("DefaultRoute при false в конфиге должен объявляться как false, got %+v", got[1].DefaultRoute)
+	}
+}

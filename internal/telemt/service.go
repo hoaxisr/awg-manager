@@ -492,6 +492,23 @@ func (s *Service) Uninstall(ctx context.Context) error {
 	return nil
 }
 
+// ResetConfig stops the standalone telemt process and removes its config and
+// runtime PID files while preserving the installed telemt binary and symlink.
+func (s *Service) ResetConfig(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_ = s.stopProcess(ctx)
+
+	_ = os.Remove(s.settingsPath)
+	_ = os.Remove(s.cfgPath)
+	_ = os.Remove(filepath.Join(s.telemtDir, "raw.toml"))
+	_ = os.Remove(s.pidPath)
+
+	s.config = DefaultConfig()
+	return nil
+}
+
 // Start launches the telemt daemon process.
 func (s *Service) Start(ctx context.Context) error {
 	s.mu.Lock()

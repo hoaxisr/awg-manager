@@ -53,10 +53,20 @@ describe('tunnels i18n', () => {
 
 	it('TunnelCreateMenu: кнопка и пункты меню переводятся', async () => {
 		const triggerIcon = createRawSnippet(() => ({ render: () => '<span></span>' }));
-		render(TunnelCreateMenu, { props: { onAwg: vi.fn(), triggerIcon } });
+		render(TunnelCreateMenu, {
+			props: {
+				onAwg: vi.fn(),
+				showFirc: true,
+				onFircTunnel: vi.fn(),
+				onFircSubscription: vi.fn(),
+				triggerIcon,
+			},
+		});
 		await fireEvent.click(screen.getByRole('button', { name: /Создать/ }));
 		expect(screen.getByText('AmneziaWG туннель')).toBeTruthy();
 		expect(screen.getByText('NativeWG или Kernel')).toBeTruthy();
+		expect(screen.getByText('Туннель FIRC')).toBeTruthy();
+		expect(screen.getByText('Подписка FIRC')).toBeTruthy();
 
 		locale.set('en');
 		flushSync();
@@ -64,5 +74,7 @@ describe('tunnels i18n', () => {
 		expect(screen.getByRole('button', { name: /Create/ })).toBeTruthy();
 		expect(screen.getByText('AmneziaWG tunnel')).toBeTruthy();
 		expect(screen.getByText('NativeWG or Kernel')).toBeTruthy();
+		expect(screen.getByText('FIRC tunnel')).toBeTruthy();
+		expect(screen.getByText('FIRC subscription')).toBeTruthy();
 	});
 });

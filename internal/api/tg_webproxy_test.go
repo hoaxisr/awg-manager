@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -460,5 +461,140 @@ func TestTgWebProxy_RapidStopStartWithConfigWatcherDoesNotRevert(t *testing.T) {
 		if st := svc.GetStatus(); !st.Running || !st.DirectOnline {
 			t.Fatalf("expected running and direct_online after rapid stop->start (delay=%v), got %+v", d, st)
 		}
+	}
+}
+
+func TestTgWebProxy_CSRF_AuthDisabled(t *testing.T) {
+	handler, _, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	checker := &fakeCSRFAuthChecker{enabled: false}
+	handler.SetAuthChecker(checker)
+
+	decodeCSRF := func(t *testing.T, body []byte) string {
+		t.Helper()
+		var res struct {
+			Success bool `json:"success"`
+			Data    struct {
+				CSRFToken string `json:"csrf_token"`
+			} `json:"data"`
+			CSRFToken string `json:"csrf_token"`
+		}
+		if err := json.Unmarshal(body, &res); err != nil {
+			t.Fatalf("unmarshal csrf response: %v (%s)", err, string(body))
+		}
+		tok := res.CSRFToken
+		if tok == "" {
+			tok = res.Data.CSRFToken
+		}
+		return tok
+	}
+
+	// 1. GetCSRFToken with valid Origin and NO cookie returns 200 and 64-char hex token.
+	reqCSRF := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	reqCSRF.Host = "192.168.10.1:2222"
+	reqCSRF.Header.Set("Origin", "http://192.168.10.1:2222")
+	wCSRF := httptest.NewRecorder()
+	handler.GetCSRFToken(wCSRF, reqCSRF)
+	if wCSRF.Code != http.StatusOK {
+		t.Fatalf("expected 200 on GetCSRFToken without cookie when auth disabled, got %d: %s", wCSRF.Code, wCSRF.Body.String())
+	}
+	token := decodeCSRF(t, wCSRF.Body.Bytes())
+	if len(token) != 64 {
+		t.Fatalf("expected 64-char hex token, got len=%d (%q)", len(token), token)
+	}
+	if _, err := hex.DecodeString(token); err != nil {
+		t.Fatalf("expected valid hex token, decode error: %v", err)
+	}
+
+	// 2. GetCSRFToken with valid Origin and a stale/invalid cookie also returns 200.
+	reqStale := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	reqStale.Host = "192.168.10.1:2222"
+	reqStale.Header.Set("Origin", "http://192.168.10.1:2222")
+	reqStale.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: "stale-expired-session"})
+	wStale := httptest.NewRecorder()
+	handler.GetCSRFToken(wStale, reqStale)
+	if wStale.Code != http.StatusOK {
+		t.Fatalf("expected 200 on GetCSRFToken with stale cookie when auth disabled, got %d: %s", wStale.Code, wStale.Body.String())
+	}
+
+	// 3. GetCSRFToken with missing Origin/Referer returns 403; foreign Origin returns 403.
+	reqNoOrigin := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	reqNoOrigin.Host = "192.168.10.1:2222"
+	wNoOrigin := httptest.NewRecorder()
+	handler.GetCSRFToken(wNoOrigin, reqNoOrigin)
+	if wNoOrigin.Code != http.StatusForbidden {
+		t.Errorf("expected 403 on GetCSRFToken without Origin/Referer, got %d", wNoOrigin.Code)
+	}
+
+	reqForeign := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	reqForeign.Host = "192.168.10.1:2222"
+	reqForeign.Header.Set("Origin", "http://evil-attacker.com")
+	wForeign := httptest.NewRecorder()
+	handler.GetCSRFToken(wForeign, reqForeign)
+	if wForeign.Code != http.StatusForbidden {
+		t.Errorf("expected 403 on GetCSRFToken with foreign Origin, got %d", wForeign.Code)
+	}
+
+	// 4. Negative CSRF checks on RevealSecret reject with 403 when auth is disabled.
+	reqMutNoToken := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/reveal", nil)
+	reqMutNoToken.Host = "192.168.10.1:2222"
+	reqMutNoToken.Header.Set("Origin", "http://192.168.10.1:2222")
+	wMutNoToken := httptest.NewRecorder()
+	handler.RevealSecret(wMutNoToken, reqMutNoToken)
+	if wMutNoToken.Code != http.StatusForbidden {
+		t.Errorf("expected 403 on RevealSecret without X-CSRF-Token, got %d", wMutNoToken.Code)
+	}
+
+	reqMutWrongToken := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/reveal", nil)
+	reqMutWrongToken.Host = "192.168.10.1:2222"
+	reqMutWrongToken.Header.Set("Origin", "http://192.168.10.1:2222")
+	reqMutWrongToken.Header.Set("X-CSRF-Token", "deadbeef")
+	wMutWrongToken := httptest.NewRecorder()
+	handler.RevealSecret(wMutWrongToken, reqMutWrongToken)
+	if wMutWrongToken.Code != http.StatusForbidden {
+		t.Errorf("expected 403 on RevealSecret with wrong X-CSRF-Token, got %d", wMutWrongToken.Code)
+	}
+
+	reqMutForeign := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/reveal", nil)
+	reqMutForeign.Host = "192.168.10.1:2222"
+	reqMutForeign.Header.Set("Origin", "http://evil-attacker.com")
+	reqMutForeign.Header.Set("X-CSRF-Token", token)
+	wMutForeign := httptest.NewRecorder()
+	handler.RevealSecret(wMutForeign, reqMutForeign)
+	if wMutForeign.Code != http.StatusForbidden {
+		t.Errorf("expected 403 on RevealSecret with foreign Origin, got %d", wMutForeign.Code)
+	}
+
+	// 5. RevealSecret with valid Origin + returned X-CSRF-Token and NO cookie returns 200.
+	reqMutOK := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/reveal", nil)
+	reqMutOK.Host = "192.168.10.1:2222"
+	reqMutOK.Header.Set("Origin", "http://192.168.10.1:2222")
+	reqMutOK.Header.Set("X-CSRF-Token", token)
+	wMutOK := httptest.NewRecorder()
+	handler.RevealSecret(wMutOK, reqMutOK)
+	if wMutOK.Code != http.StatusOK {
+		t.Fatalf("expected 200 on RevealSecret without cookie when auth disabled, got %d: %s", wMutOK.Code, wMutOK.Body.String())
+	}
+
+	// 6. Flip auth enabled back to true: require session cookie and reject auth-disabled token.
+	checker.enabled = true
+
+	reqNoCookieAuthOn := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy/csrf", nil)
+	reqNoCookieAuthOn.Host = "192.168.10.1:2222"
+	reqNoCookieAuthOn.Header.Set("Origin", "http://192.168.10.1:2222")
+	wNoCookieAuthOn := httptest.NewRecorder()
+	handler.GetCSRFToken(wNoCookieAuthOn, reqNoCookieAuthOn)
+	if wNoCookieAuthOn.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 on GetCSRFToken without cookie when auth enabled, got %d", wNoCookieAuthOn.Code)
+	}
+
+	reqOldTokAuthOn := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/reveal", nil)
+	reqOldTokAuthOn.Host = "192.168.10.1:2222"
+	reqOldTokAuthOn.Header.Set("Origin", "http://192.168.10.1:2222")
+	reqOldTokAuthOn.Header.Set("X-CSRF-Token", token)
+	reqOldTokAuthOn.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+	wOldTokAuthOn := httptest.NewRecorder()
+	handler.RevealSecret(wOldTokAuthOn, reqOldTokAuthOn)
+	if wOldTokAuthOn.Code != http.StatusForbidden {
+		t.Errorf("expected 403 on RevealSecret with auth-disabled token when auth enabled, got %d", wOldTokAuthOn.Code)
 	}
 }

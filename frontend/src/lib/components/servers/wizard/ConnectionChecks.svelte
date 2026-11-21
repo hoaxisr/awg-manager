@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { Button } from '$lib/components/ui';
 	import {
@@ -43,7 +43,7 @@
 	let fingerprintTimer: ReturnType<typeof setInterval> | null = null;
 
 	$effect(() => {
-		if (autoRun || loading) return;
+		if (autoRun) return;
 		const shared =
 			kind === 'xray'
 				? $lastServerVerification.xray
@@ -53,12 +53,13 @@
 							$lastServerVerification.xray,
 							$lastServerVerification.tgwebproxy,
 						);
-		if (shared) {
-			const next = pickFresherVerificationReport(shared, report);
-			if (next && next !== report) {
-				report = next;
-				liveBackendFingerprint = next.state_fingerprint || '';
-			}
+		if (!shared) return;
+		if (untrack(() => loading)) return;
+		const cur = untrack(() => report);
+		const next = pickFresherVerificationReport(shared, cur);
+		if (next && next !== cur) {
+			report = next;
+			liveBackendFingerprint = next.state_fingerprint || '';
 		}
 	});
 

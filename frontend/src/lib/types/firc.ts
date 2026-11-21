@@ -59,6 +59,7 @@ export interface FircTunnel {
 	interval: number;
 	silence: number;
 	filter: string;
+	filterExclude?: string;
 	order: string[];
 	exclude: string[];
 	sources: FircTunnelSource[];
@@ -82,7 +83,8 @@ export type FircTunnelStatus =
 	| 'backoff'
 	| 'bad_config'
 	| 'waiting'
-	| 'uplink_down';
+	| 'uplink_down'
+	| 'router';
 
 export const FIRC_TUNNEL_NODE_POOL = '*';
 
@@ -112,10 +114,17 @@ export interface FircTunnelSubState {
 	usage?: FircTunnelSubUsage | null;
 }
 
+export interface FircTunnelFilteredNode {
+	key: string;
+	name: string;
+	source: string;
+}
+
 export interface FircTunnelState {
 	id: string;
 	device: string;
 	status: FircTunnelStatus;
+	why?: string;
 	since: number;
 	backoffS: number;
 	lastExit: number;
@@ -126,6 +135,7 @@ export interface FircTunnelState {
 	active: string[];
 	groups: string[];
 	nodes: FircTunnelNodeState[];
+	filteredNodes?: FircTunnelFilteredNode[];
 	subscriptions: FircTunnelSubState[];
 	rxBps: number;
 	txBps: number;
@@ -147,6 +157,7 @@ export interface FircTunnelPreview {
 	total: number;
 	matched: number;
 	nodes: FircTunnelPreviewRow[];
+	filteredNodes?: FircTunnelFilteredNode[];
 	subscriptions: { name: string; cached: boolean }[];
 }
 
@@ -156,6 +167,11 @@ export interface FircTunnelProbeRow {
 	why: string;
 	handshakeMs: number | null;
 	firstByteMs: number | null;
+}
+
+export interface FircTunnelProbeProgress {
+	total: number;
+	nodes: FircTunnelProbeRow[];
 }
 
 export type FircRuleType = 'namespace' | 'wildcard' | 'domain' | 'regex' | 'subnet' | 'subnet6';
@@ -700,8 +716,24 @@ export interface FircProxyGroup {
 	interfaces: string[];
 }
 
+export interface FircInterfaceProbeResult {
+	interface: string;
+	ok: boolean;
+	latencyMs: number;
+	httpCode?: number;
+	error?: string;
+	checkedAt?: number;
+}
+
+export interface FircInterfacesProbeRes {
+	url: string;
+	checkedAt: number;
+	results: Record<string, FircInterfaceProbeResult>;
+}
+
 export interface FircKeenDNSCloudConfig {
 	enabled: boolean;
+	cloudHealthCheck?: boolean;
 	proxyGroupId?: string;
 	interfaces?: string[];
 	lastSyncError?: string;

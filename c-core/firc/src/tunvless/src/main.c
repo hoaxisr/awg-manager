@@ -41,6 +41,7 @@
 #include "ctlinb.h"
 #include "ctlnodes.h"
 #include "ctlmap.h"
+#include "tstack.h"
 
 #ifndef TUNVLESS_VERSION
 #define TUNVLESS_VERSION "dev"
@@ -65,7 +66,7 @@ static struct {
     int *want;                  /* --node: candidates in order of preference */
     size_t want_n, want_cap;
     int active, by, interval_s;
-    int list, probe, no_probe, no_retry, insecure, control;
+    int list, probe, no_probe, no_retry, insecure, control, jobs;
     const char *ca;
     const char *fp;
     const char *bind_dev;
@@ -109,6 +110,7 @@ static void usage(FILE *f) {
 "                         node. A single one is used without a probe at startup\n"
 "  -l, --list             print the usable nodes and exit\n"
 "  -p, --probe            check the candidates and exit\n"
+"  -j, --jobs N           with --probe, check N candidates at once (default 1, at most 64)\n"
 "      --no-probe         start with the first candidate without checking it\n"
 "      --insecure         accept allowInsecure nodes; do not verify certificates of\n"
 "                         security=tls nodes\n"
@@ -219,6 +221,7 @@ static int parse_args(int argc, char **argv) {
         { "node",     required_argument, NULL, 'n' },
         { "list",     no_argument,       NULL, 'l' },
         { "probe",    no_argument,       NULL, 'p' },
+        { "jobs",     required_argument, NULL, 'j' },
         { "no-probe", no_argument,       NULL, OPT_NO_PROBE },
         { "insecure", no_argument,       NULL, OPT_INSECURE },
         { "ca",       required_argument, NULL, OPT_CA },
@@ -245,11 +248,15 @@ static int parse_args(int argc, char **argv) {
     const char *addr = "203.0.113.1/32";
     uint32_t v;
     int c;
-    while ((c = getopt_long(argc, argv, "n:lpd:a:r:T:m:b:t:A:Vh", opts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "n:lpj:d:a:r:T:m:b:t:A:Vh", opts, NULL)) != -1) {
         switch (c) {
         case 'n': if (add_nodes(optarg) != 0) goto bad; break;
         case 'l': g.list = 1; break;
         case 'p': g.probe = 1; break;
+        case 'j':
+            if (parse_uint(optarg, &v) != 0 || v == 0 || v > 64) goto bad;
+            g.jobs = (int)v;
+            break;
         case OPT_NO_PROBE: g.no_probe = 1; break;
         case OPT_INSECURE: g.insecure = 1; break;
         case OPT_CA: g.ca = optarg; break;
@@ -485,25 +492,55 @@ static int node_probe6(const struct vless_node *v, int timeout_s, char *why, siz
     return vless_probe6(v, timeout_s, why, why_n);
 }
 
+static pthread_mutex_t g_probe_mu = PTHREAD_MUTEX_INITIALIZER;
+static size_t g_probe_next;
+static int g_probe_found;
+
+static void probe_one(size_t k) {
+    int i = g_sel[k];
+    char why[256] = "";
+    int hs = -1, ttfb = -1;
+    int rc = node_probe(vnode(i), g.timeout_s, why, sizeof(why), &hs, &ttfb);
+    char nm[sizeof vnode(i)->name], wy[sizeof why];
+    field(vnode(i)->name, nm, sizeof nm);
+    pthread_mutex_lock(&g_probe_mu);
+    if (rc == 0) {
+        g_probe_found = 1;
+        printf("%d\t%s\tok\thandshake %d ms, first byte %d ms\n", i, nm, hs, ttfb);
+    } else {
+        printf("%d\t%s\tfailed\t%s\n", i, nm, field(why, wy, sizeof wy));
+    }
+    fflush(stdout);
+    pthread_mutex_unlock(&g_probe_mu);
+}
+
+static void *probe_worker(void *arg) {
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&g_probe_mu);
+        size_t k = g_probe_next++;
+        pthread_mutex_unlock(&g_probe_mu);
+        if (k >= g_sel_n) return NULL;
+        probe_one(k);
+    }
+}
+
 /* --probe: the same check as at startup, with timings. */
 static int cmd_probe(void) {
-    int found = 0;
-    for (size_t k = 0; k < g_sel_n; k++) {
-        int i = g_sel[k];
-        char why[256] = "";
-        int hs = -1, ttfb = -1;
-        int rc = node_probe(vnode(i), g.timeout_s, why, sizeof(why), &hs, &ttfb);
-        char nm[sizeof vnode(i)->name], wy[sizeof why];
-        field(vnode(i)->name, nm, sizeof nm);
-        if (rc == 0) {
-            found = 1;
-            printf("%d\t%s\tok\thandshake %d ms, first byte %d ms\n", i, nm, hs, ttfb);
-        } else {
-            printf("%d\t%s\tfailed\t%s\n", i, nm, field(why, wy, sizeof wy));
-        }
-        fflush(stdout);
-    }
-    return found ? 0 : 1;
+    g_probe_next = 0;
+    g_probe_found = 0;
+    size_t want = g.jobs > 1 ? (size_t)g.jobs : 1;
+    if (want > g_sel_n) want = g_sel_n;
+    pthread_t t[64];
+    size_t made = 0;
+    pthread_attr_t a;
+    pthread_attr_init(&a);
+    tstack_set(&a, 256 * 1024);
+    while (made + 1 < want && pthread_create(&t[made], &a, probe_worker, NULL) == 0) made++;
+    pthread_attr_destroy(&a);
+    probe_worker(NULL);
+    for (size_t k = 0; k < made; k++) pthread_join(t[k], NULL);
+    return g_probe_found ? 0 : 1;
 }
 
 /* Wait before the next attempt: 5 s, doubling up to a minute. 0 — do not retry. */
