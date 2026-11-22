@@ -1556,6 +1556,97 @@ func (h *FircHandler) handleClearRecovery(w http.ResponseWriter, r *http.Request
 	})
 }
 
+func canonicalizeFircV1SubPath(r *http.Request) (string, bool) {
+	if r == nil || r.URL == nil {
+		return "", false
+	}
+	if r.URL.RawPath != "" {
+		lowerRaw := strings.ToLower(r.URL.RawPath)
+		if strings.Contains(lowerRaw, "%2f") ||
+			strings.Contains(lowerRaw, "%5c") ||
+			strings.Contains(lowerRaw, "%00") ||
+			strings.ContainsRune(r.URL.RawPath, '\\') ||
+			strings.ContainsRune(r.URL.RawPath, 0) {
+			return "", false
+		}
+	}
+	if strings.ContainsRune(r.URL.Path, '\\') || strings.ContainsRune(r.URL.Path, 0) {
+		return "", false
+	}
+	if !strings.HasPrefix(r.URL.Path, "/api/firc/v1") {
+		return "", false
+	}
+	rawSub := strings.TrimPrefix(r.URL.Path, "/api/firc/v1")
+	if rawSub != "" && !strings.HasPrefix(rawSub, "/") {
+		return "", false
+	}
+	for _, seg := range strings.Split(rawSub, "/") {
+		if seg == "." || seg == ".." {
+			return "", false
+		}
+	}
+	return path.Clean("/" + strings.TrimPrefix(rawSub, "/")), true
+}
+
+func hasSingleSegmentBetween(cleanPath, prefix, suffix string) bool {
+	if !strings.HasPrefix(cleanPath, prefix) || !strings.HasSuffix(cleanPath, suffix) {
+		return false
+	}
+	if len(cleanPath) <= len(prefix)+len(suffix) {
+		return false
+	}
+	mid := cleanPath[len(prefix) : len(cleanPath)-len(suffix)]
+	return mid != "" && !strings.ContainsRune(mid, '/')
+}
+
+func isAllowedFircV1Route(method, cleanSubPath string) bool {
+	m := method
+	if m == http.MethodHead {
+		m = http.MethodGet
+	}
+	switch cleanSubPath {
+	case "/auth",
+		"/tunnels/state",
+		"/groups/list/catalog",
+		"/groups/list/preview",
+		"/system/interfaces",
+		"/system/hosts",
+		"/system/policies",
+		"/system/resolvers",
+		"/system/netfilter",
+		"/system/events",
+		"/system/dnsstats",
+		"/system/autolist":
+		return m == http.MethodGet
+	case "/tunnels", "/groups", "/system/settings":
+		return m == http.MethodGet || m == http.MethodPut
+	case "/tunnels/probe":
+		return m == http.MethodGet || m == http.MethodPost
+	case "/tunnels/preview", "/system/restart":
+		return m == http.MethodPost
+	case "/system/capture":
+		return m == http.MethodGet || m == http.MethodPost || m == http.MethodDelete
+	}
+	switch {
+	case hasSingleSegmentBetween(cleanSubPath, "/tunnels/", "/refresh"):
+		return m == http.MethodPost
+	case hasSingleSegmentBetween(cleanSubPath, "/tunnels/", "/restart"):
+		return m == http.MethodPost
+	case hasSingleSegmentBetween(cleanSubPath, "/groups/", "/move-up"):
+		return m == http.MethodPost
+	case hasSingleSegmentBetween(cleanSubPath, "/groups/", "/list/sync"):
+		return m == http.MethodPost
+	case hasSingleSegmentBetween(cleanSubPath, "/groups/", "/list/sync/events"):
+		return m == http.MethodGet
+	case hasSingleSegmentBetween(cleanSubPath, "/groups/", "/list/rules"):
+		return m == http.MethodGet || m == http.MethodPatch
+	case hasSingleSegmentBetween(cleanSubPath, "/system/autolist/candidates/", "/add"):
+		return m == http.MethodPost
+	default:
+		return false
+	}
+}
+
 func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 	if h.op == nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -1563,17 +1654,21 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"error":"firc operator not initialized"}`))
 		return
 	}
-	subPath := strings.TrimPrefix(r.URL.Path, "/api/firc/v1")
-	if subPath == "" || subPath == "/" {
-		subPath = "/"
+	cleanSubPath, ok := canonicalizeFircV1SubPath(r)
+	if !ok {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "invalid firc api path", "INVALID_PATH")
+		return
 	}
-	if subPath == "/auth" {
+	if !isAllowedFircV1Route(r.Method, cleanSubPath) {
+		response.ErrorWithStatus(w, http.StatusForbidden, "firc v1 route is not allowed", "ROUTE_NOT_ALLOWED")
+		return
+	}
+	if cleanSubPath == "/auth" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"authenticated":true}`))
 		return
 	}
-	cleanSubPath := path.Clean("/" + strings.TrimPrefix(subPath, "/"))
 	if strings.HasPrefix(cleanSubPath, "/system/autolist/candidates/") && strings.HasSuffix(cleanSubPath, "/add") {
 		if r.Method != http.MethodPost {
 			response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "method not allowed", "METHOD_NOT_ALLOWED")
@@ -1798,10 +1893,10 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 		req.URL.Scheme = "http"
 		req.URL.Host = "unix"
 		req.Host = "unix"
-		req.URL.Path = "/api/v1" + subPath
+		req.URL.Path = "/api/v1" + cleanSubPath
 		req.URL.RawPath = ""
 	}
-	if r.Method == http.MethodGet && subPath == "/system/interfaces" {
+	if r.Method == http.MethodGet && cleanSubPath == "/system/interfaces" {
 		proxy.ModifyResponse = func(resp *http.Response) error {
 			if resp.StatusCode != http.StatusOK || resp.Body == nil {
 				return nil

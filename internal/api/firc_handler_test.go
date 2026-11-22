@@ -1862,3 +1862,183 @@ func TestFircHandler_InstallAllowedWhileActiveWhenMissingOrBroken(t *testing.T) 
 		t.Fatalf("expected installed state after repair, got %+v", st)
 	}
 }
+
+func TestFircV1Proxy_RouteAllowlistAndCanonicalPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	fircDir := filepath.Join(tmpDir, "firc")
+	if err := os.MkdirAll(fircDir, 0o755); err != nil {
+		t.Fatalf("mkdir fircDir: %v", err)
+	}
+	sockDir, err := os.MkdirTemp("", "awgm-firc-v1allow-")
+	if err != nil {
+		t.Fatalf("mkdtemp sockDir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "d.sock")
+
+	store := storage.NewSettingsStore(tmpDir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if err := store.Update(func(s *storage.Settings) error {
+		s.SingboxRouter.RoutingEngine = "firc"
+		return nil
+	}); err != nil {
+		t.Fatalf("set engine firc: %v", err)
+	}
+
+	var mu sync.Mutex
+	var upstreamPaths []string
+	var healthHits atomic.Int32
+
+	fakeMux := http.NewServeMux()
+	fakeMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/system/netfilter" && r.Method == http.MethodGet && r.Header.Get("X-Test-Client") == "" {
+			healthHits.Add(1)
+		} else {
+			mu.Lock()
+			upstreamPaths = append(upstreamPaths, r.Method+" "+r.URL.Path)
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"running":true}`))
+	})
+
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	srv := &http.Server{Handler: fakeMux}
+	go func() { _ = srv.Serve(ln) }()
+	defer func() {
+		_ = srv.Close()
+		_ = ln.Close()
+		_ = os.Remove(sockPath)
+	}()
+
+	op := firc.NewOperator(firc.Options{
+		ConfigDir:   fircDir,
+		SocketPath:  sockPath,
+		InboundPort: 1099,
+	})
+	h := NewFircHandler(op)
+	h.SetSettingsStore(store)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+
+	resetHits := func() {
+		mu.Lock()
+		upstreamPaths = nil
+		mu.Unlock()
+	}
+	snapshotHits := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]string, len(upstreamPaths))
+		copy(out, upstreamPaths)
+		return out
+	}
+
+	// 1. Disallowed internal routes and disallowed methods must be rejected with 403 and 0 upstream calls.
+	blockedCases := []struct {
+		method string
+		target string
+	}{
+		{http.MethodPost, "/api/firc/v1/system/hooks/netfilterd"},
+		{http.MethodPost, "/api/firc/v1/system/hooks/iflayer"},
+		{http.MethodPost, "/api/firc/v1/system/update/install"},
+		{http.MethodGet, "/api/firc/v1/system/update"},
+		{http.MethodPost, "/api/firc/v1/groups"},
+		{http.MethodDelete, "/api/firc/v1/groups/g1"},
+		{http.MethodPost, "/api/firc/v1/system/config/save"},
+		{http.MethodPost, "/api/firc/v1/system/autolist/candidates/a/b/add"},
+		{http.MethodDelete, "/api/firc/v1/tunnels"},
+		{http.MethodGet, "/api/firc/v1/tunnels/t1/restart"},
+	}
+	for _, tc := range blockedCases {
+		resetHits()
+		req := httptest.NewRequest(tc.method, tc.target, nil)
+		req.Header.Set("X-Test-Client", "1")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s %s: expected 403, got %d (%s)", tc.method, tc.target, rec.Code, rec.Body.String())
+		}
+		if hits := snapshotHits(); len(hits) != 0 {
+			t.Fatalf("%s %s: expected 0 upstream hits, got %v", tc.method, tc.target, hits)
+		}
+	}
+
+	// 2. Traversal and encoded-slash paths must be rejected with 400 and 0 upstream calls.
+	resetHits()
+	reqTraversalDirect := httptest.NewRequest(http.MethodPost, "/api/firc/v1/tunnels/../system/hooks/netfilterd", nil)
+	reqTraversalDirect.Header.Set("X-Test-Client", "1")
+	recDirect := httptest.NewRecorder()
+	h.handleV1Proxy(recDirect, reqTraversalDirect)
+	if recDirect.Code != http.StatusBadRequest {
+		t.Fatalf("direct traversal: expected 400, got %d (%s)", recDirect.Code, recDirect.Body.String())
+	}
+	if hits := snapshotHits(); len(hits) != 0 {
+		t.Fatalf("direct traversal leaked upstream hits: %v", hits)
+	}
+
+	for _, viaMux := range []bool{false, true} {
+		resetHits()
+		reqEnc := httptest.NewRequest(http.MethodPost, "/api/firc/v1/tunnels%2f..%2fsystem/hooks/netfilterd", nil)
+		reqEnc.Header.Set("X-Test-Client", "1")
+		recEnc := httptest.NewRecorder()
+		if viaMux {
+			mux.ServeHTTP(recEnc, reqEnc)
+		} else {
+			h.handleV1Proxy(recEnc, reqEnc)
+		}
+		if recEnc.Code != http.StatusBadRequest {
+			t.Fatalf("encoded slash traversal (viaMux=%v): expected 400, got %d (%s)", viaMux, recEnc.Code, recEnc.Body.String())
+		}
+		if hits := snapshotHits(); len(hits) != 0 {
+			t.Fatalf("encoded slash traversal leaked upstream hits (viaMux=%v): %v", viaMux, hits)
+		}
+	}
+
+	// 3. Allowed routes must forward with canonical clean path.
+	allowedCases := []struct {
+		method   string
+		target   string
+		wantRecv string
+	}{
+		{http.MethodGet, "/api/firc/v1/tunnels/", "GET /api/v1/tunnels"},
+		{http.MethodPost, "/api/firc/v1/tunnels/t1/restart", "POST /api/v1/tunnels/t1/restart"},
+		{http.MethodPost, "/api/firc/v1/groups/g1/move-up", "POST /api/v1/groups/g1/move-up"},
+		{http.MethodGet, "/api/firc/v1/groups/g1/list/rules", "GET /api/v1/groups/g1/list/rules"},
+		{http.MethodPatch, "/api/firc/v1/groups/g1/list/rules", "PATCH /api/v1/groups/g1/list/rules"},
+		{http.MethodPost, "/api/firc/v1/system/capture", "POST /api/v1/system/capture"},
+		{http.MethodDelete, "/api/firc/v1/system/capture", "DELETE /api/v1/system/capture"},
+	}
+	for _, tc := range allowedCases {
+		resetHits()
+		req := httptest.NewRequest(tc.method, tc.target, nil)
+		req.Header.Set("X-Test-Client", "1")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s %s: expected 200, got %d (%s)", tc.method, tc.target, rec.Code, rec.Body.String())
+		}
+		hits := snapshotHits()
+		if len(hits) != 1 || hits[0] != tc.wantRecv {
+			t.Fatalf("%s %s: expected upstream [%q], got %v", tc.method, tc.target, tc.wantRecv, hits)
+		}
+	}
+
+	// /auth must return 200 locally without calling upstream.
+	resetHits()
+	reqAuth := httptest.NewRequest(http.MethodGet, "/api/firc/v1/auth", nil)
+	reqAuth.Header.Set("X-Test-Client", "1")
+	recAuth := httptest.NewRecorder()
+	mux.ServeHTTP(recAuth, reqAuth)
+	if recAuth.Code != http.StatusOK || !strings.Contains(recAuth.Body.String(), `"authenticated":true`) {
+		t.Fatalf("GET /api/firc/v1/auth expected 200 authenticated, got %d (%s)", recAuth.Code, recAuth.Body.String())
+	}
+	if hits := snapshotHits(); len(hits) != 0 {
+		t.Fatalf("GET /api/firc/v1/auth should not hit upstream, got %v", hits)
+	}
+}
