@@ -170,6 +170,34 @@
 	let qrGenerating = $state(false);
 	let revealSecretInput = $state('');
 	let revealSecretSaving = $state(false);
+	// Reveal returns a single user and the backend allows one disclosure of a
+	// given secret per 5 s. Responses are reused for that window only — also
+	// across close/reopen of the modal and user switching — so the UI never
+	// asks again for a secret it has just received. The TTL is counted from
+	// receipt (never refreshed on reuse), which is not earlier than the
+	// server-side timestamp, so an expired entry is always re-fetchable.
+	const REVEAL_REUSE_MS = 5000;
+	const revealCache = new Map<string, { data: TgWebProxyRevealData; at: number }>();
+
+	// Any user, secret or config change can alter what a cached reveal shows
+	// (secret, links, enabled flag), so every successful mutation drops it.
+	function invalidateRevealCache() {
+		revealCache.clear();
+	}
+
+	function rememberReveal(data: TgWebProxyRevealData | null) {
+		if (data?.user_id) revealCache.set(data.user_id, { data, at: Date.now() });
+	}
+
+	function cachedReveal(userId: string): TgWebProxyRevealData | null {
+		const hit = revealCache.get(userId);
+		if (!hit) return null;
+		if (Date.now() - hit.at >= REVEAL_REUSE_MS) {
+			revealCache.delete(userId);
+			return null;
+		}
+		return hit.data;
+	}
 
 	// Multi-user management state
 	let showAddUserModal = $state(false);
@@ -589,6 +617,7 @@
 				upstreams: cleanUpstreams,
 				upstream_device: primaryDirectDevice(cleanUpstreams),
 			});
+			invalidateRevealCache();
 			notifications.success('Маршрут интернета для Telegram обновлён');
 			egressModalOpen = false;
 			await loadData();
@@ -609,6 +638,7 @@
 		targetId?: string,
 		userId?: string
 	) {
+		if (revealLoading) return;
 		revealLoading = true;
 		revealOpen = true;
 		if (preferredTab) {
@@ -616,13 +646,19 @@
 		} else {
 			shareTab = expectsMt ? 'mtproxy' : 'webproxy';
 		}
-		const targetUserId = userId || selectedRevealUserId || tgUsers[0]?.id || 'default';
+		// A remembered selection is only used while that user still exists; no
+		// 'default' fallback: with zero users the backend answers an empty
+		// reveal (200) instead of 404 for a non-existent "default" user.
+		const rememberedUserId = tgUsers.some((u) => u.id === selectedRevealUserId) ? selectedRevealUserId : '';
+		const targetUserId = userId || rememberedUserId || tgUsers[0]?.id || '';
 		selectedRevealUserId = targetUserId;
 		try {
-			revealData = await api.revealTgWebProxySecret(targetUserId);
+			const cached = targetUserId ? cachedReveal(targetUserId) : null;
+			revealData = cached ?? (await api.revealTgWebProxySecret(targetUserId || undefined));
 			if (revealData?.user_id) {
 				selectedRevealUserId = revealData.user_id;
 			}
+			if (!cached) rememberReveal(revealData);
 			syncRevealSecretInput();
 			if (targetId) {
 				selectedWebProxyId = targetId;
@@ -643,6 +679,7 @@
 		revealData = null;
 		revealQrDataUrl = '';
 		revealSecretInput = '';
+		selectedRevealUserId = '';
 	}
 
 	function getActiveUserReveal(): TgUserRevealData | TgWebProxyRevealData | null {
@@ -658,9 +695,8 @@
 	}
 
 	function selectRevealUser(userId: string) {
-		selectedRevealUserId = userId;
-		syncRevealSecretInput();
-		void updateRevealQR();
+		if (userId === revealData?.user_id) return;
+		void openRevealModal(shareTab, selectedWebProxyId || undefined, userId);
 	}
 
 	function getActiveWebProxyLink(): WebProxyLink | null {
@@ -742,7 +778,9 @@
 				user_id: targetId,
 				secret: cleaned,
 			});
+			invalidateRevealCache();
 			revealData = await api.revealTgWebProxySecret(targetId);
+			rememberReveal(revealData);
 			syncRevealSecretInput();
 			await updateRevealQR();
 			notifications.success(m.tg_user_secret_saved());
@@ -764,7 +802,9 @@
 				user_id: targetId,
 				regenerate_secret: true,
 			});
+			invalidateRevealCache();
 			revealData = await api.revealTgWebProxySecret(targetId);
+			rememberReveal(revealData);
 			syncRevealSecretInput();
 			await updateRevealQR();
 			notifications.success(m.tg_user_secret_regenerated());
@@ -789,6 +829,7 @@
 				remark: newUserRemark.trim() || `Пользователь ${tgUsers.length + 1}`,
 				...(trimmedSec ? { secret: trimmedSec } : {}),
 			});
+			invalidateRevealCache();
 			newUserRemark = '';
 			newUserSecret = '';
 			showAddUserModal = false;
@@ -810,6 +851,7 @@
 				user_id: user.id,
 				enabled: nextEnabled,
 			});
+			invalidateRevealCache();
 			notifications.success(
 				nextEnabled ? `Доступ для «${user.remark}» включён` : `Доступ для «${user.remark}» отключён`
 			);
@@ -833,6 +875,7 @@
 		userActionLoadingId = target.id;
 		try {
 			status = await api.tgWebProxyAction('delete_user', { user_id: target.id });
+			invalidateRevealCache();
 			deleteUserTarget = null;
 			notifications.success(`Пользователь «${target.remark}» удалён`);
 			await loadData();
@@ -841,6 +884,7 @@
 				if (tgUsers.length > 0) {
 					selectedRevealUserId = tgUsers[0].id;
 					revealData = await api.revealTgWebProxySecret(selectedRevealUserId);
+					rememberReveal(revealData);
 					syncRevealSecretInput();
 					await updateRevealQR();
 				} else {
@@ -860,6 +904,7 @@
 		try {
 			const nextAction = status?.running ? 'stop' : 'start';
 			status = await api.tgWebProxyAction(nextAction);
+			invalidateRevealCache();
 			notifications.success(status?.running ? 'Прокси Telegram запущен' : 'Прокси Telegram остановлен');
 			await loadData();
 			onRefreshParent?.();
@@ -874,6 +919,7 @@
 		actionLoading = true;
 		try {
 			status = await api.tgWebProxyAction('restart');
+			invalidateRevealCache();
 			notifications.success('Прокси Telegram перезапущен');
 			onRefreshParent?.();
 		} catch (e) {
@@ -996,6 +1042,7 @@
 					editConfig.endpoints[0].carrier_mode || getPresetMeta(ep0Preset).carrier_mode;
 			}
 			config = await api.updateTgWebProxyConfig(editConfig);
+			invalidateRevealCache();
 			notifications.success('Настройки сохранены');
 			settingsOpen = false;
 			await loadData();
@@ -1011,6 +1058,7 @@
 		rotateSecretLoading = true;
 		try {
 			status = await api.tgWebProxyAction('rotate_secret');
+			invalidateRevealCache();
 			rotateConfirmOpen = false;
 			notifications.success('Новый ключ сгенерирован. Старый ключ активен в течение 7 дней.');
 			await loadData();
@@ -1025,6 +1073,7 @@
 		revokeLoading = true;
 		try {
 			status = await api.tgWebProxyAction('revoke_legacy');
+			invalidateRevealCache();
 			revokeConfirmOpen = false;
 			notifications.success('Старый ключ успешно отозван.');
 			await loadData();
@@ -1039,6 +1088,7 @@
 		clearCacheLoading = true;
 		try {
 			status = await api.tgWebProxyAction('clear_scanner_cache');
+			invalidateRevealCache();
 			clearCacheConfirmOpen = false;
 			notifications.success('Кэш сетевых сканеров очищен.');
 		} catch (e) {
@@ -1057,6 +1107,7 @@
 		resetLoading = true;
 		try {
 			const res = await api.resetTgWebProxy({ delete_keendns: resetDeleteKeenDNS });
+			invalidateRevealCache();
 			lastCheckReport = null;
 			lastCheckError = '';
 			clearServerVerification('tgwebproxy');
@@ -1479,16 +1530,16 @@
 	{:else if revealData}
 		{@const activeUser = getActiveUserReveal()}
 		<div class="reveal-content">
-			{#if revealData.users && revealData.users.length > 0}
+			{#if tgUsers.length > 0}
 				<div class="reveal-user-selector">
 					<label for="tg-reveal-user-select" class="ep-selector-label">Пользователь / устройство:</label>
 					<select
 						id="tg-reveal-user-select"
-						value={selectedRevealUserId || revealData.users[0].id}
+						value={revealData.user_id || selectedRevealUserId || tgUsers[0].id}
 						onchange={(e) => selectRevealUser((e.currentTarget as HTMLSelectElement).value)}
 						class="select-input reveal-user-select"
 					>
-						{#each revealData.users as u (u.id)}
+						{#each tgUsers as u (u.id)}
 							<option value={u.id}>{u.remark}{u.enabled ? '' : ' (выключен)'}</option>
 						{/each}
 					</select>

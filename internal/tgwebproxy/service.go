@@ -24,6 +24,9 @@ import (
 
 var (
 	ErrRecoveryRequired = errors.New("recovery_required: service requires manual or successful recovery before mutating configuration")
+	ErrUserNotFound     = errors.New("telegram user not found")
+	// ErrRevealRateLimited is returned when the caller's allow hook rejects a reveal.
+	ErrRevealRateLimited = errors.New("reveal rate limited")
 )
 
 type EgressValidator func(device string) error
@@ -2110,21 +2113,68 @@ func (s *Service) RevealSecret() (RevealData, error) {
 	return s.RevealUserSecret("")
 }
 
-func (s *Service) RevealUserSecret(userID string) (RevealData, error) {
+// resolveRevealTarget picks exactly one user. An empty ID means the first
+// user; an unknown ID must not fall back to another user's (or the global)
+// secret. With no users configured and an empty ID it returns a zero user and
+// no error: there is nothing to disclose.
+func resolveRevealTarget(cfg Config, userID string) (TelegramUser, error) {
+	users := cfg.GetUsers()
+	if len(users) == 0 && userID == "" {
+		return TelegramUser{}, nil
+	}
+	for _, u := range users {
+		if userID == "" || u.ID == userID {
+			if u.Secret == "" {
+				break
+			}
+			return u, nil
+		}
+	}
+	return TelegramUser{}, ErrUserNotFound
+}
+
+func (s *Service) snapshotForReveal() (Config, error) {
 	s.mu.Lock()
 	cfg := s.config
 	recovery := s.recoveryRequired
 	s.mu.Unlock()
-
 	if recovery {
-		return RevealData{}, ErrRecoveryRequired
+		return Config{}, ErrRecoveryRequired
 	}
+	return cfg, nil
+}
 
-	var targetSecret string
-	var targetRemark string
-	var targetID string
-	users := cfg.GetUsers()
-	if len(users) == 0 {
+// revealRevision is an opaque revision of a secret for in-memory rate-limit
+// keys only (truncated, domain-separated SHA-256); it is never returned to
+// clients.
+func revealRevision(secret string) string {
+	sum := sha256.Sum256([]byte("tgwebproxy-reveal-revision-v1\x00" + strings.ToLower(secret)))
+	return hex.EncodeToString(sum[:8])
+}
+
+func (s *Service) RevealUserSecret(userID string) (RevealData, error) {
+	return s.RevealUserSecretLimited(userID, nil)
+}
+
+// RevealUserSecretLimited resolves the target user and builds the reveal from
+// one config snapshot. allow (if non-nil) is called with the user ID and the
+// revision of exactly the secret that would be disclosed, before any secret
+// material is built; returning false aborts with ErrRevealRateLimited. Using a
+// single snapshot means a concurrent secret change cannot make the caller
+// rate-limit one secret and disclose another. With no users configured there
+// is nothing to disclose and allow is not called.
+func (s *Service) RevealUserSecretLimited(userID string, allow func(id, revision string) bool) (RevealData, error) {
+	cfg, err := s.snapshotForReveal()
+	if err != nil {
+		return RevealData{}, err
+	}
+	target, err := resolveRevealTarget(cfg, userID)
+	if err != nil {
+		return RevealData{}, err
+	}
+	if target.ID == "" {
+		// No users configured (e.g. the last one was deleted): nothing to
+		// disclose, but the UI still gets connection metadata.
 		return RevealData{
 			DirectHost: cfg.DirectHost,
 			DirectPort: cfg.DirectPort,
@@ -2132,27 +2182,24 @@ func (s *Service) RevealUserSecret(userID string) (RevealData, error) {
 			Users:      []UserRevealData{},
 		}, nil
 	}
-	if userID != "" {
-		for _, u := range users {
-			if u.ID == userID {
-				targetSecret = u.Secret
-				targetRemark = u.Remark
-				targetID = u.ID
-				break
-			}
-		}
-	} else if len(users) > 0 {
-		targetSecret = users[0].Secret
-		targetRemark = users[0].Remark
-		targetID = users[0].ID
+	if allow != nil && !allow(target.ID, revealRevision(target.Secret)) {
+		return RevealData{}, ErrRevealRateLimited
 	}
 
-	data, err := BuildTgLinks(cfg, targetSecret)
+	// Build links from a config scoped to the target only: other users'
+	// secrets and the global legacy rotation secret (accepted for every client
+	// until it expires, owned by no user) never enter a per-user reveal.
+	scoped := cfg
+	scoped.LegacySecret = ""
+	if len(cfg.Users) > 0 {
+		scoped.Users = []TelegramUser{target}
+	}
+	data, err := BuildTgLinks(scoped, target.Secret)
 	if err != nil {
 		return RevealData{}, err
 	}
-	data.UserID = targetID
-	data.UserRemark = targetRemark
+	data.UserID = target.ID
+	data.UserRemark = target.Remark
 	return data, nil
 }
 

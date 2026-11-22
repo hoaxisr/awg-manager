@@ -3,6 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { render, fireEvent, waitFor, screen } from '@testing-library/svelte';
 import TelegramWebProxyCard from './TelegramWebProxyCard.svelte';
 import { api } from '$lib/api/client';
+import { notifications } from '$lib/stores/notifications';
 import { m } from '$lib/i18n';
 import { resetServerVerification } from '$lib/stores/serverVerification';
 import type { TgWebProxyConfig, TgWebProxyStatus } from '$lib/types';
@@ -280,6 +281,241 @@ describe('TelegramWebProxyCard', () => {
 		expect(api.tgWebProxyAction).toHaveBeenCalledWith('update_user', {
 			user_id: 'default',
 			secret: newSec,
+		});
+	});
+
+	it('does not show a stale cached secret after regenerating and switching users', async () => {
+		const userA = { id: 'u-a', remark: 'Alice', enabled: true };
+		const userB = { id: 'u-b', remark: 'Bob', enabled: true };
+		const secA1 = '00112233445566778899aabbccddeeff';
+		const secA2 = 'ffeeddccbbaa99887766554433221100';
+		const secB = 'abcdefabcdefabcdefabcdefabcdefab';
+		const secrets: Record<string, string> = { 'u-a': secA1, 'u-b': secB };
+		const reveal = (id: string) => ({
+			user_id: id,
+			user_remark: id === 'u-a' ? 'Alice' : 'Bob',
+			secret: secrets[id],
+			direct_host: 'connect.example.netcraze.club',
+			direct_port: 8443,
+			tls_domain: 'www.google.com',
+			tg_url: '',
+			tme_url: '',
+			bridge_url: '',
+			mtproxy_secret: 'ee' + secrets[id],
+			mtproxy_url: 'tg://proxy?server=1.1.1.1',
+			mtproxy_tme_url: 'https://t.me/proxy?server=1.1.1.1',
+			users: [
+				{
+					id,
+					remark: id === 'u-a' ? 'Alice' : 'Bob',
+					enabled: true,
+					secret: secrets[id],
+					tg_url: '',
+					tme_url: '',
+					bridge_url: '',
+					mtproxy_secret: 'ee' + secrets[id],
+					mtproxy_url: 'tg://proxy?server=1.1.1.1',
+					mtproxy_tme_url: 'https://t.me/proxy?server=1.1.1.1',
+				},
+			],
+		});
+		vi.mocked(api.getTgWebProxyConfig).mockResolvedValue(
+			baseConfig({ enabled: true, scenario: 'direct_fake_tls', users: [userA, userB] }),
+		);
+		vi.mocked(api.getTgWebProxyStatus).mockResolvedValue(
+			baseStatus({ running: true, direct_online: true, users: [userA, userB] }),
+		);
+		vi.mocked(api.revealTgWebProxySecret).mockImplementation(async (id?: string) => reveal(id || 'u-a'));
+		vi.mocked(api.tgWebProxyAction).mockImplementation(async (action: string) => {
+			if (action === 'update_user') secrets['u-a'] = secA2;
+			return baseStatus({ running: true, direct_online: true, users: [userA, userB] });
+		});
+
+		const { findAllByRole, findByRole } = render(TelegramWebProxyCard, {});
+		const qrButtons = await findAllByRole('button', { name: /QR \/ Ссылка/ });
+		await fireEvent.click(qrButtons[0]);
+
+		const secretInput = () =>
+			findByRole('textbox', { name: /Хеш \/ базовый секрет|Hash \/ base secret/ }) as Promise<HTMLInputElement>;
+		await waitFor(async () => expect((await secretInput()).value).toBe(secA1));
+
+		await fireEvent.click(await findByRole('button', { name: /Сгенерировать|Generate/ }));
+		await waitFor(async () => expect((await secretInput()).value).toBe(secA2));
+
+		const userSelect = (await findByRole('combobox', { name: /Пользователь/ })) as HTMLSelectElement;
+		await fireEvent.change(userSelect, { target: { value: 'u-b' } });
+		await waitFor(async () => expect((await secretInput()).value).toBe(secB));
+
+		await fireEvent.change(await findByRole('combobox', { name: /Пользователь/ }), {
+			target: { value: 'u-a' },
+		});
+		await waitFor(async () => expect((await secretInput()).value).toBe(secA2));
+	});
+
+	describe('reveal modal lifecycle (per-user reveal, rate limit, deletions)', () => {
+		type U = { id: string; remark: string; enabled: boolean };
+
+		// Backend-like reveal: 404 for unknown users, 429 for a repeat of the
+		// same secret without an intervening change (the 5 s window is longer
+		// than any of these tests), an empty 200 when no users exist.
+		function setupBackend(initial: U[], secrets: Record<string, string>) {
+			let users = [...initial];
+			const revealed = new Map<string, number>();
+			const mtproto = (sec: string) => 'ee' + sec;
+			const revealFor = (u: U) => ({
+				user_id: u.id,
+				user_remark: u.remark,
+				secret: secrets[u.id],
+				direct_host: 'connect.example.netcraze.club',
+				direct_port: 8443,
+				tls_domain: 'www.google.com',
+				tg_url: '',
+				tme_url: '',
+				bridge_url: '',
+				mtproxy_secret: mtproto(secrets[u.id]),
+				mtproxy_url: 'tg://proxy?server=1.1.1.1&secret=' + mtproto(secrets[u.id]),
+				mtproxy_tme_url: 'https://t.me/proxy?server=1.1.1.1',
+				users: [
+					{
+						id: u.id,
+						remark: u.remark,
+						enabled: u.enabled,
+						secret: secrets[u.id],
+						tg_url: '',
+						tme_url: '',
+						bridge_url: '',
+						mtproxy_secret: mtproto(secrets[u.id]),
+						mtproxy_url: 'tg://proxy?server=1.1.1.1&secret=' + mtproto(secrets[u.id]),
+						mtproxy_tme_url: 'https://t.me/proxy?server=1.1.1.1',
+					},
+				],
+			});
+			const status = () => baseStatus({ running: true, direct_online: true, users: [...users] });
+			vi.mocked(api.getTgWebProxyConfig).mockImplementation(async () =>
+				baseConfig({ enabled: true, scenario: 'direct_fake_tls', users: [...users] }),
+			);
+			vi.mocked(api.getTgWebProxyStatus).mockImplementation(async () => status());
+			vi.mocked(api.revealTgWebProxySecret).mockImplementation(async (id?: string) => {
+				if (!id) {
+					if (users.length > 0) throw new Error('test: UI must name the user when users exist');
+					return { secret: '', direct_host: '', direct_port: 0, tls_domain: '', tg_url: '', tme_url: '', bridge_url: '', mtproxy_secret: '', mtproxy_url: '', mtproxy_tme_url: '', users: [] };
+				}
+				const u = users.find((x) => x.id === id);
+				if (!u) throw new Error('telegram user not found');
+				const key = id + ':' + secrets[id];
+				const last = revealed.get(key);
+				if (last !== undefined && Date.now() - last < 5000) throw new Error('Rate limit exceeded: please wait 5 seconds');
+				revealed.set(key, Date.now());
+				return revealFor(u);
+			});
+			vi.mocked(api.tgWebProxyAction).mockImplementation(async (action: string, body?: Record<string, unknown>) => {
+				const id = body?.user_id as string | undefined;
+				if (action === 'delete_user') users = users.filter((x) => x.id !== id);
+				if (action === 'update_user' && id && body?.regenerate_secret) secrets[id] = 'ab'.repeat(16);
+				return status();
+			});
+		}
+
+		async function closeModal() {
+			await fireEvent.click((await screen.findAllByRole('button', { name: m.common_close() }))[0]);
+			await waitFor(() => expect(screen.queryByRole('combobox', { name: /Пользователь/ })).toBeNull());
+		}
+
+		async function deleteFirstUser() {
+			await fireEvent.click((await screen.findAllByRole('button', { name: /Удалить пользователя|Delete user/ }))[0]);
+			await fireEvent.click(await screen.findByRole('button', { name: /^(Удалить|Delete)$/ }));
+		}
+
+		const secretInput = () =>
+			screen.findByRole<HTMLInputElement>('textbox', { name: /Хеш \/ базовый секрет|Hash \/ base secret/ });
+
+		it('after closing, deleting the previously selected user and reopening, reveals the remaining user', async () => {
+			const A = { id: 'u-a', remark: 'Alice', enabled: true };
+			const B = { id: 'u-b', remark: 'Bob', enabled: true };
+			setupBackend([A, B], { 'u-a': '11'.repeat(16), 'u-b': '22'.repeat(16) });
+			render(TelegramWebProxyCard, {});
+
+			await fireEvent.click((await screen.findAllByRole('button', { name: /QR \/ Ссылка/ }))[0]);
+			await waitFor(async () => expect((await secretInput()).value).toBe('11'.repeat(16)));
+			await closeModal();
+			await deleteFirstUser();
+			await waitFor(() => expect(screen.getAllByRole('button', { name: /QR \/ Ссылка/ })).toHaveLength(1));
+
+			vi.mocked(api.revealTgWebProxySecret).mockClear();
+			await fireEvent.click(screen.getByRole('button', { name: /QR \/ Ссылка/ }));
+			await waitFor(async () => expect((await secretInput()).value).toBe('22'.repeat(16)));
+			expect(api.revealTgWebProxySecret).not.toHaveBeenCalledWith('u-a');
+			expect(notifications.error).not.toHaveBeenCalled();
+		});
+
+		it('after closing and deleting the last user, shows the empty state without reveal errors', async () => {
+			const L = { id: 'default', remark: 'Основной', enabled: true };
+			setupBackend([L], { default: '33'.repeat(16) });
+			render(TelegramWebProxyCard, {});
+
+			await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+			await waitFor(async () => expect((await secretInput()).value).toBe('33'.repeat(16)));
+			await closeModal();
+
+			vi.mocked(api.revealTgWebProxySecret).mockClear();
+			await deleteFirstUser();
+			await screen.findByText(m.tg_users_empty());
+			expect(screen.queryByRole('button', { name: /QR \/ Ссылка/ })).toBeNull();
+			expect(api.revealTgWebProxySecret).not.toHaveBeenCalled();
+			expect(notifications.error).not.toHaveBeenCalled();
+		});
+
+		it('reopening the same user right after closing reuses the reveal instead of hitting the rate limit', async () => {
+			const A = { id: 'u-a', remark: 'Alice', enabled: true };
+			setupBackend([A], { 'u-a': '44'.repeat(16) });
+			render(TelegramWebProxyCard, {});
+
+			await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+			await waitFor(async () => expect((await secretInput()).value).toBe('44'.repeat(16)));
+			await closeModal();
+
+			await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+			await waitFor(async () => expect((await secretInput()).value).toBe('44'.repeat(16)));
+			expect(api.revealTgWebProxySecret).toHaveBeenCalledTimes(1);
+			expect(notifications.error).not.toHaveBeenCalled();
+		});
+
+		it('re-fetches after the reuse window instead of keeping a revealed secret indefinitely', async () => {
+			const A = { id: 'u-a', remark: 'Alice', enabled: true };
+			setupBackend([A], { 'u-a': '66'.repeat(16) });
+			const realNow = Date.now.bind(Date);
+			let shift = 0;
+			const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + shift);
+			try {
+				render(TelegramWebProxyCard, {});
+				await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+				await waitFor(async () => expect((await secretInput()).value).toBe('66'.repeat(16)));
+				await closeModal();
+
+				shift = 6000;
+				await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+				await waitFor(async () => expect((await secretInput()).value).toBe('66'.repeat(16)));
+				expect(api.revealTgWebProxySecret).toHaveBeenCalledTimes(2);
+				expect(notifications.error).not.toHaveBeenCalled();
+			} finally {
+				nowSpy.mockRestore();
+			}
+		});
+
+		it('after regenerating a secret and reopening, shows the new secret, not a cached one', async () => {
+			const A = { id: 'u-a', remark: 'Alice', enabled: true };
+			setupBackend([A], { 'u-a': '55'.repeat(16) });
+			render(TelegramWebProxyCard, {});
+
+			await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+			await waitFor(async () => expect((await secretInput()).value).toBe('55'.repeat(16)));
+			await fireEvent.click(await screen.findByRole('button', { name: /Сгенерировать|Generate/ }));
+			await waitFor(async () => expect((await secretInput()).value).toBe('ab'.repeat(16)));
+			await closeModal();
+
+			await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+			await waitFor(async () => expect((await secretInput()).value).toBe('ab'.repeat(16)));
+			expect(notifications.error).not.toHaveBeenCalled();
 		});
 	});
 

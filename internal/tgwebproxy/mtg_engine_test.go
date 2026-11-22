@@ -139,10 +139,14 @@ func TestMultiUserProfilesAndReveal(t *testing.T) {
 	if rev2.UserID != user2ID || rev2.UserRemark != "Брат" {
 		t.Errorf("unexpected reveal user metadata: %+v", rev2)
 	}
-	if len(rev2.Users) != 2 {
-		t.Errorf("expected 2 user entries in RevealData.Users, got %d", len(rev2.Users))
+	if len(rev2.Users) != 1 || rev2.Users[0].ID != user2ID {
+		t.Errorf("expected RevealData.Users scoped to %s, got %+v", user2ID, rev2.Users)
 	}
-	if rev2.Users[0].Secret == rev2.Users[1].Secret {
+	rev1, err := svc.RevealUserSecret("default")
+	if err != nil {
+		t.Fatalf("RevealUserSecret(default) failed: %v", err)
+	}
+	if rev1.Secret == rev2.Secret {
 		t.Errorf("expected distinct secrets for different users")
 	}
 
