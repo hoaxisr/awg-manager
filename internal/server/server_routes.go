@@ -1145,6 +1145,10 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		s.telemtHandler.RegisterRoutes(mux, h.guarded)
 	}
 	if s.openfluxHandler != nil {
+		s.openfluxHandler.SetSessions(s.sessions)
+		if s.settings != nil {
+			s.openfluxHandler.SetAuthChecker(s.settings)
+		}
 		s.openfluxHandler.RegisterRoutes(mux, h.guarded)
 	}
 	if s.clashProxy != nil {
