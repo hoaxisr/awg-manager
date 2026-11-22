@@ -263,7 +263,7 @@ func TestTgWebProxy_MethodEnforcement(t *testing.T) {
 }
 
 func TestTgWebProxy_RateLimit_SessionKeyed(t *testing.T) {
-	handler, svc, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	handler, _, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
 	token := getValidCSRFToken(t, handler, sessionToken)
 
 	req := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/reveal", nil)
@@ -289,11 +289,9 @@ func TestTgWebProxy_RateLimit_SessionKeyed(t *testing.T) {
 
 	// Advance time past rate limit (5 seconds)
 	handler.revealMu.Lock()
-	id, rev, err := svc.ResolveRevealUser("")
-	if err != nil {
-		t.Fatal(err)
+	for k := range handler.revealLimits {
+		handler.revealLimits[k] = time.Now().Add(-6 * time.Second)
 	}
-	handler.revealLimits[revealLimitKey("sess:"+sessionToken, id, rev)] = time.Now().Add(-6 * time.Second)
 	handler.revealMu.Unlock()
 
 	w3 := httptest.NewRecorder()

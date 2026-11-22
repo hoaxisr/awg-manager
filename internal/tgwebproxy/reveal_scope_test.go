@@ -144,50 +144,62 @@ func TestRevealUserSecret_NoUsersConfigured(t *testing.T) {
 			t.Errorf("empty reveal contains %q: %s", marker, raw)
 		}
 	}
-	if id, rev, err := svc.ResolveRevealUser(""); err != nil || id != "" || rev != "" {
-		t.Errorf("ResolveRevealUser with no users = %q, %v; want \"\", nil", id, err)
+	if id, rev, err := probeRevealTarget(svc, ""); err != nil || id != "" || rev != "" {
+		t.Errorf("limiter target with no users = %q, %v; want no limiter call", id, err)
 	}
 	if _, err := svc.RevealUserSecret("default"); !errors.Is(err, ErrUserNotFound) {
 		t.Errorf("explicit default with no users err = %v, want ErrUserNotFound", err)
 	}
 }
 
-// ResolveRevealUser lets the API rate-limit before RevealData is built; it
-// must agree with RevealUserSecret on the target and expose no secrets.
-func TestResolveRevealUser_MatchesRevealTarget(t *testing.T) {
+// The limiter hook sees the same target RevealUserSecret discloses.
+func TestRevealLimited_HookSeesRevealTarget(t *testing.T) {
 	svc, _, _ := setupTestService(t)
 	svc.config = revealScopeConfig()
 
 	for in, want := range map[string]string{"": "u-a", "u-a": "u-a", "u-b": "u-b"} {
-		got, rev, err := svc.ResolveRevealUser(in)
+		got, rev, err := probeRevealTarget(svc, in)
 		if err != nil || got != want || len(rev) != 16 {
-			t.Errorf("ResolveRevealUser(%q) = %q, %v; want %q", in, got, err, want)
+			t.Errorf("limiter target(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	if _, _, err := svc.ResolveRevealUser("u-missing"); !errors.Is(err, ErrUserNotFound) {
-		t.Errorf("ResolveRevealUser(unknown) err = %v, want ErrUserNotFound", err)
+	if _, _, err := probeRevealTarget(svc, "u-missing"); !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("limited reveal(unknown) err = %v, want ErrUserNotFound", err)
 	}
 	svc.recoveryRequired = true
-	if _, _, err := svc.ResolveRevealUser("u-a"); !errors.Is(err, ErrRecoveryRequired) {
-		t.Errorf("ResolveRevealUser in recovery err = %v, want ErrRecoveryRequired", err)
+	if _, _, err := probeRevealTarget(svc, "u-a"); !errors.Is(err, ErrRecoveryRequired) {
+		t.Errorf("limited reveal in recovery err = %v, want ErrRecoveryRequired", err)
 	}
 }
 
 // The revision changes with the secret and never contains it.
-func TestResolveRevealUser_RevisionTracksSecret(t *testing.T) {
+func TestRevealRevision_TracksSecret(t *testing.T) {
 	svc, _, _ := setupTestService(t)
 	svc.config = revealScopeConfig()
-	_, revA, _ := svc.ResolveRevealUser("u-a")
-	_, revA2, _ := svc.ResolveRevealUser("u-a")
-	_, revB, _ := svc.ResolveRevealUser("u-b")
+	_, revA, _ := probeRevealTarget(svc, "u-a")
+	_, revA2, _ := probeRevealTarget(svc, "u-a")
+	_, revB, _ := probeRevealTarget(svc, "u-b")
 	if revA != revA2 || revA == revB {
 		t.Fatalf("revisions: a=%q a2=%q b=%q", revA, revA2, revB)
 	}
 	svc.config.Users[0].Secret = "0123456789abcdef0123456789abcdef"
-	if _, revChanged, _ := svc.ResolveRevealUser("u-a"); revChanged == revA {
+	if _, revChanged, _ := probeRevealTarget(svc, "u-a"); revChanged == revA {
 		t.Fatal("revision did not change with the secret")
 	}
 	if strings.Contains(revA, revealSecretA[:16]) || strings.Contains(revealSecretA, revA) {
 		t.Fatal("revision leaks secret material")
 	}
+}
+
+// probeRevealTarget returns what the limiter hook is called with, without
+// building secret material ("" when the hook is not called).
+func probeRevealTarget(svc *Service, userID string) (id, rev string, err error) {
+	_, err = svc.RevealUserSecretLimited(userID, func(i, r string) bool {
+		id, rev = i, r
+		return false
+	})
+	if errors.Is(err, ErrRevealRateLimited) {
+		err = nil
+	}
+	return id, rev, err
 }

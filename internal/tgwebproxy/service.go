@@ -25,6 +25,8 @@ import (
 var (
 	ErrRecoveryRequired = errors.New("recovery_required: service requires manual or successful recovery before mutating configuration")
 	ErrUserNotFound     = errors.New("telegram user not found")
+	// ErrRevealRateLimited is returned when the caller's allow hook rejects a reveal.
+	ErrRevealRateLimited = errors.New("reveal rate limited")
 )
 
 type EgressValidator func(device string) error
@@ -2117,30 +2119,26 @@ func (s *Service) snapshotForReveal() (Config, error) {
 	return cfg, nil
 }
 
-// ResolveRevealUser returns the ID of the user RevealUserSecret(userID) would
-// disclose ("" when no users exist) and an opaque revision of that user's
-// secret, without building any secret material. Callers rate-limit on
-// (id, revision) before the reveal is constructed, so a just-changed secret is
-// revealable at once while repeats of the same secret stay limited. The
-// revision is a truncated domain-separated SHA-256 and is meant for in-memory
-// keys only, never for responses.
-func (s *Service) ResolveRevealUser(userID string) (id, revision string, err error) {
-	cfg, err := s.snapshotForReveal()
-	if err != nil {
-		return "", "", err
-	}
-	u, err := resolveRevealTarget(cfg, userID)
-	if err != nil {
-		return "", "", err
-	}
-	if u.ID == "" {
-		return "", "", nil
-	}
-	sum := sha256.Sum256([]byte("tgwebproxy-reveal-revision-v1\x00" + strings.ToLower(u.Secret)))
-	return u.ID, hex.EncodeToString(sum[:8]), nil
+// revealRevision is an opaque revision of a secret for in-memory rate-limit
+// keys only (truncated, domain-separated SHA-256); it is never returned to
+// clients.
+func revealRevision(secret string) string {
+	sum := sha256.Sum256([]byte("tgwebproxy-reveal-revision-v1\x00" + strings.ToLower(secret)))
+	return hex.EncodeToString(sum[:8])
 }
 
 func (s *Service) RevealUserSecret(userID string) (RevealData, error) {
+	return s.RevealUserSecretLimited(userID, nil)
+}
+
+// RevealUserSecretLimited resolves the target user and builds the reveal from
+// one config snapshot. allow (if non-nil) is called with the user ID and the
+// revision of exactly the secret that would be disclosed, before any secret
+// material is built; returning false aborts with ErrRevealRateLimited. Using a
+// single snapshot means a concurrent secret change cannot make the caller
+// rate-limit one secret and disclose another. With no users configured there
+// is nothing to disclose and allow is not called.
+func (s *Service) RevealUserSecretLimited(userID string, allow func(id, revision string) bool) (RevealData, error) {
 	cfg, err := s.snapshotForReveal()
 	if err != nil {
 		return RevealData{}, err
@@ -2158,6 +2156,9 @@ func (s *Service) RevealUserSecret(userID string) (RevealData, error) {
 			TlsDomain:  cfg.TlsDomain,
 			Users:      []UserRevealData{},
 		}, nil
+	}
+	if allow != nil && !allow(target.ID, revealRevision(target.Secret)) {
+		return RevealData{}, ErrRevealRateLimited
 	}
 
 	// Build links from a config scoped to the target only: other users'

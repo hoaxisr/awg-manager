@@ -287,24 +287,6 @@ func (h *TgWebProxyHandler) RevealSecret(w http.ResponseWriter, r *http.Request)
 		userID = strings.TrimSpace(reqBody.UserID)
 	}
 
-	// Resolve the target first (no secret material) so the rate limit is
-	// checked before the reveal is built.
-	targetID, revision, err := h.svc.ResolveRevealUser(userID)
-	if err != nil {
-		writeRevealError(w, err)
-		return
-	}
-	if targetID == "" {
-		// No users: nothing to disclose, no reason to rate-limit.
-		h.writeReveal(w, "")
-		return
-	}
-
-	// Rate limit: 1 disclosure of a given secret per 5 seconds per
-	// authenticated session (or remote IP). Keyed by the resolved user and its
-	// secret revision: an explicit user_id cannot bypass the limit applied to
-	// the default reveal, and a secret that was just edited or regenerated can
-	// be revealed immediately.
 	var clientKey string
 	if cookie, err := r.Cookie(auth.SessionCookie); !h.authDisabled() && err == nil && cookie.Value != "" {
 		clientKey = "sess:" + cookie.Value
@@ -316,30 +298,16 @@ func (h *TgWebProxyHandler) RevealSecret(w http.ResponseWriter, r *http.Request)
 		clientKey = "ip:" + host
 	}
 
-	limitKey := revealLimitKey(clientKey, targetID, revision)
-	h.revealMu.Lock()
-	now := time.Now()
-	// Prune expired entries older than 1 minute to prevent unbounded growth
-	for k, last := range h.revealLimits {
-		if now.Sub(last) > 1*time.Minute {
-			delete(h.revealLimits, k)
-		}
+	// The limiter runs inside the service between target resolution and
+	// building the reveal, on the same config snapshot, so the secret that is
+	// rate-limited is exactly the one disclosed.
+	data, err := h.svc.RevealUserSecretLimited(userID, func(id, revision string) bool {
+		return h.allowReveal(revealLimitKey(clientKey, id, revision))
+	})
+	if errors.Is(err, tgwebproxy.ErrRevealRateLimited) {
+		WriteError(w, http.StatusTooManyRequests, "Rate limit exceeded: please wait 5 seconds")
+		return
 	}
-	if last, exists := h.revealLimits[limitKey]; exists {
-		if now.Sub(last) < 5*time.Second {
-			h.revealMu.Unlock()
-			WriteError(w, http.StatusTooManyRequests, "Rate limit exceeded: please wait 5 seconds")
-			return
-		}
-	}
-	h.revealLimits[limitKey] = now
-	h.revealMu.Unlock()
-
-	h.writeReveal(w, targetID)
-}
-
-func (h *TgWebProxyHandler) writeReveal(w http.ResponseWriter, targetID string) {
-	data, err := h.svc.RevealUserSecret(targetID)
 	if err != nil {
 		writeRevealError(w, err)
 		return
@@ -347,6 +315,28 @@ func (h *TgWebProxyHandler) writeReveal(w http.ResponseWriter, targetID string) 
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	WriteJSON(w, http.StatusOK, data)
+}
+
+// allowReveal implements the reveal rate limit: 1 disclosure of a given secret
+// per 5 seconds per authenticated session (or remote IP). Keys include the
+// user and its secret revision: an explicit user_id cannot bypass the limit
+// applied to the default reveal, and a secret that was just edited or
+// regenerated can be revealed immediately.
+func (h *TgWebProxyHandler) allowReveal(limitKey string) bool {
+	h.revealMu.Lock()
+	defer h.revealMu.Unlock()
+	now := time.Now()
+	// Prune expired entries older than 1 minute to prevent unbounded growth
+	for k, last := range h.revealLimits {
+		if now.Sub(last) > 1*time.Minute {
+			delete(h.revealLimits, k)
+		}
+	}
+	if last, exists := h.revealLimits[limitKey]; exists && now.Sub(last) < 5*time.Second {
+		return false
+	}
+	h.revealLimits[limitKey] = now
+	return true
 }
 
 func writeRevealError(w http.ResponseWriter, err error) {
