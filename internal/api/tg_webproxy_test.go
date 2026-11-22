@@ -289,13 +289,82 @@ func TestTgWebProxy_RateLimit_SessionKeyed(t *testing.T) {
 
 	// Advance time past rate limit (5 seconds)
 	handler.revealMu.Lock()
-	handler.revealLimits["sess:"+sessionToken] = time.Now().Add(-6 * time.Second)
+	handler.revealLimits[revealLimitKey("sess:"+sessionToken, "default")] = time.Now().Add(-6 * time.Second)
 	handler.revealMu.Unlock()
 
 	w3 := httptest.NewRecorder()
 	handler.RevealSecret(w3, req)
 	if w3.Code == http.StatusTooManyRequests {
 		t.Errorf("expected rate limit to expire after delay, got 429")
+	}
+}
+
+func newRevealRequest(t *testing.T, handler *TgWebProxyHandler, sessionToken, userID string) *http.Request {
+	t.Helper()
+	token := getValidCSRFToken(t, handler, sessionToken)
+	target := "http://192.168.10.1:2222/api/servers/tgwebproxy/reveal"
+	if userID != "" {
+		target += "?user_id=" + userID
+	}
+	req := httptest.NewRequest(http.MethodPost, target, nil)
+	req.Host = "192.168.10.1:2222"
+	req.Header.Set("Origin", "http://192.168.10.1:2222")
+	req.Header.Set("X-CSRF-Token", token)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+	return req
+}
+
+// An explicit user_id used to skip rate limiting entirely; it now shares the
+// bucket of the user it resolves to, including the empty (default) reveal.
+func TestTgWebProxy_RevealRateLimit_AppliesToExplicitUserID(t *testing.T) {
+	handler, _, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+
+	w1 := httptest.NewRecorder()
+	handler.RevealSecret(w1, newRevealRequest(t, handler, sessionToken, "default"))
+	if w1.Code != http.StatusOK {
+		t.Fatalf("first reveal: got %d: %s", w1.Code, w1.Body.String())
+	}
+	if cc := w1.Header().Get("Cache-Control"); cc == "" || !bytes.Contains([]byte(cc), []byte("no-store")) {
+		t.Errorf("reveal Cache-Control = %q, want no-store", cc)
+	}
+
+	w2 := httptest.NewRecorder()
+	handler.RevealSecret(w2, newRevealRequest(t, handler, sessionToken, "default"))
+	if w2.Code != http.StatusTooManyRequests {
+		t.Errorf("immediate repeat with explicit user_id: got %d, want 429", w2.Code)
+	}
+
+	w3 := httptest.NewRecorder()
+	handler.RevealSecret(w3, newRevealRequest(t, handler, sessionToken, ""))
+	if w3.Code != http.StatusTooManyRequests {
+		t.Errorf("empty user_id resolving to same user: got %d, want 429", w3.Code)
+	}
+}
+
+func TestTgWebProxy_RevealUnknownUser_NotFoundWithoutSecret(t *testing.T) {
+	handler, svc, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	cfg := svc.GetConfig()
+	if len(cfg.Users) == 0 {
+		t.Fatalf("expected default user in fresh config")
+	}
+
+	w := httptest.NewRecorder()
+	handler.RevealSecret(w, newRevealRequest(t, handler, sessionToken, "no-such-user"))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown user: got %d, want 404: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, marker := range []string{"tg://", "t.me/", "bridge=", `"secret"`} {
+		if bytes.Contains([]byte(body), []byte(marker)) {
+			t.Errorf("404 body contains %q: %s", marker, body)
+		}
+	}
+
+	// A failed lookup does not consume the real user's reveal budget.
+	wOK := httptest.NewRecorder()
+	handler.RevealSecret(wOK, newRevealRequest(t, handler, sessionToken, cfg.Users[0].ID))
+	if wOK.Code != http.StatusOK {
+		t.Errorf("reveal after 404: got %d, want 200", wOK.Code)
 	}
 }
 

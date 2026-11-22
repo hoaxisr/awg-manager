@@ -170,6 +170,9 @@
 	let qrGenerating = $state(false);
 	let revealSecretInput = $state('');
 	let revealSecretSaving = $state(false);
+	// Reveal returns a single user; responses are kept only while the modal is
+	// open so switching back to a user does not hit the per-user rate limit.
+	const revealCache = new Map<string, TgWebProxyRevealData>();
 
 	// Multi-user management state
 	let showAddUserModal = $state(false);
@@ -608,6 +611,7 @@
 		targetId?: string,
 		userId?: string
 	) {
+		if (revealLoading) return;
 		revealLoading = true;
 		revealOpen = true;
 		if (preferredTab) {
@@ -618,9 +622,10 @@
 		const targetUserId = userId || selectedRevealUserId || tgUsers[0]?.id || 'default';
 		selectedRevealUserId = targetUserId;
 		try {
-			revealData = await api.revealTgWebProxySecret(targetUserId);
+			revealData = revealCache.get(targetUserId) ?? (await api.revealTgWebProxySecret(targetUserId));
 			if (revealData?.user_id) {
 				selectedRevealUserId = revealData.user_id;
+				revealCache.set(revealData.user_id, revealData);
 			}
 			syncRevealSecretInput();
 			if (targetId) {
@@ -642,6 +647,7 @@
 		revealData = null;
 		revealQrDataUrl = '';
 		revealSecretInput = '';
+		revealCache.clear();
 	}
 
 	function getActiveUserReveal(): TgUserRevealData | TgWebProxyRevealData | null {
@@ -657,9 +663,8 @@
 	}
 
 	function selectRevealUser(userId: string) {
-		selectedRevealUserId = userId;
-		syncRevealSecretInput();
-		void updateRevealQR();
+		if (userId === revealData?.user_id) return;
+		void openRevealModal(shareTab, selectedWebProxyId || undefined, userId);
 	}
 
 	function getActiveWebProxyLink(): WebProxyLink | null {
@@ -1478,16 +1483,16 @@
 	{:else if revealData}
 		{@const activeUser = getActiveUserReveal()}
 		<div class="reveal-content">
-			{#if revealData.users && revealData.users.length > 0}
+			{#if tgUsers.length > 0}
 				<div class="reveal-user-selector">
 					<label for="tg-reveal-user-select" class="ep-selector-label">Пользователь / устройство:</label>
 					<select
 						id="tg-reveal-user-select"
-						value={selectedRevealUserId || revealData.users[0].id}
+						value={revealData.user_id || selectedRevealUserId || tgUsers[0].id}
 						onchange={(e) => selectRevealUser((e.currentTarget as HTMLSelectElement).value)}
 						class="select-input reveal-user-select"
 					>
-						{#each revealData.users as u (u.id)}
+						{#each tgUsers as u (u.id)}
 							<option value={u.id}>{u.remark}{u.enabled ? '' : ' (выключен)'}</option>
 						{/each}
 					</select>

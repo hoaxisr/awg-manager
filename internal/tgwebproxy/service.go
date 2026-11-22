@@ -24,6 +24,7 @@ import (
 
 var (
 	ErrRecoveryRequired = errors.New("recovery_required: service requires manual or successful recovery before mutating configuration")
+	ErrUserNotFound     = errors.New("telegram user not found")
 )
 
 type EgressValidator func(device string) error
@@ -2095,11 +2096,13 @@ func (s *Service) RevealUserSecret(userID string) (RevealData, error) {
 		return RevealData{}, ErrRecoveryRequired
 	}
 
-	var targetSecret string
-	var targetRemark string
-	var targetID string
+	// Resolve exactly one user. An unknown ID must not fall back to another
+	// user's (or the global) secret.
+	var target *TelegramUser
 	users := cfg.GetUsers()
-	if len(users) == 0 {
+	if len(users) == 0 && userID == "" {
+		// No users configured (e.g. the last one was deleted): nothing to
+		// disclose, but the UI still gets connection metadata.
 		return RevealData{
 			DirectHost: cfg.DirectHost,
 			DirectPort: cfg.DirectPort,
@@ -2107,27 +2110,30 @@ func (s *Service) RevealUserSecret(userID string) (RevealData, error) {
 			Users:      []UserRevealData{},
 		}, nil
 	}
-	if userID != "" {
-		for _, u := range users {
-			if u.ID == userID {
-				targetSecret = u.Secret
-				targetRemark = u.Remark
-				targetID = u.ID
-				break
-			}
+	for i := range users {
+		if userID == "" || users[i].ID == userID {
+			target = &users[i]
+			break
 		}
-	} else if len(users) > 0 {
-		targetSecret = users[0].Secret
-		targetRemark = users[0].Remark
-		targetID = users[0].ID
+	}
+	if target == nil || target.Secret == "" {
+		return RevealData{}, ErrUserNotFound
 	}
 
-	data, err := BuildTgLinks(cfg, targetSecret)
+	data, err := BuildTgLinks(cfg, target.Secret)
 	if err != nil {
 		return RevealData{}, err
 	}
-	data.UserID = targetID
-	data.UserRemark = targetRemark
+	// BuildTgLinks describes every user; a reveal discloses only the target.
+	scoped := data.Users[:0]
+	for _, u := range data.Users {
+		if u.ID == target.ID {
+			scoped = append(scoped, u)
+		}
+	}
+	data.Users = scoped
+	data.UserID = target.ID
+	data.UserRemark = target.Remark
 	return data, nil
 }
 
