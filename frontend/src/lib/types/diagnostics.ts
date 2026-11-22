@@ -235,6 +235,38 @@ export interface DnsCheckStartResponse {
 
 // #endregion
 
+// ─────────────────────────────────────────────
+// #region IP Inspector (PTR + Team Cymru ASN)
+// ─────────────────────────────────────────────
+
+export type IpInspectFamily = 'ipv4' | 'ipv6' | 'nat64';
+
+export type IpInspectScope =
+	| 'public'
+	| 'private'
+	| 'loopback'
+	| 'link-local'
+	| 'cgnat'
+	| 'benchmark'
+	| 'multicast'
+	| 'reserved';
+
+export interface IpInspectResult {
+	ip: string;
+	family: IpInspectFamily;
+	scope: IpInspectScope;
+	ptr?: string;
+	ptrs?: string[];
+	asn?: number;
+	prefix?: string;
+	country?: string;
+	registry?: string;
+	organization?: string;
+	cached?: boolean;
+}
+
+// #endregion
+
 export type {
 	LogEntryEvent,
 	SystemBootingEvent,

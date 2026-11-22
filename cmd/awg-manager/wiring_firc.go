@@ -5,19 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/firc"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/appver"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/uplink"
 	"github.com/hoaxisr/awg-manager/internal/uplink/wireguard"
 )
@@ -682,6 +686,7 @@ func (a *app) setupFirc() {
 	a.fircHandler.SetOnExtChanged(func(ext firc.ExtConfig) {
 		a.syncRouterSettingsFromFircExt(ext)
 	})
+	a.fircOp.SetWGServersProvider(a.listDynamicFircWGServers)
 	a.fircOp.SetServerStatusCallbacks(
 		func() bool {
 			if a.vlessServerService == nil {
@@ -696,6 +701,7 @@ func (a *app) setupFirc() {
 	if a.vlessServerService != nil {
 		a.vlessServerService.SetFircRoutingOverride(a.fircOp.LoadExtConfig().ServerRouting.IsServerEnabled("vless_xhttp_server"))
 	}
+	a.migrateLegacyFircServerRouting(context.Background())
 	a.wireFircKeenDNSCloudProvider()
 	a.wireFircEngineCoordinator()
 	a.completeFircStartup()
@@ -834,14 +840,6 @@ func (a *app) completeFircStartup() {
 	}
 }
 
-func isAwgServerIngressRef(ref string) bool {
-	return strings.HasPrefix(ref, "managed:") || ref == "iface:nwg2"
-}
-
-func isKeeneticWgIngressRef(ref string) bool {
-	return ref == "iface:Wireguard0" || ref == "iface:nwg0"
-}
-
 func isWdttServerIngressRef(ref string) bool {
 	switch ref {
 	case "iface:wdtt0", "iface:wdttraw0", "iface:opkgtun17", "iface:opkgtun18", "iface:opkgtun19":
@@ -860,6 +858,229 @@ func hasAnyRef(refs []string, match func(string) bool) bool {
 	return false
 }
 
+func isKernelNetIfaceUp(name string) bool {
+	if name == "" {
+		return false
+	}
+	nif, err := net.InterfaceByName(name)
+	return err == nil && nif != nil && (nif.Flags&net.FlagUp) != 0
+}
+
+func (a *app) listDynamicFircWGServers(ctx context.Context) []firc.DynamicWGServer {
+	list, _ := a.listDynamicFircWGServersWithStatus(ctx)
+	return list
+}
+
+func (a *app) listDynamicFircWGServersWithStatus(ctx context.Context) ([]firc.DynamicWGServer, bool) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	qCtx := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		qCtx, cancel = context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+	}
+
+	var ndmsWG []ndms.WireguardServer
+	ndmsByID := make(map[string]ndms.WireguardServer)
+	ndmsListOK := false
+	if a.ndmsQueries != nil && a.ndmsQueries.WGServers != nil {
+		if listed, err := a.ndmsQueries.WGServers.List(qCtx); err == nil {
+			ndmsWG = listed
+			ndmsListOK = true
+			for _, s := range listed {
+				ndmsByID[s.ID] = s
+			}
+		}
+	}
+
+	outboundNWGSet := make(map[string]bool)
+	if a.awgStore != nil {
+		if tunnels, err := a.awgStore.List(); err == nil {
+			for _, t := range tunnels {
+				if t.Backend == "nativewg" {
+					outboundNWGSet[nwg.NewNWGNames(t.NWGIndex).NDMSName] = true
+				}
+			}
+		}
+	}
+
+	resolvePolicy := func(ndmsName string) string {
+		if a.ndmsQueries == nil || a.ndmsQueries.RunningConfig == nil {
+			return ""
+		}
+		p, err := a.ndmsQueries.RunningConfig.GetInterfaceHotspotPolicy(qCtx, ndmsName)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(p)
+	}
+
+	var out []firc.DynamicWGServer
+	managedSet := make(map[string]bool)
+	var markedIDs []string
+	if a.settingsStore != nil {
+		markedIDs = a.settingsStore.GetServerInterfaces()
+		for _, ms := range a.settingsStore.GetManagedServers() {
+			ndmsName := strings.TrimSpace(ms.InterfaceName)
+			if ndmsName == "" {
+				continue
+			}
+			managedSet[ndmsName] = true
+			live, hasLive := ndmsByID[ndmsName]
+			kernelIface := ""
+			if hasLive && strings.TrimSpace(live.InterfaceName) != "" {
+				kernelIface = strings.TrimSpace(live.InterfaceName)
+			} else if k, ok := ndms.KernelName(ndmsName); ok {
+				kernelIface = k
+			}
+			running := false
+			if hasLive {
+				running = live.Status == "up"
+			} else {
+				running = isKernelNetIfaceUp(kernelIface)
+			}
+			subnet := firc.FormatIPv4SubnetCIDR(ms.Address, ms.Mask)
+			if subnet == "" && hasLive {
+				subnet = firc.FormatIPv4SubnetCIDR(live.Address, live.Mask)
+			}
+			name := strings.TrimSpace(ms.Description)
+			if name == "" && hasLive {
+				name = strings.TrimSpace(live.Description)
+			}
+			if name == "" {
+				name = "Сервер AmneziaWG"
+			}
+			out = append(out, firc.DynamicWGServer{
+				ID:          "managed:" + ndmsName,
+				NDMSName:    ndmsName,
+				KernelIface: kernelIface,
+				Name:        name,
+				Category:    "awgm",
+				Subnet:      subnet,
+				Running:     running,
+				Policy:      resolvePolicy(ndmsName),
+			})
+		}
+	}
+
+	markedSet := make(map[string]bool, len(markedIDs))
+	for _, id := range markedIDs {
+		markedSet[id] = true
+	}
+	for _, s := range ndmsWG {
+		if managedSet[s.ID] || outboundNWGSet[s.ID] {
+			continue
+		}
+		isBuiltIn := s.Description == ndms.BuiltInVPNServerDescription
+		isMarked := markedSet[s.ID]
+		if !isBuiltIn && !isMarked {
+			continue
+		}
+		kernelIface := strings.TrimSpace(s.InterfaceName)
+		if kernelIface == "" {
+			if k, ok := ndms.KernelName(s.ID); ok {
+				kernelIface = k
+			}
+		}
+		name := strings.TrimSpace(s.Description)
+		if name == "" {
+			name = s.ID
+		}
+		out = append(out, firc.DynamicWGServer{
+			ID:          "wg:" + s.ID,
+			NDMSName:    s.ID,
+			KernelIface: kernelIface,
+			Name:        name,
+			Category:    "system",
+			Subnet:      firc.FormatIPv4SubnetCIDR(s.Address, s.Mask),
+			Running:     s.Status == "up",
+			BuiltIn:     isBuiltIn,
+			Policy:      resolvePolicy(s.ID),
+		})
+	}
+	return out, ndmsListOK
+}
+
+func (a *app) migrateLegacyFircServerRouting(ctx context.Context) {
+	if a.fircOp == nil {
+		return
+	}
+	ext := a.fircOp.LoadExtConfig()
+	hasAwgLegacy := ext.ServerRouting.IsServerEnabled("awg_server")
+	hasWgLegacy := ext.ServerRouting.IsServerEnabled("keenetic_wg")
+	if !hasAwgLegacy && !hasWgLegacy {
+		return
+	}
+	wgServers, ndmsListOK := a.listDynamicFircWGServersWithStatus(ctx)
+	changed := false
+	if hasAwgLegacy {
+		var managedTargets []string
+		for _, srv := range wgServers {
+			if srv.Category == "awgm" {
+				if strings.EqualFold(srv.NDMSName, "Wireguard2") {
+					managedTargets = []string{srv.ID}
+					break
+				}
+				managedTargets = append(managedTargets, srv.ID)
+			}
+		}
+		if len(managedTargets) > 0 || a.settingsStore != nil {
+			ext.ServerRouting.SetServerEnabled("awg_server", false)
+			for _, id := range managedTargets {
+				ext.ServerRouting.SetServerEnabled(id, true)
+			}
+			changed = true
+		}
+	}
+	if hasWgLegacy {
+		builtInID := ""
+		for _, srv := range wgServers {
+			if srv.Category == "system" && srv.BuiltIn {
+				builtInID = srv.ID
+				break
+			}
+		}
+		if builtInID != "" {
+			ext.ServerRouting.SetServerEnabled("keenetic_wg", false)
+			ext.ServerRouting.SetServerEnabled(builtInID, true)
+			changed = true
+		} else if ndmsListOK {
+			ext.ServerRouting.SetServerEnabled("keenetic_wg", false)
+			changed = true
+		}
+	}
+	if changed {
+		_ = a.fircOp.SaveExtConfig(ext)
+	}
+}
+
+func legacyAwgServerMatches(wgServers []firc.DynamicWGServer, target firc.DynamicWGServer) bool {
+	if target.Category != "awgm" {
+		return false
+	}
+	for _, srv := range wgServers {
+		if srv.Category == "awgm" && strings.EqualFold(srv.NDMSName, "Wireguard2") {
+			return strings.EqualFold(target.NDMSName, "Wireguard2")
+		}
+	}
+	return true
+}
+
+func systemServerIngressMatcher(srv firc.DynamicWGServer) (targetRef string, matchFn func(string) bool) {
+	if srv.KernelIface != "" {
+		targetRef = "iface:" + srv.KernelIface
+	} else if srv.NDMSName != "" {
+		targetRef = "iface:" + srv.NDMSName
+	}
+	matchFn = func(ref string) bool {
+		return (srv.KernelIface != "" && ref == "iface:"+srv.KernelIface) ||
+			(srv.NDMSName != "" && ref == "iface:"+srv.NDMSName)
+	}
+	return targetRef, matchFn
+}
+
 // syncRouterSettingsFromFircExt propagates changes made in FIRC -> Settings
 // ("Маршрутизация входных VPN-серверов через FIRC") back to VLESS server config
 // and SingboxRouter.IngressInterfaces / SSTPIngress so all server cards stay in sync.
@@ -870,6 +1091,7 @@ func (a *app) syncRouterSettingsFromFircExt(ext firc.ExtConfig) {
 	if a.settingsStore == nil {
 		return
 	}
+	wgServers := a.listDynamicFircWGServers(context.Background())
 	_ = a.settingsStore.Update(func(s *storage.Settings) error {
 		refs := append([]string(nil), s.SingboxRouter.IngressInterfaces...)
 		removeMatching := func(match func(string) bool) {
@@ -883,6 +1105,9 @@ func (a *app) syncRouterSettingsFromFircExt(ext firc.ExtConfig) {
 		}
 		addUnique := func(newRefs ...string) {
 			for _, nr := range newRefs {
+				if nr == "" {
+					continue
+				}
 				exists := false
 				for _, r := range refs {
 					if r == nr {
@@ -896,29 +1121,40 @@ func (a *app) syncRouterSettingsFromFircExt(ext firc.ExtConfig) {
 			}
 		}
 
-		// 1. AWG Server (Wireguard2)
-		if ext.ServerRouting.IsServerEnabled("awg_server") {
-			if !hasAnyRef(refs, isAwgServerIngressRef) {
-				target := "managed:Wireguard2"
-				if len(s.ManagedServers) > 0 && strings.TrimSpace(s.ManagedServers[0].InterfaceName) != "" {
-					target = "managed:" + strings.TrimSpace(s.ManagedServers[0].InterfaceName)
+		// 1. Dynamic AWG & Keenetic WireGuard servers
+		seenManagedRefs := make(map[string]bool)
+		for _, srv := range wgServers {
+			switch srv.Category {
+			case "awgm":
+				ref := "managed:" + srv.NDMSName
+				seenManagedRefs[ref] = true
+				enabled := ext.ServerRouting.IsServerEnabled(srv.ID) ||
+					(ext.ServerRouting.IsServerEnabled("awg_server") && legacyAwgServerMatches(wgServers, srv))
+				if enabled {
+					addUnique(ref)
+				} else {
+					removeMatching(func(r string) bool { return r == ref })
 				}
-				addUnique(target)
+			case "system":
+				targetRef, matchFn := systemServerIngressMatcher(srv)
+				enabled := ext.ServerRouting.IsServerEnabled(srv.ID) ||
+					(srv.BuiltIn && ext.ServerRouting.IsServerEnabled("keenetic_wg"))
+				if enabled {
+					if !hasAnyRef(refs, matchFn) {
+						addUnique(targetRef)
+					}
+				} else {
+					removeMatching(matchFn)
+				}
 			}
-		} else {
-			removeMatching(isAwgServerIngressRef)
+		}
+		for _, id := range ext.ServerRouting.EnabledServers {
+			if strings.HasPrefix(id, "managed:") && !seenManagedRefs[id] {
+				addUnique(id)
+			}
 		}
 
-		// 2. Keenetic WireGuard (Wireguard0)
-		if ext.ServerRouting.IsServerEnabled("keenetic_wg") {
-			if !hasAnyRef(refs, isKeeneticWgIngressRef) {
-				addUnique("iface:Wireguard0")
-			}
-		} else {
-			removeMatching(isKeeneticWgIngressRef)
-		}
-
-		// 3. WDTT Server
+		// 2. WDTT Server
 		if ext.ServerRouting.IsServerEnabled("wdtt_server") {
 			if !hasAnyRef(refs, isWdttServerIngressRef) {
 				addUnique("iface:wdtt0", "iface:wdttraw0", "iface:opkgtun17", "iface:opkgtun19")
@@ -934,18 +1170,13 @@ func (a *app) syncRouterSettingsFromFircExt(ext firc.ExtConfig) {
 }
 
 // syncFircFromRouterSettings propagates ingress toggle changes made on individual
-// server cards (AWG, Wireguard0, WDTT, SSTP) into FIRC's awgm-ext.json.
+// server cards (managed AWG, built-in/marked WG, WDTT, SSTP) into FIRC's awgm-ext.json.
 func (a *app) syncFircFromRouterSettings(ctx context.Context, prev, next storage.SingboxRouterSettings) {
 	if a.fircOp == nil {
 		return
 	}
 
-	prevAwg := hasAnyRef(prev.IngressInterfaces, isAwgServerIngressRef)
-	nextAwg := hasAnyRef(next.IngressInterfaces, isAwgServerIngressRef)
-
-	prevWg0 := hasAnyRef(prev.IngressInterfaces, isKeeneticWgIngressRef)
-	nextWg0 := hasAnyRef(next.IngressInterfaces, isKeeneticWgIngressRef)
-
+	wgServers := a.listDynamicFircWGServers(ctx)
 	prevWdtt := hasAnyRef(prev.IngressInterfaces, isWdttServerIngressRef)
 	nextWdtt := hasAnyRef(next.IngressInterfaces, isWdttServerIngressRef)
 
@@ -958,12 +1189,51 @@ func (a *app) syncFircFromRouterSettings(ctx context.Context, prev, next storage
 		}
 	}
 
-	if prevAwg != nextAwg {
-		setIfDiff("awg_server", nextAwg)
+	handledRefs := make(map[string]bool)
+	for _, srv := range wgServers {
+		switch srv.Category {
+		case "awgm":
+			ref := "managed:" + srv.NDMSName
+			handledRefs[ref] = true
+			prevOn := slices.Contains(prev.IngressInterfaces, ref)
+			nextOn := slices.Contains(next.IngressInterfaces, ref)
+			if prevOn != nextOn {
+				setIfDiff(srv.ID, nextOn)
+				if !nextOn && legacyAwgServerMatches(wgServers, srv) {
+					setIfDiff("awg_server", false)
+				}
+			}
+		case "system":
+			_, matchFn := systemServerIngressMatcher(srv)
+			if srv.KernelIface != "" {
+				handledRefs["iface:"+srv.KernelIface] = true
+			}
+			if srv.NDMSName != "" {
+				handledRefs["iface:"+srv.NDMSName] = true
+			}
+			prevOn := hasAnyRef(prev.IngressInterfaces, matchFn)
+			nextOn := hasAnyRef(next.IngressInterfaces, matchFn)
+			if prevOn != nextOn {
+				setIfDiff(srv.ID, nextOn)
+				if !nextOn && srv.BuiltIn {
+					setIfDiff("keenetic_wg", false)
+				}
+			}
+		}
 	}
-	if prevWg0 != nextWg0 {
-		setIfDiff("keenetic_wg", nextWg0)
+
+	// Fallback if a managed:<name> ref changed when SettingsStore/NDMS was absent in unit tests.
+	for _, ref := range prev.IngressInterfaces {
+		if strings.HasPrefix(ref, "managed:") && !handledRefs[ref] && !slices.Contains(next.IngressInterfaces, ref) {
+			setIfDiff(ref, false)
+		}
 	}
+	for _, ref := range next.IngressInterfaces {
+		if strings.HasPrefix(ref, "managed:") && !handledRefs[ref] && !slices.Contains(prev.IngressInterfaces, ref) {
+			setIfDiff(ref, true)
+		}
+	}
+
 	if prevWdtt != nextWdtt {
 		setIfDiff("wdtt_server", nextWdtt)
 	}

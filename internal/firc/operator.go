@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -225,6 +226,7 @@ type Operator struct {
 	tunvlessBin              string
 	altTunvlessBin           string
 	initScript               string
+	lastOutPath              string
 	dnsProxyAddr             string
 	dnsProxyPort             int
 	inboundPort              uint16
@@ -240,6 +242,8 @@ type Operator struct {
 	managedUplinkConfig      func(context.Context, []Tunnel) ([]Tunnel, error)
 	xhttpStatusFn            func() bool
 	openfluxStatusFn         func() (bool, string)
+	wgServersProvider        func(ctx context.Context) []DynamicWGServer
+	lastWGServers            []DynamicWGServer
 	singboxBinary            string
 	singboxCheckFn           func(ctx context.Context, stagedConfigDir string) error
 	singboxStageCopyHook     func(relPath string) error
@@ -296,7 +300,7 @@ func NewOperator(opts Options) *Operator {
 		opts.InboundPort = DefaultMixedInboundPort
 	}
 	if opts.StartTimeout <= 0 {
-		opts.StartTimeout = 10 * time.Second
+		opts.StartTimeout = 30 * time.Second
 	}
 	op := &Operator{
 		log:            log,
@@ -314,6 +318,9 @@ func NewOperator(opts Options) *Operator {
 		client:         NewClient(opts.SocketPath),
 		singboxBinary:  "/opt/bin/sing-box",
 		cloudEpoch:     1,
+	}
+	if op.isSystemConfigDir() {
+		op.lastOutPath = "/tmp/firc-init/fircd.last"
 	}
 	op.extConfigGen.Store(1)
 	if _, err := os.Stat(op.extConfigPath()); err == nil {
@@ -1350,6 +1357,50 @@ func (o *Operator) Start(ctx context.Context) error {
 	return err
 }
 
+var ansiEscapeRE = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")
+
+func sanitizeStartDiagnostic(raw string) string {
+	clean := ansiEscapeRE.ReplaceAllString(raw, "")
+	clean = strings.ReplaceAll(clean, "\r", "\n")
+	lines := strings.Split(clean, "\n")
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		parts = append(parts, strings.Join(fields, " "))
+	}
+	joined := strings.Join(parts, "; ")
+	const maxDiagBytes = 400
+	if len(joined) > maxDiagBytes {
+		return strings.TrimSpace(joined[:maxDiagBytes-3]) + "..."
+	}
+	return joined
+}
+
+func (o *Operator) fircStartDiagnostic(initOut []byte) string {
+	outStr := sanitizeStartDiagnostic(string(initOut))
+	lastStr := ""
+	if o.lastOutPath != "" {
+		if b, err := os.ReadFile(o.lastOutPath); err == nil {
+			lastStr = sanitizeStartDiagnostic(string(b))
+		}
+	}
+	combined := outStr
+	switch {
+	case outStr == "":
+		combined = lastStr
+	case lastStr != "" && !strings.Contains(outStr, lastStr):
+		combined = outStr + "; last: " + lastStr
+	}
+	const maxDiagBytes = 400
+	if len(combined) > maxDiagBytes {
+		return strings.TrimSpace(combined[:maxDiagBytes-3]) + "..."
+	}
+	return combined
+}
+
 func (o *Operator) startRuntime(ctx context.Context) error {
 	o.mu.Lock()
 	startHook := o.startHook
@@ -1373,25 +1424,33 @@ func (o *Operator) startRuntime(ctx context.Context) error {
 		return err
 	}
 
+	var initOut []byte
 	o.mu.Lock()
 	if err := o.ValidateBinaries(); err != nil {
 		o.mu.Unlock()
 		return err
 	}
-	if info, err := os.Stat(o.initScript); err == nil {
+	initScript := o.initScript
+	if info, err := os.Stat(initScript); err == nil {
 		if !info.Mode().IsRegular() || info.Size() == 0 || (runtime.GOOS != "windows" && info.Mode().Perm()&0111 == 0) {
 			o.mu.Unlock()
-			return fmt.Errorf("init script at %s is not a valid executable file", o.initScript)
+			return fmt.Errorf("init script at %s is not a valid executable file", initScript)
 		}
-		cmd := exec.CommandContext(ctx, o.initScript, "start")
+		o.mu.Unlock()
+		cmd := exec.CommandContext(ctx, initScript, "start")
 		cmd.Env = append(os.Environ(), "STEER_TUN_SPARES=0")
-		if err := cmd.Run(); err != nil {
-			o.mu.Unlock()
-			return fmt.Errorf("run %s start: %w", o.initScript, err)
+		cmd.WaitDelay = 5 * time.Second
+		out, runErr := cmd.CombinedOutput()
+		initOut = out
+		if runErr != nil && !errors.Is(runErr, exec.ErrWaitDelay) {
+			if detail := o.fircStartDiagnostic(initOut); detail != "" {
+				return fmt.Errorf("run %s start: %w (%s)", initScript, runErr, detail)
+			}
+			return fmt.Errorf("run %s start: %w", initScript, runErr)
 		}
 	} else if !os.IsNotExist(err) {
 		o.mu.Unlock()
-		return fmt.Errorf("stat init script %s: %w", o.initScript, err)
+		return fmt.Errorf("stat init script %s: %w", initScript, err)
 	} else {
 		_ = os.MkdirAll(filepath.Dir(o.socketPath), 0755)
 		cmd := exec.Command(o.resolvedFircdBinary(), "--config", o.ConfigPath())
@@ -1401,8 +1460,8 @@ func (o *Operator) startRuntime(ctx context.Context) error {
 			return fmt.Errorf("start fircd: %w", err)
 		}
 		o.cmd = cmd
+		o.mu.Unlock()
 	}
-	o.mu.Unlock()
 
 	deadline := time.Now().Add(o.startTimeout)
 	for time.Now().Before(deadline) {
@@ -1421,6 +1480,9 @@ func (o *Operator) startRuntime(ctx context.Context) error {
 			return ctx.Err()
 		case <-time.After(100 * time.Millisecond):
 		}
+	}
+	if detail := o.fircStartDiagnostic(initOut); detail != "" {
+		return fmt.Errorf("fircd did not become ready on %s within %s (%s)", o.socketPath, o.startTimeout, detail)
 	}
 	return fmt.Errorf("fircd did not become ready on %s within %s", o.socketPath, o.startTimeout)
 }
@@ -1892,7 +1954,7 @@ func (o *Operator) applyGroupsLocked(ctx context.Context, groups []Group) ([]Gro
 
 func (o *Operator) applyGroupsWithPrevLocked(ctx context.Context, groups []Group, prevGroups []Group, running bool) ([]Group, error) {
 	ext := o.LoadExtConfig()
-	groups, _ = syncGroupsWithExt(groups, ext)
+	groups, _ = o.syncGroupsWithExt(ctx, groups, ext)
 
 	snap, err := captureFileSnapshot(o.GroupsPath(), 0644)
 	if err != nil {
@@ -1982,7 +2044,7 @@ func (o *Operator) StageGroupsOffline(groups []Group) ([]Group, error) {
 		return nil, err
 	}
 	ext := o.LoadExtConfig()
-	groups, _ = syncGroupsWithExt(groups, ext)
+	groups, _ = o.syncGroupsWithExt(context.Background(), groups, ext)
 	if groups == nil {
 		groups = []Group{}
 	}

@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import type {
 		FircMonitorSnapshot,
 		FircDomainCheckResult,
 	} from '$lib/types/firc';
 	import { Button, Badge, StatusDot } from '$lib/components/ui';
-	import { Activity, Search, RefreshCw, Play, Pause, ArrowRight, CheckCircle2, Globe } from 'lucide-svelte';
+	import { IpInspectSection, QuickAddRouteModal } from '$lib/components/diagnostics';
+	import { Activity, Search, RefreshCw, Play, Pause, ArrowRight, CheckCircle2, Globe, Info } from 'lucide-svelte';
 
 	let snapshot = $state<FircMonitorSnapshot | null>(null);
 	let loading = $state(true);
@@ -22,6 +24,15 @@
 	let testDomain = $state('');
 	let checkingDomain = $state(false);
 	let checkResult = $state<FircDomainCheckResult | null>(null);
+
+	let inspectedEventSeq = $state<number | null>(null);
+	let quickAddOpen = $state(false);
+	let quickAddTarget = $state<{ ip?: string; domain?: string; prefix?: string }>({});
+
+	function openQuickAdd(target: { ip?: string; domain?: string; prefix?: string }) {
+		quickAddTarget = target;
+		quickAddOpen = true;
+	}
 
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -277,6 +288,14 @@
 					<span class="muted-meta">→ {checkResult.outbound} ({checkResult.latencyMs} мс)</span>
 				{/if}
 			</div>
+			{#if !checkResult.error}
+				<IpInspectSection
+					ip={checkResult.realIp || ''}
+					domain={checkResult.domain}
+					compact
+					onOpenQuickAdd={openQuickAdd}
+				/>
+			{/if}
 		{/if}
 	</div>
 	</details>
@@ -545,24 +564,46 @@
 		{:else}
 			<div class="feed-list">
 				{#each filteredMatches as ev (ev.seq)}
-					<div class="feed-row">
-						<span class="feed-time mono">{formatTime(ev.at)}</span>
-						<Badge variant={ev.sourceId === 'lan_br0' ? 'default' : 'accent'} size="xs">
-							{ev.sourceName}
-						</Badge>
-						<span class="feed-client mono">{ev.clientIp}</span>
-						<ArrowRight size={12} class="feed-arrow" />
-						<span class="feed-domain mono">{ev.domain}</span>
-						{#if ev.fakeIp}
-							<span class="feed-fake mono">
-								({ev.fakeIp}{ev.realIp ? ` → ${ev.realIp}` : ''})
-							</span>
-						{/if}
-						<ArrowRight size={12} class="feed-arrow" />
-						<Badge variant="success" size="xs">{ev.groupName || ev.groupId}</Badge>
-						{#if ev.outbound}
+					<div class="feed-item">
+						<div class="feed-row">
+							<span class="feed-time mono">{formatTime(ev.at)}</span>
+							<Badge variant={ev.sourceId === 'lan_br0' ? 'default' : 'accent'} size="xs">
+								{ev.sourceName}
+							</Badge>
+							<span class="feed-client mono">{ev.clientIp}</span>
 							<ArrowRight size={12} class="feed-arrow" />
-							<Badge variant="info" size="xs" mono>{formatOutboundLabel(ev.outbound, ev.outboundLabel)}</Badge>
+							<span class="feed-domain mono">{ev.domain}</span>
+							{#if ev.fakeIp}
+								<span class="feed-fake mono">
+									({ev.fakeIp}{ev.realIp ? ` → ${ev.realIp}` : ''})
+								</span>
+							{/if}
+							<ArrowRight size={12} class="feed-arrow" />
+							<Badge variant="success" size="xs">{ev.groupName || ev.groupId}</Badge>
+							{#if ev.outbound}
+								<ArrowRight size={12} class="feed-arrow" />
+								<Badge variant="info" size="xs" mono>{formatOutboundLabel(ev.outbound, ev.outboundLabel)}</Badge>
+							{/if}
+							<button
+								type="button"
+								class="feed-inspect-btn"
+								class:active={inspectedEventSeq === ev.seq}
+								aria-label={m.ip_inspect_toggle_aria()}
+								aria-expanded={inspectedEventSeq === ev.seq}
+								onclick={() => (inspectedEventSeq = inspectedEventSeq === ev.seq ? null : ev.seq)}
+							>
+								<Info size={12} aria-hidden="true" />
+							</button>
+						</div>
+						{#if inspectedEventSeq === ev.seq}
+							<div class="feed-inspect-wrap">
+								<IpInspectSection
+									ip={ev.realIp || ev.fakeIp || ''}
+									domain={ev.domain}
+									compact
+									onOpenQuickAdd={openQuickAdd}
+								/>
+							</div>
 						{/if}
 					</div>
 				{/each}
@@ -571,6 +612,14 @@
 	</div>
 	{/if}
 </div>
+
+<QuickAddRouteModal
+	open={quickAddOpen}
+	ip={quickAddTarget.ip}
+	domain={quickAddTarget.domain}
+	prefix={quickAddTarget.prefix}
+	onclose={() => (quickAddOpen = false)}
+/>
 
 <style>
 	.monitor-views { display: flex; flex-wrap: wrap; gap: .35rem; }
@@ -1026,5 +1075,40 @@
 	.feed-fake {
 		color: var(--text-muted);
 		font-size: 0.71rem;
+	}
+
+	.feed-item {
+		border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+	}
+
+	.feed-item:last-child {
+		border-bottom: none;
+	}
+
+	.feed-item .feed-row {
+		border-bottom: none;
+	}
+
+	.feed-inspect-btn {
+		all: unset;
+		margin-left: auto;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 22px;
+		border-radius: 4px;
+		color: var(--text-muted);
+		cursor: pointer;
+	}
+
+	.feed-inspect-btn:hover,
+	.feed-inspect-btn.active {
+		color: var(--text-primary);
+		background: var(--color-bg-hover, rgba(255, 255, 255, 0.08));
+	}
+
+	.feed-inspect-wrap {
+		padding: 0 0.75rem 0.6rem;
 	}
 </style>

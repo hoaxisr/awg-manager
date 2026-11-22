@@ -425,14 +425,20 @@ func (h *FircHandler) handleInstall(w http.ResponseWriter, r *http.Request) {
 		response.Accepted(w, map[string]string{"status": "external_migration_started"})
 		return
 	}
-	if h.isSelected() {
+	if st.State == firc.InstallStateRunning || (h.op != nil && h.op.IsRunning(r.Context())) {
+		h.installMu.Unlock()
+		response.ErrorWithStatus(w, http.StatusConflict, firc.ErrFircRunning.Error(), "FIRC_RUNNING")
+		return
+	}
+	canRepairWhileActive := st.State == firc.InstallStateNotInstalled || st.State == firc.InstallStateRecoveryNeeded
+	if h.isSelected() && !canRepairWhileActive {
 		h.installMu.Unlock()
 		response.ErrorWithStatus(w, http.StatusConflict, firc.ErrInstallActiveCore.Error(), "FIRC_ACTIVE")
 		return
 	}
 	h.installMu.Unlock()
 
-	if err := h.installer.StartInstall(); err != nil {
+	if err := h.installer.StartInstallWithOperator(h.op); err != nil {
 		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_BUSY")
 		return
 	}

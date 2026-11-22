@@ -181,4 +181,53 @@ describe('FIRC runtime settings', () => {
 		expect(switchBtn).toBeDisabled();
 		expect(screen.getByText(/vless_xhttp_server/)).toBeInTheDocument();
 	});
+	it('enables Install FIRC when activeEngine is true, stopped, and state is not_installed', async () => {
+		status
+			.mockResolvedValueOnce({ ...base, state: 'not_installed', activeEngine: true })
+			.mockResolvedValue({ ...base, state: 'installing', activeEngine: true, busy: true, busyAction: 'install', progress: 0.2 });
+		render(FircIntegrationSection);
+		const installBtn = await screen.findByRole('button', { name: /Установить FIRC|Install FIRC/ });
+		await waitFor(() => expect(installBtn).toBeEnabled());
+		await fireEvent.click(installBtn);
+		await waitFor(() => expect(install).toHaveBeenCalledTimes(1));
+	});
+	it('enables Repair FIRC while keeping Remove FIRC disabled when activeEngine is true and state is recovery_required', async () => {
+		status.mockResolvedValue({
+			...base,
+			state: 'recovery_required',
+			activeEngine: true,
+			fircdPresent: true,
+		});
+		render(FircIntegrationSection);
+		const repairBtn = await screen.findByRole('button', { name: /Восстановить FIRC|Repair FIRC/ });
+		const removeBtn = screen.getByRole('button', { name: /Удалить FIRC|Remove FIRC/ });
+		await waitFor(() => expect(repairBtn).toBeEnabled());
+		expect(removeBtn).toBeDisabled();
+	});
+	it('keeps both Install FIRC and Remove FIRC disabled when activeEngine is true and cleanly installed', async () => {
+		status.mockResolvedValue({
+			...base,
+			state: 'installed',
+			activeEngine: true,
+			installedVersion: '0.7.0-1',
+			fircdPresent: true,
+			tunvlessPresent: true,
+		});
+		render(FircIntegrationSection);
+		const installBtn = await screen.findByRole('button', { name: /Установить FIRC|Install FIRC/ });
+		const removeBtn = screen.getByRole('button', { name: /Удалить FIRC|Remove FIRC/ });
+		await waitFor(() => expect(installBtn).toBeDisabled());
+		expect(removeBtn).toBeDisabled();
+	});
+	it('renders action error in alert without disabling retry', async () => {
+		install.mockRejectedValueOnce(new Error('temporary opkg lock'));
+		render(FircIntegrationSection);
+		const installBtn = await screen.findByRole('button', { name: /Установить FIRC|Install FIRC/ });
+		await waitFor(() => expect(installBtn).toBeEnabled());
+		await fireEvent.click(installBtn);
+		expect(await screen.findByRole('alert')).toHaveTextContent('temporary opkg lock');
+		expect(installBtn).toBeEnabled();
+		await fireEvent.click(installBtn);
+		await waitFor(() => expect(install).toHaveBeenCalledTimes(2));
+	});
 });

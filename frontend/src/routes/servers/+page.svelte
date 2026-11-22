@@ -26,7 +26,7 @@
 	} from '$lib/components/servers';
 	import { EXTERNAL_ACCESS_LABELS } from '$lib/components/servers/external-access/connectionLabels';
 	import type { XrayStatus, TgWebProxyStatus, CDNDispatcherConfig } from '$lib/types';
-	import { getFircEnabledServers, setFircServerRoutingEnabled } from '$lib/utils/fircServerRouting';
+	import { extractFircEnabledServers, getFircEnabledServers, setFircServerRoutingEnabled, type FircInboundServerId } from '$lib/utils/fircServerRouting';
 	import { dedupBy } from '$lib/utils/dedupBy';
 	import { createIngressMutationLock } from '$lib/utils/ingressMutation';
 	import { countActiveManagedPeers, countActiveSystemPeers } from '$lib/utils/serverPeerActivity';
@@ -126,6 +126,14 @@
 		}
 	}
 
+	function isLegacyAwgMatch(interfaceName: string): boolean {
+		const target = interfaceName.toLowerCase();
+		if (managedServers.some((m) => m.interfaceName.toLowerCase() === 'wireguard2')) {
+			return target === 'wireguard2';
+		}
+		return true;
+	}
+
 	async function handleToggleManagedIngress(interfaceName: string, enabled: boolean) {
 		await withIngressLock(async () => {
 			const s = await api.singboxRouterGetSettings();
@@ -135,11 +143,17 @@
 			else set.delete(ref);
 			const next = [...set];
 			await api.singboxRouterPutSettings({ ...s, ingressInterfaces: next });
-			await setFircServerRoutingEnabled('awg_server', enabled);
+			const fircId = `managed:${interfaceName}` as FircInboundServerId;
+			const clearLegacy = !enabled && isLegacyAwgMatch(interfaceName) ? ['awg_server'] : [];
+			const savedExt = await setFircServerRoutingEnabled(fircId, enabled, clearLegacy);
 			ingressRefs = next;
-			fircEnabledServers = enabled
-				? [...new Set([...fircEnabledServers, 'awg_server'])]
-				: fircEnabledServers.filter((id) => id !== 'awg_server');
+			if (savedExt) {
+				fircEnabledServers = extractFircEnabledServers(savedExt);
+			} else {
+				fircEnabledServers = enabled
+					? [...new Set([...fircEnabledServers, fircId])]
+					: fircEnabledServers.filter((id) => id !== fircId && !clearLegacy.includes(id));
+			}
 		});
 	}
 
@@ -152,11 +166,19 @@
 			else set.delete(ref);
 			const next = [...set];
 			await api.singboxRouterPutSettings({ ...s, ingressInterfaces: next });
-			await setFircServerRoutingEnabled('keenetic_wg', enabled);
+			const srv = serverList.find((x) => x.interfaceName === interfaceName || x.id === interfaceName);
+			const fircId = `wg:${srv?.id || interfaceName}` as FircInboundServerId;
+			const isBuiltIn = srv ? !isMarkedSystemServer(srv) : false;
+			const clearLegacy = !enabled && isBuiltIn ? ['keenetic_wg'] : [];
+			const savedExt = await setFircServerRoutingEnabled(fircId, enabled, clearLegacy);
 			ingressRefs = next;
-			fircEnabledServers = enabled
-				? [...new Set([...fircEnabledServers, 'keenetic_wg'])]
-				: fircEnabledServers.filter((id) => id !== 'keenetic_wg');
+			if (savedExt) {
+				fircEnabledServers = extractFircEnabledServers(savedExt);
+			} else {
+				fircEnabledServers = enabled
+					? [...new Set([...fircEnabledServers, fircId])]
+					: fircEnabledServers.filter((id) => id !== fircId && !clearLegacy.includes(id));
+			}
 		});
 	}
 
@@ -400,7 +422,7 @@
 						stats={activeManagedStats}
 						{routerIP}
 						onOpenASC={() => openManagedASC(activeManaged!.interfaceName)}
-						ingressEnabled={ingressRefs.includes(`managed:${activeManaged.interfaceName}`) || (activeEngine === 'firc' && fircEnabledServers.includes('awg_server'))}
+						ingressEnabled={ingressRefs.includes(`managed:${activeManaged.interfaceName}`) || (activeEngine === 'firc' && (fircEnabledServers.includes(`managed:${activeManaged.interfaceName}`) || (isLegacyAwgMatch(activeManaged.interfaceName) && fircEnabledServers.includes('awg_server'))))}
 						onToggleIngress={handleToggleManagedIngress}
 						{lanSegmentOptions}
 						{activeEngine}
@@ -410,7 +432,7 @@
 					server={activeServer}
 					isMarked={isMarkedSystemServer(activeServer)}
 					onUnmark={unmarkServer}
-					ingressEnabled={ingressRefs.includes(`iface:${activeServer.interfaceName}`) || (activeEngine === 'firc' && fircEnabledServers.includes('keenetic_wg'))}
+					ingressEnabled={ingressRefs.includes(`iface:${activeServer.interfaceName}`) || ingressRefs.includes(`iface:${activeServer.id}`) || (activeEngine === 'firc' && (fircEnabledServers.includes(`wg:${activeServer.id}`) || (!isMarkedSystemServer(activeServer) && fircEnabledServers.includes('keenetic_wg'))))}
 					onToggleIngress={handleToggleSystemIngress}
 					{activeEngine}
 					{routerIP}

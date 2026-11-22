@@ -1731,3 +1731,134 @@ func TestFircHandler_FilterValidation(t *testing.T) {
 		t.Fatalf("PUT /api/firc/tunnels stale fircd: expected 400 explaining filterExclude, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestFircHandler_InstallAllowedWhileActiveWhenMissingOrBroken(t *testing.T) {
+	source := t.TempDir()
+	t.Setenv("FIRC_SOURCE_ROOT", source)
+	for rel, content := range map[string]string{
+		"LICENSE":                             "GPL-3.0-or-later\n",
+		"files/entware_kn/etc/init.d/S99firc": "#!/bin/sh\n[ -e /opt/etc/firc/.awgm-disabled ] && exit 8\nexit 0\n",
+		"files/entware_kn/etc/ndm/netfilter.d/100-firc": "#!/bin/sh\nexit 0\n",
+		"files/common/etc/firc/firc.conf":               "configVersion: 0.7.0\n",
+		"files/common/etc/firc/groups.yaml":             "groups: []\n",
+	} {
+		p := filepath.Join(source, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fircdBin := filepath.Join(source, "fircd")
+	tunBin := filepath.Join(source, "tunvless")
+	if err := os.WriteFile(fircdBin, apiMinimalMIPS32ELF("fircd"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tunBin, apiMinimalMIPS32ELF("tunvless"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	ipkPath := filepath.Join(source, "runtime.ipk")
+	if err := firc.BuildRuntimeIPK(source, fircdBin, tunBin, "mipsel-3.4", "0.8.0-awgm.4", ipkPath); err != nil {
+		t.Fatal(err)
+	}
+	ipkBytes, err := os.ReadFile(ipkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(ipkBytes)
+	ipkSHA := hex.EncodeToString(sum[:])
+
+	root := t.TempDir()
+	pm := &apiMockPkgMgr{root: root, targetVer: "0.8.0-awgm.4"}
+	inst := firc.NewOnDemandInstaller("mipsel-3.4", firc.FircBinarySpec{
+		Version:       "0.8.0-awgm.4",
+		PackageURL:    "https://example.invalid/runtime.ipk",
+		PackageSHA256: ipkSHA,
+		PackageSize:   int64(len(ipkBytes)),
+	})
+	inst.SetPackageLayout(firc.DefaultPackageLayout(root))
+	inst.SetPackageManager(pm)
+	inst.SetDownloader(apiMockDownloader{url: "https://example.invalid/runtime.ipk", body: ipkBytes})
+	inst.SetFreeDiskFn(func(string) (int64, bool) { return 256 << 20, true })
+
+	var running atomic.Bool
+	inst.SetFircRunningChecker(func(context.Context) bool { return running.Load() })
+
+	store := storage.NewSettingsStore(t.TempDir())
+	_, _ = store.Load()
+	_ = store.Update(func(s *storage.Settings) error {
+		s.SingboxRouter.RoutingEngine = "firc"
+		return nil
+	})
+	inst.SetEngineActiveChecker(func() bool {
+		cfg, _ := store.Get()
+		return cfg.SingboxRouter.RoutingEngine == "firc"
+	})
+
+	op := firc.NewOperator(firc.Options{ConfigDir: filepath.Join(root, "opt", "etc", "firc")})
+	h := NewFircHandler(op)
+	h.SetSettingsStore(store)
+	h.SetInstaller(inst)
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+
+	waitNotBusy := func(t *testing.T) firc.InstallStatus {
+		t.Helper()
+		for range 100 {
+			recSt := httptest.NewRecorder()
+			mux.ServeHTTP(recSt, httptest.NewRequest(http.MethodGet, "/api/firc/install-status", nil))
+			var env struct {
+				Data firc.InstallStatus `json:"data"`
+			}
+			if json.Unmarshal(recSt.Body.Bytes(), &env) == nil && !env.Data.Busy {
+				return env.Data
+			}
+			time.Sleep(15 * time.Millisecond)
+		}
+		t.Fatal("installer remained busy")
+		return firc.InstallStatus{}
+	}
+
+	// 1. Active engine + stopped + not_installed -> 202 install_started.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/install", nil))
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), "install_started") {
+		t.Fatalf("expected 202 install_started when active+not_installed, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	st := waitNotBusy(t)
+	if st.State != firc.InstallStateInstalled || st.InstalledVersion != "0.8.0-awgm.4" {
+		t.Fatalf("expected installed state after install, got %+v", st)
+	}
+
+	// 2. Active engine + cleanly installed (stopped) -> 409 FIRC_ACTIVE.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/install", nil))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "FIRC_ACTIVE") {
+		t.Fatalf("expected 409 FIRC_ACTIVE when active+cleanly installed, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// 3. Active engine + running -> 409 FIRC_RUNNING.
+	running.Store(true)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/install", nil))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "FIRC_RUNNING") {
+		t.Fatalf("expected 409 FIRC_RUNNING when active+running, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	running.Store(false)
+
+	// 4. Active engine + stopped + recovery_required (missing fircd) -> 202 install_started repairs cleanly.
+	if err := os.Remove(filepath.Join(root, "opt", "sbin", "fircd")); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/install", nil))
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), "install_started") {
+		t.Fatalf("expected 202 install_started when active+recovery_required, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	st = waitNotBusy(t)
+	if st.State != firc.InstallStateInstalled {
+		t.Fatalf("expected installed state after repair, got %+v", st)
+	}
+}

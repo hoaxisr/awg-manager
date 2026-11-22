@@ -313,17 +313,173 @@ func TestOnDemandInstaller_AsyncReservation(t *testing.T) {
 
 func TestOnDemandInstaller_ActiveAndDependenciesRefuseMutation(t *testing.T) {
 	i, pm, _ := runtimeFixture(t)
+	ctx := context.Background()
+	if err := i.Install(ctx); err != nil {
+		t.Fatalf("initial install: %v", err)
+	}
 	i.SetEngineActiveChecker(func() bool { return true })
-	if err := i.Install(context.Background()); !errors.Is(err, ErrFircActive) {
-		t.Fatalf("active install: %v", err)
+	if err := i.Install(ctx); !errors.Is(err, ErrFircActive) {
+		t.Fatalf("active upgrade/install while healthy: %v", err)
+	}
+	if err := i.Uninstall(ctx, nil, false, false); !errors.Is(err, ErrFircActive) {
+		t.Fatalf("active uninstall: %v", err)
 	}
 	i.SetEngineActiveChecker(func() bool { return false })
 	i.SetTunvlessRunningChecker(func(context.Context) bool { return true })
-	if err := i.Uninstall(context.Background(), nil, false, false); !errors.Is(err, ErrTunvlessRunning) {
+	if err := i.Uninstall(ctx, nil, false, false); !errors.Is(err, ErrTunvlessRunning) {
 		t.Fatalf("running tunnel: %v", err)
 	}
-	if pm.installs != 0 || pm.removes != 0 {
-		t.Fatal("package mutation occurred")
+	if pm.installs != 1 || pm.removes != 0 {
+		t.Fatalf("unexpected package mutation: installs=%d removes=%d", pm.installs, pm.removes)
+	}
+}
+
+func TestOnDemandInstaller_ActiveEngineAllowsInstallAndRepairWhenStoppedAndBroken(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Active engine + stopped + not_installed -> Install succeeds.
+	instMissing, pmMissing, _ := runtimeFixture(t)
+	instMissing.SetEngineActiveChecker(func() bool { return true })
+	instMissing.SetFircRunningChecker(func(context.Context) bool { return false })
+	instMissing.SetTunvlessRunningChecker(func(context.Context) bool { return false })
+	if err := instMissing.Install(ctx); err != nil {
+		t.Fatalf("active+stopped+missing Install failed: %v", err)
+	}
+	if pmMissing.installs != 1 {
+		t.Fatalf("expected 1 install for missing active engine, got %d", pmMissing.installs)
+	}
+
+	// 2. Active engine + stopped + recovery_required (missing binary + dependents) -> Repair succeeds; running or uninstall rejected.
+	instBroken, pmBroken, _ := runtimeFixture(t)
+	if err := instBroken.Install(ctx); err != nil {
+		t.Fatalf("seed install: %v", err)
+	}
+	if err := os.Remove(instBroken.layout.FircdBin); err != nil {
+		t.Fatalf("remove fircd to simulate broken runtime: %v", err)
+	}
+	var fircRunning, tunRunning bool
+	instBroken.SetEngineActiveChecker(func() bool { return true })
+	instBroken.SetFircRunningChecker(func(context.Context) bool { return fircRunning })
+	instBroken.SetTunvlessRunningChecker(func(context.Context) bool { return tunRunning })
+	instBroken.SetDependencyChecker(func(context.Context) ([]string, error) {
+		return []string{"awg_server"}, nil
+	})
+
+	fircRunning = true
+	if err := instBroken.Install(ctx); !errors.Is(err, ErrFircRunning) {
+		t.Fatalf("expected ErrFircRunning while daemon running on broken install, got: %v", err)
+	}
+	fircRunning = false
+	tunRunning = true
+	if err := instBroken.Install(ctx); !errors.Is(err, ErrTunvlessRunning) {
+		t.Fatalf("expected ErrTunvlessRunning while tunvless running on broken install, got: %v", err)
+	}
+	tunRunning = false
+
+	if err := instBroken.Uninstall(ctx, nil, false, false); !errors.Is(err, ErrFircActive) {
+		t.Fatalf("expected ErrFircActive on active+broken Uninstall, got: %v", err)
+	}
+	if err := instBroken.Install(ctx); err != nil {
+		t.Fatalf("active+stopped+broken repair Install failed: %v", err)
+	}
+	if st := instBroken.GetInstallStatus(ctx, nil, true); st.State != InstallStateInstalled {
+		t.Fatalf("expected installed status after repair, got %+v", st)
+	}
+	if pmBroken.installs != 2 {
+		t.Fatalf("expected 2 installs (initial + repair), got %d", pmBroken.installs)
+	}
+}
+
+func TestOnDemandInstaller_OrphanedLeftoversRepairAndUninstall(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Partial leftovers (S99firc + regular /opt/bin/fircd, no .list, existing firc.conf) -> Install repairs cleanly.
+	instRepair, pmRepair, _ := runtimeFixture(t)
+	rootRepair := instRepair.layout.RootDir
+	for rel, content := range map[string]string{
+		"opt/bin/fircd":          "stale-fircd-binary",
+		"opt/etc/init.d/S99firc": "#!/bin/sh\nexit 0\n",
+		"opt/etc/firc/firc.conf": "user-conf\n",
+	} {
+		p := filepath.Join(rootRepair, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := instRepair.Install(ctx); err != nil {
+		t.Fatalf("repair over partial orphaned leftovers failed: %v", err)
+	}
+	if pmRepair.installs != 1 {
+		t.Fatalf("expected 1 package install, got %d", pmRepair.installs)
+	}
+	if target, err := os.Readlink(filepath.Join(rootRepair, "opt/bin/fircd")); err != nil || filepath.ToSlash(target) != "../sbin/fircd" {
+		t.Fatalf("expected /opt/bin/fircd symlink to ../sbin/fircd, got %q (err=%v)", target, err)
+	}
+	if cfg, err := os.ReadFile(instRepair.layout.ConfigFile); err != nil || string(cfg) != "user-conf\n" {
+		t.Fatalf("expected firc.conf preserved after repair, got %q (err=%v)", string(cfg), err)
+	}
+
+	// 2. Partial leftovers with no awg-firc-runtime in opkg -> Uninstall cleans leftovers without opkg remove.
+	instClean, pmClean, _ := runtimeFixture(t)
+	rootClean := instClean.layout.RootDir
+	for rel, content := range map[string]string{
+		"opt/bin/fircd":                    "stale-fircd-binary",
+		"opt/etc/init.d/S99firc":           "#!/bin/sh\nexit 0\n",
+		"opt/etc/ndm/netfilter.d/100-firc": "#!/bin/sh\nexit 0\n",
+		"opt/etc/firc/firc.conf":           "keep-me\n",
+	} {
+		p := filepath.Join(rootClean, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := instClean.Uninstall(ctx, nil, false, false); err != nil {
+		t.Fatalf("uninstall of orphaned leftovers failed: %v", err)
+	}
+	if pmClean.removes != 0 {
+		t.Fatalf("expected 0 opkg remove calls when awg-firc-runtime absent, got %d", pmClean.removes)
+	}
+	for _, rel := range []string{"opt/bin/fircd", "opt/etc/init.d/S99firc", "opt/etc/ndm/netfilter.d/100-firc"} {
+		if _, err := os.Lstat(filepath.Join(rootClean, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed, stat err=%v", rel, err)
+		}
+	}
+	if cfg, err := os.ReadFile(instClean.layout.ConfigFile); err != nil || string(cfg) != "keep-me\n" {
+		t.Fatalf("expected firc.conf preserved on orphan uninstall, got %q (err=%v)", string(cfg), err)
+	}
+	if st := instClean.GetInstallStatus(ctx, nil, false); st.State != InstallStateNotInstalled {
+		t.Fatalf("expected State=%q after orphan uninstall, got %+v", InstallStateNotInstalled, st)
+	}
+
+	// 3. Complete unmanaged installation (all 5 runtime files present, no .list) -> still refuses direct overwrite.
+	instUnmanaged, pmUnmanaged, _ := runtimeFixture(t)
+	rootUnmanaged := instUnmanaged.layout.RootDir
+	for rel, content := range map[string]string{
+		"opt/bin/fircd":                         "unmanaged-fircd",
+		"opt/bin/tunvless":                      "unmanaged-tunvless",
+		"opt/etc/init.d/S99firc":                "#!/bin/sh\nexit 0\n",
+		"opt/etc/ndm/netfilter.d/100-firc":      "#!/bin/sh\nexit 0\n",
+		"opt/etc/ndm/iflayerchanged.d/100-firc": "#!/bin/sh\nexit 0\n",
+	} {
+		p := filepath.Join(rootUnmanaged, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := instUnmanaged.Install(ctx); err == nil || !strings.Contains(err.Error(), "unmanaged FIRC runtime found") {
+		t.Fatalf("expected refusal for complete unmanaged runtime, got: %v", err)
+	}
+	if pmUnmanaged.installs != 0 {
+		t.Fatalf("expected 0 opkg installs for complete unmanaged runtime, got %d", pmUnmanaged.installs)
 	}
 }
 

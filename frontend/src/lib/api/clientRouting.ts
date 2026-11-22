@@ -56,6 +56,10 @@ export class RoutingClient extends ServersClient {
 	// #region Static IP Routes
 	// ─────────────────────────────────────────────
 
+	async listStaticRoutes(): Promise<StaticRouteList[]> {
+		return this.request('/routing/static-routes');
+	}
+
 	async createStaticRoute(rl: Partial<StaticRouteList>): Promise<StaticRouteList> {
 		return this.request('/static-routes/create', {
 			method: 'POST',
@@ -111,6 +115,10 @@ export class RoutingClient extends ServersClient {
 	// ─────────────────────────────────────────────
 	// #region DNS Routes — CRUD, batch, subscriptions
 	// ─────────────────────────────────────────────
+
+	async listDnsRoutes(): Promise<DnsRoute[]> {
+		return this.request('/routing/dns-routes');
+	}
 
 	async getDnsRoute(id: string): Promise<DnsRoute> {
 		return this.request(`/dns-routes/get?id=${encodeURIComponent(id)}`);

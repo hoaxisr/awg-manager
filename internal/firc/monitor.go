@@ -117,30 +117,47 @@ type parsedCIDRSource struct {
 }
 
 func buildCIDRSources(sr ServerRoutingConfig) []parsedCIDRSource {
+	return buildCIDRSourcesWithWG(sr, nil, false)
+}
+
+func buildCIDRSourcesWithWG(sr ServerRoutingConfig, wgServers []DynamicWGServer, hasProvider bool) []parsedCIDRSource {
 	type spec struct {
 		cidr string
 		id   string
 	}
-	specs := []spec{
-		{"10.10.0.2/32", "freeturn_server"},
-		{"10.10.0.0/24", "awg_server"},
-		{"10.66.0.0/16", "wdtt_server"},
-		{"10.70.0.0/16", "wdtt_server"},
-		{"10.77.0.0/16", "openflux_server"},
-		{"172.16.6.0/24", "keenetic_wg"},
-		{"172.16.7.0/24", "keenetic_sstp"},
-		{"172.16.2.0/24", "keenetic_l2tp"},
-		{"172.20.8.0/24", "keenetic_ikev2"},
-		{"172.20.0.0/24", "keenetic_ikev1"},
-		{"172.16.1.0/24", "keenetic_pptp"},
-		{"172.16.3.0/24", "keenetic_oc"},
-		{"192.168.0.0/16", "lan_br0"},
+	var specs []spec
+	if hasProvider {
+		if sr.IsServerEnabled("freeturn_server") {
+			specs = append(specs, spec{"10.10.0.2/32", "freeturn_server"})
+		}
+		for _, srv := range wgServers {
+			if sub := strings.TrimSpace(srv.Subnet); sub != "" {
+				specs = append(specs, spec{sub, srv.ID})
+			}
+		}
+	} else {
+		if sr.IsServerEnabled("freeturn_server") || !sr.IsServerEnabled("awg_server") {
+			specs = append(specs, spec{"10.10.0.2/32", "freeturn_server"})
+		}
+		specs = append(specs,
+			spec{"10.10.0.0/24", "awg_server"},
+			spec{"172.16.6.0/24", "keenetic_wg"},
+		)
 	}
+	specs = append(specs,
+		spec{"10.66.0.0/16", "wdtt_server"},
+		spec{"10.70.0.0/16", "wdtt_server"},
+		spec{"10.77.0.0/16", "openflux_server"},
+		spec{"172.16.7.0/24", "keenetic_sstp"},
+		spec{"172.16.2.0/24", "keenetic_l2tp"},
+		spec{"172.20.8.0/24", "keenetic_ikev2"},
+		spec{"172.20.0.0/24", "keenetic_ikev1"},
+		spec{"172.16.1.0/24", "keenetic_pptp"},
+		spec{"172.16.3.0/24", "keenetic_oc"},
+		spec{"192.168.0.0/16", "lan_br0"},
+	)
 	var out []parsedCIDRSource
 	for _, sp := range specs {
-		if sp.id == "freeturn_server" && !sr.IsServerEnabled("freeturn_server") && sr.IsServerEnabled("awg_server") {
-			continue
-		}
 		_, ipNet, err := net.ParseCIDR(sp.cidr)
 		if err == nil && ipNet != nil {
 			out = append(out, parsedCIDRSource{net: ipNet, serverID: sp.id})
@@ -351,7 +368,20 @@ func (op *Operator) getMonitorSnapshot(ctx context.Context, running bool) Monito
 
 	ext := op.LoadExtConfig()
 	catalog := op.ListAvailableServers(ctx)
-	cidrs := buildCIDRSources(ext.ServerRouting)
+	wgServers, hasWGProvider := op.cachedWGServers()
+	wgByID := make(map[string]DynamicWGServer, len(wgServers))
+	for _, srv := range wgServers {
+		wgByID[srv.ID] = srv
+	}
+	var enabledWG map[string]bool
+	if hasWGProvider {
+		matched := matchEnabledWGServers(ext.ServerRouting, wgServers)
+		enabledWG = make(map[string]bool, len(matched))
+		for _, srv := range matched {
+			enabledWG[srv.ID] = true
+		}
+	}
+	cidrs := buildCIDRSourcesWithWG(ext.ServerRouting, wgServers, hasWGProvider)
 
 	var fextDNS map[string][2]uint64
 	var fircDNS map[string][2]uint64
@@ -387,6 +417,22 @@ func (op *Operator) getMonitorSnapshot(ctx context.Context, running bool) Monito
 	})
 
 	ifaceToCounters := func(srvID string) (uint64, uint64) {
+		if hasWGProvider {
+			if srv, ok := wgByID[srvID]; ok {
+				if kIface := strings.TrimSpace(srv.KernelIface); kIface != "" {
+					c := fextDNS[kIface]
+					return c[0], c[1]
+				}
+				return 0, 0
+			}
+			if srvID == "freeturn_server" {
+				if kIface := findFreeTurnDetailIface(wgServers); kIface != "" {
+					c := fextDNS[kIface]
+					return c[0], c[1]
+				}
+				return 0, 0
+			}
+		}
 		switch srvID {
 		case "awg_server", "freeturn_server":
 			c := fextDNS["nwg2"]
@@ -437,7 +483,7 @@ func (op *Operator) getMonitorSnapshot(ctx context.Context, running bool) Monito
 	}
 	for _, srv := range catalog {
 		serverNameMap[srv.ID] = srv.Name
-		enabled := ext.ServerRouting.IsServerEnabled(srv.ID)
+		enabled := ext.ServerRouting.IsServerEnabled(srv.ID) || enabledWG[srv.ID]
 		if !enabled && !srv.Running {
 			continue
 		}

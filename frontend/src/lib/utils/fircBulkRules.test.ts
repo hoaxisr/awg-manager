@@ -3,6 +3,7 @@ import type { FircGroup, FircRule } from '$lib/types/firc';
 import {
 	applyBulkGroupAction,
 	applyBulkRuleAction,
+	collapseRulesTextToRootDomains,
 	detectFircRuleType,
 	parseRulesFromText,
 	serializeRulesToText,
@@ -163,5 +164,38 @@ describe('applyBulkGroupAction', () => {
 		});
 		expect(resDelete.affected).toBe(1);
 		expect(resDelete.groups.map((g) => g.id)).toEqual(['g2']);
+	});
+});
+
+describe('collapseRulesTextToRootDomains', () => {
+	it('collapses subdomains & wildcards, drops domain: when collapsed, deduplicates, and promotes [off]', () => {
+		const input = [
+			'# header comment',
+			'[off] cdn.example.com',
+			'api.example.com # keeps enabled promotion',
+			'domain:static.vendor.co.uk',
+			'domain:exact.org',
+			'*.media.youtube.com',
+			'*.cache-*.googlevideo.com',
+			'149.154.160.0/20 tcp:443 # Telegram',
+			'^api\\.[0-9]+\\.claude\\.ai$',
+		].join('\n');
+
+		const res = collapseRulesTextToRootDomains(input);
+		expect(res.collapsedCount).toBe(4);
+		expect(res.deduplicatedCount).toBe(1);
+		expect(res.total).toBe(7);
+		expect(res.text).toBe(
+			[
+				'# header comment',
+				'example.com # keeps enabled promotion',
+				'vendor.co.uk',
+				'domain:exact.org',
+				'*.youtube.com',
+				'*.cache-*.googlevideo.com',
+				'149.154.160.0/20 tcp:443 # Telegram',
+				'^api\\.[0-9]+\\.claude\\.ai$',
+			].join('\n'),
+		);
 	});
 });

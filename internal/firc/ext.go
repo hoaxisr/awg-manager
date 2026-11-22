@@ -108,6 +108,45 @@ func (op *Operator) SetServerStatusCallbacks(xhttpFn func() bool, openfluxFn fun
 	op.openfluxStatusFn = openfluxFn
 }
 
+// SetWGServersProvider registers a callback returning dynamically discovered AWGM managed servers
+// and Keenetic NDMS built-in/marked WireGuard servers.
+func (op *Operator) SetWGServersProvider(fn func(ctx context.Context) []DynamicWGServer) {
+	op.mu.Lock()
+	defer op.mu.Unlock()
+	op.wgServersProvider = fn
+}
+
+func (op *Operator) resolveWGServers(ctx context.Context) ([]DynamicWGServer, bool) {
+	if op == nil {
+		return nil, false
+	}
+	op.mu.Lock()
+	fn := op.wgServersProvider
+	op.mu.Unlock()
+	if fn == nil {
+		return nil, false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	list := fn(ctx)
+	op.mu.Lock()
+	op.lastWGServers = slices.Clone(list)
+	op.mu.Unlock()
+	return list, true
+}
+
+func (op *Operator) cachedWGServers() ([]DynamicWGServer, bool) {
+	if op == nil {
+		return nil, false
+	}
+	op.mu.Lock()
+	hasProvider := op.wgServersProvider != nil
+	cached := slices.Clone(op.lastWGServers)
+	op.mu.Unlock()
+	return cached, hasProvider
+}
+
 func (op *Operator) extConfigPath() string {
 	return filepath.Join(op.configDir, "awgm-ext.json")
 }
@@ -404,6 +443,118 @@ func normalizeCIDR24(cidrStr, fallback string) string {
 	return ipNet.String()
 }
 
+// FormatIPv4SubnetCIDR converts an IPv4 address and mask (dotted like "255.255.255.0" or prefix like "24")
+// into a normalized network CIDR string (e.g. "172.31.0.0/24").
+func FormatIPv4SubnetCIDR(addr, mask string) string {
+	ip := net.ParseIP(strings.TrimSpace(addr)).To4()
+	if ip == nil {
+		return ""
+	}
+	maskStr := strings.TrimPrefix(strings.TrimSpace(mask), "/")
+	var ipMask net.IPMask
+	if maskIP := net.ParseIP(maskStr).To4(); maskIP != nil {
+		cand := net.IPv4Mask(maskIP[0], maskIP[1], maskIP[2], maskIP[3])
+		if ones, bits := cand.Size(); bits == 32 && (ones > 0 || maskStr == "0.0.0.0") {
+			ipMask = cand
+		}
+	}
+	if ipMask == nil && maskStr != "" {
+		if prefix, err := strconv.Atoi(maskStr); err == nil && prefix >= 0 && prefix <= 32 {
+			ipMask = net.CIDRMask(prefix, 32)
+		}
+	}
+	if ipMask == nil {
+		ipMask = net.CIDRMask(24, 32)
+	}
+	ones, _ := ipMask.Size()
+	return fmt.Sprintf("%s/%d", ip.Mask(ipMask).String(), ones)
+}
+
+func formatWGServerDisplayName(srv DynamicWGServer) string {
+	name := strings.TrimSpace(srv.Name)
+	if name == "" {
+		switch {
+		case srv.Category == "awgm":
+			name = "Сервер AmneziaWG"
+		case srv.BuiltIn:
+			name = "Keenetic WireGuard"
+		default:
+			name = strings.TrimSpace(srv.NDMSName)
+		}
+	}
+	if ndmsName := strings.TrimSpace(srv.NDMSName); ndmsName != "" && !strings.Contains(name, ndmsName) {
+		return name + " (" + ndmsName + ")"
+	}
+	return name
+}
+
+func formatWGServerDetail(srv DynamicWGServer) string {
+	var parts []string
+	if k := strings.TrimSpace(srv.KernelIface); k != "" {
+		parts = append(parts, k)
+	}
+	if s := strings.TrimSpace(srv.Subnet); s != "" {
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func matchEnabledWGServers(sr ServerRoutingConfig, wgServers []DynamicWGServer) []DynamicWGServer {
+	var matched []DynamicWGServer
+	seen := make(map[string]bool)
+	add := func(srv DynamicWGServer) {
+		if srv.ID == "" || seen[srv.ID] {
+			return
+		}
+		seen[srv.ID] = true
+		matched = append(matched, srv)
+	}
+
+	for _, srv := range wgServers {
+		if sr.IsServerEnabled(srv.ID) {
+			add(srv)
+		}
+	}
+	if sr.IsServerEnabled("awg_server") {
+		matchedWireguard2 := false
+		for _, srv := range wgServers {
+			if srv.Category == "awgm" && strings.EqualFold(strings.TrimSpace(srv.NDMSName), "Wireguard2") {
+				add(srv)
+				matchedWireguard2 = true
+			}
+		}
+		if !matchedWireguard2 {
+			for _, srv := range wgServers {
+				if srv.Category == "awgm" {
+					add(srv)
+				}
+			}
+		}
+	}
+	if sr.IsServerEnabled("keenetic_wg") {
+		for _, srv := range wgServers {
+			if srv.Category == "system" && srv.BuiltIn {
+				add(srv)
+			}
+		}
+	}
+	return matched
+}
+
+func findFreeTurnDetailIface(wgServers []DynamicWGServer) string {
+	for _, srv := range wgServers {
+		if srv.Category == "awgm" && strings.EqualFold(strings.TrimSpace(srv.NDMSName), "Wireguard2") && strings.TrimSpace(srv.KernelIface) != "" {
+			return strings.TrimSpace(srv.KernelIface)
+		}
+	}
+	for _, srv := range wgServers {
+		if srv.Category == "awgm" && strings.TrimSpace(srv.KernelIface) != "" {
+			return strings.TrimSpace(srv.KernelIface)
+		}
+	}
+	return ""
+}
+
 // ListAvailableServers probes and returns all AWGM and Keenetic system VPN servers with live status.
 func (op *Operator) ListAvailableServers(ctx context.Context) []InboundServerItem {
 	op.mu.Lock()
@@ -411,7 +562,8 @@ func (op *Operator) ListAvailableServers(ctx context.Context) []InboundServerIte
 	openfluxFn := op.openfluxStatusFn
 	op.mu.Unlock()
 
-	awgUp := isNetInterfaceUp("nwg2")
+	wgServers, hasWGProvider := op.resolveWGServers(ctx)
+
 	wdttUp := isNetInterfaceUp("opkgtun17") || isNetInterfaceUp("opkgtun19") || isProcessAlive("wdtt-server", "qwdtt-server")
 	ftUp := isProcessAlive("freeturn-server", "ft-server")
 	xhttpUp := false
@@ -464,92 +616,160 @@ func (op *Operator) ListAvailableServers(ctx context.Context) []InboundServerIte
 		ocSubnet = poolStartToCIDR24(rci.OcServer.Config.PoolStart, ocSubnet)
 	}
 
-	return []InboundServerItem{
-		{
-			ID:       "awg_server",
-			Name:     "Сервер AmneziaWG (Wireguard2)",
-			Category: "awgm",
-			Running:  awgUp,
-			Detail:   "nwg2 · 10.10.0.0/24",
-		},
-		{
+	items := make([]InboundServerItem, 0, len(wgServers)+12)
+	if hasWGProvider {
+		for _, srv := range wgServers {
+			if srv.Category == "awgm" {
+				items = append(items, InboundServerItem{
+					ID:       srv.ID,
+					Name:     formatWGServerDisplayName(srv),
+					Category: "awgm",
+					Running:  srv.Running,
+					Detail:   formatWGServerDetail(srv),
+				})
+			}
+		}
+		items = append(items, InboundServerItem{
 			ID:       "wdtt_server",
 			Name:     "Сервер WDTT",
 			Category: "awgm",
 			Running:  wdttUp,
 			Detail:   "opkgtun17/19 · 10.66.0.0/16",
-		},
-		{
-			ID:       "freeturn_server",
-			Name:     "Сервер FreeTurn",
-			Category: "awgm",
-			Running:  ftUp,
-			Detail:   "nwg2 · 10.10.0.2/32",
-		},
-		{
-			ID:       "vless_xhttp_server",
-			Name:     "Сервер VLESS XHTTP",
-			Category: "awgm",
-			Running:  xhttpUp,
-			Detail:   "router · XHTTP",
-		},
-		{
-			ID:       "openflux_server",
-			Name:     "Сервер OpenFlux",
-			Category: "awgm",
-			Running:  openfluxUp,
-			Detail:   openfluxIface + " · 10.77.0.0/16",
-		},
-		{
-			ID:       "keenetic_wg",
-			Name:     "Keenetic WireGuard (Wireguard0)",
-			Category: "system",
-			Running:  wgSysUp,
-			Detail:   "nwg0 · " + wgSysSubnet,
-		},
-		{
+		})
+		ftEnabled := op.LoadExtConfig().ServerRouting.IsServerEnabled("freeturn_server")
+		if ftUp || ftEnabled {
+			ftDetail := "10.10.0.2/32"
+			if kIface := findFreeTurnDetailIface(wgServers); kIface != "" {
+				ftDetail = kIface + " · 10.10.0.2/32"
+			}
+			items = append(items, InboundServerItem{
+				ID:       "freeturn_server",
+				Name:     "Сервер FreeTurn",
+				Category: "awgm",
+				Running:  ftUp,
+				Detail:   ftDetail,
+			})
+		}
+		items = append(items,
+			InboundServerItem{
+				ID:       "vless_xhttp_server",
+				Name:     "Сервер VLESS XHTTP",
+				Category: "awgm",
+				Running:  xhttpUp,
+				Detail:   "router · XHTTP",
+			},
+			InboundServerItem{
+				ID:       "openflux_server",
+				Name:     "Сервер OpenFlux",
+				Category: "awgm",
+				Running:  openfluxUp,
+				Detail:   openfluxIface + " · 10.77.0.0/16",
+			},
+		)
+		for _, srv := range wgServers {
+			if srv.Category == "system" {
+				items = append(items, InboundServerItem{
+					ID:       srv.ID,
+					Name:     formatWGServerDisplayName(srv),
+					Category: "system",
+					Running:  srv.Running,
+					Detail:   formatWGServerDetail(srv),
+				})
+			}
+		}
+	} else {
+		awgUp := isNetInterfaceUp("nwg2")
+		items = append(items,
+			InboundServerItem{
+				ID:       "awg_server",
+				Name:     "Сервер AmneziaWG (Wireguard2)",
+				Category: "awgm",
+				Running:  awgUp,
+				Detail:   "nwg2 · 10.10.0.0/24",
+			},
+			InboundServerItem{
+				ID:       "wdtt_server",
+				Name:     "Сервер WDTT",
+				Category: "awgm",
+				Running:  wdttUp,
+				Detail:   "opkgtun17/19 · 10.66.0.0/16",
+			},
+			InboundServerItem{
+				ID:       "freeturn_server",
+				Name:     "Сервер FreeTurn",
+				Category: "awgm",
+				Running:  ftUp,
+				Detail:   "nwg2 · 10.10.0.2/32",
+			},
+			InboundServerItem{
+				ID:       "vless_xhttp_server",
+				Name:     "Сервер VLESS XHTTP",
+				Category: "awgm",
+				Running:  xhttpUp,
+				Detail:   "router · XHTTP",
+			},
+			InboundServerItem{
+				ID:       "openflux_server",
+				Name:     "Сервер OpenFlux",
+				Category: "awgm",
+				Running:  openfluxUp,
+				Detail:   openfluxIface + " · 10.77.0.0/16",
+			},
+			InboundServerItem{
+				ID:       "keenetic_wg",
+				Name:     "Keenetic WireGuard (Wireguard0)",
+				Category: "system",
+				Running:  wgSysUp,
+				Detail:   "nwg0 · " + wgSysSubnet,
+			},
+		)
+	}
+
+	items = append(items,
+		InboundServerItem{
 			ID:       "keenetic_sstp",
 			Name:     "Keenetic SSTP",
 			Category: "system",
 			Running:  sstpUp,
 			Detail:   "sstp+ · " + sstpSubnet,
 		},
-		{
+		InboundServerItem{
 			ID:       "keenetic_l2tp",
 			Name:     "Keenetic L2TP/IPsec",
 			Category: "system",
 			Running:  l2tpUp,
 			Detail:   "l2tp+ · " + l2tpSubnet,
 		},
-		{
+		InboundServerItem{
 			ID:       "keenetic_ikev2",
 			Name:     "Keenetic IKEv2/IPsec",
 			Category: "system",
 			Running:  ikev2Up,
 			Detail:   "xfrms2 · " + ikev2Subnet,
 		},
-		{
+		InboundServerItem{
 			ID:       "keenetic_ikev1",
 			Name:     "Keenetic Virtual IP (IKEv1)",
 			Category: "system",
 			Running:  ikev1Up,
 			Detail:   "xfrms1 · " + ikev1Subnet,
 		},
-		{
+		InboundServerItem{
 			ID:       "keenetic_pptp",
 			Name:     "Keenetic PPTP",
 			Category: "system",
 			Running:  pptpUp,
 			Detail:   "vpn+ · " + pptpSubnet,
 		},
-		{
+		InboundServerItem{
 			ID:       "keenetic_oc",
 			Name:     "Keenetic OpenConnect",
 			Category: "system",
 			Running:  ocUp,
 			Detail:   "oc+ · " + ocSubnet,
 		},
-	}
+	)
+	return items
 }
 
 func resolveKeenDNSInterfaces(ext ExtConfig) []string {
@@ -613,8 +833,16 @@ func buildKeenDNSGroup(ifaces []string, cloudHealthCheck bool) Group {
 }
 
 func activeServerSubnets(sr ServerRoutingConfig) []string {
+	return activeServerSubnetsWithWG(sr, nil, false)
+}
+
+func activeServerSubnetsWithWG(sr ServerRoutingConfig, wgServers []DynamicWGServer, hasProvider bool) []string {
 	var out []string
 	add := func(cidr string) {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			return
+		}
 		for _, existing := range out {
 			if existing == cidr {
 				return
@@ -622,8 +850,17 @@ func activeServerSubnets(sr ServerRoutingConfig) []string {
 		}
 		out = append(out, cidr)
 	}
-	if sr.IsServerEnabled("awg_server") {
-		add("10.10.0.0/24")
+	if hasProvider {
+		for _, srv := range matchEnabledWGServers(sr, wgServers) {
+			add(srv.Subnet)
+		}
+	} else {
+		if sr.IsServerEnabled("awg_server") {
+			add("10.10.0.0/24")
+		}
+		if sr.IsServerEnabled("keenetic_wg") {
+			add("172.16.6.0/24")
+		}
 	}
 	if sr.IsServerEnabled("wdtt_server") {
 		add("10.66.0.0/16")
@@ -637,9 +874,6 @@ func activeServerSubnets(sr ServerRoutingConfig) []string {
 	}
 	if sr.IsServerEnabled("openflux_server") {
 		add("10.77.0.0/16")
-	}
-	if sr.IsServerEnabled("keenetic_wg") {
-		add("172.16.6.0/24")
 	}
 	if sr.IsServerEnabled("keenetic_sstp") {
 		add("172.16.7.0/24")
@@ -671,16 +905,45 @@ func isManagedServerSubnet(entry string) bool {
 	return false
 }
 
-func activeServerDenyExclusions(sr ServerRoutingConfig, wantedSubnets []string) map[string]bool {
+func isKnownManagedServerSubnet(entry string, wgServers []DynamicWGServer) bool {
+	norm := strings.TrimSpace(entry)
+	if norm == "" {
+		return false
+	}
+	if isManagedServerSubnet(norm) {
+		return true
+	}
+	for _, srv := range wgServers {
+		if sub := strings.TrimSpace(srv.Subnet); sub != "" && strings.EqualFold(norm, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+func activeServerDenyExclusionsWithWG(sr ServerRoutingConfig, wantedSubnets []string, wgServers []DynamicWGServer, hasProvider bool) map[string]bool {
 	excl := make(map[string]bool)
 	for _, s := range wantedSubnets {
 		excl[strings.ToLower(strings.TrimSpace(s))] = true
 	}
-	if sr.IsServerEnabled("wdtt_server") {
-		excl["policy:policy3"] = true
+	addPolicy := func(p string) {
+		p = strings.ToLower(strings.TrimSpace(p))
+		p = strings.TrimPrefix(p, "policy:")
+		if p == "" || p == "none" {
+			return
+		}
+		excl["policy:"+p] = true
+		excl[p] = true
 	}
-	if sr.IsServerEnabled("awg_server") || sr.IsServerEnabled("freeturn_server") {
-		excl["policy:policy4"] = true
+	if sr.IsServerEnabled("wdtt_server") {
+		addPolicy("policy3")
+	}
+	if hasProvider {
+		for _, srv := range matchEnabledWGServers(sr, wgServers) {
+			addPolicy(srv.Policy)
+		}
+	} else if sr.IsServerEnabled("awg_server") || sr.IsServerEnabled("freeturn_server") {
+		addPolicy("policy4")
 	}
 	return excl
 }
@@ -688,9 +951,18 @@ func activeServerDenyExclusions(sr ServerRoutingConfig, wantedSubnets []string) 
 // syncGroupsWithExt returns an updated slice of FIRC groups incorporating KeenDNS Cloud
 // and inbound VPN server device subnets, plus a boolean indicating whether any group changed.
 func syncGroupsWithExt(groups []Group, ext ExtConfig) ([]Group, bool) {
+	return syncGroupsWithExtWithWG(groups, ext, nil, false)
+}
+
+func (op *Operator) syncGroupsWithExt(ctx context.Context, groups []Group, ext ExtConfig) ([]Group, bool) {
+	wgServers, hasProvider := op.resolveWGServers(ctx)
+	return syncGroupsWithExtWithWG(groups, ext, wgServers, hasProvider)
+}
+
+func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicWGServer, hasProvider bool) ([]Group, bool) {
 	changed := false
-	wantedSubnets := activeServerSubnets(ext.ServerRouting)
-	denyExcl := activeServerDenyExclusions(ext.ServerRouting, wantedSubnets)
+	wantedSubnets := activeServerSubnetsWithWG(ext.ServerRouting, wgServers, hasProvider)
+	denyExcl := activeServerDenyExclusionsWithWG(ext.ServerRouting, wantedSubnets, wgServers, hasProvider)
 	kdIfaces := resolveKeenDNSInterfaces(ext)
 	wantKeenDNS := ext.KeenDNSCloud.Enabled && len(kdIfaces) > 0
 
@@ -724,7 +996,7 @@ func syncGroupsWithExt(groups []Group, ext ExtConfig) ([]Group, bool) {
 		// (if user devices.allow is empty, fircd already matches all devices).
 		var userAllow []string
 		for _, entry := range g.Devices.Allow {
-			if !isManagedServerSubnet(entry) {
+			if !isKnownManagedServerSubnet(entry, wgServers) {
 				userAllow = append(userAllow, entry)
 			}
 		}
@@ -849,7 +1121,7 @@ func (op *Operator) StageExtConfigOffline(ctx context.Context, ext ExtConfig) (E
 	if err != nil {
 		return op.enrichExtRuntimeStatus(ctx, ext), err
 	}
-	if updated, changed := syncGroupsWithExt(groups, ext); changed {
+	if updated, changed := op.syncGroupsWithExt(ctx, groups, ext); changed {
 		if err := op.SaveGroupsFile(updated); err != nil {
 			return op.enrichExtRuntimeStatus(ctx, ext), err
 		}
@@ -873,7 +1145,7 @@ func (op *Operator) ReconcileExt(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	updated, changed := syncGroupsWithExt(groups, ext)
+	updated, changed := op.syncGroupsWithExt(ctx, groups, ext)
 	if changed {
 		res, applyErr := op.ApplyGroups(ctx, updated)
 		if applyErr != nil {
@@ -907,7 +1179,7 @@ func (op *Operator) reconcileExtOnStartLocked(ctx context.Context) error {
 	if err != nil {
 		groups, _ = op.LoadGroupsFile()
 	}
-	updated, changed := syncGroupsWithExt(groups, ext)
+	updated, changed := op.syncGroupsWithExt(ctx, groups, ext)
 	if changed {
 		if synced, syncErr := op.SyncGroups(ctx, updated); syncErr != nil {
 			return syncErr
@@ -1799,7 +2071,7 @@ func (op *Operator) reconcileExtNetfilterOnceLockedWithCfgGen(ctx context.Contex
 		errs = append(errs, err)
 	}
 
-	ifaces := op.activeServerInterfaces(ext.ServerRouting)
+	ifaces := op.activeServerInterfaces(ctx, ext.ServerRouting)
 	if op.isSystemConfigDir() {
 		reconcileNDMNetfilterHook(true)
 	}
@@ -1828,7 +2100,7 @@ func (op *Operator) reconcileExtNetfilterOnceLockedWithCfgGen(ctx context.Contex
 	return nil, allErr
 }
 
-func (op *Operator) activeServerInterfaces(sr ServerRoutingConfig) []string {
+func (op *Operator) activeServerInterfaces(ctx context.Context, sr ServerRoutingConfig) []string {
 	var ifaces []string
 	add := func(name string) {
 		name = strings.TrimSpace(name)
@@ -1842,8 +2114,21 @@ func (op *Operator) activeServerInterfaces(sr ServerRoutingConfig) []string {
 		}
 		ifaces = append(ifaces, name)
 	}
-	if sr.IsServerEnabled("awg_server") || sr.IsServerEnabled("freeturn_server") {
-		add("nwg2")
+	wgServers, hasProvider := op.resolveWGServers(ctx)
+	if hasProvider {
+		for _, srv := range matchEnabledWGServers(sr, wgServers) {
+			add(srv.KernelIface)
+		}
+		if sr.IsServerEnabled("freeturn_server") {
+			add(findFreeTurnDetailIface(wgServers))
+		}
+	} else {
+		if sr.IsServerEnabled("awg_server") || sr.IsServerEnabled("freeturn_server") {
+			add("nwg2")
+		}
+		if sr.IsServerEnabled("keenetic_wg") {
+			add("nwg0")
+		}
 	}
 	if sr.IsServerEnabled("wdtt_server") {
 		add("opkgtun17")
@@ -1858,9 +2143,6 @@ func (op *Operator) activeServerInterfaces(sr ServerRoutingConfig) []string {
 				add(tunIface)
 			}
 		}
-	}
-	if sr.IsServerEnabled("keenetic_wg") {
-		add("nwg0")
 	}
 	if sr.IsServerEnabled("keenetic_sstp") {
 		add("sstp+")

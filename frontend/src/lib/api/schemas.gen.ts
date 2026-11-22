@@ -724,6 +724,25 @@ const api_IPCheckServiceDTO: v.GenericSchema = v.looseObject({
 	url: v.optional(v.nullable(v.string())),
 });
 
+const api_IPInspectDTO: v.GenericSchema = v.looseObject({
+	asn: v.optional(v.nullable(v.number())),
+	cached: v.optional(v.nullable(v.boolean())),
+	country: v.optional(v.nullable(v.string())),
+	family: v.optional(v.nullable(v.string())),
+	ip: v.optional(v.nullable(v.string())),
+	organization: v.optional(v.nullable(v.string())),
+	prefix: v.optional(v.nullable(v.string())),
+	ptr: v.optional(v.nullable(v.string())),
+	ptrs: v.optional(v.nullable(v.array(v.string()))),
+	registry: v.optional(v.nullable(v.string())),
+	scope: v.optional(v.nullable(v.string())),
+});
+
+const api_IPInspectEnvelope: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_IPInspectDTO))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_IPResultData: v.GenericSchema = v.looseObject({
 	directIp: v.optional(v.nullable(v.string())),
 	endpointIp: v.optional(v.nullable(v.string())),
@@ -3788,6 +3807,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /client-routes": v.lazy(() => api_ClientRoutesListResponse),
 	"GET /connections": v.lazy(() => api_ConnectionsResponseEnvelope),
 	"GET /diagnostics/dns-proxy": v.lazy(() => api_DnsProxyInfoEnvelope),
+	"GET /diagnostics/ip-inspect": v.lazy(() => api_IPInspectEnvelope),
 	"GET /diagnostics/status": v.lazy(() => api_DiagnosticsStatusResponse),
 	"GET /dns-check/client": v.lazy(() => api_DnsCheckStartResponseEnvelope),
 	"GET /dns-check/probe": v.lazy(() => api_APIEnvelope),

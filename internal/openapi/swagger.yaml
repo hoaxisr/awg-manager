@@ -2093,6 +2093,50 @@ definitions:
         example: https://ipinfo.io/ip
         type: string
     type: object
+  api.IPInspectDTO:
+    properties:
+      asn:
+        example: 13335
+        type: integer
+      cached:
+        type: boolean
+      country:
+        example: AU
+        type: string
+      family:
+        example: ipv4
+        type: string
+      ip:
+        example: 1.1.1.1
+        type: string
+      organization:
+        example: CLOUDFLARENET, US
+        type: string
+      prefix:
+        example: 1.1.1.0/24
+        type: string
+      ptr:
+        example: one.one.one.one
+        type: string
+      ptrs:
+        items:
+          type: string
+        type: array
+      registry:
+        example: apnic
+        type: string
+      scope:
+        example: public
+        type: string
+    type: object
+  api.IPInspectEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/api.IPInspectDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.IPResultData:
     properties:
       directIp:
@@ -11476,6 +11520,36 @@ paths:
       security:
       - CookieAuth: []
       summary: DNS proxy info
+      tags:
+      - diagnostics
+  /diagnostics/ip-inspect:
+    get:
+      description: Classifies an IP address and resolves PTR + Team Cymru DNS ASN/BGP
+        prefix metadata on demand.
+      parameters:
+      - description: IPv4 or IPv6 address
+        in: query
+        name: ip
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.IPInspectEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Inspect IP address
       tags:
       - diagnostics
   /diagnostics/result:

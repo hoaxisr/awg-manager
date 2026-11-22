@@ -1044,6 +1044,20 @@ type InboundServerItem struct {
 	Detail   string `json:"detail"`
 }
 
+// DynamicWGServer describes a real WireGuard/AmneziaWG server discovered from
+// AWGM's ManagedServers or Keenetic NDMS (built-in WireGuard VPN Server / marked server interfaces).
+type DynamicWGServer struct {
+	ID          string // canonical server routing ID: "managed:<NDMSName>" or "wg:<NDMSName>"
+	NDMSName    string // e.g. "Wireguard5", "Wireguard2"
+	KernelIface string // e.g. "nwg5", "nwg2"
+	Name        string // human-readable display name
+	Category    string // "awgm" | "system"
+	Subnet      string // normalized IPv4 CIDR, e.g. "10.10.0.0/24" or "172.31.0.0/24"
+	Running     bool   // live up/down state
+	BuiltIn     bool   // true for Keenetic's built-in "Wireguard VPN Server"
+	Policy      string // optional NDMS hotspot policy (e.g. "Policy4")
+}
+
 // ServerRoutingConfig controls routing inbound VPN server traffic through FIRC rules.
 type ServerRoutingConfig struct {
 	EnabledServers   []string `json:"enabledServers"`

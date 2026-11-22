@@ -2078,11 +2078,11 @@
 				onchange={handleImportFileChange}
 			/>
 			<Button variant="ghost" size="sm" onclick={() => importFileInput?.click()}>
-				{#snippet iconBefore()}<Upload size={14} />{/snippet}
+				{#snippet iconBefore()}<Download size={14} />{/snippet}
 				Импорт
 			</Button>
 			<Button variant="ghost" size="sm" onclick={exportConfig}>
-				{#snippet iconBefore()}<Download size={14} />{/snippet}
+				{#snippet iconBefore()}<Upload size={14} />{/snippet}
 				Экспорт
 			</Button>
 			<Button
@@ -2999,7 +2999,7 @@
 									title="Массовый импорт правил текстом"
 									onclick={() => openImportRulesModal(index)}
 								>
-									<Upload size={14} />
+									<Download size={14} />
 								</button>
 								<button
 									type="button"

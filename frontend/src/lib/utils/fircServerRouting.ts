@@ -2,6 +2,8 @@ import { api } from '$lib/api/client';
 import type { FircExtConfig } from '$lib/types/firc';
 
 export type FircInboundServerId =
+	| `managed:${string}`
+	| `wg:${string}`
 	| 'awg_server'
 	| 'wdtt_server'
 	| 'freeturn_server'
@@ -45,6 +47,7 @@ export async function isFircServerRoutingEnabled(
 export async function setFircServerRoutingEnabled(
 	serverId: FircInboundServerId,
 	enabled: boolean,
+	clearLegacyIds: string[] = [],
 ): Promise<FircExtConfig | null> {
 	const getFn = (api as { fircGetExt?: () => Promise<FircExtConfig> }).fircGetExt;
 	const saveFn = (api as { fircSaveExt?: (cfg: FircExtConfig) => Promise<FircExtConfig> }).fircSaveExt;
@@ -55,8 +58,9 @@ export async function setFircServerRoutingEnabled(
 		? cur.includes(serverId)
 			? cur
 			: [...cur, serverId]
-		: cur.filter((id) => id !== serverId);
+		: cur.filter((id) => id !== serverId && !clearLegacyIds.includes(id));
 	const payload: FircExtConfig = {
+		globalTarget: ext?.globalTarget,
 		proxyGroups: ext?.proxyGroups ?? [],
 		keenDnsCloud: ext?.keenDnsCloud ?? { enabled: false, proxyGroupId: '', interfaces: [] },
 		serverRouting: {

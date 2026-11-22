@@ -19,6 +19,7 @@ import type {
 	HydraRouteStatus,
 	IPCheckService,
 	IPResult,
+	IpInspectResult,
 	IpsetUsage,
 	LoginMethod,
 	LoginResult,
@@ -585,6 +586,10 @@ export class SystemClient extends TunnelsClient {
 
 	async getDnsProxyInfo(): Promise<DnsProxyInfo> {
 		return this.request('/diagnostics/dns-proxy');
+	}
+
+	async inspectIp(ip: string): Promise<IpInspectResult> {
+		return this.request<IpInspectResult>(`/diagnostics/ip-inspect?ip=${encodeURIComponent(ip)}`);
 	}
 
 	// #endregion

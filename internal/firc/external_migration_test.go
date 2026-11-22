@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -265,5 +266,70 @@ func TestExternalMigration_RejectsUnsupportedPackageOrActiveDependents(t *testin
 	}
 	if pmDeps.extRemoves != 0 || pmDeps.installs != 0 {
 		t.Fatalf("expected zero opkg calls when dependent services exist")
+	}
+}
+
+func TestExternalMigration_StartFailureAfterActivationClearsPending(t *testing.T) {
+	ctx := context.Background()
+	inst, pm, root := seedExternalMigrationRoot(t, "firc", "0.8.2-1")
+
+	var running atomic.Bool
+	running.Store(true)
+	startErr := errors.New("fircd did not become ready on /tmp/firc/firc.sock within 30s")
+
+	op := NewOperator(Options{
+		ConfigDir:      filepath.Join(root, "opt", "etc", "firc"),
+		FircdBinary:    filepath.Join(root, "opt", "sbin", "fircd"),
+		AltFircdBinary: filepath.Join(root, "opt", "bin", "fircd"),
+		TunvlessBin:    filepath.Join(root, "opt", "sbin", "tunvless"),
+		AltTunvlessBin: filepath.Join(root, "opt", "bin", "tunvless"),
+		InitScript:     filepath.Join(root, "opt", "etc", "init.d", "S99firc"),
+	})
+	op.SetLifecycleHooks(
+		func(context.Context) error { return startErr },
+		func(context.Context) error {
+			running.Store(false)
+			return nil
+		},
+	)
+	inst.SetFircRunningChecker(func(context.Context) bool { return running.Load() })
+	inst.SetTunvlessRunningChecker(func(context.Context) bool { return false })
+
+	err := inst.MigrateExternalRuntime(ctx, op)
+	if !errors.Is(err, startErr) {
+		t.Fatalf("expected wrapped start failure %v, got: %v", startErr, err)
+	}
+	if pm.extRemoves != 1 || pm.installs != 1 {
+		t.Fatalf("expected 1 external remove and 1 runtime install, got extRemoves=%d installs=%d", pm.extRemoves, pm.installs)
+	}
+	if pending := inst.PendingOperationAction(); pending != "" {
+		t.Fatalf("expected PendingOperationAction cleared after runtime activation, got %q", pending)
+	}
+	st := inst.GetInstallStatus(ctx, op, false)
+	if st.State != InstallStateInstalled || st.InstalledVersion != "0.7.0-1" || st.ExternalPackage != "" {
+		t.Fatalf("expected clean installed state (not recovery_required) after activation, got %+v", st)
+	}
+	if !strings.Contains(st.Error, startErr.Error()) {
+		t.Fatalf("expected start failure surfaced in st.Error, got %q", st.Error)
+	}
+	if _, statErr := os.Stat(inst.externalBackupDir()); !os.IsNotExist(statErr) {
+		t.Fatalf("expected external backup dir removed after activation, err=%v", statErr)
+	}
+	for rel, want := range map[string]string{
+		"opt/etc/firc/firc.conf":     "configVersion: 0.7.0\napp:\n  httpWeb:\n    enabled: true\n",
+		"opt/var/lib/firc/hwid":      "deadbeef12345678\n",
+		"opt/var/lib/firc/rci-token": "rci-token-secret\n",
+	} {
+		got, rErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if rErr != nil || string(got) != want {
+			t.Fatalf("file %s not preserved: got=%q err=%v want=%q", rel, string(got), rErr, want)
+		}
+	}
+
+	if err := inst.Uninstall(ctx, op, false, false); err != nil {
+		t.Fatalf("expected post-migration Uninstall to succeed instead of bricking: %v", err)
+	}
+	if pm.removes != 1 {
+		t.Fatalf("expected 1 runtime removal, got %d", pm.removes)
 	}
 }
