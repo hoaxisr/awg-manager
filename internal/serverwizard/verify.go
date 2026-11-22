@@ -544,7 +544,7 @@ func (s *WizardService) verifyTelegram(ctx context.Context, checks *[]Verificati
 
 	// 3. Telegram Egress readiness check
 	if len(cfg.Upstreams) > 0 {
-		s.verifyTelegramUpstreams(ctx, cfg.Upstreams, checks)
+		s.verifyTelegramUpstreams(ctx, tgwebproxy.UpstreamSpecsFromPublic(cfg.Upstreams), checks)
 	} else {
 		s.verifyTelegramEgress(ctx, cfg.UpstreamDevice, checks)
 	}

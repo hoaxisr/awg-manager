@@ -227,6 +227,79 @@ type UpstreamSpec struct {
 	Enabled  bool   `json:"enabled"`
 }
 
+// PublicUpstreamSpec is the API view of an UpstreamSpec: SOCKS5 credentials
+// are reduced to PasswordSet so regular config/status responses never carry
+// the password. UpdateConfig keeps a stored password when the client sends it
+// back empty for the same upstream (see preserveUpstreamPasswords).
+type PublicUpstreamSpec struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Device      string `json:"device,omitempty"`
+	Address     string `json:"address,omitempty"`
+	Username    string `json:"username,omitempty"`
+	PasswordSet bool   `json:"password_set"`
+	Weight      int    `json:"weight"`
+	Enabled     bool   `json:"enabled"`
+}
+
+func publicUpstreams(list []UpstreamSpec) []PublicUpstreamSpec {
+	if list == nil {
+		return nil
+	}
+	out := make([]PublicUpstreamSpec, len(list))
+	for i, u := range list {
+		out[i] = PublicUpstreamSpec{
+			ID:          u.ID,
+			Type:        u.Type,
+			Device:      u.Device,
+			Address:     u.Address,
+			Username:    u.Username,
+			PasswordSet: u.Password != "",
+			Weight:      u.Weight,
+			Enabled:     u.Enabled,
+		}
+	}
+	return out
+}
+
+// UpstreamSpecsFromPublic converts public views back to specs without
+// credentials, for read-only consumers such as reachability checks.
+func UpstreamSpecsFromPublic(list []PublicUpstreamSpec) []UpstreamSpec {
+	if list == nil {
+		return nil
+	}
+	out := make([]UpstreamSpec, len(list))
+	for i, u := range list {
+		out[i] = UpstreamSpec{ID: u.ID, Type: u.Type, Device: u.Device, Address: u.Address, Username: u.Username, Weight: u.Weight, Enabled: u.Enabled}
+	}
+	return out
+}
+
+// preserveUpstreamPasswords restores stored SOCKS5 passwords that a client
+// sent back empty after reading the redacted public view. A password is only
+// reused for the same upstream ID, type, address and username: re-targeting an
+// upstream requires re-entering the credential, so it is never handed to a
+// different proxy server.
+func preserveUpstreamPasswords(incoming, stored []UpstreamSpec) []UpstreamSpec {
+	if len(incoming) == 0 || len(stored) == 0 {
+		return incoming
+	}
+	byID := make(map[string]UpstreamSpec, len(stored))
+	for _, u := range NormalizeUpstreams(stored) {
+		byID[u.ID] = u
+	}
+	for i, u := range incoming {
+		if u.Password != "" || u.Type != UpstreamTypeSocks5 {
+			continue
+		}
+		old, ok := byID[u.ID]
+		if ok && old.Type == UpstreamTypeSocks5 && old.Address == u.Address && old.Username == u.Username {
+			incoming[i].Password = old.Password
+		}
+	}
+	return incoming
+}
+
 func cloneUpstreams(list []UpstreamSpec) []UpstreamSpec {
 	if list == nil {
 		return nil
@@ -583,26 +656,26 @@ type ManagedIngressConfig struct {
 }
 
 type PublicConfig struct {
-	SchemaVersion      int                `json:"schema_version"`
-	Enabled            bool               `json:"enabled"`
-	Scenario           string             `json:"scenario,omitempty"`
-	NetworkPreset      string             `json:"network_preset,omitempty"`
-	ListenPort         int                `json:"listen_port"`
-	AdminPort          int                `json:"admin_port"`
-	PublicHostname     string             `json:"public_hostname"`
-	DirectHost         string             `json:"direct_host"`
-	DirectPort         int                `json:"direct_port"`
-	SecretMasked       string             `json:"secret_masked"`
-	Backend            string             `json:"backend"`
-	CarrierMode        string             `json:"carrier_mode"`
-	UpstreamDevice     string             `json:"upstream_device"`
-	Upstreams          []UpstreamSpec     `json:"upstreams,omitempty"`
-	TlsDomain          string             `json:"tls_domain"`
-	LegacyActive       bool               `json:"legacy_active"`
-	LegacyExpiresAt    string             `json:"legacy_expires_at,omitempty"`
-	LegacySecretMasked string             `json:"legacy_secret_masked,omitempty"`
-	Endpoints          []WebProxyEndpoint `json:"endpoints,omitempty"`
-	Users              []TelegramUser     `json:"users,omitempty"`
+	SchemaVersion      int                  `json:"schema_version"`
+	Enabled            bool                 `json:"enabled"`
+	Scenario           string               `json:"scenario,omitempty"`
+	NetworkPreset      string               `json:"network_preset,omitempty"`
+	ListenPort         int                  `json:"listen_port"`
+	AdminPort          int                  `json:"admin_port"`
+	PublicHostname     string               `json:"public_hostname"`
+	DirectHost         string               `json:"direct_host"`
+	DirectPort         int                  `json:"direct_port"`
+	SecretMasked       string               `json:"secret_masked"`
+	Backend            string               `json:"backend"`
+	CarrierMode        string               `json:"carrier_mode"`
+	UpstreamDevice     string               `json:"upstream_device"`
+	Upstreams          []PublicUpstreamSpec `json:"upstreams,omitempty"`
+	TlsDomain          string               `json:"tls_domain"`
+	LegacyActive       bool                 `json:"legacy_active"`
+	LegacyExpiresAt    string               `json:"legacy_expires_at,omitempty"`
+	LegacySecretMasked string               `json:"legacy_secret_masked,omitempty"`
+	Endpoints          []WebProxyEndpoint   `json:"endpoints,omitempty"`
+	Users              []TelegramUser       `json:"users,omitempty"`
 }
 
 type SnapshotManifest struct {
@@ -631,7 +704,7 @@ type Status struct {
 	BackendOnline                 bool                 `json:"backend_online"`
 	BackendAddr                   string               `json:"backend_addr,omitempty"`
 	UpstreamStatus                string               `json:"upstream_status"` // "ok", "degraded", "interface_down"
-	Upstreams                     []UpstreamSpec       `json:"upstreams,omitempty"`
+	Upstreams                     []PublicUpstreamSpec `json:"upstreams,omitempty"`
 	NetworkPreset                 string               `json:"network_preset,omitempty"`
 	CarrierMode                   string               `json:"carrier_mode"`
 	PublicHost                    string               `json:"public_host"`

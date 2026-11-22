@@ -541,7 +541,7 @@ func (s *Service) GetConfig() PublicConfig {
 		Backend:            cfg.Backend,
 		CarrierMode:        cfg.CarrierMode,
 		UpstreamDevice:     cfg.UpstreamDevice,
-		Upstreams:          cloneUpstreams(cfg.Upstreams),
+		Upstreams:          publicUpstreams(cfg.Upstreams),
 		TlsDomain:          cfg.TlsDomain,
 		LegacyActive:       cfg.LegacySecret != "",
 		LegacyExpiresAt:    cfg.LegacyExpiresAt,
@@ -948,7 +948,7 @@ func (s *Service) UpdateConfig(cfg Config) error {
 		newCfg.CarrierMode = DefaultCarrierMode
 	}
 	if cfg.Upstreams != nil {
-		norm := NormalizeUpstreams(cfg.Upstreams)
+		norm := preserveUpstreamPasswords(NormalizeUpstreams(cfg.Upstreams), s.config.Upstreams)
 		if err := ValidateUpstreams(norm); err != nil {
 			return err
 		}
@@ -2087,7 +2087,7 @@ func (s *Service) GetStatus() Status {
 		BackendOnline:                 rawOnline,
 		BackendAddr:                   cfg.Backend,
 		UpstreamStatus:                upstreamStatus,
-		Upstreams:                     cloneUpstreams(cfg.Upstreams),
+		Upstreams:                     publicUpstreams(cfg.Upstreams),
 		NetworkPreset:                 cfg.NetworkPreset,
 		CarrierMode:                   cfg.CarrierMode,
 		PublicHost:                    cfg.PublicHostname,

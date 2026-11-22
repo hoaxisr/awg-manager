@@ -360,7 +360,10 @@ export interface TelegramUpstream {
 	device?: string;
 	address?: string;
 	username?: string;
+	/** Write-only: sent to set or change the SOCKS5 password; never returned by the API. */
 	password?: string;
+	/** A SOCKS5 password is stored; an empty password keeps it for the same id/address/username. */
+	password_set?: boolean;
 	weight: number;
 	enabled: boolean;
 }

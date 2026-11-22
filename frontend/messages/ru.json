@@ -8880,6 +8880,7 @@
 	"tg_upstreams_socks_addr_placeholder": "127.0.0.1:1099",
 	"tg_upstreams_socks_user_placeholder": "Логин (необязат.)",
 	"tg_upstreams_socks_pass_placeholder": "Пароль (необязат.)",
+	"tg_upstreams_socks_pass_saved_placeholder": "Сохранён — оставьте пустым, чтобы не менять",
 	"tg_upstreams_weight_label": "Вес",
 	"tg_upstreams_remove_aria": "Удалить канал",
 	"tg_upstreams_validation_empty": "Включите хотя бы один выходной канал.",

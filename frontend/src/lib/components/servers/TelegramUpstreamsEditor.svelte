@@ -136,7 +136,10 @@
 							type="password"
 							bind:value={u.password}
 							class="text-input cred-input"
-							placeholder={m.tg_upstreams_socks_pass_placeholder()}
+							autocomplete="new-password"
+							placeholder={u.password_set
+								? m.tg_upstreams_socks_pass_saved_placeholder()
+								: m.tg_upstreams_socks_pass_placeholder()}
 						/>
 					</div>
 				{:else}

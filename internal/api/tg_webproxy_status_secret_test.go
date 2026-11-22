@@ -18,6 +18,7 @@ const (
 	statusLeakUserA  = "a1a1a1a1b2b2b2b2c3c3c3c3d4d4d4d4"
 	statusLeakUserB  = "e5e5e5e5f6f6f6f6a7a7a7a7b8b8b8b8"
 	statusLeakLegacy = "fedcba9876543210fedcba9876543210"
+	statusLeakSocks  = "S0cks-P@ss-4821-unique"
 )
 
 // setupTgWebProxyWithLinks boots a real tgwebproxy.Service from a persisted
@@ -44,6 +45,10 @@ func setupTgWebProxyWithLinks(t *testing.T) (*TgWebProxyHandler, *tgwebproxy.Ser
 		Endpoints: []tgwebproxy.WebProxyEndpoint{
 			{ID: "ep-cdn", Hostname: "cdn.example.test", IsCDN: true, Enabled: true, ListenPort: 8085, AdminPort: 8086},
 			{ID: "ep-direct", Hostname: "direct.example.test", Enabled: true, ListenPort: 8087, AdminPort: 8088},
+		},
+		Upstreams: []tgwebproxy.UpstreamSpec{
+			{ID: "up-1", Type: tgwebproxy.UpstreamTypeDirect, Weight: 5, Enabled: true},
+			{ID: "up-socks", Type: tgwebproxy.UpstreamTypeSocks5, Address: "10.0.0.2:1080", Username: "tguser", Password: statusLeakSocks, Weight: 1, Enabled: true},
 		},
 		Users: []tgwebproxy.TelegramUser{
 			{ID: "u-a", Remark: "Alice", Secret: statusLeakUserA, Enabled: true},
@@ -85,6 +90,9 @@ func setupTgWebProxyWithLinks(t *testing.T) (*TgWebProxyHandler, *tgwebproxy.Ser
 
 func assertNoTgSecretsInBody(t *testing.T, label string, body []byte) {
 	t.Helper()
+	if bytes.Contains(body, []byte(statusLeakSocks)) || bytes.Contains(body, []byte(`"password"`)) {
+		t.Errorf("%s: response exposes the SOCKS5 upstream password", label)
+	}
 	for _, sec := range []string{statusLeakUserA, statusLeakUserB, statusLeakLegacy} {
 		if bytes.Contains(body, []byte(sec)) || bytes.Contains(bytes.ToLower(body), []byte(sec)) {
 			t.Errorf("%s: response contains a raw secret", label)
@@ -135,4 +143,27 @@ func TestTgWebProxyHTTP_ActionResponseHasNoSecretLinks(t *testing.T) {
 		t.Fatalf("POST action: %d %s", w.Code, w.Body.String())
 	}
 	assertNoTgSecretsInBody(t, "POST /action", w.Body.Bytes())
+}
+
+func TestTgWebProxyHTTP_ConfigHasNoSecrets(t *testing.T) {
+	handler, _, _ := setupTgWebProxyWithLinks(t)
+
+	req := httptest.NewRequest(http.MethodGet, "http://192.168.10.1:2222/api/servers/tgwebproxy", nil)
+	w := httptest.NewRecorder()
+	handler.GetConfig(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET config: %d %s", w.Code, w.Body.String())
+	}
+	body := w.Body.Bytes()
+	if bytes.Contains(body, []byte(statusLeakSocks)) || bytes.Contains(body, []byte(`"password"`)) {
+		t.Errorf("GET config exposes the SOCKS5 upstream password: %s", body)
+	}
+	if !bytes.Contains(body, []byte(`"password_set":true`)) {
+		t.Errorf("GET config lost password_set for the SOCKS5 upstream: %s", body)
+	}
+	for _, sec := range []string{statusLeakUserA, statusLeakUserB, statusLeakLegacy} {
+		if bytes.Contains(body, []byte(sec)) {
+			t.Errorf("GET config contains a raw MTProto secret")
+		}
+	}
 }

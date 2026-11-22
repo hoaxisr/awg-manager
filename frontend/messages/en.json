@@ -8480,6 +8480,7 @@
 	"tg_upstreams_socks_addr_placeholder": "127.0.0.1:1099",
 	"tg_upstreams_socks_user_placeholder": "Username (optional)",
 	"tg_upstreams_socks_pass_placeholder": "Password (optional)",
+	"tg_upstreams_socks_pass_saved_placeholder": "Saved — leave empty to keep",
 	"tg_upstreams_weight_label": "Weight",
 	"tg_upstreams_remove_aria": "Remove channel",
 	"tg_upstreams_validation_empty": "Enable at least one outbound channel.",
