@@ -514,6 +514,7 @@ export interface FircInstallStatus {
 	state: FircInstallState;
 	installedVersion?: string;
 	availableVersion?: string;
+	updateAvailable?: boolean;
 	available: boolean;
 	unavailableReason?: string;
 	activeEngine: boolean;

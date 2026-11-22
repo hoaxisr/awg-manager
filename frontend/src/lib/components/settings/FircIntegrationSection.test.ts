@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-const { status, install, uninstall, migrate } = vi.hoisted(() => ({
+const { status, install, upgrade, uninstall, migrate } = vi.hoisted(() => ({
 	status: vi.fn(),
 	install: vi.fn(),
+	upgrade: vi.fn(),
 	uninstall: vi.fn(),
 	migrate: vi.fn(),
 }));
@@ -11,6 +12,7 @@ vi.mock('$lib/api/client', () => ({
 	api: {
 		fircGetInstallStatus: status,
 		fircInstall: install,
+		fircUpgrade: upgrade,
 		fircUninstall: uninstall,
 		fircMigrateRuntime: migrate,
 	},
@@ -26,6 +28,7 @@ beforeEach(() => {
 	vi.resetAllMocks();
 	status.mockResolvedValue(base);
 	install.mockResolvedValue({ ok: true });
+	upgrade.mockResolvedValue({ ok: true });
 	uninstall.mockResolvedValue({ ok: true });
 	migrate.mockResolvedValue({ ok: true });
 });
@@ -39,11 +42,22 @@ describe('FIRC runtime settings', () => {
 		await waitFor(() => expect(button).toBeDisabled());
 		expect(install).not.toHaveBeenCalled();
 	});
-	it('shows installed rather than available version and blocks active removal', async () => {
-		status.mockResolvedValue({ ...base, state: 'running', activeEngine: true, installedVersion: '0.7.0-1', availableVersion: '0.8.0-1', fircdPresent: true, tunvlessPresent: true });
+	it('shows both installed and available versions when update is available and blocks active removal', async () => {
+		status.mockResolvedValue({
+			...base,
+			state: 'running',
+			activeEngine: true,
+			installedVersion: '0.7.0-1',
+			availableVersion: '0.8.0-1',
+			updateAvailable: true,
+			fircdPresent: true,
+			tunvlessPresent: true,
+		});
 		render(FircIntegrationSection);
 		expect(await screen.findByText('0.7.0-1')).toBeInTheDocument();
-		expect(screen.queryByText('0.8.0-1')).not.toBeInTheDocument();
+		expect(screen.getByText(/0\.8\.0-1/)).toBeInTheDocument();
+		const updateBtn = screen.getByRole('button', { name: /Обновить FIRC|Update FIRC/ });
+		await waitFor(() => expect(updateBtn).toBeEnabled());
 		expect(screen.getByRole('button', { name: /Удалить FIRC|Remove FIRC/ })).toBeDisabled();
 	});
 	it('treats accepted install as in progress, not completed', async () => {
@@ -229,5 +243,77 @@ describe('FIRC runtime settings', () => {
 		expect(installBtn).toBeEnabled();
 		await fireEvent.click(installBtn);
 		await waitFor(() => expect(install).toHaveBeenCalledTimes(2));
+	});
+
+	it('confirms active runtime upgrade, displays rollback and dependent services notice, and shows updating progress', async () => {
+		status
+			.mockResolvedValueOnce({
+				...base,
+				state: 'running',
+				activeEngine: true,
+				installedVersion: '0.7.0-1',
+				availableVersion: '0.8.0-1',
+				updateAvailable: true,
+				dependentServices: ['awg_server', 'vless_xhttp_server'],
+				fircdPresent: true,
+				tunvlessPresent: true,
+			})
+			.mockResolvedValue({
+				...base,
+				state: 'installing',
+				activeEngine: true,
+				installedVersion: '0.7.0-1',
+				availableVersion: '0.8.0-1',
+				updateAvailable: false,
+				busy: true,
+				busyAction: 'upgrade',
+				progress: 0.45,
+				fircdPresent: true,
+				tunvlessPresent: true,
+			});
+		render(FircIntegrationSection);
+		const updateBtn = await screen.findByRole('button', { name: /Обновить FIRC|Update FIRC/ });
+		await waitFor(() => expect(updateBtn).toBeEnabled());
+		await fireEvent.click(updateBtn);
+
+		expect(await screen.findByText(/0\.7\.0-1.*0\.8\.0-1/)).toBeInTheDocument();
+		expect(screen.getByText(/Dependent services will briefly reconnect.*awg_server, vless_xhttp_server|Зависимые сервисы ненадолго переподключатся.*awg_server, vless_xhttp_server/)).toBeInTheDocument();
+		expect(screen.getByText(/rollback|откатится/i)).toBeInTheDocument();
+
+		const buttons = screen.getAllByRole('button', { name: /Обновить FIRC|Update FIRC/ });
+		await fireEvent.click(buttons[buttons.length - 1]);
+		await waitFor(() => expect(upgrade).toHaveBeenCalledTimes(1));
+		expect(install).not.toHaveBeenCalled();
+		expect(await screen.findByText(/Обновляется|Updating/)).toBeInTheDocument();
+		expect(screen.getByRole('progressbar')).toBeInTheDocument();
+	});
+
+	it('does not show duplicate available version or update button when already on latest version', async () => {
+		status.mockResolvedValue({
+			...base,
+			state: 'running',
+			activeEngine: true,
+			installedVersion: '0.8.0-1',
+			availableVersion: '0.8.0-1',
+			updateAvailable: false,
+			fircdPresent: true,
+			tunvlessPresent: true,
+		});
+		render(FircIntegrationSection);
+		expect(await screen.findByText('0.8.0-1')).toBeInTheDocument();
+		expect(screen.queryByText(/Доступна:|Available:/)).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Обновить FIRC|Update FIRC/ })).not.toBeInTheDocument();
+	});
+
+	it('shows available version before initial install when runtime is not installed', async () => {
+		status.mockResolvedValue({
+			...base,
+			state: 'not_installed',
+			availableVersion: '0.8.0-1',
+			available: true,
+		});
+		render(FircIntegrationSection);
+		expect(await screen.findByText(/0\.8\.0-1/)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /Установить FIRC|Install FIRC/ })).toBeEnabled();
 	});
 });

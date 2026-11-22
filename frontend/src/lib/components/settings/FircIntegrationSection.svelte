@@ -14,10 +14,13 @@
 	let submitting = $state(false);
 	let confirmRemoval = $state(false);
 	let confirmExternalMigration = $state(false);
+	let confirmUpgrade = $state(false);
 	let alive = false;
 	let refreshing = false;
 	let revision = 0;
 	const busy = $derived(submitting || status?.busy === true);
+	const installedVersion = $derived(status?.installedVersion?.trim() || '');
+	const availableVersion = $derived(status?.availableVersion?.trim() || '');
 	const installed = $derived(
 		Boolean(
 			status?.fircdPresent ||
@@ -31,6 +34,26 @@
 	const externalPackage = $derived(status?.externalPackage?.trim() || '');
 	const externalOwned = $derived(Boolean(externalPackage));
 	const externalMigratable = $derived(externalOwned && Boolean(status?.externalMigratable));
+	const updateAvailable = $derived(
+		Boolean(
+			status?.updateAvailable &&
+				installedVersion &&
+				availableVersion &&
+				installedVersion !== availableVersion &&
+				!externalOwned &&
+				!legacyOwned &&
+				(status?.state === 'installed' || status?.state === 'running'),
+		),
+	);
+	const showAvailableVersion = $derived(
+		Boolean(
+			availableVersion &&
+				availableVersion !== installedVersion &&
+				!externalOwned &&
+				!legacyOwned &&
+				(updateAvailable || !installed),
+		),
+	);
 	const blocked = $derived(Boolean(status?.activeEngine || status?.state === 'running' || status?.dependentServices?.length));
 	const repairUnblocked = $derived(
 		!externalOwned &&
@@ -49,13 +72,24 @@
 					? Boolean(status?.dependentServices?.length)
 					: !repairUnblocked && blocked),
 	);
+	const upgradeDisabled = $derived(loading || busy || !status?.available || Boolean(fetchError) || !updateAvailable);
 	const removeDisabled = $derived(busy || externalOwned || blocked || legacyOwned || Boolean(fetchError));
+	const upgradeConfirmSecondary = $derived.by(() => {
+		const baseMsg =
+			status?.activeEngine || status?.state === 'running'
+				? m.firc_runtime_upgrade_confirm_active({ current: installedVersion })
+				: m.firc_runtime_upgrade_confirm_idle({ current: installedVersion });
+		if (status?.dependentServices?.length) {
+			return `${baseMsg} ${m.firc_runtime_upgrade_confirm_dependents({ services: status.dependentServices.join(', ') })}`;
+		}
+		return baseMsg;
+	});
 	const stateLabel = $derived.by(() => {
 		switch (status?.state) {
 			case 'not_installed': return m.firc_runtime_absent();
 			case 'installed': return m.firc_runtime_installed();
 			case 'running': return m.firc_runtime_running();
-			case 'installing': return m.firc_runtime_installing();
+			case 'installing': return status?.busyAction === 'upgrade' ? m.firc_runtime_upgrading() : m.firc_runtime_installing();
 			case 'uninstalling': return m.firc_runtime_removing();
 			case 'recovery_required': return m.firc_runtime_recovery();
 			case 'unavailable': return m.firc_runtime_unavailable();
@@ -89,19 +123,28 @@
 		const timer = setInterval(refresh, 2000);
 		return () => { alive = false; clearInterval(timer); };
 	});
-	async function act(action: 'install' | 'uninstall' | 'migrate' | 'migrate-external') {
+	async function act(action: 'install' | 'upgrade' | 'uninstall' | 'migrate' | 'migrate-external') {
 		if (busy) return;
 		confirmRemoval = false;
 		confirmExternalMigration = false;
+		confirmUpgrade = false;
 		submitting = true;
 		actionError = '';
 		try {
 			if (action === 'migrate') await api.fircMigrateRuntime();
 			else if (action === 'migrate-external') await api.fircMigrateRuntime({ replaceExternalPackage: true });
+			else if (action === 'upgrade') await api.fircUpgrade();
 			else if (action === 'install') await api.fircInstall();
 			else await api.fircUninstall(false);
 			revision++;
-			if (alive && status) status = { ...status, busy: true, state: action === 'uninstall' ? 'uninstalling' : 'installing' };
+			if (alive && status) {
+				status = {
+					...status,
+					busy: true,
+					busyAction: action === 'upgrade' ? 'upgrade' : status.busyAction,
+					state: action === 'uninstall' ? 'uninstalling' : 'installing',
+				};
+			}
 			// 202 is only acceptance, not completion. Polling shows the actual result.
 			await refresh();
 		} catch (e) {
@@ -119,12 +162,23 @@
 			<div class="firc-status-line">
 				<StatusDot variant={status?.state === 'running' ? 'success' : status?.state === 'recovery_required' ? 'error' : 'muted'} />
 				<span class="firc-state-label">{stateLabel}</span>
-				{#if status?.installedVersion}<span class="firc-version">{status.installedVersion}</span>{/if}
+				{#if installedVersion}<span class="firc-version">{installedVersion}</span>{/if}
+				{#if showAvailableVersion}
+					<span class="firc-version-available" class:is-update={updateAvailable}>
+						{m.firc_runtime_available_version({ version: availableVersion })}
+					</span>
+				{/if}
 			</div>
 			<div class="firc-actions-row">
-				<Button size="sm" onclick={() => (externalMigratable ? (confirmExternalMigration = true) : act(legacyOwned ? 'migrate' : 'install'))} disabled={installDisabled}>
-					{externalMigratable ? m.firc_runtime_migrate_external() : legacyOwned ? m.firc_runtime_migrate() : status?.state === 'recovery_required' ? m.firc_runtime_repair() : m.firc_runtime_install()}
-				</Button>
+				{#if updateAvailable}
+					<Button size="sm" onclick={() => (confirmUpgrade = true)} disabled={upgradeDisabled}>
+						{m.firc_runtime_upgrade()}
+					</Button>
+				{:else}
+					<Button size="sm" onclick={() => (externalMigratable ? (confirmExternalMigration = true) : act(legacyOwned ? 'migrate' : 'install'))} disabled={installDisabled}>
+						{externalMigratable ? m.firc_runtime_migrate_external() : legacyOwned ? m.firc_runtime_migrate() : status?.state === 'recovery_required' ? m.firc_runtime_repair() : m.firc_runtime_install()}
+					</Button>
+				{/if}
 				{#if installed}
 					<Button size="sm" variant="outline-danger" onclick={() => (confirmRemoval = true)} disabled={removeDisabled}>{m.firc_runtime_remove()}</Button>
 				{/if}
@@ -158,6 +212,9 @@
 {#if confirmExternalMigration}
 	<ConfirmModal open title={m.firc_runtime_migrate_external()} message={m.firc_runtime_migrate_external_confirm({ pkg: externalPackage })} secondary={m.firc_runtime_migrate_external_secondary()} confirmLabel={m.firc_runtime_migrate_external()} cancelLabel={m.common_cancel()} variant="primary" onConfirm={() => act('migrate-external')} onClose={() => (confirmExternalMigration = false)} />
 {/if}
+{#if confirmUpgrade}
+	<ConfirmModal open title={m.firc_runtime_upgrade_confirm_title()} message={m.firc_runtime_upgrade_confirm({ current: installedVersion, target: availableVersion })} secondary={upgradeConfirmSecondary} confirmLabel={m.firc_runtime_upgrade()} cancelLabel={m.common_cancel()} variant="primary" onConfirm={() => act('upgrade')} onClose={() => (confirmUpgrade = false)} />
+{/if}
 
 <style>
 	.firc-header-row {
@@ -187,6 +244,23 @@
 		color: var(--color-text-secondary);
 		overflow-wrap: anywhere;
 		min-width: 0;
+	}
+
+	.firc-version-available {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		padding: 0.125rem 0.4375rem;
+		border-radius: var(--radius-sm, 0.375rem);
+		background: var(--color-surface-subtle, rgba(148, 163, 184, 0.12));
+		color: var(--color-text-secondary);
+		overflow-wrap: anywhere;
+		min-width: 0;
+	}
+
+	.firc-version-available.is-update {
+		background: var(--color-accent-subtle, rgba(59, 130, 246, 0.14));
+		color: var(--color-accent, #2563eb);
+		font-weight: 500;
 	}
 
 	.firc-actions-row {
