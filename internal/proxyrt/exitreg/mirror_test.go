@@ -706,3 +706,28 @@ func TestMirrorRemoveKeepsRowOfAnotherOwner(t *testing.T) {
 		t.Fatalf("свою запись снести не удалось: removed=%v err=%v", removed, err)
 	}
 }
+
+func TestMirrorSyncsDefaultRoute(t *testing.T) {
+	st, pub := newFakeStore(), &fakePub{}
+	m := NewStoreMirror(st, pub)
+	fa, tr := false, true
+
+	d := decl("wdttraw-de", "OpkgTun18", "opkgtun18")
+	d.DefaultRoute = &fa
+	if err := m.Ensure(d); err != nil {
+		t.Fatal(err)
+	}
+	rec := st.m["wdttraw-de"]
+	if rec.DefaultRoute || !rec.DefaultRouteSet {
+		t.Fatalf("при создании с DefaultRoute=false ожидали DefaultRoute=false DefaultRouteSet=true, got %+v", rec)
+	}
+
+	d.DefaultRoute = &tr
+	if err := m.Ensure(d); err != nil {
+		t.Fatal(err)
+	}
+	rec = st.m["wdttraw-de"]
+	if !rec.DefaultRoute || !rec.DefaultRouteSet {
+		t.Fatalf("после обновления на DefaultRoute=true ожидали DefaultRoute=true DefaultRouteSet=true, got %+v", rec)
+	}
+}

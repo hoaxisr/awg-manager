@@ -203,3 +203,38 @@ type IngressTopology struct {
 	TgPort         int                   `json:"tg_port,omitempty"`         // Telegram MTProxy/WebProxy port (e.g. 8085)
 	KeenDNS        *KeenDNSJournalRecord `json:"keendns,omitempty"`
 }
+
+// ResetOptions configures optional side-effect cleanup during per-service factory reset.
+type ResetOptions struct {
+	DeleteKeenDNS bool `json:"delete_keendns"`
+}
+
+// ResetResult describes the outcome of a per-service factory reset operation.
+type ResetResult struct {
+	Server          string   `json:"server"`
+	Reset           bool     `json:"reset"`
+	DispatcherReset bool     `json:"dispatcher_reset"`
+	KeenDNSDeleted  []string `json:"keendns_deleted,omitempty"`
+	KeenDNSSkipped  []string `json:"keendns_skipped,omitempty"`
+	Warnings        []string `json:"warnings,omitempty"`
+}
+
+// FactoryResetter is an optional capability implemented by ingress services that support resetting to factory defaults.
+type FactoryResetter interface {
+	FactoryReset(ctx context.Context) error
+}
+
+// DispatcherSystemHookCleaner removes Keenetic nginx/netfilter hooks when the dispatcher is completely reset.
+type DispatcherSystemHookCleaner interface {
+	CleanupSystemHooks()
+}
+
+// TelemtResetComponent resets standalone telemt config/PID state while preserving the telemt binary.
+type TelemtResetComponent interface {
+	ResetConfig(ctx context.Context) error
+}
+
+// KeenDNSResetOperator is an optional capability on KeenDNSOperator to safely delete non-shared ingress publications.
+type KeenDNSResetOperator interface {
+	DeleteIngressPublications(ctx context.Context, labels []string, allowedPorts []int) (deleted []string, skipped []string, warnings []string)
+}

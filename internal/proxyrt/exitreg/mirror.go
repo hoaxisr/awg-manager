@@ -75,6 +75,10 @@ func (m *StoreMirror) Ensure(d ExitDecl) error {
 		rec.RawKernelIface = d.KernelIface
 		rec.Peer.Endpoint = d.Peer
 		rec.Enabled = d.Enabled
+		if d.DefaultRoute != nil {
+			rec.DefaultRoute = *d.DefaultRoute
+			rec.DefaultRouteSet = true
+		}
 	}
 
 	if !m.st.Exists(d.ID) {

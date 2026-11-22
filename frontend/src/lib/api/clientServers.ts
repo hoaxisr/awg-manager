@@ -27,6 +27,8 @@ import type {
 	TgWebProxyRevealData,
 	CDNDispatcherConfig,
 	XHTTPTuning,
+	ServerResetOptions,
+	ServerResetResult,
 } from '$lib/types';
 import type {
 	WizardKind,
@@ -627,6 +629,24 @@ export class ServersClient extends SystemClient {
 			method: 'POST',
 			body: JSON.stringify({ strategy }),
 		});
+	}
+
+	async resetVlessServer(opts: ServerResetOptions = {}): Promise<ServerResetResult> {
+		return this.request<ServerResetResult>('/servers/vless/reset', {
+			method: 'POST',
+			body: JSON.stringify({ delete_keendns: Boolean(opts.delete_keendns) }),
+		});
+	}
+
+	async resetTgWebProxy(opts: ServerResetOptions = {}): Promise<ServerResetResult> {
+		try {
+			return await this.requestWithCSRF<ServerResetResult>('/servers/tgwebproxy/reset', {
+				method: 'POST',
+				body: JSON.stringify({ delete_keendns: Boolean(opts.delete_keendns) }),
+			});
+		} finally {
+			clearTgWebProxyCSRFCache();
+		}
 	}
 
 	// #endregion

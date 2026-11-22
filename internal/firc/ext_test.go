@@ -783,7 +783,7 @@ func TestKeenDNSCloudSync_CreationUpdateAndStrictValidation(t *testing.T) {
 	}
 
 	gotSet := ipsetSt.snapshot(FextCloudIpsetName)
-	for _, want := range []string{"95.213.212.88", "91.92.241.12", "185.162.93.99", "82.202.218.55", "185.162.93.0/24"} {
+	for _, want := range []string{"95.213.212.88", "91.92.241.12", "185.162.93.99", "82.202.218.55", "185.162.93.0/24", "31.135.14.0/24"} {
 		if !slices.Contains(gotSet, want) {
 			t.Fatalf("FEXT_CLOUD missing expected entry %q (got %v)", want, gotSet)
 		}
@@ -2036,41 +2036,94 @@ func TestPoolRejectAndFextChainTeardown_OwnershipVsManualStop(t *testing.T) {
 }
 
 func TestSyncGroupsWithExt_KeenDNSCheckMode(t *testing.T) {
-	single := buildKeenDNSGroup([]string{"tunvless0"})
-	if single.Check != nil {
-		t.Fatalf("single-iface KeenDNS group should omit Check, got %+v", single.Check)
+	singleOff := buildKeenDNSGroup([]string{"tunvless0"}, false)
+	if singleOff.Check == nil || singleOff.Check.Mode != "none" {
+		t.Fatalf("single-iface KeenDNS group (check off) should set Check.Mode=none, got %+v", singleOff.Check)
+	}
+	singleOn := buildKeenDNSGroup([]string{"tunvless0"}, true)
+	if singleOn.Check == nil || singleOn.Check.Mode != "none" {
+		t.Fatalf("single-iface KeenDNS group (check on) should set Check.Mode=none, got %+v", singleOn.Check)
 	}
 
-	multi := buildKeenDNSGroup([]string{"eth3", "tunvless0"})
-	if multi.Check == nil || multi.Check.Mode != "keendns" {
-		t.Fatalf("multi-iface KeenDNS group must set mode=keendns, got %+v", multi.Check)
+	// Default (CloudHealthCheck=false): multi-iface group uses standard fallback liveness (Check.Mode == "none").
+	multiDefault := buildKeenDNSGroup([]string{"eth3", "tunvless0"}, false)
+	if multiDefault.Check == nil || multiDefault.Check.Mode != "none" {
+		t.Fatalf("default multi-iface KeenDNS group (CloudHealthCheck=false) must set Check.Mode=none, got %+v", multiDefault.Check)
 	}
 
-	// Simulate upgrading an existing router group that lacks Check on 2 interfaces.
-	oldGroup := buildKeenDNSGroup([]string{"eth3", "tunvless0"})
-	oldGroup.Check = nil
-	updated, changed := syncGroupsWithExt([]Group{oldGroup}, ExtConfig{
+	// Opt-in (CloudHealthCheck=true): multi-iface group enables keendns check.
+	multi := buildKeenDNSGroup([]string{"eth3", "tunvless0"}, true)
+	if multi.Check == nil || multi.Check.Mode != "keendns" || multi.Check.TimeoutMs != 5000 {
+		t.Fatalf("opt-in multi-iface KeenDNS group must set mode=keendns timeoutMs=5000, got %+v", multi.Check)
+	}
+
+	// Sync with CloudHealthCheck=false on group with Check.Mode=none or Check=nil should report changed=false.
+	_, defaultChanged := syncGroupsWithExt([]Group{multiDefault}, ExtConfig{
 		KeenDNSCloud: KeenDNSCloudConfig{
 			Enabled:    true,
 			Interfaces: []string{"eth3", "tunvless0"},
 		},
 	})
+	if defaultChanged {
+		t.Fatal("expected syncGroupsWithExt to keep Check.Mode=none and report changed=false when CloudHealthCheck=false")
+	}
+
+	multiNilCheck := multiDefault
+	multiNilCheck.Check = nil
+	_, nilCheckChanged := syncGroupsWithExt([]Group{multiNilCheck}, ExtConfig{
+		KeenDNSCloud: KeenDNSCloudConfig{
+			Enabled:    true,
+			Interfaces: []string{"eth3", "tunvless0"},
+		},
+	})
+	if nilCheckChanged {
+		t.Fatal("expected syncGroupsWithExt to report changed=false when live group has Check=nil and CloudHealthCheck=false")
+	}
+
+	// Simulate enabling strict KeenDNS healthcheck on an existing 2-iface group.
+	updated, changed := syncGroupsWithExt([]Group{multiDefault}, ExtConfig{
+		KeenDNSCloud: KeenDNSCloudConfig{
+			Enabled:          true,
+			CloudHealthCheck: true,
+			Interfaces:       []string{"eth3", "tunvless0"},
+		},
+	})
 	if !changed {
-		t.Fatal("expected syncGroupsWithExt to mark changed when upgrading multi-iface KeenDNS group to check.mode=keendns")
+		t.Fatal("expected syncGroupsWithExt to mark changed when enabling CloudHealthCheck on multi-iface KeenDNS group")
 	}
 	if len(updated) != 1 || updated[0].Check == nil || updated[0].Check.Mode != "keendns" {
 		t.Fatalf("unexpected upgraded KeenDNS group: %+v", updated)
 	}
 
-	// Second sync with identical Check should report changed=false.
+	// Second sync with identical CloudHealthCheck=true should report changed=false.
 	_, changedAgain := syncGroupsWithExt(updated, ExtConfig{
 		KeenDNSCloud: KeenDNSCloudConfig{
-			Enabled:    true,
-			Interfaces: []string{"eth3", "tunvless0"},
+			Enabled:          true,
+			CloudHealthCheck: true,
+			Interfaces:       []string{"eth3", "tunvless0"},
 		},
 	})
 	if changedAgain {
 		t.Fatal("expected idempotent syncGroupsWithExt to report changed=false when keendns check already present")
+	}
+
+	// Disabling CloudHealthCheck sets Check.Mode="none", marks changed=true, and marshals explicit check field.
+	downgraded, downgradedChanged := syncGroupsWithExt(updated, ExtConfig{
+		KeenDNSCloud: KeenDNSCloudConfig{
+			Enabled:          true,
+			CloudHealthCheck: false,
+			Interfaces:       []string{"eth3", "tunvless0"},
+		},
+	})
+	if !downgradedChanged || len(downgraded) != 1 || downgraded[0].Check == nil || downgraded[0].Check.Mode != "none" {
+		t.Fatalf("expected disabling CloudHealthCheck to set Check.Mode=none and report changed=true, changed=%v group=%+v", downgradedChanged, downgraded)
+	}
+	rawDowngraded, err := json.Marshal(downgraded[0])
+	if err != nil {
+		t.Fatalf("json.Marshal(downgraded[0]): %v", err)
+	}
+	if !strings.Contains(string(rawDowngraded), `"check":{"mode":"none"}`) {
+		t.Fatalf("expected marshaled downgraded KeenDNS group to contain explicit \"check\":{\"mode\":\"none\"}, got %s", string(rawDowngraded))
 	}
 
 	// Verify my.keenetic.net and my.netcraze.net are excluded from c100d001 namespace rules
@@ -2087,7 +2140,7 @@ func TestSyncGroupsWithExt_KeenDNSCheckMode(t *testing.T) {
 	if hasLegacyNet || !hasCloudNet {
 		t.Fatalf("c100d001 rules must use cloud.keenetic.net/cloud.netcraze.net instead of broad *.net: legacy=%v cloud=%v", hasLegacyNet, hasCloudNet)
 	}
-	legacyGroup := buildKeenDNSGroup([]string{"eth3", "tunvless0"})
+	legacyGroup := buildKeenDNSGroup([]string{"eth3", "tunvless0"}, true)
 	for i := range legacyGroup.Rules {
 		if legacyGroup.Rules[i].Rule == "cloud.keenetic.net" {
 			legacyGroup.Rules[i].Rule = "keenetic.net"
@@ -2098,8 +2151,9 @@ func TestSyncGroupsWithExt_KeenDNSCheckMode(t *testing.T) {
 	}
 	migrated, migratedChanged := syncGroupsWithExt([]Group{legacyGroup}, ExtConfig{
 		KeenDNSCloud: KeenDNSCloudConfig{
-			Enabled:    true,
-			Interfaces: []string{"eth3", "tunvless0"},
+			Enabled:          true,
+			CloudHealthCheck: true,
+			Interfaces:       []string{"eth3", "tunvless0"},
 		},
 	})
 	if !migratedChanged || !keenDNSRulesEqual(migrated[0].Rules, multi.Rules) {

@@ -1672,6 +1672,9 @@ func (o *Operator) normalizeTunnelsForSave(tunnels []Tunnel, ensureInbound1099 b
 		if err := NormalizeTunnelSources(&out[i], happKeysPath); err != nil {
 			return nil, &TunnelValidationError{Err: err}
 		}
+		if err := ValidateTunnelFilters(&out[i]); err != nil {
+			return nil, &TunnelValidationError{Err: err}
+		}
 		if !out[i].Advanced.KernelTCP && !out[i].Advanced.KernelTCPSet {
 			out[i].Advanced.KernelTCP = true
 			out[i].Advanced.KernelTCPSet = true
@@ -1772,7 +1775,7 @@ func (o *Operator) applyTunnelsLocked(ctx context.Context, tunnels []Tunnel, ens
 					persistErr,
 				)
 			}
-			return nil, fmt.Errorf("sync tunnels with fircd: %w", syncErr)
+			return nil, wrapSyncTunnelError(syncErr)
 		}
 		if putResp != nil && len(putResp.Tunnels) > 0 {
 			_ = o.SaveTunnelsFile(putResp.Tunnels)
@@ -1802,6 +1805,19 @@ func (o *Operator) StageTunnelsOffline(tunnels []Tunnel, ensureInbound1099 bool)
 		normalized = []Tunnel{}
 	}
 	return &PutTunnelsResponse{Tunnels: normalized}, nil
+}
+
+func wrapSyncTunnelError(syncErr error) error {
+	if syncErr == nil {
+		return nil
+	}
+	msg := strings.ToLower(syncErr.Error())
+	if strings.Contains(msg, "filterexclude") && strings.Contains(msg, "unknown key") {
+		return &TunnelValidationError{
+			Err: fmt.Errorf("установленная версия fircd не поддерживает filterExclude (обновите awg-firc-runtime или очистите поле «Исключать»): %w", syncErr),
+		}
+	}
+	return fmt.Errorf("sync tunnels with fircd: %w", syncErr)
 }
 
 func cloneGroups(groups []Group) []Group {

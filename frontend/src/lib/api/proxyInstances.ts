@@ -305,6 +305,7 @@ export function toWdttClientConfig(v: ProxyInstanceView): WdttClientConfig {
     rawIface: str(c, "rawIface"),
     autoReconnect: bool(c, "autoReconnect"),
     autoReconnectInterval: str(c, "autoReconnectInterval"),
+    defaultRoute: bool(c, "defaultRoute"),
   };
 }
 
@@ -657,6 +658,9 @@ export function toWdttClientPatch(cfg: WdttClientConfig): Cfg {
   }
   if (cfg.autoReconnectInterval !== undefined) {
     out.autoReconnectInterval = cfg.autoReconnectInterval;
+  }
+  if (cfg.defaultRoute !== undefined) {
+    out.defaultRoute = cfg.defaultRoute;
   }
   putSecret(out, "password", cfg.password);
   return out;

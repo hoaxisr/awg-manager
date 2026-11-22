@@ -309,19 +309,18 @@ static void test_a3_a4_a5_finiteproto(void) {
     fp_engine_init();
     fp_engine_revoke_unauthorised(&cfg);
 
-    /* A3: VLESS UDP command (0x02) must be rejected with 400 Bad Request */
-    uint8_t vless_udp[26];
-    vless_udp[0] = 0x00; /* version */
-    memcpy(vless_udp + 1, cfg.clients[0].uuid, 16);
-    vless_udp[17] = 0x00; /* addons len */
-    vless_udp[18] = VLESS_CMD_UDP;
-    vless_udp[19] = 0x00; vless_udp[20] = 53; /* port 53 */
-    vless_udp[21] = VLESS_ADDR_IPV4;
-    vless_udp[22] = 127; vless_udp[23] = 0; vless_udp[24] = 0; vless_udp[25] = 1;
+    /* A3: VLESS MUX command (0x03) must be rejected with 400 Bad Request */
+    uint8_t vless_mux[22];
+    vless_mux[0] = 0x00; /* version */
+    memcpy(vless_mux + 1, cfg.clients[0].uuid, 16);
+    vless_mux[17] = 0x00; /* addons len */
+    vless_mux[18] = VLESS_CMD_MUX;
+    vless_mux[19] = 0x00; vless_mux[20] = 53;
+    vless_mux[21] = VLESS_ADDR_IPV4;
 
     uint8_t open_sid[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
     http_req_t req;
-    build_signed_fp_http_req(&req, &cfg, uuid, FP_OP_OPEN, open_sid, 0, vless_udp, sizeof(vless_udp), 1);
+    build_signed_fp_http_req(&req, &cfg, uuid, FP_OP_OPEN, open_sid, 0, vless_mux, sizeof(vless_mux), 1);
     int sv[2];
     socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
     handle_fp_http_request(sv[0], &req, &cfg);
@@ -330,8 +329,30 @@ static void test_a3_a4_a5_finiteproto(void) {
     char resp[512] = {0};
     recv(sv[1], resp, sizeof(resp) - 1, 0);
     close(sv[1]);
-    check("A3: handle_fp_open rejects VLESS UDP command with 400 Bad Request",
+    check("A3: handle_fp_open rejects VLESS MUX command with 400 Bad Request",
           strstr(resp, "HTTP/1.1 400 ") != NULL);
+
+    /* A3: VLESS UDP QUIC (port 443) must be rejected with 403 Forbidden */
+    uint8_t vless_quic[26];
+    vless_quic[0] = 0x00;
+    memcpy(vless_quic + 1, cfg.clients[0].uuid, 16);
+    vless_quic[17] = 0x00;
+    vless_quic[18] = VLESS_CMD_UDP;
+    vless_quic[19] = 0x01; vless_quic[20] = 0xBB; /* port 443 */
+    vless_quic[21] = VLESS_ADDR_IPV4;
+    vless_quic[22] = 8; vless_quic[23] = 8; vless_quic[24] = 8; vless_quic[25] = 8;
+
+    uint8_t open_sid_quic[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17 };
+    build_signed_fp_http_req(&req, &cfg, uuid, FP_OP_OPEN, open_sid_quic, 0, vless_quic, sizeof(vless_quic), 10);
+    socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
+    handle_fp_http_request(sv[0], &req, &cfg);
+    close(sv[0]);
+    free(req.body);
+    memset(resp, 0, sizeof(resp));
+    recv(sv[1], resp, sizeof(resp) - 1, 0);
+    close(sv[1]);
+    check("A3: handle_fp_open rejects VLESS UDP port 443 (QUIC) with 403 Forbidden",
+          strstr(resp, "HTTP/1.1 403 ") != NULL);
 
     /* Start loopback TCP echo server for A3/A4/A5 session lifecycle & OOM test */
     int lfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -3075,6 +3096,235 @@ static void test_stream_up_post_returns_200_when_get_closes_first(void) {
     check("VLESS/StreamUp: all HTTP worker threads exited cleanly", xhttpd_get_active_http_workers() == 0);
 }
 
+#ifndef _WIN32
+typedef struct {
+    int fd;
+    volatile int stop;
+} udp_echo_ctx_t;
+
+static void *udp_echo_server_thread(void *arg) {
+    udp_echo_ctx_t *ctx = (udp_echo_ctx_t *)arg;
+    uint8_t buf[2048];
+    while (!__atomic_load_n(&ctx->stop, __ATOMIC_ACQUIRE)) {
+        struct pollfd pfd = { .fd = ctx->fd, .events = POLLIN };
+        int pr = poll(&pfd, 1, 25);
+        if (pr <= 0) continue;
+        struct sockaddr_in cli;
+        socklen_t clen = sizeof(cli);
+        ssize_t n = recvfrom(ctx->fd, buf, sizeof(buf), 0, (struct sockaddr *)&cli, &clen);
+        if (n > 0) {
+            sendto(ctx->fd, buf, (size_t)n, 0, (const struct sockaddr *)&cli, clen);
+        }
+    }
+    return NULL;
+}
+
+static ssize_t run_fp_rpc_local(const xhttpd_config_t *cfg, const char *client_id, uint8_t op,
+                                const uint8_t sid[16], uint64_t up_off, uint64_t ack_down,
+                                uint64_t want_down, const uint8_t *payload, size_t plen,
+                                uint32_t nonce_seq, uint8_t *out_raw, size_t out_cap) {
+    http_req_t req;
+    build_signed_fp_http_req_ex(&req, cfg, client_id, op, sid, up_off, ack_down, want_down, 65536,
+                                payload, plen, nonce_seq);
+    int sv[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+        free(req.body);
+        return -1;
+    }
+    handle_fp_http_request(sv[0], &req, cfg);
+    close(sv[0]);
+    free(req.body);
+
+    size_t got = 0;
+    while (got + 1 < out_cap) {
+        ssize_t r = recv(sv[1], out_raw + got, out_cap - 1 - got, 0);
+        if (r <= 0) break;
+        got += (size_t)r;
+    }
+    out_raw[got] = '\0';
+    close(sv[1]);
+    return (ssize_t)got;
+}
+
+static size_t extract_fp_body(const uint8_t *raw, ssize_t raw_len, uint8_t *out_status,
+                              uint8_t out_sid[16], uint64_t *out_down_end, const uint8_t **out_payload) {
+    if (!raw || raw_len <= 0) return 0;
+    const uint8_t *sep = NULL;
+    for (ssize_t i = 0; i + 4 <= raw_len; i++) {
+        if (raw[i] == '\r' && raw[i + 1] == '\n' && raw[i + 2] == '\r' && raw[i + 3] == '\n') {
+            sep = raw + i + 4;
+            break;
+        }
+    }
+    if (!sep) return 0;
+    size_t body_len = (size_t)((raw + raw_len) - sep);
+    if (body_len < FP_RESP_HEADER_SIZE || memcmp(sep, FP_PROTO_MAGIC, 4) != 0) return 0;
+    if (out_status) *out_status = sep[4];
+    if (out_sid) memcpy(out_sid, sep + 6, 16);
+    if (out_down_end) *out_down_end = get_be64_t(sep + 38);
+    uint32_t plen = get_be32_t(sep + 54);
+    if (FP_RESP_HEADER_SIZE + (size_t)plen > body_len) return 0;
+    if (out_payload) *out_payload = sep + FP_RESP_HEADER_SIZE;
+    return plen;
+}
+
+static void test_finiteproto_udp_over_tcp(void) {
+    int ufd = socket(AF_INET, SOCK_DGRAM, 0);
+    check("FP-UDP: create loopback UDP echo socket", ufd >= 0);
+    struct sockaddr_in sin;
+    memset(&sin, 0, sizeof(sin));
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sin.sin_port = 0;
+    check("FP-UDP: bind loopback UDP echo socket", bind(ufd, (struct sockaddr *)&sin, sizeof(sin)) == 0);
+    socklen_t slen = sizeof(sin);
+    getsockname(ufd, (struct sockaddr *)&sin, &slen);
+    uint16_t udp_port = ntohs(sin.sin_port);
+
+    udp_echo_ctx_t ectx = { .fd = ufd, .stop = 0 };
+    pthread_t eth;
+    check("FP-UDP: start UDP echo server thread", pthread_create(&eth, NULL, udp_echo_server_thread, &ectx) == 0);
+
+    xhttpd_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.egress_mode = EGRESS_MODE_DIRECT;
+    cfg.allow_private = true;
+    cfg.num_clients = 1;
+    const char *uuid = "b831381d-6324-4d53-ad4f-8cda48b30811";
+    add_cfg_client(&cfg, 0, uuid);
+    rebuild_fp_credentials(&cfg);
+    fp_engine_init();
+    fp_engine_revoke_unauthorised(&cfg);
+
+    char target_str[64];
+    snprintf(target_str, sizeof(target_str), "udp://127.0.0.1:%u", udp_port);
+    uint32_t nseq = 1;
+
+    /* Test 1: Open udp:// and send 2 coalesced datagrams in one FP_OP_UP */
+    uint8_t open_sid1[16] = { 0xA1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    uint8_t raw[4096];
+    ssize_t rn = run_fp_rpc_local(&cfg, uuid, FP_OP_OPEN, open_sid1, 0, 0, 0,
+                                  (const uint8_t *)target_str, strlen(target_str), nseq++, raw, sizeof(raw));
+    uint8_t st = 255, sid1[16] = {0};
+    uint64_t down_end = 0;
+    const uint8_t *pl = NULL;
+    (void)extract_fp_body(raw, rn, &st, sid1, &down_end, &pl);
+    check("FP-UDP: open udp:// target succeeds with 200 OK",
+          strstr((char *)raw, "HTTP/1.1 200 ") != NULL && st == FP_STATUS_OK);
+
+    const uint8_t coalesced[] = {
+        0x00, 0x04, 'P', 'I', 'N', 'G',
+        0x00, 0x05, 'W', 'O', 'R', 'L', 'D'
+    };
+    rn = run_fp_rpc_local(&cfg, uuid, FP_OP_UP, sid1, 0, 0, 0, coalesced, sizeof(coalesced), nseq++, raw, sizeof(raw));
+    (void)extract_fp_body(raw, rn, &st, NULL, &down_end, &pl);
+    check("FP-UDP: coalesced UP succeeds", strstr((char *)raw, "HTTP/1.1 200 ") != NULL && st == FP_STATUS_OK);
+
+    uint8_t rx_buf[512];
+    size_t rx_len = 0;
+    uint64_t down_cur = 0;
+    for (int tries = 0; tries < 20 && rx_len < sizeof(coalesced); tries++) {
+        rn = run_fp_rpc_local(&cfg, uuid, FP_OP_DOWN, sid1, 0, down_cur, down_cur, NULL, 0, nseq++, raw, sizeof(raw));
+        size_t pgot = extract_fp_body(raw, rn, &st, NULL, &down_end, &pl);
+        if (pgot > 0 && down_end > down_cur && rx_len + pgot <= sizeof(rx_buf)) {
+            memcpy(rx_buf + rx_len, pl, pgot);
+            rx_len += pgot;
+            down_cur = down_end;
+        }
+    }
+    check("FP-UDP: coalesced datagrams echoed intact via DOWN",
+          rx_len == sizeof(coalesced) && memcmp(rx_buf, coalesced, sizeof(coalesced)) == 0);
+
+    /* Test 2: Single datagram split across two FP_OP_UP calls (partial length/payload buffering) */
+    const uint8_t split_full[] = { 0x00, 0x09, 'S', 'P', 'L', 'I', 'T', '_', 'P', 'K', 'T' };
+    rn = run_fp_rpc_local(&cfg, uuid, FP_OP_UP, sid1, sizeof(coalesced), down_cur, down_cur,
+                          split_full, 5, nseq++, raw, sizeof(raw));
+    (void)extract_fp_body(raw, rn, &st, NULL, &down_end, &pl);
+    check("FP-UDP: split part 1 buffered cleanly", st == FP_STATUS_OK);
+
+    rn = run_fp_rpc_local(&cfg, uuid, FP_OP_UP, sid1, sizeof(coalesced) + 5, down_cur, down_cur,
+                          split_full + 5, sizeof(split_full) - 5, nseq++, raw, sizeof(raw));
+    (void)extract_fp_body(raw, rn, &st, NULL, &down_end, &pl);
+    check("FP-UDP: split part 2 reassembled cleanly", st == FP_STATUS_OK);
+
+    size_t split_rx_len = 0;
+    for (int tries = 0; tries < 20 && split_rx_len < sizeof(split_full); tries++) {
+        rn = run_fp_rpc_local(&cfg, uuid, FP_OP_DOWN, sid1, 0, down_cur, down_cur, NULL, 0, nseq++, raw, sizeof(raw));
+        size_t pgot = extract_fp_body(raw, rn, &st, NULL, &down_end, &pl);
+        if (pgot > 0 && down_end > down_cur && split_rx_len + pgot <= sizeof(rx_buf)) {
+            memcpy(rx_buf + split_rx_len, pl, pgot);
+            split_rx_len += pgot;
+            down_cur = down_end;
+        }
+    }
+    check("FP-UDP: split datagram echoed intact",
+          split_rx_len == sizeof(split_full) && memcmp(rx_buf, split_full, sizeof(split_full)) == 0);
+
+    run_fp_rpc_local(&cfg, uuid, FP_OP_CLOSE, sid1, 0, 0, 0, NULL, 0, nseq++, raw, sizeof(raw));
+
+    /* Test 3: VLESS-framed VLESS_CMD_UDP open with initial_up datagram */
+    uint8_t vopen[32];
+    vopen[0] = 0x00;
+    memcpy(vopen + 1, cfg.clients[0].uuid, 16);
+    vopen[17] = 0x00;
+    vopen[18] = VLESS_CMD_UDP;
+    vopen[19] = (uint8_t)(udp_port >> 8);
+    vopen[20] = (uint8_t)(udp_port & 0xFF);
+    vopen[21] = VLESS_ADDR_IPV4;
+    vopen[22] = 127; vopen[23] = 0; vopen[24] = 0; vopen[25] = 1;
+    const uint8_t vframe[] = { 0x00, 0x04, 'V', 'L', 'U', 'D' };
+    memcpy(vopen + 26, vframe, sizeof(vframe));
+
+    uint8_t open_sid2[16] = { 0xA2, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    rn = run_fp_rpc_local(&cfg, uuid, FP_OP_OPEN, open_sid2, 0, 0, 0, vopen, sizeof(vopen), nseq++, raw, sizeof(raw));
+    uint8_t sid2[16] = {0};
+    (void)extract_fp_body(raw, rn, &st, sid2, &down_end, &pl);
+    check("FP-UDP: VLESS_CMD_UDP open with initial_up succeeds",
+          strstr((char *)raw, "HTTP/1.1 200 ") != NULL && st == FP_STATUS_OK);
+
+    down_cur = 0;
+    rx_len = 0;
+    for (int tries = 0; tries < 20 && rx_len < 2 + sizeof(vframe); tries++) {
+        rn = run_fp_rpc_local(&cfg, uuid, FP_OP_DOWN, sid2, 0, down_cur, down_cur, NULL, 0, nseq++, raw, sizeof(raw));
+        size_t pgot = extract_fp_body(raw, rn, &st, NULL, &down_end, &pl);
+        if (pgot > 0 && down_end > down_cur && rx_len + pgot <= sizeof(rx_buf)) {
+            memcpy(rx_buf + rx_len, pl, pgot);
+            rx_len += pgot;
+            down_cur = down_end;
+        }
+    }
+    check("FP-UDP: VLESS_CMD_UDP response has 0x00 0x00 prefix + length-prefixed reply",
+          rx_len == 2 + sizeof(vframe) && rx_buf[0] == 0x00 && rx_buf[1] == 0x00 &&
+          memcmp(rx_buf + 2, vframe, sizeof(vframe)) == 0);
+
+    run_fp_rpc_local(&cfg, uuid, FP_OP_CLOSE, sid2, 0, 0, 0, NULL, 0, nseq++, raw, sizeof(raw));
+
+    /* Test 4: ACL & QUIC 443 guards */
+    const char *quic_str = "udp://8.8.8.8:443";
+    uint8_t open_sid3[16] = { 0xA3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    rn = run_fp_rpc_local(&cfg, uuid, FP_OP_OPEN, open_sid3, 0, 0, 0,
+                          (const uint8_t *)quic_str, strlen(quic_str), nseq++, raw, sizeof(raw));
+    check("FP-UDP: udp://8.8.8.8:443 QUIC blocked with 403 Forbidden",
+          strstr((char *)raw, "HTTP/1.1 403 ") != NULL);
+
+    cfg.allow_private = false;
+    uint8_t open_sid4[16] = { 0xA4, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    rn = run_fp_rpc_local(&cfg, uuid, FP_OP_OPEN, open_sid4, 0, 0, 0,
+                          (const uint8_t *)target_str, strlen(target_str), nseq++, raw, sizeof(raw));
+    check("FP-UDP: private loopback blocked when allow_private=false",
+          strstr((char *)raw, "HTTP/1.1 403 ") != NULL);
+
+    /* Test 5: Global buffer accounting returns to 0 */
+    usleep(50000);
+    check("FP-UDP: global buffer bytes returns to 0 after close",
+          fp_engine_get_global_buf_bytes() == 0);
+
+    __atomic_store_n(&ectx.stop, 1, __ATOMIC_RELEASE);
+    pthread_join(eth, NULL);
+    close(ufd);
+}
+#endif
+
 static void *suite_watchdog_thread(void *arg) {
     (void)arg;
     for (int i = 0; i < 450; i++) { /* 45 seconds total watchdog */
@@ -3135,6 +3385,10 @@ int main(void) {
     test_http_413_oversized_post_no_tcp_rst();
     printf(">>> Starting test_stream_up_post_returns_200_when_get_closes_first...\n");
     test_stream_up_post_returns_200_when_get_closes_first();
+#ifndef _WIN32
+    printf(">>> Starting test_finiteproto_udp_over_tcp...\n");
+    test_finiteproto_udp_over_tcp();
+#endif
 
     printf("\nSummary: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

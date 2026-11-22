@@ -277,6 +277,7 @@ func TestMigrateFullParity_Hy2AnytlsVmessMieru_Subscriptions_HappCrypt_MultiRule
       {"name": "X-HWID", "value": "deadbeefcafe1234"}
     ],
     "filterInclude": "NL|DE",
+    "filterExclude": "(?i)(RU|LTE)",
     "selectorTag": "sub-87f242c6",
     "memberTags": ["sub-87f242c6-node1", "sub-87f242c6-node2"],
     "activeMember": "sub-87f242c6-node2",
@@ -450,6 +451,9 @@ func TestMigrateFullParity_Hy2AnytlsVmessMieru_Subscriptions_HappCrypt_MultiRule
 	}
 	if subTun.Filter != "NL|DE" {
 		t.Errorf("expected Filter='NL|DE', got %q", subTun.Filter)
+	}
+	if subTun.FilterExclude != "(?i)(RU|LTE)" {
+		t.Errorf("expected FilterExclude='(?i)(RU|LTE)', got %q", subTun.FilterExclude)
 	}
 	if len(subTun.Order) != 2 || !strings.HasSuffix(subTun.Order[0], ":Netherlands-1") {
 		t.Errorf("expected active member Netherlands-1 first in Order, got %v", subTun.Order)
@@ -676,10 +680,12 @@ func TestSystemSnapshotsAndReverseMigration(t *testing.T) {
 			},
 		},
 		{
-			ID:          "sub-rev",
-			Device:      "tunvless1",
-			Description: "Rev-Sub",
-			Enable:      true,
+			ID:            "sub-rev",
+			Device:        "tunvless1",
+			Description:   "Rev-Sub",
+			Enable:        true,
+			Filter:        "(?i)DE",
+			FilterExclude: "(?i)RU",
 			Sources: []TunnelSource{
 				{
 					ID:   "s2",
@@ -719,10 +725,14 @@ func TestSystemSnapshotsAndReverseMigration(t *testing.T) {
 		t.Errorf("unexpected ReverseMigrationResult counts: %+v", revRes)
 	}
 
-	// Verify 10-tunnels.json now has Rev-VLESS / rev.example.com
+	// Verify 10-tunnels.json now has Rev-VLESS / rev.example.com and subscriptions.json preserves filters
 	afterRevTunnels, err := os.ReadFile(filepath.Join(sbDir, "10-tunnels.json"))
 	if err != nil || !strings.Contains(string(afterRevTunnels), "Rev-VLESS") || !strings.Contains(string(afterRevTunnels), "rev.example.com") {
 		t.Errorf("expected Rev-VLESS in 10-tunnels.json after reverse migration, got: %s", string(afterRevTunnels))
+	}
+	afterRevSubs, err := os.ReadFile(filepath.Join(awgmDir, "subscriptions.json"))
+	if err != nil || !strings.Contains(string(afterRevSubs), `"filterInclude": "(?i)DE"`) || !strings.Contains(string(afterRevSubs), `"filterExclude": "(?i)RU"`) {
+		t.Errorf("expected filterInclude and filterExclude in subscriptions.json after reverse migration, got: %s (err=%v)", string(afterRevSubs), err)
 	}
 
 	// 3. Restore original snapshot and verify orig-vless is restored in 10-tunnels.json

@@ -1,7 +1,9 @@
+#define PCRE2_CODE_UNIT_WIDTH 8
+
 #include "firc/tunnodes.h"
 
 #include <arpa/inet.h>
-#include <regex.h>
+#include <pcre2.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,6 +16,8 @@
 #define KEY_SUFFIX_ROOM 8
 #define NODES_PER_BODY ((size_t)FIRC_TUN_MAX_NODES * 4)
 #define ROWS_MAX ((size_t)FIRC_TUN_MAX_NODES * 8)
+#define FIRC_TUN_REGEX_MATCH_LIMIT 1000000
+#define FIRC_TUN_REGEX_DEPTH_LIMIT 10000
 
 _Static_assert(NODES_PER_BODY <= VLESS_SUB_NODES_MAX, "a body must fit the parser's table of long values");
 
@@ -32,8 +36,11 @@ typedef struct {
     cand_t *v;
     size_t n, cap;
     const firc_tunnel_t *t;
-    regex_t re;
-    bool have_re;
+    pcre2_code *inc_re;
+    pcre2_match_data *inc_md;
+    pcre2_code *exc_re;
+    pcre2_match_data *exc_md;
+    pcre2_match_context *mctx;
     char *buf;
     size_t total, matched;
     size_t seen, sinks;
@@ -98,9 +105,23 @@ static const char *source_label(const firc_tun_src_t *src)
     return src->kind == FIRC_TUN_SRC_LINK ? "link" : src->sub.name;
 }
 
+static bool regex_match(pcre2_code *re, pcre2_match_data *md, pcre2_match_context *mctx, const char *name)
+{
+    return pcre2_match(re, (PCRE2_SPTR)name, strlen(name), 0, 0, md, mctx) >= 0;
+}
+
 static bool filtered_out(const build_t *b, const firc_tun_src_t *src, const char *name)
 {
-    return src->kind == FIRC_TUN_SRC_SUB && b->have_re && regexec(&b->re, name, 0, NULL, 0) != 0;
+    if (src->kind != FIRC_TUN_SRC_SUB) {
+        return false;
+    }
+    if (b->inc_re != NULL && !regex_match(b->inc_re, b->inc_md, b->mctx, name)) {
+        return true;
+    }
+    if (b->exc_re != NULL && regex_match(b->exc_re, b->exc_md, b->mctx, name)) {
+        return true;
+    }
+    return false;
 }
 
 static cand_t *add_cand(build_t *b, const firc_tun_src_t *src, const char *name, size_t seq)
@@ -505,6 +526,29 @@ static void assemble(build_t *b, firc_tun_nodes_t *out)
             emit(&e, &c->row, true);
         }
     }
+    size_t n_filt = 0;
+    for (size_t i = 0; i < b->n; i++) {
+        const cand_t *c = &b->v[i];
+        if (c->filtered && c->row.skip_reason[0] == '\0') {
+            n_filt++;
+        }
+    }
+    if (n_filt > 0) {
+        out->filtered = calloc(n_filt, sizeof *out->filtered);
+        if (out->filtered == NULL) {
+            b->err = FIRC_ERR_NOMEM;
+        } else {
+            for (size_t i = 0; i < b->n; i++) {
+                const cand_t *c = &b->v[i];
+                if (c->filtered && c->row.skip_reason[0] == '\0') {
+                    firc_tun_filtered_t *f = &out->filtered[out->n_filtered++];
+                    snprintf(f->key, sizeof f->key, "%s", c->row.key);
+                    snprintf(f->name, sizeof f->name, "%s", c->row.name);
+                    snprintf(f->source, sizeof f->source, "%s", c->row.source);
+                }
+            }
+        }
+    }
     free(ix);
     free(excl);
 }
@@ -516,9 +560,44 @@ static void build_free(build_t *b)
     }
     free(b->v);
     free(b->buf);
-    if (b->have_re) {
-        regfree(&b->re);
+    if (b->inc_md != NULL) {
+        pcre2_match_data_free(b->inc_md);
     }
+    if (b->exc_md != NULL) {
+        pcre2_match_data_free(b->exc_md);
+    }
+    if (b->mctx != NULL) {
+        pcre2_match_context_free(b->mctx);
+    }
+    if (b->inc_re != NULL) {
+        pcre2_code_free(b->inc_re);
+    }
+    if (b->exc_re != NULL) {
+        pcre2_code_free(b->exc_re);
+    }
+}
+
+static firc_err_t compile_tun_regex(const char *pat, pcre2_code **re_out, pcre2_match_data **md_out)
+{
+    if (pat == NULL || pat[0] == '\0') {
+        return FIRC_OK;
+    }
+    int errcode = 0;
+    PCRE2_SIZE erroff = 0;
+    pcre2_code *re = pcre2_compile((PCRE2_SPTR)pat, PCRE2_ZERO_TERMINATED,
+                                   PCRE2_CASELESS | PCRE2_UTF | PCRE2_UCP,
+                                   &errcode, &erroff, NULL);
+    if (re == NULL) {
+        return FIRC_ERR_INVAL;
+    }
+    pcre2_match_data *md = pcre2_match_data_create_from_pattern(re, NULL);
+    if (md == NULL) {
+        pcre2_code_free(re);
+        return FIRC_ERR_NOMEM;
+    }
+    *re_out = re;
+    *md_out = md;
+    return FIRC_OK;
 }
 
 firc_err_t firc_tun_nodes_build(const firc_tunnel_t *t, uint32_t mark, const firc_tun_body_t *bodies,
@@ -526,11 +605,24 @@ firc_err_t firc_tun_nodes_build(const firc_tunnel_t *t, uint32_t mark, const fir
 {
     memset(out, 0, sizeof *out);
     build_t b = {.t = t, .err = FIRC_OK};
-    if (t->filter != NULL && t->filter[0] != 0) {
-        if (regcomp(&b.re, t->filter, REG_EXTENDED | REG_ICASE | REG_NOSUB) != 0) {
-            return FIRC_ERR_INVAL;
+    firc_err_t cerr = compile_tun_regex(t->filter, &b.inc_re, &b.inc_md);
+    if (cerr != FIRC_OK) {
+        build_free(&b);
+        return cerr;
+    }
+    cerr = compile_tun_regex(t->filter_exclude, &b.exc_re, &b.exc_md);
+    if (cerr != FIRC_OK) {
+        build_free(&b);
+        return cerr;
+    }
+    if (b.inc_re != NULL || b.exc_re != NULL) {
+        b.mctx = pcre2_match_context_create(NULL);
+        if (b.mctx == NULL) {
+            build_free(&b);
+            return FIRC_ERR_NOMEM;
         }
-        b.have_re = true;
+        pcre2_set_match_limit(b.mctx, FIRC_TUN_REGEX_MATCH_LIMIT);
+        pcre2_set_depth_limit(b.mctx, FIRC_TUN_REGEX_DEPTH_LIMIT);
     }
     b.buf = malloc(LINK_BUF);
     if (b.buf == NULL) {
@@ -680,5 +772,6 @@ void firc_tun_nodes_free(firc_tun_nodes_t *n)
         free(n->v[i].link);
     }
     free(n->v);
+    free(n->filtered);
     memset(n, 0, sizeof *n);
 }

@@ -29,6 +29,7 @@
 		fircTunnels,
 		fircTunnelsState,
 		fircProbeResults,
+		fircInterfaceProbeResults,
 		reloadFircAll,
 		createAndOpenFircTunnel,
 	} from '$lib/stores/firc';
@@ -328,6 +329,11 @@
 			}
 
 			if (t.enable && st?.status === 'up') {
+				const ifaceProbe = t.device ? $fircInterfaceProbeResults[t.device] : undefined;
+				if (ifaceProbe?.ok && ifaceProbe.latencyMs > 0) {
+					delaySamples.push(Math.round(ifaceProbe.latencyMs));
+					continue;
+				}
 				const probeMap = $fircProbeResults[t.id];
 				if (probeMap) {
 					let bestMs: number | null = null;

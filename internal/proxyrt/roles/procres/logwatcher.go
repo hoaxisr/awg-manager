@@ -10,11 +10,10 @@ type logWatcher interface {
 	stop()
 }
 
-// scanLogForFatal проверяет дозаписанную часть журнала на наличие фатальных
-// сигнатур сбоя сессии. Смещение *offset сдвигается строго до последнего перевода
-// строки (\n), чтобы строка, записанная клиентом в два приёма, не разрезалась между
-// блоками чтения.
-func scanLogForFatal(path string, offset *int64) string {
+// readNewLogChunk дочитывает завершённые (\n) строки из добавленного хвоста журнала
+// (блоком не более 16 КиБ), сдвигая *offset строго до последнего перевода
+// строки, чтобы не разрезать строку между двумя чтениями.
+func readNewLogChunk(path string, offset *int64) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
@@ -54,5 +53,13 @@ func scanLogForFatal(path string, offset *int64) string {
 		// чтобы следующий опрос прочитал строку целиком после дозаписи.
 		return ""
 	}
-	return detectFatalSessionError(string(toCheck))
+	return string(toCheck)
+}
+
+// scanLogForFatal проверяет дозаписанную часть журнала на наличие фатальных
+// сигнатур сбоя сессии. Смещение *offset сдвигается строго до последнего перевода
+// строки (\n), чтобы строка, записанная клиентом в два приёма, не разрезалась между
+// блоками чтения.
+func scanLogForFatal(path string, offset *int64) string {
+	return detectFatalSessionError(readNewLogChunk(path, offset))
 }

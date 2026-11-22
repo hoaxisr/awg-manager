@@ -131,6 +131,20 @@
 					</div>
 				</FormRow>
 			{/if}
+
+			{#if wdttClient.connMode === 'raw'}
+				<FormRow
+					label={m.proxy_exit_params_default_route()}
+					hint={m.proxy_exit_params_default_route_hint()}
+				>
+					<Toggle
+						checked={wdttClient.defaultRoute !== false}
+						onchange={(v) => {
+							if (wdttClient) wdttClient.defaultRoute = v;
+						}}
+					/>
+				</FormRow>
+			{/if}
 		</div>
 	{:else if ftClient}
 		<div class="grid">

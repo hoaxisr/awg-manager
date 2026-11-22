@@ -79,6 +79,7 @@ var keenDNSCloudSubnets = []string{
 	"167.233.7.0/24",
 	"82.202.218.0/24",
 	"82.202.0.0/16",
+	"31.135.14.0/24",
 }
 
 // allManagedServerSubnets lists all subnets automatically injected into devices.allow when
@@ -565,7 +566,7 @@ func resolveKeenDNSInterfaces(ext ExtConfig) []string {
 	return nil
 }
 
-func buildKeenDNSGroup(ifaces []string) Group {
+func buildKeenDNSGroup(ifaces []string, cloudHealthCheck bool) Group {
 	rules := make([]Rule, 0, len(keenDNSCloudDomains)+len(keenDNSCloudSubnets))
 	idx := 1
 	for _, dom := range keenDNSCloudDomains {
@@ -586,9 +587,12 @@ func buildKeenDNSGroup(ifaces []string) Group {
 		})
 		idx++
 	}
-	var check *GroupCheck
-	if len(ifaces) >= 2 {
-		check = &GroupCheck{Mode: "keendns"}
+	// Always populate Check explicitly (mode "none" when disabled) so PUT /api/v1/groups
+	// actively clears any previously persisted check in fircd (omitting "check" tells fircd
+	// to preserve existing->check).
+	check := &GroupCheck{Mode: "none"}
+	if cloudHealthCheck && len(ifaces) >= 2 {
+		check = &GroupCheck{Mode: "keendns", TimeoutMs: 5000}
 	}
 	return Group{
 		ID:        KeenDNSGroupID,
@@ -708,7 +712,7 @@ func syncGroupsWithExt(groups []Group, ext ExtConfig) ([]Group, bool) {
 				continue
 			}
 			foundKeenDNS = true
-			kdGroup := buildKeenDNSGroup(kdIfaces)
+			kdGroup := buildKeenDNSGroup(kdIfaces, ext.KeenDNSCloud.CloudHealthCheck)
 			if !equalStringSlices([]string(g.Interface), kdIfaces) || !g.Enable || !keenDNSRulesEqual(g.Rules, kdGroup.Rules) || !groupCheckEqual(g.Check, kdGroup.Check) {
 				changed = true
 			}
@@ -755,7 +759,7 @@ func syncGroupsWithExt(groups []Group, ext ExtConfig) ([]Group, bool) {
 	}
 
 	if wantKeenDNS && !foundKeenDNS {
-		kdGroup := buildKeenDNSGroup(kdIfaces)
+		kdGroup := buildKeenDNSGroup(kdIfaces, ext.KeenDNSCloud.CloudHealthCheck)
 		filtered = append([]Group{kdGroup}, filtered...)
 		changed = true
 	}

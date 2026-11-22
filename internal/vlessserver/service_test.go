@@ -1,6 +1,7 @@
 package vlessserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -593,4 +594,90 @@ func TestBuildShareLinks_CompactExtraAndVlinkRoundTrip(t *testing.T) {
 			t.Fatalf("vlink.ParseLink failed on stream-up link: %v\nurl=%s", err, links.VlessURL)
 		}
 	})
+}
+
+func TestService_FactoryReset(t *testing.T) {
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, nil)
+
+	var fwCalls [][2]any
+	svc.mu.Lock()
+	svc.realityFirewall = func(port int, open bool) {
+		fwCalls = append(fwCalls, [2]any{port, open})
+	}
+	svc.realityFWPort = 2053
+	svc.realityFWSynced = true
+	svc.recoveryRequired = true
+	svc.recoveryReason = "corrupt state"
+	svc.mu.Unlock()
+
+	xrayDir := filepath.Join(tmpDir, "xray")
+	if err := os.MkdirAll(filepath.Join(xrayDir, "secrets"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(xrayDir, "transactions", "tx-1"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{
+		"xray-server-settings.json",
+		"reality-settings.json",
+		"migration-marker.json",
+		"runtime-decision.json",
+		filepath.Join("secrets", "client.key"),
+		filepath.Join("transactions", "tx-1", "snapshot-manifest.json"),
+		"server-ingress.lock",
+		"server-ingress-transaction.json",
+	} {
+		if err := os.WriteFile(filepath.Join(xrayDir, rel), []byte(`{"test":true}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc.mu.Lock()
+	svc.config.Enabled = true
+	svc.config.PublicDomain = "vless.example.com"
+	svc.config.Clients = []Client{{ID: "uuid-1", Remark: "Phone", Enabled: true}}
+	svc.reality.Enabled = true
+	svc.reality.PrivateKey = "priv"
+	svc.reality.PublicKey = "pub"
+	svc.mu.Unlock()
+
+	if err := svc.FactoryReset(context.Background()); err != nil {
+		t.Fatalf("FactoryReset failed: %v", err)
+	}
+
+	// Config & reality state reset to defaults and recovery cleared
+	cfg := svc.GetConfig()
+	if cfg.Enabled || cfg.PublicDomain != "" || len(cfg.Clients) != 0 {
+		t.Fatalf("expected clean default config after FactoryReset, got %+v", cfg)
+	}
+	if svc.IsRecoveryRequired() {
+		t.Fatal("expected recoveryRequired to be cleared")
+	}
+	rs := svc.GetRealityState(context.Background(), false)
+	if rs.Settings.Enabled || rs.Settings.PublicKey != "" {
+		t.Fatalf("expected clean default reality state after FactoryReset, got %+v", rs.Settings)
+	}
+
+	// VLESS files must be removed; coordinator files must remain intact
+	for _, gone := range []string{
+		"xray-server-settings.json",
+		"reality-settings.json",
+		"migration-marker.json",
+		"runtime-decision.json",
+		filepath.Join("secrets", "client.key"),
+		"transactions",
+	} {
+		if _, err := os.Stat(filepath.Join(xrayDir, gone)); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be deleted during FactoryReset", gone)
+		}
+	}
+	for _, kept := range []string{"server-ingress.lock", "server-ingress-transaction.json"} {
+		if _, err := os.Stat(filepath.Join(xrayDir, kept)); err != nil {
+			t.Fatalf("expected coordinator file %s to be preserved: %v", kept, err)
+		}
+	}
+	if len(fwCalls) == 0 || fwCalls[len(fwCalls)-1][0] != 0 || fwCalls[len(fwCalls)-1][1] != false {
+		t.Fatalf("expected realityFirewall(0, false) call, got %+v", fwCalls)
+	}
 }

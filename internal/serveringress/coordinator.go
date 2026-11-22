@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -71,6 +72,7 @@ type Coordinator struct {
 	xraySvc          XrayComponent
 	dispatcher       DispatcherComponent
 	tgSvc            TgWebProxyComponent
+	telemtSvc        TelemtResetComponent
 	fircRouting      FircRoutingComponent
 	keendns          KeenDNSOperator
 	lock             IngressLocker
@@ -127,6 +129,13 @@ func (c *Coordinator) GetKeenDNS() KeenDNSOperator {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.keendns
+}
+
+// SetTelemt wires the standalone telemt service for config reset during Telegram factory reset.
+func (c *Coordinator) SetTelemt(t TelemtResetComponent) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.telemtSvc = t
 }
 
 // SetOnPhaseChange configures a hook callback before committing phase for testing.
@@ -1384,6 +1393,13 @@ func (c *Coordinator) GetDispatcherConfig() cdndispatcher.Config {
 	return c.dispatcher.GetConfig()
 }
 
+// IsDispatcherRunning reports whether the CDN ingress dispatcher listener is currently active.
+func (c *Coordinator) IsDispatcherRunning() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dispatcher != nil && c.dispatcher.IsRunning()
+}
+
 // HydrateDispatcherRoutes checks if dispatcher routes are configured; if empty,
 // hydrates initial rules from Xray and Telegram domain settings (SSOT migration).
 func (c *Coordinator) HydrateDispatcherRoutes(ctx context.Context) error {
@@ -2615,4 +2631,409 @@ func contains(slice []string, val string) bool {
 		}
 	}
 	return false
+}
+
+func defaultDispatcherConfig() cdndispatcher.Config {
+	return cdndispatcher.Config{
+		Enabled:        false,
+		ListenAddr:     ":9009",
+		XrayTarget:     "http://127.0.0.1:9008",
+		TgTarget:       "http://127.0.0.1:8085",
+		XrayPathPrefix: "/cdn-bridge",
+		DefaultAction:  "404",
+	}
+}
+
+func extractDispatcherPort(cfg cdndispatcher.Config) int {
+	addr := strings.TrimSpace(cfg.ListenAddr)
+	if addr == "" {
+		return 9009
+	}
+	if _, portStr, err := net.SplitHostPort(addr); err == nil {
+		if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
+			return p
+		}
+	} else if strings.HasPrefix(addr, ":") {
+		if p, err := strconv.Atoi(strings.TrimPrefix(addr, ":")); err == nil && p > 0 {
+			return p
+		}
+	}
+	return 9009
+}
+
+func normalizeResetHost(raw string) string {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" {
+		return ""
+	}
+	if strings.Contains(s, "://") {
+		if u, err := url.Parse(s); err == nil && u.Host != "" {
+			s = u.Host
+		}
+	}
+	if h, _, err := net.SplitHostPort(s); err == nil {
+		s = h
+	}
+	s = strings.TrimSuffix(s, ".")
+	return strings.TrimSpace(s)
+}
+
+func extractKeenDNSLabel(rawHost, baseFQDN string) string {
+	host := normalizeResetHost(rawHost)
+	base := normalizeResetHost(baseFQDN)
+	if host == "" || base == "" {
+		return ""
+	}
+	suffix := "." + base
+	if !strings.HasSuffix(host, suffix) {
+		return ""
+	}
+	label := strings.TrimSuffix(host, suffix)
+	if label == "" || strings.Contains(label, ".") {
+		return ""
+	}
+	return label
+}
+
+func appendSplitHosts(out []string, raw string) []string {
+	for _, part := range strings.Split(raw, ",") {
+		p := strings.TrimSpace(part)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func collectVlessHosts(cfg vlessserver.Config, routes []cdndispatcher.CDNRouteRule) []string {
+	var hosts []string
+	hosts = appendSplitHosts(hosts, cfg.PublicDomain)
+	hosts = appendSplitHosts(hosts, cfg.OriginHost)
+	for _, ep := range cfg.Endpoints {
+		hosts = appendSplitHosts(hosts, ep.PublicDomain)
+		hosts = appendSplitHosts(hosts, ep.OriginHost)
+	}
+	for _, r := range routes {
+		if r.RouteXray {
+			hosts = appendSplitHosts(hosts, r.Domain)
+		}
+	}
+	return hosts
+}
+
+func collectTelegramHosts(cfg tgwebproxy.Config, routes []cdndispatcher.CDNRouteRule) []string {
+	var hosts []string
+	hosts = appendSplitHosts(hosts, cfg.PublicHostname)
+	for _, ep := range cfg.Endpoints {
+		hosts = appendSplitHosts(hosts, ep.Hostname)
+	}
+	for _, r := range routes {
+		if r.RouteTelegram {
+			hosts = appendSplitHosts(hosts, r.Domain)
+		}
+	}
+	return hosts
+}
+
+func hasVlessCDNDomains(cfg vlessserver.Config) bool {
+	if strings.TrimSpace(cfg.PublicDomain) != "" {
+		return true
+	}
+	for _, ep := range cfg.Endpoints {
+		if !ep.Enabled {
+			continue
+		}
+		if strings.TrimSpace(ep.PublicDomain) != "" || strings.TrimSpace(ep.OriginHost) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Coordinator) resetDispatcherLocked() {
+	if c.dispatcher == nil {
+		return
+	}
+	_ = c.dispatcher.Stop()
+	_ = c.dispatcher.ApplyConfig(defaultDispatcherConfig())
+	if c.dataDir != "" {
+		_ = os.Remove(c.dispatcherConfigPath())
+		_ = os.RemoveAll(filepath.Join(c.dataDir, "dispatcher", "tx"))
+	}
+	if cleaner, ok := c.dispatcher.(DispatcherSystemHookCleaner); ok {
+		cleaner.CleanupSystemHooks()
+	}
+}
+
+func (c *Coordinator) cleanupKeenDNSForResetLocked(
+	ctx context.Context,
+	targetHosts, protectedHosts []string,
+	dispPort int,
+	allowedPorts []int,
+	otherName string,
+) (deleted, skipped, warnings []string) {
+	if c.keendns == nil {
+		return nil, nil, []string{"подсистема KeenDNS недоступна для удаления доменов"}
+	}
+	disc, err := c.keendns.Discover(ctx, dispPort)
+	if err != nil {
+		return nil, nil, []string{fmt.Sprintf("не удалось прочитать настройки KeenDNS: %v", err)}
+	}
+	if disc.BaseFQDN == "" {
+		if disc.StatusMessage != "" {
+			return nil, nil, []string{disc.StatusMessage}
+		}
+		return nil, nil, nil
+	}
+
+	protectedSet := make(map[string]bool)
+	for _, h := range protectedHosts {
+		if label := extractKeenDNSLabel(h, disc.BaseFQDN); label != "" {
+			protectedSet[label] = true
+		}
+	}
+
+	seen := make(map[string]bool)
+	var toDelete []string
+	for _, h := range targetHosts {
+		label := extractKeenDNSLabel(h, disc.BaseFQDN)
+		if label == "" || seen[label] {
+			continue
+		}
+		seen[label] = true
+		if protectedSet[label] {
+			skipped = append(skipped, fmt.Sprintf("%s (используется %s)", label, otherName))
+			continue
+		}
+		toDelete = append(toDelete, label)
+	}
+
+	if len(toDelete) == 0 {
+		return deleted, skipped, warnings
+	}
+	deleter, ok := c.keendns.(KeenDNSResetOperator)
+	if !ok {
+		return deleted, skipped, append(warnings, "оператор KeenDNS не поддерживает удаление публикаций")
+	}
+	del, sk, warn := deleter.DeleteIngressPublications(ctx, toDelete, allowedPorts)
+	deleted = append(deleted, del...)
+	skipped = append(skipped, sk...)
+	warnings = append(warnings, warn...)
+	return deleted, skipped, warnings
+}
+
+// ResetVless resets only the VLESS server (and REALITY + VLESS routes in Dispatcher)
+// back to factory defaults while keeping any active Telegram server running.
+// If Telegram is inactive, CDN Dispatcher and its Keenetic hooks are fully reset as well.
+func (c *Coordinator) ResetVless(ctx context.Context, opts ResetOptions) (ResetResult, error) {
+	res := ResetResult{Server: "vless"}
+	txID := fmt.Sprintf("ing-reset-vless-%d-%d", time.Now().UnixNano(), os.Getpid())
+	err := c.withIngressLock(txID, func() error {
+		if c.xraySvc == nil {
+			return errors.New("vless service unavailable")
+		}
+		resetter, ok := c.xraySvc.(FactoryResetter)
+		if !ok {
+			return errors.New("vless service does not support factory reset")
+		}
+
+		prevXray := c.xraySvc.GetConfig()
+		var prevDisp cdndispatcher.Config
+		if c.dispatcher != nil {
+			prevDisp = c.dispatcher.GetConfig()
+		}
+		dispPort := extractDispatcherPort(prevDisp)
+
+		var tgCfg tgwebproxy.Config
+		if c.tgSvc != nil {
+			tgCfg = c.tgSvc.GetInternalConfig()
+		}
+
+		if err := resetter.FactoryReset(ctx); err != nil {
+			return err
+		}
+
+		c.mu.Lock()
+		firc := c.fircRouting
+		c.mu.Unlock()
+
+		if firc != nil && firc.IsServerRoutingEnabled("vless_xhttp_server") {
+			fircTxID := txID + "-firc"
+			if _, prepErr := firc.PrepareServerRouting(ctx, fircTxID, "vless_xhttp_server", false); prepErr != nil {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("не удалось отключить маршрутизацию VLESS в FIRC: %v", prepErr))
+			} else if commitErr := firc.CommitServerRouting(ctx, fircTxID); commitErr != nil {
+				_ = firc.RollbackServerRouting(ctx, fircTxID)
+				res.Warnings = append(res.Warnings, fmt.Sprintf("не удалось применить сброс маршрутизации VLESS в FIRC: %v", commitErr))
+			} else if finErr := firc.FinalizeServerRouting(fircTxID); finErr != nil {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("ошибка финализации сброса FIRC: %v", finErr))
+			}
+		}
+
+		tgNeedsDisp := c.tgSvc != nil && tgCfg.Enabled && tgCfg.Scenario != tgwebproxy.ScenarioDirectFakeTLS
+		if c.dispatcher != nil {
+			if tgNeedsDisp {
+				nextDisp := prevDisp
+				nextDisp.XrayTarget = "http://127.0.0.1:9008"
+				nextDisp.XrayPublicHost = ""
+				nextDisp.XrayPathPrefix = "/cdn-bridge"
+				nextDisp.XrayAdditionalPrefixes = nil
+				nextDisp.PublicHostname = tgCfg.PublicHostname
+
+				filtered := make([]cdndispatcher.CDNRouteRule, 0, len(prevDisp.Routes))
+				for _, r := range prevDisp.Routes {
+					r.RouteXray = false
+					if r.RouteTelegram {
+						filtered = append(filtered, r)
+					}
+				}
+				nextDisp.Routes = filtered
+				if nextDisp.ListenAddr == "" {
+					nextDisp.ListenAddr = ":9009"
+				}
+				if nextDisp.TgTarget == "" {
+					nextDisp.TgTarget = "http://127.0.0.1:8085"
+				}
+				if nextDisp.DefaultAction == "" {
+					nextDisp.DefaultAction = "404"
+				}
+
+				if err := c.dispatcher.ApplyConfig(nextDisp); err != nil {
+					return fmt.Errorf("reconcile dispatcher after vless reset: %w", err)
+				}
+				if err := c.saveDispatcherConfigLocked(nextDisp); err != nil {
+					return fmt.Errorf("save dispatcher config after vless reset: %w", err)
+				}
+				res.DispatcherReset = false
+			} else {
+				c.resetDispatcherLocked()
+				res.DispatcherReset = true
+			}
+		} else {
+			res.DispatcherReset = true
+		}
+
+		if opts.DeleteKeenDNS {
+			targetHosts := collectVlessHosts(prevXray, prevDisp.Routes)
+			protectedHosts := collectTelegramHosts(tgCfg, prevDisp.Routes)
+			del, sk, warn := c.cleanupKeenDNSForResetLocked(ctx, targetHosts, protectedHosts, dispPort, []int{dispPort}, "Telegram")
+			res.KeenDNSDeleted = del
+			res.KeenDNSSkipped = sk
+			res.Warnings = append(res.Warnings, warn...)
+		}
+
+		if c.dataDir != "" {
+			_ = os.Remove(c.journalPath())
+		}
+		c.setRecovery(false, "")
+		res.Reset = true
+		return nil
+	})
+	return res, err
+}
+
+// ResetTelegram resets only the Telegram proxy (and standalone telemt config,
+// preserving the telemt binary) + Telegram routes in Dispatcher back to factory defaults
+// while keeping any active VLESS server running. If VLESS is inactive/unconfigured for CDN,
+// CDN Dispatcher and its Keenetic hooks are fully reset as well.
+func (c *Coordinator) ResetTelegram(ctx context.Context, opts ResetOptions) (ResetResult, error) {
+	res := ResetResult{Server: "tgwebproxy"}
+	txID := fmt.Sprintf("ing-reset-tg-%d-%d", time.Now().UnixNano(), os.Getpid())
+	err := c.withIngressLock(txID, func() error {
+		if c.tgSvc == nil {
+			return errors.New("tgwebproxy service unavailable")
+		}
+		resetter, ok := c.tgSvc.(FactoryResetter)
+		if !ok {
+			return errors.New("tgwebproxy service does not support factory reset")
+		}
+
+		prevTg := c.tgSvc.GetInternalConfig()
+		var prevDisp cdndispatcher.Config
+		if c.dispatcher != nil {
+			prevDisp = c.dispatcher.GetConfig()
+		}
+		dispPort := extractDispatcherPort(prevDisp)
+
+		var xrayCfg vlessserver.Config
+		if c.xraySvc != nil {
+			xrayCfg = c.xraySvc.GetConfig()
+		}
+
+		if err := resetter.FactoryReset(ctx); err != nil {
+			return err
+		}
+
+		c.mu.Lock()
+		telemtSvc := c.telemtSvc
+		c.mu.Unlock()
+
+		if telemtSvc != nil {
+			if err := telemtSvc.ResetConfig(ctx); err != nil {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("ошибка сброса настроек telemt: %v", err))
+			}
+		}
+
+		xrayNeedsDisp := c.xraySvc != nil && xrayCfg.Enabled && hasVlessCDNDomains(xrayCfg)
+		if c.dispatcher != nil {
+			if xrayNeedsDisp {
+				nextDisp := prevDisp
+				nextDisp.TgTarget = "http://127.0.0.1:8085"
+				nextDisp.TgPublicHost = ""
+				nextDisp.PublicHostname = xrayCfg.PublicDomain
+
+				filtered := make([]cdndispatcher.CDNRouteRule, 0, len(prevDisp.Routes))
+				for _, r := range prevDisp.Routes {
+					r.RouteTelegram = false
+					r.TelegramTarget = ""
+					if r.RouteXray {
+						filtered = append(filtered, r)
+					}
+				}
+				nextDisp.Routes = filtered
+				if nextDisp.ListenAddr == "" {
+					nextDisp.ListenAddr = ":9009"
+				}
+				if nextDisp.XrayTarget == "" {
+					nextDisp.XrayTarget = "http://127.0.0.1:9008"
+				}
+				if nextDisp.DefaultAction == "" {
+					nextDisp.DefaultAction = "404"
+				}
+
+				if err := c.dispatcher.ApplyConfig(nextDisp); err != nil {
+					return fmt.Errorf("reconcile dispatcher after telegram reset: %w", err)
+				}
+				if err := c.saveDispatcherConfigLocked(nextDisp); err != nil {
+					return fmt.Errorf("save dispatcher config after telegram reset: %w", err)
+				}
+				res.DispatcherReset = false
+			} else {
+				c.resetDispatcherLocked()
+				res.DispatcherReset = true
+			}
+		} else {
+			res.DispatcherReset = true
+		}
+
+		if opts.DeleteKeenDNS {
+			targetHosts := collectTelegramHosts(prevTg, prevDisp.Routes)
+			protectedHosts := collectVlessHosts(xrayCfg, prevDisp.Routes)
+			allowedPorts := []int{dispPort, tgwebproxy.DefaultListenPort}
+			if prevTg.ListenPort > 0 && prevTg.ListenPort != dispPort && prevTg.ListenPort != tgwebproxy.DefaultListenPort && prevTg.ListenPort != 2222 {
+				allowedPorts = append(allowedPorts, prevTg.ListenPort)
+			}
+			del, sk, warn := c.cleanupKeenDNSForResetLocked(ctx, targetHosts, protectedHosts, dispPort, allowedPorts, "VLESS")
+			res.KeenDNSDeleted = del
+			res.KeenDNSSkipped = sk
+			res.Warnings = append(res.Warnings, warn...)
+		}
+
+		if c.dataDir != "" {
+			_ = os.Remove(c.journalPath())
+		}
+		c.setRecovery(false, "")
+		res.Reset = true
+		return nil
+	})
+	return res, err
 }

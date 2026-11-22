@@ -23,13 +23,14 @@ typedef struct {
     const char *ca;
     const char *fingerprint;
     int timeout_s;
+    int jobs;
     int64_t kill_after_ms;
 } firc_tunprobe_opts_t;
 
 /* rows[i] answers links[i]; have is false for a link the child never reported. Runs on the loop thread. */
 typedef void (*firc_tunprobe_done_fn)(const firc_tunprobe_row_t *rows, size_t n, void *ud);
 
-/* Loop thread only. Runs `binary --probe -t T [-m M] [--insecure] [--ca F] [--fp P] -` with the links on its stdin and
+/* Loop thread only. Runs `binary --probe -t T [-j J] [-m M] [--insecure] [--ca F] [--fp P] -` with the links on its stdin and
    only fds 0-2; kills it after kill_after_ms. done runs once, then the probe frees itself. */
 firc_err_t firc_tunprobe_start(firc_loop_t *loop, const firc_tunprobe_opts_t *o, char *const *links, size_t n,
                                firc_tunprobe_done_fn done, void *ud, firc_tunprobe_t **out);
@@ -37,7 +38,10 @@ firc_err_t firc_tunprobe_start(firc_loop_t *loop, const firc_tunprobe_opts_t *o,
 /* Kills and reaps the child; done never runs. NULL-safe, not from inside done. */
 void firc_tunprobe_cancel(firc_tunprobe_t *p);
 
-/* How long a probe of n links may run: 6 s per link (a long and a short ClientHello) plus 5 s. */
-int64_t firc_tunprobe_deadline_ms(size_t n);
+/* The rows so far, as many as links; have is false for one not yet reported. Loop thread only. */
+const firc_tunprobe_row_t *firc_tunprobe_rows(const firc_tunprobe_t *p);
+
+/* How long a probe of n links, jobs at once, may run: 6 s per wave (a long and a short ClientHello) plus 5 s. */
+int64_t firc_tunprobe_deadline_ms(size_t n, int jobs);
 
 #endif

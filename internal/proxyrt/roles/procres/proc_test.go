@@ -1622,3 +1622,211 @@ func TestProc_LogWatcherWakesOncePerFailure(t *testing.T) {
 		t.Fatalf("wake = %d, want 1", n)
 	}
 }
+
+func TestProcAutoReconnect_WdttGroup1CredFailureTriggersRestart(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "wdtt-group1.log")
+	if err := os.WriteFile(logPath, []byte("старт\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	link := &fakeLink{st: awgmproto.State{PID: 701, UptimeS: 20}}
+	runner := &fakeRunner{pid: 701, alive: true}
+	p := NewProc(ProcConfig{
+		ID:      "proc",
+		LogPath: logPath,
+		Runner:  runner,
+		Link:    link,
+		Gate:    okGate{},
+		Now:     time.Now,
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(true, 0)
+	defer p.stopLogWatcher()
+
+	if _, err := p.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Группа #2+ не должна сносить работающий туннель группы #1.
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("[ГРУППА #2] Ошибка кредов: CAPTCHA_WAIT_REQUIRED\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	obsGroup2, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := obsGroup2.Attrs[attrFatalError]; got != "" {
+		t.Fatalf("ошибка группы #2 не должна вызывать фатальный сбой, got %q", got)
+	}
+	if steps := p.Plan(obsGroup2); len(steps) != 0 {
+		t.Fatalf("Plan при ошибке группы #2 = %+v, want []", steps)
+	}
+
+	// Ошибка кредов группы #1 навсегда вешает эстафету -> обязателен restart.
+	f, err = os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("[ГРУППА #1] Ошибка кредов: CAPTCHA_WAIT_REQUIRED\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	obsGroup1, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := obsGroup1.Attrs[attrFatalError]; got != "[ГРУППА #1] Ошибка кредов:" {
+		t.Fatalf("fatal_error = %q, want '[ГРУППА #1] Ошибка кредов:'", got)
+	}
+	steps := p.Plan(obsGroup1)
+	if len(steps) != 1 || steps[0].Op != "restart" || steps[0].Args[argCause] != causeSessionFailure {
+		t.Fatalf("Plan при ошибке группы #1 = %+v, want [restart cause=session_failure]", steps)
+	}
+}
+
+func TestProcAutoReconnect_RawConfStartupStallRestartsAdoptedZombie(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	clock := func() time.Time { return now }
+
+	// Усыновлённый процесс без RAWCONF до порога (45 с < 2 мин): ждём и просим RecheckAfter.
+	link := &fakeLink{st: awgmproto.State{PID: 801, UptimeS: 45, Address: ""}}
+	runner := &fakeRunner{pid: 801, alive: true}
+	p := newProc(link, runner, okGate{}, clock)
+	p.SetDesired(true, []string{"-mode", "rawtun"}, nil)
+	p.SetAutoReconnect(true, 0)
+	p.SetExpectAddress(true, 2*time.Minute)
+
+	obsEarly, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obsEarly.Attrs[attrStartupStall] != "" {
+		t.Fatalf("раннее наблюдение не должно давать startup_stall: %q", obsEarly.Attrs[attrStartupStall])
+	}
+	if steps := p.Plan(obsEarly); len(steps) != 0 {
+		t.Fatalf("раннее наблюдение не должно планировать шагов: %+v", steps)
+	}
+	if recheck := p.RecheckAfter(); recheck <= 0 || recheck > 2*time.Minute {
+		t.Fatalf("RecheckAfter = %v, ожидали оставшееся окно до 2 мин", recheck)
+	}
+
+	// Зависший > stableGrace без RAWCONF: backoff НЕ сбрасывается и Plan требует restart.
+	p.recordFail(now) // simulated prior backoff failure
+	link.st = awgmproto.State{PID: 801, UptimeS: 900, Address: ""}
+	obsStall, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obsStall.Attrs[attrStartupStall] == "" {
+		t.Fatal("ожидали startup_stall при Address == '' и UptimeS == 900")
+	}
+	if p.retryAt().IsZero() {
+		t.Fatal("ResetStartBackoff не должен вызываться при отсутствии RAWCONF")
+	}
+	steps := p.Plan(obsStall)
+	if len(steps) != 1 || steps[0].Op != "restart" || steps[0].Args[argCause] != causeSessionFailure {
+		t.Fatalf("Plan при зависании без RAWCONF = %+v, want [restart cause=session_failure]", steps)
+	}
+
+	// Как только адрес выдан (RAWCONF получен), зависания нет.
+	link.st = awgmproto.State{PID: 801, UptimeS: 900, Address: "10.70.0.2"}
+	obsHealthy, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obsHealthy.Attrs[attrStartupStall] != "" {
+		t.Fatalf("при наличии Address не должно быть startup_stall: %q", obsHealthy.Attrs[attrStartupStall])
+	}
+	if !p.retryAt().IsZero() {
+		t.Fatal("при наличии Address и аптайме >= stableGrace backoff обязан сброситься")
+	}
+	if steps := p.Plan(obsHealthy); len(steps) != 0 {
+		t.Fatalf("Plan при наличии Address = %+v, want []", steps)
+	}
+}
+
+func TestProcAutoReconnect_ZeroActiveStatsStreakTriggersRestart(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "zombie-stats.log")
+	if err := os.WriteFile(logPath, []byte("старт\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	link := &fakeLink{st: awgmproto.State{PID: 901, UptimeS: 120, Address: "10.70.0.2"}}
+	runner := &fakeRunner{pid: 901, alive: true}
+	p := NewProc(ProcConfig{
+		ID:      "proc",
+		LogPath: logPath,
+		Runner:  runner,
+		Link:    link,
+		Gate:    okGate{},
+		Now:     time.Now,
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(true, 0)
+	defer p.stopLogWatcher()
+
+	if _, err := p.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// 25 строк Активных: 0, затем живая Активных: 9 (сбрасывает счётчик), затем еще 15 строк Активных: 0 -> НЕ должно сработать.
+	var sb strings.Builder
+	for i := 0; i < 25; i++ {
+		sb.WriteString("2026/11/21 19:07:35 [СТАТИСТИКА] Активных: 0 | Трафик: 0.00 МБ\n")
+	}
+	sb.WriteString("2026/11/21 19:08:50 [СТАТИСТИКА] Активных: 9 | Трафик: 0.12 МБ\n")
+	for i := 0; i < 15; i++ {
+		sb.WriteString("2026/11/21 19:09:35 [СТАТИСТИКА] Активных: 0 | Трафик: 0.12 МБ\n")
+	}
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(sb.String()); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	obs1, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs1.Attrs[attrFatalError] != "" {
+		t.Fatalf("сброшенный счётчик не должен вызывать рестарт, got %q", obs1.Attrs[attrFatalError])
+	}
+
+	// Ещё 15 строк подряд (итого 30 подряд) -> обязан сработать рестарт.
+	var sb2 strings.Builder
+	for i := 0; i < 15; i++ {
+		sb2.WriteString("2026/11/21 19:10:20 [СТАТИСТИКА] Активных: 0 | Трафик: 0.12 МБ\n")
+	}
+	f, err = os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(sb2.String()); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	obs2, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := obs2.Attrs[attrFatalError]; got != sigZeroActiveWorkers {
+		t.Fatalf("fatal_error = %q, want %q", got, sigZeroActiveWorkers)
+	}
+	steps := p.Plan(obs2)
+	if len(steps) != 1 || steps[0].Op != "restart" || steps[0].Args[argCause] != causeSessionFailure {
+		t.Fatalf("Plan при зомби-статистике = %+v, want [restart cause=session_failure]", steps)
+	}
+}

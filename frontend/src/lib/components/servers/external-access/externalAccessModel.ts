@@ -683,9 +683,9 @@ export function createInitialWizardDraft(
 
 	const schemeParts: string[] = [];
 	if (connectionWay === 'direct') {
-		schemeParts.push('Прямое подключение к адресу роутера');
+		schemeParts.push('Через домен роутера (HTTPS)');
 	} else {
-		schemeParts.push('Через внешний сервис с вашим доменом');
+		schemeParts.push('Через свой внешний домен (HTTPS)');
 	}
 	if (publicDomain) {
 		schemeParts.push(`адрес для телефона: ${publicDomain}`);

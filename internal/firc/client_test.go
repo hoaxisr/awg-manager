@@ -2120,3 +2120,66 @@ func TestAddConfirmedCandidateTransactionAndConcurrency(t *testing.T) {
 		"beta.example.com",
 	})
 }
+
+func TestClientProbeTunnelKeysAndProgress(t *testing.T) {
+	var seenMethod string
+	var seenKeys []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/tunnels/probe", func(w http.ResponseWriter, r *http.Request) {
+		seenMethod = r.Method
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			hs := 12
+			fb := 28
+			_ = json.NewEncoder(w).Encode(ProbeProgressResponse{
+				Total: 4,
+				Nodes: []ProbeNodeResult{
+					{Key: "0000000a:N1", Ok: true, HandshakeMs: &hs, FirstByteMs: &fb},
+				},
+			})
+			return
+		}
+		var req struct {
+			ID     string   `json:"id"`
+			Tunnel *Tunnel  `json:"tunnel"`
+			Keys   []string `json:"keys"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		seenKeys = append([]string(nil), req.Keys...)
+		hs := 15
+		fb := 35
+		_ = json.NewEncoder(w).Encode(ProbeResponse{
+			Nodes: []ProbeNodeResult{
+				{Key: "0000000a:N2", Ok: true, HandshakeMs: &hs, FirstByteMs: &fb},
+			},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewHTTPClient(srv.URL, srv.Client())
+	ctx := context.Background()
+
+	prog, err := c.GetTunnelProbeProgress(ctx)
+	if err != nil {
+		t.Fatalf("GetTunnelProbeProgress: %v", err)
+	}
+	if seenMethod != http.MethodGet || prog.Total != 4 || len(prog.Nodes) != 1 || prog.Nodes[0].Key != "0000000a:N1" {
+		t.Fatalf("unexpected progress: method=%s prog=%+v", seenMethod, prog)
+	}
+
+	res, err := c.ProbeTunnelKeys(ctx, "tun-1", nil, []string{"0000000a:N2"})
+	if err != nil {
+		t.Fatalf("ProbeTunnelKeys: %v", err)
+	}
+	if seenMethod != http.MethodPost || !reflect.DeepEqual(seenKeys, []string{"0000000a:N2"}) {
+		t.Fatalf("unexpected probe POST keys: method=%s seenKeys=%+v", seenMethod, seenKeys)
+	}
+	if len(res.Nodes) != 1 || res.Nodes[0].Key != "0000000a:N2" {
+		t.Fatalf("unexpected probe result: %+v", res)
+	}
+}

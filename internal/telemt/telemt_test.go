@@ -375,3 +375,44 @@ func TestSaveConfig_ReservedPort(t *testing.T) {
 		}
 	}
 }
+
+func TestResetConfig_PreservesBinaryAndClearsConfigs(t *testing.T) {
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "x86_64")
+
+	telemtDir := filepath.Join(tmpDir, "telemt")
+	if err := os.MkdirAll(telemtDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	binPath := filepath.Join(telemtDir, "telemt")
+	if err := os.WriteFile(binPath, []byte("keep-telemt-bin"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"settings.json", "config.toml", "raw.toml", "telemt.pid"} {
+		if err := os.WriteFile(filepath.Join(telemtDir, name), []byte("old"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc.mu.Lock()
+	svc.config.Enabled = true
+	svc.config.Port = 9443
+	svc.config.TLSDomain = "custom.example.com"
+	svc.mu.Unlock()
+
+	if err := svc.ResetConfig(context.Background()); err != nil {
+		t.Fatalf("ResetConfig failed: %v", err)
+	}
+
+	if data, err := os.ReadFile(binPath); err != nil || string(data) != "keep-telemt-bin" {
+		t.Fatalf("expected telemt binary preserved, got err=%v data=%q", err, string(data))
+	}
+	for _, gone := range []string{"settings.json", "config.toml", "raw.toml", "telemt.pid"} {
+		if _, err := os.Stat(filepath.Join(telemtDir, gone)); !os.IsNotExist(err) {
+			t.Fatalf("expected %s deleted during ResetConfig", gone)
+		}
+	}
+	if cfg := svc.GetConfig(); cfg.Enabled || cfg.Port != DefaultPort || cfg.TLSDomain != DefaultTLSDomain {
+		t.Fatalf("expected default telemt config after ResetConfig, got %+v", cfg)
+	}
+}

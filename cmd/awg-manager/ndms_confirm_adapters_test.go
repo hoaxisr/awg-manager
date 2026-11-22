@@ -90,18 +90,19 @@ func oracleClean(t *testing.T, f *ndmsquery.FakeNDMS) {
 func teardowns(a confirmAdapters) map[string]func(context.Context) error {
 	route := router.StaticRouteSpec{Interface: "OpkgTun5", Network: "198.18.0.0", Mask: "255.254.0.0"}
 	return map[string]func(context.Context) error{
-		"DeleteOpkgTun":          func(ctx context.Context) error { return a.opkg.DeleteOpkgTun(ctx, "OpkgTun5") },
-		"InterfaceDown":          func(ctx context.Context) error { return a.opkg.InterfaceDown(ctx, "OpkgTun5") },
-		"ClearAddress":           func(ctx context.Context) error { return a.opkg.ClearAddress(ctx, "OpkgTun5") },
-		"ClearIPv6Address":       func(ctx context.Context) error { return a.opkg.ClearIPv6Address(ctx, "OpkgTun5") },
-		"ClearIPGlobal":          func(ctx context.Context) error { return a.opkg.ClearIPGlobal(ctx, "OpkgTun5") },
-		"RemovePermitAllACL":     func(ctx context.Context) error { return a.opkg.RemovePermitAllACL(ctx, "OpkgTun5") },
-		"RemovePermitAllACLs":    func(ctx context.Context) error { return a.opkg.RemovePermitAllACLs(ctx, "OpkgTun5") },
-		"RemoveDefaultRoute":     func(ctx context.Context) error { return a.defrt.RemoveDefaultRoute(ctx, "OpkgTun5") },
-		"RemoveIPv6DefaultRoute": func(ctx context.Context) error { return a.defrt.RemoveIPv6DefaultRoute(ctx, "OpkgTun5") },
-		"RemoveSegmentNAT":       func(ctx context.Context) error { return a.nat.RemoveSegmentNAT(ctx, "Bridge1") },
-		"RemoveStaticNAT":        func(ctx context.Context) error { return a.nat.RemoveStaticNAT(ctx, "Bridge1", "PPPoE0") },
-		"RemoveStaticRoute":      func(ctx context.Context) error { return a.static.RemoveStaticRoute(ctx, route) },
+		"DeleteOpkgTun":               func(ctx context.Context) error { return a.opkg.DeleteOpkgTun(ctx, "OpkgTun5") },
+		"InterfaceDown":               func(ctx context.Context) error { return a.opkg.InterfaceDown(ctx, "OpkgTun5") },
+		"ClearAddress":                func(ctx context.Context) error { return a.opkg.ClearAddress(ctx, "OpkgTun5") },
+		"ClearIPv6Address":            func(ctx context.Context) error { return a.opkg.ClearIPv6Address(ctx, "OpkgTun5") },
+		"ClearIPGlobal":               func(ctx context.Context) error { return a.opkg.ClearIPGlobal(ctx, "OpkgTun5") },
+		"RemovePermitAllACL":          func(ctx context.Context) error { return a.opkg.RemovePermitAllACL(ctx, "OpkgTun5") },
+		"RemovePermitAllACLs":         func(ctx context.Context) error { return a.opkg.RemovePermitAllACLs(ctx, "OpkgTun5") },
+		"RemoveDefaultRoute":          func(ctx context.Context) error { return a.defrt.RemoveDefaultRoute(ctx, "OpkgTun5") },
+		"RemoveIPv6DefaultRoute":      func(ctx context.Context) error { return a.defrt.RemoveIPv6DefaultRoute(ctx, "OpkgTun5") },
+		"RemoveDefaultRouteCandidacy": func(ctx context.Context) error { return a.proxy.RemoveDefaultRouteCandidacy(ctx, "OpkgTun5") },
+		"RemoveSegmentNAT":            func(ctx context.Context) error { return a.nat.RemoveSegmentNAT(ctx, "Bridge1") },
+		"RemoveStaticNAT":             func(ctx context.Context) error { return a.nat.RemoveStaticNAT(ctx, "Bridge1", "PPPoE0") },
+		"RemoveStaticRoute":           func(ctx context.Context) error { return a.static.RemoveStaticRoute(ctx, route) },
 	}
 }
 

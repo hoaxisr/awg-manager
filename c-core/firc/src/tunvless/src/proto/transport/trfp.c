@@ -299,12 +299,12 @@ typedef struct {
 struct tr_reader {
     struct tr_link *l;
     const volatile int *stop;
-    unsigned char buf[4096];
+    unsigned char buf[TLS13_MAX_REC];
     size_t off;
     size_t len;
 };
 
-static int tr_reader_getc(struct tr_reader *r, unsigned char *out, int timeout_ms) {
+static int tr_reader_fill(struct tr_reader *r, int timeout_ms) {
     int64_t deadline = fp_now_ms() + timeout_ms;
     while (r->off >= r->len) {
         if (r->stop && __atomic_load_n(r->stop, __ATOMIC_ACQUIRE)) return TR_ECLOSED;
@@ -315,13 +315,22 @@ static int tr_reader_getc(struct tr_reader *r, unsigned char *out, int timeout_m
         if (rc) return rc;
         if (got > 0) {
             r->len = got;
-            break;
+            return 0;
         }
+        if (!r->l->plain && tls13_has_record(&r->l->tls)) continue;
         int rem = (int)(deadline - fp_now_ms());
         if (rem <= 0) return TR_EIO;
         struct pollfd pfd = { .fd = r->l->fd, .events = POLLIN };
         int pr = poll(&pfd, 1, rem > 100 ? 100 : rem);
         if (pr < 0 && errno != EINTR) return TR_EIO;
+    }
+    return 0;
+}
+
+static int tr_reader_getc(struct tr_reader *r, unsigned char *out, int timeout_ms) {
+    if (r->off >= r->len) {
+        int rc = tr_reader_fill(r, timeout_ms);
+        if (rc) return rc;
     }
     *out = r->buf[r->off++];
     return 0;
@@ -346,24 +355,19 @@ static int tr_read_http_line(struct tr_reader *r, char *out, size_t out_sz, int 
 
 static int tr_read_exact_buffered(struct tr_reader *r, unsigned char *dst, size_t len, int timeout_ms) {
     size_t done = 0;
-    while (done < len && r->off < r->len) {
-        dst[done++] = r->buf[r->off++];
-    }
     int64_t deadline = fp_now_ms() + timeout_ms;
     while (done < len) {
-        if (r->stop && __atomic_load_n(r->stop, __ATOMIC_ACQUIRE)) return TR_ECLOSED;
-        size_t got = 0;
-        int rc = tr_link_read(r->l, dst + done, len - done, &got);
-        if (rc) return rc;
-        if (got > 0) {
-            done += got;
-            continue;
+        if (r->off >= r->len) {
+            int rem = (int)(deadline - fp_now_ms());
+            if (rem <= 0) return TR_EIO;
+            int rc = tr_reader_fill(r, rem);
+            if (rc) return rc;
         }
-        int rem = (int)(deadline - fp_now_ms());
-        if (rem <= 0) return TR_EIO;
-        struct pollfd pfd = { .fd = r->l->fd, .events = POLLIN };
-        int pr = poll(&pfd, 1, rem > 100 ? 100 : rem);
-        if (pr < 0 && errno != EINTR) return TR_EIO;
+        size_t avail = r->len - r->off;
+        size_t take = (len - done < avail) ? (len - done) : avail;
+        memcpy(dst + done, r->buf + r->off, take);
+        r->off += take;
+        done += take;
     }
     return 0;
 }
@@ -624,9 +628,10 @@ static int fp_rpc_once(struct fp_ctx *ctx, struct tr_link *l, const char *http_m
     }
 
     struct tr_reader r;
-    memset(&r, 0, sizeof(r));
     r.l = l;
     r.stop = &ctx->stop;
+    r.off = 0;
+    r.len = 0;
 
     char line[4096];
     if (tr_read_http_line(&r, line, sizeof(line), 20000) <= 0) return -1;
@@ -881,8 +886,8 @@ static int fp_rpc(struct fp_ctx *ctx, uint8_t op, uint8_t flags, const uint8_t s
         char sig_hex[65];
         bytes_to_hex(sig, 32, sig_hex);
 
-        char auth_hdr[256];
-        snprintf(auth_hdr, sizeof(auth_hdr), "t=%s,n=%s,s=%s", ts_str, nonce_hex, sig_hex);
+        char auth_hdr[384];
+        snprintf(auth_hdr, sizeof(auth_hdr), "%s:%s:%s:%s", ctx->client_id, ts_str, nonce_hex, sig_hex);
 
         bool try_next_method = false;
         for (int attempt = 0; attempt < 2; attempt++) {
@@ -1012,7 +1017,7 @@ static void *fp_session_worker(void *arg) {
     int fd = ctx->worker_fd;
 
     /* 1. Read VLESS request header from worker_fd (up to 1 + 16 + 1 + 255 + 4 + 1 + 255 = 533B) */
-    unsigned char req_hdr[1024];
+    unsigned char req_hdr[4096];
     size_t req_n = 0;
     int64_t dl = fp_now_ms() + 10000;
     if (fp_recv_until(fd, &ctx->stop, req_hdr, sizeof(req_hdr), &req_n, 22, dl) < 0) {
@@ -1021,7 +1026,7 @@ static void *fp_session_worker(void *arg) {
         return NULL;
     }
 
-    /* Parse VLESS: [0x00][16B uuid][addons_len][addons][cmd=0x01][port BE16][atyp][addr] */
+    /* Parse VLESS: [0x00][16B uuid][addons_len][addons][cmd=0x01 TCP | 0x02 UDP][port BE16][atyp][addr] */
     size_t off = 1 + 16;
     size_t addons_len = req_hdr[off++];
     off += addons_len;
@@ -1030,20 +1035,26 @@ static void *fp_session_worker(void *arg) {
         fp_ctx_release(ctx);
         return NULL;
     }
-    off++; /* cmd */
+    uint8_t cmd = req_hdr[off++];
+    if (cmd != 0x01 && cmd != 0x02) {
+        shutdown(fd, SHUT_RDWR);
+        fp_ctx_release(ctx);
+        return NULL;
+    }
+    const char *prefix = (cmd == 0x02) ? "udp://" : "";
     uint16_t port = ((uint16_t)req_hdr[off] << 8) | req_hdr[off + 1];
     off += 2;
     uint8_t atyp = req_hdr[off++];
 
-    char target[300] = {0};
+    char target[320] = {0};
     if (atyp == 0x01) { /* IPv4 */
         if (fp_recv_until(fd, &ctx->stop, req_hdr, sizeof(req_hdr), &req_n, off + 4, dl) < 0) {
             shutdown(fd, SHUT_RDWR);
             fp_ctx_release(ctx);
             return NULL;
         }
-        snprintf(target, sizeof(target), "%u.%u.%u.%u:%u",
-                 req_hdr[off], req_hdr[off + 1], req_hdr[off + 2], req_hdr[off + 3], port);
+        snprintf(target, sizeof(target), "%s%u.%u.%u.%u:%u",
+                 prefix, req_hdr[off], req_hdr[off + 1], req_hdr[off + 2], req_hdr[off + 3], port);
         off += 4;
     } else if (atyp == 0x02) { /* Domain */
         if (fp_recv_until(fd, &ctx->stop, req_hdr, sizeof(req_hdr), &req_n, off + 1, dl) < 0) {
@@ -1062,7 +1073,7 @@ static void *fp_session_worker(void *arg) {
         memcpy(dom, req_hdr + off, dlen);
         dom[dlen] = '\0';
         off += dlen;
-        snprintf(target, sizeof(target), "%s:%u", dom, port);
+        snprintf(target, sizeof(target), "%s%s:%u", prefix, dom, port);
     } else if (atyp == 0x03) { /* IPv6 */
         if (fp_recv_until(fd, &ctx->stop, req_hdr, sizeof(req_hdr), &req_n, off + 16, dl) < 0) {
             shutdown(fd, SHUT_RDWR);
@@ -1072,7 +1083,7 @@ static void *fp_session_worker(void *arg) {
         char ip6[128];
         inet_ntop(AF_INET6, req_hdr + off, ip6, sizeof(ip6));
         off += 16;
-        snprintf(target, sizeof(target), "[%s]:%u", ip6, port);
+        snprintf(target, sizeof(target), "%s[%s]:%u", prefix, ip6, port);
     } else {
         shutdown(fd, SHUT_RDWR);
         fp_ctx_release(ctx);

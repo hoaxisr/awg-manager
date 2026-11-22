@@ -389,8 +389,8 @@ func (s *Service) tryAutoImportLegacyOnMissingSettings() {
 	}
 }
 
-func (s *Service) loadConfig() {
-	s.config = Config{
+func defaultConfig() Config {
+	return Config{
 		Enabled:            false,
 		ListenAddress:      "127.0.0.1",
 		ListenPort:         9008,
@@ -405,6 +405,10 @@ func (s *Service) loadConfig() {
 		OutboundSocksPort:  1099,
 		Clients:            []Client{},
 	}
+}
+
+func (s *Service) loadConfig() {
+	s.config = defaultConfig()
 
 	data, err := os.ReadFile(s.cfgPath())
 	if err != nil {
@@ -1047,6 +1051,61 @@ func (s *Service) stopLocked() error {
 	s.stopRealityRuntimeLocked()
 	s.disableOrchestratorIngressSlotLocked()
 	s.cleanLegacySlotFilesLocked()
+	return nil
+}
+
+// FactoryReset stops VLESS/REALITY runtimes, removes firewall rules and persisted
+// VLESS files (preserving coordinator lock and journal files), and restores clean
+// factory defaults in memory without writing settings files back to disk.
+func (s *Service) FactoryReset(ctx context.Context) error {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.daemon != nil {
+		_ = s.daemon.Stop()
+		s.daemon = nil
+	}
+	s.stopRealityRuntimeLocked()
+	s.realityFWSynced = false
+	s.syncRealityFirewallLocked(0)
+
+	s.disableOrchestratorIngressSlotLocked()
+	s.cleanLegacySlotFilesLocked()
+
+	if s.dataDir == "/opt/etc/awg-manager" {
+		_ = os.Remove("/tmp/awgm-xhttpd.conf")
+	}
+
+	if s.dataDir != "" {
+		xrayDir := s.xrayDir()
+		if entries, err := os.ReadDir(xrayDir); err == nil {
+			for _, entry := range entries {
+				name := entry.Name()
+				if name == "server-ingress.lock" || name == "server-ingress-transaction.json" {
+					continue
+				}
+				_ = os.RemoveAll(filepath.Join(xrayDir, name))
+			}
+		}
+		if secStore, err := NewDiskSecretStore(filepath.Join(xrayDir, "secrets")); err == nil {
+			s.secrets = secStore
+		}
+	}
+
+	s.config = defaultConfig()
+	s.reality = defaultRealitySettings()
+	s.realityLastErr = ""
+	s.realityNetCache = nil
+	s.realityNetCachedAt = time.Time{}
+	s.lastRuntimeErr = ""
+	s.fircRoutingOverride = false
+	s.recoveryRequired = false
+	s.recoveryReason = ""
+	s.recoveryFingerprint = ""
+	s.configRev++
+
+	s.notifyReload()
 	return nil
 }
 

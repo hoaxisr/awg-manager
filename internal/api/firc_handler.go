@@ -12,6 +12,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,8 +20,11 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/firc"
+	"github.com/hoaxisr/awg-manager/internal/httpprobe"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 	"github.com/hoaxisr/awg-manager/internal/uplink"
 )
 
@@ -54,6 +58,7 @@ type FircHandler struct {
 	v1Transport         *http.Transport
 	installer           *firc.OnDemandInstaller
 	installMu           sync.Mutex
+	probeInterfaceFn    func(ctx context.Context, ifaceName, checkURL string) fircInterfaceProbeResult
 }
 
 func (h *FircHandler) getV1ProxyTransport(socketPath string) *http.Transport {
@@ -245,7 +250,9 @@ func (h *FircHandler) RegisterRoutes(mux *http.ServeMux, guarded func(http.Handl
 	mux.HandleFunc("GET /api/firc/tunnels", guarded(h.handleGetTunnels))
 	mux.HandleFunc("PUT /api/firc/tunnels", guarded(h.handlePutTunnels))
 	mux.HandleFunc("GET /api/firc/tunnels/state", guarded(h.handleGetTunnelsState))
+	mux.HandleFunc("GET /api/firc/tunnels/probe", guarded(h.handleGetTunnelProbeProgress))
 	mux.HandleFunc("POST /api/firc/tunnels/probe", guarded(h.handleProbeTunnel))
+	mux.HandleFunc("POST /api/firc/interfaces/probe", guarded(h.handleProbeInterfaces))
 	mux.HandleFunc("POST /api/firc/tunnels/preview", guarded(h.handlePreviewTunnel))
 	mux.HandleFunc("POST /api/firc/tunnels/normalize-source", guarded(h.handleNormalizeSource))
 	mux.HandleFunc("GET /api/firc/groups", guarded(h.handleGetGroups))
@@ -729,6 +736,11 @@ func (h *FircHandler) handlePutTunnels(w http.ResponseWriter, r *http.Request) {
 			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "RECOVERY_REQUIRED")
 			return
 		}
+		var filterErr *subscription.FilterError
+		if errors.As(err, &filterErr) {
+			response.ErrorWithStatus(w, http.StatusBadRequest, filterErr.Error(), "INVALID_FILTER")
+			return
+		}
 		var valErr *firc.TunnelValidationError
 		if errors.As(err, &valErr) {
 			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "NORMALIZE_FAILED")
@@ -770,13 +782,45 @@ func (h *FircHandler) handleProbeTunnel(w http.ResponseWriter, r *http.Request) 
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "firc operator not initialized", "UNAVAILABLE")
 		return
 	}
-	var tun firc.Tunnel
-	if err := json.NewDecoder(r.Body).Decode(&tun); err != nil {
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
 		response.ErrorWithStatus(w, http.StatusBadRequest, "invalid request body", "BAD_REQUEST")
 		return
 	}
-	if err := firc.NormalizeTunnelSources(&tun, h.happKeysPath()); err != nil {
-		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "NORMALIZE_FAILED")
+	var wrapped struct {
+		ID     string       `json:"id,omitempty"`
+		Tunnel *firc.Tunnel `json:"tunnel,omitempty"`
+		Keys   []string     `json:"keys,omitempty"`
+	}
+	if err := json.Unmarshal(rawBody, &wrapped); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "invalid request body", "BAD_REQUEST")
+		return
+	}
+	probeID := wrapped.ID
+	var draft *firc.Tunnel
+	if wrapped.Tunnel != nil {
+		if err := firc.NormalizeTunnelSources(wrapped.Tunnel, h.happKeysPath()); err != nil {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "NORMALIZE_FAILED")
+			return
+		}
+		draft = wrapped.Tunnel
+	} else {
+		var tun firc.Tunnel
+		if err := json.Unmarshal(rawBody, &tun); err != nil {
+			response.ErrorWithStatus(w, http.StatusBadRequest, "invalid request body", "BAD_REQUEST")
+			return
+		}
+		if err := firc.NormalizeTunnelSources(&tun, h.happKeysPath()); err != nil {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "NORMALIZE_FAILED")
+			return
+		}
+		if probeID == "" {
+			probeID = tun.ID
+		}
+		draft = &tun
+	}
+	if err := firc.ValidateTunnelFilters(draft); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_FILTER")
 		return
 	}
 	if h.isExplicitlyUnselected() {
@@ -787,12 +831,218 @@ func (h *FircHandler) handleProbeTunnel(w http.ResponseWriter, r *http.Request) 
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "fircd is not running", "NOT_RUNNING")
 		return
 	}
-	res, err := h.op.Client().ProbeTunnel(r.Context(), tun.ID, &tun)
+	res, err := h.op.Client().ProbeTunnelKeys(r.Context(), probeID, draft, wrapped.Keys)
 	if err != nil {
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "PROBE_FAILED")
 		return
 	}
 	response.Success(w, res)
+}
+
+func (h *FircHandler) handleGetTunnelProbeProgress(w http.ResponseWriter, r *http.Request) {
+	if h.op == nil {
+		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "firc operator not initialized", "UNAVAILABLE")
+		return
+	}
+	if h.isExplicitlyUnselected() || !h.op.IsRunning(r.Context()) {
+		response.Success(w, &firc.ProbeProgressResponse{
+			Total: 0,
+			Nodes: []firc.ProbeNodeResult{},
+		})
+		return
+	}
+	res, err := h.op.Client().GetTunnelProbeProgress(r.Context())
+	if err != nil {
+		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "PROBE_PROGRESS_FAILED")
+		return
+	}
+	if res.Nodes == nil {
+		res.Nodes = []firc.ProbeNodeResult{}
+	}
+	response.Success(w, res)
+}
+
+var fircProbeIfaceNameRe = regexp.MustCompile(`^[a-zA-Z0-9_.:-]{1,32}$`)
+
+type fircInterfacesProbeRequest struct {
+	Interfaces []string `json:"interfaces"`
+	URL        string   `json:"url,omitempty"`
+}
+
+type fircInterfaceProbeResult struct {
+	Interface string `json:"interface"`
+	Ok        bool   `json:"ok"`
+	LatencyMs int    `json:"latencyMs"`
+	HTTPCode  int    `json:"httpCode,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+type fircInterfacesProbeResponse struct {
+	URL       string                              `json:"url"`
+	CheckedAt int64                               `json:"checkedAt"`
+	Results   map[string]fircInterfaceProbeResult `json:"results"`
+}
+
+func computeFircInterfaceProbeLatencyMs(metrics httpclient.Metrics) int {
+	totalMs := httpclient.SecToMs(metrics.TimeTotal)
+	if metrics.TimeNameLookup > 0 && metrics.TimeTotal > metrics.TimeNameLookup {
+		dnsMs := httpclient.SecToMs(metrics.TimeNameLookup)
+		if totalMs > dnsMs {
+			totalMs -= dnsMs
+		}
+	}
+	if httpprobe.SuccessCode(metrics.HTTPCode) && totalMs <= 0 {
+		totalMs = 1
+	}
+	return totalMs
+}
+
+func probeFircInterfaceHTTP(ctx context.Context, ifaceName, checkURL string) fircInterfaceProbeResult {
+	probeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+
+	res, err := httpclient.DefaultClient.Do(probeCtx, httpclient.CallConfig{
+		URL:            checkURL,
+		Interface:      ifaceName,
+		ConnectTimeout: 3 * time.Second,
+		MaxTime:        4 * time.Second,
+		DiscardBody:    true,
+	})
+	if err != nil {
+		return fircInterfaceProbeResult{
+			Interface: ifaceName,
+			Ok:        false,
+			LatencyMs: 0,
+			Error:     err.Error(),
+		}
+	}
+	if !httpprobe.SuccessCode(res.Metrics.HTTPCode) {
+		return fircInterfaceProbeResult{
+			Interface: ifaceName,
+			Ok:        false,
+			LatencyMs: 0,
+			HTTPCode:  res.Metrics.HTTPCode,
+			Error:     fmt.Sprintf("HTTP %d", res.Metrics.HTTPCode),
+		}
+	}
+	return fircInterfaceProbeResult{
+		Interface: ifaceName,
+		Ok:        true,
+		LatencyMs: computeFircInterfaceProbeLatencyMs(res.Metrics),
+		HTTPCode:  res.Metrics.HTTPCode,
+	}
+}
+
+func (h *FircHandler) handleProbeInterfaces(w http.ResponseWriter, r *http.Request) {
+	if h.op == nil {
+		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "firc operator not initialized", "UNAVAILABLE")
+		return
+	}
+	if h.isExplicitlyUnselected() {
+		h.rejectNotSelected(w)
+		return
+	}
+
+	var req fircInterfacesProbeRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "invalid request body", "BAD_REQUEST")
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "unexpected trailing request data", "BAD_REQUEST")
+		return
+	}
+
+	seen := make(map[string]struct{}, len(req.Interfaces))
+	uniqueIfaces := make([]string, 0, len(req.Interfaces))
+	for _, raw := range req.Interfaces {
+		iface := strings.TrimSpace(raw)
+		if iface == "" {
+			continue
+		}
+		if iface == "blackhole" || iface == "block" || !fircProbeIfaceNameRe.MatchString(iface) {
+			response.ErrorWithStatus(w, http.StatusBadRequest, fmt.Sprintf("invalid interface %q", iface), "BAD_REQUEST")
+			return
+		}
+		if _, exists := seen[iface]; exists {
+			continue
+		}
+		seen[iface] = struct{}{}
+		uniqueIfaces = append(uniqueIfaces, iface)
+	}
+	if len(uniqueIfaces) == 0 || len(uniqueIfaces) > 16 {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "interfaces must contain 1 to 16 unique interface names", "BAD_REQUEST")
+		return
+	}
+
+	checkURL := strings.TrimSpace(req.URL)
+	if checkURL != "" {
+		u, err := url.Parse(checkURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+			response.ErrorWithStatus(w, http.StatusBadRequest, "invalid probe url", "BAD_REQUEST")
+			return
+		}
+		checkURL = u.String()
+	} else if h.settingsStore != nil {
+		if s, err := h.settingsStore.Get(); err == nil && s != nil && strings.TrimSpace(s.ConnectivityCheckURL) != "" {
+			checkURL = strings.TrimSpace(s.ConnectivityCheckURL)
+		}
+	}
+	if checkURL == "" {
+		checkURL = storage.DefaultConnectivityCheckURL
+	}
+
+	probeFn := h.probeInterfaceFn
+	if probeFn == nil {
+		probeFn = probeFircInterfaceHTTP
+	}
+
+	probeCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	const maxConcurrent = 4
+	sem := make(chan struct{}, maxConcurrent)
+	results := make(map[string]fircInterfaceProbeResult, len(uniqueIfaces))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, iface := range uniqueIfaces {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-probeCtx.Done():
+				mu.Lock()
+				results[name] = fircInterfaceProbeResult{
+					Interface: name,
+					Ok:        false,
+					LatencyMs: 0,
+					Error:     probeCtx.Err().Error(),
+				}
+				mu.Unlock()
+				return
+			}
+			res := probeFn(probeCtx, name, checkURL)
+			if res.Interface == "" {
+				res.Interface = name
+			}
+			mu.Lock()
+			results[name] = res
+			mu.Unlock()
+		}(iface)
+	}
+	wg.Wait()
+
+	response.Success(w, fircInterfacesProbeResponse{
+		URL:       checkURL,
+		CheckedAt: time.Now().Unix(),
+		Results:   results,
+	})
 }
 
 func (h *FircHandler) handlePreviewTunnel(w http.ResponseWriter, r *http.Request) {
@@ -807,6 +1057,10 @@ func (h *FircHandler) handlePreviewTunnel(w http.ResponseWriter, r *http.Request
 	}
 	if err := firc.NormalizeTunnelSources(&tun, h.happKeysPath()); err != nil {
 		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "NORMALIZE_FAILED")
+		return
+	}
+	if err := firc.ValidateTunnelFilters(&tun); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_FILTER")
 		return
 	}
 	if h.isExplicitlyUnselected() || !h.op.IsRunning(r.Context()) {
@@ -1378,9 +1632,14 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, firc.ErrRecoveryRequired) {
 				status = http.StatusConflict
 			}
+			errMsg := err.Error()
+			var filterErr *subscription.FilterError
+			if errors.As(err, &filterErr) {
+				errMsg = filterErr.Error()
+			}
 			w.WriteHeader(status)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error":            err.Error(),
+				"error":            errMsg,
 				"recoveryRequired": h.op.IsRecoveryRequired(),
 			})
 			return
@@ -1442,6 +1701,7 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 			var wrapped struct {
 				ID     string       `json:"id,omitempty"`
 				Tunnel *firc.Tunnel `json:"tunnel,omitempty"`
+				Keys   []string     `json:"keys,omitempty"`
 			}
 			if json.Unmarshal(rawBody, &wrapped) == nil && wrapped.Tunnel != nil {
 				if err := firc.NormalizeTunnelSources(wrapped.Tunnel, h.happKeysPath()); err != nil {
@@ -1450,20 +1710,43 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 					_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 					return
 				}
-				if normBytes, err := json.Marshal(wrapped); err == nil {
-					rawBody = normBytes
-				}
-			} else {
-				var tun firc.Tunnel
-				if json.Unmarshal(rawBody, &tun) == nil && len(tun.Sources) > 0 {
-					if err := firc.NormalizeTunnelSources(&tun, h.happKeysPath()); err != nil {
+				if cleanSubPath == "/tunnels/preview" || cleanSubPath == "/tunnels/probe" {
+					if err := firc.ValidateTunnelFilters(wrapped.Tunnel); err != nil {
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusBadRequest)
 						_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 						return
 					}
-					if normBytes, err := json.Marshal(tun); err == nil {
-						rawBody = normBytes
+				}
+				if normBytes, err := json.Marshal(wrapped); err == nil {
+					rawBody = normBytes
+				}
+			} else {
+				var tun firc.Tunnel
+				if json.Unmarshal(rawBody, &tun) == nil {
+					changed := false
+					if len(tun.Sources) > 0 {
+						if err := firc.NormalizeTunnelSources(&tun, h.happKeysPath()); err != nil {
+							w.Header().Set("Content-Type", "application/json")
+							w.WriteHeader(http.StatusBadRequest)
+							_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+							return
+						}
+						changed = true
+					}
+					if cleanSubPath == "/tunnels/preview" || cleanSubPath == "/tunnels/probe" {
+						if err := firc.ValidateTunnelFilters(&tun); err != nil {
+							w.Header().Set("Content-Type", "application/json")
+							w.WriteHeader(http.StatusBadRequest)
+							_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+							return
+						}
+						changed = true
+					}
+					if changed {
+						if normBytes, err := json.Marshal(tun); err == nil {
+							rawBody = normBytes
+						}
 					}
 				}
 			}
@@ -1606,6 +1889,8 @@ func (h *FircHandler) serveOfflineV1Read(w http.ResponseWriter, r *http.Request,
 		payload = map[string]any{"tunnels": tunnels}
 	case cleanSubPath == "/tunnels/state":
 		payload = map[string]any{"tunnels": []firc.TunnelState{}}
+	case cleanSubPath == "/tunnels/probe":
+		payload = map[string]any{"total": 0, "nodes": []firc.ProbeNodeResult{}}
 	case cleanSubPath == "/groups":
 		groups, err := h.op.LoadGroupsFile()
 		if err != nil {

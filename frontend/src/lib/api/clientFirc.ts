@@ -13,6 +13,7 @@ import {
 	type FircGroupsStateRes,
 	type FircHost,
 	type FircInterfaceOption,
+	type FircInterfacesProbeRes,
 	type FircListPreviewRes,
 	type FircListRulesPage,
 	type FircMigrationOptions,
@@ -31,6 +32,7 @@ import {
 	type FircTunnel,
 	type FircTunnelSource,
 	type FircTunnelPreview,
+	type FircTunnelProbeProgress,
 	type FircTunnelProbeRow,
 	type FircTunnelState,
 	type FircExtConfig,
@@ -174,6 +176,8 @@ export class FircClient extends TelemtClient {
 			const res = await this.requestV1<{ tunnels?: FircTunnel[] }>('/tunnels');
 			return (res?.tunnels ?? []).map((t) => ({
 				...t,
+				filter: t.filter ?? '',
+				filterExclude: t.filterExclude ?? '',
 				description: stripFircEmojis(t.description),
 				sources: (t.sources ?? []).map((s) => ({
 					...s,
@@ -183,7 +187,11 @@ export class FircClient extends TelemtClient {
 		} catch {
 			const res = await this.request<{ tunnels?: FircTunnel[] } | FircTunnel[]>('/firc/tunnels');
 			const list = Array.isArray(res) ? res : (res?.tunnels ?? []);
-			return list;
+			return list.map((t) => ({
+				...t,
+				filter: t.filter ?? '',
+				filterExclude: t.filterExclude ?? '',
+			}));
 		}
 	}
 
@@ -205,6 +213,11 @@ export class FircClient extends TelemtClient {
 			...st,
 			active: (st.active ?? []).map(stripFircEmojis),
 			nodes: (st.nodes ?? []).map((n) => ({
+				...n,
+				name: stripFircEmojis(n.name),
+				source: stripFircEmojis(n.source),
+			})),
+			filteredNodes: (st.filteredNodes ?? []).map((n) => ({
 				...n,
 				name: stripFircEmojis(n.name),
 				source: stripFircEmojis(n.source),
@@ -245,6 +258,11 @@ export class FircClient extends TelemtClient {
 				name: stripFircEmojis(n.name),
 				source: stripFircEmojis(n.source),
 			})),
+			filteredNodes: (res?.filteredNodes ?? []).map((n) => ({
+				...n,
+				name: stripFircEmojis(n.name),
+				source: stripFircEmojis(n.source),
+			})),
 		};
 	}
 
@@ -262,29 +280,86 @@ export class FircClient extends TelemtClient {
 
 	private fircProbeQueue: Promise<unknown> = Promise.resolve();
 
-	async fircProbeTunnel(payload: { id?: string; tunnel?: FircTunnel }): Promise<FircTunnelProbeRow[]> {
+	async fircGetTunnelProbeProgress(): Promise<FircTunnelProbeProgress> {
+		const res = await this.requestV1<{ total?: number; nodes?: FircTunnelProbeRow[] }>(
+			'/tunnels/probe',
+		);
+		return {
+			total: res?.total ?? 0,
+			nodes: res?.nodes ?? [],
+		};
+	}
+
+	async fircProbeTunnel(
+		payload: { id?: string; tunnel?: FircTunnel; keys?: string[] },
+		options?: {
+			onProgress?: (rows: FircTunnelProbeRow[], total: number) => void;
+			pollIntervalMs?: number;
+		},
+	): Promise<FircTunnelProbeRow[]> {
 		const run = async (): Promise<FircTunnelProbeRow[]> => {
-			for (let attempt = 0; attempt < 4; attempt++) {
-				try {
-					const res = await this.requestV1<{ nodes?: FircTunnelProbeRow[] }>('/tunnels/probe', {
-						method: 'POST',
-						body: JSON.stringify(payload),
-					});
-					return res?.nodes ?? [];
-				} catch (err) {
-					const msg = err instanceof Error ? err.message.toLowerCase() : '';
-					if (msg.includes('already running') && attempt < 3) {
-						await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
-						continue;
+			let running = true;
+			let pollTimer: ReturnType<typeof setTimeout> | null = null;
+			const pollEveryMs = options?.pollIntervalMs ?? 800;
+
+			if (options?.onProgress) {
+				const schedulePoll = () => {
+					if (!running) return;
+					pollTimer = setTimeout(async () => {
+						if (!running) return;
+						const got = await this.fircGetTunnelProbeProgress().catch(() => null);
+						if (running && got && got.total > 0) {
+							options.onProgress?.(got.nodes ?? [], got.total);
+						}
+						if (running) schedulePoll();
+					}, pollEveryMs);
+				};
+				schedulePoll();
+			}
+
+			try {
+				for (let attempt = 0; attempt < 4; attempt++) {
+					try {
+						const res = await this.requestV1<{ nodes?: FircTunnelProbeRow[] }>('/tunnels/probe', {
+							method: 'POST',
+							body: JSON.stringify(payload),
+						});
+						return res?.nodes ?? [];
+					} catch (err) {
+						const msg = err instanceof Error ? err.message.toLowerCase() : '';
+						if (msg.includes('already running') && attempt < 3) {
+							await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+							continue;
+						}
+						throw err;
 					}
-					throw err;
+				}
+				return [];
+			} finally {
+				running = false;
+				if (pollTimer !== null) {
+					clearTimeout(pollTimer);
 				}
 			}
-			return [];
 		};
 		const next = this.fircProbeQueue.then(run, run);
 		this.fircProbeQueue = next.catch(() => {});
 		return next;
+	}
+
+	async fircProbeInterfaces(
+		interfaces: string[],
+		url?: string,
+	): Promise<FircInterfacesProbeRes> {
+		const trimmed = interfaces.map((s) => s.trim()).filter((s) => s.length > 0);
+		const body: { interfaces: string[]; url?: string } = { interfaces: trimmed };
+		if (url && url.trim()) {
+			body.url = url.trim();
+		}
+		return this.request<FircInterfacesProbeRes>('/firc/interfaces/probe', {
+			method: 'POST',
+			body: JSON.stringify(body),
+		});
 	}
 
 	// ── Groups & Rules (v1 native daemon) ──

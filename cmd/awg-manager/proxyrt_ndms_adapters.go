@@ -27,6 +27,7 @@ type policyLister interface {
 }
 type defaultRouteSetter interface {
 	SetDefaultRoute(ctx context.Context, iface query.Confirmed) error
+	RemoveDefaultRoute(ctx context.Context, iface query.Confirmed) error
 }
 type systemNameResolver interface {
 	ResolveSystemName(ctx context.Context, ndmsName string) string
@@ -46,6 +47,10 @@ type proxyNDMSCommands struct {
 
 func (c proxyNDMSCommands) EnsureDefaultRouteCandidacy(ctx context.Context, name string) error {
 	return confirmSet(ctx, c.ifaces, name, func(ic query.Confirmed) error { return c.routes.SetDefaultRoute(ctx, ic) })
+}
+
+func (c proxyNDMSCommands) RemoveDefaultRouteCandidacy(ctx context.Context, name string) error {
+	return confirmTeardown(ctx, c.ifaces, name, func(ic query.Confirmed) error { return c.routes.RemoveDefaultRoute(ctx, ic) })
 }
 
 // proxyNDMSQuery — ndmsres.Query. Факты интерфейса — из списка (отсутствие в

@@ -338,14 +338,31 @@ func (c *Client) PreviewTunnel(ctx context.Context, draft Tunnel) (*PreviewRespo
 
 // ProbeTunnel triggers a live health/latency probe of all nodes in a saved tunnel (by ID) or draft tunnel.
 func (c *Client) ProbeTunnel(ctx context.Context, id string, draft *Tunnel) (*ProbeResponse, error) {
+	return c.ProbeTunnelKeys(ctx, id, draft, nil)
+}
+
+// ProbeTunnelKeys triggers a live health/latency probe of a saved or draft tunnel, optionally limited to keys.
+func (c *Client) ProbeTunnelKeys(ctx context.Context, id string, draft *Tunnel, keys []string) (*ProbeResponse, error) {
 	payload := make(map[string]interface{})
 	if id != "" {
 		payload["id"] = id
 	} else if draft != nil {
 		payload["tunnel"] = draft
 	}
+	if len(keys) > 0 {
+		payload["keys"] = keys
+	}
 	var out ProbeResponse
 	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/tunnels/probe", payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetTunnelProbeProgress returns partial rows of the currently running probe via GET /api/v1/tunnels/probe.
+func (c *Client) GetTunnelProbeProgress(ctx context.Context) (*ProbeProgressResponse, error) {
+	var out ProbeProgressResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/tunnels/probe", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

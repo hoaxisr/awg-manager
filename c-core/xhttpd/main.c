@@ -599,7 +599,7 @@ static void *client_conn_thread(void *arg) {
             char body[384];
             int blen = snprintf(body, sizeof(body),
                 "{\"status\":\"ok\",\"engine\":\"c/1\",\"version\":\"%s\",\"pid\":%d,"
-                "\"capabilities\":[\"vless-xhttp\",\"finiteproto-v2\"],"
+                "\"capabilities\":[\"vless-xhttp\",\"finiteproto-v2\",\"finiteproto-udp\"],"
                 "\"active_sessions\":%d,\"pre_auth_sessions\":%d,"
                 "\"buffered_bytes\":%zu,\"pre_auth_bytes\":%zu,\"fp_sessions\":%d}\n",
                 XHTTPD_VERSION, (int)getpid(), vl_active, vl_pre_auth, vl_buf, vl_pa_buf, fp_active);

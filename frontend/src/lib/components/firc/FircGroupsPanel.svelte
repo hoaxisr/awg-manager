@@ -4,9 +4,25 @@
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
-	import { reloadFircAll, fircSyncNonce } from '$lib/stores/firc';
+	import {
+		reloadFircAll,
+		fircSyncNonce,
+		fircInterfaceProbeResults,
+		fircProbeResults,
+	} from '$lib/stores/firc';
 	import { fircMigrationAppliedNonce } from '$lib/stores/fircMigrationModal';
-	import { Button, Badge, Toggle, Modal, StatusDot, type DropdownOption } from '$lib/components/ui';
+	import { Button, Badge, Toggle, Modal, ConfirmModal, StatusDot, type DropdownOption } from '$lib/components/ui';
+	import FircGroupDevicesModal from './FircGroupDevicesModal.svelte';
+	import FircBulkGroupsBar from './FircBulkGroupsBar.svelte';
+	import FircBulkRulesBar from './FircBulkRulesBar.svelte';
+	import FircBulkRulesEditorModal from './FircBulkRulesEditorModal.svelte';
+	import {
+		applyBulkGroupAction,
+		applyBulkRuleAction,
+		detectFircRuleType,
+		type BulkGroupAction,
+		type BulkRuleAction,
+	} from '$lib/utils/fircBulkRules';
 	import ServiceTile from '$lib/components/sb-router/ServiceTile.svelte';
 	import { ServiceCatalogModal } from '$lib/components/dnsroutes';
 	import { presetCatalog, loadPresetCatalog } from '$lib/stores/presets';
@@ -35,14 +51,27 @@
 		X,
 		LayoutGrid,
 		RotateCcw,
-		Check,
 		Copy,
+		Zap,
+		Edit3,
+		FilePen,
 	} from 'lucide-svelte';
 	import {
 		saveFircGroupsDraft,
 		loadFircGroupsDraft,
 		clearFircGroupsDraft,
 	} from '$lib/stores/fircDraft';
+	import {
+		friendlyIfaceLabel,
+		getEffectiveInterfaceProbe,
+		isInternalServerFircInterface,
+		isSelectableFircFallbackInterface,
+		resolveInterfaceHealth,
+		resolveGroupActiveInterface,
+		resolveProxyGroupRuntime,
+		probeLatencyTone,
+		formatProbeLatency,
+	} from '$lib/utils/fircFallback';
 	import {
 		FIRC_RULE_TYPES,
 		extractFircGroupDomainLines,
@@ -54,10 +83,12 @@
 		type FircGroupLive,
 		type FircHost,
 		type FircInterfaceOption,
+		type FircInterfaceProbeResult,
 		type FircListPreviewRes,
 		type FircListRule,
 		type FircPolicy,
 		type FircRule,
+		type FircRuleType,
 		type FircSystemResolver,
 		type FircTunnelState,
 		type FircExtConfig,
@@ -126,6 +157,9 @@
 	let loading = $state(true);
 	let saving = $state(false);
 	let syncingGroup = $state<Record<string, boolean>>({});
+	let probingIfaces = $state<Record<string, boolean>>({});
+	let probingGroups = $state<Record<string, boolean>>({});
+	let destroyed = false;
 	let searchQuery = $state('');
 	let expandedGroups = $state<Record<string, boolean>>({});
 	let rulePageMap = $state<Record<string, number>>({});
@@ -346,6 +380,16 @@
 					},
 				};
 			}
+
+			const nowSec = Math.floor(Date.now() / 1000);
+			const existingProbes = get(fircInterfaceProbeResults);
+			const staleIfaces = allFallbackInterfaceIds().filter((id) => {
+				const prev = existingProbes[id];
+				return !prev?.checkedAt || nowSec - prev.checkedAt > 60;
+			});
+			if (staleIfaces.length > 0) {
+				void probeFallbackInterfaces(staleIfaces, { silent: true });
+			}
 		} catch (e) {
 			notifications.error(`Ошибка загрузки групп FIRC: ${(e as Error).message}`);
 		} finally {
@@ -448,6 +492,7 @@
 	});
 
 	onDestroy(() => {
+		destroyed = true;
 		if (pollTimer) clearInterval(pollTimer);
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('click', handleWindowClick);
@@ -603,6 +648,141 @@
 		return id;
 	}
 
+	function getIfaceProbe(id: string): FircInterfaceProbeResult | null {
+		return getEffectiveInterfaceProbe(
+			id,
+			$fircInterfaceProbeResults,
+			$fircProbeResults,
+			tunnelsState,
+		);
+	}
+
+	function resolveGroupActive(group: FircGroup) {
+		const list = normalizeIfaceList(group.interface);
+		const probesMap: Record<string, FircInterfaceProbeResult> = {};
+		for (const id of list) {
+			const p = getIfaceProbe(id);
+			if (p) probesMap[id] = p;
+		}
+		return resolveGroupActiveInterface(
+			group,
+			liveMap[group.id],
+			liveMap,
+			tunnelsState,
+			interfaces,
+			probesMap,
+		);
+	}
+
+	function resolveIfaceState(group: FircGroup | undefined, id: string) {
+		return resolveInterfaceHealth(
+			id,
+			group ? liveMap[group.id] : undefined,
+			liveMap,
+			tunnelsState,
+			interfaces,
+			getIfaceProbe(id),
+		);
+	}
+
+	function allFallbackInterfaceIds(): string[] {
+		const out = new Set<string>();
+		for (const pg of extConfig.proxyGroups) {
+			for (const id of pg.interfaces ?? []) {
+				if (id && !isSpecialIface(id)) out.add(id);
+			}
+		}
+		for (const g of groups) {
+			const list = normalizeIfaceList(g.interface);
+			if (list.length > 1) {
+				for (const id of list) {
+					if (id && !isSpecialIface(id)) out.add(id);
+				}
+			}
+		}
+		return Array.from(out);
+	}
+
+	async function probeFallbackInterfaces(
+		ids: string[],
+		opts?: { groupKey?: string; url?: string; silent?: boolean },
+	): Promise<void> {
+		const uniqueIds = Array.from(
+			new Set(ids.map((x) => x.trim()).filter((x) => x.length > 0 && !isSpecialIface(x))),
+		);
+		if (uniqueIds.length === 0) return;
+		const gKey = opts?.groupKey;
+		if (gKey && probingGroups[gKey]) return;
+
+		const nextProbing = { ...probingIfaces };
+		for (const id of uniqueIds) nextProbing[id] = true;
+		probingIfaces = nextProbing;
+		if (gKey) {
+			probingGroups = { ...probingGroups, [gKey]: true };
+		}
+
+		try {
+			const allResults: Record<string, FircInterfaceProbeResult> = {};
+			for (let i = 0; i < uniqueIds.length; i += 16) {
+				const chunk = uniqueIds.slice(i, i + 16);
+				const res = await api.fircProbeInterfaces(chunk, opts?.url);
+				if (destroyed) return;
+				const ts = res?.checkedAt ?? Math.floor(Date.now() / 1000);
+				for (const [k, r] of Object.entries(res?.results ?? {})) {
+					allResults[k] = { ...r, checkedAt: ts };
+				}
+			}
+			fircInterfaceProbeResults.update((prev) => ({
+				...prev,
+				...allResults,
+			}));
+
+			if (!opts?.silent) {
+				if (uniqueIds.length === 1) {
+					const onlyId = uniqueIds[0];
+					const r = allResults[onlyId];
+					const lbl = friendlyIfaceLabel(onlyId, interfaces, tunnelsState);
+					if (r?.ok) {
+						notifications.success(
+							m.firc_fallback_toast_latency({ name: lbl, ms: Math.round(r.latencyMs) }),
+						);
+					} else {
+						notifications.warning(
+							m.firc_fallback_toast_timeout({
+								name: lbl,
+								error: r?.error ? ` (${r.error})` : '',
+							}),
+						);
+					}
+				} else {
+					const okCount = uniqueIds.filter((id) => allResults[id]?.ok).length;
+					notifications.success(
+						m.firc_fallback_probe_updated({ ok: okCount, total: uniqueIds.length }),
+					);
+				}
+			}
+		} catch (e) {
+			if (!opts?.silent && !destroyed) {
+				notifications.error(
+					m.firc_fallback_probe_error({
+						error: e instanceof Error ? e.message : String(e),
+					}),
+				);
+			}
+		} finally {
+			if (!destroyed) {
+				const cleared = { ...probingIfaces };
+				for (const id of uniqueIds) delete cleared[id];
+				probingIfaces = cleared;
+				if (gKey) {
+					const nextG = { ...probingGroups };
+					delete nextG[gKey];
+					probingGroups = nextG;
+				}
+			}
+		}
+	}
+
 	async function openProxyGroupsModal() {
 		openPickerGroupId = null;
 		if (!(await refreshProxyGroups())) return;
@@ -721,16 +901,22 @@
 			: `${shortIfaceTag(list[0])} → +${list.length - 1} резерв`;
 	}
 
+	function formatCompactOutboundLabel(
+		group: FircGroup,
+		activeIface: string | null,
+		isFallbackGroup: boolean,
+		allDead: boolean,
+	): string {
+		if (isFallbackGroup) {
+			if (allDead) return m.firc_fallback_no_active();
+			const target = activeIface || primaryIface(group.interface);
+			return target ? friendlyIfaceLabel(target, interfaces, tunnelsState) : '—';
+		}
+		return formatIfaceButtonText(group);
+	}
+
 	function isInternalServerIface(opt: FircInterfaceOption): boolean {
-		const rawName = (opt.name || opt.ndmsName || '').trim();
-		const lower = rawName.toLowerCase();
-		if (opt.id === 'opkgtun17' || opt.id === 'opkgtun19' || lower.includes('awgm wdtt')) {
-			return true;
-		}
-		if (lower.includes('vpn server') || rawName === 'AWGM') {
-			return true;
-		}
-		return false;
+		return isInternalServerFircInterface(opt);
 	}
 
 	function tunnelSortPriority(id: string): number {
@@ -786,7 +972,7 @@
 		const list: { value: string; label: string; role: string }[] = [];
 		const seen = new Set<string>();
 		for (const opt of interfaces) {
-			if (!opt.id || seen.has(opt.id) || opt.id.startsWith('t2s')) continue;
+			if (!opt.id || opt.id === 'blackhole' || opt.id === 'block' || seen.has(opt.id) || opt.id.startsWith('t2s')) continue;
 			if (isInternalServerIface(opt) && gmInterface !== opt.id) continue;
 			seen.add(opt.id);
 			const prefix = opt.role === 'wan' ? 'Direct: ' : '';
@@ -1410,126 +1596,160 @@
 	// ── Modal 2: Devices Filter Modal ──
 	let devicesModalOpen = $state(false);
 	let devicesModalIndex = $state<number | null>(null);
-	let dmMode = $state<'all' | 'allow'>('all');
-	let dmEntries = $state<Set<string>>(new Set());
-	let dmInitialOrder = $state<Set<string>>(new Set());
-	let dmSearchQuery = $state('');
-	let dmManualInput = $state('');
 
-	function hostEntryKey(h: FircHost): string {
-		return h.mac ? `mac:${h.mac.toLowerCase()}` : h.ip;
-	}
-
-	function formatHostMeta(h: FircHost): string {
-		const validIp = h.ip && h.ip !== '0.0.0.0' ? h.ip : '';
-		const macStr = h.mac ? h.mac.toUpperCase() : '';
-		if (validIp && macStr) return `${validIp} · ${macStr}`;
-		return validIp || macStr || h.ip || '';
-	}
-
-	function formatEntryChipLabel(entry: string): string {
-		if (entry.startsWith('policy:')) {
-			const pName = entry.slice('policy:'.length);
-			const pol = policies.find((p) => p.name === pName);
-			return pol?.description ? `${pol.description} (${pName})` : entry;
-		}
-		if (entry.startsWith('mac:')) {
-			const mac = entry.slice('mac:'.length).toLowerCase();
-			const h = hosts.find((x) => x.mac?.toLowerCase() === mac);
-			if (h?.name) return `${h.name} (${mac})`;
-		}
-		const byIp = hosts.find((x) => x.ip === entry && x.ip !== '0.0.0.0');
-		if (byIp?.name) return `${byIp.name} (${entry})`;
-		return entry;
-	}
-
-	let sortedPolicies = $derived.by(() => {
-		return [...policies].sort((a, b) => {
-			const aSel = dmInitialOrder.has(`policy:${a.name}`) ? 1 : 0;
-			const bSel = dmInitialOrder.has(`policy:${b.name}`) ? 1 : 0;
-			if (aSel !== bSel) return bSel - aSel;
-			return (a.description || a.name).localeCompare(b.description || b.name);
-		});
+	let devicesModalGroup = $derived(
+		devicesModalIndex !== null ? (groups[devicesModalIndex] ?? null) : null,
+	);
+	let devicesModalInitial = $derived.by<FircDeviceSelector | undefined>(() => {
+		const g = devicesModalGroup;
+		if (!g) return undefined;
+		return {
+			allow: (g.devices?.allow ?? []).filter((x) => !MANAGED_SERVER_SUBNETS.has(x)),
+			deny: [...(g.devices?.deny ?? [])],
+		};
 	});
 
-	let filteredSortedHosts = $derived.by(() => {
-		const q = dmSearchQuery.trim().toLowerCase();
-		const base = q
-			? hosts.filter(
-					(h) =>
-						(h.name && h.name.toLowerCase().includes(q)) ||
-						(h.ip && h.ip.toLowerCase().includes(q)) ||
-						(h.mac && h.mac.toLowerCase().includes(q)),
-				)
-			: [...hosts];
-		return base.sort((a, b) => {
-			const aSel = dmInitialOrder.has(hostEntryKey(a)) ? 1 : 0;
-			const bSel = dmInitialOrder.has(hostEntryKey(b)) ? 1 : 0;
-			if (aSel !== bSel) return bSel - aSel;
-			return (a.name || a.ip || a.mac || '').localeCompare(b.name || b.ip || b.mac || '');
-		});
-	});
-
-	let selectedPoliciesCount = $derived(
-		policies.filter((p) => dmEntries.has(`policy:${p.name}`)).length,
-	);
-	let selectedHostsCount = $derived(
-		hosts.filter((h) => dmEntries.has(hostEntryKey(h))).length,
-	);
+	let devicesModalBulk = $state(false);
 
 	function openDevicesModal(index: number) {
-		const g = groups[index];
-		if (!g) return;
+		if (!groups[index]) return;
+		devicesModalBulk = false;
 		devicesModalIndex = index;
-		const allow = (g.devices?.allow ?? []).filter((x) => !MANAGED_SERVER_SUBNETS.has(x));
-		const deny = g.devices?.deny ?? [];
-		if (allow.length > 0) {
-			dmMode = 'allow';
-			dmEntries = new Set(allow);
-			dmInitialOrder = new Set(allow);
-		} else {
-			dmMode = 'all';
-			dmEntries = new Set(deny);
-			dmInitialOrder = new Set(deny);
-		}
-		dmSearchQuery = '';
-		dmManualInput = '';
 		devicesModalOpen = true;
 	}
 
-	function clearAllDeviceEntries() {
-		dmEntries = new Set();
+	function openBulkDevicesModal() {
+		if (selectedGroupIds.size === 0) return;
+		devicesModalBulk = true;
+		devicesModalIndex = null;
+		devicesModalOpen = true;
 	}
 
-	function toggleDeviceEntry(entry: string) {
-		const next = new Set(dmEntries);
-		if (next.has(entry)) next.delete(entry);
-		else next.add(entry);
-		dmEntries = next;
-	}
-
-	function addManualDeviceEntry() {
-		const v = dmManualInput.trim();
-		if (!v) return;
-		const next = new Set(dmEntries);
-		next.add(v);
-		dmEntries = next;
-		dmManualInput = '';
-	}
-
-	function saveDevicesModal() {
-		if (devicesModalIndex === null || !groups[devicesModalIndex]) return;
-		const arr = Array.from(dmEntries);
-		if (dmMode === 'allow' && arr.length === 0) {
-			notifications.warning(
-				'Выберите хотя бы одно устройство или политику для режима «Только для отмеченных»',
-			);
+	function applyDevicesModal(selector: FircDeviceSelector) {
+		if (devicesModalBulk) {
+			runBulkGroupAction({ kind: 'setDevices', devices: selector });
+			devicesModalBulk = false;
+			devicesModalOpen = false;
 			return;
 		}
-		const selector: FircDeviceSelector =
-			dmMode === 'allow' ? { allow: arr, deny: [] } : { allow: [], deny: arr };
+		if (devicesModalIndex === null || !groups[devicesModalIndex]) return;
 		groups[devicesModalIndex].devices = selector;
 		devicesModalOpen = false;
+	}
+
+	// ── Bulk Selection & Batch Editing ──
+	let groupSelectMode = $state(false);
+	let selectedGroupIds = $state<Set<string>>(new Set());
+	let confirmBulkDeleteGroupsOpen = $state(false);
+	let selectedRuleIdsByGroup = $state<Record<string, Set<string>>>({});
+	let bulkRulesEditorOpen = $state(false);
+	let bulkRulesEditorGroupIndex = $state<number | null>(null);
+	let bulkRulesEditorGroup = $derived(
+		bulkRulesEditorGroupIndex !== null ? (groups[bulkRulesEditorGroupIndex] ?? null) : null,
+	);
+
+	function toggleGroupSelectMode() {
+		groupSelectMode = !groupSelectMode;
+		if (!groupSelectMode) {
+			selectedGroupIds = new Set();
+			confirmBulkDeleteGroupsOpen = false;
+		}
+	}
+
+	function toggleGroupSelected(id: string) {
+		const next = new Set(selectedGroupIds);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
+		selectedGroupIds = next;
+	}
+
+	function selectAllVisibleGroups() {
+		selectedGroupIds = new Set(filteredGroups.map((entry) => entry.group.id));
+	}
+
+	function clearSelectedGroups() {
+		selectedGroupIds = new Set();
+	}
+
+	function runBulkGroupAction(action: BulkGroupAction) {
+		const res = applyBulkGroupAction(groups, selectedGroupIds, action);
+		if (res.affected === 0) return;
+		groups = res.groups;
+		if (action.kind === 'delete') {
+			const remainingIds = new Set(res.groups.map((g) => g.id));
+			selectedGroupIds = new Set(Array.from(selectedGroupIds).filter((id) => remainingIds.has(id)));
+			confirmBulkDeleteGroupsOpen = false;
+			notifications.success(m.firc_bulk_groups_deleted_toast({ count: res.affected }));
+		} else {
+			notifications.success(m.firc_bulk_groups_updated_toast({ count: res.affected }));
+		}
+	}
+
+	function getSelectedRuleSet(groupId: string): Set<string> {
+		return selectedRuleIdsByGroup[groupId] ?? new Set<string>();
+	}
+
+	function toggleRuleSelected(groupId: string, ruleId: string) {
+		const current = getSelectedRuleSet(groupId);
+		const next = new Set(current);
+		if (next.has(ruleId)) next.delete(ruleId);
+		else next.add(ruleId);
+		selectedRuleIdsByGroup = { ...selectedRuleIdsByGroup, [groupId]: next };
+	}
+
+	function selectAllRulesInGroup(group: FircGroup) {
+		selectedRuleIdsByGroup = {
+			...selectedRuleIdsByGroup,
+			[group.id]: new Set(group.rules.map((r) => r.id)),
+		};
+	}
+
+	function clearSelectedRulesInGroup(groupId: string) {
+		selectedRuleIdsByGroup = {
+			...selectedRuleIdsByGroup,
+			[groupId]: new Set(),
+		};
+	}
+
+	function runBulkRuleAction(groupIndex: number, action: BulkRuleAction) {
+		const src = groups[groupIndex];
+		if (!src) return;
+		const sel = getSelectedRuleSet(src.id);
+		const targetGroup =
+			action.kind === 'move' ? groups.find((g) => g.id === action.targetGroupId) : undefined;
+		const res = applyBulkRuleAction(groups, groupIndex, sel, action);
+		if (res.affected === 0) return;
+		groups = res.groups;
+		if (action.kind === 'move') {
+			clearSelectedRulesInGroup(src.id);
+			expandedGroups = { ...expandedGroups, [action.targetGroupId]: true };
+			notifications.success(
+				m.firc_bulk_rules_moved_toast({
+					target: targetGroup?.name ?? '',
+					count: res.affected,
+				}),
+			);
+		} else if (action.kind === 'delete') {
+			clearSelectedRulesInGroup(src.id);
+			notifications.success(m.firc_bulk_rules_deleted_toast({ count: res.affected }));
+		}
+	}
+
+	function openBulkRulesEditor(index: number) {
+		if (!groups[index]) return;
+		bulkRulesEditorGroupIndex = index;
+		bulkRulesEditorOpen = true;
+	}
+
+	function applyBulkRulesEditor(nextRules: FircRule[]) {
+		const idx = bulkRulesEditorGroupIndex;
+		if (idx === null || !groups[idx]) return;
+		const groupId = groups[idx].id;
+		groups = groups.map((g, i) => (i === idx ? { ...g, rules: nextRules } : g));
+		expandedGroups = { ...expandedGroups, [groupId]: true };
+		clearSelectedRulesInGroup(groupId);
+		bulkRulesEditorOpen = false;
+		notifications.success(m.firc_bulk_rules_editor_applied_toast({ count: nextRules.length }));
 	}
 
 	// ── Modal 3: Bulk Import Rules Modal ──
@@ -1541,14 +1761,6 @@
 		importRulesGroupIndex = index;
 		importRulesText = '';
 		importRulesModalOpen = true;
-	}
-
-	function detectRuleType(line: string): string {
-		if (/^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(line)) return 'subnet';
-		if (line.includes(':') && /^[0-9a-fA-F:/]+$/.test(line)) return 'subnet6';
-		if (line.includes('*')) return 'wildcard';
-		if (line.startsWith('^') || line.endsWith('$') || line.includes('\\')) return 'regex';
-		return 'namespace';
 	}
 
 	function submitImportRules() {
@@ -1563,7 +1775,7 @@
 		}
 		const newRules: FircRule[] = lines.map((line) => ({
 			id: randomHexId(),
-			type: detectRuleType(line),
+			type: detectFircRuleType(line),
 			rule: line,
 			enable: true,
 		}));
@@ -1890,6 +2102,14 @@
 				{#snippet iconBefore()}<LayoutGrid size={14} />{/snippet}
 				Каталог сервисов
 			</Button>
+			<Button
+				variant={groupSelectMode ? 'primary' : 'ghost'}
+				size="sm"
+				onclick={toggleGroupSelectMode}
+			>
+				{#snippet iconBefore()}<Edit3 size={14} />{/snippet}
+				{groupSelectMode ? m.firc_bulk_select_groups_done() : m.firc_bulk_select_groups_btn()}
+			</Button>
 			<Button variant="secondary" size="sm" onclick={openCreateGroupModal}>
 				{#snippet iconBefore()}<Plus size={14} />{/snippet}
 				Добавить группу
@@ -1897,22 +2117,155 @@
 		</div>
 	</div>
 
+	{#if groupSelectMode}
+		<FircBulkGroupsBar
+			selectedCount={selectedGroupIds.size}
+			visibleCount={filteredGroups.length}
+			interfaces={availableInterfaces}
+			proxyGroups={extConfig.proxyGroups}
+			onSelectAllVisible={selectAllVisibleGroups}
+			onDeselectAll={clearSelectedGroups}
+			onDone={toggleGroupSelectMode}
+			onSetInterface={(iface) => runBulkGroupAction({ kind: 'setInterface', iface })}
+			onOpenDevices={openBulkDevicesModal}
+			onEnable={() => runBulkGroupAction({ kind: 'enable', enable: true })}
+			onDisable={() => runBulkGroupAction({ kind: 'enable', enable: false })}
+			onCopyDomains={() => copySelectedGroupDomains(Array.from(selectedGroupIds))}
+			onDelete={() => (confirmBulkDeleteGroupsOpen = true)}
+		/>
+	{/if}
+
 	<p class="priority-hint">
 		Порядок групп определяет приоритет маршрутизации сверху вниз. Для каждого домена или IP применяется первая совпавшая группа.
 	</p>
 
 	{#if extConfig.proxyGroups.length > 0}
-		<div class="pg-strip">
-			<span class="pg-strip-label">Прокси-группы Fallback:</span>
-			{#each extConfig.proxyGroups as pg (pg.id)}
-				<button type="button" class="pg-strip-chip" onclick={openProxyGroupsModal}>
-					<strong>{pg.name}</strong>
-					<span class="pg-strip-chain">{pg.interfaces.map(shortIfaceTag).join(' → ')}</span>
-				</button>
-			{/each}
-			<button type="button" class="pg-strip-add" onclick={openProxyGroupsModal}>
-				+ Изменить
-			</button>
+		{@const allFallbackIds = allFallbackInterfaceIds()}
+		{@const singlePg = extConfig.proxyGroups.length === 1}
+		<div class="pg-panel">
+			<div class="pg-panel-head">
+				<div class="pg-panel-title">
+					<Shield size={13} />
+					<span>{m.firc_fallback_panel_title()}</span>
+				</div>
+				<div class="pg-panel-actions">
+					{#if allFallbackIds.length > 0}
+						<button
+							type="button"
+							class="pg-action-btn"
+							disabled={Boolean(probingGroups['__all_pg__'])}
+							onclick={() => probeFallbackInterfaces(allFallbackIds, { groupKey: '__all_pg__' })}
+							title={m.firc_fallback_test_all_title()}
+						>
+							<Zap size={12} class={probingGroups['__all_pg__'] ? 'spin' : ''} />
+							<span>
+								{probingGroups['__all_pg__']
+									? m.firc_fallback_testing()
+									: singlePg
+										? m.firc_fallback_test()
+										: m.firc_fallback_test_all()}
+							</span>
+						</button>
+					{/if}
+					<button
+						type="button"
+						class="pg-action-btn ghost"
+						onclick={openProxyGroupsModal}
+						title={m.firc_fallback_configure_chain()}
+					>
+						<Settings size={12} />
+						<span>{m.firc_fallback_edit()}</span>
+					</button>
+				</div>
+			</div>
+
+			<div class="pg-rows">
+				{#each extConfig.proxyGroups as pg (pg.id)}
+					{@const rt = resolveProxyGroupRuntime(
+						pg,
+						groups,
+						liveMap,
+						tunnelsState,
+						interfaces,
+						$fircInterfaceProbeResults,
+						$fircProbeResults,
+					)}
+					{@const isPgTesting = Boolean(probingGroups[`pg:${pg.id}`])}
+					<div class="pg-row" class:is-backup={rt.isOnBackup} class:all-dead={rt.allDead}>
+						<div class="pg-row-ident">
+							<span
+								class="iface-dot"
+								class:alive={Boolean(rt.activeIface) && !rt.isOnBackup}
+								class:backup={rt.isOnBackup}
+								class:dead={rt.allDead}
+								class:unknown={!rt.activeIface && !rt.allDead}
+							></span>
+							<strong class="pg-row-name" title={pg.name}>{pg.name}</strong>
+							{#if rt.isOnBackup && rt.activeIface}
+								<span
+									class="backup-badge"
+									title={m.firc_fallback_active_backup_title({ iface: rt.activeIface })}
+								>
+									{m.firc_fallback_backup_prefix()}
+								</span>
+							{:else if rt.allDead}
+								<span class="dead-badge" title={m.firc_fallback_all_dead_title()}>
+									{m.firc_fallback_unavailable()}
+								</span>
+							{/if}
+						</div>
+
+						<div class="pg-chain-inline">
+							{#each rt.members as mem, mIdx (mem.id)}
+								{@const tone = probeLatencyTone(mem.probe)}
+								{@const checking = Boolean(probingIfaces[mem.id])}
+								{#if mIdx > 0}
+									<span class="pg-chain-sep" aria-hidden="true">›</span>
+								{/if}
+								<button
+									type="button"
+									class="pg-node-pill"
+									class:is-active={mem.isActive && !rt.isOnBackup}
+									class:is-backup={mem.isActive && rt.isOnBackup}
+									class:is-dead={mem.state === 'dead'}
+									disabled={checking}
+									onclick={() => probeFallbackInterfaces([mem.id])}
+									title={`${mem.id}${mem.isActive ? ` · ${m.firc_fallback_active_marker()}` : ''}${mem.error ? ` · ${mem.error}` : ''} · ${m.firc_fallback_test_iface_title({ name: mem.label })}`}
+								>
+									<span
+										class="pg-mem-dot"
+										class:active={mem.isActive && !rt.isOnBackup}
+										class:backup={mem.isActive && rt.isOnBackup}
+										class:alive={!mem.isActive && mem.state === 'alive'}
+										class:dead={mem.state === 'dead'}
+										class:unknown={!mem.isActive && mem.state === 'unknown'}
+									></span>
+									<span class="pg-node-name">{mem.label}</span>
+									<span class="pg-node-delay {tone}">
+										{#if checking}
+											<RefreshCw size={10} class="spin" />
+										{:else}
+											{formatProbeLatency(mem.probe)}
+										{/if}
+									</span>
+								</button>
+							{/each}
+						</div>
+
+						{#if !singlePg}
+							<button
+								type="button"
+								class="pg-action-btn mini icon-only"
+								disabled={isPgTesting || pg.interfaces.length === 0}
+								onclick={() => probeFallbackInterfaces(pg.interfaces, { groupKey: `pg:${pg.id}` })}
+								title={m.firc_fallback_test_group_title({ name: pg.name })}
+							>
+								<Zap size={11} class={isPgTesting ? 'spin' : ''} />
+							</button>
+						{/if}
+					</div>
+				{/each}
+			</div>
 		</div>
 	{/if}
 
@@ -1944,26 +2297,125 @@
 				{@const listPage = listPages[group.id]}
 				{@const hasCustomDevices = (group.devices?.allow?.length ?? 0) > 0 || (group.devices?.deny?.length ?? 0) > 0}
 				{@const toneCls = outboundToneClass(ifaceVal)}
-				{@const liveInfo = liveMap[group.id]}
-				{@const activeBackup = liveInfo?.active && ifaceList.length > 1 && liveInfo.active !== ifaceList[0] ? liveInfo.active : null}
+				{@const activeRes = resolveGroupActive(group)}
+				{@const activeIface = activeRes.active}
+				{@const activeBackup = activeRes.isBackup ? activeIface : null}
+				{@const isFallbackGroup = ifaceList.length > 1 && !isSpecialIface(ifaceList[0])}
+				{@const matchedPg = matchingProxyGroup(group)}
+				{@const primaryProbe = !isBlock && !isBlackhole && (activeIface || ifaceVal) ? getIfaceProbe(activeIface || ifaceVal) : null}
 				{@const isPickerOpen = openPickerGroupId === group.id}
 				{@const pickerGroups = getPickerGroups(group)}
 				{@const canAddMoreIfaces = ifaceList.length > 0 && !isSpecialIface(ifaceList[0]) && ifaceList.length < MAX_GROUP_IFACES}
+				{@const selectedRuleSet = getSelectedRuleSet(group.id)}
 
 				<div
 					class="card-wrap {groupAccentClass(group)}"
 					class:disabled-card={!group.enable}
 					class:picker-open-card={isPickerOpen}
+					class:bulk-selected-card={groupSelectMode && selectedGroupIds.has(group.id)}
 				>
 					{#if groupView === 'grid'}
 						<div class="compact-group-card">
 							<div class="compact-group-heading">
+								{#if groupSelectMode}
+									<input
+										type="checkbox"
+										class="bulk-check"
+										checked={selectedGroupIds.has(group.id)}
+										aria-label={m.firc_bulk_groups_select_aria({ name: group.name })}
+										onchange={() => toggleGroupSelected(group.id)}
+									/>
+								{/if}
 								<span class="compact-priority" title="Приоритет правила">{orderStr}</span>
 								<StatusDot variant={groupStatusDotVariant(group)} size="sm" />
 								<strong>{group.name}</strong>
 								<Badge variant={group.enable ? 'muted' : 'warning'} size="xs">{group.enable ? 'Включено' : 'Выключено'}</Badge>
 							</div>
-							<div class="compact-group-output"><ArrowRight size={14} /><span>{formatIfaceButtonText(group)}</span></div>
+							{#if isFallbackGroup}
+								{@const isGridTesting = Boolean(probingGroups[`grp:${group.id}`])}
+								{@const targetId = activeIface || ifaceVal}
+								{@const isTargetChecking = Boolean(targetId && probingIfaces[targetId])}
+								<div class="compact-out-block">
+									<div class="compact-group-output">
+										<ArrowRight size={13} class="compact-out-arrow" />
+										<span
+											class="iface-dot"
+											class:alive={Boolean(activeIface) && !activeBackup}
+											class:backup={Boolean(activeBackup)}
+											class:dead={activeRes.allDead}
+											class:unknown={!activeIface && !activeRes.allDead}
+										></span>
+										<span class="compact-out-name">
+											{formatCompactOutboundLabel(group, activeIface, true, activeRes.allDead)}
+										</span>
+										{#if !activeRes.allDead && primaryProbe && targetId}
+											<button
+												type="button"
+												class="compact-delay-btn {probeLatencyTone(primaryProbe)}"
+												disabled={isTargetChecking}
+												onclick={() => probeFallbackInterfaces([targetId])}
+												title={m.firc_fallback_test_iface_title({ name: friendlyIfaceLabel(targetId, interfaces, tunnelsState) })}
+											>
+												{#if isTargetChecking}
+													<RefreshCw size={10} class="spin" />
+												{:else}
+													{formatProbeLatency(primaryProbe)}
+												{/if}
+											</button>
+										{/if}
+										{#if activeBackup}
+											<span class="backup-badge">{m.firc_fallback_backup_prefix()}</span>
+										{:else}
+											<span class="fallback-count-chip">+{ifaceList.length - 1}</span>
+										{/if}
+										<button
+											type="button"
+											class="pg-action-btn mini icon-only compact-chain-probe"
+											disabled={isGridTesting}
+											onclick={() => probeFallbackInterfaces(ifaceList, { groupKey: `grp:${group.id}` })}
+											title={m.firc_fallback_test_chain_title()}
+										>
+											<Zap size={10} class={isGridTesting ? 'spin' : ''} />
+										</button>
+									</div>
+									<div
+										class="compact-chain-sub"
+										title={`${matchedPg ? `${matchedPg.name}: ` : ''}${ifaceList.map((id) => friendlyIfaceLabel(id, interfaces, tunnelsState)).join(' → ')}`}
+									>
+										{matchedPg ? `${matchedPg.name}: ` : ''}{ifaceList
+											.map((id) => {
+												const p = getIfaceProbe(id);
+												return `${friendlyIfaceLabel(id, interfaces, tunnelsState)}${p ? ` ${formatProbeLatency(p)}` : ''}`;
+											})
+											.join(' › ')}
+									</div>
+								</div>
+							{:else}
+								{@const singleTarget = !isBlock && !isBlackhole ? (activeIface || ifaceVal) : ''}
+								{@const isSingleChecking = Boolean(singleTarget && probingIfaces[singleTarget])}
+								<div class="compact-group-output">
+									<ArrowRight size={13} class="compact-out-arrow" />
+									{#if !isBlock && !isBlackhole && singleTarget}
+										<span class="iface-dot {ifaceDotState(group, singleTarget) ?? 'unknown'}"></span>
+									{/if}
+									<span class="compact-out-name">{formatIfaceButtonText(group)}</span>
+									{#if !isBlock && !isBlackhole && primaryProbe && singleTarget}
+										<button
+											type="button"
+											class="compact-delay-btn {probeLatencyTone(primaryProbe)}"
+											disabled={isSingleChecking}
+											onclick={() => probeFallbackInterfaces([singleTarget])}
+											title={m.firc_fallback_test_iface_title({ name: friendlyIfaceLabel(singleTarget, interfaces, tunnelsState) })}
+										>
+											{#if isSingleChecking}
+												<RefreshCw size={10} class="spin" />
+											{:else}
+												{formatProbeLatency(primaryProbe)}
+											{/if}
+										</button>
+									{/if}
+								</div>
+							{/if}
 							<span class="compact-group-meta">{group.rules.length} своих правил{group.list?.url ? ` · ${group.list.rulesTotal || group.list.rules || 0} из списка` : ''}</span>
 							{#if hasCustomDevices}<span class="compact-group-meta">{devicesBadgeText(group)}</span>{/if}
 							<div class="compact-group-actions">
@@ -1973,7 +2425,16 @@
 						</div>
 					{:else}
 					<!-- Main Card Row -->
-					<div class="card">
+					<div class="card" class:select-mode={groupSelectMode}>
+						{#if groupSelectMode}
+							<input
+								type="checkbox"
+								class="bulk-check"
+								checked={selectedGroupIds.has(group.id)}
+								aria-label={m.firc_bulk_groups_select_aria({ name: group.name })}
+								onchange={() => toggleGroupSelected(group.id)}
+							/>
+						{/if}
 						<div class="order" title="Приоритет группы #{orderStr}">
 							{orderStr}
 						</div>
@@ -2105,6 +2566,7 @@
 										type="button"
 										class="tone-select-pill iface-picker-btn {toneCls}"
 										class:on-backup={Boolean(activeBackup)}
+										class:all-dead={isFallbackGroup && activeRes.allDead}
 										onclick={(e) => {
 											e.stopPropagation();
 											openPickerGroupId = isPickerOpen ? null : group.id;
@@ -2112,25 +2574,43 @@
 										}}
 										title={activeBackup
 											? `Активен резервный интерфейс ${activeBackup} (основной ${ifaceList[0]} недоступен)`
-											: ifaceList.length > 1
-												? `Цепочка Fallback: ${ifaceList.join(' → ')}`
-												: resolverBadgeText(group)}
+											: isFallbackGroup && activeIface
+												? m.firc_fallback_active_chain_title({
+														iface: friendlyIfaceLabel(activeIface, interfaces, tunnelsState),
+														chain: matchedPg
+															? `${matchedPg.name}: ${ifaceList.map((id) => friendlyIfaceLabel(id, interfaces, tunnelsState)).join(' → ')}`
+															: ifaceList.map((id) => friendlyIfaceLabel(id, interfaces, tunnelsState)).join(' → '),
+													})
+												: ifaceList.length > 1
+													? `Цепочка Fallback: ${ifaceList.join(' → ')}`
+													: resolverBadgeText(group)}
 									>
 										{#if isBlock || isBlackhole}
 											<Ban size={13} />
 										{:else}
-											{@const dotState = ifaceDotState(group, activeBackup || ifaceVal)}
+											{@const dotState = activeRes.allDead && isFallbackGroup ? 'dead' : ifaceDotState(group, activeIface || ifaceVal)}
 											{#if dotState}
-												<span class="iface-dot {dotState}"></span>
+												<span class="iface-dot {dotState}" class:backup={Boolean(activeBackup)}></span>
 											{:else if toneCls === 'tone-awg'}
 												<Shield size={13} />
 											{:else}
 												<Globe size={13} />
 											{/if}
 										{/if}
-										<span class="iface-btn-label">{formatIfaceButtonText(group)}</span>
-										{#if activeBackup}
-											<span class="backup-badge">резерв: {activeBackup}</span>
+										<span class="iface-btn-label">
+											{formatCompactOutboundLabel(group, activeIface, isFallbackGroup, activeRes.allDead)}
+										</span>
+										{#if !isBlock && !isBlackhole && primaryProbe && !(isFallbackGroup && activeRes.allDead)}
+											<span class="pill-delay-tag {probeLatencyTone(primaryProbe)}">
+												{formatProbeLatency(primaryProbe)}
+											</span>
+										{/if}
+										{#if isFallbackGroup}
+											{#if activeBackup}
+												<span class="backup-badge">{m.firc_fallback_backup_prefix()}</span>
+											{:else}
+												<span class="fallback-count-chip">+{ifaceList.length - 1}</span>
+											{/if}
 										{/if}
 										<ChevronDown size={12} class="iface-chev" />
 									</button>
@@ -2156,18 +2636,26 @@
 													</div>
 												{:else}
 													{#each extConfig.proxyGroups as pg (pg.id)}
-														{@const isPgActive = matchingProxyGroup(group)?.id === pg.id}
+														{@const isPgActive = matchedPg?.id === pg.id}
+														{@const pgRt = resolveProxyGroupRuntime(pg, groups, liveMap, tunnelsState, interfaces, $fircInterfaceProbeResults, $fircProbeResults)}
+														{@const pgActProbe = pgRt.activeIface ? getIfaceProbe(pgRt.activeIface) : null}
 														<div class="iface-pop-row" class:is-primary={isPgActive}>
 															<button
 																type="button"
 																class="iface-row-main"
 																onclick={() => applyProxyGroupToGroup(group, pg)}
+																title={pgRt.activeIface ? m.firc_fallback_active_primary_title({ iface: `${friendlyIfaceLabel(pgRt.activeIface, interfaces, tunnelsState)} (${pgRt.activeIface})` }) : m.firc_fallback_all_dead_title()}
 															>
-																<Shield size={12} />
+																<span class="iface-dot {pgRt.activeIface ? 'alive' : pgRt.allDead ? 'dead' : 'unknown'}"></span>
 																<span class="iface-row-text">
 																	<strong>{pg.name}</strong> — {pg.interfaces.map(shortIfaceTag).join(' → ')}
 																</span>
 															</button>
+															{#if pgRt.activeIface}
+																<span class="pop-pg-runtime">
+																	{friendlyIfaceLabel(pgRt.activeIface, interfaces, tunnelsState)}{pgActProbe ? ` · ${formatProbeLatency(pgActProbe)}` : ''}
+																</span>
+															{/if}
 														</div>
 													{/each}
 												{/if}
@@ -2179,6 +2667,9 @@
 													{#each pickerGroups.tunnels as item (item.id)}
 														{@const rank = ifaceList.indexOf(item.id)}
 														{@const dState = ifaceDotState(group, item.id)}
+														{@const isActMember = isFallbackGroup && activeIface === item.id}
+														{@const rowProbe = getIfaceProbe(item.id)}
+														{@const rowChecking = Boolean(probingIfaces[item.id])}
 														<div
 															class="iface-pop-row"
 															class:is-primary={rank === 0}
@@ -2209,10 +2700,29 @@
 																{#if dState}
 																	<span
 																		class="iface-dot {dState}"
+																		class:active-pulse={isActMember}
 																		title={ifaceDotTooltip(group, item.id)}
 																	></span>
 																{/if}
 																<span class="iface-row-text">{item.label}</span>
+																{#if isActMember}
+																	<span class="pop-active-tag">{m.firc_fallback_active_tag()}</span>
+																{/if}
+															</button>
+															<button
+																type="button"
+																class="pg-delay-btn compact {probeLatencyTone(rowProbe)}"
+																disabled={rowChecking}
+																onclick={(e) => {
+																	e.stopPropagation();
+																	void probeFallbackInterfaces([item.id]);
+																}}
+																title={m.firc_fallback_test_iface_title({ name: item.label })}
+															>
+																<span class="pg-delay-val">{formatProbeLatency(rowProbe)}</span>
+																{#if rowChecking}
+																	<RefreshCw size={9} class="spin" />
+																{/if}
 															</button>
 														</div>
 													{/each}
@@ -2225,6 +2735,9 @@
 													{#each pickerGroups.wans as item (item.id)}
 														{@const rank = ifaceList.indexOf(item.id)}
 														{@const dState = ifaceDotState(group, item.id)}
+														{@const isActMember = isFallbackGroup && activeIface === item.id}
+														{@const rowProbe = getIfaceProbe(item.id)}
+														{@const rowChecking = Boolean(probingIfaces[item.id])}
 														<div
 															class="iface-pop-row"
 															class:is-primary={rank === 0}
@@ -2255,10 +2768,29 @@
 																{#if dState}
 																	<span
 																		class="iface-dot {dState}"
+																		class:active-pulse={isActMember}
 																		title={ifaceDotTooltip(group, item.id)}
 																	></span>
 																{/if}
 																<span class="iface-row-text">Direct: {item.label}</span>
+																{#if isActMember}
+																	<span class="pop-active-tag">{m.firc_fallback_active_tag()}</span>
+																{/if}
+															</button>
+															<button
+																type="button"
+																class="pg-delay-btn compact {probeLatencyTone(rowProbe)}"
+																disabled={rowChecking}
+																onclick={(e) => {
+																	e.stopPropagation();
+																	void probeFallbackInterfaces([item.id]);
+																}}
+																title={m.firc_fallback_test_iface_title({ name: item.label })}
+															>
+																<span class="pg-delay-val">{formatProbeLatency(rowProbe)}</span>
+																{#if rowChecking}
+																	<RefreshCw size={9} class="spin" />
+																{/if}
 															</button>
 														</div>
 													{/each}
@@ -2318,6 +2850,9 @@
 														{#each pickerGroups.others as item (item.id)}
 															{@const rank = ifaceList.indexOf(item.id)}
 															{@const dState = ifaceDotState(group, item.id)}
+															{@const isActMember = isFallbackGroup && activeIface === item.id}
+															{@const rowProbe = getIfaceProbe(item.id)}
+															{@const rowChecking = Boolean(probingIfaces[item.id])}
 															<div
 																class="iface-pop-row"
 																class:is-primary={rank === 0}
@@ -2339,9 +2874,27 @@
 																	onclick={() => setPrimaryIface(group, item.id)}
 																>
 																	{#if dState}
-																		<span class="iface-dot {dState}"></span>
+																		<span class="iface-dot {dState}" class:active-pulse={isActMember}></span>
 																	{/if}
 																	<span class="iface-row-text">{item.label}</span>
+																	{#if isActMember}
+																		<span class="pop-active-tag">{m.firc_fallback_active_tag()}</span>
+																	{/if}
+																</button>
+																<button
+																	type="button"
+																	class="pg-delay-btn compact {probeLatencyTone(rowProbe)}"
+																	disabled={rowChecking}
+																	onclick={(e) => {
+																		e.stopPropagation();
+																		void probeFallbackInterfaces([item.id]);
+																	}}
+																	title={m.firc_fallback_test_iface_title({ name: item.label })}
+																>
+																	<span class="pg-delay-val">{formatProbeLatency(rowProbe)}</span>
+																	{#if rowChecking}
+																		<RefreshCw size={9} class="spin" />
+																	{/if}
 																</button>
 															</div>
 														{/each}
@@ -2351,7 +2904,26 @@
 
 											<div class="iface-pop-footer">
 												{#if ifaceList.length > 1}
-													Fallback-цепочка: <strong>{ifaceList.join(' → ')}</strong>
+													{@const isPopTesting = Boolean(probingGroups[`grp:${group.id}`])}
+													<div class="iface-pop-footer-row">
+														<span>
+															{#if activeIface}
+																{m.firc_fallback_active_prefix()}: {friendlyIfaceLabel(activeIface, interfaces, tunnelsState)} ·{' '}
+															{/if}Fallback: <strong>{ifaceList.join(' → ')}</strong>
+														</span>
+														<button
+															type="button"
+															class="pg-action-btn mini"
+															disabled={isPopTesting}
+															onclick={(e) => {
+																e.stopPropagation();
+																void probeFallbackInterfaces(ifaceList, { groupKey: `grp:${group.id}` });
+															}}
+														>
+															<Zap size={10} class={isPopTesting ? 'spin' : ''} />
+															<span>{m.firc_fallback_test()}</span>
+														</button>
+													</div>
 												{:else}
 													Нажмите на кружок слева, чтобы добавить резервные интерфейсы (Fallback #2–4)
 												{/if}
@@ -2483,12 +3055,50 @@
 											Сортировать А–Я
 										</button>
 									{/if}
+									{#if group.rules.length > 0}
+										<button
+											type="button"
+											class="link-btn"
+											onclick={() =>
+												selectedRuleSet.size === group.rules.length
+													? clearSelectedRulesInGroup(group.id)
+													: selectAllRulesInGroup(group)}
+										>
+											{selectedRuleSet.size === group.rules.length
+												? m.firc_bulk_deselect_all()
+												: m.firc_bulk_select_all({ count: group.rules.length })}
+										</button>
+									{/if}
 								</div>
-								<Button variant="secondary" size="sm" onclick={() => addRuleToGroup(index)}>
-									{#snippet iconBefore()}<Plus size={13} />{/snippet}
-									Добавить правило
-								</Button>
+								<div class="rules-sec-actions">
+									<Button variant="ghost" size="sm" onclick={() => openBulkRulesEditor(index)}>
+										{#snippet iconBefore()}<FilePen size={13} />{/snippet}
+										{m.firc_bulk_rules_edit_list_btn()}
+									</Button>
+									<Button variant="secondary" size="sm" onclick={() => addRuleToGroup(index)}>
+										{#snippet iconBefore()}<Plus size={13} />{/snippet}
+										Добавить правило
+									</Button>
+								</div>
 							</div>
+
+							{#if selectedRuleSet.size > 0}
+								<FircBulkRulesBar
+									selectedCount={selectedRuleSet.size}
+									totalCount={group.rules.length}
+									otherGroups={groups
+										.filter((og) => og.id !== group.id)
+										.map((og) => ({ id: og.id, name: og.name }))}
+									onSelectAll={() => selectAllRulesInGroup(group)}
+									onDeselectAll={() => clearSelectedRulesInGroup(group.id)}
+									onEnable={() => runBulkRuleAction(index, { kind: 'enable', enable: true })}
+									onDisable={() => runBulkRuleAction(index, { kind: 'enable', enable: false })}
+									onChangeType={(type) => runBulkRuleAction(index, { kind: 'setType', type })}
+									onMoveToGroup={(targetGroupId) =>
+										runBulkRuleAction(index, { kind: 'move', targetGroupId })}
+									onDelete={() => runBulkRuleAction(index, { kind: 'delete' })}
+								/>
+							{/if}
 
 							{#if group.rules.length === 0}
 								<div class="rules-empty">
@@ -2498,7 +3108,20 @@
 								<div class="rules-table">
 									{#each pagedRules as rule, rIdx (rule.id)}
 										{@const absIdx = (currentPage - 1) * PAGE_SIZE + rIdx}
-										<div class="rule-row" class:rule-disabled={!rule.enable}>
+										<div
+											class="rule-row"
+											class:rule-disabled={!rule.enable}
+											class:rule-selected={selectedRuleSet.has(rule.id)}
+										>
+											<input
+												type="checkbox"
+												class="bulk-check"
+												checked={selectedRuleSet.has(rule.id)}
+												aria-label={m.firc_bulk_rules_select_aria({
+													rule: rule.rule || String(absIdx + 1),
+												})}
+												onchange={() => toggleRuleSelected(group.id, rule.id)}
+											/>
 											<span class="rule-idx font-mono">#{absIdx + 1}</span>
 											<select class="inp rule-type-sel" bind:value={rule.type}>
 												{#each FIRC_RULE_TYPES as rt}
@@ -2863,175 +3486,20 @@
 </Modal>
 
 <!-- Modal 2: Devices & Policies Filter -->
-<Modal
+<FircGroupDevicesModal
 	open={devicesModalOpen}
-	onclose={() => (devicesModalOpen = false)}
-	title={devicesModalIndex !== null && groups[devicesModalIndex]
-		? `Устройства и политики · ${groups[devicesModalIndex].name}`
-		: 'Устройства и политики группы'}
-	size="xl"
-	resizable={true}
-	allowMaximize={true}
->
-	<div class="modal-form dm-modal-form">
-		<div class="dm-top-bar">
-			<div class="field dm-mode-field">
-				<label class="lbl" for="firc-dm-mode">Режим охвата устройств</label>
-				<select
-					id="firc-dm-mode"
-					class="inp"
-					bind:value={dmMode}
-				>
-					<option value="all">Для всех устройств (отмеченные ниже исключаются)</option>
-					<option value="allow">Только для отмеченных ниже устройств и политик</option>
-				</select>
-			</div>
-
-			<div
-				class="dm-summary-box"
-				class:has-items={dmEntries.size > 0}
-				class:needs-items={dmMode === 'allow' && dmEntries.size === 0}
-			>
-				<span class="dm-summary-text">
-					{#if dmEntries.size === 0}
-						{dmMode === 'allow'
-							? 'Выберите хотя бы одно устройство или политику ниже, чтобы применить этот режим'
-							: 'Ничего не отмечено (группа действует на все устройства)'}
-					{:else if dmMode === 'allow'}
-						Выбрано объектов: <strong>{dmEntries.size}</strong>
-					{:else}
-						Исключено объектов: <strong>{dmEntries.size}</strong>
-					{/if}
-				</span>
-				{#if dmEntries.size > 0}
-					<button type="button" class="dm-clear-btn" onclick={clearAllDeviceEntries}>
-						Снять все отметки
-					</button>
-				{/if}
-			</div>
-		</div>
-
-		<div class="dm-columns" class:single-col={policies.length === 0 || hosts.length === 0}>
-			{#if policies.length > 0}
-				<div class="sec-box dm-col-box">
-					<div class="dm-sec-head">
-						<span class="sec-cap">Политики доступа Keenetic</span>
-						<span class="dm-sec-count" class:active={selectedPoliciesCount > 0}>
-							{selectedPoliciesCount} из {policies.length}
-						</span>
-					</div>
-					<div class="devices-list">
-						{#each sortedPolicies as pol (pol.name)}
-							{@const key = `policy:${pol.name}`}
-							{@const isChecked = dmEntries.has(key)}
-							<label
-								class="device-item"
-								class:selected={isChecked && dmMode === 'allow'}
-								class:excluded={isChecked && dmMode === 'all'}
-							>
-								<input
-									type="checkbox"
-									checked={isChecked}
-									onchange={() => toggleDeviceEntry(key)}
-								/>
-								<span class="device-name">{pol.description || pol.name}</span>
-								{#if isChecked}
-									<span class="dm-state-pill" class:excl={dmMode === 'all'}>
-										<Check size={11} />
-										{dmMode === 'allow' ? 'Выбрано' : 'Исключено'}
-									</span>
-								{/if}
-								<Badge variant="muted" size="sm" mono>{pol.name}</Badge>
-							</label>
-						{/each}
-					</div>
-				</div>
-			{/if}
-
-			{#if hosts.length > 0}
-				<div class="sec-box dm-col-box">
-					<div class="dm-sec-head">
-						<span class="sec-cap">Устройства в локальной сети</span>
-						<span class="dm-sec-count" class:active={selectedHostsCount > 0}>
-							{selectedHostsCount} из {hosts.length}
-						</span>
-					</div>
-					<div class="dm-search-wrap">
-						<Search size={13} class="dm-search-icon" />
-						<input
-							type="search"
-							class="inp dm-search-inp"
-							placeholder="Поиск по имени, IP или MAC..."
-							bind:value={dmSearchQuery}
-						/>
-					</div>
-					<div class="devices-list">
-						{#if filteredSortedHosts.length === 0}
-							<div class="dm-empty-search">Ничего не найдено по запросу «{dmSearchQuery}»</div>
-						{:else}
-							{#each filteredSortedHosts as h (h.mac || h.ip)}
-								{@const key = hostEntryKey(h)}
-								{@const isChecked = dmEntries.has(key)}
-								<label
-									class="device-item"
-									class:selected={isChecked && dmMode === 'allow'}
-									class:excluded={isChecked && dmMode === 'all'}
-								>
-									<input
-										type="checkbox"
-										checked={isChecked}
-										onchange={() => toggleDeviceEntry(key)}
-									/>
-									<div class="device-main-info">
-										<span class="device-name">{h.name || h.ip || h.mac}</span>
-										<span class="device-meta font-mono">{formatHostMeta(h)}</span>
-									</div>
-									{#if isChecked}
-										<span class="dm-state-pill" class:excl={dmMode === 'all'}>
-											<Check size={11} />
-											{dmMode === 'allow' ? 'Выбрано' : 'Исключено'}
-										</span>
-									{/if}
-								</label>
-							{/each}
-						{/if}
-					</div>
-				</div>
-			{/if}
-		</div>
-
-		<div class="sec-box">
-			<div class="sec-cap">Добавить IP / CIDR / MAC вручную</div>
-			<div class="manual-row">
-				<input
-					type="text"
-					class="inp font-mono"
-					placeholder="192.168.1.50 или mac:aa:bb:cc:dd:ee:ff"
-					bind:value={dmManualInput}
-					onkeydown={(e) => e.key === 'Enter' && addManualDeviceEntry()}
-				/>
-				<Button variant="secondary" size="sm" onclick={addManualDeviceEntry}>Добавить</Button>
-			</div>
-			{#if dmEntries.size > 0}
-				<div class="chips-wrap mt-2">
-					{#each Array.from(dmEntries) as entry (entry)}
-						<span class="entry-chip" class:excl-chip={dmMode === 'all'}>
-							<span class="entry-chip-label">{formatEntryChipLabel(entry)}</span>
-							<button type="button" title="Убрать" onclick={() => toggleDeviceEntry(entry)}>✕</button>
-						</span>
-					{/each}
-				</div>
-			{/if}
-		</div>
-	</div>
-
-	{#snippet actions()}
-		<div class="modal-footer-btns">
-			<Button variant="ghost" size="sm" onclick={() => (devicesModalOpen = false)}>Отмена</Button>
-			<Button variant="primary" size="sm" onclick={saveDevicesModal}>Применить</Button>
-		</div>
-	{/snippet}
-</Modal>
+	groupName={devicesModalBulk
+		? m.firc_bulk_groups_devices_title({ count: selectedGroupIds.size })
+		: devicesModalGroup?.name}
+	initialDevices={devicesModalBulk ? { allow: [], deny: [] } : devicesModalInitial}
+	{hosts}
+	{policies}
+	onclose={() => {
+		devicesModalBulk = false;
+		devicesModalOpen = false;
+	}}
+	onapply={applyDevicesModal}
+/>
 
 <!-- Modal 3: Bulk Import Rules -->
 <Modal
@@ -3076,6 +3544,16 @@
 		</p>
 
 		{#each pgDraft as pg, pgIdx (pg.id)}
+			{@const draftRt = resolveProxyGroupRuntime(
+				pg,
+				groups,
+				liveMap,
+				tunnelsState,
+				interfaces,
+				$fircInterfaceProbeResults,
+				$fircProbeResults,
+			)}
+			{@const isModalTesting = Boolean(probingGroups[`modal:${pg.id}`])}
 			<div class="sec-box pg-editor-card">
 				<div class="pg-card-head">
 					<input
@@ -3084,6 +3562,17 @@
 						placeholder="Название прокси-группы (например, Основной + Direct)"
 						bind:value={pg.name}
 					/>
+					<button
+						type="button"
+						class="pg-action-btn"
+						disabled={pg.interfaces.length === 0 || isModalTesting}
+						title={m.firc_fallback_test_group_title({ name: pg.name })}
+						onclick={() =>
+							probeFallbackInterfaces(pg.interfaces, { groupKey: `modal:${pg.id}` })}
+					>
+						<Zap size={12} class={isModalTesting ? 'spin' : ''} />
+						<span>{isModalTesting ? '...' : m.firc_fallback_test()}</span>
+					</button>
 					<button
 						type="button"
 						class="route-action-btn danger"
@@ -3101,9 +3590,37 @@
 					{:else}
 						<div class="pg-chain-items">
 							{#each pg.interfaces as ifaceId, iIdx (ifaceId)}
-								<div class="pg-chain-pill">
+								{@const mem = draftRt.members.find((m) => m.id === ifaceId)}
+								{@const mProbe = mem?.probe ?? getIfaceProbe(ifaceId)}
+								{@const mTone = probeLatencyTone(mProbe)}
+								{@const isAct = draftRt.activeIface === ifaceId}
+								{@const checking = Boolean(probingIfaces[ifaceId])}
+								<div class="pg-chain-pill" class:is-active={isAct}>
 									<span class="pg-rank-num">#{iIdx + 1}</span>
-									<span class="font-mono">{shortIfaceTag(ifaceId)}</span>
+									<span
+										class="pg-mem-dot"
+										class:active={isAct}
+										class:alive={!isAct && mem?.state === 'alive'}
+										class:dead={mem?.state === 'dead'}
+										class:unknown={!isAct && (!mem || mem.state === 'unknown')}
+									></span>
+									<span>{friendlyIfaceLabel(ifaceId, interfaces, tunnelsState)}</span>
+									<span class="pg-pill-id font-mono">({ifaceId})</span>
+									{#if isAct}
+										<span class="pg-mem-act-tag">{m.firc_fallback_active_tag()}</span>
+									{/if}
+									<button
+										type="button"
+										class="pg-delay-btn {mTone}"
+										disabled={checking}
+										title={m.firc_fallback_test_iface_title({ name: ifaceId })}
+										onclick={() => probeFallbackInterfaces([ifaceId])}
+									>
+										<span class="pg-delay-val">{formatProbeLatency(mProbe)}</span>
+										{#if checking}
+											<RefreshCw size={9} class="spin" />
+										{/if}
+									</button>
 									<button
 										type="button"
 										disabled={iIdx === 0}
@@ -3136,9 +3653,12 @@
 				<div class="pg-candidates">
 					<div class="sec-cap">Добавить в группу (нажмите для включения / исключения):</div>
 					<div class="pg-cand-grid">
-						{#each interfaces.filter((x) => (x.role === 'tunnel' && !isInternalServerIface(x) && !x.id.startsWith('t2s')) || x.role === 'wan') as opt (opt.id)}
+						{#each interfaces.filter(isSelectableFircFallbackInterface) as opt (opt.id)}
 							{@const idxInPg = pg.interfaces.indexOf(opt.id)}
 							{@const isWan = opt.role === 'wan'}
+							{@const cHealth = resolveIfaceState(undefined, opt.id)}
+							{@const cProbe = getIfaceProbe(opt.id)}
+							{@const cTone = probeLatencyTone(cProbe)}
 							<button
 								type="button"
 								class="pg-cand-btn"
@@ -3146,10 +3666,14 @@
 								class:wan-cand={isWan}
 								onclick={() => toggleIfaceInDraftProxyGroup(pgIdx, opt.id)}
 							>
+								<span class="iface-dot {cHealth.state}"></span>
 								{#if idxInPg >= 0}
 									<span class="pg-cand-rank">#{idxInPg + 1}</span>
 								{/if}
 								<span>{isWan ? `Direct (${formatIfaceOption(opt)})` : formatIfaceOption(opt)}</span>
+								{#if cProbe}
+									<span class="pill-delay-tag {cTone}">{formatProbeLatency(cProbe)}</span>
+								{/if}
 							</button>
 						{/each}
 					</div>
@@ -3217,6 +3741,26 @@
 		</div>
 	{/snippet}
 </Modal>
+
+<FircBulkRulesEditorModal
+	open={bulkRulesEditorOpen}
+	groupName={bulkRulesEditorGroup?.name}
+	rules={bulkRulesEditorGroup?.rules ?? []}
+	makeId={randomHexId}
+	onclose={() => (bulkRulesEditorOpen = false)}
+	onapply={applyBulkRulesEditor}
+/>
+
+<ConfirmModal
+	open={confirmBulkDeleteGroupsOpen}
+	title={m.firc_bulk_groups_delete_title()}
+	message={m.firc_bulk_groups_delete_msg({ count: selectedGroupIds.size })}
+	confirmLabel={m.firc_bulk_delete()}
+	cancelLabel={m.common_cancel()}
+	variant="danger"
+	onConfirm={() => runBulkGroupAction({ kind: 'delete' })}
+	onClose={() => (confirmBulkDeleteGroupsOpen = false)}
+/>
 
 <style>
 	.firc-groups-panel {
@@ -3303,13 +3847,46 @@
 	.group-view-switch button { padding: .35rem .6rem; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-secondary); border-radius: 6px; cursor: pointer; font: inherit; font-size: .75rem; }
 	.group-view-switch button.active { border-color: var(--accent); color: var(--text-primary); }
 	.group-view-switch button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-	.cards-stack.compact-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: .75rem; align-items: stretch; }
-	.compact-group-card { display: flex; flex-direction: column; gap: .75rem; padding: 1rem; min-height: 200px; height: 100%; box-sizing: border-box; }
+	.cards-stack.compact-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: .65rem; align-items: stretch; }
+	.compact-group-card { display: flex; flex-direction: column; gap: .45rem; padding: .75rem .875rem; min-height: 138px; height: 100%; box-sizing: border-box; }
 	.compact-group-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
 	.compact-group-heading strong { overflow-wrap: anywhere; flex: 1; min-width: 100px; }
 	.compact-priority, .compact-group-meta { font-size: .75rem; color: var(--text-muted); }
-	.compact-group-output { display: flex; align-items: center; gap: .4rem; overflow-wrap: anywhere; font-size: .85rem; }
-	.compact-group-output span { min-width: 0; }
+	.compact-out-block { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+	.compact-group-output { display: flex; align-items: center; gap: 5px; min-width: 0; font-size: .82rem; }
+	.compact-group-output :global(.compact-out-arrow) { color: var(--text-muted); flex-shrink: 0; }
+	.compact-out-name { font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
+	.compact-delay-btn {
+		appearance: none;
+		display: inline-flex;
+		align-items: center;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		padding: 0 4px;
+		border-radius: 4px;
+		border: 1px solid transparent;
+		background: transparent;
+		cursor: pointer;
+		flex-shrink: 0;
+		transition: border-color var(--t-fast), background var(--t-fast);
+	}
+	.compact-delay-btn:hover:not(:disabled) { background: var(--bg-tertiary); border-color: var(--border); }
+	.compact-delay-btn.good { color: var(--latency-color-ok); }
+	.compact-delay-btn.medium { color: var(--latency-color-slow); }
+	.compact-delay-btn.bad { color: var(--latency-color-fail); }
+	.compact-delay-btn.none { color: var(--text-muted); }
+	:global(.compact-chain-probe) { margin-left: auto; flex-shrink: 0; }
+	.compact-chain-sub {
+		font-size: 11px;
+		color: var(--text-muted);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		padding-left: 18px;
+		min-width: 0;
+	}
 	.compact-group-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: auto; }
 	.cards-stack {
 		display: flex;
@@ -3340,13 +3917,42 @@
 		opacity: 0.68;
 	}
 
+	.card-wrap.bulk-selected-card {
+		border-color: var(--color-accent-border);
+		box-shadow: 0 0 0 1px var(--color-accent-border);
+	}
+
+	.bulk-check {
+		width: 15px;
+		height: 15px;
+		accent-color: var(--color-accent);
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
 	.card {
 		display: grid;
-		grid-template-columns: 26px 20px minmax(0, 1fr) auto;
-		gap: 8px;
+		grid-template-columns: 24px 18px minmax(200px, 1fr) auto;
+		gap: 6px 8px;
 		align-items: center;
-		padding: 8px 12px;
+		padding: 7px 10px;
 		min-width: 0;
+	}
+
+	:global(html[data-layout-compact='true']) .iface-btn-label {
+		max-width: 120px;
+	}
+
+	:global(html[data-layout-compact='true']) .trail {
+		gap: 4px;
+	}
+
+	:global(html[data-layout-compact='true']) .right-slot {
+		gap: 2px;
+	}
+
+	.card.select-mode {
+		grid-template-columns: 22px 24px 18px minmax(200px, 1fr) auto;
 	}
 
 	.order {
@@ -3407,8 +4013,9 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		flex-shrink: 0;
+		flex-shrink: 1;
 		min-width: 0;
+		max-width: 100%;
 	}
 
 	.group-badges-row {
@@ -3629,21 +4236,71 @@
 		border-color: var(--color-warning-border) !important;
 	}
 
+	.tone-select-pill.all-dead {
+		border-color: var(--color-error-border) !important;
+	}
+
 	.iface-btn-label {
-		max-width: 175px;
+		max-width: 145px;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.backup-badge {
+	.backup-badge,
+	.dead-badge,
+	.fallback-count-chip {
 		font-size: 10px;
-		padding: 1px 5px;
+		padding: 0 5px;
+		line-height: 16px;
 		border-radius: 4px;
+		white-space: nowrap;
+		font-variant-numeric: tabular-nums;
+		flex-shrink: 0;
+	}
+
+	.backup-badge {
 		background: var(--color-warning-tint);
 		color: var(--color-warning);
 		border: 1px solid var(--color-warning-border);
+	}
+
+	.dead-badge {
+		background: var(--color-error-tint);
+		color: var(--color-error);
+		border: 1px solid var(--color-error-border);
+	}
+
+	.fallback-count-chip {
+		font-family: var(--font-mono);
+		font-weight: 600;
+		color: var(--text-muted);
+		border: 1px dotted color-mix(in srgb, var(--text-muted) 45%, transparent);
+	}
+
+	.pill-delay-tag {
+		font-family: var(--font-mono);
+		font-size: 10.5px;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.pill-delay-tag.good {
+		color: var(--latency-color-ok);
+	}
+
+	.pill-delay-tag.medium {
+		color: var(--latency-color-slow);
+	}
+
+	.pill-delay-tag.bad {
+		color: var(--latency-color-fail);
+	}
+
+	.pill-delay-tag.none {
+		color: var(--text-muted);
 	}
 
 	.iface-picker-btn :global(.iface-chev) {
@@ -3664,6 +4321,17 @@
 		box-shadow: 0 0 4px var(--color-success-border);
 	}
 
+	.iface-dot.backup {
+		background: var(--color-warning);
+		box-shadow: 0 0 4px var(--color-warning-border);
+	}
+
+	.iface-dot.active-pulse {
+		background: var(--color-success);
+		box-shadow: 0 0 6px var(--color-success-border);
+		animation: firc-active-pulse 1.5s ease-in-out infinite;
+	}
+
 	.iface-dot.dead {
 		background: var(--color-error);
 		box-shadow: 0 0 4px var(--color-error-border);
@@ -3674,13 +4342,53 @@
 		opacity: 0.55;
 	}
 
+	.pop-active-tag {
+		font-size: 9.5px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		padding: 1px 5px;
+		border-radius: 4px;
+		background: var(--color-success-tint);
+		color: var(--color-success);
+		border: 1px solid var(--color-success-border);
+		flex-shrink: 0;
+	}
+
+	.pop-pg-runtime {
+		font-family: var(--font-mono);
+		font-size: 10px;
+		color: var(--color-success);
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.iface-pop-footer-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+	}
+
+	@keyframes firc-active-pulse {
+		0%,
+		100% {
+			opacity: 1;
+			transform: scale(1);
+		}
+		50% {
+			opacity: 0.45;
+			transform: scale(0.85);
+		}
+	}
+
 	.iface-popover {
 		position: absolute;
 		top: calc(100% + 5px);
 		right: 0;
 		z-index: 80;
-		width: 310px;
-		max-width: calc(100vw - 32px);
+		width: 330px;
+		max-width: calc(100vw - 24px);
 		box-sizing: border-box;
 		max-height: 390px;
 		overflow-y: auto;
@@ -4004,6 +4712,18 @@
 		opacity: 0.55;
 	}
 
+	.rule-row.rule-selected {
+		background: color-mix(in srgb, var(--color-accent-tint) 45%, var(--bg-secondary));
+		border-color: var(--color-accent-border);
+	}
+
+	.rules-sec-actions {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+
 	.rule-idx {
 		font-size: 11px;
 		color: var(--text-muted);
@@ -4254,279 +4974,6 @@
 		flex-shrink: 0;
 	}
 
-	.dm-modal-form {
-		gap: 14px;
-	}
-
-	.dm-top-bar {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: 12px;
-	}
-
-	.dm-mode-field {
-		flex: 1 1 320px;
-	}
-
-	.dm-summary-box {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 10px;
-		padding: 8px 12px;
-		border-radius: var(--radius-sm);
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		font-size: 12px;
-		color: var(--text-secondary);
-		min-height: 36px;
-	}
-
-	.dm-summary-box.has-items {
-		background: color-mix(in srgb, var(--color-accent) 10%, var(--bg-primary));
-		border-color: color-mix(in srgb, var(--color-accent) 40%, var(--border));
-		color: var(--text-primary);
-	}
-
-	.dm-summary-box.needs-items {
-		background: color-mix(in srgb, var(--color-warning) 10%, var(--bg-primary));
-		border-color: color-mix(in srgb, var(--color-warning) 45%, var(--border));
-		color: var(--color-warning);
-	}
-
-	.dm-clear-btn {
-		border: 0;
-		background: transparent;
-		color: var(--color-accent);
-		font-size: 11.5px;
-		font-weight: 600;
-		cursor: pointer;
-		padding: 2px 4px;
-		white-space: nowrap;
-	}
-
-	.dm-clear-btn:hover {
-		text-decoration: underline;
-	}
-
-	.dm-columns {
-		display: grid;
-		grid-template-columns: minmax(250px, 0.9fr) minmax(300px, 1.3fr);
-		gap: 12px;
-		align-items: stretch;
-	}
-
-	.dm-columns.single-col {
-		grid-template-columns: 1fr;
-	}
-
-	.dm-col-box {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		min-width: 0;
-	}
-
-	.dm-sec-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px;
-	}
-
-	.dm-sec-count {
-		font-size: 11px;
-		font-weight: 600;
-		padding: 1px 7px;
-		border-radius: 999px;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
-		color: var(--text-muted);
-		white-space: nowrap;
-		flex-shrink: 0;
-	}
-
-	.dm-sec-count.active {
-		background: color-mix(in srgb, var(--color-accent) 16%, var(--bg-secondary));
-		border-color: color-mix(in srgb, var(--color-accent) 45%, var(--border));
-		color: var(--color-accent);
-	}
-
-	.dm-search-wrap {
-		position: relative;
-		display: flex;
-		align-items: center;
-	}
-
-	:global(.dm-search-icon) {
-		position: absolute;
-		left: 9px;
-		color: var(--text-muted);
-		pointer-events: none;
-	}
-
-	.dm-search-inp {
-		width: 100%;
-		padding-left: 30px !important;
-		height: 30px;
-		font-size: 12px;
-	}
-
-	.dm-empty-search {
-		padding: 18px 10px;
-		text-align: center;
-		font-size: 12px;
-		color: var(--text-muted);
-	}
-
-	.devices-list {
-		max-height: 330px;
-		overflow-y: auto;
-		display: flex;
-		flex-direction: column;
-		gap: 5px;
-		padding-right: 2px;
-	}
-
-	.device-item {
-		display: flex;
-		align-items: center;
-		gap: 9px;
-		font-size: 12.5px;
-		padding: 7px 10px;
-		border-radius: 6px;
-		border: 1px solid transparent;
-		background: var(--bg-secondary);
-		cursor: pointer;
-		transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
-	}
-
-	.device-item:hover {
-		background: var(--bg-tertiary);
-		border-color: var(--border);
-	}
-
-	.device-item input[type='checkbox'] {
-		width: 15px;
-		height: 15px;
-		accent-color: var(--color-accent);
-		flex-shrink: 0;
-		cursor: pointer;
-	}
-
-	.device-item.selected {
-		background: color-mix(in srgb, var(--color-accent) 15%, var(--bg-secondary));
-		border-color: color-mix(in srgb, var(--color-accent) 55%, var(--border));
-		box-shadow: inset 3px 0 0 var(--color-accent);
-	}
-
-	.device-item.selected .device-name {
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.device-item.excluded {
-		background: color-mix(in srgb, var(--color-warning) 15%, var(--bg-secondary));
-		border-color: color-mix(in srgb, var(--color-warning) 55%, var(--border));
-		box-shadow: inset 3px 0 0 var(--color-warning);
-	}
-
-	.device-item.excluded input[type='checkbox'] {
-		accent-color: var(--color-warning);
-	}
-
-	.device-item.excluded .device-name {
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.device-main-info {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
-	}
-
-	.device-name {
-		flex: 1;
-		color: var(--text-primary);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.device-meta {
-		font-size: 11px;
-		color: var(--text-muted);
-	}
-
-	.dm-state-pill {
-		display: inline-flex;
-		align-items: center;
-		gap: 3px;
-		padding: 2px 7px;
-		border-radius: 999px;
-		font-size: 10.5px;
-		font-weight: 600;
-		background: color-mix(in srgb, var(--color-accent) 22%, transparent);
-		color: var(--color-accent);
-		flex-shrink: 0;
-	}
-
-	.dm-state-pill.excl {
-		background: color-mix(in srgb, var(--color-warning) 22%, transparent);
-		color: var(--color-warning);
-	}
-
-	.manual-row {
-		display: flex;
-		gap: 8px;
-	}
-
-	.manual-row .inp {
-		flex: 1;
-	}
-
-	.chips-wrap {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 6px;
-	}
-
-	.entry-chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 3px 9px;
-		border-radius: 6px;
-		background: color-mix(in srgb, var(--color-accent) 14%, var(--bg-secondary));
-		border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--border));
-		color: var(--text-primary);
-		font-size: 12px;
-		font-weight: 500;
-	}
-
-	.entry-chip.excl-chip {
-		background: color-mix(in srgb, var(--color-warning) 14%, var(--bg-secondary));
-		border-color: color-mix(in srgb, var(--color-warning) 45%, var(--border));
-	}
-
-	.entry-chip button {
-		border: 0;
-		background: transparent;
-		color: var(--text-muted);
-		cursor: pointer;
-		padding: 0 2px;
-		font-size: 11px;
-	}
-
-	.entry-chip button:hover {
-		color: var(--color-danger);
-	}
-
 	.modal-footer-btns {
 		display: flex;
 		justify-content: flex-end;
@@ -4556,6 +5003,9 @@
 		.card {
 			grid-template-columns: 28px minmax(0, 1fr);
 		}
+		.card.select-mode {
+			grid-template-columns: 22px 28px minmax(0, 1fr);
+		}
 		.reorder-slot {
 			display: none;
 		}
@@ -4567,61 +5017,350 @@
 			border-top: 1px dashed var(--border);
 			padding-top: 8px;
 		}
+		.outbound-select-wrap,
+		.iface-picker-root {
+			max-width: 100%;
+			min-width: 0;
+		}
+		.tone-select-pill {
+			max-width: 100%;
+			height: auto;
+			min-height: 27px;
+			flex-wrap: wrap;
+			padding: 3px 8px;
+		}
+		.iface-btn-label {
+			max-width: 150px;
+		}
 		.right-slot {
 			flex-wrap: wrap;
 		}
 		.rule-row {
 			flex-wrap: wrap;
 		}
-		.form-grid-2,
-		.dm-columns {
+		.form-grid-2 {
 			grid-template-columns: 1fr;
 		}
 	}
 
-	.pg-strip {
+	.pg-panel {
 		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 8px;
-		padding: 8px 12px;
+		flex-direction: column;
+		gap: 6px;
+		padding: 8px 10px;
 		background: var(--bg-secondary);
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 	}
 
-	.pg-strip-label {
+	.pg-panel-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 6px;
+	}
+
+	.pg-panel-title {
+		display: flex;
+		align-items: center;
+		gap: 6px;
 		font-size: 12px;
+		font-weight: 700;
+		color: var(--text-primary);
+		min-width: 0;
+	}
+
+	.pg-panel-actions {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		flex-wrap: wrap;
+	}
+
+	.pg-action-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		height: 24px;
+		padding: 0 8px;
+		border-radius: 5px;
+		border: 1px solid var(--border);
+		background: var(--bg-tertiary);
+		color: var(--text-primary);
+		font-family: inherit;
+		font-size: 11px;
 		font-weight: 600;
+		cursor: pointer;
+		transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
+	}
+
+	.pg-action-btn:hover:not(:disabled) {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+	}
+
+	.pg-action-btn:disabled {
+		opacity: 0.55;
+		cursor: wait;
+	}
+
+	.pg-action-btn.ghost {
+		background: transparent;
 		color: var(--text-secondary);
 	}
 
-	.pg-strip-chip {
+	.pg-action-btn.icon-only {
+		padding: 0 5px;
+	}
+
+	.pg-action-btn.mini {
+		height: 20px;
+		padding: 0 5px;
+		font-size: 10.5px;
+	}
+
+	.pg-rows {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.pg-row {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 6px 10px;
+		padding: 5px 9px;
+		background: var(--bg-primary);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		min-width: 0;
+	}
+
+	.pg-row.is-backup {
+		border-color: var(--color-warning-border);
+	}
+
+	.pg-row.all-dead {
+		border-color: var(--color-error-border);
+	}
+
+	.pg-row-ident {
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		padding: 3px 10px;
-		border-radius: 999px;
+		min-width: 0;
+		flex-shrink: 0;
+		max-width: 100%;
+	}
+
+	.pg-row-name {
 		font-size: 12px;
-		background: color-mix(in srgb, var(--color-accent) 10%, var(--bg-tertiary));
-		border: 1px solid color-mix(in srgb, var(--color-accent) 30%, var(--border));
+		font-weight: 700;
 		color: var(--text-primary);
-		cursor: pointer;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 210px;
 	}
 
-	.pg-strip-chain {
+	.pg-chain-inline {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 4px;
+		flex: 1 1 auto;
+		min-width: 0;
+	}
+
+	.pg-chain-sep {
 		font-size: 11px;
+		color: var(--text-muted);
+		user-select: none;
+	}
+
+	.pg-node-pill {
+		appearance: none;
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		padding: 2px 7px;
+		min-height: 22px;
+		border-radius: 5px;
+		border: 1px solid var(--border);
+		background: var(--bg-secondary);
 		color: var(--text-secondary);
+		font-family: inherit;
+		font-size: 11.5px;
+		cursor: pointer;
+		max-width: 100%;
+		min-width: 0;
+		transition: border-color var(--t-fast), background var(--t-fast), color var(--t-fast);
 	}
 
-	.pg-strip-add {
-		padding: 3px 8px;
-		border-radius: var(--radius-sm);
-		font-size: 11px;
-		border: 1px dashed var(--border);
+	.pg-node-pill:hover:not(:disabled) {
+		border-color: var(--color-accent);
+		color: var(--text-primary);
+	}
+
+	.pg-node-pill:disabled {
+		opacity: 0.65;
+		cursor: wait;
+	}
+
+	.pg-node-pill.is-active {
+		background: color-mix(in srgb, var(--color-success) 10%, var(--bg-secondary));
+		border-color: var(--color-success-border);
+		color: var(--text-primary);
+		font-weight: 600;
+	}
+
+	.pg-node-pill.is-backup {
+		background: color-mix(in srgb, var(--color-warning) 10%, var(--bg-secondary));
+		border-color: var(--color-warning-border);
+		color: var(--text-primary);
+		font-weight: 600;
+	}
+
+	.pg-node-pill.is-dead {
+		opacity: 0.72;
+		border-color: var(--color-error-border);
+	}
+
+	.pg-node-name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 150px;
+	}
+
+	.pg-node-delay {
+		display: inline-flex;
+		align-items: center;
+		font-family: var(--font-mono);
+		font-size: 10.5px;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.pg-node-delay.good {
+		color: var(--latency-color-ok);
+	}
+
+	.pg-node-delay.medium {
+		color: var(--latency-color-slow);
+	}
+
+	.pg-node-delay.bad {
+		color: var(--latency-color-fail);
+	}
+
+	.pg-node-delay.none {
+		color: var(--text-muted);
+	}
+
+	.pg-mem-dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.pg-mem-dot.active {
+		background: var(--color-success);
+		box-shadow: 0 0 6px var(--color-success-border);
+		animation: firc-active-pulse 1.5s ease-in-out infinite;
+	}
+
+	.pg-mem-dot.backup {
+		background: var(--color-warning);
+		box-shadow: 0 0 6px var(--color-warning-border);
+	}
+
+	.pg-mem-dot.alive {
+		background: var(--color-success);
+		opacity: 0.55;
+	}
+
+	.pg-mem-dot.dead {
+		background: var(--color-error);
+	}
+
+	.pg-mem-dot.unknown {
+		background: var(--text-muted);
+		opacity: 0.55;
+	}
+
+	.pg-mem-act-tag {
+		font-size: 9.5px;
+		font-weight: 700;
+		padding: 0 4px;
+		border-radius: 3px;
+		background: var(--color-success-tint);
+		color: var(--color-success);
+		border: 1px solid var(--color-success-border);
+	}
+
+	.pg-delay-btn {
+		appearance: none;
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		padding: 1px 5px;
+		border-radius: 4px;
+		border: 1px solid transparent;
 		background: transparent;
-		color: var(--text-secondary);
+		font-family: var(--font-mono);
+		font-size: 10.5px;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		line-height: 1.2;
 		cursor: pointer;
+		flex-shrink: 0;
+		transition: background var(--t-fast), border-color var(--t-fast);
+	}
+
+	.pg-delay-btn.compact {
+		font-size: 10px;
+		padding: 1px 4px;
+	}
+
+	.pg-delay-btn:hover:not(:disabled) {
+		background: var(--bg-tertiary);
+		border-color: var(--border);
+	}
+
+	.pg-delay-btn.good {
+		color: var(--latency-color-ok);
+	}
+
+	.pg-delay-btn.medium {
+		color: var(--latency-color-slow);
+	}
+
+	.pg-delay-btn.bad {
+		color: var(--latency-color-fail);
+	}
+
+	.pg-delay-btn.none {
+		color: var(--text-muted);
+	}
+
+	.pg-delay-val {
+		white-space: nowrap;
+	}
+
+	.pg-chain-pill.is-active {
+		border-color: var(--color-success-border);
+		background: color-mix(in srgb, var(--color-success) 10%, var(--bg-tertiary));
+	}
+
+	.pg-pill-id {
+		font-size: 10.5px;
+		color: var(--text-muted);
 	}
 
 	.pg-cap-row {

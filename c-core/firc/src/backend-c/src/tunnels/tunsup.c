@@ -183,6 +183,7 @@ static firc_err_t copy_cfg(firc_tunnel_t *dst, const firc_tunnel_t *src)
     *dst = *src;
     dst->src = v;
     dst->filter = NULL;
+    dst->filter_exclude = NULL;
     dst->order = NULL;
     dst->n_order = 0;
     dst->exclude = NULL;

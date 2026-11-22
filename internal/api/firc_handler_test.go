@@ -1481,3 +1481,253 @@ func TestFircHandler_UnselectedAndStoppedNeverStartsDaemonOrMutatesNetfilter(t *
 		t.Fatalf("Case 3 GET /api/firc/autolist caused hidden PUT settings writes: %d", got)
 	}
 }
+
+func TestFircTunnelProbeKeysAndProgressRoutes(t *testing.T) {
+	tmpDir := t.TempDir()
+	fircDir := filepath.Join(tmpDir, "firc")
+	sbDir := filepath.Join(tmpDir, "sing-box")
+	if err := os.MkdirAll(fircDir, 0o755); err != nil {
+		t.Fatalf("mkdir fircDir: %v", err)
+	}
+	if err := os.MkdirAll(sbDir, 0o755); err != nil {
+		t.Fatalf("mkdir sbDir: %v", err)
+	}
+	sockDir, err := os.MkdirTemp("", "awgm-firc-probe-")
+	if err != nil {
+		t.Fatalf("mkdtemp sockDir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "d.sock")
+
+	store := storage.NewSettingsStore(tmpDir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if err := store.Update(func(s *storage.Settings) error {
+		s.SingboxRouter.RoutingEngine = "firc"
+		return nil
+	}); err != nil {
+		t.Fatalf("set engine firc: %v", err)
+	}
+
+	var probePostBody atomic.Value
+	fakeMux := http.NewServeMux()
+	fakeMux.HandleFunc("/api/v1/system/netfilter", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"running":true}`))
+	})
+	fakeMux.HandleFunc("/api/v1/tunnels/probe", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"total":3,"nodes":[{"key":"src:N1","ok":true,"handshakeMs":11,"firstByteMs":22,"why":""}]}`))
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		probePostBody.Store(string(b))
+		_, _ = w.Write([]byte(`{"nodes":[{"key":"src:N1","ok":true,"handshakeMs":11,"firstByteMs":22,"why":""}]}`))
+	})
+
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	srv := &http.Server{Handler: fakeMux}
+	go func() { _ = srv.Serve(ln) }()
+	defer func() {
+		_ = srv.Close()
+		_ = ln.Close()
+		_ = os.Remove(sockPath)
+	}()
+
+	op := firc.NewOperator(firc.Options{
+		ConfigDir:   fircDir,
+		SocketPath:  sockPath,
+		InboundPort: 1099,
+	})
+	h := NewFircHandler(op)
+	h.SetSettingsStore(store)
+	h.SetSingboxConfigDir(sbDir)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+
+	doReq := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// V1 reverse proxy must preserve keys alongside tunnel source normalization.
+	v1Post := doReq(http.MethodPost, "/api/firc/v1/tunnels/probe", `{"tunnel":{"id":"t1","device":"tunvless0","sources":[{"id":"src1","kind":"link","link":"vless://11111111-1111-1111-1111-111111111111@1.1.1.1:443#N1"}]},"keys":["src:N1"]}`)
+	if v1Post.Code != http.StatusOK {
+		t.Fatalf("POST /api/firc/v1/tunnels/probe expected 200, got %d: %s", v1Post.Code, v1Post.Body.String())
+	}
+	forwarded, _ := probePostBody.Load().(string)
+	if !strings.Contains(forwarded, `"keys":["src:N1"]`) {
+		t.Fatalf("v1 proxy dropped keys during normalization: %s", forwarded)
+	}
+
+	// Online GET /api/firc/v1/tunnels/probe and /api/firc/tunnels/probe return live progress.
+	for _, p := range []string{"/api/firc/v1/tunnels/probe", "/api/firc/tunnels/probe"} {
+		rec := doReq(http.MethodGet, p, "")
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"total":3`) {
+			t.Fatalf("online GET %s expected total:3, got %d: %s", p, rec.Code, rec.Body.String())
+		}
+	}
+
+	// Wrapper {id, tunnel, keys} on POST /api/firc/tunnels/probe also forwards keys.
+	probePostBody.Store("")
+	wrapPost := doReq(http.MethodPost, "/api/firc/tunnels/probe", `{"id":"t1","keys":["src:N1"]}`)
+	if wrapPost.Code != http.StatusOK {
+		t.Fatalf("POST /api/firc/tunnels/probe expected 200, got %d: %s", wrapPost.Code, wrapPost.Body.String())
+	}
+	forwarded2, _ := probePostBody.Load().(string)
+	if !strings.Contains(forwarded2, `"keys":["src:N1"]`) || !strings.Contains(forwarded2, `"id":"t1"`) {
+		t.Fatalf("handleProbeTunnel did not forward id/keys: %s", forwarded2)
+	}
+
+	// Offline fallback (socket closed) must return total:0, nodes:[] on both routes.
+	_ = srv.Close()
+	_ = ln.Close()
+	_ = os.Remove(sockPath)
+	for _, p := range []string{"/api/firc/v1/tunnels/probe", "/api/firc/tunnels/probe"} {
+		rec := doReq(http.MethodGet, p, "")
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"total":0`) || !strings.Contains(rec.Body.String(), `"nodes":[]`) {
+			t.Fatalf("offline GET %s expected total:0 nodes:[], got %d: %s", p, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestFircHandler_FilterValidation(t *testing.T) {
+	tmpDir := t.TempDir()
+	fircDir := filepath.Join(tmpDir, "firc")
+	if err := os.MkdirAll(fircDir, 0755); err != nil {
+		t.Fatalf("mkdir fircDir: %v", err)
+	}
+
+	sockDir, err := os.MkdirTemp("", "firc-fv-")
+	if err != nil {
+		t.Fatalf("mkdtemp sockDir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "d.sock")
+
+	store := storage.NewSettingsStore(tmpDir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if err := store.Update(func(s *storage.Settings) error {
+		s.SingboxRouter.RoutingEngine = "sing-box"
+		return nil
+	}); err != nil {
+		t.Fatalf("update settings: %v", err)
+	}
+
+	op := firc.NewOperator(firc.Options{
+		ConfigDir:   fircDir,
+		SocketPath:  sockPath,
+		InboundPort: 1099,
+	})
+	h := NewFircHandler(op)
+	h.SetSettingsStore(store)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+
+	doReq := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// 1. Offline PUT /api/firc/tunnels and /api/firc/v1/tunnels reject lookaround / bad exclude regex
+	badLookaround := `{"tunnels":[{"id":"t1","device":"tunvless0","enable":true,"filter":"^(?!RU).*$","sources":[{"id":"s1","kind":"subscription","url":"https://example.com/sub"}]}]}`
+	rec := doReq(http.MethodPut, "/api/firc/tunnels", badLookaround)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "lookahead/lookbehind") {
+		t.Fatalf("PUT /api/firc/tunnels lookaround: expected 400 with hint, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(http.MethodPut, "/api/firc/v1/tunnels", badLookaround)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "lookahead/lookbehind") {
+		t.Fatalf("PUT /api/firc/v1/tunnels lookaround: expected 400 with hint, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	badExclude := `{"tunnels":[{"id":"t1","device":"tunvless0","enable":true,"filterExclude":"[unclosed","sources":[{"id":"s1","kind":"subscription","url":"https://example.com/sub"}]}]}`
+	rec = doReq(http.MethodPut, "/api/firc/tunnels", badExclude)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "INVALID_FILTER") {
+		t.Fatalf("PUT /api/firc/tunnels bad exclude: expected 400 INVALID_FILTER, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 2. Valid filters with surrounding whitespace are trimmed and persisted offline
+	validPayload := `{"tunnels":[{"id":"t1","device":"tunvless0","enable":true,"filter":"  (?i)(DE|NL)  ","filterExclude":"  (?i)RU  ","sources":[{"id":"s1","kind":"subscription","url":"https://example.com/sub"}]}]}`
+	rec = doReq(http.MethodPut, "/api/firc/tunnels", validPayload)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/firc/tunnels valid: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	saved, err := op.LoadTunnelsFile()
+	if err != nil || len(saved) != 1 || saved[0].Filter != "(?i)(DE|NL)" || saved[0].FilterExclude != "(?i)RU" {
+		t.Fatalf("expected trimmed filters saved, got err=%v saved=%+v", err, saved)
+	}
+
+	// 3. Preview endpoints reject invalid regex even while offline
+	rec = doReq(http.MethodPost, "/api/firc/tunnels/preview", `{"id":"t1","filter":"(?!RU)"}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "lookahead/lookbehind") {
+		t.Fatalf("POST /api/firc/tunnels/preview lookaround: expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(http.MethodPost, "/api/firc/v1/tunnels/preview", `{"id":"t1","filterExclude":"`+strings.Repeat("x", firc.MaxTunnelFilterBytes+1)+`"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /api/firc/v1/tunnels/preview overlong: expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doReq(http.MethodPost, "/api/firc/v1/tunnels/preview", `{"id":"t1","filter":"  (?i)DE  ","filterExclude":" (?i)RU "}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/firc/v1/tunnels/preview valid offline: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 4. Live fircd returning unknown key "filterExclude" yields 400 instead of 500
+	if err := op.SaveTunnelsFile([]firc.Tunnel{}); err != nil {
+		t.Fatalf("reset tunnels.yaml: %v", err)
+	}
+	if err := store.Update(func(s *storage.Settings) error {
+		s.SingboxRouter.RoutingEngine = "firc"
+		return nil
+	}); err != nil {
+		t.Fatalf("switch engine firc: %v", err)
+	}
+	fakeMux := http.NewServeMux()
+	fakeMux.HandleFunc("/api/v1/system/netfilter", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"active":true,"chains":["FIRC_DNS"]}`))
+	})
+	fakeMux.HandleFunc("/api/v1/tunnels", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPut {
+			raw, _ := io.ReadAll(r.Body)
+			if strings.Contains(string(raw), "filterExclude") {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"unknown key \"filterExclude\""}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"tunnels":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"tunnels":[]}`))
+	})
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	srv := &http.Server{Handler: fakeMux}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = srv.Close()
+		_ = ln.Close()
+	})
+
+	rec = doReq(http.MethodPut, "/api/firc/tunnels", validPayload)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "filterExclude") {
+		t.Fatalf("PUT /api/firc/tunnels stale fircd: expected 400 explaining filterExclude, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

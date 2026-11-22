@@ -83,8 +83,10 @@ type KeenDNSStore struct {
 	// Бэкофф решает обе задачи: заведомо провальный GET больше не уходит раз
 	// в минуту (и не пишет ERROR в журнал каждый раз), но прошивка с живой
 	// подсистемой сама себя вылечит через absentBackoff.
-	absentMu    sync.Mutex
-	absentUntil time.Time
+	absentMu         sync.Mutex
+	absentUntil      time.Time
+	cloudAbsentMu    sync.Mutex
+	cloudAbsentUntil time.Time
 }
 
 // absentBackoff — пауза после 404. Час: прошивка без KeenDNS не обретёт его
@@ -291,4 +293,94 @@ func parseKeenDNS(raw []byte) *KeenDNSInfo {
 		RelayDomains:   relayDomains,
 		RelayEndpoints: relayEndpoints,
 	}
+}
+
+func (s *KeenDNSStore) cloudAbsentNow() bool {
+	s.cloudAbsentMu.Lock()
+	defer s.cloudAbsentMu.Unlock()
+	return time.Now().Before(s.cloudAbsentUntil)
+}
+
+func (s *KeenDNSStore) markCloudAbsent() {
+	s.cloudAbsentMu.Lock()
+	s.cloudAbsentUntil = time.Now().Add(absentBackoff)
+	s.cloudAbsentMu.Unlock()
+}
+
+// GetCloudTargets reads active cloud relay IPv4 targets from `/show/cloud`
+// (uncached, with absent backoff on 404 for older firmwares).
+func (s *KeenDNSStore) GetCloudTargets(ctx context.Context) ([]string, error) {
+	if s == nil || s.getter == nil || s.cloudAbsentNow() {
+		return nil, nil
+	}
+	raw, err := s.getter.GetRaw(ctx, "/show/cloud")
+	if err != nil {
+		var httpErr *transport.HTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
+			s.markCloudAbsent()
+			return nil, nil
+		}
+		return nil, err
+	}
+	return parseCloudTargetIPs(raw), nil
+}
+
+func parseCloudTargetIPs(raw []byte) []string {
+	var v struct {
+		TargetHost  string          `json:"target-host"`
+		TargetHostU string          `json:"target_host"`
+		TargetList  json.RawMessage `json:"target-list"`
+		TargetListU json.RawMessage `json:"target_list"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var out []string
+	addToken := func(tok string) {
+		s := strings.TrimSpace(tok)
+		if s == "" {
+			return
+		}
+		if h, _, err := net.SplitHostPort(s); err == nil {
+			s = h
+		}
+		if ip := net.ParseIP(s); ip != nil && ip.To4() != nil {
+			ip4 := ip.To4().String()
+			if _, ok := seen[ip4]; !ok {
+				seen[ip4] = struct{}{}
+				out = append(out, ip4)
+			}
+		}
+	}
+	addTokensFromString := func(s string) {
+		fields := strings.FieldsFunc(s, func(r rune) bool {
+			return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\r' || r == '\n'
+		})
+		for _, f := range fields {
+			addToken(f)
+		}
+	}
+	ingestRawList := func(rm json.RawMessage) {
+		if len(rm) == 0 {
+			return
+		}
+		var str string
+		if err := json.Unmarshal(rm, &str); err == nil {
+			addTokensFromString(str)
+			return
+		}
+		var arr []string
+		if err := json.Unmarshal(rm, &arr); err == nil {
+			for _, item := range arr {
+				addTokensFromString(item)
+			}
+		}
+	}
+
+	addToken(v.TargetHost)
+	addToken(v.TargetHostU)
+	ingestRawList(v.TargetList)
+	ingestRawList(v.TargetListU)
+	return out
 }
