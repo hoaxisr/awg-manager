@@ -1,7 +1,12 @@
 package pagescan
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ipinspect"
@@ -77,11 +83,15 @@ type Options struct {
 	RouteChecker     RouteChecker
 	ProxyURLProvider ProxyURLProvider
 	Resolver         HostResolver
-	MaxBodyBytes     int64
-	MaxHosts         int
-	FetchTimeout     time.Duration
-	TotalTimeout     time.Duration
-	Concurrency      int
+	// ProxyResolver resolves target hostnames on behalf of proxy mode for verification and IP pinning.
+	// When nil, proxy mode probes local DNS and falls back to DNS-over-HTTPS through the local proxy
+	// (never forwarding an unverified hostname to the proxy).
+	ProxyResolver HostResolver
+	MaxBodyBytes  int64
+	MaxHosts      int
+	FetchTimeout  time.Duration
+	TotalTimeout  time.Duration
+	Concurrency   int
 }
 
 // Resource describes one hostname extracted from the target page along with routing & ASN metadata.
@@ -121,14 +131,20 @@ type Service struct {
 	routeChecker     RouteChecker
 	proxyURLProvider ProxyURLProvider
 	resolver         HostResolver
+	proxyResolver    HostResolver
+	dohEndpoints     []string
+	dohRootCAs       *x509.CertPool
 	maxBodyBytes     int64
 	maxHosts         int
 	fetchTimeout     time.Duration
 	totalTimeout     time.Duration
 	concurrency      int
 
-	// Test-only seam.
-	dialRaw func(ctx context.Context, network, addr string) (net.Conn, error)
+	dohTxSeq atomic.Uint32
+
+	// Test-only seams.
+	dialRaw   func(ctx context.Context, network, addr string) (net.Conn, error)
+	dialProxy func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // NewService constructs a page resource scanner Service.
@@ -157,17 +173,21 @@ func NewService(opts Options) *Service {
 	if concurrency <= 0 {
 		concurrency = defaultConcurrency
 	}
+	defaultDial := (&net.Dialer{Timeout: fetchTimeout}).DialContext
 	return &Service{
 		ipInspect:        opts.IPInspect,
 		routeChecker:     opts.RouteChecker,
 		proxyURLProvider: opts.ProxyURLProvider,
 		resolver:         res,
+		proxyResolver:    opts.ProxyResolver,
+		dohEndpoints:     []string{"1.1.1.1", "8.8.8.8"},
 		maxBodyBytes:     maxBody,
 		maxHosts:         maxHosts,
 		fetchTimeout:     fetchTimeout,
 		totalTimeout:     totalTimeout,
 		concurrency:      concurrency,
-		dialRaw:          (&net.Dialer{Timeout: fetchTimeout}).DialContext,
+		dialRaw:          defaultDial,
+		dialProxy:        defaultDial,
 	}
 }
 
@@ -292,13 +312,48 @@ func (s *Service) newDirectTransport() *http.Transport {
 	}
 }
 
+func parseTrustedLoopbackProxyURL(rawProxyURL string) (string, error) {
+	trimmed := strings.TrimSpace(rawProxyURL)
+	if trimmed == "" {
+		return "", ErrProxyUnavailable
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" || parsed.User != nil {
+		return "", fmt.Errorf("%w: invalid proxy URL", ErrBlockedAddress)
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") {
+		return "", fmt.Errorf("%w: unsupported proxy scheme %q", ErrBlockedAddress, parsed.Scheme)
+	}
+	if (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("%w: proxy URL must not include path, query, or fragment", ErrBlockedAddress)
+	}
+	portStr := parsed.Port()
+	if portStr == "" {
+		return "", fmt.Errorf("%w: proxy URL must include an explicit port", ErrBlockedAddress)
+	}
+	portNum, err := strconv.Atoi(portStr)
+	if err != nil || portNum < 1 || portNum > 65535 {
+		return "", fmt.Errorf("%w: invalid proxy port %q", ErrBlockedAddress, portStr)
+	}
+	host := parsed.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return net.JoinHostPort("127.0.0.1", portStr), nil
+	}
+	addr, addrErr := netip.ParseAddr(host)
+	if addrErr != nil || !addr.Unmap().IsLoopback() {
+		return "", fmt.Errorf("%w: proxy host %q is not loopback", ErrBlockedAddress, host)
+	}
+	return net.JoinHostPort(addr.Unmap().String(), portStr), nil
+}
+
 func (s *Service) newProxyTransport(rawProxyURL string) (*http.Transport, error) {
-	parsed, err := url.Parse(strings.TrimSpace(rawProxyURL))
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, fmt.Errorf("invalid proxy URL %q", rawProxyURL)
+	proxyAddr, err := parseTrustedLoopbackProxyURL(rawProxyURL)
+	if err != nil {
+		return nil, err
 	}
 	return &http.Transport{
-		Proxy:                 http.ProxyURL(parsed),
+		Proxy:                 nil, // we dial CONNECT explicitly with verified literal public IPs only
+		DialContext:           s.safeProxyDialContext(proxyAddr),
 		ForceAttemptHTTP2:     true,
 		DisableKeepAlives:     true,
 		MaxIdleConns:          4,
@@ -353,7 +408,7 @@ func (s *Service) fetchDirect(ctx context.Context, target *url.URL) (*fetchResul
 }
 
 func (s *Service) fetchViaProxy(ctx context.Context, target *url.URL, proxyURL string) (*fetchResult, error) {
-	if err := s.validateProxyTargetHost(ctx, target.Hostname()); err != nil {
+	if err := s.validateTargetHostname(target.Hostname()); err != nil {
 		return nil, err
 	}
 
@@ -368,7 +423,7 @@ func (s *Service) fetchViaProxy(ctx context.Context, target *url.URL, proxyURL s
 		Transport: tr,
 		Timeout:   s.fetchTimeout,
 		CheckRedirect: s.buildCheckRedirect(func(req *http.Request) error {
-			return s.validateProxyTargetHost(req.Context(), req.URL.Hostname())
+			return s.validateTargetHostname(req.URL.Hostname())
 		}, &redirectURLs),
 	}
 
@@ -516,34 +571,485 @@ func (s *Service) validateTargetHostname(host string) error {
 	return nil
 }
 
-func (s *Service) validateProxyTargetHost(ctx context.Context, host string) error {
-	if err := s.validateTargetHostname(host); err != nil {
-		return err
+func (s *Service) safeProxyDialContext(proxyAddr string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		host = strings.Trim(strings.TrimSpace(host), "[]")
+		if host == "" {
+			return nil, fmt.Errorf("%w: empty dial host", ErrInvalidURL)
+		}
+
+		if parsedIP, parseErr := netip.ParseAddr(host); parseErr == nil {
+			if scopeErr := s.checkDialAddr(parsedIP); scopeErr != nil {
+				return nil, scopeErr
+			}
+			return s.dialViaHTTPConnect(ctx, proxyAddr, net.JoinHostPort(parsedIP.Unmap().String(), port))
+		}
+
+		if err := s.validateTargetHostname(host); err != nil {
+			return nil, err
+		}
+
+		ips, err := s.resolveProxyTargetIPs(ctx, proxyAddr, host)
+		if err != nil {
+			return nil, err
+		}
+		ordered := orderIPsIPv4First(ips)
+		var lastErr error
+		for _, ip := range ordered {
+			conn, dialErr := s.dialViaHTTPConnect(ctx, proxyAddr, net.JoinHostPort(ip.String(), port))
+			if dialErr == nil {
+				return conn, nil
+			}
+			lastErr = dialErr
+		}
+		if lastErr == nil {
+			return nil, fmt.Errorf("%w: no usable public IP for %s", ErrBlockedAddress, host)
+		}
+		return nil, lastErr
 	}
-	if _, err := netip.ParseAddr(normalizeExtractedHost(host)); err == nil {
-		return nil
+}
+
+func orderIPsIPv4First(addrs []netip.Addr) []netip.Addr {
+	seen := make(map[netip.Addr]struct{}, len(addrs))
+	v4 := make([]netip.Addr, 0, len(addrs))
+	v6 := make([]netip.Addr, 0, len(addrs))
+	for _, raw := range addrs {
+		addr := raw.Unmap()
+		if !addr.IsValid() {
+			continue
+		}
+		if _, ok := seen[addr]; ok {
+			continue
+		}
+		seen[addr] = struct{}{}
+		if addr.Is4() {
+			v4 = append(v4, addr)
+		} else {
+			v6 = append(v6, addr)
+		}
+	}
+	return append(v4, v6...)
+}
+
+func (s *Service) resolveProxyTargetIPs(ctx context.Context, proxyAddr, host string) ([]netip.Addr, error) {
+	if s.proxyResolver != nil {
+		ips, err := s.proxyResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("proxy DNS lookup failed for %s: %w", host, err)
+		}
+		return s.validatePublicIPList(host, ips)
 	}
 
-	lookupCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	ips, err := s.resolver.LookupIPAddr(lookupCtx, host)
-	if err != nil {
-		// DNS failure locally (e.g. ISP DNS drop) should still allow remote resolution by the proxy.
-		return nil
+	// Probe local DNS first to catch LAN/split-horizon names and FakeIP redirects immediately.
+	localCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	ips, err := s.resolver.LookupIPAddr(localCtx, host)
+	cancel()
+	if err == nil && len(ips) > 0 {
+		sawBenchmark := false
+		publicAddrs := make([]netip.Addr, 0, len(ips))
+		for _, entry := range ips {
+			parsed, ok := netip.AddrFromSlice(entry.IP)
+			if !ok {
+				continue
+			}
+			parsed = parsed.Unmap()
+			_, scope := ipinspect.ClassifyAddr(parsed)
+			switch scope {
+			case "public":
+				publicAddrs = append(publicAddrs, parsed)
+			case "benchmark":
+				sawBenchmark = true
+			default:
+				return nil, fmt.Errorf("%w: host %s resolves to non-public address %s (%s)", ErrBlockedAddress, host, parsed.String(), scope)
+			}
+		}
+		if !sawBenchmark && len(publicAddrs) > 0 {
+			return publicAddrs, nil
+		}
 	}
-	for _, ipAddr := range ips {
-		parsed, ok := netip.AddrFromSlice(ipAddr.IP)
+
+	// Local lookup failed or returned FakeIP: resolve on the proxy exit side via DoH over the same
+	// loopback proxy so we never pass an unverified hostname in proxy CONNECT/GET requests.
+	return s.lookupPublicDoH(ctx, proxyAddr, host)
+}
+
+func (s *Service) validatePublicIPList(host string, ips []net.IPAddr) ([]netip.Addr, error) {
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("%w: no public IP addresses resolved for %s", ErrBlockedAddress, host)
+	}
+	out := make([]netip.Addr, 0, len(ips))
+	for _, entry := range ips {
+		parsed, ok := netip.AddrFromSlice(entry.IP)
 		if !ok {
 			continue
 		}
-		_, scope := ipinspect.ClassifyAddr(parsed)
-		// Benchmark (198.18.0.0/15) is permitted here because a routed domain resolves locally to FakeIP
-		// while the remote proxy still resolves the real public domain over the tunnel.
-		if scope != "public" && scope != "benchmark" {
-			return fmt.Errorf("%w: host %s resolves to non-public address %s (%s)", ErrBlockedAddress, host, parsed.Unmap().String(), scope)
+		parsed = parsed.Unmap()
+		if err := s.checkDialAddr(parsed); err != nil {
+			return nil, fmt.Errorf("%s resolves to blocked IP %s: %w", host, parsed.String(), err)
+		}
+		out = append(out, parsed)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%w: no usable public IP address for %s", ErrBlockedAddress, host)
+	}
+	return out, nil
+}
+
+type prefixedConn struct {
+	net.Conn
+	prefix []byte
+}
+
+func (c *prefixedConn) Read(p []byte) (int, error) {
+	if len(c.prefix) > 0 {
+		n := copy(p, c.prefix)
+		c.prefix = c.prefix[n:]
+		return n, nil
+	}
+	return c.Conn.Read(p)
+}
+
+func (s *Service) dialViaHTTPConnect(ctx context.Context, proxyAddr, targetAddr string) (net.Conn, error) {
+	conn, err := s.dialProxy(ctx, "tcp", proxyAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	stopCancel := context.AfterFunc(ctx, func() {
+		_ = conn.Close()
+	})
+	cleanupOnErr := func() {
+		stopCancel()
+		_ = conn.Close()
+	}
+
+	if deadline, has := ctx.Deadline(); has {
+		_ = conn.SetDeadline(deadline)
+	} else {
+		_ = conn.SetDeadline(time.Now().Add(s.fetchTimeout))
+	}
+
+	reqLine := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", targetAddr, targetAddr)
+	if _, err := io.WriteString(conn, reqLine); err != nil {
+		cleanupOnErr()
+		return nil, err
+	}
+
+	br := bufio.NewReader(io.LimitReader(conn, 16*1024))
+	resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		cleanupOnErr()
+		return nil, fmt.Errorf("proxy CONNECT %s: %w", targetAddr, err)
+	}
+	_ = resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		cleanupOnErr()
+		return nil, fmt.Errorf("proxy CONNECT %s failed: HTTP %d", targetAddr, resp.StatusCode)
+	}
+
+	if !stopCancel() {
+		_ = conn.Close()
+		return nil, ctx.Err()
+	}
+	_ = conn.SetDeadline(time.Time{})
+
+	if br.Buffered() > 0 {
+		buf := make([]byte, br.Buffered())
+		n, _ := br.Read(buf)
+		return &prefixedConn{Conn: conn, prefix: buf[:n]}, nil
+	}
+	return conn, nil
+}
+
+func (s *Service) lookupPublicDoH(ctx context.Context, proxyAddr, domain string) ([]netip.Addr, error) {
+	return s.lookupPublicDoHDepth(ctx, proxyAddr, domain, 0)
+}
+
+func (s *Service) lookupPublicDoHDepth(ctx context.Context, proxyAddr, domain string, depth int) ([]netip.Addr, error) {
+	domain = normalizeExtractedHost(domain)
+	if err := s.validateTargetHostname(domain); err != nil {
+		return nil, err
+	}
+	if depth > 4 {
+		return nil, fmt.Errorf("proxy DoH CNAME chain too deep for %s", domain)
+	}
+
+	var lastErr error
+	for _, endpoint := range s.dohEndpoints {
+		addrs, cname, err := s.queryDoHServer(ctx, proxyAddr, endpoint, domain)
+		if err != nil {
+			if errors.Is(err, ErrBlockedAddress) {
+				return nil, err
+			}
+			lastErr = err
+			continue
+		}
+		if len(addrs) > 0 {
+			valid := make([]netip.Addr, 0, len(addrs))
+			for _, addr := range addrs {
+				addr = addr.Unmap()
+				if checkErr := s.checkDialAddr(addr); checkErr != nil {
+					return nil, fmt.Errorf("%s resolved via exit DoH to blocked IP %s: %w", domain, addr.String(), checkErr)
+				}
+				valid = append(valid, addr)
+			}
+			return valid, nil
+		}
+		if cname != "" {
+			return s.lookupPublicDoHDepth(ctx, proxyAddr, cname, depth+1)
 		}
 	}
-	return nil
+	if lastErr != nil {
+		return nil, fmt.Errorf("proxy exit DoH resolution failed for %s: %w", domain, lastErr)
+	}
+	return nil, fmt.Errorf("%w: proxy exit DoH returned no public A records for %s", ErrBlockedAddress, domain)
+}
+
+func (s *Service) queryDoHServer(ctx context.Context, proxyAddr, dohHost, domain string) ([]netip.Addr, string, error) {
+	dohTarget := dohHost
+	if _, _, err := net.SplitHostPort(dohTarget); err != nil {
+		dohTarget = net.JoinHostPort(dohHost, "443")
+	}
+	serverName, _, err := net.SplitHostPort(dohTarget)
+	if err != nil {
+		serverName = dohHost
+	}
+
+	txID := uint16(s.dohTxSeq.Add(1))
+	if txID == 0 {
+		txID = uint16(s.dohTxSeq.Add(1))
+	}
+	wireQuery, err := encodeDoHQueryA(txID, domain)
+	if err != nil {
+		return nil, "", err
+	}
+
+	tr := &http.Transport{
+		Proxy: nil,
+		DialTLSContext: func(dialCtx context.Context, _, _ string) (net.Conn, error) {
+			rawConn, err := s.dialViaHTTPConnect(dialCtx, proxyAddr, dohTarget)
+			if err != nil {
+				return nil, err
+			}
+			tlsConn := tls.Client(rawConn, &tls.Config{
+				ServerName: strings.Trim(serverName, "[]"),
+				RootCAs:    s.dohRootCAs,
+				MinVersion: tls.VersionTLS12,
+			})
+			if err := tlsConn.HandshakeContext(dialCtx); err != nil {
+				_ = tlsConn.Close()
+				return nil, err
+			}
+			return tlsConn, nil
+		},
+		ForceAttemptHTTP2:   false,
+		DisableKeepAlives:   true,
+		TLSHandshakeTimeout: s.fetchTimeout,
+	}
+	defer tr.CloseIdleConnections()
+
+	dohCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(dohCtx, http.MethodPost, "https://"+dohTarget+"/dns-query", bytes.NewReader(wireQuery))
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Content-Type", "application/dns-message")
+	req.Header.Set("Accept", "application/dns-message")
+
+	resp, err := (&http.Client{Transport: tr, Timeout: 4 * time.Second}).Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("DoH HTTP %d", resp.StatusCode)
+	}
+	wireResp, err := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	if err != nil {
+		return nil, "", err
+	}
+	return parseDoHAResponse(wireResp, domain, txID)
+}
+
+func encodeDoHQueryA(txID uint16, domain string) ([]byte, error) {
+	labels := strings.Split(strings.TrimSuffix(normalizeExtractedHost(domain), "."), ".")
+	wireLen := 1
+	for _, lbl := range labels {
+		if len(lbl) == 0 || len(lbl) > 63 {
+			return nil, fmt.Errorf("invalid DNS name %q", domain)
+		}
+		wireLen += 1 + len(lbl)
+	}
+	if wireLen > 255 {
+		return nil, fmt.Errorf("DNS name too long %q", domain)
+	}
+
+	pkt := make([]byte, 12+wireLen+4)
+	binary.BigEndian.PutUint16(pkt[0:2], txID)
+	binary.BigEndian.PutUint16(pkt[2:4], 0x0100) // RD=1
+	binary.BigEndian.PutUint16(pkt[4:6], 1)      // QDCOUNT=1
+	off := 12
+	for _, lbl := range labels {
+		pkt[off] = byte(len(lbl))
+		copy(pkt[off+1:], lbl)
+		off += 1 + len(lbl)
+	}
+	pkt[off] = 0
+	off++
+	binary.BigEndian.PutUint16(pkt[off:off+2], 1)   // QTYPE=A
+	binary.BigEndian.PutUint16(pkt[off+2:off+4], 1) // QCLASS=IN
+	return pkt, nil
+}
+
+func parseDoHAResponse(pkt []byte, domain string, expectedTxID uint16) ([]netip.Addr, string, error) {
+	if len(pkt) < 12 {
+		return nil, "", fmt.Errorf("short DoH DNS response")
+	}
+	if binary.BigEndian.Uint16(pkt[0:2]) != expectedTxID {
+		return nil, "", fmt.Errorf("DoH DNS TXID mismatch")
+	}
+	flags := binary.BigEndian.Uint16(pkt[2:4])
+	if (flags>>15)&1 != 1 {
+		return nil, "", fmt.Errorf("unexpected DoH DNS query packet (QR=0)")
+	}
+	if opcode := (flags >> 11) & 0x0f; opcode != 0 {
+		return nil, "", fmt.Errorf("unexpected DoH DNS opcode %d", opcode)
+	}
+	if (flags>>9)&1 != 0 {
+		return nil, "", fmt.Errorf("DoH DNS response truncated (TC=1)")
+	}
+
+	wantDomain := strings.ToLower(strings.TrimSuffix(normalizeExtractedHost(domain), "."))
+	qdCount := int(binary.BigEndian.Uint16(pkt[4:6]))
+	anCount := int(binary.BigEndian.Uint16(pkt[6:8]))
+	if qdCount != 1 {
+		return nil, "", fmt.Errorf("DoH DNS expected QDCOUNT=1, got %d", qdCount)
+	}
+	qname, nextQ, err := readDNSName(pkt, 12)
+	if err != nil || nextQ+4 > len(pkt) {
+		return nil, "", fmt.Errorf("malformed DoH DNS question")
+	}
+	if strings.ToLower(strings.TrimSuffix(qname, ".")) != wantDomain {
+		return nil, "", fmt.Errorf("DoH DNS question name mismatch: got %q want %q", qname, wantDomain)
+	}
+	if qType := binary.BigEndian.Uint16(pkt[nextQ : nextQ+2]); qType != 1 {
+		return nil, "", fmt.Errorf("DoH DNS question QTYPE mismatch: %d", qType)
+	}
+	if qClass := binary.BigEndian.Uint16(pkt[nextQ+2 : nextQ+4]); qClass != 1 {
+		return nil, "", fmt.Errorf("DoH DNS question QCLASS mismatch: %d", qClass)
+	}
+
+	if rcode := int(flags & 0x0f); rcode != 0 {
+		return nil, "", fmt.Errorf("DoH DNS rcode %d for %s", rcode, wantDomain)
+	}
+
+	aRecords := make(map[string][]netip.Addr)
+	cnameRecords := make(map[string]string)
+	off := nextQ + 4
+	for i := 0; i < anCount; i++ {
+		ownerRaw, next, err := readDNSName(pkt, off)
+		if err != nil || next+10 > len(pkt) {
+			return nil, "", fmt.Errorf("malformed DoH DNS answer")
+		}
+		owner := strings.ToLower(strings.TrimSuffix(ownerRaw, "."))
+		rrType := binary.BigEndian.Uint16(pkt[next : next+2])
+		rrClass := binary.BigEndian.Uint16(pkt[next+2 : next+4])
+		rdLen := int(binary.BigEndian.Uint16(pkt[next+8 : next+10]))
+		rdataOff := next + 10
+		if rdataOff+rdLen > len(pkt) {
+			return nil, "", fmt.Errorf("truncated DoH DNS rdata")
+		}
+		if rrClass == 1 {
+			switch rrType {
+			case 1: // A
+				if rdLen == 4 {
+					addr := netip.AddrFrom4([4]byte{pkt[rdataOff], pkt[rdataOff+1], pkt[rdataOff+2], pkt[rdataOff+3]})
+					aRecords[owner] = append(aRecords[owner], addr)
+				}
+			case 5: // CNAME
+				if cnameRecords[owner] == "" {
+					if targetRaw, _, cerr := readDNSName(pkt, rdataOff); cerr == nil {
+						target := strings.ToLower(strings.TrimSuffix(targetRaw, "."))
+						if target != "" {
+							cnameRecords[owner] = target
+						}
+					}
+				}
+			}
+		}
+		off = rdataOff + rdLen
+	}
+
+	cur := wantDomain
+	visited := map[string]bool{cur: true}
+	for step := 0; step < 8; step++ {
+		if addrs := aRecords[cur]; len(addrs) > 0 {
+			return addrs, "", nil
+		}
+		nextOwner := cnameRecords[cur]
+		if nextOwner == "" || visited[nextOwner] {
+			break
+		}
+		visited[nextOwner] = true
+		cur = nextOwner
+	}
+	if cur != wantDomain {
+		return nil, cur, nil
+	}
+	return nil, "", nil
+}
+
+func readDNSName(pkt []byte, off int) (string, int, error) {
+	var labels []string
+	cur := off
+	nextOff := -1
+	jumps := 0
+	for steps := 0; steps <= len(pkt); steps++ {
+		if cur >= len(pkt) {
+			return "", 0, fmt.Errorf("truncated DNS name")
+		}
+		l := pkt[cur]
+		if l == 0 {
+			if nextOff == -1 {
+				nextOff = cur + 1
+			}
+			return strings.Join(labels, "."), nextOff, nil
+		}
+		if l&0xc0 == 0xc0 {
+			if cur+2 > len(pkt) {
+				return "", 0, fmt.Errorf("truncated DNS pointer")
+			}
+			if nextOff == -1 {
+				nextOff = cur + 2
+			}
+			ptr := int(binary.BigEndian.Uint16(pkt[cur:cur+2]) & 0x3fff)
+			if ptr >= len(pkt) {
+				return "", 0, fmt.Errorf("out-of-range DNS pointer")
+			}
+			jumps++
+			if jumps > 16 {
+				return "", 0, fmt.Errorf("DNS pointer loop")
+			}
+			cur = ptr
+			continue
+		}
+		if l&0xc0 != 0 {
+			return "", 0, fmt.Errorf("invalid DNS label header")
+		}
+		end := cur + 1 + int(l)
+		if end > len(pkt) {
+			return "", 0, fmt.Errorf("truncated DNS label")
+		}
+		labels = append(labels, string(pkt[cur+1:end]))
+		cur = end
+	}
+	return "", 0, fmt.Errorf("DNS name loop")
 }
 
 func (s *Service) enrichResources(ctx context.Context, extracted []extractedHost) []Resource {

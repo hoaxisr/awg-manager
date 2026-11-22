@@ -2,12 +2,15 @@ package pagescan
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"reflect"
 	"strings"
@@ -361,6 +364,61 @@ func TestScan_TruncationLimitsAndEnrichment(t *testing.T) {
 	}
 }
 
+func newConnectProxyTestServer(t *testing.T, routeAddr func(authority string) (string, bool)) (*httptest.Server, *[]string, *sync.Mutex) {
+	t.Helper()
+	var mu sync.Mutex
+	var authorities []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "only CONNECT allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		mu.Lock()
+		authorities = append(authorities, r.Host)
+		mu.Unlock()
+
+		dialTarget, ok := routeAddr(r.Host)
+		if !ok {
+			http.Error(w, "blocked test authority", http.StatusBadGateway)
+			return
+		}
+		upConn, err := (&net.Dialer{Timeout: 2 * time.Second}).Dial("tcp", dialTarget)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			_ = upConn.Close()
+			http.Error(w, "hijack unsupported", http.StatusInternalServerError)
+			return
+		}
+		clientConn, brw, err := hj.Hijack()
+		if err != nil {
+			_ = upConn.Close()
+			return
+		}
+		_, _ = io.WriteString(clientConn, "HTTP/1.1 200 Connection established\r\n\r\n")
+		if brw != nil && brw.Reader.Buffered() > 0 {
+			buffered := make([]byte, brw.Reader.Buffered())
+			n, _ := brw.Reader.Read(buffered)
+			if n > 0 {
+				_, _ = upConn.Write(buffered[:n])
+			}
+		}
+		go func() {
+			_, _ = io.Copy(upConn, clientConn)
+			_ = upConn.Close()
+		}()
+		go func() {
+			_, _ = io.Copy(clientConn, upConn)
+			_ = clientConn.Close()
+		}()
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &authorities, &mu
+}
+
 func TestScan_ProxyModesAndAutoFallback(t *testing.T) {
 	targetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -368,30 +426,12 @@ func TestScan_ProxyModesAndAutoFallback(t *testing.T) {
 	}))
 	defer targetSrv.Close()
 
-	// Minimal HTTP forward proxy forwarding requests to targetSrv.
-	proxyHits := 0
-	proxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxyHits++
-		fwdReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetSrv.URL+r.URL.RequestURI(), nil)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
+	proxySrv, authorities, authMu := newConnectProxyTestServer(t, func(authority string) (string, bool) {
+		if authority == "93.184.216.34:80" {
+			return targetSrv.Listener.Addr().String(), true
 		}
-		resp, err := http.DefaultClient.Do(fwdReq)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-		for k, vals := range resp.Header {
-			for _, v := range vals {
-				w.Header().Add(k, v)
-			}
-		}
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
-	}))
-	defer proxySrv.Close()
+		return "", false
+	})
 
 	resolver := &stubHostResolver{
 		records: map[string][]net.IPAddr{
@@ -400,17 +440,25 @@ func TestScan_ProxyModesAndAutoFallback(t *testing.T) {
 			"cdn.example.com":         {{IP: net.ParseIP("1.1.1.1")}},
 		},
 	}
+	proxyResolver := &stubHostResolver{
+		records: map[string][]net.IPAddr{
+			"blocked-wan.example.com": {{IP: net.ParseIP("93.184.216.34")}},
+			"fakeip-site.example.com": {{IP: net.ParseIP("93.184.216.34")}},
+		},
+	}
 
 	// Case 1: proxy mode without available proxy -> ErrProxyUnavailable.
-	svcNoProxy := NewService(Options{Resolver: resolver})
+	svcNoProxy := NewService(Options{Resolver: resolver, ProxyResolver: proxyResolver})
 	_, err := svcNoProxy.Scan(context.Background(), "http://blocked-wan.example.com/", FetchModeProxy)
 	if !errors.Is(err, ErrProxyUnavailable) {
 		t.Fatalf("expected ErrProxyUnavailable, got %v", err)
 	}
 
-	// Case 2: auto falls back to proxy when direct dial fails, and records fetchVia=proxy.
+	// Case 2: auto falls back to proxy when direct dial fails, records fetchVia=proxy,
+	// and pins CONNECT strictly to the verified literal public IP (never forwarding a hostname).
 	svcWithProxy := NewService(Options{
 		Resolver:         resolver,
+		ProxyResolver:    proxyResolver,
 		ProxyURLProvider: func(context.Context) string { return proxySrv.URL },
 		FetchTimeout:     2 * time.Second,
 	})
@@ -422,8 +470,11 @@ func TestScan_ProxyModesAndAutoFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("auto fallback Scan failed: %v", err)
 	}
-	if res.FetchVia != "proxy" || !res.ProxyAvailable || proxyHits != 1 {
-		t.Errorf("FetchVia=%q ProxyAvailable=%v proxyHits=%d", res.FetchVia, res.ProxyAvailable, proxyHits)
+	authMu.Lock()
+	gotAuth := append([]string(nil), (*authorities)...)
+	authMu.Unlock()
+	if res.FetchVia != "proxy" || !res.ProxyAvailable || len(gotAuth) != 1 || gotAuth[0] != "93.184.216.34:80" {
+		t.Fatalf("FetchVia=%q ProxyAvailable=%v CONNECT targets=%v", res.FetchVia, res.ProxyAvailable, gotAuth)
 	}
 	if len(res.Resources) < 2 {
 		t.Errorf("expected extracted resources through proxy, got %+v", res.Resources)
@@ -435,7 +486,7 @@ func TestScan_ProxyModesAndAutoFallback(t *testing.T) {
 	}
 
 	// Case 4: hostname resolving locally to FakeIP (198.18.0.9) is rejected in direct mode
-	// but automatically retried through proxy in auto mode.
+	// and automatically retried through proxy pinned to exit-verified public IP 93.184.216.34.
 	if _, err := svcWithProxy.Scan(context.Background(), "http://fakeip-site.example.com/", FetchModeDirect); !errors.Is(err, ErrBlockedAddress) {
 		t.Fatalf("expected ErrBlockedAddress in direct mode for FakeIP, got %v", err)
 	}
@@ -446,6 +497,216 @@ func TestScan_ProxyModesAndAutoFallback(t *testing.T) {
 	if resFake.FetchVia != "proxy" {
 		t.Errorf("FetchVia = %q, want proxy", resFake.FetchVia)
 	}
+}
+
+func TestScan_ProxySecurityBlocksNonPublicAndFailsClosed(t *testing.T) {
+	// 1. Non-loopback proxy URL must be rejected before dialing.
+	svcBadProxy := NewService(Options{
+		ProxyURLProvider: func(context.Context) string { return "http://192.168.1.1:1099" },
+		ProxyResolver: &stubHostResolver{
+			records: map[string][]net.IPAddr{"ok.example.com": {{IP: net.ParseIP("93.184.216.34")}}},
+		},
+	})
+	if _, err := svcBadProxy.Scan(context.Background(), "https://ok.example.com/", FetchModeProxy); !errors.Is(err, ErrBlockedAddress) {
+		t.Fatalf("expected ErrBlockedAddress for non-loopback proxy URL, got %v", err)
+	}
+
+	var redirSrv *httptest.Server
+	redirSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://internal-hop.example.com/", http.StatusFound)
+	}))
+	defer redirSrv.Close()
+
+	proxySrv, authorities, authMu := newConnectProxyTestServer(t, func(authority string) (string, bool) {
+		if authority == "93.184.216.34:80" {
+			return redirSrv.Listener.Addr().String(), true
+		}
+		return "", false
+	})
+
+	// 2. Host where local DNS and DoH both fail must fail closed without CONNECTing.
+	svcFailClosed := NewService(Options{
+		Resolver:         &stubHostResolver{},
+		ProxyURLProvider: func(context.Context) string { return proxySrv.URL },
+		FetchTimeout:     time.Second,
+	})
+	svcFailClosed.dohEndpoints = nil
+	if _, err := svcFailClosed.Scan(context.Background(), "http://unresolvable.example.com/", FetchModeProxy); err == nil {
+		t.Fatalf("expected unresolvable domain in proxy mode to fail closed")
+	}
+
+	// 3. Exit resolver returning non-public IPs (loopback, link-local metadata, FakeIP) -> ErrBlockedAddress, 0 CONNECT hits.
+	for _, tc := range []struct {
+		name string
+		ip   string
+	}{
+		{"loopback", "127.0.0.1"},
+		{"metadata", "169.254.169.254"},
+		{"fakeip", "198.18.0.5"},
+	} {
+		svcBlocked := NewService(Options{
+			Resolver: &stubHostResolver{records: map[string][]net.IPAddr{"x.example.com": {{IP: net.ParseIP("198.18.0.5")}}}},
+			ProxyResolver: &stubHostResolver{
+				records: map[string][]net.IPAddr{"x.example.com": {{IP: net.ParseIP(tc.ip)}}},
+			},
+			ProxyURLProvider: func(context.Context) string { return proxySrv.URL },
+		})
+		if _, err := svcBlocked.Scan(context.Background(), "http://x.example.com/", FetchModeProxy); !errors.Is(err, ErrBlockedAddress) {
+			t.Fatalf("%s: expected ErrBlockedAddress, got %v", tc.name, err)
+		}
+	}
+
+	authMu.Lock()
+	hitsBeforeRedir := len(*authorities)
+	authMu.Unlock()
+	if hitsBeforeRedir != 0 {
+		t.Fatalf("expected 0 proxy CONNECT hits before redirect test, got %v", *authorities)
+	}
+
+	// 4. Redirect hop in proxy mode whose target resolves to 10.0.0.1 must be blocked before any second CONNECT.
+	svcRedir := NewService(Options{
+		Resolver: &stubHostResolver{
+			records: map[string][]net.IPAddr{
+				"start.example.com":        {{IP: net.ParseIP("93.184.216.34")}},
+				"internal-hop.example.com": {{IP: net.ParseIP("10.0.0.1")}},
+			},
+		},
+		ProxyResolver: &stubHostResolver{
+			records: map[string][]net.IPAddr{
+				"start.example.com":        {{IP: net.ParseIP("93.184.216.34")}},
+				"internal-hop.example.com": {{IP: net.ParseIP("10.0.0.1")}},
+			},
+		},
+		ProxyURLProvider: func(context.Context) string { return proxySrv.URL },
+	})
+	if _, err := svcRedir.Scan(context.Background(), "http://start.example.com/", FetchModeProxy); !errors.Is(err, ErrBlockedAddress) {
+		t.Fatalf("expected ErrBlockedAddress on redirect to RFC1918 in proxy mode, got %v", err)
+	}
+	authMu.Lock()
+	redirAuth := append([]string(nil), (*authorities)...)
+	authMu.Unlock()
+	if len(redirAuth) != 1 || redirAuth[0] != "93.184.216.34:80" {
+		t.Fatalf("expected only initial verified IP in CONNECT log, got %v", redirAuth)
+	}
+}
+
+func TestScan_ProxyDoHOverConnectFakeIP(t *testing.T) {
+	targetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<img src="https://img.example.com/a.png">`)
+	}))
+	defer targetSrv.Close()
+
+	// DoH TLS server on loopback using RFC 8484 wire format.
+	dohSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqWire, err := io.ReadAll(r.Body)
+		if err != nil || len(reqWire) < 12 {
+			http.Error(w, "bad query", http.StatusBadRequest)
+			return
+		}
+		txID := binary.BigEndian.Uint16(reqWire[0:2])
+		respWire := buildTestDNSResponse(txID, "fakeip-doh.example.com", "fakeip-doh.example.com", net.ParseIP("93.184.216.34"), false)
+		w.Header().Set("Content-Type", "application/dns-message")
+		_, _ = w.Write(respWire)
+	}))
+	defer dohSrv.Close()
+
+	roots := x509.NewCertPool()
+	roots.AddCert(dohSrv.Certificate())
+
+	proxySrv, authorities, authMu := newConnectProxyTestServer(t, func(authority string) (string, bool) {
+		switch authority {
+		case dohSrv.Listener.Addr().String():
+			return dohSrv.Listener.Addr().String(), true
+		case "93.184.216.34:80":
+			return targetSrv.Listener.Addr().String(), true
+		default:
+			return "", false
+		}
+	})
+
+	svc := NewService(Options{
+		Resolver: &stubHostResolver{
+			records: map[string][]net.IPAddr{
+				"fakeip-doh.example.com": {{IP: net.ParseIP("198.18.0.44")}},
+				"img.example.com":        {{IP: net.ParseIP("93.184.216.34")}},
+			},
+		},
+		ProxyURLProvider: func(context.Context) string { return proxySrv.URL },
+		FetchTimeout:     2 * time.Second,
+	})
+	svc.dohEndpoints = []string{dohSrv.Listener.Addr().String()}
+	svc.dohRootCAs = roots
+
+	res, err := svc.Scan(context.Background(), "http://fakeip-doh.example.com/", FetchModeProxy)
+	if err != nil {
+		t.Fatalf("Scan via DoH-pinned proxy failed: %v", err)
+	}
+	if res.FetchVia != "proxy" {
+		t.Fatalf("FetchVia = %q, want proxy", res.FetchVia)
+	}
+	authMu.Lock()
+	gotAuth := append([]string(nil), (*authorities)...)
+	authMu.Unlock()
+	if len(gotAuth) != 2 || gotAuth[0] != dohSrv.Listener.Addr().String() || gotAuth[1] != "93.184.216.34:80" {
+		t.Fatalf("unexpected CONNECT sequence = %v", gotAuth)
+	}
+}
+
+func TestParseDoHAResponse_StrictValidation(t *testing.T) {
+	txID := uint16(0x1234)
+	valid := buildTestDNSResponse(txID, "app.example.com", "app.example.com", net.ParseIP("93.184.216.34"), false)
+	addrs, cname, err := parseDoHAResponse(valid, "app.example.com", txID)
+	if err != nil || cname != "" || len(addrs) != 1 || addrs[0] != netip.MustParseAddr("93.184.216.34") {
+		t.Fatalf("valid parseDoHAResponse failed: addrs=%v cname=%q err=%v", addrs, cname, err)
+	}
+
+	// Truncated TC=1 must fail.
+	tcPkt := buildTestDNSResponse(txID, "app.example.com", "app.example.com", net.ParseIP("93.184.216.34"), true)
+	if _, _, err := parseDoHAResponse(tcPkt, "app.example.com", txID); err == nil {
+		t.Fatalf("expected TC=1 packet to be rejected")
+	}
+
+	// Mismatched Answer owner must be ignored (returns no addresses).
+	wrongOwner := buildTestDNSResponse(txID, "app.example.com", "evil.example.com", net.ParseIP("93.184.216.34"), false)
+	addrsWrong, _, err := parseDoHAResponse(wrongOwner, "app.example.com", txID)
+	if err != nil {
+		t.Fatalf("unexpected error on mismatched owner: %v", err)
+	}
+	if len(addrsWrong) != 0 {
+		t.Fatalf("expected unrelated owner A record to be ignored, got %v", addrsWrong)
+	}
+}
+
+func buildTestDNSResponse(txID uint16, qname, ansOwner string, ip net.IP, tc bool) []byte {
+	encodeName := func(n string) []byte {
+		var out []byte
+		for _, lbl := range strings.Split(strings.TrimSuffix(n, "."), ".") {
+			out = append(out, byte(len(lbl)))
+			out = append(out, []byte(lbl)...)
+		}
+		return append(out, 0)
+	}
+	var pkt [12]byte
+	binary.BigEndian.PutUint16(pkt[0:2], txID)
+	flags := uint16(0x8180)
+	if tc {
+		flags |= 0x0200
+	}
+	binary.BigEndian.PutUint16(pkt[2:4], flags)
+	binary.BigEndian.PutUint16(pkt[4:6], 1) // QDCOUNT
+	binary.BigEndian.PutUint16(pkt[6:8], 1) // ANCOUNT
+
+	out := append([]byte(nil), pkt[:]...)
+	out = append(out, encodeName(qname)...)
+	out = append(out, 0, 1, 0, 1) // QTYPE A, QCLASS IN
+
+	out = append(out, encodeName(ansOwner)...)
+	out = append(out, 0, 1, 0, 1)  // TYPE A, CLASS IN
+	out = append(out, 0, 0, 0, 60) // TTL 60
+	out = append(out, 0, 4)        // RDLENGTH 4
+	out = append(out, ip.To4()...) // RDATA
+	return out
 }
 
 func TestScan_HTTP2TransportAndNavigationHeaders(t *testing.T) {
