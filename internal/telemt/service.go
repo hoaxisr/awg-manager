@@ -51,6 +51,9 @@ type Service struct {
 	config        Config
 	cachedVersion string
 	openedPort    int
+	// openedUntagged: this process inserted the untagged fallback INPUT rule
+	// for openedPort and is therefore allowed to delete it.
+	openedUntagged bool
 }
 
 // New creates a new telemt service instance.
@@ -538,12 +541,7 @@ func (s *Service) startProcess(ctx context.Context) error {
 
 	running, _ := s.GetRunningState()
 	if running {
-		port := s.config.Port
-		if port <= 0 {
-			port = DefaultPort
-		}
-		_ = applyFirewall(ctx, port)
-		s.openedPort = port
+		s.openFirewallLocked(ctx)
 		return nil
 	}
 
@@ -577,14 +575,40 @@ func (s *Service) startProcess(ctx context.Context) error {
 		return errors.New("telemt failed to start: process exited immediately")
 	}
 
-	port := s.config.Port
-	if port <= 0 {
-		port = DefaultPort
-	}
-	_ = applyFirewall(ctx, port)
-	s.openedPort = port
-
+	s.openFirewallLocked(ctx)
 	return nil
+}
+
+func (s *Service) firewallPortLocked() int {
+	if s.config.Port <= 0 {
+		return DefaultPort
+	}
+	return s.config.Port
+}
+
+// openFirewallLocked opens the configured port and records whether this
+// process owns an untagged fallback rule for it.
+func (s *Service) openFirewallLocked(ctx context.Context) {
+	port := s.firewallPortLocked()
+	if s.openedPort > 0 && s.openedPort != port {
+		removeFirewall(ctx, s.openedPort, s.openedUntagged)
+		s.openedPort, s.openedUntagged = 0, false
+	}
+	owned, _ := applyFirewall(ctx, port)
+	s.openedPort = port
+	s.openedUntagged = s.openedUntagged || owned
+}
+
+// closeFirewallLocked removes telemt's rules for the configured port and for a
+// previously opened port, deleting untagged rules only if this process
+// inserted them.
+func (s *Service) closeFirewallLocked(ctx context.Context) {
+	port := s.firewallPortLocked()
+	removeFirewall(ctx, port, s.openedUntagged && s.openedPort == port)
+	if s.openedPort > 0 && s.openedPort != port {
+		removeFirewall(ctx, s.openedPort, s.openedUntagged)
+	}
+	s.openedPort, s.openedUntagged = 0, false
 }
 
 // Stop terminates the telemt daemon process.
@@ -597,15 +621,7 @@ func (s *Service) Stop(ctx context.Context) error {
 }
 
 func (s *Service) stopProcess(ctx context.Context) error {
-	port := s.config.Port
-	if port <= 0 {
-		port = DefaultPort
-	}
-	removeFirewall(ctx, port)
-	if s.openedPort > 0 && s.openedPort != port {
-		removeFirewall(ctx, s.openedPort)
-	}
-	s.openedPort = 0
+	s.closeFirewallLocked(ctx)
 
 	running, pid := s.GetRunningState()
 	if !running {
