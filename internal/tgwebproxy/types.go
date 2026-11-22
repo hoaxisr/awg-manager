@@ -507,6 +507,19 @@ type WebProxyLink struct {
 	IsCDN       bool   `json:"is_cdn"`
 }
 
+// WebProxyStatusLink is the secret-free view of a web proxy endpoint exposed by
+// the regular status API. Connection URLs (tg://, t.me, bridge) embed the user
+// secret or an HMAC capability derived from it and are only returned by
+// RevealUserSecret via WebProxyLink.
+type WebProxyStatusLink struct {
+	ID          string `json:"id"`
+	Hostname    string `json:"hostname"`
+	Description string `json:"description,omitempty"`
+	Preset      string `json:"preset,omitempty"`
+	CarrierMode string `json:"carrier_mode,omitempty"`
+	IsCDN       bool   `json:"is_cdn"`
+}
+
 func (c Config) GetEndpoints() []WebProxyEndpoint {
 	if len(c.Endpoints) > 0 {
 		return c.Endpoints
@@ -605,35 +618,35 @@ type SnapshotManifest struct {
 }
 
 type Status struct {
-	Installed                     bool           `json:"installed"`
-	InstalledTelemt               bool           `json:"installed_telemt"`
-	InstalledTproxy               bool           `json:"installed_tproxy"`
-	Running                       bool           `json:"running"`
-	PID                           int            `json:"pid"`
-	DirectPID                     int            `json:"direct_pid,omitempty"`
-	Port                          int            `json:"port"`
-	DirectOnline                  bool           `json:"direct_online"`
-	RawOnline                     bool           `json:"raw_online"`
-	WebProxyOnline                bool           `json:"webproxy_online"`
-	BackendOnline                 bool           `json:"backend_online"`
-	BackendAddr                   string         `json:"backend_addr,omitempty"`
-	UpstreamStatus                string         `json:"upstream_status"` // "ok", "degraded", "interface_down"
-	Upstreams                     []UpstreamSpec `json:"upstreams,omitempty"`
-	NetworkPreset                 string         `json:"network_preset,omitempty"`
-	CarrierMode                   string         `json:"carrier_mode"`
-	PublicHost                    string         `json:"public_host"`
-	DirectHost                    string         `json:"direct_host"`
-	DirectPort                    int            `json:"direct_port"`
-	TlsDomain                     string         `json:"tls_domain"`
-	SecretMasked                  string         `json:"secret_masked"`
-	LegacySecretMasked            string         `json:"legacy_secret_masked"`
-	LegacyActive                  bool           `json:"legacy_active"`
-	LegacyExpiresAt               string         `json:"legacy_expires_at"`
-	LegacyExpiredPendingReconcile bool           `json:"legacy_expired_pending_reconcile"`
-	RecoveryRequired              bool           `json:"recovery_required"`
-	LastStartupError              string         `json:"last_startup_error,omitempty"`
-	WebProxies                    []WebProxyLink `json:"web_proxies,omitempty"`
-	Users                         []TelegramUser `json:"users,omitempty"`
+	Installed                     bool                 `json:"installed"`
+	InstalledTelemt               bool                 `json:"installed_telemt"`
+	InstalledTproxy               bool                 `json:"installed_tproxy"`
+	Running                       bool                 `json:"running"`
+	PID                           int                  `json:"pid"`
+	DirectPID                     int                  `json:"direct_pid,omitempty"`
+	Port                          int                  `json:"port"`
+	DirectOnline                  bool                 `json:"direct_online"`
+	RawOnline                     bool                 `json:"raw_online"`
+	WebProxyOnline                bool                 `json:"webproxy_online"`
+	BackendOnline                 bool                 `json:"backend_online"`
+	BackendAddr                   string               `json:"backend_addr,omitempty"`
+	UpstreamStatus                string               `json:"upstream_status"` // "ok", "degraded", "interface_down"
+	Upstreams                     []UpstreamSpec       `json:"upstreams,omitempty"`
+	NetworkPreset                 string               `json:"network_preset,omitempty"`
+	CarrierMode                   string               `json:"carrier_mode"`
+	PublicHost                    string               `json:"public_host"`
+	DirectHost                    string               `json:"direct_host"`
+	DirectPort                    int                  `json:"direct_port"`
+	TlsDomain                     string               `json:"tls_domain"`
+	SecretMasked                  string               `json:"secret_masked"`
+	LegacySecretMasked            string               `json:"legacy_secret_masked"`
+	LegacyActive                  bool                 `json:"legacy_active"`
+	LegacyExpiresAt               string               `json:"legacy_expires_at"`
+	LegacyExpiredPendingReconcile bool                 `json:"legacy_expired_pending_reconcile"`
+	RecoveryRequired              bool                 `json:"recovery_required"`
+	LastStartupError              string               `json:"last_startup_error,omitempty"`
+	WebProxies                    []WebProxyStatusLink `json:"web_proxies,omitempty"`
+	Users                         []TelegramUser       `json:"users,omitempty"`
 }
 
 type UserRevealData struct {

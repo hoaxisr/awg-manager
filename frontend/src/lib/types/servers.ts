@@ -328,16 +328,21 @@ export interface WebProxyEndpoint {
 	enabled: boolean;
 }
 
-export interface WebProxyLink {
+/** Secret-free endpoint descriptor returned by GET /servers/tgwebproxy/status. */
+export interface WebProxyStatusLink {
 	id: string;
 	hostname: string;
 	description?: string;
 	preset?: TgNetworkPreset | string;
 	carrier_mode?: string;
+	is_cdn: boolean;
+}
+
+/** Endpoint with connection links; only returned by POST /servers/tgwebproxy/reveal. */
+export interface WebProxyLink extends WebProxyStatusLink {
 	tg_url: string;
 	tme_url: string;
 	bridge_url: string;
-	is_cdn: boolean;
 }
 
 export interface TelegramUser {
@@ -421,13 +426,8 @@ export interface TgWebProxyStatus {
 	legacy_active?: boolean;
 	legacy_expires_at?: string;
 	legacy_expired_pending_reconcile?: boolean;
-	bridge_url: string;
-	tg_url: string;
-	tme_url: string;
-	mtproxy_secret?: string;
-	mtproxy_url?: string;
-	mtproxy_tme_url?: string;
-	web_proxies?: WebProxyLink[];
+	/** Connection links are intentionally absent; use revealTgWebProxySecret(). */
+	web_proxies?: WebProxyStatusLink[];
 	users?: TelegramUser[];
 }
 
