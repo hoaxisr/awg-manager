@@ -300,14 +300,6 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 		return fmt.Errorf("%w: %v", ErrLayoutIncomplete, err)
 	}
 
-	receipt, err := json.Marshal(activeSpec)
-	if err != nil {
-		return err
-	}
-	if err := atomicWriteYAMLFile(filepath.Join(cache, "installed.json"), receipt, 0600); err != nil {
-		return err
-	}
-
 	i.setProgress(0.88)
 	if wasRunning && !wasDisabled && op != nil {
 		if err := op.startRuntime(ctx); err != nil {
@@ -316,6 +308,14 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 		if !i.isCurrentlyRunning(ctx, op) {
 			return errors.New("FIRC did not become ready after runtime upgrade")
 		}
+	}
+
+	receipt, err := json.Marshal(activeSpec)
+	if err != nil {
+		return err
+	}
+	if err := atomicWriteYAMLFile(filepath.Join(cache, "installed.json"), receipt, 0600); err != nil {
+		return err
 	}
 
 	completed = true

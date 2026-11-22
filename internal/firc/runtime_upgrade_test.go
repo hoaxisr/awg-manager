@@ -296,10 +296,14 @@ func TestOnDemandInstaller_UpgradeRollbackOnStartFailure(t *testing.T) {
 	running.Store(true)
 
 	startAttempts := 0
+	var receiptDuringFirstBoot string
 	op.SetLifecycleHooks(
 		func(context.Context) error {
 			startAttempts++
 			if startAttempts == 1 {
+				if raw, err := os.ReadFile(filepath.Join(root, "opt", "var", "cache", "awg-manager", "firc-runtime", "installed.json")); err == nil {
+					receiptDuringFirstBoot = string(raw)
+				}
 				return errors.New("new fircd crashed on boot")
 			}
 			running.Store(true)
@@ -323,6 +327,9 @@ func TestOnDemandInstaller_UpgradeRollbackOnStartFailure(t *testing.T) {
 	err := inst.Upgrade(ctx, op)
 	if err == nil || !strings.Contains(err.Error(), "new fircd crashed on boot") {
 		t.Fatalf("expected startup failure error, got %v", err)
+	}
+	if !strings.Contains(receiptDuringFirstBoot, `"0.7.0-1"`) || strings.Contains(receiptDuringFirstBoot, `"0.8.0-1"`) {
+		t.Fatalf("expected installed.json receipt to stay at 0.7.0-1 until post-start health check passes, got %q", receiptDuringFirstBoot)
 	}
 
 	st := inst.GetInstallStatus(ctx, op, true)
