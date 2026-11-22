@@ -590,7 +590,13 @@ export class ServersClient extends SystemClient {
 			| 'create_user'
 			| 'update_user'
 			| 'delete_user',
-		payload?: { user_id?: string; remark?: string; enabled?: boolean }
+		payload?: {
+			user_id?: string;
+			remark?: string;
+			enabled?: boolean;
+			secret?: string;
+			regenerate_secret?: boolean;
+		}
 	): Promise<TgWebProxyStatus> {
 		return this.requestWithCSRF<TgWebProxyStatus>('/servers/tgwebproxy/action', {
 			method: 'POST',

@@ -240,6 +240,10 @@ func (h *TgWebProxyHandler) UpdateConfig(w http.ResponseWriter, r *http.Request)
 			WriteError(w, http.StatusConflict, "operation in progress")
 			return
 		}
+		if errors.Is(err, tgwebproxy.ErrInvalidUpstream) {
+			WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		WriteError(w, http.StatusInternalServerError, "failed to update config: "+err.Error())
 		return
 	}
@@ -345,10 +349,12 @@ func (h *TgWebProxyHandler) Action(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Action  string `json:"action"`
-		UserID  string `json:"user_id,omitempty"`
-		Remark  string `json:"remark,omitempty"`
-		Enabled *bool  `json:"enabled,omitempty"`
+		Action           string `json:"action"`
+		UserID           string `json:"user_id,omitempty"`
+		Remark           string `json:"remark,omitempty"`
+		Enabled          *bool  `json:"enabled,omitempty"`
+		Secret           string `json:"secret,omitempty"`
+		RegenerateSecret bool   `json:"regenerate_secret,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -381,9 +387,14 @@ func (h *TgWebProxyHandler) Action(w http.ResponseWriter, r *http.Request) {
 			case "clear_scanner_cache":
 				return h.svc.ClearScannerCache()
 			case "create_user":
-				return h.svc.CreateUser(req.Remark)
+				return h.svc.CreateUserWithSecret(req.Remark, req.Secret)
 			case "update_user":
-				return h.svc.UpdateUser(req.UserID, req.Remark, req.Enabled)
+				return h.svc.UpdateUserWithOptions(req.UserID, tgwebproxy.UpdateUserOptions{
+					Remark:           req.Remark,
+					Enabled:          req.Enabled,
+					Secret:           req.Secret,
+					RegenerateSecret: req.RegenerateSecret,
+				})
 			case "delete_user":
 				return h.svc.DeleteUser(req.UserID)
 			default:
@@ -402,6 +413,10 @@ func (h *TgWebProxyHandler) Action(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, tgwebproxy.ErrOperationInProgress) {
 			WriteError(w, http.StatusConflict, "operation in progress")
+			return
+		}
+		if errors.Is(err, tgwebproxy.ErrInvalidSecret) || errors.Is(err, tgwebproxy.ErrDuplicateSecret) || errors.Is(err, tgwebproxy.ErrInvalidUpstream) {
+			WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, err.Error())

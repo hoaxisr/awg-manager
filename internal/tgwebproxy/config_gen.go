@@ -75,18 +75,18 @@ func GenerateTelemtDirectConfig(cfg Config) string {
 			fmt.Fprintf(&b, "user1 = %q\n", "00000000000000000000000000000000")
 		}
 	} else {
-		fmt.Fprintf(&b, "user1 = %q\n", cfg.Secret)
+		sec := strings.TrimSpace(cfg.Secret)
+		if sec == "" {
+			sec = "00000000000000000000000000000000"
+		}
+		fmt.Fprintf(&b, "user1 = %q\n", sec)
 	}
 	if cfg.LegacySecret != "" {
 		fmt.Fprintf(&b, "user_legacy = %q\n", cfg.LegacySecret)
 	}
 	b.WriteString("\n")
 
-	b.WriteString("[[upstreams]]\n")
-	b.WriteString("type = \"direct\"\n")
-	if cfg.UpstreamDevice != "" && cfg.UpstreamDevice != "direct" {
-		fmt.Fprintf(&b, "bindtodevice = %q\n", cfg.UpstreamDevice)
-	}
+	writeTelemtUpstreams(&b, cfg)
 
 	return b.String()
 }
@@ -140,20 +140,60 @@ func GenerateTelemtRawConfig(cfg Config) string {
 			fmt.Fprintf(&b, "user1 = %q\n", "00000000000000000000000000000000")
 		}
 	} else {
-		fmt.Fprintf(&b, "user1 = %q\n", cfg.Secret)
+		sec := strings.TrimSpace(cfg.Secret)
+		if sec == "" {
+			sec = "00000000000000000000000000000000"
+		}
+		fmt.Fprintf(&b, "user1 = %q\n", sec)
 	}
 	if cfg.LegacySecret != "" {
 		fmt.Fprintf(&b, "user_legacy = %q\n", cfg.LegacySecret)
 	}
 	b.WriteString("\n")
 
-	b.WriteString("[[upstreams]]\n")
-	b.WriteString("type = \"direct\"\n")
-	if cfg.UpstreamDevice != "" && cfg.UpstreamDevice != "direct" {
-		fmt.Fprintf(&b, "bindtodevice = %q\n", cfg.UpstreamDevice)
-	}
+	writeTelemtUpstreams(&b, cfg)
 
 	return b.String()
+}
+
+func writeTelemtUpstreams(b *strings.Builder, cfg Config) {
+	upstreams := cfg.EnabledUpstreams()
+	if len(upstreams) == 0 {
+		upstreams = []UpstreamSpec{{
+			Type:    UpstreamTypeDirect,
+			Weight:  1,
+			Enabled: true,
+		}}
+	}
+	for i, u := range upstreams {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		w := u.Weight
+		if w <= 0 {
+			w = 1
+		}
+		b.WriteString("[[upstreams]]\n")
+		if u.Type == UpstreamTypeSocks5 {
+			b.WriteString("type = \"socks5\"\n")
+			fmt.Fprintf(b, "address = %q\n", u.Address)
+			if u.Username != "" {
+				fmt.Fprintf(b, "username = %q\n", u.Username)
+			}
+			if u.Password != "" {
+				fmt.Fprintf(b, "password = %q\n", u.Password)
+			}
+			fmt.Fprintf(b, "weight = %d\n", w)
+			b.WriteString("enabled = true\n")
+		} else {
+			b.WriteString("type = \"direct\"\n")
+			if u.Device != "" && u.Device != "direct" {
+				fmt.Fprintf(b, "bindtodevice = %q\n", u.Device)
+			}
+			fmt.Fprintf(b, "weight = %d\n", w)
+			b.WriteString("enabled = true\n")
+		}
+	}
 }
 
 // GenerateEndpointProfilesJSON produces the JSON profiles for a specific tproxy-server endpoint.
@@ -192,10 +232,14 @@ func GenerateEndpointProfilesJSON(ep WebProxyEndpoint, cfg Config) ([]byte, erro
 			})
 		}
 	} else {
+		sec := strings.TrimSpace(cfg.Secret)
+		if sec == "" {
+			sec = "00000000000000000000000000000000"
+		}
 		profiles = []map[string]interface{}{
 			{
 				"name":         "default",
-				"secret":       cfg.Secret,
+				"secret":       sec,
 				"backend":      backend,
 				"carrier_mode": mode,
 			},

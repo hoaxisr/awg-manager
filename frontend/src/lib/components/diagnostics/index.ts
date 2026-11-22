@@ -18,4 +18,5 @@ export { default as StaticRecordsCard } from './StaticRecordsCard.svelte';
 export { default as RebindCard } from './RebindCard.svelte';
 export { default as AwgAnalyzerResult } from './AwgAnalyzerResult.svelte';
 export { default as IpInspectSection } from './IpInspectSection.svelte';
+export { default as PageScanSection } from './PageScanSection.svelte';
 export { default as QuickAddRouteModal } from './QuickAddRouteModal.svelte';

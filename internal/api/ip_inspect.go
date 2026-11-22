@@ -69,7 +69,7 @@ func (h *IPInspectHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
 
 	res, err := h.svc.Inspect(ctx, ip)

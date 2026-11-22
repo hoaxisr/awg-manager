@@ -1,9 +1,20 @@
 package tgwebproxy
 
 import (
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+)
+
+var (
+	ErrInvalidSecret   = errors.New("invalid MTProto secret")
+	ErrDuplicateSecret = errors.New("duplicate MTProto secret")
+	ErrInvalidUpstream = errors.New("invalid upstream configuration")
 )
 
 const (
@@ -32,6 +43,9 @@ const (
 	PresetCDNFileHTTPS = "cdn_file_https"
 	PresetKeenDNS      = "keendns"
 	PresetStaticIP     = "static_ip"
+
+	UpstreamTypeDirect = "direct"
+	UpstreamTypeSocks5 = "socks5"
 
 	PhaseStaged      = "staged"
 	PhaseApplying    = "applying"
@@ -202,6 +216,136 @@ func EffectiveEndpointCarrierMode(ep WebProxyEndpoint, cfg Config) string {
 	return DefaultCarrierMode
 }
 
+type UpstreamSpec struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`               // "direct" | "socks5"
+	Device   string `json:"device,omitempty"`   // optional Linux iface for SO_BINDTODEVICE
+	Address  string `json:"address,omitempty"`  // host:port for socks5
+	Username string `json:"username,omitempty"` // optional socks5 username
+	Password string `json:"password,omitempty"` // optional socks5 password
+	Weight   int    `json:"weight"`             // >= 1 (default 1)
+	Enabled  bool   `json:"enabled"`
+}
+
+func cloneUpstreams(list []UpstreamSpec) []UpstreamSpec {
+	if list == nil {
+		return nil
+	}
+	out := make([]UpstreamSpec, len(list))
+	copy(out, list)
+	return out
+}
+
+// NormalizeMTProtoSecret validates and normalizes a user-supplied MTProto secret.
+// Accepts raw 32-char hex keys as well as full "dd<32hex>" or Fake-TLS "ee<32hex><domain_hex>" secrets.
+func NormalizeMTProtoSecret(raw string) (string, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" {
+		return "", fmt.Errorf("%w: secret cannot be empty", ErrInvalidSecret)
+	}
+	if _, err := hex.DecodeString(s); err != nil {
+		return "", fmt.Errorf("%w: must be valid hex", ErrInvalidSecret)
+	}
+	switch {
+	case len(s) == 32:
+		return s, nil
+	case len(s) == 34 && strings.HasPrefix(s, "dd"):
+		return s[2:], nil
+	case len(s) > 34 && strings.HasPrefix(s, "ee") && len(s)%2 == 0:
+		return s[2:34], nil
+	default:
+		return "", fmt.Errorf("%w: expected 32 hex chars (or ee/dd MTProto secret)", ErrInvalidSecret)
+	}
+}
+
+func NormalizeUpstreams(list []UpstreamSpec) []UpstreamSpec {
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]UpstreamSpec, len(list))
+	for i, u := range list {
+		typ := strings.ToLower(strings.TrimSpace(u.Type))
+		switch typ {
+		case "", UpstreamTypeDirect:
+			typ = UpstreamTypeDirect
+		case "socks", UpstreamTypeSocks5:
+			typ = UpstreamTypeSocks5
+		}
+		dev := strings.TrimSpace(u.Device)
+		if dev == "direct" {
+			dev = ""
+		}
+		addr := strings.TrimSpace(u.Address)
+		w := u.Weight
+		if w <= 0 {
+			w = 1
+		}
+		id := strings.TrimSpace(u.ID)
+		if id == "" {
+			id = fmt.Sprintf("up-%d", i+1)
+		}
+		out[i] = UpstreamSpec{
+			ID:       id,
+			Type:     typ,
+			Device:   dev,
+			Address:  addr,
+			Username: strings.TrimSpace(u.Username),
+			Password: u.Password,
+			Weight:   w,
+			Enabled:  u.Enabled,
+		}
+	}
+	return out
+}
+
+func ValidateUpstreams(list []UpstreamSpec) error {
+	if len(list) == 0 {
+		return nil
+	}
+	enabledCount := 0
+	for i, u := range list {
+		typ := strings.ToLower(strings.TrimSpace(u.Type))
+		if typ == "" {
+			typ = UpstreamTypeDirect
+		}
+		w := u.Weight
+		if w == 0 {
+			w = 1
+		}
+		if w < 1 || w > 65535 {
+			return fmt.Errorf("%w: upstream #%d weight must be between 1 and 65535", ErrInvalidUpstream, i+1)
+		}
+		switch typ {
+		case UpstreamTypeDirect:
+			dev := strings.TrimSpace(u.Device)
+			if dev != "" && dev != "direct" {
+				if len(dev) > 32 || strings.ContainsAny(dev, " \t\r\n/") {
+					return fmt.Errorf("%w: invalid interface name %q", ErrInvalidUpstream, dev)
+				}
+			}
+		case UpstreamTypeSocks5, "socks":
+			addr := strings.TrimSpace(u.Address)
+			host, portStr, err := net.SplitHostPort(addr)
+			if err != nil || strings.TrimSpace(host) == "" {
+				return fmt.Errorf("%w: socks5 upstream #%d must use host:port", ErrInvalidUpstream, i+1)
+			}
+			port, err := strconv.Atoi(portStr)
+			if err != nil || port < 1 || port > 65535 {
+				return fmt.Errorf("%w: socks5 upstream #%d has invalid port %q", ErrInvalidUpstream, i+1, portStr)
+			}
+		default:
+			return fmt.Errorf("%w: unsupported upstream type %q", ErrInvalidUpstream, u.Type)
+		}
+		if u.Enabled {
+			enabledCount++
+		}
+	}
+	if enabledCount == 0 {
+		return fmt.Errorf("%w: at least one upstream must be enabled", ErrInvalidUpstream)
+	}
+	return nil
+}
+
 type Config struct {
 	SchemaVersion   int                `json:"schema_version"`
 	Enabled         bool               `json:"enabled"`
@@ -218,10 +362,54 @@ type Config struct {
 	Backend         string             `json:"backend"`                  // Default: 127.0.0.1:2398 (raw telemt)
 	CarrierMode     string             `json:"carrier_mode"`             // Default: websocket
 	UpstreamDevice  string             `json:"upstream_device"`          // Egress interface (optional)
+	Upstreams       []UpstreamSpec     `json:"upstreams,omitempty"`      // Optional weighted failover upstreams
 	CoverUpstream   string             `json:"cover_upstream,omitempty"` // Optional validated loopback HTTP upstream (e.g. Xray); empty uses built-in static fallback
 	TlsDomain       string             `json:"tls_domain"`               // Fake-TLS SNI domain
 	Endpoints       []WebProxyEndpoint `json:"endpoints,omitempty"`      // Multiple web proxy backends
 	Users           []TelegramUser     `json:"users,omitempty"`          // Multi-user secrets (MTProto + Web Proxy)
+}
+
+func (c Config) EffectiveUpstreams() []UpstreamSpec {
+	if len(c.Upstreams) > 0 {
+		return NormalizeUpstreams(c.Upstreams)
+	}
+	dev := strings.TrimSpace(c.UpstreamDevice)
+	if dev == "direct" {
+		dev = ""
+	}
+	return []UpstreamSpec{
+		{
+			ID:      "up-1",
+			Type:    UpstreamTypeDirect,
+			Device:  dev,
+			Weight:  1,
+			Enabled: true,
+		},
+	}
+}
+
+func (c Config) EnabledUpstreams() []UpstreamSpec {
+	var out []UpstreamSpec
+	for _, u := range c.EffectiveUpstreams() {
+		if u.Enabled {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+func (c Config) PrimaryUpstreamDevice() string {
+	enabled := c.EnabledUpstreams()
+	if len(enabled) == 0 {
+		return ""
+	}
+	if enabled[0].Type != UpstreamTypeDirect {
+		return ""
+	}
+	if enabled[0].Device == "" {
+		return "direct"
+	}
+	return enabled[0].Device
 }
 
 type TelegramUser struct {
@@ -395,6 +583,7 @@ type PublicConfig struct {
 	Backend            string             `json:"backend"`
 	CarrierMode        string             `json:"carrier_mode"`
 	UpstreamDevice     string             `json:"upstream_device"`
+	Upstreams          []UpstreamSpec     `json:"upstreams,omitempty"`
 	TlsDomain          string             `json:"tls_domain"`
 	LegacyActive       bool               `json:"legacy_active"`
 	LegacyExpiresAt    string             `json:"legacy_expires_at,omitempty"`
@@ -429,6 +618,7 @@ type Status struct {
 	BackendOnline                 bool           `json:"backend_online"`
 	BackendAddr                   string         `json:"backend_addr,omitempty"`
 	UpstreamStatus                string         `json:"upstream_status"` // "ok", "degraded", "interface_down"
+	Upstreams                     []UpstreamSpec `json:"upstreams,omitempty"`
 	NetworkPreset                 string         `json:"network_preset,omitempty"`
 	CarrierMode                   string         `json:"carrier_mode"`
 	PublicHost                    string         `json:"public_host"`

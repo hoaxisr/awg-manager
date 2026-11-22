@@ -59,7 +59,7 @@ const ALLOWED: Record<string, { lines: number; reason: string }> = {
 	'/src/lib/components/firc/FircSettingsPanel.svelte': { lines: 152, reason: 'FIRC UI настроек' },
 	'/src/lib/components/firc/FircTunnelEditModal.svelte': { lines: 113, reason: 'FIRC UI редактирования туннелей' },
 	'/src/lib/components/servers/CDNDispatcherCard.svelte': { lines: 48, reason: 'Диспетчер CDN UI' },
-	'/src/lib/components/servers/TelegramWebProxyCard.svelte': { lines: 198, reason: 'Telegram Proxy UI' },
+	'/src/lib/components/servers/TelegramWebProxyCard.svelte': { lines: 193, reason: 'Telegram Proxy UI' },
 	'/src/lib/components/servers/XrayAutoTunnelModal.svelte': { lines: 25, reason: 'Xray Auto Tunnel UI' },
 	'/src/lib/components/servers/XrayServerCard.svelte': { lines: 239, reason: 'Xray Server UI' },
 	'/src/lib/components/servers/XrayShareModal.svelte': { lines: 36, reason: 'Xray Share Modal UI' },

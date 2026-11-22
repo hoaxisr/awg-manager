@@ -541,6 +541,7 @@ func (s *Service) GetConfig() PublicConfig {
 		Backend:            cfg.Backend,
 		CarrierMode:        cfg.CarrierMode,
 		UpstreamDevice:     cfg.UpstreamDevice,
+		Upstreams:          cloneUpstreams(cfg.Upstreams),
 		TlsDomain:          cfg.TlsDomain,
 		LegacyActive:       cfg.LegacySecret != "",
 		LegacyExpiresAt:    cfg.LegacyExpiresAt,
@@ -550,13 +551,46 @@ func (s *Service) GetConfig() PublicConfig {
 	}
 }
 
+func validateUpstreamsWithEgress(upstreams []UpstreamSpec, validator EgressValidator) error {
+	if err := ValidateUpstreams(upstreams); err != nil {
+		return err
+	}
+	if validator == nil || len(upstreams) == 0 {
+		return nil
+	}
+	validCount := 0
+	var lastErr error
+	for _, u := range upstreams {
+		if !u.Enabled {
+			continue
+		}
+		if u.Type == UpstreamTypeDirect && u.Device != "" && u.Device != "direct" {
+			if err := validator(u.Device); err != nil {
+				lastErr = err
+				continue
+			}
+		}
+		validCount++
+	}
+	if validCount == 0 && lastErr != nil {
+		return fmt.Errorf("egress validation failed: %w", lastErr)
+	}
+	return nil
+}
+
 func (s *Service) applyConfigLocked(newCfg Config) error {
 	if s.recoveryRequired {
 		return ErrRecoveryRequired
 	}
 
 	// 1. Pre-apply Egress & port/upstream validation
-	if s.egressValidator != nil && newCfg.UpstreamDevice != "" {
+	if len(newCfg.Upstreams) > 0 {
+		newCfg.Upstreams = NormalizeUpstreams(newCfg.Upstreams)
+		if err := validateUpstreamsWithEgress(newCfg.Upstreams, s.egressValidator); err != nil {
+			return err
+		}
+		newCfg.UpstreamDevice = newCfg.PrimaryUpstreamDevice()
+	} else if s.egressValidator != nil && newCfg.UpstreamDevice != "" {
 		if err := s.egressValidator(newCfg.UpstreamDevice); err != nil {
 			return fmt.Errorf("egress validation failed: %w", err)
 		}
@@ -677,7 +711,7 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 
 	s.config = newCfg
 	s.scheduleLegacyExpiryLocked()
-	go tuneRuntimeNetwork(newCfg.UpstreamDevice)
+	go tuneRuntimeNetworkUpstreams(newCfg.EnabledUpstreams())
 	go s.checkUpstreamHealth()
 	return nil
 }
@@ -786,7 +820,7 @@ func (h *serviceTxHook) RestoreWorkerStates(states map[string]WorkerProcessState
 	return nil
 }
 
-func tuneRuntimeNetwork(upstreamDevice string) {
+func tuneRuntimeNetworkUpstreams(upstreams []UpstreamSpec) {
 	if runtime.GOOS != "linux" {
 		return
 	}
@@ -795,9 +829,17 @@ func tuneRuntimeNetwork(upstreamDevice string) {
 	_ = exec.Command("sysctl", "-w", "net.ipv4.tcp_rmem=4096 262144 16777216").Run()
 	_ = exec.Command("sysctl", "-w", "net.ipv4.tcp_wmem=4096 262144 16777216").Run()
 	_ = exec.Command("sysctl", "-w", "net.core.netdev_max_backlog=5000").Run()
-	if upstreamDevice != "" && upstreamDevice != "direct" {
-		_ = exec.Command("ip", "link", "set", "dev", upstreamDevice, "txqueuelen", "1000").Run()
+	seen := make(map[string]bool)
+	for _, u := range upstreams {
+		if u.Type == UpstreamTypeDirect && u.Device != "" && u.Device != "direct" && !seen[u.Device] {
+			seen[u.Device] = true
+			_ = exec.Command("ip", "link", "set", "dev", u.Device, "txqueuelen", "1000").Run()
+		}
 	}
+}
+
+func tuneRuntimeNetwork(upstreamDevice string) {
+	tuneRuntimeNetworkUpstreams(Config{UpstreamDevice: upstreamDevice}.EnabledUpstreams())
 }
 
 func (s *Service) UpdateConfig(cfg Config) error {
@@ -905,8 +947,18 @@ func (s *Service) UpdateConfig(cfg Config) error {
 	} else if newCfg.CarrierMode == "" {
 		newCfg.CarrierMode = DefaultCarrierMode
 	}
-	if cfg.UpstreamDevice != "" {
+	if cfg.Upstreams != nil {
+		norm := NormalizeUpstreams(cfg.Upstreams)
+		if err := ValidateUpstreams(norm); err != nil {
+			return err
+		}
+		newCfg.Upstreams = norm
+		newCfg.UpstreamDevice = newCfg.PrimaryUpstreamDevice()
+	} else if cfg.UpstreamDevice != "" {
 		newCfg.UpstreamDevice = cfg.UpstreamDevice
+		if len(newCfg.Upstreams) > 0 && cfg.UpstreamDevice != s.config.UpstreamDevice {
+			newCfg.Upstreams = nil
+		}
 	}
 	if cfg.TlsDomain != "" {
 		newCfg.TlsDomain = cfg.TlsDomain
@@ -994,7 +1046,18 @@ func (s *Service) RotateSecret() error {
 	return nil
 }
 
+type UpdateUserOptions struct {
+	Remark           string
+	Enabled          *bool
+	Secret           string
+	RegenerateSecret bool
+}
+
 func (s *Service) CreateUser(remark string) error {
+	return s.CreateUserWithSecret(remark, "")
+}
+
+func (s *Service) CreateUserWithSecret(remark string, rawSecret string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1009,9 +1072,24 @@ func (s *Service) CreateUser(remark string) error {
 		trimmed = fmt.Sprintf("Пользователь %d", len(users)+1)
 	}
 
-	sec, err := randomHexSecret(s.randReader)
-	if err != nil {
-		return fmt.Errorf("generate user secret: %w", err)
+	var sec string
+	if strings.TrimSpace(rawSecret) != "" {
+		var err error
+		sec, err = NormalizeMTProtoSecret(rawSecret)
+		if err != nil {
+			return err
+		}
+		for _, u := range users {
+			if strings.EqualFold(u.Secret, sec) {
+				return fmt.Errorf("%w: секрет уже используется пользователем %q", ErrDuplicateSecret, u.Remark)
+			}
+		}
+	} else {
+		var err error
+		sec, err = randomHexSecret(s.randReader)
+		if err != nil {
+			return fmt.Errorf("generate user secret: %w", err)
+		}
 	}
 
 	newUser := TelegramUser{
@@ -1023,6 +1101,9 @@ func (s *Service) CreateUser(remark string) error {
 	}
 	users = append(users, newUser)
 	newCfg.Users = users
+	if newCfg.Secret == "" {
+		newCfg.Secret = sec
+	}
 
 	if err := s.applyConfigLocked(newCfg); err != nil {
 		return err
@@ -1033,6 +1114,13 @@ func (s *Service) CreateUser(remark string) error {
 }
 
 func (s *Service) UpdateUser(id string, remark string, enabled *bool) error {
+	return s.UpdateUserWithOptions(id, UpdateUserOptions{
+		Remark:  remark,
+		Enabled: enabled,
+	})
+}
+
+func (s *Service) UpdateUserWithOptions(id string, opts UpdateUserOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1042,22 +1130,52 @@ func (s *Service) UpdateUser(id string, remark string, enabled *bool) error {
 
 	newCfg := s.config
 	users := newCfg.GetUsers()
-	found := false
+	targetIdx := -1
 	for i := range users {
 		if users[i].ID == id {
-			if trimmed := strings.TrimSpace(remark); trimmed != "" {
-				users[i].Remark = trimmed
-			}
-			if enabled != nil {
-				users[i].Enabled = *enabled
-			}
-			found = true
+			targetIdx = i
 			break
 		}
 	}
-	if !found {
+	if targetIdx < 0 {
 		return fmt.Errorf("пользователь %s не найден", id)
 	}
+
+	if trimmed := strings.TrimSpace(opts.Remark); trimmed != "" {
+		users[targetIdx].Remark = trimmed
+	}
+	if opts.Enabled != nil {
+		users[targetIdx].Enabled = *opts.Enabled
+	}
+
+	var newSecret string
+	if opts.RegenerateSecret {
+		sec, err := randomHexSecret(s.randReader)
+		if err != nil {
+			return fmt.Errorf("generate user secret: %w", err)
+		}
+		newSecret = sec
+	} else if strings.TrimSpace(opts.Secret) != "" {
+		sec, err := NormalizeMTProtoSecret(opts.Secret)
+		if err != nil {
+			return err
+		}
+		newSecret = sec
+	}
+
+	if newSecret != "" {
+		for i, u := range users {
+			if i != targetIdx && strings.EqualFold(u.Secret, newSecret) {
+				return fmt.Errorf("%w: секрет уже используется пользователем %q", ErrDuplicateSecret, u.Remark)
+			}
+		}
+		oldSecret := users[targetIdx].Secret
+		users[targetIdx].Secret = newSecret
+		if users[targetIdx].ID == "default" || newCfg.Secret == oldSecret || (targetIdx == 0 && newCfg.Secret == "") {
+			newCfg.Secret = newSecret
+		}
+	}
+
 	newCfg.Users = users
 
 	if err := s.applyConfigLocked(newCfg); err != nil {
@@ -1078,10 +1196,6 @@ func (s *Service) DeleteUser(id string) error {
 
 	newCfg := s.config
 	users := newCfg.GetUsers()
-	if len(users) <= 1 {
-		return errors.New("нельзя удалить единственного пользователя")
-	}
-
 	var remaining []TelegramUser
 	var deletedSecret string
 	for _, u := range users {
@@ -1094,9 +1208,14 @@ func (s *Service) DeleteUser(id string) error {
 	if len(remaining) == len(users) {
 		return fmt.Errorf("пользователь %s не найден", id)
 	}
-	newCfg.Users = remaining
-	if deletedSecret != "" && newCfg.Secret == deletedSecret && len(remaining) > 0 {
-		newCfg.Secret = remaining[0].Secret
+	if len(remaining) == 0 {
+		newCfg.Users = []TelegramUser{}
+		newCfg.Secret = ""
+	} else {
+		newCfg.Users = remaining
+		if deletedSecret != "" && newCfg.Secret == deletedSecret {
+			newCfg.Secret = remaining[0].Secret
+		}
 	}
 
 	if err := s.applyConfigLocked(newCfg); err != nil {
@@ -1472,7 +1591,7 @@ func (s *Service) StartConfigured() error {
 	if s.config.IsWebEnabled() && s.mux != nil {
 		_ = s.mux.StartWithSecrets(s.config.ListenPort, s.config.GetEndpoints(), s.config.ActiveSecrets())
 	}
-	go tuneRuntimeNetwork(s.config.UpstreamDevice)
+	go tuneRuntimeNetworkUpstreams(s.config.EnabledUpstreams())
 	return nil
 }
 
@@ -1672,23 +1791,62 @@ func (s *Service) Close() error {
 
 func (s *Service) checkUpstreamHealth() {
 	s.mu.Lock()
-	device := s.config.UpstreamDevice
+	upstreams := s.config.EnabledUpstreams()
 	recovery := s.recoveryRequired
+	egressVal := s.egressValidator
+	dcProbe := s.runtimeDCProbe
 	s.mu.Unlock()
 
 	if recovery {
 		return
 	}
 
-	status := "ok"
-	if device != "" && device != "direct" && s.egressValidator != nil {
-		if err := s.egressValidator(device); err != nil {
-			status = "interface_down"
-		} else if s.runtimeDCProbe != nil && !s.runtimeDCProbe(device) {
-			status = "degraded"
+	ifaceUpCount := 0
+	dcOKCount := 0
+	for _, u := range upstreams {
+		switch u.Type {
+		case UpstreamTypeSocks5:
+			// Verify local/remote SOCKS5 endpoint accepts TCP first, then DC reachability through it.
+			tcpConn, err := (&net.Dialer{Timeout: 2 * time.Second, Control: bindDeviceControl(u.Device)}).Dial("tcp", u.Address)
+			if err != nil {
+				continue
+			}
+			_ = tcpConn.Close()
+			ifaceUpCount++
+			if dcProbe == nil {
+				dcOKCount++
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			dcConn, dcErr := dialViaUpstream(ctx, u, "149.154.175.50:443")
+			cancel()
+			if dcErr == nil {
+				_ = dcConn.Close()
+				dcOKCount++
+			}
+		default:
+			if u.Device != "" && u.Device != "direct" && egressVal != nil {
+				if err := egressVal(u.Device); err != nil {
+					continue
+				}
+			}
+			ifaceUpCount++
+			if dcProbe == nil || dcProbe(u.Device) {
+				dcOKCount++
+			}
 		}
-	} else if s.runtimeDCProbe != nil && !s.runtimeDCProbe(device) {
-		status = "degraded"
+	}
+
+	status := "ok"
+	if len(upstreams) > 0 {
+		switch {
+		case ifaceUpCount == 0:
+			status = "interface_down"
+		case dcOKCount < len(upstreams) || ifaceUpCount < len(upstreams):
+			status = "degraded"
+		default:
+			status = "ok"
+		}
 	}
 
 	s.upstreamMu.Lock()
@@ -1904,6 +2062,7 @@ func (s *Service) GetStatus() Status {
 		BackendOnline:                 rawOnline,
 		BackendAddr:                   cfg.Backend,
 		UpstreamStatus:                upstreamStatus,
+		Upstreams:                     cloneUpstreams(cfg.Upstreams),
 		NetworkPreset:                 cfg.NetworkPreset,
 		CarrierMode:                   cfg.CarrierMode,
 		PublicHost:                    cfg.PublicHostname,
@@ -1940,6 +2099,14 @@ func (s *Service) RevealUserSecret(userID string) (RevealData, error) {
 	var targetRemark string
 	var targetID string
 	users := cfg.GetUsers()
+	if len(users) == 0 {
+		return RevealData{
+			DirectHost: cfg.DirectHost,
+			DirectPort: cfg.DirectPort,
+			TlsDomain:  cfg.TlsDomain,
+			Users:      []UserRevealData{},
+		}, nil
+	}
 	if userID != "" {
 		for _, u := range users {
 			if u.ID == userID {

@@ -891,6 +891,7 @@ describe('FIRC tunnels UI integration', () => {
 
 		await fireEvent.click(screen.getByText('Изменить'));
 		expect(await screen.findByText(/Настройки туннеля VOX \(tunvless0\)/)).toBeInTheDocument();
+		expect(screen.getByPlaceholderText('Поиск узлов…')).toBeInTheDocument();
 
 		// Nodes tab shows collapsible «Скрыто фильтром (1)»
 		const hiddenToggle = await screen.findByRole('button', { name: /Скрыто фильтром \(1\)/i });
@@ -904,10 +905,12 @@ describe('FIRC tunnels UI integration', () => {
 		expect(await screen.findByText('Фильтр серверов')).toBeInTheDocument();
 		const includeInp = screen.getByLabelText('Включать только (regex)');
 		const excludeInp = screen.getByLabelText('Исключать (regex)');
+		expect(includeInp).toHaveAttribute('placeholder', 'DE|NL|🇩🇪');
+		expect(excludeInp).toHaveAttribute('placeholder', '🇷🇺|Россия|RU|BRIDGE|LTE');
 
-		// Lookaround triggers Go RE2 hint warning and skips preview API call
+		// Lookaround triggers lookaround hint warning and skips preview API call
 		await fireEvent.input(includeInp, { target: { value: '^(?!RU).*$' } });
-		expect(await screen.findByText(/Go RE2 не поддерживает lookahead\/lookbehind/i)).toBeInTheDocument();
+		expect(await screen.findByText(/lookahead\/lookbehind не поддерживается/i)).toBeInTheDocument();
 		await new Promise((r) => setTimeout(r, 380));
 		expect(fircPreviewTunnel).not.toHaveBeenCalled();
 

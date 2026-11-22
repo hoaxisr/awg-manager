@@ -15,6 +15,9 @@ vi.mock('$lib/api/client', () => ({
 		getWizardCapabilities: vi.fn(),
 		verifyWizard: vi.fn(),
 		resetTgWebProxy: vi.fn(),
+		tgWebProxyAction: vi.fn(),
+		revealTgWebProxySecret: vi.fn(),
+		updateTgWebProxyConfig: vi.fn(),
 	},
 }));
 vi.mock('$lib/stores/notifications', () => ({
@@ -184,5 +187,125 @@ describe('TelegramWebProxyCard', () => {
 		await waitFor(() => {
 			expect(api.resetTgWebProxy).toHaveBeenCalledWith({ delete_keendns: true });
 		});
+	});
+
+	it('allows deleting the last remaining user after confirmation', async () => {
+		const singleUser = { id: 'default', remark: 'Основной', enabled: true };
+		vi.mocked(api.getTgWebProxyConfig).mockResolvedValue(
+			baseConfig({ enabled: true, users: [singleUser] }),
+		);
+		vi.mocked(api.getTgWebProxyStatus).mockResolvedValue(
+			baseStatus({ running: true, direct_online: true, users: [singleUser] }),
+		);
+		vi.mocked(api.tgWebProxyAction).mockResolvedValue(
+			baseStatus({ running: true, direct_online: true, users: [] }),
+		);
+
+		const { findByRole, findByText } = render(TelegramWebProxyCard, {});
+
+		const delBtn = await findByRole('button', { name: /Удалить пользователя|Delete user/ });
+		await fireEvent.click(delBtn);
+
+		await findByText(/Удалить пользователя Telegram|Delete Telegram user/);
+		await findByText(/последний пользователь|last user/);
+
+		const confirmBtn = await findByRole('button', { name: /^(Удалить|Delete)$/ });
+		await fireEvent.click(confirmBtn);
+
+		expect(api.tgWebProxyAction).toHaveBeenCalledWith('delete_user', { user_id: 'default' });
+	});
+
+	it('allows editing and regenerating a user secret inside the Connect Telegram modal', async () => {
+		const user1 = { id: 'default', remark: 'Основной', enabled: true };
+		const oldSec = '00112233445566778899aabbccddeeff';
+		const newSec = 'ffeeddccbbaa99887766554433221100';
+		vi.mocked(api.getTgWebProxyConfig).mockResolvedValue(
+			baseConfig({ enabled: true, scenario: 'direct_fake_tls', users: [user1] }),
+		);
+		vi.mocked(api.getTgWebProxyStatus).mockResolvedValue(
+			baseStatus({ running: true, direct_online: true, users: [user1] }),
+		);
+		vi.mocked(api.revealTgWebProxySecret).mockResolvedValue({
+			user_id: 'default',
+			user_remark: 'Основной',
+			secret: oldSec,
+			direct_host: 'connect.example.netcraze.club',
+			direct_port: 8443,
+			tls_domain: 'www.google.com',
+			tg_url: '',
+			tme_url: '',
+			bridge_url: '',
+			mtproxy_secret: 'ee' + oldSec + '7777772e676f6f676c652e636f6d',
+			mtproxy_url: 'tg://proxy?server=1.1.1.1',
+			mtproxy_tme_url: 'https://t.me/proxy?server=1.1.1.1',
+			users: [
+				{
+					id: 'default',
+					remark: 'Основной',
+					enabled: true,
+					secret: oldSec,
+					tg_url: '',
+					tme_url: '',
+					bridge_url: '',
+					mtproxy_secret: 'ee' + oldSec + '7777772e676f6f676c652e636f6d',
+					mtproxy_url: 'tg://proxy?server=1.1.1.1',
+					mtproxy_tme_url: 'https://t.me/proxy?server=1.1.1.1',
+				},
+			],
+		});
+		vi.mocked(api.tgWebProxyAction).mockResolvedValue(
+			baseStatus({ running: true, direct_online: true, users: [user1] }),
+		);
+
+		const { findByRole } = render(TelegramWebProxyCard, {});
+
+		const qrBtn = await findByRole('button', { name: /QR \/ Ссылка/ });
+		await fireEvent.click(qrBtn);
+
+		const secretInput = (await findByRole('textbox', {
+			name: /Хеш \/ базовый секрет|Hash \/ base secret/,
+		})) as HTMLInputElement;
+		expect(secretInput.value).toBe(oldSec);
+
+		const regenBtn = await findByRole('button', { name: /Сгенерировать|Generate/ });
+		await fireEvent.click(regenBtn);
+		expect(api.tgWebProxyAction).toHaveBeenCalledWith('update_user', {
+			user_id: 'default',
+			regenerate_secret: true,
+		});
+
+		await fireEvent.input(secretInput, { target: { value: newSec } });
+		const saveBtn = await findByRole('button', { name: /Сохранить хеш|Save hash/ });
+		await fireEvent.click(saveBtn);
+		expect(api.tgWebProxyAction).toHaveBeenCalledWith('update_user', {
+			user_id: 'default',
+			secret: newSec,
+		});
+	});
+
+	it('renders multi-upstream summary and opens the upstreams editor', async () => {
+		const upstreams = [
+			{ id: 'up-1', type: 'direct' as const, device: 'direct', weight: 10, enabled: true },
+			{ id: 'up-2', type: 'socks5' as const, address: '127.0.0.1:1099', weight: 2, enabled: true },
+		];
+		vi.mocked(api.getTgWebProxyConfig).mockResolvedValue(
+			baseConfig({ enabled: true, upstreams }),
+		);
+		vi.mocked(api.getTgWebProxyStatus).mockResolvedValue(
+			baseStatus({ running: true, webproxy_online: true, upstreams }),
+		);
+
+		const { findByText, findByRole } = render(TelegramWebProxyCard, {});
+
+		await findByText(/\(\+1 (резерв|failover)\)/);
+
+		const changeBtn = await findByRole('button', { name: /^Изменить$/ });
+		await fireEvent.click(changeBtn);
+
+		await findByText(/Выходные каналы \(Upstreams\)|Outbound channels \(Upstreams\)/);
+		const socksInput = (await findByRole('textbox', {
+			name: /Адрес SOCKS5|SOCKS5 address/,
+		})) as HTMLInputElement;
+		expect(socksInput.value).toBe('127.0.0.1:1099');
 	});
 });
