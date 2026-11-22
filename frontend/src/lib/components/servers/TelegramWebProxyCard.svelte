@@ -170,9 +170,14 @@
 	let qrGenerating = $state(false);
 	let revealSecretInput = $state('');
 	let revealSecretSaving = $state(false);
-	// Reveal returns a single user; responses are kept only while the modal is
-	// open so switching back to a user does not hit the per-user rate limit.
-	const revealCache = new Map<string, TgWebProxyRevealData>();
+	// Reveal returns a single user and the backend allows one disclosure of a
+	// given secret per 5 s. Responses are reused for that window only — also
+	// across close/reopen of the modal and user switching — so the UI never
+	// asks again for a secret it has just received. The TTL is counted from
+	// receipt (never refreshed on reuse), which is not earlier than the
+	// server-side timestamp, so an expired entry is always re-fetchable.
+	const REVEAL_REUSE_MS = 5000;
+	const revealCache = new Map<string, { data: TgWebProxyRevealData; at: number }>();
 
 	// Any user, secret or config change can alter what a cached reveal shows
 	// (secret, links, enabled flag), so every successful mutation drops it.
@@ -181,7 +186,17 @@
 	}
 
 	function rememberReveal(data: TgWebProxyRevealData | null) {
-		if (data?.user_id) revealCache.set(data.user_id, data);
+		if (data?.user_id) revealCache.set(data.user_id, { data, at: Date.now() });
+	}
+
+	function cachedReveal(userId: string): TgWebProxyRevealData | null {
+		const hit = revealCache.get(userId);
+		if (!hit) return null;
+		if (Date.now() - hit.at >= REVEAL_REUSE_MS) {
+			revealCache.delete(userId);
+			return null;
+		}
+		return hit.data;
 	}
 
 	// Multi-user management state
@@ -630,17 +645,19 @@
 		} else {
 			shareTab = expectsMt ? 'mtproxy' : 'webproxy';
 		}
-		// No 'default' fallback: with zero users the backend answers an empty
+		// A remembered selection is only used while that user still exists; no
+		// 'default' fallback: with zero users the backend answers an empty
 		// reveal (200) instead of 404 for a non-existent "default" user.
-		const targetUserId = userId || selectedRevealUserId || tgUsers[0]?.id || '';
+		const rememberedUserId = tgUsers.some((u) => u.id === selectedRevealUserId) ? selectedRevealUserId : '';
+		const targetUserId = userId || rememberedUserId || tgUsers[0]?.id || '';
 		selectedRevealUserId = targetUserId;
 		try {
-			revealData =
-				(targetUserId && revealCache.get(targetUserId)) || (await api.revealTgWebProxySecret(targetUserId || undefined));
+			const cached = targetUserId ? cachedReveal(targetUserId) : null;
+			revealData = cached ?? (await api.revealTgWebProxySecret(targetUserId || undefined));
 			if (revealData?.user_id) {
 				selectedRevealUserId = revealData.user_id;
 			}
-			rememberReveal(revealData);
+			if (!cached) rememberReveal(revealData);
 			syncRevealSecretInput();
 			if (targetId) {
 				selectedWebProxyId = targetId;
@@ -661,7 +678,7 @@
 		revealData = null;
 		revealQrDataUrl = '';
 		revealSecretInput = '';
-		revealCache.clear();
+		selectedRevealUserId = '';
 	}
 
 	function getActiveUserReveal(): TgUserRevealData | TgWebProxyRevealData | null {
