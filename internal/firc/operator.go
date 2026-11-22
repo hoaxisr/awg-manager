@@ -244,6 +244,9 @@ type Operator struct {
 	openfluxStatusFn         func() (bool, string)
 	wgServersProvider        func(ctx context.Context) []DynamicWGServer
 	lastWGServers            []DynamicWGServer
+	monitorHostsCache        map[string]monitorHostMeta
+	monitorHostsCacheAt      time.Time
+	monitorHostsRetryAt      time.Time
 	singboxBinary            string
 	singboxCheckFn           func(ctx context.Context, stagedConfigDir string) error
 	singboxStageCopyHook     func(relPath string) error

@@ -179,6 +179,67 @@
 	let currentEntries = $derived(mode === 'all' ? denyEntries : allowEntries);
 	let activeInitialOrder = $derived(mode === 'all' ? initialDenyOrder : initialAllowOrder);
 
+	let policyByName = $derived.by(() => {
+		const map = new Map<string, FircPolicy>();
+		for (const p of policies) {
+			map.set(p.name, p);
+		}
+		return map;
+	});
+
+	function getHostPolicy(h: FircHost): { name: string; label: string } | null {
+		const name = h.policy?.trim();
+		if (!name) return null;
+		const pol = policyByName.get(name);
+		return { name, label: pol?.description || name };
+	}
+
+	function hostOnline(h: FircHost): boolean | undefined {
+		return h.online ?? h.active;
+	}
+
+	function isPolicyInSet(h: FircHost, set: Set<string>): boolean {
+		const rawPol = h.policy?.trim();
+		if (!rawPol) return false;
+		if (set.has(`policy:${rawPol}`)) return true;
+		const pol = policyByName.get(rawPol);
+		if (pol?.description && set.has(`policy:${pol.description}`)) return true;
+		return false;
+	}
+
+	function getHostEffectiveState(h: FircHost) {
+		const key = hostEntryKey(h);
+		const pol = getHostPolicy(h);
+		if (mode === 'all') {
+			const directExcluded = denyEntries.has(key);
+			const excludedByPolicy = pol !== null && isPolicyInSet(h, denyEntries);
+			const effectiveEnabled = !directExcluded && !excludedByPolicy;
+			return {
+				key,
+				pol,
+				effectiveEnabled,
+				lockedByPolicy: excludedByPolicy,
+				excludedByPolicy,
+				includedByPolicy: false,
+				directExcluded,
+				directIncluded: false,
+			};
+		}
+		const directIncluded = allowEntries.has(key);
+		const includedByPolicy = pol !== null && isPolicyInSet(h, allowEntries);
+		const effectiveEnabled = directIncluded || includedByPolicy;
+		return {
+			key,
+			pol,
+			effectiveEnabled,
+			lockedByPolicy: includedByPolicy,
+			excludedByPolicy: false,
+			includedByPolicy,
+			directExcluded: false,
+			directIncluded,
+		};
+	}
+
 	let sortedPolicies = $derived.by(() => {
 		return [...policies].sort((a, b) => {
 			const aPin = activeInitialOrder.has(`policy:${a.name}`) ? 1 : 0;
@@ -191,19 +252,23 @@
 	let filteredSortedHosts = $derived.by(() => {
 		const q = searchQuery.trim().toLowerCase();
 		const base = q
-			? dedupedHosts.filter(
-					(h) =>
+			? dedupedHosts.filter((h) => {
+					const pol = getHostPolicy(h);
+					return (
 						(h.name && h.name.toLowerCase().includes(q)) ||
 						(h.ip && h.ip.toLowerCase().includes(q)) ||
-						(h.mac && h.mac.toLowerCase().includes(q)),
-				)
+						(h.mac && h.mac.toLowerCase().includes(q)) ||
+						(pol !== null &&
+							(pol.name.toLowerCase().includes(q) || pol.label.toLowerCase().includes(q)))
+					);
+				})
 			: [...dedupedHosts];
 		return base.sort((a, b) => {
 			const aPin = activeInitialOrder.has(hostEntryKey(a)) ? 1 : 0;
 			const bPin = activeInitialOrder.has(hostEntryKey(b)) ? 1 : 0;
 			if (aPin !== bPin) return bPin - aPin;
-			const aOnline = a.online === true ? 1 : 0;
-			const bOnline = b.online === true ? 1 : 0;
+			const aOnline = hostOnline(a) === true ? 1 : 0;
+			const bOnline = hostOnline(b) === true ? 1 : 0;
 			if (aOnline !== bOnline) return bOnline - aOnline;
 			return (a.name || a.ip || a.mac || '').localeCompare(b.name || b.ip || b.mac || '');
 		});
@@ -213,7 +278,7 @@
 		policies.filter((p) => isEntryEnabled(`policy:${p.name}`)).length,
 	);
 	let activeHostsCount = $derived(
-		dedupedHosts.filter((h) => isEntryEnabled(hostEntryKey(h))).length,
+		dedupedHosts.filter((h) => getHostEffectiveState(h).effectiveEnabled).length,
 	);
 
 	let modeOptions = $derived<SegmentedOption<'all' | 'allow'>[]>([
@@ -382,48 +447,74 @@
 							{:else}
 								<div class="dm-devices-grid" class:dm-cols-3={policies.length === 0}>
 									{#each filteredSortedHosts as h (hostEntryKey(h))}
-										{@const key = hostEntryKey(h)}
-										{@const isOn = isEntryEnabled(key)}
+										{@const hostState = getHostEffectiveState(h)}
+										{@const key = hostState.key}
+										{@const pol = hostState.pol}
+										{@const isOn = hostState.effectiveEnabled}
+										{@const locked = hostState.lockedByPolicy}
+										{@const online = hostOnline(h)}
 										{@const label = h.name || h.ip || h.mac}
 										{@const meta = formatHostMeta(h)}
-										{@const titleText = [label, meta].filter(Boolean).join(' · ')}
+										{@const lockTitle = locked && pol
+											? mode === 'all'
+												? m.firc_devices_locked_excluded_by_policy({ policy: pol.label })
+												: m.firc_devices_locked_included_by_policy({ policy: pol.label })
+											: ''}
+										{@const titleText = [label, meta, pol?.label, lockTitle].filter(Boolean).join(' · ')}
 										<div
 											class="dm-row"
 											class:dm-row-excluded={mode === 'all' && !isOn}
 											class:dm-row-selected={mode === 'allow' && isOn}
 											class:dm-row-muted={mode === 'allow' && !isOn}
+											class:dm-row-policy-locked={locked}
 											data-entry={key}
 											data-enabled={isOn ? 'true' : 'false'}
+											data-policy-locked={locked ? 'true' : undefined}
+											data-policy={pol?.name || undefined}
+											title={lockTitle || undefined}
 										>
 											<button
 												type="button"
 												class="dm-row-trigger"
 												title={titleText}
+												disabled={locked}
 												onclick={() => toggleEntry(key)}
 											>
-												{#if h.online !== undefined}
+												{#if online !== undefined}
 													<span
 														class="dm-online-dot"
-														class:dm-online={h.online}
-														title={h.online ? m.firc_devices_online() : m.firc_devices_offline()}
+														class:dm-online={online}
+														title={online ? m.firc_devices_online() : m.firc_devices_offline()}
 													></span>
 												{/if}
 												<span class="dm-row-text">
 													<span class="dm-row-name">{label}</span>
-													{#if meta}
-														<span class="dm-row-meta">{meta}</span>
+													{#if meta || pol}
+														<span class="dm-row-meta-row">
+															{#if meta}
+																<span class="dm-row-meta">{meta}</span>
+															{/if}
+															{#if pol}
+																<span class="dm-policy-tag">{pol.label}</span>
+															{/if}
+														</span>
 													{/if}
 												</span>
 											</button>
 											<div class="dm-row-control">
-												{#if mode === 'all' && !isOn}
+												{#if mode === 'all' && hostState.excludedByPolicy}
+													<span class="dm-excl-pill" title={lockTitle}>{m.firc_devices_badge_by_policy()}</span>
+												{:else if mode === 'all' && !isOn}
 													<span class="dm-excl-pill">{m.firc_devices_badge_excluded()}</span>
+												{:else if mode === 'allow' && hostState.includedByPolicy}
+													<span class="dm-pol-pill-allow" title={lockTitle}>{m.firc_devices_badge_by_policy()}</span>
 												{/if}
 												<Toggle
 													size="sm"
 													spinner="none"
 													controlled
 													checked={isOn}
+													disabled={locked}
 													ariaLabel={label}
 													onchange={(next) => setEntryEnabled(key, next)}
 												/>
@@ -783,6 +874,25 @@
 		cursor: pointer;
 	}
 
+	.dm-row-trigger:disabled {
+		cursor: default;
+	}
+
+	.dm-row.dm-row-policy-locked:hover {
+		background: var(--color-bg-primary);
+		border-color: var(--color-border);
+	}
+
+	.dm-row.dm-row-excluded.dm-row-policy-locked:hover {
+		background: color-mix(in srgb, var(--color-warning-tint) 65%, var(--color-bg-primary));
+		border-color: var(--color-warning-border);
+	}
+
+	.dm-row.dm-row-selected.dm-row-policy-locked:hover {
+		background: color-mix(in srgb, var(--color-accent-tint) 65%, var(--color-bg-primary));
+		border-color: var(--color-accent-border);
+	}
+
 	.dm-online-dot {
 		width: 7px;
 		height: 7px;
@@ -818,13 +928,36 @@
 		font-weight: 600;
 	}
 
+	.dm-row-meta-row {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		min-width: 0;
+	}
+
 	.dm-row-meta {
+		min-width: 0;
 		font-family: var(--font-mono);
 		font-size: 10.5px;
 		color: var(--color-text-muted);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.dm-policy-tag {
+		flex-shrink: 0;
+		max-width: 110px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 9.5px;
+		font-weight: 600;
+		padding: 0 5px;
+		border-radius: 4px;
+		background: color-mix(in srgb, var(--color-accent-tint) 45%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-accent-border) 60%, var(--color-border));
+		color: var(--color-text-secondary);
 	}
 
 	.dm-row-control {
@@ -842,6 +975,17 @@
 		background: var(--color-warning-tint);
 		border: 1px solid var(--color-warning-border);
 		color: var(--color-warning);
+		white-space: nowrap;
+	}
+
+	.dm-pol-pill-allow {
+		font-size: 10px;
+		font-weight: 600;
+		padding: 1px 6px;
+		border-radius: var(--radius-pill);
+		background: var(--color-accent-tint);
+		border: 1px solid var(--color-accent-border);
+		color: var(--color-accent);
 		white-space: nowrap;
 	}
 

@@ -343,8 +343,10 @@ export interface FircHost {
 	ip: string;
 	ip6: string[];
 	online?: boolean;
+	active?: boolean;
 	segment?: string;
 	policy?: string;
+	policyFromSegment?: boolean;
 }
 
 export interface FircPolicy {
@@ -771,6 +773,19 @@ export interface FircMonitorDomainStat {
 	lastAt?: number;
 }
 
+export interface FircMonitorClientStat {
+	ip: string;
+	name?: string;
+	mac?: string;
+	policy?: string;
+	sourceId?: string;
+	sourceName?: string;
+	conns: number;
+	txBytes: number;
+	rxBytes: number;
+	groups?: string[];
+}
+
 export interface FircMonitorServerRow {
 	id: string;
 	name: string;
@@ -783,6 +798,7 @@ export interface FircMonitorServerRow {
 	matchedQueries: number;
 	activeConns: number;
 	activeClients?: number;
+	clients?: FircMonitorClientStat[];
 	txBytes: number;
 	rxBytes: number;
 	lastDomain?: string;
@@ -806,6 +822,7 @@ export interface FircMonitorGroupRow {
 	matchedBytes: number;
 	activeConns: number;
 	activeClients?: number;
+	clients?: FircMonitorClientStat[];
 	connTxBytes: number;
 	connRxBytes: number;
 	matchedQueries: number;
@@ -835,6 +852,7 @@ export interface FircMonitorSnapshot {
 	running: boolean;
 	totalConns: number;
 	totalClients?: number;
+	clients?: FircMonitorClientStat[];
 	totalTxBytes?: number;
 	totalRxBytes?: number;
 	totalDns: number;
