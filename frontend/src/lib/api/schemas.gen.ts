@@ -2672,6 +2672,7 @@ const api_TunnelListItemDTO: v.GenericSchema = v.looseObject({
 	name: v.optional(v.nullable(v.string())),
 	ndmsName: v.optional(v.nullable(v.string())),
 	obfuscator: v.optional(v.nullable(v.lazy(() => api_ObfuscatorItemDTO))),
+	openfluxClientId: v.optional(v.nullable(v.string())),
 	pingCheck: v.optional(v.nullable(v.lazy(() => api_TunnelPingCheckStatus))),
 	resolvedIspInterface: v.optional(v.nullable(v.string())),
 	resolvedIspInterfaceLabel: v.optional(v.nullable(v.string())),

@@ -7523,6 +7523,9 @@ definitions:
         type: string
       obfuscator:
         $ref: '#/definitions/api.ObfuscatorItemDTO'
+      openfluxClientId:
+        example: default
+        type: string
       pingCheck:
         $ref: '#/definitions/api.TunnelPingCheckStatus'
       resolvedIspInterface:
