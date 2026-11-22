@@ -1827,6 +1827,12 @@ func (s *Server) pageScanProxyURLProvider() pagescan.ProxyURLProvider {
 		if s == nil || s.fircHandler == nil || s.fircHandler.Operator() == nil {
 			return ""
 		}
+		if s.settings != nil {
+			st, err := s.settings.Get()
+			if err != nil || st == nil || strings.TrimSpace(st.SingboxRouter.RoutingEngine) != "firc" {
+				return ""
+			}
+		}
 		fircOp := s.fircHandler.Operator()
 		port := int(fircOp.InboundPort())
 		if port <= 0 || !fircOp.IsRunning(ctx) {

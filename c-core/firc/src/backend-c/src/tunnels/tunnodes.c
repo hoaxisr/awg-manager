@@ -16,8 +16,12 @@
 #define KEY_SUFFIX_ROOM 8
 #define NODES_PER_BODY ((size_t)FIRC_TUN_MAX_NODES * 4)
 #define ROWS_MAX ((size_t)FIRC_TUN_MAX_NODES * 8)
+#ifndef FIRC_TUN_REGEX_MATCH_LIMIT
 #define FIRC_TUN_REGEX_MATCH_LIMIT 1000000
+#endif
+#ifndef FIRC_TUN_REGEX_DEPTH_LIMIT
 #define FIRC_TUN_REGEX_DEPTH_LIMIT 10000
+#endif
 
 _Static_assert(NODES_PER_BODY <= VLESS_SUB_NODES_MAX, "a body must fit the parser's table of long values");
 
@@ -105,26 +109,65 @@ static const char *source_label(const firc_tun_src_t *src)
     return src->kind == FIRC_TUN_SRC_LINK ? "link" : src->sub.name;
 }
 
-static bool regex_match(pcre2_code *re, pcre2_match_data *md, pcre2_match_context *mctx, const char *name)
+static firc_err_t regex_match(pcre2_code *re, pcre2_match_data *md, pcre2_match_context *mctx,
+                              const char *name, bool *matched)
 {
-    return pcre2_match(re, (PCRE2_SPTR)name, strlen(name), 0, 0, md, mctx) >= 0;
+    *matched = false;
+    int rc = pcre2_match(re, (PCRE2_SPTR)name, strlen(name), 0, 0, md, mctx);
+    if (rc >= 0) {
+        *matched = true;
+        return FIRC_OK;
+    }
+    if (rc == PCRE2_ERROR_NOMATCH) {
+        return FIRC_OK;
+    }
+    if (rc == PCRE2_ERROR_NOMEMORY) {
+        return FIRC_ERR_NOMEM;
+    }
+    if (rc == PCRE2_ERROR_MATCHLIMIT || rc == PCRE2_ERROR_DEPTHLIMIT
+#ifdef PCRE2_ERROR_HEAPLIMIT
+        || rc == PCRE2_ERROR_HEAPLIMIT
+#endif
+    ) {
+        return FIRC_ERR_LIMIT;
+    }
+    return FIRC_ERR_INVAL;
 }
 
-static bool filtered_out(const build_t *b, const firc_tun_src_t *src, const char *name)
+static bool filtered_out(build_t *b, const firc_tun_src_t *src, const char *name)
 {
     if (src->kind != FIRC_TUN_SRC_SUB) {
         return false;
     }
-    if (b->inc_re != NULL && !regex_match(b->inc_re, b->inc_md, b->mctx, name)) {
+    if (b->err != FIRC_OK) {
         return true;
     }
-    if (b->exc_re != NULL && regex_match(b->exc_re, b->exc_md, b->mctx, name)) {
-        return true;
+    if (b->inc_re != NULL) {
+        bool matched = false;
+        firc_err_t err = regex_match(b->inc_re, b->inc_md, b->mctx, name, &matched);
+        if (err != FIRC_OK) {
+            b->err = err;
+            return true;
+        }
+        if (!matched) {
+            return true;
+        }
+    }
+    if (b->exc_re != NULL) {
+        bool matched = false;
+        firc_err_t err = regex_match(b->exc_re, b->exc_md, b->mctx, name, &matched);
+        if (err != FIRC_OK) {
+            b->err = err;
+            return true;
+        }
+        if (matched) {
+            return true;
+        }
     }
     return false;
 }
 
-static cand_t *add_cand(build_t *b, const firc_tun_src_t *src, const char *name, size_t seq)
+static cand_t *add_cand(build_t *b, const firc_tun_src_t *src, const char *name, size_t seq, bool filtered)
 {
     cand_t *c = push(b);
     if (c == NULL) {
@@ -139,13 +182,17 @@ static cand_t *add_cand(build_t *b, const firc_tun_src_t *src, const char *name,
     encode_name(enc, sizeof enc - 9 - KEY_SUFFIX_ROOM, c->row.name);
     snprintf(c->base, sizeof c->base, "%.8s:%.182s", src->id, enc);
     c->seq = seq;
-    c->filtered = filtered_out(b, src, c->row.name);
+    c->filtered = filtered;
     return c;
 }
 
 static void add_skipped(build_t *b, const firc_tun_src_t *src, const char *name, const char *reason, size_t seq)
 {
-    cand_t *c = add_cand(b, src, name, seq);
+    bool filt = filtered_out(b, src, name);
+    if (b->err != FIRC_OK) {
+        return;
+    }
+    cand_t *c = add_cand(b, src, name, seq, filt);
     if (c != NULL) {
         snprintf(c->row.skip_reason, sizeof c->row.skip_reason, "%s", reason);
     }
@@ -212,12 +259,16 @@ static void add_node(build_t *b, const firc_tun_src_t *src, struct vless_node *n
         return;
     }
     b->total++;
-    if (filtered_out(b, src, n->name)) {
-        (void)add_cand(b, src, n->name, seq);
+    bool filt = filtered_out(b, src, n->name);
+    if (b->err != FIRC_OK) {
+        return;
+    }
+    if (filt) {
+        (void)add_cand(b, src, n->name, seq, true);
         return;
     }
     b->matched++;
-    cand_t *c = add_cand(b, src, n->name, seq);
+    cand_t *c = add_cand(b, src, n->name, seq, false);
     if (c == NULL) {
         return;
     }
@@ -393,7 +444,7 @@ static void number_source(build_t *b, size_t from, size_t to)
 static void collect(build_t *b, uint32_t mark, const firc_tun_body_t *bodies, size_t n_bodies)
 {
     const firc_tunnel_t *t = b->t;
-    for (int pass = 0; pass < 2; pass++) {
+    for (int pass = 0; pass < 2 && b->err == FIRC_OK; pass++) {
         firc_tun_src_kind_t kind = pass == 0 ? FIRC_TUN_SRC_LINK : FIRC_TUN_SRC_SUB;
         for (size_t i = 0; i < t->n_src && b->err == FIRC_OK; i++) {
             const firc_tun_src_t *src = &t->src[i];
