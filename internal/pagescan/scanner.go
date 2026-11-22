@@ -280,42 +280,68 @@ type fetchResult struct {
 	bodyTruncated bool
 }
 
-func (s *Service) fetchDirect(ctx context.Context, target *url.URL) (*fetchResult, error) {
-	tr, err := httpclient.NewTransport(httpclient.TransportConfig{
-		Proxy: httpclient.ProxyDirect,
-	})
-	if err != nil {
-		return nil, err
+func (s *Service) newDirectTransport() *http.Transport {
+	return &http.Transport{
+		Proxy:                 nil, // explicit direct exit; never inherit HTTP_PROXY/HTTPS_PROXY
+		DialContext:           s.safeDirectDialContext,
+		ForceAttemptHTTP2:     true,
+		DisableKeepAlives:     true,
+		MaxIdleConns:          4,
+		TLSHandshakeTimeout:   s.fetchTimeout,
+		ExpectContinueTimeout: 1 * time.Second,
 	}
-	defer tr.CloseIdleConnections()
+}
 
-	tr.DialContext = s.safeDirectDialContext
+func (s *Service) newProxyTransport(rawProxyURL string) (*http.Transport, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawProxyURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, fmt.Errorf("invalid proxy URL %q", rawProxyURL)
+	}
+	return &http.Transport{
+		Proxy:                 http.ProxyURL(parsed),
+		ForceAttemptHTTP2:     true,
+		DisableKeepAlives:     true,
+		MaxIdleConns:          4,
+		TLSHandshakeTimeout:   s.fetchTimeout,
+		ExpectContinueTimeout: 1 * time.Second,
+	}, nil
+}
+
+func (s *Service) buildCheckRedirect(validateHost func(req *http.Request) error, redirectURLs *[]*url.URL) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= httpclient.MaxRedirectHops {
+			return fmt.Errorf("too many redirects (limit %d)", httpclient.MaxRedirectHops)
+		}
+		if len(via) > 0 {
+			if prev := via[len(via)-1]; prev.URL.Scheme == "https" && req.URL.Scheme != "https" {
+				return fmt.Errorf("%w: HTTPS to %s downgrade redirect rejected", ErrInvalidURL, req.URL.Scheme)
+			}
+		}
+		if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+			return fmt.Errorf("%w: unsupported redirect scheme %q", ErrInvalidURL, req.URL.Scheme)
+		}
+		if req.URL.User != nil {
+			return fmt.Errorf("%w: credentials in redirect URL rejected", ErrInvalidURL)
+		}
+		if err := validateHost(req); err != nil {
+			return err
+		}
+		*redirectURLs = append(*redirectURLs, cloneURL(req.URL))
+		return nil
+	}
+}
+
+func (s *Service) fetchDirect(ctx context.Context, target *url.URL) (*fetchResult, error) {
+	tr := s.newDirectTransport()
+	defer tr.CloseIdleConnections()
 
 	var redirectURLs []*url.URL
 	client := &http.Client{
 		Transport: tr,
 		Timeout:   s.fetchTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= httpclient.MaxRedirectHops {
-				return fmt.Errorf("too many redirects (limit %d)", httpclient.MaxRedirectHops)
-			}
-			if len(via) > 0 {
-				if prev := via[len(via)-1]; prev.URL.Scheme == "https" && req.URL.Scheme != "https" {
-					return fmt.Errorf("%w: HTTPS to %s downgrade redirect rejected", ErrInvalidURL, req.URL.Scheme)
-				}
-			}
-			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-				return fmt.Errorf("%w: unsupported redirect scheme %q", ErrInvalidURL, req.URL.Scheme)
-			}
-			if req.URL.User != nil {
-				return fmt.Errorf("%w: credentials in redirect URL rejected", ErrInvalidURL)
-			}
-			if err := s.validateTargetHostname(req.URL.Hostname()); err != nil {
-				return err
-			}
-			redirectURLs = append(redirectURLs, cloneURL(req.URL))
-			return nil
-		},
+		CheckRedirect: s.buildCheckRedirect(func(req *http.Request) error {
+			return s.validateTargetHostname(req.URL.Hostname())
+		}, &redirectURLs),
 	}
 
 	res, err := s.executeFetch(ctx, client, target)
@@ -331,9 +357,7 @@ func (s *Service) fetchViaProxy(ctx context.Context, target *url.URL, proxyURL s
 		return nil, err
 	}
 
-	tr, err := httpclient.NewTransport(httpclient.TransportConfig{
-		ProxyURL: proxyURL,
-	})
+	tr, err := s.newProxyTransport(proxyURL)
 	if err != nil {
 		return nil, err
 	}
@@ -343,27 +367,9 @@ func (s *Service) fetchViaProxy(ctx context.Context, target *url.URL, proxyURL s
 	client := &http.Client{
 		Transport: tr,
 		Timeout:   s.fetchTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= httpclient.MaxRedirectHops {
-				return fmt.Errorf("too many redirects (limit %d)", httpclient.MaxRedirectHops)
-			}
-			if len(via) > 0 {
-				if prev := via[len(via)-1]; prev.URL.Scheme == "https" && req.URL.Scheme != "https" {
-					return fmt.Errorf("%w: HTTPS to %s downgrade redirect rejected", ErrInvalidURL, req.URL.Scheme)
-				}
-			}
-			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-				return fmt.Errorf("%w: unsupported redirect scheme %q", ErrInvalidURL, req.URL.Scheme)
-			}
-			if req.URL.User != nil {
-				return fmt.Errorf("%w: credentials in redirect URL rejected", ErrInvalidURL)
-			}
-			if err := s.validateProxyTargetHost(req.Context(), req.URL.Hostname()); err != nil {
-				return err
-			}
-			redirectURLs = append(redirectURLs, cloneURL(req.URL))
-			return nil
-		},
+		CheckRedirect: s.buildCheckRedirect(func(req *http.Request) error {
+			return s.validateProxyTargetHost(req.Context(), req.URL.Hostname())
+		}, &redirectURLs),
 	}
 
 	res, err := s.executeFetch(ctx, client, target)
@@ -383,8 +389,13 @@ func (s *Service) executeFetch(ctx context.Context, client *http.Client, target 
 		return nil, fmt.Errorf("%w: %v", ErrInvalidURL, err)
 	}
 	req.Header.Set("User-Agent", defaultUserAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Sec-Fetch-User", "?1")
 
 	resp, err := client.Do(req)
 	if err != nil {

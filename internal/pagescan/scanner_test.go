@@ -447,3 +447,50 @@ func TestScan_ProxyModesAndAutoFallback(t *testing.T) {
 		t.Errorf("FetchVia = %q, want proxy", resFake.FetchVia)
 	}
 }
+
+func TestScan_HTTP2TransportAndNavigationHeaders(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:9999")
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:9999")
+
+	svc := NewService(Options{FetchTimeout: 2 * time.Second})
+	tr := svc.newDirectTransport()
+	if !tr.ForceAttemptHTTP2 {
+		t.Fatalf("ForceAttemptHTTP2 = false, want true")
+	}
+	if tr.Proxy != nil {
+		t.Fatalf("direct transport Proxy must be nil (must ignore env HTTP_PROXY)")
+	}
+
+	var captured http.Header
+	targetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.Header.Clone()
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<script src="https://cdn.example.com/a.js"></script>`)
+	}))
+	defer targetSrv.Close()
+
+	svc.resolver = &stubHostResolver{
+		records: map[string][]net.IPAddr{
+			"site.example.com": {{IP: net.ParseIP("93.184.216.34")}},
+			"cdn.example.com":  {{IP: net.ParseIP("1.1.1.1")}},
+		},
+	}
+	svc.dialRaw = func(ctx context.Context, _ string, _ string) (net.Conn, error) {
+		return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", targetSrv.Listener.Addr().String())
+	}
+
+	if _, err := svc.Scan(context.Background(), "http://site.example.com/", FetchModeDirect); err != nil {
+		t.Fatalf("Scan failed despite HTTP_PROXY env: %v", err)
+	}
+	for hdr, want := range map[string]string{
+		"Upgrade-Insecure-Requests": "1",
+		"Sec-Fetch-Dest":            "document",
+		"Sec-Fetch-Mode":            "navigate",
+		"Sec-Fetch-Site":            "none",
+		"Sec-Fetch-User":            "?1",
+	} {
+		if got := captured.Get(hdr); got != want {
+			t.Errorf("header %s = %q, want %q", hdr, got, want)
+		}
+	}
+}
