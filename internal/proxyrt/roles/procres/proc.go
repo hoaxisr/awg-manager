@@ -190,10 +190,12 @@ func (p *Proc) clearFatalError() {
 }
 
 // scanLog дочитывает журнал; true — найден новый сбой (флаг был пуст).
+// p.lwMu удерживается до завершения setFatalError, чтобы параллельный Observe
+// не мог прочитать уже сдвинутый logScanOffset до публикации p.fatalErr.
 func (p *Proc) scanLog() bool {
 	p.lwMu.Lock()
+	defer p.lwMu.Unlock()
 	if p.c.LogPath == "" {
-		p.lwMu.Unlock()
 		return false
 	}
 	if p.logScanOffset < p.logStartOffset && p.logStartOffset >= 0 {
@@ -201,12 +203,10 @@ func (p *Proc) scanLog() bool {
 	}
 	chunk := readNewLogChunk(p.c.LogPath, &p.logScanOffset)
 	if chunk == "" {
-		p.lwMu.Unlock()
 		return false
 	}
 	if sig := detectFatalSessionError(chunk); sig != "" {
 		p.zeroActiveStreak = 0
-		p.lwMu.Unlock()
 		return p.setFatalError(sig)
 	}
 	triggered := false
@@ -225,7 +225,6 @@ func (p *Proc) scanLog() bool {
 			p.zeroActiveStreak = 0
 		}
 	}
-	p.lwMu.Unlock()
 	if triggered {
 		return p.setFatalError(sigZeroActiveWorkers)
 	}
