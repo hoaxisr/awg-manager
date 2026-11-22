@@ -125,15 +125,30 @@ func TestRevealUserSecret_LegacySingleSecret(t *testing.T) {
 	}
 }
 
-func TestRevealUserSecret_NoSecretConfigured(t *testing.T) {
+// After the last user is deleted (#1254) an empty reveal is a clean 200
+// with no users and no secret material; an explicit unknown ID is still 404.
+func TestRevealUserSecret_NoUsersConfigured(t *testing.T) {
 	svc, _, _ := setupTestService(t)
 	cfg := revealScopeConfig()
-	cfg.Users = nil
+	cfg.Users = []TelegramUser{}
 	cfg.Secret = ""
 	svc.config = cfg
 
-	if _, err := svc.RevealSecret(); !errors.Is(err, ErrUserNotFound) {
-		t.Errorf("RevealSecret without secrets err = %v, want ErrUserNotFound", err)
+	data, err := svc.RevealSecret()
+	if err != nil || len(data.Users) != 0 || data.Secret != "" || data.UserID != "" {
+		t.Fatalf("empty reveal = %+v, %v; want no users and no error", data, err)
+	}
+	raw, _ := json.Marshal(data)
+	for _, marker := range []string{revealLegacy, "tg://", "secret="} {
+		if strings.Contains(string(raw), marker) {
+			t.Errorf("empty reveal contains %q: %s", marker, raw)
+		}
+	}
+	if id, rev, err := svc.ResolveRevealUser(""); err != nil || id != "" || rev != "" {
+		t.Errorf("ResolveRevealUser with no users = %q, %v; want \"\", nil", id, err)
+	}
+	if _, err := svc.RevealUserSecret("default"); !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("explicit default with no users err = %v, want ErrUserNotFound", err)
 	}
 }
 
@@ -144,16 +159,35 @@ func TestResolveRevealUser_MatchesRevealTarget(t *testing.T) {
 	svc.config = revealScopeConfig()
 
 	for in, want := range map[string]string{"": "u-a", "u-a": "u-a", "u-b": "u-b"} {
-		got, err := svc.ResolveRevealUser(in)
-		if err != nil || got != want {
+		got, rev, err := svc.ResolveRevealUser(in)
+		if err != nil || got != want || len(rev) != 16 {
 			t.Errorf("ResolveRevealUser(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	if _, err := svc.ResolveRevealUser("u-missing"); !errors.Is(err, ErrUserNotFound) {
+	if _, _, err := svc.ResolveRevealUser("u-missing"); !errors.Is(err, ErrUserNotFound) {
 		t.Errorf("ResolveRevealUser(unknown) err = %v, want ErrUserNotFound", err)
 	}
 	svc.recoveryRequired = true
-	if _, err := svc.ResolveRevealUser("u-a"); !errors.Is(err, ErrRecoveryRequired) {
+	if _, _, err := svc.ResolveRevealUser("u-a"); !errors.Is(err, ErrRecoveryRequired) {
 		t.Errorf("ResolveRevealUser in recovery err = %v, want ErrRecoveryRequired", err)
+	}
+}
+
+// The revision changes with the secret and never contains it.
+func TestResolveRevealUser_RevisionTracksSecret(t *testing.T) {
+	svc, _, _ := setupTestService(t)
+	svc.config = revealScopeConfig()
+	_, revA, _ := svc.ResolveRevealUser("u-a")
+	_, revA2, _ := svc.ResolveRevealUser("u-a")
+	_, revB, _ := svc.ResolveRevealUser("u-b")
+	if revA != revA2 || revA == revB {
+		t.Fatalf("revisions: a=%q a2=%q b=%q", revA, revA2, revB)
+	}
+	svc.config.Users[0].Secret = "0123456789abcdef0123456789abcdef"
+	if _, revChanged, _ := svc.ResolveRevealUser("u-a"); revChanged == revA {
+		t.Fatal("revision did not change with the secret")
+	}
+	if strings.Contains(revA, revealSecretA[:16]) || strings.Contains(revealSecretA, revA) {
+		t.Fatal("revision leaks secret material")
 	}
 }

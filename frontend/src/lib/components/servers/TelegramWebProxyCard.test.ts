@@ -283,6 +283,75 @@ describe('TelegramWebProxyCard', () => {
 		});
 	});
 
+	it('does not show a stale cached secret after regenerating and switching users', async () => {
+		const userA = { id: 'u-a', remark: 'Alice', enabled: true };
+		const userB = { id: 'u-b', remark: 'Bob', enabled: true };
+		const secA1 = '00112233445566778899aabbccddeeff';
+		const secA2 = 'ffeeddccbbaa99887766554433221100';
+		const secB = 'abcdefabcdefabcdefabcdefabcdefab';
+		const secrets: Record<string, string> = { 'u-a': secA1, 'u-b': secB };
+		const reveal = (id: string) => ({
+			user_id: id,
+			user_remark: id === 'u-a' ? 'Alice' : 'Bob',
+			secret: secrets[id],
+			direct_host: 'connect.example.netcraze.club',
+			direct_port: 8443,
+			tls_domain: 'www.google.com',
+			tg_url: '',
+			tme_url: '',
+			bridge_url: '',
+			mtproxy_secret: 'ee' + secrets[id],
+			mtproxy_url: 'tg://proxy?server=1.1.1.1',
+			mtproxy_tme_url: 'https://t.me/proxy?server=1.1.1.1',
+			users: [
+				{
+					id,
+					remark: id === 'u-a' ? 'Alice' : 'Bob',
+					enabled: true,
+					secret: secrets[id],
+					tg_url: '',
+					tme_url: '',
+					bridge_url: '',
+					mtproxy_secret: 'ee' + secrets[id],
+					mtproxy_url: 'tg://proxy?server=1.1.1.1',
+					mtproxy_tme_url: 'https://t.me/proxy?server=1.1.1.1',
+				},
+			],
+		});
+		vi.mocked(api.getTgWebProxyConfig).mockResolvedValue(
+			baseConfig({ enabled: true, scenario: 'direct_fake_tls', users: [userA, userB] }),
+		);
+		vi.mocked(api.getTgWebProxyStatus).mockResolvedValue(
+			baseStatus({ running: true, direct_online: true, users: [userA, userB] }),
+		);
+		vi.mocked(api.revealTgWebProxySecret).mockImplementation(async (id?: string) => reveal(id || 'u-a'));
+		vi.mocked(api.tgWebProxyAction).mockImplementation(async (action: string) => {
+			if (action === 'update_user') secrets['u-a'] = secA2;
+			return baseStatus({ running: true, direct_online: true, users: [userA, userB] });
+		});
+
+		const { findAllByRole, findByRole } = render(TelegramWebProxyCard, {});
+		const qrButtons = await findAllByRole('button', { name: /QR \/ Ссылка/ });
+		await fireEvent.click(qrButtons[0]);
+
+		const secretInput = () =>
+			findByRole('textbox', { name: /Хеш \/ базовый секрет|Hash \/ base secret/ }) as Promise<HTMLInputElement>;
+		await waitFor(async () => expect((await secretInput()).value).toBe(secA1));
+
+		await fireEvent.click(await findByRole('button', { name: /Сгенерировать|Generate/ }));
+		await waitFor(async () => expect((await secretInput()).value).toBe(secA2));
+
+		const userSelect = (await findByRole('combobox', { name: /Пользователь/ })) as HTMLSelectElement;
+		await fireEvent.change(userSelect, { target: { value: 'u-b' } });
+		await waitFor(async () => expect((await secretInput()).value).toBe(secB));
+
+		await fireEvent.change(
+			(await findByRole('combobox', { name: /Пользователь/ })) as HTMLSelectElement,
+			{ target: { value: 'u-a' } },
+		);
+		await waitFor(async () => expect((await secretInput()).value).toBe(secA2));
+	});
+
 	it('renders multi-upstream summary and opens the upstreams editor', async () => {
 		const upstreams = [
 			{ id: 'up-1', type: 'direct' as const, device: 'direct', weight: 10, enabled: true },

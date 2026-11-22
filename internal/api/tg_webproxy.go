@@ -289,15 +289,22 @@ func (h *TgWebProxyHandler) RevealSecret(w http.ResponseWriter, r *http.Request)
 
 	// Resolve the target first (no secret material) so the rate limit is
 	// checked before the reveal is built.
-	targetID, err := h.svc.ResolveRevealUser(userID)
+	targetID, revision, err := h.svc.ResolveRevealUser(userID)
 	if err != nil {
 		writeRevealError(w, err)
 		return
 	}
+	if targetID == "" {
+		// No users: nothing to disclose, no reason to rate-limit.
+		h.writeReveal(w, "")
+		return
+	}
 
-	// Rate limit: 1 disclosure per 5 seconds per authenticated session (or
-	// remote IP) and revealed user. Keyed by the resolved user so an explicit
-	// user_id cannot bypass the limit applied to the default reveal.
+	// Rate limit: 1 disclosure of a given secret per 5 seconds per
+	// authenticated session (or remote IP). Keyed by the resolved user and its
+	// secret revision: an explicit user_id cannot bypass the limit applied to
+	// the default reveal, and a secret that was just edited or regenerated can
+	// be revealed immediately.
 	var clientKey string
 	if cookie, err := r.Cookie(auth.SessionCookie); !h.authDisabled() && err == nil && cookie.Value != "" {
 		clientKey = "sess:" + cookie.Value
@@ -309,7 +316,7 @@ func (h *TgWebProxyHandler) RevealSecret(w http.ResponseWriter, r *http.Request)
 		clientKey = "ip:" + host
 	}
 
-	limitKey := revealLimitKey(clientKey, targetID)
+	limitKey := revealLimitKey(clientKey, targetID, revision)
 	h.revealMu.Lock()
 	now := time.Now()
 	// Prune expired entries older than 1 minute to prevent unbounded growth
@@ -328,12 +335,15 @@ func (h *TgWebProxyHandler) RevealSecret(w http.ResponseWriter, r *http.Request)
 	h.revealLimits[limitKey] = now
 	h.revealMu.Unlock()
 
+	h.writeReveal(w, targetID)
+}
+
+func (h *TgWebProxyHandler) writeReveal(w http.ResponseWriter, targetID string) {
 	data, err := h.svc.RevealUserSecret(targetID)
 	if err != nil {
 		writeRevealError(w, err)
 		return
 	}
-
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	WriteJSON(w, http.StatusOK, data)
@@ -350,8 +360,8 @@ func writeRevealError(w http.ResponseWriter, err error) {
 	}
 }
 
-func revealLimitKey(clientKey, userID string) string {
-	return clientKey + "|user:" + userID
+func revealLimitKey(clientKey, userID, revision string) string {
+	return clientKey + "|user:" + userID + "|rev:" + revision
 }
 
 func (h *TgWebProxyHandler) Action(w http.ResponseWriter, r *http.Request) {

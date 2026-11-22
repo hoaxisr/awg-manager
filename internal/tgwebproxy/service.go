@@ -2118,18 +2118,26 @@ func (s *Service) snapshotForReveal() (Config, error) {
 }
 
 // ResolveRevealUser returns the ID of the user RevealUserSecret(userID) would
-// disclose ("" when no users exist), without building any secret material.
-// Callers use it to apply rate limits before the reveal is constructed.
-func (s *Service) ResolveRevealUser(userID string) (string, error) {
+// disclose ("" when no users exist) and an opaque revision of that user's
+// secret, without building any secret material. Callers rate-limit on
+// (id, revision) before the reveal is constructed, so a just-changed secret is
+// revealable at once while repeats of the same secret stay limited. The
+// revision is a truncated domain-separated SHA-256 and is meant for in-memory
+// keys only, never for responses.
+func (s *Service) ResolveRevealUser(userID string) (id, revision string, err error) {
 	cfg, err := s.snapshotForReveal()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	u, err := resolveRevealTarget(cfg, userID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return u.ID, nil
+	if u.ID == "" {
+		return "", "", nil
+	}
+	sum := sha256.Sum256([]byte("tgwebproxy-reveal-revision-v1\x00" + strings.ToLower(u.Secret)))
+	return u.ID, hex.EncodeToString(sum[:8]), nil
 }
 
 func (s *Service) RevealUserSecret(userID string) (RevealData, error) {

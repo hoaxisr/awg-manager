@@ -174,6 +174,16 @@
 	// open so switching back to a user does not hit the per-user rate limit.
 	const revealCache = new Map<string, TgWebProxyRevealData>();
 
+	// Any user, secret or config change can alter what a cached reveal shows
+	// (secret, links, enabled flag), so every successful mutation drops it.
+	function invalidateRevealCache() {
+		revealCache.clear();
+	}
+
+	function rememberReveal(data: TgWebProxyRevealData | null) {
+		if (data?.user_id) revealCache.set(data.user_id, data);
+	}
+
 	// Multi-user management state
 	let showAddUserModal = $state(false);
 	let newUserRemark = $state('');
@@ -591,6 +601,7 @@
 				upstreams: cleanUpstreams,
 				upstream_device: primaryDirectDevice(cleanUpstreams),
 			});
+			invalidateRevealCache();
 			notifications.success('Маршрут интернета для Telegram обновлён');
 			egressModalOpen = false;
 			await loadData();
@@ -619,14 +630,17 @@
 		} else {
 			shareTab = expectsMt ? 'mtproxy' : 'webproxy';
 		}
-		const targetUserId = userId || selectedRevealUserId || tgUsers[0]?.id || 'default';
+		// No 'default' fallback: with zero users the backend answers an empty
+		// reveal (200) instead of 404 for a non-existent "default" user.
+		const targetUserId = userId || selectedRevealUserId || tgUsers[0]?.id || '';
 		selectedRevealUserId = targetUserId;
 		try {
-			revealData = revealCache.get(targetUserId) ?? (await api.revealTgWebProxySecret(targetUserId));
+			revealData =
+				(targetUserId && revealCache.get(targetUserId)) || (await api.revealTgWebProxySecret(targetUserId || undefined));
 			if (revealData?.user_id) {
 				selectedRevealUserId = revealData.user_id;
-				revealCache.set(revealData.user_id, revealData);
 			}
+			rememberReveal(revealData);
 			syncRevealSecretInput();
 			if (targetId) {
 				selectedWebProxyId = targetId;
@@ -746,7 +760,9 @@
 				user_id: targetId,
 				secret: cleaned,
 			});
+			invalidateRevealCache();
 			revealData = await api.revealTgWebProxySecret(targetId);
+			rememberReveal(revealData);
 			syncRevealSecretInput();
 			await updateRevealQR();
 			notifications.success(m.tg_user_secret_saved());
@@ -768,7 +784,9 @@
 				user_id: targetId,
 				regenerate_secret: true,
 			});
+			invalidateRevealCache();
 			revealData = await api.revealTgWebProxySecret(targetId);
+			rememberReveal(revealData);
 			syncRevealSecretInput();
 			await updateRevealQR();
 			notifications.success(m.tg_user_secret_regenerated());
@@ -793,6 +811,7 @@
 				remark: newUserRemark.trim() || `Пользователь ${tgUsers.length + 1}`,
 				...(trimmedSec ? { secret: trimmedSec } : {}),
 			});
+			invalidateRevealCache();
 			newUserRemark = '';
 			newUserSecret = '';
 			showAddUserModal = false;
@@ -814,6 +833,7 @@
 				user_id: user.id,
 				enabled: nextEnabled,
 			});
+			invalidateRevealCache();
 			notifications.success(
 				nextEnabled ? `Доступ для «${user.remark}» включён` : `Доступ для «${user.remark}» отключён`
 			);
@@ -837,6 +857,7 @@
 		userActionLoadingId = target.id;
 		try {
 			status = await api.tgWebProxyAction('delete_user', { user_id: target.id });
+			invalidateRevealCache();
 			deleteUserTarget = null;
 			notifications.success(`Пользователь «${target.remark}» удалён`);
 			await loadData();
@@ -845,6 +866,7 @@
 				if (tgUsers.length > 0) {
 					selectedRevealUserId = tgUsers[0].id;
 					revealData = await api.revealTgWebProxySecret(selectedRevealUserId);
+					rememberReveal(revealData);
 					syncRevealSecretInput();
 					await updateRevealQR();
 				} else {
@@ -864,6 +886,7 @@
 		try {
 			const nextAction = status?.running ? 'stop' : 'start';
 			status = await api.tgWebProxyAction(nextAction);
+			invalidateRevealCache();
 			notifications.success(status?.running ? 'Прокси Telegram запущен' : 'Прокси Telegram остановлен');
 			await loadData();
 			onRefreshParent?.();
@@ -878,6 +901,7 @@
 		actionLoading = true;
 		try {
 			status = await api.tgWebProxyAction('restart');
+			invalidateRevealCache();
 			notifications.success('Прокси Telegram перезапущен');
 			onRefreshParent?.();
 		} catch (e) {
@@ -1000,6 +1024,7 @@
 					editConfig.endpoints[0].carrier_mode || getPresetMeta(ep0Preset).carrier_mode;
 			}
 			config = await api.updateTgWebProxyConfig(editConfig);
+			invalidateRevealCache();
 			notifications.success('Настройки сохранены');
 			settingsOpen = false;
 			await loadData();
@@ -1015,6 +1040,7 @@
 		rotateSecretLoading = true;
 		try {
 			status = await api.tgWebProxyAction('rotate_secret');
+			invalidateRevealCache();
 			rotateConfirmOpen = false;
 			notifications.success('Новый ключ сгенерирован. Старый ключ активен в течение 7 дней.');
 			await loadData();
@@ -1029,6 +1055,7 @@
 		revokeLoading = true;
 		try {
 			status = await api.tgWebProxyAction('revoke_legacy');
+			invalidateRevealCache();
 			revokeConfirmOpen = false;
 			notifications.success('Старый ключ успешно отозван.');
 			await loadData();
@@ -1043,6 +1070,7 @@
 		clearCacheLoading = true;
 		try {
 			status = await api.tgWebProxyAction('clear_scanner_cache');
+			invalidateRevealCache();
 			clearCacheConfirmOpen = false;
 			notifications.success('Кэш сетевых сканеров очищен.');
 		} catch (e) {
@@ -1061,6 +1089,7 @@
 		resetLoading = true;
 		try {
 			const res = await api.resetTgWebProxy({ delete_keendns: resetDeleteKeenDNS });
+			invalidateRevealCache();
 			lastCheckReport = null;
 			lastCheckError = '';
 			clearServerVerification('tgwebproxy');

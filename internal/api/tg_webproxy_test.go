@@ -263,7 +263,7 @@ func TestTgWebProxy_MethodEnforcement(t *testing.T) {
 }
 
 func TestTgWebProxy_RateLimit_SessionKeyed(t *testing.T) {
-	handler, _, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	handler, svc, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
 	token := getValidCSRFToken(t, handler, sessionToken)
 
 	req := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/reveal", nil)
@@ -289,7 +289,11 @@ func TestTgWebProxy_RateLimit_SessionKeyed(t *testing.T) {
 
 	// Advance time past rate limit (5 seconds)
 	handler.revealMu.Lock()
-	handler.revealLimits[revealLimitKey("sess:"+sessionToken, "default")] = time.Now().Add(-6 * time.Second)
+	id, rev, err := svc.ResolveRevealUser("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.revealLimits[revealLimitKey("sess:"+sessionToken, id, rev)] = time.Now().Add(-6 * time.Second)
 	handler.revealMu.Unlock()
 
 	w3 := httptest.NewRecorder()
@@ -668,5 +672,88 @@ func TestTgWebProxy_CSRF_AuthDisabled(t *testing.T) {
 	handler.RevealSecret(wOldTokAuthOn, reqOldTokAuthOn)
 	if wOldTokAuthOn.Code != http.StatusForbidden {
 		t.Errorf("expected 403 on RevealSecret with auth-disabled token when auth enabled, got %d", wOldTokAuthOn.Code)
+	}
+}
+
+func postTgAction(t *testing.T, handler *TgWebProxyHandler, sessionToken, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	token := getValidCSRFToken(t, handler, sessionToken)
+	req := httptest.NewRequest(http.MethodPost, "http://192.168.10.1:2222/api/servers/tgwebproxy/action", bytes.NewBufferString(body))
+	req.Host = "192.168.10.1:2222"
+	req.Header.Set("Origin", "http://192.168.10.1:2222")
+	req.Header.Set("X-CSRF-Token", token)
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+	w := httptest.NewRecorder()
+	handler.Action(w, req)
+	return w
+}
+
+func revealSecretOf(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	var env struct {
+		Data tgwebproxy.RevealData `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode reveal: %v: %s", err, w.Body.String())
+	}
+	return env.Data.Secret
+}
+
+// The reveal modal (#1254) edits/regenerates a user's secret and immediately
+// re-reveals it. The limiter must count disclosures of a given secret, so a
+// changed secret is revealable at once while a repeat of the same one is not.
+func TestTgWebProxy_RevealAfterSecretChangeNotRateLimited(t *testing.T) {
+	handler, svc, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	userID := svc.GetConfig().Users[0].ID
+
+	w1 := httptest.NewRecorder()
+	handler.RevealSecret(w1, newRevealRequest(t, handler, sessionToken, userID))
+	if w1.Code != http.StatusOK {
+		t.Fatalf("initial reveal: %d %s", w1.Code, w1.Body.String())
+	}
+	before := revealSecretOf(t, w1)
+
+	for _, body := range []string{
+		`{"action":"update_user","user_id":"` + userID + `","regenerate_secret":true}`,
+		`{"action":"update_user","user_id":"` + userID + `","secret":"0123456789abcdef0123456789abcdef"}`,
+	} {
+		if w := postTgAction(t, handler, sessionToken, body); w.Code != http.StatusOK {
+			t.Fatalf("action %s: %d %s", body, w.Code, w.Body.String())
+		}
+		w := httptest.NewRecorder()
+		handler.RevealSecret(w, newRevealRequest(t, handler, sessionToken, userID))
+		if w.Code != http.StatusOK {
+			t.Fatalf("reveal right after %s: got %d, want 200: %s", body, w.Code, w.Body.String())
+		}
+		after := revealSecretOf(t, w)
+		if after == before {
+			t.Fatalf("reveal after %s returned the old secret", body)
+		}
+		before = after
+	}
+
+	// Same secret again within the window is still limited.
+	wSame := httptest.NewRecorder()
+	handler.RevealSecret(wSame, newRevealRequest(t, handler, sessionToken, userID))
+	if wSame.Code != http.StatusTooManyRequests {
+		t.Errorf("repeat reveal of unchanged secret: got %d, want 429", wSame.Code)
+	}
+}
+
+// With no users left there is nothing to disclose: repeated empty reveals
+// must not be rate limited into an error for the UI.
+func TestTgWebProxy_RevealWithNoUsersNotRateLimited(t *testing.T) {
+	handler, svc, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	userID := svc.GetConfig().Users[0].ID
+	if w := postTgAction(t, handler, sessionToken, `{"action":"delete_user","user_id":"`+userID+`"}`); w.Code != http.StatusOK {
+		t.Fatalf("delete last user: %d %s", w.Code, w.Body.String())
+	}
+	for i := 0; i < 2; i++ {
+		w := httptest.NewRecorder()
+		handler.RevealSecret(w, newRevealRequest(t, handler, sessionToken, ""))
+		if w.Code != http.StatusOK || revealSecretOf(t, w) != "" {
+			t.Fatalf("empty reveal #%d: %d %s", i+1, w.Code, w.Body.String())
+		}
 	}
 }
