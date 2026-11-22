@@ -844,7 +844,7 @@
 							<Search size={13} />
 							<input
 								type="text"
-								placeholder="Фильтр узлов…"
+								placeholder="Поиск узлов…"
 								bind:value={nodeQuery}
 							/>
 						</div>
@@ -1190,7 +1190,7 @@
 									class="inp mono"
 									type="text"
 									bind:value={draft.filter}
-									placeholder="(?i)(DE|NL|🇩🇪)"
+									placeholder="DE|NL|🇩🇪"
 									autocomplete="off"
 									spellcheck="false"
 								/>
