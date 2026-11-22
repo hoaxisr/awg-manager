@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/serverwizard/egress"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	sysports "github.com/hoaxisr/awg-manager/internal/sys/ports"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	tunnelservice "github.com/hoaxisr/awg-manager/internal/tunnel/service"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -963,8 +965,11 @@ func (s *Server) registerDiagnosticsRoutes(mux *http.ServeMux, h *routeHandlers)
 		IPInspect:        ipInspectSvc,
 		RouteChecker:     s.pageScanRouteChecker(),
 		ProxyURLProvider: s.pageScanProxyURLProvider(),
+		InterfaceLister:  s.pageScanInterfaceLister(),
+		ProxyLister:      s.pageScanProxyLister(),
 	})
 	pageScanHandler := api.NewPageScanHandler(pageScanSvc)
+	mux.HandleFunc("/api/diagnostics/page-scan/options", h.guarded(pageScanHandler.GetOptions))
 	mux.HandleFunc("/api/diagnostics/page-scan", h.guarded(pageScanHandler.Post))
 
 	// Connections viewer (protected)
@@ -1822,28 +1827,304 @@ func (s *Server) pageScanRouteChecker() pagescan.RouteChecker {
 	}
 }
 
+func probeLocalTCP(host string, port int) bool {
+	if host == "" || port <= 0 || port > 65535 {
+		return false
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 150*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func isNetIfaceUp(name string) bool {
+	iface, err := net.InterfaceByName(strings.TrimSpace(name))
+	return err == nil && iface.Flags&net.FlagUp != 0
+}
+
+func resolveInterfaceIPv4(ifaceName string) string {
+	iface, err := net.InterfaceByName(strings.TrimSpace(ifaceName))
+	if err != nil {
+		return ""
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return ""
+	}
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok || ipNet.IP == nil {
+			continue
+		}
+		v4 := ipNet.IP.To4()
+		if v4 == nil || v4.IsLoopback() {
+			continue
+		}
+		return v4.String()
+	}
+	return ""
+}
+
+func (s *Server) isFircRoutingSelected() bool {
+	if s == nil || s.settings == nil {
+		return false
+	}
+	st, err := s.settings.Get()
+	return err == nil && st != nil && strings.TrimSpace(st.SingboxRouter.RoutingEngine) == "firc"
+}
+
 func (s *Server) pageScanProxyURLProvider() pagescan.ProxyURLProvider {
 	return func(ctx context.Context) string {
-		if s == nil || s.fircHandler == nil || s.fircHandler.Operator() == nil {
+		if s == nil {
 			return ""
 		}
-		if s.settings != nil {
-			st, err := s.settings.Get()
-			if err != nil || st == nil || strings.TrimSpace(st.SingboxRouter.RoutingEngine) != "firc" {
-				return ""
+		if s.fircHandler != nil && s.fircHandler.Operator() != nil {
+			fircSelected := s.settings == nil || s.isFircRoutingSelected()
+			if fircSelected {
+				fircOp := s.fircHandler.Operator()
+				port := int(fircOp.InboundPort())
+				if port > 0 && fircOp.IsRunning(ctx) && probeLocalTCP("127.0.0.1", port) {
+					return fmt.Sprintf("http://127.0.0.1:%d", port)
+				}
 			}
 		}
-		fircOp := s.fircHandler.Operator()
-		port := int(fircOp.InboundPort())
-		if port <= 0 || !fircOp.IsRunning(ctx) {
-			return ""
+		if s.singboxOp != nil && s.deviceProxySvc != nil {
+			if running, _ := s.singboxOp.IsRunning(); running {
+				for _, inst := range s.deviceProxySvc.GetSnapshot().Instances {
+					if !inst.Enabled || inst.Auth.Enabled || inst.Port <= 0 {
+						continue
+					}
+					if !inst.ListenAll && inst.ListenInterface != "" && inst.ListenInterface != "lo" {
+						continue
+					}
+					if probeLocalTCP("127.0.0.1", inst.Port) {
+						return fmt.Sprintf("http://127.0.0.1:%d", inst.Port)
+					}
+				}
+			}
 		}
-		addr := fmt.Sprintf("127.0.0.1:%d", port)
-		conn, err := net.DialTimeout("tcp", addr, 150*time.Millisecond)
-		if err != nil {
-			return ""
+		return ""
+	}
+}
+
+func (s *Server) pageScanInterfaceLister() func(context.Context) []pagescan.InterfaceOption {
+	return func(ctx context.Context) []pagescan.InterfaceOption {
+		if s == nil {
+			return nil
 		}
-		_ = conn.Close()
-		return "http://" + addr
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+
+		out := make([]pagescan.InterfaceOption, 0)
+		seen := make(map[string]struct{})
+		add := func(name, label string) {
+			name = strings.TrimSpace(name)
+			if name == "" || !isNetIfaceUp(name) {
+				return
+			}
+			key := strings.ToLower(name)
+			if _, ok := seen[key]; ok {
+				return
+			}
+			seen[key] = struct{}{}
+			label = strings.TrimSpace(label)
+			if label == "" {
+				label = name
+			} else if !strings.EqualFold(label, name) && !strings.Contains(label, name) {
+				label = fmt.Sprintf("%s (%s)", label, name)
+			}
+			out = append(out, pagescan.InterfaceOption{
+				Name:  name,
+				Label: label,
+				Up:    true,
+			})
+		}
+
+		if s.fircHandler != nil && s.fircHandler.Operator() != nil {
+			fircOp := s.fircHandler.Operator()
+			if client := fircOp.Client(); client != nil {
+				tunnels, err := client.GetTunnels(probeCtx)
+				if err != nil {
+					tunnels, _ = fircOp.LoadTunnelsFile()
+				}
+				tunnelDesc := make(map[string]string, len(tunnels))
+				for _, t := range tunnels {
+					dev := strings.TrimSpace(t.Device)
+					if dev != "" {
+						tunnelDesc[dev] = strings.TrimSpace(t.Description)
+					}
+				}
+				if ifaces, err := client.GetInterfaces(probeCtx); err == nil {
+					for _, iface := range ifaces {
+						id := strings.TrimSpace(iface.ID)
+						if id == "" {
+							continue
+						}
+						_, isFircTunnel := tunnelDesc[id]
+						if !strings.EqualFold(strings.TrimSpace(iface.Role), "tunnel") && !isFircTunnel {
+							continue
+						}
+						label := tunnelDesc[id]
+						if label == "" {
+							label = strings.TrimSpace(iface.Name)
+						}
+						if label == "" {
+							label = strings.TrimSpace(iface.NDMSName)
+						}
+						add(id, label)
+					}
+				}
+				for _, t := range tunnels {
+					if t.Enable {
+						add(t.Device, t.Description)
+					}
+				}
+			}
+		}
+
+		if s.tunnelService != nil {
+			if list, err := s.tunnelService.List(probeCtx); err == nil {
+				for _, t := range list {
+					if t.State != tunnel.StateRunning {
+						continue
+					}
+					add(t.InterfaceName, t.Name)
+				}
+			}
+		}
+
+		return out
+	}
+}
+
+func (s *Server) pageScanProxyLister() func(context.Context) []pagescan.ProxyOption {
+	return func(ctx context.Context) []pagescan.ProxyOption {
+		if s == nil {
+			return nil
+		}
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+
+		out := make([]pagescan.ProxyOption, 0)
+		seen := make(map[string]struct{})
+		add := func(rawURL, label, kind string) {
+			rawURL = strings.TrimSpace(rawURL)
+			if rawURL == "" {
+				return
+			}
+			key := strings.ToLower(rawURL)
+			if _, ok := seen[key]; ok {
+				return
+			}
+			seen[key] = struct{}{}
+			out = append(out, pagescan.ProxyOption{
+				URL:   rawURL,
+				Label: strings.TrimSpace(label),
+				Kind:  kind,
+			})
+		}
+
+		addFircProxies := func() {
+			if s.fircHandler == nil || s.fircHandler.Operator() == nil {
+				return
+			}
+			fircOp := s.fircHandler.Operator()
+			if !fircOp.IsRunning(probeCtx) {
+				return
+			}
+			if client := fircOp.Client(); client != nil {
+				tunnels, err := client.GetTunnels(probeCtx)
+				if err != nil {
+					tunnels, _ = fircOp.LoadTunnelsFile()
+				}
+				for _, t := range tunnels {
+					if !t.Enable {
+						continue
+					}
+					tName := strings.TrimSpace(t.Description)
+					if tName == "" {
+						tName = strings.TrimSpace(t.Device)
+					}
+					for _, inb := range t.Inbounds {
+						if inb.Port == 0 || inb.User != "" || inb.Password != "" {
+							continue
+						}
+						listen := strings.TrimSpace(inb.Listen)
+						host := "127.0.0.1"
+						switch {
+						case listen == "", strings.EqualFold(listen, "lo"), listen == "127.0.0.1", listen == "0.0.0.0":
+							host = "127.0.0.1"
+						case net.ParseIP(listen) != nil:
+							host = listen
+						default:
+							host = resolveInterfaceIPv4(listen)
+						}
+						if host != "" && probeLocalTCP(host, int(inb.Port)) {
+							proxyURL := "http://" + net.JoinHostPort(host, strconv.Itoa(int(inb.Port)))
+							label := fmt.Sprintf("FIRC %s (:%d)", tName, inb.Port)
+							if tName == "" {
+								label = fmt.Sprintf("FIRC inbound (%s:%d)", host, inb.Port)
+							}
+							add(proxyURL, label, "firc")
+						}
+					}
+				}
+			}
+			if port := int(fircOp.InboundPort()); port > 0 && probeLocalTCP("127.0.0.1", port) {
+				addr := fmt.Sprintf("127.0.0.1:%d", port)
+				add("http://"+addr, fmt.Sprintf("FIRC inbound (%s)", addr), "firc")
+			}
+		}
+
+		addDeviceProxies := func() {
+			if s.deviceProxySvc == nil {
+				return
+			}
+			if s.singboxOp != nil {
+				if running, _ := s.singboxOp.IsRunning(); !running {
+					return
+				}
+			}
+			for _, inst := range s.deviceProxySvc.GetSnapshot().Instances {
+				if !inst.Enabled || inst.Auth.Enabled || inst.Port <= 0 {
+					continue
+				}
+				host := "127.0.0.1"
+				if !inst.ListenAll && inst.ListenInterface != "" && !strings.EqualFold(inst.ListenInterface, "lo") {
+					host = resolveInterfaceIPv4(inst.ListenInterface)
+				}
+				if host == "" || !probeLocalTCP(host, inst.Port) {
+					continue
+				}
+				addr := net.JoinHostPort(host, strconv.Itoa(inst.Port))
+				name := strings.TrimSpace(inst.Name)
+				if name == "" {
+					name = "Device proxy"
+				}
+				label := fmt.Sprintf("%s (%s)", name, addr)
+				if outTag := strings.TrimSpace(inst.SelectedOutbound); outTag != "" {
+					label = fmt.Sprintf("%s -> %s (%s)", name, outTag, addr)
+				}
+				add("http://"+addr, label, "deviceproxy")
+			}
+		}
+
+		if s.settings == nil || s.isFircRoutingSelected() {
+			addFircProxies()
+			addDeviceProxies()
+		} else {
+			addDeviceProxies()
+			addFircProxies()
+		}
+
+		return out
 	}
 }

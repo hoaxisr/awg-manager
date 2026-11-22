@@ -1,8 +1,10 @@
 package pagescan
 
 import (
+	"bufio"
 	"context"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -753,5 +755,544 @@ func TestScan_HTTP2TransportAndNavigationHeaders(t *testing.T) {
 		if got := captured.Get(hdr); got != want {
 			t.Errorf("header %s = %q, want %q", hdr, got, want)
 		}
+	}
+}
+
+func startTestSOCKS5Proxy(t *testing.T, wantUser, wantPass string, rewrite map[string]string) (string, *[]string, *sync.Mutex) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen socks5: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	var mu sync.Mutex
+	var targets []string
+
+	go func() {
+		for {
+			conn, acceptErr := ln.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				var hdr [2]byte
+				if _, err := io.ReadFull(c, hdr[:]); err != nil || hdr[0] != 0x05 || hdr[1] == 0 {
+					return
+				}
+				methods := make([]byte, hdr[1])
+				if _, err := io.ReadFull(c, methods); err != nil {
+					return
+				}
+				requireAuth := wantUser != "" || wantPass != ""
+				chosen := byte(0xFF)
+				for _, method := range methods {
+					if requireAuth && method == 0x02 {
+						chosen = 0x02
+						break
+					}
+					if !requireAuth && method == 0x00 {
+						chosen = 0x00
+						break
+					}
+				}
+				_, _ = c.Write([]byte{0x05, chosen})
+				if chosen == 0xFF {
+					return
+				}
+				if chosen == 0x02 {
+					var verLen [2]byte
+					if _, err := io.ReadFull(c, verLen[:]); err != nil || verLen[0] != 0x01 {
+						return
+					}
+					userBuf := make([]byte, verLen[1])
+					if _, err := io.ReadFull(c, userBuf); err != nil {
+						return
+					}
+					var passLen [1]byte
+					if _, err := io.ReadFull(c, passLen[:]); err != nil {
+						return
+					}
+					passBuf := make([]byte, passLen[0])
+					if _, err := io.ReadFull(c, passBuf); err != nil {
+						return
+					}
+					if string(userBuf) != wantUser || string(passBuf) != wantPass {
+						_, _ = c.Write([]byte{0x01, 0x01})
+						return
+					}
+					_, _ = c.Write([]byte{0x01, 0x00})
+				}
+
+				var reqHdr [4]byte
+				if _, err := io.ReadFull(c, reqHdr[:]); err != nil || reqHdr[0] != 0x05 || reqHdr[1] != 0x01 {
+					return
+				}
+				var targetHost string
+				switch reqHdr[3] {
+				case 0x01:
+					var ip4 [4]byte
+					if _, err := io.ReadFull(c, ip4[:]); err != nil {
+						return
+					}
+					targetHost = net.IP(ip4[:]).String()
+				case 0x03:
+					// Record domain marker so tests fail loudly if ATYP 0x03 is ever sent.
+					var l [1]byte
+					if _, err := io.ReadFull(c, l[:]); err != nil {
+						return
+					}
+					dom := make([]byte, l[0])
+					if _, err := io.ReadFull(c, dom); err != nil {
+						return
+					}
+					targetHost = "DOMAIN:" + string(dom)
+				default:
+					_, _ = c.Write([]byte{0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+					return
+				}
+				var portBuf [2]byte
+				if _, err := io.ReadFull(c, portBuf[:]); err != nil {
+					return
+				}
+				authority := net.JoinHostPort(targetHost, fmt.Sprintf("%d", binary.BigEndian.Uint16(portBuf[:])))
+				mu.Lock()
+				targets = append(targets, authority)
+				mu.Unlock()
+
+				dialTarget, ok := rewrite[authority]
+				if !ok {
+					_, _ = c.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+					return
+				}
+				up, err := net.DialTimeout("tcp", dialTarget, 2*time.Second)
+				if err != nil {
+					_, _ = c.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+					return
+				}
+				defer up.Close()
+				_, _ = c.Write([]byte{0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0})
+
+				done := make(chan struct{}, 2)
+				go func() {
+					_, _ = io.Copy(up, c)
+					done <- struct{}{}
+				}()
+				go func() {
+					_, _ = io.Copy(c, up)
+					done <- struct{}{}
+				}()
+				<-done
+			}(conn)
+		}
+	}()
+
+	return ln.Addr().String(), &targets, &mu
+}
+
+func startTestHTTPAuthConnectProxy(t *testing.T, wantUser, wantPass string, rewrite map[string]string) (string, *[]string, *[]string, *sync.Mutex) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen http connect proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	var mu sync.Mutex
+	var targets []string
+	var authHeaders []string
+
+	go func() {
+		for {
+			conn, acceptErr := ln.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				br := bufio.NewReader(c)
+				req, err := http.ReadRequest(br)
+				if err != nil || req.Method != http.MethodConnect {
+					_, _ = io.WriteString(c, "HTTP/1.1 405 Method Not Allowed\r\n\r\n")
+					return
+				}
+				authHdr := req.Header.Get("Proxy-Authorization")
+				wantHdr := "Basic " + base64.StdEncoding.EncodeToString([]byte(wantUser+":"+wantPass))
+				mu.Lock()
+				authHeaders = append(authHeaders, authHdr)
+				targets = append(targets, req.Host)
+				mu.Unlock()
+				if authHdr != wantHdr {
+					_, _ = io.WriteString(c, "HTTP/1.1 407 Proxy Authentication Required\r\n\r\n")
+					return
+				}
+				dialTarget, ok := rewrite[req.Host]
+				if !ok {
+					_, _ = io.WriteString(c, "HTTP/1.1 403 Forbidden\r\n\r\n")
+					return
+				}
+				up, err := net.DialTimeout("tcp", dialTarget, 2*time.Second)
+				if err != nil {
+					_, _ = io.WriteString(c, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
+					return
+				}
+				defer up.Close()
+				_, _ = io.WriteString(c, "HTTP/1.1 200 Connection Established\r\n\r\n")
+
+				done := make(chan struct{}, 2)
+				go func() {
+					_, _ = io.Copy(up, br)
+					done <- struct{}{}
+				}()
+				go func() {
+					_, _ = io.Copy(c, up)
+					done <- struct{}{}
+				}()
+				<-done
+			}(conn)
+		}
+	}()
+
+	return ln.Addr().String(), &targets, &authHeaders, &mu
+}
+
+func TestScanWithOptions_ManualProxySOCKS5AndHTTPAuth(t *testing.T) {
+	targetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<script src="https://cdn.example.com/a.js"></script>`)
+	}))
+	defer targetSrv.Close()
+
+	resolver := &stubHostResolver{
+		records: map[string][]net.IPAddr{
+			"site.example.com": {{IP: net.ParseIP("93.184.216.34")}},
+			"cdn.example.com":  {{IP: net.ParseIP("1.1.1.1")}},
+		},
+	}
+	rewrite := map[string]string{
+		"93.184.216.34:80": targetSrv.Listener.Addr().String(),
+	}
+
+	// 1. No-auth SOCKS5 proxy must send literal IPv4 ATYP=0x01 and extract resources.
+	socksNoAuthAddr, seenNoAuth, muNoAuth := startTestSOCKS5Proxy(t, "", "", rewrite)
+	svc := NewService(Options{Resolver: resolver, FetchTimeout: 2 * time.Second})
+	res, err := svc.ScanWithOptions(context.Background(), ScanRequest{
+		URL:      "http://site.example.com/",
+		Mode:     FetchModeProxy,
+		ProxyURL: "socks5://" + socksNoAuthAddr,
+	})
+	if err != nil {
+		t.Fatalf("SOCKS5 no-auth ScanWithOptions failed: %v", err)
+	}
+	if res.FetchVia != "proxy" || res.FetchTarget != "socks5://"+socksNoAuthAddr {
+		t.Fatalf("unexpected fetch metadata: via=%q target=%q", res.FetchVia, res.FetchTarget)
+	}
+	muNoAuth.Lock()
+	gotNoAuthTargets := append([]string(nil), (*seenNoAuth)...)
+	muNoAuth.Unlock()
+	if len(gotNoAuthTargets) != 1 || gotNoAuthTargets[0] != "93.184.216.34:80" {
+		t.Fatalf("expected literal IPv4 93.184.216.34:80 over SOCKS5, got %v", gotNoAuthTargets)
+	}
+
+	// 2. Authenticated socks5h proxy must authenticate via RFC 1929 and strip credentials from FetchTarget.
+	socksAuthAddr, seenAuth, muAuth := startTestSOCKS5Proxy(t, "alice", "s3cr3t", rewrite)
+	resAuth, err := svc.ScanWithOptions(context.Background(), ScanRequest{
+		URL:      "http://site.example.com/",
+		Mode:     FetchModeProxy,
+		ProxyURL: "socks5h://alice:s3cr3t@" + socksAuthAddr,
+	})
+	if err != nil {
+		t.Fatalf("SOCKS5 auth ScanWithOptions failed: %v", err)
+	}
+	if resAuth.FetchVia != "proxy" || resAuth.FetchTarget != "socks5h://"+socksAuthAddr {
+		t.Fatalf("expected redacted FetchTarget socks5h://%s, got via=%q target=%q", socksAuthAddr, resAuth.FetchVia, resAuth.FetchTarget)
+	}
+	muAuth.Lock()
+	gotAuthTargets := append([]string(nil), (*seenAuth)...)
+	muAuth.Unlock()
+	if len(gotAuthTargets) != 1 || gotAuthTargets[0] != "93.184.216.34:80" {
+		t.Fatalf("expected literal IPv4 93.184.216.34:80 over auth SOCKS5, got %v", gotAuthTargets)
+	}
+
+	// 3. Authenticated HTTP CONNECT proxy must send Proxy-Authorization: Basic and redact credentials.
+	httpAuthAddr, seenHTTP, authHdrs, muHTTP := startTestHTTPAuthConnectProxy(t, "bob", "pass", rewrite)
+	resHTTP, err := svc.ScanWithOptions(context.Background(), ScanRequest{
+		URL:      "http://site.example.com/",
+		Mode:     FetchModeProxy,
+		ProxyURL: "http://bob:pass@" + httpAuthAddr,
+	})
+	if err != nil {
+		t.Fatalf("HTTP Basic CONNECT ScanWithOptions failed: %v", err)
+	}
+	if resHTTP.FetchVia != "proxy" || resHTTP.FetchTarget != "http://"+httpAuthAddr {
+		t.Fatalf("expected redacted FetchTarget http://%s, got target=%q", httpAuthAddr, resHTTP.FetchTarget)
+	}
+	muHTTP.Lock()
+	gotHTTP := append([]string(nil), (*seenHTTP)...)
+	gotHdrs := append([]string(nil), (*authHdrs)...)
+	muHTTP.Unlock()
+	wantHdr := "Basic " + base64.StdEncoding.EncodeToString([]byte("bob:pass"))
+	if len(gotHTTP) != 1 || gotHTTP[0] != "93.184.216.34:80" || len(gotHdrs) != 1 || gotHdrs[0] != wantHdr {
+		t.Fatalf("HTTP CONNECT targets=%v authHdrs=%v", gotHTTP, gotHdrs)
+	}
+}
+
+func TestScanWithOptions_ManualProxyValidationAndSSRF(t *testing.T) {
+	targetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<img src="https://cdn.example.com/a.png">`)
+	}))
+	defer targetSrv.Close()
+
+	baseProxySrv, _, _ := newConnectProxyTestServer(t, func(authority string) (string, bool) {
+		if authority == "93.184.216.34:80" {
+			return targetSrv.Listener.Addr().String(), true
+		}
+		return "", false
+	})
+
+	resolver := &stubHostResolver{
+		records: map[string][]net.IPAddr{
+			"ok.example.com":     {{IP: net.ParseIP("93.184.216.34")}},
+			"cdn.example.com":    {{IP: net.ParseIP("1.1.1.1")}},
+			"rebind.example.com": {{IP: net.ParseIP("192.168.1.1")}},
+		},
+	}
+
+	var dialed []string
+	svc := NewService(Options{
+		Resolver:     resolver,
+		FetchTimeout: 2 * time.Second,
+		ProxyLister: func(context.Context) []ProxyOption {
+			return []ProxyOption{{URL: "http://192.168.90.1:1080", Label: "LAN SOCKS/HTTP", Kind: "deviceproxy"}}
+		},
+	})
+	svc.dialProxy = func(ctx context.Context, _ string, addr string) (net.Conn, error) {
+		dialed = append(dialed, addr)
+		return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", baseProxySrv.Listener.Addr().String())
+	}
+
+	invalidCases := []string{
+		"://broken",
+		"http://127.0.0.1",
+		"ftp://127.0.0.1:8080",
+		"https://127.0.0.1:8443",
+		"http://127.0.0.1:1099/path?x=1",
+	}
+	for _, rawProxy := range invalidCases {
+		if _, err := svc.ScanWithOptions(context.Background(), ScanRequest{
+			URL:      "http://ok.example.com/",
+			Mode:     FetchModeProxy,
+			ProxyURL: rawProxy,
+		}); !errors.Is(err, ErrInvalidProxy) {
+			t.Errorf("proxy %q: expected ErrInvalidProxy, got %v", rawProxy, err)
+		}
+	}
+
+	blockedCases := []string{
+		"http://192.168.1.1:1099",
+		"socks5://169.254.169.254:1080",
+		"http://198.18.0.1:1099",
+		"http://proxy.local:1080",
+		"socks5://rebind.example.com:1080",
+		"http://192.168.90.1:80", // same LAN IP as ProxyLister entry, wrong port
+	}
+	for _, rawProxy := range blockedCases {
+		if _, err := svc.ScanWithOptions(context.Background(), ScanRequest{
+			URL:      "http://ok.example.com/",
+			Mode:     FetchModeProxy,
+			ProxyURL: rawProxy,
+		}); !errors.Is(err, ErrBlockedAddress) {
+			t.Errorf("proxy %q: expected ErrBlockedAddress, got %v", rawProxy, err)
+		}
+	}
+	if len(dialed) != 0 {
+		t.Fatalf("expected 0 dials for rejected proxies, got %v", dialed)
+	}
+
+	// Exact host:port present in ProxyLister (router LAN IP listener) must succeed.
+	res, err := svc.ScanWithOptions(context.Background(), ScanRequest{
+		URL:      "http://ok.example.com/",
+		Mode:     FetchModeProxy,
+		ProxyURL: "http://192.168.90.1:1080",
+	})
+	if err != nil {
+		t.Fatalf("listed LAN proxy failed: %v", err)
+	}
+	if res.FetchTarget != "http://192.168.90.1:1080" || res.FetchTargetLabel != "LAN SOCKS/HTTP" {
+		t.Fatalf("FetchTarget=%q FetchTargetLabel=%q", res.FetchTarget, res.FetchTargetLabel)
+	}
+	if len(dialed) != 1 || dialed[0] != "192.168.90.1:1080" {
+		t.Fatalf("expected dialProxy to receive 192.168.90.1:1080, got %v", dialed)
+	}
+}
+
+func TestScanWithOptions_InterfaceMode(t *testing.T) {
+	targetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<script src="https://cdn.example.com/app.js"></script>`)
+	}))
+	defer targetSrv.Close()
+
+	var ifaceDialLog []string
+	resolver := &stubHostResolver{
+		records: map[string][]net.IPAddr{
+			"cdn.example.com": {{IP: net.ParseIP("1.1.1.1")}},
+		},
+	}
+
+	svc := NewService(Options{
+		Resolver:     resolver,
+		FetchTimeout: 2 * time.Second,
+		InterfaceLister: func(context.Context) []InterfaceOption {
+			return []InterfaceOption{{Name: "opkgtun11", Label: "VPN DE (opkgtun11)", Up: true}}
+		},
+		InterfaceValidator: func(_ context.Context, iface string) error {
+			if iface != "opkgtun11" {
+				return fmt.Errorf("%w: interface %s is down", ErrInvalidInterface, iface)
+			}
+			return nil
+		},
+	})
+	svc.interfaceLookupIPv4 = func(_ context.Context, host, iface string) ([]string, error) {
+		if host == "site.example.com" && iface == "opkgtun11" {
+			return []string{"93.184.216.34"}, nil
+		}
+		return nil, errors.New("dns miss")
+	}
+	svc.dialInterface = func(ctx context.Context, iface, _ string, addr string) (net.Conn, error) {
+		ifaceDialLog = append(ifaceDialLog, iface+"->"+addr)
+		if addr == "93.184.216.34:80" {
+			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", targetSrv.Listener.Addr().String())
+		}
+		return nil, fmt.Errorf("unexpected addr %s", addr)
+	}
+
+	// 1. Happy path over UDP DNS + SO_BINDTODEVICE seam.
+	res, err := svc.ScanWithOptions(context.Background(), ScanRequest{
+		URL:       "http://site.example.com/",
+		Mode:      FetchModeInterface,
+		Interface: "opkgtun11",
+	})
+	if err != nil {
+		t.Fatalf("interface ScanWithOptions failed: %v", err)
+	}
+	if res.FetchVia != "interface" || res.FetchTarget != "opkgtun11" || res.FetchTargetLabel != "VPN DE (opkgtun11)" {
+		t.Fatalf("unexpected interface result metadata: %+v", res)
+	}
+	if len(ifaceDialLog) != 1 || ifaceDialLog[0] != "opkgtun11->93.184.216.34:80" {
+		t.Fatalf("unexpected interface dial log: %v", ifaceDialLog)
+	}
+
+	// 2. Blocked IP returned by tunnel UDP DNS must fail closed with ErrBlockedAddress (no DoH fallback).
+	svc.interfaceLookupIPv4 = func(_ context.Context, _ string, _ string) ([]string, error) {
+		return []string{"192.168.1.1"}, nil
+	}
+	if _, err := svc.ScanWithOptions(context.Background(), ScanRequest{
+		URL:       "http://site.example.com/",
+		Mode:      FetchModeInterface,
+		Interface: "opkgtun11",
+	}); !errors.Is(err, ErrBlockedAddress) {
+		t.Fatalf("expected ErrBlockedAddress on blocked UDP DNS answer, got %v", err)
+	}
+
+	// 3. UDP DNS error falls back to exit DoH over dialInterface.
+	dohSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqWire, readErr := io.ReadAll(r.Body)
+		if readErr != nil || len(reqWire) < 12 {
+			http.Error(w, "bad query", http.StatusBadRequest)
+			return
+		}
+		txID := binary.BigEndian.Uint16(reqWire[0:2])
+		respWire := buildTestDNSResponse(txID, "doh-iface.example.com", "doh-iface.example.com", net.ParseIP("93.184.216.34"), false)
+		w.Header().Set("Content-Type", "application/dns-message")
+		_, _ = w.Write(respWire)
+	}))
+	defer dohSrv.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(dohSrv.Certificate())
+
+	svc.dohEndpoints = []string{dohSrv.Listener.Addr().String()}
+	svc.dohRootCAs = roots
+	svc.interfaceLookupIPv4 = func(context.Context, string, string) ([]string, error) {
+		return nil, errors.New("udp dns timeout")
+	}
+	ifaceDialLog = nil
+	svc.dialInterface = func(ctx context.Context, iface, _ string, addr string) (net.Conn, error) {
+		ifaceDialLog = append(ifaceDialLog, iface+"->"+addr)
+		switch addr {
+		case dohSrv.Listener.Addr().String():
+			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", dohSrv.Listener.Addr().String())
+		case "93.184.216.34:80":
+			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", targetSrv.Listener.Addr().String())
+		default:
+			return nil, fmt.Errorf("unexpected addr %s", addr)
+		}
+	}
+	resDoH, err := svc.ScanWithOptions(context.Background(), ScanRequest{
+		URL:       "http://doh-iface.example.com/",
+		Mode:      FetchModeInterface,
+		Interface: "opkgtun11",
+	})
+	if err != nil {
+		t.Fatalf("interface DoH fallback failed: %v", err)
+	}
+	if resDoH.FetchVia != "interface" || len(ifaceDialLog) != 2 {
+		t.Fatalf("expected DoH+HTTP dial over interface, got res=%+v dials=%v", resDoH, ifaceDialLog)
+	}
+
+	// 4. Invalid syntax and validator failure return ErrInvalidInterface.
+	for _, badIface := range []string{"bad iface!", "nwg9"} {
+		if _, err := svc.ScanWithOptions(context.Background(), ScanRequest{
+			URL:       "http://site.example.com/",
+			Mode:      FetchModeInterface,
+			Interface: badIface,
+		}); !errors.Is(err, ErrInvalidInterface) {
+			t.Errorf("iface %q: expected ErrInvalidInterface, got %v", badIface, err)
+		}
+	}
+}
+
+func TestService_Options(t *testing.T) {
+	svc := NewService(Options{
+		ProxyURLProvider: func(context.Context) string { return "http://user:pass@localhost:1099" },
+		ProxyLister: func(context.Context) []ProxyOption {
+			return []ProxyOption{
+				{URL: "socks5://alice:secret@127.0.0.1:1080", Label: "SOCKS5 proxy (:1080)", Kind: "socks5"},
+			}
+		},
+		InterfaceLister: func(context.Context) []InterfaceOption {
+			return []InterfaceOption{{Name: "nwg4", Label: "HomeWG (nwg4)", Up: true}}
+		},
+	})
+
+	opts := svc.Options(context.Background())
+	if opts.DefaultProxy != "http://127.0.0.1:1099" || opts.DefaultProxyLabel != "http://127.0.0.1:1099" {
+		t.Fatalf("unexpected default proxy: %+v", opts)
+	}
+	if len(opts.Proxies) != 2 {
+		t.Fatalf("expected prepended default proxy + listed proxy, got %+v", opts.Proxies)
+	}
+	if opts.Proxies[0].Kind != "default" || opts.Proxies[0].URL != "http://127.0.0.1:1099" {
+		t.Fatalf("unexpected first proxy: %+v", opts.Proxies[0])
+	}
+	if opts.Proxies[1].URL != "socks5://127.0.0.1:1080" {
+		t.Fatalf("expected stripped credentials in second proxy, got %+v", opts.Proxies[1])
+	}
+	if len(opts.Interfaces) != 1 || opts.Interfaces[0].Name != "nwg4" {
+		t.Fatalf("unexpected interfaces: %+v", opts.Interfaces)
+	}
+
+	// Second service: ProxyLister contains matching default proxy with friendly label -> no duplicate, DefaultProxyLabel matched.
+	svcLabeled := NewService(Options{
+		ProxyURLProvider: func(context.Context) string { return "http://127.0.0.1:1099" },
+		ProxyLister: func(context.Context) []ProxyOption {
+			return []ProxyOption{{URL: "http://127.0.0.1:1099", Label: "FIRC inbound (127.0.0.1:1099)", Kind: "firc"}}
+		},
+	})
+	optsLabeled := svcLabeled.Options(context.Background())
+	if len(optsLabeled.Proxies) != 1 || optsLabeled.DefaultProxyLabel != "FIRC inbound (127.0.0.1:1099)" {
+		t.Fatalf("unexpected labeled options: %+v", optsLabeled)
 	}
 }

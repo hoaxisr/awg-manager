@@ -14,6 +14,10 @@ const {
 	fircProbeAutolistHost,
 	fircAutolistCandidateAction,
 	fircDismissAutolistAddress,
+	fircGetGroups,
+	listDnsRoutes,
+	getPageScanOptions,
+	scanPage,
 } = vi.hoisted(() => ({
 	fircGetMonitor: vi.fn(),
 	fircCheckDomain: vi.fn(),
@@ -22,6 +26,10 @@ const {
 	fircProbeAutolistHost: vi.fn(),
 	fircAutolistCandidateAction: vi.fn(),
 	fircDismissAutolistAddress: vi.fn(),
+	fircGetGroups: vi.fn(),
+	listDnsRoutes: vi.fn(),
+	getPageScanOptions: vi.fn(),
+	scanPage: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({
 	api: {
@@ -32,6 +40,10 @@ vi.mock('$lib/api/client', () => ({
 		fircProbeAutolistHost,
 		fircAutolistCandidateAction,
 		fircDismissAutolistAddress,
+		fircGetGroups,
+		listDnsRoutes,
+		getPageScanOptions,
+		scanPage,
 	},
 }));
 
@@ -69,6 +81,17 @@ beforeEach(() => {
 	fircGetMonitor.mockResolvedValue(snapshot);
 	fircGetAutolist.mockResolvedValue(autolistMock);
 	fircAutolistCandidateAction.mockResolvedValue({ ...autolistMock, candidates: [] });
+	fircGetGroups.mockResolvedValue([]);
+	listDnsRoutes.mockResolvedValue([]);
+	getPageScanOptions.mockResolvedValue({
+		defaultProxy: 'http://127.0.0.1:1099',
+		defaultProxyLabel: 'FIRC inbound (127.0.0.1:1099)',
+		proxies: [
+			{ url: 'http://127.0.0.1:1099', label: 'FIRC inbound (127.0.0.1:1099)', kind: 'firc' },
+			{ url: 'socks5://127.0.0.1:1080', label: 'SOCKS5 proxy (:1080)', kind: 'socks5' },
+		],
+		interfaces: [{ name: 'opkgtun11', label: 'VPN DE (opkgtun11)', up: true }],
+	});
 });
 afterEach(cleanup);
 
@@ -298,5 +321,73 @@ describe('FIRC compact monitor', () => {
 			expect(screen.getByText('api.telegram.org')).toBeTruthy();
 		});
 		expect(screen.queryByText('web.telegram.org')).toBeNull();
+	});
+
+	it('loads page scan egress options, supports tunnel/custom proxy selection, and clears stale results on error', async () => {
+		const { container } = render(FircMonitorPanel);
+		await screen.findByText('Видео');
+
+		const details = container.querySelector('details.domain-checker') as HTMLDetailsElement;
+		details.open = true;
+		await fireEvent(details, new Event('toggle'));
+
+		await waitFor(() => {
+			expect(getPageScanOptions).toHaveBeenCalledTimes(1);
+		});
+
+		const select = screen.getByLabelText(m.page_scan_exit_label());
+		expect(select.textContent).toContain(
+			m.page_scan_exit_auto_with_proxy({ proxy: 'FIRC inbound (127.0.0.1:1099)' }),
+		);
+
+		const domainInput = screen.getByLabelText('Домен для проверки маршрута');
+		await fireEvent.input(domainInput, { target: { value: 'example.com' } });
+
+		// 1. Select tunnel interface and scan.
+		scanPage.mockResolvedValueOnce({
+			requestedUrl: 'https://example.com',
+			finalUrl: 'https://example.com/',
+			statusCode: 200,
+			fetchVia: 'interface',
+			fetchTarget: 'opkgtun11',
+			fetchTargetLabel: 'VPN DE (opkgtun11)',
+			proxyAvailable: true,
+			bodyBytes: 1200,
+			totalHosts: 1,
+			durationMs: 42,
+			resources: [{ host: 'cdn.example.com', sources: ['script'], routed: false }],
+		});
+		await fireEvent.change(select, { target: { value: 'iface:opkgtun11' } });
+		await fireEvent.click(screen.getByRole('button', { name: m.page_scan_btn() }));
+
+		await waitFor(() => {
+			expect(scanPage).toHaveBeenCalledWith('example.com', {
+				fetchMode: 'interface',
+				interface: 'opkgtun11',
+			});
+		});
+		expect(await screen.findByText('cdn.example.com')).toBeTruthy();
+
+		// 2. Select custom proxy with empty URL -> shows validation error, clears stale cdn.example.com, skips API call.
+		await fireEvent.change(select, { target: { value: 'custom' } });
+		await fireEvent.click(screen.getByRole('button', { name: m.page_scan_btn() }));
+		expect(await screen.findByText(m.page_scan_custom_proxy_required())).toBeTruthy();
+		expect(screen.queryByText('cdn.example.com')).toBeNull();
+		expect(scanPage).toHaveBeenCalledTimes(1);
+
+		// 3. Enter custom proxy URL -> scan fails -> error displayed and stale result remains cleared.
+		const customInput = screen.getByLabelText(m.page_scan_exit_custom_proxy());
+		await fireEvent.input(customInput, { target: { value: 'socks5://127.0.0.1:1080' } });
+		scanPage.mockRejectedValueOnce(new Error('socks5 timeout'));
+		await fireEvent.click(screen.getByRole('button', { name: m.page_scan_btn() }));
+
+		await waitFor(() => {
+			expect(scanPage).toHaveBeenCalledWith('example.com', {
+				fetchMode: 'proxy',
+				proxyUrl: 'socks5://127.0.0.1:1080',
+			});
+		});
+		expect(await screen.findByText('socks5 timeout')).toBeTruthy();
+		expect(screen.queryByText('cdn.example.com')).toBeNull();
 	});
 });

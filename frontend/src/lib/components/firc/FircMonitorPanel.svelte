@@ -7,7 +7,7 @@
 		FircMonitorClientStat,
 		FircDomainCheckResult,
 	} from '$lib/types/firc';
-	import type { PageScanFetchMode, PageScanResult } from '$lib/types/diagnostics';
+	import type { PageScanFetchMode, PageScanOptions, PageScanParams, PageScanResult } from '$lib/types/diagnostics';
 	import { Button, Badge, StatusDot } from '$lib/components/ui';
 	import { IpInspectSection, PageScanSection, QuickAddRouteModal } from '$lib/components/diagnostics';
 	import { Activity, Search, RefreshCw, Play, Pause, ArrowRight, CheckCircle2, Globe, Info, ChevronDown, ChevronRight, Monitor } from 'lucide-svelte';
@@ -28,9 +28,14 @@
 	let checkResult = $state<FircDomainCheckResult | null>(null);
 
 	let scanningPage = $state(false);
-	let pageScanMode = $state<PageScanFetchMode>('auto');
+	let lastPageScanParams = $state<PageScanParams | null>(null);
 	let pageScanResult = $state<PageScanResult | null>(null);
 	let pageScanError = $state('');
+	let pageScanOptions = $state<PageScanOptions | null>(null);
+	let loadingPageScanOptions = $state(false);
+	let pageScanExit = $state<string>('auto');
+	let customProxyUrl = $state('');
+	let pageScanMissingCustomProxy = $state(false);
 
 	let inspectedEventSeq = $state<number | null>(null);
 	let showGlobalClients = $state(false);
@@ -108,15 +113,62 @@
 		}
 	}
 
-	async function runPageScan(targetOverride?: string, modeOverride?: PageScanFetchMode) {
+	async function loadPageScanOptions(force = false) {
+		if (disposed || loadingPageScanOptions) return;
+		if (pageScanOptions && !force) return;
+		loadingPageScanOptions = true;
+		try {
+			const next = await api.getPageScanOptions();
+			if (disposed) return;
+			pageScanOptions = next;
+		} catch {
+			// Best-effort egress discovery; Auto/Direct/Custom still work.
+		} finally {
+			loadingPageScanOptions = false;
+		}
+	}
+
+	function resolveScanParams(modeOverride?: PageScanFetchMode): PageScanParams | null {
+		if (modeOverride === 'direct') {
+			return { fetchMode: 'direct' };
+		}
+		if (modeOverride === 'proxy') {
+			return { fetchMode: 'proxy' };
+		}
+		if (pageScanExit === 'direct') {
+			return { fetchMode: 'direct' };
+		}
+		if (pageScanExit.startsWith('iface:')) {
+			return { fetchMode: 'interface', interface: pageScanExit.slice(6) };
+		}
+		if (pageScanExit.startsWith('proxy:')) {
+			return { fetchMode: 'proxy', proxyUrl: pageScanExit.slice(6) };
+		}
+		if (pageScanExit === 'custom') {
+			const proxyUrl = customProxyUrl.trim();
+			if (!proxyUrl) {
+				pageScanResult = null;
+				pageScanError = '';
+				pageScanMissingCustomProxy = true;
+				return null;
+			}
+			return { fetchMode: 'proxy', proxyUrl };
+		}
+		return { fetchMode: 'auto' };
+	}
+
+	async function runPageScan(targetOverride?: string, override?: PageScanFetchMode | PageScanParams) {
 		const target = (targetOverride ?? testDomain).trim();
 		if (!target) return;
-		const mode = modeOverride ?? 'auto';
-		pageScanMode = mode;
+		const params = typeof override === 'object' ? override : resolveScanParams(override);
+		if (!params) return;
+		lastPageScanParams = params;
 		scanningPage = true;
+		pageScanResult = null;
 		pageScanError = '';
+		pageScanMissingCustomProxy = false;
 		try {
-			pageScanResult = await api.scanPage(target, mode);
+			pageScanResult = await api.scanPage(target, params);
 			await loadMonitor(true);
 		} catch (e) {
 			pageScanError = (e as Error).message || 'Request failed';
@@ -258,7 +310,14 @@
 	{/if}
 
 	<!-- Instant Domain Routing Checker -->
-	<details class="domain-checker">
+	<details
+		class="domain-checker"
+		ontoggle={(e) => {
+			if (e.currentTarget.open && !pageScanOptions && !loadingPageScanOptions) {
+				void loadPageScanOptions();
+			}
+		}}
+	>
 		<summary>Проверить маршрут домена</summary>
 	<div class="checker-box">
 		<div class="checker-top">
@@ -310,6 +369,66 @@
 			</Button>
 		</form>
 
+		<div class="checker-scan-exit">
+			<label class="checker-scan-exit-label" for="firc-scan-exit-select">
+				{m.page_scan_exit_label()}
+			</label>
+			<div class="checker-scan-exit-controls">
+				<select
+					id="firc-scan-exit-select"
+					class="checker-scan-select"
+					bind:value={pageScanExit}
+					onchange={() => (pageScanMissingCustomProxy = false)}
+					disabled={scanningPage}
+				>
+					<option value="auto">
+						{pageScanOptions?.defaultProxy
+							? m.page_scan_exit_auto_with_proxy({
+									proxy: pageScanOptions.defaultProxyLabel || pageScanOptions.defaultProxy,
+								})
+							: m.page_scan_exit_auto()}
+					</option>
+					<option value="direct">{m.page_scan_exit_direct()}</option>
+					{#if (pageScanOptions?.interfaces.length ?? 0) > 0}
+						<optgroup label={m.page_scan_exit_group_tunnels()}>
+							{#each pageScanOptions?.interfaces ?? [] as ifaceOpt (ifaceOpt.name)}
+								<option value={`iface:${ifaceOpt.name}`}>{ifaceOpt.label}</option>
+							{/each}
+						</optgroup>
+					{/if}
+					{#if (pageScanOptions?.proxies.length ?? 0) > 0}
+						<optgroup label={m.page_scan_exit_group_proxies()}>
+							{#each pageScanOptions?.proxies ?? [] as proxyOpt (proxyOpt.url)}
+								<option value={`proxy:${proxyOpt.url}`}>{proxyOpt.label}</option>
+							{/each}
+						</optgroup>
+					{/if}
+					<option value="custom">{m.page_scan_exit_custom_proxy()}</option>
+				</select>
+				<button
+					type="button"
+					class="checker-scan-refresh"
+					title={m.page_scan_refresh_options_title()}
+					aria-label={m.page_scan_refresh_options_title()}
+					disabled={loadingPageScanOptions || scanningPage}
+					onclick={() => void loadPageScanOptions(true)}
+				>
+					<RefreshCw size={13} aria-hidden="true" />
+				</button>
+			</div>
+			{#if pageScanExit === 'custom'}
+				<input
+					type="text"
+					class="checker-scan-proxy-input"
+					aria-label={m.page_scan_exit_custom_proxy()}
+					placeholder={m.page_scan_custom_proxy_placeholder()}
+					bind:value={customProxyUrl}
+					oninput={() => (pageScanMissingCustomProxy = false)}
+					disabled={scanningPage}
+				/>
+			{/if}
+		</div>
+
 		{#if checkResult}
 			<div class="checker-res" class:is-routed={checkResult.routed} class:is-error={Boolean(checkResult.error)}>
 				{#if checkResult.error}
@@ -349,16 +468,17 @@
 			{/if}
 		{/if}
 
-		{#if scanningPage || pageScanResult || pageScanError}
+		{#if scanningPage || pageScanResult || pageScanError || pageScanMissingCustomProxy}
 			<PageScanSection
 				loading={scanningPage}
-				error={pageScanError}
+				error={pageScanMissingCustomProxy ? m.page_scan_custom_proxy_required() : pageScanError}
 				result={pageScanResult}
 				onOpenQuickAdd={openQuickAdd}
 				onRescan={(mode) => void runPageScan(undefined, mode)}
+				onRetry={() => void runPageScan()}
 				onRoutesChanged={() => {
 					void loadMonitor(true);
-					if (pageScanResult) void runPageScan(undefined, pageScanMode);
+					if (pageScanResult) void runPageScan(undefined, lastPageScanParams ?? undefined);
 				}}
 			/>
 		{/if}
@@ -809,7 +929,7 @@
 	onclose={() => (quickAddOpen = false)}
 	onadded={() => {
 		void loadMonitor(true);
-		if (pageScanResult) void runPageScan(undefined, pageScanMode);
+		if (pageScanResult) void runPageScan(undefined, lastPageScanParams ?? undefined);
 	}}
 />
 
@@ -1031,6 +1151,71 @@
 		color: var(--text-primary);
 		font-family: var(--font-mono);
 		font-size: 0.8rem;
+	}
+
+	.checker-scan-exit {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.45rem;
+		min-width: 0;
+	}
+
+	.checker-scan-exit-label {
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+		white-space: nowrap;
+	}
+
+	.checker-scan-exit-controls {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		min-width: 0;
+		max-width: 100%;
+	}
+
+	.checker-scan-select {
+		height: 28px;
+		max-width: 100%;
+		padding: 0 0.5rem;
+		border-radius: 6px;
+		border: 1px solid var(--border);
+		background: var(--bg-primary, var(--bg-secondary));
+		color: var(--text-primary);
+		font-size: 0.76rem;
+		font-family: var(--font-mono);
+	}
+
+	.checker-scan-refresh {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		border-radius: 6px;
+		border: 1px solid var(--border);
+		background: var(--bg-secondary);
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+
+	.checker-scan-refresh:hover:not(:disabled) {
+		border-color: var(--accent);
+		color: var(--text-primary);
+	}
+
+	.checker-scan-proxy-input {
+		flex: 1 1 220px;
+		min-width: 0;
+		height: 28px;
+		padding: 0 0.55rem;
+		border-radius: 6px;
+		border: 1px solid var(--border);
+		background: var(--bg-primary, var(--bg-secondary));
+		color: var(--text-primary);
+		font-family: var(--font-mono);
+		font-size: 0.76rem;
 	}
 
 	.checker-res {
