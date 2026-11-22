@@ -69,7 +69,16 @@ jobs:
             exit 1
           fi
           go vet ./...
-          go test ./transport/webdav ./transport/registry ./share/... ./tunnel/...
+          GOOS=js GOARCH=wasm go vet ./cmd/sharewasm
+          go test ./cmd/sharewasm ./transport/webdav ./transport/registry ./share/... ./tunnel/...
+          go test -run TestLoadAvitoCookies .
+
+      - name: Verify phpbox WASM reproducibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash openflux-core/deploy/phpbox/build-wasm.sh
+          git diff --exit-code -- openflux-core/deploy/phpbox/assets/share.wasm.gz openflux-core/deploy/phpbox/assets/wasm_exec.js
 
       - name: Compute OpenFlux runtime version
         id: meta
