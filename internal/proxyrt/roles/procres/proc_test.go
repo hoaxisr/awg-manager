@@ -1830,3 +1830,51 @@ func TestProcAutoReconnect_ZeroActiveStatsStreakTriggersRestart(t *testing.T) {
 		t.Fatalf("Plan при зомби-статистике = %+v, want [restart cause=session_failure]", steps)
 	}
 }
+
+func TestProcAutoReconnect_ConcurrentWatcherAndObserveNeverMissesFatalError(t *testing.T) {
+	const wantSig = "[ГРУППА #1] Ошибка кредов:"
+	for i := 0; i < 40; i++ {
+		dir := t.TempDir()
+		logPath := filepath.Join(dir, "wdtt-race.log")
+		if err := os.WriteFile(logPath, []byte("старт\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		p := NewProc(ProcConfig{
+			ID:      "proc",
+			LogPath: logPath,
+			Runner:  &fakeRunner{pid: 701, alive: true},
+			Link:    &fakeLink{st: awgmproto.State{PID: 701, UptimeS: 20}},
+			Gate:    okGate{},
+			Now:     time.Now,
+		})
+		p.SetDesired(true, []string{"-peer", "x"}, nil)
+		p.SetAutoReconnect(true, 0)
+
+		if _, err := p.Observe(context.Background()); err != nil {
+			p.stopLogWatcher()
+			t.Fatalf("iter %d warmup Observe: %v", i, err)
+		}
+
+		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			p.stopLogWatcher()
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("[ГРУППА #1] Ошибка кредов: CAPTCHA_WAIT_REQUIRED\n"); err != nil {
+			_ = f.Close()
+			p.stopLogWatcher()
+			t.Fatal(err)
+		}
+		_ = f.Close()
+
+		obs, err := p.Observe(context.Background())
+		p.stopLogWatcher()
+		if err != nil {
+			t.Fatalf("iter %d Observe: %v", i, err)
+		}
+		if got := obs.Attrs[attrFatalError]; got != wantSig {
+			t.Fatalf("iter %d fatal_error = %q, want %q", i, got, wantSig)
+		}
+	}
+}
