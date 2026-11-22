@@ -86,6 +86,7 @@ type Status struct {
 	Arch          string        `json:"arch"`
 	LinkAvailable bool          `json:"linkAvailable"`
 	Error         string        `json:"error,omitempty"`
+	FirewallError string        `json:"firewallError,omitempty"`
 	Config        *PublicConfig `json:"config,omitempty"`
 	LogTail       string        `json:"logTail,omitempty"`
 	Client        *ClientStatus `json:"client,omitempty"`
@@ -121,7 +122,9 @@ type Service struct {
 	startedAt               time.Time
 	clientStartedAt         time.Time
 	openedPort              int
+	openedUntagged          bool
 	lastErr                 string
+	firewallErr             string
 	clientLastErr           string
 	clientStopCh            chan struct{}
 	getPublicHost           func(context.Context) string
@@ -685,6 +688,11 @@ func (s *Service) GetStatus(ctx context.Context) Status {
 	clientSt := s.getClientStatusLocked()
 	ver := s.detectInstalledVersionLocked(installed)
 
+	errMsg := s.lastErr
+	if errMsg == "" && s.firewallErr != "" {
+		errMsg = s.firewallErr
+	}
+
 	return Status{
 		Installed:     installed,
 		Running:       running,
@@ -696,7 +704,8 @@ func (s *Service) GetStatus(ctx context.Context) Status {
 		Binary:        s.binPath,
 		Arch:          s.arch,
 		LinkAvailable: linkErr == nil && strings.TrimSpace(link) != "",
-		Error:         s.lastErr,
+		Error:         errMsg,
+		FirewallError: s.firewallErr,
 		Config:        &pubCfg,
 		LogTail:       s.getLogTailLocked(100),
 		Client:        &clientSt,
@@ -1454,7 +1463,7 @@ func (s *Service) stopProcessForConfig(ctx context.Context, cfg Config) error {
 	running, pid := s.GetRunningState()
 	if !running {
 		_ = os.Remove(s.pidPath)
-		s.removeFirewall(ctx)
+		s.removeFirewallForConfig(ctx, cfg)
 		if strings.EqualFold(strings.TrimSpace(cfg.Mode), "l3") && s.routerCmds != nil {
 			ndmsIface := strings.TrimSpace(cfg.NdmsIface)
 			if ndmsIface != "" && ndmsIface != "OpkgTun0" && ndmsIface != "OpkgTun1" {
@@ -1464,7 +1473,7 @@ func (s *Service) stopProcessForConfig(ctx context.Context, cfg Config) error {
 		return nil
 	}
 
-	s.removeFirewall(ctx)
+	s.removeFirewallForConfig(ctx, cfg)
 	terminatePID(pid, s.pidPath)
 
 	if strings.EqualFold(strings.TrimSpace(cfg.Mode), "l3") && s.routerCmds != nil {
@@ -1902,9 +1911,6 @@ func cleanStaleNatRules(ctx context.Context, keepWANs []string) {
 }
 
 func (s *Service) applyFirewall(ctx context.Context) {
-	if runtime.GOOS != "linux" {
-		return
-	}
 	hasDirect := false
 	for _, t := range s.config.Transports {
 		if strings.EqualFold(strings.TrimSpace(t), "direct") {
@@ -1913,30 +1919,32 @@ func (s *Service) applyFirewall(ctx context.Context) {
 		}
 	}
 
+	var errs []string
 	if s.openedPort > 0 && (!s.config.OpenFirewall || !hasDirect || s.openedPort != s.config.DirectPort()) {
-		portStr := strconv.Itoa(s.openedPort)
-		for {
-			delCmd := exec.CommandContext(ctx, "iptables", "-D", "INPUT", "-p", "tcp", "--dport", portStr, "-j", "ACCEPT")
-			if err := delCmd.Run(); err != nil {
-				break
-			}
+		if err := removeListenFirewall(ctx, s.openedPort, s.openedUntagged); err != nil {
+			errs = append(errs, err.Error())
 		}
 		s.openedPort = 0
+		s.openedUntagged = false
 	}
 	if s.config.OpenFirewall && hasDirect {
 		port := s.config.DirectPort()
 		if port > 0 {
-			portStr := strconv.Itoa(port)
-			checkCmd := exec.CommandContext(ctx, "iptables", "-C", "INPUT", "-p", "tcp", "--dport", portStr, "-j", "ACCEPT")
-			if err := checkCmd.Run(); err != nil {
-				addCmd := exec.CommandContext(ctx, "iptables", "-I", "INPUT", "1", "-p", "tcp", "--dport", portStr, "-j", "ACCEPT")
-				_ = addCmd.Run()
+			owned, err := applyListenFirewall(ctx, port)
+			if err != nil {
+				errs = append(errs, err.Error())
+			} else {
+				if s.openedPort == port {
+					s.openedUntagged = s.openedUntagged || owned
+				} else {
+					s.openedUntagged = owned
+				}
+				s.openedPort = port
 			}
-			s.openedPort = port
 		}
 	}
 
-	if s.config.NatMode == "internet-only" {
+	if s.config.NatMode == "internet-only" && runtime.GOOS == "linux" {
 		wans := s.config.StaticNATList()
 		cleanStaleNatRules(ctx, wans)
 		for _, wan := range wans {
@@ -1947,7 +1955,9 @@ func (s *Service) applyFirewall(ctx context.Context) {
 			checkCmd := exec.CommandContext(ctx, "iptables", "-t", "nat", "-C", "POSTROUTING", "-o", wan, "-m", "comment", "--comment", "AWGM_OPENFLUX", "-j", "MASQUERADE")
 			if err := checkCmd.Run(); err != nil {
 				addCmd := exec.CommandContext(ctx, "iptables", "-t", "nat", "-I", "POSTROUTING", "1", "-o", wan, "-m", "comment", "--comment", "AWGM_OPENFLUX", "-j", "MASQUERADE")
-				_ = addCmd.Run()
+				if addErr := addCmd.Run(); addErr != nil {
+					errs = append(errs, fmt.Sprintf("openflux NAT MASQUERADE %s: %v", wan, addErr))
+				}
 			}
 		}
 	} else {
@@ -1955,29 +1965,30 @@ func (s *Service) applyFirewall(ctx context.Context) {
 	}
 
 	if s.routerCmds != nil && s.config.Policy != "" && s.config.Policy != "none" && s.config.NdmsIface != "" {
-		_ = s.routerCmds.PermitPolicy(ctx, s.config.Policy, s.config.NdmsIface)
+		if err := s.routerCmds.PermitPolicy(ctx, s.config.Policy, s.config.NdmsIface); err != nil {
+			errs = append(errs, fmt.Sprintf("openflux PermitPolicy(%s, %s): %v", s.config.Policy, s.config.NdmsIface, err))
+		}
 	}
+
+	s.firewallErr = strings.Join(errs, "; ")
 }
 
 func (s *Service) removeFirewall(ctx context.Context) {
-	if runtime.GOOS != "linux" {
-		return
-	}
+	s.removeFirewallForConfig(ctx, s.config)
+}
+
+func (s *Service) removeFirewallForConfig(ctx context.Context, cfg Config) {
 	if s.openedPort > 0 {
-		portStr := strconv.Itoa(s.openedPort)
-		for {
-			delCmd := exec.CommandContext(ctx, "iptables", "-D", "INPUT", "-p", "tcp", "--dport", portStr, "-j", "ACCEPT")
-			if err := delCmd.Run(); err != nil {
-				break
-			}
-		}
+		_ = removeListenFirewall(ctx, s.openedPort, s.openedUntagged)
 		s.openedPort = 0
+		s.openedUntagged = false
 	}
+	s.firewallErr = ""
 
 	cleanStaleNatRules(ctx, nil)
 
-	if s.routerCmds != nil && s.config.Policy != "" && s.config.NdmsIface != "" {
-		_ = s.routerCmds.DenyPolicy(ctx, s.config.Policy, s.config.NdmsIface)
+	if s.routerCmds != nil && cfg.Policy != "" && cfg.NdmsIface != "" {
+		_ = s.routerCmds.DenyPolicy(ctx, cfg.Policy, cfg.NdmsIface)
 	}
 }
 
