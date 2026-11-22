@@ -146,9 +146,13 @@ func (h *OpenFluxHandler) handleGetLink(w http.ResponseWriter, r *http.Request) 
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "openflux service not initialized", "UNAVAILABLE")
 		return
 	}
-	status := h.service.GetStatus(r.Context())
+	link, err := h.service.GetShareLink(r.Context())
+	if err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "LINK_FAILED")
+		return
+	}
 	response.Success(w, map[string]string{
-		"link": status.Link,
+		"link": link,
 	})
 }
 

@@ -127,19 +127,37 @@ func loadAvitoCookies(s string) string {
 		data, err := os.ReadFile(s)
 		if err == nil {
 			var parts []string
+			var rawLines []string
 			for _, line := range strings.Split(string(data), "\n") {
-				line = strings.Replace(line, "#HttpOnly_", "", 1)
-				if !strings.Contains(line, "\t") {
+				line = strings.TrimRight(line, "\r")
+				trimmed := strings.TrimSpace(line)
+				if trimmed == "" {
 					continue
 				}
-				fields := strings.Split(line, "\t")
-				if len(fields) >= 7 {
-					parts = append(parts, fields[5]+"="+fields[6])
+				netscapeLine := strings.Replace(line, "#HttpOnly_", "", 1)
+				if strings.Contains(netscapeLine, "\t") {
+					fields := strings.Split(netscapeLine, "\t")
+					if len(fields) >= 7 {
+						name := strings.TrimSpace(fields[5])
+						val := strings.TrimSpace(fields[6])
+						if name != "" {
+							parts = append(parts, name+"="+val)
+						}
+						continue
+					}
 				}
+				if strings.HasPrefix(trimmed, "#") {
+					continue
+				}
+				rawLines = append(rawLines, trimmed)
 			}
 			if len(parts) > 0 {
 				return strings.Join(parts, "; ")
 			}
+			if len(rawLines) > 0 {
+				return strings.Join(rawLines, "; ")
+			}
+			return ""
 		}
 	}
 	return s

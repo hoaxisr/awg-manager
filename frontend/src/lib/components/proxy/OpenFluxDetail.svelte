@@ -4,6 +4,7 @@
 	import { api } from '$lib/api/client';
 	import { effectiveStaticWan } from '$lib/api/proxyInstances';
 	import { notifications } from '$lib/stores/notifications';
+	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { errText } from '$lib/utils/errorMessage';
 	import { createIngressMutationLock } from '$lib/utils/ingressMutation';
 	import {
@@ -178,7 +179,23 @@
 			ndmsIface: m.ndmsIface ?? '',
 			tunIface: m.tunIface ?? '',
 			tunMtu: m.tunMtu ?? 1280,
+			secretSet: Boolean(m.secretSet),
+			webdavPasswordSet: Boolean(m.webdavPasswordSet),
+			mailruCookiesSet: Boolean(m.mailruCookiesSet),
+			avitoCookiesSet: Boolean(m.avitoCookiesSet),
+			onemeTokenSet: Boolean(m.onemeTokenSet),
+			clearSecret: false,
+			clearWebdavPassword: false,
+			clearMailruCookies: false,
+			clearAvitoCookies: false,
+			clearOnemeToken: false,
 		};
+	}
+
+	function secretPlaceholder(isSet?: boolean, isCleared?: boolean, fallback = ''): string {
+		if (isCleared) return 'Будет очищено при сохранении';
+		if (isSet) return 'Сохранён на роутере — оставьте пустым, чтобы не менять';
+		return fallback;
 	}
 
 	function formatUptimeS(sec?: number): string {
@@ -196,6 +213,8 @@
 	let saving = $state(false);
 	let logs = $state('');
 	let logsLoading = $state(false);
+	let revealedLink = $state('');
+	let revealingLink = $state(false);
 
 	let lanOptions = $state<{ value: string; label: string }[]>([]);
 	let wanOptions = $state<{ value: string; label: string }[]>([]);
@@ -207,7 +226,7 @@
 
 	const running = $derived(status?.running ?? row.state === 'running');
 	const uptimeValue = $derived(running ? formatUptimeS(status?.uptimeS) : '—');
-	const shareLink = $derived(status?.link ?? '');
+	const linkAvailable = $derived(Boolean(status?.linkAvailable));
 	const natList = $derived(natModeOptions());
 	const hasStaticWan = $derived(Boolean(effectiveStaticWan(draft).trim()));
 	const egressOptions = $derived([
@@ -348,6 +367,7 @@
 			};
 			await onsave(payload);
 			dirty = false;
+			revealedLink = '';
 			notifications.success('Настройки OpenFlux сервера сохранены');
 			if (running) {
 				notifications.info('Перезапустите сервер, чтобы применить обновлённые аргументы');
@@ -357,6 +377,32 @@
 			notifications.error(errText(e));
 		} finally {
 			saving = false;
+		}
+	}
+
+	async function revealShareLink() {
+		if (revealedLink) {
+			revealedLink = '';
+			return;
+		}
+		revealingLink = true;
+		try {
+			revealedLink = (await api.openfluxGetLink()).link;
+		} catch (e) {
+			notifications.error(errText(e));
+		} finally {
+			revealingLink = false;
+		}
+	}
+
+	async function copyShareLink() {
+		try {
+			const link = revealedLink || (await api.openfluxGetLink()).link;
+			if (link && (await copyToClipboard(link))) {
+				notifications.success('Ссылка OpenFlux скопирована');
+			}
+		} catch (e) {
+			notifications.error(errText(e));
 		}
 	}
 
@@ -399,11 +445,22 @@
 		<Stat label="Версия ядра" value={status?.version || '—'} sub={status?.arch} />
 	</StatStrip>
 
-	<LastErrorBox text={!running ? status?.error : ''} />
+	<LastErrorBox text={(!running ? status?.error : '') || status?.firewallError} />
 
-	{#if shareLink}
+	{#if revealedLink}
 		<div class="link-section">
-			<LinkBox link={shareLink} title="Ссылка профиля openflux://v1/ (для клиентов и роутеров)" />
+			<LinkBox link={revealedLink} title="Ссылка профиля openflux://v1/ (для клиентов и роутеров)" />
+			<div style="margin-top: 0.4rem;">
+				<Button variant="ghost" size="sm" onclick={() => (revealedLink = '')}>Скрыть ссылку</Button>
+			</div>
+		</div>
+	{:else if linkAvailable}
+		<div class="link-section link-hidden-bar">
+			<span class="link-hidden-note">Ссылка `openflux://v1/` содержит ключ шифрования и загружается по запросу.</span>
+			<div class="link-hidden-actions">
+				<Button variant="secondary" size="sm" loading={revealingLink} onclick={revealShareLink}>Показать ссылку</Button>
+				<Button variant="secondary" size="sm" onclick={copyShareLink}>Копировать</Button>
+			</div>
 		</div>
 	{:else}
 		<p class="link-empty">
@@ -449,7 +506,11 @@
 			/>
 
 			<div class="secret-wrap">
-				<SensitiveInput label="Ключ шифрования (Secret ≥ 16 символов)" bind:value={draft.secret} />
+				<SensitiveInput
+					label="Ключ шифрования (Secret ≥ 16 символов)"
+					bind:value={draft.secret}
+					placeholder={secretPlaceholder(draft.secretSet, false, 'Минимум 16 символов')}
+				/>
 				<Button variant="ghost" size="sm" onclick={generateSecret}>
 					<RefreshCw size={14} />
 					Сгенерировать
@@ -537,11 +598,39 @@
 			{/each}
 		</div>
 
-		<div class="form-grid" style="margin-top: 0.875rem;" oninput={markDirty}>
+		<div
+			class="form-grid"
+			style="margin-top: 0.875rem;"
+			oninput={() => {
+				markDirty();
+				if (draft.webdavPassword?.trim()) draft.clearWebdavPassword = false;
+				if (draft.mailruCookies?.trim()) draft.clearMailruCookies = false;
+				if (draft.avitoCookies?.trim()) draft.clearAvitoCookies = false;
+				if (draft.onemeToken?.trim()) draft.clearOnemeToken = false;
+			}}
+		>
 			{#if draft.transports.includes('webdav')}
 				<Input label="WebDAV URL" bind:value={draft.webdavUrl} placeholder="https://dav.example.com/remote.php/dav/files/user/room" fullWidth />
 				<Input label="WebDAV логин" bind:value={draft.webdavUser} fullWidth />
-				<SensitiveInput label="WebDAV пароль" bind:value={draft.webdavPassword} />
+				<div class="secret-wrap">
+					<SensitiveInput
+						label="WebDAV пароль"
+						bind:value={draft.webdavPassword}
+						placeholder={secretPlaceholder(draft.webdavPasswordSet, draft.clearWebdavPassword)}
+					/>
+					{#if draft.webdavPasswordSet && !draft.clearWebdavPassword && !draft.webdavPassword}
+						<Button
+							variant="ghost"
+							size="sm"
+							onclick={() => {
+								markDirty();
+								draft.clearWebdavPassword = true;
+							}}
+						>
+							Очистить
+						</Button>
+					{/if}
+				</div>
 			{/if}
 			{#if draft.transports.includes('mailru')}
 				<MultiUrlTextarea
@@ -554,8 +643,17 @@
 				<CookieTextarea
 					label="Mail.ru Cookies (обязательно для r7/edit)"
 					bind:value={draft.mailruCookies}
+					saved={Boolean(draft.mailruCookiesSet)}
+					cleared={Boolean(draft.clearMailruCookies)}
 					hint="Mail.ru требует авторизацию для /api/v4/r7/edit (HTTP 401 без cookies). Вставьте заголовок Cookie: (с Mpop=...), Netscape cookies.txt или JSON из Cookie-Editor. Не попадает в ссылку openflux://; можно использовать один технический аккаунт на сервере и клиенте."
-					oninput={markDirty}
+					oninput={() => {
+						markDirty();
+						if (draft.mailruCookies?.trim()) draft.clearMailruCookies = false;
+					}}
+					onclear={() => {
+						markDirty();
+						draft.clearMailruCookies = true;
+					}}
 				/>
 			{/if}
 			{#if draft.transports.includes('yandex')}
@@ -589,7 +687,25 @@
 					placeholder={"https://www.avito.ru/...\nhttps://www.avito.ru/..."}
 					oninput={markDirty}
 				/>
-				<Input label="Avito Cookies" bind:value={draft.avitoCookies} placeholder="sessid=..." fullWidth />
+				<div class="secret-wrap">
+					<SensitiveInput
+						label="Avito Cookies"
+						bind:value={draft.avitoCookies}
+						placeholder={secretPlaceholder(draft.avitoCookiesSet, draft.clearAvitoCookies, 'sessid=...')}
+					/>
+					{#if draft.avitoCookiesSet && !draft.clearAvitoCookies && !draft.avitoCookies}
+						<Button
+							variant="ghost"
+							size="sm"
+							onclick={() => {
+								markDirty();
+								draft.clearAvitoCookies = true;
+							}}
+						>
+							Очистить
+						</Button>
+					{/if}
+				</div>
 			{/if}
 			{#if draft.transports.includes('cupsonline')}
 				<MultiUrlTextarea
@@ -608,7 +724,25 @@
 				/>
 			{/if}
 			{#if draft.transports.includes('oneme')}
-				<Input label="MAX Token (--maxToken)" bind:value={draft.onemeToken} fullWidth />
+				<div class="secret-wrap">
+					<SensitiveInput
+						label="MAX Token (--maxToken)"
+						bind:value={draft.onemeToken}
+						placeholder={secretPlaceholder(draft.onemeTokenSet, draft.clearOnemeToken)}
+					/>
+					{#if draft.onemeTokenSet && !draft.clearOnemeToken && !draft.onemeToken}
+						<Button
+							variant="ghost"
+							size="sm"
+							onclick={() => {
+								markDirty();
+								draft.clearOnemeToken = true;
+							}}
+						>
+							Очистить
+						</Button>
+					{/if}
+				</div>
 				<Input label="MAX UID (--maxUid)" bind:value={draft.onemeUid} fullWidth />
 			{/if}
 			{#if draft.transports.includes('direct')}
@@ -805,6 +939,29 @@
 
 	.link-section {
 		margin: 1rem 0 0.5rem;
+	}
+
+	.link-hidden-bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+		padding: 0.75rem 0.875rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		background: var(--color-bg-secondary);
+	}
+
+	.link-hidden-note {
+		font-size: 0.8125rem;
+		color: var(--color-text-secondary);
+	}
+
+	.link-hidden-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 
 	.link-empty {

@@ -157,7 +157,23 @@
 			httpProxyListen: m.httpProxyListen ?? '',
 			autoReconnect: m.autoReconnect ?? true,
 			debug: m.debug ?? 0,
+			secretSet: Boolean(m.secretSet),
+			webdavPasswordSet: Boolean(m.webdavPasswordSet),
+			mailruCookiesSet: Boolean(m.mailruCookiesSet),
+			avitoCookiesSet: Boolean(m.avitoCookiesSet),
+			onemeTokenSet: Boolean(m.onemeTokenSet),
+			clearSecret: false,
+			clearWebdavPassword: false,
+			clearMailruCookies: false,
+			clearAvitoCookies: false,
+			clearOnemeToken: false,
 		};
+	}
+
+	function secretPlaceholder(isSet?: boolean, isCleared?: boolean, fallback = ''): string {
+		if (isCleared) return 'Будет очищено при сохранении';
+		if (isSet) return 'Сохранён на роутере — оставьте пустым, чтобы не менять';
+		return fallback;
 	}
 
 	function formatUptimeS(sec?: number): string {
@@ -409,7 +425,13 @@
 		title="Режим входа и подключения"
 		hint="В режиме OpkgTun создаётся системный L3-интерфейс роутера (виден в туннелях и политиках Keenetic); в режиме SOCKS5/HTTP открываются локальные порты для sing-box / FIRC."
 	>
-		<div class="form-grid" oninput={markDirty}>
+		<div
+			class="form-grid"
+			oninput={() => {
+				markDirty();
+				if (draft.secret?.trim()) draft.clearSecret = false;
+			}}
+		>
 			<Input label="Название" bind:value={draft.name} fullWidth />
 			<Dropdown
 				label="Режим входа"
@@ -466,7 +488,25 @@
 				fullWidth
 			/>
 
-			<SensitiveInput label="Ключ шифрования (Secret)" bind:value={draft.secret} />
+			<div class="secret-wrap">
+				<SensitiveInput
+					label="Ключ шифрования (Secret)"
+					bind:value={draft.secret}
+					placeholder={secretPlaceholder(draft.secretSet, draft.clearSecret)}
+				/>
+				{#if draft.secretSet && !draft.clearSecret && !draft.secret}
+					<Button
+						variant="ghost"
+						size="sm"
+						onclick={() => {
+							markDirty();
+							draft.clearSecret = true;
+						}}
+					>
+						Очистить
+					</Button>
+				{/if}
+			</div>
 			<Input label="Context (--context, опц.)" bind:value={draft.context} fullWidth />
 
 			<Input
@@ -551,11 +591,39 @@
 			{/each}
 		</div>
 
-		<div class="form-grid" style="margin-top: 0.875rem;" oninput={markDirty}>
+		<div
+			class="form-grid"
+			style="margin-top: 0.875rem;"
+			oninput={() => {
+				markDirty();
+				if (draft.webdavPassword?.trim()) draft.clearWebdavPassword = false;
+				if (draft.mailruCookies?.trim()) draft.clearMailruCookies = false;
+				if (draft.avitoCookies?.trim()) draft.clearAvitoCookies = false;
+				if (draft.onemeToken?.trim()) draft.clearOnemeToken = false;
+			}}
+		>
 			{#if draft.transports.includes('webdav')}
 				<Input label="WebDAV URL" bind:value={draft.webdavUrl} fullWidth />
 				<Input label="WebDAV логин" bind:value={draft.webdavUser} fullWidth />
-				<SensitiveInput label="WebDAV пароль" bind:value={draft.webdavPassword} />
+				<div class="secret-wrap">
+					<SensitiveInput
+						label="WebDAV пароль"
+						bind:value={draft.webdavPassword}
+						placeholder={secretPlaceholder(draft.webdavPasswordSet, draft.clearWebdavPassword)}
+					/>
+					{#if draft.webdavPasswordSet && !draft.clearWebdavPassword && !draft.webdavPassword}
+						<Button
+							variant="ghost"
+							size="sm"
+							onclick={() => {
+								markDirty();
+								draft.clearWebdavPassword = true;
+							}}
+						>
+							Очистить
+						</Button>
+					{/if}
+				</div>
 			{/if}
 			{#if draft.transports.includes('mailru')}
 				<MultiUrlTextarea
@@ -568,8 +636,17 @@
 				<CookieTextarea
 					label="Mail.ru Cookies (обязательно для r7/edit)"
 					bind:value={draft.mailruCookies}
+					saved={Boolean(draft.mailruCookiesSet)}
+					cleared={Boolean(draft.clearMailruCookies)}
 					hint="Mail.ru требует авторизацию для /api/v4/r7/edit (HTTP 401 без cookies). Вставьте заголовок Cookie: (с Mpop=...), Netscape cookies.txt или JSON из Cookie-Editor. Не попадает в ссылку openflux://; можно использовать один технический аккаунт на сервере и клиенте."
-					oninput={markDirty}
+					oninput={() => {
+						markDirty();
+						if (draft.mailruCookies?.trim()) draft.clearMailruCookies = false;
+					}}
+					onclear={() => {
+						markDirty();
+						draft.clearMailruCookies = true;
+					}}
 				/>
 			{/if}
 			{#if draft.transports.includes('yandex')}
@@ -603,7 +680,25 @@
 					placeholder={"https://www.avito.ru/...\nhttps://www.avito.ru/..."}
 					oninput={markDirty}
 				/>
-				<Input label="Avito Cookies" bind:value={draft.avitoCookies} fullWidth />
+				<div class="secret-wrap">
+					<SensitiveInput
+						label="Avito Cookies"
+						bind:value={draft.avitoCookies}
+						placeholder={secretPlaceholder(draft.avitoCookiesSet, draft.clearAvitoCookies, 'sessid=...')}
+					/>
+					{#if draft.avitoCookiesSet && !draft.clearAvitoCookies && !draft.avitoCookies}
+						<Button
+							variant="ghost"
+							size="sm"
+							onclick={() => {
+								markDirty();
+								draft.clearAvitoCookies = true;
+							}}
+						>
+							Очистить
+						</Button>
+					{/if}
+				</div>
 			{/if}
 			{#if draft.transports.includes('cupsonline')}
 				<MultiUrlTextarea
@@ -622,7 +717,25 @@
 				/>
 			{/if}
 			{#if draft.transports.includes('oneme')}
-				<Input label="MAX Token (--maxToken)" bind:value={draft.onemeToken} fullWidth />
+				<div class="secret-wrap">
+					<SensitiveInput
+						label="MAX Token (--maxToken)"
+						bind:value={draft.onemeToken}
+						placeholder={secretPlaceholder(draft.onemeTokenSet, draft.clearOnemeToken)}
+					/>
+					{#if draft.onemeTokenSet && !draft.clearOnemeToken && !draft.onemeToken}
+						<Button
+							variant="ghost"
+							size="sm"
+							onclick={() => {
+								markDirty();
+								draft.clearOnemeToken = true;
+							}}
+						>
+							Очистить
+						</Button>
+					{/if}
+				</div>
 				<Input label="MAX UID (--maxUid)" bind:value={draft.onemeUid} fullWidth />
 			{/if}
 			{#if draft.transports.includes('direct')}
@@ -776,6 +889,12 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
 		gap: 0.75rem;
+	}
+
+	.secret-wrap {
+		display: flex;
+		align-items: flex-end;
+		gap: 0.5rem;
 	}
 
 	.toggle-grid {

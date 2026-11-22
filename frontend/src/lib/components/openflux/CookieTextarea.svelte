@@ -5,29 +5,37 @@
 	interface Props {
 		label: string;
 		value?: string;
+		saved?: boolean;
+		cleared?: boolean;
 		placeholder?: string;
 		hint?: string;
 		rows?: number;
 		oninput?: () => void;
+		onclear?: () => void;
 	}
 
 	let {
 		label,
 		value = $bindable(''),
+		saved = false,
+		cleared = false,
 		placeholder = 'Mpop=...; sdc=...  или Netscape cookies.txt / JSON',
 		hint = '',
 		rows = 3,
 		oninput,
+		onclear,
 	}: Props = $props();
 
 	let revealed = $state(false);
 	const fieldId = `cookie-textarea-${Math.random().toString(36).slice(2, 8)}`;
 	const hasValue = $derived(Boolean(value?.trim()));
 	const hasMpop = $derived(hasMailruLoginCookie(value));
+	const isSavedMasked = $derived(!hasValue && saved && !cleared);
 
 	function handleClear() {
 		value = '';
 		revealed = false;
+		onclear?.();
 		oninput?.();
 	}
 </script>
@@ -40,8 +48,12 @@
 				<Badge size="xs" variant={hasMpop ? 'success' : 'warning'}>
 					{hasMpop ? 'Mpop найден' : 'Нет cookie Mpop'}
 				</Badge>
+			{:else if isSavedMasked}
+				<Badge size="xs" variant="success">Сохранены на роутере</Badge>
+			{:else if cleared}
+				<Badge size="xs" variant="warning">Будут очищены при сохранении</Badge>
 			{/if}
-			{#if hasValue && revealed}
+			{#if (hasValue || isSavedMasked) && revealed}
 				<Button variant="secondary" size="sm" type="button" onclick={() => (revealed = false)}>
 					Скрыть
 				</Button>
@@ -49,12 +61,16 @@
 		</div>
 	</div>
 
-	{#if hasValue && !revealed}
+	{#if (hasValue || isSavedMasked) && !revealed}
 		<div class="cookie-masked-row">
-			<span class="cookie-masked-value">•••••••••••• (cookies заданы)</span>
+			<span class="cookie-masked-value">
+				{isSavedMasked
+					? '•••••••••••• (сохранены — оставьте как есть, чтобы не менять)'
+					: '•••••••••••• (cookies заданы)'}
+			</span>
 			<div class="cookie-masked-actions">
 				<Button variant="secondary" size="sm" type="button" onclick={() => (revealed = true)}>
-					Показать / Изменить
+					{isSavedMasked ? 'Заменить' : 'Показать / Изменить'}
 				</Button>
 				<Button variant="secondary" size="sm" type="button" onclick={handleClear}>
 					Очистить

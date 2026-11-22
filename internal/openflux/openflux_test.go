@@ -131,13 +131,15 @@ func TestUpgradeFlagsAndTransportsBuildArgs(t *testing.T) {
 	cfg.OnemeToken = "tok-123"
 	cfg.OnemeUID = "42"
 
-	argsStr := strings.Join(cfg.BuildArgs("/tmp/secret.key"), " ")
+	argsStr := strings.Join(cfg.BuildArgsWithOptions("/tmp/secret.key", BuildArgsOptions{
+		AvitoCookiesFile: "/tmp/avito.txt",
+	}), " ")
 	for _, want := range []string{
 		"--upstream-proxy=socks5://127.0.0.1:10808",
 		"--low-memory",
 		"--lanes=4",
 		"--native-scripts=/opt/etc/awg-manager/openflux/scripts",
-		"--avito-cookies=session=xyz",
+		"--avito-cookies=/tmp/avito.txt",
 		"--transports=boards:88,avito:85,telemost:75,oneme:70",
 		"--boards-url=https://boards.yandex.ru/b/1",
 		"--avito-url=https://code.avito.ru/room/abc",
@@ -148,6 +150,13 @@ func TestUpgradeFlagsAndTransportsBuildArgs(t *testing.T) {
 		if !strings.Contains(argsStr, want) {
 			t.Errorf("server BuildArgs missing %q in %s", want, argsStr)
 		}
+	}
+	if strings.Contains(argsStr, "session=xyz") {
+		t.Errorf("raw avito cookie leaked into CLI args: %s", argsStr)
+	}
+	rawOnlyArgs := strings.Join(cfg.BuildArgs("/tmp/secret.key"), " ")
+	if strings.Contains(rawOnlyArgs, "session=xyz") {
+		t.Errorf("BuildArgs without options leaked raw avito cookie into CLI args: %s", rawOnlyArgs)
 	}
 
 	// Single oneme mode uses --maxToken / --maxUid
@@ -191,13 +200,15 @@ func TestUpgradeFlagsAndTransportsBuildArgs(t *testing.T) {
 	cli.LowMemory = true
 	cli.Lanes = 3
 	cli.NativeScriptsDir = "/opt/scripts"
-	cli.AvitoCookies = "c=1"
-	cliArgs := strings.Join(cli.BuildArgs("/tmp/c.key"), " ")
+	cli.AvitoCookies = "c=secretAvitoCookie"
+	cliArgs := strings.Join(cli.BuildArgsWithOptions("/tmp/c.key", BuildArgsOptions{
+		AvitoCookiesFile: "/tmp/c_avito.txt",
+	}), " ")
 	for _, want := range []string{
 		"--low-memory",
 		"--lanes=3",
 		"--native-scripts=/opt/scripts",
-		"--avito-cookies=c=1",
+		"--avito-cookies=/tmp/c_avito.txt",
 		"--boards-url=https://boards.yandex.ru/b/1",
 		"--avito-url=https://code.avito.ru/room/abc",
 		"--telemost-url=https://telemost.yandex.ru/j/999",
@@ -205,6 +216,9 @@ func TestUpgradeFlagsAndTransportsBuildArgs(t *testing.T) {
 		if !strings.Contains(cliArgs, want) {
 			t.Errorf("client BuildArgs missing %q in %s", want, cliArgs)
 		}
+	}
+	if strings.Contains(cliArgs, "secretAvitoCookie") {
+		t.Errorf("client BuildArgs leaked raw avito cookie into CLI args: %s", cliArgs)
 	}
 }
 
@@ -546,11 +560,15 @@ func TestClientServiceConfigPersistenceAndStatus(t *testing.T) {
 	}
 
 	st = svc.GetStatus(ctx)
-	if st.Link == "" {
-		t.Fatalf("expected non-empty server link")
+	if !st.LinkAvailable {
+		t.Fatalf("expected LinkAvailable=true")
+	}
+	link, err := svc.GetShareLink(ctx)
+	if err != nil || link == "" {
+		t.Fatalf("GetShareLink failed: %v", err)
 	}
 
-	share, parsedClientCfg, err := svc.ParseClientLink(st.Link)
+	share, parsedClientCfg, err := svc.ParseClientLink(link)
 	if err != nil {
 		t.Fatalf("ParseClientLink failed: %v", err)
 	}
@@ -1156,5 +1174,239 @@ func TestMailruCookiesBuildArgsAndShareIsolation(t *testing.T) {
 	}
 	if _, err := os.Stat(svc.cookieStorePath); !os.IsNotExist(err) {
 		t.Fatalf("expected SaveConfig to clear stale cookieStorePath when MailruCookies changes")
+	}
+}
+
+func TestSecurityPermissionsAndTightenOnStartup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file permissions enforced on Linux/Unix routers")
+	}
+
+	tmpDir := t.TempDir()
+	ofDir := filepath.Join(tmpDir, "openflux")
+	if err := os.MkdirAll(ofDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"config.json", "client_config.json", "secret.key", "avito_cookies.txt", "openflux.log"} {
+		content := []byte("{}")
+		if strings.HasSuffix(rel, ".key") || strings.HasSuffix(rel, ".txt") || strings.HasSuffix(rel, ".log") {
+			content = []byte("legacy")
+		}
+		if err := os.WriteFile(filepath.Join(ofDir, rel), content, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc := New(tmpDir, "x86_64", nil)
+	dirInfo, err := os.Stat(svc.openfluxDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirInfo.Mode().Perm(); perm != 0700 {
+		t.Fatalf("openflux dir perm = %o, want 0700", perm)
+	}
+	for _, p := range []string{svc.cfgPath, svc.clientCfgPath, svc.keyPath, svc.avitoCookiesPath, svc.logPath} {
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("stat %s: %v", p, err)
+		}
+		if perm := fi.Mode().Perm(); perm != 0600 {
+			t.Fatalf("%s perm = %o, want 0600", filepath.Base(p), perm)
+		}
+	}
+
+	cfg := DefaultConfig()
+	cfg.Secret = "test-secret-0123456789abcdef"
+	if err := svc.SaveConfig(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(svc.cfgPath)
+	if err != nil || fi.Mode().Perm() != 0600 {
+		t.Fatalf("config.json perm after SaveConfig = %v (err=%v), want 0600", fi, err)
+	}
+}
+
+func TestStatusRedactsSecretsAndPreservesOnSave(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "x86_64", func(context.Context) string { return "203.0.113.10" })
+
+	srvCfg := DefaultConfig()
+	srvCfg.Secret = "test-server-secret-value-123456"
+	srvCfg.Transports = []string{"webdav", "mailru", "avito", "oneme"}
+	srvCfg.WebdavURL = "https://u1:embeddedPass987@dav.example.invalid/folder"
+	srvCfg.MailruCookies = "Mpop=test-mailru-cookie-val"
+	srvCfg.AvitoCookies = "sessid=test-avito-cookie-val"
+	srvCfg.OnemeToken = "test-oneme-token-val"
+	srvCfg.OnemeUID = "42"
+	if err := svc.SaveConfig(ctx, srvCfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	st := svc.GetStatus(ctx)
+	if !st.LinkAvailable {
+		t.Fatalf("expected LinkAvailable=true")
+	}
+	stJSONBytes, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stJSON := string(stJSONBytes)
+	for _, secret := range []string{
+		"test-server-secret-value-123456",
+		"embeddedPass987",
+		"test-mailru-cookie-val",
+		"test-avito-cookie-val",
+		"test-oneme-token-val",
+		"openflux://v1/",
+	} {
+		if strings.Contains(stJSON, secret) {
+			t.Fatalf("SECURITY LEAK: Status JSON exposed %q: %s", secret, stJSON)
+		}
+	}
+	if st.Config == nil || !st.Config.SecretSet || !st.Config.WebdavPasswordSet ||
+		!st.Config.MailruCookiesSet || !st.Config.AvitoCookiesSet || !st.Config.OnemeTokenSet {
+		t.Fatalf("expected all *Set indicators true on PublicConfig, got %+v", st.Config)
+	}
+	if st.Config.WebdavURL != "https://dav.example.invalid/folder" || st.Config.WebdavUser != "u1" {
+		t.Fatalf("expected sanitized WebDAV URL/User in PublicConfig, got url=%q user=%q", st.Config.WebdavURL, st.Config.WebdavUser)
+	}
+
+	// Simulate editing Name from PublicConfig without re-submitting secrets: must preserve stored secrets.
+	editCfg := DefaultConfig()
+	editCfg.Name = "RenamedNode"
+	editCfg.Transports = srvCfg.Transports
+	editCfg.WebdavURL = st.Config.WebdavURL
+	editCfg.WebdavUser = st.Config.WebdavUser
+	editCfg.OnemeUID = srvCfg.OnemeUID
+	editCfg.Secret = ""
+	editCfg.WebdavPassword = ""
+	editCfg.MailruCookies = ""
+	editCfg.AvitoCookies = ""
+	editCfg.OnemeToken = ""
+	if err := svc.SaveConfig(ctx, editCfg); err != nil {
+		t.Fatalf("SaveConfig with omitted secrets failed: %v", err)
+	}
+	if svc.config.Secret != srvCfg.Secret || svc.config.WebdavPassword != "embeddedPass987" ||
+		svc.config.MailruCookies != srvCfg.MailruCookies || svc.config.AvitoCookies != srvCfg.AvitoCookies ||
+		svc.config.OnemeToken != srvCfg.OnemeToken {
+		t.Fatalf("expected secrets preserved when omitted on SaveConfig, got %+v", svc.config)
+	}
+
+	// Explicit Clear* flags clear only requested optional secrets and are not persisted.
+	clearCfg := editCfg
+	clearCfg.ClearAvitoCookies = true
+	clearCfg.ClearOnemeToken = true
+	if err := svc.SaveConfig(ctx, clearCfg); err != nil {
+		t.Fatalf("SaveConfig with Clear* failed: %v", err)
+	}
+	stAfterClear := svc.GetStatus(ctx)
+	if stAfterClear.Config.AvitoCookiesSet || stAfterClear.Config.OnemeTokenSet {
+		t.Fatalf("expected AvitoCookiesSet and OnemeTokenSet false after explicit clear, got %+v", stAfterClear.Config)
+	}
+	if !stAfterClear.Config.SecretSet || !stAfterClear.Config.MailruCookiesSet || !stAfterClear.Config.WebdavPasswordSet {
+		t.Fatalf("expected non-cleared secrets preserved, got %+v", stAfterClear.Config)
+	}
+
+	// Verify ClientConfig redaction, preservation, and explicit clearing too.
+	cliCfg := DefaultClientConfig()
+	cliCfg.Name = "TestClient"
+	cliCfg.InboundMode = "socks5"
+	cliCfg.Secret = "test-client-secret-value-123456"
+	cliCfg.WebdavURL = "https://cu:clientDavPass@dav.example.invalid/c"
+	cliCfg.MailruCookies = "Mpop=client-mailru-secret"
+	cliCfg.AvitoCookies = "sessid=client-avito-secret"
+	cliCfg.OnemeToken = "client-oneme-secret"
+	if err := svc.SaveClientConfig(ctx, cliCfg); err != nil {
+		t.Fatalf("SaveClientConfig failed: %v", err)
+	}
+	cliSt := svc.GetClientStatus()
+	cliJSONBytes, _ := json.Marshal(cliSt)
+	cliJSON := string(cliJSONBytes)
+	for _, secret := range []string{
+		"test-client-secret-value-123456",
+		"clientDavPass",
+		"client-mailru-secret",
+		"client-avito-secret",
+		"client-oneme-secret",
+	} {
+		if strings.Contains(cliJSON, secret) {
+			t.Fatalf("SECURITY LEAK: ClientStatus JSON exposed %q: %s", secret, cliJSON)
+		}
+	}
+
+	editCli := cliCfg
+	editCli.Name = "RenamedClient"
+	editCli.WebdavURL = cliSt.Config.WebdavURL
+	editCli.WebdavUser = cliSt.Config.WebdavUser
+	editCli.Secret = ""
+	editCli.WebdavPassword = ""
+	editCli.MailruCookies = ""
+	editCli.AvitoCookies = ""
+	editCli.OnemeToken = ""
+	if err := svc.SaveClientConfig(ctx, editCli); err != nil {
+		t.Fatalf("SaveClientConfig preserve failed: %v", err)
+	}
+	if svc.clientConfig.Secret != "test-client-secret-value-123456" || svc.clientConfig.WebdavPassword != "clientDavPass" ||
+		svc.clientConfig.AvitoCookies != "sessid=client-avito-secret" {
+		t.Fatalf("expected client secrets preserved when omitted, got %+v", svc.clientConfig)
+	}
+
+	editCli.ClearSecret = true
+	editCli.ClearWebdavPassword = true
+	editCli.ClearMailruCookies = true
+	if err := svc.SaveClientConfig(ctx, editCli); err != nil {
+		t.Fatalf("SaveClientConfig clear failed: %v", err)
+	}
+	cliAfterClear := svc.GetClientStatus()
+	if cliAfterClear.Config.SecretSet || cliAfterClear.Config.WebdavPasswordSet || cliAfterClear.Config.MailruCookiesSet || !cliAfterClear.Config.AvitoCookiesSet {
+		t.Fatalf("unexpected ClientConfig *Set flags after partial clear: %+v", cliAfterClear.Config)
+	}
+}
+
+func TestAvitoCookiesFileGenerationAndCleanup(t *testing.T) {
+	dir := t.TempDir()
+	cookieStore := filepath.Join(dir, "cookies.json")
+	mailruPath := filepath.Join(dir, "mailru_cookies.txt")
+	avitoPath := filepath.Join(dir, "avito_cookies.txt")
+
+	opts, err := prepareRuntimeCookieArgs(
+		cookieStore,
+		mailruPath, "Mpop=test-mailru",
+		avitoPath, "Cookie: sessid=abc=123; ft=xyz",
+	)
+	if err != nil {
+		t.Fatalf("prepareRuntimeCookieArgs failed: %v", err)
+	}
+	if opts.AvitoCookiesFile != avitoPath || opts.MailruCookiesFile != mailruPath {
+		t.Fatalf("unexpected cookie file options: %+v", opts)
+	}
+	data, err := os.ReadFile(avitoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ".avito.ru\tTRUE\t/\tTRUE\t0\tsessid\tabc=123\n.avito.ru\tTRUE\t/\tTRUE\t0\tft\txyz\n"
+	if string(data) != want {
+		t.Fatalf("formatted avito cookies = %q, want %q", string(data), want)
+	}
+	if runtime.GOOS != "windows" {
+		if fi, _ := os.Stat(avitoPath); fi.Mode().Perm() != 0600 {
+			t.Fatalf("avito cookie file perm = %o, want 0600", fi.Mode().Perm())
+		}
+	}
+
+	// Clearing cookies removes and zeroes temporary files.
+	opts2, err := prepareRuntimeCookieArgs(cookieStore, mailruPath, "", avitoPath, "")
+	if err != nil {
+		t.Fatalf("prepareRuntimeCookieArgs empty failed: %v", err)
+	}
+	if opts2.AvitoCookiesFile != "" || opts2.MailruCookiesFile != "" {
+		t.Fatalf("expected empty cookie file args when cleared, got %+v", opts2)
+	}
+	if _, err := os.Stat(avitoPath); !os.IsNotExist(err) {
+		t.Fatalf("expected avito cookies file removed, got %v", err)
+	}
+	if _, err := os.Stat(mailruPath); !os.IsNotExist(err) {
+		t.Fatalf("expected mailru cookies file removed, got %v", err)
 	}
 }

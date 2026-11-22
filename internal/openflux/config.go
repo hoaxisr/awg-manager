@@ -104,6 +104,156 @@ type Config struct {
 	NdmsIface        string   `json:"ndmsIface,omitempty"`
 	TunIface         string   `json:"tunIface,omitempty"`
 	TunMTU           int      `json:"tunMtu,omitempty"`
+
+	// Non-persisted request flags for clearing previously saved optional secrets.
+	ClearSecret         bool `json:"clearSecret,omitempty"`
+	ClearWebdavPassword bool `json:"clearWebdavPassword,omitempty"`
+	ClearMailruCookies  bool `json:"clearMailruCookies,omitempty"`
+	ClearAvitoCookies   bool `json:"clearAvitoCookies,omitempty"`
+	ClearOnemeToken     bool `json:"clearOnemeToken,omitempty"`
+}
+
+// PublicConfig is the redacted view of Config returned over HTTP APIs.
+// It contains presence indicators (*Set) instead of plaintext secrets.
+type PublicConfig struct {
+	Enabled             bool           `json:"enabled"`
+	Mode                string         `json:"mode"`
+	TransportMode       string         `json:"transportMode"`
+	Transports          []string       `json:"transports"`
+	TransportPriorities map[string]int `json:"transportPriorities,omitempty"`
+	WebdavURL           string         `json:"webdavUrl,omitempty"`
+	WebdavUser          string         `json:"webdavUser,omitempty"`
+	MailruURL           string         `json:"mailruUrl,omitempty"`
+	YandexURL           string         `json:"yandexUrl,omitempty"`
+	VyandexURL          string         `json:"vyandexUrl,omitempty"`
+	BoardsURL           string         `json:"boardsUrl,omitempty"`
+	AvitoURL            string         `json:"avitoUrl,omitempty"`
+	CupsonlineURL       string         `json:"cupsonlineUrl,omitempty"`
+	TelemostURL         string         `json:"telemostUrl,omitempty"`
+	OnemeUID            string         `json:"onemeUid,omitempty"`
+	DirectListen        string         `json:"directListen,omitempty"`
+	DirectHost          string         `json:"directHost,omitempty"`
+	Codec               string         `json:"codec,omitempty"`
+	UpstreamProxy       string         `json:"upstreamProxy,omitempty"`
+	LowMemory           bool           `json:"lowMemory"`
+	Lanes               int            `json:"lanes,omitempty"`
+	NativeScriptsDir    string         `json:"nativeScriptsDir,omitempty"`
+	OpenFirewall        bool           `json:"openFirewall"`
+	Debug               int            `json:"debug"`
+	Name                string         `json:"name,omitempty"`
+
+	NatMode          string   `json:"natMode,omitempty"`
+	NatStaticWAN     string   `json:"natStaticWan,omitempty"`
+	NatStaticWANs    []string `json:"natStaticWans,omitempty"`
+	Policy           string   `json:"policy,omitempty"`
+	LANSegments      []string `json:"lanSegments,omitempty"`
+	ExposeToPolicies bool     `json:"exposeToPolicies"`
+	EgressInterface  string   `json:"egressInterface,omitempty"`
+	NdmsIface        string   `json:"ndmsIface,omitempty"`
+	TunIface         string   `json:"tunIface,omitempty"`
+	TunMTU           int      `json:"tunMtu,omitempty"`
+
+	SecretSet         bool `json:"secretSet"`
+	WebdavPasswordSet bool `json:"webdavPasswordSet"`
+	MailruCookiesSet  bool `json:"mailruCookiesSet"`
+	AvitoCookiesSet   bool `json:"avitoCookiesSet"`
+	OnemeTokenSet     bool `json:"onemeTokenSet"`
+}
+
+func cloneStringSlice(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
+
+func clonePriorityMap(in map[string]int) map[string]int {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]int, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+// Public returns a redacted copy of Config safe for status/UI responses.
+func (c Config) Public() PublicConfig {
+	webdavURL, webdavUser, webdavPass := parseWebdavURL(c.WebdavURL, c.WebdavUser, c.WebdavPassword)
+	return PublicConfig{
+		Enabled:             c.Enabled,
+		Mode:                c.Mode,
+		TransportMode:       c.TransportMode,
+		Transports:          cloneStringSlice(c.Transports),
+		TransportPriorities: clonePriorityMap(c.TransportPriorities),
+		WebdavURL:           webdavURL,
+		WebdavUser:          webdavUser,
+		MailruURL:           c.MailruURL,
+		YandexURL:           c.YandexURL,
+		VyandexURL:          c.VyandexURL,
+		BoardsURL:           c.BoardsURL,
+		AvitoURL:            c.AvitoURL,
+		CupsonlineURL:       c.CupsonlineURL,
+		TelemostURL:         c.TelemostURL,
+		OnemeUID:            c.OnemeUID,
+		DirectListen:        c.DirectListen,
+		DirectHost:          c.DirectHost,
+		Codec:               c.Codec,
+		UpstreamProxy:       c.UpstreamProxy,
+		LowMemory:           c.LowMemory,
+		Lanes:               c.Lanes,
+		NativeScriptsDir:    c.NativeScriptsDir,
+		OpenFirewall:        c.OpenFirewall,
+		Debug:               c.Debug,
+		Name:                c.Name,
+		NatMode:             c.NatMode,
+		NatStaticWAN:        c.NatStaticWAN,
+		NatStaticWANs:       cloneStringSlice(c.NatStaticWANs),
+		Policy:              c.Policy,
+		LANSegments:         cloneStringSlice(c.LANSegments),
+		ExposeToPolicies:    c.ExposeToPolicies,
+		EgressInterface:     c.EgressInterface,
+		NdmsIface:           c.NdmsIface,
+		TunIface:            c.TunIface,
+		TunMTU:              c.TunMTU,
+		SecretSet:           strings.TrimSpace(c.Secret) != "",
+		WebdavPasswordSet:   webdavPass != "",
+		MailruCookiesSet:    strings.TrimSpace(c.MailruCookies) != "",
+		AvitoCookiesSet:     strings.TrimSpace(c.AvitoCookies) != "",
+		OnemeTokenSet:       strings.TrimSpace(c.OnemeToken) != "",
+	}
+}
+
+func resolveSecretField(incoming string, clear bool, existing string) string {
+	if clear {
+		return ""
+	}
+	if strings.TrimSpace(incoming) != "" {
+		return incoming
+	}
+	return existing
+}
+
+func mergeConfigSecrets(incoming, existing Config) Config {
+	incoming.Secret = resolveSecretField(incoming.Secret, incoming.ClearSecret, existing.Secret)
+	_, _, existingWebdavPass := parseWebdavURL(existing.WebdavURL, existing.WebdavUser, existing.WebdavPassword)
+	cleanURL, cleanUser, inPass := parseWebdavURL(incoming.WebdavURL, incoming.WebdavUser, incoming.WebdavPassword)
+	incoming.WebdavURL = cleanURL
+	incoming.WebdavUser = cleanUser
+	incoming.WebdavPassword = resolveSecretField(inPass, incoming.ClearWebdavPassword, existingWebdavPass)
+	incoming.MailruCookies = resolveSecretField(incoming.MailruCookies, incoming.ClearMailruCookies, existing.MailruCookies)
+	incoming.AvitoCookies = resolveSecretField(incoming.AvitoCookies, incoming.ClearAvitoCookies, existing.AvitoCookies)
+	incoming.OnemeToken = resolveSecretField(incoming.OnemeToken, incoming.ClearOnemeToken, existing.OnemeToken)
+
+	incoming.ClearSecret = false
+	incoming.ClearWebdavPassword = false
+	incoming.ClearMailruCookies = false
+	incoming.ClearAvitoCookies = false
+	incoming.ClearOnemeToken = false
+	return incoming
 }
 
 // DefaultConfig returns sensible defaults for running the OpenFlux exit node on a router.
@@ -340,17 +490,19 @@ func (c *ClientConfig) NormalizeURLs() {
 // BuildArgsOptions supplies runtime file paths for sensitive or persistent CLI flags.
 type BuildArgsOptions struct {
 	MailruCookiesFile string
+	AvitoCookiesFile  string
 	CookieStoreFile   string
 }
 
-func appendCookieArgs(args []string, mailruCookies string, opts BuildArgsOptions) []string {
+func appendCookieArgs(args []string, opts BuildArgsOptions) []string {
 	if csFile := strings.TrimSpace(opts.CookieStoreFile); csFile != "" {
 		args = append(args, "--cookie-store="+csFile)
 	}
 	if mcFile := strings.TrimSpace(opts.MailruCookiesFile); mcFile != "" {
 		args = append(args, "--mailru-cookies="+mcFile)
-	} else if mc := strings.TrimSpace(mailruCookies); mc != "" {
-		args = append(args, "--mailru-cookies="+mc)
+	}
+	if acFile := strings.TrimSpace(opts.AvitoCookiesFile); acFile != "" {
+		args = append(args, "--avito-cookies="+acFile)
 	}
 	return args
 }
@@ -416,10 +568,7 @@ func (c *Config) BuildArgsWithOptions(keyFilePath string, opts BuildArgsOptions)
 	if dir := strings.TrimSpace(c.NativeScriptsDir); dir != "" {
 		args = append(args, "--native-scripts="+dir)
 	}
-	if cookies := strings.TrimSpace(c.AvitoCookies); cookies != "" {
-		args = append(args, "--avito-cookies="+cookies)
-	}
-	args = appendCookieArgs(args, c.MailruCookies, opts)
+	args = appendCookieArgs(args, opts)
 
 	isSession := c.TransportMode == "session" || c.TransportMode == "" || len(c.Transports) > 1
 
@@ -683,6 +832,118 @@ type ClientConfig struct {
 	HttpProxyListen  string   `json:"httpProxyListen,omitempty"`
 	AutoReconnect    bool     `json:"autoReconnect"`
 	Debug            int      `json:"debug"`
+
+	// Non-persisted request flags for clearing previously saved secrets.
+	ClearSecret         bool `json:"clearSecret,omitempty"`
+	ClearWebdavPassword bool `json:"clearWebdavPassword,omitempty"`
+	ClearMailruCookies  bool `json:"clearMailruCookies,omitempty"`
+	ClearAvitoCookies   bool `json:"clearAvitoCookies,omitempty"`
+	ClearOnemeToken     bool `json:"clearOnemeToken,omitempty"`
+}
+
+// PublicClientConfig is the redacted view of ClientConfig returned over HTTP APIs.
+type PublicClientConfig struct {
+	Enabled          bool     `json:"enabled"`
+	Name             string   `json:"name,omitempty"`
+	InboundMode      string   `json:"inboundMode,omitempty"`
+	NdmsIface        string   `json:"ndmsIface,omitempty"`
+	TunIface         string   `json:"tunIface,omitempty"`
+	TunAddr          string   `json:"tunAddr,omitempty"`
+	TunMTU           int      `json:"tunMtu,omitempty"`
+	Policy           string   `json:"policy,omitempty"`
+	ExposeToPolicies bool     `json:"exposeToPolicies"`
+	DefaultRoute     bool     `json:"defaultRoute"`
+	TransportMode    string   `json:"transportMode"`
+	Transports       []string `json:"transports"`
+	DirectDial       string   `json:"directDial,omitempty"`
+	WebdavURL        string   `json:"webdavUrl,omitempty"`
+	WebdavUser       string   `json:"webdavUser,omitempty"`
+	MailruURL        string   `json:"mailruUrl,omitempty"`
+	YandexURL        string   `json:"yandexUrl,omitempty"`
+	VyandexURL       string   `json:"vyandexUrl,omitempty"`
+	BoardsURL        string   `json:"boardsUrl,omitempty"`
+	AvitoURL         string   `json:"avitoUrl,omitempty"`
+	CupsonlineURL    string   `json:"cupsonlineUrl,omitempty"`
+	TelemostURL      string   `json:"telemostUrl,omitempty"`
+	OnemeUID         string   `json:"onemeUid,omitempty"`
+	Context          string   `json:"context,omitempty"`
+	Codec            string   `json:"codec,omitempty"`
+	LowMemory        bool     `json:"lowMemory"`
+	Lanes            int      `json:"lanes,omitempty"`
+	NativeScriptsDir string   `json:"nativeScriptsDir,omitempty"`
+	Socks5Listen     string   `json:"socks5Listen,omitempty"`
+	HttpProxyListen  string   `json:"httpProxyListen,omitempty"`
+	AutoReconnect    bool     `json:"autoReconnect"`
+	Debug            int      `json:"debug"`
+
+	SecretSet         bool `json:"secretSet"`
+	WebdavPasswordSet bool `json:"webdavPasswordSet"`
+	MailruCookiesSet  bool `json:"mailruCookiesSet"`
+	AvitoCookiesSet   bool `json:"avitoCookiesSet"`
+	OnemeTokenSet     bool `json:"onemeTokenSet"`
+}
+
+// Public returns a redacted copy of ClientConfig safe for status/UI responses.
+func (c ClientConfig) Public() PublicClientConfig {
+	webdavURL, webdavUser, webdavPass := parseWebdavURL(c.WebdavURL, c.WebdavUser, c.WebdavPassword)
+	return PublicClientConfig{
+		Enabled:           c.Enabled,
+		Name:              c.Name,
+		InboundMode:       c.InboundMode,
+		NdmsIface:         c.NdmsIface,
+		TunIface:          c.TunIface,
+		TunAddr:           c.TunAddr,
+		TunMTU:            c.TunMTU,
+		Policy:            c.Policy,
+		ExposeToPolicies:  c.ExposeToPolicies,
+		DefaultRoute:      c.DefaultRoute,
+		TransportMode:     c.TransportMode,
+		Transports:        cloneStringSlice(c.Transports),
+		DirectDial:        c.DirectDial,
+		WebdavURL:         webdavURL,
+		WebdavUser:        webdavUser,
+		MailruURL:         c.MailruURL,
+		YandexURL:         c.YandexURL,
+		VyandexURL:        c.VyandexURL,
+		BoardsURL:         c.BoardsURL,
+		AvitoURL:          c.AvitoURL,
+		CupsonlineURL:     c.CupsonlineURL,
+		TelemostURL:       c.TelemostURL,
+		OnemeUID:          c.OnemeUID,
+		Context:           c.Context,
+		Codec:             c.Codec,
+		LowMemory:         c.LowMemory,
+		Lanes:             c.Lanes,
+		NativeScriptsDir:  c.NativeScriptsDir,
+		Socks5Listen:      c.Socks5Listen,
+		HttpProxyListen:   c.HttpProxyListen,
+		AutoReconnect:     c.AutoReconnect,
+		Debug:             c.Debug,
+		SecretSet:         strings.TrimSpace(c.Secret) != "",
+		WebdavPasswordSet: webdavPass != "",
+		MailruCookiesSet:  strings.TrimSpace(c.MailruCookies) != "",
+		AvitoCookiesSet:   strings.TrimSpace(c.AvitoCookies) != "",
+		OnemeTokenSet:     strings.TrimSpace(c.OnemeToken) != "",
+	}
+}
+
+func mergeClientConfigSecrets(incoming, existing ClientConfig) ClientConfig {
+	incoming.Secret = resolveSecretField(incoming.Secret, incoming.ClearSecret, existing.Secret)
+	_, _, existingWebdavPass := parseWebdavURL(existing.WebdavURL, existing.WebdavUser, existing.WebdavPassword)
+	cleanURL, cleanUser, inPass := parseWebdavURL(incoming.WebdavURL, incoming.WebdavUser, incoming.WebdavPassword)
+	incoming.WebdavURL = cleanURL
+	incoming.WebdavUser = cleanUser
+	incoming.WebdavPassword = resolveSecretField(inPass, incoming.ClearWebdavPassword, existingWebdavPass)
+	incoming.MailruCookies = resolveSecretField(incoming.MailruCookies, incoming.ClearMailruCookies, existing.MailruCookies)
+	incoming.AvitoCookies = resolveSecretField(incoming.AvitoCookies, incoming.ClearAvitoCookies, existing.AvitoCookies)
+	incoming.OnemeToken = resolveSecretField(incoming.OnemeToken, incoming.ClearOnemeToken, existing.OnemeToken)
+
+	incoming.ClearSecret = false
+	incoming.ClearWebdavPassword = false
+	incoming.ClearMailruCookies = false
+	incoming.ClearAvitoCookies = false
+	incoming.ClearOnemeToken = false
+	return incoming
 }
 
 // DefaultClientConfig returns recommended default settings for an OpenFlux client on a router.
@@ -980,10 +1241,7 @@ func (c *ClientConfig) BuildArgsWithOptions(keyFilePath string, opts BuildArgsOp
 	if dir := strings.TrimSpace(c.NativeScriptsDir); dir != "" {
 		args = append(args, "--native-scripts="+dir)
 	}
-	if cookies := strings.TrimSpace(c.AvitoCookies); cookies != "" {
-		args = append(args, "--avito-cookies="+cookies)
-	}
-	args = appendCookieArgs(args, c.MailruCookies, opts)
+	args = appendCookieArgs(args, opts)
 
 	tm := strings.ToLower(strings.TrimSpace(c.TransportMode))
 	if tm == "" {

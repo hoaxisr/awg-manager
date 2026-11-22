@@ -58,6 +58,18 @@ export interface OpenFluxConfig {
 	ndmsIface?: string;
 	tunIface?: string;
 	tunMtu?: number;
+
+	// Redacted DTO presence indicators (returned by server) and explicit clear flags (sent on save).
+	secretSet?: boolean;
+	webdavPasswordSet?: boolean;
+	mailruCookiesSet?: boolean;
+	avitoCookiesSet?: boolean;
+	onemeTokenSet?: boolean;
+	clearSecret?: boolean;
+	clearWebdavPassword?: boolean;
+	clearMailruCookies?: boolean;
+	clearAvitoCookies?: boolean;
+	clearOnemeToken?: boolean;
 }
 
 export interface OpenFluxClientConfig {
@@ -98,6 +110,17 @@ export interface OpenFluxClientConfig {
 	httpProxyListen?: string;
 	autoReconnect: boolean;
 	debug: number;
+
+	secretSet?: boolean;
+	webdavPasswordSet?: boolean;
+	mailruCookiesSet?: boolean;
+	avitoCookiesSet?: boolean;
+	onemeTokenSet?: boolean;
+	clearSecret?: boolean;
+	clearWebdavPassword?: boolean;
+	clearMailruCookies?: boolean;
+	clearAvitoCookies?: boolean;
+	clearOnemeToken?: boolean;
 }
 
 export interface OpenFluxClientStatus {
@@ -128,8 +151,9 @@ export interface OpenFluxStatus {
 	archSupported: boolean;
 	binary: string;
 	arch: string;
-	link?: string;
+	linkAvailable?: boolean;
 	error?: string;
+	firewallError?: string;
 	config?: OpenFluxConfig;
 	logTail?: string;
 	client?: OpenFluxClientStatus;
