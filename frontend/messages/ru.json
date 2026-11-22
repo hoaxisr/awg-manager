@@ -8850,5 +8850,6 @@
 	"page_scan_kind_embed": "объект",
 	"page_scan_kind_preconnect": "preconnect",
 	"page_scan_kind_csp": "CSP",
-	"page_scan_kind_link": "ссылка"
+	"page_scan_kind_link": "ссылка",
+	"firc_catalog_more_hint": "Показаны первые {shown} из {total} совпадений — уточните запрос"
 }

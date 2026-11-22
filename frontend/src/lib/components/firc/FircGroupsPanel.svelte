@@ -27,6 +27,7 @@
 	import { ServiceCatalogModal } from '$lib/components/dnsroutes';
 	import { presetCatalog, loadPresetCatalog } from '$lib/stores/presets';
 	import { singboxRouterCatalogPresetFilter } from '$lib/utils/catalog-preset';
+	import { searchFircCatalog } from '$lib/utils/fircCatalogSearch';
 	import type { CatalogPreset } from '$lib/types';
 	import {
 		Plus,
@@ -1481,7 +1482,7 @@
 	}
 
 	async function ensureCatalogLoaded() {
-		if (gmCatalog || gmCatalogLoading) return;
+		if ((gmCatalog?.sources?.length ?? 0) > 0 || gmCatalogLoading) return;
 		gmCatalogLoading = true;
 		try {
 			gmCatalog = await api.fircGetListCatalog();
@@ -1492,26 +1493,10 @@
 		}
 	}
 
-	let catalogMatches = $derived.by(() => {
-		if (!gmListEnabled || !gmCatalog) return [];
-		const q = gmListUrl.trim().toLowerCase();
-		if (!q || q.includes('://')) return [];
-		const hits: { name: string; source: string; url: string }[] = [];
-		for (const src of gmCatalog.sources ?? []) {
-			for (const name of src.names ?? []) {
-				if (name.toLowerCase().includes(q)) {
-					hits.push({
-						name,
-						source: src.id,
-						url: src.url.replace('{}', () => name),
-					});
-				}
-				if (hits.length >= 25) break;
-			}
-			if (hits.length >= 25) break;
-		}
-		return hits;
-	});
+	let catalogSearch = $derived.by(() =>
+		gmListEnabled ? searchFircCatalog(gmCatalog, gmListUrl, 100) : { items: [], total: 0 },
+	);
+	let catalogMatches = $derived(catalogSearch.items);
 
 	async function handlePreviewList() {
 		if (!gmListUrl.trim()) return;
@@ -3402,7 +3387,7 @@
 					</Button>
 					<Toggle
 						checked={gmListEnabled}
-						onchange={(v) => (gmListEnabled = v)}
+						onchange={(v) => { gmListEnabled = v; if (v) void ensureCatalogLoaded(); }}
 						ariaLabel="Включить список по URL"
 					/>
 				</div>
@@ -3430,6 +3415,11 @@
 									<Badge variant="muted" size="sm">{hit.source}</Badge>
 								</button>
 							{/each}
+							{#if catalogSearch.total > catalogMatches.length}
+								<div class="catalog-more-hint">
+									{m.firc_catalog_more_hint({ shown: catalogMatches.length, total: catalogSearch.total })}
+								</div>
+							{/if}
 						</div>
 					{/if}
 				</div>
@@ -4874,13 +4864,21 @@
 	}
 
 	.catalog-dropdown {
-		max-height: 150px;
+		max-height: 220px;
 		overflow-y: auto;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-sm);
 		background: var(--bg-secondary);
 		display: flex;
 		flex-direction: column;
+	}
+
+	.catalog-more-hint {
+		padding: 5px 10px;
+		font-size: 11px;
+		color: var(--text-muted);
+		border-top: 1px solid var(--border);
+		background: var(--bg-tertiary);
 	}
 
 	.catalog-item {

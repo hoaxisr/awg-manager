@@ -8450,5 +8450,6 @@
 	"page_scan_kind_embed": "embed",
 	"page_scan_kind_preconnect": "preconnect",
 	"page_scan_kind_csp": "CSP",
-	"page_scan_kind_link": "link"
+	"page_scan_kind_link": "link",
+	"firc_catalog_more_hint": "Showing first {shown} of {total} matches — refine your query"
 }
