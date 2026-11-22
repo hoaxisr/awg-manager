@@ -41,6 +41,8 @@ type Options struct {
 	YandexCookiesFile string
 	// AvitoCookies is the raw cookie string for code.avito.ru.
 	AvitoCookies string
+	// MailruCookies is the raw cookie string, JSON, or cookies file for Mail.ru Docs.
+	MailruCookies string
 	// StrictDirect makes a direct transport without an address an error (the
 	// apps tell the user); without it the CLI's behavior stays: the transport
 	// fails when it starts.
@@ -98,7 +100,17 @@ func New(typ, url string, params map[string]interface{}, o Options) (transport.T
 	case "boards":
 		return yandex.NewBoardsTransport(url, base), nil
 	case "mailru":
-		return mailru.NewMailruDocsTransport(url, base), nil
+		t := mailru.NewMailruDocsTransport(url, base)
+		if o.MailruCookies != "" {
+			jar, err := mailru.ParseCookiesInput(o.MailruCookies)
+			if err != nil {
+				return nil, err
+			}
+			if len(jar) > 0 {
+				_ = t.ApplyCookies(jar)
+			}
+		}
+		return t, nil
 	case "cupsonline":
 		// Stripes over its rooms itself when the room list says so (see
 		// transport.PackRooms); an old list keeps the old wire.

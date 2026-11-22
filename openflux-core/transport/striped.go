@@ -46,6 +46,7 @@ type StripedTransport struct {
 	lanesMu  sync.RWMutex
 	lanes    []Transport
 	readyAt  []time.Time
+	cookies  map[string]string
 	src      LaneSource
 	maxLanes int
 	scale    bool
@@ -327,7 +328,19 @@ func (s *StripedTransport) addLane(why string) {
 	s.lanes = append(s.lanes, l)
 	s.readyAt = append(s.readyAt, time.Now().Add(laneWarmup))
 	n := len(s.lanes)
+	var cookies map[string]string
+	if len(s.cookies) > 0 {
+		cookies = make(map[string]string, len(s.cookies))
+		for k, v := range s.cookies {
+			cookies[k] = v
+		}
+	}
 	s.lanesMu.Unlock()
+	if len(cookies) > 0 {
+		if ce, ok := l.(CookieExchanger); ok {
+			_ = ce.ApplyCookies(cookies)
+		}
+	}
 	s.attach(idx, l)
 	utils.Infof("[STRIPE] +lane %d (%s), now %d lanes", idx, why, n)
 	if err := l.Start(); err != nil {
@@ -1784,6 +1797,75 @@ func (s *StripedTransport) SetBatchHint(n int) { s.batchHint = n }
 
 // PreferredBatchBytes implements BatchSizeHinter (0: no preference).
 func (s *StripedTransport) PreferredBatchBytes() int { return s.batchHint }
+
+// FetchCookies returns the first non-empty cookie jar reported by any lane
+// implementing CookieExchanger, falling back to the cached jar if needed.
+func (s *StripedTransport) FetchCookies() (map[string]string, error) {
+	s.lanesMu.RLock()
+	lanes := append([]Transport(nil), s.lanes...)
+	var cached map[string]string
+	if len(s.cookies) > 0 {
+		cached = make(map[string]string, len(s.cookies))
+		for k, v := range s.cookies {
+			cached[k] = v
+		}
+	}
+	s.lanesMu.RUnlock()
+
+	var firstErr error
+	for _, l := range lanes {
+		ce, ok := l.(CookieExchanger)
+		if !ok {
+			continue
+		}
+		jar, err := ce.FetchCookies()
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if len(jar) > 0 {
+			return jar, nil
+		}
+	}
+	if len(cached) > 0 {
+		return cached, nil
+	}
+	return nil, firstErr
+}
+
+// ApplyCookies broadcasts the cookie jar to every lane implementing
+// CookieExchanger and remembers it for any lane attached later.
+func (s *StripedTransport) ApplyCookies(jar map[string]string) error {
+	if len(jar) == 0 {
+		return nil
+	}
+	cp := make(map[string]string, len(jar))
+	for k, v := range jar {
+		cp[k] = v
+	}
+	s.lanesMu.Lock()
+	s.cookies = cp
+	lanes := append([]Transport(nil), s.lanes...)
+	s.lanesMu.Unlock()
+
+	var firstErr error
+	for _, l := range lanes {
+		ce, ok := l.(CookieExchanger)
+		if !ok {
+			continue
+		}
+		laneJar := make(map[string]string, len(cp))
+		for k, v := range cp {
+			laneJar[k] = v
+		}
+		if err := ce.ApplyCookies(laneJar); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
 
 func (q *sender) cTarget() time.Duration {
 	if q.codelTarget > 0 {

@@ -70,6 +70,7 @@ type Config struct {
 	WebdavUser          string         `json:"webdavUser,omitempty"`
 	WebdavPassword      string         `json:"webdavPassword,omitempty"`
 	MailruURL           string         `json:"mailruUrl,omitempty"`
+	MailruCookies       string         `json:"mailruCookies,omitempty"`
 	YandexURL           string         `json:"yandexUrl,omitempty"`
 	VyandexURL          string         `json:"vyandexUrl,omitempty"`
 	BoardsURL           string         `json:"boardsUrl,omitempty"`
@@ -298,8 +299,69 @@ func parseWebdavURL(raw, user, pass string) (cleanURL, outUser, outPass string) 
 	return cleanURL, outUser, outPass
 }
 
+// NormalizeMultiURL normalizes a single URL or multi-link striped URL list
+// separated by commas, pipes, or whitespace/newlines into a compact
+// comma-separated string compatible with OpenFlux's transport registry.
+func NormalizeMultiURL(raw string) string {
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '|' || r == ' ' || r == '\n' || r == '\t' || r == '\r'
+	})
+	var clean []string
+	for _, f := range fields {
+		if u := strings.TrimSpace(f); u != "" {
+			clean = append(clean, u)
+		}
+	}
+	return strings.Join(clean, ",")
+}
+
+// NormalizeURLs normalizes multi-link transport URL fields in place.
+func (c *Config) NormalizeURLs() {
+	c.MailruURL = NormalizeMultiURL(c.MailruURL)
+	c.YandexURL = NormalizeMultiURL(c.YandexURL)
+	c.VyandexURL = NormalizeMultiURL(c.VyandexURL)
+	c.BoardsURL = NormalizeMultiURL(c.BoardsURL)
+	c.AvitoURL = NormalizeMultiURL(c.AvitoURL)
+	c.CupsonlineURL = NormalizeMultiURL(c.CupsonlineURL)
+	c.TelemostURL = NormalizeMultiURL(c.TelemostURL)
+}
+
+// NormalizeURLs normalizes multi-link transport URL fields in place.
+func (c *ClientConfig) NormalizeURLs() {
+	c.MailruURL = NormalizeMultiURL(c.MailruURL)
+	c.YandexURL = NormalizeMultiURL(c.YandexURL)
+	c.VyandexURL = NormalizeMultiURL(c.VyandexURL)
+	c.BoardsURL = NormalizeMultiURL(c.BoardsURL)
+	c.AvitoURL = NormalizeMultiURL(c.AvitoURL)
+	c.CupsonlineURL = NormalizeMultiURL(c.CupsonlineURL)
+	c.TelemostURL = NormalizeMultiURL(c.TelemostURL)
+}
+
+// BuildArgsOptions supplies runtime file paths for sensitive or persistent CLI flags.
+type BuildArgsOptions struct {
+	MailruCookiesFile string
+	CookieStoreFile   string
+}
+
+func appendCookieArgs(args []string, mailruCookies string, opts BuildArgsOptions) []string {
+	if csFile := strings.TrimSpace(opts.CookieStoreFile); csFile != "" {
+		args = append(args, "--cookie-store="+csFile)
+	}
+	if mcFile := strings.TrimSpace(opts.MailruCookiesFile); mcFile != "" {
+		args = append(args, "--mailru-cookies="+mcFile)
+	} else if mc := strings.TrimSpace(mailruCookies); mc != "" {
+		args = append(args, "--mailru-cookies="+mc)
+	}
+	return args
+}
+
 // BuildArgs converts Config to OpenFlux CLI invocation arguments.
 func (c *Config) BuildArgs(keyFilePath string) []string {
+	return c.BuildArgsWithOptions(keyFilePath, BuildArgsOptions{})
+}
+
+// BuildArgsWithOptions converts Config to OpenFlux CLI arguments using optional runtime file paths.
+func (c *Config) BuildArgsWithOptions(keyFilePath string, opts BuildArgsOptions) []string {
 	args := []string{
 		"--role=exit",
 	}
@@ -357,6 +419,7 @@ func (c *Config) BuildArgs(keyFilePath string) []string {
 	if cookies := strings.TrimSpace(c.AvitoCookies); cookies != "" {
 		args = append(args, "--avito-cookies="+cookies)
 	}
+	args = appendCookieArgs(args, c.MailruCookies, opts)
 
 	isSession := c.TransportMode == "session" || c.TransportMode == "" || len(c.Transports) > 1
 
@@ -368,20 +431,20 @@ func (c *Config) BuildArgs(keyFilePath string) []string {
 		contextURL := "http://#"
 		if strings.TrimSpace(c.WebdavURL) != "" {
 			contextURL = sanitizeContextURL(c.WebdavURL)
-		} else if strings.TrimSpace(c.MailruURL) != "" {
-			contextURL = strings.TrimSpace(c.MailruURL)
-		} else if strings.TrimSpace(c.YandexURL) != "" {
-			contextURL = strings.TrimSpace(c.YandexURL)
-		} else if strings.TrimSpace(c.VyandexURL) != "" {
-			contextURL = strings.TrimSpace(c.VyandexURL)
-		} else if strings.TrimSpace(c.BoardsURL) != "" {
-			contextURL = strings.TrimSpace(c.BoardsURL)
-		} else if strings.TrimSpace(c.AvitoURL) != "" {
-			contextURL = strings.TrimSpace(c.AvitoURL)
-		} else if strings.TrimSpace(c.CupsonlineURL) != "" {
-			contextURL = strings.TrimSpace(c.CupsonlineURL)
-		} else if strings.TrimSpace(c.TelemostURL) != "" {
-			contextURL = strings.TrimSpace(c.TelemostURL)
+		} else if u := NormalizeMultiURL(c.MailruURL); u != "" {
+			contextURL = u
+		} else if u := NormalizeMultiURL(c.YandexURL); u != "" {
+			contextURL = u
+		} else if u := NormalizeMultiURL(c.VyandexURL); u != "" {
+			contextURL = u
+		} else if u := NormalizeMultiURL(c.BoardsURL); u != "" {
+			contextURL = u
+		} else if u := NormalizeMultiURL(c.AvitoURL); u != "" {
+			contextURL = u
+		} else if u := NormalizeMultiURL(c.CupsonlineURL); u != "" {
+			contextURL = u
+		} else if u := NormalizeMultiURL(c.TelemostURL); u != "" {
+			contextURL = u
 		}
 		args = append(args, "--session-context="+contextURL)
 
@@ -467,32 +530,32 @@ func (c *Config) BuildArgs(keyFilePath string) []string {
 				args = append(args, "--webdav-pass="+webdavPass)
 			}
 		}
-		if hasMailru && strings.TrimSpace(c.MailruURL) != "" {
-			args = append(args, "--mailru-url="+strings.TrimSpace(c.MailruURL))
+		if hasMailru && NormalizeMultiURL(c.MailruURL) != "" {
+			args = append(args, "--mailru-url="+NormalizeMultiURL(c.MailruURL))
 		}
-		if hasYandex && strings.TrimSpace(c.YandexURL) != "" {
-			args = append(args, "--yandex-url="+strings.TrimSpace(c.YandexURL))
+		if hasYandex && NormalizeMultiURL(c.YandexURL) != "" {
+			args = append(args, "--yandex-url="+NormalizeMultiURL(c.YandexURL))
 		}
 		if hasVyandex {
-			vyURL := strings.TrimSpace(c.VyandexURL)
+			vyURL := NormalizeMultiURL(c.VyandexURL)
 			if vyURL == "" {
-				vyURL = strings.TrimSpace(c.YandexURL)
+				vyURL = NormalizeMultiURL(c.YandexURL)
 			}
 			if vyURL != "" {
 				args = append(args, "--vyandex-url="+vyURL)
 			}
 		}
-		if hasBoards && strings.TrimSpace(c.BoardsURL) != "" {
-			args = append(args, "--boards-url="+strings.TrimSpace(c.BoardsURL))
+		if hasBoards && NormalizeMultiURL(c.BoardsURL) != "" {
+			args = append(args, "--boards-url="+NormalizeMultiURL(c.BoardsURL))
 		}
-		if hasAvito && strings.TrimSpace(c.AvitoURL) != "" {
-			args = append(args, "--avito-url="+strings.TrimSpace(c.AvitoURL))
+		if hasAvito && NormalizeMultiURL(c.AvitoURL) != "" {
+			args = append(args, "--avito-url="+NormalizeMultiURL(c.AvitoURL))
 		}
-		if hasCups && strings.TrimSpace(c.CupsonlineURL) != "" {
-			args = append(args, "--cupsonline-url="+strings.TrimSpace(c.CupsonlineURL))
+		if hasCups && NormalizeMultiURL(c.CupsonlineURL) != "" {
+			args = append(args, "--cupsonline-url="+NormalizeMultiURL(c.CupsonlineURL))
 		}
-		if hasTelemost && strings.TrimSpace(c.TelemostURL) != "" {
-			args = append(args, "--telemost-url="+strings.TrimSpace(c.TelemostURL))
+		if hasTelemost && NormalizeMultiURL(c.TelemostURL) != "" {
+			args = append(args, "--telemost-url="+NormalizeMultiURL(c.TelemostURL))
 		}
 		if hasOneme {
 			args = append(args, "--oneme-token="+strings.TrimSpace(c.OnemeToken))
@@ -528,36 +591,36 @@ func (c *Config) BuildArgs(keyFilePath string) []string {
 			}
 			args = append(args, "--direct-listen="+dl)
 		case "mailru":
-			if strings.TrimSpace(c.MailruURL) != "" {
-				args = append(args, "--url="+strings.TrimSpace(c.MailruURL))
+			if u := NormalizeMultiURL(c.MailruURL); u != "" {
+				args = append(args, "--url="+u)
 			}
 		case "yandex":
-			if strings.TrimSpace(c.YandexURL) != "" {
-				args = append(args, "--url="+strings.TrimSpace(c.YandexURL))
+			if u := NormalizeMultiURL(c.YandexURL); u != "" {
+				args = append(args, "--url="+u)
 			}
 		case "vyandex":
-			vyURL := strings.TrimSpace(c.VyandexURL)
+			vyURL := NormalizeMultiURL(c.VyandexURL)
 			if vyURL == "" {
-				vyURL = strings.TrimSpace(c.YandexURL)
+				vyURL = NormalizeMultiURL(c.YandexURL)
 			}
 			if vyURL != "" {
 				args = append(args, "--url="+vyURL)
 			}
 		case "boards":
-			if strings.TrimSpace(c.BoardsURL) != "" {
-				args = append(args, "--url="+strings.TrimSpace(c.BoardsURL))
+			if u := NormalizeMultiURL(c.BoardsURL); u != "" {
+				args = append(args, "--url="+u)
 			}
 		case "avito":
-			if strings.TrimSpace(c.AvitoURL) != "" {
-				args = append(args, "--url="+strings.TrimSpace(c.AvitoURL))
+			if u := NormalizeMultiURL(c.AvitoURL); u != "" {
+				args = append(args, "--url="+u)
 			}
 		case "cupsonline":
-			if strings.TrimSpace(c.CupsonlineURL) != "" {
-				args = append(args, "--url="+strings.TrimSpace(c.CupsonlineURL))
+			if u := NormalizeMultiURL(c.CupsonlineURL); u != "" {
+				args = append(args, "--url="+u)
 			}
 		case "telemost":
-			if strings.TrimSpace(c.TelemostURL) != "" {
-				args = append(args, "--url="+strings.TrimSpace(c.TelemostURL))
+			if u := NormalizeMultiURL(c.TelemostURL); u != "" {
+				args = append(args, "--url="+u)
 			}
 		case "oneme":
 			if strings.TrimSpace(c.OnemeToken) != "" {
@@ -600,6 +663,7 @@ type ClientConfig struct {
 	WebdavUser       string   `json:"webdavUser,omitempty"`
 	WebdavPassword   string   `json:"webdavPassword,omitempty"`
 	MailruURL        string   `json:"mailruUrl,omitempty"`
+	MailruCookies    string   `json:"mailruCookies,omitempty"`
 	YandexURL        string   `json:"yandexUrl,omitempty"`
 	VyandexURL       string   `json:"vyandexUrl,omitempty"`
 	BoardsURL        string   `json:"boardsUrl,omitempty"`
@@ -863,6 +927,11 @@ func (c *ClientConfig) HttpURI() string {
 
 // BuildArgs converts ClientConfig to OpenFlux CLI arguments for --role=client.
 func (c *ClientConfig) BuildArgs(keyFilePath string) []string {
+	return c.BuildArgsWithOptions(keyFilePath, BuildArgsOptions{})
+}
+
+// BuildArgsWithOptions converts ClientConfig to OpenFlux CLI arguments using optional runtime file paths.
+func (c *ClientConfig) BuildArgsWithOptions(keyFilePath string, opts BuildArgsOptions) []string {
 	inbound := strings.ToLower(strings.TrimSpace(c.InboundMode))
 	if inbound == "" {
 		inbound = "tun"
@@ -914,6 +983,7 @@ func (c *ClientConfig) BuildArgs(keyFilePath string) []string {
 	if cookies := strings.TrimSpace(c.AvitoCookies); cookies != "" {
 		args = append(args, "--avito-cookies="+cookies)
 	}
+	args = appendCookieArgs(args, c.MailruCookies, opts)
 
 	tm := strings.ToLower(strings.TrimSpace(c.TransportMode))
 	if tm == "" {
@@ -1002,14 +1072,14 @@ func (c *ClientConfig) BuildArgs(keyFilePath string) []string {
 		singleType := "mailru"
 		if len(c.Transports) > 0 && strings.EqualFold(strings.TrimSpace(c.Transports[0]), "cupsonline") {
 			singleType = "cupsonline"
-		} else if strings.TrimSpace(c.MailruURL) == "" && strings.TrimSpace(c.CupsonlineURL) != "" {
+		} else if NormalizeMultiURL(c.MailruURL) == "" && NormalizeMultiURL(c.CupsonlineURL) != "" {
 			singleType = "cupsonline"
 		}
 		args = append(args, "--transport="+singleType)
-		if singleType == "cupsonline" && strings.TrimSpace(c.CupsonlineURL) != "" {
-			args = append(args, "--url="+strings.TrimSpace(c.CupsonlineURL))
-		} else if strings.TrimSpace(c.MailruURL) != "" {
-			args = append(args, "--url="+strings.TrimSpace(c.MailruURL))
+		if singleType == "cupsonline" && NormalizeMultiURL(c.CupsonlineURL) != "" {
+			args = append(args, "--url="+NormalizeMultiURL(c.CupsonlineURL))
+		} else if u := NormalizeMultiURL(c.MailruURL); u != "" {
+			args = append(args, "--url="+u)
 		}
 	} else if len(c.Transports) == 1 && strings.EqualFold(strings.TrimSpace(c.Transports[0]), "telemost") {
 		singleType := "telemost"
@@ -1017,11 +1087,11 @@ func (c *ClientConfig) BuildArgs(keyFilePath string) []string {
 		if keyFilePath != "" && strings.TrimSpace(c.Secret) != "" {
 			args = append(args, "--encryption-key-file="+keyFilePath)
 			if strings.TrimSpace(c.Context) != "" {
-				args = append(args, "--session-context="+strings.TrimSpace(c.Context))
+				args = append(args, "--session-context="+sanitizeContextURL(NormalizeMultiURL(c.Context)))
 			}
 		}
-		if strings.TrimSpace(c.TelemostURL) != "" {
-			args = append(args, "--url="+strings.TrimSpace(c.TelemostURL))
+		if u := NormalizeMultiURL(c.TelemostURL); u != "" {
+			args = append(args, "--url="+u)
 		}
 	} else if (tm == "session" || len(c.Transports) > 1) && len(sessionParts) > 0 {
 		args = append(args, "--negotiate")
@@ -1033,25 +1103,25 @@ func (c *ClientConfig) BuildArgs(keyFilePath string) []string {
 		if contextURL == "" {
 			if strings.TrimSpace(c.WebdavURL) != "" {
 				contextURL = sanitizeContextURL(c.WebdavURL)
-			} else if strings.TrimSpace(c.MailruURL) != "" {
-				contextURL = strings.TrimSpace(c.MailruURL)
-			} else if strings.TrimSpace(c.YandexURL) != "" {
-				contextURL = strings.TrimSpace(c.YandexURL)
-			} else if strings.TrimSpace(c.VyandexURL) != "" {
-				contextURL = strings.TrimSpace(c.VyandexURL)
-			} else if strings.TrimSpace(c.BoardsURL) != "" {
-				contextURL = strings.TrimSpace(c.BoardsURL)
-			} else if strings.TrimSpace(c.AvitoURL) != "" {
-				contextURL = strings.TrimSpace(c.AvitoURL)
-			} else if strings.TrimSpace(c.CupsonlineURL) != "" {
-				contextURL = strings.TrimSpace(c.CupsonlineURL)
-			} else if strings.TrimSpace(c.TelemostURL) != "" {
-				contextURL = strings.TrimSpace(c.TelemostURL)
+			} else if u := NormalizeMultiURL(c.MailruURL); u != "" {
+				contextURL = u
+			} else if u := NormalizeMultiURL(c.YandexURL); u != "" {
+				contextURL = u
+			} else if u := NormalizeMultiURL(c.VyandexURL); u != "" {
+				contextURL = u
+			} else if u := NormalizeMultiURL(c.BoardsURL); u != "" {
+				contextURL = u
+			} else if u := NormalizeMultiURL(c.AvitoURL); u != "" {
+				contextURL = u
+			} else if u := NormalizeMultiURL(c.CupsonlineURL); u != "" {
+				contextURL = u
+			} else if u := NormalizeMultiURL(c.TelemostURL); u != "" {
+				contextURL = u
 			} else {
 				contextURL = "http://#"
 			}
 		} else {
-			contextURL = sanitizeContextURL(contextURL)
+			contextURL = sanitizeContextURL(NormalizeMultiURL(contextURL))
 		}
 		args = append(args, "--session-context="+contextURL)
 		args = append(args, "--transports="+strings.Join(sessionParts, ","))
@@ -1070,31 +1140,31 @@ func (c *ClientConfig) BuildArgs(keyFilePath string) []string {
 			}
 		}
 		if hasMailru {
-			args = append(args, "--mailru-url="+strings.TrimSpace(c.MailruURL))
+			args = append(args, "--mailru-url="+NormalizeMultiURL(c.MailruURL))
 		}
 		if hasYandex {
-			args = append(args, "--yandex-url="+strings.TrimSpace(c.YandexURL))
+			args = append(args, "--yandex-url="+NormalizeMultiURL(c.YandexURL))
 		}
 		if hasVyandex {
-			vyURL := strings.TrimSpace(c.VyandexURL)
+			vyURL := NormalizeMultiURL(c.VyandexURL)
 			if vyURL == "" {
-				vyURL = strings.TrimSpace(c.YandexURL)
+				vyURL = NormalizeMultiURL(c.YandexURL)
 			}
 			if vyURL != "" {
 				args = append(args, "--vyandex-url="+vyURL)
 			}
 		}
 		if hasBoards {
-			args = append(args, "--boards-url="+strings.TrimSpace(c.BoardsURL))
+			args = append(args, "--boards-url="+NormalizeMultiURL(c.BoardsURL))
 		}
 		if hasAvito {
-			args = append(args, "--avito-url="+strings.TrimSpace(c.AvitoURL))
+			args = append(args, "--avito-url="+NormalizeMultiURL(c.AvitoURL))
 		}
 		if hasCups {
-			args = append(args, "--cupsonline-url="+strings.TrimSpace(c.CupsonlineURL))
+			args = append(args, "--cupsonline-url="+NormalizeMultiURL(c.CupsonlineURL))
 		}
-		if hasTelemost && strings.TrimSpace(c.TelemostURL) != "" {
-			args = append(args, "--telemost-url="+strings.TrimSpace(c.TelemostURL))
+		if hasTelemost && NormalizeMultiURL(c.TelemostURL) != "" {
+			args = append(args, "--telemost-url="+NormalizeMultiURL(c.TelemostURL))
 		}
 		if hasOneme {
 			args = append(args, "--oneme-token="+strings.TrimSpace(c.OnemeToken))
@@ -1110,7 +1180,7 @@ func (c *ClientConfig) BuildArgs(keyFilePath string) []string {
 		if keyFilePath != "" && strings.TrimSpace(c.Secret) != "" {
 			args = append(args, "--encryption-key-file="+keyFilePath)
 			if strings.TrimSpace(c.Context) != "" {
-				args = append(args, "--session-context="+sanitizeContextURL(c.Context))
+				args = append(args, "--session-context="+sanitizeContextURL(NormalizeMultiURL(c.Context)))
 			}
 		}
 
@@ -1131,36 +1201,36 @@ func (c *ClientConfig) BuildArgs(keyFilePath string) []string {
 				args = append(args, "--direct-dial="+strings.TrimSpace(c.DirectDial))
 			}
 		case "mailru":
-			if strings.TrimSpace(c.MailruURL) != "" {
-				args = append(args, "--url="+strings.TrimSpace(c.MailruURL))
+			if u := NormalizeMultiURL(c.MailruURL); u != "" {
+				args = append(args, "--url="+u)
 			}
 		case "yandex":
-			if strings.TrimSpace(c.YandexURL) != "" {
-				args = append(args, "--url="+strings.TrimSpace(c.YandexURL))
+			if u := NormalizeMultiURL(c.YandexURL); u != "" {
+				args = append(args, "--url="+u)
 			}
 		case "vyandex":
-			vyURL := strings.TrimSpace(c.VyandexURL)
+			vyURL := NormalizeMultiURL(c.VyandexURL)
 			if vyURL == "" {
-				vyURL = strings.TrimSpace(c.YandexURL)
+				vyURL = NormalizeMultiURL(c.YandexURL)
 			}
 			if vyURL != "" {
 				args = append(args, "--url="+vyURL)
 			}
 		case "boards":
-			if strings.TrimSpace(c.BoardsURL) != "" {
-				args = append(args, "--url="+strings.TrimSpace(c.BoardsURL))
+			if u := NormalizeMultiURL(c.BoardsURL); u != "" {
+				args = append(args, "--url="+u)
 			}
 		case "avito":
-			if strings.TrimSpace(c.AvitoURL) != "" {
-				args = append(args, "--url="+strings.TrimSpace(c.AvitoURL))
+			if u := NormalizeMultiURL(c.AvitoURL); u != "" {
+				args = append(args, "--url="+u)
 			}
 		case "cupsonline":
-			if strings.TrimSpace(c.CupsonlineURL) != "" {
-				args = append(args, "--url="+strings.TrimSpace(c.CupsonlineURL))
+			if u := NormalizeMultiURL(c.CupsonlineURL); u != "" {
+				args = append(args, "--url="+u)
 			}
 		case "telemost":
-			if strings.TrimSpace(c.TelemostURL) != "" {
-				args = append(args, "--url="+strings.TrimSpace(c.TelemostURL))
+			if u := NormalizeMultiURL(c.TelemostURL); u != "" {
+				args = append(args, "--url="+u)
 			}
 		case "oneme":
 			if strings.TrimSpace(c.OnemeToken) != "" {

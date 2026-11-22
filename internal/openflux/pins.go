@@ -3,7 +3,7 @@ package openflux
 import "strings"
 
 // PinnedVersion is the exact version of OpenFlux core packaged for awg-manager.
-const PinnedVersion = "0.17.1-awgm.1"
+const PinnedVersion = "0.17.1-awgm.2"
 
 // BinarySpec describes an OpenFlux binary for a target architecture.
 type BinarySpec struct {
@@ -16,27 +16,27 @@ type BinarySpec struct {
 var EmbeddedBinaries = map[string]BinarySpec{
 	"aarch64-3.10": {
 		URL:     "https://github.com/hoaxisr/awg-manager/releases/download/openflux-v" + PinnedVersion + "/openflux-linux-aarch64-3.10",
-		SHA256:  "e6074cbea2ab987a030177823977f9ffdf473337110511748cbf15ad8e5897b5",
+		SHA256:  "da8eeffea12a8af721fc77542160d0910561c5b93e642afac5525eb95d318813",
 		Version: PinnedVersion,
 	},
 	"mipsel-3.4": {
 		URL:     "https://github.com/hoaxisr/awg-manager/releases/download/openflux-v" + PinnedVersion + "/openflux-linux-mipsel-3.4",
-		SHA256:  "8280cb9cb56b86183708e5bb0d388ce136a2cc35e86dc81240b6d0f8a35505cd",
+		SHA256:  "cb221d8d85b8363d7b3e5c322dcd468c91d2b58c4ea4c089af53f090cdfbdd63",
 		Version: PinnedVersion,
 	},
 	"mips-3.4": {
 		URL:     "https://github.com/hoaxisr/awg-manager/releases/download/openflux-v" + PinnedVersion + "/openflux-linux-mips-3.4",
-		SHA256:  "f838a8a4b854c0826c0e5b0f8c0d76e7397a629d40dad1c6d0ca56600cbc7cf6",
+		SHA256:  "5bc37a0a2731ea8c98161074ac8f39046e2f9edef3c1a6fb1bede88fbf6c1283",
 		Version: PinnedVersion,
 	},
 	"arm": {
 		URL:     "https://github.com/hoaxisr/awg-manager/releases/download/openflux-v" + PinnedVersion + "/openflux-linux-arm",
-		SHA256:  "f9a24d4815f1b38714f3abaaecee8f57f284875614f7c514d2bfe3cad7904053",
+		SHA256:  "2dd9be872a1a0d84d67e0358fc51b2730e2228b04c723720a408ed8c7c88556c",
 		Version: PinnedVersion,
 	},
 	"x86_64": {
 		URL:     "https://github.com/hoaxisr/awg-manager/releases/download/openflux-v" + PinnedVersion + "/openflux-linux-x86_64",
-		SHA256:  "861e39dc1751cec4e74ff3b3546a38008d3f65db608c7bb04acc09f51ac636d7",
+		SHA256:  "570ecb2d3c96514973712b8543554eb903c5829303438aa83dbc0bdbbce8057f",
 		Version: PinnedVersion,
 	},
 }

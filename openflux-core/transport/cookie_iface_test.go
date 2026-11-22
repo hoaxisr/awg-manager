@@ -11,6 +11,8 @@ import (
 // CookieExchanger. If any of these break, main.go's type assertion will
 // silently skip control wiring and cookie exchange will be dead.
 var (
+	_ transport.CookieExchanger = (*transport.BatchedTransport)(nil)
+	_ transport.CookieExchanger = (*transport.StripedTransport)(nil)
 	_ transport.CookieExchanger = (*yandex.YandexDocsTransport)(nil)
 	_ transport.CookieExchanger = (*yandex.YandexVolgaTransport)(nil)
 	_ transport.CookieExchanger = (*yandex.BoardsTransport)(nil)

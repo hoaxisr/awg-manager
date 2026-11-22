@@ -92,34 +92,38 @@ type Status struct {
 
 // Service manages the OpenFlux exit server and client processes.
 type Service struct {
-	mu              sync.Mutex
-	dataDir         string
-	openfluxDir     string
-	binPath         string
-	binExplicit     bool
-	cfgPath         string
-	keyPath         string
-	pidPath         string
-	logPath         string
-	clientCfgPath   string
-	clientKeyPath   string
-	clientPidPath   string
-	clientLogPath   string
-	arch            string
-	spec            BinarySpec
-	httpClient      *http.Client
-	freeDisk        func(string) (int64, bool)
-	config          Config
-	clientConfig    ClientConfig
-	startedAt       time.Time
-	clientStartedAt time.Time
-	openedPort      int
-	clientLastErr   string
-	clientStopCh    chan struct{}
-	getPublicHost   func(context.Context) string
-	routerCmds      RouterCommands
-	policyResolver  PolicyResolver
-	tunnelStore     TunnelStore
+	mu                      sync.Mutex
+	dataDir                 string
+	openfluxDir             string
+	binPath                 string
+	binExplicit             bool
+	cfgPath                 string
+	keyPath                 string
+	mailruCookiesPath       string
+	cookieStorePath         string
+	pidPath                 string
+	logPath                 string
+	clientCfgPath           string
+	clientKeyPath           string
+	clientMailruCookiesPath string
+	clientCookieStorePath   string
+	clientPidPath           string
+	clientLogPath           string
+	arch                    string
+	spec                    BinarySpec
+	httpClient              *http.Client
+	freeDisk                func(string) (int64, bool)
+	config                  Config
+	clientConfig            ClientConfig
+	startedAt               time.Time
+	clientStartedAt         time.Time
+	openedPort              int
+	clientLastErr           string
+	clientStopCh            chan struct{}
+	getPublicHost           func(context.Context) string
+	routerCmds              RouterCommands
+	policyResolver          PolicyResolver
+	tunnelStore             TunnelStore
 
 	cachedVerPath string
 	cachedVer     string
@@ -173,25 +177,29 @@ func New(dataDir string, arch string, getPublicHost func(context.Context) string
 	}
 
 	s := &Service{
-		dataDir:       dataDir,
-		openfluxDir:   ofDir,
-		binPath:       binPath,
-		binExplicit:   binExplicit,
-		cfgPath:       filepath.Join(ofDir, "config.json"),
-		keyPath:       filepath.Join(ofDir, "secret.key"),
-		pidPath:       filepath.Join(ofDir, "openflux.pid"),
-		logPath:       filepath.Join(ofDir, "openflux.log"),
-		clientCfgPath: filepath.Join(ofDir, "client_config.json"),
-		clientKeyPath: filepath.Join(ofDir, "client_secret.key"),
-		clientPidPath: filepath.Join(ofDir, "openflux_client.pid"),
-		clientLogPath: filepath.Join(ofDir, "openflux_client.log"),
-		arch:          normArch,
-		spec:          spec,
-		httpClient:    &http.Client{Timeout: 3 * time.Minute},
-		freeDisk:      routerinfo.FreeBytes,
-		config:        DefaultConfig(),
-		clientConfig:  ClientConfig{},
-		getPublicHost: getPublicHost,
+		dataDir:                 dataDir,
+		openfluxDir:             ofDir,
+		binPath:                 binPath,
+		binExplicit:             binExplicit,
+		cfgPath:                 filepath.Join(ofDir, "config.json"),
+		keyPath:                 filepath.Join(ofDir, "secret.key"),
+		mailruCookiesPath:       filepath.Join(ofDir, "mailru_cookies.txt"),
+		cookieStorePath:         filepath.Join(ofDir, "cookies-server.json"),
+		pidPath:                 filepath.Join(ofDir, "openflux.pid"),
+		logPath:                 filepath.Join(ofDir, "openflux.log"),
+		clientCfgPath:           filepath.Join(ofDir, "client_config.json"),
+		clientKeyPath:           filepath.Join(ofDir, "client_secret.key"),
+		clientMailruCookiesPath: filepath.Join(ofDir, "client_mailru_cookies.txt"),
+		clientCookieStorePath:   filepath.Join(ofDir, "cookies-client.json"),
+		clientPidPath:           filepath.Join(ofDir, "openflux_client.pid"),
+		clientLogPath:           filepath.Join(ofDir, "openflux_client.log"),
+		arch:                    normArch,
+		spec:                    spec,
+		httpClient:              &http.Client{Timeout: 3 * time.Minute},
+		freeDisk:                routerinfo.FreeBytes,
+		config:                  DefaultConfig(),
+		clientConfig:            ClientConfig{},
+		getPublicHost:           getPublicHost,
 	}
 
 	s.loadConfig()
@@ -581,6 +589,8 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	cfg.NormalizeURLs()
+
 	if strings.EqualFold(strings.TrimSpace(cfg.Mode), "l3") {
 		preferred := strings.TrimSpace(cfg.NdmsIface)
 		if idx, ok := opkgTunNum(preferred); ok && idx < 2 {
@@ -597,9 +607,13 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 		return err
 	}
 
+	oldMailruCookies := strings.TrimSpace(s.config.MailruCookies)
 	s.config = cfg
 	if err := s.saveConfigLocked(); err != nil {
 		return err
+	}
+	if strings.TrimSpace(cfg.MailruCookies) != oldMailruCookies {
+		clearStaleCookieStores(s.cookieStorePath, filepath.Join(s.openfluxDir, "cookies-yandex.json"))
 	}
 
 	running, _ := s.GetRunningState()
@@ -655,6 +669,8 @@ func (s *Service) SaveClientConfig(ctx context.Context, cfg ClientConfig) error 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	cfg.NormalizeURLs()
+
 	oldConfig := s.clientConfig
 
 	if strings.TrimSpace(cfg.Socks5Listen) == "" {
@@ -708,6 +724,9 @@ func (s *Service) SaveClientConfig(ctx context.Context, cfg ClientConfig) error 
 	s.clientConfig = cfg
 	if err := s.saveClientConfigLocked(); err != nil {
 		return err
+	}
+	if strings.TrimSpace(cfg.MailruCookies) != strings.TrimSpace(oldConfig.MailruCookies) {
+		clearStaleCookieStores(s.clientCookieStorePath)
 	}
 
 	running, _ := s.GetClientRunningState()
@@ -978,6 +997,7 @@ func (s *Service) startProcess(ctx context.Context) error {
 		}
 		if ndmsIface == "" || ndmsIface == "OpkgTun0" || ndmsIface == "OpkgTun1" {
 			secureZeroAndRemoveFile(s.keyPath)
+			secureZeroAndRemoveFile(s.mailruCookiesPath)
 			return fmt.Errorf("недопустимый или невыделенный интерфейс OpkgTun для exit-сервера: %q", ndmsIface)
 		}
 		if s.routerCmds != nil {
@@ -991,16 +1011,24 @@ func (s *Service) startProcess(ctx context.Context) error {
 			}
 			if err := s.routerCmds.CreateInterface(ctx, ndmsIface, desc, mtu, "", s.config.ExposeToPolicies, false); err != nil {
 				secureZeroAndRemoveFile(s.keyPath)
+				secureZeroAndRemoveFile(s.mailruCookiesPath)
 				return fmt.Errorf("ошибка создания интерфейса %s в NDMS: %w", ndmsIface, err)
 			}
 		}
 	}
 
-	args := s.config.BuildArgs(s.keyPath)
+	buildOpts, err := prepareRuntimeCookieArgs(s.cookieStorePath, s.mailruCookiesPath, s.config.MailruCookies)
+	if err != nil {
+		secureZeroAndRemoveFile(s.keyPath)
+		secureZeroAndRemoveFile(s.mailruCookiesPath)
+		return err
+	}
+	args := s.config.BuildArgsWithOptions(s.keyPath, buildOpts)
 
 	logFile, err := os.OpenFile(s.logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		secureZeroAndRemoveFile(s.keyPath)
+		secureZeroAndRemoveFile(s.mailruCookiesPath)
 		return fmt.Errorf("не удалось открыть файл журнала: %w", err)
 	}
 
@@ -1012,6 +1040,7 @@ func (s *Service) startProcess(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
 		secureZeroAndRemoveFile(s.keyPath)
+		secureZeroAndRemoveFile(s.mailruCookiesPath)
 		if strings.EqualFold(strings.TrimSpace(s.config.Mode), "l3") && s.routerCmds != nil {
 			ndmsIface := strings.TrimSpace(s.config.NdmsIface)
 			if ndmsIface != "" && ndmsIface != "OpkgTun0" && ndmsIface != "OpkgTun1" {
@@ -1036,8 +1065,34 @@ func (s *Service) startProcess(ctx context.Context) error {
 	return nil
 }
 
+func clearStaleCookieStores(paths ...string) {
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		_ = os.Remove(p)
+		_ = os.Remove(p + ".incoming")
+	}
+}
+
+func prepareRuntimeCookieArgs(cookieStorePath, mailruCookiesPath, rawCookies string) (BuildArgsOptions, error) {
+	opts := BuildArgsOptions{
+		CookieStoreFile: cookieStorePath,
+	}
+	if mc := strings.TrimSpace(rawCookies); mc != "" {
+		if err := os.WriteFile(mailruCookiesPath, []byte(mc+"\n"), 0600); err != nil {
+			return BuildArgsOptions{}, fmt.Errorf("не удалось записать cookies Mail.ru: %w", err)
+		}
+		opts.MailruCookiesFile = mailruCookiesPath
+	} else {
+		secureZeroAndRemoveFile(mailruCookiesPath)
+	}
+	return opts, nil
+}
+
 func (s *Service) stopProcess(ctx context.Context) error {
 	secureZeroAndRemoveFile(s.keyPath)
+	secureZeroAndRemoveFile(s.mailruCookiesPath)
 	running, pid := s.GetRunningState()
 	if !running {
 		_ = os.Remove(s.pidPath)
@@ -1225,6 +1280,7 @@ func (s *Service) startClientProcess(ctx context.Context, resetStopCh bool) erro
 		}
 		if err := s.routerCmds.CreateInterface(ctx, ndmsIface, desc, mtu, tunAddr, s.clientConfig.ExposeToPolicies, s.clientConfig.DefaultRoute); err != nil {
 			secureZeroAndRemoveFile(s.clientKeyPath)
+			secureZeroAndRemoveFile(s.clientMailruCookiesPath)
 			return fmt.Errorf("не удалось создать интерфейс %s в NDMS: %w", ndmsIface, err)
 		}
 		if policy != "" && policy != "none" {
@@ -1233,12 +1289,19 @@ func (s *Service) startClientProcess(ctx context.Context, resetStopCh bool) erro
 				_ = s.routerCmds.DownInterface(cleanupCtx, ndmsIface)
 				cancel()
 				secureZeroAndRemoveFile(s.clientKeyPath)
+				secureZeroAndRemoveFile(s.clientMailruCookiesPath)
 				return fmt.Errorf("не удалось привязать интерфейс %s к политике %s: %w", ndmsIface, policy, err)
 			}
 		}
 	}
 
-	args := s.clientConfig.BuildArgs(s.clientKeyPath)
+	buildOpts, err := prepareRuntimeCookieArgs(s.clientCookieStorePath, s.clientMailruCookiesPath, s.clientConfig.MailruCookies)
+	if err != nil {
+		secureZeroAndRemoveFile(s.clientKeyPath)
+		secureZeroAndRemoveFile(s.clientMailruCookiesPath)
+		return err
+	}
+	args := s.clientConfig.BuildArgsWithOptions(s.clientKeyPath, buildOpts)
 
 	openFlags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
 	if resetStopCh {
@@ -1250,6 +1313,7 @@ func (s *Service) startClientProcess(ctx context.Context, resetStopCh bool) erro
 	logFile, err := os.OpenFile(s.clientLogPath, openFlags, 0644)
 	if err != nil {
 		secureZeroAndRemoveFile(s.clientKeyPath)
+		secureZeroAndRemoveFile(s.clientMailruCookiesPath)
 		return fmt.Errorf("не удалось открыть файл журнала клиента: %w", err)
 	}
 
@@ -1261,6 +1325,7 @@ func (s *Service) startClientProcess(ctx context.Context, resetStopCh bool) erro
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
 		secureZeroAndRemoveFile(s.clientKeyPath)
+		secureZeroAndRemoveFile(s.clientMailruCookiesPath)
 		if inboundMode == "tun" && s.routerCmds != nil && ndmsIface != "" && ndmsIface != "OpkgTun0" && ndmsIface != "OpkgTun1" {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			_ = s.routerCmds.DownInterface(cleanupCtx, ndmsIface)
@@ -1325,6 +1390,7 @@ func (s *Service) startClientProcess(ctx context.Context, resetStopCh bool) erro
 				s.clientStopCh = nil
 			}
 			secureZeroAndRemoveFile(s.clientKeyPath)
+			secureZeroAndRemoveFile(s.clientMailruCookiesPath)
 			_ = os.Remove(s.clientPidPath)
 			if inboundMode == "tun" && s.routerCmds != nil && ndmsIface != "" && ndmsIface != "OpkgTun0" && ndmsIface != "OpkgTun1" {
 				cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -1352,6 +1418,7 @@ func (s *Service) stopClientProcess(ctx context.Context) error {
 		s.clientStopCh = nil
 	}
 	secureZeroAndRemoveFile(s.clientKeyPath)
+	secureZeroAndRemoveFile(s.clientMailruCookiesPath)
 
 	running, pid := s.GetClientRunningState()
 	if running {

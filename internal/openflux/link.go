@@ -219,35 +219,35 @@ func ClientConfigFromShare(sc ShareConfig, base ClientConfig) ClientConfig {
 				out.WebdavURL, out.WebdavUser, out.WebdavPassword = parseWebdavURL(t.URL, t.User, t.Password)
 			}
 		case "mailru":
-			if strings.TrimSpace(t.URL) != "" {
-				out.MailruURL = strings.TrimSpace(t.URL)
+			if u := NormalizeMultiURL(t.URL); u != "" {
+				out.MailruURL = u
 			}
 		case "vyandex":
-			if strings.TrimSpace(t.URL) != "" {
-				out.VyandexURL = strings.TrimSpace(t.URL)
+			if u := NormalizeMultiURL(t.URL); u != "" {
+				out.VyandexURL = u
 				if out.YandexURL == "" {
-					out.YandexURL = strings.TrimSpace(t.URL)
+					out.YandexURL = u
 				}
 			}
 		case "yandex":
-			if strings.TrimSpace(t.URL) != "" {
-				out.YandexURL = strings.TrimSpace(t.URL)
+			if u := NormalizeMultiURL(t.URL); u != "" {
+				out.YandexURL = u
 			}
 		case "boards":
-			if strings.TrimSpace(t.URL) != "" {
-				out.BoardsURL = strings.TrimSpace(t.URL)
+			if u := NormalizeMultiURL(t.URL); u != "" {
+				out.BoardsURL = u
 			}
 		case "avito":
-			if strings.TrimSpace(t.URL) != "" {
-				out.AvitoURL = strings.TrimSpace(t.URL)
+			if u := NormalizeMultiURL(t.URL); u != "" {
+				out.AvitoURL = u
 			}
 		case "cupsonline":
-			if strings.TrimSpace(t.URL) != "" {
-				out.CupsonlineURL = strings.TrimSpace(t.URL)
+			if u := NormalizeMultiURL(t.URL); u != "" {
+				out.CupsonlineURL = u
 			}
 		case "telemost":
-			if strings.TrimSpace(t.URL) != "" {
-				out.TelemostURL = strings.TrimSpace(t.URL)
+			if u := NormalizeMultiURL(t.URL); u != "" {
+				out.TelemostURL = u
 			}
 		}
 	}
@@ -273,18 +273,18 @@ func GenerateLink(cfg Config, publicHost string) (string, error) {
 
 	if strings.TrimSpace(cfg.WebdavURL) != "" {
 		sc.Context = sanitizeContextURL(cfg.WebdavURL)
-	} else if strings.TrimSpace(cfg.MailruURL) != "" {
-		sc.Context = strings.TrimSpace(cfg.MailruURL)
-	} else if strings.TrimSpace(cfg.VyandexURL) != "" {
-		sc.Context = strings.TrimSpace(cfg.VyandexURL)
-	} else if strings.TrimSpace(cfg.YandexURL) != "" {
-		sc.Context = strings.TrimSpace(cfg.YandexURL)
-	} else if strings.TrimSpace(cfg.BoardsURL) != "" {
-		sc.Context = strings.TrimSpace(cfg.BoardsURL)
-	} else if strings.TrimSpace(cfg.AvitoURL) != "" {
-		sc.Context = strings.TrimSpace(cfg.AvitoURL)
-	} else if strings.TrimSpace(cfg.CupsonlineURL) != "" {
-		sc.Context = strings.TrimSpace(cfg.CupsonlineURL)
+	} else if u := NormalizeMultiURL(cfg.MailruURL); u != "" {
+		sc.Context = u
+	} else if u := NormalizeMultiURL(cfg.VyandexURL); u != "" {
+		sc.Context = u
+	} else if u := NormalizeMultiURL(cfg.YandexURL); u != "" {
+		sc.Context = u
+	} else if u := NormalizeMultiURL(cfg.BoardsURL); u != "" {
+		sc.Context = u
+	} else if u := NormalizeMultiURL(cfg.AvitoURL); u != "" {
+		sc.Context = u
+	} else if u := NormalizeMultiURL(cfg.CupsonlineURL); u != "" {
+		sc.Context = u
 	} else {
 		sc.Context = "http://#"
 	}
@@ -330,17 +330,17 @@ func GenerateLink(cfg Config, publicHost string) (string, error) {
 					})
 				}
 			case "mailru":
-				if strings.TrimSpace(cfg.MailruURL) != "" {
+				if u := NormalizeMultiURL(cfg.MailruURL); u != "" {
 					sc.Transports = append(sc.Transports, ShareTransport{
 						Type:     "mailru",
 						Priority: prio,
-						URL:      strings.TrimSpace(cfg.MailruURL),
+						URL:      u,
 					})
 				}
 			case "vyandex":
-				vyURL := strings.TrimSpace(cfg.VyandexURL)
+				vyURL := NormalizeMultiURL(cfg.VyandexURL)
 				if vyURL == "" {
-					vyURL = strings.TrimSpace(cfg.YandexURL)
+					vyURL = NormalizeMultiURL(cfg.YandexURL)
 				}
 				if vyURL != "" {
 					sc.Transports = append(sc.Transports, ShareTransport{
@@ -350,43 +350,43 @@ func GenerateLink(cfg Config, publicHost string) (string, error) {
 					})
 				}
 			case "yandex":
-				if strings.TrimSpace(cfg.YandexURL) != "" {
+				if u := NormalizeMultiURL(cfg.YandexURL); u != "" {
 					sc.Transports = append(sc.Transports, ShareTransport{
 						Type:     "yandex",
 						Priority: prio,
-						URL:      strings.TrimSpace(cfg.YandexURL),
+						URL:      u,
 					})
 				}
 			case "boards":
-				if strings.TrimSpace(cfg.BoardsURL) != "" {
+				if u := NormalizeMultiURL(cfg.BoardsURL); u != "" {
 					sc.Transports = append(sc.Transports, ShareTransport{
 						Type:     "boards",
 						Priority: prio,
-						URL:      strings.TrimSpace(cfg.BoardsURL),
+						URL:      u,
 					})
 				}
 			case "avito":
-				if strings.TrimSpace(cfg.AvitoURL) != "" {
+				if u := NormalizeMultiURL(cfg.AvitoURL); u != "" {
 					sc.Transports = append(sc.Transports, ShareTransport{
 						Type:     "avito",
 						Priority: prio,
-						URL:      strings.TrimSpace(cfg.AvitoURL),
+						URL:      u,
 					})
 				}
 			case "cupsonline":
-				if strings.TrimSpace(cfg.CupsonlineURL) != "" {
+				if u := NormalizeMultiURL(cfg.CupsonlineURL); u != "" {
 					sc.Transports = append(sc.Transports, ShareTransport{
 						Type:     "cupsonline",
 						Priority: prio,
-						URL:      strings.TrimSpace(cfg.CupsonlineURL),
+						URL:      u,
 					})
 				}
 			case "telemost":
-				if strings.TrimSpace(cfg.TelemostURL) != "" {
+				if u := NormalizeMultiURL(cfg.TelemostURL); u != "" {
 					sc.Transports = append(sc.Transports, ShareTransport{
 						Type:     "telemost",
 						Priority: prio,
-						URL:      strings.TrimSpace(cfg.TelemostURL),
+						URL:      u,
 					})
 				}
 			}
@@ -419,16 +419,16 @@ func GenerateLink(cfg Config, publicHost string) (string, error) {
 				})
 			}
 		case "mailru":
-			if strings.TrimSpace(cfg.MailruURL) != "" {
+			if u := NormalizeMultiURL(cfg.MailruURL); u != "" {
 				sc.Transports = append(sc.Transports, ShareTransport{
 					Type: "mailru",
-					URL:  strings.TrimSpace(cfg.MailruURL),
+					URL:  u,
 				})
 			}
 		case "vyandex":
-			vyURL := strings.TrimSpace(cfg.VyandexURL)
+			vyURL := NormalizeMultiURL(cfg.VyandexURL)
 			if vyURL == "" {
-				vyURL = strings.TrimSpace(cfg.YandexURL)
+				vyURL = NormalizeMultiURL(cfg.YandexURL)
 			}
 			if vyURL != "" {
 				sc.Transports = append(sc.Transports, ShareTransport{
@@ -437,38 +437,38 @@ func GenerateLink(cfg Config, publicHost string) (string, error) {
 				})
 			}
 		case "yandex":
-			if strings.TrimSpace(cfg.YandexURL) != "" {
+			if u := NormalizeMultiURL(cfg.YandexURL); u != "" {
 				sc.Transports = append(sc.Transports, ShareTransport{
 					Type: "yandex",
-					URL:  strings.TrimSpace(cfg.YandexURL),
+					URL:  u,
 				})
 			}
 		case "boards":
-			if strings.TrimSpace(cfg.BoardsURL) != "" {
+			if u := NormalizeMultiURL(cfg.BoardsURL); u != "" {
 				sc.Transports = append(sc.Transports, ShareTransport{
 					Type: "boards",
-					URL:  strings.TrimSpace(cfg.BoardsURL),
+					URL:  u,
 				})
 			}
 		case "avito":
-			if strings.TrimSpace(cfg.AvitoURL) != "" {
+			if u := NormalizeMultiURL(cfg.AvitoURL); u != "" {
 				sc.Transports = append(sc.Transports, ShareTransport{
 					Type: "avito",
-					URL:  strings.TrimSpace(cfg.AvitoURL),
+					URL:  u,
 				})
 			}
 		case "cupsonline":
-			if strings.TrimSpace(cfg.CupsonlineURL) != "" {
+			if u := NormalizeMultiURL(cfg.CupsonlineURL); u != "" {
 				sc.Transports = append(sc.Transports, ShareTransport{
 					Type: "cupsonline",
-					URL:  strings.TrimSpace(cfg.CupsonlineURL),
+					URL:  u,
 				})
 			}
 		case "telemost":
-			if strings.TrimSpace(cfg.TelemostURL) != "" {
+			if u := NormalizeMultiURL(cfg.TelemostURL); u != "" {
 				sc.Transports = append(sc.Transports, ShareTransport{
 					Type: "telemost",
-					URL:  strings.TrimSpace(cfg.TelemostURL),
+					URL:  u,
 				})
 			}
 		}

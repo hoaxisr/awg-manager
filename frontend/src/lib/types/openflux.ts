@@ -25,6 +25,7 @@ export interface OpenFluxConfig {
 	webdavUser?: string;
 	webdavPassword?: string;
 	mailruUrl?: string;
+	mailruCookies?: string;
 	yandexUrl?: string;
 	vyandexUrl?: string;
 	boardsUrl?: string;
@@ -77,6 +78,7 @@ export interface OpenFluxClientConfig {
 	webdavUser?: string;
 	webdavPassword?: string;
 	mailruUrl?: string;
+	mailruCookies?: string;
 	yandexUrl?: string;
 	vyandexUrl?: string;
 	boardsUrl?: string;

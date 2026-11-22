@@ -22,6 +22,9 @@
 	import { LoadingSpinner } from '$lib/components/layout';
 	import QrZoomImage from '$lib/components/ui/QrZoomImage.svelte';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
+	import CookieTextarea from './CookieTextarea.svelte';
+	import MultiUrlTextarea from './MultiUrlTextarea.svelte';
+	import { formatUrlsForTextarea, normalizeTransportUrls } from './openfluxUrls';
 	import type { OpenFluxClientConfig, OpenFluxConfig, OpenFluxStatus } from '$lib/types';
 
 	const TRANSPORTS = [
@@ -47,6 +50,7 @@
 			webdavUser: '',
 			webdavPassword: '',
 			mailruUrl: '',
+			mailruCookies: '',
 			yandexUrl: '',
 			vyandexUrl: '',
 			boardsUrl: '',
@@ -87,14 +91,15 @@
 			webdavUrl: m.webdavUrl ?? '',
 			webdavUser: m.webdavUser ?? '',
 			webdavPassword: m.webdavPassword ?? '',
-			mailruUrl: m.mailruUrl ?? '',
-			yandexUrl: m.yandexUrl ?? '',
-			vyandexUrl: m.vyandexUrl ?? '',
-			boardsUrl: m.boardsUrl ?? '',
-			avitoUrl: m.avitoUrl ?? '',
+			mailruUrl: formatUrlsForTextarea(m.mailruUrl),
+			mailruCookies: m.mailruCookies ?? '',
+			yandexUrl: formatUrlsForTextarea(m.yandexUrl),
+			vyandexUrl: formatUrlsForTextarea(m.vyandexUrl),
+			boardsUrl: formatUrlsForTextarea(m.boardsUrl),
+			avitoUrl: formatUrlsForTextarea(m.avitoUrl),
 			avitoCookies: m.avitoCookies ?? '',
-			cupsonlineUrl: m.cupsonlineUrl ?? '',
-			telemostUrl: m.telemostUrl ?? '',
+			cupsonlineUrl: formatUrlsForTextarea(m.cupsonlineUrl),
+			telemostUrl: formatUrlsForTextarea(m.telemostUrl),
 			onemeToken: m.onemeToken ?? '',
 			onemeUid: m.onemeUid ?? '',
 			directListen: m.directListen ?? '0.0.0.0:8445',
@@ -230,6 +235,14 @@
 		try {
 			const payload: OpenFluxConfig = {
 				...draft,
+				mailruUrl: normalizeTransportUrls(draft.mailruUrl),
+				mailruCookies: draft.mailruCookies?.trim() ?? '',
+				yandexUrl: normalizeTransportUrls(draft.yandexUrl),
+				vyandexUrl: normalizeTransportUrls(draft.vyandexUrl),
+				boardsUrl: normalizeTransportUrls(draft.boardsUrl),
+				avitoUrl: normalizeTransportUrls(draft.avitoUrl),
+				cupsonlineUrl: normalizeTransportUrls(draft.cupsonlineUrl),
+				telemostUrl: normalizeTransportUrls(draft.telemostUrl),
 				upstreamProxy: draft.mode === 'l4' ? (draft.upstreamProxy?.trim() ?? '') : '',
 				lanes: Math.max(0, Math.min(16, Number(draft.lanes) || 0)),
 			};
@@ -510,7 +523,7 @@
 						dirty = true;
 						draft.lanes = Math.max(0, Math.min(16, Number(v) || 0));
 					}}
-					hint="0 = автовыбор; допустимо 0..16"
+					hint="0 = авто; только для автосоздания комнат (CupsOnline / Avito без URL). Для Mail.ru / Яндекс число линий задаётся количеством ссылок."
 					fullWidth
 				/>
 
@@ -572,26 +585,68 @@
 					<SensitiveInput label="WebDAV пароль" bind:value={draft.webdavPassword} />
 				{/if}
 				{#if draft.transports.includes('mailru')}
-					<Input label="Mail.ru Документы URL" bind:value={draft.mailruUrl} placeholder="https://cloud.mail.ru/public/..." fullWidth />
+					<MultiUrlTextarea
+						label="Mail.ru Документы URL"
+						bind:value={draft.mailruUrl}
+						placeholder={"https://cloud.mail.ru/public/AAA/111\nhttps://cloud.mail.ru/public/BBB/222"}
+						hint="Один документ даёт ~270 КБ/с. Укажите 2–8 ссылок (по одной на строку или через запятую) для параллельного ускорения (stripe)."
+						oninput={() => (dirty = true)}
+					/>
+					<CookieTextarea
+						label="Mail.ru Cookies (обязательно для r7/edit)"
+						bind:value={draft.mailruCookies}
+						hint="Mail.ru требует авторизацию для /api/v4/r7/edit (HTTP 401 без cookies). Вставьте заголовок Cookie: (с Mpop=...), Netscape cookies.txt или JSON из Cookie-Editor. Не попадает в ссылку openflux://; можно использовать один технический аккаунт на сервере и клиенте."
+						oninput={() => (dirty = true)}
+					/>
 				{/if}
 				{#if draft.transports.includes('yandex')}
-					<Input label="Яндекс Диск (rw) URL" bind:value={draft.yandexUrl} placeholder="https://disk.yandex.ru/edit/disk/..." fullWidth />
+					<MultiUrlTextarea
+						label="Яндекс Диск (rw) URL"
+						bind:value={draft.yandexUrl}
+						placeholder={"https://disk.yandex.ru/edit/disk/...\nhttps://disk.yandex.ru/edit/disk/..."}
+						oninput={() => (dirty = true)}
+					/>
 				{/if}
 				{#if draft.transports.includes('vyandex')}
-					<Input label="Яндекс Диск (view) URL" bind:value={draft.vyandexUrl} placeholder="https://disk.yandex.ru/i/..." fullWidth />
+					<MultiUrlTextarea
+						label="Яндекс Диск (view) URL"
+						bind:value={draft.vyandexUrl}
+						placeholder={"https://disk.yandex.ru/i/...\nhttps://disk.yandex.ru/i/..."}
+						oninput={() => (dirty = true)}
+					/>
 				{/if}
 				{#if draft.transports.includes('boards')}
-					<Input label="Яндекс Доски URL" bind:value={draft.boardsUrl} placeholder="https://boards.yandex.ru/..." fullWidth />
+					<MultiUrlTextarea
+						label="Яндекс Доски URL"
+						bind:value={draft.boardsUrl}
+						placeholder={"https://boards.yandex.ru/...\nhttps://boards.yandex.ru/..."}
+						oninput={() => (dirty = true)}
+					/>
 				{/if}
 				{#if draft.transports.includes('avito')}
-					<Input label="Avito URL / Чат" bind:value={draft.avitoUrl} placeholder="https://www.avito.ru/..." fullWidth />
+					<MultiUrlTextarea
+						label="Avito URL / Чат"
+						bind:value={draft.avitoUrl}
+						placeholder={"https://www.avito.ru/...\nhttps://www.avito.ru/..."}
+						oninput={() => (dirty = true)}
+					/>
 					<Input label="Avito Cookies" bind:value={draft.avitoCookies} placeholder="sessid=..." fullWidth />
 				{/if}
 				{#if draft.transports.includes('cupsonline')}
-					<Input label="CupsOnline URL" bind:value={draft.cupsonlineUrl} fullWidth />
+					<MultiUrlTextarea
+						label="CupsOnline URL"
+						bind:value={draft.cupsonlineUrl}
+						placeholder="Список комнат или URL через запятую/перенос строки"
+						oninput={() => (dirty = true)}
+					/>
 				{/if}
 				{#if draft.transports.includes('telemost')}
-					<Input label="Яндекс Телемост URL" bind:value={draft.telemostUrl} placeholder="https://telemost.yandex.ru/j/..." fullWidth />
+					<MultiUrlTextarea
+						label="Яндекс Телемост URL"
+						bind:value={draft.telemostUrl}
+						placeholder={"https://telemost.yandex.ru/j/...\nhttps://telemost.yandex.ru/j/..."}
+						oninput={() => (dirty = true)}
+					/>
 				{/if}
 				{#if draft.transports.includes('oneme')}
 					<Input label="MAX Token (--maxToken)" bind:value={draft.onemeToken} fullWidth />

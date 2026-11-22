@@ -317,6 +317,7 @@ func main() {
 	flag.StringVar(&nativeScriptsDir, "native-scripts", "", "Directory of JS packages (<type>.flux, signed by the project's key) that replace the native transports of the same wire")
 	boardsURL := flag.String("boards-url", "", "URL for the boards transport")
 	mailruURL := flag.String("mailru-url", "", "URL (weblink) for the mailru transport")
+	mailruCookies := flag.String("mailru-cookies", "", "Mail.ru cookies: Cookie header, Netscape cookies.txt, JSON array, or path to file")
 	cupsonlineURL := flag.String("cupsonline-url", "", "URL for the cupsonline transport")
 	avitoURL := flag.String("avito-url", "", "URL for the avito transport")
 	avitoCookies := flag.String("avito-cookies", "", "Raw cookie string for code.avito.ru (or path to Netscape cookies.txt)")
@@ -412,6 +413,8 @@ TRANSPORTS  (multi-transport session; requires --encryption-key-file)
                                vyandex transports.
       --boards-url=<URL>       URL for the boards transport.
       --mailru-url=<WEBLINK>   Weblink for the mailru transport.
+      --mailru-cookies=<str>   Cookie header, Netscape cookies.txt, JSON array,
+                               or path to file for cloud.mail.ru.
       --cupsonline-url=<URL>   URL for the cupsonline transport.
       --avito-url=<URL>        URL for the avito transport.
       --avito-cookies=<str>    Raw cookie string or path to Netscape
@@ -555,6 +558,7 @@ DEPRECATED (removed in v2)
 		applyConfString(conf.Interface, "HttpProxy", "http-proxy", httpProxyAddr, setFlags)
 		applyConfString(conf.Interface, "UpstreamProxy", "upstream-proxy", upstreamProxy, setFlags)
 		applyConfString(conf.Interface, "AvitoCookies", "avito-cookies", avitoCookies, setFlags)
+		applyConfString(conf.Interface, "MailruCookies", "mailru-cookies", mailruCookies, setFlags)
 		applyConfString(conf.Interface, "TunName", "tun-name", &tunNameFlag, setFlags)
 		applyConfString(conf.Interface, "TunAddr", "tun-addr", &tunAddrFlag, setFlags)
 		applyConfString(conf.Interface, "EncryptionKeyFile", "encryption-key-file", encryptionKeyFile, setFlags)
@@ -860,25 +864,12 @@ DEPRECATED (removed in v2)
 
 	config := transport.DefaultConfig()
 
-	// Cookie store: per-transport file in pwd, unless --cookie-store is set.
-	// Transports without cookies (direct, oneme) skip it entirely.
-	var store *transport.CookieStore
-	if transportHasCookies(*transportType) {
-		path := *cookieStorePath
-		if path == "" {
-			path = defaultCookieStorePath(*transportType, *scriptName, *scriptPath)
-		}
-		s, err := transport.NewCookieStore(path)
-		if err != nil {
-			log.Fatalf("Cookie store %s: %v", path, err)
-		}
-		store = s
-		log.Printf("Cookie store: %s", path)
-	}
-
 	// Avito cookies: load from file or use as raw string.
 	if *avitoCookies != "" {
 		avitoCookiesStr = loadAvitoCookies(*avitoCookies)
+	}
+	if mc := strings.TrimSpace(*mailruCookies); mc != "" {
+		mailruCookiesStr = mc
 	}
 
 	if *transportType == "webdav" && *webdavURL != "" && (globalDocUrl == "" || globalDocUrl == "http://#") {
@@ -977,6 +968,32 @@ DEPRECATED (removed in v2)
 			}
 			specs[0].Params["lanes"] = *lanesFlag
 		}
+	}
+
+	// Cookie store: per-transport file in pwd (or based on the active specs in
+	// session/.conf mode), unless --cookie-store is set.
+	var store *transport.CookieStore
+	var cookieStoreTransport string
+	for _, sp := range specs {
+		if transportHasCookies(sp.Type) {
+			cookieStoreTransport = sp.Type
+			break
+		}
+	}
+	if cookieStoreTransport != "" || *cookieStorePath != "" {
+		path := *cookieStorePath
+		if path == "" {
+			if cookieStoreTransport == "" {
+				cookieStoreTransport = *transportType
+			}
+			path = defaultCookieStorePath(cookieStoreTransport, *scriptName, *scriptPath)
+		}
+		s, err := transport.NewCookieStore(path)
+		if err != nil {
+			log.Fatalf("Cookie store %s: %v", path, err)
+		}
+		store = s
+		log.Printf("Cookie store: %s", path)
 	}
 
 	// Telemost's media runs over WebRTC's own UDP sockets, which neither the
@@ -1164,7 +1181,7 @@ DEPRECATED (removed in v2)
 		}
 		inner, err := registry.New(*transportType, globalDocUrl,
 			classicParams(maxToken, maxUid, *webdavUser, *webdavPass, isExit, *lanesFlag),
-			registry.Options{Base: config, IsExit: isExit, LowMemory: lowMemoryFlag, YandexCookiesFile: yandexCookiesFile, AvitoCookies: avitoCookiesStr, ScriptDir: nativeScriptsDir})
+			registry.Options{Base: config, IsExit: isExit, LowMemory: lowMemoryFlag, YandexCookiesFile: yandexCookiesFile, AvitoCookies: avitoCookiesStr, MailruCookies: mailruCookiesStr, ScriptDir: nativeScriptsDir})
 		if err != nil {
 			log.Fatalf("%s: %v", *transportType, err)
 		}
@@ -1415,7 +1432,7 @@ func streamCarrier(transportType, url string) phpbox.Carrier {
 		log.Fatalf("--mode=stream: transport %q not supported (use cupsonline, yandex, vyandex, mailru)", transportType)
 	}
 	t, err := registry.New(transportType, url, nil, registry.Options{
-		Base: transport.DefaultConfig(), YandexCookiesFile: yandexCookiesFile, AvitoCookies: avitoCookiesStr,
+		Base: transport.DefaultConfig(), YandexCookiesFile: yandexCookiesFile, AvitoCookies: avitoCookiesStr, MailruCookies: mailruCookiesStr,
 	})
 	if err != nil {
 		log.Fatalf("--mode=stream %s: %v", transportType, err)

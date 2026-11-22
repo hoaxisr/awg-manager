@@ -17,6 +17,10 @@ var yandexCookiesFile string
 // Netscape cookies.txt for code.avito.ru.
 var avitoCookiesStr string
 
+// mailruCookiesStr is --mailru-cookies: a Cookie header, Netscape cookies.txt,
+// JSON array/object, or path to a file for cloud.mail.ru.
+var mailruCookiesStr string
+
 // nativeScriptsDir is --native-scripts: JS packages that replace the native
 // transports of the same wire (registry.Options.ScriptDir).
 var nativeScriptsDir string
@@ -48,6 +52,7 @@ func transportFactory(baseCfg transport.TransportConfig, isExit bool) manager.Fa
 			LowMemory:         lowMemoryFlag,
 			YandexCookiesFile: yandexCookiesFile,
 			AvitoCookies:      avitoCookiesStr,
+			MailruCookies:     mailruCookiesStr,
 			ScriptDir:         nativeScriptsDir,
 		})
 	}

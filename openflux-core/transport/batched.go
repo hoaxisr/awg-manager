@@ -389,6 +389,22 @@ func (b *BatchedTransport) Receive(callback func([]byte)) {
 // SendErrors counts Transport.Send failures observed by the batching layer.
 func (b *BatchedTransport) SendErrors() uint64 { return b.sendErrors.Load() }
 
+// FetchCookies forwards CookieExchanger reads to the underlying transport.
+func (b *BatchedTransport) FetchCookies() (map[string]string, error) {
+	if ce, ok := b.Transport.(CookieExchanger); ok {
+		return ce.FetchCookies()
+	}
+	return nil, nil
+}
+
+// ApplyCookies forwards CookieExchanger updates to the underlying transport.
+func (b *BatchedTransport) ApplyCookies(jar map[string]string) error {
+	if ce, ok := b.Transport.(CookieExchanger); ok {
+		return ce.ApplyCookies(jar)
+	}
+	return nil
+}
+
 func (b *BatchedTransport) recordSendError(err error) {
 	b.sendErrors.Add(1)
 	utils.Debugf("[BATCH] send error (total=%d): %v", b.sendErrors.Load(), err)

@@ -340,7 +340,7 @@ func TestNormalizeArch(t *testing.T) {
 func TestEnvBinaryOverrideAndInstallSHA(t *testing.T) {
 	tmpDir := t.TempDir()
 	customBin := filepath.Join(tmpDir, "custom-openflux")
-	if err := os.WriteFile(customBin, []byte("#!/bin/sh\necho 0.17.1-awgm.1\n"), 0755); err != nil {
+	if err := os.WriteFile(customBin, []byte("#!/bin/sh\necho "+PinnedVersion+"\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AWGM_OPENFLUX_BIN", customBin)
@@ -1045,5 +1045,116 @@ func TestWebDAVTransportIntegration(t *testing.T) {
 	}
 	if strings.Contains(sc.Context, secPass) || strings.Contains(sc.Transports[0].URL, secPass) {
 		t.Fatalf("credentials leaked into share link: %+v", sc)
+	}
+}
+
+func TestNormalizeMultiURLAndStripedMailruRoundTrip(t *testing.T) {
+	raw := "  https://cloud.mail.ru/public/AAA/111 \n\t https://cloud.mail.ru/public/BBB/222 | https://cloud.mail.ru/public/CCC/333 , "
+	got := NormalizeMultiURL(raw)
+	want := "https://cloud.mail.ru/public/AAA/111,https://cloud.mail.ru/public/BBB/222,https://cloud.mail.ru/public/CCC/333"
+	if got != want {
+		t.Fatalf("NormalizeMultiURL = %q, want %q", got, want)
+	}
+
+	cfg := DefaultConfig()
+	cfg.Secret = "1234567890123456"
+	cfg.Transports = []string{"mailru"}
+	cfg.MailruURL = raw
+
+	args := strings.Join(cfg.BuildArgs(""), " ")
+	if strings.Contains(args, "\n") || strings.Contains(args, "\t") {
+		t.Fatalf("BuildArgs contained raw newline/tab whitespace: %q", args)
+	}
+	if !strings.Contains(args, "--mailru-url="+want) {
+		t.Fatalf("expected normalized --mailru-url=%s in args: %s", want, args)
+	}
+	if !strings.Contains(args, "--session-context="+want) {
+		t.Fatalf("expected normalized --session-context=%s in args: %s", want, args)
+	}
+
+	link, err := GenerateLink(cfg, "")
+	if err != nil {
+		t.Fatalf("GenerateLink failed: %v", err)
+	}
+	sc, err := Decode(link)
+	if err != nil {
+		t.Fatalf("Decode failed: %v", err)
+	}
+	clientCfg := ClientConfigFromShare(sc, DefaultClientConfig())
+	if clientCfg.MailruURL != want {
+		t.Fatalf("ClientConfigFromShare MailruURL = %q, want %q", clientCfg.MailruURL, want)
+	}
+
+	clientArgs := strings.Join(clientCfg.BuildArgs(""), " ")
+	if !strings.Contains(clientArgs, "--mailru-url="+want) {
+		t.Fatalf("expected normalized client --mailru-url=%s in args: %s", want, clientArgs)
+	}
+}
+
+func TestMailruCookiesBuildArgsAndShareIsolation(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Secret = "1234567890123456"
+	cfg.Transports = []string{"mailru"}
+	cfg.MailruURL = "https://cloud.mail.ru/public/AAA/111,https://cloud.mail.ru/public/BBB/222"
+	cfg.MailruCookies = "Mpop=secretMpopToken; sdc=secretSdcToken"
+
+	args := cfg.BuildArgsWithOptions("/tmp/secret.key", BuildArgsOptions{
+		MailruCookiesFile: "/opt/etc/awg-manager/openflux/mailru_cookies.txt",
+		CookieStoreFile:   "/opt/etc/awg-manager/openflux/cookies-server.json",
+	})
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--mailru-cookies=/opt/etc/awg-manager/openflux/mailru_cookies.txt") {
+		t.Fatalf("expected --mailru-cookies file arg, got: %s", joined)
+	}
+	if !strings.Contains(joined, "--cookie-store=/opt/etc/awg-manager/openflux/cookies-server.json") {
+		t.Fatalf("expected --cookie-store file arg, got: %s", joined)
+	}
+	if strings.Contains(joined, "secretMpopToken") || strings.Contains(joined, "secretSdcToken") {
+		t.Fatalf("raw cookie values leaked into CLI args when MailruCookiesFile set: %s", joined)
+	}
+
+	link, err := GenerateLink(cfg, "203.0.113.1")
+	if err != nil {
+		t.Fatalf("GenerateLink failed: %v", err)
+	}
+	if strings.Contains(link, "secretMpopToken") {
+		t.Fatalf("share link leaked raw Mail.ru cookie")
+	}
+	sc, err := Decode(link)
+	if err != nil {
+		t.Fatalf("Decode failed: %v", err)
+	}
+
+	baseCli := DefaultClientConfig()
+	baseCli.MailruCookies = "Mpop=clientExistingMpop"
+	cli := ClientConfigFromShare(sc, baseCli)
+	if cli.MailruCookies != "Mpop=clientExistingMpop" {
+		t.Fatalf("expected ClientConfigFromShare to preserve MailruCookies, got %q", cli.MailruCookies)
+	}
+	cliArgs := strings.Join(cli.BuildArgsWithOptions("/tmp/cli.key", BuildArgsOptions{
+		MailruCookiesFile: "/tmp/client_mailru_cookies.txt",
+		CookieStoreFile:   "/tmp/cookies-client.json",
+	}), " ")
+	if !strings.Contains(cliArgs, "--mailru-cookies=/tmp/client_mailru_cookies.txt") ||
+		!strings.Contains(cliArgs, "--cookie-store=/tmp/cookies-client.json") {
+		t.Fatalf("unexpected client args: %s", cliArgs)
+	}
+
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "x86_64", nil)
+	if err := os.WriteFile(svc.cookieStorePath, []byte(`{"old":"1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgSave := DefaultConfig()
+	cfgSave.Enabled = false
+	cfgSave.Secret = "1234567890123456"
+	cfgSave.Transports = []string{"mailru"}
+	cfgSave.MailruURL = "https://cloud.mail.ru/public/AAA/111"
+	cfgSave.MailruCookies = "Mpop=freshMpop"
+	if err := svc.SaveConfig(context.Background(), cfgSave); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+	if _, err := os.Stat(svc.cookieStorePath); !os.IsNotExist(err) {
+		t.Fatalf("expected SaveConfig to clear stale cookieStorePath when MailruCookies changes")
 	}
 }
