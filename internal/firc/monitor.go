@@ -972,7 +972,41 @@ func parseFircDNSAResponse(pkt []byte, domain string) (net.IP, string, int, erro
 	if len(pkt) < 12 {
 		return nil, "", -1, fmt.Errorf("short DNS response")
 	}
-	rcode := int(pkt[3] & 0x0f)
+
+	flags := binary.BigEndian.Uint16(pkt[2:4])
+	if (flags>>15)&1 != 1 {
+		return nil, "", -1, fmt.Errorf("unexpected DNS query packet (QR=0) for %s", domain)
+	}
+	if opcode := (flags >> 11) & 0x0f; opcode != 0 {
+		return nil, "", -1, fmt.Errorf("unexpected DNS opcode %d for %s", opcode, domain)
+	}
+	if (flags>>9)&1 != 0 {
+		return nil, "", -1, fmt.Errorf("DNS response truncated (TC=1) for %s", domain)
+	}
+
+	wantDomain := normalizeCheckDomain(domain)
+	qdCount := int(binary.BigEndian.Uint16(pkt[4:6]))
+	anCount := int(binary.BigEndian.Uint16(pkt[6:8]))
+	if qdCount != 1 {
+		return nil, "", -1, fmt.Errorf("unexpected DNS question count %d for %s", qdCount, domain)
+	}
+
+	qname, off, err := readFircDNSName(pkt, 12)
+	if err != nil || off+4 > len(pkt) {
+		return nil, "", -1, fmt.Errorf("malformed DNS question")
+	}
+	if normalizeCheckDomain(qname) != wantDomain {
+		return nil, "", -1, fmt.Errorf("DNS question domain mismatch: got %q want %q", qname, wantDomain)
+	}
+	if qType := binary.BigEndian.Uint16(pkt[off : off+2]); qType != 1 {
+		return nil, "", -1, fmt.Errorf("DNS question QTYPE mismatch: %d", qType)
+	}
+	if qClass := binary.BigEndian.Uint16(pkt[off+2 : off+4]); qClass != 1 {
+		return nil, "", -1, fmt.Errorf("DNS question QCLASS mismatch: %d", qClass)
+	}
+	off += 4
+
+	rcode := int(flags & 0x0f)
 	if rcode != 0 {
 		name := fmt.Sprintf("rcode %d", rcode)
 		switch rcode {
@@ -986,23 +1020,14 @@ func parseFircDNSAResponse(pkt []byte, domain string) (net.IP, string, int, erro
 		return nil, "", rcode, fmt.Errorf("DNS %s for %s", name, domain)
 	}
 
-	qdCount := int(binary.BigEndian.Uint16(pkt[4:6]))
-	anCount := int(binary.BigEndian.Uint16(pkt[6:8]))
-	off := 12
-	for i := 0; i < qdCount; i++ {
-		next, err := skipFircDNSName(pkt, off)
-		if err != nil || next+4 > len(pkt) {
-			return nil, "", -1, fmt.Errorf("malformed DNS question")
-		}
-		off = next + 4
-	}
-
-	var cname string
+	aRecords := make(map[string]net.IP)
+	cnameRecords := make(map[string]string)
 	for i := 0; i < anCount; i++ {
-		next, err := skipFircDNSName(pkt, off)
+		ownerRaw, next, err := readFircDNSName(pkt, off)
 		if err != nil || next+10 > len(pkt) {
 			return nil, "", -1, fmt.Errorf("malformed DNS answer")
 		}
+		owner := normalizeCheckDomain(ownerRaw)
 		rrType := binary.BigEndian.Uint16(pkt[next : next+2])
 		rrClass := binary.BigEndian.Uint16(pkt[next+2 : next+4])
 		rdLen := int(binary.BigEndian.Uint16(pkt[next+8 : next+10]))
@@ -1010,86 +1035,99 @@ func parseFircDNSAResponse(pkt []byte, domain string) (net.IP, string, int, erro
 		if rdataOff+rdLen > len(pkt) {
 			return nil, "", -1, fmt.Errorf("truncated DNS rdata")
 		}
-		if rrClass == 1 {
+		if rrClass == 1 && owner != "" {
 			switch rrType {
 			case 1: // A
-				if rdLen == 4 {
-					return net.IPv4(pkt[rdataOff], pkt[rdataOff+1], pkt[rdataOff+2], pkt[rdataOff+3]), "", 0, nil
+				if rdLen == 4 && aRecords[owner] == nil {
+					aRecords[owner] = net.IPv4(pkt[rdataOff], pkt[rdataOff+1], pkt[rdataOff+2], pkt[rdataOff+3])
 				}
 			case 5: // CNAME
-				if cname == "" {
+				if cnameRecords[owner] == "" {
 					if target, err := decodeFircDNSName(pkt, rdataOff); err == nil {
-						cname = target
+						if normTarget := normalizeCheckDomain(target); normTarget != "" {
+							cnameRecords[owner] = normTarget
+						}
 					}
 				}
 			}
 		}
 		off = rdataOff + rdLen
 	}
-	return nil, cname, 0, nil
-}
 
-func skipFircDNSName(pkt []byte, off int) (int, error) {
-	for steps := 0; steps < len(pkt); steps++ {
-		if off >= len(pkt) {
-			return 0, fmt.Errorf("truncated DNS name")
+	cur := wantDomain
+	visited := map[string]bool{cur: true}
+	for step := 0; step < 8; step++ {
+		if ip := aRecords[cur]; ip != nil {
+			return ip, "", 0, nil
 		}
-		l := pkt[off]
-		if l == 0 {
-			return off + 1, nil
+		nextOwner := cnameRecords[cur]
+		if nextOwner == "" || visited[nextOwner] {
+			break
 		}
-		if l&0xc0 == 0xc0 {
-			if off+2 > len(pkt) {
-				return 0, fmt.Errorf("truncated DNS pointer")
-			}
-			return off + 2, nil
-		}
-		if l&0xc0 != 0 {
-			return 0, fmt.Errorf("invalid DNS label header")
-		}
-		off += 1 + int(l)
+		visited[nextOwner] = true
+		cur = nextOwner
 	}
-	return 0, fmt.Errorf("DNS name loop")
+	if cur != wantDomain {
+		return nil, cur, 0, nil
+	}
+	return nil, "", 0, nil
 }
 
-func decodeFircDNSName(pkt []byte, off int) (string, error) {
+func readFircDNSName(pkt []byte, off int) (string, int, error) {
 	var labels []string
 	cur := off
+	nextOff := -1
 	jumps := 0
-	for {
+	totalWire := 1
+	for steps := 0; steps <= len(pkt); steps++ {
 		if cur >= len(pkt) {
-			return "", fmt.Errorf("truncated DNS name")
+			return "", 0, fmt.Errorf("truncated DNS name")
 		}
 		l := pkt[cur]
 		if l == 0 {
-			break
+			if nextOff == -1 {
+				nextOff = cur + 1
+			}
+			return strings.Join(labels, "."), nextOff, nil
 		}
 		if l&0xc0 == 0xc0 {
 			if cur+2 > len(pkt) {
-				return "", fmt.Errorf("truncated DNS pointer")
+				return "", 0, fmt.Errorf("truncated DNS pointer")
+			}
+			if nextOff == -1 {
+				nextOff = cur + 2
 			}
 			ptr := int(binary.BigEndian.Uint16(pkt[cur:cur+2]) & 0x3fff)
 			if ptr >= len(pkt) {
-				return "", fmt.Errorf("out-of-range DNS pointer")
+				return "", 0, fmt.Errorf("out-of-range DNS pointer")
 			}
 			jumps++
 			if jumps > 16 {
-				return "", fmt.Errorf("DNS pointer loop")
+				return "", 0, fmt.Errorf("DNS pointer loop")
 			}
 			cur = ptr
 			continue
 		}
 		if l&0xc0 != 0 {
-			return "", fmt.Errorf("invalid DNS label header")
+			return "", 0, fmt.Errorf("invalid DNS label header")
+		}
+		totalWire += 1 + int(l)
+		if totalWire > 255 {
+			return "", 0, fmt.Errorf("DNS name too long")
 		}
 		end := cur + 1 + int(l)
 		if end > len(pkt) {
-			return "", fmt.Errorf("truncated DNS label")
+			return "", 0, fmt.Errorf("truncated DNS label")
 		}
 		labels = append(labels, string(pkt[cur+1:end]))
 		cur = end
 	}
-	return strings.Join(labels, "."), nil
+	return "", 0, fmt.Errorf("DNS name loop")
+}
+
+func decodeFircDNSName(pkt []byte, off int) (string, error) {
+	name, _, err := readFircDNSName(pkt, off)
+	return name, err
 }
 
 // CheckDomainsRouting tests how fircd resolves and routes a batch of domains in real time,

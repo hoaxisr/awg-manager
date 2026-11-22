@@ -122,3 +122,115 @@ func TestLookupFircDNSIPv4_SlowResponseCNAMEAndErrors(t *testing.T) {
 	_ = pc.Close()
 	<-done
 }
+
+func encodeTestDNSName(domain string) []byte {
+	var out []byte
+	for _, lbl := range strings.Split(strings.TrimSuffix(domain, "."), ".") {
+		out = append(out, byte(len(lbl)))
+		out = append(out, lbl...)
+	}
+	return append(out, 0)
+}
+
+func makeARecordNamed(owner string, ip [4]byte) []byte {
+	var rr []byte
+	rr = append(rr, encodeTestDNSName(owner)...)
+	meta := make([]byte, 10)
+	binary.BigEndian.PutUint16(meta[0:2], 1)  // A
+	binary.BigEndian.PutUint16(meta[2:4], 1)  // IN
+	binary.BigEndian.PutUint32(meta[4:8], 60) // TTL
+	binary.BigEndian.PutUint16(meta[8:10], 4) // RDLENGTH
+	rr = append(rr, meta...)
+	return append(rr, ip[:]...)
+}
+
+func makeCNAMERecordNamed(owner, target string) []byte {
+	var rr []byte
+	rr = append(rr, encodeTestDNSName(owner)...)
+	rdata := encodeTestDNSName(target)
+	meta := make([]byte, 10)
+	binary.BigEndian.PutUint16(meta[0:2], 5)                   // CNAME
+	binary.BigEndian.PutUint16(meta[2:4], 1)                   // IN
+	binary.BigEndian.PutUint32(meta[4:8], 60)                  // TTL
+	binary.BigEndian.PutUint16(meta[8:10], uint16(len(rdata))) // RDLENGTH
+	rr = append(rr, meta...)
+	return append(rr, rdata...)
+}
+
+func TestParseFircDNSAResponse_StrictValidationAndOwnerChain(t *testing.T) {
+	q, err := encodeFircDNSQueryA(0x42, "alias.example.com")
+	if err != nil {
+		t.Fatalf("encodeFircDNSQueryA: %v", err)
+	}
+
+	// 1. QR=0 must be rejected.
+	qr0 := buildTestDNSResponse(q, 0, [][]byte{makeARecordPtr([4]byte{1, 2, 3, 4})})
+	binary.BigEndian.PutUint16(qr0[2:4], 0x0100) // QR=0
+	if _, _, _, err := parseFircDNSAResponse(qr0, "alias.example.com"); err == nil {
+		t.Fatalf("expected QR=0 packet to be rejected")
+	}
+
+	// 2. Non-zero opcode must be rejected.
+	badOp := buildTestDNSResponse(q, 0, [][]byte{makeARecordPtr([4]byte{1, 2, 3, 4})})
+	binary.BigEndian.PutUint16(badOp[2:4], 0x8980) // QR=1, opcode=1
+	if _, _, _, err := parseFircDNSAResponse(badOp, "alias.example.com"); err == nil {
+		t.Fatalf("expected non-zero opcode packet to be rejected")
+	}
+
+	// 3. Truncated TC=1 must be rejected.
+	tcPkt := buildTestDNSResponse(q, 0, [][]byte{makeARecordPtr([4]byte{1, 2, 3, 4})})
+	binary.BigEndian.PutUint16(tcPkt[2:4], 0x8380) // TC=1
+	if _, _, _, err := parseFircDNSAResponse(tcPkt, "alias.example.com"); err == nil {
+		t.Fatalf("expected TC=1 packet to be rejected")
+	}
+
+	// 4. Question mismatch: wrong QNAME / QDCOUNT=0 / wrong QTYPE / wrong QCLASS.
+	wrongDomain := buildTestDNSResponse(q, 0, [][]byte{makeARecordPtr([4]byte{1, 2, 3, 4})})
+	if _, _, _, err := parseFircDNSAResponse(wrongDomain, "other.example.com"); err == nil {
+		t.Fatalf("expected QNAME mismatch to be rejected")
+	}
+	zeroQD := buildTestDNSResponse(q, 0, nil)
+	binary.BigEndian.PutUint16(zeroQD[4:6], 0)
+	if _, _, _, err := parseFircDNSAResponse(zeroQD, "alias.example.com"); err == nil {
+		t.Fatalf("expected QDCOUNT=0 to be rejected")
+	}
+	wrongQType := append([]byte(nil), buildTestDNSResponse(q, 0, nil)...)
+	binary.BigEndian.PutUint16(wrongQType[len(q)-4:len(q)-2], 28) // AAAA instead of A
+	if _, _, _, err := parseFircDNSAResponse(wrongQType, "alias.example.com"); err == nil {
+		t.Fatalf("expected QTYPE=AAAA mismatch to be rejected")
+	}
+	wrongQClass := append([]byte(nil), buildTestDNSResponse(q, 0, nil)...)
+	binary.BigEndian.PutUint16(wrongQClass[len(q)-2:len(q)], 3) // CH instead of IN
+	if _, _, _, err := parseFircDNSAResponse(wrongQClass, "alias.example.com"); err == nil {
+		t.Fatalf("expected QCLASS=CH mismatch to be rejected")
+	}
+
+	// 5. Answer RR for unrelated owner must NOT be accepted.
+	spoofedAns := buildTestDNSResponse(q, 0, [][]byte{
+		makeARecordNamed("spoofed.evil.org", [4]byte{10, 20, 30, 40}),
+	})
+	ip, cname, rcode, err := parseFircDNSAResponse(spoofedAns, "alias.example.com")
+	if err != nil || rcode != 0 || ip != nil || cname != "" {
+		t.Fatalf("expected unrelated owner answer to be ignored cleanly, got ip=%v cname=%q rcode=%d err=%v", ip, cname, rcode, err)
+	}
+
+	// 6. Valid inline CNAME chain with real owners: alias -> hop1 -> 93.184.216.34 (ignoring trailing unrelated A).
+	validChain := buildTestDNSResponse(q, 0, [][]byte{
+		makeCNAMERecordNamed("alias.example.com", "hop1.example.net"),
+		makeARecordNamed("unrelated.example.net", [4]byte{1, 1, 1, 1}),
+		makeARecordNamed("hop1.example.net", [4]byte{93, 184, 216, 34}),
+	})
+	ipChain, cnameChain, rcodeChain, err := parseFircDNSAResponse(validChain, "alias.example.com")
+	if err != nil || rcodeChain != 0 || cnameChain != "" || ipChain == nil || ipChain.String() != "93.184.216.34" {
+		t.Fatalf("valid CNAME->A chain failed: ip=%v cname=%q rcode=%d err=%v", ipChain, cnameChain, rcodeChain, err)
+	}
+
+	// 7. Standalone CNAME without inline A returns validated canonical CNAME target for depth follow-up.
+	onlyCNAME := buildTestDNSResponse(q, 0, [][]byte{
+		makeCNAMERecordNamed("alias.example.com", "next.example.net"),
+	})
+	ipOnly, cnameOnly, rcodeOnly, err := parseFircDNSAResponse(onlyCNAME, "alias.example.com")
+	if err != nil || rcodeOnly != 0 || ipOnly != nil || cnameOnly != "next.example.net" {
+		t.Fatalf("standalone CNAME failed: ip=%v cname=%q rcode=%d err=%v", ipOnly, cnameOnly, rcodeOnly, err)
+	}
+}
