@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -35,72 +34,16 @@ func (mtgAllowAll) Contains(net.IP) bool { return true }
 func (mtgAllowAll) Run(time.Duration)    {}
 func (mtgAllowAll) Shutdown()            {}
 
-type mtgDeviceNetwork struct {
-	dialer net.Dialer
-}
-
-func newMtgDeviceNetwork(upstreamDevice string) *mtgDeviceNetwork {
-	return &mtgDeviceNetwork{
-		dialer: net.Dialer{
-			Timeout:       10 * time.Second,
-			KeepAlive:     30 * time.Second,
-			FallbackDelay: -1,
-			Control:       bindDeviceControl(upstreamDevice),
-		},
-	}
-}
-
-func (n *mtgDeviceNetwork) Dial(network, address string) (essentials.Conn, error) {
-	return n.DialContext(context.Background(), network, address)
-}
-
-func (n *mtgDeviceNetwork) DialContext(ctx context.Context, network, address string) (essentials.Conn, error) {
-	switch network {
-	case "tcp", "tcp4", "tcp6":
-	default:
-		return nil, fmt.Errorf("unsupported network %s", network)
-	}
-	conn, err := n.dialer.DialContext(ctx, network, address)
-	if err != nil {
-		return nil, err
-	}
-	if tc, ok := conn.(*net.TCPConn); ok {
-		_ = tc.SetNoDelay(true)
-		_ = tc.SetKeepAlive(true)
-		return tc, nil
-	}
-	return essentials.WrapNetConn(conn), nil
-}
-
-func (n *mtgDeviceNetwork) MakeHTTPClient(dialFunc func(ctx context.Context, network, address string) (essentials.Conn, error)) *http.Client {
-	if dialFunc == nil {
-		dialFunc = n.DialContext
-	}
-	return &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			IdleConnTimeout: time.Minute,
-			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-				return dialFunc(ctx, network, address)
-			},
-		},
-	}
-}
-
-func (n *mtgDeviceNetwork) NativeDialer() *net.Dialer {
-	return &n.dialer
-}
-
 type mtgActiveSpec struct {
-	Secret         string
-	LegacySecret   string
-	AllSecretsCSV  string
-	TlsDomain      string
-	UpstreamDevice string
-	DirectPort     int
-	RawAddr        string
-	DirectEnabled  bool
-	RawEnabled     bool
+	Secret        string
+	LegacySecret  string
+	AllSecretsCSV string
+	TlsDomain     string
+	UpstreamsKey  string
+	DirectPort    int
+	RawAddr       string
+	DirectEnabled bool
+	RawEnabled    bool
 }
 
 // MtgEngine manages the embedded Go mtg (MTProto Fake-TLS + raw obfuscated2) listeners in-process,
@@ -191,20 +134,16 @@ func buildMtgSpec(cfg Config) mtgActiveSpec {
 	if tlsDomain == "" {
 		tlsDomain = "ya.ru"
 	}
-	upstream := strings.TrimSpace(cfg.UpstreamDevice)
-	if upstream == "direct" {
-		upstream = ""
-	}
 	return mtgActiveSpec{
-		Secret:         strings.TrimSpace(strings.ToLower(cfg.Secret)),
-		LegacySecret:   strings.TrimSpace(strings.ToLower(cfg.LegacySecret)),
-		AllSecretsCSV:  strings.Join(cfg.ActiveSecrets(), ","),
-		TlsDomain:      tlsDomain,
-		UpstreamDevice: upstream,
-		DirectPort:     directPort,
-		RawAddr:        rawAddr,
-		DirectEnabled:  cfg.Enabled && cfg.IsDirectEnabled(),
-		RawEnabled:     cfg.Enabled && cfg.IsRawEnabled(),
+		Secret:        strings.TrimSpace(strings.ToLower(cfg.Secret)),
+		LegacySecret:  strings.TrimSpace(strings.ToLower(cfg.LegacySecret)),
+		AllSecretsCSV: strings.Join(cfg.ActiveSecrets(), ","),
+		TlsDomain:     tlsDomain,
+		UpstreamsKey:  upstreamPoolSignature(cfg.EnabledUpstreams()),
+		DirectPort:    directPort,
+		RawAddr:       rawAddr,
+		DirectEnabled: cfg.Enabled && cfg.IsDirectEnabled(),
+		RawEnabled:    cfg.Enabled && cfg.IsRawEnabled(),
 	}
 }
 
@@ -229,7 +168,7 @@ func (e *MtgEngine) Apply(cfg Config) error {
 	}
 
 	e.stopLocked()
-	return e.startLocked(spec)
+	return e.startLocked(spec, cfg.EnabledUpstreams())
 }
 
 func (e *MtgEngine) Restart() error {
@@ -244,7 +183,7 @@ func (e *MtgEngine) Restart() error {
 	if !spec.DirectEnabled && !spec.RawEnabled {
 		return nil
 	}
-	return e.startLocked(spec)
+	return e.startLocked(spec, e.lastCfg.EnabledUpstreams())
 }
 
 func (e *MtgEngine) Stop() {
@@ -269,7 +208,7 @@ func (e *MtgEngine) ConnectedCount() int64 {
 	return e.connected.Load()
 }
 
-func (e *MtgEngine) startLocked(spec mtgActiveSpec) error {
+func (e *MtgEngine) startLocked(spec mtgActiveSpec, upstreams []UpstreamSpec) error {
 	var secrets []mtglib.Secret
 	if spec.AllSecretsCSV != "" {
 		for _, hexSec := range strings.Split(spec.AllSecretsCSV, ",") {
@@ -302,7 +241,7 @@ func (e *MtgEngine) startLocked(spec mtgActiveSpec) error {
 		secrets = append(secrets, secDummy)
 	}
 
-	ntw := newMtgDeviceNetwork(spec.UpstreamDevice)
+	ntw := newMtgUpstreamPool(upstreams)
 
 	e.connected.Store(0)
 	evStream := events.NewEventStream([]events.ObserverFactory{
@@ -397,7 +336,7 @@ func (e *MtgEngine) stopLocked() {
 	e.connected.Store(0)
 }
 
-func (e *MtgEngine) serveRawLoop(lis net.Listener, proxy *mtglib.Proxy, ntw *mtgDeviceNetwork, secrets []mtglib.Secret) {
+func (e *MtgEngine) serveRawLoop(lis net.Listener, proxy *mtglib.Proxy, ntw mtglib.Network, secrets []mtglib.Secret) {
 	for {
 		conn, err := lis.Accept()
 		if err != nil {
@@ -500,7 +439,7 @@ func matchObfuscated2Secret(frame []byte, secrets []mtglib.Secret) int {
 	return 0
 }
 
-func (e *MtgEngine) handleRawConn(conn net.Conn, proxy *mtglib.Proxy, ntw *mtgDeviceNetwork, secrets []mtglib.Secret) {
+func (e *MtgEngine) handleRawConn(conn net.Conn, proxy *mtglib.Proxy, ntw mtglib.Network, secrets []mtglib.Secret) {
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	var frame [64]byte
 	if _, err := io.ReadFull(conn, frame[:]); err != nil {
@@ -527,7 +466,7 @@ func (e *MtgEngine) handleRawConn(conn net.Conn, proxy *mtglib.Proxy, ntw *mtgDe
 	_ = proxy.ServeWebConn(wrapped, parsed.secretIdx)
 }
 
-func (e *MtgEngine) serveClassicObfuscated2(clientRaw net.Conn, ntw *mtgDeviceNetwork, parsed parsedObfuscated2) {
+func (e *MtgEngine) serveClassicObfuscated2(clientRaw net.Conn, ntw mtglib.Network, parsed parsedObfuscated2) {
 	defer clientRaw.Close()
 
 	dcConn, dcRecvCipher, dcSendCipher, err := dialTelegramDCClassic(ntw, parsed.dc, parsed.connType, parsed.dcBytes)
@@ -578,7 +517,7 @@ func (e *MtgEngine) serveClassicObfuscated2(clientRaw net.Conn, ntw *mtgDeviceNe
 	<-done
 }
 
-func dialTelegramDCClassic(ntw *mtgDeviceNetwork, dc int, connType [4]byte, dcBytes [2]byte) (net.Conn, cipher.Stream, cipher.Stream, error) {
+func dialTelegramDCClassic(ntw mtglib.Network, dc int, connType [4]byte, dcBytes [2]byte) (net.Conn, cipher.Stream, cipher.Stream, error) {
 	addrs := essentials.TelegramCoreAddresses[dc]
 	if len(addrs) == 0 {
 		addrs = essentials.TelegramCoreAddresses[2]

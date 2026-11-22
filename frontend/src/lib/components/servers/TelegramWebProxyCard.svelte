@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
-	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
+	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import {
 		lastServerVerification,
@@ -13,6 +13,7 @@
 	import { Button, Modal, Toggle } from '$lib/components/ui';
 	import ExternalAccessWizard from './external-access/ExternalAccessWizard.svelte';
 	import ConnectionChecks from './wizard/ConnectionChecks.svelte';
+	import TelegramUpstreamsEditor from './TelegramUpstreamsEditor.svelte';
 	import {
 		EXTERNAL_ACCESS_LABELS,
 		formatTelegramCarrierLabel,
@@ -25,6 +26,7 @@
 		TgWebProxyConfig,
 		TgWebProxyStatus,
 		TgWebProxyRevealData,
+		TelegramUpstream,
 		TelegramUser,
 		TgUserRevealData,
 		WebProxyEndpoint,
@@ -73,7 +75,7 @@
 
 	// Quick Egress modal
 	let egressModalOpen = $state(false);
-	let quickEgressDevice = $state('direct');
+	let quickUpstreams = $state<TelegramUpstream[]>([]);
 	let quickEgressSaving = $state(false);
 
 	let isConfigured = $derived(
@@ -166,12 +168,17 @@
 	let revealData = $state<TgWebProxyRevealData | null>(null);
 	let revealQrDataUrl = $state('');
 	let qrGenerating = $state(false);
+	let revealSecretInput = $state('');
+	let revealSecretSaving = $state(false);
 
 	// Multi-user management state
 	let showAddUserModal = $state(false);
 	let newUserRemark = $state('');
+	let newUserSecret = $state('');
 	let addUserLoading = $state(false);
 	let userActionLoadingId = $state<string>('');
+	let deleteUserTarget = $state<TelegramUser | null>(null);
+	let deleteUserLoading = $state(false);
 
 	let tgUsers = $derived<TelegramUser[]>(status?.users || config?.users || []);
 
@@ -179,6 +186,7 @@
 	let settingsOpen = $state(false);
 	let settingsTab = $state<'general' | 'security' | 'diagnostics'>('general');
 	let editConfig = $state<Partial<TgWebProxyConfig>>({});
+	let editUpstreams = $state<TelegramUpstream[]>([]);
 	let saveConfigLoading = $state(false);
 	let resetConfirmOpen = $state(false);
 	let resetDeleteKeenDNS = $state(false);
@@ -186,14 +194,112 @@
 	let egressOptions = $state<{ value: string; label: string; available: boolean }[]>([
 		{ value: 'direct', label: EXTERNAL_ACCESS_LABELS.egressDirect, available: true },
 	]);
-	let customEgressMode = $state(false);
 
-	let egressSummaryLabel = $derived(
-		formatTelegramEgressLabel(config?.upstream_device, egressOptions)
-	);
-	let shortEgressSummary = $derived(formatShortEgressSummary(egressSummaryLabel));
+	function buildEditableUpstreams(cfg?: Partial<TgWebProxyConfig> | null): TelegramUpstream[] {
+		const list = cfg?.upstreams;
+		if (list && list.length > 0) {
+			return list.map((u, idx) => ({
+				id: u.id || `up-${idx + 1}`,
+				type: u.type === 'socks5' ? 'socks5' : 'direct',
+				device: u.device || 'direct',
+				address: u.address || '',
+				username: u.username || '',
+				password: u.password || '',
+				weight: u.weight && u.weight > 0 ? u.weight : 1,
+				enabled: Boolean(u.enabled),
+			}));
+		}
+		return [
+			{
+				id: 'up-1',
+				type: 'direct',
+				device: (cfg?.upstream_device || 'direct').trim() || 'direct',
+				weight: 1,
+				enabled: true,
+			},
+		];
+	}
+
+	function validateUpstreamsDraft(list: TelegramUpstream[]): 'empty' | 'socks' | null {
+		const enabled = list.filter((u) => u.enabled);
+		if (enabled.length === 0) return 'empty';
+		for (const u of enabled) {
+			if (u.type === 'socks5') {
+				const addr = (u.address || '').trim();
+				const sep = addr.lastIndexOf(':');
+				const host = sep > 0 ? addr.slice(0, sep).trim() : '';
+				const portNum = sep > 0 ? Number(addr.slice(sep + 1)) : NaN;
+				if (!host || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+					return 'socks';
+				}
+			}
+		}
+		return null;
+	}
+
+	function primaryDirectDevice(list: TelegramUpstream[]): string {
+		const enabled = list.filter((u) => u.enabled);
+		if (enabled.length === 0 || enabled[0].type !== 'direct') return '';
+		return (enabled[0].device || '').trim() || 'direct';
+	}
+
+	function summarizeUpstream(u: TelegramUpstream): string {
+		if (u.type === 'socks5') {
+			return m.tg_upstreams_summary_socks({ addr: (u.address || '').trim() || 'SOCKS5' });
+		}
+		return formatTelegramEgressLabel(u.device || 'direct', egressOptions);
+	}
+
+	let egressSummaryLabel = $derived.by(() => {
+		const list = config?.upstreams;
+		if (list && list.length > 0) {
+			const enabled = list.filter((u) => u.enabled);
+			const active = enabled.length > 0 ? enabled : list;
+			if (active.length === 1) {
+				return summarizeUpstream(active[0]);
+			}
+			return m.tg_upstreams_summary_multi({
+				primary: summarizeUpstream(active[0]),
+				extra: active.length - 1,
+			});
+		}
+		return formatTelegramEgressLabel(config?.upstream_device, egressOptions);
+	});
+
+	let shortEgressSummary = $derived.by(() => {
+		const list = config?.upstreams;
+		if (list && list.length > 0) {
+			const enabled = list.filter((u) => u.enabled);
+			const active = enabled.length > 0 ? enabled : list;
+			const first = active[0];
+			const firstShort =
+				first.type === 'socks5'
+					? summarizeUpstream(first)
+					: formatShortEgressSummary(summarizeUpstream(first));
+			if (active.length > 1) {
+				return m.tg_upstreams_summary_multi({
+					primary: firstShort,
+					extra: active.length - 1,
+				});
+			}
+			return firstShort;
+		}
+		return formatShortEgressSummary(egressSummaryLabel);
+	});
 
 	let currentEgressUnavailable = $derived.by(() => {
+		const list = config?.upstreams;
+		if (list && list.length > 0) {
+			const enabled = list.filter((u) => u.enabled);
+			if (enabled.length === 0) return true;
+			return enabled.every((u) => {
+				if (u.type === 'socks5') return !(u.address || '').trim();
+				const dev = (u.device || 'direct').trim();
+				if (!dev || dev === 'direct') return false;
+				const found = egressOptions.find((o) => o.value === dev);
+				return Boolean(found && !found.available);
+			});
+		}
 		const dev = (config?.upstream_device || 'direct').trim();
 		if (!dev || dev === 'direct') return false;
 		const found = egressOptions.find((o) => o.value === dev);
@@ -451,18 +557,36 @@
 	}
 
 	function openEgressModal() {
-		quickEgressDevice = config?.upstream_device || 'direct';
-		void loadEgressOptions(quickEgressDevice);
+		quickUpstreams = buildEditableUpstreams(config);
+		void loadEgressOptions(config?.upstream_device);
 		egressModalOpen = true;
 	}
 
 	async function saveQuickEgress() {
 		if (!config) return;
+		const vErr = validateUpstreamsDraft(quickUpstreams);
+		if (vErr === 'empty') {
+			notifications.error(m.tg_upstreams_validation_empty());
+			return;
+		}
+		if (vErr === 'socks') {
+			notifications.error(m.tg_upstreams_validation_socks());
+			return;
+		}
 		quickEgressSaving = true;
 		try {
+			const cleanUpstreams = quickUpstreams.map((u) => ({
+				...u,
+				device: u.type === 'direct' ? (u.device || '').trim() || 'direct' : '',
+				address: u.type === 'socks5' ? (u.address || '').trim() : '',
+				username: u.type === 'socks5' ? (u.username || '').trim() : '',
+				password: u.type === 'socks5' ? u.password || '' : '',
+				weight: u.weight && u.weight >= 1 ? Math.floor(u.weight) : 1,
+			}));
 			config = await api.updateTgWebProxyConfig({
 				...config,
-				upstream_device: quickEgressDevice || 'direct',
+				upstreams: cleanUpstreams,
+				upstream_device: primaryDirectDevice(cleanUpstreams),
 			});
 			notifications.success('Маршрут интернета для Telegram обновлён');
 			egressModalOpen = false;
@@ -473,6 +597,10 @@
 		} finally {
 			quickEgressSaving = false;
 		}
+	}
+
+	function syncRevealSecretInput() {
+		revealSecretInput = getActiveUserReveal()?.secret || '';
 	}
 
 	async function openRevealModal(
@@ -494,6 +622,7 @@
 			if (revealData?.user_id) {
 				selectedRevealUserId = revealData.user_id;
 			}
+			syncRevealSecretInput();
 			if (targetId) {
 				selectedWebProxyId = targetId;
 			} else if (!selectedWebProxyId && revealData?.web_proxies && revealData.web_proxies.length > 0) {
@@ -512,6 +641,7 @@
 		revealOpen = false;
 		revealData = null;
 		revealQrDataUrl = '';
+		revealSecretInput = '';
 	}
 
 	function getActiveUserReveal(): TgUserRevealData | TgWebProxyRevealData | null {
@@ -528,6 +658,7 @@
 
 	function selectRevealUser(userId: string) {
 		selectedRevealUserId = userId;
+		syncRevealSecretInput();
 		void updateRevealQR();
 	}
 
@@ -580,13 +711,85 @@
 		}
 	}
 
+	function isValidSecretInput(raw: string): boolean {
+		const s = raw.trim().toLowerCase();
+		if (!/^[0-9a-f]+$/.test(s)) return false;
+		if (s.length === 32) return true;
+		if (s.length === 34 && s.startsWith('dd')) return true;
+		return s.length > 34 && s.startsWith('ee') && s.length % 2 === 0;
+	}
+
+	function getActiveRevealUserId(): string {
+		if (selectedRevealUserId) return selectedRevealUserId;
+		const active = getActiveUserReveal();
+		if (active && 'id' in active && active.id) return active.id;
+		if (active && 'user_id' in active && active.user_id) return active.user_id;
+		return tgUsers[0]?.id || '';
+	}
+
+	async function handleSaveUserSecret() {
+		const targetId = getActiveRevealUserId();
+		if (!targetId) return;
+		const cleaned = revealSecretInput.trim();
+		if (!isValidSecretInput(cleaned)) {
+			notifications.error(m.tg_user_secret_error());
+			return;
+		}
+		revealSecretSaving = true;
+		try {
+			status = await api.tgWebProxyAction('update_user', {
+				user_id: targetId,
+				secret: cleaned,
+			});
+			revealData = await api.revealTgWebProxySecret(targetId);
+			syncRevealSecretInput();
+			await updateRevealQR();
+			notifications.success(m.tg_user_secret_saved());
+			await loadData();
+			onRefreshParent?.();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.tg_user_secret_error());
+		} finally {
+			revealSecretSaving = false;
+		}
+	}
+
+	async function handleRegenerateUserSecret() {
+		const targetId = getActiveRevealUserId();
+		if (!targetId) return;
+		revealSecretSaving = true;
+		try {
+			status = await api.tgWebProxyAction('update_user', {
+				user_id: targetId,
+				regenerate_secret: true,
+			});
+			revealData = await api.revealTgWebProxySecret(targetId);
+			syncRevealSecretInput();
+			await updateRevealQR();
+			notifications.success(m.tg_user_secret_regenerated());
+			await loadData();
+			onRefreshParent?.();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.tg_user_secret_error());
+		} finally {
+			revealSecretSaving = false;
+		}
+	}
+
 	async function handleAddUser() {
+		const trimmedSec = newUserSecret.trim();
+		if (trimmedSec && !isValidSecretInput(trimmedSec)) {
+			notifications.error(m.tg_user_secret_error());
+			return;
+		}
 		addUserLoading = true;
 		try {
 			status = await api.tgWebProxyAction('create_user', {
 				remark: newUserRemark.trim() || `Пользователь ${tgUsers.length + 1}`,
+				...(trimmedSec ? { secret: trimmedSec } : {}),
 			});
 			newUserRemark = '';
+			newUserSecret = '';
 			showAddUserModal = false;
 			notifications.success('Пользователь Telegram добавлен');
 			await loadData();
@@ -618,20 +821,35 @@
 		}
 	}
 
-	async function handleDeleteUser(user: TelegramUser) {
-		if (tgUsers.length <= 1) {
-			notifications.error('Нельзя удалить единственного пользователя');
-			return;
-		}
-		userActionLoadingId = user.id;
+	function openDeleteUserConfirm(user: TelegramUser) {
+		deleteUserTarget = user;
+	}
+
+	async function confirmDeleteUser() {
+		const target = deleteUserTarget;
+		if (!target) return;
+		deleteUserLoading = true;
+		userActionLoadingId = target.id;
 		try {
-			status = await api.tgWebProxyAction('delete_user', { user_id: user.id });
-			notifications.success(`Пользователь «${user.remark}» удалён`);
+			status = await api.tgWebProxyAction('delete_user', { user_id: target.id });
+			deleteUserTarget = null;
+			notifications.success(`Пользователь «${target.remark}» удалён`);
 			await loadData();
 			onRefreshParent?.();
+			if (revealOpen && selectedRevealUserId === target.id) {
+				if (tgUsers.length > 0) {
+					selectedRevealUserId = tgUsers[0].id;
+					revealData = await api.revealTgWebProxySecret(selectedRevealUserId);
+					syncRevealSecretInput();
+					await updateRevealQR();
+				} else {
+					closeRevealModal();
+				}
+			}
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка удаления пользователя');
 		} finally {
+			deleteUserLoading = false;
 			userActionLoadingId = '';
 		}
 	}
@@ -704,7 +922,7 @@
 		if (!editConfig.upstream_device) {
 			editConfig.upstream_device = 'direct';
 		}
-		customEgressMode = false;
+		editUpstreams = buildEditableUpstreams(editConfig);
 		void loadEgressOptions(editConfig.upstream_device);
 		settingsOpen = true;
 	}
@@ -737,8 +955,27 @@
 	}
 
 	async function saveSettings() {
+		const vErr = validateUpstreamsDraft(editUpstreams);
+		if (vErr === 'empty') {
+			notifications.error(m.tg_upstreams_validation_empty());
+			return;
+		}
+		if (vErr === 'socks') {
+			notifications.error(m.tg_upstreams_validation_socks());
+			return;
+		}
 		saveConfigLoading = true;
 		try {
+			const cleanUpstreams = editUpstreams.map((u) => ({
+				...u,
+				device: u.type === 'direct' ? (u.device || '').trim() || 'direct' : '',
+				address: u.type === 'socks5' ? (u.address || '').trim() : '',
+				username: u.type === 'socks5' ? (u.username || '').trim() : '',
+				password: u.type === 'socks5' ? u.password || '' : '',
+				weight: u.weight && u.weight >= 1 ? Math.floor(u.weight) : 1,
+			}));
+			editConfig.upstreams = cleanUpstreams;
+			editConfig.upstream_device = primaryDirectDevice(cleanUpstreams);
 			if (editConfig.endpoints && editConfig.endpoints.length > 0) {
 				editConfig.endpoints = editConfig.endpoints.map((ep) => {
 					const p = ep.preset || inferEndpointPreset(ep, editConfig);
@@ -1109,21 +1346,22 @@
 									<QrCode size={13} class="mr-1" />
 									QR / Ссылка
 								</Button>
-								{#if tgUsers.length > 1}
-									<button
-										type="button"
-										class="btn-user-delete"
-										title="Удалить пользователя"
-										disabled={userActionLoadingId === user.id}
-										onclick={() => handleDeleteUser(user)}
-									>
-										<Trash2 size={14} />
-									</button>
-								{/if}
+								<button
+									type="button"
+									class="btn-user-delete"
+									title={m.tg_user_delete_btn()}
+									aria-label={m.tg_user_delete_btn()}
+									disabled={userActionLoadingId === user.id}
+									onclick={() => openDeleteUserConfirm(user)}
+								>
+									<Trash2 size={14} />
+								</button>
 							</div>
 						</div>
 					{/each}
 				</div>
+			{:else}
+				<p class="field-hint">{m.tg_users_empty()}</p>
 			{/if}
 		</section>
 	{/if}
@@ -1152,6 +1390,18 @@
 				}}
 			/>
 		</label>
+		<label class="form-field">
+			<span class="field-label">{m.tg_user_secret_optional_label()}</span>
+			<input
+				type="text"
+				bind:value={newUserSecret}
+				class="text-input font-mono"
+				placeholder={m.tg_user_secret_optional_placeholder()}
+				onkeydown={(e) => {
+					if (e.key === 'Enter' && !addUserLoading) void handleAddUser();
+				}}
+			/>
+		</label>
 	</div>
 
 	{#snippet actions()}
@@ -1164,21 +1414,46 @@
 	{/snippet}
 </Modal>
 
+<!-- Modal: Delete User Confirmation -->
+<Modal
+	open={Boolean(deleteUserTarget)}
+	title={m.tg_user_delete_confirm_title()}
+	onclose={() => { if (!deleteUserLoading) deleteUserTarget = null; }}
+	size="sm"
+>
+	{#if deleteUserTarget}
+		<div class="confirm-content">
+			<AlertTriangle size={32} class="confirm-icon text-danger mb-3" />
+			<p class="confirm-p">
+				{m.tg_user_delete_confirm_body({ name: deleteUserTarget.remark })}
+			</p>
+			{#if tgUsers.length <= 1}
+				<p class="confirm-note">
+					{m.tg_user_delete_confirm_last_note()}
+				</p>
+			{/if}
+		</div>
+	{/if}
+
+	{#snippet actions()}
+		<Button variant="secondary" onclick={() => (deleteUserTarget = null)} disabled={deleteUserLoading}>
+			Отмена
+		</Button>
+		<Button variant="danger" onclick={confirmDeleteUser} disabled={deleteUserLoading}>
+			<Trash2 size={14} class="mr-1" />
+			{m.tg_user_delete_confirm_action()}
+		</Button>
+	{/snippet}
+</Modal>
+
 <!-- Modal: Quick Egress Change -->
-<Modal bind:open={egressModalOpen} title="Куда направлять интернет (Telegram)" onclose={() => (egressModalOpen = false)} size="sm">
+<Modal bind:open={egressModalOpen} title="Куда направлять интернет (Telegram)" onclose={() => (egressModalOpen = false)} size="md">
 	<div class="egress-modal-body">
 		<p class="field-hint">
 			Выберите, через какое подключение роутера трафик Telegram будет выходить в интернет.
 		</p>
-		<label class="form-field">
-			<span class="field-label">Маршрут выхода:</span>
-			<select bind:value={quickEgressDevice} class="select-input">
-				{#each egressOptions as opt (opt.value)}
-					<option value={opt.value}>{opt.label}</option>
-				{/each}
-			</select>
-		</label>
-		{#if currentEgressUnavailable && quickEgressDevice === config?.upstream_device}
+		<TelegramUpstreamsEditor bind:upstreams={quickUpstreams} {egressOptions} />
+		{#if currentEgressUnavailable}
 			<div class="field-warn">
 				Текущий выход недоступен — выберите другой или восстановите туннель.
 			</div>
@@ -1394,6 +1669,36 @@
 									</div>
 								</div>
 								<div class="manual-item manual-item-wide">
+									<span class="m-label">{m.tg_user_secret_base_label()}</span>
+									<div class="input-with-actions">
+										<input
+											type="text"
+											aria-label={m.tg_user_secret_base_label()}
+											bind:value={revealSecretInput}
+											placeholder={m.tg_user_secret_placeholder()}
+											class="link-input font-mono"
+										/>
+										<Button
+											variant="secondary"
+											size="sm"
+											onclick={handleRegenerateUserSecret}
+											disabled={revealSecretSaving}
+										>
+											<RefreshCw size={13} class={revealSecretSaving ? 'spin mr-1' : 'mr-1'} />
+											{m.tg_user_secret_generate()}
+										</Button>
+										<Button
+											variant="primary"
+											size="sm"
+											onclick={handleSaveUserSecret}
+											disabled={revealSecretSaving}
+										>
+											{m.tg_user_secret_save()}
+										</Button>
+									</div>
+									<span class="field-hint">{m.tg_user_secret_hint()}</span>
+								</div>
+								<div class="manual-item manual-item-wide">
 									<span class="m-label">Секретный ключ:</span>
 									<div class="m-val-row">
 										<code class="m-code font-mono text-xs">{activeUser?.mtproxy_secret || revealData.mtproxy_secret}</code>
@@ -1405,12 +1710,60 @@
 							</div>
 						</div>
 					{/if}
+					{#if shareTab === 'webproxy'}
+						<div class="manual-box">
+							<div class="manual-item manual-item-wide">
+								<span class="m-label">{m.tg_user_secret_base_label()}</span>
+								<div class="input-with-actions">
+									<input
+										type="text"
+										aria-label={m.tg_user_secret_base_label()}
+										bind:value={revealSecretInput}
+										placeholder={m.tg_user_secret_placeholder()}
+										class="link-input font-mono"
+									/>
+									<Button
+										variant="secondary"
+										size="sm"
+										onclick={handleRegenerateUserSecret}
+										disabled={revealSecretSaving}
+									>
+										<RefreshCw size={13} class={revealSecretSaving ? 'spin mr-1' : 'mr-1'} />
+										{m.tg_user_secret_generate()}
+									</Button>
+									<Button
+										variant="primary"
+										size="sm"
+										onclick={handleSaveUserSecret}
+										disabled={revealSecretSaving}
+									>
+										{m.tg_user_secret_save()}
+									</Button>
+								</div>
+								<span class="field-hint">{m.tg_user_secret_hint()}</span>
+							</div>
+						</div>
+					{/if}
 				</div>
 			</div>
 		</div>
 	{/if}
 
 	{#snippet actions()}
+		{@const activeUserForAction = getActiveUserReveal()}
+		{#if activeUserForAction}
+			{@const targetUserObj = tgUsers.find((u) => u.id === (activeUserForAction as TgUserRevealData).id) || tgUsers[0]}
+			{#if targetUserObj}
+				<Button
+					variant="danger"
+					onclick={() => openDeleteUserConfirm(targetUserObj)}
+					disabled={revealSecretSaving || deleteUserLoading}
+				>
+					<Trash2 size={14} class="mr-1" />
+					{m.tg_user_delete_btn()}
+				</Button>
+			{/if}
+		{/if}
 		<Button variant="secondary" onclick={closeRevealModal}>Закрыть</Button>
 	{/snippet}
 </Modal>
@@ -1558,48 +1911,10 @@
 						<span class="field-label">Домен маскировки TLS (SNI):</span>
 						<input type="text" bind:value={editConfig.tls_domain} class="text-input" placeholder="www.google.com" />
 					</label>
-					<label class="form-field">
-						<span class="field-label">Куда направлять интернет:</span>
-						{#if !customEgressMode}
-							<select
-								value={editConfig.upstream_device || 'direct'}
-								onchange={(e) => {
-									const val = (e.currentTarget as HTMLSelectElement).value;
-									if (val === '__custom__') {
-										customEgressMode = true;
-									} else {
-										editConfig.upstream_device = val;
-									}
-								}}
-								class="select-input"
-							>
-								{#each egressOptions as opt (opt.value)}
-									<option value={opt.value}>{opt.label}</option>
-								{/each}
-								<option value="__custom__">Указать вручную...</option>
-							</select>
-						{:else}
-							<div class="input-with-actions">
-								<input
-									type="text"
-									bind:value={editConfig.upstream_device}
-									class="text-input font-mono"
-									placeholder="nwg1"
-								/>
-								<Button
-									variant="secondary"
-									size="sm"
-									onclick={() => {
-										customEgressMode = false;
-										void loadEgressOptions(editConfig.upstream_device);
-									}}
-								>
-									Список
-								</Button>
-							</div>
-						{/if}
-					</label>
+					<div class="form-field"></div>
 				</div>
+
+				<TelegramUpstreamsEditor bind:upstreams={editUpstreams} {egressOptions} />
 
 				<div class="settings-section-divider"></div>
 				<div class="section-title-row">

@@ -1,0 +1,388 @@
+package tgwebproxy
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	mrand "math/rand"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestNormalizeMTProtoSecret(t *testing.T) {
+	rawHex := "00112233445566778899aabbccddeeff"
+	if got, err := NormalizeMTProtoSecret("  " + strings.ToUpper(rawHex) + " "); err != nil || got != rawHex {
+		t.Fatalf("raw 32-hex failed: got=%q err=%v", got, err)
+	}
+	if got, err := NormalizeMTProtoSecret("dd" + rawHex); err != nil || got != rawHex {
+		t.Fatalf("dd secret failed: got=%q err=%v", got, err)
+	}
+	fakeTLS := "ee" + rawHex + hex.EncodeToString([]byte("yandex.ru"))
+	if got, err := NormalizeMTProtoSecret(fakeTLS); err != nil || got != rawHex {
+		t.Fatalf("ee Fake-TLS secret failed: got=%q err=%v", got, err)
+	}
+
+	for _, bad := range []string{"", "1234", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", "ee" + rawHex, "aa" + rawHex} {
+		if got, err := NormalizeMTProtoSecret(bad); !errors.Is(err, ErrInvalidSecret) {
+			t.Fatalf("expected ErrInvalidSecret for %q, got=%q err=%v", bad, got, err)
+		}
+	}
+}
+
+func TestUserSecretEditRegenerateAndDeleteLastUser(t *testing.T) {
+	svc, tempDir, _ := setupTestService(t)
+	svc.randReader = rand.Reader
+
+	customHex := "11112222333344445555666677778888"
+	if err := svc.UpdateUserWithOptions("default", UpdateUserOptions{
+		Secret: "ee" + customHex + hex.EncodeToString([]byte("www.google.com")),
+	}); err != nil {
+		t.Fatalf("UpdateUserWithOptions manual secret failed: %v", err)
+	}
+
+	rev1, err := svc.RevealUserSecret("default")
+	if err != nil {
+		t.Fatalf("RevealUserSecret failed: %v", err)
+	}
+	if rev1.Users[0].Secret != customHex {
+		t.Fatalf("expected secret %q, got %q", customHex, rev1.Users[0].Secret)
+	}
+	if !strings.HasPrefix(rev1.Users[0].MtproxySecret, "ee"+customHex) {
+		t.Fatalf("expected mtproxy_secret to start with ee+customHex, got %q", rev1.Users[0].MtproxySecret)
+	}
+
+	// Create second user with custom secret; duplicate must fail cleanly.
+	if err := svc.CreateUserWithSecret("Перенесённый", customHex); !errors.Is(err, ErrDuplicateSecret) {
+		t.Fatalf("expected ErrDuplicateSecret, got %v", err)
+	}
+	otherHex := "aaaabbbbccccddddeeeeffff00001111"
+	if err := svc.CreateUserWithSecret("Перенесённый", otherHex); err != nil {
+		t.Fatalf("CreateUserWithSecret failed: %v", err)
+	}
+	st := svc.GetStatus()
+	if len(st.Users) != 2 {
+		t.Fatalf("expected 2 users, got %d", len(st.Users))
+	}
+	secondID := st.Users[1].ID
+
+	// Regenerate secret on second user
+	if err := svc.UpdateUserWithOptions(secondID, UpdateUserOptions{RegenerateSecret: true}); err != nil {
+		t.Fatalf("UpdateUserWithOptions RegenerateSecret failed: %v", err)
+	}
+	rev2, err := svc.RevealUserSecret(secondID)
+	if err != nil {
+		t.Fatalf("RevealUserSecret second user failed: %v", err)
+	}
+	var secondRevealed string
+	for _, u := range rev2.Users {
+		if u.ID == secondID {
+			secondRevealed = u.Secret
+		}
+	}
+	if len(secondRevealed) != 32 || secondRevealed == otherHex {
+		t.Fatalf("expected regenerated 32-hex secret different from %q, got %q", otherHex, secondRevealed)
+	}
+
+	// Delete default user, then delete the last remaining user.
+	if err := svc.DeleteUser("default"); err != nil {
+		t.Fatalf("DeleteUser default failed: %v", err)
+	}
+	if err := svc.DeleteUser(secondID); err != nil {
+		t.Fatalf("DeleteUser last user failed: %v", err)
+	}
+	if stEmpty := svc.GetStatus(); len(stEmpty.Users) != 0 {
+		t.Fatalf("expected 0 users after deleting last user, got %+v", stEmpty.Users)
+	}
+	if secs := svc.GetInternalConfig().ActiveSecrets(); len(secs) != 0 {
+		t.Fatalf("expected 0 active secrets after deleting last user, got %v", secs)
+	}
+
+	// Verify TOML & profiles.json still render valid dummy fallback with 0 users, and persist cleanly on reload.
+	tomlStr := GenerateTelemtDirectConfig(svc.GetInternalConfig())
+	if !strings.Contains(tomlStr, `user1 = "00000000000000000000000000000000"`) {
+		t.Fatalf("expected dummy fallback user1 in direct TOML when 0 users:\n%s", tomlStr)
+	}
+	profBytes, err := GenerateProfilesJSON(svc.GetInternalConfig())
+	if err != nil {
+		t.Fatalf("GenerateProfilesJSON with 0 users failed: %v", err)
+	}
+	var profDoc struct {
+		Profiles []struct {
+			Secret string `json:"secret"`
+		} `json:"profiles"`
+	}
+	if err := json.Unmarshal(profBytes, &profDoc); err != nil || len(profDoc.Profiles) == 0 || profDoc.Profiles[0].Secret == "" {
+		t.Fatalf("unexpected profiles.json with 0 users: %s (err=%v)", string(profBytes), err)
+	}
+
+	// Reload from disk: empty users list must NOT resurrect "default".
+	reloaded := &Service{dataDir: tempDir, telemtDir: filepath.Join(tempDir, "telemt")}
+	if err := reloaded.loadAndMigrateConfig(); err != nil {
+		t.Fatalf("reload config with 0 users failed: %v", err)
+	}
+	if len(reloaded.GetInternalConfig().GetUsers()) != 0 {
+		t.Fatalf("expected 0 users after reload, got %+v", reloaded.GetInternalConfig().GetUsers())
+	}
+
+	// RevealUserSecret with 0 users returns empty Users slice cleanly.
+	revEmpty, err := svc.RevealUserSecret("")
+	if err != nil || len(revEmpty.Users) != 0 {
+		t.Fatalf("RevealUserSecret on empty users failed: rev=%+v err=%v", revEmpty, err)
+	}
+
+	// Creating a new user after 0 users restores active users cleanly.
+	if err := svc.CreateUserWithSecret("Новый", ""); err != nil {
+		t.Fatalf("CreateUserWithSecret after 0 users failed: %v", err)
+	}
+	if got := svc.GetStatus().Users; len(got) != 1 || got[0].Remark != "Новый" {
+		t.Fatalf("expected 1 recreated user, got %+v", got)
+	}
+}
+
+func TestUpstreams_TOMLAndValidationAndUpdateConfig(t *testing.T) {
+	svc, tempDir, _ := setupTestService(t)
+
+	cfg := Config{
+		Upstreams: []UpstreamSpec{
+			{ID: "up-1", Type: "direct", Device: "nwg1", Weight: 10, Enabled: true},
+			{ID: "up-2", Type: "socks5", Address: "127.0.0.1:1099", Username: "u1", Password: "p1", Weight: 2, Enabled: true},
+			{ID: "up-3", Type: "direct", Device: "nwg9", Weight: 5, Enabled: false},
+		},
+	}
+
+	if err := svc.UpdateConfig(cfg); err != nil {
+		t.Fatalf("UpdateConfig multi-upstream failed: %v", err)
+	}
+
+	directTOML, err := os.ReadFile(filepath.Join(tempDir, "telemt", "config.toml"))
+	if err != nil {
+		t.Fatalf("read config.toml: %v", err)
+	}
+	rawTOML, err := os.ReadFile(filepath.Join(tempDir, "telemt", "raw.toml"))
+	if err != nil {
+		t.Fatalf("read raw.toml: %v", err)
+	}
+
+	for _, doc := range []string{string(directTOML), string(rawTOML)} {
+		if !strings.Contains(doc, "bindtodevice = \"nwg1\"\nweight = 10\nenabled = true") {
+			t.Fatalf("expected nwg1 direct upstream in TOML:\n%s", doc)
+		}
+		if !strings.Contains(doc, "type = \"socks5\"\naddress = \"127.0.0.1:1099\"\nusername = \"u1\"\npassword = \"p1\"\nweight = 2\nenabled = true") {
+			t.Fatalf("expected socks5 upstream in TOML:\n%s", doc)
+		}
+		if strings.Contains(doc, "nwg9") {
+			t.Fatalf("disabled upstream nwg9 should not be emitted:\n%s", doc)
+		}
+	}
+
+	// Validation rejects bad SOCKS5 address, bad weight, all-disabled list.
+	for _, invalid := range [][]UpstreamSpec{
+		{{Type: "socks5", Address: "not-host-port", Weight: 1, Enabled: true}},
+		{{Type: "direct", Device: "eth0", Weight: 70000, Enabled: true}},
+		{{Type: "direct", Device: "eth0", Weight: 1, Enabled: false}},
+	} {
+		if err := ValidateUpstreams(invalid); !errors.Is(err, ErrInvalidUpstream) {
+			t.Fatalf("expected ErrInvalidUpstream for %+v, got %v", invalid, err)
+		}
+	}
+
+	// Partial failover allowed: one invalid direct iface + one healthy direct WAN succeeds.
+	err = svc.UpdateConfig(Config{
+		Upstreams: []UpstreamSpec{
+			{ID: "u-bad", Type: "direct", Device: "invalid_dev", Weight: 5, Enabled: true},
+			{ID: "u-wan", Type: "direct", Device: "direct", Weight: 1, Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected multi-upstream with healthy backup to succeed, got %v", err)
+	}
+
+	// When all enabled upstreams fail validation, UpdateConfig must reject.
+	err = svc.UpdateConfig(Config{
+		Upstreams: []UpstreamSpec{
+			{ID: "u-bad", Type: "direct", Device: "invalid_dev", Weight: 1, Enabled: true},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected error when all enabled upstreams fail validation")
+	}
+}
+
+func startEchoOnceListener(t *testing.T, tag string) (string, func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen %s: %v", tag, err)
+	}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = c.Write([]byte(tag))
+			_ = c.Close()
+		}
+	}()
+	return ln.Addr().String(), func() { _ = ln.Close() }
+}
+
+func startMinimalSocks5Server(t *testing.T, wantUser, wantPass string) (string, func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen socks5: %v", err)
+	}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(client net.Conn) {
+				defer client.Close()
+				hdr := make([]byte, 2)
+				if _, err := io.ReadFull(client, hdr); err != nil {
+					return
+				}
+				methods := make([]byte, int(hdr[1]))
+				if _, err := io.ReadFull(client, methods); err != nil {
+					return
+				}
+				if wantUser != "" {
+					_, _ = client.Write([]byte{0x05, 0x02})
+					authHdr := make([]byte, 2)
+					if _, err := io.ReadFull(client, authHdr); err != nil {
+						return
+					}
+					u := make([]byte, int(authHdr[1]))
+					if _, err := io.ReadFull(client, u); err != nil {
+						return
+					}
+					pLen := make([]byte, 1)
+					if _, err := io.ReadFull(client, pLen); err != nil {
+						return
+					}
+					p := make([]byte, int(pLen[0]))
+					if _, err := io.ReadFull(client, p); err != nil {
+						return
+					}
+					if string(u) != wantUser || string(p) != wantPass {
+						_, _ = client.Write([]byte{0x01, 0x01})
+						return
+					}
+					_, _ = client.Write([]byte{0x01, 0x00})
+				} else {
+					_, _ = client.Write([]byte{0x05, 0x00})
+				}
+
+				reqHdr := make([]byte, 4)
+				if _, err := io.ReadFull(client, reqHdr); err != nil {
+					return
+				}
+				var host string
+				switch reqHdr[3] {
+				case 0x01: // IPv4
+					ip := make([]byte, 4)
+					if _, err := io.ReadFull(client, ip); err != nil {
+						return
+					}
+					host = net.IP(ip).String()
+				case 0x03: // Domain
+					l := make([]byte, 1)
+					if _, err := io.ReadFull(client, l); err != nil {
+						return
+					}
+					d := make([]byte, int(l[0]))
+					if _, err := io.ReadFull(client, d); err != nil {
+						return
+					}
+					host = string(d)
+				default:
+					return
+				}
+				portBuf := make([]byte, 2)
+				if _, err := io.ReadFull(client, portBuf); err != nil {
+					return
+				}
+				port := int(portBuf[0])<<8 | int(portBuf[1])
+				target, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 2*time.Second)
+				if err != nil {
+					_, _ = client.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+					return
+				}
+				defer target.Close()
+				_, _ = client.Write([]byte{0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0})
+				done := make(chan struct{}, 2)
+				go func() { _, _ = io.Copy(target, client); done <- struct{}{} }()
+				go func() { _, _ = io.Copy(client, target); done <- struct{}{} }()
+				<-done
+			}(c)
+		}
+	}()
+	return ln.Addr().String(), func() { _ = ln.Close() }
+}
+
+func TestMtgUpstreamPool_FailoverCooldownSocks5AndWeights(t *testing.T) {
+	// 1. Dead primary SOCKS5 + healthy backup SOCKS5 -> automatic failover and cooldown.
+	deadLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadAddr := deadLn.Addr().String()
+	_ = deadLn.Close()
+
+	socksAddr, closeSocks := startMinimalSocks5Server(t, "tguser", "tgpass")
+	defer closeSocks()
+
+	targetAddr, closeTarget := startEchoOnceListener(t, "OK_VIA_BACKUP")
+	defer closeTarget()
+
+	now := time.Unix(1700000000, 0)
+	pool := newMtgUpstreamPool([]UpstreamSpec{
+		{ID: "dead", Type: "socks5", Address: deadAddr, Weight: 1000, Enabled: true},
+		{ID: "backup", Type: "socks5", Address: socksAddr, Username: "tguser", Password: "tgpass", Weight: 1, Enabled: true},
+	})
+	pool.nowFn = func() time.Time { return now }
+	pool.rng = mrand.New(mrand.NewSource(42))
+
+	c, err := pool.DialContext(context.Background(), "tcp", targetAddr)
+	if err != nil {
+		t.Fatalf("DialContext failover failed: %v", err)
+	}
+	buf, _ := io.ReadAll(c)
+	_ = c.Close()
+	if string(buf) != "OK_VIA_BACKUP" {
+		t.Fatalf("unexpected payload via failover: %q", string(buf))
+	}
+
+	// Failed primary must now be in cooldown so healthy backup is ranked first.
+	order := pool.selectOrder()
+	if order[0].spec.ID != "backup" {
+		t.Fatalf("expected healthy backup first after dead primary cooldown, got %q", order[0].spec.ID)
+	}
+
+	// 2. Weighted distribution favors heavy weight (100 vs 1).
+	wPool := newMtgUpstreamPool([]UpstreamSpec{
+		{ID: "heavy", Type: "direct", Weight: 100, Enabled: true},
+		{ID: "light", Type: "direct", Weight: 1, Enabled: true},
+	})
+	wPool.rng = mrand.New(mrand.NewSource(7))
+	heavyFirst := 0
+	for range 100 {
+		if wPool.selectOrder()[0].spec.ID == "heavy" {
+			heavyFirst++
+		}
+	}
+	if heavyFirst < 85 {
+		t.Fatalf("expected heavy upstream weight=100 to win majority of draws vs weight=1, won %d/100", heavyFirst)
+	}
+}

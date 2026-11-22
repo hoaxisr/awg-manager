@@ -349,6 +349,17 @@ export interface TelegramUser {
 	created_at?: string;
 }
 
+export interface TelegramUpstream {
+	id: string;
+	type: 'direct' | 'socks5';
+	device?: string;
+	address?: string;
+	username?: string;
+	password?: string;
+	weight: number;
+	enabled: boolean;
+}
+
 export interface TgUserRevealData {
 	id: string;
 	remark: string;
@@ -379,6 +390,7 @@ export interface TgWebProxyConfig {
 	backend: string;
 	carrier_mode: string;
 	upstream_device?: string;
+	upstreams?: TelegramUpstream[];
 	tls_domain?: string;
 	endpoints?: WebProxyEndpoint[];
 	users?: TelegramUser[];
@@ -397,6 +409,7 @@ export interface TgWebProxyStatus {
 	backend_online: boolean;
 	backend_addr: string;
 	upstream_status?: 'ok' | 'degraded' | 'interface_down';
+	upstreams?: TelegramUpstream[];
 	network_preset?: TgNetworkPreset | string;
 	carrier_mode: string;
 	public_host: string;

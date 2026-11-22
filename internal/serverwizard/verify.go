@@ -13,6 +13,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/cdndispatcher"
 	"github.com/hoaxisr/awg-manager/internal/serverwizard/egress"
+	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 )
 
 // TLSCertProbeFunc probes TLS certificate validity (hostname, validity window, chain) for a specific FQDN.
@@ -542,7 +543,11 @@ func (s *WizardService) verifyTelegram(ctx context.Context, checks *[]Verificati
 	}
 
 	// 3. Telegram Egress readiness check
-	s.verifyTelegramEgress(ctx, cfg.UpstreamDevice, checks)
+	if len(cfg.Upstreams) > 0 {
+		s.verifyTelegramUpstreams(ctx, cfg.Upstreams, checks)
+	} else {
+		s.verifyTelegramEgress(ctx, cfg.UpstreamDevice, checks)
+	}
 }
 
 func (s *WizardService) verifyXrayEgress(ctx context.Context, mode, iface string, checks *[]VerificationCheck) {
@@ -678,6 +683,102 @@ func (s *WizardService) verifyTelegramEgress(ctx context.Context, upstream strin
 		Status:  CheckStatusOK,
 		Message: fmt.Sprintf("Используется интерфейс %s", upstream),
 	})
+}
+
+func (s *WizardService) verifyTelegramUpstreams(ctx context.Context, upstreams []tgwebproxy.UpstreamSpec, checks *[]VerificationCheck) {
+	norm := tgwebproxy.NormalizeUpstreams(upstreams)
+	var enabled []tgwebproxy.UpstreamSpec
+	for _, u := range norm {
+		if u.Enabled {
+			enabled = append(enabled, u)
+		}
+	}
+	if len(enabled) == 0 {
+		*checks = append(*checks, VerificationCheck{
+			ID:          "tg_egress",
+			Service:     "egress",
+			Title:       "Выходные каналы трафика Telegram",
+			Status:      CheckStatusBlocked,
+			Category:    VerifyCategoryEgress,
+			Message:     "Не включён ни один выходной upstream-канал",
+			Remediation: "Включите хотя бы один канал (Direct или SOCKS5) в настройках выхода Telegram.",
+		})
+		return
+	}
+
+	okCount := 0
+	var okLabels, badLabels []string
+	for _, u := range enabled {
+		if u.Type == tgwebproxy.UpstreamTypeSocks5 {
+			label := fmt.Sprintf("SOCKS5 %s", u.Address)
+			dialFn := s.dialTimeout
+			if dialFn == nil {
+				dialFn = net.DialTimeout
+			}
+			conn, err := dialFn("tcp", u.Address, 1500*time.Millisecond)
+			if err != nil {
+				badLabels = append(badLabels, fmt.Sprintf("%s (%v)", label, err))
+				continue
+			}
+			_ = conn.Close()
+			okCount++
+			okLabels = append(okLabels, fmt.Sprintf("%s (вес %d)", label, u.Weight))
+			continue
+		}
+
+		dev := strings.TrimSpace(u.Device)
+		if dev == "" || dev == "direct" {
+			okCount++
+			okLabels = append(okLabels, fmt.Sprintf("Direct WAN (вес %d)", u.Weight))
+			continue
+		}
+		if s.egress != nil {
+			res, err := s.egress.Resolve(ctx, egress.ResolveRequest{
+				ServerKind: "tgwebproxy",
+				EgressID:   dev,
+			})
+			if err != nil {
+				badLabels = append(badLabels, fmt.Sprintf("%s (%v)", dev, err))
+				continue
+			}
+			okCount++
+			okLabels = append(okLabels, fmt.Sprintf("%s (вес %d)", res.Interface, u.Weight))
+			continue
+		}
+		okCount++
+		okLabels = append(okLabels, fmt.Sprintf("%s (вес %d)", dev, u.Weight))
+	}
+
+	switch {
+	case okCount == len(enabled):
+		*checks = append(*checks, VerificationCheck{
+			ID:      "tg_egress",
+			Service: "egress",
+			Title:   "Выходные каналы трафика Telegram",
+			Status:  CheckStatusOK,
+			Message: fmt.Sprintf("Все активные каналы (%d) готовы: %s", okCount, strings.Join(okLabels, ", ")),
+		})
+	case okCount > 0:
+		*checks = append(*checks, VerificationCheck{
+			ID:          "tg_egress",
+			Service:     "egress",
+			Title:       "Выходные каналы трафика Telegram",
+			Status:      CheckStatusWarning,
+			Category:    VerifyCategoryEgress,
+			Message:     fmt.Sprintf("Доступно %d из %d каналов (%s); недоступны: %s", okCount, len(enabled), strings.Join(okLabels, ", "), strings.Join(badLabels, "; ")),
+			Remediation: "Проверьте недоступные туннели или SOCKS5-прокси — сейчас работает резервный канал.",
+		})
+	default:
+		*checks = append(*checks, VerificationCheck{
+			ID:          "tg_egress",
+			Service:     "egress",
+			Title:       "Выходные каналы трафика Telegram",
+			Status:      CheckStatusBlocked,
+			Category:    VerifyCategoryEgress,
+			Message:     fmt.Sprintf("Все выбранные каналы недоступны: %s", strings.Join(badLabels, "; ")),
+			Remediation: "Проверьте туннели/SOCKS5-прокси или добавьте прямой канал WAN.",
+		})
+	}
 }
 
 func (s *WizardService) verifyDomainDNS(ctx context.Context, id, service, title, domain string, checks *[]VerificationCheck) {
