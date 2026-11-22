@@ -627,7 +627,7 @@
 				{#each TRANSPORTS as tr (tr.id)}
 					<button
 						type="button"
-						class="chip"
+						class="of-chip"
 						class:active={draft.transports.includes(tr.id)}
 						onclick={() => toggleTransport(tr.id)}
 					>
@@ -976,7 +976,7 @@
 		gap: 0.5rem;
 	}
 
-	.chip {
+	.of-chip {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.35rem;
@@ -989,7 +989,7 @@
 		cursor: pointer;
 	}
 
-	.chip.active {
+	.of-chip.active {
 		border-color: var(--color-accent);
 		background: color-mix(in srgb, var(--color-accent) 12%, transparent);
 		color: var(--color-text-primary);
