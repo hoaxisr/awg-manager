@@ -26,10 +26,10 @@ var (
 	// ErrInvalidIP indicates the supplied string could not be parsed as an IP address.
 	ErrInvalidIP = errors.New("invalid IP address")
 
-	nat64WellKnown  = netip.MustParsePrefix("64:ff9b::/96")
-	nat64LocalUse   = netip.MustParsePrefix("64:ff9b:1::/48")
-	cgnatPrefix     = netip.MustParsePrefix("100.64.0.0/10")
-	benchmarkPrefix = netip.MustParsePrefix("198.18.0.0/15")
+	nat64WellKnown   = netip.MustParsePrefix("64:ff9b::/96")
+	nat64LocalUse    = netip.MustParsePrefix("64:ff9b:1::/48")
+	cgnatPrefix      = netip.MustParsePrefix("100.64.0.0/10")
+	benchmarkPrefix  = netip.MustParsePrefix("198.18.0.0/15")
 	reservedPrefixes = []netip.Prefix{
 		netip.MustParsePrefix("192.0.2.0/24"),
 		netip.MustParsePrefix("198.51.100.0/24"),

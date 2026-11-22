@@ -105,9 +105,9 @@ func newTestFircServerDiscoveryApp(t *testing.T) (*app, *storage.SettingsStore) 
 	}`
 	fg := &stubFircRCIGetter{
 		jsonByPath: map[string]string{
-			"/show/interface/":                        showIfaces,
-			"/show/rc/interface/":                     rcIfaces,
-			"/show/running-config":                    `{"message":["ip hotspot","policy Wireguard5 Policy4","exit"]}`,
+			"/show/interface/":                            showIfaces,
+			"/show/rc/interface/":                         rcIfaces,
+			"/show/running-config":                        `{"message":["ip hotspot","policy Wireguard5 Policy4","exit"]}`,
 			"/show/interface/system-name?name=Wireguard0": `"nwg0"`,
 			"/show/interface/system-name?name=Wireguard1": `"nwg1"`,
 			"/show/interface/system-name?name=Wireguard2": `"nwg2"`,
