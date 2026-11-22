@@ -66,14 +66,14 @@ func New(dataDir string, arch string) *Service {
 
 	pidPath := ManagedTelemtPIDPath
 	if dataDir != "/opt/etc/awg-manager" && dataDir != "" {
-		pidPath = filepath.Join(telemtDir, "telemt.pid")
+		pidPath = filepath.Join(telemtDir, StandalonePIDName)
 	}
 
 	s := &Service{
 		dataDir:      dataDir,
 		telemtDir:    telemtDir,
 		binPath:      filepath.Join(telemtDir, "telemt"),
-		cfgPath:      filepath.Join(telemtDir, "config.toml"),
+		cfgPath:      filepath.Join(telemtDir, StandaloneConfigName),
 		settingsPath: filepath.Join(telemtDir, "settings.json"),
 		pidPath:      pidPath,
 		arch:         normArch,
@@ -284,7 +284,7 @@ func NormalizeTLSDomain(raw string) string {
 	return d
 }
 
-// SaveConfig updates the telemt configuration and writes config.toml.
+// SaveConfig updates the telemt configuration and writes its standalone TOML.
 func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -494,6 +494,8 @@ func (s *Service) Uninstall(ctx context.Context) error {
 
 // ResetConfig stops the standalone telemt process and removes its config and
 // runtime PID files while preserving the installed telemt binary and symlink.
+// Telegram WebProxy telemt files (config.toml, raw.toml) are reset by
+// tgwebproxy.FactoryReset, not here.
 func (s *Service) ResetConfig(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -502,7 +504,6 @@ func (s *Service) ResetConfig(ctx context.Context) error {
 
 	_ = os.Remove(s.settingsPath)
 	_ = os.Remove(s.cfgPath)
-	_ = os.Remove(filepath.Join(s.telemtDir, "raw.toml"))
 	_ = os.Remove(s.pidPath)
 
 	s.config = DefaultConfig()
@@ -550,7 +551,7 @@ func (s *Service) startProcess(ctx context.Context) error {
 	// Clean up any stale PID file before starting
 	_ = os.Remove(s.pidPath)
 
-	// Ensure config.toml is written
+	// Ensure the standalone config is written
 	tomlData := GenerateTOML(s.config)
 	_ = os.WriteFile(s.cfgPath, []byte(tomlData), 0644)
 
