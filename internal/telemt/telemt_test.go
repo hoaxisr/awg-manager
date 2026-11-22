@@ -388,7 +388,7 @@ func TestResetConfig_PreservesBinaryAndClearsConfigs(t *testing.T) {
 	if err := os.WriteFile(binPath, []byte("keep-telemt-bin"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"settings.json", "config.toml", "raw.toml", "telemt.pid"} {
+	for _, name := range []string{"settings.json", StandaloneConfigName, StandalonePIDName} {
 		if err := os.WriteFile(filepath.Join(telemtDir, name), []byte("old"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -407,7 +407,7 @@ func TestResetConfig_PreservesBinaryAndClearsConfigs(t *testing.T) {
 	if data, err := os.ReadFile(binPath); err != nil || string(data) != "keep-telemt-bin" {
 		t.Fatalf("expected telemt binary preserved, got err=%v data=%q", err, string(data))
 	}
-	for _, gone := range []string{"settings.json", "config.toml", "raw.toml", "telemt.pid"} {
+	for _, gone := range []string{"settings.json", StandaloneConfigName, StandalonePIDName} {
 		if _, err := os.Stat(filepath.Join(telemtDir, gone)); !os.IsNotExist(err) {
 			t.Fatalf("expected %s deleted during ResetConfig", gone)
 		}

@@ -6,11 +6,19 @@ const (
 	// PinnedTelemtVersion is the validated stable upstream release of telemt.
 	PinnedTelemtVersion = "3.5.7"
 
+	// Ownership: config.toml, raw.toml and /opt/var/run/telemt{,-raw}.pid in
+	// the shared telemt directory belong to the Telegram WebProxy workers
+	// (internal/tgwebproxy, init scripts S99telemt/S96telemt-raw). The
+	// standalone service only uses the files below. Its pid file must also stay
+	// outside tgwebproxy's factory-reset glob /opt/var/run/telemt*.pid*.
 	ManagedTelemtDir        = "/opt/etc/awg-manager/telemt"
 	ManagedTelemtBinaryPath = "/opt/etc/awg-manager/telemt/telemt"
-	ManagedTelemtConfigPath = "/opt/etc/awg-manager/telemt/config.toml"
-	ManagedTelemtPIDPath    = "/opt/var/run/telemt.pid"
+	ManagedTelemtConfigPath = "/opt/etc/awg-manager/telemt/" + StandaloneConfigName
+	ManagedTelemtPIDPath    = "/opt/var/run/awgm-telemt-standalone.pid"
 	LegacyTelemtBinaryPath  = "/opt/bin/telemt"
+
+	StandaloneConfigName = "standalone.toml"
+	StandalonePIDName    = "standalone.pid"
 
 	DefaultPort      = 8443
 	DefaultListenIP  = "0.0.0.0"
