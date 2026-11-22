@@ -944,53 +944,58 @@
 			</div>
 		</div>
 
-		<details class="autolist-details text-xs">
-			<summary>{m.autolist_details()}</summary>
-			<div class="flex flex-col gap-1.5 mt-2">
-				<div class="grid grid-cols-2 gap-x-4 gap-y-1">
+		{@render candidateDetails(c, true)}
+	</div>
+{/snippet}
+
+<!-- Детальная информация по проверке: карточка кандидата и модалка повторной проверки. -->
+{#snippet candidateDetails(c: AutolistCandidate, withLastError: boolean)}
+	<details class="autolist-details text-xs">
+		<summary>{m.autolist_details()}</summary>
+		<div class="flex flex-col gap-1.5 mt-2">
+			<div class="grid grid-cols-2 gap-x-4 gap-y-1">
+				<span>
+					<span class="opacity-60">{m.autolist_details_coverage()}:</span>
+					{coverageText(c)}
+					<span class="opacity-60">{formatAutolistDuration(c.coverage?.durationMs)}</span>
+				</span>
+				<span>
+					<span class="opacity-60">{m.autolist_details_interface()}:</span>
+					<span class="font-mono">{c.targetInterface || '—'} → {c.targetOutbound || '—'}</span>
+				</span>
+				{#if c.clientIP || c.clientMAC}
 					<span>
-						<span class="opacity-60">{m.autolist_details_coverage()}:</span>
-						{coverageText(c)}
-						<span class="opacity-60">{formatAutolistDuration(c.coverage?.durationMs)}</span>
+						<span class="opacity-60">{m.autolist_details_client()}:</span>
+						<span class="font-mono">{[c.clientIP, c.clientMAC].filter(Boolean).join(' · ')}</span>
 					</span>
+				{/if}
+				{#if c.correlationID}
 					<span>
-						<span class="opacity-60">{m.autolist_details_interface()}:</span>
-						<span class="font-mono">{c.targetInterface || '—'} → {c.targetOutbound || '—'}</span>
+						<span class="opacity-60">{m.autolist_details_correlation()}:</span>
+						<span class="font-mono">{c.correlationID}</span>
 					</span>
-					{#if c.clientIP || c.clientMAC}
-						<span>
-							<span class="opacity-60">{m.autolist_details_client()}:</span>
-							<span class="font-mono">{[c.clientIP, c.clientMAC].filter(Boolean).join(' · ')}</span>
-						</span>
-					{/if}
-					{#if c.correlationID}
-						<span>
-							<span class="opacity-60">{m.autolist_details_correlation()}:</span>
-							<span class="font-mono">{c.correlationID}</span>
-						</span>
-					{/if}
-				</div>
-				{#each evFields(c) as { key, e } (key)}
-					<div class="border-t border-base-200 pt-1.5">
-						<div class="font-medium">
-							{key === 'direct' ? m.autolist_col_direct() : key === 'wan' ? m.autolist_col_wan() : m.autolist_col_tunnel()}:
-							<span class={verdictClass(e?.verdict)}>{verdictText(e?.verdict)}</span>
-							<span class="opacity-60">{formatAutolistDuration(e?.durationMs)} · {formatAutolistBytes(e?.bytes)}</span>
-						</div>
-						{#if e?.detail}
-							<pre class="autolist-raw">{e.detail}</pre>
-						{/if}
-					</div>
-				{/each}
-				{#if c.lastError}
-					<div class="text-error break-all">
-						<span class="opacity-60">{m.autolist_last_error()}:</span>
-						{c.lastError}
-					</div>
 				{/if}
 			</div>
-		</details>
-	</div>
+			{#each evFields(c) as { key, e } (key)}
+				<div class="border-t border-base-200 pt-1.5">
+					<div class="font-medium">
+						{key === 'direct' ? m.autolist_col_direct() : key === 'wan' ? m.autolist_col_wan() : m.autolist_col_tunnel()}:
+						<span class={verdictClass(e?.verdict)}>{verdictText(e?.verdict)}</span>
+						<span class="opacity-60">{formatAutolistDuration(e?.durationMs)} · {formatAutolistBytes(e?.bytes)}</span>
+					</div>
+					{#if e?.detail}
+						<pre class="autolist-raw">{e.detail}</pre>
+					{/if}
+				</div>
+			{/each}
+			{#if withLastError && c.lastError}
+				<div class="text-error break-all">
+					<span class="opacity-60">{m.autolist_last_error()}:</span>
+					{c.lastError}
+				</div>
+			{/if}
+		</div>
+	</details>
 {/snippet}
 
 <PageHeader title={m.autolist_tab_title()} />
@@ -1579,7 +1584,13 @@
 		{/if}
 	{/if}
 {/snippet}
-<RecheckModal open={recheckCandidate !== null} candidate={recheckCandidate} onclose={closeRecheck} actions={recheckActions} />
+<RecheckModal
+	open={recheckCandidate !== null}
+	candidate={recheckCandidate}
+	onclose={closeRecheck}
+	actions={recheckActions}
+	details={candidateDetails}
+/>
 
 <style>
 	/* В этой новой вкладке p-3 не попадает в Tailwind CSS; не полагаемся на

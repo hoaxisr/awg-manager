@@ -16,9 +16,11 @@
 		onclose: () => void;
 		/** Кнопки родителя («В туннель»/«Убрать») в футере модалки. */
 		actions?: Snippet;
+		/** Детальная информация по проверке (общий блок с карточкой кандидата). */
+		details?: Snippet<[AutolistCandidate, boolean]>;
 	}
 
-	let { open, candidate, onclose, actions }: Props = $props();
+	let { open, candidate, onclose, actions, details }: Props = $props();
 
 	type Phase = 'idle' | 'running' | 'done' | 'error';
 
@@ -162,17 +164,22 @@
 				{shown.lastError}
 			</div>
 	{/if}
+		<!-- Детали проверки: тот же блок, что у карточки кандидата. -->
+		{@render details?.(shown, false)}
 	{/if}
 	{#snippet actions()}
-		{#if phase !== 'running' && candidate}
-			<Button variant="secondary" onclick={() => void recheckAgain()}>
-				{#snippet iconBefore()}
-					<RotateCw size={14} strokeWidth={2} aria-hidden="true" />
-				{/snippet}
-				{m.autolist_recheck_again()}
-			</Button>
-		{/if}
-		{@render actions?.()}
+		<!-- Перенос строк: набор действий шире карточки и не должен вылезать за её край. -->
+		<div class="flex flex-wrap justify-end gap-2">
+			{#if phase !== 'running' && candidate}
+				<Button variant="secondary" size="md" onclick={() => void recheckAgain()}>
+					{#snippet iconBefore()}
+						<RotateCw size={14} strokeWidth={2} aria-hidden="true" />
+					{/snippet}
+					{m.autolist_recheck_again()}
+				</Button>
+			{/if}
+			{@render actions?.()}
+		</div>
 	{/snippet}
 </Modal>
 
