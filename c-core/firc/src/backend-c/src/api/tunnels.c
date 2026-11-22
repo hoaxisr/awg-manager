@@ -1446,6 +1446,19 @@ static cJSON *preview_json(const firc_tunnel_t *t, const firc_tun_nodes_t *nodes
     return o;
 }
 
+static void write_nodes_build_err(firc_http_res_t *res, firc_err_t err)
+{
+    if (err == FIRC_ERR_LIMIT) {
+        firc_http_res_write_error(res, 400, "filter regex exceeded match limit");
+        return;
+    }
+    if (err == FIRC_ERR_INVAL) {
+        firc_http_res_write_error(res, 400, "invalid filter regex");
+        return;
+    }
+    firc_http_res_write_error(res, 500, err == FIRC_OK ? "out of memory" : firc_err_str(err));
+}
+
 static void handle_preview(firc_http_req_t *req, firc_http_res_t *res, void *ud)
 {
     firc_tunnels_ctx_t *ctx = ud;
@@ -1478,7 +1491,7 @@ static void handle_preview(firc_http_req_t *req, firc_http_res_t *res, void *ud)
     free(b);
     firc_tunnels_free(&set);
     if (o == NULL) {
-        firc_http_res_write_error(res, 500, err == FIRC_OK ? "out of memory" : firc_err_str(err));
+        write_nodes_build_err(res, err);
         return;
     }
     firc_http_res_write_json(res, 200, o);
@@ -1653,7 +1666,7 @@ static void start_probe(firc_tunnels_ctx_t *ctx, firc_http_res_t *res, const fir
     firc_tun_nodes_t nodes;
     firc_err_t err = firc_tun_nodes_build(&all, mark, b, nb, &nodes);
     if (err != FIRC_OK) {
-        firc_http_res_write_error(res, 500, firc_err_str(err));
+        write_nodes_build_err(res, err);
         return;
     }
     tun_probe_call_t *c = calloc(1, sizeof *c);

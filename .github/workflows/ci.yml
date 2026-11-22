@@ -104,9 +104,16 @@ jobs:
       - name: Install C toolchain
         run: |
           set -euo pipefail
+          need_pkgs=""
           if ! command -v gcc >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1; then
+            need_pkgs="$need_pkgs build-essential"
+          fi
+          if [ ! -f /usr/include/pcre2.h ] && ! pkg-config --exists libpcre2-8 2>/dev/null; then
+            need_pkgs="$need_pkgs libpcre2-dev"
+          fi
+          if [ -n "$need_pkgs" ]; then
             sudo apt-get update
-            sudo apt-get install -y --no-install-recommends build-essential
+            sudo apt-get install -y --no-install-recommends $need_pkgs
           fi
           gcc --version
           make --version
@@ -141,6 +148,8 @@ jobs:
           CFLAGS="-O2 -Wall -Wextra -Werror -std=gnu11 -pthread" \
           LDFLAGS="-pthread" \
           make -B -C c-core/fpc all
+          make -C c-core/firc/src/backend-c CFLAGS_EXTRA=-Werror sanitize
+          make -C c-core/firc/src/backend-c clean
 
       - name: Run mandatory C-backed Go runtime tests
         env:

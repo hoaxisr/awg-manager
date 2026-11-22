@@ -246,8 +246,8 @@ NETFILTER_OBJS := $(NETFILTER_SRCS:%.c=$(BUILDDIR)/%.o)
 API_OBJS := $(API_SRCS:%.c=$(BUILDDIR)/%.o)
 SUBSCRIPTIONS_OBJS := $(SUBSCRIPTIONS_SRCS:%.c=$(BUILDDIR)/%.o)
 UPDATE_OBJS := $(UPDATE_SRCS:%.c=$(BUILDDIR)/%.o)
-TUNNELS_OBJS := $(TUNNELS_SRCS:%.c=$(BUILDDIR)/%.o) \
-    $(TUNVLESS_PARSER_SRCS:$(TUNVLESS_DIR)/%.c=$(BUILDDIR)/tunvless/%.o)
+TUNVLESS_PARSER_OBJS := $(TUNVLESS_PARSER_SRCS:$(TUNVLESS_DIR)/%.c=$(BUILDDIR)/tunvless/%.o)
+TUNNELS_OBJS := $(TUNNELS_SRCS:%.c=$(BUILDDIR)/%.o) $(TUNVLESS_PARSER_OBJS)
 INTERFACES_OBJS := $(INTERFACES_SRCS:%.c=$(BUILDDIR)/%.o)
 TAP_RULES_OBJS := $(TAP_RULES_SRCS:%.c=$(BUILDDIR)/%.o)
 TAP_OBJS := $(TAP_SRCS:%.c=$(BUILDDIR)/%.o) $(TAP_CFG_SRCS:%.c=$(BUILDDIR)/%.o)
@@ -263,7 +263,7 @@ PCRE2_LIB ?= -lpcre2-8
 CJSON_LIB ?= -lcjson
 DEP_LIBS := -lyaml $(PCRE2_LIB) -lmnl $(CJSON_LIB) -lm -lcurl -lz
 
-TEST_SUPPORT_SRCS := tests/unit/fake_iptables.c tests/unit/fake_rtnl.c tests/unit/fake_conntrack.c tests/unit/fake_setnl.c tests/unit/fake_nflog.c tests/unit/xt_golden.c tests/unit/fake_xtables.c
+TEST_SUPPORT_SRCS := $(wildcard tests/unit/fake_iptables.c tests/unit/fake_rtnl.c tests/unit/fake_conntrack.c tests/unit/fake_setnl.c tests/unit/fake_nflog.c tests/unit/xt_golden.c tests/unit/fake_xtables.c)
 TEST_SUPPORT_OBJS := $(TEST_SUPPORT_SRCS:tests/unit/%.c=$(BUILDDIR)/tests/support/%.o)
 
 TEST_SRCS := $(filter-out $(TEST_SUPPORT_SRCS), $(wildcard tests/unit/*.c))
@@ -385,12 +385,17 @@ $(BUILDDIR)/tests/test_system: tests/unit/test_system.c $(LIB_OBJS) $(TEST_SUPPO
 	$(CC) $(CFLAGS) -Itests/vendor -Itests/unit $(LDFLAGS) $(SYSTEM_WRAP) -o $@ $< \
 	    $(LIB_OBJS) $(TEST_SUPPORT_OBJS) $(LDLIBS) $(DEP_LIBS)
 
+$(BUILDDIR)/tests/test_tunnodes_filter: tests/unit/test_tunnodes_filter.c $(BUILDDIR)/src/tunnels/tunnodes.o $(BUILDDIR)/src/util/err.o $(TUNVLESS_PARSER_OBJS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< $(BUILDDIR)/src/tunnels/tunnodes.o $(BUILDDIR)/src/util/err.o $(TUNVLESS_PARSER_OBJS) $(LDLIBS) $(PCRE2_LIB)
+
 $(BUILDDIR)/tests/%: tests/unit/%.c $(LIB_OBJS) $(TEST_SUPPORT_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Itests/vendor -Itests/unit $(LDFLAGS) -o $@ $< $(LIB_OBJS) $(TEST_SUPPORT_OBJS) $(LDLIBS) $(DEP_LIBS)
 
 # Run every binary even after a failure, then name the failures.
 test: $(TEST_BINS)
+	@if [ -z "$(TEST_BINS)" ]; then echo "ERROR: no unit tests found in tests/unit/*.c" >&2; exit 1; fi
 	@failed=""; 	for t in $(TEST_BINS); do 	    echo "== $$t"; 	    $$t || failed="$$failed $$t"; 	done; 	if [ -n "$$failed" ]; then 	    echo; echo "FAILED:"; for t in $$failed; do echo "  $$t"; done; exit 1; 	fi
 
 # float-cast-overflow is not part of -fsanitize=undefined and has to be named.
