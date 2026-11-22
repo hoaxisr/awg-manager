@@ -228,6 +228,59 @@ func TestService_FirewallOwnership(t *testing.T) {
 		}
 	})
 
+	t.Run("apply error records no ownership", func(t *testing.T) {
+		f := &fakeChain{noComment: true, fail: errors.New("xtables lock busy")}
+		useFakeChain(t, f)
+		svc := New(t.TempDir(), "x86_64")
+		svc.config.Port = 8448
+
+		svc.openFirewallLocked(ctx)
+		if svc.openedUntagged {
+			t.Fatal("failed apply recorded ownership of an untagged rule")
+		}
+		// iptables recovers and the user opens the port themselves.
+		f.fail = nil
+		f.rules = []string{spec(8448, false)}
+		_ = svc.stopProcess(ctx)
+		if f.count(spec(8448, false)) != 1 {
+			t.Fatalf("stop after failed apply removed foreign rule: %q", f.rules)
+		}
+	})
+
+	t.Run("restart cycle and Close keep one owned rule", func(t *testing.T) {
+		f := &fakeChain{noComment: true}
+		useFakeChain(t, f)
+		svc := New(t.TempDir(), "x86_64")
+		svc.config.Port = 8448
+
+		svc.openFirewallLocked(ctx)
+		for i := 0; i < 3; i++ { // restartProcess = stopProcess + startProcess
+			_ = svc.stopProcess(ctx)
+			svc.openFirewallLocked(ctx)
+			if n := f.count(spec(8448, false)); n != 1 || !svc.openedUntagged {
+				t.Fatalf("after restart %d: rules=%d owned=%v", i, n, svc.openedUntagged)
+			}
+		}
+		_ = svc.Close() // awg-manager shutdown
+		if len(f.rules) != 0 {
+			t.Fatalf("owned rule left after Close: %q", f.rules)
+		}
+	})
+
+	t.Run("SaveConfig port change: stop closes old owned rule", func(t *testing.T) {
+		f := &fakeChain{noComment: true, rules: []string{spec(1443, false)}}
+		useFakeChain(t, f)
+		svc := New(t.TempDir(), "x86_64")
+		svc.config.Port = 8448
+		svc.openFirewallLocked(ctx)
+
+		svc.config.Port = 1443 // SaveConfig updates config before restartProcess
+		_ = svc.stopProcess(ctx)
+		if f.count(spec(8448, false)) != 0 || f.count(spec(1443, false)) != 1 {
+			t.Fatalf("port change stop: %q", f.rules)
+		}
+	})
+
 	t.Run("port change closes old owned rule", func(t *testing.T) {
 		f := &fakeChain{noComment: true, rules: []string{spec(1443, false)}}
 		useFakeChain(t, f)
