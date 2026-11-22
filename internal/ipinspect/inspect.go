@@ -18,7 +18,7 @@ const (
 	defaultTTL        = 30 * time.Minute
 	defaultEmptyTTL   = 5 * time.Minute
 	defaultASTTL      = 6 * time.Hour
-	publicTimeout     = 4 * time.Second
+	publicTimeout     = 5 * time.Second
 	privatePTRTimeout = 1500 * time.Millisecond
 )
 
@@ -284,7 +284,7 @@ func (s *Service) Inspect(ctx context.Context, rawIP string) (Result, error) {
 
 	go func() {
 		defer wg.Done()
-		names, err := s.resolver.LookupAddr(lookupCtx, ipStr)
+		names, err := s.lookupAddrWithRetry(lookupCtx, ipStr)
 		if err == nil {
 			ptrs = cleanPTRs(names)
 		}
@@ -296,7 +296,7 @@ func (s *Service) Inspect(ctx context.Context, rawIP string) (Result, error) {
 		if originName == "" {
 			return
 		}
-		txts, err := s.resolver.LookupTXT(lookupCtx, originName)
+		txts, err := s.lookupTXTWithRetry(lookupCtx, originName)
 		if err != nil {
 			return
 		}
@@ -322,7 +322,7 @@ func (s *Service) Inspect(ctx context.Context, rawIP string) (Result, error) {
 		}
 
 		asName := fmt.Sprintf("AS%d.asn.cymru.com", asn)
-		asTXTs, err := s.resolver.LookupTXT(lookupCtx, asName)
+		asTXTs, err := s.lookupTXTWithRetry(lookupCtx, asName)
 		if err != nil {
 			return
 		}
@@ -365,6 +365,44 @@ func (s *Service) Inspect(ctx context.Context, rawIP string) (Result, error) {
 	s.putCachedIP(ipStr, res, ttl)
 
 	return cloneResult(res), nil
+}
+
+func isTimeoutError(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
+func waitRetryDelay(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (s *Service) lookupTXTWithRetry(ctx context.Context, name string) ([]string, error) {
+	txts, err := s.resolver.LookupTXT(ctx, name)
+	if err == nil || !isTimeoutError(err) || ctx.Err() != nil {
+		return txts, err
+	}
+	if !waitRetryDelay(ctx, 150*time.Millisecond) {
+		return nil, ctx.Err()
+	}
+	return s.resolver.LookupTXT(ctx, name)
+}
+
+func (s *Service) lookupAddrWithRetry(ctx context.Context, addr string) ([]string, error) {
+	names, err := s.resolver.LookupAddr(ctx, addr)
+	if err == nil || !isTimeoutError(err) || ctx.Err() != nil {
+		return names, err
+	}
+	if !waitRetryDelay(ctx, 150*time.Millisecond) {
+		return nil, ctx.Err()
+	}
+	return s.resolver.LookupAddr(ctx, addr)
 }
 
 func cleanPTRs(names []string) []string {

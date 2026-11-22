@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -836,6 +839,259 @@ func normalizeCheckDomain(raw string) string {
 	return strings.TrimSpace(strings.TrimSuffix(domain, "."))
 }
 
+var fircDNSTxSeq atomic.Uint32
+
+// lookupFircDNSIPv4 sends an A-record UDP query directly to dnsAddr (fircd :3553),
+// bypassing Go's resolv.conf parser which on Keenetic imposes `options timeout:1 attempts:1`
+// and aborts uncached tunnel-resolved queries (1.0-1.4s) prematurely.
+func lookupFircDNSIPv4(ctx context.Context, dnsAddr, domain string) (net.IP, error) {
+	return lookupFircDNSIPv4Depth(ctx, dnsAddr, domain, 0)
+}
+
+func lookupFircDNSIPv4Depth(ctx context.Context, dnsAddr, domain string, depth int) (net.IP, error) {
+	domain = normalizeCheckDomain(domain)
+	if domain == "" {
+		return nil, fmt.Errorf("empty domain")
+	}
+	if ip := net.ParseIP(domain); ip != nil {
+		if ip4 := ip.To4(); ip4 != nil {
+			return ip4, nil
+		}
+		return nil, fmt.Errorf("non-IPv4 literal %q", domain)
+	}
+	if depth > 4 {
+		return nil, fmt.Errorf("CNAME chain too deep for %q", domain)
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		ip, cname, rcode, err := exchangeFircDNSA(ctx, dnsAddr, domain)
+		if err == nil {
+			if ip != nil {
+				return ip, nil
+			}
+			if cname != "" {
+				return lookupFircDNSIPv4Depth(ctx, dnsAddr, cname, depth+1)
+			}
+			return nil, fmt.Errorf("no IPv4 A record for %s", domain)
+		}
+		lastErr = err
+		if rcode >= 0 {
+			// Authoritative non-zero DNS RCODE (NXDOMAIN, SERVFAIL, etc.) — no UDP retry needed.
+			return nil, err
+		}
+		var ne net.Error
+		if !errors.As(err, &ne) || !ne.Timeout() {
+			return nil, err
+		}
+		if deadline, has := ctx.Deadline(); has && time.Until(deadline) < 1200*time.Millisecond {
+			break
+		}
+	}
+	return nil, lastErr
+}
+
+func encodeFircDNSQueryA(txID uint16, domain string) ([]byte, error) {
+	labels := strings.Split(strings.TrimSuffix(domain, "."), ".")
+	wireLen := 1
+	for _, lbl := range labels {
+		if len(lbl) == 0 || len(lbl) > 63 {
+			return nil, fmt.Errorf("invalid DNS name %q", domain)
+		}
+		wireLen += 1 + len(lbl)
+	}
+	if wireLen > 255 {
+		return nil, fmt.Errorf("DNS name too long %q", domain)
+	}
+
+	pkt := make([]byte, 12+wireLen+4)
+	binary.BigEndian.PutUint16(pkt[0:2], txID)
+	binary.BigEndian.PutUint16(pkt[2:4], 0x0100) // RD=1
+	binary.BigEndian.PutUint16(pkt[4:6], 1)      // QDCOUNT=1
+	off := 12
+	for _, lbl := range labels {
+		pkt[off] = byte(len(lbl))
+		copy(pkt[off+1:], lbl)
+		off += 1 + len(lbl)
+	}
+	pkt[off] = 0
+	off++
+	binary.BigEndian.PutUint16(pkt[off:off+2], 1)   // QTYPE=A
+	binary.BigEndian.PutUint16(pkt[off+2:off+4], 1) // QCLASS=IN
+	return pkt, nil
+}
+
+func exchangeFircDNSA(ctx context.Context, dnsAddr, domain string) (ip net.IP, cname string, rcode int, err error) {
+	rcode = -1
+	txID := uint16(fircDNSTxSeq.Add(1))
+	if txID == 0 {
+		txID = uint16(fircDNSTxSeq.Add(1))
+	}
+	query, err := encodeFircDNSQueryA(txID, domain)
+	if err != nil {
+		return nil, "", -1, err
+	}
+
+	d := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := d.DialContext(ctx, "udp", dnsAddr)
+	if err != nil {
+		return nil, "", -1, err
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(4 * time.Second)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	_ = conn.SetDeadline(deadline)
+
+	if _, err := conn.Write(query); err != nil {
+		return nil, "", -1, err
+	}
+
+	buf := make([]byte, 1500)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			return nil, "", -1, fmt.Errorf("lookup %s via %s: %w", domain, dnsAddr, err)
+		}
+		if n < 12 {
+			continue
+		}
+		if binary.BigEndian.Uint16(buf[0:2]) != txID {
+			continue
+		}
+		return parseFircDNSAResponse(buf[:n], domain)
+	}
+}
+
+func parseFircDNSAResponse(pkt []byte, domain string) (net.IP, string, int, error) {
+	if len(pkt) < 12 {
+		return nil, "", -1, fmt.Errorf("short DNS response")
+	}
+	rcode := int(pkt[3] & 0x0f)
+	if rcode != 0 {
+		name := fmt.Sprintf("rcode %d", rcode)
+		switch rcode {
+		case 2:
+			name = "SERVFAIL"
+		case 3:
+			name = "NXDOMAIN"
+		case 5:
+			name = "REFUSED"
+		}
+		return nil, "", rcode, fmt.Errorf("DNS %s for %s", name, domain)
+	}
+
+	qdCount := int(binary.BigEndian.Uint16(pkt[4:6]))
+	anCount := int(binary.BigEndian.Uint16(pkt[6:8]))
+	off := 12
+	for i := 0; i < qdCount; i++ {
+		next, err := skipFircDNSName(pkt, off)
+		if err != nil || next+4 > len(pkt) {
+			return nil, "", -1, fmt.Errorf("malformed DNS question")
+		}
+		off = next + 4
+	}
+
+	var cname string
+	for i := 0; i < anCount; i++ {
+		next, err := skipFircDNSName(pkt, off)
+		if err != nil || next+10 > len(pkt) {
+			return nil, "", -1, fmt.Errorf("malformed DNS answer")
+		}
+		rrType := binary.BigEndian.Uint16(pkt[next : next+2])
+		rrClass := binary.BigEndian.Uint16(pkt[next+2 : next+4])
+		rdLen := int(binary.BigEndian.Uint16(pkt[next+8 : next+10]))
+		rdataOff := next + 10
+		if rdataOff+rdLen > len(pkt) {
+			return nil, "", -1, fmt.Errorf("truncated DNS rdata")
+		}
+		if rrClass == 1 {
+			switch rrType {
+			case 1: // A
+				if rdLen == 4 {
+					return net.IPv4(pkt[rdataOff], pkt[rdataOff+1], pkt[rdataOff+2], pkt[rdataOff+3]), "", 0, nil
+				}
+			case 5: // CNAME
+				if cname == "" {
+					if target, err := decodeFircDNSName(pkt, rdataOff); err == nil {
+						cname = target
+					}
+				}
+			}
+		}
+		off = rdataOff + rdLen
+	}
+	return nil, cname, 0, nil
+}
+
+func skipFircDNSName(pkt []byte, off int) (int, error) {
+	for steps := 0; steps < len(pkt); steps++ {
+		if off >= len(pkt) {
+			return 0, fmt.Errorf("truncated DNS name")
+		}
+		l := pkt[off]
+		if l == 0 {
+			return off + 1, nil
+		}
+		if l&0xc0 == 0xc0 {
+			if off+2 > len(pkt) {
+				return 0, fmt.Errorf("truncated DNS pointer")
+			}
+			return off + 2, nil
+		}
+		if l&0xc0 != 0 {
+			return 0, fmt.Errorf("invalid DNS label header")
+		}
+		off += 1 + int(l)
+	}
+	return 0, fmt.Errorf("DNS name loop")
+}
+
+func decodeFircDNSName(pkt []byte, off int) (string, error) {
+	var labels []string
+	cur := off
+	jumps := 0
+	for {
+		if cur >= len(pkt) {
+			return "", fmt.Errorf("truncated DNS name")
+		}
+		l := pkt[cur]
+		if l == 0 {
+			break
+		}
+		if l&0xc0 == 0xc0 {
+			if cur+2 > len(pkt) {
+				return "", fmt.Errorf("truncated DNS pointer")
+			}
+			ptr := int(binary.BigEndian.Uint16(pkt[cur:cur+2]) & 0x3fff)
+			if ptr >= len(pkt) {
+				return "", fmt.Errorf("out-of-range DNS pointer")
+			}
+			jumps++
+			if jumps > 16 {
+				return "", fmt.Errorf("DNS pointer loop")
+			}
+			cur = ptr
+			continue
+		}
+		if l&0xc0 != 0 {
+			return "", fmt.Errorf("invalid DNS label header")
+		}
+		end := cur + 1 + int(l)
+		if end > len(pkt) {
+			return "", fmt.Errorf("truncated DNS label")
+		}
+		labels = append(labels, string(pkt[cur+1:end]))
+		cur = end
+	}
+	return strings.Join(labels, "."), nil
+}
+
 // CheckDomainsRouting tests how fircd resolves and routes a batch of domains in real time,
 // snapshotting DNAT/group state at most once per batch instead of spawning per-domain subprocesses.
 func (op *Operator) CheckDomainsRouting(ctx context.Context, domains []string) map[string]*DomainCheckResult {
@@ -862,13 +1118,6 @@ func (op *Operator) CheckDomainsRouting(ctx context.Context, domains []string) m
 	}
 
 	dnsAddr := op.DNSProxyEndpoint()
-	r := &net.Resolver{
-		PreferGo: true,
-		Dial: func(dCtx context.Context, _, _ string) (net.Conn, error) {
-			d := net.Dialer{Timeout: 3 * time.Second}
-			return d.DialContext(dCtx, "udp", dnsAddr)
-		},
-	}
 
 	type lookupOutcome struct {
 		domain  string
@@ -901,12 +1150,12 @@ func (op *Operator) CheckDomainsRouting(ctx context.Context, domains []string) m
 			}
 
 			start := time.Now()
-			lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-			ips, err := r.LookupIP(lookupCtx, "ip4", dom)
+			lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			ip, err := lookupFircDNSIPv4(lookupCtx, dnsAddr, dom)
 			cancel()
 			latency := time.Since(start).Milliseconds()
 
-			if err != nil || len(ips) == 0 {
+			if err != nil || ip == nil {
 				errMsg := "не удалось разрешить домен"
 				if err != nil {
 					errMsg = err.Error()
@@ -924,9 +1173,8 @@ func (op *Operator) CheckDomainsRouting(ctx context.Context, domains []string) m
 				return
 			}
 
-			ip := ips[0].To4()
-			if ip == nil {
-				ip = ips[0]
+			if ip4 := ip.To4(); ip4 != nil {
+				ip = ip4
 			}
 			ipStr := ip.String()
 			isFake := ip != nil && ip[0] == 198 && (ip[1] == 18 || ip[1] == 19)
@@ -1068,17 +1316,11 @@ func (op *Operator) CheckDomainRouting(ctx context.Context, domain string) (*Dom
 
 	start := time.Now()
 	dnsAddr := op.DNSProxyEndpoint()
-	r := &net.Resolver{
-		PreferGo: true,
-		Dial: func(dCtx context.Context, _, _ string) (net.Conn, error) {
-			d := net.Dialer{Timeout: 4 * time.Second}
-			return d.DialContext(dCtx, "udp", dnsAddr)
-		},
-	}
-
-	ips, err := r.LookupIP(ctx, "ip4", domain)
+	lookupCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	ip, err := lookupFircDNSIPv4(lookupCtx, dnsAddr, domain)
+	cancel()
 	latency := time.Since(start).Milliseconds()
-	if err != nil || len(ips) == 0 {
+	if err != nil || ip == nil {
 		errMsg := "не удалось разрешить домен"
 		if err != nil {
 			errMsg = err.Error()
@@ -1092,9 +1334,8 @@ func (op *Operator) CheckDomainRouting(ctx context.Context, domain string) (*Dom
 		}, nil
 	}
 
-	ip := ips[0].To4()
-	if ip == nil {
-		ip = ips[0]
+	if ip4 := ip.To4(); ip4 != nil {
+		ip = ip4
 	}
 	ipStr := ip.String()
 	isFake := ip != nil && ip[0] == 198 && (ip[1] == 18 || ip[1] == 19)

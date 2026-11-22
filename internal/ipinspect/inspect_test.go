@@ -254,3 +254,50 @@ func TestServiceInspect_PartialFailureAndCacheEviction(t *testing.T) {
 		t.Fatalf("cache size %d exceeded maxEntries %d", cacheLen, defaultMaxEntries)
 	}
 }
+
+type flakyTimeoutError struct{}
+
+func (flakyTimeoutError) Error() string   { return "i/o timeout" }
+func (flakyTimeoutError) Timeout() bool   { return true }
+func (flakyTimeoutError) Temporary() bool { return true }
+
+type flakyTimeoutResolver struct {
+	mu      sync.Mutex
+	txtHits map[string]int
+}
+
+func (r *flakyTimeoutResolver) LookupAddr(_ context.Context, _ string) ([]string, error) {
+	return []string{"dns.google."}, nil
+}
+
+func (r *flakyTimeoutResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.txtHits == nil {
+		r.txtHits = make(map[string]int)
+	}
+	r.txtHits[name]++
+	if r.txtHits[name] == 1 {
+		// Simulate Keenetic resolv.conf 1s cutoff on cold cache; retry succeeds from cache.
+		return nil, flakyTimeoutError{}
+	}
+	switch name {
+	case "8.8.8.8.origin.asn.cymru.com":
+		return []string{"15169 | 8.8.8.0/24 | US | arin | 2023-12-28"}, nil
+	case "AS15169.asn.cymru.com":
+		return []string{"15169 | US | arin | 2000-03-30 | GOOGLE, US"}, nil
+	default:
+		return nil, nil
+	}
+}
+
+func TestServiceInspect_RetriesOnceOnTransientTimeout(t *testing.T) {
+	svc := NewServiceWithResolver(&flakyTimeoutResolver{}, nil)
+	res, err := svc.Inspect(context.Background(), "8.8.8.8")
+	if err != nil {
+		t.Fatalf("Inspect error = %v", err)
+	}
+	if res.ASN != 15169 || res.Prefix != "8.8.8.0/24" || res.Organization != "GOOGLE, US" || res.PTR != "dns.google" {
+		t.Fatalf("expected transient timeout retry to populate full metadata, got %+v", res)
+	}
+}
