@@ -286,6 +286,7 @@ func (h *FircHandler) RegisterRoutes(mux *http.ServeMux, guarded func(http.Handl
 	mux.HandleFunc("/api/firc/v1/", guarded(h.handleV1Proxy))
 	mux.HandleFunc("GET /api/firc/install-status", guarded(h.handleInstallStatus))
 	mux.HandleFunc("POST /api/firc/install", guarded(h.handleInstall))
+	mux.HandleFunc("POST /api/firc/upgrade", guarded(h.handleUpgrade))
 	mux.HandleFunc("POST /api/firc/uninstall", guarded(h.handleUninstall))
 	mux.HandleFunc("POST /api/firc/migrate-runtime", guarded(h.handleMigrateRuntime))
 }
@@ -444,6 +445,72 @@ func (h *FircHandler) handleInstall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.Accepted(w, map[string]string{"status": "install_started"})
+}
+
+// @Summary Upgrade the installed FIRC runtime package
+// @Description Downloads and verifies the target runtime IPK before restarting an active FIRC daemon and rolling back automatically on failure.
+// @Tags firc
+// @Produce json
+// @Security CookieAuth
+// @Success 202 {object} APIEnvelope
+// @Failure 409 {object} APIErrorEnvelope
+// @Failure 503 {object} APIErrorEnvelope
+// @Router /firc/upgrade [post]
+func (h *FircHandler) handleUpgrade(w http.ResponseWriter, r *http.Request) {
+	if h.installer == nil {
+		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "firc installer not configured", "UNAVAILABLE")
+		return
+	}
+
+	h.installMu.Lock()
+	st := h.installer.GetInstallStatus(r.Context(), h.op, h.isSelected())
+	if st.ExternalPackage != "" {
+		h.installMu.Unlock()
+		response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("firc runtime belongs to external package %s.list; migrate to awg-firc-runtime first", st.ExternalPackage), "EXTERNAL_PACKAGE_OWNED")
+		return
+	}
+	if st.LegacyBundledOwnership {
+		h.installMu.Unlock()
+		response.ErrorWithStatus(w, http.StatusConflict, "firc runtime belongs to legacy awg-manager package; migrate ownership first", "LEGACY_BUNDLED_OWNED")
+		return
+	}
+	if !st.Available {
+		h.installMu.Unlock()
+		reason := st.UnavailableReason
+		if reason == "" {
+			reason = firc.ErrReleaseUnavailable.Error()
+		}
+		response.ErrorWithStatus(w, http.StatusServiceUnavailable, reason, "RELEASE_UNAVAILABLE")
+		return
+	}
+	if st.Busy {
+		h.installMu.Unlock()
+		response.ErrorWithStatus(w, http.StatusConflict, firc.ErrInstallBusy.Error(), "INSTALL_BUSY")
+		return
+	}
+	if st.State == firc.InstallStateNotInstalled || st.InstalledVersion == "" {
+		h.installMu.Unlock()
+		response.ErrorWithStatus(w, http.StatusConflict, firc.ErrRuntimeNotInstalled.Error(), "RUNTIME_NOT_INSTALLED")
+		return
+	}
+	if st.State == firc.InstallStateRecoveryNeeded {
+		h.installMu.Unlock()
+		response.ErrorWithStatus(w, http.StatusConflict, firc.ErrUpgradeRequiresRepair.Error(), "RECOVERY_REQUIRED")
+		return
+	}
+	if !st.UpdateAvailable {
+		h.installMu.Unlock()
+		response.ErrorWithStatus(w, http.StatusConflict, firc.ErrAlreadyUpToDate.Error(), "ALREADY_UP_TO_DATE")
+		return
+	}
+	h.installMu.Unlock()
+
+	if err := h.installer.StartUpgrade(h.op); err != nil {
+		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_BUSY")
+		return
+	}
+
+	response.Accepted(w, map[string]string{"status": "upgrade_started"})
 }
 
 // @Summary Migrate FIRC runtime ownership to awg-firc-runtime
