@@ -36,6 +36,25 @@ func TestAutolistOwnerRequiresExactUnconditionalForm(t *testing.T) {
 	}
 }
 
+func TestAutolistOwnerStaysLastAfterAddingUserRule(t *testing.T) {
+	svc, _ := newOrchedTestService(t)
+	ctx := context.Background()
+	owner := Rule{RuleSet: []string{"awgm-autolist"}, Action: "route", Outbound: "awgm-autolist-target"}
+	user := Rule{DomainSuffix: []string{"user.example"}, Action: "route", Outbound: "direct"}
+	for _, rule := range []Rule{owner, user} {
+		if err := svc.AddRule(ctx, rule); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rules, err := svc.ListRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 2 || !isAutolistOwnerRule(rules[1]) {
+		t.Fatalf("Autolist owner is not last: %+v", rules)
+	}
+}
+
 func TestAutolistOwnerMoveProtectionAndWriterRepair(t *testing.T) {
 	svc, _ := newOrchedTestService(t)
 	ctx := context.Background()
@@ -50,6 +69,16 @@ func TestAutolistOwnerMoveProtectionAndWriterRepair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ownerIndex := -1
+	for i, rule := range before {
+		if isAutolistOwnerRule(rule) {
+			ownerIndex = i
+			break
+		}
+	}
+	if ownerIndex < 0 {
+		t.Fatalf("owner rule missing: %+v", before)
+	}
 	for _, move := range [][2]int{{0, 1}, {1, 0}} {
 		if err := svc.MoveRule(ctx, move[0], move[1]); !errors.Is(err, ErrRuleProtected) {
 			t.Fatalf("MoveRule(%d,%d)=%v", move[0], move[1], err)
@@ -62,7 +91,7 @@ func TestAutolistOwnerMoveProtectionAndWriterRepair(t *testing.T) {
 
 	repaired := owner
 	repaired.Outbound = "direct"
-	if err := svc.UpdateRule(ctx, 0, repaired); err != nil {
+	if err := svc.UpdateRule(ctx, ownerIndex, repaired); err != nil {
 		t.Fatalf("writer owner repair was rejected: %v", err)
 	}
 }

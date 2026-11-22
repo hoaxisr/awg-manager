@@ -16,7 +16,25 @@ func (s *ServiceImpl) ListRules(ctx context.Context) ([]Rule, error) {
 }
 
 func (s *ServiceImpl) AddRule(ctx context.Context, r Rule) error {
-	return s.withConfig(ctx, "rules", func(c *RouterConfig) error { return c.AddRule(r) })
+	return s.withConfig(ctx, "rules", func(c *RouterConfig) error {
+		if err := c.AddRule(r); err != nil {
+			return err
+		}
+		// The Autolist owner stays last, so a new user rule remains movable
+		// among user rules and cannot strand itself below the protected owner.
+		if !isAutolistOwnerRule(r) {
+			for i, existing := range c.Route.Rules {
+				if !isAutolistOwnerRule(existing) {
+					continue
+				}
+				owner := c.Route.Rules[i]
+				copy(c.Route.Rules[i:], c.Route.Rules[i+1:])
+				c.Route.Rules[len(c.Route.Rules)-1] = owner
+				break
+			}
+		}
+		return nil
+	})
 }
 
 func (s *ServiceImpl) UpdateRule(ctx context.Context, index int, r Rule) error {

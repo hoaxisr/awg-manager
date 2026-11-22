@@ -8077,7 +8077,7 @@
 	"autolist_action_add_hint": "Добавить в общий ruleset автосписка, идущий через туннель",
 	"autolist_action_dismiss": "Скрыть",
 	"autolist_action_dismiss_hint": "Спрятать кандидата из списка, пока вы его не вернёте",
-	"autolist_action_forget": "Удалить карточку",
+	"autolist_action_forget": "Удалить кандидата",
 	"autolist_action_forget_hint": "Убрать кандидата из списка, правила не трогаются",
 	"autolist_action_remove": "Удалить правило",
 	"autolist_action_remove_hint": "Убрать правило из маршрутизации",

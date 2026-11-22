@@ -7677,7 +7677,7 @@
 	"autolist_action_add_hint": "Add to the shared Autolist ruleset routed through the tunnel",
 	"autolist_action_dismiss": "Hide",
 	"autolist_action_dismiss_hint": "Hide the candidate from the list until you restore it",
-	"autolist_action_forget": "Delete card",
+	"autolist_action_forget": "Delete candidate",
 	"autolist_action_forget_hint": "Remove the candidate from the list; rules are untouched",
 	"autolist_action_remove": "Remove rule",
 	"autolist_action_remove_hint": "Remove the rule from routing",
