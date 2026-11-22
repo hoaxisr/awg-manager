@@ -467,7 +467,7 @@ func (i *OnDemandInstaller) recoverPendingLocked(ctx context.Context, op *Operat
 		}
 		return i.saveOperationWithHook(runtimeOperation{Action: "uninstall", Pending: false})
 
-	case "install":
+	case "install", "upgrade":
 		if i.packages == nil {
 			return errors.New("runtime package manager unavailable for pending install recovery")
 		}
@@ -486,7 +486,7 @@ func (i *OnDemandInstaller) recoverPendingLocked(ctx context.Context, op *Operat
 						ver, verErr = i.packages.Version(ctx, RuntimePackageName)
 					}
 					if verErr == nil && ver == receipt.Version && verifyInstalledRuntime(cachedIPK, i.arch, receipt.Version, i.layout) == nil {
-						return i.saveOperationWithHook(runtimeOperation{Action: "install", Pending: false})
+						return i.saveOperationWithHook(runtimeOperation{Action: priorOp.Action, Pending: false})
 					}
 				}
 			}

@@ -43,6 +43,7 @@ type InstallStatus struct {
 	State                  InstallState `json:"state"`
 	InstalledVersion       string       `json:"installedVersion,omitempty"`
 	AvailableVersion       string       `json:"availableVersion,omitempty"`
+	UpdateAvailable        bool         `json:"updateAvailable"`
 	Available              bool         `json:"available"`
 	UnavailableReason      string       `json:"unavailableReason,omitempty"`
 	FircdPresent           bool         `json:"fircdPresent"`
@@ -241,17 +242,21 @@ func (odi *OnDemandInstaller) SetDependencyChecker(fn func(ctx context.Context) 
 }
 
 var (
-	ErrInstallBusy        = errors.New("firc: install/uninstall operation already in progress")
-	ErrFircActive         = errors.New("firc: cannot uninstall while FIRC is the active routing engine")
-	ErrFircRunning        = errors.New("firc: cannot uninstall while FIRC is running; stop it first")
-	ErrTunvlessRunning    = errors.New("firc: cannot uninstall while tunvless is running")
-	ErrFircDependencies   = errors.New("firc: cannot uninstall: active services depend on FIRC")
-	ErrInsufficientDisk   = errors.New("firc: insufficient disk space for installation")
-	ErrNoDownloader       = errors.New("firc: downloader not configured")
-	ErrSHA256Mismatch     = errors.New("firc: SHA256 checksum verification failed")
-	ErrReleaseUnavailable = errors.New("firc: release is not yet published or configured for this architecture")
-	ErrInstallActiveCore  = errors.New("firc: cannot install or upgrade while FIRC is active; switch routing engine first")
-	ErrLayoutIncomplete   = errors.New("firc: package layout verification failed after install")
+	ErrInstallBusy           = errors.New("firc: install/uninstall operation already in progress")
+	ErrFircActive            = errors.New("firc: cannot uninstall while FIRC is the active routing engine")
+	ErrFircRunning           = errors.New("firc: cannot uninstall while FIRC is running; stop it first")
+	ErrTunvlessRunning       = errors.New("firc: cannot uninstall while tunvless is running")
+	ErrFircDependencies      = errors.New("firc: cannot uninstall: active services depend on FIRC")
+	ErrInsufficientDisk      = errors.New("firc: insufficient disk space for installation")
+	ErrNoDownloader          = errors.New("firc: downloader not configured")
+	ErrSHA256Mismatch        = errors.New("firc: SHA256 checksum verification failed")
+	ErrReleaseUnavailable    = errors.New("firc: release is not yet published or configured for this architecture")
+	ErrInstallActiveCore     = errors.New("firc: cannot install or upgrade while FIRC is active; switch routing engine first")
+	ErrLayoutIncomplete      = errors.New("firc: package layout verification failed after install")
+	ErrRuntimeNotInstalled   = errors.New("firc: runtime package is not installed; install it first")
+	ErrAlreadyUpToDate       = errors.New("firc: runtime is already at the latest available version")
+	ErrUpgradeRequiresRepair = errors.New("firc: runtime requires recovery before upgrading; run repair first")
+	ErrUpgradeBackupMissing  = errors.New("firc: verified backup of installed runtime is required before upgrading")
 )
 
 const (
@@ -348,7 +353,7 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 
 	var state InstallState
 	switch {
-	case busy && (busyAction == "install" || busyAction == "migrate_legacy" || busyAction == "migrate_external"):
+	case busy && (busyAction == "install" || busyAction == "upgrade" || busyAction == "migrate_legacy" || busyAction == "migrate_external"):
 		state = InstallStateInstalling
 	case busy && busyAction == "uninstall":
 		state = InstallStateUninstalling
@@ -371,10 +376,19 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 		state = InstallStateInstalled
 	}
 
+	updateAvailable := available &&
+		!legacyOwned &&
+		extPkg == "" &&
+		(state == InstallStateInstalled || state == InstallStateRunning) &&
+		installedVer != "" &&
+		effectiveSpec.Version != "" &&
+		installedVer != effectiveSpec.Version
+
 	status := InstallStatus{
 		State:                  state,
 		InstalledVersion:       installedVer,
 		AvailableVersion:       effectiveSpec.Version,
+		UpdateAvailable:        updateAvailable,
 		Available:              available,
 		UnavailableReason:      unavailableReason,
 		FircdPresent:           fircdPresent,

@@ -900,7 +900,7 @@ func (m *apiMockPkgMgr) Install(_ context.Context, ipkPath string) error {
 	}
 	defer outerGz.Close()
 	outerTar := tar.NewReader(outerGz)
-	var dataTarGz []byte
+	var dataTarGz, ctrlTarGz []byte
 	for {
 		hdr, err := outerTar.Next()
 		if err == io.EOF {
@@ -909,12 +909,40 @@ func (m *apiMockPkgMgr) Install(_ context.Context, ipkPath string) error {
 		if err != nil {
 			return err
 		}
-		if strings.TrimPrefix(hdr.Name, "./") == "data.tar.gz" {
+		switch strings.TrimPrefix(hdr.Name, "./") {
+		case "data.tar.gz":
 			dataTarGz, err = io.ReadAll(outerTar)
 			if err != nil {
 				return err
 			}
-			break
+		case "control.tar.gz":
+			ctrlTarGz, err = io.ReadAll(outerTar)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	ctrlVer := ""
+	if len(ctrlTarGz) > 0 {
+		if cg, cErr := gzip.NewReader(bytes.NewReader(ctrlTarGz)); cErr == nil {
+			ct := tar.NewReader(cg)
+			for {
+				ch, nErr := ct.Next()
+				if nErr != nil {
+					break
+				}
+				if strings.TrimPrefix(ch.Name, "./") == "control" {
+					if cb, rErr := io.ReadAll(ct); rErr == nil {
+						for _, line := range strings.Split(string(cb), "\n") {
+							if k, v, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(k) == "Version" {
+								ctrlVer = strings.TrimSpace(v)
+							}
+						}
+					}
+					break
+				}
+			}
+			_ = cg.Close()
 		}
 	}
 	innerGz, err := gzip.NewReader(bytes.NewReader(dataTarGz))
@@ -973,7 +1001,11 @@ func (m *apiMockPkgMgr) Install(_ context.Context, ipkPath string) error {
 			}
 		}
 	}
-	m.runtimeVer = m.targetVer
+	if ctrlVer != "" {
+		m.runtimeVer = ctrlVer
+	} else {
+		m.runtimeVer = m.targetVer
+	}
 	return nil
 }
 
@@ -2040,5 +2072,213 @@ func TestFircV1Proxy_RouteAllowlistAndCanonicalPath(t *testing.T) {
 	}
 	if hits := snapshotHits(); len(hits) != 0 {
 		t.Fatalf("GET /api/firc/v1/auth should not hit upstream, got %v", hits)
+	}
+}
+
+func TestFircHandler_UpgradeRuntime_ActiveAndPreconditions(t *testing.T) {
+	buildIPK := func(ver string) (firc.FircBinarySpec, []byte) {
+		source := t.TempDir()
+		t.Setenv("FIRC_SOURCE_ROOT", source)
+		for rel, content := range map[string]string{
+			"LICENSE":                             "GPL-3.0-or-later\n",
+			"files/entware_kn/etc/init.d/S99firc": "#!/bin/sh\n[ -e /opt/etc/firc/.awgm-disabled ] && exit 8\nexit 0\n",
+			"files/entware_kn/etc/ndm/netfilter.d/100-firc": "#!/bin/sh\nexit 0\n",
+			"files/common/etc/firc/firc.conf":               "configVersion: 0.7.0\n",
+			"files/common/etc/firc/groups.yaml":             "groups: []\n",
+		} {
+			p := filepath.Join(source, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(content), 0755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fircdBin := filepath.Join(source, "fircd")
+		tunBin := filepath.Join(source, "tunvless")
+		if err := os.WriteFile(fircdBin, apiMinimalMIPS32ELF("fircd-"+ver), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(tunBin, apiMinimalMIPS32ELF("tunvless-"+ver), 0755); err != nil {
+			t.Fatal(err)
+		}
+		ipkPath := filepath.Join(source, "runtime-"+ver+".ipk")
+		if err := firc.BuildRuntimeIPK(source, fircdBin, tunBin, "mipsel-3.4", ver, ipkPath); err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(ipkPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(b)
+		return firc.FircBinarySpec{
+			Version:       ver,
+			PackageURL:    "https://example.invalid/runtime-" + ver + ".ipk",
+			PackageSHA256: hex.EncodeToString(sum[:]),
+			PackageSize:   int64(len(b)),
+		}, b
+	}
+
+	specV1, bytesV1 := buildIPK("0.8.0-awgm.4")
+	specV2, bytesV2 := buildIPK("0.8.0-awgm.5")
+
+	root := t.TempDir()
+	pm := &apiMockPkgMgr{root: root, targetVer: "0.8.0-awgm.4"}
+	store := storage.NewSettingsStore(t.TempDir())
+	_, _ = store.Load()
+	_ = store.Update(func(s *storage.Settings) error {
+		s.SingboxRouter.RoutingEngine = "firc"
+		return nil
+	})
+
+	op := firc.NewOperator(firc.Options{
+		ConfigDir:      filepath.Join(root, "opt", "etc", "firc"),
+		FircdBinary:    filepath.Join(root, "opt", "sbin", "fircd"),
+		AltFircdBinary: filepath.Join(root, "opt", "bin", "fircd"),
+		TunvlessBin:    filepath.Join(root, "opt", "sbin", "tunvless"),
+		AltTunvlessBin: filepath.Join(root, "opt", "bin", "tunvless"),
+		InitScript:     filepath.Join(root, "opt", "etc", "init.d", "S99firc"),
+	})
+
+	var running atomic.Bool
+	op.SetLifecycleHooks(
+		func(context.Context) error { running.Store(true); return nil },
+		func(context.Context) error { running.Store(false); return nil },
+	)
+
+	makeHandler := func(spec firc.FircBinarySpec, ipkBytes []byte) (*http.ServeMux, *firc.OnDemandInstaller) {
+		inst := firc.NewOnDemandInstaller("mipsel-3.4", spec)
+		inst.SetPackageLayout(firc.DefaultPackageLayout(root))
+		inst.SetPackageManager(pm)
+		inst.SetDownloader(apiMockDownloader{url: spec.PackageURL, body: ipkBytes})
+		inst.SetFreeDiskFn(func(string) (int64, bool) { return 256 << 20, true })
+		inst.SetEngineActiveChecker(func() bool {
+			cfg, _ := store.Get()
+			return cfg.SingboxRouter.RoutingEngine == "firc"
+		})
+		inst.SetFircRunningChecker(func(context.Context) bool { return running.Load() })
+		inst.SetTunvlessRunningChecker(func(context.Context) bool { return false })
+
+		h := NewFircHandler(op)
+		h.SetSettingsStore(store)
+		h.SetInstaller(inst)
+		mux := http.NewServeMux()
+		h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+		return mux, inst
+	}
+
+	waitDone := func(t *testing.T, mux *http.ServeMux) firc.InstallStatus {
+		t.Helper()
+		for range 120 {
+			recSt := httptest.NewRecorder()
+			mux.ServeHTTP(recSt, httptest.NewRequest(http.MethodGet, "/api/firc/install-status", nil))
+			var env struct {
+				Data firc.InstallStatus `json:"data"`
+			}
+			if json.Unmarshal(recSt.Body.Bytes(), &env) == nil && !env.Data.Busy {
+				return env.Data
+			}
+			time.Sleep(15 * time.Millisecond)
+		}
+		t.Fatal("installer remained busy")
+		return firc.InstallStatus{}
+	}
+
+	// 1. Not installed -> POST /api/firc/upgrade returns 409 RUNTIME_NOT_INSTALLED.
+	muxV1, instV1 := makeHandler(specV1, bytesV1)
+	rec := httptest.NewRecorder()
+	muxV1.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/upgrade", nil))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "RUNTIME_NOT_INSTALLED") {
+		t.Fatalf("expected 409 RUNTIME_NOT_INSTALLED, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// Seed v1 while active+stopped, then mark it running.
+	if err := instV1.Install(context.Background()); err != nil {
+		t.Fatalf("seed v1 install: %v", err)
+	}
+	running.Store(true)
+
+	// 2. Same version -> 409 ALREADY_UP_TO_DATE.
+	rec = httptest.NewRecorder()
+	muxV1.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/upgrade", nil))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "ALREADY_UP_TO_DATE") {
+		t.Fatalf("expected 409 ALREADY_UP_TO_DATE, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// 3. Recovery required (missing binary) -> 409 RECOVERY_REQUIRED.
+	muxV2, _ := makeHandler(specV2, bytesV2)
+	if err := os.Remove(filepath.Join(root, "opt", "sbin", "fircd")); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	muxV2.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/upgrade", nil))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "RECOVERY_REQUIRED") {
+		t.Fatalf("expected 409 RECOVERY_REQUIRED, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	// Repair back to v1 cleanly.
+	running.Store(false)
+	if err := instV1.Install(context.Background()); err != nil {
+		t.Fatalf("repair v1: %v", err)
+	}
+	running.Store(true)
+
+	// 4. install-status exposes both versions + updateAvailable=true, and POST /api/firc/upgrade upgrades active running runtime cleanly.
+	stRec := httptest.NewRecorder()
+	muxV2.ServeHTTP(stRec, httptest.NewRequest(http.MethodGet, "/api/firc/install-status", nil))
+	if stRec.Code != http.StatusOK || !strings.Contains(stRec.Body.String(), `"updateAvailable":true`) {
+		t.Fatalf("expected updateAvailable=true in status, got %d (%s)", stRec.Code, stRec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	muxV2.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/upgrade", nil))
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), "upgrade_started") {
+		t.Fatalf("expected 202 upgrade_started, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	stAfter := waitDone(t, muxV2)
+	if stAfter.State != firc.InstallStateRunning || stAfter.InstalledVersion != "0.8.0-awgm.5" || stAfter.UpdateAvailable {
+		t.Fatalf("expected running 0.8.0-awgm.5 with updateAvailable=false, got %+v", stAfter)
+	}
+
+	// 5. External package ownership -> 409 EXTERNAL_PACKAGE_OWNED.
+	extRoot := t.TempDir()
+	infoDir := filepath.Join(extRoot, "opt", "lib", "opkg", "info")
+	_ = os.MkdirAll(infoDir, 0755)
+	_ = os.WriteFile(filepath.Join(infoDir, "firc.list"), []byte("/opt/sbin/fircd\n"), 0644)
+	extInst := firc.NewOnDemandInstaller("mipsel-3.4", specV2)
+	extInst.SetPackageLayout(firc.DefaultPackageLayout(extRoot))
+	extInst.SetPackageManager(&apiMockPkgMgr{root: extRoot, extPkg: "firc", extVer: "0.8.2-1"})
+	extH := NewFircHandler(nil)
+	extH.SetInstaller(extInst)
+	extMux := http.NewServeMux()
+	extH.RegisterRoutes(extMux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+	recExt := httptest.NewRecorder()
+	extMux.ServeHTTP(recExt, httptest.NewRequest(http.MethodPost, "/api/firc/upgrade", nil))
+	if recExt.Code != http.StatusConflict || !strings.Contains(recExt.Body.String(), "EXTERNAL_PACKAGE_OWNED") {
+		t.Fatalf("expected 409 EXTERNAL_PACKAGE_OWNED, got %d (%s)", recExt.Code, recExt.Body.String())
+	}
+
+	// 6. Rollback over HTTP when upgraded daemon crashes on boot.
+	specV3, bytesV3 := buildIPK("0.8.0-awgm.6")
+	muxV3, _ := makeHandler(specV3, bytesV3)
+	attempts := 0
+	op.SetLifecycleHooks(
+		func(context.Context) error {
+			attempts++
+			if attempts == 1 {
+				return errors.New("v3 boot failure")
+			}
+			running.Store(true)
+			return nil
+		},
+		func(context.Context) error { running.Store(false); return nil },
+	)
+	rec = httptest.NewRecorder()
+	muxV3.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/upgrade", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 upgrade_started for v3, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	stRollback := waitDone(t, muxV3)
+	if stRollback.State != firc.InstallStateRunning || stRollback.InstalledVersion != "0.8.0-awgm.5" || !stRollback.UpdateAvailable || !strings.Contains(stRollback.Error, "v3 boot failure") {
+		t.Fatalf("expected rolled back running 0.8.0-awgm.5 with error surfaced, got %+v", stRollback)
 	}
 }

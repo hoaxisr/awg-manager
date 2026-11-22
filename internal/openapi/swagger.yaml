@@ -12345,6 +12345,30 @@ paths:
       summary: Remove the FIRC runtime while preserving configuration
       tags:
       - firc
+  /firc/upgrade:
+    post:
+      description: Downloads and verifies the target runtime IPK before restarting
+        an active FIRC daemon and rolling back automatically on failure.
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Upgrade the installed FIRC runtime package
+      tags:
+      - firc
   /health:
     get:
       description: Cheap check for frontend pollers; no NDMS or I/O.
