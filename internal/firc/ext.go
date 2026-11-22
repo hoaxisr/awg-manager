@@ -926,17 +926,24 @@ func activeServerDenyExclusionsWithWG(sr ServerRoutingConfig, wantedSubnets []st
 	for _, s := range wantedSubnets {
 		excl[strings.ToLower(strings.TrimSpace(s))] = true
 	}
+	addPolicy := func(p string) {
+		p = strings.ToLower(strings.TrimSpace(p))
+		p = strings.TrimPrefix(p, "policy:")
+		if p == "" || p == "none" {
+			return
+		}
+		excl["policy:"+p] = true
+		excl[p] = true
+	}
 	if sr.IsServerEnabled("wdtt_server") {
-		excl["policy:policy3"] = true
+		addPolicy("policy3")
 	}
 	if hasProvider {
 		for _, srv := range matchEnabledWGServers(sr, wgServers) {
-			if p := strings.TrimSpace(srv.Policy); p != "" && !strings.EqualFold(p, "none") {
-				excl["policy:"+strings.ToLower(p)] = true
-			}
+			addPolicy(srv.Policy)
 		}
 	} else if sr.IsServerEnabled("awg_server") || sr.IsServerEnabled("freeturn_server") {
-		excl["policy:policy4"] = true
+		addPolicy("policy4")
 	}
 	return excl
 }
