@@ -1,6 +1,7 @@
 package telemt
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -10,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 )
 
 // Files under <dataDir>/telemt that belong to the Telegram WebProxy
@@ -135,38 +138,66 @@ func TestResetConfig_OnlyRemovesStandaloneFiles(t *testing.T) {
 	}
 }
 
+const telemtHelperEnv = "AWGM_TELEMT_TEST_HELPER"
+
+// TestHelperTelemtProcess is not a test: it is the body of the fake telemt
+// process spawned by TestStop_DoesNotKillTgWebProxyTelemt.
+func TestHelperTelemtProcess(t *testing.T) {
+	if os.Getenv(telemtHelperEnv) != "1" {
+		return
+	}
+	time.Sleep(30 * time.Second)
+	os.Exit(0)
+}
+
 // Linux-only: process identity is resolved through /proc. A telemt process
 // recorded in the tgwebproxy-owned pid file must survive standalone Stop.
 func TestStop_DoesNotKillTgWebProxyTelemt(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("process identity check requires /proc")
 	}
-	sleepBin, err := exec.LookPath("sleep")
-	if err != nil {
-		t.Skip("sleep not available")
-	}
 	svc := New(t.TempDir(), "x86_64")
 	_ = seedTgWebProxyTelemtFiles(t, svc.telemtDir)
 
-	// A process whose argv0 basename is "telemt", like the tgwebproxy worker.
-	fakeTelemt := filepath.Join(t.TempDir(), "telemt")
-	data, err := os.ReadFile(sleepBin)
+	// Helper = this test binary re-executed with argv0 ".../telemt", so its
+	// /proc cmdline matches the tgwebproxy worker. A copied system `sleep` is
+	// not usable: multicall coreutils (uutils on Ubuntu 26.04) dispatch on
+	// argv0 and exit immediately when invoked as "telemt".
+	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(fakeTelemt, data, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(fakeTelemt, "30")
+	cmd := exec.Command(self, "-test.run=^TestHelperTelemtProcess$")
+	cmd.Args[0] = filepath.Join(t.TempDir(), "telemt")
+	cmd.Env = append(os.Environ(), telemtHelperEnv+"=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	var waitErr error
 	done := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(done) }()
+	go func() { waitErr = cmd.Wait(); close(done) }()
 	t.Cleanup(func() { _ = cmd.Process.Kill(); <-done })
+	pid := cmd.Process.Pid
+
+	// Fixture sanity: the helper must be alive and identified as "telemt"
+	// before Stop, otherwise a death below would prove nothing about Stop.
+	deadline := time.Now().Add(5 * time.Second)
+	for !childproc.MatchesBinary(pid, "telemt") {
+		select {
+		case <-done:
+			t.Fatalf("helper exited before Stop: %v; stderr: %s", waitErr, stderr.String())
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("helper pid %d never identified as telemt; stderr: %s", pid, stderr.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 
 	tgPid := filepath.Join(svc.telemtDir, "telemt.pid")
-	if err := os.WriteFile(tgPid, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
+	if err := os.WriteFile(tgPid, []byte(strconv.Itoa(pid)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -177,7 +208,7 @@ func TestStop_DoesNotKillTgWebProxyTelemt(t *testing.T) {
 
 	select {
 	case <-done:
-		t.Fatalf("standalone Stop killed the tgwebproxy telemt process")
+		t.Fatalf("tgwebproxy telemt process died during standalone Stop: %v; stderr: %s", waitErr, stderr.String())
 	case <-time.After(300 * time.Millisecond):
 	}
 	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
