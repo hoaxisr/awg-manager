@@ -34,6 +34,7 @@ var (
 // TunnelStore mirrors the active OpenFlux client OpkgTun interface into the manager's tunnel list.
 type TunnelStore interface {
 	Get(id string) (*storage.AWGTunnel, error)
+	List() ([]storage.AWGTunnel, error)
 	Exists(id string) bool
 	Create(t *storage.AWGTunnel) error
 	Update(id string, mut func(*storage.AWGTunnel) error) error
@@ -120,6 +121,7 @@ type Service struct {
 	startedAt               time.Time
 	clientStartedAt         time.Time
 	openedPort              int
+	lastErr                 string
 	clientLastErr           string
 	clientStopCh            chan struct{}
 	getPublicHost           func(context.Context) string
@@ -498,13 +500,49 @@ func (s *Service) ensureClientTunAllocatedLocked(ctx context.Context) {
 	}
 	ndms, tun := s.allocateTunLocked(ctx, preferred)
 	if ndms != "" && tun != "" {
-		if s.routerCmds != nil && preferred != "" && preferred != ndms && preferred != "OpkgTun0" && preferred != "OpkgTun1" {
-			_ = s.routerCmds.DownInterface(ctx, preferred)
-			_ = s.routerCmds.DeleteInterface(ctx, preferred)
-		}
 		s.clientConfig.NdmsIface = ndms
 		s.clientConfig.TunIface = tun
 	}
+}
+
+func normalizedInboundMode(raw string) string {
+	m := strings.ToLower(strings.TrimSpace(raw))
+	if m == "" {
+		return "tun"
+	}
+	return m
+}
+
+func (s *Service) isOwnedClientInterfaceLocked(iface, expectedPrevIface string) bool {
+	iface = strings.TrimSpace(iface)
+	if iface == "" {
+		return false
+	}
+	idx, ok := opkgTunNum(iface)
+	if !ok || idx < 2 {
+		return false
+	}
+	if srvIface := strings.TrimSpace(s.config.NdmsIface); srvIface != "" && strings.EqualFold(iface, srvIface) {
+		return false
+	}
+	if strings.TrimSpace(expectedPrevIface) == "" || !strings.EqualFold(iface, strings.TrimSpace(expectedPrevIface)) {
+		return false
+	}
+	if s.tunnelStore != nil {
+		if rec, err := s.tunnelStore.Get("openflux-client"); err == nil && rec != nil {
+			if recIface := strings.TrimSpace(rec.RawNdmsIface); recIface != "" && !strings.EqualFold(recIface, iface) {
+				return false
+			}
+		}
+		if tunnels, err := s.tunnelStore.List(); err == nil {
+			for _, t := range tunnels {
+				if t.ID != "openflux-client" && strings.EqualFold(strings.TrimSpace(t.RawNdmsIface), iface) {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 func (s *Service) getClientStatusLocked() ClientStatus {
@@ -658,6 +696,7 @@ func (s *Service) GetStatus(ctx context.Context) Status {
 		Binary:        s.binPath,
 		Arch:          s.arch,
 		LinkAvailable: linkErr == nil && strings.TrimSpace(link) != "",
+		Error:         s.lastErr,
 		Config:        &pubCfg,
 		LogTail:       s.getLogTailLocked(100),
 		Client:        &clientSt,
@@ -678,12 +717,15 @@ func (s *Service) GetShareLink(ctx context.Context) (string, error) {
 	return GenerateLink(cfg, host)
 }
 
-// SaveConfig validates and saves the configuration, applying changes if needed.
+// SaveConfig validates and saves the configuration, applying changes transactionally with rollback on failure.
 func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	cfg = mergeConfigSecrets(cfg, s.config)
+	oldConfig := s.config
+	wasRunning, _ := s.GetRunningState()
+
+	cfg = mergeConfigSecrets(cfg, oldConfig)
 	cfg.NormalizeURLs()
 
 	if strings.EqualFold(strings.TrimSpace(cfg.Mode), "l3") {
@@ -702,52 +744,82 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 		return err
 	}
 
-	oldMailruCookies := strings.TrimSpace(s.config.MailruCookies)
 	s.config = cfg
 	if err := s.saveConfigLocked(); err != nil {
+		s.config = oldConfig
 		return err
 	}
-	if strings.TrimSpace(cfg.MailruCookies) != oldMailruCookies {
-		clearStaleCookieStores(s.cookieStorePath, filepath.Join(s.openfluxDir, "cookies-yandex.json"))
-	}
 
-	running, _ := s.GetRunningState()
-	if running {
+	var opErr error
+	if wasRunning {
 		if !s.config.Enabled {
-			_ = s.stopProcess(ctx)
+			opErr = s.stopProcessForConfig(ctx, oldConfig)
 		} else {
-			_ = s.restartProcess(ctx)
+			if stopErr := s.stopProcessForConfig(ctx, oldConfig); stopErr != nil {
+				opErr = stopErr
+			} else {
+				time.Sleep(200 * time.Millisecond)
+				opErr = s.startProcess(ctx)
+			}
 		}
 	} else if s.config.Enabled && s.IsInstalled() {
-		_ = s.startProcess(ctx)
+		opErr = s.startProcess(ctx)
+	}
+
+	if opErr != nil {
+		s.config = oldConfig
+		_ = s.saveConfigLocked()
+		if wasRunning {
+			_ = s.startProcess(ctx)
+		} else if stillRunning, _ := s.GetRunningState(); stillRunning {
+			_ = s.stopProcessForConfig(ctx, cfg)
+		}
+		return opErr
+	}
+
+	if strings.TrimSpace(cfg.MailruCookies) != strings.TrimSpace(oldConfig.MailruCookies) {
+		clearStaleCookieStores(s.cookieStorePath, filepath.Join(s.openfluxDir, "cookies-yandex.json"))
 	}
 
 	return nil
 }
 
-// Start launches the OpenFlux process.
+// Start launches the OpenFlux process and persists Enabled=true atomically.
 func (s *Service) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	prevErr := s.lastErr
 	if err := s.startProcess(ctx); err != nil {
 		return err
 	}
 	s.config.Enabled = true
-	_ = s.saveConfigLocked()
+	if err := s.saveConfigLocked(); err != nil {
+		_ = s.stopProcess(ctx)
+		s.config.Enabled = false
+		s.lastErr = prevErr
+		return fmt.Errorf("не удалось сохранить конфигурацию: %w", err)
+	}
 	return nil
 }
 
-// Stop stops the OpenFlux process.
+// Stop stops the OpenFlux process and persists Enabled=false atomically.
 func (s *Service) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	prevEnabled := s.config.Enabled
 	if err := s.stopProcess(ctx); err != nil {
 		return err
 	}
 	s.config.Enabled = false
-	_ = s.saveConfigLocked()
+	if err := s.saveConfigLocked(); err != nil {
+		s.config.Enabled = prevEnabled
+		if prevEnabled && s.IsInstalled() {
+			_ = s.startProcess(ctx)
+		}
+		return fmt.Errorf("не удалось сохранить конфигурацию: %w", err)
+	}
 	return nil
 }
 
@@ -759,12 +831,46 @@ func (s *Service) Restart(ctx context.Context) error {
 	return s.restartProcess(ctx)
 }
 
-// SaveClientConfig validates and saves the client configuration, applying changes if needed.
+func (s *Service) rollbackNewClientIfaceLocked(ctx context.Context, newCfg ClientConfig, oldIface string) {
+	if s.routerCmds == nil {
+		return
+	}
+	newIface := strings.TrimSpace(newCfg.NdmsIface)
+	if newIface == "" || strings.EqualFold(newIface, strings.TrimSpace(oldIface)) {
+		return
+	}
+	idx, ok := opkgTunNum(newIface)
+	if !ok || idx < 2 || strings.EqualFold(newIface, strings.TrimSpace(s.config.NdmsIface)) {
+		return
+	}
+	if s.tunnelStore != nil {
+		if tunnels, err := s.tunnelStore.List(); err == nil {
+			for _, t := range tunnels {
+				if t.ID != "openflux-client" && strings.EqualFold(strings.TrimSpace(t.RawNdmsIface), newIface) {
+					return
+				}
+			}
+		}
+	}
+	if np := strings.TrimSpace(newCfg.Policy); np != "" && np != "none" {
+		_ = s.routerCmds.DenyPolicy(ctx, np, newIface)
+	}
+	_ = s.routerCmds.DownInterface(ctx, newIface)
+	_ = s.routerCmds.DeleteInterface(ctx, newIface)
+}
+
+// SaveClientConfig validates and saves the client configuration transactionally,
+// applying router interface/policy cleanup only after persistence and runtime updates succeed.
 func (s *Service) SaveClientConfig(ctx context.Context, cfg ClientConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	oldConfig := s.clientConfig
+	wasRunning, _ := s.GetClientRunningState()
+	oldIface := strings.TrimSpace(oldConfig.NdmsIface)
+	oldPolicy := strings.TrimSpace(oldConfig.Policy)
+	oldInbound := normalizedInboundMode(oldConfig.InboundMode)
+
 	cfg = mergeClientConfigSecrets(cfg, oldConfig)
 	cfg.NormalizeURLs()
 
@@ -775,8 +881,8 @@ func (s *Service) SaveClientConfig(ctx context.Context, cfg ClientConfig) error 
 		cfg.Name = "OpenFlux Выход"
 	}
 
-	inbound := strings.ToLower(strings.TrimSpace(cfg.InboundMode))
-	if inbound == "" || inbound == "tun" {
+	inbound := normalizedInboundMode(cfg.InboundMode)
+	if inbound == "tun" {
 		preferred := strings.TrimSpace(cfg.NdmsIface)
 		if idx, ok := opkgTunNum(preferred); ok && idx < 2 {
 			preferred = ""
@@ -798,56 +904,63 @@ func (s *Service) SaveClientConfig(ctx context.Context, cfg ClientConfig) error 
 		return err
 	}
 
-	if s.routerCmds != nil {
-		oldPolicy := strings.TrimSpace(oldConfig.Policy)
-		newPolicy := strings.TrimSpace(cfg.Policy)
-		oldIface := strings.TrimSpace(oldConfig.NdmsIface)
-		newIface := strings.TrimSpace(cfg.NdmsIface)
+	// Persist configuration atomically first before any router interface or policy mutations.
+	s.clientConfig = cfg
+	if err := s.saveClientConfigLocked(); err != nil {
+		s.clientConfig = oldConfig
+		return err
+	}
 
-		if oldIface != "" && oldPolicy != "" && oldPolicy != "none" {
-			if oldPolicy != newPolicy || oldIface != newIface || inbound == "socks5" {
-				_ = s.routerCmds.DenyPolicy(ctx, oldPolicy, oldIface)
+	var opErr error
+	if wasRunning {
+		if !s.clientConfig.Enabled {
+			opErr = s.stopClientProcessForIface(ctx, oldIface, oldIface)
+		} else {
+			if stopErr := s.stopClientProcessForIface(ctx, oldIface, oldIface); stopErr != nil {
+				opErr = stopErr
+			} else {
+				time.Sleep(200 * time.Millisecond)
+				opErr = s.startClientProcess(ctx, true)
 			}
 		}
-		if (inbound == "socks5" && oldConfig.InboundMode != "socks5" && oldIface != "") ||
-			(oldIface != "" && oldIface != newIface && oldIface != "OpkgTun0" && oldIface != "OpkgTun1") {
+	} else if s.clientConfig.Enabled && s.IsInstalled() {
+		opErr = s.startClientProcess(ctx, true)
+	}
+
+	if opErr != nil {
+		s.rollbackNewClientIfaceLocked(ctx, s.clientConfig, oldIface)
+		s.clientConfig = oldConfig
+		_ = s.saveClientConfigLocked()
+		if wasRunning {
+			_ = s.startClientProcess(ctx, true)
+		}
+		s.syncClientMirrorLocked()
+		return opErr
+	}
+
+	newIface := strings.TrimSpace(s.clientConfig.NdmsIface)
+	newPolicy := strings.TrimSpace(s.clientConfig.Policy)
+	if s.routerCmds != nil && oldIface != "" && s.isOwnedClientInterfaceLocked(oldIface, oldIface) {
+		ifaceChanged := !strings.EqualFold(oldIface, newIface)
+		switchedToSocks := inbound == "socks5" && oldInbound != "socks5"
+		if oldPolicy != "" && oldPolicy != "none" && (oldPolicy != newPolicy || ifaceChanged || switchedToSocks) {
+			_ = s.routerCmds.DenyPolicy(ctx, oldPolicy, oldIface)
+		}
+		if switchedToSocks || ifaceChanged {
 			_ = s.routerCmds.DownInterface(ctx, oldIface)
 			_ = s.routerCmds.DeleteInterface(ctx, oldIface)
 		}
 	}
 
-	s.clientConfig = cfg
-	if err := s.saveClientConfigLocked(); err != nil {
-		return err
-	}
 	if strings.TrimSpace(cfg.MailruCookies) != strings.TrimSpace(oldConfig.MailruCookies) {
 		clearStaleCookieStores(s.clientCookieStorePath)
-	}
-
-	running, _ := s.GetClientRunningState()
-	if running {
-		if !s.clientConfig.Enabled {
-			err := s.stopClientProcess(ctx)
-			s.syncClientMirrorLocked()
-			return err
-		}
-		err := s.restartClientProcess(ctx)
-		s.syncClientMirrorLocked()
-		return err
-	} else if s.clientConfig.Enabled && s.IsInstalled() {
-		if err := s.startClientProcess(ctx, true); err != nil {
-			s.clientConfig.Enabled = false
-			_ = s.saveClientConfigLocked()
-			s.syncClientMirrorLocked()
-			return err
-		}
 	}
 
 	s.syncClientMirrorLocked()
 	return nil
 }
 
-// StartClient launches the OpenFlux client process.
+// StartClient launches the OpenFlux client process and persists Enabled=true atomically.
 func (s *Service) StartClient(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -857,30 +970,39 @@ func (s *Service) StartClient(ctx context.Context) error {
 	}
 	s.clientConfig.Enabled = true
 	if err := s.saveClientConfigLocked(); err != nil {
+		_ = s.stopClientProcess(ctx)
+		s.clientConfig.Enabled = false
+		s.syncClientMirrorLocked()
 		return fmt.Errorf("не удалось сохранить конфигурацию клиента: %w", err)
 	}
 	s.syncClientMirrorLocked()
 	return nil
 }
 
-// StopClient stops the OpenFlux client process.
+// StopClient stops the OpenFlux client process and persists Enabled=false atomically.
 func (s *Service) StopClient(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	prevEnabled := s.clientConfig.Enabled
 	if err := s.stopClientProcess(ctx); err != nil {
 		return err
 	}
 	s.clientConfig.Enabled = false
 	s.clientLastErr = ""
 	if err := s.saveClientConfigLocked(); err != nil {
+		s.clientConfig.Enabled = prevEnabled
+		if prevEnabled && s.IsInstalled() {
+			_ = s.startClientProcess(ctx, true)
+		}
+		s.syncClientMirrorLocked()
 		return fmt.Errorf("не удалось сохранить конфигурацию клиента: %w", err)
 	}
 	s.syncClientMirrorLocked()
 	return nil
 }
 
-// DeleteClient completely stops the client, cleans up OpkgTun/NDMS interface, and resets client config.
+// DeleteClient completely stops the client, cleans up owned OpkgTun/NDMS interface, and resets client config.
 func (s *Service) DeleteClient(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -889,12 +1011,12 @@ func (s *Service) DeleteClient(ctx context.Context) error {
 
 	if s.routerCmds != nil {
 		ndmsIface := strings.TrimSpace(s.clientConfig.NdmsIface)
-		if ndmsIface != "" && ndmsIface != "OpkgTun0" && ndmsIface != "OpkgTun1" {
+		if ndmsIface != "" && s.isOwnedClientInterfaceLocked(ndmsIface, ndmsIface) {
+			if s.clientConfig.Policy != "" {
+				_ = s.routerCmds.DenyPolicy(ctx, s.clientConfig.Policy, ndmsIface)
+			}
 			_ = s.routerCmds.DownInterface(ctx, ndmsIface)
 			_ = s.routerCmds.DeleteInterface(ctx, ndmsIface)
-		}
-		if s.clientConfig.Policy != "" && ndmsIface != "" {
-			_ = s.routerCmds.DenyPolicy(ctx, s.clientConfig.Policy, ndmsIface)
 		}
 	}
 
@@ -1138,6 +1260,7 @@ func (s *Service) startProcess(ctx context.Context) error {
 		return fmt.Errorf("ошибка валидации настроек: %w", err)
 	}
 
+	s.lastErr = ""
 	_ = os.MkdirAll(s.openfluxDir, 0700)
 	_ = os.Chmod(s.openfluxDir, 0700)
 	if err := atomicWriteFile(s.keyPath, []byte(strings.TrimSpace(s.config.Secret)+"\n"), 0600); err != nil {
@@ -1206,6 +1329,11 @@ func (s *Service) startProcess(ctx context.Context) error {
 	}
 	_ = os.Chmod(s.logPath, 0600)
 
+	var logOffset int64
+	if fi, stErr := logFile.Stat(); stErr == nil {
+		logOffset = fi.Size()
+	}
+
 	cmd := exec.Command(s.binPath, args...)
 	cmd.Dir = s.openfluxDir
 	cmd.Stdout = logFile
@@ -1222,6 +1350,7 @@ func (s *Service) startProcess(ctx context.Context) error {
 				cancel()
 			}
 		}
+		s.lastErr = fmt.Sprintf("не удалось запустить openflux: %v", err)
 		return fmt.Errorf("не удалось запустить openflux: %w", err)
 	}
 
@@ -1229,13 +1358,56 @@ func (s *Service) startProcess(ctx context.Context) error {
 	_ = atomicWriteFile(s.pidPath, []byte(strconv.Itoa(pid)+"\n"), 0600)
 	s.startedAt = time.Now()
 
+	waitDone := make(chan error, 1)
 	go func() {
-		_ = cmd.Wait()
+		waitErr := cmd.Wait()
 		_ = logFile.Close()
+		waitDone <- waitErr
 	}()
+
+	select {
+	case waitErr := <-waitDone:
+		s.cleanupServerRuntimeFiles()
+		_ = os.Remove(s.pidPath)
+		if strings.EqualFold(strings.TrimSpace(s.config.Mode), "l3") && s.routerCmds != nil {
+			ndmsIface := strings.TrimSpace(s.config.NdmsIface)
+			if ndmsIface != "" && ndmsIface != "OpkgTun0" && ndmsIface != "OpkgTun1" {
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = s.routerCmds.DownInterface(cleanupCtx, ndmsIface)
+				cancel()
+			}
+		}
+		msg := extractLastErrorFromLog(readFileSliceFrom(s.logPath, logOffset))
+		if msg == "" && waitErr != nil {
+			msg = fmt.Sprintf("процесс завершился сразу после запуска: %v", waitErr)
+		} else if msg == "" {
+			msg = "процесс завершился сразу после запуска"
+		}
+		s.lastErr = msg
+		return fmt.Errorf("%s", msg)
+	case <-time.After(150 * time.Millisecond):
+	}
 
 	s.applyFirewall(ctx)
 	return nil
+}
+
+func readFileSliceFrom(path string, offset int64) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if offset > 0 {
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			return ""
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 64*1024))
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func clearStaleCookieStores(paths ...string) {
@@ -1273,13 +1445,18 @@ func prepareRuntimeCookieArgs(cookieStorePath, mailruCookiesPath, rawMailruCooki
 }
 
 func (s *Service) stopProcess(ctx context.Context) error {
+	return s.stopProcessForConfig(ctx, s.config)
+}
+
+func (s *Service) stopProcessForConfig(ctx context.Context, cfg Config) error {
 	s.cleanupServerRuntimeFiles()
+	s.lastErr = ""
 	running, pid := s.GetRunningState()
 	if !running {
 		_ = os.Remove(s.pidPath)
 		s.removeFirewall(ctx)
-		if strings.EqualFold(strings.TrimSpace(s.config.Mode), "l3") && s.routerCmds != nil {
-			ndmsIface := strings.TrimSpace(s.config.NdmsIface)
+		if strings.EqualFold(strings.TrimSpace(cfg.Mode), "l3") && s.routerCmds != nil {
+			ndmsIface := strings.TrimSpace(cfg.NdmsIface)
 			if ndmsIface != "" && ndmsIface != "OpkgTun0" && ndmsIface != "OpkgTun1" {
 				_ = s.routerCmds.DownInterface(ctx, ndmsIface)
 			}
@@ -1290,8 +1467,8 @@ func (s *Service) stopProcess(ctx context.Context) error {
 	s.removeFirewall(ctx)
 	terminatePID(pid, s.pidPath)
 
-	if strings.EqualFold(strings.TrimSpace(s.config.Mode), "l3") && s.routerCmds != nil {
-		ndmsIface := strings.TrimSpace(s.config.NdmsIface)
+	if strings.EqualFold(strings.TrimSpace(cfg.Mode), "l3") && s.routerCmds != nil {
+		ndmsIface := strings.TrimSpace(cfg.NdmsIface)
 		if ndmsIface != "" && ndmsIface != "OpkgTun0" && ndmsIface != "OpkgTun1" {
 			_ = s.routerCmds.DownInterface(ctx, ndmsIface)
 		}
@@ -1300,8 +1477,10 @@ func (s *Service) stopProcess(ctx context.Context) error {
 }
 
 func (s *Service) restartProcess(ctx context.Context) error {
-	_ = s.stopProcess(ctx)
-	time.Sleep(500 * time.Millisecond)
+	if err := s.stopProcess(ctx); err != nil {
+		return err
+	}
+	time.Sleep(200 * time.Millisecond)
 	return s.startProcess(ctx)
 }
 
@@ -1594,6 +1773,11 @@ func (s *Service) startClientProcess(ctx context.Context, resetStopCh bool) erro
 }
 
 func (s *Service) stopClientProcess(ctx context.Context) error {
+	iface := strings.TrimSpace(s.clientConfig.NdmsIface)
+	return s.stopClientProcessForIface(ctx, iface, iface)
+}
+
+func (s *Service) stopClientProcessForIface(ctx context.Context, ndmsIface, expectedPrevIface string) error {
 	if s.clientStopCh != nil {
 		close(s.clientStopCh)
 		s.clientStopCh = nil
@@ -1608,8 +1792,8 @@ func (s *Service) stopClientProcess(ctx context.Context) error {
 	}
 
 	if s.routerCmds != nil {
-		ndmsIface := strings.TrimSpace(s.clientConfig.NdmsIface)
-		if ndmsIface != "" && ndmsIface != "OpkgTun0" && ndmsIface != "OpkgTun1" {
+		ndmsIface = strings.TrimSpace(ndmsIface)
+		if ndmsIface != "" && s.isOwnedClientInterfaceLocked(ndmsIface, expectedPrevIface) {
 			_ = s.routerCmds.DownInterface(ctx, ndmsIface)
 		}
 	}
@@ -1618,7 +1802,9 @@ func (s *Service) stopClientProcess(ctx context.Context) error {
 }
 
 func (s *Service) restartClientProcess(ctx context.Context) error {
-	_ = s.stopClientProcess(ctx)
+	if err := s.stopClientProcess(ctx); err != nil {
+		return err
+	}
 	time.Sleep(200 * time.Millisecond)
 	return s.startClientProcess(ctx, true)
 }

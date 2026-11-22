@@ -13,13 +13,61 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+func TestMain(m *testing.M) {
+	if filepath.Base(os.Args[0]) == "openflux" {
+		for _, arg := range os.Args[1:] {
+			if strings.Contains(arg, "fail-boot") || strings.Contains(arg, "fail.invalid") {
+				fmt.Fprintln(os.Stderr, "[ERROR] simulated openflux boot failure")
+				os.Exit(1)
+			}
+		}
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+		select {
+		case <-sigCh:
+		case <-time.After(30 * time.Second):
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func installFakeOpenFluxBinary(t *testing.T, svc *Service) string {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binPath := filepath.Join(svc.openfluxDir, "openflux")
+	if err := os.MkdirAll(svc.openfluxDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(binPath)
+	if err := os.Symlink(exe, binPath); err != nil {
+		data, rErr := os.ReadFile(exe)
+		if rErr != nil {
+			t.Fatal(rErr)
+		}
+		if wErr := os.WriteFile(binPath, data, 0755); wErr != nil {
+			t.Fatal(wErr)
+		}
+	}
+	svc.binPath = binPath
+	svc.binExplicit = true
+	return binPath
+}
 
 func TestConfigValidation(t *testing.T) {
 	cfg := DefaultConfig()
@@ -610,21 +658,31 @@ func TestClientServiceConfigPersistenceAndStatus(t *testing.T) {
 }
 
 type mockRouterCmds struct {
-	allocatedNdms string
-	allocatedTun  string
-	createdNdms   string
-	createdDesc   string
-	createdMtu    int
-	createdAddr   string
-	downNdms      string
-	delNdms       string
-	permittedPol  string
-	deniedPol     string
-	createErr     error
-	permitErr     error
+	allocatedNdms    string
+	allocatedTun     string
+	respectPreferred bool
+	createdNdms      string
+	createdDesc      string
+	createdMtu       int
+	createdAddr      string
+	downNdms         string
+	delNdms          string
+	permittedPol     string
+	deniedPol        string
+	createErr        error
+	permitErr        error
+	downedIfaces     []string
+	deletedIfaces    []string
+	deniedCalls      []string
+	createdIfaces    []string
 }
 
 func (m *mockRouterCmds) AllocateTunInterface(ctx context.Context, preferred string) (string, string, error) {
+	if m.respectPreferred && preferred != "" {
+		if idx, ok := opkgTunNum(preferred); ok && idx >= 2 {
+			return fmt.Sprintf("OpkgTun%d", idx), fmt.Sprintf("opkgtun%d", idx), nil
+		}
+	}
 	if m.allocatedNdms != "" {
 		return m.allocatedNdms, m.allocatedTun, nil
 	}
@@ -637,6 +695,7 @@ func (m *mockRouterCmds) CreateInterface(ctx context.Context, ndmsName, desc str
 	m.createdDesc = desc
 	m.createdMtu = mtu
 	m.createdAddr = ipWithMask
+	m.createdIfaces = append(m.createdIfaces, ndmsName)
 	if m.createErr != nil {
 		return m.createErr
 	}
@@ -645,11 +704,13 @@ func (m *mockRouterCmds) CreateInterface(ctx context.Context, ndmsName, desc str
 
 func (m *mockRouterCmds) DownInterface(ctx context.Context, ndmsName string) error {
 	m.downNdms = ndmsName
+	m.downedIfaces = append(m.downedIfaces, ndmsName)
 	return nil
 }
 
 func (m *mockRouterCmds) DeleteInterface(ctx context.Context, ndmsName string) error {
 	m.delNdms = ndmsName
+	m.deletedIfaces = append(m.deletedIfaces, ndmsName)
 	return nil
 }
 
@@ -663,6 +724,7 @@ func (m *mockRouterCmds) PermitPolicy(ctx context.Context, policy, iface string)
 
 func (m *mockRouterCmds) DenyPolicy(ctx context.Context, policy, iface string) error {
 	m.deniedPol = policy
+	m.deniedCalls = append(m.deniedCalls, policy+":"+iface)
 	return nil
 }
 
@@ -716,8 +778,9 @@ func TestAutoDiscoverFreeTunAndTunAllocation(t *testing.T) {
 	}
 
 	mock := &mockRouterCmds{
-		allocatedNdms: "OpkgTun7",
-		allocatedTun:  "opkgtun7",
+		allocatedNdms:    "OpkgTun7",
+		allocatedTun:     "opkgtun7",
+		respectPreferred: true,
 	}
 	svc.SetRouterCommands(mock)
 
@@ -914,6 +977,15 @@ func (m *mockTunnelStore) Get(id string) (*storage.AWGTunnel, error) {
 }
 
 func (m *mockTunnelStore) Exists(id string) bool { _, ok := m.tunnels[id]; return ok }
+func (m *mockTunnelStore) List() ([]storage.AWGTunnel, error) {
+	out := make([]storage.AWGTunnel, 0, len(m.tunnels))
+	for _, t := range m.tunnels {
+		if t != nil {
+			out = append(out, *t)
+		}
+	}
+	return out, nil
+}
 func (m *mockTunnelStore) Create(t *storage.AWGTunnel) error {
 	cp := *t
 	m.tunnels[t.ID] = &cp
@@ -1408,5 +1480,338 @@ func TestAvitoCookiesFileGenerationAndCleanup(t *testing.T) {
 	}
 	if _, err := os.Stat(mailruPath); !os.IsNotExist(err) {
 		t.Fatalf("expected mailru cookies file removed, got %v", err)
+	}
+}
+
+func TestSaveConfig_RestartFailureRollsBackAndRestartsPrevious(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX process management tested on Linux/Unix")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "x86_64", nil)
+	installFakeOpenFluxBinary(t, svc)
+
+	goodCfg := DefaultConfig()
+	goodCfg.Name = "GoodServer"
+	goodCfg.Enabled = true
+	goodCfg.Secret = "test-server-secret-1234567890"
+	goodCfg.Transports = []string{"direct"}
+	goodCfg.DirectListen = "0.0.0.0:8445"
+	if err := svc.SaveConfig(ctx, goodCfg); err != nil {
+		t.Fatalf("initial SaveConfig failed: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.stopProcess(ctx) })
+
+	running, origPID := svc.GetRunningState()
+	if !running || origPID <= 0 {
+		t.Fatalf("expected initial server running")
+	}
+
+	badCfg := goodCfg
+	badCfg.Name = "BrokenServer"
+	badCfg.NativeScriptsDir = "/tmp/fail-boot"
+	err := svc.SaveConfig(ctx, badCfg)
+	if err == nil || !strings.Contains(err.Error(), "simulated openflux boot failure") {
+		t.Fatalf("expected propagated boot failure error, got %v", err)
+	}
+
+	if svc.config.Name != "GoodServer" || svc.config.NativeScriptsDir != "" {
+		t.Fatalf("expected in-memory server config rolled back to GoodServer, got %+v", svc.config)
+	}
+	onDisk, rErr := os.ReadFile(svc.cfgPath)
+	if rErr != nil {
+		t.Fatal(rErr)
+	}
+	var diskCfg Config
+	if err := json.Unmarshal(onDisk, &diskCfg); err != nil {
+		t.Fatal(err)
+	}
+	if diskCfg.Name != "GoodServer" || diskCfg.NativeScriptsDir != "" {
+		t.Fatalf("expected disk config rolled back to GoodServer, got %+v", diskCfg)
+	}
+	runningAfter, _ := svc.GetRunningState()
+	if !runningAfter {
+		t.Fatalf("expected previous server restarted after failed SaveConfig rollback")
+	}
+}
+
+func TestStartStop_ConfigPersistFailureRollsBackState(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX process/path semantics tested on Linux/Unix")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "x86_64", nil)
+	installFakeOpenFluxBinary(t, svc)
+
+	cfg := DefaultConfig()
+	cfg.Enabled = false
+	cfg.Secret = "test-server-secret-1234567890"
+	cfg.Transports = []string{"direct"}
+	if err := svc.SaveConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// Point cfgPath to a non-existent nested dir under a regular file to fail atomicWriteFile reliably even as root.
+	blockerFile := filepath.Join(tmpDir, "not-a-dir")
+	if err := os.WriteFile(blockerFile, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	origCfgPath := svc.cfgPath
+	svc.cfgPath = filepath.Join(blockerFile, "config.json")
+
+	if err := svc.Start(ctx); err == nil {
+		_ = svc.stopProcess(ctx)
+		t.Fatalf("expected Start to fail when config persistence fails")
+	}
+	if svc.config.Enabled {
+		t.Fatalf("expected server Enabled rolled back to false on Start save error")
+	}
+	if running, _ := svc.GetRunningState(); running {
+		_ = svc.stopProcess(ctx)
+		t.Fatalf("expected started process rolled back (stopped) when Start save fails")
+	}
+
+	// Now verify Stop rolls back Enabled and restarts if persistence fails.
+	svc.cfgPath = origCfgPath
+	if err := svc.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.stopProcess(ctx) })
+
+	svc.cfgPath = filepath.Join(blockerFile, "config.json")
+	if err := svc.Stop(ctx); err == nil {
+		t.Fatalf("expected Stop to fail when config persistence fails")
+	}
+	if !svc.config.Enabled {
+		t.Fatalf("expected Enabled rolled back to true on Stop save error")
+	}
+	if running, _ := svc.GetRunningState(); !running {
+		t.Fatalf("expected server restarted on Stop save rollback")
+	}
+
+	// Verify StartClient / StopClient rollback on clientCfgPath failure too.
+	cliCfg := DefaultClientConfig()
+	cliCfg.Enabled = false
+	cliCfg.InboundMode = "socks5"
+	cliCfg.Transports = []string{"direct"}
+	cliCfg.DirectDial = "198.51.100.10:8445"
+	cliCfg.Secret = "test-client-secret-1234567890"
+	if err := svc.SaveClientConfig(ctx, cliCfg); err != nil {
+		t.Fatal(err)
+	}
+
+	origCliCfgPath := svc.clientCfgPath
+	svc.clientCfgPath = filepath.Join(blockerFile, "client_config.json")
+	if err := svc.StartClient(ctx); err == nil {
+		_ = svc.stopClientProcess(ctx)
+		t.Fatalf("expected StartClient to fail when config persistence fails")
+	}
+	if svc.clientConfig.Enabled {
+		t.Fatalf("expected client Enabled rolled back to false on StartClient save error")
+	}
+	if running, _ := svc.GetClientRunningState(); running {
+		_ = svc.stopClientProcess(ctx)
+		t.Fatalf("expected client process rolled back when StartClient save fails")
+	}
+
+	svc.clientCfgPath = origCliCfgPath
+	if err := svc.StartClient(ctx); err != nil {
+		t.Fatalf("StartClient failed: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.stopClientProcess(ctx) })
+
+	svc.clientCfgPath = filepath.Join(blockerFile, "client_config.json")
+	if err := svc.StopClient(ctx); err == nil {
+		t.Fatalf("expected StopClient to fail when config persistence fails")
+	}
+	if !svc.clientConfig.Enabled {
+		t.Fatalf("expected client Enabled rolled back to true on StopClient save error")
+	}
+	if running, _ := svc.GetClientRunningState(); !running {
+		t.Fatalf("expected client restarted on StopClient save rollback")
+	}
+}
+
+func TestSaveClientConfig_WriteFailureHasNoRouterSideEffects(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "aarch64", nil)
+
+	mock := &mockRouterCmds{
+		allocatedNdms:    "OpkgTun7",
+		allocatedTun:     "opkgtun7",
+		respectPreferred: true,
+	}
+	svc.SetRouterCommands(mock)
+
+	initial := DefaultClientConfig()
+	initial.Name = "OriginalClient"
+	initial.InboundMode = "tun"
+	initial.NdmsIface = "OpkgTun7"
+	initial.TunIface = "opkgtun7"
+	initial.Policy = "Policy0"
+	initial.Transports = []string{"direct"}
+	initial.DirectDial = "198.51.100.10:8445"
+	initial.Secret = "test-client-secret-1234567890"
+	if err := svc.SaveClientConfig(ctx, initial); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reset mock call records and force clientCfgPath persistence failure.
+	mock.deniedCalls = nil
+	mock.downedIfaces = nil
+	mock.deletedIfaces = nil
+
+	blockerFile := filepath.Join(tmpDir, "not-a-dir")
+	if err := os.WriteFile(blockerFile, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	svc.clientCfgPath = filepath.Join(blockerFile, "client_config.json")
+
+	updated := initial
+	updated.Name = "ShouldFailWrite"
+	updated.InboundMode = "socks5"
+	updated.Policy = ""
+	if err := svc.SaveClientConfig(ctx, updated); err == nil {
+		t.Fatalf("expected SaveClientConfig to fail on unwritable path")
+	}
+
+	if svc.clientConfig.Name != "OriginalClient" || svc.clientConfig.NdmsIface != "OpkgTun7" {
+		t.Fatalf("expected in-memory clientConfig preserved on write error, got %+v", svc.clientConfig)
+	}
+	if len(mock.deniedCalls) != 0 || len(mock.downedIfaces) != 0 || len(mock.deletedIfaces) != 0 {
+		t.Fatalf("expected ZERO router side effects on write error, got denied=%v down=%v del=%v", mock.deniedCalls, mock.downedIfaces, mock.deletedIfaces)
+	}
+}
+
+func TestSaveClientConfig_RestartFailureRollsBackAndPreservesOldInterface(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX process management tested on Linux/Unix")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "aarch64", nil)
+	installFakeOpenFluxBinary(t, svc)
+
+	mock := &mockRouterCmds{
+		allocatedNdms:    "OpkgTun7",
+		allocatedTun:     "opkgtun7",
+		respectPreferred: true,
+	}
+	svc.SetRouterCommands(mock)
+
+	good := DefaultClientConfig()
+	good.Name = "GoodClient"
+	good.Enabled = true
+	good.InboundMode = "tun"
+	good.Policy = "Policy0"
+	good.Transports = []string{"direct"}
+	good.DirectDial = "198.51.100.10:8445"
+	good.Secret = "test-client-secret-1234567890"
+	if err := svc.SaveClientConfig(ctx, good); err != nil {
+		t.Fatalf("initial SaveClientConfig failed: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.stopClientProcess(ctx) })
+
+	if running, _ := svc.GetClientRunningState(); !running {
+		t.Fatalf("expected initial client running")
+	}
+
+	// Switch to new interface OpkgTun8 + boot-failing arg -> must rollback cleanly.
+	mock.allocatedNdms = "OpkgTun8"
+	mock.allocatedTun = "opkgtun8"
+	mock.deletedIfaces = nil
+	mock.deniedCalls = nil
+
+	bad := good
+	bad.Name = "BadClient"
+	bad.NdmsIface = ""
+	bad.TunIface = ""
+	bad.Policy = "Policy1"
+	bad.NativeScriptsDir = "/tmp/fail-boot"
+	err := svc.SaveClientConfig(ctx, bad)
+	if err == nil || !strings.Contains(err.Error(), "simulated openflux boot failure") {
+		t.Fatalf("expected SaveClientConfig failure on boot error, got %v", err)
+	}
+
+	if svc.clientConfig.Name != "GoodClient" || svc.clientConfig.NdmsIface != "OpkgTun7" || svc.clientConfig.Policy != "Policy0" {
+		t.Fatalf("expected clientConfig rolled back to GoodClient/OpkgTun7/Policy0, got %+v", svc.clientConfig)
+	}
+	if slices.Contains(mock.deletedIfaces, "OpkgTun7") {
+		t.Fatalf("old interface OpkgTun7 must NOT be deleted when SaveClientConfig fails: deleted=%v", mock.deletedIfaces)
+	}
+	if !slices.Contains(mock.deletedIfaces, "OpkgTun8") {
+		t.Fatalf("newly allocated failed interface OpkgTun8 must be cleaned up on rollback: deleted=%v", mock.deletedIfaces)
+	}
+
+	onDisk, rErr := os.ReadFile(svc.clientCfgPath)
+	if rErr != nil {
+		t.Fatal(rErr)
+	}
+	var diskCfg ClientConfig
+	if err := json.Unmarshal(onDisk, &diskCfg); err != nil {
+		t.Fatal(err)
+	}
+	if diskCfg.Name != "GoodClient" || diskCfg.NdmsIface != "OpkgTun7" {
+		t.Fatalf("expected disk client_config.json rolled back, got %+v", diskCfg)
+	}
+
+	if runningAfter, _ := svc.GetClientRunningState(); !runningAfter {
+		t.Fatalf("expected previous client restarted after rollback")
+	}
+}
+
+func TestSaveClientConfig_DoesNotDeleteUnownedInterface(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	svc := New(tmpDir, "aarch64", nil)
+
+	store := newMockTunnelStore()
+	// Simulate another AWG tunnel owning OpkgTun9.
+	if err := store.Create(&storage.AWGTunnel{
+		ID:           "foreign-tun-1",
+		RawNdmsIface: "OpkgTun9",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc.SetTunnelStore(store)
+
+	mock := &mockRouterCmds{
+		allocatedNdms: "OpkgTun12",
+		allocatedTun:  "opkgtun12",
+	}
+	svc.SetRouterCommands(mock)
+
+	// Simulate pre-existing stale config referencing foreign OpkgTun9.
+	svc.clientConfig = ClientConfig{
+		Enabled:       false,
+		Name:          "LegacyStale",
+		InboundMode:   "tun",
+		NdmsIface:     "OpkgTun9",
+		TunIface:      "opkgtun9",
+		Policy:        "Policy0",
+		TransportMode: "session",
+		Transports:    []string{"direct"},
+		DirectDial:    "198.51.100.10:8445",
+		Secret:        "test-client-secret-1234567890",
+	}
+
+	next := svc.clientConfig
+	next.InboundMode = "socks5"
+	next.Policy = ""
+	if err := svc.SaveClientConfig(ctx, next); err != nil {
+		t.Fatalf("SaveClientConfig failed: %v", err)
+	}
+
+	if slices.Contains(mock.downedIfaces, "OpkgTun9") || slices.Contains(mock.deletedIfaces, "OpkgTun9") {
+		t.Fatalf("unowned OpkgTun9 owned by another tunnel must NEVER be downed or deleted: down=%v del=%v", mock.downedIfaces, mock.deletedIfaces)
+	}
+	if len(mock.deniedCalls) != 0 {
+		t.Fatalf("unowned OpkgTun9 policy must NOT be denied, got %v", mock.deniedCalls)
 	}
 }
