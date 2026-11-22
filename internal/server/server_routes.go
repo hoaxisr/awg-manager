@@ -17,6 +17,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/mcp"
 	"github.com/hoaxisr/awg-manager/internal/mcp/localdeps"
 	"github.com/hoaxisr/awg-manager/internal/openapi"
+	"github.com/hoaxisr/awg-manager/internal/pagescan"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
@@ -953,9 +954,18 @@ func (s *Server) registerDiagnosticsRoutes(mux *http.ServeMux, h *routeHandlers)
 		mux.HandleFunc("/api/diagnostics/dns-proxy", h.guarded(dnsProxyInfoHandler.Get))
 	}
 
-	// On-demand IP inspector (PTR + Team Cymru DNS ASN/BGP prefix)
-	ipInspectHandler := api.NewIPInspectHandler(ipinspect.NewService())
+	// On-demand IP inspector (PTR + Team Cymru DNS ASN/BGP prefix) & page resource scanner
+	ipInspectSvc := ipinspect.NewService()
+	ipInspectHandler := api.NewIPInspectHandler(ipInspectSvc)
 	mux.HandleFunc("/api/diagnostics/ip-inspect", h.guarded(ipInspectHandler.Get))
+
+	pageScanSvc := pagescan.NewService(pagescan.Options{
+		IPInspect:        ipInspectSvc,
+		RouteChecker:     s.pageScanRouteChecker(),
+		ProxyURLProvider: s.pageScanProxyURLProvider(),
+	})
+	pageScanHandler := api.NewPageScanHandler(pageScanSvc)
+	mux.HandleFunc("/api/diagnostics/page-scan", h.guarded(pageScanHandler.Post))
 
 	// Connections viewer (protected)
 	mux.HandleFunc("/api/connections", h.guarded(func(w http.ResponseWriter, r *http.Request) {
@@ -1774,4 +1784,60 @@ func (s *Server) listFircEgressTunnels(ctx context.Context) []routing.TunnelEntr
 		})
 	}
 	return entries
+}
+
+func (s *Server) pageScanRouteChecker() pagescan.RouteChecker {
+	if s == nil || s.fircHandler == nil || s.fircHandler.Operator() == nil {
+		return nil
+	}
+	fircOp := s.fircHandler.Operator()
+	return func(ctx context.Context, domains []string) (map[string]pagescan.RouteInfo, error) {
+		if s.settings != nil {
+			st, err := s.settings.Get()
+			if err != nil || st == nil || strings.TrimSpace(st.SingboxRouter.RoutingEngine) != "firc" {
+				return nil, nil
+			}
+		}
+		if !fircOp.IsRunning(ctx) {
+			return nil, nil
+		}
+		checked := fircOp.CheckDomainsRouting(ctx, domains)
+		out := make(map[string]pagescan.RouteInfo, len(checked))
+		for dom, res := range checked {
+			if res == nil {
+				continue
+			}
+			out[dom] = pagescan.RouteInfo{
+				Routed:        res.Routed,
+				FakeIP:        res.FakeIP,
+				RealIP:        res.RealIP,
+				GroupID:       res.GroupID,
+				GroupName:     res.GroupName,
+				Outbound:      res.Outbound,
+				OutboundLabel: res.OutboundLabel,
+				Error:         res.Error,
+			}
+		}
+		return out, nil
+	}
+}
+
+func (s *Server) pageScanProxyURLProvider() pagescan.ProxyURLProvider {
+	return func(ctx context.Context) string {
+		if s == nil || s.fircHandler == nil || s.fircHandler.Operator() == nil {
+			return ""
+		}
+		fircOp := s.fircHandler.Operator()
+		port := int(fircOp.InboundPort())
+		if port <= 0 || !fircOp.IsRunning(ctx) {
+			return ""
+		}
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
+		conn, err := net.DialTimeout("tcp", addr, 150*time.Millisecond)
+		if err != nil {
+			return ""
+		}
+		_ = conn.Close()
+		return "http://" + addr
+	}
 }

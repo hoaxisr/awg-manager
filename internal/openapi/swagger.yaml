@@ -3037,6 +3037,101 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.PageScanEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/api.PageScanResultDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.PageScanRequestDTO:
+    properties:
+      fetchMode:
+        example: auto
+        type: string
+      url:
+        example: https://www.themoviedb.org
+        type: string
+    type: object
+  api.PageScanResourceDTO:
+    properties:
+      fakeIp:
+        example: 198.18.0.12
+        type: string
+      groupId:
+        example: media
+        type: string
+      groupName:
+        example: Media
+        type: string
+      host:
+        example: www.themoviedb.org
+        type: string
+      inspect:
+        $ref: '#/definitions/api.IPInspectDTO'
+      ip:
+        example: 143.204.238.90
+        type: string
+      outbound:
+        example: tunvless0
+        type: string
+      outboundLabel:
+        example: Netherlands
+        type: string
+      resolveError:
+        type: string
+      routed:
+        example: true
+        type: boolean
+      sources:
+        example:
+        - document
+        - script
+        items:
+          type: string
+        type: array
+    type: object
+  api.PageScanResultDTO:
+    properties:
+      bodyBytes:
+        example: 65536
+        type: integer
+      bodyTruncated:
+        example: false
+        type: boolean
+      contentType:
+        example: text/html; charset=utf-8
+        type: string
+      durationMs:
+        example: 420
+        type: integer
+      fetchVia:
+        example: direct
+        type: string
+      finalUrl:
+        example: https://www.themoviedb.org/
+        type: string
+      hostsTruncated:
+        example: false
+        type: boolean
+      proxyAvailable:
+        example: true
+        type: boolean
+      requestedUrl:
+        example: https://www.themoviedb.org
+        type: string
+      resources:
+        items:
+          $ref: '#/definitions/api.PageScanResourceDTO'
+        type: array
+      statusCode:
+        example: 200
+        type: integer
+      totalHosts:
+        example: 8
+        type: integer
+    type: object
   api.PeerConfData:
     properties:
       conf:
@@ -11550,6 +11645,47 @@ paths:
       security:
       - CookieAuth: []
       summary: Inspect IP address
+      tags:
+      - diagnostics
+  /diagnostics/page-scan:
+    post:
+      consumes:
+      - application/json
+      description: Fetches target HTML page on demand (SSRF-safe), extracts referenced
+        hostnames, checks FIRC routing, and inspects DNS/PTR/ASN metadata.
+      parameters:
+      - description: Target URL and optional fetch mode (auto, direct, proxy)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.PageScanRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.PageScanEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Scan page resources
       tags:
       - diagnostics
   /diagnostics/result:

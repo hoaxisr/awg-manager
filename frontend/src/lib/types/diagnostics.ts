@@ -267,6 +267,43 @@ export interface IpInspectResult {
 
 // #endregion
 
+// ─────────────────────────────────────────────
+// #region Page Resource Scanner
+// ─────────────────────────────────────────────
+
+export type PageScanFetchMode = 'auto' | 'direct' | 'proxy';
+
+export interface PageScanResource {
+	host: string;
+	sources: string[];
+	ip?: string;
+	fakeIp?: string;
+	routed: boolean;
+	groupId?: string;
+	groupName?: string;
+	outbound?: string;
+	outboundLabel?: string;
+	inspect?: IpInspectResult;
+	resolveError?: string;
+}
+
+export interface PageScanResult {
+	requestedUrl: string;
+	finalUrl: string;
+	statusCode: number;
+	contentType?: string;
+	fetchVia: 'direct' | 'proxy' | string;
+	proxyAvailable: boolean;
+	bodyBytes: number;
+	bodyTruncated?: boolean;
+	totalHosts: number;
+	hostsTruncated?: boolean;
+	durationMs: number;
+	resources: PageScanResource[];
+}
+
+// #endregion
+
 export type {
 	LogEntryEvent,
 	SystemBootingEvent,

@@ -1101,6 +1101,40 @@ const api_OversizedTagsResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_PageScanEnvelope: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_PageScanResultDTO))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_PageScanResourceDTO: v.GenericSchema = v.looseObject({
+	fakeIp: v.optional(v.nullable(v.string())),
+	groupId: v.optional(v.nullable(v.string())),
+	groupName: v.optional(v.nullable(v.string())),
+	host: v.optional(v.nullable(v.string())),
+	inspect: v.optional(v.nullable(v.lazy(() => api_IPInspectDTO))),
+	ip: v.optional(v.nullable(v.string())),
+	outbound: v.optional(v.nullable(v.string())),
+	outboundLabel: v.optional(v.nullable(v.string())),
+	resolveError: v.optional(v.nullable(v.string())),
+	routed: v.optional(v.nullable(v.boolean())),
+	sources: v.optional(v.nullable(v.array(v.string()))),
+});
+
+const api_PageScanResultDTO: v.GenericSchema = v.looseObject({
+	bodyBytes: v.optional(v.nullable(v.number())),
+	bodyTruncated: v.optional(v.nullable(v.boolean())),
+	contentType: v.optional(v.nullable(v.string())),
+	durationMs: v.optional(v.nullable(v.number())),
+	fetchVia: v.optional(v.nullable(v.string())),
+	finalUrl: v.optional(v.nullable(v.string())),
+	hostsTruncated: v.optional(v.nullable(v.boolean())),
+	proxyAvailable: v.optional(v.nullable(v.boolean())),
+	requestedUrl: v.optional(v.nullable(v.string())),
+	resources: v.optional(v.nullable(v.array(v.lazy(() => api_PageScanResourceDTO)))),
+	statusCode: v.optional(v.nullable(v.number())),
+	totalHosts: v.optional(v.nullable(v.number())),
+});
+
 const api_PeerConfData: v.GenericSchema = v.looseObject({
 	conf: v.optional(v.nullable(v.string())),
 });
@@ -4038,6 +4072,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /control/stop": v.lazy(() => api_TunnelControlResponse),
 	"POST /control/toggle-default-route": v.lazy(() => api_APIEnvelope),
 	"POST /control/toggle-enabled": v.lazy(() => api_APIEnvelope),
+	"POST /diagnostics/page-scan": v.lazy(() => api_PageScanEnvelope),
 	"POST /diagnostics/run": v.lazy(() => api_APIEnvelope),
 	"POST /dns-check/start": v.lazy(() => api_DnsCheckStartResponseEnvelope),
 	"POST /dns-routes/create": v.lazy(() => api_DnsRouteResponse),

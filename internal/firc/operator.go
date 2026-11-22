@@ -336,6 +336,14 @@ func (o *Operator) ConfigDir() string {
 	return o.configDir
 }
 
+// InboundPort returns the local mixed proxy port kept active by FIRC.
+func (o *Operator) InboundPort() uint16 {
+	if o == nil {
+		return 0
+	}
+	return o.inboundPort
+}
+
 func (o *Operator) isSystemConfigDir() bool {
 	return o != nil && filepath.Clean(o.configDir) == filepath.Clean(DefaultConfigDir)
 }

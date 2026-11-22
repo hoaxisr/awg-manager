@@ -6,8 +6,9 @@
 		FircMonitorSnapshot,
 		FircDomainCheckResult,
 	} from '$lib/types/firc';
+	import type { PageScanFetchMode, PageScanResult } from '$lib/types/diagnostics';
 	import { Button, Badge, StatusDot } from '$lib/components/ui';
-	import { IpInspectSection, QuickAddRouteModal } from '$lib/components/diagnostics';
+	import { IpInspectSection, PageScanSection, QuickAddRouteModal } from '$lib/components/diagnostics';
 	import { Activity, Search, RefreshCw, Play, Pause, ArrowRight, CheckCircle2, Globe, Info } from 'lucide-svelte';
 
 	let snapshot = $state<FircMonitorSnapshot | null>(null);
@@ -24,6 +25,11 @@
 	let testDomain = $state('');
 	let checkingDomain = $state(false);
 	let checkResult = $state<FircDomainCheckResult | null>(null);
+
+	let scanningPage = $state(false);
+	let pageScanMode = $state<PageScanFetchMode>('auto');
+	let pageScanResult = $state<PageScanResult | null>(null);
+	let pageScanError = $state('');
 
 	let inspectedEventSeq = $state<number | null>(null);
 	let quickAddOpen = $state(false);
@@ -81,6 +87,23 @@
 			};
 		} finally {
 			checkingDomain = false;
+		}
+	}
+
+	async function runPageScan(targetOverride?: string, modeOverride?: PageScanFetchMode) {
+		const target = (targetOverride ?? testDomain).trim();
+		if (!target) return;
+		const mode = modeOverride ?? 'auto';
+		pageScanMode = mode;
+		scanningPage = true;
+		pageScanError = '';
+		try {
+			pageScanResult = await api.scanPage(target, mode);
+			await loadMonitor(true);
+		} catch (e) {
+			pageScanError = (e as Error).message || 'Request failed';
+		} finally {
+			scanningPage = false;
 		}
 	}
 
@@ -254,8 +277,18 @@
 				placeholder="Например, youtube.com"
 				bind:value={testDomain}
 			/>
-			<Button variant="primary" size="sm" type="submit" loading={checkingDomain}>
+			<Button variant="primary" size="sm" type="submit" loading={checkingDomain} disabled={scanningPage}>
 				Проверить
+			</Button>
+			<Button
+				variant="secondary"
+				size="sm"
+				type="button"
+				loading={scanningPage}
+				disabled={!testDomain.trim() || checkingDomain}
+				onclick={() => void runPageScan()}
+			>
+				{m.page_scan_btn()}
 			</Button>
 		</form>
 
@@ -296,6 +329,20 @@
 					onOpenQuickAdd={openQuickAdd}
 				/>
 			{/if}
+		{/if}
+
+		{#if scanningPage || pageScanResult || pageScanError}
+			<PageScanSection
+				loading={scanningPage}
+				error={pageScanError}
+				result={pageScanResult}
+				onOpenQuickAdd={openQuickAdd}
+				onRescan={(mode) => void runPageScan(undefined, mode)}
+				onRoutesChanged={() => {
+					void loadMonitor(true);
+					if (pageScanResult) void runPageScan(undefined, pageScanMode);
+				}}
+			/>
 		{/if}
 	</div>
 	</details>
@@ -619,6 +666,10 @@
 	domain={quickAddTarget.domain}
 	prefix={quickAddTarget.prefix}
 	onclose={() => (quickAddOpen = false)}
+	onadded={() => {
+		void loadMonitor(true);
+		if (pageScanResult) void runPageScan(undefined, pageScanMode);
+	}}
 />
 
 <style>
