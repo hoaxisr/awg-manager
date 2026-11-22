@@ -204,7 +204,8 @@
 				device: u.device || 'direct',
 				address: u.address || '',
 				username: u.username || '',
-				password: u.password || '',
+				password: '',
+				password_set: Boolean(u.password_set),
 				weight: u.weight && u.weight > 0 ? u.weight : 1,
 				enabled: Boolean(u.enabled),
 			}));

@@ -541,7 +541,7 @@ func (s *Service) GetConfig() PublicConfig {
 		Backend:            cfg.Backend,
 		CarrierMode:        cfg.CarrierMode,
 		UpstreamDevice:     cfg.UpstreamDevice,
-		Upstreams:          cloneUpstreams(cfg.Upstreams),
+		Upstreams:          publicUpstreams(cfg.Upstreams),
 		TlsDomain:          cfg.TlsDomain,
 		LegacyActive:       cfg.LegacySecret != "",
 		LegacyExpiresAt:    cfg.LegacyExpiresAt,
@@ -948,7 +948,7 @@ func (s *Service) UpdateConfig(cfg Config) error {
 		newCfg.CarrierMode = DefaultCarrierMode
 	}
 	if cfg.Upstreams != nil {
-		norm := NormalizeUpstreams(cfg.Upstreams)
+		norm := preserveUpstreamPasswords(NormalizeUpstreams(cfg.Upstreams), s.config.Upstreams)
 		if err := ValidateUpstreams(norm); err != nil {
 			return err
 		}
@@ -1879,12 +1879,11 @@ func (s *Service) deriveBridgeURL(host, secretHex string) string {
 	return DeriveBridgeURL(host, secretHex)
 }
 
-func buildSingleUserLinks(cfg Config, activeSecret string) (string, string, string, string, string, string, []WebProxyLink) {
-	hexDomain := hex.EncodeToString([]byte(cfg.TlsDomain))
-	mtproxySecret := "ee" + activeSecret + hexDomain
-
-	var webProxies []WebProxyLink
+// linkableEndpoints returns the endpoints that get client-facing links: those
+// with a hostname, skipping disabled ones when more than one is configured.
+func linkableEndpoints(cfg Config) []WebProxyEndpoint {
 	endpoints := cfg.GetEndpoints()
+	out := make([]WebProxyEndpoint, 0, len(endpoints))
 	for _, ep := range endpoints {
 		if !ep.Enabled && len(endpoints) > 1 {
 			continue
@@ -1892,6 +1891,34 @@ func buildSingleUserLinks(cfg Config, activeSecret string) (string, string, stri
 		if ep.Hostname == "" {
 			continue
 		}
+		out = append(out, ep)
+	}
+	return out
+}
+
+// buildStatusWebProxyLinks describes the linkable endpoints without any
+// secret-derived material, for the regular status response.
+func buildStatusWebProxyLinks(cfg Config) []WebProxyStatusLink {
+	var out []WebProxyStatusLink
+	for _, ep := range linkableEndpoints(cfg) {
+		out = append(out, WebProxyStatusLink{
+			ID:          ep.ID,
+			Hostname:    ep.Hostname,
+			Description: ep.Description,
+			Preset:      InferEndpointPreset(ep, cfg),
+			CarrierMode: EffectiveEndpointCarrierMode(ep, cfg),
+			IsCDN:       ep.IsCDN,
+		})
+	}
+	return out
+}
+
+func buildSingleUserLinks(cfg Config, activeSecret string) (string, string, string, string, string, string, []WebProxyLink) {
+	hexDomain := hex.EncodeToString([]byte(cfg.TlsDomain))
+	mtproxySecret := "ee" + activeSecret + hexDomain
+
+	var webProxies []WebProxyLink
+	for _, ep := range linkableEndpoints(cfg) {
 		epTgURL := fmt.Sprintf("tg://webproxy?server=%s&secret=%s", ep.Hostname, activeSecret)
 		epTmeURL := fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", ep.Hostname, activeSecret)
 		epBridgeURL := DeriveBridgeURL(ep.Hostname, activeSecret)
@@ -2046,8 +2073,6 @@ func (s *Service) GetStatus() Status {
 		running = webProxyOnline && rawOnline
 	}
 
-	links, _ := BuildTgLinks(cfg, "")
-
 	return Status{
 		Installed:                     installed,
 		InstalledTelemt:               installedTelemt,
@@ -2062,7 +2087,7 @@ func (s *Service) GetStatus() Status {
 		BackendOnline:                 rawOnline,
 		BackendAddr:                   cfg.Backend,
 		UpstreamStatus:                upstreamStatus,
-		Upstreams:                     cloneUpstreams(cfg.Upstreams),
+		Upstreams:                     publicUpstreams(cfg.Upstreams),
 		NetworkPreset:                 cfg.NetworkPreset,
 		CarrierMode:                   cfg.CarrierMode,
 		PublicHost:                    cfg.PublicHostname,
@@ -2076,7 +2101,7 @@ func (s *Service) GetStatus() Status {
 		LegacyExpiredPendingReconcile: legacyExpiredPending,
 		RecoveryRequired:              recovery,
 		LastStartupError:              startupErr,
-		WebProxies:                    links.WebProxies,
+		WebProxies:                    buildStatusWebProxyLinks(cfg),
 		Users:                         cfg.GetPublicUsers(),
 	}
 }
