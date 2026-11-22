@@ -333,6 +333,9 @@ func TestTgWebProxy_RevealRateLimit_AppliesToExplicitUserID(t *testing.T) {
 	if w2.Code != http.StatusTooManyRequests {
 		t.Errorf("immediate repeat with explicit user_id: got %d, want 429", w2.Code)
 	}
+	if bytes.Contains(w2.Body.Bytes(), []byte(`"secret"`)) || bytes.Contains(w2.Body.Bytes(), []byte("tg://")) {
+		t.Errorf("rate-limited response carries secret material: %s", w2.Body.String())
+	}
 
 	w3 := httptest.NewRecorder()
 	handler.RevealSecret(w3, newRevealRequest(t, handler, sessionToken, ""))

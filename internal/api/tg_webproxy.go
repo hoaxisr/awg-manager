@@ -287,17 +287,11 @@ func (h *TgWebProxyHandler) RevealSecret(w http.ResponseWriter, r *http.Request)
 		userID = strings.TrimSpace(reqBody.UserID)
 	}
 
-	data, err := h.svc.RevealUserSecret(userID)
+	// Resolve the target first (no secret material) so the rate limit is
+	// checked before the reveal is built.
+	targetID, err := h.svc.ResolveRevealUser(userID)
 	if err != nil {
-		if errors.Is(err, tgwebproxy.ErrRecoveryRequired) {
-			WriteError(w, http.StatusServiceUnavailable, err.Error())
-			return
-		}
-		if errors.Is(err, tgwebproxy.ErrUserNotFound) {
-			WriteError(w, http.StatusNotFound, err.Error())
-			return
-		}
-		WriteError(w, http.StatusInternalServerError, err.Error())
+		writeRevealError(w, err)
 		return
 	}
 
@@ -315,7 +309,7 @@ func (h *TgWebProxyHandler) RevealSecret(w http.ResponseWriter, r *http.Request)
 		clientKey = "ip:" + host
 	}
 
-	limitKey := revealLimitKey(clientKey, data.UserID)
+	limitKey := revealLimitKey(clientKey, targetID)
 	h.revealMu.Lock()
 	now := time.Now()
 	// Prune expired entries older than 1 minute to prevent unbounded growth
@@ -334,9 +328,26 @@ func (h *TgWebProxyHandler) RevealSecret(w http.ResponseWriter, r *http.Request)
 	h.revealLimits[limitKey] = now
 	h.revealMu.Unlock()
 
+	data, err := h.svc.RevealUserSecret(targetID)
+	if err != nil {
+		writeRevealError(w, err)
+		return
+	}
+
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	WriteJSON(w, http.StatusOK, data)
+}
+
+func writeRevealError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, tgwebproxy.ErrRecoveryRequired):
+		WriteError(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, tgwebproxy.ErrUserNotFound):
+		WriteError(w, http.StatusNotFound, err.Error())
+	default:
+		WriteError(w, http.StatusInternalServerError, err.Error())
+	}
 }
 
 func revealLimitKey(clientKey, userID string) string {

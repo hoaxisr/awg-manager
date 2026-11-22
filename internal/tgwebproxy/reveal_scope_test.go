@@ -10,6 +10,7 @@ import (
 const (
 	revealSecretA = "a1a1a1a1b2b2b2b2c3c3c3c3d4d4d4d4"
 	revealSecretB = "e5e5e5e5f6f6f6f6a7a7a7a7b8b8b8b8"
+	revealLegacy  = "fedcba9876543210fedcba9876543210"
 )
 
 func revealScopeConfig() Config {
@@ -21,6 +22,10 @@ func revealScopeConfig() Config {
 		DirectPort:     8448,
 		TlsDomain:      "home.example.test",
 		Secret:         revealSecretA,
+		// Global rotation secret: accepted for every client until it expires,
+		// owned by no user, so a per-user reveal must not disclose it.
+		LegacySecret:    revealLegacy,
+		LegacyExpiresAt: "2099-01-01T00:00:00Z",
 		Endpoints: []WebProxyEndpoint{
 			{ID: "ep-cdn", Hostname: "cdn.example.test", IsCDN: true, Enabled: true, ListenPort: 8085, AdminPort: 8086},
 			{ID: "ep-direct", Hostname: "direct.example.test", Enabled: true, ListenPort: 8087, AdminPort: 8088},
@@ -46,6 +51,9 @@ func assertRevealOnlyFor(t *testing.T, data RevealData, wantID, wantSecret, othe
 	}
 	if strings.Contains(string(raw), otherSecret) {
 		t.Errorf("reveal for %q contains another user's secret", wantID)
+	}
+	if data.LegacySecret != "" || strings.Contains(string(raw), revealLegacy) {
+		t.Errorf("reveal for %q discloses the global legacy secret", wantID)
 	}
 	for _, wp := range data.WebProxies {
 		if !strings.Contains(wp.TgURL, "secret="+wantSecret) {
@@ -126,5 +134,26 @@ func TestRevealUserSecret_NoSecretConfigured(t *testing.T) {
 
 	if _, err := svc.RevealSecret(); !errors.Is(err, ErrUserNotFound) {
 		t.Errorf("RevealSecret without secrets err = %v, want ErrUserNotFound", err)
+	}
+}
+
+// ResolveRevealUser lets the API rate-limit before RevealData is built; it
+// must agree with RevealUserSecret on the target and expose no secrets.
+func TestResolveRevealUser_MatchesRevealTarget(t *testing.T) {
+	svc, _, _ := setupTestService(t)
+	svc.config = revealScopeConfig()
+
+	for in, want := range map[string]string{"": "u-a", "u-a": "u-a", "u-b": "u-b"} {
+		got, err := svc.ResolveRevealUser(in)
+		if err != nil || got != want {
+			t.Errorf("ResolveRevealUser(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if _, err := svc.ResolveRevealUser("u-missing"); !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("ResolveRevealUser(unknown) err = %v, want ErrUserNotFound", err)
+	}
+	svc.recoveryRequired = true
+	if _, err := svc.ResolveRevealUser("u-a"); !errors.Is(err, ErrRecoveryRequired) {
+		t.Errorf("ResolveRevealUser in recovery err = %v, want ErrRecoveryRequired", err)
 	}
 }
