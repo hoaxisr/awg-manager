@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button } from '$lib/components/ui';
 	import type {
@@ -105,7 +106,7 @@
 	let revealLoading = $state(false);
 	let cancelling = $state(false);
 	let applyPhase = $state<'review' | 'applying' | 'done'>('review');
-	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let stopJobPoll: (() => void) | null = null;
 
 	// Direct VLESS + REALITY entry (white-IP preset)
 	type WizardRealityMode = 'off' | 'also' | 'only';
@@ -260,10 +261,8 @@
 	});
 
 	function stopPolling() {
-		if (pollTimer) {
-			clearInterval(pollTimer);
-			pollTimer = null;
-		}
+		stopJobPoll?.();
+		stopJobPoll = null;
 	}
 
 	async function resolveCurrentInput(): Promise<ExternalAccessInput> {
@@ -675,11 +674,12 @@
 			}
 			const res = await api.applyWizardPlan(draft.selectedKind, activePlanId);
 			applyPhase = 'applying';
-			await pollJob(res.job_id);
+			// Ход задания: короткий опрос до конечной фазы, первый тик сразу.
+			// Раньше таймер ставился и после уже конечной первой фазы —
+			// onapplied/onsettled звучали дважды; visiblePoll к тому же не
+			// накладывает запросы.
 			stopPolling();
-			pollTimer = setInterval(() => {
-				void pollJob(res.job_id);
-			}, 750);
+			stopJobPoll = startVisiblePoll(() => pollJob(res.job_id), 750);
 		} catch (e) {
 			notifications.error(
 				e instanceof Error ? e.message : 'Не удалось запустить применение'

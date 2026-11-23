@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
@@ -159,6 +160,9 @@ func (a *app) setupUplink() {
 	c.OnTransition = func(id string, s uplink.State) {
 		a.bootLog.Info("uplink", id, "state="+s.Phase+" provider="+s.Provider+" reason="+s.LastError)
 	}
+	c.OnStateChange = func(string) {
+		a.eventBus.PublishInvalidated(events.ResourceUplink, "state-changed")
+	}
 	a.uplinkController.Store(c)
 	if a.fircOp != nil {
 		a.fircOp.SetManagedUplinkConfig(func(ctx context.Context, tunnels []firc.Tunnel) ([]firc.Tunnel, error) {
@@ -173,7 +177,9 @@ func (a *app) setupUplink() {
 			return c.RenameTarget(ctx, uplink.Target{Engine: "sing-box", Ref: old}, uplink.Target{Engine: "sing-box", Ref: next}, apply)
 		})
 	}
-	a.srv.SetUplinkHandler(&api.UplinkHandler{Controller: c})
+	uplinkHandler := &api.UplinkHandler{Controller: c}
+	uplinkHandler.SetEventBus(a.eventBus)
+	a.srv.SetUplinkHandler(uplinkHandler)
 	go func() {
 		// Do not race boot restoration or report the empty pre-boot WAN model.
 		ticker := time.NewTicker(time.Second)

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import type {
 		FircJournalEvent,
 		FircDnsStatsRow,
@@ -41,7 +42,8 @@
 	let captureLast = $state<FircCaptureLast | undefined>(undefined);
 	let captureBusy = $state(false);
 
-	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let stopPoll: (() => void) | null = null;
+	let destroyed = false;
 
 	const groupNameMap = $derived.by(() => {
 		const map: Record<string, string> = {};
@@ -124,15 +126,21 @@
 		}
 		await Promise.all([pollEvents(), loadDnsStats(), pollCapture()]);
 
-		pollTimer = setInterval(() => {
-			if (subTab === 'events') pollEvents();
-			else if (subTab === 'dns') loadDnsStats();
-			else if (subTab === 'capture') pollCapture();
+		// onMount асинхронный: без этой проверки опрос, запущенный после
+		// размонтирования, не остановился бы никогда.
+		if (destroyed) return;
+		// Хвост журнала — живые данные, остаётся опросом через visiblePoll
+		// (спит в фоновой вкладке, запросы не накладываются).
+		stopPoll = startVisiblePoll(() => {
+			if (subTab === 'events') return pollEvents();
+			if (subTab === 'dns') return loadDnsStats();
+			if (subTab === 'capture') return pollCapture();
 		}, 2500);
 	});
 
 	onDestroy(() => {
-		if (pollTimer) clearInterval(pollTimer);
+		destroyed = true;
+		stopPoll?.();
 	});
 
 	function eventSummaryText(ev: FircJournalEvent): string {

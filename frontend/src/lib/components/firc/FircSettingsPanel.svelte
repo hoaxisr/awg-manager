@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { api } from '$lib/api/client';
+  import { onResourceInvalidated } from '$lib/stores/storeRegistry';
   import { m } from '$lib/i18n';
   import type {
     FircStatus,
@@ -86,7 +87,7 @@
   let loading = $state(true);
   let saving = $state(false);
   let busyAction = $state<string | null>(null);
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let unsubFirc: (() => void) | null = null;
 
   interface Props {
     hasUnsaved?: boolean;
@@ -421,12 +422,15 @@
         })
         .catch(() => {});
     }
-    pollTimer = setInterval(() => loadAll(true), 4000);
+    // Статус, настройки демона и ext перечитываем по подсказке firc
+    // (мутации FIRC и смена живости демона, замеченная сторожем) — без
+    // 4-секундного таймера. Несохранённые правки loadAll не затирает.
+    unsubFirc = onResourceInvalidated('firc', () => void loadAll(true));
   });
 
   onDestroy(() => {
     destroyed = true;
-    if (pollTimer) clearInterval(pollTimer);
+    unsubFirc?.();
   });
 
   function resetChanges() {

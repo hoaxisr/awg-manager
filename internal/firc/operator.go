@@ -191,6 +191,7 @@ type MigrationJournalCommitFaultHooks struct {
 // Leaf locks (extConfigMu, cloudStateMu, cloudCancelMu, mu, extIpsetMu, extIptablesMu, extCloudDNSMu,
 // extCloudClockMu) must never acquire any lock listed above.
 type Operator struct {
+	runtimeObs               runtimeObserver
 	mu                       sync.Mutex
 	mutationMu               sync.Mutex
 	lifecycleMu              sync.Mutex

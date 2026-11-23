@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { onMount, onDestroy, untrack } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { onResourceInvalidated } from '$lib/stores/storeRegistry';
 	import { Button } from '$lib/components/ui';
 	import {
 		lastServerVerification,
@@ -40,7 +41,6 @@
 	let report = $state<VerificationReport | null>(null);
 	let checkedUIStateFingerprint = $state('');
 	let liveBackendFingerprint = $state('');
-	let fingerprintTimer: ReturnType<typeof setInterval> | null = null;
 
 	$effect(() => {
 		if (autoRun) return;
@@ -141,26 +141,19 @@
 		if (typeof window !== 'undefined') {
 			window.addEventListener('focus', handleFocus);
 		}
-		fingerprintTimer = setInterval(() => {
-			void syncBackendFingerprint();
-		}, 10000);
+		// Отпечаток состояния сервера меняется с правками ingress (VLESS,
+		// Telegram, диспетчер) и с туннелями выхода — по их подсказкам и
+		// перечитываем, таймер не нужен. Фокус окна остаётся страховкой.
+		const unsubIngress = onResourceInvalidated('servers.ingress', () => void syncBackendFingerprint());
+		const unsubTunnels = onResourceInvalidated('tunnels', () => void syncBackendFingerprint());
 
 		return () => {
 			if (typeof window !== 'undefined') {
 				window.removeEventListener('focus', handleFocus);
 			}
-			if (fingerprintTimer) {
-				clearInterval(fingerprintTimer);
-				fingerprintTimer = null;
-			}
+			unsubIngress();
+			unsubTunnels();
 		};
-	});
-
-	onDestroy(() => {
-		if (fingerprintTimer) {
-			clearInterval(fingerprintTimer);
-			fingerprintTimer = null;
-		}
 	});
 </script>
 

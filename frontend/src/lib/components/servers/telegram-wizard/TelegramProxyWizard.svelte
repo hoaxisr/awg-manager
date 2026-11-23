@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { notifications } from '$lib/stores/notifications';
 	import WizardShell from '../wizard/WizardShell.svelte';
 	import PreflightList from '../wizard/PreflightList.svelte';
@@ -55,8 +57,17 @@
 	let planRecord = $state<ServerPlanRecord | null>(null);
 	let currentJob = $state<JobStatusResponse | null>(null);
 	let revealedCreds = $state<RevealCredentials | null>(null);
-	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let stopJobPoll: (() => void) | null = null;
 	let cancelling = $state(false);
+
+	function stopPolling() {
+		stopJobPoll?.();
+		stopJobPoll = null;
+	}
+
+	// Без этого опрос задания переживал размонтирование мастера, если тот
+	// закрыли не через open=false.
+	onDestroy(stopPolling);
 
 	$effect(() => {
 		if (open) {
@@ -67,10 +78,7 @@
 	});
 
 	function cleanup() {
-		if (pollTimer) {
-			clearInterval(pollTimer);
-			pollTimer = null;
-		}
+		stopPolling();
 		currentStep = 0;
 		loading = false;
 		capsError = null;
@@ -176,20 +184,20 @@
 	}
 
 	function startPolling(jobId: string) {
-		if (pollTimer) clearInterval(pollTimer);
-		pollTimer = setInterval(async () => {
+		// Ход идущего задания: короткий опрос только до конечной фазы.
+		// visiblePoll не даёт запросам накладываться при медленном ответе.
+		stopPolling();
+		stopJobPoll = startVisiblePoll(async () => {
 			try {
 				const job = await api.getWizardJob('tgwebproxy', jobId);
 				currentJob = job;
 				if (job.phase === 'succeeded') {
-					if (pollTimer) clearInterval(pollTimer);
-					pollTimer = null;
+					stopPolling();
 					currentStep = 5;
 					onapplied?.();
 					void revealSecrets(jobId);
 				} else if (job.phase === 'failed' || job.phase === 'cancelled' || job.phase === 'recovery_required') {
-					if (pollTimer) clearInterval(pollTimer);
-					pollTimer = null;
+					stopPolling();
 				}
 			} catch {
 				// Ignore transient network errors

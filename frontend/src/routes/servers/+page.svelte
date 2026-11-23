@@ -4,6 +4,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
+	import { onResourceInvalidated } from '$lib/stores/storeRegistry';
 	import { systemInfo } from '$lib/stores/system';
 	import { goto } from '$app/navigation';
 	import { browser } from '$app/environment';
@@ -41,7 +42,8 @@
 	}
 
 	let unsub: (() => void) | undefined;
-	let pollTimer: ReturnType<typeof setInterval> | undefined;
+	let unsubIngress: (() => void) | undefined;
+	let unsubFirc: (() => void) | undefined;
 
 	let xrayStatus = $state<XrayStatus | null>(null);
 	let tgStatus = $state<TgWebProxyStatus | null>(null);
@@ -78,16 +80,21 @@
 		loadXrayStatus();
 		loadTgStatus();
 		loadDispatcherStatus();
-		pollTimer = setInterval(() => {
+		// Вместо таймера — подсказки: servers.ingress приходит на правки
+		// VLESS/Telegram/диспетчера и на смену их рантайма, firc — на правку
+		// маршрутизации серверов через FIRC.
+		unsubIngress = onResourceInvalidated('servers.ingress', () => {
 			loadXrayStatus();
 			loadTgStatus();
 			loadDispatcherStatus();
 			loadIngressRefs();
-		}, 6000);
+		});
+		unsubFirc = onResourceInvalidated('firc', () => loadIngressRefs());
 	});
 	onDestroy(() => {
 		unsub?.();
-		if (pollTimer) clearInterval(pollTimer);
+		unsubIngress?.();
+		unsubFirc?.();
 	});
 
 	let snap = $derived($servers);

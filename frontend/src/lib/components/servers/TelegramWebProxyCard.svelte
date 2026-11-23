@@ -2,6 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
+	import { onResourceInvalidated } from '$lib/stores/storeRegistry';
 	import { notifications } from '$lib/stores/notifications';
 	import {
 		lastServerVerification,
@@ -537,8 +538,9 @@
 
 	onMount(() => {
 		void loadData();
-		const interval = setInterval(loadStatus, 5000);
-		return () => clearInterval(interval);
+		// Статус и конфиг — по подсказке servers.ingress (правки ingress и
+		// смена рантайма, которую замечает сторож на бэкенде), не по таймеру.
+		return onResourceInvalidated('servers.ingress', () => void loadStatus());
 	});
 
 	async function loadData() {

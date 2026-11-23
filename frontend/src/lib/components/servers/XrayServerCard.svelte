@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { onResourceInvalidated } from '$lib/stores/storeRegistry';
 	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import {
@@ -283,7 +284,9 @@
 
 	onMount(() => {
 		void loadData();
-		const interval = setInterval(loadStatus, 5000);
+		// Статус и конфиг — по подсказке servers.ingress (правки ingress и
+		// смена рантайма, которую замечает сторож на бэкенде), не по таймеру.
+		const unsubIngress = onResourceInvalidated('servers.ingress', () => void loadStatus());
 		const handleDocClick = () => {
 			openMenuId = null;
 		};
@@ -291,7 +294,7 @@
 			window.addEventListener('click', handleDocClick);
 		}
 		return () => {
-			clearInterval(interval);
+			unsubIngress();
 			if (typeof window !== 'undefined') {
 				window.removeEventListener('click', handleDocClick);
 			}

@@ -3,6 +3,7 @@
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import { api } from '$lib/api/client';
+	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import {
@@ -177,7 +178,7 @@
 	}
 	let listPages = $state<Record<string, GroupListPageState>>({});
 
-	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let stopLivePoll: (() => void) | null = null;
 	let importFileInput = $state<HTMLInputElement | null>(null);
 	let lastHandledMigrationNonce = get(fircMigrationAppliedNonce);
 	let lastHandledSyncNonce = get(fircSyncNonce);
@@ -487,7 +488,10 @@
 		} catch { /* Keep the default view. */ }
 		void loadAll();
 		void loadPresetCatalog();
-		pollTimer = setInterval(() => void pollLiveState(), 4000);
+		// Живое состояние демона (активный выход группы, состояние туннелей,
+		// интерфейсы) меняется внутри fircd без участия панели — события нет,
+		// поэтому опрос, но через visiblePoll: спит в фоне, не накладывается.
+		stopLivePoll = startVisiblePoll(pollLiveState, 4000);
 		if (typeof window !== 'undefined') {
 			window.addEventListener('click', handleWindowClick);
 		}
@@ -495,7 +499,7 @@
 
 	onDestroy(() => {
 		destroyed = true;
-		if (pollTimer) clearInterval(pollTimer);
+		stopLivePoll?.();
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('click', handleWindowClick);
 		}

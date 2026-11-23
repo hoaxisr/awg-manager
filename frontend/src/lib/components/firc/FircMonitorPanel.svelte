@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
+	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import type {
 		FircMonitorSnapshot,
 		FircDomainCheckResult,
@@ -40,7 +41,7 @@
 		quickAddOpen = true;
 	}
 
-	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let stopPoll: (() => void) | null = null;
 
 	const quickDomains = [
 		'gemini.google.com',
@@ -108,13 +109,15 @@
 	}
 
 	onMount(() => {
+		// Живые счётчики монитора — опрос, но через visiblePoll: спит в
+		// фоновой вкладке и не накладывает запросы.
 		void loadMonitor(false);
-		pollTimer = setInterval(() => void loadMonitor(true), 2500);
+		stopPoll = startVisiblePoll(() => loadMonitor(true), 2500);
 	});
 
 	onDestroy(() => {
 		disposed = true;
-		if (pollTimer) clearInterval(pollTimer);
+		stopPoll?.();
 	});
 
 	function formatBytes(bytes: number): string {

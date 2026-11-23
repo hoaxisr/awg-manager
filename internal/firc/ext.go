@@ -1316,7 +1316,14 @@ func (op *Operator) runExtWatchdogTick(loopCtx context.Context) {
 	}
 	ctx, cancel := context.WithTimeout(loopCtx, 10*time.Second)
 	defer cancel()
-	if !op.IsRunning(ctx) || op.ManuallyDisabled() {
+	running := op.IsRunning(ctx)
+	// Отменённый такт (остановка сторожа) — не наблюдение: «не запущен»
+	// здесь значит лишь, что пинг прервали.
+	if loopCtx.Err() == nil {
+		kdErr, _ := op.keenDNSCloudStatus()
+		op.noteRuntimeState(running, kdErr)
+	}
+	if !running || op.ManuallyDisabled() {
 		return
 	}
 
@@ -1341,6 +1348,9 @@ func (op *Operator) runExtWatchdogTick(loopCtx context.Context) {
 		return
 	}
 	_ = op.reconcileExtNetfilterLockedWithCfgGen(ctx, ext, groups, nfGen, cfgGen, true, false)
+	// Итог синхронизации KeenDNS этого такта — тоже наблюдение.
+	kdErr, _ := op.keenDNSCloudStatus()
+	op.noteRuntimeState(true, kdErr)
 	if !wantKeenDNS || groupsLive {
 		op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, wantKeenDNS, groups)
 	}

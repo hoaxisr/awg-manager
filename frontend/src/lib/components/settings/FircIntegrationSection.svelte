@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { onResourceInvalidated } from '$lib/stores/storeRegistry';
+	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { m } from '$lib/i18n';
 	import { Button, ConfirmModal, StatusDot } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
@@ -114,8 +116,19 @@
 	onMount(() => {
 		alive = true;
 		void refresh();
-		const timer = setInterval(refresh, 2000);
-		return () => { alive = false; clearInterval(timer); };
+		// Состояние рантайма — по подсказке firc (установка/удаление запущены,
+		// смена движка, демон упал или поднялся).
+		const unsub = onResourceInvalidated('firc', () => void refresh());
+		return () => { alive = false; unsub(); };
+	});
+	// Ход установки/обновления/удаления — короткий опрос только пока операция
+	// идёт (status.busy); с её концом опрос снимается сам.
+	// Через $derived: эффект перезапускается на смене флага, а не на каждом
+	// новом объекте status (иначе каждый ответ перезапускал бы опрос).
+	const operationRunning = $derived(status?.busy === true);
+	$effect(() => {
+		if (!operationRunning) return;
+		return startVisiblePoll(refresh, 2000);
 	});
 	async function act(action: 'install' | 'upgrade' | 'uninstall' | 'migrate-external') {
 		if (busy) return;

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/cdndispatcher"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 )
@@ -17,6 +18,13 @@ type IngressDispatcherHandler struct {
 	coord    *serveringress.Coordinator
 	disp     *cdndispatcher.Dispatcher
 	vlessSvc *vlessserver.Service
+	bus      *events.Bus
+}
+
+// SetEventBus wires the SSE event bus: успешные мутации публикуют
+// ResourceServersIngress.
+func (h *IngressDispatcherHandler) SetEventBus(bus *events.Bus) {
+	h.bus = bus
 }
 
 // NewIngressDispatcherHandler creates a new IngressDispatcherHandler.
@@ -72,6 +80,7 @@ func (h *IngressDispatcherHandler) UpdateDispatcherConfig(w http.ResponseWriter,
 		WriteError(w, http.StatusInternalServerError, "failed to apply dispatcher config: "+err.Error())
 		return
 	}
+	h.bus.PublishInvalidated(events.ResourceServersIngress, "dispatcher-config-updated")
 	WriteJSON(w, http.StatusOK, dispatcherConfigResponse{
 		Config:  h.coord.GetDispatcherConfig(),
 		Running: h.dispatcherRunning(),
@@ -114,5 +123,6 @@ func (h *IngressDispatcherHandler) UpdateVlessTuning(w http.ResponseWriter, r *h
 		WriteError(w, http.StatusBadRequest, "failed to update xhttp tuning: "+err.Error())
 		return
 	}
+	h.bus.PublishInvalidated(events.ResourceServersIngress, "vless-tuning-updated")
 	WriteJSON(w, http.StatusOK, h.vlessSvc.GetTuning())
 }

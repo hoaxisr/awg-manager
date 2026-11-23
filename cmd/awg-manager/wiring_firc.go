@@ -15,6 +15,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -596,6 +597,11 @@ func (a *app) wireFircEngineCoordinator() {
 		return a.fircOp.RuntimeDependents()
 	})
 	a.fircInstaller = installer
+	// Конец асинхронной операции рантайма (успех или ошибка) — без этого
+	// вкладка, не державшая опрос хода, так и показывала бы «устанавливается».
+	installer.SetOnFinished(func() {
+		a.eventBus.PublishInvalidated(events.ResourceFirc, "runtime-operation-finished")
+	})
 
 	if a.fircHandler != nil {
 		a.fircHandler.SetOtherEngineLifecycle(hooks.StartTarget, hooks.StopEngine)
@@ -660,6 +666,12 @@ func (a *app) setupFirc() {
 	})
 	a.fircHandler = api.NewFircHandler(a.fircOp)
 	a.fircHandler.SetSettingsStore(a.settingsStore)
+	// Шину хендлеру раньше не передавали вовсе — его подсказки
+	// (publishEngineInvalidations после purge/restore) уходили в nil.
+	a.fircHandler.SetEventBus(a.eventBus)
+	a.fircOp.SetOnRuntimeChange(func() {
+		a.eventBus.PublishInvalidated(events.ResourceFirc, "runtime-changed")
+	})
 	if a.singboxOp != nil {
 		a.fircHandler.SetSingboxConfigDir(a.singboxOp.ConfigDir())
 		a.fircOp.SetSingboxBinary(a.singboxOp.Binary())

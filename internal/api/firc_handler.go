@@ -158,6 +158,13 @@ func (h *FircHandler) publishEngineInvalidations(reason string) {
 	h.bus.PublishInvalidated(events.ResourceAwg3, reason)
 	h.bus.PublishInvalidated(events.ResourceSettings, reason)
 	h.bus.PublishInvalidated(events.ResourceSysInfo, reason)
+	h.bus.PublishInvalidated(events.ResourceFirc, reason)
+}
+
+// publishFirc — подсказка ResourceFirc после мутации состояния FIRC.
+// Безопасна без шины: (*events.Bus)(nil).PublishInvalidated — no-op.
+func (h *FircHandler) publishFirc(reason string) {
+	h.bus.PublishInvalidated(events.ResourceFirc, reason)
 }
 
 // HasInstaller reports whether an OnDemandInstaller is configured on this handler.
@@ -232,6 +239,9 @@ func (h *FircHandler) SwitchEngineWithOptions(ctx context.Context, targetEngine 
 	if h.op == nil {
 		return http.ErrNotSupported
 	}
+	// Публикуем и на ошибке: сорванная смена движка оставляет метку
+	// восстановления, и её страница должна увидеть сразу.
+	defer h.publishFirc("engine-switch")
 	return h.op.SwitchEngineWithOptions(ctx, targetEngine, opts, h.buildEngineSwitchHooks())
 }
 
@@ -240,6 +250,8 @@ func (h *FircHandler) ReconcileRecovery(ctx context.Context, preferredEngine str
 	if h.op == nil {
 		return nil, http.ErrNotSupported
 	}
+	// Как и смена движка: исход любой, состояние восстановления сменилось.
+	defer h.publishFirc("recovery-reconcile")
 	return h.op.ReconcileRecovery(ctx, preferredEngine, h.buildEngineSwitchHooks())
 }
 
@@ -423,6 +435,7 @@ func (h *FircHandler) handleInstall(w http.ResponseWriter, r *http.Request) {
 			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_BUSY")
 			return
 		}
+		h.publishFirc("external-migration-started")
 		response.Accepted(w, map[string]string{"status": "external_migration_started"})
 		return
 	}
@@ -444,6 +457,7 @@ func (h *FircHandler) handleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.publishFirc("install-started")
 	response.Accepted(w, map[string]string{"status": "install_started"})
 }
 
@@ -505,6 +519,7 @@ func (h *FircHandler) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.publishFirc("upgrade-started")
 	response.Accepted(w, map[string]string{"status": "upgrade_started"})
 }
 
@@ -569,6 +584,7 @@ func (h *FircHandler) handleMigrateRuntime(w http.ResponseWriter, r *http.Reques
 			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_BUSY")
 			return
 		}
+		h.publishFirc("external-migration-started")
 		response.Accepted(w, map[string]string{"status": "external_migration_started"})
 		return
 	}
@@ -593,6 +609,7 @@ func (h *FircHandler) handleMigrateRuntime(w http.ResponseWriter, r *http.Reques
 			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_BUSY")
 			return
 		}
+		h.publishFirc("external-migration-started")
 		response.Accepted(w, map[string]string{"status": "external_migration_started"})
 		return
 	}
@@ -664,6 +681,7 @@ func (h *FircHandler) handleUninstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.publishFirc("uninstall-started")
 	response.Accepted(w, map[string]string{"status": "uninstall_started"})
 }
 
@@ -693,6 +711,7 @@ func (h *FircHandler) handleControl(w http.ResponseWriter, r *http.Request) {
 			response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "START_FAILED")
 			return
 		}
+		h.publishFirc("control-start")
 	case "stop":
 		if err := h.op.StopByUser(r.Context()); err != nil {
 			response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "STOP_FAILED")
@@ -701,6 +720,7 @@ func (h *FircHandler) handleControl(w http.ResponseWriter, r *http.Request) {
 		if h.isExplicitlyUnselected() {
 			h.op.CleanupPoolRejectBarrier(r.Context())
 		}
+		h.publishFirc("control-stop")
 	case "reload":
 		if h.op.IsRecoveryRequired() {
 			if _, err := h.ReconcileRecovery(r.Context(), "firc"); err != nil {
@@ -716,6 +736,7 @@ func (h *FircHandler) handleControl(w http.ResponseWriter, r *http.Request) {
 				response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "RELOAD_FAILED")
 				return
 			}
+			h.publishFirc("control-reload")
 		}
 	case "clear_recovery", "reconcile_recovery":
 		if _, err := h.ReconcileRecovery(r.Context(), strings.TrimSpace(req.Engine)); err != nil {
@@ -737,6 +758,8 @@ func (h *FircHandler) handleControl(w http.ResponseWriter, r *http.Request) {
 		response.ErrorWithStatus(w, http.StatusBadRequest, "unsupported action: "+action, "BAD_REQUEST")
 		return
 	}
+	// select/reconcile публикуют сами (SwitchEngineWithOptions,
+	// ReconcileRecovery) — второй подсказки здесь не шлём.
 	if h.isExplicitlyUnselected() {
 		response.Success(w, h.op.GetOfflineStatus(false))
 		return
@@ -1456,6 +1479,7 @@ func (h *FircHandler) handlePutSettings(w http.ResponseWriter, r *http.Request) 
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "SETTINGS_UPDATE_FAILED")
 		return
 	}
+	h.publishFirc("settings-updated")
 	response.Success(w, res)
 }
 
@@ -1698,6 +1722,45 @@ func isAllowedFircV1Route(method, cleanSubPath string) bool {
 	}
 }
 
+// isMutatingFircV1Request — не-GET запрос /v1, меняющий состояние. POST
+// предпросмотра и пробы туннеля только читают — их не считаем.
+func isMutatingFircV1Request(method, cleanSubPath string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	return cleanSubPath != "/tunnels/preview" && cleanSubPath != "/tunnels/probe"
+}
+
+// fircV1StatusWriter запоминает код ответа. Unwrap/Flush — чтобы
+// ReverseProxy (FlushInterval -1) по-прежнему сбрасывал поток.
+type fircV1StatusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *fircV1StatusWriter) WriteHeader(code int) {
+	if w.status == 0 {
+		w.status = code
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *fircV1StatusWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *fircV1StatusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *fircV1StatusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 	if h.op == nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -1713,6 +1776,19 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 	if !isAllowedFircV1Route(r.Method, cleanSubPath) {
 		response.ErrorWithStatus(w, http.StatusForbidden, "firc v1 route is not allowed", "ROUTE_NOT_ALLOWED")
 		return
+	}
+	// Успешная мутация через /v1 (группы, туннели, настройки демона,
+	// перезапуск, правила списков) — подсказка firc. Выходов из обработчика
+	// с успехом много (офлайн-стейджинг, прокси к демону), поэтому статус
+	// снимаем с ответа, а не расставляем публикацию по веткам.
+	if isMutatingFircV1Request(r.Method, cleanSubPath) {
+		sw := &fircV1StatusWriter{ResponseWriter: w}
+		w = sw
+		defer func() {
+			if sw.status >= 200 && sw.status < 300 {
+				h.publishFirc("v1" + strings.ReplaceAll(cleanSubPath, "/", "-"))
+			}
+		}()
 	}
 	if cleanSubPath == "/auth" {
 		w.Header().Set("Content-Type", "application/json")
@@ -2170,6 +2246,7 @@ func (h *FircHandler) handlePutExt(w http.ResponseWriter, r *http.Request) {
 	if h.onExtChanged != nil {
 		h.onExtChanged(ext)
 	}
+	h.publishFirc("ext-updated")
 	response.Success(w, ext)
 }
 

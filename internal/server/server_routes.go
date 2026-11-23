@@ -13,6 +13,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/connections"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/ipinspect"
 	"github.com/hoaxisr/awg-manager/internal/mcp"
 	"github.com/hoaxisr/awg-manager/internal/mcp/localdeps"
@@ -26,6 +27,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	sysports "github.com/hoaxisr/awg-manager/internal/sys/ports"
 	tunnelservice "github.com/hoaxisr/awg-manager/internal/tunnel/service"
+	"github.com/hoaxisr/awg-manager/internal/uplink"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -243,6 +245,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 
 	if s.vlessServerService != nil {
 		h.vlessServerHandler = api.NewVlessServerHandler(s.vlessServerService, s.serverIngressCoordinator)
+		h.vlessServerHandler.SetEventBus(s.bus)
 	}
 	if s.tgWebProxyService != nil {
 		h.tgWebProxyHandler = api.NewTgWebProxyHandler(s.tgWebProxyService, s.sessions)
@@ -250,9 +253,11 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 			h.tgWebProxyHandler.SetAuthChecker(s.settings)
 		}
 		h.tgWebProxyHandler.SetCoordinator(s.serverIngressCoordinator)
+		h.tgWebProxyHandler.SetEventBus(s.bus)
 	}
 	if s.serverIngressCoordinator != nil || s.cdnDispatcher != nil {
 		h.ingressDispatcherHandler = api.NewIngressDispatcherHandler(s.serverIngressCoordinator, s.cdnDispatcher, s.vlessServerService)
+		h.ingressDispatcherHandler.SetEventBus(s.bus)
 	}
 	if s.vlessServerService != nil || s.tgWebProxyService != nil {
 		egressAdp := egress.NewAdapter(s.catalog)
@@ -290,6 +295,9 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 		fingerprint := serverwizard.NewFingerprintEngine(s.vlessServerService, s.cdnDispatcher, s.tgWebProxyService, s.serverIngressCoordinator, egressAdp)
 		planStore := serverwizard.NewPlanStore()
 		jobRunner := serverwizard.NewJobRunner()
+		jobRunner.SetOnFinished(func() {
+			s.bus.PublishInvalidated(events.ResourceServersIngress, "wizard-job-finished")
+		})
 		wizardSvc := serverwizard.NewWizardService(
 			s.serverIngressCoordinator,
 			s.vlessServerService,
@@ -396,14 +404,7 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 		h.hookHandler.SetIPv4RunningHook(s.ipv4RunningHook)
 	}
 	if s.uplinkHandler != nil && s.uplinkHandler.Controller != nil {
-		h.hookHandler.SetUplinkWANChangeNudge(func(ndmsID, kernel string) {
-			for _, provider := range s.uplinkHandler.Controller.Providers() {
-				if (ndmsID != "" && provider.ID == ndmsID) || (kernel != "" && provider.Device == kernel) {
-					s.uplinkHandler.Controller.NotifyWANChange(provider.ID)
-					return
-				}
-			}
-		})
+		h.hookHandler.SetUplinkWANChangeNudge(uplinkWANChangeNudge(s.bus, s.uplinkHandler.Controller))
 	}
 
 	// WAN status (protected) — event ingress is the NDMS hook spool.
@@ -1838,5 +1839,21 @@ func (s *Server) pageScanProxyURLProvider() pagescan.ProxyURLProvider {
 		}
 		_ = conn.Close()
 		return "http://" + addr
+	}
+}
+
+// uplinkWANChangeNudge будит контроллер Multi-WAN на хук интерфейса и шлёт
+// подсказку uplink — только если интерфейс оказался WAN-провайдером и один
+// раз за хук: хук приходит и на каждый наш туннель (ifcreated, ipchanged…),
+// и подсказка на каждый был бы шумом.
+func uplinkWANChangeNudge(bus *events.Bus, c *uplink.Controller) func(ndmsID, kernel string) {
+	return func(ndmsID, kernel string) {
+		for _, provider := range c.Providers() {
+			if (ndmsID != "" && provider.ID == ndmsID) || (kernel != "" && provider.Device == kernel) {
+				c.NotifyWANChange(provider.ID)
+				bus.PublishInvalidated(events.ResourceUplink, "wan-changed")
+				return
+			}
+		}
 	}
 }

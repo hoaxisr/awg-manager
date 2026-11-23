@@ -35,6 +35,11 @@ type Controller struct {
 	dnsDirty     map[string]bool
 	// OnTransition is set before Run. It must not call back into Controller.
 	OnTransition func(string, State)
+	// OnStateChange is set before Run. Зовётся на смену того, что видно в UI
+	// (фаза, провайдер, устройство, ошибка, кандидат возврата и его счёт), —
+	// шире OnTransition, но не на каждый такт: Failures/NextCheck тикают
+	// постоянно и сюда не входят. Must not call back into Controller.
+	OnStateChange func(string)
 	// TargetCatalog is set before serving requests. It adds inventory-only
 	// targets alongside executable adapters; unavailable targets cannot be enabled.
 	TargetCatalog func(context.Context) ([]TargetInfo, error)
@@ -92,6 +97,17 @@ func (c *Controller) publish(id string, s State) {
 	if c.OnTransition != nil && (previous.Phase != s.Phase || previous.Provider != s.Provider || previous.LastError != s.LastError) {
 		c.OnTransition(id, s)
 	}
+	if c.OnStateChange != nil && visibleStateChanged(previous, s) {
+		c.OnStateChange(id)
+	}
+}
+
+func visibleStateChanged(a, b State) bool {
+	// LastError — по наличию, не по тексту: в тексте бывают адреса и порты,
+	// и сравнение по нему давало бы подсказку на каждую пробу.
+	return a.Phase != b.Phase || a.Provider != b.Provider || a.Device != b.Device ||
+		(a.LastError != "") != (b.LastError != "") || a.Candidate != b.Candidate ||
+		a.RecoverySuccesses != b.RecoverySuccesses
 }
 
 func (c *Controller) Put(ctx context.Context, p Policy) (Policy, error) {

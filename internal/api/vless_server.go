@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
@@ -32,6 +33,19 @@ type vlessToggleClientRequest struct {
 type VlessServerHandler struct {
 	svc   *vlessserver.Service
 	coord *serveringress.Coordinator
+	bus   *events.Bus
+}
+
+// SetEventBus wires the SSE event bus: успешные мутации публикуют
+// ResourceServersIngress, чтобы карточка и страница серверов перечитались
+// без таймера.
+func (h *VlessServerHandler) SetEventBus(bus *events.Bus) {
+	h.bus = bus
+}
+
+// publishIngress безопасна без шины: (*events.Bus)(nil) — no-op.
+func (h *VlessServerHandler) publishIngress(reason string) {
+	h.bus.PublishInvalidated(events.ResourceServersIngress, reason)
 }
 
 // NewVlessServerHandler creates a new VlessServerHandler.
@@ -124,6 +138,7 @@ func (h *VlessServerHandler) UpdateConfig(w http.ResponseWriter, r *http.Request
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("vless-config-updated")
 	WriteJSON(w, http.StatusOK, h.svc.GetConfig())
 }
 
@@ -202,6 +217,7 @@ func (h *VlessServerHandler) Action(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	h.publishIngress("vless-action")
 	WriteJSON(w, http.StatusOK, h.svc.GetStatus())
 }
 
@@ -229,6 +245,7 @@ func (h *VlessServerHandler) AddClient(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("vless-client-added")
 	WriteJSON(w, http.StatusOK, client)
 }
 
@@ -257,6 +274,7 @@ func (h *VlessServerHandler) DeleteClient(w http.ResponseWriter, r *http.Request
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("vless-client-deleted")
 	WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -290,6 +308,7 @@ func (h *VlessServerHandler) ToggleClient(w http.ResponseWriter, r *http.Request
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("vless-client-toggled")
 	WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -326,6 +345,7 @@ func (h *VlessServerHandler) RotateClientFP(w http.ResponseWriter, r *http.Reque
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("vless-client-rotated")
 	WriteJSON(w, http.StatusOK, updated)
 }
 
@@ -366,6 +386,7 @@ func (h *VlessServerHandler) ResolveRecovery(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	h.svc.ClearRecoveryRequired()
+	h.publishIngress("vless-recovery-resolved")
 	WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -399,6 +420,7 @@ func (h *VlessServerHandler) FactoryReset(w http.ResponseWriter, r *http.Request
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("vless-reset")
 	WriteJSON(w, http.StatusOK, res)
 }
 

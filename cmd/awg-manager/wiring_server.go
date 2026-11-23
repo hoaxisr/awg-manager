@@ -673,6 +673,7 @@ func (a *app) setupRouter() {
 
 	singboxRouterHandler := api.NewSingboxRouterHandler(routerSvc, a.loggingService)
 	singboxRouterHandler.SetOutboundRefCheckers(a.deviceProxySvc, routerSvc)
+	singboxRouterHandler.SetEventBus(a.eventBus)
 	if a.autolistService != nil {
 		// Teardown объектов Autolist запрещён, пока сателлит отвечает: он
 		// воссоздаёт объекты следующей записью (проверка — HTTP /status).
@@ -901,6 +902,7 @@ func (a *app) setupShutdown() {
 
 	// Start the monitoring scheduler now that shutdownCtx exists.
 	a.monitoringService.Start(a.shutdownCtx)
+	a.startIngressRuntimeWatch(a.shutdownCtx)
 	a.setupUplink()
 	// Прокси-рантайм. Точка встраивания выбрана здесь, а не сразу за
 	// присвоением a.routerSvc: ingress-адаптер сервера действительно требует

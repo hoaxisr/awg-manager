@@ -237,7 +237,6 @@ func (i *OnDemandInstaller) reserve(action string) error {
 }
 func (i *OnDemandInstaller) finish(err error) {
 	i.mu.Lock()
-	defer i.mu.Unlock()
 	i.busy = false
 	i.busyAction = ""
 	if err != nil {
@@ -245,6 +244,19 @@ func (i *OnDemandInstaller) finish(err error) {
 	} else {
 		i.progress = 1
 	}
+	fn := i.onFinished
+	i.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// SetOnFinished задаёт подписчика на завершение установки, обновления,
+// удаления или переноса рантайма — с любым исходом.
+func (i *OnDemandInstaller) SetOnFinished(fn func()) {
+	i.mu.Lock()
+	i.onFinished = fn
+	i.mu.Unlock()
 }
 func (i *OnDemandInstaller) StartInstall() error { return i.startAsync("install", nil, false, false) }
 func (i *OnDemandInstaller) StartInstallWithOperator(op *Operator) error {

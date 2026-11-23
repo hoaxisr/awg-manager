@@ -65,6 +65,9 @@ type InstallStatus struct {
 
 // OnDemandInstaller manages on-demand FIRC binary download, verification, and install/uninstall.
 type OnDemandInstaller struct {
+	// onFinished — подписчик на конец операции (успех или ошибка); зовётся
+	// из finish вне i.mu. Задаётся до первой операции.
+	onFinished func()
 	mu         sync.Mutex
 	busy       bool
 	busyAction string

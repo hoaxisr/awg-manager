@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { m } from '$lib/i18n';
-	import { api } from '$lib/api/client';
 	import {
 		stripFircEmojis,
 		type FircTunnel,
@@ -32,6 +31,7 @@
 		fircInterfaceProbeResults,
 		reloadFircAll,
 		createAndOpenFircTunnel,
+		acquireFircTunnelsStatePoll,
 	} from '$lib/stores/firc';
 	import {
 		fircMigrationAppliedNonce,
@@ -68,7 +68,8 @@
 	let mobileLayout = $state(readTunnelMobileLayout());
 	let trafficTotals = $state<Record<string, { down: number; up: number }>>({});
 
-	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let releaseStatePoll: (() => void) | undefined;
+	let unsubTunnelsState: (() => void) | undefined;
 	let lastTrafficAt = $state(0);
 	let unsubSbTunnels: (() => void) | undefined;
 	let unsubSbStatus: (() => void) | undefined;
@@ -181,21 +182,15 @@
 
 		void loadInitial();
 
-		pollTimer = setInterval(async () => {
-			try {
-				const stList = await api.fircGetTunnelsState();
-				if (stList) {
-					fircTunnelsState.set(stList);
-					accumulatePollTraffic(stList);
-				}
-			} catch {
-				// ignore background poll error
-			}
-		}, 2500);
+		// Опрос состояния — общий с главной (acquireFircTunnelsStatePoll);
+		// трафик копим по каждому пришедшему снимку.
+		releaseStatePoll = acquireFircTunnelsStatePoll();
+		unsubTunnelsState = fircTunnelsState.subscribe((stList) => accumulatePollTraffic(stList));
 	});
 
 	onDestroy(() => {
-		if (pollTimer) clearInterval(pollTimer);
+		releaseStatePoll?.();
+		unsubTunnelsState?.();
 		unsubSbStatus?.();
 		unsubSbTunnels?.();
 		unsubMobile?.();
