@@ -1119,6 +1119,16 @@
 			await loadData();
 			onRefreshParent?.();
 			notifications.success(m.server_reset_tg_success());
+			if (res.keendns_deleted?.length) {
+				notifications.info(
+					m.server_reset_keendns_deleted({ domains: res.keendns_deleted.join(', ') }),
+				);
+			}
+			if (res.keendns_skipped?.length) {
+				notifications.warning(
+					m.server_reset_keendns_skipped({ domains: res.keendns_skipped.join(', ') }),
+				);
+			}
 			if (res.warnings?.length) {
 				notifications.warning(res.warnings.join('; '));
 			}
@@ -3264,6 +3274,9 @@
 	}
 
 	.checkbox-input {
+		width: 16px;
+		height: 16px;
+		flex-shrink: 0;
 		accent-color: var(--color-accent);
 		cursor: pointer;
 	}
@@ -3445,10 +3458,20 @@
 		cursor: pointer;
 	}
 
+	.reset-keendns-check input[type='checkbox'] {
+		width: 18px;
+		height: 18px;
+		min-width: 18px;
+		flex: 0 0 18px;
+		margin-top: 2px;
+	}
+
 	.reset-keendns-text {
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
+		flex: 1 1 0;
+		min-width: 0;
 	}
 
 	.reset-keendns-label {
