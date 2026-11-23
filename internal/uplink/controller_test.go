@@ -186,7 +186,7 @@ func TestPolicyRevisionAndReturnedSlices(t *testing.T) {
 	if _, err = c.Put(context.Background(), p); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
-	if err = c.Delete(p.ID, p.Revision); !errors.Is(err, ErrConflict) {
+	if err = c.Delete(context.Background(), p.ID, p.Revision); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
 }
@@ -252,9 +252,18 @@ func TestWANDownInterruptsLongProbeInterval(t *testing.T) {
 }
 
 func TestStartupFallbackDoesNotTreatAdoptionAsManualPin(t *testing.T) {
-	c, a, _, _ := fixture(t)
+	c, a, _, now := fixture(t)
 	a.failing["wan1"] = true
+	// После рестарта (LastSuccess пуст) одна неудачная проба — ещё не отказ.
 	c.Tick(context.Background())
+	if state(c).Phase != "suspect" || state(c).Provider != "ISP1" || len(a.activated) != 1 {
+		t.Fatal("failover on first failure after restart", state(c), a.activated)
+	}
+	advance(c, now)
+	if state(c).Phase != "suspect" || state(c).Provider != "ISP1" {
+		t.Fatal("threshold skipped without LastSuccess", state(c))
+	}
+	advance(c, now)
 	if state(c).Phase != "healthy" || state(c).Provider != "ISP2" {
 		t.Fatal(state(c))
 	}
@@ -292,7 +301,7 @@ func TestWANNotificationCoalescesAndInterruptsProbeInterval(t *testing.T) {
 		t.Fatal("ordinary tick did not respect interval")
 	}
 	for range 1000 {
-		c.NotifyWANChange()
+		c.NotifyWANChange("ISP1")
 	}
 	if len(c.wake) != 1 {
 		t.Fatal("WAN events were not coalesced")

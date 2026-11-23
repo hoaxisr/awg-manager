@@ -235,7 +235,7 @@ func (h *UplinkHandler) handleDeletePolicy(w http.ResponseWriter, r *http.Reques
 	if !uplinkDecode(w, r, &req) {
 		return
 	}
-	if err := h.Controller.Delete(req.ID, req.Revision); err != nil {
+	if err := h.Controller.Delete(r.Context(), req.ID, req.Revision); err != nil {
 		uplinkError(w, err)
 		return
 	}

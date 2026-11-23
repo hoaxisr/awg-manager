@@ -22,7 +22,7 @@ func TestBackupPauseRejectsMutationsAndRestartsReconciliation(t *testing.T) {
 	if _, err := c.Put(context.Background(), p); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
-	if err := c.Delete(p.ID, p.Revision); !errors.Is(err, ErrConflict) {
+	if err := c.Delete(context.Background(), p.ID, p.Revision); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
 	if err := c.Switch(context.Background(), p.ID, "ISP2", p.Revision); !errors.Is(err, ErrConflict) {

@@ -399,7 +399,7 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 		h.hookHandler.SetUplinkWANChangeNudge(func(ndmsID, kernel string) {
 			for _, provider := range s.uplinkHandler.Controller.Providers() {
 				if (ndmsID != "" && provider.ID == ndmsID) || (kernel != "" && provider.Device == kernel) {
-					s.uplinkHandler.Controller.NotifyWANChange()
+					s.uplinkHandler.Controller.NotifyWANChange(provider.ID)
 					return
 				}
 			}
