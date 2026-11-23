@@ -125,7 +125,7 @@ github.com/segmentio/encoding/json
 # github.com/tylertreat/BoomFilters v0.0.0-20251117164519-53813c36cc1b
 ## explicit
 github.com/tylertreat/BoomFilters
-# github.com/xtls/reality v0.0.0-20260322125925-9234c772ba8f
+# github.com/xtls/reality v0.0.0-20260908045812-e1986a4d31ca
 ## explicit; go 1.24.0
 github.com/xtls/reality
 github.com/xtls/reality/fips140tls

@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +45,17 @@ const (
 // startFakeDest runs a TLS 1.3 server that plays the camouflage site.
 func startFakeDest(t *testing.T) (addr string, certDER []byte) {
 	t.Helper()
+	return startFakeDestNames(t, 0)
+}
+
+// startFakeDestNames: extra > 0 раздувает сертификат лишними SAN — как у
+// настоящих сайтов (www.microsoft.com: Certificate 8273 байта).
+func startFakeDestNames(t *testing.T, extra int) (addr string, certDER []byte) {
+	t.Helper()
+	names := []string{testSNI}
+	for i := 0; i < extra; i++ {
+		names = append(names, fmt.Sprintf("n%04d.%s", i, testSNI))
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +63,7 @@ func startFakeDest(t *testing.T) (addr string, certDER []byte) {
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(42),
 		Subject:      pkix.Name{CommonName: testSNI},
-		DNSNames:     []string{testSNI},
+		DNSNames:     names,
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 	}
@@ -506,5 +518,48 @@ func TestRealityTCPRejectsVisionFlow(t *testing.T) {
 	}
 	if ne, ok := err.(net.Error); ok && ne.Timeout() {
 		t.Fatal("Vision request was neither served nor closed")
+	}
+}
+
+// F872: хук грузит xt_comment до первого правила с -m comment — иначе на
+// прошивке без модуля порт REALITY с WAN не открывается.
+func TestWANHookLoadsCommentModuleFirst(t *testing.T) {
+	h := renderWANHook(2053)
+	load, use := strings.Index(h, "insmod"), strings.Index(h, "-m comment")
+	if load < 0 || use < 0 || load > use {
+		t.Fatalf("xt_comment must be loaded before the first -m comment rule:\n%s", h)
+	}
+}
+
+// Сертификат dest больше старого буфера записи REALITY (до xtls/reality #33)
+// рвал рукопожатие с любым клиентом: на www.microsoft.com вход не работал.
+func TestRealityLargeDestCertificate(t *testing.T) {
+	dest, der := startFakeDestNames(t, 600)
+	if len(der) < 9000 {
+		t.Fatalf("certificate only %d bytes", len(der))
+	}
+	echo := startEcho(t)
+	c, _ := startC(t)
+	cfg, pub, sid := newTestConfig(t, dest, TransportTCP)
+	cfg.Upstream = c.Addr()
+	srv := New()
+	if err := srv.Apply(cfg); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+	waitRecordDetection(t, dest)
+
+	conn, verified := realityDial(t, srv.Addr(), testSNI, pub, sid)
+	defer conn.Close()
+	if !verified {
+		t.Fatal("not REALITY-signed")
+	}
+	if _, err := conn.Write(append(vlessHeader(t, echo), []byte("big")...)); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got := make([]byte, 5)
+	if _, err := io.ReadFull(conn, got); err != nil || string(got[2:]) != "big" {
+		t.Fatalf("echo through REALITY with a large dest certificate: %q %v", got, err)
 	}
 }
