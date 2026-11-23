@@ -1953,10 +1953,12 @@ func maskSecret(s string) string {
 	if s == "" {
 		return ""
 	}
+	// Хвост из 4 символов — только чтобы отличать секреты друг от друга;
+	// голова плюс хвост раскрывали 32 бита из 128.
 	if len(s) <= 8 {
 		return "********"
 	}
-	return s[:4] + "********" + s[len(s)-4:]
+	return "********" + s[len(s)-4:]
 }
 
 func (s *Service) GetStatus() Status {

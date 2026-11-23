@@ -157,3 +157,14 @@ func TestRevealUserSecret_StillReturnsWebProxyLinks(t *testing.T) {
 		t.Errorf("reveal mtproxy_url = %q, want ee-prefixed u-a secret", data.MtproxyURL)
 	}
 }
+
+// F819: маска показывает только последние 4 символа секрета.
+func TestMaskSecret_OnlyTail(t *testing.T) {
+	got := maskSecret("00112233445566778899aabbccddeeff")
+	if got != "********eeff" {
+		t.Fatalf("maskSecret = %q, want ********eeff", got)
+	}
+	if maskSecret("short") != "********" || maskSecret("") != "" {
+		t.Fatal("short/empty secrets must not leak characters")
+	}
+}
