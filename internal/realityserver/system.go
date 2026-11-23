@@ -101,6 +101,11 @@ CMT="%s"
 IPTABLES=/opt/sbin/iptables
 [ -x "$IPTABLES" ] || IPTABLES=iptables
 run() { "$IPTABLES" -w "$@" 2>/dev/null || "$IPTABLES" "$@" 2>/dev/null; }
+# NDMS сам метки-комментарии не ставит, xt_comment на загрузке не поднят:
+# без модуля правило не ставится и порт с WAN закрыт (стенд 5.02.B.4).
+KREL="$(uname -r)"
+grep -q "^xt_comment " /proc/modules 2>/dev/null || \
+    { [ -f "/lib/modules/${KREL}/xt_comment.ko" ] && insmod "/lib/modules/${KREL}/xt_comment.ko" 2>/dev/null; }
 
 run -C INPUT -p tcp -m tcp --dport "$PORT" -m comment --comment "$CMT" -j ACCEPT || \
     run -I INPUT 1 -p tcp -m tcp --dport "$PORT" -m comment --comment "$CMT" -j ACCEPT
