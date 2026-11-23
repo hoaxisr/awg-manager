@@ -103,7 +103,7 @@ func makeFakeFPCBinary(t *testing.T, mode string) string {
 
 func TestParseAndEnsureVLESSFiniteProtoV2AndLegacyRejection(t *testing.T) {
 	SetStorePath(filepath.Join(t.TempDir(), "fp-clients.json"))
-	t.Cleanup(StopAllEndpoints)
+	t.Cleanup(stopAllEndpoints)
 
 	uuidStr := "01234567-89ab-4def-8123-456789abcdef"
 	cleanUUID := strings.ReplaceAll(uuidStr, "-", "")
@@ -203,7 +203,7 @@ func TestParseAndEnsureVLESSFiniteProtoV2AndLegacyRejection(t *testing.T) {
 
 func TestMandatoryCFPCAndNoGoFallback(t *testing.T) {
 	SetStorePath(filepath.Join(t.TempDir(), "fp-mandatory.json"))
-	t.Cleanup(StopAllEndpoints)
+	t.Cleanup(stopAllEndpoints)
 
 	fpID, fpSecretHex, _, err := xhttpserver.GenerateFPCredentials()
 	if err != nil {
@@ -287,7 +287,7 @@ func TestMandatoryCFPCAndNoGoFallback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("EnsureEndpoint with verified C binary: %v", err)
 		}
-		defer StopAllEndpoints()
+		defer stopAllEndpoints()
 		if gotPort <= 0 || gotPort == foreignPort {
 			t.Fatalf("expected relocated port != %d, got %d", foreignPort, gotPort)
 		}
@@ -344,7 +344,7 @@ func TestMandatoryCFPCAndNoGoFallback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("restart EnsureEndpoint: %v", err)
 		}
-		defer StopAllEndpoints()
+		defer stopAllEndpoints()
 		if port2 <= 0 {
 			t.Fatalf("invalid restarted port %d", port2)
 		}
@@ -405,7 +405,7 @@ func TestCClientToCBackendEndToEndAndRevocation(t *testing.T) {
 	t.Setenv("AWGM_C_FPC_BIN", cClientBin)
 
 	SetStorePath(filepath.Join(t.TempDir(), "fp-c-to-c-e2e.json"))
-	t.Cleanup(StopAllEndpoints)
+	t.Cleanup(stopAllEndpoints)
 
 	echoLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -450,7 +450,7 @@ func TestCClientToCBackendEndToEndAndRevocation(t *testing.T) {
 		t.Fatalf("srv.Start (C backend): %v", err)
 	}
 	defer srv.Stop()
-	defer StopAllEndpoints()
+	defer stopAllEndpoints()
 
 	if srv.CDaemonPID() <= 0 {
 		t.Fatalf("expected C daemon PID > 0, got %d", srv.CDaemonPID())
@@ -557,7 +557,7 @@ func TestUniversalHTTPMethodsAndAutoFallback_CClientToCBackend(t *testing.T) {
 	t.Setenv("AWGM_C_FPC_BIN", cClientBin)
 
 	SetStorePath(filepath.Join(t.TempDir(), "fp-universal-c.json"))
-	t.Cleanup(StopAllEndpoints)
+	t.Cleanup(stopAllEndpoints)
 
 	echoLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -628,7 +628,7 @@ func TestUniversalHTTPMethodsAndAutoFallback_CClientToCBackend(t *testing.T) {
 	srvPort, _ := strconv.Atoi(srvPortStr)
 
 	for _, mode := range []string{"auto", "get", "head_get", "options", "delete", "head"} {
-		StopAllEndpoints()
+		stopAllEndpoints()
 		uri := fmt.Sprintf(
 			"vless://%s@%s:%d?security=none&type=xhttp&host=%s&path=%%2Fcdn-bridge&mode=finiteproto&fp_v=2&fp_id=%s&fp_secret=%s&fp_method=%s#Mode-%s",
 			uuidStr, srvHost, srvPort, srvHost, fpID, fpSecretHex, mode, mode,
@@ -648,5 +648,86 @@ func TestUniversalHTTPMethodsAndAutoFallback_CClientToCBackend(t *testing.T) {
 		if err := dialSocks5Echo(socksPort, echoPort, msg); err != nil {
 			t.Fatalf("mode %s: echo over C awgm-fpc -> CDN gate -> C awgm-xhttpd failed: %v", mode, err)
 		}
+	}
+}
+
+func stopAllEndpoints() {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+	for k, inst := range globalInstances {
+		delete(globalInstances, k)
+		inst.stop()
+	}
+	clear(globalDormant)
+}
+
+// F823: сверка усыпляет endpoint без ссылок и поднимает его на прежнем
+// порту, когда ссылка вернулась; ссылка из YAML FIRC тоже держит; свежий
+// EnsureEndpoint защищён minAge; битый JSON отменяет сверку.
+func TestReconcileReferenced(t *testing.T) {
+	SetStorePath(filepath.Join(t.TempDir(), "fp-clients.json"))
+	t.Cleanup(stopAllEndpoints)
+	t.Setenv("AWGM_DISABLE_C_FPC", "0")
+	t.Setenv("AWGM_C_FPC_BIN", makeFakeFPCBinary(t, "ok"))
+	fpID, fpSecretHex, _, err := xhttpserver.GenerateFPCredentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := EndpointSpec{Key: "gc-a", Server: "127.0.0.1", ServerPort: 443, UUID: "01234567-89ab-4def-8123-456789abcdef",
+		FPClientID: fpID, FPSecretHex: fpSecretHex, Host: "cdn.example.com", Path: "/cdn-bridge"}
+	port, err := EnsureEndpoint(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sbDir, fircDir := t.TempDir(), t.TempDir()
+	roots := []string{sbDir, fircDir, filepath.Join(t.TempDir(), "missing")}
+	alive := func() bool {
+		globalMu.Lock()
+		defer globalMu.Unlock()
+		inst, ok := globalInstances["gc-a"]
+		return ok && inst.isAlive()
+	}
+
+	// Свежий — не трогаем, даже без ссылок.
+	if err := ReconcileReferenced(roots, time.Hour); err != nil || !alive() {
+		t.Fatalf("fresh endpoint pruned: err=%v alive=%v", err, alive())
+	}
+	// Без ссылок и не свежий — спит.
+	if err := ReconcileReferenced(roots, 0); err != nil || alive() {
+		t.Fatalf("unreferenced endpoint still running: err=%v", err)
+	}
+	// Ссылка вернулась во вложенном JSON-слоте — поднят на том же порту.
+	slot := fmt.Sprintf(`{"route":{},"outbounds":[{"type":"selector"},{"type":"socks","server":"127.0.0.1","server_port":%d}]}`, port)
+	if err := os.MkdirAll(filepath.Join(sbDir, "disabled"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sbDir, "disabled", "30-x.json"), []byte(slot), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconcileReferenced(roots, 0); err != nil || !alive() {
+		t.Fatalf("referenced dormant endpoint not revived: err=%v", err)
+	}
+	globalMu.Lock()
+	gotPort := globalInstances["gc-a"].spec.SocksPort
+	globalMu.Unlock()
+	if gotPort != port {
+		t.Fatalf("revived on port %d, want %d", gotPort, port)
+	}
+	// Ссылка только из FIRC (socks5://127.0.0.1:P в YAML) тоже держит.
+	_ = os.Remove(filepath.Join(sbDir, "disabled", "30-x.json"))
+	yaml := fmt.Sprintf("tunnels:\n  - name: fp\n    outbound: socks5://127.0.0.1:%d\n", port)
+	if err := os.WriteFile(filepath.Join(fircDir, "tunnels.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconcileReferenced(roots, 0); err != nil || !alive() {
+		t.Fatalf("FIRC-referenced endpoint pruned: err=%v", err)
+	}
+	// Битый JSON — сверка отменена, ничего не тронуто.
+	_ = os.Remove(filepath.Join(fircDir, "tunnels.yaml"))
+	if err := os.WriteFile(filepath.Join(sbDir, "31-bad.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconcileReferenced(roots, 0); err == nil || !alive() {
+		t.Fatalf("broken slot must abort reconcile: err=%v alive=%v", err, alive())
 	}
 }

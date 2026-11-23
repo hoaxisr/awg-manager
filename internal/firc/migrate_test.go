@@ -2330,7 +2330,6 @@ func TestR1CommitBoundaryFaultInjectionAndSubprocessRecovery(t *testing.T) {
 
 func TestFircFiniteProtoNormalizer(t *testing.T) {
 	fpclient.SetStorePath(filepath.Join(t.TempDir(), "fp-clients.json"))
-	t.Cleanup(fpclient.StopAllEndpoints)
 
 	const (
 		uuidStr   = "01234567-89ab-4def-8123-456789abcdef"
