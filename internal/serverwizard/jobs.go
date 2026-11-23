@@ -99,6 +99,9 @@ func (jr *JobRunner) GenerateJobID() string {
 
 // CreateJobWithID registers a new wizard apply job with a predetermined ID.
 func (jr *JobRunner) CreateJobWithID(id, kind, sessionID string, cancelFn context.CancelFunc) *InternalJob {
+	// Чистка ленивая, на каждом новом задании: иначе завершённые задания и
+	// выданные учётные данные копились бы в памяти до перезапуска демона.
+	jr.PruneExpired()
 	now := jr.clock()
 
 	job := &InternalJob{
@@ -395,6 +398,14 @@ func (jr *JobRunner) PruneExpired() {
 		}
 	}
 	jr.secretsMu.Unlock()
+
+	jr.limitsMu.Lock()
+	for sid, ts := range jr.limits {
+		if len(ts) == 0 || !ts[len(ts)-1].After(now.Add(-RevealRateLimitWin)) {
+			delete(jr.limits, sid)
+		}
+	}
+	jr.limitsMu.Unlock()
 
 	jr.jobsMu.Lock()
 	for id, job := range jr.jobs {
