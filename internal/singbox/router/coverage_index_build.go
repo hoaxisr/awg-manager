@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -16,9 +17,49 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 )
 
 var coverageTokenErrorPattern = regexp.MustCompile(`([?&]token=)[^&\s]+`)
+
+// coverageIndexBudgetPercent — сколько процентов свободной ОЗУ может занять
+// индекс покрытия. Потолок гибкий: на устройстве с запасом памяти лимит выше.
+const coverageIndexBudgetPercent = 70
+
+// coveragePrefixSetBytes — оценка памяти на один префикс в множестве
+// (ключ map[netip.Prefix] плюс корзины). Замер: ~96 байт на запись.
+const coveragePrefixSetBytes = 96
+
+// errCoverageIndexTooLarge — набор не влез в потолок памяти: индекс по нему
+// не строится, а сам набор в покрытии не учитывается.
+var errCoverageIndexTooLarge = errors.New("coverage index: rule-set exceeds the memory budget")
+
+// coverageBudget — потолок памяти на сборку индекса покрытия.
+type coverageBudget struct {
+	remaining int64
+}
+
+// newCoverageBudget берёт 70% свободной ОЗУ на момент сборки. Если память
+// неизвестна (нет /proc/meminfo) — потолка нет.
+func newCoverageBudget() *coverageBudget {
+	available := int64(osdetect.GetAvailableMemoryMB()) * 1024 * 1024
+	if available <= 0 {
+		return &coverageBudget{remaining: math.MaxInt64}
+	}
+	return &coverageBudget{remaining: available * coverageIndexBudgetPercent / 100}
+}
+
+// take резервирует память под один префикс; false — потолок исчерпан.
+func (b *coverageBudget) take() bool {
+	if b == nil {
+		return true
+	}
+	if b.remaining < coveragePrefixSetBytes {
+		return false
+	}
+	b.remaining -= coveragePrefixSetBytes
+	return true
+}
 
 // coverageRuleSetDownload shares the on-disk remote cache, but unlike the old
 // Inspector wrapper it also cancels an in-flight HTTP request with generation.
@@ -118,6 +159,7 @@ func (s *ServiceImpl) buildCoverageIndex(ctx context.Context, extraTags []string
 	if cfg == nil {
 		cfg = NewEmptyConfig()
 	}
+	budget := newCoverageBudget()
 	materializer := s.ruleSetMaterializer()
 	allSets := withRuleSetFetchVia(slot, materializer.inspectRuleSetsWithInlineAliases(cfg))
 	byTag := make(map[string]RuleSet, len(allSets))
@@ -158,6 +200,7 @@ func (s *ServiceImpl) buildCoverageIndex(ctx context.Context, extraTags []string
 	snapshot := &coverageIndexSnapshot{
 		slot:      string(slot),
 		entries:   make(map[string]*coverageIndexEntry, len(ordered)),
+		skipped:   map[string]struct{}{},
 		requested: requested,
 	}
 	for _, tag := range ordered {
@@ -183,12 +226,16 @@ func (s *ServiceImpl) buildCoverageIndex(ctx context.Context, extraTags []string
 				snapshot.refreshAfter = refresh
 			}
 		}
-		rules, err := s.coverageRuleSetRules(ctx, materializer, rs)
-		if err != nil {
-			return nil, fmt.Errorf("coverage index rule-set %q: %w", tag, err)
+		rules, err := s.coverageRuleSetRules(ctx, materializer, rs, budget)
+		var entry *coverageIndexEntry
+		if err == nil {
+			entry, err = compileCoverageIndexEntry(rules, budget)
 		}
-		entry, err := compileCoverageIndexEntry(rules)
 		if err != nil {
+			if errors.Is(err, errCoverageIndexTooLarge) {
+				snapshot.skipped[tag] = struct{}{}
+				continue
+			}
 			return nil, fmt.Errorf("coverage index rule-set %q: %w", tag, err)
 		}
 		snapshot.entries[tag] = entry
@@ -205,7 +252,7 @@ func (s *ServiceImpl) buildCoverageIndex(ctx context.Context, extraTags []string
 // разбирается потоково: правила — по одному, а большие массивы ip_cidr — по
 // элементам. На наборе в 100+ тыс. адресов это снимает десятки мегабайт
 // промежуточного []any из кучи демона.
-func (s *ServiceImpl) coverageRuleSetRules(ctx context.Context, materializer ruleSetMaterializer, rs RuleSet) ([]map[string]any, error) {
+func (s *ServiceImpl) coverageRuleSetRules(ctx context.Context, materializer ruleSetMaterializer, rs RuleSet, budget *coverageBudget) ([]map[string]any, error) {
 	if rs.Type == "inline" {
 		return rs.Rules, nil
 	}
@@ -264,7 +311,7 @@ func (s *ServiceImpl) coverageRuleSetRules(ctx context.Context, materializer rul
 		}
 		reader = bytes.NewReader(raw)
 	}
-	rules, err := decodeCoverageRules(reader)
+	rules, err := decodeCoverageRules(reader, budget)
 	if err != nil {
 		return nil, fmt.Errorf("parse source JSON: %w", err)
 	}
@@ -272,7 +319,7 @@ func (s *ServiceImpl) coverageRuleSetRules(ctx context.Context, materializer rul
 }
 
 // decodeCoverageRules разбирает rule-set JSON потоково.
-func decodeCoverageRules(reader io.Reader) ([]map[string]any, error) {
+func decodeCoverageRules(reader io.Reader, budget *coverageBudget) ([]map[string]any, error) {
 	decoder := json.NewDecoder(reader)
 	token, err := decoder.Token()
 	if err != nil {
@@ -300,7 +347,7 @@ func decodeCoverageRules(reader io.Reader) ([]map[string]any, error) {
 			return nil, fmt.Errorf("expected a rule array")
 		}
 		for decoder.More() {
-			rule, err := decodeCoverageRule(decoder)
+			rule, err := decodeCoverageRule(decoder, budget)
 			if err != nil {
 				return nil, err
 			}
@@ -314,7 +361,7 @@ func decodeCoverageRules(reader io.Reader) ([]map[string]any, error) {
 }
 
 // decodeCoverageRule читает одно правило; ip_cidr декодируется по элементам.
-func decodeCoverageRule(decoder *json.Decoder) (map[string]any, error) {
+func decodeCoverageRule(decoder *json.Decoder, budget *coverageBudget) (map[string]any, error) {
 	token, err := decoder.Token()
 	if err != nil {
 		return nil, err
@@ -330,7 +377,7 @@ func decodeCoverageRule(decoder *json.Decoder) (map[string]any, error) {
 		}
 		name, _ := key.(string)
 		if name == "ip_cidr" {
-			set, err := decodeCoveragePrefixSet(decoder)
+			set, err := decodeCoveragePrefixSet(decoder, budget)
 			if err != nil {
 				return nil, err
 			}
@@ -351,7 +398,7 @@ func decodeCoverageRule(decoder *json.Decoder) (map[string]any, error) {
 
 // decodeCoveragePrefixSet читает ip_cidr по элементам сразу в множество
 // префиксов: промежуточный список на 100+ тыс. адресов не нужен.
-func decodeCoveragePrefixSet(decoder *json.Decoder) (coveragePrefixSet, error) {
+func decodeCoveragePrefixSet(decoder *json.Decoder, budget *coverageBudget) (coveragePrefixSet, error) {
 	token, err := decoder.Token()
 	if err != nil {
 		return nil, err
@@ -365,6 +412,9 @@ func decodeCoveragePrefixSet(decoder *json.Decoder) (coveragePrefixSet, error) {
 			var value string
 			if err := decoder.Decode(&value); err != nil {
 				return nil, err
+			}
+			if !budget.take() {
+				return nil, errCoverageIndexTooLarge
 			}
 			prefix, err := coveragePrefix(value)
 			if err != nil {
@@ -381,6 +431,9 @@ func decodeCoveragePrefixSet(decoder *json.Decoder) (coveragePrefixSet, error) {
 	if !ok {
 		return nil, fmt.Errorf("expected a string array")
 	}
+	if !budget.take() {
+		return nil, errCoverageIndexTooLarge
+	}
 	prefix, err := coveragePrefix(text)
 	if err != nil {
 		return nil, fmt.Errorf("ip_cidr %q: %w", text, err)
@@ -389,10 +442,10 @@ func decodeCoveragePrefixSet(decoder *json.Decoder) (coveragePrefixSet, error) {
 	return set, nil
 }
 
-func compileCoverageIndexEntry(rules []map[string]any) (*coverageIndexEntry, error) {
+func compileCoverageIndexEntry(rules []map[string]any, budget *coverageBudget) (*coverageIndexEntry, error) {
 	entry := &coverageIndexEntry{rules: make([]coverageIndexRule, 0, len(rules))}
 	for index, raw := range rules {
-		rule, err := compileCoverageIndexRule(raw)
+		rule, err := compileCoverageIndexRule(raw, budget)
 		if err != nil {
 			return nil, fmt.Errorf("rule %d: %w", index, err)
 		}
@@ -401,7 +454,7 @@ func compileCoverageIndexEntry(rules []map[string]any) (*coverageIndexEntry, err
 	return entry, nil
 }
 
-func compileCoverageIndexRule(raw map[string]any) (coverageIndexRule, error) {
+func compileCoverageIndexRule(raw map[string]any, budget *coverageBudget) (coverageIndexRule, error) {
 	var out coverageIndexRule
 	keys := make([]string, 0, len(raw))
 	for key := range raw {
@@ -457,7 +510,7 @@ func compileCoverageIndexRule(raw map[string]any) (coverageIndexRule, error) {
 			return out, fmt.Errorf("logical rule has no children")
 		}
 		for _, child := range children {
-			compiled, err := compileCoverageIndexRule(child)
+			compiled, err := compileCoverageIndexRule(child, budget)
 			if err != nil {
 				return out, err
 			}
@@ -471,7 +524,7 @@ func compileCoverageIndexRule(raw map[string]any) (coverageIndexRule, error) {
 	if out.mode != "" {
 		return out, fmt.Errorf("default rule cannot carry mode")
 	}
-	if err := compileCoverageDestination(&out.dest, raw); err != nil {
+	if err := compileCoverageDestination(&out.dest, raw, budget); err != nil {
 		return out, err
 	}
 	needsContext, err := validateCoverageContextFields(raw)
@@ -504,7 +557,7 @@ func coverageNestedRuleMaps(raw any) ([]map[string]any, error) {
 	}
 }
 
-func compileCoverageDestination(dest *coverageDestination, raw map[string]any) error {
+func compileCoverageDestination(dest *coverageDestination, raw map[string]any, budget *coverageBudget) error {
 	for _, key := range []string{"domain", "domain_suffix", "domain_keyword", "domain_regex", "ip_cidr"} {
 		value, exists := raw[key]
 		if !exists {
@@ -567,6 +620,9 @@ func compileCoverageDestination(dest *coverageDestination, raw map[string]any) e
 		case "ip_cidr":
 			dest.prefixes = coveragePrefixSet{}
 			for _, value := range values {
+				if !budget.take() {
+					return errCoverageIndexTooLarge
+				}
 				prefix, err := coveragePrefix(value)
 				if err != nil {
 					return fmt.Errorf("ip_cidr %q: %w", value, err)

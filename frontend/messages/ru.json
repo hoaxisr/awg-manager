@@ -8387,6 +8387,7 @@
 	"autolist_cfg_exclude_domains_hint": "Эти домены не проверяются и не добавляются. По одному в строке или через запятую.",
 	"autolist_cfg_exclude_rulesets": "Исключения rule-set / geosite",
 	"autolist_cfg_exclude_rulesets_hint": "Не добавлять имена и IP из выбранных наборов.",
+	"autolist_cfg_exclude_rulesets_too_large": "Набор не учитывается в покрытии: слишком большой для этого устройства.",
 	"autolist_cfg_auto": "Автоматически добавлять в туннель",
 	"autolist_cfg_auto_hint": "Создаёт правило только после успешной проверки через туннель.",
 	"autolist_cfg_auto_warning": "Не рекомендуется. Автоматика может добавить лишнее — проверяйте список правил после включения.",

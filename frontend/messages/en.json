@@ -7987,6 +7987,7 @@
 	"autolist_cfg_exclude_domains_hint": "These domains are never checked or added. One per line or comma-separated.",
 	"autolist_cfg_exclude_rulesets": "Rule-set / geosite exclusions",
 	"autolist_cfg_exclude_rulesets_hint": "Names and IPs from the selected sets are not added.",
+	"autolist_cfg_exclude_rulesets_too_large": "The set is not included in coverage: too large for this device.",
 	"autolist_cfg_auto": "Add to tunnel automatically",
 	"autolist_cfg_auto_hint": "Creates a rule only after the tunnel check succeeds.",
 	"autolist_cfg_auto_warning": "Not recommended. The automation may add more than needed — review the rule list afterwards.",

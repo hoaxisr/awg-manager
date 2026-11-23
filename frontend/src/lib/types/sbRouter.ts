@@ -430,6 +430,16 @@ export interface SingboxRouterRuleSet {
 	materialized_srs?: boolean;
 }
 
+/** Снимок индекса покрытия: правила и наборы применённого слота. */
+export interface SingboxRouterCoverageSnapshot {
+	generation: number;
+	slot: string;
+	rules: unknown[];
+	rule_sets: SingboxRouterRuleSet[];
+	/** Наборы, не влезшие в потолок памяти: в покрытии они не учитываются. */
+	skipped_rule_sets?: string[];
+}
+
 export interface SingboxRouterOutbound {
 	type: 'direct' | 'urltest' | 'selector' | 'loadbalance' | 'fallback';
 	tag: string;

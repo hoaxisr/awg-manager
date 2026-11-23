@@ -90,7 +90,7 @@ func TestCoverageIndexSingBoxParity(t *testing.T) {
 			if err != nil {
 				t.Fatalf("compile: %v: %s", err, stderr)
 			}
-			entry, err := compileCoverageIndexEntry(fixture.rules)
+			entry, err := compileCoverageIndexEntry(fixture.rules, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

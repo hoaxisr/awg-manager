@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/netip"
 	"regexp"
 	"slices"
@@ -19,6 +20,9 @@ type CoverageSnapshot struct {
 	Slot       string    `json:"slot"`
 	Rules      []Rule    `json:"rules"`
 	RuleSets   []RuleSet `json:"rule_sets"`
+	// SkippedRuleSets — наборы, не влезшие в потолок памяти: в покрытии они
+	// не учитываются (исключение по ним не применяется).
+	SkippedRuleSets []string `json:"skipped_rule_sets,omitempty"`
 }
 
 // IndexedRuleSetMatch is the additive response of the indexed-match endpoint.
@@ -38,6 +42,8 @@ type coverageIndexSnapshot struct {
 	rules      []Rule
 	ruleSets   []RuleSet
 	entries    map[string]*coverageIndexEntry
+	// skipped holds tags whose rule-set did not fit the memory budget.
+	skipped map[string]struct{}
 	// requested includes defined and undefined requested tags. An undefined
 	// exclusion is a supported snapshot with an unsupported per-tag result, not
 	// a missing generation that would rebuild forever.
@@ -56,10 +62,11 @@ func (s *coverageIndexSnapshot) hasRequested(tags []string) bool {
 
 func (s *coverageIndexSnapshot) projection() CoverageSnapshot {
 	return CoverageSnapshot{
-		Generation: s.generation,
-		Slot:       s.slot,
-		Rules:      slices.Clone(s.rules),
-		RuleSets:   slices.Clone(s.ruleSets),
+		Generation:      s.generation,
+		Slot:            s.slot,
+		Rules:           slices.Clone(s.rules),
+		RuleSets:        slices.Clone(s.ruleSets),
+		SkippedRuleSets: slices.Sorted(maps.Keys(s.skipped)),
 	}
 }
 
@@ -72,6 +79,13 @@ func (s *coverageIndexSnapshot) match(input string, tags []string) IndexedRuleSe
 		result := RuleSetMatchResult{Tag: tag}
 		entry, ok := s.entries[tag]
 		if !ok {
+			if _, skipped := s.skipped[tag]; skipped {
+				// Набор не влез в потолок памяти: исключение не применяем,
+				// но и ошибкой это не считаем — покрытие считается консервативно.
+				result.Supported = true
+				out.Results = append(out.Results, result)
+				continue
+			}
 			result.Error = "rule-set is not defined"
 			out.Results = append(out.Results, result)
 			continue
