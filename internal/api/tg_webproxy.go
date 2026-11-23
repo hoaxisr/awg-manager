@@ -49,7 +49,7 @@ func (h *TgWebProxyHandler) authDisabled() bool {
 }
 
 // SetCoordinator attaches the shared ingress coordinator so API mutations
-// serialize with ConfigWatcher and refresh watcher snapshots before releasing the lock.
+// serialize with other ingress transactions.
 func (h *TgWebProxyHandler) SetCoordinator(coord *serveringress.Coordinator) {
 	h.coord = coord
 }

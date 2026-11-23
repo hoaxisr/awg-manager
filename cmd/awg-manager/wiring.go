@@ -191,7 +191,6 @@ type app struct {
 	tgWebProxyService   *tgwebproxy.Service
 	cdnDispatcher       *cdndispatcher.Dispatcher
 	ingressCoordinator  *serveringress.Coordinator
-	ingressWatcher      *serveringress.ConfigWatcher
 	terminalManager     *terminal.ManagerImpl
 	clientRouteStore    *storage.ClientRouteStore
 	clientRouteService  *clientroute.ServiceImpl

@@ -174,14 +174,6 @@ func (a *app) setupServer() {
 	// Always ensure in-process Go Multiplexer for Telegram Web Proxy is active if enabled
 	a.tgWebProxyService.EnsureMuxRunning()
 
-	// Start background watcher for ingress configuration files (hot-reload without restart or rebuild)
-	a.ingressWatcher = a.ingressCoordinator.StartConfigWatcher(context.Background())
-	a.deferOnExit(func() {
-		if a.ingressWatcher != nil {
-			a.ingressWatcher.Stop()
-		}
-	})
-
 	a.deferOnExit(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

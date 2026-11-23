@@ -465,7 +465,7 @@ func freeTCPPortForTest(t *testing.T) int {
 	return port
 }
 
-func TestTgWebProxy_RapidStopStartWithConfigWatcherDoesNotRevert(t *testing.T) {
+func TestTgWebProxy_RapidStopStartKeepsEnabled(t *testing.T) {
 	handler, svc, _, sessionToken, tempDir := setupTestTgWebProxyHandler(t)
 	coord := serveringress.New(tempDir, nil, nil, svc)
 	handler.SetCoordinator(coord)
@@ -496,11 +496,7 @@ func TestTgWebProxy_RapidStopStartWithConfigWatcherDoesNotRevert(t *testing.T) {
 		t.Fatalf("initial ApplyTelegramConfig: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	watcher := coord.StartConfigWatcher(ctx)
 	t.Cleanup(func() {
-		cancel()
-		watcher.Stop()
 		_ = coord.SetTelegramEnabled(context.Background(), false)
 	})
 
@@ -527,10 +523,8 @@ func TestTgWebProxy_RapidStopStartWithConfigWatcherDoesNotRevert(t *testing.T) {
 			time.Sleep(d)
 		}
 		doAction("start")
-		// Wait past the watcher poll + debounce window after each stop->start cycle.
-		time.Sleep(350 * time.Millisecond)
 		if cfg := svc.GetInternalConfig(); !cfg.Enabled {
-			t.Fatalf("ConfigWatcher reverted enabled=false after rapid stop->start (delay=%v)", d)
+			t.Fatalf("enabled=false after rapid stop->start (delay=%v)", d)
 		}
 		if st := svc.GetStatus(); !st.Running || !st.DirectOnline {
 			t.Fatalf("expected running and direct_online after rapid stop->start (delay=%v), got %+v", d, st)
