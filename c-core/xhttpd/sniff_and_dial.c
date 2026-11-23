@@ -130,6 +130,26 @@ bool check_destination_acl_ex(const char *host, bool allow_private, bool allow_f
                 return !is_special_use_ipv4_octets(v4, false);
             }
         }
+        /* Teredo 2001::/32: the real peer hides behind a relay, nothing to classify */
+        if (a6.s6_addr[0] == 0x20 && a6.s6_addr[1] == 0x01 &&
+            a6.s6_addr[2] == 0x00 && a6.s6_addr[3] == 0x00) {
+            return false;
+        }
+        /* NAT64 well-known 64:ff9b::/96 leads to the embedded IPv4 (64:ff9b::7f00:1 is loopback).
+         * Local-use 64:ff9b:1::/48 places the IPv4 by operator prefix length, so it is refused
+         * rather than guessed (same split as Go internal/ipinspect). */
+        if (a6.s6_addr[0] == 0x00 && a6.s6_addr[1] == 0x64 &&
+            a6.s6_addr[2] == 0xff && a6.s6_addr[3] == 0x9b) {
+            bool wk = true;
+            for (int i = 4; i < 12; i++) {
+                if (a6.s6_addr[i] != 0) { wk = false; break; }
+            }
+            if (wk) {
+                uint8_t v4[4] = { a6.s6_addr[12], a6.s6_addr[13], a6.s6_addr[14], a6.s6_addr[15] };
+                return !is_special_use_ipv4_octets(v4, false);
+            }
+            if (a6.s6_addr[4] == 0x00 && a6.s6_addr[5] == 0x01) return false;
+        }
         /* 6to4 2002::/16 embedded IPv4 */
         if (a6.s6_addr[0] == 0x20 && a6.s6_addr[1] == 0x02) {
             uint8_t v4[4] = { a6.s6_addr[2], a6.s6_addr[3], a6.s6_addr[4], a6.s6_addr[5] };
@@ -614,8 +634,31 @@ int sync_fakeip_dnat(const char *fake_ip) {
     return 0;
 }
 
-/* Raw UDP DNS A-record query to dns_host:dns_port */
-static int udp_dns_query_a(const char *domain, const char *dns_host, uint16_t dns_port, char *out_ip, size_t out_sz) {
+/* IPv4 or IPv6 literal + port -> sockaddr; returns its length, 0 if ip_str is not a literal. */
+static socklen_t fill_sockaddr(const char *ip_str, uint16_t port, struct sockaddr_storage *ss) {
+    memset(ss, 0, sizeof(*ss));
+    struct sockaddr_in *s4 = (struct sockaddr_in *)ss;
+    if (inet_pton(AF_INET, ip_str, &s4->sin_addr) == 1) {
+        s4->sin_family = AF_INET;
+        s4->sin_port = htons(port);
+        return (socklen_t)sizeof(*s4);
+    }
+    struct sockaddr_in6 *s6 = (struct sockaddr_in6 *)ss;
+    if (inet_pton(AF_INET6, ip_str, &s6->sin6_addr) == 1) {
+        s6->sin6_family = AF_INET6;
+        s6->sin6_port = htons(port);
+        return (socklen_t)sizeof(*s6);
+    }
+    return 0;
+}
+
+#define DNS_QTYPE_A    1
+#define DNS_QTYPE_AAAA 28
+
+/* Raw UDP DNS query (A or AAAA) to dns_host:dns_port.
+ * Returns 0 with out_ip set, 1 when the server answered NOERROR without a record of
+ * qtype (NODATA: worth asking the other family), -1 on any other failure. */
+static int udp_dns_query(const char *domain, uint16_t qtype, const char *dns_host, uint16_t dns_port, char *out_ip, size_t out_sz) {
     uint8_t pkt[512];
     memset(pkt, 0, sizeof(pkt));
     uint8_t rnd[2];
@@ -640,22 +683,16 @@ static int udp_dns_query_a(const char *domain, const char *dns_host, uint16_t dn
         p = dot + 1;
     }
     pkt[off++] = 0x00;
-    pkt[off++] = 0x00; pkt[off++] = 0x01; /* QTYPE = A */
+    pkt[off++] = (uint8_t)(qtype >> 8); pkt[off++] = (uint8_t)qtype; /* QTYPE */
     pkt[off++] = 0x00; pkt[off++] = 0x01; /* QCLASS = IN */
 
-    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    struct sockaddr_storage sa;
+    socklen_t sa_len = fill_sockaddr(dns_host, dns_port, &sa);
+    if (sa_len == 0) return -1;
+    int fd = socket(sa.ss_family, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     if (fd < 0) return -1;
 
-    struct sockaddr_in sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons(dns_port);
-    if (inet_pton(AF_INET, dns_host, &sa.sin_addr) != 1) {
-        close(fd);
-        return -1;
-    }
-
-    if (sendto(fd, pkt, off, 0, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+    if (sendto(fd, pkt, off, 0, (struct sockaddr *)&sa, sa_len) < 0) {
         close(fd);
         return -1;
     }
@@ -675,7 +712,7 @@ static int udp_dns_query_a(const char *domain, const char *dns_host, uint16_t dn
 
     uint16_t qdcount = ((uint16_t)resp[4] << 8) | resp[5];
     uint16_t ancount = ((uint16_t)resp[6] << 8) | resp[7];
-    if (ancount == 0) return -1;
+    if (ancount == 0) return 1;
 
     size_t roff = 12;
     /* Skip questions */
@@ -703,14 +740,17 @@ static int udp_dns_query_a(const char *domain, const char *dns_host, uint16_t dn
         uint16_t rdlen  = ((uint16_t)resp[roff + 8] << 8) | resp[roff + 9];
         roff += 10;
         if (roff + rdlen > (size_t)rlen) return -1;
-        if (rtype == 1 && rdlen == 4) {
+        if (qtype == DNS_QTYPE_A && rtype == DNS_QTYPE_A && rdlen == 4) {
             snprintf(out_ip, out_sz, "%u.%u.%u.%u",
                      resp[roff], resp[roff + 1], resp[roff + 2], resp[roff + 3]);
             return 0;
         }
+        if (qtype == DNS_QTYPE_AAAA && rtype == DNS_QTYPE_AAAA && rdlen == 16) {
+            return inet_ntop(AF_INET6, resp + roff, out_ip, (socklen_t)out_sz) ? 0 : -1;
+        }
         roff += rdlen;
     }
-    return -1;
+    return 1; /* e.g. only a CNAME chain */
 }
 
 static bool is_local_or_keendns_host(const char *host) {
@@ -724,7 +764,9 @@ static bool is_local_or_keendns_host(const char *host) {
     return false;
 }
 
-int resolve_host_ipv4(const char *host, int egress_mode, const char *dns_proxy_host, uint16_t dns_proxy_port, bool allow_private, char *out_ip, size_t out_sz) {
+/* A first, AAAA only when the name has no A (and ipv4_only is off): IPv4 stays the
+ * default path for dual-stack names, IPv6-only names still work. */
+int resolve_host_ip(const char *host, int egress_mode, const char *dns_proxy_host, uint16_t dns_proxy_port, bool allow_private, bool ipv4_only, char *out_ip, size_t out_sz) {
     if (!host || !host[0]) return -1;
     bool allow_fakeip = (egress_mode == EGRESS_MODE_ROUTER);
     if (!check_destination_acl_ex(host, allow_private, allow_fakeip)) return -1;
@@ -737,10 +779,15 @@ int resolve_host_ipv4(const char *host, int egress_mode, const char *dns_proxy_h
         }
         return 0;
     }
+    struct in6_addr a6;
+    if (inet_pton(AF_INET6, host, &a6) == 1) {
+        snprintf(out_ip, out_sz, "%s", host);
+        return 0;
+    }
 
     bool use_firc_dns = (egress_mode == EGRESS_MODE_ROUTER) && dns_proxy_host && dns_proxy_host[0] && dns_proxy_port > 0 && !is_local_or_keendns_host(host);
     char cache_key[280];
-    snprintf(cache_key, sizeof(cache_key), "%s|%d|%d|%d", host, egress_mode, use_firc_dns ? 1 : 0, allow_private ? 1 : 0);
+    snprintf(cache_key, sizeof(cache_key), "%s|%d|%d|%d|%d", host, egress_mode, use_firc_dns ? 1 : 0, allow_private ? 1 : 0, ipv4_only ? 1 : 0);
 
     uint64_t now = now_ms();
     pthread_mutex_lock(&g_dns_cache_mu);
@@ -757,24 +804,42 @@ int resolve_host_ipv4(const char *host, int egress_mode, const char *dns_proxy_h
     }
     pthread_mutex_unlock(&g_dns_cache_mu);
 
-    int rc = -1;
+    /* FIRC DNS proxy (router mode), then router local DNS (127.0.0.1:53), then getaddrinfo */
+    const char *dns_hosts[2];
+    uint16_t dns_ports[2];
+    int num_dns = 0;
     if (use_firc_dns) {
-        rc = udp_dns_query_a(host, dns_proxy_host, dns_proxy_port, out_ip, out_sz);
+        dns_hosts[num_dns] = dns_proxy_host;
+        dns_ports[num_dns++] = dns_proxy_port;
+    }
+    dns_hosts[num_dns] = "127.0.0.1";
+    dns_ports[num_dns++] = 53;
+    int rc = -1;
+    for (int i = 0; i < num_dns && rc != 0; i++) {
+        rc = udp_dns_query(host, DNS_QTYPE_A, dns_hosts[i], dns_ports[i], out_ip, out_sz);
+        if (rc == 1 && !ipv4_only) {
+            rc = udp_dns_query(host, DNS_QTYPE_AAAA, dns_hosts[i], dns_ports[i], out_ip, out_sz);
+        }
     }
     if (rc != 0) {
-        /* Try router local DNS (127.0.0.1:53) then getaddrinfo fallback */
-        rc = udp_dns_query_a(host, "127.0.0.1", 53, out_ip, out_sz);
-        if (rc != 0) {
-            struct addrinfo hints, *res = NULL;
-            memset(&hints, 0, sizeof(hints));
-            hints.ai_family = AF_INET;
-            hints.ai_socktype = SOCK_STREAM;
-            if (getaddrinfo(host, NULL, &hints, &res) == 0 && res) {
-                struct sockaddr_in *sin = (struct sockaddr_in *)res->ai_addr;
-                inet_ntop(AF_INET, &sin->sin_addr, out_ip, (socklen_t)out_sz);
-                freeaddrinfo(res);
+        struct addrinfo hints, *res = NULL;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = ipv4_only ? AF_INET : AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        if (getaddrinfo(host, NULL, &hints, &res) == 0 && res) {
+            const struct addrinfo *pick = NULL;
+            for (const struct addrinfo *ai = res; ai; ai = ai->ai_next) {
+                if (ai->ai_family == AF_INET) { pick = ai; break; }
+                if (!pick && ai->ai_family == AF_INET6) pick = ai;
+            }
+            if (pick && pick->ai_family == AF_INET) {
+                inet_ntop(AF_INET, &((const struct sockaddr_in *)pick->ai_addr)->sin_addr, out_ip, (socklen_t)out_sz);
+                rc = 0;
+            } else if (pick) {
+                inet_ntop(AF_INET6, &((const struct sockaddr_in6 *)pick->ai_addr)->sin6_addr, out_ip, (socklen_t)out_sz);
                 rc = 0;
             }
+            freeaddrinfo(res);
         }
     }
     if (rc != 0) return -1;
@@ -806,15 +871,18 @@ int resolve_host_ipv4(const char *host, int egress_mode, const char *dns_proxy_h
     return 0;
 }
 
-static int connect_nonblock_v4(const char *ip_str, uint16_t port, uint32_t fwmark, const char *bind_if, int timeout_ms) {
+static int connect_nonblock(const char *ip_str, uint16_t port, uint32_t fwmark, const char *bind_if, int timeout_ms) {
+    struct sockaddr_storage sa;
+    socklen_t sa_len = fill_sockaddr(ip_str, port, &sa);
+    if (sa_len == 0) return -1;
 #ifdef _WIN32
-    SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+    SOCKET s = socket(sa.ss_family, SOCK_STREAM, 0);
     if (s == INVALID_SOCKET) return -1;
     u_long nonblock = 1;
     ioctlsocket(s, FIONBIO, &nonblock);
     int fd = (int)s;
 #else
-    int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    int fd = socket(sa.ss_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (fd < 0) return -1;
 #endif
 
@@ -843,16 +911,7 @@ static int connect_nonblock_v4(const char *ip_str, uint16_t port, uint32_t fwmar
     (void)bind_if;
 #endif
 
-    struct sockaddr_in sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons(port);
-    if (inet_pton(AF_INET, ip_str, &sa.sin_addr) != 1) {
-        close(fd);
-        return -1;
-    }
-
-    int r = connect(fd, (struct sockaddr *)&sa, sizeof(sa));
+    int r = connect(fd, (struct sockaddr *)&sa, sa_len);
 #ifdef _WIN32
     if (r < 0 && WSAGetLastError() != WSAEWOULDBLOCK && errno != EINPROGRESS) {
         close(fd);
@@ -915,8 +974,37 @@ static int connect_nonblock_v4(const char *ip_str, uint16_t port, uint32_t fwmar
     return fd;
 }
 
-static int dial_socks5(const char *socks_host, uint16_t socks_port, const char *target_host, uint16_t target_port, int timeout_ms) {
-    int fd = connect_nonblock_v4(socks_host, socks_port, 0, NULL, timeout_ms);
+/* SOCKS5 ATYP + address + port for an IPv4/IPv6 literal or a domain; returns its length, 0 if unusable. */
+static size_t socks5_put_addr(uint8_t *p, const char *host, uint16_t port) {
+    uint8_t v4_oct[4];
+    struct in6_addr v6_addr;
+    size_t n;
+    if (inet_pton(AF_INET6, host, &v6_addr) == 1) {
+        p[0] = 0x04; /* IPv6 */
+        memcpy(p + 1, v6_addr.s6_addr, 16);
+        n = 17;
+    } else if (parse_ipv4_octets(host, v4_oct)) {
+        p[0] = 0x01; /* IPv4 */
+        memcpy(p + 1, v4_oct, 4);
+        n = 5;
+    } else {
+        size_t hlen = strlen(host);
+        if (hlen == 0 || hlen > 255) return 0;
+        p[0] = 0x03; /* DOMAIN */
+        p[1] = (uint8_t)hlen;
+        memcpy(p + 2, host, hlen);
+        n = 2 + hlen;
+    }
+    p[n] = (uint8_t)(port >> 8);
+    p[n + 1] = (uint8_t)(port & 0xFF);
+    return n + 2;
+}
+
+/* No-auth greeting + one request (cmd 1 CONNECT / 3 UDP ASSOCIATE). Returns the control
+ * connection; bnd (when not NULL) gets the reply BND.ADDR:BND.PORT if it is an IP. */
+static int socks5_request(const char *socks_host, uint16_t socks_port, uint8_t cmd, const char *target_host,
+                          uint16_t target_port, int timeout_ms, struct sockaddr_storage *bnd, socklen_t *bnd_len) {
+    int fd = connect_nonblock(socks_host, socks_port, 0, NULL, timeout_ms);
     if (fd < 0) return -1;
 
     struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
@@ -931,32 +1019,9 @@ static int dial_socks5(const char *socks_host, uint16_t socks_port, const char *
         return -1;
     }
 
-    uint8_t req[300];
-    size_t req_len = 0;
-    uint8_t v4_oct[4];
-    if (parse_ipv4_octets(target_host, v4_oct)) {
-        req[0] = 0x05;
-        req[1] = 0x01; /* CONNECT */
-        req[2] = 0x00;
-        req[3] = 0x01; /* IPv4 */
-        memcpy(req + 4, v4_oct, 4);
-        req[8] = (uint8_t)(target_port >> 8);
-        req[9] = (uint8_t)(target_port & 0xFF);
-        req_len = 10;
-    } else {
-        size_t hlen = strlen(target_host);
-        if (hlen == 0 || hlen > 255) { close(fd); return -1; }
-        req[0] = 0x05;
-        req[1] = 0x01; /* CONNECT */
-        req[2] = 0x00;
-        req[3] = 0x03; /* DOMAIN */
-        req[4] = (uint8_t)hlen;
-        memcpy(req + 5, target_host, hlen);
-        req[5 + hlen] = (uint8_t)(target_port >> 8);
-        req[5 + hlen + 1] = (uint8_t)(target_port & 0xFF);
-        req_len = 5 + hlen + 2;
-    }
-    if (write_all(fd, req, req_len) < 0) { close(fd); return -1; }
+    uint8_t req[300] = { 0x05, cmd, 0x00 };
+    size_t alen = socks5_put_addr(req + 3, target_host, target_port);
+    if (alen == 0 || write_all(fd, req, 3 + alen) < 0) { close(fd); return -1; }
 
     uint8_t rhdr[4];
     if (recv(fd, rhdr, 4, MSG_WAITALL) != 4 || rhdr[0] != 0x05 || rhdr[1] != 0x00) {
@@ -974,11 +1039,73 @@ static int dial_socks5(const char *socks_host, uint16_t socks_port, const char *
         close(fd);
         return -1;
     }
-    uint8_t discard[260];
-    if (skip > 0 && recv(fd, discard, skip, MSG_WAITALL) != (ssize_t)skip) {
+    uint8_t baddr[260];
+    if (skip > 0 && recv(fd, baddr, skip, MSG_WAITALL) != (ssize_t)skip) {
         close(fd);
         return -1;
     }
+    if (bnd && bnd_len) {
+        *bnd_len = 0;
+        memset(bnd, 0, sizeof(*bnd));
+        uint16_t bport = (uint16_t)((baddr[skip - 2] << 8) | baddr[skip - 1]);
+        if (rhdr[3] == 0x01) {
+            struct sockaddr_in *s4 = (struct sockaddr_in *)bnd;
+            s4->sin_family = AF_INET;
+            memcpy(&s4->sin_addr, baddr, 4);
+            s4->sin_port = htons(bport);
+            *bnd_len = (socklen_t)sizeof(*s4);
+        } else if (rhdr[3] == 0x04) {
+            struct sockaddr_in6 *s6 = (struct sockaddr_in6 *)bnd;
+            s6->sin6_family = AF_INET6;
+            memcpy(&s6->sin6_addr, baddr, 16);
+            s6->sin6_port = htons(bport);
+            *bnd_len = (socklen_t)sizeof(*s6);
+        }
+    }
+    return fd;
+}
+
+static int dial_socks5(const char *socks_host, uint16_t socks_port, const char *target_host, uint16_t target_port, int timeout_ms) {
+    return socks5_request(socks_host, socks_port, 0x01, target_host, target_port, timeout_ms, NULL, NULL);
+}
+
+/* RFC 1928 UDP ASSOCIATE. The UDP socket is connect()ed to the relay, so the kernel drops
+ * datagrams from any other source; the control connection is handed to the caller and
+ * must stay open while the association is used. */
+static int socks5_udp_associate(const xhttpd_config_t *cfg, const char *target_ip, uint16_t target_port,
+                                udp_egress_t *out) {
+    struct sockaddr_storage relay;
+    socklen_t relay_len = 0;
+    int ctrl = socks5_request(cfg->socks_host, cfg->socks_port, 0x03, "0.0.0.0", 0, 5000, &relay, &relay_len);
+    if (ctrl < 0) return -1;
+    if (relay_len == 0) { close(ctrl); return -1; }
+    /* Unspecified BND.ADDR means "the SOCKS server's own address" */
+    bool unspec = (relay.ss_family == AF_INET && ((struct sockaddr_in *)&relay)->sin_addr.s_addr == 0) ||
+                  (relay.ss_family == AF_INET6 && IN6_IS_ADDR_UNSPECIFIED(&((struct sockaddr_in6 *)&relay)->sin6_addr));
+    if (unspec) {
+        uint16_t rport = relay.ss_family == AF_INET ? ntohs(((struct sockaddr_in *)&relay)->sin_port)
+                                                    : ntohs(((struct sockaddr_in6 *)&relay)->sin6_port);
+        relay_len = fill_sockaddr(cfg->socks_host, rport, &relay);
+        if (relay_len == 0) { close(ctrl); return -1; }
+    }
+
+    out->socks_hdr[0] = 0x00; /* RSV */
+    out->socks_hdr[1] = 0x00;
+    out->socks_hdr[2] = 0x00; /* FRAG: we never fragment */
+    size_t alen = socks5_put_addr(out->socks_hdr + 3, target_ip, target_port);
+    if (alen == 0 || alen > sizeof(out->socks_hdr) - 3) { close(ctrl); return -1; }
+    out->socks_hdr_len = (uint8_t)(3 + alen);
+
+    int fd = socket(relay.ss_family, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) { close(ctrl); return -1; }
+    if (connect(fd, (struct sockaddr *)&relay, relay_len) < 0) {
+        close(fd);
+        close(ctrl);
+        return -1;
+    }
+    out->dest = relay;
+    out->dest_len = relay_len;
+    out->socks_ctrl_fd = ctrl;
     return fd;
 }
 
@@ -987,7 +1114,7 @@ int dial_target_tcp(const char *orig_host, uint16_t port, const uint8_t *first_c
 
     /* 1. In router mode, forward TCP port 53 directly to fircd (:3553) */
     if (cfg->egress_mode == EGRESS_MODE_ROUTER && port == 53 && cfg->dns_proxy_host[0] && cfg->dns_proxy_port > 0) {
-        return connect_nonblock_v4(cfg->dns_proxy_host, cfg->dns_proxy_port, 0, NULL, timeout_ms);
+        return connect_nonblock(cfg->dns_proxy_host, cfg->dns_proxy_port, 0, NULL, timeout_ms);
     }
 
     char sniffed[256] = {0};
@@ -1009,9 +1136,9 @@ int dial_target_tcp(const char *orig_host, uint16_t port, const uint8_t *first_c
         if (!check_destination_acl_ex(lookup_host, cfg->allow_private, false)) return -1;
         if (!cfg->allow_private) {
             char verified_ip[48] = {0};
-            if (resolve_host_ipv4(lookup_host, cfg->egress_mode, cfg->dns_proxy_host, cfg->dns_proxy_port, false, verified_ip, sizeof(verified_ip)) != 0) {
+            if (resolve_host_ip(lookup_host, cfg->egress_mode, cfg->dns_proxy_host, cfg->dns_proxy_port, false, cfg->ipv4_only, verified_ip, sizeof(verified_ip)) != 0) {
                 if (lookup_host != orig_host && !is_firc_fake_ip_str(orig_host)) {
-                    if (resolve_host_ipv4(orig_host, cfg->egress_mode, cfg->dns_proxy_host, cfg->dns_proxy_port, false, verified_ip, sizeof(verified_ip)) != 0) {
+                    if (resolve_host_ip(orig_host, cfg->egress_mode, cfg->dns_proxy_host, cfg->dns_proxy_port, false, cfg->ipv4_only, verified_ip, sizeof(verified_ip)) != 0) {
                         return -1;
                     }
                 } else {
@@ -1022,18 +1149,18 @@ int dial_target_tcp(const char *orig_host, uint16_t port, const uint8_t *first_c
             return dial_socks5(cfg->socks_host, cfg->socks_port, verified_ip, port, timeout_ms);
         }
         char lan_ip[48] = {0};
-        if (resolve_host_ipv4(lookup_host, EGRESS_MODE_DIRECT, cfg->dns_proxy_host, cfg->dns_proxy_port, true, lan_ip, sizeof(lan_ip)) == 0 &&
+        if (resolve_host_ip(lookup_host, EGRESS_MODE_DIRECT, cfg->dns_proxy_host, cfg->dns_proxy_port, true, cfg->ipv4_only, lan_ip, sizeof(lan_ip)) == 0 &&
             is_private_lan_ip_str(lan_ip)) {
-            return connect_nonblock_v4(lan_ip, port, 0, NULL, timeout_ms);
+            return connect_nonblock(lan_ip, port, 0, NULL, timeout_ms);
         }
         return dial_socks5(cfg->socks_host, cfg->socks_port, lookup_host, port, timeout_ms);
     }
 
     char resolved_ip[48] = {0};
-    if (resolve_host_ipv4(lookup_host, cfg->egress_mode, cfg->dns_proxy_host, cfg->dns_proxy_port, cfg->allow_private, resolved_ip, sizeof(resolved_ip)) != 0) {
+    if (resolve_host_ip(lookup_host, cfg->egress_mode, cfg->dns_proxy_host, cfg->dns_proxy_port, cfg->allow_private, cfg->ipv4_only, resolved_ip, sizeof(resolved_ip)) != 0) {
         /* If sniffed lookup failed and orig_host was a real public IPv4 (not a FakeIP), fallback to orig_host */
         if (lookup_host != orig_host && !is_firc_fake_ip_str(orig_host)) {
-            if (resolve_host_ipv4(orig_host, cfg->egress_mode, cfg->dns_proxy_host, cfg->dns_proxy_port, cfg->allow_private, resolved_ip, sizeof(resolved_ip)) != 0) {
+            if (resolve_host_ip(orig_host, cfg->egress_mode, cfg->dns_proxy_host, cfg->dns_proxy_port, cfg->allow_private, cfg->ipv4_only, resolved_ip, sizeof(resolved_ip)) != 0) {
                 return -1;
             }
         } else {
@@ -1060,12 +1187,12 @@ int dial_target_tcp(const char *orig_host, uint16_t port, const uint8_t *first_c
     }
 
     uint64_t t0 = now_ms();
-    int fd = connect_nonblock_v4(resolved_ip, port, mark, bind_if, timeout_ms);
+    int fd = connect_nonblock(resolved_ip, port, mark, bind_if, timeout_ms);
     if (fd < 0 && mark == FIRC_ROUTING_MARK) {
         /* Force re-sync FEXT_DNAT once and retry */
         dnat_bump_generation();
         sync_fakeip_dnat(resolved_ip);
-        fd = connect_nonblock_v4(resolved_ip, port, mark, bind_if, timeout_ms);
+        fd = connect_nonblock(resolved_ip, port, mark, bind_if, timeout_ms);
     }
     diag_log("dial_tcp orig=%s:%u sni=%s resolved=%s:%u mode=%d mark=0x%x dur=%llums fd=%d",
              orig_host, port, sniffed[0] ? sniffed : "-", resolved_ip, port, cfg->egress_mode, mark,
@@ -1073,8 +1200,10 @@ int dial_target_tcp(const char *orig_host, uint16_t port, const uint8_t *first_c
     return fd;
 }
 
-int dial_target_udp(const char *host, uint16_t port, const xhttpd_config_t *cfg, struct sockaddr_in *out_dest) {
-    if (!host || !cfg || !out_dest) return -1;
+int dial_target_udp(const char *host, uint16_t port, const xhttpd_config_t *cfg, udp_egress_t *out) {
+    if (!host || !cfg || !out) return -1;
+    memset(out, 0, sizeof(*out));
+    out->socks_ctrl_fd = -1;
 
     char resolved_ip[64] = {0};
     uint16_t dest_port = port;
@@ -1085,7 +1214,7 @@ int dial_target_udp(const char *host, uint16_t port, const xhttpd_config_t *cfg,
         snprintf(resolved_ip, sizeof(resolved_ip), "%s", cfg->dns_proxy_host);
         dest_port = cfg->dns_proxy_port;
     } else {
-        if (resolve_host_ipv4(host, cfg->egress_mode, cfg->dns_proxy_host, cfg->dns_proxy_port, cfg->allow_private, resolved_ip, sizeof(resolved_ip)) != 0) {
+        if (resolve_host_ip(host, cfg->egress_mode, cfg->dns_proxy_host, cfg->dns_proxy_port, cfg->allow_private, cfg->ipv4_only, resolved_ip, sizeof(resolved_ip)) != 0) {
             return -1;
         }
         if (cfg->egress_mode != EGRESS_MODE_ROUTER && is_firc_fake_ip_str(resolved_ip)) {
@@ -1100,8 +1229,16 @@ int dial_target_udp(const char *host, uint16_t port, const xhttpd_config_t *cfg,
             }
         }
     }
+    /* SOCKS egress carries UDP too, otherwise it leaks straight to WAN (F864).
+     * LAN targets with allow_private stay direct, as dial_target_tcp does. */
+    if (cfg->egress_mode == EGRESS_MODE_SOCKS && !(cfg->allow_private && is_private_lan_ip_str(resolved_ip))) {
+        return socks5_udp_associate(cfg, resolved_ip, dest_port, out);
+    }
 
-    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    out->dest_len = fill_sockaddr(resolved_ip, dest_port, &out->dest);
+    if (out->dest_len == 0) return -1;
+
+    int fd = socket(out->dest.ss_family, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     if (fd < 0) return -1;
 #ifdef SO_MARK
     if (mark != 0) {
@@ -1123,13 +1260,52 @@ int dial_target_udp(const char *host, uint16_t port, const xhttpd_config_t *cfg,
 #else
     (void)bind_if;
 #endif
+    return fd;
+}
 
-    memset(out_dest, 0, sizeof(*out_dest));
-    out_dest->sin_family = AF_INET;
-    out_dest->sin_port = htons(dest_port);
-    if (inet_pton(AF_INET, resolved_ip, &out_dest->sin_addr) != 1) {
-        close(fd);
+ssize_t udp_egress_send(int fd, const udp_egress_t *e, const uint8_t *data, size_t len) {
+    if (e->socks_ctrl_fd < 0) {
+        return sendto(fd, (const char *)data, len, 0, (const struct sockaddr *)&e->dest, e->dest_len);
+    }
+#ifdef _WIN32
+    errno = ENOTSUP; /* SOCKS UDP needs sendmsg; the daemon only ships for Linux */
+    return -1;
+#else
+    struct iovec iov[2] = {
+        { .iov_base = (void *)e->socks_hdr, .iov_len = e->socks_hdr_len },
+        { .iov_base = (void *)data,         .iov_len = len },
+    };
+    struct msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_iov = iov;
+    msg.msg_iovlen = 2;
+    ssize_t n = sendmsg(fd, &msg, MSG_NOSIGNAL);
+    return n < 0 ? n : (n >= (ssize_t)e->socks_hdr_len ? n - (ssize_t)e->socks_hdr_len : 0);
+#endif
+}
+
+/* SOCKS: strips the RFC 1928 UDP header in place. A fragmented (FRAG != 0) or malformed
+ * datagram is dropped and reported as -1/EAGAIN, so callers treat it like "nothing yet". */
+ssize_t udp_egress_recv(int fd, const udp_egress_t *e, uint8_t *buf, size_t cap, int flags) {
+    ssize_t n = recv(fd, (char *)buf, cap, flags);
+    if (n < 0 || e->socks_ctrl_fd < 0) return n;
+    size_t hl = 0;
+    if (n >= 4 && buf[0] == 0 && buf[1] == 0 && buf[2] == 0) {
+        if (buf[3] == 0x01) hl = 4 + 4 + 2;
+        else if (buf[3] == 0x04) hl = 4 + 16 + 2;
+        else if (buf[3] == 0x03 && n >= 5) hl = 4 + 1 + (size_t)buf[4] + 2;
+    }
+    if (hl == 0 || (size_t)n < hl) {
+        errno = EAGAIN;
         return -1;
     }
-    return fd;
+    memmove(buf, buf + hl, (size_t)n - hl);
+    return n - (ssize_t)hl;
+}
+
+void udp_egress_close_ctrl(udp_egress_t *e) {
+    if (e && e->socks_ctrl_fd >= 0) {
+        close(e->socks_ctrl_fd);
+        e->socks_ctrl_fd = -1;
+    }
 }

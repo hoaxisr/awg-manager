@@ -3109,7 +3109,7 @@ static void *udp_echo_server_thread(void *arg) {
         struct pollfd pfd = { .fd = ctx->fd, .events = POLLIN };
         int pr = poll(&pfd, 1, 25);
         if (pr <= 0) continue;
-        struct sockaddr_in cli;
+        struct sockaddr_storage cli;
         socklen_t clen = sizeof(cli);
         ssize_t n = recvfrom(ctx->fd, buf, sizeof(buf), 0, (struct sockaddr *)&cli, &clen);
         if (n > 0) {
@@ -3323,6 +3323,761 @@ static void test_finiteproto_udp_over_tcp(void) {
     pthread_join(eth, NULL);
     close(ufd);
 }
+
+/* ---- F869: IPv6 egress ---- */
+typedef struct {
+    int fd;
+    volatile int stop;
+} fake_dns_ctx_t;
+
+/* Answers: v6only.test -> A NODATA, AAAA 2606:4700:4700::1111; loop6.test -> AAAA ::1 (A NODATA);
+ * dual.test -> A 1.1.1.1, AAAA 2606:4700:4700::1001; anything else NXDOMAIN. */
+static void *fake_dns_thread(void *arg) {
+    fake_dns_ctx_t *c = (fake_dns_ctx_t *)arg;
+    while (!__atomic_load_n(&c->stop, __ATOMIC_ACQUIRE)) {
+        struct pollfd pfd = { .fd = c->fd, .events = POLLIN };
+        if (poll(&pfd, 1, 25) <= 0) continue;
+        uint8_t q[512];
+        struct sockaddr_storage cli;
+        socklen_t clen = sizeof(cli);
+        ssize_t n = recvfrom(c->fd, q, sizeof(q), 0, (struct sockaddr *)&cli, &clen);
+        if (n < 17) continue;
+        char name[256] = {0};
+        size_t off = 12, nl = 0;
+        while (off < (size_t)n && q[off] != 0 && nl + q[off] + 2 < sizeof(name)) {
+            if (nl) name[nl++] = '.';
+            memcpy(name + nl, q + off + 1, q[off]);
+            nl += q[off];
+            off += 1 + q[off];
+        }
+        off++;
+        if (off + 4 > (size_t)n) continue;
+        uint16_t qtype = (uint16_t)((q[off] << 8) | q[off + 1]);
+        size_t qend = off + 4;
+        uint8_t rdata[16];
+        size_t rdlen = 0;
+        int rcode = 0;
+        if (strcmp(name, "v6only.test") == 0) {
+            if (qtype == 28) { inet_pton(AF_INET6, "2606:4700:4700::1111", rdata); rdlen = 16; }
+        } else if (strcmp(name, "loop6.test") == 0) {
+            if (qtype == 28) { inet_pton(AF_INET6, "::1", rdata); rdlen = 16; }
+        } else if (strcmp(name, "dual.test") == 0) {
+            if (qtype == 1) { inet_pton(AF_INET, "1.1.1.1", rdata); rdlen = 4; }
+            if (qtype == 28) { inet_pton(AF_INET6, "2606:4700:4700::1001", rdata); rdlen = 16; }
+        } else {
+            rcode = 3;
+        }
+        uint8_t r[600];
+        memcpy(r, q, qend);
+        r[2] = 0x81; r[3] = (uint8_t)(0x80 | rcode);
+        r[6] = 0; r[7] = rdlen ? 1 : 0;
+        r[8] = r[9] = r[10] = r[11] = 0;
+        size_t ro = qend;
+        if (rdlen) {
+            uint8_t ans[12] = { 0xc0, 0x0c, (uint8_t)(qtype >> 8), (uint8_t)qtype, 0, 1, 0, 0, 0, 60, 0, (uint8_t)rdlen };
+            memcpy(r + ro, ans, 12); ro += 12;
+            memcpy(r + ro, rdata, rdlen); ro += rdlen;
+        }
+        sendto(c->fd, r, ro, 0, (struct sockaddr *)&cli, clen);
+    }
+    return NULL;
+}
+
+static int bind_loopback(int family, int type, uint16_t *out_port) {
+    int fd = socket(family, type, 0);
+    if (fd < 0) return -1;
+    struct sockaddr_storage ss;
+    memset(&ss, 0, sizeof(ss));
+    socklen_t sl;
+    if (family == AF_INET6) {
+        struct sockaddr_in6 *s6 = (struct sockaddr_in6 *)&ss;
+        s6->sin6_family = AF_INET6;
+        s6->sin6_addr = in6addr_loopback;
+        sl = sizeof(*s6);
+    } else {
+        struct sockaddr_in *s4 = (struct sockaddr_in *)&ss;
+        s4->sin_family = AF_INET;
+        s4->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        sl = sizeof(*s4);
+    }
+    if (bind(fd, (struct sockaddr *)&ss, sl) != 0 || (type == SOCK_STREAM && listen(fd, 8) != 0)) {
+        close(fd);
+        return -1;
+    }
+    getsockname(fd, (struct sockaddr *)&ss, &sl);
+    *out_port = ntohs(family == AF_INET6 ? ((struct sockaddr_in6 *)&ss)->sin6_port
+                                         : ((struct sockaddr_in *)&ss)->sin_port);
+    return fd;
+}
+
+/* Runs one stream-one POST synchronously and returns everything the handler wrote. */
+static size_t invoke_vless_post_capture(const xhttpd_config_t *cfg, const uint8_t *body, size_t body_len,
+                                        uint8_t *out, size_t out_cap) {
+    http_req_t req;
+    memset(&req, 0, sizeof(req));
+    snprintf(req.method, sizeof(req.method), "POST");
+    snprintf(req.path, sizeof(req.path), "/cdn-bridge");
+    snprintf(req.peer_ip, sizeof(req.peer_ip), "127.0.0.1");
+    req.content_length = (int64_t)body_len;
+    req.body = (uint8_t *)malloc(body_len);
+    memcpy(req.body, body, body_len);
+    req.body_len = body_len;
+    int sv[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) { free(req.body); return 0; }
+    conn_reader_t cr;
+    memset(&cr, 0, sizeof(cr));
+    cr.fd = sv[0];
+    handle_vless_http_request(sv[0], &cr, &req, "/cdn-bridge", cfg);
+    close(sv[0]);
+    free(req.body);
+    size_t got = 0;
+    while (got < out_cap) {
+        ssize_t r = recv(sv[1], out + got, out_cap - got, 0);
+        if (r <= 0) break;
+        got += (size_t)r;
+    }
+    close(sv[1]);
+    return got;
+}
+
+typedef struct {
+    int lfd;
+    uint8_t atyp;
+    uint8_t addr[16];
+} socks_atyp_probe_t;
+
+/* Minimal SOCKS5 CONNECT endpoint: records ATYP/address and answers success. */
+static void *socks_atyp_probe_thread(void *arg) {
+    socks_atyp_probe_t *p = (socks_atyp_probe_t *)arg;
+    struct pollfd lp = { .fd = p->lfd, .events = POLLIN };
+    if (poll(&lp, 1, 3000) <= 0) return NULL;
+    int c = accept(p->lfd, NULL, NULL);
+    if (c < 0) return NULL;
+    uint8_t b[64];
+    if (recv(c, b, 3, MSG_WAITALL) == 3 && write_all(c, "\x05\x00", 2) == 0 &&
+        recv(c, b, 4, MSG_WAITALL) == 4) {
+        p->atyp = b[3];
+        size_t alen = b[3] == 0x04 ? 16 : (b[3] == 0x01 ? 4 : 0);
+        if (alen && recv(c, p->addr, alen, MSG_WAITALL) == (ssize_t)alen && recv(c, b, 2, MSG_WAITALL) == 2) {
+            write_all(c, "\x05\x00\x00\x01\x7f\x00\x00\x01\x00\x00", 10);
+        }
+    }
+    usleep(100000);
+    close(c);
+    return NULL;
+}
+
+static void test_f869_ipv6_egress(void) {
+    /* ACL: Teredo and NAT64 (Go internal/ipinspect parity) */
+    check("F869: blocks Teredo 2001::/32", !check_destination_acl_ex("2001:0:4136:e378:8000:63bf:3fff:fdd2", false, false));
+    check("F869: blocks NAT64 64:ff9b::7f00:1 (embedded loopback)", !check_destination_acl_ex("64:ff9b::7f00:1", false, false));
+    check("F869: blocks NAT64 64:ff9b::c0a8:101 (embedded 192.168.1.1)", !check_destination_acl_ex("64:ff9b::c0a8:101", false, false));
+    check("F869: allows NAT64 64:ff9b::808:808 (embedded 8.8.8.8)", check_destination_acl_ex("64:ff9b::808:808", false, false));
+    check("F869: blocks local-use NAT64 64:ff9b:1::/48", !check_destination_acl_ex("64:ff9b:1::808:808", false, false));
+    check("F869: still allows 2001:4860::8888 (not Teredo)", check_destination_acl_ex("2001:4860::8888", false, false));
+
+    /* Config: domain_strategy=ipv4_only */
+    char conf_path[] = "/tmp/xhttpd-f869-XXXXXX";
+    int cfd = mkstemp(conf_path);
+    const char *conf = "client=b831381d-6324-4d53-ad4f-8cda48b30811\ndomain_strategy=ipv4_only\n";
+    check("F869: write config", cfd >= 0 && write(cfd, conf, strlen(conf)) == (ssize_t)strlen(conf));
+    close(cfd);
+    xhttpd_config_t *lc = (xhttpd_config_t *)calloc(1, sizeof(*lc));
+    check("F869: domain_strategy=ipv4_only parsed", load_config_file(conf_path, lc) == 0 && lc->ipv4_only);
+    unlink(conf_path);
+    free(lc);
+
+    /* AAAA fallback through the FIRC DNS proxy */
+    uint16_t dns_port = 0;
+    fake_dns_ctx_t dctx = { .fd = bind_loopback(AF_INET, SOCK_DGRAM, &dns_port), .stop = 0 };
+    pthread_t dth;
+    check("F869: fake DNS started", dctx.fd >= 0 && pthread_create(&dth, NULL, fake_dns_thread, &dctx) == 0);
+    char ip[64] = {0};
+    int rc = resolve_host_ip("v6only.test", EGRESS_MODE_ROUTER, "127.0.0.1", dns_port, false, false, ip, sizeof(ip));
+    check("F869: AAAA-only name resolves to IPv6", rc == 0 && strcmp(ip, "2606:4700:4700::1111") == 0);
+    memset(ip, 0, sizeof(ip));
+    rc = resolve_host_ip("dual.test", EGRESS_MODE_ROUTER, "127.0.0.1", dns_port, false, false, ip, sizeof(ip));
+    check("F869: dual-stack name keeps A first", rc == 0 && strcmp(ip, "1.1.1.1") == 0);
+    rc = resolve_host_ip("loop6.test", EGRESS_MODE_ROUTER, "127.0.0.1", dns_port, false, false, ip, sizeof(ip));
+    check("F869: AAAA answer ::1 still goes through ACL", rc != 0);
+    rc = resolve_host_ip("v6only.test", EGRESS_MODE_ROUTER, "127.0.0.1", dns_port, false, true, ip, sizeof(ip));
+    check("F869: ipv4_only skips AAAA", rc != 0);
+
+    /* SOCKS egress: IPv6 target goes out as ATYP 4 */
+    {
+        socks_atyp_probe_t sp;
+        memset(&sp, 0, sizeof(sp));
+        uint16_t sport = 0;
+        sp.lfd = bind_loopback(AF_INET, SOCK_STREAM, &sport);
+        pthread_t sth;
+        pthread_create(&sth, NULL, socks_atyp_probe_thread, &sp);
+        xhttpd_config_t scfg;
+        memset(&scfg, 0, sizeof(scfg));
+        scfg.egress_mode = EGRESS_MODE_SOCKS;
+        snprintf(scfg.socks_host, sizeof(scfg.socks_host), "127.0.0.1");
+        scfg.socks_port = sport;
+        int sfd = dial_target_tcp("2606:4700:4700::1111", 443, NULL, 0, &scfg, 2000);
+        pthread_join(sth, NULL);
+        uint8_t want[16];
+        inet_pton(AF_INET6, "2606:4700:4700::1111", want);
+        check("F869: SOCKS CONNECT to IPv6 uses ATYP 4", sfd >= 0 && sp.atyp == 0x04 && memcmp(sp.addr, want, 16) == 0);
+        if (sfd >= 0) close(sfd);
+        close(sp.lfd);
+    }
+
+    /* Dial over IPv6: literal (VLESS atyp 3) and AAAA-resolved name, TCP and UDP */
+    uint16_t tport = 0, uport = 0;
+    int tl = bind_loopback(AF_INET6, SOCK_STREAM, &tport);
+    int ul = bind_loopback(AF_INET6, SOCK_DGRAM, &uport);
+    if (tl < 0 || ul < 0) {
+        printf("SKIP: F869 IPv6 dial checks: no ::1 on this host (run under `unshare -rn` with lo up)\n");
+    } else {
+        xhttpd_config_t cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.egress_mode = EGRESS_MODE_ROUTER;
+        cfg.allow_private = true;
+        snprintf(cfg.dns_proxy_host, sizeof(cfg.dns_proxy_host), "127.0.0.1");
+        cfg.dns_proxy_port = dns_port;
+
+        int fd = dial_target_tcp("::1", tport, NULL, 0, &cfg, 2000);
+        int afd = (fd >= 0) ? accept(tl, NULL, NULL) : -1;
+        check("F869: TCP dial to IPv6 literal ::1", fd >= 0 && afd >= 0);
+        if (fd >= 0) close(fd);
+        if (afd >= 0) close(afd);
+
+        fd = dial_target_tcp("loop6.test", tport, NULL, 0, &cfg, 2000);
+        afd = (fd >= 0) ? accept(tl, NULL, NULL) : -1;
+        check("F869: TCP dial to AAAA-only name", fd >= 0 && afd >= 0);
+        if (fd >= 0) close(fd);
+        if (afd >= 0) close(afd);
+
+        udp_echo_ctx_t ectx = { .fd = ul, .stop = 0 };
+        pthread_t eth;
+        pthread_create(&eth, NULL, udp_echo_server_thread, &ectx);
+        udp_egress_t ue;
+        int ufd = dial_target_udp("::1", uport, &cfg, &ue);
+        uint8_t ubuf[64];
+        ssize_t un = -1;
+        if (ufd >= 0 && udp_egress_send(ufd, &ue, (const uint8_t *)"V6UDP", 5) == 5) {
+            struct pollfd upfd = { .fd = ufd, .events = POLLIN };
+            if (poll(&upfd, 1, 2000) > 0) un = udp_egress_recv(ufd, &ue, ubuf, sizeof(ubuf), 0);
+        }
+        check("F869: UDP echo over IPv6", un == 5 && memcmp(ubuf, "V6UDP", 5) == 0);
+        if (ufd >= 0) close(ufd);
+
+        /* Mux (XUDP) New frame with mux atyp 3 (IPv6) */
+        add_cfg_client(&cfg, 0, "b831381d-6324-4d53-ad4f-8cda48b30811");
+        cfg.num_clients = 1;
+        uint8_t body[128];
+        size_t bl = 0;
+        body[bl++] = 0x00;
+        memcpy(body + bl, cfg.clients[0].uuid, 16); bl += 16;
+        body[bl++] = 0x00;
+        body[bl++] = VLESS_CMD_MUX;
+        /* meta: sub_id, New, OptionData, net UDP, port, atyp 3, 16 bytes */
+        size_t mlen = 2 + 1 + 1 + 1 + 2 + 1 + 16;
+        body[bl++] = 0; body[bl++] = (uint8_t)mlen;
+        body[bl++] = 0; body[bl++] = 7;
+        body[bl++] = 0x01; body[bl++] = 0x01; body[bl++] = 0x02;
+        body[bl++] = (uint8_t)(uport >> 8); body[bl++] = (uint8_t)uport;
+        body[bl++] = 0x03;
+        inet_pton(AF_INET6, "::1", body + bl); bl += 16;
+        body[bl++] = 0; body[bl++] = 6;
+        memcpy(body + bl, "MUXV6!", 6); bl += 6;
+        uint8_t out[2048];
+        size_t got = invoke_vless_post_capture(&cfg, body, bl, out, sizeof(out));
+        check("F869: mux UDP New frame to IPv6 (atyp 3) echoed", memmem(out, got, "MUXV6!", 6) != NULL);
+
+        __atomic_store_n(&ectx.stop, 1, __ATOMIC_RELEASE);
+        pthread_join(eth, NULL);
+    }
+    if (tl >= 0) close(tl);
+    if (ul >= 0) close(ul);
+    __atomic_store_n(&dctx.stop, 1, __ATOMIC_RELEASE);
+    pthread_join(dth, NULL);
+    close(dctx.fd);
+}
+
+/* ---- F870/F863: stream-one slots, per-IP cap, mux revocation ---- */
+typedef struct {
+    int lfd;
+    int fds[256];
+    int n;
+    volatile int stop;
+} tcp_holder_t;
+
+/* Accepts and holds target connections open, never answers. */
+static void *tcp_holder_thread(void *arg) {
+    tcp_holder_t *h = (tcp_holder_t *)arg;
+    while (!__atomic_load_n(&h->stop, __ATOMIC_ACQUIRE)) {
+        struct pollfd p = { .fd = h->lfd, .events = POLLIN };
+        if (poll(&p, 1, 25) <= 0) continue;
+        int c = accept(h->lfd, NULL, NULL);
+        if (c >= 0 && h->n < 256) h->fds[h->n++] = c;
+        else if (c >= 0) close(c);
+    }
+    return NULL;
+}
+
+typedef struct {
+    const xhttpd_config_t *cfg;
+    uint8_t body[128];
+    size_t body_len;
+    char xff[64];
+    int sv[2];
+    volatile int done;
+} so_worker_t;
+
+static void *so_worker_thread(void *arg) {
+    so_worker_t *w = (so_worker_t *)arg;
+    http_req_t req;
+    memset(&req, 0, sizeof(req));
+    snprintf(req.method, sizeof(req.method), "POST");
+    snprintf(req.path, sizeof(req.path), "/cdn-bridge");
+    snprintf(req.peer_ip, sizeof(req.peer_ip), "127.0.0.1");
+    snprintf(req.xff, sizeof(req.xff), "%s", w->xff);
+    req.content_length = (int64_t)w->body_len;
+    req.body = w->body;
+    req.body_len = w->body_len;
+    conn_reader_t cr;
+    memset(&cr, 0, sizeof(cr));
+    cr.fd = w->sv[0];
+    handle_vless_http_request(w->sv[0], &cr, &req, "/cdn-bridge", w->cfg);
+    shutdown(w->sv[0], SHUT_RDWR);
+    __atomic_store_n(&w->done, 1, __ATOMIC_RELEASE);
+    return NULL;
+}
+
+static size_t build_vless_body(uint8_t *b, const uint8_t uuid[16], uint8_t cmd, uint16_t port) {
+    size_t n = 0;
+    b[n++] = 0x00;
+    memcpy(b + n, uuid, 16); n += 16;
+    b[n++] = 0x00;
+    b[n++] = cmd;
+    if (cmd == VLESS_CMD_MUX) return n;
+    b[n++] = (uint8_t)(port >> 8); b[n++] = (uint8_t)port;
+    b[n++] = VLESS_ADDR_IPV4;
+    b[n++] = 127; b[n++] = 0; b[n++] = 0; b[n++] = 1;
+    b[n++] = 'x';
+    return n;
+}
+
+/* Starts a stream-one in its own thread (512 KiB stack, as a real worker) and
+ * returns the HTTP status line code seen on the client side (200 = stream started). */
+static int start_so_worker(so_worker_t *w, pthread_t *th) {
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, w->sv) != 0) return -1;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 524288);
+    int prc = pthread_create(th, &attr, so_worker_thread, w);
+    pthread_attr_destroy(&attr);
+    if (prc != 0) return -1;
+    char hdr[64] = {0};
+    if (!recv_until_substr_ex(w->sv[1], "\r\n", hdr, sizeof(hdr), 3000)) return -1;
+    int code = -1;
+    (void)sscanf(hdr, "HTTP/1.1 %d", &code);
+    return code;
+}
+
+static bool wait_all_done(so_worker_t *ws, int n, int timeout_ms) {
+    uint64_t deadline = now_ms() + (uint64_t)timeout_ms;
+    for (;;) {
+        bool all = true;
+        for (int i = 0; i < n; i++) {
+            if (!__atomic_load_n(&ws[i].done, __ATOMIC_ACQUIRE)) { all = false; break; }
+        }
+        if (all) return true;
+        if (now_ms() >= deadline) return false;
+        usleep(10000);
+    }
+}
+
+static void test_f870_stream_one_limits_and_revocation(void) {
+    vless_engine_init();
+    uint16_t hport = 0;
+    tcp_holder_t holder;
+    memset(&holder, 0, sizeof(holder));
+    holder.lfd = bind_loopback(AF_INET, SOCK_STREAM, &hport);
+    listen(holder.lfd, 256);
+    pthread_t hth;
+    pthread_create(&hth, NULL, tcp_holder_thread, &holder);
+
+    xhttpd_config_t *cfg = (xhttpd_config_t *)calloc(1, sizeof(*cfg));
+    cfg->egress_mode = EGRESS_MODE_DIRECT;
+    cfg->allow_private = true;
+    cfg->idle_timeout_sec = 120;
+    cfg->max_sessions_per_ip = 512; /* what vlessserver writes */
+    snprintf(cfg->trusted_proxies[0], sizeof(cfg->trusted_proxies[0]), "127.0.0.1/32");
+    cfg->num_trusted_proxies = 1;
+    add_cfg_client(cfg, 0, "b831381d-6324-4d53-ad4f-8cda48b30811");
+    cfg->num_clients = 1;
+    xhttpd_config_t *empty = (xhttpd_config_t *)calloc(1, sizeof(*empty));
+
+    /* 1. 64 streams from one REALITY client (loopback peer + XFF) and 8 from another:
+     *    more than the old 64-slot table; the 65th from the first IP is refused. */
+    enum { NA = 64, NB = 8, NT = NA + NB };
+    so_worker_t *ws = (so_worker_t *)calloc(NT + 1, sizeof(*ws));
+    pthread_t *ths = (pthread_t *)calloc(NT + 1, sizeof(*ths));
+    int ok200 = 0;
+    for (int i = 0; i < NT; i++) {
+        ws[i].cfg = cfg;
+        ws[i].body_len = build_vless_body(ws[i].body, cfg->clients[0].uuid, VLESS_CMD_TCP, hport);
+        snprintf(ws[i].xff, sizeof(ws[i].xff), "%s", i < NA ? "198.51.100.10" : "198.51.100.20");
+        if (start_so_worker(&ws[i], &ths[i]) == 200) ok200++;
+    }
+    check("F870: 72 concurrent stream-one (64 + 8 from two IPs) all start", ok200 == NT);
+    ws[NT].cfg = cfg;
+    ws[NT].body_len = build_vless_body(ws[NT].body, cfg->clients[0].uuid, VLESS_CMD_TCP, hport);
+    snprintf(ws[NT].xff, sizeof(ws[NT].xff), "198.51.100.10");
+    int code = start_so_worker(&ws[NT], &ths[NT]);
+    check("F870: 65th stream-one from one client IP gets 429 (cap = workers/2)", code == 429);
+    pthread_join(ths[NT], NULL);
+    close(ws[NT].sv[1]);
+    close(ws[NT].sv[0]);
+
+    /* 2. Removing the client revokes every stream, including those past slot 64 */
+    uint64_t t0 = now_ms();
+    vless_engine_revoke_unauthorised(empty);
+    bool all_done = wait_all_done(ws, NT, 3000);
+    check("F870: client removal ends all 72 stream-one streams", all_done);
+    printf("INFO: F870 revocation of %d streams took %llu ms\n", NT, (unsigned long long)(now_ms() - t0));
+    if (all_done) {
+        for (int i = 0; i < NT; i++) {
+            pthread_join(ths[i], NULL);
+            close(ws[i].sv[0]);
+            close(ws[i].sv[1]);
+        }
+    }
+
+    /* 3. A lower configured max_sessions_per_ip applies to stream-one too */
+    cfg->max_sessions_per_ip = 2;
+    memset(ws, 0, sizeof(*ws) * 4);
+    int codes[4];
+    const char *ips[4] = { "203.0.113.5", "203.0.113.5", "203.0.113.5", "203.0.113.6" };
+    for (int i = 0; i < 4; i++) {
+        ws[i].cfg = cfg;
+        ws[i].body_len = build_vless_body(ws[i].body, cfg->clients[0].uuid, VLESS_CMD_TCP, hport);
+        snprintf(ws[i].xff, sizeof(ws[i].xff), "%s", ips[i]);
+        codes[i] = start_so_worker(&ws[i], &ths[i]);
+    }
+    check("F870: max_sessions_per_ip=2 admits two stream-one per IP, refuses the third",
+          codes[0] == 200 && codes[1] == 200 && codes[2] == 429 && codes[3] == 200);
+    vless_engine_revoke_unauthorised(empty);
+    check("F870: capped-IP streams revoked", wait_all_done(ws, 4, 3000));
+    for (int i = 0; i < 4; i++) {
+        pthread_join(ths[i], NULL);
+        close(ws[i].sv[0]);
+        close(ws[i].sv[1]);
+    }
+
+    /* 4. Mux (XUDP) stream-one: frames already queued must not keep running after
+     *    revocation. Five UDP frames to a sink that never answers cost 2 s each. */
+    uint16_t sink_port = 0;
+    int sink = bind_loopback(AF_INET, SOCK_DGRAM, &sink_port);
+    so_worker_t mw;
+    memset(&mw, 0, sizeof(mw));
+    mw.cfg = cfg;
+    mw.body_len = build_vless_body(mw.body, cfg->clients[0].uuid, VLESS_CMD_MUX, 0);
+    for (int f = 0; f < 5; f++) {
+        uint8_t *b = mw.body + mw.body_len;
+        b[0] = 0; b[1] = 12;                         /* meta len */
+        b[2] = 0; b[3] = (uint8_t)(f + 1);           /* sub id */
+        b[4] = 0x01; b[5] = 0x01; b[6] = 0x02;       /* New, OptionData, UDP */
+        b[7] = (uint8_t)(sink_port >> 8); b[8] = (uint8_t)sink_port;
+        b[9] = 0x01; b[10] = 127; b[11] = 0; b[12] = 0; b[13] = 1;
+        b[14] = 0; b[15] = 1; b[16] = 'q';
+        mw.body_len += 17;
+    }
+    snprintf(mw.xff, sizeof(mw.xff), "203.0.113.9");
+    pthread_t mth;
+    code = start_so_worker(&mw, &mth);
+    usleep(300000);
+    t0 = now_ms();
+    vless_engine_revoke_unauthorised(empty);
+    bool mux_done = wait_all_done(&mw, 1, 4000);
+    check("F870: mux stream-one stops within 1 s of client removal", code == 200 && mux_done && now_ms() - t0 < 1000);
+    pthread_join(mth, NULL);
+    close(mw.sv[0]);
+    close(mw.sv[1]);
+    close(sink);
+
+    __atomic_store_n(&holder.stop, 1, __ATOMIC_RELEASE);
+    pthread_join(hth, NULL);
+    for (int i = 0; i < holder.n; i++) close(holder.fds[i]);
+    close(holder.lfd);
+    free(ws);
+    free(ths);
+    free(cfg);
+    free(empty);
+}
+
+/* ---- F864: UDP in socks egress mode goes through SOCKS5 UDP ASSOCIATE ---- */
+typedef struct {
+    int lfd;
+    volatile int stop;
+    int assoc;           /* UDP ASSOCIATE requests served */
+    int ctrl_closed;     /* control connections the client closed */
+    int dgrams_ok;       /* client datagrams with RSV=0 FRAG=0 ATYP=1 */
+    uint16_t out_ports[16];
+    pthread_mutex_t mu;
+} socks_udp_relay_t;
+
+typedef struct {
+    socks_udp_relay_t *r;
+    int ctrl;
+} socks_udp_conn_t;
+
+static void *socks_udp_conn_thread(void *arg) {
+    socks_udp_conn_t *c = (socks_udp_conn_t *)arg;
+    socks_udp_relay_t *r = c->r;
+    uint8_t b[2048];
+    int ctrl = c->ctrl;
+    free(c);
+    if (recv(ctrl, b, 3, MSG_WAITALL) != 3 || write_all(ctrl, "\x05\x00", 2) < 0 ||
+        recv(ctrl, b, 10, MSG_WAITALL) != 10 || b[1] != 0x03) {
+        close(ctrl);
+        return NULL;
+    }
+    uint16_t uport = 0, oport = 0;
+    int ufd = bind_loopback(AF_INET, SOCK_DGRAM, &uport);
+    int ofd = bind_loopback(AF_INET, SOCK_DGRAM, &oport);
+    /* BND.ADDR 0.0.0.0: the client must fall back to the SOCKS server address */
+    uint8_t rep[10] = { 0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, (uint8_t)(uport >> 8), (uint8_t)uport };
+    write_all(ctrl, rep, sizeof(rep));
+    pthread_mutex_lock(&r->mu);
+    if (r->assoc < 16) r->out_ports[r->assoc] = oport;
+    r->assoc++;
+    pthread_mutex_unlock(&r->mu);
+    struct sockaddr_in cli;
+    socklen_t clen = 0;
+    while (!__atomic_load_n(&r->stop, __ATOMIC_ACQUIRE)) {
+        struct pollfd p[3] = { { .fd = ctrl, .events = POLLIN }, { .fd = ufd, .events = POLLIN }, { .fd = ofd, .events = POLLIN } };
+        if (poll(p, 3, 25) <= 0) continue;
+        if (p[0].revents) {
+            if (recv(ctrl, b, sizeof(b), 0) <= 0) {
+                pthread_mutex_lock(&r->mu);
+                r->ctrl_closed++;
+                pthread_mutex_unlock(&r->mu);
+                break;
+            }
+        }
+        if (p[1].revents & POLLIN) {
+            clen = sizeof(cli);
+            ssize_t n = recvfrom(ufd, b, sizeof(b), 0, (struct sockaddr *)&cli, &clen);
+            if (n > 10 && b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0x01) {
+                pthread_mutex_lock(&r->mu);
+                r->dgrams_ok++;
+                pthread_mutex_unlock(&r->mu);
+                struct sockaddr_in dst;
+                memset(&dst, 0, sizeof(dst));
+                dst.sin_family = AF_INET;
+                memcpy(&dst.sin_addr, b + 4, 4);
+                memcpy(&dst.sin_port, b + 8, 2);
+                sendto(ofd, b + 10, (size_t)n - 10, 0, (struct sockaddr *)&dst, sizeof(dst));
+            }
+        }
+        if ((p[2].revents & POLLIN) && clen > 0) {
+            struct sockaddr_in src;
+            socklen_t slen = sizeof(src);
+            uint8_t o[2048];
+            ssize_t n = recvfrom(ofd, o + 10, sizeof(o) - 10, 0, (struct sockaddr *)&src, &slen);
+            if (n > 0) {
+                o[0] = 0; o[1] = 0; o[3] = 0x01;
+                memcpy(o + 4, &src.sin_addr, 4);
+                memcpy(o + 8, &src.sin_port, 2);
+                uint8_t junk[14];
+                memcpy(junk, o, 10);
+                junk[2] = 0x01; /* FRAG=1: must be dropped by the client */
+                memcpy(junk + 10, "JUNK", 4);
+                sendto(ufd, junk, sizeof(junk), 0, (struct sockaddr *)&cli, clen);
+                o[2] = 0;
+                sendto(ufd, o, (size_t)n + 10, 0, (struct sockaddr *)&cli, clen);
+            }
+        }
+    }
+    close(ufd);
+    close(ofd);
+    close(ctrl);
+    return NULL;
+}
+
+static void *socks_udp_relay_thread(void *arg) {
+    socks_udp_relay_t *r = (socks_udp_relay_t *)arg;
+    while (!__atomic_load_n(&r->stop, __ATOMIC_ACQUIRE)) {
+        struct pollfd p = { .fd = r->lfd, .events = POLLIN };
+        if (poll(&p, 1, 25) <= 0) continue;
+        int c = accept(r->lfd, NULL, NULL);
+        if (c < 0) continue;
+        socks_udp_conn_t *ca = (socks_udp_conn_t *)malloc(sizeof(*ca));
+        ca->r = r;
+        ca->ctrl = c;
+        pthread_t th;
+        if (pthread_create(&th, NULL, socks_udp_conn_thread, ca) == 0) pthread_detach(th);
+        else { close(c); free(ca); }
+    }
+    return NULL;
+}
+
+typedef struct {
+    int fd;
+    volatile int stop;
+    uint16_t last_src_port;
+    int hits;
+} udp_prefix_echo_t;
+
+static void *udp_prefix_echo_thread(void *arg) {
+    udp_prefix_echo_t *e = (udp_prefix_echo_t *)arg;
+    uint8_t b[2048];
+    while (!__atomic_load_n(&e->stop, __ATOMIC_ACQUIRE)) {
+        struct pollfd p = { .fd = e->fd, .events = POLLIN };
+        if (poll(&p, 1, 25) <= 0) continue;
+        struct sockaddr_in src;
+        socklen_t sl = sizeof(src);
+        ssize_t n = recvfrom(e->fd, b + 2, sizeof(b) - 2, 0, (struct sockaddr *)&src, &sl);
+        if (n <= 0) continue;
+        __atomic_store_n(&e->last_src_port, ntohs(src.sin_port), __ATOMIC_RELEASE);
+        __atomic_add_fetch(&e->hits, 1, __ATOMIC_ACQ_REL);
+        b[0] = 'E'; b[1] = ':';
+        sendto(e->fd, b, (size_t)n + 2, 0, (struct sockaddr *)&src, sl);
+    }
+    return NULL;
+}
+
+static bool relay_owns_port(socks_udp_relay_t *r, uint16_t port) {
+    bool found = false;
+    pthread_mutex_lock(&r->mu);
+    for (int i = 0; i < r->assoc && i < 16; i++) {
+        if (r->out_ports[i] == port) found = true;
+    }
+    pthread_mutex_unlock(&r->mu);
+    return found;
+}
+
+static bool wait_ctrl_closed(socks_udp_relay_t *r, int want, int timeout_ms) {
+    uint64_t deadline = now_ms() + (uint64_t)timeout_ms;
+    while (now_ms() < deadline) {
+        pthread_mutex_lock(&r->mu);
+        int got = r->ctrl_closed;
+        pthread_mutex_unlock(&r->mu);
+        if (got >= want) return true;
+        usleep(10000);
+    }
+    return false;
+}
+
+static void test_f864_socks_udp_associate(void) {
+    socks_udp_relay_t relay;
+    memset(&relay, 0, sizeof(relay));
+    pthread_mutex_init(&relay.mu, NULL);
+    uint16_t sport = 0;
+    relay.lfd = bind_loopback(AF_INET, SOCK_STREAM, &sport);
+    pthread_t rth;
+    pthread_create(&rth, NULL, socks_udp_relay_thread, &relay);
+
+    uint16_t eport = 0;
+    udp_prefix_echo_t echo = { .fd = bind_loopback(AF_INET, SOCK_DGRAM, &eport), .stop = 0 };
+    pthread_t eth;
+    pthread_create(&eth, NULL, udp_prefix_echo_thread, &echo);
+
+    xhttpd_config_t *cfg = (xhttpd_config_t *)calloc(1, sizeof(*cfg));
+    cfg->egress_mode = EGRESS_MODE_SOCKS;
+    snprintf(cfg->socks_host, sizeof(cfg->socks_host), "127.0.0.1");
+    cfg->socks_port = sport;
+    cfg->allow_private = true; /* target is loopback; 127/8 is not "LAN", so it still goes via SOCKS */
+    cfg->max_sessions_per_ip = 16;
+    const char *uuid = "b831381d-6324-4d53-ad4f-8cda48b30811";
+    add_cfg_client(cfg, 0, uuid);
+    cfg->num_clients = 1;
+    rebuild_fp_credentials(cfg);
+    vless_engine_init();
+
+    /* 1. VLESS command UDP (stream-one) */
+    uint8_t body[128];
+    size_t bl = 0;
+    body[bl++] = 0x00;
+    memcpy(body + bl, cfg->clients[0].uuid, 16); bl += 16;
+    body[bl++] = 0x00;
+    body[bl++] = VLESS_CMD_UDP;
+    body[bl++] = (uint8_t)(eport >> 8); body[bl++] = (uint8_t)eport;
+    body[bl++] = VLESS_ADDR_IPV4;
+    body[bl++] = 127; body[bl++] = 0; body[bl++] = 0; body[bl++] = 1;
+    body[bl++] = 0; body[bl++] = 4;
+    memcpy(body + bl, "ping", 4); bl += 4;
+    uint8_t out[4096];
+    size_t got = invoke_vless_post_capture(cfg, body, bl, out, sizeof(out));
+    check("F864: VLESS UDP reply comes back through SOCKS relay",
+          memmem(out, got, "E:ping", 6) != NULL && relay_owns_port(&relay, __atomic_load_n(&echo.last_src_port, __ATOMIC_ACQUIRE)));
+    check("F864: fragmented SOCKS UDP datagram is dropped", memmem(out, got, "JUNK", 4) == NULL);
+    pthread_mutex_lock(&relay.mu);
+    int dgrams_ok = relay.dgrams_ok;
+    pthread_mutex_unlock(&relay.mu);
+    check("F864: datagram to relay carries RSV/FRAG=0/ATYP header", dgrams_ok >= 1);
+    check("F864: control connection closed when the UDP stream ends", wait_ctrl_closed(&relay, 1, 3000));
+
+    /* 2. Mux (XUDP) UDP sub-session */
+    bl = 0;
+    body[bl++] = 0x00;
+    memcpy(body + bl, cfg->clients[0].uuid, 16); bl += 16;
+    body[bl++] = 0x00;
+    body[bl++] = VLESS_CMD_MUX;
+    body[bl++] = 0; body[bl++] = 12;
+    body[bl++] = 0; body[bl++] = 3;
+    body[bl++] = 0x01; body[bl++] = 0x01; body[bl++] = 0x02;
+    body[bl++] = (uint8_t)(eport >> 8); body[bl++] = (uint8_t)eport;
+    body[bl++] = 0x01; body[bl++] = 127; body[bl++] = 0; body[bl++] = 0; body[bl++] = 1;
+    body[bl++] = 0; body[bl++] = 3;
+    memcpy(body + bl, "mux", 3); bl += 3;
+    int hits_before = __atomic_load_n(&echo.hits, __ATOMIC_ACQUIRE);
+    got = invoke_vless_post_capture(cfg, body, bl, out, sizeof(out));
+    check("F864: mux UDP reply comes back through SOCKS relay",
+          memmem(out, got, "E:mux", 5) != NULL && __atomic_load_n(&echo.hits, __ATOMIC_ACQUIRE) > hits_before &&
+          relay_owns_port(&relay, __atomic_load_n(&echo.last_src_port, __ATOMIC_ACQUIRE)));
+    check("F864: mux control connection closed", wait_ctrl_closed(&relay, 2, 3000));
+
+    /* 3. FiniteProto udp:// session */
+    fp_engine_init();
+    fp_engine_revoke_unauthorised(cfg);
+    char target[64];
+    snprintf(target, sizeof(target), "udp://127.0.0.1:%u", eport);
+    uint8_t raw[4096];
+    uint8_t osid[16] = { 0xB1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    uint32_t nseq = 1;
+    ssize_t rn = run_fp_rpc_local(cfg, uuid, FP_OP_OPEN, osid, 0, 0, 0, (const uint8_t *)target, strlen(target), nseq++, raw, sizeof(raw));
+    uint8_t st = 255, sid[16] = {0};
+    uint64_t down_end = 0;
+    const uint8_t *pl = NULL;
+    (void)extract_fp_body(raw, rn, &st, sid, &down_end, &pl);
+    const uint8_t frame[] = { 0x00, 0x02, 'f', 'p' };
+    rn = run_fp_rpc_local(cfg, uuid, FP_OP_UP, sid, 0, 0, 0, frame, sizeof(frame), nseq++, raw, sizeof(raw));
+    uint8_t rx[256];
+    size_t rx_len = 0;
+    uint64_t down_cur = 0;
+    for (int tries = 0; tries < 40 && rx_len < 6; tries++) {
+        rn = run_fp_rpc_local(cfg, uuid, FP_OP_DOWN, sid, 0, down_cur, down_cur, NULL, 0, nseq++, raw, sizeof(raw));
+        size_t pgot = extract_fp_body(raw, rn, &st, NULL, &down_end, &pl);
+        if (pgot > 0 && down_end > down_cur && rx_len + pgot <= sizeof(rx)) {
+            memcpy(rx + rx_len, pl, pgot);
+            rx_len += pgot;
+            down_cur = down_end;
+        } else {
+            usleep(20000);
+        }
+    }
+    check("F864: FiniteProto UDP reply comes back through SOCKS relay (fragment dropped)",
+          rx_len == 6 && memcmp(rx, "\x00\x04" "E:fp", 6) == 0 &&
+          relay_owns_port(&relay, __atomic_load_n(&echo.last_src_port, __ATOMIC_ACQUIRE)));
+    run_fp_rpc_local(cfg, uuid, FP_OP_CLOSE, sid, 0, 0, 0, NULL, 0, nseq++, raw, sizeof(raw));
+    check("F864: FiniteProto close releases the control connection", wait_ctrl_closed(&relay, 3, 3000));
+
+    __atomic_store_n(&echo.stop, 1, __ATOMIC_RELEASE);
+    __atomic_store_n(&relay.stop, 1, __ATOMIC_RELEASE);
+    pthread_join(eth, NULL);
+    pthread_join(rth, NULL);
+    usleep(50000);
+    close(echo.fd);
+    close(relay.lfd);
+    free(cfg);
+}
 #endif
 
 static void *suite_watchdog_thread(void *arg) {
@@ -3388,6 +4143,12 @@ int main(void) {
 #ifndef _WIN32
     printf(">>> Starting test_finiteproto_udp_over_tcp...\n");
     test_finiteproto_udp_over_tcp();
+    printf(">>> Starting test_f869_ipv6_egress...\n");
+    test_f869_ipv6_egress();
+    printf(">>> Starting test_f870_stream_one_limits_and_revocation...\n");
+    test_f870_stream_one_limits_and_revocation();
+    printf(">>> Starting test_f864_socks_udp_associate...\n");
+    test_f864_socks_udp_associate();
 #endif
 
     printf("\nSummary: %d passed, %d failed\n", g_pass, g_fail);

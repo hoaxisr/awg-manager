@@ -148,10 +148,20 @@ static int send_xhttp_stream_headers(int fd) {
     return write_all(fd, hdr, (size_t)n);
 }
 
-static int read_exact(int fd, uint8_t *buf, size_t len) {
+/* abort_flag (may be NULL): checked every 100 ms while waiting, so a revoked stream does
+ * not sit in a blocking read of the up pipe until the peer happens to close it. The wait
+ * itself stays unbounded as a blocking read() was: the 15 s deadline covers EAGAIN only. */
+static int read_exact(int fd, uint8_t *buf, size_t len, const bool *abort_flag) {
     size_t off = 0;
     uint64_t deadline = now_ms() + 15000ULL;
     while (off < len) {
+        if (abort_flag) {
+            if (__atomic_load_n(abort_flag, __ATOMIC_ACQUIRE)) return -1;
+            struct pollfd apfd = { .fd = fd, .events = POLLIN };
+            int apr = poll(&apfd, 1, 100);
+            if (apr < 0 && errno != EINTR) return -1;
+            if (apr <= 0) continue;
+        }
         ssize_t r = read(fd, buf + off, len - off);
         if (r == 0) return -1;
         if (r < 0) {
@@ -334,7 +344,7 @@ static void handle_vless_udp_stream(const vless_req_t *vreq, const uint8_t *init
         return;
     }
 
-    struct sockaddr_in dest;
+    udp_egress_t dest;
     int ufd = dial_target_udp(vreq->host, vreq->port, cfg, &dest);
     if (ufd < 0) {
         write_http_chunk(down_fd, vresp_hdr, 2);
@@ -348,7 +358,7 @@ static void handle_vless_udp_stream(const vless_req_t *vreq, const uint8_t *init
         if (pos + 2 + plen > initial_len) break;
         pos += 2;
         if (plen > 0) {
-            sendto(ufd, initial_buf + pos, plen, 0, (struct sockaddr *)&dest, sizeof(dest));
+            udp_egress_send(ufd, &dest, initial_buf + pos, plen);
         }
         pos += plen;
     }
@@ -369,6 +379,7 @@ static void handle_vless_udp_stream(const vless_req_t *vreq, const uint8_t *init
     uint8_t *pkt_buf = (uint8_t *)malloc(65536);
     if (!pkt_buf) {
         close(ufd);
+        udp_egress_close_ctrl(&dest);
         write_http_chunk(down_fd, vresp_hdr, 2);
         return;
     }
@@ -411,24 +422,24 @@ static void handle_vless_udp_stream(const vless_req_t *vreq, const uint8_t *init
 
         if (!up_eof && (pfds[0].revents & (POLLIN | POLLHUP | POLLERR))) {
             uint8_t lbuf[2];
-            if (read_exact(up_fd, lbuf, 2) < 0) {
+            if (read_exact(up_fd, lbuf, 2, abort_flag) < 0) {
                 up_eof = true;
                 last_io_ms = now_ms();
             } else {
                 uint16_t plen = ((uint16_t)lbuf[0] << 8) | lbuf[1];
                 if (plen > 0) {
-                    if (read_exact(up_fd, pkt_buf, plen) < 0) {
+                    if (read_exact(up_fd, pkt_buf, plen, abort_flag) < 0) {
                         up_eof = true;
                         last_io_ms = now_ms();
                     } else {
                         last_io_ms = now_ms();
-                        sendto(ufd, pkt_buf, plen, 0, (struct sockaddr *)&dest, sizeof(dest));
+                        udp_egress_send(ufd, &dest, pkt_buf, plen);
                     }
                 }
             }
         }
         if (pfds[1].revents & (POLLIN | POLLHUP | POLLERR)) {
-            ssize_t n = recv(ufd, pkt_buf + 4, 65500, 0);
+            ssize_t n = udp_egress_recv(ufd, &dest, pkt_buf + 4, 65500, 0);
             if (n > 0) {
                 last_io_ms = now_ms();
                 if (!vresp_sent) {
@@ -443,8 +454,8 @@ static void handle_vless_udp_stream(const vless_req_t *vreq, const uint8_t *init
                     pkt_buf[3] = (uint8_t)(n & 0xFF);
                     if (write_http_chunk(down_fd, pkt_buf + 2, (size_t)n + 2) < 0) { down_closed = true; break; }
                 }
-            } else {
-                break;
+            } else if (!(n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))) {
+                break; /* EAGAIN: a dropped SOCKS datagram, see udp_egress_recv */
             }
         }
     }
@@ -454,11 +465,13 @@ static void handle_vless_udp_stream(const vless_req_t *vreq, const uint8_t *init
         write_http_chunk(down_fd, vresp_hdr, 2);
     }
     close(ufd);
+    udp_egress_close_ctrl(&dest);
 }
 
 /* XUDP / Mux (0x03) handler for UDP DNS & TCP sub-sessions */
 static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_len,
-                                    int up_fd, int down_fd, const xhttpd_config_t *cfg) {
+                                    int up_fd, int down_fd, const xhttpd_config_t *cfg,
+                                    const bool *abort_flag) {
     int rfd = up_fd;
     bool vresp_sent = false;
     uint8_t vresp_hdr[2] = { 0x00, 0x00 };
@@ -476,7 +489,7 @@ static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_l
             _d += _take; \
             _rem -= _take; \
         } \
-        if (_rem > 0 && read_exact(rfd, _d, _rem) < 0) _rc = -1; \
+        if (_rem > 0 && read_exact(rfd, _d, _rem, abort_flag) < 0) _rc = -1; \
         _rc; \
     })
 
@@ -490,6 +503,8 @@ static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_l
     }
 
     while (1) {
+        /* Revocation stops the relay even for frames already buffered in the up pipe */
+        if (abort_flag && __atomic_load_n(abort_flag, __ATOMIC_ACQUIRE)) break;
         uint8_t mlen_buf[2];
         if (MUX_READ_EXACT(mlen_buf, 2) < 0) break;
         uint16_t mlen = ((uint16_t)mlen_buf[0] << 8) | mlen_buf[1];
@@ -527,6 +542,8 @@ static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_l
                     memcpy(host, meta + 9, dlen);
                     host[dlen] = '\0';
                 }
+            } else if (atyp == 3 && mlen >= 24) {
+                inet_ntop(AF_INET6, meta + 8, host, sizeof(host));
             }
             if (net_type == 0x02 /* UDP */) {
                 if (port == 443) {
@@ -536,25 +553,32 @@ static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_l
                     continue;
                 }
                 if (plen > 0 && host[0]) {
-                    struct sockaddr_in dest;
+                    udp_egress_t dest;
                     int ufd = dial_target_udp(host, port, cfg, &dest);
                     if (ufd >= 0) {
-                        sendto(ufd, payload, plen, 0, (struct sockaddr *)&dest, sizeof(dest));
+                        udp_egress_send(ufd, &dest, payload, plen);
                         struct pollfd upfd = { .fd = ufd, .events = POLLIN };
-                        if (poll(&upfd, 1, 2000) > 0) {
-                            uint8_t rbuf[4096];
-                            ssize_t rn = recv(ufd, rbuf + 8, sizeof(rbuf) - 8, 0);
-                            if (rn > 0) {
-                                rbuf[0] = 0x00; rbuf[1] = 0x04;
-                                rbuf[2] = (uint8_t)(sub_id >> 8); rbuf[3] = (uint8_t)sub_id;
-                                rbuf[4] = 0x02; /* Keep */
-                                rbuf[5] = 0x01; /* OptionData */
-                                rbuf[6] = (uint8_t)((rn >> 8) & 0xFF);
-                                rbuf[7] = (uint8_t)(rn & 0xFF);
-                                write_http_chunk(down_fd, rbuf, (size_t)rn + 8);
+                        /* Wait up to 2 s for one reply; a datagram udp_egress_recv drops
+                         * (fragmented SOCKS reply) does not end the wait */
+                        uint8_t rbuf[4096];
+                        ssize_t rn = -1;
+                        for (int waited = 0; waited < 2000 && rn <= 0; waited += 100) {
+                            if (abort_flag && __atomic_load_n(abort_flag, __ATOMIC_ACQUIRE)) break;
+                            if (poll(&upfd, 1, 100) > 0) {
+                                rn = udp_egress_recv(ufd, &dest, rbuf + 8, sizeof(rbuf) - 8, MSG_DONTWAIT);
                             }
                         }
+                        if (rn > 0) {
+                            rbuf[0] = 0x00; rbuf[1] = 0x04;
+                            rbuf[2] = (uint8_t)(sub_id >> 8); rbuf[3] = (uint8_t)sub_id;
+                            rbuf[4] = 0x02; /* Keep */
+                            rbuf[5] = 0x01; /* OptionData */
+                            rbuf[6] = (uint8_t)((rn >> 8) & 0xFF);
+                            rbuf[7] = (uint8_t)(rn & 0xFF);
+                            write_http_chunk(down_fd, rbuf, (size_t)rn + 8);
+                        }
                         close(ufd);
+                        udp_egress_close_ctrl(&dest);
                     }
                 }
             }
@@ -564,7 +588,7 @@ static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_l
     free(meta);
     free(payload);
 
-    if (!vresp_sent) {
+    if (!vresp_sent && !(abort_flag && __atomic_load_n(abort_flag, __ATOMIC_ACQUIRE))) {
         write_http_chunk(down_fd, vresp_hdr, 2);
     }
 }
@@ -574,7 +598,10 @@ static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_l
 #define MAX_PENDING_SEQ       32
 #define PRE_AUTH_MAX_PACKETS  4
 #define MAX_RECENT_SID_RING   64
-#define MAX_STREAM_ONE_SLOTS  64
+/* Every stream-one runs inside an HTTP worker, so one slot per worker means a live
+ * stream-one always has a slot and stays revocable. A full table (only reachable by
+ * calling the handler outside the worker pool) is refused with 503, never run unrevocable. */
+#define MAX_STREAM_ONE_SLOTS  MAX_HTTP_WORKERS
 
 typedef struct {
     bool     used;
@@ -618,6 +645,7 @@ typedef struct {
     uint8_t uuid[16];
     int     client_fd;
     bool    revoked;
+    char    client_ip[64];
 } stream_one_slot_t;
 
 typedef struct {
@@ -780,7 +808,7 @@ static void run_vless_stream(int up_fd, int down_fd, const xhttpd_config_t *cfg,
     } else if (vreq.command == VLESS_CMD_UDP) {
         handle_vless_udp_stream(&vreq, rem_ptr, rem_len, up_fd, down_fd, cfg, abort_flag, watch_down_eof);
     } else if (vreq.command == VLESS_CMD_MUX) {
-        handle_vless_mux_stream(rem_ptr, rem_len, up_fd, down_fd, cfg);
+        handle_vless_mux_stream(rem_ptr, rem_len, up_fd, down_fd, cfg, abort_flag);
     }
 }
 
@@ -995,6 +1023,26 @@ static void close_vless_session_locked(vless_session_t *s) {
     pthread_cond_broadcast(&s->cond);
 }
 
+/* Concurrent VLESS connections (sessions + stream-one) allowed per effective client IP.
+ * max_sessions_per_ip is clamped to half the worker pool: each such connection pins at
+ * least one HTTP worker, and since F854 every REALITY TCP connection is a stream-one, so
+ * without the clamp (vlessserver writes 512) one client IP could take all MAX_HTTP_WORKERS
+ * and starve CDN and every other client with 503. */
+static int vless_per_ip_conn_limit(const xhttpd_config_t *cfg) {
+    int lim = (cfg && cfg->max_sessions_per_ip > 0) ? cfg->max_sessions_per_ip : 16;
+    return lim < MAX_HTTP_WORKERS / 2 ? lim : MAX_HTTP_WORKERS / 2;
+}
+
+/* Caller holds g_vless_table_mu. */
+static int count_stream_one_for_ip_locked(const char *client_ip) {
+    int n = 0;
+    if (!client_ip || !client_ip[0]) return 0;
+    for (int i = 0; i < MAX_STREAM_ONE_SLOTS; i++) {
+        if (g_stream_one_slots[i].active && strcmp(g_stream_one_slots[i].client_ip, client_ip) == 0) n++;
+    }
+    return n;
+}
+
 /* err_code: 429 = rate/session cap, 503 = table full */
 static vless_session_t *get_or_create_vless_session(const char *sid, const char *client_ip,
                                                     bool creating_pre_auth_upload,
@@ -1030,8 +1078,8 @@ static vless_session_t *get_or_create_vless_session(const char *sid, const char 
         pthread_mutex_unlock(&cand->mu);
     }
 
-    int max_per_ip = (cfg && cfg->max_sessions_per_ip > 0) ? cfg->max_sessions_per_ip : 16;
-    if (ip_total >= max_per_ip) {
+    ip_total += count_stream_one_for_ip_locked(client_ip);
+    if (ip_total >= vless_per_ip_conn_limit(cfg)) {
         pthread_mutex_unlock(&g_vless_table_mu);
         if (err_code) *err_code = 429;
         return NULL;
@@ -1653,28 +1701,55 @@ int handle_vless_http_request(int client_fd, conn_reader_t *cr, const http_req_t
             !check_destination_acl_ex(vreq_one.host, cfg->allow_private, cfg->egress_mode == EGRESS_MODE_ROUTER)) {
             return send_http_error(client_fd, 403, "Forbidden", "destination forbidden", req->keep_alive);
         }
-        int spipe[2];
-        if (pipe(spipe) < 0) return -1;
-        if (send_xhttp_stream_headers(client_fd) < 0) {
-            close(spipe[0]);
-            close(spipe[1]);
-            return -1;
-        }
-
+        /* The slot is taken before the 200 goes out: no slot means no stream (revocation
+         * finds streams only through their slot), and the per-IP cap answers 429. */
         int slot_idx = -1;
+        bool over_ip_cap = false;
         pthread_mutex_lock(&g_vless_table_mu);
-        for (int i = 0; i < MAX_STREAM_ONE_SLOTS; i++) {
-            if (!g_stream_one_slots[i].active) {
-                slot_idx = i;
-                g_stream_one_slots[i].active = true;
-                __atomic_store_n(&g_stream_one_slots[i].revoked, false, __ATOMIC_RELEASE);
-                g_stream_one_slots[i].client_fd = client_fd;
-                memcpy(g_stream_one_slots[i].uuid, vreq_one.uuid, 16);
-                break;
+        int ip_conns = count_stream_one_for_ip_locked(client_ip);
+        for (int i = 0; i < MAX_VLESS_SESSIONS; i++) {
+            vless_session_t *cand = &g_vless_sessions[i];
+            pthread_mutex_lock(&cand->mu);
+            if (cand->active && !cand->closed && strcmp(cand->client_ip, client_ip) == 0) ip_conns++;
+            pthread_mutex_unlock(&cand->mu);
+        }
+        if (ip_conns >= vless_per_ip_conn_limit(cfg)) {
+            over_ip_cap = true;
+        } else {
+            for (int i = 0; i < MAX_STREAM_ONE_SLOTS; i++) {
+                if (!g_stream_one_slots[i].active) {
+                    slot_idx = i;
+                    g_stream_one_slots[i].active = true;
+                    __atomic_store_n(&g_stream_one_slots[i].revoked, false, __ATOMIC_RELEASE);
+                    g_stream_one_slots[i].client_fd = client_fd;
+                    memcpy(g_stream_one_slots[i].uuid, vreq_one.uuid, 16);
+                    snprintf(g_stream_one_slots[i].client_ip, sizeof(g_stream_one_slots[i].client_ip), "%s", client_ip);
+                    break;
+                }
             }
         }
         pthread_mutex_unlock(&g_vless_table_mu);
-        const bool *abort_ptr = (slot_idx >= 0) ? &g_stream_one_slots[slot_idx].revoked : NULL;
+        /* -1 closes the connection: the rest of a duplex (chunked) body must not be parsed
+         * as the next request */
+        if (over_ip_cap) {
+            (void)send_http_error(client_fd, 429, "Too Many Requests", "per-ip connection limit", false);
+            return -1;
+        }
+        if (slot_idx < 0) {
+            (void)send_http_error(client_fd, 503, "Service Unavailable", "stream limit", false);
+            return -1;
+        }
+        const bool *abort_ptr = &g_stream_one_slots[slot_idx].revoked;
+
+        int spipe[2] = { -1, -1 };
+        if (pipe(spipe) < 0 || send_xhttp_stream_headers(client_fd) < 0) {
+            if (spipe[0] >= 0) { close(spipe[0]); close(spipe[1]); }
+            pthread_mutex_lock(&g_vless_table_mu);
+            g_stream_one_slots[slot_idx].active = false;
+            g_stream_one_slots[slot_idx].client_fd = -1;
+            pthread_mutex_unlock(&g_vless_table_mu);
+            return -1;
+        }
 
         bool spawned_feed = false;
         pthread_t feed_tid;
@@ -1708,13 +1783,11 @@ int handle_vless_http_request(int client_fd, conn_reader_t *cr, const http_req_t
             shutdown(client_fd, SHUT_RD);
             pthread_join(feed_tid, NULL);
         }
-        bool was_revoked = (slot_idx >= 0) ? __atomic_load_n(&g_stream_one_slots[slot_idx].revoked, __ATOMIC_ACQUIRE) : false;
-        if (slot_idx >= 0) {
-            pthread_mutex_lock(&g_vless_table_mu);
-            g_stream_one_slots[slot_idx].active = false;
-            g_stream_one_slots[slot_idx].client_fd = -1;
-            pthread_mutex_unlock(&g_vless_table_mu);
-        }
+        bool was_revoked = __atomic_load_n(&g_stream_one_slots[slot_idx].revoked, __ATOMIC_ACQUIRE);
+        pthread_mutex_lock(&g_vless_table_mu);
+        g_stream_one_slots[slot_idx].active = false;
+        g_stream_one_slots[slot_idx].client_fd = -1;
+        pthread_mutex_unlock(&g_vless_table_mu);
         if (!was_revoked) {
             write_http_chunk_end(client_fd);
         }

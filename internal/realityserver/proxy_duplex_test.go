@@ -58,7 +58,7 @@ type duplexEnv struct {
 	outHdrs  []http.Header
 }
 
-func startDuplexEnv(t *testing.T) *duplexEnv {
+func startDuplexEnv(t *testing.T, opts ...func(*xhttpserver.Config)) *duplexEnv {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("awgm-xhttpd integration needs linux")
@@ -86,7 +86,7 @@ func startDuplexEnv(t *testing.T) *duplexEnv {
 		}
 	}()
 
-	c := xhttpserver.New(xhttpserver.Config{
+	cfg := xhttpserver.Config{
 		ListenAddr:     "127.0.0.1:0",
 		BinaryPath:     xhttptest.RequireCXHTTPDBinary(t),
 		ConfigPath:     t.TempDir() + "/awgm-xhttpd.conf",
@@ -94,7 +94,11 @@ func startDuplexEnv(t *testing.T) *duplexEnv {
 		Clients:        []string{duplexUUID},
 		TrustedProxies: []string{"127.0.0.1/32"},
 		Egress:         xhttpserver.EgressConfig{Mode: "direct", AllowPrivateDestinations: true},
-	})
+	}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	c := xhttpserver.New(cfg)
 	if err := c.Start(); err != nil {
 		t.Fatalf("awgm-xhttpd start: %v", err)
 	}
@@ -366,7 +370,9 @@ func (e *duplexEnv) assertForwardedReplaced(t *testing.T) {
 
 // Замер: 50 одновременных stream-one сессий через прокси.
 func TestDuplexProxy_Measure50StreamOne(t *testing.T) {
-	e := startDuplexEnv(t)
+	// 50 stream-one с одного IP: лимит «на IP» как у vlessserver (512, в C режется
+	// до половины воркеров = 64); дефолт 16 отказал бы 17-му с 429.
+	e := startDuplexEnv(t, func(c *xhttpserver.Config) { c.MaxSessionsPerIP = 512 })
 	const n = 50
 	// прогрев одного соединения, чтобы базовая линия включала h2-conn
 	withTimeout(t, 10*time.Second, "warmup", func() error {

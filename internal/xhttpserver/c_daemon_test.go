@@ -486,3 +486,24 @@ func TestCDaemon_ReloadErrorHandling(t *testing.T) {
 		t.Fatalf("expected nil error on 200 OK, got %v", err)
 	}
 }
+
+func TestCDaemon_DomainStrategyRenderedForC(t *testing.T) {
+	u, _ := ParseUUID("11111111-2222-3333-4444-555555555555")
+	allowed := map[[16]byte]struct{}{u: {}}
+	render := func(ds string) string {
+		cfg := Config{ListenAddr: "127.0.0.1:9008", Egress: EgressConfig{DomainStrategy: ds}}
+		return renderCXHTTPDConfig(cfg, "127.0.0.1:9008", []string{"/cdn-bridge"}, allowed, nil)
+	}
+	if got := render(" IPv4_Only "); !strings.Contains(got, "\ndomain_strategy=ipv4_only\n") {
+		t.Fatalf("ipv4_only not rendered:\n%s", got)
+	}
+	if got := render("prefer_ipv4"); !strings.Contains(got, "\ndomain_strategy=prefer_ipv4\n") {
+		t.Fatalf("prefer_ipv4 not rendered:\n%s", got)
+	}
+	if got := render(""); strings.Contains(got, "domain_strategy=") {
+		t.Fatalf("empty strategy must not be rendered:\n%s", got)
+	}
+	if got := render("ipv4_only\nallow_private=1"); strings.Contains(got, "domain_strategy=") || strings.Contains(got, "allow_private=1") {
+		t.Fatalf("unknown strategy must be dropped, not injected:\n%s", got)
+	}
+}

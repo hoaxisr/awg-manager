@@ -10,6 +10,8 @@
 #include <stddef.h>
 #include <pthread.h>
 #include <time.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <netinet/in.h>
 #endif
 
@@ -47,6 +49,17 @@
 #define FP_MAX_GLOBAL_BUF    (16 * 1024 * 1024)
 #define FP_MAX_SESSIONS      512
 #define FP_POLL_WAIT_MS      100
+/* Not raised on purpose (F870). Resident cost of one busy worker, measured with
+ * gcc -O2 -fstack-usage on x86_64 (frames are dominated by fixed arrays; MIPS32 itself
+ * not measured, no cross toolchain at hand) and sizeof():
+ *   stack touched ~57 KiB of the 512 KiB reserve (client_conn_thread 19.2 KiB +
+ *   run_vless_stream 13.1 KiB + sniff_tls_sni 16.1 KiB + DNS/getaddrinfo path),
+ *   per-request config snapshot 112-116 KiB (sizeof(xhttpd_config_t), malloc'd and copied),
+ *   relay buffer 32 KiB (TCP) / 64 KiB (UDP) / 128 KiB (mux), stream-one feed thread
+ *   ~17 KiB more, plus kernel pipe and socket buffers.
+ * That is ~230 KiB user memory per worker, ~29 MiB at 128 before socket buffers: already
+ * a large share of a 128 MiB router. The per-IP cap in vless_xhttp.c keeps one client
+ * from taking the whole pool instead. */
 #define MAX_HTTP_WORKERS     128
 
 #define DEFAULT_STAGE2_ID    "stage2probe"
@@ -102,6 +115,7 @@ typedef struct {
     char           dns_proxy_host[64];
     uint16_t       dns_proxy_port;
     bool           allow_private;
+    bool           ipv4_only;   /* domain_strategy=ipv4_only: no AAAA fallback */
     int            idle_timeout_sec;
     int            max_sessions_per_ip;
     int            max_pre_auth_sessions;
@@ -147,9 +161,25 @@ void dnat_bump_generation(void);
 bool should_defer_dial_for_sniff(const char *host, uint16_t port, int egress_mode);
 int  sniff_tls_sni(const uint8_t *buf, size_t len, char *out_host, size_t out_sz);
 int  sniff_http_host(const uint8_t *buf, size_t len, char *out_host, size_t out_sz);
-int  resolve_host_ipv4(const char *host, int egress_mode, const char *dns_proxy_host, uint16_t dns_proxy_port, bool allow_private, char *out_ip, size_t out_sz);
+int  resolve_host_ip(const char *host, int egress_mode, const char *dns_proxy_host, uint16_t dns_proxy_port, bool allow_private, bool ipv4_only, char *out_ip, size_t out_sz);
 int  dial_target_tcp(const char *orig_host, uint16_t port, const uint8_t *first_chunk, size_t chunk_len, const xhttpd_config_t *cfg, int timeout_ms);
-int  dial_target_udp(const char *host, uint16_t port, const xhttpd_config_t *cfg, struct sockaddr_in *out_dest);
+
+/* UDP egress handle. Direct: datagrams go to dest as is. SOCKS (socks_ctrl_fd >= 0):
+ * dest is the UDP ASSOCIATE relay, every datagram carries socks_hdr (RFC 1928
+ * RSV/FRAG/ATYP/DST for the target), and the TCP control connection must stay open for
+ * the association lifetime: release it with udp_egress_close_ctrl() next to close(fd). */
+typedef struct {
+    struct sockaddr_storage dest;
+    socklen_t               dest_len;
+    int                     socks_ctrl_fd;
+    uint8_t                 socks_hdr[22];
+    uint8_t                 socks_hdr_len;
+} udp_egress_t;
+
+int     dial_target_udp(const char *host, uint16_t port, const xhttpd_config_t *cfg, udp_egress_t *out);
+ssize_t udp_egress_send(int fd, const udp_egress_t *e, const uint8_t *data, size_t len);
+ssize_t udp_egress_recv(int fd, const udp_egress_t *e, uint8_t *buf, size_t cap, int flags);
+void    udp_egress_close_ctrl(udp_egress_t *e);
 
 /* Buffered HTTP/1.1 reader for keep-alive connections */
 typedef struct {

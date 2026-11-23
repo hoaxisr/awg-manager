@@ -383,6 +383,13 @@ func renderCXHTTPDConfig(cfg Config, listenAddr string, prefixes []string, allow
 	fmt.Fprintf(&b, "dns_proxy_host=%s\n", dHost)
 	fmt.Fprintf(&b, "dns_proxy_port=%s\n", dPortStr)
 
+	// Known values only: the line goes into the line-based key=value C config,
+	// free text with a newline would inject foreign keys.
+	switch ds := strings.ToLower(strings.TrimSpace(cfg.Egress.DomainStrategy)); ds {
+	case "ipv4_only", "prefer_ipv4":
+		fmt.Fprintf(&b, "domain_strategy=%s\n", ds)
+	}
+
 	if cfg.Egress.AllowPrivateDestinations {
 		fmt.Fprintf(&b, "allow_private=1\n")
 	} else {

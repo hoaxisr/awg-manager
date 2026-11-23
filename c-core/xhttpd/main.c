@@ -857,6 +857,9 @@ int load_config_file(const char *path, xhttpd_config_t *cfg) {
             if (p >= 0 && p <= 65535) next->dns_proxy_port = (uint16_t)p;
         } else if (strcmp(k, "allow_private") == 0) {
             next->allow_private = (strcmp(v, "1") == 0 || strcasecmp(v, "true") == 0);
+        } else if (strcmp(k, "domain_strategy") == 0) {
+            /* prefer_ipv4 and empty behave as the default: A first, AAAA when the name has no A */
+            next->ipv4_only = (strcasecmp(v, "ipv4_only") == 0);
         } else if (strcmp(k, "idle_timeout_sec") == 0) {
             int t = atoi(v);
             if (t > 5) next->idle_timeout_sec = t;
