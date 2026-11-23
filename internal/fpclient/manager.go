@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/procnet"
 )
@@ -223,8 +224,10 @@ func (inst *runningInstance) stop() {
 	if inst.bridgeLn != nil {
 		_ = inst.bridgeLn.Close()
 	}
-	if inst.cmd != nil && inst.cmd.Process != nil {
-		_ = inst.cmd.Process.Kill()
+	// После Wait pid уже может принадлежать чужому процессу: Process.Kill
+	// это отсекал сам, а KillGroup бьёт по номеру — поэтому только живому.
+	if inst.isAlive() {
+		_ = childproc.KillGroup(inst.cmd.Process.Pid)
 	}
 	if inst.doneCh != nil {
 		select {
@@ -936,6 +939,9 @@ func startInstanceLocked(spec EndpointSpec) (*runningInstance, error) {
 		"-method", methodMode,
 	)
 	cmd.Stderr = stderrBuf
+	// Порядок важен: SetProcessGroup заменяет SysProcAttr целиком, а
+	// setParentDeath дописывает Pdeathsig в него.
+	childproc.SetProcessGroup(cmd)
 	setParentDeath(cmd)
 	cmd.Env = append(os.Environ(),
 		"FP_CLIENT_SECRET_HEX="+strings.ToLower(strings.TrimSpace(spec.FPSecretHex)),
