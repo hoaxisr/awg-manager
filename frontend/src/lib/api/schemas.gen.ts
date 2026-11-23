@@ -4327,6 +4327,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /uplink/switch": v.lazy(() => api_UplinkEntriesResponse),
 	"POST /warpscout/account/address": v.record(v.string(), v.unknown()),
 	"POST /warpscout/account/delete": v.record(v.string(), v.unknown()),
+	"POST /warpscout/account/import": v.record(v.string(), v.unknown()),
 	"POST /warpscout/account/license": v.record(v.string(), v.unknown()),
 	"POST /warpscout/account/register": v.record(v.string(), v.unknown()),
 	"POST /warpscout/apply": v.record(v.string(), v.unknown()),

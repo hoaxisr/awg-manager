@@ -22,6 +22,8 @@ const api = vi.hoisted(() => ({
 	warpscoutState: vi.fn(),
 	warpscoutTargets: vi.fn(),
 	warpscoutSaveConfig: vi.fn(),
+	warpscoutRegister: vi.fn(),
+	warpscoutImportAccount: vi.fn(),
 	warpscoutSetAddress: vi.fn(),
 	warpscoutFindJunkStart: vi.fn(),
 	warpscoutFindJunkStop: vi.fn(),
@@ -659,5 +661,91 @@ describe('WarpScoutTab', () => {
 
 		await waitFor(() => expect(api.warpscoutSaveConfig).toHaveBeenCalledTimes(1));
 		expect(api.warpscoutSaveConfig.mock.calls[0][0].autoRename).toBe(false);
+	});
+
+	it('allows importing an account from the CTA modal and calls warpscoutImportAccount', async () => {
+		const initial = state();
+		api.warpscoutImportAccount.mockResolvedValue({
+			id: 'imported-1234',
+			warpPlus: false,
+			accountType: 'imported',
+			hasToken: false,
+			imported: true,
+			addressV4: '172.16.0.2',
+			publicKey: 'pub-imp',
+			peerPublicKey: 'peer-1',
+			createdAt: '2026-11-23T10:00:00Z',
+		});
+		const view = await mount(initial);
+
+		const openBtn = await screen.findByRole('button', { name: 'Импорт / прокси' });
+		await fireEvent.click(openBtn);
+
+		const textarea = await waitFor(() => view.container.ownerDocument.querySelector<HTMLTextAreaElement>('#warp-import-raw')!);
+		await fireEvent.input(textarea, {
+			target: { value: '[Interface]\nPrivateKey = privkey\nAddress = 172.16.0.2/32\n' },
+		});
+
+		const submitBtn = await screen.findByRole('button', { name: 'Импортировать' });
+		await fireEvent.click(submitBtn);
+
+		await waitFor(() => expect(api.warpscoutImportAccount).toHaveBeenCalledTimes(1));
+		expect(api.warpscoutImportAccount).toHaveBeenCalledWith('[Interface]\nPrivateKey = privkey\nAddress = 172.16.0.2/32');
+	});
+
+	it('allows registering through custom proxyUrl and relayUrl options', async () => {
+		const initial = state();
+		api.warpscoutRegister.mockResolvedValue({
+			id: 'reg-1',
+			warpPlus: false,
+			accountType: 'free',
+			hasToken: true,
+			imported: false,
+			addressV4: '172.16.0.2',
+			publicKey: 'pub-reg',
+			peerPublicKey: 'peer-1',
+			createdAt: '2026-11-23T10:00:00Z',
+		});
+		const view = await mount(initial);
+
+		const openBtn = await screen.findByRole('button', { name: 'Импорт / прокси' });
+		await fireEvent.click(openBtn);
+
+		const proxyTabBtn = await screen.findByRole('button', { name: 'Прокси / Relay' });
+		await fireEvent.click(proxyTabBtn);
+
+		const proxyInput = await waitFor(() => view.container.ownerDocument.querySelector<HTMLInputElement>('#warp-proxy-url')!);
+		const relayInput = view.container.ownerDocument.querySelector<HTMLInputElement>('#warp-relay-url')!;
+		await fireEvent.input(proxyInput, { target: { value: 'socks5://127.0.0.1:1080' } });
+		await fireEvent.input(relayInput, { target: { value: 'https://warp-relay.example.com' } });
+
+		const regBtns = await screen.findAllByRole('button', { name: 'Зарегистрировать' });
+		const submitBtn = regBtns.at(-1)!;
+		await fireEvent.click(submitBtn);
+
+		await waitFor(() => expect(api.warpscoutRegister).toHaveBeenCalledTimes(1));
+		expect(api.warpscoutRegister).toHaveBeenCalledWith({
+			proxyUrl: 'socks5://127.0.0.1:1080',
+			relayUrl: 'https://warp-relay.example.com',
+		});
+	});
+
+	it('hides WARP+ license binding and shows no-token hint for imported tokenless account', async () => {
+		const base = acctState();
+		const initial: WarpScoutState = {
+			...base,
+			account: {
+				...base.account!,
+				id: 'imported-abc',
+				accountType: 'imported',
+				hasToken: false,
+				imported: true,
+			},
+		};
+		const { container } = await mount(initial);
+
+		await fireEvent.click(chip(container, 0));
+		await screen.findByText('Аккаунт импортирован из .conf без токена Cloudflare — привязка WARP+ недоступна.');
+		expect(container.querySelector('#warp-license')).toBeNull();
 	});
 });

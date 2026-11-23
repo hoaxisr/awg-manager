@@ -1272,8 +1272,8 @@ func TestService_RegisterFallbackAndKeyRotation(t *testing.T) {
 		Runner: &fakeRunner{},
 		WAN:    func(context.Context) (string, bool) { return "eth3", true },
 		HTTP:   func(string) (*http.Client, error) { return blockedClient, nil },
-		HTTPFallbacks: func(context.Context) []*http.Client {
-			return []*http.Client{srv.Client(), srv.Client()}
+		HTTPFallbacks: func(context.Context) []FallbackClient {
+			return []FallbackClient{{Client: srv.Client()}, {Client: srv.Client()}}
 		},
 	})
 	t.Cleanup(s.Stop)
@@ -2802,5 +2802,483 @@ func TestWatchedTunnels_RespectsModeAndEnabled(t *testing.T) {
 	got2 := s.WatchedTunnels()
 	if len(got2) != 2 || got2["system:Wireguard0"].State != WatchDegraded || got2["system:Wireguard0"].Message != "timeout" {
 		t.Fatalf("multi mode WatchedTunnels = %+v, want both active profiles", got2)
+	}
+}
+
+func TestRegisterWithOptions_RelayProxyBypassAndAltHost(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("custom relay and invalid relay rejection", func(t *testing.T) {
+		relayHits := 0
+		relaySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v0a4005/reg" {
+				t.Errorf("unexpected relay path: %s", r.URL.Path)
+			}
+			relayHits++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"id":"rel-1","token":"tok-rel","warp_enabled":true,"account":{"account_type":"free"},"config":{"client_id":"AQID","peers":[{"public_key":%q}],"interface":{"addresses":{"v4":"172.16.0.9"}}}}`, WarpPeerPublicKey)
+		}))
+		defer relaySrv.Close()
+
+		st, err := NewStore(t.TempDir(), plainCipher{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := New(Deps{
+			Store: st,
+			HTTP:  func(string) (*http.Client, error) { return relaySrv.Client(), nil },
+		})
+		t.Cleanup(s.Stop)
+
+		if _, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: "http://relay.example.com"}); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("expected ErrInvalidInput for non-local http relay, got %v", err)
+		}
+		acct, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: relaySrv.URL})
+		if err != nil {
+			t.Fatalf("RegisterWithOptions via relay failed: %v", err)
+		}
+		if relayHits != 1 || acct.ID != "rel-1" || !acct.HasToken || acct.Imported {
+			t.Fatalf("unexpected relay account: hits=%d acct=%+v", relayHits, acct)
+		}
+	})
+
+	t.Run("explicit proxyUrl skips direct WAN and fallbacks", func(t *testing.T) {
+		api := newFakeWarpAPI(t)
+		st, err := NewStore(t.TempDir(), plainCipher{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var gotProxyURL string
+		wanCalled := false
+		fbCalled := false
+		s := New(Deps{
+			Store: st,
+			HTTP: func(string) (*http.Client, error) {
+				wanCalled = true
+				return nil, errors.New("should not dial WAN")
+			},
+			HTTPFallbacks: func(context.Context) []FallbackClient {
+				fbCalled = true
+				return nil
+			},
+			HTTPProxyClient: func(u string) (*http.Client, error) {
+				gotProxyURL = u
+				return api.srv.Client(), nil
+			},
+		})
+		t.Cleanup(s.Stop)
+
+		acct, err := s.RegisterWithOptions(ctx, RegisterOptions{ProxyURL: "socks5://127.0.0.1:1080"})
+		if err != nil {
+			t.Fatalf("RegisterWithOptions via proxy failed: %v", err)
+		}
+		if gotProxyURL != "socks5://127.0.0.1:1080" || wanCalled || fbCalled || acct.ID != "dev-1" {
+			t.Fatalf("unexpected proxy behavior: url=%q wan=%v fb=%v acct=%+v", gotProxyURL, wanCalled, fbCalled, acct)
+		}
+	})
+
+	t.Run("direct TLS bypass recovers before fallbacks", func(t *testing.T) {
+		api := newFakeWarpAPI(t)
+		st, err := NewStore(t.TempDir(), plainCipher{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fbCalled := false
+		s := New(Deps{
+			Store: st,
+			HTTP: func(string) (*http.Client, error) {
+				return &http.Client{Transport: failRoundTripper{err: errors.New("tspu reset")}}, nil
+			},
+			HTTPDirectBypass: func(string) (*http.Client, error) {
+				return api.srv.Client(), nil
+			},
+			HTTPFallbacks: func(context.Context) []FallbackClient {
+				fbCalled = true
+				return nil
+			},
+		})
+		t.Cleanup(s.Stop)
+
+		acct, err := s.Register(ctx)
+		if err != nil {
+			t.Fatalf("Register with bypass failed: %v", err)
+		}
+		if fbCalled || acct.ID != "dev-1" {
+			t.Fatalf("expected bypass recovery without fallbacks, fb=%v acct=%+v", fbCalled, acct)
+		}
+	})
+
+	t.Run("fallback to alt host when primary fails", func(t *testing.T) {
+		primarySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer primarySrv.Close()
+
+		altSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"id":"alt-1","token":"tok-alt","warp_enabled":true,"account":{"account_type":"free"},"config":{"client_id":"AQID","peers":[{"public_key":%q}],"interface":{"addresses":{"v4":"172.16.0.2"}}}}`, WarpPeerPublicKey)
+		}))
+		defer altSrv.Close()
+
+		origPrimary, origAlt := cfAPIBase, cfAPIBaseAlt
+		cfAPIBase, cfAPIBaseAlt = primarySrv.URL, altSrv.URL
+		t.Cleanup(func() {
+			cfAPIBase, cfAPIBaseAlt = origPrimary, origAlt
+		})
+
+		st, err := NewStore(t.TempDir(), plainCipher{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := New(Deps{
+			Store: st,
+			HTTP:  func(string) (*http.Client, error) { return altSrv.Client(), nil },
+		})
+		t.Cleanup(s.Stop)
+
+		acct, err := s.Register(ctx)
+		if err != nil {
+			t.Fatalf("expected alt host recovery, got %v", err)
+		}
+		if acct.ID != "alt-1" {
+			t.Fatalf("expected alt-1 account, got %+v", acct)
+		}
+	})
+}
+
+func TestImportAccount_AndTokenlessGuards(t *testing.T) {
+	ctx := context.Background()
+	priv, _, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := NewStore(t.TempDir(), plainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	netCalled := false
+	s := New(Deps{
+		Store: st,
+		HTTP: func(string) (*http.Client, error) {
+			netCalled = true
+			return nil, errors.New("unexpected network call")
+		},
+	})
+	t.Cleanup(s.Stop)
+
+	conf := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 172.16.0.5/32\n[Peer]\nPublicKey = %s\n", priv, WarpPeerPublicKey)
+	acct, err := s.ImportAccount(ctx, conf)
+	if err != nil {
+		t.Fatalf("ImportAccount failed: %v", err)
+	}
+	if !acct.Imported || acct.HasToken || acct.Token != "" || !strings.HasPrefix(acct.ID, "imported-") {
+		t.Fatalf("unexpected imported account flags: %+v", acct)
+	}
+
+	if _, err := s.SetLicense(ctx, "lic-key"); !errors.Is(err, ErrInvalidInput) || netCalled {
+		t.Fatalf("expected SetLicense rejection without network call, err=%v netCalled=%v", err, netCalled)
+	}
+	if err := s.DeleteAccountLocal(ctx); err != nil || netCalled {
+		t.Fatalf("expected local-only delete for tokenless account, err=%v netCalled=%v", err, netCalled)
+	}
+	if s.d.Store.Account() != nil {
+		t.Fatal("expected account cleared after DeleteAccountLocal")
+	}
+
+	// С токеном SetLicense продолжает работать через Cloudflare API.
+	api := newFakeWarpAPI(t)
+	s2 := New(Deps{
+		Store: st,
+		HTTP:  func(string) (*http.Client, error) { return api.srv.Client(), nil },
+	})
+	t.Cleanup(s2.Stop)
+	jsonWithToken := fmt.Sprintf(`{"id":"tok-acc","token":"secret-tok","private_key":%q,"peer_public_key":%q,"address_v4":"172.16.0.2"}`, priv, WarpPeerPublicKey)
+	acct2, err := s2.ImportAccount(ctx, jsonWithToken)
+	if err != nil || !acct2.HasToken || !acct2.Imported {
+		t.Fatalf("expected tokened import, err=%v acct=%+v", err, acct2)
+	}
+	if _, err := s2.SetLicense(ctx, "valid-lic"); err != nil {
+		t.Fatalf("SetLicense on tokened import failed: %v", err)
+	}
+}
+
+func TestApply_OfflineReuseAccountAndSecondTunnelGuard(t *testing.T) {
+	ctx := context.Background()
+	priv, pub, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := NewStore(t.TempDir(), plainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tun := &fakeTunnels{refs: map[string]*TunnelRef{}}
+	s := New(Deps{
+		Store:   st,
+		Tunnels: tun,
+		HTTP: func(string) (*http.Client, error) {
+			return &http.Client{Transport: failRoundTripper{err: errors.New("TLS handshake timeout")}}, nil
+		},
+	})
+	t.Cleanup(s.Stop)
+
+	conf := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 172.16.0.2/32\n[Peer]\nPublicKey = %s\n", priv, WarpPeerPublicKey)
+	if _, err := s.ImportAccount(ctx, conf); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Автоматический fallback на основной аккаунт при создании первого туннеля в офлайне.
+	res1, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.9:2408",
+	})
+	if err != nil {
+		t.Fatalf("first offline Apply failed: %v", err)
+	}
+	if !res1.AccountReused || res1.Tunnel == nil {
+		t.Fatalf("expected AccountReused=true, got %+v", res1)
+	}
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, res1.Tunnel.ID)].LocalPublicKey = pub
+	tun.mu.Unlock()
+
+	// 2. Второй туннель на том же ключе отвергается как при fallback, так и при явном ReuseAccount.
+	if _, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.10:2408",
+	}); err == nil {
+		t.Fatal("expected error creating second tunnel on already-used key")
+	}
+	if _, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.10:2408", ReuseAccount: true,
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for explicit ReuseAccount on busy key, got %v", err)
+	}
+
+	// 3. После удаления первого туннеля сбой Tunnels.Create при повторном использовании
+	// основного аккаунта НЕ вызывает dropRegistration у Cloudflare.
+	tun.mu.Lock()
+	delete(tun.refs, key(TargetNative, res1.Tunnel.ID))
+	tun.mu.Unlock()
+	if _, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.11:2408", ReuseAccount: true,
+	}); err != nil {
+		t.Fatalf("ReuseAccount after first tunnel removed failed: %v", err)
+	}
+	tun.mu.Lock()
+	for id, ref := range tun.refs {
+		delete(tun.refs, id)
+		_ = ref
+	}
+	tun.createErr = errors.New("ndms fail")
+	tun.mu.Unlock()
+
+	api := newFakeWarpAPI(t)
+	sOnline := New(Deps{
+		Store:   st,
+		Tunnels: tun,
+		HTTP:    func(string) (*http.Client, error) { return api.srv.Client(), nil },
+	})
+	t.Cleanup(sOnline.Stop)
+	if err := st.SetAccount(&Account{ID: "keep-primary", Token: "tok-keep", PrivateKey: priv, PublicKey: pub, PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sOnline.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.12:2408", ReuseAccount: true,
+	}); err == nil {
+		t.Fatal("expected createErr failure")
+	}
+	time.Sleep(30 * time.Millisecond)
+	api.mu.Lock()
+	deleted := append([]string(nil), api.deleted...)
+	api.mu.Unlock()
+	if len(deleted) != 0 {
+		t.Fatalf("reused primary account must not be dropped on Create failure, deleted=%v", deleted)
+	}
+}
+
+func TestDoAccountOpWithBase_ClosesAllFallbacks(t *testing.T) {
+	ctx := context.Background()
+	st, err := NewStore(t.TempDir(), plainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	makeService := func(closed *[3]bool) *Service {
+		s := New(Deps{
+			Store: st,
+			HTTP: func(string) (*http.Client, error) {
+				return &http.Client{Transport: failRoundTripper{err: errors.New("wan blocked")}}, nil
+			},
+			HTTPFallbacks: func(context.Context) []FallbackClient {
+				return []FallbackClient{
+					{Client: &http.Client{Transport: failRoundTripper{err: errors.New("fb0")}}, Close: func() { closed[0] = true }},
+					{Client: &http.Client{Transport: failRoundTripper{err: errors.New("fb1")}}, Close: func() { closed[1] = true }},
+					{Client: &http.Client{Transport: failRoundTripper{err: errors.New("fb2")}}, Close: func() { closed[2] = true }},
+				}
+			},
+		})
+		t.Cleanup(s.Stop)
+		return s
+	}
+
+	// 1. Early success on fb0 still closes fb1 and fb2.
+	var closedEarly [3]bool
+	sEarly := makeService(&closedEarly)
+	if err := sEarly.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, _ string) error {
+		if closedEarly[0] {
+			return errors.New("closed before callback")
+		}
+		// Succeed when using fb0 (non-WAN client).
+		if hc.Transport != nil {
+			if _, ok := hc.Transport.(failRoundTripper); ok {
+				if err := hc.Transport.(failRoundTripper).err; err.Error() == "fb0" {
+					return nil
+				}
+			}
+		}
+		return errors.New("wan blocked")
+	}); err != nil {
+		t.Fatalf("early fallback success failed: %v", err)
+	}
+	if closedEarly != [3]bool{true, true, true} {
+		t.Fatalf("expected all fallbacks closed on early success, got %v", closedEarly)
+	}
+
+	// 2. All fail closes all fallbacks.
+	var closedAllFail [3]bool
+	sFail := makeService(&closedAllFail)
+	if err := sFail.doAccountOpWithBase(ctx, RegisterOptions{}, func(_ *http.Client, _ string) error {
+		return errors.New("network timeout")
+	}); err == nil {
+		t.Fatal("expected failure when all fallbacks fail")
+	}
+	if closedAllFail != [3]bool{true, true, true} {
+		t.Fatalf("expected all fallbacks closed on failure, got %v", closedAllFail)
+	}
+
+	// 3. Cancelled context still closes pre-created fallbacks.
+	var closedCancel [3]bool
+	sCancel := makeService(&closedCancel)
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	_ = sCancel.doAccountOpWithBase(cctx, RegisterOptions{}, func(_ *http.Client, _ string) error {
+		return errors.New("cancelled")
+	})
+	if closedCancel != [3]bool{true, true, true} {
+		t.Fatalf("expected all fallbacks closed on canceled context, got %v", closedCancel)
+	}
+}
+
+func TestRegisterWithOptions_CustomRelayDoesNotSendExistingToken(t *testing.T) {
+	ctx := context.Background()
+	priv, pub, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := NewStore(t.TempDir(), plainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAccount(&Account{
+		ID:            "existing-plus-id",
+		Token:         "sensitive-existing-token",
+		PrivateKey:    priv,
+		PublicKey:     pub,
+		PeerPublicKey: WarpPeerPublicKey,
+		AddressV4:     "172.16.0.2",
+		WarpPlus:      true,
+		HasToken:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotMethod, gotAuth, gotPath string
+	relaySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"id":"rel-new","token":"tok-rel-new","warp_enabled":true,"account":{"account_type":"free"},"config":{"client_id":"AQID","peers":[{"public_key":%q}],"interface":{"addresses":{"v4":"172.16.0.8"}}}}`, WarpPeerPublicKey)
+	}))
+	defer relaySrv.Close()
+
+	s := New(Deps{
+		Store: st,
+		HTTP:  func(string) (*http.Client, error) { return relaySrv.Client(), nil },
+	})
+	t.Cleanup(s.Stop)
+
+	acct, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: relaySrv.URL})
+	if err != nil {
+		t.Fatalf("RegisterWithOptions via relay failed: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/v0a4005/reg" || gotAuth != "" {
+		t.Fatalf("custom relay must register cleanly without sending existing token: method=%s path=%s auth=%q", gotMethod, gotPath, gotAuth)
+	}
+	if acct.ID != "rel-new" {
+		t.Fatalf("expected new relay account rel-new, got %+v", acct)
+	}
+}
+
+func TestApiDo_RejectsRedirectsAndDisallowedRelayIPs(t *testing.T) {
+	ctx := context.Background()
+	st, err := NewStore(t.TempDir(), plainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targetHits := 0
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer redirectTarget.Close()
+
+	redirSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL, http.StatusFound)
+	}))
+	defer redirSrv.Close()
+
+	err = apiDo(ctx, redirSrv.Client(), http.MethodPost, redirSrv.URL+"/reg", "tok-1", map[string]string{"key": "abc"}, nil)
+	var se *apiStatusError
+	if !errors.As(err, &se) || se.Code != http.StatusFound || targetHits != 0 {
+		t.Fatalf("expected non-followed 302 redirect error with 0 target hits, got err=%v targetHits=%d", err, targetHits)
+	}
+	if shouldRetryFallback(err) {
+		t.Fatal("302 redirect status should not retry fallbacks")
+	}
+
+	for _, badRelay := range []string{
+		"https://169.254.169.254",
+		"https://[fe80::1]:8443",
+		"https://0.0.0.0",
+		"https://[::ffff:169.254.169.254]",
+	} {
+		if _, nErr := NormalizeRelayBaseURL(badRelay); !errors.Is(nErr, ErrInvalidInput) {
+			t.Fatalf("NormalizeRelayBaseURL(%q) = %v, want ErrInvalidInput", badRelay, nErr)
+		}
+	}
+
+	fbCalled := false
+	s := New(Deps{
+		Store: st,
+		HTTPFallbacks: func(context.Context) []FallbackClient {
+			fbCalled = true
+			return nil
+		},
+		HTTPProxyClient: func(string) (*http.Client, error) {
+			return &http.Client{
+				Transport: failRoundTripper{err: errors.New(`dial socks5://alice:supersecret@127.0.0.1:1: connection refused`)},
+			}, nil
+		},
+	})
+	t.Cleanup(s.Stop)
+
+	_, regErr := s.RegisterWithOptions(ctx, RegisterOptions{ProxyURL: "socks5://alice:supersecret@127.0.0.1:1"})
+	if regErr == nil || fbCalled {
+		t.Fatalf("expected proxy error without fallback, err=%v fbCalled=%v", regErr, fbCalled)
+	}
+	if strings.Contains(regErr.Error(), "supersecret") {
+		t.Fatalf("proxy password leaked in RegisterWithOptions error: %v", regErr)
 	}
 }

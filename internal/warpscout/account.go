@@ -11,24 +11,182 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"strings"
 	"time"
 )
 
 // API Cloudflare WARP. Домен api.devices.cloudflare.com (v0a4005) не режется
 // ТСПУ на прямом WAN большинства провайдеров РФ в отличие от устаревшего
-// api.cloudflareclient.com; при блокировке и его Service перебирает резервные
-// выходы (локальный прокси / активные VPN-туннели).
+// api.cloudflareclient.com; при блокировке и его Service перебирает TLS-split,
+// резервные выходы (локальный прокси / активные VPN-туннели) и запасной хост.
 const (
 	apiBase       = "https://api.devices.cloudflare.com/v0a4005"
+	apiBaseAlt    = "https://api.cloudflareclient.com/v0a4005"
 	apiClientVer  = "a-6.11-2223"
 	apiUserAgent  = "okhttp/3.12.1"
 	apiMaxBody    = 64 << 10
 	apiReqTimeout = 15 * time.Second
 )
 
+// RegisterOptions — необязательные параметры ручной регистрации WARP через прокси или relay.
+type RegisterOptions struct {
+	ProxyURL string `json:"proxyUrl,omitempty"`
+	RelayURL string `json:"relayUrl,omitempty"`
+}
+
+// ErrDisallowedAddress возвращается при попытке подключиться к запрещённому IP
+// (link-local, multicast, unspecified), включая адреса после DNS-резолва.
+var ErrDisallowedAddress = errors.New("подключение к указанному адресу не допускается")
+
+// IsDisallowedIP запрещает link-local (включая metadata 169.254.169.254),
+// multicast и unspecified (0.0.0.0, ::) адреса.
+func IsDisallowedIP(addr netip.Addr) bool {
+	if !addr.IsValid() {
+		return false
+	}
+	addr = addr.WithZone("").Unmap()
+	return addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast() || addr.IsUnspecified()
+}
+
+// IsDisallowedLiteralIP запрещает link-local (включая metadata 169.254.169.254),
+// multicast и unspecified (0.0.0.0, ::) литеральные адреса.
+func IsDisallowedLiteralIP(host string) bool {
+	h := strings.TrimSpace(strings.Trim(host, "[]"))
+	if h == "" {
+		return false
+	}
+	addr, err := netip.ParseAddr(h)
+	if err != nil {
+		return false
+	}
+	return IsDisallowedIP(addr)
+}
+
+// RedactURLCredentials маскирует пароль или учётные данные в URL для безопасных ошибок и логов.
+func RedactURLCredentials(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if u, err := url.Parse(trimmed); err == nil && u.Scheme != "" {
+		if u.User != nil {
+			return u.Redacted()
+		}
+		return trimmed
+	}
+	if schemeEnd := strings.Index(trimmed, "://"); schemeEnd >= 0 {
+		authStart := schemeEnd + 3
+		rest := trimmed[authStart:]
+		authEnd := len(rest)
+		if idx := strings.IndexAny(rest, "/?#"); idx >= 0 {
+			authEnd = idx
+		}
+		if at := strings.LastIndex(rest[:authEnd], "@"); at >= 0 {
+			return trimmed[:authStart] + "***@" + rest[at+1:]
+		}
+	}
+	return trimmed
+}
+
+type maskedSentinelError struct {
+	msg       string
+	sentinels []error
+}
+
+func (e *maskedSentinelError) Error() string { return e.msg }
+
+func (e *maskedSentinelError) Is(target error) bool {
+	for _, s := range e.sentinels {
+		if errors.Is(s, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// SanitizeProxyError удаляет пароль и логин прокси из текста ошибки.
+func SanitizeProxyError(err error, rawProxyURL string) error {
+	if err == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(rawProxyURL)
+	redacted := RedactURLCredentials(trimmed)
+	msg := err.Error()
+	changed := false
+	if trimmed != "" && redacted != "" && trimmed != redacted && strings.Contains(msg, trimmed) {
+		msg = strings.ReplaceAll(msg, trimmed, redacted)
+		changed = true
+	}
+	if u, parseErr := url.Parse(trimmed); parseErr == nil && u.User != nil {
+		if pass, ok := u.User.Password(); ok && pass != "" && strings.Contains(msg, pass) {
+			msg = strings.ReplaceAll(msg, pass, "xxxxx")
+			changed = true
+		}
+		if user := u.User.Username(); user != "" && strings.Contains(msg, user+":") {
+			msg = strings.ReplaceAll(msg, user+":", "***:")
+			changed = true
+		}
+	}
+	if !changed {
+		return err
+	}
+	var sentinels []error
+	if errors.Is(err, ErrInvalidInput) {
+		sentinels = append(sentinels, ErrInvalidInput)
+	}
+	if errors.Is(err, ErrDisallowedAddress) {
+		sentinels = append(sentinels, ErrDisallowedAddress)
+	}
+	if len(sentinels) > 0 {
+		return &maskedSentinelError{msg: msg, sentinels: sentinels}
+	}
+	return errors.New(msg)
+}
+
+// NormalizeRelayBaseURL проверяет и нормализует пользовательский URL HTTP-relay для регистрации WARP.
+func NormalizeRelayBaseURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("%w: некорректный URL relay: %v", ErrInvalidInput, err)
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.TrimSpace(u.Host) == "" {
+		return "", fmt.Errorf("%w: укажите чистый URL relay без параметров и учётных данных", ErrInvalidInput)
+	}
+	scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
+	host := strings.ToLower(u.Hostname())
+	if IsDisallowedLiteralIP(host) {
+		return "", fmt.Errorf("%w: указанный IP-адрес relay не допускается", ErrInvalidInput)
+	}
+	switch scheme {
+	case "https":
+	case "http":
+		if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+			return "", fmt.Errorf("%w: для внешнего relay допустим только HTTPS", ErrInvalidInput)
+		}
+	default:
+		return "", fmt.Errorf("%w: relay URL должен начинаться с https://", ErrInvalidInput)
+	}
+	path := strings.TrimRight(u.Path, "/")
+	if path == "" || !strings.Contains(path, "/v0") {
+		path += "/v0a4005"
+	}
+	u.Scheme = scheme
+	u.Path = path
+	u.RawPath = ""
+	return u.String(), nil
+}
+
 // cfAPIBase переопределяется в модульных тестах.
-var cfAPIBase = apiBase
+var (
+	cfAPIBase    = apiBase
+	cfAPIBaseAlt = apiBaseAlt
+)
 
 // HTTPClientFactory отдаёт клиента с выходом через указанный WAN-интерфейс
 // (пустая строка — маршрут по умолчанию).
@@ -154,7 +312,14 @@ func apiDo(ctx context.Context, c *http.Client, method, url, token string, body 
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := c.Do(req)
+	if c == nil {
+		return errors.New("HTTP-клиент не настроен")
+	}
+	client := *c
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("Cloudflare API: %w", err)
 	}
@@ -189,19 +354,33 @@ func accountFromRegResp(r regResponse, priv, pub string) *Account {
 		PeerPublicKey: peer, AddressV4: v4, AddressV6: r.Config.Interface.Addresses.V6,
 		ClientID: r.Config.ClientID, AccountType: r.Account.AccountType,
 		WarpPlus: r.Account.isWarpPlus(), License: r.Account.License,
+		HasToken:  r.ID != "" && r.Token != "",
 		CreatedAt: time.Now().UTC(),
 	}
+}
+
+func resolveAPIBase(baseURL string) string {
+	b := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if b == "" {
+		return cfAPIBase
+	}
+	return b
 }
 
 // RegisterAccount регистрирует новую учётную запись WARP (POST /reg +
 // PATCH /reg/{id} {"warp_enabled": true}).
 func RegisterAccount(ctx context.Context, c *http.Client) (*Account, error) {
+	return registerAccountWithBase(ctx, c, cfAPIBase)
+}
+
+func registerAccountWithBase(ctx context.Context, c *http.Client, baseURL string) (*Account, error) {
+	base := resolveAPIBase(baseURL)
 	priv, pub, err := GenerateKeyPair()
 	if err != nil {
 		return nil, err
 	}
 	var r regResponse
-	if err := apiDo(ctx, c, http.MethodPost, cfAPIBase+"/reg", "", map[string]string{"key": pub}, &r); err != nil {
+	if err := apiDo(ctx, c, http.MethodPost, base+"/reg", "", map[string]string{"key": pub}, &r); err != nil {
 		return nil, err
 	}
 	if r.ID == "" || r.Token == "" {
@@ -209,7 +388,7 @@ func RegisterAccount(ctx context.Context, c *http.Client) (*Account, error) {
 	}
 	if !r.WarpEnabled {
 		var patched regResponse
-		if err := apiDo(ctx, c, http.MethodPatch, cfAPIBase+"/reg/"+r.ID, r.Token, map[string]bool{"warp_enabled": true}, &patched); err != nil {
+		if err := apiDo(ctx, c, http.MethodPatch, base+"/reg/"+r.ID, r.Token, map[string]bool{"warp_enabled": true}, &patched); err != nil {
 			return nil, err
 		}
 		if len(patched.Config.Peers) > 0 {
@@ -223,20 +402,26 @@ func RegisterAccount(ctx context.Context, c *http.Client) (*Account, error) {
 // RotateAccountKey меняет ключевую пару существующей регистрации WARP на месте
 // (PATCH /reg/{id} {"key": pub}), сохраняя привязанную лицензию WARP+ и слот.
 func RotateAccountKey(ctx context.Context, c *http.Client, existing *Account) (*Account, error) {
+	return rotateAccountKeyWithBase(ctx, c, existing, cfAPIBase)
+}
+
+func rotateAccountKeyWithBase(ctx context.Context, c *http.Client, existing *Account, baseURL string) (*Account, error) {
 	if existing == nil || existing.ID == "" || existing.Token == "" {
 		return nil, errors.New("нет существующей учётной записи для ротации ключа")
 	}
+	base := resolveAPIBase(baseURL)
 	priv, pub, err := GenerateKeyPair()
 	if err != nil {
 		return nil, err
 	}
 	var r regResponse
-	if err := apiDo(ctx, c, http.MethodPatch, cfAPIBase+"/reg/"+existing.ID, existing.Token, map[string]string{"key": pub}, &r); err != nil {
+	if err := apiDo(ctx, c, http.MethodPatch, base+"/reg/"+existing.ID, existing.Token, map[string]string{"key": pub}, &r); err != nil {
 		return nil, err
 	}
 	acct := accountFromRegResp(r, priv, pub)
 	acct.ID = existing.ID
 	acct.Token = existing.Token
+	acct.HasToken = existing.ID != "" && existing.Token != ""
 	if acct.License == "" {
 		acct.License = existing.License
 	}
@@ -252,11 +437,15 @@ func RotateAccountKey(ctx context.Context, c *http.Client, existing *Account) (*
 
 // ApplyLicense привязывает ключ WARP+ и возвращает обновлённые флаги.
 func ApplyLicense(ctx context.Context, c *http.Client, a *Account, license string) error {
+	return applyLicenseWithBase(ctx, c, a, license, cfAPIBase)
+}
+
+func applyLicenseWithBase(ctx context.Context, c *http.Client, a *Account, license, baseURL string) error {
 	license = strings.TrimSpace(license)
 	if license == "" {
 		return errors.New("пустой ключ лицензии")
 	}
-	url := cfAPIBase + "/reg/" + a.ID + "/account"
+	url := resolveAPIBase(baseURL) + "/reg/" + a.ID + "/account"
 	if err := apiDo(ctx, c, http.MethodPut, url, a.Token, map[string]string{"license": license}, nil); err != nil {
 		return err
 	}
@@ -272,5 +461,9 @@ func ApplyLicense(ctx context.Context, c *http.Client, a *Account, license strin
 
 // DeleteAccount снимает регистрацию (лучшее усилие).
 func DeleteAccount(ctx context.Context, c *http.Client, a *Account) error {
-	return apiDo(ctx, c, http.MethodDelete, cfAPIBase+"/reg/"+a.ID, a.Token, nil, nil)
+	return deleteAccountWithBase(ctx, c, a, cfAPIBase)
+}
+
+func deleteAccountWithBase(ctx context.Context, c *http.Client, a *Account, baseURL string) error {
+	return apiDo(ctx, c, http.MethodDelete, resolveAPIBase(baseURL)+"/reg/"+a.ID, a.Token, nil, nil)
 }

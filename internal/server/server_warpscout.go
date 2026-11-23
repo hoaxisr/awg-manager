@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"net/http"
 	"strconv"
 	"strings"
 
@@ -85,12 +84,14 @@ func (s *Server) buildWarpScout(h *routeHandlers) *api.WarpScoutHandler {
 		SupportsKernelAWG31: supportsKernelAWG31,
 	}
 	deps := warpscout.Deps{
-		Store:   store,
-		Runner:  &warpscout.BinaryRunner{},
-		Tunnels: ops,
-		Prober:  &warpscout.HTTPTraceProber{},
-		HTTP:    api.WarpHTTPClientFactory,
-		HTTPFallbacks: func(ctx context.Context) []*http.Client {
+		Store:            store,
+		Runner:           &warpscout.BinaryRunner{},
+		Tunnels:          ops,
+		Prober:           &warpscout.HTTPTraceProber{},
+		HTTP:             api.WarpHTTPClientFactory,
+		HTTPDirectBypass: api.WarpSplitTLSClientFactory,
+		HTTPProxyClient:  api.WarpProxyHTTPClient,
+		HTTPFallbacks: func(ctx context.Context) []warpscout.FallbackClient {
 			return api.WarpFallbackClients(ctx, s.deviceProxySvc, ops, s.downloadSvc)
 		},
 		Log: log,

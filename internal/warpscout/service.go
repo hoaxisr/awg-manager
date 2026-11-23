@@ -85,9 +85,15 @@ type Deps struct {
 	// UsedIPv4 — IPv4-адреса, уже занятые существующими туннелями и интерфейсами роутера.
 	UsedIPv4 func(ctx context.Context) []string
 	HTTP     HTTPClientFactory
+	// HTTPDirectBypass — прямой WAN-клиент с фрагментацией TLS ClientHello по SNI
+	// для пробивания ТСПУ при блокировке домена регистрации Cloudflare.
+	HTTPDirectBypass HTTPClientFactory
+	// HTTPProxyClient — фабрика одноразового клиента для ручной регистрации через
+	// указанный пользователем URL прокси (http/https/socks5/socks5h).
+	HTTPProxyClient func(proxyURL string) (*http.Client, error)
 	// HTTPFallbacks — резервные HTTP-клиенты (прокси/туннель) на случай
 	// блокировки API регистрации Cloudflare на прямом WAN.
-	HTTPFallbacks  func(ctx context.Context) []*http.Client
+	HTTPFallbacks  func(ctx context.Context) []FallbackClient
 	Bus            Publisher
 	OnWatchChanged func()
 	Log            Logger
@@ -99,6 +105,13 @@ type Deps struct {
 	SupportsKernelAWG31 func() bool
 	// Now/Sleep — для тестов.
 	Now func() time.Time
+}
+
+// FallbackClient связывает резервный HTTP-клиент с функцией освобождения
+// ресурсов (например, downloader.Lease.Close или CloseIdleConnections).
+type FallbackClient struct {
+	Client *http.Client
+	Close  func()
 }
 
 // ScanRequest — параметры ручного скана.
@@ -197,12 +210,17 @@ type ApplyRequest struct {
 	AWG             *AWGParams `json:"awg,omitempty"`
 	EnableAutopilot bool       `json:"enableAutopilot"`
 	Filters         *Filters   `json:"filters,omitempty"`
+	// ReuseAccount разрешает использовать основной аккаунт без обращения к
+	// Cloudflare API (офлайн/импортированная учётка), если его ключ ещё не
+	// занят другим WARP-туннелем.
+	ReuseAccount bool `json:"reuseAccount,omitempty"`
 }
 
 // ApplyResult — итог применения.
 type ApplyResult struct {
-	Tunnel    *TunnelRef `json:"tunnel"`
-	ProfileID string     `json:"profileId,omitempty"`
+	Tunnel        *TunnelRef `json:"tunnel"`
+	ProfileID     string     `json:"profileId,omitempty"`
+	AccountReused bool       `json:"accountReused,omitempty"`
 }
 
 // ExportRequest — собрать .conf для найденного эндпоинта без создания туннеля.
@@ -531,6 +549,27 @@ func (s *Service) httpClient(ctx context.Context) (*http.Client, error) {
 	return s.d.HTTP(iface)
 }
 
+func (s *Service) httpBypassClient(ctx context.Context) (*http.Client, error) {
+	if s.d.HTTPDirectBypass == nil {
+		return nil, errors.New("TLS-bypass HTTP-клиент не настроен")
+	}
+	iface := s.resolveScanIface(ctx, "")
+	return s.d.HTTPDirectBypass(iface)
+}
+
+func altAPIBaseFor(primaryBase string, opts RegisterOptions) string {
+	if strings.TrimSpace(opts.RelayURL) != "" {
+		return ""
+	}
+	if cfAPIBase != apiBase && cfAPIBaseAlt == apiBaseAlt {
+		return ""
+	}
+	if cfAPIBaseAlt == "" || cfAPIBaseAlt == primaryBase {
+		return ""
+	}
+	return cfAPIBaseAlt
+}
+
 func (s *Service) resolveScanIface(ctx context.Context, override string) string {
 	if v := sanitizeIfaceName(override); v != "" {
 		return v
@@ -543,33 +582,140 @@ func (s *Service) resolveScanIface(ctx context.Context, override string) string 
 }
 
 // doAccountOp выполняет запрос к Cloudflare API сначала напрямую через WAN, а
-// при сетевой блокировке ТСПУ перебирает резервные выходы (прокси/туннели).
+// при сетевой блокировке ТСПУ перебирает TLS-bypass, запасной хост и резервные выходы.
 func (s *Service) doAccountOp(ctx context.Context, fn func(*http.Client) error) error {
-	var firstErr error
-	if hc, err := s.httpClient(ctx); err == nil && hc != nil {
-		err = fn(hc)
-		if err == nil || !shouldRetryFallback(err) {
-			return err
-		}
-		firstErr = err
-	} else if err != nil {
-		firstErr = err
+	return s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, _ string) error {
+		return fn(hc)
+	})
+}
+
+func (s *Service) doAccountOpWithBase(ctx context.Context, opts RegisterOptions, fn func(*http.Client, string) error) error {
+	relayBase, err := NormalizeRelayBaseURL(opts.RelayURL)
+	if err != nil {
+		return err
 	}
+	primaryBase := cfAPIBase
+	if relayBase != "" {
+		primaryBase = relayBase
+	}
+	altBase := altAPIBaseFor(primaryBase, opts)
+
+	wrapUserDisallowed := func(e error) error {
+		if errors.Is(e, ErrDisallowedAddress) && !errors.Is(e, ErrInvalidInput) {
+			return fmt.Errorf("%w: %w", ErrInvalidInput, e)
+		}
+		return e
+	}
+	allowFallback := func(e error) bool {
+		if relayBase != "" && (errors.Is(e, ErrDisallowedAddress) || errors.Is(e, ErrInvalidInput)) {
+			return false
+		}
+		return shouldRetryFallback(e)
+	}
+
+	if proxyURL := strings.TrimSpace(opts.ProxyURL); proxyURL != "" {
+		if s.d.HTTPProxyClient == nil {
+			return errors.New("HTTP-клиент прокси не настроен")
+		}
+		phc, pErr := s.d.HTTPProxyClient(proxyURL)
+		if pErr != nil {
+			return SanitizeProxyError(pErr, proxyURL)
+		}
+		defer phc.CloseIdleConnections()
+		err := fn(phc, primaryBase)
+		if err != nil && altBase != "" {
+			var se *apiStatusError
+			if errors.As(err, &se) && shouldRetryFallback(err) {
+				err = fn(phc, altBase)
+			}
+		}
+		return SanitizeProxyError(wrapUserDisallowed(err), proxyURL)
+	}
+
+	var firstErr error
+	recordErr := func(e error) {
+		if firstErr == nil && e != nil {
+			firstErr = e
+		}
+	}
+
+	hc, hcErr := s.httpClient(ctx)
+	if hcErr == nil && hc != nil {
+		defer hc.CloseIdleConnections()
+		if err := fn(hc, primaryBase); err == nil || !allowFallback(err) {
+			if relayBase != "" {
+				err = wrapUserDisallowed(err)
+			}
+			return err
+		} else {
+			recordErr(err)
+		}
+	} else if hcErr != nil {
+		recordErr(hcErr)
+	}
+
+	var bypassHC *http.Client
+	if s.d.HTTPDirectBypass != nil {
+		if bhc, bErr := s.httpBypassClient(ctx); bErr == nil && bhc != nil {
+			bypassHC = bhc
+			defer bypassHC.CloseIdleConnections()
+			if err := fn(bypassHC, primaryBase); err == nil || !allowFallback(err) {
+				if relayBase != "" {
+					err = wrapUserDisallowed(err)
+				}
+				return err
+			} else {
+				recordErr(err)
+			}
+		}
+	}
+
+	if altBase != "" {
+		altClient := bypassHC
+		if altClient == nil {
+			altClient = hc
+		}
+		if altClient != nil {
+			if err := fn(altClient, altBase); err == nil || !allowFallback(err) {
+				if relayBase != "" {
+					err = wrapUserDisallowed(err)
+				}
+				return err
+			} else {
+				recordErr(err)
+			}
+		}
+	}
+
 	if s.d.HTTPFallbacks != nil {
-		for _, fb := range s.d.HTTPFallbacks(ctx) {
-			if fb == nil || ctx.Err() != nil {
+		fallbacks := s.d.HTTPFallbacks(ctx)
+		defer func() {
+			for _, fb := range fallbacks {
+				if fb.Close != nil {
+					fb.Close()
+				} else if fb.Client != nil {
+					fb.Client.CloseIdleConnections()
+				}
+			}
+		}()
+		for _, fb := range fallbacks {
+			if fb.Client == nil || ctx.Err() != nil {
 				continue
 			}
-			err := fn(fb)
-			if err == nil || !shouldRetryFallback(err) {
+			err := fn(fb.Client, primaryBase)
+			if err == nil || !allowFallback(err) {
+				if relayBase != "" {
+					err = wrapUserDisallowed(err)
+				}
 				return err
 			}
-			if firstErr == nil {
-				firstErr = err
-			}
+			recordErr(err)
 		}
 	}
 	if firstErr != nil {
+		if relayBase != "" {
+			return wrapUserDisallowed(firstErr)
+		}
 		return firstErr
 	}
 	return errors.New("HTTP-клиент не настроен")
@@ -577,14 +723,25 @@ func (s *Service) doAccountOp(ctx context.Context, fn func(*http.Client) error) 
 
 // Register регистрирует (или перевыпускает ключи) учётную запись WARP.
 func (s *Service) Register(ctx context.Context) (*Account, error) {
+	return s.RegisterWithOptions(ctx, RegisterOptions{})
+}
+
+// RegisterWithOptions регистрирует (или перевыпускает ключи) учётную запись WARP
+// с необязательными ручными параметрами прокси или HTTP-relay.
+func (s *Service) RegisterWithOptions(ctx context.Context, opts RegisterOptions) (*Account, error) {
+	if _, err := NormalizeRelayBaseURL(opts.RelayURL); err != nil {
+		return nil, err
+	}
+	opts.ProxyURL = strings.TrimSpace(opts.ProxyURL)
 	s.acctMu.Lock()
 	defer s.acctMu.Unlock()
 	old := s.d.Store.Account()
 	var acct *Account
 	var oldNotFound bool
-	err := s.doAccountOp(ctx, func(hc *http.Client) error {
-		if old != nil && old.ID != "" && old.Token != "" {
-			rotated, rotErr := RotateAccountKey(ctx, hc, old)
+	useCustomRelay := strings.TrimSpace(opts.RelayURL) != ""
+	err := s.doAccountOpWithBase(ctx, opts, func(hc *http.Client, base string) error {
+		if !useCustomRelay && old != nil && old.ID != "" && old.Token != "" {
+			rotated, rotErr := rotateAccountKeyWithBase(ctx, hc, old, base)
 			if rotErr == nil {
 				acct = rotated
 				return nil
@@ -597,7 +754,7 @@ func (s *Service) Register(ctx context.Context) (*Account, error) {
 			}
 			oldNotFound = true
 		}
-		fresh, regErr := RegisterAccount(ctx, hc)
+		fresh, regErr := registerAccountWithBase(ctx, hc, base)
 		if regErr != nil {
 			return regErr
 		}
@@ -613,17 +770,32 @@ func (s *Service) Register(ctx context.Context) (*Account, error) {
 	if err := s.d.Store.SetAccount(acct); err != nil {
 		return nil, err
 	}
-	if old != nil && old.ID != "" && old.ID != acct.ID && !oldNotFound {
+	if old != nil && old.ID != "" && old.Token != "" && old.ID != acct.ID && !oldNotFound {
 		s.dropRegistration(old)
 	}
 	s.logInfo("register", "warp", "Зарегистрирована учётная запись Cloudflare WARP")
 	return s.d.Store.Account(), nil
 }
 
+// ImportAccount импортирует готовую учётную запись WARP из JSON, TOML или WireGuard/AWG .conf.
+func (s *Service) ImportAccount(_ context.Context, raw string) (*Account, error) {
+	acct, err := ParseAccountImport(raw)
+	if err != nil {
+		return nil, err
+	}
+	s.acctMu.Lock()
+	defer s.acctMu.Unlock()
+	if err := s.d.Store.SetAccount(acct); err != nil {
+		return nil, err
+	}
+	s.logInfo("import", "warp", "Импортирована учётная запись Cloudflare WARP")
+	return s.d.Store.Account(), nil
+}
+
 // dropRegistration снимает регистрацию у Cloudflare лучшим усилием, в фоне,
 // под общим WaitGroup сервиса, чтобы Stop дожидался запроса.
 func (s *Service) dropRegistration(prev *Account) {
-	if prev == nil || prev.ID == "" || s.rootCtx.Err() != nil {
+	if prev == nil || prev.ID == "" || prev.Token == "" || s.rootCtx.Err() != nil {
 		return
 	}
 	s.wg.Add(1)
@@ -631,8 +803,8 @@ func (s *Service) dropRegistration(prev *Account) {
 		defer s.wg.Done()
 		dctx, cancel := context.WithTimeout(s.rootCtx, 20*time.Second)
 		defer cancel()
-		_ = s.doAccountOp(dctx, func(hc *http.Client) error {
-			return DeleteAccount(dctx, hc, prev)
+		_ = s.doAccountOpWithBase(dctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+			return deleteAccountWithBase(dctx, hc, prev, base)
 		})
 	}()
 }
@@ -646,8 +818,8 @@ func (s *Service) registerTunnelAccount(ctx context.Context, primary *Account) (
 	s.acctMu.Lock()
 	defer s.acctMu.Unlock()
 	var fresh *Account
-	if err := s.doAccountOp(ctx, func(hc *http.Client) error {
-		reg, err := RegisterAccount(ctx, hc)
+	if err := s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+		reg, err := registerAccountWithBase(ctx, hc, base)
 		if err != nil {
 			return err
 		}
@@ -657,13 +829,69 @@ func (s *Service) registerTunnelAccount(ctx context.Context, primary *Account) (
 		return nil, err
 	}
 	if primary != nil && primary.License != "" {
-		if err := s.doAccountOp(ctx, func(hc *http.Client) error {
-			return ApplyLicense(ctx, hc, fresh, primary.License)
+		if err := s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+			return applyLicenseWithBase(ctx, hc, fresh, primary.License, base)
 		}); err != nil {
 			s.logWarn("register", "warp", "Лицензия WARP+ к учётной записи туннеля не применена: "+err.Error())
 		}
 	}
 	return fresh, nil
+}
+
+func (s *Service) isStoredSlotAccount(a *Account) bool {
+	if a == nil {
+		return false
+	}
+	pub := strings.TrimSpace(a.PublicKey)
+	id := strings.TrimSpace(a.ID)
+	for _, slot := range []*Account{s.d.Store.Account(), s.d.Store.InnerAccount()} {
+		if slot == nil {
+			continue
+		}
+		if pub != "" && strings.TrimSpace(slot.PublicKey) == pub {
+			return true
+		}
+		if id != "" && strings.TrimSpace(slot.ID) == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) isAccountKeyInUse(ctx context.Context, pubKey string) (bool, string) {
+	pubKey = strings.TrimSpace(pubKey)
+	if pubKey == "" {
+		return false, ""
+	}
+	var aliveNames map[string]string
+	if s.d.Tunnels != nil {
+		if list, err := s.d.Tunnels.List(ctx); err == nil {
+			aliveNames = make(map[string]string, len(list))
+			for _, t := range list {
+				key := string(t.Mode) + ":" + t.ID
+				aliveNames[key] = t.Name
+				if strings.TrimSpace(t.LocalPublicKey) == pubKey {
+					return true, t.Name
+				}
+			}
+		}
+	}
+	for _, ta := range s.d.Store.TunnelAccounts() {
+		if strings.TrimSpace(ta.PublicKey) != pubKey {
+			continue
+		}
+		key := string(ta.TunnelMode) + ":" + ta.TunnelID
+		if aliveNames == nil {
+			return true, ta.TunnelID
+		}
+		if owner, ok := aliveNames[key]; ok {
+			if owner == "" {
+				owner = ta.TunnelID
+			}
+			return true, owner
+		}
+	}
+	return false, ""
 }
 
 // collectTunnelAccounts снимает учётные записи удалённых туннелей. Судит по
@@ -692,7 +920,11 @@ func (s *Service) collectTunnelAccounts(ctx context.Context) {
 		if err := s.d.Store.RemoveTunnelAccount(ta.PublicKey); err != nil {
 			continue
 		}
-		s.dropRegistration(&ta.Account)
+		// Если удалённый туннель создавался офлайн на ключе основного слота,
+		// сам слот в Store и его регистрацию у Cloudflare сохраняем.
+		if !s.isStoredSlotAccount(&ta.Account) {
+			s.dropRegistration(&ta.Account)
+		}
 	}
 }
 
@@ -704,8 +936,11 @@ func (s *Service) SetLicense(ctx context.Context, license string) (*Account, err
 	if acct == nil {
 		return nil, ErrNoAccount
 	}
-	if err := s.doAccountOp(ctx, func(hc *http.Client) error {
-		return ApplyLicense(ctx, hc, acct, license)
+	if acct.ID == "" || acct.Token == "" || !acct.HasToken {
+		return nil, fmt.Errorf("%w: импортированный аккаунт без токена Cloudflare не поддерживает привязку лицензии WARP+ — импортируйте JSON/TOML с токеном или перерегистрируйтесь", ErrInvalidInput)
+	}
+	if err := s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+		return applyLicenseWithBase(ctx, hc, acct, license, base)
 	}); err != nil {
 		return nil, err
 	}
@@ -747,14 +982,14 @@ func (s *Service) DeleteAccountLocal(ctx context.Context) error {
 		return err
 	}
 	_ = s.d.Store.SetInnerAccount(nil)
-	if acct != nil {
-		_ = s.doAccountOp(ctx, func(hc *http.Client) error {
-			return DeleteAccount(ctx, hc, acct)
+	if acct != nil && acct.ID != "" && acct.Token != "" {
+		_ = s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+			return deleteAccountWithBase(ctx, hc, acct, base)
 		})
 	}
-	if inner != nil {
-		_ = s.doAccountOp(ctx, func(hc *http.Client) error {
-			return DeleteAccount(ctx, hc, inner)
+	if inner != nil && inner.ID != "" && inner.Token != "" {
+		_ = s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+			return deleteAccountWithBase(ctx, hc, inner, base)
 		})
 	}
 	return nil
@@ -900,8 +1135,8 @@ func (s *Service) ensureDistinctAccount(ctx context.Context, routeIface string, 
 		}
 	}
 	if fresh == nil && (firstErr == nil || shouldRetryFallback(firstErr)) {
-		err := s.doAccountOp(ctx, func(hc *http.Client) error {
-			reg, rerr := RegisterAccount(ctx, hc)
+		err := s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+			reg, rerr := registerAccountWithBase(ctx, hc, base)
 			if rerr != nil {
 				return rerr
 			}
@@ -1448,6 +1683,7 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		return nil, err
 	}
 	var ref *TunnelRef
+	var accountReused bool
 	var createOpts CreateOptions
 	switch req.Action {
 	case "create":
@@ -1540,9 +1776,34 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 			addrV4 = s.pickNonCollidingIPv4(ctx, addrV4, outer.AddressV4)
 		}
 		s.collectTunnelAccounts(ctx)
-		tunAcct, err := s.registerTunnelAccount(ctx, acct)
-		if err != nil {
-			return nil, fmt.Errorf("учётная запись WARP для туннеля: %w", err)
+		var (
+			tunAcct       *Account
+			reusedPrimary bool
+		)
+		if req.ReuseAccount {
+			if acct.PrivateKey == "" {
+				return nil, ErrNoAccount
+			}
+			if inUse, owner := s.isAccountKeyInUse(ctx, acct.PublicKey); inUse {
+				return nil, fmt.Errorf("%w: ключ текущего аккаунта уже используется туннелем %q — для второго туннеля нужна отдельная регистрация или другой импорт", ErrInvalidInput, owner)
+			}
+			tunAcct = acct
+			reusedPrimary = true
+		} else {
+			regAcct, regErr := s.registerTunnelAccount(ctx, acct)
+			if regErr == nil {
+				tunAcct = regAcct
+			} else if shouldRetryFallback(regErr) && acct.PrivateKey != "" {
+				if inUse, owner := s.isAccountKeyInUse(ctx, acct.PublicKey); !inUse {
+					tunAcct = acct
+					reusedPrimary = true
+					s.logWarn("apply", name, "Cloudflare API недоступен — для первого туннеля использован сохранённый ключ основного аккаунта")
+				} else {
+					return nil, fmt.Errorf("учётная запись WARP для туннеля (основной ключ уже занят туннелем %q — импортируйте другой конфиг/JSON или укажите прокси): %w", owner, regErr)
+				}
+			} else {
+				return nil, fmt.Errorf("учётная запись WARP для туннеля: %w", regErr)
+			}
 		}
 		cfgAcct := *tunAcct
 		cfgAcct.AddressV4 = addrV4
@@ -1556,10 +1817,13 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		})
 		created, err := s.d.Tunnels.Create(ctx, req.Mode, name, conf, createOpts)
 		if err != nil {
-			s.dropRegistration(tunAcct)
+			if !reusedPrimary {
+				s.dropRegistration(tunAcct)
+			}
 			return nil, err
 		}
 		ref = created
+		accountReused = reusedPrimary
 		if err := s.d.Store.AddTunnelAccount(TunnelAccount{Account: *tunAcct, TunnelMode: created.Mode, TunnelID: created.ID}); err != nil {
 			// Туннель работает; не сохранена лишь запись, по которой
 			// регистрацию сняли бы после его удаления.
@@ -1617,7 +1881,7 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 	default:
 		return nil, fmt.Errorf("%w: action должен быть create или swap", ErrInvalidInput)
 	}
-	res := &ApplyResult{Tunnel: ref}
+	res := &ApplyResult{Tunnel: ref, AccountReused: accountReused}
 	if req.EnableAutopilot && ref != nil {
 		cfg := s.d.Store.Config()
 		filters := DefaultFilters()

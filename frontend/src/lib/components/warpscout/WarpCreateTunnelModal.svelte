@@ -121,6 +121,7 @@
 	let protocol = $state<WarpProtocol>(untrack(() => filters.protocol));
 	let obfSourceKey = $state('');
 	let autopilot = $state(false);
+	let reuseAccount = $state(false);
 	let applying = $state(false);
 
 	const selectedObf = $derived(
@@ -170,12 +171,15 @@
 				awg: protocol === 'awg' && selectedObf ? selectedObf.awg : undefined,
 				enableAutopilot,
 				filters: enableAutopilot ? { ...filters, protocol } : undefined,
+				reuseAccount: reuseAccount || undefined,
 			});
 			const created = res.tunnel?.name || res.tunnel?.id || name;
 			notifications.success(
-				enableAutopilot && res.profileId
-					? m.warpscout_created_with_auto({ name: created })
-					: m.warpscout_created_ok({ name: created }),
+				res.accountReused
+					? m.warpscout_created_reused_ok({ name: created })
+					: enableAutopilot && res.profileId
+						? m.warpscout_created_with_auto({ name: created })
+						: m.warpscout_created_ok({ name: created }),
 			);
 			onclose();
 			await ondone();
@@ -281,6 +285,13 @@
 			hint={autopilotLocked ? m.warpscout_autopilot_locked_hint() : ''}
 			disabled={autopilotLocked}
 			onchange={(v) => (autopilot = v)}
+		/>
+		<Toggle
+			checked={reuseAccount}
+			size="sm"
+			label={m.warpscout_reuse_acct_create()}
+			hint={m.warpscout_reuse_acct_hint()}
+			onchange={(v) => (reuseAccount = v)}
 		/>
 	</div>
 	{#snippet actions()}

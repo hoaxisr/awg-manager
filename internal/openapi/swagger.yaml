@@ -24286,6 +24286,23 @@ paths:
       summary: Delete WARP account
       tags:
       - warpscout
+  /warpscout/account/import:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Import Cloudflare WARP account
+      tags:
+      - warpscout
   /warpscout/account/license:
     post:
       consumes:

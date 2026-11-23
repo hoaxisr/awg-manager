@@ -1290,6 +1290,13 @@ func defaultRotateKernelPort(ctx context.Context, iface string) error {
 	return nil
 }
 
+// warpLookupIPAddr переопределяется только в тестах для подмены DNS-резолвера.
+var warpLookupIPAddr warpscout.LookupIPAddrFunc
+
+func wrapWarpDialContext(base warpscout.DialContextFunc) warpscout.DialContextFunc {
+	return warpscout.NewGuardedDialContextWithLookup(base, warpLookupIPAddr)
+}
+
 // WarpHTTPClientFactory — клиент Cloudflare API с прямым выходом через WAN.
 // Короткий таймаут рукопожатия позволяет быстро перейти на резервный выход
 // (прокси/туннель), если провайдер блокирует домен регистрации на сыром WAN.
@@ -1298,29 +1305,141 @@ func WarpHTTPClientFactory(wanIface string) (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	tr.DialContext = wrapWarpDialContext(tr.DialContext)
 	tr.TLSHandshakeTimeout = 6 * time.Second
 	tr.ResponseHeaderTimeout = 10 * time.Second
 	return &http.Client{Transport: tr, Timeout: 12 * time.Second}, nil
 }
 
+// WarpSplitTLSClientFactory — прямой WAN-клиент с фрагментацией TLS ClientHello
+// по SNI (обход ТСПУ без внешнего прокси).
+func WarpSplitTLSClientFactory(wanIface string) (*http.Client, error) {
+	tr, err := httpclient.NewTransport(httpclient.TransportConfig{Interface: wanIface, Proxy: httpclient.ProxyDirect})
+	if err != nil {
+		return nil, err
+	}
+	baseDial := tr.DialContext
+	if baseDial == nil {
+		baseDial = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	}
+	tr.DialContext = warpscout.NewSplitTLSDialer(wrapWarpDialContext(baseDial))
+	tr.TLSHandshakeTimeout = 6 * time.Second
+	tr.ResponseHeaderTimeout = 10 * time.Second
+	return &http.Client{Transport: tr, Timeout: 12 * time.Second}, nil
+}
+
+// WarpProxyHTTPClient создаёт HTTP-клиента через указанный пользователем прокси
+// (http://, https://, socks5://, socks5h://).
+func WarpProxyHTTPClient(proxyURL string) (*http.Client, error) {
+	trimmed := strings.TrimSpace(proxyURL)
+	u, err := url.Parse(trimmed)
+	if err != nil || strings.TrimSpace(u.Hostname()) == "" {
+		return nil, fmt.Errorf("%w: поддерживаются прокси http://, https://, socks5://, socks5h://", warpscout.ErrInvalidInput)
+	}
+	switch strings.ToLower(strings.TrimSpace(u.Scheme)) {
+	case "http", "https", "socks5", "socks5h":
+	default:
+		return nil, fmt.Errorf("%w: поддерживаются прокси http://, https://, socks5://, socks5h://", warpscout.ErrInvalidInput)
+	}
+	if warpscout.IsDisallowedLiteralIP(u.Hostname()) {
+		return nil, fmt.Errorf("%w: указанный IP-адрес прокси не допускается", warpscout.ErrInvalidInput)
+	}
+	tr, err := httpclient.NewTransport(httpclient.TransportConfig{ProxyURL: trimmed})
+	if err != nil {
+		return nil, warpscout.SanitizeProxyError(fmt.Errorf("%w: некорректный URL прокси: %v", warpscout.ErrInvalidInput, err), trimmed)
+	}
+	tr.DialContext = wrapWarpDialContext(tr.DialContext)
+	tr.TLSHandshakeTimeout = 10 * time.Second
+	tr.ResponseHeaderTimeout = 12 * time.Second
+	return &http.Client{Transport: tr, Timeout: 18 * time.Second}, nil
+}
+
+var listNetInterfaces = net.Interfaces
+
 // WarpFallbackClients собирает резервные HTTP-клиенты для регистрации WARP и
 // привязки WARP+ на случай блокировки API Cloudflare на прямом WAN:
-//  1. настроенный маршрут загрузок (если выбран не direct);
+//  1. настроенный маршрут загрузок и дополнительные доступные outbound'ы (sing-box / подписки);
 //  2. локальный «Прокси для устройств» (deviceproxy, включая авторизацию инстанса);
-//  3. до двух запущенных незащищённых не-WARP VPN-туннелей.
-func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *WarpTunnelOps, dl *downloader.Service) []*http.Client {
-	var out []*http.Client
+//  3. до двух запущенных незащищённых не-WARP VPN-туннелей;
+//  4. до двух активных ядерных интерфейсов VLESS (tunvless*).
+func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *WarpTunnelOps, dl *downloader.Service) []warpscout.FallbackClient {
+	var out []warpscout.FallbackClient
+	closeAll := func() {
+		for _, item := range out {
+			if item.Close != nil {
+				item.Close()
+			} else if item.Client != nil {
+				item.Client.CloseIdleConnections()
+			}
+		}
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil
+	}
+	seenRoutes := map[string]bool{}
+	seenIfaces := map[string]bool{}
 
 	if dl != nil {
-		if lease, err := dl.ResolveClient(ctx, nil); err == nil && lease != nil && lease.Client != nil {
-			if tag := strings.TrimSpace(lease.Route.Tag); tag != "" && tag != "direct" {
-				out = append(out, lease.Client)
+		if lease, err := dl.ResolveClient(ctx, nil); err == nil && lease != nil {
+			if lease.Client != nil {
+				tag := strings.TrimSpace(lease.Route.Tag)
+				kind := strings.TrimSpace(lease.Route.Kind)
+				if tag != "" && !strings.EqualFold(tag, "direct") {
+					seenRoutes[tag+"\x00"+kind] = true
+					out = append(out, warpscout.FallbackClient{
+						Client: lease.Client,
+						Close:  lease.Close,
+					})
+				} else {
+					lease.Close()
+				}
 			} else {
 				lease.Close()
 			}
 		}
+		if ctx != nil && ctx.Err() != nil {
+			closeAll()
+			return nil
+		}
+		if outbounds := dl.ListOutbounds(ctx); len(outbounds) > 0 {
+			extra := 0
+			for _, ob := range outbounds {
+				if ctx != nil && ctx.Err() != nil {
+					closeAll()
+					return nil
+				}
+				if !ob.Available {
+					continue
+				}
+				tag := strings.TrimSpace(ob.Tag)
+				kind := strings.TrimSpace(ob.Kind)
+				if tag == "" || strings.EqualFold(tag, "direct") || seenRoutes[tag+"\x00"+kind] {
+					continue
+				}
+				lease, err := dl.ResolveClient(ctx, &downloader.Route{Tag: ob.Tag, Kind: ob.Kind})
+				if err != nil || lease == nil || lease.Client == nil {
+					if lease != nil {
+						lease.Close()
+					}
+					continue
+				}
+				seenRoutes[tag+"\x00"+kind] = true
+				out = append(out, warpscout.FallbackClient{
+					Client: lease.Client,
+					Close:  lease.Close,
+				})
+				extra++
+				if extra >= 3 {
+					break
+				}
+			}
+		}
 	}
 
+	if ctx != nil && ctx.Err() != nil {
+		closeAll()
+		return nil
+	}
 	if dp != nil {
 		for _, inst := range dp.GetSnapshot().Instances {
 			if !inst.Enabled || inst.Port <= 0 || inst.Port > 65535 || strings.EqualFold(strings.TrimSpace(inst.SelectedOutbound), "direct") {
@@ -1335,14 +1454,23 @@ func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *Warp
 				u.User = url.UserPassword(inst.Auth.Username, inst.Auth.Password)
 			}
 			if tr, err := httpclient.NewTransport(httpclient.TransportConfig{ProxyURL: u.String()}); err == nil {
+				tr.DialContext = wrapWarpDialContext(tr.DialContext)
 				tr.TLSHandshakeTimeout = 8 * time.Second
 				tr.ResponseHeaderTimeout = 12 * time.Second
-				out = append(out, &http.Client{Transport: tr, Timeout: 15 * time.Second})
+				c := &http.Client{Transport: tr, Timeout: 15 * time.Second}
+				out = append(out, warpscout.FallbackClient{
+					Client: c,
+					Close:  c.CloseIdleConnections,
+				})
 				break
 			}
 		}
 	}
 
+	if ctx != nil && ctx.Err() != nil {
+		closeAll()
+		return nil
+	}
 	if ops != nil {
 		if list, err := ops.List(ctx); err == nil {
 			added := 0
@@ -1354,9 +1482,15 @@ func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *Warp
 				if err != nil {
 					continue
 				}
+				seenIfaces[ref.Iface] = true
+				tr.DialContext = wrapWarpDialContext(tr.DialContext)
 				tr.TLSHandshakeTimeout = 6 * time.Second
 				tr.ResponseHeaderTimeout = 10 * time.Second
-				out = append(out, &http.Client{Transport: tr, Timeout: 12 * time.Second})
+				c := &http.Client{Transport: tr, Timeout: 12 * time.Second}
+				out = append(out, warpscout.FallbackClient{
+					Client: c,
+					Close:  c.CloseIdleConnections,
+				})
 				added++
 				if added >= 2 {
 					break
@@ -1365,6 +1499,44 @@ func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *Warp
 		}
 	}
 
+	if ctx != nil && ctx.Err() != nil {
+		closeAll()
+		return nil
+	}
+	if ifaces, err := listNetInterfaces(); err == nil {
+		sort.Slice(ifaces, func(i, j int) bool { return ifaces[i].Name < ifaces[j].Name })
+		added := 0
+		for _, ifc := range ifaces {
+			if ifc.Flags&net.FlagUp == 0 || seenIfaces[ifc.Name] {
+				continue
+			}
+			if !strings.HasPrefix(strings.ToLower(ifc.Name), "tunvless") {
+				continue
+			}
+			tr, err := httpclient.NewTransport(httpclient.TransportConfig{Interface: ifc.Name, Proxy: httpclient.ProxyDirect})
+			if err != nil {
+				continue
+			}
+			seenIfaces[ifc.Name] = true
+			tr.DialContext = wrapWarpDialContext(tr.DialContext)
+			tr.TLSHandshakeTimeout = 6 * time.Second
+			tr.ResponseHeaderTimeout = 10 * time.Second
+			c := &http.Client{Transport: tr, Timeout: 12 * time.Second}
+			out = append(out, warpscout.FallbackClient{
+				Client: c,
+				Close:  c.CloseIdleConnections,
+			})
+			added++
+			if added >= 2 {
+				break
+			}
+		}
+	}
+
+	if ctx != nil && ctx.Err() != nil {
+		closeAll()
+		return nil
+	}
 	return out
 }
 
@@ -1482,9 +1654,43 @@ func (h *WarpScoutHandler) Register(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-	acct, err := h.svc.Register(r.Context())
+	var opts warpscout.RegisterOptions
+	if r.Body != nil {
+		if err := readJSONBody(w, r, &opts); err != nil && !errors.Is(err, errEmptyBody) {
+			response.BadRequest(w, err.Error())
+			return
+		}
+	}
+	acct, err := h.svc.RegisterWithOptions(r.Context(), opts)
 	if err != nil {
 		h.log.Warn("register", "warp", err.Error())
+		h.fail(w, err)
+		return
+	}
+	response.Success(w, acct)
+}
+
+type warpImportAccountRequest struct {
+	Raw string `json:"raw"`
+}
+
+// ImportAccount — импорт учётной записи WARP из JSON, TOML или WireGuard/AWG .conf.
+//
+//	@Summary	Import Cloudflare WARP account
+//	@Tags		warpscout
+//	@Accept		json
+//	@Produce	json
+//	@Security	CookieAuth
+//	@Success	200	{object}	map[string]interface{}
+//	@Router		/warpscout/account/import [post]
+func (h *WarpScoutHandler) ImportAccount(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[warpImportAccountRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	acct, err := h.svc.ImportAccount(r.Context(), req.Raw)
+	if err != nil {
+		h.log.Warn("import", "warp", err.Error())
 		h.fail(w, err)
 		return
 	}
