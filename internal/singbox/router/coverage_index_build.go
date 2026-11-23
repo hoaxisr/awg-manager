@@ -26,6 +26,10 @@ var coverageTokenErrorPattern = regexp.MustCompile(`([?&]token=)[^&\s]+`)
 // индекс покрытия. Потолок гибкий: на устройстве с запасом памяти лимит выше.
 const coverageIndexBudgetPercent = 70
 
+// coverageIndexTotalBudgetPercent — предел от общего объёма ОЗУ: на 512-МБ
+// устройстве это ~51 МБ — выше демон уже упирается в память роутера.
+const coverageIndexTotalBudgetPercent = 10
+
 // coveragePrefixSetBytes — оценка памяти на один префикс в множестве
 // (ключ map[netip.Prefix] плюс корзины). Замер: ~96 байт на запись.
 const coveragePrefixSetBytes = 96
@@ -39,14 +43,27 @@ type coverageBudget struct {
 	remaining int64
 }
 
-// newCoverageBudget берёт 70% свободной ОЗУ на момент сборки. Если память
-// неизвестна (нет /proc/meminfo) — потолка нет.
+// newCoverageBudget берёт минимум из 70% свободной ОЗУ и 10% общего объёма
+// на момент сборки. Если память неизвестна (нет /proc/meminfo) — потолка нет.
 func newCoverageBudget() *coverageBudget {
-	available := int64(osdetect.GetAvailableMemoryMB()) * 1024 * 1024
-	if available <= 0 {
-		return &coverageBudget{remaining: math.MaxInt64}
+	return &coverageBudget{remaining: coverageIndexBudgetBytes(
+		osdetect.GetAvailableMemoryMB(),
+		osdetect.GetTotalMemoryMB(),
+	)}
+}
+
+// coverageIndexBudgetBytes — потолок индекса в байтах: минимум из доли
+// свободной памяти и доли общего объёма. Ноль по обеим величинам — память
+// неизвестна, потолка нет.
+func coverageIndexBudgetBytes(availableMB, totalMB int) int64 {
+	budget := int64(math.MaxInt64)
+	if availableMB > 0 {
+		budget = min(budget, int64(availableMB)*1024*1024*coverageIndexBudgetPercent/100)
 	}
-	return &coverageBudget{remaining: available * coverageIndexBudgetPercent / 100}
+	if totalMB > 0 {
+		budget = min(budget, int64(totalMB)*1024*1024*coverageIndexTotalBudgetPercent/100)
+	}
+	return budget
 }
 
 // take резервирует память под один префикс; false — потолок исчерпан.

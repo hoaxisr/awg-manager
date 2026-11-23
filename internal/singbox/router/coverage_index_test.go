@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -426,5 +427,21 @@ func TestCoverageIndexBudgetStopsRuleSet(t *testing.T) {
 	}
 	if got := snapshot.projection().SkippedRuleSets; len(got) != 1 || got[0] != "big" {
 		t.Fatalf("skipped rule-set not exposed: %v", got)
+	}
+}
+
+// Потолок индекса — минимум из 70% свободной ОЗУ и 10% общего объёма.
+func TestCoverageIndexBudgetTakesTighterLimit(t *testing.T) {
+	// 512 МБ всего, 250 МБ свободно: 70% свободной = 175 МБ, 10% общего = 51 МБ.
+	if got, want := coverageIndexBudgetBytes(250, 512), int64(512)*1024*1024/10; got != want {
+		t.Fatalf("budget = %d, want %d", got, want)
+	}
+	// Роутер почти занят: 70% свободной (70 МБ) строже, чем 10% общего (102 МБ).
+	if got, want := coverageIndexBudgetBytes(100, 1024), int64(100)*1024*1024*70/100; got != want {
+		t.Fatalf("budget = %d, want %d", got, want)
+	}
+	// Память неизвестна — потолка нет.
+	if got := coverageIndexBudgetBytes(0, 0); got != math.MaxInt64 {
+		t.Fatalf("budget = %d, want no limit", got)
 	}
 }
