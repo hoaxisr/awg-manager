@@ -330,11 +330,11 @@ func decodeCoverageRule(decoder *json.Decoder) (map[string]any, error) {
 		}
 		name, _ := key.(string)
 		if name == "ip_cidr" {
-			list, err := decodeCoverageStringList(decoder)
+			set, err := decodeCoveragePrefixSet(decoder)
 			if err != nil {
 				return nil, err
 			}
-			rule[name] = list
+			rule[name] = set
 			continue
 		}
 		var value any
@@ -349,34 +349,44 @@ func decodeCoverageRule(decoder *json.Decoder) (map[string]any, error) {
 	return rule, nil
 }
 
-// decodeCoverageStringList читает массив строк по элементам.
-func decodeCoverageStringList(decoder *json.Decoder) ([]string, error) {
+// decodeCoveragePrefixSet читает ip_cidr по элементам сразу в множество
+// префиксов: промежуточный список на 100+ тыс. адресов не нужен.
+func decodeCoveragePrefixSet(decoder *json.Decoder) (coveragePrefixSet, error) {
 	token, err := decoder.Token()
 	if err != nil {
 		return nil, err
 	}
+	set := coveragePrefixSet{}
 	if delim, ok := token.(json.Delim); ok {
 		if delim != '[' {
 			return nil, fmt.Errorf("expected a string array")
 		}
-		list := []string{}
 		for decoder.More() {
 			var value string
 			if err := decoder.Decode(&value); err != nil {
 				return nil, err
 			}
-			list = append(list, value)
+			prefix, err := coveragePrefix(value)
+			if err != nil {
+				return nil, fmt.Errorf("ip_cidr %q: %w", value, err)
+			}
+			set.insert(prefix)
 		}
 		if _, err := decoder.Token(); err != nil {
 			return nil, err
 		}
-		return list, nil
+		return set, nil
 	}
 	text, ok := token.(string)
 	if !ok {
 		return nil, fmt.Errorf("expected a string array")
 	}
-	return []string{text}, nil
+	prefix, err := coveragePrefix(text)
+	if err != nil {
+		return nil, fmt.Errorf("ip_cidr %q: %w", text, err)
+	}
+	set.insert(prefix)
+	return set, nil
 }
 
 func compileCoverageIndexEntry(rules []map[string]any) (*coverageIndexEntry, error) {
@@ -499,6 +509,17 @@ func compileCoverageDestination(dest *coverageDestination, raw map[string]any) e
 		value, exists := raw[key]
 		if !exists {
 			continue
+		}
+		if key == "ip_cidr" {
+			// Потоковый разбор уже собрал множество префиксов — пересобирать нечего.
+			if set, ok := value.(coveragePrefixSet); ok {
+				if len(set) == 0 {
+					continue
+				}
+				dest.hasFields = true
+				dest.prefixes = set
+				continue
+			}
 		}
 		values, err := coverageStringList(value)
 		if err != nil {
