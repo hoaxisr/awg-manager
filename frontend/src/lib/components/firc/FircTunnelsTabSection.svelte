@@ -69,6 +69,7 @@
 	let trafficTotals = $state<Record<string, { down: number; up: number }>>({});
 
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let lastTrafficAt = $state(0);
 	let unsubSbTunnels: (() => void) | undefined;
 	let unsubSbStatus: (() => void) | undefined;
 	let unsubMobile: (() => void) | undefined;
@@ -136,8 +137,15 @@
 		}
 	}
 
+	// Накопительного счётчика у fircd нет — только скорость. Интегрируем её по
+	// фактическому интервалу между опросами; разрыв больше 10 с (вкладка в фоне,
+	// таймер притормозил) пропускаем, а не выдумываем байты за него. Итог —
+	// оценка за время просмотра, так и подписана.
 	function accumulatePollTraffic(states: FircTunnelState[]): void {
-		if (!states || states.length === 0) return;
+		const now = Date.now();
+		const dt = lastTrafficAt > 0 ? (now - lastTrafficAt) / 1000 : 0;
+		lastTrafficAt = now;
+		if (!states || states.length === 0 || dt <= 0 || dt > 10) return;
 		const next = { ...trafficTotals };
 		let changed = false;
 		for (const st of states) {
@@ -146,8 +154,8 @@
 			if (rx > 0 || tx > 0) {
 				const prev = next[st.id] ?? { down: 0, up: 0 };
 				next[st.id] = {
-					down: prev.down + Math.round(rx * 2.5),
-					up: prev.up + Math.round(tx * 2.5),
+					down: prev.down + Math.round(rx * dt),
+					up: prev.up + Math.round(tx * dt),
 				};
 				changed = true;
 			}
@@ -367,7 +375,7 @@
 			},
 			{
 				value: formatBytes(totalDown + totalUp),
-				label: m.singbox_tabs_total_traffic(),
+				label: m.firc_tabs_traffic_while_viewing(),
 				sub: `↓ ${formatBytes(totalDown)} · ↑ ${formatBytes(totalUp)}`,
 			},
 			{

@@ -1914,6 +1914,7 @@
 	"singbox_tabs_mieru_desc": "Мультиплексированный прокси с парольной аутентификацией. TCP и UDP в одном профиле, несколько портов и транспортов.",
 	"singbox_tabs_running_sub": "в работе {active} · остановлено {stopped}",
 	"singbox_tabs_total_traffic": "Суммарный трафик",
+	"firc_tabs_traffic_while_viewing": "Трафик за время просмотра",
 	"singbox_tabs_avg_delay": "Средний delay",
 	"singbox_tabs_avg_delay_sub": "по последним проверкам",
 	"singbox_tabs_col_protocol": "Протокол",

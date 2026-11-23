@@ -378,7 +378,7 @@ describe('FIRC tunnels UI integration', () => {
 		expect(screen.getByText('QUIC')).toBeInTheDocument();
 		expect(screen.getAllByText('FIRC').length).toBeGreaterThanOrEqual(2);
 		expect(screen.getByText('2/2')).toBeInTheDocument();
-		expect(screen.getByText(m.singbox_tabs_total_traffic())).toBeInTheDocument();
+		expect(screen.getByText(m.firc_tabs_traffic_while_viewing())).toBeInTheDocument();
 		expect(screen.getByText(m.singbox_tabs_avg_delay())).toBeInTheDocument();
 		expect(screen.getByText(m.tunnels_awg_stat_leader())).toBeInTheDocument();
 
