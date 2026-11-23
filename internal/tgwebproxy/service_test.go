@@ -21,70 +21,127 @@ import (
 	tproxysession "github.com/hoaxisr/awg-manager/internal/tgwebproxy/tproxy/session"
 )
 
-type mockRunner struct {
-	commands []string
-	pidFiles map[string]string
+// fakeEngines заменяет встроенные движки mtg и tproxy в тестах сервиса:
+// те же переходы «запущен/остановлен», что у MtgEngine/TproxyEngine, но без
+// реальных слушателей на фиксированных портах. calls — журнал вызовов в
+// порядке поступления, общий для обоих движков.
+type fakeEngines struct {
+	mu        sync.Mutex
+	calls     []string
+	mtgCfg    Config
+	tproxyCfg Config
+	direct    bool
+	raw       bool
+	web       bool
+	readyErr  error
 }
 
-func (m *mockRunner) RunCommand(name string, args ...string) error {
-	action := ""
-	if len(args) > 0 {
-		action = args[0]
-	}
-	m.commands = append(m.commands, name+" "+action)
-	if m.pidFiles != nil {
-		if pidFile, ok := m.pidFiles[name]; ok {
-			if action == "start" || action == "restart" {
-				_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
-			} else if action == "stop" {
-				_ = os.Remove(pidFile)
-			}
+func (f *fakeEngines) log() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+func (f *fakeEngines) count(call string) int {
+	n := 0
+	for _, c := range f.log() {
+		if c == call {
+			n++
 		}
 	}
+	return n
+}
+
+type fakeMtg struct{ *fakeEngines }
+
+func (f fakeMtg) Apply(cfg Config) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "mtg.apply")
+	f.mtgCfg = cfg
+	f.direct = cfg.Enabled && cfg.IsDirectEnabled()
+	f.raw = cfg.Enabled && cfg.IsRawEnabled()
 	return nil
 }
 
-func setupTestService(t *testing.T) (*Service, string, *mockRunner) {
+func (f fakeMtg) Restart() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "mtg.restart")
+	f.direct = f.mtgCfg.Enabled && f.mtgCfg.IsDirectEnabled()
+	f.raw = f.mtgCfg.Enabled && f.mtgCfg.IsRawEnabled()
+	return nil
+}
+
+func (f fakeMtg) Stop() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "mtg.stop")
+	f.direct, f.raw = false, false
+}
+
+func (f fakeMtg) IsDirectRunning() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.direct
+}
+
+func (f fakeMtg) IsRawRunning() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.raw
+}
+
+type fakeTproxy struct{ *fakeEngines }
+
+func (f fakeTproxy) Apply(cfg Config) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "tproxy.apply")
+	f.tproxyCfg = cfg
+	f.web = cfg.Enabled && cfg.IsWebEnabled()
+	return nil
+}
+
+func (f fakeTproxy) Restart() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "tproxy.restart")
+	f.web = f.tproxyCfg.Enabled && f.tproxyCfg.IsWebEnabled()
+	return nil
+}
+
+func (f fakeTproxy) Stop() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "tproxy.stop")
+	f.web = false
+}
+
+func (f fakeTproxy) IsPrimaryRunning() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.web
+}
+
+func (f fakeTproxy) CheckPrimaryReady(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.web {
+		return errors.New("embedded tproxy primary listener is not running")
+	}
+	return f.readyErr
+}
+
+func newFakeWorkers() (*WorkerSupervisor, *fakeEngines) {
+	eng := &fakeEngines{}
+	return &WorkerSupervisor{mtg: fakeMtg{eng}, tproxy: fakeTproxy{eng}}, eng
+}
+
+func setupTestService(t *testing.T) (*Service, string, *fakeEngines) {
 	t.Helper()
 	tempDir := t.TempDir()
-	runner := &mockRunner{
-		pidFiles: make(map[string]string),
-	}
-
-	w1Init := filepath.Join(tempDir, "S96telemt-raw")
-	w1Pid := filepath.Join(tempDir, "telemt-raw.pid")
-	runner.pidFiles[w1Init] = w1Pid
-
-	w2Init := filepath.Join(tempDir, "S99telemt")
-	w2Pid := filepath.Join(tempDir, "telemt.pid")
-	runner.pidFiles[w2Init] = w2Pid
-
-	w3Init := filepath.Join(tempDir, "S95tproxy-server")
-	w3Pid := filepath.Join(tempDir, "tproxy-server.pid")
-	runner.pidFiles[w3Init] = w3Pid
-
-	workers := &WorkerSupervisor{
-		workers: []WorkerDef{
-			{Name: "telemt-raw", InitScript: w1Init, PidFile: w1Pid, Port: 2398},
-			{Name: "telemt-direct", InitScript: w2Init, PidFile: w2Pid, Port: 8443},
-			{Name: "tproxy-server", InitScript: w3Init, PidFile: w3Pid, Port: 8085, IsHTTPMetrics: true, MetricsURL: "http://127.0.0.1:8086/metrics"},
-		},
-		runner: runner,
-		dialer: func(network, addr string, timeout time.Duration) (net.Conn, error) {
-			return &net.IPConn{}, nil
-		},
-		httpGet: func(url string) (*http.Response, error) {
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader("tproxy_metrics 1")),
-			}, nil
-		},
-		socketChecker: func(pid int, port int) (bool, error) {
-			return true, nil
-		},
-		readinessTimeout: 500 * time.Millisecond,
-	}
-
+	workers, engines := newFakeWorkers()
 	tc := NewTransactionCoordinator(filepath.Join(tempDir, "tproxy"))
 	svc := &Service{
 		dataDir: tempDir,
@@ -109,7 +166,7 @@ func setupTestService(t *testing.T) (*Service, string, *mockRunner) {
 	_ = svc.ensureTokenKey()
 	svc.loadAndMigrateConfig()
 
-	return svc, tempDir, runner
+	return svc, tempDir, engines
 }
 
 func TestTokenKey_PreservedAcrossApply(t *testing.T) {
@@ -160,7 +217,7 @@ func TestSchemaMigration_V1ToV2(t *testing.T) {
 	svc := &Service{
 		dataDir:         tempDir,
 		tc:              tc,
-		workers:         &WorkerSupervisor{workers: []WorkerDef{}, runner: &mockRunner{}},
+		workers:         func() *WorkerSupervisor { ws, _ := newFakeWorkers(); return ws }(),
 		tproxyValidator: func(s string) error { return nil },
 	}
 	_ = svc.ensureTokenKey()
@@ -294,29 +351,6 @@ func TestPhaseOrder_ApplyingBeforeTargetRename(t *testing.T) {
 
 	if phaseWhenValidated != PhaseStaged {
 		t.Errorf("expected phase %s during validation, got %s", PhaseStaged, phaseWhenValidated)
-	}
-}
-
-func TestProcessIdentity_StalePid(t *testing.T) {
-	tempDir := t.TempDir()
-	pidFile := filepath.Join(tempDir, "fake.pid")
-	// Write a non-existent PID
-	_ = os.WriteFile(pidFile, []byte("999999"), 0644)
-
-	ws := &WorkerSupervisor{
-		workers: []WorkerDef{
-			{
-				Name:         "fake-worker",
-				PidFile:      pidFile,
-				ExeName:      "nonexistent_exe",
-				CmdlineMatch: "nonexistent_cmd",
-			},
-		},
-	}
-
-	st := ws.GetWorkerState(ws.workers[0])
-	if st.Running {
-		t.Errorf("expected stale PID to be reported as NOT running")
 	}
 }
 
@@ -688,35 +722,27 @@ func TestService_CloseIdempotent(t *testing.T) {
 	}
 }
 
-func TestWorkers_SocketCheck_FailClosed(t *testing.T) {
-	tempDir := t.TempDir()
-	wInit := filepath.Join(tempDir, "S96telemt-raw")
-	wPid := filepath.Join(tempDir, "telemt-raw.pid")
-	_ = os.WriteFile(wPid, []byte(fmt.Sprintf("%d", os.Getpid())), 0600)
+func TestWorkers_CheckReadiness_FailClosed(t *testing.T) {
+	ws, eng := newFakeWorkers()
+	cfg := Config{Enabled: true, Scenario: ScenarioDual}
 
-	ws := &WorkerSupervisor{
-		workers: []WorkerDef{
-			{Name: "telemt-raw", InitScript: wInit, PidFile: wPid, Port: 2398},
-		},
-		runner: &mockRunner{},
-		dialer: func(network, addr string, timeout time.Duration) (net.Conn, error) {
-			return &net.IPConn{}, nil
-		},
-		// Injected socketChecker that simulates ownership failure
-		socketChecker: func(pid int, port int) (bool, error) {
-			return false, errors.New("socket inode belongs to another pid")
-		},
-		readinessTimeout: 200 * time.Millisecond,
+	// Ничего не запущено — готовность не подтверждается.
+	if err := ws.CheckReadiness(cfg); err == nil || !strings.Contains(err.Error(), "mtg raw listener is not running") {
+		t.Fatalf("expected raw listener readiness failure, got %v", err)
 	}
 
-	// CheckReadiness should fail closed and return descriptive error
-	cfg := Config{Enabled: true}
+	if err := ws.ApplyWorkers(cfg); err != nil {
+		t.Fatalf("ApplyWorkers: %v", err)
+	}
+	if err := ws.CheckReadiness(cfg); err != nil {
+		t.Fatalf("expected readiness after apply, got %v", err)
+	}
+
+	// Слушатель tproxy есть, но метрики не отвечают — отказ, а не «готов».
+	eng.readyErr = errors.New("tproxy admin metrics returned unexpected status 503")
 	err := ws.CheckReadiness(cfg)
-	if err == nil {
-		t.Errorf("expected fail-closed error from socket checker in CheckReadiness, got nil")
-	}
-	if !strings.Contains(err.Error(), "socket ownership check failed") {
-		t.Errorf("expected timeout error to mention socket ownership check, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "readiness check failed for worker tproxy-server") {
+		t.Fatalf("expected tproxy readiness failure, got %v", err)
 	}
 }
 
@@ -905,13 +931,11 @@ func TestLoadOrCreateKeyFile_CorruptBackupFailure_AbortsWithoutOverwriting(t *te
 }
 
 func TestStartConfigured_ReadinessFailureRollsBackWorkers(t *testing.T) {
-	svc, _, runner := setupTestService(t)
+	svc, _, engines := setupTestService(t)
 	svc.config.Enabled = true
 
 	// Simulate readiness failure
-	svc.workers.dialer = func(network, addr string, timeout time.Duration) (net.Conn, error) {
-		return nil, errors.New("connection refused")
-	}
+	engines.readyErr = errors.New("connection refused")
 
 	err := svc.StartConfigured()
 	if err == nil {
@@ -919,15 +943,14 @@ func TestStartConfigured_ReadinessFailureRollsBackWorkers(t *testing.T) {
 	}
 
 	// Verify that workers were stopped (rollback was invoked)
-	stopCalled := false
-	for _, cmd := range runner.commands {
-		if strings.HasSuffix(cmd, "stop") {
-			stopCalled = true
-			break
+	ws := svc.workers
+	for _, name := range workerNames {
+		if ws.GetWorkerState(name).Running {
+			t.Errorf("expected %s stopped after readiness failure rollback", name)
 		}
 	}
-	if !stopCalled {
-		t.Errorf("expected worker stop to be called on readiness failure rollback")
+	if engines.count("mtg.stop") == 0 || engines.count("tproxy.stop") == 0 {
+		t.Errorf("expected both engines stopped on rollback, calls: %v", engines.log())
 	}
 
 	// Verify persistent config Enabled is still true
@@ -1029,7 +1052,7 @@ func TestLoadAndMigrateConfig_MultiEndpointPreservesOriginNonCDN(t *testing.T) {
 }
 
 func TestReconcileRuntime_RestartsTproxyWhenProfilesDiffer(t *testing.T) {
-	svc, tempDir, runner := setupTestService(t)
+	svc, tempDir, engines := setupTestService(t)
 	svc.config.Enabled = true
 	svc.config.Scenario = ScenarioCDNHTTP
 	svc.config.CarrierMode = DefaultCarrierMode
@@ -1065,15 +1088,11 @@ func TestReconcileRuntime_RestartsTproxyWhenProfilesDiffer(t *testing.T) {
 	}
 
 	// Verify tproxy-server worker was restarted
-	restartSeen := false
-	for _, cmd := range runner.commands {
-		if strings.Contains(cmd, "S95tproxy-server restart") {
-			restartSeen = true
-			break
-		}
+	if engines.count("tproxy.restart") == 0 {
+		t.Fatalf("expected tproxy engine restart, calls: %v", engines.log())
 	}
-	if !restartSeen {
-		t.Fatalf("expected S95tproxy-server restart in runner commands: %+v", runner.commands)
+	if !svc.workers.GetWorkerState(workerTproxy).Running {
+		t.Fatalf("expected tproxy engine running after reconcile")
 	}
 }
 
@@ -1157,99 +1176,47 @@ func TestTelegramLegacyScenarioMigration(t *testing.T) {
 }
 
 func TestTelegramScenariosAppliedCorrectly(t *testing.T) {
-	runner := &mockRunner{}
-	ws := &WorkerSupervisor{
-		workers: []WorkerDef{
-			{Name: "telemt-raw", InitScript: "/etc/init.d/S96telemt-raw", Port: 2398},
-			{Name: "telemt-direct", InitScript: "/etc/init.d/S99telemt", Port: 8443},
-			{Name: "tproxy-server", InitScript: "/etc/init.d/S95tproxy-server", Port: 8085, IsHTTPMetrics: true},
-		},
-		runner: runner,
+	ws, eng := newFakeWorkers()
+
+	running := func() (direct, raw, web bool) {
+		return ws.GetWorkerState(workerDirect).Running,
+			ws.GetWorkerState(workerRaw).Running,
+			ws.GetWorkerState(workerTproxy).Running
 	}
 
-	// 1. Scenario: direct_fake_tls -> only telemt-direct starts, others stopped
-	runner.commands = nil
-	cfgDirect := Config{
-		Enabled:  true,
-		Scenario: ScenarioDirectFakeTLS,
-	}
-	if err := ws.ApplyWorkers(cfgDirect); err != nil {
-		t.Fatalf("ApplyWorkers direct_fake_tls failed: %v", err)
-	}
-	// Check stop of disabled workers first, then start of direct
-	var cmdStr string
-	for _, c := range runner.commands {
-		cmdStr += c + ";"
-	}
-	if !strings.Contains(cmdStr, "S95tproxy-server stop") || !strings.Contains(cmdStr, "S96telemt-raw stop") {
-		t.Errorf("expected disabled workers stopped, got commands: %v", runner.commands)
-	}
-	if !strings.Contains(cmdStr, "S99telemt restart") && !strings.Contains(cmdStr, "S99telemt start") {
-		t.Errorf("expected telemt-direct started, got commands: %v", runner.commands)
-	}
-
-	// 2. Scenario: cdn_http -> telemt-direct stopped, raw and web started
-	runner.commands = nil
-	cfgCDN := Config{
-		Enabled:  true,
-		Scenario: ScenarioCDNHTTP,
-	}
-	if err := ws.ApplyWorkers(cfgCDN); err != nil {
-		t.Fatalf("ApplyWorkers cdn_http failed: %v", err)
-	}
-	cmdStr = ""
-	for _, c := range runner.commands {
-		cmdStr += c + ";"
-	}
-	if !strings.Contains(cmdStr, "S99telemt stop") {
-		t.Errorf("expected direct stopped, got commands: %v", runner.commands)
-	}
-	if !strings.Contains(cmdStr, "S96telemt-raw restart") || !strings.Contains(cmdStr, "S95tproxy-server restart") {
-		t.Errorf("expected raw and web started, got commands: %v", runner.commands)
-	}
-
-	// 3. Scenario: dual -> start order direct -> raw -> tproxy
-	runner.commands = nil
-	cfgDual := Config{
-		Enabled:  true,
-		Scenario: ScenarioDual,
-	}
-	if err := ws.ApplyWorkers(cfgDual); err != nil {
-		t.Fatalf("ApplyWorkers dual failed: %v", err)
-	}
-	// Verify exact start order: direct -> raw -> tproxy
-	directIdx, rawIdx, tproxyIdx := -1, -1, -1
-	for i, c := range runner.commands {
-		if strings.Contains(c, "S99telemt restart") {
-			directIdx = i
-		} else if strings.Contains(c, "S96telemt-raw restart") {
-			rawIdx = i
-		} else if strings.Contains(c, "S95tproxy-server restart") {
-			tproxyIdx = i
+	for _, tc := range []struct {
+		scenario         string
+		direct, raw, web bool
+	}{
+		{ScenarioDirectFakeTLS, true, false, false},
+		{ScenarioCDNHTTP, false, true, true},
+		{ScenarioDual, true, true, true},
+	} {
+		if err := ws.ApplyWorkers(Config{Enabled: true, Scenario: tc.scenario}); err != nil {
+			t.Fatalf("ApplyWorkers %s failed: %v", tc.scenario, err)
+		}
+		d, r, w := running()
+		if d != tc.direct || r != tc.raw || w != tc.web {
+			t.Errorf("%s: direct=%v raw=%v web=%v, want %v %v %v", tc.scenario, d, r, w, tc.direct, tc.raw, tc.web)
 		}
 	}
-	if directIdx < 0 || rawIdx < 0 || tproxyIdx < 0 || !(directIdx < rawIdx && rawIdx < tproxyIdx) {
-		t.Errorf("expected start order direct -> raw -> tproxy, got commands: %v (indices: %d, %d, %d)", runner.commands, directIdx, rawIdx, tproxyIdx)
+
+	// Start order: mtg (raw backend of tproxy) before tproxy.
+	calls := eng.log()
+	if len(calls) < 2 || calls[len(calls)-2] != "mtg.apply" || calls[len(calls)-1] != "tproxy.apply" {
+		t.Errorf("expected start order mtg -> tproxy, got calls: %v", calls)
 	}
 
-	// 4. Stop: stop order tproxy -> raw -> direct
-	runner.commands = nil
-	cfgStopped := Config{Enabled: false}
-	if err := ws.ApplyWorkers(cfgStopped); err != nil {
+	// Stop: everything down, tproxy before its mtg backend.
+	if err := ws.ApplyWorkers(Config{Enabled: false}); err != nil {
 		t.Fatalf("ApplyWorkers stop failed: %v", err)
 	}
-	stopDirectIdx, stopRawIdx, stopTproxyIdx := -1, -1, -1
-	for i, c := range runner.commands {
-		if strings.Contains(c, "S95tproxy-server stop") {
-			stopTproxyIdx = i
-		} else if strings.Contains(c, "S96telemt-raw stop") {
-			stopRawIdx = i
-		} else if strings.Contains(c, "S99telemt stop") {
-			stopDirectIdx = i
-		}
+	if d, r, w := running(); d || r || w {
+		t.Errorf("expected all workers stopped, got direct=%v raw=%v web=%v", d, r, w)
 	}
-	if stopTproxyIdx < 0 || stopRawIdx < 0 || stopDirectIdx < 0 || !(stopTproxyIdx < stopRawIdx && stopRawIdx < stopDirectIdx) {
-		t.Errorf("expected stop order tproxy -> raw -> direct, got commands: %v (indices: %d, %d, %d)", runner.commands, stopTproxyIdx, stopRawIdx, stopDirectIdx)
+	calls = eng.log()
+	if calls[len(calls)-2] != "tproxy.stop" || calls[len(calls)-1] != "mtg.stop" {
+		t.Errorf("expected stop order tproxy -> mtg, got calls: %v", calls)
 	}
 }
 
@@ -1998,7 +1965,10 @@ func TestConstrainTproxyLimitsForRAMMB_AndDirectKeenDNSNonCDN(t *testing.T) {
 }
 
 func TestService_FactoryReset_WipesState(t *testing.T) {
-	svc, tmpDir, runner := setupTestService(t)
+	svc, tmpDir, engines := setupTestService(t)
+	if err := svc.workers.ApplyWorkers(Config{Enabled: true, Scenario: ScenarioDual}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := os.MkdirAll(filepath.Join(tmpDir, "tproxy", "transactions", "tx-1"), 0700); err != nil {
 		t.Fatal(err)
@@ -2058,7 +2028,9 @@ func TestService_FactoryReset_WipesState(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmpDir, "tproxy", "csrf.key")); err != nil {
 		t.Fatalf("expected fresh csrf.key: %v", err)
 	}
-	if len(runner.commands) == 0 {
-		t.Fatal("expected workers stop commands during FactoryReset")
+	for _, name := range workerNames {
+		if svc.workers.GetWorkerState(name).Running {
+			t.Fatalf("expected %s stopped during FactoryReset, calls: %v", name, engines.log())
+		}
 	}
 }

@@ -26,6 +26,7 @@ func setupTestTgWebProxyHandler(t *testing.T) (*TgWebProxyHandler, *tgwebproxy.S
 	}
 
 	svc := tgwebproxy.New(tempDir, nil)
+	svc.SetRuntimeDCProbeForTest(func(string) bool { return true })
 	handler := NewTgWebProxyHandler(svc, sessionStore)
 	t.Cleanup(func() {
 		sessionStore.Stop()
@@ -376,6 +377,7 @@ func TestTgWebProxy_RevealUnknownUser_NotFoundWithoutSecret(t *testing.T) {
 func TestTgWebProxy_CSRF_NilSessionStore_FailClosed(t *testing.T) {
 	tempDir := t.TempDir()
 	svc := tgwebproxy.New(tempDir, nil)
+	svc.SetRuntimeDCProbeForTest(func(string) bool { return true })
 	t.Cleanup(func() { _ = svc.Close() })
 	// Handler constructed with nil sessionStore
 	handler := NewTgWebProxyHandler(svc, nil)

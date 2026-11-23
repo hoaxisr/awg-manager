@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 )
 
@@ -35,7 +36,6 @@ type TproxyValidator func(stagingDir string) error
 type Service struct {
 	mu                   sync.Mutex
 	dataDir              string
-	binPath              string
 	config               Config
 	tc                   *TransactionCoordinator
 	workers              *WorkerSupervisor
@@ -61,13 +61,11 @@ type Service struct {
 func New(dataDir string, onReload func()) *Service {
 	tproxyBaseDir := filepath.Join(dataDir, "tproxy")
 
-	workers := NewDefaultWorkerSupervisor()
-	workers.SetTproxyDir(tproxyBaseDir)
+	workers := NewDefaultWorkerSupervisor(tproxyBaseDir)
 	tc := NewTransactionCoordinator(tproxyBaseDir)
 
 	s := &Service{
 		dataDir:              dataDir,
-		binPath:              "/opt/bin/tproxy-server",
 		tc:                   tc,
 		workers:              workers,
 		mux:                  NewMux(),
@@ -643,9 +641,7 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 	tproxyChanged := hasTproxyFileChanges(s.tproxyDir(), files)
 	tproxyWasRunning := false
 	if s.workers != nil {
-		if w := s.workers.findWorker("tproxy-server"); w != nil {
-			tproxyWasRunning = s.workers.GetWorkerState(*w).Running
-		}
+		tproxyWasRunning = s.workers.GetWorkerState(workerTproxy).Running
 	}
 	prevCfg := s.config
 	muxWasRunning := s.mux != nil && s.mux.IsRunning()
@@ -729,8 +725,8 @@ func (h *serviceTxHook) ApplyWorkers(cfg Config) error {
 		if err := h.svc.workers.ApplyWorkers(cfg); err != nil {
 			return err
 		}
-		if !h.svc.workers.isMock() && cfg.Enabled && cfg.IsWebEnabled() && h.tproxyChanged && h.tproxyWasRunning {
-			if err := h.svc.workers.RestartWorker("tproxy-server"); err != nil {
+		if cfg.Enabled && cfg.IsWebEnabled() && h.tproxyChanged && h.tproxyWasRunning {
+			if err := h.svc.workers.RestartWorker(workerTproxy); err != nil {
 				return err
 			}
 			if err := h.svc.workers.ApplyWorkers(cfg); err != nil {
@@ -1272,7 +1268,7 @@ func (s *Service) RotateTokenKey() error {
 
 	// Restart tproxy-server worker
 	if s.config.Enabled && s.workers != nil {
-		_ = s.workers.RestartWorker("tproxy-server")
+		_ = s.workers.RestartWorker(workerTproxy)
 	}
 
 	s.notifyReload()
@@ -1290,7 +1286,7 @@ func (s *Service) ClearScannerCache() error {
 	_ = os.Remove("/tmp/cache/beobachten.txt")
 
 	if s.config.Enabled && s.workers != nil {
-		_ = s.workers.RestartWorker("telemt-raw")
+		_ = s.workers.RestartWorker(workerRaw)
 	}
 
 	return nil
@@ -1478,8 +1474,8 @@ func (s *Service) Restart() error {
 		return ErrRecoveryRequired
 	}
 
-	if s.config.Enabled && s.config.IsWebEnabled() && s.workers != nil && !s.workers.isMock() {
-		_ = s.workers.RestartWorker("tproxy-server")
+	if s.config.Enabled && s.config.IsWebEnabled() && s.workers != nil {
+		_ = s.workers.RestartWorker(workerTproxy)
 	}
 	if err := s.workers.ApplyWorkers(s.config); err != nil {
 		return err
@@ -1622,7 +1618,7 @@ func (s *Service) ReconcileRuntime() error {
 		return fmt.Errorf("sync tproxy profiles: %w", err)
 	}
 	if changed {
-		if err := s.workers.RestartWorker("tproxy-server"); err != nil {
+		if err := s.workers.RestartWorker(workerTproxy); err != nil {
 			return fmt.Errorf("restart tproxy-server after profile update: %w", err)
 		}
 	}
@@ -1735,6 +1731,18 @@ func (s *Service) Close() error {
 		s.healthWg.Wait()
 	})
 	return nil
+}
+
+// SetRuntimeDCProbeForTest подменяет проверку доступности Telegram DC: иначе
+// тесты потребителей пакета ходят в настоящую сеть из фоновой горутины
+// checkUpstreamHealth (флейк F859). Вне go test — паника.
+func (s *Service) SetRuntimeDCProbeForTest(fn func(device string) bool) {
+	if !testing.Testing() {
+		panic("tgwebproxy: SetRuntimeDCProbeForTest вызван вне go test")
+	}
+	s.mu.Lock()
+	s.runtimeDCProbe = fn
+	s.mu.Unlock()
 }
 
 func (s *Service) checkUpstreamHealth() {
@@ -1973,23 +1981,11 @@ func (s *Service) GetStatus() Status {
 	var pid, directPID int
 
 	if workers != nil && !recovery {
-		for _, w := range workers.workers {
-			st := workers.GetWorkerState(w)
-			switch w.Name {
-			case "telemt-direct":
-				directOnline = st.Running
-				if st.Running {
-					directPID = st.PID
-				}
-			case "telemt-raw":
-				rawOnline = st.Running
-			case "tproxy-server":
-				webProxyOnline = st.Running
-				if st.Running {
-					pid = st.PID
-				}
-			}
-		}
+		direct := workers.GetWorkerState(workerDirect)
+		directOnline, directPID = direct.Running, direct.PID
+		rawOnline = workers.GetWorkerState(workerRaw).Running
+		web := workers.GetWorkerState(workerTproxy)
+		webProxyOnline, pid = web.Running, web.PID
 	}
 
 	s.upstreamMu.RLock()
@@ -2007,14 +2003,8 @@ func (s *Service) GetStatus() Status {
 		}
 	}
 
-	installedTelemt := true
-	installedTproxy := true
-
-	installed := installedTelemt && installedTproxy
-	if cfg.Scenario == ScenarioDirectFakeTLS {
-		installed = installedTelemt
-	}
-
+	// Движки встроены в бинарь — «установлены» всегда; поля остаются ради
+	// формы ответа API (installed_telemt/installed_tproxy читает фронт).
 	running := directOnline && webProxyOnline && rawOnline
 	switch cfg.Scenario {
 	case ScenarioDirectFakeTLS:
@@ -2024,9 +2014,9 @@ func (s *Service) GetStatus() Status {
 	}
 
 	return Status{
-		Installed:                     installed,
-		InstalledTelemt:               installedTelemt,
-		InstalledTproxy:               installedTproxy,
+		Installed:                     true,
+		InstalledTelemt:               true,
+		InstalledTproxy:               true,
 		Running:                       running,
 		PID:                           pid,
 		DirectPID:                     directPID,
