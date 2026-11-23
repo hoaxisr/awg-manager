@@ -76,6 +76,15 @@ func TestClassifyAddr(t *testing.T) {
 		{"203.0.113.5", "ipv4", "reserved"},
 		{"2001:db8::1", "ipv6", "reserved"},
 		{"0.0.0.0", "ipv4", "reserved"},
+		// F820: служебные диапазоны и NAT64 с непубличным IPv4 внутри.
+		{"0.1.2.3", "ipv4", "reserved"},
+		{"192.0.0.8", "ipv4", "reserved"},
+		{"fec0::1", "ipv6", "reserved"},
+		{"2001:0:4136:e378::1", "ipv6", "reserved"},
+		{"2002:c0a8:101::1", "ipv6", "reserved"},
+		{"::c0a8:101", "ipv6", "reserved"},
+		{"64:ff9b::7f00:1", "nat64", "loopback"},
+		{"64:ff9b::a00:1", "nat64", "private"},
 	}
 
 	for _, tc := range cases {
