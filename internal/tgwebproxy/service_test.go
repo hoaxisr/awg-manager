@@ -87,9 +87,9 @@ func setupTestService(t *testing.T) (*Service, string, *mockRunner) {
 
 	tc := NewTransactionCoordinator(filepath.Join(tempDir, "tproxy"))
 	svc := &Service{
-		dataDir:   tempDir,
-		tc:        tc,
-		workers:   workers,
+		dataDir: tempDir,
+		tc:      tc,
+		workers: workers,
 		egressValidator: func(device string) error {
 			if device == "invalid_dev" {
 				return errors.New("interface invalid_dev not found")
@@ -551,9 +551,9 @@ func TestSchemaMigration_MissingSchemaVersion(t *testing.T) {
 
 	tc := NewTransactionCoordinator(tproxyDir)
 	svc := &Service{
-		dataDir:   tempDir,
-		tc:        tc,
-		workers:   nil,
+		dataDir: tempDir,
+		tc:      tc,
+		workers: nil,
 		egressValidator: func(device string) error {
 			return nil
 		},

@@ -669,4 +669,3 @@ func discoverPOSIXShells(t *testing.T) []shellRunner {
 	}
 	return out
 }
-
