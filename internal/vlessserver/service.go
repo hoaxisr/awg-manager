@@ -163,11 +163,17 @@ func (s *Service) SyncFircServerRouting(enabled bool) {
 			changed = true
 		}
 	}
+	var saveErr error
 	if changed {
-		_ = s.saveConfig()
+		saveErr = s.saveConfig()
 	}
 	if s.config.Enabled {
-		_ = s.syncDaemonLocked()
+		_ = s.syncDaemonLocked() // свою ошибку кладёт в lastRuntimeErr
+	}
+	// Режим в памяти уже сменён, а на диск не лёг: после рестарта он вернётся.
+	// Показываем это в статусе, а не теряем молча.
+	if saveErr != nil {
+		s.lastRuntimeErr = "save outbound mode: " + saveErr.Error()
 	}
 }
 
