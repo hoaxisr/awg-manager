@@ -257,4 +257,47 @@ describe('ExitDetail: кнопка диагностики WDTT', () => {
 		expect(await findByRole('button', { name: 'Настройки' })).toBeTruthy();
 		expect(queryByRole('button', { name: 'Диагностика' })).toBeNull();
 	});
-})
+
+	it('модалка диагностики не закрывается при фоновом поллинге с новым объектом row того же id', async () => {
+		const { findByRole, findByText, queryByText, rerender } = mount('diag-poll-1', 'raw');
+		await fireEvent.click(await findByRole('button', { name: 'Диагностика' }));
+		await waitFor(() => expect(apiMock.runWdttClientDiag).toHaveBeenCalledTimes(1));
+		expect(await findByText('Путь ОК')).toBeTruthy();
+
+		// Имитация тика statusPoll: новый объект row с тем же id и обновлённый status.
+		await rerender({
+			row: row('diag-poll-1', 'raw'),
+			status: { ...status },
+			wdttClient: { ...CLIENT, connMode: 'raw' },
+			policies: [] as AccessPolicy[],
+			tunnels: [] as TunnelListItem[],
+			onstart: () => {},
+			onstop: () => {},
+			onsave: async () => null,
+			onreload: () => {},
+		});
+		await new Promise((r) => setTimeout(r, 20));
+		expect(queryByText('Путь ОК')).toBeTruthy();
+		expect(apiMock.runWdttClientDiag).toHaveBeenCalledTimes(1);
+	});
+
+	it('модалка диагностики закрывается при смене row.id без перемонтирования', async () => {
+		const { findByRole, findByText, queryByText, rerender } = mount('diag-poll-1', 'raw');
+		await fireEvent.click(await findByRole('button', { name: 'Диагностика' }));
+		await waitFor(() => expect(apiMock.runWdttClientDiag).toHaveBeenCalledTimes(1));
+		expect(await findByText('Путь ОК')).toBeTruthy();
+
+		await rerender({
+			row: row('diag-poll-2', 'raw'),
+			status: { ...status },
+			wdttClient: { ...CLIENT, connMode: 'raw' },
+			policies: [] as AccessPolicy[],
+			tunnels: [] as TunnelListItem[],
+			onstart: () => {},
+			onstop: () => {},
+			onsave: async () => null,
+			onreload: () => {},
+		});
+		await waitFor(() => expect(queryByText('Путь ОК')).toBeNull());
+	});
+});
