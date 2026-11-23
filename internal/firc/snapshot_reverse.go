@@ -400,8 +400,6 @@ type snapshotSettingsRouterSchema struct {
 	KeeneticCloudTunnel     bool     `json:"keeneticCloudTunnel"`
 	KeeneticCloudOutbound   string   `json:"keeneticCloudOutbound"`
 	DynamicCloudCIDRs       []string `json:"dynamicCloudCIDRs"`
-	SusaninEnabled          bool     `json:"susaninEnabled"`
-	SusaninOutbound         string   `json:"susaninOutbound"`
 }
 
 type snapshotSettingsSchema struct {

@@ -1,15 +1,12 @@
 #!/bin/sh
 
 ACTION="$1"
-INIT_DIR="${AWGM_INIT_DIR:-/opt/etc/init.d}"
-MANIFEST_DIR="${AWGM_MANIFEST_DIR:-/opt/etc/awg-manager}"
-MANIFEST="$MANIFEST_DIR/.unmanaged_inits.manifest"
 
 # On upgrade: only stop awg-manager daemon, keep tunnels running
 if [ "$ACTION" = "upgrade" ]; then
     echo "Upgrading awg-manager..."
     echo "  Tunnels will continue running during upgrade."
-    "$INIT_DIR/S99awg-manager" stop 2>/dev/null || true
+    /opt/etc/init.d/S99awg-manager stop 2>/dev/null || true
     exit 0
 fi
 
@@ -17,81 +14,19 @@ fi
 echo "Removing awg-manager..."
 
 # Stop the daemon first (if running)
-"$INIT_DIR/S99awg-manager" stop 2>/dev/null || true
+/opt/etc/init.d/S99awg-manager stop 2>/dev/null || true
 
-# Stop and remove managed worker init scripts (only if MANAGED_BY=awg-manager)
-for script in S95tproxy-server S99telemt S96telemt-raw; do
-    target="$INIT_DIR/$script"
-    if [ -f "$target" ]; then
-        if grep -q "MANAGED_BY=awg-manager" "$target" 2>/dev/null; then
-            "$target" stop 2>/dev/null || true
-            rm -f "$target"
-        fi
-    fi
-done
-
-# Restore unmanaged init scripts if backed up during installation
-if [ -f "$MANIFEST" ] && [ ! -L "$MANIFEST" ]; then
-    echo "Checking for unmanaged init scripts to restore..."
-    NEW_MANIFEST="${MANIFEST}.tmp.$$"
-    rm -f "$NEW_MANIFEST" 2>/dev/null || true
-
-    while IFS=" " read -r script sha || [ -n "$script" ]; do
-        [ -z "$script" ] && continue
-        case "$script" in
-            S95tproxy-server|S99telemt|S96telemt-raw) ;;
-            *)
-                echo "$script $sha" >> "$NEW_MANIFEST"
-                continue
-                ;;
-        esac
-        target="$INIT_DIR/$script"
-        bak="${target}.bak"
-        if [ -f "$bak" ] && [ ! -L "$bak" ]; then
-            # Verify checksum against recorded SHA-256 if available
-            if [ -n "$sha" ] && command -v sha256sum >/dev/null 2>&1; then
-                cur_sha=$(sha256sum "$bak" 2>/dev/null | awk '{print $1}')
-                if [ -n "$cur_sha" ] && [ "$cur_sha" != "$sha" ]; then
-                    echo "Warning: checksum mismatch for $bak (expected $sha, got $cur_sha) - preserving backup"
-                    echo "$script $sha" >> "$NEW_MANIFEST"
-                    continue
-                fi
-            fi
-
-            if [ ! -e "$target" ] || grep -q "MANAGED_BY=awg-manager" "$target" 2>/dev/null; then
-                echo "Restoring unmanaged $bak to $target..."
-                tmp_target="${target}.tmp.$$"
-                if cp -p "$bak" "$tmp_target" 2>/dev/null || cp "$bak" "$tmp_target" 2>/dev/null; then
-                    chmod 0755 "$tmp_target" 2>/dev/null || true
-                    if mv -f "$tmp_target" "$target" 2>/dev/null; then
-                        rm -f "$bak" 2>/dev/null || true
-                    else
-                        rm -f "$tmp_target" 2>/dev/null || true
-                        echo "Warning: failed to move restored script to $target"
-                        echo "$script $sha" >> "$NEW_MANIFEST"
-                    fi
-                else
-                    echo "Warning: failed to restore $bak to $target"
-                    echo "$script $sha" >> "$NEW_MANIFEST"
-                fi
-            else
-                # Target exists and is not managed by awg-manager
-                echo "$script $sha" >> "$NEW_MANIFEST"
-            fi
-        else
-            # Backup does not exist
-            echo "Warning: backup file $bak missing"
-        fi
-    done < "$MANIFEST"
-
-    if [ -s "$NEW_MANIFEST" ]; then
-        mv -f "$NEW_MANIFEST" "$MANIFEST" 2>/dev/null || true
-        echo "Notice: some unmanaged init scripts were preserved in $MANIFEST for manual review."
-    else
-        rm -f "$NEW_MANIFEST" "$MANIFEST" 2>/dev/null || true
-    fi
+# Use awg-manager --cleanup to properly delete all managed tunnels
+# This uses the service layer which handles:
+# - NDMS interface removal (OS 5.x)
+# - Process termination
+# - Endpoint route cleanup
+# - Config file cleanup
+# - Storage cleanup
+if [ -x /opt/bin/awg-manager ]; then
+    echo "Running awg-manager cleanup..."
+    /opt/bin/awg-manager --cleanup 2>&1 || true
 fi
-
 
 # Хук перехвата DNS policy-tun переживает удаление пакета и продолжает
 # реассертить DNAT в туннель, которого больше нет: правила зашиты прямо в
@@ -130,9 +65,13 @@ rm -f /opt/etc/ndm/netfilter.d/51-awgm-tunnel-fw.sh /opt/etc/awg-manager/tunnel-
 # именуются NN-awgm-*.sh — подметаем разом.
 rm -f /opt/etc/ndm/netfilter.d/*-awgm-*.sh
 
+# Снимки настроек перед обновлением: архивы с ключами в открытом виде,
+# которые нужны только для отката свежего обновления. Каталог данных при
+# удалении остаётся, а снимки в нём — нет.
+rm -rf /opt/etc/awg-manager/update-snapshots
+
 # Каталоги лока и старого PID, логи и недокачанный IPK на накопителе (#854).
 rm -rf /opt/var/lock/awg-manager /opt/var/run/awg-manager
-rm -rf /opt/etc/awg-manager/update-snapshots
 rm -f /opt/tmp/awg-manager-upgrade.log /opt/tmp/awg-manager-stderr.log /opt/tmp/awg-manager_*.ipk
 rm -f /tmp/awg-manager-router-login.json
 
