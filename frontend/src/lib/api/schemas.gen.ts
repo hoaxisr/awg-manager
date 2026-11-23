@@ -3554,7 +3554,6 @@ const vlessserver_ShareLinks: v.GenericSchema = v.looseObject({
 });
 
 const vlessserver_Status: v.GenericSchema = v.looseObject({
-	active_generation: v.optional(v.nullable(v.string())),
 	backend: v.optional(v.nullable(v.string())),
 	binary_path: v.optional(v.nullable(v.string())),
 	clients: v.optional(v.nullable(v.array(v.lazy(() => vlessserver_Client)))),
@@ -3563,7 +3562,6 @@ const vlessserver_Status: v.GenericSchema = v.looseObject({
 	domain: v.optional(v.nullable(v.string())),
 	installed: v.optional(v.nullable(v.boolean())),
 	listen_address: v.optional(v.nullable(v.string())),
-	migration_status: v.optional(v.nullable(v.string())),
 	pid: v.optional(v.nullable(v.number())),
 	port: v.optional(v.nullable(v.number())),
 	recovery_fingerprint: v.optional(v.nullable(v.string())),

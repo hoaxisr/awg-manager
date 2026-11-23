@@ -368,47 +368,6 @@ func (s *Service) xrayDir() string {
 	return filepath.Join(s.dataDir, "xray")
 }
 
-// tryAutoImportLegacyOnMissingSettings attempts non-destructive import from existing dataDir/xray/config.json
-// or dataDir/xray/profiles/*/active.json ONLY when xray-server-settings.json does not exist yet.
-func (s *Service) tryAutoImportLegacyOnMissingSettings() {
-	candidates := []string{
-		filepath.Join(s.xrayDir(), "config.json"),
-	}
-	if matches, err := filepath.Glob(filepath.Join(s.xrayDir(), "profiles", "*", "active.json")); err == nil {
-		candidates = append(candidates, matches...)
-	}
-	for _, src := range candidates {
-		if !fileExists(src) {
-			continue
-		}
-		disc, err := DiscoverLegacy(src, "")
-		if err != nil {
-			s.recoveryRequired = true
-			s.recoveryReason = fmt.Sprintf("legacy configuration read error (%s): %v", src, err)
-			return
-		}
-		if !disc.Found {
-			continue
-		}
-		if disc.Topology == TopologyC {
-			_ = BackupLegacyConfigFile(src, s.dataDir)
-			s.recoveryRequired = true
-			s.recoveryReason = fmt.Sprintf("unsupported legacy configuration in %s: %s", filepath.Base(src), disc.ConflictReason)
-			return
-		}
-		migrated, err := MigrateLegacy(context.Background(), disc, s.dataDir, 9008)
-		if err != nil && !errors.Is(err, ErrAlreadyMigrated) {
-			s.recoveryRequired = true
-			s.recoveryReason = fmt.Sprintf("legacy configuration import failed (%s): %v", filepath.Base(src), err)
-			return
-		}
-		if migrated != nil {
-			s.config = *migrated
-		}
-		return
-	}
-}
-
 func defaultConfig() Config {
 	return Config{
 		Enabled:            false,
@@ -434,7 +393,6 @@ func (s *Service) loadConfig() {
 	if err != nil {
 		if os.IsNotExist(err) {
 			s.recoveryRequired = false
-			s.tryAutoImportLegacyOnMissingSettings()
 			return
 		}
 		s.recoveryRequired = true

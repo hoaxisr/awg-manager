@@ -16,7 +16,6 @@
 		XrayStatus,
 		XrayClient,
 		XrayEndpointConfig,
-		XrayMigrationStatus,
 		XHTTPTuning,
 		XHTTPPreset,
 	} from '$lib/types';
@@ -69,8 +68,6 @@
 
 	let status = $state<XrayStatus | null>(untrack(() => initialStatus));
 	let config = $state<XrayConfig | null>(null);
-	let migrationStatus = $state<XrayMigrationStatus | null>(null);
-	let conflictResolving = $state(false);
 	let clients = $derived(status?.clients ?? config?.clients ?? []);
 	let endpoints = $derived(config?.endpoints ?? []);
 	let keendnsDiscovery = $state<KeenDNSDiscovery | null>(null);
@@ -329,17 +326,15 @@
 	async function loadData() {
 		loading = true;
 		try {
-			const [s, c, mig, t, caps, rState] = await Promise.all([
+			const [s, c, t, caps, rState] = await Promise.all([
 				api.getXrayServerStatus(),
 				api.getXrayServerConfig(),
-				api.getXrayMigrationStatus().catch(() => null),
 				api.getXrayTuning().catch(() => null),
 				api.getWizardCapabilities('xray').catch(() => null),
 				api.getXrayReality(false).catch(() => null),
 			]);
 			status = s;
 			config = c;
-			migrationStatus = mig;
 			if (t) tuning = t;
 			if (rState) realityState = rState;
 			egressOptions = caps?.egress_options ? [...caps.egress_options] : [];
@@ -363,25 +358,6 @@
 			lastCheckError = e instanceof Error ? e.message : 'Не удалось выполнить проверку';
 		} finally {
 			checkLoading = false;
-		}
-	}
-
-	async function handleResolveConflict(action: 'keep_new' | 'import_legacy_draft') {
-		conflictResolving = true;
-		try {
-			const res = await api.resolveXrayConflict(action);
-			if (res.success) {
-				notifications.success(
-					action === 'keep_new'
-						? 'Активирован сервер VLESS (awgm-xhttpd)'
-						: 'Клиенты и параметры Legacy импортированы'
-				);
-				await loadData();
-			}
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка разрешения конфликта');
-		} finally {
-			conflictResolving = false;
 		}
 	}
 
@@ -985,7 +961,6 @@
 			lastCheckError = '';
 			clearServerVerification('xray');
 			realityState = null;
-			migrationStatus = null;
 			resetConfirmOpen = false;
 			settingsOpen = false;
 			await loadData();
@@ -1213,39 +1188,6 @@
 			<div class="banner-content">
 				<div class="banner-title">Требуется восстановление конфигурации</div>
 				<div class="banner-desc">{status.recovery_reason || 'Файл настроек повреждён. Исходный файл не был изменён.'}</div>
-			</div>
-		</div>
-	{/if}
-
-	{#if migrationStatus?.discovery?.found && migrationStatus?.discovery?.topology === 'C' && migrationStatus?.decision?.migration_status !== 'migrated'}
-		<div class="alert-banner error">
-			<AlertTriangle size={18} class="banner-icon banner-icon-err" />
-			<div class="banner-content">
-				<div class="banner-title">Обнаружен неподдерживаемый профиль Legacy</div>
-				<div class="banner-desc">
-					{migrationStatus.discovery.conflict_reason || 'Старая конфигурация использует неподдерживаемый транспорт или протокол и сохранена без изменений.'}
-				</div>
-				<div class="banner-actions">
-					<Button variant="secondary" size="sm" disabled={conflictResolving} onclick={() => handleResolveConflict('keep_new')}>
-						Использовать сервер VLESS (awgm-xhttpd)
-					</Button>
-				</div>
-			</div>
-		</div>
-	{:else if migrationStatus?.discovery?.found && migrationStatus?.decision?.migration_status === 'deferred'}
-		<div class="alert-banner info">
-			<AlertTriangle size={18} class="banner-icon banner-icon-info" />
-			<div class="banner-content">
-				<div class="banner-title">Обнаружены настройки прежнего сервера</div>
-				<div class="banner-desc">Вы можете импортировать клиентов в сервер VLESS (awgm-xhttpd) с сохранением резервной копии или продолжить с текущей конфигурацией.</div>
-				<div class="banner-actions">
-					<Button variant="primary" size="sm" disabled={conflictResolving} onclick={() => handleResolveConflict('import_legacy_draft')}>
-						Импортировать клиентов
-					</Button>
-					<Button variant="secondary" size="sm" disabled={conflictResolving} onclick={() => handleResolveConflict('keep_new')}>
-						Оставить текущие настройки
-					</Button>
-				</div>
 			</div>
 		</div>
 	{/if}
@@ -3131,11 +3073,6 @@
 		color: var(--color-text-muted);
 		font-size: 12px;
 		line-height: 1.4;
-	}
-	.banner-actions {
-		display: flex;
-		gap: 8px;
-		margin-top: 4px;
 	}
 
 	.font-mono {

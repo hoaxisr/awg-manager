@@ -9826,8 +9826,6 @@ definitions:
     type: object
   vlessserver.Status:
     properties:
-      active_generation:
-        type: string
       backend:
         type: string
       binary_path:
@@ -9845,8 +9843,6 @@ definitions:
       installed:
         type: boolean
       listen_address:
-        type: string
-      migration_status:
         type: string
       pid:
         type: integer
@@ -12220,9 +12216,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Transactionally migrates FIRC ownership from legacy bundled awg-manager
-        or (when replaceExternalPackage=true) an allowlisted external Entware FIRC
-        package to awg-firc-runtime, preserving configs and runtime state.
+      description: Transactionally migrates FIRC ownership from an allowlisted external
+        Entware FIRC package (requires replaceExternalPackage=true) to awg-firc-runtime,
+        preserving configs and runtime state.
       parameters:
       - description: Migration options; set replaceExternalPackage=true to replace
           an external Entware FIRC package

@@ -469,11 +469,6 @@ func (h *FircHandler) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 		response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("firc runtime belongs to external package %s.list; migrate to awg-firc-runtime first", st.ExternalPackage), "EXTERNAL_PACKAGE_OWNED")
 		return
 	}
-	if st.LegacyBundledOwnership {
-		h.installMu.Unlock()
-		response.ErrorWithStatus(w, http.StatusConflict, "firc runtime belongs to legacy awg-manager package; migrate ownership first", "LEGACY_BUNDLED_OWNED")
-		return
-	}
 	if !st.Available {
 		h.installMu.Unlock()
 		reason := st.UnavailableReason
@@ -514,7 +509,7 @@ func (h *FircHandler) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Migrate FIRC runtime ownership to awg-firc-runtime
-// @Description Transactionally migrates FIRC ownership from legacy bundled awg-manager or (when replaceExternalPackage=true) an allowlisted external Entware FIRC package to awg-firc-runtime, preserving configs and runtime state.
+// @Description Transactionally migrates FIRC ownership from an allowlisted external Entware FIRC package (requires replaceExternalPackage=true) to awg-firc-runtime, preserving configs and runtime state.
 // @Tags firc
 // @Accept json
 // @Produce json
@@ -601,19 +596,8 @@ func (h *FircHandler) handleMigrateRuntime(w http.ResponseWriter, r *http.Reques
 		response.Accepted(w, map[string]string{"status": "external_migration_started"})
 		return
 	}
-	if !st.LegacyBundledOwnership && st.State != firc.InstallStateRecoveryNeeded {
-		h.installMu.Unlock()
-		response.ErrorWithStatus(w, http.StatusConflict, "legacy bundled FIRC ownership not present", "NOT_LEGACY_BUNDLED")
-		return
-	}
 	h.installMu.Unlock()
-
-	if err := h.installer.StartLegacyMigration(h.op); err != nil {
-		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_BUSY")
-		return
-	}
-
-	response.Accepted(w, map[string]string{"status": "legacy_migration_started"})
+	response.ErrorWithStatus(w, http.StatusConflict, "no FIRC runtime ownership to migrate", "NOTHING_TO_MIGRATE")
 }
 
 // @Summary Remove the FIRC runtime while preserving configuration

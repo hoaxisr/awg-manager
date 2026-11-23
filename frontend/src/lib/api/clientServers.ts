@@ -17,7 +17,6 @@ import type {
 	XrayConfig,
 	XrayStatus,
 	XrayShareLinks,
-	XrayMigrationStatus,
 	XrayRealityState,
 	XrayRealityUpdate,
 	XrayRealityDestCheck,
@@ -505,17 +504,6 @@ export class ServersClient extends SystemClient {
 		if (endpointId) params.set('endpoint_id', endpointId);
 		const qs = params.toString();
 		return this.request<XrayShareLinks>(`/servers/vless/clients/${encodeURIComponent(id)}/link${qs ? `?${qs}` : ''}`);
-	}
-
-	async getXrayMigrationStatus(): Promise<XrayMigrationStatus> {
-		return this.request<XrayMigrationStatus>('/servers/vless/migration');
-	}
-
-	async resolveXrayConflict(action: 'keep_new' | 'import_legacy_draft'): Promise<{ success: boolean; decision?: unknown }> {
-		return this.request<{ success: boolean; decision?: unknown }>('/servers/vless/migration/resolve', {
-			method: 'POST',
-			body: JSON.stringify({ action }),
-		});
 	}
 
 	// Direct VLESS + REALITY entry (white-IP routers)

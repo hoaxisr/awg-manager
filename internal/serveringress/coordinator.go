@@ -1647,42 +1647,6 @@ func (c *Coordinator) applyDispatcherConfigSeq(ctx context.Context, cfg cdndispa
 	})
 }
 
-// ResolveMigration executes migration strategy under coordinator lock.
-func (c *Coordinator) ResolveMigration(ctx context.Context, strategy string, legacyCfg *vlessserver.Config) error {
-	txID := fmt.Sprintf("ing-mig-%d-%d", time.Now().UnixNano(), os.Getpid())
-	return c.withIngressLock(txID, func() error {
-		if c.recoveryNeeded {
-			return ErrRecoveryRequired
-		}
-
-		switch strategy {
-		case "keep_new":
-			return vlessserver.SaveRuntimeDecision(c.dataDir, vlessserver.RuntimeDecision{
-				ActiveGeneration: "new",
-				MigrationStatus:  "migrated",
-				DecidedAt:        time.Now().UTC().Format(time.RFC3339),
-			})
-		case "keep_legacy":
-			return vlessserver.ErrLegacyRuntimeRemoved
-		case "import_legacy_draft":
-			if legacyCfg == nil {
-				return errors.New("legacy config is nil")
-			}
-			desired := c.topologyForXrayConfig(*legacyCfg)
-			if err := c.applyLocked(ctx, txID, desired, legacyCfg, nil); err != nil {
-				return err
-			}
-			return vlessserver.SaveRuntimeDecision(c.dataDir, vlessserver.RuntimeDecision{
-				ActiveGeneration: "new",
-				MigrationStatus:  "migrated",
-				DecidedAt:        time.Now().UTC().Format(time.RFC3339),
-			})
-		default:
-			return fmt.Errorf("unknown strategy: %s", strategy)
-		}
-	})
-}
-
 // ExecuteIngressTransaction executes a full coordinated transaction for Server Wizards with candidate isolation and readiness probes.
 func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params IngressTransactionParams) error {
 	txID := params.TxID

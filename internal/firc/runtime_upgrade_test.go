@@ -512,20 +512,4 @@ func TestOnDemandInstaller_UpgradePreconditions(t *testing.T) {
 	if err := instExt.Upgrade(ctx, nil); err == nil || !strings.Contains(err.Error(), "external package firc.list") {
 		t.Fatalf("expected external package refusal, got %v", err)
 	}
-
-	// 6. Legacy bundled ownership -> refused
-	legRoot := t.TempDir()
-	infoDir := filepath.Join(legRoot, "opt", "lib", "opkg", "info")
-	if err := os.MkdirAll(infoDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(infoDir, "awg-manager.list"), []byte("/opt/sbin/fircd\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	instLeg := NewOnDemandInstaller("aarch64-3.10", specV2Real)
-	instLeg.SetPackageLayout(DefaultPackageLayout(legRoot))
-	instLeg.SetPackageManager(&upgradeMockPackages{root: legRoot, arch: "aarch64-3.10"})
-	if err := instLeg.Upgrade(ctx, nil); err == nil || !strings.Contains(err.Error(), "awg-manager.list") {
-		t.Fatalf("expected legacy bundled ownership refusal, got %v", err)
-	}
 }
