@@ -56,7 +56,7 @@ type Server struct {
 	cAddr        string
 	cVersion     string
 	cExitCh      chan error
-	cExitErr     error
+	onExit       func()
 }
 
 // New constructs a C-backed xhttpserver supervisor.
@@ -121,11 +121,12 @@ func (s *Server) CDaemonVersion() string {
 	return s.cVersion
 }
 
-// CDaemonExitError returns the last unexpected exit error of awgm-xhttpd, if any.
-func (s *Server) CDaemonExitError() error {
+// SetOnUnexpectedExit registers fn, run in its own goroutine when the child
+// exits without Stop (crash, OOM kill) — the supervisor never restarts it itself.
+func (s *Server) SetOnUnexpectedExit(fn func()) {
 	s.srvMu.Lock()
 	defer s.srvMu.Unlock()
-	return s.cExitErr
+	s.onExit = fn
 }
 
 // Start validates configuration and binary integrity, checks port availability safely,
@@ -201,13 +202,17 @@ func (s *Server) Start() error {
 		close(exitCh)
 
 		s.srvMu.Lock()
+		var onExit func()
 		if s.cCmd == cmd {
-			s.cExitErr = waitErr
 			s.running = false
 			s.cCmd = nil
 			s.cAddr = ""
+			onExit = s.onExit
 		}
 		s.srvMu.Unlock()
+		if onExit != nil {
+			go onExit()
+		}
 	}()
 
 	httpClient := &http.Client{Timeout: 200 * time.Millisecond}
@@ -258,7 +263,6 @@ func (s *Server) Start() error {
 	s.cVersion = health.Version
 	s.cConfPath = confPath
 	s.cExitCh = exitCh
-	s.cExitErr = nil
 	s.running = true
 	return nil
 }
@@ -486,7 +490,8 @@ func (s *Server) stopCDaemonLocked() {
 		}
 	}
 cleanup:
-	if confPath != "" && strings.HasPrefix(filepath.Base(confPath), fmt.Sprintf("awgm-xhttpd-%d-", os.Getpid())) {
+	// Конфиг несёт UUID клиентов и FP-секреты — после остановки ему незачем жить.
+	if confPath == DefaultConfigPath || (confPath != "" && strings.HasPrefix(filepath.Base(confPath), fmt.Sprintf("awgm-xhttpd-%d-", os.Getpid()))) {
 		_ = os.Remove(confPath)
 	}
 }

@@ -323,9 +323,29 @@ func (s *Service) syncDaemonLocked() error {
 		s.lastRuntimeErr = err.Error()
 		return err
 	}
+	srv.SetOnUnexpectedExit(func() { s.restartCrashedDaemon(srv) })
 	s.daemon = srv
 	s.lastRuntimeErr = ""
 	return nil
+}
+
+// daemonRestartDelay — пауза перед подъёмом упавшего awgm-xhttpd.
+var daemonRestartDelay = 10 * time.Second
+
+// restartCrashedDaemon поднимает awgm-xhttpd после падения (OOM-kill и т.п.),
+// если srv всё ещё текущий демон: Stop/Shutdown обнуляют s.daemon, и тогда
+// перезапуск не нужен. ponytail: одна попытка на падение — неудачный подъём
+// оставляет причину в lastRuntimeErr; при повторяющихся падениях не чаще раза
+// в daemonRestartDelay.
+func (s *Service) restartCrashedDaemon(srv *xhttpserver.Server) {
+	time.AfterFunc(daemonRestartDelay, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.daemon != srv || srv.IsRunning() {
+			return
+		}
+		_ = s.syncDaemonLocked()
+	})
 }
 
 func (s *Service) IsRecoveryRequired() bool {

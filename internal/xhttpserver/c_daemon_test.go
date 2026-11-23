@@ -358,6 +358,8 @@ func TestCDaemon_HealthPIDCapabilitiesAndCrashDetection(t *testing.T) {
 		t.Fatalf("Start with healthy C daemon failed: %v", err)
 	}
 	defer srv.Stop()
+	exited := make(chan struct{}, 1)
+	srv.SetOnUnexpectedExit(func() { exited <- struct{}{} })
 
 	if srv.CDaemonPID() <= 0 || !srv.IsRunning() {
 		t.Fatalf("expected running C daemon, pid=%d running=%v", srv.CDaemonPID(), srv.IsRunning())
@@ -381,6 +383,24 @@ func TestCDaemon_HealthPIDCapabilitiesAndCrashDetection(t *testing.T) {
 	}
 	if srv.IsRunning() || srv.CDaemonPID() != 0 {
 		t.Fatalf("expected IsRunning()==false and PID==0 after crash, got running=%v pid=%d", srv.IsRunning(), srv.CDaemonPID())
+	}
+	// F824: о падении узнаёт супервизор (vlessserver), иначе демон лежал бы
+	// до ручного пересохранения.
+	select {
+	case <-exited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("unexpected exit hook not called after crash")
+	}
+
+	// Штатный Stop — не падение: колбэк молчит.
+	if err := srv.Start(); err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	_ = srv.Stop()
+	select {
+	case <-exited:
+		t.Fatal("exit hook fired on deliberate Stop")
+	case <-time.After(300 * time.Millisecond):
 	}
 }
 
