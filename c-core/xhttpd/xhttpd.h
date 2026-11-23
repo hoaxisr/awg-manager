@@ -55,7 +55,8 @@
  *   stack touched ~57 KiB of the 512 KiB reserve (client_conn_thread 19.2 KiB +
  *   run_vless_stream 13.1 KiB + sniff_tls_sni 16.1 KiB + DNS/getaddrinfo path),
  *   per-request config snapshot 112-116 KiB (sizeof(xhttpd_config_t), malloc'd and copied),
- *   relay buffer 32 KiB (TCP) / 64 KiB (UDP) / 128 KiB (mux), stream-one feed thread
+ *   relay buffer 32 KiB (TCP) / 64 KiB (UDP) / 128 KiB (mux, plus 14 KiB sub-session table,
+ *   one 64 KiB-stack downlink thread and its 8 KiB buffer), stream-one feed thread
  *   ~17 KiB more, plus kernel pipe and socket buffers.
  * That is ~230 KiB user memory per worker, ~29 MiB at 128 before socket buffers: already
  * a large share of a 128 MiB router. The per-IP cap in vless_xhttp.c keeps one client

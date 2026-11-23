@@ -468,7 +468,275 @@ static void handle_vless_udp_stream(const vless_req_t *vreq, const uint8_t *init
     udp_egress_close_ctrl(&dest);
 }
 
-/* XUDP / Mux (0x03) handler for UDP DNS & TCP sub-sessions */
+/* ---- Mux.Cool / XUDP (VLESS command 0x03) ----
+ * Frame: [u16 meta_len][u16 id][u8 status][u8 option][status New: u8 net, u16 port, u8 atyp, addr
+ * (+8-byte XUDP GlobalID for UDP)] [option Data: u16 len, data]. A UDP Keep may carry
+ * net/port/addr after option as well (XUDP); we send replies that way, with the
+ * sub-session's target as the source, as the Go stack did before F854.
+ *
+ * Threads: the worker thread reads the uplink and dials (a dial stalls only the uplink, as
+ * in the old Go handler); ONE downlink thread per mux stream polls every sub-session fd and
+ * writes Keep/End frames. Chosen over a reader thread per sub-session: on MIPS each extra
+ * thread costs a stack (64 KiB reserved here, a few KiB touched) and an 8 KiB buffer, so a
+ * full mux would cost MUX_MAX_SUBS of them instead of one. Only the downlink thread closes
+ * sub-session fds (or the worker after joining it), and never while the worker writes to
+ * one (busy), so an fd can not be closed and reused under a pending poll/recv/write. */
+#define MUX_STATUS_NEW       0x01
+#define MUX_STATUS_KEEP      0x02
+#define MUX_STATUS_END       0x03
+#define MUX_STATUS_KEEPALIVE 0x04
+#define MUX_OPT_DATA         0x01
+#define MUX_OPT_ERROR        0x02
+#define MUX_NET_TCP          0x01
+#define MUX_NET_UDP          0x02
+/* Xray defaults: mux.concurrency 8 TCP + xudpConcurrency 16 UDP per connection = 24;
+ * 32 leaves headroom without letting one stream hold an unbounded number of sockets. */
+#define MUX_MAX_SUBS         32
+/* Xray buf.Size: its mux PacketReader refuses UDP frames above 8 KiB; TCP uses the same chunk. */
+#define MUX_DOWN_BUF         8192
+#define MUX_HDR_MAX          272 /* 2 + 4 + net/port/atyp + 1 + 255 domain + 2 data len */
+/* mux_down_thread frame is ~1.1 KiB (gcc -fstack-usage, x86_64) plus write_http_chunk and
+ * recv/sendmsg; 64 KiB keeps room for sanitizer builds and libc. */
+#define MUX_DOWN_STACK       65536
+
+typedef struct {
+    bool         used;
+    bool         dead;     /* no more I/O; the downlink thread closes fd once busy == 0 */
+    bool         pending;  /* TCP dial deferred until the first data (sniffing) */
+    uint8_t      net;
+    uint16_t     id;
+    int          fd;
+    int          busy;     /* worker is writing to / dialing for this sub-session */
+    udp_egress_t ue;
+    char         host[256];
+    uint16_t     port;
+} mux_sub_t;
+
+typedef struct {
+    mux_sub_t        subs[MUX_MAX_SUBS];
+    pthread_mutex_t  mu;       /* subs and the flags below */
+    pthread_mutex_t  down_mu;  /* serialises writes to down_fd */
+    int              down_fd;
+    int              wake[2];
+    const bool      *abort_flag;
+    bool             stop;        /* worker: end now */
+    bool             up_eof;      /* worker: uplink ended, drain replies then end */
+    bool             down_broken; /* downlink thread: client gone */
+    uint64_t         tcp_idle_ms;
+} mux_ctx_t;
+
+static bool mux_aborted(const mux_ctx_t *m) {
+    return m->abort_flag && __atomic_load_n(m->abort_flag, __ATOMIC_ACQUIRE);
+}
+
+static void mux_wake(mux_ctx_t *m) {
+    ssize_t w = write(m->wake[1], "w", 1);
+    (void)w;
+}
+
+/* Header for one frame; udp_host != NULL appends net/port/address (UDP Keep). Returns length. */
+static size_t mux_encode_hdr(uint8_t *out, uint16_t id, uint8_t status, uint8_t opt,
+                             const char *udp_host, uint16_t udp_port, size_t data_len) {
+    size_t m = 2;
+    out[m++] = (uint8_t)(id >> 8);
+    out[m++] = (uint8_t)id;
+    out[m++] = status;
+    out[m++] = opt;
+    if (udp_host) {
+        out[m++] = MUX_NET_UDP;
+        out[m++] = (uint8_t)(udp_port >> 8);
+        out[m++] = (uint8_t)udp_port;
+        struct in_addr a4;
+        struct in6_addr a6;
+        if (inet_pton(AF_INET, udp_host, &a4) == 1) {
+            out[m++] = 0x01;
+            memcpy(out + m, &a4, 4); m += 4;
+        } else if (inet_pton(AF_INET6, udp_host, &a6) == 1) {
+            out[m++] = 0x03;
+            memcpy(out + m, &a6, 16); m += 16;
+        } else {
+            size_t hl = strlen(udp_host);
+            if (hl > 255) hl = 255;
+            out[m++] = 0x02;
+            out[m++] = (uint8_t)hl;
+            memcpy(out + m, udp_host, hl); m += hl;
+        }
+    }
+    out[0] = (uint8_t)((m - 2) >> 8);
+    out[1] = (uint8_t)(m - 2);
+    if (opt & MUX_OPT_DATA) {
+        out[m++] = (uint8_t)(data_len >> 8);
+        out[m++] = (uint8_t)data_len;
+    }
+    return m;
+}
+
+static int mux_write_down(mux_ctx_t *m, const uint8_t *buf, size_t len) {
+    pthread_mutex_lock(&m->down_mu);
+    int rc = write_http_chunk(m->down_fd, buf, len);
+    pthread_mutex_unlock(&m->down_mu);
+    if (rc < 0) {
+        pthread_mutex_lock(&m->mu);
+        m->down_broken = true;
+        pthread_mutex_unlock(&m->mu);
+    }
+    return rc;
+}
+
+static void mux_send_end(mux_ctx_t *m, uint16_t id, uint8_t opt) {
+    uint8_t f[8];
+    size_t n = mux_encode_hdr(f, id, MUX_STATUS_END, opt, NULL, 0, 0);
+    (void)mux_write_down(m, f, n);
+}
+
+/* Caller holds m->mu or owns the table alone. */
+static void mux_close_sub_fd(mux_sub_t *s) {
+    if (s->fd >= 0) close(s->fd);
+    s->fd = -1;
+    if (s->net == MUX_NET_UDP) udp_egress_close_ctrl(&s->ue);
+}
+
+static void *mux_down_thread(void *arg) {
+    mux_ctx_t *m = (mux_ctx_t *)arg;
+    uint8_t *buf = (uint8_t *)malloc(MUX_HDR_MAX + MUX_DOWN_BUF);
+    if (!buf) {
+        pthread_mutex_lock(&m->mu);
+        m->down_broken = true;
+        pthread_mutex_unlock(&m->mu);
+        return NULL;
+    }
+    uint64_t last_io = now_ms();
+    for (;;) {
+        struct pollfd pfds[MUX_MAX_SUBS + 1];
+        int idx[MUX_MAX_SUBS];
+        int n = 0;
+        bool live = false, live_tcp = false;
+        pthread_mutex_lock(&m->mu);
+        if (m->stop || m->down_broken || mux_aborted(m)) {
+            pthread_mutex_unlock(&m->mu);
+            break;
+        }
+        for (int i = 0; i < MUX_MAX_SUBS; i++) {
+            mux_sub_t *s = &m->subs[i];
+            if (!s->used) continue;
+            if (s->dead) {
+                if (s->busy == 0) {
+                    mux_close_sub_fd(s);
+                    s->used = false;
+                }
+                continue;
+            }
+            live = true;
+            if (s->net == MUX_NET_TCP) live_tcp = true;
+            if (s->fd >= 0) {
+                pfds[n].fd = s->fd;
+                pfds[n].events = POLLIN;
+                pfds[n].revents = 0;
+                idx[n++] = i;
+            }
+        }
+        bool up_eof = m->up_eof;
+        pthread_mutex_unlock(&m->mu);
+        /* After the uplink ends, deliver what is still coming: TCP until the targets close
+         * (bounded by the idle timeout), UDP-only for 2 s of silence, as the UDP stream does. */
+        if (up_eof && (!live || now_ms() - last_io >= (live_tcp ? m->tcp_idle_ms : 2000ULL))) break;
+
+        pfds[n].fd = m->wake[0];
+        pfds[n].events = POLLIN;
+        pfds[n].revents = 0;
+        int pr = poll(pfds, (nfds_t)(n + 1), 100);
+        if (pr < 0 && errno != EINTR) break;
+        if (pr <= 0) continue;
+        if (pfds[n].revents & POLLIN) {
+            uint8_t drain[64];
+            while (read(m->wake[0], drain, sizeof(drain)) > 0) {}
+        }
+        for (int k = 0; k < n; k++) {
+            if (!(pfds[k].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+            pthread_mutex_lock(&m->mu);
+            mux_sub_t *s = &m->subs[idx[k]];
+            if (!s->used || s->dead || s->fd != pfds[k].fd) {
+                pthread_mutex_unlock(&m->mu);
+                continue;
+            }
+            uint8_t *data = buf + MUX_HDR_MAX;
+            ssize_t r;
+            bool is_udp = (s->net == MUX_NET_UDP);
+            if (is_udp) r = udp_egress_recv(s->fd, &s->ue, data, MUX_DOWN_BUF, MSG_DONTWAIT);
+            else r = recv(s->fd, data, MUX_DOWN_BUF, MSG_DONTWAIT);
+            int end_opt = -1;
+            if (!is_udp && (r == 0 || (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))) {
+                end_opt = (r == 0) ? 0 : MUX_OPT_ERROR;
+                s->dead = true;
+            }
+            uint16_t id = s->id;
+            char host[256];
+            uint16_t port = s->port;
+            if (is_udp) snprintf(host, sizeof(host), "%s", s->host);
+            pthread_mutex_unlock(&m->mu);
+
+            if (r > 0) {
+                uint8_t hdr[MUX_HDR_MAX];
+                size_t hl = mux_encode_hdr(hdr, id, MUX_STATUS_KEEP, MUX_OPT_DATA,
+                                           is_udp ? host : NULL, port, (size_t)r);
+                memcpy(data - hl, hdr, hl);
+                last_io = now_ms();
+                if (mux_write_down(m, data - hl, hl + (size_t)r) < 0) break;
+            }
+            if (end_opt >= 0) {
+                last_io = now_ms();
+                mux_send_end(m, id, (uint8_t)end_opt);
+            }
+        }
+    }
+    free(buf);
+    return NULL;
+}
+
+/* net/port/atyp/address at meta[off]; returns bytes consumed or 0. */
+static size_t mux_parse_target(const uint8_t *meta, size_t mlen, size_t off,
+                               uint8_t *net, uint16_t *port, char *host, size_t host_sz) {
+    if (off + 4 > mlen) return 0;
+    *net = meta[off];
+    *port = (uint16_t)((meta[off + 1] << 8) | meta[off + 2]);
+    uint8_t atyp = meta[off + 3];
+    size_t p = off + 4;
+    if (atyp == 0x01) {
+        if (p + 4 > mlen) return 0;
+        snprintf(host, host_sz, "%u.%u.%u.%u", meta[p], meta[p + 1], meta[p + 2], meta[p + 3]);
+        p += 4;
+    } else if (atyp == 0x03) {
+        if (p + 16 > mlen || !inet_ntop(AF_INET6, meta + p, host, (socklen_t)host_sz)) return 0;
+        p += 16;
+    } else if (atyp == 0x02) {
+        if (p + 1 > mlen) return 0;
+        size_t dl = meta[p++];
+        if (dl == 0 || p + dl > mlen || dl >= host_sz) return 0;
+        memcpy(host, meta + p, dl);
+        host[dl] = '\0';
+        p += dl;
+    } else {
+        return 0;
+    }
+    return p - off;
+}
+
+/* Worker side of a write to a sub-session (busy already taken). Returns 0 or -1. */
+static int mux_sub_write(mux_sub_t *s, int fd, const uint8_t *data, size_t len) {
+    if (len == 0) return 0;
+    if (s->net == MUX_NET_UDP) {
+        (void)udp_egress_send(fd, &s->ue, data, len); /* a lost datagram is UDP, not an error */
+        return 0;
+    }
+    return write_all(fd, data, len);
+}
+
+/* Dials a TCP/UDP target; for TCP `first` feeds the SNI/Host sniffer. Returns fd or -1. */
+static int mux_dial(mux_sub_t *s, const uint8_t *first, size_t first_len, const xhttpd_config_t *cfg) {
+    if (s->net == MUX_NET_UDP) return dial_target_udp(s->host, s->port, cfg, &s->ue);
+    return dial_target_tcp(s->host, s->port, first, first_len, cfg, 8000);
+}
+
 static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_len,
                                     int up_fd, int down_fd, const xhttpd_config_t *cfg,
                                     const bool *abort_flag) {
@@ -495,18 +763,39 @@ static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_l
 
     uint8_t *meta = (uint8_t *)malloc(65536);
     uint8_t *payload = (uint8_t *)malloc(65536);
-    if (!meta || !payload) {
-        if (meta) free(meta);
-        if (payload) free(payload);
+    mux_ctx_t *m = (mux_ctx_t *)calloc(1, sizeof(*m));
+    if (!meta || !payload || !m || pipe2(m->wake, O_NONBLOCK | O_CLOEXEC) < 0) {
+        free(meta);
+        free(payload);
+        free(m);
         write_http_chunk(down_fd, vresp_hdr, 2);
         return;
     }
+    pthread_mutex_init(&m->mu, NULL);
+    pthread_mutex_init(&m->down_mu, NULL);
+    m->down_fd = down_fd;
+    m->abort_flag = abort_flag;
+    m->tcp_idle_ms = (uint64_t)((cfg && cfg->idle_timeout_sec > 5) ? cfg->idle_timeout_sec : 120) * 1000ULL;
+    for (int i = 0; i < MUX_MAX_SUBS; i++) m->subs[i].fd = -1;
 
-    while (1) {
+    pthread_t down_tid;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, MUX_DOWN_STACK);
+    bool down_started = (pthread_create(&down_tid, &attr, mux_down_thread, m) == 0);
+    pthread_attr_destroy(&attr);
+
+    bool clean_eof = false;
+    while (down_started) {
         /* Revocation stops the relay even for frames already buffered in the up pipe */
-        if (abort_flag && __atomic_load_n(abort_flag, __ATOMIC_ACQUIRE)) break;
+        if (mux_aborted(m)) break;
+        pthread_mutex_lock(&m->mu);
+        bool broken = m->down_broken;
+        pthread_mutex_unlock(&m->mu);
+        if (broken) break;
+
         uint8_t mlen_buf[2];
-        if (MUX_READ_EXACT(mlen_buf, 2) < 0) break;
+        if (MUX_READ_EXACT(mlen_buf, 2) < 0) { clean_eof = !mux_aborted(m); break; }
         uint16_t mlen = ((uint16_t)mlen_buf[0] << 8) | mlen_buf[1];
         if (mlen < 4) break;
         if (MUX_READ_EXACT(meta, mlen) < 0) break;
@@ -516,7 +805,7 @@ static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_l
         uint8_t  opt    = meta[3];
 
         size_t plen = 0;
-        if (opt & 0x01) {
+        if (opt & MUX_OPT_DATA) {
             uint8_t plen_buf[2];
             if (MUX_READ_EXACT(plen_buf, 2) < 0) break;
             plen = ((uint16_t)plen_buf[0] << 8) | plen_buf[1];
@@ -525,72 +814,124 @@ static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_l
 
         if (!vresp_sent) {
             vresp_sent = true;
-            if (write_http_chunk(down_fd, vresp_hdr, 2) < 0) break;
+            if (mux_write_down(m, vresp_hdr, 2) < 0) break;
         }
 
-        if (status == 0x04 /* KeepAlive */) continue;
-        if (status == 0x01 /* New */ && mlen > 7) {
-            uint8_t net_type = meta[4];
-            uint16_t port = ((uint16_t)meta[5] << 8) | meta[6];
-            uint8_t atyp = meta[7];
-            char host[256] = {0};
-            if (atyp == 1 && mlen >= 12) {
-                snprintf(host, sizeof(host), "%u.%u.%u.%u", meta[8], meta[9], meta[10], meta[11]);
-            } else if (atyp == 2 && mlen >= 9) {
-                uint8_t dlen = meta[8];
-                if (9 + dlen <= mlen) {
-                    memcpy(host, meta + 9, dlen);
-                    host[dlen] = '\0';
-                }
-            } else if (atyp == 3 && mlen >= 24) {
-                inet_ntop(AF_INET6, meta + 8, host, sizeof(host));
+        if (status == MUX_STATUS_NEW) {
+            mux_sub_t ns;
+            memset(&ns, 0, sizeof(ns));
+            ns.fd = -1;
+            ns.ue.socks_ctrl_fd = -1;
+            ns.id = sub_id;
+            if (mux_parse_target(meta, mlen, 4, &ns.net, &ns.port, ns.host, sizeof(ns.host)) == 0 ||
+                (ns.net != MUX_NET_TCP && ns.net != MUX_NET_UDP)) {
+                mux_send_end(m, sub_id, MUX_OPT_ERROR);
+                continue;
             }
-            if (net_type == 0x02 /* UDP */) {
-                if (port == 443) {
-                    /* Send Mux End frame for QUIC 443 */
-                    uint8_t end_f[6] = { 0x00, 0x04, (uint8_t)(sub_id >> 8), (uint8_t)sub_id, 0x03, 0x02 };
-                    write_http_chunk(down_fd, end_f, 6);
+            if (ns.net == MUX_NET_UDP && ns.port == 443) {
+                /* Reject QUIC (UDP 443) so clients fall back to TCP 443 */
+                mux_send_end(m, sub_id, MUX_OPT_ERROR);
+                continue;
+            }
+            int slot = -1, used = 0;
+            pthread_mutex_lock(&m->mu);
+            for (int i = 0; i < MUX_MAX_SUBS; i++) {
+                mux_sub_t *s = &m->subs[i];
+                if (s->used && !s->dead && s->id == sub_id) s->dead = true; /* New replaces */
+                if (s->used) used++;
+                else if (slot < 0) slot = i;
+            }
+            pthread_mutex_unlock(&m->mu);
+            if (slot < 0 || used >= MUX_MAX_SUBS) {
+                mux_wake(m);
+                mux_send_end(m, sub_id, MUX_OPT_ERROR);
+                continue;
+            }
+            /* Plain IP:443/80 with no first data yet: dial on the first Keep, so the
+             * sniffed domain decides routing, as handle_vless_tcp_stream does. */
+            if (ns.net == MUX_NET_TCP && plen == 0 && should_defer_dial_for_sniff(ns.host, ns.port, cfg->egress_mode)) {
+                ns.pending = true;
+            } else {
+                ns.fd = mux_dial(&ns, payload, plen, cfg);
+                if (ns.fd < 0 || mux_sub_write(&ns, ns.fd, payload, plen) < 0) {
+                    mux_close_sub_fd(&ns);
+                    mux_send_end(m, sub_id, MUX_OPT_ERROR);
                     continue;
                 }
-                if (plen > 0 && host[0]) {
-                    udp_egress_t dest;
-                    int ufd = dial_target_udp(host, port, cfg, &dest);
-                    if (ufd >= 0) {
-                        udp_egress_send(ufd, &dest, payload, plen);
-                        struct pollfd upfd = { .fd = ufd, .events = POLLIN };
-                        /* Wait up to 2 s for one reply; a datagram udp_egress_recv drops
-                         * (fragmented SOCKS reply) does not end the wait */
-                        uint8_t rbuf[4096];
-                        ssize_t rn = -1;
-                        for (int waited = 0; waited < 2000 && rn <= 0; waited += 100) {
-                            if (abort_flag && __atomic_load_n(abort_flag, __ATOMIC_ACQUIRE)) break;
-                            if (poll(&upfd, 1, 100) > 0) {
-                                rn = udp_egress_recv(ufd, &dest, rbuf + 8, sizeof(rbuf) - 8, MSG_DONTWAIT);
-                            }
-                        }
-                        if (rn > 0) {
-                            rbuf[0] = 0x00; rbuf[1] = 0x04;
-                            rbuf[2] = (uint8_t)(sub_id >> 8); rbuf[3] = (uint8_t)sub_id;
-                            rbuf[4] = 0x02; /* Keep */
-                            rbuf[5] = 0x01; /* OptionData */
-                            rbuf[6] = (uint8_t)((rn >> 8) & 0xFF);
-                            rbuf[7] = (uint8_t)(rn & 0xFF);
-                            write_http_chunk(down_fd, rbuf, (size_t)rn + 8);
-                        }
-                        close(ufd);
-                        udp_egress_close_ctrl(&dest);
-                    }
-                }
             }
+            ns.used = true;
+            pthread_mutex_lock(&m->mu);
+            m->subs[slot] = ns; /* slot stays free for us: only the worker allocates */
+            pthread_mutex_unlock(&m->mu);
+            mux_wake(m);
+            continue;
         }
+        if (status != MUX_STATUS_KEEP && status != MUX_STATUS_END) continue; /* KeepAlive */
+
+        pthread_mutex_lock(&m->mu);
+        mux_sub_t *s = NULL;
+        for (int i = 0; i < MUX_MAX_SUBS; i++) {
+            if (m->subs[i].used && !m->subs[i].dead && m->subs[i].id == sub_id) { s = &m->subs[i]; break; }
+        }
+        if (!s) {
+            pthread_mutex_unlock(&m->mu);
+            continue;
+        }
+        s->busy++;
+        bool need_dial = s->pending && plen > 0;
+        int fd = s->fd;
+        pthread_mutex_unlock(&m->mu);
+
+        int wrc = 0;
+        if (need_dial) {
+            /* busy keeps the entry; the downlink thread skips fd < 0 */
+            fd = mux_dial(s, payload, plen, cfg);
+            pthread_mutex_lock(&m->mu);
+            s->fd = fd;
+            s->pending = false;
+            pthread_mutex_unlock(&m->mu);
+            if (fd < 0) wrc = -1;
+        }
+        if (wrc == 0 && fd >= 0) wrc = mux_sub_write(s, fd, payload, plen);
+
+        pthread_mutex_lock(&m->mu);
+        s->busy--;
+        if (wrc < 0 || status == MUX_STATUS_END) s->dead = true;
+        pthread_mutex_unlock(&m->mu);
+        if (wrc < 0) mux_send_end(m, sub_id, MUX_OPT_ERROR);
+        mux_wake(m);
     }
     #undef MUX_READ_EXACT
-    free(meta);
-    free(payload);
 
-    if (!vresp_sent && !(abort_flag && __atomic_load_n(abort_flag, __ATOMIC_ACQUIRE))) {
+    pthread_mutex_lock(&m->mu);
+    if (clean_eof) {
+        /* Half-close: TCP targets see EOF, replies keep flowing until they finish */
+        m->up_eof = true;
+        for (int i = 0; i < MUX_MAX_SUBS; i++) {
+            mux_sub_t *s = &m->subs[i];
+            if (s->used && !s->dead && s->net == MUX_NET_TCP && s->fd >= 0) shutdown(s->fd, SHUT_WR);
+        }
+    } else {
+        m->stop = true;
+    }
+    pthread_mutex_unlock(&m->mu);
+    if (down_started) {
+        mux_wake(m);
+        pthread_join(down_tid, NULL);
+    }
+    for (int i = 0; i < MUX_MAX_SUBS; i++) {
+        if (m->subs[i].used) mux_close_sub_fd(&m->subs[i]);
+    }
+    if (!vresp_sent && !mux_aborted(m)) {
         write_http_chunk(down_fd, vresp_hdr, 2);
     }
+    close(m->wake[0]);
+    close(m->wake[1]);
+    pthread_mutex_destroy(&m->mu);
+    pthread_mutex_destroy(&m->down_mu);
+    free(m);
+    free(meta);
+    free(payload);
 }
 
 /* VLESS XHTTP Session Table for packet-up and stream-up */

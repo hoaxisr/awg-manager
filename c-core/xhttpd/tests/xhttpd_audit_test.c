@@ -4078,6 +4078,352 @@ static void test_f864_socks_udp_associate(void) {
     close(relay.lfd);
     free(cfg);
 }
+
+/* ---- F871: Mux.Cool / XUDP server side ---- */
+typedef struct {
+    int lfd;
+    volatile int stop;
+    int eof_seen;  /* connections whose peer half-closed / closed */
+} tcp_multi_echo_t;
+
+typedef struct {
+    tcp_multi_echo_t *e;
+    int fd;
+} tcp_echo_conn_t;
+
+static void *tcp_echo_conn_thread(void *arg) {
+    tcp_echo_conn_t *c = (tcp_echo_conn_t *)arg;
+    uint8_t b[4096];
+    for (;;) {
+        ssize_t n = recv(c->fd, b, sizeof(b), 0);
+        if (n <= 0) break;
+        if (write_all(c->fd, b, (size_t)n) < 0) break;
+    }
+    __atomic_add_fetch(&c->e->eof_seen, 1, __ATOMIC_ACQ_REL);
+    close(c->fd);
+    free(c);
+    return NULL;
+}
+
+static void *tcp_multi_echo_thread(void *arg) {
+    tcp_multi_echo_t *e = (tcp_multi_echo_t *)arg;
+    while (!__atomic_load_n(&e->stop, __ATOMIC_ACQUIRE)) {
+        struct pollfd p = { .fd = e->lfd, .events = POLLIN };
+        if (poll(&p, 1, 25) <= 0) continue;
+        int fd = accept(e->lfd, NULL, NULL);
+        if (fd < 0) continue;
+        tcp_echo_conn_t *c = (tcp_echo_conn_t *)malloc(sizeof(*c));
+        c->e = e;
+        c->fd = fd;
+        pthread_t th;
+        if (pthread_create(&th, NULL, tcp_echo_conn_thread, c) == 0) pthread_detach(th);
+        else { close(fd); free(c); }
+    }
+    return NULL;
+}
+
+typedef struct {
+    const xhttpd_config_t *cfg;
+    int sv[2];
+    pthread_t th;
+    volatile int done;
+    uint8_t vhdr[19];
+    uint8_t raw[65536];
+    size_t raw_len, raw_pos;
+    bool hdr_done, ended;
+    uint8_t rx[65536];
+    size_t rx_len, rx_pos;
+    bool vresp_skipped;
+} mux_cli_t;
+
+typedef struct {
+    uint16_t id;
+    uint8_t status, opt;
+    bool has_addr;
+    char host[64];
+    uint16_t port;
+    uint8_t data[9000];
+    size_t dlen;
+} mux_frame_t;
+
+static void *mux_cli_worker(void *arg) {
+    mux_cli_t *c = (mux_cli_t *)arg;
+    http_req_t req;
+    memset(&req, 0, sizeof(req));
+    snprintf(req.method, sizeof(req.method), "POST");
+    snprintf(req.path, sizeof(req.path), "/cdn-bridge");
+    snprintf(req.peer_ip, sizeof(req.peer_ip), "127.0.0.1");
+    req.chunked = true;
+    req.chunked_incomplete = true;
+    req.content_length = -1;
+    req.body = c->vhdr;
+    req.body_len = sizeof(c->vhdr);
+    conn_reader_t *cr = (conn_reader_t *)calloc(1, sizeof(*cr));
+    cr->fd = c->sv[0];
+    handle_vless_http_request(c->sv[0], cr, &req, "/cdn-bridge", c->cfg);
+    shutdown(c->sv[0], SHUT_RDWR);
+    free(cr);
+    __atomic_store_n(&c->done, 1, __ATOMIC_RELEASE);
+    return NULL;
+}
+
+static mux_cli_t *mux_cli_start(const xhttpd_config_t *cfg) {
+    mux_cli_t *c = (mux_cli_t *)calloc(1, sizeof(*c));
+    c->cfg = cfg;
+    c->vhdr[0] = 0x00;
+    memcpy(c->vhdr + 1, cfg->clients[0].uuid, 16);
+    c->vhdr[17] = 0x00;
+    c->vhdr[18] = VLESS_CMD_MUX;
+    socketpair(AF_UNIX, SOCK_STREAM, 0, c->sv);
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 524288);
+    pthread_create(&c->th, &attr, mux_cli_worker, c);
+    pthread_attr_destroy(&attr);
+    return c;
+}
+
+/* One mux frame as one HTTP chunk of the uplink */
+static void mux_cli_send(mux_cli_t *c, uint16_t id, uint8_t status, uint8_t net, const char *ip4, uint16_t port,
+                         const char *data, size_t dlen) {
+    uint8_t f[512];
+    size_t m = 2;
+    f[m++] = (uint8_t)(id >> 8); f[m++] = (uint8_t)id;
+    f[m++] = status;
+    f[m++] = dlen ? 0x01 : 0x00;
+    if (status == 0x01) {
+        f[m++] = net;
+        f[m++] = (uint8_t)(port >> 8); f[m++] = (uint8_t)port;
+        f[m++] = 0x01;
+        inet_pton(AF_INET, ip4, f + m); m += 4;
+        if (net == 0x02) { memset(f + m, 0xAB, 8); m += 8; } /* XUDP GlobalID */
+    }
+    f[0] = (uint8_t)((m - 2) >> 8); f[1] = (uint8_t)(m - 2);
+    if (dlen) {
+        f[m++] = (uint8_t)(dlen >> 8); f[m++] = (uint8_t)dlen;
+        memcpy(f + m, data, dlen); m += dlen;
+    }
+    char ch[16];
+    int hl = snprintf(ch, sizeof(ch), "%zx\r\n", m);
+    write_all(c->sv[1], ch, (size_t)hl);
+    write_all(c->sv[1], f, m);
+    write_all(c->sv[1], "\r\n", 2);
+}
+
+static void mux_cli_decode(mux_cli_t *c) {
+    if (!c->hdr_done) {
+        uint8_t *e = (uint8_t *)memmem(c->raw + c->raw_pos, c->raw_len - c->raw_pos, "\r\n\r\n", 4);
+        if (!e) return;
+        c->raw_pos = (size_t)(e - c->raw) + 4;
+        c->hdr_done = true;
+    }
+    for (;;) {
+        uint8_t *nl = (uint8_t *)memmem(c->raw + c->raw_pos, c->raw_len - c->raw_pos, "\r\n", 2);
+        if (!nl) return;
+        size_t sz = strtoul((const char *)c->raw + c->raw_pos, NULL, 16);
+        size_t start = (size_t)(nl - c->raw) + 2;
+        if (start + sz + 2 > c->raw_len) return;
+        if (sz == 0) { c->ended = true; return; }
+        memcpy(c->rx + c->rx_len, c->raw + start, sz);
+        c->rx_len += sz;
+        c->raw_pos = start + sz + 2;
+    }
+}
+
+/* Next downlink mux frame; 0 on timeout or end of stream. */
+static int mux_cli_next(mux_cli_t *c, mux_frame_t *f, int timeout_ms) {
+    uint64_t deadline = now_ms() + (uint64_t)timeout_ms;
+    for (;;) {
+        mux_cli_decode(c);
+        if (!c->vresp_skipped && c->rx_len - c->rx_pos >= 2) { c->rx_pos += 2; c->vresp_skipped = true; }
+        size_t av = c->rx_len - c->rx_pos;
+        const uint8_t *p = c->rx + c->rx_pos;
+        if (c->vresp_skipped && av >= 2) {
+            size_t ml = ((size_t)p[0] << 8) | p[1];
+            size_t need = 2 + ml;
+            if (av >= need && ml >= 4) {
+                uint8_t opt = p[5];
+                size_t dl = 0;
+                if (opt & 0x01) {
+                    if (av < need + 2) goto more;
+                    dl = ((size_t)p[need] << 8) | p[need + 1];
+                    if (av < need + 2 + dl) goto more;
+                }
+                memset(f, 0, sizeof(*f));
+                f->id = (uint16_t)((p[2] << 8) | p[3]);
+                f->status = p[4];
+                f->opt = opt;
+                if (ml >= 8 && p[6] == 0x02 && p[9] == 0x01) {
+                    f->has_addr = true;
+                    f->port = (uint16_t)((p[7] << 8) | p[8]);
+                    snprintf(f->host, sizeof(f->host), "%u.%u.%u.%u", p[10], p[11], p[12], p[13]);
+                }
+                if (dl) memcpy(f->data, p + need + 2, dl < sizeof(f->data) ? dl : sizeof(f->data));
+                f->dlen = dl;
+                c->rx_pos += need + ((opt & 0x01) ? 2 + dl : 0);
+                return 1;
+            }
+        }
+    more:
+        if (c->ended) return 0;
+        uint64_t now = now_ms();
+        if (now >= deadline) return 0;
+        struct pollfd pf = { .fd = c->sv[1], .events = POLLIN };
+        if (poll(&pf, 1, (int)(deadline - now)) <= 0) continue;
+        ssize_t r = recv(c->sv[1], c->raw + c->raw_len, sizeof(c->raw) - c->raw_len, 0);
+        if (r <= 0) { c->ended = true; continue; }
+        c->raw_len += (size_t)r;
+    }
+}
+
+static bool mux_cli_wait_done(mux_cli_t *c, int timeout_ms) {
+    uint64_t deadline = now_ms() + (uint64_t)timeout_ms;
+    while (!__atomic_load_n(&c->done, __ATOMIC_ACQUIRE)) {
+        if (now_ms() >= deadline) return false;
+        /* keep the downlink drained so the server never blocks on a full socket */
+        uint8_t junk[4096];
+        (void)recv(c->sv[1], junk, sizeof(junk), MSG_DONTWAIT);
+        usleep(5000);
+    }
+    return true;
+}
+
+static void mux_cli_free(mux_cli_t *c) {
+    pthread_join(c->th, NULL);
+    close(c->sv[0]);
+    close(c->sv[1]);
+    free(c);
+}
+
+static void test_f871_mux_xudp(void) {
+    vless_engine_init();
+    xhttpd_config_t *cfg = (xhttpd_config_t *)calloc(1, sizeof(*cfg));
+    cfg->egress_mode = EGRESS_MODE_DIRECT;
+    cfg->allow_private = true;
+    cfg->idle_timeout_sec = 120;
+    cfg->max_sessions_per_ip = 16;
+    add_cfg_client(cfg, 0, "b831381d-6324-4d53-ad4f-8cda48b30811");
+    cfg->num_clients = 1;
+    xhttpd_config_t *empty = (xhttpd_config_t *)calloc(1, sizeof(*empty));
+
+    uint16_t tport = 0, uport = 0, sink_port = 0, oport = 0;
+    tcp_multi_echo_t te;
+    memset(&te, 0, sizeof(te));
+    te.lfd = bind_loopback(AF_INET, SOCK_STREAM, &tport);
+    pthread_t teth;
+    pthread_create(&teth, NULL, tcp_multi_echo_thread, &te);
+    udp_prefix_echo_t ue = { .fd = bind_loopback(AF_INET, SOCK_DGRAM, &uport), .stop = 0 };
+    pthread_t ueth;
+    pthread_create(&ueth, NULL, udp_prefix_echo_thread, &ue);
+    int sink = bind_loopback(AF_INET, SOCK_DGRAM, &sink_port);
+    int olfd = bind_loopback(AF_INET, SOCK_STREAM, &oport);
+    pthread_t oth;
+    pthread_create(&oth, NULL, vless_oneshot_reply_close_thread, (void *)(intptr_t)olfd);
+
+    /* a target that never answers nor closes: only revocation may end its sub-session */
+    uint16_t hport = 0;
+    tcp_holder_t holder;
+    memset(&holder, 0, sizeof(holder));
+    holder.lfd = bind_loopback(AF_INET, SOCK_STREAM, &hport);
+    pthread_t hth;
+    pthread_create(&hth, NULL, tcp_holder_thread, &holder);
+
+    mux_cli_t *c = mux_cli_start(cfg);
+    mux_frame_t f;
+
+    /* 1. A silent UDP sub-session first, then two TCP sub-sessions with interleaved data:
+     *    replies must flow at once, not after a per-frame wait. */
+    uint64_t t0 = now_ms();
+    mux_cli_send(c, 9, 0x01, 0x02, "127.0.0.1", sink_port, "zz", 2);
+    mux_cli_send(c, 3, 0x01, 0x01, "127.0.0.1", hport, "h", 1);
+    mux_cli_send(c, 1, 0x01, 0x01, "127.0.0.1", tport, "A1", 2);
+    mux_cli_send(c, 2, 0x01, 0x01, "127.0.0.1", tport, "B1", 2);
+    mux_cli_send(c, 1, 0x02, 0, NULL, 0, "A2", 2);
+    mux_cli_send(c, 2, 0x02, 0, NULL, 0, "B2", 2);
+    char got1[16] = {0}, got2[16] = {0};
+    while ((strlen(got1) < 4 || strlen(got2) < 4) && mux_cli_next(c, &f, 3000)) {
+        if (f.status != 0x02 || f.dlen == 0 || f.dlen > 4) continue;
+        char *dst = f.id == 1 ? got1 : (f.id == 2 ? got2 : NULL);
+        if (dst && strlen(dst) + f.dlen < sizeof(got1)) strncat(dst, (const char *)f.data, f.dlen);
+    }
+    uint64_t took = now_ms() - t0;
+    check("F871: two concurrent TCP sub-sessions echo interleaved data", strcmp(got1, "A1A2") == 0 && strcmp(got2, "B1B2") == 0);
+    check("F871: replies not held behind a silent UDP sub-session (< 1 s)", took < 1000);
+
+    /* 2. One UDP sub-session: 5 datagrams in, 5 replies out, each with the source address */
+    mux_cli_send(c, 5, 0x01, 0x02, "127.0.0.1", uport, "d0", 2);
+    for (int i = 1; i < 5; i++) {
+        char d[16];
+        snprintf(d, sizeof(d), "d%d", i);
+        mux_cli_send(c, 5, 0x02, 0, NULL, 0, d, 2);
+    }
+    int udp_ok = 0;
+    while (udp_ok < 5 && mux_cli_next(c, &f, 3000)) {
+        char want[16];
+        snprintf(want, sizeof(want), "E:d%d", udp_ok);
+        if (f.id == 5 && f.status == 0x02 && f.has_addr && strcmp(f.host, "127.0.0.1") == 0 && f.port == uport &&
+            f.dlen == 4 && memcmp(f.data, want, 4) == 0) {
+            udp_ok++;
+        }
+    }
+    check("F871: UDP sub-session: 5 datagrams -> 5 Keep replies with source address", udp_ok == 5);
+
+    /* 3a. Client End closes the target */
+    int eof_before = __atomic_load_n(&te.eof_seen, __ATOMIC_ACQUIRE);
+    mux_cli_send(c, 1, 0x03, 0, NULL, 0, NULL, 0);
+    uint64_t dl = now_ms() + 2000;
+    while (__atomic_load_n(&te.eof_seen, __ATOMIC_ACQUIRE) == eof_before && now_ms() < dl) usleep(10000);
+    check("F871: client End closes the TCP target", __atomic_load_n(&te.eof_seen, __ATOMIC_ACQUIRE) > eof_before);
+    /* 3b. Target close produces End */
+    mux_cli_send(c, 7, 0x01, 0x01, "127.0.0.1", oport, "hi", 2);
+    bool got_reply = false, got_end = false;
+    while (!got_end && mux_cli_next(c, &f, 3000)) {
+        if (f.id == 7 && f.status == 0x02 && f.dlen == 5 && memcmp(f.data, "REPLY", 5) == 0) got_reply = true;
+        if (f.id == 7 && f.status == 0x03) got_end = true;
+    }
+    check("F871: target close -> Keep data then End frame", got_reply && got_end);
+
+    /* 4. Sub-session cap: 32 live, the next New gets End+Error, the stream itself lives on */
+    int live_now = 4; /* sub-sessions 2, 3 (TCP), 5 and 9 (UDP) are still live */
+    for (int id = 100; id < 100 + (32 - live_now); id++) mux_cli_send(c, (uint16_t)id, 0x01, 0x02, "127.0.0.1", sink_port, "s", 1);
+    mux_cli_send(c, 200, 0x01, 0x02, "127.0.0.1", sink_port, "s", 1);
+    mux_cli_send(c, 2, 0x02, 0, NULL, 0, "B3", 2);
+    bool cap_end = false, early_end = false, still_works = false;
+    while (!(cap_end && still_works) && mux_cli_next(c, &f, 3000)) {
+        if (f.status == 0x03 && f.id == 200 && (f.opt & 0x02)) cap_end = true;
+        if (f.status == 0x03 && f.id >= 100 && f.id < 200) early_end = true;
+        if (f.id == 2 && f.status == 0x02 && f.dlen == 2 && memcmp(f.data, "B3", 2) == 0) still_works = true;
+    }
+    check("F871: sub-session over the cap (32) refused with End+Error, others kept", cap_end && !early_end && still_works);
+
+    /* 5. Revocation stops the whole mux while its uplink is still open. The echo
+     *    sub-session is ended first: what remains (a holder that never closes, silent UDP)
+     *    gives the server no downlink write that could fail and end it by accident. */
+    mux_cli_send(c, 2, 0x03, 0, NULL, 0, NULL, 0);
+    usleep(200000);
+    t0 = now_ms();
+    vless_engine_revoke_unauthorised(empty);
+    check("F871: mux with open uplink stops within 1 s of client removal",
+          mux_cli_wait_done(c, 3000) && now_ms() - t0 < 1000);
+    mux_cli_free(c);
+
+    __atomic_store_n(&holder.stop, 1, __ATOMIC_RELEASE);
+    pthread_join(hth, NULL);
+    for (int i = 0; i < holder.n; i++) close(holder.fds[i]);
+    close(holder.lfd);
+    __atomic_store_n(&te.stop, 1, __ATOMIC_RELEASE);
+    __atomic_store_n(&ue.stop, 1, __ATOMIC_RELEASE);
+    pthread_join(teth, NULL);
+    pthread_join(ueth, NULL);
+    pthread_join(oth, NULL);
+    close(te.lfd);
+    close(ue.fd);
+    close(sink);
+    close(olfd);
+    usleep(50000);
+    free(cfg);
+    free(empty);
+}
 #endif
 
 static void *suite_watchdog_thread(void *arg) {
@@ -4149,6 +4495,8 @@ int main(void) {
     test_f870_stream_one_limits_and_revocation();
     printf(">>> Starting test_f864_socks_udp_associate...\n");
     test_f864_socks_udp_associate();
+    printf(">>> Starting test_f871_mux_xudp...\n");
+    test_f871_mux_xudp();
 #endif
 
     printf("\nSummary: %d passed, %d failed\n", g_pass, g_fail);
