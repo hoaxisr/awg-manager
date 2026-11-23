@@ -791,7 +791,17 @@ func (l *Local) lifecycle(ctx context.Context, id, action string) error {
 	default:
 		typ = orchestrator.EventRestart
 	}
-	err := l.c.Orch.HandleEvent(ctx, orchestrator.Event{Type: typ, Tunnel: id})
+	// Страж uplink — как у кнопок карточки; снят до SetEnabled ниже.
+	err := func() error {
+		if l.c.Tunnels != nil {
+			release, err := l.c.Tunnels.GuardUplinkMutation(ctx, id, "lifecycle")
+			if err != nil {
+				return err
+			}
+			defer release()
+		}
+		return l.c.Orch.HandleEvent(ctx, orchestrator.Event{Type: typ, Tunnel: id})
+	}()
 	if action == mcpsrv.ActionStart && errors.Is(err, tunnel.ErrAlreadyRunning) {
 		err = nil
 	}

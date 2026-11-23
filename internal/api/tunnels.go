@@ -31,6 +31,9 @@ type TunnelService interface {
 	Start(ctx context.Context, tunnelID string) error
 	Stop(ctx context.Context, tunnelID string) error
 	Restart(ctx context.Context, tunnelID string) error
+	// GuardUplinkMutation берётся вокруг прямого вызова оркестратора;
+	// release — до любого другого вызова службы (страж нереентерабелен).
+	GuardUplinkMutation(ctx context.Context, tunnelID, operation string) (func(), error)
 
 	// Validation
 	CheckAddressConflicts(ctx context.Context, tunnelID string) []string

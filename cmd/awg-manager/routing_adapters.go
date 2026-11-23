@@ -151,10 +151,23 @@ func (a exitRegistryAdapter) LookupExit(id string) (routing.ExitEntry, bool) {
 
 // orchLifecycleAdapter routes accesspolicy.SetInterfaceUp for managed tunnels
 // to the orchestrator lifecycle (full start/stop incl. NativeWG kmod proxy).
-type orchLifecycleAdapter struct{ orch *orchestrator.Orchestrator }
+// guard — страж uplink службы туннелей, как у service.Start/Stop.
+type orchLifecycleAdapter struct {
+	orch  *orchestrator.Orchestrator
+	guard func(ctx context.Context, id, operation string) (func(), error)
+}
+
+func (a orchLifecycleAdapter) event(ctx context.Context, typ orchestrator.EventType, id string) error {
+	release, err := a.guard(ctx, id, "lifecycle")
+	if err != nil {
+		return err
+	}
+	defer release()
+	return a.orch.HandleEvent(ctx, orchestrator.Event{Type: typ, Tunnel: id})
+}
 
 func (a orchLifecycleAdapter) Start(ctx context.Context, id string) error {
-	err := a.orch.HandleEvent(ctx, orchestrator.Event{Type: orchestrator.EventStart, Tunnel: id})
+	err := a.event(ctx, orchestrator.EventStart, id)
 	if errors.Is(err, tunnel.ErrAlreadyRunning) {
 		return nil // already running — user's "on" intent fulfilled
 	}
@@ -162,7 +175,7 @@ func (a orchLifecycleAdapter) Start(ctx context.Context, id string) error {
 }
 
 func (a orchLifecycleAdapter) Stop(ctx context.Context, id string) error {
-	return a.orch.HandleEvent(ctx, orchestrator.Event{Type: orchestrator.EventStop, Tunnel: id})
+	return a.event(ctx, orchestrator.EventStop, id)
 }
 
 // storeManagedTunnelResolver maps an NDMS interface name to a managed tunnel
