@@ -137,7 +137,6 @@ func setupTestWizardHandler(t *testing.T) (*ServerWizardHandler, *auth.SessionSt
 
 	fingerprint := serverwizard.NewFingerprintEngine(xray, disp, tg, rec, egressAdp)
 	fingerprint.SetProcDir(procDir)
-	fingerprint.SetInitScripts([]string{})
 
 	planStore := serverwizard.NewPlanStore()
 	jobRunner := serverwizard.NewJobRunner()
