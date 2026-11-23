@@ -365,6 +365,9 @@ func (i *OnDemandInstaller) verifyPreviousRuntimeBackup(cache, previousVersion s
 }
 
 func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string, op *Operator, selected, purge bool) (result error) {
+	if action == "install" {
+		i.prewarmVerifiedIPK(ctx)
+	}
 	if i.lockRuntime != nil {
 		unlock := i.lockRuntime()
 		defer unlock()
@@ -401,13 +404,6 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	if err := i.checkExternalPackageOwnership(); err != nil {
 		return err
 	}
-	legacyOwned, err := i.HasLegacyBundledOwnership()
-	if err != nil {
-		return err
-	}
-	if legacyOwned && action == "uninstall" {
-		return errors.New("firc runtime belongs to package awg-manager.list; migrate ownership before uninstalling")
-	}
 	if i.packages == nil {
 		return errors.New("firc: runtime package manager unavailable")
 	}
@@ -423,15 +419,16 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	if action == "install" && !spec.IsAvailable() {
 		return ErrReleaseUnavailable
 	}
-	if legacyOwned {
-		return i.migrateLegacyLocked(ctx, op)
-	}
 	priorOperation, journalErr := i.readOperation()
 	if journalErr != nil {
 		return fmt.Errorf("cannot read runtime recovery journal: %w", journalErr)
 	}
-	if priorOperation.Pending && (priorOperation.Action == "migrate_legacy" || priorOperation.Action == "migrate_external") {
+	if priorOperation.Pending && priorOperation.Action == "migrate_external" {
 		return fmt.Errorf("cannot start %q while %q migration requires recovery", action, priorOperation.Action)
+	}
+	if action == "install" {
+		// До отметки Pending: после неё уборка сочла бы операцию незавершённой.
+		i.pruneRuntimeCache(i.rootPath("/opt/var/cache/awg-manager/firc-runtime"))
 	}
 	if err := i.saveOperation(runtimeOperation{Action: action, Pending: true}); err != nil {
 		return err
@@ -734,4 +731,70 @@ func persistRuntimeIPKCache(cache string, data []byte, sourceSpec, activeSpec Fi
 		_ = os.Remove(fallbackPath)
 	}
 	return nil
+}
+
+// pruneRuntimeCache убирает из кэша рантайма то, что осталось от прошлых
+// операций: IPK прежних версий (каждый до 32 МиБ на /opt) и stage-каталоги
+// оборванных операций. Хранится только IPK установленной версии — его ждёт
+// откат следующего обновления. При незавершённой операции ничего не трогаем:
+// её восстановлению нужен свой IPK. Зовётся под runtime-локом до отметки
+// Pending текущей операции. Каталог кэша при удалении awg-manager не трогаем:
+// рантайм FIRC — отдельный пакет и остаётся, а без installed.json и его IPK
+// не обновится и не откатится.
+func (i *OnDemandInstaller) pruneRuntimeCache(cache string) {
+	if i.PendingOperationAction() != "" {
+		return
+	}
+	keep := ""
+	if b, err := os.ReadFile(filepath.Join(cache, "installed.json")); err == nil {
+		var receipt FircBinarySpec
+		if json.Unmarshal(b, &receipt) == nil {
+			keep = "runtime-" + receipt.PackageSHA256 + ".ipk"
+		}
+	}
+	entries, err := os.ReadDir(cache)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		switch {
+		case e.IsDir() && (strings.HasPrefix(name, "stage-") || strings.HasPrefix(name, "upgrade-stage-") ||
+			strings.HasPrefix(name, "ext-migrate-stage-") || strings.HasPrefix(name, ".firc-runtime-verify-")):
+		case !e.IsDir() && strings.HasPrefix(name, "runtime-") && strings.HasSuffix(name, ".ipk") && name != keep:
+		default:
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(cache, name))
+	}
+}
+
+// prewarmVerifiedIPK скачивает IPK рантайма в verified.ipk ДО runtime-лока:
+// загрузка идёт до 10 минут, и держать на ней лок значило бы блокировать
+// старт/стоп FIRC и правки маршрутизации. От параллельных операций установщика
+// защищает reserve(). Под локом prepareVerifiedRuntimeIPK находит файл по SHA,
+// проверяет его как обычно и не качает заново. Ошибка здесь не важна: путь
+// под локом повторит загрузку и покажет её. Репак из Entware (fallback) не
+// прогреваем — он и так идёт под локом.
+func (i *OnDemandInstaller) prewarmVerifiedIPK(ctx context.Context) {
+	spec, fromFallback := i.installSpec()
+	if fromFallback || !spec.IsAvailable() {
+		return
+	}
+	cache := i.rootPath("/opt/var/cache/awg-manager/firc-runtime")
+	verified := filepath.Join(cache, "verified.ipk")
+	if VerifyFileSHA256(verified, spec.PackageSHA256) == nil {
+		return
+	}
+	if os.MkdirAll(cache, 0700) != nil {
+		return
+	}
+	tmp := filepath.Join(cache, ".prewarm.ipk")
+	defer os.Remove(tmp)
+	if downloadRuntimeArtifact(ctx, i.downloader, spec, tmp) != nil {
+		return
+	}
+	if VerifyFileSHA256(tmp, spec.PackageSHA256) == nil {
+		_ = os.Rename(tmp, verified)
+	}
 }

@@ -578,17 +578,13 @@ func (a *app) wireFircEngineCoordinator() {
 		installer.SetDownloader(fircDownloaderAdapter{svc: a.downloadSvc})
 	}
 	installer.SetEngineActiveChecker(a.isFircEngineActive)
+	// Ping не отвечает и у зависшего fircd, а prerm рантайма проверяет pidof:
+	// по одному ping обновление сочло бы процесс остановленным и упало в opkg.
 	installer.SetFircRunningChecker(func(ctx context.Context) bool {
-		return a.fircOp != nil && a.fircOp.IsRunning(ctx)
+		return (a.fircOp != nil && a.fircOp.IsRunning(ctx)) || pidofRunning(ctx, "fircd")
 	})
 	installer.SetTunvlessRunningChecker(func(ctx context.Context) bool {
-		out, err := exec.CommandContext(ctx, "pidof", "tunvless").Output()
-		if err == nil {
-			return len(strings.TrimSpace(string(out))) > 0
-		}
-		var exitErr *exec.ExitError
-		// pidof exit 1 means no process; any other failure is unknown, not safe.
-		return !errors.As(err, &exitErr) || exitErr.ExitCode() != 1
+		return pidofRunning(ctx, "tunvless")
 	})
 	installer.SetDependencyChecker(func(ctx context.Context) ([]string, error) {
 		if a.settingsStore == nil {
@@ -640,21 +636,6 @@ func (a *app) wireFircEngineCoordinator() {
 					a.vlessServerService.SetFircRoutingOverride(false)
 				}
 			},
-		})
-	}
-	if a.updaterService != nil {
-		a.updaterService.SetPreUpgradeHook(func(ctx context.Context) error {
-			legacyOwned, err := installer.HasLegacyBundledOwnership()
-			if err != nil || !legacyOwned {
-				return err
-			}
-			if spec.IsAvailable() {
-				return installer.MigrateLegacyBundledRuntime(ctx, a.fircOp)
-			}
-			if a.isFircEngineActive() || (a.fircOp != nil && a.fircOp.IsRunning(ctx)) {
-				return errors.New("cannot upgrade awg-manager while legacy bundled FIRC is active and standalone awg-firc-runtime release is unavailable; switch routing engine first")
-			}
-			return nil
 		})
 	}
 }
@@ -837,6 +818,26 @@ func (a *app) completeFircStartup() {
 				a.fircOp.StopDirectChild()
 			})
 		}
+	}
+	a.recoverOrphanServerRoutingTx()
+}
+
+// recoverOrphanServerRoutingTx подбирает транзакции sr-tx, которые журнал
+// ingress не успел записать (сбой между PrepareServerRouting и записью
+// журнала). Зовётся после запуска движка: откат транзакции, начатой при живом
+// fircd, синхронизирует его группы и на остановленном упал бы в
+// recovery_required. Журнал ingress к этому моменту закрыт его StartupRecovery.
+func (a *app) recoverOrphanServerRoutingTx() {
+	if a.fircOp == nil || a.ingressCoordinator == nil {
+		return
+	}
+	if req, _ := a.ingressCoordinator.IsRecoveryRequired(); req {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := a.fircOp.RecoverIncompleteServerRoutingTx(ctx); err != nil && a.bootLog != nil {
+		a.bootLog.Warn("firc", "server_routing_recovery", err.Error())
 	}
 }
 
@@ -1248,4 +1249,15 @@ func (a *app) syncFircFromRouterSettings(ctx context.Context, prev, next storage
 			_, _ = a.fircOp.StageExtConfigOffline(ctx, ext)
 		}
 	}
+}
+
+// pidofRunning: pidof с кодом 1 — процесса нет; любой другой отказ — неизвестно,
+// поэтому «запущен» (безопасная сторона для остановки перед opkg).
+func pidofRunning(ctx context.Context, name string) bool {
+	out, err := exec.CommandContext(ctx, "pidof", name).Output()
+	if err == nil {
+		return len(strings.TrimSpace(string(out))) > 0
+	}
+	var exitErr *exec.ExitError
+	return !errors.As(err, &exitErr) || exitErr.ExitCode() != 1
 }

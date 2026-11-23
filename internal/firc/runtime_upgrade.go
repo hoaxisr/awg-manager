@@ -19,6 +19,7 @@ func (i *OnDemandInstaller) StartUpgrade(op *Operator) error {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
+		i.prewarmVerifiedIPK(ctx)
 		i.runWithRuntimeLock(op, func() {
 			i.finish(i.upgradeRuntimeLocked(ctx, op))
 		})
@@ -33,6 +34,7 @@ func (i *OnDemandInstaller) Upgrade(ctx context.Context, op *Operator) error {
 	if err := i.reserve("upgrade"); err != nil {
 		return err
 	}
+	i.prewarmVerifiedIPK(ctx)
 	var err error
 	i.runWithRuntimeLock(op, func() {
 		err = i.upgradeRuntimeLocked(ctx, op)
@@ -56,14 +58,6 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 	if err := i.checkExternalPackageOwnership(); err != nil {
 		return err
 	}
-	legacyOwned, err := i.HasLegacyBundledOwnership()
-	if err != nil {
-		return err
-	}
-	if legacyOwned {
-		return errors.New("firc runtime belongs to package awg-manager.list; migrate ownership before upgrading")
-	}
-
 	priorOp, journalErr := i.readOperation()
 	if journalErr != nil || priorOp.Pending {
 		return ErrUpgradeRequiresRepair
@@ -136,6 +130,7 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 	if err := os.MkdirAll(cache, 0700); err != nil {
 		return err
 	}
+	i.pruneRuntimeCache(cache)
 	stage, err := os.MkdirTemp(cache, "upgrade-stage-")
 	if err != nil {
 		return err
@@ -177,7 +172,7 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 		return err
 	}
 
-	if err := i.saveOperationWithHook(runtimeOperation{
+	if err := i.saveOperation(runtimeOperation{
 		Action:          "upgrade",
 		Pending:         true,
 		PreviousVersion: previousVersion,
@@ -200,7 +195,7 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 			if result != nil {
 				j.Error = result.Error()
 			}
-			if saveErr := i.saveOperationWithHook(j); saveErr != nil {
+			if saveErr := i.saveOperation(j); saveErr != nil {
 				result = errors.Join(result, fmt.Errorf("persist runtime upgrade journal: %w", saveErr))
 			}
 			return
@@ -260,7 +255,7 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 			}
 		}
 
-		if saveErr := i.saveOperationWithHook(runtimeOperation{
+		if saveErr := i.saveOperation(runtimeOperation{
 			Action:          "upgrade",
 			Pending:         mutated && !rollbackOK,
 			PreviousVersion: previousVersion,
