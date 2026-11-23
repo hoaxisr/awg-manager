@@ -245,11 +245,9 @@ func (s *Service) suggestRealityPortLocked() int {
 	return DefaultRealityPort
 }
 
+// realityRuntimeConfigLocked — вход REALITY отдаёт VLESS основному C-демону:
+// клиенты и выход в сеть у них общие (buildXHTTPServerConfig).
 func (s *Service) realityRuntimeConfigLocked() realityserver.Config {
-	backend := buildXHTTPServerConfig(s.config)
-	if s.fircRoutingOverride {
-		backend.Egress.Mode = "router"
-	}
 	return realityserver.Config{
 		ListenAddr:  net.JoinHostPort("0.0.0.0", strconv.Itoa(s.reality.Port)),
 		Transport:   s.reality.Transport,
@@ -258,8 +256,40 @@ func (s *Service) realityRuntimeConfigLocked() realityserver.Config {
 		PrivateKey:  s.reality.PrivateKey,
 		ShortIDs:    s.reality.ShortIDs,
 		XHTTPPath:   s.reality.XHTTPPath,
-		Backend:     backend,
+		Upstream:    loopbackDialAddr(buildXHTTPServerConfig(s.config).ListenAddr),
 	}
+}
+
+// loopbackDialAddr: демон на «любом» адресе достижим по 127.0.0.1 — с него
+// же C доверяет X-Forwarded-For. ponytail: демон на конкретном LAN-адресе
+// увидит пиром этот адрес и не поверит XFF (лимит на IP станет общим);
+// чинить, если кто-то так настроит.
+func loopbackDialAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
+}
+
+func (s *Service) realityDesiredLocked() bool {
+	return s.config.Enabled && s.reality.Enabled && s.reality.PrivateKey != "" && s.hasEnabledClientsLocked() && !s.recoveryRequired
+}
+
+// realityUpstreamPathLocked — путь, который C-демон должен обслуживать для
+// входа REALITY; "" — вход не нужен.
+func (s *Service) realityUpstreamPathLocked() string {
+	if !s.realityDesiredLocked() {
+		return ""
+	}
+	norm, err := s.realityRuntimeConfigLocked().Normalize()
+	if err != nil {
+		return ""
+	}
+	return norm.XHTTPPath
 }
 
 func (s *Service) hasEnabledClientsLocked() bool {
@@ -278,11 +308,22 @@ func (s *Service) syncRealityLocked() {
 	if s.realitySrv == nil {
 		s.realitySrv = realityserver.New()
 	}
-	desired := s.config.Enabled && s.reality.Enabled && s.reality.PrivateKey != "" && s.hasEnabledClientsLocked() && !s.recoveryRequired
-	if !desired {
+	if !s.realityDesiredLocked() {
 		s.realitySrv.Stop()
 		s.realityLastErr = ""
 		s.syncRealityFirewallLocked(0)
+		return
+	}
+	// VLESS за входом обслуживает C-демон: без него вход принимал бы
+	// рукопожатия и молча рвал их. Ошибку видно в состоянии и UpdateReality
+	// по ней откатывает настройки.
+	if s.testRuntimeHook == nil && (s.daemon == nil || !s.daemon.IsRunning()) {
+		s.realitySrv.Stop()
+		s.syncRealityFirewallLocked(0)
+		s.realityLastErr = "VLESS-демон не запущен"
+		if s.lastRuntimeErr != "" {
+			s.realityLastErr += ": " + s.lastRuntimeErr
+		}
 		return
 	}
 	if err := s.realitySrv.Apply(s.realityRuntimeConfigLocked()); err != nil {
@@ -398,7 +439,7 @@ func (s *Service) UpdateReality(upd RealityUpdate) (RealityState, error) {
 	}
 	if upd.Reset {
 		s.reality = defaultRealitySettings()
-		s.syncRealityLocked()
+		_ = s.syncDaemonLocked()
 		if err := s.saveRealitySettingsLocked(); err != nil {
 			return s.realityStateLocked(), err
 		}
@@ -496,11 +537,11 @@ func (s *Service) UpdateReality(upd RealityUpdate) (RealityState, error) {
 	}
 
 	s.reality.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	s.syncRealityLocked()
+	_ = s.syncDaemonLocked() // путь входа у демона, затем сам вход; ошибка демона — в lastRuntimeErr
 	if s.reality.Enabled && s.config.Enabled && s.realityLastErr != "" {
 		failErr := errors.New(s.realityLastErr)
 		s.reality = prev
-		s.syncRealityLocked()
+		_ = s.syncDaemonLocked()
 		return s.realityStateLocked(), fmt.Errorf("не удалось запустить Reality: %w", failErr)
 	}
 	if err := s.saveRealitySettingsLocked(); err != nil {

@@ -23,11 +23,13 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
+	"github.com/hoaxisr/awg-manager/internal/xhttpserver/xhttptest"
 	utls "github.com/refraction-networking/utls"
 	"github.com/xtls/reality"
 	"golang.org/x/crypto/hkdf"
@@ -202,19 +204,32 @@ func vlessHeader(t *testing.T, target string) []byte {
 	t.Helper()
 	host, portStr, _ := net.SplitHostPort(target)
 	port, _ := strconv.Atoi(portStr)
-	u, err := xhttpserver.ParseUUID(testUUID)
-	if err != nil {
-		t.Fatal(err)
+	return xhttptest.BuildVLESSReq(t, testUUID, net.ParseIP(host), uint16(port), nil)
+}
+
+// startC поднимает awgm-xhttpd так же, как vlessserver для REALITY: путь
+// входа в PathPrefixes, loopback в TrustedProxies.
+func startC(t *testing.T) (*xhttpserver.Server, xhttpserver.Config) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("awgm-xhttpd integration needs linux")
 	}
-	var b bytes.Buffer
-	b.WriteByte(0)
-	b.Write(u[:])
-	b.WriteByte(0)                                       // addons
-	b.WriteByte(VLESSCmdTCP)                             // command
-	_ = binary.Write(&b, binary.BigEndian, uint16(port)) // port
-	b.WriteByte(VLESSAddrIPv4)
-	b.Write(net.ParseIP(host).To4())
-	return b.Bytes()
+	cfg := xhttpserver.Config{
+		ListenAddr:     "127.0.0.1:0",
+		BinaryPath:     xhttptest.RequireCXHTTPDBinary(t),
+		ConfigPath:     t.TempDir() + "/awgm-xhttpd.conf",
+		PathPrefix:     "/cdn-bridge",
+		PathPrefixes:   []string{DefaultXHTTPPath, "/rx-test"},
+		Clients:        []string{testUUID},
+		TrustedProxies: []string{"127.0.0.1/32"},
+		Egress:         xhttpserver.EgressConfig{Mode: "direct", AllowPrivateDestinations: true},
+	}
+	c := xhttpserver.New(cfg)
+	if err := c.Start(); err != nil {
+		t.Fatalf("awgm-xhttpd start: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Stop() })
+	return c, cfg
 }
 
 func newTestConfig(t *testing.T, dest, transport string) (Config, string, string) {
@@ -231,10 +246,7 @@ func newTestConfig(t *testing.T, dest, transport string) (Config, string, string
 		ServerNames: []string{testSNI},
 		PrivateKey:  priv,
 		ShortIDs:    []string{sid},
-		Backend: xhttpserver.Config{
-			Clients: []string{testUUID},
-			Egress:  xhttpserver.EgressConfig{Mode: "direct", AllowPrivateDestinations: true},
-		},
+		Upstream:    "127.0.0.1:1",
 	}, pub, sid
 }
 
@@ -283,7 +295,9 @@ func TestNormalize(t *testing.T) {
 func TestRealityTCPEndToEnd(t *testing.T) {
 	dest, _ := startFakeDest(t)
 	echo := startEcho(t)
+	c, cCfg := startC(t)
 	cfg, pub, sid := newTestConfig(t, dest, TransportTCP)
+	cfg.Upstream = c.Addr()
 
 	srv := New()
 	if err := srv.Apply(cfg); err != nil {
@@ -311,6 +325,19 @@ func TestRealityTCPEndToEnd(t *testing.T) {
 	}
 	if st := srv.Status(); !st.Running || st.ActiveConns < 1 {
 		t.Fatalf("status: %+v", st)
+	}
+
+	// Клиентов держит C: снятый клиент теряет и сырой поток через REALITY.
+	upd := cCfg
+	upd.Clients = []string{"11111111-2222-3333-4444-555555555555"}
+	if err := c.UpdateConfig(upd); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Read(make([]byte, 1)); err == nil {
+		t.Fatal("stream of a removed client stayed open")
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatal("stream of a removed client was not closed")
 	}
 }
 
@@ -359,7 +386,7 @@ func TestRealityWrongShortIDRejected(t *testing.T) {
 	}
 }
 
-func TestRealityApplyHotUpdateAndRevoke(t *testing.T) {
+func TestRealityApplyKeepsListener(t *testing.T) {
 	dest, _ := startFakeDest(t)
 	cfg, _, _ := newTestConfig(t, dest, TransportTCP)
 	srv := New()
@@ -368,19 +395,16 @@ func TestRealityApplyHotUpdateAndRevoke(t *testing.T) {
 	}
 	defer srv.Stop()
 	addr := srv.Addr()
-
-	// Changing only clients must not rebind.
-	cfg.Backend.Clients = []string{testUUID, "11111111-2222-3333-4444-555555555555"}
-	if err := srv.Apply(cfg); err != nil {
-		t.Fatal(err)
+	if err := srv.Apply(cfg); err != nil || srv.Addr() != addr {
+		t.Fatalf("same config must keep the listener (err=%v)", err)
 	}
-	if srv.Addr() != addr {
-		t.Fatal("client-only change must keep the listener")
+	cfg.Upstream = "127.0.0.1:2"
+	if err := srv.Apply(cfg); err != nil || srv.Addr() == addr {
+		t.Fatalf("upstream change must rebind (err=%v)", err)
 	}
-	// No clients -> refuse.
-	cfg.Backend.Clients = nil
+	cfg.Upstream = "nope"
 	if err := srv.Apply(cfg); err == nil {
-		t.Fatal("expected error without clients")
+		t.Fatal("invalid upstream must fail")
 	}
 	srv.Stop()
 	if srv.IsRunning() {
@@ -391,8 +415,10 @@ func TestRealityApplyHotUpdateAndRevoke(t *testing.T) {
 func TestRealityXHTTPStreamOne(t *testing.T) {
 	dest, _ := startFakeDest(t)
 	echo := startEcho(t)
+	c, _ := startC(t)
 	cfg, pub, sid := newTestConfig(t, dest, TransportXHTTP)
 	cfg.XHTTPPath = "/rx-test"
+	cfg.Upstream = c.Addr()
 	srv := New()
 	if err := srv.Apply(cfg); err != nil {
 		t.Fatal(err)
@@ -443,5 +469,42 @@ func TestIsPortFree(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	if IsPortFree(port) {
 		t.Fatal("bound port reported as free")
+	}
+}
+
+// F866: Vision (flow в addons VLESS) не реализован — C отказывает явно, а не
+// пропускает addons и ломает поток посередине.
+func TestRealityTCPRejectsVisionFlow(t *testing.T) {
+	dest, _ := startFakeDest(t)
+	echo := startEcho(t)
+	c, _ := startC(t)
+	cfg, pub, sid := newTestConfig(t, dest, TransportTCP)
+	cfg.Upstream = c.Addr()
+	srv := New()
+	if err := srv.Apply(cfg); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+	waitRecordDetection(t, dest)
+
+	conn, verified := realityDial(t, srv.Addr(), testSNI, pub, sid)
+	defer conn.Close()
+	if !verified {
+		t.Fatal("not REALITY-signed")
+	}
+	hdr := vlessHeader(t, echo)
+	flow := append([]byte{0x0a, byte(len("xtls-rprx-vision"))}, "xtls-rprx-vision"...)
+	vision := append(append(append([]byte{}, hdr[:17]...), byte(len(flow))), flow...)
+	vision = append(vision, hdr[18:]...)
+	if _, err := conn.Write(append(vision, []byte("ping")...)); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	n, err := conn.Read(make([]byte, 16))
+	if n > 0 {
+		t.Fatalf("Vision request got %d bytes of response", n)
+	}
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatal("Vision request was neither served nor closed")
 	}
 }

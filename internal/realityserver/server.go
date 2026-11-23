@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 	"github.com/xtls/reality"
 )
 
@@ -38,11 +38,12 @@ type Config struct {
 	ShortIDs []string
 	// MaxTimeDiff limits client clock skew (0 = disabled, Xray default).
 	MaxTimeDiff time.Duration
-	// XHTTPPath is the XHTTP path prefix (only for Transport == "xhttp").
+	// XHTTPPath is the XHTTP path prefix. For Transport == "tcp" it is the
+	// internal path the raw stream is handed to awgm-xhttpd under.
 	XHTTPPath string
-	// Backend carries the VLESS clients and egress settings. ListenAddr and
-	// PathPrefix are managed by this package.
-	Backend xhttpserver.Config
+	// Upstream is the awgm-xhttpd address ("127.0.0.1:port"); the daemon must
+	// serve XHTTPPath and trust loopback for X-Forwarded-For.
+	Upstream string
 }
 
 // Normalize fills defaults and validates the configuration.
@@ -116,14 +117,14 @@ func (c Config) Normalize() (Config, error) {
 	}
 	c.ShortIDs = sids
 
-	if c.Transport == TransportXHTTP {
-		p := "/" + strings.Trim(strings.TrimSpace(c.XHTTPPath), "/")
-		if p == "/" {
-			p = DefaultXHTTPPath
-		}
-		c.XHTTPPath = p
-	} else {
-		c.XHTTPPath = ""
+	p := "/" + strings.Trim(strings.TrimSpace(c.XHTTPPath), "/")
+	if p == "/" || c.Transport == TransportTCP {
+		p = DefaultXHTTPPath
+	}
+	c.XHTTPPath = p
+	c.Upstream = strings.TrimSpace(c.Upstream)
+	if _, _, err := net.SplitHostPort(c.Upstream); err != nil {
+		return c, fmt.Errorf("realityserver: invalid upstream %q: %w", c.Upstream, err)
 	}
 	return c, nil
 }
@@ -158,24 +159,8 @@ func (c Config) listenerKey() string {
 	sort.Strings(sids)
 	return strings.Join([]string{
 		c.ListenAddr, c.Transport, c.Dest, strings.Join(names, ","),
-		c.PrivateKey, strings.Join(sids, ","), c.XHTTPPath, c.MaxTimeDiff.String(),
+		c.PrivateKey, strings.Join(sids, ","), c.XHTTPPath, c.MaxTimeDiff.String(), c.Upstream,
 	}, "|")
-}
-
-func (c Config) backendConfig() xhttpserver.Config {
-	b := c.Backend
-	// Never used for binding (ServeListener/ServeVLESSConn), kept unique for diagnostics.
-	b.ListenAddr = c.ListenAddr
-	if c.XHTTPPath != "" {
-		b.PathPrefix = c.XHTTPPath
-	} else {
-		b.PathPrefix = DefaultXHTTPPath
-	}
-	b.PathPrefixes = nil
-	b.FiniteCredentials = nil
-	// Direct REALITY peers are the real clients: no reverse proxy is trusted.
-	b.TrustedProxies = nil
-	return b
 }
 
 func (c Config) realityConfig() (*reality.Config, error) {
@@ -224,8 +209,9 @@ type Server struct {
 	key       string
 	running   bool
 	tcpLn     net.Listener
-	backend   *backendRuntime
-	tracker   *rawConnTracker
+	httpSrv   *http.Server
+	upstream  *http.Transport
+	tracker   *connTracker
 	ctx       context.Context
 	cancel    context.CancelFunc
 	startedAt time.Time
@@ -242,30 +228,22 @@ func New() *Server {
 	return &Server{listen: net.Listen}
 }
 
-// Apply starts the server or reconciles it with cfg. When only clients/egress
-// changed, existing connections are kept (allowlist changes still revoke
-// streams of removed clients). Listener-level changes rebind the port.
+// Apply starts the server or reconciles it with cfg. Clients and egress live
+// in awgm-xhttpd, so only listener-level changes matter here: they rebind the
+// port, anything else keeps existing connections.
 func (s *Server) Apply(cfg Config) error {
 	norm, err := cfg.Normalize()
 	if err != nil {
 		return err
 	}
-	if len(norm.Backend.Clients) == 0 {
-		return xhttpserver.ErrNoValidClients
-	}
 	key := norm.listenerKey()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if s.running && s.key == key && s.backend != nil {
-		if err := s.backend.updateConfig(norm.backendConfig()); err != nil {
-			return err
-		}
+	if s.running && s.key == key {
 		s.cfg = norm
 		return nil
 	}
-
 	s.stopLocked()
 	return s.startLocked(norm, key)
 }
@@ -275,11 +253,6 @@ func (s *Server) startLocked(cfg Config, key string) error {
 	if err != nil {
 		return err
 	}
-	backend := newBackendRuntime(cfg.backendConfig())
-	if err := backend.updateConfig(cfg.backendConfig()); err != nil {
-		return err
-	}
-
 	listen := s.listen
 	if listen == nil {
 		listen = net.Listen
@@ -289,29 +262,42 @@ func (s *Server) startLocked(cfg Config, key string) error {
 		return fmt.Errorf("realityserver: listen %s: %w", cfg.ListenAddr, err)
 	}
 
-	tracker := newRawConnTracker()
+	tracker := newConnTracker()
 	// Порт открыт с WAN, а лимиты сессий есть только у C-демона: без потолка
 	// поток подключений съел бы память роутера горутинами и пробами dest.
 	// ponytail: общий потолок; лимит на IP — если упрёмся в одного клиента.
 	limited := newLimitListener(tcpLn, maxConcurrentConns)
 	rln := &trackingListener{Listener: reality.NewListener(limited, rcfg), tracker: tracker}
 	ctx, cancel := context.WithCancel(context.Background())
+	tr := newUpstreamTransport()
 
+	var httpSrv *http.Server
 	switch cfg.Transport {
 	case TransportXHTTP:
-		if err := backend.serveListener(rln); err != nil {
-			cancel()
-			_ = tcpLn.Close()
-			return err
+		// Клиенты под REALITY говорят h2 без ALPN-согласования на нашей стороне
+		// (TLS держит reality.Conn), поэтому h2c с prior knowledge плюс h1.
+		var protos http.Protocols
+		protos.SetHTTP1(true)
+		protos.SetUnencryptedHTTP2(true)
+		httpSrv = &http.Server{
+			Handler:           newXHTTPProxy(cfg.Upstream, cfg.XHTTPPath, tr),
+			ErrorLog:          quietLog,
+			Protocols:         &protos,
+			ReadHeaderTimeout: 15 * time.Second,
+			MaxHeaderBytes:    16 << 10,
+			IdleTimeout:       120 * time.Second,
+			BaseContext:       func(net.Listener) context.Context { return ctx },
 		}
+		go func() { _ = httpSrv.Serve(rln) }()
 	default:
-		go s.acceptLoop(ctx, rln, backend, tracker)
+		go acceptRaw(ctx, rln, cfg.Upstream, cfg.XHTTPPath, tr)
 	}
 
 	s.cfg = cfg
 	s.key = key
 	s.tcpLn = tcpLn
-	s.backend = backend
+	s.httpSrv = httpSrv
+	s.upstream = tr
 	s.tracker = tracker
 	s.ctx = ctx
 	s.cancel = cancel
@@ -320,22 +306,13 @@ func (s *Server) startLocked(cfg Config, key string) error {
 	return nil
 }
 
-func (s *Server) acceptLoop(ctx context.Context, ln net.Listener, backend *backendRuntime, tracker *rawConnTracker) {
+func acceptRaw(ctx context.Context, ln net.Listener, upstream, path string, tr http.RoundTripper) {
 	for {
 		c, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		if ctx.Err() != nil {
-			_ = c.Close()
-			return
-		}
-		go func(conn net.Conn) {
-			defer func() { _ = recover() }()
-			// The tracking listener already registered conn; closing it (done by
-			// ServeVLESSConn) unregisters it.
-			backend.serveVLESSConn(ctx, conn, nil)
-		}(c)
+		go pipeRawVLESS(ctx, c, upstream, path, tr)
 	}
 }
 
@@ -357,17 +334,18 @@ func (s *Server) stopLocked() {
 	if s.tcpLn != nil {
 		_ = s.tcpLn.Close()
 	}
-	if s.backend != nil {
-		if s.cfg.Transport == TransportXHTTP {
-			// Shutdown waits for idle conns briefly; force-close the rest below.
-			go func(b *backendRuntime) { b.stop() }(s.backend)
-		}
+	if s.httpSrv != nil {
+		_ = s.httpSrv.Close()
 	}
 	if s.tracker != nil {
-		s.tracker.CloseAll()
+		s.tracker.closeAll()
+	}
+	if s.upstream != nil {
+		s.upstream.CloseIdleConnections() // простаивающие keep-alive держат воркеры C
 	}
 	s.tcpLn = nil
-	s.backend = nil
+	s.httpSrv = nil
+	s.upstream = nil
 	s.tracker = nil
 	s.key = ""
 }
@@ -389,7 +367,7 @@ func (s *Server) Status() Status {
 		st.Transport = s.cfg.Transport
 		st.StartedAt = s.startedAt.UTC().Format(time.RFC3339)
 		if s.tracker != nil {
-			st.ActiveConns = s.tracker.Count()
+			st.ActiveConns = s.tracker.count()
 		}
 	}
 	return st
@@ -409,7 +387,7 @@ func (s *Server) Addr() string {
 // so Stop can force-close them, including HTTP/2 connections owned by net/http.
 type trackingListener struct {
 	net.Listener
-	tracker *rawConnTracker
+	tracker *connTracker
 }
 
 func (l *trackingListener) Accept() (net.Conn, error) {
@@ -417,17 +395,17 @@ func (l *trackingListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	l.tracker.Add(c)
+	l.tracker.add(c)
 	return &trackedConn{Conn: c, tracker: l.tracker}, nil
 }
 
 type trackedConn struct {
 	net.Conn
-	tracker *rawConnTracker
+	tracker *connTracker
 	once    sync.Once
 }
 
 func (c *trackedConn) Close() error {
-	c.once.Do(func() { c.tracker.Remove(c.Conn) })
+	c.once.Do(func() { c.tracker.remove(c.Conn) })
 	return c.Conn.Close()
 }

@@ -280,14 +280,17 @@ func (s *Service) syncDaemonLocked() error {
 		s.syncRealityLocked()
 		return nil
 	}
+	defer s.syncRealityLocked()
 	if err := validateConfigTransports(s.config); err != nil {
 		s.lastRuntimeErr = err.Error()
 		return err
 	}
-	defer s.syncRealityLocked()
 	xCfg := buildXHTTPServerConfig(s.config)
 	if s.fircRoutingOverride {
 		xCfg.Egress.Mode = "router"
+	}
+	if p := s.realityUpstreamPathLocked(); p != "" {
+		xCfg.PathPrefixes = append(xCfg.PathPrefixes, p)
 	}
 	if s.testRuntimeHook != nil {
 		if err := s.testRuntimeHook(xCfg); err != nil {

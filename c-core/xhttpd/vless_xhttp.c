@@ -32,7 +32,13 @@ int parse_vless_header(const uint8_t *buf, size_t len, const xhttpd_config_t *cf
 
     memcpy(out->uuid, buf + 1, 16);
     size_t addons_len = buf[17];
-    size_t pos = 18 + addons_len;
+    /* Addons несут только flow (xtls-rprx-vision): Vision мы не реализуем,
+     * молча пропустить его — сломать клиенту поток посередине. Отказ. */
+    if (addons_len != 0) {
+        diag_log("parse_vless_header: flow addons unsupported (len=%zu)", addons_len);
+        return -1;
+    }
+    size_t pos = 18;
     if (len < pos + 1) return -1;
 
     out->command = buf[pos++];

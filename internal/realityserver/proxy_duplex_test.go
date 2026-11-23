@@ -1,6 +1,6 @@
-package realityserver_test
+package realityserver
 
-// F854 фаза 1: проверка, что h2-фронт на Go может реверс-проксировать XHTTP
+// F854: прод-прокси newXHTTPProxy реверс-проксирует XHTTP
 // в awgm-xhttpd (HTTP/1.1) без потери дуплекса. REALITY здесь не нужен —
 // обычный TLS с самоподписанным сертификатом, h2 по ALPN.
 
@@ -15,8 +15,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -37,45 +35,15 @@ const (
 	duplexPayload = 1 << 20
 )
 
-// newDuplexProxy — кандидат на прод-конфигурацию прокси h2 -> awgm-xhttpd.
-// onOut (может быть nil) видит исходящий запрос после Rewrite: тестовый хук.
-func newDuplexProxy(cAddr string, onOut func(*http.Request)) http.Handler {
-	target := &url.URL{Scheme: "http", Host: cAddr}
-	rp := &httputil.ReverseProxy{
-		Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.SetURL(target)
-			pr.Out.Host = pr.In.Host
-			// В режиме Rewrite ReverseProxy заранее срезает Forwarded/X-Forwarded-*
-			// с исходящего запроса, так что SetXForwarded ставит XFF ровно в адрес
-			// пира, а не дописывает к присланному клиентом. CF-Connecting-IP и
-			// X-Real-IP прокси не трогает — их снимаем сами: CF-Connecting-IP у C
-			// приоритетнее XFF (vless_xhttp.c resolve_effective_client_ip).
-			pr.SetXForwarded()
-			pr.Out.Header.Del("CF-Connecting-IP")
-			pr.Out.Header.Del("X-Real-IP")
-			if onOut != nil {
-				onOut(pr.Out)
-			}
-		},
-		FlushInterval: -1,
-		Transport: &http.Transport{
-			Proxy:               nil,
-			DialContext:         (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
-			ForceAttemptHTTP2:   false,
-			TLSNextProto:        map[string]func(string, *tls.Conn) http.RoundTripper{},
-			MaxIdleConnsPerHost: 16,
-			IdleConnTimeout:     30 * time.Second,
-			DisableCompression:  true,
-		},
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Для h2 дуплекс есть всегда; вызов нужен только на HTTP/1.x.
-		if err := http.NewResponseController(w).EnableFullDuplex(); err != nil && !errors.Is(err, http.ErrNotSupported) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		rp.ServeHTTP(w, r)
-	})
+// recordingRT видит исходящий к C запрос после Rewrite прод-прокси.
+type recordingRT struct {
+	http.RoundTripper
+	onOut func(*http.Request)
+}
+
+func (r recordingRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.onOut(req)
+	return r.RoundTripper.RoundTrip(req)
 }
 
 type duplexEnv struct {
@@ -137,11 +105,11 @@ func startDuplexEnv(t *testing.T) *duplexEnv {
 	env.echoIP, env.echoPort = ea.IP, uint16(ea.Port)
 	env.vlessHdr = xhttptest.BuildVLESSReq(t, duplexUUID, env.echoIP, env.echoPort, nil)
 
-	front := httptest.NewUnstartedServer(newDuplexProxy(c.Addr(), func(r *http.Request) {
+	front := httptest.NewUnstartedServer(newXHTTPProxy(c.Addr(), duplexPrefix, recordingRT{newUpstreamTransport(), func(r *http.Request) {
 		env.mu.Lock()
 		env.outHdrs = append(env.outHdrs, r.Header.Clone())
 		env.mu.Unlock()
-	}))
+	}}))
 	front.EnableHTTP2 = true
 	front.StartTLS()
 	t.Cleanup(front.Close)
@@ -591,4 +559,27 @@ func TestDuplexProxy_StreamUpLockstep(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// Вход REALITY пускает к C только свой путь: служебные и чужие пути демона
+// с WAN недостижимы, в том числе через "..".
+func TestXHTTPProxyOnlyServesPrefix(t *testing.T) {
+	var hits []string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits = append(hits, r.URL.Path)
+	}))
+	defer up.Close()
+	h := newXHTTPProxy(strings.TrimPrefix(up.URL, "http://"), "/rx", newUpstreamTransport())
+	for _, p := range []string{"/.xhttpd/health", "/cdn-bridge/", "/rxx/", "/rx/../.xhttpd/health", "/rx/%2e%2e/.xhttpd/health"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: status %d, want 404", p, rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/rx/abc", nil))
+	if rec.Code != http.StatusOK || len(hits) != 1 {
+		t.Fatalf("own path: status %d, upstream hits %v", rec.Code, hits)
+	}
 }
