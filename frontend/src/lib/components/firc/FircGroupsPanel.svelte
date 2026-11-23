@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import { api } from '$lib/api/client';
@@ -1379,15 +1380,14 @@
 			return;
 		}
 		const text = res.lines.join('\n');
-		try {
-			await navigator.clipboard.writeText(text);
+		if (await copyToClipboard(text)) {
 			const skippedParts: string[] = [];
 			if (res.skippedRegexOrCidr > 0) skippedParts.push(`подсети/regex: ${res.skippedRegexOrCidr}`);
 			if (res.skippedRemoteLists > 0) skippedParts.push(`списков по URL: ${res.skippedRemoteLists}`);
 			notifications.success(
 				`Скопировано доменов: ${res.lines.length}${skippedParts.length ? ` (пропущено ${skippedParts.join(', ')})` : ''}`,
 			);
-		} catch {
+		} else {
 			notifications.error('Не удалось скопировать домены в буфер обмена');
 		}
 	}
