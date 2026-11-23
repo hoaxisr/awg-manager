@@ -64,6 +64,19 @@ rm -f /opt/etc/ndm/netfilter.d/51-awgm-tunnel-fw.sh /opt/etc/awg-manager/tunnel-
 # снятия файла правил он no-op), 61/62 снимает только живая фича. Все они
 # именуются NN-awgm-*.sh — подметаем разом.
 rm -f /opt/etc/ndm/netfilter.d/*-awgm-*.sh
+# Правка nginx роутера из сборок #1239 (хук 65-awgm-nginx-unbuffer.sh): снять
+# подмену comp_off.conf и наш http2 у слушателей, затем reload (не stop —
+# остановка nginx роняет веб-управление роутером).
+if [ -f /opt/etc/awg-manager/comp_off.conf ]; then
+    umount /etc/nginx/comp_off.conf 2>/dev/null
+    rm -f /opt/etc/awg-manager/comp_off.conf
+    if [ -f /tmp/nginx/nginx.conf ]; then
+        sed -E 's/(listen [^;]*) ssl http2( proxy_protocol)?;/\1 ssl\2;/' /tmp/nginx/nginx.conf > /tmp/nginx/nginx.conf.awgm && \
+            nginx -t -c /tmp/nginx/nginx.conf.awgm >/dev/null 2>&1 && mv -f /tmp/nginx/nginx.conf.awgm /tmp/nginx/nginx.conf
+        rm -f /tmp/nginx/nginx.conf.awgm
+    fi
+    nginx -s reload 2>/dev/null
+fi
 
 # Снимки настроек перед обновлением: архивы с ключами в открытом виде,
 # которые нужны только для отката свежего обновления. Каталог данных при
