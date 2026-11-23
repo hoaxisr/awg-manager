@@ -500,6 +500,8 @@
 	// ── Settings modal ───────────────────────────────────────────────────
 
 	let settingsOpen = $state(false);
+	/** Наборы, не влезшие в потолок памяти: в покрытии они не учитываются. */
+	let skippedRuleSets = $state<string[]>([]);
 	let autoConfirmOpen = $state(false);
 	let busy = $state(false);
 	let historyClearConfirmOpen = $state(false);
@@ -727,16 +729,34 @@
 		settingsOpen = true;
 		cfgLoading = true;
 		cfgLoadSucceeded = false;
+		skippedRuleSets = [];
 		void fetchProbeResources();
 		try {
 			const cfgLoaded = await api.getAutolistConfig();
 			if (generation !== cfgLoadGeneration) return;
 			cfgDraft = autolistConfigDraft(cfgLoaded);
 			cfgLoadSucceeded = true;
+			void fetchSkippedRuleSets(cfgDraft.excludeRuleSets ?? []);
 		} catch {
 			if (generation === cfgLoadGeneration) notifications.error(m.autolist_cfg_read_err());
 		} finally {
 			if (generation === cfgLoadGeneration) cfgLoading = false;
+		}
+	}
+
+	/**
+	 * Наборы, не влезшие в потолок памяти: панель их не учитывает в покрытии.
+	 */
+	async function fetchSkippedRuleSets(tags: string[]) {
+		if (tags.length === 0) {
+			skippedRuleSets = [];
+			return;
+		}
+		try {
+			const snapshot = await api.singboxRouterIndexedSnapshot(tags);
+			skippedRuleSets = snapshot.skipped_rule_sets ?? [];
+		} catch {
+			skippedRuleSets = [];
 		}
 	}
 
@@ -786,6 +806,7 @@
 			notifications.success(m.autolist_cfg_saved());
 			if (generation === cfgLoadGeneration && cfgDraft === draftAtSave) settingsOpen = false;
 			autolistStatus.invalidate();
+			void fetchSkippedRuleSets(draftAtSave.excludeRuleSets ?? []);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.autolist_cfg_save_err());
 		} finally {
@@ -1432,6 +1453,12 @@
 							allowOrphans
 						/>
 						<span class="text-xs opacity-60">{m.autolist_cfg_exclude_rulesets_hint()}</span>
+						{#if skippedRuleSets.length > 0}
+							<div class="autolist-warning rounded-lg bg-warning/10 border border-warning/30 px-3 py-2 text-xs">
+								{m.autolist_cfg_exclude_rulesets_too_large()}
+								<span class="opacity-70">{skippedRuleSets.join(', ')}</span>
+							</div>
+						{/if}
 					</div>
 
 					<div class="autolist-warning flex items-start justify-between gap-3 rounded-lg bg-warning/10 border border-warning/30">

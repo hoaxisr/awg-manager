@@ -12,6 +12,7 @@ import type {
 	SingboxProxiesTestResponse,
 	SingboxRouterDNSChainPreset,
 	SingboxRouterDNSGlobals,
+	SingboxRouterCoverageSnapshot,
 	SingboxRouterDNSLookupResult,
 	SingboxRouterDNSRewrite,
 	SingboxRouterDNSRule,
@@ -114,6 +115,17 @@ export class SbRouterClient extends SingboxClient {
 
 	async singboxRouterListRuleSets(): Promise<SingboxRouterRuleSet[]> {
 		return this.request('/singbox/router/rulesets/list');
+	}
+
+	/**
+	 * Снимок индекса покрытия по наборам: в ответе есть skipped_rule_sets —
+	 * наборы, не влезшие в потолок памяти (в покрытии они не учитываются).
+	 */
+	async singboxRouterIndexedSnapshot(tags: string[]): Promise<SingboxRouterCoverageSnapshot> {
+		return this.request('/singbox/router/rulesets/indexed-snapshot', {
+			method: 'POST',
+			body: JSON.stringify({ tags }),
+		});
 	}
 
 	async singboxRouterDatRuleSetURL(kind: 'geosite' | 'geoip', tags: string[]): Promise<{ url: string }> {

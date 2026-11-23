@@ -107,6 +107,23 @@ func gcEnvForTotalMemoryMB(mem int) []string {
 
 // detectTotalMemory reads /proc/meminfo and extracts MemTotal.
 func detectTotalMemory() int {
+	return readMeminfoMB("MemTotal:")
+}
+
+// GetAvailableMemoryMB returns the memory the device may still hand out right
+// now: MemAvailable, with MemFree as a fallback. The value is read fresh on
+// every call — a budget built from it must see the memory of this moment.
+// Zero means "unknown" (no /proc/meminfo, e.g. a dev box).
+func GetAvailableMemoryMB() int {
+	if available := readMeminfoMB("MemAvailable:"); available > 0 {
+		return available
+	}
+	return readMeminfoMB("MemFree:")
+}
+
+// readMeminfoMB returns the value of the first matching /proc/meminfo key in
+// megabytes.
+func readMeminfoMB(key string) int {
 	file, err := os.Open("/proc/meminfo")
 	if err != nil {
 		return 0
@@ -116,16 +133,18 @@ func detectTotalMemory() int {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, "MemTotal:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				kb, err := strconv.Atoi(fields[1])
-				if err != nil {
-					return 0
-				}
-				return kb / 1024
-			}
+		if !strings.HasPrefix(line, key) {
+			continue
 		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return 0
+		}
+		kb, err := strconv.Atoi(fields[1])
+		if err != nil {
+			return 0
+		}
+		return kb / 1024
 	}
 	return 0
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,7 +27,7 @@ func TestCoverageIndexHeadlessRuleParity(t *testing.T) {
 			map[string]any{"domain_suffix": []any{"example.net"}},
 			map[string]any{"domain_keyword": []any{"login"}},
 		}},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func TestCoverageIndexHeadlessRuleParity(t *testing.T) {
 		}
 	}
 
-	inverted, err := compileCoverageIndexEntry([]map[string]any{{"domain": []any{"blocked.example"}, "invert": true}})
+	inverted, err := compileCoverageIndexEntry([]map[string]any{{"domain": []any{"blocked.example"}, "invert": true}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +62,7 @@ func TestCoverageIndexHeadlessRuleParity(t *testing.T) {
 	contextual, err := compileCoverageIndexEntry([]map[string]any{
 		{"ip_cidr": []any{"34.0.0.0/15"}},
 		{"network": "udp", "ip_cidr": []any{"35.192.0.0/11"}, "port_range": []any{"50000:50099"}},
-	})
+	}, nil)
 	if err != nil || !contextual.match("34.0.0.1") || contextual.match("35.192.0.1") {
 		t.Fatalf("network/port context semantics differ: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestCoverageIndexRejectsUnsupportedGeneration(t *testing.T) {
 		"default nested": {"rules": []any{}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := compileCoverageIndexEntry([]map[string]any{raw}); err == nil {
+			if _, err := compileCoverageIndexEntry([]map[string]any{raw}, nil); err == nil {
 				t.Fatal("expected failed generation fixture")
 			}
 		})
@@ -100,7 +101,7 @@ func testCoverageBuilder(calls *atomic.Int32, started chan<- int, block <-chan s
 		}
 		requested := map[string]struct{}{"base": {}}
 		entries := map[string]*coverageIndexEntry{}
-		base, _ := compileCoverageIndexEntry([]map[string]any{{"domain_suffix": []any{"example.com"}}})
+		base, _ := compileCoverageIndexEntry([]map[string]any{{"domain_suffix": []any{"example.com"}}}, nil)
 		entries["base"] = base
 		for _, tag := range tags {
 			requested[tag] = struct{}{}
@@ -405,5 +406,42 @@ func TestCoverageIndexErrorRedaction(t *testing.T) {
 	err := redactCoverageIndexError(fmt.Errorf("download http://127.0.0.1/x?kind=geoip&token=secret-value&tag=RU failed"))
 	if err == nil || strings.Contains(err.Error(), "secret-value") || !strings.Contains(err.Error(), "token=<redacted>") {
 		t.Fatalf("unredacted error: %v", err)
+	}
+}
+
+// Набор, не влезший в потолок памяти, не индексируется и помечается пропущенным.
+func TestCoverageIndexBudgetStopsRuleSet(t *testing.T) {
+	budget := &coverageBudget{remaining: coveragePrefixSetBytes}
+	reader := strings.NewReader(`{"rules":[{"ip_cidr":["192.0.2.0/24","198.51.100.0/24"]}]}`)
+	if _, err := decodeCoverageRules(reader, budget); !errors.Is(err, errCoverageIndexTooLarge) {
+		t.Fatalf("expected budget error, got %v", err)
+	}
+
+	snapshot := &coverageIndexSnapshot{
+		entries: map[string]*coverageIndexEntry{},
+		skipped: map[string]struct{}{"big": {}},
+	}
+	result := snapshot.match("example.com", []string{"big"})
+	if len(result.Results) != 1 || !result.Results[0].Supported || result.Results[0].Matched || result.Results[0].Error != "" {
+		t.Fatalf("skipped rule-set must match nothing without error: %+v", result.Results)
+	}
+	if got := snapshot.projection().SkippedRuleSets; len(got) != 1 || got[0] != "big" {
+		t.Fatalf("skipped rule-set not exposed: %v", got)
+	}
+}
+
+// Потолок индекса — минимум из 70% свободной ОЗУ и 10% общего объёма.
+func TestCoverageIndexBudgetTakesTighterLimit(t *testing.T) {
+	// 512 МБ всего, 250 МБ свободно: 70% свободной = 175 МБ, 10% общего = 51 МБ.
+	if got, want := coverageIndexBudgetBytes(250, 512), int64(512)*1024*1024/10; got != want {
+		t.Fatalf("budget = %d, want %d", got, want)
+	}
+	// Роутер почти занят: 70% свободной (70 МБ) строже, чем 10% общего (102 МБ).
+	if got, want := coverageIndexBudgetBytes(100, 1024), int64(100)*1024*1024*70/100; got != want {
+		t.Fatalf("budget = %d, want %d", got, want)
+	}
+	// Память неизвестна — потолка нет.
+	if got := coverageIndexBudgetBytes(0, 0); got != math.MaxInt64 {
+		t.Fatalf("budget = %d, want no limit", got)
 	}
 }

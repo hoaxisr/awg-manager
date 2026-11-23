@@ -67,11 +67,11 @@ func (s *Store) Load() (LoadReport, error) {
 	report := LoadReport{}
 	if cfg.ResolveVia != "" && !strings.HasPrefix(cfg.ResolveVia, "sb:") {
 		report.Warnings = append(report.Warnings,
-			fmt.Sprintf("legacy resolveVia=%q replaced with sing-box dns.final", cfg.ResolveVia))
+			fmt.Sprintf("прежний resolveVia=%q заменён на sing-box dns.final", cfg.ResolveVia))
 		cfg.ResolveVia = ""
 	}
 	if !cfg.TunnelProbe && cfg.AutoAdd {
-		report.Warnings = append(report.Warnings, "autoAdd disabled because tunnelProbe is off")
+		report.Warnings = append(report.Warnings, "автоматическое добавление выключено: нет проверки через туннель")
 	}
 	if err := validate(&cfg, false); err != nil {
 		return LoadReport{}, err
