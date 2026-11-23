@@ -5010,6 +5010,8 @@
 	"sb_router_outbounds_kind_group": "группа",
 	"sb_router_outbounds_edit_in_groups": "Редактируется в разделе Туннели → Sing-box подписки → Сводные группы",
 	"sb_router_outbounds_edit_in_subs": "Редактируется в разделе Туннели → Sing-box подписки",
+	"sb_router_outbounds_edit_autolist": "Служебный выход автолиста: его настраивает сам автолист",
+	"sb_router_outbounds_delete_autolist": "Служебный выход автолиста: его удаляет сам автолист",
 	"sb_router_outbounds_current_choice": "Текущий выбор {type}",
 	"sb_router_outbounds_active": "активен: {label}",
 	"sb_router_outbounds_edit_aria": "Редактировать outbound {tag}",

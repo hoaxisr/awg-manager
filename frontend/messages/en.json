@@ -4706,6 +4706,8 @@
 	"sb_router_outbounds_kind_group": "group",
 	"sb_router_outbounds_edit_in_groups": "Edit it in Tunnels → Sing-box subscriptions → Composite groups",
 	"sb_router_outbounds_edit_in_subs": "Edit it in Tunnels → Sing-box subscriptions",
+	"sb_router_outbounds_edit_autolist": "Service exit of the Autolist: the Autolist configures it itself",
+	"sb_router_outbounds_delete_autolist": "Service exit of the Autolist: the Autolist removes it itself",
 	"sb_router_outbounds_current_choice": "Current choice: {type}",
 	"sb_router_outbounds_active": "active: {label}",
 	"sb_router_outbounds_edit_aria": "Edit outbound {tag}",
