@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { AlertTriangle } from 'lucide-svelte';
 	import { m } from '$lib/i18n';
-	import { Button } from '$lib/components/ui';
 	import type { WarpTunnelRef } from '$lib/types/warpscout';
 	import { findTunnelIpv4Conflict, parseTunnelIpv4, suggestFreeTunnelIpv4 } from './warpscoutUi';
 
@@ -41,9 +40,9 @@
 	</div>
 	{#if suggested && suggested !== value.trim()}
 		<div>
-			<Button variant="ghost" size="sm" onclick={() => onsuggest(suggested)}>
+			<button type="button" class="ipv4-suggest-btn mono" onclick={() => onsuggest(suggested)}>
 				{m.warpscout_ipv4_use_free({ ip: suggested })}
-			</Button>
+			</button>
 		</div>
 	{/if}
 {:else if hint}
@@ -72,5 +71,22 @@
 	}
 	.ipv4-msg.warn {
 		color: var(--color-warning);
+	}
+	.ipv4-suggest-btn {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.18rem 0.5rem;
+		font-size: 0.72rem;
+		border-radius: var(--radius-sm);
+		border: 1px solid color-mix(in srgb, var(--color-warning) 55%, var(--color-border));
+		background: color-mix(in srgb, var(--color-warning) 10%, var(--color-bg-primary));
+		color: var(--color-text-primary);
+		cursor: pointer;
+	}
+	.ipv4-suggest-btn:hover {
+		background: color-mix(in srgb, var(--color-warning) 18%, var(--color-bg-primary));
+	}
+	.mono {
+		font-family: var(--font-mono);
 	}
 </style>

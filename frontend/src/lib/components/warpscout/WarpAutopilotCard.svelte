@@ -228,7 +228,6 @@
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius);
 		background: var(--color-bg-secondary);
-		box-shadow: var(--shadow);
 		overflow: hidden;
 		display: flex;
 		flex-direction: column;

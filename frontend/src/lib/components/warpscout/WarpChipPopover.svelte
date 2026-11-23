@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { ChevronDown } from 'lucide-svelte';
+	import { ChevronDown, X } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		/** Содержимое кнопки-чипа (без шеврона). */
@@ -70,6 +71,7 @@
 	</button>
 
 	{#if open}
+		<div class="pop-backdrop" role="presentation" onclick={() => (open = false)}></div>
 		<div
 			class="popover"
 			class:align-right={alignRight}
@@ -78,8 +80,13 @@
 			aria-label={ariaLabel ?? title}
 		>
 			<div class="pop-head">
-				<span class="pop-title">{title}</span>
-				{#if headExtra}{@render headExtra()}{/if}
+				<div class="pop-head-left">
+					<span class="pop-title">{title}</span>
+					{#if headExtra}{@render headExtra()}{/if}
+				</div>
+				<button type="button" class="pop-close" aria-label={m.common_close()} onclick={close}>
+					<X size={15} />
+				</button>
 			</div>
 			{@render children(close)}
 		</div>
@@ -93,18 +100,21 @@
 		min-width: 0;
 		max-width: 100%;
 	}
+	.pop-backdrop {
+		display: none;
+	}
 	.status-chip {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.35rem;
-		height: 30px;
+		height: 32px;
 		min-width: 0;
 		max-width: 100%;
 		overflow: hidden;
-		padding: 0 0.6rem;
+		padding: 0 0.65rem;
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--color-border);
-		background: var(--color-bg-primary);
+		background: var(--color-bg-secondary);
 		color: var(--color-text-primary);
 		font: inherit;
 		font-size: 0.75rem;
@@ -172,12 +182,13 @@
 		width: min(var(--pop-width), calc(100vw - 2rem));
 		max-height: max(18rem, min(46rem, calc(100dvh - 13.5rem)));
 		overflow-y: auto;
+		overflow-x: hidden;
 		overscroll-behavior: contain;
 		background: var(--color-bg-secondary);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius);
-		box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
-		padding: 0.75rem;
+		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+		padding: 0.85rem;
 		display: flex;
 		flex-direction: column;
 		gap: 0.65rem;
@@ -195,6 +206,31 @@
 		justify-content: space-between;
 		gap: 0.5rem;
 	}
+	.pop-head-left {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		min-width: 0;
+		flex-wrap: wrap;
+	}
+	.pop-close {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 26px;
+		height: 26px;
+		border: 1px solid transparent;
+		border-radius: var(--radius-sm);
+		background: transparent;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+	.pop-close:hover {
+		color: var(--color-text-primary);
+		background: var(--color-bg-tertiary);
+		border-color: var(--color-border);
+	}
 	.pop-title {
 		font-size: 0.82rem;
 		font-weight: 600;
@@ -211,6 +247,7 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.4rem;
+		flex-wrap: wrap;
 		padding-top: 0.5rem;
 		border-top: 1px solid var(--color-border);
 	}
@@ -219,17 +256,31 @@
 	}
 
 	@media (max-width: 768px) {
+		.pop-backdrop {
+			display: block;
+			position: fixed;
+			inset: 0;
+			background: rgba(0, 0, 0, 0.45);
+			z-index: var(--z-drawer-backdrop);
+		}
 		.popover,
 		.popover.align-right {
 			position: fixed;
-			left: 50%;
-			right: auto;
-			transform: translateX(-50%);
-			top: 4.25rem;
+			top: auto;
+			right: 0;
+			bottom: 0;
+			left: 0;
+			transform: none;
 			z-index: var(--z-drawer);
-			width: min(var(--pop-width), calc(100vw - 1.5rem));
-			max-height: calc(100dvh - 5.25rem);
-			box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+			width: 100%;
+			max-width: none;
+			max-height: 85dvh;
+			border-radius: 16px 16px 0 0;
+			border-left: 0;
+			border-right: 0;
+			border-bottom: 0;
+			box-shadow: none;
+			padding: 0.9rem 1rem 1.1rem;
 		}
 	}
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Copy, Download, Plus, Repeat } from 'lucide-svelte';
+	import { Copy, Download, MoreHorizontal, Plus, Repeat } from 'lucide-svelte';
 	import { m } from '$lib/i18n';
 	import { Button, IconButton } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
@@ -10,12 +10,50 @@
 	interface Props {
 		/** Уже отсортированные результаты: первая строка получает метку TOP. */
 		hits: WarpHit[];
+		showTgCol?: boolean;
 		oncreate: (h: WarpHit) => void;
 		onswap: (h: WarpHit) => void;
 		onexport?: (h: WarpHit) => void;
 	}
 
-	let { hits, oncreate, onswap, onexport }: Props = $props();
+	let { hits, showTgCol = true, oncreate, onswap, onexport }: Props = $props();
+
+	let rowMenuHit = $state<WarpHit | null>(null);
+	let rowMenuPos = $state({ top: 0, right: 16, openUp: false });
+
+	function toggleRowMenu(h: WarpHit, e: MouseEvent): void {
+		e.stopPropagation();
+		if (rowMenuHit?.endpoint === h.endpoint) {
+			rowMenuHit = null;
+			return;
+		}
+		const btn = e.currentTarget as HTMLButtonElement;
+		const rect = btn.getBoundingClientRect();
+		const menuH = onexport ? 120 : 86;
+		const spaceBelow = window.innerHeight - rect.bottom - 12;
+		const openUp = spaceBelow < menuH && rect.top > menuH + 12;
+		rowMenuPos = {
+			top: openUp ? Math.max(8, rect.top - menuH - 4) : rect.bottom + 4,
+			right: Math.max(8, window.innerWidth - rect.right),
+			openUp,
+		};
+		rowMenuHit = h;
+	}
+
+	function closeRowMenu(): void {
+		rowMenuHit = null;
+	}
+
+	function handleWindowPointerDown(e: PointerEvent): void {
+		if (!rowMenuHit) return;
+		const t = e.target as HTMLElement | null;
+		if (t?.closest('.row-overflow-menu') || t?.closest('.row-more-btn')) return;
+		closeRowMenu();
+	}
+
+	function handleWindowKeyDown(e: KeyboardEvent): void {
+		if (e.key === 'Escape' && rowMenuHit) closeRowMenu();
+	}
 
 	async function copyEndpoint(ep: string): Promise<void> {
 		const ok = await copyToClipboard(ep);
@@ -24,6 +62,13 @@
 	}
 </script>
 
+<svelte:window
+	onpointerdown={handleWindowPointerDown}
+	onkeydown={handleWindowKeyDown}
+	onscroll={closeRowMenu}
+	onresize={closeRowMenu}
+/>
+
 <div class="hits-table-wrap">
 	<table class="hits">
 		<thead>
@@ -31,7 +76,7 @@
 				<th>Endpoint</th>
 				<th>{m.warpscout_col_location()}</th>
 				<th class="r">{m.warpscout_col_latency()}</th>
-				<th class="c hide-xs">TG</th>
+				{#if showTgCol}<th class="c hide-xs">TG</th>{/if}
 				<th></th>
 			</tr>
 		</thead>
@@ -39,7 +84,7 @@
 			{#each hits as h, i (h.endpoint)}
 				{@const tone = latencyTone(h.pingMs)}
 				<tr class:top-hit={i === 0}>
-					<td class="mono">
+					<td class="mono cell-ep">
 						<span class="ep">
 							{#if i === 0}<span class="top-badge">TOP</span>{/if}
 							<span>{h.endpoint}</span>
@@ -52,7 +97,7 @@
 							</IconButton>
 						</span>
 					</td>
-					<td>
+					<td class="cell-geo">
 						<span class="geo">
 							{#if h.loc}<span class="flag">{countryFlag(h.loc)}</span>{/if}
 							<span class="mono colo-cell">{h.colo || h.loc || '—'}</span>
@@ -60,7 +105,7 @@
 						</span>
 					</td>
 					<td
-						class="r mono"
+						class="r mono cell-lat"
 						title={h.handshakeMs > 0 ? m.warpscout_handshake_tip({ ms: h.handshakeMs }) : undefined}
 					>
 						{#if h.pingMs > 0}
@@ -72,11 +117,14 @@
 							—
 						{/if}
 					</td>
-					<td class="c hide-xs">
-						{#if h.tgOk}<span class="ok">✓</span>{:else}<span class="muted">—</span>{/if}
-					</td>
+					{#if showTgCol}
+						<td class="c hide-xs cell-tg">
+							{#if h.tgOk}<span class="ok">✓</span>{:else}<span class="muted">—</span>{/if}
+						</td>
+					{/if}
 					<td class="actions-cell">
-						<div class="actions">
+						<!-- Мобильная карточка (<= 600px): прямой доступ к действиям без горизонтального скролла -->
+						<div class="actions-mobile" class:has-export={Boolean(onexport)}>
 							{#if onexport}
 								<Button
 									size="sm"
@@ -97,10 +145,29 @@
 								{#snippet iconBefore()}<Plus size={12} />{/snippet}
 								{m.warpscout_tunnel_btn()}
 							</Button>
-							<Button size="sm" variant="ghost" title={m.warpscout_swap_ep_tip()} onclick={() => onswap(h)}>
+							<Button size="sm" variant="secondary" title={m.warpscout_swap_ep_tip()} onclick={() => onswap(h)}>
 								{#snippet iconBefore()}<Repeat size={12} />{/snippet}
 								{m.warpscout_swap_btn()}
 							</Button>
+						</div>
+
+						<!-- Десктоп / компактный вид: основное действие + меню «⋯» -->
+						<div class="actions-desktop">
+							<Button size="sm" variant="secondary" title={m.warpscout_swap_ep_tip()} onclick={() => onswap(h)}>
+								{#snippet iconBefore()}<Repeat size={12} />{/snippet}
+								{m.warpscout_swap_btn()}
+							</Button>
+							<button
+								type="button"
+								class="row-more-btn"
+								class:open={rowMenuHit?.endpoint === h.endpoint}
+								aria-label={m.warpscout_row_more_aria()}
+								aria-haspopup="menu"
+								aria-expanded={rowMenuHit?.endpoint === h.endpoint}
+								onclick={(e) => toggleRowMenu(h, e)}
+							>
+								<MoreHorizontal size={14} />
+							</button>
 						</div>
 					</td>
 				</tr>
@@ -108,6 +175,56 @@
 		</tbody>
 	</table>
 </div>
+
+{#if rowMenuHit}
+	{@const hit = rowMenuHit}
+	<div
+		class="row-overflow-menu"
+		class:open-up={rowMenuPos.openUp}
+		role="menu"
+		style:top={`${rowMenuPos.top}px`}
+		style:right={`${rowMenuPos.right}px`}
+	>
+		<button
+			type="button"
+			class="row-menu-item"
+			role="menuitem"
+			onclick={() => {
+				closeRowMenu();
+				oncreate(hit);
+			}}
+		>
+			<Plus size={13} />
+			<span>{m.warpscout_create_tunnel_menu()}</span>
+		</button>
+		{#if onexport}
+			<button
+				type="button"
+				class="row-menu-item"
+				role="menuitem"
+				onclick={() => {
+					closeRowMenu();
+					onexport(hit);
+				}}
+			>
+				<Download size={13} />
+				<span>{m.warpscout_download_conf_menu()}</span>
+			</button>
+		{/if}
+		<button
+			type="button"
+			class="row-menu-item"
+			role="menuitem"
+			onclick={() => {
+				closeRowMenu();
+				void copyEndpoint(hit.endpoint);
+			}}
+		>
+			<Copy size={13} />
+			<span>{m.warpscout_copy_ep_menu()}</span>
+		</button>
+	</div>
+{/if}
 
 <style>
 	.hits-table-wrap {
@@ -216,10 +333,68 @@
 	.actions-cell {
 		width: 1%;
 	}
-	.actions {
+	.actions-desktop {
 		display: inline-flex;
+		align-items: center;
 		gap: 0.25rem;
 		justify-content: flex-end;
+	}
+	.actions-mobile {
+		display: none;
+	}
+	.row-more-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-secondary);
+		color: var(--color-text-secondary);
+		cursor: pointer;
+		transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+	}
+	.row-more-btn:hover,
+	.row-more-btn.open {
+		color: var(--color-text-primary);
+		border-color: var(--color-border-hover);
+		background: var(--color-bg-hover);
+	}
+	.row-overflow-menu {
+		position: fixed;
+		z-index: var(--z-floating);
+		min-width: 11.25rem;
+		padding: 0.25rem;
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+	}
+	.row-overflow-menu.open-up {
+		transform-origin: bottom right;
+	}
+	.row-menu-item {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		width: 100%;
+		padding: 0.42rem 0.55rem;
+		border: 0;
+		border-radius: calc(var(--radius-sm) - 2px);
+		background: transparent;
+		color: var(--color-text-primary);
+		font: inherit;
+		font-size: 0.78rem;
+		text-align: left;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.row-menu-item:hover {
+		background: var(--color-bg-hover);
 	}
 	.ok {
 		color: var(--color-success);
@@ -235,6 +410,96 @@
 	@media (max-width: 580px) {
 		.hide-xs {
 			display: none;
+		}
+	}
+
+	@media (max-width: 600px) {
+		.hits-table-wrap {
+			max-height: none;
+			overflow: visible;
+		}
+		.hits thead {
+			display: none;
+		}
+		.hits,
+		.hits tbody {
+			display: block;
+			width: 100%;
+		}
+		.hits tbody tr {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto;
+			grid-template-areas:
+				'ep lat'
+				'geo tg'
+				'actions actions';
+			align-items: center;
+			gap: 0.35rem 0.5rem;
+			padding: 0.65rem 0.7rem;
+			border-bottom: 1px solid var(--color-border);
+		}
+		.hits tbody tr:last-child {
+			border-bottom: 0;
+		}
+		.hits td {
+			border-bottom: 0;
+			padding: 0;
+			min-width: 0;
+			white-space: normal;
+		}
+		.hits td.cell-ep {
+			grid-area: ep;
+		}
+		.hits td.cell-geo {
+			grid-area: geo;
+		}
+		.hits td.cell-lat {
+			grid-area: lat;
+			justify-self: end;
+			white-space: nowrap;
+		}
+		.hits td.cell-tg {
+			grid-area: tg;
+			display: block;
+			justify-self: end;
+			font-size: 0.72rem;
+		}
+		.hits td.actions-cell {
+			grid-area: actions;
+			width: 100%;
+			padding-top: 0.25rem;
+		}
+		.ep {
+			flex-wrap: wrap;
+		}
+		.actions-desktop {
+			display: none;
+		}
+		.actions-mobile {
+			display: flex;
+			flex-wrap: wrap;
+			align-items: center;
+			justify-content: flex-start;
+			width: 100%;
+			gap: 0.35rem;
+		}
+		.actions-mobile :global(button) {
+			min-height: 32px;
+		}
+		.actions-mobile.has-export :global(button:nth-child(1)) {
+			order: 3;
+		}
+		.actions-mobile.has-export :global(button:nth-child(2)) {
+			order: 2;
+		}
+		.actions-mobile.has-export :global(button:nth-child(3)) {
+			order: 1;
+		}
+		.actions-mobile:not(.has-export) :global(button:nth-child(1)) {
+			order: 2;
+		}
+		.actions-mobile:not(.has-export) :global(button:nth-child(2)) {
+			order: 1;
 		}
 	}
 </style>

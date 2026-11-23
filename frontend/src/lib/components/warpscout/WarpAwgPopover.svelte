@@ -1,18 +1,17 @@
 <script lang="ts">
-	import { Shield, Sparkles, Square } from 'lucide-svelte';
+	import { ChevronDown, Shield, Sparkles, Square } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import { signatureHostPresetOptions, type SignatureHostPreset } from '$lib/utils/protocols';
-	import { Badge, Button, Dropdown } from '$lib/components/ui';
-	import type { DropdownOption } from '$lib/components/ui';
+	import { Badge, Button, Dropdown, SegmentedControl, SideDrawer } from '$lib/components/ui';
+	import type { DropdownOption, SegmentedOption } from '$lib/components/ui';
 	import type {
 		WarpAWGParams,
 		WarpFindJunkStatus,
 		WarpObfuscationSource,
 		WarpSignatureHostPreset,
 	} from '$lib/types/warpscout';
-	import WarpChipPopover from './WarpChipPopover.svelte';
 	import {
 		FIND_JUNK_PROFILES,
 		LIMITS,
@@ -67,6 +66,20 @@
 		onfindjunkchanged,
 	}: Props = $props();
 
+	let open = $state(false);
+	let chipEl = $state<HTMLButtonElement | null>(null);
+	let awgTab = $state<'params' | 'findjunk'>('params');
+
+	const awgTabOptions = $derived<SegmentedOption<'params' | 'findjunk'>[]>([
+		{ value: 'params', label: m.warpscout_awg_tab_params() },
+		{ value: 'findjunk', label: m.warpscout_awg_tab_findjunk() },
+	]);
+
+	function closeDrawer(): void {
+		open = false;
+		chipEl?.focus();
+	}
+
 	let junkProfile = $state<string>('random');
 	let junkHostPreset = $state<SignatureHostPreset>('default');
 	let junkDomains = $state<string>('');
@@ -88,6 +101,11 @@
 	});
 
 	const junkRunning = $derived(findJunk?.running ?? false);
+	let prevJunkRunning = false;
+	$effect(() => {
+		if (junkRunning && !prevJunkRunning) awgTab = 'findjunk';
+		prevJunkRunning = junkRunning;
+	});
 	const junkAttempts = $derived(findJunk?.attempts ?? []);
 	const activeAttempt = $derived(resolveSelectedJunkAttempt(findJunk, selectedAttempt));
 	const junkCanApply = $derived(canApplyFindJunk(findJunk, selectedAttempt));
@@ -294,18 +312,22 @@
 	}
 </script>
 
-<WarpChipPopover
-	title={m.warpscout_awg_pop_title()}
-	ariaLabel={m.warpscout_awg_pop_aria()}
-	chipTitle={m.warpscout_awg_chip_tip()}
-	width="min(31rem, calc(100vw - 2rem))"
->
-	{#snippet chip()}
+<div class="pop-anchor">
+	<button
+		bind:this={chipEl}
+		type="button"
+		class="status-chip"
+		class:active={open}
+		aria-haspopup="dialog"
+		aria-expanded={open}
+		title={m.warpscout_awg_chip_tip()}
+		onclick={() => (open = !open)}
+	>
 		<Shield size={13} class="chip-ic" />
 		<span class="chip-dim hide-sm">{m.warpscout_awg_chip_label()}</span>
 		<span class="mono chip-strong">{signatureProfileLabel(awg.signatureProfile)}</span>
 		{#if awg.generatedDomain && showDomainPool}
-			<span class="mono chip-dim">· {awg.generatedDomain}</span>
+			<span class="mono chip-dim hide-sm">· {awg.generatedDomain}</span>
 		{/if}
 		<span class="mono chip-dim">· Jc {awg.jc} · {awg.jmin}–{awg.jmax}</span>
 		{#if chipVerBadge}
@@ -317,10 +339,22 @@
 			<span class="mono chip-dim">· {Math.max(1, findJunk?.attempt ?? 0)}/{findJunk?.maxAttempts ?? junkMaxAttempts}</span>
 		{/if}
 		{#if dirty}<span class="unsaved-dot" title={m.warpscout_unsaved_tip()}></span>{/if}
-	{/snippet}
+		<span class="chev" class:open><ChevronDown size={13} /></span>
+	</button>
+</div>
 
-	{#snippet children(close)}
-		<div class="awg-pop-body">
+<SideDrawer {open} title={m.warpscout_awg_pop_title()} width={460} onClose={closeDrawer}>
+	<div class="awg-drawer-content">
+		<div class="awg-drawer-tabs">
+			<SegmentedControl
+				value={awgTab}
+				options={awgTabOptions}
+				ariaLabel={m.warpscout_awg_tabs_aria()}
+				onchange={(v) => (awgTab = v)}
+			/>
+		</div>
+
+		<div class="awg-pop-body" class:tab-hidden={awgTab !== 'params'}>
 			{#if obfuscationSources.length > 0}
 				<Dropdown
 					label={m.warpscout_awg_copy_label()}
@@ -463,8 +497,9 @@
 			<p class="pop-hint">
 				{awg.signatureProfile === 'custom' ? m.warpscout_awg_custom_hint() : m.warpscout_awg_hint()}
 			</p>
+		</div>
 
-			<div class="findjunk-box">
+		<div class="findjunk-box" class:tab-hidden={awgTab !== 'findjunk'}>
 				<div class="fj-head">
 					<span class="fj-title">{m.warpscout_findjunk_title()}</span>
 					{#if junkRunning}
@@ -648,30 +683,117 @@
 					{/if}
 				{/if}
 			</div>
-		</div>
+	</div>
 
-		<div class="pop-foot end">
-			{#if dirty}
-				<Button size="sm" variant="ghost" onclick={onreset} disabled={saving}>
-					{m.warpscout_reset_btn()}
+	{#snippet footer()}
+		<div class="awg-drawer-footer">
+			<span class="awg-sync-status" class:is-dirty={dirty}>
+				{dirty ? m.warpscout_awg_unsaved() : m.warpscout_awg_synced()}
+			</span>
+			<div class="awg-footer-actions">
+				{#if dirty}
+					<Button size="sm" variant="ghost" onclick={onreset} disabled={saving}>
+						{m.warpscout_reset_btn()}
+					</Button>
+				{/if}
+				<Button
+					size="sm"
+					variant="primary"
+					loading={saving}
+					disabled={!dirty || !cpValid || !customDomainValid}
+					onclick={async () => {
+						if (await onsave()) closeDrawer();
+					}}
+				>
+					{m.common_save()}
 				</Button>
-			{/if}
-			<Button
-				size="sm"
-				variant="primary"
-				loading={saving}
-				disabled={!dirty || !cpValid || !customDomainValid}
-				onclick={async () => {
-					if (await onsave()) close();
-				}}
-			>
-				{m.common_save()}
-			</Button>
+			</div>
 		</div>
 	{/snippet}
-</WarpChipPopover>
+</SideDrawer>
 
 <style>
+	.pop-anchor {
+		position: relative;
+		display: inline-flex;
+		min-width: 0;
+		max-width: 100%;
+	}
+	.status-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		height: 32px;
+		min-width: 0;
+		max-width: 100%;
+		overflow: hidden;
+		padding: 0 0.65rem;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-secondary);
+		color: var(--color-text-primary);
+		font: inherit;
+		font-size: 0.75rem;
+		cursor: pointer;
+		white-space: nowrap;
+		transition: border-color 0.15s ease, background 0.15s ease;
+	}
+	.status-chip:hover {
+		border-color: var(--color-border-hover);
+		background: var(--color-bg-hover);
+	}
+	.status-chip.active {
+		border-color: var(--color-accent);
+		background: var(--color-accent-tint);
+	}
+	.status-chip :global(.chip-ic) {
+		color: var(--color-text-muted);
+		flex-shrink: 0;
+	}
+	.chip-strong {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		font-weight: 600;
+		color: var(--color-text-primary);
+	}
+	.chip-dim {
+		color: var(--color-text-secondary);
+	}
+	.unsaved-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--color-warning);
+		flex-shrink: 0;
+	}
+	.chev {
+		display: inline-flex;
+		flex-shrink: 0;
+		color: var(--color-text-muted);
+		transition: transform 0.15s ease;
+	}
+	.chev.open {
+		transform: rotate(180deg);
+	}
+	.awg-drawer-content {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+	.awg-drawer-tabs {
+		display: flex;
+		align-items: center;
+	}
+	.tab-hidden {
+		display: none !important;
+	}
+	.pop-hint {
+		margin: 0;
+		font-size: 0.72rem;
+		line-height: 1.38;
+		color: var(--color-text-muted);
+	}
 	.awg-pop-body {
 		display: flex;
 		flex-direction: column;
@@ -694,8 +816,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.6rem;
-		padding: 0.75rem 0 0.1rem;
-		border-top: 1px solid var(--color-border);
+		padding: 0;
+		border-top: 0;
 	}
 	.fj-head {
 		display: flex;
@@ -777,10 +899,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.4rem;
-		padding: 0.5rem 0.6rem;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-border);
-		background: color-mix(in srgb, var(--color-bg-tertiary) 45%, transparent);
+		padding: 0.65rem 0 0;
+		border-radius: 0;
+		border: 0;
+		border-top: 1px solid var(--color-border);
+		background: transparent;
 	}
 	.awg3-title {
 		font-size: 0.78rem;
@@ -846,8 +969,46 @@
 		font-size: 0.78rem;
 		color: var(--color-error);
 	}
+	.awg-drawer-footer {
+		width: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.65rem;
+	}
+	.awg-sync-status {
+		font-size: 0.74rem;
+		color: var(--color-text-muted);
+	}
+	.awg-sync-status.is-dirty {
+		color: var(--color-warning);
+		font-weight: 500;
+	}
+	.awg-footer-actions {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		margin-left: auto;
+	}
 	.mono {
 		font-family: var(--font-mono);
+	}
+
+	@media (max-width: 768px) {
+		.awg-drawer-footer {
+			flex-direction: column;
+			align-items: stretch;
+		}
+		.awg-footer-actions {
+			margin-left: 0;
+			justify-content: flex-end;
+		}
+	}
+
+	@media (max-width: 720px) {
+		.hide-sm {
+			display: none;
+		}
 	}
 
 	@media (max-width: 480px) {

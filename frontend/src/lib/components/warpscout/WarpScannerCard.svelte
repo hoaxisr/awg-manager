@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Play, Square, Radar } from 'lucide-svelte';
+	import { Play, Square, Radar, SlidersHorizontal } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { Badge, Button, SegmentedControl } from '$lib/components/ui';
@@ -75,6 +75,25 @@
 	let starting = $state(false);
 	let stopping = $state(false);
 	let now = $state(Date.now());
+	let mobileFiltersOpen = $state(false);
+
+	const filterSummaryChips = $derived.by(() => {
+		const out: string[] = [];
+		if ((filters.excludeColos ?? []).length > 0) {
+			out.push(m.warpscout_filters_summary_excl({ list: filters.excludeColos.join(', ') }));
+		}
+		if ((filters.allowedCountries ?? []).length > 0) {
+			out.push(filters.allowedCountries.join(', '));
+		}
+		if ((filters.maxRttMs ?? 0) > 0) {
+			out.push(m.warpscout_filters_summary_rtt({ ms: filters.maxRttMs }));
+		}
+		if (filters.requireTelegram) {
+			out.push(m.warpscout_filters_summary_tg());
+		}
+		if (out.length === 0) out.push(m.warpscout_filters_none());
+		return out;
+	});
 
 	function onMaxHitsInput(e: Event): void {
 		const el = e.currentTarget as HTMLInputElement;
@@ -127,6 +146,7 @@
 	);
 
 	const hits = $derived(sortHits(scan.hits));
+	const showTgCol = $derived(Boolean(filters.requireTelegram) || hits.some((h) => h.tgOk));
 
 	async function startScan(): Promise<void> {
 		const clampedHits = sanitizeInt(maxHitsInput, LIMITS.maxHits);
@@ -250,9 +270,26 @@
 		</div>
 	</div>
 
-	<!-- Встроенная компактная полоса фильтров -->
+	<!-- Встроенная компактная полоса фильтров (на телефоне сворачивается в аккордеон) -->
 	<div class="filter-strip">
-		<WarpFiltersEditor bind:filters hideProtocol disabled={running} idPrefix="scan" />
+		<button
+			type="button"
+			class="mobile-filters-toggle"
+			aria-expanded={mobileFiltersOpen}
+			onclick={() => (mobileFiltersOpen = !mobileFiltersOpen)}
+		>
+			<span class="mft-left">
+				<SlidersHorizontal size={13} />
+				<span class="mft-title">{m.warpscout_filters_toggle()}</span>
+				{#each filterSummaryChips as chip (chip)}
+					<span class="mft-chip">{chip}</span>
+				{/each}
+			</span>
+			<span class="mono mft-sign">{mobileFiltersOpen ? '−' : '+'}</span>
+		</button>
+		<div class="filter-strip-body" class:mobile-open={mobileFiltersOpen}>
+			<WarpFiltersEditor bind:filters hideProtocol disabled={running} idPrefix="scan" />
+		</div>
 	</div>
 
 	<!-- Прогресс сканирования -->
@@ -295,7 +332,7 @@
 				{#snippet icon()}<Radar />{/snippet}
 			</EmptyState>
 		{:else if hits.length > 0}
-			<WarpHitsTable {hits} oncreate={(h) => (createHit = h)} onswap={(h) => (swapHit = h)} onexport={exportConf} />
+			<WarpHitsTable {hits} {showTgCol} oncreate={(h) => (createHit = h)} onswap={(h) => (swapHit = h)} onexport={exportConf} />
 		{:else if !running && scan.total > 0 && !scan.error}
 			<EmptyState
 				title={m.warpscout_empty_no_hits_title()}
@@ -311,6 +348,18 @@
 					: m.warpscout_empty_ready_wg({ route: effectiveRoute })}
 			>
 				{#snippet icon()}<Radar />{/snippet}
+				{#snippet action()}
+					<Button
+						variant="primary"
+						size="sm"
+						loading={starting}
+						onclick={startScan}
+						disabled={!engineAvailable || !hasAccount || findJunkRunning}
+					>
+						{#snippet iconBefore()}<Play size={13} />{/snippet}
+						{m.warpscout_start_scan_btn()}
+					</Button>
+				{/snippet}
 			</EmptyState>
 		{/if}
 	</div>
@@ -351,7 +400,6 @@
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius);
 		background: var(--color-bg-secondary);
-		box-shadow: var(--shadow);
 		overflow: hidden;
 		display: flex;
 		flex-direction: column;
@@ -407,6 +455,51 @@
 		background: color-mix(in srgb, var(--color-bg-tertiary) 55%, transparent);
 		border-bottom: 1px solid var(--color-border);
 	}
+	.mobile-filters-toggle {
+		display: none;
+		width: 100%;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		padding: 0.15rem 0;
+		border: 0;
+		background: transparent;
+		color: var(--color-text-primary);
+		font: inherit;
+		font-size: 0.78rem;
+		cursor: pointer;
+		text-align: left;
+	}
+	.mft-left {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		flex-wrap: wrap;
+		min-width: 0;
+		color: var(--color-text-secondary);
+	}
+	.mft-title {
+		font-weight: 600;
+		color: var(--color-text-primary);
+	}
+	.mft-chip {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.08rem 0.42rem;
+		border-radius: 999px;
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-secondary);
+		color: var(--color-text-secondary);
+		font-family: var(--font-mono);
+		font-size: 0.69rem;
+	}
+	.mft-sign {
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: var(--color-text-muted);
+		flex-shrink: 0;
+		padding-left: 0.25rem;
+	}
 	.progress-strip {
 		display: flex;
 		align-items: center;
@@ -451,6 +544,21 @@
 	}
 	.mono {
 		font-family: var(--font-mono);
+	}
+
+	@media (max-width: 768px) {
+		.mobile-filters-toggle {
+			display: flex;
+		}
+		.filter-strip-body {
+			display: none;
+			margin-top: 0.6rem;
+			padding-top: 0.6rem;
+			border-top: 1px solid var(--color-border);
+		}
+		.filter-strip-body.mobile-open {
+			display: block;
+		}
 	}
 
 	@media (max-width: 640px) {

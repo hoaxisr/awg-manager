@@ -253,6 +253,10 @@
 	const history = $derived((ws?.history ?? []).slice(0, 30));
 	const account = $derived(ws?.account ?? null);
 	const usedIpv4 = $derived(ws?.usedIpv4 ?? []);
+
+	let mobileSection = $state<'radar' | 'autopilot'>('radar');
+	const scanHitsCount = $derived(ws?.scan?.hits?.length ?? 0);
+	const anyAutopilotActive = $derived((ws?.config?.profiles ?? []).some((p) => p.enabled));
 </script>
 
 <div class="warp-tab">
@@ -334,9 +338,35 @@
 			</div>
 		</div>
 
+		<!-- Мобильный переключатель секций (убирает длинную прокрутку на телефоне) -->
+		<div class="mobile-section-bar" role="tablist" aria-label={m.warpscout_mobile_tabs_aria()}>
+			<button
+				type="button"
+				role="tab"
+				aria-selected={mobileSection === 'radar'}
+				class="mob-sec-btn"
+				class:active={mobileSection === 'radar'}
+				onclick={() => (mobileSection = 'radar')}
+			>
+				<span>{m.warpscout_radar_title()}</span>
+				{#if scanHitsCount > 0}<span class="mono mob-sec-count">({scanHitsCount})</span>{/if}
+			</button>
+			<button
+				type="button"
+				role="tab"
+				aria-selected={mobileSection === 'autopilot'}
+				class="mob-sec-btn"
+				class:active={mobileSection === 'autopilot'}
+				onclick={() => (mobileSection = 'autopilot')}
+			>
+				<span class="mob-dot" class:ok={anyAutopilotActive}></span>
+				<span>{m.warpscout_autopilot_title()}</span>
+			</button>
+		</div>
+
 		<!-- Два столбца: слева сканер узлов, справа автопилот с журналом подмен -->
 		<div class="cockpit-grid">
-			<div class="col-scanner">
+			<div class="col-scanner" class:mobile-hidden={mobileSection !== 'radar'}>
 				<WarpScannerCard
 					scan={ws.scan}
 					engineAvailable={ws.engine.available}
@@ -357,7 +387,7 @@
 				/>
 			</div>
 
-			<div class="col-autopilot">
+			<div class="col-autopilot" class:mobile-hidden={mobileSection !== 'autopilot'}>
 				<WarpAutopilotCard
 					bind:config={draft}
 					{targets}
@@ -385,17 +415,18 @@
 		flex-direction: column;
 		gap: 0.75rem;
 		margin-top: 0.55rem;
+		padding-bottom: 3.75rem;
 	}
 	.top-bar {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.5rem 0.75rem;
-		padding: 0.45rem 0.6rem;
-		border-radius: var(--radius);
-		background: var(--color-bg-secondary);
-		border: 1px solid var(--color-border);
-		box-shadow: var(--shadow);
+		padding: 0;
+		border-radius: 0;
+		background: transparent;
+		border: 0;
+		box-shadow: none;
 		flex-wrap: wrap;
 	}
 	.chips-left {
@@ -413,11 +444,62 @@
 		min-width: 0;
 		max-width: 100%;
 	}
+	.mobile-section-bar {
+		display: none;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 2px;
+		padding: 2px;
+		background: var(--color-bg-tertiary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+	}
+	.mob-sec-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.35rem;
+		height: 32px;
+		padding: 0 0.65rem;
+		border: 0;
+		border-radius: calc(var(--radius-sm) - 2px);
+		background: transparent;
+		color: var(--color-text-secondary);
+		font: inherit;
+		font-size: 0.78rem;
+		font-weight: 500;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.mob-sec-btn.active {
+		background: var(--color-accent-tint);
+		color: var(--color-accent);
+		box-shadow: inset 0 0 0 1px var(--color-accent-border);
+		font-weight: 600;
+	}
+	.mob-sec-count {
+		font-size: 0.72rem;
+	}
+	.mob-dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		flex-shrink: 0;
+		background: var(--color-text-muted);
+	}
+	.mob-dot.ok {
+		background: var(--color-success);
+	}
+	.mono {
+		font-family: var(--font-mono);
+	}
 	.cockpit-grid {
 		display: grid;
 		grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
 		gap: 0.85rem;
 		align-items: start;
+	}
+	:global(html[data-layout-compact='true']) .cockpit-grid {
+		grid-template-columns: 1fr;
 	}
 	.col-scanner,
 	.col-autopilot {
@@ -457,9 +539,18 @@
 		color: var(--color-text-muted);
 	}
 
-	@media (max-width: 1080px) {
+	@media (max-width: 1140px) {
 		.cockpit-grid {
 			grid-template-columns: 1fr;
+		}
+	}
+
+	@media (max-width: 768px) {
+		.mobile-section-bar {
+			display: grid;
+		}
+		.mobile-hidden {
+			display: none;
 		}
 	}
 

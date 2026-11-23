@@ -47,6 +47,7 @@
 	);
 	const trace = $derived(watch?.trace);
 	const ep = $derived(watch?.endpoint || tgt?.endpoint || stats?.currentEndpoint || '');
+	const sameTargetName = $derived(!!tgt && !!profile.name && profile.name.trim() === tgt.name.trim());
 	const ledTone = $derived(!profile.enabled ? 'muted' : view.tone);
 	const hasStats = $derived(!!stats && (stats.checksTotal > 0 || stats.swapsOk > 0 || stats.swapsFail > 0));
 </script>
@@ -55,46 +56,56 @@
 	<!-- Верхняя телеметрическая полоса -->
 	<div class="telemetry-row">
 		<div class="tel-left">
-			<span class="led {ledTone}" class:pulse={profile.enabled && view.tone === 'ok'} title={view.label}></span>
-			<span class="prof-name">{profile.name || m.warpscout_unnamed()}</span>
+			<div class="tel-title-line">
+				<span class="led {ledTone}" class:pulse={profile.enabled && view.tone === 'ok'} title={view.label}></span>
+				<span class="prof-name">{profile.name || m.warpscout_unnamed()}</span>
 
-			{#if tgt}
-				<span class="tgt-pill">
-					<span>{tgt.name}</span>
-					{#if tgt.iface && tgt.iface !== tgt.name}
-						<span class="mono muted">· {tgt.iface}</span>
+				{#if tgt}
+					{#if sameTargetName}
+						{#if tgt.iface}
+							<span class="tgt-pill"><span class="mono">{tgt.iface}</span></span>
+						{/if}
+					{:else}
+						<span class="tgt-pill">
+							<span>{tgt.name}</span>
+							{#if tgt.iface && tgt.iface !== tgt.name}
+								<span class="mono muted">· {tgt.iface}</span>
+							{/if}
+						</span>
 					{/if}
-				</span>
-			{:else if profile.targetId}
-				<span class="tgt-pill warn">{m.warpscout_target_missing_pill({ id: profile.targetId })}</span>
-			{:else}
-				<span class="tgt-pill warn">{m.warpscout_pick_tunnel_pill()}</span>
-			{/if}
+				{:else if profile.targetId}
+					<span class="tgt-pill warn">{m.warpscout_target_missing_pill({ id: profile.targetId })}</span>
+				{:else}
+					<span class="tgt-pill warn">{m.warpscout_pick_tunnel_pill()}</span>
+				{/if}
 
-			{#if ep}
-				<span class="ep-text mono">{ep}</span>
-			{/if}
+				{#if ep}
+					<span class="ep-text mono">{ep}</span>
+				{/if}
+			</div>
+
+			<div class="tel-live-line">
+				{#if profile.enabled && trace}
+					{@const lTone = latencyTone(trace.latencyMs)}
+					<div class="live-metric">
+						{#if trace.latencyMs > 0}
+							<span class="live-ms mono {lTone}">{m.warpscout_ms({ ms: trace.latencyMs })}</span>
+						{/if}
+						<span class="live-colo mono">
+							{trace.colo || '—'}
+							{#if trace.loc}· {countryFlag(trace.loc)} {trace.loc}{/if}
+							{#if trace.warp}· warp={trace.warp}{/if}
+						</span>
+					</div>
+				{:else if profile.enabled || watch}
+					<Badge variant={view.variant} size="xs">{view.label}</Badge>
+				{:else}
+					<Badge variant="muted" size="xs">{m.warpscout_badge_off()}</Badge>
+				{/if}
+			</div>
 		</div>
 
 		<div class="tel-right">
-			{#if profile.enabled && trace}
-				{@const lTone = latencyTone(trace.latencyMs)}
-				<div class="live-metric">
-					{#if trace.latencyMs > 0}
-						<span class="live-ms mono {lTone}">{m.warpscout_ms({ ms: trace.latencyMs })}</span>
-					{/if}
-					<span class="live-colo mono">
-						{trace.colo || '—'}
-						{#if trace.loc}· {countryFlag(trace.loc)} {trace.loc}{/if}
-						{#if trace.warp}· warp={trace.warp}{/if}
-					</span>
-				</div>
-			{:else if profile.enabled || watch}
-				<Badge variant={view.variant} size="xs">{view.label}</Badge>
-			{:else}
-				<Badge variant="muted" size="xs">{m.warpscout_badge_off()}</Badge>
-			{/if}
-
 			<div class="row-controls">
 				<Toggle
 					checked={profile.enabled}
@@ -186,18 +197,32 @@
 	}
 	.telemetry-row {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		justify-content: space-between;
 		gap: 0.5rem 0.85rem;
-		padding: 0.55rem 0.75rem 0.4rem;
+		padding: 0.65rem 0.75rem 0.4rem;
 		flex-wrap: wrap;
 	}
 	.tel-left {
 		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.35rem;
+		min-width: 0;
+		flex: 1 1 10rem;
+	}
+	.tel-title-line {
+		display: flex;
 		align-items: center;
-		gap: 0.4rem 0.55rem;
+		gap: 0.4rem 0.5rem;
 		flex-wrap: wrap;
 		min-width: 0;
+	}
+	.tel-live-line {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		flex-wrap: wrap;
 	}
 	.led {
 		width: 8px;
@@ -325,13 +350,5 @@
 	}
 	.warn {
 		color: var(--color-warning);
-	}
-
-	@media (max-width: 640px) {
-		.tel-right {
-			width: 100%;
-			justify-content: space-between;
-			margin-left: 0;
-		}
 	}
 </style>

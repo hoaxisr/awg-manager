@@ -117,7 +117,7 @@
 		</Button>
 	</div>
 {:else}
-	<WarpChipPopover title={m.warpscout_acct_pop_title()} width="22.5rem">
+	<WarpChipPopover title={m.warpscout_acct_pop_title()} width="25.5rem">
 		{#snippet chip()}
 			<span class="chip-dot"></span>
 			<span class="chip-strong">{account.warpPlus ? 'WARP+' : 'WARP Free'}</span>
@@ -269,7 +269,7 @@
 		gap: 0.5rem;
 		padding: 0.15rem 0.25rem 0.15rem 0.55rem;
 		border-radius: var(--radius-sm);
-		background: var(--color-bg-primary);
+		background: var(--color-bg-secondary);
 		border: 1px solid var(--color-border);
 		flex-wrap: wrap;
 	}
@@ -301,17 +301,20 @@
 	}
 	.kv-grid {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 0.4rem;
+		grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+		gap: 1px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-border);
+		overflow: hidden;
 	}
 	.kv {
 		display: flex;
 		flex-direction: column;
 		gap: 0.1rem;
-		padding: 0.35rem 0.5rem;
-		border-radius: var(--radius-sm);
+		padding: 0.4rem 0.55rem;
 		background: var(--color-bg-primary);
-		border: 1px solid var(--color-border);
+		min-width: 0;
 	}
 	.kv .k {
 		font-size: 0.67rem;

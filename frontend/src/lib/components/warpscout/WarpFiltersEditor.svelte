@@ -79,7 +79,6 @@
 		<div class="field field-rtt">
 			<div class="field-head">
 				<label class="ws-label" for={`${idPrefix}-rtt`}>{m.warpscout_max_rtt()}</label>
-				<span class="hint" title={m.warpscout_max_rtt_hint()}>0 = ∞</span>
 			</div>
 			<input
 				id={`${idPrefix}-rtt`}
@@ -88,7 +87,7 @@
 				min={LIMITS.maxRttMs.min}
 				max={LIMITS.maxRttMs.max}
 				step="10"
-				placeholder="0"
+				placeholder="0 = ∞"
 				title={m.warpscout_max_rtt_hint()}
 				bind:value={filters.maxRttMs}
 				{disabled}
@@ -165,14 +164,6 @@
 		color: var(--color-text-secondary);
 		line-height: 1.2;
 		white-space: nowrap;
-	}
-	.hint {
-		font-size: 0.68rem;
-		color: var(--color-text-muted);
-		font-family: var(--font-mono);
-		line-height: 1.2;
-		white-space: nowrap;
-		flex-shrink: 0;
 	}
 	.mono {
 		font-family: var(--font-mono);
