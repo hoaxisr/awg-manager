@@ -234,6 +234,9 @@ type Server struct {
 	listen func(network, addr string) (net.Listener, error)
 }
 
+// maxConcurrentConns caps open connections (handshaking + established).
+const maxConcurrentConns = 512
+
 // New creates an idle REALITY server.
 func New() *Server {
 	return &Server{listen: net.Listen}
@@ -287,7 +290,11 @@ func (s *Server) startLocked(cfg Config, key string) error {
 	}
 
 	tracker := newRawConnTracker()
-	rln := &trackingListener{Listener: reality.NewListener(tcpLn, rcfg), tracker: tracker}
+	// Порт открыт с WAN, а лимиты сессий есть только у C-демона: без потолка
+	// поток подключений съел бы память роутера горутинами и пробами dest.
+	// ponytail: общий потолок; лимит на IP — если упрёмся в одного клиента.
+	limited := newLimitListener(tcpLn, maxConcurrentConns)
+	rln := &trackingListener{Listener: reality.NewListener(limited, rcfg), tracker: tracker}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	switch cfg.Transport {
