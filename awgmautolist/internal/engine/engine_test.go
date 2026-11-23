@@ -209,10 +209,11 @@ func TestPauseResumeCleanGeneration(t *testing.T) {
 
 	// Recovery: capture resumes and a new suspect creates the candidate.
 	h.probes.setWAN(model.VerdictReachable)
+	// Ждём именно старта захвата: флаг паузы снимается под локами движка, а
+	// сам Start делается позже — между ними есть окно, в котором счётчик
+	// стартов ещё старый (на загруженном раннере тест падал).
 	h.waitFor(func() bool { return !h.engine.Status().CapturePaused })
-	if h.captureStarts() <= startsBefore {
-		t.Fatal("capture did not restart after resume")
-	}
+	h.waitFor(func() bool { return h.captureStarts() > startsBefore })
 	starts := h.captureStarts()
 	h.capture.suspect(target, "tcp-rst")
 	h.waitFor(func() bool {
