@@ -561,63 +561,6 @@ func (ws *WorkerSupervisor) reconcileExtraEndpoints(activeIDs map[string]bool) {
 	}
 }
 
-func (ws *WorkerSupervisor) stopLegacyTelemtOSProcesses() {
-	for _, name := range []string{"telemt-raw", "telemt-direct"} {
-		if w := ws.findWorker(name); w != nil {
-			_ = ws.stopWorker(*w)
-			if foundPid, _ := findProcByPattern(w.ExeName, w.CmdlineMatch); foundPid > 0 {
-				_ = childproc.TerminateGroup(foundPid)
-				for i := 0; i < 10; i++ {
-					if !childproc.IsAlive(foundPid) {
-						break
-					}
-					time.Sleep(50 * time.Millisecond)
-				}
-				if childproc.IsAlive(foundPid) {
-					_ = childproc.KillGroup(foundPid)
-				}
-			}
-			if w.InitScript != "" {
-				if data, err := os.ReadFile(w.InitScript); err == nil {
-					str := string(data)
-					if strings.Contains(str, "ENABLED=yes") {
-						updated := strings.ReplaceAll(str, "ENABLED=yes", "ENABLED=no")
-						_ = os.WriteFile(w.InitScript, []byte(updated), 0755)
-					}
-				}
-			}
-		}
-	}
-}
-
-func (ws *WorkerSupervisor) stopLegacyTproxyOSProcesses() {
-	if w := ws.findWorker("tproxy-server"); w != nil {
-		_ = ws.stopWorker(*w)
-		if foundPid, _ := findProcByPattern(w.ExeName, w.CmdlineMatch); foundPid > 0 {
-			_ = childproc.TerminateGroup(foundPid)
-			for i := 0; i < 10; i++ {
-				if !childproc.IsAlive(foundPid) {
-					break
-				}
-				time.Sleep(50 * time.Millisecond)
-			}
-			if childproc.IsAlive(foundPid) {
-				_ = childproc.KillGroup(foundPid)
-			}
-		}
-		if w.InitScript != "" {
-			if data, err := os.ReadFile(w.InitScript); err == nil {
-				str := string(data)
-				if strings.Contains(str, "ENABLED=yes") {
-					updated := strings.ReplaceAll(str, "ENABLED=yes", "ENABLED=no")
-					_ = os.WriteFile(w.InitScript, []byte(updated), 0755)
-				}
-			}
-		}
-	}
-	ws.stopAllExtraEndpoints()
-}
-
 func (ws *WorkerSupervisor) RestartWorker(name string) error {
 	w := ws.findWorker(name)
 	if w == nil {
@@ -631,11 +574,9 @@ func (ws *WorkerSupervisor) RestartWorker(name string) error {
 		return ws.runner.RunCommand(target, "restart")
 	}
 	if ws.mtg != nil && (name == "telemt-raw" || name == "telemt-direct") {
-		ws.stopLegacyTelemtOSProcesses()
 		return ws.mtg.Restart()
 	}
 	if ws.tproxy != nil && name == "tproxy-server" {
-		ws.stopLegacyTproxyOSProcesses()
 		return ws.tproxy.Restart()
 	}
 	_ = ws.stopWorker(*w)
@@ -725,8 +666,6 @@ func (ws *WorkerSupervisor) ApplyWorkers(cfg Config) error {
 	}
 
 	// Production: Direct process supervision with embedded Go mtg & tproxy engines
-	ws.stopLegacyTelemtOSProcesses()
-	ws.stopLegacyTproxyOSProcesses()
 
 	if !cfg.Enabled {
 		if ws.tproxy != nil {
@@ -943,8 +882,6 @@ func (ws *WorkerSupervisor) RestoreWorkerStates(states map[string]WorkerProcessS
 		return nil
 	}
 
-	ws.stopLegacyTelemtOSProcesses()
-	ws.stopLegacyTproxyOSProcesses()
 	var restoreErrs []error
 	if ws.mtg != nil {
 		directWasRunning := states["telemt-direct"].Running
