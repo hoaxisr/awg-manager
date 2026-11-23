@@ -1171,9 +1171,7 @@ func (d *Dispatcher) startLocked() error {
 		return fmt.Errorf("cdn dispatcher bind %s: %w", d.cfg.ListenAddr, err)
 	}
 
-	server := &http.Server{
-		Handler: d,
-	}
+	server := newDispatcherServer(d)
 
 	exited := make(chan struct{})
 	d.server = server
@@ -1292,9 +1290,7 @@ func (d *Dispatcher) applyConfigLocked(cfg Config, mode applyMode) error {
 		oldServer := d.server
 		oldExited := d.exited
 
-		newServer := &http.Server{
-			Handler: d,
-		}
+		newServer := newDispatcherServer(d)
 		newExited := make(chan struct{})
 
 		d.snapshot.Store(newSnap)
@@ -1562,3 +1558,13 @@ func (d *Dispatcher) CleanupSystemHooks() {
 		_ = exec.Command("nginx", "-s", "reload").Run()
 	}
 }
+
+// newDispatcherServer: адрес слушания не сужаем — в режиме origin внешний CDN
+// забирает трафик с <адрес роутера>:9009 напрямую. ReadTimeout/WriteTimeout не
+// ставим: через диспетчер идут долгие потоки XHTTP и WebSocket. Срок на
+// заголовки закрывает медленный slowloris.
+func newDispatcherServer(h http.Handler) *http.Server {
+	return &http.Server{Handler: h, ReadHeaderTimeout: dispatcherReadHeaderTimeout}
+}
+
+const dispatcherReadHeaderTimeout = 10 * time.Second
