@@ -55,7 +55,7 @@ type InstallStatus struct {
 	RequiredDiskBytes  int64        `json:"requiredDiskBytes,omitempty"`
 	Busy               bool         `json:"busy"`
 	BusyAction         string       `json:"busyAction,omitempty"`
-	Progress           float64      `json:"progress,omitempty"` // 0.0вЂ“1.0
+	Progress           float64      `json:"progress,omitempty"` // 0.0–1.0
 	Error              string       `json:"error,omitempty"`
 	ActiveEngine       bool         `json:"activeEngine"`
 	ExternalPackage    string       `json:"externalPackage,omitempty"`

@@ -642,7 +642,7 @@ func BuildRealityShareLinks(st RealitySettings, client Client, host string) (*Sh
 	if remark == "" {
 		remark = "VLESS"
 	}
-	label := remark + " В· Reality"
+	label := remark + " · Reality"
 	hostForURL := host
 	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
 		hostForURL = "[" + host + "]"
