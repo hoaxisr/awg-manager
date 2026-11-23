@@ -88,7 +88,6 @@ func setupTestService(t *testing.T) (*Service, string, *mockRunner) {
 	tc := NewTransactionCoordinator(filepath.Join(tempDir, "tproxy"))
 	svc := &Service{
 		dataDir:   tempDir,
-		telemtDir: filepath.Join(tempDir, "telemt"),
 		tc:        tc,
 		workers:   workers,
 		egressValidator: func(device string) error {
@@ -106,7 +105,6 @@ func setupTestService(t *testing.T) (*Service, string, *mockRunner) {
 		stopCh: make(chan struct{}),
 	}
 
-	_ = os.MkdirAll(svc.telemtDir, 0700)
 	_ = os.MkdirAll(svc.tproxyDir(), 0700)
 	_ = svc.ensureTokenKey()
 	svc.loadAndMigrateConfig()
@@ -161,7 +159,6 @@ func TestSchemaMigration_V1ToV2(t *testing.T) {
 	tc := NewTransactionCoordinator(tproxyDir)
 	svc := &Service{
 		dataDir:         tempDir,
-		telemtDir:       filepath.Join(tempDir, "telemt"),
 		tc:              tc,
 		workers:         &WorkerSupervisor{workers: []WorkerDef{}, runner: &mockRunner{}},
 		tproxyValidator: func(s string) error { return nil },
@@ -555,7 +552,6 @@ func TestSchemaMigration_MissingSchemaVersion(t *testing.T) {
 	tc := NewTransactionCoordinator(tproxyDir)
 	svc := &Service{
 		dataDir:   tempDir,
-		telemtDir: filepath.Join(tempDir, "telemt"),
 		tc:        tc,
 		workers:   nil,
 		egressValidator: func(device string) error {
@@ -2001,21 +1997,8 @@ func TestConstrainTproxyLimitsForRAMMB_AndDirectKeenDNSNonCDN(t *testing.T) {
 	}
 }
 
-func TestService_FactoryReset_PreservesTelemtBinaryAndWipesState(t *testing.T) {
+func TestService_FactoryReset_WipesState(t *testing.T) {
 	svc, tmpDir, runner := setupTestService(t)
-
-	telemtBinPath := filepath.Join(tmpDir, "telemt", "telemt")
-	if err := os.MkdirAll(filepath.Dir(telemtBinPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(telemtBinPath, []byte("fake-telemt-binary"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range []string{"config.toml", "raw.toml", "settings.json", "telemt.pid"} {
-		if err := os.WriteFile(filepath.Join(tmpDir, "telemt", f), []byte("old-content"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
 
 	if err := os.MkdirAll(filepath.Join(tmpDir, "tproxy", "transactions", "tx-1"), 0700); err != nil {
 		t.Fatal(err)
@@ -2047,17 +2030,8 @@ func TestService_FactoryReset_PreservesTelemtBinaryAndWipesState(t *testing.T) {
 		t.Fatalf("FactoryReset failed: %v", err)
 	}
 
-	// Binary MUST be preserved intact
-	binData, err := os.ReadFile(telemtBinPath)
-	if err != nil || string(binData) != "fake-telemt-binary" {
-		t.Fatalf("expected telemt binary preserved intact, got err=%v data=%q", err, string(binData))
-	}
-
-	// Telemt configs & tproxy runtime/tx files must be deleted
+	// tproxy runtime/tx files must be deleted
 	for _, gone := range []string{
-		filepath.Join("telemt", "config.toml"),
-		filepath.Join("telemt", "raw.toml"),
-		filepath.Join("telemt", "settings.json"),
 		filepath.Join("tproxy", "config.json"),
 		filepath.Join("tproxy", "profiles.json"),
 		filepath.Join("tproxy", "transactions"),

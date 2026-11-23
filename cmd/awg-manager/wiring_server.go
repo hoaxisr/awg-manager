@@ -37,7 +37,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
-	"github.com/hoaxisr/awg-manager/internal/telemt"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
@@ -104,17 +103,8 @@ func (a *app) setupServer() {
 	}
 	a.tgWebProxyService = tgwebproxy.New(a.dataDir, onReload)
 
-	telemtArch := detectArch()
-	a.telemtService = telemt.New(a.dataDir, telemtArch)
-	a.deferOnExit(func() {
-		_ = a.telemtService.Close()
-	})
-	_ = a.telemtService.StartIfEnabled(context.Background())
-	a.telemtHandler = api.NewTelemtHandler(a.telemtService)
-
 	// Cross-Component Ingress Coordinator and Crash Recovery
 	a.ingressCoordinator = serveringress.New(a.dataDir, a.vlessServerService, a.cdnDispatcher, a.tgWebProxyService)
-	a.ingressCoordinator.SetTelemt(a.telemtService)
 	if a.fircOp != nil {
 		a.ingressCoordinator.SetFircRouting(a.fircOp)
 	}
@@ -249,7 +239,6 @@ func (a *app) setupServer() {
 			},
 			SingboxHandler:           a.singboxHandler,
 			FircHandler:              a.fircHandler,
-			TelemtHandler:            a.telemtHandler,
 			VlessServerService:       a.vlessServerService,
 			TgWebProxyService:        a.tgWebProxyService,
 			CDNDispatcher:            a.cdnDispatcher,

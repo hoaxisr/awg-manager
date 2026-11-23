@@ -1,4 +1,4 @@
-import { TelemtClient } from './clientTelemt';
+import { WarpScoutClient } from './clientWarpScout';
 import {
 	stripFircEmojis,
 	type FircCaptureRes,
@@ -43,7 +43,7 @@ import {
 	type FircInstallStatus,
 } from '$lib/types/firc';
 
-export class FircClient extends TelemtClient {
+export class FircClient extends WarpScoutClient {
 	protected async requestV1<T>(subPath: string, options: RequestInit = {}): Promise<T> {
 		const url = `${this.baseUrl}/firc/v1${subPath}`;
 		let response: Response;

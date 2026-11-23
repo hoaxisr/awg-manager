@@ -1135,9 +1135,6 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.fircHandler != nil {
 		s.fircHandler.RegisterRoutes(mux, h.guarded)
 	}
-	if s.telemtHandler != nil {
-		s.telemtHandler.RegisterRoutes(mux, h.guarded)
-	}
 	if s.clashProxy != nil {
 		mux.HandleFunc("/api/singbox/clash/", h.guarded(s.clashProxy.ServeHTTP))
 		mux.HandleFunc("/api/singbox/clash", h.guarded(s.clashProxy.ServeHTTP))

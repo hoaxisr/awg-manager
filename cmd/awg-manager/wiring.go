@@ -48,7 +48,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/staticroute"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
-	"github.com/hoaxisr/awg-manager/internal/telemt"
 	"github.com/hoaxisr/awg-manager/internal/terminal"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
@@ -190,8 +189,6 @@ type app struct {
 	managedService      *managed.Service
 	vlessServerService  *vlessserver.Service
 	tgWebProxyService   *tgwebproxy.Service
-	telemtService       *telemt.Service
-	telemtHandler       *api.TelemtHandler
 	cdnDispatcher       *cdndispatcher.Dispatcher
 	ingressCoordinator  *serveringress.Coordinator
 	ingressWatcher      *serveringress.ConfigWatcher

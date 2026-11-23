@@ -72,7 +72,6 @@ type Coordinator struct {
 	xraySvc          XrayComponent
 	dispatcher       DispatcherComponent
 	tgSvc            TgWebProxyComponent
-	telemtSvc        TelemtResetComponent
 	fircRouting      FircRoutingComponent
 	keendns          KeenDNSOperator
 	lock             IngressLocker
@@ -129,13 +128,6 @@ func (c *Coordinator) GetKeenDNS() KeenDNSOperator {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.keendns
-}
-
-// SetTelemt wires the standalone telemt service for config reset during Telegram factory reset.
-func (c *Coordinator) SetTelemt(t TelemtResetComponent) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.telemtSvc = t
 }
 
 // SetOnPhaseChange configures a hook callback before committing phase for testing.
@@ -2931,8 +2923,7 @@ func (c *Coordinator) ResetVless(ctx context.Context, opts ResetOptions) (ResetR
 	return res, err
 }
 
-// ResetTelegram resets only the Telegram proxy (and standalone telemt config,
-// preserving the telemt binary) + Telegram routes in Dispatcher back to factory defaults
+// ResetTelegram resets only the Telegram proxy + Telegram routes in Dispatcher back to factory defaults
 // while keeping any active VLESS server running. If VLESS is inactive/unconfigured for CDN,
 // CDN Dispatcher and its Keenetic hooks are fully reset as well.
 func (c *Coordinator) ResetTelegram(ctx context.Context, opts ResetOptions) (ResetResult, error) {
@@ -2961,16 +2952,6 @@ func (c *Coordinator) ResetTelegram(ctx context.Context, opts ResetOptions) (Res
 
 		if err := resetter.FactoryReset(ctx); err != nil {
 			return err
-		}
-
-		c.mu.Lock()
-		telemtSvc := c.telemtSvc
-		c.mu.Unlock()
-
-		if telemtSvc != nil {
-			if err := telemtSvc.ResetConfig(ctx); err != nil {
-				res.Warnings = append(res.Warnings, fmt.Sprintf("ошибка сброса настроек telemt: %v", err))
-			}
 		}
 
 		xrayNeedsDisp := c.xraySvc != nil && xrayCfg.Enabled && hasVlessCDNDomains(xrayCfg)

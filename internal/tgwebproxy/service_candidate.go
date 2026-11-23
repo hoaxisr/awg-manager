@@ -170,8 +170,6 @@ func (s *Service) PrepareCandidate(txID string, candidate Config) (string, error
 		bakName string
 	}{
 		{s.cfgPath(), "tgwebproxy-settings.json.bak"},
-		{s.telemtDirectPath(), "config.toml.bak"},
-		{s.telemtRawPath(), "raw.toml.bak"},
 		{filepath.Join(s.tproxyDir(), "profiles.json"), "profiles.json.bak"},
 		{filepath.Join(s.tproxyDir(), "config.json"), "config.json.bak"},
 	}
@@ -212,9 +210,6 @@ func (s *Service) PrepareCandidate(txID string, candidate Config) (string, error
 	}
 
 	// 2. Render candidate files
-	telemtDirectTOML := GenerateTelemtDirectConfig(candidate)
-	telemtRawTOML := GenerateTelemtRawConfig(candidate)
-
 	profilesJSON, err := GenerateProfilesJSON(candidate)
 	if err != nil {
 		_ = os.RemoveAll(txPath)
@@ -239,8 +234,6 @@ func (s *Service) PrepareCandidate(txID string, candidate Config) (string, error
 		name    string
 		content []byte
 	}{
-		{"config.toml.candidate", []byte(telemtDirectTOML)},
-		{"raw.toml.candidate", []byte(telemtRawTOML)},
 		{"profiles.json.candidate", profilesJSON},
 		{"config.json.candidate", configJSON},
 		{"tgwebproxy-settings.json.candidate", settingsJSON},
@@ -334,8 +327,6 @@ func (s *Service) CommitPrepared(txID string) error {
 			candPath string
 			dstPath  string
 		}{
-			{filepath.Join(txPath, "config.toml.candidate"), s.telemtDirectPath()},
-			{filepath.Join(txPath, "raw.toml.candidate"), s.telemtRawPath()},
 			{filepath.Join(txPath, "profiles.json.candidate"), filepath.Join(s.tproxyDir(), "profiles.json")},
 			{filepath.Join(txPath, "config.json.candidate"), filepath.Join(s.tproxyDir(), "config.json")},
 			{filepath.Join(txPath, "tgwebproxy-settings.json.candidate"), s.cfgPath()},
@@ -501,8 +492,6 @@ func (s *Service) rollbackLocked(txID string, manifest *SnapshotManifest) error 
 		bakName string
 		dstPath string
 	}{
-		{"config.toml.bak", s.telemtDirectPath()},
-		{"raw.toml.bak", s.telemtRawPath()},
 		{"profiles.json.bak", filepath.Join(s.tproxyDir(), "profiles.json")},
 		{"config.json.bak", filepath.Join(s.tproxyDir(), "config.json")},
 		{"tgwebproxy-settings.json.bak", s.cfgPath()},

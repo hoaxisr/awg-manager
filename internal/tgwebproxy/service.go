@@ -35,7 +35,6 @@ type TproxyValidator func(stagingDir string) error
 type Service struct {
 	mu                   sync.Mutex
 	dataDir              string
-	telemtDir            string
 	binPath              string
 	config               Config
 	tc                   *TransactionCoordinator
@@ -60,20 +59,6 @@ type Service struct {
 }
 
 func New(dataDir string, onReload func()) *Service {
-	var telemtDir string
-	if dataDir != "" && dataDir != "/opt/etc/awg-manager" {
-		telemtDir = filepath.Join(dataDir, "telemt")
-		_ = os.MkdirAll(telemtDir, 0755)
-	} else {
-		telemtDir = "/opt/etc/awg-manager/telemt"
-		if _, err := os.Stat(telemtDir); os.IsNotExist(err) {
-			if _, errLegacy := os.Stat("/opt/etc/telemt"); errLegacy == nil {
-				telemtDir = "/opt/etc/telemt"
-			} else {
-				_ = os.MkdirAll(telemtDir, 0755)
-			}
-		}
-	}
 	tproxyBaseDir := filepath.Join(dataDir, "tproxy")
 
 	workers := NewDefaultWorkerSupervisor()
@@ -82,7 +67,6 @@ func New(dataDir string, onReload func()) *Service {
 
 	s := &Service{
 		dataDir:              dataDir,
-		telemtDir:            telemtDir,
 		binPath:              "/opt/bin/tproxy-server",
 		tc:                   tc,
 		workers:              workers,
@@ -146,14 +130,6 @@ func (s *Service) cfgPath() string {
 
 func (s *Service) tproxyDir() string {
 	return filepath.Join(s.dataDir, "tproxy")
-}
-
-func (s *Service) telemtDirectPath() string {
-	return filepath.Join(s.telemtDir, "config.toml")
-}
-
-func (s *Service) telemtRawPath() string {
-	return filepath.Join(s.telemtDir, "raw.toml")
 }
 
 var renameKeyFile = os.Rename
@@ -608,9 +584,6 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 		return fmt.Errorf("marshal settings: %w", err)
 	}
 
-	telemtDirectTOML := GenerateTelemtDirectConfig(newCfg)
-	telemtRawTOML := GenerateTelemtRawConfig(newCfg)
-
 	profilesJSON, err := GenerateProfilesJSON(newCfg)
 	if err != nil {
 		return fmt.Errorf("generate profiles: %w", err)
@@ -625,8 +598,6 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 
 	files := []FilePayload{
 		{TargetPath: s.cfgPath(), Content: settingsBytes, Mode: 0600},
-		{TargetPath: s.telemtDirectPath(), Content: []byte(telemtDirectTOML), Mode: 0600},
-		{TargetPath: s.telemtRawPath(), Content: []byte(telemtRawTOML), Mode: 0600},
 		{TargetPath: profilesPath, Content: profilesJSON, Mode: 0600},
 		{TargetPath: filepath.Join(s.tproxyDir(), "config.json"), Content: configJSON, Mode: 0600},
 	}
@@ -1411,7 +1382,6 @@ func (s *Service) Stop() error {
 }
 
 // FactoryReset stops all Telegram proxy workers and mux, wipes tproxy state and
-// telemt configs/runtime files (preserving the installed telemt binary), and
 // re-initializes fresh factory default settings and keys.
 func (s *Service) FactoryReset(ctx context.Context) error {
 	_ = ctx
@@ -1438,23 +1408,8 @@ func (s *Service) FactoryReset(ctx context.Context) error {
 		}
 	}
 
-	if s.telemtDir != "" {
-		for _, name := range []string{"config.toml", "raw.toml", "settings.json", "telemt.pid"} {
-			_ = os.Remove(filepath.Join(s.telemtDir, name))
-		}
-		for _, pat := range []string{"config.toml.*", "raw.toml.*", "settings.json.*"} {
-			if matches, err := filepath.Glob(filepath.Join(s.telemtDir, pat)); err == nil {
-				for _, m := range matches {
-					_ = os.Remove(m)
-				}
-			}
-		}
-	}
-
 	if s.dataDir == "/opt/etc/awg-manager" {
 		for _, pat := range []string{
-			"/opt/var/run/telemt*.pid*",
-			"/opt/var/run/telemt*.limit.json",
 			"/opt/var/run/tproxy-*.pid*",
 		} {
 			if matches, err := filepath.Glob(pat); err == nil {
@@ -1643,16 +1598,6 @@ func (s *Service) syncProfilesLocked(cfg Config) (bool, error) {
 				changed = true
 			}
 		}
-	}
-
-	telemtDirectBytes := []byte(GenerateTelemtDirectConfig(cfg))
-	if existing, err := os.ReadFile(s.telemtDirectPath()); err != nil || !bytes.Equal(existing, telemtDirectBytes) {
-		_ = atomicWriteMetadata(s.telemtDirectPath(), telemtDirectBytes, 0600)
-	}
-
-	telemtRawBytes := []byte(GenerateTelemtRawConfig(cfg))
-	if existing, err := os.ReadFile(s.telemtRawPath()); err != nil || !bytes.Equal(existing, telemtRawBytes) {
-		_ = atomicWriteMetadata(s.telemtRawPath(), telemtRawBytes, 0600)
 	}
 
 	return changed, nil
