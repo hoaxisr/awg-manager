@@ -420,15 +420,13 @@ func compileCoverageDestination(dest *coverageDestination, raw map[string]any) e
 				dest.regexes = append(dest.regexes, expression)
 			}
 		case "ip_cidr":
-			dest.prefixes = &coveragePrefixTrie{}
+			dest.prefixes = coveragePrefixSet{}
 			for _, value := range values {
 				prefix, err := coveragePrefix(value)
 				if err != nil {
 					return fmt.Errorf("ip_cidr %q: %w", value, err)
 				}
-				if err := dest.prefixes.insert(prefix); err != nil {
-					return err
-				}
+				dest.prefixes.insert(prefix)
 			}
 		}
 	}

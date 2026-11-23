@@ -388,7 +388,7 @@ type coverageDestination struct {
 	suffix    map[string]struct{}
 	keywords  []string
 	regexes   []*regexp.Regexp
-	prefixes  *coveragePrefixTrie
+	prefixes  coveragePrefixSet
 	hasFields bool
 }
 
@@ -428,94 +428,23 @@ func (d *coverageDestination) match(input string) bool {
 	return false
 }
 
-// coveragePrefixTrie is a binary prefix trie. It avoids a linear scan of large
-// geoip sets while keeping one compact array per address family.
-type coveragePrefixTrie struct {
-	v4 []coverageTrieNode
-	v6 []coverageTrieNode
-}
+// coveragePrefixSet is the set of prefixes a destination matches by IP. The
+// key is the masked prefix itself; a lookup walks the prefix lengths (/32…/0
+// for IPv4, /128…/0 for IPv6). One map entry per prefix instead of one trie
+// node per prefix bit keeps huge geoip sets small.
+type coveragePrefixSet map[netip.Prefix]struct{}
 
-type coverageTrieNode struct {
-	zero     int32
-	one      int32
-	terminal bool
-}
-
-func newCoverageTrieNode() coverageTrieNode { return coverageTrieNode{zero: -1, one: -1} }
-
-func (t *coveragePrefixTrie) insert(prefix netip.Prefix) error {
-	prefix = prefix.Masked()
+func (s coveragePrefixSet) insert(prefix netip.Prefix) {
 	addr := prefix.Addr().Unmap()
-	if !addr.IsValid() {
-		return fmt.Errorf("invalid prefix address")
-	}
-	var nodes *[]coverageTrieNode
-	var bytes []byte
-	if addr.Is4() {
-		nodes = &t.v4
-		value := addr.As4()
-		bytes = value[:]
-	} else {
-		nodes = &t.v6
-		value := addr.As16()
-		bytes = value[:]
-	}
-	if len(*nodes) == 0 {
-		*nodes = append(*nodes, newCoverageTrieNode())
-	}
-	at := int32(0)
-	for bit := 0; bit < prefix.Bits(); bit++ {
-		one := bytes[bit/8]&(1<<uint(7-bit%8)) != 0
-		next := (*nodes)[at].zero
-		if one {
-			next = (*nodes)[at].one
-		}
-		if next < 0 {
-			*nodes = append(*nodes, newCoverageTrieNode())
-			next = int32(len(*nodes) - 1)
-			// Assign after append: append may move the backing array.
-			if one {
-				(*nodes)[at].one = next
-			} else {
-				(*nodes)[at].zero = next
-			}
-		}
-		at = next
-	}
-	(*nodes)[at].terminal = true
-	return nil
+	s[netip.PrefixFrom(addr, prefix.Bits()).Masked()] = struct{}{}
 }
 
-func (t *coveragePrefixTrie) contains(addr netip.Addr) bool {
-	addr = addr.Unmap()
-	var nodes []coverageTrieNode
-	var bytes []byte
-	if addr.Is4() {
-		nodes = t.v4
-		value := addr.As4()
-		bytes = value[:]
-	} else {
-		nodes = t.v6
-		value := addr.As16()
-		bytes = value[:]
-	}
-	if len(nodes) == 0 {
-		return false
-	}
-	at := int32(0)
-	for bit := 0; bit < addr.BitLen(); bit++ {
-		if nodes[at].terminal {
+func (s coveragePrefixSet) contains(addr netip.Addr) bool {
+	addr = addr.Unmap().WithZone("")
+	for bits := addr.BitLen(); bits >= 0; bits-- {
+		if _, ok := s[netip.PrefixFrom(addr, bits).Masked()]; ok {
 			return true
 		}
-		one := bytes[bit/8]&(1<<uint(7-bit%8)) != 0
-		next := nodes[at].zero
-		if one {
-			next = nodes[at].one
-		}
-		if next < 0 {
-			return false
-		}
-		at = next
 	}
-	return nodes[at].terminal
+	return false
 }
