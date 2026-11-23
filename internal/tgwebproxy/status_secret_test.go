@@ -3,8 +3,12 @@ package tgwebproxy
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
+	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 // statusLeakFixture returns a realistic multi-user, multi-endpoint configuration
@@ -166,5 +170,19 @@ func TestMaskSecret_OnlyTail(t *testing.T) {
 	}
 	if maskSecret("short") != "********" || maskSecret("") != "" {
 		t.Fatal("short/empty secrets must not leak characters")
+	}
+}
+
+// F827: остановка движка (в том числе ради ротации секрета) обрывает уже
+// принятые raw-соединения.
+func TestMtgEngine_StopClosesRawConns(t *testing.T) {
+	e := NewMtgEngine()
+	srv, cli := net.Pipe()
+	defer cli.Close()
+	e.trackRaw(srv)
+	e.Stop()
+	_ = srv.SetWriteDeadline(time.Now().Add(time.Second))
+	if _, err := srv.Write([]byte{1}); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("raw conn still open after Stop: %v", err)
 	}
 }
