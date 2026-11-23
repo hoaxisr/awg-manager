@@ -338,3 +338,44 @@ func TestLookupIPv4ForBind_FiltersFakeIPAndFallsBackOnTimeout(t *testing.T) {
 		t.Fatalf("unbound lookup mismatch: got=%q err=%v pubCalls=%d", got, err, pubCalls)
 	}
 }
+
+func TestLookupIPv4ViaPublicDNS_TriesBoundInterfaceFirst(t *testing.T) {
+	origQuery := queryPublicDNSA
+	t.Cleanup(func() {
+		queryPublicDNSA = origQuery
+	})
+
+	var attempts []string
+	queryPublicDNSA = func(_ context.Context, _, srv, ifName string, _ int) (string, error) {
+		attempts = append(attempts, ifName+"@"+srv)
+		if ifName == "tunvless2" && srv == "1.1.1.1" {
+			return "104.16.132.229", nil
+		}
+		return "", fakeTimeoutErr{}
+	}
+
+	got, err := lookupIPv4ViaPublicDNS(context.Background(), "cp.cloudflare.com", "tunvless2")
+	if err != nil || got != "104.16.132.229" {
+		t.Fatalf("expected bound interface lookup success, got=%q err=%v", got, err)
+	}
+	if len(attempts) != 1 || attempts[0] != "tunvless2@1.1.1.1" {
+		t.Fatalf("expected bound interface tried first without wasting budget on default route, attempts=%v", attempts)
+	}
+
+	// Falls back to default route if bound interface fails.
+	attempts = nil
+	queryPublicDNSA = func(_ context.Context, _, srv, ifName string, _ int) (string, error) {
+		attempts = append(attempts, ifName+"@"+srv)
+		if ifName == "" && srv == "1.1.1.1" {
+			return "104.16.133.229", nil
+		}
+		return "", fakeTimeoutErr{}
+	}
+	got, err = lookupIPv4ViaPublicDNS(context.Background(), "cp.cloudflare.com", "tunvless2")
+	if err != nil || got != "104.16.133.229" {
+		t.Fatalf("expected fallback to default route, got=%q err=%v", got, err)
+	}
+	if len(attempts) != 3 || attempts[0] != "tunvless2@1.1.1.1" || attempts[1] != "tunvless2@8.8.8.8" || attempts[2] != "@1.1.1.1" {
+		t.Fatalf("expected bound interface exhausted before default route fallback, attempts=%v", attempts)
+	}
+}

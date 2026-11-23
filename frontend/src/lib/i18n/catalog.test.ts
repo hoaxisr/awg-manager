@@ -54,7 +54,7 @@ const ALLOWED: Record<string, { lines: number; reason: string }> = {
 	'/src/lib/components/firc/FircGroupsPanel.svelte': { lines: 210, reason: 'FIRC UI групп' },
 	'/src/lib/components/firc/FircJournalPanel.svelte': { lines: 42, reason: 'FIRC UI журнала' },
 	'/src/lib/components/firc/FircMigrationWizardModal.svelte': { lines: 248, reason: 'FIRC UI мастера миграции' },
-	'/src/lib/components/firc/FircMonitorPanel.svelte': { lines: 87, reason: 'FIRC UI монитора' },
+	'/src/lib/components/firc/FircMonitorPanel.svelte': { lines: 85, reason: 'FIRC UI монитора' },
 	'/src/lib/components/firc/FircResourceCard.svelte': { lines: 53, reason: 'FIRC UI ресурсов' },
 	'/src/lib/components/firc/FircSettingsPanel.svelte': { lines: 152, reason: 'FIRC UI настроек' },
 	'/src/lib/components/firc/FircTunnelEditModal.svelte': { lines: 113, reason: 'FIRC UI редактирования туннелей' },

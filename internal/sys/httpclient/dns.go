@@ -34,13 +34,18 @@ var lookupSystemIPv4 = func(ctx context.Context, host string) ([]net.IP, error) 
 // lookupPublicIPv4 is swappable in tests.
 var lookupPublicIPv4 = lookupIPv4ViaPublicDNS
 
+// queryPublicDNSA is swappable in tests.
+var queryPublicDNSA = lookupAViaDNS
+
 func lookupIPv4ViaPublicDNS(ctx context.Context, host, bindIface string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	ifaces := []string{""}
-	if strings.TrimSpace(bindIface) != "" {
-		ifaces = append(ifaces, strings.TrimSpace(bindIface))
+	var ifaces []string
+	if trimmed := strings.TrimSpace(bindIface); trimmed != "" {
+		ifaces = []string{trimmed, ""}
+	} else {
+		ifaces = []string{""}
 	}
 	servers := []string{"1.1.1.1", "8.8.8.8"}
 	var lastErr error
@@ -50,7 +55,7 @@ func lookupIPv4ViaPublicDNS(ctx context.Context, host, bindIface string) (string
 				return "", ctx.Err()
 			}
 			subCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
-			ipStr, err := lookupAViaDNS(subCtx, host, srv, ifName, 0)
+			ipStr, err := queryPublicDNSA(subCtx, host, srv, ifName, 0)
 			cancel()
 			if err == nil {
 				if parsed := net.ParseIP(ipStr); parsed != nil && !isFakeIPv4(parsed) {

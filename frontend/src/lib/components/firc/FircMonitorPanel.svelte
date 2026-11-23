@@ -556,7 +556,7 @@
 														{#if expandedServerClients[srv.id]}<ChevronDown size={11} />{:else}<ChevronRight size={11} />{/if}
 													</button>
 												{:else}
-													<span class="bytes-meta"> · {srv.activeClients} устр.</span>
+													<span class="bytes-meta"> · {m.firc_devices_policy_hosts({ count: srv.activeClients })}</span>
 												{/if}
 											{/if}
 										</div>
@@ -729,7 +729,7 @@
 														{#if expandedGroupClients[grp.id]}<ChevronDown size={11} />{:else}<ChevronRight size={11} />{/if}
 													</button>
 												{:else}
-													<span class="bytes-meta"> · {grp.activeClients} устр.</span>
+													<span class="bytes-meta"> · {m.firc_devices_policy_hosts({ count: grp.activeClients })}</span>
 												{/if}
 											{/if}
 										</div>
