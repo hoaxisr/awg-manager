@@ -142,7 +142,16 @@ func (b *Builder) BuildLink(ctx context.Context, rec instancestore.Record, req L
 	if err != nil {
 		return nil, &LinkError{Code: "WDTT_LINK_ENCODE_FAILED", Msg: err.Error()}
 	}
-	qLink, err := EncodeQwdttLink(peer, linkPassword, hashes, name, 0, 0, mode)
+	rawPort, _ := listenPort(cfg.EffectiveRawListen())
+	directPort := 0
+	if d := strings.TrimSpace(cfg.DirectListen); d != "" && d != strings.TrimSpace(cfg.Listen) {
+		directPort, _ = listenPort(d)
+	}
+	qLink, err := EncodeQwdttLinkWithOptions(peer, linkPassword, hashes, name, 0, 0, mode, QwdttLinkOptions{
+		DiagKey:    ReadDiagToken(cfg.ConfigDir),
+		RawPort:    rawPort,
+		DirectPort: directPort,
+	})
 	if err != nil {
 		return nil, &LinkError{Code: "WDTT_LINK_ENCODE_FAILED", Msg: err.Error()}
 	}

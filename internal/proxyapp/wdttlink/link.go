@@ -11,12 +11,15 @@ package wdttlink
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -159,8 +162,38 @@ func EncodeLinkWithClientPort(peer string, wgPort int, password string, vkHashes
 	return link, nil
 }
 
+// QwdttLinkOptions — дополнительные параметры qwdtt:// (диагностический токен и порты режимов сервера).
+type QwdttLinkOptions struct {
+	DiagKey    string
+	RawPort    int
+	DirectPort int
+}
+
+// ReadDiagToken читает diag.key (32 случайных байта в hex) из configDir сервера и
+// кодирует его в base64url без '=' (формат dk= в ссылках и -diag-key клиента).
+func ReadDiagToken(configDir string) string {
+	dir := strings.TrimSpace(configDir)
+	if dir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "diag.key"))
+	if err != nil {
+		return ""
+	}
+	secret, err := hex.DecodeString(strings.TrimSpace(string(data)))
+	if err != nil || len(secret) != 32 {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(secret)
+}
+
 // EncodeQwdttLink builds qwdtt:// for qWDTT/Android — явный port=9000 в query.
 func EncodeQwdttLink(peer, password string, vkHashes []string, name string, clientListenPort, workers int, connMode string) (string, error) {
+	return EncodeQwdttLinkWithOptions(peer, password, vkHashes, name, clientListenPort, workers, connMode, QwdttLinkOptions{})
+}
+
+// EncodeQwdttLinkWithOptions собирает qwdtt:// с опциональными dk=, raw=, direct=.
+func EncodeQwdttLinkWithOptions(peer, password string, vkHashes []string, name string, clientListenPort, workers int, connMode string, opts QwdttLinkOptions) (string, error) {
 	peer = normalizePeer(strings.TrimSpace(peer))
 	password = strings.TrimSpace(password)
 	if peer == "" {
@@ -188,6 +221,15 @@ func EncodeQwdttLink(peer, password string, vkHashes []string, name string, clie
 	}
 	if n := strings.TrimSpace(name); n != "" {
 		q.Set("name", n)
+	}
+	if dk := strings.TrimSpace(opts.DiagKey); dk != "" {
+		q.Set("dk", dk)
+	}
+	if opts.RawPort > 0 {
+		q.Set("raw", strconv.Itoa(opts.RawPort))
+	}
+	if opts.DirectPort > 0 {
+		q.Set("direct", strconv.Itoa(opts.DirectPort))
 	}
 	return SchemeQwdtt + "config?" + q.Encode(), nil
 }
@@ -322,6 +364,7 @@ func parseQwdttURI(link string) (ImportPayload, error) {
 		DeviceID: firstQuery(q, "deviceId", "device-id", "did"),
 		SubURL:   normalizeSubURL(firstQuery(q, "sub", "subUrl", "sub_url")),
 		ConnMode: firstQuery(q, "mode", "connMode", "relayMode"),
+		DiagKey:  firstQuery(q, "dk", "diagKey", "diag_key"),
 	}, nil
 }
 
@@ -379,6 +422,7 @@ func mapJSONProfile(raw map[string]interface{}) (ImportPayload, error) {
 		SubURL:   normalizeSubURL(firstStr(raw, "sub", "subUrl", "sub_url")),
 		WG:       firstStr(raw, "wg", "conf", "config"),
 		ConnMode: firstStr(raw, "mode", "connMode", "relayMode"),
+		DiagKey:  firstStr(raw, "dk", "diagKey", "diag_key"),
 	}, nil
 }
 

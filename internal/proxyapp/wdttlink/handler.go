@@ -249,6 +249,7 @@ func recordFromPayload(p ImportPayload, id, wantName string) instancestore.Recor
 			Mode:     normalizeConnMode(p.ConnMode),
 			Peer:     p.Peer,
 			Password: p.Password,
+			DiagKey:  strings.TrimSpace(p.DiagKey),
 			VKHashes: strings.Join(p.VKHashes, ","),
 			Workers:  p.Workers,
 			DeviceID: p.DeviceID,

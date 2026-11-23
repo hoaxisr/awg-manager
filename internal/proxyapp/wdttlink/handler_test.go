@@ -2,11 +2,16 @@ package wdttlink
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -1170,5 +1175,58 @@ func TestLink_IPv6PeerGetsModePort(t *testing.T) {
 	}
 	if data["peer"] != "[2001:db8::1]:56004" {
 		t.Fatalf("peer=%v want [2001:db8::1]:56004", data["peer"])
+	}
+}
+
+func TestLink_IncludesDiagKeyRawAndDirectPorts(t *testing.T) {
+	cfgDir := t.TempDir()
+	secret := make([]byte, 32)
+	for i := range secret {
+		secret[i] = byte(0xa0 + i)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "diag.key"), []byte(hex.EncodeToString(secret)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wantDK := base64.RawURLEncoding.EncodeToString(secret)
+
+	rec := serverRecord(roles.WdttServerConfig{
+		Listen:       "0.0.0.0:56002",
+		RawListen:    "0.0.0.0:56013",
+		DirectListen: "0.0.0.0:56014",
+		WgPort:       56001,
+		RelayMode:    ConnModeWG,
+		ConfigDir:    cfgDir,
+	}, instancestore.ServerUser{Password: "abonent"})
+	h, _, _, _ := newTestHandler(t, rec)
+
+	rr := httptest.NewRecorder()
+	h.Link(rr, post(t, `{"peer":"1.2.3.4","password":"abonent"}`), rec.Key())
+	data, msg, code := decodeEnvelope(t, rr)
+	if code != "" {
+		t.Fatalf("отказ %s: %s", code, msg)
+	}
+	qLink, _ := data["linkQwdtt"].(string)
+	u, err := url.Parse(qLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	if q.Get("dk") != wantDK {
+		t.Fatalf("dk = %q, want %q", q.Get("dk"), wantDK)
+	}
+	if q.Get("raw") != "56013" || q.Get("direct") != "56014" {
+		t.Fatalf("ports in qwdtt link: raw=%q direct=%q", q.Get("raw"), q.Get("direct"))
+	}
+}
+
+func TestImport_StoresDiagKey(t *testing.T) {
+	h, _, mut, _ := newTestHandler(t)
+	rr := httptest.NewRecorder()
+	h.Import(rr, post(t, `{"link":"qwdtt://config?peer=10.0.0.1&pass=x&hashes=h&dk=diagTok123"}`))
+	if _, msg, code := decodeEnvelope(t, rr); code != "" {
+		t.Fatalf("отказ %s: %s", code, msg)
+	}
+	if len(mut.created) != 1 || mut.created[0].WdttClient.DiagKey != "diagTok123" {
+		t.Fatalf("DiagKey не сохранился при импорте: %+v", mut.created)
 	}
 }

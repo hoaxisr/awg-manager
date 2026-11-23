@@ -27,6 +27,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/ftlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/install"
 	proxysub "github.com/hoaxisr/awg-manager/internal/proxyapp/subscription"
+	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttdiag"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttusers"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
@@ -1055,6 +1056,10 @@ func (a *app) wireProxyrt() {
 		Snapshots: snapshots,
 		Log:       logTail,
 	})
+	diagHandler := wdttdiag.New(wdttdiag.Deps{
+		Records: records,
+		Binary:  installSvc.Binary,
+	})
 	instances := api.NewProxyInstancesHandler(api.ProxyInstancesDeps{
 		Manager:          mgr,
 		States:           states,
@@ -1073,6 +1078,7 @@ func (a *app) wireProxyrt() {
 			allowlist: allowlist.Serve,
 			link:      linkHandler.Link,
 			ensureWG:  linkHandler.EnsureWGTunnel,
+			diag:      diagHandler.Serve,
 			refresh:   subs.Serve,
 		}.handler(),
 		ListenMoves:        instances.AckListenMoves,
@@ -1355,6 +1361,7 @@ type proxyrtDispatch struct {
 	allowlist func(w http.ResponseWriter, r *http.Request, key string, sub []string)
 	link      func(w http.ResponseWriter, r *http.Request, key string)
 	ensureWG  func(w http.ResponseWriter, r *http.Request, key string)
+	diag      func(w http.ResponseWriter, r *http.Request, key string)
 	refresh   func(w http.ResponseWriter, r *http.Request, key string)
 }
 
@@ -1383,6 +1390,12 @@ func (d proxyrtDispatch) handler() http.HandlerFunc {
 			d.link(w, r, key)
 		case "ensure-wg-tunnel":
 			d.ensureWG(w, r, key)
+		case "diag":
+			if len(parts) == 0 && d.diag != nil {
+				d.diag(w, r, key)
+				return
+			}
+			d.instances(w, r)
 		case "linked-tunnels":
 			// Своей ручки у связей больше нет: снимает их путь удаления
 			// инстанса (PF24). Путь остаётся ради честного 404 на старый

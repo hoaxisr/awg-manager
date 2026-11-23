@@ -1,10 +1,15 @@
 package wdttlink
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -279,5 +284,76 @@ func TestSubscriptionClientKeepsNoIdleConnections(t *testing.T) {
 
 	if n := conns.Load(); n != 2 {
 		t.Fatalf("сервер увидел %d новых соединений, ожидалось 2: транспорт держит простаивающее соединение, а закрыть его некому", n)
+	}
+}
+
+func TestReadDiagToken_Formats(t *testing.T) {
+	if got := ReadDiagToken(""); got != "" {
+		t.Fatalf("empty dir -> %q, want empty", got)
+	}
+	dir := t.TempDir()
+	if got := ReadDiagToken(dir); got != "" {
+		t.Fatalf("missing diag.key -> %q, want empty", got)
+	}
+	// Невалидный hex или неверная длина (16 байт вместо 32).
+	if err := os.WriteFile(filepath.Join(dir, "diag.key"), []byte("not-hex"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadDiagToken(dir); got != "" {
+		t.Fatalf("invalid hex -> %q, want empty", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "diag.key"), []byte(strings.Repeat("ab", 16)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadDiagToken(dir); got != "" {
+		t.Fatalf("short key -> %q, want empty", got)
+	}
+	// 32 байта в 64-символьном hex -> base64.RawURLEncoding.
+	secret := make([]byte, 32)
+	for i := range secret {
+		secret[i] = byte(i + 1)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "diag.key"), []byte(hex.EncodeToString(secret)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := base64.RawURLEncoding.EncodeToString(secret)
+	if got := ReadDiagToken(dir); got != want {
+		t.Fatalf("ReadDiagToken = %q, want %q", got, want)
+	}
+}
+
+func TestQwdttLink_DiagKeyAndPortsRoundtrip(t *testing.T) {
+	dk := "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+	link, err := EncodeQwdttLinkWithOptions("203.0.113.10:56002", "secret", []string{"h1"}, "Srv", 0, 18, "wg", QwdttLinkOptions{
+		DiagKey:    dk,
+		RawPort:    56003,
+		DirectPort: 56004,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	if q.Get("dk") != dk || q.Get("raw") != "56003" || q.Get("direct") != "56004" {
+		t.Fatalf("query params mismatch: %v", q)
+	}
+	got, err := DecodeImport(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DiagKey != dk {
+		t.Fatalf("DecodeImport qwdtt DiagKey = %q, want %q", got.DiagKey, dk)
+	}
+
+	jsonBody := `{"peer":"203.0.113.10:56002","pass":"secret","hashes":"h1","diag_key":"` + dk + `"}`
+	gotJSON, err := DecodeImport(jsonBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotJSON.DiagKey != dk {
+		t.Fatalf("DecodeImport JSON DiagKey = %q, want %q", gotJSON.DiagKey, dk)
 	}
 }

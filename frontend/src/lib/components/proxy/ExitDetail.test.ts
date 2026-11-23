@@ -26,6 +26,7 @@ const apiMock = vi.hoisted(() => ({
 	ensureWdttRawTunnel: vi.fn(),
 	importConfig: vi.fn(),
 	getFreeTurnCaptchaStatus: vi.fn(),
+	runWdttClientDiag: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({ api: apiMock }));
 
@@ -182,5 +183,78 @@ describe('ExitDetail: режим подключения правится в де
 		await fireEvent.click(await findByRole('button', { name: 'Raw' }));
 
 		expect(await findByText('WDTT · Raw')).toBeTruthy();
+	});
+});
+
+describe('ExitDetail: кнопка диагностики WDTT', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		apiMock.ensureWdttWgTunnel.mockResolvedValue(undefined);
+		apiMock.ensureWdttRawTunnel.mockResolvedValue(undefined);
+		apiMock.getFreeTurnCaptchaStatus.mockResolvedValue({ available: false, clients: [] });
+		apiMock.runWdttClientDiag.mockResolvedValue({
+			mode: 'dtls',
+			durationMs: 120,
+			exitCode: 0,
+			steps: [],
+			verdict: { code: 'path_ok', sev: 'ok', title: 'Путь ОК', text: 'Всё работает' },
+		});
+	});
+
+	it('кнопка «Диагностика» открывает модалку и вызывает runWdttClientDiag для WDTT', async () => {
+		const { findByRole, findByText } = mount('diag-1', 'wg');
+		const btn = await findByRole('button', { name: 'Диагностика' });
+		await fireEvent.click(btn);
+		await waitFor(() => expect(apiMock.runWdttClientDiag).toHaveBeenCalledWith('diag-1', {}));
+		expect(await findByText('Путь ОК')).toBeTruthy();
+	});
+
+	it('у FreeTurn-клиента кнопки диагностики WDTT нет', async () => {
+		const { queryByRole, findByRole } = render(ExitDetail, {
+			props: {
+				row: {
+					key: 'freeturn-client:ft1',
+					id: 'ft1',
+					protocol: 'freeturn',
+					role: 'client',
+					name: 'FreeTurn NL',
+					state: 'stopped',
+					autostart: false,
+					orphanedPid: false,
+					binaryPresent: true,
+				},
+				status: { running: false, binary: '/opt/bin/freeturn', binaryPresent: true },
+				ftClient: {
+					enabled: false,
+					listen: '127.0.0.1:9002',
+					peer: 'ft.example:3478',
+					provider: 'vk',
+					links: '',
+					streams: 4,
+					transport: 'tcp',
+					mode: 'udp',
+					bond: false,
+					obfProfile: 'none',
+					obfTimingMs: 0,
+					streamsPerCred: 0,
+					obfKey: '',
+					obfKeySet: true,
+					platform: 'desktop',
+					dnsMode: 'auto',
+					dnsServers: '',
+					clientId: '',
+					sub: '',
+					debug: false,
+				},
+				policies: [] as AccessPolicy[],
+				tunnels: [] as TunnelListItem[],
+				onstart: () => {},
+				onstop: () => {},
+				onsave: async () => null,
+				onreload: () => {},
+			},
+		});
+		expect(await findByRole('button', { name: 'Настройки' })).toBeTruthy();
+		expect(queryByRole('button', { name: 'Диагностика' })).toBeNull();
 	});
 })

@@ -46,6 +46,7 @@ type WdttClientConfig struct {
 	Listen      string `json:"listen"` // 127.0.0.1:PORT из пула ListenPortMin..Max
 	Peer        string `json:"peer"`
 	Password    string `json:"password"`
+	DiagKey     string `json:"diagKey,omitempty"`
 	VKHashes    string `json:"vkHashes"`
 	Workers     int    `json:"workers"`
 	Obfs        string `json:"obfs,omitempty"`

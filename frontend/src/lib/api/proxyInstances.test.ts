@@ -978,3 +978,85 @@ describe('natStaticWans (F61)', () => {
 		expect('natStaticWans' in patch).toBe(false);
 	});
 });
+
+describe('diagKey и POST /diag', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('toWdttClientConfig выставляет diagKeySet и не отдаёт diagKey наружу', () => {
+		const withDK = toWdttClientConfig({
+			...wdttClientView,
+			config: { ...wdttClientView.config, diagKeySet: true }
+		});
+		expect(withDK.diagKey).toBe('');
+		expect(withDK.diagKeySet).toBe(true);
+
+		const withoutDK = toWdttClientConfig(wdttClientView);
+		expect(withoutDK.diagKeySet).toBe(false);
+	});
+
+	it('toWdttClientPatch опускает пустой diagKey и отправляет заданный', () => {
+		const base: WdttClientConfig = {
+			listen: '127.0.0.1:9000',
+			peer: 'vps.example:56002',
+			password: '',
+			diagKey: '   ',
+			vkHashes: 'h1',
+			workers: 9,
+			obfs: '',
+			fingerprint: '',
+			captchaMode: 'auto'
+		};
+		expect('diagKey' in toWdttClientPatch(base)).toBe(false);
+		expect(toWdttClientPatch({ ...base, diagKey: 'tok-123' }).diagKey).toBe('tok-123');
+	});
+
+	it('api.runWdttClientDiag шлёт POST /proxyrt/instances/wdtt-client%3Anl/diag и проходит schema validation', async () => {
+		const calls: Array<{ url: string; method: string; body: unknown }> = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init?: RequestInit) => {
+				calls.push({
+					url,
+					method: init?.method ?? 'GET',
+					body: init?.body ? JSON.parse(String(init.body)) : undefined
+				});
+				return {
+					ok: true,
+					status: 200,
+					headers: new Headers({ 'content-type': 'application/json' }),
+					json: async () => ({
+						success: true,
+						data: {
+							mode: 'dtls',
+							transport: 'tcp',
+							durationMs: 320,
+							exitCode: 0,
+							steps: [{ step: 'turn', title: 'TURN', state: 'ok' }],
+							verdict: {
+								code: 'path_ok',
+								sev: 'ok',
+								title: 'OK',
+								text: 'Ready',
+								actions: ['None'],
+								facts: { turn: 'ok' }
+							}
+						}
+					})
+				} as unknown as Response;
+			})
+		);
+
+		const res = await api.runWdttClientDiag('nl', { transport: 'tcp', diagKey: 'dk-1' });
+		expect(calls).toEqual([
+			{
+				url: '/api/proxyrt/instances/wdtt-client%3Anl/diag',
+				method: 'POST',
+				body: { transport: 'tcp', diagKey: 'dk-1' }
+			}
+		]);
+		expect(res.verdict?.code).toBe('path_ok');
+		expect(res.steps[0]?.state).toBe('ok');
+	});
+});

@@ -9984,6 +9984,73 @@ definitions:
         description: '"queryInHeader"'
         type: string
     type: object
+  wdttdiag.DiagResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdttdiag.Result'
+      success:
+        example: true
+        type: boolean
+    type: object
+  wdttdiag.Request:
+    properties:
+      diagKey:
+        type: string
+      ports:
+        type: string
+      transport:
+        enum:
+        - ""
+        - auto
+        - udp
+        - tcp
+        type: string
+    type: object
+  wdttdiag.Result:
+    properties:
+      durationMs:
+        type: integer
+      exitCode:
+        type: integer
+      mode:
+        type: string
+      steps:
+        items:
+          $ref: '#/definitions/wdttdiag.Step'
+        type: array
+      transport:
+        type: string
+      verdict:
+        $ref: '#/definitions/wdttdiag.Verdict'
+    type: object
+  wdttdiag.Step:
+    properties:
+      state:
+        type: string
+      step:
+        type: string
+      text:
+        type: string
+      title:
+        type: string
+    type: object
+  wdttdiag.Verdict:
+    properties:
+      actions:
+        items:
+          type: string
+        type: array
+      code:
+        type: string
+      facts:
+        type: object
+      sev:
+        type: string
+      text:
+        type: string
+      title:
+        type: string
+    type: object
   wdttlink.DecodeResponse:
     properties:
       data:
@@ -10016,6 +10083,8 @@ definitions:
       connMode:
         type: string
       deviceId:
+        type: string
+      diagKey:
         type: string
       listen:
         type: string
@@ -14890,6 +14959,58 @@ paths:
       security:
       - CookieAuth: []
       summary: Разбудить реконсиляцию инстанса
+      tags:
+      - proxyrt
+  /proxyrt/instances/{key}/diag:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Одноразовый прогон `wt-client -diag` через TURN VK без запуска туннеля.
+        409 WDTT_DIAG_UNSUPPORTED — установлен старый `wt-client` без флага `-diag`.
+        409 WDTT_DIAG_BUSY — диагностика этого инстанса уже идёт.
+        504 WDTT_DIAG_TIMEOUT — превышен лимит времени ожидания ответа.
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: Опции диагностики (транспорт, одноразовый ключ, порты)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/wdttdiag.Request'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttdiag.DiagResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "504":
+          description: Gateway Timeout
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Диагностика подключения wdtt-клиента
       tags:
       - proxyrt
   /proxyrt/instances/{key}/ensure-wg-tunnel:

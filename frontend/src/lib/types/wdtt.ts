@@ -9,6 +9,9 @@ export interface WdttClientConfig {
 	 * «инстанс настроен».
 	 */
 	passwordSet?: boolean;
+	diagKey?: string;
+	/** Серверный diag.key импортирован/задан на бэкенде; значение наружу не отдаётся. */
+	diagKeySet?: boolean;
 	vkHashes: string;
 	workers: number;
 	obfs: string;
@@ -168,6 +171,7 @@ export interface WdttImportPayload {
 	deviceId?: string;
 	wg?: string;
 	connMode?: 'wg' | 'raw';
+	diagKey?: string;
 }
 
 export interface WdttSubscriptionPreview {
@@ -209,4 +213,37 @@ export interface WdttPanelUsersStatus {
 	available: boolean;
 	users: WdttPanelUserEntry[];
 	reload?: WdttServerClientsReload;
+}
+
+export type WdttDiagTransport = 'auto' | 'udp' | 'tcp';
+
+export interface WdttDiagRequest {
+	transport?: WdttDiagTransport;
+	diagKey?: string;
+	ports?: string;
+}
+
+export interface WdttDiagStep {
+	step: string;
+	title: string;
+	state: 'run' | 'ok' | 'fail' | 'warn' | 'skip' | string;
+	text?: string;
+}
+
+export interface WdttDiagVerdict {
+	code: string;
+	sev: 'ok' | 'warn' | 'error' | string;
+	title: string;
+	text: string;
+	actions?: string[];
+	facts?: Record<string, unknown>;
+}
+
+export interface WdttDiagResult {
+	mode?: string;
+	transport?: string;
+	durationMs: number;
+	exitCode: number;
+	steps: WdttDiagStep[];
+	verdict?: WdttDiagVerdict;
 }

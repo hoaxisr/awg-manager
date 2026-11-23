@@ -34,6 +34,7 @@
 	import { apiErrorCode } from './serverClients';
 	import { findLinkedTunnel, listenPort } from './linkedTunnel';
 	import InstanceBadges from './InstanceBadges.svelte';
+	import WdttDiagModal from './WdttDiagModal.svelte';
 	import type { ProxyInstanceRow } from './rows';
 
 	interface Props {
@@ -103,6 +104,12 @@
 
 	// Настройки — одноразовые: уезжают в ящик, как у раздачи.
 	let settingsOpen = $state(false);
+	let diagOpen = $state(false);
+
+	$effect(() => {
+		void row.id;
+		diagOpen = false;
+	});
 
 
 	// Правило имён ia.md §1.0: на странице NDMS-имя, kernel-имя — под (i).
@@ -274,6 +281,11 @@
 					<FieldHint text={noPeerHint} ariaLabel={m.proxy_exit_detail_start_blocked_aria()} />
 				{/if}
 			{/if}
+			{#if row.protocol === 'wdtt'}
+				<Button variant="ghost" size="sm" disabled={!!noPeerHint} onclick={() => (diagOpen = true)}>
+					{m.proxy_exit_detail_diag()}
+				</Button>
+			{/if}
 			<Button variant="ghost" size="sm" onclick={() => (settingsOpen = true)}>{m.proxy_common_settings()}</Button>
 			{#if onwizard}
 				<Button variant="ghost" size="sm" onclick={onwizard}>{m.proxy_common_wizard()}</Button>
@@ -393,6 +405,16 @@
 		busyTunnel={tunnelBusy}
 	/>
 </SideDrawer>
+
+{#if row.protocol === 'wdtt'}
+	<WdttDiagModal
+		open={diagOpen}
+		instanceId={row.id}
+		instanceName={row.name}
+		diagKeySet={wdttDraft?.diagKeySet}
+		onclose={() => (diagOpen = false)}
+	/>
+{/if}
 
 <style>
 	.head {
