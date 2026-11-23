@@ -231,6 +231,15 @@ func archiveJournal(journalPath string, suffix string, txID string) error {
 		return nil
 	}
 	archivePath := fmt.Sprintf("%s.%s.%s", journalPath, suffix, txID)
+	// Архив никто не читает — он для разбора последнего сбоя. Хранить по файлу
+	// на каждую транзакцию значило бы копить их на флеше без предела.
+	for _, kind := range []string{"committed", "failed"} {
+		if old, err := filepath.Glob(journalPath + "." + kind + ".*"); err == nil {
+			for _, o := range old {
+				_ = os.Remove(o)
+			}
+		}
+	}
 	if err := os.Rename(journalPath, archivePath); err != nil {
 		return fmt.Errorf("archive journal to %s: %w", archivePath, err)
 	}
