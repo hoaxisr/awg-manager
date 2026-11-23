@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"time"
@@ -73,12 +75,12 @@ func (r uplinkWANResolver) Providers() []uplink.Provider {
 }
 
 func (a *app) setupUplink() {
-	store, err := uplink.OpenStore(filepath.Join(a.dataDir, "uplink-policies.json"))
+	store, err := openQuarantining(a, filepath.Join(a.dataDir, "uplink-policies.json"), "политики uplink начаты заново", uplink.OpenStore)
 	if err != nil {
 		a.bootLog.Error("uplink-init", "", err.Error())
 		return
 	}
-	wanDNS, err := uplink.OpenWANDNS(filepath.Join(a.dataDir, "uplink-wan-dns.json"))
+	wanDNS, err := openQuarantining(a, filepath.Join(a.dataDir, "uplink-wan-dns.json"), "DNS WAN для uplink начаты заново", uplink.OpenWANDNS)
 	if err != nil {
 		a.bootLog.Error("uplink-dns-init", "", err.Error())
 		return
@@ -188,3 +190,25 @@ func (a *app) setupUplink() {
 }
 
 var _ uplink.Adapter = (*wireguard.Managed)(nil)
+
+// openQuarantining: файл с битым JSON откладывается в <path>.corrupt-<unix>
+// (данные целы для ручного разбора), и uplink стартует с пустым. Иначе
+// setupUplink выходил бы, не зарегистрировав ни одного стража, и туннели во
+// владении адаптеров правились бы поверх живой привязки; с пустым списком
+// политик страж на правке снимает привязку. Ошибки чтения (сбой накопителя) и
+// неизвестную схему (откат версии) не трогаем: временный сбой не должен стать
+// потерей политик.
+func openQuarantining[T any](a *app, path, lostWhat string, open func(string) (*T, error)) (*T, error) {
+	v, err := open(path)
+	var syntaxErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	if err == nil || !(errors.As(err, &syntaxErr) || errors.As(err, &typeErr)) {
+		return v, err
+	}
+	moved := fmt.Sprintf("%s.corrupt-%d", path, time.Now().Unix())
+	if rerr := os.Rename(path, moved); rerr != nil {
+		return nil, fmt.Errorf("%w; quarantine: %v", err, rerr)
+	}
+	a.bootLog.Error("uplink-init", "", fmt.Sprintf("%s не разобрался (%v), отложен в %s; %s", path, err, moved, lostWhat))
+	return open(path)
+}
