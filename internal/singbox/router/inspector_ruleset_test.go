@@ -350,3 +350,30 @@ func TestRuleSetHTTPClientPinsHTTP11(t *testing.T) {
 		t.Errorf("ALPN = %v, ожидался [http/1.1]", got)
 	}
 }
+
+// Смена формата набора (json → srs) должна перекачать файл: иначе правка
+// видна только после перезагрузки роутера, а кэш отдаёт старый формат.
+func TestRuleSetCache_FormatSwitchRefetches(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_, _ = w.Write([]byte("payload"))
+	}))
+	defer srv.Close()
+
+	cache := newRuleSetCache(t.TempDir())
+	url := srv.URL + "/list.srs"
+	if _, err := cache.getOrDownload(url, "source", nil, "list", ""); err != nil {
+		t.Fatalf("source getOrDownload: %v", err)
+	}
+	binary, err := cache.getOrDownload(url, "binary", nil, "list", "")
+	if err != nil {
+		t.Fatalf("binary getOrDownload: %v", err)
+	}
+	if hits != 2 {
+		t.Fatalf("hits = %d, want 2 (format switch must refetch)", hits)
+	}
+	if !strings.HasSuffix(binary, ".srs") {
+		t.Errorf("cache path %q does not end in .srs", binary)
+	}
+}
