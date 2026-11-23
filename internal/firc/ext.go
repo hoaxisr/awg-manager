@@ -212,6 +212,7 @@ func normalizeExtConfig(ext ExtConfig) ExtConfig {
 			cleaned = []string{}
 		}
 		pg.Interfaces = cleaned
+		pg.Check = normalizeProxyGroupCheck(pg.Check, len(cleaned))
 	}
 	var kdIfaces []string
 	seenKD := make(map[string]bool)
@@ -772,6 +773,69 @@ func (op *Operator) ListAvailableServers(ctx context.Context) []InboundServerIte
 	return items
 }
 
+func normalizeProxyGroupCheck(c *GroupCheck, ifaceCount int) *GroupCheck {
+	if c == nil {
+		return nil
+	}
+	if ifaceCount < 2 {
+		return &GroupCheck{Mode: "none"}
+	}
+	out := normalizeGroupCheck(c)
+	switch out.Mode {
+	case "url":
+	case "keendns":
+		out.URL = ""
+		if out.TimeoutMs == 0 {
+			out.TimeoutMs = 5000
+		}
+	default:
+		return &GroupCheck{Mode: "none"}
+	}
+	return &out
+}
+
+func findProxyGroupByID(ext ExtConfig, id string) (ProxyGroup, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ProxyGroup{}, false
+	}
+	for _, pg := range ext.ProxyGroups {
+		if pg.ID == id {
+			return pg, true
+		}
+	}
+	return ProxyGroup{}, false
+}
+
+func findProxyGroupByInterfaces(ext ExtConfig, ifaces []string) (ProxyGroup, bool) {
+	if len(ifaces) < 2 {
+		return ProxyGroup{}, false
+	}
+	for _, pg := range ext.ProxyGroups {
+		if equalStringSlices(pg.Interfaces, ifaces) {
+			return pg, true
+		}
+	}
+	return ProxyGroup{}, false
+}
+
+func resolveKeenDNSCheck(ext ExtConfig, kdIfaces []string, existingCheck *GroupCheck) *GroupCheck {
+	if len(kdIfaces) < 2 {
+		return &GroupCheck{Mode: "none"}
+	}
+	if ext.KeenDNSCloud.CloudHealthCheck {
+		return &GroupCheck{Mode: "keendns", TimeoutMs: 5000}
+	}
+	if pg, ok := findProxyGroupByID(ext, ext.KeenDNSCloud.ProxyGroupID); ok && pg.Check != nil {
+		return normalizeProxyGroupCheck(pg.Check, len(kdIfaces))
+	}
+	if existingCheck != nil && strings.TrimSpace(existingCheck.Mode) == "url" {
+		preserved := *existingCheck
+		return &preserved
+	}
+	return &GroupCheck{Mode: "none"}
+}
+
 func resolveKeenDNSInterfaces(ext ExtConfig) []string {
 	if ext.KeenDNSCloud.ProxyGroupID != "" {
 		for _, pg := range ext.ProxyGroups {
@@ -973,7 +1037,7 @@ func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicW
 	for _, g := range groups {
 		if g.ID == globalGroupID {
 			foundGlobal = true
-			if !wantGlobal || !g.Enable || !slices.Equal(g.Interface, global.Interface) || !keenDNSRulesEqual(g.Rules, global.Rules) {
+			if !wantGlobal || !g.Enable || !slices.Equal(g.Interface, global.Interface) || !keenDNSRulesEqual(g.Rules, global.Rules) || !groupCheckEqual(g.Check, global.Check) {
 				changed = true
 			}
 			continue
@@ -985,6 +1049,7 @@ func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicW
 			}
 			foundKeenDNS = true
 			kdGroup := buildKeenDNSGroup(kdIfaces, ext.KeenDNSCloud.CloudHealthCheck)
+			kdGroup.Check = resolveKeenDNSCheck(ext, kdIfaces, g.Check)
 			if !equalStringSlices([]string(g.Interface), kdIfaces) || !g.Enable || !keenDNSRulesEqual(g.Rules, kdGroup.Rules) || !groupCheckEqual(g.Check, kdGroup.Check) {
 				changed = true
 			}
@@ -1027,11 +1092,22 @@ func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicW
 			}
 		}
 
+		if len(g.Interface) >= 2 {
+			if pg, ok := findProxyGroupByInterfaces(ext, []string(g.Interface)); ok && pg.Check != nil {
+				desired := normalizeProxyGroupCheck(pg.Check, len(g.Interface))
+				if !groupCheckEqual(g.Check, desired) {
+					g.Check = desired
+					changed = true
+				}
+			}
+		}
+
 		filtered = append(filtered, g)
 	}
 
 	if wantKeenDNS && !foundKeenDNS {
 		kdGroup := buildKeenDNSGroup(kdIfaces, ext.KeenDNSCloud.CloudHealthCheck)
+		kdGroup.Check = resolveKeenDNSCheck(ext, kdIfaces, nil)
 		filtered = append([]Group{kdGroup}, filtered...)
 		changed = true
 	}

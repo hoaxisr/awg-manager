@@ -8,6 +8,7 @@
     FircExtConfig,
     FircInterfaceOption,
     FircProxyGroup,
+    FircGroupCheck,
     FircInboundServerItem,
     FircMigrationOptions,
     FircMigrationSummary,
@@ -287,17 +288,30 @@
   }
 
   function openPgModal() {
-    pgDraft = extConfig.proxyGroups.map((pg) => ({
-      id: pg.id,
-      name: pg.name,
-      interfaces: [...pg.interfaces],
-    }));
+    pgDraft = extConfig.proxyGroups.map((pg) => {
+      const ifaces = [...pg.interfaces];
+      const mode = pg.check?.mode || (ifaces.length >= 2 ? 'url' : 'none');
+      const check: FircGroupCheck = pg.check
+        ? {
+            mode,
+            url: mode === 'url' ? (pg.check.url ?? '') : '',
+            ...(mode === 'keendns' ? { timeoutMs: pg.check.timeoutMs || 5000 } : {}),
+          }
+        : { mode: ifaces.length >= 2 ? 'url' : 'none', url: '' };
+      return {
+        id: pg.id,
+        name: pg.name,
+        interfaces: ifaces,
+        check,
+      };
+    });
     if (pgDraft.length === 0) {
       pgDraft = [
         {
           id: Math.random().toString(16).slice(2, 10),
           name: 'KeenDNS Fallback + Direct',
           interfaces: [],
+          check: { mode: 'none', url: '' },
         },
       ];
     }
@@ -311,6 +325,7 @@
         id: Math.random().toString(16).slice(2, 10),
         name: `Fallback #${pgDraft.length + 1}`,
         interfaces: [],
+        check: { mode: 'none', url: '' },
       },
     ];
   }
@@ -322,11 +337,38 @@
   function togglePgDraftIface(pgIdx: number, ifaceId: string) {
     const pg = pgDraft[pgIdx];
     if (!pg) return;
+    const prevLen = pg.interfaces.length;
     if (pg.interfaces.includes(ifaceId)) {
       pg.interfaces = pg.interfaces.filter((x) => x !== ifaceId);
     } else if (pg.interfaces.length < 4) {
       pg.interfaces = [...pg.interfaces, ifaceId];
     }
+    if (pg.interfaces.length >= 2 && prevLen < 2) {
+      if (!pg.check || pg.check.mode === 'none') {
+        pg.check = { mode: 'url', url: pg.check?.url ?? '' };
+      }
+    } else if (pg.interfaces.length < 2) {
+      pg.check = { mode: 'none', url: '' };
+    }
+  }
+
+  function setPgDraftCheckMode(pgIdx: number, mode: 'none' | 'url' | 'keendns') {
+    const pg = pgDraft[pgIdx];
+    if (!pg) return;
+    pg.check = {
+      mode,
+      url: mode === 'url' ? (pg.check?.url ?? '') : '',
+      ...(mode === 'keendns' ? { timeoutMs: pg.check?.timeoutMs || 5000 } : {}),
+    };
+  }
+
+  function setPgDraftCheckUrl(pgIdx: number, url: string) {
+    const pg = pgDraft[pgIdx];
+    if (!pg) return;
+    pg.check = {
+      mode: pg.check?.mode ?? 'url',
+      url,
+    };
   }
 
   function applyPgModal() {
@@ -336,11 +378,22 @@
         return;
       }
     }
-    extConfig.proxyGroups = pgDraft.map((pg) => ({
-      id: pg.id,
-      name: pg.name.trim(),
-      interfaces: [...pg.interfaces],
-    }));
+    extConfig.proxyGroups = pgDraft.map((pg) => {
+      const ifaces = [...pg.interfaces];
+      const mode = ifaces.length >= 2 ? (pg.check?.mode ?? 'url') : 'none';
+      const check: FircGroupCheck =
+        mode === 'url'
+          ? { mode: 'url', url: (pg.check?.url ?? '').trim() }
+          : mode === 'keendns'
+            ? { mode: 'keendns', timeoutMs: pg.check?.timeoutMs || 5000 }
+            : { mode: 'none' };
+      return {
+        id: pg.id,
+        name: pg.name.trim(),
+        interfaces: ifaces,
+        check,
+      };
+    });
     if (!extConfig.keenDnsCloud.proxyGroupId && extConfig.proxyGroups.length > 0) {
       extConfig.keenDnsCloud.proxyGroupId = extConfig.proxyGroups[0].id;
       extConfig.keenDnsCloud.interfaces = [...extConfig.proxyGroups[0].interfaces];
@@ -778,7 +831,7 @@
               <optgroup label="Прокси-группы (Fallback)">
                 {#each extConfig.proxyGroups as pg (pg.id)}
                   <option value="pg:{pg.id}">
-                    {pg.name} ({pg.interfaces.map((id) => (id === 'eth3' ? 'Direct (eth3)' : id)).join(' → ')})
+                    {pg.name} ({pg.interfaces.map((id) => friendlyIfaceLabel(id, interfaces, $fircTunnelsState)).join(' → ')})
                   </option>
                 {/each}
               </optgroup>
@@ -1447,6 +1500,57 @@
             </button>
           {/each}
         </div>
+        {#if pg.interfaces.length >= 2}
+          {@const pgMode = pg.check?.mode ?? 'url'}
+          <div class="pg-check-box">
+            <div class="pg-check-grid">
+              <div class="field">
+                <label class="lbl" for={`firc-settings-pg-check-mode-${pg.id}`}>
+                  {m.firc_group_check_label()}
+                </label>
+                <select
+                  id={`firc-settings-pg-check-mode-${pg.id}`}
+                  class="inp"
+                  value={pgMode}
+                  onchange={(e) =>
+                    setPgDraftCheckMode(
+                      pgIdx,
+                      (e.currentTarget as HTMLSelectElement).value as 'none' | 'url' | 'keendns',
+                    )}
+                >
+                  <option value="url">{m.firc_group_check_mode_url()}</option>
+                  <option value="keendns">KeenDNS Cloud relay TCP</option>
+                  <option value="none">{m.firc_group_check_mode_none()}</option>
+                </select>
+              </div>
+              {#if pgMode === 'url'}
+                <div class="field">
+                  <label class="lbl" for={`firc-settings-pg-check-url-${pg.id}`}>
+                    {m.firc_group_check_url_label()}
+                  </label>
+                  <input
+                    id={`firc-settings-pg-check-url-${pg.id}`}
+                    type="text"
+                    class="inp mono"
+                    placeholder={m.firc_group_check_url_placeholder()}
+                    value={pg.check?.url ?? ''}
+                    oninput={(e) =>
+                      setPgDraftCheckUrl(pgIdx, (e.currentTarget as HTMLInputElement).value)}
+                  />
+                </div>
+              {/if}
+            </div>
+            <p class="hint">
+              {#if pgMode === 'url'}
+                {m.firc_group_check_url_hint()}
+              {:else if pgMode === 'keendns'}
+                {m.firc_pg_check_keendns_hint()}
+              {:else}
+                {m.firc_pg_check_none_hint()}
+              {/if}
+            </p>
+          </div>
+        {/if}
       </div>
     {/each}
     <div>
@@ -1800,6 +1904,20 @@
     border-radius: 4px;
     background: color-mix(in srgb, var(--color-accent) 22%, transparent);
     color: var(--color-accent);
+  }
+
+  .pg-check-box {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+  }
+
+  .pg-check-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 8px;
   }
 
   .pg-test-btn {

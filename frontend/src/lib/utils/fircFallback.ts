@@ -28,6 +28,8 @@ export interface FircProxyGroupRuntime {
 	allDead: boolean;
 	usedByCount: number;
 	members: FircFallbackMemberRuntime[];
+	hasDivergentActive?: boolean;
+	divergentSummary?: string;
 }
 
 export function normalizeFircIfaceList(raw: string | string[] | undefined): string[] {
@@ -229,6 +231,15 @@ export function resolveGroupActiveInterface(
 	}
 
 	if (groupLive) {
+		if (groupLive.live === false) {
+			const ifEntries = groupLive.interfaces ?? [];
+			const allConfiguredDead =
+				ifEntries.length > 0 &&
+				list.every((id) => ifEntries.find((x) => x.name === id)?.state === 'dead');
+			if (allConfiguredDead || !groupLive.active || !list.includes(groupLive.active)) {
+				return { active: null, isBackup: false, allDead: true };
+			}
+		}
 		if (groupLive.active && list.includes(groupLive.active)) {
 			return {
 				active: groupLive.active,
@@ -272,6 +283,43 @@ export function resolveGroupActiveInterface(
 	};
 }
 
+function pickAuthoritativeMatchingGroup(
+	matchingGroups: FircGroup[],
+	liveMap: Record<string, FircGroupLive>,
+	chain: string[],
+): FircGroup | undefined {
+	const candidates = matchingGroups.filter((g) => Boolean(liveMap[g.id]));
+	if (candidates.length === 0) return undefined;
+
+	const score = (g: FircGroup): number => {
+		const live = liveMap[g.id];
+		let s = 0;
+		if (g.enable) s += 1000;
+		const mode = g.check?.mode ?? 'none';
+		if (mode === 'url') s += 300;
+		else if (mode === 'keendns') s += 200;
+		if (live.live === false || (live.active && chain.length > 0 && live.active !== chain[0])) {
+			s += 80;
+		}
+		if (live.interfaces && live.interfaces.some((x) => x.state === 'alive' || x.state === 'dead')) {
+			s += 20;
+		}
+		return s;
+	};
+
+	let best = candidates[0];
+	let bestScore = score(best);
+	for (let i = 1; i < candidates.length; i++) {
+		const cur = candidates[i];
+		const sc = score(cur);
+		if (sc > bestScore) {
+			best = cur;
+			bestScore = sc;
+		}
+	}
+	return best;
+}
+
 export function resolveProxyGroupRuntime(
 	pg: Pick<FircProxyGroup, 'id' | 'name' | 'interfaces'>,
 	groups: FircGroup[],
@@ -288,9 +336,7 @@ export function resolveProxyGroupRuntime(
 	});
 	const usedByCount = matchingGroups.length;
 
-	const authoritativeGroup =
-		matchingGroups.find((g) => g.enable && liveMap[g.id]) ??
-		matchingGroups.find((g) => liveMap[g.id]);
+	const authoritativeGroup = pickAuthoritativeMatchingGroup(matchingGroups, liveMap, chain);
 	const authoritativeLive = authoritativeGroup ? liveMap[authoritativeGroup.id] : undefined;
 
 	const probesById: Record<string, FircInterfaceProbeResult> = {};
@@ -307,6 +353,35 @@ export function resolveProxyGroupRuntime(
 		interfaces,
 		probesById,
 	);
+
+	const activeByGroup: Array<{ name: string; active: string }> = [];
+	const distinctActive = new Set<string>();
+	for (const g of matchingGroups) {
+		if (!g.enable) continue;
+		const gl = liveMap[g.id];
+		if (!gl) continue;
+		const gRes = resolveGroupActiveInterface(
+			g,
+			gl,
+			liveMap,
+			tunnelsState,
+			interfaces,
+			probesById,
+		);
+		const eff = gRes.allDead ? '__dead__' : (gRes.active ?? '');
+		if (!eff) continue;
+		distinctActive.add(eff);
+		activeByGroup.push({
+			name: g.name || g.id,
+			active: gRes.allDead
+				? m.firc_fallback_no_active()
+				: friendlyIfaceLabel(eff, interfaces, tunnelsState),
+		});
+	}
+	const hasDivergentActive = distinctActive.size > 1;
+	const divergentSummary = hasDivergentActive
+		? activeByGroup.map((x) => `${x.name} -> ${x.active}`).join('; ')
+		: undefined;
 
 	const members: FircFallbackMemberRuntime[] = chain.map((id, idx) => {
 		const probe = probesById[id] ?? null;
@@ -335,6 +410,8 @@ export function resolveProxyGroupRuntime(
 		allDead: resolution.allDead,
 		usedByCount,
 		members,
+		hasDivergentActive,
+		divergentSummary,
 	};
 }
 

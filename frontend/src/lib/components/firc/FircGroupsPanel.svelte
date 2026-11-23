@@ -532,6 +532,7 @@
 		if (isSpecialIface(id)) {
 			group.interface = id;
 			if (id === 'block' && !group.block) group.block = 'null';
+			ensureDefaultGroupCheck(group);
 			openPickerGroupId = null;
 			return;
 		}
@@ -544,6 +545,7 @@
 		const rest = cur.filter((x) => x !== id && !isSpecialIface(x));
 		const next = [id, ...rest].slice(0, MAX_GROUP_IFACES);
 		group.interface = denormalizeIfaceList(next);
+		ensureDefaultGroupCheck(group);
 	}
 
 	function ensureDefaultGroupCheck(group: FircGroup) {
@@ -639,7 +641,12 @@
 	function applyProxyGroupToGroup(group: FircGroup, pg: FircProxyGroup) {
 		if (!pg.interfaces || pg.interfaces.length === 0) return;
 		group.interface = denormalizeIfaceList(pg.interfaces);
-		ensureDefaultGroupCheck(group);
+		const pgCheck = buildGroupCheckFromProxyGroup(pg);
+		if (pgCheck) {
+			group.check = pgCheck;
+		} else {
+			ensureDefaultGroupCheck(group);
+		}
 		openPickerGroupId = null;
 	}
 
@@ -737,6 +744,7 @@
 				...prev,
 				...allResults,
 			}));
+			void pollLiveState();
 
 			if (!opts?.silent) {
 				if (uniqueIds.length === 1) {
@@ -784,6 +792,52 @@
 		}
 	}
 
+	function inferDraftProxyGroupCheck(pg: FircProxyGroup): FircGroupCheck {
+		const ifaces = pg.interfaces ?? [];
+		if (ifaces.length < 2) {
+			return { mode: 'none', url: '' };
+		}
+		if (pg.check) {
+			const mode = pg.check.mode || 'none';
+			return {
+				mode,
+				url: mode === 'url' ? (pg.check.url ?? '') : '',
+				...(mode === 'keendns' ? { timeoutMs: pg.check.timeoutMs || 5000 } : {}),
+			};
+		}
+		const matching = groups.filter((g) => {
+			const list = normalizeIfaceList(g.interface);
+			return list.length === ifaces.length && list.every((v, idx) => v === ifaces[idx]);
+		});
+		const preferred =
+			matching.find((g) => g.check && g.check.mode !== 'none') ??
+			matching.find((g) => Boolean(g.check));
+		if (preferred?.check) {
+			const mode = preferred.check.mode || 'none';
+			return {
+				mode,
+				url: mode === 'url' ? (preferred.check.url ?? '') : '',
+				...(mode === 'keendns' ? { timeoutMs: preferred.check.timeoutMs || 5000 } : {}),
+			};
+		}
+		return { mode: 'url', url: '' };
+	}
+
+	function buildGroupCheckFromProxyGroup(pg: FircProxyGroup): FircGroupCheck | undefined {
+		if ((pg.interfaces?.length ?? 0) < 2) {
+			return { mode: 'none', url: '' };
+		}
+		if (!pg.check) {
+			return undefined;
+		}
+		const mode = pg.check.mode || 'none';
+		return {
+			mode,
+			url: mode === 'url' ? (pg.check.url ?? '').trim() : '',
+			...(mode === 'keendns' ? { timeoutMs: pg.check.timeoutMs || 5000 } : {}),
+		};
+	}
+
 	async function openProxyGroupsModal() {
 		openPickerGroupId = null;
 		if (!(await refreshProxyGroups())) return;
@@ -791,6 +845,7 @@
 			id: pg.id || randomHexId(),
 			name: pg.name,
 			interfaces: [...(pg.interfaces ?? [])],
+			check: inferDraftProxyGroupCheck(pg),
 		}));
 		if (pgDraft.length === 0) {
 			pgDraft = [
@@ -798,6 +853,7 @@
 					id: randomHexId(),
 					name: 'Основной Fallback',
 					interfaces: [],
+					check: { mode: 'none', url: '' },
 				},
 			];
 		}
@@ -811,6 +867,7 @@
 				id: randomHexId(),
 				name: `Fallback #${pgDraft.length + 1}`,
 				interfaces: [],
+				check: { mode: 'none', url: '' },
 			},
 		];
 	}
@@ -822,6 +879,7 @@
 	function toggleIfaceInDraftProxyGroup(pgIndex: number, ifaceId: string) {
 		const pg = pgDraft[pgIndex];
 		if (!pg) return;
+		const prevLen = pg.interfaces.length;
 		const exists = pg.interfaces.includes(ifaceId);
 		if (exists) {
 			pg.interfaces = pg.interfaces.filter((x) => x !== ifaceId);
@@ -832,6 +890,32 @@
 			}
 			pg.interfaces = [...pg.interfaces, ifaceId];
 		}
+		if (pg.interfaces.length >= 2 && prevLen < 2) {
+			if (!pg.check || pg.check.mode === 'none') {
+				pg.check = { mode: 'url', url: pg.check?.url ?? '' };
+			}
+		} else if (pg.interfaces.length < 2) {
+			pg.check = { mode: 'none', url: '' };
+		}
+	}
+
+	function setDraftProxyGroupCheckMode(pgIndex: number, mode: 'none' | 'url' | 'keendns') {
+		const pg = pgDraft[pgIndex];
+		if (!pg) return;
+		pg.check = {
+			mode,
+			url: mode === 'url' ? (pg.check?.url ?? '') : '',
+			...(mode === 'keendns' ? { timeoutMs: pg.check?.timeoutMs || 5000 } : {}),
+		};
+	}
+
+	function setDraftProxyGroupCheckUrl(pgIndex: number, url: string) {
+		const pg = pgDraft[pgIndex];
+		if (!pg) return;
+		pg.check = {
+			mode: pg.check?.mode ?? 'url',
+			url,
+		};
 	}
 
 	function moveIfaceInDraftProxyGroup(pgIndex: number, iIdx: number, delta: -1 | 1) {
@@ -860,11 +944,22 @@
 		try {
 			const nextExt: FircExtConfig = {
 				...extConfig,
-				proxyGroups: pgDraft.map((pg) => ({
-					id: pg.id || randomHexId(),
-					name: pg.name.trim(),
-					interfaces: pg.interfaces.slice(0, MAX_GROUP_IFACES),
-				})),
+				proxyGroups: pgDraft.map((pg) => {
+					const ifaces = pg.interfaces.slice(0, MAX_GROUP_IFACES);
+					const mode = ifaces.length >= 2 ? (pg.check?.mode ?? 'url') : 'none';
+					const check: FircGroupCheck =
+						mode === 'url'
+							? { mode: 'url', url: (pg.check?.url ?? '').trim() }
+							: mode === 'keendns'
+								? { mode: 'keendns', timeoutMs: pg.check?.timeoutMs || 5000 }
+								: { mode: 'none' };
+					return {
+						id: pg.id || randomHexId(),
+						name: pg.name.trim(),
+						interfaces: ifaces,
+						check,
+					};
+				}),
 			};
 			const saved = await api.fircSaveExt(nextExt);
 			extConfig = saved;
@@ -1029,7 +1124,7 @@
 	}
 
 	function resolverBadgeText(group: FircGroup): string {
-		const iface = primaryIface(group.interface);
+		const iface = liveMap[group.id]?.active || primaryIface(group.interface);
 		if (iface === 'block') return 'DNS: блокировка';
 		const resolve = group.resolve ?? { tunnel: true, server: '' };
 		if (!resolve.tunnel) return 'DNS: общий upstream';
@@ -1430,8 +1525,6 @@
 	let gmInterface = $state('');
 	let gmDnsMode = $state<'auto' | 'own' | 'off'>('auto');
 	let gmDnsServer = $state('');
-	let gmCheckMode = $state<'none' | 'url' | 'keendns'>('none');
-	let gmCheckUrl = $state('');
 	let gmListEnabled = $state(false);
 	let gmListUrl = $state('');
 	let gmListInterval = $state(86400);
@@ -1448,8 +1541,6 @@
 		gmInterface = availableInterfaces[0]?.value ?? 'block';
 		gmDnsMode = 'auto';
 		gmDnsServer = '';
-		gmCheckMode = 'none';
-		gmCheckUrl = '';
 		gmListEnabled = false;
 		gmListUrl = '';
 		gmListInterval = 86400;
@@ -1469,9 +1560,6 @@
 		const res = g.resolve ?? { tunnel: true, server: '' };
 		gmDnsMode = !res.tunnel ? 'off' : res.server ? 'own' : 'auto';
 		gmDnsServer = res.server ?? '';
-		const ifaceCount = normalizeIfaceList(g.interface).length;
-		gmCheckMode = g.check?.mode ?? (ifaceCount >= 2 ? (g.id === 'c100d001' ? 'keendns' : 'url') : 'none');
-		gmCheckUrl = g.check?.url ?? '';
 		gmListEnabled = Boolean(g.list?.url);
 		gmListUrl = g.list?.url ?? '';
 		gmListInterval = g.list?.interval ?? 86400;
@@ -1546,11 +1634,7 @@
 			}
 			const hasChain = normalizeIfaceList(nextIface).length >= 2 && !isSpecialIface(primaryIface(nextIface));
 			const nextCheck: FircGroupCheck | undefined = hasChain
-				? {
-						...(cur.check ?? {}),
-						mode: gmCheckMode,
-						url: gmCheckMode === 'url' ? gmCheckUrl.trim() : '',
-					}
+				? cur.check
 				: cur.check
 					? { ...cur.check, mode: 'none', url: '' }
 					: undefined;
@@ -2111,7 +2195,20 @@
 			onSelectAllVisible={selectAllVisibleGroups}
 			onDeselectAll={clearSelectedGroups}
 			onDone={toggleGroupSelectMode}
-			onSetInterface={(iface) => runBulkGroupAction({ kind: 'setInterface', iface })}
+			onSetInterface={(iface) => {
+				let check: FircGroupCheck | undefined;
+				if (Array.isArray(iface)) {
+					const matched = extConfig.proxyGroups.find(
+						(pg) =>
+							pg.interfaces.length === iface.length &&
+							pg.interfaces.every((val, idx) => val === iface[idx]),
+					);
+					check =
+						(matched ? buildGroupCheckFromProxyGroup(matched) : undefined) ??
+						(iface.length >= 2 ? { mode: 'url', url: '' } : { mode: 'none', url: '' });
+				}
+				runBulkGroupAction({ kind: 'setInterface', iface, check });
+			}}
 			onOpenDevices={openBulkDevicesModal}
 			onEnable={() => runBulkGroupAction({ kind: 'enable', enable: true })}
 			onDisable={() => runBulkGroupAction({ kind: 'enable', enable: false })}
@@ -2176,16 +2273,22 @@
 						$fircProbeResults,
 					)}
 					{@const isPgTesting = Boolean(probingGroups[`pg:${pg.id}`])}
+					{@const activeMem = rt.activeIface ? rt.members.find((x) => x.id === rt.activeIface) : undefined}
+					{@const activeProbeFailed = Boolean(activeMem?.probe && !activeMem.probe.ok)}
 					<div class="pg-row" class:is-backup={rt.isOnBackup} class:all-dead={rt.allDead}>
-						<div class="pg-row-ident">
+						<div
+							class="pg-row-ident"
+							title={rt.hasDivergentActive && rt.divergentSummary ? `${pg.name} (${rt.divergentSummary})` : pg.name}
+						>
 							<span
 								class="iface-dot"
-								class:alive={Boolean(rt.activeIface) && !rt.isOnBackup}
-								class:backup={rt.isOnBackup}
+								class:alive={Boolean(rt.activeIface) && !rt.isOnBackup && !activeProbeFailed}
+								class:backup={rt.isOnBackup && !activeProbeFailed}
+								class:warn={Boolean(rt.activeIface) && activeProbeFailed && !rt.allDead}
 								class:dead={rt.allDead}
 								class:unknown={!rt.activeIface && !rt.allDead}
 							></span>
-							<strong class="pg-row-name" title={pg.name}>{pg.name}</strong>
+							<strong class="pg-row-name">{pg.name}</strong>
 							{#if rt.isOnBackup && rt.activeIface}
 								<span
 									class="backup-badge"
@@ -2204,26 +2307,42 @@
 							{#each rt.members as mem, mIdx (mem.id)}
 								{@const tone = probeLatencyTone(mem.probe)}
 								{@const checking = Boolean(probingIfaces[mem.id])}
+								{@const probeFailed = Boolean(mem.probe && !mem.probe.ok)}
+								{@const isWarnActive = mem.state !== 'dead' && mem.isActive && probeFailed}
 								{#if mIdx > 0}
 									<span class="pg-chain-sep" aria-hidden="true">›</span>
 								{/if}
 								<button
 									type="button"
 									class="pg-node-pill"
-									class:is-active={mem.isActive && !rt.isOnBackup}
-									class:is-backup={mem.isActive && rt.isOnBackup}
+									class:is-active={mem.isActive && !rt.isOnBackup && !isWarnActive}
+									class:is-backup={mem.isActive && rt.isOnBackup && !isWarnActive}
+									class:is-probe-warn={isWarnActive}
 									class:is-dead={mem.state === 'dead'}
 									disabled={checking}
 									onclick={() => probeFallbackInterfaces([mem.id])}
-									title={`${mem.id}${mem.isActive ? ` · ${m.firc_fallback_active_marker()}` : ''}${mem.error ? ` · ${mem.error}` : ''} · ${m.firc_fallback_test_iface_title({ name: mem.label })}`}
+									title={[
+										mem.id,
+										mem.isActive ? m.firc_fallback_active_marker() : '',
+										mem.error,
+										probeFailed
+											? m.firc_fallback_probe_error_detail({
+													error: mem.probe?.error || m.firc_fallback_timeout(),
+												})
+											: '',
+										m.firc_fallback_test_iface_title({ name: mem.label }),
+									]
+										.filter(Boolean)
+										.join(' · ')}
 								>
 									<span
 										class="pg-mem-dot"
-										class:active={mem.isActive && !rt.isOnBackup}
-										class:backup={mem.isActive && rt.isOnBackup}
-										class:alive={!mem.isActive && mem.state === 'alive'}
+										class:active={mem.isActive && !rt.isOnBackup && !probeFailed}
+										class:backup={mem.isActive && rt.isOnBackup && !probeFailed}
+										class:warn={mem.state !== 'dead' && probeFailed}
+										class:alive={!mem.isActive && mem.state === 'alive' && !probeFailed}
 										class:dead={mem.state === 'dead'}
-										class:unknown={!mem.isActive && mem.state === 'unknown'}
+										class:unknown={!mem.isActive && mem.state === 'unknown' && !probeFailed}
 									></span>
 									<span class="pg-node-name">{mem.label}</span>
 									<span class="pg-node-delay {tone}">
@@ -2281,13 +2400,14 @@
 				)}
 				{@const listPage = listPages[group.id]}
 				{@const hasCustomDevices = (group.devices?.allow?.length ?? 0) > 0 || (group.devices?.deny?.length ?? 0) > 0}
-				{@const toneCls = outboundToneClass(ifaceVal)}
 				{@const activeRes = resolveGroupActive(group)}
 				{@const activeIface = activeRes.active}
 				{@const activeBackup = activeRes.isBackup ? activeIface : null}
 				{@const isFallbackGroup = ifaceList.length > 1 && !isSpecialIface(ifaceList[0])}
 				{@const matchedPg = matchingProxyGroup(group)}
+				{@const toneCls = outboundToneClass(activeIface || ifaceVal)}
 				{@const primaryProbe = !isBlock && !isBlackhole && (activeIface || ifaceVal) ? getIfaceProbe(activeIface || ifaceVal) : null}
+				{@const primaryProbeFailed = Boolean(!isBlock && !isBlackhole && primaryProbe && !primaryProbe.ok && !(isFallbackGroup && activeRes.allDead))}
 				{@const isPickerOpen = openPickerGroupId === group.id}
 				{@const pickerGroups = getPickerGroups(group)}
 				{@const canAddMoreIfaces = ifaceList.length > 0 && !isSpecialIface(ifaceList[0]) && ifaceList.length < MAX_GROUP_IFACES}
@@ -2325,8 +2445,9 @@
 										<ArrowRight size={13} class="compact-out-arrow" />
 										<span
 											class="iface-dot"
-											class:alive={Boolean(activeIface) && !activeBackup}
-											class:backup={Boolean(activeBackup)}
+											class:alive={Boolean(activeIface) && !activeBackup && !primaryProbeFailed}
+											class:backup={Boolean(activeBackup) && !primaryProbeFailed}
+											class:warn={Boolean(activeIface) && primaryProbeFailed && !activeRes.allDead}
 											class:dead={activeRes.allDead}
 											class:unknown={!activeIface && !activeRes.allDead}
 										></span>
@@ -2357,7 +2478,11 @@
 											type="button"
 											class="pg-action-btn mini icon-only compact-chain-probe"
 											disabled={isGridTesting}
-											onclick={() => probeFallbackInterfaces(ifaceList, { groupKey: `grp:${group.id}` })}
+											onclick={() =>
+												probeFallbackInterfaces(ifaceList, {
+													groupKey: `grp:${group.id}`,
+													url: group.check?.mode === 'url' && group.check.url ? group.check.url : undefined,
+												})}
 											title={m.firc_fallback_test_chain_title()}
 										>
 											<Zap size={10} class={isGridTesting ? 'spin' : ''} />
@@ -2551,31 +2676,45 @@
 										type="button"
 										class="tone-select-pill iface-picker-btn {toneCls}"
 										class:on-backup={Boolean(activeBackup)}
+										class:probe-warn={primaryProbeFailed}
 										class:all-dead={isFallbackGroup && activeRes.allDead}
 										onclick={(e) => {
 											e.stopPropagation();
 											openPickerGroupId = isPickerOpen ? null : group.id;
 											if (!isPickerOpen) void refreshProxyGroups();
 										}}
-										title={activeBackup
-											? `Активен резервный интерфейс ${activeBackup} (основной ${ifaceList[0]} недоступен)`
-											: isFallbackGroup && activeIface
-												? m.firc_fallback_active_chain_title({
-														iface: friendlyIfaceLabel(activeIface, interfaces, tunnelsState),
-														chain: matchedPg
-															? `${matchedPg.name}: ${ifaceList.map((id) => friendlyIfaceLabel(id, interfaces, tunnelsState)).join(' → ')}`
-															: ifaceList.map((id) => friendlyIfaceLabel(id, interfaces, tunnelsState)).join(' → '),
+										title={[
+											activeBackup
+												? `Активен резервный интерфейс ${friendlyIfaceLabel(activeBackup, interfaces, tunnelsState)} (основной ${friendlyIfaceLabel(ifaceList[0], interfaces, tunnelsState)} недоступен)`
+												: isFallbackGroup && activeIface
+													? m.firc_fallback_active_chain_title({
+															iface: friendlyIfaceLabel(activeIface, interfaces, tunnelsState),
+															chain: matchedPg
+																? `${matchedPg.name}: ${ifaceList.map((id) => friendlyIfaceLabel(id, interfaces, tunnelsState)).join(' → ')}`
+																: ifaceList.map((id) => friendlyIfaceLabel(id, interfaces, tunnelsState)).join(' → '),
+														})
+													: ifaceList.length > 1
+														? `Цепочка Fallback: ${ifaceList.join(' → ')}`
+														: resolverBadgeText(group),
+											primaryProbeFailed
+												? m.firc_fallback_probe_error_detail({
+														error: primaryProbe?.error || m.firc_fallback_timeout(),
 													})
-												: ifaceList.length > 1
-													? `Цепочка Fallback: ${ifaceList.join(' → ')}`
-													: resolverBadgeText(group)}
+												: '',
+											primaryProbeFailed && isFallbackGroup && (!group.check || group.check.mode === 'none')
+												? m.firc_fallback_check_disabled_hint()
+												: '',
+										]
+											.filter(Boolean)
+											.join(' · ')}
 									>
 										{#if isBlock || isBlackhole}
 											<Ban size={13} />
 										{:else}
-											{@const dotState = activeRes.allDead && isFallbackGroup ? 'dead' : ifaceDotState(group, activeIface || ifaceVal)}
+											{@const rawDotState = activeRes.allDead && isFallbackGroup ? 'dead' : ifaceDotState(group, activeIface || ifaceVal)}
+											{@const dotState = primaryProbeFailed && rawDotState && rawDotState !== 'dead' ? 'warn' : rawDotState}
 											{#if dotState}
-												<span class="iface-dot {dotState}" class:backup={Boolean(activeBackup)}></span>
+												<span class="iface-dot {dotState}" class:backup={Boolean(activeBackup) && !primaryProbeFailed}></span>
 											{:else if toneCls === 'tone-awg'}
 												<Shield size={13} />
 											{:else}
@@ -2631,7 +2770,7 @@
 																onclick={() => applyProxyGroupToGroup(group, pg)}
 																title={pgRt.activeIface ? m.firc_fallback_active_primary_title({ iface: `${friendlyIfaceLabel(pgRt.activeIface, interfaces, tunnelsState)} (${pgRt.activeIface})` }) : m.firc_fallback_all_dead_title()}
 															>
-																<span class="iface-dot {pgRt.activeIface ? 'alive' : pgRt.allDead ? 'dead' : 'unknown'}"></span>
+																<span class="iface-dot {pgRt.activeIface ? (pgRt.isOnBackup ? 'backup' : 'alive') : pgRt.allDead ? 'dead' : 'unknown'}" class:backup={pgRt.isOnBackup}></span>
 																<span class="iface-row-text">
 																	<strong>{pg.name}</strong> — {pg.interfaces.map(shortIfaceTag).join(' → ')}
 																</span>
@@ -3346,34 +3485,6 @@
 			{/if}
 		</div>
 
-		{#if groupModalMode === 'edit' && groupModalIndex !== null && normalizeIfaceList(groups[groupModalIndex]?.interface ?? '').length >= 2 && !isSpecialIface(gmInterface)}
-			<div class="sec-box">
-				<div class="field">
-					<label class="lbl" for="firc-gm-check-mode">{m.firc_group_check_label()}</label>
-					<select id="firc-gm-check-mode" class="inp" bind:value={gmCheckMode}>
-						<option value="url">{m.firc_group_check_mode_url()}</option>
-						<option value="keendns">KeenDNS Cloud relay TCP</option>
-						<option value="none">{m.firc_group_check_mode_none()}</option>
-					</select>
-				</div>
-				{#if gmCheckMode === 'url'}
-					<div class="field mt-2">
-						<label class="lbl" for="firc-gm-check-url">{m.firc_group_check_url_label()}</label>
-						<input
-							id="firc-gm-check-url"
-							type="text"
-							class="inp font-mono"
-							placeholder={m.firc_group_check_url_placeholder()}
-							bind:value={gmCheckUrl}
-						/>
-						<p class="hint">
-							{m.firc_group_check_url_hint()}
-						</p>
-					</div>
-				{/if}
-			</div>
-		{/if}
-
 		<div class="sec-box">
 			<div class="field-row">
 				<div class="field-row-info">
@@ -3668,6 +3779,58 @@
 						{/each}
 					</div>
 				</div>
+
+				{#if pg.interfaces.length >= 2}
+					{@const pgMode = pg.check?.mode ?? 'url'}
+					<div class="pg-check-box">
+						<div class="pg-check-grid">
+							<div class="field">
+								<label class="lbl" for={`firc-pg-check-mode-${pg.id}`}>
+									{m.firc_group_check_label()}
+								</label>
+								<select
+									id={`firc-pg-check-mode-${pg.id}`}
+									class="inp"
+									value={pgMode}
+									onchange={(e) =>
+										setDraftProxyGroupCheckMode(
+											pgIdx,
+											(e.currentTarget as HTMLSelectElement).value as 'none' | 'url' | 'keendns',
+										)}
+								>
+									<option value="url">{m.firc_group_check_mode_url()}</option>
+									<option value="keendns">KeenDNS Cloud relay TCP</option>
+									<option value="none">{m.firc_group_check_mode_none()}</option>
+								</select>
+							</div>
+							{#if pgMode === 'url'}
+								<div class="field">
+									<label class="lbl" for={`firc-pg-check-url-${pg.id}`}>
+										{m.firc_group_check_url_label()}
+									</label>
+									<input
+										id={`firc-pg-check-url-${pg.id}`}
+										type="text"
+										class="inp font-mono"
+										placeholder={m.firc_group_check_url_placeholder()}
+										value={pg.check?.url ?? ''}
+										oninput={(e) =>
+											setDraftProxyGroupCheckUrl(pgIdx, (e.currentTarget as HTMLInputElement).value)}
+									/>
+								</div>
+							{/if}
+						</div>
+						<p class="hint">
+							{#if pgMode === 'url'}
+								{m.firc_group_check_url_hint()}
+							{:else if pgMode === 'keendns'}
+								{m.firc_pg_check_keendns_hint()}
+							{:else}
+								{m.firc_pg_check_none_hint()}
+							{/if}
+						</p>
+					</div>
+				{/if}
 			</div>
 		{/each}
 
@@ -4222,7 +4385,8 @@
 		filter: brightness(1.08);
 	}
 
-	.tone-select-pill.on-backup {
+	.tone-select-pill.on-backup,
+	.tone-select-pill.probe-warn {
 		border-color: var(--color-warning-border) !important;
 	}
 
@@ -4311,7 +4475,8 @@
 		box-shadow: 0 0 4px var(--color-success-border);
 	}
 
-	.iface-dot.backup {
+	.iface-dot.backup,
+	.iface-dot.warn {
 		background: var(--color-warning);
 		box-shadow: 0 0 4px var(--color-warning-border);
 	}
@@ -5214,7 +5379,8 @@
 		font-weight: 600;
 	}
 
-	.pg-node-pill.is-backup {
+	.pg-node-pill.is-backup,
+	.pg-node-pill.is-probe-warn {
 		background: color-mix(in srgb, var(--color-warning) 10%, var(--bg-secondary));
 		border-color: var(--color-warning-border);
 		color: var(--text-primary);
@@ -5273,7 +5439,8 @@
 		animation: firc-active-pulse 1.5s ease-in-out infinite;
 	}
 
-	.pg-mem-dot.backup {
+	.pg-mem-dot.backup,
+	.pg-mem-dot.warn {
 		background: var(--color-warning);
 		box-shadow: 0 0 6px var(--color-warning-border);
 	}
@@ -5468,6 +5635,20 @@
 		border-radius: 4px;
 		background: color-mix(in srgb, var(--color-accent) 22%, transparent);
 		color: var(--color-accent);
+	}
+
+	.pg-check-box {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding-top: 8px;
+		border-top: 1px dashed var(--border);
+	}
+
+	.pg-check-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+		gap: 8px;
 	}
 
 	.list-toggle-actions {

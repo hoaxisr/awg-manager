@@ -3,11 +3,72 @@ package httpclient
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
 	"time"
 )
+
+// isFakeIPv4 reports whether ip falls inside FIRC / Sing-box FakeIP range (198.18.0.0/15).
+func isFakeIPv4(ip net.IP) bool {
+	ip4 := ip.To4()
+	return ip4 != nil && ip4[0] == 198 && (ip4[1] == 18 || ip4[1] == 19)
+}
+
+func isDNSTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
+var lookupSystemIPv4 = func(ctx context.Context, host string) ([]net.IP, error) {
+	return net.DefaultResolver.LookupIP(ctx, "ip4", host)
+}
+
+// lookupPublicIPv4 is swappable in tests.
+var lookupPublicIPv4 = lookupIPv4ViaPublicDNS
+
+func lookupIPv4ViaPublicDNS(ctx context.Context, host, bindIface string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	ifaces := []string{""}
+	if strings.TrimSpace(bindIface) != "" {
+		ifaces = append(ifaces, strings.TrimSpace(bindIface))
+	}
+	servers := []string{"1.1.1.1", "8.8.8.8"}
+	var lastErr error
+	for _, ifName := range ifaces {
+		for _, srv := range servers {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			subCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+			ipStr, err := lookupAViaDNS(subCtx, host, srv, ifName, 0)
+			cancel()
+			if err == nil {
+				if parsed := net.ParseIP(ipStr); parsed != nil && !isFakeIPv4(parsed) {
+					if ip4 := parsed.To4(); ip4 != nil {
+						return ip4.String(), nil
+					}
+				}
+				lastErr = fmt.Errorf("non-public IPv4 %q from %s", ipStr, srv)
+				continue
+			}
+			lastErr = err
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no public DNS response")
+	}
+	return "", lastErr
+}
 
 // lookupIPv6 is swappable in tests.
 var lookupIPv6 = lookupIPv6ForBind
@@ -77,13 +138,30 @@ func LookupIPv4ForBind(ctx context.Context, host string, dnsServers []string, bi
 		return "", fmt.Errorf("httpclient: no DNS servers configured for %q", host)
 	}
 
-	ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	ips, err := lookupSystemIPv4(ctx, host)
 	if err != nil {
+		if bindIface != "" && ctx.Err() == nil && isDNSTimeout(err) {
+			if pubIP, pubErr := lookupPublicIPv4(ctx, host, bindIface); pubErr == nil {
+				return pubIP, nil
+			}
+		}
 		return "", fmt.Errorf("httpclient: system DNS lookup %q: %w", host, err)
 	}
+	sawFake := false
 	for _, ip := range ips {
 		if ip4 := ip.To4(); ip4 != nil {
+			if bindIface != "" && isFakeIPv4(ip4) {
+				sawFake = true
+				continue
+			}
 			return ip4.String(), nil
+		}
+	}
+	if bindIface != "" && sawFake && ctx.Err() == nil {
+		if pubIP, pubErr := lookupPublicIPv4(ctx, host, bindIface); pubErr == nil {
+			return pubIP, nil
+		} else {
+			return "", fmt.Errorf("httpclient: system DNS returned FakeIP for %q and public fallback failed: %w", host, pubErr)
 		}
 	}
 	return "", fmt.Errorf("httpclient: no IPv4 address for %q", host)

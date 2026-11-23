@@ -259,3 +259,82 @@ func TestResolveIPv6Resilient_KeepsLastGood(t *testing.T) {
 		t.Fatalf("устаревший ответ не сработал: %q %v", ip, err)
 	}
 }
+
+type fakeTimeoutErr struct{}
+
+func (fakeTimeoutErr) Error() string   { return "i/o timeout" }
+func (fakeTimeoutErr) Timeout() bool   { return true }
+func (fakeTimeoutErr) Temporary() bool { return true }
+
+func TestLookupIPv4ForBind_FiltersFakeIPAndFallsBackOnTimeout(t *testing.T) {
+	origSys := lookupSystemIPv4
+	origPub := lookupPublicIPv4
+	t.Cleanup(func() {
+		lookupSystemIPv4 = origSys
+		lookupPublicIPv4 = origPub
+		resetResolveCache()
+	})
+
+	if !isFakeIPv4(net.ParseIP("198.18.0.1")) || !isFakeIPv4(net.ParseIP("198.19.255.254")) {
+		t.Fatal("expected 198.18.0.0/15 to match isFakeIPv4")
+	}
+	if isFakeIPv4(net.ParseIP("1.1.1.1")) || isFakeIPv4(net.ParseIP("198.20.0.1")) {
+		t.Fatal("non-FakeIP matched isFakeIPv4")
+	}
+
+	// 1. System DNS returns only FakeIP on bound interface -> public DNS fallback supplies real IP.
+	pubCalls := 0
+	lookupSystemIPv4 = func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("198.18.0.42")}, nil
+	}
+	lookupPublicIPv4 = func(_ context.Context, host, bindIface string) (string, error) {
+		pubCalls++
+		if host != "cp.cloudflare.com" || bindIface != "qmi_br0" {
+			return "", errors.New("unexpected args")
+		}
+		return "104.16.132.229", nil
+	}
+	got, err := LookupIPv4ForBind(context.Background(), "cp.cloudflare.com", nil, "qmi_br0")
+	if err != nil || got != "104.16.132.229" || pubCalls != 1 {
+		t.Fatalf("FakeIP fallback: got=%q err=%v pubCalls=%d", got, err, pubCalls)
+	}
+
+	// 2. System DNS returns FakeIP + real IP -> picks real IP without calling public DNS.
+	pubCalls = 0
+	lookupSystemIPv4 = func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("198.18.0.42"), net.ParseIP("104.16.133.229")}, nil
+	}
+	got, err = LookupIPv4ForBind(context.Background(), "cp.cloudflare.com", nil, "qmi_br0")
+	if err != nil || got != "104.16.133.229" || pubCalls != 0 {
+		t.Fatalf("FakeIP mixed list: got=%q err=%v pubCalls=%d", got, err, pubCalls)
+	}
+
+	// 3. System DNS times out on bound interface -> falls back to public DNS.
+	pubCalls = 0
+	lookupSystemIPv4 = func(context.Context, string) ([]net.IP, error) {
+		return nil, &net.OpError{Op: "lookup", Err: fakeTimeoutErr{}}
+	}
+	got, err = LookupIPv4ForBind(context.Background(), "cp.cloudflare.com", nil, "qmi_br0")
+	if err != nil || got != "104.16.132.229" || pubCalls != 1 {
+		t.Fatalf("timeout fallback: got=%q err=%v pubCalls=%d", got, err, pubCalls)
+	}
+
+	// 4. Non-timeout DNS error (NXDOMAIN) does NOT call public DNS fallback.
+	pubCalls = 0
+	lookupSystemIPv4 = func(context.Context, string) ([]net.IP, error) {
+		return nil, &net.DNSError{Err: "no such host", Name: "missing.example", IsNotFound: true}
+	}
+	if _, err := LookupIPv4ForBind(context.Background(), "missing.example", nil, "qmi_br0"); err == nil || pubCalls != 0 {
+		t.Fatalf("NXDOMAIN should fail fast without public DNS: err=%v pubCalls=%d", err, pubCalls)
+	}
+
+	// 5. Unbound lookup (bindIface == "") does not filter 198.18/15 or use public fallback.
+	pubCalls = 0
+	lookupSystemIPv4 = func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("198.18.0.42")}, nil
+	}
+	got, err = LookupIPv4ForBind(context.Background(), "cp.cloudflare.com", nil, "")
+	if err != nil || got != "198.18.0.42" || pubCalls != 0 {
+		t.Fatalf("unbound lookup mismatch: got=%q err=%v pubCalls=%d", got, err, pubCalls)
+	}
+}
