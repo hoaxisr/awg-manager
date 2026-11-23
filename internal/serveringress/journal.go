@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 type JournalPhase string
@@ -182,47 +184,14 @@ func writeJournal(path string, j *TransactionJournal) error {
 		return fmt.Errorf("marshal journal: %w", err)
 	}
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	// Каталог создаём сами: AtomicWritePerm создал бы его с 0755, а журнал
+	// держится в 0700.
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("mkdir journal dir: %w", err)
 	}
-
-	tmp, err := os.CreateTemp(dir, "server-ingress-tx-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp journal: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		if tmp != nil {
-			_ = tmp.Close()
-			_ = os.Remove(tmpName)
-		}
-	}()
-
-	if err := tmp.Chmod(0600); err != nil {
-		return fmt.Errorf("chmod journal: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
+	if err := storage.AtomicWritePerm(path, data, 0600); err != nil {
 		return fmt.Errorf("write journal: %w", err)
 	}
-	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("sync journal: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp journal: %w", err)
-	}
-	tmp = nil
-
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename journal: %w", err)
-	}
-
-	// fsync parent directory
-	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
-		_ = d.Close()
-	}
-
 	return nil
 }
 
@@ -253,44 +222,4 @@ func archiveJournal(journalPath string, suffix string, txID string) error {
 func fileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
-}
-
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("mkdir %s: %w", dir, err)
-	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		if tmp != nil {
-			_ = tmp.Close()
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if err := tmp.Chmod(perm); err != nil {
-		return fmt.Errorf("chmod %s: %w", tmpName, err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("write %s: %w", tmpName, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("sync %s: %w", tmpName, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", tmpName, err)
-	}
-	tmp = nil
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("rename %s: %w", path, err)
-	}
-	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
-		_ = d.Close()
-	}
-	return nil
 }

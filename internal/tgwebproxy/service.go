@@ -21,6 +21,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 var (
@@ -391,14 +393,9 @@ func (s *Service) loadAndMigrateConfig() error {
 		bakPath := cfgPath + ".v1.bak"
 		// Write .v1.bak atomically with 0600 ONLY if it doesn't already exist
 		if _, err := os.Stat(bakPath); os.IsNotExist(err) {
-			tmpBak := bakPath + ".tmp"
-			if err := os.WriteFile(tmpBak, data, 0600); err != nil {
+			if err := storage.AtomicWritePerm(bakPath, data, 0600); err != nil {
 				return fmt.Errorf("write v1 backup: %w", err)
 			}
-			if err := os.Rename(tmpBak, bakPath); err != nil {
-				return fmt.Errorf("rename v1 backup: %w", err)
-			}
-			_ = fsyncDir(s.tproxyDir())
 		}
 
 		migrated := loaded
@@ -1239,32 +1236,9 @@ func (s *Service) RotateTokenKey() error {
 		return fmt.Errorf("generate token key: %w", err)
 	}
 
-	tmpFile, err := os.CreateTemp(dir, ".token.key.tmp.*")
-	if err != nil {
-		return fmt.Errorf("create tmp token key: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	if _, err := tmpFile.Write(key); err != nil {
-		tmpFile.Close()
-		_ = os.Remove(tmpPath)
+	if err := storage.AtomicWritePerm(filepath.Join(dir, "token.key"), key, 0600); err != nil {
 		return err
 	}
-	if err := tmpFile.Sync(); err != nil {
-		tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-
-	keyPath := filepath.Join(dir, "token.key")
-	if err := renameKeyFile(tmpPath, keyPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	_ = fsyncDir(dir)
 
 	// Restart tproxy-server worker
 	if s.config.Enabled && s.workers != nil {

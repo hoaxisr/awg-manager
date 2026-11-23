@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 const (
@@ -41,7 +43,7 @@ func SyncWANFirewall(port int, enabled bool) {
 	cleanupWANRules(port)
 	desired := renderWANHook(port)
 	if existing, err := os.ReadFile(realityWANHookPath); err != nil || string(existing) != desired {
-		_ = os.WriteFile(realityWANHookPath, []byte(desired), 0755)
+		_ = storage.AtomicWritePerm(realityWANHookPath, []byte(desired), 0755) // ndm не должен прочесть недописанный хук
 	}
 	_ = exec.Command("/bin/sh", realityWANHookPath).Run()
 }

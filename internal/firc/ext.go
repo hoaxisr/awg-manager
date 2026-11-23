@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/cloudagent"
 )
 
@@ -1829,7 +1830,7 @@ func (op *Operator) EngageCutoverBarrier(ctx context.Context) error {
 		dir := filepath.Dir(cutoverGuardHookPath)
 		if st, err := os.Stat(dir); err == nil && st.IsDir() {
 			if cur, err := os.ReadFile(cutoverGuardHookPath); err != nil || string(cur) != cutoverGuardHookScript {
-				_ = os.WriteFile(cutoverGuardHookPath, []byte(cutoverGuardHookScript), 0o755)
+				_ = storage.AtomicWritePerm(cutoverGuardHookPath, []byte(cutoverGuardHookScript), 0o755)
 			}
 		}
 	}
@@ -1947,7 +1948,7 @@ func reconcileNDMNetfilterHook(needHook bool) {
 	if cur, err := os.ReadFile(ndmFircExtHookPath); err == nil && string(cur) == ndmFircExtHookScript {
 		return
 	}
-	_ = os.WriteFile(ndmFircExtHookPath, []byte(ndmFircExtHookScript), 0o755)
+	_ = storage.AtomicWritePerm(ndmFircExtHookPath, []byte(ndmFircExtHookScript), 0o755)
 }
 
 // ReconcileExtNetfilter ensures iptables hooks in nat FEXT_DNS, mangle FEXT_OUT, and nat FEXT_NOUT

@@ -18,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // Dispatcher coordinates HTTP traffic from the router's origin proxy port (default :9009)
@@ -1526,7 +1528,7 @@ exit 0
 	}
 
 	if existingHook, err := os.ReadFile(hookPath); err != nil || string(existingHook) != desiredHook {
-		_ = os.WriteFile(hookPath, []byte(desiredHook), 0755)
+		_ = storage.AtomicWritePerm(hookPath, []byte(desiredHook), 0755) // ndm не должен прочесть недописанный хук
 	}
 
 	_ = exec.Command("/bin/sh", hookPath).Run()

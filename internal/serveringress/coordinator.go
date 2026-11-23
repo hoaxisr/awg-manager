@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/cdndispatcher"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 )
@@ -1303,7 +1304,7 @@ func (c *Coordinator) saveDispatcherConfigLocked(cfg cdndispatcher.Config) error
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create dispatcher dir: %w", err)
 	}
-	return atomicWriteFile(path, data, 0600)
+	return storage.AtomicWritePerm(path, data, 0600)
 }
 
 // GetDispatcherConfig returns the current dispatcher configuration.

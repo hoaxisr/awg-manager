@@ -16,6 +16,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/realityserver"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 )
 
@@ -475,56 +476,13 @@ func (s *Service) loadConfig() {
 	s.config.UplinkMethod = t.UplinkMethod
 }
 
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", dir, err)
-	}
-
-	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	tmpName := tmpFile.Name()
-	defer func() {
-		if tmpFile != nil {
-			_ = tmpFile.Close()
-			_ = os.Remove(tmpName)
-		}
-	}()
-
-	if err := tmpFile.Chmod(perm); err != nil {
-		return fmt.Errorf("chmod %s: %w", tmpName, err)
-	}
-	if _, err := tmpFile.Write(data); err != nil {
-		return fmt.Errorf("write %s: %w", tmpName, err)
-	}
-	if err := tmpFile.Sync(); err != nil {
-		return fmt.Errorf("sync %s: %w", tmpName, err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", tmpName, err)
-	}
-	tmpFile = nil
-
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("rename to %s: %w", path, err)
-	}
-	if dirF, err := os.Open(dir); err == nil {
-		_ = dirF.Sync()
-		_ = dirF.Close()
-	}
-	return nil
-}
-
 func (s *Service) writeSettingsBytes(data []byte) error {
 	if s.saveSettingsHook != nil {
 		if err := s.saveSettingsHook(s.cfgPath(), data); err != nil {
 			return err
 		}
 	}
-	return atomicWriteFile(s.cfgPath(), data, 0600)
+	return storage.AtomicWritePerm(s.cfgPath(), data, 0600)
 }
 
 func (s *Service) saveConfig() error {

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/uplink"
 )
 
@@ -181,25 +182,11 @@ func writeJSON(path string, r any) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".wg-uplink-")
-	if err != nil {
+	if err := storage.AtomicWritePerm(path, b, 0600); err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(b); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	if err = os.Rename(f.Name(), path); err != nil {
-		return err
-	}
+	// storage глотает отказ fsync каталога, а через writeJSON пишутся привязка
+	// и реестр, после которых меняются маршруты: EIO здесь обязан остановить.
 	d, err := os.Open(filepath.Dir(path))
 	if err != nil {
 		return err

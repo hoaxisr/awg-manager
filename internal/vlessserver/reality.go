@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/realityserver"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // RealityEndpointID is the pseudo endpoint id used by share-link APIs to request
@@ -173,7 +174,7 @@ func (s *Service) saveRealitySettingsLocked() error {
 	if err := os.MkdirAll(filepath.Dir(s.realitySettingsPath()), 0700); err != nil {
 		return err
 	}
-	return atomicWriteFile(s.realitySettingsPath(), data, 0600)
+	return storage.AtomicWritePerm(s.realitySettingsPath(), data, 0600)
 }
 
 // ensureRealityMaterialLocked generates missing keys / short id / xhttp path.

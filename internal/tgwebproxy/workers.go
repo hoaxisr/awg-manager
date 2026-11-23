@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // Ключи воркеров. Это имена прежних внешних процессов: они остаются ключами
@@ -45,35 +47,11 @@ type WorkerSupervisor struct {
 }
 
 func atomicWriteMetadata(path string, content []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	// Каталог — 0700; AtomicWritePerm создал бы его с 0755.
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		_ = os.Remove(tmpName)
-	}()
-
-	if _, err := tmp.Write(content); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return storage.AtomicWritePerm(path, content, mode)
 }
 
 func NewDefaultWorkerSupervisor(tproxyDir string) *WorkerSupervisor {
