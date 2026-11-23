@@ -4086,6 +4086,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /firc/install": v.lazy(() => api_APIEnvelope),
 	"POST /firc/migrate-runtime": v.lazy(() => api_APIEnvelope),
 	"POST /firc/uninstall": v.lazy(() => api_APIEnvelope),
+	"POST /firc/upgrade": v.lazy(() => api_APIEnvelope),
 	"POST /hydraroute/geo-files/add": v.lazy(() => api_GeoFileResponse),
 	"POST /hydraroute/geo-files/rescan": v.lazy(() => api_GeoFilesRescannedResponse),
 	"POST /hydraroute/geo-files/take-control": v.lazy(() => api_GeoFileResponse),

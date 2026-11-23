@@ -196,6 +196,8 @@ func (i *OnDemandInstaller) operationPath() string {
 type runtimeOperation struct {
 	Action          string `json:"action"`
 	Pending         bool   `json:"pending"`
+	PreviousVersion string `json:"previousVersion,omitempty"`
+	TargetVersion   string `json:"targetVersion,omitempty"`
 	ExternalPackage string `json:"externalPackage,omitempty"`
 	Error           string `json:"error,omitempty"`
 }
