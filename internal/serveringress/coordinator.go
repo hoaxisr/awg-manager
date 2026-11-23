@@ -1111,10 +1111,6 @@ func (c *Coordinator) failAndRollback(j *TransactionJournal, origErr error) erro
 	return origErr
 }
 
-func (c *Coordinator) rollback(j *TransactionJournal, xrayTxID string, origErr error) error {
-	return c.failAndRollback(j, origErr)
-}
-
 func (c *Coordinator) topologyForXrayConfig(cfg vlessserver.Config) IngressTopology {
 	prev := c.getCurrentTopology()
 	desired := prev
@@ -2108,10 +2104,6 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 
 		return nil
 	})
-}
-
-func (c *Coordinator) rollbackIngressTx(j *TransactionJournal, xrayTxID string, prevTg tgwebproxy.Config, prevDisp cdndispatcher.Config, origErr error) error {
-	return c.failAndRollback(j, origErr)
 }
 
 func xrayAdditionalPrefixes(cfg vlessserver.Config, primaryPrefix string) []string {
