@@ -1,9 +1,11 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/netip"
 	"os"
@@ -181,11 +183,11 @@ func (s *ServiceImpl) buildCoverageIndex(ctx context.Context, extraTags []string
 				snapshot.refreshAfter = refresh
 			}
 		}
-		source, err := s.coverageRuleSetSource(ctx, materializer, rs)
+		rules, err := s.coverageRuleSetRules(ctx, materializer, rs)
 		if err != nil {
 			return nil, fmt.Errorf("coverage index rule-set %q: %w", tag, err)
 		}
-		entry, err := compileCoverageIndexEntry(source.Rules)
+		entry, err := compileCoverageIndexEntry(rules)
 		if err != nil {
 			return nil, fmt.Errorf("coverage index rule-set %q: %w", tag, err)
 		}
@@ -199,15 +201,19 @@ func (s *ServiceImpl) buildCoverageIndex(ctx context.Context, extraTags []string
 	return snapshot, nil
 }
 
-func (s *ServiceImpl) coverageRuleSetSource(ctx context.Context, materializer ruleSetMaterializer, rs RuleSet) (inlineRuleSetSource, error) {
+// coverageRuleSetRules отдаёт правила набора для индекса покрытия. JSON
+// разбирается потоково: правила — по одному, а большие массивы ip_cidr — по
+// элементам. На наборе в 100+ тыс. адресов это снимает десятки мегабайт
+// промежуточного []any из кучи демона.
+func (s *ServiceImpl) coverageRuleSetRules(ctx context.Context, materializer ruleSetMaterializer, rs RuleSet) ([]map[string]any, error) {
 	if rs.Type == "inline" {
-		return inlineRuleSetSource{Rules: rs.Rules}, nil
+		return rs.Rules, nil
 	}
 	var path, format string
 	switch rs.Type {
 	case "remote":
 		if rs.URL == "" {
-			return inlineRuleSetSource{}, fmt.Errorf("remote URL is empty")
+			return nil, fmt.Errorf("remote URL is empty")
 		}
 		format = rs.Format
 		if format == "" {
@@ -215,12 +221,12 @@ func (s *ServiceImpl) coverageRuleSetSource(ctx context.Context, materializer ru
 		}
 		local, err := coverageRuleSetDownload(ctx, rs.URL, format, rs.fetchVia)
 		if err != nil {
-			return inlineRuleSetSource{}, fmt.Errorf("download: %w", err)
+			return nil, fmt.Errorf("download: %w", err)
 		}
 		path = local
 	case "local":
 		if rs.Path == "" {
-			return inlineRuleSetSource{}, fmt.Errorf("local path is empty")
+			return nil, fmt.Errorf("local path is empty")
 		}
 		path = rs.Path
 		format = rs.Format
@@ -228,31 +234,149 @@ func (s *ServiceImpl) coverageRuleSetSource(ctx context.Context, materializer ru
 			format = inferFormat(path)
 		}
 	default:
-		return inlineRuleSetSource{}, fmt.Errorf("unsupported type %q", rs.Type)
+		return nil, fmt.Errorf("unsupported type %q", rs.Type)
 	}
 	if err := ctx.Err(); err != nil {
-		return inlineRuleSetSource{}, err
+		return nil, err
 	}
-	var raw []byte
-	var err error
+	var reader io.Reader
 	switch {
 	case format == "source":
-		raw, err = os.ReadFile(path)
+		file, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("read: %w", err)
+		}
+		defer file.Close()
+		reader = file
 	case materializer.isManagedLocalRuleSet(rs):
 		// Managed inline SRS has an authoritative JSON sibling published in
 		// the same generation. No binary decompile is needed.
-		raw, err = os.ReadFile(strings.TrimSuffix(path, ".srs") + ".json")
+		file, err := os.Open(strings.TrimSuffix(path, ".srs") + ".json")
+		if err != nil {
+			return nil, fmt.Errorf("read: %w", err)
+		}
+		defer file.Close()
+		reader = file
 	default:
-		raw, err = ruleSetDecompileExec(ctx, s.singboxBinary(), path)
+		raw, err := ruleSetDecompileExec(ctx, s.singboxBinary(), path)
+		if err != nil {
+			return nil, fmt.Errorf("read/decompile: %w", err)
+		}
+		reader = bytes.NewReader(raw)
 	}
+	rules, err := decodeCoverageRules(reader)
 	if err != nil {
-		return inlineRuleSetSource{}, fmt.Errorf("read/decompile: %w", err)
+		return nil, fmt.Errorf("parse source JSON: %w", err)
 	}
-	var source inlineRuleSetSource
-	if err := json.Unmarshal(raw, &source); err != nil {
-		return inlineRuleSetSource{}, fmt.Errorf("parse source JSON: %w", err)
+	return rules, nil
+}
+
+// decodeCoverageRules разбирает rule-set JSON потоково.
+func decodeCoverageRules(reader io.Reader) ([]map[string]any, error) {
+	decoder := json.NewDecoder(reader)
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
 	}
-	return source, nil
+	if token != json.Delim('{') {
+		return nil, fmt.Errorf("expected a rule-set object")
+	}
+	rules := []map[string]any{}
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		if name, _ := key.(string); name != "rules" {
+			var skip any
+			if err := decoder.Decode(&skip); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if token, err := decoder.Token(); err != nil {
+			return nil, err
+		} else if token != json.Delim('[') {
+			return nil, fmt.Errorf("expected a rule array")
+		}
+		for decoder.More() {
+			rule, err := decodeCoverageRule(decoder)
+			if err != nil {
+				return nil, err
+			}
+			rules = append(rules, rule)
+		}
+		if _, err := decoder.Token(); err != nil {
+			return nil, err
+		}
+	}
+	return rules, nil
+}
+
+// decodeCoverageRule читает одно правило; ip_cidr декодируется по элементам.
+func decodeCoverageRule(decoder *json.Decoder) (map[string]any, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if token != json.Delim('{') {
+		return nil, fmt.Errorf("expected a rule object")
+	}
+	rule := map[string]any{}
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		name, _ := key.(string)
+		if name == "ip_cidr" {
+			list, err := decodeCoverageStringList(decoder)
+			if err != nil {
+				return nil, err
+			}
+			rule[name] = list
+			continue
+		}
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return nil, err
+		}
+		rule[name] = value
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, err
+	}
+	return rule, nil
+}
+
+// decodeCoverageStringList читает массив строк по элементам.
+func decodeCoverageStringList(decoder *json.Decoder) ([]string, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := token.(json.Delim); ok {
+		if delim != '[' {
+			return nil, fmt.Errorf("expected a string array")
+		}
+		list := []string{}
+		for decoder.More() {
+			var value string
+			if err := decoder.Decode(&value); err != nil {
+				return nil, err
+			}
+			list = append(list, value)
+		}
+		if _, err := decoder.Token(); err != nil {
+			return nil, err
+		}
+		return list, nil
+	}
+	text, ok := token.(string)
+	if !ok {
+		return nil, fmt.Errorf("expected a string array")
+	}
+	return []string{text}, nil
 }
 
 func compileCoverageIndexEntry(rules []map[string]any) (*coverageIndexEntry, error) {
