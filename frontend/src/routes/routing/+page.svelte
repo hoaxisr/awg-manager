@@ -118,7 +118,16 @@
         }
     }
 
-    let activeTab = $state<RoutingTab>(savedFavoriteTab ?? 'firc');
+    // Вкладка из ссылки — сразу: иначе сперва монтируется стартовая и шлёт
+    // свои запросы (F890).
+    function tabFromUrl(): RoutingTab | null {
+        const v = browser ? new URL(window.location.href).searchParams.get('tab') : null;
+        return ROUTING_TABS.includes(v as RoutingTab) ? (v as RoutingTab) : null;
+    }
+
+    const urlTab = tabFromUrl();
+    const startTab = urlTab ?? savedFavoriteTab ?? 'firc';
+    let activeTab = $state<RoutingTab>(startTab);
 
     // ?policy=Policy1 — прямой переход из настроек sing-box в редактор
     // конкретной политики (#573).
@@ -395,7 +404,9 @@
         if (items.length === 0) return;
 
         const si = $systemInfo;
-        const systemKnown = si.lastFetchedAt > 0 || si.status === 'error';
+        // Отказ system/info вкладку из ссылки не сбрасывает: сброс ушёл бы в
+        // адрес, и после восстановления ссылка была бы потеряна.
+        const systemKnown = si.lastFetchedAt > 0 || (si.status === 'error' && activeTab !== urlTab);
 
         if (
             !systemKnown &&
@@ -405,13 +416,13 @@
             return;
         }
         if (activeTab === 'geodata' && geoFileCount === null && !tabsInclude(items, activeTab)) return;
-        // Любимую не сбрасываем, пока не пришло то, от чего зависит её
-        // видимость: до загрузки настроек usageLevel = 'advanced' и
+        // Стартовую (из ссылки или любимую) не сбрасываем, пока не пришло то,
+        // от чего зависит её видимость: до загрузки настроек usageLevel = 'advanced' и
         // expert-вкладки скрыты; FakeIP ниже expert виден только по
         // routingMode из настроек sing-box. Ждём лишь эти вкладки и лишь
         // пока настройки не отказали, чтобы упавшая загрузка не держала
         // их вечно.
-        if (activeTab === savedFavoriteTab && !tabsInclude(items, activeTab)) {
+        if (activeTab === startTab && !tabsInclude(items, activeTab)) {
             const levelGated = activeTab === 'geodata' || activeTab === 'singbox' || activeTab === 'fakeip';
             if (levelGated && $settings === null && !$settingsUnavailable) return;
             if (activeTab === 'fakeip' && $singboxSettings === null) return;
@@ -440,7 +451,10 @@
 
         if (!tabsInclude(items, activeTab)) {
             const first = items[0];
-            activeTab = (first.children?.[0]?.id ?? first.id) as typeof activeTab;
+            activeTab =
+                savedFavoriteTab && tabsInclude(items, savedFavoriteTab)
+                    ? savedFavoriteTab
+                    : ((first.children?.[0]?.id ?? first.id) as typeof activeTab);
         }
     });
 
