@@ -1581,7 +1581,9 @@ func EnsureInboundPort1099(tunnels []Tunnel, port uint16) []Tunnel {
 	for i := range tunnels {
 		NormalizeTunnelNodeRefs(&tunnels[i])
 		for j := range tunnels[i].Inbounds {
-			if tunnels[i].Inbounds[j].Listen == "" || tunnels[i].Inbounds[j].Listen == "127.0.0.1" || tunnels[i].Inbounds[j].Listen == "lo" {
+			// Пустой и 127.0.0.1 fircd отвергает. "lo" допустим и остаётся как есть:
+			// на нём живёт служебный вход без пароля (PrepareUplink), в LAN ему нельзя.
+			if tunnels[i].Inbounds[j].Listen == "" || tunnels[i].Inbounds[j].Listen == "127.0.0.1" {
 				tunnels[i].Inbounds[j].Listen = "br0"
 			}
 			if strings.TrimSpace(tunnels[i].Inbounds[j].Node) == "" {

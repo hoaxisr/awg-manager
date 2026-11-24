@@ -26,6 +26,14 @@ func UplinkPoolInbound(in TunnelInbound) bool {
 	return in.Port != 0 && in.Node == TunnelNodePool && (in.Listen == "lo" || in.Listen == "127.0.0.1") && in.User == "" && in.Password == ""
 }
 
+// movedUplinkInbound — наш служебный вход, который прежние версии при сохранении
+// туннелей переводили с lo на br0. Опознаём только по записанному порту: иначе
+// вход на br0 может быть пользовательским.
+func movedUplinkInbound(in TunnelInbound, recordedPort uint16) bool {
+	return recordedPort != 0 && in.Port == recordedPort && in.Listen == "br0" &&
+		in.Node == TunnelNodePool && in.User == "" && in.Password == ""
+}
+
 func (o *Operator) uplinkInboundRecordPath() string {
 	if o == nil || strings.TrimSpace(o.configDir) == "" {
 		return ""
@@ -110,6 +118,14 @@ func (a *UplinkAdapter) PrepareUplink(ctx context.Context, t uplink.Target) erro
 			return nil
 		}
 	}
+	recordedPort := o.loadUplinkInboundRecords()[t.Ref]
+	kept := make([]TunnelInbound, 0, len(target.Inbounds)+1)
+	for _, in := range target.Inbounds {
+		if !movedUplinkInbound(in, recordedPort) {
+			kept = append(kept, in)
+		}
+	}
+	target.Inbounds = kept
 	// Keep the reservation until immediately before daemon sync. Its readback
 	// and later payload probe reject a failed bind; no foreign port is adopted.
 	var listener net.Listener
@@ -131,7 +147,7 @@ func (a *UplinkAdapter) PrepareUplink(ctx context.Context, t uplink.Target) erro
 	if listener == nil {
 		return fmt.Errorf("no unused diagnostic SOCKS port")
 	}
-	target.Inbounds = append(append([]TunnelInbound(nil), target.Inbounds...), TunnelInbound{Listen: "lo", Port: port, Node: TunnelNodePool})
+	target.Inbounds = append(target.Inbounds, TunnelInbound{Listen: "lo", Port: port, Node: TunnelNodePool})
 	tunnels[index] = target
 	listener.Close()
 	if _, err = o.applyTunnelsLocked(ctx, tunnels, false); err != nil {
@@ -170,6 +186,9 @@ func (a *UplinkAdapter) ReleaseUplink(ctx context.Context, t uplink.Target) erro
 	records := o.loadUplinkInboundRecords()
 	recordedPort := records[t.Ref]
 	isAutoDiagnosticInbound := func(in TunnelInbound) bool {
+		if movedUplinkInbound(in, recordedPort) {
+			return true
+		}
 		if in.Listen != "lo" || !UplinkPoolInbound(in) || in.Port == DefaultMixedInboundPort || in.Port == o.inboundPort {
 			return false
 		}

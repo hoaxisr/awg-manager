@@ -141,3 +141,46 @@ func TestUplinkReleaseOfflineAndMissingTunnel(t *testing.T) {
 		t.Fatalf("missing tunnel ReleaseUplink should succeed, got %v", err)
 	}
 }
+
+// Сохранение туннелей из UI не переводит служебный вход без пароля в LAN (F898).
+func TestEnsureInboundPort1099_KeepsLoopback(t *testing.T) {
+	got := EnsureInboundPort1099([]Tunnel{{ID: "managed", Enable: true, Inbounds: []TunnelInbound{
+		{Listen: "lo", Port: 49281, Node: TunnelNodePool},
+		{Listen: "127.0.0.1", Port: 1099, Node: TunnelNodePool},
+		{Listen: "", Port: 1098, Node: TunnelNodePool},
+	}}}, 1099)[0].Inbounds
+	if got[0].Listen != "lo" || got[1].Listen != "br0" || got[2].Listen != "br0" || len(got) != 3 {
+		t.Fatalf("inbounds = %+v", got)
+	}
+}
+
+// Вход, уже переведённый прежней версией на br0, снимается и при подготовке, и при
+// освобождении; пользовательский вход на br0 с другим портом — нет.
+func TestUplinkRemovesInboundMovedToLAN(t *testing.T) {
+	user := TunnelInbound{Listen: "br0", Port: 1088, Node: TunnelNodePool}
+	moved := TunnelInbound{Listen: "br0", Port: 49281, Node: TunnelNodePool}
+	target := uplink.Target{Engine: "firc", Ref: "managed"}
+	for _, tc := range []struct {
+		name string
+		run  func(*UplinkAdapter) error
+		lo   int
+	}{
+		{"подготовка", func(a *UplinkAdapter) error { return a.PrepareUplink(context.Background(), target) }, 1},
+		{"освобождение", func(a *UplinkAdapter) error { return a.ReleaseUplink(context.Background(), target) }, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, m, _ := uplinkFixture(t)
+			m.tunnels[0].Inbounds = []TunnelInbound{user, moved}
+			if err := a.Operator.saveUplinkInboundRecords(map[string]uint16{"managed": moved.Port}); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.run(a); err != nil {
+				t.Fatal(err)
+			}
+			got := m.tunnels[0].Inbounds
+			if len(got) != 1+tc.lo || got[0] != user || (tc.lo == 1 && !UplinkPoolInbound(got[1])) {
+				t.Fatalf("inbounds = %+v", got)
+			}
+		})
+	}
+}
