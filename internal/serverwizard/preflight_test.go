@@ -347,3 +347,88 @@ func TestPreflightAndDesired_TgWebProxyPortAvoidsXrayLoop(t *testing.T) {
 		t.Fatalf("expected BuildDesiredConfig to reject DirectPort == ListenPort collision")
 	}
 }
+
+func TestPreflightEngine_InProcessPIDPortIsolationAndCollisions(t *testing.T) {
+	xray := &mockXrayReader{}
+	disp := &mockDispReader{}
+	tg := &mockTgReader{
+		cfg: tgwebproxy.PublicConfig{
+			Enabled:    true,
+			DirectPort: 8443,
+			ListenPort: 8085,
+		},
+		st: tgwebproxy.Status{
+			InstalledTelemt: true,
+			DirectOnline:    true,
+			DirectPID:       os.Getpid(),
+			DirectPort:      8443,
+		},
+	}
+	rec := &mockRecReader{required: false}
+	engine := NewPreflightEngine(xray, disp, tg, rec, nil)
+	engine.statFn = func(path string) (os.FileInfo, error) {
+		return mockFileInfo{name: path, size: 1000}, nil
+	}
+	engine.findProcFn = func(procDir, addr string, port int) (procnet.ListenerLookup, error) {
+		switch port {
+		case 2053, 2222, 8443:
+			return procnet.ListenerLookup{SocketFound: true, SocketInode: "inproc", PID: os.Getpid()}, nil
+		default:
+			return procnet.ListenerLookup{SocketFound: false}, nil
+		}
+	}
+
+	ctx := context.Background()
+
+	// 1. Active in-process Reality (:2053) and Web UI (:2222) share os.Getpid() -> must be BLOCKED
+	for _, occupiedPort := range []int{2053, 2222} {
+		resp := engine.Run(ctx, WizardPlanRequest{
+			Kind:       "tgwebproxy",
+			Scenario:   "direct_fake_tls",
+			DirectHost: "203.0.113.10",
+			DirectPort: occupiedPort,
+			TlsDomain:  "www.google.com",
+		})
+		if resp.CanProceed {
+			t.Fatalf("expected in-process port %d owned by os.Getpid() to be BLOCKED for MTProto", occupiedPort)
+		}
+	}
+
+	// 2. Own active MTProto port (8443) -> ALLOWED
+	respOwn := engine.Run(ctx, WizardPlanRequest{
+		Kind:       "tgwebproxy",
+		Scenario:   "direct_fake_tls",
+		DirectHost: "203.0.113.10",
+		DirectPort: 8443,
+		TlsDomain:  "www.google.com",
+	})
+	if !respOwn.CanProceed {
+		t.Fatalf("expected active own DirectPort 8443 to pass, got %+v", respOwn.Checks)
+	}
+
+	// 3. Reserved tproxy-server backend port 8084 -> BLOCKED
+	resp8084 := engine.Run(ctx, WizardPlanRequest{
+		Kind:       "tgwebproxy",
+		Scenario:   "direct_fake_tls",
+		DirectHost: "203.0.113.10",
+		DirectPort: 8084,
+		TlsDomain:  "www.google.com",
+	})
+	if resp8084.CanProceed {
+		t.Fatalf("expected reserved DirectPort 8084 to be BLOCKED")
+	}
+
+	// 4. Single-service dual mode collision DirectPort == ListenPort (8085) -> BLOCKED
+	respColl := engine.Run(ctx, WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "dual",
+		PublicDomain: "tg.example.com",
+		DirectHost:   "203.0.113.10",
+		DirectPort:   8085,
+		ListenPort:   8085,
+		TlsDomain:    "www.google.com",
+	})
+	if respColl.CanProceed {
+		t.Fatalf("expected dual mode DirectPort == ListenPort (8085) to be BLOCKED")
+	}
+}

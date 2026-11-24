@@ -210,6 +210,7 @@ const (
 	VerifyCategoryAuth       VerificationErrorCategory = "auth"
 	VerifyCategoryEgress     VerificationErrorCategory = "egress"
 	VerifyCategoryTimeout    VerificationErrorCategory = "timeout"
+	VerifyCategoryFirewall   VerificationErrorCategory = "firewall"
 )
 
 type VerificationCheck struct {

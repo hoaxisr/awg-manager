@@ -90,6 +90,7 @@
 		auth: m.servers_wizard_checks_cat_auth,
 		egress: m.servers_wizard_checks_cat_egress,
 		timeout: m.servers_wizard_checks_cat_timeout,
+		firewall: m.servers_wizard_checks_cat_firewall,
 	};
 
 	function formatTime(iso: string): string {

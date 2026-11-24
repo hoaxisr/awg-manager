@@ -31,6 +31,7 @@
 		tgwebproxy: m.servers_wizard_target_tgwebproxy,
 		'tproxy-server': m.servers_wizard_target_tproxy,
 		upstream_egress: m.servers_wizard_target_upstream,
+		wan_firewall: m.servers_wizard_target_wan_firewall,
 	};
 
 	// Неизвестное серверу-новее значение показываем как есть.

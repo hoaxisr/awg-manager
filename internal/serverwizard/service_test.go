@@ -757,3 +757,233 @@ func TestWizardService_KeenDNSCertStatusHonestVerification(t *testing.T) {
 		t.Fatalf("expected KeenDNSCertStatus='invalid' when cert is for wrong hostname despite SSLEnabled=true & RuntimeActive=true, got %q", creds2.KeenDNSCertStatus)
 	}
 }
+
+func TestWizard_MTProtoDirectOnlyForbidsKeenDNSAndPlansWANFirewall(t *testing.T) {
+	svc, _, _, tg, _ := setupTestWizard(t)
+	ctx := context.Background()
+
+	// 1. BuildDesiredConfig rejects KeenDNS 4th-level creation for tgwebproxy + direct_fake_tls
+	for _, badReq := range []WizardPlanRequest{
+		{
+			Kind:         "tgwebproxy",
+			Scenario:     "direct_fake_tls",
+			DirectHost:   "203.0.113.10",
+			DirectPort:   8443,
+			TlsDomain:    "www.google.com",
+			KeenDNSLabel: "connect",
+		},
+		{
+			Kind:        "tgwebproxy",
+			Scenario:    "direct_fake_tls",
+			DirectHost:  "203.0.113.10",
+			DirectPort:  8443,
+			TlsDomain:   "www.google.com",
+			KeenDNSMode: "create",
+		},
+	} {
+		if _, err := BuildDesiredConfig(ctx, nil, badReq); err == nil {
+			t.Fatalf("expected BuildDesiredConfig to reject KeenDNS for direct_fake_tls request %+v", badReq)
+		}
+	}
+
+	// 2. BuildDesiredConfig clears stale HTTP/web fields on tgwebproxy + direct_fake_tls
+	cleanDesired, err := BuildDesiredConfig(ctx, nil, WizardPlanRequest{
+		Kind:          "tgwebproxy",
+		Scenario:      "direct_fake_tls",
+		ConnectionWay: "external_https",
+		OriginType:    "cloud_address",
+		OriginHost:    "stale.example.keenetic.link",
+		OriginScheme:  "https",
+		OriginPort:    443,
+		PublicDomain:  "stale-web.example.com",
+		DirectHost:    "203.0.113.10",
+		DirectPort:    8443,
+		TlsDomain:     "www.google.com",
+	})
+	if err != nil {
+		t.Fatalf("BuildDesiredConfig clean direct_fake_tls failed: %v", err)
+	}
+	if cleanDesired.KeenDNSLabel != "" || cleanDesired.PublicHostname != "" || cleanDesired.OriginHost != "" ||
+		cleanDesired.ConnectionWay != "direct" || cleanDesired.OriginType != "public_address" {
+		t.Fatalf("expected web-only fields cleared and direct white-IP normalized, got %+v", cleanDesired)
+	}
+
+	// 3. Plan for tgwebproxy + direct_fake_tls includes wan_firewall and omits cdn-dispatcher/keendns_proxy
+	directPlan, err := svc.Plan(ctx, "sess-mtproto-only", WizardPlanRequest{
+		Kind:       "tgwebproxy",
+		Scenario:   "direct_fake_tls",
+		DirectHost: "203.0.113.10",
+		DirectPort: 8443,
+		TlsDomain:  "www.google.com",
+	})
+	if err != nil {
+		t.Fatalf("Plan direct_fake_tls failed: %v", err)
+	}
+	hasWANFirewall := false
+	for _, it := range directPlan.Plan.Items {
+		if it.Target == "wan_firewall" && it.Action == "enable" && it.NewValue == "tcp/8443" {
+			hasWANFirewall = true
+		}
+		if it.Target == "keendns_proxy" || it.Target == "cdn-dispatcher" {
+			t.Fatalf("did not expect web ingress target %q in direct_fake_tls plan: %+v", it.Target, directPlan.Plan.Items)
+		}
+	}
+	if !hasWANFirewall {
+		t.Fatalf("expected wan_firewall tcp/8443 item in direct_fake_tls plan, got %+v", directPlan.Plan.Items)
+	}
+
+	// 4. Preflight blocks KeenDNS on direct_fake_tls, even before Plan
+	preBlocked := svc.Preflight(ctx, WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "direct_fake_tls",
+		DirectHost:   "203.0.113.10",
+		DirectPort:   8443,
+		TlsDomain:    "www.google.com",
+		KeenDNSMode:  "create",
+		KeenDNSLabel: "connect",
+	})
+	if preBlocked.CanProceed {
+		t.Fatalf("expected Preflight CanProceed=false when KeenDNS is passed for direct_fake_tls")
+	}
+
+	// 5. KeenDNS IS allowed on dual, cdn_http, xray, and both (including both + direct_fake_tls!)
+	kdMock := &mockKeenDNSOperator{
+		disc: serveringress.KeenDNSDiscovery{State: "supported", BaseFQDN: "example.keenetic.pro"},
+	}
+	svc.SetKeenDNS(kdMock)
+
+	dualPlan, err := svc.Plan(ctx, "sess-dual-kd", WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "dual",
+		PublicDomain: "tgsub.example.keenetic.pro",
+		DirectHost:   "203.0.113.10",
+		DirectPort:   9443,
+		TlsDomain:    "www.google.com",
+		KeenDNSMode:  "create",
+		KeenDNSLabel: "tgsub",
+	})
+	if err != nil {
+		t.Fatalf("Plan dual with KeenDNS failed: %v", err)
+	}
+	var sawDualFW, sawDualKD bool
+	for _, it := range dualPlan.Plan.Items {
+		if it.Target == "wan_firewall" && it.NewValue == "tcp/9443" {
+			sawDualFW = true
+		}
+		if it.Target == "keendns_proxy" && it.NewValue == "tgsub" {
+			sawDualKD = true
+		}
+	}
+	if !sawDualFW || !sawDualKD {
+		t.Fatalf("expected both wan_firewall and keendns_proxy in dual plan, got %+v", dualPlan.Plan.Items)
+	}
+
+	// both (VLESS web + Telegram direct_fake_tls) with KeenDNS for VLESS MUST succeed
+	bothDesired, err := BuildDesiredConfig(ctx, nil, WizardPlanRequest{
+		Kind:         "both",
+		Scenario:     "direct_fake_tls",
+		PublicDomain: "vless.example.keenetic.pro",
+		KeenDNSMode:  "create",
+		KeenDNSLabel: "vless",
+		DirectHost:   "203.0.113.10",
+		DirectPort:   8443,
+		TlsDomain:    "www.google.com",
+	})
+	if err != nil {
+		t.Fatalf("expected Kind=both + Scenario=direct_fake_tls with KeenDNS for VLESS to succeed: %v", err)
+	}
+	if bothDesired.KeenDNSLabel != "vless" {
+		t.Fatalf("expected KeenDNSLabel 'vless' preserved on both+direct_fake_tls, got %q", bothDesired.KeenDNSLabel)
+	}
+
+	// 6. DirectPort validation rejects privileged, reserved, and out-of-range ports in BuildDesiredConfig & Preflight
+	for _, badPort := range []int{-5, 22, 80, 443, 1023, 1099, 9009, 51820, 65536} {
+		reqBadPort := WizardPlanRequest{
+			Kind:       "tgwebproxy",
+			Scenario:   "direct_fake_tls",
+			DirectHost: "203.0.113.10",
+			DirectPort: badPort,
+			TlsDomain:  "www.google.com",
+		}
+		if _, err := BuildDesiredConfig(ctx, nil, reqBadPort); err == nil {
+			t.Fatalf("expected BuildDesiredConfig to reject unsafe DirectPort %d", badPort)
+		}
+		if preBad := svc.Preflight(ctx, reqBadPort); preBad.CanProceed {
+			t.Fatalf("expected Preflight CanProceed=false for unsafe DirectPort %d", badPort)
+		}
+	}
+
+	// 7. KeenDNSMode="existing" is also rejected on tgwebproxy + direct_fake_tls
+	existingKDReq := WizardPlanRequest{
+		Kind:        "tgwebproxy",
+		Scenario:    "direct_fake_tls",
+		DirectHost:  "203.0.113.10",
+		DirectPort:  8443,
+		TlsDomain:   "www.google.com",
+		KeenDNSMode: "existing",
+	}
+	if _, err := BuildDesiredConfig(ctx, nil, existingKDReq); err == nil {
+		t.Fatalf("expected BuildDesiredConfig to reject KeenDNSMode='existing' for direct_fake_tls")
+	}
+	if preKD := svc.Preflight(ctx, existingKDReq); preKD.CanProceed {
+		t.Fatalf("expected Preflight to block KeenDNSMode='existing' for direct_fake_tls")
+	}
+
+	// 8. Private / CGNAT DirectHost emits CheckStatusWarning (direct_host_private_ip) without blocking Plan
+	for _, privIP := range []string{"192.168.1.1", "100.64.1.2"} {
+		prePriv := svc.Preflight(ctx, WizardPlanRequest{
+			Kind:       "tgwebproxy",
+			Scenario:   "direct_fake_tls",
+			DirectHost: privIP,
+			DirectPort: 8443,
+			TlsDomain:  "www.google.com",
+		})
+		if !prePriv.CanProceed || !prePriv.HasWarnings {
+			t.Fatalf("expected CanProceed=true and HasWarnings=true for private IP %s, got %+v", privIP, prePriv)
+		}
+		sawPrivWarn := false
+		for _, c := range prePriv.Checks {
+			if c.ID == "direct_host_private_ip" && c.Status == CheckStatusWarning {
+				sawPrivWarn = true
+			}
+		}
+		if !sawPrivWarn {
+			t.Fatalf("expected direct_host_private_ip warning for %s, got %+v", privIP, prePriv.Checks)
+		}
+	}
+
+	// 9. Verify uses VerifyCategoryFirewall on tg_mtproto_wan_firewall warning
+	tg.cfg = tgwebproxy.PublicConfig{
+		Enabled:    true,
+		Scenario:   "direct_fake_tls",
+		DirectHost: "203.0.113.10",
+		DirectPort: 70000, // out-of-range forces IsDirectWANPortOpen=false cross-platform
+		TlsDomain:  "www.google.com",
+		ListenPort: 8085,
+	}
+	tg.st = tgwebproxy.Status{
+		Installed:       true,
+		InstalledTelemt: true,
+		DirectOnline:    true,
+		DirectPort:      70000,
+	}
+	svc.SetDialTimeout(func(network, address string, timeout time.Duration) (net.Conn, error) {
+		return &mockTestConn{}, nil
+	})
+	vReport, err := svc.Verify(ctx, "tgwebproxy")
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	var sawFWCategory bool
+	for _, c := range vReport.Checks {
+		if c.ID == "tg_mtproto_wan_firewall" && c.Status == CheckStatusWarning {
+			if c.Category != VerifyCategoryFirewall {
+				t.Fatalf("expected VerifyCategoryFirewall (%q), got %q", VerifyCategoryFirewall, c.Category)
+			}
+			sawFWCategory = true
+		}
+	}
+	if !sawFWCategory {
+		t.Fatalf("expected tg_mtproto_wan_firewall warning in report: %+v", vReport.Checks)
+	}
+}

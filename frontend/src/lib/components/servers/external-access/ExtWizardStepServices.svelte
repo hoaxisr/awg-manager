@@ -11,6 +11,7 @@
 		otherServiceCurrentlyEnabled: boolean;
 		otherServiceLabel: string;
 		onselectkind: (kind: WizardKind) => void;
+		onselectscenario: (scenario: string) => void;
 	}
 
 	let {
@@ -19,6 +20,7 @@
 		otherServiceCurrentlyEnabled,
 		otherServiceLabel,
 		onselectkind,
+		onselectscenario,
 	}: Props = $props();
 </script>
 
@@ -110,7 +112,7 @@
 				type="button"
 				class="choice-card compact"
 				class:selected={draft.tgScenario === 'direct_fake_tls'}
-				onclick={() => (draft.tgScenario = 'direct_fake_tls')}
+				onclick={() => onselectscenario('direct_fake_tls')}
 			>
 				<div class="choice-top">
 					<span class="choice-title">{m.servers_ext_wiz_s1_tg_direct_title()}</span>
@@ -125,7 +127,7 @@
 				type="button"
 				class="choice-card compact"
 				class:selected={draft.tgScenario === 'cdn_http'}
-				onclick={() => (draft.tgScenario = 'cdn_http')}
+				onclick={() => onselectscenario('cdn_http')}
 			>
 				<div class="choice-top">
 					<span class="choice-title">{m.servers_ext_wiz_s1_tg_domain_title()}</span>
@@ -140,7 +142,7 @@
 				type="button"
 				class="choice-card compact"
 				class:selected={draft.tgScenario === 'dual'}
-				onclick={() => (draft.tgScenario = 'dual')}
+				onclick={() => onselectscenario('dual')}
 			>
 				<div class="choice-top">
 					<span class="choice-title">{m.servers_ext_wiz_s1_tg_dual_title()}</span>

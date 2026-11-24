@@ -20,6 +20,9 @@
 		createInitialWizardDraft,
 		buildPlanRequestFromDraft,
 		isDraftEgressValid,
+		isTgDirectOnlyDraft,
+		pickDefaultMtprotoDirectHost,
+		shouldKeepExistingSchemeAfterStep1Change,
 		validateKeenDNSLabelClient,
 		type ExternalAccessInput,
 		type ExternalAccessWizardDraft,
@@ -80,6 +83,7 @@
 	let cancelling = $state(false);
 	let applyPhase = $state<'review' | 'applying' | 'done'>('review');
 	let stopJobPoll: (() => void) | null = null;
+	let initialEditWasTgDirectOnly = $state(false);
 
 	// Direct VLESS + REALITY entry (white-IP preset)
 	type WizardRealityMode = 'off' | 'also' | 'only';
@@ -110,6 +114,27 @@
 	let wantTgWeb = $derived(
 		wantTg && (draft.tgScenario === 'dual' || draft.tgScenario === 'cdn_http')
 	);
+	let isTgDirectOnly = $derived(isTgDirectOnlyDraft(draft));
+	let detectedMtprotoWhiteIP = $derived(
+		(realityState?.network?.white_ip
+			? realityState.network.external_ip || realityState.network.wan_address || ''
+			: '') ||
+			(keendnsInfo?.wan_ip && !keendnsInfo.wan_ip_private ? keendnsInfo.wan_ip : '')
+	);
+	let keenDNSBaseDomain = $derived(
+		(
+			realityState?.network?.keendns_domain ||
+			(keendnsInfo?.enabled ? keendnsInfo.domain : '') ||
+			''
+		).trim()
+	);
+	let keenDNSBaseIsDirect = $derived(
+		Boolean(
+			realityState?.network?.keendns_domain ||
+				(keendnsInfo?.enabled && keendnsInfo.mode === 'direct')
+		)
+	);
+	let detectedMtprotoDirectDomain = $derived(keenDNSBaseIsDirect ? keenDNSBaseDomain : '');
 
 	let otherServiceCurrentlyEnabled = $derived(
 		(draft.selectedKind === 'xray' && draft.tgInitiallyEnabled) ||
@@ -280,6 +305,7 @@
 				initial.existingClientCount === 0 && !initial.isEditMode
 					? { ...initial, clientRemark: m.servers_ext_wiz_my_phone() }
 					: initial;
+			initialEditWasTgDirectOnly = draft.isEditMode && isTgDirectOnlyDraft(draft);
 			realityState = rSt;
 			const rEnabled = Boolean(rSt?.settings?.enabled);
 			realityInitiallyEnabled = rEnabled;
@@ -315,6 +341,9 @@
 		realityNetChecking = true;
 		try {
 			realityState = await api.getXrayReality(true);
+			if (wantTgDirect) {
+				prefillMtprotoDirectHostIfEmpty();
+			}
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.servers_ext_wiz_err_wan_check());
 		} finally {
@@ -330,6 +359,9 @@
 			if (res.keendns) {
 				keendnsInfo = res.keendns;
 			}
+			if (wantTgDirect) {
+				prefillMtprotoDirectHostIfEmpty();
+			}
 		} catch (e) {
 			notifications.error(
 				e instanceof Error ? e.message : m.servers_ext_wiz_err_caps()
@@ -344,6 +376,9 @@
 		showRouterFacts = true;
 		try {
 			keendnsInfo = await api.getWizardKeenDNS(draft.selectedKind);
+			if (wantTgDirect) {
+				prefillMtprotoDirectHostIfEmpty();
+			}
 		} catch (e) {
 			notifications.error(
 				e instanceof Error ? e.message : m.servers_ext_wiz_err_keendns()
@@ -353,15 +388,64 @@
 		}
 	}
 
+	function prefillMtprotoDirectHostIfEmpty() {
+		if (draft.directHost.trim()) return;
+		const suggested = pickDefaultMtprotoDirectHost({
+			directDomain: detectedMtprotoDirectDomain,
+			whiteIP: detectedMtprotoWhiteIP,
+		});
+		if (suggested) {
+			draft.directHost = suggested;
+		}
+	}
+
 	function selectServiceKind(kind: WizardKind) {
 		draft.selectedKind = kind;
 		draft.disableOtherService = false;
 		if (kind === 'tgwebproxy') {
 			realityMode = 'off';
+			if (draft.tgScenario === 'direct_fake_tls') {
+				draft.keendnsMode = 'manual';
+				draft.connectionWay = 'direct';
+				draft.originType = 'public_address';
+			}
 		} else if (kind === 'both' && realityMode === 'only') {
 			realityMode = 'also';
 		}
+		draft.keepExistingConnectionScheme = shouldKeepExistingSchemeAfterStep1Change(
+			initialEditWasTgDirectOnly,
+			draft
+		);
+		if (
+			(kind === 'tgwebproxy' || kind === 'both') &&
+			(draft.tgScenario === 'dual' || draft.tgScenario === 'direct_fake_tls')
+		) {
+			prefillMtprotoDirectHostIfEmpty();
+		}
 		void loadCapabilities(kind);
+	}
+
+	function selectTgScenario(scenario: string) {
+		draft.tgScenario = scenario;
+		if (draft.selectedKind === 'tgwebproxy' && scenario === 'direct_fake_tls') {
+			draft.keendnsMode = 'manual';
+			draft.connectionWay = 'direct';
+			draft.originType = 'public_address';
+		}
+		draft.keepExistingConnectionScheme = shouldKeepExistingSchemeAfterStep1Change(
+			initialEditWasTgDirectOnly,
+			draft
+		);
+		if (scenario === 'dual' || scenario === 'direct_fake_tls') {
+			prefillMtprotoDirectHostIfEmpty();
+		}
+	}
+
+	function switchToWebBridgeFromCGNAT() {
+		draft.tgScenario = 'cdn_http';
+		draft.keepExistingConnectionScheme = false;
+		draft.originType = 'cloud_address';
+		draft.connectionWay = 'direct';
 	}
 
 	function setKeenDNSActionMode(mode: 'manual' | 'existing' | 'create') {
@@ -451,7 +535,7 @@
 	}
 
 	function buildRequest(): WizardPlanRequest {
-		if (draft.keendnsMode === 'create' && keendnsAvailable) {
+		if (!isTgDirectOnly && draft.keendnsMode === 'create' && keendnsAvailable) {
 			syncKeenDNSToAddresses();
 		}
 		return buildPlanRequestFromDraft(draft);
@@ -471,6 +555,16 @@
 		if (stepIndex === 2) {
 			if (isRealityOnly) {
 				return realityStep2Valid;
+			}
+			if (isTgDirectOnly) {
+				const portNum = Number(draft.directPort);
+				return Boolean(
+					draft.directHost.trim() &&
+						effectiveTlsDomain &&
+						Number.isInteger(portNum) &&
+						portNum >= 1024 &&
+						portNum <= 65535
+				);
 			}
 			if (draft.keendnsMode === 'create') {
 				if (!keendnsAvailable || !keendnsValidation.valid || Boolean(keendnsLabelConflict)) {
@@ -492,11 +586,21 @@
 				return false;
 			}
 			if (wantTgDirect) {
+				const firstPhoneDomain = (effectivePhoneDomain.split(',')[0] || '').trim();
 				const dHost =
 					draft.directHost.trim() ||
 					draft.originHost.trim() ||
-					effectivePhoneDomain;
-				if (!dHost || !effectiveTlsDomain) return false;
+					firstPhoneDomain;
+				const portNum = Number(draft.directPort);
+				if (
+					!dHost ||
+					!effectiveTlsDomain ||
+					!Number.isInteger(portNum) ||
+					portNum < 1024 ||
+					portNum > 65535
+				) {
+					return false;
+				}
 			}
 			return realityStep2Valid;
 		}
@@ -756,12 +860,14 @@
 					{otherServiceCurrentlyEnabled}
 					{otherServiceLabel}
 					onselectkind={selectServiceKind}
+					onselectscenario={selectTgScenario}
 				/>
 			{:else if stepIndex === 1}
 				<ExtWizardStepConnection
 					bind:draft
 					bind:realityMode
 					{isRealityOnly}
+					{isTgDirectOnly}
 					{wantXray}
 					{realityPort}
 					{realityState}
@@ -772,15 +878,21 @@
 					{keendnsInfo}
 					oncheckreality={() => void checkRealityNetwork()}
 					oncheckfacts={() => void checkRouterFacts()}
+					onswitchtowebbridge={switchToWebBridgeFromCGNAT}
 				/>
 			{:else if stepIndex === 2}
 				<ExtWizardStepAddresses
 					bind:draft
 					{isRealityOnly}
+					{isTgDirectOnly}
 					{usesReality}
 					{wantXray}
 					{wantTgWeb}
 					{wantTgDirect}
+					{detectedMtprotoWhiteIP}
+					{keenDNSBaseDomain}
+					{keenDNSBaseIsDirect}
+					{detectedMtprotoDirectDomain}
 					{keendnsInfo}
 					{keendnsAvailable}
 					{keendnsValidation}
@@ -821,9 +933,12 @@
 					bind:draft
 					{applyPhase}
 					{isRealityOnly}
+					{isTgDirectOnly}
 					{usesReality}
 					{wantXray}
 					{wantTg}
+					{wantTgDirect}
+					{effectiveTlsDomain}
 					{keendnsAvailable}
 					{previewKeenDNSFqdn}
 					{realityState}

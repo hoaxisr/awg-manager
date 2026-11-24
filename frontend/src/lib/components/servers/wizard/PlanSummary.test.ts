@@ -7,7 +7,7 @@ import PlanSummary from './PlanSummary.svelte';
 const ACTIONS = ['create', 'modify', 'enable', 'disable', 'keep', 'publish'];
 const TARGETS = [
 	'awgm-xhttpd', 'cdn-dispatcher', 'client', 'direct_host', 'keendns_proxy', 'origin_source',
-	'outbound_routing', 'public_domain', 'telemt', 'tgwebproxy', 'tproxy-server', 'upstream_egress',
+	'outbound_routing', 'public_domain', 'telemt', 'tgwebproxy', 'tproxy-server', 'upstream_egress', 'wan_firewall',
 ];
 
 function plan(items: [string, string][]): ChangePlan {

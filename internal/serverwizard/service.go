@@ -372,12 +372,20 @@ func (s *WizardService) buildTelegramPlan(desired DesiredWizardConfig, fp string
 	var items []PlanItem
 
 	if desired.Scenario == "direct_fake_tls" || desired.Scenario == "dual" {
-		items = append(items, PlanItem{
-			Action:      "enable",
-			Target:      "telemt",
-			Description: fmt.Sprintf("MTProto Fake-TLS direct прокси на порту %d", directPort),
-			NewValue:    fmt.Sprintf(":%d", directPort),
-		})
+		items = append(items,
+			PlanItem{
+				Action:      "enable",
+				Target:      "telemt",
+				Description: fmt.Sprintf("MTProto Fake-TLS direct прокси на порту %d", directPort),
+				NewValue:    fmt.Sprintf(":%d", directPort),
+			},
+			PlanItem{
+				Action:      "enable",
+				Target:      "wan_firewall",
+				Description: fmt.Sprintf("Автоматическое открытие TCP-порта %d в WAN-фаерволе Keenetic для MTProto", directPort),
+				NewValue:    fmt.Sprintf("tcp/%d", directPort),
+			},
+		)
 		if desired.DirectHost != "" {
 			items = append(items, PlanItem{
 				Action:      "modify",
@@ -420,7 +428,7 @@ func (s *WizardService) buildTelegramPlan(desired DesiredWizardConfig, fp string
 		NewValue:    upstream,
 	})
 
-	if desired.KeenDNSLabel != "" {
+	if desired.KeenDNSLabel != "" && (desired.Scenario == "cdn_http" || desired.Scenario == "dual") {
 		items = append(items, s.buildKeenDNSPlanItem(context.Background(), desired.KeenDNSLabel, dispPort))
 	}
 
@@ -433,8 +441,16 @@ func (s *WizardService) buildTelegramPlan(desired DesiredWizardConfig, fp string
 		})
 	}
 
+	summary := "Настройка сервера Telegram (MTProto Fake-TLS + Web CDN)"
+	switch desired.Scenario {
+	case "direct_fake_tls":
+		summary = "Настройка прокси Telegram (MTProto Fake-TLS)"
+	case "cdn_http":
+		summary = "Настройка сервера Telegram Web Proxy (Web CDN)"
+	}
+
 	return ChangePlan{
-		Summary:          "Настройка сервера Telegram Web Proxy (MTProto Fake-TLS + Web CDN)",
+		Summary:          summary,
 		Items:            items,
 		RestartRequired:  true,
 		StateFingerprint: fp,

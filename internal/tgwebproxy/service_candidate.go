@@ -56,8 +56,11 @@ func (s *Service) PrepareCandidate(txID string, candidate Config) (string, error
 	}
 
 	// Normalize defaults for candidate
-	if candidate.DirectPort <= 0 {
+	if candidate.DirectPort == 0 {
 		candidate.DirectPort = DefaultDirectPort
+	}
+	if err := ValidateDirectPort(candidate.DirectPort); err != nil {
+		return "", err
 	}
 	if candidate.ListenPort <= 0 {
 		candidate.ListenPort = DefaultListenPort
@@ -444,6 +447,7 @@ func (s *Service) CommitPrepared(txID string) error {
 	}
 
 	s.config = candidate
+	s.syncDirectWANFirewallLocked(candidate)
 
 	// 3. Mark manifest active
 	manifest.State = "active"
@@ -575,6 +579,7 @@ func (s *Service) rollbackLocked(txID string, manifest *SnapshotManifest) error 
 	}
 
 	s.config = manifest.OldConfig
+	s.syncDirectWANFirewallLocked(manifest.OldConfig)
 
 	if len(rollbackErrs) > 0 {
 		return errors.Join(rollbackErrs...)

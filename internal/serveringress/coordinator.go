@@ -1011,6 +1011,7 @@ func (c *Coordinator) applyLocked(ctx context.Context, txID string, desired Ingr
 		return fmt.Errorf("%w: archive journal: %v", ErrRecoveryRequired, err)
 	}
 
+	c.syncWANIngressFirewall()
 	return nil
 }
 
@@ -1112,6 +1113,21 @@ func (c *Coordinator) failAndRollback(j *TransactionJournal, origErr error) erro
 	return origErr
 }
 
+func tgScenarioNeedsWebIngress(scenario string) bool {
+	s := strings.TrimSpace(scenario)
+	return s == "" || s == "cdn_http" || s == "dual" || s == "cdn_domain" || s == "both"
+}
+
+func recomputePublicHostname(topo IngressTopology) string {
+	if topo.XrayEnabled && strings.TrimSpace(topo.XrayPublicHostname) != "" {
+		return strings.TrimSpace(topo.XrayPublicHostname)
+	}
+	if topo.TgEnabled && tgScenarioNeedsWebIngress(topo.TgScenario) && strings.TrimSpace(topo.TgPublicHostname) != "" {
+		return strings.TrimSpace(topo.TgPublicHostname)
+	}
+	return ""
+}
+
 func (c *Coordinator) topologyForXrayConfig(cfg vlessserver.Config) IngressTopology {
 	prev := c.getCurrentTopology()
 	desired := prev
@@ -1196,15 +1212,23 @@ func (c *Coordinator) topologyForTelegramConfig(cfg tgwebproxy.Config) IngressTo
 		desired.TgWebPort = 8085
 		desired.TgPort = 8085
 	}
-	if cfg.PublicHostname != "" {
-		desired.TgPublicHostname = cfg.PublicHostname
+	if desired.TgScenario == tgwebproxy.ScenarioDirectFakeTLS {
+		desired.TgPublicHostname = ""
+		desired.PublicHostname = recomputePublicHostname(desired)
+	} else {
+		if cfg.PublicHostname != "" {
+			desired.TgPublicHostname = cfg.PublicHostname
+		}
+		if desired.TgPublicHostname != "" && desired.PublicHostname == "" {
+			desired.PublicHostname = desired.TgPublicHostname
+		}
 	}
 	if desired.DispatcherPort <= 0 {
 		desired.DispatcherPort = 9009
 	}
 
 	desired.DispatcherEnabled = (desired.XrayEnabled && desired.XrayPublicHostname != "") ||
-		(desired.TgEnabled && (desired.TgScenario == "cdn_http" || desired.TgScenario == "dual"))
+		(desired.TgEnabled && tgScenarioNeedsWebIngress(desired.TgScenario))
 	return desired
 }
 
@@ -1324,6 +1348,21 @@ func (c *Coordinator) IsDispatcherRunning() bool {
 	return c.dispatcher != nil && c.dispatcher.IsRunning()
 }
 
+// SyncWANIngressFirewall synchronizes WAN firewall ports for MTProto direct ingress
+// when coordinator is not in recovery mode.
+func (c *Coordinator) SyncWANIngressFirewall() {
+	c.syncWANIngressFirewall()
+}
+
+func (c *Coordinator) syncWANIngressFirewall() {
+	if needed, _ := c.IsRecoveryRequired(); needed {
+		return
+	}
+	if syncer, ok := c.tgSvc.(interface{ SyncDirectWANFirewall() }); ok {
+		syncer.SyncDirectWANFirewall()
+	}
+}
+
 // HydrateDispatcherRoutes checks if dispatcher routes are configured; if empty,
 // hydrates initial rules from Xray and Telegram domain settings (SSOT migration).
 func (c *Coordinator) HydrateDispatcherRoutes(ctx context.Context) error {
@@ -1427,7 +1466,7 @@ func (c *Coordinator) HydrateDispatcherRoutes(ctx context.Context) error {
 	var tgDomains []string
 	if c.tgSvc != nil {
 		tCfg := c.tgSvc.GetConfig()
-		if tCfg.PublicHostname != "" {
+		if tCfg.Scenario != tgwebproxy.ScenarioDirectFakeTLS && tCfg.PublicHostname != "" {
 			for _, d := range strings.Split(tCfg.PublicHostname, ",") {
 				d = strings.ToLower(strings.TrimSpace(d))
 				if d != "" {
@@ -1571,6 +1610,7 @@ func (c *Coordinator) ApplyDispatcherConfig(ctx context.Context, cfg cdndispatch
 			_ = c.tgSvc.UpdateConfig(tgCfg)
 		}
 
+		c.syncWANIngressFirewall()
 		return nil
 	})
 }
@@ -1692,7 +1732,7 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 			desiredTopo.TgWebAddress = "127.0.0.1"
 			desiredTopo.TgWebPort = candTg.ListenPort
 			desiredTopo.TgPort = candTg.ListenPort
-			if candTg.Scenario == "direct_fake_tls" {
+			if candTg.Scenario == tgwebproxy.ScenarioDirectFakeTLS {
 				desiredTopo.TgPublicHostname = ""
 			} else {
 				desiredTopo.TgPublicHostname = candTg.PublicHostname
@@ -1702,17 +1742,16 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 			}
 		}
 
+		desiredTopo.PublicHostname = recomputePublicHostname(desiredTopo)
+
 		// Dispatcher required if Xray or TG uses CDN ingress
 		needsDispatcher := false
 		if desiredTopo.XrayEnabled && (desiredTopo.XrayPublicHostname != "" || desiredTopo.PublicHostname != "" || desiredTopo.XrayPathPrefix != "") {
 			needsDispatcher = true
 		}
-		if desiredTopo.TgEnabled {
-			scenario := desiredTopo.TgScenario
-			if scenario == "cdn_http" || scenario == "dual" || scenario == "cdn_domain" || scenario == "both" || scenario == "" {
-				if desiredTopo.TgPublicHostname != "" || desiredTopo.PublicHostname != "" {
-					needsDispatcher = true
-				}
+		if desiredTopo.TgEnabled && tgScenarioNeedsWebIngress(desiredTopo.TgScenario) {
+			if desiredTopo.TgPublicHostname != "" || desiredTopo.PublicHostname != "" {
+				needsDispatcher = true
 			}
 		}
 		desiredTopo.DispatcherEnabled = needsDispatcher
@@ -2103,6 +2142,7 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 			return fmt.Errorf("%w: archive journal: %v", ErrRecoveryRequired, err)
 		}
 
+		c.syncWANIngressFirewall()
 		return nil
 	})
 }

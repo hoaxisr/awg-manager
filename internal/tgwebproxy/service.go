@@ -44,6 +44,7 @@ type Service struct {
 	mux                  *Mux
 	legacyTimer          *time.Timer
 	onReload             func()
+	directWANFirewall    func(port int, enabled bool)
 	egressValidator      EgressValidator
 	tproxyValidator      TproxyValidator
 	runtimeDCProbe       func(device string) bool
@@ -72,6 +73,7 @@ func New(dataDir string, onReload func()) *Service {
 		workers:              workers,
 		mux:                  NewMux(),
 		onReload:             onReload,
+		directWANFirewall:    SyncDirectWANFirewall,
 		egressValidator:      DefaultEgressValidator,
 		tproxyValidator:      defaultTproxyValidator,
 		runtimeDCProbe:       defaultRuntimeDCProbe,
@@ -581,6 +583,16 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 			return fmt.Errorf("egress validation failed: %w", err)
 		}
 	}
+	if newCfg.IsDirectEnabled() {
+		directPort := newCfg.DirectPort
+		if directPort <= 0 {
+			directPort = DefaultDirectPort
+		}
+		if err := ValidateDirectPort(directPort); err != nil {
+			return err
+		}
+		newCfg.DirectPort = directPort
+	}
 	if err := ValidatePortsAndUpstreams(newCfg); err != nil {
 		return err
 	}
@@ -689,10 +701,36 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 	}
 
 	s.config = newCfg
+	s.syncDirectWANFirewallLocked(newCfg)
 	s.scheduleLegacyExpiryLocked()
 	go tuneRuntimeNetworkUpstreams(newCfg.EnabledUpstreams())
 	go s.checkUpstreamHealth()
 	return nil
+}
+
+// SyncDirectWANFirewall reconciles Keenetic's WAN firewall rule with the current config under s.mu.
+func (s *Service) SyncDirectWANFirewall() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.recoveryRequired {
+		return
+	}
+	s.syncDirectWANFirewallLocked(s.config)
+}
+
+func (s *Service) syncDirectWANFirewallLocked(cfg Config) {
+	if s.directWANFirewall == nil {
+		return
+	}
+	if cfg.IsDirectEnabled() {
+		port := cfg.DirectPort
+		if port <= 0 {
+			port = DefaultDirectPort
+		}
+		s.directWANFirewall(port, true)
+		return
+	}
+	s.directWANFirewall(0, false)
 }
 
 func hasTproxyFileChanges(tproxyDir string, files []FilePayload) bool {
@@ -902,7 +940,10 @@ func (s *Service) UpdateConfig(cfg Config) error {
 	if cfg.DirectHost != "" {
 		newCfg.DirectHost = cfg.DirectHost
 	}
-	if cfg.DirectPort > 0 {
+	if cfg.DirectPort != 0 {
+		if err := ValidateDirectPort(cfg.DirectPort); err != nil {
+			return err
+		}
 		newCfg.DirectPort = cfg.DirectPort
 	}
 	if cfg.Secret != "" && cfg.Secret != s.config.Secret {
@@ -1471,6 +1512,7 @@ func (s *Service) Restart() error {
 	if err := s.workers.ApplyWorkers(s.config); err != nil {
 		return err
 	}
+	s.syncDirectWANFirewallLocked(s.config)
 	s.notifyReload()
 	return nil
 }
@@ -1485,6 +1527,7 @@ func (s *Service) StartConfigured() error {
 	}
 
 	if !s.config.Enabled {
+		s.syncDirectWANFirewallLocked(s.config)
 		return nil
 	}
 
@@ -1522,12 +1565,16 @@ func (s *Service) StartConfigured() error {
 	}
 
 	if err := s.workers.ApplyWorkers(s.config); err != nil {
+		runtimeStopCfg := s.config
+		runtimeStopCfg.Enabled = false
+		s.syncDirectWANFirewallLocked(runtimeStopCfg)
 		return err
 	}
 	if err := s.workers.CheckReadiness(s.config); err != nil {
 		runtimeStopCfg := s.config
 		runtimeStopCfg.Enabled = false
 		stopErr := s.workers.ApplyWorkers(runtimeStopCfg)
+		s.syncDirectWANFirewallLocked(runtimeStopCfg)
 		if stopErr != nil {
 			return errors.Join(err, fmt.Errorf("rollback tg workers after readiness failure: %w", stopErr))
 		}
@@ -1536,6 +1583,7 @@ func (s *Service) StartConfigured() error {
 	if s.config.IsWebEnabled() && s.mux != nil {
 		_ = s.mux.StartWithSecrets(s.config.ListenPort, s.config.GetEndpoints(), s.config.ActiveSecrets())
 	}
+	s.syncDirectWANFirewallLocked(s.config)
 	go tuneRuntimeNetworkUpstreams(s.config.EnabledUpstreams())
 	return nil
 }
@@ -1865,32 +1913,34 @@ func buildSingleUserLinks(cfg Config, activeSecret string) (string, string, stri
 	mtproxySecret := "ee" + activeSecret + hexDomain
 
 	var webProxies []WebProxyLink
-	for _, ep := range linkableEndpoints(cfg) {
-		epTgURL := fmt.Sprintf("tg://webproxy?server=%s&secret=%s", ep.Hostname, activeSecret)
-		epTmeURL := fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", ep.Hostname, activeSecret)
-		epBridgeURL := DeriveBridgeURL(ep.Hostname, activeSecret)
-		webProxies = append(webProxies, WebProxyLink{
-			ID:          ep.ID,
-			Hostname:    ep.Hostname,
-			Description: ep.Description,
-			Preset:      InferEndpointPreset(ep, cfg),
-			CarrierMode: EffectiveEndpointCarrierMode(ep, cfg),
-			TgURL:       epTgURL,
-			TmeURL:      epTmeURL,
-			BridgeURL:   epBridgeURL,
-			IsCDN:       ep.IsCDN,
-		})
-	}
-
 	var tgURL, tmeURL, bridgeURL string
-	if cfg.PublicHostname != "" {
-		tgURL = fmt.Sprintf("tg://webproxy?server=%s&secret=%s", cfg.PublicHostname, activeSecret)
-		tmeURL = fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", cfg.PublicHostname, activeSecret)
-		bridgeURL = DeriveBridgeURL(cfg.PublicHostname, activeSecret)
-	} else if len(webProxies) > 0 {
-		tgURL = webProxies[0].TgURL
-		tmeURL = webProxies[0].TmeURL
-		bridgeURL = webProxies[0].BridgeURL
+	if cfg.Scenario != ScenarioDirectFakeTLS {
+		for _, ep := range linkableEndpoints(cfg) {
+			epTgURL := fmt.Sprintf("tg://webproxy?server=%s&secret=%s", ep.Hostname, activeSecret)
+			epTmeURL := fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", ep.Hostname, activeSecret)
+			epBridgeURL := DeriveBridgeURL(ep.Hostname, activeSecret)
+			webProxies = append(webProxies, WebProxyLink{
+				ID:          ep.ID,
+				Hostname:    ep.Hostname,
+				Description: ep.Description,
+				Preset:      InferEndpointPreset(ep, cfg),
+				CarrierMode: EffectiveEndpointCarrierMode(ep, cfg),
+				TgURL:       epTgURL,
+				TmeURL:      epTmeURL,
+				BridgeURL:   epBridgeURL,
+				IsCDN:       ep.IsCDN,
+			})
+		}
+
+		if cfg.PublicHostname != "" {
+			tgURL = fmt.Sprintf("tg://webproxy?server=%s&secret=%s", cfg.PublicHostname, activeSecret)
+			tmeURL = fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", cfg.PublicHostname, activeSecret)
+			bridgeURL = DeriveBridgeURL(cfg.PublicHostname, activeSecret)
+		} else if len(webProxies) > 0 {
+			tgURL = webProxies[0].TgURL
+			tmeURL = webProxies[0].TmeURL
+			bridgeURL = webProxies[0].BridgeURL
+		}
 	}
 
 	var mtproxyURL, mtproxyTmeURL string

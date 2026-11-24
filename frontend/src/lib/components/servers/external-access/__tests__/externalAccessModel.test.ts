@@ -14,7 +14,11 @@ import {
 	computeConfigFingerprint,
 	computeEffectiveVerifyKind,
 	createInitialWizardDraft,
+	draftNeedsWebIngress,
 	isDraftEgressValid,
+	isTgDirectOnlyDraft,
+	pickDefaultMtprotoDirectHost,
+	shouldKeepExistingSchemeAfterStep1Change,
 	buildPlanRequestFromDraft,
 	validateKeenDNSLabelClient,
 } from '../externalAccessModel';
@@ -738,5 +742,177 @@ describe('externalAccessModel', () => {
 			} as unknown as TgWebProxyStatus,
 		});
 		expect(stoppedSummary.telegram.overallState).toBe('stopped');
+	});
+
+	it('disables KeenDNS and web-only fields for MTProto-only (direct_fake_tls) while keeping them for web proxy / VLESS', () => {
+		expect(isTgDirectOnlyDraft({ selectedKind: 'tgwebproxy', tgScenario: 'direct_fake_tls' })).toBe(true);
+		expect(draftNeedsWebIngress({ selectedKind: 'tgwebproxy', tgScenario: 'direct_fake_tls' })).toBe(false);
+
+		expect(isTgDirectOnlyDraft({ selectedKind: 'tgwebproxy', tgScenario: 'cdn_http' })).toBe(false);
+		expect(draftNeedsWebIngress({ selectedKind: 'tgwebproxy', tgScenario: 'cdn_http' })).toBe(true);
+
+		expect(isTgDirectOnlyDraft({ selectedKind: 'tgwebproxy', tgScenario: 'dual' })).toBe(false);
+		expect(draftNeedsWebIngress({ selectedKind: 'tgwebproxy', tgScenario: 'dual' })).toBe(true);
+
+		expect(isTgDirectOnlyDraft({ selectedKind: 'both', tgScenario: 'direct_fake_tls' })).toBe(false);
+		expect(draftNeedsWebIngress({ selectedKind: 'both', tgScenario: 'direct_fake_tls' })).toBe(true);
+
+		const tgOnlyDraft = createInitialWizardDraft({
+			tgConfig: {
+				enabled: true,
+				scenario: 'direct_fake_tls',
+				listen_port: 8085,
+				admin_port: 8086,
+				public_hostname: 'stale.keenetic.link',
+				direct_host: '203.0.113.10',
+				direct_port: 8443,
+				tls_domain: 'www.google.com',
+				carrier_mode: 'https-lanes',
+				upstream_device: 'direct',
+				secret: '00112233445566778899aabbccddeeff',
+				backend: '127.0.0.1:2398',
+			},
+		});
+		expect(tgOnlyDraft.selectedKind).toBe('tgwebproxy');
+		expect(tgOnlyDraft.connectionWay).toBe('direct');
+		expect(tgOnlyDraft.originType).toBe('public_address');
+		expect(uiText(tgOnlyDraft.connectionSchemeSummary)).toContain('белом IP');
+
+		// Even if stale KeenDNS/HTTP values sit in draft, MTProto-only request must strip them
+		tgOnlyDraft.keendnsMode = 'create';
+		tgOnlyDraft.keendnsLabel = 'connect';
+		tgOnlyDraft.originHost = 'stale.keenetic.link';
+		tgOnlyDraft.publicDomain = 'stale.keenetic.link';
+		tgOnlyDraft.connectionWay = 'external_https';
+		tgOnlyDraft.originType = 'cloud_address';
+
+		const mtprotoReq = buildPlanRequestFromDraft(tgOnlyDraft);
+		expect(mtprotoReq.keendns_mode).toBeUndefined();
+		expect(mtprotoReq.keendns_label).toBeUndefined();
+		expect(mtprotoReq.public_domain).toBe('');
+		expect(mtprotoReq.origin_host).toBeUndefined();
+		expect(mtprotoReq.origin_scheme).toBeUndefined();
+		expect(mtprotoReq.origin_port).toBeUndefined();
+		expect(mtprotoReq.connection_way).toBe('direct');
+		expect(mtprotoReq.origin_type).toBe('public_address');
+		expect(mtprotoReq.direct_host).toBe('203.0.113.10');
+		expect(mtprotoReq.direct_port).toBe(8443);
+
+		// Switching to dual (web proxy + MTProto) preserves KeenDNS and HTTP fields
+		tgOnlyDraft.tgScenario = 'dual';
+		const dualReq = buildPlanRequestFromDraft(tgOnlyDraft);
+		expect(dualReq.keendns_mode).toBe('create');
+		expect(dualReq.keendns_label).toBe('connect');
+		expect(dualReq.public_domain).toBe('stale.keenetic.link');
+		expect(dualReq.origin_host).toBe('stale.keenetic.link');
+
+		// 3rd-level direct KeenDNS domain is preferred over raw white IP when available
+		expect(
+			pickDefaultMtprotoDirectHost({
+				directDomain: '  myrouter.keenetic.pro  ',
+				whiteIP: '203.0.113.10',
+			})
+		).toBe('myrouter.keenetic.pro');
+		expect(pickDefaultMtprotoDirectHost({ directDomain: '', whiteIP: ' 203.0.113.10 ' })).toBe(
+			'203.0.113.10'
+		);
+		expect(pickDefaultMtprotoDirectHost({})).toBe('');
+	});
+
+	it('aligns dual/both direct_host fallback, filters stale direct_fake_tls :9009 warnings, and drops sticky scheme on scenario switch', () => {
+		// 1. dual with empty directHost & originHost falls back to first public domain
+		const dualDraft = createInitialWizardDraft({});
+		dualDraft.selectedKind = 'tgwebproxy';
+		dualDraft.tgScenario = 'dual';
+		dualDraft.publicDomain = 'edge.example.test, alt.example.test';
+		dualDraft.originHost = '';
+		dualDraft.directHost = '';
+		expect(buildPlanRequestFromDraft(dualDraft).direct_host).toBe('edge.example.test');
+
+		// 2. both + direct_fake_tls with empty directHost & originHost falls back to first public domain
+		const bothDirectDraft = createInitialWizardDraft({});
+		bothDirectDraft.selectedKind = 'both';
+		bothDirectDraft.tgScenario = 'direct_fake_tls';
+		bothDirectDraft.publicDomain = 'vless.example.test, backup.example.test';
+		bothDirectDraft.originHost = '';
+		bothDirectDraft.directHost = '';
+		expect(buildPlanRequestFromDraft(bothDirectDraft).direct_host).toBe('vless.example.test');
+
+		// 3. direct_fake_tls with leftover tCfg.endpoints omits stale :9009 warnings and webEndpoints
+		const directSummary = buildExternalAccessSummary({
+			tgConfig: {
+				enabled: true,
+				scenario: 'direct_fake_tls',
+				listen_port: 8085,
+				admin_port: 8086,
+				public_hostname: 'stale.example.test',
+				direct_host: '203.0.113.10',
+				direct_port: 8443,
+				tls_domain: 'www.google.com',
+				carrier_mode: 'https-lanes',
+				upstream_device: 'direct',
+				secret: '00112233445566778899aabbccddeeff',
+				backend: '127.0.0.1:2398',
+				endpoints: [
+					{
+						id: 'ep-1',
+						hostname: 'stale.example.test',
+						listen_port: 8084,
+						admin_port: 8086,
+						is_cdn: true,
+						enabled: true,
+					},
+				],
+			},
+			dispatcherConfig: {
+				enabled: true,
+				listen_addr: ':9009',
+				xray_target: 'http://127.0.0.1:9008',
+				tg_target: 'http://127.0.0.1:8085',
+				xray_path_prefix: '/xhttp-bridge',
+				default_action: '404',
+				routes: [
+					{
+						id: 'r-1',
+						domain: 'other.example.test',
+						description: 'Other',
+						route_xray: true,
+						route_telegram: false,
+						enabled: true,
+					},
+				],
+			},
+		});
+		expect(directSummary.telegram.webEndpoints).toEqual([]);
+		expect(directSummary.dispatcher.warnings).toEqual([]);
+
+		// 4. Switching out of direct_fake_tls edit mode clears sticky keepExistingConnectionScheme
+		expect(
+			shouldKeepExistingSchemeAfterStep1Change(true, {
+				selectedKind: 'tgwebproxy',
+				tgScenario: 'direct_fake_tls',
+				keepExistingConnectionScheme: true,
+			})
+		).toBe(true);
+		for (const nextDraft of [
+			{ selectedKind: 'tgwebproxy' as const, tgScenario: 'dual' },
+			{ selectedKind: 'tgwebproxy' as const, tgScenario: 'cdn_http' },
+			{ selectedKind: 'both' as const, tgScenario: 'direct_fake_tls' },
+			{ selectedKind: 'xray' as const, tgScenario: 'direct_fake_tls' },
+		]) {
+			expect(
+				shouldKeepExistingSchemeAfterStep1Change(true, {
+					...nextDraft,
+					keepExistingConnectionScheme: true,
+				})
+			).toBe(false);
+		}
+		expect(
+			shouldKeepExistingSchemeAfterStep1Change(false, {
+				selectedKind: 'tgwebproxy',
+				tgScenario: 'cdn_http',
+				keepExistingConnectionScheme: true,
+			})
+		).toBe(true);
 	});
 });

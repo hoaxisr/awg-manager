@@ -163,8 +163,13 @@ func (a *app) setupServer() {
 	)
 	if autoStartErr != nil {
 		a.bootLog.Error("ingress", "autostart", autoStartErr.Error())
-	} else if started {
-		a.bootLog.Info("ingress", "autostart", "ingress services started successfully")
+	} else {
+		if started {
+			a.bootLog.Info("ingress", "autostart", "ingress services started successfully")
+		}
+		if !recoveryReq && !vlessReq && !tgSt.RecoveryRequired {
+			a.ingressCoordinator.SyncWANIngressFirewall()
+		}
 	}
 
 	if err := a.tgWebProxyService.ReconcileRuntime(); err != nil {

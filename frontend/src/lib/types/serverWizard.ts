@@ -208,7 +208,8 @@ export type VerificationErrorCategory =
 	| 'http_origin'
 	| 'auth'
 	| 'egress'
-	| 'timeout';
+	| 'timeout'
+	| 'firewall';
 
 export interface VerificationCheck {
 	id: string;

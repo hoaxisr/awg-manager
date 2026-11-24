@@ -83,6 +83,14 @@ func (r WizardPlanRequest) forTelegram() WizardPlanRequest {
 	if strings.TrimSpace(r.TgPublicDomain) != "" {
 		tr.PublicDomain = strings.TrimSpace(r.TgPublicDomain)
 	}
+	if strings.TrimSpace(tr.Scenario) == "direct_fake_tls" {
+		tr.PublicDomain = ""
+		tr.KeenDNSMode = ""
+		tr.KeenDNSLabel = ""
+		tr.OriginHost = ""
+		tr.OriginScheme = ""
+		tr.OriginPort = 0
+	}
 	if r.TgListenPort > 0 {
 		tr.ListenPort = r.TgListenPort
 	} else {
@@ -169,24 +177,39 @@ func BuildDesiredConfig(ctx context.Context, egressResolver egress.Resolver, req
 		OriginPort:          req.OriginPort,
 		DisableOtherService: req.DisableOtherService,
 	}
-	if kdLabel := strings.ToLower(strings.TrimSpace(req.KeenDNSLabel)); kdLabel != "" {
-		if err := ndmscommand.ValidateKeenDNSLabel(kdLabel); err != nil {
-			return desired, fmt.Errorf("invalid KeenDNS label: %w", err)
+	rawScenario := strings.TrimSpace(req.Scenario)
+	isTgDirectOnly := req.Kind == "tgwebproxy" && rawScenario == "direct_fake_tls"
+	if isTgDirectOnly {
+		kdMode := strings.ToLower(strings.TrimSpace(req.KeenDNSMode))
+		if strings.TrimSpace(req.KeenDNSLabel) != "" || (kdMode != "" && kdMode != "manual") {
+			return desired, errors.New("домен 4-го уровня KeenDNS поддерживает только HTTP/HTTPS (Web Proxy) и не используется для прямого MTProto")
 		}
-		desired.KeenDNSLabel = kdLabel
-	}
-	if desired.OriginHost != "" {
-		if err := ValidateDirectHost(desired.OriginHost); err != nil {
-			return desired, fmt.Errorf("invalid origin host: %w", err)
+		desired.ConnectionWay = "direct"
+		desired.OriginType = "public_address"
+		desired.OriginHost = ""
+		desired.OriginScheme = ""
+		desired.OriginPort = 0
+		desired.KeenDNSLabel = ""
+	} else {
+		if kdLabel := strings.ToLower(strings.TrimSpace(req.KeenDNSLabel)); kdLabel != "" {
+			if err := ndmscommand.ValidateKeenDNSLabel(kdLabel); err != nil {
+				return desired, fmt.Errorf("invalid KeenDNS label: %w", err)
+			}
+			desired.KeenDNSLabel = kdLabel
 		}
-		if desired.OriginScheme != "https" {
-			desired.OriginScheme = "http"
+		if desired.OriginHost != "" {
+			if err := ValidateDirectHost(desired.OriginHost); err != nil {
+				return desired, fmt.Errorf("invalid origin host: %w", err)
+			}
+			if desired.OriginScheme != "https" {
+				desired.OriginScheme = "http"
+			}
 		}
 	}
 
 	switch req.Kind {
 	case "tgwebproxy":
-		scenario := req.Scenario
+		scenario := rawScenario
 		if scenario == "" {
 			scenario = "dual"
 		}
@@ -197,6 +220,11 @@ func BuildDesiredConfig(ctx context.Context, egressResolver egress.Resolver, req
 		}
 		desired.Scenario = scenario
 
+		if req.DirectPort != 0 && (scenario == "direct_fake_tls" || scenario == "dual") {
+			if err := tgwebproxy.ValidateDirectPort(req.DirectPort); err != nil {
+				return desired, err
+			}
+		}
 		desired.DirectPort = req.DirectPort
 		if desired.DirectPort <= 0 {
 			desired.DirectPort = 8443
@@ -218,7 +246,9 @@ func BuildDesiredConfig(ctx context.Context, egressResolver egress.Resolver, req
 		}
 
 		desired.PublicHostname = strings.TrimSpace(req.PublicDomain)
-		if scenario == "cdn_http" || scenario == "dual" {
+		if scenario == "direct_fake_tls" {
+			desired.PublicHostname = ""
+		} else if scenario == "cdn_http" || scenario == "dual" {
 			if desired.PublicHostname == "" {
 				return desired, errors.New("public domain is required for CDN or dual scenario")
 			}

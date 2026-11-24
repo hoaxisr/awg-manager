@@ -427,6 +427,28 @@ func (s *WizardService) verifyTelegram(ctx context.Context, checks *[]Verificati
 		if directHost != "" && net.ParseIP(directHost) == nil {
 			s.verifyDomainDNS(ctx, "tg_mtproto_dns", "tg_mtproto", "DNS прямого адреса MTProto", directHost, checks)
 		}
+
+		if tgwebproxy.IsDirectWANPortOpen(directPort) {
+			*checks = append(*checks, VerificationCheck{
+				ID:            "tg_mtproto_wan_firewall",
+				Service:       "tg_mtproto",
+				Title:         "WAN-фаервол для порта MTProto",
+				Status:        CheckStatusOK,
+				Message:       fmt.Sprintf("TCP-порт %d открыт в WAN-фаерволе роутера для входящих подключений MTProto", directPort),
+				TargetAddress: fmt.Sprintf("0.0.0.0:%d", directPort),
+			})
+		} else {
+			*checks = append(*checks, VerificationCheck{
+				ID:            "tg_mtproto_wan_firewall",
+				Service:       "tg_mtproto",
+				Title:         "WAN-фаервол для порта MTProto",
+				Status:        CheckStatusWarning,
+				Category:      VerifyCategoryFirewall,
+				Message:       fmt.Sprintf("TCP-порт %d не обнаружен в правилах WAN-фаервола Keenetic", directPort),
+				Remediation:   "Перепримените настройки в мастере или перезапустите прокси Telegram для автоматического открытия порта.",
+				TargetAddress: fmt.Sprintf("0.0.0.0:%d", directPort),
+			})
+		}
 	}
 
 	// 2. Web connection (CDN / Web Proxy + :9009 dispatcher) — independent from MTProto

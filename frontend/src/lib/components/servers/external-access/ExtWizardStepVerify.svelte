@@ -24,9 +24,12 @@
 		draft: ExternalAccessWizardDraft;
 		applyPhase: 'review' | 'applying' | 'done';
 		isRealityOnly: boolean;
+		isTgDirectOnly: boolean;
 		usesReality: boolean;
 		wantXray: boolean;
 		wantTg: boolean;
+		wantTgDirect: boolean;
+		effectiveTlsDomain: string;
 		keendnsAvailable: boolean;
 		previewKeenDNSFqdn: string;
 		realityState: XrayRealityState | null;
@@ -54,9 +57,12 @@
 		draft = $bindable(),
 		applyPhase,
 		isRealityOnly,
+		isTgDirectOnly,
 		usesReality,
 		wantXray,
 		wantTg,
+		wantTgDirect,
+		effectiveTlsDomain,
 		keendnsAvailable,
 		previewKeenDNSFqdn,
 		realityState,
@@ -96,7 +102,7 @@
 			{m.servers_ext_wiz_s5_desc()}
 		</p>
 
-		{#if !isRealityOnly && draft.keendnsMode === 'create' && keendnsAvailable}
+		{#if !isRealityOnly && !isTgDirectOnly && draft.keendnsMode === 'create' && keendnsAvailable}
 			<div class="keendns-publish-alert">
 				<Globe size={18} class="icon-info-soft" />
 				<div class="publish-alert-body">
@@ -140,6 +146,46 @@
 				<div class="summary-row-item">
 					<span class="sum-label">{m.servers_ext_wiz_s5_firewall()}</span>
 					<span class="sum-val">{m.servers_ext_wiz_s5_firewall_text({ port: realityPort })}</span>
+				</div>
+			{:else if isTgDirectOnly}
+				<div class="summary-row-item">
+					<span class="sum-label">{m.servers_ext_wiz_s5_services()}</span>
+					<span class="sum-val">
+						{m.servers_ext_wiz_s5_svc_tg_mtproto()}
+						{#if draft.vlessInitiallyEnabled}
+							· VLESS {draft.disableOtherService ? m.servers_ext_wiz_s5_will_disable() : m.servers_ext_wiz_s5_stays_on()}
+						{/if}
+					</span>
+				</div>
+				<div class="summary-row-item">
+					<span class="sum-label">{m.servers_ext_wiz_s5_entry()}</span>
+					<span class="sum-val mono">
+						{m.servers_ext_wiz_s5_entry_tg_direct({ port: draft.directPort || 8443 })}
+					</span>
+				</div>
+				<div class="summary-row-item">
+					<span class="sum-label">{m.servers_ext_wiz_s5_tg_direct_addr()}</span>
+					<span class="sum-val mono">{draft.directHost.trim() || '—'}</span>
+				</div>
+				<div class="summary-row-item">
+					<span class="sum-label">{m.servers_ext_wiz_s5_tls_domain()}</span>
+					<span class="sum-val mono">{effectiveTlsDomain}</span>
+				</div>
+				<div class="summary-row-item">
+					<span class="sum-label">{m.servers_ext_wiz_s5_inet_tg()}</span>
+					<span class="sum-val">{formatEgressSummaryText(draft.tgUpstreamDevice)}</span>
+				</div>
+				<div class="summary-row-item">
+					<span class="sum-label">{m.servers_ext_wiz_s5_firewall()}</span>
+					<span class="sum-val">{m.servers_ext_wiz_s5_tg_firewall_text({ port: draft.directPort || 8443 })}</span>
+				</div>
+				<div class="summary-row-item">
+					<span class="sum-label">{m.servers_ext_wiz_s5_restart()}</span>
+					<span class="sum-val">
+						{planRecord?.plan?.restart_required
+							? m.servers_ext_wiz_s5_restart_yes()
+							: m.servers_ext_wiz_s5_restart_no()}
+					</span>
 				</div>
 			{:else}
 			<div class="summary-row-item">
@@ -204,6 +250,14 @@
 			{/if}
 
 			{#if wantTg}
+				{#if wantTgDirect}
+					<div class="summary-row-item">
+						<span class="sum-label">{m.servers_ext_wiz_s5_tg_direct_entry()}</span>
+						<span class="sum-val mono">
+							{formatDomainList(draft.directHost || draft.originHost) || '—'}:{draft.directPort || 8443} {m.servers_ext_wiz_s5_port_auto_open()}
+						</span>
+					</div>
+				{/if}
 				<div class="summary-row-item">
 					<span class="sum-label">{m.servers_ext_wiz_s5_inet_tg()}</span>
 					<span class="sum-val">{formatEgressSummaryText(draft.tgUpstreamDevice)}</span>

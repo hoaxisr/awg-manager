@@ -13,6 +13,7 @@
 		draft: ExternalAccessWizardDraft;
 		realityMode: WizardRealityMode;
 		isRealityOnly: boolean;
+		isTgDirectOnly: boolean;
 		wantXray: boolean;
 		realityPort: number;
 		realityState: XrayRealityState | null;
@@ -23,12 +24,14 @@
 		keendnsInfo: KeenDNSDiscovery | null;
 		oncheckreality: () => void;
 		oncheckfacts: () => void;
+		onswitchtowebbridge: () => void;
 	}
 
 	let {
 		draft = $bindable(),
 		realityMode = $bindable(),
 		isRealityOnly,
+		isTgDirectOnly,
 		wantXray,
 		realityPort,
 		realityState,
@@ -39,13 +42,102 @@
 		keendnsInfo,
 		oncheckreality,
 		oncheckfacts,
+		onswitchtowebbridge,
 	}: Props = $props();
 </script>
 
 <div class="step-section">
 	<h3 class="step-heading">{m.servers_ext_wiz_s2_heading()}</h3>
 
-	{#if draft.isEditMode && draft.keepExistingConnectionScheme}
+	{#if isTgDirectOnly}
+		<div class="origin-box">
+			<div class="choice-top">
+				<span class="choice-title">{m.servers_ext_wiz_s2_tg_direct_title()}</span>
+				<span class="tech-sub-badge badge-ok">
+					{m.servers_ext_wiz_s2_tg_direct_port_badge({ port: draft.directPort || 8443 })}
+				</span>
+			</div>
+			<div class="choice-text">
+				{m.servers_ext_wiz_s2_tg_direct_desc()}
+			</div>
+		</div>
+
+		<div class="origin-box">
+			<div class="question-header-row">
+				<span class="field-label">{m.servers_ext_wiz_s2_q_tg_white_ip()}</span>
+				<Button
+					variant="secondary"
+					size="sm"
+					onclick={() => {
+						oncheckreality();
+						oncheckfacts();
+					}}
+					disabled={checkingFacts || realityNetChecking}
+				>
+					<RefreshCw size={13} class="mr-1" />
+					{checkingFacts || realityNetChecking ? m.servers_wizard_checks_running() : m.common_check()}
+				</Button>
+			</div>
+
+			<div
+				class="reality-wan-box"
+				class:ok={realityState?.network ? realityWhiteIP : Boolean(keendnsInfo?.wan_ip && !keendnsInfo.wan_ip_private)}
+				class:warn={realityState?.network ? !realityWhiteIP : Boolean(keendnsInfo?.wan_ip_private)}
+			>
+				{#if realityState?.network}
+					{#if realityWhiteIP}
+						<CheckCircle2 size={15} class="icon-success-soft" />
+						<span>
+							{m.servers_ext_wiz_s2_tg_ip_confirmed()} <strong class="mono">{realityState.network.external_ip || realityState.network.wan_address}</strong>
+							{realityState.network.keendns_domain ? ` · ${m.servers_ext_wiz_s2_tg_direct_domain_also({ domain: realityState.network.keendns_domain })}` : ''}
+						</span>
+					{:else}
+						<AlertTriangle size={15} class="icon-warning-soft" />
+						<div>
+							<span>
+								{m.servers_ext_wiz_s2_tg_ip_not_found({ reason: realityState.network.reason || m.servers_ext_wiz_s2_tg_ip_cgnat_reason() })}
+							</span>
+							<div style="margin-top: 6px;">
+								<button
+									type="button"
+									class="link-btn"
+									onclick={onswitchtowebbridge}
+								>
+									{m.servers_ext_wiz_s2_tg_switch_web()}
+								</button>
+							</div>
+						</div>
+					{/if}
+				{:else if keendnsInfo?.wan_ip}
+					{#if !keendnsInfo.wan_ip_private}
+						<CheckCircle2 size={15} class="icon-success-soft" />
+						<span>
+							{m.servers_ext_wiz_s2_tg_wan_public()} <strong class="mono">{keendnsInfo.wan_ip}</strong>
+						</span>
+					{:else}
+						<AlertTriangle size={15} class="icon-warning-soft" />
+						<div>
+							<span>
+								{m.servers_ext_wiz_s2_tg_wan_cgnat_before()}<strong class="mono">{keendnsInfo.wan_ip}</strong>{m.servers_ext_wiz_s2_tg_wan_cgnat_after()}
+							</span>
+							<div style="margin-top: 6px;">
+								<button
+									type="button"
+									class="link-btn"
+									onclick={onswitchtowebbridge}
+								>
+									{m.servers_ext_wiz_s2_tg_switch_web()}
+								</button>
+							</div>
+						</div>
+					{/if}
+				{:else}
+					<AlertTriangle size={15} class="icon-warning-soft" />
+					<span>{m.servers_ext_wiz_s2_ip_unchecked()}</span>
+				{/if}
+			</div>
+		</div>
+	{:else if draft.isEditMode && draft.keepExistingConnectionScheme}
 		<div class="saved-scheme-card">
 			<div class="saved-scheme-top">
 				<div class="saved-scheme-badge">

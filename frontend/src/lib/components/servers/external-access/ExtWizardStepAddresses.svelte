@@ -6,17 +6,22 @@
 	import type { ExternalAccessWizardDraft, validateKeenDNSLabelClient } from './externalAccessModel';
 	import KeenDnsAddressBox from './KeenDnsAddressBox.svelte';
 	import RealityFields from '../reality/RealityFields.svelte';
-	import { ChevronDown, ChevronUp } from 'lucide-svelte';
+	import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-svelte';
 
 	type KeenDNSMode = 'manual' | 'existing' | 'create';
 
 	interface Props {
 		draft: ExternalAccessWizardDraft;
 		isRealityOnly: boolean;
+		isTgDirectOnly: boolean;
 		usesReality: boolean;
 		wantXray: boolean;
 		wantTgWeb: boolean;
 		wantTgDirect: boolean;
+		detectedMtprotoWhiteIP: string;
+		keenDNSBaseDomain: string;
+		keenDNSBaseIsDirect: boolean;
+		detectedMtprotoDirectDomain: string;
 		keendnsInfo: KeenDNSDiscovery | null;
 		keendnsAvailable: boolean;
 		keendnsValidation: ReturnType<typeof validateKeenDNSLabelClient>;
@@ -38,10 +43,15 @@
 	let {
 		draft = $bindable(),
 		isRealityOnly,
+		isTgDirectOnly,
 		usesReality,
 		wantXray,
 		wantTgWeb,
 		wantTgDirect,
+		detectedMtprotoWhiteIP,
+		keenDNSBaseDomain,
+		keenDNSBaseIsDirect,
+		detectedMtprotoDirectDomain,
 		keendnsInfo,
 		keendnsAvailable,
 		keendnsValidation,
@@ -85,6 +95,104 @@
 				bind:publicHost={realityPublicHost}
 				onrefreshed={(fresh) => (realityState = fresh)}
 			/>
+		</div>
+	{:else if isTgDirectOnly}
+		<p class="step-desc">
+			{m.servers_ext_wiz_s3_tg_only_desc()}
+		</p>
+		<div class="origin-box">
+			<div class="origin-header-row">
+				<span class="origin-title">{m.servers_ext_wiz_s3_tg_direct_title()}</span>
+				{#if keenDNSBaseDomain || detectedMtprotoWhiteIP}
+					<div class="pills-row">
+						{#if keenDNSBaseDomain}
+							<button
+								type="button"
+								class="pill-btn"
+								class:active={draft.directHost.trim().toLowerCase() === keenDNSBaseDomain.toLowerCase()}
+								onclick={() => (draft.directHost = keenDNSBaseDomain)}
+							>
+								{m.servers_ext_wiz_s3_tg_3rd_domain_pill({ domain: keenDNSBaseDomain })}{keenDNSBaseIsDirect ? '' : ` ${m.servers_ext_wiz_s3_tg_cloud_suffix()}`}
+							</button>
+						{/if}
+						{#if detectedMtprotoWhiteIP}
+							<button
+								type="button"
+								class="pill-btn"
+								class:active={draft.directHost.trim() === detectedMtprotoWhiteIP}
+								onclick={() => (draft.directHost = detectedMtprotoWhiteIP)}
+							>
+								{m.servers_ext_wiz_s3_tg_white_ip_pill({ ip: detectedMtprotoWhiteIP })}
+							</button>
+						{/if}
+					</div>
+				{/if}
+			</div>
+			<div class="form-grid-2">
+				<div class="field-block">
+					<label class="field-label" for="wiz-direct-host-only">
+						{m.servers_ext_wiz_s3_tg_direct_host_label()}
+					</label>
+					<input
+						id="wiz-direct-host-only"
+						type="text"
+						class="text-input mono"
+						bind:value={draft.directHost}
+						placeholder={detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || m.servers_ext_wiz_s3_tg_direct_host_ph()}
+					/>
+					{#if keenDNSBaseDomain && !keenDNSBaseIsDirect}
+						<div class="scheme-warn-note" style="margin-top: 2px;">
+							<AlertTriangle size={14} />
+							<span>
+								{m.servers_ext_wiz_s3_tg_cloud_warn_before()} <strong class="mono">{keenDNSBaseDomain}</strong> {m.servers_ext_wiz_s3_tg_cloud_warn_after()}
+							</span>
+						</div>
+					{/if}
+					<span class="field-hint">
+						{m.servers_ext_wiz_s3_tg_direct_only_hint()}
+					</span>
+				</div>
+
+				<div class="field-block">
+					<label class="field-label" for="wiz-tls-preset-only">
+						{m.servers_ext_wiz_s3_tls_domain()}
+					</label>
+					<select id="wiz-tls-preset-only" class="select-input" bind:value={draft.tlsPreset}>
+						{#each TLS_SNI_PRESETS as p (p.domain)}
+							<option value={p.domain}>{p.label}</option>
+						{/each}
+						<option value="__custom__">{m.servers_ext_wiz_s3_tls_custom()}</option>
+					</select>
+					{#if draft.tlsPreset === '__custom__'}
+						<input
+							type="text"
+							class="text-input mono"
+							style="margin-top: 6px;"
+							bind:value={draft.customTlsDomain}
+							placeholder="example.com"
+						/>
+					{/if}
+				</div>
+			</div>
+
+			<div class="form-grid-2" style="margin-top: 4px;">
+				<div class="field-block">
+					<label class="field-label" for="wiz-direct-port-only">
+						{m.servers_ext_wiz_s3_tg_only_port_label()}
+					</label>
+					<input
+						id="wiz-direct-port-only"
+						type="number"
+						min="1024"
+						max="65535"
+						class="text-input mono"
+						bind:value={draft.directPort}
+					/>
+					<span class="field-hint">
+						{m.servers_ext_wiz_s3_tg_only_port_hint()}
+					</span>
+				</div>
+			</div>
 		</div>
 	{:else}
 	{#if draft.connectionWay === 'direct'}
@@ -224,7 +332,33 @@
 
 	{#if wantTgDirect}
 		<div class="origin-box">
-			<div class="origin-title">{m.servers_ext_wiz_s3_tg_direct_title()}</div>
+			<div class="origin-header-row">
+				<span class="origin-title">{m.servers_ext_wiz_s3_tg_direct_title()}</span>
+				{#if keenDNSBaseDomain || detectedMtprotoWhiteIP}
+					<div class="pills-row">
+						{#if keenDNSBaseDomain}
+							<button
+								type="button"
+								class="pill-btn"
+								class:active={draft.directHost.trim().toLowerCase() === keenDNSBaseDomain.toLowerCase()}
+								onclick={() => (draft.directHost = keenDNSBaseDomain)}
+							>
+								{m.servers_ext_wiz_s3_tg_3rd_domain_pill({ domain: keenDNSBaseDomain })}{keenDNSBaseIsDirect ? '' : ` ${m.servers_ext_wiz_s3_tg_cloud_suffix()}`}
+							</button>
+						{/if}
+						{#if detectedMtprotoWhiteIP}
+							<button
+								type="button"
+								class="pill-btn"
+								class:active={draft.directHost.trim() === detectedMtprotoWhiteIP}
+								onclick={() => (draft.directHost = detectedMtprotoWhiteIP)}
+							>
+								{m.servers_ext_wiz_s3_tg_white_ip_pill({ ip: detectedMtprotoWhiteIP })}
+							</button>
+						{/if}
+					</div>
+				{/if}
+			</div>
 			<div class="form-grid-2">
 				<div class="field-block">
 					<label class="field-label" for="wiz-direct-host">
@@ -235,8 +369,16 @@
 						type="text"
 						class="text-input mono"
 						bind:value={draft.directHost}
-						placeholder={draft.originHost || draft.publicDomain || 'router.example.com'}
+						placeholder={detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || draft.originHost || draft.publicDomain || 'router.example.com'}
 					/>
+					{#if keenDNSBaseDomain && !keenDNSBaseIsDirect}
+						<div class="scheme-warn-note" style="margin-top: 2px;">
+							<AlertTriangle size={14} />
+							<span>
+								{m.servers_ext_wiz_s3_tg_cloud_warn_before()} <strong class="mono">{keenDNSBaseDomain}</strong> {m.servers_ext_wiz_s3_tg_cloud_warn_after()}
+							</span>
+						</div>
+					{/if}
 					<span class="field-hint">
 						{m.servers_ext_wiz_s3_direct_host_hint()}
 					</span>
@@ -337,6 +479,47 @@
 </div>
 
 <style>
+	.origin-header-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+
+	.pills-row {
+		display: flex;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+
+	.pill-btn {
+		display: inline-flex;
+		align-items: center;
+		padding: 5px 10px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-secondary);
+		color: var(--color-text-secondary);
+		font-size: 12px;
+		cursor: pointer;
+	}
+
+	.pill-btn.active {
+		border-color: var(--color-accent-border);
+		background: var(--color-accent-tint);
+		color: var(--color-accent);
+		font-weight: 600;
+	}
+
+	.scheme-warn-note {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 12px;
+		color: var(--color-warning);
+	}
+
 	.advanced-box {
 		padding: 12px;
 		border-radius: var(--radius-sm);
