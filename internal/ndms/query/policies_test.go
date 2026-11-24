@@ -169,3 +169,19 @@ func TestPolicyIndex(t *testing.T) {
 		t.Error("all custom names share the same sentinel index")
 	}
 }
+
+func TestPolicyStore_RCOrderKeepsResponseOrder(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON(policiesPath, `{"Policy7": {"description": "dup"}, "custom": {}, "Policy0": {"description": "dup"}}`)
+	got, err := NewPolicyStore(fg, NopLogger()).List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	order := map[string]int{}
+	for _, p := range got {
+		order[p.Name] = p.RCOrder
+	}
+	if len(order) != 3 || order["Policy7"] != 0 || order["custom"] != 1 || order["Policy0"] != 2 {
+		t.Fatalf("RCOrder = %v", order)
+	}
+}

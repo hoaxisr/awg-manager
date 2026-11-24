@@ -18,6 +18,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -661,6 +662,7 @@ func (a *app) setupFirc() {
 
 	a.fircOp = firc.NewOperator(firc.Options{
 		Logger:      slog.Default().With("component", "firc"),
+		AppLog:      a.loggingService,
 		ConfigDir:   configDir,
 		InboundPort: firc.DefaultMixedInboundPort,
 	})
@@ -680,6 +682,7 @@ func (a *app) setupFirc() {
 		a.syncRouterSettingsFromFircExt(ext)
 	})
 	a.fircOp.SetWGServersProvider(a.listDynamicFircWGServers)
+	a.fircOp.SetRouterPoliciesProvider(a.fircRouterPolicies)
 	a.fircOp.SetServerStatusCallbacks(
 		func() bool {
 			if a.vlessServerService == nil {
@@ -1014,6 +1017,47 @@ func (a *app) listDynamicFircWGServersWithStatus(ctx context.Context) ([]firc.Dy
 		})
 	}
 	return out, ndmsListOK
+}
+
+// fircRouterPolicies собирает политики роутера для разбора исключений групп FIRC.
+// Исключение снимается безвозвратно, поэтому чтение мимо кэша (Fetch), а любой
+// отказ — «данных нет».
+func (a *app) fircRouterPolicies(ctx context.Context) (firc.RouterPolicies, bool) {
+	if a.ndmsQueries == nil || a.ndmsQueries.Policies == nil || a.ndmsQueries.RunningConfig == nil || a.proxyStore == nil {
+		return firc.RouterPolicies{}, false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	policies, err := a.ndmsQueries.Policies.Fetch(ctx)
+	if err != nil {
+		return firc.RouterPolicies{}, false
+	}
+	lines, err := a.ndmsQueries.RunningConfig.Fetch(ctx)
+	if err != nil {
+		return firc.RouterPolicies{}, false
+	}
+	st, err := a.proxyStore.Load()
+	if err != nil {
+		return firc.RouterPolicies{}, false
+	}
+
+	var rp firc.RouterPolicies
+	rp.Interfaces, rp.Hosts = ndmsquery.HotspotPolicies(lines)
+	policies = slices.Clone(policies) // срез общий с кэшем
+	slices.SortFunc(policies, func(x, y ndms.Policy) int { return x.RCOrder - y.RCOrder })
+	for _, p := range policies {
+		rp.Policies = append(rp.Policies, firc.RouterPolicy{Name: p.Name, Description: p.Description})
+	}
+	for _, rec := range st.Records {
+		if rec.WdttServer == nil {
+			continue
+		}
+		rp.WDTT = append(rp.WDTT, firc.WDTTServerPolicy{
+			Policy:     rec.WdttServer.Policy,
+			Interfaces: []string{rec.WdttServer.NdmsIface, rec.WdttServer.RawNdmsIface},
+		})
+	}
+	return rp, true
 }
 
 func (a *app) migrateLegacyFircServerRouting(ctx context.Context) {

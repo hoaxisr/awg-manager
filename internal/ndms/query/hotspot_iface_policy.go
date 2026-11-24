@@ -12,6 +12,16 @@ func (s *RunningConfigStore) GetInterfaceHotspotPolicy(ctx context.Context, ifac
 	if err != nil {
 		return "", err
 	}
+	ifaces, _ := HotspotPolicies(lines)
+	if p, ok := ifaces[iface]; ok {
+		return p, nil
+	}
+	return "none", nil
+}
+
+// HotspotPolicies — политики блока `ip hotspot`: интерфейсов и хостов (по MAC).
+func HotspotPolicies(lines []string) (ifaces, hosts map[string]string) {
+	ifaces, hosts = map[string]string{}, map[string]string{}
 	inHotspot := false
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -25,15 +35,15 @@ func (s *RunningConfigStore) GetInterfaceHotspotPolicy(ctx context.Context, ifac
 		if trimmed == "!" {
 			break
 		}
-		if !strings.HasPrefix(trimmed, "policy ") {
-			continue
-		}
 		parts := strings.Fields(trimmed)
-		// policy <interface> <access|policyName>
-		if len(parts) < 3 || parts[1] != iface {
-			continue
+		switch {
+		case len(parts) >= 3 && parts[0] == "policy": // policy <interface> <access|policyName>
+			if _, seen := ifaces[parts[1]]; !seen {
+				ifaces[parts[1]] = parts[2]
+			}
+		case len(parts) >= 4 && parts[0] == "host" && parts[2] == "policy": // host <mac> policy <policyName>
+			hosts[strings.ToLower(parts[1])] = parts[3]
 		}
-		return parts[2], nil
 	}
-	return "none", nil
+	return ifaces, hosts
 }

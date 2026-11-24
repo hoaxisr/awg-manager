@@ -25,8 +25,7 @@ export function hasPolicyEntry(entries: Iterable<string>, name: string, policies
 
 /**
  * Набор с политикой или без неё. Вернувшаяся политика пишется так, как была записана
- * изначально: бэкенд снимает с deny каноническую запись политики включённого сервера,
- * и замена описания на имя теряла бы исключение при сохранении.
+ * изначально: снял и вернул — не правка.
  */
 export function withPolicyEntry(
 	entries: Set<string>,

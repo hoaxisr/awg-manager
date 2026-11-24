@@ -1004,48 +1004,27 @@ func isKnownManagedServerSubnet(entry string, wgServers []DynamicWGServer) bool 
 	return false
 }
 
-func activeServerDenyExclusionsWithWG(sr ServerRoutingConfig, wantedSubnets []string, wgServers []DynamicWGServer, hasProvider bool) map[string]bool {
-	excl := make(map[string]bool)
-	for _, s := range wantedSubnets {
-		excl[strings.ToLower(strings.TrimSpace(s))] = true
-	}
-	addPolicy := func(p string) {
-		p = strings.ToLower(strings.TrimSpace(p))
-		p = strings.TrimPrefix(p, "policy:")
-		if p == "" || p == "none" {
-			return
-		}
-		excl["policy:"+p] = true
-		excl[p] = true
-	}
-	if sr.IsServerEnabled("wdtt_server") {
-		addPolicy("policy3")
-	}
-	if hasProvider {
-		for _, srv := range matchEnabledWGServers(sr, wgServers) {
-			addPolicy(srv.Policy)
-		}
-	} else if sr.IsServerEnabled("awg_server") || sr.IsServerEnabled("freeturn_server") {
-		addPolicy("policy4")
-	}
-	return excl
-}
-
 // syncGroupsWithExt returns an updated slice of FIRC groups incorporating KeenDNS Cloud
 // and inbound VPN server device subnets, plus a boolean indicating whether any group changed.
 func syncGroupsWithExt(groups []Group, ext ExtConfig) ([]Group, bool) {
-	return syncGroupsWithExtWithWG(groups, ext, nil, false)
+	updated, changed, _ := syncGroupsWithExtWithWG(groups, ext, nil, false, nil)
+	return updated, changed
 }
 
 func (op *Operator) syncGroupsWithExt(ctx context.Context, groups []Group, ext ExtConfig) ([]Group, bool) {
 	wgServers, hasProvider := op.resolveWGServers(ctx)
-	return syncGroupsWithExtWithWG(groups, ext, wgServers, hasProvider)
+	rp := op.routerPoliciesFor(ctx, groups, ext.ServerRouting)
+	updated, changed, denyRules := syncGroupsWithExtWithWG(groups, ext, wgServers, hasProvider, rp)
+	if rp != nil {
+		op.warnKeptServerDenies(updated, denyRules)
+	}
+	return updated, changed
 }
 
-func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicWGServer, hasProvider bool) ([]Group, bool) {
+func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicWGServer, hasProvider bool, rp *RouterPolicies) ([]Group, bool, serverDenyRules) {
 	changed := false
 	wantedSubnets := activeServerSubnetsWithWG(ext.ServerRouting, wgServers, hasProvider)
-	denyExcl := activeServerDenyExclusionsWithWG(ext.ServerRouting, wantedSubnets, wgServers, hasProvider)
+	denyRules := newServerDenyRules(ext.ServerRouting, wantedSubnets, wgServers, rp)
 	kdIfaces := resolveKeenDNSInterfaces(ext)
 	wantKeenDNS := ext.KeenDNSCloud.Enabled && len(kdIfaces) > 0
 
@@ -1097,11 +1076,11 @@ func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicW
 			changed = true
 		}
 
-		// Strip any deny entries that conflict with enabled inbound VPN servers (e.g. Policy3 for WDTT, Policy4 for AWG).
-		if len(g.Devices.Deny) > 0 && len(denyExcl) > 0 {
+		// Strip any deny entries that conflict with enabled inbound VPN servers.
+		if len(g.Devices.Deny) > 0 {
 			var newDeny []string
 			for _, entry := range g.Devices.Deny {
-				if !denyExcl[strings.ToLower(strings.TrimSpace(entry))] {
+				if strip, _, _ := denyRules.verdict(entry); !strip {
 					newDeny = append(newDeny, entry)
 				}
 			}
@@ -1139,7 +1118,7 @@ func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicW
 			changed = true
 		}
 	}
-	return filtered, changed
+	return filtered, changed, denyRules
 }
 
 func equalStringSlices(a, b []string) bool {

@@ -23,6 +23,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -52,6 +53,7 @@ type BreakGlassOptions struct {
 // Options configures the firc Operator.
 type Options struct {
 	Logger         *slog.Logger
+	AppLog         logging.AppLogger
 	ConfigDir      string
 	SocketPath     string
 	FircdBinary    string
@@ -249,6 +251,9 @@ type Operator struct {
 	openfluxStatusFn         func() (bool, string)
 	wgServersProvider        func(ctx context.Context) []DynamicWGServer
 	lastWGServers            []DynamicWGServer
+	routerPoliciesProvider   func(ctx context.Context) (RouterPolicies, bool)
+	lastKeptDenies           []string
+	appLog                   *logging.ScopedLogger
 	singboxBinary            string
 	singboxCheckFn           func(ctx context.Context, stagedConfigDir string) error
 	singboxStageCopyHook     func(relPath string) error
@@ -312,6 +317,7 @@ func NewOperator(opts Options) *Operator {
 	}
 	op := &Operator{
 		log:            log,
+		appLog:         logging.NewScopedLogger(opts.AppLog, logging.GroupRouting, logging.SubAccessPolicy),
 		configDir:      opts.ConfigDir,
 		socketPath:     opts.SocketPath,
 		fircdBinary:    opts.FircdBinary,

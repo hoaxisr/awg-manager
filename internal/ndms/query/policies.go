@@ -1,6 +1,7 @@
 package query
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -64,9 +65,11 @@ func (s *PolicyStore) fetch(ctx context.Context) ([]ndms.Policy, error) {
 	if err := decodeRCMap(body, &raw); err != nil {
 		return nil, fmt.Errorf("fetch policies: %w", err)
 	}
+	order := rcKeyOrder(body)
 	out := make([]ndms.Policy, 0, len(raw))
 	for name, w := range raw {
 		p := ndms.Policy{
+			RCOrder:     order[name],
 			Name:        name,
 			Description: w.Description,
 			Standalone:  parseStandalone(w.Standalone),
@@ -97,6 +100,27 @@ func (s *PolicyStore) fetch(ctx context.Context) ([]ndms.Policy, error) {
 		return out[i].Name < out[j].Name
 	})
 	return out, nil
+}
+
+// rcKeyOrder — место каждого ключа объекта верхнего уровня: map порядка не хранит.
+func rcKeyOrder(body []byte) map[string]int {
+	order := map[string]int{}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return order
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return order
+		}
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return order
+		}
+		order[key.(string)] = len(order)
+	}
+	return order
 }
 
 // PolicyIndex extracts a sort key: PolicyN sorts by number, custom names

@@ -11,6 +11,8 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -226,5 +228,57 @@ func TestSyncFircAndRouterSettings_DynamicPerServerAndLegacyMigration(t *testing
 	}
 	if after.ServerRouting.IsServerEnabled("wg:Wireguard2") {
 		t.Fatalf("expected wg:Wireguard2 disabled after card toggle off, got %v", after.ServerRouting.EnabledServers)
+	}
+}
+
+func TestFircRouterPolicies(t *testing.T) {
+	fg := &stubFircRCIGetter{jsonByPath: map[string]string{
+		"/show/rc/ip/policy": `{"Policy7": {"description": "VPN"}, "Policy1": {"description": "VPN"}}`,
+		"/show/running-config": `{"message":["ip hotspot","    policy OpkgTun17 Policy7",
+			"    host aa:bb:cc:dd:ee:01 policy Policy1","!"]}`,
+	}}
+	a := &app{
+		ndmsQueries: ndmsquery.NewQueries(ndmsquery.Deps{Getter: fg}),
+		proxyStore:  instancestore.New(t.TempDir()),
+	}
+	if _, err := a.proxyStore.Replace(func(st *instancestore.State) error {
+		st.Records = append(st.Records, instancestore.Record{
+			ID: "srv", Kind: instancestore.KindWdttServer, Name: "WDTT",
+			WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000", Policy: "Policy7", NdmsIface: "OpkgTun17", WgIface: "opkgtun17", RawNdmsIface: "OpkgTun18", RawIface: "opkgtun18"},
+		})
+		return nil
+	}); err != nil {
+		t.Fatalf("seed proxy store: %v", err)
+	}
+
+	// Прочитанное заранее не должно подменять свежий ответ роутера.
+	if _, err := a.ndmsQueries.RunningConfig.List(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fg.jsonByPath["/show/running-config"] = `{"message":["ip hotspot","    policy OpkgTun17 Policy7",
+		"    policy Bridge1 Policy7","    host aa:bb:cc:dd:ee:01 policy Policy1","!"]}`
+
+	rp, ok := a.fircRouterPolicies(context.Background())
+	if !ok {
+		t.Fatal("fircRouterPolicies: no data")
+	}
+	if want := []firc.RouterPolicy{{Name: "Policy7", Description: "VPN"}, {Name: "Policy1", Description: "VPN"}}; !slices.Equal(rp.Policies, want) {
+		t.Errorf("policies = %v, want %v (порядок ответа RCI)", rp.Policies, want)
+	}
+	if rp.Interfaces["OpkgTun17"] != "Policy7" || rp.Interfaces["Bridge1"] != "Policy7" || rp.Hosts["aa:bb:cc:dd:ee:01"] != "Policy1" {
+		t.Errorf("members: ifaces=%v hosts=%v", rp.Interfaces, rp.Hosts)
+	}
+	if len(rp.WDTT) != 1 || rp.WDTT[0].Policy != "Policy7" || !slices.Equal(rp.WDTT[0].Interfaces, []string{"OpkgTun17", "OpkgTun18"}) {
+		t.Errorf("wdtt = %+v", rp.WDTT)
+	}
+
+	// Кэш политик общий: сортировка снимка не должна его переставить.
+	if cached, err := a.ndmsQueries.Policies.List(context.Background()); err != nil || cached[0].Name != "Policy1" {
+		t.Errorf("cached policies reordered: %v (err=%v)", cached, err)
+	}
+
+	delete(fg.jsonByPath, "/show/running-config")
+	if _, ok := a.fircRouterPolicies(context.Background()); ok {
+		t.Error("running-config недоступен — данных нет, а не прежний кэш")
 	}
 }
