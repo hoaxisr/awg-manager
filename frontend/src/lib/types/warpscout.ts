@@ -206,6 +206,7 @@ export interface WarpEngineInfo {
 export interface WarpScoutState {
 	engine: WarpEngineInfo;
 	account: WarpAccount | null;
+	accountKeyInUseBy?: string;
 	hasInnerAccount?: boolean;
 	accountUnreadable: boolean;
 	defaultWan?: string;

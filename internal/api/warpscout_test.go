@@ -1457,19 +1457,31 @@ func TestWarpFallbackClients_DownloaderLeasesAndCancel(t *testing.T) {
 		TransportResolver: fakeWarpDownloaderTransport{port: 1099},
 	})
 
-	origIfaces := listNetInterfaces
-	listNetInterfaces = func() ([]net.Interface, error) { return nil, nil }
-	t.Cleanup(func() { listNetInterfaces = origIfaces })
-
 	clients := WarpFallbackClients(context.Background(), nil, nil, dl)
-	if len(clients) != 3 {
-		t.Fatalf("expected 3 downloader fallback clients (main + 2 extra), got %d", len(clients))
+	if len(clients) != 1 {
+		t.Fatalf("expected strictly 1 configured downloader fallback client (no extra unconfigured outbounds), got %d", len(clients))
 	}
-	for i, c := range clients {
-		if c.Client == nil || c.Close == nil {
-			t.Fatalf("fallback client[%d] missing Client or Close callback: %+v", i, c)
+	if clients[0].Client == nil || clients[0].Close == nil {
+		t.Fatalf("fallback client[0] missing Client or Close callback: %+v", clients[0])
+	}
+	clients[0].Close()
+
+	// Route = direct: must return 0 downloader fallback clients even when extra outbounds exist.
+	dlDirect := downloader.NewService(downloader.Deps{
+		RouteProvider: fakeWarpDownloaderRoute{route: &downloader.Route{Tag: "direct", Kind: "direct"}},
+		Outbounds: fakeWarpDownloaderOutbounds{items: []downloader.Outbound{
+			{Tag: "direct", Kind: "direct", Available: true},
+			{Tag: "vless-eu", Kind: "vless", Available: true},
+		}},
+		TransportResolver: fakeWarpDownloaderTransport{port: 1099},
+	})
+	if got := WarpFallbackClients(context.Background(), nil, nil, dlDirect); len(got) != 0 {
+		for _, c := range got {
+			if c.Close != nil {
+				c.Close()
+			}
 		}
-		c.Close()
+		t.Fatalf("expected 0 fallback clients when download route is direct, got %d", len(got))
 	}
 
 	canceledCtx, cancel := context.WithCancel(context.Background())
@@ -1479,25 +1491,56 @@ func TestWarpFallbackClients_DownloaderLeasesAndCancel(t *testing.T) {
 	}
 }
 
-func TestWarpFallbackClients_TunVless(t *testing.T) {
-	orig := listNetInterfaces
-	listNetInterfaces = func() ([]net.Interface, error) {
-		return []net.Interface{
-			{Name: "tunvless0", Flags: net.FlagUp},
-			{Name: "tunvless1", Flags: 0},
-			{Name: "tun0", Flags: net.FlagUp},
-		}, nil
+func TestWarpFallbackClients_OnlyOneUnprotectedNonWarpTunnel_PreservesBoundDNS(t *testing.T) {
+	ops, _, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"prot1": tunnel.StateRunning,
+		"warp1": tunnel.StateRunning,
+		"stop1": tunnel.StateStopped,
+		"tunA":  tunnel.StateRunning,
+		"tunB":  tunnel.StateRunning,
+	})
+	for _, id := range []string{"prot1", "warp1", "stop1", "tunA", "tunB"} {
+		seedWarpTunnel(t, store, id, "kernel")
+		if err := store.Update(id, func(tun *storage.AWGTunnel) error {
+			tun.Enabled = id != "stop1"
+			if id == "prot1" {
+				tun.Locked = true
+			}
+			if id != "warp1" {
+				tun.Peer.PublicKey = "non-warp-peer"
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	t.Cleanup(func() { listNetInterfaces = orig })
 
-	clients := WarpFallbackClients(context.Background(), nil, nil, nil)
+	clients := WarpFallbackClients(context.Background(), nil, ops, nil)
 	for _, c := range clients {
 		if c.Close != nil {
 			c.Close()
 		}
 	}
 	if len(clients) != 1 || clients[0].Client == nil {
-		t.Fatalf("expected 1 tunvless fallback client, got %+v", clients)
+		t.Fatalf("expected strictly 1 eligible unprotected non-WARP tunnel fallback client, got %+v", clients)
+	}
+
+	// Bound dial wrapper with warpLookupIPAddr == nil preserves hostnames for bound DNS
+	// while still enforcing RemoteAddr policy post-dial.
+	origLookup := warpLookupIPAddr
+	warpLookupIPAddr = nil
+	t.Cleanup(func() { warpLookupIPAddr = origLookup })
+
+	var dialedHost string
+	dial := wrapWarpDialContext(func(_ context.Context, _ string, addr string) (net.Conn, error) {
+		dialedHost = addr
+		return nil, errors.New("dial probed")
+	}, "tunA", warpscout.IsDisallowedRelayIP)
+	if _, err := dial(context.Background(), "tcp", "api.devices.cloudflare.com:443"); err == nil {
+		t.Fatal("expected dial probed error")
+	}
+	if dialedHost != "api.devices.cloudflare.com:443" {
+		t.Fatalf("bound dialer must preserve hostname for bound interface DNS, got %q", dialedHost)
 	}
 }
 
@@ -1597,8 +1640,10 @@ func TestWarpClients_DialGuardBlocksResolvedDisallowedIPs(t *testing.T) {
 			return []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}}, nil
 		case "evil-ll6.test":
 			return []net.IPAddr{{IP: net.ParseIP("fe80::1")}}, nil
-		case "good-local.test":
+		case "evil-loopback.test", "good-local.test":
 			return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+		case "evil-priv.test":
+			return []net.IPAddr{{IP: net.ParseIP("192.168.1.1")}}, nil
 		default:
 			return nil, errors.New("unexpected DNS lookup for " + host)
 		}
@@ -1624,7 +1669,7 @@ func TestWarpClients_DialGuardBlocksResolvedDisallowedIPs(t *testing.T) {
 		t.Fatalf("SOCKS5 proxy resolving to 169.254.169.254 must fail with ErrDisallowedAddress, got %v", err)
 	}
 
-	// 2. WarpHTTPClientFactory and WarpSplitTLSClientFactory block DNS-resolved disallowed IPs.
+	// 2. WarpHTTPClientFactory and WarpSplitTLSClientFactory block link-local, loopback, and RFC1918 relay IPs.
 	directClient, err := WarpHTTPClientFactory("")
 	if err != nil {
 		t.Fatalf("WarpHTTPClientFactory: %v", err)
@@ -1637,32 +1682,36 @@ func TestWarpClients_DialGuardBlocksResolvedDisallowedIPs(t *testing.T) {
 	defer splitClient.CloseIdleConnections()
 
 	for _, c := range []*http.Client{directClient, splitClient} {
-		if _, err := c.Get("https://evil-meta.test/v0a4005/reg"); !errors.Is(err, warpscout.ErrDisallowedAddress) {
-			t.Fatalf("client request to evil-meta.test must fail with ErrDisallowedAddress, got %v", err)
-		}
-		if _, err := c.Get("https://evil-ll6.test/v0a4005/reg"); !errors.Is(err, warpscout.ErrDisallowedAddress) {
-			t.Fatalf("client request to evil-ll6.test must fail with ErrDisallowedAddress, got %v", err)
+		for _, badHost := range []string{"evil-meta.test", "evil-ll6.test", "evil-loopback.test", "evil-priv.test"} {
+			if _, err := c.Get("https://" + badHost + "/v0a4005/reg"); !errors.Is(err, warpscout.ErrDisallowedAddress) {
+				t.Fatalf("client request to %s must fail with ErrDisallowedAddress, got %v", badHost, err)
+			}
 		}
 	}
 
-	// 3. Legitimate hostname resolving to allowed loopback IP succeeds cleanly.
+	// 3. Legitimate local proxy on loopback (e.g. socks5/http proxy) still succeeds cleanly.
 	hits := 0
-	localSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	localProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits++
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer localSrv.Close()
-	_, port, err := net.SplitHostPort(strings.TrimPrefix(localSrv.URL, "http://"))
+	defer localProxy.Close()
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(localProxy.URL, "http://"))
 	if err != nil {
 		t.Fatalf("split local server addr: %v", err)
 	}
-	resp, err := directClient.Get("http://good-local.test:" + port)
+	localProxyClient, err := WarpProxyHTTPClient("http://good-local.test:" + port)
 	if err != nil {
-		t.Fatalf("allowed good-local.test request failed: %v", err)
+		t.Fatalf("WarpProxyHTTPClient(good-local.test) failed: %v", err)
+	}
+	defer localProxyClient.CloseIdleConnections()
+	resp, err := localProxyClient.Get("http://162.159.192.1/test")
+	if err != nil {
+		t.Fatalf("allowed local proxy good-local.test request failed: %v", err)
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || hits != 1 {
-		t.Fatalf("expected 200 OK with 1 hit, got status=%d hits=%d", resp.StatusCode, hits)
+		t.Fatalf("expected 200 OK with 1 hit via local proxy, got status=%d hits=%d", resp.StatusCode, hits)
 	}
 
 	// 4. End-to-end WarpScoutHandler.Register returns 400 INVALID_INPUT, masks proxy password, and skips fallbacks.

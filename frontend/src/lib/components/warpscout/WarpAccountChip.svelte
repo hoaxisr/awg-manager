@@ -2,10 +2,10 @@
 	import { KeyRound, Network, RefreshCcw, SlidersHorizontal, Trash2, UserPlus } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
-	import { Button, ConfirmModal, Input, Modal, SegmentedControl } from '$lib/components/ui';
-	import type { SegmentedOption } from '$lib/components/ui';
+	import { Button, ConfirmModal, Input } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import type { WarpAccount, WarpTunnelRef } from '$lib/types/warpscout';
+	import WarpAccountAltModal from './WarpAccountAltModal.svelte';
 	import WarpChipPopover from './WarpChipPopover.svelte';
 	import WarpIpv4Notice from './WarpIpv4Notice.svelte';
 	import { formatTime, parseTunnelIpv4, shortId, warpErrorMessage } from './warpscoutUi';
@@ -14,10 +14,11 @@
 		account: WarpAccount | null;
 		targets?: WarpTunnelRef[];
 		usedIpv4?: string[];
+		accountKeyInUseBy?: string;
 		onchanged: () => void | Promise<void>;
 	}
 
-	let { account, targets = [], usedIpv4 = [], onchanged }: Props = $props();
+	let { account, targets = [], usedIpv4 = [], accountKeyInUseBy = '', onchanged }: Props = $props();
 
 	let accountBusy = $state(false);
 	let license = $state('');
@@ -27,36 +28,13 @@
 	let confirmDelete = $state(false);
 	let showAltModal = $state(false);
 	let altTab = $state<'import' | 'proxy'>('import');
-	let importRaw = $state('');
-	let proxyUrl = $state('');
-	let relayUrl = $state('');
-	let fileInputEl = $state<HTMLInputElement | null>(null);
 
 	const hasToken = $derived(account?.hasToken !== false);
-	const altTabOptions: SegmentedOption<'import' | 'proxy'>[] = $derived([
-		{ value: 'import', label: m.warpscout_alt_tab_import() },
-		{ value: 'proxy', label: m.warpscout_alt_tab_proxy() },
-	]);
+	const keyLocked = $derived(!!accountKeyInUseBy.trim());
 
 	function openAltModal(tab: 'import' | 'proxy' = 'import'): void {
 		altTab = tab;
 		showAltModal = true;
-	}
-
-	function closeAltModal(): void {
-		if (accountBusy) return;
-		showAltModal = false;
-	}
-
-	async function onFileSelected(e: Event): Promise<void> {
-		const input = e.currentTarget as HTMLInputElement;
-		const file = input.files?.[0];
-		if (!file) return;
-		try {
-			importRaw = await file.text();
-		} finally {
-			input.value = '';
-		}
 	}
 
 	$effect(() => {
@@ -99,43 +77,6 @@
 			await api.warpscoutRegister();
 			notifications.success(m.warpscout_acct_registered());
 			confirmReissue = false;
-			await onchanged();
-		} catch (e) {
-			notifications.error(warpErrorMessage(e));
-		} finally {
-			accountBusy = false;
-		}
-	}
-
-	async function submitImport(): Promise<void> {
-		const raw = importRaw.trim();
-		if (!raw) return;
-		accountBusy = true;
-		try {
-			await api.warpscoutImportAccount(raw);
-			notifications.success(m.warpscout_acct_imported_ok());
-			importRaw = '';
-			showAltModal = false;
-			await onchanged();
-		} catch (e) {
-			notifications.error(warpErrorMessage(e));
-		} finally {
-			accountBusy = false;
-		}
-	}
-
-	async function submitProxyRegister(): Promise<void> {
-		const p = proxyUrl.trim();
-		const r = relayUrl.trim();
-		if (!p && !r) return;
-		accountBusy = true;
-		try {
-			await api.warpscoutRegister({
-				proxyUrl: p || undefined,
-				relayUrl: r || undefined,
-			});
-			notifications.success(m.warpscout_acct_registered());
-			showAltModal = false;
 			await onchanged();
 		} catch (e) {
 			notifications.error(warpErrorMessage(e));
@@ -228,6 +169,12 @@
 				</div>
 			</div>
 
+			{#if keyLocked}
+				<p class="key-in-use-warn">
+					{m.warpscout_acct_key_in_use_warn({ name: accountKeyInUseBy })}
+				</p>
+			{/if}
+
 			<!-- IPv4 туннеля: можно сменить до создания туннеля или для сканера -->
 			<form class="lic-box" onsubmit={saveAccountAddress}>
 				<label class="lic-label" for="warp-acct-ipv4">
@@ -311,7 +258,7 @@
 				<Button
 					size="sm"
 					variant="ghost"
-					disabled={accountBusy}
+					disabled={accountBusy || keyLocked}
 					onclick={() => {
 						close();
 						confirmReissue = true;
@@ -323,7 +270,7 @@
 				<Button
 					size="sm"
 					variant="outline-danger"
-					disabled={accountBusy}
+					disabled={accountBusy || keyLocked}
 					onclick={() => {
 						close();
 						confirmDelete = true;
@@ -337,84 +284,14 @@
 	</WarpChipPopover>
 {/if}
 
-<Modal open={showAltModal} title={m.warpscout_alt_modal_title()} size="md" onclose={closeAltModal}>
-	<div class="alt-modal-body">
-		<SegmentedControl
-			value={altTab}
-			options={altTabOptions}
-			ariaLabel={m.warpscout_alt_modal_title()}
-			onchange={(v) => (altTab = v)}
-		/>
-
-		{#if altTab === 'import'}
-			<p class="alt-hint">{m.warpscout_import_hint()}</p>
-			<input
-				bind:this={fileInputEl}
-				type="file"
-				accept=".json,.toml,.conf,.txt"
-				class="file-input-hidden"
-				onchange={onFileSelected}
-			/>
-			<div class="alt-head-row">
-				<label class="lic-label" for="warp-import-raw">{m.warpscout_import_paste_label()}</label>
-				<Button size="sm" variant="ghost" disabled={accountBusy} onclick={() => fileInputEl?.click()}>
-					{m.warpscout_import_file_btn()}
-				</Button>
-			</div>
-			<textarea
-				id="warp-import-raw"
-				class="alt-textarea mono"
-				rows={7}
-				placeholder={'[Interface]\nPrivateKey = ...\nAddress = 172.16.0.2/32'}
-				bind:value={importRaw}
-			></textarea>
-		{:else}
-			<p class="alt-hint">{m.warpscout_proxy_hint()}</p>
-			<div class="alt-field">
-				<label class="lic-label" for="warp-proxy-url">{m.warpscout_proxy_url_label()}</label>
-				<Input
-					id="warp-proxy-url"
-					type="text"
-					placeholder="socks5://127.0.0.1:1080"
-					autocomplete="off"
-					fullWidth
-					bind:value={proxyUrl}
-				/>
-			</div>
-			<div class="alt-field">
-				<label class="lic-label" for="warp-relay-url">{m.warpscout_relay_url_label()}</label>
-				<Input
-					id="warp-relay-url"
-					type="text"
-					placeholder="https://warp-relay.example.com"
-					autocomplete="off"
-					fullWidth
-					bind:value={relayUrl}
-				/>
-			</div>
-		{/if}
-	</div>
-
-	{#snippet actions()}
-		<Button variant="ghost" onclick={closeAltModal} disabled={accountBusy}>
-			{m.common_cancel()}
-		</Button>
-		{#if altTab === 'import'}
-			<Button variant="primary" loading={accountBusy} disabled={!importRaw.trim()} onclick={submitImport}>
-				{m.warpscout_import_btn()}
-			</Button>
-		{:else}
-			<Button
-				variant="primary"
-				loading={accountBusy}
-				disabled={!proxyUrl.trim() && !relayUrl.trim()}
-				onclick={submitProxyRegister}
-			>
-				{m.warpscout_proxy_register_btn()}
-			</Button>
-		{/if}
-	{/snippet}
-</Modal>
+<WarpAccountAltModal
+	open={showAltModal}
+	initialTab={altTab}
+	hasExistingAccount={!!account}
+	{accountKeyInUseBy}
+	onclose={() => (showAltModal = false)}
+	{onchanged}
+/>
 
 <ConfirmModal
 	open={confirmReissue}
@@ -508,6 +385,16 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+	.key-in-use-warn {
+		margin: 0;
+		padding: 0.45rem 0.6rem;
+		border-radius: var(--radius-sm);
+		font-size: 0.74rem;
+		line-height: 1.4;
+		color: var(--color-warning);
+		background: var(--color-warning-tint);
+		border: 1px solid var(--color-warning-border);
+	}
 	.lic-box {
 		display: flex;
 		flex-direction: column;
@@ -528,43 +415,11 @@
 		align-items: center;
 		gap: 0.4rem;
 	}
-	.no-token-hint,
-	.alt-hint {
+	.no-token-hint {
 		margin: 0;
 		font-size: 0.75rem;
 		line-height: 1.4;
 		color: var(--color-text-muted);
-	}
-	.alt-modal-body {
-		display: flex;
-		flex-direction: column;
-		gap: 0.7rem;
-	}
-	.alt-head-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.5rem;
-	}
-	.alt-field {
-		display: flex;
-		flex-direction: column;
-		gap: 0.3rem;
-	}
-	.alt-textarea {
-		width: 100%;
-		padding: 0.45rem 0.55rem;
-		font-size: 0.76rem;
-		line-height: 1.45;
-		color: var(--color-text-primary);
-		background: var(--color-bg-primary);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		resize: vertical;
-		box-sizing: border-box;
-	}
-	.file-input-hidden {
-		display: none;
 	}
 	.mono {
 		font-family: var(--font-mono);

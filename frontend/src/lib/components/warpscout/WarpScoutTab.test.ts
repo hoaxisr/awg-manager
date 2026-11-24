@@ -24,6 +24,7 @@ const api = vi.hoisted(() => ({
 	warpscoutSaveConfig: vi.fn(),
 	warpscoutRegister: vi.fn(),
 	warpscoutImportAccount: vi.fn(),
+	warpscoutDeleteAccount: vi.fn(),
 	warpscoutSetAddress: vi.fn(),
 	warpscoutFindJunkStart: vi.fn(),
 	warpscoutFindJunkStop: vi.fn(),
@@ -693,7 +694,7 @@ describe('WarpScoutTab', () => {
 		expect(api.warpscoutImportAccount).toHaveBeenCalledWith('[Interface]\nPrivateKey = privkey\nAddress = 172.16.0.2/32');
 	});
 
-	it('allows registering through custom proxyUrl and relayUrl options', async () => {
+	it('allows registering through custom proxyUrl and relayUrl options, warns on relay, and clears credentials', async () => {
 		const initial = state();
 		api.warpscoutRegister.mockResolvedValue({
 			id: 'reg-1',
@@ -714,9 +715,10 @@ describe('WarpScoutTab', () => {
 		const proxyTabBtn = await screen.findByRole('button', { name: 'Прокси / Relay' });
 		await fireEvent.click(proxyTabBtn);
 
+		await screen.findByText(/сторонний HTTP-relay видит запросы регистрации/i);
 		const proxyInput = await waitFor(() => view.container.ownerDocument.querySelector<HTMLInputElement>('#warp-proxy-url')!);
 		const relayInput = view.container.ownerDocument.querySelector<HTMLInputElement>('#warp-relay-url')!;
-		await fireEvent.input(proxyInput, { target: { value: 'socks5://127.0.0.1:1080' } });
+		await fireEvent.input(proxyInput, { target: { value: 'socks5://alice:topsecret@127.0.0.1:1080' } });
 		await fireEvent.input(relayInput, { target: { value: 'https://warp-relay.example.com' } });
 
 		const regBtns = await screen.findAllByRole('button', { name: 'Зарегистрировать' });
@@ -725,9 +727,61 @@ describe('WarpScoutTab', () => {
 
 		await waitFor(() => expect(api.warpscoutRegister).toHaveBeenCalledTimes(1));
 		expect(api.warpscoutRegister).toHaveBeenCalledWith({
-			proxyUrl: 'socks5://127.0.0.1:1080',
+			proxyUrl: 'socks5://alice:topsecret@127.0.0.1:1080',
 			relayUrl: 'https://warp-relay.example.com',
 		});
+
+		// Reopening modal shows credentials cleared.
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импорт / прокси' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Прокси / Relay' }));
+		const reopenedProxy = await waitFor(() => view.container.ownerDocument.querySelector<HTMLInputElement>('#warp-proxy-url')!);
+		const reopenedRelay = view.container.ownerDocument.querySelector<HTMLInputElement>('#warp-relay-url')!;
+		expect(reopenedProxy.value).toBe('');
+		expect(reopenedRelay.value).toBe('');
+	});
+
+	it('requires confirmation before overwriting an existing account on import', async () => {
+		const initial = acctState();
+		api.warpscoutImportAccount.mockResolvedValue({
+			...initial.account!,
+			id: 'imported-new',
+			accountType: 'imported',
+			hasToken: false,
+			imported: true,
+		});
+		const view = await mount(initial);
+
+		await fireEvent.click(chip(view.container, 0));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импорт / прокси' }));
+
+		const textarea = await waitFor(() => view.container.ownerDocument.querySelector<HTMLTextAreaElement>('#warp-import-raw')!);
+		await fireEvent.input(textarea, {
+			target: { value: '[Interface]\nPrivateKey = privnew\nAddress = 172.16.0.9/32\n' },
+		});
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импортировать' }));
+		expect(api.warpscoutImportAccount).not.toHaveBeenCalled();
+		await screen.findByText('Заменить текущую учётную запись WARP?');
+
+		const importButtons = await screen.findAllByRole('button', { name: 'Импортировать' });
+		await fireEvent.click(importButtons.at(-1)!);
+		await waitFor(() => expect(api.warpscoutImportAccount).toHaveBeenCalledTimes(1));
+	});
+
+	it('locks reissue and delete controls when primary account key is in use by a live tunnel', async () => {
+		const initial: WarpScoutState = {
+			...acctState(),
+			accountKeyInUseBy: 'WARP Live',
+		};
+		const { container } = await mount(initial);
+
+		await fireEvent.click(chip(container, 0));
+		await screen.findByText(/Ключ этого аккаунта используется живым туннелем «WARP Live»/);
+
+		const reissueBtn = await screen.findByRole('button', { name: 'Перевыпустить' });
+		const deleteBtn = await screen.findByRole('button', { name: 'Удалить' });
+		expect(reissueBtn.hasAttribute('disabled')).toBe(true);
+		expect(deleteBtn.hasAttribute('disabled')).toBe(true);
 	});
 
 	it('hides WARP+ license binding and shows no-token hint for imported tokenless account', async () => {

@@ -1293,8 +1293,11 @@ func defaultRotateKernelPort(ctx context.Context, iface string) error {
 // warpLookupIPAddr переопределяется только в тестах для подмены DNS-резолвера.
 var warpLookupIPAddr warpscout.LookupIPAddrFunc
 
-func wrapWarpDialContext(base warpscout.DialContextFunc) warpscout.DialContextFunc {
-	return warpscout.NewGuardedDialContextWithLookup(base, warpLookupIPAddr)
+func wrapWarpDialContext(base warpscout.DialContextFunc, boundIface string, disallow warpscout.IPDisallowFunc) warpscout.DialContextFunc {
+	if strings.TrimSpace(boundIface) != "" && warpLookupIPAddr == nil {
+		return warpscout.NewPostDialGuardedDialContext(base, disallow)
+	}
+	return warpscout.NewGuardedDialContextWithPolicy(base, warpLookupIPAddr, disallow)
 }
 
 // WarpHTTPClientFactory — клиент Cloudflare API с прямым выходом через WAN.
@@ -1305,10 +1308,10 @@ func WarpHTTPClientFactory(wanIface string) (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	tr.DialContext = wrapWarpDialContext(tr.DialContext)
-	tr.TLSHandshakeTimeout = 6 * time.Second
-	tr.ResponseHeaderTimeout = 10 * time.Second
-	return &http.Client{Transport: tr, Timeout: 12 * time.Second}, nil
+	tr.DialContext = wrapWarpDialContext(tr.DialContext, wanIface, warpscout.IsDisallowedRelayIP)
+	tr.TLSHandshakeTimeout = 5 * time.Second
+	tr.ResponseHeaderTimeout = 8 * time.Second
+	return &http.Client{Transport: tr, Timeout: 10 * time.Second}, nil
 }
 
 // WarpSplitTLSClientFactory — прямой WAN-клиент с фрагментацией TLS ClientHello
@@ -1322,10 +1325,10 @@ func WarpSplitTLSClientFactory(wanIface string) (*http.Client, error) {
 	if baseDial == nil {
 		baseDial = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	}
-	tr.DialContext = warpscout.NewSplitTLSDialer(wrapWarpDialContext(baseDial))
-	tr.TLSHandshakeTimeout = 6 * time.Second
-	tr.ResponseHeaderTimeout = 10 * time.Second
-	return &http.Client{Transport: tr, Timeout: 12 * time.Second}, nil
+	tr.DialContext = warpscout.NewSplitTLSDialer(wrapWarpDialContext(baseDial, wanIface, warpscout.IsDisallowedRelayIP))
+	tr.TLSHandshakeTimeout = 5 * time.Second
+	tr.ResponseHeaderTimeout = 8 * time.Second
+	return &http.Client{Transport: tr, Timeout: 10 * time.Second}, nil
 }
 
 // WarpProxyHTTPClient создаёт HTTP-клиента через указанный пользователем прокси
@@ -1348,20 +1351,17 @@ func WarpProxyHTTPClient(proxyURL string) (*http.Client, error) {
 	if err != nil {
 		return nil, warpscout.SanitizeProxyError(fmt.Errorf("%w: некорректный URL прокси: %v", warpscout.ErrInvalidInput, err), trimmed)
 	}
-	tr.DialContext = wrapWarpDialContext(tr.DialContext)
-	tr.TLSHandshakeTimeout = 10 * time.Second
-	tr.ResponseHeaderTimeout = 12 * time.Second
-	return &http.Client{Transport: tr, Timeout: 18 * time.Second}, nil
+	tr.DialContext = wrapWarpDialContext(tr.DialContext, "", warpscout.IsDisallowedIP)
+	tr.TLSHandshakeTimeout = 8 * time.Second
+	tr.ResponseHeaderTimeout = 10 * time.Second
+	return &http.Client{Transport: tr, Timeout: 12 * time.Second}, nil
 }
 
-var listNetInterfaces = net.Interfaces
-
 // WarpFallbackClients собирает резервные HTTP-клиенты для регистрации WARP и
-// привязки WARP+ на случай блокировки API Cloudflare на прямом WAN:
-//  1. настроенный маршрут загрузок и дополнительные доступные outbound'ы (sing-box / подписки);
-//  2. локальный «Прокси для устройств» (deviceproxy, включая авторизацию инстанса);
-//  3. до двух запущенных незащищённых не-WARP VPN-туннелей;
-//  4. до двух активных ядерных интерфейсов VLESS (tunvless*).
+// привязки WARP+ на случай блокировки API Cloudflare на прямом WAN (не более 3 выходов):
+//  1. настроенный не-direct маршрут загрузок (downloader);
+//  2. первый активный не-direct локальный «Прокси для устройств» (deviceproxy);
+//  3. первый запущенный незащищённый не-WARP VPN-туннель.
 func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *WarpTunnelOps, dl *downloader.Service) []warpscout.FallbackClient {
 	var out []warpscout.FallbackClient
 	closeAll := func() {
@@ -1376,62 +1376,36 @@ func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *Warp
 	if ctx != nil && ctx.Err() != nil {
 		return nil
 	}
-	seenRoutes := map[string]bool{}
-	seenIfaces := map[string]bool{}
 
 	if dl != nil {
 		if lease, err := dl.ResolveClient(ctx, nil); err == nil && lease != nil {
-			if lease.Client != nil {
-				tag := strings.TrimSpace(lease.Route.Tag)
-				kind := strings.TrimSpace(lease.Route.Kind)
-				if tag != "" && !strings.EqualFold(tag, "direct") {
-					seenRoutes[tag+"\x00"+kind] = true
-					out = append(out, warpscout.FallbackClient{
-						Client: lease.Client,
-						Close:  lease.Close,
-					})
-				} else {
-					lease.Close()
+			tag := strings.TrimSpace(lease.Route.Tag)
+			if lease.Client != nil && tag != "" && !strings.EqualFold(tag, "direct") {
+				cCopy := *lease.Client
+				if cCopy.Timeout == 0 {
+					cCopy.Timeout = 10 * time.Second
 				}
+				if tr, ok := cCopy.Transport.(*http.Transport); ok && tr != nil {
+					trClone := tr.Clone()
+					trClone.TLSHandshakeTimeout = 5 * time.Second
+					trClone.ResponseHeaderTimeout = 8 * time.Second
+					if trClone.Proxy == nil {
+						trClone.DialContext = wrapWarpDialContext(trClone.DialContext, "bound", warpscout.IsDisallowedRelayIP)
+					} else {
+						trClone.DialContext = wrapWarpDialContext(trClone.DialContext, "", warpscout.IsDisallowedIP)
+					}
+					cCopy.Transport = trClone
+				}
+				leaseRef := lease
+				out = append(out, warpscout.FallbackClient{
+					Client: &cCopy,
+					Close: func() {
+						cCopy.CloseIdleConnections()
+						leaseRef.Close()
+					},
+				})
 			} else {
 				lease.Close()
-			}
-		}
-		if ctx != nil && ctx.Err() != nil {
-			closeAll()
-			return nil
-		}
-		if outbounds := dl.ListOutbounds(ctx); len(outbounds) > 0 {
-			extra := 0
-			for _, ob := range outbounds {
-				if ctx != nil && ctx.Err() != nil {
-					closeAll()
-					return nil
-				}
-				if !ob.Available {
-					continue
-				}
-				tag := strings.TrimSpace(ob.Tag)
-				kind := strings.TrimSpace(ob.Kind)
-				if tag == "" || strings.EqualFold(tag, "direct") || seenRoutes[tag+"\x00"+kind] {
-					continue
-				}
-				lease, err := dl.ResolveClient(ctx, &downloader.Route{Tag: ob.Tag, Kind: ob.Kind})
-				if err != nil || lease == nil || lease.Client == nil {
-					if lease != nil {
-						lease.Close()
-					}
-					continue
-				}
-				seenRoutes[tag+"\x00"+kind] = true
-				out = append(out, warpscout.FallbackClient{
-					Client: lease.Client,
-					Close:  lease.Close,
-				})
-				extra++
-				if extra >= 3 {
-					break
-				}
 			}
 		}
 	}
@@ -1454,10 +1428,10 @@ func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *Warp
 				u.User = url.UserPassword(inst.Auth.Username, inst.Auth.Password)
 			}
 			if tr, err := httpclient.NewTransport(httpclient.TransportConfig{ProxyURL: u.String()}); err == nil {
-				tr.DialContext = wrapWarpDialContext(tr.DialContext)
-				tr.TLSHandshakeTimeout = 8 * time.Second
-				tr.ResponseHeaderTimeout = 12 * time.Second
-				c := &http.Client{Transport: tr, Timeout: 15 * time.Second}
+				tr.DialContext = wrapWarpDialContext(tr.DialContext, "", warpscout.IsDisallowedIP)
+				tr.TLSHandshakeTimeout = 6 * time.Second
+				tr.ResponseHeaderTimeout = 8 * time.Second
+				c := &http.Client{Transport: tr, Timeout: 10 * time.Second}
 				out = append(out, warpscout.FallbackClient{
 					Client: c,
 					Close:  c.CloseIdleConnections,
@@ -1473,7 +1447,6 @@ func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *Warp
 	}
 	if ops != nil {
 		if list, err := ops.List(ctx); err == nil {
-			added := 0
 			for _, ref := range list {
 				if !ref.Running || ref.Protected || ref.IsWarp || ref.Iface == "" {
 					continue
@@ -1482,52 +1455,14 @@ func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *Warp
 				if err != nil {
 					continue
 				}
-				seenIfaces[ref.Iface] = true
-				tr.DialContext = wrapWarpDialContext(tr.DialContext)
-				tr.TLSHandshakeTimeout = 6 * time.Second
-				tr.ResponseHeaderTimeout = 10 * time.Second
-				c := &http.Client{Transport: tr, Timeout: 12 * time.Second}
+				tr.DialContext = wrapWarpDialContext(tr.DialContext, ref.Iface, warpscout.IsDisallowedRelayIP)
+				tr.TLSHandshakeTimeout = 5 * time.Second
+				tr.ResponseHeaderTimeout = 8 * time.Second
+				c := &http.Client{Transport: tr, Timeout: 10 * time.Second}
 				out = append(out, warpscout.FallbackClient{
 					Client: c,
 					Close:  c.CloseIdleConnections,
 				})
-				added++
-				if added >= 2 {
-					break
-				}
-			}
-		}
-	}
-
-	if ctx != nil && ctx.Err() != nil {
-		closeAll()
-		return nil
-	}
-	if ifaces, err := listNetInterfaces(); err == nil {
-		sort.Slice(ifaces, func(i, j int) bool { return ifaces[i].Name < ifaces[j].Name })
-		added := 0
-		for _, ifc := range ifaces {
-			if ifc.Flags&net.FlagUp == 0 || seenIfaces[ifc.Name] {
-				continue
-			}
-			if !strings.HasPrefix(strings.ToLower(ifc.Name), "tunvless") {
-				continue
-			}
-			tr, err := httpclient.NewTransport(httpclient.TransportConfig{Interface: ifc.Name, Proxy: httpclient.ProxyDirect})
-			if err != nil {
-				continue
-			}
-			seenIfaces[ifc.Name] = true
-			tr.DialContext = wrapWarpDialContext(tr.DialContext)
-			tr.TLSHandshakeTimeout = 6 * time.Second
-			tr.ResponseHeaderTimeout = 10 * time.Second
-			c := &http.Client{Transport: tr, Timeout: 12 * time.Second}
-			out = append(out, warpscout.FallbackClient{
-				Client: c,
-				Close:  c.CloseIdleConnections,
-			})
-			added++
-			if added >= 2 {
 				break
 			}
 		}

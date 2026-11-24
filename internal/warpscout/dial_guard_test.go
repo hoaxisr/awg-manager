@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -203,5 +204,74 @@ func TestRegisterWithOptions_DisallowedResolvedRelaySkipsFallbacksAndDefaultSink
 	}
 	if !errors.Is(sanitized, ErrInvalidInput) || !errors.Is(sanitized, ErrDisallowedAddress) {
 		t.Fatalf("sentinels lost after sanitization: %v", sanitized)
+	}
+}
+
+func TestIsDisallowedRelayIP_AndPostDialGuard(t *testing.T) {
+	ctx := context.Background()
+
+	for _, addr := range []string{
+		"127.0.0.1",
+		"::1",
+		"10.0.0.1",
+		"172.16.0.1",
+		"192.168.1.1",
+		"fd00::1",
+		"100.64.0.1",
+		"169.254.169.254",
+		"fe80::1",
+		"224.0.0.1",
+		"0.0.0.0",
+		"::ffff:127.0.0.1",
+		"::ffff:192.168.1.10",
+	} {
+		if !IsDisallowedRelayLiteralIP(addr) {
+			t.Fatalf("expected relay IP %q to be disallowed", addr)
+		}
+		if !IsDisallowedRelayIP(netip.MustParseAddr(addr)) {
+			t.Fatalf("expected IsDisallowedRelayIP(%q) == true", addr)
+		}
+	}
+	for _, pub := range []string{"162.159.192.1", "1.1.1.1", "2606:4700::1"} {
+		if IsDisallowedRelayLiteralIP(pub) {
+			t.Fatalf("expected public IP %q to be allowed for relay", pub)
+		}
+	}
+
+	// Literal disallowed IPs are rejected before baseDial is called.
+	for _, target := range []string{"127.0.0.1:443", "192.168.1.1:443", "169.254.169.254:443", "100.64.0.5:443"} {
+		dials := 0
+		dial := NewPostDialGuardedDialContext(func(context.Context, string, string) (net.Conn, error) {
+			dials++
+			return nil, errors.New("should not dial")
+		}, IsDisallowedRelayIP)
+		if _, err := dial(ctx, "tcp", target); !errors.Is(err, ErrDisallowedAddress) || dials != 0 {
+			t.Fatalf("post-dial guard literal %q: err=%v dials=%d, want ErrDisallowedAddress with 0 dials", target, err, dials)
+		}
+	}
+
+	// Hostname passes untouched to baseDial (preserving interface-bound DNS) and RemoteAddr is verified after connect.
+	var gotAddr string
+	badConn := &guardTestConn{remoteAddr: guardTestAddr("192.168.1.1:443")}
+	badPostDial := NewPostDialGuardedDialContext(func(_ context.Context, _ string, addr string) (net.Conn, error) {
+		gotAddr = addr
+		return badConn, nil
+	}, IsDisallowedRelayIP)
+	conn, err := badPostDial(ctx, "tcp", "api.devices.cloudflare.com:443")
+	if gotAddr != "api.devices.cloudflare.com:443" {
+		t.Fatalf("expected hostname passed untouched to baseDial, got %q", gotAddr)
+	}
+	if !errors.Is(err, ErrDisallowedAddress) || !badConn.closed || conn != nil {
+		t.Fatalf("expected disallowed RemoteAddr closed and rejected: conn=%v closed=%v err=%v", conn, badConn.closed, err)
+	}
+
+	okConn := &guardTestConn{remoteAddr: guardTestAddr("162.159.192.1:443")}
+	goodPostDial := NewPostDialGuardedDialContext(func(_ context.Context, _ string, addr string) (net.Conn, error) {
+		gotAddr = addr
+		return okConn, nil
+	}, IsDisallowedRelayIP)
+	conn, err = goodPostDial(ctx, "tcp", "api.devices.cloudflare.com:443")
+	if err != nil || conn != okConn || okConn.closed {
+		t.Fatalf("expected public RemoteAddr to succeed cleanly: conn=%v closed=%v err=%v", conn, okConn.closed, err)
 	}
 }

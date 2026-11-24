@@ -451,11 +451,11 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 				Running:  ref.ViaRunning,
 			}
 		}
-		// Ключ скана обязан отличаться от ключа внешнего туннеля, иначе
-		// Cloudflare рвёт внешнюю сессию. Берём готовую запись: регистрировать
-		// слот без пользователя автоподмена не должна.
-		if swapAcct = s.existingAccountAvoiding(outerRef.LocalPublicKey); swapAcct == nil {
-			s.finishSwap(ctx, p, ev, st, errors.New("нет учётной записи WARP с ключом, отличным от внешнего туннеля, — запустите скан вручную"), nil, false, false)
+		// Ключ скана обязан отличаться от ключа внешнего туннеля и чужих живых
+		// туннелей, иначе Cloudflare рвёт их сессию. Берём готовую запись:
+		// регистрировать слот без пользователя автоподмена не должна.
+		if swapAcct = s.existingAccountFor(ctx, ref.Mode, ref.ID, outerRef.LocalPublicKey); swapAcct == nil {
+			s.finishSwap(ctx, p, ev, st, errors.New("нет свободной учётной записи WARP с ключом, отличным от внешнего туннеля, — запустите скан вручную"), nil, false, false)
 			return
 		}
 	} else {
@@ -469,11 +469,27 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 		// Скан через WARP его же ключом рвёт внешнюю сессию у Cloudflare.
 		// Без готовой записи с другим ключом уходим на WAN.
 		if outerRef != nil && outerRef.IsWarp && outerRef.LocalPublicKey != "" && swapAcct.PublicKey == outerRef.LocalPublicKey {
-			if other := s.existingAccountAvoiding(outerRef.LocalPublicKey); other != nil {
+			if other := s.existingFreeAccount(ctx, outerRef.LocalPublicKey, ref.LocalPublicKey); other != nil {
 				swapAcct = other
 			} else {
 				scanOverride, _ = s.d.WAN(ctx)
 				outerRef = nil
+			}
+		}
+		// Если выбранный ключ занят целевым или переиспользованным живым туннелем,
+		// ищем свободную запись или пропускаем автоподмену, чтобы не рвать сессию.
+		sameTargetKey := ref.LocalPublicKey != "" && strings.TrimSpace(swapAcct.PublicKey) == strings.TrimSpace(ref.LocalPublicKey)
+		reusedInUse, reusedOwner := s.isReusedTunnelAccountKey(ctx, swapAcct.PublicKey)
+		if sameTargetKey || reusedInUse {
+			ownerName := reusedOwner
+			if ownerName == "" {
+				ownerName = ref.Name
+			}
+			if other := s.existingFreeAccount(ctx, swapAcct.PublicKey, ref.LocalPublicKey); other != nil {
+				swapAcct = other
+			} else {
+				s.finishSwap(ctx, p, ev, st, fmt.Errorf("ключ аккаунта WARP занят живым туннелем %q — автоподмена пропущена, чтобы не разорвать соединение", ownerName), nil, false, false)
+				return
 			}
 		}
 	}

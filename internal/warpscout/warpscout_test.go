@@ -198,8 +198,13 @@ func newFakeWarpAPI(t *testing.T) *fakeWarpAPI {
 	// Тест, уже поставивший свою подмену API, сохраняет её: иначе его
 	// сервер остался бы без запросов, а тест — зелёным вхолостую.
 	if cfAPIBase == apiBase {
+		origAlt := cfAPIBaseAlt
 		cfAPIBase = a.srv.URL
-		t.Cleanup(func() { cfAPIBase = apiBase })
+		cfAPIBaseAlt = ""
+		t.Cleanup(func() {
+			cfAPIBase = apiBase
+			cfAPIBaseAlt = origAlt
+		})
 	}
 	return a
 }
@@ -793,9 +798,9 @@ func TestAccountOps_Serialized(t *testing.T) {
 	// После newTestService: он ставит общую подмену API, а этому тесту
 	// нужна своя, с удержанием запроса.
 	s, _, _, _ := newTestService(t)
-	origBase := cfAPIBase
-	cfAPIBase = srv.URL
-	t.Cleanup(func() { cfAPIBase = origBase })
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	cfAPIBase, cfAPIBaseAlt = srv.URL, ""
+	t.Cleanup(func() { cfAPIBase, cfAPIBaseAlt = origBase, origAlt })
 	log := &captureLog{}
 	s.d.Log = log
 	s.d.HTTP = func(string) (*http.Client, error) { return srv.Client(), nil }
@@ -1176,9 +1181,9 @@ func TestRegisterAccount_V0a4005FlowAndWarpPlusSemantics(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	origBase := cfAPIBase
-	cfAPIBase = srv.URL
-	t.Cleanup(func() { cfAPIBase = origBase })
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	cfAPIBase, cfAPIBaseAlt = srv.URL, ""
+	t.Cleanup(func() { cfAPIBase, cfAPIBaseAlt = origBase, origAlt })
 
 	acct, err := RegisterAccount(context.Background(), srv.Client())
 	if err != nil {
@@ -1258,9 +1263,9 @@ func TestService_RegisterFallbackAndKeyRotation(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	origBase := cfAPIBase
-	cfAPIBase = srv.URL
-	t.Cleanup(func() { cfAPIBase = origBase })
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	cfAPIBase, cfAPIBaseAlt = srv.URL, ""
+	t.Cleanup(func() { cfAPIBase, cfAPIBaseAlt = origBase, origAlt })
 
 	st, err := NewStore(t.TempDir(), plainCipher{})
 	if err != nil {
@@ -1541,9 +1546,9 @@ func TestSetAccountAddress_PreservedAcrossRotationAndCreateOverride(t *testing.T
 	}))
 	defer srv.Close()
 
-	origBase := cfAPIBase
-	cfAPIBase = srv.URL
-	t.Cleanup(func() { cfAPIBase = origBase })
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	cfAPIBase, cfAPIBaseAlt = srv.URL, ""
+	t.Cleanup(func() { cfAPIBase, cfAPIBaseAlt = origBase, origAlt })
 
 	s, _, tun, _ := newTestService(t)
 	s.d.HTTP = func(string) (*http.Client, error) { return srv.Client(), nil }
@@ -1739,9 +1744,9 @@ func TestStartScan_ViaWarpTunnel_UsesInnerAccountAndConcurrency1(t *testing.T) {
 		}`))
 	}))
 	defer srv.Close()
-	origBase := cfAPIBase
-	cfAPIBase = srv.URL
-	t.Cleanup(func() { cfAPIBase = origBase })
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	cfAPIBase, cfAPIBaseAlt = srv.URL, ""
+	t.Cleanup(func() { cfAPIBase, cfAPIBaseAlt = origBase, origAlt })
 
 	s, runner, tun, _ := newTestService(t)
 	s.d.HTTP = func(string) (*http.Client, error) { return srv.Client(), nil }
@@ -1808,9 +1813,9 @@ func TestApplyCreate_WarpInWarp_MTU1220AndMultiAutopilot(t *testing.T) {
 		}`))
 	}))
 	defer srv.Close()
-	origBase := cfAPIBase
-	cfAPIBase = srv.URL
-	t.Cleanup(func() { cfAPIBase = origBase })
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	cfAPIBase, cfAPIBaseAlt = srv.URL, ""
+	t.Cleanup(func() { cfAPIBase, cfAPIBaseAlt = origBase, origAlt })
 
 	s, _, tun, _ := newTestService(t)
 	s.d.HTTP = func(string) (*http.Client, error) { return srv.Client(), nil }
@@ -2810,15 +2815,16 @@ func TestRegisterWithOptions_RelayProxyBypassAndAltHost(t *testing.T) {
 
 	t.Run("custom relay and invalid relay rejection", func(t *testing.T) {
 		relayHits := 0
-		relaySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/v0a4005/reg" {
-				t.Errorf("unexpected relay path: %s", r.URL.Path)
+		relayClient := &http.Client{Transport: guardRoundTripper(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Host != "warp-relay.example.com" || r.URL.Path != "/v0a4005/reg" {
+				t.Errorf("unexpected relay URL: %s", r.URL.String())
 			}
 			relayHits++
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprintf(w, `{"id":"rel-1","token":"tok-rel","warp_enabled":true,"account":{"account_type":"free"},"config":{"client_id":"AQID","peers":[{"public_key":%q}],"interface":{"addresses":{"v4":"172.16.0.9"}}}}`, WarpPeerPublicKey)
-		}))
-		defer relaySrv.Close()
+			rec := httptest.NewRecorder()
+			rec.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(rec, `{"id":"rel-1","token":"tok-rel","warp_enabled":true,"account":{"account_type":"free"},"config":{"client_id":"AQID","peers":[{"public_key":%q}],"interface":{"addresses":{"v4":"172.16.0.9"}}}}`, WarpPeerPublicKey)
+			return rec.Result(), nil
+		})}
 
 		st, err := NewStore(t.TempDir(), plainCipher{})
 		if err != nil {
@@ -2826,14 +2832,27 @@ func TestRegisterWithOptions_RelayProxyBypassAndAltHost(t *testing.T) {
 		}
 		s := New(Deps{
 			Store: st,
-			HTTP:  func(string) (*http.Client, error) { return relaySrv.Client(), nil },
+			HTTP:  func(string) (*http.Client, error) { return relayClient, nil },
 		})
 		t.Cleanup(s.Stop)
 
-		if _, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: "http://relay.example.com"}); !errors.Is(err, ErrInvalidInput) {
-			t.Fatalf("expected ErrInvalidInput for non-local http relay, got %v", err)
+		for _, bad := range []string{
+			"http://relay.example.com",
+			"http://127.0.0.1:8080",
+			"http://localhost:8080",
+			"https://localhost",
+			"https://127.0.0.1",
+			"https://[::1]",
+			"https://192.168.1.1",
+			"https://10.0.0.1",
+			"https://172.16.0.1",
+			"https://100.64.0.1",
+		} {
+			if _, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: bad}); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("expected ErrInvalidInput for relay %q, got %v", bad, err)
+			}
 		}
-		acct, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: relaySrv.URL})
+		acct, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: "https://warp-relay.example.com"})
 		if err != nil {
 			t.Fatalf("RegisterWithOptions via relay failed: %v", err)
 		}
@@ -3028,12 +3047,19 @@ func TestApply_OfflineReuseAccountAndSecondTunnelGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 1. Автоматический fallback на основной аккаунт при создании первого туннеля в офлайне.
-	res1, err := s.Apply(ctx, ApplyRequest{
+	// 1. В офлайне без ReuseAccount туннель НЕ переходит молча на ключ основного аккаунта.
+	if _, err := s.Apply(ctx, ApplyRequest{
 		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.9:2408",
+	}); err == nil {
+		t.Fatal("expected error in offline Apply without ReuseAccount=true")
+	}
+
+	// 1b. Явный ReuseAccount=true создаёт первый туннель на ключе основного аккаунта.
+	res1, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.9:2408", ReuseAccount: true,
 	})
 	if err != nil {
-		t.Fatalf("first offline Apply failed: %v", err)
+		t.Fatalf("explicit ReuseAccount Apply failed: %v", err)
 	}
 	if !res1.AccountReused || res1.Tunnel == nil {
 		t.Fatalf("expected AccountReused=true, got %+v", res1)
@@ -3042,7 +3068,7 @@ func TestApply_OfflineReuseAccountAndSecondTunnelGuard(t *testing.T) {
 	tun.refs[key(TargetNative, res1.Tunnel.ID)].LocalPublicKey = pub
 	tun.mu.Unlock()
 
-	// 2. Второй туннель на том же ключе отвергается как при fallback, так и при явном ReuseAccount.
+	// 2. Второй туннель на том же ключе отвергается как при явном ReuseAccount, так и в офлайне.
 	if _, err := s.Apply(ctx, ApplyRequest{
 		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.10:2408",
 	}); err == nil {
@@ -3193,22 +3219,23 @@ func TestRegisterWithOptions_CustomRelayDoesNotSendExistingToken(t *testing.T) {
 	}
 
 	var gotMethod, gotAuth, gotPath string
-	relaySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	relayClient := &http.Client{Transport: guardRoundTripper(func(r *http.Request) (*http.Response, error) {
 		gotMethod = r.Method
 		gotAuth = r.Header.Get("Authorization")
 		gotPath = r.URL.Path
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"id":"rel-new","token":"tok-rel-new","warp_enabled":true,"account":{"account_type":"free"},"config":{"client_id":"AQID","peers":[{"public_key":%q}],"interface":{"addresses":{"v4":"172.16.0.8"}}}}`, WarpPeerPublicKey)
-	}))
-	defer relaySrv.Close()
+		rec := httptest.NewRecorder()
+		rec.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(rec, `{"id":"rel-new","token":"tok-rel-new","warp_enabled":true,"account":{"account_type":"free"},"config":{"client_id":"AQID","peers":[{"public_key":%q}],"interface":{"addresses":{"v4":"172.16.0.8"}}}}`, WarpPeerPublicKey)
+		return rec.Result(), nil
+	})}
 
 	s := New(Deps{
 		Store: st,
-		HTTP:  func(string) (*http.Client, error) { return relaySrv.Client(), nil },
+		HTTP:  func(string) (*http.Client, error) { return relayClient, nil },
 	})
 	t.Cleanup(s.Stop)
 
-	acct, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: relaySrv.URL})
+	acct, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: "https://warp-relay.example.com"})
 	if err != nil {
 		t.Fatalf("RegisterWithOptions via relay failed: %v", err)
 	}
@@ -3249,6 +3276,17 @@ func TestApiDo_RejectsRedirectsAndDisallowedRelayIPs(t *testing.T) {
 	}
 
 	for _, badRelay := range []string{
+		"http://relay.example.com",
+		"http://127.0.0.1:8080",
+		"http://localhost:8080",
+		"https://localhost",
+		"https://sub.localhost",
+		"https://127.0.0.1",
+		"https://[::1]",
+		"https://192.168.1.1",
+		"https://10.0.0.1",
+		"https://172.16.0.1",
+		"https://100.64.0.1",
 		"https://169.254.169.254",
 		"https://[fe80::1]:8443",
 		"https://0.0.0.0",
@@ -3280,5 +3318,148 @@ func TestApiDo_RejectsRedirectsAndDisallowedRelayIPs(t *testing.T) {
 	}
 	if strings.Contains(regErr.Error(), "supersecret") {
 		t.Fatalf("proxy password leaked in RegisterWithOptions error: %v", regErr)
+	}
+}
+
+func TestAltAPIBaseFor_IndependentFromPrimaryOverride(t *testing.T) {
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	t.Cleanup(func() {
+		cfAPIBase, cfAPIBaseAlt = origBase, origAlt
+	})
+
+	cfAPIBase = "https://primary.test/v0a4005"
+	cfAPIBaseAlt = "https://alt.test/v0a4005"
+	if got := altAPIBaseFor(cfAPIBase, RegisterOptions{}); got != "https://alt.test/v0a4005" {
+		t.Fatalf("expected alt base returned regardless of cfAPIBase override, got %q", got)
+	}
+	if got := altAPIBaseFor("https://alt.test/v0a4005", RegisterOptions{}); got != "" {
+		t.Fatalf("expected empty alt base when primary == alt, got %q", got)
+	}
+	if got := altAPIBaseFor(cfAPIBase, RegisterOptions{RelayURL: "https://relay.example.com"}); got != "" {
+		t.Fatalf("expected empty alt base for custom RelayURL, got %q", got)
+	}
+	cfAPIBaseAlt = ""
+	if got := altAPIBaseFor(cfAPIBase, RegisterOptions{}); got != "" {
+		t.Fatalf("expected empty alt base when cleared, got %q", got)
+	}
+}
+
+func TestAccountKeyInUse_BlocksScanReissueDeleteImportAndWatchdog(t *testing.T) {
+	ctx := context.Background()
+	s, runner, tun, prober := newTestService(t)
+	api := apiOf(t)
+
+	priv1, pub1, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.d.Store.SetAccount(&Account{
+		ID: "prim-1", Token: "tok-1", PrivateKey: priv1, PublicKey: pub1,
+		PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create tunnel explicitly reusing primary key.
+	res, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Name: "WARP Live", Endpoint: "162.159.193.1:2408", ReuseAccount: true,
+	})
+	if err != nil || !res.AccountReused || res.Tunnel == nil {
+		t.Fatalf("Apply ReuseAccount failed: res=%+v err=%v", res, err)
+	}
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, res.Tunnel.ID)].LocalPublicKey = pub1
+	tun.refs[key(TargetNative, res.Tunnel.ID)].Running = true
+	tun.mu.Unlock()
+
+	if st := s.State(); st.AccountKeyInUseBy != "WARP Live" {
+		t.Fatalf("expected State().AccountKeyInUseBy == 'WARP Live', got %q", st.AccountKeyInUseBy)
+	}
+	if _, err := s.RegisterWithOptions(ctx, RegisterOptions{}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected Register blocked with ErrInvalidInput while key in use, got %v", err)
+	}
+	if err := s.DeleteAccountLocal(ctx); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected DeleteAccountLocal blocked with ErrInvalidInput while key in use, got %v", err)
+	}
+	if s.d.Store.Account() == nil || len(api.deleted) != 0 {
+		t.Fatalf("account or Cloudflare registration must remain intact when delete is blocked: acct=%v deleted=%v", s.d.Store.Account(), api.deleted)
+	}
+	if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected WAN StartScan blocked with ErrInvalidInput while key in use, got %v", err)
+	}
+	if err := s.StartFindJunk(FindJunkRequest{I1Profile: "quic"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected WAN StartFindJunk blocked with ErrInvalidInput while key in use, got %v", err)
+	}
+
+	// Importing the exact same live tunnel key is rejected.
+	sameConf := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 172.16.0.2/32\n[Peer]\nPublicKey = %s\n", priv1, WarpPeerPublicKey)
+	if _, err := s.ImportAccount(ctx, sameConf); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ImportAccount of live tunnel's own key rejected with ErrInvalidInput, got %v", err)
+	}
+
+	// Watchdog swap skips when monitored tunnel uses primary key and no free alternate account exists.
+	prober.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+	p := Profile{
+		ID: "p-live", Name: "WARP Live", Enabled: true, TargetMode: TargetNative, TargetID: res.Tunnel.ID,
+		Filters: DefaultFilters(), FailThreshold: 1, CooldownSec: 10,
+	}
+	if _, err := s.SaveConfig(ctx, Config{ProfileMode: ProfileModeSingle, ActiveProfileID: p.ID, Profiles: []Profile{p}, AWG: s.d.Store.Config().AWG}); err != nil {
+		t.Fatal(err)
+	}
+	s.checkOnce(ctx, p, &watcherState{})
+	runner.mu.Lock()
+	scanCount := len(runner.calls)
+	runner.mu.Unlock()
+	if scanCount != 0 {
+		t.Fatalf("watchdog must not scan using live tunnel's own key, runner calls=%d", scanCount)
+	}
+	if ws := s.State().Watch; len(ws) != 1 || !strings.Contains(ws[0].Message, "занят живым туннелем") {
+		t.Fatalf("expected watch message explaining key in use, got %+v", ws)
+	}
+
+	// Importing a DIFFERENT spare key succeeds, keeps live tunnel's old registration intact at Cloudflare, and unblocks StartScan!
+	priv2, _, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherConf := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 172.16.0.9/32\n[Peer]\nPublicKey = %s\n", priv2, WarpPeerPublicKey)
+	imp, err := s.ImportAccount(ctx, otherConf)
+	if err != nil || imp == nil || imp.PublicKey == pub1 {
+		t.Fatalf("importing distinct spare account failed: imp=%+v err=%v", imp, err)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if _, deleted := api.counts(); len(deleted) != 0 {
+		t.Fatalf("old primary registration still in use by live tunnel must NOT be deleted on import: %v", deleted)
+	}
+	if st := s.State(); st.AccountKeyInUseBy != "" {
+		t.Fatalf("expected AccountKeyInUseBy cleared after importing distinct key, got %q", st.AccountKeyInUseBy)
+	}
+	if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); err != nil {
+		t.Fatalf("expected StartScan unblocked with spare account, got %v", err)
+	}
+	s.StopScan()
+}
+
+func TestImportAccount_DropsUnusedReplacedRegistration(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, _ := newTestService(t)
+	api := apiOf(t)
+
+	priv1, pub1, _ := GenerateKeyPair()
+	priv2, _, _ := GenerateKeyPair()
+	if err := s.d.Store.SetAccount(&Account{
+		ID: "old-unused-id", Token: "tok-unused", PrivateKey: priv1, PublicKey: pub1,
+		PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	otherConf := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 172.16.0.5/32\n[Peer]\nPublicKey = %s\n", priv2, WarpPeerPublicKey)
+	if _, err := s.ImportAccount(ctx, otherConf); err != nil {
+		t.Fatalf("ImportAccount failed: %v", err)
+	}
+	deleted := api.waitDeleted(t, 1)
+	if len(deleted) != 1 || deleted[0] != "old-unused-id" {
+		t.Fatalf("expected old unused account dropped via Cloudflare DELETE, got %v", deleted)
 	}
 }

@@ -41,7 +41,7 @@ type RegisterOptions struct {
 var ErrDisallowedAddress = errors.New("подключение к указанному адресу не допускается")
 
 // IsDisallowedIP запрещает link-local (включая metadata 169.254.169.254),
-// multicast и unspecified (0.0.0.0, ::) адреса.
+// multicast и unspecified (0.0.0.0, ::) адреса. Подходит для локального/LAN прокси.
 func IsDisallowedIP(addr netip.Addr) bool {
 	if !addr.IsValid() {
 		return false
@@ -50,9 +50,32 @@ func IsDisallowedIP(addr netip.Addr) bool {
 	return addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast() || addr.IsUnspecified()
 }
 
+var cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")
+
+// IsDisallowedRelayIP дополнительно запрещает loopback (127.0.0.0/8, ::1),
+// RFC1918/ULA (Private) и CGNAT (100.64.0.0/10) — используется для внешнего
+// HTTP-relay и прямых обращений к Cloudflare API.
+func IsDisallowedRelayIP(addr netip.Addr) bool {
+	if !addr.IsValid() {
+		return false
+	}
+	addr = addr.WithZone("").Unmap()
+	return IsDisallowedIP(addr) || addr.IsLoopback() || addr.IsPrivate() || cgnatPrefix.Contains(addr)
+}
+
 // IsDisallowedLiteralIP запрещает link-local (включая metadata 169.254.169.254),
 // multicast и unspecified (0.0.0.0, ::) литеральные адреса.
 func IsDisallowedLiteralIP(host string) bool {
+	return isDisallowedLiteralWithPolicy(host, IsDisallowedIP)
+}
+
+// IsDisallowedRelayLiteralIP проверяет литеральный IP-адрес по строгой политике
+// внешнего relay (включая loopback, RFC1918/ULA и CGNAT).
+func IsDisallowedRelayLiteralIP(host string) bool {
+	return isDisallowedLiteralWithPolicy(host, IsDisallowedRelayIP)
+}
+
+func isDisallowedLiteralWithPolicy(host string, disallow func(netip.Addr) bool) bool {
 	h := strings.TrimSpace(strings.Trim(host, "[]"))
 	if h == "" {
 		return false
@@ -61,7 +84,7 @@ func IsDisallowedLiteralIP(host string) bool {
 	if err != nil {
 		return false
 	}
-	return IsDisallowedIP(addr)
+	return disallow(addr)
 }
 
 // RedactURLCredentials маскирует пароль или учётные данные в URL для безопасных ошибок и логов.
@@ -159,18 +182,15 @@ func NormalizeRelayBaseURL(raw string) (string, error) {
 		return "", fmt.Errorf("%w: укажите чистый URL relay без параметров и учётных данных", ErrInvalidInput)
 	}
 	scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
-	host := strings.ToLower(u.Hostname())
-	if IsDisallowedLiteralIP(host) {
-		return "", fmt.Errorf("%w: указанный IP-адрес relay не допускается", ErrInvalidInput)
-	}
-	switch scheme {
-	case "https":
-	case "http":
-		if host != "localhost" && host != "127.0.0.1" && host != "::1" {
-			return "", fmt.Errorf("%w: для внешнего relay допустим только HTTPS", ErrInvalidInput)
-		}
-	default:
+	host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(u.Hostname()), "."))
+	if scheme != "https" {
 		return "", fmt.Errorf("%w: relay URL должен начинаться с https://", ErrInvalidInput)
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return "", fmt.Errorf("%w: локальный адрес relay не допускается", ErrInvalidInput)
+	}
+	if IsDisallowedRelayLiteralIP(host) {
+		return "", fmt.Errorf("%w: указанный IP-адрес relay не допускается", ErrInvalidInput)
 	}
 	path := strings.TrimRight(u.Path, "/")
 	if path == "" || !strings.Contains(path, "/v0") {

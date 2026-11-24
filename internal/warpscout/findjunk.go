@@ -296,6 +296,16 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 	if _, ok := s.d.Runner.Available(); !ok {
 		return ErrEngineMissing
 	}
+	scanIface := s.resolveScanIface(s.rootCtx, req.Ifname)
+	if outer := s.resolveRouteTunnel(s.rootCtx, scanIface); outer == nil || !outer.IsWarp {
+		if inUse, owner := s.accountKeyOwner(s.rootCtx, acct); inUse {
+			if free := s.existingFreeAccount(s.rootCtx, acct.PublicKey); free != nil {
+				acct = free
+			} else {
+				return fmt.Errorf("%w: ключ аккаунта WARP используется живым туннелем %q — подбор тем же ключом разорвёт его соединение; удалите туннель или импортируйте отдельный аккаунт для сканера", ErrInvalidInput, owner)
+			}
+		}
+	}
 
 	cfgAWG := s.d.Store.Config().AWG
 	hostPreset := req.HostPreset
@@ -333,7 +343,7 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 	}
 
 	ctx, cancel := context.WithCancel(s.rootCtx)
-	scanIface := s.resolveScanIface(ctx, req.Ifname)
+	scanIface = s.resolveScanIface(ctx, req.Ifname)
 	s.mu.Lock()
 	s.findJunkSeq++
 	runID := s.findJunkSeq

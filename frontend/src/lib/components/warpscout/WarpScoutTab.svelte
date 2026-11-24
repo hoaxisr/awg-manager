@@ -301,7 +301,13 @@
 		<!-- Шапка: слева учётная запись и обфускация AWG, справа — маршрут сканера -->
 		<div class="top-bar">
 			<div class="chips-left">
-				<WarpAccountChip {account} {targets} {usedIpv4} onchanged={refreshNow} />
+				<WarpAccountChip
+					{account}
+					{targets}
+					{usedIpv4}
+					accountKeyInUseBy={ws.accountKeyInUseBy ?? ''}
+					onchanged={refreshNow}
+				/>
 				<WarpAwgPopover
 					bind:awg={draft.awg}
 					obfuscationSources={ws.obfuscationSources ?? []}
