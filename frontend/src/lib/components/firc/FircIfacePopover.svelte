@@ -212,7 +212,6 @@
 					>
 						<span
 							class="iface-dot {pgRt.activeIface ? (pgRt.isOnBackup ? 'backup' : 'alive') : pgRt.allDead ? 'dead' : 'unknown'}"
-							class:backup={pgRt.isOnBackup}
 						></span>
 						<span class="iface-row-text">
 							<strong>{pg.name}</strong> — {pg.interfaces.map((id) => shortIfaceTag(rt.interfaces, id)).join(' → ')}

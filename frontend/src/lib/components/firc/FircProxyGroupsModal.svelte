@@ -13,6 +13,7 @@
 		formatIfaceOption,
 		getIfaceProbe,
 		ifaceLabel,
+		normalizeGroupCheck,
 		proxyGroupRuntime,
 		randomHexId,
 		resolveIfaceState,
@@ -56,7 +57,7 @@
 				id: randomHexId(),
 				name: `Fallback #${draft.length + 1}`,
 				interfaces: [],
-				check: { mode: 'none', url: '' },
+				check: { mode: 'url', url: '' },
 			},
 		];
 	}
@@ -68,7 +69,6 @@
 	function toggleIfaceInDraftProxyGroup(pgIndex: number, ifaceId: string) {
 		const pg = draft[pgIndex];
 		if (!pg) return;
-		const prevLen = pg.interfaces.length;
 		const exists = pg.interfaces.includes(ifaceId);
 		if (exists) {
 			pg.interfaces = pg.interfaces.filter((x) => x !== ifaceId);
@@ -79,32 +79,18 @@
 			}
 			pg.interfaces = [...pg.interfaces, ifaceId];
 		}
-		if (pg.interfaces.length >= 2 && prevLen < 2) {
-			if (!pg.check || pg.check.mode === 'none') {
-				pg.check = { mode: 'url', url: pg.check?.url ?? '' };
-			}
-		} else if (pg.interfaces.length < 2) {
-			pg.check = { mode: 'none', url: '' };
-		}
 	}
 
 	function setDraftProxyGroupCheckMode(pgIndex: number, mode: FircGroupCheck['mode']) {
 		const pg = draft[pgIndex];
 		if (!pg) return;
-		pg.check = {
-			mode,
-			url: mode === 'url' ? (pg.check?.url ?? '') : '',
-			...(mode === 'keendns' ? { timeoutMs: pg.check?.timeoutMs || 5000 } : {}),
-		};
+		pg.check = normalizeGroupCheck({ ...pg.check, mode });
 	}
 
 	function setDraftProxyGroupCheckUrl(pgIndex: number, url: string) {
 		const pg = draft[pgIndex];
-		if (!pg) return;
-		pg.check = {
-			mode: pg.check?.mode ?? 'url',
-			url,
-		};
+		if (!pg?.check) return;
+		pg.check = { ...pg.check, url };
 	}
 
 	function moveIfaceInDraftProxyGroup(pgIndex: number, iIdx: number, delta: -1 | 1) {
@@ -270,7 +256,7 @@
 				</div>
 
 				{#if pg.interfaces.length >= 2}
-					{@const pgMode = pg.check?.mode ?? 'url'}
+					{@const pgMode = pg.check?.mode}
 					<div class="pg-check-box">
 						<div class="pg-check-grid">
 							<div class="field">
@@ -280,15 +266,18 @@
 								<select
 									id={`firc-pg-check-mode-${pg.id}`}
 									class="inp"
-									value={pgMode}
+									value={pgMode ?? ''}
 									onchange={(e) =>
 										setDraftProxyGroupCheckMode(
 											pgIdx,
 											(e.currentTarget as HTMLSelectElement).value as FircGroupCheck['mode'],
 										)}
 								>
+									{#if !pgMode}
+										<option value="">{m.firc_pg_check_mode_groups()}</option>
+									{/if}
 									<option value="url">{m.firc_group_check_mode_url()}</option>
-									<option value="keendns">KeenDNS Cloud relay TCP</option>
+									<option value="keendns">{m.firc_group_check_mode_keendns()}</option>
 									<option value="none">{m.firc_group_check_mode_none()}</option>
 								</select>
 							</div>
@@ -314,8 +303,13 @@
 								{m.firc_group_check_url_hint()}
 							{:else if pgMode === 'keendns'}
 								{m.firc_pg_check_keendns_hint()}
-							{:else}
+							{:else if pgMode === 'none'}
 								{m.firc_pg_check_none_hint()}
+							{:else}
+								{m.firc_pg_check_groups_hint()}
+							{/if}
+							{#if pgMode}
+								{m.firc_pg_check_scope_hint()}
 							{/if}
 						</p>
 					</div>

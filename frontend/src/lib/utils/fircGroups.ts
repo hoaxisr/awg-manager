@@ -30,6 +30,8 @@ import type {
 
 export const PAGE_SIZE = 50;
 export const MAX_GROUP_IFACES = 4;
+/** Зарезервированная группа облака Keenetic (KeenDNSGroupID в internal/firc). */
+const KEENDNS_GROUP_ID = 'c100d001';
 
 export function intervalOptions(): { value: number; label: string }[] {
 	return [
@@ -208,28 +210,27 @@ export function setPrimaryIface(group: FircGroup, id: string): boolean {
 	if (isSpecialIface(id)) {
 		group.interface = id;
 		if (id === 'block' && !group.block) group.block = 'null';
-		ensureDefaultGroupCheck(group);
 		return true;
 	}
 	const cur = normalizeIfaceList(group.interface);
 	if (cur.length <= 1 || isSpecialIface(cur[0])) {
 		group.interface = id;
-		ensureDefaultGroupCheck(group);
 		return true;
 	}
 	const rest = cur.filter((x) => x !== id && !isSpecialIface(x));
 	const next = [id, ...rest].slice(0, MAX_GROUP_IFACES);
 	group.interface = denormalizeIfaceList(next);
-	ensureDefaultGroupCheck(group);
 	return false;
 }
 
-export function ensureDefaultGroupCheck(group: FircGroup) {
+/** Умолчание для новой цепочки; у прежней (wasChain) none — выбор пользователя. */
+export function ensureDefaultGroupCheck(group: FircGroup, wasChain: boolean) {
 	const list = normalizeIfaceList(group.interface);
 	if (list.length >= 2 && !isSpecialIface(list[0])) {
-		if (!group.check || group.check.mode === 'none') {
+		if (!group.check || (group.check.mode === 'none' && !wasChain)) {
 			group.check = {
-				mode: group.id === 'c100d001' ? 'keendns' : 'url',
+				...group.check,
+				mode: group.id === KEENDNS_GROUP_ID ? 'keendns' : 'url',
 				url: group.check?.url ?? '',
 			};
 		}
@@ -246,104 +247,108 @@ export function toggleBackupIface(group: FircGroup, id: string) {
 		if (cur.length <= 1) return;
 		const next = cur.filter((x) => x !== id);
 		group.interface = denormalizeIfaceList(next);
-		ensureDefaultGroupCheck(group);
+		ensureDefaultGroupCheck(group, true);
 	} else {
 		if (cur.length === 0 || isSpecialIface(cur[0])) {
 			group.interface = id;
-			ensureDefaultGroupCheck(group);
+			ensureDefaultGroupCheck(group, false);
 			return;
 		}
 		if (cur.length >= MAX_GROUP_IFACES) return;
 		group.interface = denormalizeIfaceList([...cur, id]);
-		ensureDefaultGroupCheck(group);
+		ensureDefaultGroupCheck(group, cur.length >= 2);
 	}
 }
 
-export function inferDraftProxyGroupCheck(pg: FircProxyGroup, groups: FircGroup[] = []): FircGroupCheck {
-	const ifaces = pg.interfaces ?? [];
-	if (ifaces.length < 2) {
-		return { mode: 'none', url: '' };
-	}
-	if (pg.check) {
-		const mode = pg.check.mode || 'none';
-		return {
-			mode,
-			url: mode === 'url' ? (pg.check.url ?? '') : '',
-			...(mode === 'keendns' ? { timeoutMs: pg.check.timeoutMs || 5000 } : {}),
-		};
-	}
-	const matching = groups.filter((g) => {
-		const list = normalizeIfaceList(g.interface);
-		return list.length === ifaces.length && list.every((v, idx) => v === ifaces[idx]);
-	});
-	const preferred =
-		matching.find((g) => g.check && g.check.mode !== 'none') ??
-		matching.find((g) => Boolean(g.check));
-	if (preferred?.check) {
-		const mode = preferred.check.mode || 'none';
-		return {
-			mode,
-			url: mode === 'url' ? (preferred.check.url ?? '') : '',
-			...(mode === 'keendns' ? { timeoutMs: preferred.check.timeoutMs || 5000 } : {}),
-		};
-	}
-	return { mode: 'url', url: '' };
-}
-
-export function buildGroupCheckFromProxyGroup(pg: FircProxyGroup): FircGroupCheck | undefined {
-	if ((pg.interfaces?.length ?? 0) < 2) {
-		return { mode: 'none', url: '' };
-	}
-	if (!pg.check) {
-		return undefined;
-	}
-	const mode = pg.check.mode || 'none';
+/** Проверка целиком, но без чужих для режима полей: адрес только у url, у keendns — таймаут 5 с. */
+export function normalizeGroupCheck(check: FircGroupCheck): FircGroupCheck {
+	const mode = check.mode || 'none';
 	return {
+		...check,
 		mode,
-		url: mode === 'url' ? (pg.check.url ?? '').trim() : '',
-		...(mode === 'keendns' ? { timeoutMs: pg.check.timeoutMs || 5000 } : {}),
+		url: mode === 'url' ? (check.url ?? '').trim() : '',
+		...(mode === 'keendns' ? { timeoutMs: check.timeoutMs || 5000 } : {}),
 	};
+}
+
+/** Ноль и отсутствие поля для fircd одно и то же — умолчание демона. */
+function checkKey(check: FircGroupCheck | undefined): string {
+	const c = normalizeGroupCheck(check ?? { mode: 'none' });
+	return JSON.stringify([
+		c.mode,
+		c.url,
+		c.intervalSec ?? 0,
+		c.timeoutMs ?? 0,
+		c.failThreshold ?? 0,
+		c.recoverThreshold ?? 0,
+	]);
+}
+
+function sameChain(a: string[], b: string[]): boolean {
+	return a.length === b.length && a.every((v, idx) => v === b[idx]);
+}
+
+/**
+ * Проверка прокси-группы для черновика. Без своей — общая проверка групп этой цепочки;
+ * разошлись или групп нет — undefined, группы живут со своими. Группа KeenDNS лишь
+ * подтверждает совпадение: её проверкой управляет переключатель облака.
+ */
+export function inferDraftProxyGroupCheck(
+	pg: FircProxyGroup,
+	groups: FircGroup[],
+): FircGroupCheck | undefined {
+	const ifaces = pg.interfaces ?? [];
+	// Одиночному интерфейсу проверять нечего; это умолчание на случай роста до цепочки.
+	if (ifaces.length < 2) return { mode: 'url', url: '' };
+	if (pg.check) return normalizeGroupCheck(pg.check);
+	const matching = groups.filter((g) => sameChain(normalizeIfaceList(g.interface), ifaces));
+	const source = matching.find((g) => g.id !== KEENDNS_GROUP_ID);
+	if (!source || matching.some((g) => checkKey(g.check) !== checkKey(source.check))) return undefined;
+	return normalizeGroupCheck(source.check ?? { mode: 'none' });
+}
+
+/** Проверка, которую прокси-группа задаёт своим группам; undefined — не задаёт. */
+export function buildGroupCheckFromProxyGroup(pg: FircProxyGroup): FircGroupCheck | undefined {
+	return pg.check && pg.interfaces.length >= 2 ? normalizeGroupCheck(pg.check) : undefined;
 }
 
 export function normalizeProxyGroupForSave(pg: FircProxyGroup): FircProxyGroup {
-	const ifaces = (pg.interfaces ?? []).slice(0, MAX_GROUP_IFACES);
-	const mode = ifaces.length >= 2 ? (pg.check?.mode ?? 'url') : 'none';
-	const check: FircGroupCheck =
-		mode === 'url'
-			? { mode: 'url', url: (pg.check?.url ?? '').trim() }
-			: mode === 'keendns'
-				? { mode: 'keendns', timeoutMs: pg.check?.timeoutMs || 5000 }
-				: { mode: 'none' };
+	const interfaces = (pg.interfaces ?? []).slice(0, MAX_GROUP_IFACES);
+	const check: FircGroupCheck | undefined =
+		interfaces.length < 2 ? { mode: 'none' } : pg.check && normalizeGroupCheck(pg.check);
 	return {
 		id: pg.id || randomHexId(),
 		name: pg.name.trim(),
-		interfaces: ifaces,
-		check,
+		interfaces,
+		...(check ? { check } : {}),
 	};
 }
 
-export function findDuplicateProxyGroupChain(
+/** Пара прокси-групп с одной цепочкой; пары, лежащие так уже в saved, не считаются. */
+function findNewDuplicateChain(
 	draft: FircProxyGroup[],
+	saved: FircProxyGroup[],
 ): [FircProxyGroup, FircProxyGroup] | null {
-	const seen = new Map<string, FircProxyGroup>();
-	for (const pg of draft) {
-		if ((pg.interfaces?.length ?? 0) === 0) continue;
-		const key = pg.interfaces.join('\0');
-		const prev = seen.get(key);
+	const unchanged = (pg: FircProxyGroup) =>
+		saved.some((s) => s.id === pg.id && sameChain(s.interfaces, pg.interfaces));
+	for (const [i, pg] of draft.entries()) {
+		const prev = draft.slice(0, i).find(
+			(p) => sameChain(p.interfaces, pg.interfaces) && !(unchanged(p) && unchanged(pg)),
+		);
 		if (prev) return [prev, pg];
-		seen.set(key, pg);
 	}
 	return null;
 }
 
 export function applyProxyGroupToGroup(group: FircGroup, pg: FircProxyGroup): boolean {
 	if (!pg.interfaces || pg.interfaces.length === 0) return false;
+	const wasChain = normalizeIfaceList(group.interface).length >= 2;
 	group.interface = denormalizeIfaceList(pg.interfaces);
 	const pgCheck = buildGroupCheckFromProxyGroup(pg);
 	if (pgCheck) {
 		group.check = pgCheck;
 	} else {
-		ensureDefaultGroupCheck(group);
+		ensureDefaultGroupCheck(group, wasChain);
 	}
 	return true;
 }
@@ -407,15 +412,21 @@ export function matchingProxyGroup(
 	if (list.length === 0) return undefined;
 	let firstMatch: FircProxyGroup | undefined;
 	for (const pg of proxyGroups) {
-		if (
-			pg.interfaces.length === list.length &&
-			pg.interfaces.every((val, idx) => val === list[idx])
-		) {
+		if (sameChain(pg.interfaces, list)) {
 			if (pg.check != null) return pg;
 			if (!firstMatch) firstMatch = pg;
 		}
 	}
 	return firstMatch;
+}
+
+/** Прокси-группа, чья проверка действует на цепочку группы; без check она ничем не управляет. */
+export function managingProxyGroup(
+	proxyGroups: FircProxyGroup[],
+	group: Pick<FircGroup, 'interface'>,
+): FircProxyGroup | undefined {
+	const pg = matchingProxyGroup(proxyGroups, group);
+	return pg && buildGroupCheckFromProxyGroup(pg) ? pg : undefined;
 }
 
 export function shortIfaceTag(interfaces: FircInterfaceOption[], id: string): string {
@@ -955,20 +966,11 @@ export function groupFromForm(
 			nextIface = denormalizeIfaceList([form.iface, ...rest].slice(0, MAX_GROUP_IFACES));
 		}
 		const hasChain = normalizeIfaceList(nextIface).length >= 2 && !isSpecialIface(primaryIface(nextIface));
-		const matchedPg = hasChain
-			? matchingProxyGroup(proxyGroups, { interface: nextIface })
-			: undefined;
+		const managing = managingProxyGroup(proxyGroups, { interface: nextIface });
 		const nextCheck: FircGroupCheck | undefined = hasChain
-			? matchedPg
-				? (buildGroupCheckFromProxyGroup(matchedPg) ?? cur.check)
-				: {
-						...(cur.check ?? {}),
-						mode: form.checkMode,
-						url: form.checkMode === 'url' ? form.checkUrl.trim() : '',
-						...(form.checkMode === 'keendns'
-							? { timeoutMs: cur.check?.timeoutMs || 5000 }
-							: {}),
-					}
+			? normalizeGroupCheck(
+					managing?.check ?? { ...cur.check, mode: form.checkMode, url: form.checkUrl },
+				)
 			: cur.check
 				? { ...cur.check, mode: 'none', url: '' }
 				: undefined;
@@ -1019,7 +1021,7 @@ export function normalizeExtConfig(ext: FircExtConfig): FircExtConfig {
 }
 
 /** Черновик редактора прокси-групп; пустой список — одна заготовка. */
-export function proxyGroupsDraft(saved: FircProxyGroup[], groups: FircGroup[] = []): FircProxyGroup[] {
+export function proxyGroupsDraft(saved: FircProxyGroup[], groups: FircGroup[]): FircProxyGroup[] {
 	const draft = saved.map((pg) => ({
 		id: pg.id || randomHexId(),
 		name: pg.name,
@@ -1032,18 +1034,21 @@ export function proxyGroupsDraft(saved: FircProxyGroup[], groups: FircGroup[] = 
 			id: randomHexId(),
 			name: m.firc_groups_pg_default_name(),
 			interfaces: [],
-			check: { mode: 'none', url: '' },
+			check: { mode: 'url', url: '' },
 		},
 	];
 }
 
-/** Текст ошибки для первой невалидной прокси-группы черновика или null. */
-export function proxyGroupsDraftError(draft: FircProxyGroup[]): string | null {
+/** Текст ошибки для первой невалидной прокси-группы черновика или null; saved — до правки. */
+export function proxyGroupsDraftError(
+	draft: FircProxyGroup[],
+	saved: FircProxyGroup[],
+): string | null {
 	for (const pg of draft) {
 		if (!pg.name.trim()) return m.firc_groups_pg_name_required();
 		if (pg.interfaces.length === 0) return m.firc_groups_pg_iface_required({ name: pg.name });
 	}
-	const dup = findDuplicateProxyGroupChain(draft);
+	const dup = findNewDuplicateChain(draft, saved);
 	if (dup) {
 		return m.firc_groups_pg_duplicate_chain({
 			first: dup[0].name.trim() || dup[0].id,

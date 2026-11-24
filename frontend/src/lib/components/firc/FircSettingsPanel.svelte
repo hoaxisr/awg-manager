@@ -168,13 +168,16 @@
     }
   }
 
-  function openPgModal() {
-    pgDraft = proxyGroupsDraft(extConfig.proxyGroups);
+  async function openPgModal() {
+    // Без списка групп черновик не выводит проверку: чужие настройки не затираются.
+    const groups = await api.fircGetGroups().catch(() => []);
+    if (destroyed) return;
+    pgDraft = proxyGroupsDraft(extConfig.proxyGroups, groups);
     pgModalOpen = true;
   }
 
   function applyPgModal() {
-    const draftErr = proxyGroupsDraftError(pgDraft);
+    const draftErr = proxyGroupsDraftError(pgDraft, extConfig.proxyGroups);
     if (draftErr) {
       notifications.error(draftErr);
       return;

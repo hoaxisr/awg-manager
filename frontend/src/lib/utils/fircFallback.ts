@@ -283,43 +283,6 @@ export function resolveGroupActiveInterface(
 	};
 }
 
-function pickAuthoritativeMatchingGroup(
-	matchingGroups: FircGroup[],
-	liveMap: Record<string, FircGroupLive>,
-	chain: string[],
-): FircGroup | undefined {
-	const candidates = matchingGroups.filter((g) => Boolean(liveMap[g.id]));
-	if (candidates.length === 0) return undefined;
-
-	const score = (g: FircGroup): number => {
-		const live = liveMap[g.id];
-		let s = 0;
-		if (g.enable) s += 1000;
-		const mode = g.check?.mode ?? 'none';
-		if (mode === 'url') s += 300;
-		else if (mode === 'keendns') s += 200;
-		if (live.live === false || (live.active && chain.length > 0 && live.active !== chain[0])) {
-			s += 80;
-		}
-		if (live.interfaces && live.interfaces.some((x) => x.state === 'alive' || x.state === 'dead')) {
-			s += 20;
-		}
-		return s;
-	};
-
-	let best = candidates[0];
-	let bestScore = score(best);
-	for (let i = 1; i < candidates.length; i++) {
-		const cur = candidates[i];
-		const sc = score(cur);
-		if (sc > bestScore) {
-			best = cur;
-			bestScore = sc;
-		}
-	}
-	return best;
-}
-
 export function resolveProxyGroupRuntime(
 	pg: Pick<FircProxyGroup, 'id' | 'name' | 'interfaces'>,
 	groups: FircGroup[],
@@ -336,7 +299,12 @@ export function resolveProxyGroupRuntime(
 	});
 	const usedByCount = matchingGroups.length;
 
-	const authoritativeGroup = pickAuthoritativeMatchingGroup(matchingGroups, liveMap, chain);
+	// Группа с проверкой знает о живости больше: без неё демон видит только сам интерфейс.
+	const withLive = matchingGroups.filter((g) => liveMap[g.id]);
+	const authoritativeGroup =
+		withLive.find((g) => g.enable && (g.check?.mode ?? 'none') !== 'none') ??
+		withLive.find((g) => g.enable) ??
+		withLive[0];
 	const authoritativeLive = authoritativeGroup ? liveMap[authoritativeGroup.id] : undefined;
 
 	const probesById: Record<string, FircInterfaceProbeResult> = {};

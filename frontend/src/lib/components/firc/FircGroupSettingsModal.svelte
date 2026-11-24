@@ -116,7 +116,7 @@
 					<label class="lbl" for="firc-gm-check-mode">{m.firc_group_check_label()}</label>
 					<select id="firc-gm-check-mode" class="inp" bind:value={form.checkMode}>
 						<option value="url">{m.firc_group_check_mode_url()}</option>
-						<option value="keendns">KeenDNS Cloud relay TCP</option>
+						<option value="keendns">{m.firc_group_check_mode_keendns()}</option>
 						<option value="none">{m.firc_group_check_mode_none()}</option>
 					</select>
 				</div>

@@ -52,7 +52,6 @@
 		allFallbackInterfaceIds,
 		buildAvailableInterfaces,
 		buildCatalogTunnelOptions,
-		buildGroupCheckFromProxyGroup,
 		domainCopyNotice,
 		emptyExtConfig,
 		emptyGroupForm,
@@ -65,7 +64,7 @@
 		groupServiceKey,
 		groupsFromPresets,
 		isSpecialIface,
-		matchingProxyGroup,
+		managingProxyGroup,
 		normalizeExtConfig,
 		normalizeGroup,
 		normalizeIfaceList,
@@ -84,7 +83,6 @@
 		extractFircGroupDomainLines,
 		type FircDeviceSelector,
 		type FircGroup,
-		type FircGroupCheck,
 		type FircGroupLive,
 		type FircHost,
 		type FircInterfaceOption,
@@ -325,12 +323,12 @@
 	async function openProxyGroupsModal() {
 		openPickerGroupId = null;
 		if (!(await refreshProxyGroups())) return;
-		pgDraft = proxyGroupsDraft(extConfig.proxyGroups, groups);
+		pgDraft = proxyGroupsDraft(extConfig.proxyGroups, baselineGroups);
 		proxyGroupsModalOpen = true;
 	}
 
 	async function saveProxyGroupsModal() {
-		const draftError = proxyGroupsDraftError(pgDraft);
+		const draftError = proxyGroupsDraftError(pgDraft, extConfig.proxyGroups);
 		if (draftError) {
 			notifications.error(draftError);
 			return;
@@ -552,7 +550,7 @@
 			!isSpecialIface(groupForm.form.iface),
 	);
 	let gmManagedProxyGroup = $derived(
-		gmHasChain && gmEditGroup ? matchingProxyGroup(extConfig.proxyGroups, gmEditGroup) : undefined,
+		gmHasChain && gmEditGroup ? managingProxyGroup(extConfig.proxyGroups, gmEditGroup) : undefined,
 	);
 	let gmShowCheck = $derived(gmHasChain && !gmManagedProxyGroup);
 
@@ -840,16 +838,12 @@
 			onSelectAllVisible={() => selection.setGroups(filteredGroups.map((entry) => entry.group.id))}
 			onDeselectAll={() => selection.setGroups([])}
 			onDone={toggleGroupSelectMode}
-			onSetInterface={(iface) => {
-				let check: FircGroupCheck | undefined;
-				if (Array.isArray(iface)) {
-					const matched = matchingProxyGroup(extConfig.proxyGroups, { interface: iface });
-					check =
-						(matched ? buildGroupCheckFromProxyGroup(matched) : undefined) ??
-						(iface.length >= 2 ? { mode: 'url', url: '' } : { mode: 'none', url: '' });
-				}
-				runBulkGroupAction({ kind: 'setInterface', iface, check });
-			}}
+			onSetInterface={(iface) =>
+				runBulkGroupAction({
+					kind: 'setInterface',
+					iface,
+					check: managingProxyGroup(extConfig.proxyGroups, { interface: iface })?.check,
+				})}
 			onOpenDevices={openBulkDevicesModal}
 			onEnable={() => runBulkGroupAction({ kind: 'enable', enable: true })}
 			onDisable={() => runBulkGroupAction({ kind: 'enable', enable: false })}

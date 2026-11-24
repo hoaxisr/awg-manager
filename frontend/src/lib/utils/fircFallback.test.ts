@@ -230,6 +230,16 @@ describe('fircFallback', () => {
 		expect(rt.isOnBackup).toBe(true);
 		expect(rt.hasDivergentActive).toBe(true);
 		expect(rt.divergentSummary).toBe('KeenDNS Cloud -> Direct (eth3); Global -> tt-usa');
+
+		// Выключенная группа с проверкой уступает работающей без неё.
+		const off = [groups[0], { ...groups[1], enable: false }];
+		expect(resolveProxyGroupRuntime(pg, off, liveMap, [], IFACES, {}, {}).activeIface).toBe('eth3');
+		// Работающих нет — хоть какое-то живое состояние.
+		const onlyGlobal: Record<string, FircGroupLive> = {
+			c100d002: { live: true, active: 'tunvless4', interfaces: [{ name: 'eth3', state: 'alive', since: 1, error: '' }] },
+		};
+		const allOff = groups.map((g) => ({ ...g, enable: false }));
+		expect(resolveProxyGroupRuntime(pg, allOff, onlyGlobal, [], IFACES, {}, {}).activeIface).toBe('tunvless4');
 	});
 
 	it('prefers explicit interface probe over tunnel node probe fallback', () => {
