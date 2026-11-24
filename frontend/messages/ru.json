@@ -8305,7 +8305,6 @@
 	"warpscout_awg_chip_tip": "Параметры обфускации рукопожатия AmneziaWG",
 	"warpscout_awg_chip_label": "AWG:",
 	"warpscout_unsaved_tip": "Не сохранено",
-	"warpscout_awg_pop_aria": "Параметры обфускации AmneziaWG",
 	"warpscout_awg_pop_title": "Обфускация AWG",
 	"warpscout_awg_sig_label": "Профиль сигнатуры (I1–I5)",
 	"warpscout_awg_hint": "S1–S4 и H1–H4 для Cloudflare WARP всегда штатные: серверы отвергают изменённые заголовки WireGuard.",

@@ -7905,7 +7905,6 @@
 	"warpscout_awg_chip_tip": "AmneziaWG handshake obfuscation settings",
 	"warpscout_awg_chip_label": "AWG:",
 	"warpscout_unsaved_tip": "Unsaved",
-	"warpscout_awg_pop_aria": "AmneziaWG obfuscation settings",
 	"warpscout_awg_pop_title": "AWG obfuscation",
 	"warpscout_awg_sig_label": "Signature profile (I1–I5)",
 	"warpscout_awg_hint": "S1–S4 and H1–H4 stay standard for Cloudflare WARP: servers reject modified WireGuard headers.",
