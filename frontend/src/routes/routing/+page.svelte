@@ -68,10 +68,19 @@
         // settings. Without this the dormant mode's chip rendered as active
         // until the user first visited a sing-box tab (which runs loadAll).
         void singboxRouterStore.reloadSettings();
+        void loadGeoFileCount();
     });
     $effect(() => {
-        if (browser && $page.url.searchParams.get('tab') === 'uplink') {
+        if (!browser) return;
+        const tab = $page.url.searchParams.get('tab');
+        if (tab === 'uplink') {
             void goto('/?tab=uplink', { replaceState: true });
+        } else if (tab !== null && !(ROUTING_TABS as readonly string[]).includes(tab)) {
+            // Закладка на снятую вкладку (hrneo): пока параметр в адресе, Tabs
+            // ждёт её появления и выбор пользователя в адрес не пишет.
+            const url = new URL($page.url);
+            url.searchParams.delete('tab');
+            void goto(url, { replaceState: true, keepFocus: true, noScroll: true });
         }
     });
     onDestroy(() => {
@@ -241,13 +250,10 @@
     }
 
     // Derived: tab badges
-    let geoFileCount = $state(0);
+    // null — ещё не прочитано.
+    let geoFileCount = $state<number | null>(null);
 
     async function loadGeoFileCount() {
-        if (!singboxInstalled) {
-            geoFileCount = 0;
-            return;
-        }
         try {
             const files = await api.getGeoFiles();
             geoFileCount = files?.length ?? 0;
@@ -255,11 +261,6 @@
             geoFileCount = 0;
         }
     }
-
-    $effect(() => {
-        if (singboxInstalled) void loadGeoFileCount();
-        else geoFileCount = 0;
-    });
     let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled).length);
     let ipActiveCount = $derived(ipRoutes.filter(r => r.enabled).length);
     let clientActiveCount = $derived(clientRoutes.filter(r => r.enabled).length);
@@ -365,8 +366,10 @@
             autolistAvailable
                 ? { id: 'autolist', label: m.routing_page_tab_autolist(), badge: autolistWaitingCount, separatorBefore: true }
                 : null,
-            singboxInstalled
-                ? { id: 'geodata', label: m.routing_page_tab_geodata(), badge: geoFileCount, separatorBefore: true }
+            // Файлы нужны sing-box, но и без него скачанное должно быть видно:
+            // только здесь их удаляют и выключают автообновление.
+            singboxInstalled || (geoFileCount ?? 0) > 0
+                ? { id: 'geodata', label: m.routing_page_tab_geodata(), badge: geoFileCount ?? 0, separatorBefore: true }
                 : null,
         ] as (TabItem | null)[])
             .filter((t): t is TabItem => t !== null)
@@ -402,6 +405,7 @@
         ) {
             return;
         }
+        if (activeTab === 'geodata' && geoFileCount === null && !tabsInclude(items, activeTab)) return;
         // Любимую не сбрасываем, пока не пришло то, от чего зависит её
         // видимость: до загрузки настроек usageLevel = 'advanced' и
         // expert-вкладки скрыты; FakeIP ниже expert виден только по

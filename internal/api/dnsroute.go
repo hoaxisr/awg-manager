@@ -214,7 +214,7 @@ func (h *DNSRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := h.svc.Create(r.Context(), list)
 	if err != nil {
-		response.Error(w, err.Error(), "DNS_ROUTE_CREATE_ERROR")
+		writeDNSRouteError(w, err, "DNS_ROUTE_CREATE_ERROR")
 		return
 	}
 
@@ -286,7 +286,7 @@ func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.Delete(r.Context(), id); err != nil {
-		writeDNSRouteError(w, err, "DNS_ROUTE_DELETE_ERROR")
+		response.Error(w, err.Error(), "DNS_ROUTE_DELETE_ERROR")
 		return
 	}
 
@@ -329,7 +329,7 @@ func (h *DNSRouteHandler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.svc.DeleteBatch(r.Context(), body.IDs); err != nil {
-		writeDNSRouteError(w, err, "DNS_ROUTE_DELETE_BATCH_ERROR")
+		response.Error(w, err.Error(), "DNS_ROUTE_DELETE_BATCH_ERROR")
 		return
 	}
 
@@ -373,7 +373,7 @@ func (h *DNSRouteHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 
 	created, err := h.svc.CreateBatch(r.Context(), lists)
 	if err != nil {
-		response.Error(w, err.Error(), "DNS_ROUTE_CREATE_BATCH_ERROR")
+		writeDNSRouteError(w, err, "DNS_ROUTE_CREATE_BATCH_ERROR")
 		return
 	}
 
@@ -409,7 +409,7 @@ func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.SetEnabled(r.Context(), id, body.Enabled); err != nil {
-		writeDNSRouteError(w, err, "DNS_ROUTE_SET_ENABLED_ERROR")
+		response.Error(w, err.Error(), "DNS_ROUTE_SET_ENABLED_ERROR")
 		return
 	}
 

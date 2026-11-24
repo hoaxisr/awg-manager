@@ -397,15 +397,25 @@ func TestDNSRouteHandler_MutationsPublishInvalidation(t *testing.T) {
 	}
 }
 
-func TestWriteDNSRouteError_HydraRouteBackendCode(t *testing.T) {
-	rec := httptest.NewRecorder()
-	writeDNSRouteError(rec, fmt.Errorf("wrap: %w", dnsroute.ErrHydraRouteBackend), "DNS_ROUTE_CREATE_ERROR")
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"code":"DNS_ROUTE_BACKEND_UNSUPPORTED"`) {
-		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+// Отказ по бэкенду HydraRoute отличим по коду на всех ручках, где его даёт
+// служба: создание, правка, пакет (импорт старой копии).
+func TestDNSRouteHandler_HydraRouteBackendCode(t *testing.T) {
+	refused := fmt.Errorf("wrap: %w", dnsroute.ErrHydraRouteBackend)
+	fake := &fakeDNSRouteService{
+		createFn: func(context.Context, dnsroute.DomainList) (*dnsroute.DomainList, error) { return nil, refused },
+		updateFn: func(context.Context, dnsroute.DomainList) (*dnsroute.DomainList, error) { return nil, refused },
+		createBatchFn: func(context.Context, []dnsroute.DomainList) ([]*dnsroute.DomainList, error) {
+			return nil, refused
+		},
 	}
-	rec = httptest.NewRecorder()
-	writeDNSRouteError(rec, errors.New("boom"), "DNS_ROUTE_UPDATE_ERROR")
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "DNS_ROUTE_UPDATE_ERROR") {
-		t.Fatalf("other errors keep old shape: %d %s", rec.Code, rec.Body.String())
+	h := NewDNSRouteHandler(fake, nil)
+	for name, rr := range map[string]*httptest.ResponseRecorder{
+		"Create":      perform(h.Create, http.MethodPost, "/dns-routes/create", `{"name":"x","backend":"hydraroute"}`),
+		"Update":      perform(h.Update, http.MethodPost, "/dns-routes/update?id=dns1", `{"name":"x","backend":"hydraroute"}`),
+		"CreateBatch": perform(h.CreateBatch, http.MethodPost, "/dns-routes/create-batch", `[{"name":"x","backend":"hydraroute"}]`),
+	} {
+		if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != "DNS_ROUTE_BACKEND_UNSUPPORTED" {
+			t.Errorf("%s: %d %s", name, rr.Code, rr.Body.String())
+		}
 	}
 }

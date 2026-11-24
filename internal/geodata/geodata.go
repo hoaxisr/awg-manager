@@ -99,7 +99,7 @@ func (s *GeoDataStore) SetProgressReporter(fn func(rawURL, fileType, phase strin
 }
 
 // SetOnChange регистрирует колбэк изменения состава/содержимого геофайлов
-// (Update / UpdateAll / Delete / TakeControl). Потребитель — bypass-набор:
+// (Update / UpdateAll / Delete). Потребитель — bypass-набор:
 // его содержимое выведено из .dat, поэтому обязано пересобираться следом.
 // Optional; nil — уведомлений нет.
 func (s *GeoDataStore) SetOnChange(fn func()) {
