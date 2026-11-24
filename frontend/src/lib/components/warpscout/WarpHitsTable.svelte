@@ -1,21 +1,67 @@
 <script lang="ts">
-	import { Copy, Download, Plus, Repeat } from 'lucide-svelte';
+	import { Copy } from 'lucide-svelte';
 	import { m } from '$lib/i18n';
-	import { Button, IconButton } from '$lib/components/ui';
+	import { IconButton } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import type { WarpHit } from '$lib/types/warpscout';
+	import WarpHitActions from './WarpHitActions.svelte';
+	import WarpHitRowMenu from './WarpHitRowMenu.svelte';
 	import { countryFlag, latencyTone } from './warpscoutUi';
 
 	interface Props {
 		/** Уже отсортированные результаты: первая строка получает метку TOP. */
 		hits: WarpHit[];
+		showTgCol?: boolean;
 		oncreate: (h: WarpHit) => void;
 		onswap: (h: WarpHit) => void;
 		onexport?: (h: WarpHit) => void;
 	}
 
-	let { hits, oncreate, onswap, onexport }: Props = $props();
+	let { hits, showTgCol = true, oncreate, onswap, onexport }: Props = $props();
+
+	let rowMenuHit = $state<WarpHit | null>(null);
+	let rowMenuIndex = $state(-1);
+	let rowMenuPos = $state({ top: 0, right: 16 });
+	let rowMenuTriggerEl = $state<HTMLButtonElement | null>(null);
+
+	function toggleRowMenu(h: WarpHit, e: MouseEvent): void {
+		e.stopPropagation();
+		if (rowMenuHit?.endpoint === h.endpoint) {
+			rowMenuHit = null;
+			rowMenuIndex = -1;
+			return;
+		}
+		const btn = e.currentTarget as HTMLButtonElement;
+		const rect = btn.getBoundingClientRect();
+		const menuH = onexport ? 86 : 48;
+		const spaceBelow = window.innerHeight - rect.bottom - 12;
+		const openUp = spaceBelow < menuH && rect.top > menuH + 12;
+		rowMenuPos = {
+			top: openUp ? Math.max(8, rect.top - menuH - 4) : rect.bottom + 4,
+			right: Math.max(8, window.innerWidth - rect.right),
+		};
+		rowMenuTriggerEl = btn;
+		rowMenuIndex = hits.findIndex((item) => item.endpoint === h.endpoint);
+		rowMenuHit = h;
+	}
+
+	function closeRowMenu(): void {
+		rowMenuHit = null;
+		rowMenuIndex = -1;
+	}
+
+	function restoreRowMenuFocus(): void {
+		rowMenuTriggerEl?.focus({ preventScroll: true });
+	}
+
+	$effect(() => {
+		if (!rowMenuHit) return;
+		const idx = hits.findIndex((item) => item.endpoint === rowMenuHit?.endpoint);
+		if (idx === rowMenuIndex) return;
+		closeRowMenu();
+		if (idx !== -1) restoreRowMenuFocus();
+	});
 
 	async function copyEndpoint(ep: string): Promise<void> {
 		const ok = await copyToClipboard(ep);
@@ -31,7 +77,7 @@
 				<th>Endpoint</th>
 				<th>{m.warpscout_col_location()}</th>
 				<th class="r">{m.warpscout_col_latency()}</th>
-				<th class="c hide-xs">TG</th>
+				{#if showTgCol}<th class="c hide-xs">TG</th>{/if}
 				<th></th>
 			</tr>
 		</thead>
@@ -39,7 +85,7 @@
 			{#each hits as h, i (h.endpoint)}
 				{@const tone = latencyTone(h.pingMs)}
 				<tr class:top-hit={i === 0}>
-					<td class="mono">
+					<td class="mono cell-ep">
 						<span class="ep">
 							{#if i === 0}<span class="top-badge">TOP</span>{/if}
 							<span>{h.endpoint}</span>
@@ -52,7 +98,7 @@
 							</IconButton>
 						</span>
 					</td>
-					<td>
+					<td class="cell-geo">
 						<span class="geo">
 							{#if h.loc}<span class="flag">{countryFlag(h.loc)}</span>{/if}
 							<span class="mono colo-cell">{h.colo || h.loc || '—'}</span>
@@ -60,7 +106,7 @@
 						</span>
 					</td>
 					<td
-						class="r mono"
+						class="r mono cell-lat"
 						title={h.handshakeMs > 0 ? m.warpscout_handshake_tip({ ms: h.handshakeMs }) : undefined}
 					>
 						{#if h.pingMs > 0}
@@ -72,42 +118,35 @@
 							—
 						{/if}
 					</td>
-					<td class="c hide-xs">
-						{#if h.tgOk}<span class="ok">✓</span>{:else}<span class="muted">—</span>{/if}
-					</td>
+					{#if showTgCol}
+						<td class="c hide-xs cell-tg">
+							{#if h.tgOk}<span class="ok">✓</span>{:else}<span class="muted">—</span>{/if}
+						</td>
+					{/if}
 					<td class="actions-cell">
-						<div class="actions">
-							{#if onexport}
-								<Button
-									size="sm"
-									variant="ghost"
-									title={m.warpscout_export_conf_tip()}
-									onclick={() => onexport(h)}
-								>
-									{#snippet iconBefore()}<Download size={12} />{/snippet}
-									{m.warpscout_export_conf_btn()}
-								</Button>
-							{/if}
-							<Button
-								size="sm"
-								variant="outline-primary"
-								title={m.warpscout_create_tunnel_tip()}
-								onclick={() => oncreate(h)}
-							>
-								{#snippet iconBefore()}<Plus size={12} />{/snippet}
-								{m.warpscout_tunnel_btn()}
-							</Button>
-							<Button size="sm" variant="ghost" title={m.warpscout_swap_ep_tip()} onclick={() => onswap(h)}>
-								{#snippet iconBefore()}<Repeat size={12} />{/snippet}
-								{m.warpscout_swap_btn()}
-							</Button>
-						</div>
+						<WarpHitActions
+							hit={h}
+							menuOpen={rowMenuHit?.endpoint === h.endpoint}
+							{oncreate}
+							{onswap}
+							{onexport}
+							ontogglemenu={toggleRowMenu}
+						/>
 					</td>
 				</tr>
 			{/each}
 		</tbody>
 	</table>
 </div>
+
+<WarpHitRowMenu
+	hit={rowMenuHit}
+	pos={rowMenuPos}
+	{onexport}
+	oncopy={(ep) => void copyEndpoint(ep)}
+	onclose={closeRowMenu}
+	onrestorefocus={restoreRowMenuFocus}
+/>
 
 <style>
 	.hits-table-wrap {
@@ -216,11 +255,6 @@
 	.actions-cell {
 		width: 1%;
 	}
-	.actions {
-		display: inline-flex;
-		gap: 0.25rem;
-		justify-content: flex-end;
-	}
 	.ok {
 		color: var(--color-success);
 		font-weight: 600;
@@ -235,6 +269,78 @@
 	@media (max-width: 580px) {
 		.hide-xs {
 			display: none;
+		}
+	}
+
+	@media (max-width: 600px) {
+		.hits-table-wrap {
+			max-height: none;
+			overflow: visible;
+		}
+		.hits thead {
+			display: none;
+		}
+		.hits,
+		.hits tbody {
+			display: block;
+			width: 100%;
+		}
+		.hits tbody tr {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto;
+			grid-template-areas:
+				'ep lat'
+				'geo tg'
+				'actions actions';
+			align-items: center;
+			gap: 0.35rem 0.5rem;
+			padding: 0.65rem 0.7rem;
+			border-bottom: 1px solid var(--color-border);
+		}
+		.hits tbody tr:last-child {
+			border-bottom: 0;
+		}
+		/* Строка — сетка с отступами: фон на ячейках оставлял бы полосы между ними. */
+		.hits tr.top-hit {
+			background: color-mix(in srgb, var(--color-accent-tint) 45%, transparent);
+		}
+		.hits tr:hover {
+			background: var(--color-bg-hover);
+		}
+		.hits tr.top-hit td,
+		.hits tr:hover td {
+			background: transparent;
+		}
+		.hits td {
+			border-bottom: 0;
+			padding: 0;
+			min-width: 0;
+			white-space: normal;
+		}
+		.hits td.cell-ep {
+			grid-area: ep;
+		}
+		.hits td.cell-geo {
+			grid-area: geo;
+		}
+		.hits td.cell-lat {
+			grid-area: lat;
+			justify-self: end;
+			white-space: nowrap;
+		}
+		.hits td.cell-tg {
+			grid-area: tg;
+			display: block;
+			justify-self: end;
+			font-size: 0.72rem;
+		}
+		.hits td.actions-cell {
+			grid-area: actions;
+			width: 100%;
+			padding-top: 0.25rem;
+		}
+		.ep {
+			flex-wrap: wrap;
 		}
 	}
 </style>

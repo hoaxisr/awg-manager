@@ -2,7 +2,7 @@
 	import { KeyRound, Network, RefreshCcw, SlidersHorizontal, Trash2, UserPlus } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
-	import { Button, ConfirmModal, Input } from '$lib/components/ui';
+	import { Button, ConfirmModal, IconButton, Input } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import type { WarpAccount, WarpTunnelRef } from '$lib/types/warpscout';
 	import WarpAccountAltModal from './WarpAccountAltModal.svelte';
@@ -142,7 +142,7 @@
 		</Button>
 	</div>
 {:else}
-	<WarpChipPopover title={m.warpscout_acct_pop_title()} width="24rem">
+	<WarpChipPopover title={m.warpscout_acct_pop_title()} width="25.5rem">
 		{#snippet chip()}
 			<span class="chip-dot"></span>
 			<span class="chip-strong">{account.warpPlus ? 'WARP+' : 'WARP Free'}</span>
@@ -279,18 +279,19 @@
 					{#snippet iconBefore()}<RefreshCcw size={13} />{/snippet}
 					{m.warpscout_reissue_btn()}
 				</Button>
-				<Button
-					size="sm"
-					variant="outline-danger"
+				<!-- Иконка: три подписи не помещаются в строку поповера. -->
+				<IconButton
+					variant="danger"
+					ariaLabel={m.common_delete()}
+					title={m.common_delete()}
 					disabled={accountBusy || keyLocked}
 					onclick={() => {
 						close();
 						confirmDelete = true;
 					}}
 				>
-					{#snippet iconBefore()}<Trash2 size={13} />{/snippet}
-					{m.common_delete()}
-				</Button>
+					<Trash2 size={14} />
+				</IconButton>
 			</div>
 		{/snippet}
 	</WarpChipPopover>
@@ -337,7 +338,7 @@
 		gap: 0.5rem;
 		padding: 0.15rem 0.25rem 0.15rem 0.55rem;
 		border-radius: var(--radius-sm);
-		background: var(--color-bg-primary);
+		background: var(--color-bg-secondary);
 		border: 1px solid var(--color-border);
 		flex-wrap: wrap;
 	}
@@ -374,17 +375,20 @@
 	}
 	.kv-grid {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 0.4rem;
+		grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+		gap: 1px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-border);
+		overflow: hidden;
 	}
 	.kv {
 		display: flex;
 		flex-direction: column;
 		gap: 0.1rem;
-		padding: 0.35rem 0.5rem;
-		border-radius: var(--radius-sm);
+		padding: 0.4rem 0.55rem;
 		background: var(--color-bg-primary);
-		border: 1px solid var(--color-border);
+		min-width: 0;
 	}
 	.kv .k {
 		font-size: 0.67rem;

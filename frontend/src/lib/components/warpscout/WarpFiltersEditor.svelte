@@ -139,7 +139,7 @@
 		grid-column: 1 / -1;
 	}
 	.filters-grid.no-proto {
-		grid-template-columns: minmax(11rem, 1.45fr) minmax(7.5rem, 0.95fr) 7.25rem;
+		grid-template-columns: minmax(11rem, 1.45fr) minmax(7.5rem, 0.95fr) 7.6rem;
 	}
 	.field {
 		display: flex;

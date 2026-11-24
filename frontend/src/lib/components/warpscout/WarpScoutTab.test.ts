@@ -570,6 +570,102 @@ describe('WarpScoutTab', () => {
 		);
 	});
 
+	it('keeps find-junk form fields and the picked attempt after the drawer is closed and reopened', async () => {
+		const attempt = (n: number) => ({
+			attempt: n,
+			awg: { signatureProfile: 'stun', jc: 4 + n, jmin: 20, jmax: 70 },
+			profile: 'stun',
+			working: 15 - n,
+			scanned: 15,
+			total: 15,
+			pct: 95 - n,
+			durationMs: 2000,
+		});
+		const fj: WarpFindJunkStatus = {
+			runId: 5,
+			running: false,
+			attempt: 2,
+			maxAttempts: 8,
+			thresholdPct: 95,
+			attempts: [attempt(1), attempt(2)],
+			best: attempt(1),
+		};
+		const { container } = await mount(state({}, { findJunk: fj }));
+		const numInputs = () =>
+			container.querySelectorAll<HTMLInputElement>('.findjunk-box input[type="number"]');
+		const rows = () => container.querySelectorAll<HTMLButtonElement>('.junk-row');
+		const pressed = () => [...rows()].map((b) => b.getAttribute('aria-pressed'));
+		const reopen = async () => {
+			await fireEvent.click(container.querySelector<HTMLElement>('.drawer .drawer-close button')!);
+			await waitFor(() => expect(container.querySelector('.drawer')).toBeNull());
+			await fireEvent.click(chip(container, 0));
+		};
+
+		await fireEvent.click(chip(container, 0));
+		await fireEvent.input(numInputs()[0], { target: { value: '7' } });
+		await fireEvent.input(numInputs()[1], { target: { value: '80' } });
+		await fireEvent.click(rows()[1]);
+		expect(pressed()).toEqual(['false', 'true']);
+
+		await reopen();
+		expect([...numInputs()].map((i) => i.value)).toEqual(['7', '80']);
+		expect(pressed()).toEqual(['false', 'true']);
+
+		// Новый запуск сбрасывает выбор попытки, но не параметры формы.
+		warpFindJunkPush.set({ ...fj, runId: 6 });
+		await tick();
+		expect(pressed()).toEqual(['true', 'false']);
+		expect(numInputs()[0].value).toBe('7');
+	});
+
+	it('switches the AWG drawer to find-junk when a run starts, once per run', async () => {
+		const { container } = await mount(state());
+		await fireEvent.click(chip(container, 0));
+		const tab = (name: string) => screen.getByRole('button', { name });
+		const pressed = () =>
+			['Параметры', 'Подбор find-junk'].map((n) => tab(n).getAttribute('aria-pressed'));
+		expect(pressed()).toEqual(['true', 'false']);
+
+		const run: WarpFindJunkStatus = {
+			runId: 1,
+			running: true,
+			attempt: 1,
+			maxAttempts: 8,
+			thresholdPct: 95,
+			attempts: [],
+		};
+		warpFindJunkPush.set(run);
+		await tick();
+		expect(pressed()).toEqual(['false', 'true']);
+
+		// Вернулись на «Параметры» — события того же запуска назад не уводят.
+		await fireEvent.click(tab('Параметры'));
+		warpFindJunkPush.set({ ...run, attempt: 2 });
+		await tick();
+		expect(pressed()).toEqual(['true', 'false']);
+
+		// Запуск закончился, начался следующий — снова «Подбор».
+		warpFindJunkPush.set({ ...run, running: false });
+		await tick();
+		warpFindJunkPush.set({ ...run, runId: 2 });
+		await tick();
+		expect(pressed()).toEqual(['false', 'true']);
+	});
+
+	it('hides the inactive section on mobile', async () => {
+		const { container } = await mount(acctState());
+		const hidden = () =>
+			['.col-scanner', '.col-autopilot'].map((sel) =>
+				container.querySelector(sel)!.classList.contains('mobile-hidden'),
+			);
+		expect(hidden()).toEqual([false, true]);
+		const buttons = container.querySelectorAll<HTMLButtonElement>('.mobile-section-bar button');
+		await fireEvent.click(buttons[1]);
+		expect(hidden()).toEqual([true, false]);
+		await fireEvent.click(buttons[0]);
+		expect(hidden()).toEqual([false, true]);
+	});
+
 	it('displays AWG 3.1 badge when DisableCookies toggle is enabled', async () => {
 		const { container } = await mount(state({}, { supportsAsc3: true, supportsKernelAwg31: true }));
 		await fireEvent.click(chip(container, 0));
@@ -618,13 +714,57 @@ describe('WarpScoutTab', () => {
 		URL.createObjectURL = createUrlSpy;
 		URL.revokeObjectURL = revokeUrlSpy;
 		const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+		const selectSpy = vi.spyOn(HTMLTextAreaElement.prototype, 'select');
 
 		try {
 			const view = await mount(initial);
-			await waitFor(() => expect(view.container.querySelector('.actions-cell')).not.toBeNull());
-			const exportBtn = view.container.querySelector<HTMLButtonElement>('.actions-cell button:first-of-type');
-			expect(exportBtn).not.toBeNull();
-			await fireEvent.click(exportBtn!);
+			await waitFor(() => expect(view.container.querySelector('.actions-desktop')).not.toBeNull());
+			const desktopActions = view.container.querySelector<HTMLElement>('.actions-desktop')!;
+			const createBtn = desktopActions.querySelector<HTMLButtonElement>('button[title="Создать новый туннель WARP"]');
+			const swapBtn = desktopActions.querySelector<HTMLButtonElement>('button[title="Подменить узел в существующем туннеле"]');
+			expect(createBtn?.textContent?.trim()).toBe('Создать');
+			expect(swapBtn?.textContent?.trim()).toBe('Подменить');
+
+			const moreBtn = desktopActions.querySelector<HTMLButtonElement>('.row-more-btn');
+			expect(moreBtn).not.toBeNull();
+			expect(moreBtn!.getAttribute('aria-expanded')).toBe('false');
+			await fireEvent.click(moreBtn!);
+			expect(moreBtn!.getAttribute('aria-expanded')).toBe('true');
+
+			const menu = await waitFor(() => {
+				const el = view.container.querySelector<HTMLElement>('.row-overflow-menu');
+				expect(el).not.toBeNull();
+				return el!;
+			});
+			const menuButtons = Array.from(menu.querySelectorAll<HTMLButtonElement>('button'));
+			expect(menuButtons.length).toBe(2);
+			await waitFor(() => expect(document.activeElement).toBe(menuButtons[0]));
+
+			await fireEvent.keyDown(menu, { key: 'ArrowDown' });
+			expect(document.activeElement).toBe(menuButtons[1]);
+
+			await fireEvent.keyDown(menu, { key: 'Escape' });
+			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).toBeNull());
+			expect(document.activeElement).toBe(moreBtn);
+			expect(moreBtn!.getAttribute('aria-expanded')).toBe('false');
+
+			await fireEvent.click(moreBtn!);
+			await waitFor(() => expect(document.activeElement?.closest('.row-overflow-menu')).not.toBeNull());
+			await fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
+			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).toBeNull());
+			expect(document.activeElement).toBe(moreBtn);
+
+			await fireEvent.click(moreBtn!);
+			const reopened = await waitFor(() => {
+				const el = view.container.querySelector<HTMLElement>('.row-overflow-menu');
+				expect(el).not.toBeNull();
+				return el!;
+			});
+			const exportItem = Array.from(reopened.querySelectorAll<HTMLButtonElement>('button')).find((btn) =>
+				btn.textContent?.includes('Скачать .conf'),
+			);
+			expect(exportItem).not.toBeUndefined();
+			await fireEvent.click(exportItem!);
 
 			await waitFor(() =>
 				expect(api.warpscoutExport).toHaveBeenCalledWith({
@@ -635,10 +775,106 @@ describe('WarpScoutTab', () => {
 			);
 			expect(createUrlSpy).toHaveBeenCalled();
 			expect(revokeUrlSpy).toHaveBeenCalledWith('blob:mock');
+			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).toBeNull());
+			expect(document.activeElement).toBe(moreBtn);
+
+			// Копирование по plain HTTP: select() в браузере забирает фокус в скрытый textarea
+			// (в jsdom — нет, поэтому подмена), после копирования он возвращается.
+			selectSpy.mockImplementation(function (this: HTMLTextAreaElement) {
+				this.focus();
+			});
+			await fireEvent.click(moreBtn!);
+			await waitFor(() => expect(document.activeElement?.closest('.row-overflow-menu')).not.toBeNull());
+			await fireEvent.click(screen.getByRole('button', { name: 'Копировать IP:порт' }));
+			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).toBeNull());
+			expect(document.activeElement).toBe(moreBtn);
+
+			// Повторно открываем меню и проверяем закрытие при скролле таблицы .hits-table-wrap.
+			await fireEvent.click(moreBtn!);
+			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).not.toBeNull());
+			const wrap = view.container.querySelector<HTMLElement>('.hits-table-wrap')!;
+			await fireEvent.scroll(wrap);
+			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).toBeNull());
+
+			// Сдвигаем строку при живом обновлении SSE — плавающее меню закрывается вместо зависания.
+			await fireEvent.click(moreBtn!);
+			await waitFor(() => expect(document.activeElement?.closest('.row-overflow-menu')).not.toBeNull());
+			warpScanPush.set({
+				running: true,
+				owner: 'manual',
+				total: 2,
+				done: 2,
+				hits: [
+					{
+						endpoint: '162.159.193.5:2408',
+						handshakeMs: 10,
+						pingMs: 12,
+						colo: 'ARN',
+						loc: 'SE',
+						warp: 'on',
+						tgOk: true,
+					},
+					initial.scan.hits![0],
+				],
+			});
+			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).toBeNull());
+			// Строка жива — фокус возвращается на её «⋯».
+			expect(moreBtn!.isConnected).toBe(true);
+			expect(document.activeElement).toBe(moreBtn);
 		} finally {
 			clickSpy.mockRestore();
+			selectSpy.mockRestore();
 			URL.createObjectURL = origCreateUrl;
 			URL.revokeObjectURL = origRevokeUrl;
+		}
+	});
+
+	it('renders WarpChipPopover inside SideDrawer on mobile viewports', async () => {
+		const origMatchMedia = window.matchMedia;
+		Object.defineProperty(window, 'matchMedia', {
+			configurable: true,
+			writable: true,
+			value: (query: string) => ({
+				matches: query === '(max-width: 768px)',
+				media: query,
+				onchange: null,
+				addListener: vi.fn(),
+				removeListener: vi.fn(),
+				addEventListener: vi.fn(),
+				removeEventListener: vi.fn(),
+				dispatchEvent: vi.fn(),
+			}),
+		});
+		try {
+			const { container } = await mount(acctState());
+			const filterToggle = container.querySelector<HTMLButtonElement>('button.mobile-filters-toggle');
+			expect(filterToggle).not.toBeNull();
+			expect(filterToggle?.hasAttribute('aria-label')).toBe(false);
+			expect(filterToggle!.getAttribute('aria-expanded')).toBe('false');
+			await fireEvent.click(filterToggle!);
+			expect(filterToggle!.getAttribute('aria-expanded')).toBe('true');
+			expect(container.querySelector('.filter-strip-body.mobile-open')).not.toBeNull();
+
+			await fireEvent.click(chip(container, 0));
+
+			const drawer = await waitFor(() => {
+				const el = container.querySelector<HTMLElement>('.drawer[role="dialog"][aria-modal="true"]');
+				expect(el).not.toBeNull();
+				return el!;
+			});
+			expect(drawer.querySelector('.drawer-handle')).not.toBeNull();
+			expect(container.querySelector('.popover')).toBeNull();
+
+			const backdrop = container.querySelector<HTMLElement>('.backdrop');
+			expect(backdrop).not.toBeNull();
+			await fireEvent.click(backdrop!);
+			await waitFor(() => expect(container.querySelector('.drawer')).toBeNull());
+		} finally {
+			Object.defineProperty(window, 'matchMedia', {
+				configurable: true,
+				writable: true,
+				value: origMatchMedia,
+			});
 		}
 	});
 

@@ -74,11 +74,11 @@
 <style>
 	.timeline-section {
 		border-top: 1px solid var(--color-border);
-		background: color-mix(in srgb, var(--color-bg-tertiary) 40%, transparent);
-		padding: 0.55rem 0.85rem 0.65rem;
+		background: transparent;
+		padding: 0.65rem 0.85rem 0.75rem;
 		display: flex;
 		flex-direction: column;
-		gap: 0.45rem;
+		gap: 0.35rem;
 	}
 	.timeline-head {
 		display: flex;
@@ -106,18 +106,27 @@
 	.timeline-list {
 		display: flex;
 		flex-direction: column;
-		gap: 0.35rem;
-		max-height: 13.5rem;
+		gap: 0;
+		max-height: 15rem;
 		overflow: auto;
+	}
+	:global(html[data-layout-compact='true']) .timeline-list {
+		max-height: none;
+		overflow: visible;
 	}
 	.swap-item {
 		display: flex;
 		align-items: flex-start;
 		gap: 0.55rem;
-		padding: 0.42rem 0.6rem;
-		border-radius: var(--radius-sm);
-		background: var(--color-bg-secondary);
-		border: 1px solid var(--color-border);
+		padding: 0.5rem 0;
+		border-radius: 0;
+		background: transparent;
+		border: 0;
+		border-bottom: 1px solid var(--color-border);
+	}
+	.swap-item:last-child {
+		border-bottom: 0;
+		padding-bottom: 0;
 	}
 	.swap-dot {
 		width: 7px;
@@ -198,5 +207,12 @@
 	}
 	.muted {
 		color: var(--color-text-muted);
+	}
+
+	@media (max-width: 768px) {
+		.timeline-list {
+			max-height: none;
+			overflow: visible;
+		}
 	}
 </style>

@@ -102,7 +102,7 @@
 	.route-list {
 		display: flex;
 		flex-direction: column;
-		gap: 0.25rem;
+		gap: 0.18rem;
 		max-height: 15rem;
 		overflow-y: auto;
 	}
@@ -119,10 +119,11 @@
 		align-items: center;
 		gap: 0.5rem;
 		width: 100%;
-		padding: 0.4rem 0.55rem;
+		min-height: 40px;
+		padding: 0.45rem 0.55rem;
 		border-radius: var(--radius-sm);
 		border: 1px solid transparent;
-		background: var(--color-bg-primary);
+		background: transparent;
 		color: var(--color-text-primary);
 		font: inherit;
 		text-align: left;

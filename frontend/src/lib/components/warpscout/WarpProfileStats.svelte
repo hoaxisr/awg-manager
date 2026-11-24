@@ -196,16 +196,20 @@
 	.kpi-grid {
 		display: grid;
 		grid-template-columns: repeat(4, minmax(0, 1fr));
-		gap: 0.4rem;
+		gap: 1px;
+		background: var(--color-border);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		overflow: hidden;
 	}
 	.kpi-tile {
 		display: flex;
 		flex-direction: column;
 		gap: 0.08rem;
-		padding: 0.35rem 0.5rem;
-		border-radius: var(--radius-sm);
+		padding: 0.4rem 0.55rem;
+		border-radius: 0;
 		background: var(--color-bg-primary);
-		border: 1px solid var(--color-border);
+		border: 0;
 		min-width: 0;
 	}
 	.kpi-label {
@@ -270,12 +274,12 @@
 		display: grid;
 		grid-template-columns: repeat(20, minmax(0, 1fr));
 		gap: 4px;
-		height: 42px;
+		height: 28px;
 		align-items: stretch;
-		padding: 5px 6px;
-		border-radius: var(--radius-sm);
-		background: var(--color-bg-primary);
-		border: 1px solid var(--color-border);
+		padding: 2px 0;
+		border-radius: 0;
+		background: transparent;
+		border: 0;
 	}
 	.spark-col {
 		height: 100%;

@@ -1,13 +1,15 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { ChevronDown } from 'lucide-svelte';
+	import { X } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
+	import { IconButton, SideDrawer } from '$lib/components/ui';
+	import WarpChipButton from './WarpChipButton.svelte';
 
 	interface Props {
 		/** Содержимое кнопки-чипа (без шеврона). */
 		chip: Snippet;
-		/** Заголовок поповера; он же доступное имя, если не задан ariaLabel. */
+		/** Заголовок поповера; он же доступное имя. */
 		title: string;
-		ariaLabel?: string;
 		chipTitle?: string;
 		/** Ширина поповера на широком экране (CSS-длина). */
 		width: string;
@@ -17,20 +19,32 @@
 		children: Snippet<[() => void]>;
 	}
 
-	let { chip, title, ariaLabel, chipTitle, width, alignRight = false, headExtra, children }: Props = $props();
+	let { chip, title, chipTitle, width, alignRight = false, headExtra, children }: Props = $props();
 
 	let open = $state(false);
+	let isMobile = $state(false);
 	let rootEl = $state<HTMLDivElement | null>(null);
 	let chipEl = $state<HTMLButtonElement | null>(null);
 
 	function close(): void {
 		open = false;
-		chipEl?.focus();
+		chipEl?.focus({ preventScroll: true });
 	}
 
-	// Слушатели живут только пока поповер открыт.
 	$effect(() => {
-		if (!open) return;
+		if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+		const mq = window.matchMedia('(max-width: 768px)');
+		const sync = () => {
+			isMobile = mq.matches;
+		};
+		sync();
+		mq.addEventListener('change', sync);
+		return () => mq.removeEventListener('change', sync);
+	});
+
+	// Слушатели живут только пока открыт десктопный поповер (у SideDrawer свои обработчики).
+	$effect(() => {
+		if (!open || isMobile) return;
 
 		function handlePointerDown(e: PointerEvent): void {
 			const target = e.target as HTMLElement | null;
@@ -55,31 +69,35 @@
 </script>
 
 <div class="pop-anchor" bind:this={rootEl}>
-	<button
-		bind:this={chipEl}
-		type="button"
-		class="status-chip"
-		class:active={open}
-		aria-haspopup="dialog"
-		aria-expanded={open}
-		title={chipTitle}
-		onclick={() => (open = !open)}
-	>
+	<WarpChipButton bind:buttonEl={chipEl} {open} title={chipTitle} onclick={() => (open = !open)}>
 		{@render chip()}
-		<span class="chev" class:open><ChevronDown size={13} /></span>
-	</button>
+	</WarpChipButton>
 
-	{#if open}
+	{#if isMobile}
+		<SideDrawer {open} {title} onClose={close}>
+			<div class="drawer-pop-body">
+				{#if headExtra}
+					<div class="drawer-head-extra">{@render headExtra()}</div>
+				{/if}
+				{@render children(close)}
+			</div>
+		</SideDrawer>
+	{:else if open}
 		<div
 			class="popover"
 			class:align-right={alignRight}
 			style:--pop-width={width}
 			role="dialog"
-			aria-label={ariaLabel ?? title}
+			aria-label={title}
 		>
 			<div class="pop-head">
-				<span class="pop-title">{title}</span>
-				{#if headExtra}{@render headExtra()}{/if}
+				<div class="pop-head-left">
+					<span class="pop-title">{title}</span>
+					{#if headExtra}{@render headExtra()}{/if}
+				</div>
+				<IconButton ariaLabel={m.common_close()} title={m.common_close()} onclick={close}>
+					<X size={15} />
+				</IconButton>
 			</div>
 			{@render children(close)}
 		</div>
@@ -93,76 +111,6 @@
 		min-width: 0;
 		max-width: 100%;
 	}
-	.status-chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		height: 30px;
-		min-width: 0;
-		max-width: 100%;
-		overflow: hidden;
-		padding: 0 0.6rem;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-primary);
-		color: var(--color-text-primary);
-		font: inherit;
-		font-size: 0.75rem;
-		cursor: pointer;
-		white-space: nowrap;
-		transition: border-color 0.15s ease, background 0.15s ease;
-	}
-	.status-chip:hover {
-		border-color: var(--color-border-hover);
-		background: var(--color-bg-hover);
-	}
-	.status-chip.active {
-		border-color: var(--color-accent);
-		background: var(--color-accent-tint);
-	}
-	/* Содержимое чипа приходит сниппетом из родителя — отсюда :global. */
-	.status-chip :global(.chip-ic) {
-		color: var(--color-text-muted);
-		flex-shrink: 0;
-	}
-	/* Длинное значение (подпись маршрута) сжимается с многоточием, а не
-	   растягивает страницу по горизонтали. */
-	.status-chip :global(.chip-strong) {
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		font-weight: 600;
-		color: var(--color-text-primary);
-	}
-	.status-chip :global(.chip-dim) {
-		color: var(--color-text-secondary);
-	}
-	.status-chip :global(.chip-sep) {
-		color: var(--color-text-muted);
-	}
-	.status-chip :global(.chip-dot) {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		flex-shrink: 0;
-		background: var(--color-success);
-	}
-	.status-chip :global(.unsaved-dot) {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--color-warning);
-		flex-shrink: 0;
-	}
-	.chev {
-		display: inline-flex;
-		flex-shrink: 0;
-		color: var(--color-text-muted);
-		transition: transform 0.15s ease;
-	}
-	.chev.open {
-		transform: rotate(180deg);
-	}
 
 	.popover {
 		position: absolute;
@@ -172,12 +120,13 @@
 		width: min(var(--pop-width), calc(100vw - 2rem));
 		max-height: max(18rem, min(46rem, calc(100dvh - 13.5rem)));
 		overflow-y: auto;
+		overflow-x: hidden;
 		overscroll-behavior: contain;
 		background: var(--color-bg-secondary);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius);
-		box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
-		padding: 0.75rem;
+		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+		padding: 0.85rem;
 		display: flex;
 		flex-direction: column;
 		gap: 0.65rem;
@@ -189,53 +138,50 @@
 		left: auto;
 		right: 0;
 	}
+	.drawer-pop-body {
+		display: flex;
+		flex-direction: column;
+		gap: 0.65rem;
+		min-width: 0;
+		max-width: 100%;
+		overflow-x: hidden;
+	}
+	.drawer-head-extra {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		flex-wrap: wrap;
+	}
 	.pop-head {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.5rem;
 	}
+	.pop-head-left {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		min-width: 0;
+		flex-wrap: wrap;
+	}
 	.pop-title {
 		font-size: 0.82rem;
 		font-weight: 600;
 		color: var(--color-text-primary);
 	}
-	.popover :global(.pop-hint) {
-		margin: 0;
-		font-size: 0.72rem;
-		line-height: 1.38;
-		color: var(--color-text-muted);
-	}
-	.popover :global(.pop-foot) {
+	.popover :global(.pop-foot),
+	.drawer-pop-body :global(.pop-foot) {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.4rem;
+		flex-wrap: wrap;
 		padding-top: 0.5rem;
 		border-top: 1px solid var(--color-border);
 	}
-	.popover :global(.pop-foot.end) {
+	.popover :global(.pop-foot.end),
+	.drawer-pop-body :global(.pop-foot.end) {
 		justify-content: flex-end;
-	}
-
-	@media (max-width: 768px) {
-		.popover,
-		.popover.align-right {
-			position: fixed;
-			left: 50%;
-			right: auto;
-			transform: translateX(-50%);
-			top: 4.25rem;
-			z-index: var(--z-drawer);
-			width: min(var(--pop-width), calc(100vw - 1.5rem));
-			max-height: calc(100dvh - 5.25rem);
-			box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
-		}
-	}
-
-	@media (max-width: 720px) {
-		.status-chip :global(.hide-sm) {
-			display: none;
-		}
 	}
 </style>

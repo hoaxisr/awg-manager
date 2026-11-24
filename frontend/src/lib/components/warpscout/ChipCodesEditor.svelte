@@ -34,6 +34,7 @@
 	let invalid = $state(false);
 
 	const pattern = $derived(codeLength === 2 ? /^[A-Z]{2}$/ : /^[A-Z0-9]{3}$/);
+	const availableQuick = $derived(quick.filter((q) => !values.includes(q)));
 
 	function add(raw: string): void {
 		const parts = raw
@@ -69,16 +70,15 @@
 </script>
 
 <div class="chip-editor" class:disabled>
-	{#if label || (quick.length > 0 && !disabled)}
+	{#if label || (availableQuick.length > 0 && !disabled)}
 		<div class="head-row">
 			{#if label}<span class="ws-label">{label}</span>{/if}
-			{#if quick.length > 0 && !disabled}
+			{#if availableQuick.length > 0 && !disabled}
 				<div class="quick">
-					{#each quick as q (q)}
+					{#each availableQuick as q (q)}
 						<button
 							type="button"
 							class="quick-btn mono"
-							disabled={values.includes(q)}
 							onclick={() => add(q)}
 						>+{q}</button>
 					{/each}
@@ -136,8 +136,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 0.25rem;
-		flex-wrap: nowrap;
+		gap: 0.2rem 0.4rem;
+		flex-wrap: wrap;
 		min-height: 1.125rem;
 	}
 	.ws-label {
@@ -146,8 +146,6 @@
 		color: var(--color-text-secondary);
 		line-height: 1.2;
 		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
 	}
 	.chips {
 		display: flex;
@@ -217,23 +215,20 @@
 		gap: 0.15rem;
 	}
 	.quick-btn {
-		font-size: 0.65rem;
-		line-height: 1.15;
-		padding: 0.06rem 0.3rem;
-		border: 1px dashed var(--color-border-hover);
+		font-size: 0.68rem;
+		line-height: 1.2;
+		padding: 0.08rem 0.36rem;
+		border: 1px solid var(--color-border);
 		border-radius: 999px;
-		background: transparent;
-		color: var(--color-text-muted);
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-secondary);
 		cursor: pointer;
 		white-space: nowrap;
+		transition: color 0.12s ease, border-color 0.12s ease;
 	}
 	.quick-btn:hover:not(:disabled) {
 		color: var(--color-accent);
 		border-color: var(--color-accent);
-	}
-	.quick-btn:disabled {
-		opacity: 0.35;
-		cursor: default;
 	}
 	.mono {
 		font-family: var(--font-mono);

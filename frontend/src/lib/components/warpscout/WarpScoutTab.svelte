@@ -3,7 +3,8 @@
 	import { AlertTriangle, RefreshCcw } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
-	import { Button, Card } from '$lib/components/ui';
+	import { Button, Card, SegmentedControl } from '$lib/components/ui';
+	import type { SegmentedOption } from '$lib/components/ui';
 	import RichText from '$lib/components/ui/RichText.svelte';
 	import { notifications } from '$lib/stores/notifications';
 	import { warpFindJunkPush, warpScanPush, warpWatchPush } from '$lib/stores/warpscout';
@@ -253,6 +254,22 @@
 	const history = $derived((ws?.history ?? []).slice(0, 30));
 	const account = $derived(ws?.account ?? null);
 	const usedIpv4 = $derived(ws?.usedIpv4 ?? []);
+
+	let mobileSection = $state<'radar' | 'autopilot'>('radar');
+	const scanHitsCount = $derived(ws?.scan?.hits?.length ?? 0);
+	const activeProfilesCount = $derived((ws?.config?.profiles ?? []).filter((p) => p.enabled).length);
+	const mobileSectionOptions = $derived<SegmentedOption<'radar' | 'autopilot'>[]>([
+		{
+			value: 'radar',
+			label: scanHitsCount > 0 ? `${m.warpscout_radar_title()} (${scanHitsCount})` : m.warpscout_radar_title(),
+		},
+		{
+			value: 'autopilot',
+			label: activeProfilesCount > 0
+				? `${m.warpscout_autopilot_title()} (${activeProfilesCount})`
+				: m.warpscout_autopilot_title(),
+		},
+	]);
 </script>
 
 <div class="warp-tab">
@@ -341,9 +358,20 @@
 			</div>
 		</div>
 
+		<!-- Мобильный переключатель секций (убирает длинную прокрутку на телефоне) -->
+		<div class="mobile-section-bar">
+			<SegmentedControl
+				value={mobileSection}
+				options={mobileSectionOptions}
+				ariaLabel={m.warpscout_mobile_tabs_aria()}
+				fullWidth
+				onchange={(v) => (mobileSection = v)}
+			/>
+		</div>
+
 		<!-- Два столбца: слева сканер узлов, справа автопилот с журналом подмен -->
 		<div class="cockpit-grid">
-			<div class="col-scanner">
+			<div class="col-scanner" class:mobile-hidden={mobileSection !== 'radar'}>
 				<WarpScannerCard
 					scan={ws.scan}
 					engineAvailable={ws.engine.available}
@@ -364,7 +392,7 @@
 				/>
 			</div>
 
-			<div class="col-autopilot">
+			<div class="col-autopilot" class:mobile-hidden={mobileSection !== 'autopilot'}>
 				<WarpAutopilotCard
 					bind:config={draft}
 					{targets}
@@ -393,16 +421,22 @@
 		gap: 0.75rem;
 		margin-top: 0.55rem;
 	}
+	.warp-tab :global(.pop-hint) {
+		margin: 0;
+		font-size: 0.72rem;
+		line-height: 1.38;
+		color: var(--color-text-muted);
+	}
 	.top-bar {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.5rem 0.75rem;
-		padding: 0.45rem 0.6rem;
-		border-radius: var(--radius);
-		background: var(--color-bg-secondary);
-		border: 1px solid var(--color-border);
-		box-shadow: var(--shadow);
+		padding: 0;
+		border-radius: 0;
+		background: transparent;
+		border: 0;
+		box-shadow: none;
 		flex-wrap: wrap;
 	}
 	.chips-left {
@@ -420,11 +454,17 @@
 		min-width: 0;
 		max-width: 100%;
 	}
+	.mobile-section-bar {
+		display: none;
+	}
 	.cockpit-grid {
 		display: grid;
 		grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
 		gap: 0.85rem;
 		align-items: start;
+	}
+	:global(html[data-layout-compact='true']) .cockpit-grid {
+		grid-template-columns: 1fr;
 	}
 	.col-scanner,
 	.col-autopilot {
@@ -464,9 +504,21 @@
 		color: var(--color-text-muted);
 	}
 
-	@media (max-width: 1080px) {
+	@media (max-width: 1140px) {
 		.cockpit-grid {
 			grid-template-columns: 1fr;
+		}
+	}
+
+	@media (max-width: 768px) {
+		.warp-tab {
+			padding-bottom: 3.75rem;
+		}
+		.mobile-section-bar {
+			display: block;
+		}
+		.mobile-hidden {
+			display: none;
 		}
 	}
 
