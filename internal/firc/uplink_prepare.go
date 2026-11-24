@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/uplink"
 )
 
@@ -61,11 +62,7 @@ func (o *Operator) saveUplinkInboundRecords(records map[string]uint16) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return storage.AtomicWritePerm(path, data, 0o600)
 }
 
 func (a *UplinkAdapter) PrepareUplink(ctx context.Context, t uplink.Target) error {

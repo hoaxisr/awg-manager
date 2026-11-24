@@ -16,10 +16,12 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
+	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
@@ -103,13 +105,14 @@ func TestWarpFallbackClients_DeviceProxy(t *testing.T) {
 	}
 	dp := deviceproxy.NewService(deviceproxy.Deps{Store: store})
 
-	clients := WarpFallbackClients(context.Background(), dp, nil, nil)
-	if len(clients) != 1 || clients[0] == nil {
-		t.Fatalf("ожидался 1 резервный HTTP-клиент через Прокси для устройств, получили %d", len(clients))
+	clients := WarpFallbackClients(context.Background(), dp, nil)
+	if len(clients) != 1 || clients[0].Client == nil || clients[0].Close == nil {
+		t.Fatalf("ожидался 1 резервный HTTP-клиент через Прокси для устройств, получили %+v", clients)
 	}
+	clients[0].Close()
 
 	_ = ln.Close()
-	if none := WarpFallbackClients(context.Background(), dp, nil, nil); len(none) != 0 {
+	if none := WarpFallbackClients(context.Background(), dp, nil); len(none) != 0 {
 		t.Fatalf("закрытый порт прокси не должен попадать в fallback, получили %d", len(none))
 	}
 }
@@ -563,9 +566,13 @@ type apiJunkRunner struct {
 
 func (r *apiJunkRunner) Available() (string, bool) { return "/fake", true }
 
-func (r *apiJunkRunner) Run(_ context.Context, p warpscout.ScanParams, on func(warpscout.EngineEvent)) error {
+func (r *apiJunkRunner) Run(ctx context.Context, p warpscout.ScanParams, on func(warpscout.EngineEvent)) error {
 	if r.gate != nil {
-		<-r.gate
+		select {
+		case <-r.gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	total := len(p.Endpoints)
 	on(warpscout.EngineEvent{Type: "start", Total: total})
@@ -585,6 +592,58 @@ func (apiPlainCipher) Decrypt(s string) (string, error) {
 	return s[4:], nil
 }
 
+type countingKeyOps struct {
+	mu            sync.Mutex
+	listCalls     int
+	listKeysCalls int
+}
+
+func (c *countingKeyOps) List(context.Context) ([]warpscout.TunnelRef, error) {
+	c.mu.Lock()
+	c.listCalls++
+	c.mu.Unlock()
+	return nil, nil
+}
+
+func (c *countingKeyOps) ListKeys(context.Context) ([]warpscout.TunnelKeyRef, error) {
+	c.mu.Lock()
+	c.listKeysCalls++
+	c.mu.Unlock()
+	return nil, nil
+}
+
+func (c *countingKeyOps) ListCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.listCalls
+}
+
+func (c *countingKeyOps) ListKeysCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.listKeysCalls
+}
+
+func (c *countingKeyOps) ResetCounts() {
+	c.mu.Lock()
+	c.listCalls = 0
+	c.listKeysCalls = 0
+	c.mu.Unlock()
+}
+
+func (c *countingKeyOps) Get(context.Context, warpscout.TargetMode, string) (*warpscout.TunnelRef, error) {
+	return nil, errors.New("не найден")
+}
+func (c *countingKeyOps) Create(context.Context, warpscout.TargetMode, string, string, warpscout.CreateOptions) (*warpscout.TunnelRef, error) {
+	return nil, errors.New("unsupported")
+}
+func (c *countingKeyOps) SwapEndpoint(context.Context, warpscout.TargetMode, string, string, warpscout.SwapOptions) error {
+	return errors.New("unsupported")
+}
+func (c *countingKeyOps) Rename(context.Context, warpscout.TargetMode, string, string) error {
+	return errors.New("unsupported")
+}
+
 func TestWarpScoutHandler_FindJunkEndpoints(t *testing.T) {
 	store, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
 	if err != nil {
@@ -599,22 +658,36 @@ func TestWarpScoutHandler_FindJunkEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	tunOps := &countingKeyOps{}
 	runner := &apiJunkRunner{gate: make(chan struct{}), hits: 0}
 	svc := warpscout.New(warpscout.Deps{
-		Store:  store,
-		Runner: runner,
-		WAN:    func(context.Context) (string, bool) { return "eth3", true },
+		Store:   store,
+		Runner:  runner,
+		Tunnels: tunOps,
+		WAN:     func(context.Context) (string, bool) { return "eth3", true },
 	})
 	t.Cleanup(svc.Stop)
 	h := NewWarpScoutHandler(svc, nil)
 
-	// 1. Запуск find-junk -> 200 OK
+	// 1. Запуск find-junk -> 200 OK (без повторного перечисления при чтении FindJunkSnapshot после старта)
 	req := httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/start",
 		bytes.NewBufferString(`{"i1Profile":"quic","maxAttempts":1,"perSubnet":1}`))
 	rec := httptest.NewRecorder()
+	tunOps.ResetCounts()
 	h.FindJunkStart(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("FindJunkStart code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if listCalls := tunOps.ListCount(); listCalls != 1 {
+		t.Fatalf("FindJunkStart expected 1 Tunnels.List call (resolveRouteTunnel), got %d", listCalls)
+	}
+	if keyCalls := tunOps.ListKeysCount(); keyCalls != 1 {
+		t.Fatalf("FindJunkStart expected 1 Tunnels.ListKeys call, got %d", keyCalls)
+	}
+	beforeList, beforeKeys := tunOps.ListCount(), tunOps.ListKeysCount()
+	_ = svc.FindJunkSnapshot()
+	if gotList, gotKeys := tunOps.ListCount(), tunOps.ListKeysCount(); gotList != beforeList || gotKeys != beforeKeys {
+		t.Fatalf("FindJunkSnapshot must not enumerate tunnels: List %d->%d, ListKeys %d->%d", beforeList, gotList, beforeKeys, gotKeys)
 	}
 
 	// 2. Попытка применить во время выполнения -> 409 WARP_BUSY
@@ -883,9 +956,13 @@ type stubSystemTunnelSvc struct {
 	cmds    *ndmscommand.Commands
 	tunnel  *ndms.SystemWireguardTunnel
 	curASC  json.RawMessage
+	listErr error
 }
 
 func (s *stubSystemTunnelSvc) List(context.Context) ([]ndms.SystemWireguardTunnel, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
 	return nil, nil
 }
 
@@ -1379,5 +1456,683 @@ func TestWarpScoutHandler_FindJunkApply_BodyAndBackcompat(t *testing.T) {
 		bytes.NewBufferString(`{"attempt":`)))
 	if recBad.Code != http.StatusBadRequest {
 		t.Fatalf("malformed JSON code=%d body=%s", recBad.Code, recBad.Body.String())
+	}
+}
+
+func TestWarpProxyHTTPClient(t *testing.T) {
+	for _, valid := range []string{
+		"http://127.0.0.1:8080",
+		"https://proxy.example.com:8443",
+		"socks5://127.0.0.1:1080",
+		"socks5h://user:pass@127.0.0.1:1080",
+	} {
+		hc, err := WarpProxyHTTPClient(valid)
+		if err != nil || hc == nil {
+			t.Fatalf("WarpProxyHTTPClient(%q) failed: hc=%v err=%v", valid, hc, err)
+		}
+		hc.CloseIdleConnections()
+	}
+	for _, invalid := range []string{
+		"",
+		"not-a-url",
+		"ftp://127.0.0.1:21",
+		"socks5://",
+		"http://169.254.169.254:8080",
+		"https://[fe80::1]:8443",
+		"socks5://0.0.0.0:1080",
+		"socks5://alice:supersecret@169.254.169.254:1080",
+	} {
+		_, err := WarpProxyHTTPClient(invalid)
+		if !errors.Is(err, warpscout.ErrInvalidInput) {
+			t.Fatalf("WarpProxyHTTPClient(%q) = %v, want ErrInvalidInput", invalid, err)
+		}
+		if strings.Contains(err.Error(), "supersecret") {
+			t.Fatalf("proxy password leaked in error message: %v", err)
+		}
+	}
+}
+
+type fakeWarpDownloaderOutbounds struct {
+	items []downloader.Outbound
+}
+
+func (f fakeWarpDownloaderOutbounds) ListDownloadOutbounds(context.Context) []downloader.Outbound {
+	return f.items
+}
+
+type fakeWarpDownloaderRoute struct {
+	route *downloader.Route
+}
+
+func (f fakeWarpDownloaderRoute) GetDownloadRoute(context.Context) (*downloader.Route, error) {
+	return f.route, nil
+}
+
+type fakeWarpDownloaderTransport struct {
+	port int
+}
+
+func (f fakeWarpDownloaderTransport) Resolve(_ context.Context, ob downloader.Outbound) (downloader.TransportSpec, error) {
+	return downloader.TransportSpec{Mode: downloader.TransportModeProxy, ProxyPort: f.port}, nil
+}
+
+func (f fakeWarpDownloaderTransport) IsAvailable(context.Context, downloader.Outbound) bool {
+	return true
+}
+
+func TestWarpFallbackClients_DownloaderLeasesAndCancel(t *testing.T) {
+	dl := downloader.NewService(downloader.Deps{
+		RouteProvider: fakeWarpDownloaderRoute{route: &downloader.Route{Tag: "vless-main", Kind: "vless"}},
+		Outbounds: fakeWarpDownloaderOutbounds{items: []downloader.Outbound{
+			{Tag: "direct", Kind: "direct", Available: true},
+			{Tag: "vless-main", Kind: "vless", Available: true},
+			{Tag: "vless-eu", Kind: "vless", Available: true},
+			{Tag: "vless-us", Kind: "vless", Available: true},
+		}},
+		TransportResolver: fakeWarpDownloaderTransport{port: 1099},
+	})
+
+	clients := WarpFallbackClients(context.Background(), nil, dl)
+	if len(clients) != 1 {
+		t.Fatalf("expected strictly 1 configured downloader fallback client (no extra unconfigured outbounds), got %d", len(clients))
+	}
+	if clients[0].Client == nil || clients[0].Close == nil {
+		t.Fatalf("fallback client[0] missing Client or Close callback: %+v", clients[0])
+	}
+	clients[0].Close()
+
+	// Route = direct: must return 0 downloader fallback clients even when extra outbounds exist.
+	dlDirect := downloader.NewService(downloader.Deps{
+		RouteProvider: fakeWarpDownloaderRoute{route: &downloader.Route{Tag: "direct", Kind: "direct"}},
+		Outbounds: fakeWarpDownloaderOutbounds{items: []downloader.Outbound{
+			{Tag: "direct", Kind: "direct", Available: true},
+			{Tag: "vless-eu", Kind: "vless", Available: true},
+		}},
+		TransportResolver: fakeWarpDownloaderTransport{port: 1099},
+	})
+	if got := WarpFallbackClients(context.Background(), nil, dlDirect); len(got) != 0 {
+		for _, c := range got {
+			if c.Close != nil {
+				c.Close()
+			}
+		}
+		t.Fatalf("expected 0 fallback clients when download route is direct, got %d", len(got))
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := WarpFallbackClients(canceledCtx, nil, dl); len(got) != 0 {
+		t.Fatalf("expected no fallback clients for canceled context, got %d", len(got))
+	}
+}
+
+func TestWarpClientFactories_PostDialProdBranch(t *testing.T) {
+	origLookup := warpLookupIPAddr
+	origNewTransport := warpNewTransport
+	warpLookupIPAddr = nil
+	t.Cleanup(func() {
+		warpLookupIPAddr = origLookup
+		warpNewTransport = origNewTransport
+	})
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	var (
+		mu       sync.Mutex
+		sawBytes int
+		seenAddr string
+	)
+	accepted := make(chan struct{}, 4)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- struct{}{}
+			go func(c net.Conn) {
+				defer c.Close()
+				_ = c.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+				buf := make([]byte, 32)
+				n, _ := c.Read(buf)
+				mu.Lock()
+				sawBytes += n
+				mu.Unlock()
+			}(conn)
+		}
+	}()
+
+	warpNewTransport = func(cfg httpclient.TransportConfig) (*http.Transport, error) {
+		return &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				mu.Lock()
+				seenAddr = addr
+				mu.Unlock()
+				return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", ln.Addr().String())
+			},
+		}, nil
+	}
+
+	assertPostDialRejected := func(name string, client *http.Client) {
+		t.Helper()
+		mu.Lock()
+		seenAddr = ""
+		sawBytes = 0
+		mu.Unlock()
+		req, err := http.NewRequest(http.MethodGet, "https://api.devices.cloudflare.com/v0a4005/reg", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, doErr := client.Do(req)
+		if !errors.Is(doErr, warpscout.ErrDisallowedAddress) {
+			t.Fatalf("%s: expected ErrDisallowedAddress from prod post-dial guard, got %v", name, doErr)
+		}
+		select {
+		case <-accepted:
+		case <-time.After(time.Second):
+			t.Fatalf("%s: expected base DialContext to be invoked", name)
+		}
+		time.Sleep(30 * time.Millisecond)
+		mu.Lock()
+		gotAddr, gotBytes := seenAddr, sawBytes
+		mu.Unlock()
+		if gotAddr != "api.devices.cloudflare.com:443" {
+			t.Fatalf("%s: prod bound path must preserve hostname for bound DNS, got %q", name, gotAddr)
+		}
+		if gotBytes != 0 {
+			t.Fatalf("%s: post-dial guard must close disallowed connection before writing bytes, read %d bytes", name, gotBytes)
+		}
+	}
+
+	cHTTP, err := WarpHTTPClientFactory("eth3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPostDialRejected("WarpHTTPClientFactory", cHTTP)
+
+	cSplit, err := WarpSplitTLSClientFactory("eth3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPostDialRejected("WarpSplitTLSClientFactory", cSplit)
+
+	dl := downloader.NewService(downloader.Deps{
+		RouteProvider:     fakeWarpDownloaderRoute{route: &downloader.Route{Tag: "bind-awg0", Kind: "awg"}},
+		Outbounds:         fakeWarpDownloaderOutbounds{items: []downloader.Outbound{{Tag: "bind-awg0", Kind: "awg", Detail: "awg0", Available: true}}},
+		TransportResolver: fakeBoundDownloaderTransport{},
+	})
+	clients := WarpFallbackClients(context.Background(), nil, dl)
+	if len(clients) != 1 || clients[0].Client == nil {
+		t.Fatalf("expected 1 bound downloader fallback client, got %+v", clients)
+	}
+	defer clients[0].Close()
+	tr, ok := clients[0].Client.Transport.(*http.Transport)
+	if !ok || tr.DialContext == nil {
+		t.Fatalf("expected wrapped *http.Transport on bound downloader fallback, got %T", clients[0].Client.Transport)
+	}
+	if _, err := tr.DialContext(context.Background(), "tcp", "127.0.0.1:443"); !errors.Is(err, warpscout.ErrDisallowedAddress) {
+		t.Fatalf("expected bound downloader fallback to reject disallowed loopback literal IP under relay policy, got %v", err)
+	}
+}
+
+type fakeBoundDownloaderTransport struct{}
+
+func (fakeBoundDownloaderTransport) Resolve(context.Context, downloader.Outbound) (downloader.TransportSpec, error) {
+	return downloader.TransportSpec{Mode: downloader.TransportModeBind, Interface: "awg0"}, nil
+}
+
+func (fakeBoundDownloaderTransport) IsAvailable(context.Context, downloader.Outbound) bool {
+	return true
+}
+
+type staticRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f staticRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestWarpScoutHandler_RegisterAndImport(t *testing.T) {
+	priv, _, err := warpscout.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsStore, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seenURL string
+	fakeClient := &http.Client{
+		Transport: staticRoundTripper(func(r *http.Request) (*http.Response, error) {
+			seenURL = r.URL.String()
+			body := `{"id":"api-dev-1","token":"api-tok-1","warp_enabled":true,"account":{"account_type":"free"},"config":{"client_id":"AQID","peers":[{"public_key":"` + warpscout.WarpPeerPublicKey + `"}],"interface":{"addresses":{"v4":"172.16.0.2"}}}}`
+			rec := httptest.NewRecorder()
+			rec.Header().Set("Content-Type", "application/json")
+			_, _ = rec.WriteString(body)
+			return rec.Result(), nil
+		}),
+	}
+	svc := warpscout.New(warpscout.Deps{
+		Store:           wsStore,
+		HTTP:            func(string) (*http.Client, error) { return fakeClient, nil },
+		HTTPProxyClient: WarpProxyHTTPClient,
+	})
+	t.Cleanup(svc.Stop)
+	h := NewWarpScoutHandler(svc, nil)
+
+	// 1. Пустое тело Register остаётся совместимым и ходит на дефолтный endpoint.
+	recEmpty := httptest.NewRecorder()
+	h.Register(recEmpty, httptest.NewRequest(http.MethodPost, "/api/warpscout/account/register", nil))
+	if recEmpty.Code != http.StatusOK || !strings.Contains(seenURL, "api.devices.cloudflare.com") {
+		t.Fatalf("empty Register code=%d seenURL=%q body=%s", recEmpty.Code, seenURL, recEmpty.Body.String())
+	}
+
+	// 2. Register с custom relayUrl.
+	if err := wsStore.SetAccount(nil); err != nil {
+		t.Fatal(err)
+	}
+	recRelay := httptest.NewRecorder()
+	h.Register(recRelay, httptest.NewRequest(http.MethodPost, "/api/warpscout/account/register",
+		bytes.NewBufferString(`{"relayUrl":"https://warp-relay.example.com"}`)))
+	if recRelay.Code != http.StatusOK || seenURL != "https://warp-relay.example.com/v0a4005/reg" {
+		t.Fatalf("relay Register code=%d seenURL=%q body=%s", recRelay.Code, seenURL, recRelay.Body.String())
+	}
+
+	// 3. Некорректный proxyUrl или битый JSON -> 400 Bad Request.
+	recBadProxy := httptest.NewRecorder()
+	h.Register(recBadProxy, httptest.NewRequest(http.MethodPost, "/api/warpscout/account/register",
+		bytes.NewBufferString(`{"proxyUrl":"ftp://bad"}`)))
+	if recBadProxy.Code != http.StatusBadRequest {
+		t.Fatalf("invalid proxyUrl code=%d body=%s", recBadProxy.Code, recBadProxy.Body.String())
+	}
+	recBadJSON := httptest.NewRecorder()
+	h.Register(recBadJSON, httptest.NewRequest(http.MethodPost, "/api/warpscout/account/register",
+		bytes.NewBufferString(`{"proxyUrl":`)))
+	if recBadJSON.Code != http.StatusBadRequest {
+		t.Fatalf("malformed Register JSON code=%d body=%s", recBadJSON.Code, recBadJSON.Body.String())
+	}
+
+	// 4. ImportAccount: валидный .conf -> 200, мусор -> 400.
+	conf := "[Interface]\nPrivateKey = " + priv + "\nAddress = 172.16.0.7/32\n"
+	payload, _ := json.Marshal(map[string]string{"raw": conf})
+	recImportOK := httptest.NewRecorder()
+	h.ImportAccount(recImportOK, httptest.NewRequest(http.MethodPost, "/api/warpscout/account/import", bytes.NewReader(payload)))
+	if recImportOK.Code != http.StatusOK {
+		t.Fatalf("ImportAccount valid .conf code=%d body=%s", recImportOK.Code, recImportOK.Body.String())
+	}
+	var env struct {
+		Success bool              `json:"success"`
+		Data    warpscout.Account `json:"data"`
+	}
+	if err := json.Unmarshal(recImportOK.Body.Bytes(), &env); err != nil || !env.Success || !env.Data.Imported || env.Data.HasToken {
+		t.Fatalf("unexpected ImportAccount response: %s", recImportOK.Body.String())
+	}
+
+	recImportBad := httptest.NewRecorder()
+	h.ImportAccount(recImportBad, httptest.NewRequest(http.MethodPost, "/api/warpscout/account/import",
+		bytes.NewBufferString(`{"raw":"not a config"}`)))
+	if recImportBad.Code != http.StatusBadRequest {
+		t.Fatalf("ImportAccount invalid input code=%d body=%s", recImportBad.Code, recImportBad.Body.String())
+	}
+}
+
+func TestWarpClients_DialGuardBlocksResolvedDisallowedIPs(t *testing.T) {
+	origLookup := warpLookupIPAddr
+	warpLookupIPAddr = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		switch strings.ToLower(strings.TrimSpace(host)) {
+		case "evil-meta.test", "evil-socks.test":
+			return []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}}, nil
+		case "evil-ll6.test":
+			return []net.IPAddr{{IP: net.ParseIP("fe80::1")}}, nil
+		case "evil-loopback.test", "good-local.test":
+			return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+		case "evil-priv.test":
+			return []net.IPAddr{{IP: net.ParseIP("192.168.1.1")}}, nil
+		default:
+			return nil, errors.New("unexpected DNS lookup for " + host)
+		}
+	}
+	t.Cleanup(func() { warpLookupIPAddr = origLookup })
+
+	// 1. WarpProxyHTTPClient blocks DNS-resolved disallowed IPs for HTTP and SOCKS5 proxies.
+	httpProxyClient, err := WarpProxyHTTPClient("http://alice:topsecret@evil-meta.test:8080")
+	if err != nil {
+		t.Fatalf("WarpProxyHTTPClient(http) unexpected build error: %v", err)
+	}
+	defer httpProxyClient.CloseIdleConnections()
+	if _, err := httpProxyClient.Get("http://1.2.3.4/test"); !errors.Is(err, warpscout.ErrDisallowedAddress) {
+		t.Fatalf("HTTP proxy resolving to 169.254.169.254 must fail with ErrDisallowedAddress, got %v", err)
+	}
+
+	socksProxyClient, err := WarpProxyHTTPClient("socks5://evil-socks.test:1080")
+	if err != nil {
+		t.Fatalf("WarpProxyHTTPClient(socks5) unexpected build error: %v", err)
+	}
+	defer socksProxyClient.CloseIdleConnections()
+	if _, err := socksProxyClient.Get("http://1.2.3.4/test"); !errors.Is(err, warpscout.ErrDisallowedAddress) {
+		t.Fatalf("SOCKS5 proxy resolving to 169.254.169.254 must fail with ErrDisallowedAddress, got %v", err)
+	}
+
+	// 2. WarpHTTPClientFactory and WarpSplitTLSClientFactory block link-local, loopback, and RFC1918 relay IPs.
+	directClient, err := WarpHTTPClientFactory("")
+	if err != nil {
+		t.Fatalf("WarpHTTPClientFactory: %v", err)
+	}
+	defer directClient.CloseIdleConnections()
+	splitClient, err := WarpSplitTLSClientFactory("")
+	if err != nil {
+		t.Fatalf("WarpSplitTLSClientFactory: %v", err)
+	}
+	defer splitClient.CloseIdleConnections()
+
+	for _, c := range []*http.Client{directClient, splitClient} {
+		for _, badHost := range []string{"evil-meta.test", "evil-ll6.test", "evil-loopback.test", "evil-priv.test"} {
+			if _, err := c.Get("https://" + badHost + "/v0a4005/reg"); !errors.Is(err, warpscout.ErrDisallowedAddress) {
+				t.Fatalf("client request to %s must fail with ErrDisallowedAddress, got %v", badHost, err)
+			}
+		}
+	}
+
+	// 3. Legitimate local proxy on loopback (e.g. socks5/http proxy) still succeeds cleanly.
+	hits := 0
+	localProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer localProxy.Close()
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(localProxy.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split local server addr: %v", err)
+	}
+	localProxyClient, err := WarpProxyHTTPClient("http://good-local.test:" + port)
+	if err != nil {
+		t.Fatalf("WarpProxyHTTPClient(good-local.test) failed: %v", err)
+	}
+	defer localProxyClient.CloseIdleConnections()
+	resp, err := localProxyClient.Get("http://162.159.192.1/test")
+	if err != nil {
+		t.Fatalf("allowed local proxy good-local.test request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || hits != 1 {
+		t.Fatalf("expected 200 OK with 1 hit via local proxy, got status=%d hits=%d", resp.StatusCode, hits)
+	}
+
+	// 4. End-to-end WarpScoutHandler.Register returns 400 INVALID_INPUT, masks proxy password, and skips fallbacks.
+	wsStore, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fbCalled := false
+	svc := warpscout.New(warpscout.Deps{
+		Store:           wsStore,
+		HTTP:            WarpHTTPClientFactory,
+		HTTPProxyClient: WarpProxyHTTPClient,
+		HTTPFallbacks: func(context.Context) []warpscout.FallbackClient {
+			fbCalled = true
+			return nil
+		},
+	})
+	t.Cleanup(svc.Stop)
+	h := NewWarpScoutHandler(svc, nil)
+
+	recProxy := httptest.NewRecorder()
+	h.Register(recProxy, httptest.NewRequest(http.MethodPost, "/api/warpscout/account/register",
+		bytes.NewBufferString(`{"proxyUrl":"http://alice:topsecret@evil-meta.test:8080"}`)))
+	if recProxy.Code != http.StatusBadRequest || !strings.Contains(recProxy.Body.String(), `"INVALID_INPUT"`) {
+		t.Fatalf("expected 400 INVALID_INPUT for disallowed resolved proxy, got code=%d body=%s", recProxy.Code, recProxy.Body.String())
+	}
+	if strings.Contains(recProxy.Body.String(), "topsecret") {
+		t.Fatalf("proxy password leaked in HTTP response: %s", recProxy.Body.String())
+	}
+
+	recRelay := httptest.NewRecorder()
+	h.Register(recRelay, httptest.NewRequest(http.MethodPost, "/api/warpscout/account/register",
+		bytes.NewBufferString(`{"relayUrl":"https://evil-meta.test"}`)))
+	if recRelay.Code != http.StatusBadRequest || !strings.Contains(recRelay.Body.String(), `"INVALID_INPUT"`) {
+		t.Fatalf("expected 400 INVALID_INPUT for disallowed resolved relay, got code=%d body=%s", recRelay.Code, recRelay.Body.String())
+	}
+	if fbCalled {
+		t.Fatal("disallowed resolved relay must not invoke fallback clients")
+	}
+}
+
+func TestWarpTunnelOps_ListReturnsErrorOnSystemListFailure(t *testing.T) {
+	ctx := context.Background()
+	ops, _, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg50": tunnel.StateRunning,
+	})
+	seedWarpTunnel(t, store, "awg50", "nativewg")
+	ops.System = &stubSystemTunnelSvc{
+		listErr: errors.New("rci list failure"),
+	}
+
+	// Быстрая инвентаризация ListKeys для опасных операций с ключами обязана падать (fail-closed).
+	keys, err := ops.ListKeys(ctx)
+	if err == nil || !strings.Contains(err.Error(), "rci list failure") {
+		t.Fatalf("expected WarpTunnelOps.ListKeys to fail closed on System.List error, got keys=%+v err=%v", keys, err)
+	}
+	if keys != nil {
+		t.Fatalf("expected nil partial key slice on System.List error, got %+v", keys)
+	}
+
+	// UI Targets / List при сбое System.List по-прежнему сохраняет управляемые туннели из Store.
+	refs, err := ops.List(ctx)
+	if err != nil {
+		t.Fatalf("expected WarpTunnelOps.List to keep managed tunnels on System.List error, got err=%v", err)
+	}
+	if len(refs) != 1 || refs[0].ID != "awg50" {
+		t.Fatalf("expected managed awg50 in WarpTunnelOps.List, got %+v", refs)
+	}
+
+	priv1, pub1, err := warpscout.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsStore, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wsStore.SetAccount(&warpscout.Account{
+		ID: "prim-err", Token: "tok-err", PrivateKey: priv1, PublicKey: pub1,
+		PeerPublicKey: warpscout.WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := warpscout.New(warpscout.Deps{
+		Store:   wsStore,
+		Tunnels: ops,
+		WAN:     func(context.Context) (string, bool) { return "eth3", true },
+	})
+	t.Cleanup(svc.Stop)
+
+	if st := svc.State(); !strings.Contains(st.AccountKeyCheckError, "rci list failure") {
+		t.Fatalf("expected State().AccountKeyCheckError containing 'rci list failure', got %+v", st)
+	}
+	if _, err := svc.RegisterWithOptions(ctx, warpscout.RegisterOptions{}); err == nil || !strings.Contains(err.Error(), "rci list failure") {
+		t.Fatalf("expected RegisterWithOptions to fail closed on System.List failure, got %v", err)
+	}
+	if err := svc.DeleteAccountLocal(ctx); err == nil || !strings.Contains(err.Error(), "rci list failure") {
+		t.Fatalf("expected DeleteAccountLocal to fail closed on System.List failure, got %v", err)
+	}
+}
+
+type stubSystemInventorySvc struct {
+	*stubSystemTunnelSvc
+	tunnels []ndms.SystemWireguardTunnel
+}
+
+func (s *stubSystemInventorySvc) List(context.Context) ([]ndms.SystemWireguardTunnel, error) {
+	return append([]ndms.SystemWireguardTunnel(nil), s.tunnels...), nil
+}
+
+func (s *stubSystemInventorySvc) Get(_ context.Context, name string) (*ndms.SystemWireguardTunnel, error) {
+	for i := range s.tunnels {
+		if s.tunnels[i].ID == name {
+			cp := s.tunnels[i]
+			return &cp, nil
+		}
+	}
+	return nil, errors.New("не найден")
+}
+
+func TestWarpTunnelOps_ProtectedExternalTunnelBlocksScanAndReissue(t *testing.T) {
+	ctx := context.Background()
+	privOther, pubOther, err := warpscout.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv1, pub1, err := warpscout.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ops, tunnelSvc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg50": tunnel.StateRunning,
+	})
+	getCalls := 0
+	origGet := tunnelSvc.getFn
+	tunnelSvc.getFn = func(ctx context.Context, id string) (*service.TunnelWithStatus, error) {
+		getCalls++
+		return origGet(ctx, id)
+	}
+	seedTunnel(t, store, &storage.AWGTunnel{
+		ID:       "awg50",
+		Name:     "WARP awg50",
+		Enabled:  true,
+		Backend:  "nativewg",
+		NWGIndex: 3,
+		Interface: storage.AWGInterface{
+			PrivateKey: privOther,
+			Address:    "172.16.0.10/32",
+		},
+		Peer: storage.AWGPeer{
+			PublicKey: warpscout.WarpPeerPublicKey,
+			Endpoint:  "162.159.192.70:2408",
+		},
+	})
+	ops.System = &stubSystemInventorySvc{
+		stubSystemTunnelSvc: &stubSystemTunnelSvc{},
+		tunnels: []ndms.SystemWireguardTunnel{
+			{
+				ID:            "Wireguard3",
+				Description:   "WARP awg50",
+				Status:        "up",
+				InterfaceName: "nwg3",
+				PublicKey:     pubOther,
+				Peer: &ndms.WireguardPeerInfo{
+					PublicKey: warpscout.WarpPeerPublicKey,
+					Endpoint:  "162.159.192.70:2408",
+				},
+			},
+			{
+				ID:            "Wireguard7",
+				Description:   "Phobos WARP",
+				External:      "phobos",
+				Status:        "up",
+				InterfaceName: "nwg7",
+				PublicKey:     pub1,
+				Peer: &ndms.WireguardPeerInfo{
+					PublicKey: warpscout.WarpPeerPublicKey,
+					Endpoint:  "162.159.192.1:2408",
+				},
+			},
+		},
+	}
+
+	wsStore, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wsStore.SetAccount(&warpscout.Account{
+		ID:            "prim-ext",
+		Token:         "tok-ext",
+		PrivateKey:    priv1,
+		PublicKey:     pub1,
+		PeerPublicKey: warpscout.WarpPeerPublicKey,
+		AddressV4:     "172.16.0.2",
+		HasToken:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := warpscout.New(warpscout.Deps{
+		Store:   wsStore,
+		Runner:  &apiJunkRunner{},
+		Tunnels: ops,
+		WAN:     func(context.Context) (string, bool) { return "eth3", true },
+	})
+	t.Cleanup(svc.Stop)
+
+	getCalls = 0
+	keyRefs, err := ops.ListKeys(ctx)
+	if err != nil {
+		t.Fatalf("ops.ListKeys: %v", err)
+	}
+	if getCalls != 0 {
+		t.Fatalf("expected ops.ListKeys to avoid per-tunnel Svc.Get calls, got %d", getCalls)
+	}
+	var sawExtKey bool
+	for _, r := range keyRefs {
+		if r.Mode == warpscout.TargetSystem && r.ID == "Wireguard3" {
+			t.Fatalf("managed NativeWG shadow Wireguard3 must not duplicate under TargetSystem in ListKeys: %+v", r)
+		}
+		if r.Mode == warpscout.TargetSystem && r.ID == "Wireguard7" {
+			sawExtKey = true
+			if r.LocalPublicKey != pub1 || r.Name != "Phobos WARP" || !r.Protected {
+				t.Fatalf("expected protected Wireguard7 key ref with pub1 and Phobos WARP, got %+v", r)
+			}
+		}
+	}
+	if !sawExtKey {
+		t.Fatalf("expected ops.ListKeys to include protected external tunnel Wireguard7, got %+v", keyRefs)
+	}
+
+	refs, err := ops.List(ctx)
+	if err != nil {
+		t.Fatalf("ops.List: %v", err)
+	}
+	for _, r := range refs {
+		if r.Mode == warpscout.TargetSystem && r.ID == "Wireguard7" {
+			t.Fatalf("protected external tunnel Wireguard7 must not appear in UI ops.List: %+v", r)
+		}
+	}
+
+	targets, err := svc.Targets(ctx)
+	if err != nil {
+		t.Fatalf("svc.Targets: %v", err)
+	}
+	var sawManaged bool
+	for _, tg := range targets {
+		if tg.Mode == warpscout.TargetSystem && tg.ID == "Wireguard7" {
+			t.Fatalf("protected external tunnel Wireguard7 must not leak into svc.Targets: %+v", tg)
+		}
+		if tg.Mode == warpscout.TargetNative && tg.ID == "awg50" {
+			sawManaged = true
+		}
+	}
+	if !sawManaged {
+		t.Fatalf("expected managed awg50 in svc.Targets, got %+v", targets)
+	}
+
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetSystem, "Wireguard7", "162.159.192.2:2408", warpscout.SwapOptions{}); !errors.Is(err, warpscout.ErrProtected) {
+		t.Fatalf("expected ErrProtected from SwapEndpoint on Wireguard7, got %v", err)
+	}
+	if err := ops.Rename(ctx, warpscout.TargetSystem, "Wireguard7", "Other"); !errors.Is(err, warpscout.ErrProtected) {
+		t.Fatalf("expected ErrProtected from Rename on Wireguard7, got %v", err)
+	}
+
+	if st := svc.State(); st.AccountKeyInUseBy != "Phobos WARP" {
+		t.Fatalf("expected State().AccountKeyInUseBy == 'Phobos WARP', got %q", st.AccountKeyInUseBy)
+	}
+	if err := svc.StartScan(warpscout.ScanRequest{Filters: warpscout.Filters{Protocol: warpscout.ProtocolWG}}); !errors.Is(err, warpscout.ErrInvalidInput) {
+		t.Fatalf("expected StartScan blocked with ErrInvalidInput when external tunnel holds key, got %v", err)
+	}
+	if _, err := svc.RegisterWithOptions(ctx, warpscout.RegisterOptions{}); !errors.Is(err, warpscout.ErrInvalidInput) {
+		t.Fatalf("expected RegisterWithOptions blocked with ErrInvalidInput when external tunnel holds key, got %v", err)
+	}
+	if err := svc.DeleteAccountLocal(ctx); !errors.Is(err, warpscout.ErrInvalidInput) {
+		t.Fatalf("expected DeleteAccountLocal blocked with ErrInvalidInput when external tunnel holds key, got %v", err)
 	}
 }

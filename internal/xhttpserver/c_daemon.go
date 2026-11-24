@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/procnet"
 )
 
@@ -56,7 +58,7 @@ type Server struct {
 	cAddr        string
 	cVersion     string
 	cExitCh      chan error
-	cExitErr     error
+	onExit       func()
 }
 
 // New constructs a C-backed xhttpserver supervisor.
@@ -121,11 +123,12 @@ func (s *Server) CDaemonVersion() string {
 	return s.cVersion
 }
 
-// CDaemonExitError returns the last unexpected exit error of awgm-xhttpd, if any.
-func (s *Server) CDaemonExitError() error {
+// SetOnUnexpectedExit registers fn, run in its own goroutine when the child
+// exits without Stop (crash, OOM kill) — the supervisor never restarts it itself.
+func (s *Server) SetOnUnexpectedExit(fn func()) {
 	s.srvMu.Lock()
 	defer s.srvMu.Unlock()
-	return s.cExitErr
+	s.onExit = fn
 }
 
 // Start validates configuration and binary integrity, checks port availability safely,
@@ -186,6 +189,9 @@ func (s *Server) Start() error {
 		cmdEnv = append(cmdEnv, s.cEnv...)
 	}
 	cmd.Env = cmdEnv
+	// Своя сессия: остановка бьёт по группе, и порождённые демоном процессы
+	// не переживают его.
+	childproc.SetProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start awgm-xhttpd (%s): %w", binInfo.Path, err)
 	}
@@ -201,13 +207,17 @@ func (s *Server) Start() error {
 		close(exitCh)
 
 		s.srvMu.Lock()
+		var onExit func()
 		if s.cCmd == cmd {
-			s.cExitErr = waitErr
 			s.running = false
 			s.cCmd = nil
 			s.cAddr = ""
+			onExit = s.onExit
 		}
 		s.srvMu.Unlock()
+		if onExit != nil {
+			go onExit()
+		}
 	}()
 
 	httpClient := &http.Client{Timeout: 200 * time.Millisecond}
@@ -241,7 +251,7 @@ func (s *Server) Start() error {
 
 	if !ready {
 		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
+			_ = childproc.KillGroup(cmd.Process.Pid)
 		}
 		select {
 		case <-exitCh:
@@ -258,7 +268,6 @@ func (s *Server) Start() error {
 	s.cVersion = health.Version
 	s.cConfPath = confPath
 	s.cExitCh = exitCh
-	s.cExitErr = nil
 	s.running = true
 	return nil
 }
@@ -372,15 +381,7 @@ func writeCXHTTPDConfigFileAt(confPath string, cfg Config, listenAddr string, pr
 		return err
 	}
 	content := renderCXHTTPDConfig(cfg, listenAddr, prefixes, allowed, trusted)
-	tmp := fmt.Sprintf("%s.tmp.%d", confPath, time.Now().UnixNano())
-	if err := os.WriteFile(tmp, []byte(content), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, confPath); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return storage.AtomicWritePerm(confPath, []byte(content), 0o600)
 }
 
 func (s *Server) pushFailClosedEmptyClients() error {
@@ -468,7 +469,7 @@ func (s *Server) stopCDaemonLocked() {
 	s.cExitCh = nil
 	if cmd != nil && cmd.Process != nil {
 		if runtime.GOOS != "windows" {
-			_ = cmd.Process.Signal(syscall.SIGTERM)
+			_ = childproc.TerminateGroup(cmd.Process.Pid)
 			if exitCh != nil {
 				select {
 				case <-exitCh:
@@ -477,7 +478,16 @@ func (s *Server) stopCDaemonLocked() {
 				}
 			}
 		}
-		_ = cmd.Process.Kill()
+		// Уже подобранный процесс не добиваем: KillGroup бьёт по номеру, и
+		// освобождённый pid мог достаться другой группе.
+		if exitCh != nil {
+			select {
+			case <-exitCh:
+				goto cleanup
+			default:
+			}
+		}
+		_ = childproc.KillGroup(cmd.Process.Pid)
 		if exitCh != nil {
 			select {
 			case <-exitCh:
@@ -486,7 +496,8 @@ func (s *Server) stopCDaemonLocked() {
 		}
 	}
 cleanup:
-	if confPath != "" && strings.HasPrefix(filepath.Base(confPath), fmt.Sprintf("awgm-xhttpd-%d-", os.Getpid())) {
+	// Конфиг несёт UUID клиентов и FP-секреты — после остановки ему незачем жить.
+	if confPath == DefaultConfigPath || (confPath != "" && strings.HasPrefix(filepath.Base(confPath), fmt.Sprintf("awgm-xhttpd-%d-", os.Getpid()))) {
 		_ = os.Remove(confPath)
 	}
 }
@@ -631,9 +642,7 @@ func ensurePortFreeOrReapVerifiedStaleCDaemon(listenAddr string) error {
 		lookup, lerr := procnet.FindListeningProcess("/proc", host, port)
 		if lerr == nil && lookup.SocketFound {
 			if isVerifiedCDaemonProcessLinux(lookup.PID) {
-				if proc, perr := os.FindProcess(lookup.PID); perr == nil && proc != nil {
-					_ = proc.Signal(syscall.SIGTERM)
-				}
+				_ = childproc.TerminateGroup(lookup.PID)
 				deadline := time.Now().Add(1 * time.Second)
 				for time.Now().Before(deadline) {
 					lk, e := procnet.FindListeningProcess("/proc", host, port)
@@ -642,9 +651,7 @@ func ensurePortFreeOrReapVerifiedStaleCDaemon(listenAddr string) error {
 					}
 					time.Sleep(25 * time.Millisecond)
 				}
-				if proc, perr := os.FindProcess(lookup.PID); perr == nil && proc != nil {
-					_ = proc.Kill()
-				}
+				_ = childproc.KillGroup(lookup.PID)
 				deadline2 := time.Now().Add(500 * time.Millisecond)
 				for time.Now().Before(deadline2) {
 					lk, e := procnet.FindListeningProcess("/proc", host, port)

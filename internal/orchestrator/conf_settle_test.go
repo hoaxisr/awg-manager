@@ -404,10 +404,9 @@ func TestHookSetters_AreRaceFreeAgainstUpdateState(t *testing.T) {
 		for i := 0; i < 200; i++ {
 			o.SetEventBus(events.NewBus())
 			o.SetInterfaceInvalidator(func(string) {})
-			o.SetOnTunnelRunning(func(string) {})
 		}
 	}()
-	// ColdStart читает все три хука (publish + invalidator + onTunnelRunning),
+	// ColdStart читает оба хука (publish + invalidator),
 	// Stop — только шину: без первого мутация «сеттер без лока» не видна.
 	for i := 0; i < 200; i++ {
 		o.updateState(Action{Type: ActionColdStartKernel, Tunnel: "awg10"})

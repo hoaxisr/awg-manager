@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 )
 
 // EngineTransition holds the controller before any engine operator lock. This
@@ -15,17 +14,7 @@ type EngineTransition struct {
 }
 
 func (c *Controller) AcquireEngineTransition(ctx context.Context) (*EngineTransition, error) {
-	for !c.mu.TryLock() {
-		timer := time.NewTimer(10 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		c.mu.Unlock()
+	if err := c.gate.lockExclusive(ctx); err != nil {
 		return nil, err
 	}
 	return &EngineTransition{controller: c}, nil
@@ -34,7 +23,7 @@ func (c *Controller) AcquireEngineTransition(ctx context.Context) (*EngineTransi
 // CheckTarget deliberately refuses implicit migration. Disabled policies remain
 // durable and may be explicitly remapped before being enabled on another engine.
 func (g *EngineTransition) CheckTarget(engine string) error {
-	if g.controller.paused {
+	if g.controller.paused.Load() {
 		return fmt.Errorf("%w: uplink controller paused for backup", ErrConflict)
 	}
 	if g.controller.store.renameIntent() != nil {
@@ -54,4 +43,4 @@ func (g *EngineTransition) CheckTarget(engine string) error {
 	return nil
 }
 
-func (g *EngineTransition) Release() { g.once.Do(g.controller.mu.Unlock) }
+func (g *EngineTransition) Release() { g.once.Do(g.controller.gate.unlockExclusive) }

@@ -774,6 +774,7 @@ type Group struct {
 	Enable     bool              `json:"enable" yaml:"enable"`
 	Color      string            `json:"color,omitempty" yaml:"color,omitempty"`
 	Block      string            `json:"block,omitempty" yaml:"block,omitempty"`
+	Cloudflare bool              `json:"cloudflare,omitempty" yaml:"cloudflare,omitempty"`
 	Live       bool              `json:"live,omitempty" yaml:"-"`
 	LiveReason string            `json:"liveReason,omitempty" yaml:"-"`
 	Active     string            `json:"active,omitempty" yaml:"-"`

@@ -20,7 +20,6 @@ const snapshot = () =>
 		authenticated: false,
 		login: null,
 		singbox: null,
-		hydra: null,
 		deviceProxy: null,
 		deviceProxyRuntime: null,
 		clientRoutesTotal: 2,

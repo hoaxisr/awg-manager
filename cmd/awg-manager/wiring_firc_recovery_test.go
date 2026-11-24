@@ -73,7 +73,7 @@ func TestFircStartupRecoveryGate_BlocksOnCorruptPendingMigrationAndRespectsManua
 		inst.SetPackageManager(&fakeStartupRuntimeManager{})
 		inst.SetRuntimeLocker(fircOp.LockRuntimeMutation)
 
-		// Write a pending migrate_legacy operation without a valid backup manifest.
+		// Write a pending migrate_legacy operation: the action is no longer recognised and must fail closed.
 		opJournalPath := filepath.Join(root, "opt/etc/awg-manager/firc-runtime-operation.json")
 		if err := os.WriteFile(opJournalPath, []byte(`{"action":"migrate_legacy","pending":true}`), 0600); err != nil {
 			t.Fatal(err)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
@@ -18,8 +17,6 @@ import (
 // PreflightEngine executes non-mutating readiness checks before wizard planning.
 type PreflightEngine struct {
 	xhttpdPath string
-	tproxyPath string
-	telemtPath string
 	procDir    string
 	statFn     func(path string) (os.FileInfo, error)
 	findProcFn func(procDir, addr string, port int) (procnet.ListenerLookup, error)
@@ -40,8 +37,6 @@ func NewPreflightEngine(
 ) *PreflightEngine {
 	return &PreflightEngine{
 		xhttpdPath: xhttpserver.DefaultBinaryPath,
-		tproxyPath: "/opt/bin/tproxy-server",
-		telemtPath: "/opt/bin/telemt",
 		procDir:    "/proc",
 		statFn:     os.Stat,
 		findProcFn: procnet.FindListeningProcess,
@@ -194,33 +189,20 @@ func (pe *PreflightEngine) Run(ctx context.Context, req WizardPlanRequest) Prefl
 
 func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequest, checks *[]PreflightCheck) {
 	// Binary checks
-	if pe.tgSvc != nil && pe.tgSvc.GetStatus().InstalledTelemt {
-		*checks = append(*checks, PreflightCheck{
-			ID:      "bin_telemt",
-			Title:   "Встроенное ядро mtg (MTProto Fake-TLS)",
-			Status:  CheckStatusOK,
-			Message: "Ядро mtg встроено в процесс awg-manager",
-		})
-	} else {
-		telemtPath := pe.telemtPath
-		if _, err := pe.statFn(telemtPath); err != nil {
-			if _, errManaged := pe.statFn("/opt/etc/awg-manager/telemt/telemt"); errManaged == nil {
-				telemtPath = "/opt/etc/awg-manager/telemt/telemt"
-			}
-		}
-		pe.checkBinary("bin_telemt", "Служба telemt (MTProto Fake-TLS)", telemtPath, checks)
-	}
+	// mtg и tproxy встроены в процесс: внешних бинарей нет, проверять нечего.
+	*checks = append(*checks, PreflightCheck{
+		ID:      "bin_telemt",
+		Title:   "Встроенное ядро mtg (MTProto Fake-TLS)",
+		Status:  CheckStatusOK,
+		Message: "Ядро mtg встроено в процесс awg-manager",
+	})
 	if req.Scenario != "direct_fake_tls" {
-		if pe.tgSvc != nil && pe.tgSvc.GetStatus().InstalledTproxy {
-			*checks = append(*checks, PreflightCheck{
-				ID:      "bin_tproxy",
-				Title:   "Встроенный Web Proxy (tproxy)",
-				Status:  CheckStatusOK,
-				Message: "Модуль Web Proxy встроен в процесс awg-manager",
-			})
-		} else {
-			pe.checkBinary("bin_tproxy", "Служба tproxy-server (Web Proxy)", pe.tproxyPath, checks)
-		}
+		*checks = append(*checks, PreflightCheck{
+			ID:      "bin_tproxy",
+			Title:   "Встроенный Web Proxy (tproxy)",
+			Status:  CheckStatusOK,
+			Message: "Модуль Web Proxy встроен в процесс awg-manager",
+		})
 	}
 
 	// Ports checks
@@ -250,13 +232,6 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 		st := pe.tgSvc.GetStatus()
 		currentWebPID = st.PID
 		currentDirectPID = st.DirectPID
-	}
-	if currentDirectPID == 0 {
-		if pidBytes, err := os.ReadFile("/opt/var/run/telemt.pid"); err == nil {
-			if p, err := strconv.Atoi(strings.TrimSpace(string(pidBytes))); err == nil {
-				currentDirectPID = p
-			}
-		}
 	}
 
 	if scenario != "cdn_http" {

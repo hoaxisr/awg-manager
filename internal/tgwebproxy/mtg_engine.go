@@ -59,6 +59,12 @@ type MtgEngine struct {
 	lastCfg   Config
 	hasCfg    bool
 	connected atomic.Int64
+
+	// rawConns — соединения raw-листенера. stopLocked закрывает их: иначе
+	// остановка, ротация или отзыв секрета не обрывали бы уже подключённых.
+	// Порядок локов: mu → rawMu.
+	rawMu    sync.Mutex
+	rawConns map[net.Conn]struct{}
 }
 
 func NewMtgEngine() *MtgEngine {
@@ -333,7 +339,28 @@ func (e *MtgEngine) stopLocked() {
 	}
 	e.secrets = nil
 	e.active = mtgActiveSpec{}
+	e.rawMu.Lock()
+	for c := range e.rawConns {
+		_ = c.Close()
+	}
+	e.rawConns = nil
+	e.rawMu.Unlock()
 	e.connected.Store(0)
+}
+
+func (e *MtgEngine) trackRaw(c net.Conn) {
+	e.rawMu.Lock()
+	if e.rawConns == nil {
+		e.rawConns = make(map[net.Conn]struct{})
+	}
+	e.rawConns[c] = struct{}{}
+	e.rawMu.Unlock()
+}
+
+func (e *MtgEngine) untrackRaw(c net.Conn) {
+	e.rawMu.Lock()
+	delete(e.rawConns, c)
+	e.rawMu.Unlock()
 }
 
 func (e *MtgEngine) serveRawLoop(lis net.Listener, proxy *mtglib.Proxy, ntw mtglib.Network, secrets []mtglib.Secret) {
@@ -345,6 +372,9 @@ func (e *MtgEngine) serveRawLoop(lis net.Listener, proxy *mtglib.Proxy, ntw mtgl
 			}
 			return
 		}
+		// Учёт до запуска горутины: соединение, принятое перед stopLocked,
+		// иначе прописалось бы уже после очистки и жило со старым секретом.
+		e.trackRaw(conn)
 		go e.handleRawConn(conn, proxy, ntw, secrets)
 	}
 }
@@ -440,6 +470,14 @@ func matchObfuscated2Secret(frame []byte, secrets []mtglib.Secret) int {
 }
 
 func (e *MtgEngine) handleRawConn(conn net.Conn, proxy *mtglib.Proxy, ntw mtglib.Network, secrets []mtglib.Secret) {
+	// Паника шифра (mtgctr.XORKeyStream при отказе EVP) рвёт одно
+	// соединение, а не весь демон.
+	defer func() {
+		if recover() != nil {
+			_ = conn.Close()
+		}
+	}()
+	defer e.untrackRaw(conn)
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	var frame [64]byte
 	if _, err := io.ReadFull(conn, frame[:]); err != nil {
@@ -496,19 +534,20 @@ func (e *MtgEngine) serveClassicObfuscated2(clientRaw net.Conn, ntw mtglib.Netwo
 	}
 
 	done := make(chan struct{}, 2)
+	// recover: горутина копирования вне defer'а handleRawConn.
 	go func() {
+		defer func() { _ = recover(); done <- struct{}{} }()
 		_, _ = io.Copy(dcStream, clientStream)
 		if tc, ok := dcConn.(interface{ CloseWrite() error }); ok {
 			_ = tc.CloseWrite()
 		}
-		done <- struct{}{}
 	}()
 	go func() {
+		defer func() { _ = recover(); done <- struct{}{} }()
 		_, _ = io.Copy(clientStream, dcStream)
 		if tc, ok := clientRaw.(interface{ CloseWrite() error }); ok {
 			_ = tc.CloseWrite()
 		}
-		done <- struct{}{}
 	}()
 	<-done
 	// Unblock the other copy and wait before releasing its cipher state.

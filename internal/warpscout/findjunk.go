@@ -296,6 +296,11 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 	if _, ok := s.d.Runner.Available(); !ok {
 		return ErrEngineMissing
 	}
+	scanIface := s.resolveScanIface(s.rootCtx, req.Ifname)
+	outer, err := s.prepareScanAccount(s.rootCtx, acct, scanIface)
+	if err != nil {
+		return err
+	}
 
 	cfgAWG := s.d.Store.Config().AWG
 	hostPreset := req.HostPreset
@@ -333,7 +338,6 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 	}
 
 	ctx, cancel := context.WithCancel(s.rootCtx)
-	scanIface := s.resolveScanIface(ctx, req.Ifname)
 	s.mu.Lock()
 	s.findJunkSeq++
 	runID := s.findJunkSeq
@@ -363,14 +367,12 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 		var best *JunkAttempt
 		func() {
 			defer s.engineMu.Unlock()
-			outer := s.resolveRouteTunnel(ctx, scanIface)
-			scanAcct := acct
-			if outer != nil && outer.IsWarp {
-				if !outer.Running {
-					runErr = errors.New("внешний туннель WARP выключен — сначала запустите его")
-				} else {
-					scanAcct, runErr = s.ensureDistinctAccount(ctx, outer.Iface, outer.LocalPublicKey)
-				}
+			defer s.releaseScanKey()
+			var scanAcct *Account
+			if outer != nil && outer.IsWarp && !outer.Running {
+				runErr = errors.New("внешний туннель WARP выключен — сначала запустите его")
+			} else {
+				scanAcct, runErr = s.claimScanAccount(func() (*Account, error) { return s.pickScanAccount(ctx, outer) })
 			}
 
 			r := newFindJunkRand()
@@ -563,6 +565,13 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 		}
 	}()
 	return nil
+}
+
+// FindJunkSnapshot возвращает копию статуса автоподбора маскировки без чтения инвентаризации туннелей.
+func (s *Service) FindJunkSnapshot() FindJunkStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneFindJunkStatus(s.findJunk)
 }
 
 // StopFindJunk прерывает текущий подбор маскировки, сохраняя лучший найденный набор.

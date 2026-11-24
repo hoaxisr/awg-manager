@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
+	import { Button } from '$lib/components/ui';
 	import type { FircProxyGroup } from '$lib/types/firc';
 	import { Check, Copy, Monitor, Power, PowerOff, Trash2 } from 'lucide-svelte';
 
@@ -84,10 +85,10 @@
 				{m.firc_bulk_deselect_all()}
 			</button>
 		{/if}
-		<button type="button" class="fb-btn fb-btn-done" onclick={onDone}>
-			<Check size={13} />
-			<span>{m.firc_bulk_select_groups_done()}</span>
-		</button>
+		<Button variant="outline-primary" size="sm" onclick={onDone}>
+			{#snippet iconBefore()}<Check size={13} />{/snippet}
+			{m.firc_bulk_select_groups_done()}
+		</Button>
 	</div>
 
 	<div class="fb-actions">
@@ -113,35 +114,30 @@
 			</optgroup>
 		</select>
 
-		<button type="button" class="fb-btn" disabled={actionsDisabled} onclick={onOpenDevices}>
-			<Monitor size={13} />
-			<span>{m.firc_bulk_groups_devices_btn()}</span>
-		</button>
+		<Button variant="secondary" size="sm" disabled={actionsDisabled} onclick={onOpenDevices}>
+			{#snippet iconBefore()}<Monitor size={13} />{/snippet}
+			{m.firc_bulk_groups_devices_btn()}
+		</Button>
 
-		<button type="button" class="fb-btn" disabled={actionsDisabled} onclick={onEnable}>
-			<Power size={13} />
-			<span>{m.firc_bulk_enable()}</span>
-		</button>
+		<Button variant="secondary" size="sm" disabled={actionsDisabled} onclick={onEnable}>
+			{#snippet iconBefore()}<Power size={13} />{/snippet}
+			{m.firc_bulk_enable()}
+		</Button>
 
-		<button type="button" class="fb-btn" disabled={actionsDisabled} onclick={onDisable}>
-			<PowerOff size={13} />
-			<span>{m.firc_bulk_disable()}</span>
-		</button>
+		<Button variant="secondary" size="sm" disabled={actionsDisabled} onclick={onDisable}>
+			{#snippet iconBefore()}<PowerOff size={13} />{/snippet}
+			{m.firc_bulk_disable()}
+		</Button>
 
-		<button type="button" class="fb-btn" disabled={actionsDisabled} onclick={onCopyDomains}>
-			<Copy size={13} />
-			<span>{m.firc_bulk_groups_copy_domains()}</span>
-		</button>
+		<Button variant="secondary" size="sm" disabled={actionsDisabled} onclick={onCopyDomains}>
+			{#snippet iconBefore()}<Copy size={13} />{/snippet}
+			{m.firc_bulk_groups_copy_domains()}
+		</Button>
 
-		<button
-			type="button"
-			class="fb-btn fb-btn-danger"
-			disabled={actionsDisabled}
-			onclick={onDelete}
-		>
-			<Trash2 size={13} />
-			<span>{m.firc_bulk_delete()}</span>
-		</button>
+		<Button variant="outline-danger" size="sm" disabled={actionsDisabled} onclick={onDelete}>
+			{#snippet iconBefore()}<Trash2 size={13} />{/snippet}
+			{m.firc_bulk_delete()}
+		</Button>
 	</div>
 </div>
 
@@ -193,51 +189,15 @@
 		gap: 6px;
 	}
 
-	.fb-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-		height: 28px;
-		padding: 0 9px;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-primary);
-		color: var(--color-text-primary);
-		font-size: 12px;
-		font-weight: 500;
-		font-family: inherit;
-		cursor: pointer;
-		transition:
-			background var(--t-fast),
-			border-color var(--t-fast);
-	}
 
-	.fb-btn:hover:not(:disabled) {
-		background: var(--color-bg-hover);
-		border-color: var(--color-border-hover);
-	}
 
-	.fb-btn:disabled,
 	.fb-select:disabled {
 		opacity: 0.45;
 		cursor: not-allowed;
 	}
 
-	.fb-btn-done {
-		border-color: var(--color-accent-border);
-		color: var(--color-accent);
-	}
 
-	.fb-btn-danger {
-		color: var(--color-error);
-		border-color: var(--color-error-border);
-		background: var(--color-error-tint);
-	}
 
-	.fb-btn-danger:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-error) 24%, transparent);
-		border-color: var(--color-error);
-	}
 
 	.fb-select {
 		height: 28px;

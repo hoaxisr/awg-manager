@@ -18,8 +18,18 @@
 #include <sys/prctl.h>
 #endif
 
-xhttpd_config_t g_cfg;
-pthread_rwlock_t g_cfg_lock = PTHREAD_RWLOCK_INITIALIZER;
+/* Live configuration: one immutable heap snapshot shared by every request instead of a
+ * ~115 KiB copy per request (F870). A request holds a reference for its whole lifetime,
+ * streams included; a reload publishes a new snapshot and drops the published reference
+ * of the old one, which is freed by whoever drops the last reference. g_cfg_lock only
+ * orders the pointer swap against a concurrent acquire. */
+typedef struct {
+    xhttpd_config_t cfg; /* first member: a cfg pointer is the snapshot pointer */
+    int             refs;
+} cfg_snapshot_t;
+static cfg_snapshot_t *g_cfg_snap = NULL;
+static int g_cfg_snaps_live = 0; /* allocated snapshots, for the audit test */
+static pthread_rwlock_t g_cfg_lock = PTHREAD_RWLOCK_INITIALIZER;
 bool g_diag_enabled = false;
 static volatile sig_atomic_t g_reload_flag = 0;
 static volatile sig_atomic_t g_stop_flag = 0;
@@ -543,6 +553,51 @@ int read_http_request(conn_reader_t *cr, http_req_t *req) {
     return 0;
 }
 
+const xhttpd_config_t *xhttpd_cfg_acquire(void) {
+    pthread_rwlock_rdlock(&g_cfg_lock);
+    cfg_snapshot_t *snap = g_cfg_snap;
+    if (snap) __atomic_add_fetch(&snap->refs, 1, __ATOMIC_RELAXED);
+    pthread_rwlock_unlock(&g_cfg_lock);
+    return snap ? &snap->cfg : NULL;
+}
+
+void xhttpd_cfg_release(const xhttpd_config_t *cfg) {
+    if (!cfg) return;
+    cfg_snapshot_t *snap = (cfg_snapshot_t *)(uintptr_t)cfg;
+    if (__atomic_sub_fetch(&snap->refs, 1, __ATOMIC_ACQ_REL) == 0) {
+        free(snap);
+        __atomic_sub_fetch(&g_cfg_snaps_live, 1, __ATOMIC_RELAXED);
+    }
+}
+
+int xhttpd_test_live_cfg_snapshots(void) {
+    return __atomic_load_n(&g_cfg_snaps_live, __ATOMIC_RELAXED);
+}
+
+/* Publishes snap (refs already 1 for the published reference); with revoke, live
+ * sessions of removed clients are revoked under the same lock as before. */
+static void publish_cfg_snapshot(cfg_snapshot_t *snap, bool revoke) {
+    pthread_rwlock_wrlock(&g_cfg_lock);
+    cfg_snapshot_t *old = g_cfg_snap;
+    g_cfg_snap = snap;
+    if (revoke) {
+        fp_engine_revoke_unauthorised(&snap->cfg);
+        vless_engine_revoke_unauthorised(&snap->cfg);
+    }
+    pthread_rwlock_unlock(&g_cfg_lock);
+    if (old) xhttpd_cfg_release(&old->cfg);
+}
+
+int xhttpd_test_publish_config(const xhttpd_config_t *cfg) {
+    cfg_snapshot_t *snap = (cfg_snapshot_t *)calloc(1, sizeof(*snap));
+    if (!snap) return -1;
+    snap->cfg = *cfg;
+    snap->refs = 1;
+    __atomic_add_fetch(&g_cfg_snaps_live, 1, __ATOMIC_RELAXED);
+    publish_cfg_snapshot(snap, false);
+    return 0;
+}
+
 static const char *match_path_prefix(const char *path, const xhttpd_config_t *cfg) {
     for (int i = 0; i < cfg->num_prefixes; i++) {
         const char *p = cfg->prefixes[i];
@@ -559,23 +614,18 @@ static void *client_conn_thread(void *arg) {
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
+    /* Only the header fields: zeroing the 16 KiB buffer would make it resident for the
+     * whole life of the connection, idle keep-alives included. */
     conn_reader_t cr;
-    memset(&cr, 0, sizeof(cr));
     cr.fd = fd;
+    cr.pos = 0;
+    cr.len = 0;
 
     char peer_ip[64] = "127.0.0.1";
     struct sockaddr_in psa;
     socklen_t plen = sizeof(psa);
     if (getpeername(fd, (struct sockaddr *)&psa, &plen) == 0 && psa.sin_family == AF_INET) {
         inet_ntop(AF_INET, &psa.sin_addr, peer_ip, sizeof(peer_ip));
-    }
-
-    xhttpd_config_t *cfg_snap = (xhttpd_config_t *)malloc(sizeof(*cfg_snap));
-    if (!cfg_snap) {
-        send_http_error(fd, 503, "Service Unavailable", "out of memory", false);
-        graceful_lingering_close(fd);
-        __atomic_sub_fetch(&g_active_http_workers, 1, __ATOMIC_RELEASE);
-        return NULL;
     }
 
     bool linger_before_close = false;
@@ -649,7 +699,7 @@ static void *client_conn_thread(void *arg) {
             pthread_mutex_lock(&g_reload_mu);
             int rc = -1;
             if (g_config_path[0]) {
-                rc = load_config_file(g_config_path, &g_cfg);
+                rc = load_config_file(g_config_path, NULL);
             }
             pthread_mutex_unlock(&g_reload_mu);
 
@@ -665,12 +715,16 @@ static void *client_conn_thread(void *arg) {
             break;
         }
 
-        pthread_rwlock_rdlock(&g_cfg_lock);
-        *cfg_snap = g_cfg;
-        pthread_rwlock_unlock(&g_cfg_lock);
+        const xhttpd_config_t *cfg_snap = xhttpd_cfg_acquire();
+        if (!cfg_snap) {
+            send_http_error(fd, 503, "Service Unavailable", "no configuration", false);
+            if (req.body) free(req.body);
+            break;
+        }
 
         const char *matched_prefix = match_path_prefix(req.path, cfg_snap);
         if (!matched_prefix) {
+            xhttpd_cfg_release(cfg_snap);
             send_http_error(fd, 404, "Not Found", "not found", req.keep_alive);
             if (req.body) free(req.body);
             if (!req.keep_alive) {
@@ -681,6 +735,7 @@ static void *client_conn_thread(void *arg) {
         }
 
         if (cfg_snap->num_clients == 0) {
+            xhttpd_cfg_release(cfg_snap);
             send_http_error(fd, 403, "Forbidden", "server has no authorized clients", req.keep_alive);
             if (req.body) free(req.body);
             if (!req.keep_alive) {
@@ -696,6 +751,7 @@ static void *client_conn_thread(void *arg) {
         } else {
             rc = handle_vless_http_request(fd, &cr, &req, matched_prefix, cfg_snap);
         }
+        xhttpd_cfg_release(cfg_snap);
 
         bool ka = req.keep_alive;
         bool chunked_inc = req.chunked_incomplete;
@@ -706,7 +762,6 @@ static void *client_conn_thread(void *arg) {
         }
     }
 
-    free(cfg_snap);
     if (linger_before_close) {
         graceful_lingering_close(fd);
     } else {
@@ -728,7 +783,7 @@ int xhttpd_spawn_client_worker_for_test(int fd) {
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    pthread_attr_setstacksize(&attr, 524288);
+    pthread_attr_setstacksize(&attr, XHTTPD_WORKER_STACK);
     if (pthread_create(&tid, &attr, client_conn_thread, (void *)(intptr_t)fd) != 0) {
         __atomic_sub_fetch(&g_active_http_workers, 1, __ATOMIC_RELEASE);
         pthread_attr_destroy(&attr);
@@ -749,15 +804,17 @@ static void normalize_prefix(const char *raw, char *out, size_t out_sz) {
     }
 }
 
-int load_config_file(const char *path, xhttpd_config_t *cfg) {
+/* Loads path and makes it the live configuration; out (may be NULL) gets a copy. */
+int load_config_file(const char *path, xhttpd_config_t *out) {
     FILE *fp = fopen(path, "r");
     if (!fp) return -1;
 
-    xhttpd_config_t *next = (xhttpd_config_t *)calloc(1, sizeof(*next));
-    if (!next) {
+    cfg_snapshot_t *snap = (cfg_snapshot_t *)calloc(1, sizeof(*snap));
+    if (!snap) {
         fclose(fp);
         return -1;
     }
+    xhttpd_config_t *next = &snap->cfg;
     snprintf(next->listen_host, sizeof(next->listen_host), "127.0.0.1");
     next->listen_port = 9008;
     snprintf(next->prefixes[0], sizeof(next->prefixes[0]), "/cdn-bridge");
@@ -810,7 +867,7 @@ int load_config_file(const char *path, xhttpd_config_t *cfg) {
             if (!parse_uuid_str(v, u)) continue;
             if (next->num_clients >= MAX_CLIENTS) {
                 fclose(fp);
-                free(next);
+                free(snap);
                 return -1;
             }
             memcpy(next->clients[next->num_clients].uuid, u, 16);
@@ -829,7 +886,7 @@ int load_config_file(const char *path, xhttpd_config_t *cfg) {
             if (hex_to_bytes(sec_hex, sec, 32) != 32) continue;
             if (next->num_cfg_fp_creds >= MAX_FP_CREDS) {
                 fclose(fp);
-                free(next);
+                free(snap);
                 return -1;
             }
             (void)add_explicit_fp_cred(next, cid, sec);
@@ -840,7 +897,7 @@ int load_config_file(const char *path, xhttpd_config_t *cfg) {
             else if (strcasecmp(v, "interface") == 0 || strcasecmp(v, "outbound") == 0) next->egress_mode = EGRESS_MODE_INTERFACE;
             else {
                 fclose(fp);
-                free(next);
+                free(snap);
                 return -1;
             }
         } else if (strcmp(k, "interface") == 0) {
@@ -857,6 +914,9 @@ int load_config_file(const char *path, xhttpd_config_t *cfg) {
             if (p >= 0 && p <= 65535) next->dns_proxy_port = (uint16_t)p;
         } else if (strcmp(k, "allow_private") == 0) {
             next->allow_private = (strcmp(v, "1") == 0 || strcasecmp(v, "true") == 0);
+        } else if (strcmp(k, "domain_strategy") == 0) {
+            /* prefer_ipv4 and empty behave as the default: A first, AAAA when the name has no A */
+            next->ipv4_only = (strcasecmp(v, "ipv4_only") == 0);
         } else if (strcmp(k, "idle_timeout_sec") == 0) {
             int t = atoi(v);
             if (t > 5) next->idle_timeout_sec = t;
@@ -888,24 +948,22 @@ int load_config_file(const char *path, xhttpd_config_t *cfg) {
     fclose(fp);
 
     if (next->egress_mode == EGRESS_MODE_INTERFACE && next->interface_name[0] == '\0') {
-        free(next);
+        free(snap);
         return -1;
     }
     if (next->egress_mode == EGRESS_MODE_SOCKS && (next->socks_host[0] == '\0' || next->socks_port == 0)) {
-        free(next);
+        free(snap);
         return -1;
     }
     if (rebuild_fp_credentials(next) < 0) {
-        free(next);
+        free(snap);
         return -1;
     }
     dnat_bump_generation();
-    pthread_rwlock_wrlock(&g_cfg_lock);
-    *cfg = *next;
-    fp_engine_revoke_unauthorised(next);
-    vless_engine_revoke_unauthorised(next);
-    pthread_rwlock_unlock(&g_cfg_lock);
-    free(next);
+    if (out) *out = *next;
+    snap->refs = 1;
+    __atomic_add_fetch(&g_cfg_snaps_live, 1, __ATOMIC_RELAXED);
+    publish_cfg_snapshot(snap, true);
     return 0;
 }
 
@@ -925,7 +983,7 @@ static void *reaper_thread_fn(void *arg) {
         if (__atomic_load_n(&g_reload_flag, __ATOMIC_ACQUIRE) && g_config_path[0]) {
             __atomic_store_n(&g_reload_flag, 0, __ATOMIC_RELEASE);
             pthread_mutex_lock(&g_reload_mu);
-            load_config_file(g_config_path, &g_cfg);
+            load_config_file(g_config_path, NULL);
             pthread_mutex_unlock(&g_reload_mu);
         }
         vless_engine_reap_stale();
@@ -955,25 +1013,6 @@ int main(int argc, char **argv) {
 #ifdef __linux__
     prctl(PR_SET_PDEATHSIG, SIGTERM);
 #endif
-
-    memset(&g_cfg, 0, sizeof(g_cfg));
-    snprintf(g_cfg.listen_host, sizeof(g_cfg.listen_host), "127.0.0.1");
-    g_cfg.listen_port = 9008;
-    snprintf(g_cfg.prefixes[0], sizeof(g_cfg.prefixes[0]), "/cdn-bridge");
-    g_cfg.num_prefixes = 1;
-    g_cfg.egress_mode = EGRESS_MODE_ROUTER;
-    snprintf(g_cfg.socks_host, sizeof(g_cfg.socks_host), "127.0.0.1");
-    g_cfg.socks_port = 1099;
-    snprintf(g_cfg.dns_proxy_host, sizeof(g_cfg.dns_proxy_host), "127.0.0.1");
-    g_cfg.dns_proxy_port = 3553;
-    g_cfg.allow_private = false;
-    g_cfg.idle_timeout_sec = 120;
-    g_cfg.max_sessions_per_ip = 16;
-    g_cfg.max_pre_auth_sessions = 64;
-    g_cfg.max_pre_auth_per_ip = 8;
-    g_cfg.max_pre_auth_bytes_per_ip = 256 * 1024;
-    g_cfg.max_pre_auth_bytes_global = 4 * 1024 * 1024;
-    g_cfg.pre_auth_ttl_ms = 10000;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-version") == 0 || strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
@@ -1005,7 +1044,7 @@ int main(int argc, char **argv) {
     vless_engine_init();
     __atomic_store_n(&g_diag_enabled, (access("/tmp/awgm-xhttp-diag.enable", F_OK) == 0), __ATOMIC_RELAXED);
 
-    if (load_config_file(g_config_path, &g_cfg) != 0) {
+    if (load_config_file(g_config_path, NULL) != 0) {
         fprintf(stderr, "awgm-xhttpd: failed to load config %s\n", g_config_path);
         return 1;
     }
@@ -1021,10 +1060,12 @@ int main(int argc, char **argv) {
     struct sockaddr_in sa;
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
-    sa.sin_port = htons(g_cfg.listen_port);
-    if (inet_pton(AF_INET, g_cfg.listen_host, &sa.sin_addr) != 1) {
+    const xhttpd_config_t *boot_cfg = xhttpd_cfg_acquire();
+    sa.sin_port = htons(boot_cfg->listen_port);
+    if (inet_pton(AF_INET, boot_cfg->listen_host, &sa.sin_addr) != 1) {
         sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     }
+    xhttpd_cfg_release(boot_cfg);
 
     if (bind(srv_fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
         perror("bind");
@@ -1071,7 +1112,7 @@ int main(int argc, char **argv) {
         pthread_attr_t attr;
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-        pthread_attr_setstacksize(&attr, 524288);
+        pthread_attr_setstacksize(&attr, XHTTPD_WORKER_STACK);
         if (pthread_create(&tid, &attr, client_conn_thread, (void *)(intptr_t)cfd) != 0) {
             __atomic_sub_fetch(&g_active_http_workers, 1, __ATOMIC_RELEASE);
             close(cfd);

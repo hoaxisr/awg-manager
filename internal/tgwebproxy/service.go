@@ -19,7 +19,10 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 var (
@@ -35,8 +38,6 @@ type TproxyValidator func(stagingDir string) error
 type Service struct {
 	mu                   sync.Mutex
 	dataDir              string
-	telemtDir            string
-	binPath              string
 	config               Config
 	tc                   *TransactionCoordinator
 	workers              *WorkerSupervisor
@@ -60,30 +61,13 @@ type Service struct {
 }
 
 func New(dataDir string, onReload func()) *Service {
-	var telemtDir string
-	if dataDir != "" && dataDir != "/opt/etc/awg-manager" {
-		telemtDir = filepath.Join(dataDir, "telemt")
-		_ = os.MkdirAll(telemtDir, 0755)
-	} else {
-		telemtDir = "/opt/etc/awg-manager/telemt"
-		if _, err := os.Stat(telemtDir); os.IsNotExist(err) {
-			if _, errLegacy := os.Stat("/opt/etc/telemt"); errLegacy == nil {
-				telemtDir = "/opt/etc/telemt"
-			} else {
-				_ = os.MkdirAll(telemtDir, 0755)
-			}
-		}
-	}
 	tproxyBaseDir := filepath.Join(dataDir, "tproxy")
 
-	workers := NewDefaultWorkerSupervisor()
-	workers.SetTproxyDir(tproxyBaseDir)
+	workers := NewDefaultWorkerSupervisor(tproxyBaseDir)
 	tc := NewTransactionCoordinator(tproxyBaseDir)
 
 	s := &Service{
 		dataDir:              dataDir,
-		telemtDir:            telemtDir,
-		binPath:              "/opt/bin/tproxy-server",
 		tc:                   tc,
 		workers:              workers,
 		mux:                  NewMux(),
@@ -146,14 +130,6 @@ func (s *Service) cfgPath() string {
 
 func (s *Service) tproxyDir() string {
 	return filepath.Join(s.dataDir, "tproxy")
-}
-
-func (s *Service) telemtDirectPath() string {
-	return filepath.Join(s.telemtDir, "config.toml")
-}
-
-func (s *Service) telemtRawPath() string {
-	return filepath.Join(s.telemtDir, "raw.toml")
 }
 
 var renameKeyFile = os.Rename
@@ -417,14 +393,9 @@ func (s *Service) loadAndMigrateConfig() error {
 		bakPath := cfgPath + ".v1.bak"
 		// Write .v1.bak atomically with 0600 ONLY if it doesn't already exist
 		if _, err := os.Stat(bakPath); os.IsNotExist(err) {
-			tmpBak := bakPath + ".tmp"
-			if err := os.WriteFile(tmpBak, data, 0600); err != nil {
+			if err := storage.AtomicWritePerm(bakPath, data, 0600); err != nil {
 				return fmt.Errorf("write v1 backup: %w", err)
 			}
-			if err := os.Rename(tmpBak, bakPath); err != nil {
-				return fmt.Errorf("rename v1 backup: %w", err)
-			}
-			_ = fsyncDir(s.tproxyDir())
 		}
 
 		migrated := loaded
@@ -608,9 +579,6 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 		return fmt.Errorf("marshal settings: %w", err)
 	}
 
-	telemtDirectTOML := GenerateTelemtDirectConfig(newCfg)
-	telemtRawTOML := GenerateTelemtRawConfig(newCfg)
-
 	profilesJSON, err := GenerateProfilesJSON(newCfg)
 	if err != nil {
 		return fmt.Errorf("generate profiles: %w", err)
@@ -625,8 +593,6 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 
 	files := []FilePayload{
 		{TargetPath: s.cfgPath(), Content: settingsBytes, Mode: 0600},
-		{TargetPath: s.telemtDirectPath(), Content: []byte(telemtDirectTOML), Mode: 0600},
-		{TargetPath: s.telemtRawPath(), Content: []byte(telemtRawTOML), Mode: 0600},
 		{TargetPath: profilesPath, Content: profilesJSON, Mode: 0600},
 		{TargetPath: filepath.Join(s.tproxyDir(), "config.json"), Content: configJSON, Mode: 0600},
 	}
@@ -672,9 +638,7 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 	tproxyChanged := hasTproxyFileChanges(s.tproxyDir(), files)
 	tproxyWasRunning := false
 	if s.workers != nil {
-		if w := s.workers.findWorker("tproxy-server"); w != nil {
-			tproxyWasRunning = s.workers.GetWorkerState(*w).Running
-		}
+		tproxyWasRunning = s.workers.GetWorkerState(workerTproxy).Running
 	}
 	prevCfg := s.config
 	muxWasRunning := s.mux != nil && s.mux.IsRunning()
@@ -758,8 +722,8 @@ func (h *serviceTxHook) ApplyWorkers(cfg Config) error {
 		if err := h.svc.workers.ApplyWorkers(cfg); err != nil {
 			return err
 		}
-		if !h.svc.workers.isMock() && cfg.Enabled && cfg.IsWebEnabled() && h.tproxyChanged && h.tproxyWasRunning {
-			if err := h.svc.workers.RestartWorker("tproxy-server"); err != nil {
+		if cfg.Enabled && cfg.IsWebEnabled() && h.tproxyChanged && h.tproxyWasRunning {
+			if err := h.svc.workers.RestartWorker(workerTproxy); err != nil {
 				return err
 			}
 			if err := h.svc.workers.ApplyWorkers(cfg); err != nil {
@@ -1272,36 +1236,13 @@ func (s *Service) RotateTokenKey() error {
 		return fmt.Errorf("generate token key: %w", err)
 	}
 
-	tmpFile, err := os.CreateTemp(dir, ".token.key.tmp.*")
-	if err != nil {
-		return fmt.Errorf("create tmp token key: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	if _, err := tmpFile.Write(key); err != nil {
-		tmpFile.Close()
-		_ = os.Remove(tmpPath)
+	if err := storage.AtomicWritePerm(filepath.Join(dir, "token.key"), key, 0600); err != nil {
 		return err
 	}
-	if err := tmpFile.Sync(); err != nil {
-		tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-
-	keyPath := filepath.Join(dir, "token.key")
-	if err := renameKeyFile(tmpPath, keyPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-	_ = fsyncDir(dir)
 
 	// Restart tproxy-server worker
 	if s.config.Enabled && s.workers != nil {
-		_ = s.workers.RestartWorker("tproxy-server")
+		_ = s.workers.RestartWorker(workerTproxy)
 	}
 
 	s.notifyReload()
@@ -1319,7 +1260,7 @@ func (s *Service) ClearScannerCache() error {
 	_ = os.Remove("/tmp/cache/beobachten.txt")
 
 	if s.config.Enabled && s.workers != nil {
-		_ = s.workers.RestartWorker("telemt-raw")
+		_ = s.workers.RestartWorker(workerRaw)
 	}
 
 	return nil
@@ -1411,7 +1352,6 @@ func (s *Service) Stop() error {
 }
 
 // FactoryReset stops all Telegram proxy workers and mux, wipes tproxy state and
-// telemt configs/runtime files (preserving the installed telemt binary), and
 // re-initializes fresh factory default settings and keys.
 func (s *Service) FactoryReset(ctx context.Context) error {
 	_ = ctx
@@ -1438,23 +1378,8 @@ func (s *Service) FactoryReset(ctx context.Context) error {
 		}
 	}
 
-	if s.telemtDir != "" {
-		for _, name := range []string{"config.toml", "raw.toml", "settings.json", "telemt.pid"} {
-			_ = os.Remove(filepath.Join(s.telemtDir, name))
-		}
-		for _, pat := range []string{"config.toml.*", "raw.toml.*", "settings.json.*"} {
-			if matches, err := filepath.Glob(filepath.Join(s.telemtDir, pat)); err == nil {
-				for _, m := range matches {
-					_ = os.Remove(m)
-				}
-			}
-		}
-	}
-
 	if s.dataDir == "/opt/etc/awg-manager" {
 		for _, pat := range []string{
-			"/opt/var/run/telemt*.pid*",
-			"/opt/var/run/telemt*.limit.json",
 			"/opt/var/run/tproxy-*.pid*",
 		} {
 			if matches, err := filepath.Glob(pat); err == nil {
@@ -1523,8 +1448,8 @@ func (s *Service) Restart() error {
 		return ErrRecoveryRequired
 	}
 
-	if s.config.Enabled && s.config.IsWebEnabled() && s.workers != nil && !s.workers.isMock() {
-		_ = s.workers.RestartWorker("tproxy-server")
+	if s.config.Enabled && s.config.IsWebEnabled() && s.workers != nil {
+		_ = s.workers.RestartWorker(workerTproxy)
 	}
 	if err := s.workers.ApplyWorkers(s.config); err != nil {
 		return err
@@ -1645,16 +1570,6 @@ func (s *Service) syncProfilesLocked(cfg Config) (bool, error) {
 		}
 	}
 
-	telemtDirectBytes := []byte(GenerateTelemtDirectConfig(cfg))
-	if existing, err := os.ReadFile(s.telemtDirectPath()); err != nil || !bytes.Equal(existing, telemtDirectBytes) {
-		_ = atomicWriteMetadata(s.telemtDirectPath(), telemtDirectBytes, 0600)
-	}
-
-	telemtRawBytes := []byte(GenerateTelemtRawConfig(cfg))
-	if existing, err := os.ReadFile(s.telemtRawPath()); err != nil || !bytes.Equal(existing, telemtRawBytes) {
-		_ = atomicWriteMetadata(s.telemtRawPath(), telemtRawBytes, 0600)
-	}
-
 	return changed, nil
 }
 
@@ -1677,7 +1592,7 @@ func (s *Service) ReconcileRuntime() error {
 		return fmt.Errorf("sync tproxy profiles: %w", err)
 	}
 	if changed {
-		if err := s.workers.RestartWorker("tproxy-server"); err != nil {
+		if err := s.workers.RestartWorker(workerTproxy); err != nil {
 			return fmt.Errorf("restart tproxy-server after profile update: %w", err)
 		}
 	}
@@ -1790,6 +1705,18 @@ func (s *Service) Close() error {
 		s.healthWg.Wait()
 	})
 	return nil
+}
+
+// SetRuntimeDCProbeForTest подменяет проверку доступности Telegram DC: иначе
+// тесты потребителей пакета ходят в настоящую сеть из фоновой горутины
+// checkUpstreamHealth (флейк F859). Вне go test — паника.
+func (s *Service) SetRuntimeDCProbeForTest(fn func(device string) bool) {
+	if !testing.Testing() {
+		panic("tgwebproxy: SetRuntimeDCProbeForTest вызван вне go test")
+	}
+	s.mu.Lock()
+	s.runtimeDCProbe = fn
+	s.mu.Unlock()
 }
 
 func (s *Service) checkUpstreamHealth() {
@@ -2008,10 +1935,12 @@ func maskSecret(s string) string {
 	if s == "" {
 		return ""
 	}
+	// Хвост из 4 символов — только чтобы отличать секреты друг от друга;
+	// голова плюс хвост раскрывали 32 бита из 128.
 	if len(s) <= 8 {
 		return "********"
 	}
-	return s[:4] + "********" + s[len(s)-4:]
+	return "********" + s[len(s)-4:]
 }
 
 func (s *Service) GetStatus() Status {
@@ -2026,23 +1955,11 @@ func (s *Service) GetStatus() Status {
 	var pid, directPID int
 
 	if workers != nil && !recovery {
-		for _, w := range workers.workers {
-			st := workers.GetWorkerState(w)
-			switch w.Name {
-			case "telemt-direct":
-				directOnline = st.Running
-				if st.Running {
-					directPID = st.PID
-				}
-			case "telemt-raw":
-				rawOnline = st.Running
-			case "tproxy-server":
-				webProxyOnline = st.Running
-				if st.Running {
-					pid = st.PID
-				}
-			}
-		}
+		direct := workers.GetWorkerState(workerDirect)
+		directOnline, directPID = direct.Running, direct.PID
+		rawOnline = workers.GetWorkerState(workerRaw).Running
+		web := workers.GetWorkerState(workerTproxy)
+		webProxyOnline, pid = web.Running, web.PID
 	}
 
 	s.upstreamMu.RLock()
@@ -2060,14 +1977,8 @@ func (s *Service) GetStatus() Status {
 		}
 	}
 
-	installedTelemt := true
-	installedTproxy := true
-
-	installed := installedTelemt && installedTproxy
-	if cfg.Scenario == ScenarioDirectFakeTLS {
-		installed = installedTelemt
-	}
-
+	// Движки встроены в бинарь — «установлены» всегда; поля остаются ради
+	// формы ответа API (installed_telemt/installed_tproxy читает фронт).
 	running := directOnline && webProxyOnline && rawOnline
 	switch cfg.Scenario {
 	case ScenarioDirectFakeTLS:
@@ -2077,9 +1988,9 @@ func (s *Service) GetStatus() Status {
 	}
 
 	return Status{
-		Installed:                     installed,
-		InstalledTelemt:               installedTelemt,
-		InstalledTproxy:               installedTproxy,
+		Installed:                     true,
+		InstalledTelemt:               true,
+		InstalledTproxy:               true,
 		Running:                       running,
 		PID:                           pid,
 		DirectPID:                     directPID,

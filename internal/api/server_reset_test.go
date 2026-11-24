@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/auth"
@@ -66,15 +64,6 @@ func TestVlessServerHandler_FactoryReset(t *testing.T) {
 func TestTgWebProxyHandler_FactoryReset_CSRFAndSuccess(t *testing.T) {
 	handler, svc, _, sessionToken, tempDir := setupTestTgWebProxyHandler(t)
 
-	telemtDir := filepath.Join(tempDir, "telemt")
-	if err := os.MkdirAll(telemtDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	binPath := filepath.Join(telemtDir, "telemt")
-	if err := os.WriteFile(binPath, []byte("bin"), 0755); err != nil {
-		t.Fatal(err)
-	}
-
 	disp := cdndispatcher.NewWithDataDir(tempDir, cdndispatcher.Config{})
 	coord := serveringress.New(tempDir, nil, disp, svc)
 	handler.SetCoordinator(coord)
@@ -112,8 +101,5 @@ func TestTgWebProxyHandler_FactoryReset_CSRFAndSuccess(t *testing.T) {
 	}
 	if !env.Success || !env.Data.Reset || env.Data.Server != "tgwebproxy" {
 		t.Fatalf("unexpected reset response: %+v", env)
-	}
-	if _, err := os.Stat(binPath); err != nil {
-		t.Fatalf("expected telemt binary preserved after HTTP reset: %v", err)
 	}
 }

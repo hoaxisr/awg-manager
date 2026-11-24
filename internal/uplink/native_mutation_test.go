@@ -66,18 +66,18 @@ func TestNativeMutationGuardAndIndependentEngine(t *testing.T) {
 func TestNativeDeleteFailureRetainsDisabledPolicyForRetry(t *testing.T) {
 	c, a, p := nativeController(t)
 	a.releaseErr = errors.New("route cleanup failed")
-	if err := c.Delete(p.ID, p.Revision); err == nil {
+	if err := c.Delete(context.Background(), p.ID, p.Revision); err == nil {
 		t.Fatal("cleanup failure ignored")
 	}
 	entry := c.List()[0]
 	if entry.Policy.Enabled || entry.Policy.Revision != p.Revision+1 || entry.State.Phase != "recovery-required" {
 		t.Fatal(entry)
 	}
-	if err := c.Delete(p.ID, p.Revision); !errors.Is(err, ErrConflict) {
+	if err := c.Delete(context.Background(), p.ID, p.Revision); !errors.Is(err, ErrConflict) {
 		t.Fatal("stale revision accepted", err)
 	}
 	a.releaseErr = nil
-	if err := c.Delete(p.ID, entry.Policy.Revision); err != nil {
+	if err := c.Delete(context.Background(), p.ID, entry.Policy.Revision); err != nil {
 		t.Fatal(err)
 	}
 	if len(c.List()) != 0 || a.device != "wan1" || a.releases != 2 {

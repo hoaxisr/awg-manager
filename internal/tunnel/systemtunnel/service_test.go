@@ -153,3 +153,22 @@ func TestSetASCParams_KeepsASC3OfInterface(t *testing.T) {
 		t.Errorf("запись с ключом 3.x дополнена: %s", poster.last())
 	}
 }
+
+// F886: очищенная форма (числа null/0, строки "") — это «снять обфускацию».
+// Запись такого объекта NDMS отвергает «no input» (null) или молча игнорирует
+// (0); снимает ASC только `no wireguard asc` (стенд 5.02.B.4).
+func TestSetASCParams_EmptyFormResetsASC(t *testing.T) {
+	const current = `{"jc": 4, "header-protection-key": "K"}`
+	for _, form := range []string{
+		`{"jc":null,"jmin":null,"s1":null,"h1":"","h2":"","i1":""}`,
+		`{"jc":0,"jmin":0,"s1":0,"h1":"","h2":"","i1":"","randomTrailers":false}`,
+	} {
+		svc, poster := newASCHarnessWith(t, "Wireguard1", "client", false, current)
+		if err := svc.SetASCParams(context.Background(), "Wireguard1", json.RawMessage(form)); err != nil {
+			t.Fatalf("SetASCParams(%s): %v", form, err)
+		}
+		if got, want := poster.last(), `{"parse":"interface Wireguard1 no wireguard asc"}`; got != want {
+			t.Errorf("форма %s:\n got %s\nwant %s", form, got, want)
+		}
+	}
+}

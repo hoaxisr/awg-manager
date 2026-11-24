@@ -551,6 +551,12 @@ label {
 	to { transform: rotate(360deg); }
 }
 
+/* Вращающаяся иконка (lucide) на время операции: class="spin". Общий класс —
+   scoped-правило в компоненте до svg дочернего компонента не дотягивается. */
+.spin {
+	animation: spin 1s linear infinite;
+}
+
 /* Loading-centered wrapper (used by tab-loading panels and full-page loaders) */
 .loading-centered {
 	min-height: 220px;
@@ -1680,6 +1686,17 @@ input.api-key-input {
 	font-size: 13px;
 	font-weight: 500;
 	color: var(--color-text-secondary);
+}
+
+.field-callout-warn {
+	margin: 0;
+	padding: 0.45rem 0.6rem;
+	border-radius: var(--radius-sm);
+	font-size: 0.74rem;
+	line-height: 1.4;
+	color: var(--color-warning);
+	background: var(--color-warning-tint);
+	border: 1px solid var(--color-warning-border);
 }
 
 /* ─── Chip primitive (filter pills, action pills, level toggles) ─── */

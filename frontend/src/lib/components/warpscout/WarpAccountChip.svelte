@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { KeyRound, Network, RefreshCcw, Trash2, UserPlus } from 'lucide-svelte';
+	import { KeyRound, Network, RefreshCcw, SlidersHorizontal, Trash2, UserPlus } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { Button, ConfirmModal, Input } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import type { WarpAccount, WarpTunnelRef } from '$lib/types/warpscout';
+	import WarpAccountAltModal from './WarpAccountAltModal.svelte';
 	import WarpChipPopover from './WarpChipPopover.svelte';
 	import WarpIpv4Notice from './WarpIpv4Notice.svelte';
 	import { formatTime, parseTunnelIpv4, shortId, warpErrorMessage } from './warpscoutUi';
@@ -13,10 +14,19 @@
 		account: WarpAccount | null;
 		targets?: WarpTunnelRef[];
 		usedIpv4?: string[];
+		accountKeyInUseBy?: string;
+		accountKeyCheckError?: string;
 		onchanged: () => void | Promise<void>;
 	}
 
-	let { account, targets = [], usedIpv4 = [], onchanged }: Props = $props();
+	let {
+		account,
+		targets = [],
+		usedIpv4 = [],
+		accountKeyInUseBy = '',
+		accountKeyCheckError = '',
+		onchanged,
+	}: Props = $props();
 
 	let accountBusy = $state(false);
 	let license = $state('');
@@ -24,6 +34,16 @@
 	let syncedIpv4 = $state<string | undefined>(undefined);
 	let confirmReissue = $state(false);
 	let confirmDelete = $state(false);
+	let showAltModal = $state(false);
+	let altTab = $state<'import' | 'proxy'>('import');
+
+	const hasToken = $derived(account?.hasToken !== false);
+	const keyLocked = $derived(!!accountKeyInUseBy.trim() || !!accountKeyCheckError.trim());
+
+	function openAltModal(tab: 'import' | 'proxy' = 'import'): void {
+		altTab = tab;
+		showAltModal = true;
+	}
 
 	$effect(() => {
 		const nextSrv = account ? account.addressV4 || '172.16.0.2' : '';
@@ -75,6 +95,7 @@
 
 	async function applyLicense(e: SubmitEvent): Promise<void> {
 		e.preventDefault();
+		if (!hasToken) return;
 		const key = license.trim();
 		if (!key) return;
 		accountBusy = true;
@@ -111,6 +132,10 @@
 	<div class="acct-cta">
 		<span class="cta-dot"></span>
 		<span class="cta-text">{m.warpscout_acct_not_registered()}</span>
+		<Button size="sm" variant="ghost" disabled={accountBusy} onclick={() => openAltModal('import')}>
+			{#snippet iconBefore()}<SlidersHorizontal size={13} />{/snippet}
+			{m.warpscout_acct_alt_btn()}
+		</Button>
 		<Button size="sm" variant="primary" loading={accountBusy} onclick={register}>
 			{#snippet iconBefore()}<UserPlus size={13} />{/snippet}
 			{m.warpscout_register_btn()}
@@ -126,9 +151,14 @@
 		{/snippet}
 
 		{#snippet headExtra()}
-			<span class="tier-pill" class:plus={account.warpPlus}>
-				{account.warpPlus ? 'WARP+' : account.accountType || 'free'}
-			</span>
+			<div class="head-pills">
+				{#if account.imported}
+					<span class="tier-pill">{m.warpscout_acct_imported_pill()}</span>
+				{/if}
+				<span class="tier-pill" class:plus={account.warpPlus}>
+					{account.warpPlus ? 'WARP+' : account.accountType || 'free'}
+				</span>
+			</div>
 		{/snippet}
 
 		{#snippet children(close)}
@@ -146,6 +176,16 @@
 					<span class="v">{m.warpscout_acct_encrypted()}</span>
 				</div>
 			</div>
+
+			{#if accountKeyInUseBy.trim()}
+				<p class="field-callout-warn">
+					{m.warpscout_acct_key_in_use_warn({ name: accountKeyInUseBy })}
+				</p>
+			{:else if accountKeyCheckError.trim()}
+				<p class="field-callout-warn">
+					{m.warpscout_acct_key_check_err({ err: accountKeyCheckError })}
+				</p>
+			{/if}
 
 			<!-- IPv4 туннеля: можно сменить до создания туннеля или для сканера -->
 			<form class="lic-box" onsubmit={saveAccountAddress}>
@@ -181,38 +221,56 @@
 				/>
 			</form>
 
-			<!-- Форма: Enter в поле привязывает ключ. -->
-			<form class="lic-box" onsubmit={applyLicense}>
-				<label class="lic-label" for="warp-license">
-					<KeyRound size={12} />
-					<span>{m.warpscout_license_label()}</span>
-				</label>
-				<div class="lic-row">
-					<Input
-						id="warp-license"
-						type="password"
-						placeholder="xxxxxxxx-xxxxxxxx-xxxxxxxx"
-						autocomplete="off"
-						fullWidth
-						bind:value={license}
-					/>
-					<Button
-						size="sm"
-						variant="primary"
-						type="submit"
-						loading={accountBusy}
-						disabled={!license.trim()}
-					>
-						{m.warpscout_license_bind()}
-					</Button>
+			{#if hasToken}
+				<!-- Форма: Enter в поле привязывает ключ. -->
+				<form class="lic-box" onsubmit={applyLicense}>
+					<label class="lic-label" for="warp-license">
+						<KeyRound size={12} />
+						<span>{m.warpscout_license_label()}</span>
+					</label>
+					<div class="lic-row">
+						<Input
+							id="warp-license"
+							type="password"
+							placeholder="xxxxxxxx-xxxxxxxx-xxxxxxxx"
+							autocomplete="off"
+							fullWidth
+							bind:value={license}
+						/>
+						<Button
+							size="sm"
+							variant="primary"
+							type="submit"
+							loading={accountBusy}
+							disabled={!license.trim()}
+						>
+							{m.warpscout_license_bind()}
+						</Button>
+					</div>
+				</form>
+			{:else}
+				<div class="lic-box">
+					<p class="no-token-hint">{m.warpscout_acct_notoken_hint()}</p>
 				</div>
-			</form>
+			{/if}
 
 			<div class="pop-foot">
 				<Button
 					size="sm"
 					variant="ghost"
 					disabled={accountBusy}
+					onclick={() => {
+						close();
+						openAltModal('import');
+					}}
+				>
+					{#snippet iconBefore()}<SlidersHorizontal size={13} />{/snippet}
+					{m.warpscout_acct_alt_btn()}
+				</Button>
+				<Button
+					size="sm"
+					variant="ghost"
+					disabled={accountBusy || keyLocked}
 					onclick={() => {
 						close();
 						confirmReissue = true;
@@ -224,7 +282,7 @@
 				<Button
 					size="sm"
 					variant="outline-danger"
-					disabled={accountBusy}
+					disabled={accountBusy || keyLocked}
 					onclick={() => {
 						close();
 						confirmDelete = true;
@@ -237,6 +295,16 @@
 		{/snippet}
 	</WarpChipPopover>
 {/if}
+
+<WarpAccountAltModal
+	open={showAltModal}
+	initialTab={altTab}
+	hasExistingAccount={!!account}
+	{accountKeyInUseBy}
+	{accountKeyCheckError}
+	onclose={() => (showAltModal = false)}
+	{onchanged}
+/>
 
 <ConfirmModal
 	open={confirmReissue}
@@ -284,6 +352,11 @@
 		font-size: 0.76rem;
 		font-weight: 500;
 		color: var(--color-text-secondary);
+	}
+	.head-pills {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
 	}
 	.tier-pill {
 		padding: 0.08rem 0.45rem;
@@ -347,6 +420,12 @@
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
+	}
+	.no-token-hint {
+		margin: 0;
+		font-size: 0.75rem;
+		line-height: 1.4;
+		color: var(--color-text-muted);
 	}
 	.mono {
 		font-family: var(--font-mono);

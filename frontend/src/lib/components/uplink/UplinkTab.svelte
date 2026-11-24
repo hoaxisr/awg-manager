@@ -2,6 +2,7 @@
 	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { onResourceInvalidated } from '$lib/stores/storeRegistry';
 	import type { UplinkCapabilities, UplinkEntry, UplinkPolicy, UplinkProvider, UplinkSnapshot } from '$lib/types/uplink';
 	import StatStrip, { type StatCellData } from '$lib/components/sb-router/StatStrip.svelte';
 	import { Badge, Button, ConfirmModal, SideDrawer, StatusDot, Toggle } from '$lib/components/ui';
@@ -249,23 +250,35 @@
 				if (live) error = (e as Error).message;
 			}
 		})();
-		let polling = false;
-		const timer = setInterval(() => {
-			if (!busy && !polling) {
-				polling = true;
-				void refresh()
-					.catch((e) => {
-						if (live) error = (e as Error).message;
-					})
-					.finally(() => {
-						polling = false;
-					});
-			}
-		}, 5000);
+		// Снимок перечитываем по подсказке uplink (мутации политик, смена
+		// состояния контроллера, смена WAN) вместо 5-секундного таймера.
+		const unsub = onResourceInvalidated('uplink', () => {
+			refreshPending = true;
+		});
 		return () => {
 			live = false;
-			clearInterval(timer);
+			mounted = false;
+			unsub();
 		};
+	});
+
+	// Подсказка, пришедшая во время правки или идущего чтения, не теряется:
+	// перечитываем, как только busy снят и прошлое чтение закончилось.
+	let refreshPending = $state(false);
+	let pendingInFlight = $state(false);
+	// Чтение могло завершиться после размонтирования — ошибку тогда не пишем.
+	let mounted = $state(true);
+	$effect(() => {
+		if (!refreshPending || busy || pendingInFlight) return;
+		refreshPending = false;
+		pendingInFlight = true;
+		void refresh()
+			.catch((e) => {
+				if (mounted) error = (e as Error).message;
+			})
+			.finally(() => {
+				pendingInFlight = false;
+			});
 	});
 
 	function create() {

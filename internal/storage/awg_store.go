@@ -370,6 +370,17 @@ func (s *AWGTunnelStore) Delete(id string) error {
 	defer lk.Unlock()
 	if s.uplinkGuard != nil {
 		old, err := s.Get(id)
+		if errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("tunnel not found: %s", id)
+		}
+		var syntaxErr *json.SyntaxError
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
+			// Битую запись тоже должно быть можно удалить. Guard'у достаётся
+			// только ID: проверки по ID работают, по Backend — нет (его не
+			// прочесть).
+			old, err = &AWGTunnel{ID: id}, nil
+		}
 		if err != nil {
 			return err
 		}

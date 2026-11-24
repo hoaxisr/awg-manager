@@ -23,33 +23,9 @@ export interface XrayStatus {
 	recovery_required?: boolean;
 	recovery_reason?: string;
 	recovery_fingerprint?: string;
-	migration_status?: 'migrated' | 'deferred' | 'conflict' | string;
-	active_generation?: 'new' | string;
 }
 
 export type VlessStatus = XrayStatus;
-
-export interface XrayMigrationStatus {
-	discovery?: {
-		found: boolean;
-		topology?: 'A' | 'B' | 'C';
-		listen_address?: string;
-		listen_port?: number;
-		public_domain?: string;
-		path?: string;
-		clients?: XrayClient[];
-		conflict_reason?: string;
-	};
-	decision?: {
-		active_generation: 'new' | string;
-		migration_status: 'migrated' | 'deferred' | 'conflict' | string;
-		decided_at?: string;
-		generation_counter?: number;
-		reason?: string;
-	};
-}
-
-export type VlessMigrationStatus = XrayMigrationStatus;
 
 // ── Direct VLESS + REALITY entry (routers with a white IP) ──
 

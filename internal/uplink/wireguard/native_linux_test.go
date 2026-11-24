@@ -312,7 +312,7 @@ func TestNativeWireguardFallback(t *testing.T) {
 	if err := restartedAdapter.Probe(ctx, p.Target, "wan2"); err != nil {
 		t.Fatal("rehydrated path", err)
 	}
-	if err := restarted.Delete(p.ID, p.Revision); err != nil {
+	if err := restarted.Delete(context.Background(), p.ID, p.Revision); err != nil {
 		t.Fatal("release policy", err)
 	}
 	if restartedAdapter.OwnsTarget(target.Ref) || lastProvider != "isp2" {

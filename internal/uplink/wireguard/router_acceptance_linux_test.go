@@ -286,7 +286,7 @@ func TestRouterNativeUplinkAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertHealthy("GigabitEthernet1")
-	if err = c.Delete(p.ID, p.Revision); err != nil {
+	if err = c.Delete(context.Background(), p.ID, p.Revision); err != nil {
 		t.Fatal(err)
 	}
 	if _, e := op.NativeUplinkPeerMark(ctx, &stored); e != nil {

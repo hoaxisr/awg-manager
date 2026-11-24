@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestAppliedState_SaveLoadRoundtrip(t *testing.T) {
@@ -313,5 +314,34 @@ func TestReload_PIDChangeRefusesStaleAppliedHash(t *testing.T) {
 	}
 	if fp.reloadsN() != 2 {
 		t.Fatalf("expected PID change (1001 -> 2002) to force reload instead of adopting stale hash; reloads=%d", fp.reloadsN())
+	}
+}
+
+// F823: хук после reload зовётся и при применении, и в ветке «конфиг не
+// изменился» — на рестарте демона Reload идёт именно ей.
+func TestReload_AfterReloadHookOnApplyAndSkip(t *testing.T) {
+	fp := &fakeProc{running: true}
+	o := newFakeOrch(t, t.TempDir(), fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	calls := make(chan struct{}, 4)
+	o.SetAfterReload(func() { calls <- struct{}{} })
+	for i := 0; i < 2; i++ {
+		if err := o.Reload(); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-calls:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("reload %d: after-reload hook not called", i+1)
+		}
 	}
 }

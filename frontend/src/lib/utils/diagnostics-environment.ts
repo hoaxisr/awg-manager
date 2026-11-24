@@ -11,7 +11,6 @@ import type {
 	DeviceProxyConfig,
 	DeviceProxyRuntime,
 	DnsCheckStartResponse,
-	HydraRouteStatus,
 	PolicyDevice,
 	Subscription,
 } from '$lib/types';
@@ -58,8 +57,6 @@ export interface DiagnosticsEnvironmentSnapshot {
 }
 
 type AwgmCounts = {
-	hydra?: HydraRouteStatus | null;
-	hydraLoaded?: boolean;
 	deviceProxy?: DeviceProxyConfig | null;
 	deviceProxyRuntime?: DeviceProxyRuntime | null;
 	clientRoutesTotal?: number;
@@ -276,10 +273,6 @@ export async function collectDiagnosticsEnvironmentSnapshot(): Promise<Diagnosti
 		counts.deviceProxyRuntime = rt;
 	}
 
-	if (isRoutingSubTabVisible(level, 'hrNeo')) {
-		counts.hydra = await capture('hydraRoute', () => api.getHydraRouteStatus(), null as HydraRouteStatus | null, errors, markPartial);
-		counts.hydraLoaded = true;
-	}
 
 	if (level !== 'basic') {
 		const subs = await capture('subscriptions', () => api.listSubscriptions(), [] as Subscription[], errors, markPartial);
@@ -299,9 +292,6 @@ export async function collectDiagnosticsEnvironmentSnapshot(): Promise<Diagnosti
 				authenticated: get(auth).authenticated,
 				login: get(auth).login,
 				singbox: get(singboxStatus).data,
-				hydra: counts.hydra ?? null,
-				hydraLoaded: counts.hydraLoaded ?? false,
-				showHydra: isRoutingSubTabVisible(level, 'hrNeo'),
 				deviceProxy: counts.deviceProxy ?? null,
 				deviceProxyRuntime: counts.deviceProxyRuntime ?? null,
 				clientRoutesTotal: counts.clientRoutesTotal ?? 0,

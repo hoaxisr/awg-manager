@@ -2,11 +2,14 @@
 	import { untrack } from 'svelte';
 	import { Modal, Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
+	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import type { XrayShareLinks, XrayClient, XrayEndpointConfig } from '$lib/types';
 	import { renderCrispQrDataUrl } from '$lib/utils/qrSvg';
 	import { Copy, Download, Send, Layers } from 'lucide-svelte';
+	import XrayShareQr from './XrayShareQr.svelte';
+	import XrayShareRoutePicker, { shownDomain, type RouteOption } from './XrayShareRoutePicker.svelte';
 
 	interface Props {
 		open: boolean;
@@ -30,13 +33,6 @@
 		onclose
 	}: Props = $props();
 
-	interface RouteOption {
-		id: string;
-		domain: string;
-		description: string;
-		mode?: string;
-	}
-
 	let links = $state<XrayShareLinks | null>(null);
 	let loading = $state(false);
 	let copyAllLoading = $state(false);
@@ -44,15 +40,8 @@
 	let isPrimaryFinite = $derived(Boolean(links?.vless_url?.includes('mode=finiteproto')));
 	let isReality = $derived(Boolean(links?.vless_url?.includes('security=reality')));
 
-	function modeLabel(mode?: string): string {
-		if (mode === 'finiteproto') return 'FiniteProto v2';
-		if (mode === 'reality-tcp') return 'Reality · TCP';
-		if (mode === 'reality-xhttp') return 'Reality · XHTTP';
-		return 'XHTTP';
-	}
 	let qrDataUrl = $state('');
 	let qrGenerating = $state(false);
-	let qrZoomOpen = $state(false);
 	let availableDomains = $state<RouteOption[]>([]);
 	let selectedDomain = $state('');
 	let selectedEndpointId = $state('');
@@ -70,27 +59,11 @@
 			initializedForOpen = false;
 			links = null;
 			qrDataUrl = '';
-			qrZoomOpen = false;
 			availableDomains = [];
 			selectedDomain = '';
 			selectedEndpointId = '';
 		}
 	});
-
-	function cleanDomainDescription(raw?: string, domain?: string): string {
-		const d = (raw || '').trim();
-		if (d) {
-			return d;
-		}
-		const dom = (domain || '').toLowerCase();
-		if (dom.includes('edge.') || dom.includes('cdn.') || dom.includes('selcdn') || dom.includes('twcdn')) {
-			return 'Через CDN';
-		}
-		if (dom.includes('netcraze.club') || dom.includes('crazedns') || dom.includes('keenetic.')) {
-			return 'KeenDNS';
-		}
-		return 'Прямой адрес';
-	}
 
 	async function initModal() {
 		loading = true;
@@ -111,7 +84,7 @@
 						domainList.push({
 							id: ep.id,
 							domain: dom,
-							description: ep.name || cleanDomainDescription('', dom),
+							description: ep.name || '',
 							mode: ep.mode || ep.transport || 'packet-up'
 						});
 					}
@@ -128,7 +101,7 @@
 						domainList.push({
 							id: '',
 							domain: r.domain,
-							description: cleanDomainDescription(r.description, r.domain)
+							description: r.description || ''
 						});
 					}
 				}
@@ -141,7 +114,7 @@
 					const domLower = p.toLowerCase();
 					if (!seen.has(domLower)) {
 						seen.add(domLower);
-						domainList.push({ id: '', domain: p, description: cleanDomainDescription('', p) });
+						domainList.push({ id: '', domain: p, description: '' });
 					}
 				}
 			}
@@ -149,15 +122,17 @@
 			availableDomains = domainList;
 
 			// 3. Direct REALITY entry (white-IP preset), offered alongside CDN/KeenDNS routes.
+			// Хост неизвестен — домен `:port`, подпись «белый IP» подставляется при показе
+			// (бэкенд для endpoint_id=reality домен не читает).
 			const reality = await api.getXrayReality().catch(() => null);
 			if (reality?.settings?.enabled && reality.settings.public_key) {
-				const host = reality.settings.public_host || reality.network?.public_host || 'белый IP';
+				const host = reality.settings.public_host || reality.network?.public_host || '';
 				availableDomains = [
 					...availableDomains,
 					{
 						id: 'reality',
 						domain: `${host}:${reality.settings.port}`,
-						description: 'Reality (прямой, белый IP)',
+						description: '',
 						mode: reality.settings.transport === 'xhttp' ? 'reality-xhttp' : 'reality-tcp'
 					}
 				];
@@ -182,7 +157,7 @@
 			}
 			await loadLinks(selectedDomain || undefined, selectedEndpointId || undefined);
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка загрузки данных подключения');
+			notifications.error(e instanceof Error ? e.message : m.servers_xray_share_load_failed());
 		} finally {
 			loading = false;
 		}
@@ -224,7 +199,7 @@
 				generateQR(content);
 			}
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка получения ссылок');
+			notifications.error(e instanceof Error ? e.message : m.servers_xray_share_links_failed());
 		}
 	}
 
@@ -239,10 +214,10 @@
 			);
 			const urls = results.map((r) => r.vless_url).filter(Boolean);
 			if (urls.length > 0 && (await copyToClipboard(urls.join('\n')))) {
-				notifications.success(`Скопированы все маршруты VLESS (${urls.length} шт.)`);
+				notifications.success(m.servers_xray_share_all_copied({ count: urls.length }));
 			}
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось скопировать все маршруты');
+			notifications.error(e instanceof Error ? e.message : m.servers_xray_share_all_copy_failed());
 		} finally {
 			copyAllLoading = false;
 		}
@@ -264,37 +239,38 @@
 	async function copyCurrent() {
 		if (!links) return;
 		let text = '';
-		let label = '';
+		let label: () => string = () => '';
 		switch (activeTab) {
 			case 'vless':
 				text = links.vless_url;
-				label = 'VLESS ссылка';
+				label = () => m.servers_xray_share_vless_link();
 				break;
 			case 'finiteproto':
 				text = links.finiteproto_url || links.vless_url;
-				label = 'VLESS FiniteProto ссылка';
+				label = () => m.servers_xray_share_fp_link();
 				break;
 			case 'happ':
 				text = links.happ_json;
-				label = 'Happ JSON';
+				label = () => 'Happ JSON';
 				break;
 			case 'singbox':
 				text = links.singbox_json;
-				label = 'Sing-box outbound JSON';
+				label = () => 'Sing-box outbound JSON';
 				break;
 			case 'mihomo':
 				text = links.mihomo_yaml;
-				label = 'Clash YAML';
+				label = () => 'Clash YAML';
 				break;
 		}
 		if (text && (await copyToClipboard(text))) {
-			notifications.success(`${label} скопирована`);
+			notifications.success(m.servers_xray_share_copied({ label: label() }));
 		}
 	}
 
 	function shareToTelegram() {
 		if (!links?.vless_url) return;
-		const label = selectedDomain ? `${clientRemark || 'Клиент'} · ${selectedDomain}` : clientRemark || 'Клиент';
+		const name = clientRemark || m.servers_xray_client_fallback();
+		const label = selectedDomain ? `${name} · ${shownDomain(selectedDomain)}` : name;
 		const tgUrl = `https://t.me/share/url?url=${encodeURIComponent(links.vless_url)}&text=${encodeURIComponent(`VLESS (${label})`)}`;
 		window.open(tgUrl, '_blank');
 	}
@@ -338,84 +314,29 @@
 		a.download = filename;
 		a.click();
 		URL.revokeObjectURL(url);
-		notifications.success(`Файл ${filename} скачан`);
+		notifications.success(m.servers_xray_share_file_downloaded({ filename }));
 	}
 </script>
 
-<Modal bind:open title={`Подключение: ${clientRemark || 'Клиент'}`} {onclose} size="lg">
+<Modal bind:open title={m.servers_xray_share_title({ name: clientRemark || m.servers_xray_client_fallback() })} {onclose} size="lg">
 	{#if loading}
-		<div class="loading-box">Загрузка конфигурации...</div>
+		<div class="loading-box">{m.servers_xray_share_loading()}</div>
 	{:else if links}
 		<div class="share-container">
-			<!-- QR Code Section -->
-			<div class="qr-col">
-				{#if qrGenerating}
-					<div class="qr-placeholder">Генерация QR...</div>
-				{:else if qrDataUrl}
-					<button
-						type="button"
-						class="qr-wrapper qr-zoom-btn"
-						onclick={() => (qrZoomOpen = true)}
-						title="Нажмите, чтобы увеличить QR-код"
-					>
-						<img src={qrDataUrl} alt="QR-код VLESS" class="qr-img" />
-					</button>
-					<div class="qr-hint">
-						{isPrimaryFinite || activeTab === 'finiteproto'
-							? 'Ссылка и QR-код транспорта FiniteProto v2 (нажмите на QR для увеличения)'
-							: 'Отсканируйте в Happ / v2rayNG / Streisand (нажмите на QR для увеличения)'}
-					</div>
-				{:else}
-					<div class="qr-placeholder">QR-код недоступен</div>
-				{/if}
-			</div>
+			<XrayShareQr {qrDataUrl} generating={qrGenerating} finite={isPrimaryFinite || activeTab === 'finiteproto'} />
 
 			<!-- Format Tabs and Preview Section -->
 			<div class="data-col">
-				{#if clients.length > 1}
-					<div class="endpoint-picker">
-						<span class="picker-label">Устройство:</span>
-						<select
-							class="picker-select"
-							value={clientId}
-							onchange={(e) => void onClientChange(e.currentTarget.value)}
-						>
-							{#each clients as c (c.id)}
-								<option value={c.id}>
-									{c.remark || 'Устройство'}{c.enabled ? '' : ' (выключен)'}
-								</option>
-							{/each}
-						</select>
-					</div>
-				{/if}
-				{#if availableDomains.length > 1}
-					<div class="endpoint-picker">
-						<span class="picker-label">Конфигурация / маршрут VLESS:</span>
-						<div class="route-pills">
-							{#each availableDomains as opt (opt.id || opt.domain)}
-								<button
-									type="button"
-									class="route-pill"
-									class:active={(selectedEndpointId || selectedDomain) === (opt.id || opt.domain)}
-									onclick={() => void onRouteChange(opt.id || opt.domain)}
-								>
-									<span class="route-pill-title">{opt.description || 'Маршрут VLESS'}</span>
-									<span class="route-pill-sub font-mono">
-										{opt.domain} · {modeLabel(opt.mode)}
-									</span>
-								</button>
-							{/each}
-						</div>
-					</div>
-				{:else if availableDomains.length === 1}
-					<div class="endpoint-picker">
-						<span class="picker-label">Конфигурация VLESS:</span>
-						<div class="readonly-pill font-mono">
-							{availableDomains[0].description ? `${availableDomains[0].description} (${availableDomains[0].domain})` : availableDomains[0].domain}
-							· {isPrimaryFinite ? 'FiniteProto v2' : modeLabel(availableDomains[0].mode)}
-						</div>
-					</div>
-				{/if}
+				<XrayShareRoutePicker
+					{clients}
+					{clientId}
+					routes={availableDomains}
+					{selectedEndpointId}
+					{selectedDomain}
+					{isPrimaryFinite}
+					onclientchange={(id) => void onClientChange(id)}
+					onroutechange={(val) => void onRouteChange(val)}
+				/>
 
 				<div class="tabs">
 					<button
@@ -442,7 +363,7 @@
 						class:active={activeTab === 'happ'}
 						onclick={() => { activeTab = 'happ'; if (links) generateQR(links.happ_json); }}
 					>
-						{isReality ? 'JSON (Xray / Happ)' : 'JSON (Клиент XHTTP)'}
+						{isReality ? 'JSON (Xray / Happ)' : m.servers_xray_share_tab_xhttp_json()}
 					</button>
 					{#if links.singbox_json}
 						<button
@@ -481,51 +402,33 @@
 				<div class="actions-row">
 					<Button variant="primary" size="sm" onclick={copyCurrent}>
 						<Copy size={14} class="mr-1" />
-						Копировать
+						{m.common_copy()}
 					</Button>
 					{#if availableDomains.length > 1 && activeTab === 'vless'}
 						<Button variant="secondary" size="sm" onclick={copyAllRoutes} disabled={copyAllLoading}>
 							<Layers size={14} class="mr-1" />
-							{copyAllLoading ? 'Копирование...' : `Скопировать все маршруты (${availableDomains.length})`}
+							{copyAllLoading ? m.servers_xray_share_copying() : m.servers_xray_share_copy_all({ count: availableDomains.length })}
 						</Button>
 					{/if}
 					<Button variant="secondary" size="sm" onclick={downloadConfig}>
 						<Download size={14} class="mr-1" />
-						Скачать
+						{m.common_download()}
 					</Button>
 					<span class="tg-share-wrap">
 						<Button variant="secondary" size="sm" onclick={shareToTelegram}>
 							<Send size={14} class="mr-1" />
-							В Telegram
+							{m.servers_xray_share_to_telegram()}
 						</Button>
 					</span>
 				</div>
 			</div>
 		</div>
 	{:else}
-		<div class="error-box">Не удалось получить данные для подключения</div>
+		<div class="error-box">{m.servers_xray_share_failed()}</div>
 	{/if}
 
 	{#snippet actions()}
-		<Button variant="secondary" onclick={onclose}>Закрыть</Button>
-	{/snippet}
-</Modal>
-
-<Modal
-	bind:open={qrZoomOpen}
-	title="QR-код VLESS для сканирования"
-	onclose={() => (qrZoomOpen = false)}
-	size="sm"
->
-	{#if qrDataUrl}
-		<div class="qr-zoom-body">
-			<div class="qr-zoom-frame">
-				<img src={qrDataUrl} alt="QR-код VLESS крупным планом" class="qr-zoom-img" />
-			</div>
-		</div>
-	{/if}
-	{#snippet actions()}
-		<Button variant="secondary" onclick={() => (qrZoomOpen = false)}>Закрыть</Button>
+		<Button variant="secondary" onclick={onclose}>{m.common_close()}</Button>
 	{/snippet}
 </Modal>
 
@@ -542,83 +445,6 @@
 		gap: 1.5rem;
 		align-items: flex-start;
 		min-height: 280px;
-	}
-
-	.qr-col {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		width: 264px;
-		flex-shrink: 0;
-	}
-
-	.qr-wrapper {
-		background: #ffffff;
-		padding: 10px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.qr-zoom-btn {
-		cursor: zoom-in;
-		transition: transform var(--t-fast) ease, box-shadow var(--t-fast) ease;
-	}
-
-	.qr-zoom-btn:hover {
-		transform: scale(1.02);
-		box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
-	}
-
-	.qr-img {
-		width: 240px;
-		height: 240px;
-		image-rendering: crisp-edges;
-		display: block;
-	}
-
-	.qr-zoom-body {
-		display: flex;
-		justify-content: center;
-	}
-
-	.qr-zoom-frame {
-		background: #ffffff;
-		padding: 16px;
-		border-radius: var(--radius);
-		border: 1px solid var(--color-border);
-	}
-
-	.qr-zoom-img {
-		width: min(360px, 78vw);
-		height: auto;
-		aspect-ratio: 1 / 1;
-		image-rendering: crisp-edges;
-		display: block;
-	}
-
-	.qr-placeholder {
-		width: 240px;
-		height: 240px;
-		background: var(--color-bg-secondary);
-		border: 1px dashed var(--color-border);
-		border-radius: var(--radius);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 12px;
-		color: var(--color-text-muted);
-	}
-
-	.qr-hint {
-		margin-top: 10px;
-		font-size: 11px;
-		color: var(--color-text-muted);
-		text-align: center;
-		line-height: 1.4;
 	}
 
 	.data-col {
@@ -693,81 +519,6 @@
 		flex-wrap: wrap;
 	}
 
-	.endpoint-picker {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		margin-bottom: 4px;
-	}
-
-	.picker-label {
-		font-size: 11px;
-		font-weight: 500;
-		color: var(--color-text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-	}
-
-	.picker-select {
-		background: var(--color-bg-primary);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		padding: 6px 10px;
-		font-size: 12px;
-		color: var(--color-text-primary);
-		outline: none;
-		cursor: pointer;
-	}
-	.picker-select:focus {
-		border-color: var(--color-accent);
-	}
-
-	.route-pills {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-		gap: 6px;
-	}
-
-	.route-pill {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		padding: 7px 10px;
-		background: var(--color-bg-primary);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		text-align: left;
-		cursor: pointer;
-		transition: all var(--t-fast) ease;
-	}
-	.route-pill:hover {
-		border-color: var(--color-accent);
-		background: var(--color-bg-hover);
-	}
-	.route-pill.active {
-		border-color: var(--color-accent);
-		background: var(--color-accent-tint);
-	}
-	.route-pill-title {
-		font-size: 12px;
-		font-weight: 600;
-		color: var(--color-text-primary);
-	}
-	.route-pill-sub {
-		font-size: 11px;
-		color: var(--color-text-muted);
-		word-break: break-all;
-	}
-
-	.readonly-pill {
-		padding: 6px 10px;
-		background: var(--color-bg-primary);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		font-size: 12px;
-		color: var(--color-text-secondary);
-	}
-
 	.tg-share-wrap :global(button) {
 		color: #229ED9 !important;
 		border-color: rgba(34, 158, 217, 0.4) !important;
@@ -777,17 +528,10 @@
 		border-color: #229ED9 !important;
 	}
 
-	.font-mono {
-		font-family: var(--font-mono);
-	}
-
 	@media (max-width: 640px) {
 		.share-container {
 			flex-direction: column;
 			align-items: stretch;
-		}
-		.qr-col {
-			width: 100%;
 		}
 	}
 </style>

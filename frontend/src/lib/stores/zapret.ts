@@ -1,4 +1,4 @@
-import { derived, writable, type Readable } from 'svelte/store';
+import { derived, type Readable } from 'svelte/store';
 import { api } from '$lib/api/client';
 import type { ZapretStatus } from '$lib/types';
 import { isRoutingSubTabVisible } from '$lib/types/usageLevel';
@@ -42,29 +42,3 @@ export const zapretStatusIfExpert: Readable<PollingState<ZapretStatus> | null> =
 	},
 	null,
 );
-
-const TUNNELS_CARD_HIDDEN_KEY = 'awg.zapret.tunnels-card-hidden';
-
-function readTunnelsCardHidden(): boolean {
-	try {
-		return localStorage.getItem(TUNNELS_CARD_HIDDEN_KEY) === '1';
-	} catch {
-		return false;
-	}
-}
-
-/**
- * Скрыта ли карточка Zapret на странице туннелей. Настройка браузера
- * (localStorage), на роутер не уходит: на другом устройстве карточка видна.
- */
-export const zapretTunnelsCardHidden = writable<boolean>(readTunnelsCardHidden());
-
-export function setZapretTunnelsCardHidden(hidden: boolean): void {
-	try {
-		if (hidden) localStorage.setItem(TUNNELS_CARD_HIDDEN_KEY, '1');
-		else localStorage.removeItem(TUNNELS_CARD_HIDDEN_KEY);
-	} catch {
-		// Хранилище недоступно (приватный режим): настройка живёт до перезагрузки.
-	}
-	zapretTunnelsCardHidden.set(hidden);
-}

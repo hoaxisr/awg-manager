@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildOutboundOptions, outboundGroupLabel } from './outboundOptions';
+import { buildOutboundOptions, outboundGroupLabel, AUTOLIST_TARGET_OUTBOUND } from './outboundOptions';
 import type { AWGTagInfo, SingboxRouterOutbound } from '$lib/types';
 
 const awg: AWGTagInfo[] = [{ tag: 'awg-awg10', label: 'DE', kind: 'managed', iface: 'opkgtun10' }];
@@ -40,6 +40,26 @@ describe('buildOutboundOptions', () => {
 			{ type: 'urltest', tag: 'DE', outbounds: ['awg-awg10'], source: 'router' },
 		];
 		const groups = buildOutboundOptions(null, null, onlySelf, false, null, 'DE');
+		expect(groups.some((g) => g.id === 'composite')).toBe(false);
+	});
+
+	it('never offers the autolist service outbound for selection', () => {
+		const withAutolist: SingboxRouterOutbound[] = [
+			...composites,
+			{ type: 'direct', tag: AUTOLIST_TARGET_OUTBOUND, bind_interface: 'br0', source: 'router' },
+		];
+		const got = values(buildOutboundOptions(awg, null, withAutolist, false));
+		expect(got).not.toContain(AUTOLIST_TARGET_OUTBOUND);
+		// обычные outbound остаются доступными
+		expect(got).toContain('other');
+		expect(got).toContain('awg-awg10');
+	});
+
+	it('drops the composite group when it holds only the autolist outbound', () => {
+		const onlyAutolist: SingboxRouterOutbound[] = [
+			{ type: 'direct', tag: AUTOLIST_TARGET_OUTBOUND, bind_interface: 'br0', source: 'router' },
+		];
+		const groups = buildOutboundOptions(null, null, onlyAutolist, false);
 		expect(groups.some((g) => g.id === 'composite')).toBe(false);
 	});
 });

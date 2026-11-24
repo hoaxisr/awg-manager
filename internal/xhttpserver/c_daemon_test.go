@@ -358,6 +358,8 @@ func TestCDaemon_HealthPIDCapabilitiesAndCrashDetection(t *testing.T) {
 		t.Fatalf("Start with healthy C daemon failed: %v", err)
 	}
 	defer srv.Stop()
+	exited := make(chan struct{}, 1)
+	srv.SetOnUnexpectedExit(func() { exited <- struct{}{} })
 
 	if srv.CDaemonPID() <= 0 || !srv.IsRunning() {
 		t.Fatalf("expected running C daemon, pid=%d running=%v", srv.CDaemonPID(), srv.IsRunning())
@@ -381,6 +383,24 @@ func TestCDaemon_HealthPIDCapabilitiesAndCrashDetection(t *testing.T) {
 	}
 	if srv.IsRunning() || srv.CDaemonPID() != 0 {
 		t.Fatalf("expected IsRunning()==false and PID==0 after crash, got running=%v pid=%d", srv.IsRunning(), srv.CDaemonPID())
+	}
+	// F824: о падении узнаёт супервизор (vlessserver), иначе демон лежал бы
+	// до ручного пересохранения.
+	select {
+	case <-exited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("unexpected exit hook not called after crash")
+	}
+
+	// Штатный Stop — не падение: колбэк молчит.
+	if err := srv.Start(); err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	_ = srv.Stop()
+	select {
+	case <-exited:
+		t.Fatal("exit hook fired on deliberate Stop")
+	case <-time.After(300 * time.Millisecond):
 	}
 }
 
@@ -464,5 +484,26 @@ func TestCDaemon_ReloadErrorHandling(t *testing.T) {
 	returnBody = "Reload OK"
 	if err := srv.reloadCDaemonConfig(); err != nil {
 		t.Fatalf("expected nil error on 200 OK, got %v", err)
+	}
+}
+
+func TestCDaemon_DomainStrategyRenderedForC(t *testing.T) {
+	u, _ := ParseUUID("11111111-2222-3333-4444-555555555555")
+	allowed := map[[16]byte]struct{}{u: {}}
+	render := func(ds string) string {
+		cfg := Config{ListenAddr: "127.0.0.1:9008", Egress: EgressConfig{DomainStrategy: ds}}
+		return renderCXHTTPDConfig(cfg, "127.0.0.1:9008", []string{"/cdn-bridge"}, allowed, nil)
+	}
+	if got := render(" IPv4_Only "); !strings.Contains(got, "\ndomain_strategy=ipv4_only\n") {
+		t.Fatalf("ipv4_only not rendered:\n%s", got)
+	}
+	if got := render("prefer_ipv4"); !strings.Contains(got, "\ndomain_strategy=prefer_ipv4\n") {
+		t.Fatalf("prefer_ipv4 not rendered:\n%s", got)
+	}
+	if got := render(""); strings.Contains(got, "domain_strategy=") {
+		t.Fatalf("empty strategy must not be rendered:\n%s", got)
+	}
+	if got := render("ipv4_only\nallow_private=1"); strings.Contains(got, "domain_strategy=") || strings.Contains(got, "allow_private=1") {
+		t.Fatalf("unknown strategy must be dropped, not injected:\n%s", got)
 	}
 }

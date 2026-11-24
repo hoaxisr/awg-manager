@@ -275,3 +275,48 @@ func TestServerRoutingTxConcurrentMutationSerialization(t *testing.T) {
 		t.Fatalf("expected strict mutationMu serialization (maxConcurrentInCommit == 1), got %d", gotMax)
 	}
 }
+
+// F833: правка awgm-ext.json, сделанная после Commit (mutationMu между
+// Prepare/Commit и откатом отпущен), откатом не затирается. Без правки откат
+// по-прежнему возвращает файл к копии.
+func TestServerRoutingTxRollbackKeepsEditAfterCommit(t *testing.T) {
+	st := newFakeIptablesState()
+	SetExtIptablesRunner(st.runner)
+	defer SetExtIptablesRunner(nil)
+	InvalidateOutputRoutingCache()
+	defer InvalidateOutputRoutingCache()
+
+	for _, edit := range []bool{false, true} {
+		cfgDir := t.TempDir()
+		op := NewOperator(Options{ConfigDir: cfgDir, SocketPath: filepath.Join(cfgDir, "nonexistent.sock")})
+		if err := op.SaveExtConfig(ExtConfig{}); err != nil {
+			t.Fatal(err)
+		}
+		before, _ := os.ReadFile(op.extConfigPath())
+		txID, err := op.PrepareServerRouting(context.Background(), "tx-edit", "vless_xhttp_server", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := op.CommitServerRouting(context.Background(), txID); err != nil {
+			t.Fatal(err)
+		}
+		var edited []byte
+		if edit {
+			edited = []byte(`{"userEdit":true}` + "\n")
+			if err := os.WriteFile(op.extConfigPath(), edited, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := op.RollbackServerRouting(context.Background(), txID); err != nil {
+			t.Fatalf("rollback (edit=%v): %v", edit, err)
+		}
+		got, _ := os.ReadFile(op.extConfigPath())
+		want := before
+		if edit {
+			want = edited
+		}
+		if string(got) != string(want) {
+			t.Fatalf("edit=%v: ext after rollback = %q, want %q", edit, got, want)
+		}
+	}
+}

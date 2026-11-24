@@ -163,10 +163,6 @@ type Orchestrator struct {
 	// synchronously so async-ness stays a wiring detail (and tests deterministic).
 	ifaceInvalidator func(name string)
 
-	// onTunnelRunning is an optional callback on confirmed running
-	// transition. Nil-safe.
-	onTunnelRunning func(tunnelID string)
-
 	// startRetry (под o.mu) — туннели с живой цепочкой повтора старта
 	// (start_retry.go): одна цепочка на туннель, хотя бут и WAN-up могут
 	// упасть на нём оба.
@@ -214,7 +210,7 @@ func (o *Orchestrator) SetClientRoute(cr ClientRouteExecutor) { o.clientRoute = 
 
 // SetEventBus sets the event bus for SSE publishing.
 //
-// Все три хука ниже (bus, ifaceInvalidator, onTunnelRunning) ЧИТАЮТСЯ из
+// Оба хука ниже (bus, ifaceInvalidator) ЧИТАЮТСЯ из
 // updateState под o.mu, поэтому и пишутся под ним же: асимметрия
 // «write-unlocked / read-locked» — та же болезнь, что у пробы conf-слоя, и
 // стоит она столько же, сколько лишний Lock на старте демона. F258.
@@ -230,15 +226,6 @@ func (o *Orchestrator) SetInterfaceInvalidator(fn func(name string)) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.ifaceInvalidator = fn
-}
-
-// SetOnTunnelRunning wires a callback invoked when any tunnel (kernel or
-// NativeWG) reaches confirmed running state. Used to restart HydraRoute Neo
-// so it re-applies CONNMARK rules.
-func (o *Orchestrator) SetOnTunnelRunning(fn func(tunnelID string)) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.onTunnelRunning = fn
 }
 
 // SetConfLayerProbe wires the fresh NDMS read of an interface's conf layer.
@@ -1179,9 +1166,6 @@ func (o *Orchestrator) updateState(action Action) {
 				if ndmsName := tunnel.NewNames(t.ID).NDMSName; ndmsName != "" {
 					o.ifaceInvalidator(ndmsName)
 				}
-			}
-			if o.onTunnelRunning != nil {
-				o.onTunnelRunning(t.ID)
 			}
 		case ActionStopKernel, ActionStopNativeWG, ActionSuspendProxy, ActionSuspendKernel:
 			o.bus.Publish("tunnel:state", events.TunnelStateEvent{

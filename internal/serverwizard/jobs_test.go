@@ -150,3 +150,33 @@ func TestJobRunner_SecretExpiration(t *testing.T) {
 		t.Fatalf("expected ErrSecretsExpired, got %v", err)
 	}
 }
+
+// F821: новое задание чистит протухшие учётные данные, старые завершённые
+// задания и сессии лимитера — без отдельного таймера.
+func TestJobRunner_CreateJobPrunesExpired(t *testing.T) {
+	jr := NewJobRunner()
+	now := time.Now()
+	jr.clock = func() time.Time { return now }
+
+	old := jr.CreateJob("xray", "sess-old", nil)
+	jr.SucceedJob(old.ID, &RevealCredentials{Kind: "xray", UUID: "old-uuid"})
+	if _, err := jr.RevealSecrets(old.ID, "sess-old"); err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(2 * time.Hour)
+	jr.CreateJob("xray", "sess-new", nil)
+
+	jr.secretsMu.Lock()
+	_, secretLeft := jr.secrets[old.ID]
+	jr.secretsMu.Unlock()
+	jr.jobsMu.RLock()
+	_, jobLeft := jr.jobs[old.ID]
+	jr.jobsMu.RUnlock()
+	jr.limitsMu.Lock()
+	_, limitLeft := jr.limits["sess-old"]
+	jr.limitsMu.Unlock()
+	if secretLeft || jobLeft || limitLeft {
+		t.Fatalf("expired state survived new job: secret=%v job=%v limit=%v", secretLeft, jobLeft, limitLeft)
+	}
+}

@@ -35,10 +35,9 @@ describe('skipIPv6LeavesNothing', () => {
 		expect(skipIPv6LeavesNothing({ skipIPv6: true, ...v6 })).toBe(true);
 	});
 
-	it('без флага, с IPv4-записью, в HydraRoute или в пустом списке — нет', () => {
+	it('без флага, с IPv4-записью или в пустом списке — нет', () => {
 		expect(skipIPv6LeavesNothing({ ...v6 })).toBe(false);
 		expect(skipIPv6LeavesNothing({ skipIPv6: true, domains: ['example.com'], subnets: v6.subnets })).toBe(false);
-		expect(skipIPv6LeavesNothing({ skipIPv6: true, backend: 'hydraroute', ...v6 })).toBe(false);
 		expect(skipIPv6LeavesNothing({ skipIPv6: true, domains: [], subnets: [] })).toBe(false);
 	});
 });

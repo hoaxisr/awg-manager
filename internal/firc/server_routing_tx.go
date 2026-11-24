@@ -66,6 +66,10 @@ func (op *Operator) PrepareServerRouting(ctx context.Context, txID string, serve
 	if txID == "" {
 		txID = fmt.Sprintf("firc-sr-%d", time.Now().UnixNano())
 	}
+	// txID становится именем каталога, а откат делает RemoveAll по нему.
+	if strings.ContainsAny(txID, `/\`) || txID == "." || txID == ".." {
+		return "", fmt.Errorf("invalid firc sr-tx id %q", txID)
+	}
 	if op.configDir == "" {
 		return "", errors.New("firc config directory is not configured")
 	}
@@ -188,6 +192,7 @@ func (op *Operator) CommitServerRouting(ctx context.Context, txID string) error 
 	if err := op.SaveExtConfig(manifest.CandidateExt); err != nil {
 		return fmt.Errorf("save firc ext config: %w", err)
 	}
+	recordAppliedFile(txDir, op.extConfigPath(), "awgm-ext.json.applied")
 
 	if hooks.BeforeReconcile != nil {
 		if err := hooks.BeforeReconcile(txID); err != nil {
@@ -198,6 +203,7 @@ func (op *Operator) CommitServerRouting(ctx context.Context, txID string) error 
 	if err := op.reconcileExtStrict(ctx, manifest.CandidateExt); err != nil {
 		return fmt.Errorf("reconcile firc ext runtime: %w", err)
 	}
+	recordAppliedFile(txDir, op.GroupsPath(), "groups.yaml.applied")
 
 	manifest.Committed = true
 	updatedBytes, err := json.MarshalIndent(manifest, "", "  ")
@@ -282,6 +288,14 @@ func (op *Operator) RollbackServerRouting(ctx context.Context, txID string) erro
 		}
 	}
 
+	// Между Prepare и откатом mutationMu отпущен: файл, изменённый уже после
+	// нашего Commit, — чужая правка, и восстановление копии её бы стёрло.
+	skipExt := changedSinceApplied(txDir, op.extConfigPath(), "awgm-ext.json.applied")
+	skipGroups := changedSinceApplied(txDir, op.GroupsPath(), "groups.yaml.applied")
+	if skipExt || skipGroups {
+		op.log.Warn("firc server routing rollback keeps files edited after commit", "tx", txID, "ext", skipExt, "groups", skipGroups)
+	}
+
 	if len(rbErrs) == 0 {
 		// 1. Restore live fircd runtime groups (with save=false so fircd does not overwrite groups.yaml)
 		// and strictly reconcile netfilter hooks back to PrevExt + LiveGroups.
@@ -291,7 +305,7 @@ func (op *Operator) RollbackServerRouting(ctx context.Context, txID string) erro
 			rbCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 		}
-		if manifest.WasRunning || op.IsRunning(rbCtx) {
+		if !skipGroups && (manifest.WasRunning || op.IsRunning(rbCtx)) {
 			if _, syncErr := op.SyncGroupsRuntimeOnly(rbCtx, manifest.LiveGroups); syncErr != nil {
 				rbErrs = append(rbErrs, fmt.Errorf("restore live fircd groups: %w", syncErr))
 			} else if nfErr := op.ReconcileExtNetfilterStrict(rbCtx, manifest.PrevExt, manifest.LiveGroups); nfErr != nil {
@@ -300,7 +314,9 @@ func (op *Operator) RollbackServerRouting(ctx context.Context, txID string) erro
 		}
 
 		// 2. Restore awgm-ext.json and verify byte-for-byte restoration on disk.
-		if manifest.ExtExisted {
+		switch {
+		case skipExt: // правили после нашего Commit — не трогаем
+		case manifest.ExtExisted:
 			bakBytes, rErr := os.ReadFile(filepath.Join(txDir, "awgm-ext.json.bak"))
 			if rErr != nil {
 				rbErrs = append(rbErrs, fmt.Errorf("read awgm-ext.json.bak: %w", rErr))
@@ -309,7 +325,7 @@ func (op *Operator) RollbackServerRouting(ctx context.Context, txID string) erro
 			} else if gotBytes, vErr := os.ReadFile(op.extConfigPath()); vErr != nil || !bytes.Equal(gotBytes, bakBytes) {
 				rbErrs = append(rbErrs, fmt.Errorf("verify restored awgm-ext.json: %v", vErr))
 			}
-		} else {
+		default:
 			if rmErr := os.Remove(op.extConfigPath()); rmErr != nil && !os.IsNotExist(rmErr) {
 				rbErrs = append(rbErrs, fmt.Errorf("remove uncommitted awgm-ext.json: %w", rmErr))
 			}
@@ -317,7 +333,9 @@ func (op *Operator) RollbackServerRouting(ctx context.Context, txID string) erro
 
 		// 3. Restore groups.yaml last and verify byte-for-byte restoration on disk so pre-apply disk
 		// state is preserved even when it differed from live fircd runtime groups.
-		if manifest.GroupsExisted {
+		switch {
+		case skipGroups: // правили после нашего Commit — не трогаем
+		case manifest.GroupsExisted:
 			bakBytes, rErr := os.ReadFile(filepath.Join(txDir, "groups.yaml.bak"))
 			if rErr != nil {
 				rbErrs = append(rbErrs, fmt.Errorf("read groups.yaml.bak: %w", rErr))
@@ -326,11 +344,21 @@ func (op *Operator) RollbackServerRouting(ctx context.Context, txID string) erro
 			} else if gotBytes, vErr := os.ReadFile(op.GroupsPath()); vErr != nil || !bytes.Equal(gotBytes, bakBytes) {
 				rbErrs = append(rbErrs, fmt.Errorf("verify restored groups.yaml: %v", vErr))
 			}
-		} else {
+		default:
 			if rmErr := os.Remove(op.GroupsPath()); rmErr != nil && !os.IsNotExist(rmErr) {
 				rbErrs = append(rbErrs, fmt.Errorf("remove uncommitted groups.yaml: %w", rmErr))
 			}
 		}
+	}
+
+	// Пропущенный файл оставил на диске чужую правку: группы и netfilter
+	// сверяем с тем, что лежит на диске, а не с PrevExt/CandidateExt.
+	if len(rbErrs) == 0 && (skipExt || skipGroups) {
+		rbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := op.reconcileExtStrict(rbCtx, op.LoadExtConfig()); err != nil {
+			rbErrs = append(rbErrs, fmt.Errorf("reconcile firc after partial rollback: %w", err))
+		}
+		cancel()
 	}
 
 	if len(rbErrs) > 0 {
@@ -414,6 +442,14 @@ func (op *Operator) RecoverIncompleteServerRoutingTx(ctx context.Context) error 
 
 		// Committed == true ("committing" phase before FinalizeServerRouting):
 		// Ensure candidate state is persisted and reconciled, then finalize.
+		// Если ext правили уже после Commit (каталог не удалился из-за сбоя
+		// finalize), устаревший CandidateExt поверх новой правки не пишем.
+		if changedSinceApplied(filepath.Join(srRoot, txID), op.extConfigPath(), "awgm-ext.json.applied") {
+			if err := op.FinalizeServerRouting(txID); err != nil {
+				recErrs = append(recErrs, fmt.Errorf("recover committed sr-tx %s finalize: %w", txID, err))
+			}
+			continue
+		}
 		op.mutationMu.Lock()
 		if err := op.SaveExtConfig(manifest.CandidateExt); err != nil {
 			op.mutationMu.Unlock()
@@ -431,4 +467,23 @@ func (op *Operator) RecoverIncompleteServerRoutingTx(ctx context.Context) error 
 		}
 	}
 	return errors.Join(recErrs...)
+}
+
+// recordAppliedFile кладёт в каталог транзакции копию того, что Commit оставил
+// на диске. Ошибка не фатальна: без отметки откат ведёт себя как раньше.
+func recordAppliedFile(txDir, path, marker string) {
+	if data, err := os.ReadFile(path); err == nil {
+		_ = atomicWriteYAMLFile(filepath.Join(txDir, marker), data, 0600)
+	}
+}
+
+// changedSinceApplied — файл после нашего Commit кто-то переписал. Без отметки
+// (Commit файл не тронул или упал раньше) — false, откат по-старому.
+func changedSinceApplied(txDir, path, marker string) bool {
+	applied, err := os.ReadFile(filepath.Join(txDir, marker))
+	if err != nil {
+		return false
+	}
+	cur, err := os.ReadFile(path)
+	return err == nil && !bytes.Equal(cur, applied)
 }

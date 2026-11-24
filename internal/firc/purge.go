@@ -238,7 +238,7 @@ func (o *Operator) PurgeFircAndTunnels(
 	runtimeRemoved := false
 	if inst != nil {
 		st := inst.GetInstallStatus(ctx, o, false)
-		if st.ExternalPackage == "" && (st.InstalledVersion != "" || st.LegacyBundledOwnership) {
+		if st.ExternalPackage == "" && st.InstalledVersion != "" {
 			if err := inst.Uninstall(ctx, o, false, false); err != nil {
 				restoreExtIfNeeded()
 				return nil, fmt.Errorf("uninstall firc runtime package: %w", err)

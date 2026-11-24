@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
+	import { Button } from '$lib/components/ui';
 	import { FIRC_RULE_TYPES, type FircRuleType } from '$lib/types/firc';
 	import { Power, PowerOff, Trash2 } from 'lucide-svelte';
 
@@ -57,14 +58,14 @@
 	</div>
 
 	<div class="fb-actions">
-		<button type="button" class="fb-btn" onclick={onEnable}>
-			<Power size={13} />
-			<span>{m.firc_bulk_enable()}</span>
-		</button>
-		<button type="button" class="fb-btn" onclick={onDisable}>
-			<PowerOff size={13} />
-			<span>{m.firc_bulk_disable()}</span>
-		</button>
+		<Button variant="secondary" size="sm" onclick={onEnable}>
+			{#snippet iconBefore()}<Power size={13} />{/snippet}
+			{m.firc_bulk_enable()}
+		</Button>
+		<Button variant="secondary" size="sm" onclick={onDisable}>
+			{#snippet iconBefore()}<PowerOff size={13} />{/snippet}
+			{m.firc_bulk_disable()}
+		</Button>
 
 		<select
 			class="fb-select"
@@ -92,10 +93,10 @@
 			</select>
 		{/if}
 
-		<button type="button" class="fb-btn fb-btn-danger" onclick={onDelete}>
-			<Trash2 size={13} />
-			<span>{m.firc_bulk_delete()}</span>
-		</button>
+		<Button variant="outline-danger" size="sm" onclick={onDelete}>
+			{#snippet iconBefore()}<Trash2 size={13} />{/snippet}
+			{m.firc_bulk_delete()}
+		</Button>
 	</div>
 </div>
 
@@ -148,40 +149,9 @@
 		gap: 6px;
 	}
 
-	.fb-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-		height: 28px;
-		padding: 0 9px;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-primary);
-		color: var(--color-text-primary);
-		font-size: 12px;
-		font-weight: 500;
-		font-family: inherit;
-		cursor: pointer;
-		transition:
-			background var(--t-fast),
-			border-color var(--t-fast);
-	}
 
-	.fb-btn:hover {
-		background: var(--color-bg-hover);
-		border-color: var(--color-border-hover);
-	}
 
-	.fb-btn-danger {
-		color: var(--color-error);
-		border-color: var(--color-error-border);
-		background: var(--color-error-tint);
-	}
 
-	.fb-btn-danger:hover {
-		background: color-mix(in srgb, var(--color-error) 24%, transparent);
-		border-color: var(--color-error);
-	}
 
 	.fb-select {
 		height: 28px;

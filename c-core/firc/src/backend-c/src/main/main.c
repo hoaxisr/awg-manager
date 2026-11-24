@@ -123,6 +123,7 @@ struct daemon {
     int update_timer;
     firc_router_id_retry_t *rid_retry;
     int rid_timer;
+    int cf_timer;
     firc_ifcheck_t *ifcheck;
     firc_ifwatch_t *ifwatch;
     firc_httpd_t *http_tcp;
@@ -376,6 +377,10 @@ static void daemon_teardown(struct daemon *d)
     firc_tunrun_stop(d->tunrun, 5000);
     firc_tunrun_free(d->tunrun);
     d->tunrun = NULL;
+    if (d->cf_timer != 0 && d->loop != NULL) {
+        (void)firc_loop_del_timer(d->loop, d->cf_timer);
+        d->cf_timer = 0;
+    }
     if (d->dns_retry_timer != 0 && d->loop != NULL) {
         (void)firc_loop_del_timer(d->loop, d->dns_retry_timer);
         d->dns_retry_timer = 0;
@@ -739,6 +744,13 @@ static void on_dns_retry(firc_loop_t *loop, void *ud)
     d->dns_retry_timer = 0;
     firc_app_set_dns_down(d->app, false);
     FIRC_WARN("DNS proxy has its port now: answering DNS again");
+}
+
+static void on_cf_tick(firc_loop_t *loop, void *ud)
+{
+    (void)loop;
+    struct daemon *d = ud;
+    firc_app_cf_tick(d->app);
 }
 
 static void on_pool_sweep_timer(firc_loop_t *loop, void *ud)
@@ -1433,7 +1445,7 @@ int main(int argc, char **argv)
         /* the file must know every chunk in use, whatever it held */
         firc_fakeip_set_on_chunk(d.pool, on_chunk_taken, &d);
         if (lerr == FIRC_OK) {
-            FIRC_INFO("pool: %zu names restored from %s", restored, FIRC_POOL_STATE_PATH);
+            FIRC_INFO("pool: %zu entries restored from %s", restored, FIRC_POOL_STATE_PATH);
             forget_groups_not_in_config(d.pool, &cfg, now_unix());
             d.pool_restored = restored;
             d.pool_file_ok = true;
@@ -1651,6 +1663,12 @@ int main(int argc, char **argv)
     firc_app_set_policies_read(d.app, firc_kn_policies_read);
 #endif
     firc_app_set_dns_down(d.app, dns_down);
+    if (firc_loop_add_timer(d.loop, FIRC_CF_TICK_MS, FIRC_CF_TICK_MS, on_cf_tick, &d, &d.cf_timer) != FIRC_OK) {
+        FIRC_ERROR("failed to schedule the Cloudflare target check");
+        daemon_teardown(&d);
+        firc_config_clear(&cfg);
+        return 1;
+    }
     if (dns_down && firc_loop_add_timer(d.loop, FIRC_DNS_RETRY_MS, FIRC_DNS_RETRY_MS, on_dns_retry, &d,
                                         &d.dns_retry_timer) != FIRC_OK) {
         FIRC_ERROR("failed to schedule the DNS proxy's retry");

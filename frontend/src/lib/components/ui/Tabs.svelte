@@ -43,9 +43,11 @@
         skipMemorySearchParams?: string[];
         /** Explicit page preference, such as a pinned favorite, takes priority. */
         restoreMemory?: boolean;
+        /** Whole row inert (e.g. while an operation runs); URL/memory sync is unaffected. */
+        disabled?: boolean;
     }
 
-    let { tabs, active, onchange, urlParam, defaultTab, memoryReady = true, persistKey, skipMemorySearchParams = [], restoreMemory = true }: Props = $props();
+    let { tabs, active, onchange, urlParam, defaultTab, memoryReady = true, persistKey, skipMemorySearchParams = [], restoreMemory = true, disabled = false }: Props = $props();
 
     let containerEl: HTMLDivElement | undefined = $state();
     let measureEl: HTMLDivElement | undefined = $state();
@@ -101,7 +103,7 @@
     // Gates the outbound URL writer until the inbound effect has had a chance
     // to apply (or rule out) the value from the URL. Conditional tabs whose
     // visibility depends on async stores ($systemInfo.isOS5,
-    // $systemInfo.singbox.installed, hydrarouteInstalled) arrive AFTER mount,
+    // $systemInfo.singbox.installed) arrive AFTER mount,
     // so a deep-linked `?tab=policy` may not yet match any known tab on the
     // first inbound run. Without this flag, the outbound effect would
     // overwrite `?tab=policy` with the default tab's empty URL before the
@@ -222,11 +224,18 @@
     function measure(row: HTMLDivElement): MeasuredItem[] {
         // getBoundingClientRect() returns fractional pixels and, inside a
         // ResizeObserver callback, does not force an additional layout.
-        // Children are tab chips plus span.tab-separator dividers.
-        return (Array.from(row.children) as HTMLElement[]).map((el) => ({
-            width: el.getBoundingClientRect().width,
-            separator: el.tagName === 'SPAN',
-        }));
+        // Children are tab chips plus span.tab-separator dividers. The
+        // separator's horizontal margins are part of the row but not of its
+        // rect; leaving them out let the row overflow by their sum.
+        return (Array.from(row.children) as HTMLElement[]).map((el) => {
+            const separator = el.tagName === 'SPAN';
+            let width = el.getBoundingClientRect().width;
+            if (separator) {
+                const cs = getComputedStyle(el);
+                width += parseFloat(cs.marginLeft) + parseFloat(cs.marginRight);
+            }
+            return { width, separator };
+        });
     }
 
     // containerWidth is passed in from ResizeObserver entries (free — no forced
@@ -338,6 +347,7 @@
                 class:active={interactive && isTabActive(tab)}
                 class:open
                 tabindex={interactive ? undefined : -1}
+                disabled={interactive && disabled}
                 title={hidden ? m.ui_tabs_hidden_items() : undefined}
                 aria-haspopup="menu"
                 aria-expanded={open}
@@ -369,6 +379,7 @@
             class="tab"
             class:active={interactive && isTabActive(tab)}
             tabindex={interactive ? undefined : -1}
+            disabled={interactive && disabled}
             onclick={interactive ? () => selectTab(leaf?.id ?? tab.id) : undefined}
         >
             {leaf?.label ?? tab.label}
@@ -417,6 +428,7 @@
                 <button
                     class="more-chip"
                     class:has-active={hasOverflowActive}
+                    {disabled}
                     onclick={() => {
                         menuOpenId = null;
                         overflowOpen = !overflowOpen;
@@ -497,8 +509,14 @@
         transition: color 0.15s, border-color 0.15s;
     }
 
-    .tab:hover {
+    .tab:hover:not(:disabled) {
         color: var(--text-primary);
+    }
+
+    .tab:disabled,
+    .more-chip:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
     }
 
     .tab.active {

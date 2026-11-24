@@ -221,6 +221,26 @@ func newFakeAWGMWriter(t *testing.T) *fakeAWGM {
 		}
 		writeData(w, map[string]bool{"ok": true})
 	})
+	mux.HandleFunc("/api/singbox/router/outbounds/delete", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Tag string `json:"tag"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.writes = append(f.writes, "outbounds/delete")
+		kept := f.outbounds[:0]
+		for _, ob := range f.outbounds {
+			if ob["tag"] != body.Tag {
+				kept = append(kept, ob)
+			}
+		}
+		f.outbounds = kept
+		writeData(w, map[string]bool{"ok": true})
+	})
 	mux.HandleFunc("/api/singbox/router/bindable-interfaces", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -445,6 +465,139 @@ func TestWriterRefreshTargetOutboundManagedTunnel(t *testing.T) {
 	}
 	if f.appliedCount() != applied+1 {
 		t.Fatalf("applies=%d, want %d", f.appliedCount(), applied+1)
+	}
+}
+
+// Switching from a bindable interface (own direct outbound) to a tunnel
+// re-points the owner rule at the tunnel's outbound and removes the now
+// unused own outbound.
+func TestWriterRefreshRemovesUnusedOwnOutbound(t *testing.T) {
+	f := newFakeAWGMWriter(t)
+	bindableSetup(f)
+	f.awgTags = []map[string]any{{"tag": "awg-tun", "iface": "nwg9"}}
+	w := NewWriter(f.client)
+
+	if _, err := w.Add(context.Background(), domainTarget("one.example"), "br0"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.outbounds) != 1 || f.outbounds[0]["tag"] != targetOutboundTag {
+		t.Fatalf("own outbound not created: %+v", f.outbounds)
+	}
+
+	res, err := w.RefreshTargetOutbound(context.Background(), "nwg9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Persisted || res.Outbound != "awg-tun" {
+		t.Fatalf("refresh=%+v", res)
+	}
+	if len(f.rules) != 1 || f.rules[0]["outbound"] != "awg-tun" {
+		t.Fatalf("owner=%+v", f.rules)
+	}
+	if len(f.outbounds) != 0 {
+		t.Fatalf("own outbound not removed: %+v", f.outbounds)
+	}
+	deleted := false
+	for _, wr := range f.writesSnapshot() {
+		if wr == "outbounds/delete" {
+			deleted = true
+		}
+	}
+	if !deleted {
+		t.Fatalf("no outbound delete: %v", f.writesSnapshot())
+	}
+}
+
+// The own outbound stays as long as the owner rule points at it.
+func TestWriterRefreshKeepsOwnOutboundWhileUsed(t *testing.T) {
+	f := newFakeAWGMWriter(t)
+	bindableSetup(f)
+	w := NewWriter(f.client)
+
+	if _, err := w.Add(context.Background(), domainTarget("one.example"), "br0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.RefreshTargetOutbound(context.Background(), "eth3"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.outbounds) != 1 || f.outbounds[0]["tag"] != targetOutboundTag {
+		t.Fatalf("own outbound removed while in use: %+v", f.outbounds)
+	}
+	for _, wr := range f.writesSnapshot() {
+		if wr == "outbounds/delete" {
+			t.Fatalf("own outbound deleted while in use: %v", f.writesSnapshot())
+		}
+	}
+}
+
+// Two enabled outbounds for one interface are ambiguous: the refresh must
+// fail and leave the owner rule alone.
+func TestWriterRefreshAmbiguousInterfaceKeepsRule(t *testing.T) {
+	f := newFakeAWGMWriter(t)
+	bindableSetup(f)
+	f.awgTags = []map[string]any{{"tag": "awg-tun", "iface": "nwg9"}}
+	w := NewWriter(f.client)
+
+	if _, err := w.Add(context.Background(), domainTarget("one.example"), "nwg9"); err != nil {
+		t.Fatal(err)
+	}
+	// A second enabled outbound for the same interface makes the mapping
+	// ambiguous: the refresh must refuse and keep the owner rule as it was.
+	f.awgTags = append(f.awgTags, map[string]any{"tag": "awg-tun2", "iface": "nwg9"})
+	if _, err := w.RefreshTargetOutbound(context.Background(), "nwg9"); err == nil {
+		t.Fatal("expected ambiguous interface error")
+	}
+	if len(f.rules) != 1 || f.rules[0]["outbound"] != "awg-tun" {
+		t.Fatalf("owner changed on ambiguous refresh: %+v", f.rules)
+	}
+}
+
+// Adding through a tunnel after a bindable add re-points the owner rule and
+// removes the now unused own outbound.
+func TestWriterAddThroughTunnelRemovesOwnOutbound(t *testing.T) {
+	f := newFakeAWGMWriter(t)
+	bindableSetup(f)
+	f.awgTags = []map[string]any{{"tag": "awg-tun", "iface": "nwg9"}}
+	w := NewWriter(f.client)
+
+	if _, err := w.Add(context.Background(), domainTarget("one.example"), "br0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Add(context.Background(), domainTarget("two.example"), "nwg9"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.rules) != 1 || f.rules[0]["outbound"] != "awg-tun" {
+		t.Fatalf("owner=%+v", f.rules)
+	}
+	if len(f.outbounds) != 0 {
+		t.Fatalf("own outbound not removed: %+v", f.outbounds)
+	}
+}
+
+// A foreign rule still referencing the own outbound keeps it alive: the
+// outbound is still needed and must not be deleted.
+func TestWriterRefreshKeepsOwnOutboundUsedByForeignRule(t *testing.T) {
+	f := newFakeAWGMWriter(t)
+	bindableSetup(f)
+	f.awgTags = []map[string]any{{"tag": "awg-tun", "iface": "nwg9"}}
+	w := NewWriter(f.client)
+
+	if _, err := w.Add(context.Background(), domainTarget("one.example"), "br0"); err != nil {
+		t.Fatal(err)
+	}
+	// A user rule of their own points at the same outbound.
+	f.rules = append(f.rules, map[string]any{"domain_suffix": []any{"other.example"}, "action": "route", "outbound": targetOutboundTag})
+
+	if _, err := w.RefreshTargetOutbound(context.Background(), "nwg9"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.outbounds) != 1 || f.outbounds[0]["tag"] != targetOutboundTag {
+		t.Fatalf("own outbound removed while a foreign rule uses it: %+v", f.outbounds)
+	}
+	for _, wr := range f.writesSnapshot() {
+		if wr == "outbounds/delete" {
+			t.Fatalf("own outbound deleted while a foreign rule uses it: %v", f.writesSnapshot())
+		}
 	}
 }
 

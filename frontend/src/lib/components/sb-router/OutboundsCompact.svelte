@@ -9,6 +9,7 @@
   import { Badge } from '$lib/components/ui';
   import { Edit3, Trash2 } from 'lucide-svelte';
   import { isGroupOutbound, isSubscriptionOutbound, outboundDisplay } from './outboundLabel';
+  import { AUTOLIST_TARGET_OUTBOUND } from '$lib/components/routing/singboxRouter/outboundOptions';
   import { outboundDeleteBlockReasons, type OutboundUsageInput } from './outboundUsage';
   import { COMPOSITE_OUTBOUND_TYPES, resolveCompositeOutboundView } from './compositeOutboundDisplay';
 
@@ -69,17 +70,25 @@
       return m.sb_router_outbounds_edit_in_groups();
     if (isSubscriptionOutbound(o, subscriptions))
       return m.sb_router_outbounds_edit_in_subs();
+    // Служебный outbound автолиста: его привязкой управляет спутник.
+    if (o.tag === AUTOLIST_TARGET_OUTBOUND) return m.sb_router_outbounds_edit_autolist();
     return null;
   }
 
   // Один проход по конфигу на список вместо O(outbounds × конфиг) на строку.
   const deleteReasons = $derived(usage ? outboundDeleteBlockReasons(outbounds, usage) : null);
+
+  /** Удаление служебного outbound автолиста запрещено: им владеет спутник. */
+  function deleteBlockReason(o: SingboxRouterOutbound, reason: string | null): string | null {
+    if (o.tag === AUTOLIST_TARGET_OUTBOUND) return m.sb_router_outbounds_delete_autolist();
+    return reason;
+  }
 </script>
 
 <div class="list">
   {#each outbounds as o (o.tag)}
     {@const d = outboundDisplay(o, subscriptions, groups)}
-    {@const deleteReason = deleteReasons?.get(o.tag) ?? null}
+    {@const deleteReason = deleteBlockReason(o, deleteReasons?.get(o.tag) ?? null)}
     {@const editReason = editBlockReason(o)}
     {@const av = activeView(o)}
     <div class="row">

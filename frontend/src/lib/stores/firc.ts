@@ -1,5 +1,6 @@
 import { writable, get } from 'svelte/store';
 import { api } from '$lib/api/client';
+import { startVisiblePoll } from '$lib/utils/visiblePoll';
 import {
 	stripFircEmojis,
 	type FircGroup,
@@ -105,6 +106,35 @@ export async function reloadFircAll(): Promise<void> {
 	} finally {
 		fircLoading.set(false);
 	}
+}
+
+// Состояние туннелей fircd (up/down, rxBps/txBps) — живые метрики демона,
+// события о них у панели нет, поэтому опрос. Владелец один: главная и
+// вкладка FIRC берут его по ссылке, таймер общий и живёт, пока есть хоть
+// один держатель. Раньше каждая опрашивала ту же ручку своим таймером.
+let tunnelsStatePollRefs = 0;
+let stopTunnelsStatePoll: (() => void) | null = null;
+
+export function acquireFircTunnelsStatePoll(): () => void {
+	if (tunnelsStatePollRefs++ === 0) {
+		stopTunnelsStatePoll = startVisiblePoll(async () => {
+			try {
+				const st = await api.fircGetTunnelsState();
+				if (st) fircTunnelsState.set(st);
+			} catch {
+				// Разовый сбой опроса — показываем прошлый снимок.
+			}
+		}, 2500);
+	}
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		if (--tunnelsStatePollRefs === 0) {
+			stopTunnelsStatePoll?.();
+			stopTunnelsStatePoll = null;
+		}
+	};
 }
 
 export async function previewFircMigration(): Promise<FircMigrationSummary> {

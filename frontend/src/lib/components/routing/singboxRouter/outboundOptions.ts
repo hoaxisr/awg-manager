@@ -31,6 +31,14 @@ export function outboundGroupLabel(id: OutboundGroupId): string {
 	}
 }
 
+/**
+ * Служебный outbound автолиста: его создаёт и удаляет спутник (awgmautolist),
+ * а правило автолиста — единственный, кто на него ссылается. В списке
+ * outbound-ов он виден, но выбрать его в другом правиле нельзя: он не
+ * пользовательский выход, а привязка правила автолиста к выбранному туннелю.
+ */
+export const AUTOLIST_TARGET_OUTBOUND = 'awgm-autolist-target';
+
 export function buildOutboundOptions(
 	awgTags: AWGTagInfo[] | undefined | null,
 	phase1Tunnels: SingboxTunnel[] | undefined | null,
@@ -136,7 +144,12 @@ export function buildOutboundOptions(
 			.filter((g) => g.items.length > 0);
 	}
 
-	return groups;
+	// Служебный outbound автолиста не предлагается для выбора: он принадлежит
+	// правилу автолиста, и пользовательское правило на нём — рассинхронизация
+	// со спутником (он перезапишет привязку при следующем добавлении).
+	return groups
+		.map((g) => ({ ...g, items: g.items.filter((i) => i.value !== AUTOLIST_TARGET_OUTBOUND) }))
+		.filter((g) => g.items.length > 0);
 }
 
 // Download detour dropdown options (для remote rule-set'ов): плоский список
