@@ -2823,10 +2823,59 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.PageScanInterfaceOptionDTO:
+    properties:
+      label:
+        example: VPN DE (opkgtun11)
+        type: string
+      name:
+        example: opkgtun11
+        type: string
+    type: object
+  api.PageScanOptionsDTO:
+    properties:
+      defaultProxy:
+        example: http://127.0.0.1:1099
+        type: string
+      defaultProxyLabel:
+        example: FIRC inbound (127.0.0.1:1099)
+        type: string
+      interfaces:
+        items:
+          $ref: '#/definitions/api.PageScanInterfaceOptionDTO'
+        type: array
+      proxies:
+        items:
+          $ref: '#/definitions/api.PageScanProxyOptionDTO'
+        type: array
+    type: object
+  api.PageScanOptionsEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/api.PageScanOptionsDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.PageScanProxyOptionDTO:
+    properties:
+      label:
+        example: FIRC inbound (127.0.0.1:1099)
+        type: string
+      url:
+        example: http://127.0.0.1:1099
+        type: string
+    type: object
   api.PageScanRequestDTO:
     properties:
       fetchMode:
         example: auto
+        type: string
+      interface:
+        example: opkgtun11
+        type: string
+      proxyUrl:
+        example: socks5://127.0.0.1:1080
         type: string
       url:
         example: https://www.themoviedb.org
@@ -2859,6 +2908,8 @@ definitions:
         type: string
       resolveError:
         type: string
+      routeUnknown:
+        type: boolean
       routed:
         example: true
         type: boolean
@@ -2881,9 +2932,18 @@ definitions:
       contentType:
         example: text/html; charset=utf-8
         type: string
+      defaultProxy:
+        example: http://127.0.0.1:1099
+        type: string
       durationMs:
         example: 420
         type: integer
+      fetchTarget:
+        example: http://127.0.0.1:1099
+        type: string
+      fetchTargetLabel:
+        example: FIRC inbound (127.0.0.1:1099)
+        type: string
       fetchVia:
         example: direct
         type: string
@@ -11414,7 +11474,8 @@ paths:
       description: Fetches target HTML page on demand (SSRF-safe), extracts referenced
         hostnames, checks FIRC routing, and inspects DNS/PTR/ASN metadata.
       parameters:
-      - description: Target URL and optional fetch mode (auto, direct, proxy)
+      - description: Target URL and optional fetch mode (auto, direct, proxy, interface)
+          with interface/proxyUrl
         in: body
         name: request
         required: true
@@ -11446,6 +11507,26 @@ paths:
       security:
       - CookieAuth: []
       summary: Scan page resources
+      tags:
+      - diagnostics
+  /diagnostics/page-scan/options:
+    get:
+      description: Discovers active router tunnel interfaces and reachable local proxies
+        available for on-demand page scanning.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.PageScanOptionsEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List page scan egress options
       tags:
       - diagnostics
   /diagnostics/result:

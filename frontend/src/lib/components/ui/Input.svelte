@@ -11,6 +11,7 @@
     value?: string;
     placeholder?: string;
     label?: string;
+    ariaLabel?: string;
     hint?: string;
     error?: string;
     disabled?: boolean;
@@ -35,6 +36,7 @@
     value = $bindable(''),
     placeholder,
     label,
+    ariaLabel,
     hint,
     error,
     disabled = false,
@@ -84,6 +86,7 @@
       {required}
       {readonly}
       {autocomplete}
+      aria-label={ariaLabel}
       {name}
       {min}
       {max}

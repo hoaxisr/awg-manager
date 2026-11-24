@@ -1020,6 +1020,28 @@ const api_PageScanEnvelope: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_PageScanInterfaceOptionDTO: v.GenericSchema = v.looseObject({
+	label: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+});
+
+const api_PageScanOptionsDTO: v.GenericSchema = v.looseObject({
+	defaultProxy: v.optional(v.nullable(v.string())),
+	defaultProxyLabel: v.optional(v.nullable(v.string())),
+	interfaces: v.optional(v.nullable(v.array(v.lazy(() => api_PageScanInterfaceOptionDTO)))),
+	proxies: v.optional(v.nullable(v.array(v.lazy(() => api_PageScanProxyOptionDTO)))),
+});
+
+const api_PageScanOptionsEnvelope: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_PageScanOptionsDTO))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_PageScanProxyOptionDTO: v.GenericSchema = v.looseObject({
+	label: v.optional(v.nullable(v.string())),
+	url: v.optional(v.nullable(v.string())),
+});
+
 const api_PageScanResourceDTO: v.GenericSchema = v.looseObject({
 	fakeIp: v.optional(v.nullable(v.string())),
 	groupId: v.optional(v.nullable(v.string())),
@@ -1030,6 +1052,7 @@ const api_PageScanResourceDTO: v.GenericSchema = v.looseObject({
 	outbound: v.optional(v.nullable(v.string())),
 	outboundLabel: v.optional(v.nullable(v.string())),
 	resolveError: v.optional(v.nullable(v.string())),
+	routeUnknown: v.optional(v.nullable(v.boolean())),
 	routed: v.optional(v.nullable(v.boolean())),
 	sources: v.optional(v.nullable(v.array(v.string()))),
 });
@@ -1038,7 +1061,10 @@ const api_PageScanResultDTO: v.GenericSchema = v.looseObject({
 	bodyBytes: v.optional(v.nullable(v.number())),
 	bodyTruncated: v.optional(v.nullable(v.boolean())),
 	contentType: v.optional(v.nullable(v.string())),
+	defaultProxy: v.optional(v.nullable(v.string())),
 	durationMs: v.optional(v.nullable(v.number())),
+	fetchTarget: v.optional(v.nullable(v.string())),
+	fetchTargetLabel: v.optional(v.nullable(v.string())),
 	fetchVia: v.optional(v.nullable(v.string())),
 	finalUrl: v.optional(v.nullable(v.string())),
 	hostsTruncated: v.optional(v.nullable(v.boolean())),
@@ -3750,6 +3776,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /connections": v.lazy(() => api_ConnectionsResponseEnvelope),
 	"GET /diagnostics/dns-proxy": v.lazy(() => api_DnsProxyInfoEnvelope),
 	"GET /diagnostics/ip-inspect": v.lazy(() => api_IPInspectEnvelope),
+	"GET /diagnostics/page-scan/options": v.lazy(() => api_PageScanOptionsEnvelope),
 	"GET /diagnostics/status": v.lazy(() => api_DiagnosticsStatusResponse),
 	"GET /dns-check/client": v.lazy(() => api_DnsCheckStartResponseEnvelope),
 	"GET /dns-check/probe": v.lazy(() => api_APIEnvelope),
