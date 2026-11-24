@@ -235,7 +235,6 @@ func (h *DNSRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 //	@Param			body	body	DnsRouteUpsertRequest	true	"DNS route list payload"
 //	@Success		200	{object}	DnsRouteResponse
 //	@Failure		400	{object}	APIErrorEnvelope
-//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/update [post]
 func (h *DNSRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -271,7 +270,6 @@ func (h *DNSRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 //	@Param			id	query	string	true	"List id"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
-//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/delete [post]
 func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -312,7 +310,6 @@ func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 //	@Param			body	body	DnsRouteDeleteBatchRequest	true	"IDs to delete"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
-//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/delete-batch [post]
 func (h *DNSRouteHandler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
@@ -394,7 +391,6 @@ func (h *DNSRouteHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 //	@Param			body	body	EnabledToggleRequest	true	"Enabled flag"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
-//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/set-enabled [post]
 func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
