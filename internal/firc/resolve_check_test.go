@@ -2,6 +2,7 @@ package firc
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
@@ -231,24 +232,32 @@ groups:
 }
 
 // Запрос без tunnel у обычной группы значит то же, что и раньше: выключено явно.
+// Без resolve демон считает tunnel включённым (config/models.c): прочитав такой файл, Go не выключает его.
 func TestGroupsFile_TunnelExplicitForOrdinaryGroups(t *testing.T) {
 	op := newGroupsOperator(t)
 	if err := op.SaveGroupsFile([]Group{{ID: "g", Name: "g", Interface: GroupInterface{"nwg0"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if out, _ := os.ReadFile(op.GroupsPath()); !strings.Contains(string(out), "tunnel: false") {
+	if out, _ := os.ReadFile(op.GroupsPath()); !strings.Contains(string(out), "tunnel: true") {
 		t.Fatalf("tunnel not written:\n%s", out)
 	}
-	if err := os.WriteFile(op.GroupsPath(), []byte("groups:\n  - id: g\n    name: g\n    interface: nwg0\n  - id: d\n    name: d\n    interface: dns\n    resolve:\n      server: 9.9.9.9\n"), 0o644); err != nil {
+	if err := os.WriteFile(op.GroupsPath(), []byte("groups:\n  - id: g\n    name: g\n    interface: nwg0\n  - id: o\n    name: o\n    interface: nwg0\n    resolve:\n      tunnel: false\n  - id: d\n    name: d\n    interface: dns\n    resolve:\n      server: 9.9.9.9\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	grps, err := op.LoadGroupsFile()
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, _ := json.Marshal([]GroupResolve{grps[0].Resolve, grps[1].Resolve})
-	if want := `[{"tunnel":false},{"server":"9.9.9.9","fallback":true}]`; string(got) != want {
+	got, _ := json.Marshal([]GroupResolve{grps[0].Resolve, grps[1].Resolve, grps[2].Resolve})
+	if want := `[{"tunnel":true},{"tunnel":false},{"server":"9.9.9.9","fallback":true}]`; string(got) != want {
 		t.Fatalf("loaded resolve=%s want %s", got, want)
+	}
+	if err := op.SaveGroupsFile(grps); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := os.ReadFile(op.GroupsPath())
+	if s := string(out); strings.Count(s, "tunnel: true") != 1 || strings.Count(s, "tunnel: false") != 1 || strings.Count(s, "tunnel:") != 2 {
+		t.Fatalf("round trip changed tunnel:\n%s", s)
 	}
 }
 
@@ -361,7 +370,34 @@ func TestMigration_SkipsDNSOnlyGroups(t *testing.T) {
 }
 
 func TestValidateFircGroupsYAML_RefusesInvalidDNSGroup(t *testing.T) {
-	if _, err := validateFircGroupsYAML([]byte("groups:\n  - id: g\n    name: g\n    interface: dns\n")); err == nil {
+	if _, err := validateFircGroupsYAML([]byte("groups:\n  - id: g\n    name: g\n    interface: dns\n"), nil); err == nil {
 		t.Fatal("a dns group without resolve.server was accepted")
+	}
+}
+
+// Резолвер внутри пула из firc.conf самого снимка: такой groups.yaml демон после восстановления не загрузит.
+func TestSnapshotPreflight_RefusesResolverInPool(t *testing.T) {
+	op := newGroupsOperator(t)
+	const groups = "groups:\n  - id: 0a1b2c3d\n    name: g\n    interface: nwg0\n    resolve:\n      server: 100.64.0.1\n"
+	entry := func(rel, data string) SnapshotFileEntry {
+		return SnapshotFileEntry{Scope: "firc", RelPath: rel, DataB64: base64.StdEncoding.EncodeToString([]byte(data))}
+	}
+	preflight := func(entries ...SnapshotFileEntry) error {
+		_, _, err := op.validateSnapshotEntriesPreflight(context.Background(), "", entries, false, "")
+		return err
+	}
+	if err := preflight(entry("groups.yaml", groups)); err != nil {
+		t.Fatalf("outside the default pool: %v", err)
+	}
+	conf := "configVersion: 0.7.0\napp:\n  addressPool:\n    v4:\n      pool: 100.64.0.0/15\n"
+	var invalid *GroupValidationError
+	if err := preflight(entry("groups.yaml", groups), entry("firc.conf", conf)); !errors.As(err, &invalid) || invalid.Field != "resolve.server" {
+		t.Fatalf("pool of the snapshot's firc.conf: err=%v", err)
+	}
+	if err := os.WriteFile(op.ConfigPath(), []byte(conf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := preflight(entry("groups.yaml", groups)); !errors.As(err, &invalid) {
+		t.Fatalf("pool of the firc.conf on disk: err=%v", err)
 	}
 }

@@ -934,7 +934,8 @@ func validateFircTunnelsYAML(data []byte) ([]Tunnel, error) {
 	return doc.Tunnels, nil
 }
 
-func validateFircGroupsYAML(data []byte) ([]Group, error) {
+// pool — пул подставных адресов для ValidateGroups; nil — без этой проверки.
+func validateFircGroupsYAML(data []byte, pool []netip.Prefix) ([]Group, error) {
 	var rawMap map[string]any
 	if err := yaml.Unmarshal(data, &rawMap); err != nil || len(rawMap) == 0 {
 		return nil, fmt.Errorf("groups.yaml must be a non-empty YAML mapping: %v", err)
@@ -992,7 +993,7 @@ func validateFircGroupsYAML(data []byte) ([]Group, error) {
 			}
 		}
 	}
-	if err := ValidateGroups(doc.Groups, nil); err != nil {
+	if err := ValidateGroups(doc.Groups, pool); err != nil {
 		return nil, fmt.Errorf("groups.yaml: %w", err)
 	}
 	return doc.Groups, nil
@@ -1121,7 +1122,7 @@ func validateDecodedSnapshotFileContent(scope, relPath string, data []byte) erro
 			_, err := validateFircTunnelsYAML(data)
 			return err
 		case "groups.yaml":
-			_, err := validateFircGroupsYAML(data)
+			_, err := validateFircGroupsYAML(data, nil) // пул известен только вместе с firc.conf: см. validateSnapshotEntriesPreflight
 			return err
 		case "firc.conf":
 			return validateFircConfYAML(data)
@@ -2081,7 +2082,11 @@ func (o *Operator) validateSnapshotEntriesPreflight(
 			hasTunnelsYAML = true
 		}
 		if grpData, ok := stagedMap["firc:groups.yaml"]; ok {
-			grps, err := validateFircGroupsYAML(grpData)
+			pool := o.addressPool()
+			if conf, ok := stagedMap["firc:firc.conf"]; ok {
+				pool = o.addressPoolFor(conf)
+			}
+			grps, err := validateFircGroupsYAML(grpData, pool)
 			if err != nil {
 				return nil, nil, err
 			}

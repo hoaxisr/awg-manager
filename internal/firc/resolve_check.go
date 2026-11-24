@@ -191,6 +191,12 @@ func dohURLHost(url string) (string, bool) {
 // addressPool — префиксы пула подставных адресов fircd: app.addressPool из firc.conf,
 // умолчание v4 и сгенерированный демоном префикс v6.
 func (o *Operator) addressPool() []netip.Prefix {
+	data, _ := os.ReadFile(o.ConfigPath())
+	return o.addressPoolFor(data)
+}
+
+// addressPoolFor — то же для содержимого firc.conf, которое ещё не на диске (снимок перед восстановлением).
+func (o *Operator) addressPoolFor(fircConf []byte) []netip.Prefix {
 	var conf struct {
 		App struct {
 			AddressPool struct {
@@ -203,9 +209,7 @@ func (o *Operator) addressPool() []netip.Prefix {
 			} `yaml:"addressPool"`
 		} `yaml:"app"`
 	}
-	if data, err := os.ReadFile(o.ConfigPath()); err == nil {
-		_ = yaml.Unmarshal(data, &conf) // нечитаемый конфиг не примет и сам fircd: остаются умолчания
-	}
+	_ = yaml.Unmarshal(fircConf, &conf) // нечитаемый конфиг не примет и сам fircd: остаются умолчания
 	v4, v6 := conf.App.AddressPool.V4.Pool, conf.App.AddressPool.V6.Pool
 	if v4 == "" {
 		v4 = defaultAddressPoolV4

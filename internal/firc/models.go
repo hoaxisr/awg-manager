@@ -671,7 +671,7 @@ func (r GroupResolve) MarshalYAML() (interface{}, error) {
 }
 
 // normalizeGroupResolve приводит resolve к виду fircd: у группы «только DNS» нет tunnel
-// и есть fallback, у остальных tunnel указан всегда.
+// и есть fallback, у остальных tunnel указан всегда; без значения — включён, как в config/models.c.
 func normalizeGroupResolve(groups []Group) []Group {
 	out := slices.Clone(groups)
 	for i := range out {
@@ -683,7 +683,8 @@ func normalizeGroupResolve(groups []Group) []Group {
 				r.Fallback = &on
 			}
 		} else if r.Tunnel == nil {
-			r.Tunnel = new(bool)
+			on := true
+			r.Tunnel = &on
 		}
 	}
 	return out
